@@ -1,6 +1,6 @@
 ---
 name: to-spawn
-description: "Alle Ticket-Sessions einer Spec auf einmal starten — ein Windows-Terminal-Fenster, Tab je `bau <N>` + Tab `wache <S>`, Warten außerhalb von Claude (0 Token), Kontrolle per `sessions <S>`. Trigger: /to-spawn, „spawn alle Terminals“, „starte alle Tickets“, nach /to-tickets. Varianten: `local` (Standard, dieser PC) · `srv` (gebaut: tmux auf dem Bau-Server, PC darf aus)."
+description: "Alle Ticket-Sessions einer Spec auf einmal starten — STANDARD: auf dem Bau-Server (`ssh bau-server`, tmux-Sitzung `spec-<S>`, Fenster je `bau <N>` + `wache <S>`, Laptop darf aus), Warten außerhalb von Claude (0 Token), Kontrolle per `ssh bau-server sessions <S>`. Trigger: /to-spawn, „spawn alle Terminals“, „starte alle Tickets“, nach /to-tickets. Varianten: `srv` (Standard) · `local` (nur auf Wunsch: Windows-Terminal-Tabs auf diesem PC)."
 disable-model-invocation: false
 ---
 
@@ -12,9 +12,9 @@ Stand 2026-09-17 (David: „richtig geil … merk dir das richtig gut“). Vorau
 
 ## Aufruf
 
-- `/to-spawn <S>` oder `/to-spawn local <S>` — dieser PC (Standard).
-- `/to-spawn local <S> --tickets 188,189,190` — nur diese Tabs (z. B. Neustart einzelner Wartetabs).
-- `/to-spawn srv <S>` — Bau-Server, tmux (siehe unten).
+- `/to-spawn <S>` oder `/to-spawn srv <S>` — **Standard seit 2026-09-17 (David): Bau-Server** (tmux `spec-<S>`, Laptop darf aus).
+- `/to-spawn <S> --tickets 188,189,190` — nur diese Tickets (z. B. Neustart einzelner Wartefenster); gilt für srv und local.
+- `/to-spawn local <S>` — nur auf ausdrücklichen Wunsch dieser PC (Windows-Terminal-Tabs).
 
 ## Ablauf `local` (deterministisch, Skript statt Prosa)
 
