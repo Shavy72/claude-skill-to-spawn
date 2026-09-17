@@ -8,6 +8,10 @@ $ziel = Join-Path $env:USERPROFILE ".claude\skills\to-spawn"
 New-Item -ItemType Directory -Force $ziel | Out-Null
 foreach ($f in @("SKILL.md", "spawn_local.ps1", "spawn_srv.ps1")) { Copy-Item (Join-Path $hier $f) (Join-Path $ziel $f) -Force }
 Write-Host "Skill installiert: $ziel"
+$ziel2 = Join-Path (Split-Path $ziel) "to-spawn-local"
+New-Item -ItemType Directory -Force $ziel2 | Out-Null
+Copy-Item (Join-Path $hier "to-spawn-local.SKILL.md") (Join-Path $ziel2 "SKILL.md") -Force
+Write-Host "Skill installiert: $ziel2"
 
 # PowerShell-Profil: bau / wache / sessions (nur ergänzen, nie überschreiben)
 $profilPfad = $PROFILE.CurrentUserAllHosts

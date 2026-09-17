@@ -14,7 +14,7 @@ Stand 2026-09-17 (David: „richtig geil … merk dir das richtig gut“). Vorau
 
 - `/to-spawn <S>` oder `/to-spawn srv <S>` — **Standard seit 2026-09-17 (David): Bau-Server** (tmux `spec-<S>`, Laptop darf aus).
 - `/to-spawn <S> --tickets 188,189,190` — nur diese Tickets (z. B. Neustart einzelner Wartefenster); gilt für srv und local.
-- `/to-spawn local <S>` — nur auf ausdrücklichen Wunsch dieser PC (Windows-Terminal-Tabs).
+- `/to-spawn-local <S>` — eigener Befehl (Skill `to-spawn-local`): Konsolen auf diesem PC (Windows-Terminal-Tabs).
 
 ## Ablauf `local` (deterministisch, Skript statt Prosa)
 
