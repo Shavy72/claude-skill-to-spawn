@@ -1,0 +1,60 @@
+<p align="center">
+  <a href="https://github.com/Shavy72/claude-skill-to-spawn/blob/main/LICENSE"><img src="https://img.shields.io/github/license/Shavy72/claude-skill-to-spawn" alt="License"></a>
+  <a href="https://github.com/Shavy72/claude-skill-to-spawn/stargazers"><img src="https://img.shields.io/github/stars/Shavy72/claude-skill-to-spawn" alt="Stars"></a>
+</p>
+
+# claude-skill-to-spawn
+
+**Spawn every ticket session of a spec at once — one terminal window, one tab per ticket, zero tokens while waiting.**
+
+The last link of a speed-first workflow chain for Claude Code: split the work into small, parallelisable tickets, then start *all* of them in one go. Blocked tickets wait outside Claude (a GitHub poll, no context, no cost) and start themselves the moment their blockers are closed and merged. One extra tab runs a **watcher** session that checks the seams between tickets and never builds anything.
+
+```
+ /to-spec  →  /to-tickets  →  /to-spawn  →  bau <N> × n  +  wache <S>
+ spec        vertical slices   one window,    each tab: wait (0 tokens) → claim →
+ (issue)     + native          all tabs at     implement → tests → close issue
+             blocked_by edges  once            watcher: seams, proofs, deploy gate
+```
+
+Why it is fast: tickets are cut fine (each fits one fresh context window), everything without a blocker runs in parallel, and nothing waits *inside* a paid session.
+
+## What you get
+
+| File | Purpose |
+|---|---|
+| `SKILL.md` | The skill Claude Code loads on `/to-spawn` (German — the author's working language). |
+| `spawn_local.ps1` | Deterministic launcher: reads the spec manifest, skips closed/running tickets, opens one Windows Terminal window with `wache <S>` + `bau <N>` tabs, then prints the session table. |
+| `install.ps1` | Copies the skill to `~/.claude/skills/to-spawn`, adds the `bau` / `wache` / `sessions` PowerShell functions to your profile, optionally copies the repo scripts. |
+| `repo-scripts/` | The per-repo half: `bau.py` (one ticket session, waits for blockers outside Claude), `wache.py` (watcher session), `sessions_stand.py` (which sessions are on: off / waiting / running since / ORPHANED), `spec_stand.py` (one line per ticket for the watcher). Repo name is read from `git remote origin`. |
+
+## Install
+
+```powershell
+git clone https://github.com/Shavy72/claude-skill-to-spawn "$env:TEMP\claude-skill-to-spawn"
+pwsh -File "$env:TEMP\claude-skill-to-spawn\install.ps1"            # skill + profile functions
+pwsh -File "$env:TEMP\claude-skill-to-spawn\install.ps1" -Repo .     # additionally copy repo-scripts/ into ./scripts of the current repo
+```
+
+Requirements: Windows Terminal (`wt`), PowerShell 7, Python 3.12+, `gh` (logged in), Claude Code. The repo needs the manifest convention `docs/agents/manifests/spec-<S>.json` and `docs/agents/manifests/_default.json` (created by `/to-tickets`; a minimal `_default.json` is included).
+
+## Use
+
+```
+/to-spawn 182                 # everything of spec #182 (skips closed + already running tickets)
+/to-spawn 182 --tickets 188,189,190
+sessions 182                  # any time, any terminal: off / waiting / running since HH:MM / ORPHANED
+```
+
+## Hard rules (learned the expensive way)
+
+- **Never kill `bau.py` without reading `sessions <S>` first.** Only state `waiting` may be killed. A killed `bau.py` leaves its Claude child orphaned; restarting creates a duplicate session on the same worktree.
+- **No environment variables and no `;` inside the tab command** — `wt` treats `;` as a tab separator and you get a second window full of broken tabs. Transcript persistence (`CLAUDE_CODE_FORCE_SESSION_PERSISTENCE=1`) is set by `bau.py` / `wache.py` themselves.
+- After spawning, verify by process list. Never claim "running" from the launcher's exit code.
+
+## Roadmap
+
+- `/to-spawn srv <S>` — same sessions as tmux/cmux windows on a build server so the PC can be switched off. Not built yet; the skill answers with the open questions instead of starting anything.
+
+## License
+
+MIT
