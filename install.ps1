@@ -6,7 +6,7 @@ $ErrorActionPreference = "Stop"
 $hier = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ziel = Join-Path $env:USERPROFILE ".claude\skills\to-spawn"
 New-Item -ItemType Directory -Force $ziel | Out-Null
-foreach ($f in @("SKILL.md", "spawn_local.ps1")) { Copy-Item (Join-Path $hier $f) (Join-Path $ziel $f) -Force }
+foreach ($f in @("SKILL.md", "spawn_local.ps1", "spawn_srv.ps1")) { Copy-Item (Join-Path $hier $f) (Join-Path $ziel $f) -Force }
 Write-Host "Skill installiert: $ziel"
 
 # PowerShell-Profil: bau / wache / sessions (nur ergänzen, nie überschreiben)

@@ -291,8 +291,22 @@ def build_kontext(entry: dict) -> str:
     return "\n".join(lines)
 
 
+def worktree_pfad(ticket: str) -> str:
+    """Wohin der Worktree dieses Tickets gehört — Windows wie bisher, Linux unter ``$BAU_WT_DIR``."""
+    if sys.platform == "win32":
+        return f"C:/dev/wt-{ticket}"
+    basis = os.environ.get("BAU_WT_DIR") or "~/wt"
+    return f"{Path(basis).expanduser().as_posix().rstrip('/')}/wt-{ticket}"
+
+
 def build_prompt(template: str, ticket: str, spec: str, title: str, kontext: str) -> str:
-    return template.replace("{N}", ticket).replace("{S}", spec).replace("{TITLE}", title).replace("{KONTEXT}", kontext)
+    return (
+        template.replace("{WT}", worktree_pfad(ticket))
+        .replace("{N}", ticket)
+        .replace("{S}", spec)
+        .replace("{TITLE}", title)
+        .replace("{KONTEXT}", kontext)
+    )
 
 
 # --- Main -------------------------------------------------------------------

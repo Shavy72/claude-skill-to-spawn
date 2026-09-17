@@ -1,6 +1,6 @@
 ---
 name: to-spawn
-description: "Alle Ticket-Sessions einer Spec auf einmal starten — ein Windows-Terminal-Fenster, Tab je `bau <N>` + Tab `wache <S>`, Warten außerhalb von Claude (0 Token), Kontrolle per `sessions <S>`. Trigger: /to-spawn, „spawn alle Terminals“, „starte alle Tickets“, nach /to-tickets. Varianten: `local` (Standard, dieser PC) · `srv` (geplant: tmux/cmux auf dem Server, PC darf aus)."
+description: "Alle Ticket-Sessions einer Spec auf einmal starten — ein Windows-Terminal-Fenster, Tab je `bau <N>` + Tab `wache <S>`, Warten außerhalb von Claude (0 Token), Kontrolle per `sessions <S>`. Trigger: /to-spawn, „spawn alle Terminals“, „starte alle Tickets“, nach /to-tickets. Varianten: `local` (Standard, dieser PC) · `srv` (gebaut: tmux auf dem Bau-Server, PC darf aus)."
 disable-model-invocation: false
 ---
 
@@ -14,7 +14,7 @@ Stand 2026-09-17 (David: „richtig geil … merk dir das richtig gut“). Vorau
 
 - `/to-spawn <S>` oder `/to-spawn local <S>` — dieser PC (Standard).
 - `/to-spawn local <S> --tickets 188,189,190` — nur diese Tabs (z. B. Neustart einzelner Wartetabs).
-- `/to-spawn srv <S>` — **noch nicht gebaut** (siehe unten), heute nur Fehlermeldung + Hinweis.
+- `/to-spawn srv <S>` — Bau-Server, tmux (siehe unten).
 
 ## Ablauf `local` (deterministisch, Skript statt Prosa)
 
@@ -39,14 +39,19 @@ Stand 2026-09-17 (David: „richtig geil … merk dir das richtig gut“). Vorau
 - ⊗-Tabs erst schließen, wenn `sessions` keine VERWAIST-Zeile mehr zeigt.
 - Tabs schließen kann `wt` nicht per Befehl; ganze Fenster schließt David.
 
-## `srv` — geplant (noch nicht gebaut)
+## `srv` — Bau-Server (gebaut 2026-09-17)
 
-Ziel: dieselben Sessions als tmux/cmux-Fenster auf einem Bau-Server, damit der PC aus sein darf. Offene Punkte (grillen, bevor gebaut wird — siehe Memory `project_meta_exec_rem_bau_server_vision_2026_09_16`):
-- Wo läuft Claude Code (Bau-VPS, Login/Token, `bau.py` portieren: `wt` → `tmux new-window -n "bau <N>"`).
-- Worktrees `C:/dev/wt-<N>` → `/opt/wt-<N>`; Deploy-Skript vom Server aus; Git-Zugang.
-- Kontrolle vom Handy: `sessions` als Web-Seite oder Telegram-Meldung; Glocke → Push.
-- Browser-Beweise (claude-in-chrome) gibt es auf dem Server nicht → Playwright-Weg Pflicht.
-Bis dahin antwortet `/to-spawn srv` mit genau diesem Hinweis und startet nichts.
+Dieselben Sessions als tmux-Fenster auf dem netcup-Bau-Server (`ssh bau-server`, Nutzer `bau`, Repo `~/duoplus-management`, Doku `docs/BAU_SERVER.md`), damit der PC aus sein darf. Worktrees liegen dort unter `~/wt/wt-<N>` (`$BAU_WT_DIR`, Default `~/wt`).
+
+1. Vom Laptop: `pwsh -File ~/.claude/skills/to-spawn/spawn_srv.ps1 -Spec <S> [-Tickets "a,b,c"] [-OhneWache] [-DryRun] [-Zielserver bau-server]`
+   - ruft `scripts/spawn_srv.sh <S> ...` per SSH auf dem Server auf (kein SSH-Login nötig, Key liegt bereit),
+   - Server macht `git fetch && git merge --ff-only origin/master` (Abbruch bei Konflikt, nie rebase/stash), liest das Manifest, überspringt laufende Tickets,
+   - legt tmux-Session `spec-<S>` an: Fenster `wache <S>` + je Ticket ein Fenster `bau <N>`,
+   - gibt nach 10 s die `sessions <S>`-Tabelle aus.
+2. Kontrolle: `ssh bau-server sessions <S>` (Tabelle) · Live reinschauen `ssh -t bau-server tmux attach -t spec-<S>` (Fenster wechseln `Strg+B n`, raus ohne zu beenden `Strg+B d`).
+3. Harte Regeln gelten gleich (nie `wartet` überspringen, kein Duplikat, kein Kill ohne `sessions`-Check).
+4. Browser-Beweise auf dem Server: **kein** `claude-in-chrome` (kein Desktop) — Playwright-Weg (`scripts/beweis_*.py`-Vorlagen), siehe Memory `reference_cmo_browser_beweis_playwright`.
+5. SSH-Falle Windows: `Bad permissions` auf `.ssh/config`/Key-Datei → `icacls <Datei> /inheritance:r; icacls <Datei> /grant:r "$env:USERNAME:(R)"` einmalig fixen.
 
 ## Anhang: manueller Einzeiler (falls das Skript nicht geht)
 

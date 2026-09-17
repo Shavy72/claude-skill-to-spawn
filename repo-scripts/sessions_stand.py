@@ -12,7 +12,8 @@ Zustände je Ticket:
   läuft seit HH:MM ``bau.py``/``wache.py`` hat eine Claude-Session gestartet (Kindprozess)
   VERWAIST seit    Claude-Session lebt, aber ``bau.py`` ist weg (nie ``bau.py`` killen, ohne die Kinder zu prüfen)
 
-Nur Windows (WMI über PowerShell). Kostet keine Token, läuft in jedem Terminal.
+Windows liest die Prozessliste per WMI (PowerShell), Linux per ``ps``.
+Kostet keine Token, läuft in jedem Terminal.
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import re
 import subprocess
 import sys
@@ -33,6 +35,10 @@ MANIFESTE = REPO / "docs" / "agents" / "manifests"
 MUSTER = re.compile(r"scripts[\\/](bau|wache)\.py\"?\s+(\d+)")
 #: Claude-Session aus ``bau``: der Settings-Pfad trägt die Ticket-Nummer (``<repo>-bau\\<N>-<zeit>``).
 VERWAIST = re.compile(r"[\w.-]+-bau[\\/](\d+)-\d{8}-\d{6}[\\/]settings\.json")
+#: Prozessnamen einer laufenden Claude-Session (Windows ``claude.exe``/``node.exe``, Linux ``claude``/``node``).
+SESSION_NAMEN = frozenset({"claude.exe", "node.exe", "claude", "node"})
+#: Namen, unter denen eine verwaiste Claude-Session auftaucht (``node.exe`` bleibt draußen — auf Windows zu unscharf).
+VERWAIST_NAMEN = frozenset({"claude.exe", "claude", "node"})
 
 
 @dataclass
@@ -55,8 +61,42 @@ class Eintrag:
     kinder: list[str] = field(default_factory=list)
 
 
+def ps_zeilen_parsen(text: str) -> list[Prozess]:
+    """``ps -eo pid,ppid,lstart,comm,args --no-headers`` auswerten (``lstart`` = 5 Felder, Locale C)."""
+    ergebnis: list[Prozess] = []
+    for zeile in text.splitlines():
+        teile = zeile.split(None, 8)
+        if len(teile) < 8 or not teile[0].isdigit():
+            continue
+        try:
+            start = datetime.strptime(" ".join(teile[2:7]), "%a %b %d %H:%M:%S %Y")
+        except ValueError:
+            start = None
+        name = teile[7]
+        ergebnis.append(Prozess(int(teile[0]), int(teile[1]), name, teile[8] if len(teile) > 8 else name, start))
+    return ergebnis
+
+
+def prozesse_linux() -> list[Prozess]:
+    """Prozessliste über ``ps`` (Startzeit-Format nur mit ``LC_ALL=C`` verlässlich)."""
+    out = subprocess.run(
+        ["ps", "-eo", "pid,ppid,lstart,comm,args", "--no-headers"],
+        capture_output=True,
+        text=True,
+        errors="replace",
+        check=False,
+        env={**os.environ, "LC_ALL": "C"},
+    ).stdout
+    if not out.strip():
+        log.error("Prozessliste leer — ist ``ps`` (procps) installiert?")
+        return []
+    return ps_zeilen_parsen(out)
+
+
 def prozesse_lesen() -> list[Prozess]:
-    """Alle Prozesse mit Kommandozeile und Startzeit (PowerShell/WMI)."""
+    """Alle Prozesse mit Kommandozeile und Startzeit (Windows: PowerShell/WMI, sonst ``ps``)."""
+    if sys.platform != "win32":
+        return prozesse_linux()
     ps = (
         "[Console]::OutputEncoding=[Text.Encoding]::UTF8; Get-CimInstance Win32_Process | Select-Object ProcessId, ParentProcessId, Name, CommandLine, "
         "@{n='Start';e={ if ($_.CreationDate) { $_.CreationDate.ToString('o') } else { '' } }} | ConvertTo-Json -Compress"
@@ -117,7 +157,7 @@ def manifeste_lesen(spec: str | None) -> dict[str, Eintrag]:
 
 def zuordnen(eintraege: dict[str, Eintrag], alle: list[Prozess]) -> None:
     for p in alle:
-        if p.name.lower() != "python.exe":
+        if not p.name.lower().startswith("python"):
             continue
         m = MUSTER.search(p.cmd)
         if not m:
@@ -129,7 +169,7 @@ def zuordnen(eintraege: dict[str, Eintrag], alle: list[Prozess]) -> None:
             eintraege[nummer] = e
         e.pid = p.pid
         kinder = nachkommen(p.pid, alle)
-        session = next((k for k in kinder if k.name.lower() in ("claude.exe", "node.exe")), None)
+        session = next((k for k in kinder if k.name.lower() in SESSION_NAMEN), None)
         if session is not None:
             e.session_pid = session.pid
             seit = session.start.strftime("%H:%M") if session.start else "?"
@@ -141,7 +181,7 @@ def zuordnen(eintraege: dict[str, Eintrag], alle: list[Prozess]) -> None:
     # (17.09.2026: bau.py beendet, Claude-Kind lief unsichtbar weiter, zweimal für #187).
     bekannte = {e.session_pid for e in eintraege.values() if e.session_pid}
     for p in alle:
-        if p.name.lower() != "claude.exe" or p.pid in bekannte:
+        if p.name.lower() not in VERWAIST_NAMEN or p.pid in bekannte:
             continue
         m = VERWAIST.search(p.cmd)
         if not m:
