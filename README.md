@@ -25,6 +25,7 @@ Why it is fast: tickets are cut fine (each fits one fresh context window), every
 | `SKILL.md` | The skill Claude Code loads on `/to-spawn` (German — the author's working language). |
 | `spawn_local.ps1` | Deterministic launcher: reads the spec manifest, skips closed/running tickets, opens one Windows Terminal window with `wache <S>` + `bau <N>` tabs, then prints the session table. |
 | `install.ps1` | Copies the skill to `~/.claude/skills/to-spawn`, adds the `bau` / `wache` / `sessions` PowerShell functions to your profile, optionally copies the repo scripts. |
+| `docs/kontext-manifest.md` | The `/to-tickets` add-on this chain needs: manifest schema, **native GitHub `blocked_by` edges** (the launcher waits on them), per-ticket context package, watcher. Copy into your repo's `docs/agents/`. |
 | `repo-scripts/` | The per-repo half: `bau.py` (one ticket session, waits for blockers outside Claude), `wache.py` (watcher session), `sessions_stand.py` (which sessions are on: off / waiting / running since / ORPHANED), `spec_stand.py` (one line per ticket for the watcher). Repo name is read from `git remote origin`. |
 
 ## Install
@@ -36,6 +37,13 @@ pwsh -File "$env:TEMP\claude-skill-to-spawn\install.ps1" -Repo .     # additiona
 ```
 
 Requirements: Windows Terminal (`wt`), PowerShell 7, Python 3.12+, `gh` (logged in), Claude Code. The repo needs the manifest convention `docs/agents/manifests/spec-<S>.json` and `docs/agents/manifests/_default.json` (created by `/to-tickets`; a minimal `_default.json` is included).
+
+## The chain, end to end
+
+1. `/to-spec` — grill the problem, write the spec as an issue (words, decisions, acceptance, ticket cut proposal, tools table).
+2. `/to-tickets` — vertical slices, one issue each, **native `blocked_by` edges** + sub-issues, `## Kontext-Paket` per ticket, manifest `spec-<S>.json` (see `docs/kontext-manifest.md`). Build size per ticket (`klein` / `groß` / `regulär`) decides how much review runs *during* the build; the heavy review panel + deploy run once per wave, not per ticket.
+3. `/to-spawn <S>` — one window, all tabs. Blocked tickets wait for free (GitHub poll every 10 min), start themselves, claim, implement, prove, close. The watcher tab checks seams and proofs and never builds.
+4. `sessions <S>` — see what is on at any time.
 
 ## Use
 

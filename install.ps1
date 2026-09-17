@@ -54,4 +54,18 @@ if ($Repo) {
     $def = Join-Path $man "_default.json"
     if (-not (Test-Path $def)) { Copy-Item (Join-Path $hier "repo-scripts\_default.json") $def; Write-Host "kopiert: $def" }
 }
+# Glocke: Claude Code schlägt am Zug-Ende die Terminal-Glocke → 🔔 am Tab, wenn eine Session fertig ist.
+$cj = Join-Path $env:USERPROFILE ".claude.json"
+if (Test-Path $cj) {
+    try {
+        $roh = Get-Content $cj -Raw
+        if ($roh -notmatch '"preferredNotifChannel"\s*:\s*"terminal_bell"') {
+            Copy-Item $cj "$cj.bak-to-spawn" -Force
+            $obj = $roh | ConvertFrom-Json -AsHashtable
+            $obj["preferredNotifChannel"] = "terminal_bell"
+            ($obj | ConvertTo-Json -Depth 50) | Set-Content $cj -Encoding utf8
+            Write-Host "Glocke gesetzt: preferredNotifChannel = terminal_bell (Sicherung $cj.bak-to-spawn). Gilt für neue Sessions."
+        } else { Write-Host "Glocke schon gesetzt." }
+    } catch { Write-Warning "Glocke nicht gesetzt ($_) — von Hand: in einer Claude-Session /config → Notifications → terminal_bell" }
+}
 Write-Host "Fertig. Neues Terminal öffnen (Profil neu laden), dann im Repo: /to-spawn <SpecNr>"
