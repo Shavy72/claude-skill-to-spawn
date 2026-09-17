@@ -60,3 +60,14 @@ $repo=(Get-Location).Path; $cmds=@("wache 182")+(183..190|%{"bau $_"})
 $a=@(); foreach($c in $cmds){ $a+=@("new-tab","--title","`"$c`"","-d","`"$repo`"","pwsh","-NoExit","-Command","`"$c`"",";") }
 $a=$a[0..($a.Count-2)]; Start-Process wt -ArgumentList ($a -join " ")
 ```
+
+## Version 2 (vorläufig, 2026-09-18) — Kern aus Grill/Spec #202
+
+Python-Kern `to_spawn.py` (Paket `to_spawn/`, Tests `tests/`, Doku `to_spawn/README.md`). Befehle:
+- `python ~/.claude/skills/to-spawn/to_spawn.py pruefen <S>` — Regularien: jedes Ticket im Manifest braucht `schaetzung_k` (< 200) und `umfang`, Blocker-Kanten nativ; sonst Exit 3 „erst /to-tickets".
+- `… spawn <S> [--ziel local|srv]` — fragt „lokal (1) oder Server (2)?", prüft erst Regularien, delegiert dann an `spawn_local.ps1` / `spawn_srv.ps1`.
+- `… log <S>` — Gesamt-Tabelle aus `docs/agents/bau_log/<N>.jsonl` (Token, Dauer, Staffel-Zähler) · `… lernstoff` — Zeilen für /to-tickets.
+- `… hook-stop` / `… hook-subagent-stop` — Stop-/SubagentStop-Hooks (JSON auf stdin) schreiben `session_ende`/`subagent_ende` mit Token-Summen aus dem Transkript.
+- Staffel (200k): Hook kann eine Session nicht beenden (Doku: `continue:false` endet nur die Runde) → Hook setzt Marker `.to-spawn/stop-<N>`, `to_spawn/bau_loop.py` beendet das Kind und startet die Folge-Session mit Handoff als Startkontext (max 3 Staffeln). Verdrahtung in `bau.py` = Ticket #203/#204.
+- Drei Einstiege (Ziel, Ticket #205): `/to-spawn <S>` fragt 1/2 · `/to-spawn-local <S>` · `/to-spawn-remote <S>` (ersetzt `srv`) · `/to-spawn-of` = Umzug (#212).
+- Entscheidungen + Ticket-Kette (#203–#214): `docs/GRILL_2026-09-18_to_spawn_final.md` im DuoPlus-Repo, Spec #202.
