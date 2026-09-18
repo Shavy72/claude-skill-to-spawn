@@ -15,6 +15,8 @@ Beantwortet:
   ``issue reopen <N> --repo <slug> --comment <T>`` → state = open, Kommentar merken
   ``issue comment <N> --repo <slug> --body <T>``   → Kommentar merken
 ``GH_STUB_PROTOKOLL`` (Pfad): jeder Aufruf wird als Zeile angehängt.
+``GH_STUB_FEHLER`` (z. B. ``comment`` oder ``reopen,comment``): diese Aufrufe enden mit Exit 1.
+``labels`` (Liste von Namen) und ``state_reason`` im Issue werden durchgereicht (Fixrunde #213).
 """
 
 from __future__ import annotations
@@ -44,6 +46,8 @@ def _issue(nummer: str, daten: dict) -> dict:
         "closed_at": eintrag.get("closed_at"),
         "updated_at": eintrag.get("updated_at"),
         "assignees": [{"login": name} for name in eintrag.get("assignees", [])],
+        "labels": [{"name": name} for name in eintrag.get("labels", [])],
+        "state_reason": eintrag.get("state_reason"),
     }
 
 
@@ -63,6 +67,9 @@ def main() -> int:
         print(json.dumps([]))
         return 0
     if args[:2] in (["issue", "reopen"], ["issue", "comment"]):
+        if args[1] in os.environ.get("GH_STUB_FEHLER", "").split(","):
+            print(f"gh-Ersatz #213: {args[1]} absichtlich gescheitert", file=sys.stderr)
+            return 1
         nummer = args[2]
         text = _wert(args, "--comment") or _wert(args, "--body")
         eintrag = daten.setdefault("issues", {}).setdefault(nummer, {})

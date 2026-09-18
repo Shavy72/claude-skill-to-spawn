@@ -90,6 +90,8 @@ def main() -> int:
         repo, a.spec, gh_repo, konfig, wt_basis=wt_basis, dry_run=a.dry_run
     )
     print("\n".join(ergebnis.zeilen))
+    if any("FEHLER" in zeile for zeile in ergebnis.zeilen):
+        return max(ergebnis.exit_code, 1)  # jeder Aktionsfehler = Exit 1 (#213)
     return ergebnis.exit_code
 
 

@@ -78,6 +78,12 @@ def _zustand_datei(repo: Path, gh_repo: str = "") -> Path:
     return zustand_ordner() / f"{repo_kennung(repo, gh_repo)}_meldungen.json"
 
 
+def schon_gesendet(repo: Path, schluessel: str, gh_repo: str = "") -> bool:
+    """Wurde die Meldung mit diesem Schlüssel schon erfolgreich verschickt?"""
+    zustand = lade_json(_zustand_datei(repo, gh_repo))
+    return schluessel in set(zustand.get("gesendet") or [])
+
+
 def darf_raus(art: str, konfig: dict[str, Any]) -> bool:
     """Politik: kritische Arten und ``spec_fertig`` immer, andere nur ohne ``nur_kritisch``."""
     nur_kritisch = bool(konfig.get("mail", {}).get("nur_kritisch", True))

@@ -57,6 +57,7 @@ def _git(repo: Path, *args: str, env: dict[str, str] | None = None) -> str:
         capture_output=True,
         text=True,
         env={**os.environ, **(env or {})},
+        timeout=60,
     )
     return fertig.stdout.strip()
 

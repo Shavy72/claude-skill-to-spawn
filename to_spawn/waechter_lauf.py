@@ -19,6 +19,7 @@ import logging
 import re
 import subprocess
 import threading
+import time
 import uuid
 from collections.abc import Callable
 from datetime import datetime
@@ -31,6 +32,8 @@ log = logging.getLogger("to_spawn.waechter_lauf")
 
 _LIMIT_TEXT = re.compile(r"(reached|hit) your .*limit", re.IGNORECASE)
 TAKT_S = 5.0
+#: Sekunden, nach denen ein fehlendes Transkript eine Warnung wert ist.
+WARTE_TRANSKRIPT_S = 60.0
 
 
 def transkript_ordner(cwd: Path, heim: Path | None = None) -> Path:
@@ -66,22 +69,27 @@ def ist_limit_zeile(eintrag: dict[str, Any]) -> bool:
     )
     if not fehler:
         return False
-    return eintrag.get("error") == "rate_limit" or bool(
-        _LIMIT_TEXT.search(_texte(eintrag))
-    )
+    # ``error == "rate_limit"`` allein reicht nicht: auch kurze API-Drosselungen tragen es.
+    return bool(_LIMIT_TEXT.search(_texte(eintrag)))
 
 
 class Aufsicht(threading.Thread):
     """Liest neue Zeilen einer Transkript-Datei ab Byte ``ab`` und meldet die erste Limit-Zeile."""
 
     def __init__(
-        self, datei: Path, ab: int, takt: float, bei_limit: Callable[[str], None]
+        self,
+        datei: Path,
+        ab: int,
+        takt: float,
+        bei_limit: Callable[[str], None],
+        warte_s: float = WARTE_TRANSKRIPT_S,
     ) -> None:
         super().__init__(name="waechter-aufsicht", daemon=True)
         self.datei = datei
         self.pos = ab
         self.takt = takt
         self.bei_limit = bei_limit
+        self.warte_s = warte_s
         self.halt = threading.Event()
 
     def _neue_zeilen(self, rest: bytes) -> tuple[list[bytes], bytes]:
@@ -89,24 +97,45 @@ class Aufsicht(threading.Thread):
             with self.datei.open("rb") as strom:
                 strom.seek(self.pos)
                 stueck = strom.read()
-        except OSError:
+        except OSError as fehler:
+            log.debug("Transkript %s (noch) nicht lesbar: %s", self.datei, fehler)
             return [], rest
         self.pos += len(stueck)
         *zeilen, rest = (rest + stueck).split(b"\n")
         return zeilen, rest
 
+    def _limit_in(self, zeilen: list[bytes]) -> bool:
+        for roh in zeilen:
+            try:
+                eintrag = json.loads(roh.decode("utf-8", errors="replace"))
+            except ValueError as fehler:
+                log.debug("Transkript-Zeile unlesbar (%s): %.80r", fehler, roh)
+                continue
+            if isinstance(eintrag, dict) and ist_limit_zeile(eintrag):
+                self.bei_limit(_texte(eintrag)[:200] or str(eintrag.get("error")))
+                return True
+        return False
+
     def run(self) -> None:
         rest = b""
-        while not self.halt.is_set():
+        beginn = time.monotonic()
+        gewarnt = False
+        while True:
+            zuletzt = self.halt.is_set()  # nach dem Halt genau einmal nachlesen
             zeilen, rest = self._neue_zeilen(rest)
-            for roh in zeilen:
-                try:
-                    eintrag = json.loads(roh.decode("utf-8", errors="replace"))
-                except ValueError:
-                    continue
-                if isinstance(eintrag, dict) and ist_limit_zeile(eintrag):
-                    self.bei_limit(_texte(eintrag)[:200] or str(eintrag.get("error")))
-                    return
+            if self._limit_in(zeilen) or zuletzt:
+                return
+            if (
+                not gewarnt
+                and not self.datei.is_file()
+                and time.monotonic() - beginn > self.warte_s
+            ):
+                gewarnt = True
+                log.warning(
+                    "Transkript %s nach %.0f s nicht da — Limit-Erkennung blind.",
+                    self.datei,
+                    self.warte_s,
+                )
             self.halt.wait(self.takt)
 
 
@@ -150,14 +179,41 @@ def _beende(proc: subprocess.Popen[bytes]) -> None:
         proc.kill()
 
 
-def _log_repo(repo: Path) -> Path:
-    """Bau-Log-Ziel: Regel des Skills (``TO_SPAWN_LOG_REPO``), sonst das Repo."""
+def _log_repo(repo: Path) -> Path | None:
+    """Bau-Log-Ziel: Regel des Skills (``TO_SPAWN_LOG_REPO``, fehlt der Ordner → ``None``)."""
     regel = getattr(bau_log, "log_repo", None)
     if callable(regel):
         ziel = regel(repo)
-        if isinstance(ziel, Path):
-            return ziel
+        return ziel if isinstance(ziel, Path) else None
     return repo
+
+
+def _melde_wechsel(repo: Path, spec: int, sid: str, modell: str, ausweich: str, grund: str) -> None:
+    """Mail zuerst, dann Zeile ins versionierte Bau-Log — nie ein Grund, den Neustart zu lassen."""
+    try:
+        melder.melden(
+            repo,
+            "waechter_ausweich",
+            f"Wächter #{spec} läuft auf Ausweich-Modell",
+            f"Wächter #{spec}: {modell} hat das Limit erreicht ({grund}) — weiter mit {ausweich}.",
+            f"waechter_ausweich|{spec}|{sid}",
+        )
+    except (OSError, ValueError, subprocess.SubprocessError) as fehler:
+        log.warning("Wächter #%s: Mail waechter_ausweich gescheitert: %s", spec, fehler)
+    ziel = _log_repo(repo)
+    if ziel is None:
+        log.info("Wächter #%s: kein Bau-Log-Ziel — Zeile waechter_modell entfällt.", spec)
+        return
+    try:
+        bau_log.eintrag_schreiben(
+            ziel, spec, "waechter_modell", von=modell, nach=ausweich, grund=grund
+        )
+    except (OSError, ValueError) as fehler:
+        log.warning(
+            "Wächter #%s: Bau-Log-Zeile waechter_modell nicht geschrieben (%s) — Neustart trotzdem.",
+            spec,
+            fehler,
+        )
 
 
 def fahre(
@@ -232,21 +288,7 @@ def fahre(
             return rc
 
         grund = gruende[0] if gruende else "Nutzungs-Limit"
-        bau_log.schreibe(
-            _log_repo(repo),
-            spec,
-            "waechter_modell",
-            von=modell,
-            nach=ausweich,
-            grund=grund,
-        )
-        melder.melden(
-            repo,
-            "waechter_ausweich",
-            f"Wächter #{spec} läuft auf Ausweich-Modell",
-            f"Wächter #{spec}: {modell} hat das Limit erreicht ({grund}) — weiter mit {ausweich}.",
-            f"waechter_ausweich|{spec}|{sid}",
-        )
+        _melde_wechsel(repo, spec, sid, modell, ausweich, grund)
         weiter = (
             f"Weiter als Bau-Wächter Spec #{spec}: Modell-Wechsel {modell} → {ausweich} wegen Nutzungs-Limit. "
             f"Nächster Tick wie gehabt (python scripts/capo.py {spec}); "
