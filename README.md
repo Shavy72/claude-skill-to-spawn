@@ -55,6 +55,19 @@ Requirements: Windows Terminal (`wt`), PowerShell 7, Python 3.12+, `gh` (logged 
 sessions 182                  # any time, any terminal: off / waiting / running since HH:MM / ORPHANED
 ```
 
+## Nest (server setup, #210)
+
+`nest/nest_push.sh` (source machine) and `nest/nest_server.sh` (root on a fresh Debian/Ubuntu
+server) turn any repo into a build server; repo-specific steps live in the repo's
+`.to-spawn/nest_repo.sh`. Logic sits in `to_spawn.py nest …` (onboarding, sandbox, secrets
+via `bws`, tools from `.to-spawn/werkzeuge.json`, permissions shown but only a human
+enters them with `nest rechte --eintragen`). Sandbox per worktree (`srt`) is opt-in:
+`.to-spawn/config.json` → `sandbox.modus: "an"`; with `sandbox.pflicht` (default) a session
+never starts unsandboxed. Known limit: `~/.claude/.credentials.json` stays readable inside
+the sandbox — Claude Code does not start without it (checked 2026-09-19: "Not logged in").
+Readiness check of a started session (tmux prompt, `git status`/`gh issue edit` without
+prompts) is ticket #214.
+
 ## Hard rules (learned the expensive way)
 
 - **Never kill `bau.py` without reading `sessions <S>` first.** Only state `waiting` may be killed. A killed `bau.py` leaves its Claude child orphaned; restarting creates a duplicate session on the same worktree.

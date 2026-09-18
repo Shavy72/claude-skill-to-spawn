@@ -659,8 +659,6 @@ def main() -> int:
     if model:
         cmd += ["--model", model]
     cmd.append(erster_prompt)
-    # Sandbox je Worktree (#210): Logik in to_spawn.nest, hier nur der Präfix (srt).
-    cmd = nest.sandbox_praefix(konfig, worktree_pfad(ticket), REPO, trocken=args.dry_run) + cmd
 
     off_count = sum(1 for v in overrides.values() if v == "off")
     log.info("Ticket #%s · Spec #%s · %s", ticket, spec, title)
@@ -676,6 +674,11 @@ def main() -> int:
     log.info("Temp: %s", out)
 
     if args.dry_run:
+        # Sandbox je Worktree (#210): Probelauf zeigt nur den Präfix, legt nichts an.
+        praefix = nest.sandbox_start(konfig, worktree_pfad(ticket), REPO, trocken=True)
+        if praefix is None:
+            return 2
+        cmd = praefix + cmd
         print("\nBefehl:")
         print(
             " ".join(f'"{c}"' if " " in c or "\n" in c else c for c in cmd[:-1]),
@@ -685,6 +688,11 @@ def main() -> int:
 
     if not args.sofort and not args.umzug:
         auf_blocker_warten(ticket, max(60, args.takt))
+    # Sandbox erst jetzt (#210): Worktree entsteht vom frischen origin-Stand (nest holt ihn).
+    praefix = nest.sandbox_start(konfig, worktree_pfad(ticket), REPO)
+    if praefix is None:
+        return 2
+    cmd = praefix + cmd
 
     # Aus einer Claude-Session gestartet erben Kind-Sessions die Markierung
     # CLAUDE_CODE_CHILD_SESSION und speichern kein Transkript (kein Resume nach

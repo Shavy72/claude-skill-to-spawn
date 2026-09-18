@@ -170,11 +170,28 @@ def worktree_von(ziel: str) -> tuple[Path, str | None]:
     return pfad, treffer.group(1) if treffer else None
 
 
+def _zweig_name(worktree: Path, ticket: str | None) -> str:
+    """``ticket-<N>``; ohne Nummer der gesäuberte Ordnername (nur Buchstaben, Ziffern, ._-)."""
+    if ticket:
+        return f"ticket-{ticket}"
+    name = re.sub(r"[^A-Za-z0-9._-]+", "-", worktree.name).strip("-.")
+    if not name:
+        raise NestFehler(f"Aus {worktree.name!r} lässt sich kein Zweig-Name bilden")
+    return name
+
+
 def worktree_anlegen(worktree: Path, hauptrepo: Path, ticket: str | None) -> None:
-    """Legt den Worktree an, wenn er fehlt; ein vorhandener bleibt unberührt."""
+    """Legt den Worktree an, wenn er fehlt; ein vorhandener bleibt unberührt.
+
+    Vorher ``git fetch origin``, damit der neue Zweig auf dem frischen Stand beginnt.
+    """
     if worktree.exists():
         return
-    zweig = f"ticket-{ticket}" if ticket else worktree.name
+    zweig = _zweig_name(worktree, ticket)
+    if _git(hauptrepo, "remote", "get-url", "origin").returncode == 0:
+        abruf = _git(hauptrepo, "fetch", "-q", "origin")
+        if abruf.returncode != 0:
+            log.warning("git fetch origin scheiterte: %s", abruf.stderr.strip()[:200])
     if _git(hauptrepo, "rev-parse", "--verify", "--quiet", zweig).returncode == 0:
         ergebnis = _git(hauptrepo, "worktree", "add", str(worktree), zweig)
     else:
@@ -194,9 +211,15 @@ def sandbox_einstellungen(
     ticket: str | None = None,
     home: Path | None = None,
 ) -> dict[str, Any]:
-    """srt-Einstellungen: Schreiben nur im Worktree + nötigen Ordnern, Netz per Liste."""
+    """srt-Einstellungen: Schreiben nur im Worktree + nötigen Ordnern, Netz per Liste.
+
+    Gesperrt (auch innerhalb erlaubter Ordner): Git-Hooks und Git-Konfig des Hauptrepos,
+    Claude-Einstellungen, -Hooks, -Skills, -Agenten (sonst könnte eine Session sich selbst
+    Rechte geben). Nicht lesbar: ``~/.config/to-spawn`` (bws-Token).
+    """
     heim = home or Path.home()
     schreiben: list[str] = [str(worktree)]
+    sperre_schreiben: list[str] = []
     if ticket:
         for nachbar in sorted(worktree.parent.glob(f"*-{ticket}")):
             if nachbar.is_dir() and nachbar != worktree:
@@ -204,10 +227,15 @@ def sandbox_einstellungen(
     gemeinsam = _git_common_dir(hauptrepo)
     if gemeinsam is not None:
         schreiben.append(str(gemeinsam))
+        sperre_schreiben += [str(gemeinsam / "hooks"), str(gemeinsam / "config")]
     schreiben.append(str(hauptrepo / ".to-spawn"))
     for name in (".claude", ".claude.json", ".cache", ".npm"):
         schreiben.append(str(heim / name))
     schreiben.append("/tmp")
+    claude = heim / ".claude"
+    for name in ("settings.json", "settings.local.json", "hooks", "skills", "agents"):
+        sperre_schreiben.append(str(claude / name))
+    sperre_lesen = [str(heim / ".config" / "to-spawn")]
     sandbox = konfig.get("sandbox") if isinstance(konfig.get("sandbox"), dict) else {}
     zusatz = sandbox.get("netz_zusatz") if isinstance(sandbox, dict) else None
     netz = list(NETZ_VORGABE)
@@ -217,9 +245,9 @@ def sandbox_einstellungen(
     return {
         "network": {"allowedDomains": netz, "deniedDomains": []},
         "filesystem": {
-            "denyRead": [],
+            "denyRead": sperre_lesen,
             "allowWrite": list(dict.fromkeys(schreiben)),
-            "denyWrite": [],
+            "denyWrite": sperre_schreiben,
         },
     }
 
@@ -250,6 +278,45 @@ def sandbox_vorbereiten(
     return datei
 
 
+#: Hängt am srt-Präfix: Kennung „läuft in der Sandbox“ (``~/.ssh/config`` prüft sie).
+SANDBOX_KENNUNG: tuple[str, ...] = ("env", "TO_SPAWN_SANDBOX=1")
+
+
+def _sandbox_einstellung(konfig: Mapping[str, Any]) -> tuple[str, bool]:
+    sandbox = konfig.get("sandbox")
+    if not isinstance(sandbox, dict):
+        return "aus", True
+    return str(sandbox.get("modus", "aus")), bool(sandbox.get("pflicht", True))
+
+
+def _sandbox_bauen(
+    worktree: str,
+    hauptrepo: Path,
+    konfig: Mapping[str, Any],
+    which: Callable[[str], str | None],
+    trocken: bool,
+) -> list[str]:
+    """Präfix ``[srt, --settings, <datei>, --, env, TO_SPAWN_SANDBOX=1]``; Probleme → NestFehler.
+
+    ``--`` ist Pflicht: ohne ihn liest srt das ``--settings`` von claude als sein eigenes.
+    """
+    srt, bwrap = which("srt"), which("bwrap")
+    if not srt or not bwrap:
+        fehlt = " und ".join(n for n, p in (("srt", srt), ("bwrap", bwrap)) if not p)
+        raise NestFehler(
+            f"Sandbox ist an, aber {fehlt} fehlt. "
+            "Abhilfe: `to_spawn.py nest werkzeuge --installieren`."
+        )
+    if trocken:
+        pfad, _ticket = worktree_von(worktree)
+        return [srt, "--settings", str(pfad / SANDBOX_DATEI), "--", *SANDBOX_KENNUNG]
+    try:
+        datei = sandbox_vorbereiten(worktree, hauptrepo, konfig)
+    except OSError as fehler:
+        raise NestFehler(f"Sandbox nicht vorbereitet ({fehler})") from fehler
+    return [srt, "--settings", str(datei), "--", *SANDBOX_KENNUNG]
+
+
 def sandbox_praefix(
     konfig: Mapping[str, Any],
     worktree: str,
@@ -257,34 +324,44 @@ def sandbox_praefix(
     which: Callable[[str], str | None] = shutil.which,
     trocken: bool = False,
 ) -> list[str]:
-    """Befehls-Präfix ``[srt, --settings, <datei>, --]`` für ``bau.py`` — oder leer.
-
-    ``--`` ist Pflicht: ohne ihn liest srt das ``--settings`` von claude als sein eigenes.
-
-    Leer bei ``sandbox.modus`` ≠ "an", wenn ``srt``/``bwrap`` fehlen oder der Worktree
-    nicht vorbereitet werden kann (jeweils mit Warnung). ``trocken``: nichts schreiben.
-    """
+    """Präfix für eine Session — oder leer (Modus ≠ "an" oder Problem, mit Warnung)."""
     sandbox = konfig.get("sandbox")
-    modus = sandbox.get("modus", "an") if isinstance(sandbox, dict) else "an"
+    modus = sandbox.get("modus", "aus") if isinstance(sandbox, dict) else "aus"
     if modus != "an":
         return []
-    srt, bwrap = which("srt"), which("bwrap")
-    if not srt or not bwrap:
-        log.warning(
-            "Sandbox ist an, aber %s fehlt — Session läuft OHNE Sandbox. "
-            "Abhilfe: `to_spawn.py nest werkzeuge --installieren`.",
-            " und ".join(n for n, p in (("srt", srt), ("bwrap", bwrap)) if not p),
-        )
-        return []
-    if trocken:
-        pfad, _ticket = worktree_von(worktree)
-        return [srt, "--settings", str(pfad / SANDBOX_DATEI), "--"]
     try:
-        datei = sandbox_vorbereiten(worktree, hauptrepo, konfig)
-    except (NestFehler, OSError) as fehler:
-        log.warning("Sandbox nicht vorbereitet (%s) — Session läuft OHNE Sandbox.", fehler)
+        return _sandbox_bauen(worktree, hauptrepo, konfig, which, trocken)
+    except NestFehler as fehler:
+        log.warning("%s — Session läuft OHNE Sandbox.", fehler)
         return []
-    return [srt, "--settings", str(datei), "--"]
+
+
+def sandbox_start(
+    konfig: Mapping[str, Any],
+    worktree: str,
+    hauptrepo: Path,
+    which: Callable[[str], str | None] = shutil.which,
+    trocken: bool = False,
+) -> list[str] | None:
+    """Wie ``sandbox_praefix``, aber mit ``sandbox.pflicht``: Problem → ``None`` (Abbruch).
+
+    ``bau.py`` ruft das NACH dem Warten auf Blocker; ``None`` heißt: nicht starten.
+    """
+    modus, pflicht = _sandbox_einstellung(konfig)
+    if modus != "an":
+        return []
+    try:
+        return _sandbox_bauen(worktree, hauptrepo, konfig, which, trocken)
+    except NestFehler as fehler:
+        if pflicht:
+            log.error(
+                "%s — Session startet NICHT (sandbox.pflicht). Beheben oder in "
+                ".to-spawn/config.json `sandbox.pflicht` auf false setzen.",
+                fehler,
+            )
+            return None
+        log.warning("%s — Session läuft OHNE Sandbox (sandbox.pflicht = false).", fehler)
+        return []
 
 
 # --- 3. Secrets über bws -------------------------------------------------------------
@@ -315,8 +392,9 @@ def token_finden(environ: Mapping[str, str], home: Path) -> str | None:
 def _env_wert(wert: str) -> str:
     if _SICHER.match(wert):
         return wert
-    maskiert = wert.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
-    return f'"{maskiert}"'
+    # Einfache Anführungszeichen: kein $-Ersetzen, nur \\ und \' werden maskiert.
+    maskiert = wert.replace("\\", "\\\\").replace("'", "\\'")
+    return f"'{maskiert}'"
 
 
 def _bws_geheimnisse(
@@ -348,6 +426,8 @@ def _bws_geheimnisse(
             werte[schluessel] = wert if isinstance(wert, str) else ""
         else:
             log.warning("bws-Eintrag ohne gültigen Schlüssel-Namen übersprungen")
+    if not werte:
+        raise NestFehler("bws lieferte 0 Schlüssel (Projekt/Zugriff des Tokens prüfen)")
     return werte
 
 
@@ -410,6 +490,8 @@ class Rezept:
     """Wie ein Unterbau auf Debian/Ubuntu kommt. Erweiterbar: neue Zeile = neues Rezept.
 
     ``weg``: "apt" (Paket), "npm" (global) oder "skript" (macht ``nest_server.sh``).
+    ``immer``: gehört zur Sandbox und wird in jedem Repo geprüft; alle anderen nur, wenn
+    die ``werkzeuge.json`` des Repos sie nennt.
     """
 
     name: str
@@ -417,6 +499,7 @@ class Rezept:
     weg: str
     paket: str = ""
     hinweis: str = ""
+    immer: bool = False
 
 
 #: Neben ``inventur.UNTERBAUTEN``: gleiche Namen, hier nur der Installationsweg.
@@ -425,10 +508,10 @@ REZEPTE: tuple[Rezept, ...] = (
     Rezept("adb", "adb", "apt", "adb"),
     Rezept("gh", "gh", "apt", "gh", "apt-Quelle von cli.github.com legt nest_server.sh an"),
     Rezept("codex", "codex", "npm", "@openai/codex", "Anmeldung bleibt: `codex login`"),
-    Rezept("bubblewrap", "bwrap", "apt", "bubblewrap"),
-    Rezept("socat", "socat", "apt", "socat"),
-    Rezept("ripgrep", "rg", "apt", "ripgrep"),
-    Rezept("srt", "srt", "npm", "@anthropic-ai/sandbox-runtime"),
+    Rezept("bubblewrap", "bwrap", "apt", "bubblewrap", immer=True),
+    Rezept("socat", "socat", "apt", "socat", immer=True),
+    Rezept("ripgrep", "rg", "apt", "ripgrep", immer=True),
+    Rezept("srt", "srt", "npm", "@anthropic-ai/sandbox-runtime", immer=True),
     Rezept("bws", "bws", "skript", hinweis="nest_server.sh lädt es aus dem GitHub-Release"),
 )
 
@@ -491,8 +574,24 @@ def _abhilfe(rezept: Rezept) -> str:
     return f"{text} ({rezept.hinweis})" if rezept.hinweis else text
 
 
+def _unterbau_namen(repo: Path) -> set[str] | None:
+    """Unterbau, den ``werkzeuge.json`` nennt: ``kategorien``, ``unterbau``, ``setup_zeilen``."""
+    abgewaehlt, namen = _freigabe(repo)
+    if namen is None:
+        return None
+    daten = json.loads((repo / inventur.AUSGABE_PFAD).read_text(encoding="utf-8"))
+    unterbau = daten.get("unterbau") if isinstance(daten, dict) else None
+    if isinstance(unterbau, list):
+        namen |= {n for n in unterbau if isinstance(n, str)}
+    zeilen = daten.get("setup_zeilen") if isinstance(daten, dict) else None
+    for zeile in zeilen if isinstance(zeilen, list) else []:
+        if isinstance(zeile, dict) and isinstance(zeile.get("name"), str):
+            namen.add(zeile["name"])
+    return namen - abgewaehlt
+
+
 def _freigabe(repo: Path) -> tuple[set[str], set[str] | None]:
-    """(abgewählt, gewünschte Namen) aus ``werkzeuge.json``; ohne Datei → (leer, None)."""
+    """(abgewählt, gewünschte Werkzeug-Namen aus ``kategorien``); ohne Datei → (leer, None)."""
     datei = repo / inventur.AUSGABE_PFAD
     abgewaehlt = inventur.lies_abwahl(datei)
     if not datei.exists():
@@ -504,6 +603,15 @@ def _freigabe(repo: Path) -> tuple[set[str], set[str] | None]:
         if isinstance(liste, list):
             namen |= {n for n in liste if isinstance(n, str)}
     return abgewaehlt, namen - abgewaehlt
+
+
+def ist_root() -> bool:
+    """Läuft der Prozess als root? Auf Windows (kein ``os.geteuid``) nie."""
+    geteuid = getattr(os, "geteuid", None)
+    return bool(geteuid is not None and geteuid() == 0)
+
+
+_ist_root = ist_root  # ``pruefe_werkzeuge`` hat einen gleichnamigen Parameter
 
 
 def pruefe_werkzeuge(
@@ -521,12 +629,15 @@ def pruefe_werkzeuge(
     claude_home = claude_home or heim / ".claude"
     home_json = home_json or heim / ".claude.json"
     ausfuehren = ausfuehren or inventur._fuehre_aus
-    root = (os.geteuid() == 0) if ist_root is None else ist_root
+    root = _ist_root() if ist_root is None else ist_root
     bericht = WerkzeugBericht(repo)
     abgewaehlt, gewuenscht = _freigabe(repo)
+    genannt = _unterbau_namen(repo)
 
     for rezept in REZEPTE:
         if rezept.name in abgewaehlt:
+            continue
+        if not rezept.immer and (genannt is None or rezept.name not in genannt):
             continue
         if which(rezept.befehl):
             bericht.unterbau.append(Zeile(rezept.name, "da"))
@@ -542,12 +653,13 @@ def pruefe_werkzeuge(
 
     if gewuenscht is None:
         bericht.hinweise.append(
-            f"keine {inventur.AUSGABE_PFAD} — nur Unterbau geprüft "
+            f"keine {inventur.AUSGABE_PFAD} — nur Sandbox-Unterbau geprüft "
             "(`to_spawn.py inventur --schreiben` legt sie an)"
         )
         return bericht
     katalog = inventur.lies_katalog(repo, claude_home, home_json)
     vorhanden = {w.name for w in katalog.werkzeuge}
+    gewuenscht -= {r.name for r in REZEPTE}
     bericht.werkzeuge_fehlen = sorted(gewuenscht - vorhanden)
     bericht.werkzeuge_da = len(gewuenscht & vorhanden)
     return bericht
@@ -620,6 +732,26 @@ def mcp_export(home_json: Path, namen: Sequence[str], ziel: Path) -> list[str]:
     return list(raus)
 
 
+def mcp_import(quelle: Path, claude_json: Path) -> list[str]:
+    """MCP-Einträge aus ``quelle`` in ``claude_json`` → ``mcpServers`` mischen (atomar, 0600).
+
+    Vorhandene Einträge bleiben unverändert (nie überschreiben); nur neue Namen kommen dazu.
+    Ersetzt ``claude mcp add-json "$(cat …)"`` — Schlüssel stehen so nie in argv/ps.
+    """
+    neu = _lies_json_objekt(quelle)
+    if not quelle.exists():
+        raise NestFehler(f"{quelle} fehlt")
+    daten = _lies_json_objekt(claude_json)
+    server = daten.setdefault("mcpServers", {})
+    if not isinstance(server, dict):
+        raise NestFehler(f"{claude_json}: `mcpServers` ist kein Objekt — nichts geschrieben")
+    dazu = [name for name, eintrag in neu.items() if name not in server and isinstance(eintrag, dict)]
+    for name in dazu:
+        server[name] = neu[name]
+    _schreibe_atomar(claude_json, _json_text(daten), 0o600)
+    return dazu
+
+
 # --- 5. Rechte: nur ein Mensch trägt ein ----------------------------------------------
 
 RECHTE_ERLAUBEN: tuple[str, ...] = (
@@ -638,7 +770,10 @@ RECHTE_ERLAUBEN: tuple[str, ...] = (
     "Bash(gh issue edit:*)",
     "Bash(gh issue comment:*)",
     "Bash(gh issue list:*)",
+    "Bash(gh issue close:*)",
     "Bash(gh pr view:*)",
+    "Bash(git push:*)",
+    "Bash(python3 */to_spawn.py eintrag:*)",
 )
 
 
@@ -738,6 +873,10 @@ def richte_parser_ein(unter: Any) -> None:
     p_mx.add_argument("--ziel", type=Path, required=True)
     p_mx.add_argument("namen", nargs="*")
 
+    p_mi = nest_unter.add_parser("mcp-import", help="MCP-Einträge in ~/.claude.json mischen")
+    p_mi.add_argument("--quelle", type=Path, required=True)
+    p_mi.add_argument("--claude-json", type=Path, default=Path.home() / ".claude.json")
+
     p_aw = nest_unter.add_parser("auswahl", help="Namen für nest_push.sh")
     p_aw.add_argument("--art", choices=["skill", "mcp"], required=True)
     p_aw.add_argument("--repo", type=Path)
@@ -778,6 +917,10 @@ def lauf(args: argparse.Namespace) -> int:
             namen = mcp_export(heim / ".claude.json", list(args.namen), args.ziel)
             print(f"MCPs vorbereitet: {', '.join(namen) or '—'} (Schlüssel bleiben verdeckt)")
             return 0
+        if befehl == "mcp-import":
+            dazu = mcp_import(args.quelle, args.claude_json)
+            print(f"MCPs neu eingetragen: {', '.join(dazu) or '—'} (vorhandene bleiben)")
+            return 0
         if befehl == "auswahl":
             repo = (args.repo or config.repo_wurzel()).resolve()
             namen = auswahl(repo, args.art, heim / ".claude", heim / ".claude.json")
@@ -806,10 +949,12 @@ __all__: Sequence[str] = (
     "auswahl",
     "hole_secrets",
     "mcp_export",
+    "mcp_import",
     "pruefe_werkzeuge",
     "rechte_eintragen",
     "rechte_vorschlag",
     "sandbox_praefix",
+    "sandbox_start",
     "sandbox_vorbereiten",
     "setze_onboarding",
     "uebernehme_einstellungen",

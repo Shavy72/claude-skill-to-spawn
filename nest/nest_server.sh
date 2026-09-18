@@ -60,7 +60,8 @@ PROJEKT_SLUG="$(printf '%s' "$ZIEL" | sed 's#[/.]#-#g')"
 
 ok()   { echo "[ok] $*"; }
 info() { echo "[..] $*"; }
-warn() { echo "[!!] $*" >&2; }
+FEHLER_LISTE=()
+warn() { echo "[!!] $*" >&2; FEHLER_LISTE+=("$*"); }
 q()    { printf '%q' "$1"; }
 asnutzer() { su - "$NUTZER" -c "$1"; }
 # Python-Kern des Skills (als root, HOME = Nutzer): JSON, bws, Werkzeuge
@@ -213,12 +214,18 @@ install -d -m 700 -o "$NUTZER" -g "$NUTZER" "$NUTZER_HOME/.claude" "$NUTZER_HOME
 if [ -f "$STAGE/credentials.json" ]; then
   install -m 600 -o "$NUTZER" -g "$NUTZER" "$STAGE/credentials.json" "$NUTZER_HOME/.claude/.credentials.json"
   ok "Claude-Zugang gesetzt"
-else
+elif [ ! -f "$NUTZER_HOME/.claude/.credentials.json" ]; then
   warn "$STAGE/credentials.json fehlt — Claude-Login noch offen (nest_push.sh laufen lassen)"
 fi
+rm -f "$STAGE/credentials.json"
 
+gh_login=""
 if [ -f "$STAGE/gh_token" ]; then
   gh_login="$(GH_TOKEN="$(cat "$STAGE/gh_token")" gh api user --jq .login 2>/dev/null || true)"
+fi
+if [ -f "$STAGE/gh_token" ] && [ -z "$gh_login" ]; then
+  warn "gh-Token aus $STAGE ungültig (kein Login) — hosts.yml NICHT geschrieben"
+elif [ -f "$STAGE/gh_token" ]; then
   if [ -z "$GIT_NAME" ]; then GIT_NAME="$gh_login"; fi
   if [ -z "$GIT_MAIL" ]; then
     GIT_MAIL="$(GH_TOKEN="$(cat "$STAGE/gh_token")" gh api user \
@@ -228,22 +235,24 @@ if [ -f "$STAGE/gh_token" ]; then
   umask 177
   { printf 'github.com:\n'
     printf '    oauth_token: %s\n' "$(cat "$STAGE/gh_token")"
-    printf '    user: %s\n' "${gh_login:-$GIT_NAME}"
+    printf '    user: %s\n' "$gh_login"
     printf '    git_protocol: https\n'
   } > "$NUTZER_HOME/.config/gh/hosts.yml"
   umask 22
   chown -R "$NUTZER:$NUTZER" "$NUTZER_HOME/.config/gh"
   chmod 600 "$NUTZER_HOME/.config/gh/hosts.yml"
   ok "gh-Zugang gesetzt"
-else
+elif [ ! -f "$NUTZER_HOME/.config/gh/hosts.yml" ]; then
   warn "$STAGE/gh_token fehlt — gh-Login noch offen"
 fi
+rm -f "$STAGE/gh_token"
 
 if [ -f "$STAGE/bws_token" ]; then
   install -d -m 700 -o "$NUTZER" -g "$NUTZER" "$NUTZER_HOME/.config/to-spawn"
   install -m 600 -o "$NUTZER" -g "$NUTZER" "$STAGE/bws_token" "$NUTZER_HOME/.config/to-spawn/bws_token"
   ok "bws-Token gesetzt (Inhalt bleibt verdeckt)"
 fi
+rm -f "$STAGE/bws_token"
 [ -n "$GIT_NAME" ] && [ -n "$GIT_MAIL" ] \
   || warn "Git-Name/-Mail unbekannt — mit --git-name/--git-mail erneut laufen lassen"
 
@@ -283,7 +292,11 @@ ok "Skill to-spawn: $SKILL_NUTZER"
 if [ ! -x "$NUTZER_HOME/.local/bin/claude" ] && ! asnutzer 'command -v claude >/dev/null'; then
   asnutzer 'curl -fsSL https://claude.ai/install.sh | bash' >/dev/null
 fi
-ok "Claude Code $(asnutzer 'claude --version' 2>/dev/null || echo 'FEHLT')"
+if claude_version="$(asnutzer 'claude --version' 2>/dev/null)"; then
+  ok "Claude Code $claude_version"
+else
+  warn "Claude Code fehlt (Installation gescheitert)"
+fi
 if ! asnutzer 'command -v uv >/dev/null'; then
   asnutzer 'curl -LsSf https://astral.sh/uv/install.sh | sh' >/dev/null
 fi
@@ -307,8 +320,14 @@ if [ ! -d "$ZIEL/.git" ]; then
     *) asnutzer "gh repo clone $(q "$REPO_ARG") $(q "$ZIEL") -- -q" ;;
   esac
 else
-  asnutzer "cd $(q "$ZIEL") && git fetch -q origin && git merge -q --ff-only @{u}" \
-    || warn "Repo nicht fast-forward — bitte von Hand ansehen"
+  asnutzer "cd $(q "$ZIEL") && git fetch -q origin" || warn "git fetch im Repo gescheitert"
+  # Hauptbaum nur vorspulen, wenn er sauber ist — sonst bleibt fremde Arbeit unberührt.
+  if [ -z "$(asnutzer "cd $(q "$ZIEL") && git status --porcelain")" ]; then
+    asnutzer "cd $(q "$ZIEL") && git merge -q --ff-only @{u}" \
+      || warn "Repo nicht fast-forward — bitte von Hand ansehen"
+  else
+    info "Hauptbaum hat Änderungen — nur git fetch, kein Vorspulen"
+  fi
 fi
 ok "Repo: $(asnutzer "cd $(q "$ZIEL") && git log -1 --oneline")"
 
@@ -337,10 +356,14 @@ if ! bws --version 2>/dev/null | grep -qF "$BWS_VERSION"; then
 fi
 SSH_CFG="$NUTZER_HOME/.ssh/config"
 touch "$SSH_CFG"
+# Alter Block (prüfte HTTPS_PROXY statt der eigenen Kennung) → entfernen, unten neu
+if grep -q 'HTTPS_PROXY\$https_proxy' "$SSH_CFG"; then
+  sed -i '/>>> to-spawn Sandbox >>>/,/<<< to-spawn Sandbox <<</d' "$SSH_CFG"
+fi
 if ! grep -q '>>> to-spawn Sandbox >>>' "$SSH_CFG"; then
   {
     echo "# >>> to-spawn Sandbox >>>  (ssh in srt nur über deren Proxy, siehe nest/ssh_durch_sandbox.sh)"
-    echo 'Match exec "test -n \"$HTTPS_PROXY$https_proxy\""'
+    echo 'Match exec "test -n \"$TO_SPAWN_SANDBOX\""'
     echo "    ProxyCommand $SKILL_NUTZER/nest/ssh_durch_sandbox.sh %h %p"
     echo "Match all"
     echo "# <<< to-spawn Sandbox <<<"
@@ -349,7 +372,10 @@ if ! grep -q '>>> to-spawn Sandbox >>>' "$SSH_CFG"; then
   } > "$SSH_CFG.neu" && mv "$SSH_CFG.neu" "$SSH_CFG"
 fi
 chown "$NUTZER:$NUTZER" "$SSH_CFG"; chmod 600 "$SSH_CFG"
-ok "Sandbox-Unterbau: srt $(srt --version 2>/dev/null || echo FEHLT) · bwrap · socat · rg · bws $(bws --version 2>/dev/null | awk '{print $2}')"
+for befehl in srt bwrap socat rg bws; do
+  command -v "$befehl" >/dev/null 2>&1 || warn "Sandbox-Unterbau: $befehl fehlt"
+done
+ok "Sandbox-Unterbau geprüft: srt $(srt --version 2>/dev/null) · bws $(bws --version 2>/dev/null | awk '{print $2}')"
 
 # ---------------------------------------------------------------- 12. .env: erst bws, sonst Staging
 env_da=0
@@ -357,9 +383,14 @@ if command -v bws >/dev/null 2>&1 && { [ -n "${BWS_ACCESS_TOKEN:-}" ] || [ -f "$
   if nest_py secrets --ziel "$ZIEL/.env"; then env_da=1; else warn "bws-Abruf gescheitert — .env aus der Staging-Kiste"; fi
 fi
 if [ "$env_da" -eq 0 ] && [ -f "$STAGE/env" ]; then
-  install -m 600 "$STAGE/env" "$ZIEL/.env"
-  env_da=1
+  if [ -f "$ZIEL/.env" ]; then
+    info "Im Repo liegt schon eine .env — Staging-.env wird NICHT darübergelegt"
+  else
+    install -m 600 "$STAGE/env" "$ZIEL/.env"
+  fi
 fi
+rm -f "$STAGE/env"
+[ -f "$ZIEL/.env" ] && env_da=1
 if [ "$env_da" -eq 1 ]; then
   chown "$NUTZER:$NUTZER" "$ZIEL/.env"; chmod 600 "$ZIEL/.env"
   ok ".env im Repo ($(wc -l < "$ZIEL/.env") Zeilen, Inhalt bleibt verdeckt)"
@@ -374,17 +405,14 @@ else
   info "Werkzeuge übersprungen (--ohne-werkzeuge)"
 fi
 if [ -f "$STAGE/mcp.json" ]; then
-  for name in $(jq -r 'keys[]' "$STAGE/mcp.json"); do
-    if asnutzer "claude mcp get $(q "$name")" >/dev/null 2>&1; then continue; fi
-    einzeln="$STAGE/.mcp_einzeln.json"
-    jq -c --arg n "$name" '.[$n]' "$STAGE/mcp.json" > "$einzeln"
-    chown "$NUTZER:$NUTZER" "$einzeln"; chmod 600 "$einzeln"
-    asnutzer "claude mcp add-json --scope user $(q "$name") \"\$(cat $(q "$einzeln"))\"" >/dev/null \
-      || warn "MCP $name nicht angelegt"
-    rm -f "$einzeln"
-  done
-  ok "MCPs: $(jq -r 'keys[]' "$STAGE/mcp.json" | paste -sd' ' -)"
+  # direkt in ~/.claude.json mischen (0600) — Schlüssel stehen nie in argv/ps
+  if nest_py mcp-import --quelle "$STAGE/mcp.json" --claude-json "$NUTZER_HOME/.claude.json"; then
+    chown "$NUTZER:$NUTZER" "$NUTZER_HOME/.claude.json"
+  else
+    warn "MCPs nicht eingetragen"
+  fi
 fi
+rm -f "$STAGE/mcp.json"
 
 # ---------------------------------------------------------------- 14. Repo-eigener Schritt
 if [ -f "$ZIEL/.to-spawn/nest_repo.sh" ]; then
@@ -399,6 +427,12 @@ fi
 echo
 asnutzer "BAU_WT_DIR=$(q "$WT_DIR") python3 $(q "$SKILL_NUTZER/to_spawn.py") nest rechte" || true
 echo
+if [ ${#FEHLER_LISTE[@]} -gt 0 ]; then
+  echo "[!!] Nest NICHT fertig — ${#FEHLER_LISTE[@]} Fehler:" >&2
+  for fehler in "${FEHLER_LISTE[@]}"; do echo "     - $fehler" >&2; done
+  echo "     Beheben und dieses Skript erneut laufen lassen (idempotent)." >&2
+  exit 3
+fi
 ok "Nest steht. Letzter Schritt macht ein MENSCH selbst: als $NUTZER einloggen und"
 echo "     python3 $SKILL_NUTZER/to_spawn.py nest rechte --eintragen"
 echo "     tippen. Danach: tmux → bau <N>"

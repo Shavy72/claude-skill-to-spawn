@@ -156,7 +156,7 @@ for f in credentials.json gh_token env mcp.json bws_token; do
 done
 
 # ---------------------------------------------------------------- 3. Hochladen
-ssh "$HOST_ROOT" "id -u $NUTZER >/dev/null 2>&1 || adduser --disabled-password --gecos Bau-Server $NUTZER >/dev/null; install -d -m 700 -o $NUTZER -g $NUTZER $STAGE_REMOTE && rm -rf $STAGE_REMOTE/claude"
+ssh "$HOST_ROOT" "id -u $NUTZER >/dev/null 2>&1 || adduser --disabled-password --gecos Bau-Server $NUTZER >/dev/null; install -d -m 700 -o $NUTZER -g $NUTZER $STAGE_REMOTE && find $STAGE_REMOTE -mindepth 1 -delete"   # Kiste ganz leeren, auch alte Geheimnis-Dateien
 tar -czf - -C "$STAGE" . | ssh "$HOST_ROOT" "tar -xzf - -C $STAGE_REMOTE"   # ein Strom statt vieler scp-Verbindungen
 ssh "$HOST_ROOT" "chown -R $NUTZER:$NUTZER $STAGE_REMOTE && chmod 700 $STAGE_REMOTE && for f in credentials.json gh_token env mcp.json bws_token; do [ -f $STAGE_REMOTE/\$f ] && chmod 600 $STAGE_REMOTE/\$f; done; true"
 ok "Staging-Kiste liegt auf dem Server unter $STAGE_REMOTE"

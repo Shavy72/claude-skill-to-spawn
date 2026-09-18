@@ -197,7 +197,7 @@ def test_sandbox_datei_je_worktree_mit_eigenem_pfad(tmp_path: Path, haupt: Path)
     assert "api.anthropic.com" in netz and "github.com" in netz
     assert "10.0.0.9:22" in netz and "beispiel.invalid" in netz
     assert a["network"]["deniedDomains"] == []
-    assert a["filesystem"]["denyRead"] == [] and a["filesystem"]["denyWrite"] == []
+    assert a["filesystem"]["denyRead"] and a["filesystem"]["denyWrite"]  # Fixrunde: Sperren
 
 
 def test_sandbox_legt_fehlenden_worktree_an(tmp_path: Path) -> None:
@@ -240,7 +240,7 @@ def test_sandbox_praefix_modus_aus_und_fehlendes_srt(tmp_path: Path, haupt: Path
     assert not (ziel / ".to-spawn" / "sandbox.json").exists()
     praefix = nest.sandbox_praefix(an, str(ziel), haupt, which=alles_da.get)
     datei = ziel / ".to-spawn" / "sandbox.json"
-    assert praefix == ["/x/srt", "--settings", str(datei), "--"]
+    assert praefix == ["/x/srt", "--settings", str(datei), "--", *nest.SANDBOX_KENNUNG]
     assert datei.is_file()
 
 
@@ -250,7 +250,10 @@ def test_sandbox_praefix_trocken_schreibt_nichts(tmp_path: Path, haupt: Path) ->
     praefix = nest.sandbox_praefix(
         an, str(ziel), haupt, which={"srt": "/x/srt", "bwrap": "/x/bwrap"}.get, trocken=True
     )
-    assert praefix == ["/x/srt", "--settings", str(ziel / ".to-spawn" / "sandbox.json"), "--"]
+    assert praefix == [
+        "/x/srt", "--settings", str(ziel / ".to-spawn" / "sandbox.json"), "--",
+        *nest.SANDBOX_KENNUNG,
+    ]
     assert not ziel.exists()
 
 
@@ -408,6 +411,7 @@ def _werkzeug_welt(tmp_path: Path) -> tuple[Path, Path, Path]:
             {
                 "standard": "alles an",
                 "abgewaehlt": ["skill-ab", "adb"],
+                "unterbau": ["ffmpeg", "gh", "adb"],
                 "kategorien": {"bauen": ["skill-da", "skill-fehlt", "skill-ab"]},
             }
         ),
@@ -644,22 +648,6 @@ def test_nest_push_trocken_zeigt_auswahl(tmp_path: Path) -> None:
     assert "skill-ab" not in ausgabe
 
 
-def test_ssh_durch_sandbox_nutzt_proxy_aus_umgebung(tmp_path: Path) -> None:
-    binaer = tmp_path / "bin"
-    protokoll = tmp_path / "socat.txt"
-    _programm(binaer, "socat", f'echo "$@" > "{protokoll}"\n')
-    ergebnis = subprocess.run(
-        ["bash", str(NEST / "ssh_durch_sandbox.sh"), "10.0.0.9", "22"],
-        env={"PATH": f"{binaer}{os.pathsep}/usr/bin:/bin",
-             "HTTPS_PROXY": "http://nutzer:dummy-auth@localhost:40123"},
-        capture_output=True, text=True, timeout=30, check=False,
-    )
-    assert ergebnis.returncode == 0, ergebnis.stderr
-    argumente = protokoll.read_text(encoding="utf-8")
-    assert "PROXY:localhost:10.0.0.9:22,proxyport=40123,proxyauth=nutzer:dummy-auth" in argumente
-    assert "dummy-auth" not in ergebnis.stdout + ergebnis.stderr
-
-
 def test_ssh_durch_sandbox_ohne_proxy_bricht_ab(tmp_path: Path) -> None:
     ergebnis = subprocess.run(
         ["bash", str(NEST / "ssh_durch_sandbox.sh"), "h", "22"],
@@ -731,3 +719,303 @@ def test_mcp_export_600_ohne_werte_in_ausgabe(tmp_path: Path) -> None:
     assert daten["chrome-devtools"]["args"] == ["x", "--headless"]
     assert "fehlt" not in daten
     assert stat.S_IMODE(ziel.stat().st_mode) == 0o600
+
+
+# === Fixrunde nach Prüfpanel (#210) ==================================================
+
+
+def test_fix_vorgabe_sandbox_aus_und_pflicht() -> None:
+    from to_spawn import config
+
+    assert config.DEFAULTS["sandbox"]["modus"] == "aus"
+    assert config.DEFAULTS["sandbox"]["pflicht"] is True
+
+
+def test_fix_bau_probelauf_ohne_sandbox_konfig_ohne_srt(tmp_path: Path) -> None:
+    repo = _bau_repo(tmp_path, "an")
+    (repo / ".to-spawn" / "config.json").write_text("{}", encoding="utf-8")
+    binaer = tmp_path / "bin"
+    for name in ("srt", "bwrap", "claude"):
+        _programm(binaer, name, "exit 0\n")
+    umgebung = _umgebung(
+        tmp_path, PATH=f"{binaer}{os.pathsep}{os.environ['PATH']}",
+        BAU_WT_DIR=str(tmp_path / "wt"),
+    )
+    ergebnis = subprocess.run(
+        [sys.executable, str(SKRIPTE / "bau.py"), "901", "--dry-run"],
+        cwd=str(repo), env=umgebung, capture_output=True, text=True,
+        encoding="utf-8", errors="replace", timeout=60, check=False,
+    )
+    assert ergebnis.returncode == 0, ergebnis.stdout + ergebnis.stderr
+    assert "--settings " + str(tmp_path / "wt") not in ergebnis.stdout + ergebnis.stderr
+
+
+def test_fix_secrets_null_schluessel_schreibt_nichts(
+    tmp_path: Path, bws_welt: tuple[Path, dict[str, str]]
+) -> None:
+    _heim, umgebung = bws_welt
+    binaer = Path(umgebung["PATH"].split(os.pathsep)[0])
+    _programm(binaer, "bws", "printf '[]'\n")
+    ziel = tmp_path / ".env"
+    ergebnis = _cli(
+        "secrets", "--ziel", str(ziel), cwd=tmp_path,
+        env={**umgebung, "BWS_ACCESS_TOKEN": TOKEN},
+    )
+    assert ergebnis.returncode != 0
+    assert not ziel.exists()
+    ziel.write_text("ALT=1\n", encoding="utf-8")
+    _cli("secrets", "--ziel", str(ziel), cwd=tmp_path, env={**umgebung, "BWS_ACCESS_TOKEN": TOKEN})
+    assert ziel.read_text(encoding="utf-8") == "ALT=1\n"
+
+
+def test_fix_env_wert_einfache_anfuehrung_rundreise(
+    tmp_path: Path, bws_welt: tuple[Path, dict[str, str]]
+) -> None:
+    dotenv = pytest.importorskip("dotenv")
+    _heim, umgebung = bws_welt
+    binaer = Path(umgebung["PATH"].split(os.pathsep)[0])
+    schwierig = "dummy it's $HOME \"x\" #y"
+    daten = json.dumps([{"key": "SCHWER", "value": schwierig}])
+    _programm(binaer, "bws", f"cat <<'JSON'\n{daten}\nJSON\n")
+    ziel = tmp_path / ".env"
+    ergebnis = _cli(
+        "secrets", "--ziel", str(ziel), cwd=tmp_path,
+        env={**umgebung, "BWS_ACCESS_TOKEN": TOKEN},
+    )
+    assert ergebnis.returncode == 0, ergebnis.stderr
+    assert "SCHWER='" in ziel.read_text(encoding="utf-8")
+    assert dotenv.dotenv_values(ziel)["SCHWER"] == schwierig
+
+
+def test_fix_mcp_import_merged_atomar_600(tmp_path: Path) -> None:
+    claude_json = tmp_path / ".claude.json"
+    claude_json.write_text(
+        json.dumps({"fremd": 1, "mcpServers": {"alt": {"command": "behalten"}}}),
+        encoding="utf-8",
+    )
+    quelle = tmp_path / "mcp.json"
+    quelle.write_text(
+        json.dumps(
+            {"alt": {"command": "neu"}, "suche": {"command": "npx", "env": {"K": GEHEIM_1}}}
+        ),
+        encoding="utf-8",
+    )
+    ergebnis = _cli(
+        "mcp-import", "--quelle", str(quelle), "--claude-json", str(claude_json),
+        cwd=tmp_path, env=_umgebung(tmp_path),
+    )
+    assert ergebnis.returncode == 0, ergebnis.stderr
+    assert GEHEIM_1 not in ergebnis.stdout + ergebnis.stderr
+    daten = json.loads(claude_json.read_text(encoding="utf-8"))
+    assert daten["fremd"] == 1
+    assert daten["mcpServers"]["alt"] == {"command": "behalten"}
+    assert daten["mcpServers"]["suche"]["env"]["K"] == GEHEIM_1
+    assert stat.S_IMODE(claude_json.stat().st_mode) == 0o600
+
+
+def test_fix_nest_server_ohne_mcp_add_json_in_argv() -> None:
+    text = (NEST / "nest_server.sh").read_text(encoding="utf-8")
+    assert "add-json" not in text
+    assert "mcp-import" in text
+
+
+def test_fix_sandbox_sperren(tmp_path: Path, haupt: Path) -> None:
+    ziel = _worktree(haupt, tmp_path / "wt" / "wt-6", "ticket-6")
+    heim = tmp_path / "heim"
+    heim.mkdir()
+    ergebnis = _cli("sandbox", str(ziel), "--repo", str(haupt), cwd=haupt, env=_umgebung(heim))
+    assert ergebnis.returncode == 0, ergebnis.stderr
+    daten = _sandbox_datei(ziel)
+    gemeinsam = (haupt / ".git").resolve()
+    sperre_schreiben = daten["filesystem"]["denyWrite"]
+    for pfad in (
+        gemeinsam / "hooks",
+        gemeinsam / "config",
+        heim / ".claude" / "settings.json",
+        heim / ".claude" / "settings.local.json",
+        heim / ".claude" / "hooks",
+        heim / ".claude" / "skills",
+        heim / ".claude" / "agents",
+    ):
+        assert str(pfad) in sperre_schreiben, pfad
+    assert str(heim / ".config" / "to-spawn") in daten["filesystem"]["denyRead"]
+    assert not any(".ssh" in p for p in daten["filesystem"]["denyRead"])
+
+
+def test_fix_sandbox_kennung_im_praefix_und_ssh_match(tmp_path: Path, haupt: Path) -> None:
+    assert "TO_SPAWN_SANDBOX=1" in nest.SANDBOX_KENNUNG
+    text = (NEST / "nest_server.sh").read_text(encoding="utf-8")
+    match_zeilen = [z for z in text.splitlines() if "Match exec" in z]
+    assert match_zeilen and all("TO_SPAWN_SANDBOX" in z for z in match_zeilen)
+    assert not any("HTTPS_PROXY" in z for z in match_zeilen)
+
+
+def test_fix_sandbox_start_pflicht_bricht_ab(tmp_path: Path, haupt: Path) -> None:
+    ziel = _worktree(haupt, tmp_path / "wt" / "wt-2", "ticket-2")
+    ohne_srt = {"bwrap": "/x/bwrap"}.get
+    an = {"sandbox": {"modus": "an", "pflicht": True}}
+    assert nest.sandbox_start(an, str(ziel), haupt, which=ohne_srt) is None
+    locker = {"sandbox": {"modus": "an", "pflicht": False}}
+    assert nest.sandbox_start(locker, str(ziel), haupt, which=ohne_srt) == []
+    aus = {"sandbox": {"modus": "aus"}}
+    assert nest.sandbox_start(aus, str(ziel), haupt, which=ohne_srt) == []
+    # Worktree scheitert (kein origin) + Pflicht → Abbruch
+    fehlt = tmp_path / "wt" / "wt-77"
+    alles = {"srt": "/x/srt", "bwrap": "/x/bwrap"}.get
+    assert nest.sandbox_start(an, str(fehlt), haupt, which=alles) is None
+    assert nest.sandbox_start(locker, str(fehlt), haupt, which=alles) == []
+
+
+def test_fix_bau_py_praefix_nach_blocker_warten() -> None:
+    text = (SKRIPTE / "bau.py").read_text(encoding="utf-8")
+    warten = text.index("auf_blocker_warten(ticket, max(60, args.takt))")
+    echt = text.index("nest.sandbox_start(konfig, worktree_pfad(ticket), REPO)")
+    assert echt > warten
+
+
+def test_fix_worktree_anlegen_holt_origin(tmp_path: Path) -> None:
+    quelle = _neues_repo(tmp_path / "quelle")
+    haupt = tmp_path / "klon"
+    subprocess.run(["git", "clone", "-q", str(quelle), str(haupt)], check=True)
+    (quelle / "neu.txt").write_text("frisch\n", encoding="utf-8")
+    _git(quelle, "add", "-A")
+    _git(quelle, "commit", "-m", "neu")
+    heim = tmp_path / "heim"
+    heim.mkdir()
+    ergebnis = _cli(
+        "sandbox", "12", "--repo", str(haupt),
+        cwd=haupt, env=_umgebung(heim, BAU_WT_DIR=str(tmp_path / "wt")),
+    )
+    assert ergebnis.returncode == 0, ergebnis.stderr
+    assert (tmp_path / "wt" / "wt-12" / "neu.txt").is_file(), "vorher git fetch origin"
+
+
+def test_fix_zweigname_ohne_ticket_gesaeubert(tmp_path: Path) -> None:
+    quelle = _neues_repo(tmp_path / "quelle")
+    haupt = tmp_path / "klon"
+    subprocess.run(["git", "clone", "-q", str(quelle), str(haupt)], check=True)
+    ziel = tmp_path / "wt" / "mein wt~x"
+    ergebnis = _cli(
+        "sandbox", str(ziel), "--repo", str(haupt), cwd=haupt, env=_umgebung(tmp_path)
+    )
+    assert ergebnis.returncode == 0, ergebnis.stderr
+    assert _git(ziel, "branch", "--show-current") == "mein-wt-x"
+
+
+def test_fix_werkzeuge_nur_genannte_unterbauten(tmp_path: Path) -> None:
+    repo, claude_home, home_json = _werkzeug_welt(tmp_path)
+    datei = repo / ".to-spawn" / "werkzeuge.json"
+    daten = json.loads(datei.read_text(encoding="utf-8"))
+    daten.pop("unterbau")
+    daten["setup_zeilen"] = [{"name": "codex", "fehlgrund": "x", "abhilfe": "y"}]
+    datei.write_text(json.dumps(daten), encoding="utf-8")
+    aufrufe: list[list[str]] = []
+
+    def ausfuehren(befehl: list[str]) -> int:
+        aufrufe.append(befehl)
+        return 1
+
+    bericht = nest.pruefe_werkzeuge(
+        repo, claude_home=claude_home, home_json=home_json,
+        which=lambda _n: None, ausfuehren=ausfuehren, installieren=True, ist_root=True,
+    )
+    namen = {z.name for z in bericht.unterbau}
+    assert {"bubblewrap", "socat", "ripgrep", "srt"} <= namen
+    assert "codex" in namen, "in setup_zeilen genannt"
+    assert "ffmpeg" not in namen and "gh" not in namen and "adb" not in namen
+    installiert = {b[-1] for b in aufrufe}
+    assert "ffmpeg" not in installiert and "@openai/codex" in installiert
+    datei.unlink()
+    ohne = nest.pruefe_werkzeuge(
+        repo, claude_home=claude_home, home_json=home_json,
+        which=lambda _n: None, ausfuehren=ausfuehren, installieren=False,
+    )
+    assert {z.name for z in ohne.unterbau} == {"bubblewrap", "socat", "ripgrep", "srt"}
+    assert ohne.hinweise
+
+
+def test_fix_rechte_ergaenzt(tmp_path: Path) -> None:
+    for eintrag in (
+        "Bash(git push:*)", "Bash(gh issue close:*)", "Bash(python3 */to_spawn.py eintrag:*)"
+    ):
+        assert eintrag in nest.RECHTE_ERLAUBEN
+
+
+def test_fix_geteuid_windows_sicher(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delattr(os, "geteuid", raising=False)
+    assert nest.ist_root() is False
+
+
+def test_fix_staging_geheimnisse_werden_geraeumt() -> None:
+    server = (NEST / "nest_server.sh").read_text(encoding="utf-8")
+    for name in ("env", "gh_token", "bws_token", "credentials.json", "mcp.json"):
+        assert f'rm -f "$STAGE/{name}"' in server, name
+    push = (NEST / "nest_push.sh").read_text(encoding="utf-8")
+    assert "-mindepth 1 -delete" in push
+    assert "schon eine .env" in server
+
+
+def test_fix_nest_server_fehlerliste_exit_3() -> None:
+    text = (NEST / "nest_server.sh").read_text(encoding="utf-8")
+    assert "FEHLER_LISTE" in text and "exit 3" in text
+    assert "|| echo 'FEHLT'" not in text and "|| echo FEHLT" not in text
+    assert "git status --porcelain" in text
+
+
+class _Proxy:
+    """Kleiner HTTP-CONNECT-Proxy: merkt sich die Anfrage, antwortet 200, spiegelt Daten."""
+
+    def __init__(self) -> None:
+        import socket
+        import threading
+
+        self.anfrage = b""
+        self.server = socket.socket()
+        self.server.bind(("127.0.0.1", 0))
+        self.server.listen(1)
+        self.port = self.server.getsockname()[1]
+        self.faden = threading.Thread(target=self._lauf, daemon=True)
+        self.faden.start()
+
+    def _lauf(self) -> None:
+        verbindung, _ = self.server.accept()
+        while b"\r\n\r\n" not in self.anfrage:
+            teil = verbindung.recv(1024)
+            if not teil:
+                return
+            self.anfrage += teil
+        verbindung.sendall(b"HTTP/1.1 200 Connection established\r\n\r\n")
+        while True:
+            teil = verbindung.recv(1024)
+            if not teil:
+                break
+            verbindung.sendall(teil)
+        verbindung.close()
+
+
+def test_fix_ssh_helfer_connect_ohne_anmeldung_in_argv(tmp_path: Path) -> None:
+    import base64
+
+    proxy = _Proxy()
+    ergebnis = subprocess.run(
+        ["bash", str(NEST / "ssh_durch_sandbox.sh"), "10.0.0.9", "22"],
+        input=b"hallo\n",
+        env={"PATH": "/usr/bin:/bin",
+             "HTTPS_PROXY": f"http://nutzer:dummy-auth@127.0.0.1:{proxy.port}"},
+        capture_output=True, timeout=30, check=False,
+    )
+    proxy.faden.join(5)
+    assert ergebnis.returncode == 0, ergebnis.stderr
+    assert ergebnis.stdout == b"hallo\n"
+    kopf = proxy.anfrage.decode()
+    assert kopf.startswith("CONNECT 10.0.0.9:22 HTTP/1.1\r\n")
+    erwartet = base64.b64encode(b"nutzer:dummy-auth").decode()
+    assert f"Proxy-Authorization: Basic {erwartet}" in kopf
+    assert b"dummy-auth" not in ergebnis.stderr
+    skript = (NEST / "ssh_durch_sandbox.sh").read_text(encoding="utf-8")
+    assert "socat" not in skript and "proxyauth" not in skript
+
+
+def test_fix_readme_nest_verweist_auf_214() -> None:
+    text = (SKILL / "README.md").read_text(encoding="utf-8")
+    assert "Nest" in text and "#214" in text
