@@ -67,7 +67,7 @@ def spawn(
     eingabe: TextIO | None = None,
 ) -> int:
     """Regularien prüfen, dann das passende Terminal-Skript starten."""
-    bericht = manifest.pruefe(repo, spec, konfig)
+    bericht = manifest.pruefe(repo, spec, konfig, auswahl=tickets)
     print(bericht.text())
     if not bericht.sauber:
         return manifest.EXIT_WEIGERUNG

@@ -1,6 +1,7 @@
 # Kontext-Manifest für Ticket-Sessions
 
 Status: gültig seit 2026-09-12 (portiert aus FLOWBASE, projektbezogen angepasst).
+Pflichtfelder seit 2026-09-18 (#206).
 
 ## Was das Manifest ist
 
@@ -21,6 +22,8 @@ Loop-Prompt (Domino: wartet auf Blocker → claimt Ticket → `/implement` → s
   "tickets": {
     "71": {
       "title": "Grundbilder-Raster …",
+      "schaetzung_k": 90,
+      "umfang": "Raster-Kacheln + Canonize-Endpunkt",
       "skills": ["user-flow-lens", "duoplus-api"],
       "mcp": ["claude-in-chrome"],
       "docs": ["docs/SPEC_grundbilder_upgrade.md"],
@@ -35,6 +38,9 @@ Loop-Prompt (Domino: wartet auf Blocker → claimt Ticket → `/implement` → s
 - `files` sind die Kontext-Paket-Stellen aus dem Ticket-Issue (`Pfad:Start-Ende`), damit
   die Session nicht selbst explorieren muss.
 - Ticket-Schlüssel = echte GitHub-Issue-Nummer (String).
+- **Pflicht je Ticket (seit #206):** `schaetzung_k` (Zahl, Tausend Token, > 0 und
+  < `staffel.grenze_k` aus `.to-spawn/config.json`, Vorgabe 200) und `umfang`
+  (Klartext, kurz: was das Ticket umfasst). Ohne beide Felder weigert sich `to-spawn`.
 
 ## Core-Set (immer geladen, unabhängig vom Manifest)
 
@@ -65,16 +71,57 @@ bei Bedarf zusätzlich listet: `duoplus-api` (Cloud-Phone-API), `postproxy-api` 
 
 1. **`to-spec`** entwirft die Spec und ergänzt am Ende `## Werkzeuge`: pro Arbeitsbereich
    der Spec eine Zeile Skills · MCPs · Docs (Toolbox `toolbox.py find <wort>` zur Suche).
-2. **`to-tickets`** übernimmt beim Explore-Schritt pro Ticket die konkreten Datei-Stellen
-   als `## Kontext-Paket (nur das lesen)` in den Issue-Body, dazu `## Werkzeuge` aus der
-   Spec-Tabelle, setzt native Blocker-Kanten (`dependencies/blocked_by`) und schreibt
-   `docs/agents/manifests/spec-<S>.json` (Ticket-Nummern = echte Issue-Nummern).
-3. **`/to-spawn <S>`** (Skill `~/.claude/skills/to-spawn`, GitHub `Shavy72/claude-skill-to-spawn`) öffnet
-   ein Windows-Terminal-Fenster mit `wache <S>` + einem Tab `bau <N>` je offenem Ticket — alle auf
+2. **`to-tickets`** liest zuerst den Lernstoff (`to_spawn.py lernstoff`, Schätzung → Ist
+   vergangener Tickets), schneidet danach die Tickets. Übernimmt beim Explore-Schritt
+   pro Ticket die konkreten Datei-Stellen als `## Kontext-Paket (nur das lesen)` in den
+   Issue-Body, dazu `## Werkzeuge` aus der Spec-Tabelle, setzt native Blocker-Kanten
+   (`dependencies/blocked_by`) und schreibt `docs/agents/manifests/spec-<S>.json`
+   (Ticket-Nummern = echte Issue-Nummern, je Ticket `schaetzung_k` + `umfang` Pflicht).
+   Abschluss: `to_spawn.py pruefen <S>` muss Exit 0 liefern, sonst nachbessern.
+3. **`/to-spawn <S>`** (Skill `~/.claude/skills/to-spawn`, GitHub `Shavy72/claude-skill-to-spawn`)
+   prüft zuerst die Regularien (siehe unten), erst danach öffnet es ein Windows-Terminal-Fenster
+   mit `wache <S>` + einem Tab `bau <N>` je offenem Ticket — alle auf
    einmal, geblockte warten im Skript (0 Token). Kontrolle: `sessions <S>`.
 4. **`bau <N>`** (`scripts/bau.py`) liest `spec-<S>.json`, baut daraus eine
    `--settings`-Datei mit reduzierter Skill-Liste + `--mcp-config`/`--strict-mcp-config`,
    startet die Session und übergibt den Loop-Prompt.
+
+## Regularien vor dem Spawn (Pflicht)
+
+`python ~/.claude/skills/to-spawn/to_spawn.py pruefen <S> [--tickets a,b] [--ohne-github]` läuft
+automatisch vor jedem Spawn (`to_spawn.py spawn`, `scripts/spawn_srv.sh`,
+`spawn_local.ps1`). Exit 0 = frei, **Exit 3 = Weigerung**, nichts wird gestartet;
+jede Fehlerzeile nennt ihre Abhilfe.
+
+**Weigerung (Exit 3) bei:**
+- Pflichtfeld (`schaetzung_k` oder `umfang`) fehlt
+- Schätzung ≥ 200 (bzw. `staffel.grenze_k`)
+- Ticket-Schlüssel doppelt im Manifest
+- gewähltes Ticket (`--tickets` / `-Tickets`) steht nicht im Manifest — die
+  Auswahl läuft immer durch die Prüfung, die Regeln gelten fürs ganze Manifest
+- offenes Ticket steht zusätzlich in einer anderen `spec-*.json` (jede außer der
+  eigenen Datei, auch `spec-149-ticket-179.json`); mit `--ohne-github` ist der
+  Zustand unbekannt und zählt wie offen („Zustand ohne GitHub unbekannt“)
+- Ticket-Text nennt „Blocked by #X“ ohne native Kante, und X ist ein Ticket der
+  Spec **oder** offen (Zustand nicht abfragbar = auch Weigerung); Fehlermeldung
+  nennt den `gh api`-Befehl zum Setzen. Erkannt werden Überschriften `#`–`######`
+  und fett `**Blocked by:**` (Groß/Klein egal, Doppelpunkt optional), Verweise als
+  `#12` oder `…/issues/12`; „None“/„Keine“/„-“ = kein Verweis. Abschnitt endet an
+  der nächsten Überschrift; die Fett-Form gilt für den Rest der Zeile, ist der
+  leer, bis zur nächsten Leerzeile
+- kein Ticket der Spec trägt das Label `checkpoint:human` (Name aus Konfig
+  `regularien.checkpoint_label`); solange andere Tickets offen sind, muss das
+  Checkpoint-Ticket offen sein und mindestens eine native Kante haben
+- GitHub nicht abfragbar (außer bewusst ohne, per `--ohne-github`)
+
+**Nur Warnung (kein Abbruch):**
+- Blocker-Verweis auf eine geschlossene Nummer außerhalb der Spec (Entwurfs-Nummer?)
+- kein Ticket der Spec hat überhaupt eine Kante
+- offenes Ticket hat schon einen Assignee (läuft woanders eine Session? sonst
+  Wiederaufnahme)
+
+`scripts/spawn_srv.sh` weigert sich zusätzlich, wenn der Skill fehlt
+(`TO_SPAWN_HOME`, Default `~/.claude/skills/to-spawn`).
 
 ## Was sich pro Session steuern lässt
 

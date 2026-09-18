@@ -12,9 +12,9 @@ Immer im Repo-Wurzelordner ausführen:
 | Befehl | Wirkung |
 |---|---|
 | `python to_spawn.py spawn <S> [--ziel local\|srv] [--tickets a,b] [--dry-run]` | prüft die Regularien, fragt „lokal (1) oder Server (2)?" und startet das Terminal-Skript |
-| `python to_spawn.py pruefen <S> [--ohne-github]` | nur die Regularien; Exit 0 = frei, **Exit 3 = Weigerung** |
+| `python to_spawn.py pruefen <S> [--tickets a,b] [--ohne-github]` | nur die Regularien; Exit 0 = frei, **Exit 3 = Weigerung** |
 | `python to_spawn.py log <S>` | Gesamt-Tabelle aller Tickets der Spec (Schätzung, Ist, Sessions, Staffel, Subagenten, Dauer) |
-| `python to_spawn.py lernstoff [--letzte 30]` | Zeilen für `/to-tickets` (Schätzung → Ist) |
+| `python to_spawn.py lernstoff [--letzte 30]` | Zeilen für `/to-tickets` (Schätzung → Ist, Sessions, Faktor je Ticket + Faustregeln für den Schnitt) |
 | `python to_spawn.py hook-stop` | Stop-Hook, JSON auf stdin |
 | `python to_spawn.py hook-subagent-stop` | SubagentStop-Hook, JSON auf stdin |
 
@@ -22,15 +22,45 @@ Immer im Repo-Wurzelordner ausführen:
 
 ## Regularien (Weigerung, Exit 3)
 
-Gelesen wird `docs/agents/manifests/spec-<S>.json`. Je Ticket Pflicht:
+Gelesen wird `docs/agents/manifests/spec-<S>.json`. `pruefen <S> [--tickets a,b] [--ohne-github]`
+läuft automatisch vor jedem Spawn (`spawn`, `scripts/spawn_srv.sh`,
+`spawn_local.ps1`); Exit 0 = frei, **Exit 3 = Weigerung**, nichts wird gestartet,
+jede Fehlerzeile nennt ihre Abhilfe.
 
-- `schaetzung_k` — Zahl in Tausend Token, höchstens `staffel.grenze_k` (200)
-- `umfang` — Klartext, was das Ticket umfasst
+**Weigerung (Exit 3) bei:**
+- Pflichtfeld fehlt: `schaetzung_k` (Zahl, Tausend Token, > 0 und < `staffel.grenze_k`,
+  Vorgabe 200) oder `umfang` (Klartext, was das Ticket umfasst)
+- Schätzung ≥ `staffel.grenze_k`
+- Ticket-Schlüssel doppelt im Manifest
+- gewähltes Ticket (`--tickets`) steht nicht im Manifest — die Auswahl läuft immer
+  durch die Prüfung (`spawn`, `spawn_srv.sh`, `spawn_local.ps1` reichen sie durch),
+  die Regeln gelten trotzdem fürs ganze Manifest
+- offenes Ticket steht zusätzlich in einer anderen `spec-*.json` (jede außer der
+  eigenen Datei, auch `spec-149-ticket-179.json`); mit `--ohne-github` zählt der
+  unbekannte Zustand wie offen („Zustand ohne GitHub unbekannt“)
+- Ticket-Text nennt „Blocked by #X“ ohne native Kante
+  (`gh api repos/<owner>/<repo>/issues/<N>/dependencies/blocked_by`), und X ist ein
+  Ticket der Spec **oder** offen (Zustand nicht abfragbar = auch Weigerung; je Nummer
+  eine Abfrage) — die Fehlermeldung nennt den passenden `gh api`-Befehl zum Setzen.
+  Erkannt: Überschriften `#`–`######` und fett `**Blocked by:**` (Groß/Klein egal,
+  Doppelpunkt optional), Verweise `#12` oder `…/issues/12`; „None“/„Keine“/„-“ = kein
+  Verweis. Abschnitt endet an der nächsten Überschrift; die Fett-Form gilt für den Rest
+  der Zeile, ist der leer, bis zur nächsten Leerzeile
+- kein Ticket der Spec trägt das Label `checkpoint:human` (Name aus Konfig-Schlüssel
+  `regularien.checkpoint_label`); solange andere Tickets offen sind, muss das
+  Checkpoint-Ticket offen sein und mindestens eine native Kante haben
+- GitHub nicht abfragbar (fail-closed) — außer bewusst ohne, per `--ohne-github`
 
-Fehlt eines oder liegt die Schätzung über der Grenze: klare Meldung „erst
-/to-tickets", nichts wird gestartet. Zusätzlich werden die nativen
-`blocked_by`-Kanten über `gh api repos/<owner>/<repo>/issues/<N>/dependencies/blocked_by`
-geprüft; hat **kein** Ticket eine Kante, gibt es eine Warnung (kein Abbruch).
+**Nur Warnung (kein Abbruch):**
+- Blocker-Verweis auf eine geschlossene Nummer außerhalb der Spec (Entwurfs-Nummer?)
+- kein Ticket der Spec hat überhaupt eine Kante
+- offenes Ticket hat schon einen Assignee (läuft woanders eine Session? sonst
+  Wiederaufnahme)
+
+Für Tests kennt der Stub (`gh_stub.py`, über `TO_SPAWN_GH_STUB`) `GH_STUB_DATEN`
+— eine JSON-Datei mit `labels`/`body`/`assignees` je Ticket, damit die Regularien
+ohne echtes GitHub geprüft werden können — dazu `GH_STUB_KAPUTT` (diese Nummern
+scheitern) und `GH_STUB_PROTOKOLL` (jeder Aufruf als Zeile in eine Datei).
 
 ## Bau-Log
 

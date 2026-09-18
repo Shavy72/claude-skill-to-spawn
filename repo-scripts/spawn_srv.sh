@@ -42,6 +42,27 @@ elif ! git merge --ff-only origin/master; then
   exit 1
 fi
 
+# --- 1b. Regularien (#206) — auch im Probelauf; Weigerung startet nichts ----
+# Eine Ticket-Auswahl (--tickets) geht mit in die Prüfung: jede Nummer muss im
+# Manifest stehen, die Regeln laufen trotzdem über das ganze Manifest.
+echo "== Regularien =="
+SKILL_HOME="${TO_SPAWN_HOME:-$HOME/.claude/skills/to-spawn}"
+if [ ! -f "$SKILL_HOME/to_spawn.py" ]; then
+  echo "WEIGERUNG: Regularien-Prüfer fehlt ($SKILL_HOME/to_spawn.py) — Skill to-spawn installieren (github.com/Shavy72/claude-skill-to-spawn), dann erneut." >&2
+  exit 3
+fi
+PRUEF_ARGS=(pruefen "$SPEC")
+if [ -n "$TICKETS_ARG" ]; then PRUEF_ARGS+=(--tickets "$TICKETS_ARG"); fi
+rc=0
+python3 "$SKILL_HOME/to_spawn.py" "${PRUEF_ARGS[@]}" || rc=$?
+if [ "$rc" -eq 3 ]; then
+  echo "WEIGERUNG — nichts gestartet." >&2
+  exit 3
+elif [ "$rc" -ne 0 ]; then
+  echo "Regularien-Prüfer brach ab (Exit $rc) — nichts gestartet." >&2
+  exit "$rc"
+fi
+
 # --- 2. Tickets bestimmen ---------------------------------------------------
 if [ -n "$TICKETS_ARG" ]; then
   TICKETS="$(echo "$TICKETS_ARG" | tr ',' '\n' | sed '/^\s*$/d')"

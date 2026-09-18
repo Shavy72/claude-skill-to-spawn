@@ -97,3 +97,13 @@ def ticket_offen(ticket: str, cwd: Path | None = None) -> bool | None:
     if not isinstance(daten, dict) or "state" not in daten:
         return None
     return str(daten["state"]).upper() == "OPEN"
+
+
+def ticket_daten(ticket: str, cwd: Path | None = None) -> dict[str, Any] | None:
+    """Zustand, Labels, Text und Zuständige eines Issues (``None`` bei Fehler)."""
+    daten = json_lauf(
+        ["issue", "view", str(ticket), "--json", "state,labels,body,assignees"], cwd=cwd
+    )
+    if not isinstance(daten, dict) or "state" not in daten:
+        return None
+    return daten

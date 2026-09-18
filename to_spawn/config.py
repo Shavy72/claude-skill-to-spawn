@@ -40,6 +40,9 @@ DEFAULTS: dict[str, Any] = {
         "ziel": "",
         "nur_kritisch": True,
     },
+    "regularien": {
+        "checkpoint_label": "checkpoint:human",
+    },
 }
 
 KONFIG_PFAD = Path(".to-spawn") / "config.json"

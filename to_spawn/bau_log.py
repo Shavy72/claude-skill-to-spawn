@@ -11,9 +11,10 @@ import json
 import logging
 import os
 import re
+from collections.abc import Iterable
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 log = logging.getLogger("to_spawn.bau_log")
 
@@ -119,6 +120,7 @@ def zusammenfassung(repo: Path, ticket: str | int) -> dict[str, Any]:
         "ticket": str(ticket),
         "schaetzung_k": auftrag.get("schaetzung_k"),
         "umfang": auftrag.get("umfang") or auftrag.get("text"),
+        "title": auftrag.get("title"),
         "sessions": len(starts) or len(enden),
         "staffel": max(staffeln) if staffeln else (len(starts) or len(enden)),
         "subagenten": len(subs),
@@ -139,7 +141,7 @@ def tabelle(repo: Path, tickets: Iterable[str | int]) -> str:
         reihen.append(
             (
                 f"#{z['ticket']}",
-                f"{schaetzung:g}" if isinstance(schaetzung, (int, float)) else "—",
+                f"{schaetzung:g}" if ist_schaetzung(schaetzung) else "—",
                 f"{z['ist_k']:g}" if z["ist_k"] else "—",
                 str(z["sessions"]),
                 str(z["staffel"]),
@@ -159,20 +161,144 @@ def tabelle(repo: Path, tickets: Iterable[str | int]) -> str:
     return "\n".join(linien)
 
 
-def lernstoff(repo: Path, letzte: int = 30) -> str:
-    """Die letzten Tickets als Lernstoff-Zeilen für ``/to-tickets``."""
-    tickets = alle_tickets(repo)[-letzte:]
+#: Umfang-Arten für die Faustregel „Sessions je Art“ (Kleinschrift). Wortstamm am
+#: Wortanfang: „Skripte“, „Tests“, „Tabellen“ zählen mit; kurze Kürzel wie „ui“,
+#: „css“, „sql“, „cli“, „api“ nur als ganzes Wort.
+UMFANG_ARTEN: dict[str, re.Pattern[str]] = {
+    "Datenbank": re.compile(r"\b(datenbank\w*|tabelle\w*|migration\w*|sql|spalte\w*)\b"),
+    "Oberfläche": re.compile(
+        r"\b(oberfläche\w*|ui|seite\w*|template\w*|css|knopf\w*|knöpf\w*|button\w*"
+        r"|dialog\w*|ansicht\w*)\b"
+    ),
+    "Hook": re.compile(r"\bhook\w*"),
+    "Skript": re.compile(r"\b(skript\w*|script\w*|cli)\b"),
+    "Doku": re.compile(r"\b(doku\w*|docs|readme\w*)\b"),
+    "Deploy": re.compile(r"\b(deploy\w*|gate\w*|server\w*)\b"),
+    "Test": re.compile(r"\b(test\w*|beweis\w*)\b"),
+    "API": re.compile(r"\b(api|endpoint\w*|route\w*)\b"),
+}
+
+
+def ist_schaetzung(wert: Any) -> bool:
+    """Echte Schätzung = Zahl über 0; ``True``/``False`` zählen nie."""
+    return isinstance(wert, (int, float)) and not isinstance(wert, bool) and wert > 0
+
+
+def _komma(wert: float) -> str:
+    """Eine Nachkommastelle mit deutschem Dezimalkomma."""
+    return f"{wert:.1f}".replace(".", ",")
+
+
+def _zeitpunkt(text: Any) -> datetime | None:
+    try:
+        wert = datetime.fromisoformat(str(text))
+    except ValueError:
+        return None
+    return wert if wert.tzinfo else wert.replace(tzinfo=timezone.utc)
+
+
+def _juengster(repo: Path, ticket: str) -> datetime:
+    zeiten = [z for z in (_zeitpunkt(r.get("ts")) for r in lese(repo, ticket)) if z]
+    return max(zeiten) if zeiten else datetime.min.replace(tzinfo=timezone.utc)
+
+
+def _manifest_eintraege(repo: Path) -> dict[str, dict[str, Any]]:
+    """Ticket → Manifest-Eintrag aus allen ``spec-<Zahl>.json`` (Fallback-Quelle)."""
+    from . import manifest
+
+    eintraege: dict[str, dict[str, Any]] = {}
+    for datei in manifest.alle_manifeste(repo).values():
+        try:
+            daten, _ = manifest.lies_json(datei)
+        except (OSError, ValueError) as fehler:
+            log.warning("Manifest %s unlesbar: %s", datei, fehler)
+            continue
+        tickets = daten.get("tickets") if isinstance(daten, dict) else None
+        if isinstance(tickets, dict):
+            for nummer, eintrag in tickets.items():
+                if isinstance(eintrag, dict):
+                    eintraege[str(nummer)] = eintrag
+    return eintraege
+
+
+def umfang_art(text: str) -> str:
+    """Umfang-Art eines Tickets, z. B. „Datenbank+Oberfläche“ (sonst „Sonstiges“)."""
+    klein = (text or "").lower()
+    treffer = sorted(name for name, muster in UMFANG_ARTEN.items() if muster.search(klein))
+    return "+".join(treffer) or "Sonstiges"
+
+
+def _faustregeln(zeilen: list[dict[str, Any]], grenze: float) -> list[str]:
+    regeln = ["Faustregeln für den Schnitt:"]
+    faktoren = [
+        z["ist_k"] / z["schaetzung_k"]
+        for z in zeilen
+        if ist_schaetzung(z["schaetzung_k"]) and z["ist_k"]
+    ]
+    if faktoren:
+        mittel = _komma(sum(faktoren) / len(faktoren))
+        regeln.append(
+            f"- Schätzungen lagen im Mittel bei Faktor {mittel} — Schätzung × {mittel} "
+            f"muss unter {grenze:g}k bleiben."
+        )
+    je_art: dict[str, list[int]] = {}
+    for z in zeilen:
+        if z["sessions"] >= 1:
+            art = umfang_art(f"{z['umfang'] or ''} {z['title'] or ''}")
+            je_art.setdefault(art, []).append(z["sessions"])
+    for art, anzahl in sorted(
+        je_art.items(), key=lambda paar: (-sum(paar[1]) / len(paar[1]), paar[0])
+    ):
+        regeln.append(
+            f"- {art} brauchte im Mittel {_komma(sum(anzahl) / len(anzahl))} Sessions "
+            f"(n={len(anzahl)})"
+        )
+    staffel = [z["ticket"] for z in zeilen if z["staffel"] > 1]
+    if staffel:
+        regeln.append(
+            f"- Staffel > 1 bei {len(staffel)} Tickets: "
+            + ", ".join(f"#{t}" for t in staffel)
+            + " — diese waren zu groß für eine Session."
+        )
+    else:
+        regeln.append("- Kein Ticket brauchte eine zweite Staffel.")
+    return regeln
+
+
+def lernstoff(repo: Path, letzte: int = 30, grenze_k: float | None = None) -> str:
+    """Die jüngsten Tickets (nach Zeitstempel) als Lernstoff für ``/to-tickets``."""
+    tickets = sorted(alle_tickets(repo), key=lambda t: _juengster(repo, t), reverse=True)
+    tickets = tickets[: max(letzte, 0)]
     if not tickets:
         return "Kein Bau-Log vorhanden — noch kein Lernstoff."
-    zeilen = ["Lernstoff aus dem Bau-Log (Schätzung → Ist, Sessions je Ticket):"]
+    if grenze_k is None:
+        from . import config
+
+        grenze_k = float(config.lade(repo).get("staffel", {}).get("grenze_k", 200))
+    aus_manifest = _manifest_eintraege(repo)
+    zeilen = ["Lernstoff aus dem Bau-Log (Schätzung → Ist, Sessions je Ticket, jüngste zuerst):"]
+    daten: list[dict[str, Any]] = []
     for ticket in tickets:
         z = zusammenfassung(repo, ticket)
+        eintrag = aus_manifest.get(str(ticket), {})
+        if z["schaetzung_k"] is None:
+            z["schaetzung_k"] = eintrag.get("schaetzung_k")
+        z["title"] = z.get("title") or eintrag.get("title")
+        if not z["umfang"]:
+            z["umfang"] = eintrag.get("umfang") or z["title"]
+        daten.append(z)
         schaetzung = z["schaetzung_k"]
-        soll = f"{schaetzung:g}k" if isinstance(schaetzung, (int, float)) else "ohne Schätzung"
-        umfang = (z["umfang"] or "").replace("\n", " ")[:110]
+        hat_schaetzung = ist_schaetzung(schaetzung)
+        soll = f"{schaetzung:g}k" if hat_schaetzung else "ohne Schätzung"
+        faktor = (
+            f" (Faktor {_komma(z['ist_k'] / schaetzung)})" if hat_schaetzung and z["ist_k"] else ""
+        )
+        umfang = str(z["umfang"] or "").replace("\n", " ")[:110]
         zeilen.append(
-            f"- #{z['ticket']}: {soll} geschätzt → {z['ist_k']:g}k ist, "
+            f"- #{z['ticket']}: {soll} geschätzt → {z['ist_k']:g}k ist{faktor}, "
             f"{z['sessions']} Session(s), {z['subagenten']} Subagent(en)"
             + (f" · {umfang}" if umfang else "")
         )
+    zeilen.append("")
+    zeilen += _faustregeln(daten, grenze_k)
     return "\n".join(zeilen)

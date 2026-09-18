@@ -3,7 +3,7 @@
 Aufruf (im Repo-Wurzelordner):
 
     python ~/.claude/skills/to-spawn/to_spawn.py spawn <S> [--ziel local|srv]
-    python ~/.claude/skills/to-spawn/to_spawn.py pruefen <S>
+    python ~/.claude/skills/to-spawn/to_spawn.py pruefen <S> [--tickets a,b] [--ohne-github]
     python ~/.claude/skills/to-spawn/to_spawn.py log <S>
     python ~/.claude/skills/to-spawn/to_spawn.py lernstoff [--letzte 30]
     python ~/.claude/skills/to-spawn/to_spawn.py hook-stop          # JSON auf stdin
@@ -35,7 +35,7 @@ def _spec_tickets(repo: Path, spec: str) -> list[str]:
         daten = manifest.lade_manifest(repo, spec)
     except (FileNotFoundError, ValueError):
         return bau_log.alle_tickets(repo)
-    return sorted(daten["tickets"], key=lambda n: int(n) if str(n).isdigit() else 0)
+    return sorted(daten["tickets"], key=manifest.ticket_schluessel)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -54,8 +54,15 @@ def main(argv: list[str] | None = None) -> int:
 
     p_pruefen = unter.add_parser("pruefen", help="Regularien des Manifests prüfen")
     p_pruefen.add_argument("spec")
+    p_pruefen.add_argument(
+        "--tickets", help="gewählte Tickets (Komma), jedes muss im Manifest stehen"
+    )
     p_pruefen.add_argument("--dry-run", action="store_true", help="ohne Wirkung, nur Lesen")
-    p_pruefen.add_argument("--ohne-github", action="store_true", help="Blocker-Kanten auslassen")
+    p_pruefen.add_argument(
+        "--ohne-github",
+        action="store_true",
+        help="GitHub-Teil auslassen (Kanten, Checkpoint, Belegung, Zustände)",
+    )
 
     p_log = unter.add_parser("log", help="Gesamt-Tabelle aus dem Bau-Log")
     p_log.add_argument("spec")
@@ -83,7 +90,13 @@ def main(argv: list[str] | None = None) -> int:
             dry_run=args.dry_run,
         )
     if args.befehl == "pruefen":
-        bericht = manifest.pruefe(repo, args.spec, konfig, mit_github=not args.ohne_github)
+        bericht = manifest.pruefe(
+            repo,
+            args.spec,
+            konfig,
+            mit_github=not args.ohne_github,
+            auswahl=_tickets(args.tickets),
+        )
         print(bericht.text())
         return 0 if bericht.sauber else manifest.EXIT_WEIGERUNG
     if args.befehl == "log":

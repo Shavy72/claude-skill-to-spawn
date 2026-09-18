@@ -10,6 +10,25 @@ param(
     [switch]$DryRun
 )
 $ErrorActionPreference = "Stop"
+
+# Regularien zuerst (#206): bei Weigerung startet kein einziger Tab. Eine Auswahl
+# (-Tickets) geht mit in die Prüfung — jede Nummer muss im Manifest stehen.
+# Kein 2>&1: unter PowerShell 5.1 mit ErrorActionPreference Stop bricht eine
+# stderr-Zeile sonst das Skript ab. stderr läuft direkt durch, EAP nur hier locker.
+$py = if (Get-Command python -ErrorAction SilentlyContinue) { "python" } else { "python3" }
+$pruefArgs = @("$PSScriptRoot/to_spawn.py", "pruefen", "$Spec")
+if ($Tickets.Count -gt 0) { $pruefArgs += @("--tickets", ($Tickets -join ",")) }
+$eapVorher = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+try {
+    & $py @pruefArgs
+    $rc = $LASTEXITCODE
+} finally {
+    $ErrorActionPreference = $eapVorher
+}
+if ($rc -eq 3) { Write-Host "WEIGERUNG — nichts gestartet." -ForegroundColor Red; exit 3 }
+if ($rc -ne 0) { Write-Host "Regularien-Prüfer brach ab (Exit $rc) — nichts gestartet." -ForegroundColor Red; exit $rc }
+
 $repo = (Get-Location).Path
 $manifest = Join-Path $repo "docs/agents/manifests/spec-$Spec.json"
 if (-not (Test-Path "./scripts/bau.py")) { throw "Kein ./scripts/bau.py — im Repo-Wurzelordner ausführen." }
