@@ -9,16 +9,28 @@ from __future__ import annotations
 import json
 import logging
 import os
+import sys
 from pathlib import Path
 from typing import Any
 
 log = logging.getLogger("to_spawn.config")
 
+#: Terminal-Adapter (V1) je Plattform; der erste ist der Standard. Die Konfig
+#: ist eingecheckt und wird zwischen Windows und Server geteilt, darum steht
+#: ``terminal`` je Plattform in einem Objekt.
+TERMINAL_ADAPTER: dict[str, tuple[str, ...]] = {
+    "win32": ("wt",),
+    "linux": ("tmux",),
+    "darwin": ("tmux",),
+}
+
 #: Vorgabewerte. ``staffel.modus`` = "eltern", weil ein Stop-Hook den
 #: Claude-Prozess laut Doku nicht beenden kann (siehe README, Abschnitt Staffel).
 DEFAULTS: dict[str, Any] = {
     "ziel_default": "srv",
-    "terminal": "wt",
+    "terminal": {
+        plattform: adapter[0] for plattform, adapter in TERMINAL_ADAPTER.items()
+    },
     "ssh_ziel": "bau-server",
     "runner": "claude",
     "modelle": {
@@ -116,3 +128,30 @@ def staffel_modus(konfig: dict[str, Any]) -> str:
         konfig.get("staffel", {}).get("modus", "eltern")
     )
     return modus if modus in ("hook", "eltern") else "eltern"
+
+
+def plattform_von(plattform: str | None = None) -> str:
+    """win32 / linux / darwin — unbekannte Systeme zählen als linux."""
+    wert = plattform or sys.platform
+    if wert.startswith("win"):
+        return "win32"
+    if wert == "darwin":
+        return "darwin"
+    return "linux"
+
+
+def terminal_fuer(konfig: dict[str, Any], plattform: str | None = None) -> str:
+    """Terminal dieser Plattform aus ``terminal`` (Objekt je Plattform oder alter Text).
+
+    Alter Text gilt nur auf der Plattform, auf der er ein Adapter ist; sonst und
+    bei fehlendem/kaputtem Wert gilt der Plattform-Standard.
+    """
+    system = plattform_von(plattform)
+    standard = TERMINAL_ADAPTER[system][0]
+    wert = konfig.get("terminal")
+    if isinstance(wert, dict):
+        eintrag = wert.get(system)
+        return eintrag if isinstance(eintrag, str) and eintrag else standard
+    if isinstance(wert, str) and wert in TERMINAL_ADAPTER[system]:
+        return wert
+    return standard

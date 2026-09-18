@@ -23,8 +23,22 @@ Drei Einstiege (#205), alle landen in `python ~/.claude/skills/to-spawn/to_spawn
 
 - Logik liegt in `~/.claude/skills/to-spawn/skripte/` (`bau.py`, `wache.py`, `sessions_stand.py`, `spec_stand.py`, `spawn_srv.sh`), direkt startbar im Repo-Wurzelordner. Repo = `TO_SPAWN_REPO`, sonst Git-Wurzel des aktuellen Ordners — nie der Skill-Ordner.
 - Das Repo trägt nur dünne Weiterleitungen gleichen Namens unter `scripts/` (+ Helfer `scripts/_to_spawn_weiterleitung.py`, Vorlage in `repo-scripts/`). Sie setzen `TO_SPAWN_REPO` = Ordner über `scripts/` und springen in den Skill (`$TO_SPAWN_HOME`, Vorgabe `~/.claude/skills/to-spawn`); fehlt der Skill → Meldung + Exit 3. `bau <N>`/`wache <S>`/`sessions <S>` bleiben unverändert.
-- Repo-Konfig `.to-spawn/config.json` (legt `bau.py`/`wache.py`/`to_spawn.py pruefen|spawn` beim ersten Start mit Vorgaben an, überschreibt nie): `terminal`, `ziel_default`, `ssh_ziel`, `runner`, `modelle` + `effort` je Rolle (`ticket`, `ticket_leicht`, `waechter`), `staffel`, `mail.ziel`, `regularien.checkpoint_label`, `staging_start`, `deploy_befehl`. Verdrahtet sind heute: `ziel_default`, `ssh_ziel`, `modelle.ticket` (`bau`, Vorrang `--model` > Konfig > `_default.json`), `modelle.waechter` (`wache`), `regularien`, `staffel`. Die übrigen Felder sind angelegt, werden aber erst von den Folge-Tickets der Spec #202 gelesen — eine Änderung dort wirkt noch nicht. `--dry-run` legt nichts an. `.gitignore`: `.to-spawn/*` + `!.to-spawn/config.json`.
+- Repo-Konfig `.to-spawn/config.json` (legt `bau.py`/`wache.py`/`to_spawn.py pruefen|spawn` beim ersten Start mit Vorgaben an, überschreibt nie): `terminal`, `ziel_default`, `ssh_ziel`, `runner`, `modelle` + `effort` je Rolle (`ticket`, `ticket_leicht`, `waechter`), `staffel`, `mail.ziel`, `regularien.checkpoint_label`, `staging_start`, `deploy_befehl`. Verdrahtet sind heute: `ziel_default`, `ssh_ziel`, `modelle.ticket` (`bau`, Vorrang `--model` > Konfig > `_default.json`), `modelle.waechter` (`wache`), `regularien`, `staffel`. `terminal` ist ein Objekt je Plattform (`{"win32": "wt", "linux": "tmux", "darwin": "tmux"}`), weil die eingecheckte Konfig zwischen Windows und Server geteilt wird; ein alter Text-Wert wird beim nächsten Setup umgewandelt. `terminal`, `modelle.ticket_leicht` und `effort` setzt das Setup (#208), gelesen werden sie aber erst von den Folge-Tickets der Spec #202 — eine Änderung dort wirkt noch nicht. Die übrigen Felder sind angelegt, aber ebenfalls noch nicht verdrahtet. `--dry-run` legt nichts an. `.gitignore`: `.to-spawn/*` + `!.to-spawn/config.json`.
 - Der Staffel-Hook bleibt im Repo (`scripts/hooks/staffel_stop.py`).
+
+## Setup (`/to-spawn setup`, #208)
+
+Wählt Terminal (nur für die Plattform, auf der es läuft), Modell und Effort je Rolle (`ticket`, `ticket_leicht`, `waechter`) und schreibt NUR `.to-spawn/config.json` (atomar, Rechte bleiben, alle übrigen Felder bleiben). Startet und beendet nichts — laufende Sessions bleiben unberührt, neue Starts lesen die Werte. Jederzeit wiederholbar.
+
+Ablauf für dich (das Modell), wenn die Konfig fehlt oder der Nutzer „setup“ sagt:
+1. `python ~/.claude/skills/to-spawn/to_spawn.py setup --zeigen` — Optionen je Plattform (mit Status bereit / nicht installiert / geplant), Modelle, Effort-Stufen, aktuelle Werte. Zeigt „In der Datei“ (Rohwerte) getrennt vom Standard. Schreibt nichts; mit Setz-Flags = Exit 2.
+2. Per AskUserQuestion fragen: Terminal, Modell + Effort für Ticket, Modell + Effort für leichtes Ticket, Effort für Wächter. Standard (= aktueller Wert) zuerst mit „(Empfohlen)“. Geplante Terminals nur nennen, nicht anbieten.
+3. `python ~/.claude/skills/to-spawn/to_spawn.py setup --terminal <t> --modell-ticket <id> --effort-ticket <e> --modell-leicht <id> --effort-leicht <e> --effort-waechter <e>` — nur genannte Werte ändern sich, ungültiger Wert = Exit 2, nichts geschrieben. `--standard` = alle Standards ohne Fragen, zusätzliche Wert-Flags gewinnen darüber.
+
+- Wächter läuft immer auf Fable 5.1 (`claude-fable-5-1`); es gibt nur `--effort-waechter`, ein anderes Wächter-Modell wird beim Speichern überschrieben.
+- Im eigenen Terminal reicht `python ~/.claude/skills/to-spawn/to_spawn.py setup` (Fragen nacheinander, Enter = Standard). Ohne echtes Terminal (Bash-Tool, Pipe) ohne Flags = Exit 2; `--dialog` erzwingt den Dialog über die Pipe.
+- Erster `spawn` in einem Repo ohne Konfig: im echten Terminal läuft der Dialog von selbst, sonst werden die Vorgaben angelegt mit dem Hinweis auf `setup`.
+- Unlesbare Konfig wird nie überschrieben (Exit 1 mit Meldung, auch bei `--zeigen`; der Dialog prüft das vor der ersten Frage).
 
 ## Ablauf `local` (deterministisch, Skript statt Prosa)
 
