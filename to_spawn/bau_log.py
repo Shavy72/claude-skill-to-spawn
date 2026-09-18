@@ -28,6 +28,7 @@ TYPEN = (
     "session_ende",
     "subagent_ende",
     "staffel_limit",
+    "zusammenfassung",
 )
 
 LOG_ORDNER = Path("docs") / "agents" / "bau_log"
@@ -36,6 +37,33 @@ _WT_MUSTER = re.compile(r"wt-(\d+)")
 
 def log_pfad(repo: Path, ticket: str | int) -> Path:
     return repo / LOG_ORDNER / f"{ticket}.jsonl"
+
+
+def log_repo(fallback: Path | None = None) -> Path | None:
+    """Wohin Hooks und ``eintrag`` schreiben (#204).
+
+    ``TO_SPAWN_LOG_REPO`` gesetzt (setzt ``bau.py`` auf den Ticket-Worktree) → genau
+    dieser Ordner, aber nur wenn er existiert. Fehlt er (noch), gibt es ``None`` —
+    nie in den geteilten Hauptbaum ausweichen: eine unversionierte
+    ``docs/agents/bau_log/<N>.jsonl`` dort blockiert später jeden ``git pull``.
+    Ohne Variable gilt ``fallback`` bzw. die Git-Wurzel des aktuellen Ordners.
+    """
+    ziel = os.environ.get("TO_SPAWN_LOG_REPO", "").strip()
+    if ziel:
+        pfad = Path(ziel).expanduser()
+        if pfad.is_dir():
+            return pfad.resolve()
+        log.info(
+            "TO_SPAWN_LOG_REPO %s existiert (noch) nicht — keine Log-Zeile, "
+            "kein Ausweichen in den Hauptbaum.",
+            pfad,
+        )
+        return None
+    if fallback is not None:
+        return fallback
+    from . import config
+
+    return config.repo_wurzel()
 
 
 def ticket_aus_umgebung(cwd: Path | None = None) -> str | None:
@@ -107,22 +135,57 @@ def _summe(zeilen: Iterable[dict[str, Any]], feld: str = "gesamt") -> int:
     return gesamt
 
 
+def _juengste_je_session(zeilen: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Nur die jüngste Zeile je ``session_id`` (Hooks schreiben kumulierte Summen).
+
+    Claude Code feuert den Stop-Hook am Ende jeder Runde; jede Zeile trägt die
+    Summe des ganzen Transkripts bis dahin. Zeilen ohne ``session_id`` (ältere
+    Logs) zählen einzeln.
+    """
+    je_id: dict[str, dict[str, Any]] = {}
+    ohne_id: list[dict[str, Any]] = []
+    for zeile in zeilen:
+        kennung = zeile.get("session_id")
+        if kennung:
+            je_id[str(kennung)] = zeile  # spätere Zeile überschreibt frühere
+        else:
+            ohne_id.append(zeile)
+    return [*je_id.values(), *ohne_id]
+
+
+def _dauer(zeile: dict[str, Any]) -> int:
+    try:
+        return int(float(zeile.get("dauer_s") or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
 def zusammenfassung(repo: Path, ticket: str | int) -> dict[str, Any]:
     """Kennzahlen eines Tickets für Tabelle und Lernstoff."""
     zeilen = lese(repo, ticket)
-    enden = [z for z in zeilen if z.get("typ") == "session_ende"]
-    subs = [z for z in zeilen if z.get("typ") == "subagent_ende"]
+    enden = _juengste_je_session(z for z in zeilen if z.get("typ") == "session_ende")
+    subs = _juengste_je_session(z for z in zeilen if z.get("typ") == "subagent_ende")
     starts = [z for z in zeilen if z.get("typ") == "session_start"]
     staffeln = [int(z.get("staffel") or 1) for z in zeilen if z.get("staffel") is not None]
     auftrag = next((z for z in zeilen if z.get("typ") == "auftrag"), {})
-    dauer = sum(int(z.get("dauer_s") or 0) for z in enden)
+    dauer = sum(_dauer(z) for z in enden)
+    kennungen = {
+        str(z["session_id"])
+        for z in zeilen
+        if z.get("typ") in ("session_start", "session_ende") and z.get("session_id")
+    }
+    enden_ohne_id = sum(1 for z in enden if not z.get("session_id"))
+    starts_ohne_id = sum(1 for z in starts if not z.get("session_id"))
+    # Der Starter (bau_loop) schreibt session_start ohne Kennung, die Hooks mit —
+    # das Maximum zählt dieselbe Session nicht doppelt.
+    sessions = max(len(kennungen) + enden_ohne_id, starts_ohne_id)
     return {
         "ticket": str(ticket),
         "schaetzung_k": auftrag.get("schaetzung_k"),
         "umfang": auftrag.get("umfang") or auftrag.get("text"),
         "title": auftrag.get("title"),
-        "sessions": len(starts) or len(enden),
-        "staffel": max(staffeln) if staffeln else (len(starts) or len(enden)),
+        "sessions": sessions,
+        "staffel": max(staffeln) if staffeln else sessions,
         "subagenten": len(subs),
         "ist_k": round((_summe(enden) + _summe(subs)) / 1000, 1),
         "dauer_s": dauer,

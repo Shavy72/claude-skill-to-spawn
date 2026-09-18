@@ -78,6 +78,8 @@ BUILTIN_SKILLS = [
 ]
 CHROME_MCP = "claude-in-chrome"
 STAFFEL_HOOK = REPO / "scripts" / "hooks" / "staffel_stop.py"
+#: CLI des Skills (Bau-Log-Hooks, #204) — dieselbe Skill-Wurzel wie oben in sys.path.
+TO_SPAWN_CLI = Path(_SKILL) / "to_spawn.py"
 STAFFEL_MAX_DEFAULT = 8
 # Handoffs sind Übersichten, keine Romane — mehr als das wäre ein Fehler in der Vorsession.
 STAFFEL_HANDOFF_MAX_ZEICHEN = 40_000
@@ -312,11 +314,8 @@ def build_kontext(entry: dict) -> str:
 
 
 def worktree_pfad(ticket: str) -> str:
-    """Wohin der Worktree dieses Tickets gehört — Windows wie bisher, Linux unter ``$BAU_WT_DIR``."""
-    if sys.platform == "win32":
-        return f"C:/dev/wt-{ticket}"
-    basis = os.environ.get("BAU_WT_DIR") or "~/wt"
-    return f"{Path(basis).expanduser().as_posix().rstrip('/')}/wt-{ticket}"
+    """Wohin der Worktree dieses Tickets gehört — Regel lebt in ``to_spawn.config`` (#204)."""
+    return config.worktree_pfad(ticket)
 
 
 def build_prompt(template: str, ticket: str, spec: str, title: str, kontext: str) -> str:
@@ -346,9 +345,42 @@ def handoff_dirs(ticket: str) -> list[str]:
 
 
 def staffel_hooks() -> dict:
-    """Stop-Hook-Block für die Session-eigene ``settings.json``."""
-    befehl = subprocess.list2cmdline([sys.executable, str(STAFFEL_HOOK)])
-    return {"Stop": [{"hooks": [{"type": "command", "command": befehl}]}]}
+    """Hook-Block für die Session-eigene ``settings.json``.
+
+    ``Stop``: zuerst der Staffel-Hook, danach der Bau-Log-Hook des Skills (Token,
+    Modell, Dauer je Runde). ``SubagentStop``: Bau-Log-Zeile je Subagent (#204).
+    """
+    staffel = subprocess.list2cmdline([sys.executable, str(STAFFEL_HOOK)])
+    bau_log_stop = subprocess.list2cmdline([sys.executable, str(TO_SPAWN_CLI), "hook-stop"])
+    bau_log_sub = subprocess.list2cmdline([sys.executable, str(TO_SPAWN_CLI), "hook-subagent-stop"])
+    return {
+        "Stop": [
+            {
+                "hooks": [
+                    {"type": "command", "command": staffel},
+                    {"type": "command", "command": bau_log_stop},
+                ]
+            }
+        ],
+        "SubagentStop": [{"hooks": [{"type": "command", "command": bau_log_sub}]}],
+    }
+
+
+def bau_log_umgebung(ticket: str, runde: int, start: float, effort: str | None) -> dict[str, str]:
+    """Umgebung der Bau-Log-Hooks (#204): Ticket, Runde, Start, Effort, Ziel-Ordner.
+
+    ``TO_SPAWN_LOG_REPO`` zeigt auf den Ticket-Worktree; existiert er noch nicht,
+    schreiben die Hooks nichts (nie in den geteilten Hauptbaum).
+    """
+    umgebung = {
+        "TO_SPAWN_TICKET": ticket,
+        "TO_SPAWN_START": str(start),
+        "TO_SPAWN_STAFFEL": str(runde),
+        "TO_SPAWN_LOG_REPO": str(Path(worktree_pfad(ticket)).expanduser()),
+    }
+    if effort:
+        umgebung["TO_SPAWN_EFFORT"] = effort
+    return umgebung
 
 
 def staffel_umgebung(ticket: str, staffel_datei: Path, runde: int, fingerabdruck: str = "") -> dict[str, str]:
@@ -503,7 +535,9 @@ def main() -> int:
     (out / "prompt.txt").write_text(prompt, encoding="utf-8")
 
     # Vorrang: --model > Repo-Konfig ``modelle.ticket`` (#205) > _default.json.
-    model = args.model or config.lade(REPO).get("modelle", {}).get("ticket") or default.get("model")
+    konfig = config.lade(REPO)
+    model = args.model or konfig.get("modelle", {}).get("ticket") or default.get("model")
+    effort = konfig.get("effort", {}).get("ticket")
     claude = shutil.which("claude") or "claude"
     cmd = [
         claude,
@@ -558,7 +592,11 @@ def main() -> int:
     runde = 1
     fingerabdruck = ""
     while True:
-        os.environ.update(staffel_umgebung(ticket, staffel_datei, runde, fingerabdruck))
+        umgebung = staffel_umgebung(ticket, staffel_datei, runde, fingerabdruck)
+        umgebung.update(
+            bau_log_umgebung(ticket, runde, float(umgebung["BAU_SESSION_START"]), effort)
+        )
+        os.environ.update(umgebung)
         (out / f"prompt-runde{runde}.txt").write_text(cmd[-1], encoding="utf-8")
         code = starte_session(cmd)
         uebergabe = staffel_uebergabe(staffel_datei)

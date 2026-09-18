@@ -9,6 +9,8 @@ Aufruf (im Repo-Wurzelordner):
     python ~/.claude/skills/to-spawn/to_spawn.py setup [--zeigen|--standard|--terminal …]
     python ~/.claude/skills/to-spawn/to_spawn.py hook-stop          # JSON auf stdin
     python ~/.claude/skills/to-spawn/to_spawn.py hook-subagent-stop # JSON auf stdin
+    python ~/.claude/skills/to-spawn/to_spawn.py eintrag --ticket <N> --typ zusammenfassung \
+        --umfang "…" --schwierigkeiten "…" --entscheidungen "…" [--repo <pfad>]
 """
 
 from __future__ import annotations
@@ -148,6 +150,29 @@ def _setup(repo: Path, args: argparse.Namespace) -> int:
     return 0
 
 
+def _eintrag(args: argparse.Namespace) -> int:
+    """``eintrag``: eine Klartext-Zeile (Zusammenfassung oder Entscheidung) anhängen."""
+    repo = Path(args.repo).expanduser() if args.repo else bau_log.log_repo()
+    if repo is None or not repo.is_dir():
+        log.error("Kein Bau-Log-Ordner (TO_SPAWN_LOG_REPO fehlt auf der Platte?) — nichts geschrieben.")
+        return 1
+    ticket = args.ticket or bau_log.ticket_aus_umgebung(repo)
+    if not ticket or not str(ticket).strip().isdigit():
+        log.error("Ticket-Nummer fehlt — --ticket <N> angeben.")
+        return 2
+    zeile = bau_log.schreibe(
+        repo,
+        str(ticket).strip(),
+        args.typ,
+        umfang=args.umfang,
+        schwierigkeiten=args.schwierigkeiten,
+        entscheidungen=args.entscheidungen,
+        text=args.text,
+    )
+    print(f"Bau-Log #{zeile['ticket']}: {args.typ} → {bau_log.log_pfad(repo, zeile['ticket'])}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     # Windows-Konsole ist cp1252: Umlaute und Pfeile sonst UnicodeEncodeError.
     for strom in (sys.stdout, sys.stderr):
@@ -227,9 +252,26 @@ def main(argv: list[str] | None = None) -> int:
     unter.add_parser("hook-stop", help="Stop-Hook (JSON auf stdin)")
     unter.add_parser("hook-subagent-stop", help="SubagentStop-Hook (JSON auf stdin)")
 
+    p_eintrag = unter.add_parser("eintrag", help="Klartext-Zeile ins Bau-Log des Tickets")
+    p_eintrag.add_argument("--ticket", help="Ticket-Nummer (sonst TO_SPAWN_TICKET/wt-<N>)")
+    p_eintrag.add_argument("--typ", required=True, choices=["zusammenfassung", "entscheidung"])
+    p_eintrag.add_argument("--umfang", help="was gebaut wurde")
+    p_eintrag.add_argument("--schwierigkeiten", help="was schwer war")
+    p_eintrag.add_argument("--entscheidungen", help="was entschieden wurde")
+    p_eintrag.add_argument("--text", help="freier Text")
+    p_eintrag.add_argument(
+        "--repo", help="Ordner mit dem Bau-Log (sonst TO_SPAWN_LOG_REPO bzw. Git-Wurzel)"
+    )
+
     args = ap.parse_args(argv)
-    if not args.befehl.startswith("hook-"):
-        logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+    # Hooks zuerst und ohne Vorarbeit: sie dürfen die Session nie stören (#204).
+    if args.befehl == "hook-stop":
+        return hooks.hook_stop()
+    if args.befehl == "hook-subagent-stop":
+        return hooks.hook_subagent_stop()
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+    if args.befehl == "eintrag":
+        return _eintrag(args)
 
     repo = config.repo_wurzel()
     if args.befehl == "inventur":
@@ -281,10 +323,6 @@ def main(argv: list[str] | None = None) -> int:
     if args.befehl == "lernstoff":
         print(bau_log.lernstoff(repo, args.letzte))
         return 0
-    if args.befehl == "hook-stop":
-        return hooks.hook_stop()
-    if args.befehl == "hook-subagent-stop":
-        return hooks.hook_subagent_stop()
     ap.error(f"Unbekannter Befehl: {args.befehl}")
     return 2
 

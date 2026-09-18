@@ -33,7 +33,7 @@ from pathlib import Path
 _SKILL = str(Path(__file__).resolve().parent.parent)
 if _SKILL not in sys.path:
     sys.path.insert(0, _SKILL)
-from to_spawn import config  # noqa: E402
+from to_spawn import bau_log, config  # noqa: E402
 
 log = logging.getLogger("sessions_stand")
 #: Repo, in dem gearbeitet wird: ``TO_SPAWN_REPO`` (setzt die Weiterleitung im Repo), sonst
@@ -68,6 +68,7 @@ class Eintrag:
     pid: int | None = None
     session_pid: int | None = None
     kinder: list[str] = field(default_factory=list)
+    token: str = "—"
 
 
 def ps_zeilen_parsen(text: str) -> list[Prozess]:
@@ -206,6 +207,27 @@ def zuordnen(eintraege: dict[str, Eintrag], alle: list[Prozess]) -> None:
             e.zustand = f"VERWAIST seit {seit}"
 
 
+def token_text(ticket: str, repo: Path = REPO) -> str:
+    """Ist-Token eines Tickets aus dem Bau-Log, z. B. „123,4k“ (``—`` ohne Log, #204).
+
+    Zuerst das Log im Ticket-Worktree (dort schreiben die Hooks), sonst das im Repo.
+    """
+    for ort in (Path(config.worktree_pfad(ticket)).expanduser(), repo):
+        if bau_log.log_pfad(ort, ticket).is_file():
+            ist_k = bau_log.zusammenfassung(ort, ticket)["ist_k"]
+            return f"{ist_k:.1f}".replace(".", ",") + "k" if ist_k else "—"
+    return "—"
+
+
+def token_eintragen(eintraege: dict[str, Eintrag], repo: Path = REPO) -> None:
+    for e in eintraege.values():
+        if e.art == "ticket":
+            try:
+                e.token = token_text(e.nummer, repo)
+            except OSError as fehler:
+                log.warning("Bau-Log #%s unlesbar: %s", e.nummer, fehler)
+
+
 def tabelle(eintraege: dict[str, Eintrag], alle_zeigen: bool) -> str:
     zeilen = []
     for n in sorted(eintraege, key=lambda x: int(x)):
@@ -215,11 +237,11 @@ def tabelle(eintraege: dict[str, Eintrag], alle_zeigen: bool) -> str:
         kopf = f"Spec #{n}" if e.art == "spec" else f"#{n}"
         pid = f"pid {e.pid}" if e.pid else "—"
         sess = f"session {e.session_pid}" if e.session_pid else ""
-        zeilen.append(f"{kopf:<10} {e.zustand:<18} {pid:<10} {sess:<14} {e.titel[:60]}")
+        zeilen.append(f"{kopf:<10} {e.zustand:<18} {pid:<10} {sess:<14} {e.token:<8} {e.titel[:60]}")
     if not zeilen:
         return "(keine Ticket-Sessions gefunden)"
-    kopfzeile = f"{'Ticket':<10} {'Zustand':<18} {'Prozess':<10} {'Claude':<14} Titel"
-    return "\n".join([kopfzeile, "-" * 110, *zeilen])
+    kopfzeile = f"{'Ticket':<10} {'Zustand':<18} {'Prozess':<10} {'Claude':<14} {'Token':<8} Titel"
+    return "\n".join([kopfzeile, "-" * 119, *zeilen])
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -231,6 +253,7 @@ def main(argv: list[str] | None = None) -> int:
     eintraege = manifeste_lesen(a.spec)
     alle = prozesse_lesen()
     zuordnen(eintraege, alle)
+    token_eintragen(eintraege)
     print(tabelle(eintraege, alle_zeigen=a.alle or bool(a.spec)))
     an = sum(1 for e in eintraege.values() if e.zustand != "aus")
     laufen = sum(1 for e in eintraege.values() if e.zustand.startswith("läuft"))

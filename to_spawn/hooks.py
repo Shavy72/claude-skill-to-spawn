@@ -64,6 +64,17 @@ def _usage(eintrag: dict[str, Any]) -> dict[str, Any] | None:
     return verbrauch if isinstance(verbrauch, dict) else None
 
 
+def _zahl(wert: Any) -> int:
+    """Token-Wert als Ganzzahl; Unlesbares zählt 0 statt den Hook abzubrechen."""
+    if isinstance(wert, bool):
+        return 0
+    try:
+        return int(wert or 0)
+    except (TypeError, ValueError):
+        log.warning("Unlesbarer Token-Wert %r im Transkript — zählt 0.", wert)
+        return 0
+
+
 def summiere(eintraege: list[dict[str, Any]]) -> dict[str, int]:
     """Token-Summe über ``message.usage`` der übergebenen assistant-Zeilen."""
     summe = dict(LEERE_TOKENS)
@@ -71,10 +82,10 @@ def summiere(eintraege: list[dict[str, Any]]) -> dict[str, int]:
         verbrauch = _usage(eintrag)
         if verbrauch is None:
             continue
-        summe["input"] += int(verbrauch.get("input_tokens") or 0)
-        summe["cache_read"] += int(verbrauch.get("cache_read_input_tokens") or 0)
-        summe["cache_creation"] += int(verbrauch.get("cache_creation_input_tokens") or 0)
-        summe["output"] += int(verbrauch.get("output_tokens") or 0)
+        summe["input"] += _zahl(verbrauch.get("input_tokens"))
+        summe["cache_read"] += _zahl(verbrauch.get("cache_read_input_tokens"))
+        summe["cache_creation"] += _zahl(verbrauch.get("cache_creation_input_tokens"))
+        summe["output"] += _zahl(verbrauch.get("output_tokens"))
     summe["gesamt"] = (
         summe["input"] + summe["cache_read"] + summe["cache_creation"] + summe["output"]
     )
@@ -158,69 +169,133 @@ def _eingabe(strom: TextIO) -> dict[str, Any]:
     return daten if isinstance(daten, dict) else {}
 
 
+def _text(wert: Any, vorgabe: str) -> str:
+    """Kurztext für die Log-Zeile (``null`` oder Nicht-Text im Hook-JSON → Vorgabe)."""
+    return (wert if isinstance(wert, str) else "")[:300] or vorgabe
+
+
+def _erster_zeitpunkt(eintraege: list[dict[str, Any]]) -> str | None:
+    """Zeitstempel des ersten Transkript-Eintrags (wie im Transkript geschrieben)."""
+    for eintrag in eintraege:
+        roh = eintrag.get("timestamp")
+        if isinstance(roh, str) and roh:
+            return roh
+    return None
+
+
+def _hat_zeile(repo: Path, ticket: str, typ: str, session_id: str) -> bool:
+    return any(
+        z.get("typ") == typ and z.get("session_id") == session_id
+        for z in bau_log.lese(repo, ticket)
+    )
+
+
 def hook_stop(strom: TextIO | None = None, ausgabe: TextIO | None = None) -> int:
-    """Stop-Hook: schreibt ``session_ende`` und — bei frischem Handoff — den Marker."""
-    daten = _eingabe(strom or sys.stdin)
-    repo = config.repo_wurzel()
+    """Stop-Hook: schreibt ``session_ende`` und — bei frischem Handoff — den Marker.
+
+    Endet immer mit 0: ein Fehler im Hook darf die Bau-Session nie stören (#204).
+    """
+    try:
+        _hook_stop(strom or sys.stdin, ausgabe or sys.stdout)
+    except Exception:
+        log.exception("Stop-Hook fehlgeschlagen — keine Log-Zeile, Session läuft weiter.")
+    return 0
+
+
+def _hook_stop(strom: TextIO, ausgabe: TextIO) -> None:
+    daten = _eingabe(strom)
+    repo = bau_log.log_repo()
+    if repo is None:
+        return
     konfig = config.lade(repo)
     ticket = bau_log.ticket_aus_umgebung(repo)
     if ticket is None:
         log.info("Kein Ticket erkennbar (TO_SPAWN_TICKET/wt-<N>) — keine Log-Zeile.")
-        return 0
+        return
 
     eintraege = _zeilen(Path(daten.get("transcript_path") or ""))
     haupt = haupt_zeilen(eintraege)
-    tokens = summiere(haupt)
+    session_id = daten.get("session_id")
+    modell = modell_aus(haupt) or konfig.get("modelle", {}).get("ticket")
+    effort = os.environ.get("TO_SPAWN_EFFORT") or konfig.get("effort", {}).get("ticket")
+
+    # Stop feuert am Ende jeder Runde — session_start nur beim ersten Mal je Session.
+    if session_id and not _hat_zeile(repo, ticket, "session_start", str(session_id)):
+        bau_log.schreibe(
+            repo,
+            ticket,
+            "session_start",
+            session_id=session_id,
+            staffel=_staffel(),
+            modell=modell,
+            effort=effort,
+            runner=konfig.get("runner"),
+            beginn=_erster_zeitpunkt(eintraege),
+            text="Session gestartet.",
+        )
     bau_log.schreibe(
         repo,
         ticket,
         "session_ende",
-        session_id=daten.get("session_id"),
+        session_id=session_id,
         staffel=_staffel(),
-        modell=modell_aus(haupt) or konfig.get("modelle", {}).get("ticket"),
-        effort=os.environ.get("TO_SPAWN_EFFORT") or konfig.get("effort", {}).get("ticket"),
+        modell=modell,
+        effort=effort,
         runner=konfig.get("runner"),
-        tokens=tokens,
+        tokens=summiere(haupt),
         dauer_s=dauer_sekunden(eintraege),
-        text=daten.get("last_assistant_message", "")[:300] or "Session beendet.",
+        text=_text(daten.get("last_assistant_message"), "Session beendet."),
     )
 
     handoff = _frischer_handoff(repo, ticket)
     if handoff is None:
-        return 0
+        return
 
     marker = marker_pfad(repo, ticket)
     marker.parent.mkdir(parents=True, exist_ok=True)
     marker.write_text(str(handoff), encoding="utf-8")
-    bau_log.schreibe(
-        repo,
-        ticket,
-        "handoff",
-        session_id=daten.get("session_id"),
-        staffel=_staffel(),
-        text=f"Handoff geschrieben: {handoff.name} — Folge-Session übernimmt.",
-    )
+    if not (session_id and _hat_zeile(repo, ticket, "handoff", str(session_id))):
+        bau_log.schreibe(
+            repo,
+            ticket,
+            "handoff",
+            session_id=session_id,
+            staffel=_staffel(),
+            text=f"Handoff geschrieben: {handoff.name} — Folge-Session übernimmt.",
+        )
     if config.staffel_modus(konfig) == "hook":
         # Weg "hook": Claude soll die Verarbeitung beenden. Laut Doku beendet das
         # nur die Runde, nicht den Prozess — der Marker bleibt der sichere Weg.
-        (ausgabe or sys.stdout).write(
+        ausgabe.write(
             json.dumps(
                 {"continue": False, "stopReason": "Smart Zone erreicht — Handoff geschrieben."},
                 ensure_ascii=False,
             )
         )
-    return 0
 
 
 def hook_subagent_stop(strom: TextIO | None = None) -> int:
-    """SubagentStop-Hook: schreibt ``subagent_ende`` inklusive Eltern-Session."""
-    daten = _eingabe(strom or sys.stdin)
-    repo = config.repo_wurzel()
+    """SubagentStop-Hook: schreibt ``subagent_ende`` inklusive Eltern-Session.
+
+    Endet immer mit 0: ein Fehler im Hook darf die Bau-Session nie stören (#204).
+    """
+    try:
+        _hook_subagent_stop(strom or sys.stdin)
+    except Exception:
+        log.exception("SubagentStop-Hook fehlgeschlagen — keine Log-Zeile, Session läuft weiter.")
+    return 0
+
+
+def _hook_subagent_stop(strom: TextIO) -> None:
+    daten = _eingabe(strom)
+    repo = bau_log.log_repo()
+    if repo is None:
+        return
     konfig = config.lade(repo)
     ticket = bau_log.ticket_aus_umgebung(repo)
     if ticket is None:
         log.info("Kein Ticket erkennbar — keine Subagenten-Zeile.")
-        return 0
+        return
 
     eigenes = daten.get("agent_transcript_path")
     if eigenes and Path(eigenes).is_file():
@@ -230,21 +305,22 @@ def hook_subagent_stop(strom: TextIO | None = None) -> int:
         eintraege = _zeilen(Path(daten.get("transcript_path") or ""))
         kette = letzte_subagent_kette(eintraege)
 
+    eltern = daten.get("session_id")
     bau_log.schreibe(
         repo,
         ticket,
         "subagent_ende",
-        session_id=daten.get("agent_id") or daten.get("session_id"),
-        eltern_session=daten.get("session_id"),
+        session_id=daten.get("agent_id") or eltern,
+        eltern_session=eltern,
+        vermerk=f"Subagent von Session {eltern}" if eltern else None,
         staffel=_staffel(),
         modell=modell_aus(kette) or daten.get("agent_type"),
         effort=os.environ.get("TO_SPAWN_EFFORT"),
         runner=konfig.get("runner"),
         tokens=summiere(kette),
         dauer_s=dauer_sekunden(kette),
-        text=(daten.get("last_assistant_message") or "Subagent beendet.")[:300],
+        text=_text(daten.get("last_assistant_message"), "Subagent beendet."),
     )
-    return 0
 
 
 def _staffel() -> int:

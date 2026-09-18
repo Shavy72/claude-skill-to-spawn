@@ -4,8 +4,9 @@ Verhält sich wie eine Bau-Session: liest den Prompt (letztes Argument), legt ei
 Mini-Transkript mit ``message.usage`` an und endet je nach Szenario.
 
 Umgebung:
-  ``FAKE_CLAUDE_SZENARIO``  ``fertig`` (endet einfach) oder ``handoff``
-                            (erster Lauf schreibt Handoff + Marker)
+  ``FAKE_CLAUDE_SZENARIO``  ``fertig`` (endet einfach), ``handoff``
+                            (erster Lauf schreibt Handoff + Marker) oder ``hooks``
+                            (führt die Hooks aus ``--settings`` aus wie Claude Code, #204)
   ``FAKE_CLAUDE_AUSGABE``   Ordner für Prompt-Mitschriften und Transkripte
   ``TO_SPAWN_TICKET``       Ticket-Nummer (setzt die Staffel-Schleife)
 """
@@ -14,8 +15,10 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
-from datetime import datetime, timezone
+import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 
@@ -56,6 +59,162 @@ def main() -> int:
         marker = repo / ".to-spawn" / f"stop-{ticket}"
         marker.parent.mkdir(parents=True, exist_ok=True)
         marker.write_text("handoff", encoding="utf-8")
+    if szenario == "hooks":
+        return _hooks_szenario(ausgabe, ticket)
+    return 0
+
+
+# --- Szenario "hooks" (#204) --------------------------------------------------
+
+#: Feste Startzeit des gestellten Transkripts; Einträge liegen 60 s auseinander.
+HOOK_BEGINN = datetime(2026, 9, 18, 10, 0, 0, tzinfo=timezone.utc)
+HAUPT_SESSION = "sess-haupt-204"
+SUBAGENT_ID = "agent-204"
+
+
+def _zeit(sekunden: int) -> str:
+    return (HOOK_BEGINN + timedelta(seconds=sekunden)).isoformat().replace("+00:00", "Z")
+
+
+def _assistant(sekunden: int, modell: str, usage: dict, sidechain: bool = False) -> dict:
+    return {
+        "type": "assistant",
+        "isSidechain": sidechain,
+        "sessionId": HAUPT_SESSION,
+        "timestamp": _zeit(sekunden),
+        "message": {"model": modell, "usage": usage},
+    }
+
+
+def _anhaengen(pfad: Path, zeilen: list[dict]) -> None:
+    with pfad.open("a", encoding="utf-8") as fh:
+        for zeile in zeilen:
+            fh.write(json.dumps(zeile, ensure_ascii=False) + "\n")
+
+
+def _hook_befehle(ereignis: str) -> list[str]:
+    """Befehle eines Hook-Ereignisses aus der Datei hinter ``--settings``."""
+    if "--settings" not in sys.argv:
+        return []
+    datei = Path(sys.argv[sys.argv.index("--settings") + 1])
+    daten = json.loads(datei.read_text(encoding="utf-8"))
+    befehle: list[str] = []
+    for gruppe in (daten.get("hooks") or {}).get(ereignis) or []:
+        for hook in gruppe.get("hooks") or []:
+            if hook.get("type") == "command" and hook.get("command"):
+                befehle.append(str(hook["command"]))
+    return befehle
+
+
+def _hooks_ausfuehren(ausgabe: Path, ticket: str, ereignis: str, eingabe: dict) -> None:
+    """Wie Claude Code: jeder Befehl per Shell, JSON auf stdin, Ergebnis mitschreiben."""
+    for befehl in _hook_befehle(ereignis):
+        lauf = subprocess.run(
+            befehl,
+            shell=True,
+            input=json.dumps(eingabe, ensure_ascii=False),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+        )
+        _anhaengen(
+            ausgabe / f"hooks-{ticket}.jsonl",
+            [
+                {
+                    "ereignis": ereignis,
+                    "befehl": befehl,
+                    "code": lauf.returncode,
+                    "stderr": lauf.stderr[-800:],
+                }
+            ],
+        )
+
+
+def _hooks_szenario(ausgabe: Path, ticket: str) -> int:
+    """Zwei Runden (Stop feuert je Runde) plus ein Subagent — Token-Werte sind bekannt."""
+    haupt = ausgabe / f"hooks-transkript-{ticket}.jsonl"
+    haupt.unlink(missing_ok=True)
+    sub = ausgabe / f"hooks-subagent-{ticket}.jsonl"
+    sub.unlink(missing_ok=True)
+    _anhaengen(
+        haupt,
+        [
+            {"type": "user", "sessionId": HAUPT_SESSION, "timestamp": _zeit(0)},
+            _assistant(
+                60,
+                "claude-opus-5",
+                {
+                    "input_tokens": 1000,
+                    "cache_read_input_tokens": 20000,
+                    "cache_creation_input_tokens": 3000,
+                    "output_tokens": 400,
+                },
+            ),
+        ],
+    )
+    stop = {
+        "session_id": HAUPT_SESSION,
+        "transcript_path": str(haupt),
+        "cwd": str(Path.cwd()),
+        "hook_event_name": "Stop",
+        "stop_hook_active": False,
+        "last_assistant_message": "Runde 1 fertig.",
+    }
+    _hooks_ausfuehren(ausgabe, ticket, "Stop", stop)
+
+    _anhaengen(
+        sub,
+        [
+            _assistant(
+                120,
+                "claude-sonnet-5",
+                {
+                    "input_tokens": 200,
+                    "cache_read_input_tokens": 5000,
+                    "cache_creation_input_tokens": 800,
+                    "output_tokens": 100,
+                },
+                sidechain=True,
+            )
+        ],
+    )
+    _hooks_ausfuehren(
+        ausgabe,
+        ticket,
+        "SubagentStop",
+        {
+            "session_id": HAUPT_SESSION,
+            "transcript_path": str(haupt),
+            "agent_id": SUBAGENT_ID,
+            "agent_type": "executor-sonnet",
+            "agent_transcript_path": str(sub),
+            "cwd": str(Path.cwd()),
+            "hook_event_name": "SubagentStop",
+            "stop_hook_active": False,
+            "last_assistant_message": "Subagent fertig.",
+        },
+    )
+
+    _anhaengen(
+        haupt,
+        [
+            {"type": "user", "sessionId": HAUPT_SESSION, "timestamp": _zeit(180)},
+            _assistant(
+                240,
+                "claude-opus-5",
+                {
+                    "input_tokens": 500,
+                    "cache_read_input_tokens": 30000,
+                    "cache_creation_input_tokens": 1000,
+                    "output_tokens": 600,
+                },
+            ),
+        ],
+    )
+    time.sleep(1.2)  # Dauer aus TO_SPAWN_START wird sonst 0 s
+    _hooks_ausfuehren(ausgabe, ticket, "Stop", {**stop, "last_assistant_message": "Runde 2 fertig."})
     return 0
 
 

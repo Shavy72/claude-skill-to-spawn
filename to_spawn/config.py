@@ -85,6 +85,18 @@ def repo_wurzel(start: Path | None = None) -> Path:
     return pfad
 
 
+def worktree_pfad(ticket: str | int) -> str:
+    """Wohin der Worktree eines Tickets gehört — Windows ``C:/dev``, Linux unter ``$BAU_WT_DIR``.
+
+    Einzige Stelle dieser Regel: ``bau.py`` (Start + Bau-Log-Ziel) und
+    ``sessions_stand.py`` (Token-Spalte) lesen sie von hier (#204).
+    """
+    if sys.platform == "win32":
+        return f"C:/dev/wt-{ticket}"
+    basis = os.environ.get("BAU_WT_DIR") or "~/wt"
+    return f"{Path(basis).expanduser().as_posix().rstrip('/')}/wt-{ticket}"
+
+
 def lade(repo: Path | None = None) -> dict[str, Any]:
     """Konfiguration des Repos, mit Vorgaben aufgefüllt."""
     wurzel = repo_wurzel(repo)
