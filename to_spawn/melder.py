@@ -90,6 +90,23 @@ def darf_raus(art: str, konfig: dict[str, Any]) -> bool:
     return art in IMMER or not nur_kritisch
 
 
+def mail_befehl(konfig: dict[str, Any]) -> list[str]:
+    """``mail.befehl`` als argv-Liste; leer = kein Versand eingerichtet (bewusste Wahl)."""
+    mail = konfig.get("mail")
+    befehl = (mail.get("befehl") if isinstance(mail, dict) else None) or []
+    if isinstance(befehl, str):
+        befehl = befehl.split()
+    befehl = [str(teil) for teil in befehl if str(teil).strip()]
+    if befehl and befehl[0] in ("python", "python3", "py"):
+        befehl[0] = sys.executable  # auf dem Bau-Server gibt es kein „python“ (#213)
+    return befehl
+
+
+def mail_eingerichtet(konfig: dict[str, Any]) -> bool:
+    """Hat das Repo einen Mail-Befehl? Ohne ihn ist „keine Mail“ kein Fehler."""
+    return bool(mail_befehl(konfig))
+
+
 def melden(
     repo: Path,
     art: str,
@@ -115,12 +132,7 @@ def melden(
             "Meldung %s schon verschickt (%s) — kein zweites Mal.", art, schluessel
         )
         return False
-    befehl = konfig.get("mail", {}).get("befehl") or []
-    if isinstance(befehl, str):
-        befehl = befehl.split()
-    befehl = [str(teil) for teil in befehl]
-    if befehl and befehl[0] in ("python", "python3", "py"):
-        befehl[0] = sys.executable  # auf dem Bau-Server gibt es kein „python“ (#213)
+    befehl = mail_befehl(konfig)
     if not befehl:
         log.warning(
             "Keine Mail möglich: mail.befehl fehlt in .to-spawn/config.json — %s: %s",

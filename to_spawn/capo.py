@@ -17,7 +17,9 @@ Verstöße 1, 2, 3 und 5 öffnen das Ticket höchstens EINMAL je Regel wieder; s
 jemand erneut mit demselben Verstoß, gibt es nur noch einen Kommentar. Keine Regeln
 für Tickets „nicht geplant“/„Duplikat“ oder mit Label ``waechter:ok``. Zeitgrenzen:
 beim ersten Tick einer Spec sind alle geschlossenen Tickets Ausgangsstand (nur
-melden), danach wird ein Schließen erst 15 min später geprüft (Karenz).
+melden; maßgeblich ist, ob das Ticket beim ersten Tick schon zu war — kein
+Vergleich der GitHub-Uhr mit der lokalen Uhr), danach wird ein Schließen erst
+15 min später geprüft (Karenz, ``waechter.karenz_minuten``; ``0`` = keine Karenz).
 ``TO_SPAWN_WAECHTER_SOFORT=1`` bzw. ``waechter.sofort`` schaltet beide Zeitgrenzen ab.
 Regel 4 kommentiert nur und meldet per Mail (je Tag einmal). Dazu kommt das
 Bau-Log-Delta (nur neue Zeilen seit dem letzten Tick, aus dem Hauptzweig und den
@@ -59,6 +61,8 @@ NICHT_GEPLANT = frozenset({"not_planned", "duplicate"})
 OK_LABEL = "waechter:ok"
 #: Minuten nach ``closed_at``, bevor die Regeln greifen (Vorgabe, ``waechter.karenz_minuten``).
 KARENZ_MIN = 15.0
+#: Tick-Zeile, wenn ``mail.befehl`` fehlt: bewusste Wahl des Repos, kein Fehler.
+MAIL_AUS = "INFO: Mail nicht eingerichtet (mail.befehl leer) — Meldungen stehen nur hier."
 #: Sekunden, die ein Tick auf die Sperre eines anderen Laufs wartet.
 SPERRE_S = 30.0
 GIT_ZEIT_S = 30
@@ -720,6 +724,50 @@ def sperre(datei: Path, warten_s: float = SPERRE_S) -> Iterator[bool]:
 
 
 
+def karenz_minuten(waechter: dict[str, Any]) -> float:
+    """``waechter.karenz_minuten``; fehlt der Wert, gilt :data:`KARENZ_MIN`, ``0`` = keine Karenz."""
+    roh = waechter.get("karenz_minuten")
+    if roh is None or (isinstance(roh, str) and not roh.strip()):
+        return KARENZ_MIN
+    try:
+        wert = float(roh)
+    except (TypeError, ValueError):
+        log.warning("waechter.karenz_minuten=%r ist keine Zahl — nehme %s min.", roh, KARENZ_MIN)
+        return KARENZ_MIN
+    if wert < 0:
+        log.warning("waechter.karenz_minuten=%r ist negativ — nehme 0 (keine Karenz).", roh)
+        return 0.0
+    return wert
+
+
+def schliess_marke(issue: dict[str, Any]) -> str:
+    """Kennung eines Schließ-Ereignisses: ``closed_at`` (``?`` ohne Zeit), offen = ``""``."""
+    if str(issue.get("state", "")).lower() != "closed":
+        return ""
+    return str(issue.get("closed_at") or "?")
+
+
+def ist_ausgangsstand(
+    n: int,
+    issue: dict[str, Any],
+    ausgang: dict[str, Any] | None,
+    geschlossen_zeit: datetime | None,
+    erster_tick: datetime,
+) -> bool:
+    """War dieses Schließen schon beim ersten Tick da?
+
+    Maßgeblich ist der beim ersten Tick gemerkte Stand je Ticket (``ausgangsstand``
+    in der Zustandsdatei) — kein Uhr-Vergleich: ``closed_at`` kommt von GitHub, der
+    erste Tick von der lokalen Uhr, die vorgehen kann. Nur Tickets, die es beim
+    ersten Tick noch nicht gab (oder Zustände aus älteren Versionen), fallen auf
+    den Zeitvergleich zurück.
+    """
+    if ausgang is not None and str(n) in ausgang:
+        marke = str(ausgang[str(n)] or "")
+        return bool(marke) and marke == schliess_marke(issue)
+    return geschlossen_zeit is None or geschlossen_zeit < erster_tick
+
+
 def ist_sofort(konfig: dict[str, Any]) -> bool:
     """Sofort-Modus: keine Karenz, kein Ausgangsstand (Umgebung oder ``waechter.sofort``)."""
     if os.environ.get("TO_SPAWN_WAECHTER_SOFORT", "").strip() == "1":
@@ -810,9 +858,12 @@ def _tick(
     if erster_tick is None:
         erster_tick = jetzt  # dieser Tick ist der erste: alles Geschlossene = Ausgangsstand
         zustand["erster_tick"] = jetzt.isoformat(timespec="seconds")
+        zustand["ausgangsstand"] = {str(int(i["number"])): schliess_marke(i) for i in liste}
+    ausgang = zustand.get("ausgangsstand")
+    ausgang = ausgang if isinstance(ausgang, dict) else None
     waechter = konfig.get("waechter", {}) if isinstance(konfig.get("waechter"), dict) else {}
     stunden = float(waechter.get("verwaist_stunden") or 3)
-    karenz = 0.0 if sofort else float(waechter.get("karenz_minuten") or KARENZ_MIN)
+    karenz = 0.0 if sofort else karenz_minuten(waechter)
     regularien = konfig.get("regularien", {}) if isinstance(konfig.get("regularien"), dict) else {}
     belege = str(regularien.get("belege_ordner") or "docs/verify-hard")
     checkpoint = str(regularien.get("checkpoint_label") or "checkpoint:human")
@@ -933,8 +984,8 @@ def _tick(
                 continue
             if regeln_aus:
                 continue
-            ausgangsstand = not sofort and (
-                geschlossen_zeit is None or geschlossen_zeit < erster_tick
+            ausgangsstand = not sofort and ist_ausgangsstand(
+                n, issue, ausgang, geschlossen_zeit, erster_tick
             )
             if (
                 not ausgangsstand
@@ -1092,6 +1143,11 @@ def _tick(
                 f"spec_fertig|{spec}",
             )
 
+    if MAIL_AUS in erg.zeilen:  # je Tick nur einmal, nicht je Meldung
+        erste = erg.zeilen.index(MAIL_AUS)
+        erg.zeilen = [
+            z for i, z in enumerate(erg.zeilen) if z != MAIL_AUS or i == erste
+        ]
     sichern()
     if any("FEHLER" in z for z in erg.zeilen):
         erg.exit_code = 1
@@ -1124,12 +1180,19 @@ def _melde(
     text: str,
     schluessel: str,
 ) -> list[str]:
-    """Mail über den Melder; Fehlschlag = FEHLER-Zeile (der nächste Tick versucht es wieder)."""
+    """Mail über den Melder; Fehlschlag = FEHLER-Zeile (der nächste Tick versucht es wieder).
+
+    Ohne ``mail.befehl`` hat das Repo bewusst keine Mail: dann nur :data:`MAIL_AUS`
+    (INFO, Exit 0). FEHLER heißt nur: ein eingerichteter Versand ist gescheitert.
+    """
     if dry_run:
         return [f"[Probe] Mail {art}: {betreff}"]
     if not melder.darf_raus(art, konfig):
         melder.melden(repo, art, betreff, text, schluessel, konfig=konfig, gh_repo=gh_repo)
         return []
+    if not melder.mail_eingerichtet(konfig):
+        log.info("Mail nicht eingerichtet (mail.befehl leer) — %s: %s", art, betreff)
+        return [MAIL_AUS]
     if melder.schon_gesendet(repo, schluessel, gh_repo):
         return []
     if melder.melden(
