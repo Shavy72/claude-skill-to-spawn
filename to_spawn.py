@@ -15,6 +15,7 @@ Aufruf (im Repo-Wurzelordner):
     python ~/.claude/skills/to-spawn/to_spawn.py umzug <N> --handoff <pfad> [--dry-run]
     python ~/.claude/skills/to-spawn/to_spawn.py umzug-alle <S> [--ohne-wache] [--warte-max s] [--dry-run]
     python ~/.claude/skills/to-spawn/to_spawn.py hook-umzug         # JSON auf stdin (#212)
+    python ~/.claude/skills/to-spawn/to_spawn.py nest onboarding|sandbox|secrets|werkzeuge|rechte|auswahl
 """
 
 from __future__ import annotations
@@ -27,7 +28,17 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from to_spawn import bau_log, config, deploy_status, hooks, inventur, manifest, setup, umzug  # noqa: E402
+from to_spawn import (  # noqa: E402
+    bau_log,
+    config,
+    deploy_status,
+    hooks,
+    inventur,
+    manifest,
+    nest,
+    setup,
+    umzug,
+)
 from to_spawn import spawn as spawn_modul  # noqa: E402
 
 log = logging.getLogger("to_spawn")
@@ -322,6 +333,8 @@ def main(argv: list[str] | None = None) -> int:
         "--repo", help="Ordner mit dem Bau-Log (sonst TO_SPAWN_LOG_REPO bzw. Git-Wurzel)"
     )
 
+    nest.richte_parser_ein(unter)
+
     args = ap.parse_args(argv)
     # Hooks zuerst und ohne Vorarbeit: sie dürfen die Session nie stören (#204).
     if args.befehl == "hook-stop":
@@ -331,6 +344,8 @@ def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     if args.befehl == "eintrag":
         return _eintrag(args)
+    if args.befehl == "nest":
+        return nest.lauf(args)
 
     repo = config.repo_wurzel()
     if args.befehl == "inventur":

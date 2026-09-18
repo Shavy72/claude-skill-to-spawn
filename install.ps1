@@ -21,7 +21,7 @@ if (Test-Path $ziel) {
 }
 New-Item -ItemType Directory -Force $ziel | Out-Null
 foreach ($f in @("SKILL.md", "README.md", "LICENSE", "to_spawn.py", "install.sh", "install.ps1", "spawn_local.ps1", "spawn_srv.ps1",
-                 "to_spawn", "skripte", "repo-scripts", "aliase", "tests", "docs")) {
+                 "to_spawn", "skripte", "repo-scripts", "aliase", "tests", "docs", "nest")) {
     $quelle = Join-Path $hier $f
     if (Test-Path $quelle) { Copy-Item $quelle (Join-Path $ziel $f) -Recurse -Force }
 }

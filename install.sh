@@ -38,13 +38,13 @@ fi
 # --- 2. Skill kopieren (ohne Git, Caches) ------------------------------------
 mkdir -p "$ZIEL"
 for eintrag in SKILL.md README.md LICENSE to_spawn.py install.sh install.ps1 spawn_local.ps1 spawn_srv.ps1 \
-               to_spawn skripte repo-scripts aliase tests docs; do
+               to_spawn skripte repo-scripts aliase tests docs nest; do
   if [ -e "$HIER/$eintrag" ]; then
     cp -a "$HIER/$eintrag" "$ZIEL/"
   fi
 done
 find "$ZIEL" \( -name __pycache__ -o -name .pytest_cache -o -name .ruff_cache \) -prune -exec rm -rf {} +
-chmod +x "$ZIEL/skripte/spawn_srv.sh" "$ZIEL/repo-scripts/spawn_srv.sh"
+chmod +x "$ZIEL/skripte/spawn_srv.sh" "$ZIEL/repo-scripts/spawn_srv.sh" "$ZIEL"/nest/*.sh
 echo "Skill installiert: $ZIEL"
 
 # --- 3. Alias-Skills ----------------------------------------------------------

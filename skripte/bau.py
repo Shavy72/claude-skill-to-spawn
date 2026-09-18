@@ -34,7 +34,7 @@ from pathlib import Path
 _SKILL = str(Path(__file__).resolve().parent.parent)
 if _SKILL not in sys.path:
     sys.path.insert(0, _SKILL)
-from to_spawn import config, umzug  # noqa: E402
+from to_spawn import config, nest, umzug  # noqa: E402
 
 # Windows-Konsole ist cp1252 — Umlaute/Pfeile im Prompt brauchen UTF-8.
 for stream in (sys.stdout, sys.stderr):
@@ -659,6 +659,8 @@ def main() -> int:
     if model:
         cmd += ["--model", model]
     cmd.append(erster_prompt)
+    # Sandbox je Worktree (#210): Logik in to_spawn.nest, hier nur der Präfix (srt).
+    cmd = nest.sandbox_praefix(konfig, worktree_pfad(ticket), REPO, trocken=args.dry_run) + cmd
 
     off_count = sum(1 for v in overrides.values() if v == "off")
     log.info("Ticket #%s · Spec #%s · %s", ticket, spec, title)

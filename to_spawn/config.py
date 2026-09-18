@@ -75,6 +75,16 @@ DEFAULTS: dict[str, Any] = {
     "staging_start": "",
     #: Deploy-Befehl des Repos (leer = Repo deployt nicht über den Skill).
     "deploy_befehl": "",
+    #: Sandbox je Worktree (#210): "an" = Session läuft in ``srt`` (fehlen srt/bwrap →
+    #: Warnung, Session ohne); ``netz_zusatz`` = weitere erlaubte Ziele (``host[:port]``).
+    "sandbox": {
+        "modus": "an",
+        "netz_zusatz": [],
+    },
+    #: Nest-Bau (#210): ``bws_projekt`` = Projekt-ID im Bitwarden Secrets Manager (leer = alle).
+    "nest": {
+        "bws_projekt": "",
+    },
 }
 
 KONFIG_PFAD = Path(".to-spawn") / "config.json"
