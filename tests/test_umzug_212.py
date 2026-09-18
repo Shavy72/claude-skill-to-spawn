@@ -42,8 +42,14 @@ befehl = sys.argv[-1]
 if modus == "fehler":
     sys.stderr.write("ssh: connect to host bau-server port 22: Connection refused\n")
     sys.exit(255)
+if "spawn_srv.sh" in befehl and modus == "laeuft_bereits":
+    sys.stderr.write("Ticket #9121 läuft auf dem Server bereits (wartet) — Umzug abgebrochen.\n")
+    sys.exit(4)
+if "spawn_srv.sh" in befehl and modus in ("abbruch_nach_start", "abbruch_ohne_server"):
+    sys.stderr.write("client_loop: send disconnect: Broken pipe\n")
+    sys.exit(255)
 if "tmux list-windows" in befehl:
-    if modus == "ohne_fenster":
+    if modus in ("ohne_fenster", "abbruch_ohne_server"):
         sys.exit(1)
     print("wache 9120")
     print("bau 9121")
@@ -148,6 +154,7 @@ def welt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path]:
     monkeypatch.setenv("BAU_UMZUG_DATEI", str(tmp_path / "out" / "umzug.json"))
     (tmp_path / "out").mkdir()
     monkeypatch.delenv("TO_SPAWN_REPO", raising=False)
+    monkeypatch.delenv("BAU_UMZUG_ANFRAGE", raising=False)
     monkeypatch.setattr(umzug, "BEWEIS_TAKT", 0.01)
     monkeypatch.setattr(umzug, "BEWEIS_MAX", 0.5)
     monkeypatch.chdir(wt)
@@ -242,7 +249,9 @@ def test_handoff_wird_committet_gepusht_und_session_beendet(welt: dict[str, Path
     start = aufrufe[0]
     assert start[:3] == ["-o", "BatchMode=yes", "bau-server"]
     assert "cd ~/duoplus-management && bash scripts/spawn_srv.sh 9120 --tickets 9121" in start[-1]
-    assert f"--ohne-wache --umzug ticket-9121:{HANDOFF_REL}" in start[-1]
+    # Fixrunde #212 (Befund 7): die Referenz trägt den Commit-SHA mit.
+    kopf = _git(welt["wt"], "rev-parse", "HEAD")
+    assert f"--ohne-wache --umzug ticket-9121@{kopf}:{HANDOFF_REL}" in start[-1]
     assert any("tmux list-windows -t =spec-9120" in a[-1] for a in aufrufe[1:])
     assert any("sessions_stand.py 9120" in a[-1] for a in aufrufe[1:])
 
@@ -650,9 +659,10 @@ def test_umzug_alle_reihenfolge_und_wache(
 ) -> None:
     w = alle({"9123": "aus", "9122": "läuft seit 10:00", "9121": "wartet"})
     assert _alle(tmp_path, warte_max=5) == 0
+    # Fixrunde #212 (Befund 3): erst Server starten + beweisen, dann lokal beenden.
     assert w.ereignisse == [
-        "beenden 9121",
         "server 9121",
+        "beenden 9121",
         "anfrage 9122",
         "server wache 9120",
     ]
@@ -685,7 +695,7 @@ def test_umzug_alle_timeout_stoppt_vor_naechstem(
 def test_umzug_alle_ohne_wache(alle, tmp_path: Path) -> None:
     w = alle({"9121": "wartet"})
     assert _alle(tmp_path, warte_max=5, ohne_wache=True) == 0
-    assert w.ereignisse == ["beenden 9121", "server 9121"]
+    assert w.ereignisse == ["server 9121", "beenden 9121"]  # Befund 3: Server zuerst
     assert not Path(os.environ["BAU_UMZUG_DATEI"]).exists()
 
 
@@ -837,3 +847,460 @@ def test_sessions_stand_zaehlt_nur_prozesse_im_eigenen_repo(tmp_path: Path) -> N
         for proz in prozesse:
             proz.kill()
             proz.wait()
+
+
+# === Fixrunde #212 (Prüfpanel-Befunde 1–12) ===================================
+
+
+def _kind_mit_umzug(datei: Path) -> list[str]:
+    """Kind, das die Umzug-Datei schreibt und dann weiterläuft (wie eine Session nach Exit 0)."""
+    return [
+        sys.executable,
+        "-c",
+        "import pathlib, sys, time; "
+        "pathlib.Path(sys.argv[1]).write_text('{\"ziel\": \"bau-server\"}'); time.sleep(60)",
+        str(datei),
+    ]
+
+
+# --- Befund 1: Windows — ganzen Prozessbaum beenden, danach prüfen ---------------
+
+
+def test_umzug_wache_windows_beendet_ganzen_baum(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    datei = tmp_path / "umzug.json"
+    aufrufe: list[list[str]] = []
+    echt = subprocess.run
+
+    def run(cmd: object, *args: object, **kw: object) -> object:
+        if isinstance(cmd, list) and cmd and cmd[0] == "taskkill":
+            aufrufe.append([str(c) for c in cmd])
+            os.kill(int(cmd[2]), signal.SIGKILL)
+            return subprocess.CompletedProcess(cmd, 0, "ERFOLGREICH", "")
+        return echt(cmd, *args, **kw)  # type: ignore[call-overload]
+
+    monkeypatch.setattr(umzug, "_ist_windows", lambda: True, raising=False)
+    monkeypatch.setattr(umzug.subprocess, "run", run)
+    _code, daten = umzug.starte_mit_umzug_wache(_kind_mit_umzug(datei), datei, takt=0.05, frist=5)
+    assert len(aufrufe) == 1, aufrufe
+    assert aufrufe[0][:2] == ["taskkill", "/PID"]
+    assert aufrufe[0][3:] == ["/T", "/F"]
+    assert daten is not None
+    assert daten.get("lokal_beendet") is True
+
+
+def test_umzug_wache_windows_baum_bleibt_meldet_laut(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    datei = tmp_path / "umzug.json"
+    echt = subprocess.run
+
+    def run(cmd: object, *args: object, **kw: object) -> object:
+        if isinstance(cmd, list) and cmd and cmd[0] == "taskkill":
+            return subprocess.CompletedProcess(cmd, 1, "", "FEHLER: Zugriff verweigert")
+        return echt(cmd, *args, **kw)  # type: ignore[call-overload]
+
+    monkeypatch.setattr(umzug, "_ist_windows", lambda: True, raising=False)
+    monkeypatch.setattr(umzug.subprocess, "run", run)
+    with caplog.at_level("ERROR"):
+        _code, daten = umzug.starte_mit_umzug_wache(
+            _kind_mit_umzug(datei), datei, takt=0.05, frist=0.5
+        )
+    assert daten is not None
+    assert daten.get("lokal_beendet") is False
+    assert "Doppel-Lauf" in caplog.text
+
+
+# --- Befund 2 + 3: umzug_alle liest frisch und startet den Server zuerst -------
+
+
+def test_umzug_alle_liest_zustand_vor_jeder_aktion_neu(
+    alle, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    w = alle({"9121": "läuft seit 10:00", "9122": "wartet"})
+    vorher = umzug.anfrage_schreiben
+
+    def anfrage(repo: Path, ticket: str) -> Path:
+        if ticket == "9121":  # während #9121 umzieht, startet #9122 sein Claude
+            w.zustaende["9122"] = "läuft seit 11:00"
+        return vorher(repo, ticket)
+
+    monkeypatch.setattr(umzug, "anfrage_schreiben", anfrage)
+    assert _alle(tmp_path, warte_max=5) == 0
+    assert w.ereignisse == ["anfrage 9121", "anfrage 9122", "server wache 9120"]
+
+
+def test_umzug_alle_wartet_server_scheitert_lokal_unangetastet(
+    alle, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    w = alle({"9121": "wartet", "9122": "wartet"})
+
+    def starten(spec: str, ticket: str | None, **kw: object) -> bool:
+        w.ereignisse.append(f"server {ticket}")
+        return False
+
+    monkeypatch.setattr(umzug, "server_starten", starten)
+    assert _alle(tmp_path, warte_max=5) == umzug.EXIT_FEHLER
+    assert w.ereignisse == ["server 9121"]
+    assert w.zustaende["9121"] == "wartet"
+    assert "Stopp bei #9121" in capsys.readouterr().out
+
+
+def test_umzug_alle_wartet_wird_laeuft_nach_serverstart(
+    alle, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    w = alle({"9121": "wartet"})
+    vorher = w.starten
+
+    def starten(spec: str, ticket: str | None, **kw: object) -> bool:
+        ok = vorher(spec, ticket, **kw)
+        if ticket == "9121":  # lokal startet Claude, während der Server hochfährt
+            w.zustaende["9121"] = "läuft seit 11:00"
+        return ok
+
+    def schliessen(spec: str, ticket: str, **kw: object) -> bool:
+        w.ereignisse.append(f"schliessen {ticket}")
+        w.server.discard(ticket)
+        return True
+
+    monkeypatch.setattr(umzug, "server_starten", starten)
+    monkeypatch.setattr(umzug, "server_fenster_schliessen", schliessen, raising=False)
+    assert _alle(tmp_path, warte_max=5, ohne_wache=True) == 0
+    assert w.ereignisse == ["server 9121", "schliessen 9121", "anfrage 9121"]
+
+
+# --- Befund 4: läuft auf dem Server schon → Umzug bricht ab -------------------------
+
+
+def test_spawn_srv_umzug_laeuft_bereits_exit_4(welt: dict[str, Path]) -> None:
+    schlaefer = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(60)", str(SKRIPTE / "bau.py"), TICKET],
+        cwd=str(welt["haupt"]),
+    )
+    try:
+        for _ in range(50):
+            if umzug.lokale_zustaende(welt["haupt"], SPEC).get(TICKET, ("aus", None))[0] != "aus":
+                break
+            time.sleep(0.1)
+        ergebnis = _spawn_srv(
+            welt["haupt"], SPEC, "--tickets", TICKET, "--ohne-wache",
+            "--umzug", f"ticket-9121:{HANDOFF_REL}", "--dry-run",
+        )
+        assert ergebnis.returncode == 4, ergebnis.stdout + ergebnis.stderr
+        assert "Umzug abgebrochen" in ergebnis.stderr
+        assert "nichts gestartet" not in ergebnis.stdout
+        # Ohne --umzug bleibt es beim Überspringen.
+        # --ohne-regularien: die Regularien-Prüfung bräuchte GitHub und ist hier nicht das Thema.
+        normal = _spawn_srv(
+            welt["haupt"], SPEC, "--tickets", TICKET, "--ohne-wache", "--ohne-regularien", "--dry-run"
+        )
+        assert normal.returncode == 0, normal.stdout + normal.stderr
+        assert "übersprungen" in normal.stdout
+    finally:
+        schlaefer.kill()
+        schlaefer.wait()
+
+
+def test_umzug_einzel_server_laeuft_schon_bricht_ab(
+    welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setenv("SSH_STUB_MODUS", "laeuft_bereits")
+    pfad = _handoff(welt["wt"])
+    with caplog.at_level("ERROR"):
+        assert _umzug(welt, pfad) != 0
+    assert "läuft auf dem Server schon" in caplog.text
+    assert not Path(os.environ["BAU_UMZUG_DATEI"]).exists()
+    assert not any("tmux list-windows" in a[-1] for a in _ssh_aufrufe(welt))
+
+
+# --- Befund 5: Hintergrund-Aufruf + Aufräumen bei Abbruch --------------------------
+
+
+def test_alias_umzug_alle_im_hintergrund() -> None:
+    text = (SKILL / "aliase" / "to-spawn-of" / "SKILL.md").read_text(encoding="utf-8")
+    assert "run_in_background" in text
+
+
+def test_umzug_alle_raeumt_anfrage_bei_strg_c(
+    alle, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    alle({"9121": "läuft seit 10:00"}, zieht_um=False)
+
+    def sleep(_s: float) -> None:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(umzug.time, "sleep", sleep)
+    with pytest.raises(KeyboardInterrupt):
+        _alle(tmp_path, warte_max=60)
+    anfrage = tmp_path / ".to-spawn" / "umzug-anfrage-9121"
+    assert not anfrage.exists()
+    assert not Path(f"{anfrage}.laeuft").exists()
+
+
+def test_umzug_alle_raeumt_anfrage_bei_sigterm(
+    alle, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    alle({"9121": "läuft seit 10:00"}, zieht_um=False)
+
+    def still(_n: int, _f: object) -> None:
+        return None
+
+    vorher = signal.signal(signal.SIGTERM, still)
+    echt_sleep = time.sleep
+
+    def sleep(_s: float) -> None:
+        os.kill(os.getpid(), signal.SIGTERM)
+        echt_sleep(0.01)
+
+    try:
+        monkeypatch.setattr(umzug.time, "sleep", sleep)
+        with pytest.raises(SystemExit):
+            _alle(tmp_path, warte_max=0.5)
+        monkeypatch.setattr(umzug.time, "sleep", echt_sleep)
+        assert signal.getsignal(signal.SIGTERM) is still
+    finally:
+        signal.signal(signal.SIGTERM, vorher)
+    assert not (tmp_path / ".to-spawn" / "umzug-anfrage-9121").exists()
+
+
+# --- Befund 6: SSH-Abbruch nach dem Start → Server einmal prüfen -------------------
+
+
+def test_ssh_abbruch_nach_start_server_laeuft_doch(
+    welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setenv("SSH_STUB_MODUS", "abbruch_nach_start")
+    pfad = _handoff(welt["wt"])
+    with caplog.at_level("WARNING"):
+        assert _umzug(welt, pfad) == 0
+    assert "läuft trotzdem" in caplog.text
+    assert Path(os.environ["BAU_UMZUG_DATEI"]).is_file()
+
+
+def test_ssh_abbruch_ohne_server_bleibt_fehler(
+    welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("SSH_STUB_MODUS", "abbruch_ohne_server")
+    pfad = _handoff(welt["wt"])
+    assert _umzug(welt, pfad) == umzug.EXIT_FEHLER
+    assert not Path(os.environ["BAU_UMZUG_DATEI"]).exists()
+    assert any("tmux list-windows" in a[-1] for a in _ssh_aufrufe(welt))
+
+
+# --- Befund 7: Handoff-Referenz mit Commit-SHA, Fetch-Fehler = Exit 2 ---------------
+
+
+def test_bau_umzug_sha_liest_genau_diesen_stand(welt: dict[str, Path]) -> None:
+    _handoff_auf_branch(welt)
+    sha1 = _git(welt["wt"], "rev-parse", "HEAD")
+    _handoff(welt["wt"], HANDOFF_OK + "Zweiter Umzug: neuer Stand.\n")
+    _git(welt["wt"], "commit", "-q", "-m", "docs(#9121): zweiter Umzug (#9121) [skip ci]", "--", HANDOFF_REL)
+    _git(welt["wt"], "push", "-q", "origin", "HEAD:refs/heads/ticket-9121")
+    ergebnis = _bau(welt["haupt"], welt["tmp"], "--umzug", f"ticket-9121@{sha1}:{HANDOFF_REL}")
+    assert ergebnis.returncode == 0, ergebnis.stdout + ergebnis.stderr
+    prompt = (welt["tmp"] / "fake" / "prompt-1.txt").read_text(encoding="utf-8")
+    assert "Stand: Hälfte gebaut." in prompt
+    assert "Zweiter Umzug" not in prompt
+    assert "origin/ticket-9121" in prompt
+
+
+def test_bau_umzug_sha_nicht_auf_branch_exit_2(welt: dict[str, Path]) -> None:
+    _handoff_auf_branch(welt)
+    _handoff(welt["haupt"], HANDOFF_OK + "fremd\n")
+    _git(welt["haupt"], "add", HANDOFF_REL)
+    _git(welt["haupt"], "commit", "-q", "-m", "fremd")
+    fremd = _git(welt["haupt"], "rev-parse", "HEAD")
+    ergebnis = _bau(welt["haupt"], welt["tmp"], "--umzug", f"ticket-9121@{fremd}:{HANDOFF_REL}")
+    assert ergebnis.returncode == 2, ergebnis.stdout + ergebnis.stderr
+    assert "nicht in origin/ticket-9121" in ergebnis.stderr
+    assert not (welt["tmp"] / "fake" / "aufrufe.txt").exists()
+
+
+def test_bau_umzug_fetch_fehler_exit_2(welt: dict[str, Path]) -> None:
+    _handoff_auf_branch(welt)
+    _git(welt["haupt"], "fetch", "-q", "origin")
+    _git(welt["haupt"], "remote", "set-url", "origin", str(welt["tmp"] / "weg.git"))
+    ergebnis = _bau(welt["haupt"], welt["tmp"], "--umzug", f"ticket-9121:{HANDOFF_REL}")
+    assert ergebnis.returncode == 2, ergebnis.stdout + ergebnis.stderr
+    assert "git fetch" in ergebnis.stderr
+    assert not (welt["tmp"] / "fake" / "aufrufe.txt").exists()
+
+
+def test_spawn_srv_reicht_sha_ref_durch(welt: dict[str, Path]) -> None:
+    ref = f"ticket-9121@{'a' * 40}:{HANDOFF_REL}"
+    ergebnis = _spawn_srv(
+        welt["haupt"], SPEC, "--tickets", TICKET, "--ohne-wache", "--umzug", ref, "--dry-run"
+    )
+    assert ergebnis.returncode == 0, ergebnis.stdout + ergebnis.stderr
+    assert f"bau 9121 --umzug {ref}" in ergebnis.stdout
+
+
+# --- Befund 8: ungetrackte Arbeitsdateien -----------------------------------------
+
+
+def test_ungetrackte_arbeitsdatei_weigert(welt: dict[str, Path]) -> None:
+    (welt["wt"] / "neu.py").write_text("y = 1\n", encoding="utf-8")
+    pfad = _handoff(welt["wt"])
+    assert _umzug(welt, pfad) == umzug.EXIT_WEIGERUNG
+    assert _remote_sha(welt) == ""
+    assert _ssh_aufrufe(welt) == []
+
+
+def test_gitignorierte_datei_zaehlt_nicht(welt: dict[str, Path]) -> None:
+    gemeinsam = Path(
+        _git(welt["wt"], "rev-parse", "--path-format=absolute", "--git-common-dir")
+    )
+    exclude = gemeinsam / "info" / "exclude"
+    exclude.parent.mkdir(parents=True, exist_ok=True)
+    with exclude.open("a", encoding="utf-8") as fh:
+        fh.write("*.log\n")
+    (welt["wt"] / "lauf.log").write_text("x\n", encoding="utf-8")
+    pfad = _handoff(welt["wt"])
+    assert _umzug(welt, pfad) == 0
+
+
+# --- Befund 9: ls-remote-Fehler ehrlich melden ---------------------------------
+
+
+def test_ls_remote_fehler_wird_gemeldet(
+    welt: dict[str, Path], caplog: pytest.LogCaptureFixture
+) -> None:
+    _git(welt["wt"], "remote", "set-url", "--push", "origin", str(welt["origin"]))
+    _git(welt["wt"], "remote", "set-url", "origin", str(welt["tmp"] / "weg.git"))
+    pfad = _handoff(welt["wt"])
+    with caplog.at_level("ERROR"):
+        assert _umzug(welt, pfad) == umzug.EXIT_FEHLER
+    assert "ls-remote scheiterte" in caplog.text
+    assert _ssh_aufrufe(welt) == []
+
+
+# --- Befund 10: Ergebnis der Session an den Wächter --------------------------------
+
+
+def test_umzug_einzel_schreibt_ergebnis_in_laeuft_datei(
+    welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    anfrage = welt["tmp"] / "umzug-anfrage-9121"
+    laeuft = Path(f"{anfrage}.laeuft")
+    laeuft.write_text("2026-09-18T20:00:00+02:00", encoding="utf-8")
+    monkeypatch.setenv("BAU_UMZUG_ANFRAGE", str(anfrage))
+    monkeypatch.setenv("SSH_STUB_MODUS", "fehler")
+    pfad = _handoff(welt["wt"])
+    assert _umzug(welt, pfad) == umzug.EXIT_FEHLER
+    daten = json.loads(laeuft.read_text(encoding="utf-8"))
+    assert daten["exit"] == umzug.EXIT_FEHLER
+    assert "Server-Start" in daten["grund"]
+
+
+def test_umzug_einzel_ohne_laeuft_datei_legt_keine_an(
+    welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    anfrage = welt["tmp"] / "umzug-anfrage-9121"
+    monkeypatch.setenv("BAU_UMZUG_ANFRAGE", str(anfrage))
+    pfad = _handoff(welt["wt"])
+    assert _umzug(welt, pfad) == 0
+    assert not Path(f"{anfrage}.laeuft").exists()
+
+
+def test_umzug_alle_stoppt_sofort_bei_fehlschlag_der_session(
+    alle, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    w = alle({"9121": "läuft seit 10:00", "9122": "wartet"}, zieht_um=False)
+    vorher = umzug.anfrage_schreiben
+
+    def anfrage(repo: Path, ticket: str) -> Path:
+        pfad = vorher(repo, ticket)
+        laeuft = Path(f"{pfad}.laeuft")
+        pfad.rename(laeuft)  # wie der Stop-Hook
+        laeuft.write_text(
+            json.dumps({"exit": 1, "grund": "Server-Start scheiterte — lokale Session läuft weiter."}),
+            encoding="utf-8",
+        )
+        return pfad
+
+    monkeypatch.setattr(umzug, "anfrage_schreiben", anfrage)
+    start = time.monotonic()
+    assert _alle(tmp_path, warte_max=3) == umzug.EXIT_FEHLER
+    assert time.monotonic() - start < 2
+    ausgabe = capsys.readouterr().out
+    assert "Server-Start scheiterte" in ausgabe
+    assert "Stopp bei #9121" in ausgabe
+    assert w.ereignisse == ["anfrage 9121"]
+    assert not (tmp_path / ".to-spawn" / "umzug-anfrage-9121.laeuft").exists()
+
+
+# --- Befund 11: Pfade in der Hook-Anweisung gequotet ---------------------------------
+
+
+def test_hook_anweisung_quotet_pfade(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    anfrage = tmp_path / "umzug-anfrage-9121"
+    anfrage.write_text("1", encoding="utf-8")
+    monkeypatch.setenv("BAU_UMZUG_ANFRAGE", str(anfrage))
+    monkeypatch.setenv("BAU_TICKET", "9121")
+    monkeypatch.setattr(umzug.sys, "executable", "C:/Program Files/Python312/python.exe")
+    monkeypatch.setattr(umzug, "SKILL", Path("/opt/mein skill"))
+    assert umzug.hook_umzug_anfrage("{}") == 0
+    grund = json.loads(capsys.readouterr().out)["reason"]
+    assert (
+        "'C:/Program Files/Python312/python.exe' '/opt/mein skill/to_spawn.py' umzug 9121"
+        in grund
+    )
+
+
+# --- Befund 12: shell=True-Notnagel nur, wenn das Programm fehlt ---------------------
+
+
+def test_start_notnagel_nur_bei_datei_fehlt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    aufrufe: list[bool] = []
+    echt = subprocess.Popen
+
+    def popen(cmd: object, *args: object, **kw: object) -> object:
+        aufrufe.append(bool(kw.get("shell")))
+        if not kw.get("shell"):
+            raise FileNotFoundError(2, "claude nicht gefunden")
+        return echt([sys.executable, "-c", "pass"])
+
+    monkeypatch.setattr(umzug.subprocess, "Popen", popen)
+    code, daten = umzug.starte_mit_umzug_wache(["claude", "x"], tmp_path / "u.json", takt=0.05)
+    assert aufrufe == [False, True]
+    assert code == 0 and daten is None
+
+
+def test_start_andere_oserror_wird_geworfen(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    aufrufe: list[bool] = []
+    echt = subprocess.Popen
+
+    def popen(cmd: object, *args: object, **kw: object) -> object:
+        aufrufe.append(bool(kw.get("shell")))
+        if not kw.get("shell"):
+            raise PermissionError(13, "Zugriff verweigert")
+        return echt([sys.executable, "-c", "pass"])
+
+    monkeypatch.setattr(umzug.subprocess, "Popen", popen)
+    with caplog.at_level("ERROR"), pytest.raises(PermissionError):
+        umzug.starte_mit_umzug_wache(["claude", "x"], tmp_path / "u.json", takt=0.05)
+    assert aufrufe == [False]
+    assert "Zugriff verweigert" in caplog.text
+
+
+# --- Befund 13: Pflichtzeile als Markdown-Überschrift ------------------------------
+
+
+@pytest.mark.parametrize("zeile", ["## Umzug: server", "# Umzug: server", "### **Umzug:** server"])
+def test_umzug_zeile_als_ueberschrift_gilt(welt: dict[str, Path], zeile: str) -> None:
+    pfad = _handoff(welt["wt"], f"# Handoff #9121\n\nStand: Hälfte gebaut.\n\n{zeile}\n")
+    assert _umzug(welt, pfad) == 0
+    assert Path(os.environ["BAU_UMZUG_DATEI"]).is_file()
+
+
+def test_umzug_nur_im_fliesstext_bleibt_weigerung(welt: dict[str, Path]) -> None:
+    pfad = _handoff(welt["wt"], "# Handoff\n\nDer Umzug: server kommt später.\n")
+    assert _umzug(welt, pfad) == umzug.EXIT_WEIGERUNG
+    assert _ssh_aufrufe(welt) == []

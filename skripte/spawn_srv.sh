@@ -3,11 +3,12 @@
 #
 # Aufruf (auf dem Server, als Nutzer bau):
 #   bash scripts/spawn_srv.sh <S> [--tickets 179,188] [--ohne-wache] [--dry-run]
-#        [--umzug <branch>:<pfad>] [--ohne-regularien] [--nur-wache]
+#        [--umzug <branch>@<sha>:<pfad>] [--ohne-regularien] [--nur-wache]
 #
 # Umzug (#212): --umzug nur mit genau einem Ticket, startet ``bau <N> --umzug <ref>``
-# (Handoff aus origin/<branch>:<pfad> als Startkontext) und prüft keine Regularien.
-# --nur-wache startet nur das Wächter-Fenster.
+# (Handoff aus Commit <sha> auf origin/<branch> als Startkontext; ``<branch>:<pfad>``
+# ohne SHA geht weiter) und prüft keine Regularien. Läuft das Ticket hier schon:
+# Exit 4, nichts gestartet. --nur-wache startet nur das Wächter-Fenster.
 # Eine tmux-Session je Spec (``spec-<S>``), darin ein Fenster ``wache <S>`` und
 # je Ticket ein Fenster ``bau <N>``. Gewartet wird in bau.py (0 Token).
 # Kontrolle: ``sessions <S>`` · ``tmux attach -t spec-<S>`` (raus: Strg+B d).
@@ -34,7 +35,7 @@ while [ $# -gt 0 ]; do
     --umzug) UMZUG_REF="${2:-}"; OHNE_REGULARIEN=1; shift 2 ;;
     --ohne-regularien) OHNE_REGULARIEN=1; shift ;;
     --nur-wache) NUR_WACHE=1; shift ;;
-    -h|--help) sed -n '2,14p' "${BASH_SOURCE[0]}"; exit 0 ;;
+    -h|--help) sed -n '2,15p' "${BASH_SOURCE[0]}"; exit 0 ;;
     *)
       if [ -z "$SPEC" ]; then SPEC="$1"; shift; else echo "Unbekanntes Argument: $1" >&2; exit 2; fi ;;
   esac
@@ -48,7 +49,7 @@ if [ -n "$UMZUG_REF" ]; then
   fi
   case "$UMZUG_REF" in
     ?*:?*) ;;
-    *) echo "--umzug erwartet <branch>:<pfad>, bekam: '$UMZUG_REF'" >&2; exit 2 ;;
+    *) echo "--umzug erwartet <branch>@<sha>:<pfad>, bekam: '$UMZUG_REF'" >&2; exit 2 ;;
   esac
 fi
 if [ "$NUR_WACHE" -eq 1 ] && [ "$OHNE_WACHE" -eq 1 ]; then
@@ -128,6 +129,10 @@ for n in $TICKETS; do
     else
       GEPLANT+=("bau $n")
     fi
+  elif [ -n "$UMZUG_REF" ]; then
+    # Umzug: nie eine zweite Session für dasselbe Ticket — der Umzug bricht ab (Exit 4).
+    echo "Ticket #$n läuft auf dem Server bereits ($z) — Umzug abgebrochen, nichts gestartet." >&2
+    exit 4
   else
     echo "Ticket #$n läuft bereits ($z) — übersprungen."
   fi

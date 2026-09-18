@@ -1,6 +1,6 @@
 """bau — schlanke Claude-Code-Session für genau ein Ticket.
 
-Aufruf: ``python scripts/bau.py <N> [--dry-run] [--model <m>] [--print-prompt] [--sofort] [--takt <s>] [--umzug <branch>:<pfad>]``
+Aufruf: ``python scripts/bau.py <N> [--dry-run] [--model <m>] [--print-prompt] [--sofort] [--takt <s>] [--umzug <branch>@<sha>:<pfad>]``
 
 Liest das Ticket-Manifest unter ``docs/agents/manifests/*.json`` (SSOT-Schema siehe
 ``docs/agents/kontext-manifest.md``), schaltet alle nicht benötigten Skills
@@ -441,18 +441,13 @@ def staffel_prompt(prompt: str, handoff: Path, runde: int) -> str:
 # --- Umzug (#212) -----------------------------------------------------------
 
 
-def umzug_handoff_lesen(ref: str) -> tuple[str, str, str]:
-    """``<branch>:<pfad>`` → ``(branch, pfad, inhalt)`` aus ``origin/<branch>`` (im REPO).
+#: ``<branch>@<sha>:<pfad>`` — der SHA ist der Commit, den der Umzug gepusht hat.
+UMZUG_REF_SHA = re.compile(r"^(?P<branch>.+)@(?P<sha>[0-9a-fA-F]{7,64})$")
 
-    Nicht lesbar → Abbruch mit Exit 2, es startet nichts.
-    """
-    branch, _, pfad = ref.partition(":")
-    if not branch or not pfad:
-        log.error("Umzug-Handoff nicht lesbar: --umzug erwartet <branch>:<pfad>, bekam %r.", ref)
-        sys.exit(2)
-    subprocess.run(["git", "fetch", "-q", "origin", branch], cwd=REPO, check=False)
-    gezeigt = subprocess.run(
-        ["git", "show", f"origin/{branch}:{pfad}"],
+
+def _git_lauf(*args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", *args],
         cwd=REPO,
         capture_output=True,
         text=True,
@@ -460,10 +455,50 @@ def umzug_handoff_lesen(ref: str) -> tuple[str, str, str]:
         errors="replace",
         check=False,
     )
+
+
+def umzug_handoff_lesen(ref: str) -> tuple[str, str, str]:
+    """``<branch>@<sha>:<pfad>`` → ``(branch, pfad, inhalt)`` aus genau diesem Commit (im REPO).
+
+    Der Commit muss in ``origin/<branch>`` liegen. Die alte Form ``<branch>:<pfad>``
+    (ohne SHA) liest den aktuellen Stand von ``origin/<branch>``.
+    Nicht lesbar (auch: ``git fetch`` scheitert) → Abbruch mit Exit 2, es startet nichts.
+    """
+    links, _, pfad = ref.partition(":")
+    treffer = UMZUG_REF_SHA.match(links)
+    branch, sha = (treffer.group("branch"), treffer.group("sha")) if treffer else (links, "")
+    if not branch or not pfad:
+        log.error(
+            "Umzug-Handoff nicht lesbar: --umzug erwartet <branch>@<sha>:<pfad>, bekam %r.", ref
+        )
+        sys.exit(2)
+    geholt = _git_lauf("fetch", "-q", "origin", branch)
+    if geholt.returncode != 0:
+        log.error(
+            "Umzug-Handoff nicht lesbar: git fetch origin %s scheiterte (Exit %s: %s) — "
+            "nichts gestartet.",
+            branch,
+            geholt.returncode,
+            (geholt.stderr or geholt.stdout).strip()[:200] or "keine Meldung",
+        )
+        sys.exit(2)
+    if sha:
+        enthalten = _git_lauf("merge-base", "--is-ancestor", sha, f"origin/{branch}")
+        if enthalten.returncode != 0:
+            log.error(
+                "Umzug-Handoff nicht lesbar: Commit %s ist nicht in origin/%s (%s) — "
+                "nichts gestartet.",
+                sha,
+                branch,
+                enthalten.stderr.strip()[:200] or "nicht enthalten",
+            )
+            sys.exit(2)
+    stand = sha or f"origin/{branch}"
+    gezeigt = _git_lauf("show", f"{stand}:{pfad}")
     if gezeigt.returncode != 0 or not gezeigt.stdout.strip():
         log.error(
-            "Umzug-Handoff nicht lesbar: origin/%s:%s (%s) — nichts gestartet.",
-            branch,
+            "Umzug-Handoff nicht lesbar: %s:%s (%s) — nichts gestartet.",
+            stand,
             pfad,
             gezeigt.stderr.strip()[:200] or "leer",
         )
@@ -527,8 +562,9 @@ def main() -> int:
     )
     parser.add_argument(
         "--umzug",
-        metavar="BRANCH:PFAD",
-        help="Umzug vom PC (#212): Handoff aus origin/<branch>:<pfad> als Startkontext, impliziert --sofort",
+        metavar="BRANCH@SHA:PFAD",
+        help="Umzug vom PC (#212): Handoff aus Commit <sha> auf origin/<branch> als Startkontext "
+        "(alte Form <branch>:<pfad> liest origin/<branch>), impliziert --sofort",
     )
     args = parser.parse_args()
     ticket = str(args.ticket)
@@ -679,6 +715,13 @@ def main() -> int:
         if umzug_daten is not None:
             # Kein Staffel-Neustart: die Session läuft jetzt auf dem Server weiter.
             staffel_datei.unlink(missing_ok=True)
+            if umzug_daten.get("lokal_beendet") is False:
+                log.error(
+                    "Umzug nach %s bestätigt, aber die lokale Session ist NICHT sicher beendet "
+                    "— Doppel-Lauf droht: Claude-Fenster von Hand schließen.",
+                    umzug_daten.get("ziel") or "?",
+                )
+                return 1
             log.info(
                 "Umzug nach %s bestätigt — lokale Session beendet (Exit %s).",
                 umzug_daten.get("ziel") or "?",
