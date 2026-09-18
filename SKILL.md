@@ -1,20 +1,30 @@
 ---
 name: to-spawn
-description: "Alle Ticket-Sessions einer Spec auf einmal starten — STANDARD: auf dem Bau-Server (`ssh bau-server`, tmux-Sitzung `spec-<S>`, Fenster je `bau <N>` + `wache <S>`, Laptop darf aus), Warten außerhalb von Claude (0 Token), Kontrolle per `ssh bau-server sessions <S>`. Trigger: /to-spawn, „spawn alle Terminals“, „starte alle Tickets“, nach /to-tickets. Varianten: `srv` (Standard) · `local` (nur auf Wunsch: Windows-Terminal-Tabs auf diesem PC)."
+description: "Alle Ticket-Sessions einer Spec auf einmal starten — lokal (Windows-Terminal-Tabs) oder auf dem Bau-Server (`ssh bau-server`, tmux-Sitzung `spec-<S>`, Fenster je `bau <N>` + `wache <S>`, Laptop darf aus), Warten außerhalb von Claude (0 Token), Kontrolle per `ssh bau-server sessions <S>`. Trigger: /to-spawn, „spawn alle Terminals“, „starte alle Tickets“, nach /to-tickets. Einstiege: `/to-spawn <S>` fragt lokal (1) oder Server (2) · `/to-spawn-local <S>` (Windows-Terminal-Tabs auf diesem PC) · `/to-spawn-remote <S>` (Bau-Server, ersetzt `srv`); `/meta-exec` = alter Name."
 disable-model-invocation: false
 ---
 
 # /to-spawn — Bau-Sessions einer Spec starten
 
-Quelle/Installation: `github.com/Shavy72/claude-skill-to-spawn` (`install.ps1`; Repo-Hälfte in `repo-scripts/`). Änderungen hier → dort nachziehen.
+Quelle: `github.com/Shavy72/claude-skill-to-spawn` — Änderungen nur dort, dann installieren: Linux `bash install.sh [--repo <Pfad>]`, Windows `pwsh -File install.ps1 [-Repo <Pfad>]` (kopiert Skill + Alias-Skills nach `~/.claude/skills/`, alter Stand wandert nach `~/.claude/skills/_alt/`).
 
 Stand 2026-09-17 (David: „richtig geil … merk dir das richtig gut“). Voraussetzung: `/to-tickets` ist durch, `docs/agents/manifests/spec-<S>.json` liegt, Tickets haben native `blocked_by`-Kanten.
 
 ## Aufruf
 
-- `/to-spawn <S>` oder `/to-spawn srv <S>` — **Standard seit 2026-09-17 (David): Bau-Server** (tmux `spec-<S>`, Laptop darf aus).
-- `/to-spawn <S> --tickets 188,189,190` — nur diese Tickets (z. B. Neustart einzelner Wartefenster); gilt für srv und local.
-- `/to-spawn-local <S>` — eigener Befehl (Skill `to-spawn-local`): Konsolen auf diesem PC (Windows-Terminal-Tabs).
+Drei Einstiege (#205), alle landen in `python ~/.claude/skills/to-spawn/to_spawn.py spawn <S> [--ziel local|srv] [--tickets a,b]` (prüft erst die Regularien):
+- `/to-spawn <S>` — **du (das Modell) fragst David** „lokal (1) oder Server (2)?“ (AskUserQuestion, Vorschlag = `ziel_default` aus `.to-spawn/config.json`) und rufst dann mit `--ziel local` bzw. `--ziel srv` auf. Nie ohne `--ziel` aus dem Bash-Tool starten: dort ist die Eingabe leer, die Skript-Frage nimmt still die Vorgabe.
+- `/to-spawn-local <S>` — Alias-Skill, `--ziel local`: Konsolen auf diesem PC (Windows-Terminal-Tabs).
+- `/to-spawn-remote <S>` — Alias-Skill, `--ziel srv`: Bau-Server (tmux `spec-<S>`, Laptop darf aus). Ersetzt `/to-spawn srv <S>`. `--ziel srv` braucht `pwsh` (Windows-Laptop); **auf dem Bau-Server selbst** stattdessen `bash scripts/spawn_srv.sh <S> [--tickets a,b]` im Repo-Wurzelordner.
+- `… --tickets 188,189,190` — nur diese Tickets (z. B. Neustart einzelner Wartefenster); gilt für alle drei.
+- `/meta-exec` — alter Name, Alias auf `/to-spawn`.
+
+## Umzug #205 — Skripte im Skill, Repo nur Weiterleitungen
+
+- Logik liegt in `~/.claude/skills/to-spawn/skripte/` (`bau.py`, `wache.py`, `sessions_stand.py`, `spec_stand.py`, `spawn_srv.sh`), direkt startbar im Repo-Wurzelordner. Repo = `TO_SPAWN_REPO`, sonst Git-Wurzel des aktuellen Ordners — nie der Skill-Ordner.
+- Das Repo trägt nur dünne Weiterleitungen gleichen Namens unter `scripts/` (+ Helfer `scripts/_to_spawn_weiterleitung.py`, Vorlage in `repo-scripts/`). Sie setzen `TO_SPAWN_REPO` = Ordner über `scripts/` und springen in den Skill (`$TO_SPAWN_HOME`, Vorgabe `~/.claude/skills/to-spawn`); fehlt der Skill → Meldung + Exit 3. `bau <N>`/`wache <S>`/`sessions <S>` bleiben unverändert.
+- Repo-Konfig `.to-spawn/config.json` (legt `bau.py`/`wache.py`/`to_spawn.py pruefen|spawn` beim ersten Start mit Vorgaben an, überschreibt nie): `terminal`, `ziel_default`, `ssh_ziel`, `runner`, `modelle` + `effort` je Rolle (`ticket`, `ticket_leicht`, `waechter`), `staffel`, `mail.ziel`, `regularien.checkpoint_label`, `staging_start`, `deploy_befehl`. Verdrahtet sind heute: `ziel_default`, `ssh_ziel`, `modelle.ticket` (`bau`, Vorrang `--model` > Konfig > `_default.json`), `modelle.waechter` (`wache`), `regularien`, `staffel`. Die übrigen Felder sind angelegt, werden aber erst von den Folge-Tickets der Spec #202 gelesen — eine Änderung dort wirkt noch nicht. `--dry-run` legt nichts an. `.gitignore`: `.to-spawn/*` + `!.to-spawn/config.json`.
+- Der Staffel-Hook bleibt im Repo (`scripts/hooks/staffel_stop.py`).
 
 ## Ablauf `local` (deterministisch, Skript statt Prosa)
 
@@ -69,5 +79,5 @@ Python-Kern `to_spawn.py` (Paket `to_spawn/`, Tests `tests/`, Doku `to_spawn/REA
 - `… log <S>` — Gesamt-Tabelle aus `docs/agents/bau_log/<N>.jsonl` (Token, Dauer, Staffel-Zähler) · `… lernstoff` — Zeilen für /to-tickets: Schätzung → Ist, Sessions, Faktor je Ticket + Faustregeln (mittlerer Faktor, Sessions je Umfang-Art, Tickets mit Staffel > 1).
 - `… hook-stop` / `… hook-subagent-stop` — Stop-/SubagentStop-Hooks (JSON auf stdin) schreiben `session_ende`/`subagent_ende` mit Token-Summen aus dem Transkript.
 - Staffel (200k): Hook kann eine Session nicht beenden (Doku: `continue:false` endet nur die Runde) → Hook setzt Marker `.to-spawn/stop-<N>`, `to_spawn/bau_loop.py` beendet das Kind und startet die Folge-Session mit Handoff als Startkontext (max 3 Staffeln). Verdrahtung in `bau.py` = Ticket #203/#204.
-- Drei Einstiege (Ziel, Ticket #205): `/to-spawn <S>` fragt 1/2 · `/to-spawn-local <S>` · `/to-spawn-remote <S>` (ersetzt `srv`) · `/to-spawn-of` = Umzug (#212).
+- Drei Einstiege (gebaut #205, siehe „Aufruf“) · `/to-spawn-of` = Umzug (#212, offen).
 - Entscheidungen + Ticket-Kette (#203–#214): `docs/GRILL_2026-09-18_to_spawn_final.md` im DuoPlus-Repo, Spec #202.

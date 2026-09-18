@@ -78,6 +78,8 @@ def main(argv: list[str] | None = None) -> int:
         logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
     repo = config.repo_wurzel()
+    if args.befehl in ("spawn", "pruefen") and not args.dry_run:
+        config.sicherstellen(repo)
     konfig = config.lade(repo)
 
     if args.befehl == "spawn":

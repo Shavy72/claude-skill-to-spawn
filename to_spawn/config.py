@@ -43,6 +43,10 @@ DEFAULTS: dict[str, Any] = {
     "regularien": {
         "checkpoint_label": "checkpoint:human",
     },
+    #: Befehl, der die Staging-Umgebung startet (leer = keine Staging-Stufe).
+    "staging_start": "",
+    #: Deploy-Befehl des Repos (leer = Repo deployt nicht über den Skill).
+    "deploy_befehl": "",
 }
 
 KONFIG_PFAD = Path(".to-spawn") / "config.json"
@@ -84,6 +88,26 @@ def lade(repo: Path | None = None) -> dict[str, Any]:
         log.warning("Konfig ist kein Objekt (%s) — Vorgaben gelten.", datei)
         return dict(DEFAULTS)
     return _mische(DEFAULTS, eigen)
+
+
+def sicherstellen(repo: Path | None = None) -> Path:
+    """Legt ``.to-spawn/config.json`` mit den Vorgaben an, falls sie fehlt.
+
+    Eine vorhandene Datei bleibt unangetastet (auch wenn sie unlesbar ist).
+    Rückgabe: Pfad der Konfig-Datei.
+    """
+    datei = repo_wurzel(repo) / KONFIG_PFAD
+    if datei.exists():
+        return datei
+    datei.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        # Modus "x": zwei gleichzeitige Starts überschreiben sich nie gegenseitig.
+        with datei.open("x", encoding="utf-8") as strom:
+            strom.write(json.dumps(DEFAULTS, indent=2, ensure_ascii=False) + "\n")
+    except FileExistsError:
+        return datei
+    log.info("Konfig angelegt: %s (Vorgaben, bitte anpassen)", datei)
+    return datei
 
 
 def staffel_modus(konfig: dict[str, Any]) -> str:

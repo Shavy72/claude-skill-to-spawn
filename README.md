@@ -24,9 +24,11 @@ Why it is fast: tickets are cut fine (each fits one fresh context window), every
 |---|---|
 | `SKILL.md` | The skill Claude Code loads on `/to-spawn` (German — the author's working language). |
 | `spawn_local.ps1` | Deterministic launcher: reads the spec manifest, skips closed/running tickets, opens one Windows Terminal window with `wache <S>` + `bau <N>` tabs, then prints the session table. |
-| `install.ps1` | Copies the skill to `~/.claude/skills/to-spawn`, adds the `bau` / `wache` / `sessions` PowerShell functions to your profile, optionally copies the repo scripts. |
+| `install.ps1` / `install.sh` | Copies the skill to `~/.claude/skills/to-spawn` (old copy moved to `~/.claude/skills/_alt/`), installs the alias skills, optionally copies the repo forwarders (`-Repo` / `--repo`, missing files only) and creates `.to-spawn/config.json`. `install.ps1` also adds the `bau` / `wache` / `sessions` PowerShell functions. |
+| `aliase/` | Alias skills: `/to-spawn-local <S>` (`--ziel local`), `/to-spawn-remote <S>` (`--ziel srv`), `/meta-exec` (old name of `/to-spawn`). |
 | `docs/kontext-manifest.md` | The `/to-tickets` add-on this chain needs: manifest schema, **native GitHub `blocked_by` edges** (the launcher waits on them), per-ticket context package, watcher. Copy into your repo's `docs/agents/`. |
-| `repo-scripts/` | The per-repo half: `bau.py` (one ticket session, waits for blockers outside Claude), `wache.py` (watcher session), `sessions_stand.py` (which sessions are on: off / waiting / running since / ORPHANED), `spec_stand.py` (one line per ticket for the watcher). Repo name is read from `git remote origin`. |
+| `skripte/` | The logic: `bau.py` (one ticket session, waits for blockers outside Claude), `wache.py` (watcher session), `sessions_stand.py` (which sessions are on: off / waiting / running since / ORPHANED), `spec_stand.py` (one line per ticket for the watcher), `spawn_srv.sh` (tmux launcher on the build server). Repo = `TO_SPAWN_REPO`, else the git root of the current directory. |
+| `repo-scripts/` | The per-repo half: thin forwarders with the same names (+ `_to_spawn_weiterleitung.py`) that jump into `skripte/`, plus `_default.json`. Per-repo settings live in `.to-spawn/config.json`. |
 
 ## Install
 
