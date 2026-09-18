@@ -15,6 +15,7 @@ Immer im Repo-Wurzelordner ausführen:
 | `python to_spawn.py pruefen <S> [--tickets a,b] [--ohne-github]` | nur die Regularien; Exit 0 = frei, **Exit 3 = Weigerung** |
 | `python to_spawn.py log <S>` | Gesamt-Tabelle aller Tickets der Spec (Schätzung, Ist, Sessions, Staffel, Subagenten, Dauer) |
 | `python to_spawn.py lernstoff [--letzte 30]` | Zeilen für `/to-tickets` (Schätzung → Ist, Sessions, Faktor je Ticket + Faustregeln für den Schnitt) |
+| `python to_spawn.py deploy-status [--datei P] [--ticket N] [--still-min 60]` | liest nur die Deploy-Statusdatei (Vorgabe `<Repo>/.deploy_status.jsonl`, sonst `DEPLOY_STATUS_DATEI`), schreibt jede neue Phase als `deploy_phase` ins Bau-Log des Repos, in dem die Datei liegt (ohne Doppel; Ticket aus `--ticket`, `BAU_TICKET` oder `wt-<N>`), Ausgabe ≤ 3 Zeilen; **Exit 0 = grün, 1 = rot (auch: Gate-Prozess laut PID tot ohne Ende-Zeile), 3 = läuft, 4 = still über der Grenze oder Zeitstempel unlesbar, 2 = keine Datei** |
 | `python to_spawn.py hook-stop` | Stop-Hook, JSON auf stdin |
 | `python to_spawn.py hook-subagent-stop` | SubagentStop-Hook, JSON auf stdin |
 | `python to_spawn.py inventur [--json] [--abwahl a,b] [--anwahl a,b] [--schreiben] [--ausgabe PFAD] [--letzte 200]` | Setup-Wizard Teil 2: Werkzeug-Inventur (Skills, Plugin-Skills, Agenten, MCP-Server) nach 12 Kategorien, Standard alles an; Setup-Zeilen für fehlende Unterbauten, tote Winkel; `--schreiben` legt `.to-spawn/werkzeuge.json` an, unbekannter Name = **Exit 2** |
@@ -158,8 +159,9 @@ Alles andere (CLI, Manifest-Prüfung, Bau-Log, Hooks, Staffel-Schleife, Git) lä
 
 - Setup-Wizard, Werkzeug-Inventur, Nest-Bau, Staging, `/to-spawn-of`, Mail und
   Remote Control fehlen (bewusst, eigene Tickets der Spec #202).
-- Deploy-Statusdatei (`deploy_phase`-Zeilen) ist im Log-Format vorgesehen, aber noch
-  schreibt niemand sie.
+- Deploy-Statusdatei: `safe_deploy_vps.sh` (DuoPlus-Repo) schreibt sie, `deploy-status`
+  überträgt sie als `deploy_phase` ins Bau-Log (#207). Andere Repos brauchen dafür ein
+  eigenes Deploy-Skript mit demselben Zeilenformat.
 - `spawn` ist nur Delegation; `spawn_srv.ps1`/`spawn_local.ps1` kennen die Staffel
   noch nicht — sie starten `bau <N>` des Repos, nicht `bau_loop.run_ticket`.
 - `ist_k` summiert die `usage`-Felder aller assistant-Zeilen; das ist ein

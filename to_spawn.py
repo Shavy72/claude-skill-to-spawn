@@ -7,6 +7,7 @@ Aufruf (im Repo-Wurzelordner):
     python ~/.claude/skills/to-spawn/to_spawn.py log <S>
     python ~/.claude/skills/to-spawn/to_spawn.py lernstoff [--letzte 30]
     python ~/.claude/skills/to-spawn/to_spawn.py setup [--zeigen|--standard|--terminal …]
+    python ~/.claude/skills/to-spawn/to_spawn.py deploy-status [--datei P] [--ticket N] [--still-min 60]
     python ~/.claude/skills/to-spawn/to_spawn.py hook-stop          # JSON auf stdin
     python ~/.claude/skills/to-spawn/to_spawn.py hook-subagent-stop # JSON auf stdin
     python ~/.claude/skills/to-spawn/to_spawn.py eintrag --ticket <N> --typ zusammenfassung \
@@ -22,7 +23,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from to_spawn import bau_log, config, hooks, inventur, manifest, setup  # noqa: E402
+from to_spawn import bau_log, config, deploy_status, hooks, inventur, manifest, setup  # noqa: E402
 from to_spawn import spawn as spawn_modul  # noqa: E402
 
 log = logging.getLogger("to_spawn")
@@ -251,6 +252,19 @@ def main(argv: list[str] | None = None) -> int:
         f"(Standard {inventur.HISTORIE_VORGABE}, 0 = keine)",
     )
 
+    p_status = unter.add_parser(
+        "deploy-status",
+        help="Deploy-Statusdatei lesen, neue Phasen ins Bau-Log (Exit 0/1/2/3/4)",
+    )
+    p_status.add_argument("--datei", help="Statusdatei (Vorgabe: <Repo>/.deploy_status.jsonl)")
+    p_status.add_argument("--ticket", help="Ticket fürs Bau-Log (sonst TO_SPAWN_TICKET/wt-<N>)")
+    p_status.add_argument(
+        "--still-min",
+        type=float,
+        default=deploy_status.STILL_MIN_VORGABE,
+        help="ab so vielen Minuten ohne neue Phase gilt der Lauf als hängend (Exit 4)",
+    )
+
     unter.add_parser("hook-stop", help="Stop-Hook (JSON auf stdin)")
     unter.add_parser("hook-subagent-stop", help="SubagentStop-Hook (JSON auf stdin)")
 
@@ -325,6 +339,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.befehl == "lernstoff":
         print(bau_log.lernstoff(repo, args.letzte))
         return 0
+    if args.befehl == "deploy-status":
+        return deploy_status.deploy_status(
+            repo, datei=args.datei, ticket=args.ticket, still_min=args.still_min
+        )
     ap.error(f"Unbekannter Befehl: {args.befehl}")
     return 2
 
