@@ -282,7 +282,11 @@ if [ -d "$STAGE/claude" ]; then
 else
   warn "$STAGE/claude fehlt — ~/.claude noch leer"
 fi
-if [ ! -f "$SKILL_NUTZER/to_spawn.py" ]; then
+# Fehlt der Skill oder weicht er vom laufenden Stand ab → neu installieren (alter Stand nach _alt/).
+if [ "$(cd "$SKILL_DIR" && pwd -P)" != "$(cd "$SKILL_NUTZER" 2>/dev/null && pwd -P)" ] \
+   && ! ( for teil in SKILL.md to_spawn.py to_spawn skripte nest; do
+          diff -rq -x __pycache__ "$SKILL_DIR/$teil" "$SKILL_NUTZER/$teil" >/dev/null 2>&1 || exit 1
+        done ); then
   bash "$SKILL_DIR/install.sh" --skills "$NUTZER_HOME/.claude/skills" >/dev/null
 fi
 chown -R "$NUTZER:$NUTZER" "$NUTZER_HOME/.claude"
