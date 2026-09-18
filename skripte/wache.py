@@ -20,6 +20,7 @@ import logging
 import re
 import os
 import shutil
+import tempfile
 import subprocess
 import sys
 from datetime import date
@@ -29,7 +30,7 @@ from pathlib import Path
 _SKILL = str(Path(__file__).resolve().parent.parent)
 if _SKILL not in sys.path:
     sys.path.insert(0, _SKILL)
-from to_spawn import config, waechter_lauf  # noqa: E402
+from to_spawn import config, umzug, waechter_lauf  # noqa: E402
 
 log = logging.getLogger("wache")
 def repo_aus_origin(fallback: str) -> str:
@@ -97,8 +98,14 @@ def main() -> int:
     # Eine Session im Worktree darf nicht das Repo des Launchers erben (#205).
     os.environ.pop("TO_SPAWN_REPO", None)
     os.environ["CLAUDE_CODE_FORCE_SESSION_PERSISTENCE"] = "1"
-    # Aufsicht (#213): Limit im Transkript → Ausweich-Modell.
-    return waechter_lauf.fahre(
+    # Umzug (#212): /to-spawn-of im Wächter zieht alle Sessions um und beendet am Ende
+    # diese Wächter-Session über die Umzug-Datei (Temp-Ordner je Lauf).
+    umzug_datei = Path(tempfile.mkdtemp(prefix=f"wache-{a.spec}-")) / "umzug.json"
+    os.environ["BAU_UMZUG_DATEI"] = str(umzug_datei)
+    os.environ["TO_SPAWN_WACHE_SPEC"] = str(a.spec)
+    umzug_datei.unlink(missing_ok=True)
+    # Aufsicht (#213): Limit im Transkript → Ausweich-Modell; Umzug-Datei (#212) → Ende.
+    code = waechter_lauf.fahre(
         claude=claude,
         spec=a.spec,
         prompt=prompt,
@@ -108,7 +115,17 @@ def main() -> int:
         repo=REPO_ORDNER,
         cwd=Path.cwd(),
         takt=float(os.environ.get("TO_SPAWN_AUFSICHT_TAKT") or waechter_lauf.TAKT_S),
+        abbruch=umzug_datei.exists,
     )
+    umzug_daten = umzug.lies_umzug(umzug_datei)
+    if umzug_daten is not None:
+        log.info(
+            "Umzug nach %s bestätigt — lokaler Wächter beendet (Exit %s).",
+            umzug_daten.get("ziel") or "?",
+            code,
+        )
+        return 0
+    return code
 
 
 if __name__ == "__main__":

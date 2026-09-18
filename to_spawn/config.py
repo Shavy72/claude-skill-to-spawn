@@ -32,6 +32,8 @@ DEFAULTS: dict[str, Any] = {
         plattform: adapter[0] for plattform, adapter in TERMINAL_ADAPTER.items()
     },
     "ssh_ziel": "bau-server",
+    #: Repo-Ordner auf dem Bau-Server (leer = ``~/<Name des Repo-Ordners>``), für den Umzug (#212).
+    "server_repo": "",
     "runner": "claude",
     "modelle": {
         "ticket": "claude-opus-5",

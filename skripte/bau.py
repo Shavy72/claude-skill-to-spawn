@@ -1,6 +1,6 @@
 """bau — schlanke Claude-Code-Session für genau ein Ticket.
 
-Aufruf: ``python scripts/bau.py <N> [--dry-run] [--model <m>] [--print-prompt] [--sofort] [--takt <s>]``
+Aufruf: ``python scripts/bau.py <N> [--dry-run] [--model <m>] [--print-prompt] [--sofort] [--takt <s>] [--umzug <branch>:<pfad>]``
 
 Liest das Ticket-Manifest unter ``docs/agents/manifests/*.json`` (SSOT-Schema siehe
 ``docs/agents/kontext-manifest.md``), schaltet alle nicht benötigten Skills
@@ -34,7 +34,7 @@ from pathlib import Path
 _SKILL = str(Path(__file__).resolve().parent.parent)
 if _SKILL not in sys.path:
     sys.path.insert(0, _SKILL)
-from to_spawn import config  # noqa: E402
+from to_spawn import config, umzug  # noqa: E402
 
 # Windows-Konsole ist cp1252 — Umlaute/Pfeile im Prompt brauchen UTF-8.
 for stream in (sys.stdout, sys.stderr):
@@ -78,7 +78,7 @@ BUILTIN_SKILLS = [
 ]
 CHROME_MCP = "claude-in-chrome"
 STAFFEL_HOOK = REPO / "scripts" / "hooks" / "staffel_stop.py"
-#: CLI des Skills (Bau-Log-Hooks, #204) — dieselbe Skill-Wurzel wie oben in sys.path.
+#: CLI des Skills (Bau-Log-Hooks #204, Umzug-Anfrage #212) — dieselbe Skill-Wurzel wie oben in sys.path.
 TO_SPAWN_CLI = Path(_SKILL) / "to_spawn.py"
 STAFFEL_MAX_DEFAULT = 8
 # Handoffs sind Übersichten, keine Romane — mehr als das wäre ein Fehler in der Vorsession.
@@ -348,7 +348,7 @@ def staffel_hooks() -> dict:
     """Hook-Block für die Session-eigene ``settings.json``.
 
     ``Stop``: zuerst der Staffel-Hook, danach der Bau-Log-Hook des Skills (Token,
-    Modell, Dauer je Runde). ``SubagentStop``: Bau-Log-Zeile je Subagent (#204).
+    Modell, Dauer je Runde); er gibt auch die Umzug-Anfrage des Wächters weiter (#212). ``SubagentStop``: Bau-Log-Zeile je Subagent (#204).
     """
     staffel = subprocess.list2cmdline([sys.executable, str(STAFFEL_HOOK)])
     bau_log_stop = subprocess.list2cmdline([sys.executable, str(TO_SPAWN_CLI), "hook-stop"])
@@ -438,12 +438,74 @@ def staffel_prompt(prompt: str, handoff: Path, runde: int) -> str:
     )
 
 
-def starte_session(cmd: list[str]) -> int:
-    """Interaktiv: stdin/stdout durchreichen. .cmd-Shim auf Windows braucht shell=True als Notnagel."""
-    try:
-        return subprocess.run(cmd, check=False).returncode
-    except OSError:
-        return subprocess.run(subprocess.list2cmdline(cmd), shell=True, check=False).returncode
+# --- Umzug (#212) -----------------------------------------------------------
+
+
+def umzug_handoff_lesen(ref: str) -> tuple[str, str, str]:
+    """``<branch>:<pfad>`` → ``(branch, pfad, inhalt)`` aus ``origin/<branch>`` (im REPO).
+
+    Nicht lesbar → Abbruch mit Exit 2, es startet nichts.
+    """
+    branch, _, pfad = ref.partition(":")
+    if not branch or not pfad:
+        log.error("Umzug-Handoff nicht lesbar: --umzug erwartet <branch>:<pfad>, bekam %r.", ref)
+        sys.exit(2)
+    subprocess.run(["git", "fetch", "-q", "origin", branch], cwd=REPO, check=False)
+    gezeigt = subprocess.run(
+        ["git", "show", f"origin/{branch}:{pfad}"],
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+    if gezeigt.returncode != 0 or not gezeigt.stdout.strip():
+        log.error(
+            "Umzug-Handoff nicht lesbar: origin/%s:%s (%s) — nichts gestartet.",
+            branch,
+            pfad,
+            gezeigt.stderr.strip()[:200] or "leer",
+        )
+        sys.exit(2)
+    return branch, pfad, gezeigt.stdout
+
+
+def umzug_prompt(prompt: str, text: str, branch: str, ticket: str) -> str:
+    """Startkontext einer umgezogenen Session: Worktree-Anweisung + Handoff vor dem Auftrag."""
+    if len(text) > STAFFEL_HANDOFF_MAX_ZEICHEN:
+        text = text[:STAFFEL_HANDOFF_MAX_ZEICHEN] + "\n(… gekürzt)"
+    wt = worktree_pfad(ticket)
+    # Keine Backticks/Code-Zäune (Windows-Notnagel shell=True, wie staffel_prompt).
+    return (
+        "## Umzug auf den Bau-Server\n"
+        "Diese Session ist vom lokalen PC auf den Bau-Server umgezogen. "
+        f"Arbeitsstand liegt auf Branch {branch} (origin). Worktree {wt} auf diesen Branch setzen: "
+        "existiert er → sauberen Baum prüfen (git status --short leer), dann "
+        f"git fetch origin && git checkout -B {branch} origin/{branch}; sonst "
+        f"git worktree add -B {branch} {wt} origin/{branch}. "
+        "Assignee bleibt, kein neuer Claim nötig. Der Handoff unten ist dein Startkontext — "
+        "lies ihn hier, nicht erneut von der Platte.\n\n"
+        f"----- HANDOFF ANFANG -----\n{text}\n----- HANDOFF ENDE -----\n\n"
+        f"---\n\n{prompt}"
+    )
+
+
+def umzug_anfragen_aufraeumen(ticket: str) -> Path:
+    """Alte Umzug-Anfragen des Wächters löschen; Rückgabe: Pfad der Anfrage-Datei."""
+    anfrage = REPO / ".to-spawn" / f"umzug-anfrage-{ticket}"
+    anfrage.unlink(missing_ok=True)
+    Path(f"{anfrage}.laeuft").unlink(missing_ok=True)
+    return anfrage
+
+
+def starte_session(cmd: list[str], umzug_datei: Path) -> tuple[int, dict | None]:
+    """Interaktiv: stdin/stdout durchreichen, dabei auf die Umzug-Datei achten (#212).
+
+    Taucht ``umzug_datei`` auf, wird die Session beendet (terminate, nach 20 s kill).
+    .cmd-Shim auf Windows: ``shell=True``-Notnagel steckt in ``umzug.starte_mit_umzug_wache``.
+    """
+    return umzug.starte_mit_umzug_wache(cmd, umzug_datei)
 
 
 # --- Main -------------------------------------------------------------------
@@ -462,6 +524,11 @@ def main() -> int:
         type=int,
         default=STAFFEL_MAX_DEFAULT,
         help="Höchstzahl Staffel-Runden je Ticket (8); 1 = kein Neustart",
+    )
+    parser.add_argument(
+        "--umzug",
+        metavar="BRANCH:PFAD",
+        help="Umzug vom PC (#212): Handoff aus origin/<branch>:<pfad> als Startkontext, impliziert --sofort",
     )
     args = parser.parse_args()
     ticket = str(args.ticket)
@@ -484,8 +551,12 @@ def main() -> int:
         spec = spec_gh
 
     prompt = build_prompt(default["prompt_template"], ticket, spec, title, build_kontext(entry))
+    erster_prompt = prompt
+    if args.umzug:
+        branch, _pfad, handoff_text = umzug_handoff_lesen(args.umzug)
+        erster_prompt = umzug_prompt(prompt, handoff_text, branch, ticket)
     if args.print_prompt:
-        print(prompt)
+        print(erster_prompt)
         return 0
 
     # Skills
@@ -551,7 +622,7 @@ def main() -> int:
         cmd.append("--no-chrome")
     if model:
         cmd += ["--model", model]
-    cmd.append(prompt)
+    cmd.append(erster_prompt)
 
     off_count = sum(1 for v in overrides.values() if v == "off")
     log.info("Ticket #%s · Spec #%s · %s", ticket, spec, title)
@@ -574,7 +645,7 @@ def main() -> int:
         )
         return 0
 
-    if not args.sofort:
+    if not args.sofort and not args.umzug:
         auf_blocker_warten(ticket, max(60, args.takt))
 
     # Aus einer Claude-Session gestartet erben Kind-Sessions die Markierung
@@ -584,6 +655,12 @@ def main() -> int:
     # Eine Session im Worktree darf nicht das Repo des Launchers erben (#205).
     os.environ.pop("TO_SPAWN_REPO", None)
     os.environ["CLAUDE_CODE_FORCE_SESSION_PERSISTENCE"] = "1"
+
+    # Umzug (#212): bau.py beendet die Session, sobald ``umzug.json`` auftaucht; der
+    # Stop-Hook ``hook-umzug`` liest die Anfrage des Wächters.
+    umzug_datei = out / "umzug.json"
+    os.environ["BAU_UMZUG_DATEI"] = str(umzug_datei)
+    os.environ["BAU_UMZUG_ANFRAGE"] = str(umzug_anfragen_aufraeumen(ticket))
 
     # Staffel-Schleife: jede Runde eine eigene Session, Übergabe über die Staffel-Datei.
     staffel_datei.unlink(missing_ok=True)
@@ -598,7 +675,16 @@ def main() -> int:
         )
         os.environ.update(umgebung)
         (out / f"prompt-runde{runde}.txt").write_text(cmd[-1], encoding="utf-8")
-        code = starte_session(cmd)
+        code, umzug_daten = starte_session(cmd, umzug_datei)
+        if umzug_daten is not None:
+            # Kein Staffel-Neustart: die Session läuft jetzt auf dem Server weiter.
+            staffel_datei.unlink(missing_ok=True)
+            log.info(
+                "Umzug nach %s bestätigt — lokale Session beendet (Exit %s).",
+                umzug_daten.get("ziel") or "?",
+                code,
+            )
+            return 0
         uebergabe = staffel_uebergabe(staffel_datei)
         if uebergabe is None:
             return exit_code(code)

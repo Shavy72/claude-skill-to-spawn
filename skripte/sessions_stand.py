@@ -165,12 +165,30 @@ def manifeste_lesen(spec: str | None) -> dict[str, Eintrag]:
     return eintraege
 
 
+def fremdes_repo(pid: int) -> bool:
+    """Läuft dieser ``bau.py``/``wache.py`` in einem anderen Repo als ``REPO``? (#212)
+
+    Linux: Arbeitsordner aus ``/proc/<pid>/cwd`` — außerhalb von ``REPO`` zählt der
+    Prozess nicht (zwei Repos mit derselben Ticket-Nummer auf einem Rechner, oder
+    „lokal“ und „Server“ auf demselben Rechner). Ohne ``/proc`` (Windows) oder bei
+    unlesbarem Ordner zählt er wie bisher.
+    """
+    try:
+        ordner = Path(os.readlink(f"/proc/{pid}/cwd")).resolve()
+    except OSError:
+        return False
+    wurzel = REPO.resolve()
+    return ordner != wurzel and wurzel not in ordner.parents
+
+
 def zuordnen(eintraege: dict[str, Eintrag], alle: list[Prozess]) -> None:
     for p in alle:
         if not p.name.lower().startswith("python"):
             continue
         m = MUSTER.search(p.cmd)
         if not m:
+            continue
+        if fremdes_repo(p.pid):
             continue
         art, nummer = m.group(1), m.group(2)
         e = eintraege.get(nummer)

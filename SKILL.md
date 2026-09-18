@@ -40,6 +40,12 @@ Ablauf für dich (das Modell), wenn die Konfig fehlt oder der Nutzer „setup“
 - Erster `spawn` in einem Repo ohne Konfig: im echten Terminal läuft der Dialog von selbst, sonst werden die Vorgaben angelegt mit dem Hinweis auf `setup`.
 - Unlesbare Konfig wird nie überschrieben (Exit 1 mit Meldung, auch bei `--zeigen`; der Dialog prüft das vor der ersten Frage).
 
+## Umzug `/to-spawn-of` (#212) — laufende Session auf den Bau-Server verschieben
+
+- Alias-Skill `/to-spawn-of` (`aliase/to-spawn-of/SKILL.md`), Logik `to_spawn/umzug.py`. In einer Bau-Session (`BAU_TICKET`): Handoff mit Zeile `Umzug: server` (nie `Staffel: weiter`), eigene Arbeit mit Pathspec committen, dann `python ~/.claude/skills/to-spawn/to_spawn.py umzug <N> --handoff <pfad> [--dry-run]`. Das Skript committet nur den Handoff, pusht den Branch (Beweis `ls-remote` = HEAD), startet per `ssh <ssh_ziel>` im Server-Repo (`server_repo`, Vorgabe `~/<Repo-Ordner>`) `spawn_srv.sh <S> --tickets <N> --ohne-wache --umzug <branch>:<pfad>` und beendet die lokale Session erst nach Beweis (tmux-Fenster `bau <N>` + `sessions <S>` nicht `aus`, bis 90 s) über `BAU_UMZUG_DATEI` → `bau.py` beendet das Claude-Kind, keine Staffel-Runde. Exit 0 = umgezogen · 3 = Weigerung · 1 = Server nicht bewiesen, lokal läuft weiter.
+- Im Wächter (`TO_SPAWN_WACHE_SPEC`): Frage „Ganzen Bau auf den Bau-Server verschieben?“, bei Ja `… umzug-alle <S> [--ohne-wache] [--warte-max s] [--dry-run]` — Tickets aufsteigend, streng nacheinander: `wartet` → lokales `bau.py` beenden + normal auf dem Server starten; `läuft` → Anfrage-Datei `.to-spawn/umzug-anfrage-<N>`, der Stop-Hook `hook-umzug` gibt der Session die Umzug-Anweisung; `VERWAIST` oder Zeitüberschreitung → Stopp, Rest bleibt lokal. Zum Schluss `spawn_srv.sh <S> --nur-wache` und die lokale Wächter-Session endet.
+- Server-Seite: `bau.py --umzug <branch>:<pfad>` (impliziert `--sofort`) liest den Handoff aus `origin/<branch>` und setzt den Worktree auf diesen Branch; `spawn_srv.sh` kennt `--umzug`, `--ohne-regularien`, `--nur-wache`.
+
 ## Ablauf `local` (deterministisch, Skript statt Prosa)
 
 1. Im Repo-Wurzelordner: `pwsh -File ~/.claude/skills/to-spawn/spawn_local.ps1 -Spec <S> [-Tickets a,b,c] [-OhneWache] [-Window 1] [-DryRun]`
@@ -95,7 +101,7 @@ Python-Kern `to_spawn.py` (Paket `to_spawn/`, Tests `tests/`, Doku `to_spawn/REA
 - `… hook-stop` / `… hook-subagent-stop` — Stop-/SubagentStop-Hooks (JSON auf stdin) schreiben `session_ende`/`subagent_ende` mit Token-Summen aus dem Transkript.
 - Staffel (200k): Hook kann eine Session nicht beenden (Doku: `continue:false` endet nur die Runde) → Hook setzt Marker `.to-spawn/stop-<N>`, `to_spawn/bau_loop.py` beendet das Kind und startet die Folge-Session mit Handoff als Startkontext (max 3 Staffeln). Verdrahtung in `bau.py` = Ticket #203/#204.
 - Wächter (#213): `wache <S>` startet mit `--remote-control "Wächter #<S>"` + `--fallback-model` und wechselt beim Nutzungs-Limit selbst auf `modelle.waechter_ausweich` (Aufsicht liest das Transkript, Bau-Log `waechter_modell`, Mail). Tick = `python scripts/capo.py <S> [--dry-run] [--uebersicht]`: Stand je Ticket, nur neue Bau-Log-Zeilen, Regeln commit_ohne_nummer · beweis_fehlt · test_ersetzt · vps_ungleich_origin (öffnet wieder, je Schließ-Ereignis einmal) und session_verwaist (Kommentar + Mail, je Tag einmal); Mail nur kritisch (Gate rot, Session tot, Live-Beweis blockiert, Ausweich-Modell) + Spec fertig über `mail.befehl`. Sessions melden `… eintrag --typ blockiert --grund "…"` bzw. `--typ entscheidung --frage … --wahl … --grund …`.
-- Drei Einstiege (gebaut #205, siehe „Aufruf“) · `/to-spawn-of` = Umzug (#212, offen).
+- Drei Einstiege (gebaut #205, siehe „Aufruf“) · `/to-spawn-of` = Umzug (#212, siehe Abschnitt „Umzug“).
 - Entscheidungen + Ticket-Kette (#203–#214): `docs/GRILL_2026-09-18_to_spawn_final.md` im DuoPlus-Repo, Spec #202.
 
 ## Setup Teil 2 — Werkzeug-Inventur (#209)

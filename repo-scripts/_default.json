@@ -1,5 +1,5 @@
 {
-  "core_skills": ["fable-1080", "implement", "mp-tdd", "prp-commit", "code-review", "verify-hard", "german-umlauts", "loop", "run", "diagnosing-bugs"],
+  "core_skills": ["fable-1080", "implement", "mp-tdd", "prp-commit", "code-review", "verify-hard", "german-umlauts", "loop", "run", "diagnosing-bugs", "to-spawn-of"],
   "core_mcp": [],
   "codex_deploy": true,
   "model": "claude-opus-5",

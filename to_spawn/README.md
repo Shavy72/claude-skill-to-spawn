@@ -19,6 +19,9 @@ Immer im Repo-Wurzelordner ausführen:
 | `python to_spawn.py hook-stop` | Stop-Hook, JSON auf stdin |
 | `python to_spawn.py hook-subagent-stop` | SubagentStop-Hook, JSON auf stdin |
 | `python to_spawn.py inventur [--json] [--abwahl a,b] [--anwahl a,b] [--schreiben] [--ausgabe PFAD] [--letzte 200]` | Setup-Wizard Teil 2: Werkzeug-Inventur (Skills, Plugin-Skills, Agenten, MCP-Server) nach 12 Kategorien, Standard alles an; Setup-Zeilen für fehlende Unterbauten, tote Winkel; `--schreiben` legt `.to-spawn/werkzeuge.json` an, unbekannter Name = **Exit 2** |
+| `python to_spawn.py umzug <N> --handoff <pfad> [--dry-run]` | Bau-Session auf den Bau-Server umziehen (#212): Handoff prüfen (`Umzug: server`, kein `Staffel: weiter`), committen + pushen, Server-Start per SSH, lokales Ende erst nach Beweis; **Exit 0 = umgezogen, 1 = Server nicht bewiesen (lokal läuft weiter), 3 = Weigerung** |
+| `python to_spawn.py umzug-alle <S> [--ohne-wache] [--warte-max s] [--dry-run]` | Wächter-Variante: alle Sessions der Spec streng nacheinander umziehen, Stopp bei `VERWAIST`/Zeitüberschreitung, zum Schluss Wächter auf dem Server |
+| `python to_spawn.py hook-umzug` | Stop-Hook: liegt `.to-spawn/umzug-anfrage-<N>`, bekommt die Session die Umzug-Anweisung (einmal) |
 
 `--ziel` überspringt die Frage; ohne Angabe gilt `ziel_default` aus der Konfig.
 
@@ -157,7 +160,7 @@ Alles andere (CLI, Manifest-Prüfung, Bau-Log, Hooks, Staffel-Schleife, Git) lä
 
 ## Offene Punkte
 
-- Setup-Wizard, Werkzeug-Inventur, Nest-Bau, Staging, `/to-spawn-of`, Mail und
+- Setup-Wizard, Werkzeug-Inventur, Nest-Bau, Staging, Mail und
   Remote Control fehlen (bewusst, eigene Tickets der Spec #202).
 - Deploy-Statusdatei: `safe_deploy_vps.sh` (DuoPlus-Repo) schreibt sie, `deploy-status`
   überträgt sie als `deploy_phase` ins Bau-Log (#207). Andere Repos brauchen dafür ein

@@ -12,18 +12,22 @@ Aufruf (im Repo-Wurzelordner):
     python ~/.claude/skills/to-spawn/to_spawn.py hook-subagent-stop # JSON auf stdin
     python ~/.claude/skills/to-spawn/to_spawn.py eintrag --ticket <N> --typ zusammenfassung \
         --umfang "…" --schwierigkeiten "…" --entscheidungen "…" [--repo <pfad>]
+    python ~/.claude/skills/to-spawn/to_spawn.py umzug <N> --handoff <pfad> [--dry-run]
+    python ~/.claude/skills/to-spawn/to_spawn.py umzug-alle <S> [--ohne-wache] [--warte-max s] [--dry-run]
+    python ~/.claude/skills/to-spawn/to_spawn.py hook-umzug         # JSON auf stdin (#212)
 """
 
 from __future__ import annotations
 
 import argparse
+import io
 import logging
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from to_spawn import bau_log, config, deploy_status, hooks, inventur, manifest, setup  # noqa: E402
+from to_spawn import bau_log, config, deploy_status, hooks, inventur, manifest, setup, umzug  # noqa: E402
 from to_spawn import spawn as spawn_modul  # noqa: E402
 
 log = logging.getLogger("to_spawn")
@@ -179,6 +183,25 @@ def _eintrag(args: argparse.Namespace) -> int:
     return 0
 
 
+def _hook_stop_mit_umzug() -> int:
+    """Ein Stop-Befehl für Bau-Log (#204) und Umzug-Anfrage des Wächters (#212).
+
+    stdin ist nur einmal lesbar. Liegt eine Umzug-Anfrage, gewinnt deren
+    Blockier-Antwort; sonst gilt die Ausgabe des Bau-Log-Hooks. Endet immer mit 0.
+    """
+    log = logging.getLogger("to_spawn.hook_stop")
+    roh = sys.stdin.read()
+    bau_log_ausgabe = io.StringIO()
+    code = hooks.hook_stop(io.StringIO(roh), bau_log_ausgabe)
+    umzug_ausgabe = io.StringIO()
+    try:
+        umzug.hook_umzug_anfrage(roh, umzug_ausgabe)
+    except Exception:  # noqa: BLE001 — Hook darf die Session nie stören
+        log.exception("Umzug-Teil des Stop-Hooks fehlgeschlagen — Session läuft weiter.")
+    sys.stdout.write(umzug_ausgabe.getvalue() or bau_log_ausgabe.getvalue())
+    return code
+
+
 def main(argv: list[str] | None = None) -> int:
     # Windows-Konsole ist cp1252: Umlaute und Pfeile sonst UnicodeEncodeError.
     for strom in (sys.stdout, sys.stderr):
@@ -270,6 +293,17 @@ def main(argv: list[str] | None = None) -> int:
 
     unter.add_parser("hook-stop", help="Stop-Hook (JSON auf stdin)")
     unter.add_parser("hook-subagent-stop", help="SubagentStop-Hook (JSON auf stdin)")
+    # Umzug einer Bau-Session auf den Bau-Server (/to-spawn-of, #212).
+    p_umzug = unter.add_parser("umzug", help="diese Bau-Session auf den Bau-Server umziehen")
+    p_umzug.add_argument("ticket")
+    p_umzug.add_argument("--handoff", required=True, help="Handoff mit Zeile „Umzug: server“")
+    p_umzug.add_argument("--dry-run", action="store_true", help="nur prüfen und Befehle zeigen")
+    p_alle = unter.add_parser("umzug-alle", help="alle Sessions einer Spec nacheinander umziehen")
+    p_alle.add_argument("spec")
+    p_alle.add_argument("--ohne-wache", action="store_true", help="Wächter bleibt lokal")
+    p_alle.add_argument("--warte-max", type=float, default=1800, help="Sekunden je Session (1800)")
+    p_alle.add_argument("--dry-run", action="store_true", help="nur den Plan zeigen")
+    unter.add_parser("hook-umzug", help="Stop-Hook: Umzug-Anfrage des Wächters (JSON auf stdin)")
 
     p_eintrag = unter.add_parser("eintrag", help="Klartext-Zeile ins Bau-Log des Tickets")
     p_eintrag.add_argument("--ticket", help="Ticket-Nummer (sonst TO_SPAWN_TICKET/wt-<N>)")
@@ -291,7 +325,7 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
     # Hooks zuerst und ohne Vorarbeit: sie dürfen die Session nie stören (#204).
     if args.befehl == "hook-stop":
-        return hooks.hook_stop()
+        return _hook_stop_mit_umzug()
     if args.befehl == "hook-subagent-stop":
         return hooks.hook_subagent_stop()
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
@@ -351,6 +385,26 @@ def main(argv: list[str] | None = None) -> int:
     if args.befehl == "deploy-status":
         return deploy_status.deploy_status(
             repo, datei=args.datei, ticket=args.ticket, still_min=args.still_min
+        )
+    if args.befehl == "hook-umzug":
+        return umzug.hook_umzug_anfrage()
+    if args.befehl == "umzug":
+        return umzug.umzug_einzel(
+            args.ticket,
+            Path(args.handoff),
+            worktree=repo,
+            konfig=config.lade(umzug.haupt_repo(repo)),
+            dry_run=args.dry_run,
+        )
+    if args.befehl == "umzug-alle":
+        haupt = umzug.haupt_repo(repo)
+        return umzug.umzug_alle(
+            args.spec,
+            repo=haupt,
+            konfig=config.lade(haupt),
+            warte_max=args.warte_max,
+            ohne_wache=args.ohne_wache,
+            dry_run=args.dry_run,
         )
     ap.error(f"Unbekannter Befehl: {args.befehl}")
     return 2
