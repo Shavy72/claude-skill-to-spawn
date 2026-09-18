@@ -36,6 +36,9 @@ TYPEN = (
     "session_ende",
     "subagent_ende",
     "staffel_limit",
+    # Wächter (#213): Live-Beweis blockiert (Feld ``grund``) und Modell-Wechsel beim Limit.
+    "blockiert",
+    "waechter_modell",
     "zusammenfassung",
 )
 

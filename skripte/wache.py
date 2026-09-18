@@ -3,8 +3,13 @@
 Aufruf: ``python scripts/wache.py <S> [--model <m>] [--takt <s>] [--dry-run] [--print-prompt]``
 
 Der Wächter baut nichts und spricht keine Bau-Session an. Er liest je Tick nur
-``scripts/spec_stand.py <S>`` (eine Zeile je Ticket), prüft Belegseiten nur bei
-Zustandswechsel und schreibt seinen Stand in ``docs/HANDOFF_<datum>_waechter_<S>.md``.
+``scripts/capo.py <S>`` (Stand je Ticket, neue Bau-Log-Zeilen, Verstöße — capo öffnet
+selbst wieder und mailt Kritisches), prüft Belegseiten nur bei Zustandswechsel und
+schreibt seinen Stand in ``docs/HANDOFF_<datum>_waechter_<S>.md``.
+
+Start mit ``--remote-control "Wächter #<S>"`` (Konfig ``waechter.remote_control``) und
+``--fallback-model`` (Konfig ``modelle.waechter_ausweich``). Beim Nutzungs-Limit wechselt
+die Aufsicht (``to_spawn/waechter_lauf.py``) selbst auf das Ausweich-Modell (#213).
 Gegenstück zu ``bau <N>`` (eine Session je Ticket, Domino über native Blocker).
 """
 
@@ -24,7 +29,7 @@ from pathlib import Path
 _SKILL = str(Path(__file__).resolve().parent.parent)
 if _SKILL not in sys.path:
     sys.path.insert(0, _SKILL)
-from to_spawn import config  # noqa: E402
+from to_spawn import config, waechter_lauf  # noqa: E402
 
 log = logging.getLogger("wache")
 def repo_aus_origin(fallback: str) -> str:
@@ -49,11 +54,11 @@ REPO_ORDNER = Path(os.environ["TO_SPAWN_REPO"]).resolve() if os.environ.get("TO_
 MODELL = "claude-fable-5-1"
 
 PROMPT = """/loop Bau-Wächter Spec #{S} ({REPO}). Ich baue NICHTS und spreche KEINE Bau-Session an (kein SendMessage; Kommentare auf Ticket-Issues nur bei echtem Zustandswechsel, max. 2 Zeilen). \
-Jeder Tick: 1) `PYTHONIOENCODING=utf-8 python scripts/spec_stand.py {S}` — Ein-Zeilen-Stand je Ticket, mehr nicht lesen. \
-2) Nur bei Änderung gegenüber dem letzten Tick genauer hinsehen: Ticket neu zu → Schließ-Kommentar + Belegseite unter docs/verify-hard/ auf origin/master prüfen (Akzeptanz erfüllt? Live-Klick-Weg-Beleg mit Rolle da? Tests nur ergänzt, nie ersetzt? Commit-Betreff endet mit „(#<Ticket>)“?), bei Mangel 2-Zeilen-Kommentar „Wächter: … fehlt“ + `gh issue reopen`; Assignee seit >3 h ohne Commit auf origin/master und Worktree C:/dev/wt-<N> ohne Änderung → verwaist-Verdacht notieren; VPS-HEAD ≠ origin/master nach einem Deploy-Ticket → notieren; zwei Sessions mit Commits in derselben Datei → Konflikt-Warnung notieren. \
+Jeder Tick: 1) `PYTHONIOENCODING=utf-8 python scripts/capo.py {S}` — Stand je Ticket + nur neue Bau-Log-Zeilen + Verstöße, mehr nicht lesen. capo öffnet selbst wieder (Commit ohne „(#<Ticket>)“, Belegseite fehlt, Test ersetzt, VPS ≠ origin), kommentiert verwaiste Sessions und mailt Kritisches (Gate rot, Session tot, Live-Beweis blockiert) — das NICHT doppelt tun. \
+2) Nur bei Änderung gegenüber dem letzten Tick genauer hinsehen: Ticket neu zu ohne Verstoß → Belegseite unter docs/verify-hard/ per Grep prüfen (Akzeptanz erfüllt? Live-Klick-Weg-Beleg mit Rolle da?), bei Mangel 2-Zeilen-Kommentar „Wächter: … fehlt“ + `gh issue reopen`; zwei Sessions mit Commits in derselben Datei → Konflikt-Warnung notieren. \
 3) Stand in `docs/HANDOFF_{DATUM}_waechter_{S}.md` fortschreiben (Stand + Nachträge mit Uhrzeit, Muster docs/HANDOFF_2026-09-15_waechter_107.md), Commit nur mit Pathspec + [skip ci], Rebase nur bei sauberem Baum (`git diff --quiet`), Push — nur wenn sich etwas geändert hat. \
 4) ScheduleWakeup {TAKT} s solange Sessions bauen, 3600 s wenn alle Terminals nur warten; noop: true ohne Änderung. \
-ENDE: alle Tickets zu + Belegseiten geprüft + VPS = origin/master → Abschlussbericht als Kommentar auf #{S} (max. 10 Zeilen) + stop: true. \
+ENDE: capo meldet „SPEC FERTIG“ (alle Tickets zu, keine Verstöße; capo hat docs/agents/entscheidungen_{S}.md geschrieben und David gemailt) → diese Übersicht mit Pathspec + [skip ci] committen + pushen, Abschlussbericht als Kommentar auf #{S} (max. 10 Zeilen, Link auf die Übersicht) + stop: true. \
 Eigener Kontext: Spec/Tickets nie voll laden, nur Stand-Zeilen; Belegseiten per Grep/limit. Erste Zeile jeder Antwort: 🧭 Fable · low · caveman · Wächter."""
 
 
@@ -77,8 +82,11 @@ def main() -> int:
         print(prompt)
         return 0
     claude = shutil.which("claude") or "claude"
-    cmd = [claude, "--model", a.model, prompt]
-    log.info("Wächter Spec #%s · Modell %s · Takt %ss", a.spec, a.model, a.takt)
+    konfig = config.lade(REPO_ORDNER)
+    ausweich = str(konfig.get("modelle", {}).get("waechter_ausweich") or "")
+    remote_control = bool(konfig.get("waechter", {}).get("remote_control", True))
+    cmd = waechter_lauf.befehl(claude, a.model, ausweich, remote_control, a.spec, prompt)
+    log.info("Wächter Spec #%s · Modell %s · Ausweich %s · Takt %ss", a.spec, a.model, ausweich or "-", a.takt)
     if a.dry_run:
         print(" ".join(cmd[:-1]), '"<prompt>"')
         return 0
@@ -89,10 +97,18 @@ def main() -> int:
     # Eine Session im Worktree darf nicht das Repo des Launchers erben (#205).
     os.environ.pop("TO_SPAWN_REPO", None)
     os.environ["CLAUDE_CODE_FORCE_SESSION_PERSISTENCE"] = "1"
-    try:
-        return subprocess.run(cmd, check=False).returncode
-    except OSError:
-        return subprocess.run(" ".join(f'"{c}"' for c in cmd), shell=True, check=False).returncode
+    # Aufsicht (#213): Limit im Transkript → Ausweich-Modell.
+    return waechter_lauf.fahre(
+        claude=claude,
+        spec=a.spec,
+        prompt=prompt,
+        modell=a.model,
+        ausweich=ausweich,
+        remote_control=remote_control,
+        repo=REPO_ORDNER,
+        cwd=Path.cwd(),
+        takt=float(os.environ.get("TO_SPAWN_AUFSICHT_TAKT") or waechter_lauf.TAKT_S),
+    )
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-"""Gemeinsamer Helfer der Weiterleitungen ``scripts/{bau,wache,sessions_stand,spec_stand}.py``.
+"""Gemeinsamer Helfer der Weiterleitungen ``scripts/{bau,wache,capo,sessions_stand,spec_stand}.py``.
 
 Die Logik liegt im Skill ``to-spawn`` (``$TO_SPAWN_HOME``, Vorgabe
 ``~/.claude/skills/to-spawn``) unter ``skripte/<name>.py`` — hier nur der Sprung

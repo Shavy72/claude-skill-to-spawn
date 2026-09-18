@@ -171,6 +171,9 @@ def _eintrag(args: argparse.Namespace) -> int:
         schwierigkeiten=args.schwierigkeiten,
         entscheidungen=args.entscheidungen,
         text=args.text,
+        frage=args.frage,
+        wahl=args.wahl,
+        grund=args.grund,
     )
     print(f"Bau-Log #{zeile['ticket']}: {args.typ} → {bau_log.log_pfad(repo, zeile['ticket'])}")
     return 0
@@ -270,11 +273,17 @@ def main(argv: list[str] | None = None) -> int:
 
     p_eintrag = unter.add_parser("eintrag", help="Klartext-Zeile ins Bau-Log des Tickets")
     p_eintrag.add_argument("--ticket", help="Ticket-Nummer (sonst TO_SPAWN_TICKET/wt-<N>)")
-    p_eintrag.add_argument("--typ", required=True, choices=["zusammenfassung", "entscheidung"])
+    p_eintrag.add_argument(
+        "--typ", required=True, choices=["zusammenfassung", "entscheidung", "blockiert"]
+    )
     p_eintrag.add_argument("--umfang", help="was gebaut wurde")
     p_eintrag.add_argument("--schwierigkeiten", help="was schwer war")
     p_eintrag.add_argument("--entscheidungen", help="was entschieden wurde")
     p_eintrag.add_argument("--text", help="freier Text")
+    # Wächter-Übersicht (#213): Entscheidung als Frage · Wahl · Grund; blockiert braucht --grund.
+    p_eintrag.add_argument("--frage", help="Entscheidung: welche Frage")
+    p_eintrag.add_argument("--wahl", help="Entscheidung: was gewählt wurde")
+    p_eintrag.add_argument("--grund", help="Entscheidung: warum · blockiert: woran es hängt")
     p_eintrag.add_argument(
         "--repo", help="Ordner mit dem Bau-Log (sonst TO_SPAWN_LOG_REPO bzw. Git-Wurzel)"
     )

@@ -37,6 +37,8 @@ DEFAULTS: dict[str, Any] = {
         "ticket": "claude-opus-5",
         "ticket_leicht": "claude-sonnet-5",
         "waechter": "claude-fable-5-1",
+        #: Modell, auf das der Wächter beim Nutzungs-Limit wechselt (#213).
+        "waechter_ausweich": "claude-opus-5",
     },
     "effort": {
         "ticket": "medium",
@@ -51,10 +53,22 @@ DEFAULTS: dict[str, Any] = {
     "mail": {
         "ziel": "",
         "nur_kritisch": True,
+        #: Versand-Befehl als argv-Liste, JSON auf stdin (leer = kein Versand, nur Log) (#213).
+        "befehl": [],
     },
     "regularien": {
         "checkpoint_label": "checkpoint:human",
+        #: Ordner der Belegseiten, den der Wächter je Ticket prüft (#213).
+        "belege_ordner": "docs/verify-hard",
     },
+    #: Wächter (#213): Remote Control an, verwaist ab so vielen Stunden ohne Spur.
+    "waechter": {
+        "remote_control": True,
+        "verwaist_stunden": 3,
+    },
+    #: Ordner mit den Ticket-Worktrees ``wt-<N>`` für die Wächter-Regel verwaist
+    #: (leer = Regel von ``worktree_pfad``: Windows ``C:/dev``, sonst ``$BAU_WT_DIR`` bzw. ``~/wt``) (#213).
+    "wt_basis": "",
     #: Befehl, der die Staging-Umgebung startet (leer = keine Staging-Stufe).
     "staging_start": "",
     #: Deploy-Befehl des Repos (leer = Repo deployt nicht über den Skill).
