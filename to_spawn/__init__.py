@@ -8,4 +8,4 @@ dieses Paket ruft sie nur auf.
 
 from __future__ import annotations
 
-__all__ = ["bau_log", "bau_loop", "config", "gh", "hooks", "manifest", "spawn"]
+__all__ = ["bau_log", "bau_loop", "config", "gh", "hooks", "inventur", "manifest", "spawn"]

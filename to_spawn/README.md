@@ -17,6 +17,7 @@ Immer im Repo-Wurzelordner ausführen:
 | `python to_spawn.py lernstoff [--letzte 30]` | Zeilen für `/to-tickets` (Schätzung → Ist, Sessions, Faktor je Ticket + Faustregeln für den Schnitt) |
 | `python to_spawn.py hook-stop` | Stop-Hook, JSON auf stdin |
 | `python to_spawn.py hook-subagent-stop` | SubagentStop-Hook, JSON auf stdin |
+| `python to_spawn.py inventur [--json] [--abwahl a,b] [--anwahl a,b] [--schreiben] [--ausgabe PFAD] [--letzte 200]` | Setup-Wizard Teil 2: Werkzeug-Inventur (Skills, Plugin-Skills, Agenten, MCP-Server) nach 12 Kategorien, Standard alles an; Setup-Zeilen für fehlende Unterbauten, tote Winkel; `--schreiben` legt `.to-spawn/werkzeuge.json` an, unbekannter Name = **Exit 2** |
 
 `--ziel` überspringt die Frage; ohne Angabe gilt `ziel_default` aus der Konfig.
 

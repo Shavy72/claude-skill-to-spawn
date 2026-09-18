@@ -95,3 +95,17 @@ Python-Kern `to_spawn.py` (Paket `to_spawn/`, Tests `tests/`, Doku `to_spawn/REA
 - Staffel (200k): Hook kann eine Session nicht beenden (Doku: `continue:false` endet nur die Runde) → Hook setzt Marker `.to-spawn/stop-<N>`, `to_spawn/bau_loop.py` beendet das Kind und startet die Folge-Session mit Handoff als Startkontext (max 3 Staffeln). Verdrahtung in `bau.py` = Ticket #203/#204.
 - Drei Einstiege (gebaut #205, siehe „Aufruf“) · `/to-spawn-of` = Umzug (#212, offen).
 - Entscheidungen + Ticket-Kette (#203–#214): `docs/GRILL_2026-09-18_to_spawn_final.md` im DuoPlus-Repo, Spec #202.
+
+## Setup Teil 2 — Werkzeug-Inventur (#209)
+
+Zweck: aus Projekt, Session-Historie und Skill-Katalog eine großzügige Abwahl-Liste bauen. Standard = alles an, der Nutzer wählt ab statt an. 12 Kategorien in fester Reihenfolge: Bauen · Testen/Beweisen · Design/Frontend · Recherche · Medien · Deploy/Betrieb · Projekt-Spezial · Sicherheit/Secrets · Kontext/Gedächtnis · Steuerung/Meldung · Sehen/Verstehen · Zweitmeinung/Sonderfähigkeiten.
+
+Ablauf (im Repo-Wurzelordner):
+1. `python ~/.claude/skills/to-spawn/to_spawn.py inventur --json` laufen lassen (liest nur, legt nichts an).
+2. Analyse-Agent mit `model: sonnet` starten, Anleitung `~/.claude/skills/to-spawn/docs/inventur-agent.md`, Eingabe = die JSON-Ausgabe. Er liefert höchstens 15 Zeilen Vorschläge und ändert nichts.
+3. Dem Nutzer die Liste (`inventur` ohne `--json`) plus Vorschläge zeigen und fragen, was er abwählen will.
+4. `… inventur --abwahl a,b --schreiben` → `.to-spawn/werkzeuge.json`. Ein späterer Lauf behält die Abwahl (auch für Werkzeuge, die gerade nicht installiert sind: „abgewählt, derzeit nicht gefunden“); `--anwahl a` nimmt sie zurück; unbekannter Name → Exit 2 mit gültigen Namen; kaputte `werkzeuge.json` → Exit 4, Datei bleibt unberührt. Ohne `--schreiben` endet die Liste mit „nicht gespeichert“.
+
+Gut zu wissen: Setup-Zeilen erscheinen nur für FEHLENDE Unterbauten (codex, gemini, ffmpeg, adb, gh), jede mit Fehlgrund und Abhilfe; gh zählt erst mit bestandenem `gh auth status`, codex erst mit `~/.codex/auth.json` oder nicht leerem OPENAI_API_KEY. Aus `.env` liest die Inventur nur Schlüssel-Namen mit nicht leerem Wert, nie Werte. Gelesen werden `~/.claude` und die Projekt-Ordner `.claude/skills` + `.claude/agents` des Repos. Einordnung = Schlüsselwort-Tabelle `REGELN` in `to_spawn/inventur.py` (Name vor Beschreibung, erste Regel gewinnt); eingebaute Skills/Agenten haben eine feste Kategorie — Fehlgriffe meldet der Analyse-Agent. Tote Winkel: leere Kategorien, Skill-Ordner ohne SKILL.md, doppelte Kurznamen, fehlende Historie, genutzte, aber nicht installierte Skills/Befehle, `agents/`-Verweis ohne Agenten-Dateien.
+
+werkzeuge.json liest heute noch niemand beim Start — die Übergabe an die Bau-Session (z. B. --disallowedTools) folgt im Nest-Ticket #210.

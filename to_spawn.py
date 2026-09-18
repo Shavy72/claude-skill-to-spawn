@@ -20,7 +20,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from to_spawn import bau_log, config, hooks, manifest, setup  # noqa: E402
+from to_spawn import bau_log, config, hooks, inventur, manifest, setup  # noqa: E402
 from to_spawn import spawn as spawn_modul  # noqa: E402
 
 log = logging.getLogger("to_spawn")
@@ -210,6 +210,19 @@ def main(argv: list[str] | None = None) -> int:
     p_setup.add_argument(
         "--plattform", choices=["win32", "linux", "darwin"], help="zum Testen"
     )
+    p_inv = unter.add_parser("inventur", help="Werkzeug-Inventur (Setup-Wizard Teil 2)")
+    p_inv.add_argument("--json", action="store_true", help="JSON statt Liste ausgeben")
+    p_inv.add_argument("--abwahl", help="diese Werkzeuge abwählen (Komma)")
+    p_inv.add_argument("--anwahl", help="Abwahl dieser Werkzeuge zurücknehmen (Komma)")
+    p_inv.add_argument("--schreiben", action="store_true", help="Freigabeliste schreiben")
+    p_inv.add_argument("--ausgabe", type=Path, help="anderer Zielpfad für die Freigabeliste")
+    p_inv.add_argument(
+        "--letzte",
+        type=int,
+        default=inventur.HISTORIE_VORGABE,
+        help="so viele neueste Historie-Dateien (JSONL) auswerten "
+        f"(Standard {inventur.HISTORIE_VORGABE}, 0 = keine)",
+    )
 
     unter.add_parser("hook-stop", help="Stop-Hook (JSON auf stdin)")
     unter.add_parser("hook-subagent-stop", help="SubagentStop-Hook (JSON auf stdin)")
@@ -219,6 +232,17 @@ def main(argv: list[str] | None = None) -> int:
         logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
     repo = config.repo_wurzel()
+    if args.befehl == "inventur":
+        # Nur lesen: legt keine Konfig an (kein config.sicherstellen).
+        return inventur.lauf(
+            repo,
+            als_json=args.json,
+            abwahl=args.abwahl,
+            anwahl=args.anwahl,
+            schreiben=args.schreiben,
+            ausgabe=args.ausgabe,
+            letzte=args.letzte,
+        )
     if args.befehl == "setup":
         return _setup(repo, args)
     if args.befehl == "spawn" and not args.dry_run:
