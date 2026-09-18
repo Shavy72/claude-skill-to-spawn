@@ -213,7 +213,7 @@ def token_text(ticket: str, repo: Path = REPO) -> str:
     Zuerst das Log im Ticket-Worktree (dort schreiben die Hooks), sonst das im Repo.
     """
     for ort in (Path(config.worktree_pfad(ticket)).expanduser(), repo):
-        if bau_log.log_pfad(ort, ticket).is_file():
+        if bau_log.hat_log(ort, ticket):  # versioniert oder Laufdatei (Fixrunde #204)
             ist_k = bau_log.zusammenfassung(ort, ticket)["ist_k"]
             return f"{ist_k:.1f}".replace(".", ",") + "k" if ist_k else "—"
     return "—"

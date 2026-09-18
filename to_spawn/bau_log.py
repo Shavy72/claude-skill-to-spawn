@@ -1,8 +1,15 @@
-"""Bau-Log: eine JSONL-Datei je Ticket unter ``docs/agents/bau_log/<N>.jsonl``.
+"""Bau-Log: zwei JSONL-Dateien je Ticket.
+
+- Laufdatei ``.to-spawn/bau_log/<N>.jsonl`` (unversioniert, per ``.gitignore``
+  ausgenommen): hier schreiben Hooks und Starter während der Session. So bleibt der
+  Worktree sauber, ``git rebase`` und das Deploy-Gate brechen nicht ab (Fixrunde #204).
+- Versionierte Datei ``docs/agents/bau_log/<N>.jsonl``: schreibt nur der CLI-Befehl
+  ``eintrag``. Er überträgt dabei alle Laufdatei-Zeilen, die dort noch fehlen; danach
+  committet die Session die Datei.
 
 Nur anhängen, nie umschreiben — so wandert die Datei konfliktfrei über Git
 zwischen Laptop und Bau-Server. Zahlen schreiben die Hooks, Worte schreibt die
-Session.
+Session. ``lese()`` vereint beide Dateien.
 """
 
 from __future__ import annotations
@@ -11,6 +18,7 @@ import json
 import logging
 import os
 import re
+from collections import Counter
 from collections.abc import Iterable
 from datetime import datetime, timezone
 from pathlib import Path
@@ -32,11 +40,22 @@ TYPEN = (
 )
 
 LOG_ORDNER = Path("docs") / "agents" / "bau_log"
+LAUF_ORDNER = Path(".to-spawn") / "bau_log"
 _WT_MUSTER = re.compile(r"wt-(\d+)")
 
 
 def log_pfad(repo: Path, ticket: str | int) -> Path:
+    """Versionierte Datei (schreibt nur ``eintrag``)."""
     return repo / LOG_ORDNER / f"{ticket}.jsonl"
+
+
+def lauf_pfad(repo: Path, ticket: str | int) -> Path:
+    """Unversionierte Laufdatei (schreiben Hooks und Starter)."""
+    return repo / LAUF_ORDNER / f"{ticket}.jsonl"
+
+
+def hat_log(repo: Path, ticket: str | int) -> bool:
+    return log_pfad(repo, ticket).is_file() or lauf_pfad(repo, ticket).is_file()
 
 
 def log_repo(fallback: Path | None = None) -> Path | None:
@@ -83,44 +102,101 @@ def jetzt() -> str:
     return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
 
 
-def schreibe(repo: Path, ticket: str | int, typ: str, **felder: Any) -> dict[str, Any]:
-    """Eine Zeile anhängen und zurückgeben."""
+def _neue_zeile(ticket: str | int, typ: str, felder: dict[str, Any]) -> dict[str, Any]:
     if typ not in TYPEN:
         log.warning("Unbekannter Zeilen-Typ %r — wird trotzdem geschrieben.", typ)
     zeile: dict[str, Any] = {"ts": jetzt(), "typ": typ, "ticket": str(ticket)}
     zeile.update({k: v for k, v in felder.items() if v is not None})
-    datei = log_pfad(repo, ticket)
-    datei.parent.mkdir(parents=True, exist_ok=True)
-    with datei.open("a", encoding="utf-8", newline="\n") as fh:
-        fh.write(json.dumps(zeile, ensure_ascii=False) + "\n")
     return zeile
 
 
-def lese(repo: Path, ticket: str | int) -> list[dict[str, Any]]:
-    """Alle Zeilen eines Tickets (kaputte Zeilen werden übersprungen)."""
-    datei = log_pfad(repo, ticket)
+def _haenge_an(datei: Path, rohzeilen: Iterable[str]) -> None:
+    datei.parent.mkdir(parents=True, exist_ok=True)
+    with datei.open("a", encoding="utf-8", newline="\n") as fh:
+        for roh in rohzeilen:
+            fh.write(roh + "\n")
+
+
+def _rohzeilen(datei: Path) -> list[str]:
     if not datei.is_file():
         return []
-    zeilen: list[dict[str, Any]] = []
-    for roh in datei.read_text(encoding="utf-8").splitlines():
-        roh = roh.strip()
-        if not roh:
-            continue
+    return [z.strip() for z in datei.read_text(encoding="utf-8").splitlines() if z.strip()]
+
+
+def _fehlende(fest: list[str], lauf: list[str]) -> list[str]:
+    """Laufdatei-Zeilen, die in der versionierten Datei fehlen (exakt je Zeile).
+
+    Gezählt wie eine Mehrfachmenge: steht eine Zeile zweimal in der Laufdatei und
+    einmal versioniert, fehlt sie genau einmal.
+    """
+    vorrat = Counter(fest)
+    fehlend: list[str] = []
+    for roh in lauf:
+        if vorrat[roh] > 0:
+            vorrat[roh] -= 1
+        else:
+            fehlend.append(roh)
+    return fehlend
+
+
+def schreibe(repo: Path, ticket: str | int, typ: str, **felder: Any) -> dict[str, Any]:
+    """Eine Zeile an die unversionierte Laufdatei anhängen und zurückgeben."""
+    zeile = _neue_zeile(ticket, typ, felder)
+    _haenge_an(lauf_pfad(repo, ticket), [json.dumps(zeile, ensure_ascii=False)])
+    return zeile
+
+
+def eintrag_schreiben(repo: Path, ticket: str | int, typ: str, **felder: Any) -> dict[str, Any]:
+    """Nur für den CLI-Befehl ``eintrag``: fehlende Laufdatei-Zeilen und die neue
+    Zeile an die versionierte Datei anhängen (danach committet die Session sie)."""
+    zeile = _neue_zeile(ticket, typ, felder)
+    fest = log_pfad(repo, ticket)
+    fehlend = _fehlende(_rohzeilen(fest), _rohzeilen(lauf_pfad(repo, ticket)))
+    if fehlend:
+        log.info("Bau-Log #%s: %d Zeile(n) aus der Laufdatei übertragen.", ticket, len(fehlend))
+    _haenge_an(fest, [*fehlend, json.dumps(zeile, ensure_ascii=False)])
+    return zeile
+
+
+def _lese_datei(datei: Path) -> list[tuple[str, dict[str, Any]]]:
+    paare: list[tuple[str, dict[str, Any]]] = []
+    for roh in _rohzeilen(datei):
         try:
             eintrag = json.loads(roh)
         except ValueError:
             log.warning("Kaputte Log-Zeile in %s übersprungen.", datei)
             continue
         if isinstance(eintrag, dict):
+            paare.append((roh, eintrag))
+    return paare
+
+
+def _sortier_zeit(zeile: dict[str, Any]) -> datetime:
+    return _zeitpunkt(zeile.get("ts")) or datetime.min.replace(tzinfo=timezone.utc)
+
+
+def lese(repo: Path, ticket: str | int) -> list[dict[str, Any]]:
+    """Alle Zeilen eines Tickets: versioniert ∪ Laufdatei, nach ``ts`` sortiert.
+
+    Zeilen, die exakt gleich in beiden Dateien stehen, zählen einmal. Kaputte Zeilen
+    werden übersprungen.
+    """
+    fest = _lese_datei(log_pfad(repo, ticket))
+    lauf = _lese_datei(lauf_pfad(repo, ticket))
+    fehlend = Counter(_fehlende([roh for roh, _ in fest], [roh for roh, _ in lauf]))
+    zeilen = [eintrag for _, eintrag in fest]
+    for roh, eintrag in lauf:
+        if fehlend[roh] > 0:
+            fehlend[roh] -= 1
             zeilen.append(eintrag)
-    return zeilen
+    return sorted(zeilen, key=_sortier_zeit)  # stabil: gleiche Zeit behält Reihenfolge
 
 
 def alle_tickets(repo: Path) -> list[str]:
-    ordner = repo / LOG_ORDNER
-    if not ordner.is_dir():
-        return []
-    nummern = [p.stem for p in ordner.glob("*.jsonl") if p.stem.isdigit()]
+    nummern: set[str] = set()
+    for ordner in (repo / LOG_ORDNER, repo / LAUF_ORDNER):
+        if ordner.is_dir():
+            nummern.update(p.stem for p in ordner.glob("*.jsonl") if p.stem.isdigit())
     return sorted(nummern, key=int)
 
 
@@ -179,6 +255,7 @@ def zusammenfassung(repo: Path, ticket: str | int) -> dict[str, Any]:
     # Der Starter (bau_loop) schreibt session_start ohne Kennung, die Hooks mit —
     # das Maximum zählt dieselbe Session nicht doppelt.
     sessions = max(len(kennungen) + enden_ohne_id, starts_ohne_id)
+    klartext = next((z for z in reversed(zeilen) if z.get("typ") == "zusammenfassung"), {})
     return {
         "ticket": str(ticket),
         "schaetzung_k": auftrag.get("schaetzung_k"),
@@ -191,6 +268,10 @@ def zusammenfassung(repo: Path, ticket: str | int) -> dict[str, Any]:
         "dauer_s": dauer,
         "handoffs": sum(1 for z in zeilen if z.get("typ") == "handoff"),
         "entscheidungen": sum(1 for z in zeilen if z.get("typ") == "entscheidung"),
+        # Klartext der jüngsten ``zusammenfassung``-Zeile (Fixrunde #204).
+        "umfang_ist": klartext.get("umfang"),
+        "schwierigkeiten": klartext.get("schwierigkeiten"),
+        "entscheidungen_text": klartext.get("entscheidungen"),
     }
 
 
@@ -362,6 +443,9 @@ def lernstoff(repo: Path, letzte: int = 30, grenze_k: float | None = None) -> st
             f"{z['sessions']} Session(s), {z['subagenten']} Subagent(en)"
             + (f" · {umfang}" if umfang else "")
         )
+        schwer = str(z["schwierigkeiten"] or "").replace("\n", " ")[:110]
+        if schwer:
+            zeilen.append(f"  Schwierigkeiten: {schwer}")
     zeilen.append("")
     zeilen += _faustregeln(daten, grenze_k)
     return "\n".join(zeilen)

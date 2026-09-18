@@ -76,14 +76,39 @@ def _zeit(sekunden: int) -> str:
     return (HOOK_BEGINN + timedelta(seconds=sekunden)).isoformat().replace("+00:00", "Z")
 
 
-def _assistant(sekunden: int, modell: str, usage: dict, sidechain: bool = False) -> dict:
-    return {
+def _assistant(
+    sekunden: int,
+    modell: str,
+    usage: dict,
+    sidechain: bool = False,
+    nachricht_id: str | None = None,
+    anfrage_id: str | None = None,
+) -> dict:
+    """assistant-Zeile; ``nachricht_id``/``anfrage_id`` wie bei Claude Code (Fixrunde #204)."""
+    zeile = {
         "type": "assistant",
         "isSidechain": sidechain,
         "sessionId": HAUPT_SESSION,
         "timestamp": _zeit(sekunden),
         "message": {"model": modell, "usage": usage},
     }
+    if nachricht_id:
+        zeile["message"]["id"] = nachricht_id
+    if anfrage_id:
+        zeile["requestId"] = anfrage_id
+    return zeile
+
+
+def _mit_teilzeile(zeile: dict, versatz: int = 1) -> list[dict]:
+    """Claude Code schreibt eine Antwort als mehrere Zeilen mit gleicher Kennung und
+    gleicher ``usage`` (je Inhaltsblock eine Zeile). Die Teilzeile darf nicht doppelt
+    zählen (Fixrunde #204)."""
+    teil = json.loads(json.dumps(zeile))
+    teil["timestamp"] = (
+        datetime.fromisoformat(zeile["timestamp"].replace("Z", "+00:00"))
+        + timedelta(seconds=versatz)
+    ).isoformat().replace("+00:00", "Z")
+    return [zeile, teil]
 
 
 def _anhaengen(pfad: Path, zeilen: list[dict]) -> None:
@@ -142,15 +167,19 @@ def _hooks_szenario(ausgabe: Path, ticket: str) -> int:
         haupt,
         [
             {"type": "user", "sessionId": HAUPT_SESSION, "timestamp": _zeit(0)},
-            _assistant(
-                60,
-                "claude-opus-5",
-                {
-                    "input_tokens": 1000,
-                    "cache_read_input_tokens": 20000,
-                    "cache_creation_input_tokens": 3000,
-                    "output_tokens": 400,
-                },
+            *_mit_teilzeile(
+                _assistant(
+                    60,
+                    "claude-opus-5",
+                    {
+                        "input_tokens": 1000,
+                        "cache_read_input_tokens": 20000,
+                        "cache_creation_input_tokens": 3000,
+                        "output_tokens": 400,
+                    },
+                    nachricht_id="msg_runde1",
+                    anfrage_id="req_runde1",
+                )
             ),
         ],
     )
@@ -167,16 +196,19 @@ def _hooks_szenario(ausgabe: Path, ticket: str) -> int:
     _anhaengen(
         sub,
         [
-            _assistant(
-                120,
-                "claude-sonnet-5",
-                {
-                    "input_tokens": 200,
-                    "cache_read_input_tokens": 5000,
-                    "cache_creation_input_tokens": 800,
-                    "output_tokens": 100,
-                },
-                sidechain=True,
+            *_mit_teilzeile(
+                _assistant(
+                    120,
+                    "claude-sonnet-5",
+                    {
+                        "input_tokens": 200,
+                        "cache_read_input_tokens": 5000,
+                        "cache_creation_input_tokens": 800,
+                        "output_tokens": 100,
+                    },
+                    sidechain=True,
+                    nachricht_id="msg_subagent1",
+                )
             )
         ],
     )
@@ -201,15 +233,19 @@ def _hooks_szenario(ausgabe: Path, ticket: str) -> int:
         haupt,
         [
             {"type": "user", "sessionId": HAUPT_SESSION, "timestamp": _zeit(180)},
-            _assistant(
-                240,
-                "claude-opus-5",
-                {
-                    "input_tokens": 500,
-                    "cache_read_input_tokens": 30000,
-                    "cache_creation_input_tokens": 1000,
-                    "output_tokens": 600,
-                },
+            # Runde 2 nur mit requestId (ohne message.id) — Ersatz-Schlüssel.
+            *_mit_teilzeile(
+                _assistant(
+                    240,
+                    "claude-opus-5",
+                    {
+                        "input_tokens": 500,
+                        "cache_read_input_tokens": 30000,
+                        "cache_creation_input_tokens": 1000,
+                        "output_tokens": 600,
+                    },
+                    anfrage_id="req_runde2",
+                )
             ),
         ],
     )

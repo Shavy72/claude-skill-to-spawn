@@ -75,13 +75,36 @@ def _zahl(wert: Any) -> int:
         return 0
 
 
+def _antwort_schluessel(eintrag: dict[str, Any]) -> str | None:
+    """Kennung einer Modellantwort: ``message.id``, sonst ``requestId``."""
+    nachricht = eintrag.get("message")
+    kennung = nachricht.get("id") if isinstance(nachricht, dict) else None
+    if isinstance(kennung, str) and kennung:
+        return f"msg:{kennung}"
+    anfrage = eintrag.get("requestId")
+    if isinstance(anfrage, str) and anfrage:
+        return f"req:{anfrage}"
+    return None
+
+
 def summiere(eintraege: list[dict[str, Any]]) -> dict[str, int]:
-    """Token-Summe über ``message.usage`` der übergebenen assistant-Zeilen."""
+    """Token-Summe über ``message.usage`` der übergebenen assistant-Zeilen.
+
+    Claude Code schreibt eine Modellantwort als mehrere Zeilen (je Inhaltsblock) mit
+    derselben ``message.id``/``requestId`` und derselben ``usage`` — je Kennung zählt
+    nur die erste Zeile. Zeilen ohne Kennung zählen einzeln (Fixrunde #204).
+    """
     summe = dict(LEERE_TOKENS)
+    gesehen: set[str] = set()
     for eintrag in eintraege:
         verbrauch = _usage(eintrag)
         if verbrauch is None:
             continue
+        schluessel = _antwort_schluessel(eintrag)
+        if schluessel is not None:
+            if schluessel in gesehen:
+                continue
+            gesehen.add(schluessel)
         summe["input"] += _zahl(verbrauch.get("input_tokens"))
         summe["cache_read"] += _zahl(verbrauch.get("cache_read_input_tokens"))
         summe["cache_creation"] += _zahl(verbrauch.get("cache_creation_input_tokens"))
@@ -118,6 +141,11 @@ def dauer_sekunden(eintraege: list[dict[str, Any]]) -> int:
             return max(0, int(datetime.now().timestamp() - float(start_env)))
         except ValueError:
             pass
+    return dauer_aus_zeitstempeln(eintraege)
+
+
+def dauer_aus_zeitstempeln(eintraege: list[dict[str, Any]]) -> int:
+    """Spanne erster bis letzter Transkript-Zeitstempel (für Subagenten, Fixrunde #204)."""
     zeiten = [z for z in (_zeitstempel(e) for e in eintraege) if z is not None]
     if len(zeiten) < 2:
         return 0
@@ -190,11 +218,50 @@ def _hat_zeile(repo: Path, ticket: str, typ: str, session_id: str) -> bool:
     )
 
 
+PROTOKOLL = Path(".claude") / "to-spawn" / "hooks.log"
+
+
+def _datei_protokoll() -> None:
+    """Hook-Meldungen zusätzlich nach ``~/.claude/to-spawn/hooks.log`` (Fixrunde #204).
+
+    stderr eines Hooks mit Exit 0 sieht niemand. Scheitert das Anlegen, läuft der
+    Hook still weiter.
+    """
+    try:
+        ziel = (Path.home() / PROTOKOLL).resolve()
+        ziel.parent.mkdir(parents=True, exist_ok=True)
+        handler = logging.FileHandler(ziel, encoding="utf-8")
+    except (OSError, RuntimeError):
+        return
+    handler.setFormatter(
+        logging.Formatter("%(asctime)s %(levelname)s [pid %(process)d] %(name)s: %(message)s")
+    )
+    handler.set_name("to-spawn-hooks")
+    wurzel = logging.getLogger("to_spawn")
+    for alt in [h for h in wurzel.handlers if h.get_name() == "to-spawn-hooks"]:
+        wurzel.removeHandler(alt)
+        alt.close()
+    wurzel.addHandler(handler)
+    if wurzel.level == logging.NOTSET or wurzel.level > logging.INFO:
+        wurzel.setLevel(logging.INFO)
+
+
+def _ohne_log_repo(hook: str) -> None:
+    """Protokoll-Zeile, wenn der Ziel-Ordner (Ticket-Worktree) fehlt."""
+    log.warning(
+        "%s: Bau-Log-Ordner fehlt (TO_SPAWN_LOG_REPO=%s) — keine Zeile für Ticket #%s.",
+        hook,
+        os.environ.get("TO_SPAWN_LOG_REPO") or "(nicht gesetzt)",
+        bau_log.ticket_aus_umgebung() or "?",
+    )
+
+
 def hook_stop(strom: TextIO | None = None, ausgabe: TextIO | None = None) -> int:
     """Stop-Hook: schreibt ``session_ende`` und — bei frischem Handoff — den Marker.
 
     Endet immer mit 0: ein Fehler im Hook darf die Bau-Session nie stören (#204).
     """
+    _datei_protokoll()
     try:
         _hook_stop(strom or sys.stdin, ausgabe or sys.stdout)
     except Exception:
@@ -206,6 +273,7 @@ def _hook_stop(strom: TextIO, ausgabe: TextIO) -> None:
     daten = _eingabe(strom)
     repo = bau_log.log_repo()
     if repo is None:
+        _ohne_log_repo("Stop-Hook")
         return
     konfig = config.lade(repo)
     ticket = bau_log.ticket_aus_umgebung(repo)
@@ -279,6 +347,7 @@ def hook_subagent_stop(strom: TextIO | None = None) -> int:
 
     Endet immer mit 0: ein Fehler im Hook darf die Bau-Session nie stören (#204).
     """
+    _datei_protokoll()
     try:
         _hook_subagent_stop(strom or sys.stdin)
     except Exception:
@@ -290,6 +359,7 @@ def _hook_subagent_stop(strom: TextIO) -> None:
     daten = _eingabe(strom)
     repo = bau_log.log_repo()
     if repo is None:
+        _ohne_log_repo("SubagentStop-Hook")
         return
     konfig = config.lade(repo)
     ticket = bau_log.ticket_aus_umgebung(repo)
@@ -301,16 +371,18 @@ def _hook_subagent_stop(strom: TextIO) -> None:
     if eigenes and Path(eigenes).is_file():
         eintraege = _zeilen(Path(eigenes))
         kette = [e for e in eintraege if _usage(e) is not None]
+        zeit_kette = eintraege  # das ganze eigene Transkript gehört dem Subagenten
     else:
         eintraege = _zeilen(Path(daten.get("transcript_path") or ""))
         kette = letzte_subagent_kette(eintraege)
+        zeit_kette = kette
 
     eltern = daten.get("session_id")
     bau_log.schreibe(
         repo,
         ticket,
         "subagent_ende",
-        session_id=daten.get("agent_id") or eltern,
+        session_id=_subagent_kennung(daten, zeit_kette),
         eltern_session=eltern,
         vermerk=f"Subagent von Session {eltern}" if eltern else None,
         staffel=_staffel(),
@@ -318,9 +390,26 @@ def _hook_subagent_stop(strom: TextIO) -> None:
         effort=os.environ.get("TO_SPAWN_EFFORT"),
         runner=konfig.get("runner"),
         tokens=summiere(kette),
-        dauer_s=dauer_sekunden(kette),
+        # Nur die eigene Kette — TO_SPAWN_START ist der Start der ganzen Session.
+        dauer_s=dauer_aus_zeitstempeln(zeit_kette),
         text=_text(daten.get("last_assistant_message"), "Subagent beendet."),
     )
+
+
+def _subagent_kennung(daten: dict[str, Any], kette: list[dict[str, Any]]) -> str | None:
+    """``agent_id``, sonst Dateiname des Subagenten-Transkripts, sonst
+    ``<session_id>:<erster Zeitstempel der Kette>`` — nie die bloße Eltern-Session,
+    sonst verschluckt die Zählung je Kennung alle Subagenten bis auf einen."""
+    agent_id = daten.get("agent_id")
+    if isinstance(agent_id, str) and agent_id:
+        return agent_id
+    eigenes = daten.get("agent_transcript_path")
+    if isinstance(eigenes, str) and eigenes.strip():
+        return Path(eigenes).stem
+    eltern = daten.get("session_id")
+    if not eltern:
+        return None
+    return f"{eltern}:{_erster_zeitpunkt(kette) or '?'}"
 
 
 def _staffel() -> int:

@@ -160,7 +160,9 @@ def _eintrag(args: argparse.Namespace) -> int:
     if not ticket or not str(ticket).strip().isdigit():
         log.error("Ticket-Nummer fehlt — --ticket <N> angeben.")
         return 2
-    zeile = bau_log.schreibe(
+    # Einzige Stelle, die die versionierte Datei schreibt: überträgt fehlende
+    # Laufdatei-Zeilen der Hooks gleich mit (Fixrunde #204).
+    zeile = bau_log.eintrag_schreiben(
         repo,
         str(ticket).strip(),
         args.typ,
