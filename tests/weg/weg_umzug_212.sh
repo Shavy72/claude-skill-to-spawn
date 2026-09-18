@@ -40,6 +40,8 @@ cp "$SKILL"/repo-scripts/{bau.py,wache.py,sessions_stand.py,spec_stand.py,spawn_
 # Dieses Repo ist auf den Skill-Stand unter Test festgenagelt (auch auf der Server-Seite).
 sed -i "s|os.environ.get(\"TO_SPAWN_HOME\") or Path.home() / \".claude\" / \"skills\" / \"to-spawn\"|os.environ.get(\"TO_SPAWN_HOME\") or \"$SKILL\"|" "$L/scripts/_to_spawn_weiterleitung.py"
 grep -q "$SKILL" "$L/scripts/_to_spawn_weiterleitung.py" || { echo "Weiterleitung nicht festgenagelt"; exit 2; }
+sed -i "s|^SKILL=\"\${TO_SPAWN_HOME:-\$HOME/.claude/skills/to-spawn}\"|SKILL=\"\${TO_SPAWN_HOME:-$SKILL}\"|" "$L/scripts/spawn_srv.sh"
+grep -q "$SKILL" "$L/scripts/spawn_srv.sh" || { echo "spawn_srv.sh-Weiterleitung nicht festgenagelt"; exit 2; }
 cp "$HOME/duoplus-management/scripts/hooks/staffel_stop.py" "$L/scripts/hooks/"
 cat > "$L/docs/agents/manifests/_default.json" <<'JSON'
 {
@@ -109,7 +111,7 @@ pruefe "lokal: Umzug bestätigt im Log" 'tmux capture-pane -p -t weg212-lokal -S
 pruefe "tmux-Fenster bau $T auf dem Server" 'tmux list-windows -t "=spec-$S" -F "#W" 2>/dev/null | grep -qx "bau $T"'
 SRV_BAU="$(pid_mit_cwd "bau.py $T" "$SRV" | head -1)"
 pruefe "Server-bau.py läuft im Server-Repo (PID $SRV_BAU)" '[ -n "$SRV_BAU" ]'
-pruefe "Server-bau.py mit --umzug gestartet" 'tr "\0" " " < /proc/$SRV_BAU/cmdline | grep -q -- "--umzug ticket-$T:docs/handoffs/HANDOFF_"'
+pruefe "Server-bau.py mit --umzug gestartet" 'tr "\0" " " < /proc/$SRV_BAU/cmdline | grep -Eq -- "--umzug ticket-$T@[0-9a-f]{7,40}:docs/handoffs/HANDOFF_"'
 HANDOFF="$(git -C "$O" ls-tree -r --name-only "ticket-$T" docs/handoffs | grep "HANDOFF_.*_$T.md" | head -1)"
 pruefe "Handoff auf origin/ticket-$T ($HANDOFF)" '[ -n "$HANDOFF" ] && git -C "$O" show "ticket-$T:$HANDOFF" | grep -qi "umzug: *server"'
 pruefe "Commit-Betreff endet mit (#$T) [skip ci]" 'git -C "$O" log -1 --format=%s "ticket-$T" | grep -q "(#$T) \[skip ci\]$"'

@@ -11,7 +11,7 @@ Die Logik liegt im Skill `to-spawn` (`to_spawn/umzug.py`). Welche Variante gilt,
 ## 1. Bau-Session (`BAU_TICKET` gesetzt)
 
 1. Handoff `docs/handoffs/HANDOFF_<heute>_$BAU_TICKET.md` im Ticket-Worktree schreiben: Stand, nächste Schritte, offene Punkte. **Pflichtzeile `Umzug: server`** (auch als Überschrift `## Umzug: server` gültig), **nie** die Zeile `Staffel: weiter` (sonst startet die lokale Staffel neu).
-2. Eigene Arbeit mit Pathspec committen (`git status --short` vorher, nur eigene Dateien — auch neue Dateien, sonst Weigerung).
+2. Eigene Arbeit mit Pathspec committen (`git status --short` vorher, nur eigene Dateien — auch neue Dateien, sonst Weigerung). **Den Handoff dabei NICHT committen** — das macht das Skript in Schritt 3 mit dem richtigen Betreff.
 3. Im Worktree ausführen:
    `python3 "${TO_SPAWN_HOME:-$HOME/.claude/skills/to-spawn}"/to_spawn.py umzug $BAU_TICKET --handoff docs/handoffs/HANDOFF_<heute>_$BAU_TICKET.md`
 4. **Exit 0 → nichts mehr tun.** Die Session läuft schon auf dem Server; `bau.py` beendet diese lokale Session gleich selbst (kein Doppel-Lauf).

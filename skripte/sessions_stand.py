@@ -211,6 +211,8 @@ def zuordnen(eintraege: dict[str, Eintrag], alle: list[Prozess]) -> None:
     for p in alle:
         if p.name.lower() not in VERWAIST_NAMEN or p.pid in bekannte:
             continue
+        if fremdes_repo(p.pid):  # Claude-Session eines anderen Repos ist hier keine Waise (#212)
+            continue
         m = VERWAIST.search(p.cmd)
         if not m:
             continue
