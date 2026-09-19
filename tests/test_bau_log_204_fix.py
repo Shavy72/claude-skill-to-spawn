@@ -121,7 +121,7 @@ def test_weg_hooks_lassen_worktree_sauber_eintrag_uebertraegt(
     assert enden[-1]["tokens"] == HAUPT_TOKENS
     subs = [z for z in zeilen if z["typ"] == "subagent_ende"]
     assert subs[0]["tokens"] == SUBAGENT_TOKENS
-    assert bau_log.zusammenfassung(worktree, TICKET)["ist_k"] == 62.6
+    assert bau_log.zusammenfassung(worktree, TICKET)["verbrauch_k"] == 62.6  # #238
 
     umgebung = {**_umgebung(tmp_path, wt_basis), "TO_SPAWN_LOG_REPO": str(worktree)}
     eintrag = [
@@ -153,7 +153,7 @@ def test_weg_hooks_lassen_worktree_sauber_eintrag_uebertraegt(
     fest2 = _roh(versioniert)
     assert len(fest2) == len(lauf) + 2
     assert len(bau_log.lese(worktree, TICKET)) == len(lauf) + 2
-    assert bau_log.zusammenfassung(worktree, TICKET)["ist_k"] == 62.6
+    assert bau_log.zusammenfassung(worktree, TICKET)["verbrauch_k"] == 62.6  # #238
 
     # Nach dem Commit der versionierten Datei ist der Worktree wieder sauber.
     _git(worktree, "add", str(versioniert))

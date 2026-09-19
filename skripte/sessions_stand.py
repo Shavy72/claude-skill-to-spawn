@@ -228,14 +228,16 @@ def zuordnen(eintraege: dict[str, Eintrag], alle: list[Prozess]) -> None:
 
 
 def token_text(ticket: str, repo: Path = REPO) -> str:
-    """Ist-Token eines Tickets aus dem Bau-Log, z. B. „123,4k“ (``—`` ohne Log, #204).
+    """Spitzen-Kontext eines Tickets aus dem Bau-Log, z. B. „180,2k“ (``—`` ohne Wert).
 
-    Zuerst das Log im Ticket-Worktree (dort schreiben die Hooks), sonst das im Repo.
+    Die Smart-Zone-Zahl: größter Kontext einer Session (#238), nie die Summe des
+    Cache-Lesens. Zuerst das Log im Ticket-Worktree (dort schreiben die Hooks),
+    sonst das im Repo.
     """
     for ort in (Path(config.worktree_pfad(ticket)).expanduser(), repo):
         if bau_log.hat_log(ort, ticket):  # versioniert oder Laufdatei (Fixrunde #204)
-            ist_k = bau_log.zusammenfassung(ort, ticket)["ist_k"]
-            return f"{ist_k:.1f}".replace(".", ",") + "k" if ist_k else "—"
+            spitze_k = bau_log.zusammenfassung(ort, ticket)["spitze_k"]
+            return f"{spitze_k:.1f}".replace(".", ",") + "k" if spitze_k else "—"
     return "—"
 
 

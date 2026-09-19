@@ -352,7 +352,13 @@ def _lauf(
     for staffel in range(1, sessions + 1):
         zeilen.append({"ts": ts, "typ": "session_start", "staffel": staffel})
         zeilen.append(
-            {"ts": ts, "typ": "session_ende", "tokens": {"gesamt": ist_gesamt // sessions}}
+            {
+                "ts": ts,
+                "typ": "session_ende",
+                "tokens": {"gesamt": ist_gesamt // sessions},
+                # Seit #238 zählt nur der Spitzen-Kontext je Session als Ist.
+                "kontext": {"spitze": ist_gesamt // sessions},
+            }
         )
     _log(repo, ticket, zeilen)
 

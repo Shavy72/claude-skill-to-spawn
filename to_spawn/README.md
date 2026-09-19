@@ -167,6 +167,11 @@ Alles andere (CLI, Manifest-Prüfung, Bau-Log, Hooks, Staffel-Schleife, Git) lä
   eigenes Deploy-Skript mit demselben Zeilenformat.
 - `spawn` ist nur Delegation; `spawn_srv.ps1`/`spawn_local.ps1` kennen die Staffel
   noch nicht — sie starten `bau <N>` des Repos, nicht `bau_loop.run_ticket`.
-- `ist_k` summiert die `usage`-Felder aller assistant-Zeilen; das ist ein
-  Verbrauchsmaß, kein Kontext-Höchststand.
+- Token im Bau-Log (#238): `kontext.spitze` = größter Kontext eines Aufrufs
+  (input + cache_read + cache_creation), `ist_k` = Summe dieser Spitzen je
+  Hauptsession (eine Session = ihre Spitze), `spitze_k` = größte Einzelspitze
+  (Spalte „Token“ in `sessions`), `sub_spitze_k` = größte Subagenten-Spitze.
+  `verbrauch_k` summiert alle `usage`-Felder inkl. Cache-Lesen — ein Verbrauchsmaß,
+  nie eine Kontextgröße. Alte Zeilen ohne `kontext` zählen nicht; `to_spawn.py
+  umrechnen --ticket <N>` hängt den Wert aus dem Transkript an.
 - Marker-Weg braucht den echten Beweis mit laufender Claude-Session (Probesitz).

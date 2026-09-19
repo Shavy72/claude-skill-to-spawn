@@ -194,6 +194,30 @@ def _eintrag(args: argparse.Namespace) -> int:
     return 0
 
 
+def _umrechnen(args: argparse.Namespace) -> int:
+    """``umrechnen``: alten Bau-Log-Zeilen den Spitzen-Kontext nachtragen (#238)."""
+    repo = Path(args.repo).expanduser() if args.repo else bau_log.log_repo()
+    if repo is None or not repo.is_dir():
+        log.error("Kein Bau-Log-Ordner — --repo <Ordner> angeben.")
+        return 1
+    ticket = str(args.ticket or bau_log.ticket_aus_umgebung(repo) or "").strip()
+    if not ticket.isdigit():
+        log.error("Ticket-Nummer fehlt — --ticket <N> angeben.")
+        return 2
+    transkripte = Path(args.transkripte).expanduser()
+    if not transkripte.is_dir():
+        log.error("Transkript-Ordner %s fehlt.", transkripte)
+        return 1
+    umgerechnet, ohne = hooks.umrechnen(repo, ticket, transkripte)
+    z = bau_log.zusammenfassung(repo, ticket)
+    ist = f"{z['ist_k']:g}k" if z["ist_k"] else "—"
+    print(
+        f"Bau-Log #{ticket}: {umgerechnet} Zeile(n) umgerechnet, {ohne} ohne Transkript "
+        f"· Kontext jetzt {ist}"
+    )
+    return 0
+
+
 def _hook_stop_mit_umzug() -> int:
     """Ein Stop-Befehl für Bau-Log (#204) und Umzug-Anfrage des Wächters (#212).
 
@@ -333,6 +357,17 @@ def main(argv: list[str] | None = None) -> int:
         "--repo", help="Ordner mit dem Bau-Log (sonst TO_SPAWN_LOG_REPO bzw. Git-Wurzel)"
     )
 
+    p_um = unter.add_parser(
+        "umrechnen", help="alte Bau-Log-Zeilen: Spitzen-Kontext aus dem Transkript nachtragen"
+    )
+    p_um.add_argument("--ticket", help="Ticket-Nummer (sonst TO_SPAWN_TICKET/wt-<N>)")
+    p_um.add_argument("--repo", help="Ordner mit dem Bau-Log (sonst TO_SPAWN_LOG_REPO)")
+    p_um.add_argument(
+        "--transkripte",
+        default=str(Path.home() / ".claude" / "projects"),
+        help="Claude-Projektordner mit den Transkripten",
+    )
+
     nest.richte_parser_ein(unter)
 
     args = ap.parse_args(argv)
@@ -344,6 +379,8 @@ def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     if args.befehl == "eintrag":
         return _eintrag(args)
+    if args.befehl == "umrechnen":
+        return _umrechnen(args)
     if args.befehl == "nest":
         return nest.lauf(args)
 

@@ -197,7 +197,9 @@ def test_weg_bau_schreibt_bau_log_im_worktree(repo: Path, tmp_path: Path) -> Non
     assert subs[0]["vermerk"] == f"Subagent von Session {HAUPT_SESSION}"
 
     zusammen = bau_log.zusammenfassung(worktree, TICKET)
-    assert zusammen["ist_k"] == 62.6
+    # Seit #238: Summe heißt ehrlich ``verbrauch_k``; ``ist_k`` = Spitzen-Kontext.
+    assert zusammen["verbrauch_k"] == 62.6
+    assert zusammen["ist_k"] == 31.5
     assert zusammen["sessions"] == 1
     assert zusammen["subagenten"] == 1
 
@@ -210,7 +212,7 @@ def test_weg_bau_schreibt_bau_log_im_worktree(repo: Path, tmp_path: Path) -> Non
     kopf = next(z for z in stand.stdout.splitlines() if z.startswith("Ticket"))
     assert "Token" in kopf
     zeile = next(z for z in stand.stdout.splitlines() if z.startswith(f"#{TICKET}"))
-    assert "62,6k" in zeile, stand.stdout
+    assert "31,5k" in zeile, stand.stdout  # Spitzen-Kontext statt Summe (#238)
 
 
 def test_weg_worktree_fehlt_keine_datei_im_repo(repo: Path, tmp_path: Path) -> None:
@@ -329,7 +331,9 @@ def test_zusammenfassung_dedupliziert_je_session(repo: Path) -> None:
         ],
     )
     z = bau_log.zusammenfassung(repo, TICKET)
-    assert z["ist_k"] == 5.9  # 3000 + 2000 + 100 + 100 + 700
+    # Seit #238 heißt die Summe ``verbrauch_k``; ohne ``kontext`` kein ``ist_k``.
+    assert z["verbrauch_k"] == 5.9  # 3000 + 2000 + 100 + 100 + 700
+    assert z["ist_k"] is None
     assert z["dauer_s"] == 160  # 120 + 30 + 5 + 5
     assert z["sessions"] == 4  # a, b und zwei Zeilen ohne Kennung
     assert z["subagenten"] == 1

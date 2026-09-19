@@ -18,6 +18,7 @@ import json
 import logging
 import os
 import sys
+from collections.abc import Iterator
 from datetime import datetime
 from pathlib import Path
 from typing import Any, TextIO
@@ -87,14 +88,13 @@ def _antwort_schluessel(eintrag: dict[str, Any]) -> str | None:
     return None
 
 
-def summiere(eintraege: list[dict[str, Any]]) -> dict[str, int]:
-    """Token-Summe über ``message.usage`` der übergebenen assistant-Zeilen.
+def _je_antwort(eintraege: list[dict[str, Any]]) -> Iterator[dict[str, Any]]:
+    """``message.usage`` je Modellantwort genau einmal.
 
     Claude Code schreibt eine Modellantwort als mehrere Zeilen (je Inhaltsblock) mit
     derselben ``message.id``/``requestId`` und derselben ``usage`` — je Kennung zählt
     nur die erste Zeile. Zeilen ohne Kennung zählen einzeln (Fixrunde #204).
     """
-    summe = dict(LEERE_TOKENS)
     gesehen: set[str] = set()
     for eintrag in eintraege:
         verbrauch = _usage(eintrag)
@@ -105,6 +105,13 @@ def summiere(eintraege: list[dict[str, Any]]) -> dict[str, int]:
             if schluessel in gesehen:
                 continue
             gesehen.add(schluessel)
+        yield verbrauch
+
+
+def summiere(eintraege: list[dict[str, Any]]) -> dict[str, int]:
+    """Token-Summe über ``message.usage`` der übergebenen assistant-Zeilen."""
+    summe = dict(LEERE_TOKENS)
+    for verbrauch in _je_antwort(eintraege):
         summe["input"] += _zahl(verbrauch.get("input_tokens"))
         summe["cache_read"] += _zahl(verbrauch.get("cache_read_input_tokens"))
         summe["cache_creation"] += _zahl(verbrauch.get("cache_creation_input_tokens"))
@@ -113,6 +120,28 @@ def summiere(eintraege: list[dict[str, Any]]) -> dict[str, int]:
         summe["input"] + summe["cache_read"] + summe["cache_creation"] + summe["output"]
     )
     return summe
+
+
+def kontext(eintraege: list[dict[str, Any]]) -> dict[str, int] | None:
+    """Spitzen-Kontext und Anzahl der Modellaufrufe (#238); ``None`` ohne Aufruf.
+
+    Jeder Aufruf schickt den ganzen bisherigen Kontext; ``input`` + ``cache_read`` +
+    ``cache_creation`` eines Aufrufs ist also die Kontextgröße in diesem Moment. Die
+    Summe über alle Aufrufe wächst quadratisch und ist keine Kontextgröße — die
+    Smart-Zone-Zahl ist das Maximum. Ohne lesbaren Aufruf (leeres oder fehlendes
+    Transkript) gibt es keinen Wert statt einer falschen 0.
+    """
+    spitze = 0
+    aufrufe = 0
+    for verbrauch in _je_antwort(eintraege):
+        aufrufe += 1
+        groesse = (
+            _zahl(verbrauch.get("input_tokens"))
+            + _zahl(verbrauch.get("cache_read_input_tokens"))
+            + _zahl(verbrauch.get("cache_creation_input_tokens"))
+        )
+        spitze = max(spitze, groesse)
+    return {"spitze": spitze, "aufrufe": aufrufe} if aufrufe else None
 
 
 def modell_aus(eintraege: list[dict[str, Any]]) -> str | None:
@@ -311,6 +340,7 @@ def _hook_stop(strom: TextIO, ausgabe: TextIO) -> None:
         effort=effort,
         runner=konfig.get("runner"),
         tokens=summiere(haupt),
+        kontext=kontext(haupt),
         dauer_s=dauer_sekunden(eintraege),
         text=_text(daten.get("last_assistant_message"), "Session beendet."),
     )
@@ -390,6 +420,7 @@ def _hook_subagent_stop(strom: TextIO) -> None:
         effort=os.environ.get("TO_SPAWN_EFFORT"),
         runner=konfig.get("runner"),
         tokens=summiere(kette),
+        kontext=kontext(kette),
         # Nur die eigene Kette — TO_SPAWN_START ist der Start der ganzen Session.
         dauer_s=dauer_aus_zeitstempeln(zeit_kette),
         text=_text(daten.get("last_assistant_message"), "Subagent beendet."),
@@ -410,6 +441,72 @@ def _subagent_kennung(daten: dict[str, Any], kette: list[dict[str, Any]]) -> str
     if not eltern:
         return None
     return f"{eltern}:{_erster_zeitpunkt(kette) or '?'}"
+
+
+def _transkript_fuer(zeile: dict[str, Any], transkripte: Path) -> Path | None:
+    """Transkript zu einer alten Log-Zeile im Claude-Projektordner (#238).
+
+    ``session_ende``: ``<projekt>/<session_id>.jsonl``. ``subagent_ende``:
+    ``<projekt>/<eltern_session>/subagents/agent-<session_id>.jsonl``.
+    """
+    kennung = str(zeile.get("session_id") or "")
+    if not kennung or "/" in kennung or ":" in kennung:
+        return None
+    if zeile.get("typ") == "subagent_ende":
+        eltern = str(zeile.get("eltern_session") or "")
+        if not eltern or "/" in eltern:
+            return None
+        kennung = kennung.removeprefix("agent-")  # Kennung aus dem Dateinamen
+        name = f"{eltern}/subagents/agent-{kennung}.jsonl"
+    else:
+        name = f"{kennung}.jsonl"
+    for kandidat in (transkripte / name, *transkripte.glob(f"*/{name}")):
+        if kandidat.is_file():
+            return kandidat
+    return None
+
+
+def umrechnen(repo: Path, ticket: str, transkripte: Path) -> tuple[int, int]:
+    """Alten Log-Zeilen ohne ``kontext`` den Spitzen-Kontext nachtragen (#238).
+
+    Vor #238 stand nur ``tokens`` (Summe über alle Aufrufe) im Log. Für jede
+    Session, deren jüngste Zeile keinen ``kontext`` trägt, hängt ``umrechnen`` eine
+    Kopie dieser Zeile mit ``kontext`` an die Laufdatei an — nie umschreiben: ein
+    gleichzeitig laufender Hook hängt ebenfalls nur an, keine Zeile geht verloren,
+    und die jüngste Zeile je Session gewinnt beim Lesen. ``eintrag`` überträgt die
+    Nachträge wie jede Laufzeile in die versionierte Datei.
+    Gibt (umgerechnet, ohne Transkript) zurück.
+    """
+    zeilen = bau_log.lese(repo, ticket)
+    juengste: dict[tuple[str, str], dict[str, Any]] = {}
+    ohne = 0
+    for zeile in zeilen:
+        if zeile.get("typ") not in ("session_ende", "subagent_ende"):
+            continue
+        kennung = zeile.get("session_id")
+        if not kennung:
+            if not isinstance(zeile.get("kontext"), dict):
+                ohne += 1
+            continue
+        juengste[(str(zeile["typ"]), str(kennung))] = zeile
+    umgerechnet = 0
+    for zeile in juengste.values():
+        if isinstance(zeile.get("kontext"), dict):
+            continue
+        pfad = _transkript_fuer(zeile, transkripte)
+        wert = None
+        if pfad is not None:
+            eintraege = _zeilen(pfad)
+            kette = haupt_zeilen(eintraege) if zeile.get("typ") == "session_ende" else eintraege
+            wert = kontext(kette)
+        if wert is None:
+            ohne += 1
+            continue
+        felder = {k: v for k, v in zeile.items() if k not in ("ts", "typ", "ticket")}
+        felder.update(kontext=wert, umgerechnet_aus=pfad.name)
+        bau_log.schreibe(repo, ticket, str(zeile["typ"]), **felder)
+        umgerechnet += 1
+    return umgerechnet, ohne
 
 
 def _staffel() -> int:

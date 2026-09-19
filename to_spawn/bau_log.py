@@ -214,6 +214,38 @@ def _summe(zeilen: Iterable[dict[str, Any]], feld: str = "gesamt") -> int:
     return gesamt
 
 
+def _spitzen(zeilen: Iterable[dict[str, Any]]) -> list[int]:
+    """Spitzen-Kontext je Zeile (#238); Zeilen ohne ``kontext`` (vor #238) fehlen.
+
+    Deren ``tokens.gesamt`` ist die Summe des Cache-Lesens über alle Aufrufe und
+    keine Kontextgröße — sie wird nie als Ersatz genommen (``umrechnen`` holt den
+    Wert aus dem Transkript nach).
+    """
+    werte: list[int] = []
+    for zeile in zeilen:
+        kontext = zeile.get("kontext")
+        if isinstance(kontext, dict):
+            wert = kontext.get("spitze")
+            if isinstance(wert, (int, float)) and not isinstance(wert, bool):
+                werte.append(int(wert))
+    return werte
+
+
+def _aufrufe(zeilen: Iterable[dict[str, Any]]) -> int:
+    gesamt = 0
+    for zeile in zeilen:
+        kontext = zeile.get("kontext")
+        if isinstance(kontext, dict):
+            wert = kontext.get("aufrufe")
+            if isinstance(wert, int) and not isinstance(wert, bool):
+                gesamt += wert
+    return gesamt
+
+
+def _k(wert: int | None) -> float | None:
+    return round(wert / 1000, 1) if wert else None
+
+
 def _juengste_je_session(zeilen: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
     """Nur die jüngste Zeile je ``session_id`` (Hooks schreiben kumulierte Summen).
 
@@ -259,6 +291,9 @@ def zusammenfassung(repo: Path, ticket: str | int) -> dict[str, Any]:
     # das Maximum zählt dieselbe Session nicht doppelt.
     sessions = max(len(kennungen) + enden_ohne_id, starts_ohne_id)
     klartext = next((z for z in reversed(zeilen) if z.get("typ") == "zusammenfassung"), {})
+    haupt_spitzen = _spitzen(enden)
+    sub_spitzen = _spitzen(subs)
+    vollstaendig = bool(haupt_spitzen) and len(haupt_spitzen) == len(enden)
     return {
         "ticket": str(ticket),
         "schaetzung_k": auftrag.get("schaetzung_k"),
@@ -267,7 +302,17 @@ def zusammenfassung(repo: Path, ticket: str | int) -> dict[str, Any]:
         "sessions": sessions,
         "staffel": max(staffeln) if staffeln else sessions,
         "subagenten": len(subs),
-        "ist_k": round((_summe(enden) + _summe(subs)) / 1000, 1),
+        # Spitzen-Kontext der Hauptsession (#238); bei mehreren Staffeln die Summe
+        # der Spitzen je Session — das ist der Bedarf, den ``schaetzung_k`` schätzt.
+        # Fehlt einer Session der Wert (Log vor #238, nicht umgerechnet), gibt es
+        # kein ``ist_k`` — ein Teilwert würde die Lernschleife zu klein lernen lassen.
+        "ist_k": _k(sum(haupt_spitzen)) if vollstaendig else None,
+        "spitze_k": _k(max(haupt_spitzen)) if vollstaendig else None,
+        "sub_spitze_k": _k(max(sub_spitzen)) if sub_spitzen else None,
+        "aufrufe": _aufrufe(enden),
+        "output_k": round(_summe(enden, "output") / 1000, 1),
+        # Verbrauch inkl. Cache-Lesen über alle Aufrufe — nie als Kontext anzeigen.
+        "verbrauch_k": round((_summe(enden) + _summe(subs)) / 1000, 1),
         "dauer_s": dauer,
         "handoffs": sum(1 for z in zeilen if z.get("typ") == "handoff"),
         "entscheidungen": sum(1 for z in zeilen if z.get("typ") == "entscheidung"),
@@ -280,7 +325,20 @@ def zusammenfassung(repo: Path, ticket: str | int) -> dict[str, Any]:
 
 def tabelle(repo: Path, tickets: Iterable[str | int]) -> str:
     """Gesamt-Tabelle als Klartext (feste Spaltenbreiten, ohne Fremd-Bibliothek)."""
-    kopf = ("Ticket", "Schätz.k", "Ist k", "Sess.", "Staffel", "Subag.", "Dauer", "Entsch.")
+    # „Ist k“ = Spitzen-Kontext (#238); Verbrauch inkl. Cache-Lesen steht getrennt.
+    kopf = (
+        "Ticket",
+        "Schätz.k",
+        "Ist k",
+        "Sess.",
+        "Staffel",
+        "Subag.",
+        "Dauer",
+        "Entsch.",
+        "Sub-Spitze k",
+        "Aufrufe",
+        "Verbrauch k (Cache inkl.)",
+    )
     reihen: list[tuple[str, ...]] = []
     for ticket in tickets:
         z = zusammenfassung(repo, ticket)
@@ -295,6 +353,9 @@ def tabelle(repo: Path, tickets: Iterable[str | int]) -> str:
                 str(z["subagenten"]),
                 f"{z['dauer_s'] // 60} min" if z["dauer_s"] else "—",
                 str(z["entscheidungen"]),
+                f"{z['sub_spitze_k']:g}" if z["sub_spitze_k"] else "—",
+                str(z["aufrufe"]) if z["aufrufe"] else "—",
+                f"{z['verbrauch_k']:g}" if z["verbrauch_k"] else "—",
             )
         )
     if not reihen:
@@ -440,9 +501,10 @@ def lernstoff(repo: Path, letzte: int = 30, grenze_k: float | None = None) -> st
         faktor = (
             f" (Faktor {_komma(z['ist_k'] / schaetzung)})" if hat_schaetzung and z["ist_k"] else ""
         )
+        ist = f"{z['ist_k']:g}k" if z["ist_k"] else "?"
         umfang = str(z["umfang"] or "").replace("\n", " ")[:110]
         zeilen.append(
-            f"- #{z['ticket']}: {soll} geschätzt → {z['ist_k']:g}k ist{faktor}, "
+            f"- #{z['ticket']}: {soll} geschätzt → {ist} ist{faktor}, "
             f"{z['sessions']} Session(s), {z['subagenten']} Subagent(en)"
             + (f" · {umfang}" if umfang else "")
         )
