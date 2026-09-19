@@ -47,7 +47,6 @@ ROLLEN: dict[str, str] = {
     "waechter": "Wächter",
 }
 
-REMOTE_HINWEIS = "Remote Control — geplant: nur Wächter, am Handy (noch nicht wählbar)."
 SCHLUSS_SATZ = "Laufende Sessions bleiben unberührt; neue Starts lesen die Werte."
 ERSTES_MAL = (
     "Erstes Mal in diesem Repo: `to_spawn.py setup` passt Terminal/Modell/Effort an."
@@ -136,6 +135,12 @@ _TERMINALS: list[_Terminal] = [
 
 
 plattform_von = config.plattform_von
+
+
+def remote_hinweis(konfig: dict[str, Any]) -> str:
+    """Remote-Control-Zeile so, wie ``wache`` startet (Konfig ``waechter.remote_control``, #213)."""
+    an = bool(konfig.get("waechter", {}).get("remote_control", True))
+    return f"Remote Control (nur Wächter, per Claude-App erreichbar): {'an' if an else 'aus'}"
 
 
 def pruefe_start(programm: str, pfad: str) -> str | None:
@@ -296,7 +301,7 @@ def fuehre_dialog(
             f"Achtung: Standard {std_option.name} ist hier {std_option.status}"
             f"{' (' + std_option.grund + ')' if std_option.grund else ''}."
         )
-    geplant.append(REMOTE_HINWEIS)
+    geplant.append(remote_hinweis(konfig))
     modell_liste = [(mid, f"{name} ({mid})") for mid, name in MODELLE]
     effort_liste = [(e, e) for e in EFFORTS]
 
@@ -454,7 +459,7 @@ def zeige(
         marke = " [Standard]" if option.schluessel == vorgabe["terminal"] else ""
         wahl = option.schluessel if option.waehlbar else "nicht wählbar"
         zeilen.append(f"  {wahl}: {_terminal_zeile(option)}{marke}")
-    zeilen.append(f"  {REMOTE_HINWEIS}")
+    zeilen.append(f"  {remote_hinweis(konfig)}")
     zeilen += ["", "Modelle (--modell-ticket, --modell-leicht):"]
     zeilen += [f"  {mid}: {name}" for mid, name in MODELLE]
     zeilen += [
