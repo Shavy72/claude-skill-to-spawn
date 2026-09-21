@@ -237,10 +237,10 @@ def blocker_offen(ticket: str) -> list[str]:
     Session auf einem Stand ohne die Blocker-Arbeit. Bei gh-/git-Fehlern gilt
     „offen" (fail-closed), damit kein Loop vorzeitig losläuft.
     """
-    gh = shutil.which("gh")
-    if gh is None:
+    gh_bin = shutil.which("gh")
+    if gh_bin is None:
         return ["gh fehlt"]
-    deps = _gh_json(gh, "api", f"repos/{GH_REPO}/issues/{ticket}/dependencies/blocked_by")
+    deps = _gh_json(gh_bin, "api", f"repos/{GH_REPO}/issues/{ticket}/dependencies/blocked_by")
     if not isinstance(deps, list):
         return ["Blocker-Abfrage fehlgeschlagen"]
     gruende: list[str] = []
