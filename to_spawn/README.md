@@ -143,6 +143,31 @@ Fehlt das Plugin: `bau`/`wache` enden mit **Exit 2** und nennen `claude plugin i
 `setup --zeige` trägt eine Zeile `context-mode … bereit — <Pfad>` bzw. `FEHLT`.
 Beleg je Session: `sessions` zeigt in der Spalte `ctx` ✓/✗ (start.mjs-Kindprozess unter der Claude-Session).
 
+## Probesitz (#214) — die Checkliste, die das Setup selbst führt
+
+`python to_spawn.py probesitz` fährt 7 echte Prüfungen und merkt sich den Stand je
+Maschine + Repo (`~/.claude/to-spawn/waechter/probesitz/<owner_repo>.json`, Ordner
+über `TO_SPAWN_WAECHTER_ORDNER`). `setup --zeigen` und jedes Setup-Ende hängen den
+Block „Probesitz (7 Punkte)“ an. Rot = Grund + „fehlt noch: …“, nie nur ein Kreuz.
+
+| # | Punkt | Prüfung |
+|---|---|---|
+| 1 | Login trägt | `claude auth status` → `loggedIn` |
+| 2 | Wegwerf-Session: Mini-Commit + Push | Wegwerf-Ticket per `gh issue create`, Worktree `wt-<N>`, `bau.py <N> --probesitz` (claude -p, Sonnet), Zweig `probesitz-<N>` auf origin mit Commit `(#N)` |
+| 3 | Playwright gegen Staging | `staging.url` (oder `adresse=` aus `staging.zugang_datei`) + `/login` antwortet 200; Zugang `nutzer=`/`passwort=` oder `user:pass` |
+| 4 | Sandbox sperrt außerhalb Worktree | `srt --settings … -- touch` innen Exit 0, außen ≠ 0 und keine Datei (`sandbox.modus aus` ist nur ein Hinweis) |
+| 5 | Bau-Log-Zeile mit Token | aus dem Wegwerf-Lauf: `session_ende` mit `tokens.gesamt > 0` |
+| 6 | Künstlicher Handoff startet Folge-Session | aus dem Wegwerf-Lauf: `handoff` + `session_start` mit `staffel = 2` (braucht `scripts/hooks/staffel_stop.py` im Repo) |
+| 7 | Mail „Probesitz grün“ | nur wenn 1–6 grün; Art `probesitz_gruen` über `mail.befehl`, geht auch bei `nur_kritisch` |
+
+- Punkte 2/5/6 sind EIN Lauf (bis 15 min). Ticket, Fern-Zweig, Worktree und lokale
+  Zweige werden immer aufgeräumt (`gh issue close`, `git push --delete`, `worktree remove`),
+  auch bei Fehlern.
+- `--punkt N` (mehrfach) prüft nur diese Punkte, `--zeigen` zeigt nur den Stand,
+  `--modell` wählt das Modell der Wegwerf-Session.
+- Exit 0 = 7/7 ✓ · 1 = mindestens ein ✗ · 2 = Konfig/Repo unlesbar.
+- Konfig: `"staging": {"url": "", "zugang_datei": ""}` (Staging-Nest #211).
+
 ## Konfig `.to-spawn/config.json`
 
 Fehlt die Datei, gelten die Vorgaben aus `to_spawn/config.py`:
@@ -157,7 +182,8 @@ Fehlt die Datei, gelten die Vorgaben aus `to_spawn/config.py`:
               "waechter": "claude-fable-5-1"},
   "effort": {"ticket": "medium", "ticket_leicht": "low", "waechter": "low"},
   "staffel": {"modus": "eltern", "grenze_k": 200, "max_staffeln": 3},
-  "mail": {"ziel": "", "nur_kritisch": true}
+  "mail": {"ziel": "", "nur_kritisch": true},
+  "staging": {"url": "", "zugang_datei": ""}
 }
 ```
 

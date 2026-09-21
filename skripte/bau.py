@@ -1,6 +1,6 @@
 """bau — schlanke Claude-Code-Session für genau ein Ticket.
 
-Aufruf: ``python scripts/bau.py <N> [--dry-run] [--model <m>] [--print-prompt] [--sofort] [--takt <s>] [--umzug <branch>@<sha>:<pfad>]``
+Aufruf: ``python scripts/bau.py <N> [--dry-run] [--model <m>] [--print-prompt] [--sofort] [--takt <s>] [--umzug <branch>@<sha>:<pfad>] [--probesitz]``
 
 Liest das Ticket-Manifest unter ``docs/agents/manifests/*.json`` (SSOT-Schema siehe
 ``docs/agents/kontext-manifest.md``), schaltet alle nicht benötigten Skills
@@ -35,7 +35,7 @@ from pathlib import Path
 _SKILL = str(Path(__file__).resolve().parent.parent)
 if _SKILL not in sys.path:
     sys.path.insert(0, _SKILL)
-from to_spawn import config, context_mode, nest, sessions_datei, umzug  # noqa: E402
+from to_spawn import config, context_mode, nest, probesitz, sessions_datei, umzug  # noqa: E402
 from to_spawn.waechter_lauf import transkript_ordner
 
 # Windows-Konsole ist cp1252 — Umlaute/Pfeile im Prompt brauchen UTF-8.
@@ -102,8 +102,12 @@ def read_json(path: Path, default: dict | None = None) -> dict:
 # --- Manifest ---------------------------------------------------------------
 
 
-def load_default() -> dict:
+def load_default(ersatz: Path | None = None) -> dict:
+    """``docs/agents/manifests/_default.json`` des Repos; fehlt sie, ``ersatz`` (Probesitz, #214)."""
     path = MANIFEST_DIR / "_default.json"
+    if not path.is_file() and ersatz is not None and ersatz.is_file():
+        log.warning("Default-Manifest fehlt im Repo — nehme %s.", ersatz)
+        path = ersatz
     if not path.is_file():
         log.error("Default-Manifest fehlt: %s", path)
         sys.exit(2)
@@ -606,8 +610,21 @@ def main() -> int:
         help="Umzug vom PC (#212): Handoff aus Commit <sha> auf origin/<branch> als Startkontext "
         "(alte Form <branch>:<pfad> liest origin/<branch>), impliziert --sofort",
     )
+    parser.add_argument(
+        "--probesitz",
+        action="store_true",
+        help="Probesitz (#214): Wegwerf-Session ohne Terminal (claude -p), fester Mini-Auftrag, "
+        "kein Manifest nötig, impliziert --sofort",
+    )
     args = parser.parse_args()
     ticket = str(args.ticket)
+    if args.probesitz:
+        args.sofort = True
+        if not STAFFEL_HOOK.is_file():
+            log.warning(
+                "Staffel-Hook %s fehlt im Repo — Punkt 6 (Handoff → Folge-Session) kann nicht grün werden.",
+                STAFFEL_HOOK,
+            )
     if not args.dry_run:  # Probelauf ohne Seiteneffekte (#205)
         config.sicherstellen(REPO)
     # Fortsetzen nur mit vorhandenem Transkript (#236, F5): ohne die Datei startete
@@ -618,9 +635,13 @@ def main() -> int:
             log.error("--resume %s: Transkript %s fehlt — kein Start.", args.resume, transkript)
             return 2
 
-    default = load_default()
-    found = find_manifest(ticket)
-    if found:
+    default = load_default(Path(_SKILL) / "repo-scripts" / "_default.json" if args.probesitz else None)
+    found = None if args.probesitz else find_manifest(ticket)
+    if args.probesitz:
+        # Wegwerf-Ticket: kein Manifest, kein gh — der Auftrag ist fest (#214).
+        entry = {}
+        spec, title = "probesitz", f"Probesitz-Wegwerf-Session #{ticket}"
+    elif found:
         manifest, entry = found
         spec = str(manifest.get("spec", "?"))
         title = entry.get("title") or f"Ticket {ticket}"
@@ -633,7 +654,11 @@ def main() -> int:
             return 2
         spec = spec_gh
 
-    prompt = build_prompt(default["prompt_template"], ticket, spec, title, build_kontext(entry))
+    prompt = (
+        probesitz.WEGWERF_PROMPT.format(ticket=ticket)
+        if args.probesitz
+        else build_prompt(default["prompt_template"], ticket, spec, title, build_kontext(entry))
+    )
     erster_prompt = prompt
     if args.umzug:
         branch, _pfad, handoff_text = umzug_handoff_lesen(args.umzug)
@@ -702,6 +727,8 @@ def main() -> int:
     claude = shutil.which("claude") or "claude"
     cmd = [
         claude,
+        # Probesitz (#214): Print-Modus, die Session endet ohne Terminal von selbst.
+        *(["-p"] if args.probesitz else []),
         "--settings",
         str(settings_path),
         "--mcp-config",
@@ -768,6 +795,13 @@ def main() -> int:
     umzug_datei = out / "umzug.json"
     os.environ["BAU_UMZUG_DATEI"] = str(umzug_datei)
     os.environ["BAU_UMZUG_ANFRAGE"] = str(umzug_anfragen_aufraeumen(ticket))
+
+    if args.probesitz:
+        # ``claude -p`` liest eine Pipe auf stdin bis zum Ende — ohne Terminal würde die
+        # Session hängen. Deshalb stdin fest auf /dev/null (#214).
+        leer = os.open(os.devnull, os.O_RDONLY)
+        os.dup2(leer, sys.stdin.fileno())
+        os.close(leer)
 
     # Staffel-Schleife: jede Runde eine eigene Session, Übergabe über die Staffel-Datei.
     staffel_datei.unlink(missing_ok=True)

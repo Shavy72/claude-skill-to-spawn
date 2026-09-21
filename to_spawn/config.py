@@ -75,6 +75,12 @@ DEFAULTS: dict[str, Any] = {
     "staging_start": "",
     #: Deploy-Befehl des Repos (leer = Repo deployt nicht über den Skill).
     "deploy_befehl": "",
+    #: Staging-Nest (#211) für den Probesitz (#214): ``url`` = Adresse, ``zugang_datei`` = Datei mit
+    #: ``nutzer=…``/``passwort=…`` (oder ``user:pass``); leer = Punkt 3 bleibt rot mit „fehlt noch“.
+    "staging": {
+        "url": "",
+        "zugang_datei": "",
+    },
     #: Sandbox je Worktree (#210), Opt-in je Repo: "an" = Session läuft in ``srt``.
     #: ``pflicht`` (bei "an"): fehlt srt/bwrap oder scheitert der Worktree → kein Start;
     #: false → Warnung, Session ohne Sandbox. ``netz_zusatz`` = weitere Ziele (``host[:port]``).

@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, TextIO
 
-from . import config, context_mode
+from . import config, context_mode, probesitz
 
 log = logging.getLogger("to_spawn.setup")
 
@@ -440,13 +440,27 @@ def speichere(
     return datei
 
 
+def probesitz_block(repo: Path) -> str:
+    """Stand der Probesitz-Checkliste (#214) — darf das Setup nie zu Fall bringen."""
+    try:
+        return probesitz.zeige(probesitz.lade_zustand(repo))
+    except (OSError, ValueError) as fehler:
+        log.warning("Probesitz-Stand nicht lesbar: %s", fehler)
+        return probesitz.zeige({})
+
+
 def zeige(
-    konfig: dict[str, Any], datei: Path, plattform: str | None = None, **pruef: Any
+    konfig: dict[str, Any],
+    datei: Path,
+    plattform: str | None = None,
+    repo: Path | None = None,
+    **pruef: Any,
 ) -> str:
     """Optionen + Werte als Text (für den Skill, der dann nachfragt).
 
     „In der Datei“ = Rohwerte, „Standard“ = was Enter im Dialog nimmt.
-    Unlesbare Datei → :class:`KonfigUnlesbar`.
+    Unlesbare Datei → :class:`KonfigUnlesbar`. Am Ende steht der Probesitz-Stand (#214);
+    ``repo`` = Repo-Wurzel (Vorgabe: zwei Ebenen über der Konfig-Datei).
     """
     roh = lies_roh(datei)
     vorgabe = standards(konfig, plattform)
@@ -496,6 +510,7 @@ def zeige(
             f"  {rolle} ({klartext}): {modell_name(modell)} ({modell}{fest}), "
             f"Effort {vorgabe['effort'][rolle]}"
         )
+    zeilen += ["", probesitz_block(repo or datei.resolve().parent.parent)]
     return "\n".join(zeilen)
 
 
@@ -522,6 +537,7 @@ def erster_start(
         )
         datei = speichere(repo, aenderungen, plattform)
         ausgabe.write(f"Gespeichert: {datei}\n")
+        ausgabe.write(probesitz_block(config.repo_wurzel(repo)) + "\n")
         ausgabe.flush()
         return datei
     datei = config.sicherstellen(repo)

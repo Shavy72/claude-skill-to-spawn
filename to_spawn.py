@@ -7,6 +7,7 @@ Aufruf (im Repo-Wurzelordner):
     python ~/.claude/skills/to-spawn/to_spawn.py log <S>
     python ~/.claude/skills/to-spawn/to_spawn.py lernstoff [--letzte 30]
     python ~/.claude/skills/to-spawn/to_spawn.py setup [--zeigen|--standard|--terminal …]
+    python ~/.claude/skills/to-spawn/to_spawn.py probesitz [--punkt N …] [--zeigen] [--modell M]  # 7-Punkte-Abnahme (#214)
     python ~/.claude/skills/to-spawn/to_spawn.py deploy-status [--datei P] [--ticket N] [--still-min 60]
     python ~/.claude/skills/to-spawn/to_spawn.py hook-stop          # JSON auf stdin
     python ~/.claude/skills/to-spawn/to_spawn.py hook-subagent-stop # JSON auf stdin
@@ -37,6 +38,7 @@ from to_spawn import (  # noqa: E402
     inventur,
     manifest,
     nest,
+    probesitz,
     setup,
     umzug,
 )
@@ -92,7 +94,7 @@ def _setup(repo: Path, args: argparse.Namespace) -> int:
         return 1
     konfig = config.lade(repo)
     if args.zeigen:
-        print(setup.zeige(konfig, datei, args.plattform))
+        print(setup.zeige(konfig, datei, args.plattform, repo=repo))
         return 0
 
     modelle = [mid for mid, _ in setup.MODELLE]
@@ -164,6 +166,8 @@ def _setup(repo: Path, args: argparse.Namespace) -> int:
             f"Effort {stand['effort'][rolle]}"
         )
     print(setup.SCHLUSS_SATZ)
+    print()
+    print(setup.probesitz_block(repo))
     return 0
 
 
@@ -282,6 +286,16 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Optionen + Werte zeigen, nichts schreiben",
     )
+    p_probe = unter.add_parser(
+        "probesitz", help="7-Punkte-Abnahme des Setups selbst fahren (#214)"
+    )
+    p_probe.add_argument(
+        "--punkt", action="append", type=int, help="nur diesen Punkt (1–7), mehrfach möglich"
+    )
+    p_probe.add_argument(
+        "--zeigen", action="store_true", help="nur den gemerkten Stand zeigen, nichts prüfen"
+    )
+    p_probe.add_argument("--modell", help="Modell der Wegwerf-Session (Vorgabe claude-sonnet-5)")
     p_setup.add_argument(
         "--dialog", action="store_true", help="Dialog auch ohne Terminal (stdin gepipt)"
     )
@@ -406,6 +420,10 @@ def main(argv: list[str] | None = None) -> int:
         )
     if args.befehl == "setup":
         return _setup(repo, args)
+    if args.befehl == "probesitz":
+        return probesitz.befehl(
+            repo, punkte=args.punkt, nur_zeigen=args.zeigen, modell=args.modell
+        )
     if args.befehl == "spawn" and not args.dry_run:
         setup.erster_start(
             repo,

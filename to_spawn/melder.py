@@ -32,7 +32,8 @@ log = logging.getLogger("to_spawn.melder")
 KRITISCH = frozenset(
     {"gate_rot", "session_tot", "live_beweis_blockiert", "waechter_ausweich"}
 )
-IMMER = KRITISCH | {"spec_fertig"}
+#: ``probesitz_gruen`` (#214): die eine Erfolgsmeldung des Probesitz geht auch bei ``nur_kritisch`` raus.
+IMMER = KRITISCH | {"spec_fertig", "probesitz_gruen"}
 ZEITLIMIT_S = 120
 
 
