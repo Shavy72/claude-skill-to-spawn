@@ -166,6 +166,10 @@ Block „Probesitz (7 Punkte)“ an. Rot = Grund + „fehlt noch: …“, nie nu
 - `--punkt N` (mehrfach) prüft nur diese Punkte, `--zeigen` zeigt nur den Stand,
   `--modell` wählt das Modell der Wegwerf-Session.
 - Exit 0 = 7/7 ✓ · 1 = mindestens ein ✗ · 2 = Konfig/Repo unlesbar.
+- Jeder Lauf trägt eine Lauf-Kennung; Punkt 7 geht nur raus, wenn 1–6 im SELBEN Lauf grün
+  waren (`--punkt 7` allein = Rot „Punkte aus älterem Lauf“). Die Wegwerf-Session bekommt
+  `claude -p --allowedTools "Bash(git *)" "Bash(mkdir *)" Write Edit Read` — auch ohne
+  `bypassPermissions`. Aufräum-Fehlschläge (Ticket offen, Zweig bleibt) stehen im Beleg von Punkt 2.
 - Konfig: `"staging": {"url": "", "zugang_datei": ""}` (Staging-Nest #211).
 
 ## Konfig `.to-spawn/config.json`

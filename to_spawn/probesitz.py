@@ -30,6 +30,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import uuid
 from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
@@ -48,6 +49,12 @@ MODELL_VORGABE = "claude-sonnet-5"
 #: Gesamt-Zeitlimit des Wegwerf-Laufs (zwei kurze Runden, Sonnet).
 WEGWERF_ZEITLIMIT_S = 15 * 60
 BEOBACHTUNGS_TAKT_S = 5.0
+#: Frist nach SIGTERM, bevor die Prozessgruppe hart beendet wird.
+BEENDEN_FRIST_S = 30.0
+#: Muster im Session-Protokoll, die einen Rechte-Stopp verraten (Fixrunde #214).
+RECHTE_MUSTER = re.compile(r"permission denied|requires? permission|requested permissions|haven't granted|not allowed to use", re.IGNORECASE)
+#: stderr von ``touch`` in der Sandbox, das als echte Sperre zählt.
+SPERR_MUSTER = re.compile(r"permission denied|read-only file system|keine berechtigung", re.IGNORECASE)
 BELEG_ZEILEN_MAX = 20
 SKILL_ORDNER = Path(__file__).resolve().parent.parent
 
@@ -79,7 +86,7 @@ WEGWERF_PROMPT = (
     "6) beende deine Antwort sofort danach mit dem Wort FERTIG. "
     "Runde 2 (ein Handoff steht im Startkontext): "
     "1) Datei docs/probesitz/{ticket}_runde2.txt mit „Probesitz Runde 2“ anlegen; "
-    "2) Commit „chore(probesitz): Wegwerf-Commit Runde 2 (#{ticket}) [skip ci]“, "
+    "2) git add nur diese Datei, Commit „chore(probesitz): Wegwerf-Commit Runde 2 (#{ticket}) [skip ci]“, "
     "git push origin probesitz-{ticket}; "
     "3) keinen Handoff schreiben; "
     "4) antworte nur FERTIG. "
@@ -165,14 +172,22 @@ def speichere_zustand(repo: Path, zustand: dict[str, Any]) -> None:
     melder.speichere_json(zustand_datei(repo), zustand)
 
 
-def eintragen(zustand: dict[str, Any], ergebnis: Ergebnis) -> dict[str, Any]:
-    """Ergebnis in den Zustand mischen (neues Objekt, Eingabe bleibt unverändert)."""
+def eintragen(
+    zustand: dict[str, Any], ergebnis: Ergebnis, lauf_id: str | None = None
+) -> dict[str, Any]:
+    """Ergebnis in den Zustand mischen (neues Objekt, Eingabe bleibt unverändert).
+
+    ``lauf_id`` kennzeichnet den Lauf: Punkt 7 und der Exit-Code trauen nur Punkten
+    aus demselben Lauf (Fixrunde #214).
+    """
     neu = dict(zustand)
     punkte = dict(neu.get("punkte") or {})
     eintrag = asdict(ergebnis)
     eintrag.pop("nummer", None)
     eintrag.pop("titel", None)
     eintrag["ts"] = _jetzt()
+    if lauf_id:
+        eintrag["lauf_id"] = lauf_id
     punkte[str(ergebnis.nummer)] = eintrag
     neu["punkte"] = punkte
     neu["letzter_lauf"] = eintrag["ts"]
@@ -188,8 +203,25 @@ def offene_punkte(zustand: dict[str, Any], bis: int = 7) -> list[int]:
     return [n for n in range(1, bis + 1) if not punkt_gruen(zustand, n)]
 
 
+def aeltere_punkte(zustand: dict[str, Any], lauf_id: str, bis: int = 6) -> list[int]:
+    """Grüne Punkte, die nicht aus dem Lauf ``lauf_id`` stammen."""
+    punkte = zustand.get("punkte") or {}
+    return [
+        n
+        for n in range(1, bis + 1)
+        if punkt_gruen(zustand, n) and (punkte.get(str(n)) or {}).get("lauf_id") != lauf_id
+    ]
+
+
 def alle_gruen(zustand: dict[str, Any]) -> bool:
+    """7/7 ✓ — Punkt 7 wird nur grün, wenn 1–6 im selben Lauf grün waren."""
     return not offene_punkte(zustand)
+
+
+def _stempel_kurz(ts: Any) -> str:
+    """ISO → ``TT.MM. HH:MM`` für die Anzeige."""
+    text = str(ts or "")
+    return f"{text[8:10]}.{text[5:7]}. {text[11:16]}" if len(text) >= 16 else text
 
 
 def zeige(zustand: dict[str, Any]) -> str:
@@ -201,15 +233,16 @@ def zeige(zustand: dict[str, Any]) -> str:
         if not isinstance(eintrag, dict):
             zeilen.append(f"  · {nummer} {titel} — noch nie geprüft")
             continue
-        zeilen.append(
-            Ergebnis(
-                nummer,
-                titel,
-                bool(eintrag.get("ok")),
-                str(eintrag.get("grund") or ""),
-                str(eintrag.get("fehlt_noch") or ""),
-            ).zeile()
-        )
+        zeile = Ergebnis(
+            nummer,
+            titel,
+            bool(eintrag.get("ok")),
+            str(eintrag.get("grund") or ""),
+            str(eintrag.get("fehlt_noch") or ""),
+        ).zeile()
+        if eintrag.get("lauf_id"):
+            zeile += f" · {_stempel_kurz(eintrag.get('ts'))}"
+        zeilen.append(zeile)
     stand = zustand.get("letzter_lauf")
     zeilen.append(
         f"  Stand: {stand}" if stand else "  Noch nie gelaufen: python to_spawn.py probesitz"
@@ -357,6 +390,10 @@ def pruefe_sandbox(
             return _rot(4, f"srt sperrt auch innerhalb des Worktrees (Exit {drinnen.returncode}: {kurz})", "srt/bwrap-Setup prüfen (nest werkzeuge, user namespaces)", beleg)
         if draussen.returncode == 0 or ziel_aussen.exists():
             return _rot(4, "srt lässt Schreiben außerhalb des Worktrees zu", "srt-Einstellungen prüfen (nest sandbox)", beleg)
+        meldung = (draussen.stderr or draussen.stdout).strip()
+        if draussen.returncode != 1 or not SPERR_MUSTER.search(meldung):
+            # 124 = Zeitlimit, 126/127 = srt/bwrap nicht startbar — das ist keine Sperre.
+            return _rot(4, f"srt außen Exit {draussen.returncode} ohne Sperr-Meldung: {meldung[-160:]}", "srt/bwrap-Setup prüfen (nest werkzeuge)", beleg)
         return _gruen(4, f"innen erlaubt, außen gesperrt{hinweis}", beleg)
     except OSError as fehler:
         return _rot(4, f"Sandbox-Prüfung scheiterte: {fehler}", "srt/bwrap-Setup prüfen (nest werkzeuge)")
@@ -410,6 +447,45 @@ def session_beobachten(ticket: str) -> str | None:
     return None
 
 
+def _posix() -> bool:
+    return sys.platform != "win32"
+
+
+def _signal_an_gruppe(prozess: subprocess.Popen[Any], sig: int, hart: bool) -> None:
+    """Signal an die Prozessgruppe (POSIX) — sonst nur an bau.py selbst (Windows)."""
+    if _posix():
+        try:
+            os.killpg(prozess.pid, sig)
+            return
+        except (OSError, AttributeError):
+            pass
+    if hart:
+        prozess.kill()
+    else:
+        prozess.terminate()
+
+
+def prozess_beenden(prozess: subprocess.Popen[Any], frist: float | None = None) -> None:
+    """Prozessgruppe sanft beenden, nach ``frist`` hart — und immer auf das Ende warten.
+
+    Sonst liefe ``claude`` unter einem toten ``bau.py`` weiter, während der Worktree
+    schon weggeräumt wird (Fixrunde #214).
+    """
+    if prozess.poll() is not None:
+        return
+    _signal_an_gruppe(prozess, signal.SIGTERM, hart=False)
+    try:
+        prozess.wait(timeout=frist if frist is not None else BEENDEN_FRIST_S)
+        return
+    except subprocess.TimeoutExpired:
+        pass
+    _signal_an_gruppe(prozess, getattr(signal, "SIGKILL", signal.SIGTERM), hart=True)
+    try:
+        prozess.wait(timeout=BEENDEN_FRIST_S)
+    except subprocess.TimeoutExpired:
+        log.error("Prozess %s lässt sich nicht beenden — von Hand prüfen.", prozess.pid)
+
+
 def session_fahren(
     argv: list[str],
     *,
@@ -420,7 +496,11 @@ def session_fahren(
     ticket: str,
     ausgabe: TextIO | None = None,
 ) -> SessionLauf:
-    """``bau.py --probesitz`` starten, alle 5 s nach der Session schauen, Zeitlimit hart."""
+    """``bau.py --probesitz`` starten, alle 5 s nach der Session schauen, Zeitlimit hart.
+
+    Was auch passiert (Ausnahme im Beobachter, Strg-C, Zeitlimit): beim Verlassen ist die
+    Prozessgruppe beendet und abgewartet.
+    """
     with tempfile.NamedTemporaryFile(
         "w", prefix=f"probesitz-{ticket}-", suffix=".log", delete=False, encoding="utf-8"
     ) as protokoll:
@@ -431,34 +511,45 @@ def session_fahren(
             stdin=subprocess.DEVNULL,
             stdout=protokoll,
             stderr=subprocess.STDOUT,
-            start_new_session=True,
+            start_new_session=_posix(),
         )
         start = time.monotonic()
         beobachtung: str | None = None
         zeit_um = False
-        while True:
-            try:
-                prozess.wait(timeout=BEOBACHTUNGS_TAKT_S)
-                break
-            except subprocess.TimeoutExpired:
-                pass
-            if beobachtung is None:
-                beobachtung = beobachter(ticket)
-                if beobachtung and ausgabe:
-                    ausgabe.write(f"    Wegwerf-Session sichtbar: {beobachtung}\n")
-                    ausgabe.flush()
-            if time.monotonic() - start > zeitlimit_s:
-                zeit_um = True
+        try:
+            while True:
                 try:
-                    os.killpg(prozess.pid, signal.SIGTERM)
-                except OSError:
-                    prozess.terminate()
-                try:
-                    prozess.wait(timeout=30)
+                    prozess.wait(timeout=BEOBACHTUNGS_TAKT_S)
+                    break
                 except subprocess.TimeoutExpired:
-                    prozess.kill()
-                break
-    return SessionLauf(prozess.returncode or 0, beobachtung, zeit_um, protokoll.name)
+                    pass
+                if beobachtung is None:
+                    beobachtung = beobachter(ticket)
+                    if beobachtung and ausgabe:
+                        ausgabe.write(f"    Wegwerf-Session sichtbar: {beobachtung}\n")
+                        ausgabe.flush()
+                if time.monotonic() - start > zeitlimit_s:
+                    zeit_um = True
+                    prozess_beenden(prozess)
+                    break
+        finally:
+            prozess_beenden(prozess)
+    code = prozess.returncode
+    return SessionLauf(code if code is not None else -1, beobachtung, zeit_um, protokoll.name)
+
+
+def protokoll_grund(pfad: str) -> str | None:
+    """Rechte-Stopp im Session-Protokoll (``claude -p`` ohne erlaubte Werkzeuge)?"""
+    try:
+        text = Path(pfad).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    treffer = RECHTE_MUSTER.search(text)
+    if not treffer:
+        return None
+    anfang = text.rfind("\n", 0, treffer.start()) + 1
+    ende = text.find("\n", treffer.end())
+    return text[anfang : ende if ende >= 0 else None].strip()[:200]
 
 
 def werte_bau_log(zeilen: Iterable[dict[str, Any]]) -> tuple[Ergebnis, Ergebnis]:
@@ -509,40 +600,61 @@ def pruefe_push(repo: Path, ticket: str, zweig: str, laeufer: Laeufer) -> Ergebn
     return _gruen(2, f"{len(betreffe)} Commit(s) auf origin/{zweig}", beleg="\n".join(betreffe))
 
 
-def _wegwerf_ticket(repo: Path, laeufer: Laeufer, which: Which) -> str | None:
+def _wegwerf_ticket(repo: Path, laeufer: Laeufer, which: Which) -> tuple[str | None, str]:
+    """Wegwerf-Ticket anlegen → (Nummer, "") oder (None, Grund)."""
     gh = which("gh")
     if not gh:
-        return None
+        return None, "gh nicht gefunden"
     stempel = datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M")
     fertig = laeufer(
         [gh, "issue", "create", "--title", f"Probesitz {stempel}", "--body", "Wegwerf-Ticket des Probesitz (Skill to-spawn, #214). Wird am Ende automatisch geschlossen."],
         cwd=repo,
         timeout=120,
     )
+    meldung = (fertig.stderr or fertig.stdout).strip()
     if fertig.returncode != 0:
-        log.warning("gh issue create scheiterte: %s", (fertig.stderr or fertig.stdout).strip()[-200:])
-        return None
+        log.warning("gh issue create scheiterte: %s", meldung[-200:])
+        return None, (f"gh issue create Exit {fertig.returncode}: {meldung[-160:]}" if meldung else "gh nicht angemeldet")
     treffer = re.search(r"/(\d+)\s*$", fertig.stdout.strip())
-    return treffer.group(1) if treffer else None
+    if not treffer:
+        return None, f"gh issue create ohne Ticket-Nummer in der Antwort: {fertig.stdout.strip()[-160:]}"
+    return treffer.group(1), ""
 
 
-def _aufraeumen(repo: Path, ticket: str, worktree: Path, zweig: str, laeufer: Laeufer, which: Which, fazit: str) -> None:
-    """Immer: Ticket schließen, Fern-Zweig, Worktree und lokale Zweige weg — Fehler nur loggen."""
+def _aufraeumen(repo: Path, ticket: str, worktree: Path, zweig: str, laeufer: Laeufer, which: Which, fazit: str) -> list[str]:
+    """Immer: Ticket schließen, Fern-Zweig, Worktree und lokale Zweige weg.
+
+    Rückgabe: Fehlschläge als Text (landen im Beleg von Punkt 2 und in der Ausgabe) —
+    ein offenes Ticket oder ein liegengebliebener Zweig darf nicht unsichtbar bleiben.
+    """
     gh = which("gh")
-    schritte: list[list[str]] = []
-    if gh:
-        schritte.append([gh, "issue", "close", ticket, "--comment", f"Probesitz beendet: {fazit}"])
-    schritte += [
-        ["git", "-C", str(repo), "push", "origin", "--delete", zweig],
-        ["git", "-C", str(repo), "worktree", "remove", "--force", str(worktree)],
-        ["git", "-C", str(repo), "branch", "-D", f"ticket-{ticket}", zweig],
-    ]
-    for argv in schritte:
+    fehler: list[str] = []
+
+    def schritt(argv: list[str]) -> bool:
         fertig = laeufer(argv, cwd=repo, timeout=120)
-        if fertig.returncode != 0:
-            log.warning("Aufräumen (%s) Exit %s: %s", " ".join(argv[:4]), fertig.returncode, (fertig.stderr or fertig.stdout).strip()[-160:])
+        if fertig.returncode == 0:
+            return True
+        meldung = (fertig.stderr or fertig.stdout).strip()[-160:]
+        kurz = " ".join(argv[1:4]) if argv[0] == "git" else " ".join(Path(argv[0]).name.split() + argv[1:3])
+        log.warning("Aufräumen (%s) Exit %s: %s", kurz, fertig.returncode, meldung)
+        fehler.append(f"{kurz} Exit {fertig.returncode}: {meldung}")
+        return False
+
+    if gh:
+        schritt([gh, "issue", "close", ticket, "--comment", f"Probesitz beendet: {fazit}"])
+    else:
+        fehler.append(f"gh fehlt — Ticket #{ticket} bleibt offen")
+    schritt(["git", "-C", str(repo), "push", "origin", "--delete", zweig])
+    schritt(["git", "-C", str(repo), "worktree", "remove", "--force", str(worktree)])
     if worktree.exists():
         shutil.rmtree(worktree, ignore_errors=True)
+    zweige = ["git", "-C", str(repo), "branch", "-D", f"ticket-{ticket}", zweig]
+    if not schritt(zweige):
+        # Registrierung eines weggezogenen Worktrees blockiert branch -D — erst prune, dann erneut.
+        schritt(["git", "-C", str(repo), "worktree", "prune"])
+        fehler.pop()
+        schritt(zweige)
+    return fehler
 
 
 def _log_auszug(worktree: Path, ticket: str) -> str:
@@ -570,10 +682,10 @@ def wegwerf_lauf(
     zeitlimit_s: float = WEGWERF_ZEITLIMIT_S,
 ) -> dict[int, Ergebnis]:
     """Ein echter Lauf für die Punkte 2, 5 und 6 — Wegwerf-Ticket, Worktree, zwei Runden."""
-    ticket = _wegwerf_ticket(repo, laeufer, which)
+    ticket, grund = _wegwerf_ticket(repo, laeufer, which)
     if ticket is None:
         return {
-            2: _rot(2, "gh nicht angemeldet", "gh auth login"),
+            2: _rot(2, grund, "gh auth login"),
             5: _rot(5, "hängt an Punkt 2"),
             6: _rot(6, "hängt an Punkt 2"),
         }
@@ -598,8 +710,15 @@ def wegwerf_lauf(
             p5.beleg = (p5.beleg + "\n" if p5.beleg else "") + auszug
         if lauf.beobachtung:
             p2.beleg = (p2.beleg + "\n" if p2.beleg else "") + lauf.beobachtung
+        if lauf.protokoll:
+            p2.beleg = (p2.beleg + "\n" if p2.beleg else "") + f"Protokoll: {lauf.protokoll}"
+        rechte = protokoll_grund(lauf.protokoll) if lauf.protokoll else None
         if lauf.zeit_ueberschritten:
             p2 = _rot(2, f"Zeitlimit {int(zeitlimit_s)} s überschritten (Protokoll {lauf.protokoll})", "Session-Protokoll lesen", p2.beleg)
+        elif rechte:
+            p2 = _rot(2, f"Session ohne Werkzeug-Rechte: {rechte}", "claude -p braucht --allowedTools (bau.py --probesitz) oder bypassPermissions", p2.beleg)
+        elif lauf.exit_code != 0:
+            p2 = _rot(2, f"bau.py Exit {lauf.exit_code} (Protokoll {lauf.protokoll})", "Session-Protokoll lesen (Sandbox-Pflicht, srt, claude, context-mode?)", p2.beleg)
         if not (repo / "scripts" / "hooks" / "staffel_stop.py").is_file() and not p6.ok:
             p6.fehlt_noch = "scripts/hooks/staffel_stop.py im Repo (Staffel-Hook, siehe SKILL.md)"
         ergebnisse = {2: p2, 5: p5, 6: p6}
@@ -610,7 +729,13 @@ def wegwerf_lauf(
         ergebnisse = {2: _rot(2, grund, "Fehler beheben, Probesitz erneut"), 5: _rot(5, "hängt an Punkt 2"), 6: _rot(6, "hängt an Punkt 2")}
         fazit = f"abgebrochen ({grund})"
     finally:
-        _aufraeumen(repo, ticket, worktree, zweig, laeufer, which, fazit)
+        reste = _aufraeumen(repo, ticket, worktree, zweig, laeufer, which, fazit)
+        if reste and 2 in ergebnisse:
+            text = "Aufräumen unvollständig: " + " · ".join(reste)
+            ergebnisse[2].beleg = (ergebnisse[2].beleg + "\n" if ergebnisse[2].beleg else "") + text
+            if ausgabe:
+                ausgabe.write(f"    {text}\n")
+                ausgabe.flush()
     return ergebnisse
 
 
@@ -626,15 +751,22 @@ def pruefe_mail(
     konfig: dict[str, Any],
     zustand: dict[str, Any],
     *,
+    lauf_id: str | None = None,
     melden: Callable[..., bool] = melder.melden,
 ) -> Ergebnis:
     offen = offene_punkte(zustand, bis=6)
     if offen:
         return _rot(7, "Punkte offen: " + ", ".join(str(n) for n in offen), "erst die offenen Punkte")
+    if lauf_id:
+        alt = aeltere_punkte(zustand, lauf_id)
+        if alt:
+            punkte = zustand.get("punkte") or {}
+            stempel = ", ".join(f"{n} ({_stempel_kurz((punkte.get(str(n)) or {}).get('ts'))})" for n in alt)
+            return _rot(7, f"Punkte aus älterem Lauf: {', '.join(str(n) for n in alt)} — {stempel}", "vollständiger Lauf ohne --punkt")
     if not melder.mail_eingerichtet(konfig):
         return _rot(7, "kein Mail-Befehl", "mail.befehl in .to-spawn/config.json")
     stempel = _jetzt()
-    vorschau = eintragen(zustand, _gruen(7, "Mail geht raus"))
+    vorschau = eintragen(zustand, _gruen(7, "Mail geht raus"), lauf_id)
     text = _zusammenfassung(vorschau)
     if melden(repo, "probesitz_gruen", "Probesitz grün", text, f"probesitz:{stempel}", konfig=konfig):
         return _gruen(7, f"Mail verschickt ({stempel})", beleg=text)
@@ -661,12 +793,13 @@ def laufen(
     """Gewählte Punkte (Vorgabe alle) prüfen, Zustand nach jedem Punkt speichern."""
     gewaehlt = set(punkte) if punkte else set(range(1, 8))
     zustand = lade_zustand(repo)
+    lauf_id = _jetzt() + "-" + uuid.uuid4().hex[:8]
     ergebnisse: list[Ergebnis] = []
 
     def merken(*neue: Ergebnis) -> None:
         nonlocal zustand
         for erg in neue:
-            zustand = eintragen(zustand, erg)
+            zustand = eintragen(zustand, erg, lauf_id)
             ergebnisse.append(erg)
             if ausgabe:
                 ausgabe.write(erg.zeile() + "\n")
@@ -683,7 +816,7 @@ def laufen(
     if 4 in gewaehlt:
         merken(pruefe_sandbox(konfig, repo, laeufer=laeufer, which=which))
     if 7 in gewaehlt:
-        merken(pruefe_mail(repo, konfig, zustand, melden=melden))
+        merken(pruefe_mail(repo, konfig, zustand, lauf_id=lauf_id, melden=melden))
     return sorted(ergebnisse, key=lambda e: e.nummer)
 
 
@@ -696,10 +829,6 @@ def befehl(repo: Path, *, punkte: list[int] | None, nur_zeigen: bool, modell: st
         konfig = config.lade(repo)
     except OSError as fehler:
         ausgabe.write(f"Konfig nicht lesbar: {fehler}\n")
-        return EXIT_KONFIG
-    ungueltig = [n for n in (punkte or []) if n not in range(1, 8)]
-    if ungueltig:
-        ausgabe.write(f"--punkt nur 1–7, nicht {ungueltig}\n")
         return EXIT_KONFIG
     if not nur_zeigen:
         ausgabe.write("Probesitz läuft — jeder Punkt ist eine echte Prüfung.\n")

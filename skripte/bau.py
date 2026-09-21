@@ -83,6 +83,8 @@ STAFFEL_HOOK = REPO / "scripts" / "hooks" / "staffel_stop.py"
 #: CLI des Skills (Bau-Log-Hooks #204, Umzug-Anfrage #212) — dieselbe Skill-Wurzel wie oben in sys.path.
 TO_SPAWN_CLI = Path(_SKILL) / "to_spawn.py"
 STAFFEL_MAX_DEFAULT = 8
+#: Werkzeug-Rechte der Probesitz-Wegwerf-Session (#214): nur git, Ordner anlegen, Dateien.
+PROBESITZ_RECHTE = ("Bash(git *)", "Bash(mkdir *)", "Write", "Edit", "Read")
 # Handoffs sind Übersichten, keine Romane — mehr als das wäre ein Fehler in der Vorsession.
 STAFFEL_HANDOFF_MAX_ZEICHEN = 40_000
 
@@ -727,8 +729,11 @@ def main() -> int:
     claude = shutil.which("claude") or "claude"
     cmd = [
         claude,
-        # Probesitz (#214): Print-Modus, die Session endet ohne Terminal von selbst.
-        *(["-p"] if args.probesitz else []),
+        # Probesitz (#214): Print-Modus, die Session endet ohne Terminal von selbst. Ohne
+        # bypassPermissions (frisches Setup) verweigert ``-p`` jedes Werkzeug still — deshalb
+        # die nötigen Rechte ausdrücklich mitgeben. ``--allowedTools`` ist variadisch: das
+        # nächste Flag muss direkt folgen, sonst frisst es den Prompt am Ende.
+        *(["-p", "--allowedTools", *PROBESITZ_RECHTE] if args.probesitz else []),
         "--settings",
         str(settings_path),
         "--mcp-config",

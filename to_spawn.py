@@ -290,7 +290,11 @@ def main(argv: list[str] | None = None) -> int:
         "probesitz", help="7-Punkte-Abnahme des Setups selbst fahren (#214)"
     )
     p_probe.add_argument(
-        "--punkt", action="append", type=int, help="nur diesen Punkt (1–7), mehrfach möglich"
+        "--punkt",
+        action="append",
+        type=int,
+        choices=range(1, 8),
+        help="nur diesen Punkt (1–7), mehrfach möglich",
     )
     p_probe.add_argument(
         "--zeigen", action="store_true", help="nur den gemerkten Stand zeigen, nichts prüfen"
