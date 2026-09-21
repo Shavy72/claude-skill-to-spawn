@@ -8,14 +8,17 @@ Ticket-Worktrees und die Bau-Logs — und prüft fünf Regeln:
 2. ``beweis_fehlt`` — Ticket zu, aber keine Belegseite mit der Nummer im Namen
    (reine Doku-Tickets brauchen keine: die Doku ist der Beleg).
 3. ``test_ersetzt`` — ein Ticket-Commit hat eine Testfunktion/Testdatei entfernt
-   (nur echte Testdateien; erlaubt mit Commit-Trailer ``Test-entfernt: <Grund>``).
+   (nur echte Testdateien; es gibt keine Ausnahme, Tests werden nie entfernt).
 4. ``session_verwaist`` (kritisch) — Ticket offen + zugewiesen, aber seit Stunden keine Spur
    (nicht bei Checkpoint-Label oder wenn die jüngste Bau-Log-Zeile ``blockiert`` ist).
 5. ``vps_ungleich_origin`` — Deploy-Ticket zu, aber sein Commit ist nicht auf dem VPS.
 
-Verstöße 1, 2, 3 und 5 öffnen das Ticket höchstens EINMAL je Regel wieder; schließt
-jemand erneut mit demselben Verstoß, gibt es nur noch einen Kommentar. Keine Regeln
-für Tickets „nicht geplant“/„Duplikat“ oder mit Label ``waechter:ok``. Zeitgrenzen:
+Verstöße 1, 2, 3 und 5 öffnen das Ticket jedes Mal wieder, wenn es erneut mit
+demselben Verstoß geschlossen wird (Entscheidung 21.09.: Spec Zeile 13 kennt keine
+Ausnahme; je Schließen bleibt es bei einer Wieder-Öffnung). Keine Regeln für Tickets
+„nicht geplant“/„Duplikat“. Label ``waechter:ok`` hebt nur das Wieder-Öffnen auf —
+der Verstoß wird trotzdem erkannt und im Tick-Bericht genannt, zählt aber wie der
+Ausgangsstand als „alt“ und hält „Spec fertig“ nicht auf. Zeitgrenzen:
 beim ersten Tick einer Spec sind alle geschlossenen Tickets Ausgangsstand (nur
 melden; maßgeblich ist, ob das Ticket beim ersten Tick schon zu war — kein
 Vergleich der GitHub-Uhr mit der lokalen Uhr), danach wird ein Schließen erst
@@ -62,7 +65,9 @@ OK_LABEL = "waechter:ok"
 #: Minuten nach ``closed_at``, bevor die Regeln greifen (Vorgabe, ``waechter.karenz_minuten``).
 KARENZ_MIN = 15.0
 #: Tick-Zeile, wenn ``mail.befehl`` fehlt: bewusste Wahl des Repos, kein Fehler.
-MAIL_AUS = "INFO: Mail nicht eingerichtet (mail.befehl leer) — Meldungen stehen nur hier."
+MAIL_AUS = (
+    "INFO: Mail nicht eingerichtet (mail.befehl leer) — Meldungen stehen nur hier."
+)
 #: Sekunden, die ein Tick auf die Sperre eines anderen Laufs wartet.
 SPERRE_S = 30.0
 GIT_ZEIT_S = 30
@@ -73,7 +78,6 @@ _TEST_DATEI = re.compile(
 )
 #: Kopien von Tests (Belege, Archiv, Mutanten) sind keine Testdateien.
 _KEINE_TESTDATEI = re.compile(r"(^|/)(docs|archive)/|(^|/)mutants/")
-_TRAILER_TEST_ENTFERNT = re.compile(r"^Test-entfernt:[ \t]*\S", re.MULTILINE)
 _PY_TEST = re.compile(r"^-[ \t]*(?:async[ \t]+)?def[ \t]+(test_\w+)", re.MULTILINE)
 _JS_TEST = re.compile(r"""^-[ \t]*(?:it|test)\([ \t]*(["'`])(.+?)\1""", re.MULTILINE)
 
@@ -289,11 +293,6 @@ def _test_verluste(repo: Path, sha: str) -> list[str]:
         abschnitt = abschnitte.get(pfad, "")
         if not _PY_TEST.search(abschnitt) and not _JS_TEST.search(abschnitt):
             verluste.append(f"Datei {pfad}")
-    if verluste:
-        code, text = _git(repo, "show", "-s", "--format=%B", sha)
-        if code == 0 and _TRAILER_TEST_ENTFERNT.search(text):
-            log.info("Commit %s: Test-Entfernung per Trailer erlaubt.", sha[:7])
-            return []  # E5: bewusst entfernt, Grund steht im Commit
     return verluste
 
 
@@ -495,7 +494,9 @@ def _zeilen_aus(text: str, quelle: str) -> list[dict[str, Any]]:
         except ValueError:
             eintrag = None
         if not isinstance(eintrag, dict):
-            log.warning("Kaputte Bau-Log-Zeile %s:%s — als „kaputt“ gezählt.", quelle, nr)
+            log.warning(
+                "Kaputte Bau-Log-Zeile %s:%s — als „kaputt“ gezählt.", quelle, nr
+            )
             eintrag = {"typ": "kaputt"}
         zeilen.append(eintrag)
     return zeilen
@@ -722,8 +723,6 @@ def sperre(datei: Path, warten_s: float = SPERRE_S) -> Iterator[bool]:
             exkl.unlink()
 
 
-
-
 def karenz_minuten(waechter: dict[str, Any]) -> float:
     """``waechter.karenz_minuten``; fehlt der Wert, gilt :data:`KARENZ_MIN`, ``0`` = keine Karenz."""
     roh = waechter.get("karenz_minuten")
@@ -732,10 +731,14 @@ def karenz_minuten(waechter: dict[str, Any]) -> float:
     try:
         wert = float(roh)
     except (TypeError, ValueError):
-        log.warning("waechter.karenz_minuten=%r ist keine Zahl — nehme %s min.", roh, KARENZ_MIN)
+        log.warning(
+            "waechter.karenz_minuten=%r ist keine Zahl — nehme %s min.", roh, KARENZ_MIN
+        )
         return KARENZ_MIN
     if wert < 0:
-        log.warning("waechter.karenz_minuten=%r ist negativ — nehme 0 (keine Karenz).", roh)
+        log.warning(
+            "waechter.karenz_minuten=%r ist negativ — nehme 0 (keine Karenz).", roh
+        )
         return 0.0
     return wert
 
@@ -780,7 +783,9 @@ def _sperr_wartezeit() -> float:
     try:
         return float(roh) if roh else SPERRE_S
     except ValueError:
-        log.warning("TO_SPAWN_CAPO_SPERRE_S=%r ist keine Zahl — nehme %s s.", roh, SPERRE_S)
+        log.warning(
+            "TO_SPAWN_CAPO_SPERRE_S=%r ist keine Zahl — nehme %s s.", roh, SPERRE_S
+        )
         return SPERRE_S
 
 
@@ -852,19 +857,28 @@ def _tick(
     zustand = melder.lade_json(datei)
     erledigt = set(zustand.get("erledigt") or [])
     gelesen: dict[str, int] = dict(zustand.get("log_zeilen") or {})
-    wieder_geoeffnet = set(zustand.get("wieder_geoeffnet") or [])
     sofort = ist_sofort(konfig)
     erster_tick = _zeit(zustand.get("erster_tick"))
     if erster_tick is None:
-        erster_tick = jetzt  # dieser Tick ist der erste: alles Geschlossene = Ausgangsstand
+        erster_tick = (
+            jetzt  # dieser Tick ist der erste: alles Geschlossene = Ausgangsstand
+        )
         zustand["erster_tick"] = jetzt.isoformat(timespec="seconds")
-        zustand["ausgangsstand"] = {str(int(i["number"])): schliess_marke(i) for i in liste}
+        zustand["ausgangsstand"] = {
+            str(int(i["number"])): schliess_marke(i) for i in liste
+        }
     ausgang = zustand.get("ausgangsstand")
     ausgang = ausgang if isinstance(ausgang, dict) else None
-    waechter = konfig.get("waechter", {}) if isinstance(konfig.get("waechter"), dict) else {}
+    waechter = (
+        konfig.get("waechter", {}) if isinstance(konfig.get("waechter"), dict) else {}
+    )
     stunden = float(waechter.get("verwaist_stunden") or 3)
     karenz = 0.0 if sofort else karenz_minuten(waechter)
-    regularien = konfig.get("regularien", {}) if isinstance(konfig.get("regularien"), dict) else {}
+    regularien = (
+        konfig.get("regularien", {})
+        if isinstance(konfig.get("regularien"), dict)
+        else {}
+    )
     belege = str(regularien.get("belege_ordner") or "docs/verify-hard")
     checkpoint = str(regularien.get("checkpoint_label") or "checkpoint:human")
     vps = konfig.get("vps") if isinstance(konfig.get("vps"), dict) else {}
@@ -885,7 +899,6 @@ def _tick(
             {
                 "erledigt": sorted(erledigt),
                 "log_zeilen": gelesen,
-                "wieder_geoeffnet": sorted(wieder_geoeffnet),
             }
         )
         melder.speichere_json(datei, zustand)
@@ -944,7 +957,10 @@ def _tick(
                 if ist_gate_rot(z):
                     erg.verstoesse.append(
                         Verstoss(
-                            n, "gate_rot", _kurz(z.get("grund") or "Deploy-Gate rot"), True
+                            n,
+                            "gate_rot",
+                            _kurz(z.get("grund") or "Deploy-Gate rot"),
+                            True,
                         )
                     )
                     aktionen += _melde(
@@ -959,7 +975,9 @@ def _tick(
                     )
                 elif z.get("typ") == "blockiert":
                     erg.verstoesse.append(
-                        Verstoss(n, "live_beweis_blockiert", _kurz(z.get("grund")), True)
+                        Verstoss(
+                            n, "live_beweis_blockiert", _kurz(z.get("grund")), True
+                        )
                     )
                     aktionen += _melde(
                         repo,
@@ -979,9 +997,7 @@ def _tick(
             if grund in NICHT_GEPLANT:
                 aktionen.append(f"#{n} zu als {grund} — keine Regeln")
                 continue
-            if OK_LABEL in label_namen(issue):
-                aktionen.append(f"#{n} Label {OK_LABEL} — Regeln übersprungen")
-                continue
+            nur_melden = OK_LABEL in label_namen(issue)
             if regeln_aus:
                 continue
             ausgangsstand = not sofort and ist_ausgangsstand(
@@ -1015,6 +1031,14 @@ def _tick(
                         f"#{n} alt: {f.regel} — {f.text} (Ausgangsstand, nicht wieder geöffnet)"
                     )
                 continue
+            if nur_melden:
+                erg.alt += funde_ok
+                for f in funde_ok:
+                    aktionen.append(
+                        f"#{n} VERSTOSS {f.regel}: {f.text} "
+                        f"(Label {OK_LABEL} — bewusst freigegeben, nicht wieder geöffnet)"
+                    )
+                continue
             erg.verstoesse += funde_ok
             geschlossen = str(issue.get("closed_at") or "?")
             neu_funde = [
@@ -1027,31 +1051,10 @@ def _tick(
                 )
             if not neu_funde:
                 continue
-            erstmals_offen = [f for f in neu_funde if f"{n}|{f.regel}" not in wieder_geoeffnet]
-            if erstmals_offen:
-                aktionen += _wieder_oeffnen(n, gh_repo, neu_funde, dry_run)
-                if aktionen[-1] == f"#{n} wieder geöffnet":
-                    erledigt.update(f"{n}|{f.regel}|{geschlossen}" for f in neu_funde)
-                    wieder_geoeffnet.update(f"{n}|{f.regel}" for f in neu_funde)
-                    sichern()
-            else:
-                # E2: schon einmal wieder geöffnet — kein zweites Mal, nur Kommentar.
-                aktionen.append(
-                    f"#{n} schon einmal wieder geöffnet — diesmal nur Kommentar"
-                )
-                text = "\n".join(
-                    f"Wächter: {f.regel} — {f.text} (schon einmal wieder geöffnet — "
-                    f"diesmal nicht noch einmal; Label {OK_LABEL} gibt bewusst frei)"
-                    for f in neu_funde
-                )
-                if dry_run:
-                    aktionen.append(f"#{n} [Probe] würde kommentieren")
-                elif _gh_ok(["issue", "comment", str(n), "--repo", gh_repo, "--body", text]):
-                    erledigt.update(f"{n}|{f.regel}|{geschlossen}" for f in neu_funde)
-                    sichern()
-                    aktionen.append(f"#{n} kommentiert")
-                else:
-                    aktionen.append(f"#{n} FEHLER: kommentieren gescheitert")
+            aktionen += _wieder_oeffnen(n, gh_repo, neu_funde, dry_run)
+            if aktionen[-1] == f"#{n} wieder geöffnet":
+                erledigt.update(f"{n}|{f.regel}|{geschlossen}" for f in neu_funde)
+                sichern()
         elif not regeln_aus:
             fund = regel_verwaist(
                 n,
@@ -1188,7 +1191,9 @@ def _melde(
     if dry_run:
         return [f"[Probe] Mail {art}: {betreff}"]
     if not melder.darf_raus(art, konfig):
-        melder.melden(repo, art, betreff, text, schluessel, konfig=konfig, gh_repo=gh_repo)
+        melder.melden(
+            repo, art, betreff, text, schluessel, konfig=konfig, gh_repo=gh_repo
+        )
         return []
     if not melder.mail_eingerichtet(konfig):
         log.info("Mail nicht eingerichtet (mail.befehl leer) — %s: %s", art, betreff)
@@ -1199,4 +1204,6 @@ def _melde(
         repo, art, betreff, text, schluessel, konfig=konfig, gh_repo=gh_repo
     ):
         return [f"Mail {art} verschickt: {betreff}"]
-    return [f"FEHLER: Mail {art} nicht verschickt: {betreff} (nächster Tick versucht es wieder)"]
+    return [
+        f"FEHLER: Mail {art} nicht verschickt: {betreff} (nächster Tick versucht es wieder)"
+    ]

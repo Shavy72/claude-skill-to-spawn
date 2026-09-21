@@ -1,11 +1,10 @@
 """Fixrunde #213 (Prüfpanel 18.09.): keine Fehlalarme mehr, Laufdatei-Delta, Zeitgrenzen, Sperre.
 
 Nachgebildet sind die Fälle aus dem Prüfpanel: Scope-Betreff ``feat(#219): …``,
-Tickets „nicht geplant“, reine Doku-Tickets, zweites Schließen nach einem
+Tickets „nicht geplant“, reine Doku-Tickets, zweiter Tick nach einem
 Wieder-Öffnen, erster Tick mit längst geschlossenen Tickets, Label ``waechter:ok``,
 gescheitertes ``git fetch``, Tickets frisch zu (< 15 min), ``deploy_phase`` rot
-nur in der gitignorierten Laufdatei, Mutanten-Kopien unter ``docs/``, Trailer
-``Test-entfernt:``, VPS unlesbar, Checkpoint-Label, ``rate_limit`` ohne Limit-Text.
+nur in der gitignorierten Laufdatei, Mutanten-Kopien unter ``docs/``, VPS unlesbar, Checkpoint-Label, ``rate_limit`` ohne Limit-Text.
 
 Echt laufen Git, ``skripte/capo.py``, ``skripte/wache.py`` und die Zustandsdateien;
 gestellt sind wie in ``test_waechter_213.py`` nur ``gh``, ``ssh``, Mail und ``claude``.
@@ -142,9 +141,19 @@ def test_code_ticket_ohne_beleg_bleibt_verstoss(welt: dict[str, Path]) -> None:
     assert any(k.startswith("Wächter: beweis_fehlt") for k in _kommentare(welt, "901"))
 
 
-# --- E2: höchstens einmal wieder öffnen -----------------------------------------------
+# --- E2: je Schließen genau einmal wieder öffnen ---------------------------------------
+# Entscheidung 21.09. (#213, verify-hard Lauf 3): Die Einmal-Sperre je Ticket+Regel ist
+# weg, Spec Zeile 13 kennt keine Ausnahme. Der alte Fall
+# test_zweites_schliessen_nach_reopen_oeffnet_nicht_nochmal prüfte die Sperre und gilt
+# nicht mehr; das neue Soll (zweites Schließen öffnet wieder) steht in
+# tests/test_waechter_213_spec_streng.py. Hier bleibt der Teil, der weiter gilt:
+# derselbe geschlossene Stand wird nur einmal wieder geöffnet, auch über mehrere Ticks.
 
 
+@pytest.mark.skip(
+    reason="Verhalten per Entscheidung 21.09. umgekehrt (#213): jedes erneute Schließen "
+    "öffnet wieder — Soll in tests/test_waechter_213_spec_streng.py"
+)
 def test_zweites_schliessen_nach_reopen_oeffnet_nicht_nochmal(
     welt: dict[str, Path],
 ) -> None:
@@ -153,20 +162,29 @@ def test_zweites_schliessen_nach_reopen_oeffnet_nicht_nochmal(
     _capo(welt)
     assert _zustand(welt) == "open"
     assert len(_kommentare(welt, "901")) == 1
-    # Die Session schließt erneut, ohne den Verstoß zu beheben.
     _gh_setzen(welt, "901", state="closed", closed_at=_iso(timedelta(minutes=20)))
     ergebnis = _capo(welt)
     assert ergebnis.returncode == 0, _text(ergebnis)
     assert _zustand(welt) == "closed"
     kommentare = _kommentare(welt, "901")
     assert len(kommentare) == 2 and "nicht noch einmal" in kommentare[1]
-    assert "schon einmal wieder geöffnet" in ergebnis.stdout
+
+
+def test_zweiter_tick_nach_reopen_oeffnet_nicht_nochmal(welt: dict[str, Path]) -> None:
+    _commit(welt["repo"], "feat: ohne Nummer", _beleg())
+    _frisch_zu(welt, minuten=40)
     _capo(welt)
-    assert _zustand(welt) == "closed"
-    assert len(_kommentare(welt, "901")) == 2
+    assert _zustand(welt) == "open"
+    assert len(_kommentare(welt, "901")) == 1
+    # Zweiter Tick, ohne dass jemand erneut geschlossen hat.
+    ergebnis = _capo(welt)
+    assert ergebnis.returncode == 0, _text(ergebnis)
+    assert _zustand(welt) == "open"
+    assert len(_kommentare(welt, "901")) == 1, _text(ergebnis)
 
 
 def test_label_waechter_ok_ueberspringt_regeln(welt: dict[str, Path]) -> None:
+    """Label hebt seit 21.09. nur das Wieder-Öffnen auf, nicht das Erkennen (#213)."""
     _commit(welt["repo"], "feat: ohne Nummer", {})
     _frisch_zu(welt, labels=["waechter:ok"])
     ergebnis = _capo(welt)
@@ -174,6 +192,7 @@ def test_label_waechter_ok_ueberspringt_regeln(welt: dict[str, Path]) -> None:
     assert _zustand(welt) == "closed"
     assert _kommentare(welt, "901") == []
     assert "waechter:ok" in ergebnis.stdout
+    assert "VERSTOSS commit_ohne_nummer" in ergebnis.stdout
 
 
 # --- E3: erster Tick = Ausgangsstand ------------------------------------------------
@@ -340,9 +359,7 @@ def test_mail_fehler_ist_fehlerzeile_und_wird_wiederholt(
 
 def test_mutanten_kopie_unter_docs_ist_kein_test(welt: dict[str, Path]) -> None:
     mutante = "docs/verify-hard/x/mutants/test_a.py"
-    _commit(
-        welt["repo"], "test: Mutante", {mutante: "def test_m():\n    assert 0\n"}
-    )
+    _commit(welt["repo"], "test: Mutante", {mutante: "def test_m():\n    assert 0\n"})
     _commit(welt["repo"], "chore: Mutanten weg (#901)", {mutante: None, **_beleg()})
     _frisch_zu(welt)
     ergebnis = _capo(welt)
@@ -350,11 +367,17 @@ def test_mutanten_kopie_unter_docs_ist_kein_test(welt: dict[str, Path]) -> None:
     assert "test_ersetzt" not in ergebnis.stdout
 
 
+@pytest.mark.skip(
+    reason="Ausnahme per Entscheidung 21.09. entfernt (#213): Tests werden nie entfernt — "
+    "Soll in tests/test_waechter_213_spec_streng.py"
+)
 def test_trailer_test_entfernt_erlaubt(welt: dict[str, Path]) -> None:
-    _commit(welt["repo"], "test: alt", {"tests/test_a.py": "def test_alt():\n    pass\n"})
+    _commit(
+        welt["repo"], "test: alt", {"tests/test_a.py": "def test_alt():\n    pass\n"}
+    )
     _commit(
         welt["repo"],
-        "refactor: Umbau (#901)\n\nTest-entfernt: test_alt prüfte die alte Tabelle, die es nicht mehr gibt",
+        "refactor: Umbau (#901)\n\nTest-entfernt: test_alt prüfte die alte Tabelle",
         {"tests/test_a.py": "def test_neu():\n    pass\n", **_beleg()},
     )
     _frisch_zu(welt)
@@ -362,8 +385,15 @@ def test_trailer_test_entfernt_erlaubt(welt: dict[str, Path]) -> None:
     assert _kommentare(welt, "901") == [], _text(ergebnis)
 
 
+# Entscheidung 21.09. (#213): test_trailer_test_entfernt_erlaubt prüfte die Ausnahme
+# „Commit-Trailer Test-entfernt: erlaubt das Entfernen“. Die Ausnahme ist weg (Spec
+# Zeile 18: Tests nur ergänzt); das neue Soll steht in test_waechter_213_spec_streng.py.
+
+
 def test_ohne_trailer_bleibt_test_ersetzt(welt: dict[str, Path]) -> None:
-    _commit(welt["repo"], "test: alt", {"tests/test_a.py": "def test_alt():\n    pass\n"})
+    _commit(
+        welt["repo"], "test: alt", {"tests/test_a.py": "def test_alt():\n    pass\n"}
+    )
     _commit(
         welt["repo"],
         "refactor: Umbau (#901)\n\nTest entfernt, weil alt",
@@ -524,12 +554,9 @@ def test_wechsel_schreibt_versioniertes_log(welt: dict[str, Path]) -> None:
 
 def test_wechsel_scheitert_nie_am_log(welt: dict[str, Path]) -> None:
     # Versioniertes Log nicht schreibbar (Ordner statt Datei) → Neustart trotzdem.
-    (welt["repo"] / "docs" / "agents" / "bau_log" / f"{SPEC}.jsonl").mkdir(
-        parents=True
-    )
+    (welt["repo"] / "docs" / "agents" / "bau_log" / f"{SPEC}.jsonl").mkdir(parents=True)
     ergebnis = _wache(welt["repo"], env=_wache_welt(welt))
     assert ergebnis.returncode == 0, _text(ergebnis)
     assert len(_aufrufe(welt)) == 2
     assert [m["art"] for m in _mails(welt)] == ["waechter_ausweich"]
     assert "Bau-Log" in ergebnis.stderr
-
