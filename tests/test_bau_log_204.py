@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -76,9 +77,7 @@ def repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
             {
                 "spec": int(SPEC),
                 "feature": "wegwerf",
-                "tickets": {
-                    TICKET: {"title": "Wegwerf-Ticket", "schaetzung_k": 120, "umfang": "Kern bauen."}
-                },
+                "tickets": {TICKET: {"title": "Wegwerf-Ticket", "schaetzung_k": 120, "umfang": "Kern bauen."}},
             },
             ensure_ascii=False,
         ),
@@ -231,9 +230,7 @@ def test_weg_worktree_fehlt_keine_datei_im_repo(repo: Path, tmp_path: Path) -> N
 # --- Hooks stören nie ---------------------------------------------------------
 
 
-def _hook_cli(
-    repo: Path, befehl: str, eingabe: str, zusatz_env: dict[str, str]
-) -> subprocess.CompletedProcess[str]:
+def _hook_cli(repo: Path, befehl: str, eingabe: str, zusatz_env: dict[str, str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, str(CLI), befehl],
         cwd=str(repo),
@@ -265,9 +262,7 @@ def test_hook_endet_immer_mit_exit_0(repo: Path, befehl: str, eingabe: str) -> N
 
 
 @pytest.mark.parametrize("befehl", ["hook-stop", "hook-subagent-stop"])
-def test_hook_mit_kaputtem_transkript_endet_mit_exit_0(
-    repo: Path, tmp_path: Path, befehl: str
-) -> None:
+def test_hook_mit_kaputtem_transkript_endet_mit_exit_0(repo: Path, tmp_path: Path, befehl: str) -> None:
     transkript = tmp_path / "kaputt.jsonl"
     transkript.write_text(
         json.dumps(
@@ -428,6 +423,21 @@ def test_prompt_verlangt_zusammenfassung_vor_dem_schliessen() -> None:
     assert "`" not in prompt
 
 
+_PLATZHALTER = re.compile(r"\{[A-Z_]+\}")
+
+
 @pytest.mark.skipif(not REPO_DEFAULT.is_file(), reason="Repo-Kopie des Loop-Prompts fehlt")
-def test_prompt_repo_kopie_ist_identisch() -> None:
-    assert _prompt(REPO_DEFAULT) == _prompt(SKILL / "repo-scripts" / "_default.json")
+def test_prompt_repo_kopie_platzhalter_teilmenge_skill_bleibt_neutral() -> None:
+    """seit #257 nicht mehr identisch: Skill-Vorlage repo-neutral (B1), DuoPlus-Kopie
+    behält ihre Deploy-Sätze. Beide teilen ``PROMPT_KERN``, die Platzhalter der
+    Repo-Kopie sind eine Teilmenge der Skill-Platzhalter, die Skill-Vorlage
+    nennt kein DuoPlus-Wort."""
+    skill_prompt = _prompt(SKILL / "repo-scripts" / "_default.json")
+    repo_prompt = _prompt(REPO_DEFAULT)
+    assert PROMPT_KERN in skill_prompt
+    assert PROMPT_KERN in repo_prompt
+    skill_platzhalter = set(_PLATZHALTER.findall(skill_prompt))
+    repo_platzhalter = set(_PLATZHALTER.findall(repo_prompt))
+    assert repo_platzhalter <= skill_platzhalter, (repo_platzhalter, skill_platzhalter)
+    assert "duoplus" not in skill_prompt.lower()
+    assert "clawy-vps" not in skill_prompt.lower()

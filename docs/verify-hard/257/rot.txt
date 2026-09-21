@@ -1,0 +1,40 @@
+
+tests/test_fremdrepo_257.py:405: AttributeError
+__________ test_offene_punkte_staging_nicht_konfiguriert_sperrt_nicht __________
+
+    def test_offene_punkte_staging_nicht_konfiguriert_sperrt_nicht() -> None:
+        zustand = _zustand("staging.url fehlt")
+>       assert probesitz.offene_punkte(zustand, bis=6) == []
+E       assert [3] == []
+E         
+E         Left contains one more item: 3
+E         Use -v to get more diff
+
+tests/test_fremdrepo_257.py:429: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_fremdrepo_257.py::test_hauptzweig_aus_config - AttributeErr...
+FAILED tests/test_fremdrepo_257.py::test_hauptzweig_aus_origin_head - Attribu...
+FAILED tests/test_fremdrepo_257.py::test_hauptzweig_nur_origin_master - Attri...
+FAILED tests/test_fremdrepo_257.py::test_hauptzweig_nur_origin_main - Attribu...
+FAILED tests/test_fremdrepo_257.py::test_hauptzweig_rueckfall_master - Attrib...
+FAILED tests/test_fremdrepo_257.py::test_label_sicherstellen_mit_gh_stub - At...
+FAILED tests/test_fremdrepo_257.py::test_label_sicherstellen_ohne_gh - Attrib...
+FAILED tests/test_fremdrepo_257.py::test_build_prompt_ersetzt_repo_hauptzweig_checkpoint
+FAILED tests/test_fremdrepo_257.py::test_default_json_repo_neutral - Assertio...
+FAILED tests/test_fremdrepo_257.py::test_baue_befehl_lokal_ohne_pwsh - Assert...
+FAILED tests/test_fremdrepo_257.py::test_baue_befehl_lokal_tickets_und_dry_run
+FAILED tests/test_fremdrepo_257.py::test_baue_befehl_srv_linux - AssertionErr...
+FAILED tests/test_fremdrepo_257.py::test_spawn_srv_kein_hartes_origin_master
+FAILED tests/test_fremdrepo_257.py::test_spawn_srv_fenster_ohne_shell_funktionen
+FAILED tests/test_fremdrepo_257.py::test_vertrauen_setzt_flag_und_bewahrt_fremde_schluessel
+FAILED tests/test_fremdrepo_257.py::test_vertrauen_legt_fehlende_datei_an - I...
+FAILED tests/test_fremdrepo_257.py::test_defaults_worktree_basis_und_hauptzweig_leer
+FAILED tests/test_fremdrepo_257.py::test_worktree_pfad_mit_worktree_basis - A...
+FAILED tests/test_fremdrepo_257.py::test_sicherstellen_frisch_setzt_repo_namen_in_worktree_basis
+FAILED tests/test_fremdrepo_257.py::test_sicherstellen_vorhandene_datei_ergaenzt_fehlenden_schluessel
+FAILED tests/test_fremdrepo_257.py::test_log_repo_faellt_auf_to_spawn_repo_zurueck
+FAILED tests/test_fremdrepo_257.py::test_skill_hat_eigene_staffel_hook_kopie
+FAILED tests/test_fremdrepo_257.py::test_staffel_hook_pfad_bevorzugt_repo_kopie
+FAILED tests/test_fremdrepo_257.py::test_staffel_hook_pfad_fallback_skill_kopie
+FAILED tests/test_fremdrepo_257.py::test_offene_punkte_staging_nicht_konfiguriert_sperrt_nicht
+25 failed, 4 passed, 1 skipped in 0.69s

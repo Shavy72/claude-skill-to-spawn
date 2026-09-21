@@ -30,7 +30,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from to_spawn import config, inventur
+from to_spawn import config, gh, inventur
 
 log = logging.getLogger("to_spawn.nest")
 
@@ -152,12 +152,10 @@ def _git_common_dir(hauptrepo: Path) -> Path | None:
 
 
 def _standard_zweig(hauptrepo: Path) -> str | None:
-    ergebnis = _git(hauptrepo, "symbolic-ref", "--short", "refs/remotes/origin/HEAD")
-    if ergebnis.returncode == 0 and ergebnis.stdout.strip():
-        return ergebnis.stdout.strip()
-    for kandidat in ("origin/main", "origin/master"):
-        if _git(hauptrepo, "rev-parse", "--verify", "--quiet", kandidat).returncode == 0:
-            return kandidat
+    """``origin/<hauptzweig>`` (Konfig, origin/HEAD, main, master — eine Regel in ``gh.hauptzweig``, #257 F9)."""
+    kandidat = f"origin/{gh.hauptzweig(hauptrepo)}"
+    if _git(hauptrepo, "rev-parse", "--verify", "--quiet", kandidat).returncode == 0:
+        return kandidat
     return None
 
 
@@ -197,7 +195,7 @@ def worktree_anlegen(worktree: Path, hauptrepo: Path, ticket: str | None) -> Non
     else:
         basis = _standard_zweig(hauptrepo)
         if basis is None:
-            raise NestFehler(f"{hauptrepo}: kein origin/main oder origin/master")
+            raise NestFehler(f"{hauptrepo}: kein origin/{gh.hauptzweig(hauptrepo)} (Hauptzweig laut Konfig/origin)")
         ergebnis = _git(hauptrepo, "worktree", "add", "-b", zweig, str(worktree), basis)
     if ergebnis.returncode != 0:
         raise NestFehler(f"git worktree add scheiterte: {ergebnis.stderr.strip()[:300]}")

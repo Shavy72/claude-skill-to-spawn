@@ -199,8 +199,30 @@ def punkt_gruen(zustand: dict[str, Any], nummer: int) -> bool:
     return bool(isinstance(eintrag, dict) and eintrag.get("ok"))
 
 
-def offene_punkte(zustand: dict[str, Any], bis: int = 7) -> list[int]:
-    return [n for n in range(1, bis + 1) if not punkt_gruen(zustand, n)]
+#: Grund-Anfang eines roten Punkts, der nur „nicht konfiguriert“ heißt (#257): Staging ist
+#: freiwillig, ohne ``staging.url`` bleibt Punkt 3 sichtbar rot, sperrt aber Punkt 7 nicht.
+NICHT_KONFIGURIERT = "staging.url fehlt"
+
+
+def punkt_nicht_konfiguriert(zustand: dict[str, Any], nummer: int) -> bool:
+    eintrag = (zustand.get("punkte") or {}).get(str(nummer))
+    return bool(
+        isinstance(eintrag, dict)
+        and not eintrag.get("ok")
+        and str(eintrag.get("grund") or "").startswith(NICHT_KONFIGURIERT)
+    )
+
+
+def offene_punkte(
+    zustand: dict[str, Any], bis: int = 7, *, ohne_nicht_konfiguriert: bool = True
+) -> list[int]:
+    """Rote Punkte 1..``bis``; ``ohne_nicht_konfiguriert`` lässt „nur nicht konfiguriert“ aus."""
+    return [
+        n
+        for n in range(1, bis + 1)
+        if not punkt_gruen(zustand, n)
+        and not (ohne_nicht_konfiguriert and punkt_nicht_konfiguriert(zustand, n))
+    ]
 
 
 def aeltere_punkte(zustand: dict[str, Any], lauf_id: str, bis: int = 6) -> list[int]:
@@ -214,8 +236,9 @@ def aeltere_punkte(zustand: dict[str, Any], lauf_id: str, bis: int = 6) -> list[
 
 
 def alle_gruen(zustand: dict[str, Any]) -> bool:
-    """7/7 ✓ — Punkt 7 wird nur grün, wenn 1–6 im selben Lauf grün waren."""
-    return not offene_punkte(zustand)
+    """7/7 ✓ — Punkt 7 wird nur grün, wenn 1–6 im selben Lauf grün waren.
+    Ein nicht konfiguriertes Staging zählt hier als offen (Exit bleibt 1, sichtbar rot)."""
+    return not offene_punkte(zustand, ohne_nicht_konfiguriert=False)
 
 
 def _stempel_kurz(ts: Any) -> str:
@@ -559,13 +582,24 @@ def protokoll_grund(pfad: str) -> str | None:
     return text[anfang : ende if ende >= 0 else None].strip()[:200]
 
 
+#: Hinweis-Text zu Punkt 6: der Hook liegt im Skill, eine Repo-Kopie ist freiwillig (#257).
+STAFFEL_HOOK_HINWEIS = "Staffel-Hook (Skill `skripte/hooks/staffel_stop.py`, Repo-Kopie scripts/hooks/ freiwillig)"
+
+
+def staffel_hook_vorhanden(repo: Path, skill: Path = SKILL_ORDNER) -> bool:
+    """Repo-Kopie ODER Skill-Kopie — dieselbe Regel wie ``bau.py:staffel_hook_pfad`` (#257)."""
+    return (repo / "scripts" / "hooks" / "staffel_stop.py").is_file() or (
+        skill / "skripte" / "hooks" / "staffel_stop.py"
+    ).is_file()
+
+
 def werte_bau_log(zeilen: Iterable[dict[str, Any]]) -> tuple[Ergebnis, Ergebnis]:
     """Punkte 5 und 6 aus den Bau-Log-Zeilen des Wegwerf-Tickets."""
     zeilen = list(zeilen)
     if not zeilen:
         return (
             _rot(5, "keine Bau-Log-Zeile", "Bau-Log-Hook (to_spawn.py hook-stop) in der Session-Settings-Datei + TO_SPAWN_LOG_REPO"),
-            _rot(6, "keine Bau-Log-Zeile", "Staffel-Hook scripts/hooks/staffel_stop.py im Repo + Handoff mit „Staffel: weiter“"),
+            _rot(6, "keine Bau-Log-Zeile", f"{STAFFEL_HOOK_HINWEIS} + Handoff mit „Staffel: weiter“"),
         )
     enden = [z for z in zeilen if z.get("typ") == "session_ende"]
     mit_token = [z for z in enden if isinstance(z.get("tokens"), dict) and int(z["tokens"].get("gesamt") or 0) > 0]
@@ -581,9 +615,9 @@ def werte_bau_log(zeilen: Iterable[dict[str, Any]]) -> tuple[Ergebnis, Ergebnis]
     if handoffs and starts_2:
         p6 = _gruen(6, "handoff geschrieben, Staffel 2 gestartet", beleg=f"Handoff-Session {handoffs[0].get('session_id') or '?'} → Folge-Session {starts_2[0].get('session_id') or '?'}")
     elif handoffs:
-        p6 = _rot(6, "handoff da, aber keine session_start mit Staffel 2", "Staffel-Hook scripts/hooks/staffel_stop.py im Repo (Übergabe an bau.py)")
+        p6 = _rot(6, "handoff da, aber keine session_start mit Staffel 2", f"{STAFFEL_HOOK_HINWEIS} (Übergabe an bau.py)")
     else:
-        p6 = _rot(6, "keine handoff-Zeile", "Staffel-Hook scripts/hooks/staffel_stop.py im Repo + Handoff mit „Staffel: weiter“")
+        p6 = _rot(6, "keine handoff-Zeile", f"{STAFFEL_HOOK_HINWEIS} + Handoff mit „Staffel: weiter“")
     return p5, p6
 
 
@@ -696,7 +730,7 @@ def wegwerf_lauf(
             5: _rot(5, "hängt an Punkt 2"),
             6: _rot(6, "hängt an Punkt 2"),
         }
-    worktree = Path(config.worktree_pfad(ticket)).expanduser()
+    worktree = Path(config.worktree_pfad(ticket, repo)).expanduser()
     zweig = f"probesitz-{ticket}"
     fazit = "abgebrochen"
     ergebnisse: dict[int, Ergebnis] = {}
@@ -710,7 +744,8 @@ def wegwerf_lauf(
         env["TO_SPAWN_REPO"] = str(repo)
         env.pop("CLAUDE_CODE_CHILD_SESSION", None)
         lauf = session_starter(argv, cwd=worktree, env=env, zeitlimit_s=zeitlimit_s, beobachter=beobachter, ticket=ticket, ausgabe=ausgabe)
-        p5, p6 = werte_bau_log(bau_log.lese(worktree, ticket))
+        # Worktree-Datei + Rückfall-Laufdatei im Hauptbaum (Zeilen vor dem Worktree, #257)
+        p5, p6 = werte_bau_log(bau_log.lese(worktree, ticket, hauptbaum=repo))
         p2 = pruefe_push(repo, ticket, zweig, laeufer)
         auszug = _log_auszug(worktree, ticket)
         if auszug:
@@ -726,8 +761,8 @@ def wegwerf_lauf(
             p2 = _rot(2, f"Session ohne Werkzeug-Rechte: {rechte}", "claude -p braucht --allowedTools (bau.py --probesitz) oder bypassPermissions", p2.beleg)
         elif lauf.exit_code != 0:
             p2 = _rot(2, f"bau.py Exit {lauf.exit_code} (Protokoll {lauf.protokoll})", "Session-Protokoll lesen (Sandbox-Pflicht, srt, claude, context-mode?)", p2.beleg)
-        if not (repo / "scripts" / "hooks" / "staffel_stop.py").is_file() and not p6.ok:
-            p6.fehlt_noch = "scripts/hooks/staffel_stop.py im Repo (Staffel-Hook, siehe SKILL.md)"
+        if not staffel_hook_vorhanden(repo, skill) and not p6.ok:
+            p6.fehlt_noch = f"{STAFFEL_HOOK_HINWEIS} fehlt — Skill neu installieren (install.sh)"
         ergebnisse = {2: p2, 5: p5, 6: p6}
         fazit = ", ".join(f"Punkt {n} {'✓' if e.ok else '✗'}" for n, e in sorted(ergebnisse.items()))
     except Exception as fehler:  # jeder Fehler wird Rot mit Grund, aufgeräumt wird trotzdem
@@ -772,11 +807,14 @@ def pruefe_mail(
             return _rot(7, f"Punkte aus älterem Lauf: {', '.join(str(n) for n in alt)} — {stempel}", "vollständiger Lauf ohne --punkt")
     if not melder.mail_eingerichtet(konfig):
         return _rot(7, "kein Mail-Befehl", "mail.befehl in .to-spawn/config.json")
+    # Staging nicht konfiguriert (Punkt 3 nur „staging.url fehlt“) → grün ohne Staging (#257).
+    ohne_staging = bool(offene_punkte(zustand, bis=6, ohne_nicht_konfiguriert=False))
+    betreff = "Probesitz grün (ohne Staging)" if ohne_staging else "Probesitz grün"
     stempel = _jetzt()
     vorschau = eintragen(zustand, _gruen(7, "Mail geht raus"), lauf_id)
     text = _zusammenfassung(vorschau)
-    if melden(repo, "probesitz_gruen", "Probesitz grün", text, f"probesitz:{stempel}", konfig=konfig):
-        return _gruen(7, f"Mail verschickt ({stempel})", beleg=text)
+    if melden(repo, "probesitz_gruen", betreff, text, f"probesitz:{stempel}", konfig=konfig):
+        return _gruen(7, f"Mail verschickt ({stempel}){' — ohne Staging' if ohne_staging else ''}", beleg=text)
     return _rot(7, "mail.befehl hat die Meldung nicht angenommen (Exit ≠ 0, siehe Log)", "mail.befehl prüfen: JSON auf stdin, Exit 0 = gesendet")
 
 

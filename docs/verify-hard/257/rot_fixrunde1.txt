@@ -1,0 +1,30 @@
+
+    def test_nest_verwendet_gh_hauptzweig() -> None:
+        text = (SKILL / "to_spawn" / "nest.py").read_text(encoding="utf-8")
+>       assert "hauptzweig(" in text, "F9 fehlt noch: nest.py sucht main/master noch selbst"
+E       AssertionError: F9 fehlt noch: nest.py sucht main/master noch selbst
+E       assert 'hauptzweig(' in '"""Nest-Bau (#210): alles mit Logik, was ``nest/nest_server.sh`` und ``nest_push.sh`` brauchen.\n\nUnterbefehle von `...fix",\n    "sandbox_start",\n    "sandbox_vorbereiten",\n    "setze_onboarding",\n    "uebernehme_einstellungen",\n)\n'
+
+tests/test_fremdrepo_257_fix1.py:251: AssertionError
+________ test_spawn_srv_kaputte_speicherpruefung_meldet_text_und_exit6 _________
+
+    def test_spawn_srv_kaputte_speicherpruefung_meldet_text_und_exit6() -> None:
+        text = (SKRIPTE / "spawn_srv.sh").read_text(encoding="utf-8")
+>       assert "Speicherprüfung kaputt" in text, "F4 fehlt noch: Meldung bei kaputter Speicherprüfung"
+E       AssertionError: F4 fehlt noch: Meldung bei kaputter Speicherprüfung
+E       assert 'Speicherprüfung kaputt' in '#!/usr/bin/env bash\n# spawn_srv.sh — alle Ticket-Sessions einer Spec auf dem Bau-Server starten.\n#\n# Aufruf (auf d...|| true\necho\necho "Kontrolle: sessions $SPEC · tmux attach -t $SESSION (Fenster wechseln Strg+B n, raus Strg+B d)"\n'
+
+tests/test_fremdrepo_257_fix1.py:259: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_fremdrepo_257_fix1.py::test_nest_server_legt_symlink_unter_multi_user_target_an
+FAILED tests/test_fremdrepo_257_fix1.py::test_label_sicherstellen_vorhanden_kein_create
+FAILED tests/test_fremdrepo_257_fix1.py::test_label_sicherstellen_404_legt_an_ohne_force
+FAILED tests/test_fremdrepo_257_fix1.py::test_auf_speicher_warten_zwei_zyklen_dann_frei
+FAILED tests/test_fremdrepo_257_fix1.py::test_wache_hat_auf_speicher_warten_statt_exit5
+FAILED tests/test_fremdrepo_257_fix1.py::test_repo_slug_oder_abbruch_ohne_origin_exit_2
+FAILED tests/test_fremdrepo_257_fix1.py::test_vertrauen_sicherstellen_legt_sperrdatei_an_und_bleibt_konsistent
+FAILED tests/test_fremdrepo_257_fix1.py::test_hauptzweig_main_und_master_ohne_head_main_gewinnt
+FAILED tests/test_fremdrepo_257_fix1.py::test_spec_stand_repo_neutral - Asser...
+FAILED tests/test_fremdrepo_257_fix1.py::test_nest_verwendet_gh_hauptzweig - ...
+FAILED tests/test_fremdrepo_257_fix1.py::test_spawn_srv_kaputte_speicherpruefung_meldet_text_und_exit6
+11 failed, 5 passed in 0.33s

@@ -1,7 +1,9 @@
 """Kompakter Stand aller Tickets einer Spec — für den Bau-Wächter.
 
-Liest NUR GitHub + origin/master + Worktree-Ordner. Spricht keine Session an,
+Liest NUR GitHub + origin/<Hauptzweig> + Worktree-Ordner. Spricht keine Session an,
 schreibt nichts. Eine Zeile je Ticket, damit ein Wächter-Tick ~1k Token kostet.
+Repo-neutral (#257 F8): GitHub-Slug aus dem origin, Hauptzweig aus ``gh.hauptzweig``,
+Worktree-Basis aus der Repo-Konfig, Server-Zeile nur mit ``ssh_ziel`` + ``server_repo``.
 
     python scripts/spec_stand.py 132
 """
@@ -21,9 +23,8 @@ from pathlib import Path
 _SKILL = str(Path(__file__).resolve().parent.parent)
 if _SKILL not in sys.path:
     sys.path.insert(0, _SKILL)
-from to_spawn import config  # noqa: E402
+from to_spawn import config, gh  # noqa: E402
 
-REPO = "Shavy72/duoplus-management"
 log = logging.getLogger("spec_stand")
 #: Repo, in dem gearbeitet wird: ``TO_SPAWN_REPO`` (setzt die Weiterleitung im Repo), sonst
 #: Git-Wurzel des aktuellen Ordners — nie der Ort dieses Skripts (liegt im Skill, #205).
@@ -31,10 +32,29 @@ REPO_ORDNER = Path(os.environ["TO_SPAWN_REPO"]).resolve() if os.environ.get("TO_
 
 
 def sh(*args: str, cwd: Path | None = None) -> str:
-    r = subprocess.run(list(args), capture_output=True, text=True, encoding="utf-8", cwd=cwd)
+    r = subprocess.run(list(args), capture_output=True, text=True, encoding="utf-8", cwd=cwd, check=False)
     if r.returncode != 0:
         raise RuntimeError(f"{args[:3]} → {r.stderr.strip()[:200]}")
     return r.stdout.strip()
+
+
+def wt_basis_vorgabe(repo: Path) -> str:
+    """Basis-Ordner der Ticket-Worktrees laut ``config.worktree_pfad`` (Konfig ``worktree_basis``,
+    sonst Plattform-Regel) — dieselbe Regel wie ``bau.py``."""
+    return str(Path(config.worktree_pfad("0", repo)).parent.as_posix())
+
+
+def server_head(konfig: dict) -> str:
+    """Kurz-SHA des Repos auf dem Server — nur wenn ``ssh_ziel`` und ``server_repo`` gesetzt sind, sonst leer."""
+    ziel = str(konfig.get("ssh_ziel") or "").strip()
+    pfad = str(konfig.get("server_repo") or "").strip()
+    if not ziel or not pfad:
+        return ""
+    try:
+        return sh("ssh", ziel, f"cd {pfad} && git rev-parse --short HEAD")
+    except RuntimeError as e:
+        log.warning("Server-HEAD nicht lesbar: %s", e)
+        return ""
 
 
 def gh_json(pfad: str) -> object:
@@ -53,18 +73,25 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("spec", type=int)
     ap.add_argument("--repo-dir", default=str(REPO_ORDNER))
-    ap.add_argument("--wt-basis", default="C:/dev")
+    ap.add_argument("--wt-basis", default=None, help="Basis der wt-<N>-Ordner (Vorgabe: Repo-Konfig worktree_basis)")
     a = ap.parse_args()
     repo = Path(a.repo_dir)
     logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(message)s")
+    konfig = config.lade(repo)
+    REPO = gh.repo_aus_origin(repo)
+    if not REPO:
+        print(
+            "Kein GitHub-Repo erkannt (origin fehlt oder zeigt nicht auf github.com) — "
+            "im Repo-Ordner starten oder TO_SPAWN_REPO setzen",
+            file=sys.stderr,
+        )
+        return 2
+    wt_basis = a.wt_basis or wt_basis_vorgabe(repo)
+    haupt = f"origin/{gh.hauptzweig(repo)}"
 
     sh("git", "fetch", "-q", "origin", cwd=repo)
-    vps = ""
-    try:
-        vps = sh("ssh", "clawy-vps", "cd /opt/duoplus-management && git rev-parse --short HEAD")
-    except RuntimeError as e:
-        log.warning("VPS-HEAD nicht lesbar: %s", e)
-    origin = sh("git", "rev-parse", "--short", "origin/master", cwd=repo)
+    vps = server_head(konfig)
+    origin = sh("git", "rev-parse", "--short", haupt, cwd=repo)
 
     kinder = gh_json(f"repos/{REPO}/issues/{a.spec}/sub_issues?per_page=100")
     assert isinstance(kinder, list)
@@ -79,13 +106,13 @@ def main() -> int:
         deps = gh_json(f"repos/{REPO}/issues/{n}/dependencies/blocked_by")
         assert isinstance(deps, list)
         blocker_offen = [d["number"] for d in deps if d["state"] != "closed"]
-        commit = sh("git", "log", "origin/master", "--oneline", "-1", "--fixed-strings", "--grep", f"(#{n})", cwd=repo)
+        commit = sh("git", "log", haupt, "--oneline", "-1", "--fixed-strings", "--grep", f"(#{n})", cwd=repo)
         commit = commit[:7] if commit else "-"
         kommentare = gh_json(f"repos/{REPO}/issues/{n}/comments?per_page=1&direction=desc")
         assert isinstance(kommentare, list)
         letzter = kommentare[0] if kommentare else None
         kom = f"{alter(letzter['created_at'])} „{letzter['body'].strip().splitlines()[0][:70]}“" if letzter else "—"
-        wt = Path(a.wt_basis) / f"wt-{n}"
+        wt = Path(wt_basis).expanduser() / f"wt-{n}"
         wt_info = "-"
         if wt.is_dir():
             try:
@@ -97,7 +124,7 @@ def main() -> int:
         zeilen.append(f"#{n} {state} {wer:<10} {wartet:<16} commit:{commit} {wt_info:<10} {kom}")
 
     print(
-        f"Spec #{a.spec} · origin/master {origin} · VPS {vps or '?'} · offen {offen_gesamt}/{len(kinder)} · {datetime.now():%d.%m. %H:%M}"
+        f"Spec #{a.spec} · {haupt} {origin} · VPS {vps or '—'} · offen {offen_gesamt}/{len(kinder)} · {datetime.now():%d.%m. %H:%M}"
     )
     print("\n".join(zeilen))
     return 0

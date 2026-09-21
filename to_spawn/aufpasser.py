@@ -85,7 +85,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from to_spawn import config, sessions_datei
+from to_spawn import config, sessions_datei, speicher
 from to_spawn.waechter_lauf import _LIMIT_TEXT as LIMIT_TEXT
 from to_spawn.waechter_lauf import transkript_ordner
 
@@ -679,6 +679,10 @@ class Aufpasser:
             .strftime("%Y-%m-%d")
         )
         self.stand = self._stand_laden()
+        #: Echte Fenster-Starts in diesem Tick (Speicher-Staffel, #257 Paket B):
+        #: ab dem zweiten Start wartet der Tick ``staffel_s`` Sekunden, damit die
+        #: Claude-Starts sich nicht stapeln. Am Tick-Anfang wieder 0.
+        self._starts_in_tick = 0
 
     # -- Werkzeuge ---------------------------------------------------------------
 
@@ -1544,11 +1548,27 @@ class Aufpasser:
             befehl = self.bau_befehl(repo, ticket, resume=sid)
         else:
             befehl = self.wache_befehl(repo, spec, resume=sid)
+        # Speicher-Schutz (#257 Paket B): kein Start, wenn RAM knapp oder die Obergrenze
+        # an Claude-Sessions erreicht ist — der nächste Tick prüft neu. Zwischen zwei
+        # echten Starts in einem Tick liegt die Staffel-Pause (nicht im Trockenlauf).
+        konfig = config.lade(repo)
+        frei, grund = speicher.platz_frei(konfig)
+        if not frei:
+            log.warning("%s: Fenster „%s“ nicht gestartet — %s", sitzung, name, grund)
+            if self.e.trocken:
+                print(f"[trocken] {sitzung}: Fenster „{name}“ nicht gestartet — {grund}")
+            return
+        if self._starts_in_tick > 0 and not self.e.trocken:
+            pause = speicher.staffel_s(konfig)
+            log.info("%s: Staffel — %d s Pause vor Fenster „%s“", sitzung, pause, name)
+            time.sleep(pause)
         try:
             self.fenster_starten(sitzung, name, cwd, befehl)
         except RuntimeError as fehler:
             log.error("%s: Fenster „%s“ nicht startbar: %s", sitzung, name, fehler)
             return
+        if not self.e.trocken:
+            self._starts_in_tick += 1
         wer = f"#{ticket}" if ticket is not None else "Wächter-Fenster"
         was = "hatte keine Session" if ticket is not None else "fehlte"
         if not self.e.trocken:
@@ -1636,6 +1656,7 @@ class Aufpasser:
         return code
 
     def _lauf(self) -> None:
+        self._starts_in_tick = 0
         gesehen: list[tuple[str, str, list[Fenster], Path]] = []
         for sitzung, spec in self.sitzungen():
             try:

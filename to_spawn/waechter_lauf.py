@@ -186,7 +186,7 @@ def _log_repo(repo: Path) -> Path | None:
     """Bau-Log-Ziel: Regel des Skills (``TO_SPAWN_LOG_REPO``, fehlt der Ordner → ``None``)."""
     regel = getattr(bau_log, "log_repo", None)
     if callable(regel):
-        ziel = regel(repo)
+        ziel = regel(repo, versioniert=True)  # schreibt docs/agents/bau_log/ (#257)
         return ziel if isinstance(ziel, Path) else None
     return repo
 

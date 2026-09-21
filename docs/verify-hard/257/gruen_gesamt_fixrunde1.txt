@@ -1,0 +1,14 @@
+>           assert aufpasser.Aufpasser(e).deploy_laeuft() == []
+E           AssertionError: assert ['bash script...h --nur-gate'] == []
+E             
+E             Left contains one more item: 'bash scripts/safe_deploy_vps.sh --nur-gate'
+E             Use -v to get more diff
+
+tests/test_aufpasser_236.py:469: AssertionError
+----------------------------- Captured stderr call -----------------------------
+fake claude: HOME ist das Login-Home — keine Session-Datei geschrieben
+=========================== short test summary info ============================
+FAILED tests/test_aufpasser_236.py::test_deploy_wache_zaehlt_nur_programm_nicht_prompt
+1 failed, 679 passed, 4 skipped in 501.13s (0:08:21)
+
+Nachlauf 20:27: test_deploy_wache_zaehlt_nur_programm_nicht_prompt isoliert erneut → 1 passed (der Test zählt echte Prozesse der Maschine; zur Laufzeit lief ein fremdes 'bash scripts/safe_deploy_vps.sh --nur-gate' einer anderen Session — kein Bezug zur Fixrunde).

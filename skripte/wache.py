@@ -23,6 +23,7 @@ import shutil
 import tempfile
 import subprocess
 import sys
+import time
 from datetime import date
 from pathlib import Path
 
@@ -30,17 +31,34 @@ from pathlib import Path
 _SKILL = str(Path(__file__).resolve().parent.parent)
 if _SKILL not in sys.path:
     sys.path.insert(0, _SKILL)
-from to_spawn import config, context_mode, umzug, waechter_lauf  # noqa: E402
+from to_spawn import (  # noqa: E402
+    config,
+    context_mode,
+    speicher,
+    umzug,
+    vertrauen,
+    waechter_lauf,
+)
 
 log = logging.getLogger("wache")
-def repo_aus_origin(fallback: str) -> str:
+#: Repo, in dem gearbeitet wird: ``TO_SPAWN_REPO`` (setzt die Weiterleitung im Repo), sonst
+#: Git-Wurzel des aktuellen Ordners — nie der Ort dieses Skripts (liegt im Skill, #205).
+REPO_ORDNER = Path(os.environ["TO_SPAWN_REPO"]).resolve() if os.environ.get("TO_SPAWN_REPO") else config.repo_wurzel()
+
+
+def repo_aus_origin(fallback: str = "") -> str:
     """``owner/name`` aus ``git remote get-url origin`` (GitHub, https oder ssh); sonst ``fallback``.
 
     Damit läuft dasselbe Skript in jedem Repo mit GitHub-Origin — nichts hart verdrahtet.
+    Gelesen wird im Arbeits-Repo ``REPO_ORDNER``, nicht im aktuellen Ordner (#257).
     """
     try:
         url = subprocess.run(
-            ["git", "remote", "get-url", "origin"], capture_output=True, text=True, check=False
+            ["git", "remote", "get-url", "origin"],
+            cwd=str(REPO_ORDNER),
+            capture_output=True,
+            text=True,
+            check=False,
         ).stdout.strip()
     except OSError:
         return fallback
@@ -48,10 +66,42 @@ def repo_aus_origin(fallback: str) -> str:
     return m.group(1) if m else fallback
 
 
-REPO = repo_aus_origin("Shavy72/duoplus-management")
-#: Repo, in dem gearbeitet wird: ``TO_SPAWN_REPO`` (setzt die Weiterleitung im Repo), sonst
-#: Git-Wurzel des aktuellen Ordners — nie der Ort dieses Skripts (liegt im Skill, #205).
-REPO_ORDNER = Path(os.environ["TO_SPAWN_REPO"]).resolve() if os.environ.get("TO_SPAWN_REPO") else config.repo_wurzel()
+KEIN_GITHUB_REPO = (
+    "Kein GitHub-Repo erkannt (origin fehlt oder zeigt nicht auf github.com) — "
+    "im Repo-Ordner starten oder TO_SPAWN_REPO setzen"
+)
+
+
+def repo_slug_oder_abbruch() -> str:
+    """``owner/name`` aus dem origin von ``REPO_ORDNER`` — ohne GitHub-Origin Exit 2 (#257 F5).
+
+    Fehlt der GitHub-Origin, gilt die ausdrückliche Vorgabe ``TO_SPAWN_GH_REPO`` (z. B.
+    Spiegel-Repo mit lokalem origin, Tests); ein stiller Rückfall auf ein festes Repo
+    gibt es nicht mehr.
+    """
+    slug = repo_aus_origin("") or os.environ.get("TO_SPAWN_GH_REPO", "").strip()
+    if slug:
+        return slug
+    print(KEIN_GITHUB_REPO, file=sys.stderr)
+    raise SystemExit(2)
+
+
+#: Beim Import nur der beste Versuch (leer ohne GitHub-Origin); ``main()`` setzt verbindlich.
+REPO = repo_aus_origin("") or os.environ.get("TO_SPAWN_GH_REPO", "").strip()
+
+
+def auf_speicher_warten(
+    konfig: dict,
+    *,
+    wer: str = "Wächter",
+    pruefen=speicher.platz_frei,
+    schlafen=time.sleep,
+    takt_s: int = 60,
+) -> int:
+    """Warten, bis ``speicher.platz_frei`` frei meldet; Rückgabe = Zahl der Wartezyklen (#257 F3)."""
+    return speicher.auf_platz_warten(konfig, wer=wer, pruefen=pruefen, schlafen=schlafen, takt_s=takt_s)
+
+
 MODELL = "claude-fable-5-1"
 
 PROMPT = """/loop Bau-Wächter Spec #{S} ({REPO}). Ich baue NICHTS und spreche KEINE Bau-Session an (kein SendMessage; Kommentare auf Ticket-Issues nur bei echtem Zustandswechsel, max. 2 Zeilen). \
@@ -78,6 +128,9 @@ def main() -> int:
     )
     a = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+    # GitHub-Slug verbindlich (#257 F5): kein GitHub-Origin → Exit 2 mit Grund, kein Rückfall.
+    global REPO
+    REPO = repo_slug_oder_abbruch()
     if not a.dry_run:  # Probelauf ohne Seiteneffekte (#205)
         config.sicherstellen(REPO_ORDNER)
     a.model = a.model or config.lade(REPO_ORDNER).get("modelle", {}).get("waechter") or MODELL
@@ -108,6 +161,11 @@ def main() -> int:
     if a.dry_run:
         print(" ".join(cmd[:-1]), '"<prompt>"')
         return 0
+    # Speicher-Schutz (#257 Paket B, Fixrunde 1 F3): RAM knapp oder Obergrenze an
+    # Claude-Sessions erreicht → warten statt Exit 5, damit Fenster und Grund bleiben.
+    auf_speicher_warten(konfig, wer=f"Wächter #{a.spec}")
+    # Vertrauens-Dialog für die Repo-Wurzel vorab bestätigen (#257) — Fehler nur Warnung.
+    vertrauen.still_sicherstellen(REPO_ORDNER)
     # Aus einer Claude-Session gestartet erben Kind-Sessions die Markierung
     # CLAUDE_CODE_CHILD_SESSION und speichern kein Transkript (kein Resume nach
     # Absturz, Beleg 17.09.2026). Persistenz deshalb ausdrücklich erzwingen.

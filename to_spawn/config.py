@@ -71,6 +71,12 @@ DEFAULTS: dict[str, Any] = {
     #: Ordner mit den Ticket-Worktrees ``wt-<N>`` für die Wächter-Regel verwaist
     #: (leer = Regel von ``worktree_pfad``: Windows ``C:/dev``, sonst ``$BAU_WT_DIR`` bzw. ``~/wt``) (#213).
     "wt_basis": "",
+    #: Basis der Ticket-Worktrees für alle Starter (#257): leer = altes Verhalten (Windows
+    #: ``C:/dev``, sonst ``$BAU_WT_DIR`` bzw. ``~/wt``); ``sicherstellen`` trägt beim ersten
+    #: Anlegen ``~/wt/<Repo-Name>`` ein, damit zwei Repos sich nie ``wt-<N>`` teilen.
+    "worktree_basis": "",
+    #: Hauptzweig des Repos (leer = automatisch: origin/HEAD, sonst master/main) (#257).
+    "hauptzweig": "",
     #: Befehl, der die Staging-Umgebung startet (leer = keine Staging-Stufe).
     "staging_start": "",
     #: Deploy-Befehl des Repos (leer = Repo deployt nicht über den Skill).
@@ -92,6 +98,15 @@ DEFAULTS: dict[str, Any] = {
     #: Nest-Bau (#210): ``bws_projekt`` = Projekt-ID im Bitwarden Secrets Manager (leer = alle).
     "nest": {
         "bws_projekt": "",
+    },
+    #: Speicher-Schutz (#257 Paket B): kein neuer Claude-Start, wenn weniger als
+    #: ``min_frei_mib`` MiB frei sind oder schon ``max_sessions`` Claude-Prozesse laufen.
+    #: Richtwert: 6 Sessions je 16 GB RAM (Bau-Server, OOM-Absturz 21.09.). ``staffel_s`` =
+    #: Pause in Sekunden zwischen zwei Fenster-Starts, damit die Starts sich nicht stapeln.
+    "speicher": {
+        "min_frei_mib": 2048,
+        "max_sessions": 6,
+        "staffel_s": 20,
     },
 }
 
@@ -119,16 +134,63 @@ def repo_wurzel(start: Path | None = None) -> Path:
     return pfad
 
 
-def worktree_pfad(ticket: str | int) -> str:
+def worktree_pfad(ticket: str | int, repo: Path | None = None) -> str:
     """Wohin der Worktree eines Tickets gehört — Windows ``C:/dev``, Linux unter ``$BAU_WT_DIR``.
 
-    Einzige Stelle dieser Regel: ``bau.py`` (Start + Bau-Log-Ziel) und
-    ``sessions_stand.py`` (Token-Spalte) lesen sie von hier (#204).
+    Steht ``worktree_basis`` in der Repo-Konfig (#257), gilt sie auf jeder Plattform
+    (``~`` wird aufgelöst). Einzige Stelle dieser Regel: ``bau.py`` (Start + Bau-Log-Ziel),
+    ``sessions_stand.py`` (Token-Spalte) und ``capo`` lesen sie von hier (#204).
+    ``repo`` = Repo-Wurzel (sonst ``TO_SPAWN_REPO`` bzw. der aktuelle Ordner).
     """
+    if repo is None and os.environ.get("TO_SPAWN_REPO"):
+        repo = Path(os.environ["TO_SPAWN_REPO"]).expanduser()
+    basis = str(lade(repo).get("worktree_basis") or "").strip()
+    if basis:
+        return f"{Path(basis).expanduser().as_posix().rstrip('/')}/wt-{ticket}"
     if sys.platform == "win32":
         return f"C:/dev/wt-{ticket}"
     basis = os.environ.get("BAU_WT_DIR") or "~/wt"
     return f"{Path(basis).expanduser().as_posix().rstrip('/')}/wt-{ticket}"
+
+
+def worktree_basis_vorgabe(repo: Path) -> str:
+    """Startwert für ``worktree_basis`` beim Anlegen der Konfig: ``~/wt/<Repo-Name>``
+    (Windows ``C:/dev/<Repo-Name>``) — nur ein Vorschlag, die Datei darf ihn ändern."""
+    name = repo_wurzel(repo).name
+    return f"C:/dev/{name}" if sys.platform == "win32" else f"~/wt/{name}"
+
+
+#: Zeilen, die ``sicherstellen`` in die Repo-``.gitignore`` schreibt: Laufdateien und
+#: Marker unter ``.to-spawn/`` bleiben unversioniert, nur die Konfig wird eingecheckt (#257).
+GITIGNORE_BLOCK = (
+    "# to-spawn: Laufdateien/Marker unversioniert, nur die Konfig eingecheckt",
+    ".to-spawn/*",
+    "!.to-spawn/config.json",
+)
+
+
+def gitignore_ergaenzen(wurzel: Path) -> bool:
+    """Block aus ``GITIGNORE_BLOCK`` idempotent an ``.gitignore`` anhängen (``True`` = geschrieben)."""
+    datei = wurzel / ".gitignore"
+    try:
+        vorhanden = datei.read_text(encoding="utf-8") if datei.is_file() else ""
+    except OSError as fehler:
+        log.warning(".gitignore unlesbar (%s) — nicht ergänzt: %s", datei, fehler)
+        return False
+    zeilen = {zeile.strip() for zeile in vorhanden.splitlines()}
+    fehlend = [zeile for zeile in GITIGNORE_BLOCK[1:] if zeile not in zeilen]
+    if not fehlend:
+        return False
+    block = "\n".join(GITIGNORE_BLOCK) + "\n"
+    trenner = "" if not vorhanden or vorhanden.endswith("\n") else "\n"
+    try:
+        with datei.open("a", encoding="utf-8") as strom:
+            strom.write(f"{trenner}{block}")
+    except OSError as fehler:
+        log.warning(".gitignore nicht schreibbar (%s): %s", datei, fehler)
+        return False
+    log.info(".gitignore ergänzt: %s", datei)
+    return True
 
 
 def lade(repo: Path | None = None) -> dict[str, Any]:
@@ -151,17 +213,23 @@ def lade(repo: Path | None = None) -> dict[str, Any]:
 def sicherstellen(repo: Path | None = None) -> Path:
     """Legt ``.to-spawn/config.json`` mit den Vorgaben an, falls sie fehlt.
 
-    Eine vorhandene Datei bleibt unangetastet (auch wenn sie unlesbar ist).
-    Rückgabe: Pfad der Konfig-Datei.
+    Beim Anlegen bekommt ``worktree_basis`` den Vorschlag ``~/wt/<Repo-Name>`` (#257).
+    Eine vorhandene Datei bleibt byte-gleich (Plan B8, #257): fehlende Felder liefert
+    ``lade`` beim Lesen aus ``DEFAULTS``, nichts wird nachgetragen. Dazu der
+    ``.gitignore``-Block für ``.to-spawn/`` (idempotent). Rückgabe: Pfad der Konfig-Datei.
     """
-    datei = repo_wurzel(repo) / KONFIG_PFAD
+    wurzel = repo_wurzel(repo)
+    datei = wurzel / KONFIG_PFAD
+    gitignore_ergaenzen(wurzel)
     if datei.exists():
         return datei
     datei.parent.mkdir(parents=True, exist_ok=True)
+    inhalt = dict(DEFAULTS)
+    inhalt["worktree_basis"] = worktree_basis_vorgabe(wurzel)
     try:
         # Modus "x": zwei gleichzeitige Starts überschreiben sich nie gegenseitig.
         with datei.open("x", encoding="utf-8") as strom:
-            strom.write(json.dumps(DEFAULTS, indent=2, ensure_ascii=False) + "\n")
+            strom.write(json.dumps(inhalt, indent=2, ensure_ascii=False) + "\n")
     except FileExistsError:
         return datei
     log.info("Konfig angelegt: %s (Vorgaben, bitte anpassen)", datei)

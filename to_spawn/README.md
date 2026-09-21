@@ -22,6 +22,7 @@ Immer im Repo-Wurzelordner ausführen:
 | `python to_spawn.py umzug <N> --handoff <pfad> [--dry-run]` | Bau-Session auf den Bau-Server umziehen (#212): Handoff prüfen (`Umzug: server`, auch `## Umzug: server`; kein `Staffel: weiter`; keine ungetrackten Dateien außer dem Handoff), committen + pushen, Referenz `<branch>@<sha>:<pfad>`, Server-Start per SSH, lokales Ende erst nach Beweis; **Exit 0 = umgezogen, 1 = Server nicht bewiesen / läuft dort schon (lokal läuft weiter), 3 = Weigerung**; Ergebnis zusätzlich in `<BAU_UMZUG_ANFRAGE>.laeuft`, falls vorhanden |
 | `python to_spawn.py umzug-alle <S> [--ohne-wache] [--warte-max s] [--dry-run]` | Wächter-Variante (im Hintergrund starten): alle Sessions der Spec streng nacheinander umziehen, Zustand je Ticket frisch gelesen, `wartet` → erst Server starten + beweisen, dann lokal beenden; Stopp bei `VERWAIST`/Zeitüberschreitung/Fehlschlag der Session, Anfrage-Datei wird immer aufgeräumt; zum Schluss Wächter auf dem Server |
 | `python to_spawn.py aufpasser [--trocken] [--tmux-socket NAME] [--zustand DIR] [--hang-min N] [--bau-vorlage "…"] [--wache-vorlage "…"] [--deploy-muster REGEX] [--repo P] [--cron-einrichten]` | Aufpasser/Hausmeister (#236, Cron alle 15 min, nur Linux/tmux; gleich wie `skripte/aufpasser.py`): je tmux-Sitzung `spec-<S>` fehlende `bau <N>`-Fenster starten, Fenster geschlossener Tickets schließen (schmutziger Worktree vorher auf `sicherung/<N>` gesichert + gepusht), stille Fenster in drei Stufen wecken (anstupsen → sichern + Fenster per tmux-Respawn mit `--resume <Gesprächs-ID>` fortsetzen, Nachweis binnen 120 s → „braucht David“; Text ändert sich nach einem Eingriff ⇒ Stufe 0; gilt auch für `wache <S>` via `wache.py --resume`, `--wache-vorlage`); fehlende Fenster (auch `wache <S>`) und Panes mit nur noch einer Shell werden über `.to-spawn/sessions/<N>.json`/`wache-<S>.json` mit `--resume` fortgesetzt, sofern das Transkript liegt; jeder Eingriff = eigene Issue-Zeile, Meldungen ohne Eingriff einmal am Tag; mehr als 3 Anstupser je Fenster in 24 h ⇒ „braucht David“; Deploy-Wache noch einmal direkt vor jedem Eingriff; Start gilt erst nach 5 s Fenster-Nachweis; Gesprächs-ID + Zustand `busy`/`idle` aus `~/.claude/sessions/<pid>.json` (kein Transkript-Raten), `--hang-min` nie unter 61 (Wakeups ≤ 60 min); Sicherung ohne `.env`/`*zugang*`/`*.pem`/`*.key`, Hauptrepo nie; läuft ein Deploy/Gate (`--deploy-muster`, Vorgabe `safe_deploy_vps\.sh|deploy_schlange|staging_deploy\.sh|pytest` plus Skripte aus `.to-spawn/config.json`, Prozesse > 6 h = Waise), wird nichts angefasst; Start-Regel: kein Start bei Label `ready-for-human`/`needs-info`/`wontfix`, höchstens 2 Starts je Ticket in 6 h; Zustand `~/.local/state/to-spawn/aufpasser/` (`stand.json`, `aufpasser.log`); jede Meldung als Kommentar im Spec-Issue, `--cron-einrichten` legt die Cron-Zeile an oder ersetzt sie; **Exit 0, 1 = unerwarteter Fehler (im Log)** |
+| `python to_spawn.py speicher [--staffel]` | Speicher-Schutz (#257, `to_spawn/speicher.py`, nur Linux): druckt den Stand („Speicher frei: … / Speicher knapp: … / schon N Claude-Sessions“), **Exit 0 = frei, 5 = voll**; `--staffel` gibt nur die Pause in Sekunden zwischen zwei Fenster-Starts aus |
 | `python to_spawn.py hook-umzug` | Stop-Hook: liegt `.to-spawn/umzug-anfrage-<N>`, bekommt die Session die Umzug-Anweisung (einmal) |
 
 `--ziel` überspringt die Frage; ohne Angabe gilt `ziel_default` aus der Konfig.
@@ -157,7 +158,7 @@ Block „Probesitz (7 Punkte)“ an. Rot = Grund + „fehlt noch: …“, nie nu
 | 3 | Playwright gegen Staging | `staging.url` (oder `adresse=` aus `staging.zugang_datei`) + `/login` antwortet 200; Zugang `nutzer=`/`passwort=` oder `user:pass` |
 | 4 | Sandbox sperrt außerhalb Worktree | `srt --settings … -- touch` innen Exit 0, außen ≠ 0 und keine Datei (`sandbox.modus aus` ist nur ein Hinweis) |
 | 5 | Bau-Log-Zeile mit Token | aus dem Wegwerf-Lauf: `session_ende` mit `tokens.gesamt > 0` |
-| 6 | Künstlicher Handoff startet Folge-Session | aus dem Wegwerf-Lauf: `handoff` + `session_start` mit `staffel = 2` (braucht `scripts/hooks/staffel_stop.py` im Repo) |
+| 6 | Künstlicher Handoff startet Folge-Session | aus dem Wegwerf-Lauf: `handoff` + `session_start` mit `staffel = 2` (Hook `scripts/hooks/staffel_stop.py` im Repo, fehlt er, greift die Skill-eigene Kopie `skripte/hooks/staffel_stop.py` — die Repo-Kopie hat Vorrang) |
 | 7 | Mail „Probesitz grün“ | nur wenn 1–6 grün; Art `probesitz_gruen` über `mail.befehl`, geht auch bei `nur_kritisch` |
 
 - Punkte 2/5/6 sind EIN Lauf (bis 15 min). Ticket, Fern-Zweig, Worktree und lokale
@@ -187,9 +188,24 @@ Fehlt die Datei, gelten die Vorgaben aus `to_spawn/config.py`:
   "effort": {"ticket": "medium", "ticket_leicht": "low", "waechter": "low"},
   "staffel": {"modus": "eltern", "grenze_k": 200, "max_staffeln": 3},
   "mail": {"ziel": "", "nur_kritisch": true},
-  "staging": {"url": "", "zugang_datei": ""}
+  "staging": {"url": "", "zugang_datei": ""},
+  "speicher": {"min_frei_mib": 2048, "max_sessions": 6, "staffel_s": 20}
 }
 ```
+
+## Speicher (#257 Paket B)
+
+Lehre aus dem OOM-Absturz 21.09. (16 GB, kein Swap, 12 Sessions): `to_spawn/speicher.py`
+liest `MemAvailable` aus `/proc/meminfo` und zählt Prozesse mit `argv[0]` = `claude`.
+Vor jedem Claude-Start fragen `bau.py`, `wache.py`, `spawn_srv.sh` und der Aufpasser
+`speicher.platz_frei(konfig)`; voll → kein Start, Exit 5 (Skripte) bzw. Fenster in diesem
+Tick ausgelassen (Aufpasser, nächster Tick prüft neu). Grenzen im Konfig-Feld `speicher`:
+`min_frei_mib` (2 GB Mindestmaß), `max_sessions` (Obergrenze 6 je 16 GB), `staffel_s`
+(20 s Pause zwischen zwei Fenster-Starts, `to_spawn.py speicher --staffel`). Kein Linux
+oder `/proc` unlesbar = kein Urteil = frei. Test-Tür: `TO_SPAWN_SPEICHER_MEMINFO` /
+`TO_SPAWN_SPEICHER_PROC` zeigen auf Attrappen (die Suite setzt sie in `conftest.py` auf
+„immer frei“). Das Nest legt dazu Swap in RAM-Größe (mind. 8 GiB) und den tmux-Server als
+`tmux-bau.service` (OOMScoreAdjust=-900, `exit-empty off`) an — Abschnitt 5b in `nest_server.sh`.
 
 ## Test
 

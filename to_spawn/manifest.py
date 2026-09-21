@@ -364,7 +364,8 @@ def _pruefe_github(
     elif not checkpoints:
         bericht.fehler.append(
             f"Kein Checkpoint-Ticket: keins der Tickets trägt das Label {label} — /to-tickets: "
-            "Abnahme-Ticket für Davids Test anlegen, von allen anderen blockiert."
+            "Abnahme-Ticket für den menschlichen Test anlegen, von allen anderen blockiert. "
+            f"Fehlt das Label im Repo: `gh label create {label}` oder `to_spawn.py setup` (#257)."
         )
     else:
         _pruefe_checkpoint(bericht, github, checkpoints)

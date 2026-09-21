@@ -85,6 +85,7 @@ Schritte:
    3. Node 22
    4. GitHub CLI (gh)
    5. tmux.conf + .bashrc (REPO=$ZIEL, BAU_WT_DIR=$WT_DIR, bau/wache/sessions)
+  5b. Swap (RAM-Größe, mind. 8 GiB) + tmux-Server als tmux-bau.service (OOMScoreAdjust=-900)
    6. Zugangsdaten aus $STAGE (Claude, gh, bws-Token)
    7. ~/.claude aus $STAGE ergänzen (ohne Löschen), Skill to-spawn nach $SKILL_NUTZER
    8. Claude Code + uv
@@ -160,12 +161,27 @@ set -g mouse on
 set -g history-limit 50000
 set -g default-terminal "screen-256color"
 setw -g mode-keys vi
+# Server bleibt ohne Sessions am Leben (#257): sonst startet der nächste ``tmux new``
+# einen ungeschützten Server statt des Dienstes tmux-bau.service.
+set -s exit-empty off
 EOF
   chown "$NUTZER:$NUTZER" "$NUTZER_HOME/.tmux.conf"
 fi
 
-if ! grep -q -e '>>> to-spawn nest <<<' -e '>>> bau-server <<<' "$NUTZER_HOME/.bashrc" 2>/dev/null; then
-  cat >> "$NUTZER_HOME/.bashrc" <<'EOF'
+# Block zwischen den Markern wird bei erneutem Lauf ERSETZT, nicht übersprungen (#257,
+# idempotent: alter Block raus, neuer rein). Der Alt-Marker ``bau-server`` zählt mit.
+if [ -f "$NUTZER_HOME/.bashrc" ] && grep -q -e '>>> to-spawn nest <<<' -e '>>> bau-server <<<' "$NUTZER_HOME/.bashrc"; then
+  awk '
+    /^# >>> (to-spawn nest|bau-server) <<</ { drin=1; next }
+    /^# <<< (to-spawn nest|bau-server) >>>/ { drin=0; next }
+    !drin { print }
+  ' "$NUTZER_HOME/.bashrc" > "$NUTZER_HOME/.bashrc.to-spawn-neu"
+  # Leerzeilen am Ende weg — sonst wächst die Datei bei jedem Lauf um eine Leerzeile.
+  sed -i -e :a -e '/^\n*$/{$d;N;ba' -e '}' "$NUTZER_HOME/.bashrc.to-spawn-neu"
+  mv "$NUTZER_HOME/.bashrc.to-spawn-neu" "$NUTZER_HOME/.bashrc"
+  chown "$NUTZER:$NUTZER" "$NUTZER_HOME/.bashrc"
+fi
+cat >> "$NUTZER_HOME/.bashrc" <<'EOF'
 
 # >>> to-spawn nest <<<
 # nur für interaktive Shells: ins Repo wechseln + venv anschalten (falls vorhanden)
@@ -175,7 +191,6 @@ if [ -d "$REPO" ]; then
 fi
 # <<< to-spawn nest >>>
 EOF
-fi
 
 # Kopf der .bashrc: Debians Vorlage steigt bei nicht-interaktiven Shells früh aus.
 # PATH und bau/wache/sessions müssen davor stehen, sonst findet `ssh <server> bau 42` nichts.
@@ -208,6 +223,109 @@ EOF
 fi
 chown "$NUTZER:$NUTZER" "$NUTZER_HOME/.bashrc"
 ok "tmux.conf + .bashrc (bau/wache/sessions, cd ins Repo)"
+
+# ---------------------------------------------------------------- 5b. Swap + tmux als System-Dienst
+# Lehre aus dem OOM-Absturz 21.09. (#257 Paket B): 16 GB ohne Swap, 12 Claude-Sessions,
+# der Kernel schoss den tmux-Server ab und alle Sessions waren weg. Darum:
+# (a) Swap in RAM-Größe (mindestens 8 GiB), (b) der tmux-Server läuft als
+# systemd-Dienst mit OOMScoreAdjust=-900 — der Kernel nimmt ihn als Letztes.
+# Idempotent: vorhandener Swap bleibt, vorhandene Unit wird nur nachgezogen.
+
+# (a) Swap: /proc/swaps hat nur die Kopfzeile → kein Swap aktiv.
+swap_aktiv="$(awk 'NR>1' /proc/swaps 2>/dev/null || true)"
+if [ -n "$swap_aktiv" ]; then
+  ok "Swap vorhanden: $(awk 'NR>1 {print $1}' /proc/swaps | tr '\n' ' ')"
+elif [ -f /swapfile ]; then
+  # Datei da, aber nicht aktiv (z. B. Neustart ohne fstab-Zeile): nur einschalten.
+  if swapon /swapfile 2>/dev/null; then
+    ok "Swap /swapfile eingeschaltet"
+  else
+    warn "swapon /swapfile fehlgeschlagen"
+  fi
+else
+  ram_kib="$(awk '/^MemTotal:/ {print $2}' /proc/meminfo 2>/dev/null || echo 0)"
+  swap_gib=$(( (ram_kib + 1048575) / 1048576 ))   # aufgerundet auf ganze GiB
+  if [ "$swap_gib" -lt 8 ]; then swap_gib=8; fi
+  info "Swap anlegen: /swapfile mit ${swap_gib} GiB (RAM $(( ram_kib / 1024 )) MiB)"
+  if fallocate -l "${swap_gib}G" /swapfile && chmod 600 /swapfile && mkswap -q /swapfile && swapon /swapfile; then
+    ok "Swap /swapfile (${swap_gib} GiB) aktiv"
+  else
+    warn "Swap /swapfile konnte nicht angelegt werden (fallocate/mkswap/swapon)"
+    rm -f /swapfile
+  fi
+fi
+if [ -f /swapfile ] && ! grep -q '^/swapfile[[:space:]]' /etc/fstab 2>/dev/null; then
+  echo '/swapfile none swap sw 0 0' >> /etc/fstab
+  ok "fstab: /swapfile eingetragen (hält den Neustart)"
+fi
+
+# (b) .tmux.conf: exit-empty off nachziehen, falls die Datei älter ist als dieser Schritt.
+if ! grep -q 'exit-empty off' "$NUTZER_HOME/.tmux.conf" 2>/dev/null; then
+  {
+    echo '# Server bleibt ohne Sessions am Leben (#257): sonst startet der nächste ``tmux new``'
+    echo '# einen ungeschützten Server statt des Dienstes tmux-bau.service.'
+    echo 'set -s exit-empty off'
+  } >> "$NUTZER_HOME/.tmux.conf"
+  chown "$NUTZER:$NUTZER" "$NUTZER_HOME/.tmux.conf"
+  ok ".tmux.conf: exit-empty off nachgetragen"
+fi
+
+# (c) tmux-bau.service: der eine tmux-Server des Nutzers, vom Kernel zuletzt beendet.
+TMUX_UNIT=/etc/systemd/system/tmux-bau.service
+cat > "$TMUX_UNIT" <<UNIT
+[Unit]
+Description=tmux-Server für die Bau-Sessions ($NUTZER) — vom OOM-Killer geschützt (#257)
+After=network.target
+
+[Service]
+Type=simple
+User=$NUTZER
+Group=$NUTZER
+WorkingDirectory=$NUTZER_HOME
+Environment=HOME=$NUTZER_HOME USER=$NUTZER SHELL=/bin/bash LANG=C.UTF-8
+ExecStart=/usr/bin/tmux -D
+OOMScoreAdjust=-900
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+if command -v systemctl >/dev/null 2>&1; then
+  fragment="$(systemctl show tmux-bau.service -p FragmentPath --value 2>/dev/null || true)"
+  NUTZER_UID="$(id -u "$NUTZER")"
+  WANTS_LINK=/etc/systemd/system/multi-user.target.wants/tmux-bau.service
+  if [ "${fragment#/run/systemd/transient}" != "$fragment" ]; then
+    # Ein transienter Dienst gleichen Namens läuft (systemd-run) — kein Neustart, der
+    # würde alle laufenden Sessions töten. ``systemctl enable`` lehnt transiente Units ab,
+    # darum den Symlink unter multi-user.target.wants von Hand setzen (#257 F1): so
+    # startet die dauerhafte Unit beim nächsten Boot, statt nie.
+    systemctl daemon-reload
+    mkdir -p "$(dirname "$WANTS_LINK")"
+    ln -sfn "$TMUX_UNIT" "$WANTS_LINK"
+    warn "tmux-bau.service: transienter Dienst läuft — dauerhafte Unit geschrieben + verlinkt, greift nach systemctl restart tmux-bau oder Neustart"
+  elif ! systemctl is-active --quiet tmux-bau.service \
+       && su -s /bin/bash "$NUTZER" -c "tmux -S /tmp/tmux-$NUTZER_UID/default list-sessions" >/dev/null 2>&1; then
+    # Kein Dienst aktiv, aber der Nutzer hat schon einen tmux-Server: ``enable --now`` würde
+    # ``tmux -D`` gegen den bestehenden Socket starten, der sofort stirbt und unter
+    # Restart=always im Kreis dreht (#257 F1). Nur enable, der Dienst übernimmt später.
+    systemctl daemon-reload
+    if systemctl enable tmux-bau.service >/dev/null 2>&1; then
+      warn "tmux-bau.service: tmux-Server läuft schon ohne Dienst — nach tmux kill-server oder Neustart übernimmt der Dienst"
+    else
+      warn "tmux-bau.service konnte nicht aktiviert werden (systemctl enable)"
+    fi
+  else
+    systemctl daemon-reload
+    if systemctl enable --now tmux-bau.service >/dev/null 2>&1; then
+      ok "tmux-bau.service aktiv (OOMScoreAdjust=-900, Restart=always, RestartSec=5)"
+    else
+      warn "tmux-bau.service konnte nicht gestartet werden (systemctl enable --now)"
+    fi
+  fi
+else
+  warn "systemctl fehlt — tmux-bau.service nur geschrieben ($TMUX_UNIT)"
+fi
 
 # ---------------------------------------------------------------- 6. Zugangsdaten aus der Staging-Kiste
 install -d -m 700 -o "$NUTZER" -g "$NUTZER" "$NUTZER_HOME/.claude" "$NUTZER_HOME/.config"

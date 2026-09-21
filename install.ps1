@@ -80,7 +80,8 @@ if ($Repo) {
     $def = Join-Path $man "_default.json"
     if (-not (Test-Path $def)) { Copy-Item (Join-Path $hier "repo-scripts\_default.json") $def; Write-Host "kopiert: $def" }
     # Ohne doppelte Anführungszeichen im -c-Text: Windows PowerShell 5.1 würde sie beim Aufruf verschlucken.
-    $py = 'import sys; sys.path.insert(0, sys.argv[1]); from pathlib import Path; from to_spawn import config; print(config.sicherstellen(Path(sys.argv[2])))'
+    # Konfig anlegen (+ .gitignore-Block) und Checkpoint-Label im GitHub-Repo sicherstellen (#257).
+    $py = 'import sys; sys.path.insert(0, sys.argv[1]); from pathlib import Path; from to_spawn import config, gh; r = Path(sys.argv[2]); print(config.sicherstellen(r)); l = str(config.lade(r).get("regularien", {}).get("checkpoint_label") or "checkpoint:human"); print("Label " + l + (": vorhanden" if gh.label_sicherstellen(r, l) else ": nicht angelegt - von Hand: gh label create " + l))'
     $konfig = python -c $py $ziel (Resolve-Path $Repo).Path
     Write-Host "Konfig: $konfig"
 }

@@ -1,0 +1,10 @@
+Erster Gesamtlauf: 1 failed, 663 passed, 4 skipped in 517.01s — test_setup_208::test_erster_start_ohne_tty_legt_vorgaben_an_mit_hinweis erwartete DEFAULTS byte-gleich, B8 (#257) setzt beim Erstanlegen worktree_basis=~/wt/<Repo>; Test-Erwartung angepasst (Vorgabe + worktree_basis_vorgabe).
+Nachlauf test_setup_208.py: 39 passed.
+Zweiter Gesamtlauf:
+=========================== short test summary info ============================
+FAILED tests/test_aufpasser_236.py::test_deploy_wache_zaehlt_nur_programm_nicht_prompt
+1 failed, 663 passed, 4 skipped in 540.97s (0:09:00)
+Nachprüfung test_aufpasser_236::test_deploy_wache_zaehlt_nur_programm_nicht_prompt allein: 1 passed.
+Ursache Rot im Gesamtlauf: der Test liest die ECHTE Prozessliste (deploy_laeuft() == [] gegen Muster
+safe_deploy_vps\.sh) — lief in dem Moment auf dem Bau-Server ein fremder Deploy (parallele Ticket-Sessions
+#63/#162/#251/#71), zählt er mit. Umgebungsabhängig, nicht aus #257; unverändert gelassen.

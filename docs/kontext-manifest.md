@@ -49,9 +49,13 @@ Loop-Prompt (Domino: wartet auf Blocker → claimt Ticket → `/implement` → s
 - Skills: `fable-1080`, `implement`, `prp-commit`, `code-review`, `verify-hard`,
   `german-umlauts`, `loop`, `run`, `diagnosing-bugs`
 - MCP: leer (Core bringt keine MCP-Server mit — jedes Ticket listet seine selbst)
-- Prompt-Template: enthält die Projekt-Regeln aus `CLAUDE.md` (Worktree `C:/dev/wt-<N>`,
-  Pathspec-Commit mit `[skip ci]`, Deploy nur per `safe_deploy_vps.sh --skip-ci` nach
-  Live-Jobs-Check, `checkpoint:human` = warten auf Davids GitHub-Kommentar).
+- Prompt-Template: repo-neutrale Vorlage (Feld `prompt_template`), Platzhalter
+  `{N}` (Ticket), `{S}` (Spec), `{TITLE}`, `{WT}` (Worktree-Pfad), `{REPO}`
+  (`owner/name` aus dem Origin), `{HAUPTZWEIG}` (`master`/`main`/…, aus
+  `gh.hauptzweig`), `{CHECKPOINT_LABEL}` (aus `regularien.checkpoint_label`) und
+  `{KONTEXT}` (Kontext-Paket). `bau.py` füllt sie über `build_prompt`; die Vorlage
+  kommt aus `docs/agents/manifests/_default.json` des Repos, fehlt sie, aus der
+  Skill-Vorlage `repo-scripts/_default.json`.
 
 Verfügbare MCP-Namen zur Auswahl im Manifest (Stand 2026-09-12, `bau.py` löst sie über
 `~/.claude.json` global + Projekt-Eintrag, Repo-`.mcp.json` und

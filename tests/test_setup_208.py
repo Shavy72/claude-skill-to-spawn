@@ -485,7 +485,12 @@ def test_erster_start_mit_tty_fuehrt_dialog(repo: Path) -> None:
 def test_erster_start_ohne_tty_legt_vorgaben_an_mit_hinweis(repo: Path) -> None:
     ausgabe = io.StringIO()
     setup.erster_start(repo, ist_tty=False, eingabe=_antworten(), ausgabe=ausgabe)
-    assert _lies(repo) == json.loads(json.dumps(config.DEFAULTS))
+    # Vorgaben, bis auf ``worktree_basis``: beim ersten Anlegen steht dort
+    # ``~/wt/<Repo-Name>`` (#257 B8), damit zwei Repos sich nie ``wt-<N>`` teilen.
+    erwartet = json.loads(json.dumps(config.DEFAULTS))
+    erwartet["worktree_basis"] = config.worktree_basis_vorgabe(repo)
+    assert _lies(repo) == erwartet
+    assert _lies(repo)["worktree_basis"].endswith("/" + repo.name)
     assert "Erstes Mal in diesem Repo" in ausgabe.getvalue()
     # Zweiter Start: Datei da → kein Hinweis, nichts verändert.
     ausgabe2 = io.StringIO()

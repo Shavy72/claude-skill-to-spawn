@@ -1,0 +1,1967 @@
+I001 [*] Import block is un-sorted or un-formatted
+  --> skripte/bau.py:38:1
+   |
+36 |   if _SKILL not in sys.path:
+37 |       sys.path.insert(0, _SKILL)
+38 | / from to_spawn import config, context_mode, gh, nest, probesitz, sessions_datei, speicher, umzug, vertrauen  # noqa: E402
+39 | | from to_spawn.waechter_lauf import transkript_ordner
+   | |____________________________________________________^
+40 |
+41 |   # Windows-Konsole ist cp1252 — Umlaute/Pfeile im Prompt brauchen UTF-8.
+   |
+help: Organize imports
+   |
+37 |     sys.path.insert(0, _SKILL)
+   - from to_spawn import config, context_mode, gh, nest, probesitz, sessions_datei, speicher, umzug, vertrauen  # noqa: E402
+38 + from to_spawn import (  # noqa: E402
+39 +     config,
+40 +     context_mode,
+41 +     gh,
+42 +     nest,
+43 +     probesitz,
+44 +     sessions_datei,
+45 +     speicher,
+46 +     umzug,
+47 +     vertrauen,
+48 + )
+49 | from to_spawn.waechter_lauf import transkript_ordner
+   |
+
+RUF100 [*] Unused `noqa` directive (non-enabled: `E402`)
+  --> skripte/bau.py:38:109
+   |
+36 | if _SKILL not in sys.path:
+37 |     sys.path.insert(0, _SKILL)
+38 | from to_spawn import config, context_mode, gh, nest, probesitz, sessions_datei, speicher, umzug, vertrauen  # noqa: E402
+   |                                                                                                             ^^^^^^^^^^^^
+39 | from to_spawn.waechter_lauf import transkript_ordner
+   |
+help: Remove unused `noqa` directive
+   |
+37 |     sys.path.insert(0, _SKILL)
+   - from to_spawn import config, context_mode, gh, nest, probesitz, sessions_datei, speicher, umzug, vertrauen  # noqa: E402
+38 + from to_spawn import config, context_mode, gh, nest, probesitz, sessions_datei, speicher, umzug, vertrauen
+39 | from to_spawn.waechter_lauf import transkript_ordner
+   |
+
+DTZ005 `datetime.datetime.now()` called without a `tz` argument
+   --> skripte/bau.py:254:13
+    |
+252 |             "; ".join(gruende),
+253 |             takt // 60,
+254 |             datetime.now().strftime("%H:%M"),
+    |             ^^^^^^^^^^^^^^
+255 |         )
+256 |         time.sleep(takt)
+    |
+help: Pass a `datetime.timezone` object to the `tz` parameter
+
+DTZ005 `datetime.datetime.now()` called without a `tz` argument
+   --> skripte/bau.py:737:13
+    |
+736 |     # Temp-Dateien
+737 |     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    |             ^^^^^^^^^^^^^^
+738 |     out = Path(os.environ.get("LOCALAPPDATA") or tempfile.gettempdir()) / "Temp"
+739 |     if not out.is_dir():
+    |
+help: Pass a `datetime.timezone` object to the `tz` parameter
+
+RUF100 [*] Unused `noqa` directive (non-enabled: `E402`)
+  --> skripte/sessions_stand.py:36:39
+   |
+34 | if _SKILL not in sys.path:
+35 |     sys.path.insert(0, _SKILL)
+36 | from to_spawn import bau_log, config  # noqa: E402
+   |                                       ^^^^^^^^^^^^
+37 |
+38 | log = logging.getLogger("sessions_stand")
+   |
+help: Remove unused `noqa` directive
+   |
+35 |     sys.path.insert(0, _SKILL)
+   - from to_spawn import bau_log, config  # noqa: E402
+36 + from to_spawn import bau_log, config
+37 |
+   |
+
+DTZ007 Naive datetime constructed using `datetime.datetime.strptime()` without %z
+  --> skripte/sessions_stand.py:83:21
+   |
+81 |             continue
+82 |         try:
+83 |             start = datetime.strptime(" ".join(teile[2:7]), "%a %b %d %H:%M:%S %Y")
+   |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+84 |         except ValueError:
+85 |             start = None
+   |
+help: Call `.replace(tzinfo=<timezone>)` or `.astimezone()` to convert to an aware datetime
+
+DTZ005 `datetime.datetime.now()` called without a `tz` argument
+   --> skripte/sessions_stand.py:301:69
+    |
+299 |     an = sum(1 for e in eintraege.values() if e.zustand != "aus")
+300 |     laufen = sum(1 for e in eintraege.values() if e.zustand.startswith("läuft"))
+301 |     print(f"\n{an} Prozesse an · {laufen} Claude-Sessions laufen · {datetime.now().strftime('%H:%M')}")
+    |                                                                     ^^^^^^^^^^^^^^
+302 |     return 0
+    |
+help: Pass a `datetime.timezone` object to the `tz` parameter
+
+RUF100 [*] Unused `noqa` directive (non-enabled: `E402`)
+  --> skripte/spec_stand.py:24:30
+   |
+22 | if _SKILL not in sys.path:
+23 |     sys.path.insert(0, _SKILL)
+24 | from to_spawn import config  # noqa: E402
+   |                              ^^^^^^^^^^^^
+25 |
+26 | REPO = "Shavy72/duoplus-management"
+   |
+help: Remove unused `noqa` directive
+   |
+23 |     sys.path.insert(0, _SKILL)
+   - from to_spawn import config  # noqa: E402
+24 + from to_spawn import config
+25 |
+   |
+
+PLW1510 `subprocess.run` without explicit `check` argument
+  --> skripte/spec_stand.py:34:9
+   |
+33 | def sh(*args: str, cwd: Path | None = None) -> str:
+34 |     r = subprocess.run(list(args), capture_output=True, text=True, encoding="utf-8", cwd=cwd)
+   |         ^^^^^^^^^^^^^^
+35 |     if r.returncode != 0:
+36 |         raise RuntimeError(f"{args[:3]} → {r.stderr.strip()[:200]}")
+   |
+help: Add explicit `check=False`
+
+DTZ005 `datetime.datetime.now()` called without a `tz` argument
+   --> skripte/spec_stand.py:100:110
+    |
+ 99 |     print(
+100 |         f"Spec #{a.spec} · origin/master {origin} · VPS {vps or '?'} · offen {offen_gesamt}/{len(kinder)} · {datetime.now():%d.%m. %H…
+    |                                                                                                              ^^^^^^^^^^^^^^
+101 |     )
+102 |     print("\n".join(zeilen))
+    |
+help: Pass a `datetime.timezone` object to the `tz` parameter
+
+I001 [*] Import block is un-sorted or un-formatted
+  --> skripte/wache.py:16:1
+   |
+14 |   """
+15 |
+16 | / from __future__ import annotations
+17 | |
+18 | | import argparse
+19 | | import logging
+20 | | import re
+21 | | import os
+22 | | import shutil
+23 | | import tempfile
+24 | | import subprocess
+25 | | import sys
+26 | | from datetime import date
+27 | | from pathlib import Path
+   | |________________________^
+28 |
+29 |   # Skill-Wurzel in sys.path, damit ``to_spawn.config`` (Repo-Wurzel, Konfig) importierbar ist (#205).
+   |
+help: Organize imports
+   |
+19 | import logging
+20 + import os
+21 | import re
+   - import os
+22 | import shutil
+   - import tempfile
+23 | import subprocess
+24 | import sys
+25 + import tempfile
+26 | from datetime import date
+   |
+
+RUF100 [*] Unused `noqa` directive (non-enabled: `E402`)
+  --> skripte/wache.py:33:25
+   |
+31 | if _SKILL not in sys.path:
+32 |     sys.path.insert(0, _SKILL)
+33 | from to_spawn import (  # noqa: E402
+   |                         ^^^^^^^^^^^^
+34 |     config,
+35 |     context_mode,
+   |
+help: Remove unused `noqa` directive
+   |
+32 |     sys.path.insert(0, _SKILL)
+   - from to_spawn import (  # noqa: E402
+33 + from to_spawn import (
+34 |     config,
+   |
+
+DTZ011 `datetime.date.today()` used
+   --> skripte/wache.py:99:55
+    |
+ 97 |     a.model = a.model or config.lade(REPO_ORDNER).get("modelle", {}).get("waechter") or MODELL
+ 98 |
+ 99 |     prompt = PROMPT.format(S=a.spec, REPO=REPO, DATUM=date.today().isoformat(), TAKT=max(600, a.takt))
+    |                                                       ^^^^^^^^^^^^
+100 |     if a.print_prompt:
+101 |         print(prompt)
+    |
+help: Use `datetime.datetime.now(tz=...).date()` instead
+
+RUF100 [*] Unused `noqa` directive (non-enabled: `E402`)
+  --> tests/test_bau_log_204.py:25:31
+   |
+23 | SKRIPTE = SKILL / "skripte"
+24 | FAKE_CLAUDE = Path(__file__).resolve().parent / "hilfen" / "fake_claude.py"
+25 | import context_mode_attrappe  # noqa: E402  (tests/hilfen, Pfad setzt conftest)
+   |                               ^^^^^^^^^^^^
+26 |
+27 | sys.path.insert(0, str(SKILL))
+   |
+help: Remove unused `noqa` directive
+   |
+24 | FAKE_CLAUDE = Path(__file__).resolve().parent / "hilfen" / "fake_claude.py"
+   - import context_mode_attrappe  # noqa: E402  (tests/hilfen, Pfad setzt conftest)
+25 + import context_mode_attrappe
+26 |
+   |
+
+RUF100 [*] Unused `noqa` directive (non-enabled: `E402`)
+  --> tests/test_bau_log_204.py:29:31
+   |
+27 | sys.path.insert(0, str(SKILL))
+28 |
+29 | from to_spawn import bau_log  # noqa: E402
+   |                               ^^^^^^^^^^^^
+30 |
+31 | TICKET = "901"
+   |
+help: Remove unused `noqa` directive
+   |
+28 |
+   - from to_spawn import bau_log  # noqa: E402
+29 + from to_spawn import bau_log
+30 |
+   |
+
+I001 [*] Import block is un-sorted or un-formatted
+  --> tests/test_bau_log_204_fix.py:8:1
+   |
+ 6 |   """
+ 7 |
+ 8 | / from __future__ import annotations
+ 9 | |
+10 | | import io
+11 | | import json
+12 | | import sys
+13 | | import time
+14 | | from pathlib import Path
+15 | |
+16 | | import pytest
+17 | |
+18 | | from test_bau_log_204 import (  # noqa: F401 — ``repo`` ist ein Fixture
+19 | |     CLI,
+20 | |     HAUPT_SESSION,
+21 | |     HAUPT_TOKENS,
+22 | |     SKILL,
+23 | |     SUBAGENT_TOKENS,
+24 | |     TICKET,
+25 | |     _bau,
+26 | |     _git,
+27 | |     _hook_cli,
+28 | |     _lauf,
+29 | |     _umgebung,
+30 | |     repo,
+31 | | )
+   | |_^
+32 |
+33 |   sys.path.insert(0, str(SKILL))
+   |
+help: Organize imports
+   |
+16 | import pytest
+   -
+17 | from test_bau_log_204 import (  # noqa: F401 — ``repo`` ist ein Fixture
+   |
+
+RUF100 [*] Unused `noqa` directive (non-enabled: `E402`)
+  --> tests/test_bau_log_204_fix.py:35:38
+   |
+33 | sys.path.insert(0, str(SKILL))
+34 |
+35 | from to_spawn import bau_log, hooks  # noqa: E402
+   |                                      ^^^^^^^^^^^^
+help: Remove unused `noqa` directive
+   |
+34 |
+   - from to_spawn import bau_log, hooks  # noqa: E402
+35 + from to_spawn import bau_log, hooks
+36 |
+   |
+
+F811 Redefinition of unused `repo` from line 30
+  --> tests/test_bau_log_204_fix.py:82:25
+   |
+82 | def _repo_mit_gitignore(repo: Path, tmp_path: Path) -> tuple[Path, Path]:
+   |                         ^^^^ `repo` redefined here
+83 |     (repo / ".gitignore").write_text(".to-spawn/*\n!.to-spawn/config.json\n", encoding="utf-8")
+84 |     _git(repo, "add", ".gitignore")
+   |
+  ::: tests/test_bau_log_204_fix.py:30:5
+   |
+28 |     _lauf,
+29 |     _umgebung,
+30 |     repo,
+   |     ---- previous definition of `repo` here
+31 | )
+   |
+help: Remove definition: `repo`
+
+F811 Redefinition of unused `repo` from line 30
+   --> tests/test_bau_log_204_fix.py:105:5
+    |
+104 | def test_weg_hooks_lassen_worktree_sauber_eintrag_uebertraegt(
+105 |     repo: Path, tmp_path: Path
+    |     ^^^^ `repo` redefined here
+106 | ) -> None:
+107 |     wt_basis, worktree = _repo_mit_gitignore(repo, tmp_path)
+    |
+   ::: tests/test_bau_log_204_fix.py:30:5
+    |
+ 28 |     _lauf,
+ 29 |     _umgebung,
+ 30 |     repo,
+    |     ---- previous definition of `repo` here
+ 31 | )
+    |
+help: Remove definition: `repo`
+
+F811 Redefinition of unused `repo` from line 30
+   --> tests/test_bau_log_204_fix.py:164:49
+    |
+164 | def test_lese_vereint_versioniert_und_laufdatei(repo: Path) -> None:
+    |                                                 ^^^^ `repo` redefined here
+165 |     gemeinsam = {"ts": "2026-09-18T10:01:00+00:00", "typ": "session_ende", "session_id": "a"}
+166 |     fest = bau_log.log_pfad(repo, TICKET)
+    |
+   ::: tests/test_bau_log_204_fix.py:30:5
+    |
+ 28 |     _lauf,
+ 29 |     _umgebung,
+ 30 |     repo,
+    |     ---- previous definition of `repo` here
+ 31 | )
+    |
+help: Remove definition: `repo`
+
+F811 Redefinition of unused `repo` from line 30
+   --> tests/test_bau_log_204_fix.py:185:44
+    |
+185 | def test_alle_tickets_findet_nur_laufdatei(repo: Path) -> None:
+    |                                            ^^^^ `repo` redefined here
+186 |     lauf = _laufdatei(repo, "55")
+187 |     lauf.parent.mkdir(parents=True)
+    |
+   ::: tests/test_bau_log_204_fix.py:30:5
+    |
+ 28 |     _lauf,
+ 29 |     _umgebung,
+ 30 |     repo,
+    |     ---- previous definition of `repo` here
+ 31 | )
+    |
+help: Remove definition: `repo`
+
+F811 Redefinition of unused `repo` from line 30
+   --> tests/test_bau_log_204_fix.py:203:20
+    |
+203 | def _schreibe_fest(repo: Path, zeilen: list[dict]) -> None:
+    |                    ^^^^ `repo` redefined here
+204 |     fest = bau_log.log_pfad(repo, TICKET)
+205 |     fest.parent.mkdir(parents=True, exist_ok=True)
+    |
+   ::: tests/test_bau_log_204_fix.py:30:5
+    |
+ 28 |     _lauf,
+ 29 |     _umgebung,
+ 30 |     repo,
+    |     ---- previous definition of `repo` here
+ 31 | )
+    |
+help: Remove definition: `repo`
+
+F811 Redefinition of unused `repo` from line 30
+   --> tests/test_bau_log_204_fix.py:211:58
+    |
+211 | def test_zusammenfassung_liefert_juengste_klartext_zeile(repo: Path) -> None:
+    |                                                          ^^^^ `repo` redefined here
+212 |     _schreibe_fest(
+213 |         repo,
+    |
+   ::: tests/test_bau_log_204_fix.py:30:5
+    |
+ 28 |     _lauf,
+ 29 |     _umgebung,
+ 30 |     repo,
+    |     ---- previous definition of `repo` here
+ 31 | )
+    |
+help: Remove definition: `repo`
+
+F811 Redefinition of unused `repo` from line 30
+   --> tests/test_bau_log_204_fix.py:245:48
+    |
+245 | def test_hook_protokolliert_fehlenden_worktree(repo: Path, tmp_path: Path) -> None:
+    |                                                ^^^^ `repo` redefined here
+246 |     heim = tmp_path / "heim"
+247 |     heim.mkdir()
+    |
+   ::: tests/test_bau_log_204_fix.py:30:5
+    |
+ 28 |     _lauf,
+ 29 |     _umgebung,
+ 30 |     repo,
+    |     ---- previous definition of `repo` here
+ 31 | )
+    |
+help: Remove definition: `repo`
+
+F811 Redefinition of unused `repo` from line 30
+   --> tests/test_bau_log_204_fix.py:268:52
+    |
+268 | def test_hook_ohne_schreibbares_heim_laeuft_weiter(repo: Path, tmp_path: Path) -> None:
+    |                                                    ^^^^ `repo` redefined here
+269 |     heim = tmp_path / "heim-datei"
+270 |     heim.write_text("kein Ordner", encoding="utf-8")
+    |
+   ::: tests/test_bau_log_204_fix.py:30:5
+    |
+ 28 |     _lauf,
+ 29 |     _umgebung,
+ 30 |     repo,
+    |     ---- previous definition of `repo` here
+ 31 | )
+    |
+help: Remove definition: `repo`
+
+I001 [*] Import block is un-sorted or un-formatted
+  --> tests/test_context_mode_237.py:11:1
+   |
+ 9 |   """
+10 |
+11 | / from __future__ import annotations
+12 | |
+13 | | import json
+14 | | import os
+15 | | import shutil
+16 | | import subprocess
+17 | | import sys
+18 | | import signal
+19 | | import threading
+20 | | import time
+21 | | from pathlib import Path
+22 | |
+23 | | import pytest
+   | |_____________^
+24 |
+25 |   SKILL = Path(__file__).resolve().parent.parent
+   |
+help: Organize imports
+   |
+15 | import shutil
+16 + import signal
+17 | import subprocess
+18 | import sys
+   - import signal
+19 | import threading
+   |
+
+I001 [*] Import block is un-sorted or un-formatted
+  --> tests/test_context_mode_237.py:29:1
+   |
+27 |   sys.path.insert(0, str(SKILL))
+28 |
+29 | / import context_mode_attrappe  # noqa: E402  (tests/hilfen, Pfad setzt conftest)
+30 | | from to_spawn import context_mode, setup  # noqa: E402
+   | |________________________________________^
+31 |
+32 |   SERVER = "plugin_context-mode_context-mode"
+   |
+help: Organize imports
+   |
+29 | import context_mode_attrappe  # noqa: E402  (tests/hilfen, Pfad setzt conftest)
+30 +
+31 | from to_spawn import context_mode, setup  # noqa: E402
+   |
+
+RUF100 [*] Unused `noqa` directive (non-enabled: `E402`)
+  --> tests/test_context_mode_237.py:29:31
+   |
+27 | sys.path.insert(0, str(SKILL))
+28 |
+29 | import context_mode_attrappe  # noqa: E402  (tests/hilfen, Pfad setzt conftest)
+   |                               ^^^^^^^^^^^^
+30 | from to_spawn import context_mode, setup  # noqa: E402
+   |
+help: Remove unused `noqa` directive
+   |
+28 |
+   - import context_mode_attrappe  # noqa: E402  (tests/hilfen, Pfad setzt conftest)
+29 + import context_mode_attrappe
+30 | from to_spawn import context_mode, setup  # noqa: E402
+   |
+
+RUF100 [*] Unused `noqa` directive (non-enabled: `E402`)
+  --> tests/test_context_mode_237.py:30:43
+   |
+29 | import context_mode_attrappe  # noqa: E402  (tests/hilfen, Pfad setzt conftest)
+30 | from to_spawn import context_mode, setup  # noqa: E402
+   |                                           ^^^^^^^^^^^^
+31 |
+32 | SERVER = "plugin_context-mode_context-mode"
+   |
+help: Remove unused `noqa` directive
+   |
+29 | import context_mode_attrappe  # noqa: E402  (tests/hilfen, Pfad setzt conftest)
+   - from to_spawn import context_mode, setup  # noqa: E402
+30 + from to_spawn import context_mode, setup
+31 |
+   |
+
+RUF100 [*] Unused `noqa` directive (non-enabled: `E402`)
+  --> tests/test_fremdrepo_257.py:35:61
+   |
+33 |     sys.path.insert(0, str(SKILL))
+34 |
+35 | from to_spawn import bau_log, config, gh, probesitz, spawn  # noqa: E402
+   |                                                             ^^^^^^^^^^^^
+36 |
+37 | _ZAEHLER = itertools.count()
+   |
+help: Remove unused `noqa` directive
+   |
+34 |
+   - from to_spawn import bau_log, config, gh, probesitz, spawn  # noqa: E402
+35 + from to_spawn import bau_log, config, gh, probesitz, spawn
+36 |
+   |
+
+PLW1510 `subprocess.run` without explicit `check` argument
+   --> tests/test_fremdrepo_257.py:241:16
+    |
+240 | def test_spawn_srv_bash_syntax_ok() -> None:
+241 |     ergebnis = subprocess.run(["bash", "-n", str(SKRIPTE / "spawn_srv.sh")], capture_output=True, text=True)
+    |                ^^^^^^^^^^^^^^
+242 |     assert ergebnis.returncode == 0, ergebnis.stderr
+    |
+help: Add explicit `check=False`
+
+RUF100 [*] Unused `noqa` directive (non-enabled: `E402`)
+  --> tests/test_nest_210.py:26:31
+   |
+25 | sys.path.insert(0, str(SKILL))
+26 | import context_mode_attrappe  # noqa: E402  (tests/hilfen, Pfad setzt conftest)
+   |                               ^^^^^^^^^^^^
+27 |
+28 | from to_spawn import nest
+   |
+help: Remove unused `noqa` directive
+   |
+25 | sys.path.insert(0, str(SKILL))
+   - import context_mode_attrappe  # noqa: E402  (tests/hilfen, Pfad setzt conftest)
+26 + import context_mode_attrappe
+27 |
+   |
+
+I001 [*] Import block is un-sorted or un-formatted
+  --> tests/test_probesitz_214.py:26:1
+   |
+24 |   sys.path.insert(0, str(SKILL))
+25 |
+26 | / import context_mode_attrappe  # noqa: E402  (tests/hilfen, Pfad setzt conftest)
+27 | | from to_spawn import bau_log, config, melder, probesitz, setup  # noqa: E402
+   | |______________________________________________________________^
+28 |
+29 |   GH_WRAPPER = """#!/bin/sh
+   |
+help: Organize imports
+   |
+26 | import context_mode_attrappe  # noqa: E402  (tests/hilfen, Pfad setzt conftest)
+27 +
+28 | from to_spawn import bau_log, config, melder, probesitz, setup  # noqa: E402
+   |
+
+RUF100 [*] Unused `noqa` directive (non-enabled: `E402`)
+  --> tests/test_probesitz_214.py:26:31
+   |
+24 | sys.path.insert(0, str(SKILL))
+25 |
+26 | import context_mode_attrappe  # noqa: E402  (tests/hilfen, Pfad setzt conftest)
+   |                               ^^^^^^^^^^^^
+27 | from to_spawn import bau_log, config, melder, probesitz, setup  # noqa: E402
+   |
+help: Remove unused `noqa` directive
+   |
+25 |
+   - import context_mode_attrappe  # noqa: E402  (tests/hilfen, Pfad setzt conftest)
+26 + import context_mode_attrappe
+27 | from to_spawn import bau_log, config, melder, probesitz, setup  # noqa: E402
+   |
+
+RUF100 [*] Unused `noqa` directive (non-enabled: `E402`)
+  --> tests/test_probesitz_214.py:27:65
+   |
+26 | import context_mode_attrappe  # noqa: E402  (tests/hilfen, Pfad setzt conftest)
+27 | from to_spawn import bau_log, config, melder, probesitz, setup  # noqa: E402
+   |                                                                 ^^^^^^^^^^^^
+28 |
+29 | GH_WRAPPER = """#!/bin/sh
+   |
+help: Remove unused `noqa` directive
+   |
+26 | import context_mode_attrappe  # noqa: E402  (tests/hilfen, Pfad setzt conftest)
+   - from to_spawn import bau_log, config, melder, probesitz, setup  # noqa: E402
+27 + from to_spawn import bau_log, config, melder, probesitz, setup
+28 |
+   |
+
+I001 [*] Import block is un-sorted or un-formatted
+  --> tests/test_probesitz_214_fix.py:25:1
+   |
+23 |   sys.path.insert(0, str(SKILL))
+24 |
+25 | / import context_mode_attrappe  # noqa: E402  (tests/hilfen, Pfad setzt conftest)
+26 | | from to_spawn import config, probesitz  # noqa: E402
+   | |______________________________________^
+help: Organize imports
+   |
+25 | import context_mode_attrappe  # noqa: E402  (tests/hilfen, Pfad setzt conftest)
+26 +
+27 | from to_spawn import config, probesitz  # noqa: E402
+   -
+28 |
+   |
+
+RUF100 [*] Unused `noqa` directive (non-enabled: `E402`)
+  --> tests/test_probesitz_214_fix.py:25:31
+   |
+23 | sys.path.insert(0, str(SKILL))
+24 |
+25 | import context_mode_attrappe  # noqa: E402  (tests/hilfen, Pfad setzt conftest)
+   |                               ^^^^^^^^^^^^
+26 | from to_spawn import config, probesitz  # noqa: E402
+   |
+help: Remove unused `noqa` directive
+   |
+24 |
+   - import context_mode_attrappe  # noqa: E402  (tests/hilfen, Pfad setzt conftest)
+25 + import context_mode_attrappe
+26 | from to_spawn import config, probesitz  # noqa: E402
+   |
+
+RUF100 [*] Unused `noqa` directive (non-enabled: `E402`)
+  --> tests/test_probesitz_214_fix.py:26:41
+   |
+25 | import context_mode_attrappe  # noqa: E402  (tests/hilfen, Pfad setzt conftest)
+26 | from to_spawn import config, probesitz  # noqa: E402
+   |                                         ^^^^^^^^^^^^
+help: Remove unused `noqa` directive
+   |
+25 | import context_mode_attrappe  # noqa: E402  (tests/hilfen, Pfad setzt conftest)
+   - from to_spawn import config, probesitz  # noqa: E402
+26 + from to_spawn import config, probesitz
+27 |
+   |
+
+RUF100 [*] Unused `noqa` directive (non-enabled: `E402`)
+  --> tests/test_probesitz_214_weg.py:20:41
+   |
+18 | sys.path.insert(0, str(SKILL))
+19 |
+20 | from to_spawn import config, probesitz  # noqa: E402
+   |                                         ^^^^^^^^^^^^
+help: Remove unused `noqa` directive
+   |
+19 |
+   - from to_spawn import config, probesitz  # noqa: E402
+20 + from to_spawn import config, probesitz
+21 |
+   |
+
+I001 [*] Import block is un-sorted or un-formatted
+  --> tests/test_speicher_257.py:28:1
+   |
+26 |   sys.path.insert(0, str(SKILL))
+27 |
+28 | / from to_spawn import config  # noqa: E402
+29 | | from to_spawn import speicher  # noqa: E402  (fehlt vor Paket B — Datei dann rot)
+   | |_____________________________^
+help: Organize imports
+   |
+27 |
+   - from to_spawn import config  # noqa: E402
+   - from to_spawn import speicher  # noqa: E402  (fehlt vor Paket B — Datei dann rot)
+   -
+28 + from to_spawn import (
+29 +     config,  # noqa: E402
+30 +     speicher,  # noqa: E402  (fehlt vor Paket B — Datei dann rot)
+31 + )
+32 |
+   |
+
+RUF100 [*] Unused `noqa` directive (non-enabled: `E402`)
+  --> tests/test_speicher_257.py:28:30
+   |
+26 | sys.path.insert(0, str(SKILL))
+27 |
+28 | from to_spawn import config  # noqa: E402
+   |                              ^^^^^^^^^^^^
+29 | from to_spawn import speicher  # noqa: E402  (fehlt vor Paket B — Datei dann rot)
+   |
+help: Remove unused `noqa` directive
+   |
+27 |
+   - from to_spawn import config  # noqa: E402
+28 + from to_spawn import config
+29 | from to_spawn import speicher  # noqa: E402  (fehlt vor Paket B — Datei dann rot)
+   |
+
+RUF100 [*] Unused `noqa` directive (non-enabled: `E402`)
+  --> tests/test_speicher_257.py:29:32
+   |
+28 | from to_spawn import config  # noqa: E402
+29 | from to_spawn import speicher  # noqa: E402  (fehlt vor Paket B — Datei dann rot)
+   |                                ^^^^^^^^^^^^
+help: Remove unused `noqa` directive
+   |
+28 | from to_spawn import config  # noqa: E402
+   - from to_spawn import speicher  # noqa: E402  (fehlt vor Paket B — Datei dann rot)
+29 + from to_spawn import speicher
+30 |
+   |
+
+RUF100 [*] Unused `noqa` directive (non-enabled: `E402`)
+  --> tests/test_to_spawn_kern.py:25:49
+   |
+23 | sys.path.insert(0, str(SKILL))
+24 |
+25 | from to_spawn import bau_log, bau_loop, config  # noqa: E402
+   |                                                 ^^^^^^^^^^^^
+26 |
+27 | SPEC = 900
+   |
+help: Remove unused `noqa` directive
+   |
+24 |
+   - from to_spawn import bau_log, bau_loop, config  # noqa: E402
+25 + from to_spawn import bau_log, bau_loop, config
+26 |
+   |
+
+RUF100 [*] Unused `noqa` directive (non-enabled: `E402`)
+  --> tests/test_token_kontext_238.py:31:31
+   |
+29 | sys.path.insert(0, str(SKRIPTE))
+30 |
+31 | from to_spawn import bau_log  # noqa: E402
+   |                               ^^^^^^^^^^^^
+32 |
+33 | TICKET = "204"
+   |
+help: Remove unused `noqa` directive
+   |
+30 |
+   - from to_spawn import bau_log  # noqa: E402
+31 + from to_spawn import bau_log
+32 |
+   |
+
+RUF100 [*] Unused `noqa` directive (non-enabled: `E402`)
+  --> tests/test_umzug_205.py:27:30
+   |
+25 | sys.path.insert(0, str(SKILL))
+26 |
+27 | from to_spawn import config  # noqa: E402
+   |                              ^^^^^^^^^^^^
+28 |
+29 | FAKE_CLAUDE = r"""#!/usr/bin/env python3
+   |
+help: Remove unused `noqa` directive
+   |
+26 |
+   - from to_spawn import config  # noqa: E402
+27 + from to_spawn import config
+28 |
+   |
+
+RUF100 [*] Unused `noqa` directive (non-enabled: `E402`)
+  --> tests/test_umzug_212.py:26:37
+   |
+24 | sys.path.insert(0, str(SKILL))
+25 |
+26 | from to_spawn import config, umzug  # noqa: E402
+   |                                     ^^^^^^^^^^^^
+27 |
+28 | HEUTE = "2026-09-18"
+   |
+help: Remove unused `noqa` directive
+   |
+25 |
+   - from to_spawn import config, umzug  # noqa: E402
+26 + from to_spawn import config, umzug
+27 |
+   |
+
+ISC004 Unparenthesized implicit string concatenation in collection
+   --> tests/test_umzug_212.py:860:9
+    |
+858 |           sys.executable,
+859 |           "-c",
+860 | /         "import pathlib, sys, time; "
+861 | |         "pathlib.Path(sys.argv[1]).write_text('{\"ziel\": \"bau-server\"}'); time.sleep(60)",
+    | |____________________________________________________________________________________________^
+862 |           str(datei),
+863 |       ]
+    |
+help: Did you forget a comma?
+help: Wrap implicitly concatenated strings in parentheses
+
+RUF100 [*] Unused `noqa` directive (non-enabled: `E402`)
+  --> tests/test_waechter_213.py:30:31
+   |
+29 | sys.path.insert(0, str(SKILL))
+30 | import context_mode_attrappe  # noqa: E402  (tests/hilfen, Pfad setzt conftest)
+   |                               ^^^^^^^^^^^^
+31 |
+32 | SPEC = "900"
+   |
+help: Remove unused `noqa` directive
+   |
+29 | sys.path.insert(0, str(SKILL))
+   - import context_mode_attrappe  # noqa: E402  (tests/hilfen, Pfad setzt conftest)
+30 + import context_mode_attrappe
+31 |
+   |
+
+I001 [*] Import block is un-sorted or un-formatted
+  --> tests/test_waechter_213_fix.py:15:1
+   |
+13 |   """
+14 |
+15 | / from __future__ import annotations
+16 | |
+17 | | import json
+18 | | import logging
+19 | | import subprocess
+20 | | import time
+21 | | from datetime import datetime, timedelta, timezone
+22 | | from pathlib import Path
+23 | |
+24 | | import pytest
+25 | |
+26 | | from test_waechter_213 import (  # noqa: F401  (welt = Fixture)
+27 | |     SPEC,
+28 | |     _ausfuehrbar,
+29 | |     _beleg,
+30 | |     _capo,
+31 | |     _commit,
+32 | |     _git,
+33 | |     _gh_setzen,
+34 | |     _gh_zustand,
+35 | |     _iso,
+36 | |     _kommentare,
+37 | |     _konfig,
+38 | |     _log_zeile,
+39 | |     _mails,
+40 | |     _text,
+41 | |     _wache,
+42 | |     _wache_welt,
+43 | |     _aufrufe,
+44 | |     welt,
+45 | | )
+   | |_^
+help: Organize imports
+   |
+24 | import pytest
+   -
+25 | from test_waechter_213 import (  # noqa: F401  (welt = Fixture)
+26 |     SPEC,
+27 +     _aufrufe,
+28 |     _ausfuehrbar,
+29 |     _beleg,
+30 |     _capo,
+31 |     _commit,
+   -     _git,
+32 |     _gh_setzen,
+33 |     _gh_zustand,
+34 +     _git,
+35 |     _iso,
+--------------------------------------------------------------------------------
+42 |     _wache_welt,
+   -     _aufrufe,
+43 |     welt,
+44 | )
+   -
+45 |
+   |
+
+F811 Redefinition of unused `welt` from line 44
+  --> tests/test_waechter_213_fix.py:51:20
+   |
+51 | def _zustand_datei(welt: dict[str, Path]) -> Path:
+   |                    ^^^^ `welt` redefined here
+52 |     return welt["zustand"] / f"test_wegwerf_{SPEC}.json"
+   |
+  ::: tests/test_waechter_213_fix.py:44:5
+   |
+42 |     _wache_welt,
+43 |     _aufrufe,
+44 |     welt,
+   |     ---- previous definition of `welt` here
+45 | )
+   |
+help: Remove definition: `welt`
+
+F811 Redefinition of unused `welt` from line 44
+  --> tests/test_waechter_213_fix.py:55:20
+   |
+55 | def _waechter_seit(welt: dict[str, Path], stunden: float = 1.0) -> None:
+   |                    ^^^^ `welt` redefined here
+56 |     """Zustand so setzen, als liefe der Wächter schon ``stunden`` (erster Tick lange her)."""
+57 |     datei = _zustand_datei(welt)
+   |
+  ::: tests/test_waechter_213_fix.py:44:5
+   |
+42 |     _wache_welt,
+43 |     _aufrufe,
+44 |     welt,
+   |     ---- previous definition of `welt` here
+45 | )
+   |
+help: Remove definition: `welt`
+
+F811 Redefinition of unused `welt` from line 44
+  --> tests/test_waechter_213_fix.py:66:5
+   |
+65 | def _frisch_zu(
+66 |     welt: dict[str, Path], nummer: str = "901", minuten: float = 20, **felder: object
+   |     ^^^^ `welt` redefined here
+67 | ) -> None:
+68 |     """Wächter läuft seit 1 h, Ticket wurde vor ``minuten`` geschlossen (nach der Karenz)."""
+   |
+  ::: tests/test_waechter_213_fix.py:44:5
+   |
+42 |     _wache_welt,
+43 |     _aufrufe,
+44 |     welt,
+   |     ---- previous definition of `welt` here
+45 | )
+   |
+help: Remove definition: `welt`
+
+F811 Redefinition of unused `welt` from line 44
+  --> tests/test_waechter_213_fix.py:79:14
+   |
+79 | def _zustand(welt: dict[str, Path], nummer: str = "901") -> str:
+   |              ^^^^ `welt` redefined here
+80 |     return _gh_zustand(welt)["issues"][nummer]["state"]
+   |
+  ::: tests/test_waechter_213_fix.py:44:5
+   |
+42 |     _wache_welt,
+43 |     _aufrufe,
+44 |     welt,
+   |     ---- previous definition of `welt` here
+45 | )
+   |
+help: Remove definition: `welt`
+
+F811 Redefinition of unused `welt` from line 44
+  --> tests/test_waechter_213_fix.py:86:49
+   |
+86 | def test_scope_betreff_zaehlt_als_ticket_commit(welt: dict[str, Path]) -> None:
+   |                                                 ^^^^ `welt` redefined here
+87 |     _commit(welt["repo"], "feat(#901): Belegbilder als WebP [skip ci]", _beleg())
+88 |     _frisch_zu(welt)
+   |
+  ::: tests/test_waechter_213_fix.py:44:5
+   |
+42 |     _wache_welt,
+43 |     _aufrufe,
+44 |     welt,
+   |     ---- previous definition of `welt` here
+45 | )
+   |
+help: Remove definition: `welt`
+
+F811 Redefinition of unused `welt` from line 44
+  --> tests/test_waechter_213_fix.py:96:49
+   |
+96 | def test_ohne_nummer_im_betreff_bleibt_verstoss(welt: dict[str, Path]) -> None:
+   |                                                 ^^^^ `welt` redefined here
+97 |     _commit(welt["repo"], "feat: Belegbilder als WebP [skip ci]", _beleg())
+98 |     _frisch_zu(welt)
+   |
+  ::: tests/test_waechter_213_fix.py:44:5
+   |
+42 |     _wache_welt,
+43 |     _aufrufe,
+44 |     welt,
+   |     ---- previous definition of `welt` here
+45 | )
+   |
+help: Remove definition: `welt`
+
+F811 Redefinition of unused `welt` from line 44
+   --> tests/test_waechter_213_fix.py:108:37
+    |
+107 | @pytest.mark.parametrize("grund", ["not_planned", "duplicate"])
+108 | def test_nicht_geplant_keine_regeln(welt: dict[str, Path], grund: str) -> None:
+    |                                     ^^^^ `welt` redefined here
+109 |     _commit(welt["repo"], "chore: irgendwas", {})
+110 |     _frisch_zu(welt, state_reason=grund)
+    |
+   ::: tests/test_waechter_213_fix.py:44:5
+    |
+ 42 |     _wache_welt,
+ 43 |     _aufrufe,
+ 44 |     welt,
+    |     ---- previous definition of `welt` here
+ 45 | )
+    |
+help: Remove definition: `welt`
+
+F811 Redefinition of unused `welt` from line 44
+   --> tests/test_waechter_213_fix.py:121:47
+    |
+121 | def test_doku_ticket_braucht_keine_belegseite(welt: dict[str, Path]) -> None:
+    |                                               ^^^^ `welt` redefined here
+122 |     _commit(
+123 |         welt["repo"],
+    |
+   ::: tests/test_waechter_213_fix.py:44:5
+    |
+ 42 |     _wache_welt,
+ 43 |     _aufrufe,
+ 44 |     welt,
+    |     ---- previous definition of `welt` here
+ 45 | )
+    |
+help: Remove definition: `welt`
+
+F811 Redefinition of unused `welt` from line 44
+   --> tests/test_waechter_213_fix.py:133:49
+    |
+133 | def test_code_ticket_ohne_beleg_bleibt_verstoss(welt: dict[str, Path]) -> None:
+    |                                                 ^^^^ `welt` redefined here
+134 |     _commit(
+135 |         welt["repo"],
+    |
+   ::: tests/test_waechter_213_fix.py:44:5
+    |
+ 42 |     _wache_welt,
+ 43 |     _aufrufe,
+ 44 |     welt,
+    |     ---- previous definition of `welt` here
+ 45 | )
+    |
+help: Remove definition: `welt`
+
+F811 Redefinition of unused `welt` from line 44
+   --> tests/test_waechter_213_fix.py:158:5
+    |
+156 | )
+157 | def test_zweites_schliessen_nach_reopen_oeffnet_nicht_nochmal(
+158 |     welt: dict[str, Path],
+    |     ^^^^ `welt` redefined here
+159 | ) -> None:
+160 |     _commit(welt["repo"], "feat: ohne Nummer", _beleg())
+    |
+   ::: tests/test_waechter_213_fix.py:44:5
+    |
+ 42 |     _wache_welt,
+ 43 |     _aufrufe,
+ 44 |     welt,
+    |     ---- previous definition of `welt` here
+ 45 | )
+    |
+help: Remove definition: `welt`
+
+F811 Redefinition of unused `welt` from line 44
+   --> tests/test_waechter_213_fix.py:178:57
+    |
+178 | def test_zweiter_tick_nach_reopen_oeffnet_nicht_nochmal(welt: dict[str, Path]) -> None:
+    |                                                         ^^^^ `welt` redefined here
+179 |     _commit(welt["repo"], "feat: ohne Nummer", _beleg())
+180 |     _frisch_zu(welt, minuten=40)
+    |
+   ::: tests/test_waechter_213_fix.py:44:5
+    |
+ 42 |     _wache_welt,
+ 43 |     _aufrufe,
+ 44 |     welt,
+    |     ---- previous definition of `welt` here
+ 45 | )
+    |
+help: Remove definition: `welt`
+
+F811 Redefinition of unused `welt` from line 44
+   --> tests/test_waechter_213_fix.py:191:48
+    |
+191 | def test_label_waechter_ok_ueberspringt_regeln(welt: dict[str, Path]) -> None:
+    |                                                ^^^^ `welt` redefined here
+192 |     """Label hebt seit 21.09. nur das Wieder-Öffnen auf, nicht das Erkennen (#213)."""
+193 |     _commit(welt["repo"], "feat: ohne Nummer", {})
+    |
+   ::: tests/test_waechter_213_fix.py:44:5
+    |
+ 42 |     _wache_welt,
+ 43 |     _aufrufe,
+ 44 |     welt,
+    |     ---- previous definition of `welt` here
+ 45 | )
+    |
+help: Remove definition: `welt`
+
+F811 Redefinition of unused `welt` from line 44
+   --> tests/test_waechter_213_fix.py:206:49
+    |
+206 | def test_erster_tick_oeffnet_alte_tickets_nicht(welt: dict[str, Path]) -> None:
+    |                                                 ^^^^ `welt` redefined here
+207 |     _commit(welt["repo"], "feat: ohne Nummer", {})
+208 |     _gh_setzen(welt, "901", closed_at=_iso(timedelta(days=2)))
+    |
+   ::: tests/test_waechter_213_fix.py:44:5
+    |
+ 42 |     _wache_welt,
+ 43 |     _aufrufe,
+ 44 |     welt,
+    |     ---- previous definition of `welt` here
+ 45 | )
+    |
+help: Remove definition: `welt`
+
+F811 Redefinition of unused `welt` from line 44
+   --> tests/test_waechter_213_fix.py:225:5
+    |
+224 | def test_erster_tick_probe_schlaegt_kein_wieder_oeffnen_vor(
+225 |     welt: dict[str, Path],
+    |     ^^^^ `welt` redefined here
+226 | ) -> None:
+227 |     _commit(welt["repo"], "feat: ohne Nummer", {})
+    |
+   ::: tests/test_waechter_213_fix.py:44:5
+    |
+ 42 |     _wache_welt,
+ 43 |     _aufrufe,
+ 44 |     welt,
+    |     ---- previous definition of `welt` here
+ 45 | )
+    |
+help: Remove definition: `welt`
+
+F811 Redefinition of unused `welt` from line 44
+   --> tests/test_waechter_213_fix.py:237:40
+    |
+237 | def test_fetch_fehler_setzt_regeln_aus(welt: dict[str, Path]) -> None:
+    |                                        ^^^^ `welt` redefined here
+238 |     _commit(welt["repo"], "feat: ohne Nummer", {})
+239 |     _frisch_zu(welt)
+    |
+   ::: tests/test_waechter_213_fix.py:44:5
+    |
+ 42 |     _wache_welt,
+ 43 |     _aufrufe,
+ 44 |     welt,
+    |     ---- previous definition of `welt` here
+ 45 | )
+    |
+help: Remove definition: `welt`
+
+F811 Redefinition of unused `welt` from line 44
+   --> tests/test_waechter_213_fix.py:248:51
+    |
+248 | def test_karenz_frisch_geschlossen_prueft_spaeter(welt: dict[str, Path]) -> None:
+    |                                                   ^^^^ `welt` redefined here
+249 |     _commit(welt["repo"], "feat: ohne Nummer", {})
+250 |     _commit(welt["repo"], "feat: B (#902)", _beleg("902"))
+    |
+   ::: tests/test_waechter_213_fix.py:44:5
+    |
+ 42 |     _wache_welt,
+ 43 |     _aufrufe,
+ 44 |     welt,
+    |     ---- previous definition of `welt` here
+ 45 | )
+    |
+help: Remove definition: `welt`
+
+F811 Redefinition of unused `welt` from line 44
+   --> tests/test_waechter_213_fix.py:264:28
+    |
+264 | def _ignoriert_laufdateien(welt: dict[str, Path]) -> None:
+    |                            ^^^^ `welt` redefined here
+265 |     _commit(
+266 |         welt["repo"],
+    |
+   ::: tests/test_waechter_213_fix.py:44:5
+    |
+ 42 |     _wache_welt,
+ 43 |     _aufrufe,
+ 44 |     welt,
+    |     ---- previous definition of `welt` here
+ 45 | )
+    |
+help: Remove definition: `welt`
+
+F811 Redefinition of unused `welt` from line 44
+   --> tests/test_waechter_213_fix.py:273:5
+    |
+272 | def test_gate_rot_nur_in_gitignorierter_laufdatei_im_worktree(
+273 |     welt: dict[str, Path],
+    |     ^^^^ `welt` redefined here
+274 | ) -> None:
+275 |     _ignoriert_laufdateien(welt)
+    |
+   ::: tests/test_waechter_213_fix.py:44:5
+    |
+ 42 |     _wache_welt,
+ 43 |     _aufrufe,
+ 44 |     welt,
+    |     ---- previous definition of `welt` here
+ 45 | )
+    |
+help: Remove definition: `welt`
+
+F811 Redefinition of unused `welt` from line 44
+   --> tests/test_waechter_213_fix.py:298:50
+    |
+298 | def test_blockiert_in_laufdatei_des_repo_ordners(welt: dict[str, Path]) -> None:
+    |                                                  ^^^^ `welt` redefined here
+299 |     lauf = welt["repo"] / ".to-spawn" / "bau_log" / "902.jsonl"
+300 |     lauf.parent.mkdir(parents=True, exist_ok=True)
+    |
+   ::: tests/test_waechter_213_fix.py:44:5
+    |
+ 42 |     _wache_welt,
+ 43 |     _aufrufe,
+ 44 |     welt,
+    |     ---- previous definition of `welt` here
+ 45 | )
+    |
+help: Remove definition: `welt`
+
+F811 Redefinition of unused `welt` from line 44
+   --> tests/test_waechter_213_fix.py:312:5
+    |
+311 | def test_kaputte_log_zeile_wird_gewarnt(
+312 |     welt: dict[str, Path], caplog: pytest.LogCaptureFixture
+    |     ^^^^ `welt` redefined here
+313 | ) -> None:
+314 |     from to_spawn import capo
+    |
+   ::: tests/test_waechter_213_fix.py:44:5
+    |
+ 42 |     _wache_welt,
+ 43 |     _aufrufe,
+ 44 |     welt,
+    |     ---- previous definition of `welt` here
+ 45 | )
+    |
+help: Remove definition: `welt`
+
+F811 Redefinition of unused `welt` from line 44
+   --> tests/test_waechter_213_fix.py:326:15
+    |
+326 | def _verwaist(welt: dict[str, Path], **felder: object) -> None:
+    |               ^^^^ `welt` redefined here
+327 |     _commit(welt["repo"], "feat: Bauteil (#901)", _beleg())
+328 |     _gh_setzen(
+    |
+   ::: tests/test_waechter_213_fix.py:44:5
+    |
+ 42 |     _wache_welt,
+ 43 |     _aufrufe,
+ 44 |     welt,
+    |     ---- previous definition of `welt` here
+ 45 | )
+    |
+help: Remove definition: `welt`
+
+F811 Redefinition of unused `welt` from line 44
+   --> tests/test_waechter_213_fix.py:334:5
+    |
+333 | def test_mail_session_tot_trotz_kommentar_fehler(
+334 |     welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+    |     ^^^^ `welt` redefined here
+335 | ) -> None:
+336 |     _verwaist(welt)
+    |
+   ::: tests/test_waechter_213_fix.py:44:5
+    |
+ 42 |     _wache_welt,
+ 43 |     _aufrufe,
+ 44 |     welt,
+    |     ---- previous definition of `welt` here
+ 45 | )
+    |
+help: Remove definition: `welt`
+
+F811 Redefinition of unused `welt` from line 44
+   --> tests/test_waechter_213_fix.py:345:5
+    |
+344 | def test_mail_fehler_ist_fehlerzeile_und_wird_wiederholt(
+345 |     welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+    |     ^^^^ `welt` redefined here
+346 | ) -> None:
+347 |     _verwaist(welt)
+    |
+   ::: tests/test_waechter_213_fix.py:44:5
+    |
+ 42 |     _wache_welt,
+ 43 |     _aufrufe,
+ 44 |     welt,
+    |     ---- previous definition of `welt` here
+ 45 | )
+    |
+help: Remove definition: `welt`
+
+F811 Redefinition of unused `welt` from line 44
+   --> tests/test_waechter_213_fix.py:365:50
+    |
+365 | def test_mutanten_kopie_unter_docs_ist_kein_test(welt: dict[str, Path]) -> None:
+    |                                                  ^^^^ `welt` redefined here
+366 |     mutante = "docs/verify-hard/x/mutants/test_a.py"
+367 |     _commit(welt["repo"], "test: Mutante", {mutante: "def test_m():\n    assert 0\n"})
+    |
+   ::: tests/test_waechter_213_fix.py:44:5
+    |
+ 42 |     _wache_welt,
+ 43 |     _aufrufe,
+ 44 |     welt,
+    |     ---- previous definition of `welt` here
+ 45 | )
+    |
+help: Remove definition: `welt`
+
+F811 Redefinition of unused `welt` from line 44
+   --> tests/test_waechter_213_fix.py:379:40
+    |
+377 |     "Soll in tests/test_waechter_213_spec_streng.py"
+378 | )
+379 | def test_trailer_test_entfernt_erlaubt(welt: dict[str, Path]) -> None:
+    |                                        ^^^^ `welt` redefined here
+380 |     _commit(
+381 |         welt["repo"], "test: alt", {"tests/test_a.py": "def test_alt():\n    pass\n"}
+    |
+   ::: tests/test_waechter_213_fix.py:44:5
+    |
+ 42 |     _wache_welt,
+ 43 |     _aufrufe,
+ 44 |     welt,
+    |     ---- previous definition of `welt` here
+ 45 | )
+    |
+help: Remove definition: `welt`
+
+F811 Redefinition of unused `welt` from line 44
+   --> tests/test_waechter_213_fix.py:398:43
+    |
+398 | def test_ohne_trailer_bleibt_test_ersetzt(welt: dict[str, Path]) -> None:
+    |                                           ^^^^ `welt` redefined here
+399 |     _commit(
+400 |         welt["repo"], "test: alt", {"tests/test_a.py": "def test_alt():\n    pass\n"}
+    |
+   ::: tests/test_waechter_213_fix.py:44:5
+    |
+ 42 |     _wache_welt,
+ 43 |     _aufrufe,
+ 44 |     welt,
+    |     ---- previous definition of `welt` here
+ 45 | )
+    |
+help: Remove definition: `welt`
+
+F811 Redefinition of unused `welt` from line 44
+   --> tests/test_waechter_213_fix.py:416:5
+    |
+415 | def test_vps_unlesbar_kein_spec_fertig(
+416 |     welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+    |     ^^^^ `welt` redefined here
+417 | ) -> None:
+418 |     _konfig(welt, vps={"ssh": "vps-test", "pfad": "/opt/x", "deploy_pfade": ["web/"]})
+    |
+   ::: tests/test_waechter_213_fix.py:44:5
+    |
+ 42 |     _wache_welt,
+ 43 |     _aufrufe,
+ 44 |     welt,
+    |     ---- previous definition of `welt` here
+ 45 | )
+    |
+help: Remove definition: `welt`
+
+F811 Redefinition of unused `welt` from line 44
+   --> tests/test_waechter_213_fix.py:439:46
+    |
+439 | def test_checkpoint_label_ist_nicht_verwaist(welt: dict[str, Path]) -> None:
+    |                                              ^^^^ `welt` redefined here
+440 |     _verwaist(welt, labels=["checkpoint:human"])
+441 |     ergebnis = _capo(welt)
+    |
+   ::: tests/test_waechter_213_fix.py:44:5
+    |
+ 42 |     _wache_welt,
+ 43 |     _aufrufe,
+ 44 |     welt,
+    |     ---- previous definition of `welt` here
+ 45 | )
+    |
+help: Remove definition: `welt`
+
+F811 Redefinition of unused `welt` from line 44
+   --> tests/test_waechter_213_fix.py:446:54
+    |
+446 | def test_juengste_zeile_blockiert_ist_nicht_verwaist(welt: dict[str, Path]) -> None:
+    |                                                      ^^^^ `welt` redefined here
+447 |     alt = timedelta(hours=5)
+448 |     zeile = json.loads(_log_zeile("blockiert", grund="wartet auf David"))
+    |
+   ::: tests/test_waechter_213_fix.py:44:5
+    |
+ 42 |     _wache_welt,
+ 43 |     _aufrufe,
+ 44 |     welt,
+    |     ---- previous definition of `welt` here
+ 45 | )
+    |
+help: Remove definition: `welt`
+
+F811 Redefinition of unused `welt` from line 44
+   --> tests/test_waechter_213_fix.py:466:5
+    |
+465 | def test_zweiter_capo_lauf_wartet_nicht_endlos(
+466 |     welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+    |     ^^^^ `welt` redefined here
+467 | ) -> None:
+468 |     from to_spawn import capo
+    |
+   ::: tests/test_waechter_213_fix.py:44:5
+    |
+ 42 |     _wache_welt,
+ 43 |     _aufrufe,
+ 44 |     welt,
+    |     ---- previous definition of `welt` here
+ 45 | )
+    |
+help: Remove definition: `welt`
+
+I001 [*] Import block is un-sorted or un-formatted
+   --> tests/test_waechter_213_fix.py:521:5
+    |
+519 |       tmp_path: Path, caplog: pytest.LogCaptureFixture
+520 |   ) -> None:
+521 | /     from test_waechter_213 import LIMIT_ZEILE
+522 | |     from to_spawn import waechter_lauf
+    | |______________________________________^
+523 |
+524 |       datei = tmp_path / "t.jsonl"
+    |
+help: Organize imports
+    |
+521 |     from test_waechter_213 import LIMIT_ZEILE
+522 +
+523 |     from to_spawn import waechter_lauf
+    |
+
+F811 Redefinition of unused `welt` from line 44
+   --> tests/test_waechter_213_fix.py:552:45
+    |
+552 | def test_wechsel_schreibt_versioniertes_log(welt: dict[str, Path]) -> None:
+    |                                             ^^^^ `welt` redefined here
+553 |     ergebnis = _wache(welt["repo"], env=_wache_welt(welt))
+554 |     assert ergebnis.returncode == 0, _text(ergebnis)
+    |
+   ::: tests/test_waechter_213_fix.py:44:5
+    |
+ 42 |     _wache_welt,
+ 43 |     _aufrufe,
+ 44 |     welt,
+    |     ---- previous definition of `welt` here
+ 45 | )
+    |
+help: Remove definition: `welt`
+
+F811 Redefinition of unused `welt` from line 44
+   --> tests/test_waechter_213_fix.py:560:39
+    |
+560 | def test_wechsel_scheitert_nie_am_log(welt: dict[str, Path]) -> None:
+    |                                       ^^^^ `welt` redefined here
+561 |     # Versioniertes Log nicht schreibbar (Ordner statt Datei) → Neustart trotzdem.
+562 |     (welt["repo"] / "docs" / "agents" / "bau_log" / f"{SPEC}.jsonl").mkdir(parents=True)
+    |
+   ::: tests/test_waechter_213_fix.py:44:5
+    |
+ 42 |     _wache_welt,
+ 43 |     _aufrufe,
+ 44 |     welt,
+    |     ---- previous definition of `welt` here
+ 45 | )
+    |
+help: Remove definition: `welt`
+
+F811 Redefinition of unused `welt` from line 25
+  --> tests/test_waechter_213_fix2.py:29:20
+   |
+29 | def _zustand_datei(welt: dict[str, Path]) -> Path:
+   |                    ^^^^ `welt` redefined here
+30 |     return welt["zustand"] / f"test_wegwerf_{SPEC}.json"
+   |
+  ::: tests/test_waechter_213_fix2.py:25:5
+   |
+23 |     _mails,
+24 |     _text,
+25 |     welt,
+   |     ---- previous definition of `welt` here
+26 | )
+   |
+help: Remove definition: `welt`
+
+F811 Redefinition of unused `welt` from line 25
+  --> tests/test_waechter_213_fix2.py:33:14
+   |
+33 | def _zustand(welt: dict[str, Path], nummer: str = "901") -> str:
+   |              ^^^^ `welt` redefined here
+34 |     daten = json.loads(welt["gh"].read_text(encoding="utf-8"))
+35 |     return daten["issues"][nummer]["state"]
+   |
+  ::: tests/test_waechter_213_fix2.py:25:5
+   |
+23 |     _mails,
+24 |     _text,
+25 |     welt,
+   |     ---- previous definition of `welt` here
+26 | )
+   |
+help: Remove definition: `welt`
+
+F811 Redefinition of unused `welt` from line 25
+  --> tests/test_waechter_213_fix2.py:38:18
+   |
+38 | def _ohne_karenz(welt: dict[str, Path], **zusatz: object) -> None:
+   |                  ^^^^ `welt` redefined here
+39 |     _konfig(welt, waechter={"karenz_minuten": 0}, **zusatz)
+   |
+  ::: tests/test_waechter_213_fix2.py:25:5
+   |
+23 |     _mails,
+24 |     _text,
+25 |     welt,
+   |     ---- previous definition of `welt` here
+26 | )
+   |
+help: Remove definition: `welt`
+
+F811 Redefinition of unused `welt` from line 25
+  --> tests/test_waechter_213_fix2.py:45:36
+   |
+45 | def test_karenz_null_prueft_sofort(welt: dict[str, Path]) -> None:
+   |                                    ^^^^ `welt` redefined here
+46 |     _ohne_karenz(welt)
+47 |     _commit(welt["repo"], "feat: ohne Nummer", _beleg("901"))
+   |
+  ::: tests/test_waechter_213_fix2.py:25:5
+   |
+23 |     _mails,
+24 |     _text,
+25 |     welt,
+   |     ---- previous definition of `welt` here
+26 | )
+   |
+help: Remove definition: `welt`
+
+F811 Redefinition of unused `welt` from line 25
+  --> tests/test_waechter_213_fix2.py:60:38
+   |
+60 | def test_karenz_fehlt_bleibt_vorgabe(welt: dict[str, Path]) -> None:
+   |                                      ^^^^ `welt` redefined here
+61 |     """Ohne ``karenz_minuten`` gilt weiter die Vorgabe (15 min)."""
+62 |     _commit(welt["repo"], "feat: ohne Nummer", _beleg("901"))
+   |
+  ::: tests/test_waechter_213_fix2.py:25:5
+   |
+23 |     _mails,
+24 |     _text,
+25 |     welt,
+   |     ---- previous definition of `welt` here
+26 | )
+   |
+help: Remove definition: `welt`
+
+F811 Redefinition of unused `welt` from line 25
+  --> tests/test_waechter_213_fix2.py:74:57
+   |
+74 | def test_nach_erstem_tick_geschlossen_trotz_uhr_vorlauf(welt: dict[str, Path]) -> None:
+   |                                                         ^^^^ `welt` redefined here
+75 |     """Lokale Uhr geht vor (hier 5 min): ``closed_at`` von GitHub liegt dann VOR
+76 |     ``erster_tick``, obwohl das Ticket erst nach dem ersten Tick zuging. Es darf
+   |
+  ::: tests/test_waechter_213_fix2.py:25:5
+   |
+23 |     _mails,
+24 |     _text,
+25 |     welt,
+   |     ---- previous definition of `welt` here
+26 | )
+   |
+help: Remove definition: `welt`
+
+F811 Redefinition of unused `welt` from line 25
+  --> tests/test_waechter_213_fix2.py:93:51
+   |
+93 | def test_beim_ersten_tick_zu_bleibt_ausgangsstand(welt: dict[str, Path]) -> None:
+   |                                                   ^^^^ `welt` redefined here
+94 |     _ohne_karenz(welt)
+95 |     _commit(welt["repo"], "feat: ohne Nummer", _beleg("901"))
+   |
+  ::: tests/test_waechter_213_fix2.py:25:5
+   |
+23 |     _mails,
+24 |     _text,
+25 |     welt,
+   |     ---- previous definition of `welt` here
+26 | )
+   |
+help: Remove definition: `welt`
+
+F811 Redefinition of unused `welt` from line 25
+   --> tests/test_waechter_213_fix2.py:110:28
+    |
+110 | def _spec_fertig_ohne_mail(welt: dict[str, Path], mail: dict[str, object]) -> None:
+    |                            ^^^^ `welt` redefined here
+111 |     _konfig(welt, mail=mail)
+112 |     _commit(welt["repo"], "feat: A (#901)", _beleg("901"))
+    |
+   ::: tests/test_waechter_213_fix2.py:25:5
+    |
+ 23 |     _mails,
+ 24 |     _text,
+ 25 |     welt,
+    |     ---- previous definition of `welt` here
+ 26 | )
+    |
+help: Remove definition: `welt`
+
+F811 Redefinition of unused `welt` from line 25
+   --> tests/test_waechter_213_fix2.py:117:46
+    |
+117 | def test_ohne_mail_befehl_spec_fertig_exit_0(welt: dict[str, Path]) -> None:
+    |                                              ^^^^ `welt` redefined here
+118 |     _spec_fertig_ohne_mail(welt, {"ziel": "", "nur_kritisch": True})
+119 |     for _ in range(2):
+    |
+   ::: tests/test_waechter_213_fix2.py:25:5
+    |
+ 23 |     _mails,
+ 24 |     _text,
+ 25 |     welt,
+    |     ---- previous definition of `welt` here
+ 26 | )
+    |
+help: Remove definition: `welt`
+
+F811 Redefinition of unused `welt` from line 25
+   --> tests/test_waechter_213_fix2.py:128:57
+    |
+128 | def test_leerer_mail_befehl_ist_auch_nicht_eingerichtet(welt: dict[str, Path]) -> None:
+    |                                                         ^^^^ `welt` redefined here
+129 |     _spec_fertig_ohne_mail(welt, {"befehl": [], "nur_kritisch": True})
+130 |     ergebnis = _capo(welt)
+    |
+   ::: tests/test_waechter_213_fix2.py:25:5
+    |
+ 23 |     _mails,
+ 24 |     _text,
+ 25 |     welt,
+    |     ---- previous definition of `welt` here
+ 26 | )
+    |
+help: Remove definition: `welt`
+
+F811 Redefinition of unused `welt` from line 25
+   --> tests/test_waechter_213_fix2.py:136:5
+    |
+135 | def test_konfigurierter_mail_befehl_scheitert_bleibt_fehler(
+136 |     welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+    |     ^^^^ `welt` redefined here
+137 | ) -> None:
+138 |     monkeypatch.setenv("MAIL_FAKE_EXIT", "1")
+    |
+   ::: tests/test_waechter_213_fix2.py:25:5
+    |
+ 23 |     _mails,
+ 24 |     _text,
+ 25 |     welt,
+    |     ---- previous definition of `welt` here
+ 26 | )
+    |
+help: Remove definition: `welt`
+
+F811 Redefinition of unused `welt` from line 22
+   --> tests/test_waechter_213_limit_echt.py:117:48
+    |
+117 | def test_wache_wechselt_bei_echter_limit_zeile(welt: dict[str, Path]) -> None:
+    |                                                ^^^^ `welt` redefined here
+118 |     """Ganzer Weg: gestelltes ``claude`` schreibt die echte Zeile unverändert ins
+119 |     Transkript — ``wache.py`` beendet die Session und setzt mit ``--resume`` auf dem
+    |
+   ::: tests/test_waechter_213_limit_echt.py:22:5
+    |
+ 20 |     _wache,
+ 21 |     _wache_welt,
+ 22 |     welt,
+    |     ---- previous definition of `welt` here
+ 23 | )
+    |
+help: Remove definition: `welt`
+
+F811 Redefinition of unused `welt` from line 29
+  --> tests/test_waechter_213_spec_streng.py:35:5
+   |
+34 | def test_zweites_schliessen_mit_demselben_verstoss_oeffnet_wieder(
+35 |     welt: dict[str, Path],
+   |     ^^^^ `welt` redefined here
+36 | ) -> None:
+37 |     _commit(welt["repo"], "feat: ohne Nummer", _beleg())
+   |
+  ::: tests/test_waechter_213_spec_streng.py:29:5
+   |
+27 |     _kommentare,
+28 |     _text,
+29 |     welt,
+   |     ---- previous definition of `welt` here
+30 | )
+31 | from test_waechter_213_fix import _frisch_zu, _zustand, _zustand_datei
+   |
+help: Remove definition: `welt`
+
+F811 Redefinition of unused `welt` from line 29
+  --> tests/test_waechter_213_spec_streng.py:54:57
+   |
+54 | def test_label_waechter_ok_meldet_den_verstoss_trotzdem(welt: dict[str, Path]) -> None:
+   |                                                         ^^^^ `welt` redefined here
+55 |     _commit(welt["repo"], "feat: ohne Nummer", {})
+56 |     _frisch_zu(welt, labels=["waechter:ok"])
+   |
+  ::: tests/test_waechter_213_spec_streng.py:29:5
+   |
+27 |     _kommentare,
+28 |     _text,
+29 |     welt,
+   |     ---- previous definition of `welt` here
+30 | )
+31 | from test_waechter_213_fix import _frisch_zu, _zustand, _zustand_datei
+   |
+help: Remove definition: `welt`
+
+F811 Redefinition of unused `welt` from line 29
+  --> tests/test_waechter_213_spec_streng.py:65:52
+   |
+65 | def test_trailer_test_entfernt_entschuldigt_nichts(welt: dict[str, Path]) -> None:
+   |                                                    ^^^^ `welt` redefined here
+66 |     _commit(
+67 |         welt["repo"], "test: alt", {"tests/test_a.py": "def test_alt():\n    pass\n"}
+   |
+  ::: tests/test_waechter_213_spec_streng.py:29:5
+   |
+27 |     _kommentare,
+28 |     _text,
+29 |     welt,
+   |     ---- previous definition of `welt` here
+30 | )
+31 | from test_waechter_213_fix import _frisch_zu, _zustand, _zustand_datei
+   |
+help: Remove definition: `welt`
+
+F811 Redefinition of unused `welt` from line 29
+  --> tests/test_waechter_213_spec_streng.py:80:56
+   |
+80 | def test_label_waechter_ok_blockiert_spec_fertig_nicht(welt: dict[str, Path]) -> None:
+   |                                                        ^^^^ `welt` redefined here
+81 |     """Ein bewusst freigegebenes Ticket darf „Spec fertig“ nicht ewig verhindern (#213)."""
+82 |     # #901 ist freigegeben trotz Verstoß, #902 sauber gebaut und zu.
+   |
+  ::: tests/test_waechter_213_spec_streng.py:29:5
+   |
+27 |     _kommentare,
+28 |     _text,
+29 |     welt,
+   |     ---- previous definition of `welt` here
+30 | )
+31 | from test_waechter_213_fix import _frisch_zu, _zustand, _zustand_datei
+   |
+help: Remove definition: `welt`
+
+F811 Redefinition of unused `welt` from line 29
+  --> tests/test_waechter_213_spec_streng.py:92:58
+   |
+92 | def test_zustand_merkt_sich_keine_wieder_geoeffnet_liste(welt: dict[str, Path]) -> None:
+   |                                                          ^^^^ `welt` redefined here
+93 |     """Die Einmal-Sperre ist weg — ihr Zustandsfeld darf nicht weiterwachsen (#213)."""
+94 |     _commit(welt["repo"], "feat: ohne Nummer", _beleg())
+   |
+  ::: tests/test_waechter_213_spec_streng.py:29:5
+   |
+27 |     _kommentare,
+28 |     _text,
+29 |     welt,
+   |     ---- previous definition of `welt` here
+30 | )
+31 | from test_waechter_213_fix import _frisch_zu, _zustand, _zustand_datei
+   |
+help: Remove definition: `welt`
+
+RUF100 [*] Unused `noqa` directive (non-enabled: `E402`)
+  --> to_spawn.py:33:25
+   |
+31 | sys.path.insert(0, str(Path(__file__).resolve().parent))
+32 |
+33 | from to_spawn import (  # noqa: E402
+   |                         ^^^^^^^^^^^^
+34 |     aufpasser,
+35 |     bau_log,
+   |
+help: Remove unused `noqa` directive
+   |
+32 |
+   - from to_spawn import (  # noqa: E402
+33 + from to_spawn import (
+34 |     aufpasser,
+   |
+
+RUF100 [*] Unused `noqa` directive (non-enabled: `E402`)
+  --> to_spawn.py:48:44
+   |
+46 |     umzug,
+47 | )
+48 | from to_spawn import spawn as spawn_modul  # noqa: E402
+   |                                            ^^^^^^^^^^^^
+49 |
+50 | log = logging.getLogger("to_spawn")
+   |
+help: Remove unused `noqa` directive
+   |
+47 | )
+   - from to_spawn import spawn as spawn_modul  # noqa: E402
+48 + from to_spawn import spawn as spawn_modul
+49 |
+   |
+
+RUF100 [*] Unused `noqa` directive (unused: `BLE001`)
+   --> to_spawn.py:257:24
+    |
+255 |     try:
+256 |         umzug.hook_umzug_anfrage(roh, umzug_ausgabe)
+257 |     except Exception:  # noqa: BLE001 — Hook darf die Session nie stören
+    |                        ^^^^^^^^^^^^^^
+258 |         log.exception("Umzug-Teil des Stop-Hooks fehlgeschlagen — Session läuft weiter.")
+259 |     sys.stdout.write(umzug_ausgabe.getvalue() or bau_log_ausgabe.getvalue())
+    |
+help: Remove unused `noqa` directive
+    |
+256 |         umzug.hook_umzug_anfrage(roh, umzug_ausgabe)
+    -     except Exception:  # noqa: BLE001 — Hook darf die Session nie stören
+257 +     except Exception:
+258 |         log.exception("Umzug-Teil des Stop-Hooks fehlgeschlagen — Session läuft weiter.")
+    |
+
+UP035 [*] Import from `collections.abc` instead: `Sequence`
+  --> to_spawn/bau_loop.py:23:1
+   |
+21 | import time
+22 | from pathlib import Path
+23 | from typing import Any, Sequence
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+24 |
+25 | from . import bau_log, config, gh, hooks
+   |
+help: Import from `collections.abc`
+   |
+22 | from pathlib import Path
+   - from typing import Any, Sequence
+23 + from typing import Any
+24 + from collections.abc import Sequence
+25 |
+   |
+
+DTZ005 `datetime.datetime.now()` called without a `tz` argument
+   --> to_spawn/hooks.py:170:31
+    |
+168 |     if start_env:
+169 |         try:
+170 |             return max(0, int(datetime.now().timestamp() - float(start_env)))
+    |                               ^^^^^^^^^^^^^^
+171 |         except ValueError:
+172 |             pass
+    |
+help: Pass a `datetime.timezone` object to the `tz` parameter
+
+UP035 [*] Import from `collections.abc` instead: `Sequence`
+  --> to_spawn/spawn.py:18:1
+   |
+16 | import sys
+17 | from pathlib import Path
+18 | from typing import Any, Sequence, TextIO
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+19 |
+20 | from . import manifest
+   |
+help: Import from `collections.abc`
+   |
+17 | from pathlib import Path
+   - from typing import Any, Sequence, TextIO
+18 + from typing import Any, TextIO
+19 + from collections.abc import Sequence
+20 |
+   |
+
+B023 Function definition does not bind loop variable `ticket`
+   --> to_spawn/umzug.py:733:50
+    |
+731 |                     ziel_pid = neue_pid or pid
+732 |                     prozess_beenden(ziel_pid)
+733 |                     if not _warte(lambda: frisch(ticket)[0] == "aus", 30.0, min(takt, 1.0)):
+    |                                                  ^^^^^^
+734 |                         server_fenster_schliessen(spec, ticket, ziel=ziel)
+735 |                         return stopp(
+    |
+
+TRY004 Prefer `TypeError` exception for invalid type
+  --> to_spawn/vertrauen.py:31:9
+   |
+29 |     daten = json.loads(claude_json.read_text(encoding="utf-8"))
+30 |     if not isinstance(daten, dict):
+31 |         raise ValueError(f"{claude_json} ist kein JSON-Objekt")
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+32 |     return daten
+   |
+
+Found 107 errors.
+[*] 38 fixable with the `--fix` option (1 hidden fix can be enabled with the `--unsafe-fixes` option).
+Vergleich (--no-cache, gleiche cwd): HEAD-Snapshot 101 Befunde, Arbeitsstand 107.
+Die 6 neuen liegen in Dateien der Vor-Session (tests/test_fremdrepo_257.py PLW1510+RUF100,
+tests/test_speicher_257.py I001+2×RUF100, to_spawn/vertrauen.py TRY004) — nicht aus dieser Fixrunde.
+Eigene Änderungen (speicher.py, config.py, aufpasser.py, conftest.py, to_spawn.py, bau.py, wache.py,
+sessions_stand.py): 0 neue Befunde (wache.py-Import umgebrochen, damit I001 nicht dazukommt).
+Hinweis: die Regeln (DTZ, RUF100, PLW…) stammen aus einer Nutzer-/Umgebungs-Konfig, das Skill-Repo hat keine ruff.toml.
+
+== Fixrunde 1 (executor-opus, 21.09. 20:17) ==
+
+Found 19 errors.
+[*] 11 fixable with the `--fix` option.
+Geänderte Dateien gh.py/speicher.py/vertrauen.py/nest.py/bau.py/wache.py/spec_stand.py: 0 neue Befunde (I001 in bau.py/wache.py schon am HEAD-Stand).

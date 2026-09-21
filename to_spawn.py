@@ -24,6 +24,7 @@ from __future__ import annotations
 import argparse
 import io
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -34,12 +35,14 @@ from to_spawn import (  # noqa: E402
     bau_log,
     config,
     deploy_status,
+    gh,
     hooks,
     inventur,
     manifest,
     nest,
     probesitz,
     setup,
+    speicher,
     umzug,
 )
 from to_spawn import spawn as spawn_modul  # noqa: E402
@@ -59,6 +62,12 @@ def _spec_tickets(repo: Path, spec: str) -> list[str]:
     except (FileNotFoundError, ValueError):
         return bau_log.alle_tickets(repo)
     return sorted(daten["tickets"], key=manifest.ticket_schluessel)
+
+
+def _repo_aus_umgebung() -> Path | None:
+    """``TO_SPAWN_REPO`` (setzt die Weiterleitung im Repo, #205) oder ``None`` = aktueller Ordner."""
+    wert = os.environ.get("TO_SPAWN_REPO", "").strip()
+    return Path(wert).expanduser() if wert else None
 
 
 def _setup(repo: Path, args: argparse.Namespace) -> int:
@@ -166,6 +175,12 @@ def _setup(repo: Path, args: argparse.Namespace) -> int:
             f"Effort {stand['effort'][rolle]}"
         )
     print(setup.SCHLUSS_SATZ)
+    # Checkpoint-Label im GitHub-Repo anlegen (#257) — Weigerung „Kein Checkpoint-Ticket“ vorbeugen.
+    label = str(config.lade(repo).get("regularien", {}).get("checkpoint_label") or "checkpoint:human")
+    if gh.label_sicherstellen(repo, label):
+        print(f"  Label {label} im GitHub-Repo vorhanden.")
+    else:
+        print(f"  Label {label} nicht angelegt — von Hand: gh label create {label}")
     print()
     print(setup.probesitz_block(repo))
     return 0
@@ -173,7 +188,8 @@ def _setup(repo: Path, args: argparse.Namespace) -> int:
 
 def _eintrag(args: argparse.Namespace) -> int:
     """``eintrag``: eine Klartext-Zeile (Zusammenfassung oder Entscheidung) anhängen."""
-    repo = Path(args.repo).expanduser() if args.repo else bau_log.log_repo()
+    # Versionierte Datei: nie in den Hauptbaum ausweichen (#257, ``versioniert=True``).
+    repo = Path(args.repo).expanduser() if args.repo else bau_log.log_repo(versioniert=True)
     if repo is None or not repo.is_dir():
         log.error("Kein Bau-Log-Ordner (TO_SPAWN_LOG_REPO fehlt auf der Platte?) — nichts geschrieben.")
         return 1
@@ -182,11 +198,13 @@ def _eintrag(args: argparse.Namespace) -> int:
         log.error("Ticket-Nummer fehlt — --ticket <N> angeben.")
         return 2
     # Einzige Stelle, die die versionierte Datei schreibt: überträgt fehlende
-    # Laufdatei-Zeilen der Hooks gleich mit (Fixrunde #204).
+    # Laufdatei-Zeilen der Hooks gleich mit (Fixrunde #204) — auch die aus dem
+    # Hauptbaum, die vor dem Anlegen des Worktrees dort landeten (#257).
     zeile = bau_log.eintrag_schreiben(
         repo,
         str(ticket).strip(),
         args.typ,
+        hauptbaum=bau_log.log_rueckfall(),
         umfang=args.umfang,
         schwierigkeiten=args.schwierigkeiten,
         entscheidungen=args.entscheidungen,
@@ -345,6 +363,9 @@ def main(argv: list[str] | None = None) -> int:
         help="ab so vielen Minuten ohne neue Phase gilt der Lauf als hängend (Exit 4)",
     )
 
+    unter.add_parser(
+        "hauptzweig", help="Name des Hauptzweigs ausgeben (Konfig, origin/HEAD, master/main) (#257)"
+    )
     unter.add_parser("hook-stop", help="Stop-Hook (JSON auf stdin)")
     unter.add_parser("hook-subagent-stop", help="SubagentStop-Hook (JSON auf stdin)")
     # Umzug einer Bau-Session auf den Bau-Server (/to-spawn-of, #212).
@@ -387,6 +408,15 @@ def main(argv: list[str] | None = None) -> int:
         help="Claude-Projektordner mit den Transkripten",
     )
 
+    # Speicher-Schutz (#257 Paket B): Stand drucken, Exit 0 = frei, 5 = voll;
+    # ``--staffel`` gibt nur die Pause in Sekunden aus (für spawn_srv.sh).
+    p_speicher = unter.add_parser(
+        "speicher", help="darf noch eine Claude-Session starten? (Exit 0 frei / 5 voll)"
+    )
+    p_speicher.add_argument(
+        "--staffel", action="store_true", help="nur die Staffel-Pause in Sekunden ausgeben"
+    )
+
     nest.richte_parser_ein(unter)
     # Aufpasser (#236): Cron-Hausmeister für die tmux-Fenster; gleiche Argumente wie
     # ``skripte/aufpasser.py``.
@@ -409,6 +439,13 @@ def main(argv: list[str] | None = None) -> int:
         return nest.lauf(args)
     if args.befehl == "aufpasser":
         return aufpasser.lauf_mit_args(args)
+    if args.befehl == "hauptzweig":
+        # Nur der Name auf stdout — spawn_srv.sh liest ihn ein (#257).
+        print(gh.hauptzweig(config.repo_wurzel(_repo_aus_umgebung())))
+        return 0
+    if args.befehl == "speicher":
+        # Nur lesen: legt keine Konfig an (kein config.sicherstellen).
+        return speicher.cli(config.lade(_repo_aus_umgebung()), nur_staffel=args.staffel)
 
     repo = config.repo_wurzel()
     if args.befehl == "inventur":

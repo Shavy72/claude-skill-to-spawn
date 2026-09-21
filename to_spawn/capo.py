@@ -134,15 +134,10 @@ def _git(repo: Path, *args: str) -> tuple[int, str]:
 
 
 def haupt_ref(repo: Path) -> str | None:
-    """``origin/HEAD``, sonst ``origin/master``, sonst ``origin/main``."""
-    code, kopf = _git(repo, "symbolic-ref", "-q", "--short", "refs/remotes/origin/HEAD")
-    kandidaten = ([kopf.strip()] if code == 0 and kopf.strip() else []) + [
-        "origin/master",
-        "origin/main",
-    ]
-    for ref in kandidaten:
-        if _git(repo, "rev-parse", "--verify", "-q", ref)[0] == 0:
-            return ref
+    """``origin/<Hauptzweig>`` nach der Regel von ``gh.hauptzweig`` (#257); ``None`` ohne den Ref."""
+    ref = f"origin/{gh.hauptzweig(repo)}"
+    if _git(repo, "rev-parse", "--verify", "-q", ref)[0] == 0:
+        return ref
     return None
 
 

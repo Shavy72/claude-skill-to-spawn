@@ -35,7 +35,7 @@ from pathlib import Path
 _SKILL = str(Path(__file__).resolve().parent.parent)
 if _SKILL not in sys.path:
     sys.path.insert(0, _SKILL)
-from to_spawn import config, context_mode, nest, probesitz, sessions_datei, umzug  # noqa: E402
+from to_spawn import config, context_mode, gh, nest, probesitz, sessions_datei, speicher, umzug, vertrauen  # noqa: E402
 from to_spawn.waechter_lauf import transkript_ordner
 
 # Windows-Konsole ist cp1252 — Umlaute/Pfeile im Prompt brauchen UTF-8.
@@ -79,7 +79,16 @@ BUILTIN_SKILLS = [
     "tdd",
 ]
 CHROME_MCP = "claude-in-chrome"
-STAFFEL_HOOK = REPO / "scripts" / "hooks" / "staffel_stop.py"
+#: Staffel-Hook des Skills (#257): Fremd-Repos brauchen keine eigene Kopie.
+STAFFEL_HOOK_SKILL = Path(_SKILL) / "skripte" / "hooks" / "staffel_stop.py"
+
+
+def staffel_hook_pfad(repo: Path = REPO) -> Path:
+    """Repo-Kopie ``scripts/hooks/staffel_stop.py`` wenn vorhanden, sonst die des Skills (#257)."""
+    eigene = repo / "scripts" / "hooks" / "staffel_stop.py"
+    return eigene if eigene.is_file() else STAFFEL_HOOK_SKILL
+
+
 #: CLI des Skills (Bau-Log-Hooks #204, Umzug-Anfrage #212) — dieselbe Skill-Wurzel wie oben in sys.path.
 TO_SPAWN_CLI = Path(_SKILL) / "to_spawn.py"
 STAFFEL_MAX_DEFAULT = 8
@@ -158,14 +167,19 @@ def ticket_from_gh(ticket: str) -> tuple[str, str | None]:
 # --- Blocker-Wache (wartet im Skript, nicht in der Claude-Session) ----------
 
 
-def repo_aus_origin(fallback: str) -> str:
+def repo_aus_origin(fallback: str = "", repo: Path | None = None) -> str:
     """``owner/name`` aus ``git remote get-url origin`` (GitHub, https oder ssh); sonst ``fallback``.
 
     Damit läuft dasselbe Skript in jedem Repo mit GitHub-Origin — nichts hart verdrahtet.
+    Gelesen wird im Arbeits-Repo ``REPO`` (oder ``repo``), nicht im aktuellen Ordner (#257).
     """
     try:
         url = subprocess.run(
-            ["git", "remote", "get-url", "origin"], capture_output=True, text=True, check=False
+            ["git", "remote", "get-url", "origin"],
+            cwd=str(repo or REPO),
+            capture_output=True,
+            text=True,
+            check=False,
         ).stdout.strip()
     except OSError:
         return fallback
@@ -173,7 +187,35 @@ def repo_aus_origin(fallback: str) -> str:
     return m.group(1) if m else fallback
 
 
-GH_REPO = repo_aus_origin("Shavy72/duoplus-management")
+KEIN_GITHUB_REPO = (
+    "Kein GitHub-Repo erkannt (origin fehlt oder zeigt nicht auf github.com) — "
+    "im Repo-Ordner starten oder TO_SPAWN_REPO setzen"
+)
+
+
+def repo_slug_oder_abbruch(repo: Path) -> str:
+    """``owner/name`` aus dem origin von ``repo`` — ohne GitHub-Origin Abbruch mit Exit 2 (#257 F5).
+
+    Kein stiller Rückfall auf ein festes Repo mehr: der Aufrufer sähe sonst Blocker,
+    Labels und Prompt-Text eines fremden Repos.
+    """
+    slug = repo_aus_origin("", repo)
+    if slug:
+        return slug
+    print(KEIN_GITHUB_REPO, file=sys.stderr)
+    raise SystemExit(2)
+
+
+def gh_repo_ermitteln(repo: Path) -> str:
+    """Slug für GitHub-Aufrufe: GitHub-Origin von ``repo``; fehlt der, gilt die ausdrückliche
+    Vorgabe ``TO_SPAWN_GH_REPO`` (z. B. Spiegel-Repo mit lokalem origin, Tests); sonst
+    :func:`repo_slug_oder_abbruch` → Exit 2. Nie ein fest verdrahtetes Repo."""
+    return repo_aus_origin("", repo) or os.environ.get("TO_SPAWN_GH_REPO", "").strip() or repo_slug_oder_abbruch(repo)
+
+
+#: Wird in ``main()`` über :func:`gh_repo_ermitteln` verbindlich gesetzt; beim Import nur
+#: der beste Versuch (leer ohne GitHub-Origin), damit Helfer importierbar bleiben.
+GH_REPO = repo_aus_origin("") or os.environ.get("TO_SPAWN_GH_REPO", "").strip()
 
 
 def _gh_json(gh: str, *args: str) -> object | None:
@@ -191,7 +233,7 @@ def blocker_offen(ticket: str) -> list[str]:
     """Gründe, warum #ticket noch nicht starten darf (leer = frei).
 
     Zwei Prüfungen wie im Loop-Prompt: jeder Blocker muss CLOSED sein und
-    seinen Commit ``(#<Blocker>)`` auf ``origin/master`` haben — sonst baut die
+    seinen Commit ``(#<Blocker>)`` auf ``origin/<Hauptzweig>`` haben — sonst baut die
     Session auf einem Stand ohne die Blocker-Arbeit. Bei gh-/git-Fehlern gilt
     „offen" (fail-closed), damit kein Loop vorzeitig losläuft.
     """
@@ -202,6 +244,7 @@ def blocker_offen(ticket: str) -> list[str]:
     if not isinstance(deps, list):
         return ["Blocker-Abfrage fehlgeschlagen"]
     gruende: list[str] = []
+    haupt = f"origin/{gh.hauptzweig(REPO)}"  # master/main/… je Repo (#257)
     for d in deps:
         nr, state = d.get("number"), d.get("state")
         if state != "closed":
@@ -209,7 +252,7 @@ def blocker_offen(ticket: str) -> list[str]:
             continue
         subprocess.run(["git", "fetch", "-q", "origin"], cwd=REPO, check=False)
         found = subprocess.run(
-            ["git", "log", "origin/master", "--oneline", "--fixed-strings", f"--grep=(#{nr})"],
+            ["git", "log", haupt, "--oneline", "--fixed-strings", f"--grep=(#{nr})"],
             cwd=REPO,
             capture_output=True,
             text=True,
@@ -217,7 +260,7 @@ def blocker_offen(ticket: str) -> list[str]:
             check=False,
         ).stdout.strip()
         if not found:
-            gruende.append(f"#{nr} zu, aber kein Commit „(#{nr})“ auf origin/master")
+            gruende.append(f"#{nr} zu, aber kein Commit „(#{nr})“ auf {haupt}")
     return gruende
 
 
@@ -239,6 +282,18 @@ def auf_blocker_warten(ticket: str, takt: int) -> None:
             datetime.now().strftime("%H:%M"),
         )
         time.sleep(takt)
+
+
+def auf_speicher_warten(
+    konfig: dict,
+    *,
+    wer: str = "bau",
+    pruefen=speicher.platz_frei,
+    schlafen=time.sleep,
+    takt_s: int = 60,
+) -> int:
+    """Warten, bis ``speicher.platz_frei`` frei meldet; Rückgabe = Zahl der Wartezyklen (#257 F3)."""
+    return speicher.auf_platz_warten(konfig, wer=wer, pruefen=pruefen, schlafen=schlafen, takt_s=takt_s)
 
 
 # --- Skill-Katalog ----------------------------------------------------------
@@ -323,16 +378,30 @@ def build_kontext(entry: dict) -> str:
 
 def worktree_pfad(ticket: str) -> str:
     """Wohin der Worktree dieses Tickets gehört — Regel lebt in ``to_spawn.config`` (#204)."""
-    return config.worktree_pfad(ticket)
+    return config.worktree_pfad(ticket, REPO)
 
 
-def build_prompt(template: str, ticket: str, spec: str, title: str, kontext: str) -> str:
+def build_prompt(
+    template: str,
+    ticket: str,
+    spec: str,
+    title: str,
+    kontext: str,
+    konfig: dict | None = None,
+) -> str:
+    """Platzhalter der Vorlage füllen — auch die repo-neutralen (#257):
+    ``{REPO}`` = owner/name, ``{HAUPTZWEIG}``, ``{CHECKPOINT_LABEL}`` aus der Konfig."""
+    konfig = konfig if konfig is not None else config.lade(REPO)
+    label = str((konfig.get("regularien") or {}).get("checkpoint_label") or "checkpoint:human")
     return (
         template.replace("{WT}", worktree_pfad(ticket))
         .replace("{N}", ticket)
         .replace("{S}", spec)
         .replace("{TITLE}", title)
         .replace("{KONTEXT}", kontext)
+        .replace("{REPO}", GH_REPO)
+        .replace("{HAUPTZWEIG}", gh.hauptzweig(REPO))
+        .replace("{CHECKPOINT_LABEL}", label)
     )
 
 
@@ -358,7 +427,7 @@ def staffel_hooks() -> dict:
     ``Stop``: zuerst der Staffel-Hook, danach der Bau-Log-Hook des Skills (Token,
     Modell, Dauer je Runde); er gibt auch die Umzug-Anfrage des Wächters weiter (#212). ``SubagentStop``: Bau-Log-Zeile je Subagent (#204).
     """
-    staffel = subprocess.list2cmdline([sys.executable, str(STAFFEL_HOOK)])
+    staffel = subprocess.list2cmdline([sys.executable, str(staffel_hook_pfad(REPO))])
     bau_log_stop = subprocess.list2cmdline([sys.executable, str(TO_SPAWN_CLI), "hook-stop"])
     bau_log_sub = subprocess.list2cmdline([sys.executable, str(TO_SPAWN_CLI), "hook-subagent-stop"])
     return {
@@ -377,14 +446,17 @@ def staffel_hooks() -> dict:
 def bau_log_umgebung(ticket: str, runde: int, start: float, effort: str | None) -> dict[str, str]:
     """Umgebung der Bau-Log-Hooks (#204): Ticket, Runde, Start, Effort, Ziel-Ordner.
 
-    ``TO_SPAWN_LOG_REPO`` zeigt auf den Ticket-Worktree; existiert er noch nicht,
-    schreiben die Hooks nichts (nie in den geteilten Hauptbaum).
+    ``TO_SPAWN_LOG_REPO`` zeigt auf den Ticket-Worktree; existiert er (noch/nicht mehr)
+    nicht, schreiben die Hooks die unversionierte Laufdatei in den Hauptbaum
+    ``TO_SPAWN_LOG_RUECKFALL`` (#257; ``TO_SPAWN_REPO`` selbst nimmt die Session nicht
+    mit, #205). Die versionierte Datei schreibt nur ``eintrag`` im Worktree.
     """
     umgebung = {
         "TO_SPAWN_TICKET": ticket,
         "TO_SPAWN_START": str(start),
         "TO_SPAWN_STAFFEL": str(runde),
         "TO_SPAWN_LOG_REPO": str(Path(worktree_pfad(ticket)).expanduser()),
+        "TO_SPAWN_LOG_RUECKFALL": str(REPO),
     }
     if effort:
         umgebung["TO_SPAWN_EFFORT"] = effort
@@ -620,12 +692,16 @@ def main() -> int:
     )
     args = parser.parse_args()
     ticket = str(args.ticket)
+    # GitHub-Slug verbindlich (#257 F5): kein GitHub-Origin → Exit 2 mit Grund, kein Rückfall.
+    global GH_REPO
+    GH_REPO = gh_repo_ermitteln(REPO)
     if args.probesitz:
         args.sofort = True
-        if not STAFFEL_HOOK.is_file():
+        if not staffel_hook_pfad(REPO).is_file():
             log.warning(
-                "Staffel-Hook %s fehlt im Repo — Punkt 6 (Handoff → Folge-Session) kann nicht grün werden.",
-                STAFFEL_HOOK,
+                "Staffel-Hook %s fehlt (weder im Repo noch im Skill) — Punkt 6 (Handoff → "
+                "Folge-Session) kann nicht grün werden.",
+                staffel_hook_pfad(REPO),
             )
     if not args.dry_run:  # Probelauf ohne Seiteneffekte (#205)
         config.sicherstellen(REPO)
@@ -659,7 +735,9 @@ def main() -> int:
     prompt = (
         probesitz.WEGWERF_PROMPT.format(ticket=ticket)
         if args.probesitz
-        else build_prompt(default["prompt_template"], ticket, spec, title, build_kontext(entry))
+        else build_prompt(
+            default["prompt_template"], ticket, spec, title, build_kontext(entry), config.lade(REPO)
+        )
     )
     erster_prompt = prompt
     if args.umzug:
@@ -781,11 +859,19 @@ def main() -> int:
 
     if not args.sofort and not args.umzug and not args.resume:
         auf_blocker_warten(ticket, max(60, args.takt))
+    # Speicher-Schutz (#257 Paket B, Fixrunde 1 F3), die EINE Stelle vor dem Prozessstart
+    # (gilt für Erststart, --resume und --umzug): RAM knapp oder Obergrenze an
+    # Claude-Sessions erreicht → warten statt Exit 5, damit das Fenster und der Grund bleiben.
+    auf_speicher_warten(konfig, wer=f"bau {ticket}")
     # Sandbox erst jetzt (#210): Worktree entsteht vom frischen origin-Stand (nest holt ihn).
     praefix = nest.sandbox_start(konfig, worktree_pfad(ticket), REPO)
     if praefix is None:
         return 2
     cmd = praefix + cmd
+
+    # Vertrauens-Dialog vorab bestätigen (#257): ohne Terminal-Antwort hinge die Session
+    # an „Do you trust the files in this folder?“ — Fehler nur als Warnung.
+    vertrauen.still_sicherstellen(Path(worktree_pfad(ticket)).expanduser(), REPO)
 
     # Aus einer Claude-Session gestartet erben Kind-Sessions die Markierung
     # CLAUDE_CODE_CHILD_SESSION und speichern kein Transkript (kein Resume nach

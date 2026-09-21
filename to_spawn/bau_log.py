@@ -61,13 +61,31 @@ def hat_log(repo: Path, ticket: str | int) -> bool:
     return log_pfad(repo, ticket).is_file() or lauf_pfad(repo, ticket).is_file()
 
 
-def log_repo(fallback: Path | None = None) -> Path | None:
+#: Rückfall-Ordner für die Laufdatei, wenn der Worktree (noch/nicht mehr) fehlt (#257):
+#: ``bau.py`` setzt ``TO_SPAWN_LOG_RUECKFALL`` auf den Hauptbaum (``TO_SPAWN_REPO`` nimmt es
+#: aus der Session-Umgebung, #205); ``TO_SPAWN_REPO`` gilt außerhalb einer Session.
+RUECKFALL_VARIABLEN = ("TO_SPAWN_LOG_RUECKFALL", "TO_SPAWN_REPO")
+
+
+def log_rueckfall() -> Path | None:
+    """Hauptbaum aus ``RUECKFALL_VARIABLEN`` (erster vorhandener Ordner), sonst ``None``."""
+    for name in RUECKFALL_VARIABLEN:
+        wert = os.environ.get(name, "").strip()
+        if wert and Path(wert).expanduser().is_dir():
+            return Path(wert).expanduser().resolve()
+    return None
+
+
+def log_repo(fallback: Path | None = None, *, versioniert: bool = False) -> Path | None:
     """Wohin Hooks und ``eintrag`` schreiben (#204).
 
     ``TO_SPAWN_LOG_REPO`` gesetzt (setzt ``bau.py`` auf den Ticket-Worktree) → genau
-    dieser Ordner, aber nur wenn er existiert. Fehlt er (noch), gibt es ``None`` —
-    nie in den geteilten Hauptbaum ausweichen: eine unversionierte
-    ``docs/agents/bau_log/<N>.jsonl`` dort blockiert später jeden ``git pull``.
+    dieser Ordner, wenn er existiert. Fehlt er (noch nicht angelegt oder schon vom
+    Launcher gelöscht), gilt für die unversionierte Laufdatei ``.to-spawn/bau_log/``
+    der Hauptbaum aus :func:`log_rueckfall` (#257) — dort ist der Ordner per
+    ``.gitignore`` unversioniert und stört keinen ``git pull``. ``versioniert=True``
+    (nur ``eintrag``, schreibt ``docs/agents/bau_log/``) weicht nie aus: eine
+    unversionierte Datei dort blockiert später jeden ``git pull`` im Hauptbaum → ``None``.
     Ohne Variable gilt ``fallback`` bzw. die Git-Wurzel des aktuellen Ordners.
     """
     ziel = os.environ.get("TO_SPAWN_LOG_REPO", "").strip()
@@ -75,6 +93,12 @@ def log_repo(fallback: Path | None = None) -> Path | None:
         pfad = Path(ziel).expanduser()
         if pfad.is_dir():
             return pfad.resolve()
+        rueckfall = None if versioniert else log_rueckfall()
+        if rueckfall is not None:
+            log.info(
+                "TO_SPAWN_LOG_REPO %s existiert nicht — Laufdatei im Hauptbaum %s.", pfad, rueckfall
+            )
+            return rueckfall
         log.info(
             "TO_SPAWN_LOG_REPO %s existiert (noch) nicht — keine Log-Zeile, "
             "kein Ausweichen in den Hauptbaum.",
@@ -149,12 +173,23 @@ def schreibe(repo: Path, ticket: str | int, typ: str, **felder: Any) -> dict[str
     return zeile
 
 
-def eintrag_schreiben(repo: Path, ticket: str | int, typ: str, **felder: Any) -> dict[str, Any]:
+def _laufzeilen(repo: Path, ticket: str | int, hauptbaum: Path | None) -> list[str]:
+    """Rohzeilen der Laufdatei im ``repo`` plus der Rückfall-Laufdatei im ``hauptbaum`` (#257)."""
+    zeilen = _rohzeilen(lauf_pfad(repo, ticket))
+    if hauptbaum is not None and hauptbaum.resolve() != repo.resolve():
+        zeilen += _rohzeilen(lauf_pfad(hauptbaum, ticket))
+    return zeilen
+
+
+def eintrag_schreiben(
+    repo: Path, ticket: str | int, typ: str, *, hauptbaum: Path | None = None, **felder: Any
+) -> dict[str, Any]:
     """Nur für den CLI-Befehl ``eintrag``: fehlende Laufdatei-Zeilen und die neue
-    Zeile an die versionierte Datei anhängen (danach committet die Session sie)."""
+    Zeile an die versionierte Datei anhängen (danach committet die Session sie).
+    ``hauptbaum`` = Ort der Rückfall-Laufdatei (Zeilen vor dem Worktree, #257)."""
     zeile = _neue_zeile(ticket, typ, felder)
     fest = log_pfad(repo, ticket)
-    fehlend = _fehlende(_rohzeilen(fest), _rohzeilen(lauf_pfad(repo, ticket)))
+    fehlend = _fehlende(_rohzeilen(fest), _laufzeilen(repo, ticket, hauptbaum))
     if fehlend:
         log.info("Bau-Log #%s: %d Zeile(n) aus der Laufdatei übertragen.", ticket, len(fehlend))
     _haenge_an(fest, [*fehlend, json.dumps(zeile, ensure_ascii=False)])
@@ -178,14 +213,16 @@ def _sortier_zeit(zeile: dict[str, Any]) -> datetime:
     return _zeitpunkt(zeile.get("ts")) or datetime.min.replace(tzinfo=timezone.utc)
 
 
-def lese(repo: Path, ticket: str | int) -> list[dict[str, Any]]:
+def lese(repo: Path, ticket: str | int, *, hauptbaum: Path | None = None) -> list[dict[str, Any]]:
     """Alle Zeilen eines Tickets: versioniert ∪ Laufdatei, nach ``ts`` sortiert.
 
     Zeilen, die exakt gleich in beiden Dateien stehen, zählen einmal. Kaputte Zeilen
-    werden übersprungen.
+    werden übersprungen. ``hauptbaum`` nimmt die Rückfall-Laufdatei dort dazu (#257).
     """
     fest = _lese_datei(log_pfad(repo, ticket))
     lauf = _lese_datei(lauf_pfad(repo, ticket))
+    if hauptbaum is not None and hauptbaum.resolve() != repo.resolve():
+        lauf += _lese_datei(lauf_pfad(hauptbaum, ticket))
     fehlend = Counter(_fehlende([roh for roh, _ in fest], [roh for roh, _ in lauf]))
     zeilen = [eintrag for _, eintrag in fest]
     for roh, eintrag in lauf:
@@ -271,9 +308,11 @@ def _dauer(zeile: dict[str, Any]) -> int:
         return 0
 
 
-def zusammenfassung(repo: Path, ticket: str | int) -> dict[str, Any]:
-    """Kennzahlen eines Tickets für Tabelle und Lernstoff."""
-    zeilen = lese(repo, ticket)
+def zusammenfassung(
+    repo: Path, ticket: str | int, *, hauptbaum: Path | None = None
+) -> dict[str, Any]:
+    """Kennzahlen eines Tickets für Tabelle und Lernstoff (``hauptbaum`` wie bei :func:`lese`)."""
+    zeilen = lese(repo, ticket, hauptbaum=hauptbaum)
     enden = _juengste_je_session(z for z in zeilen if z.get("typ") == "session_ende")
     subs = _juengste_je_session(z for z in zeilen if z.get("typ") == "subagent_ende")
     starts = [z for z in zeilen if z.get("typ") == "session_start"]

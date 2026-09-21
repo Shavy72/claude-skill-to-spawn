@@ -68,6 +68,15 @@ the sandbox — Claude Code does not start without it (checked 2026-09-19: "Not 
 Readiness check of a started session (tmux prompt, `git status`/`gh issue edit` without
 prompts) is ticket #214.
 
+## Memory guard (#257)
+
+One OOM kill took down twelve sessions at once (16 GB, no swap). Since then every starter
+(`bau`, `wache`, `spawn_srv.sh`, the Aufpasser cron) asks `to_spawn.py speicher` before
+launching Claude: at most 6 sessions per 16 GB, at least 2 GB free, 20 s between two window
+starts — all three live in `.to-spawn/config.json` under `speicher`. Full means no start
+(exit 5), not a slower start. The nest adds swap sized to RAM (min 8 GiB) and runs the tmux
+server as `tmux-bau.service` with `OOMScoreAdjust=-900`, so the kernel kills it last.
+
 ## Hard rules (learned the expensive way)
 
 - **Never kill `bau.py` without reading `sessions <S>` first.** Only state `waiting` may be killed. A killed `bau.py` leaves its Claude child orphaned; restarting creates a duplicate session on the same worktree.

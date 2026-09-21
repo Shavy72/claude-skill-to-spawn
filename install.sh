@@ -73,7 +73,20 @@ if [ -n "$REPO" ]; then
       echo "kopiert: $ziel_datei"
     fi
   done
-  python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); from pathlib import Path; from to_spawn import config; print("Konfig:", config.sicherstellen(Path(sys.argv[2])))' "$ZIEL" "$REPO"
+  # Konfig anlegen (+ .gitignore-Block) und Checkpoint-Label im GitHub-Repo sicherstellen (#257).
+  python3 - "$ZIEL" "$REPO" <<'PY'
+import sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+from to_spawn import config, gh
+repo = Path(sys.argv[2])
+print("Konfig:", config.sicherstellen(repo))
+label = str(config.lade(repo).get("regularien", {}).get("checkpoint_label") or "checkpoint:human")
+if gh.label_sicherstellen(repo, label):
+    print(f"Label {label}: vorhanden")
+else:
+    print(f"Label {label}: nicht angelegt — später von Hand: gh label create {label}")
+PY
 fi
 
 echo "Fertig. Im Repo: /to-spawn <SpecNr> (fragt lokal/Server) · /to-spawn-local <S> · /to-spawn-remote <S>"

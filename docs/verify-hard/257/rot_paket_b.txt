@@ -1,0 +1,40 @@
+        (repo / ".to-spawn").mkdir()
+        bestehend = {k: v for k, v in config.DEFAULTS.items() if k not in ("worktree_basis", "hauptzweig")}
+        roh = json.dumps(bestehend)
+        (repo / ".to-spawn" / "config.json").write_text(roh, encoding="utf-8")
+        config.sicherstellen(repo)
+>       assert (repo / ".to-spawn" / "config.json").read_text(encoding="utf-8") == roh
+E       assert '{\n  "ziel_d...eig": ""\n}\n' == '{"ziel_defau...rojekt": ""}}'
+E         
+E         - {"ziel_default": "srv", "terminal": {"win32": "wt", "linux": "tmux", "darwin": "tmux"}, "ssh_ziel": "bau-server", "server_repo": "", "runner": "claude", "modelle": {"ticket": "claude-opus-5", "ticket_leicht": "claude-sonnet-5", "waechter": "claude-fable-5-1", "waechter_ausweich": "claude-opus-5"}, "effort": {"ticket": "medium", "ticket_leicht": "low", "waechter": "low"}, "staffel": {"modus": "eltern", "grenze_k": 200, "max_staffeln": 3}, "mail": {"ziel": "", "nur_kritisch": true, "befehl": []}, "regularien": {"checkpoint_label": "checkpoint:human", "belege_ordner": "d...
+E         
+E         ...Full output truncated (58 lines hidden), use '-vv' to show
+
+tests/test_fremdrepo_257.py:384: AssertionError
+_____________________ test_sicherstellen_ueberschreibt_nie _____________________
+
+repo = PosixPath('/tmp/pytest-of-bau/pytest-1636/test_sicherstellen_ueberschrei0/repo')
+
+    def test_sicherstellen_ueberschreibt_nie(repo: Path) -> None:
+        datei = repo / ".to-spawn" / "config.json"
+        datei.parent.mkdir()
+        datei.write_text('{"deploy_befehl": "make deploy"}', encoding="utf-8")
+        assert config.sicherstellen(repo) == datei
+>       assert datei.read_text(encoding="utf-8") == '{"deploy_befehl": "make deploy"}'
+E       assert '{\n  "deploy... ""\n  }\n}\n' == '{"deploy_bef...make deploy"}'
+E         
+E         + {
+E         - {"deploy_befehl": "make deploy"}
+E         ? ^                              ^
+E         +   "deploy_befehl": "make deploy",
+E         ? ^^                              ^^
+E         +   "ziel_default": "srv",...
+E         
+E         ...Full output truncated (54 lines hidden), use '-vv' to show
+
+/home/bau/wt/skill-257/tests/test_umzug_205.py:111: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_fremdrepo_257.py::test_sicherstellen_vorhandene_datei_bleibt_unangetastet_defaults_beim_lesen
+FAILED tests/test_umzug_205.py::test_sicherstellen_ueberschreibt_nie - assert...
+ERROR tests/test_speicher_257.py
+2 failed, 79 passed, 1 error in 12.43s
