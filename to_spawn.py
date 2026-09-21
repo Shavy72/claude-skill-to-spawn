@@ -29,6 +29,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from to_spawn import (  # noqa: E402
+    aufpasser,
     bau_log,
     config,
     deploy_status,
@@ -369,6 +370,11 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     nest.richte_parser_ein(unter)
+    # Aufpasser (#236): Cron-Hausmeister für die tmux-Fenster; gleiche Argumente wie
+    # ``skripte/aufpasser.py``.
+    aufpasser.parser_fuellen(
+        unter.add_parser("aufpasser", help="tmux-Fenster bau/wache beaufsichtigen (Cron)")
+    )
 
     args = ap.parse_args(argv)
     # Hooks zuerst und ohne Vorarbeit: sie dürfen die Session nie stören (#204).
@@ -383,6 +389,8 @@ def main(argv: list[str] | None = None) -> int:
         return _umrechnen(args)
     if args.befehl == "nest":
         return nest.lauf(args)
+    if args.befehl == "aufpasser":
+        return aufpasser.lauf_mit_args(args)
 
     repo = config.repo_wurzel()
     if args.befehl == "inventur":

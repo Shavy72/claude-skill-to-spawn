@@ -1,0 +1,46 @@
+# Rot-Lauf VOR dem Fix (Auszug, tail -45): 30 failed, 3 passed — Befehl: env -u TO_SPAWN_TICKET -u TO_SPAWN_LOG_REPO -u TO_SPAWN_REPO -u BAU_WT_DIR .venv/bin/python -m pytest tests/test_aufpasser_236_fix.py -q
+E       AttributeError: module 'to_spawn.aufpasser' has no attribute 'HANG_MIN_UNTERGRENZE'
+
+tests/test_aufpasser_236_fix.py:718: AttributeError
+_____________________ test_f15_ohne_hang_min_gilt_vorgabe ______________________
+
+welt = Welt(tmp=PosixPath('/tmp/pytest-of-bau/pytest-1515/test_f15_ohne_hang_min_gilt_vo0'), heim=PosixPath('/tmp/pytest-of-b...rotokoll.txt'), protokoll_bau=PosixPath('/tmp/pytest-of-bau/pytest-1515/test_f15_ohne_hang_min_gilt_vo0/bau_argv.txt'))
+
+    def test_f15_ohne_hang_min_gilt_vorgabe(welt: Welt) -> None:
+>       assert aufpasser.HANG_MIN >= aufpasser.HANG_MIN_UNTERGRENZE
+                                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: module 'to_spawn.aufpasser' has no attribute 'HANG_MIN_UNTERGRENZE'
+
+tests/test_aufpasser_236_fix.py:729: AttributeError
+=========================== short test summary info ============================
+FAILED tests/test_aufpasser_236_fix.py::test_f1_zwei_fenster_gleicher_cwd_richtige_id
+FAILED tests/test_aufpasser_236_fix.py::test_f1_ohne_json_ohne_argv_keine_id_braucht_david
+FAILED tests/test_aufpasser_236_fix.py::test_f1_argv_id_muss_zur_json_passen
+FAILED tests/test_aufpasser_236_fix.py::test_f1_list_windows_liefert_fenster_und_pane_id
+FAILED tests/test_aufpasser_236_fix.py::test_f2_busy_gilt_als_arbeitend - Ass...
+FAILED tests/test_aufpasser_236_fix.py::test_f2_limit_zeile_echt_und_neue_marker
+FAILED tests/test_aufpasser_236_fix.py::test_f3_text_geaendert_nach_eingriff_setzt_stufe_zurueck
+FAILED tests/test_aufpasser_236_fix.py::test_f3_stufe_3_bleibt_ohne_textaenderung
+FAILED tests/test_aufpasser_236_fix.py::test_f4_f5_fortsetzen_respawn_fenster_bleibt_nachweis_gruen
+FAILED tests/test_aufpasser_236_fix.py::test_f4_fortsetzen_auch_als_letztes_fenster_sitzung_lebt
+FAILED tests/test_aufpasser_236_fix.py::test_f5_nachweis_fehlt_meldung_stufe_3
+FAILED tests/test_aufpasser_236_fix.py::test_f4_respawn_und_kill_nur_mit_freigabe
+FAILED tests/test_aufpasser_236_fix.py::test_f5_bau_resume_ohne_transkript_bricht_ab
+FAILED tests/test_aufpasser_236_fix.py::test_f6_text_aendert_sich_kurz_vor_eingriff_kein_eingriff
+FAILED tests/test_aufpasser_236_fix.py::test_f7_worktree_aus_git_liste_trotz_falschem_bau_wt_dir
+FAILED tests/test_aufpasser_236_fix.py::test_f8_sicherung_ohne_env_und_mit_kette
+FAILED tests/test_aufpasser_236_fix.py::test_f9_lauf_sperre_zweiter_lauf_geht_sofort
+FAILED tests/test_aufpasser_236_fix.py::test_f10_labels_verhindern_start - As...
+FAILED tests/test_aufpasser_236_fix.py::test_f10_start_gedaechtnis_zwei_starts_dann_meldung
+FAILED tests/test_aufpasser_236_fix.py::test_f11_ticket_zu_schliesst_erst_nach_karenz
+FAILED tests/test_aufpasser_236_fix.py::test_f11_ticket_zu_busy_bleibt - Asse...
+FAILED tests/test_aufpasser_236_fix.py::test_f12_waise_aelter_6h_wird_ignoriert
+FAILED tests/test_aufpasser_236_fix.py::test_f12_muster_aus_repo_config - Att...
+FAILED tests/test_aufpasser_236_fix.py::test_f12_sh_fehlendes_programm_wird_runtime_error
+FAILED tests/test_aufpasser_236_fix.py::test_f13_alt_zeile_ohne_marke_wird_ersetzt
+FAILED tests/test_aufpasser_236_fix.py::test_f13_trocken_zeigt_nur_und_legt_nichts_an
+FAILED tests/test_aufpasser_236_fix.py::test_f13_trocken_lauf_legt_keinen_zustandsordner_an
+FAILED tests/test_aufpasser_236_fix.py::test_f14_schluessel_erst_nach_erfolgreichem_kommentar
+FAILED tests/test_aufpasser_236_fix.py::test_f15_hang_min_untergrenze - Attri...
+FAILED tests/test_aufpasser_236_fix.py::test_f15_ohne_hang_min_gilt_vorgabe
+30 failed, 3 passed in 37.27s

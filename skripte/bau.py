@@ -27,6 +27,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import uuid
 from datetime import datetime
 from pathlib import Path
 
@@ -34,7 +35,8 @@ from pathlib import Path
 _SKILL = str(Path(__file__).resolve().parent.parent)
 if _SKILL not in sys.path:
     sys.path.insert(0, _SKILL)
-from to_spawn import config, context_mode, nest, umzug  # noqa: E402
+from to_spawn import config, context_mode, nest, sessions_datei, umzug  # noqa: E402
+from to_spawn.waechter_lauf import transkript_ordner
 
 # Windows-Konsole ist cp1252 — Umlaute/Pfeile im Prompt brauchen UTF-8.
 for stream in (sys.stdout, sys.stderr):
@@ -438,6 +440,39 @@ def staffel_prompt(prompt: str, handoff: Path, runde: int) -> str:
     )
 
 
+# --- Gesprächs-ID (#236) ----------------------------------------------------
+
+
+def resume_prompt(ticket: str) -> str:
+    """Kurzer Weiter-Text, wenn der Aufpasser eine Session mit ``--resume`` fortsetzt."""
+    return (
+        f"Aufpasser: Weiter mit Ticket #{ticket} genau dort, wo du warst. "
+        "Ticket offen? weiterbauen; nichts zu tun? ScheduleWakeup."
+    )
+
+
+def session_id_setzen(
+    cmd: list[str], out: Path, sid: str | None = None, ticket: str = "", runde: int = 1
+) -> str:
+    """Gesprächs-ID im Befehl setzen (``--resume`` → ``--session-id``, jede Runde frisch),
+    in ``session-id.txt`` schreiben und als ``BAU_SESSION_ID`` setzen. Ohne ``sid``:
+    nur die vorhandene ID merken (Runde 1). Mit ``ticket`` zusätzlich nach
+    ``<repo>/.to-spawn/sessions/<N>.json`` (Aufpasser #236 R2: Fortsetzen nach Fenster-Tod)."""
+    for flag in ("--session-id", "--resume"):
+        if flag in cmd[:-1]:
+            i = cmd.index(flag)
+            if sid:
+                cmd[i : i + 2] = ["--session-id", sid]
+            sid = sid or cmd[i + 1]
+            break
+    sid = sid or str(uuid.uuid4())
+    os.environ["BAU_SESSION_ID"] = sid
+    (out / "session-id.txt").write_text(sid + "\n", encoding="utf-8")
+    if ticket:
+        sessions_datei.schreiben(REPO, ticket, sid, Path.cwd(), runde)
+    return sid
+
+
 # --- Umzug (#212) -----------------------------------------------------------
 
 
@@ -561,6 +596,11 @@ def main() -> int:
         help="Höchstzahl Staffel-Runden je Ticket (8); 1 = kein Neustart",
     )
     parser.add_argument(
+        "--resume",
+        metavar="SESSION-ID",
+        help="Aufpasser (#236): Session mit dieser Gesprächs-ID fortsetzen, ohne Blocker-Warten",
+    )
+    parser.add_argument(
         "--umzug",
         metavar="BRANCH@SHA:PFAD",
         help="Umzug vom PC (#212): Handoff aus Commit <sha> auf origin/<branch> als Startkontext "
@@ -570,6 +610,13 @@ def main() -> int:
     ticket = str(args.ticket)
     if not args.dry_run:  # Probelauf ohne Seiteneffekte (#205)
         config.sicherstellen(REPO)
+    # Fortsetzen nur mit vorhandenem Transkript (#236, F5): ohne die Datei startete
+    # ``claude --resume`` eine frische Session — genau das darf der Aufpasser nie.
+    if args.resume and not args.dry_run:
+        transkript = transkript_ordner(Path.cwd()) / f"{args.resume}.jsonl"
+        if not transkript.is_file():
+            log.error("--resume %s: Transkript %s fehlt — kein Start.", args.resume, transkript)
+            return 2
 
     default = load_default()
     found = find_manifest(ticket)
@@ -665,6 +712,13 @@ def main() -> int:
         cmd.append("--no-chrome")
     if model:
         cmd += ["--model", model]
+    # Feste Gesprächs-ID (#236): der Aufpasser liest sie aus dem Prozessbaum und setzt
+    # die Session nach einer Sicherung mit ``--resume`` fort.
+    if args.resume:
+        cmd += ["--resume", args.resume]
+        erster_prompt = resume_prompt(ticket)
+    else:
+        cmd += ["--session-id", str(uuid.uuid4())]
     cmd.append(erster_prompt)
 
     off_count = sum(1 for v in overrides.values() if v == "off")
@@ -693,7 +747,7 @@ def main() -> int:
         )
         return 0
 
-    if not args.sofort and not args.umzug:
+    if not args.sofort and not args.umzug and not args.resume:
         auf_blocker_warten(ticket, max(60, args.takt))
     # Sandbox erst jetzt (#210): Worktree entsteht vom frischen origin-Stand (nest holt ihn).
     praefix = nest.sandbox_start(konfig, worktree_pfad(ticket), REPO)
@@ -721,6 +775,7 @@ def main() -> int:
         log.warning("Staffel braucht /proc — auf %s bleibt die Übergabe von Hand.", sys.platform)
     runde = 1
     fingerabdruck = ""
+    session_id_setzen(cmd, out, ticket=ticket, runde=runde)
     while True:
         umgebung = staffel_umgebung(ticket, staffel_datei, runde, fingerabdruck)
         umgebung.update(
@@ -771,6 +826,7 @@ def main() -> int:
             code,
         )
         cmd[-1] = staffel_prompt(prompt, handoff, runde)
+        session_id_setzen(cmd, out, str(uuid.uuid4()), ticket=ticket, runde=runde)
 
 
 if __name__ == "__main__":

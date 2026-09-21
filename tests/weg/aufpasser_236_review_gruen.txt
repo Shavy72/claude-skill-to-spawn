@@ -1,0 +1,8 @@
+.................                                                        [100%]
+17 passed in 52.98s
+
+--- Doppel-Resume-Wache (D1-D3, 2026-09-21) — Grün gegen Arbeitsstand (md5 9f3bbc5bd42947357eae90a5777db373) ---
+$ env -u TO_SPAWN_TICKET -u TO_SPAWN_LOG_REPO -u TO_SPAWN_REPO -u BAU_WT_DIR .venv/bin/python -m pytest tests/test_aufpasser_236_review.py -q -k "d1 or d2 or d3"
+3 passed, 17 deselected in 6.44s
+$ env -u TO_SPAWN_TICKET -u TO_SPAWN_LOG_REPO -u TO_SPAWN_REPO -u BAU_WT_DIR .venv/bin/python -m pytest tests/test_aufpasser_236_review.py -q
+20 passed in 59.10s

@@ -10,6 +10,9 @@ Hintergrund-Faden die neuen Zeilen seines Transkripts
   ``waechter_modell``, Mail ``waechter_ausweich``, Neustart per
   ``claude --resume <session-id> --model <Ausweich>`` mit kurzem Weiter-Prompt.
 * Wächter läuft schon auf dem Ausweich-Modell → nur Mail ``session_tot`` (er steht).
+
+Der Aufpasser (#236) setzt ein stilles Wächter-Fenster über ``fahre(session_id=…)``
+mit ``--resume`` fort; die Gesprächs-ID steht in ``.to-spawn/sessions/wache-<S>.json``.
 """
 
 from __future__ import annotations
@@ -26,7 +29,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from . import bau_log, melder
+from . import bau_log, melder, sessions_datei
 
 log = logging.getLogger("to_spawn.waechter_lauf")
 
@@ -228,13 +231,37 @@ def fahre(
     cwd: Path,
     takt: float = TAKT_S,
     abbruch: Callable[[], bool] | None = None,
+    session_id: str | None = None,
 ) -> int:
     """Wächter starten und beaufsichtigen; Rückgabe = Exit-Code der letzten Session.
 
     ``abbruch`` (optional) wird je Takt gefragt; ``True`` beendet die Session mit Exit 0.
+    ``session_id`` (Aufpasser, #236 R1): vorhandenes Gespräch per ``--resume`` fortsetzen
+    statt frisch zu starten — nur wenn das Transkript noch da ist, sonst Exit 2.
+    Die Gesprächs-ID landet in ``<repo>/.to-spawn/sessions/wache-<S>.json`` (R2).
     """
-    sid = str(uuid.uuid4())
-    cmd = befehl(claude, modell, ausweich, remote_control, spec, prompt, session_id=sid)
+    if session_id:
+        sid = session_id
+        transkript = transkript_ordner(cwd) / f"{sid}.jsonl"
+        if not transkript.is_file():
+            log.error(
+                "Wächter #%s --resume %s: Transkript %s fehlt — kein Start.",
+                spec,
+                sid,
+                transkript,
+            )
+            return 2
+        cmd = [claude, "--resume", sid, "--model", modell]
+        if remote_control:
+            cmd += ["--remote-control", f"Wächter #{spec}"]
+        cmd.append(
+            f"Aufpasser: Weiter als Bau-Wächter Spec #{spec} genau dort, wo du warst — "
+            "nächster Tick wie gehabt."
+        )
+    else:
+        sid = str(uuid.uuid4())
+        cmd = befehl(claude, modell, ausweich, remote_control, spec, prompt, session_id=sid)
+    sessions_datei.schreiben(repo, f"wache-{spec}", sid, cwd, 1)
     while True:
         datei = transkript_ordner(cwd) / f"{sid}.jsonl"
         ab = datei.stat().st_size if datei.is_file() else 0

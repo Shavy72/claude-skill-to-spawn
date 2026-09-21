@@ -1,0 +1,473 @@
+FFF.FFFFFFFFFF.FF                                                        [100%]
+=================================== FAILURES ===================================
+____________________ test_r1_wache_fenster_wird_fortgesetzt ____________________
+
+welt = Welt(tmp=PosixPath('/tmp/pytest-of-bau/pytest-1529/test_r1_wache_fenster_wird_for0'), heim=PosixPath('/tmp/pytest-of-b...rotokoll.txt'), protokoll_bau=PosixPath('/tmp/pytest-of-bau/pytest-1529/test_r1_wache_fenster_wird_for0/bau_argv.txt'))
+
+    def test_r1_wache_fenster_wird_fortgesetzt(welt: Welt) -> None:
+        """Stufe 1 + still: das Wächter-Fenster wird (ohne Sicherung — kein Worktree)
+        per Respawn mit ``--resume <gleiche ID>`` fortgesetzt, Nachweis grün, Stufe 2."""
+        sid = str(uuid.uuid4())
+        _fenster(welt, "bau 9002", "sleep 3600")
+        tmux("kill-window", "-t", fenster_ziel(WACHE))
+        _fenster(welt, WACHE, f"{welt.bin}/claude --session-id {sid} x")
+        wid, pid = _fenster_id(WACHE)
+        alt_pane_pid = welt_pane_pid(WACHE)
+        _still_seit(welt, WACHE, 100, stufe=1, eingriff=time.time() - 100 * 60)
+>       assert welt.lauf("--wache-vorlage", _wache_vorlage(welt)) == 0
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_aufpasser_236_review.py:113: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/test_aufpasser_236.py:210: in lauf
+    return aufpasser.main(
+to_spawn/aufpasser.py:1482: in main
+    args = ap.parse_args(argv)
+           ^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.13/argparse.py:1916: in parse_args
+    self.error(msg)
+/usr/lib/python3.13/argparse.py:2672: in error
+    self.exit(2, _('%(prog)s: error: %(message)s\n') % args)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = ArgumentParser(prog='__main__.py', usage=None, description='Aufpasser für Bau-Sessions im tmux.', formatter_class=<class 'argparse.HelpFormatter'>, conflict_handler='error', add_help=True)
+status = 2
+message = '__main__.py: error: unrecognized arguments: --wache-vorlage /tmp/pytest-of-bau/pytest-1529/test_r1_wache_fenster_wird_for0/bin/wache_claude.sh {s}{resume}\n'
+
+    def exit(self, status=0, message=None):
+        if message:
+            self._print_message(message, _sys.stderr)
+>       _sys.exit(status)
+E       SystemExit: 2
+
+/usr/lib/python3.13/argparse.py:2659: SystemExit
+----------------------------- Captured stderr call -----------------------------
+usage: __main__.py [-h] [--trocken] [--tmux-socket TMUX_SOCKET]
+                   [--zustand ZUSTAND] [--hang-min HANG_MIN]
+                   [--bau-vorlage BAU_VORLAGE] [--deploy-muster DEPLOY_MUSTER]
+                   [--repo REPO] [--cron-einrichten]
+__main__.py: error: unrecognized arguments: --wache-vorlage /tmp/pytest-of-bau/pytest-1529/test_r1_wache_fenster_wird_for0/bin/wache_claude.sh {s}{resume}
+________________ test_r1_wache_resume_ohne_transkript_bricht_ab ________________
+
+tmp_path = PosixPath('/tmp/pytest-of-bau/pytest-1529/test_r1_wache_resume_ohne_tran0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7f8bcd221350>
+
+    def test_r1_wache_resume_ohne_transkript_bricht_ab(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """``wache.py <S> --resume abc --dry-run`` zeigt ``--resume abc`` und keine
+        ``--session-id``; ``waechter_lauf.fahre(session_id=…)`` ohne Transkript endet
+        mit 2 und startet nie eine Session."""
+        arbeit = tmp_path / "repo"
+        arbeit.mkdir()
+        git(arbeit, "init", "-q")
+        heim = tmp_path / "heim"
+        (heim / ".claude").mkdir(parents=True)
+        echte_plugins = Path.home() / ".claude" / "plugins"
+        if echte_plugins.exists():
+            (heim / ".claude" / "plugins").symlink_to(echte_plugins)
+        umgebung = {k: v for k, v in os.environ.items() if k != "TO_SPAWN_REPO"}
+        umgebung["HOME"] = str(heim)
+        ergebnis = subprocess.run(
+            [sys.executable, str(SKRIPTE / "wache.py"), "9001", "--resume", "abc", "--dry-run"],
+            cwd=str(arbeit),
+            env=umgebung,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=60,
+            check=False,
+        )
+>       assert ergebnis.returncode == 0, ergebnis.stdout + ergebnis.stderr
+E       AssertionError: usage: wache.py [-h] [--model MODEL] [--takt TAKT] [--dry-run]
+E                         [--print-prompt]
+E                         spec
+E         wache.py: error: unrecognized arguments: --resume abc
+E         
+E       assert 2 == 0
+E        +  where 2 = CompletedProcess(args=['/home/bau/duoplus-management/.venv/bin/python', '/home/bau/wt/skill-236/skripte/wache.py', '90...run]\n                [--print-prompt]\n                spec\nwache.py: error: unrecognized arguments: --resume abc\n').returncode
+
+tests/test_aufpasser_236_review.py:150: AssertionError
+_______ test_r2_fehlendes_fenster_startet_mit_resume_wenn_id_datei_liegt _______
+
+welt = Welt(tmp=PosixPath('/tmp/pytest-of-bau/pytest-1529/test_r2_fehlendes_fenster_star0'), heim=PosixPath('/tmp/pytest-of-b...rotokoll.txt'), protokoll_bau=PosixPath('/tmp/pytest-of-bau/pytest-1529/test_r2_fehlendes_fenster_star0/bau_argv.txt'))
+
+    def test_r2_fehlendes_fenster_startet_mit_resume_wenn_id_datei_liegt(
+        welt: Welt,
+    ) -> None:
+        sid = str(uuid.uuid4())
+        sessions_datei.schreiben(welt.repo, "9002", sid, welt.repo, 1)
+        _transkript_anlegen(welt, welt.repo, sid)
+        assert welt.lauf() == 0
+        assert "bau 9002" in fenster_namen()
+>       assert _argv_protokoll(welt) == [f"9002 --resume {sid}"]
+E       AssertionError: assert ['9002'] == ['9002 --resu...1c21817b875a']
+E         
+E         At index 0 diff: '9002' != '9002 --resume bb800af8-dd26-4d39-8eb9-1c21817b875a'
+E         Use -v to get more diff
+
+tests/test_aufpasser_236_review.py:185: AssertionError
+------------------------------ Captured log call -------------------------------
+INFO     aufpasser:aufpasser.py:1285 spec-9001: 1 Fenster (wache 9001), offene Tickets [9002]
+INFO     aufpasser:aufpasser.py:860 spec-9001: Fenster „bau 9002“ starten: /tmp/pytest-of-bau/pytest-1529/test_r2_fehlendes_fenster_star0/bin/bau_protokoll.sh 9002
+INFO     aufpasser:aufpasser.py:821 spec 9001: #9002 hatte keine Session, gestartet.
+________________ test_r2_fehlendes_wache_fenster_wird_gestartet ________________
+
+welt = Welt(tmp=PosixPath('/tmp/pytest-of-bau/pytest-1529/test_r2_fehlendes_wache_fenste0'), heim=PosixPath('/tmp/pytest-of-b...rotokoll.txt'), protokoll_bau=PosixPath('/tmp/pytest-of-bau/pytest-1529/test_r2_fehlendes_wache_fenste0/bau_argv.txt'))
+
+    def test_r2_fehlendes_wache_fenster_wird_gestartet(welt: Welt) -> None:
+        _fenster(welt, "bau 9002", "sleep 3600")
+        tmux("kill-window", "-t", fenster_ziel(WACHE))
+        assert WACHE not in fenster_namen()
+>       assert welt.lauf("--wache-vorlage", _wache_protokoll_vorlage(welt)) == 0
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_aufpasser_236_review.py:202: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/test_aufpasser_236.py:210: in lauf
+    return aufpasser.main(
+to_spawn/aufpasser.py:1482: in main
+    args = ap.parse_args(argv)
+           ^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.13/argparse.py:1916: in parse_args
+    self.error(msg)
+/usr/lib/python3.13/argparse.py:2672: in error
+    self.exit(2, _('%(prog)s: error: %(message)s\n') % args)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = ArgumentParser(prog='__main__.py', usage=None, description='Aufpasser für Bau-Sessions im tmux.', formatter_class=<class 'argparse.HelpFormatter'>, conflict_handler='error', add_help=True)
+status = 2
+message = '__main__.py: error: unrecognized arguments: --wache-vorlage /tmp/pytest-of-bau/pytest-1529/test_r2_fehlendes_wache_fenste0/bin/bau_protokoll.sh {s}{resume}\n'
+
+    def exit(self, status=0, message=None):
+        if message:
+            self._print_message(message, _sys.stderr)
+>       _sys.exit(status)
+E       SystemExit: 2
+
+/usr/lib/python3.13/argparse.py:2659: SystemExit
+----------------------------- Captured stderr call -----------------------------
+usage: __main__.py [-h] [--trocken] [--tmux-socket TMUX_SOCKET]
+                   [--zustand ZUSTAND] [--hang-min HANG_MIN]
+                   [--bau-vorlage BAU_VORLAGE] [--deploy-muster DEPLOY_MUSTER]
+                   [--repo REPO] [--cron-einrichten]
+__main__.py: error: unrecognized arguments: --wache-vorlage /tmp/pytest-of-bau/pytest-1529/test_r2_fehlendes_wache_fenste0/bin/bau_protokoll.sh {s}{resume}
+__________________ test_r2_fehlendes_wache_fenster_mit_resume __________________
+
+welt = Welt(tmp=PosixPath('/tmp/pytest-of-bau/pytest-1529/test_r2_fehlendes_wache_fenste1'), heim=PosixPath('/tmp/pytest-of-b...rotokoll.txt'), protokoll_bau=PosixPath('/tmp/pytest-of-bau/pytest-1529/test_r2_fehlendes_wache_fenste1/bau_argv.txt'))
+
+    def test_r2_fehlendes_wache_fenster_mit_resume(welt: Welt) -> None:
+        sid = str(uuid.uuid4())
+        sessions_datei.schreiben(welt.repo, f"wache-{SPEC}", sid, welt.repo, 1)
+        _transkript_anlegen(welt, welt.repo, sid)
+        _fenster(welt, "bau 9002", "sleep 3600")
+        tmux("kill-window", "-t", fenster_ziel(WACHE))
+>       assert welt.lauf("--wache-vorlage", _wache_protokoll_vorlage(welt)) == 0
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_aufpasser_236_review.py:214: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/test_aufpasser_236.py:210: in lauf
+    return aufpasser.main(
+to_spawn/aufpasser.py:1482: in main
+    args = ap.parse_args(argv)
+           ^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.13/argparse.py:1916: in parse_args
+    self.error(msg)
+/usr/lib/python3.13/argparse.py:2672: in error
+    self.exit(2, _('%(prog)s: error: %(message)s\n') % args)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = ArgumentParser(prog='__main__.py', usage=None, description='Aufpasser für Bau-Sessions im tmux.', formatter_class=<class 'argparse.HelpFormatter'>, conflict_handler='error', add_help=True)
+status = 2
+message = '__main__.py: error: unrecognized arguments: --wache-vorlage /tmp/pytest-of-bau/pytest-1529/test_r2_fehlendes_wache_fenste1/bin/bau_protokoll.sh {s}{resume}\n'
+
+    def exit(self, status=0, message=None):
+        if message:
+            self._print_message(message, _sys.stderr)
+>       _sys.exit(status)
+E       SystemExit: 2
+
+/usr/lib/python3.13/argparse.py:2659: SystemExit
+----------------------------- Captured stderr call -----------------------------
+usage: __main__.py [-h] [--trocken] [--tmux-socket TMUX_SOCKET]
+                   [--zustand ZUSTAND] [--hang-min HANG_MIN]
+                   [--bau-vorlage BAU_VORLAGE] [--deploy-muster DEPLOY_MUSTER]
+                   [--repo REPO] [--cron-einrichten]
+__main__.py: error: unrecognized arguments: --wache-vorlage /tmp/pytest-of-bau/pytest-1529/test_r2_fehlendes_wache_fenste1/bin/bau_protokoll.sh {s}{resume}
+___________ test_r2_pane_nur_shell_kein_send_keys_sondern_fortsetzen ___________
+
+welt = Welt(tmp=PosixPath('/tmp/pytest-of-bau/pytest-1529/test_r2_pane_nur_shell_kein_se0'), heim=PosixPath('/tmp/pytest-of-b...rotokoll.txt'), protokoll_bau=PosixPath('/tmp/pytest-of-bau/pytest-1529/test_r2_pane_nur_shell_kein_se0/bau_argv.txt'))
+
+    def test_r2_pane_nur_shell_kein_send_keys_sondern_fortsetzen(welt: Welt) -> None:
+        """Nur noch eine Shell im Pane (Session beendet), Ticket offen, ≥ hang_min
+        still: kein Anstupsen (Text liefe als Befehl), sondern sichern + Fortsetzen
+        mit der ID aus ``.to-spawn/sessions/<N>.json``."""
+        welt.worktree(9002, schmutzig=True)
+        sid = str(uuid.uuid4())
+        sessions_datei.schreiben(welt.repo, "9002", sid, welt.repo, 1)
+        _transkript_anlegen(welt, welt.repo, sid)
+        _fenster(welt, "bau 9002", "bash --norc --noprofile")
+        time.sleep(0.5)
+        wid, pid = _fenster_id("bau 9002")
+        _still_seit(welt, "bau 9002", 100, stufe=0)
+        assert welt.lauf("--bau-vorlage", _bau_claude_vorlage(welt)) == 0
+        assert _fenster_id("bau 9002") == (wid, pid)
+>       assert _argv_protokoll(welt) == [f"9002 --resume {sid}"]
+E       AssertionError: assert [] == ['9002 --resu...5a8b7c479380']
+E         
+E         Right contains one more item: '9002 --resume aa5df671-9965-4ca1-b430-5a8b7c479380'
+E         Use -v to get more diff
+
+tests/test_aufpasser_236_review.py:234: AssertionError
+------------------------------ Captured log call -------------------------------
+INFO     aufpasser:aufpasser.py:1285 spec-9001: 2 Fenster (bau 9002, wache 9001), offene Tickets [9002]
+INFO     aufpasser:aufpasser.py:821 spec 9001: „bau 9002“ stand 100 min still, angestupst.
+______________ test_r2_pane_nur_shell_ohne_id_datei_braucht_david ______________
+
+welt = Welt(tmp=PosixPath('/tmp/pytest-of-bau/pytest-1529/test_r2_pane_nur_shell_ohne_id0'), heim=PosixPath('/tmp/pytest-of-b...rotokoll.txt'), protokoll_bau=PosixPath('/tmp/pytest-of-bau/pytest-1529/test_r2_pane_nur_shell_ohne_id0/bau_argv.txt'))
+
+    def test_r2_pane_nur_shell_ohne_id_datei_braucht_david(welt: Welt) -> None:
+        _fenster(welt, "bau 9002", "bash --norc --noprofile")
+        time.sleep(0.5)
+        text_vorher = pane_text("bau 9002")
+        _still_seit(welt, "bau 9002", 100, stufe=0)
+        assert welt.lauf() == 0
+>       assert pane_text("bau 9002") == text_vorher, "nichts getippt"
+E       AssertionError: nichts getippt
+E       assert 'bash-5.2$ Au...n\n\n\n\n\n\n' == 'bash-5.2$\n\...n\n\n\n\n\n\n'
+E         
+E         + bash-5.2$ Aufpasser: Du stehst seit 100 min still. Setz deinen Loop/Auftrag gena
+E         + u dort fort, wo du warst (Ticket offen? weiterbauen; nichts zu tun? ScheduleWake
+E         + up).
+E         + bash: syntax error near unexpected token `('
+E           bash-5.2$
+E           ...
+E         
+E         ...Full output truncated (22 lines hidden), use '-vv' to show
+
+tests/test_aufpasser_236_review.py:247: AssertionError
+------------------------------ Captured log call -------------------------------
+INFO     aufpasser:aufpasser.py:1285 spec-9001: 2 Fenster (bau 9002, wache 9001), offene Tickets [9002]
+INFO     aufpasser:aufpasser.py:821 spec 9001: „bau 9002“ stand 100 min still, angestupst.
+_____________________ test_r2_bau_schreibt_sessions_datei ______________________
+
+repo_bau = PosixPath('/tmp/pytest-of-bau/pytest-1529/test_r2_bau_schreibt_sessions_0/repo')
+tmp_path = PosixPath('/tmp/pytest-of-bau/pytest-1529/test_r2_bau_schreibt_sessions_0')
+
+    def test_r2_bau_schreibt_sessions_datei(repo_bau: Path, tmp_path: Path) -> None:
+        binaer = tmp_path / "bin"
+        binaer.mkdir()
+        (binaer / "claude").write_text(FAKE_CLAUDE_ARGV, encoding="utf-8")
+        (binaer / "claude").chmod(0o755)
+        beweis = tmp_path / "argv.json"
+        temp = tmp_path / "tmp"
+        temp.mkdir()
+        env = {
+            "PATH": f"{binaer}{os.pathsep}{os.environ['PATH']}",
+            "FAKE_ARGV": str(beweis),
+            "TMPDIR": str(temp),
+        }
+        ergebnis = _bau(repo_bau, "--sofort", env=env)
+        assert ergebnis.returncode == 0, ergebnis.stdout + ergebnis.stderr
+        argv = json.loads(beweis.read_text(encoding="utf-8"))
+        sid = argv[argv.index("--session-id") + 1]
+        datei = repo_bau / ".to-spawn" / "sessions" / "901.json"
+>       assert datei.is_file(), "bau.py muss .to-spawn/sessions/<N>.json schreiben"
+E       AssertionError: bau.py muss .to-spawn/sessions/<N>.json schreiben
+E       assert False
+E        +  where False = is_file()
+E        +    where is_file = PosixPath('/tmp/pytest-of-bau/pytest-1529/test_r2_bau_schreibt_sessions_0/repo/.to-spawn/sessions/901.json').is_file
+
+/home/bau/wt/skill-236/tests/test_aufpasser_236_review.py:272: AssertionError
+____________________ test_r2_wache_schreibt_sessions_datei _____________________
+
+tmp_path = PosixPath('/tmp/pytest-of-bau/pytest-1529/test_r2_wache_schreibt_session0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7f8bcd2dc9f0>
+
+    def test_r2_wache_schreibt_sessions_datei(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """``waechter_lauf.fahre`` legt ``.to-spawn/sessions/wache-<S>.json`` an."""
+        arbeit = tmp_path / "repo"
+        arbeit.mkdir()
+        heim = tmp_path / "heim"
+        heim.mkdir()
+        monkeypatch.setenv("HOME", str(heim))
+        attrappe = tmp_path / "claude_kurz.sh"
+        attrappe.write_text("#!/bin/bash\nexit 0\n", encoding="utf-8")
+        attrappe.chmod(0o755)
+        code = waechter_lauf.fahre(
+            claude=str(attrappe),
+            spec=9001,
+            prompt="x",
+            modell="m",
+            ausweich="",
+            remote_control=False,
+            repo=arbeit,
+            cwd=arbeit,
+            takt=0.2,
+        )
+        assert code == 0
+        daten = sessions_datei.lesen(arbeit, "wache-9001")
+>       assert daten and uuid.UUID(daten["session_id"])
+E       assert (None)
+
+tests/test_aufpasser_236_review.py:302: AssertionError
+______________ test_r3_zwei_starts_am_selben_tag_zwei_kommentare _______________
+
+welt = Welt(tmp=PosixPath('/tmp/pytest-of-bau/pytest-1529/test_r3_zwei_starts_am_selben_0'), heim=PosixPath('/tmp/pytest-of-b...rotokoll.txt'), protokoll_bau=PosixPath('/tmp/pytest-of-bau/pytest-1529/test_r3_zwei_starts_am_selben_0/bau_argv.txt'))
+
+    def test_r3_zwei_starts_am_selben_tag_zwei_kommentare(welt: Welt) -> None:
+        assert welt.lauf() == 0
+        assert "bau 9002" in fenster_namen()
+        tmux("kill-window", "-t", fenster_ziel("bau 9002"))
+        time.sleep(0.5)
+        assert welt.lauf() == 0
+        treffer = [k for k in welt.kommentare() if "#9002 hatte keine Session, gestartet." in k]
+>       assert len(treffer) == 2, welt.kommentare()
+E       AssertionError: ['issue comment 9001 --body Aufpasser: #9002 hatte keine Session, gestartet.']
+E       assert 1 == 2
+E        +  where 1 = len(['issue comment 9001 --body Aufpasser: #9002 hatte keine Session, gestartet.'])
+
+tests/test_aufpasser_236_review.py:316: AssertionError
+------------------------------ Captured log call -------------------------------
+INFO     aufpasser:aufpasser.py:1285 spec-9001: 1 Fenster (wache 9001), offene Tickets [9002]
+INFO     aufpasser:aufpasser.py:860 spec-9001: Fenster „bau 9002“ starten: /tmp/pytest-of-bau/pytest-1529/test_r3_zwei_starts_am_selben_0/bin/bau_protokoll.sh 9002
+INFO     aufpasser:aufpasser.py:821 spec 9001: #9002 hatte keine Session, gestartet.
+INFO     aufpasser:aufpasser.py:1285 spec-9001: 1 Fenster (wache 9001), offene Tickets [9002]
+INFO     aufpasser:aufpasser.py:860 spec-9001: Fenster „bau 9002“ starten: /tmp/pytest-of-bau/pytest-1529/test_r3_zwei_starts_am_selben_0/bin/bau_protokoll.sh 9002
+INFO     aufpasser:aufpasser.py:821 spec 9001: #9002 hatte keine Session, gestartet.
+INFO     aufpasser:aufpasser.py:824 spec 9001: Meldung heute schon abgesetzt (gestartet)
+__________ test_r4_deploy_startet_waehrend_verzoegerung_kein_eingriff __________
+
+welt = Welt(tmp=PosixPath('/tmp/pytest-of-bau/pytest-1529/test_r4_deploy_startet_waehren0'), heim=PosixPath('/tmp/pytest-of-b...rotokoll.txt'), protokoll_bau=PosixPath('/tmp/pytest-of-bau/pytest-1529/test_r4_deploy_startet_waehren0/bau_argv.txt'))
+
+    def test_r4_deploy_startet_waehrend_verzoegerung_kein_eingriff(welt: Welt) -> None:
+        name = f"aufpasser-deploy-probe-{os.getpid()}.sh"
+        skript = welt.bin / name
+        skript.write_text("#!/bin/bash\nsleep 3600\n", encoding="utf-8")
+        skript.chmod(0o755)
+        _fenster(welt, "bau 9002", "cat")
+        _still_seit(welt, "bau 9002", 100, stufe=0)
+        gestartet: list[subprocess.Popen[bytes]] = []
+        zuender = threading.Timer(1.5, lambda: gestartet.append(subprocess.Popen([str(skript)])))
+        zuender.start()
+        try:
+            e = _einstellungen(welt, verzoegerung_s=4.0, deploy_muster=name.replace(".", r"\."))
+            assert aufpasser.lauf_mit_einstellungen(e) == 0
+        finally:
+            zuender.cancel()
+            for p in gestartet:
+                p.kill()
+                p.wait()
+>       assert "Aufpasser" not in pane_text("bau 9002")
+E       AssertionError: assert 'Aufpasser' not in 'Aufpasser: ...\n\n\n\n\n\n'
+E         
+E         'Aufpasser' is contained here:
+E           Aufpasser: Du stehst seit 100 min still. Setz deinen Loop/Auftrag genau dort for
+E         ? +++++++++
+E           t, wo du warst (Ticket offen? weiterbauen; nichts zu tun? ScheduleWakeup).
+E           Aufpasser: Du stehst seit 100 min still. Setz deinen Loop/Auftrag genau dort for
+E           t, wo du warst (Ticket offen? weiterbauen; nichts zu tun? ScheduleWakeup)....
+E         
+E         ...Full output truncated (20 lines hidden), use '-vv' to show
+
+tests/test_aufpasser_236_review.py:340: AssertionError
+------------------------------ Captured log call -------------------------------
+INFO     aufpasser:aufpasser.py:1285 spec-9001: 2 Fenster (bau 9002, wache 9001), offene Tickets [9002]
+INFO     aufpasser:aufpasser.py:821 spec 9001: „bau 9002“ stand 100 min still, angestupst.
+_______________________ test_r5_anstupsen_zaehlt_stupser _______________________
+
+welt = Welt(tmp=PosixPath('/tmp/pytest-of-bau/pytest-1529/test_r5_anstupsen_zaehlt_stups0'), heim=PosixPath('/tmp/pytest-of-b...rotokoll.txt'), protokoll_bau=PosixPath('/tmp/pytest-of-bau/pytest-1529/test_r5_anstupsen_zaehlt_stups0/bau_argv.txt'))
+
+    def test_r5_anstupsen_zaehlt_stupser(welt: Welt) -> None:
+        _fenster(welt, "bau 9002", "cat")
+        _still_seit(welt, "bau 9002", 100, stufe=0)
+        assert welt.lauf() == 0
+        assert "Aufpasser" in pane_text("bau 9002")
+>       assert len(welt.eintrag("bau 9002")["stupser"]) == 1
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       KeyError: 'stupser'
+
+tests/test_aufpasser_236_review.py:354: KeyError
+------------------------------ Captured log call -------------------------------
+INFO     aufpasser:aufpasser.py:1285 spec-9001: 2 Fenster (bau 9002, wache 9001), offene Tickets [9002]
+INFO     aufpasser:aufpasser.py:821 spec 9001: „bau 9002“ stand 100 min still, angestupst.
+________________ test_r5_drei_stupser_in_24h_dann_braucht_david ________________
+
+welt = Welt(tmp=PosixPath('/tmp/pytest-of-bau/pytest-1529/test_r5_drei_stupser_in_24h_da0'), heim=PosixPath('/tmp/pytest-of-b...rotokoll.txt'), protokoll_bau=PosixPath('/tmp/pytest-of-bau/pytest-1529/test_r5_drei_stupser_in_24h_da0/bau_argv.txt'))
+
+    def test_r5_drei_stupser_in_24h_dann_braucht_david(welt: Welt) -> None:
+        _fenster(welt, "bau 9002", "cat")
+        jetzt = time.time()
+        _still_seit(
+            welt,
+            "bau 9002",
+            100,
+            stufe=0,
+            stupser=[jetzt - 20 * 3600, jetzt - 8 * 3600, jetzt - 3 * 3600],
+        )
+        text_vorher = pane_text("bau 9002")
+        assert welt.lauf() == 0
+>       assert pane_text("bau 9002") == text_vorher, "kein vierter Anstupser"
+E       AssertionError: kein vierter Anstupser
+E       assert 'Aufpasser: D...n\n\n\n\n\n\n' == '\n\n\n\n\n\n...n\n\n\n\n\n\n'
+E         
+E         Strings contain only whitespace, escaping them using repr()
+E         - '\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n'
+E         + 'Aufpasser: Du stehst seit 100 min still. Setz deinen Loop/Auftrag genau dort for\nt, wo du warst (Ticket offen? weiterbauen; nichts zu tun? ScheduleWakeup).\nAufpasser: Du stehst seit 100 min still. Setz deinen Loop/Auftrag genau dort for\nt, wo du warst (Ticket offen? weiterbauen; nichts zu tun? ScheduleWakeup).\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n'
+
+tests/test_aufpasser_236_review.py:369: AssertionError
+------------------------------ Captured log call -------------------------------
+INFO     aufpasser:aufpasser.py:1285 spec-9001: 2 Fenster (bau 9002, wache 9001), offene Tickets [9002]
+INFO     aufpasser:aufpasser.py:821 spec 9001: „bau 9002“ stand 100 min still, angestupst.
+___________ test_r6_start_attrappe_endet_sofort_start_fehlgeschlagen ___________
+
+welt = Welt(tmp=PosixPath('/tmp/pytest-of-bau/pytest-1529/test_r6_start_attrappe_endet_s0'), heim=PosixPath('/tmp/pytest-of-b...rotokoll.txt'), protokoll_bau=PosixPath('/tmp/pytest-of-bau/pytest-1529/test_r6_start_attrappe_endet_s0/bau_argv.txt'))
+
+    def test_r6_start_attrappe_endet_sofort_start_fehlgeschlagen(welt: Welt) -> None:
+        vorlage = _bau_claude_vorlage(welt, BAU_SOFORT_WEG)
+        assert welt.lauf("--bau-vorlage", vorlage) == 0
+        assert _argv_protokoll(welt) == ["9002"]
+        kommentare = welt.kommentare()
+>       assert not any("gestartet." in k for k in kommentare), kommentare
+E       AssertionError: ['issue comment 9001 --body Aufpasser: #9002 hatte keine Session, gestartet.']
+E       assert not True
+E        +  where True = any(<generator object test_r6_start_attrappe_endet_sofort_start_fehlgeschlagen.<locals>.<genexpr> at 0x7f8bcca70ad0>)
+
+tests/test_aufpasser_236_review.py:400: AssertionError
+------------------------------ Captured log call -------------------------------
+INFO     aufpasser:aufpasser.py:1285 spec-9001: 1 Fenster (wache 9001), offene Tickets [9002]
+INFO     aufpasser:aufpasser.py:860 spec-9001: Fenster „bau 9002“ starten: /tmp/pytest-of-bau/pytest-1529/test_r6_start_attrappe_endet_s0/bin/bau_claude.sh 9002
+INFO     aufpasser:aufpasser.py:821 spec 9001: #9002 hatte keine Session, gestartet.
+_________________ test_r7_helfer_braucht_david_und_doku_120_s __________________
+
+    def test_r7_helfer_braucht_david_und_doku_120_s() -> None:
+>       assert callable(getattr(aufpasser.Aufpasser, "_braucht_david", None))
+E       AssertionError: assert False
+E        +  where False = callable(None)
+E        +    where None = getattr(<class 'to_spawn.aufpasser.Aufpasser'>, '_braucht_david', None)
+E        +      where <class 'to_spawn.aufpasser.Aufpasser'> = aufpasser.Aufpasser
+
+tests/test_aufpasser_236_review.py:409: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_aufpasser_236_review.py::test_r1_wache_fenster_wird_fortgesetzt
+FAILED tests/test_aufpasser_236_review.py::test_r1_wache_resume_ohne_transkript_bricht_ab
+FAILED tests/test_aufpasser_236_review.py::test_r2_fehlendes_fenster_startet_mit_resume_wenn_id_datei_liegt
+FAILED tests/test_aufpasser_236_review.py::test_r2_fehlendes_wache_fenster_wird_gestartet
+FAILED tests/test_aufpasser_236_review.py::test_r2_fehlendes_wache_fenster_mit_resume
+FAILED tests/test_aufpasser_236_review.py::test_r2_pane_nur_shell_kein_send_keys_sondern_fortsetzen
+FAILED tests/test_aufpasser_236_review.py::test_r2_pane_nur_shell_ohne_id_datei_braucht_david
+FAILED tests/test_aufpasser_236_review.py::test_r2_bau_schreibt_sessions_datei
+FAILED tests/test_aufpasser_236_review.py::test_r2_wache_schreibt_sessions_datei
+FAILED tests/test_aufpasser_236_review.py::test_r3_zwei_starts_am_selben_tag_zwei_kommentare
+FAILED tests/test_aufpasser_236_review.py::test_r4_deploy_startet_waehrend_verzoegerung_kein_eingriff
+FAILED tests/test_aufpasser_236_review.py::test_r5_anstupsen_zaehlt_stupser
+FAILED tests/test_aufpasser_236_review.py::test_r5_drei_stupser_in_24h_dann_braucht_david
+FAILED tests/test_aufpasser_236_review.py::test_r6_start_attrappe_endet_sofort_start_fehlgeschlagen
+FAILED tests/test_aufpasser_236_review.py::test_r7_helfer_braucht_david_und_doku_120_s
+15 failed, 2 passed in 29.86s
+
+--- Doppel-Resume-Wache (D1-D3, 2026-09-21) — Rot gegen HEAD (git show HEAD:to_spawn/aufpasser.py) ---
+$ env -u TO_SPAWN_TICKET -u TO_SPAWN_LOG_REPO -u TO_SPAWN_REPO -u BAU_WT_DIR .venv/bin/python -m pytest tests/test_aufpasser_236_review.py -q -k "d1 or d2 or d3"
+test_d1_fehlendes_fenster_kein_start_wenn_gespraech_woanders_lebt FAILED — AssertionError: 'bau 9002' in fenster_namen() (HEAD kennt session_laeuft_schon nicht, startet trotzdem)
+test_d2_shell_pane_kein_fortsetzen_wenn_gespraech_woanders_lebt FAILED — assert 1 == 3 (HEAD stupst an statt braucht-David, kein Guard)
+test_d3_pane_mit_wartendem_python_ist_keine_beendete_session FAILED — AttributeError: module 'to_spawn.aufpasser' has no attribute 'session_beendet'
+3 failed, 17 deselected in 6.57s

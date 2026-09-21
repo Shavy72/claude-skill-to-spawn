@@ -1,0 +1,25 @@
+.........................................F.............................. [ 14%]
+........................................................................ [ 29%]
+........................................................................ [ 44%]
+........................................................................ [ 59%]
+........................................................................ [ 73%]
+........................................................................ [ 88%]
+..........s............s.............................ss                  [100%]
+=================================== FAILURES ===================================
+_____________________ test_prompt_repo_kopie_ist_identisch _____________________
+
+    @pytest.mark.skipif(not REPO_DEFAULT.is_file(), reason="Repo-Kopie des Loop-Prompts fehlt")
+    def test_prompt_repo_kopie_ist_identisch() -> None:
+>       assert _prompt(REPO_DEFAULT) == _prompt(SKILL / "repo-scripts" / "_default.json")
+E       AssertionError: assert 'Terminal · T...· Schritt x/y' == 'Terminal · T...· Schritt x/y'
+E         
+E         Skipping 1707 identical leading characters in diff, use -v to show
+E         -  Exit 0), Gate im Hintergrund starten (Bash mit run_in_background: bash scripts/safe_deploy_vps.sh --skip-ci), kein blockierender Aufruf; danach alle 5 min (ScheduleWakeup 300 s) nur python3 ~/.claude/skills/to-spawn/to_spawn.py deploy-status --datei {WT}/.deploy_status.jsonl --ticket {N} abfragen (Windows: python; liest nur .deploy_status.jsonl und schreibt jede neue Phase als deploy_phase ins Bau-Log, keine Log-Volltexte lesen): Exit 3 = läuft, 4 = hängt (über 60 min keine neue Phase) → Prozess prüfen...
+E         
+E         ...Full output truncated (7 lines hidden), use '-vv' to show
+
+tests/test_bau_log_204.py:431: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_bau_log_204.py::test_prompt_repo_kopie_ist_identisch - Asse...
+1 failed, 482 passed, 4 skipped in 106.85s (0:01:46)
+exit=1

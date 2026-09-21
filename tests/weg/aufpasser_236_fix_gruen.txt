@@ -1,0 +1,3 @@
+# Grün-Lauf NACH dem Fix: tests/test_aufpasser_236_fix.py + tests/test_aufpasser_236.py, gleicher Befehl
+........................................................                 [100%]
+56 passed in 82.16s (0:01:22)

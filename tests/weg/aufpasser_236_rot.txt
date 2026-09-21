@@ -1,0 +1,18 @@
+
+==================================== ERRORS ====================================
+_________________ ERROR collecting tests/test_aufpasser_236.py _________________
+ImportError while importing test module '/home/bau/wt/skill-236/tests/test_aufpasser_236.py'.
+Hint: make sure your test modules/packages have valid Python names.
+Traceback:
+/usr/lib/python3.13/importlib/__init__.py:88: in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/test_aufpasser_236.py:34: in <module>
+    from to_spawn import aufpasser  # noqa: E402
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   ImportError: cannot import name 'aufpasser' from 'to_spawn' (/home/bau/wt/skill-236/to_spawn/__init__.py)
+=========================== short test summary info ============================
+ERROR tests/test_aufpasser_236.py
+!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 1 failures !!!!!!!!!!!!!!!!!!!!!!!!!!!
+!!!!!!!!!!!!!!!!!!!! Interrupted: 1 error during collection !!!!!!!!!!!!!!!!!!!!
+1 error in 0.16s

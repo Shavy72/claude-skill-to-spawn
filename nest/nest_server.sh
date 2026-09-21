@@ -305,6 +305,12 @@ if ! asnutzer 'command -v uv >/dev/null'; then
   asnutzer 'curl -LsSf https://astral.sh/uv/install.sh | sh' >/dev/null
 fi
 ok "uv $(asnutzer 'uv --version' 2>/dev/null | awk '{print $2}')"
+# Aufpasser (#236): Cron-Hausmeister für die tmux-Fenster, alle 15 min, idempotent.
+if asnutzer "python3 $(q "$SKILL_NUTZER/skripte/aufpasser.py") --cron-einrichten" >/dev/null 2>&1; then
+  ok "Aufpasser-Cron (alle 15 min)"
+else
+  warn "Aufpasser-Cron nicht eingerichtet (crontab fehlt oder Skill nicht lesbar)"
+fi
 
 # ---------------------------------------------------------------- 9. ~/.claude.json: Erststart + Vertrauen
 nest_py onboarding --claude-json "$NUTZER_HOME/.claude.json" --trust "$ZIEL" --trust "$WT_DIR"

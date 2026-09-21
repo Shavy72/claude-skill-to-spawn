@@ -1,0 +1,12 @@
+# Rot-Lauf VOR den Nachfixen (to_spawn/aufpasser.py + tests/hilfen/fake_claude_schlaeft.sh
+# temporär auf `git show HEAD:...` zurückgesetzt, danach exakt auf den Fix-Stand
+# zurückkopiert — kein git stash, Befund per md5sum verglichen): 3 failed
+FAILED tests/test_aufpasser_236_nachfix.py::test_n1_pgrep_nicht_nutzbar_lauf_bricht_fail_closed_ab — AssertionError: assert 0 == 1 (Alt-Code kannte kein fail-closed, lauf() gab 0 zurück)
+FAILED tests/test_aufpasser_236_nachfix.py::test_n2_fortsetzen_fehlschlag_stufe_3_kein_zweiter_versuch — AttributeError: Aufpasser hat kein _fenster_fortsetzen
+FAILED tests/test_aufpasser_236_nachfix.py::test_n3_nachweis_ueberlebt_verzoegerte_session_json — AttributeError: aufpasser hat kein NACHWEIS_S
+3 failed in 2.23s
+
+# Grün-Lauf NACH Rückkopie auf den Fix-Stand — Befehl:
+# cd /home/bau/wt/skill-236 && env -u TO_SPAWN_TICKET -u TO_SPAWN_LOG_REPO -u TO_SPAWN_REPO -u BAU_WT_DIR /home/bau/duoplus-management/.venv/bin/python -m pytest tests/test_aufpasser_236_nachfix.py -q
+...                                                                      [100%]
+3 passed in 28.84s

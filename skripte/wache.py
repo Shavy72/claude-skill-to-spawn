@@ -1,6 +1,6 @@
 """Bau-Wächter-Session für eine Spec starten (frische Claude-Session, Fable 5.1).
 
-Aufruf: ``python scripts/wache.py <S> [--model <m>] [--takt <s>] [--dry-run] [--print-prompt]``
+Aufruf: ``python scripts/wache.py <S> [--model <m>] [--takt <s>] [--dry-run] [--print-prompt] [--resume <id>]``
 
 Der Wächter baut nichts und spricht keine Bau-Session an. Er liest je Tick nur
 ``scripts/capo.py <S>`` (Stand je Ticket, neue Bau-Log-Zeilen, Verstöße — capo öffnet
@@ -72,6 +72,10 @@ def main() -> int:
     ap.add_argument("--takt", type=int, default=1800, help="Sekunden zwischen zwei Ticks (1800)")
     ap.add_argument("--dry-run", action="store_true", help="nur Befehl zeigen")
     ap.add_argument("--print-prompt", action="store_true", help="nur den Prompt ausgeben")
+    ap.add_argument(
+        "--resume", default=None, metavar="SESSION_ID",
+        help="vorhandenes Wächter-Gespräch fortsetzen statt frisch zu starten (Aufpasser #236)",
+    )
     a = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     if not a.dry_run:  # Probelauf ohne Seiteneffekte (#205)
@@ -96,6 +100,11 @@ def main() -> int:
     cmd = waechter_lauf.befehl(claude, a.model, ausweich, remote_control, a.spec, prompt)
     log.info("Wächter Spec #%s · Modell %s · Ausweich %s · Takt %ss", a.spec, a.model, ausweich or "-", a.takt)
     log.info("context-mode (Pflicht-MCP, lädt als Plugin): %s", ctx_wurzel)
+    if a.resume:  # Aufpasser (#236 R1): Sicherheitskette auch für das Wächter-Fenster
+        cmd = [claude, "--resume", a.resume, "--model", a.model]
+        if remote_control:
+            cmd += ["--remote-control", f"Wächter #{a.spec}"]
+        cmd.append("<weiter>")
     if a.dry_run:
         print(" ".join(cmd[:-1]), '"<prompt>"')
         return 0
@@ -124,6 +133,7 @@ def main() -> int:
         cwd=Path.cwd(),
         takt=float(os.environ.get("TO_SPAWN_AUFSICHT_TAKT") or waechter_lauf.TAKT_S),
         abbruch=umzug_datei.exists,
+        session_id=a.resume,
     )
     umzug_daten = umzug.lies_umzug(umzug_datei)
     if umzug_daten is not None:
