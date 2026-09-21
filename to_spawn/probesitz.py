@@ -421,7 +421,14 @@ def _sessions_stand() -> Any:
     if spec is None or spec.loader is None:
         raise ImportError("skripte/sessions_stand.py nicht ladbar")
     modul = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(modul)
+    # ``@dataclass`` sucht das Modul in ``sys.modules`` (Python 3.13) — ohne Eintrag
+    # AttributeError (Live-Befund Probesitz 21.09., #214).
+    sys.modules[spec.name] = modul
+    try:
+        spec.loader.exec_module(modul)
+    except Exception:
+        sys.modules.pop(spec.name, None)
+        raise
     return modul
 
 

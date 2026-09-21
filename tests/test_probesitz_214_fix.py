@@ -396,3 +396,11 @@ def test_f11_docs_exit_2_nur_konfig() -> None:
     for datei in (SKILL / "SKILL.md", SKILL / "to_spawn" / "README.md"):
         text = datei.read_text(encoding="utf-8")
         assert "2 = Konfig/Repo unlesbar" in text, datei
+
+
+def test_sessions_stand_laedt_echt_unter_python_3_13() -> None:
+    """Live-Befund 21.09.: ohne ``sys.modules``-Eintrag bricht ``@dataclass`` in
+    ``skripte/sessions_stand.py`` unter Python 3.13 mit AttributeError (#214)."""
+    modul = probesitz._sessions_stand()
+    assert callable(modul.prozesse_lesen)
+    assert callable(modul.context_mode_zustand)
