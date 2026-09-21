@@ -27,6 +27,7 @@ SKRIPTE = SKILL / "skripte"
 GH_STUB = Path(__file__).resolve().parent / "hilfen" / "gh_stub_213.py"
 
 sys.path.insert(0, str(SKILL))
+import context_mode_attrappe  # noqa: E402  (tests/hilfen, Pfad setzt conftest)
 
 SPEC = "900"
 
@@ -668,6 +669,7 @@ def _wache_welt(welt: dict[str, Path]) -> dict[str, str]:
     _ausfuehrbar(binaer / "claude", FAKE_CLAUDE)
     heim = welt["tmp"] / "heim"
     heim.mkdir(exist_ok=True)
+    context_mode_attrappe.plugin_anlegen(heim)  # Pflicht-Plugin seit #237
     return {
         "PATH": f"{binaer}{os.pathsep}{os.environ['PATH']}",
         "HOME": str(heim),

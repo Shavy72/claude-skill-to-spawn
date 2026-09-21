@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, TextIO
 
-from . import config
+from . import config, context_mode
 
 log = logging.getLogger("to_spawn.setup")
 
@@ -302,6 +302,7 @@ def fuehre_dialog(
             f"{' (' + std_option.grund + ')' if std_option.grund else ''}."
         )
     geplant.append(remote_hinweis(konfig))
+    geplant.append(context_mode.hinweis())
     modell_liste = [(mid, f"{name} ({mid})") for mid, name in MODELLE]
     effort_liste = [(e, e) for e in EFFORTS]
 
@@ -460,6 +461,7 @@ def zeige(
         wahl = option.schluessel if option.waehlbar else "nicht wählbar"
         zeilen.append(f"  {wahl}: {_terminal_zeile(option)}{marke}")
     zeilen.append(f"  {remote_hinweis(konfig)}")
+    zeilen.append(f"  {context_mode.hinweis()}")
     zeilen += ["", "Modelle (--modell-ticket, --modell-leicht):"]
     zeilen += [f"  {mid}: {name}" for mid, name in MODELLE]
     zeilen += [

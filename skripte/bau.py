@@ -34,7 +34,7 @@ from pathlib import Path
 _SKILL = str(Path(__file__).resolve().parent.parent)
 if _SKILL not in sys.path:
     sys.path.insert(0, _SKILL)
-from to_spawn import config, nest, umzug  # noqa: E402
+from to_spawn import config, context_mode, nest, umzug  # noqa: E402
 
 # Windows-Konsole ist cp1252 — Umlaute/Pfeile im Prompt brauchen UTF-8.
 for stream in (sys.stdout, sys.stderr):
@@ -616,6 +616,13 @@ def main() -> int:
             mcp_servers[name] = catalog[name]
         else:
             log.warning("MCP unauflösbar, übersprungen: %s", name)
+    # Pflicht-MCP context-mode (#237): ``--strict-mcp-config`` sperrt das Plugin-MCP aus,
+    # also steht es hier selbst in der mcp.json — kein Manifest kann es abwählen.
+    try:
+        mcp_servers.update(context_mode.server_definition(CLAUDE_DIR))
+    except context_mode.ContextModeFehlt as fehler:
+        log.error("%s", fehler)
+        return 2
 
     # Temp-Dateien
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")

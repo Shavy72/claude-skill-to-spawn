@@ -129,6 +129,19 @@ false` heißt „Claude stops processing entirely after the hook runs" — das b
 die Runde, nicht den Prozess. Ein Hook kann den Claude-Prozess also nicht beenden;
 der Elternprozess muss es tun.
 
+## Pflicht-MCP context-mode (#237)
+
+Jede Session, die to-spawn startet, hat das Plugin-MCP `context-mode` (Token-Sparer). `bau.py`
+startet mit `--strict-mcp-config`, das sperrt Plugin-MCPs aus — deshalb trägt `bau.py` den Server
+selbst in seine `mcp.json` ein (`to_spawn/context_mode.py`), unter dem Plugin-Namen
+`plugin_context-mode_context-mode`, damit die Werkzeuge weiter `mcp__plugin_context-mode_context-mode__ctx_*`
+heißen. Der Pfad kommt aus `~/.claude/plugins/installed_plugins.json`, sonst aus der neuesten Version
+im Plugin-Cache — nie aus einer festen Versionsnummer. Kein Manifest kann den Eintrag abwählen.
+`wache.py` startet ohne die Sperre (Plugin lädt selbst) und prüft nur, dass es installiert ist.
+Fehlt das Plugin: `bau`/`wache` enden mit **Exit 2** und nennen `claude plugin install context-mode@context-mode`;
+`setup --zeige` trägt eine Zeile `context-mode … bereit — <Pfad>` bzw. `FEHLT`.
+Beleg je Session: `sessions` zeigt in der Spalte `ctx` ✓/✗ (start.mjs-Kindprozess unter der Claude-Session).
+
 ## Konfig `.to-spawn/config.json`
 
 Fehlt die Datei, gelten die Vorgaben aus `to_spawn/config.py`:

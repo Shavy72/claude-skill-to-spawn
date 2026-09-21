@@ -23,6 +23,7 @@ NEST = SKILL / "nest"
 SKRIPTE = SKILL / "skripte"
 
 sys.path.insert(0, str(SKILL))
+import context_mode_attrappe  # noqa: E402  (tests/hilfen, Pfad setzt conftest)
 
 from to_spawn import nest
 
@@ -58,6 +59,7 @@ def _umgebung(heim: Path, **extra: str) -> dict[str, str]:
         if k not in ("BWS_ACCESS_TOKEN", "TO_SPAWN_REPO", "BAU_WT_DIR")
     }
     umgebung["HOME"] = str(heim)
+    context_mode_attrappe.plugin_anlegen(heim)  # Pflicht-Plugin seit #237
     umgebung.update(extra)
     return umgebung
 

@@ -30,7 +30,7 @@ from pathlib import Path
 _SKILL = str(Path(__file__).resolve().parent.parent)
 if _SKILL not in sys.path:
     sys.path.insert(0, _SKILL)
-from to_spawn import config, umzug, waechter_lauf  # noqa: E402
+from to_spawn import config, context_mode, umzug, waechter_lauf  # noqa: E402
 
 log = logging.getLogger("wache")
 def repo_aus_origin(fallback: str) -> str:
@@ -83,11 +83,19 @@ def main() -> int:
         print(prompt)
         return 0
     claude = shutil.which("claude") or "claude"
+    # Pflicht-MCP context-mode (#237): der Wächter startet ohne ``--strict-mcp-config``,
+    # das Plugin-MCP lädt also von selbst — nur fehlen darf es nicht.
+    try:
+        ctx_wurzel = context_mode.pruefen(streng=True)
+    except context_mode.ContextModeFehlt as fehler:
+        log.error("%s", fehler)
+        return 2
     konfig = config.lade(REPO_ORDNER)
     ausweich = str(konfig.get("modelle", {}).get("waechter_ausweich") or "")
     remote_control = bool(konfig.get("waechter", {}).get("remote_control", True))
     cmd = waechter_lauf.befehl(claude, a.model, ausweich, remote_control, a.spec, prompt)
     log.info("Wächter Spec #%s · Modell %s · Ausweich %s · Takt %ss", a.spec, a.model, ausweich or "-", a.takt)
+    log.info("context-mode (Pflicht-MCP, lädt als Plugin): %s", ctx_wurzel)
     if a.dry_run:
         print(" ".join(cmd[:-1]), '"<prompt>"')
         return 0

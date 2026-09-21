@@ -21,6 +21,7 @@ SKILL = Path(__file__).resolve().parent.parent
 CLI = SKILL / "to_spawn.py"
 SKRIPTE = SKILL / "skripte"
 FAKE_CLAUDE = Path(__file__).resolve().parent / "hilfen" / "fake_claude.py"
+import context_mode_attrappe  # noqa: E402  (tests/hilfen, Pfad setzt conftest)
 
 sys.path.insert(0, str(SKILL))
 
@@ -105,6 +106,7 @@ def _umgebung(tmp_path: Path, wt_basis: Path) -> dict[str, str]:
     claude.chmod(0o755)
     heim = tmp_path / "heim"
     heim.mkdir(exist_ok=True)
+    context_mode_attrappe.plugin_anlegen(heim)  # Pflicht-Plugin seit #237
     temp = tmp_path / "tmp"
     temp.mkdir(exist_ok=True)
     umgebung = {

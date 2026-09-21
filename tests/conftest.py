@@ -10,7 +10,15 @@ Dateien. Die Zeitgrenzen selbst prüft ``test_waechter_213_fix.py`` ohne Schalte
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
 import pytest
+
+# Test-Helfer (``tests/hilfen``) einmal importierbar machen — z. B. ``context_mode_attrappe`` (#237).
+_HILFEN = str(Path(__file__).resolve().parent / "hilfen")
+if _HILFEN not in sys.path:
+    sys.path.insert(0, _HILFEN)
 
 _SOFORT_MODULE = frozenset({"test_waechter_213", "test_waechter_213_weg"})
 

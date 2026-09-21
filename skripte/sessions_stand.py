@@ -69,6 +69,7 @@ class Eintrag:
     session_pid: int | None = None
     kinder: list[str] = field(default_factory=list)
     token: str = "—"
+    ctx: str = "—"  # context-mode-Server unter der Session: ✓ / ✗ (#237)
 
 
 def ps_zeilen_parsen(text: str) -> list[Prozess]:
@@ -145,6 +146,15 @@ def nachkommen(pid: int, alle: list[Prozess]) -> list[Prozess]:
     return kinder
 
 
+#: MCP-Server des Plugins = ``…/start.mjs`` als eigene Datei; die Hooks heißen ``hooks/sessionstart.mjs``.
+CONTEXT_MODE_SERVER = re.compile(r"[\\/]start\.mjs(?:\s|\"|$)")
+
+
+def context_mode_zustand(session_pid: int, alle: list[Prozess]) -> str:
+    """``✓`` wenn unter der Claude-Session ein context-mode-Server (``start.mjs``) läuft (#237)."""
+    return "✓" if any(CONTEXT_MODE_SERVER.search(k.cmd) for k in nachkommen(session_pid, alle)) else "✗"
+
+
 def manifeste_lesen(spec: str | None) -> dict[str, Eintrag]:
     eintraege: dict[str, Eintrag] = {}
     dateien = [MANIFESTE / f"spec-{spec}.json"] if spec else sorted(MANIFESTE.glob("spec-*.json"))
@@ -205,6 +215,8 @@ def zuordnen(eintraege: dict[str, Eintrag], alle: list[Prozess]) -> None:
         else:
             e.zustand = "wartet" if art == "bau" else "startet"
         e.kinder = [k.name for k in kinder][:4]
+        if session is not None:
+            e.ctx = context_mode_zustand(session.pid, alle)
     # Verwaiste Sessions: ``claude.exe`` lebt, aber der ``bau.py``-Elternprozess ist weg
     # (17.09.2026: bau.py beendet, Claude-Kind lief unsichtbar weiter, zweimal für #187).
     bekannte = {e.session_pid for e in eintraege.values() if e.session_pid}
@@ -225,6 +237,7 @@ def zuordnen(eintraege: dict[str, Eintrag], alle: list[Prozess]) -> None:
         else:
             e.session_pid = p.pid
             e.zustand = f"VERWAIST seit {seit}"
+            e.ctx = context_mode_zustand(p.pid, alle)
 
 
 def token_text(ticket: str, repo: Path = REPO) -> str:
@@ -259,10 +272,12 @@ def tabelle(eintraege: dict[str, Eintrag], alle_zeigen: bool) -> str:
         kopf = f"Spec #{n}" if e.art == "spec" else f"#{n}"
         pid = f"pid {e.pid}" if e.pid else "—"
         sess = f"session {e.session_pid}" if e.session_pid else ""
-        zeilen.append(f"{kopf:<10} {e.zustand:<18} {pid:<10} {sess:<14} {e.token:<8} {e.titel[:60]}")
+        zeilen.append(
+            f"{kopf:<10} {e.zustand:<18} {pid:<10} {sess:<14} {e.token:<8} {e.ctx:<4} {e.titel[:60]}"
+        )
     if not zeilen:
         return "(keine Ticket-Sessions gefunden)"
-    kopfzeile = f"{'Ticket':<10} {'Zustand':<18} {'Prozess':<10} {'Claude':<14} {'Token':<8} Titel"
+    kopfzeile = f"{'Ticket':<10} {'Zustand':<18} {'Prozess':<10} {'Claude':<14} {'Token':<8} {'ctx':<4} Titel"
     return "\n".join([kopfzeile, "-" * 119, *zeilen])
 
 
