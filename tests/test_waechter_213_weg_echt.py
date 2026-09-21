@@ -11,7 +11,9 @@ Ablauf: Spec + Kind + Sub-Issue-Kante → Wegwerf-Repo mit Konfig und passender
 Belegseite ``docs/verify-hard/<Kind>_beleg.md`` (damit nur ``commit_ohne_nummer``
 greift) → erster Tick (Kind offen) → Kind schließen + Commit ohne Nummer → zweiter
 Tick → Kind wieder OPEN, Kommentar nennt ``commit_ohne_nummer``, nicht
-``beweis_fehlt``. Zum Schluss werden beide Issues geschlossen.
+``beweis_fehlt`` → noch einmal schließen → dritter Tick → Kind wieder OPEN, zweiter
+Kommentar (Entscheidung 21.09.: keine Einmal-Sperre). Zum Schluss werden beide
+Issues geschlossen.
 """
 
 from __future__ import annotations
@@ -204,6 +206,40 @@ def test_capo_echt_ohne_sofort_schalter(
         assert len(waechter) == 1
         assert "commit_ohne_nummer" in waechter[0]
         assert "beweis_fehlt" not in waechter[0]
+
+        # Entscheidung 21.09. (#213): zweites Schließen mit demselben Verstoß
+        # öffnet wieder — früher gab es dafür nur einen Kommentar.
+        _gh(
+            "issue",
+            "close",
+            str(kind),
+            "--repo",
+            GH_REPO,
+            "--comment",
+            "Weg-Test #213 echt: zweites Mal geschlossen, Verstoß nicht behoben.",
+        )
+        dritte = _tick(repo, spec, tmp_path, umgebung)
+        assert dritte.returncode == 0, dritte.stdout + dritte.stderr
+        assert "schon einmal wieder geöffnet" not in dritte.stdout
+        daten = json.loads(
+            _gh(
+                "issue",
+                "view",
+                str(kind),
+                "--repo",
+                GH_REPO,
+                "--json",
+                "state,comments",
+            )
+        )
+        print(f"Kind #{kind} nach dem zweiten Schließen: {daten['state']}")
+        waechter = [
+            c["body"] for c in daten["comments"] if c["body"].startswith("Wächter:")
+        ]
+        print(f"Wächter-Kommentare: {len(waechter)}")
+        assert daten["state"] == "OPEN"
+        assert len(waechter) == 2
+        assert all("commit_ohne_nummer" in k for k in waechter)
     finally:
         for nummer in (kind, spec):
             subprocess.run(

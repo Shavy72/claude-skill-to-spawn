@@ -162,12 +162,17 @@ def test_zweites_schliessen_nach_reopen_oeffnet_nicht_nochmal(
     _capo(welt)
     assert _zustand(welt) == "open"
     assert len(_kommentare(welt, "901")) == 1
+    # Die Session schließt erneut, ohne den Verstoß zu beheben.
     _gh_setzen(welt, "901", state="closed", closed_at=_iso(timedelta(minutes=20)))
     ergebnis = _capo(welt)
     assert ergebnis.returncode == 0, _text(ergebnis)
     assert _zustand(welt) == "closed"
     kommentare = _kommentare(welt, "901")
     assert len(kommentare) == 2 and "nicht noch einmal" in kommentare[1]
+    assert "schon einmal wieder geöffnet" in ergebnis.stdout
+    _capo(welt)
+    assert _zustand(welt) == "closed"
+    assert len(_kommentare(welt, "901")) == 2
 
 
 def test_zweiter_tick_nach_reopen_oeffnet_nicht_nochmal(welt: dict[str, Path]) -> None:
@@ -377,7 +382,7 @@ def test_trailer_test_entfernt_erlaubt(welt: dict[str, Path]) -> None:
     )
     _commit(
         welt["repo"],
-        "refactor: Umbau (#901)\n\nTest-entfernt: test_alt prüfte die alte Tabelle",
+        "refactor: Umbau (#901)\n\nTest-entfernt: test_alt prüfte die alte Tabelle, die es nicht mehr gibt",
         {"tests/test_a.py": "def test_neu():\n    pass\n", **_beleg()},
     )
     _frisch_zu(welt)
