@@ -6,3 +6,4 @@ $ env -u TO_SPAWN_TICKET -u TO_SPAWN_LOG_REPO -u TO_SPAWN_REPO -u BAU_WT_DIR .ve
 3 passed, 17 deselected in 6.44s
 $ env -u TO_SPAWN_TICKET -u TO_SPAWN_LOG_REPO -u TO_SPAWN_REPO -u BAU_WT_DIR .venv/bin/python -m pytest tests/test_aufpasser_236_review.py -q
 20 passed in 59.10s
+2 passed, 42 deselected in 0.11s

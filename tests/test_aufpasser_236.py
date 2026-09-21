@@ -917,10 +917,12 @@ def test_bau_neue_session_schreibt_id(repo_bau: Path, tmp_path: Path) -> None:
 
 
 def test_arbeitet_marker() -> None:
+    """Geändert wegen Live-Befund 21.09. (L1): „nächste Prüfung“ zählt nur noch als
+    echte bau.py-Warte-Zeile, nicht als freie Prosa."""
     for marker in (
         "esc to interrupt",
         "background agent",
-        "nächste Prüfung",
+        "Ticket #9 wartet (#8 offen) — nächste Prüfung in 10 min [08:00]",
         "usage limit",
         "limit reset",
         "Do you want to proceed?",

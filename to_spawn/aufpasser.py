@@ -137,10 +137,12 @@ SKRIPT_STARTER = Path(__file__).resolve().parent.parent / "skripte" / "aufpasser
 ARBEITS_MARKER = (
     "esc to interrupt",
     "background agent",
-    "nächste Prüfung",
     "usage limit",
     "limit reset",
 )
+# Warte-Zeile von bau.py (Blocker offen). Nur diese Form zählt — „nächste Prüfung“
+# allein stand am 21.09. als Claude-Prosa im Scrollback eines idle Fensters.
+BLOCKER_WARTEN = re.compile(r"Ticket #\d+ wartet \(.*\) — nächste Prüfung in \d+ min")
 RUECKFRAGE_MARKER = (
     "Do you want to proceed?",
     "Do you want to",
@@ -280,8 +282,10 @@ def arbeitet(text: str, status: str | None = None) -> bool:
     """
     if status == "busy":
         return True
-    return any(m in text for m in ARBEITS_MARKER + RUECKFRAGE_MARKER) or bool(
-        LIMIT_TEXT.search(text)
+    return (
+        any(m in text for m in ARBEITS_MARKER + RUECKFRAGE_MARKER)
+        or bool(BLOCKER_WARTEN.search(text))
+        or bool(LIMIT_TEXT.search(text))
     )
 
 

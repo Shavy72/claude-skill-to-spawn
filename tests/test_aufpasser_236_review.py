@@ -550,3 +550,15 @@ def test_d3_pane_mit_wartendem_python_ist_keine_beendete_session(
     assert "Aufpasser" in pane_text("bau 9002"), "Anstupsen statt Fortsetzen"
     assert welt.eintrag("bau 9002")["stufe"] == 1
     assert _argv_protokoll(welt) == []
+
+
+def test_l1_prosa_naechste_pruefung_ist_kein_arbeits_marker() -> None:
+    """Live-Befund 21.09.: „bau 217“ (Ticket zu, seit Stunden idle) galt als arbeitend,
+    weil im Scrollback Claude-Prosa stand: „… nächste Prüfung um 06:37 Uhr.“ Der Marker
+    gilt nur noch für die echte Warte-Zeile von bau.py."""
+    from to_spawn import aufpasser as a
+
+    prosa = "● 🛠 Modus: Feature · Schritt 9/9 — Nichts tun, nächste Prüfung um 06:37 Uhr.\n❯ "
+    assert a.arbeitet(prosa, None) is False
+    echt = "INFO Ticket #214 wartet (#236 offen; #237 offen) — nächste Prüfung in 10 min [08:17]"
+    assert a.arbeitet(echt, None) is True

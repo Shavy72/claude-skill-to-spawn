@@ -471,3 +471,4 @@ test_d1_fehlendes_fenster_kein_start_wenn_gespraech_woanders_lebt FAILED — Ass
 test_d2_shell_pane_kein_fortsetzen_wenn_gespraech_woanders_lebt FAILED — assert 1 == 3 (HEAD stupst an statt braucht-David, kein Guard)
 test_d3_pane_mit_wartendem_python_ist_keine_beendete_session FAILED — AttributeError: module 'to_spawn.aufpasser' has no attribute 'session_beendet'
 3 failed, 17 deselected in 6.57s
+1 failed, 20 deselected in 0.14s
