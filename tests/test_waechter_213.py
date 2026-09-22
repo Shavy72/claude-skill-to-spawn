@@ -709,6 +709,16 @@ def test_wache_wechselt_bei_limit_auf_ausweich_modell(welt: dict[str, Path]) -> 
     assert [m["art"] for m in _mails(welt)] == ["waechter_ausweich"]
 
 
+@pytest.mark.skip(
+    reason="#254 hat dieses Verhalten abgelöst: nennt die Limit-Zeile eine Reset-Uhrzeit "
+    "(LIMIT_ZEILE tut das: „resets 7:40pm“), pausiert der Wächter bis dahin und fährt "
+    "selbst weiter. Nachfolger: test_waechter_254_weg.py::"
+    "test_wache_pausiert_bis_zum_reset_und_faehrt_selbst_weiter. Der alte Weg — Mail "
+    "session_tot, kein Neustart — gilt weiter ohne Uhrzeit und wird dort von "
+    "test_wache_ohne_uhrzeit_meldet_session_tot_und_wartet_nicht geprüft. Kein "
+    "xfail(strict), weil das Ergebnis sonst von der Tageszeit abhinge: liegt 19:40 mehr "
+    "als MAX_WARTE_S weg, läuft der alte Weg und der Test wäre grün."
+)
 def test_wache_auf_ausweich_meldet_nur_session_tot(welt: dict[str, Path]) -> None:
     env = {**_wache_welt(welt), "FAKE_SCHLAF": "3"}
     ergebnis = _wache(welt["repo"], "--model", "claude-opus-5", env=env)

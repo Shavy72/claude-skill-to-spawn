@@ -39,6 +39,9 @@ TYPEN = (
     # Wächter (#213): Live-Beweis blockiert (Feld ``grund``) und Modell-Wechsel beim Limit.
     "blockiert",
     "waechter_modell",
+    # Wächter (#254): Pause bis zum Limit-Reset und der Neustart danach.
+    "waechter_pause",
+    "waechter_weiter",
     "zusammenfassung",
     # Lernschleife (#286): erkannter Stillstand mit Klasse/Symptom/Ursache/Lösung.
     "vorfall",

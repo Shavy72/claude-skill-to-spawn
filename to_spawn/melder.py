@@ -30,7 +30,13 @@ log = logging.getLogger("to_spawn.melder")
 
 #: Arten, die immer rausgehen (auch bei ``mail.nur_kritisch``).
 KRITISCH = frozenset(
-    {"gate_rot", "session_tot", "live_beweis_blockiert", "waechter_ausweich"}
+    {
+        "gate_rot",
+        "session_tot",
+        "live_beweis_blockiert",
+        "waechter_ausweich",
+        "waechter_pause",  # #254: „Wächter pausiert bis 5:40“ darf nicht im Log versanden
+    }
 )
 #: ``probesitz_gruen`` (#214): die eine Erfolgsmeldung des Probesitz geht auch bei ``nur_kritisch`` raus.
 IMMER = KRITISCH | {"spec_fertig", "probesitz_gruen"}

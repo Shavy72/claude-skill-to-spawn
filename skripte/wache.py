@@ -189,7 +189,17 @@ def main() -> int:
         remote_control=remote_control,
         repo=REPO_ORDNER,
         cwd=Path.cwd(),
-        takt=float(os.environ.get("TO_SPAWN_AUFSICHT_TAKT") or waechter_lauf.TAKT_S),
+        takt=waechter_lauf.zahl_aus_umgebung(
+            "TO_SPAWN_AUFSICHT_TAKT", waechter_lauf.TAKT_S
+        )
+        or waechter_lauf.TAKT_S,
+        puffer=waechter_lauf.zahl_aus_umgebung(
+            "TO_SPAWN_RESET_PUFFER_S", waechter_lauf.RESET_PUFFER_S
+        ),
+        hoechstens=waechter_lauf.zahl_aus_umgebung(
+            "TO_SPAWN_RESET_MAX_S", waechter_lauf.MAX_WARTE_S
+        )
+        or waechter_lauf.MAX_WARTE_S,
         abbruch=umzug_datei.exists,
         session_id=a.resume,
     )
