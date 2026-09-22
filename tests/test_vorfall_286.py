@@ -641,3 +641,17 @@ def test_vorfall_einer_session_zaehlt_als_spur(tmp_path: Path) -> None:
     fremd = {"typ": "vorfall", "quelle": "capo", "klasse": "skill"}
     andere = {"typ": "session_start"}
     assert modul.ohne_waechter_zeilen([eigen, fremd, andere]) == [eigen, andere]
+
+
+def test_aufpasser_kennt_jeden_stillstand(tmp_path: Path) -> None:
+    """Jedes Stillstands-Ereignis des Aufpassers hat Vorfall-Worte (#286).
+
+    ``gestartet``/``fortgesetzt``/``geschlossen`` sind Normalbetrieb und fehlen
+    bewusst; alles, was einmal am Tag gemeldet wird, ist ein Stillstand.
+    """
+    from to_spawn import aufpasser as modul
+
+    fehlend = modul.MELDUNG_EINMAL_PRO_TAG - set(modul.EREIGNIS_VORFALL)
+    assert fehlend == set(), fehlend
+    assert "angestupst" in modul.EREIGNIS_VORFALL
+    assert not {"gestartet", "fortgesetzt", "geschlossen"} & set(modul.EREIGNIS_VORFALL)

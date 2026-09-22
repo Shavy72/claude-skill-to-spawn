@@ -126,8 +126,9 @@ MELDUNG_EINMAL_PRO_TAG = frozenset(
     }
 )
 #: Ereignis → Vorfall (Klasse, Symptom, Ursache, Lösung) für die Lernschleife (#286).
-#: Nur Stillstände stehen hier — ``gestartet``/``fortgesetzt``/``geschlossen`` sind
-#: normale Züge und lernen nichts.
+#: Jeder erkannte Stillstand steht hier, auch der erste Anstupser. Nur die Züge, bei
+#: denen nichts stockte — ``gestartet``, ``fortgesetzt``, ``geschlossen`` — fehlen:
+#: sie sind der Normalbetrieb und lernen nichts.
 EREIGNIS_VORFALL: dict[str, tuple[str, str, str, str]] = {
     "startet_nicht": (
         "skill",
@@ -164,6 +165,18 @@ EREIGNIS_VORFALL: dict[str, tuple[str, str, str, str]] = {
         "Bau-Kette wartet auf Davids Entscheidung",
         "Die Frage wurde nicht vor dem Spawn im Grill entschieden",
         "Entscheidung in den Grill vorziehen; sonst greift die 60-min-Annahme (#285)",
+    ),
+    "session_beendet": (
+        "skill",
+        "Session beendet, aber das Ticket ist offen — niemand baut weiter",
+        "Keine Gesprächs-ID gemerkt, der Aufpasser kann nicht fortsetzen",
+        "Neue Runde starten (bau <N> --sofort); Sitzungs-Datei der Session prüfen",
+    ),
+    "angestupst": (
+        "skill",
+        "Session steht still und muss angestupst werden",
+        "Session wartet auf nichts, meldet aber nichts — Stufe 1 des Aufpassers",
+        "Aufpasser stupst an; wiederholt es sich am selben Ticket, Auftrag schärfen",
     ),
     "rueckfrage": (
         "mensch",
