@@ -1,6 +1,6 @@
 """Wächter-Tick für eine Spec: Stand, Bau-Log-Delta, Regel-Verstöße (#213).
 
-    python scripts/capo.py <S> [--dry-run] [--uebersicht] [--wt-basis P] [--gh-repo owner/name]
+    python scripts/capo.py <S> [--dry-run] [--kein-katalog] [--uebersicht] [--wt-basis P] [--gh-repo owner/name]
 
 Ein Aufruf = ein Tick: Kopfzeile, eine Stand-Zeile je Ticket, nur die neuen
 Bau-Log-Zeilen, dann Verstöße und was capo getan hat (Ticket wieder geöffnet,
@@ -9,6 +9,9 @@ Kommentar, Mail). Sind alle Tickets zu und ohne Verstoß: „SPEC FERTIG“, Mai
 
 ``--dry-run`` öffnet nichts, kommentiert nichts, mailt nichts und merkt sich nichts.
 ``--uebersicht`` schreibt nur die Entscheidungs-Übersicht und gibt ihren Pfad aus.
+Jeder Tick hängt neue Vorfälle (erkannte Stillstände) als Zeile an den Fehlerkatalog
+``docs/agents/FEHLERKATALOG_spawn.md`` — die Lernschleife (#286). ``--kein-katalog``
+schaltet das ab, ``--katalog`` bleibt als Flag bestehender Aufrufe erhalten.
 """
 
 from __future__ import annotations
@@ -58,6 +61,17 @@ def main() -> int:
         help="nichts öffnen, nichts mailen, nichts merken",
     )
     ap.add_argument(
+        "--katalog",
+        action="store_true",
+        help="Vorgabe seit #286 — Flag bleibt für bestehende Aufrufe erhalten",
+    )
+    ap.add_argument(
+        "--kein-katalog",
+        dest="kein_katalog",
+        action="store_true",
+        help="Vorfälle nur ins Bau-Log, nicht in den Fehlerkatalog",
+    )
+    ap.add_argument(
         "--uebersicht",
         action="store_true",
         help="nur Entscheidungs-Übersicht schreiben",
@@ -87,7 +101,13 @@ def main() -> int:
         return 0
 
     ergebnis = capo.tick(
-        repo, a.spec, gh_repo, konfig, wt_basis=wt_basis, dry_run=a.dry_run
+        repo,
+        a.spec,
+        gh_repo,
+        konfig,
+        wt_basis=wt_basis,
+        dry_run=a.dry_run,
+        katalog=not a.kein_katalog,
     )
     print("\n".join(ergebnis.zeilen))
     if any("FEHLER" in zeile for zeile in ergebnis.zeilen):

@@ -40,6 +40,8 @@ TYPEN = (
     "blockiert",
     "waechter_modell",
     "zusammenfassung",
+    # Lernschleife (#286): erkannter Stillstand mit Klasse/Symptom/Ursache/Lösung.
+    "vorfall",
 )
 
 LOG_ORDNER = Path("docs") / "agents" / "bau_log"
@@ -194,6 +196,21 @@ def eintrag_schreiben(
         log.info("Bau-Log #%s: %d Zeile(n) aus der Laufdatei übertragen.", ticket, len(fehlend))
     _haenge_an(fest, [*fehlend, json.dumps(zeile, ensure_ascii=False)])
     return zeile
+
+
+def spiegel_in_laufdatei(repo: Path, ticket: str | int, zeile: dict[str, Any]) -> None:
+    """Eine schon versionierte Zeile zusätzlich in die Laufdatei legen (#286).
+
+    Der Wächter liest die versionierte Datei über ``git show origin/<Hauptzweig>`` —
+    bis Commit und Push sieht er die Zeile nicht. Die Laufdatei liest er direkt von
+    der Platte. Weil die Rohzeile identisch ist, zählt :func:`lese` sie trotzdem nur
+    einmal, und ``eintrag`` überträgt sie später nicht noch einmal.
+    """
+    roh = json.dumps(zeile, ensure_ascii=False)
+    lauf = lauf_pfad(repo, ticket)
+    if roh in _rohzeilen(lauf):
+        return
+    _haenge_an(lauf, [roh])
 
 
 def _lese_datei(datei: Path) -> list[tuple[str, dict[str, Any]]]:

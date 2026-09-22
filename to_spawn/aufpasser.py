@@ -85,7 +85,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from to_spawn import config, sessions_datei, speicher
+from to_spawn import bau_log, config, sessions_datei, speicher, vorfall
 from to_spawn.waechter_lauf import _LIMIT_TEXT as LIMIT_TEXT
 from to_spawn.waechter_lauf import transkript_ordner
 
@@ -125,6 +125,57 @@ MELDUNG_EINMAL_PRO_TAG = frozenset(
         "session_beendet",
     }
 )
+#: Ereignis → Vorfall (Klasse, Symptom, Ursache, Lösung) für die Lernschleife (#286).
+#: Nur Stillstände stehen hier — ``gestartet``/``fortgesetzt``/``geschlossen`` sind
+#: normale Züge und lernen nichts.
+EREIGNIS_VORFALL: dict[str, tuple[str, str, str, str]] = {
+    "startet_nicht": (
+        "skill",
+        "Fenster steht leer, die Bau-Session läuft nicht an",
+        "Startbefehl im Fenster lief nicht an (Vorlage, Pfad oder Repo stimmt nicht)",
+        "Aufpasser startet neu; Startbefehl und Repo-Pfad des Fensters prüfen",
+    ),
+    "start_fehlgeschlagen": (
+        "skill",
+        "Neustart des Fensters schlägt fehl",
+        "tmux-Befehl oder Startvorlage scheitert",
+        "Fehlertext im Aufpasser-Log lesen, Vorlage (--bau-vorlage) richtigstellen",
+    ),
+    "fortsetzen_fehlgeschlagen": (
+        "skill",
+        "Angehaltene Session lässt sich nicht fortsetzen",
+        "Resume-ID fehlt oder das Transkript ist weg",
+        "Session neu starten statt fortsetzen (bau <N> --sofort)",
+    ),
+    "sicherung_fehlgeschlagen": (
+        "skill",
+        "Arbeit eines Fensters konnte nicht gesichert werden",
+        "Commit/Push vor dem Schließen scheiterte",
+        "Worktree von Hand sichern, erst dann das Fenster schließen",
+    ),
+    "stupser_erschoepft": (
+        "skill",
+        "Session reagiert auf keinen Anstupser mehr",
+        "Session hängt oder wartet auf etwas, das nie kommt",
+        "Fenster ansehen, Session beenden und die Runde neu starten",
+    ),
+    "braucht_david": (
+        "mensch",
+        "Bau-Kette wartet auf Davids Entscheidung",
+        "Die Frage wurde nicht vor dem Spawn im Grill entschieden",
+        "Entscheidung in den Grill vorziehen; sonst greift die 60-min-Annahme (#285)",
+    ),
+    "rueckfrage": (
+        "mensch",
+        "Session stellt eine Rückfrage und wartet",
+        "Der Auftrag ließ eine Entscheidung offen",
+        "Auftrag vorab schärfen (Bleibt-gleich-Liste, Umfang beziffern)",
+    ),
+}
+
+#: Ticket-Nummer aus einem Fenster-Schlüssel wie ``spec-282/bau 286``.
+_FENSTER_TICKET = re.compile(r"bau[ _-]?(\d+)")
+
 #: Nur noch das im Pane ⇒ die Session ist beendet, ein Anstupser liefe als Befehl.
 SHELLS = frozenset({"bash", "sh", "zsh", "dash", "fish", "ksh"})
 #: Deploy-Prozesse älter als das sind Waisen.
@@ -920,11 +971,14 @@ class Aufpasser:
         Kommentar gesetzt (R3)."""
         log.info("spec %s: %s", spec, text)
         schluessel = f"{fenster}|{ereignis}|{self.datum}"
-        if ereignis in MELDUNG_EINMAL_PRO_TAG and schluessel in self.stand.meldungen:
-            log.info("spec %s: Meldung heute schon abgesetzt (%s)", spec, ereignis)
-            return
         if self.e.trocken:
             print(f"[trocken] spec {spec}: {text}")
+            return
+        # Vorfall VOR der Tages-Sperre: die Lernschleife hat ihren eigenen
+        # Doppelschutz, sonst verlöre ein gescheiterter Schreibversuch den Tag.
+        self.vorfall_notieren(spec, repo, fenster, ereignis, text)
+        if ereignis in MELDUNG_EINMAL_PRO_TAG and schluessel in self.stand.meldungen:
+            log.info("spec %s: Meldung heute schon abgesetzt (%s)", spec, ereignis)
             return
         try:
             self.sh(
@@ -934,6 +988,53 @@ class Aufpasser:
             log.error("spec %s: Kommentar fehlgeschlagen: %s", spec, fehler)
             return
         self.stand.meldungen[schluessel] = self.jetzt
+
+    def log_ordner(self, repo: Path, ticket: str) -> Path:
+        """Wohin die Vorfall-Zeile gehört: Worktree des Tickets, sonst Hauptbaum.
+
+        capo liest Laufdateien nur im Repo selbst und in ``wt-<Ticket>``. Ein
+        Vorfall zu #291, der im Worktree von #286 landet, sieht niemand wieder.
+        """
+        if repo.name == f"wt-{ticket}":
+            return repo
+        haupt = bau_log.log_rueckfall()
+        if haupt is not None and haupt.is_dir():
+            return haupt
+        return repo
+
+    def vorfall_notieren(
+        self, spec: str, repo: Path, fenster: str, ereignis: str, text: str
+    ) -> None:
+        """Stillstand als ``vorfall``-Zeile ins Bau-Log — die Lernschleife (#286).
+
+        Ticket aus dem Fenster-Namen (``bau <N>``), sonst die Spec. ``capo …
+        --katalog`` hängt die Zeile später an den Fehlerkatalog. Ein Fehler beim
+        Schreiben darf den Aufpasser-Lauf nie kippen.
+        """
+        worte = EREIGNIS_VORFALL.get(ereignis)
+        if worte is None:
+            return
+        treffer = _FENSTER_TICKET.search(fenster)
+        ticket = treffer.group(1) if treffer else spec
+        # Wächter-Fenster arbeiten in einem Worktree; dessen ``.to-spawn`` liest
+        # niemand für ein fremdes Ticket. Darum in den Hauptbaum schreiben, wenn
+        # das Fenster nicht der Worktree dieses Tickets ist (#286).
+        ziel = self.log_ordner(repo, ticket)
+        klasse, symptom, ursache, loesung = worte
+        try:
+            vorfall.schreibe(
+                ziel,
+                ticket,
+                klasse=klasse,
+                symptom=symptom,
+                ursache=ursache,
+                loesung=loesung,
+                beispiel=f"#{ticket} {self.datum}",
+                regel=ereignis,
+                quelle="aufpasser",
+            )
+        except (OSError, ValueError) as fehler:
+            log.warning("Vorfall zu %s nicht notiert: %s", ereignis, fehler)
 
     # -- Eingreifen --------------------------------------------------------------
 

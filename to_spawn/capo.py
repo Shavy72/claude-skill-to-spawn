@@ -49,7 +49,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from . import bau_log, gh, melder
+from . import bau_log, gh, melder, vorfall
 
 log = logging.getLogger("to_spawn.capo")
 
@@ -80,6 +80,63 @@ _TEST_DATEI = re.compile(
 _KEINE_TESTDATEI = re.compile(r"(^|/)(docs|archive)/|(^|/)mutants/")
 _PY_TEST = re.compile(r"^-[ \t]*(?:async[ \t]+)?def[ \t]+(test_\w+)", re.MULTILINE)
 _JS_TEST = re.compile(r"""^-[ \t]*(?:it|test)\([ \t]*(["'`])(.+?)\1""", re.MULTILINE)
+
+
+#: Regel → Vorfall für die Lernschleife (#286): Klasse, Symptom, Ursache, Lösung.
+#: Die Worte sind je Regel fest — so steht eine Regel genau einmal im Katalog,
+#: der konkrete Fall (Ticket, Text) landet in der Bau-Log-Zeile und im Beispiel.
+REGEL_VORFALL: dict[str, tuple[str, str, str, str]] = {
+    "commit_ohne_nummer": (
+        "prozess",
+        "Arbeit im Repo, aber kein Ticket-Bezug im Commit-Betreff",
+        "Betreff endet nicht auf (#N) — der Wächter ordnet den Commit keinem Ticket zu",
+        "Betreff mit (#N) abschließen; capo öffnet das Ticket wieder",
+    ),
+    "beweis_fehlt": (
+        "prozess",
+        "Ticket zu, aber niemand kann den Beweis nachlesen",
+        "Keine Belegseite unter dem Beleg-Ordner zum Ticket",
+        "Belegseite anlegen (docs/verify-hard/<N>_*.md) und neu schließen",
+    ),
+    "test_ersetzt": (
+        "prozess",
+        "Nach dem Fix fehlen Tests, die vorher da waren",
+        "Test entfernt statt ergänzt",
+        "Test wieder aufnehmen oder die Umbenennung im Commit-Text ausweisen",
+    ),
+    "vps_ungleich_origin": (
+        "infra",
+        "Live-System zeigt einen anderen Stand als origin",
+        "Fremder Deploy hat den eigenen Stand überschrieben",
+        "VPS-HEAD vor dem Bundle prüfen, Rettung mit --to <origin-SHA>",
+    ),
+    "session_verwaist": (
+        "skill",
+        "Fenster steht, Ticket offen, nichts bewegt sich",
+        "Session tot oder ohne Folge-Runde — keine Spur in Commit, Bau-Log, Worktree",
+        "capo kommentiert das Ticket, der Aufpasser startet die Folge-Runde",
+    ),
+    "gate_rot": (
+        "infra",
+        "Deploy-Gate bricht rot ab",
+        "Test oder Vorstufe im Gate scheitert",
+        "Grund aus der Gate-Ausgabe beheben und das Gate neu starten",
+    ),
+    "live_beweis_blockiert": (
+        "prozess",
+        "Session meldet: Live-Beweis nicht möglich",
+        "Ein fremder Lauf, ein Deploy oder ein fehlendes Gerät blockiert den Weg",
+        "Blocker im Ticket benennen, Beweis nach dem Blocker nachholen",
+    ),
+}
+
+#: Vorfall-Worte, wenn eine Regel neu ist und noch nicht in REGEL_VORFALL steht.
+VORFALL_UNBEKANNT = (
+    "skill",
+    "Wächter meldet einen Verstoß ohne hinterlegte Lernschleife",
+    "Regel ist neu und steht noch nicht in REGEL_VORFALL",
+    "Regel in to_spawn/capo.py:REGEL_VORFALL mit Klasse/Symptom/Ursache/Lösung ergänzen",
+)
 
 
 @dataclass
@@ -784,6 +841,76 @@ def _sperr_wartezeit() -> float:
         return SPERRE_S
 
 
+def vorfall_aus_verstoss(
+    repo: Path, fund: Verstoss, jetzt: datetime
+) -> vorfall.Vorfall | None:
+    """Einen Verstoß als ``vorfall``-Zeile ins Bau-Log des Tickets schreiben.
+
+    ``None`` heißt: derselbe Vorfall steht dort schon (zweiter Tick, gleiche Lage).
+    Verstöße aus dem Ausgangsstand laufen hier bewusst nicht durch — sonst lernt
+    der Katalog die Altlasten vor dem ersten Tick.
+    """
+    klasse, symptom, ursache, loesung = REGEL_VORFALL.get(fund.regel, VORFALL_UNBEKANNT)
+    beispiel = f"#{fund.ticket} {jetzt.astimezone():%d.%m.%Y}"
+    try:
+        zeile = vorfall.schreibe(
+            repo,
+            fund.ticket,
+            klasse=klasse,
+            symptom=symptom,
+            ursache=ursache,
+            loesung=loesung,
+            beispiel=beispiel,
+            regel=fund.regel,
+            quelle="capo",
+        )
+    except (OSError, ValueError) as fehler:  # ein Tick darf daran nie sterben
+        log.warning("Vorfall zu #%s (%s) nicht notiert: %s", fund.ticket, fund.regel, fehler)
+        return None
+    if zeile is None:
+        return None
+    return vorfall.Vorfall(
+        klasse=klasse,
+        symptom=symptom,
+        ursache=ursache,
+        loesung=loesung,
+        beispiel=beispiel,
+        regel=fund.regel,
+        ticket=str(fund.ticket),
+        quelle="capo",
+    )
+
+
+def katalog_pflegen(
+    repo: Path, konfig: dict[str, Any], vorfaelle: list[vorfall.Vorfall]
+) -> list[str]:
+    """Neue Vorfälle in den Fehlerkatalog hängen; Rückgabe = Zeilen für den Tick.
+
+    Der Katalog wird gegen parallele Wächter gesperrt (zwei Specs, eine Datei).
+    Ein Repo ganz ohne Katalog ist kein Fehler (Fremd-Repo, #257) — ein fehlender
+    Abschnitt, eine kaputte Tabelle oder eine unschreibbare Datei schon: sonst
+    meldet der Tick Erfolg, obwohl nichts gelernt wurde.
+    """
+    if not vorfaelle:
+        return []
+    pfad = vorfall.katalog_pfad(repo, konfig)
+    with sperre(pfad, _sperr_wartezeit()) as frei:
+        if not frei:
+            return ["Katalog: ein anderer Lauf hält die Datei — dieser Tick lässt sie aus"]
+        erg = vorfall.in_katalog(pfad, vorfaelle)
+    zeilen: list[str] = []
+    if erg.nummern:
+        zeilen.append(f"Katalog: {len(erg.nummern)} neue Zeile(n) — {' '.join(erg.nummern)}")
+    elif erg.ohne_katalog:
+        # Kein Dateiname in der Zeile: der Tick wertet jede Zeile mit „FEHLER“ als
+        # roten Lauf, und der Dateiname trägt das Wort schon im Namen.
+        zeilen.append("Katalog: dieses Repo führt keinen Fehlerkatalog — nichts eingetragen")
+    elif not erg.probleme:
+        zeilen.append("Katalog: nichts Neues")
+    zeilen += [f"FEHLER: Katalog — {grund}" for grund in erg.probleme]
+    return zeilen
+
+
 def tick(
     repo: Path,
     spec: int,
@@ -792,6 +919,7 @@ def tick(
     *,
     wt_basis: str = "",
     dry_run: bool = False,
+    katalog: bool = False,
     jetzt: datetime | None = None,
 ) -> TickErgebnis:
     """Ein Wächter-Tick: Stand + Delta + Verstöße/Aktionen als Textzeilen.
@@ -800,7 +928,7 @@ def tick(
     schreibt nichts und braucht keine Sperre.
     """
     if dry_run:
-        return _tick(repo, spec, gh_repo, konfig, wt_basis, True, jetzt)
+        return _tick(repo, spec, gh_repo, konfig, wt_basis, True, katalog, jetzt)
     datei = _zustand_datei(repo, gh_repo, spec)
     with sperre(datei, _sperr_wartezeit()) as frei:
         if not frei:
@@ -810,7 +938,7 @@ def tick(
                 f"(Sperre {datei.name}.lock) — Tick übersprungen."
             )
             return erg
-        return _tick(repo, spec, gh_repo, konfig, wt_basis, False, jetzt)
+        return _tick(repo, spec, gh_repo, konfig, wt_basis, False, katalog, jetzt)
 
 
 def _tick(
@@ -820,6 +948,7 @@ def _tick(
     konfig: dict[str, Any],
     wt_basis: str,
     dry_run: bool,
+    katalog: bool,
     jetzt: datetime | None,
 ) -> TickErgebnis:
     jetzt = jetzt or datetime.now(timezone.utc)
@@ -901,6 +1030,7 @@ def _tick(
     stand: list[str] = []
     delta: list[str] = []
     aktionen: list[str] = []
+    gelernt: list[vorfall.Vorfall] = []  # Vorfälle für den Fehlerkatalog (#286)
     offen = 0
     wartet = 0
     for issue in sorted(liste, key=lambda x: int(x["number"])):
@@ -917,6 +1047,7 @@ def _tick(
             if zeilen is not None:
                 lauf.append((quelle, zeilen))
         alle_zeilen = log_zeilen + [z for _, zeilen in lauf for z in zeilen]
+        gelernt += vorfall.aus_zeilen(alle_zeilen)  # was Sessions selbst meldeten
         wer = ",".join(a.get("login", "?") for a in issue.get("assignees") or []) or "-"
         commit = eigene[0].sha[:7] if eigene else "-"
         lauf_info = f" lauf:{sum(len(z) for _, z in lauf)}" if lauf else ""
@@ -1055,7 +1186,8 @@ def _tick(
                 n,
                 issue,
                 eigene,
-                alle_zeilen,
+                # Eigene Vorfall-Zeilen sind keine Spur der Session (#286).
+                vorfall.ohne_waechter_zeilen(alle_zeilen),
                 wt_zeit,
                 stunden,
                 jetzt,
@@ -1099,6 +1231,27 @@ def _tick(
                     f"Ticket #{n} ({wer}): {fund.text}",
                     schluessel,
                 )
+
+    # Der Aufpasser meldet Vorfälle eines Wächter-Fensters auf die Spec-Nummer —
+    # die steht nicht in der Kinderliste und käme sonst nie in den Katalog (#286).
+    spec_wt = worktree_ordner(spec, wt_basis)
+    spec_zeilen = log_vom_ref(repo, ref, spec)
+    for _, pfad_lauf in laufdateien(repo, spec_wt, spec):
+        spec_lauf = lauf_zeilen(pfad_lauf)
+        if spec_lauf is not None:
+            spec_zeilen += spec_lauf
+    gelernt += vorfall.aus_zeilen(spec_zeilen)
+
+    if not dry_run:
+        for fund in erg.verstoesse:
+            neu = vorfall_aus_verstoss(repo, fund, jetzt)
+            if neu is not None:
+                gelernt.append(neu)
+                aktionen.append(f"#{fund.ticket} Vorfall notiert ({fund.regel})")
+            else:
+                aktionen.append(f"#{fund.ticket} Vorfall schon bekannt ({fund.regel})")
+    if katalog and not dry_run:
+        aktionen += katalog_pflegen(repo, konfig, gelernt)
 
     erg.zeilen += kopfzeilen
     erg.zeilen.append(

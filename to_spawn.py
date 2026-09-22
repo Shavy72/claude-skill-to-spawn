@@ -44,6 +44,7 @@ from to_spawn import (  # noqa: E402
     setup,
     speicher,
     umzug,
+    vorfall,
 )
 from to_spawn import spawn as spawn_modul  # noqa: E402
 
@@ -197,6 +198,21 @@ def _eintrag(args: argparse.Namespace) -> int:
     if not ticket or not str(ticket).strip().isdigit():
         log.error("Ticket-Nummer fehlt — --ticket <N> angeben.")
         return 2
+    zusatz: dict[str, str] = {}
+    if args.typ == "vorfall":
+        try:
+            zusatz = vorfall.eintrag_felder(
+                args.klasse or "",
+                args.symptom or "",
+                args.ursache or "",
+                args.loesung or "",
+                args.schutz or "",
+                args.beispiel or "",
+            )
+            zusatz["quelle"] = vorfall.SESSION_QUELLE
+        except ValueError as fehler:
+            log.error("%s", fehler)
+            return 2
     # Einzige Stelle, die die versionierte Datei schreibt: überträgt fehlende
     # Laufdatei-Zeilen der Hooks gleich mit (Fixrunde #204) — auch die aus dem
     # Hauptbaum, die vor dem Anlegen des Worktrees dort landeten (#257).
@@ -212,7 +228,11 @@ def _eintrag(args: argparse.Namespace) -> int:
         frage=args.frage,
         wahl=args.wahl,
         grund=args.grund,
+        **zusatz,
     )
+    if args.typ == "vorfall":
+        # Damit der Wächter den Vorfall schon vor Commit + Push sieht (#286).
+        bau_log.spiegel_in_laufdatei(repo, zeile["ticket"], zeile)
     print(f"Bau-Log #{zeile['ticket']}: {args.typ} → {bau_log.log_pfad(repo, zeile['ticket'])}")
     return 0
 
@@ -383,7 +403,9 @@ def main(argv: list[str] | None = None) -> int:
     p_eintrag = unter.add_parser("eintrag", help="Klartext-Zeile ins Bau-Log des Tickets")
     p_eintrag.add_argument("--ticket", help="Ticket-Nummer (sonst TO_SPAWN_TICKET/wt-<N>)")
     p_eintrag.add_argument(
-        "--typ", required=True, choices=["zusammenfassung", "entscheidung", "blockiert"]
+        "--typ",
+        required=True,
+        choices=["zusammenfassung", "entscheidung", "blockiert", "vorfall"],
     )
     p_eintrag.add_argument("--umfang", help="was gebaut wurde")
     p_eintrag.add_argument("--schwierigkeiten", help="was schwer war")
@@ -393,6 +415,15 @@ def main(argv: list[str] | None = None) -> int:
     p_eintrag.add_argument("--frage", help="Entscheidung: welche Frage")
     p_eintrag.add_argument("--wahl", help="Entscheidung: was gewählt wurde")
     p_eintrag.add_argument("--grund", help="Entscheidung: warum · blockiert: woran es hängt")
+    # Lernschleife (#286): ein Vorfall braucht Klasse, Symptom, Ursache, Lösung.
+    p_eintrag.add_argument(
+        "--klasse", choices=sorted(vorfall.KLASSEN), help="Vorfall: welche Klasse"
+    )
+    p_eintrag.add_argument("--symptom", help="Vorfall: was man sieht")
+    p_eintrag.add_argument("--ursache", help="Vorfall: woran es lag")
+    p_eintrag.add_argument("--loesung", help="Vorfall: was hilft")
+    p_eintrag.add_argument("--schutz", help="Vorfall: Schutz-Spalte im Katalog")
+    p_eintrag.add_argument("--beispiel", help="Vorfall: Beleg (Ticket, Datum)")
     p_eintrag.add_argument(
         "--repo", help="Ordner mit dem Bau-Log (sonst TO_SPAWN_LOG_REPO bzw. Git-Wurzel)"
     )
