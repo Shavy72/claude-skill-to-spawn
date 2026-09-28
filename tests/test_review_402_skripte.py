@@ -115,3 +115,13 @@ def test_abnahme_unbelegt_und_echtes_rot_bleiben(tu: ModuleType, tmp_path: Path)
     assert _status(tu, tmp_path, "unbelegt") != "gruen"
     assert _status(tu, tmp_path, "ROT, Punkte offen") == "rot"
     assert _status(tu, tmp_path, "GRÜN, aber noch offen") == "rot"
+
+
+@pytest.mark.parametrize("text", ["GRÜN, keine Fehler, 1 offen", "GRÜN, 0 Fehler, 2 offen"])
+def test_abnahme_zahl_ungleich_null_vor_offen_bleibt_rot(tu: ModuleType, tmp_path: Path, text: str) -> None:
+    assert _status(tu, tmp_path, text) == "rot"
+
+
+@pytest.mark.parametrize("text", ["nichts zu beanstanden, belegt", "Nichtigkeiten, GRÜN"])
+def test_abnahme_nicht_und_fehlt_nur_als_ganzes_wort(tu: ModuleType, tmp_path: Path, text: str) -> None:
+    assert _status(tu, tmp_path, text) == "gruen"

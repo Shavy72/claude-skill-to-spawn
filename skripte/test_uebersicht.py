@@ -39,10 +39,10 @@ _ABNAHME = re.compile(r"ABNAHME[^:\n]*:\s*\**\s*([^\n*|]+)")
 # Abnahme-Stichwörter: Wortanfang fest, Endung frei (grün/grüne/grünen, belegt/belegte), aber
 # "unbelegt" trifft nicht. ROT nicht vor Bindestrich ("Rot-Beweis" ist Beleg, kein Urteil).
 # OFFEN gilt als schlecht, außer verneint ("0 offen", "nichts mehr offen", "keine Punkte offen":
-# Verneinung höchstens 2 Wörter vor OFFEN) - die Verneinung wird vor der Suche entfernt.
+# Verneinung direkt vor OFFEN, höchstens 1 Wort, keine Satzzeichen) - die Verneinung wird vor der Suche entfernt.
 _ABNAHME_GUT = re.compile(r"\b(?:ABGENOMMEN|BESTANDEN|GRÜN|BELEGT|FREIGEGEBEN)(?:e|en|er|es|em)?\b", re.I)
-_ABNAHME_SCHLECHT = re.compile(r"\b(?:ABGELEHNT|ROT\b(?!-)|NICHT|FEHLT)|\bOFFEN\b", re.I)
-_OFFEN_VERNEINT = re.compile(r"\b(?:0|null|nichts|keine?|nix)\b(?:\W+\w+){0,2}?\W+OFFEN\b", re.I)
+_ABNAHME_SCHLECHT = re.compile(r"\b(?:ABGELEHNT|ROT\b(?!-)|NICHT|FEHLT(?:EN|T)?)\b|\bOFFEN\b", re.I)
+_OFFEN_VERNEINT = re.compile(r"\b(?:0|null|nichts(?: mehr)?|keine(?: \w+)?|nix)\s+OFFEN\b", re.I)
 _XY = re.compile(r"\b(\d+)\s*/\s*(\d+)\s+(?:Tests?|grün|bestanden|belegt|Kriterien|Abnahme)", re.I)
 _KLICKWEG = re.compile(r"klick.?weg|live-klick|live-beweis", re.I)
 _VERNEINT = re.compile(r"\b(?:kein|keine|keiner|nicht|entfällt|n/a)\b", re.I)
