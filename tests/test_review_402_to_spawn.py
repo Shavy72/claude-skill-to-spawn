@@ -206,3 +206,93 @@ def test_mensch_noetig_ohne_fix_runde_zeigt_fragezeichen() -> None:
 def test_mensch_noetig_mit_fix_runde_und_review_offen() -> None:
     assert capo.mensch_noetig_was({"fix_runde": 3}) == "Review-Beleg nach 3 Fixrunden noch rot"
     assert capo.mensch_noetig_was({"grund": "review_offen"}) == "Review angefordert, aber kein Beleg geschrieben"
+
+
+# --- Fix-Runde 2, S1: nur Kommentare von Repo-Beteiligten zählen ----------------
+# Ein Dritter (öffentliches Repo) darf mit der Marke weder einen Vorschlag setzen
+# noch ``seit`` hinter Davids Antwort schieben. GitHub liefert ``author_association``
+# an jedem Kommentar; hier läuft der echte ``issue_kommentare`` über gestelltes gh.
+
+
+def _gh_kommentar(autor: str, text: str, vor_min: float, rolle: str) -> dict[str, Any]:
+    return {**_kommentar(autor, text, vor_min), "author_association": rolle}
+
+
+def _checkpoint_ueber_gh(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, kommentare: list[dict[str, Any]]
+) -> list[str]:
+    """Wie ``_checkpoint``, aber die Kommentare kommen durch ``capo.issue_kommentare``."""
+
+    def json_lauf(args: list[str], cwd: Path | None = None) -> Any:
+        if args[:2] == ["api", "user"]:
+            return {"login": KONTO}
+        if args[:1] == ["api"] and "/comments" in args[1]:
+            return kommentare
+        return None
+
+    monkeypatch.setattr(gh, "json_lauf", json_lauf)
+    monkeypatch.setattr(capo, "_SESSION_LOGIN", {}, raising=False)
+    return capo._checkpoint(
+        tmp_path,
+        {"waechter": {"checkpoint_frist_min": 60}},
+        "probe/repo",
+        900,
+        902,
+        [],
+        set(),
+        checkpoint="checkpoint:human",
+        jetzt=JETZT,
+        dry_run=True,
+        gelernt=[],
+    )
+
+
+@pytest.mark.parametrize("rolle", ["NONE", "CONTRIBUTOR", "FIRST_TIME_CONTRIBUTOR"])
+def test_s1_dritter_mit_marke_und_vorschlag_wird_nicht_angenommen(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, rolle: str
+) -> None:
+    kommentare = [_gh_kommentar("fremder", SESSION_VORSCHLAG, 90, rolle)]
+    zeilen = _checkpoint_ueber_gh(monkeypatch, tmp_path, kommentare)
+    assert not any("würde Vorschlag annehmen" in z for z in zeilen), zeilen
+
+
+def test_s1_dritter_marken_kommentar_verschiebt_davids_antwort_nicht(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    kommentare = [
+        _gh_kommentar(KONTO, SESSION_VORSCHLAG, 150, "OWNER"),
+        _gh_kommentar(KONTO, "Nein, erst am Morgen abschalten.", 100, "OWNER"),
+        _gh_kommentar("fremder", f"{MARKE} Frage: x?\n\nVorschlag: sofort aus.", 30, "NONE"),
+    ]
+    zeilen = _checkpoint_ueber_gh(monkeypatch, tmp_path, kommentare)
+    assert not any("würde Vorschlag annehmen" in z for z in zeilen), zeilen
+    assert any(f"von {KONTO}" in z and "als Antwort gewertet" in z for z in zeilen), zeilen
+
+
+@pytest.mark.parametrize("rolle", ["OWNER", "MEMBER", "COLLABORATOR"])
+def test_s1_session_vorschlag_von_beteiligtem_wird_angenommen(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, rolle: str
+) -> None:
+    zeilen = _checkpoint_ueber_gh(monkeypatch, tmp_path, [_gh_kommentar(KONTO, SESSION_VORSCHLAG, 90, rolle)])
+    assert any("würde Vorschlag annehmen: sofort aus." in z for z in zeilen), zeilen
+
+
+def test_s1_kommentar_ohne_author_association_zaehlt_nicht(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    zeilen = _checkpoint_ueber_gh(monkeypatch, tmp_path, [_kommentar(KONTO, SESSION_VORSCHLAG, 90)])
+    assert not any("würde Vorschlag annehmen" in z for z in zeilen), zeilen
+
+
+# --- Fix-Runde 2, G3: Meldung sagt, was wirklich erkannt wurde ------------------
+
+
+def test_g3_antwort_meldung_nennt_kommentar_ohne_marke(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    kommentare = [
+        _kommentar(KONTO, SESSION_VORSCHLAG, 90),
+        _kommentar(KONTO, "Probesitz beendet: alles grün.", 10),
+    ]
+    zeilen = _checkpoint(monkeypatch, tmp_path, kommentare, {"login": KONTO})
+    assert any(
+        f"Kommentar ohne Session-Marke von {KONTO}" in z and "Vorschlag nicht übernommen" in z for z in zeilen
+    ), zeilen

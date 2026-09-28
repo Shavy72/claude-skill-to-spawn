@@ -1043,10 +1043,26 @@ def checkpoint_frist(waechter: dict[str, Any]) -> float:
     return max(wert, 0.0)
 
 
+#: ``author_association``-Werte, deren Kommentare der Checkpoint überhaupt liest (#402).
+#: Ein Dritter im öffentlichen Repo könnte sonst mit der Marke :data:`SESSION_KOPF`
+#: einen Vorschlag setzen oder ``seit`` hinter Davids Antwort schieben.
+BETEILIGTE_ROLLEN = frozenset({"OWNER", "MEMBER", "COLLABORATOR"})
+
+
 def issue_kommentare(gh_repo: str, ticket: int) -> list[dict[str, Any]] | None:
-    """Kommentare eines Issues (``None`` = Abfrage gescheitert)."""
+    """Kommentare eines Issues von Repo-Beteiligten (``None`` = Abfrage gescheitert).
+
+    Nur Kommentare mit ``author_association`` aus :data:`BETEILIGTE_ROLLEN` kommen
+    zurück — für Vorschlag, Fragezeit und Antwort gleichermaßen. Fehlt das Feld,
+    zählt der Kommentar nicht (sichere Richtung: lieber keine Annahme).
+    """
     daten = gh.json_lauf(["api", f"repos/{gh_repo}/issues/{ticket}/comments?per_page=100"])
-    return daten if isinstance(daten, list) else None
+    if not isinstance(daten, list):
+        return None
+    beteiligt = [e for e in daten if isinstance(e, dict) and e.get("author_association") in BETEILIGTE_ROLLEN]
+    if len(beteiligt) < len(daten):
+        log.info("#%s: %d Kommentar(e) von Nicht-Beteiligten ignoriert", ticket, len(daten) - len(beteiligt))
+    return beteiligt
 
 
 def _kommentar_teile(eintrag: dict[str, Any]) -> tuple[str, str, datetime | None]:
@@ -1173,7 +1189,12 @@ def _checkpoint(
         return [f"#{n} Checkpoint wartet ({wartet:.0f} von {frist:.0f} min)"]
     antwort = davids_antwort(kommentare, seit)
     if antwort:
-        return [f"#{n} Checkpoint: {antwort} hat geantwortet — keine Annahme"]
+        # Ohne Marke heißt nur: nicht von einer Session mit neuem Prompt — kann David
+        # sein oder eine Session mit altem Prompt („Probesitz beendet:“). Sichere Richtung.
+        return [
+            f"#{n} Checkpoint: Kommentar ohne Session-Marke von {antwort} — als Antwort gewertet "
+            f"({antwort} hat geantwortet oder Session mit altem Prompt), Vorschlag nicht übernommen"
+        ]
     if vorschlag is None:
         zeilen_aus: list[str] = [
             f"#{n} Checkpoint {wartet:.0f} min offen, aber kein Vorschlag der Session "

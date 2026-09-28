@@ -69,6 +69,8 @@ def _kommentare(nummer: str, daten: dict) -> list[dict]:
                 "user": {"login": eintrag.get("autor", "bot")},
                 "body": eintrag.get("body", ""),
                 "created_at": eintrag.get("created_at", jetzt),
+                # GitHub-REST liefert die Rolle je Kommentar; Vorgabe OWNER (#402 S1).
+                "author_association": eintrag.get("author_association", "OWNER"),
             }
         )
     return antwort
