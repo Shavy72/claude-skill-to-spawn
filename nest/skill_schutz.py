@@ -19,8 +19,10 @@ am PC, ``/to-spawn`` schiebt sie selbst. Liest das Hook-JSON von stdin
     - ``dd of=…``; ``tar -x``/``--extract`` mit Skill-Pfad (z. B. ``-C``)
     - ``git`` mit schreibendem Unterbefehl (``_GIT_SCHREIBEND``) im Skill-Ordner
       (``-C <pfad>``, ``--git-dir``/``--work-tree``, vorheriges ``cd`` oder ``cwd``)
-    - ``git clone``/``git init`` mit Ziel in den Skills (clone: 2. Positionsargument,
-      init: 1.; fehlt es, der Arbeitsordner; dazu ``--separate-git-dir``)
+    - ``git clone``/``init``/``worktree add``/``submodule add`` mit Ziel in den Skills
+      (Ziel-Position je Unterbefehl in ``_GIT_ANLEGEN``; dazu ``--separate-git-dir``)
+      oder mit ``--git-dir``/``--work-tree`` in den Skills
+    - Env-Präfixe ``GIT_DIR=``/``GIT_WORK_TREE=`` zählen wie ``--git-dir``/``--work-tree``
     - ``python``/``python3`` mit Inline-Code (``-c`` oder ``- <<``), der schreibt
       (Regex ``_PY_SCHREIBT``) und den Skill-Pfad nennt
   ``cd <pfad>`` im Befehl verschiebt das Arbeitsverzeichnis für die Folgeteile.
@@ -72,19 +74,27 @@ _GIT_SCHREIBEND = {
     "stash", "clean", "rm", "mv", "commit", "cherry-pick", "revert", "add",
 }  # fmt: skip
 # Globale git-Optionen, die das nächste Token als Wert schlucken.
-_GIT_GLOBAL_MIT_WERT = {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env"}
-# clone/init-Optionen mit Wert (Leerzeichen-Form), damit der Wert nicht als Ziel zählt.
-_GIT_MIT_WERT = {
-    "clone": {
+_GIT_GLOBAL_MIT_WERT = {
+    "-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env", "--attr-source",
+}  # fmt: skip
+# Env-Präfixe, die wie die gleichnamigen globalen git-Optionen wirken.
+_GIT_ENV = {"GIT_DIR": "--git-dir", "GIT_WORK_TREE": "--work-tree"}
+# Unterbefehle, die ein neues Repo/Arbeitsverzeichnis anlegen:
+# (Index des Ziel-Positionsarguments, Optionen mit Wert in Leerzeichen-Form).
+# Fehlt das Ziel, gilt der Arbeitsordner; fehlen schon die Argumente davor, nichts.
+_GIT_ANLEGEN = {
+    "clone": (1, {
         "-b", "--branch", "-o", "--origin", "-u", "--upload-pack", "--depth", "-c",
         "--config", "--reference", "--reference-if-able", "--separate-git-dir",
         "--template", "-j", "--jobs", "--shallow-since", "--shallow-exclude",
-        "--filter", "--server-option", "--bundle-uri", "--ref-format",
-    },
-    "init": {
+        "--filter", "--server-option", "--bundle-uri", "--ref-format", "--revision",
+    }),
+    "init": (0, {
         "-b", "--initial-branch", "--separate-git-dir", "--template",
         "--object-format", "--ref-format",
-    },
+    }),
+    "worktree add": (0, {"-b", "-B", "--reason"}),
+    "submodule add": (1, {"-b", "--branch", "--name", "--reference", "--depth"}),
 }  # fmt: skip
 # Optionen, deren Wert selbst ein Schreibziel ist.
 _GIT_ZIEL_OPTIONEN = {"--separate-git-dir"}
@@ -182,26 +192,31 @@ def _git_schreibt(args: list[str], cwd: Path) -> bool:
     if not rest:
         return False
     unterbefehl, rest = rest[0], rest[1:]
-    if unterbefehl in ("clone", "init"):
-        positionale, ziel_werte = _git_ziel_args(rest, _GIT_MIT_WERT[unterbefehl])
-        if unterbefehl == "clone" and not positionale:
+    if unterbefehl in ("worktree", "submodule") and rest[:1] == ["add"]:
+        unterbefehl, rest = f"{unterbefehl} add", rest[1:]
+    if unterbefehl in _GIT_ANLEGEN:
+        ziel_index, mit_wert = _GIT_ANLEGEN[unterbefehl]
+        positionale, ziel_werte = _git_ziel_args(rest, mit_wert)
+        if len(positionale) < ziel_index:
             return False
-        # Ziel: clone → 2. Positionsargument (fehlt es: Ordner aus der URL im
-        # Arbeitsordner), init → 1. Positionsargument (fehlt es: Arbeitsordner selbst).
-        ziel_index = 1 if unterbefehl == "clone" else 0
+        # Fehlt das Ziel: clone → Ordner aus der URL im Arbeitsordner, init → Arbeitsordner.
         ziel = positionale[ziel_index] if len(positionale) > ziel_index else "."
-        return any(_in_skills(z, ordner) for z in (ziel, *ziel_werte))
-    return unterbefehl in _GIT_SCHREIBEND and (
-        repo_in_skills or _in_skills(str(ordner), cwd)
-    )
+        return repo_in_skills or any(_in_skills(z, ordner) for z in (ziel, *ziel_werte))
+    return unterbefehl in _GIT_SCHREIBEND and (repo_in_skills or _in_skills(str(ordner), cwd))
 
 
 def _teil_schreibt(tokens: list[str], cwd: Path) -> bool:
+    git_env: list[str] = []  # GIT_DIR=…/GIT_WORK_TREE=… als globale git-Optionen
     while tokens and (tokens[0] in _PRAEFIXE or ("=" in tokens[0] and not tokens[0].startswith("-"))):
+        name, _, wert = tokens[0].partition("=")
+        if name in _GIT_ENV:
+            git_env.append(f"{_GIT_ENV[name]}={wert}")
         tokens = tokens[1:]
     if not tokens:
         return False
     befehl, args = Path(tokens[0]).name, tokens[1:]
+    if befehl == "git":
+        args = git_env + args
     nicht_optionen = [a for a in args if not a.startswith("-")]
     if befehl in _ALLE_ARGS:
         return any(_in_skills(a, cwd) for a in nicht_optionen)

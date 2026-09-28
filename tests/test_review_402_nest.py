@@ -82,3 +82,47 @@ def test_git_clone_init_in_skills_wird_verweigert(home: Path, befehl: str) -> No
 def test_git_clone_init_ausserhalb_ist_erlaubt(home: Path, befehl: str) -> None:
     ergebnis = _hook(home, befehl, home / "repo")
     assert ergebnis.returncode == 0, (befehl, ergebnis.stderr)
+
+
+@pytest.mark.parametrize(
+    "befehl",
+    [
+        # R5: --git-dir/--work-tree bzw. GIT_DIR/GIT_WORK_TREE zeigen in die Skills.
+        "git --git-dir ~/.claude/skills/x init",
+        "git --git-dir=~/.claude/skills/x/.git --work-tree=~/.claude/skills/x init",
+        "GIT_DIR=~/.claude/skills/x git init",
+        "GIT_WORK_TREE=~/.claude/skills/to-spawn GIT_DIR=/tmp/g.git git commit -am x",
+        "GIT_DIR=~/.claude/skills/to-spawn/.git git checkout -- .",
+        # R6: worktree add / submodule add mit Ziel in den Skills.
+        "git worktree add ~/.claude/skills/x main",
+        "git worktree add -b neu ~/.claude/skills/x",
+        f"git -C ~/repo submodule add {URL} ~/.claude/skills/x",
+        f"git submodule add -b main {URL} ~/.claude/skills/x",
+        # R7: clone --revision schluckt Wert; globales --attr-source schluckt Wert.
+        f"git clone --revision abc123 {URL} ~/.claude/skills/x",
+        "git --attr-source HEAD -C ~/.claude/skills/to-spawn commit -am x",
+    ],
+)
+def test_review_r5_r6_r7_umgehungen_werden_verweigert(home: Path, befehl: str) -> None:
+    ergebnis = _hook(home, befehl, home / "repo")
+    assert ergebnis.returncode == 2, (befehl, ergebnis.stderr)
+    assert "Skill-Dateien sind auf dem Bau-Server schreibgeschützt" in ergebnis.stderr
+
+
+@pytest.mark.parametrize(
+    "befehl",
+    [
+        "git worktree add /tmp/x",
+        "git worktree add -b neu /tmp/x main",
+        "git worktree list",
+        f"git submodule add {URL} vendor/x",
+        f"git clone --revision abc123 {URL} /tmp/x",
+        "git --attr-source HEAD -C ~/.claude/skills/to-spawn status",
+        "GIT_DIR=/tmp/g.git git init",
+        "GIT_DIR=~/.claude/skills/to-spawn/.git git log --oneline -3",
+        "git --git-dir ~/.claude/skills/to-spawn/.git status",
+    ],
+)
+def test_review_r5_r6_r7_erlaubte_faelle(home: Path, befehl: str) -> None:
+    ergebnis = _hook(home, befehl, home / "repo")
+    assert ergebnis.returncode == 0, (befehl, ergebnis.stderr)
