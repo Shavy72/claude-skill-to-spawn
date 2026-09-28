@@ -57,7 +57,11 @@ def _kommentar(autor: str, text: str, vor_min: float) -> dict[str, Any]:
 
 
 def _checkpoint(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, kommentare: list[dict[str, Any]], login: Any
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    kommentare: list[dict[str, Any]],
+    login: Any,
+    zeilen: list[dict[str, Any]] | None = None,
 ) -> list[str]:
     """Probelauf des Checkpoints mit gestelltem GitHub (Kommentare + ``gh api user``)."""
     monkeypatch.setattr(capo, "issue_kommentare", lambda _repo, _n: kommentare)
@@ -75,7 +79,7 @@ def _checkpoint(
         "probe/repo",
         900,
         902,
-        [],
+        zeilen or [],
         set(),
         checkpoint="checkpoint:human",
         jetzt=JETZT,
@@ -94,7 +98,8 @@ def test_checkpoint_vorschlag_eines_fremden_autors_wird_nicht_angenommen(
 def test_checkpoint_vorschlag_des_session_logins_wird_angenommen(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    zeilen = _checkpoint(monkeypatch, tmp_path, [_kommentar("bau-bot", VORSCHLAG, 90)], {"login": "bau-bot"})
+    # Angepasst (Nachschau R1): Login trennt nicht mehr, der Session-Kommentar trägt die Marke.
+    zeilen = _checkpoint(monkeypatch, tmp_path, [_kommentar("bau-bot", SESSION_VORSCHLAG, 90)], {"login": "bau-bot"})
     assert any("würde Vorschlag annehmen: sofort aus." in z for z in zeilen), zeilen
 
 
@@ -106,10 +111,89 @@ def test_checkpoint_ohne_bekannten_login_nimmt_keinen_kommentar_vorschlag_an(
 
 
 def test_checkpoint_vorschlag_filtert_fremde_autoren() -> None:
-    kommentare = [_kommentar("bau-bot", "Vorschlag: eigener", 90), _kommentar("fremder", "Vorschlag: fremd", 30)]
-    vorschlag = capo.checkpoint_vorschlag([], kommentare, session_login="bau-bot")
+    # Angepasst (Nachschau R1): kein session_login mehr — „fremd“ heißt jetzt: ohne Marke.
+    kommentare = [_kommentar("bau-bot", f"{MARKE} Vorschlag: eigener", 90), _kommentar("fremder", "Vorschlag: fremd", 30)]
+    vorschlag = capo.checkpoint_vorschlag([], kommentare)
     assert vorschlag is not None
     assert (vorschlag.wahl, vorschlag.autor) == ("eigener", "bau-bot")
+
+
+# --- Befund 8, Nachschau R1/R2: gleiches gh-Konto für Session und David ----------
+# Session und David kommentieren mit demselben Login (nest_push.sh kopiert Davids
+# gh-Token). Nur die Marke capo.SESSION_KOPF trennt Session-Kommentare von David.
+
+KONTO = "Shavy72"
+MARKE = "Bau-Session:"
+SESSION_VORSCHLAG = f"{MARKE} Frage: Soll der Abschalter sofort greifen?\n\nVorschlag: sofort aus."
+
+
+def test_marke_ist_die_konstante_aus_capo() -> None:
+    assert capo.SESSION_KOPF == MARKE
+
+
+def test_r1_davids_nein_vom_gleichen_konto_verhindert_annahme(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    kommentare = [
+        _kommentar(KONTO, SESSION_VORSCHLAG, 90),
+        _kommentar(KONTO, "Nein, erst am Morgen abschalten.", 10),
+    ]
+    zeilen = _checkpoint(monkeypatch, tmp_path, kommentare, {"login": KONTO})
+    assert not any("würde Vorschlag annehmen" in z for z in zeilen), zeilen
+    assert any("hat geantwortet" in z for z in zeilen), zeilen
+
+
+def test_r1_davids_eigener_vorschlag_ohne_marke_wird_nicht_angenommen(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    zeilen = _checkpoint(monkeypatch, tmp_path, [_kommentar(KONTO, VORSCHLAG, 90)], {"login": KONTO})
+    assert not any("würde Vorschlag annehmen" in z for z in zeilen), zeilen
+
+
+def test_r1_session_vorschlag_mit_marke_wird_angenommen(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    zeilen = _checkpoint(monkeypatch, tmp_path, [_kommentar(KONTO, SESSION_VORSCHLAG, 90)], {"login": KONTO})
+    assert any("würde Vorschlag annehmen: sofort aus." in z for z in zeilen), zeilen
+
+
+def test_r2_session_fortschritt_mit_marke_ist_keine_antwort_auf_bau_log_vorschlag(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    ts = (JETZT - timedelta(minutes=90)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    bau_log = [{"typ": "entscheidung", "frage": "Abschalter?", "wahl": "sofort aus", "ts": ts}]
+    kommentare = [_kommentar(KONTO, f"{MARKE} Zwischenstand: Tests laufen.", 30)]
+    zeilen = _checkpoint(monkeypatch, tmp_path, kommentare, {"login": KONTO}, zeilen=bau_log)
+    assert not any("hat geantwortet" in z for z in zeilen), zeilen
+    assert any("würde Vorschlag annehmen: sofort aus" in z for z in zeilen), zeilen
+
+
+def test_r2_davids_antwort_ohne_marke_auf_bau_log_vorschlag_zaehlt(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    ts = (JETZT - timedelta(minutes=90)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    bau_log = [{"typ": "entscheidung", "frage": "Abschalter?", "wahl": "sofort aus", "ts": ts}]
+    kommentare = [_kommentar(KONTO, "Nein.", 30)]
+    zeilen = _checkpoint(monkeypatch, tmp_path, kommentare, {"login": KONTO}, zeilen=bau_log)
+    assert any(f"{KONTO} hat geantwortet" in z for z in zeilen), zeilen
+
+
+def test_bau_prompt_gibt_der_session_die_marke_vor(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Die Marke lebt nur in capo; die Vorlage holt sie über {SESSION_KOPF}."""
+    import importlib.util
+    import json
+
+    spec = importlib.util.spec_from_file_location("fremdrepo_257_hilfen", SKILL / "tests" / "test_fremdrepo_257.py")
+    assert spec and spec.loader
+    hilfen = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(hilfen)
+    _git, _lade_bau = hilfen._git, hilfen._lade_bau
+
+    vorlage = json.loads((SKILL / "repo-scripts" / "_default.json").read_text(encoding="utf-8"))["prompt_template"]
+    assert "{SESSION_KOPF}" in vorlage and "Vorschlag: <eigene Wahl>" in vorlage
+    repo = tmp_path / "projrepo"
+    repo.mkdir()
+    _git(repo, "init", "-q")
+    _git(repo, "remote", "add", "origin", "https://github.com/acme/produkt.git")
+    ergebnis = _lade_bau(monkeypatch, repo).build_prompt(vorlage, "5", "1", "Titel", "Kontext", konfig={})
+    assert "{SESSION_KOPF}" not in ergebnis
+    assert f"„{capo.SESSION_KOPF}“" in ergebnis
 
 
 # --- Befund 9: fehlende Fixrunde ------------------------------------------------

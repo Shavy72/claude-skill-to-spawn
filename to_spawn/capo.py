@@ -1009,6 +1009,10 @@ CHECKPOINT_FRIST_MIN = 60.0
 _VORSCHLAG = re.compile(r"Vorschlag\s*:\s*(.+)", re.IGNORECASE | re.DOTALL)
 #: Anfang jedes Wächter-Kommentars — eigene Kommentare sind nie „Davids Antwort“.
 WAECHTER_KOPF = "Wächter:"
+#: Anfang jedes Issue-Kommentars einer Bau-Session (#402). Session, Wächter und David
+#: kommentieren mit demselben gh-Konto — der Login trennt sie nicht, nur diese Marke.
+#: Der Bau-Prompt bekommt sie über den Platzhalter ``{SESSION_KOPF}`` (skripte/bau.py).
+SESSION_KOPF = "Bau-Session:"
 
 
 @dataclass
@@ -1052,34 +1056,18 @@ def _kommentar_teile(eintrag: dict[str, Any]) -> tuple[str, str, datetime | None
     return autor, str(eintrag.get("body") or ""), _zeit(eintrag.get("created_at"))
 
 
-#: Zwischenspeicher für :func:`session_login` (je Prozess eine gh-Abfrage).
-_SESSION_LOGIN: dict[str, str] = {}
+def _ist_session_kommentar(text: str) -> bool:
+    """Trägt der Kommentar die Marke :data:`SESSION_KOPF` am Anfang?"""
+    return text.lstrip().startswith(SESSION_KOPF)
 
 
-def session_login() -> str:
-    """gh-Login, unter dem Bau-Sessions und Wächter kommentieren — ``""`` = unbekannt.
-
-    Beide laufen mit derselben ``gh``-Anmeldung; nur Kommentare dieses Logins sind
-    Vorschläge der Session (#402). Gescheiterte Abfragen werden nicht gemerkt.
-    """
-    if "login" not in _SESSION_LOGIN:
-        daten = gh.json_lauf(["api", "user"])
-        login = str(daten.get("login") or "") if isinstance(daten, dict) else ""
-        if not login:
-            return ""
-        _SESSION_LOGIN["login"] = login
-    return _SESSION_LOGIN["login"]
-
-
-def checkpoint_vorschlag(
-    zeilen: list[dict[str, Any]], kommentare: list[dict[str, Any]], *, session_login: str
-) -> Vorschlag | None:
+def checkpoint_vorschlag(zeilen: list[dict[str, Any]], kommentare: list[dict[str, Any]]) -> Vorschlag | None:
     """Jüngster eigener Vorschlag der Session — ``None`` heißt: nie raten.
 
-    Zählt eine Bau-Log-Zeile ``entscheidung`` mit Wahl und ein Issue-Kommentar mit
-    „Vorschlag:“ vom ``session_login`` (#402: fremde Autoren zählen nie; leerer
-    Login = kein Kommentar zählt). Wächter-Kommentare zählen nicht (sonst nimmt er
-    sich selbst an).
+    Zählt eine Bau-Log-Zeile ``entscheidung`` mit Wahl und ein Issue-Kommentar, der
+    mit :data:`SESSION_KOPF` beginnt und „Vorschlag:“ enthält. Der Login zählt nicht:
+    Session und David schreiben mit demselben gh-Konto (#402). Kommentare ohne Marke
+    (auch Wächter-Kommentare) sind nie ein Session-Vorschlag.
     """
     kandidaten: list[Vorschlag] = []
     for z in zeilen:
@@ -1091,9 +1079,7 @@ def checkpoint_vorschlag(
             kandidaten.append(Vorschlag(frage, wahl, grund, zeit))
     for eintrag in kommentare:
         autor, text, zeit = _kommentar_teile(eintrag)
-        if zeit is None or not session_login or autor != session_login:
-            continue
-        if text.lstrip().startswith(WAECHTER_KOPF):
+        if zeit is None or not _ist_session_kommentar(text):
             continue
         treffer = _VORSCHLAG.search(text)
         if treffer:
@@ -1121,17 +1107,19 @@ def checkpoint_frage_zeit(zeilen: list[dict[str, Any]], kommentare: list[dict[st
     return max(echte) if echte else None
 
 
-def davids_antwort(kommentare: list[dict[str, Any]], seit: datetime, eigener_autor: str) -> str:
-    """Login des ersten fremden Kommentars nach ``seit`` — ``""`` = keine Antwort."""
+def davids_antwort(kommentare: list[dict[str, Any]], seit: datetime) -> str:
+    """Login des ersten Kommentars nach ``seit`` ohne Session- oder Wächter-Marke.
+
+    ``""`` = keine Antwort. Der Login trennt nicht (gleiches gh-Konto, #402) — nur die
+    Marken :data:`SESSION_KOPF` und :data:`WAECHTER_KOPF`.
+    """
     for eintrag in sorted(
         kommentare, key=lambda e: _kommentar_teile(e)[2] or datetime.min.replace(tzinfo=timezone.utc)
     ):
         autor, text, zeit = _kommentar_teile(eintrag)
         if zeit is None or zeit <= seit:
             continue
-        if text.lstrip().startswith(WAECHTER_KOPF):
-            continue
-        if eigener_autor and autor == eigener_autor:
+        if text.lstrip().startswith(WAECHTER_KOPF) or _ist_session_kommentar(text):
             continue
         return autor or "jemand"
     return ""
@@ -1173,7 +1161,7 @@ def _checkpoint(
     kommentare = issue_kommentare(gh_repo, n)
     if kommentare is None:
         return [f"#{n} FEHLER: Kommentare nicht lesbar — Checkpoint ungeprüft"]
-    vorschlag = checkpoint_vorschlag(zeilen, kommentare, session_login=session_login())
+    vorschlag = checkpoint_vorschlag(zeilen, kommentare)
     frage_zeit = checkpoint_frage_zeit(zeilen, kommentare)
     if vorschlag is None and frage_zeit is None:
         return []  # Label gesetzt, aber noch keine Frage gestellt
@@ -1183,7 +1171,7 @@ def _checkpoint(
     wartet = (jetzt - seit).total_seconds() / 60
     if wartet <= frist:
         return [f"#{n} Checkpoint wartet ({wartet:.0f} von {frist:.0f} min)"]
-    antwort = davids_antwort(kommentare, seit, vorschlag.autor if vorschlag else "")
+    antwort = davids_antwort(kommentare, seit)
     if antwort:
         return [f"#{n} Checkpoint: {antwort} hat geantwortet — keine Annahme"]
     if vorschlag is None:
