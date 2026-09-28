@@ -91,3 +91,27 @@ def test_seite_datei_kaputt_wirft(ls: ModuleType, tmp_path: Path) -> None:
     ablage.seite_datei.write_text("{kaputt", encoding="utf-8")
     with pytest.raises(json.JSONDecodeError):
         fenster.lies_url(ablage)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "GRÜN, 0 offen",
+        "GRÜN, nichts mehr offen",
+        "GRÜN, keine Punkte offen",
+        "GRÜN (Rot-Beweis belegt)",
+    ],
+)
+def test_abnahme_verneinung_und_rot_beweis_bleiben_gruen(tu: ModuleType, tmp_path: Path, text: str) -> None:
+    assert _status(tu, tmp_path, text) == "gruen"
+
+
+@pytest.mark.parametrize("text", ["grüne Abnahme", "grünen Licht", "belegte Punkte", "bestandene Tests", "freigegebene Fassung"])
+def test_abnahme_flektierte_formen_sind_gruen(tu: ModuleType, tmp_path: Path, text: str) -> None:
+    assert _status(tu, tmp_path, text) == "gruen"
+
+
+def test_abnahme_unbelegt_und_echtes_rot_bleiben(tu: ModuleType, tmp_path: Path) -> None:
+    assert _status(tu, tmp_path, "unbelegt") != "gruen"
+    assert _status(tu, tmp_path, "ROT, Punkte offen") == "rot"
+    assert _status(tu, tmp_path, "GRÜN, aber noch offen") == "rot"
