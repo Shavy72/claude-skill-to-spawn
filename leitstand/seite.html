@@ -1737,7 +1737,7 @@ h1 .specnr{color:var(--muted);font-weight:600}
       }, stoerung);
       abonniereNeueste(db, "live", 3, (docs) => { liveDocs = docs; uebernehme(); });
       abonniereNeueste(db, "log", 40, (docs) => { liveLog = docs; uebernehme(); });
-    } catch (e) { stoerung(); uebernehme(true); }
+    } catch (e) { uebernehme(true); stoerung(); } // erst Erst-Render erzwingen, dann Störung anzeigen (sonst überschreibt setzeQuelle sie)
   })();
 })();
 </script>
