@@ -171,7 +171,12 @@ def test_weg_bau_schreibt_bau_log_im_worktree(repo: Path, tmp_path: Path) -> Non
     assert ereignisse == ["Stop", "Stop", "SubagentStop"], _hook_ergebnisse(tmp_path)
     assert all(h["code"] == 0 for h in hooks), hooks
     stop_befehle = [h["befehl"] for h in _hook_ergebnisse(tmp_path) if h["ereignis"] == "Stop"]
-    assert "staffel_stop.py" in stop_befehle[0], "Staffel-Hook muss zuerst laufen"
+    # Reihenfolge seit #321 (bau.staffel_hooks): Frage-Sperre zuerst, dann Staffel-Hook
+    # (Konfig hier ohne ``staffel.aktiv`` → Vorgabe an), zuletzt der Bau-Log-Hook.
+    assert "frage-sperre" in stop_befehle[0], "Frage-Sperre muss zuerst laufen (#321)"
+    staffel_idx = next(i for i, b in enumerate(stop_befehle) if "staffel_stop.py" in b)
+    bau_log_idx = next(i for i, b in enumerate(stop_befehle) if "hook-stop" in b)
+    assert staffel_idx < bau_log_idx, "Staffel-Hook vor dem Bau-Log-Hook"
 
     assert not (repo / bau_log.LOG_ORDNER).exists(), "nie in den Hauptbaum schreiben"
     zeilen = bau_log.lese(worktree, TICKET)

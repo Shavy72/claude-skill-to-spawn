@@ -97,6 +97,7 @@ def _lade_leitstand() -> ModuleType:
 def test_leitstand_meta_traegt_repo_slug_und_seite_hat_keinen_festen_slug() -> None:
     ls = _lade_leitstand()
     manifest = {"tickets": {"8": {"umfang": "x"}}}
+
     def meta(**extra: str) -> dict[str, object]:
         docs = ls.seed_docs("7", manifest, {}, ziel="local", gestartet="x", faktor=None, ssh_ziel="s", **extra)
         return next(doc for sammlung, _, doc in docs if sammlung == "meta")
@@ -110,7 +111,17 @@ def test_leitstand_meta_traegt_repo_slug_und_seite_hat_keinen_festen_slug() -> N
 
 
 def test_pi_local_skill_nutzt_aktuelles_repo_und_prueft_pi_motor() -> None:
-    text = (SKILL.parent / "to-spawn-pi-local" / "SKILL.md").read_text(encoding="utf-8")
+    # to-spawn-pi-local ist ein eigener Skill außerhalb dieses Repos (nicht in aliase/):
+    # neben dem installierten Skill-Ordner oder unter ~/.claude/skills. Fehlt er (Klon auf
+    # dem Bau-Server, CI), gibt es nichts zu prüfen → skip mit Grund statt FileNotFoundError.
+    kandidaten = [
+        SKILL.parent / "to-spawn-pi-local" / "SKILL.md",
+        Path.home() / ".claude" / "skills" / "to-spawn-pi-local" / "SKILL.md",
+    ]
+    datei = next((k for k in kandidaten if k.is_file()), None)
+    if datei is None:
+        pytest.skip("Skill to-spawn-pi-local nicht installiert (gehört nicht zu diesem Repo)")
+    text = datei.read_text(encoding="utf-8")
     assert "Desktop/DuoPlus" not in text
     assert "git rev-parse --show-toplevel" in text
     assert "Pi-Motor in diesem Repo nicht eingerichtet" in text

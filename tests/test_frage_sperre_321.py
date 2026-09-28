@@ -19,8 +19,10 @@ SKRIPTE = SKILL / "skripte"
 _REPO_ENV = os.environ.get("TO_SPAWN_REPO")
 DUOPLUS_REPO = Path(_REPO_ENV or "C:/Users/d4veg/Desktop/DuoPlus/duoplus-management")
 SETUP_SKRIPT = DUOPLUS_REPO / "scripts" / "setup_bau_server_push.sh"
-#: Hook-Datei relativ zum Skill (``~/.claude/skills/to-spawn`` → ``~/.claude/hooks/…``).
-HOOK_DATEI = Path(__file__).resolve().parents[3] / "hooks/smart-zone/staffel/frage-sperre.mjs"
+#: Hook-Datei, wie ``bau.FRAGE_SPERRE_BEFEHL`` sie aufruft (``~/.claude/hooks/…``) — am
+#: Home-Ordner, nicht relativ zum Skill-Ordner (Klon unter /home/bau/t402 o. ä. bricht sonst).
+CLAUDE_HEIM = Path.home() / ".claude"
+HOOK_DATEI = CLAUDE_HEIM / "hooks/smart-zone/staffel/frage-sperre.mjs"
 
 
 def _lade_bau(monkeypatch: pytest.MonkeyPatch, repo: Path) -> types.ModuleType:
@@ -57,6 +59,8 @@ def test_frage_sperre_pretooluse_askuserquestion(bau: types.ModuleType) -> None:
 
 
 def test_frage_sperre_hook_datei_existiert() -> None:
+    if not CLAUDE_HEIM.is_dir():
+        pytest.skip(f"keine Claude-Installation ({CLAUDE_HEIM} fehlt) — Hook gehört nicht zum Repo")
     assert HOOK_DATEI.is_file(), f"{HOOK_DATEI} fehlt"
 
 

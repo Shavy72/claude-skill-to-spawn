@@ -721,7 +721,13 @@ def test_wache_wechselt_bei_limit_auf_ausweich_modell(welt: dict[str, Path]) -> 
     zeilen = bau_log.lese(welt["repo"], SPEC)
     wechsel = [z for z in zeilen if z["typ"] == "waechter_modell"]
     assert len(wechsel) == 1
-    assert wechsel[0]["von"] == "claude-opus-5" and wechsel[0]["nach"] == "claude-sonnet-5"
+    # „von“ = Startmodell des Wächters: SSOT ``modelle.waechter`` der Repo-Konfig, bei Opus
+    # mit ``[1m]`` ergänzt (wache.volles_fenster, 2026-09-28) — kein fest verdrahtetes Literal.
+    from to_spawn import config
+
+    start_modell = erster[erster.index("--model") + 1]
+    assert start_modell.startswith(str(config.lade(welt["repo"])["modelle"]["waechter"]))
+    assert wechsel[0]["von"] == start_modell and wechsel[0]["nach"] == "claude-sonnet-5"
     assert [m["art"] for m in _mails(welt)] == ["waechter_ausweich"]
 
 

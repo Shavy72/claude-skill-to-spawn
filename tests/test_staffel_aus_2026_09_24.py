@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "skripte"))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -34,11 +37,17 @@ def test_ohne_staffel_kein_staffel_hook_aber_rest_bleibt() -> None:
     assert any("hook-stop" in b for b in ohne)
 
 
+#: DuoPlus-Repo: ``TO_SPAWN_REPO`` (beim Import gelesen, conftest löscht ``TO_SPAWN_*`` je Test),
+#: sonst der Hauptbaum am PC. Nicht relativ zum Skill-Ordner: im Klon (z. B. /home/bau/t402)
+#: gab ``parents[4]`` einen IndexError bzw. einen falschen Pfad.
+_REPO_ENV = os.environ.get("TO_SPAWN_REPO")
+DUOPLUS_REPO = Path(_REPO_ENV) if _REPO_ENV else Path.home() / "Desktop" / "DuoPlus" / "duoplus-management"
+
+
 def test_repo_konfig_duoplus_hat_staffel_aus() -> None:
-    repo = Path(__file__).resolve().parents[4] / "Desktop" / "DuoPlus" / "duoplus-management"
-    datei = repo / ".to-spawn" / "config.json"
+    datei = DUOPLUS_REPO / ".to-spawn" / "config.json"
     if not datei.is_file():
-        return
+        pytest.skip(f"duoplus-management-Konfig fehlt ({datei}) — Beschluss 24.09. hier nicht prüfbar")
     import json
 
     assert bau.staffel_aktiv(json.loads(datei.read_text(encoding="utf-8"))) is False
