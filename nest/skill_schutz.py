@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""PreToolUse-Hook: Skill-Dateien auf dem Bau-Server schreibgeschützt (duoplus-management#325).
+"""PreToolUse-Hook: Skill-Dateien auf dem Bau-Server schreibgeschützt (Hauptprojekt-Issue #325).
 
 Eine Bau-Session darf ``~/.claude/skills/`` nicht ändern — Skill-Änderungen entstehen
 am PC, ``/to-spawn`` schiebt sie selbst. Liest das Hook-JSON von stdin
@@ -18,7 +18,9 @@ am PC, ``/to-spawn`` schiebt sie selbst. Liest das Hook-JSON von stdin
     - ``sed -i``/``--in-place``, ``perl -i`` — jedes Nicht-Options-Argument
     - ``dd of=…``; ``tar -x``/``--extract`` mit Skill-Pfad (z. B. ``-C``)
     - ``git`` mit schreibendem Unterbefehl (``_GIT_SCHREIBEND``) im Skill-Ordner
-      (``-C <pfad>``, vorheriges ``cd`` oder ``cwd``)
+      (``-C <pfad>``, ``--git-dir``/``--work-tree``, vorheriges ``cd`` oder ``cwd``)
+    - ``git clone``/``git init`` mit Ziel in den Skills (clone: 2. Positionsargument,
+      init: 1.; fehlt es, der Arbeitsordner; dazu ``--separate-git-dir``)
     - ``python``/``python3`` mit Inline-Code (``-c`` oder ``- <<``), der schreibt
       (Regex ``_PY_SCHREIBT``) und den Skill-Pfad nennt
   ``cd <pfad>`` im Befehl verschiebt das Arbeitsverzeichnis für die Folgeteile.
@@ -43,9 +45,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-logging.basicConfig(
-    level=logging.WARNING, format="skill_schutz: %(message)s", stream=sys.stderr
-)
+logging.basicConfig(level=logging.WARNING, format="skill_schutz: %(message)s", stream=sys.stderr)
 log = logging.getLogger("skill_schutz")
 
 GRUND = "Skill-Dateien sind auf dem Bau-Server schreibgeschützt — Änderung am PC machen, /to-spawn schiebt sie selbst."
@@ -71,6 +71,23 @@ _GIT_SCHREIBEND = {
     "checkout", "switch", "apply", "reset", "restore", "pull", "merge", "am", "rebase",
     "stash", "clean", "rm", "mv", "commit", "cherry-pick", "revert", "add",
 }  # fmt: skip
+# Globale git-Optionen, die das nächste Token als Wert schlucken.
+_GIT_GLOBAL_MIT_WERT = {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env"}
+# clone/init-Optionen mit Wert (Leerzeichen-Form), damit der Wert nicht als Ziel zählt.
+_GIT_MIT_WERT = {
+    "clone": {
+        "-b", "--branch", "-o", "--origin", "-u", "--upload-pack", "--depth", "-c",
+        "--config", "--reference", "--reference-if-able", "--separate-git-dir",
+        "--template", "-j", "--jobs", "--shallow-since", "--shallow-exclude",
+        "--filter", "--server-option", "--bundle-uri", "--ref-format",
+    },
+    "init": {
+        "-b", "--initial-branch", "--separate-git-dir", "--template",
+        "--object-format", "--ref-format",
+    },
+}  # fmt: skip
+# Optionen, deren Wert selbst ein Schreibziel ist.
+_GIT_ZIEL_OPTIONEN = {"--separate-git-dir"}
 _PY_SCHREIBT = re.compile(
     r"open\([^)]*['\"][wax]\+?b?['\"]|write_text|write_bytes|shutil\.|os\.(?:remove|unlink|rename|replace)"
     r"|\.unlink\(|\.rename\(|Path\([^)]*\)\.replace\("
@@ -115,10 +132,72 @@ def _tokens(teil: str) -> list[str]:
         return teil.split()
 
 
+def _git_ziel_args(args: list[str], mit_wert: set[str]) -> tuple[list[str], list[str]]:
+    """Trennt ``git clone``/``git init``-Argumente in (Positionsargumente, Schreibziel-Optionswerte).
+
+    Optionen aus ``mit_wert`` schlucken das nächste Token (``--depth 1``); ``--opt=wert``
+    bleibt ein Token. Schreibziel-Optionen (``_GIT_ZIEL_OPTIONEN``, z. B.
+    ``--separate-git-dir``) liefern ihren Wert zur Prüfung mit.
+    """
+    positionale: list[str] = []
+    ziel_werte: list[str] = []
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a == "--":
+            positionale.extend(args[i + 1 :])
+            break
+        if a.startswith("-"):
+            name, gleich, wert = a.partition("=")
+            if not gleich and name in mit_wert and i + 1 < len(args):
+                wert = args[i + 1]
+                i += 1
+            if name in _GIT_ZIEL_OPTIONEN:
+                ziel_werte.append(wert)
+        else:
+            positionale.append(a)
+        i += 1
+    return positionale, ziel_werte
+
+
+def _git_schreibt(args: list[str], cwd: Path) -> bool:
+    """``git …``: schreibender Unterbefehl im Skill-Ordner oder clone/init mit Skill-Ziel.
+
+    Globale Optionen: ``-C <pfad>`` verschiebt den Arbeitsordner; ``--git-dir``/
+    ``--work-tree`` (mit Leerzeichen oder ``=``) in den Skills zählen wie ein Skill-Ordner.
+    """
+    ordner = cwd
+    repo_in_skills = False
+    rest = list(args)
+    while rest and rest[0].startswith("-"):
+        name, gleich, wert = rest[0].partition("=")
+        schritt = 1
+        if not gleich and name in _GIT_GLOBAL_MIT_WERT and len(rest) > 1:
+            wert, schritt = rest[1], 2
+        if name == "-C" and schritt == 2:
+            ordner = _aufloesen(wert, ordner)
+        elif name in ("--git-dir", "--work-tree") and _in_skills(wert, ordner):
+            repo_in_skills = True
+        rest = rest[schritt:]
+    if not rest:
+        return False
+    unterbefehl, rest = rest[0], rest[1:]
+    if unterbefehl in ("clone", "init"):
+        positionale, ziel_werte = _git_ziel_args(rest, _GIT_MIT_WERT[unterbefehl])
+        if unterbefehl == "clone" and not positionale:
+            return False
+        # Ziel: clone → 2. Positionsargument (fehlt es: Ordner aus der URL im
+        # Arbeitsordner), init → 1. Positionsargument (fehlt es: Arbeitsordner selbst).
+        ziel_index = 1 if unterbefehl == "clone" else 0
+        ziel = positionale[ziel_index] if len(positionale) > ziel_index else "."
+        return any(_in_skills(z, ordner) for z in (ziel, *ziel_werte))
+    return unterbefehl in _GIT_SCHREIBEND and (
+        repo_in_skills or _in_skills(str(ordner), cwd)
+    )
+
+
 def _teil_schreibt(tokens: list[str], cwd: Path) -> bool:
-    while tokens and (
-        tokens[0] in _PRAEFIXE or ("=" in tokens[0] and not tokens[0].startswith("-"))
-    ):
+    while tokens and (tokens[0] in _PRAEFIXE or ("=" in tokens[0] and not tokens[0].startswith("-"))):
         tokens = tokens[1:]
     if not tokens:
         return False
@@ -128,33 +207,17 @@ def _teil_schreibt(tokens: list[str], cwd: Path) -> bool:
         return any(_in_skills(a, cwd) for a in nicht_optionen)
     if befehl in _ZIEL_LETZTES:
         return bool(nicht_optionen) and _in_skills(nicht_optionen[-1], cwd)
-    if befehl in ("sed", "perl") and any(
-        re.match(r"^-[a-zA-Z]*i", a) or a.startswith("--in-place") for a in args
-    ):
+    if befehl in ("sed", "perl") and any(re.match(r"^-[a-zA-Z]*i", a) or a.startswith("--in-place") for a in args):
         return any(_in_skills(a, cwd) for a in nicht_optionen)
     if befehl == "dd":
         return any(a.startswith("of=") and _in_skills(a[3:], cwd) for a in args)
-    if befehl == "tar" and any(
-        a == "--extract" or re.match(r"^-?[a-zA-Z]*x", a) for a in args[:2]
-    ):
+    if befehl == "tar" and any(a == "--extract" or re.match(r"^-?[a-zA-Z]*x", a) for a in args[:2]):
         return any(_in_skills(a, cwd) for a in nicht_optionen) or _in_skills(".", cwd)
     if befehl == "git":
-        ordner = cwd
-        rest = list(args)
-        while rest and rest[0].startswith("-"):
-            if rest[0] == "-C" and len(rest) > 1:
-                ordner = _aufloesen(rest[1], cwd)
-                rest = rest[2:]
-            else:
-                rest = rest[1:]
-        return (
-            bool(rest) and rest[0] in _GIT_SCHREIBEND and _in_skills(str(ordner), cwd)
-        )
+        return _git_schreibt(args, cwd)
     if re.fullmatch(r"python\d*(?:\.\d+)?", befehl) and "-c" in args:
         code = args[args.index("-c") + 1] if args.index("-c") + 1 < len(args) else ""
-        return bool(_PY_SCHREIBT.search(code)) and (
-            ".claude/skills" in code or _in_skills(".", cwd)
-        )
+        return bool(_PY_SCHREIBT.search(code)) and (".claude/skills" in code or _in_skills(".", cwd))
     return False
 
 
@@ -164,9 +227,7 @@ def bash_schreibt_in_skills(befehl: str, cwd: Path) -> bool:
     heredoc = re.search(r"python\d*(?:\.\d+)?\s+-\s*<<", befehl)
     if heredoc:
         code = befehl[heredoc.end() :]
-        if _PY_SCHREIBT.search(code) and (
-            ".claude/skills" in code or _in_skills(".", cwd)
-        ):
+        if _PY_SCHREIBT.search(code) and (".claude/skills" in code or _in_skills(".", cwd)):
             return True
         befehl = befehl[: heredoc.start()]
     aktuell = cwd
@@ -209,9 +270,7 @@ def main() -> int:
     try:
         verweigern = pruefe(daten)
     except Exception as fehler:  # noqa: BLE001 — Schutz-Hook: im Zweifel verweigern
-        log.error(
-            "Prüfung abgebrochen (%s: %s) — verweigert.", type(fehler).__name__, fehler
-        )
+        log.error("Prüfung abgebrochen (%s: %s) — verweigert.", type(fehler).__name__, fehler)
         return 2
     if verweigern:
         sys.stderr.write(f"{GRUND}\n")
