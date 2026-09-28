@@ -229,7 +229,7 @@ def claude_befehl(claude: str, konfig: dict[str, Any], spec: int) -> list[str]:
     modelle = konfig.get("modelle") if isinstance(konfig.get("modelle"), dict) else {}
     modell = str(modelle.get("waechter") or MODELL)
     ausweich = str(modelle.get("waechter_ausweich") or "")
-    cmd = waechter_lauf.befehl(claude, modell, ausweich, False, spec, "")
+    cmd = waechter_lauf.befehl(claude, modell, ausweich, False, spec, "", effort=waechter_lauf.effort(konfig))
     return [*claude_start(claude), *cmd[1:-1], "-p"]
 
 

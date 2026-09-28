@@ -20,6 +20,7 @@ Kommentare dürfen als Text (Autor ``bot``, Zeit jetzt) oder als Objekt
 ``{"autor": …, "body": …, "created_at": …}`` im Zustand stehen (#285).
 ``GH_STUB_PROTOKOLL`` (Pfad): jeder Aufruf wird als Zeile angehängt.
 ``GH_STUB_FEHLER`` (z. B. ``comment`` oder ``reopen,comment``): diese Aufrufe enden mit Exit 1.
+``api user`` → ``{"login": <Zustand ``login``, Vorgabe bau-bot>}`` (#402).
 ``labels`` (Liste von Namen) und ``state_reason`` im Issue werden durchgereicht (Fixrunde #213).
 """
 
@@ -81,6 +82,9 @@ def main() -> int:
             fh.write(json.dumps(args, ensure_ascii=False) + "\n")
     pfad, daten = _lade()
     if args[:1] == ["api"]:
+        if args[1:2] == ["user"]:  # gh-Login der Session (#402), Vorgabe ``bau-bot``
+            print(json.dumps({"login": daten.get("login", "bau-bot")}))
+            return 0
         treffer = re.search(r"issues/(\d+)/sub_issues", args[1])
         if treffer:
             kinder = daten.get("sub", {}).get(treffer.group(1), [])

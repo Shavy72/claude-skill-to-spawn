@@ -1052,11 +1052,34 @@ def _kommentar_teile(eintrag: dict[str, Any]) -> tuple[str, str, datetime | None
     return autor, str(eintrag.get("body") or ""), _zeit(eintrag.get("created_at"))
 
 
-def checkpoint_vorschlag(zeilen: list[dict[str, Any]], kommentare: list[dict[str, Any]]) -> Vorschlag | None:
+#: Zwischenspeicher für :func:`session_login` (je Prozess eine gh-Abfrage).
+_SESSION_LOGIN: dict[str, str] = {}
+
+
+def session_login() -> str:
+    """gh-Login, unter dem Bau-Sessions und Wächter kommentieren — ``""`` = unbekannt.
+
+    Beide laufen mit derselben ``gh``-Anmeldung; nur Kommentare dieses Logins sind
+    Vorschläge der Session (#402). Gescheiterte Abfragen werden nicht gemerkt.
+    """
+    if "login" not in _SESSION_LOGIN:
+        daten = gh.json_lauf(["api", "user"])
+        login = str(daten.get("login") or "") if isinstance(daten, dict) else ""
+        if not login:
+            return ""
+        _SESSION_LOGIN["login"] = login
+    return _SESSION_LOGIN["login"]
+
+
+def checkpoint_vorschlag(
+    zeilen: list[dict[str, Any]], kommentare: list[dict[str, Any]], *, session_login: str
+) -> Vorschlag | None:
     """Jüngster eigener Vorschlag der Session — ``None`` heißt: nie raten.
 
     Zählt eine Bau-Log-Zeile ``entscheidung`` mit Wahl und ein Issue-Kommentar mit
-    „Vorschlag:“. Wächter-Kommentare zählen nicht (sonst nimmt er sich selbst an).
+    „Vorschlag:“ vom ``session_login`` (#402: fremde Autoren zählen nie; leerer
+    Login = kein Kommentar zählt). Wächter-Kommentare zählen nicht (sonst nimmt er
+    sich selbst an).
     """
     kandidaten: list[Vorschlag] = []
     for z in zeilen:
@@ -1068,7 +1091,9 @@ def checkpoint_vorschlag(zeilen: list[dict[str, Any]], kommentare: list[dict[str
             kandidaten.append(Vorschlag(frage, wahl, grund, zeit))
     for eintrag in kommentare:
         autor, text, zeit = _kommentar_teile(eintrag)
-        if zeit is None or text.lstrip().startswith(WAECHTER_KOPF):
+        if zeit is None or not session_login or autor != session_login:
+            continue
+        if text.lstrip().startswith(WAECHTER_KOPF):
             continue
         treffer = _VORSCHLAG.search(text)
         if treffer:
@@ -1112,6 +1137,17 @@ def davids_antwort(kommentare: list[dict[str, Any]], seit: datetime, eigener_aut
     return ""
 
 
+def mensch_noetig_was(eintrag: dict[str, Any]) -> str:
+    """Kurztext eines „Mensch nötig“-Eintrags; alte Zeilen ohne ``grund`` gelten als beleg_rot.
+
+    Fehlt ``fix_runde`` (alte Einträge), steht „?“ statt „None“ (#402).
+    """
+    if eintrag.get("grund") == "review_offen":
+        return "Review angefordert, aber kein Beleg geschrieben"
+    runden = eintrag.get("fix_runde")
+    return f"Review-Beleg nach {'?' if runden is None else runden} Fixrunden noch rot"
+
+
 def _checkpoint(
     repo: Path,
     konfig: dict[str, Any],
@@ -1137,7 +1173,7 @@ def _checkpoint(
     kommentare = issue_kommentare(gh_repo, n)
     if kommentare is None:
         return [f"#{n} FEHLER: Kommentare nicht lesbar — Checkpoint ungeprüft"]
-    vorschlag = checkpoint_vorschlag(zeilen, kommentare)
+    vorschlag = checkpoint_vorschlag(zeilen, kommentare, session_login=session_login())
     frage_zeit = checkpoint_frage_zeit(zeilen, kommentare)
     if vorschlag is None and frage_zeit is None:
         return []  # Label gesetzt, aber noch keine Frage gestellt
@@ -1768,12 +1804,7 @@ def _tick(
     for eintrag in mensch_noetig.eintraege_fuer_spec(spec, set(mn_gesehen)):
         ziel = str(eintrag.get("ticket") or spec)
         fp = str(eintrag.get("fingerprint") or "")[:8]
-        runden = eintrag.get("fix_runde")
-        # grund fehlt bei alten Zeilen → wie beleg_rot behandeln (damaliger Text)
-        if eintrag.get("grund") == "review_offen":
-            was = "Review angefordert, aber kein Beleg geschrieben"
-        else:
-            was = f"Review-Beleg nach {runden} Fixrunden noch rot"
+        was = mensch_noetig_was(eintrag)
         aktionen.append(f"MENSCH NÖTIG: #{ziel} {was} (fp {fp}) — Kette läuft weiter, David prüft.")
         if dry_run or regeln_aus:
             continue
@@ -1784,7 +1815,7 @@ def _tick(
         if not _gh_ok(["issue", "comment", ziel, "--repo", gh_repo, "--body", text]):
             aktionen.append(f"#{ziel} FEHLER: kommentieren gescheitert (Mensch nötig)")
             continue
-        bau_log.schreibe(repo, ziel, "mensch_noetig", fingerprint=fp, fix_runde=runden)
+        bau_log.schreibe(repo, ziel, "mensch_noetig", fingerprint=fp, fix_runde=eintrag.get("fix_runde"))
         mn_gesehen.append(mensch_noetig.schluessel(eintrag))
         zustand["mensch_noetig_gesehen"] = mn_gesehen
         sichern()

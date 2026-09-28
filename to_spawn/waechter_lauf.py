@@ -291,6 +291,16 @@ class Aufsicht(threading.Thread):
             self.halt.wait(self.takt)
 
 
+#: Denkstufe der Wächter-Session, wenn die Konfig ``effort.waechter`` nichts sagt (David 28.09.2026).
+EFFORT = "medium"
+
+
+def effort(konfig: dict[str, Any]) -> str:
+    """Denkstufe des Wächters aus ``effort.waechter`` — eine Quelle für Wache und Takt-Lauf (#402)."""
+    stufen = konfig.get("effort") if isinstance(konfig.get("effort"), dict) else {}
+    return str(stufen.get("waechter") or EFFORT)
+
+
 def befehl(
     claude: str,
     modell: str,

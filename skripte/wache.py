@@ -108,8 +108,8 @@ def auf_speicher_warten(
 
 MODELL = "claude-opus-5-5"
 
-#: Denkstufe der Wache, wenn die Konfig ``effort.waechter`` nichts sagt (David 28.09.2026).
-EFFORT = "medium"
+#: Vorgabe-Denkstufe; Quelle ist ``waechter_lauf.EFFORT`` (eine Stelle für Wache und Takt, #402).
+EFFORT = waechter_lauf.EFFORT
 #: Umgebungsvariable mit dem Pfad der Ablöse-Datei (setzt ``main`` je Lauf).
 ABLOESE_ENV = "TO_SPAWN_WACHE_ABLOESUNG"
 #: Obergrenze Selbstablösungen je Fenster.
@@ -245,7 +245,7 @@ def main() -> int:
         config.sicherstellen(REPO_ORDNER)
     konfig = config.lade(REPO_ORDNER)
     a.model = a.model or volles_fenster(str(konfig.get("modelle", {}).get("waechter") or MODELL))
-    effort = str(konfig.get("effort", {}).get("waechter") or EFFORT)
+    effort = waechter_lauf.effort(konfig)
 
     prompt = prompt_bauen(a.spec, REPO, a.takt, konfig)
     if a.print_prompt:
