@@ -1633,6 +1633,13 @@ h1 .specnr{color:var(--muted);font-weight:600}
   });
 
   /* ---------- Daten ---------- */
+  // Klebrige Störung: bleibt sichtbar (auch gegen Sicherheits-Timer, "Verbinde …", Beispiel-Stand),
+  // bis ein Abo nach dem Fehler wieder erfolgreich Daten liefert (verbindungWieder) oder die Seite neu lädt.
+  let stoerungAktiv = false;
+  function zeigeStoerung() {
+    const l = $("h-live"); l.classList.remove("an"); l.classList.add("stoerung");
+    $("h-live-text").textContent = "Live-Verbindung gestört, zeige letzten Stand";
+  }
   function setzeQuelle(q, text) {
     quelle = q;
     $("beispiel").classList.toggle("an", q !== "live");
@@ -1641,6 +1648,7 @@ h1 .specnr{color:var(--muted);font-weight:600}
     l.classList.toggle("an", q === "live");
     l.classList.remove("stoerung");
     $("h-live-text").textContent = text || (q === "live" ? "Live verbunden" : "Keine Live-Verbindung");
+    if (stoerungAktiv) zeigeStoerung();
   }
 
   // Log-Anzeige baut ein Folge-Schritt; aufrufen nur, wenn die Funktion existiert
@@ -1691,10 +1699,9 @@ h1 .specnr{color:var(--muted);font-weight:600}
     mische();
     logNeuZeichnen();
   }
-  const stoerung = () => {
-    const l = $("h-live"); l.classList.remove("an"); l.classList.add("stoerung");
-    $("h-live-text").textContent = "Live-Verbindung gestört, zeige letzten Stand";
-  };
+  const stoerung = () => { stoerungAktiv = true; zeigeStoerung(); };
+  // Ein Snapshot kam erfolgreich an: Verbindung ist wieder da, Störung aufheben (vor uebernehme, das neu zeichnet).
+  const verbindungWieder = () => { stoerungAktiv = false; };
 
   // Abo auf die neuesten n Dokumente einer Collection, nach "zeit" absteigend.
   // Ersatzweg ohne orderBy/limit, falls die Abfrage nicht unterstützt wird: dann im Browser sortieren.
@@ -1703,6 +1710,7 @@ h1 .specnr{color:var(--muted);font-weight:600}
       const docs = (snap && snap.docs ? snap.docs : []).filter((d) => d.exists)
         .map((d) => Object.assign({ id: d.id }, d.data()));
       docs.sort((a, b) => (ts(b.zeit) ?? 0) - (ts(a.zeit) ?? 0));
+      verbindungWieder();
       weiter(docs.slice(0, n));
     };
     let ersatzAktiv = false;
@@ -1725,13 +1733,15 @@ h1 .specnr{color:var(--muted);font-weight:600}
       gerendert = true; zeigeBeispiel("beispiel");
       return;
     }
-    $("h-live-text").textContent = "Verbinde …";
+    if (!stoerungAktiv) $("h-live-text").textContent = "Verbinde …";
     try {
       db.doc("meta/stand").onSnapshot((snap) => {
+        verbindungWieder();
         liveMeta = snap && snap.exists ? Object.assign({}, snap.data()) : null;
         uebernehme();
       }, stoerung);
       db.collection("tickets").onSnapshot((snap) => {
+        verbindungWieder();
         liveTickets = snap.docs.filter((d) => d.exists).map((d) => normTicket(d.data(), d.id));
         uebernehme();
       }, stoerung);
