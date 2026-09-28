@@ -1,0 +1,12 @@
+    @pytest.mark.skipif(sys.platform != "win32", reason="nur Windows-Konsolen")
+    def test_takt_startoptionen_ohne_detached_process() -> None:
+        flags = waechter_takt.abgeloest_optionen()["creationflags"]
+>       assert not flags & subprocess.DETACHED_PROCESS
+E       assert not (520 & 8)
+E        +  where 8 = subprocess.DETACHED_PROCESS
+
+tests\test_takt_ohne_fenster.py:61: AssertionError
+=========================== short test summary info ===========================
+FAILED tests/test_takt_ohne_fenster.py::test_takt_startoptionen_geben_unsichtbare_geerbte_konsole
+FAILED tests/test_takt_ohne_fenster.py::test_takt_startoptionen_ohne_detached_process
+2 failed in 0.51s

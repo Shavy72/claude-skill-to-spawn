@@ -23,7 +23,7 @@ sys.path.insert(0, str(SKILL))
 
 from to_spawn import config, setup
 
-FLAGGSCHIFF = "claude-fable-5-1"
+FLAGGSCHIFF = "claude-opus-5-5"
 
 
 def _git(repo: Path, *args: str) -> None:
@@ -171,11 +171,11 @@ def test_dialog_nur_enter_nimmt_standards() -> None:
     assert ergebnis == {
         "terminal": "tmux",
         "modelle": {
-            "ticket": "claude-opus-5",
+            "ticket": "claude-opus-5-5",
             "ticket_leicht": "claude-sonnet-5",
             "waechter": FLAGGSCHIFF,
         },
-        "effort": {"ticket": "medium", "ticket_leicht": "low", "waechter": "low"},
+        "effort": {"ticket": "medium", "ticket_leicht": "low", "waechter": "medium"},
     }
     text = ausgabe.getvalue()
     assert "[Standard]" in text
@@ -194,8 +194,8 @@ def test_dialog_eof_nimmt_standards_ohne_absturz() -> None:
         pruefe_start=_startet,
     )
     assert ergebnis["terminal"] == "wt"
-    assert ergebnis["modelle"]["ticket"] == "claude-opus-5"
-    assert ergebnis["effort"]["waechter"] == "low"
+    assert ergebnis["modelle"]["ticket"] == "claude-opus-5-5"
+    assert ergebnis["effort"]["waechter"] == "medium"
 
 
 def test_dialog_ungueltige_eingabe_fragt_nach() -> None:
@@ -222,7 +222,7 @@ def test_dialog_drei_fehlversuche_nehmen_standard() -> None:
         finde=_alles_da,
         pruefe_start=_startet,
     )
-    assert ergebnis["modelle"]["ticket"] == "claude-opus-5"
+    assert ergebnis["modelle"]["ticket"] == "claude-opus-5-5"
 
 
 def test_dialog_geplantes_terminal_nicht_waehlbar() -> None:
@@ -291,7 +291,7 @@ def test_speichere_behaelt_fremde_felder(repo: Path) -> None:
         {
             "deploy_befehl": "make deploy",
             "eigenes_feld": {"x": 1},
-            "modelle": {"ticket": "claude-opus-5", "sonder": "abc"},
+            "modelle": {"ticket": "claude-opus-5-5", "sonder": "abc"},
         },
     )
     setup.speichere(
@@ -478,7 +478,7 @@ def test_erster_start_mit_tty_fuehrt_dialog(repo: Path) -> None:
         pruefe_start=_startet,
     )
     daten = _lies(repo)
-    assert daten["modelle"]["ticket"] == "claude-opus-5"
+    assert daten["modelle"]["ticket"] == "claude-opus-5-5"
     assert daten["terminal"]["linux"] == "tmux"
 
 
@@ -547,7 +547,7 @@ def test_weg_standard_plus_flags_flags_gewinnen(repo: Path) -> None:
     daten = _lies(repo)
     assert daten["effort"]["ticket"] == "max"
     assert daten["effort"]["ticket_leicht"] == "low"
-    assert daten["modelle"]["ticket"] == "claude-opus-5"
+    assert daten["modelle"]["ticket"] == "claude-opus-5-5"
 
 
 def test_weg_zeigen_mit_setz_flags_exit_2(repo: Path) -> None:

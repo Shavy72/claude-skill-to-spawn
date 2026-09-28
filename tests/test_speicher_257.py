@@ -219,3 +219,10 @@ def test_nest_server_trockener_plan_nennt_swap_und_dienst() -> None:
     assert ergebnis.returncode == 0, ergebnis.stderr
     assert "Swap" in ergebnis.stdout
     assert "tmux-bau.service" in ergebnis.stdout
+
+
+def test_nest_server_tmux_dienst_oompolicy_continue() -> None:
+    """OOM-Absturz 26.09.: mit OOMPolicy=stop riss ein gekilltes pytest-Kind den ganzen Dienst mit."""
+    text = (SKILL / "nest" / "nest_server.sh").read_text(encoding="utf-8")
+    unit = text.split("cat > \"$TMUX_UNIT\" <<UNIT", 1)[1].split("\nUNIT\n", 1)[0]
+    assert "OOMPolicy=continue" in unit

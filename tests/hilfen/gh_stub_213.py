@@ -14,6 +14,10 @@ Beantwortet:
   ``api repos/<slug>/issues/<S>/sub_issues…``      → Liste der Kind-Issues
   ``issue reopen <N> --repo <slug> --comment <T>`` → state = open, Kommentar merken
   ``issue comment <N> --repo <slug> --body <T>``   → Kommentar merken
+  ``api repos/<slug>/issues/<N>/comments…``        → Kommentare (#285)
+  ``issue edit <N> --repo <slug> --remove-label``  → Label entfernen/ergänzen (#285)
+Kommentare dürfen als Text (Autor ``bot``, Zeit jetzt) oder als Objekt
+``{"autor": …, "body": …, "created_at": …}`` im Zustand stehen (#285).
 ``GH_STUB_PROTOKOLL`` (Pfad): jeder Aufruf wird als Zeile angehängt.
 ``GH_STUB_FEHLER`` (z. B. ``comment`` oder ``reopen,comment``): diese Aufrufe enden mit Exit 1.
 ``labels`` (Liste von Namen) und ``state_reason`` im Issue werden durchgereicht (Fixrunde #213).
@@ -25,6 +29,7 @@ import json
 import os
 import re
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -51,6 +56,23 @@ def _issue(nummer: str, daten: dict) -> dict:
     }
 
 
+def _kommentare(nummer: str, daten: dict) -> list[dict]:
+    """Kommentare wie die GitHub-API (#285); Texte ohne Autor gelten als Bot-Kommentar."""
+    jetzt = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    antwort = []
+    for eintrag in daten.get("kommentare", {}).get(nummer, []):
+        if isinstance(eintrag, str):
+            eintrag = {"autor": "bot", "body": eintrag, "created_at": jetzt}
+        antwort.append(
+            {
+                "user": {"login": eintrag.get("autor", "bot")},
+                "body": eintrag.get("body", ""),
+                "created_at": eintrag.get("created_at", jetzt),
+            }
+        )
+    return antwort
+
+
 def main() -> int:
     args = sys.argv[1:]
     protokoll = os.environ.get("GH_STUB_PROTOKOLL")
@@ -64,7 +86,21 @@ def main() -> int:
             kinder = daten.get("sub", {}).get(treffer.group(1), [])
             print(json.dumps([_issue(str(k), daten) for k in kinder]))
             return 0
+        treffer = re.search(r"issues/(\d+)/comments", args[1])
+        if treffer:
+            print(json.dumps(_kommentare(treffer.group(1), daten), ensure_ascii=False))
+            return 0
         print(json.dumps([]))
+        return 0
+    if args[:2] == ["issue", "edit"]:
+        eintrag = daten.setdefault("issues", {}).setdefault(args[2], {})
+        weg = _wert(args, "--remove-label")
+        if weg:
+            eintrag["labels"] = [n for n in eintrag.get("labels", []) if n != weg]
+        dazu = _wert(args, "--add-label")
+        if dazu and dazu not in eintrag.get("labels", []):
+            eintrag.setdefault("labels", []).append(dazu)
+        pfad.write_text(json.dumps(daten, ensure_ascii=False), encoding="utf-8")
         return 0
     if args[:2] in (["issue", "reopen"], ["issue", "comment"]):
         if args[1] in os.environ.get("GH_STUB_FEHLER", "").split(","):

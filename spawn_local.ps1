@@ -1,7 +1,7 @@
 # /to-spawn local — alle Ticket-Sessions einer Spec auf einmal starten (Windows Terminal, ein Fenster).
 # Aufruf (Repo-Wurzel):  pwsh -File ~/.claude/skills/to-spawn/spawn_local.ps1 -Spec 182 [-Tickets 188,189,190] [-OhneWache] [-Window 1] [-DryRun]
 # Liest docs/agents/manifests/spec-<S>.json (Ticket-Nummern), öffnet je Ticket einen Tab `bau <N>` und
-# (sofern nicht -OhneWache) zuerst einen Tab `wache <S>`. Prüft danach per scripts/sessions_stand.py.
+# (sofern nicht -OhneWache) zuerst einen Tab `wache <S>` und einen Tab `leitstand <S>` (Schalter leitstand.aktiv). Prüft danach per scripts/sessions_stand.py.
 param(
     [Parameter(Mandatory = $true)][int]$Spec,
     [int[]]$Tickets = @(),
@@ -51,6 +51,18 @@ if (Get-Command gh -ErrorAction SilentlyContinue) {
 }
 $cmds = @()
 if (-not $OhneWache -and ($laufend -notcontains $Spec)) { $cmds += "wache $Spec" }
+# Bau-Leitstand (Live-Seite): Tab `leitstand <S>` (Profil-Funktion → skripte/leitstand.py <S> sitzung),
+# nur mit Wächter, bei leitstand.aktiv an (Exit 0) und wenn noch keine Leitstand-Session der Spec läuft.
+if (-not $OhneWache) {
+    $ErrorActionPreference = "Continue"
+    & $py "$PSScriptRoot/skripte/leitstand.py" "$Spec" aktiv | Out-Null
+    $lsAktiv = $LASTEXITCODE
+    $ErrorActionPreference = $eapVorher
+    $lsLaeuft = Get-CimInstance Win32_Process -Filter "Name='python.exe'" |
+        Where-Object { $_.CommandLine -match "leitstand\.py`"? $Spec sitzung" }
+    if ($lsAktiv -eq 0 -and -not $lsLaeuft) { $cmds += "leitstand $Spec" }
+    elseif ($lsLaeuft) { Write-Host "leitstand $Spec läuft schon — übersprungen" -ForegroundColor Yellow }
+}
 foreach ($n in $Tickets) {
     if ($zu -contains $n) { Write-Host "#$n ist geschlossen — übersprungen" -ForegroundColor DarkGray; continue }
     if ($laufend -contains $n) { Write-Host "#$n läuft schon — übersprungen" -ForegroundColor Yellow; continue }

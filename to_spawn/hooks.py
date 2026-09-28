@@ -285,6 +285,23 @@ def _ohne_log_repo(hook: str) -> None:
     )
 
 
+def _starte_takt(repo: Path, ticket: str) -> None:
+    """Nach ``session_ende`` den Wächter-Takt der Spec abgelöst starten (#316).
+
+    Spec aus ``TO_SPAWN_SPEC`` (setzt ``bau.py``); ohne Spec nichts. Fehler nur loggen.
+    """
+    spec = os.environ.get("TO_SPAWN_SPEC", "").strip()
+    if not spec.isdigit():
+        return
+    try:
+        from . import waechter_takt
+
+        ziel = Path(os.environ["TO_SPAWN_REPO"]) if os.environ.get("TO_SPAWN_REPO") else repo
+        waechter_takt.starte_abgeloest(int(spec), ziel, f"session_ende #{ticket}")
+    except Exception:  # noqa: BLE001 — der Hook darf die Bau-Session nie stören
+        log.exception("Wächter-Takt #%s nicht gestartet — Session läuft weiter.", spec)
+
+
 def hook_stop(strom: TextIO | None = None, ausgabe: TextIO | None = None) -> int:
     """Stop-Hook: schreibt ``session_ende`` und — bei frischem Handoff — den Marker.
 
@@ -344,6 +361,7 @@ def _hook_stop(strom: TextIO, ausgabe: TextIO) -> None:
         dauer_s=dauer_sekunden(eintraege),
         text=_text(daten.get("last_assistant_message"), "Session beendet."),
     )
+    _starte_takt(repo, ticket)
 
     handoff = _frischer_handoff(repo, ticket)
     if handoff is None:

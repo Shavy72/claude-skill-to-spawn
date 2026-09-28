@@ -1,5 +1,5 @@
 # Installer für /to-spawn: Skill nach ~/.claude/skills/to-spawn (inkl. skripte/, to_spawn/, to_spawn.py),
-# Alias-Skills (aliase/* → ~/.claude/skills/<alias>), Profil-Funktionen bau/wache/sessions,
+# Alias-Skills (aliase/* → ~/.claude/skills/<alias>), Profil-Funktionen bau/wache/sessions/leitstand,
 # optional die Repo-Weiterleitungen (repo-scripts/ → <Repo>/scripts, nur fehlende) + .to-spawn/config.json.
 # Ein vorhandener Skill-Ordner wird nie gelöscht, sondern nach ~/.claude/skills/_alt/to-spawn-<zeit> verschoben.
 # Linux/macOS: install.sh.
@@ -63,6 +63,25 @@ foreach ($fn in @("bau", "wache", "sessions")) {
 if ($profil -notmatch "function bau\b" -or $profil -notmatch "function wache\b" -or $profil -notmatch "function sessions\b") {
     Add-Content -Path $profilPfad -Value $block
     Write-Host "Profil ergänzt: $profilPfad (fehlende Funktionen angehängt; doppelte Definitionen bitte von Hand bereinigen)"
+}
+# leitstand <S> [unterbefehl]: Bau-Leitstand-Session der Spec in diesem Fenster (eigener Block, weil
+# Profile mit bau/wache/sessions sonst nichts Neues bekommen).
+$profil = Get-Content $profilPfad -Raw
+if ($profil -match "function leitstand\b") {
+    Write-Host "Profil: function leitstand existiert schon — unverändert"
+} else {
+    Add-Content -Path $profilPfad -Value @'
+
+# --- to-spawn Bau-Leitstand: leitstand <S> startet die Leitstand-Session (Live-Seite) in diesem Fenster ---
+function leitstand {
+    if ($args.Count -eq 0) { Write-Host "Usage: leitstand <SpecNr> [sitzung|anweisung|url|mail|aktiv|...]"; return }
+    $skill = if ($env:TO_SPAWN_HOME) { $env:TO_SPAWN_HOME } else { Join-Path $HOME ".claude/skills/to-spawn" }
+    [string[]]$rest = @($args | Select-Object -Skip 1)
+    if ($rest.Count -eq 0) { $rest = @("sitzung") }
+    $env:PYTHONIOENCODING = "utf-8"; python (Join-Path $skill "skripte/leitstand.py") $args[0] @rest
+}
+'@
+    Write-Host "Profil ergänzt: function leitstand"
 }
 
 # Repo-Weiterleitungen (die Logik bleibt im Skill unter skripte/)

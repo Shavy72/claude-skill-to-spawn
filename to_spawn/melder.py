@@ -36,10 +36,15 @@ KRITISCH = frozenset(
         "live_beweis_blockiert",
         "waechter_ausweich",
         "waechter_pause",  # #254: „Wächter pausiert bis 5:40“ darf nicht im Log versanden
+        # Nacht-Checkpoints (#285): angenommene Entscheidung und offene Frage ohne
+        # Vorschlag muss David am Morgen sehen können.
+        "checkpoint_annahme",
+        "checkpoint_offen",
     }
 )
 #: ``probesitz_gruen`` (#214): die eine Erfolgsmeldung des Probesitz geht auch bei ``nur_kritisch`` raus.
-IMMER = KRITISCH | {"spec_fertig", "probesitz_gruen"}
+#: ``leitstand_start``: die eine Mail mit dem Link zur Bau-Leitstand-Seite je Spec.
+IMMER = KRITISCH | {"spec_fertig", "probesitz_gruen", "leitstand_start"}
 ZEITLIMIT_S = 120
 
 

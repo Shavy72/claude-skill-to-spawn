@@ -79,7 +79,34 @@ def _lauf(exit_code: int, protokoll: Path, text: str = "") -> Any:
     return starter
 
 
+def _pid_lebt_windows(pid: int) -> bool:
+    """Nur nachsehen, nie beenden: ``os.kill(pid, 0)`` ist unter Windows ``TerminateProcess``
+    (tötet ein lebendes Kind) und wirft bei beendeter PID ``WinError 87``."""
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+    kernel32.GetExitCodeProcess.argtypes = (wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD))
+    kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+    process_query_limited_information = 0x1000
+    still_active = 259
+    griff = kernel32.OpenProcess(process_query_limited_information, False, pid)
+    if not griff:
+        # ERROR_INVALID_PARAMETER (87): keine solche PID mehr — tot. Zugriff verweigert: lebt.
+        return ctypes.get_last_error() != 87
+    try:
+        code = wintypes.DWORD()
+        assert kernel32.GetExitCodeProcess(griff, ctypes.byref(code)), ctypes.get_last_error()
+        return code.value == still_active
+    finally:
+        kernel32.CloseHandle(griff)
+
+
 def _pid_lebt(pid: int) -> bool:
+    if sys.platform == "win32":
+        return _pid_lebt_windows(pid)
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
@@ -122,7 +149,9 @@ def test_f1_rechte_verweigert_wird_grund(repo: Path, tmp_path: Path) -> None:
         _konfig(repo),
         laeufer=laeufer,
         which=_which_alles,
-        session_starter=_lauf(0, protokoll, "Claude requested permissions to use Bash, but you haven't granted it yet.\n"),
+        session_starter=_lauf(
+            0, protokoll, "Claude requested permissions to use Bash, but you haven't granted it yet.\n"
+        ),
         worktree_anlegen=lambda *_: None,
     )
     p2 = ergebnisse[2]
@@ -220,7 +249,10 @@ def test_f9_windows_weg_ohne_killpg(tmp_path: Path, monkeypatch: pytest.MonkeyPa
 def test_f4_exit_0_ohne_nummer_eigener_grund(repo: Path) -> None:
     laeufer = Laeufer({"issue create": (0, "Creating issue in x/y\n", "")})
     ergebnisse = probesitz.wegwerf_lauf(
-        repo, _konfig(repo), laeufer=laeufer, which=_which_alles,
+        repo,
+        _konfig(repo),
+        laeufer=laeufer,
+        which=_which_alles,
         session_starter=lambda *a, **k: pytest.fail("kein Start ohne Ticket"),
     )
     assert not ergebnisse[2].ok
@@ -232,7 +264,10 @@ def test_f4_exit_0_ohne_nummer_eigener_grund(repo: Path) -> None:
 def test_f4_stderr_wird_grund(repo: Path) -> None:
     laeufer = Laeufer({"issue create": (1, "", "HTTP 401: Bad credentials (https://api.github.com/graphql)")})
     ergebnisse = probesitz.wegwerf_lauf(
-        repo, _konfig(repo), laeufer=laeufer, which=_which_alles,
+        repo,
+        _konfig(repo),
+        laeufer=laeufer,
+        which=_which_alles,
         session_starter=lambda *a, **k: pytest.fail("kein Start ohne Ticket"),
     )
     assert "401" in ergebnisse[2].grund, ergebnisse[2]
@@ -255,11 +290,15 @@ def _sandbox_laeufer(aussen: tuple[int, str]) -> Laeufer:
     return Sperre()
 
 
-@pytest.mark.parametrize("exit_code,stderr", [(124, "Zeitlimit 120s überschritten"), (126, "bwrap: exec failed"), (127, "No such file")])
+@pytest.mark.parametrize(
+    "exit_code,stderr", [(124, "Zeitlimit 120s überschritten"), (126, "bwrap: exec failed"), (127, "No such file")]
+)
 def test_f5_zeitlimit_und_fehlstart_sind_rot(repo: Path, tmp_path: Path, exit_code: int, stderr: str) -> None:
     heim = tmp_path / "heim"
     heim.mkdir()
-    erg = probesitz.pruefe_sandbox(_konfig(repo), repo, laeufer=_sandbox_laeufer((exit_code, stderr)), which=_which_alles, home=heim)
+    erg = probesitz.pruefe_sandbox(
+        _konfig(repo), repo, laeufer=_sandbox_laeufer((exit_code, stderr)), which=_which_alles, home=heim
+    )
     assert not erg.ok, erg
     assert str(exit_code) in erg.grund
 
@@ -267,14 +306,22 @@ def test_f5_zeitlimit_und_fehlstart_sind_rot(repo: Path, tmp_path: Path, exit_co
 def test_f5_exit_1_ohne_sperr_meldung_ist_rot(repo: Path, tmp_path: Path) -> None:
     heim = tmp_path / "heim"
     heim.mkdir()
-    erg = probesitz.pruefe_sandbox(_konfig(repo), repo, laeufer=_sandbox_laeufer((1, "touch: Kaputt")), which=_which_alles, home=heim)
+    erg = probesitz.pruefe_sandbox(
+        _konfig(repo), repo, laeufer=_sandbox_laeufer((1, "touch: Kaputt")), which=_which_alles, home=heim
+    )
     assert not erg.ok, erg
 
 
 def test_f5_permission_denied_ist_gruen(repo: Path, tmp_path: Path) -> None:
     heim = tmp_path / "heim"
     heim.mkdir()
-    erg = probesitz.pruefe_sandbox(_konfig(repo), repo, laeufer=_sandbox_laeufer((1, "touch: cannot touch: Permission denied")), which=_which_alles, home=heim)
+    erg = probesitz.pruefe_sandbox(
+        _konfig(repo),
+        repo,
+        laeufer=_sandbox_laeufer((1, "touch: cannot touch: Permission denied")),
+        which=_which_alles,
+        home=heim,
+    )
     assert erg.ok, erg
 
 
@@ -284,14 +331,18 @@ def test_f5_permission_denied_ist_gruen(repo: Path, tmp_path: Path) -> None:
 def _gruen_bis_6(lauf_id: str) -> dict[str, Any]:
     zustand: dict[str, Any] = {}
     for nummer in range(1, 7):
-        zustand = probesitz.eintragen(zustand, probesitz.Ergebnis(nummer, probesitz.PUNKTE[nummer - 1], True, "ok"), lauf_id=lauf_id)
+        zustand = probesitz.eintragen(
+            zustand, probesitz.Ergebnis(nummer, probesitz.PUNKTE[nummer - 1], True, "ok"), lauf_id=lauf_id
+        )
     return zustand
 
 
 def test_f6_p7_verweigert_aeltere_punkte(repo: Path) -> None:
     konfig = _konfig(repo)
     konfig["mail"]["befehl"] = ["true"]
-    erg = probesitz.pruefe_mail(repo, konfig, _gruen_bis_6("alt"), lauf_id="neu", melden=lambda *a, **k: pytest.fail("keine Mail"))
+    erg = probesitz.pruefe_mail(
+        repo, konfig, _gruen_bis_6("alt"), lauf_id="neu", melden=lambda *a, **k: pytest.fail("keine Mail")
+    )
     assert not erg.ok
     assert erg.grund.startswith("Punkte aus älterem Lauf: 1, 2, 3, 4, 5, 6")
     assert erg.fehlt_noch == "vollständiger Lauf ohne --punkt"
@@ -301,7 +352,9 @@ def test_f6_p7_gleicher_lauf_geht_raus(repo: Path) -> None:
     konfig = _konfig(repo)
     konfig["mail"]["befehl"] = ["true"]
     gesehen: list[str] = []
-    erg = probesitz.pruefe_mail(repo, konfig, _gruen_bis_6("gleich"), lauf_id="gleich", melden=lambda *a, **k: gesehen.append(a[1]) or True)
+    erg = probesitz.pruefe_mail(
+        repo, konfig, _gruen_bis_6("gleich"), lauf_id="gleich", melden=lambda *a, **k: gesehen.append(a[1]) or True
+    )
     assert erg.ok and gesehen == ["probesitz_gruen"]
 
 
@@ -333,8 +386,12 @@ def test_f7_aufraeum_fehler_im_beleg_und_prune(repo: Path, tmp_path: Path) -> No
         }
     )
     ergebnisse = probesitz.wegwerf_lauf(
-        repo, _konfig(repo), laeufer=laeufer, which=_which_alles,
-        session_starter=_lauf(0, tmp_path / "lauf.log"), worktree_anlegen=lambda *_: None,
+        repo,
+        _konfig(repo),
+        laeufer=laeufer,
+        which=_which_alles,
+        session_starter=_lauf(0, tmp_path / "lauf.log"),
+        worktree_anlegen=lambda *_: None,
     )
     beleg = ergebnisse[2].beleg
     assert "Aufräumen" in beleg and "issue close" in beleg and "Could not resolve" in beleg, beleg
@@ -365,7 +422,13 @@ def test_f8_dry_run_zeigt_allowed_tools(repo: Path, heim: Path) -> None:
     env["PATH"] = f"{heim / 'bin'}{os.pathsep}{env.get('PATH', '')}"
     ergebnis = subprocess.run(
         [sys.executable, str(SKRIPTE / "bau.py"), "999", "--probesitz", "--dry-run"],
-        cwd=str(repo), env=env, capture_output=True, text=True, encoding="utf-8", timeout=60, check=False,
+        cwd=str(repo),
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=60,
+        check=False,
     )
     assert ergebnis.returncode == 0, ergebnis.stderr
     befehl = ergebnis.stdout.split("Befehl:", 1)[1]
@@ -386,7 +449,12 @@ def test_f10_runde_2_add_nur_diese_datei() -> None:
 def test_f11_punkt_ausserhalb_1_bis_7_ist_argparse_fehler(repo: Path) -> None:
     ergebnis = subprocess.run(
         [sys.executable, str(CLI), "probesitz", "--punkt", "9", "--zeigen"],
-        cwd=str(repo), capture_output=True, text=True, encoding="utf-8", timeout=60, check=False,
+        cwd=str(repo),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=60,
+        check=False,
     )
     assert ergebnis.returncode == 2
     assert "invalid choice" in ergebnis.stderr

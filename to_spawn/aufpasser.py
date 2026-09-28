@@ -69,7 +69,6 @@ Eingriff kommen je Fenster/Ereignis einmal am Tag (R3). Trockenlauf: ``--trocken
 from __future__ import annotations
 
 import argparse
-import fcntl
 import hashlib
 import json
 import logging
@@ -90,6 +89,11 @@ from to_spawn.waechter_lauf import _LIMIT_TEXT as LIMIT_TEXT
 from to_spawn.waechter_lauf import transkript_ordner
 
 log = logging.getLogger("aufpasser")
+
+try:  # nur Linux/macOS; auf Windows fehlt fcntl (Import darf dort nicht brechen)
+    import fcntl
+except ImportError:  # pragma: no cover - Windows
+    fcntl = None  # type: ignore[assignment]
 
 HANG_MIN = 90
 #: Wakeups wartender Loop-Sessions kommen spätestens alle 60 min — darunter wäre
@@ -1743,6 +1747,9 @@ class Aufpasser:
             return object()
         self.e.zustand.mkdir(parents=True, exist_ok=True)
         datei = open(self.e.zustand / "lock", "w", encoding="utf-8")  # noqa: SIM115
+        if fcntl is None:
+            log.warning("fcntl fehlt (Windows) — Lauf-Sperre %s ohne flock", datei.name)
+            return datei
         try:
             fcntl.flock(datei, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError:

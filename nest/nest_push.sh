@@ -60,7 +60,7 @@ warn() { echo "[!!] $*" >&2; }
 [ -n "$HOST_ROOT" ] || { warn "Pflicht: --host-root <ssh-alias mit root-Zugang>"; exit 2; }
 REPO="$(cd "$REPO" && pwd)"
 STAGE_REMOTE="${STAGE_REMOTE:-/home/$NUTZER/stage}"
-PY="$(command -v python3 || command -v python || true)"
+PY="${TO_SPAWN_PY:-$(command -v python3 || command -v python || true)}"   # TO_SPAWN_PY: Python des Aufrufers (#325)
 [ -n "$PY" ] || { warn "python fehlt lokal."; exit 1; }
 nest_py() { "$PY" "$SKILL_DIR/to_spawn.py" nest "$@"; }
 

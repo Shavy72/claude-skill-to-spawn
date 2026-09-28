@@ -8,10 +8,10 @@
 # Umzug (#212): --umzug nur mit genau einem Ticket, startet ``bau <N> --umzug <ref>``
 # (Handoff aus Commit <sha> auf origin/<branch> als Startkontext; ``<branch>:<pfad>``
 # ohne SHA geht weiter) und prüft keine Regularien. Läuft das Ticket hier schon:
-# Exit 4, nichts gestartet. --nur-wache startet nur das Wächter-Fenster.
+# Exit 4, nichts gestartet. --nur-wache startet nur Wächter + Leitstand (fehlende).
 # Exit 5: Speicher voll (to_spawn.py speicher) — begonnene Fenster laufen, der Rest nicht.
 # Exit 6: Speicherprüfung kaputt oder Hauptzweig nicht ermittelbar — nichts weiter gestartet.
-# Eine tmux-Session je Spec (``spec-<S>``), darin ein Fenster ``wache <S>`` und
+# Eine tmux-Session je Spec (``spec-<S>``), darin ``wache <S>``, ``leitstand <S>`` und
 # je Ticket ein Fenster ``bau <N>``. Gewartet wird in bau.py (0 Token).
 # Kontrolle: ``sessions <S>`` · ``tmux attach -t spec-<S>`` (raus: Strg+B d).
 set -euo pipefail
@@ -140,6 +140,16 @@ if [ "$OHNE_WACHE" -eq 0 ]; then
     KURZ+=("wache $SPEC")
   else
     echo "Wächter für Spec #$SPEC läuft bereits ($z) — übersprungen."
+  fi
+  # Bau-Leitstand (Live-Seite): Fenster ``leitstand <S>`` mit interaktiver Sonnet-Session, nur bei
+  # leitstand.aktiv an (Exit 0) und wenn das Fenster noch fehlt — auch nachträglich per --nur-wache.
+  if ! TO_SPAWN_REPO="$REPO" "$PY" "$SKILL_HOME/skripte/leitstand.py" "$SPEC" aktiv >/dev/null 2>&1; then
+    echo "Leitstand für Spec #$SPEC aus (leitstand.aktiv) — kein Fenster."
+  elif tmux list-windows -t "=$SESSION" -F '#W' 2>/dev/null | grep -qx "leitstand $SPEC"; then
+    echo "Leitstand für Spec #$SPEC läuft bereits — übersprungen."
+  else
+    GEPLANT+=("$(printf %q "$PY") $(printf %q "$SKILL_HOME/skripte/leitstand.py") $SPEC sitzung")
+    KURZ+=("leitstand $SPEC")
   fi
 fi
 for n in $TICKETS; do

@@ -41,7 +41,7 @@ log = logging.getLogger("to_spawn.waechter_lauf")
 _LIMIT_TEXT = re.compile(r"(reached|hit) your .*limit", re.IGNORECASE)
 #: Uhrzeit-Angabe derselben Zeile: „· resets 5:40am (Europe/Berlin)“ (#254).
 _RESET_TEXT = re.compile(
-    r"resets?\s+(?P<stunde>\d{1,2})(?::(?P<minute>\d{2}))?\s*(?P<halb>am|pm)?"
+    r"resets?\s+(?:at\s+)?(?P<stunde>\d{1,2})(?::(?P<minute>\d{2}))?\s*(?P<halb>am|pm)?"
     r"(?:\s*\((?P<zone>[^)]+)\))?",
     re.IGNORECASE,
 )
@@ -299,9 +299,12 @@ def befehl(
     spec: int,
     prompt: str,
     session_id: str | None = None,
+    effort: str = "",
 ) -> list[str]:
-    """Start-Befehl der Wächter-Session."""
+    """Start-Befehl der Wächter-Session (``effort`` → ``--effort``, Konfig ``effort.waechter``)."""
     cmd = [claude, "--model", modell]
+    if effort:
+        cmd += ["--effort", effort]
     if ausweich and ausweich != modell:
         cmd += ["--fallback-model", ausweich]
     if remote_control:
@@ -309,6 +312,18 @@ def befehl(
     if session_id:
         cmd += ["--session-id", session_id]
     return [*cmd, prompt]
+
+
+def resume_befehl(
+    claude: str, sid: str, modell: str, effort: str, remote_control: bool, spec: int, text: str
+) -> list[str]:
+    """Fortsetzung eines Wächter-Gesprächs mit denselben Flags wie beim Start."""
+    cmd = [claude, "--resume", sid, "--model", modell]
+    if effort:
+        cmd += ["--effort", effort]
+    if remote_control:
+        cmd += ["--remote-control", f"Wächter #{spec}"]
+    return [*cmd, text]
 
 
 def _starte(cmd: list[str], cwd: Path) -> subprocess.Popen[bytes]:
@@ -460,6 +475,7 @@ def fahre(
     session_id: str | None = None,
     puffer: float = RESET_PUFFER_S,
     hoechstens: float = MAX_WARTE_S,
+    effort: str = "",
 ) -> int:
     """Wächter starten und beaufsichtigen; Rückgabe = Exit-Code der letzten Session.
 
@@ -482,16 +498,19 @@ def fahre(
                 transkript,
             )
             return 2
-        cmd = [claude, "--resume", sid, "--model", modell]
-        if remote_control:
-            cmd += ["--remote-control", f"Wächter #{spec}"]
-        cmd.append(
+        cmd = resume_befehl(
+            claude,
+            sid,
+            modell,
+            effort,
+            remote_control,
+            spec,
             f"Aufpasser: Weiter als Bau-Wächter Spec #{spec} genau dort, wo du warst — "
-            "nächster Tick wie gehabt."
+            "nächster Tick wie gehabt.",
         )
     else:
         sid = str(uuid.uuid4())
-        cmd = befehl(claude, modell, ausweich, remote_control, spec, prompt, session_id=sid)
+        cmd = befehl(claude, modell, ausweich, remote_control, spec, prompt, session_id=sid, effort=effort)
     sessions_datei.schreiben(repo, f"wache-{spec}", sid, cwd, 1)
     pausen = 0  # Limit-Pausen dieser Session (Obergrenze MAX_PAUSEN, F1)
     while True:
@@ -593,14 +612,17 @@ def fahre(
                 pause_s=round(wartezeit, 1),
                 runde=pausen,
             )
-            cmd = [claude, "--resume", sid, "--model", modell]
-            if remote_control:
-                cmd += ["--remote-control", f"Wächter #{spec}"]
-            cmd.append(
+            cmd = resume_befehl(
+                claude,
+                sid,
+                modell,
+                effort,
+                remote_control,
+                spec,
                 f"Weiter als Bau-Wächter Spec #{spec}: Das Nutzungs-Limit ist seit "
                 f"{ziel.astimezone():%H:%M} wieder offen, die Pause ist vorbei. "
                 f"Nächster Tick wie gehabt (python scripts/capo.py {spec}); "
-                f"docs/agents/bau_log/{spec}.jsonl beim nächsten Handoff-Commit mitnehmen."
+                f"docs/agents/bau_log/{spec}.jsonl beim nächsten Handoff-Commit mitnehmen.",
             )
             continue
 
@@ -611,7 +633,4 @@ def fahre(
             f"docs/agents/bau_log/{spec}.jsonl beim nächsten Handoff-Commit mitnehmen."
         )
         modell = ausweich
-        cmd = [claude, "--resume", sid, "--model", ausweich]
-        if remote_control:
-            cmd += ["--remote-control", f"Wächter #{spec}"]
-        cmd.append(weiter)
+        cmd = resume_befehl(claude, sid, ausweich, effort, remote_control, spec, weiter)

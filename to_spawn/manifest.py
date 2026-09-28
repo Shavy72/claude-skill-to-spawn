@@ -396,11 +396,42 @@ def _pruefe_checkpoint(
         return
     for nummer in offene_cp:
         daten = github[nummer] or {}
+        _pruefe_checkpoint_am_ende(bericht, github, nummer)
         if not daten.get("_kanten"):
             bericht.fehler.append(
                 f"Checkpoint-Ticket #{nummer} hat keine native Kante — es startet sofort statt "
                 "nach den anderen; Kanten auf die übrigen Tickets setzen."
             )
+
+
+def _pruefe_checkpoint_am_ende(
+    bericht: Bericht, github: dict[str, dict[str, Any] | None], checkpoint: str
+) -> None:
+    """Fehler, wenn Davids Frage andere Tickets blockiert (#285, verschärft #325).
+
+    Blockiert, weil es hinten dran hängt, ist gewollt (Abnahme-Ticket). Steht der
+    Checkpoint dagegen VOR anderen Tickets, wartet nachts die ganze Kette auf eine
+    Antwort — solche Fragen gehören in den Grill vor den Spawn. Seit #325 ein Fehler
+    (``pruefen`` weigert sich), keine Warnung mehr.
+    """
+    wartende = [
+        n
+        for n in bericht.tickets
+        if isinstance(github.get(n), dict)
+        and any(
+            str(kante.get("number")) == checkpoint
+            for kante in github[n].get("_kanten") or []
+            if isinstance(kante, dict)
+        )
+    ]
+    if not wartende:
+        return
+    liste = ", ".join(f"#{n}" for n in wartende)
+    bericht.fehler.append(
+        f"Checkpoint-Ticket #{checkpoint} steht mitten in der Kette: blockiert {liste} — "
+        "Abnahme gehört ans Kettenende (von allen anderen blockiert, blockiert selbst keins); "
+        "Frage in den Grill vor den Spawn ziehen."
+    )
 
 
 def _pruefe_verweise(

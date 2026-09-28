@@ -38,7 +38,7 @@ sys.path.insert(0, str(SKILL))
 from to_spawn import bau_log, waechter_lauf  # noqa: E402
 
 BERLIN = ZoneInfo("Europe/Berlin")
-AUSWEICH = "claude-opus-5"
+AUSWEICH = "claude-sonnet-5"
 ECHT = Path(__file__).resolve().parent / "hilfen" / "limit_zeile_echt.jsonl"
 
 

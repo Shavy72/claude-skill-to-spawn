@@ -14,10 +14,11 @@ import shlex
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any, Sequence, TextIO
 
-from . import manifest
+from . import capo, manifest, probesitz, stand
 
 log = logging.getLogger("to_spawn.spawn")
 
@@ -68,6 +69,15 @@ def baue_befehl(
     return befehl
 
 
+def fern_ordner(pfad: str) -> str:
+    """Ordner für ``cd`` in einem SSH-Befehl quoten — ``~/`` bleibt aufgelöst (``'~/x'`` würde es nicht)."""
+    if pfad == "~":
+        return "~"
+    if pfad.startswith("~/"):
+        return "~/" + shlex.quote(pfad[2:])
+    return shlex.quote(pfad)
+
+
 def _befehl_unix(
     ziel: str,
     spec: int | str,
@@ -89,7 +99,7 @@ def _befehl_unix(
             "(Repo-Ordner auf dem Bau-Server) — oder lokal starten (Ziel 1)."
         )
     ssh_ziel = str(konfig.get("ssh_ziel") or "bau-server")
-    fern = f"cd {shlex.quote(server_repo)} && bash scripts/spawn_srv.sh {shlex.join(argumente)}"
+    fern = f"cd {fern_ordner(server_repo)} && bash scripts/spawn_srv.sh {shlex.join(argumente)}"
     return ["ssh", ssh_ziel, fern]
 
 
@@ -124,6 +134,11 @@ def spawn(
         if not skript.is_file():
             log.error("Terminal-Skript fehlt: %s", skript)
             return 2
+    # Bau-Server muss den Skill-Stand des PCs haben, sonst selbst nachziehen (#325).
+    if gewaehlt == "srv":
+        stand_rc = stand.sichere_stand(repo, konfig, nur_pruefen=dry_run)
+        if stand_rc != 0 and not (dry_run and stand_rc == stand.EXIT_ABWEICHEND):
+            return manifest.EXIT_WEIGERUNG
     log.info("Ziel %s · %s", gewaehlt, " ".join(befehl))
     if dry_run:
         print(" ".join(befehl))
@@ -131,3 +146,117 @@ def spawn(
     # Das Skript arbeitet im Repo des Aufrufs, nicht im Repo aus ~/.bashrc (#212/#257).
     umgebung = {**os.environ, "TO_SPAWN_REPO": str(repo)}
     return subprocess.run(befehl, cwd=str(repo), check=False, env=umgebung).returncode
+
+
+# --- Einzelticket-Neustart (Wächter-Werkzeug) -------------------------------------------------------
+
+#: Wartezeit, bis ein beendetes Ticket in ``sessions_stand`` als ``aus`` erscheint.
+NEUSTART_WARTE_S = 60
+
+
+def neustart_auftrag(handoff: str) -> str:
+    """Auftrag der neuen Session: am Handoff weiterbauen (leer = normaler Start)."""
+    if not handoff.strip():
+        return ""
+    return (
+        f"Weiter ab Handoff {handoff.strip()} (Ticket-Worktree) — lies ihn zuerst "
+        "und setze genau dort fort, wo die Vorsession aufgehört hat."
+    )
+
+
+def ticket_eintrag(spec: int | str, ticket: int | str) -> Any:
+    """Zustand des Tickets aus ``skripte/sessions_stand.py`` (``aus``/``wartet``/``läuft …``/``VERWAIST …``)."""
+    modul = probesitz._sessions_stand()
+    eintraege = modul.manifeste_lesen(str(spec))
+    modul.zuordnen(eintraege, modul.prozesse_lesen())
+    return eintraege.get(str(ticket)) or modul.Eintrag(str(ticket), "ticket", "(nicht im Manifest)")
+
+
+def _neustart_lokal_befehl(repo: Path, spec: int, ticket: int, auftrag: str) -> tuple[list[str], bool]:
+    """(argv, über tmux?) — Linux: tmux-Fenster ``bau <N>`` wie capo; Windows: neuer wt-Tab."""
+    if sys.platform != "win32":
+        fenster = capo.tmux_fenster(spec)
+        return capo.folge_befehl(repo, spec, ticket, fenster, auftrag), fenster is not None
+    innen = f"python '{capo._bau_skript(repo)}' {ticket} --sofort"
+    if auftrag:
+        # wt trennt Tabs an ';' — der Auftrag darf keins enthalten; ' für pwsh verdoppeln.
+        innen += " --auftrag '" + auftrag.replace(";", ",").replace("'", "''") + "'"
+    return ["wt", "-w", "0", "new-tab", "--title", f"bau {ticket}", "-d", str(repo), "pwsh", "-NoExit", "-Command", innen], False
+
+
+def neustart(
+    repo: Path,
+    spec: int,
+    ticket: int,
+    konfig: dict[str, Any],
+    *,
+    ziel: str = "local",
+    handoff: str = "",
+    beenden: bool = False,
+    dry_run: bool = False,
+) -> int:
+    """Ein Ticket neu starten — Einzeiler für den Wächter.
+
+    ``local`` = dieser Rechner (Bau-Server: tmux-Fenster in ``spec-<S>``, PC: wt-Tab),
+    ``srv`` = per SSH derselbe Befehl im ``server_repo`` des Bau-Servers. Läuft das
+    Ticket noch, bricht der Neustart ab (Exit 3) — außer mit ``beenden``: dann wird
+    zuerst nur die Claude-Session beendet (ohne Session ``bau.py`` selbst, das dann
+    nichts mehr zu tun hat), nie ein fremder Prozess.
+    """
+    if ziel == "srv":
+        server_repo = str(konfig.get("server_repo") or "").strip()
+        if not server_repo:
+            log.error("Ziel Server braucht `server_repo` in .to-spawn/config.json.")
+            return 2
+        stand_rc = stand.sichere_stand(repo, konfig, nur_pruefen=dry_run)
+        if stand_rc != 0 and not (dry_run and stand_rc == stand.EXIT_ABWEICHEND):
+            return manifest.EXIT_WEIGERUNG
+        argumente = ["neustart", str(spec), str(ticket), "--ziel", "local"]
+        if handoff:
+            argumente += ["--handoff", handoff]
+        if beenden:
+            argumente.append("--beenden")
+        if dry_run:
+            argumente.append("--dry-run")
+        fern = (
+            f"cd {fern_ordner(server_repo)} && "
+            f"python3 ~/.claude/skills/to-spawn/to_spawn.py {shlex.join(argumente)}"
+        )
+        befehl = ["ssh", str(konfig.get("ssh_ziel") or "bau-server"), fern]
+        print(" ".join(befehl[:2]), repr(fern))
+        return subprocess.run(befehl, cwd=str(repo), check=False).returncode
+
+    os.environ["TO_SPAWN_REPO"] = str(repo)
+    eintrag = ticket_eintrag(spec, ticket)
+    print(f"#{ticket}: {eintrag.zustand} (bau.py {eintrag.pid or '-'}, Session {eintrag.session_pid or '-'})")
+    if eintrag.zustand != "aus":
+        opfer = eintrag.session_pid or eintrag.pid
+        if not beenden:
+            log.error("#%s läuft noch (%s) — erst prüfen, dann mit --beenden neu starten.", ticket, eintrag.zustand)
+            return 3
+        if dry_run:
+            print(f"würde beenden: PID {opfer} ({'Claude-Session' if eintrag.session_pid else 'bau.py ohne Session'})")
+        else:
+            try:
+                os.kill(int(opfer), 15)
+            except OSError as fehler:
+                log.error("#%s: PID %s nicht beendbar (%s).", ticket, opfer, fehler)
+                return 2
+            ende = time.monotonic() + NEUSTART_WARTE_S
+            while ticket_eintrag(spec, ticket).zustand != "aus":
+                if time.monotonic() > ende:
+                    log.error("#%s nach %ss noch nicht aus — kein Neustart.", ticket, NEUSTART_WARTE_S)
+                    return 3
+                time.sleep(2)
+    auftrag = neustart_auftrag(handoff)
+    befehl, ueber_tmux = _neustart_lokal_befehl(repo, spec, ticket, auftrag)
+    print(("Trockenlauf: " if dry_run else "Start: ") + shlex.join(befehl))
+    if dry_run:
+        return 0
+    if sys.platform == "win32":
+        return subprocess.run(befehl, cwd=str(repo), check=False).returncode
+    grund = capo._starte_folge_runde(repo, ticket, befehl, ueber_tmux, auftrag)
+    if grund:
+        log.error("#%s: Start fehlgeschlagen — %s", ticket, grund)
+        return 2
+    return 0

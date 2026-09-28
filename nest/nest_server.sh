@@ -229,6 +229,9 @@ ok "tmux.conf + .bashrc (bau/wache/sessions, cd ins Repo)"
 # der Kernel schoss den tmux-Server ab und alle Sessions waren weg. Darum:
 # (a) Swap in RAM-Größe (mindestens 8 GiB), (b) der tmux-Server läuft als
 # systemd-Dienst mit OOMScoreAdjust=-900 — der Kernel nimmt ihn als Letztes.
+# OOM-Absturz 26.09.: ein pytest-Kind wurde gekillt, und systemd stoppte mit dem
+# Standard OOMPolicy=stop den ganzen Dienst samt aller Sessions. Darum
+# OOMPolicy=continue: nur der Übeltäter stirbt.
 # Idempotent: vorhandener Swap bleibt, vorhandene Unit wird nur nachgezogen.
 
 # (a) Swap: /proc/swaps hat nur die Kopfzeile → kein Swap aktiv.
@@ -285,6 +288,7 @@ WorkingDirectory=$NUTZER_HOME
 Environment=HOME=$NUTZER_HOME USER=$NUTZER SHELL=/bin/bash LANG=C.UTF-8
 ExecStart=/usr/bin/tmux -D
 OOMScoreAdjust=-900
+OOMPolicy=continue
 Restart=always
 RestartSec=5
 
@@ -318,7 +322,7 @@ if command -v systemctl >/dev/null 2>&1; then
   else
     systemctl daemon-reload
     if systemctl enable --now tmux-bau.service >/dev/null 2>&1; then
-      ok "tmux-bau.service aktiv (OOMScoreAdjust=-900, Restart=always, RestartSec=5)"
+      ok "tmux-bau.service aktiv (OOMScoreAdjust=-900, OOMPolicy=continue, Restart=always, RestartSec=5)"
     else
       warn "tmux-bau.service konnte nicht gestartet werden (systemctl enable --now)"
     fi

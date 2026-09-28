@@ -21,6 +21,8 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from git_bash import git_bash
+
 
 def main() -> int:
     prompt = sys.argv[-1] if len(sys.argv) > 1 else ""
@@ -105,9 +107,10 @@ def _mit_teilzeile(zeile: dict, versatz: int = 1) -> list[dict]:
     zählen (Fixrunde #204)."""
     teil = json.loads(json.dumps(zeile))
     teil["timestamp"] = (
-        datetime.fromisoformat(zeile["timestamp"].replace("Z", "+00:00"))
-        + timedelta(seconds=versatz)
-    ).isoformat().replace("+00:00", "Z")
+        (datetime.fromisoformat(zeile["timestamp"].replace("Z", "+00:00")) + timedelta(seconds=versatz))
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
     return [zeile, teil]
 
 
@@ -132,11 +135,14 @@ def _hook_befehle(ereignis: str) -> list[str]:
 
 
 def _hooks_ausfuehren(ausgabe: Path, ticket: str, ereignis: str, eingabe: dict) -> None:
-    """Wie Claude Code: jeder Befehl per Shell, JSON auf stdin, Ergebnis mitschreiben."""
+    """Wie Claude Code: jeder Befehl per Bash (unter Windows Git Bash), JSON auf stdin,
+    Ergebnis mitschreiben."""
+    bash = git_bash()
+    if bash is None:
+        raise RuntimeError("Keine Bash gefunden (Git Bash / CLAUDE_CODE_GIT_BASH_PATH)")
     for befehl in _hook_befehle(ereignis):
         lauf = subprocess.run(
-            befehl,
-            shell=True,
+            [bash, "-c", befehl],
             input=json.dumps(eingabe, ensure_ascii=False),
             capture_output=True,
             text=True,

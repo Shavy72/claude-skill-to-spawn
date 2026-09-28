@@ -66,7 +66,8 @@ def _schreibe_atomar(datei: Path, text: str, modus: int | None = None) -> None:
         modus = datei.stat().st_mode & 0o777 if datei.exists() else 0o644
     griff, zwischen = tempfile.mkstemp(prefix=f".{datei.name}.", dir=str(datei.parent))
     try:
-        os.fchmod(griff, modus)
+        if hasattr(os, "fchmod"):  # Windows kennt kein fchmod, dort gilt nur das Lese-Flag
+            os.fchmod(griff, modus)
         with os.fdopen(griff, "w", encoding="utf-8") as strom:
             strom.write(text)
         os.replace(zwischen, datei)
@@ -262,8 +263,11 @@ def sandbox_vorbereiten(
     worktree_anlegen(worktree, hauptrepo, ticket)
     worktree = worktree.resolve()
     einstellungen = sandbox_einstellungen(
-        worktree, hauptrepo, konfig if konfig is not None else config.lade(hauptrepo),
-        ticket, home,
+        worktree,
+        hauptrepo,
+        konfig if konfig is not None else config.lade(hauptrepo),
+        ticket,
+        home,
     )
     datei = worktree / SANDBOX_DATEI
     _schreibe_atomar(datei, _json_text(einstellungen), 0o644)
@@ -301,10 +305,7 @@ def _sandbox_bauen(
     srt, bwrap = which("srt"), which("bwrap")
     if not srt or not bwrap:
         fehlt = " und ".join(n for n, p in (("srt", srt), ("bwrap", bwrap)) if not p)
-        raise NestFehler(
-            f"Sandbox ist an, aber {fehlt} fehlt. "
-            "Abhilfe: `to_spawn.py nest werkzeuge --installieren`."
-        )
+        raise NestFehler(f"Sandbox ist an, aber {fehlt} fehlt. Abhilfe: `to_spawn.py nest werkzeuge --installieren`.")
     if trocken:
         pfad, _ticket = worktree_von(worktree)
         return [srt, "--settings", str(pfad / SANDBOX_DATEI), "--", *SANDBOX_KENNUNG]
@@ -395,15 +396,11 @@ def _env_wert(wert: str) -> str:
     return f"'{maskiert}'"
 
 
-def _bws_geheimnisse(
-    bws: str, projekt: str | None, token: str, environ: Mapping[str, str]
-) -> dict[str, str]:
+def _bws_geheimnisse(bws: str, projekt: str | None, token: str, environ: Mapping[str, str]) -> dict[str, str]:
     befehl = [bws, "secret", "list", *([projekt] if projekt else []), "--output", "json"]
     umgebung = {**environ, "BWS_ACCESS_TOKEN": token}
     try:
-        ergebnis = subprocess.run(
-            befehl, env=umgebung, capture_output=True, text=True, check=False, timeout=120
-        )
+        ergebnis = subprocess.run(befehl, env=umgebung, capture_output=True, text=True, check=False, timeout=120)
     except (OSError, subprocess.TimeoutExpired) as fehler:
         raise NestFehler(f"bws nicht startbar ({type(fehler).__name__})") from fehler
     if ergebnis.returncode != 0:

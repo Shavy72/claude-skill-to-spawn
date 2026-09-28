@@ -1,6 +1,6 @@
 """bau — schlanke Claude-Code-Session für genau ein Ticket.
 
-Aufruf: ``python scripts/bau.py <N> [--dry-run] [--model <m>] [--print-prompt] [--sofort] [--takt <s>] [--umzug <branch>@<sha>:<pfad>] [--probesitz]``
+Aufruf: ``python scripts/bau.py <N> [--dry-run] [--model <m>] [--print-prompt] [--sofort] [--takt <s>] [--umzug <branch>@<sha>:<pfad>] [--probesitz] [--auftrag <text>]``
 
 Liest das Ticket-Manifest unter ``docs/agents/manifests/*.json`` (SSOT-Schema siehe
 ``docs/agents/kontext-manifest.md``), schaltet alle nicht benötigten Skills
@@ -22,6 +22,7 @@ import json
 import logging
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -30,6 +31,7 @@ import time
 import uuid
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 # Skill-Wurzel in sys.path, damit ``to_spawn.config`` (Repo-Wurzel, Konfig) importierbar ist (#205).
 _SKILL = str(Path(__file__).resolve().parent.parent)
@@ -51,6 +53,12 @@ REPO = Path(os.environ["TO_SPAWN_REPO"]).resolve() if os.environ.get("TO_SPAWN_R
 MANIFEST_DIR = REPO / "docs" / "agents" / "manifests"
 HOME = Path.home()
 CLAUDE_DIR = HOME / ".claude"
+
+# Pflicht-Skills: der globale Review-Stop-Hook (``~/.claude/hooks/review/stop.py``) fordert
+# „Skill review-dirigent ausführen“, der Dirigent ruft diese Skills per Skill-Werkzeug. Stehen
+# sie auf ``off``, scheitert der Aufruf und jedes Ticket endet mit „Mensch nötig“
+# (Handoff 2026-09-24). Kein Manifest kann sie abwählen — wie context-mode bei den MCPs.
+PFLICHT_SKILLS = ["review-dirigent", "code-review", "security-review", "sentry-security-review"]
 
 # Builtins, die Claude Code ohne Datei mitbringt (per skillOverrides abschaltbar).
 BUILTIN_SKILLS = [
@@ -89,11 +97,19 @@ def staffel_hook_pfad(repo: Path = REPO) -> Path:
     return eigene if eigene.is_file() else STAFFEL_HOOK_SKILL
 
 
+#: Frage-Sperre (#321): Bau-Sessions fragen David nie (AskUserQuestion aus, Stop mit Frage → weiter).
+#: Wortgleich mit dem Server-Template (setup_bau_server_push.sh): Claude Code legt identische Befehle
+#: zusammen, der Hook läuft auf dem Bau-Server so nur einmal. ``~`` lösen Git-Bash und Linux auf.
+FRAGE_SPERRE_BEFEHL = "node ~/.claude/hooks/smart-zone/staffel/frage-sperre.mjs"
+
+
 #: CLI des Skills (Bau-Log-Hooks #204, Umzug-Anfrage #212) — dieselbe Skill-Wurzel wie oben in sys.path.
 TO_SPAWN_CLI = Path(_SKILL) / "to_spawn.py"
 STAFFEL_MAX_DEFAULT = 8
 #: Werkzeug-Rechte der Probesitz-Wegwerf-Session (#214): nur git, Ordner anlegen, Dateien.
 PROBESITZ_RECHTE = ("Bash(git *)", "Bash(mkdir *)", "Write", "Edit", "Read")
+#: Auftrag einer Runde (#285) ist ein Wächter-Kommentar, kein Dokument.
+AUFTRAG_MAX_ZEICHEN = 4_000
 # Handoffs sind Übersichten, keine Romane — mehr als das wäre ein Fehler in der Vorsession.
 STAFFEL_HANDOFF_MAX_ZEICHEN = 40_000
 
@@ -421,29 +437,60 @@ def handoff_dirs(ticket: str) -> list[str]:
     return [str(worktree / "docs" / "handoffs"), str(worktree / "docs")]
 
 
-def staffel_hooks() -> dict:
+def hook_befehl(*teile: Path | str) -> str:
+    """Hook-Befehl für Bash: Claude Code startet Hooks auch unter Windows in Git Bash.
+
+    ``subprocess.list2cmdline`` ließe Backslashes stehen, Bash schluckt sie
+    (``C:Python313python.exe: command not found``). Daher Pfade mit ``/`` und ``shlex.quote``.
+    """
+    return " ".join(shlex.quote(t.as_posix() if isinstance(t, Path) else t) for t in teile)
+
+
+def staffel_aktiv(konfig: dict) -> bool:
+    """Staffel-Neustart an der Smart-Zone-Grenze erlaubt? ``staffel.aktiv`` in der Repo-Konfig.
+
+    Aus (David, 24.09.2026): Neustarts mitten im Deploy-Gate brachen Tests ab und verloren
+    Kontext. Die Smart Zone regelt dann allein der Ticket-Schnitt vorab; die Session baut
+    ihr Ticket bis zum Ende durch.
+    """
+    return bool((konfig.get("staffel") or {}).get("aktiv", True))
+
+
+def staffel_hooks(mit_staffel: bool = True) -> dict:
     """Hook-Block für die Session-eigene ``settings.json``.
 
-    ``Stop``: zuerst der Staffel-Hook, danach der Bau-Log-Hook des Skills (Token,
+    ``Stop``: zuerst die Frage-Sperre (#321: endet die Antwort mit einer Frage, heißt
+    es „Vorschlag nehmen, weitermachen“), dann der Staffel-Hook, danach der Bau-Log-Hook des Skills (Token,
     Modell, Dauer je Runde); er gibt auch die Umzug-Anfrage des Wächters weiter (#212). ``SubagentStop``: Bau-Log-Zeile je Subagent (#204).
+    ``PreToolUse``: ``AskUserQuestion`` → Frage-Sperre lehnt ab (#321).
     """
-    staffel = subprocess.list2cmdline([sys.executable, str(staffel_hook_pfad(REPO))])
-    bau_log_stop = subprocess.list2cmdline([sys.executable, str(TO_SPAWN_CLI), "hook-stop"])
-    bau_log_sub = subprocess.list2cmdline([sys.executable, str(TO_SPAWN_CLI), "hook-subagent-stop"])
+    frage_sperre = FRAGE_SPERRE_BEFEHL
+    staffel = hook_befehl(Path(sys.executable), staffel_hook_pfad(REPO))
+    bau_log_stop = hook_befehl(Path(sys.executable), TO_SPAWN_CLI, "hook-stop")
+    bau_log_sub = hook_befehl(Path(sys.executable), TO_SPAWN_CLI, "hook-subagent-stop")
+    stop = [{"type": "command", "command": frage_sperre}]
+    if mit_staffel:
+        stop.append({"type": "command", "command": staffel})
+    stop.append({"type": "command", "command": bau_log_stop})
     return {
-        "Stop": [
-            {
-                "hooks": [
-                    {"type": "command", "command": staffel},
-                    {"type": "command", "command": bau_log_stop},
-                ]
-            }
-        ],
+        "Stop": [{"hooks": stop}],
         "SubagentStop": [{"hooks": [{"type": "command", "command": bau_log_sub}]}],
+        "PreToolUse": [{"matcher": "AskUserQuestion", "hooks": [{"type": "command", "command": frage_sperre}]}],
     }
 
 
-def bau_log_umgebung(ticket: str, runde: int, start: float, effort: str | None) -> dict[str, str]:
+def session_settings(overrides: dict[str, Any], mit_staffel: bool = True) -> dict[str, Any]:
+    """Inhalt der Session-eigenen ``settings.json``; ``AskUserQuestion`` ist gesperrt (#321)."""
+    return {
+        "skillOverrides": overrides,
+        "hooks": staffel_hooks(mit_staffel),
+        "permissions": {"deny": ["AskUserQuestion"]},
+    }
+
+
+def bau_log_umgebung(
+    ticket: str, runde: int, start: float, effort: str | None, spec: str | None = None
+) -> dict[str, str]:
     """Umgebung der Bau-Log-Hooks (#204): Ticket, Runde, Start, Effort, Ziel-Ordner.
 
     ``TO_SPAWN_LOG_REPO`` zeigt auf den Ticket-Worktree; existiert er (noch/nicht mehr)
@@ -460,6 +507,9 @@ def bau_log_umgebung(ticket: str, runde: int, start: float, effort: str | None) 
     }
     if effort:
         umgebung["TO_SPAWN_EFFORT"] = effort
+    if spec and spec != "?":
+        # Smart-Zone-Ledger liest die Spec aus TO_SPAWN_SPEC (Feld „spec“).
+        umgebung["TO_SPAWN_SPEC"] = spec
     return umgebung
 
 
@@ -498,6 +548,24 @@ def exit_code(code: int) -> int:
     return 128 + abs(code) if code < 0 else code
 
 
+def auftrag_prompt(prompt: str, auftrag: str) -> str:
+    """Auftrag dieser Runde (z. B. Wächter-Kommentar) klar abgesetzt vor den Prompt (#285).
+
+    Ohne Auftrag ruft niemand diese Funktion — der Prompt bleibt dann unverändert.
+    """
+    text = auftrag.strip()
+    if len(text) > AUFTRAG_MAX_ZEICHEN:
+        text = text[:AUFTRAG_MAX_ZEICHEN] + "\n(… gekürzt)"
+    # Keine Backticks/Code-Zäune (Windows-Notnagel shell=True, wie staffel_prompt).
+    return (
+        "## Auftrag dieser Runde\n"
+        "Diese Runde wurde mit einem eigenen Auftrag gestartet — er gilt vor dem "
+        "allgemeinen Ticket-Ablauf darunter:\n\n"
+        f"{text}\n\n"
+        f"---\n\n{prompt}"
+    )
+
+
 def staffel_prompt(prompt: str, handoff: Path, runde: int) -> str:
     """Startkontext der Folge-Session: Handoff-Inhalt vor dem Originalauftrag."""
     try:
@@ -529,9 +597,7 @@ def resume_prompt(ticket: str) -> str:
     )
 
 
-def session_id_setzen(
-    cmd: list[str], out: Path, sid: str | None = None, ticket: str = "", runde: int = 1
-) -> str:
+def session_id_setzen(cmd: list[str], out: Path, sid: str | None = None, ticket: str = "", runde: int = 1) -> str:
     """Gesprächs-ID im Befehl setzen (``--resume`` → ``--session-id``, jede Runde frisch),
     in ``session-id.txt`` schreiben und als ``BAU_SESSION_ID`` setzen. Ohne ``sid``:
     nur die vorhandene ID merken (Runde 1). Mit ``ticket`` zusätzlich nach
@@ -581,15 +647,12 @@ def umzug_handoff_lesen(ref: str) -> tuple[str, str, str]:
     treffer = UMZUG_REF_SHA.match(links)
     branch, sha = (treffer.group("branch"), treffer.group("sha")) if treffer else (links, "")
     if not branch or not pfad:
-        log.error(
-            "Umzug-Handoff nicht lesbar: --umzug erwartet <branch>@<sha>:<pfad>, bekam %r.", ref
-        )
+        log.error("Umzug-Handoff nicht lesbar: --umzug erwartet <branch>@<sha>:<pfad>, bekam %r.", ref)
         sys.exit(2)
     geholt = _git_lauf("fetch", "-q", "origin", branch)
     if geholt.returncode != 0:
         log.error(
-            "Umzug-Handoff nicht lesbar: git fetch origin %s scheiterte (Exit %s: %s) — "
-            "nichts gestartet.",
+            "Umzug-Handoff nicht lesbar: git fetch origin %s scheiterte (Exit %s: %s) — nichts gestartet.",
             branch,
             geholt.returncode,
             (geholt.stderr or geholt.stdout).strip()[:200] or "keine Meldung",
@@ -599,8 +662,7 @@ def umzug_handoff_lesen(ref: str) -> tuple[str, str, str]:
         enthalten = _git_lauf("merge-base", "--is-ancestor", sha, f"origin/{branch}")
         if enthalten.returncode != 0:
             log.error(
-                "Umzug-Handoff nicht lesbar: Commit %s ist nicht in origin/%s (%s) — "
-                "nichts gestartet.",
+                "Umzug-Handoff nicht lesbar: Commit %s ist nicht in origin/%s (%s) — nichts gestartet.",
                 sha,
                 branch,
                 enthalten.stderr.strip()[:200] or "nicht enthalten",
@@ -690,6 +752,12 @@ def main() -> int:
         help="Probesitz (#214): Wegwerf-Session ohne Terminal (claude -p), fester Mini-Auftrag, "
         "kein Manifest nötig, impliziert --sofort",
     )
+    parser.add_argument(
+        "--auftrag",
+        metavar="TEXT",
+        help="Auftrag dieser Runde (#285): kommt als Abschnitt „## Auftrag dieser Runde“ vor den "
+        "Prompt; auch als Umgebungsvariable BAU_AUFTRAG (ohne beides bleibt der Prompt gleich)",
+    )
     args = parser.parse_args()
     ticket = str(args.ticket)
     # GitHub-Slug verbindlich (#257 F5): kein GitHub-Origin → Exit 2 mit Grund, kein Rückfall.
@@ -735,10 +803,12 @@ def main() -> int:
     prompt = (
         probesitz.WEGWERF_PROMPT.format(ticket=ticket)
         if args.probesitz
-        else build_prompt(
-            default["prompt_template"], ticket, spec, title, build_kontext(entry), config.lade(REPO)
-        )
+        else build_prompt(default["prompt_template"], ticket, spec, title, build_kontext(entry), config.lade(REPO))
     )
+    auftrag = args.auftrag or os.environ.get("BAU_AUFTRAG", "")
+    if auftrag.strip():
+        # Vor dem Prompt, damit auch jede Staffel-Runde den Auftrag dieser Runde sieht (#285).
+        prompt = auftrag_prompt(prompt, auftrag)
     erster_prompt = prompt
     if args.umzug:
         branch, _pfad, handoff_text = umzug_handoff_lesen(args.umzug)
@@ -748,7 +818,7 @@ def main() -> int:
         return 0
 
     # Skills
-    whitelist = list(dict.fromkeys(default.get("core_skills", []) + (entry.get("skills") or [])))
+    whitelist = list(dict.fromkeys(default.get("core_skills", []) + (entry.get("skills") or []) + PFLICHT_SKILLS))
     known = known_skill_names()
     for name in whitelist:
         if name not in known:
@@ -781,14 +851,17 @@ def main() -> int:
     out = Path(os.environ.get("LOCALAPPDATA") or tempfile.gettempdir()) / "Temp"
     if not out.is_dir():
         out = Path(tempfile.gettempdir())
-    out = out / f"{GH_REPO.rsplit('/', 1)[-1]}-bau" / f"{ticket}-{stamp}"
-    out.mkdir(parents=True, exist_ok=True)
+    basis = out / f"{GH_REPO.rsplit('/', 1)[-1]}-bau"
+    basis.mkdir(parents=True, exist_ok=True)
+    # mkdtemp statt ``<ticket>-<stamp>``: zwei Starts desselben Tickets in derselben Sekunde
+    # (Staffel-Neustart, parallele Tests) teilten sonst settings.json und prompt.txt.
+    out = Path(tempfile.mkdtemp(prefix=f"{ticket}-{stamp}-", dir=basis))
     settings_path = out / "settings.json"
     mcp_path = out / "mcp.json"
     staffel_datei = out / "staffel.json"
     settings_path.write_text(
         json.dumps(
-            {"skillOverrides": overrides, "hooks": staffel_hooks()},
+            session_settings(overrides, staffel_aktiv(config.lade(REPO))),
             ensure_ascii=False,
             indent=1,
         ),
@@ -903,9 +976,7 @@ def main() -> int:
     session_id_setzen(cmd, out, ticket=ticket, runde=runde)
     while True:
         umgebung = staffel_umgebung(ticket, staffel_datei, runde, fingerabdruck)
-        umgebung.update(
-            bau_log_umgebung(ticket, runde, float(umgebung["BAU_SESSION_START"]), effort)
-        )
+        umgebung.update(bau_log_umgebung(ticket, runde, float(umgebung["BAU_SESSION_START"]), effort, spec))
         os.environ.update(umgebung)
         (out / f"prompt-runde{runde}.txt").write_text(cmd[-1], encoding="utf-8")
         code, umzug_daten = starte_session(cmd, umzug_datei)

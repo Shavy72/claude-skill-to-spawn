@@ -10,7 +10,7 @@ Beantwortet nur, was der Kern fragt:
 
 Umgebung: ``GH_STUB_ZU`` (Komma-Liste geschlossener Tickets),
 ``GH_STUB_BLOCKER`` (``<Ticket>:<Blocker>``-Paare, Komma-getrennt),
-``GH_STUB_DATEN`` (Pfad zu JSON ``{"<N>": {"labels": [..], "body": "..",
+``GH_STUB_DATEN`` (Pfad zu JSON ``{"<N>": {"labels": [..], "body": "..", "title": "..",
 "assignees": [..]}}`` — wird bei ``issue view`` in die Antwort gemischt;
 ohne die Variable bleibt die Antwort wie bisher nur ``state``),
 ``GH_STUB_KAPUTT`` (Komma-Liste: ``issue view`` dieser Nummern scheitert mit Exit 1),
@@ -33,11 +33,7 @@ def _zu() -> set[str]:
 
 def _blocker(ticket: str) -> list[dict]:
     paare = [p for p in os.environ.get("GH_STUB_BLOCKER", "").split(",") if ":" in p]
-    return [
-        {"number": int(p.split(":")[1]), "state": "closed"}
-        for p in paare
-        if p.split(":")[0].strip() == ticket
-    ]
+    return [{"number": int(p.split(":")[1]), "state": "closed"} for p in paare if p.split(":")[0].strip() == ticket]
 
 
 def _zusatz(ticket: str) -> dict:
@@ -53,6 +49,8 @@ def _zusatz(ticket: str) -> dict:
         zusatz["assignees"] = [{"login": login} for login in eintrag["assignees"]]
     if "body" in eintrag:
         zusatz["body"] = eintrag["body"]
+    if "title" in eintrag:
+        zusatz["title"] = eintrag["title"]
     return zusatz
 
 

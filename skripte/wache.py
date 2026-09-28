@@ -1,21 +1,25 @@
-"""Bau-Wächter-Session für eine Spec starten (frische Claude-Session, Fable 5.1).
+"""Bau-Wächter-Session für eine Spec starten (frische Claude-Session, Opus mit vollem Kontextfenster).
 
 Aufruf: ``python scripts/wache.py <S> [--model <m>] [--takt <s>] [--dry-run] [--print-prompt] [--resume <id>]``
+Selbstablösung aus der laufenden Wache: ``python scripts/wache.py <S> --abloesen <handoff>``.
 
-Der Wächter baut nichts und spricht keine Bau-Session an. Er liest je Tick nur
-``scripts/capo.py <S>`` (Stand je Ticket, neue Bau-Log-Zeilen, Verstöße — capo öffnet
-selbst wieder und mailt Kritisches), prüft Belegseiten nur bei Zustandswechsel und
-schreibt seinen Stand in ``docs/HANDOFF_<datum>_waechter_<S>.md``.
+Die Wache ist eine voll fähige Session und verantwortlich, dass der Bau autonom durchläuft:
+je Tick ``scripts/capo.py <S>``, Sessions prüfen, hängende Tickets per
+``to_spawn.py neustart`` ablösen, Übergaben an der Smart-Zone-Grenze starten. Stand in
+``docs/HANDOFF_<datum>_waechter_<S>.md``.
 
-Start mit ``--remote-control "Wächter #<S>"`` (Konfig ``waechter.remote_control``) und
-``--fallback-model`` (Konfig ``modelle.waechter_ausweich``). Beim Nutzungs-Limit wechselt
-die Aufsicht (``to_spawn/waechter_lauf.py``) selbst auf das Ausweich-Modell (#213).
-Gegenstück zu ``bau <N>`` (eine Session je Ticket, Domino über native Blocker).
+Start mit ``--effort`` (Konfig ``effort.waechter``, Vorgabe medium), Opus-Modelle mit
+``[1m]`` (volles Kontextfenster wie eine normale Session), ``--remote-control "Wächter #<S>"``
+(Konfig ``waechter.remote_control``) und ``--fallback-model`` (``modelle.waechter_ausweich``).
+Beim Nutzungs-Limit wechselt die Aufsicht (``to_spawn/waechter_lauf.py``) selbst auf das
+Ausweich-Modell (#213). ``--abloesen`` legt die Ablöse-Datei an; die Aufsicht beendet die
+Session und startet im selben Fenster die Nachfolge-Wache mit dem Handoff als Startkontext.
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import re
 import os
@@ -102,15 +106,111 @@ def auf_speicher_warten(
     return speicher.auf_platz_warten(konfig, wer=wer, pruefen=pruefen, schlafen=schlafen, takt_s=takt_s)
 
 
-MODELL = "claude-fable-5-1"
+MODELL = "claude-opus-5-5"
 
-PROMPT = """/loop Bau-Wächter Spec #{S} ({REPO}). Ich baue NICHTS und spreche KEINE Bau-Session an (kein SendMessage; Kommentare auf Ticket-Issues nur bei echtem Zustandswechsel, max. 2 Zeilen). \
-Jeder Tick: 1) `PYTHONIOENCODING=utf-8 python scripts/capo.py {S} --katalog` — Stand je Ticket + nur neue Bau-Log-Zeilen + Verstöße, mehr nicht lesen. capo öffnet selbst wieder (Commit ohne „(#<Ticket>)“, Belegseite fehlt, Test ersetzt, VPS ≠ origin), kommentiert verwaiste Sessions und mailt Kritisches (Gate rot, Session tot, Live-Beweis blockiert) — das NICHT doppelt tun. `--katalog` schreibt jeden neuen Vorfall ins Bau-Log und als Zeile in docs/agents/FEHLERKATALOG_spawn.md (#286); die Datei mit Pathspec mitcommitten. \
-2) Nur bei Änderung gegenüber dem letzten Tick genauer hinsehen: Ticket neu zu ohne Verstoß → Belegseite unter docs/verify-hard/ per Grep prüfen (Akzeptanz erfüllt? Live-Klick-Weg-Beleg mit Rolle da?), bei Mangel 2-Zeilen-Kommentar „Wächter: … fehlt“ + `gh issue reopen`; zwei Sessions mit Commits in derselben Datei → Konflikt-Warnung notieren. \
-3) Stand in `docs/HANDOFF_{DATUM}_waechter_{S}.md` fortschreiben (Stand + Nachträge mit Uhrzeit, Muster docs/HANDOFF_2026-09-15_waechter_107.md), Commit nur mit Pathspec + [skip ci], Rebase nur bei sauberem Baum (`git diff --quiet`), Push — nur wenn sich etwas geändert hat. \
-4) ScheduleWakeup {TAKT} s solange Sessions bauen, 3600 s wenn alle Terminals nur warten; noop: true ohne Änderung. \
-ENDE: capo meldet „SPEC FERTIG“ (alle Tickets zu, keine Verstöße; capo hat docs/agents/entscheidungen_{S}.md geschrieben und David gemailt) → diese Übersicht mit Pathspec + [skip ci] committen + pushen, Abschlussbericht als Kommentar auf #{S} (max. 10 Zeilen, Link auf die Übersicht) + stop: true. \
-Eigener Kontext: Spec/Tickets nie voll laden, nur Stand-Zeilen; Belegseiten per Grep/limit. Erste Zeile jeder Antwort: 🧭 Fable · low · caveman · Wächter."""
+#: Denkstufe der Wache, wenn die Konfig ``effort.waechter`` nichts sagt (David 28.09.2026).
+EFFORT = "medium"
+#: Umgebungsvariable mit dem Pfad der Ablöse-Datei (setzt ``main`` je Lauf).
+ABLOESE_ENV = "TO_SPAWN_WACHE_ABLOESUNG"
+#: Obergrenze Selbstablösungen je Fenster.
+# ponytail: feste Obergrenze gegen Ablöse-Schleifen, Zähler je Spec im Leitstand wenn Wachen länger laufen
+MAX_ABLOESUNGEN = 10
+#: Zeichen-Obergrenze für den Wache-Handoff im Folge-Prompt (wie ``bau.py``).
+HANDOFF_MAX_ZEICHEN = 40_000
+
+
+def volles_fenster(modell: str) -> str:
+    """Opus ohne Kontext-Angabe → ``[1m]`` (volles Fenster wie eine normale Session)."""
+    if "opus" in modell and "[" not in modell:
+        return modell + "[1m]"
+    return modell
+
+
+def prompt_bauen(spec: int, repo: str, takt: int, konfig: dict) -> str:
+    """Wache-Prompt mit Server-Befehlen aus der Konfig (``ssh_ziel``, ``server_repo``)."""
+    text = PROMPT.format(
+        S=spec, REPO=repo, DATUM=date.today().isoformat(), TAKT=max(600, takt), SKILL=Path(_SKILL).as_posix()
+    )
+    return text.replace("<SSH>", str(konfig.get("ssh_ziel") or "bau-server")).replace(
+        "<SERVER_REPO>", str(konfig.get("server_repo") or "<server_repo fehlt in .to-spawn/config.json>")
+    )
+
+
+def abloesung_anlegen(handoff: str) -> int:
+    """``--abloesen``: Ablöse-Datei der laufenden Aufsicht schreiben (nur aus einer Wache heraus)."""
+    ziel = os.environ.get(ABLOESE_ENV, "").strip()
+    if not ziel:
+        print(f"{ABLOESE_ENV} fehlt — --abloesen geht nur aus einer laufenden Wache.", file=sys.stderr)
+        return 2
+    pfad = (REPO_ORDNER / handoff) if not Path(handoff).is_absolute() else Path(handoff)
+    if not pfad.is_file():
+        print(f"Handoff {pfad} fehlt — erst schreiben und committen.", file=sys.stderr)
+        return 2
+    Path(ziel).write_text(json.dumps({"handoff": str(pfad)}), encoding="utf-8")
+    print(f"Ablösung angelegt: Nachfolge-Wache startet mit {pfad}.")
+    return 0
+
+
+def abloese_prompt(prompt: str, handoff: Path, runde: int) -> str:
+    """Startkontext der Nachfolge-Wache: Handoff der Vorgängerin vor dem Auftrag."""
+    try:
+        inhalt = handoff.read_text(encoding="utf-8")
+    except OSError as fehler:
+        inhalt = f"(Handoff {handoff} nicht lesbar: {fehler})"
+    if len(inhalt) > HANDOFF_MAX_ZEICHEN:
+        inhalt = inhalt[:HANDOFF_MAX_ZEICHEN] + "\n(… gekürzt)"
+    return (
+        f"## Wache-Ablösung (Runde {runde})\n"
+        f"Die Vorgänger-Wache hat an ihrer Handoff-Grenze übergeben. Ihr Handoff ({handoff}) ist "
+        f"dein Startkontext — setze dort fort.\n\n"
+        f"----- HANDOFF ANFANG -----\n{inhalt}\n----- HANDOFF ENDE -----\n\n{prompt}"
+    )
+
+
+#: Fester Wächter-Takt: 30 min, keine Ausnahme (auch nicht, wenn alle Terminals warten).
+TAKT_S = 1800
+
+PROMPT = """/loop Bau-Wächter Spec #{S} ({REPO})
+
+## Auftrag
+Du bist verantwortlich, dass Spec #{S} vollständig, sauber und autonom fertig gebaut wird. Du bist eine voll fähige Session: lesen, prüfen, Subagenten nutzen, Fehler selbst beheben — was nötig ist, damit der Bau durchläuft.
+- Rückfragen/Entscheidungen der Ticket-Sessions (Bau-Log typ blockiert/entscheidung/frage) entscheidest du im besten Interesse von David (Nordstern, Doktrinen), Antwort per Issue-Kommentar + `python {SKILL}/to_spawn.py eintrag --typ entscheidung`. Nur Label checkpoint:human bleibt für David.
+- Es gelten die Regeln der Projekt-CLAUDE.md: bau.py nie beenden, ohne vorher `sessions {S}` bzw. pstree geprüft zu haben; Deploy live nur mit Davids Freigabe; Commits nur mit Pathspec + [skip ci].
+- Eine Bau-Session hängt oder ist tot → du handelst (Befehle unten), nicht nur melden.
+
+## Jeder Tick
+1. `PYTHONIOENCODING=utf-8 python scripts/capo.py {S} --katalog` — Stand je Ticket, neue Bau-Log-Zeilen, Verstöße. capo öffnet selbst wieder, kommentiert verwaiste Sessions und mailt Kritisches (nicht doppelt tun); `--katalog` schreibt neue Vorfälle ins Bau-Log und nach docs/agents/FEHLERKATALOG_spawn.md (mit Pathspec mitcommitten).
+2. `node ~/.claude/hooks/smart-zone/staffel/aufraeumen.mjs --spec {S}` — schließt Fenster übergebener Sessions.
+3. Befehl A (unten) — läuft jedes offene, entblockte Ticket? Hängt eines, ist es tot oder an der Grenze → Befehle B–D.
+4. Ticket neu zu ohne Verstoß → Belegseite unter docs/verify-hard/ prüfen (Akzeptanz erfüllt? Live-Klick-Weg-Beleg mit Rolle da?); Mangel → 2-Zeilen-Kommentar „Wächter: … fehlt“ + `gh issue reopen`.
+5. Stand in `docs/HANDOFF_{DATUM}_waechter_{S}.md` fortschreiben (Stand + Nachträge mit Uhrzeit), Commit mit Pathspec + [skip ci], Rebase nur bei sauberem Baum (`git diff --quiet`), Push.
+6. Takt: ScheduleWakeup {TAKT} s, immer; noop: true ohne Änderung.
+
+## Befehle (fertig zum Kopieren; <N> = Ticket, <PID> aus Befehl A)
+Ort: Wache im tmux des Bau-Servers → Spalte „hier“ ist der Bau-Server. Wache am PC → „hier“ = PC, Server-Tickets mit der Server-Form.
+A Stand aller Sessions
+  hier:   `python scripts/sessions_stand.py {S} --alle` (aus / wartet / läuft seit / VERWAIST) · `python {SKILL}/to_spawn.py log {S}` (Token, Dauer je Ticket)
+  Server: `ssh <SSH> 'cd <SERVER_REPO> && python3 scripts/sessions_stand.py {S} --alle'`
+B Ticket neu starten (Ticket steht auf „aus“)
+  hier:   `python {SKILL}/to_spawn.py neustart {S} <N>`
+  Server: `python {SKILL}/to_spawn.py neustart {S} <N> --ziel srv`
+  Erst mit `--dry-run` ansehen, dann ohne.
+C Hängende oder tote Session erkennen und ablösen
+  Erkennen: Befehl A zeigt VERWAIST, oder „läuft seit“ ohne neue Bau-Log-Zeile/Commit seit über 60 min, oder capo meldet „Session tot“. Prüfen: Bau-Server `pstree -p <PID>`, PC: Kinder-Spalte in Befehl A. Auf dem Server greift zusätzlich der Aufpasser (Cron, 15 min): `python3 {SKILL}/skripte/aufpasser.py --trocken` zeigt, was er tun würde.
+  Ablösen (beendet nur die Claude-Session des Tickets, dann Neustart): `python {SKILL}/to_spawn.py neustart {S} <N> --beenden` (Server: zusätzlich `--ziel srv`). Halbfertige Arbeit im Worktree bleibt liegen, die neue Session übernimmt sie.
+D Session an der Smart-Zone-Grenze übergeben (Handoff-Grenze aus ~/.claude/smart-zone.json)
+  Die Ticket-Session schreibt `docs/handoffs/HANDOFF_<datum>_<N>.md` im Ticket-Worktree, committet ihn und hört auf. Staffel ist aus (`staffel.aktiv`) — der Nachfolger kommt von dir:
+  `python {SKILL}/to_spawn.py neustart {S} <N> --handoff docs/handoffs/HANDOFF_<datum>_<N>.md --beenden` (Server: zusätzlich `--ziel srv`). Die neue Session startet mit dem Auftrag „Weiter ab Handoff …“.
+E Dich selbst ablösen (deine Handoff-Grenze ist erreicht)
+  1. `docs/HANDOFF_{DATUM}_waechter_{S}.md` vollständig: Stand je Ticket, offene Entscheidungen, laufende Neustarts, nächster Schritt. Commit mit Pathspec + [skip ci], Push.
+  2. `python {SKILL}/skripte/wache.py {S} --abloesen docs/HANDOFF_{DATUM}_waechter_{S}.md` — die Aufsicht beendet diese Session und startet im selben Fenster die Nachfolge-Wache mit dem Handoff als Startkontext. Danach nichts mehr tun.
+
+## Abschluss
+ABSCHLUSS schon vor Live: Bau fertig, bereit zur Abnahme (alle Bau-Tickets zu oder nur noch Live-Belege/checkpoint:human-Abnahme offen, bzw. „Kette … durch“ oder „SPEC FERTIG“) → PFLICHT Abschluss-Paket `--stand abnahme` (einmal): Rundschau als Artifact (Skill rundschau), `python {SKILL}/skripte/belege_uebersicht.py {S}` und `python {SKILL}/skripte/test_uebersicht.py {S}` je als Artifact, Direkt-Links je Ticket in die Stage-App (staging.url aus .to-spawn/config.json + Route an die richtige Stelle, Rolle im Titel), Zugang nur als Namen (Basic-Auth-Nutzer, App-Rolle, Bitwarden-Eintragsname — nie Passwort), dann `python {SKILL}/skripte/abschluss_paket.py {S} --stand abnahme --stage <url> --rundschau <link> --belege <link> --tests <link> --direkt "<Titel (als Rolle)>=<url>"… --basic-auth-nutzer <name> --app-rolle "<Name (rolle)>" --bitwarden <eintrag>` (schreibt docs/agents/abschluss_{S}.md + mailt David).
+Danach Aufbau-Prüfung (einmal): `python {SKILL}/skripte/thermo_lauf.py plan {S}`. Exit 0 → je Eintrag in `teile` ein Subagent, alle parallel im selben Zug (`model: opus`, Prompt = Feld `prompt` unverändert); jede JSON-Antwort als `<befunde_ordner>/teil-<nr>.json` speichern, dann `python {SKILL}/skripte/thermo_lauf.py sammeln {S}` und die Issue-URL in den Abschlussbericht. Exit 2/4 → überspringen. Exit 3 → fehlenden Teil nachstarten, erneut sammeln. Kein Umbau in der Spec — Befunde gehen nur ins Sammel-Issue. Nach dem Live-Deploy dasselbe einmal mit `--stand live`.
+ENDE erst bei „SPEC FERTIG“ (capo hat docs/agents/entscheidungen_{S}.md geschrieben). Übersichten + Abschluss + docs/agents/thermo_{S}.md mit Pathspec + [skip ci] committen + pushen, Abschlussbericht als Kommentar auf #{S} (max. 10 Zeilen, die Links); bei „SPEC FERTIG“ stop: true.
+
+Erste Zeile jeder Antwort: 🧭 Opus · medium · Wächter #{S}"""
 
 
 def main() -> int:
@@ -119,23 +219,35 @@ def main() -> int:
     ap.add_argument(
         "--model", default=None, help=f"Claude-Modell (Vorgabe: Repo-Konfig modelle.waechter, sonst {MODELL})"
     )
-    ap.add_argument("--takt", type=int, default=1800, help="Sekunden zwischen zwei Ticks (1800)")
+    ap.add_argument("--takt", type=int, default=TAKT_S, help=f"Sekunden zwischen zwei Ticks ({TAKT_S})")
     ap.add_argument("--dry-run", action="store_true", help="nur Befehl zeigen")
     ap.add_argument("--print-prompt", action="store_true", help="nur den Prompt ausgeben")
     ap.add_argument(
-        "--resume", default=None, metavar="SESSION_ID",
+        "--resume",
+        default=None,
+        metavar="SESSION_ID",
         help="vorhandenes Wächter-Gespräch fortsetzen statt frisch zu starten (Aufpasser #236)",
     )
+    ap.add_argument(
+        "--abloesen",
+        default=None,
+        metavar="HANDOFF",
+        help="aus der laufenden Wache: Session beenden, Nachfolge-Wache mit diesem Handoff starten",
+    )
     a = ap.parse_args()
+    if a.abloesen:
+        return abloesung_anlegen(a.abloesen)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     # GitHub-Slug verbindlich (#257 F5): kein GitHub-Origin → Exit 2 mit Grund, kein Rückfall.
     global REPO
     REPO = repo_slug_oder_abbruch()
     if not a.dry_run:  # Probelauf ohne Seiteneffekte (#205)
         config.sicherstellen(REPO_ORDNER)
-    a.model = a.model or config.lade(REPO_ORDNER).get("modelle", {}).get("waechter") or MODELL
+    konfig = config.lade(REPO_ORDNER)
+    a.model = a.model or volles_fenster(str(konfig.get("modelle", {}).get("waechter") or MODELL))
+    effort = str(konfig.get("effort", {}).get("waechter") or EFFORT)
 
-    prompt = PROMPT.format(S=a.spec, REPO=REPO, DATUM=date.today().isoformat(), TAKT=max(600, a.takt))
+    prompt = prompt_bauen(a.spec, REPO, a.takt, konfig)
     if a.print_prompt:
         print(prompt)
         return 0
@@ -147,17 +259,20 @@ def main() -> int:
     except context_mode.ContextModeFehlt as fehler:
         log.error("%s", fehler)
         return 2
-    konfig = config.lade(REPO_ORDNER)
     ausweich = str(konfig.get("modelle", {}).get("waechter_ausweich") or "")
     remote_control = bool(konfig.get("waechter", {}).get("remote_control", True))
-    cmd = waechter_lauf.befehl(claude, a.model, ausweich, remote_control, a.spec, prompt)
-    log.info("Wächter Spec #%s · Modell %s · Ausweich %s · Takt %ss", a.spec, a.model, ausweich or "-", a.takt)
+    cmd = waechter_lauf.befehl(claude, a.model, ausweich, remote_control, a.spec, prompt, effort=effort)
+    log.info(
+        "Wächter Spec #%s · Modell %s · Effort %s · Ausweich %s · Takt %ss",
+        a.spec,
+        a.model,
+        effort,
+        ausweich or "-",
+        a.takt,
+    )
     log.info("context-mode (Pflicht-MCP, lädt als Plugin): %s", ctx_wurzel)
     if a.resume:  # Aufpasser (#236 R1): Sicherheitskette auch für das Wächter-Fenster
-        cmd = [claude, "--resume", a.resume, "--model", a.model]
-        if remote_control:
-            cmd += ["--remote-control", f"Wächter #{a.spec}"]
-        cmd.append("<weiter>")
+        cmd = waechter_lauf.resume_befehl(claude, a.resume, a.model, effort, remote_control, a.spec, "<weiter>")
     if a.dry_run:
         print(" ".join(cmd[:-1]), '"<prompt>"')
         return 0
@@ -175,42 +290,57 @@ def main() -> int:
     os.environ["CLAUDE_CODE_FORCE_SESSION_PERSISTENCE"] = "1"
     # Umzug (#212): /to-spawn-of im Wächter zieht alle Sessions um und beendet am Ende
     # diese Wächter-Session über die Umzug-Datei (Temp-Ordner je Lauf).
-    umzug_datei = Path(tempfile.mkdtemp(prefix=f"wache-{a.spec}-")) / "umzug.json"
+    lauf_ordner = Path(tempfile.mkdtemp(prefix=f"wache-{a.spec}-"))
+    umzug_datei = lauf_ordner / "umzug.json"
+    abloese_datei = lauf_ordner / "abloesung.json"
     os.environ["BAU_UMZUG_DATEI"] = str(umzug_datei)
     os.environ["TO_SPAWN_WACHE_SPEC"] = str(a.spec)
+    os.environ[ABLOESE_ENV] = str(abloese_datei)
     umzug_datei.unlink(missing_ok=True)
-    # Aufsicht (#213): Limit im Transkript → Ausweich-Modell; Umzug-Datei (#212) → Ende.
-    code = waechter_lauf.fahre(
-        claude=claude,
-        spec=a.spec,
-        prompt=prompt,
-        modell=a.model,
-        ausweich=ausweich,
-        remote_control=remote_control,
-        repo=REPO_ORDNER,
-        cwd=Path.cwd(),
-        takt=waechter_lauf.zahl_aus_umgebung(
-            "TO_SPAWN_AUFSICHT_TAKT", waechter_lauf.TAKT_S
+    session_id = a.resume
+    start_prompt = prompt
+    for runde in range(1, MAX_ABLOESUNGEN + 2):
+        # Aufsicht (#213): Limit im Transkript → Ausweich-Modell; Umzug-/Ablöse-Datei → Ende.
+        code = waechter_lauf.fahre(
+            claude=claude,
+            spec=a.spec,
+            prompt=start_prompt,
+            modell=a.model,
+            ausweich=ausweich,
+            remote_control=remote_control,
+            repo=REPO_ORDNER,
+            cwd=Path.cwd(),
+            takt=waechter_lauf.zahl_aus_umgebung("TO_SPAWN_AUFSICHT_TAKT", waechter_lauf.TAKT_S)
+            or waechter_lauf.TAKT_S,
+            puffer=waechter_lauf.zahl_aus_umgebung("TO_SPAWN_RESET_PUFFER_S", waechter_lauf.RESET_PUFFER_S),
+            hoechstens=waechter_lauf.zahl_aus_umgebung("TO_SPAWN_RESET_MAX_S", waechter_lauf.MAX_WARTE_S)
+            or waechter_lauf.MAX_WARTE_S,
+            abbruch=lambda: umzug_datei.exists() or abloese_datei.exists(),
+            session_id=session_id,
+            effort=effort,
         )
-        or waechter_lauf.TAKT_S,
-        puffer=waechter_lauf.zahl_aus_umgebung(
-            "TO_SPAWN_RESET_PUFFER_S", waechter_lauf.RESET_PUFFER_S
-        ),
-        hoechstens=waechter_lauf.zahl_aus_umgebung(
-            "TO_SPAWN_RESET_MAX_S", waechter_lauf.MAX_WARTE_S
-        )
-        or waechter_lauf.MAX_WARTE_S,
-        abbruch=umzug_datei.exists,
-        session_id=a.resume,
-    )
-    umzug_daten = umzug.lies_umzug(umzug_datei)
-    if umzug_daten is not None:
-        log.info(
-            "Umzug nach %s bestätigt — lokaler Wächter beendet (Exit %s).",
-            umzug_daten.get("ziel") or "?",
-            code,
-        )
-        return 0
+        umzug_daten = umzug.lies_umzug(umzug_datei)
+        if umzug_daten is not None:
+            log.info(
+                "Umzug nach %s bestätigt — lokaler Wächter beendet (Exit %s).",
+                umzug_daten.get("ziel") or "?",
+                code,
+            )
+            return 0
+        if not abloese_datei.exists():
+            return code
+        try:
+            handoff = Path(json.loads(abloese_datei.read_text(encoding="utf-8"))["handoff"])
+        except (OSError, ValueError, KeyError, TypeError) as fehler:
+            log.error("Ablöse-Datei %s unlesbar (%s) — Wache endet.", abloese_datei, fehler)
+            return 2
+        abloese_datei.unlink(missing_ok=True)
+        if runde > MAX_ABLOESUNGEN:
+            log.error("Wächter #%s: %s Ablösungen erreicht — keine weitere Nachfolge.", a.spec, MAX_ABLOESUNGEN)
+            return 2
+        log.info("Wächter #%s: Ablösung %s — Nachfolge-Wache startet mit %s.", a.spec, runde, handoff)
+        session_id = None
+        start_prompt = abloese_prompt(prompt, handoff, runde + 1)
     return code
 
 

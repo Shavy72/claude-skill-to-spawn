@@ -36,16 +36,16 @@ DEFAULTS: dict[str, Any] = {
     "server_repo": "",
     "runner": "claude",
     "modelle": {
-        "ticket": "claude-opus-5",
+        "ticket": "claude-opus-5-5",
         "ticket_leicht": "claude-sonnet-5",
-        "waechter": "claude-fable-5-1",
+        "waechter": "claude-opus-5-5",
         #: Modell, auf das der Wächter beim Nutzungs-Limit wechselt (#213).
-        "waechter_ausweich": "claude-opus-5",
+        "waechter_ausweich": "claude-sonnet-5",
     },
     "effort": {
         "ticket": "medium",
         "ticket_leicht": "low",
-        "waechter": "low",
+        "waechter": "medium",
     },
     "staffel": {
         "modus": "eltern",

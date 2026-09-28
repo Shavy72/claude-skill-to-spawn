@@ -3,6 +3,7 @@
 Aufruf (im Repo-Wurzelordner):
 
     python ~/.claude/skills/to-spawn/to_spawn.py spawn <S> [--ziel local|srv]
+    python ~/.claude/skills/to-spawn/to_spawn.py stand            # Skill-Stand Bau-Server sichern (#325)
     python ~/.claude/skills/to-spawn/to_spawn.py pruefen <S> [--tickets a,b] [--ohne-github]
     python ~/.claude/skills/to-spawn/to_spawn.py log <S>
     python ~/.claude/skills/to-spawn/to_spawn.py lernstoff [--letzte 30]
@@ -38,6 +39,7 @@ from to_spawn import (  # noqa: E402
     gh,
     hooks,
     inventur,
+    leitstand,
     manifest,
     nest,
     probesitz,
@@ -45,8 +47,10 @@ from to_spawn import (  # noqa: E402
     speicher,
     umzug,
     vorfall,
+    waechter_takt,
 )
 from to_spawn import spawn as spawn_modul  # noqa: E402
+from to_spawn import stand as stand_modul  # noqa: E402
 
 log = logging.getLogger("to_spawn")
 
@@ -296,6 +300,18 @@ def main(argv: list[str] | None = None) -> int:
     p_spawn.add_argument("--tickets", help="nur diese Tickets, mit Komma getrennt")
     p_spawn.add_argument("--dry-run", action="store_true", help="nur den Befehl zeigen")
 
+    p_neu = unter.add_parser("neustart", help="ein Ticket neu starten (Wächter-Einzeiler)")
+    p_neu.add_argument("spec", type=int)
+    p_neu.add_argument("ticket", type=int)
+    p_neu.add_argument("--ziel", choices=["local", "srv"], default="local", help="local = dieser Rechner")
+    p_neu.add_argument("--handoff", default="", help="Handoff-Datei: neue Session setzt dort fort")
+    p_neu.add_argument("--beenden", action="store_true", help="laufende Claude-Session vorher beenden")
+    p_neu.add_argument("--dry-run", action="store_true", help="nur zeigen, nichts starten/beenden")
+
+    unter.add_parser(
+        "stand", help="Skill-Stand des Bau-Servers prüfen, bei Abweichung pushen (#325)"
+    )
+
     p_pruefen = unter.add_parser("pruefen", help="Regularien des Manifests prüfen")
     p_pruefen.add_argument("spec")
     p_pruefen.add_argument(
@@ -449,6 +465,8 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     nest.richte_parser_ein(unter)
+    leitstand.richte_parser_ein(unter)
+    waechter_takt.richte_parser_ein(unter)
     # Aufpasser (#236): Cron-Hausmeister für die tmux-Fenster; gleiche Argumente wie
     # ``skripte/aufpasser.py``.
     aufpasser.parser_fuellen(
@@ -468,6 +486,10 @@ def main(argv: list[str] | None = None) -> int:
         return _umrechnen(args)
     if args.befehl == "nest":
         return nest.lauf(args)
+    if args.befehl == "leitstand":
+        return leitstand.lauf(args)
+    if args.befehl in ("takt", "takt-einrichten"):
+        return waechter_takt.lauf(args)
     if args.befehl == "aufpasser":
         return aufpasser.lauf_mit_args(args)
     if args.befehl == "hauptzweig":
@@ -516,6 +538,19 @@ def main(argv: list[str] | None = None) -> int:
             tickets=_tickets(args.tickets),
             dry_run=args.dry_run,
         )
+    if args.befehl == "neustart":
+        return spawn_modul.neustart(
+            repo,
+            args.spec,
+            args.ticket,
+            konfig,
+            ziel=args.ziel,
+            handoff=args.handoff,
+            beenden=args.beenden,
+            dry_run=args.dry_run,
+        )
+    if args.befehl == "stand":
+        return stand_modul.sichere_stand(repo, konfig)
     if args.befehl == "pruefen":
         bericht = manifest.pruefe(
             repo,

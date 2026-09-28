@@ -25,6 +25,15 @@ SKRIPTE = SKILL / "skripte"
 sys.path.insert(0, str(SKILL))
 
 from to_spawn import config  # noqa: E402
+from git_bash import git_bash  # noqa: E402  (tests/hilfen, Pfad setzt conftest)
+
+
+def _bash() -> str:
+    """Git Bash statt nacktem ``bash``: unter Windows fände ``CreateProcess`` sonst zuerst
+    die WSL-Bash in ``System32`` (``execvpe(/bin/bash) failed``)."""
+    pfad = git_bash()
+    assert pfad, "Keine Bash gefunden (unter Windows Git Bash nötig, WSL zählt nicht)"
+    return pfad
 
 FAKE_CLAUDE = r"""#!/usr/bin/env python3
 import json, os, sys
@@ -231,6 +240,12 @@ def test_kind_session_erbt_kein_to_spawn_repo(
     claude = binaer / "claude"
     claude.write_text(FAKE_CLAUDE, encoding="utf-8")
     claude.chmod(0o755)
+    if sys.platform == "win32":
+        # Ohne Endung findet ``shutil.which`` die Attrappe unter Windows nicht (PATHEXT) und
+        # startet das echte ``claude.exe`` — der Shim leitet auf die Attrappe um.
+        (binaer / "claude.cmd").write_text(
+            f'@"{sys.executable}" "%~dp0claude" %*\r\n', encoding="utf-8"
+        )
     beweis = tmp_path / "umgebung.json"
     temp = tmp_path / "tmp"
     temp.mkdir()
@@ -264,7 +279,7 @@ def test_kind_session_erbt_kein_to_spawn_repo(
 
 def test_spawn_srv_hilfe_und_repo_aus_umgebung(repo: Path) -> None:
     ergebnis = subprocess.run(
-        ["bash", str(SKRIPTE / "spawn_srv.sh"), "--help"],
+        [_bash(), str(SKRIPTE / "spawn_srv.sh"), "--help"],
         cwd=str(repo),
         capture_output=True,
         text=True,
@@ -292,7 +307,7 @@ def test_install_sh_vorhanden_und_syntaktisch_sauber() -> None:
     skript = SKILL / "install.sh"
     assert skript.is_file()
     ergebnis = subprocess.run(
-        ["bash", "-n", str(skript)], capture_output=True, text=True, check=False
+        [_bash(), "-n", str(skript)], capture_output=True, text=True, check=False
     )
     assert ergebnis.returncode == 0, ergebnis.stderr
 

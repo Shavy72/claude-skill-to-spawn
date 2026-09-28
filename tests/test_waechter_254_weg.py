@@ -24,7 +24,7 @@ from test_waechter_213 import (  # noqa: F401  (welt = Fixture)
     welt,
 )
 
-AUSWEICH = "claude-opus-5"
+AUSWEICH = "claude-sonnet-5"
 ECHT = Path(__file__).resolve().parent / "hilfen" / "limit_zeile_echt.jsonl"
 
 

@@ -42,8 +42,9 @@ REPO = Path(os.environ["TO_SPAWN_REPO"]).resolve() if os.environ.get("TO_SPAWN_R
 MANIFESTE = REPO / "docs" / "agents" / "manifests"
 #: ``scripts/`` = Weiterleitung im Repo, ``skripte/`` = Direktstart aus dem Skill (#205).
 MUSTER = re.compile(r"(?:scripts|skripte)[\\/](bau|wache)\.py\"?\s+(\d+)")
-#: Claude-Session aus ``bau``: der Settings-Pfad trägt die Ticket-Nummer (``<repo>-bau\\<N>-<zeit>``).
-VERWAIST = re.compile(r"[\w.-]+-bau[\\/](\d+)-\d{8}-\d{6}[\\/]settings\.json")
+#: Claude-Session aus ``bau``: der Settings-Pfad trägt die Ticket-Nummer (``<repo>-bau\\<N>-<zeit>[-<anhang>]``,
+#: Anhang seit ``mkdtemp`` in ``bau.py``).
+VERWAIST = re.compile(r"[\w.-]+-bau[\\/](\d+)-\d{8}-\d{6}(?:-\w+)?[\\/]settings\.json")
 #: Prozessnamen einer laufenden Claude-Session (Windows ``claude.exe``/``node.exe``, Linux ``claude``/``node``).
 SESSION_NAMEN = frozenset({"claude.exe", "node.exe", "claude", "node"})
 #: Namen, unter denen eine verwaiste Claude-Session auftaucht (``node.exe`` bleibt draußen — auf Windows zu unscharf).
@@ -113,7 +114,14 @@ def prozesse_lesen() -> list[Prozess]:
         "@{n='Start';e={ if ($_.CreationDate) { $_.CreationDate.ToString('o') } else { '' } }} | ConvertTo-Json -Compress"
     )
     out = subprocess.run(
-        ["powershell", "-NoProfile", "-Command", ps], capture_output=True, text=True, encoding="utf-8", errors="replace", check=False
+        ["powershell", "-NoProfile", "-Command", ps],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+        # Aus Takt/Leitstand ohne Konsole gestartet: sonst öffnet PowerShell je Aufruf ein Fenster.
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
     ).stdout
     if not out.strip():
         log.error("Prozessliste leer — läuft das auf Windows mit PowerShell?")
@@ -276,9 +284,7 @@ def tabelle(eintraege: dict[str, Eintrag], alle_zeigen: bool) -> str:
         kopf = f"Spec #{n}" if e.art == "spec" else f"#{n}"
         pid = f"pid {e.pid}" if e.pid else "—"
         sess = f"session {e.session_pid}" if e.session_pid else ""
-        zeilen.append(
-            f"{kopf:<10} {e.zustand:<18} {pid:<10} {sess:<14} {e.token:<8} {e.ctx:<4} {e.titel[:60]}"
-        )
+        zeilen.append(f"{kopf:<10} {e.zustand:<18} {pid:<10} {sess:<14} {e.token:<8} {e.ctx:<4} {e.titel[:60]}")
     if not zeilen:
         return "(keine Ticket-Sessions gefunden)"
     kopfzeile = f"{'Ticket':<10} {'Zustand':<18} {'Prozess':<10} {'Claude':<14} {'Token':<8} {'ctx':<4} Titel"

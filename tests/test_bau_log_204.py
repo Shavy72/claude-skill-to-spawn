@@ -441,3 +441,50 @@ def test_prompt_repo_kopie_platzhalter_teilmenge_skill_bleibt_neutral() -> None:
     assert repo_platzhalter <= skill_platzhalter, (repo_platzhalter, skill_platzhalter)
     assert "duoplus" not in skill_prompt.lower()
     assert "clawy-vps" not in skill_prompt.lower()
+
+
+# --- Spec reist mit in die Ticket-Session (Smart-Zone-Ledger-Feld „spec“) ------
+
+
+def _bau_modul():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("bau_skript_spec_test", SKRIPTE / "bau.py")
+    assert spec is not None and spec.loader is not None
+    modul = importlib.util.module_from_spec(spec)
+    sys.path.insert(0, str(SKRIPTE))
+    spec.loader.exec_module(modul)
+    return modul
+
+
+def test_bau_log_umgebung_traegt_spec() -> None:
+    bau = _bau_modul()
+    mit = bau.bau_log_umgebung(TICKET, 1, 1.0, "high", spec=SPEC)
+    assert mit["TO_SPAWN_SPEC"] == SPEC
+    ohne = bau.bau_log_umgebung(TICKET, 1, 1.0, "high")
+    assert "TO_SPAWN_SPEC" not in ohne
+    unbekannt = bau.bau_log_umgebung(TICKET, 1, 1.0, "high", spec="?")
+    assert "TO_SPAWN_SPEC" not in unbekannt
+
+
+def test_weg_claude_session_sieht_to_spawn_spec(repo: Path, tmp_path: Path) -> None:
+    """Echter bau.py-Lauf: das gestartete ``claude`` bekommt TO_SPAWN_SPEC in der Umgebung."""
+    wt_basis = tmp_path / "wt"
+    umgebung = _umgebung(tmp_path, wt_basis)
+    umgebung["FAKE_CLAUDE_SZENARIO"] = "fertig"
+    umgebung.pop("TO_SPAWN_SPEC", None)
+    mitschrift = tmp_path / "spec-mitschrift.txt"
+    claude = tmp_path / "bin" / "claude"
+    claude.write_text(
+        "#!/bin/sh\n"
+        f'printf "spec=%s\n" "$TO_SPAWN_SPEC" >> "{mitschrift}"\n'
+        f'exec "{sys.executable}" "{FAKE_CLAUDE}" "$@"\n',
+        encoding="utf-8",
+    )
+    claude.chmod(0o755)
+
+    ergebnis = _lauf([sys.executable, str(SKRIPTE / "bau.py"), TICKET, "--sofort"], repo, umgebung)
+    assert ergebnis.returncode == 0, ergebnis.stdout + ergebnis.stderr
+    zeilen = mitschrift.read_text(encoding="utf-8").splitlines()
+    assert zeilen, "claude wurde nicht gestartet"
+    assert all(z == f"spec={SPEC}" for z in zeilen), zeilen

@@ -1,0 +1,55 @@
+{
+ "spec": 376,
+ "feature": "reelstrasse-verwerfen",
+ "hinweise": "Oberfläche zuerst (1-3), Backend dahinter (4-8). claude-in-chrome im Abo nicht verfügbar → Playwright.",
+ "tickets": {
+  "377": {
+   "title": "Verwerfen 1/9: Rollen „obere Etage“ + Grund-Chip-Katalog",
+   "skills": [],
+   "mcp": [],
+   "docs": [
+    "CONTEXT.md"
+   ],
+   "files": [
+    "web/services/worker_access.py:42-59",
+    "web/routes/production_street.py:69",
+    "web/routes/production_street.py:2087-2107",
+    "web/routes/production_street.py:2286-2306",
+    "web/static/js/suite/issue.js:135-138"
+   ],
+   "schaetzung_k": 25,
+   "umfang": "Rollen-Konstante obere Etage, /api/abbrechen für Worker sperren, Chip-Katalog SSOT + Auslieferung an Oberfläche"
+  },
+  "378": {
+   "title": "Verwerfen 2/9: Mülleimer + Pop-up-Gerüst in der Reelstraße",
+   "skills": [
+    "user-flow-lens",
+    "ui-ux-pro-max",
+    "frontend-refactoring",
+    "ds-playwright-cli"
+   ],
+   "mcp": [],
+   "docs": [
+    "docs/DESIGN_DOKTRIN.md"
+   ],
+   "files": [
+    "web/static/js/strasse2.js:5416-5453",
+    "web/static/js/strasse2.js:344-351",
+    "web/templates/_strasse2_rumpf.html:25-40",
+    "web/services/reel_street.py:356-411",
+    "tests/strasse2_js_harness.py:26-76"
+   ],
+   "schaetzung_k": 35,
+   "umfang": "Mülleimer unten rechts, Sichtbarkeit je Rolle/Stufe, Pop-up mit Kopf-Text, Kosten, Zurück/Verwerfen (Verwerfen noch hinter Schalter)"
+  },
+  "386": {
+   "title": "Checkpoint: Abnahme Spec #376 Verwerfen in der Reelstraße",
+   "skills": [],
+   "mcp": [],
+   "docs": [],
+   "files": [],
+   "schaetzung_k": 5,
+   "umfang": "Davids Abnahme, keine Bau-Arbeit"
+  }
+ }
+}

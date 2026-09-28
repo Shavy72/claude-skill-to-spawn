@@ -90,9 +90,7 @@ def _commit(
         _git(repo, "add", name)
     env = {}
     if alter is not None:
-        stempel = (datetime.now(timezone.utc) - alter).strftime(
-            "%Y-%m-%dT%H:%M:%S+0000"
-        )
+        stempel = (datetime.now(timezone.utc) - alter).strftime("%Y-%m-%dT%H:%M:%S+0000")
         env = {"GIT_AUTHOR_DATE": stempel, "GIT_COMMITTER_DATE": stempel}
     _git(repo, "commit", "-q", "--allow-empty", "-m", betreff, env=env)
     _git(repo, "push", "-q", "origin", "HEAD:master")
@@ -112,11 +110,7 @@ def _gh_setzen(welt: dict[str, Path], nummer: str, **felder: object) -> None:
 def _mails(welt: dict[str, Path]) -> list[dict]:
     if not welt["mails"].is_file():
         return []
-    return [
-        json.loads(z)
-        for z in welt["mails"].read_text(encoding="utf-8").splitlines()
-        if z
-    ]
+    return [json.loads(z) for z in welt["mails"].read_text(encoding="utf-8").splitlines() if z]
 
 
 def _konfig(welt: dict[str, Path], **zusatz: object) -> None:
@@ -237,9 +231,7 @@ def test_commit_ohne_nummer_oeffnet_wieder(welt: dict[str, Path]) -> None:
     assert ergebnis.returncode == 0, _text(ergebnis)
     assert _gh_zustand(welt)["issues"]["901"]["state"] == "open"
     kommentar = _kommentare(welt, "901")
-    assert len(kommentar) == 1 and kommentar[0].startswith(
-        "Wächter: commit_ohne_nummer"
-    )
+    assert len(kommentar) == 1 and kommentar[0].startswith("Wächter: commit_ohne_nummer")
     assert "commit_ohne_nummer" in ergebnis.stdout
 
 
@@ -261,9 +253,7 @@ def test_nummer_mitten_im_betreff_zaehlt_nicht(welt: dict[str, Path]) -> None:
 
 
 def test_beweis_fehlt_und_laengere_zahl_zaehlt_nicht(welt: dict[str, Path]) -> None:
-    _commit(
-        welt["repo"], "feat: Bauteil (#901)", {"docs/verify-hard/9010_fremd.md": "x\n"}
-    )
+    _commit(welt["repo"], "feat: Bauteil (#901)", {"docs/verify-hard/9010_fremd.md": "x\n"})
     _capo(welt)
     assert _gh_zustand(welt)["issues"]["901"]["state"] == "open"
     assert any(k.startswith("Wächter: beweis_fehlt") for k in _kommentare(welt, "901"))
@@ -292,12 +282,8 @@ def test_test_ersetzt_oeffnet_wieder(welt: dict[str, Path]) -> None:
 
 
 def test_geloeschte_testdatei_oeffnet_wieder(welt: dict[str, Path]) -> None:
-    _commit(
-        welt["repo"], "test: Datei", {"tests/test_b.py": "def test_b():\n    pass\n"}
-    )
-    _commit(
-        welt["repo"], "feat: Aufräumen (#901)", {"tests/test_b.py": None, **_beleg()}
-    )
+    _commit(welt["repo"], "test: Datei", {"tests/test_b.py": "def test_b():\n    pass\n"})
+    _commit(welt["repo"], "feat: Aufräumen (#901)", {"tests/test_b.py": None, **_beleg()})
     _capo(welt)
     assert any(k.startswith("Wächter: test_ersetzt") for k in _kommentare(welt, "901"))
 
@@ -358,17 +344,13 @@ def test_verwaiste_session_kommentar_und_mail_einmal_am_tag(
     welt: dict[str, Path],
 ) -> None:
     _commit(welt["repo"], "feat: Bauteil (#901)", _beleg())
-    _commit(
-        welt["repo"], "feat: Anfang (#902)", {"a.txt": "a\n"}, alter=timedelta(hours=5)
-    )
+    _commit(welt["repo"], "feat: Anfang (#902)", {"a.txt": "a\n"}, alter=timedelta(hours=5))
     _gh_setzen(welt, "902", assignees=["bau"], updated_at=_iso(timedelta(hours=5)))
     _capo(welt)
     _capo(welt)
     assert _gh_zustand(welt)["issues"]["902"]["state"] == "open"
     kommentare = _kommentare(welt, "902")
-    assert len(kommentare) == 1 and kommentare[0].startswith(
-        "Wächter: session_verwaist"
-    )
+    assert len(kommentare) == 1 and kommentare[0].startswith("Wächter: session_verwaist")
     mails = _mails(welt)
     assert [m["art"] for m in mails] == ["session_tot"]
     assert "902" in mails[0]["betreff"]
@@ -377,9 +359,7 @@ def test_verwaiste_session_kommentar_und_mail_einmal_am_tag(
 def test_frische_worktree_aenderung_ist_kein_verwaist(welt: dict[str, Path]) -> None:
     _gh_setzen(welt, "902", assignees=["bau"], updated_at=_iso(timedelta(hours=5)))
     wt = welt["wt"] / "wt-902"
-    subprocess.run(
-        ["git", "clone", "-q", str(welt["tmp"] / "fern.git"), str(wt)], check=True
-    )
+    subprocess.run(["git", "clone", "-q", str(welt["tmp"] / "fern.git"), str(wt)], check=True)
     (wt / "neu.txt").write_text("frisch\n", encoding="utf-8")
     _capo(welt)
     assert _kommentare(welt, "902") == []
@@ -402,9 +382,7 @@ def _ssh_fake(welt: dict[str, Path], sha: str) -> dict[str, str]:
     return {"PATH": f"{binaer}{os.pathsep}{os.environ['PATH']}"}
 
 
-def test_vps_hinter_origin_oeffnet_wieder(
-    welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_vps_hinter_origin_oeffnet_wieder(welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch) -> None:
     vorher = _git(welt["repo"], "rev-parse", "HEAD")
     _konfig(
         welt,
@@ -412,28 +390,91 @@ def test_vps_hinter_origin_oeffnet_wieder(
             "ssh": "vps-test",
             "pfad": "/opt/x",
             "deploy_pfade": ["web/", "Dockerfile"],
+            # nie das echte Staging-Log des Bau-Servers lesen
+            "staging_log": str(welt["tmp"] / "kein_staging.jsonl"),
         },
     )
     _commit(welt["repo"], "feat: Seite (#901)", {"web/seite.py": "x = 1\n", **_beleg()})
     for name, wert in _ssh_fake(welt, vorher).items():
         monkeypatch.setenv(name, wert)
     _capo(welt)
-    assert any(
-        k.startswith("Wächter: vps_ungleich_origin") for k in _kommentare(welt, "901")
-    )
+    assert any(k.startswith("Wächter: vps_ungleich_origin") for k in _kommentare(welt, "901"))
 
 
-def test_vps_auf_stand_bleibt_zu(
-    welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_vps_auf_stand_bleibt_zu(welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch) -> None:
     _konfig(welt, vps={"ssh": "vps-test", "pfad": "/opt/x", "deploy_pfade": ["web/"]})
-    kopf = _commit(
-        welt["repo"], "feat: Seite (#901)", {"web/seite.py": "x = 1\n", **_beleg()}
-    )
+    kopf = _commit(welt["repo"], "feat: Seite (#901)", {"web/seite.py": "x = 1\n", **_beleg()})
     for name, wert in _ssh_fake(welt, kopf).items():
         monkeypatch.setenv(name, wert)
     _capo(welt)
     assert _kommentare(welt, "901") == []
+
+
+def _vps_staging(
+    welt: dict[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    staging_sha: str | None,
+    zettel: bool = False,
+) -> None:
+    """Commit #901 fehlt live; Staging-Log (``None`` = Datei fehlt) + optional Zettel."""
+    vorher = _git(welt["repo"], "rev-parse", "HEAD")
+    log = welt["tmp"] / "deploys.jsonl"
+    freigabe = welt["tmp"] / "live_freigabe"
+    freigabe.mkdir()
+    if zettel:
+        (freigabe / "901").write_text("ok\n", encoding="utf-8")
+    _konfig(
+        welt,
+        vps={
+            "ssh": "vps-test",
+            "pfad": "/opt/x",
+            "deploy_pfade": ["web/"],
+            "staging_log": str(log),
+            "freigabe_ordner": str(freigabe),
+        },
+    )
+    kopf = _commit(welt["repo"], "feat: Seite (#901)", {"web/seite.py": "x = 1\n", **_beleg()})
+    if staging_sha is not None:
+        zeilen = [
+            {"sha": staging_sha or kopf, "ergebnis": "gruen"},
+            {"sha": "0" * 40, "ergebnis": "rot"},
+        ]
+        log.write_text("\n".join(json.dumps(z) for z in zeilen) + "\n", encoding="utf-8")
+    for name, wert in _ssh_fake(welt, vorher).items():
+        monkeypatch.setenv(name, wert)
+
+
+def test_vps_fehlt_aber_auf_staging_ohne_zettel_bleibt_zu(
+    welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _vps_staging(welt, monkeypatch, staging_sha="")  # "" = Ticket-Commit selbst
+    ergebnis = _capo(welt)
+    assert _kommentare(welt, "901") == [], _text(ergebnis)
+    assert _gh_zustand(welt)["issues"]["901"]["state"] == "closed"
+
+
+def test_vps_fehlt_auf_staging_mit_zettel_oeffnet_wieder(
+    welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _vps_staging(welt, monkeypatch, staging_sha="", zettel=True)
+    _capo(welt)
+    assert any(k.startswith("Wächter: vps_ungleich_origin") for k in _kommentare(welt, "901"))
+
+
+def test_vps_fehlt_staging_sha_noch_nicht_geholt_bleibt_zu(
+    welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#362 27.09.: Staging-Stand schon grün, Wächter-Repo hatte ihn noch nicht geholt."""
+    _vps_staging(welt, monkeypatch, staging_sha="ab" * 20)  # lokal unbekannter Commit
+    ergebnis = _capo(welt)
+    assert _kommentare(welt, "901") == [], _text(ergebnis)
+    assert _gh_zustand(welt)["issues"]["901"]["state"] == "closed"
+
+
+def test_vps_fehlt_ohne_staging_log_oeffnet_wieder(welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch) -> None:
+    _vps_staging(welt, monkeypatch, staging_sha=None)
+    _capo(welt)
+    assert any(k.startswith("Wächter: vps_ungleich_origin") for k in _kommentare(welt, "901"))
 
 
 def test_ohne_vps_konfig_keine_vps_regel(welt: dict[str, Path]) -> None:
@@ -446,9 +487,7 @@ def test_ohne_vps_konfig_keine_vps_regel(welt: dict[str, Path]) -> None:
 
 
 def _log_zeile(typ: str, **felder: object) -> str:
-    zeile = {
-        "ts": datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
-    }
+    zeile = {"ts": datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")}
     zeile.update({"typ": typ, "ticket": "902", **felder})
     return json.dumps(zeile, ensure_ascii=False) + "\n"
 
@@ -467,15 +506,11 @@ def test_delta_zeigt_nur_neue_zeilen(welt: dict[str, Path]) -> None:
     _commit(welt["repo"], "feat: Bauteil (#901)", _beleg())
     _log_anhaengen(
         welt,
-        _log_zeile(
-            "entscheidung", frage="Welche Tabelle", wahl="SQLite", grund="schon da"
-        ),
+        _log_zeile("entscheidung", frage="Welche Tabelle", wahl="SQLite", grund="schon da"),
         "docs: Log (#902)",
     )
     erste = _capo(welt).stdout
-    assert re.search(
-        r"#902 \d\d:\d\d entscheidung: Welche Tabelle · SQLite · schon da", erste
-    ), erste
+    assert re.search(r"#902 \d\d:\d\d entscheidung: Welche Tabelle · SQLite · schon da", erste), erste
     zweite = _capo(welt).stdout
     assert "Welche Tabelle" not in zweite
     _log_anhaengen(
@@ -491,9 +526,7 @@ def test_gate_rot_und_blockiert_melden_einmal(welt: dict[str, Path]) -> None:
     _commit(welt["repo"], "feat: Bauteil (#901)", _beleg())
     _log_anhaengen(
         welt,
-        _log_zeile(
-            "deploy_phase", lauf="1", phase="ende", ergebnis="rot", grund="pytest rot"
-        )
+        _log_zeile("deploy_phase", lauf="1", phase="ende", ergebnis="rot", grund="pytest rot")
         + _log_zeile("blockiert", grund="Handy aus"),
         "docs: Log (#902)",
     )
@@ -510,9 +543,7 @@ def test_gate_rot_und_blockiert_melden_einmal(welt: dict[str, Path]) -> None:
 def test_uebersicht_schreibt_tabelle(welt: dict[str, Path]) -> None:
     _log_anhaengen(
         welt,
-        _log_zeile(
-            "entscheidung", frage="Welche Tabelle", wahl="SQLite", grund="schon da"
-        ),
+        _log_zeile("entscheidung", frage="Welche Tabelle", wahl="SQLite", grund="schon da"),
         "docs: Log (#902)",
     )
     ergebnis = _capo(welt, "--uebersicht")
@@ -521,9 +552,7 @@ def test_uebersicht_schreibt_tabelle(welt: dict[str, Path]) -> None:
     assert str(datei) in ergebnis.stdout
     text = datei.read_text(encoding="utf-8")
     assert "| Ticket | Zeit | Frage | Wahl | Grund |" in text
-    assert re.search(
-        r"\| #902 \| [^|]+ \| Welche Tabelle \| SQLite \| schon da \|", text
-    )
+    assert re.search(r"\| #902 \| [^|]+ \| Welche Tabelle \| SQLite \| schon da \|", text)
 
 
 def test_spec_fertig_meldet_und_schreibt_uebersicht(welt: dict[str, Path]) -> None:
@@ -557,22 +586,16 @@ def test_melder_politik(welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch) 
         "an": "",
     }
 
-    _konfig(
-        welt, mail={"nur_kritisch": False, "befehl": welt["mail_befehl"], "ziel": ""}
-    )
+    _konfig(welt, mail={"nur_kritisch": False, "befehl": welt["mail_befehl"], "ziel": ""})
     assert melder.melden(repo, "info", "nur Info", "egal", "k4") is True
 
     monkeypatch.setenv("MAIL_FAKE_EXIT", "1")
     assert melder.melden(repo, "session_tot", "tot", "x", "k5") is False
     monkeypatch.setenv("MAIL_FAKE_EXIT", "0")
-    assert (
-        melder.melden(repo, "session_tot", "tot", "x", "k5") is True
-    )  # Fehlschlag merkt nichts
+    assert melder.melden(repo, "session_tot", "tot", "x", "k5") is True  # Fehlschlag merkt nichts
 
 
-def test_melder_ohne_befehl_warnt(
-    welt: dict[str, Path], caplog: pytest.LogCaptureFixture
-) -> None:
+def test_melder_ohne_befehl_warnt(welt: dict[str, Path], caplog: pytest.LogCaptureFixture) -> None:
     from to_spawn import melder
 
     _konfig(welt, mail={"befehl": [], "ziel": "", "nur_kritisch": True})
@@ -591,9 +614,7 @@ def test_limit_erkennung_gegen_echte_zeile() -> None:
     fable = {
         "type": "assistant",
         "isApiErrorMessage": True,
-        "message": {
-            "content": [{"type": "text", "text": "You've reached your Fable limit"}]
-        },
+        "message": {"content": [{"type": "text", "text": "You've reached your Fable limit"}]},
     }
     assert waechter_lauf.ist_limit_zeile(fable) is True
     normal = {
@@ -627,10 +648,8 @@ def _wache(
 def test_wache_dry_run_zeigt_remote_control_und_ausweich(welt: dict[str, Path]) -> None:
     ergebnis = _wache(welt["repo"], "--dry-run")
     assert ergebnis.returncode == 0, _text(ergebnis)
-    assert (
-        "--remote-control" in ergebnis.stdout and f"Wächter #{SPEC}" in ergebnis.stdout
-    )
-    assert "--fallback-model claude-opus-5" in ergebnis.stdout
+    assert "--remote-control" in ergebnis.stdout and f"Wächter #{SPEC}" in ergebnis.stdout
+    assert "--fallback-model claude-sonnet-5" in ergebnis.stdout
     prompt = _wache(welt["repo"], "--print-prompt").stdout
     assert f"scripts/capo.py {SPEC}" in prompt
     assert "spec_stand.py" not in prompt
@@ -694,7 +713,7 @@ def test_wache_wechselt_bei_limit_auf_ausweich_modell(welt: dict[str, Path]) -> 
     erster, zweiter = aufrufe
     sid = erster[erster.index("--session-id") + 1]
     assert zweiter[zweiter.index("--resume") + 1] == sid
-    assert zweiter[zweiter.index("--model") + 1] == "claude-opus-5"
+    assert zweiter[zweiter.index("--model") + 1] == "claude-sonnet-5"
     assert "--remote-control" in zweiter
     from to_spawn import bau_log
 
@@ -702,10 +721,7 @@ def test_wache_wechselt_bei_limit_auf_ausweich_modell(welt: dict[str, Path]) -> 
     zeilen = bau_log.lese(welt["repo"], SPEC)
     wechsel = [z for z in zeilen if z["typ"] == "waechter_modell"]
     assert len(wechsel) == 1
-    assert (
-        wechsel[0]["von"] == "claude-fable-5-1"
-        and wechsel[0]["nach"] == "claude-opus-5"
-    )
+    assert wechsel[0]["von"] == "claude-opus-5" and wechsel[0]["nach"] == "claude-sonnet-5"
     assert [m["art"] for m in _mails(welt)] == ["waechter_ausweich"]
 
 

@@ -1,0 +1,1743 @@
+<title>Bau-Leitstand</title>
+<style>
+@import url("https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap");
+
+:root{
+  --bg:#e3e6e0; --panel:#f5f6f2; --panel-2:#ebede7; --ink:#161a18; --muted:#566058; --faint:#879089;
+  --line:#d0d5cd; --line-2:#b8bfb5; --track:#2a302c; --track-idle:#a2aaa3; --enamel:#1f3a2f; --enamel-ink:#f1f4ee;
+  --wait:#848c86; --run:#1f63d6; --done:#17804a; --david:#c27400; --err:#c42b2b; --befund:#4b6475;
+  --run-soft:rgba(31,99,214,.12); --david-soft:rgba(194,116,0,.14); --err-soft:rgba(196,43,43,.10); --done-soft:rgba(23,128,74,.11);
+  /* Naht-Farben: ruhige Akzente, bewusst abseits der Zustandsfarben */
+  --n1:#0b7a84; --n2:#6b4bbd; --n3:#a13d6d; --nA:#8a6c3f; --n0:#7d867f;
+  --shadow:0 1px 0 rgba(0,0,0,.04), 0 8px 22px -14px rgba(20,30,25,.35);
+  --focus:#1f63d6;
+  --f-head:"Barlow Condensed","Arial Narrow",system-ui,sans-serif;
+  --f-body:"Barlow",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --f-mono:"IBM Plex Mono",ui-monospace,"Cascadia Mono",Consolas,monospace;
+  color-scheme:light;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0e1210; --panel:#161b18; --panel-2:#1c221f; --ink:#e4e9e3; --muted:#9aa59d; --faint:#687269;
+    --line:#262d29; --line-2:#36403a; --track:#c8d0c9; --track-idle:#3c463f; --enamel:#1d3a2d; --enamel-ink:#e6efe8;
+    --wait:#727c75; --run:#5a9dff; --done:#3cc278; --david:#ffae1f; --err:#ff5b52; --befund:#93aabb;
+    --run-soft:rgba(90,157,255,.14); --david-soft:rgba(255,174,31,.13); --err-soft:rgba(255,91,82,.12); --done-soft:rgba(60,194,120,.12);
+    --n1:#46c1ca; --n2:#a893f0; --n3:#e585b5; --nA:#d2b489; --n0:#7f8a82;
+    --shadow:0 1px 0 rgba(255,255,255,.03), 0 12px 26px -16px rgba(0,0,0,.85);
+    --focus:#7fb3ff; color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0e1210; --panel:#161b18; --panel-2:#1c221f; --ink:#e4e9e3; --muted:#9aa59d; --faint:#687269;
+  --line:#262d29; --line-2:#36403a; --track:#c8d0c9; --track-idle:#3c463f; --enamel:#1d3a2d; --enamel-ink:#e6efe8;
+  --wait:#727c75; --run:#5a9dff; --done:#3cc278; --david:#ffae1f; --err:#ff5b52; --befund:#93aabb;
+  --run-soft:rgba(90,157,255,.14); --david-soft:rgba(255,174,31,.13); --err-soft:rgba(255,91,82,.12); --done-soft:rgba(60,194,120,.12);
+  --n1:#46c1ca; --n2:#a893f0; --n3:#e585b5; --nA:#d2b489; --n0:#7f8a82;
+  --shadow:0 1px 0 rgba(255,255,255,.03), 0 12px 26px -16px rgba(0,0,0,.85);
+  --focus:#7fb3ff; color-scheme:dark;
+}
+
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html,body{margin:0}
+body{background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:15px;line-height:1.45;-webkit-font-smoothing:antialiased;overflow-x:hidden}
+.num,.mono{font-family:var(--f-mono);font-variant-numeric:tabular-nums}
+button{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--focus);outline-offset:2px;border-radius:3px}
+a{color:var(--run)}
+code{font-family:var(--f-mono);font-size:.88em;background:var(--panel-2);border:1px solid var(--line);padding:0 .35em;border-radius:3px}
+
+.wrap{max-width:1320px;margin:0 auto;padding:22px 16px 40px;display:flex;flex-direction:column;gap:26px}
+
+/* Kopf */
+.kopf{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:14px 20px;align-items:start}
+.schild{display:inline-flex;align-items:center;gap:9px;background:var(--enamel);color:var(--enamel-ink);padding:4px 11px 4px 8px;border-radius:3px;font-family:var(--f-head);font-weight:700;letter-spacing:.16em;text-transform:uppercase;font-size:12.5px;box-shadow:inset 0 0 0 2px rgba(255,255,255,.1)}
+.schild svg{flex:none}
+h1{font-family:var(--f-head);font-weight:700;font-size:clamp(28px,4.6vw,42px);line-height:1.04;margin:12px 0 6px;letter-spacing:.005em}
+h1 .specnr{color:var(--muted);font-weight:600}
+.kopf-meta{display:flex;flex-wrap:wrap;gap:4px 18px;color:var(--muted);font-size:14px}
+.kopf-meta b{color:var(--ink);font-weight:600}
+.kopf-rechts{display:flex;flex-direction:column;align-items:flex-end;gap:8px}
+.plakette{display:inline-flex;align-items:center;gap:8px;border:1.5px solid var(--track);padding:5px 11px;border-radius:3px;font-family:var(--f-head);font-weight:600;font-size:15px;letter-spacing:.06em;text-transform:uppercase;white-space:nowrap}
+.theme-btn{background:var(--panel);border:1px solid var(--line);border-radius:4px;padding:3px 10px;font-size:12.5px;color:var(--muted);cursor:pointer}
+.theme-btn:hover{color:var(--ink);border-color:var(--line-2)}
+.hinweis-live{font-size:13px;color:var(--muted);display:flex;align-items:center;gap:7px}
+.hinweis-live .dot{width:8px;height:8px;border-radius:50%;background:var(--wait);flex:none}
+.hinweis-live.an .dot{background:var(--done);box-shadow:0 0 0 3px var(--done-soft)}
+.hinweis-live.stoerung .dot{background:var(--err)}
+
+/* Sticky-Legende */
+.legende-leiste{position:sticky;top:0;z-index:20;margin:-10px -16px -12px;padding:8px 16px;background:color-mix(in srgb,var(--bg) 88%,transparent);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
+.legende-innen{display:flex;align-items:center;gap:6px 18px;overflow-x:auto;scrollbar-width:none;white-space:nowrap;font-size:13px;color:var(--muted)}
+.legende-innen::-webkit-scrollbar{display:none}
+.lg-gruppe{display:inline-flex;align-items:center;gap:12px;flex:none}
+.lg-gruppe > b{font-family:var(--f-head);font-size:11.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--faint);font-weight:700}
+.lg{display:inline-flex;align-items:center;gap:6px;flex:none}
+.lg .punkt{width:10px;height:10px;border-radius:50%}
+.lg .band{width:16px;height:10px;border-radius:2px;background:color-mix(in srgb,var(--nc) 22%,transparent);border-left:3px solid var(--nc)}
+.lg-trenner{width:1px;height:16px;background:var(--line-2);flex:none}
+
+.beispiel{display:none;font-size:13.5px;background:var(--panel-2);border:1px dashed var(--line-2);padding:7px 12px;border-radius:4px;color:var(--muted);margin:0}
+.beispiel.an{display:block}
+.stand-alt{margin:0;font-size:13.5px;color:var(--ink);background:var(--david-soft);border:1px solid color-mix(in srgb,var(--david) 45%,var(--line));border-left:3px solid var(--david);padding:7px 12px;border-radius:4px}
+.stand-alt[hidden]{display:none}
+
+/* Anzeige-Tafeln */
+.tafeln{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.tafel{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:13px 16px 14px;display:flex;flex-direction:column;gap:5px;min-width:0;box-shadow:var(--shadow)}
+.tafel .lbl{font-family:var(--f-head);text-transform:uppercase;letter-spacing:.13em;font-size:12px;color:var(--muted);font-weight:600}
+.tafel .wert{font-family:var(--f-mono);font-variant-numeric:tabular-nums;font-size:32px;font-weight:600;line-height:1.1}
+.tafel .unter{font-size:13.5px;color:var(--muted)}
+.tafel.run{background:linear-gradient(0deg,var(--run-soft),var(--run-soft)),var(--panel)}
+.tafel.run .wert{color:var(--run)}
+.tafel.david{border-color:color-mix(in srgb,var(--david) 55%,var(--line));background:linear-gradient(0deg,var(--david-soft),var(--david-soft)),var(--panel)}
+.tafel.david.null{border-color:var(--line);background:var(--panel)}
+.tafel.david .wert{color:var(--david)}
+.tafel.david.null .wert{color:var(--ink)}
+.schiene{height:8px;background:var(--panel-2);border:1px solid var(--line);border-radius:2px;overflow:hidden;position:relative;margin:2px 0}
+.schiene i{position:absolute;inset:0 auto 0 0;background:var(--done);transition:width .6s ease}
+.schiene i.lauf{background:repeating-linear-gradient(90deg,var(--run) 0 6px,transparent 6px 9px);opacity:.55}
+
+/* Abschnitte */
+.abschnitt{display:flex;flex-direction:column;gap:12px}
+.abschnitt-kopf{display:flex;align-items:baseline;gap:6px 14px;flex-wrap:wrap;border-bottom:2px solid var(--track);padding-bottom:6px}
+.abschnitt-kopf h2{font-family:var(--f-head);font-weight:700;font-size:22px;letter-spacing:.04em;margin:0;text-transform:uppercase}
+.abschnitt-kopf .sub{color:var(--muted);font-size:14px}
+
+/* Phasen-Leiste (Nähte) */
+.phasen{display:grid;grid-template-columns:repeat(var(--anz,4),minmax(0,1fr));gap:22px;list-style:none;margin:0;padding:0}
+.phase{position:relative;background:linear-gradient(0deg,color-mix(in srgb,var(--nc) 7%,transparent),color-mix(in srgb,var(--nc) 7%,transparent)),var(--panel);border:1px solid color-mix(in srgb,var(--nc) 28%,var(--line));border-top:4px solid var(--nc);border-radius:6px;padding:12px 14px 13px;display:flex;flex-direction:column;gap:8px;min-width:0;box-shadow:var(--shadow)}
+.phase:not(:last-child)::after{content:"";position:absolute;top:50%;right:-17px;width:12px;height:12px;border-top:2px solid var(--line-2);border-right:2px solid var(--line-2);transform:translateY(-50%) rotate(45deg)}
+.phase.s-laeuft{border-color:color-mix(in srgb,var(--nc) 55%,var(--line));border-top-color:var(--nc)}
+.ph-kopf{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.ph-nr{font-family:var(--f-head);font-weight:700;font-size:13px;letter-spacing:.14em;text-transform:uppercase;color:var(--nc)}
+.pill{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;padding:1px 8px;border-radius:999px;white-space:nowrap;color:var(--pc);background:color-mix(in srgb,var(--pc) 13%,transparent)}
+.pill::before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor}
+.phase .ph-name{display:block;font-family:var(--f-head);font-size:25px;line-height:1.05;margin:0;font-weight:700;transition:color .2s ease}
+.phase .ph-kurz{display:block;margin:0;font-size:14px;color:var(--muted);line-height:1.4}
+.ph-knopf{appearance:none;background:none;border:0;margin:0;padding:0;font:inherit;color:inherit;text-align:left;cursor:pointer;display:flex;flex-direction:column;gap:8px;width:100%;border-radius:4px}
+.ph-knopf:hover .ph-name{color:var(--nc)}
+.ph-knopf:focus-visible{outline:2px solid var(--nc);outline-offset:4px}
+.phase{transition:opacity .25s ease,box-shadow .25s ease}
+.phase.aktiv{border-color:var(--nc);box-shadow:0 0 0 2px color-mix(in srgb,var(--nc) 45%,transparent),var(--shadow)}
+.phasen.gefiltert .phase:not(.aktiv){opacity:.55}
+.alle-zeigen{margin-left:auto;appearance:none;font:inherit;font-size:13px;background:var(--panel);border:1px solid var(--line-2);border-radius:999px;padding:3px 12px;cursor:pointer;color:var(--ink);white-space:nowrap}
+.alle-zeigen:hover{border-color:var(--run);color:var(--run)}
+.alle-zeigen[hidden]{display:none}
+.abgedunkelt{opacity:.28;transition:opacity .25s ease}
+.im-filter{opacity:1;transition:opacity .25s ease}
+.ph-balken{height:6px;border-radius:3px;background:color-mix(in srgb,var(--nc) 14%,var(--panel-2));overflow:hidden}
+.ph-balken i{display:block;height:100%;background:var(--nc);border-radius:3px;transition:width .6s ease}
+.ph-zeile{display:flex;align-items:center;justify-content:space-between;gap:6px 10px;flex-wrap:wrap;font-size:13px}
+.ph-zeile .num{font-weight:500}
+.tks{display:flex;flex-wrap:wrap;gap:4px}
+.tk{display:inline-flex;align-items:center;gap:4px;font-family:var(--f-mono);font-size:11.5px;padding:1px 6px;border:1px solid var(--line);background:var(--panel);border-radius:3px;cursor:pointer}
+.tk:hover{border-color:var(--nc)}
+.tk::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--tc)}
+.ph-ueber{margin:auto 0 0;padding-top:8px;border-top:1px dashed color-mix(in srgb,var(--nc) 35%,var(--line));font-size:13px;color:var(--ink);display:flex;gap:7px;align-items:flex-start}
+.ph-ueber svg{flex:none;margin-top:2px;color:var(--nc)}
+
+/* Gleisplan */
+.stellpult{background:var(--panel);border:1px solid var(--line);border-radius:6px;box-shadow:var(--shadow);position:relative;overflow:hidden}
+.gleis-scroll{overflow-x:auto;overflow-y:hidden;-webkit-overflow-scrolling:touch;scrollbar-width:thin}
+.gleis-scroll svg{display:block}
+.wisch{display:none;font-size:12.5px;color:var(--muted);padding:8px 14px 0;margin:0}
+.stellpult.ueberbreit .wisch{display:block}
+.zone{stroke:none}
+.zone-kante{fill:var(--nc)}
+.zone-lbl{font-family:var(--f-head);font-size:13px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;fill:var(--nc)}
+.zone-grenze{stroke:var(--line-2);stroke-width:1.2;stroke-dasharray:4 5}
+.gleis{fill:none;stroke:var(--track-idle);stroke-width:3;stroke-linecap:round;stroke-linejoin:round}
+.gleis.frei{stroke:var(--track)}
+.gleis.fertig{stroke:var(--done)}
+.gleis.ziel-david{stroke:var(--david)}
+.fluss{fill:none;stroke:var(--run);stroke-width:3;stroke-linecap:round;stroke-dasharray:2 12;animation:fluss 1.1s linear infinite}
+.fluss.david{stroke:var(--david)}
+@keyframes fluss{from{stroke-dashoffset:28}to{stroke-dashoffset:0}}
+.weiche{fill:var(--panel);stroke:var(--track);stroke-width:2}
+.sweep{fill:none;stroke:var(--run);stroke-width:4;stroke-linecap:round;stroke-dasharray:60 3000;stroke-dashoffset:60;animation:sweep 1.4s ease-out forwards;opacity:.9}
+@keyframes sweep{to{stroke-dashoffset:-1400;opacity:0}}
+
+.knoten{cursor:pointer;outline:none}
+.knoten .koerper{fill:var(--panel);stroke:var(--line-2);stroke-width:1.5}
+.knoten .kopfband{fill:color-mix(in srgb,var(--nc) 15%,var(--panel))}
+.knoten .kante{fill:var(--nc)}
+.knoten:hover .koerper{stroke:var(--track)}
+.knoten:focus-visible .fokus{stroke:var(--focus);stroke-width:2.5;opacity:1}
+.knoten .fokus{fill:none;opacity:0}
+.knoten.gewaehlt .koerper{stroke:var(--ink);stroke-width:2.5}
+.knoten .nr{font-family:var(--f-mono);font-size:12.5px;font-weight:600;fill:var(--ink)}
+.knoten .ntag{font-family:var(--f-head);font-size:12.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;fill:var(--nc)}
+.knoten .zst{font-family:var(--f-head);font-size:12.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase}
+.knoten .titel{font-family:var(--f-body);font-size:13.5px;font-weight:600;fill:var(--ink)}
+.knoten .status{font-family:var(--f-mono);font-size:11px;fill:var(--muted)}
+.knoten .phase-t{font-family:var(--f-body);font-size:12px;font-style:italic;fill:var(--muted)}
+.knoten .phase-t.cp{fill:var(--david);font-style:normal;font-weight:600}
+.knoten .pb-bg{fill:var(--panel-2);stroke:var(--line)}
+.knoten .pb{transition:width .8s ease}
+.lampe{stroke:rgba(0,0,0,.3);stroke-width:1}
+.halo{fill:none;stroke-width:2;transform-box:fill-box;transform-origin:center}
+.knoten.z-laeuft .koerper{stroke:var(--run)}
+.knoten.z-laeuft .halo{stroke:var(--run);animation:halo 1.8s ease-out infinite}
+@keyframes halo{0%{transform:scale(1);opacity:.9}100%{transform:scale(2.6);opacity:0}}
+.knoten.z-david .koerper{stroke:var(--david);stroke-width:2.5}
+.knoten.z-david .lampe{animation:blink 1s steps(1) infinite}
+@keyframes blink{0%,60%{opacity:1}60.01%,100%{opacity:.3}}
+.knoten.z-fehler .koerper{stroke:var(--err);stroke-width:2}
+.knoten.z-fertig .koerper{stroke:var(--done)}
+.knoten.checkpoint .mensch{fill:var(--david)}
+.lampentest .knoten .lampe{animation:lampentest 1.2s steps(1) 1}
+@keyframes lampentest{0%{fill:var(--done)}25%{fill:var(--david)}50%{fill:var(--err)}75%{fill:var(--run)}}
+
+/* Detail */
+.detail{border-top:2px solid var(--track);padding:18px;display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);gap:16px 28px;background:linear-gradient(0deg,color-mix(in srgb,var(--nc,transparent) 5%,transparent),color-mix(in srgb,var(--nc,transparent) 5%,transparent))}
+.detail[hidden]{display:none}
+.detail h3{font-family:var(--f-head);font-size:25px;margin:0;line-height:1.1;font-weight:700}
+.detail .d-kopf{grid-column:1/-1;display:flex;gap:12px;align-items:flex-start;justify-content:space-between;flex-wrap:wrap}
+.detail .d-kopf .links{display:flex;flex-direction:column;gap:7px;min-width:0}
+.detail .zu{background:var(--panel);border:1px solid var(--line);border-radius:4px;padding:4px 12px;cursor:pointer;font-size:13px}
+.detail p{margin:0}
+.feld{display:flex;flex-direction:column;gap:3px}
+.feld .fl{font-family:var(--f-head);font-size:12px;letter-spacing:.13em;text-transform:uppercase;color:var(--muted);font-weight:600}
+.spalte{display:flex;flex-direction:column;gap:14px;min-width:0}
+.chip{display:inline-flex;align-items:center;gap:6px;font-family:var(--f-head);font-size:13px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;padding:2px 9px;border-radius:3px;border:1.5px solid currentColor}
+.chip.naht{border:0;color:var(--nc);background:color-mix(in srgb,var(--nc) 14%,transparent)}
+.chipreihe{display:flex;gap:6px;flex-wrap:wrap}
+.nrchip{font-family:var(--f-mono);font-size:12.5px;padding:2px 7px;border:1px solid var(--line);background:var(--panel);border-radius:3px;cursor:pointer}
+.nrchip.ok{border-color:var(--done);color:var(--done)}
+.vergleich{display:grid;grid-template-columns:88px 1fr auto;gap:6px 10px;align-items:center;font-size:13px}
+.vergleich .bahn{height:10px;background:var(--panel-2);border:1px solid var(--line);position:relative;overflow:hidden;border-radius:2px}
+.vergleich .bahn i{position:absolute;inset:0 auto 0 0}
+.vergleich .soll i{background:repeating-linear-gradient(90deg,var(--wait) 0 5px,transparent 5px 8px)}
+.vergleich .ist i{background:var(--run)}
+.vergleich .ist.ueber i{background:var(--err)}
+.gh{font-size:14px}
+
+/* Fahrplan */
+.fahrplan{background:var(--panel);border:1px solid var(--line);border-radius:6px;box-shadow:var(--shadow);padding:14px 16px 12px;display:flex;flex-direction:column;gap:12px}
+.prognose{display:flex;flex-wrap:wrap;gap:6px 26px;font-size:14px}
+.prognose b{font-family:var(--f-mono);font-variant-numeric:tabular-nums;font-size:17px}
+.prognose .dav b{color:var(--david)}
+.zl{padding-bottom:18px;display:grid;grid-template-columns:minmax(130px,250px) minmax(0,1fr);gap:0;position:relative}
+.zl-achse{grid-column:2;position:relative;height:20px;border-bottom:1px solid var(--line)}
+.zl-achse span{position:absolute;top:0;transform:translateX(-50%);font-family:var(--f-mono);font-size:10.5px;color:var(--faint);white-space:nowrap}
+.zl-lbl{font-size:13px;line-height:1.3;padding:7px 10px 7px 10px;min-width:0;display:flex;flex-direction:column;gap:1px;cursor:pointer;text-align:left;border:0;border-bottom:1px solid var(--panel);border-left:4px solid var(--nc);background:color-mix(in srgb,var(--nc) 9%,var(--panel))}
+.zl-lbl:hover{background:color-mix(in srgb,var(--nc) 15%,var(--panel))}
+.zl-lbl .t{overflow-wrap:anywhere}
+.zl-lbl .n{font-family:var(--f-head);font-size:11.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--nc)}
+.zl-bahn{position:relative;border-bottom:1px solid var(--panel);min-height:42px;background:color-mix(in srgb,var(--nc) 4%,var(--panel))}
+.zl-bahn .soll{position:absolute;top:10px;height:12px;border:1.5px dashed var(--nc);border-radius:2px;background:color-mix(in srgb,var(--nc) 8%,transparent)}
+.zl-bahn .ist{position:absolute;top:14px;height:8px;border-radius:2px;background:var(--run)}
+.zl-bahn .ist.fertig{background:var(--done)}
+.zl-bahn .ist.david{background:var(--david)}
+.zl-bahn .ist.fehler{background:var(--err)}
+.zl-bahn .ist.laeuft{box-shadow:0 0 0 3px var(--run-soft)}
+.zl-bahn .zahl{position:absolute;top:25px;font-family:var(--f-mono);font-size:10.5px;color:var(--muted);white-space:nowrap}
+.jetzt{position:absolute;top:0;bottom:0;width:0;border-left:2px solid var(--err);pointer-events:none;z-index:2}
+.jetzt::before{content:"jetzt";position:absolute;bottom:-17px;left:3px;font-family:var(--f-mono);font-size:10px;color:var(--err);background:var(--panel);padding:0 2px}
+
+/* Meldungsleiste (offene Punkte für David) */
+.meldung{display:flex;align-items:center;gap:8px 14px;flex-wrap:wrap;margin:0;font-size:14px;color:var(--ink);background:var(--david-soft);border:1px solid color-mix(in srgb,var(--david) 35%,var(--line));border-radius:6px;padding:8px 12px}
+.meldung[hidden]{display:none}
+.meldung .m-punkt{width:8px;height:8px;border-radius:50%;background:var(--david);flex:none}
+.meldung .m-text{flex:1 1 220px;min-width:0;overflow-wrap:anywhere}
+.meldung .m-text b{font-weight:600}
+.knopf-klein{appearance:none;font:inherit;font-size:13px;background:var(--panel);border:1px solid var(--line-2);border-radius:4px;padding:4px 11px;cursor:pointer;white-space:nowrap;color:var(--ink)}
+.knopf-klein:hover{border-color:var(--run);color:var(--run)}
+
+/* Wächter-Log */
+.log-chips{display:flex;gap:6px;flex-wrap:wrap;margin-left:auto}
+.log-chip{appearance:none;font:inherit;font-size:13px;padding:3px 11px;border-radius:999px;border:1px solid var(--line-2);background:var(--panel);color:var(--muted);cursor:pointer}
+.log-chip:hover{color:var(--ink)}
+.log-chip[aria-pressed="true"]{background:var(--ink);border-color:var(--ink);color:var(--panel)}
+.log-chip .anz{font-family:var(--f-mono);font-size:11.5px;margin-left:5px;opacity:.75}
+.log-liste{list-style:none;margin:0;padding:0;border:1px solid var(--line);border-radius:6px;background:var(--panel);overflow:hidden}
+.log-e{display:grid;grid-template-columns:4px 58px minmax(0,1fr) auto;gap:2px 12px;align-items:start;padding:8px 12px 8px 0;border-bottom:1px solid var(--line);transition:background .4s ease}
+.log-e:last-child{border-bottom:0}
+.log-e.art-david{background:color-mix(in srgb,var(--david) 6%,var(--panel))}
+.log-e.art-problem{background:color-mix(in srgb,var(--err) 5%,var(--panel))}
+.log-e.erledigt{background:var(--panel);opacity:.62}
+.log-e.blitz{background:var(--david-soft)}
+.log-e:focus{outline:none}
+.log-e .strich{grid-column:1;grid-row:1/3;align-self:stretch;background:var(--ac)}
+.log-e .zeit{grid-column:2;grid-row:1/3;font-family:var(--f-mono);font-size:12.5px;display:flex;flex-direction:column;line-height:1.3;padding-top:1px}
+.log-e .zeit small{color:var(--faint);font-size:10.5px;font-family:var(--f-body)}
+.log-e .kopfz{grid-column:3;display:flex;align-items:baseline;gap:2px 9px;flex-wrap:wrap;min-width:0}
+.log-e .art{font-family:var(--f-head);font-size:11.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ac);white-space:nowrap}
+.log-e .ti{font-weight:600;font-size:14px;overflow-wrap:anywhere}
+.log-e .erl{font-size:11.5px;color:var(--done)}
+.log-e .tx{grid-column:3;margin:0;font-size:13px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.log-e .log-tk{grid-column:4;grid-row:1/3;align-self:center;font-family:var(--f-mono);font-size:12px;padding:3px 9px}
+.log-e span.log-tk{color:var(--muted)}
+.log-leer{margin:0;padding:14px;color:var(--muted);font-size:14px}
+
+/* Hinweise */
+.karten{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px}
+.karte{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:10px 13px;display:grid;grid-template-columns:22px minmax(0,1fr);gap:1px 8px;align-items:start}
+.karte svg{grid-row:1/3;margin-top:3px;color:var(--muted)}
+.karte h4{margin:0;font-family:var(--f-head);font-size:16.5px;font-weight:700;letter-spacing:.02em;line-height:1.3}
+.karte p{margin:0;font-size:13.5px;color:var(--muted)}
+.karte.achtung{border-color:color-mix(in srgb,var(--err) 45%,var(--line));background:linear-gradient(0deg,var(--err-soft),var(--err-soft)),var(--panel)}
+.karte.achtung svg,.karte.achtung h4{color:var(--err)}
+.karte.live{grid-column:1/-1;border-color:color-mix(in srgb,var(--run) 35%,var(--line));background:linear-gradient(0deg,var(--run-soft),var(--run-soft)),var(--panel)}
+.karte.live svg{color:var(--run)}
+.befehle{grid-column:2;display:flex;flex-direction:column;gap:6px;margin-top:6px}
+.befehl{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 10px;align-items:center}
+.befehl .bt{grid-column:1/-1;font-size:13px;color:var(--muted)}
+.befehl pre{margin:0;font-family:var(--f-mono);font-size:13.5px;background:var(--panel);border:1px solid var(--line);border-radius:4px;padding:6px 10px;overflow-x:auto;white-space:pre}
+.kopier{background:var(--panel);border:1px solid var(--line-2);border-radius:4px;padding:5px 12px;font-size:13px;cursor:pointer;white-space:nowrap}
+.kopier:hover{border-color:var(--run);color:var(--run)}
+.kopier.ok{border-color:var(--done);color:var(--done)}
+
+.fuss{font-size:12.5px;color:var(--faint);display:flex;gap:6px 18px;flex-wrap:wrap;border-top:1px solid var(--line);padding-top:10px}
+
+@media (max-width:1000px){
+  .phasen{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .phase:nth-child(2n)::after{display:none}
+}
+@media (max-width:860px){
+  .tafeln{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .detail{grid-template-columns:minmax(0,1fr)}
+}
+@media (max-width:560px){
+  .wrap{gap:22px}
+  .kopf{grid-template-columns:minmax(0,1fr)}
+  .kopf-rechts{align-items:center;flex-direction:row;flex-wrap:wrap}
+  .tafel{padding:11px 12px}
+  .tafel .wert{font-size:24px}
+  .phasen{grid-template-columns:minmax(0,1fr);gap:18px}
+  .phase:not(:last-child)::after{display:block;top:auto;bottom:-15px;right:auto;left:50%;transform:translateX(-50%) rotate(135deg)}
+  .zl{grid-template-columns:minmax(104px,118px) minmax(0,1fr)}
+  .zl-lbl{padding:6px 6px 6px 7px;font-size:12.5px}
+  .befehl{grid-template-columns:minmax(0,1fr)}
+  .log-e{grid-template-columns:4px 46px minmax(0,1fr) auto;gap:2px 9px;padding-right:9px}
+  .log-chips{margin-left:0}
+}
+
+/* Handy (unter 700 px): Gleisplan als Liste, Detail als Blatt von unten */
+.gleis-liste{display:none}
+.m-kurz{display:none}
+.zl-jetzt-lage{position:absolute;top:0;bottom:18px;left:0;width:0;pointer-events:none}
+@media (max-width:700px){
+  .wrap{gap:18px;padding:14px 16px 32px}
+  .kopf{grid-template-columns:minmax(0,1fr);gap:8px}
+  h1{font-size:27px;margin:10px 0 5px}
+  .kopf-meta{font-size:13px;gap:2px 14px}
+  .kopf-rechts{flex-direction:row;flex-wrap:wrap;align-items:center;gap:6px 12px}
+  .plakette{font-size:13px;padding:3px 9px}
+  .theme-btn{min-height:32px}
+
+  .meldung{flex-wrap:nowrap;gap:10px;padding:5px 6px 5px 12px}
+  .meldung .m-text{flex:1 1 auto;white-space:nowrap}
+  .meldung .m-lang{display:none}
+  .meldung .m-kurz{display:inline}
+  .meldung .knopf-klein{min-height:40px;padding:0 14px}
+
+  .legende-leiste{margin:-8px -16px -10px;padding:6px 0}
+  .legende-innen{padding:0 16px;font-size:12.5px;gap:6px 14px;-webkit-mask-image:linear-gradient(90deg,#000 calc(100% - 24px),transparent);mask-image:linear-gradient(90deg,#000 calc(100% - 24px),transparent)}
+  .lg-gruppe{gap:10px}
+  .lg-gruppe > b{font-size:12px;letter-spacing:.1em}
+
+  .tafeln{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+  .tafel{padding:9px 11px 10px;gap:3px}
+  .tafel .lbl{font-size:12px;letter-spacing:.08em}
+  .tafel .wert{font-size:23px}
+  .tafel .unter{font-size:12.5px;line-height:1.3}
+
+  .abschnitt{gap:10px}
+  .abschnitt-kopf h2{font-size:19px}
+  .abschnitt-kopf .sub{font-size:13px}
+
+  .phasen{display:flex;overflow-x:auto;scroll-snap-type:x mandatory;gap:10px;margin:0 -16px;padding:2px 16px 6px;scroll-padding:0 16px;scrollbar-width:none;overscroll-behavior-x:contain}
+  .phasen::-webkit-scrollbar{display:none}
+  .phase{flex:0 0 min(78%,300px);scroll-snap-align:start;padding:10px 12px 11px;gap:7px}
+  .phase:not(:last-child)::after,.phase:nth-child(2n)::after{display:none}
+  .phase .ph-kurz{display:none}
+  .phase .ph-name{font-size:21px}
+  .ph-knopf{gap:6px}
+  .tk{font-size:12px;padding:3px 7px}
+  .ph-ueber{font-size:12.5px;padding-top:7px}
+
+  .gleis-scroll,.stellpult .wisch,.stellpult.ueberbreit .wisch{display:none}
+  .gleis-liste{display:flex;flex-direction:column}
+  .gl-gruppe{--nc:var(--line-2);transition:opacity .25s ease}
+  .gl-gruppe + .gl-gruppe{border-top:1px solid var(--line)}
+  .gl-kopf{display:flex;align-items:center;gap:8px;margin:0;padding:8px 12px;font-family:var(--f-head);font-size:14px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--nc);background:color-mix(in srgb,var(--nc) 10%,var(--panel));border-left:4px solid var(--nc);border-bottom:1px solid var(--line)}
+  .gl-name{flex:1 1 auto;min-width:0;overflow-wrap:anywhere}
+  .gl-zahl{font-family:var(--f-mono);font-size:13px;font-weight:500;letter-spacing:0;color:var(--muted)}
+  .gl-kopf .pill{text-transform:none;letter-spacing:0;font-family:var(--f-body)}
+  .gl-ul{list-style:none;margin:0;padding:0}
+  .gl-ul li + li{border-top:1px solid var(--line)}
+  .gl-zeile{appearance:none;display:grid;grid-template-columns:12px minmax(0,1fr) 14px;gap:10px;align-items:start;width:100%;min-height:52px;padding:10px 12px 11px 16px;margin:0;border:0;border-left:4px solid color-mix(in srgb,var(--nc) 35%,transparent);background:var(--panel);color:var(--ink);font:inherit;text-align:left;cursor:pointer;-webkit-tap-highlight-color:transparent}
+  .gl-zeile:active{background:var(--panel-2)}
+  .gl-zeile.aktiv{background:color-mix(in srgb,var(--nc) 12%,var(--panel));border-left-color:var(--nc)}
+  .gl-zeile:focus-visible{outline:2px solid var(--nc);outline-offset:-2px}
+  .gl-lampe{width:12px;height:12px;border-radius:50%;margin-top:4px;background:var(--zc);box-shadow:0 0 0 3px color-mix(in srgb,var(--zc) 22%,transparent)}
+  .gl-zeile.z-wartet .gl-lampe,.gl-zeile.z-blockiert .gl-lampe,.gl-zeile.z-bereit .gl-lampe{background:var(--panel);border:2px solid var(--zc);box-shadow:none}
+  .gl-inhalt{display:flex;flex-direction:column;gap:3px;min-width:0}
+  .gl-titel{font-size:15px;font-weight:600;line-height:1.3;overflow-wrap:anywhere}
+  .gl-titel b{font-family:var(--f-mono);font-weight:600;color:var(--muted)}
+  .gl-cp{font-size:12.5px;font-weight:600;color:var(--david)}
+  .gl-phase{font-size:13px;font-style:italic;color:var(--muted);overflow-wrap:anywhere}
+  .gl-status{font-size:13px;font-weight:500;color:var(--zc)}
+  .gl-zeile.z-wartet .gl-status,.gl-zeile.z-blockiert .gl-status,.gl-zeile.z-bereit .gl-status{color:var(--muted)}
+  .gl-balken{height:5px;margin-top:3px;border-radius:3px;background:var(--panel-2);overflow:hidden}
+  .gl-balken i{display:block;height:100%;border-radius:3px;background:var(--zc);transition:width .6s ease}
+  .gl-pfeil{margin-top:3px;color:var(--faint)}
+
+  .detail{position:fixed;left:0;right:0;bottom:0;z-index:60;max-height:84vh;max-height:84dvh;overflow-y:auto;overscroll-behavior:contain;grid-template-columns:minmax(0,1fr);gap:14px;padding:0 16px calc(18px + env(safe-area-inset-bottom,0px));border-top:0;border-radius:14px 14px 0 0;background:linear-gradient(0deg,color-mix(in srgb,var(--nc,transparent) 5%,transparent),color-mix(in srgb,var(--nc,transparent) 5%,transparent)),var(--panel);box-shadow:0 -6px 28px rgba(0,0,0,.28),0 0 0 100vmax rgba(12,16,22,.42)}
+  .detail .d-kopf{position:sticky;top:0;z-index:1;flex-wrap:nowrap;margin:0 -16px;padding:16px 16px 10px;background:var(--panel);border-bottom:1px solid var(--line)}
+  .detail .d-kopf::before{content:"";position:absolute;top:6px;left:50%;width:40px;height:4px;margin-left:-20px;border-radius:2px;background:var(--line-2)}
+  .detail h3{font-size:21px}
+  .detail .zu{flex:none;min-height:44px;min-width:44px;padding:0 14px;font-size:14px;font-weight:600}
+  .nrchip{min-height:44px;padding:0 12px;font-size:13.5px}
+  .detail .gh a{display:inline-flex;align-items:center;min-height:44px}
+  .vergleich{grid-template-columns:76px minmax(0,1fr) auto;gap:6px 8px}
+
+  .fahrplan{padding:12px 12px 10px}
+  .zl{grid-template-columns:minmax(0,1fr);padding-bottom:24px}
+  .zl > div:first-child{display:none}
+  .zl-achse{grid-column:1}
+  .zl-achse span{font-size:12px}
+  .zl-jetzt-lage{bottom:24px}
+  .zl-lbl{position:relative;z-index:3;flex-direction:row;flex-wrap:wrap;align-items:baseline;gap:0 8px;padding:6px 10px 4px;font-size:13px;border-bottom:0}
+  .zl-lbl .n{font-size:12px}
+  .zl-bahn{min-height:46px}
+  .zl-bahn .zahl{top:26px;font-size:12px}
+  .jetzt::before{font-size:12px;bottom:-20px}
+
+  .log-chips{margin-left:0;flex-wrap:nowrap;overflow-x:auto;width:100%;scrollbar-width:none;padding-bottom:2px}
+  .log-chips::-webkit-scrollbar{display:none}
+  .log-chip{flex:none;min-height:36px}
+  .log-chip .anz{font-size:12px}
+  .log-e{grid-template-columns:4px 46px minmax(0,1fr) auto;gap:2px 9px;padding:7px 9px 7px 0}
+  .log-e .zeit small,.log-e .art,.log-e .erl{font-size:12px}
+  .log-e .tx{white-space:normal;overflow:visible;text-overflow:clip;line-height:1.35}
+  .log-e .log-tk{min-height:40px}
+}
+@media (prefers-reduced-motion: reduce){
+  *,*::before,*::after{animation:none!important;transition:none!important}
+  .sweep{display:none}
+}
+</style>
+
+<div class="wrap" id="app">
+  <header class="kopf">
+    <div>
+      <span class="schild">
+        <svg width="16" height="16" viewBox="0 0 18 18" aria-hidden="true"><rect x="1" y="1" width="16" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="6" cy="6" r="2.2" fill="currentColor"/><circle cx="12" cy="12" r="2.2" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>
+        Bau-Leitstand
+      </span>
+      <h1 id="h-titel"><span class="specnr" id="h-spec">Spec –</span> <span id="h-name">Lade Stand …</span></h1>
+      <div class="kopf-meta">
+        <span>Gestartet <b id="h-gestartet" data-rel="">–</b></span>
+        <span><b id="h-stand">Stand von –</b></span>
+      </div>
+    </div>
+    <div class="kopf-rechts">
+      <span class="plakette" id="h-ort">–</span>
+      <span class="hinweis-live" id="h-live"><span class="dot"></span><span id="h-live-text">Keine Live-Verbindung</span></span>
+      <button type="button" class="theme-btn" id="theme-btn" aria-label="Farbmodus wechseln">Farbe: automatisch</button>
+    </div>
+  </header>
+  <p class="stand-alt" id="stand-alt" role="status" hidden>Stand ist alt – der Wächter meldet sich nicht.</p>
+  <div class="meldung" id="meldung" role="status" hidden></div>
+
+  <div class="legende-leiste" role="region" aria-label="Legende">
+    <div class="legende-innen" id="legende"></div>
+  </div>
+
+  <p class="beispiel" id="beispiel">Beispiel-Stand, keine Live-Verbindung.</p>
+
+  <section class="tafeln" aria-label="Überblick">
+    <div class="tafel">
+      <span class="lbl">Wie weit?</span>
+      <span class="wert" id="t-prozent">0 %</span>
+      <div class="schiene" aria-hidden="true"><i id="t-schiene-lauf" class="lauf" style="width:0"></i><i id="t-schiene" style="width:0"></i></div>
+      <span class="unter" id="t-fertig">0 von 0 Tickets fertig</span>
+    </div>
+    <div class="tafel" id="t-laeuft-tafel">
+      <span class="lbl">Was läuft?</span>
+      <span class="wert" id="t-laeuft">0</span>
+      <span class="unter" id="t-laeuft-unter">–</span>
+    </div>
+    <div class="tafel david null" id="t-david-tafel">
+      <span class="lbl">Brauchst du mich?</span>
+      <span class="wert" id="t-david">0</span>
+      <span class="unter" id="t-david-unter">–</span>
+    </div>
+    <div class="tafel">
+      <span class="lbl">Wann fertig?</span>
+      <span class="wert" id="t-ende">–</span>
+      <span class="unter" id="t-ende-unter">–</span>
+    </div>
+  </section>
+
+  <section class="abschnitt" aria-labelledby="ph-h">
+    <div class="abschnitt-kopf"><h2 id="ph-h">Ablauf in Nähten</h2><span class="sub">Jede Naht ist eine Test-Phase. Tippen zeigt nur diese Naht.</span><button type="button" class="alle-zeigen" id="ph-alle" hidden>Alle zeigen</button></div>
+    <ol class="phasen" id="phasen"></ol>
+  </section>
+
+  <section class="abschnitt" aria-labelledby="gp-h">
+    <div class="abschnitt-kopf"><h2 id="gp-h">Gleisplan</h2><span class="sub">Rechts startet erst, wenn links fertig ist. Tippen zeigt Details.</span></div>
+    <div class="stellpult" id="stellpult">
+      <p class="wisch">Plan ist breiter als der Bildschirm: seitlich wischen.</p>
+      <div class="gleis-scroll" id="gleis-scroll"><svg id="gleisplan" role="group" aria-label="Ablauf der Tickets"></svg></div>
+      <div class="gleis-liste" id="gleis-liste" aria-label="Tickets nach Naht"></div>
+      <div class="detail" id="detail" hidden aria-live="polite" role="dialog" aria-label="Ticket-Details"></div>
+    </div>
+  </section>
+
+  <section class="abschnitt" aria-labelledby="zl-h">
+    <div class="abschnitt-kopf"><h2 id="zl-h">Fahrplan</h2><span class="sub">Gestrichelt: geplant. Voll: echt gebraucht.</span></div>
+    <div class="fahrplan">
+      <div class="prognose" id="prognose"></div>
+      <div class="zl" id="zeitleiste"></div>
+    </div>
+  </section>
+
+  <section class="abschnitt" aria-labelledby="log-h" id="log">
+    <div class="abschnitt-kopf"><h2 id="log-h">Wächter-Log</h2><span class="sub">Meldungen vom Wächter, neueste oben.</span><div class="log-chips" id="log-chips" role="group" aria-label="Meldungen filtern"></div></div>
+    <ol class="log-liste" id="log-liste"><li class="log-leer">Noch keine Meldungen.</li></ol>
+  </section>
+
+  <section class="abschnitt" aria-labelledby="hw-h">
+    <div class="abschnitt-kopf"><h2 id="hw-h">Hinweise</h2></div>
+    <div class="karten" id="karten"></div>
+  </section>
+
+  <div class="fuss"><span id="f-faktor"></span><span id="f-quelle"></span></div>
+</div>
+
+<script>
+(() => {
+  "use strict";
+  const MIN = 60000;
+  const $ = (id) => document.getElementById(id);
+  const SVGNS = "http://www.w3.org/2000/svg";
+
+  /* ---------- Nähte (Test-Phasen) ---------- */
+  const NAEHTE_STANDARD = [
+    { nr: 1, name: "Oberfläche", kurz: "Klick-Logik im Browser-Prüfstand: Mülleimer, Pop-up, Chips." },
+    { nr: 2, name: "Server", kurz: "Server-Test mit echter Test-Datenbank: Rechte, Verwerfen, Sperren, Issue und Mail." },
+    { nr: 3, name: "Live", kurz: "Einmal echt im Live-System durchgeklickt, bevor es fertig ist." }
+  ];
+  const ABNAHME = { key: "A", label: "Abnahme", name: "Abnahme", kurz: "Du schaust dir das Ergebnis an und gibst frei.", farbe: "var(--nA)" };
+  const OHNE = { key: "0", label: "Ohne Naht", name: "Sonstiges", kurz: "Tickets ohne feste Test-Phase.", farbe: "var(--n0)" };
+  const NFARBEN = ["var(--n1)", "var(--n2)", "var(--n3)"];
+
+  /* ---------- Beispiel-Daten ---------- */
+  const FALLBACK = (() => {
+    const now = Date.now();
+    const iso = (t) => new Date(t).toISOString();
+    const t = (nr, titel, kurz, blocked_by, zustand, k, erw, reihe, naht, extra) => Object.assign({
+      nr, titel, kurz, art: "bau", blocked_by, zustand, schaetzung_k: k, ist_k: null,
+      erwartet_min: erw, start: null, ende: null, naht,
+      liefert: "", beweis: "", reihe
+    }, extra || {});
+    return {
+      meta: {
+        spec: 376, titel: "Verwerfen in der Reelstraße", ziel: "local",
+        gestartet: iso(now - 22 * MIN), aktualisiert: iso(now - 40 * 1000), faktor: 4.8,
+        beobachten: [{ titel: "Alle Sessions ansehen", befehl: "sessions 376" }],
+        hinweise: [
+          { titel: "Lokal auf diesem PC", text: "PC anlassen, Terminal-Fenster offen lassen.", art: "info" },
+          { titel: "Nie hart beenden", text: "Einen bau-Tab nie schließen, solange er arbeitet.", art: "achtung" },
+          { titel: "Speicher", text: "Höchstens 6 Sessions gleichzeitig, der Rest wartet.", art: "info" },
+          { titel: "Abnahme", text: "Bei #386 einen Kommentar schreiben, dann schließt es.", art: "info" }
+        ]
+      },
+      tickets: [
+        t(377, "Rollen „obere Etage“ + Grund-Chip-Katalog", "Legt fest, wer verwerfen darf, und die Liste der Gründe.", [], "wartet", 25, 40, 1, 2,
+          { liefert: "Rollen-Prüfung und Grund-Liste im System", beweis: "Tests grün, Liste im Dashboard sichtbar" }),
+        t(378, "Mülleimer + Pop-up-Gerüst", "Mülleimer-Knopf an jedem Reel, öffnet ein leeres Fenster.", [377], "wartet", 35, 55, 2, 1,
+          { liefert: "Knopf und Fenster in der Reelstraße", beweis: "Screenshot vom offenen Fenster" }),
+        t(379, "Grund-Chips, ⓘ-Hover, Pflicht-Logik", "Gründe zum Antippen, Erklärung beim Drüberfahren, ohne Grund kein Verwerfen.", [378], "wartet", 35, 55, 3, 1,
+          { liefert: "Auswahl der Gründe im Fenster", beweis: "Klickweg-Test ohne Attrappen" }),
+        t(380, "Beschwerde speichern", "Der gewählte Grund landet dauerhaft im System.", [379], "wartet", 35, 55, 4, 2,
+          { liefert: "Gespeicherte Beschwerde je Reel", beweis: "Eintrag in der Datenbank nach Klick" }),
+        t(381, "Verwerfen scharf", "Reel wird wirklich aus der Straße genommen.", [379], "wartet", 40, 65, 5, 2,
+          { liefert: "Verworfenes Reel verschwindet aus der Liste", beweis: "Server-Test mit Test-Reel" }),
+        t(382, "Vorlagen-Sperre", "Verworfene Vorlage wird nicht nochmal benutzt.", [381], "wartet", 30, 45, 6, 2,
+          { liefert: "Gesperrte Vorlagen", beweis: "Test: gesperrte Vorlage taucht nicht auf" }),
+        t(383, "Ernte-Issue + Mail", "Gesammelte Gründe werden zu einem Ticket und einer Mail.", [381], "wartet", 35, 55, 7, 2,
+          { liefert: "Automatisches Ticket mit Gründen", beweis: "Ticket auf GitHub angelegt" }),
+        t(384, "Detektiv-Ansicht", "Übersicht: was wurde warum verworfen.", [381], "wartet", 35, 55, 8, 2,
+          { liefert: "Neue Ansicht im Dashboard", beweis: "Screenshot der Ansicht" }),
+        t(385, "Gesamt-Klickweg live", "Der ganze Ablauf einmal echt durchgeklickt.", [380, 382, 383, 384], "wartet", 20, 30, 9, 3,
+          { liefert: "Beleg für den ganzen Ablauf", beweis: "Video oder Screenshots vom Live-System" }),
+        t(386, "Abnahme durch David", "Du schaust es dir an und gibst frei.", [385], "wartet", 5, 15, 10, null,
+          { art: "checkpoint", liefert: "Deine Freigabe", beweis: "Dein Kommentar im Ticket" })
+      ],
+      // Ein Dokument aus Collection "live": nur die sich schnell ändernden Felder je Ticket
+      live: {
+        zeit: iso(now - 40 * 1000),
+        tickets: {
+          "377": { zustand: "fertig", ist_k: 41, start: iso(now - 21 * MIN), ende: iso(now - 6 * MIN) },
+          "378": { zustand: "läuft", ist_k: 12, start: iso(now - 5 * MIN), phase: "Knopf einbauen", fortschritt: 30 }
+        }
+      },
+      // Einträge aus Collection "log", neueste zuerst
+      log: [
+        { zeit: iso(now - 4 * MIN), art: "david", ticket: 377, titel: "Review ohne Beleg", text: "#377 hat ein Review angefordert, aber keinen Beleg geschrieben." },
+        { zeit: iso(now - 5 * MIN), art: "problem", ticket: 379, titel: "Blockiert", text: "#379 ist blockiert, bis #378 fertig ist." },
+        { zeit: iso(now - 6 * MIN), art: "info", ticket: 377, titel: "Fertig", text: "#377 ist fertig, Tests sind grün." },
+        { zeit: iso(now - 14 * MIN), art: "befund", ticket: 377, titel: "Entscheidung", text: "#377 nutzt die vorhandene Rollen-Liste statt einer neuen Tabelle." },
+        { zeit: iso(now - 21 * MIN), art: "info", ticket: 377, titel: "Gestartet", text: "#377 hat mit der Arbeit begonnen." }
+      ]
+    };
+  })();
+
+  /* ---------- Zustand ---------- */
+  let meta = FALLBACK.meta;
+  let statTickets = [];    // normalisierte statische Tickets (Collection "tickets" bzw. FALLBACK)
+  let liveAktuell = null;  // neuestes Dokument aus Collection "live": { zeit, tickets: { "<nr>": {...} } }
+  let logEintraege = [];   // Collection "log", neueste zuerst (höchstens 40)
+  let tickets = [];        // Ergebnis von mische(): statTickets + Live-Felder
+  let quelle = "beispiel"; // beispiel | live | leer
+  let gewaehlt = null;
+  let nahtFilter = null;   // Phasen-Key der gefilterten Naht oder null
+  let logFilter = "alle";  // alle | probleme | befunde | info
+  let ersterRender = true;
+  let model = null; // berechnet: map, tiefe, blockiert, reihenfolge, phasen
+
+  /* ---------- Hilfen ---------- */
+  const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const mitCode = (s) => esc(s).replace(/`([^`]+)`/g, "<code>$1</code>");
+  const ts = (v) => { if (!v) return null; const n = Date.parse(v); return Number.isFinite(n) ? n : null; };
+  const zahl = (v, d) => (typeof v === "number" && Number.isFinite(v) ? v : d);
+  const hhmm = (t) => new Date(t).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" });
+  const dauer = (ms) => {
+    const m = Math.max(0, Math.round(ms / MIN));
+    if (m < 60) return m + " Min";
+    const h = Math.floor(m / 60), r = m % 60;
+    return h + " Std" + (r ? " " + String(r).padStart(2, "0") + " Min" : "");
+  };
+  const uhr = (ms) => {
+    const s = Math.max(0, Math.floor(ms / 1000));
+    const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), x = s % 60;
+    const p = (n) => String(n).padStart(2, "0");
+    return h ? h + ":" + p(m) + ":" + p(x) : p(m) + ":" + p(x);
+  };
+  const vor = (t) => {
+    if (t == null) return "–";
+    const d = Date.now() - t;
+    if (d < 45000) return "gerade eben";
+    if (d < 3600000) return "vor " + Math.max(1, Math.round(d / MIN)) + " Min";
+    return "vor " + dauer(d);
+  };
+  const kommaZahl = (n) => String(n).replace(".", ",");
+  const nrListe = (arr) => "#" + arr.join(", #");
+  const ZWORT = { wartet: "wartet", blockiert: "blockiert", bereit: "bereit", "läuft": "läuft", fertig: "fertig", braucht_david: "braucht dich", fehler: "Fehler" };
+  const ZFARBE = { wartet: "var(--wait)", blockiert: "var(--wait)", bereit: "var(--wait)", "läuft": "var(--run)", fertig: "var(--done)", braucht_david: "var(--david)", fehler: "var(--err)" };
+  const ZKLASSE = { "läuft": "z-laeuft", fertig: "z-fertig", braucht_david: "z-david", fehler: "z-fehler" };
+
+  function normTicket(raw, idFallback) {
+    const r = raw || {};
+    const nr = zahl(r.nr, Number(idFallback));
+    const naht = zahl(r.naht, null);
+    return {
+      nr, titel: String(r.titel || "Ticket " + nr), kurz: String(r.kurz || ""),
+      art: r.art === "checkpoint" ? "checkpoint" : "bau",
+      blocked_by: Array.isArray(r.blocked_by) ? r.blocked_by.map(Number).filter(Number.isFinite) : [],
+      zustand: ["wartet", "läuft", "fertig", "braucht_david", "fehler"].includes(r.zustand) ? r.zustand : "wartet",
+      schaetzung_k: zahl(r.schaetzung_k, 0), ist_k: zahl(r.ist_k, null), erwartet_min: zahl(r.erwartet_min, 30),
+      start: r.start || null, ende: r.ende || null, liefert: String(r.liefert || ""), beweis: String(r.beweis || ""),
+      reihe: zahl(r.reihe, nr), fortschritt: zahl(r.fortschritt, null), phase: r.phase ? String(r.phase) : "",
+      naht: naht != null && naht >= 1 ? Math.round(naht) : null
+    };
+  }
+
+  /* ---------- Phasen: Nähte + Abnahme ---------- */
+  function phasenListe() {
+    const roh = meta && Array.isArray(meta.naehte) && meta.naehte.length ? meta.naehte : NAEHTE_STANDARD;
+    const liste = [];
+    const gesehen = new Set();
+    roh.forEach((n) => {
+      const nr = zahl(n && Number(n.nr), null);
+      if (nr == null || gesehen.has(nr)) return;
+      gesehen.add(nr);
+      liste.push({ nr, name: String((n && n.name) || "Naht " + nr), kurz: String((n && n.kurz) || "") });
+    });
+    tickets.forEach((t) => { if (t.art !== "checkpoint" && t.naht != null && !gesehen.has(t.naht)) { gesehen.add(t.naht); liste.push({ nr: t.naht, name: "Naht " + t.naht, kurz: "" }); } });
+    liste.sort((a, b) => a.nr - b.nr);
+    const phasen = liste.map((n, i) => ({ key: String(n.nr), label: "Naht " + n.nr, name: n.name, kurz: n.kurz, farbe: NFARBEN[i % NFARBEN.length] }));
+    if (tickets.some((t) => t.art !== "checkpoint" && t.naht == null)) phasen.push(OHNE);
+    if (tickets.some((t) => t.art === "checkpoint")) phasen.push(ABNAHME);
+    return phasen;
+  }
+  const phaseKey = (t) => (t.art === "checkpoint" ? "A" : t.naht != null ? String(t.naht) : "0");
+  const phaseVon = (t) => model.phasenMap.get(phaseKey(t)) || OHNE;
+
+  /* ---------- Modell ---------- */
+  function bauModell() {
+    const map = new Map(tickets.map((t) => [t.nr, t]));
+    const tiefe = new Map();
+    const berechne = (nr, pfad) => {
+      if (tiefe.has(nr)) return tiefe.get(nr);
+      if (pfad.has(nr)) return 0; // Kreis: abbrechen
+      pfad.add(nr);
+      const t = map.get(nr);
+      let d = 0;
+      if (t) for (const b of t.blocked_by) if (map.has(b)) d = Math.max(d, berechne(b, pfad) + 1);
+      pfad.delete(nr);
+      tiefe.set(nr, d);
+      return d;
+    };
+    tickets.forEach((t) => berechne(t.nr, new Set()));
+    const blockiert = new Map();
+    tickets.forEach((t) => t.blocked_by.forEach((b) => { if (!blockiert.has(b)) blockiert.set(b, []); blockiert.get(b).push(t.nr); }));
+    const reihenfolge = tickets.slice().sort((a, b) => tiefe.get(a.nr) - tiefe.get(b.nr) || a.reihe - b.reihe || a.nr - b.nr);
+    const phasen = phasenListe();
+    const phasenMap = new Map(phasen.map((p) => [p.key, p]));
+    return { map, tiefe, blockiert, reihenfolge, phasen, phasenMap };
+  }
+
+  function anzeigeZustand(t) {
+    if (t.zustand !== "wartet") return t.zustand;
+    return offeneBlocker(t).length ? "blockiert" : "bereit";
+  }
+  function offeneBlocker(t) {
+    return t.blocked_by.filter((b) => { const x = model.map.get(b); return x && x.zustand !== "fertig"; });
+  }
+
+  function fortschritt(t, now) {
+    if (t.zustand === "fertig") return 100;
+    if (t.fortschritt != null) return Math.max(0, Math.min(100, t.fortschritt));
+    if (t.zustand === "wartet") return 0;
+    if (t.zustand === "braucht_david") return 95;
+    const s = ts(t.start);
+    const zeit = s != null && t.erwartet_min > 0 ? (now - s) / (t.erwartet_min * MIN) : 0;
+    const f = zahl(meta && meta.faktor, 1) || 1;
+    const tok = t.ist_k != null && t.schaetzung_k > 0 ? t.ist_k / (t.schaetzung_k * f) : 0;
+    return Math.min(95, Math.max(0, Math.max(zeit, tok) * 100));
+  }
+
+  function restText(t, now) {
+    const s = ts(t.start);
+    if (s == null) return "";
+    const rest = t.erwartet_min * MIN - (now - s);
+    if (rest >= 0) return "noch ca. " + dauer(rest + 30000);
+    return "überzieht um " + dauer(-rest);
+  }
+
+  function prognose(now) {
+    const t0 = ts(meta && meta.gestartet) ?? now;
+    const plan = new Map();
+    let ende = t0, davidAb = null, davidJetzt = false;
+    for (const t of model.reihenfolge) {
+      let frei = t0;
+      t.blocked_by.forEach((b) => { const p = plan.get(b); if (p) frei = Math.max(frei, p.pe); });
+      const erw = t.erwartet_min * MIN;
+      let ps, pe;
+      const s = ts(t.start), e = ts(t.ende);
+      if (t.zustand === "fertig") { ps = s ?? frei; pe = e ?? ps + erw; }
+      else if (t.zustand === "wartet") { ps = Math.max(frei, now); pe = ps + erw; }
+      else { ps = s ?? frei; pe = Math.max(ps + erw, now + (t.zustand === "läuft" ? 60000 : 0)); }
+      plan.set(t.nr, { ps, pe });
+      ende = Math.max(ende, pe);
+      if (t.zustand === "braucht_david") davidJetzt = true;
+      if (t.art === "checkpoint" && t.zustand !== "fertig") davidAb = davidAb == null ? ps : Math.min(davidAb, ps);
+    }
+    return { t0, plan, ende, davidAb, davidJetzt };
+  }
+
+  /* ---------- Text messen (für Umbruch ohne Kürzen) ---------- */
+  const messCtx = document.createElement("canvas").getContext("2d");
+  const FONT_TITEL = '600 13.5px Barlow, system-ui, sans-serif';
+  const FONT_PHASE = 'italic 12px Barlow, system-ui, sans-serif';
+  const FONT_STATUS = '11px "IBM Plex Mono", Consolas, monospace';
+  const FONT_NR = '600 12.5px "IBM Plex Mono", Consolas, monospace';
+  const FONT_KOPF = '700 12.5px "Barlow Condensed", "Arial Narrow", sans-serif';
+  const FONT_ZST = '600 12.5px "Barlow Condensed", "Arial Narrow", sans-serif';
+  const breiteVon = (txt, font) => { messCtx.font = font; return messCtx.measureText(txt).width; };
+  // Großbuchstaben-Etiketten mit Sperrung (letter-spacing in em) messen
+  const textBreite = (txt, font, sperr) => {
+    const s = String(txt || "").toUpperCase();
+    return breiteVon(s, font) + s.length * sperr * 12.5;
+  };
+  function umbrechen(text, max, font) {
+    const worte = String(text || "").split(/\s+/).filter(Boolean);
+    const zeilen = [];
+    let cur = "";
+    for (const wort of worte) {
+      // Ganzes Wort bevorzugen; nur wenn es allein nicht in eine Zeile passt, nach Bindestrich trennen
+      const ganz = cur ? cur + " " + wort : wort;
+      if (breiteVon(ganz, font) <= max) { cur = ganz; continue; }
+      if (breiteVon(wort, font) <= max) { if (cur) zeilen.push(cur); cur = wort; continue; }
+      const teile = wort.split(/(?<=-)(?=.)/);
+      teile.forEach((teil, i) => {
+        let w = teil;
+        const fuge = i === 0 ? " " : "";
+        // Überlanges Stück hart mit Bindestrich trennen statt überlaufen
+        while (breiteVon(w, font) > max && w.length > 4) {
+          let k = w.length - 1;
+          while (k > 2 && breiteVon(w.slice(0, k) + "-", font) > max) k--;
+          if (cur) { zeilen.push(cur); cur = ""; }
+          zeilen.push(w.slice(0, k) + "-");
+          w = w.slice(k);
+        }
+        const probe = cur ? cur + fuge + w : w;
+        if (!cur || breiteVon(probe, font) <= max) cur = probe;
+        else { zeilen.push(cur); cur = w; }
+      });
+    }
+    if (cur) zeilen.push(cur);
+    return zeilen;
+  }
+
+  /* ---------- Phasen-Leiste ---------- */
+  function phasenStand(p) {
+    const liste = tickets.filter((t) => phaseKey(t) === p.key).sort((a, b) => model.tiefe.get(a.nr) - model.tiefe.get(b.nr) || a.nr - b.nr);
+    const n = liste.length, fertig = liste.filter((t) => t.zustand === "fertig").length;
+    let zst = "offen";
+    if (n && fertig === n) zst = "fertig";
+    else if (liste.some((t) => t.zustand === "fehler")) zst = "fehler";
+    else if (liste.some((t) => t.zustand === "braucht_david")) zst = "david";
+    else if (liste.some((t) => t.zustand !== "wartet")) zst = "läuft";
+    // Einstieg: Tickets ohne Vorgänger in derselben Phase
+    const inPhase = new Set(liste.map((t) => t.nr));
+    const einstieg = liste.filter((t) => !t.blocked_by.some((b) => inPhase.has(b)));
+    const offenJe = einstieg.map((t) => offeneBlocker(t).filter((b) => !inPhase.has(b)));
+    let ueber = "";
+    if (zst === "fertig") ueber = "Alles fertig.";
+    else if (zst === "offen") {
+      const best = offenJe.length ? offenJe.reduce((a, b) => (b.length < a.length ? b : a)) : [];
+      ueber = best.length ? "Startet, sobald " + nrListe(best) + (best.length === 1 ? " fertig ist." : " fertig sind.") : "Kann jetzt starten.";
+    } else {
+      const warten = [...new Set(offenJe.flat())];
+      ueber = warten.length ? "Rest wartet noch auf " + nrListe(warten) + "." : "Läuft, nichts blockiert.";
+    }
+    return { liste, n, fertig, zst, ueber };
+  }
+  const PZ = { offen: ["noch nicht dran", "var(--wait)"], "läuft": ["läuft", "var(--run)"], fertig: ["fertig", "var(--done)"], david: ["braucht dich", "var(--david)"], fehler: ["Fehler", "var(--err)"] };
+  const icoPfeil = '<svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 8h10M8.5 4 12.5 8l-4 4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  const icoHaken = '<svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8.5 6.5 12 13 4.5" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
+  function renderPhasen() {
+    const box = $("phasen");
+    const ph = model.phasen;
+    // Filter bleibt über jeden renderAlles() erhalten; verschwundene Naht hebt ihn auf
+    if (nahtFilter != null && !ph.some((p) => p.key === nahtFilter)) nahtFilter = null;
+    box.style.setProperty("--anz", String(Math.max(1, Math.min(ph.length, 4))));
+    box.classList.toggle("gefiltert", nahtFilter != null);
+    const alle = $("ph-alle"); if (alle) alle.hidden = nahtFilter == null;
+    box.innerHTML = ph.map((p) => {
+      const s = phasenStand(p);
+      const [wort, farbe] = PZ[s.zst];
+      const an = nahtFilter === p.key;
+      const tks = s.liste.map((t) => '<button type="button" class="tk" data-springe="' + t.nr + '" style="--tc:' + ZFARBE[anzeigeZustand(t)] + '" title="' + esc(t.titel) + " · " + esc(ZWORT[anzeigeZustand(t)]) + '">#' + t.nr + "</button>").join("");
+      return '<li class="phase s-' + (s.zst === "läuft" ? "laeuft" : s.zst) + (an ? " aktiv" : "") + '" data-naht="' + esc(p.key) + '" style="--nc:' + p.farbe + '">' +
+        '<button type="button" class="ph-knopf" data-naht="' + esc(p.key) + '" aria-pressed="' + an + '" title="Nur ' + esc(p.label) + ' zeigen">' +
+        '<span class="ph-kopf"><span class="ph-nr">' + esc(p.label) + '</span><span class="pill" style="--pc:' + farbe + '">' + wort + "</span></span>" +
+        '<span class="ph-name">' + esc(p.name) + "</span>" +
+        (p.kurz ? '<span class="ph-kurz">' + esc(p.kurz) + "</span>" : "") +
+        "</button>" +
+        '<div class="ph-balken" aria-hidden="true"><i style="width:' + (s.n ? (s.fertig / s.n) * 100 : 0) + '%"></i></div>' +
+        '<div class="ph-zeile"><span class="num">' + s.fertig + " von " + s.n + ' fertig</span><span class="tks">' + tks + "</span></div>" +
+        '<p class="ph-ueber">' + (s.zst === "fertig" ? icoHaken : icoPfeil) + "<span>" + esc(s.ueber) + "</span></p>" +
+        "</li>";
+    }).join("");
+  }
+
+  /* ---------- Legende (sticky) ---------- */
+  function renderLegende() {
+    const z = [["var(--wait)", "wartet"], ["var(--run)", "läuft"], ["var(--done)", "fertig"], ["var(--david)", "braucht dich"], ["var(--err)", "Fehler"]];
+    const html =
+      '<span class="lg-gruppe"><b>Zustand</b>' + z.map(([f, w]) => '<span class="lg"><i class="punkt" style="background:' + f + '"></i>' + w + "</span>").join("") + "</span>" +
+      '<i class="lg-trenner" aria-hidden="true"></i>' +
+      '<span class="lg-gruppe"><b>Test-Phase</b>' + model.phasen.map((p) => '<span class="lg" style="--nc:' + p.farbe + '"><i class="band"></i>' + esc(p.key === "A" || p.key === "0" ? p.name : p.label + " " + p.name) + "</span>").join("") + "</span>" +
+      '<i class="lg-trenner" aria-hidden="true"></i>' +
+      '<span class="lg"><svg width="26" height="10" aria-hidden="true"><line x1="2" y1="5" x2="24" y2="5" stroke="var(--run)" stroke-width="3" stroke-dasharray="2 6" stroke-linecap="round"/></svg>Arbeit fließt</span>';
+    const box = $("legende");
+    if (box.dataset.html !== html) { box.innerHTML = html; box.dataset.html = html; }
+  }
+
+  /* ---------- Gleisplan ---------- */
+  // Maße richten sich nach der Breite des Gleisplan-Kastens (masseSetzen)
+  const W_MIN = 138, W_MAX = 236, CG_MIN = 20, CG_MAX = 30, RG = 22, PX = 16;
+  const LH_TITEL = 17, LH_PHASE = 15;
+  let W = 180, CG = 26, PY = 50, BARW = W - 26, H = 130;
+  const gx = (d) => PX + d * (W + CG);
+  const gy = (r) => PY + r * (H + RG);
+  function masseSetzen(spalten) {
+    const n = Math.max(1, spalten);
+    const platz = Math.max(0, ($("gleis-scroll").clientWidth || 0) - 2 * PX);
+    CG = Math.round(Math.min(CG_MAX, Math.max(CG_MIN, (platz / n) * 0.14)));
+    W = Math.floor(Math.min(W_MAX, Math.max(W_MIN, (platz - (n - 1) * CG) / n)));
+    BARW = W - 26;
+  }
+
+  function zeilenVergeben() {
+    const reihe = new Map();
+    const spalten = new Map();
+    for (const t of model.reihenfolge) {
+      const d = model.tiefe.get(t.nr);
+      if (!spalten.has(d)) spalten.set(d, new Set());
+      const belegt = spalten.get(d);
+      const eltern = t.blocked_by.filter((b) => reihe.has(b)).map((b) => reihe.get(b));
+      const wunsch = eltern.length ? Math.round(eltern.reduce((a, b) => a + b, 0) / eltern.length) : 0;
+      let r = null;
+      for (let k = 0; k < 60 && r == null; k++) {
+        for (const c of [wunsch + k, wunsch - k]) if (c >= 0 && !belegt.has(c)) { r = c; break; }
+      }
+      belegt.add(r);
+      reihe.set(t.nr, r);
+    }
+    return reihe;
+  }
+
+  function rundPfad(pts, rad) {
+    const p = pts.filter((q, i) => i === 0 || q[0] !== pts[i - 1][0] || q[1] !== pts[i - 1][1]);
+    let d = "M" + p[0][0] + " " + p[0][1];
+    for (let i = 1; i < p.length - 1; i++) {
+      const [ax, ay] = p[i - 1], [bx, by] = p[i], [cx, cy] = p[i + 1];
+      const l1 = Math.hypot(bx - ax, by - ay), l2 = Math.hypot(cx - bx, cy - by);
+      const r = Math.min(rad, l1 / 2, l2 / 2);
+      const x1 = bx - ((bx - ax) / l1) * r, y1 = by - ((by - ay) / l1) * r;
+      const x2 = bx + ((cx - bx) / l2) * r, y2 = by + ((cy - by) / l2) * r;
+      d += " L" + x1.toFixed(1) + " " + y1.toFixed(1) + " Q" + bx + " " + by + " " + x2.toFixed(1) + " " + y2.toFixed(1);
+    }
+    const z = p[p.length - 1];
+    return d + " L" + z[0] + " " + z[1];
+  }
+
+  function kantenPunkte(a, b, reihe) {
+    const da = model.tiefe.get(a), db = model.tiefe.get(b);
+    const ra = reihe.get(a), rb = reihe.get(b);
+    const sx = gx(da) + W, sy = gy(ra) + H / 2, tx = gx(db), ty = gy(rb) + H / 2;
+    if (db - da <= 1) {
+      const mx = tx - CG / 2;
+      return [[sx, sy], [mx, sy], [mx, ty], [tx, ty]];
+    }
+    const k = rb > ra ? ra + 1 : ra === rb ? ra + 1 : ra;
+    const cy = gy(k) - RG / 2;
+    const m1 = sx + CG / 2, m2 = tx - CG / 2;
+    return [[sx, sy], [m1, sy], [m1, cy], [m2, cy], [m2, ty], [tx, ty]];
+  }
+
+  function el(name, attrs, parent) {
+    const n = document.createElementNS(SVGNS, name);
+    if (attrs) for (const k in attrs) n.setAttribute(k, attrs[k]);
+    if (parent) parent.appendChild(n);
+    return n;
+  }
+
+  function mensch(parent, x, y, s) {
+    const g = el("g", { class: "mensch", transform: "translate(" + x + " " + y + ") scale(" + s + ")", "aria-hidden": "true" }, parent);
+    el("circle", { cx: 8, cy: 4, r: 3.2 }, g);
+    el("path", { d: "M2 16c0-4 2.7-6.6 6-6.6s6 2.6 6 6.6z" }, g);
+    return g;
+  }
+
+  function knotenText(t) {
+    const cp = t.art === "checkpoint";
+    const titel = umbrechen(t.titel, W - 26, FONT_TITEL);
+    const ph = [];
+    if (cp) ph.push({ txt: "Hier brauchen wir dich", cp: true });
+    if (t.zustand !== "fertig" && t.phase) umbrechen("Gerade: " + t.phase, W - 26, FONT_PHASE).forEach((z) => ph.push({ txt: z, cp: false }));
+    return { titel, ph };
+  }
+
+  function renderGleisplan(now) {
+    const svg = $("gleisplan");
+    const reihe = zeilenVergeben();
+    let maxD = 0, maxR = 0;
+    tickets.forEach((t) => { maxD = Math.max(maxD, model.tiefe.get(t.nr)); maxR = Math.max(maxR, reihe.get(t.nr)); });
+    masseSetzen(maxD + 1);
+
+    // Zonen je Naht: Spalten mit gleicher Phase werden zu einem Band.
+    // Zerfällt eine Naht in getrennte Spaltenbereiche, gibt es keine Bänder (nur Kasten-Farbe + Etikett).
+    const spaltePhase = [];
+    const nahtSpalten = new Map();
+    for (let d = 0; d <= maxD; d++) {
+      const keys = new Set(tickets.filter((t) => model.tiefe.get(t.nr) === d).map(phaseKey));
+      keys.forEach((k) => { if (!nahtSpalten.has(k)) nahtSpalten.set(k, []); nahtSpalten.get(k).push(d); });
+      spaltePhase.push(keys.size === 1 ? [...keys][0] : "mix");
+    }
+    const zerfaellt = [...nahtSpalten.values()].some((ds) => ds[ds.length - 1] - ds[0] + 1 !== ds.length);
+    PY = zerfaellt ? 16 : 46;
+
+    const texte = new Map(tickets.map((t) => [t.nr, knotenText(t)]));
+    let inhalt = 0;
+    texte.forEach((x) => { inhalt = Math.max(inhalt, x.titel.length * LH_TITEL + x.ph.length * LH_PHASE); });
+    H = 30 + 16 + inhalt + 40;
+    const breite = gx(maxD) + W + PX, hoehe = gy(maxR) + H + 18;
+    svg.setAttribute("width", breite); svg.setAttribute("height", hoehe);
+    svg.setAttribute("viewBox", "0 0 " + breite + " " + hoehe);
+    svg.textContent = "";
+
+    const zonen = el("g", { "aria-hidden": "true" }, svg);
+    let d0 = 0;
+    for (let d = 1; !zerfaellt && d <= maxD + 1; d++) {
+      if (d <= maxD && spaltePhase[d] === spaltePhase[d0]) continue;
+      const key = spaltePhase[d0];
+      const x0 = d0 === 0 ? 0 : gx(d0) - CG / 2;
+      const x1 = d - 1 === maxD ? breite : gx(d - 1) + W + CG / 2;
+      if (key !== "mix") {
+        const p = model.phasenMap.get(key) || OHNE;
+        const g = el("g", { style: "--nc:" + p.farbe }, zonen);
+        el("rect", { class: "zone", x: x0, y: 0, width: x1 - x0, height: hoehe, style: "fill:color-mix(in srgb, var(--nc) 6%, transparent)" }, g);
+        el("rect", { class: "zone-kante", x: x0, y: 0, width: x1 - x0, height: 3 }, g);
+        const lbl = el("text", { class: "zone-lbl", x: (d0 === 0 ? PX : gx(d0)), y: 27 }, g);
+        lbl.textContent = p.key === "A" || p.key === "0" ? p.name : p.label + " · " + p.name;
+      }
+      if (d <= maxD) el("line", { class: "zone-grenze", x1: x1, y1: 10, x2: x1, y2: hoehe - 8 }, zonen);
+      d0 = d;
+    }
+
+    // Gleise
+    const gleise = el("g", { "aria-hidden": "true" }, svg);
+    const flussG = el("g", { "aria-hidden": "true" }, svg);
+    const weichen = new Map();
+    const sweeps = [];
+    tickets.forEach((t) => t.blocked_by.forEach((b) => {
+      if (!model.map.has(b)) return;
+      const a = model.map.get(b);
+      const pts = kantenPunkte(b, t.nr, reihe);
+      const d = rundPfad(pts, 10);
+      let cls = "gleis";
+      if (a.zustand === "fertig" && t.zustand === "fertig") cls += " fertig";
+      else if (a.zustand === "fertig") cls += " frei";
+      if (t.art === "checkpoint" && a.zustand === "fertig") cls += " ziel-david";
+      el("path", { d, class: cls }, gleise);
+      sweeps.push(d);
+      const aktiv = a.zustand === "fertig" && (t.zustand === "läuft" || t.zustand === "braucht_david");
+      if (aktiv) el("path", { d, class: "fluss" + (t.zustand === "braucht_david" ? " david" : "") }, flussG);
+      const wk = pts[pts.length - 2][0] + "," + pts[pts.length - 1][1];
+      weichen.set(wk, (weichen.get(wk) || 0) + 1);
+    }));
+    weichen.forEach((n, k) => {
+      if (n < 2) return;
+      const [x, y] = k.split(",").map(Number);
+      el("circle", { cx: x, cy: y, r: 4.5, class: "weiche" }, gleise);
+    });
+    if (ersterRender) {
+      const sw = el("g", { "aria-hidden": "true" }, svg);
+      sweeps.forEach((d) => el("path", { d, class: "sweep" }, sw));
+      setTimeout(() => sw.remove(), 1700);
+    }
+
+    // Knoten
+    for (const t of model.reihenfolge) {
+      const x = gx(model.tiefe.get(t.nr)), y = gy(reihe.get(t.nr));
+      const z = anzeigeZustand(t);
+      const cp = t.art === "checkpoint";
+      const p = phaseVon(t);
+      const tx = texte.get(t.nr);
+      const g = el("g", {
+        class: "knoten " + (ZKLASSE[z] || "z-wartet") + (cp ? " checkpoint" : "") + (gewaehlt === t.nr ? " gewaehlt" : "") + filterKlasse(t),
+        transform: "translate(" + x + " " + y + ")", tabindex: 0, role: "button", style: "--nc:" + p.farbe,
+        "aria-pressed": gewaehlt === t.nr ? "true" : "false", "data-nr": t.nr,
+        "aria-label": "Ticket " + t.nr + ": " + t.titel + ", " + p.label + ", " + ZWORT[z] + (cp ? ", hier brauchen wir dich" : "")
+      }, svg);
+      el("rect", { class: "fokus", x: -4, y: -4, width: W + 8, height: H + 8, rx: 8 }, g);
+      el("rect", { class: "koerper", x: 0, y: 0, width: W, height: H, rx: 6 }, g);
+      el("rect", { class: "kopfband", x: 1, y: 1, width: W - 2, height: 29, rx: 5 }, g);
+      el("rect", { class: "kante", x: 1, y: 1, width: 4, height: H - 2, rx: 2 }, g);
+      el("circle", { class: "halo", cx: 18, cy: 15.5, r: 5.5 }, g);
+      el("circle", { class: "lampe", cx: 18, cy: 15.5, r: 5.5, fill: ZFARBE[z] }, g);
+      const nrTxt = "#" + t.nr;
+      const nr = el("text", { class: "nr", x: 30, y: 20 }, g); nr.textContent = nrTxt;
+      const tagX = 30 + breiteVon(nrTxt, FONT_NR) + 8;
+      const tag = el("text", { class: "ntag", x: tagX, y: 20 }, g);
+      tag.textContent = p.label;
+      // Zustands-Wort oben rechts nur, wenn es neben Nummer + Naht passt; sonst spricht die Lampe
+      const tagEnde = tagX + textBreite(p.label, FONT_KOPF, 0.1);
+      const zstB = textBreite(ZWORT[z], FONT_ZST, 0.08);
+      const menschB = cp ? 22 : 0;
+      if (W - 10 - zstB - menschB - 10 >= tagEnde) {
+        const zt = el("text", { class: "zst", x: W - 10, y: 20, "text-anchor": "end", fill: ZFARBE[z] }, g);
+        zt.textContent = ZWORT[z];
+        if (cp) mensch(g, W - 10 - zstB - 20, 7, 1);
+      } else if (cp && W - 26 - 8 >= tagEnde) mensch(g, W - 26, 7, 1);
+      tx.titel.forEach((zeile, i) => { const tt = el("text", { class: "titel", x: 13, y: 49 + i * LH_TITEL }, g); tt.textContent = zeile; });
+      const phY = 49 + tx.titel.length * LH_TITEL + 1;
+      tx.ph.forEach((pz, i) => {
+        const e = el("text", { class: "phase-t" + (pz.cp ? " cp" : ""), x: 13, y: phY + i * LH_PHASE }, g); e.textContent = pz.txt;
+      });
+      const st = el("text", { class: "status", x: 13, y: H - 22, id: "kst-" + t.nr }, g);
+      st.textContent = statusZeile(t, now);
+      el("rect", { class: "pb-bg", x: 13, y: H - 14, width: BARW, height: 6, rx: 2 }, g);
+      el("rect", { class: "pb", id: "kpb-" + t.nr, x: 13, y: H - 14, width: (BARW * fortschritt(t, now)) / 100, height: 6, rx: 2, fill: ZFARBE[z] }, g);
+      const tip = el("title", null, g); tip.textContent = t.kurz || t.titel;
+    }
+
+    const box = $("stellpult");
+    box.classList.toggle("ueberbreit", breite > $("gleis-scroll").clientWidth + 4);
+  }
+
+  /* ---------- Gleisplan als Liste (Handy, unter 700 px) ---------- */
+  const HANDY_MQ = window.matchMedia ? matchMedia("(max-width:700px)") : null;
+  function istHandy() { return !!(HANDY_MQ && HANDY_MQ.matches); }
+
+  function listenStatus(t, now) {
+    const z = anzeigeZustand(t);
+    const p = Math.round(fortschritt(t, now));
+    if (z === "blockiert") return "wartet auf " + nrListe(offeneBlocker(t));
+    if (z === "bereit") return "bereit · wartet auf Platz";
+    if (z === "fertig") { const a = ts(t.start), e = ts(t.ende); return "fertig" + (a != null && e != null ? " · " + dauer(e - a) : ""); }
+    if (z === "braucht_david") return "Du bist dran";
+    if (z === "fehler") return "Fehler · " + p + " %";
+    if (z === "läuft") return p + " % · " + restText(t, now);
+    return ZWORT[z] || z;
+  }
+
+  function renderGleisliste(now) {
+    const box = $("gleis-liste");
+    if (!box) return;
+    const gesehen = new Set();
+    const gruppen = model.phasen.map((p) => ({ p, s: phasenStand(p) }));
+    gruppen.forEach((g) => g.s.liste.forEach((t) => gesehen.add(t.nr)));
+    const rest = tickets.filter((t) => !gesehen.has(t.nr));
+    if (rest.length) gruppen.push({ p: OHNE, s: { liste: rest, n: rest.length, fertig: rest.filter((t) => t.zustand === "fertig").length, zst: "offen" } });
+    const zeile = (t) => {
+      const z = anzeigeZustand(t);
+      const an = gewaehlt === t.nr;
+      const cp = t.art === "checkpoint";
+      return '<li><button type="button" class="gl-zeile' + (an ? " aktiv" : "") + " z-" + (z === "läuft" ? "laeuft" : z) + '" data-nr="' + t.nr + '" aria-pressed="' + an + '" style="--zc:' + ZFARBE[z] + '">' +
+        '<span class="gl-lampe" aria-hidden="true"></span>' +
+        '<span class="gl-inhalt"><span class="gl-titel"><b class="num">#' + t.nr + "</b> " + esc(t.titel) + "</span>" +
+        (cp ? '<span class="gl-cp">Hier brauchen wir dich</span>' : "") +
+        (t.zustand !== "fertig" && t.phase ? '<span class="gl-phase">Gerade: ' + esc(t.phase) + "</span>" : "") +
+        '<span class="gl-status num" id="gls-' + t.nr + '">' + esc(listenStatus(t, now)) + "</span>" +
+        '<span class="gl-balken" aria-hidden="true"><i id="glb-' + t.nr + '" style="width:' + fortschritt(t, now) + '%"></i></span></span>' +
+        '<svg class="gl-pfeil" width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><path d="M6 3.5 10.5 8 6 12.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>' +
+        "</button></li>";
+    };
+    box.innerHTML = gruppen.filter((g) => g.s.liste.length).map(({ p, s }) => {
+      const [wort, farbe] = PZ[s.zst] || PZ.offen;
+      const name = p.key === "A" || p.key === "0" ? p.name : p.label + " · " + p.name;
+      const fkl = nahtFilter == null ? "" : p.key === nahtFilter ? " im-filter" : " abgedunkelt";
+      return '<section class="gl-gruppe' + fkl + '" data-naht="' + esc(p.key) + '" style="--nc:' + p.farbe + '">' +
+        '<h3 class="gl-kopf"><span class="gl-name">' + esc(name) + '</span><span class="gl-zahl num">' + s.fertig + "/" + s.n + '</span><span class="pill" style="--pc:' + farbe + '">' + wort + "</span></h3>" +
+        '<ul class="gl-ul">' + s.liste.map(zeile).join("") + "</ul></section>";
+    }).join("");
+  }
+
+  function statusZeile(t, now) {
+    const z = anzeigeZustand(t);
+    const p = Math.round(fortschritt(t, now));
+    let s;
+    if (z === "blockiert") {
+      const ob = offeneBlocker(t);
+      s = "wartet auf " + nrListe(ob);
+      if (breiteVon(s, FONT_STATUS) > W - 20) s = "wartet auf " + ob.length + " Tickets";
+      if (breiteVon(s, FONT_STATUS) > W - 20) s = ob.length + " Tickets davor";
+      return s;
+    }
+    if (z === "bereit") return breiteVon("bereit · wartet auf Platz", FONT_STATUS) > W - 20 ? "bereit" : "bereit · wartet auf Platz";
+    if (z === "fertig") {
+      const a = ts(t.start), e = ts(t.ende);
+      s = "fertig" + (a != null && e != null ? " · " + dauer(e - a) : "");
+      return breiteVon(s, FONT_STATUS) > W - 20 ? "fertig" : s;
+    }
+    if (z === "braucht_david") return "Du bist dran";
+    if (z === "fehler") return "Fehler · " + p + " %";
+    s = p + " % · " + restText(t, now);
+    if (breiteVon(s, FONT_STATUS) > W - 20) s = p + " %";
+    return s;
+  }
+
+  /* ---------- Detail ---------- */
+  function renderDetail(now) {
+    const box = $("detail");
+    if (gewaehlt == null || !model.map.has(gewaehlt)) { box.hidden = true; box.textContent = ""; return; }
+    const t = model.map.get(gewaehlt);
+    const z = anzeigeZustand(t);
+    const p = phaseVon(t);
+    const s = ts(t.start), e = ts(t.ende);
+    const f = zahl(meta && meta.faktor, 1) || 1;
+    const nachfolger = model.blockiert.get(t.nr) || [];
+    const chips = (list) => list.length ? list.map((n) => {
+      const x = model.map.get(n);
+      return '<button type="button" class="nrchip' + (x && x.zustand === "fertig" ? " ok" : "") + '" data-springe="' + n + '">#' + n + (x && x.zustand === "fertig" ? " fertig" : "") + "</button>";
+    }).join("") : '<span style="color:var(--muted)">keins</span>';
+    const tokMax = Math.max(t.schaetzung_k * f, t.ist_k || 0, 1);
+    const tatsMs = s != null ? (e ?? now) - s : null;
+    const zeitMax = Math.max(t.erwartet_min * MIN, tatsMs || 0, 1);
+    const ueberT = t.ist_k != null && t.ist_k > t.schaetzung_k * f;
+    const ueberZ = tatsMs != null && tatsMs > t.erwartet_min * MIN;
+    const dauerIst = s == null ? "noch nicht gestartet" : e != null ? dauer(e - s) : '<span class="num" data-clock="' + s + '">' + uhr(now - s) + "</span> (läuft)";
+    const pct = Math.round(fortschritt(t, now));
+
+    box.style.setProperty("--nc", p.farbe);
+    box.innerHTML =
+      '<div class="d-kopf"><div class="links">' +
+        '<div class="chipreihe"><span class="chip" style="color:' + ZFARBE[z] + '">' + esc(ZWORT[z]) + "</span>" +
+        '<span class="chip naht">' + esc(p.key === "A" || p.key === "0" ? p.name : p.label + " · " + p.name) + "</span>" +
+        (t.art === "checkpoint" ? '<span class="chip" style="color:var(--david)"><svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="4" r="3.2" fill="currentColor"/><path d="M2 16c0-4 2.7-6.6 6-6.6s6 2.6 6 6.6z" fill="currentColor"/></svg>Hier brauchen wir dich</span>' : "") +
+        '<span class="chip num" style="color:var(--muted)" id="d-pct">' + pct + " %</span></div>" +
+        "<h3>#" + t.nr + " " + esc(t.titel) + "</h3>" +
+        (t.phase ? '<p style="color:var(--muted);font-style:italic">Gerade: ' + esc(t.phase) + "</p>" : "") +
+      '</div><button type="button" class="zu" id="d-zu">Schließen</button></div>' +
+      '<div class="spalte">' +
+        '<div class="feld"><span class="fl">Worum es geht</span><p>' + (esc(t.kurz) || "–") + "</p></div>" +
+        '<div class="feld"><span class="fl">Was am Ende da ist</span><p>' + (esc(t.liefert) || "–") + "</p></div>" +
+        '<div class="feld"><span class="fl">Woran man sieht, dass es klappt</span><p>' + (esc(t.beweis) || "–") + "</p></div>" +
+        '<div class="feld"><span class="fl">Muss vorher fertig sein</span><div class="chipreihe">' + chips(t.blocked_by) + "</div></div>" +
+        '<div class="feld"><span class="fl">Wartet auf dieses Ticket</span><div class="chipreihe">' + chips(nachfolger) + "</div></div>" +
+      "</div>" +
+      '<div class="spalte">' +
+        '<div class="feld"><span class="fl">Dauer</span><div class="vergleich">' +
+          '<span>erwartet</span><span class="bahn soll"><i style="width:' + ((t.erwartet_min * MIN) / zeitMax) * 100 + '%"></i></span><span class="num">' + t.erwartet_min + " Min</span>" +
+          '<span>tatsächlich</span><span class="bahn ist' + (ueberZ ? " ueber" : "") + '"><i id="d-zeitbar" style="width:' + ((tatsMs || 0) / zeitMax) * 100 + '%"></i></span><span class="num">' + dauerIst + "</span>" +
+        "</div>" + (t.zustand === "läuft" ? '<p class="num" style="font-size:13px;color:var(--muted)" id="d-rest">' + esc(restText(t, now)) + "</p>" : "") + "</div>" +
+        '<div class="feld"><span class="fl">Arbeitsmenge (Token)</span><div class="vergleich">' +
+          '<span>geschätzt</span><span class="bahn soll"><i style="width:' + ((t.schaetzung_k * f) / tokMax) * 100 + '%"></i></span><span class="num">' + t.schaetzung_k + "k × " + kommaZahl(f) + "</span>" +
+          '<span>verbraucht</span><span class="bahn ist' + (ueberT ? " ueber" : "") + '"><i style="width:' + ((t.ist_k || 0) / tokMax) * 100 + '%"></i></span><span class="num">' + (t.ist_k != null ? t.ist_k + "k" : "–") + "</span>" +
+        "</div></div>" +
+        '<div class="feld"><span class="fl">Zeiten</span><p class="num" style="font-size:13.5px">Start ' + (s != null ? hhmm(s) : "–") + " · Ende " + (e != null ? hhmm(e) : "–") + "</p></div>" +
+        (meta && typeof meta.repo === "string" && /^[\w.-]+\/[\w.-]+$/.test(meta.repo)
+          ? '<p class="gh"><a href="https://github.com/' + meta.repo.split("/").map(encodeURIComponent).join("/") + "/issues/" + encodeURIComponent(t.nr) + '" target="_blank" rel="noopener">Ticket #' + t.nr + " auf GitHub öffnen</a></p>"
+          : "") +
+      "</div>";
+    box.hidden = false;
+    $("d-zu").addEventListener("click", () => waehle(null, true));
+  }
+
+  function waehle(nr, fokusZurueck) {
+    const alt = gewaehlt;
+    gewaehlt = gewaehlt === nr ? null : nr;
+    renderAlles();
+    if (gewaehlt != null) {
+      const d = $("detail");
+      if (d && d.getBoundingClientRect().top > window.innerHeight - 80) d.scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "nearest" });
+    }
+    if (fokusZurueck && alt != null) {
+      const k = document.querySelector((istHandy() ? ".gl-zeile" : ".knoten") + '[data-nr="' + alt + '"]');
+      if (k) k.focus({ preventScroll: istHandy() });
+    }
+  }
+
+  /* ---------- Fahrplan ---------- */
+  function renderZeitleiste(now, pg) {
+    const box = $("zeitleiste");
+    const t0 = pg.t0;
+    const t1 = Math.max(pg.ende, now);
+    const span = Math.max(t1 - t0, 30 * MIN) * 1.04;
+    const pos = (t) => ((t - t0) / span) * 100;
+    let html = '<div></div><div class="zl-achse">';
+    const bahnBreite = Math.max(120, box.clientWidth - (istHandy() ? 0 : 250));
+    const maxTicks = Math.max(2, Math.floor(bahnBreite / 64));
+    const schritt = [10, 15, 20, 30, 60, 120, 180, 240, 360].map((m) => m * MIN).find((x) => span / x <= maxTicks) || 720 * MIN;
+    for (let t = Math.ceil(t0 / schritt) * schritt; t <= t0 + span; t += schritt) {
+      const p = pos(t);
+      if (p > 3 && p < 97) html += '<span style="left:' + p + '%">' + hhmm(t) + "</span>";
+    }
+    html += "</div>";
+    for (const t of model.reihenfolge) {
+      const pl = pg.plan.get(t.nr);
+      const ph = phaseVon(t);
+      const s = ts(t.start), e = ts(t.ende);
+      const z = anzeigeZustand(t);
+      const sollStart = pl.ps, sollEnde = pl.ps + t.erwartet_min * MIN;
+      const fkl = filterKlasse(t);
+      html += '<button type="button" class="zl-lbl' + fkl + '" style="--nc:' + ph.farbe + '" data-springe="' + t.nr + '"><span class="n">' + esc(ph.label) + '</span><span class="t"><b class="num">#' + t.nr + "</b> " + esc(t.titel) + "</span></button>";
+      html += '<div class="zl-bahn' + fkl + '" style="--nc:' + ph.farbe + '">';
+      html += '<span class="soll" style="left:' + pos(sollStart) + "%;width:" + Math.max(0.6, pos(sollEnde) - pos(sollStart)) + '%" title="geplant ' + t.erwartet_min + ' Min"></span>';
+      if (s != null) {
+        const ie = e ?? now;
+        const cls = t.zustand === "fertig" ? "fertig" : t.zustand === "braucht_david" ? "david" : t.zustand === "fehler" ? "fehler" : "laeuft";
+        html += '<span class="ist ' + cls + '" style="left:' + pos(s) + "%;width:" + Math.max(0.6, pos(ie) - pos(s)) + '%"></span>';
+      }
+      let zahlTxt = "";
+      if (z === "fertig" && s != null && e != null) zahlTxt = dauer(e - s) + " statt " + t.erwartet_min + " Min";
+      else if (t.zustand === "läuft") zahlTxt = Math.round(fortschritt(t, now)) + " % · " + restText(t, now);
+      else if (t.zustand === "braucht_david") zahlTxt = "wartet auf dich";
+      else if (t.zustand === "fehler") zahlTxt = "Fehler";
+      else zahlTxt = "ab ca. " + hhmm(sollStart);
+      const zp = Math.min(pos(sollStart), s != null ? pos(s) : 100);
+      html += '<span class="zahl" style="' + (zp > 62 ? "right:" + (100 - Math.max(pos(sollEnde), s != null ? pos(e ?? now) : 0)) + "%" : "left:" + zp + "%") + '">' + esc(zahlTxt) + "</span>";
+      html += "</div>";
+    }
+    html += '<div class="zl-jetzt-lage"><span class="jetzt" style="left:' + pos(now) + '%"></span></div>';
+    box.innerHTML = html;
+    // Jetzt-Linie liegt absolut über allen Zeilen der Balken-Spalte (keine Grid-Zelle, verschiebt nichts)
+    const achse = box.querySelector(".zl-achse"), lage = box.querySelector(".zl-jetzt-lage");
+    if (achse && lage) { lage.style.left = achse.offsetLeft + "px"; lage.style.width = achse.offsetWidth + "px"; }
+
+    const davidTxt = pg.davidJetzt ? "jetzt" : pg.davidAb != null ? "ca. " + hhmm(pg.davidAb) : "–";
+    $("prognose").innerHTML =
+      '<span>Voraussichtlich fertig gegen <b>' + hhmm(pg.ende) + "</b></span>" +
+      '<span class="dav">Du wirst gebraucht: <b>' + davidTxt + "</b></span>";
+  }
+
+  /* ---------- Kopf, Tafeln, Hinweise ---------- */
+  function renderKopf(now, pg) {
+    $("h-spec").textContent = "Spec " + (meta && meta.spec != null ? meta.spec : "–");
+    $("h-name").textContent = (meta && meta.titel) || "ohne Titel";
+    const ort = meta && meta.ziel === "server" ? "Bau-Server" : "Lokal auf diesem PC";
+    const ortIcon = meta && meta.ziel === "server"
+      ? '<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="2" width="12" height="5" rx="1" fill="none" stroke="currentColor" stroke-width="1.5"/><rect x="2" y="9" width="12" height="5" rx="1" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="5" cy="4.5" r="1" fill="currentColor"/><circle cx="5" cy="11.5" r="1" fill="currentColor"/></svg>'
+      : '<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><rect x="1.5" y="2" width="13" height="9" rx="1" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M5 14h6M8 11v3" stroke="currentColor" stroke-width="1.5"/></svg>';
+    const ortHtml = ortIcon + esc(ort);
+    if ($("h-ort").innerHTML !== ortHtml) $("h-ort").innerHTML = ortHtml;
+    $("h-gestartet").dataset.rel = String(ts(meta && meta.gestartet) ?? "");
+
+    const n = tickets.length;
+    const fertig = tickets.filter((t) => t.zustand === "fertig").length;
+    const summe = tickets.reduce((a, t) => a + t.erwartet_min, 0) || 1;
+    const gew = tickets.reduce((a, t) => a + t.erwartet_min * fortschritt(t, now), 0) / summe;
+    const nurFertig = tickets.filter((t) => t.zustand === "fertig").reduce((a, t) => a + t.erwartet_min, 0) / summe * 100;
+    $("t-prozent").textContent = (gew < 10 ? gew.toFixed(1).replace(".", ",") : Math.round(gew)) + " %";
+    $("t-schiene").style.width = nurFertig + "%";
+    $("t-schiene-lauf").style.width = gew + "%";
+    $("t-fertig").textContent = fertig + " von " + n + " Tickets fertig";
+
+    $("t-ende").textContent = hhmm(pg.ende);
+    $("t-ende-unter").textContent = pg.ende - now > 0 ? "noch ca. " + dauer(pg.ende - now) : "gleich";
+
+    const dm = davidListe();
+    const david = dm.length;
+    $("t-david").textContent = String(david);
+    $("t-david-tafel").classList.toggle("null", david === 0);
+    $("t-david-unter").textContent = david
+      ? "Jetzt: " + dm.map((k) => (typeof k === "number" ? "#" + k : "Hinweis")).join(", ")
+      : pg.davidAb != null ? "Nein. Gegen " + hhmm(pg.davidAb) + " bei der Abnahme" : "Nein, gerade nicht";
+
+    const lauf = tickets.filter((t) => t.zustand === "läuft");
+    $("t-laeuft").textContent = String(lauf.length);
+    $("t-laeuft-tafel").classList.toggle("run", lauf.length > 0);
+    let lu = lauf.length ? lauf.map((t) => "#" + t.nr + (t.phase ? " " + t.phase : "")).join(" · ") : "gerade nichts";
+    const fehler = tickets.filter((t) => t.zustand === "fehler").length;
+    if (fehler) lu += " · " + fehler + " mit Fehler";
+    $("t-laeuft-unter").textContent = lu;
+
+    $("f-faktor").textContent = "Faktor Token-Schätzung: ×" + kommaZahl(zahl(meta && meta.faktor, 1));
+    $("f-quelle").textContent = quelle === "live" ? "Quelle: Live-Stand" : "Quelle: Beispiel-Stand";
+    document.title = "Bau-Leitstand";
+  }
+
+  const icoWarn = '<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.5 15 14H1z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M8 6v4" stroke="currentColor" stroke-width="1.6"/><circle cx="8" cy="12" r=".9" fill="currentColor"/></svg>';
+  const icoInfo = '<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 7v4.5" stroke="currentColor" stroke-width="1.6"/><circle cx="8" cy="4.8" r=".9" fill="currentColor"/></svg>';
+  const icoAuge = '<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M1 8s2.6-4.8 7-4.8S15 8 15 8s-2.6 4.8-7 4.8S1 8 1 8z" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="8" cy="8" r="2.2" fill="currentColor"/></svg>';
+
+  function renderKarten() {
+    const h = (meta && Array.isArray(meta.hinweise)) ? meta.hinweise : [];
+    const b = (meta && Array.isArray(meta.beobachten)) ? meta.beobachten.filter((x) => x && x.befehl) : [];
+    let html = "";
+    if (b.length) {
+      html += '<article class="karte live">' + icoAuge + "<h4>Live zuschauen</h4><p>Befehl kopieren und in PowerShell einfügen.</p>" +
+        '<div class="befehle">' + b.map((x, i) =>
+          '<div class="befehl">' + (x.titel ? '<span class="bt">' + esc(x.titel) + "</span>" : "") +
+          "<pre>" + esc(x.befehl) + '</pre><button type="button" class="kopier" data-kopier="' + i + '">Kopieren</button></div>'
+        ).join("") + "</div></article>";
+    }
+    html += h.map((x) =>
+      '<article class="karte' + (x && x.art === "achtung" ? " achtung" : "") + '">' + (x && x.art === "achtung" ? icoWarn : icoInfo) + "<h4>" + esc(x && x.titel) + "</h4><p>" + mitCode(x && x.text) + "</p></article>"
+    ).join("");
+    if (!html) html = '<p style="color:var(--muted);margin:0">Keine Hinweise.</p>';
+    const box = $("karten");
+    if (box.dataset.html !== html) { box.innerHTML = html; box.dataset.html = html; }
+  }
+
+  async function kopiere(knopf) {
+    const b = (meta && Array.isArray(meta.beobachten)) ? meta.beobachten.filter((x) => x && x.befehl) : [];
+    const x = b[Number(knopf.dataset.kopier)];
+    if (!x) return;
+    let ok = false;
+    try { await navigator.clipboard.writeText(String(x.befehl)); ok = true; } catch (e) { ok = false; }
+    knopf.textContent = ok ? "Kopiert" : "Bitte markieren";
+    knopf.classList.toggle("ok", ok);
+    setTimeout(() => { knopf.textContent = "Kopieren"; knopf.classList.remove("ok"); }, 1800);
+  }
+
+  /* ---------- Live-Mischung, Frische, „Brauchst du mich?“ ---------- */
+  const LIVE_FELDER = ["zustand", "ist_k", "phase", "fortschritt", "start", "ende"];
+  const STAND_ALT_MS = 10 * MIN;
+
+  // Legt die Felder des neuesten live-Dokuments einzeln (nur vorhandene) über die statischen Tickets.
+  function mische() {
+    const lt = liveAktuell && liveAktuell.tickets && typeof liveAktuell.tickets === "object" ? liveAktuell.tickets : {};
+    tickets = statTickets.map((t) => {
+      const l = lt[String(t.nr)];
+      if (!l || typeof l !== "object") return t;
+      const roh = Object.assign({}, t);
+      for (const f of LIVE_FELDER) if (Object.prototype.hasOwnProperty.call(l, f) && l[f] !== undefined) roh[f] = l[f];
+      return normTicket(roh, t.nr);
+    });
+    if (gewaehlt != null && !tickets.some((t) => t.nr === gewaehlt)) gewaehlt = null;
+    renderAlles();
+  }
+
+  // Zeitpunkt des Stands: zeit des neuesten live-Dokuments, sonst meta.aktualisiert.
+  function standZeit() {
+    return ts(liveAktuell && liveAktuell.zeit) ?? ts(meta && meta.aktualisiert);
+  }
+
+  function renderStand(now) {
+    const s = standZeit();
+    let txt = "Stand unbekannt";
+    if (s != null) {
+      const min = Math.max(0, Math.floor((now - s) / MIN));
+      txt = min < 1 ? "Stand von gerade eben" : min < 120 ? "Stand von vor " + min + " Min" : "Stand von vor " + Math.floor(min / 60) + " Std";
+    }
+    const h = $("h-stand");
+    if (h.textContent !== txt) h.textContent = txt;
+    const alt = $("stand-alt");
+    const istAlt = s != null && now - s > STAND_ALT_MS;
+    if (alt.hidden === istAlt) alt.hidden = !istAlt;
+  }
+
+  // Wer braucht David? Tickets mit braucht_david + offene Log-Einträge art "david", je Ticket nur einmal.
+  // Rückgabe: Ticketnummern (number) bzw. "log:<i>" für Einträge ohne Ticket.
+  function davidListe() {
+    const s = new Set();
+    tickets.forEach((t) => { if (t.zustand === "braucht_david") s.add(t.nr); });
+    logEintraege.forEach((e, i) => {
+      if (!e || e.art !== "david" || e.erledigt === true) return;
+      const nr = Number(e.ticket);
+      s.add(e.ticket != null && Number.isFinite(nr) ? nr : "log:" + (e.id || i));
+    });
+    return [...s];
+  }
+
+  /* ---------- Naht-Filter ---------- */
+  // Klasse für Gleisplan-Knoten und Fahrplan-Zeilen, damit der Filter jedes Neuzeichnen übersteht
+  function filterKlasse(t) {
+    if (nahtFilter == null || !t) return "";
+    return phaseKey(t) === nahtFilter ? " im-filter" : " abgedunkelt";
+  }
+  // Klick: vorhandene Elemente umschalten (so greift die Überblendung), kein komplettes Neuzeichnen
+  function wendeNahtFilterAn() {
+    const an = nahtFilter != null;
+    const passt = (nr) => { const t = model && model.map.get(nr); return !!t && phaseKey(t) === nahtFilter; };
+    const setze = (n, p) => { if (!n) return; n.classList.toggle("im-filter", an && p); n.classList.toggle("abgedunkelt", an && !p); };
+    document.querySelectorAll(".knoten[data-nr]").forEach((k) => setze(k, passt(Number(k.dataset.nr))));
+    document.querySelectorAll(".zl-lbl[data-springe]").forEach((l) => {
+      const p = passt(Number(l.dataset.springe));
+      setze(l, p);
+      const b = l.nextElementSibling;
+      if (b && b.classList.contains("zl-bahn")) setze(b, p);
+    });
+    document.querySelectorAll(".gl-gruppe[data-naht]").forEach((g) => setze(g, g.dataset.naht === nahtFilter));
+    document.querySelectorAll(".phase[data-naht]").forEach((li) => li.classList.toggle("aktiv", an && li.dataset.naht === nahtFilter));
+    document.querySelectorAll(".ph-knopf[data-naht]").forEach((b) => b.setAttribute("aria-pressed", String(an && b.dataset.naht === nahtFilter)));
+    $("phasen").classList.toggle("gefiltert", an);
+    const alle = $("ph-alle"); if (alle) alle.hidden = !an;
+  }
+  function setzeNahtFilter(key) {
+    nahtFilter = key == null || String(key) === nahtFilter ? null : String(key);
+    wendeNahtFilterAn();
+  }
+
+  /* ---------- Wächter-Log ---------- */
+  const LOGART = { problem: ["Problem", "var(--err)"], david: ["braucht dich", "var(--david)"], befund: ["Befund", "var(--befund)"], info: ["Info", "var(--wait)"] };
+  const LOGFILTER = { alle: null, probleme: ["problem", "david"], befunde: ["befund"], info: ["info"] };
+  const LOGCHIPS = [["alle", "Alle"], ["probleme", "Probleme"], ["befunde", "Befunde"], ["info", "Info"]];
+  const logArt = (e) => (e && LOGART[e.art] ? e.art : "info");
+  const logSchluessel = (e, i) => String(e && e.id != null ? e.id : "i" + i);
+
+  // Offene Punkte für die Meldungsleiste: problem/david, nicht erledigt, höchstens 24 h alt
+  function offeneMeldungen(now) {
+    return logEintraege.map((e, i) => ({ e, i })).filter(({ e }) => {
+      if (!e || (e.art !== "problem" && e.art !== "david") || e.erledigt === true) return false;
+      const z = ts(e.zeit);
+      return z != null && now - z <= 24 * 60 * MIN;
+    });
+  }
+
+  function renderMeldung(now) {
+    const box = $("meldung");
+    if (!box) return;
+    const offen = offeneMeldungen(now);
+    let html = "";
+    if (offen.length) {
+      const { e, i } = offen[0];
+      const n = offen.length;
+      html = '<span class="m-punkt" aria-hidden="true"></span><span class="m-text"><span class="m-lang">' +
+        (n === 1 ? "1 Punkt braucht dich: " : n + " Punkte brauchen dich: ") + "<b>" + esc(e.titel || "ohne Titel") + "</b>" +
+        (n > 1 ? " und " + (n - 1) + " weitere" : "") + '</span><span class="m-kurz"><b>' + n + "</b> " + (n === 1 ? "Punkt braucht dich" : "Punkte brauchen dich") + "</span></span>" +
+        '<button type="button" class="knopf-klein" data-zumlog="' + esc(logSchluessel(e, i)) + '">Zum Log</button>';
+    }
+    if (box.innerHTML !== html) box.innerHTML = html; // Fokus auf „Zum Log“ bleibt beim Takt erhalten
+    box.hidden = !offen.length;
+  }
+
+  function renderLog() {
+    const box = $("log-liste"), chips = $("log-chips");
+    if (!box || !chips) return;
+    const now = Date.now();
+    const liste = logEintraege.map((e, i) => ({ e, i })).filter(({ e }) => e && typeof e === "object");
+    const zahlen = { alle: liste.length, probleme: 0, befunde: 0, info: 0 };
+    liste.forEach(({ e }) => { const a = logArt(e); zahlen[a === "problem" || a === "david" ? "probleme" : a === "befund" ? "befunde" : "info"]++; });
+    chips.innerHTML = LOGCHIPS.map(([k, w]) => '<button type="button" class="log-chip" data-logfilter="' + k + '" aria-pressed="' + (logFilter === k) + '">' + w + '<span class="anz num">' + zahlen[k] + "</span></button>").join("");
+    const erlaubt = LOGFILTER[logFilter];
+    const sicht = erlaubt ? liste.filter(({ e }) => erlaubt.includes(logArt(e))) : liste;
+    if (!sicht.length) {
+      box.innerHTML = '<li class="log-leer">' + (liste.length ? "Keine Meldungen in diesem Filter." : "Noch keine Meldungen.") + "</li>";
+    } else {
+      box.innerHTML = sicht.map(({ e, i }) => {
+        const a = logArt(e);
+        const [wort, farbe] = LOGART[a];
+        const z = ts(e.zeit);
+        const nr = Number(e.ticket);
+        const hatNr = e.ticket != null && e.ticket !== "" && Number.isFinite(nr);
+        const tk = !hatNr ? ""
+          : tickets.some((t) => t.nr === nr)
+            ? '<button type="button" class="knopf-klein log-tk" data-springe="' + nr + '" aria-label="Ticket ' + nr + ' öffnen">#' + nr + "</button>"
+            : '<span class="log-tk">#' + nr + "</span>";
+        return '<li class="log-e art-' + a + (e.erledigt === true ? " erledigt" : "") + '" tabindex="-1" style="--ac:' + farbe + '" data-logid="' + esc(logSchluessel(e, i)) + '">' +
+          '<span class="strich" aria-hidden="true"></span>' +
+          '<span class="zeit num">' + (z != null ? hhmm(z) + '<small data-rel="' + z + '">' + vor(z) + "</small>" : "–") + "</span>" +
+          '<span class="kopfz"><span class="art">' + wort + '</span><b class="ti">' + esc(e.titel || "ohne Titel") + "</b>" + (e.erledigt === true ? '<span class="erl">erledigt</span>' : "") + "</span>" +
+          (e.text ? '<p class="tx" title="' + esc(e.text) + '">' + esc(e.text) + "</p>" : "") +
+          tk + "</li>";
+      }).join("");
+    }
+    renderMeldung(now);
+  }
+
+  function zumLog(id) {
+    const finde = () => [...document.querySelectorAll(".log-e[data-logid]")].find((n) => n.dataset.logid === id);
+    let el = finde();
+    if (!el && logFilter !== "alle") { logFilter = "alle"; renderLog(); el = finde(); }
+    const ruhe = matchMedia("(prefers-reduced-motion: reduce)").matches;
+    (el || $("log")).scrollIntoView({ behavior: ruhe ? "auto" : "smooth", block: "center" });
+    if (!el) return;
+    el.focus({ preventScroll: true });
+    el.classList.add("blitz");
+    setTimeout(() => el.classList.remove("blitz"), 2000);
+  }
+
+  /* ---------- Render & Takt ---------- */
+  function renderAlles() {
+    const now = Date.now();
+    model = bauModell();
+    const pg = prognose(now);
+    const scroll = $("gleis-scroll").scrollLeft;
+    const fokusNr = document.activeElement && document.activeElement.dataset ? document.activeElement.dataset.nr : null;
+    renderKopf(now, pg);
+    renderLegende();
+    renderPhasen();
+    renderGleisplan(now);
+    renderGleisliste(now);
+    renderDetail(now);
+    renderZeitleiste(now, pg);
+    renderKarten();
+    $("gleis-scroll").scrollLeft = scroll;
+    if (fokusNr) { const k = document.querySelector((istHandy() ? ".gl-zeile" : ".knoten") + '[data-nr="' + fokusNr + '"]'); if (k) k.focus({ preventScroll: true }); }
+    const ruhe = matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (ersterRender && !ruhe) {
+      document.documentElement.classList.add("lampentest");
+      setTimeout(() => document.documentElement.classList.remove("lampentest"), 1300);
+    }
+    ersterRender = false;
+    takt(true);
+  }
+
+  let zaehler = 0;
+  let relZaehler = 0;
+  function takt(erzwingen) {
+    const now = Date.now();
+    // Relative Zeiten nur jede 15. Sekunde neu rechnen (oder sofort nach neuem Stand)
+    if (erzwingen === true || relZaehler % 15 === 0) {
+      document.querySelectorAll("[data-rel]").forEach((n) => { const v = Number(n.dataset.rel); n.textContent = n.dataset.rel && Number.isFinite(v) ? vor(v) : "–"; });
+      if (model) renderStand(now);
+      renderMeldung(now); // 24-h-Fenster altert auch ohne neuen Log-Stand
+    }
+    if (erzwingen !== true) relZaehler++;
+    document.querySelectorAll("[data-clock]").forEach((n) => { n.textContent = uhr(now - Number(n.dataset.clock)); });
+    if (!model) return;
+    const pg = prognose(now);
+    for (const t of tickets) {
+      if (t.zustand !== "läuft" && t.zustand !== "fehler" && t.zustand !== "braucht_david") continue;
+      const st = $("kst-" + t.nr); if (st) st.textContent = statusZeile(t, now);
+      const pb = $("kpb-" + t.nr); if (pb) pb.setAttribute("width", (BARW * fortschritt(t, now)) / 100);
+      const ls = $("gls-" + t.nr); if (ls) ls.textContent = listenStatus(t, now);
+      const lb = $("glb-" + t.nr); if (lb) lb.style.width = fortschritt(t, now) + "%";
+    }
+    if (gewaehlt != null && model.map.has(gewaehlt)) {
+      const t = model.map.get(gewaehlt);
+      const p = $("d-pct"); if (p) p.textContent = Math.round(fortschritt(t, now)) + " %";
+      const r = $("d-rest"); if (r) r.textContent = restText(t, now);
+      const s = ts(t.start);
+      const zb = $("d-zeitbar");
+      if (zb && s != null && ts(t.ende) == null) {
+        const tats = now - s; zb.style.width = (tats / Math.max(t.erwartet_min * MIN, tats, 1)) * 100 + "%";
+      }
+    }
+    renderKopf(now, pg);
+    if (zaehler++ % 5 === 0) renderZeitleiste(now, pg);
+  }
+  setInterval(takt, 1000);
+
+  /* ---------- Interaktion ---------- */
+  document.addEventListener("click", (ev) => {
+    // Handy: Tippen neben das offene Blatt schließt es (und löst darunter nichts aus)
+    if (gewaehlt != null && istHandy() && ev.target.closest && !ev.target.closest("#detail")) { waehle(null, true); return; }
+    const kp = ev.target.closest && ev.target.closest("[data-kopier]");
+    if (kp) { kopiere(kp); return; }
+    const pk = ev.target.closest && ev.target.closest(".ph-knopf");
+    if (pk) { setzeNahtFilter(pk.dataset.naht); return; }
+    if (ev.target.closest && ev.target.closest("#ph-alle")) {
+      const war = nahtFilter;
+      setzeNahtFilter(null);
+      const b = [...document.querySelectorAll(".ph-knopf[data-naht]")].find((n) => n.dataset.naht === war);
+      if (b) b.focus();
+      return;
+    }
+    const lf = ev.target.closest && ev.target.closest("[data-logfilter]");
+    if (lf) {
+      logFilter = LOGFILTER.hasOwnProperty(lf.dataset.logfilter) ? lf.dataset.logfilter : "alle";
+      renderLog();
+      const c = document.querySelector('.log-chip[data-logfilter="' + logFilter + '"]'); if (c) c.focus();
+      return;
+    }
+    const zl = ev.target.closest && ev.target.closest("[data-zumlog]");
+    if (zl) { zumLog(zl.dataset.zumlog); return; }
+    const k = ev.target.closest && ev.target.closest(".knoten, .gl-zeile");
+    if (k) { waehle(Number(k.dataset.nr)); return; }
+    const s = ev.target.closest && ev.target.closest("[data-springe]");
+    if (s) {
+      gewaehlt = null; waehle(Number(s.dataset.springe));
+      const kn = document.querySelector('.knoten[data-nr="' + s.dataset.springe + '"]');
+      if (kn) { kn.focus({ preventScroll: true }); kn.scrollIntoView({ block: "nearest", inline: "center" }); }
+    }
+  });
+  document.addEventListener("keydown", (ev) => {
+    const k = ev.target.closest && ev.target.closest(".knoten");
+    if (k && (ev.key === "Enter" || ev.key === " ")) { ev.preventDefault(); waehle(Number(k.dataset.nr)); }
+    if (ev.key === "Escape") {
+      if (gewaehlt != null) waehle(null, true);          // erst Detail schließen
+      else if (nahtFilter != null) setzeNahtFilter(null); // sonst Naht-Filter aus
+    }
+  });
+  // Gleisplan passt sich der Kastenbreite an: bei Größenänderung (gebremst) neu zeichnen
+  let letzteBreite = 0, resizeTimer = null;
+  const nachResize = () => {
+    const w = $("stellpult").clientWidth;
+    if (!gerendert || !w || Math.abs(w - letzteBreite) < 2) return;
+    letzteBreite = w;
+    renderAlles();
+  };
+  const planeResize = () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(nachResize, 140); };
+  if (typeof ResizeObserver === "function") new ResizeObserver(planeResize).observe($("stellpult"));
+  else window.addEventListener("resize", planeResize);
+
+  /* Farbmodus (nur Komfort, lokal gemerkt) */
+  const MODI = ["auto", "light", "dark"], MODI_TXT = { auto: "automatisch", light: "hell", dark: "dunkel" };
+  let modus = "auto";
+  try { const m = localStorage.getItem("bau-leitstand-theme"); if (MODI.includes(m)) modus = m; } catch (e) { /* ohne Speicher */ }
+  const setzeModus = () => {
+    if (modus === "auto") document.documentElement.removeAttribute("data-theme");
+    else document.documentElement.setAttribute("data-theme", modus);
+    $("theme-btn").textContent = "Farbe: " + MODI_TXT[modus];
+  };
+  setzeModus();
+  $("theme-btn").addEventListener("click", () => {
+    modus = MODI[(MODI.indexOf(modus) + 1) % MODI.length];
+    try { localStorage.setItem("bau-leitstand-theme", modus); } catch (e) { /* ohne Speicher */ }
+    setzeModus();
+  });
+
+  /* ---------- Daten ---------- */
+  function setzeQuelle(q, text) {
+    quelle = q;
+    $("beispiel").classList.toggle("an", q !== "live");
+    $("beispiel").textContent = q === "leer" ? "Noch kein Stand eingetragen. Du siehst einen Beispiel-Stand." : "Beispiel-Stand, keine Live-Verbindung.";
+    const l = $("h-live");
+    l.classList.toggle("an", q === "live");
+    l.classList.remove("stoerung");
+    $("h-live-text").textContent = text || (q === "live" ? "Live verbunden" : "Keine Live-Verbindung");
+  }
+
+  // Log-Anzeige baut ein Folge-Schritt; aufrufen nur, wenn die Funktion existiert
+  function logNeuZeichnen() {
+    try { if (typeof renderLog === "function") renderLog(); } catch (e) { /* Log-Anzeige optional */ }
+  }
+
+  function zeigeBeispiel(q, text) {
+    meta = FALLBACK.meta;
+    statTickets = FALLBACK.tickets.map((t) => normTicket(t, t.nr));
+    liveAktuell = FALLBACK.live;
+    logEintraege = FALLBACK.log.slice();
+    setzeQuelle(q, text);
+    mische();
+    logNeuZeichnen();
+  }
+
+  const hatRuntime = !!(window.claude && typeof window.claude.use === "function");
+  let gerendert = false;
+  if (!hatRuntime) { zeigeBeispiel("beispiel"); gerendert = true; }
+  // Nach dem Laden der Schriften neu messen, damit Titel exakt umbrechen
+  try { if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { if (gerendert) renderAlles(); }); } catch (e) { /* ohne Font-API */ }
+
+  // Rohstand aus der Datenbank (undefined = noch nicht angekommen)
+  let liveMeta = undefined, liveTickets = undefined, liveDocs = undefined, liveLog = undefined;
+  let sicherheit = null;
+
+  // Erstes Rendern wartet auf meta + tickets + live; der Sicherheits-Timer erzwingt es nach 4 s.
+  function uebernehme(erzwingen) {
+    const vollstaendig = liveMeta !== undefined && liveTickets !== undefined && liveDocs !== undefined;
+    if (!gerendert && !vollstaendig && erzwingen !== true) return;
+    if (sicherheit) { clearTimeout(sicherheit); sicherheit = null; }
+    gerendert = true;
+    if (liveMeta === undefined && liveTickets === undefined) {
+      zeigeBeispiel("beispiel", "Verbinde …");
+      return;
+    }
+    const lm = liveMeta || null, lt = liveTickets || [];
+    if (!lm && lt.length === 0) {
+      zeigeBeispiel("leer", "Live verbunden, noch leer");
+      return;
+    }
+    meta = lm || { spec: null, titel: "", ziel: "local", gestartet: null, aktualisiert: null, faktor: 1, hinweise: [] };
+    statTickets = lt;
+    liveAktuell = liveDocs && liveDocs.length ? liveDocs[0] : null;
+    logEintraege = liveLog || [];
+    setzeQuelle("live");
+    mische();
+    logNeuZeichnen();
+  }
+  const stoerung = () => {
+    const l = $("h-live"); l.classList.remove("an"); l.classList.add("stoerung");
+    $("h-live-text").textContent = "Live-Verbindung gestört, zeige letzten Stand";
+  };
+
+  // Abo auf die neuesten n Dokumente einer Collection, nach "zeit" absteigend.
+  // Ersatzweg ohne orderBy/limit, falls die Abfrage nicht unterstützt wird: dann im Browser sortieren.
+  function abonniereNeueste(db, name, n, weiter) {
+    const verarbeite = (snap) => {
+      const docs = (snap && snap.docs ? snap.docs : []).filter((d) => d.exists)
+        .map((d) => Object.assign({ id: d.id }, d.data()));
+      docs.sort((a, b) => (ts(b.zeit) ?? 0) - (ts(a.zeit) ?? 0));
+      weiter(docs.slice(0, n));
+    };
+    let ersatzAktiv = false;
+    const ersatz = () => {
+      if (ersatzAktiv) return;
+      ersatzAktiv = true;
+      try { db.collection(name).onSnapshot(verarbeite, stoerung); } catch (e) { stoerung(); }
+    };
+    try { db.collection(name).orderBy("zeit", "desc").limit(n).onSnapshot(verarbeite, ersatz); } catch (e) { ersatz(); }
+  }
+
+  (async () => {
+    if (!hatRuntime) return;
+    // Sicherheits-Timer läuft ab Start, auch falls die Runtime selbst hängt
+    sicherheit = setTimeout(() => uebernehme(true), 4000);
+    let db = null;
+    try { db = await window.claude.use("db"); } catch (e) { db = null; }
+    if (!db) {
+      if (sicherheit) { clearTimeout(sicherheit); sicherheit = null; }
+      gerendert = true; zeigeBeispiel("beispiel");
+      return;
+    }
+    $("h-live-text").textContent = "Verbinde …";
+    try {
+      db.doc("meta/stand").onSnapshot((snap) => {
+        liveMeta = snap && snap.exists ? Object.assign({}, snap.data()) : null;
+        uebernehme();
+      }, stoerung);
+      db.collection("tickets").onSnapshot((snap) => {
+        liveTickets = snap.docs.filter((d) => d.exists).map((d) => normTicket(d.data(), d.id));
+        uebernehme();
+      }, stoerung);
+      abonniereNeueste(db, "live", 3, (docs) => { liveDocs = docs; uebernehme(); });
+      abonniereNeueste(db, "log", 40, (docs) => { liveLog = docs; uebernehme(); });
+    } catch (e) { stoerung(); uebernehme(true); }
+  })();
+})();
+</script>
