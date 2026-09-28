@@ -209,7 +209,7 @@ def lege_writes_ab(
 
 
 def gh_lauf(args: list[str], repo: Path) -> tuple[int, str]:
-    """``gh <args>`` (oder ``TO_SPAWN_GH_STUB``) ohne Fenster; (Exit-Code, stdout)."""
+    """``gh <args>`` (oder ``TO_SPAWN_GH_STUB``) ohne Fenster; (Exit-Code, stdout — bei Fehler stderr, gekürzt)."""
     vorspann = gh_modul.gh_befehl()
     if vorspann is None:
         return 127, ""
@@ -218,6 +218,8 @@ def gh_lauf(args: list[str], repo: Path) -> tuple[int, str]:
     except (OSError, subprocess.SubprocessError) as fehler:
         log.warning("gh-Aufruf fehlgeschlagen: %s", fehler)
         return 127, ""
+    if erg.returncode != 0:
+        return erg.returncode, ((erg.stderr or "").strip() or (erg.stdout or "").strip())[:300]
     return erg.returncode, (erg.stdout or "").strip()
 
 
@@ -258,7 +260,7 @@ def gh_issues(repo: Path, nummern: list[str]) -> dict[str, dict[str, Any]]:
     abfrage = f'query {{ repository(owner: "{besitzer}", name: "{name}") {{ {teile} }} }}'
     code, ausgabe = gh_lauf(["api", "graphql", "-f", f"query={abfrage}"], repo)
     if code != 0:
-        raise RuntimeError(f"gh api graphql: Exit {code}")
+        raise RuntimeError(f"gh api graphql: Exit {code}: {ausgabe}" if ausgabe else f"gh api graphql: Exit {code}")
     daten = json.loads(ausgabe)["data"]["repository"]
     return {n: daten.get(f"i{n}") or {} for n in nummern}
 

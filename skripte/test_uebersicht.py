@@ -36,8 +36,8 @@ _PASSED = re.compile(r"\b(\d+) passed\b")
 _FAILED = re.compile(r"\b(\d+) (?:failed|errors?)\b")
 _BEFEHL = re.compile(r"(?<![\w./])(?:python3? -m pytest|pytest|node --test|npm (?:run )?test) [^\n`|]*")
 _ABNAHME = re.compile(r"ABNAHME[^:\n]*:\s*\**\s*([^\n*|]+)")
-_ABNAHME_GUT = re.compile(r"ABGENOMMEN|BESTANDEN|GRÜN|BELEGT|FREIGEGEBEN", re.I)
-_ABNAHME_SCHLECHT = re.compile(r"ABGELEHNT|\bROT\b|NICHT|OFFEN|FEHLT", re.I)
+_ABNAHME_GUT = re.compile(r"\b(?:ABGENOMMEN|BESTANDEN|GRÜN|BELEGT|FREIGEGEBEN)\b", re.I)
+_ABNAHME_SCHLECHT = re.compile(r"\b(?:ABGELEHNT|ROT|NICHT|FEHLT)\b|(?<!nichts )(?<!keine )(?<!nix )\bOFFEN\b", re.I)
 _XY = re.compile(r"\b(\d+)\s*/\s*(\d+)\s+(?:Tests?|grün|bestanden|belegt|Kriterien|Abnahme)", re.I)
 _KLICKWEG = re.compile(r"klick.?weg|live-klick|live-beweis", re.I)
 _VERNEINT = re.compile(r"\b(?:kein|keine|keiner|nicht|entfällt|n/a)\b", re.I)
@@ -279,7 +279,7 @@ def main(argv: list[str] | None = None) -> int:
     ).resolve()
     try:
         tickets = lade_tickets(repo, a.spec)
-    except (OSError, ValueError) as fehler:
+    except (OSError, ValueError, AttributeError, TypeError) as fehler:
         log.error("Manifest spec-%s nicht lesbar: %s", a.spec, fehler)
         return 2
     verify_hard = repo / "docs" / "verify-hard"

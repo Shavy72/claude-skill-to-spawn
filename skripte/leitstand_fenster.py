@@ -158,8 +158,8 @@ def lies_url(ablage: Ablage) -> str | None:
     try:
         daten = json.loads(ablage.seite_datei.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as fehler:
-        log.warning("seite-%s.json unlesbar: %s", ablage.spec, fehler)
-        return None
+        log.error("seite-%s.json unlesbar (%s) — Abbruch, sonst entsteht eine zweite Seite.", ablage.spec, fehler)
+        raise
     url = str(daten.get("url") or "").strip() if isinstance(daten, dict) else ""
     return url or None
 
