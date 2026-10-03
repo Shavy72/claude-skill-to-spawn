@@ -1011,10 +1011,17 @@ _VORSCHLAG = re.compile(r"Vorschlag\s*:\s*(.+)", re.IGNORECASE | re.DOTALL)
 WAECHTER_KOPF = "Aufseher:"
 #: Frühere Marke vor der Umbenennung (#428) — alte Issue-Kommentare bleiben eigene Kommentare.
 ALTE_AUFSEHER_KOEPFE: tuple[str, ...] = ("Wächter:",)  # #428-alt
+#: Alle Marken des Aufsehers (neu + alt) — z. B. für den Leitstand.
+AUFSEHER_KOEPFE: tuple[str, ...] = (WAECHTER_KOPF, *ALTE_AUFSEHER_KOEPFE)
+#: Anfang der Issue-Kommentare des Aufpassers (to_spawn/aufpasser.py), gleiches gh-Konto.
+AUFPASSER_KOPF = "Aufpasser:"
 #: Anfang jedes Issue-Kommentars einer Bau-Session (#402). Session, Aufseher und David
 #: kommentieren mit demselben gh-Konto — der Login trennt sie nicht, nur diese Marke.
 #: Der Bau-Prompt bekommt sie über den Platzhalter ``{SESSION_KOPF}`` (skripte/bau.py).
 SESSION_KOPF = "Bau-Session:"
+#: Marken aller eigenen Kommentare ohne Bau-Session (die prüft ``_ist_session_kommentar``):
+#: so beginnende Kommentare sind nie „Davids Antwort“.
+EIGENE_KOEPFE: tuple[str, ...] = (*AUFSEHER_KOEPFE, AUFPASSER_KOPF)
 
 
 @dataclass
@@ -1129,7 +1136,7 @@ def davids_antwort(kommentare: list[dict[str, Any]], seit: datetime) -> str:
     """Login des ersten Kommentars nach ``seit`` ohne Session- oder Aufseher-Marke.
 
     ``""`` = keine Antwort. Der Login trennt nicht (gleiches gh-Konto, #402) — nur die
-    Marken :data:`SESSION_KOPF` und :data:`WAECHTER_KOPF`.
+    Marken :data:`SESSION_KOPF` und :data:`EIGENE_KOEPFE` (Aufseher, Aufpasser).
     """
     for eintrag in sorted(
         kommentare, key=lambda e: _kommentar_teile(e)[2] or datetime.min.replace(tzinfo=timezone.utc)
@@ -1137,9 +1144,7 @@ def davids_antwort(kommentare: list[dict[str, Any]], seit: datetime) -> str:
         autor, text, zeit = _kommentar_teile(eintrag)
         if zeit is None or zeit <= seit:
             continue
-        if text.lstrip().startswith((WAECHTER_KOPF, *ALTE_AUFSEHER_KOEPFE)) or _ist_session_kommentar(
-            text
-        ):
+        if text.lstrip().startswith(EIGENE_KOEPFE) or _ist_session_kommentar(text):
             continue
         return autor or "jemand"
     return ""
@@ -1774,7 +1779,7 @@ def _tick(
                         "--repo",
                         gh_repo,
                         "--body",
-                        f"Aufseher: {fund.regel} — {fund.text}",
+                        f"{WAECHTER_KOPF} {fund.regel} — {fund.text}",
                     ]
                 ):
                     erledigt.add(schluessel)
@@ -1822,8 +1827,8 @@ def _tick(
         if dry_run or regeln_aus:
             continue
         text = (
-            f"Aufseher: Mensch nötig — {was} (fp {fp}).\n"
-            "Aufseher: Die Kette läuft weiter; bitte den Review-Befund von Hand prüfen."
+            f"{WAECHTER_KOPF} Mensch nötig — {was} (fp {fp}).\n"
+            f"{WAECHTER_KOPF} Die Kette läuft weiter; bitte den Review-Befund von Hand prüfen."
         )
         if not _gh_ok(["issue", "comment", ziel, "--repo", gh_repo, "--body", text]):
             aktionen.append(f"#{ziel} FEHLER: kommentieren gescheitert (Mensch nötig)")
@@ -1884,7 +1889,7 @@ def _wieder_oeffnen(n: int, gh_repo: str, funde: list[Verstoss], dry_run: bool) 
     """Ticket einmal wieder öffnen; letzte Zeile ``#N wieder geöffnet`` = geklappt."""
     if dry_run:
         return [f"#{n} [Probe] würde wieder öffnen"]
-    kommentar = "\n".join(f"Aufseher: {f.regel} — {f.text}" for f in funde)
+    kommentar = "\n".join(f"{WAECHTER_KOPF} {f.regel} — {f.text}" for f in funde)
     if _gh_ok(["issue", "reopen", str(n), "--repo", gh_repo, "--comment", kommentar]):
         return [f"#{n} wieder geöffnet"]
     return [f"#{n} FEHLER: wieder öffnen gescheitert"]

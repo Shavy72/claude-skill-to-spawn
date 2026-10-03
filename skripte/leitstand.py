@@ -59,6 +59,7 @@ if _SKILL not in sys.path:
 from to_spawn import bau_log, config  # noqa: E402
 from to_spawn import gh as gh_modul  # noqa: E402
 from to_spawn import manifest as manifest_modul  # noqa: E402
+from to_spawn.capo import AUFSEHER_KOEPFE  # noqa: E402
 
 # Fenster-Teil (Ablage, Zustands-/URL-Datei, seite, anweisung, mail, aktiv, sitzung) liegt in leitstand_fenster.py.
 if str(_SKRIPTE) not in sys.path:
@@ -392,10 +393,11 @@ def aus_kommentaren(nummer: str, issue: dict[str, Any], spec: str) -> list[Ereig
     for k in (issue.get("comments") or {}).get("nodes") or []:
         body = str(k.get("body") or "").strip()
         zeit = lokal_iso(k.get("createdAt"))
-        # Alte Kommentare tragen noch die Marke vor #428.
-        if not body.startswith(("Aufseher", "Wächter")) or not zeit:  # #428-alt
+        # Nur echte Marken mit Doppelpunkt (auch die alte vor #428) — „Aufseher-Fenster …“ nicht.
+        kopf = next((k for k in AUFSEHER_KOEPFE if body.startswith(k)), None)
+        if kopf is None or not zeit:
             continue
-        rein = re.sub(r"(?:Aufseher|Wächter):\s*", "", body)  # #428-alt
+        rein = body[len(kopf) :].lstrip()
         if "Mensch nötig" in body:
             art = "david"
         elif re.search(r"\b(rot|Fehler|blockiert)\b", body):

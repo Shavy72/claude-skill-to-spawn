@@ -21,6 +21,8 @@ from pathlib import Path
 
 import pytest
 
+from to_spawn import capo
+
 SKILL = Path(__file__).resolve().parent.parent
 GH_REPO = "Shavy72/claude-skill-to-spawn"
 log = logging.getLogger("test_waechter_213_weg")
@@ -137,7 +139,7 @@ def test_capo_oeffnet_echtes_issue_wieder(tmp_path: Path) -> None:
         waechter = [
             c["body"]
             for c in daten["comments"]
-            if c["body"].startswith("Wächter: commit_ohne_nummer")
+            if c["body"].startswith(f"{capo.WAECHTER_KOPF} commit_ohne_nummer")
         ]
         print(f"Wächter-Kommentar: {waechter[:1]}")
         assert len(waechter) == 1

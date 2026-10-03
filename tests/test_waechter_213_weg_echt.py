@@ -28,6 +28,8 @@ from pathlib import Path
 
 import pytest
 
+from to_spawn import capo
+
 SKILL = Path(__file__).resolve().parent.parent
 GH_REPO = "Shavy72/claude-skill-to-spawn"
 log = logging.getLogger("test_waechter_213_weg_echt")
@@ -200,7 +202,7 @@ def test_capo_echt_ohne_sofort_schalter(
         print(f"Kind #{kind} nach Tick 2: {daten['state']}")
         assert daten["state"] == "OPEN"
         waechter = [
-            c["body"] for c in daten["comments"] if c["body"].startswith("Wächter:")
+            c["body"] for c in daten["comments"] if c["body"].startswith(capo.WAECHTER_KOPF)
         ]
         print(f"Wächter-Kommentar: {waechter}")
         assert len(waechter) == 1
@@ -234,7 +236,7 @@ def test_capo_echt_ohne_sofort_schalter(
         )
         print(f"Kind #{kind} nach dem zweiten Schließen: {daten['state']}")
         waechter = [
-            c["body"] for c in daten["comments"] if c["body"].startswith("Wächter:")
+            c["body"] for c in daten["comments"] if c["body"].startswith(capo.WAECHTER_KOPF)
         ]
         print(f"Wächter-Kommentare: {len(waechter)}")
         assert daten["state"] == "OPEN"

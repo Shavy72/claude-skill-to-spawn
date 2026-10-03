@@ -10,12 +10,14 @@ c) Grep-Wächter: keine aktive Datei des Skills nennt die Rolle noch „Wächter
 
 from __future__ import annotations
 
+import importlib.util
 import re
 import shutil
 import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from types import ModuleType
 
 import pytest
 
@@ -161,7 +163,8 @@ def test_nest_bestehende_bashrc_bekommt_aufseher_nachgetragen() -> None:
     assert re.search(r"grep -q[^\n]*aufseher\(\)", text), (
         "Nachtrag für bestehende .bashrc fehlt"
     )
-    assert text.count('aufseher() { _bau_py wache.py "$@"; }') >= 2
+    # Erstanlage + Nachtrag: zwei Definitionen, die beide wache.py starten (Abstände egal).
+    assert len(re.findall(r"aufseher\(\)\s*\{[^}]*wache\.py", text)) >= 2
 
 
 # --------------------------------------------------------------------- b) install.ps1
@@ -186,7 +189,7 @@ def test_install_ps1_aufseher_funktion_laeuft_echt(tmp_path: Path) -> None:
     (tmp_path / "scripts" / "wache.py").write_text(
         "import sys\nprint('WACHE_PY', *sys.argv[1:])\n", encoding="utf-8"
     )
-    python = shutil.which("python3") or "python3"
+    python = sys.executable
     funktion = m.group(1).replace(
         'python "./scripts/wache.py"', f'& "{python}" "./scripts/wache.py"'
     )
@@ -198,16 +201,18 @@ def test_install_ps1_aufseher_funktion_laeuft_echt(tmp_path: Path) -> None:
         check=False,
         timeout=60,
     )
+    assert lauf.returncode == 0, f"pwsh rc={lauf.returncode}: {lauf.stderr}"
     assert "WACHE_PY 9" in lauf.stdout, lauf.stdout + lauf.stderr
 
 
 # --------------------------------------------------------------------- Rückwärtskompatibilität
 
 
-def test_capo_alte_waechter_marke_bleibt_eigener_kommentar() -> None:
+def test_capo_alte_waechter_marke_bleibt_eigener_kommentar(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Kommentare von vor #428 („Wächter: …“) dürfen nie als Davids Antwort gelten."""
-    if str(SKILL) not in sys.path:
-        sys.path.insert(0, str(SKILL))
+    monkeypatch.syspath_prepend(str(SKILL))
     from to_spawn import capo
 
     seit = datetime(2026, 10, 1, tzinfo=timezone.utc)
@@ -233,3 +238,109 @@ def test_capo_alte_waechter_marke_bleibt_eigener_kommentar() -> None:
         }
     )
     assert capo.davids_antwort(kommentare, seit) == "david"
+
+
+def test_capo_aufpasser_kommentar_ist_nie_davids_antwort(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Der Aufpasser kommentiert mit demselben gh-Konto — seine Marke ist eine eigene Marke."""
+    monkeypatch.syspath_prepend(str(SKILL))
+    from to_spawn import capo
+
+    seit = datetime(2026, 10, 1, tzinfo=timezone.utc)
+    kommentare = [
+        {
+            "user": {"login": "x"},
+            "body": "Aufpasser: Sicherung #12",
+            "created_at": "2026-10-01T10:00:00Z",
+        }
+    ]
+    assert capo.davids_antwort(kommentare, seit) == ""
+    assert "Aufpasser:" in capo.EIGENE_KOEPFE
+    assert set(capo.AUFSEHER_KOEPFE) <= set(capo.EIGENE_KOEPFE)
+
+
+# --------------------------------------------------------------------- Leitstand
+
+
+@pytest.fixture
+def leitstand(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
+    monkeypatch.syspath_prepend(str(SKILL))
+    spec = importlib.util.spec_from_file_location(
+        "leitstand_aufseher_428", SKILL / "skripte" / "leitstand.py"
+    )
+    assert spec and spec.loader
+    modul = importlib.util.module_from_spec(spec)
+    monkeypatch.setitem(sys.modules, spec.name, modul)
+    spec.loader.exec_module(modul)
+    return modul
+
+
+def test_leitstand_erkennt_alte_und_neue_aufseher_marke(leitstand: ModuleType) -> None:
+    """Alte „Wächter:“- und neue „Aufseher:“-Kommentare sind Aufseher-Ereignisse,
+    ein Satz, der nur mit dem Wort „Aufseher“ beginnt, ist es nicht."""
+    issue = {
+        "comments": {
+            "nodes": [
+                {
+                    "id": "a",
+                    "body": "Wächter: Ticket #5 blockiert.",
+                    "createdAt": "2026-10-01T10:00:00Z",
+                },
+                {
+                    "id": "b",
+                    "body": "Aufseher: Ticket #6 fertig.",
+                    "createdAt": "2026-10-01T11:00:00Z",
+                },
+                {
+                    "id": "c",
+                    "body": "Aufseher-Fenster fehlte, neu gestartet.",
+                    "createdAt": "2026-10-01T12:00:00Z",
+                },
+            ]
+        }
+    }
+    ereignisse = leitstand.aus_kommentaren("7", issue, "7")
+    quellen = [e.quelle for e in ereignisse]
+    assert quellen == ["gh|a", "gh|b"], quellen
+    titel = {e.quelle: e.titel for e in ereignisse}
+    assert titel["gh|a"].startswith("Ticket #5"), titel
+    assert titel["gh|b"].startswith("Ticket #6"), titel
+
+
+# --------------------------------------------------------------------- Grep-Wächter Tests
+
+#: Alte Marke, zusammengesetzt, damit diese Datei sich nicht selbst findet.
+_ALTE_MARKE = "W" + "ächter:"
+#: Logik-Vergleiche mit der alten Marke: ``startswith(… "Wächter:" …)``, ``== "Wächter:…"``,
+#: ``"Wächter:…" in x`` / ``x in "Wächter:…"``. Docstrings und Testdaten treffen nicht.
+_LOGIK_MUSTER = re.compile(
+    r"startswith\([^)\n]*[\"']" + _ALTE_MARKE
+    + r"|(?:==|!=)\s*[\"']" + _ALTE_MARKE
+    + r"|[\"']" + _ALTE_MARKE + r"[^\"'\n]*[\"']\s*(?:==|!=|in\b|not\s+in\b)"
+    + r"|\bin\s+[\"']" + _ALTE_MARKE
+)
+
+
+def test_logik_muster_trifft_vergleich_aber_nicht_testdaten() -> None:
+    m = _ALTE_MARKE
+    assert _LOGIK_MUSTER.search(f'if c["body"].startswith("{m}")')
+    assert _LOGIK_MUSTER.search(f'x == "{m} a"')
+    assert _LOGIK_MUSTER.search(f'"{m}" in body')
+    assert not _LOGIK_MUSTER.search(f'"body": "{m} alt",')
+    assert not _LOGIK_MUSTER.search(f'"""Kommentare „{m} …“ bleiben eigene."""')
+
+
+def test_tests_filtern_nicht_mit_alter_marke() -> None:
+    """Tests dürfen capo-Kommentare nicht per Literal „Wächter:“ filtern — capo schreibt
+    „Aufseher:“. Filtern über ``capo.WAECHTER_KOPF`` (#428-Fixrunde)."""
+    funde: list[str] = []
+    for pfad in sorted((SKILL / "tests").glob("*.py")):
+        if pfad.resolve() == Path(__file__).resolve():
+            continue
+        for nr, zeile in enumerate(pfad.read_text(encoding="utf-8").splitlines(), 1):
+            if RUECKWAERTS_MARKE in zeile:
+                continue
+            if _LOGIK_MUSTER.search(zeile):
+                funde.append(f"{pfad.name}:{nr}: {zeile.strip()}")
+    assert not funde, "Alte Marke in Test-Logik:\n" + "\n".join(funde)
