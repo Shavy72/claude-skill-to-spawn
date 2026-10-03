@@ -123,7 +123,7 @@ def pruefen(claude_dir: Path | None = None, streng: bool = False) -> Path:
     """Wurzel liefern oder :class:`ContextModeFehlt`.
 
     ``streng`` = der Launcher verlässt sich darauf, dass Claude Code das Plugin selbst lädt
-    (Wächter, ohne eigene mcp.json): dann müssen Registry lesbar und das Plugin in
+    (Aufseher, ohne eigene mcp.json): dann müssen Registry lesbar und das Plugin in
     ``enabledPlugins`` nicht abgeschaltet sein. ``bau.py`` schreibt den Server selbst und
     braucht nur die Dateien.
     """

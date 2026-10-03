@@ -1,6 +1,6 @@
 """Gesprächs-ID je Fenster im Repo merken: ``<repo>/.to-spawn/sessions/<name>.json``.
 
-Schreiben ``bau.py`` (``<N>.json``, jede Staffel-Runde neu) und der Wächter
+Schreiben ``bau.py`` (``<N>.json``, jede Staffel-Runde neu) und der Aufseher
 (``wache-<S>.json``); lesen tut der Aufpasser (Fixrunde 2 #236, R2): fehlt ein
 Fenster oder lebt im Pane nur noch eine Shell, setzt er die Session mit
 ``--resume <session_id>`` fort, statt frisch zu starten — sofern das Transkript

@@ -84,7 +84,7 @@ Schritte:
    2. Nutzer $NUTZER + sudo ohne Passwort + SSH-Schlüssel von root
    3. Node 22
    4. GitHub CLI (gh)
-   5. tmux.conf + .bashrc (REPO=$ZIEL, BAU_WT_DIR=$WT_DIR, bau/wache/sessions)
+   5. tmux.conf + .bashrc (REPO=$ZIEL, BAU_WT_DIR=$WT_DIR, bau/aufseher/wache/sessions)
   5b. Swap (RAM-Größe, mind. 8 GiB) + tmux-Server als tmux-bau.service (OOMScoreAdjust=-900)
    6. Zugangsdaten aus $STAGE (Claude, gh, bws-Token)
    7. ~/.claude aus $STAGE ergänzen (ohne Löschen), Skill to-spawn nach $SKILL_NUTZER
@@ -193,7 +193,7 @@ fi
 EOF
 
 # Kopf der .bashrc: Debians Vorlage steigt bei nicht-interaktiven Shells früh aus.
-# PATH und bau/wache/sessions müssen davor stehen, sonst findet `ssh <server> bau 42` nichts.
+# PATH und bau/aufseher/wache/sessions müssen davor stehen, sonst findet `ssh <server> bau 42` nichts.
 if ! grep -q -e 'to-spawn Nest Kopf' -e 'bau-server Kopf' "$NUTZER_HOME/.bashrc" 2>/dev/null; then
   {
     echo "# to-spawn Nest Kopf — vor Debians Ausstieg für nicht-interaktive Shells"
@@ -201,7 +201,7 @@ if ! grep -q -e 'to-spawn Nest Kopf' -e 'bau-server Kopf' "$NUTZER_HOME/.bashrc"
     echo "export REPO=$(q "$ZIEL")"
     echo "export BAU_WT_DIR=$(q "$WT_DIR")"
     cat <<'EOF'
-_bau_py() {  # bau/wache/sessions: Weiterleitung im Repo, sonst direkt der Skill
+_bau_py() {  # bau/aufseher/wache/sessions: Weiterleitung im Repo, sonst direkt der Skill
   local skript="$1"; shift
   local py=python3
   [ -x "$REPO/.venv/bin/python" ] && py="$REPO/.venv/bin/python"
@@ -214,6 +214,7 @@ _bau_py() {  # bau/wache/sessions: Weiterleitung im Repo, sonst direkt der Skill
   fi
 }
 bau()      { _bau_py bau.py "$@"; }
+aufseher() { _bau_py wache.py "$@"; }  # Aufseher der Spec (#428); wache = alter Alias
 wache()    { _bau_py wache.py "$@"; }
 sessions() { _bau_py sessions_stand.py "$@"; }
 
@@ -221,8 +222,18 @@ EOF
     cat "$NUTZER_HOME/.bashrc" 2>/dev/null || true
   } > "$NUTZER_HOME/.bashrc.neu" && mv "$NUTZER_HOME/.bashrc.neu" "$NUTZER_HOME/.bashrc"
 fi
+# Nachtrag (#428): ältere Nest-Köpfe kennen nur wache — aufseher davor setzen (idempotent).
+if ! grep -q 'aufseher()' "$NUTZER_HOME/.bashrc" 2>/dev/null; then
+  {
+    echo "# to-spawn Aufseher (#428) — Hauptbefehl, wache bleibt Alias"
+    cat <<'EOF'
+aufseher() { _bau_py wache.py "$@"; }
+EOF
+    cat "$NUTZER_HOME/.bashrc" 2>/dev/null || true
+  } > "$NUTZER_HOME/.bashrc.neu" && mv "$NUTZER_HOME/.bashrc.neu" "$NUTZER_HOME/.bashrc"
+fi
 chown "$NUTZER:$NUTZER" "$NUTZER_HOME/.bashrc"
-ok "tmux.conf + .bashrc (bau/wache/sessions, cd ins Repo)"
+ok "tmux.conf + .bashrc (bau/aufseher/wache/sessions, cd ins Repo)"
 
 # ---------------------------------------------------------------- 5b. Swap + tmux als System-Dienst
 # Lehre aus dem OOM-Absturz 21.09. (#257 Paket B): 16 GB ohne Swap, 12 Claude-Sessions,

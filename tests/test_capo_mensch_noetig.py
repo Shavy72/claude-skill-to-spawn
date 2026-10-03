@@ -72,7 +72,7 @@ def test_neuer_eintrag_zeile_und_ein_kommentar(welt: dict[str, Path], datei: Pat
     )
     kommentare = _mensch_kommentare(welt, "902")
     assert len(kommentare) == 1
-    assert kommentare[0].startswith("Wächter:")
+    assert kommentare[0].startswith("Aufseher:")
     assert _gh_zustand(welt)["issues"]["902"]["state"] == "open"
     zweite = _capo(welt)
     assert "MENSCH NÖTIG" not in _text(zweite)

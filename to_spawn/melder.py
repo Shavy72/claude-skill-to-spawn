@@ -1,4 +1,4 @@
-"""Melder des Wächters: eine Mail an David, nur wenn es wirklich zählt (#213).
+"""Melder des Aufsehers: eine Mail an David, nur wenn es wirklich zählt (#213).
 
 ``melden(repo, art, betreff, text, schluessel)`` schickt über den Befehl aus der
 Repo-Konfig ``mail.befehl`` (argv-Liste; stdin = JSON ``{art, betreff, text, an}``,
@@ -35,7 +35,7 @@ KRITISCH = frozenset(
         "session_tot",
         "live_beweis_blockiert",
         "waechter_ausweich",
-        "waechter_pause",  # #254: „Wächter pausiert bis 5:40“ darf nicht im Log versanden
+        "waechter_pause",  # #254: „Aufseher pausiert bis 5:40“ darf nicht im Log versanden
         # Nacht-Checkpoints (#285): angenommene Entscheidung und offene Frage ohne
         # Vorschlag muss David am Morgen sehen können.
         "checkpoint_annahme",

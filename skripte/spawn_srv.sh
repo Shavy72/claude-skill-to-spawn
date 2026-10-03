@@ -8,7 +8,7 @@
 # Umzug (#212): --umzug nur mit genau einem Ticket, startet ``bau <N> --umzug <ref>``
 # (Handoff aus Commit <sha> auf origin/<branch> als Startkontext; ``<branch>:<pfad>``
 # ohne SHA geht weiter) und prüft keine Regularien. Läuft das Ticket hier schon:
-# Exit 4, nichts gestartet. --nur-wache startet nur Wächter + Leitstand (fehlende).
+# Exit 4, nichts gestartet. --nur-wache startet nur Aufseher + Leitstand (fehlende).
 # Exit 5: Speicher voll (to_spawn.py speicher) — begonnene Fenster laufen, der Rest nicht.
 # Exit 6: Speicherprüfung kaputt oder Hauptzweig nicht ermittelbar — nichts weiter gestartet.
 # Eine tmux-Session je Spec (``spec-<S>``), darin ``wache <S>``, ``leitstand <S>`` und
@@ -139,7 +139,7 @@ if [ "$OHNE_WACHE" -eq 0 ]; then
     GEPLANT+=("$(printf %q "$PY") $(printf %q "$SKILL_HOME/skripte/wache.py") $SPEC")
     KURZ+=("wache $SPEC")
   else
-    echo "Wächter für Spec #$SPEC läuft bereits ($z) — übersprungen."
+    echo "Aufseher für Spec #$SPEC läuft bereits ($z) — übersprungen."
   fi
   # Bau-Leitstand (Live-Seite): Fenster ``leitstand <S>`` mit interaktiver Sonnet-Session, nur bei
   # leitstand.aktiv an (Exit 0) und wenn das Fenster noch fehlt — auch nachträglich per --nur-wache.

@@ -84,7 +84,7 @@ bei Bedarf zusätzlich listet: `duoplus-api` (Cloud-Phone-API), `postproxy-api` 
    Abschluss: `to_spawn.py pruefen <S>` muss Exit 0 liefern, sonst nachbessern.
 3. **`/to-spawn <S>`** (Skill `~/.claude/skills/to-spawn`, GitHub `Shavy72/claude-skill-to-spawn`)
    prüft zuerst die Regularien (siehe unten), erst danach öffnet es ein Windows-Terminal-Fenster
-   mit `wache <S>` + einem Tab `bau <N>` je offenem Ticket — alle auf
+   mit `wache <S>` (dem Aufseher) + einem Tab `bau <N>` je offenem Ticket — alle auf
    einmal, geblockte warten im Skript (0 Token). Kontrolle: `sessions <S>`.
 4. **`bau <N>`** (`scripts/bau.py`) liest `spec-<S>.json`, baut daraus eine
    `--settings`-Datei mit reduzierter Skill-Liste + `--mcp-config`/`--strict-mcp-config`,

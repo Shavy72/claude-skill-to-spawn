@@ -5,7 +5,7 @@ Geschrieben wird atomar (tmp-Datei im selben Ordner + ``os.replace``), damit
 eine laufende Session nie eine halbe Datei liest. Alle übrigen Felder der
 vorhandenen Datei bleiben erhalten, auch unbekannte.
 
-Die Wächter-Rolle läuft immer auf dem Flaggschiff-Modell; der Wizard fragt dort
+Die Aufseher-Rolle läuft immer auf dem Flaggschiff-Modell; der Wizard fragt dort
 nur den Effort.
 """
 
@@ -44,7 +44,7 @@ EFFORTS: list[str] = ["low", "medium", "high", "xhigh", "max"]
 ROLLEN: dict[str, str] = {
     "ticket": "Ticket-Session",
     "ticket_leicht": "leichtes Ticket",
-    "waechter": "Wächter",
+    "waechter": "Aufseher",
 }
 
 SCHLUSS_SATZ = "Laufende Sessions bleiben unberührt; neue Starts lesen die Werte."
@@ -140,7 +140,7 @@ plattform_von = config.plattform_von
 def remote_hinweis(konfig: dict[str, Any]) -> str:
     """Remote-Control-Zeile so, wie ``wache`` startet (Konfig ``waechter.remote_control``, #213)."""
     an = bool(konfig.get("waechter", {}).get("remote_control", True))
-    return f"Remote Control (nur Wächter, per Claude-App erreichbar): {'an' if an else 'aus'}"
+    return f"Remote Control (nur Aufseher, per Claude-App erreichbar): {'an' if an else 'aus'}"
 
 
 def pruefe_start(programm: str, pfad: str) -> str | None:
@@ -218,7 +218,7 @@ def modell_name(modell: str) -> str:
 
 
 def standards(konfig: dict[str, Any], plattform: str | None = None) -> dict[str, Any]:
-    """Alle Standard-Antworten (= aktuelle Werte der Konfig), Wächter = Flaggschiff."""
+    """Alle Standard-Antworten (= aktuelle Werte der Konfig), Aufseher = Flaggschiff."""
     modelle = {r: _rollen_wert(konfig, "modelle", r) for r in ROLLEN}
     modelle["waechter"] = FLAGGSCHIFF
     return {
@@ -285,7 +285,7 @@ def fuehre_dialog(
     finde: Finde = shutil.which,
     pruefe_start: PruefeStart = pruefe_start,
 ) -> dict[str, Any]:
-    """Fragt Terminal → Ticket → leichtes Ticket → Wächter (nur Effort).
+    """Fragt Terminal → Ticket → leichtes Ticket → Aufseher (nur Effort).
 
     Rückgabe: ``{"terminal", "modelle", "effort"}`` für :func:`speichere`.
     EOF auf der Eingabe = ab dort alle Standards.
@@ -332,11 +332,11 @@ def fuehre_dialog(
                 ausgabe,
             )
         ausgabe.write(
-            f"\nWächter läuft immer auf {modell_name(FLAGGSCHIFF)} ({FLAGGSCHIFF}), "
+            f"\nAufseher läuft immer auf {modell_name(FLAGGSCHIFF)} ({FLAGGSCHIFF}), "
             "gefragt wird nur der Effort.\n"
         )
         ergebnis["effort"]["waechter"] = _frage(
-            "Effort für Wächter:",
+            "Effort für Aufseher:",
             effort_liste,
             vorgabe["effort"]["waechter"],
             eingabe,
@@ -409,7 +409,7 @@ def speichere(
     """Setzt nur ``terminal.<plattform>``, ``modelle.*``, ``effort.*`` — der Rest bleibt.
 
     Fehlt die Datei, sind die Vorgaben die Basis. Eine unlesbare Datei wird nie
-    überschrieben (:class:`KonfigUnlesbar`). Wächter-Modell = immer Flaggschiff.
+    überschrieben (:class:`KonfigUnlesbar`). Aufseher-Modell = immer Flaggschiff.
     ``modelle``/``effort``, die kein Objekt sind, werden (mit Warnung) neu angelegt.
     """
     datei = config.repo_wurzel(repo) / config.KONFIG_PFAD
@@ -433,7 +433,7 @@ def speichere(
         ziel.update({rolle: wert for rolle, wert in neu.items() if rolle in ROLLEN})
         daten[feld] = ziel
     if daten["modelle"].get("waechter") != FLAGGSCHIFF:
-        log.info("Wächter-Modell auf Flaggschiff %s gesetzt.", FLAGGSCHIFF)
+        log.info("Aufseher-Modell auf Flaggschiff %s gesetzt.", FLAGGSCHIFF)
     daten["modelle"]["waechter"] = FLAGGSCHIFF
     _schreibe_atomar(datei, daten)
     log.info("Konfig gespeichert: %s", datei)

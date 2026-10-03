@@ -231,7 +231,7 @@ def test_commit_ohne_nummer_oeffnet_wieder(welt: dict[str, Path]) -> None:
     assert ergebnis.returncode == 0, _text(ergebnis)
     assert _gh_zustand(welt)["issues"]["901"]["state"] == "open"
     kommentar = _kommentare(welt, "901")
-    assert len(kommentar) == 1 and kommentar[0].startswith("Wächter: commit_ohne_nummer")
+    assert len(kommentar) == 1 and kommentar[0].startswith("Aufseher: commit_ohne_nummer")
     assert "commit_ohne_nummer" in ergebnis.stdout
 
 
@@ -246,7 +246,7 @@ def test_sauberes_ticket_bleibt_zu(welt: dict[str, Path]) -> None:
 def test_nummer_mitten_im_betreff_zaehlt_nicht(welt: dict[str, Path]) -> None:
     _commit(welt["repo"], "docs(#901): Nachtrag", _beleg())
     _capo(welt)
-    assert _kommentare(welt, "901")[0].startswith("Wächter: commit_ohne_nummer")
+    assert _kommentare(welt, "901")[0].startswith("Aufseher: commit_ohne_nummer")
 
 
 # --- Regel 2: Beweis fehlt -----------------------------------------------------
@@ -256,7 +256,7 @@ def test_beweis_fehlt_und_laengere_zahl_zaehlt_nicht(welt: dict[str, Path]) -> N
     _commit(welt["repo"], "feat: Bauteil (#901)", {"docs/verify-hard/9010_fremd.md": "x\n"})
     _capo(welt)
     assert _gh_zustand(welt)["issues"]["901"]["state"] == "open"
-    assert any(k.startswith("Wächter: beweis_fehlt") for k in _kommentare(welt, "901"))
+    assert any(k.startswith("Aufseher: beweis_fehlt") for k in _kommentare(welt, "901"))
 
 
 def test_beleg_ordner_aus_konfig(welt: dict[str, Path]) -> None:
@@ -277,7 +277,7 @@ def test_test_ersetzt_oeffnet_wieder(welt: dict[str, Path]) -> None:
     _capo(welt)
     kommentare = _kommentare(welt, "901")
     assert len(kommentare) == 1
-    assert kommentare[0].startswith("Wächter: test_ersetzt")
+    assert kommentare[0].startswith("Aufseher: test_ersetzt")
     assert "test_alt" in kommentare[0]
 
 
@@ -285,7 +285,7 @@ def test_geloeschte_testdatei_oeffnet_wieder(welt: dict[str, Path]) -> None:
     _commit(welt["repo"], "test: Datei", {"tests/test_b.py": "def test_b():\n    pass\n"})
     _commit(welt["repo"], "feat: Aufräumen (#901)", {"tests/test_b.py": None, **_beleg()})
     _capo(welt)
-    assert any(k.startswith("Wächter: test_ersetzt") for k in _kommentare(welt, "901"))
+    assert any(k.startswith("Aufseher: test_ersetzt") for k in _kommentare(welt, "901"))
 
 
 def test_verschobener_test_ist_kein_ersatz(welt: dict[str, Path]) -> None:
@@ -350,7 +350,7 @@ def test_verwaiste_session_kommentar_und_mail_einmal_am_tag(
     _capo(welt)
     assert _gh_zustand(welt)["issues"]["902"]["state"] == "open"
     kommentare = _kommentare(welt, "902")
-    assert len(kommentare) == 1 and kommentare[0].startswith("Wächter: session_verwaist")
+    assert len(kommentare) == 1 and kommentare[0].startswith("Aufseher: session_verwaist")
     mails = _mails(welt)
     assert [m["art"] for m in mails] == ["session_tot"]
     assert "902" in mails[0]["betreff"]
@@ -398,7 +398,7 @@ def test_vps_hinter_origin_oeffnet_wieder(welt: dict[str, Path], monkeypatch: py
     for name, wert in _ssh_fake(welt, vorher).items():
         monkeypatch.setenv(name, wert)
     _capo(welt)
-    assert any(k.startswith("Wächter: vps_ungleich_origin") for k in _kommentare(welt, "901"))
+    assert any(k.startswith("Aufseher: vps_ungleich_origin") for k in _kommentare(welt, "901"))
 
 
 def test_vps_auf_stand_bleibt_zu(welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch) -> None:
@@ -458,7 +458,7 @@ def test_vps_fehlt_auf_staging_mit_zettel_oeffnet_wieder(
 ) -> None:
     _vps_staging(welt, monkeypatch, staging_sha="", zettel=True)
     _capo(welt)
-    assert any(k.startswith("Wächter: vps_ungleich_origin") for k in _kommentare(welt, "901"))
+    assert any(k.startswith("Aufseher: vps_ungleich_origin") for k in _kommentare(welt, "901"))
 
 
 def test_vps_fehlt_staging_sha_noch_nicht_geholt_bleibt_zu(
@@ -474,7 +474,7 @@ def test_vps_fehlt_staging_sha_noch_nicht_geholt_bleibt_zu(
 def test_vps_fehlt_ohne_staging_log_oeffnet_wieder(welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch) -> None:
     _vps_staging(welt, monkeypatch, staging_sha=None)
     _capo(welt)
-    assert any(k.startswith("Wächter: vps_ungleich_origin") for k in _kommentare(welt, "901"))
+    assert any(k.startswith("Aufseher: vps_ungleich_origin") for k in _kommentare(welt, "901"))
 
 
 def test_ohne_vps_konfig_keine_vps_regel(welt: dict[str, Path]) -> None:
@@ -648,7 +648,7 @@ def _wache(
 def test_wache_dry_run_zeigt_remote_control_und_ausweich(welt: dict[str, Path]) -> None:
     ergebnis = _wache(welt["repo"], "--dry-run")
     assert ergebnis.returncode == 0, _text(ergebnis)
-    assert "--remote-control" in ergebnis.stdout and f"Wächter #{SPEC}" in ergebnis.stdout
+    assert "--remote-control" in ergebnis.stdout and f"Aufseher #{SPEC}" in ergebnis.stdout
     assert "--fallback-model claude-sonnet-5" in ergebnis.stdout
     prompt = _wache(welt["repo"], "--print-prompt").stdout
     assert f"scripts/capo.py {SPEC}" in prompt

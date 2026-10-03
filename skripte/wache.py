@@ -1,19 +1,19 @@
-"""Bau-Wächter-Session für eine Spec starten (frische Claude-Session, Opus mit vollem Kontextfenster).
+"""Bau-Aufseher-Session für eine Spec starten (frische Claude-Session, Opus mit vollem Kontextfenster).
 
 Aufruf: ``python scripts/wache.py <S> [--model <m>] [--takt <s>] [--dry-run] [--print-prompt] [--resume <id>]``
-Selbstablösung aus der laufenden Wache: ``python scripts/wache.py <S> --abloesen <handoff>``.
+Selbstablösung aus dem laufenden Aufseher: ``python scripts/wache.py <S> --abloesen <handoff>``.
 
-Die Wache ist eine voll fähige Session und verantwortlich, dass der Bau autonom durchläuft:
+Der Aufseher ist eine voll fähige Session und verantwortlich, dass der Bau autonom durchläuft:
 je Tick ``scripts/capo.py <S>``, Sessions prüfen, hängende Tickets per
 ``to_spawn.py neustart`` ablösen, Übergaben an der Smart-Zone-Grenze starten. Stand in
 ``docs/HANDOFF_<datum>_waechter_<S>.md``.
 
 Start mit ``--effort`` (Konfig ``effort.waechter``, Vorgabe medium), Opus-Modelle mit
-``[1m]`` (volles Kontextfenster wie eine normale Session), ``--remote-control "Wächter #<S>"``
+``[1m]`` (volles Kontextfenster wie eine normale Session), ``--remote-control "Aufseher #<S>"``
 (Konfig ``waechter.remote_control``) und ``--fallback-model`` (``modelle.waechter_ausweich``).
 Beim Nutzungs-Limit wechselt die Aufsicht (``to_spawn/waechter_lauf.py``) selbst auf das
 Ausweich-Modell (#213). ``--abloesen`` legt die Ablöse-Datei an; die Aufsicht beendet die
-Session und startet im selben Fenster die Nachfolge-Wache mit dem Handoff als Startkontext.
+Session und startet im selben Fenster den Nachfolge-Aufseher mit dem Handoff als Startkontext.
 """
 
 from __future__ import annotations
@@ -97,7 +97,7 @@ REPO = repo_aus_origin("") or os.environ.get("TO_SPAWN_GH_REPO", "").strip()
 def auf_speicher_warten(
     konfig: dict,
     *,
-    wer: str = "Wächter",
+    wer: str = "Aufseher",
     pruefen=speicher.platz_frei,
     schlafen=time.sleep,
     takt_s: int = 60,
@@ -108,14 +108,14 @@ def auf_speicher_warten(
 
 MODELL = "claude-opus-5-5"
 
-#: Vorgabe-Denkstufe; Quelle ist ``waechter_lauf.EFFORT`` (eine Stelle für Wache und Takt, #402).
+#: Vorgabe-Denkstufe; Quelle ist ``waechter_lauf.EFFORT`` (eine Stelle für Aufseher und Takt, #402).
 EFFORT = waechter_lauf.EFFORT
 #: Umgebungsvariable mit dem Pfad der Ablöse-Datei (setzt ``main`` je Lauf).
 ABLOESE_ENV = "TO_SPAWN_WACHE_ABLOESUNG"
 #: Obergrenze Selbstablösungen je Fenster.
-# ponytail: feste Obergrenze gegen Ablöse-Schleifen, Zähler je Spec im Leitstand wenn Wachen länger laufen
+# ponytail: feste Obergrenze gegen Ablöse-Schleifen, Zähler je Spec im Leitstand wenn Aufseher länger laufen
 MAX_ABLOESUNGEN = 10
-#: Zeichen-Obergrenze für den Wache-Handoff im Folge-Prompt (wie ``bau.py``).
+#: Zeichen-Obergrenze für den Aufseher-Handoff im Folge-Prompt (wie ``bau.py``).
 HANDOFF_MAX_ZEICHEN = 40_000
 
 
@@ -127,7 +127,7 @@ def volles_fenster(modell: str) -> str:
 
 
 def prompt_bauen(spec: int, repo: str, takt: int, konfig: dict) -> str:
-    """Wache-Prompt mit Server-Befehlen aus der Konfig (``ssh_ziel``, ``server_repo``)."""
+    """Aufseher-Prompt mit Server-Befehlen aus der Konfig (``ssh_ziel``, ``server_repo``)."""
     text = PROMPT.format(
         S=spec, REPO=repo, DATUM=date.today().isoformat(), TAKT=max(600, takt), SKILL=Path(_SKILL).as_posix()
     )
@@ -140,22 +140,22 @@ def prompt_bauen(spec: int, repo: str, takt: int, konfig: dict) -> str:
 
 
 def abloesung_anlegen(handoff: str) -> int:
-    """``--abloesen``: Ablöse-Datei der laufenden Aufsicht schreiben (nur aus einer Wache heraus)."""
+    """``--abloesen``: Ablöse-Datei der laufenden Aufsicht schreiben (nur aus einem Aufseher heraus)."""
     ziel = os.environ.get(ABLOESE_ENV, "").strip()
     if not ziel:
-        print(f"{ABLOESE_ENV} fehlt — --abloesen geht nur aus einer laufenden Wache.", file=sys.stderr)
+        print(f"{ABLOESE_ENV} fehlt — --abloesen geht nur aus einem laufenden Aufseher.", file=sys.stderr)
         return 2
     pfad = (REPO_ORDNER / handoff) if not Path(handoff).is_absolute() else Path(handoff)
     if not pfad.is_file():
         print(f"Handoff {pfad} fehlt — erst schreiben und committen.", file=sys.stderr)
         return 2
     Path(ziel).write_text(json.dumps({"handoff": str(pfad)}), encoding="utf-8")
-    print(f"Ablösung angelegt: Nachfolge-Wache startet mit {pfad}.")
+    print(f"Ablösung angelegt: Nachfolge-Aufseher startet mit {pfad}.")
     return 0
 
 
 def abloese_prompt(prompt: str, handoff: Path, runde: int) -> str:
-    """Startkontext der Nachfolge-Wache: Handoff der Vorgängerin vor dem Auftrag."""
+    """Startkontext des Nachfolge-Aufsehers: Handoff des Vorgängers vor dem Auftrag."""
     try:
         inhalt = handoff.read_text(encoding="utf-8")
     except OSError as fehler:
@@ -163,17 +163,17 @@ def abloese_prompt(prompt: str, handoff: Path, runde: int) -> str:
     if len(inhalt) > HANDOFF_MAX_ZEICHEN:
         inhalt = inhalt[:HANDOFF_MAX_ZEICHEN] + "\n(… gekürzt)"
     return (
-        f"## Wache-Ablösung (Runde {runde})\n"
-        f"Die Vorgänger-Wache hat an ihrer Handoff-Grenze übergeben. Ihr Handoff ({handoff}) ist "
+        f"## Aufseher-Ablösung (Runde {runde})\n"
+        f"Der Vorgänger-Aufseher hat an seiner Handoff-Grenze übergeben. Sein Handoff ({handoff}) ist "
         f"dein Startkontext — setze dort fort.\n\n"
         f"----- HANDOFF ANFANG -----\n{inhalt}\n----- HANDOFF ENDE -----\n\n{prompt}"
     )
 
 
-#: Fester Wächter-Takt: 30 min, keine Ausnahme (auch nicht, wenn alle Terminals warten).
+#: Fester Aufseher-Takt: 30 min, keine Ausnahme (auch nicht, wenn alle Terminals warten).
 TAKT_S = 1800
 
-PROMPT = """/loop Bau-Wächter Spec #{S} ({REPO})
+PROMPT = """/loop Bau-Aufseher Spec #{S} ({REPO})
 
 ## Auftrag
 Du bist verantwortlich, dass Spec #{S} vollständig, sauber und autonom fertig gebaut wird. Du bist eine voll fähige Session: lesen, prüfen, Subagenten nutzen, Fehler selbst beheben — was nötig ist, damit der Bau durchläuft.
@@ -185,12 +185,12 @@ Du bist verantwortlich, dass Spec #{S} vollständig, sauber und autonom fertig g
 1. `PYTHONIOENCODING=utf-8 python scripts/capo.py {S} --katalog` — Stand je Ticket, neue Bau-Log-Zeilen, Verstöße. capo öffnet selbst wieder, kommentiert verwaiste Sessions und mailt Kritisches (nicht doppelt tun); `--katalog` schreibt neue Vorfälle ins Bau-Log und nach docs/agents/FEHLERKATALOG_spawn.md (mit Pathspec mitcommitten).
 2. `node ~/.claude/hooks/smart-zone/staffel/aufraeumen.mjs --spec {S}` — schließt Fenster übergebener Sessions.
 3. Befehl A (unten) — läuft jedes offene, entblockte Ticket? Hängt eines, ist es tot oder an der Grenze → Befehle B–D.
-4. Ticket neu zu ohne Verstoß → Belegseite unter docs/verify-hard/ prüfen (Akzeptanz erfüllt? Live-Klick-Weg-Beleg mit Rolle da?); Mangel → 2-Zeilen-Kommentar „Wächter: … fehlt“ + `gh issue reopen`.
+4. Ticket neu zu ohne Verstoß → Belegseite unter docs/verify-hard/ prüfen (Akzeptanz erfüllt? Live-Klick-Weg-Beleg mit Rolle da?); Mangel → 2-Zeilen-Kommentar „Aufseher: … fehlt“ + `gh issue reopen`.
 5. Stand in `docs/HANDOFF_{DATUM}_waechter_{S}.md` fortschreiben (Stand + Nachträge mit Uhrzeit), Commit mit Pathspec + [skip ci], Rebase nur bei sauberem Baum (`git diff --quiet`), Push.
 6. Takt: ScheduleWakeup {TAKT} s, immer; noop: true ohne Änderung.
 
 ## Befehle (fertig zum Kopieren; <N> = Ticket, <PID> aus Befehl A)
-Ort: Wache im tmux des Bau-Servers → Spalte „hier“ ist der Bau-Server. Wache am PC → „hier“ = PC, Server-Tickets mit der Server-Form.
+Ort: Aufseher im tmux des Bau-Servers → Spalte „hier“ ist der Bau-Server. Aufseher am PC → „hier“ = PC, Server-Tickets mit der Server-Form.
 A Stand aller Sessions
   hier:   `python scripts/sessions_stand.py {S} --alle` (aus / wartet / läuft seit / VERWAIST) · `python {SKILL}/to_spawn.py log {S}` (Token, Dauer je Ticket)
   Server: `ssh <SSH> 'cd <SERVER_REPO> && python3 scripts/sessions_stand.py {S} --alle'`
@@ -206,18 +206,18 @@ D Session an der Smart-Zone-Grenze übergeben (Handoff-Grenze aus ~/.claude/smar
   `python {SKILL}/to_spawn.py neustart {S} <N> --handoff docs/handoffs/HANDOFF_<datum>_<N>.md --beenden` (Server: zusätzlich `--ziel srv`). Die neue Session startet mit dem Auftrag „Weiter ab Handoff …“.
 E Dich selbst ablösen (deine Handoff-Grenze ist erreicht)
   1. `docs/HANDOFF_{DATUM}_waechter_{S}.md` vollständig: Stand je Ticket, offene Entscheidungen, laufende Neustarts, nächster Schritt. Commit mit Pathspec + [skip ci], Push.
-  2. `python {SKILL}/skripte/wache.py {S} --abloesen docs/HANDOFF_{DATUM}_waechter_{S}.md` — die Aufsicht beendet diese Session und startet im selben Fenster die Nachfolge-Wache mit dem Handoff als Startkontext. Danach nichts mehr tun.
+  2. `python {SKILL}/skripte/wache.py {S} --abloesen docs/HANDOFF_{DATUM}_waechter_{S}.md` — die Aufsicht beendet diese Session und startet im selben Fenster den Nachfolge-Aufseher mit dem Handoff als Startkontext. Danach nichts mehr tun.
 
 ## Abschluss
 ABSCHLUSS schon vor Live: Bau fertig, bereit zur Abnahme (alle Bau-Tickets zu oder nur noch Live-Belege/checkpoint:human-Abnahme offen, bzw. „Kette … durch“ oder „SPEC FERTIG“) → PFLICHT Abschluss-Paket `--stand abnahme` (einmal): Rundschau als Artifact (Skill rundschau), `python {SKILL}/skripte/belege_uebersicht.py {S}` und `python {SKILL}/skripte/test_uebersicht.py {S}` je als Artifact, Direkt-Links je Ticket in die Stage-App (staging.url aus .to-spawn/config.json + Route an die richtige Stelle, Rolle im Titel), Zugang nur als Namen (Basic-Auth-Nutzer, App-Rolle, Bitwarden-Eintragsname — nie Passwort), dann `python {SKILL}/skripte/abschluss_paket.py {S} --stand abnahme --stage <url> --rundschau <link> --belege <link> --tests <link> --direkt "<Titel (als Rolle)>=<url>"… --basic-auth-nutzer <name> --app-rolle "<Name (rolle)>" --bitwarden <eintrag>` (schreibt docs/agents/abschluss_{S}.md + mailt David).
 Danach Aufbau-Prüfung (einmal): `python {SKILL}/skripte/thermo_lauf.py plan {S}`. Exit 0 → je Eintrag in `teile` ein Subagent, alle parallel im selben Zug (`model: opus`, Prompt = Feld `prompt` unverändert); jede JSON-Antwort als `<befunde_ordner>/teil-<nr>.json` speichern, dann `python {SKILL}/skripte/thermo_lauf.py sammeln {S}` und die Issue-URL in den Abschlussbericht. Exit 2/4 → überspringen. Exit 3 → fehlenden Teil nachstarten, erneut sammeln. Kein Umbau in der Spec — Befunde gehen nur ins Sammel-Issue. Nach dem Live-Deploy dasselbe einmal mit `--stand live`.
 ENDE erst bei „SPEC FERTIG“ (capo hat docs/agents/entscheidungen_{S}.md geschrieben). Übersichten + Abschluss + docs/agents/thermo_{S}.md mit Pathspec + [skip ci] committen + pushen, Abschlussbericht als Kommentar auf #{S} (max. 10 Zeilen, die Links); bei „SPEC FERTIG“ stop: true.
 
-Erste Zeile jeder Antwort: 🧭 Opus · medium · Wächter #{S}"""
+Erste Zeile jeder Antwort: 🧭 Opus · medium · Aufseher #{S}"""
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Bau-Wächter-Session für eine Spec.")
+    ap = argparse.ArgumentParser(description="Bau-Aufseher-Session für eine Spec.")
     ap.add_argument("spec", type=int, help="Spec-Issue-Nummer")
     ap.add_argument(
         "--model", default=None, help=f"Claude-Modell (Vorgabe: Repo-Konfig modelle.waechter, sonst {MODELL})"
@@ -229,13 +229,13 @@ def main() -> int:
         "--resume",
         default=None,
         metavar="SESSION_ID",
-        help="vorhandenes Wächter-Gespräch fortsetzen statt frisch zu starten (Aufpasser #236)",
+        help="vorhandenes Aufseher-Gespräch fortsetzen statt frisch zu starten (Aufpasser #236)",
     )
     ap.add_argument(
         "--abloesen",
         default=None,
         metavar="HANDOFF",
-        help="aus der laufenden Wache: Session beenden, Nachfolge-Wache mit diesem Handoff starten",
+        help="aus dem laufenden Aufseher: Session beenden, Nachfolge-Aufseher mit diesem Handoff starten",
     )
     a = ap.parse_args()
     if a.abloesen:
@@ -255,7 +255,7 @@ def main() -> int:
         print(prompt)
         return 0
     claude = shutil.which("claude") or "claude"
-    # Pflicht-MCP context-mode (#237): der Wächter startet ohne ``--strict-mcp-config``,
+    # Pflicht-MCP context-mode (#237): der Aufseher startet ohne ``--strict-mcp-config``,
     # das Plugin-MCP lädt also von selbst — nur fehlen darf es nicht.
     try:
         ctx_wurzel = context_mode.pruefen(streng=True)
@@ -266,7 +266,7 @@ def main() -> int:
     remote_control = bool(konfig.get("waechter", {}).get("remote_control", True))
     cmd = waechter_lauf.befehl(claude, a.model, ausweich, remote_control, a.spec, prompt, effort=effort)
     log.info(
-        "Wächter Spec #%s · Modell %s · Effort %s · Ausweich %s · Takt %ss",
+        "Aufseher Spec #%s · Modell %s · Effort %s · Ausweich %s · Takt %ss",
         a.spec,
         a.model,
         effort,
@@ -274,14 +274,14 @@ def main() -> int:
         a.takt,
     )
     log.info("context-mode (Pflicht-MCP, lädt als Plugin): %s", ctx_wurzel)
-    if a.resume:  # Aufpasser (#236 R1): Sicherheitskette auch für das Wächter-Fenster
+    if a.resume:  # Aufpasser (#236 R1): Sicherheitskette auch für das Aufseher-Fenster
         cmd = waechter_lauf.resume_befehl(claude, a.resume, a.model, effort, remote_control, a.spec, "<weiter>")
     if a.dry_run:
         print(" ".join(cmd[:-1]), '"<prompt>"')
         return 0
     # Speicher-Schutz (#257 Paket B, Fixrunde 1 F3): RAM knapp oder Obergrenze an
     # Claude-Sessions erreicht → warten statt Exit 5, damit Fenster und Grund bleiben.
-    auf_speicher_warten(konfig, wer=f"Wächter #{a.spec}")
+    auf_speicher_warten(konfig, wer=f"Aufseher #{a.spec}")
     # Vertrauens-Dialog für die Repo-Wurzel vorab bestätigen (#257) — Fehler nur Warnung.
     vertrauen.still_sicherstellen(REPO_ORDNER)
     # Aus einer Claude-Session gestartet erben Kind-Sessions die Markierung
@@ -291,8 +291,8 @@ def main() -> int:
     # Eine Session im Worktree darf nicht das Repo des Launchers erben (#205).
     os.environ.pop("TO_SPAWN_REPO", None)
     os.environ["CLAUDE_CODE_FORCE_SESSION_PERSISTENCE"] = "1"
-    # Umzug (#212): /to-spawn-of im Wächter zieht alle Sessions um und beendet am Ende
-    # diese Wächter-Session über die Umzug-Datei (Temp-Ordner je Lauf).
+    # Umzug (#212): /to-spawn-of im Aufseher zieht alle Sessions um und beendet am Ende
+    # diese Aufseher-Session über die Umzug-Datei (Temp-Ordner je Lauf).
     lauf_ordner = Path(tempfile.mkdtemp(prefix=f"wache-{a.spec}-"))
     umzug_datei = lauf_ordner / "umzug.json"
     abloese_datei = lauf_ordner / "abloesung.json"
@@ -325,7 +325,7 @@ def main() -> int:
         umzug_daten = umzug.lies_umzug(umzug_datei)
         if umzug_daten is not None:
             log.info(
-                "Umzug nach %s bestätigt — lokaler Wächter beendet (Exit %s).",
+                "Umzug nach %s bestätigt — lokaler Aufseher beendet (Exit %s).",
                 umzug_daten.get("ziel") or "?",
                 code,
             )
@@ -335,13 +335,13 @@ def main() -> int:
         try:
             handoff = Path(json.loads(abloese_datei.read_text(encoding="utf-8"))["handoff"])
         except (OSError, ValueError, KeyError, TypeError) as fehler:
-            log.error("Ablöse-Datei %s unlesbar (%s) — Wache endet.", abloese_datei, fehler)
+            log.error("Ablöse-Datei %s unlesbar (%s) — Aufseher endet.", abloese_datei, fehler)
             return 2
         abloese_datei.unlink(missing_ok=True)
         if runde > MAX_ABLOESUNGEN:
-            log.error("Wächter #%s: %s Ablösungen erreicht — keine weitere Nachfolge.", a.spec, MAX_ABLOESUNGEN)
+            log.error("Aufseher #%s: %s Ablösungen erreicht — keine weitere Nachfolge.", a.spec, MAX_ABLOESUNGEN)
             return 2
-        log.info("Wächter #%s: Ablösung %s — Nachfolge-Wache startet mit %s.", a.spec, runde, handoff)
+        log.info("Aufseher #%s: Ablösung %s — Nachfolge-Aufseher startet mit %s.", a.spec, runde, handoff)
         session_id = None
         start_prompt = abloese_prompt(prompt, handoff, runde + 1)
     return code

@@ -1,7 +1,7 @@
 """„Mensch nötig“-Einträge des Review-Stop-Hooks lesen (``~/.claude/hooks/review/stop.py``).
 
 Der Hook hängt je roter Bau-Session nach max. Fixrunden eine JSON-Zeile an
-(``session_id, repo, fingerprint, spec, ticket, zeit, fix_runde``); der Wächter
+(``session_id, repo, fingerprint, spec, ticket, zeit, fix_runde``); der Aufseher
 meldet jeden Eintrag seiner Spec genau einmal.
 """
 

@@ -177,7 +177,7 @@ def manifeste_lesen(spec: str | None) -> dict[str, Eintrag]:
             continue
         s = str(m.get("spec") or "")
         if s and s not in eintraege:
-            eintraege[s] = Eintrag(s, "spec", f"Wächter Spec #{s} ({m.get('feature', '')})")
+            eintraege[s] = Eintrag(s, "spec", f"Aufseher Spec #{s} ({m.get('feature', '')})")
         for n, t in (m.get("tickets") or {}).items():
             eintraege[str(n)] = Eintrag(str(n), "ticket", str(t.get("title") or ""))
     return eintraege

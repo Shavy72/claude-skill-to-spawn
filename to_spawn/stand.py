@@ -89,7 +89,7 @@ def syntaxfehler(skill_ordner: Path) -> list[str]:
     """``datei:zeile`` je Python-Datei des Skills, die sich nicht parsen lässt.
 
     Der Push kopiert den PC-Stand samt halb gespeicherter Dateien anderer Sessions;
-    ein Syntaxfehler dort legt auf dem Bau-Server den Wächter lahm (#325).
+    ein Syntaxfehler dort legt auf dem Bau-Server den Aufseher lahm (#325).
     """
     kaputt: list[str] = []
     for datei in sorted(skill_ordner.rglob("*.py")):

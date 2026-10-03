@@ -379,7 +379,7 @@ def aus_bau_log(ticket: str, zeilen: list[dict[str, Any]]) -> list[Ereignis]:
                     zeit,
                     "info",
                     f"#{nr} Modell gewechselt",
-                    einfach(f"Der Wächter hat das Modell gewechselt: {inhalt}."),
+                    einfach(f"Der Aufseher hat das Modell gewechselt: {inhalt}."),
                     nr,
                 )
             )
@@ -392,9 +392,10 @@ def aus_kommentaren(nummer: str, issue: dict[str, Any], spec: str) -> list[Ereig
     for k in (issue.get("comments") or {}).get("nodes") or []:
         body = str(k.get("body") or "").strip()
         zeit = lokal_iso(k.get("createdAt"))
-        if not body.startswith("Wächter") or not zeit:
+        # Alte Kommentare tragen noch die Marke vor #428.
+        if not body.startswith(("Aufseher", "Wächter")) or not zeit:  # #428-alt
             continue
-        rein = re.sub(r"Wächter:\s*", "", body)
+        rein = re.sub(r"(?:Aufseher|Wächter):\s*", "", body)  # #428-alt
         if "Mensch nötig" in body:
             art = "david"
         elif re.search(r"\b(rot|Fehler|blockiert)\b", body):
@@ -408,7 +409,7 @@ def aus_kommentaren(nummer: str, issue: dict[str, Any], spec: str) -> list[Ereig
 
 
 def ohne_doppelte_david(aus_log: list[Ereignis], kommentare: list[Ereignis]) -> list[Ereignis]:
-    """Bau-Log-„mensch_noetig“ weglassen, wenn der Wächter binnen 5 Min dasselbe kommentiert hat."""
+    """Bau-Log-„mensch_noetig“ weglassen, wenn der Aufseher binnen 5 Min dasselbe kommentiert hat."""
     wache = [t for t in (als_zeit(e.zeit) for e in kommentare if e.art == "david") if t]
 
     def doppelt(e: Ereignis) -> bool:
@@ -639,7 +640,7 @@ def beobachten_fuer(ziel: str, spec: str, ssh_ziel: str) -> list[dict[str, str]]
             {"titel": "Stand als Tabelle", "befehl": f"sessions {spec}"},
             {
                 "titel": "Live zuschauen (lokal)",
-                "befehl": f"Windows-Terminal-Fenster der Spec {spec} – je Ticket ein Tab „bau <N>“, dazu „wache {spec}“",
+                "befehl": f"Windows-Terminal-Fenster der Spec {spec} – je Ticket ein Tab „bau <N>“, dazu „wache {spec}“ (der Aufseher)",
             },
         ]
     return [

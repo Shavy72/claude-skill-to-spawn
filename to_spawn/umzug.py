@@ -6,10 +6,10 @@ Drei Teile:
   pushen, Session auf dem Server mit dem Handoff als Startkontext neu starten und
   erst nach bewiesenem Server-Lauf das lokale Ende anstoßen (``BAU_UMZUG_DATEI``,
   ``bau.py`` beendet daraufhin die lokale Session — kein Doppel-Lauf).
-* :func:`umzug_alle` — Wächter-Variante: alle laufenden Ticket-Sessions einer Spec
+* :func:`umzug_alle` — Aufseher-Variante: alle laufenden Ticket-Sessions einer Spec
   streng nacheinander umziehen, nie zwei halb.
 * :func:`hook_umzug_anfrage` — Stop-Hook in jeder Bau-Session: liegt eine Anfrage des
-  Wächters, bekommt die Session die Anweisung, sich selbst umzuziehen.
+  Aufsehers, bekommt die Session die Anweisung, sich selbst umzuziehen.
 
 Außerdem :func:`starte_mit_umzug_wache` für ``bau.py``/``wache.py``: startet das
 Claude-Kind und beendet es, sobald die Umzug-Datei auftaucht.
@@ -189,7 +189,7 @@ def server_starten(
     ergebnis = _ssh(ziel, befehl, SSH_START_TIMEOUT)
     if ergebnis is not None and ergebnis.returncode == 0:
         return True
-    was = f"#{ticket}" if ticket else f"Wächter Spec #{spec}"
+    was = f"#{ticket}" if ticket else f"Aufseher Spec #{spec}"
     if ergebnis is not None and ergebnis.returncode == EXIT_LAEUFT_SCHON:
         log.error(
             "%s läuft auf dem Server schon — Umzug abgebrochen, lokale Session läuft weiter "
@@ -442,7 +442,7 @@ def stand_sichern(
 
 
 def ergebnis_melden(code: int, grund: str) -> None:
-    """Ergebnis an den Wächter: ``<BAU_UMZUG_ANFRAGE>.laeuft`` (nur wenn sie existiert).
+    """Ergebnis an den Aufseher: ``<BAU_UMZUG_ANFRAGE>.laeuft`` (nur wenn sie existiert).
 
     Die Datei legt der Stop-Hook beim Übernehmen der Anfrage an; ``umzug_alle`` liest
     sie und stoppt bei einem Fehlschlag sofort, statt bis zur Frist zu warten.
@@ -466,7 +466,7 @@ def ergebnis_melden(code: int, grund: str) -> None:
             encoding="utf-8",
         )
     except OSError as fehler:
-        log.warning("Ergebnis für den Wächter nicht schreibbar (%s): %s", laeuft, fehler)
+        log.warning("Ergebnis für den Aufseher nicht schreibbar (%s): %s", laeuft, fehler)
 
 
 def umzug_einzel(
@@ -528,7 +528,7 @@ def umzug_einzel(
     return EXIT_OK
 
 
-# --- Wächter-Variante -------------------------------------------------------------
+# --- Aufseher-Variante -------------------------------------------------------------
 
 
 def _sessions_stand(repo: Path) -> ModuleType:
@@ -769,12 +769,12 @@ def umzug_alle(
     if ohne_wache:
         return EXIT_OK
     if not server_starten(spec, None, ziel=ziel, ordner=ordner, nur_wache=True):
-        print(f"Wächter Spec #{spec}: Server-Start scheiterte — Wächter bleibt lokal.")
+        print(f"Aufseher Spec #{spec}: Server-Start scheiterte — Aufseher bleibt lokal.")
         return EXIT_FEHLER
     if not _warte(lambda: server_laeuft(spec, None, ziel=ziel, ordner=ordner), BEWEIS_MAX, BEWEIS_TAKT):
-        print(f"Wächter Spec #{spec}: kein tmux-Fenster auf {ziel} — Wächter bleibt lokal.")
+        print(f"Aufseher Spec #{spec}: kein tmux-Fenster auf {ziel} — Aufseher bleibt lokal.")
         return EXIT_FEHLER
-    print(f"Wächter Spec #{spec} umgezogen → {ziel}")
+    print(f"Aufseher Spec #{spec} umgezogen → {ziel}")
     lokales_ende_anstossen(
         {
             "spec": spec,
@@ -789,7 +789,7 @@ def umzug_alle(
 
 
 def hook_umzug_anfrage(stdin_json: str | None = None, ausgabe: TextIO | None = None) -> int:
-    """Stop-Hook: Anfrage des Wächters → Session bekommt die Umzug-Anweisung (einmal).
+    """Stop-Hook: Anfrage des Aufsehers → Session bekommt die Umzug-Anweisung (einmal).
 
     Läuft in jeder Bau-Session über ``to_spawn.py hook-stop`` mit (ein Stop-Befehl für
     Bau-Log und Umzug) und einzeln als ``to_spawn.py hook-umzug``.
@@ -815,7 +815,7 @@ def hook_umzug_anfrage(stdin_json: str | None = None, ausgabe: TextIO | None = N
         return 0
     handoff = f"docs/handoffs/HANDOFF_{_jetzt().date().isoformat()}_{ticket}.md"
     grund = (
-        "Der Wächter verlangt den Umzug dieser Session auf den Bau-Server. "
+        "Der Aufseher verlangt den Umzug dieser Session auf den Bau-Server. "
         f"1) Handoff {handoff} im Worktree schreiben (Stand, nächste Schritte, offene Punkte) "
         "mit der Zeile „Umzug: server“, ohne die Zeile „Staffel: weiter“. "
         "2) Eigene Arbeit mit Pathspec committen. "

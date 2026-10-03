@@ -214,7 +214,7 @@ def test_r2_fehlendes_wache_fenster_wird_gestartet(welt: Welt) -> None:
     assert welt.lauf("--wache-vorlage", _wache_protokoll_vorlage(welt)) == 0
     assert WACHE in fenster_namen()
     assert _argv_protokoll(welt) == [SPEC]
-    assert any("Wächter-Fenster fehlte, gestartet." in k for k in welt.kommentare())
+    assert any("Aufseher-Fenster fehlte, gestartet." in k for k in welt.kommentare())
 
 
 def test_r2_fehlendes_wache_fenster_mit_resume(welt: Welt) -> None:
@@ -227,7 +227,7 @@ def test_r2_fehlendes_wache_fenster_mit_resume(welt: Welt) -> None:
     assert WACHE in fenster_namen()
     assert _argv_protokoll(welt) == [f"{SPEC} --resume {sid}"]
     assert any(
-        f"Wächter-Fenster fehlte, mit Gespräch {sid[:8]}… fortgesetzt." in k
+        f"Aufseher-Fenster fehlte, mit Gespräch {sid[:8]}… fortgesetzt." in k
         for k in welt.kommentare()
     )
 

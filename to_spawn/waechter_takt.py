@@ -1,4 +1,4 @@
-"""Wächter-Takt (#316): Prüf-Skript ohne KI, Claude nur bei Bedarf.
+"""Aufseher-Takt (#316): Prüf-Skript ohne KI, Claude nur bei Bedarf.
 
 Ein Takt nimmt die Leitstand-Sperre ``takt-<S>`` (nicht blockierend — belegt ⇒
 sofort aussteigen), lässt capo einen Tick laufen und sammelt, was zu entscheiden
@@ -60,7 +60,7 @@ CAPO_ABBRUCH = (
 #: (Text, Merker-Feld, Schlüssel) — Feld/Schlüssel sagen, was „gesehen“ bedeutet.
 Eintrag = tuple[str, str, Any]
 
-PROMPT = """Wächter-Takt Spec #{S} ({REPO}). Einmaliger Lauf: kein Handoff, kein /loop, kein ScheduleWakeup — nach dieser Liste endest du. Ziel: Spec {S} vollständig, sauber, autonom fertig. Jede Rückfrage (Bau-Log blockiert/entscheidung/frage) entscheidest DU selbst im besten Interesse von David (Nordstern, Doktrinen) und antwortest per Issue-Kommentar (max. 2 Zeilen) + `python {SKILL}/to_spawn.py eintrag --ticket <N> --typ entscheidung --frage … --wahl … --grund …`. Nur Label checkpoint:human bleibt für David. Du baust nichts und sprichst keine Bau-Session an. Ticket neu zu → Belegseite unter docs/verify-hard/ per Grep prüfen (Akzeptanz erfüllt? Live-Klick-Weg-Beleg mit Rolle da?), bei Mangel 2-Zeilen-Kommentar „Wächter: … fehlt“ + `gh issue reopen`. capo-Verstoß: capo hat schon geöffnet/kommentiert — nicht doppelt tun. Bau fertig, bereit zur Abnahme (alle Bau-Tickets zu oder nur noch Live-Belege/checkpoint:human-Abnahme offen, bzw. „Kette … durch“ oder „SPEC FERTIG“) → Abschluss-Paket `--stand abnahme` (einmal): Rundschau als Artifact (Skill rundschau), `python {SKILL}/skripte/belege_uebersicht.py {S}` und `python {SKILL}/skripte/test_uebersicht.py {S}` je als Artifact, Direkt-Links je Ticket in die Stage-App (staging.url aus .to-spawn/config.json + Route an die richtige Stelle, Rolle im Titel), Zugang nur als Namen (Basic-Auth-Nutzer, App-Rolle, Bitwarden-Eintragsname — nie Passwort), dann `python {SKILL}/skripte/abschluss_paket.py {S} --stand abnahme --stage <url> --rundschau <link> --belege <link> --tests <link> --direkt "<Titel (als Rolle)>=<url>"… --basic-auth-nutzer <name> --app-rolle "<Name (rolle)>" --bitwarden <eintrag>` (schreibt docs/agents/abschluss_{S}.md + mailt David), Abschlussbericht als Kommentar auf #{S} (max. 10 Zeilen). Danach Aufbau-Prüfung (einmal): `python {SKILL}/skripte/thermo_lauf.py plan {S}`. Exit 0 → je Eintrag in `teile` ein Subagent, alle parallel im selben Zug (`model: opus`, Prompt = Feld `prompt` unverändert); jede JSON-Antwort als `<befunde_ordner>/teil-<nr>.json` speichern, dann `python {SKILL}/skripte/thermo_lauf.py sammeln {S}` (schreibt docs/agents/thermo_{S}.md, mit Pathspec + [skip ci] committen + pushen) und die Issue-URL in den Abschlussbericht. Exit 2/4 → überspringen. Exit 3 → fehlenden Teil nachstarten, erneut sammeln. Kein Umbau in der Spec — Befunde gehen nur ins Sammel-Issue. Nach dem Live-Deploy dasselbe einmal mit `--stand live`. Kontext sparen: Tickets nie voll laden, Belegseiten per Grep/limit.
+PROMPT = """Aufseher-Takt Spec #{S} ({REPO}). Einmaliger Lauf: kein Handoff, kein /loop, kein ScheduleWakeup — nach dieser Liste endest du. Ziel: Spec {S} vollständig, sauber, autonom fertig. Jede Rückfrage (Bau-Log blockiert/entscheidung/frage) entscheidest DU selbst im besten Interesse von David (Nordstern, Doktrinen) und antwortest per Issue-Kommentar (max. 2 Zeilen) + `python {SKILL}/to_spawn.py eintrag --ticket <N> --typ entscheidung --frage … --wahl … --grund …`. Nur Label checkpoint:human bleibt für David. Du baust nichts und sprichst keine Bau-Session an. Ticket neu zu → Belegseite unter docs/verify-hard/ per Grep prüfen (Akzeptanz erfüllt? Live-Klick-Weg-Beleg mit Rolle da?), bei Mangel 2-Zeilen-Kommentar „Aufseher: … fehlt“ + `gh issue reopen`. capo-Verstoß: capo hat schon geöffnet/kommentiert — nicht doppelt tun. Bau fertig, bereit zur Abnahme (alle Bau-Tickets zu oder nur noch Live-Belege/checkpoint:human-Abnahme offen, bzw. „Kette … durch“ oder „SPEC FERTIG“) → Abschluss-Paket `--stand abnahme` (einmal): Rundschau als Artifact (Skill rundschau), `python {SKILL}/skripte/belege_uebersicht.py {S}` und `python {SKILL}/skripte/test_uebersicht.py {S}` je als Artifact, Direkt-Links je Ticket in die Stage-App (staging.url aus .to-spawn/config.json + Route an die richtige Stelle, Rolle im Titel), Zugang nur als Namen (Basic-Auth-Nutzer, App-Rolle, Bitwarden-Eintragsname — nie Passwort), dann `python {SKILL}/skripte/abschluss_paket.py {S} --stand abnahme --stage <url> --rundschau <link> --belege <link> --tests <link> --direkt "<Titel (als Rolle)>=<url>"… --basic-auth-nutzer <name> --app-rolle "<Name (rolle)>" --bitwarden <eintrag>` (schreibt docs/agents/abschluss_{S}.md + mailt David), Abschlussbericht als Kommentar auf #{S} (max. 10 Zeilen). Danach Aufbau-Prüfung (einmal): `python {SKILL}/skripte/thermo_lauf.py plan {S}`. Exit 0 → je Eintrag in `teile` ein Subagent, alle parallel im selben Zug (`model: opus`, Prompt = Feld `prompt` unverändert); jede JSON-Antwort als `<befunde_ordner>/teil-<nr>.json` speichern, dann `python {SKILL}/skripte/thermo_lauf.py sammeln {S}` (schreibt docs/agents/thermo_{S}.md, mit Pathspec + [skip ci] committen + pushen) und die Issue-URL in den Abschlussbericht. Exit 2/4 → überspringen. Exit 3 → fehlenden Teil nachstarten, erneut sammeln. Kein Umbau in der Spec — Befunde gehen nur ins Sammel-Issue. Nach dem Live-Deploy dasselbe einmal mit `--stand live`. Kontext sparen: Tickets nie voll laden, Belegseiten per Grep/limit.
 
 Zu entscheiden:
 {LISTE}
@@ -472,7 +472,7 @@ def _repo(args: argparse.Namespace) -> Path:
 
 
 def richte_parser_ein(unter: Any) -> None:
-    p = unter.add_parser("takt", help="Wächter-Takt: prüfen, Claude nur bei Bedarf (#316)")
+    p = unter.add_parser("takt", help="Aufseher-Takt: prüfen, Claude nur bei Bedarf (#316)")
     p.add_argument("spec", type=int, help="Spec-Issue-Nummer")
     p.add_argument(
         "--dry-run",
@@ -493,7 +493,7 @@ def richte_parser_ein(unter: Any) -> None:
     )
     p.add_argument("--notiz", default=None, help="nur Notizzettel waechter-<S> setzen und enden")
 
-    p_e = unter.add_parser("takt-einrichten", help="Wächter-Takt alle 5 min als Cron (nur Linux)")
+    p_e = unter.add_parser("takt-einrichten", help="Aufseher-Takt alle 5 min als Cron (nur Linux)")
     p_e.add_argument("spec", type=int, help="Spec-Issue-Nummer")
     p_e.add_argument(
         "--repo-dir",
