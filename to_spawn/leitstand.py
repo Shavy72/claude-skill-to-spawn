@@ -1,6 +1,6 @@
 """Leitstand (#313): gemeinsame Sperren und gemeinsamer Zustand auf dem Bau-Server.
 
-Jede Komponente (Wächter, Gate, Nest, capo, aufpasser) fragt hier, statt nach
+Jede Komponente (Aufseher, Gate, Nest, capo, aufpasser) fragt hier, statt nach
 eigenem Stand zu handeln.
 
 * Sperren sind echte Betriebssystem-Sperren (Linux ``fcntl.flock``, Windows

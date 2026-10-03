@@ -98,7 +98,7 @@ def test_ohne_nummer_im_betreff_bleibt_verstoss(welt: dict[str, Path]) -> None:
     _frisch_zu(welt)
     _capo(welt)
     assert _zustand(welt) == "open"
-    assert _kommentare(welt, "901")[0].startswith("Wächter: commit_ohne_nummer")
+    assert _kommentare(welt, "901")[0].startswith("Aufseher: commit_ohne_nummer")
 
 
 # --- 1: nicht geplant / Duplikat --------------------------------------------------
@@ -138,7 +138,7 @@ def test_code_ticket_ohne_beleg_bleibt_verstoss(welt: dict[str, Path]) -> None:
     )
     _frisch_zu(welt)
     _capo(welt)
-    assert any(k.startswith("Wächter: beweis_fehlt") for k in _kommentare(welt, "901"))
+    assert any(k.startswith("Aufseher: beweis_fehlt") for k in _kommentare(welt, "901"))
 
 
 # --- E2: je Schließen genau einmal wieder öffnen ---------------------------------------
@@ -406,7 +406,7 @@ def test_ohne_trailer_bleibt_test_ersetzt(welt: dict[str, Path]) -> None:
     )
     _frisch_zu(welt)
     _capo(welt)
-    assert any(k.startswith("Wächter: test_ersetzt") for k in _kommentare(welt, "901"))
+    assert any(k.startswith("Aufseher: test_ersetzt") for k in _kommentare(welt, "901"))
 
 
 # --- 9: VPS unlesbar ------------------------------------------------------------------

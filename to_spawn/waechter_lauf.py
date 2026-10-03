@@ -1,20 +1,20 @@
-"""Aufsicht über die Wächter-Session: Nutzungs-Limit erkennen, Ausweich-Modell starten (#213).
+"""Aufsicht über die Aufseher-Session: Nutzungs-Limit erkennen, Ausweich-Modell starten (#213).
 
 ``claude --fallback-model`` greift nur bei „overloaded/not available“, nicht beim
 Nutzungs-Limit („You've hit your session limit“, „You've reached your Fable limit“).
-Deshalb startet :func:`fahre` den Wächter selbst (``Popen``) und liest in einem
+Deshalb startet :func:`fahre` den Aufseher selbst (``Popen``) und liest in einem
 Hintergrund-Faden die neuen Zeilen seines Transkripts
 ``~/.claude/projects/<cwd>/<session-id>.jsonl``. Taucht die Limit-Zeile auf:
 
-* Wächter läuft noch auf dem Haupt-Modell → Prozess beenden, Bau-Log-Zeile
+* Aufseher läuft noch auf dem Haupt-Modell → Prozess beenden, Bau-Log-Zeile
   ``waechter_modell``, Mail ``waechter_ausweich``, Neustart per
   ``claude --resume <session-id> --model <Ausweich>`` mit kurzem Weiter-Prompt.
-* Wächter läuft schon auf dem Ausweich-Modell → Reset-Uhrzeit aus der Limit-Zeile
-  lesen (#254): nennt sie eine, pausiert der Wächter bis dahin (plus Puffer) und
+* Aufseher läuft schon auf dem Ausweich-Modell → Reset-Uhrzeit aus der Limit-Zeile
+  lesen (#254): nennt sie eine, pausiert der Aufseher bis dahin (plus Puffer) und
   fährt danach selbst per ``--resume`` weiter; nennt sie keine (oder liegt der
   Reset mehr als :data:`MAX_WARTE_S` weg), bleibt es bei Mail ``session_tot``.
 
-Der Aufpasser (#236) setzt ein stilles Wächter-Fenster über ``fahre(session_id=…)``
+Der Aufpasser (#236) setzt ein stilles Aufseher-Fenster über ``fahre(session_id=…)``
 mit ``--resume`` fort; die Gesprächs-ID steht in ``.to-spawn/sessions/wache-<S>.json``.
 """
 
@@ -48,15 +48,15 @@ _RESET_TEXT = re.compile(
 TAKT_S = 5.0
 #: Sekunden, nach denen ein fehlendes Transkript eine Warnung wert ist.
 WARTE_TRANSKRIPT_S = 60.0
-#: Puffer nach dem Reset, bevor der Wächter weiterfährt (#254).
+#: Puffer nach dem Reset, bevor der Aufseher weiterfährt (#254).
 RESET_PUFFER_S = 120.0
-#: Obergrenze der Pause. Darüber (z. B. Wochen-Limit) meldet der Wächter wie bisher
+#: Obergrenze der Pause. Darüber (z. B. Wochen-Limit) meldet der Aufseher wie bisher
 #: und bleibt stehen — lieber ein Mensch als eine Pause über Tage.
 MAX_WARTE_S = 6 * 3600.0
 #: So weit darf ein Reset zurückliegen und noch gelten. Weiter zurück heißt: die Zeile
-#: meint ein anderes Fenster — sonst startet der Wächter im Takt des Puffers neu (F1).
+#: meint ein anderes Fenster — sonst startet der Aufseher im Takt des Puffers neu (F1).
 RESET_TOLERANZ_S = 120.0
-#: So oft pausiert der Wächter in Folge. Danach steht er wie vor #254 — ein Limit,
+#: So oft pausiert der Aufseher in Folge. Danach steht er wie vor #254 — ein Limit,
 #: das nach jedem Neustart sofort wieder greift, ist ein Fall für einen Menschen (F1).
 MAX_PAUSEN = 3
 
@@ -291,12 +291,12 @@ class Aufsicht(threading.Thread):
             self.halt.wait(self.takt)
 
 
-#: Denkstufe der Wächter-Session, wenn die Konfig ``effort.waechter`` nichts sagt (David 28.09.2026).
+#: Denkstufe der Aufseher-Session, wenn die Konfig ``effort.waechter`` nichts sagt (David 28.09.2026).
 EFFORT = "medium"
 
 
 def effort(konfig: dict[str, Any]) -> str:
-    """Denkstufe des Wächters aus ``effort.waechter`` — eine Quelle für Wache und Takt-Lauf (#402)."""
+    """Denkstufe des Aufsehers aus ``effort.waechter`` — eine Quelle für Aufseher und Takt-Lauf (#402)."""
     stufen = konfig.get("effort") if isinstance(konfig.get("effort"), dict) else {}
     return str(stufen.get("waechter") or EFFORT)
 
@@ -311,14 +311,14 @@ def befehl(
     session_id: str | None = None,
     effort: str = "",
 ) -> list[str]:
-    """Start-Befehl der Wächter-Session (``effort`` → ``--effort``, Konfig ``effort.waechter``)."""
+    """Start-Befehl der Aufseher-Session (``effort`` → ``--effort``, Konfig ``effort.waechter``)."""
     cmd = [claude, "--model", modell]
     if effort:
         cmd += ["--effort", effort]
     if ausweich and ausweich != modell:
         cmd += ["--fallback-model", ausweich]
     if remote_control:
-        cmd += ["--remote-control", f"Wächter #{spec}"]
+        cmd += ["--remote-control", f"Aufseher #{spec}"]
     if session_id:
         cmd += ["--session-id", session_id]
     return [*cmd, prompt]
@@ -327,12 +327,12 @@ def befehl(
 def resume_befehl(
     claude: str, sid: str, modell: str, effort: str, remote_control: bool, spec: int, text: str
 ) -> list[str]:
-    """Fortsetzung eines Wächter-Gesprächs mit denselben Flags wie beim Start."""
+    """Fortsetzung eines Aufseher-Gesprächs mit denselben Flags wie beim Start."""
     cmd = [claude, "--resume", sid, "--model", modell]
     if effort:
         cmd += ["--effort", effort]
     if remote_control:
-        cmd += ["--remote-control", f"Wächter #{spec}"]
+        cmd += ["--remote-control", f"Aufseher #{spec}"]
     return [*cmd, text]
 
 
@@ -371,17 +371,17 @@ def _melde_wechsel(repo: Path, spec: int, sid: str, modell: str, ausweich: str, 
         melder.melden(
             repo,
             "waechter_ausweich",
-            f"Wächter #{spec} läuft auf Ausweich-Modell",
-            f"Wächter #{spec}: {modell} hat das Limit erreicht ({grund}) — weiter mit {ausweich}.",
+            f"Aufseher #{spec} läuft auf Ausweich-Modell",
+            f"Aufseher #{spec}: {modell} hat das Limit erreicht ({grund}) — weiter mit {ausweich}.",
             f"waechter_ausweich|{spec}|{sid}",
         )
     except (OSError, ValueError, subprocess.SubprocessError) as fehler:
-        log.warning("Wächter #%s: Mail waechter_ausweich gescheitert: %s", spec, fehler)
+        log.warning("Aufseher #%s: Mail waechter_ausweich gescheitert: %s", spec, fehler)
     _log_zeile(repo, spec, "waechter_modell", von=modell, nach=ausweich, grund=grund)
 
 
 def _log_zeile(repo: Path, spec: int, typ: str, **felder: Any) -> None:
-    """Eine Zeile ins versionierte Bau-Log — nie ein Grund, den Wächter zu stoppen."""
+    """Eine Zeile ins versionierte Bau-Log — nie ein Grund, den Aufseher zu stoppen."""
     ziel = _log_repo(repo)
     try:
         if ziel is not None:
@@ -392,14 +392,14 @@ def _log_zeile(repo: Path, spec: int, typ: str, **felder: Any) -> None:
         rueckfall = bau_log.log_rueckfall() or repo
         bau_log.schreibe(rueckfall, spec, typ, **felder)
         log.warning(
-            "Wächter #%s: Zeile %s nur in der Laufdatei unter %s (kein versioniertes Ziel).",
+            "Aufseher #%s: Zeile %s nur in der Laufdatei unter %s (kein versioniertes Ziel).",
             spec,
             typ,
             rueckfall,
         )
     except (OSError, ValueError) as fehler:
         log.warning(
-            "Wächter #%s: Bau-Log-Zeile %s nicht geschrieben (%s) — Wächter läuft weiter.",
+            "Aufseher #%s: Bau-Log-Zeile %s nicht geschrieben (%s) — Aufseher läuft weiter.",
             spec,
             typ,
             fehler,
@@ -426,14 +426,14 @@ def _melde_pause(
         melder.melden(
             repo,
             "waechter_pause",
-            f"Wächter #{spec} pausiert bis {bis}",
-            f"Wächter #{spec}: {modell} hat das Limit erreicht ({grund}). "
+            f"Aufseher #{spec} pausiert bis {bis}",
+            f"Aufseher #{spec}: {modell} hat das Limit erreicht ({grund}). "
             f"Pause {runde} von {MAX_PAUSEN} bis {bis} ({sekunden / 60:.0f} min), "
             "danach fährt er selbst weiter.",
             f"waechter_pause|{spec}|{sid}|{runde}|{int(ziel.timestamp())}",
         )
     except (OSError, ValueError, subprocess.SubprocessError) as fehler:
-        log.warning("Wächter #%s: Mail waechter_pause gescheitert: %s", spec, fehler)
+        log.warning("Aufseher #%s: Mail waechter_pause gescheitert: %s", spec, fehler)
     _log_zeile(
         repo,
         spec,
@@ -449,21 +449,21 @@ def _melde_pause(
 def _melde_stillstand(
     repo: Path, spec: int, sid: str, modell: str, text: str, grund: str
 ) -> None:
-    """Wächter bleibt stehen: Mail wie vor #254 — und eine Spur im Bau-Log (F5)."""
+    """Aufseher bleibt stehen: Mail wie vor #254 — und eine Spur im Bau-Log (F5)."""
     try:
         raus = melder.melden(
             repo,
             "session_tot",
-            f"Wächter #{spec} steht",
-            f"Wächter #{spec} hat auch auf dem Ausweich-Modell {modell} das Limit erreicht: {text}",
+            f"Aufseher #{spec} steht",
+            f"Aufseher #{spec} hat auch auf dem Ausweich-Modell {modell} das Limit erreicht: {text}",
             f"session_tot|waechter|{spec}|{sid}|{datetime.now().astimezone():%Y-%m-%d}",
         )
     except (OSError, ValueError, subprocess.SubprocessError) as fehler:
         raus = False
-        log.warning("Wächter #%s: Mail session_tot gescheitert: %s", spec, fehler)
+        log.warning("Aufseher #%s: Mail session_tot gescheitert: %s", spec, fehler)
     if not raus:
         log.warning(
-            "Wächter #%s steht (%s) und es ging KEINE Mail raus — nur diese Zeile.",
+            "Aufseher #%s steht (%s) und es ging KEINE Mail raus — nur diese Zeile.",
             spec,
             grund,
         )
@@ -487,13 +487,13 @@ def fahre(
     hoechstens: float = MAX_WARTE_S,
     effort: str = "",
 ) -> int:
-    """Wächter starten und beaufsichtigen; Rückgabe = Exit-Code der letzten Session.
+    """Aufseher starten und beaufsichtigen; Rückgabe = Exit-Code der letzten Session.
 
     ``abbruch`` (optional) wird je Takt gefragt; ``True`` beendet die Session mit Exit 0.
     ``session_id`` (Aufpasser, #236 R1): vorhandenes Gespräch per ``--resume`` fortsetzen
     statt frisch zu starten — nur wenn das Transkript noch da ist, sonst Exit 2.
     Die Gesprächs-ID landet in ``<repo>/.to-spawn/sessions/wache-<S>.json`` (R2).
-    Auf dem Ausweich-Modell wartet der Wächter das Limit aus, wenn die Limit-Zeile
+    Auf dem Ausweich-Modell wartet der Aufseher das Limit aus, wenn die Limit-Zeile
     eine Reset-Uhrzeit nennt (#254): ``puffer`` Sekunden obendrauf, länger als
     ``hoechstens`` wird nie gewartet.
     """
@@ -502,7 +502,7 @@ def fahre(
         transkript = transkript_ordner(cwd) / f"{sid}.jsonl"
         if not transkript.is_file():
             log.error(
-                "Wächter #%s --resume %s: Transkript %s fehlt — kein Start.",
+                "Aufseher #%s --resume %s: Transkript %s fehlt — kein Start.",
                 spec,
                 sid,
                 transkript,
@@ -515,7 +515,7 @@ def fahre(
             effort,
             remote_control,
             spec,
-            f"Aufpasser: Weiter als Bau-Wächter Spec #{spec} genau dort, wo du warst — "
+            f"Aufpasser: Weiter als Bau-Aufseher Spec #{spec} genau dort, wo du warst — "
             "nächster Tick wie gehabt.",
         )
     else:
@@ -549,7 +549,7 @@ def fahre(
             _gruende.append(text)
             _limit.set()
             log.warning(
-                "Wächter #%s: Nutzungs-Limit erkannt (%s) — %s", spec, _modell, text
+                "Aufseher #%s: Nutzungs-Limit erkannt (%s) — %s", spec, _modell, text
             )
             if not _auf:
                 _beende(_proc)
@@ -589,7 +589,7 @@ def fahre(
             except subprocess.TimeoutExpired:
                 if abbruch is not None and abbruch():
                     log.info(
-                        "Wächter #%s: Abbruch-Bedingung erfüllt — Session wird beendet.",
+                        "Aufseher #%s: Abbruch-Bedingung erfüllt — Session wird beendet.",
                         spec,
                     )
                     aufsicht.halt.set()
@@ -606,13 +606,13 @@ def fahre(
             pausen += 1
             _melde_pause(repo, spec, sid, modell, ziel, wartezeit, grund, pausen)
             log.warning(
-                "Wächter #%s: Limit-Pause bis %s (%.0f s) — danach fährt er selbst weiter.",
+                "Aufseher #%s: Limit-Pause bis %s (%.0f s) — danach fährt er selbst weiter.",
                 spec,
                 ziel,
                 wartezeit,
             )
             if not _warten(wartezeit, takt, abbruch):
-                log.info("Wächter #%s: Abbruch während der Limit-Pause.", spec)
+                log.info("Aufseher #%s: Abbruch während der Limit-Pause.", spec)
                 return 0
             _log_zeile(
                 repo,
@@ -629,7 +629,7 @@ def fahre(
                 effort,
                 remote_control,
                 spec,
-                f"Weiter als Bau-Wächter Spec #{spec}: Das Nutzungs-Limit ist seit "
+                f"Weiter als Bau-Aufseher Spec #{spec}: Das Nutzungs-Limit ist seit "
                 f"{ziel.astimezone():%H:%M} wieder offen, die Pause ist vorbei. "
                 f"Nächster Tick wie gehabt (python scripts/capo.py {spec}); "
                 f"docs/agents/bau_log/{spec}.jsonl beim nächsten Handoff-Commit mitnehmen.",
@@ -638,7 +638,7 @@ def fahre(
 
         _melde_wechsel(repo, spec, sid, modell, ausweich, grund)
         weiter = (
-            f"Weiter als Bau-Wächter Spec #{spec}: Modell-Wechsel {modell} → {ausweich} wegen Nutzungs-Limit. "
+            f"Weiter als Bau-Aufseher Spec #{spec}: Modell-Wechsel {modell} → {ausweich} wegen Nutzungs-Limit. "
             f"Nächster Tick wie gehabt (python scripts/capo.py {spec}); "
             f"docs/agents/bau_log/{spec}.jsonl beim nächsten Handoff-Commit mitnehmen."
         )

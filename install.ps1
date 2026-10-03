@@ -1,5 +1,5 @@
 # Installer für /to-spawn: Skill nach ~/.claude/skills/to-spawn (inkl. skripte/, to_spawn/, to_spawn.py),
-# Alias-Skills (aliase/* → ~/.claude/skills/<alias>), Profil-Funktionen bau/wache/sessions/leitstand,
+# Alias-Skills (aliase/* → ~/.claude/skills/<alias>), Profil-Funktionen bau/aufseher/wache/sessions/leitstand,
 # optional die Repo-Weiterleitungen (repo-scripts/ → <Repo>/scripts, nur fehlende) + .to-spawn/config.json.
 # Ein vorhandener Skill-Ordner wird nie gelöscht, sondern nach ~/.claude/skills/_alt/to-spawn-<zeit> verschoben.
 # Linux/macOS: install.sh.
@@ -49,7 +49,7 @@ function bau {
 }
 function wache {
     if (-not (Test-Path "./scripts/wache.py")) { Write-Error "wache: kein ./scripts/wache.py im aktuellen Ordner"; return }
-    if ($args.Count -eq 0) { Write-Host "Usage: wache <SpecNr> [--dry-run] [--print-prompt] [--model <m>] [--takt <s>]"; return }
+    if ($args.Count -eq 0) { Write-Host "Usage: wache <SpecNr> (Alias von aufseher) [--dry-run] [--print-prompt] [--model <m>] [--takt <s>]"; return }
     python "./scripts/wache.py" @args
 }
 function sessions {
@@ -63,6 +63,23 @@ foreach ($fn in @("bau", "wache", "sessions")) {
 if ($profil -notmatch "function bau\b" -or $profil -notmatch "function wache\b" -or $profil -notmatch "function sessions\b") {
     Add-Content -Path $profilPfad -Value $block
     Write-Host "Profil ergänzt: $profilPfad (fehlende Funktionen angehängt; doppelte Definitionen bitte von Hand bereinigen)"
+}
+# aufseher <S>: startet den Aufseher der Spec (#428, gleiches Ziel wie wache — wache bleibt Alias).
+# Eigener Block, weil Profile mit bau/wache/sessions sonst nichts Neues bekommen.
+$profil = Get-Content $profilPfad -Raw
+if ($profil -match "function aufseher\b") {
+    Write-Host "Profil: function aufseher existiert schon — unverändert"
+} else {
+    Add-Content -Path $profilPfad -Value @'
+
+# --- to-spawn Aufseher: aufseher <S> startet den Aufseher der Spec (wache <S> = alter Alias) ---
+function aufseher {
+    if (-not (Test-Path "./scripts/wache.py")) { Write-Error "aufseher: kein ./scripts/wache.py im aktuellen Ordner"; return }
+    if ($args.Count -eq 0) { Write-Host "Usage: aufseher <SpecNr> [--dry-run] [--print-prompt] [--model <m>] [--takt <s>]"; return }
+    python "./scripts/wache.py" @args
+}
+'@
+    Write-Host "Profil ergänzt: function aufseher"
 }
 # leitstand <S> [unterbefehl]: Bau-Leitstand-Session der Spec in diesem Fenster (eigener Block, weil
 # Profile mit bau/wache/sessions sonst nichts Neues bekommen).

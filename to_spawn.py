@@ -131,7 +131,7 @@ def _setup(repo: Path, args: argparse.Namespace) -> int:
             return 2
     if args.modell_waechter and args.modell_waechter != setup.FLAGGSCHIFF:
         print(
-            f"Hinweis: Wächter läuft immer auf {setup.FLAGGSCHIFF} — Angabe ignoriert."
+            f"Hinweis: Aufseher läuft immer auf {setup.FLAGGSCHIFF} — Angabe ignoriert."
         )
 
     if args.standard or hat_werte:
@@ -235,7 +235,7 @@ def _eintrag(args: argparse.Namespace) -> int:
         **zusatz,
     )
     if args.typ == "vorfall":
-        # Damit der Wächter den Vorfall schon vor Commit + Push sieht (#286).
+        # Damit der Aufseher den Vorfall schon vor Commit + Push sieht (#286).
         bau_log.spiegel_in_laufdatei(repo, zeile["ticket"], zeile)
     print(f"Bau-Log #{zeile['ticket']}: {args.typ} → {bau_log.log_pfad(repo, zeile['ticket'])}")
     return 0
@@ -266,7 +266,7 @@ def _umrechnen(args: argparse.Namespace) -> int:
 
 
 def _hook_stop_mit_umzug() -> int:
-    """Ein Stop-Befehl für Bau-Log (#204) und Umzug-Anfrage des Wächters (#212).
+    """Ein Stop-Befehl für Bau-Log (#204) und Umzug-Anfrage des Aufsehers (#212).
 
     stdin ist nur einmal lesbar. Liegt eine Umzug-Anfrage, gewinnt deren
     Blockier-Antwort; sonst gilt die Ausgabe des Bau-Log-Hooks. Endet immer mit 0.
@@ -300,7 +300,7 @@ def main(argv: list[str] | None = None) -> int:
     p_spawn.add_argument("--tickets", help="nur diese Tickets, mit Komma getrennt")
     p_spawn.add_argument("--dry-run", action="store_true", help="nur den Befehl zeigen")
 
-    p_neu = unter.add_parser("neustart", help="ein Ticket neu starten (Wächter-Einzeiler)")
+    p_neu = unter.add_parser("neustart", help="ein Ticket neu starten (Aufseher-Einzeiler)")
     p_neu.add_argument("spec", type=int)
     p_neu.add_argument("ticket", type=int)
     p_neu.add_argument("--ziel", choices=["local", "srv"], default="local", help="local = dieser Rechner")
@@ -367,7 +367,7 @@ def main(argv: list[str] | None = None) -> int:
     p_setup.add_argument("--effort-leicht")
     p_setup.add_argument("--effort-waechter")
     p_setup.add_argument(
-        "--modell-waechter", help="wird ignoriert: Wächter = immer Flaggschiff"
+        "--modell-waechter", help="wird ignoriert: Aufseher = immer Flaggschiff"
     )
     p_setup.add_argument(
         "--plattform", choices=["win32", "linux", "darwin"], help="zum Testen"
@@ -411,10 +411,10 @@ def main(argv: list[str] | None = None) -> int:
     p_umzug.add_argument("--dry-run", action="store_true", help="nur prüfen und Befehle zeigen")
     p_alle = unter.add_parser("umzug-alle", help="alle Sessions einer Spec nacheinander umziehen")
     p_alle.add_argument("spec")
-    p_alle.add_argument("--ohne-wache", action="store_true", help="Wächter bleibt lokal")
+    p_alle.add_argument("--ohne-wache", action="store_true", help="Aufseher bleibt lokal")
     p_alle.add_argument("--warte-max", type=float, default=1800, help="Sekunden je Session (1800)")
     p_alle.add_argument("--dry-run", action="store_true", help="nur den Plan zeigen")
-    unter.add_parser("hook-umzug", help="Stop-Hook: Umzug-Anfrage des Wächters (JSON auf stdin)")
+    unter.add_parser("hook-umzug", help="Stop-Hook: Umzug-Anfrage des Aufsehers (JSON auf stdin)")
 
     p_eintrag = unter.add_parser("eintrag", help="Klartext-Zeile ins Bau-Log des Tickets")
     p_eintrag.add_argument("--ticket", help="Ticket-Nummer (sonst TO_SPAWN_TICKET/wt-<N>)")
@@ -427,7 +427,7 @@ def main(argv: list[str] | None = None) -> int:
     p_eintrag.add_argument("--schwierigkeiten", help="was schwer war")
     p_eintrag.add_argument("--entscheidungen", help="was entschieden wurde")
     p_eintrag.add_argument("--text", help="freier Text")
-    # Wächter-Übersicht (#213): Entscheidung als Frage · Wahl · Grund; blockiert braucht --grund.
+    # Aufseher-Übersicht (#213): Entscheidung als Frage · Wahl · Grund; blockiert braucht --grund.
     p_eintrag.add_argument("--frage", help="Entscheidung: welche Frage")
     p_eintrag.add_argument("--wahl", help="Entscheidung: was gewählt wurde")
     p_eintrag.add_argument("--grund", help="Entscheidung: warum · blockiert: woran es hängt")

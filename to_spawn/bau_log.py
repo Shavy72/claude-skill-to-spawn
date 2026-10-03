@@ -36,10 +36,10 @@ TYPEN = (
     "session_ende",
     "subagent_ende",
     "staffel_limit",
-    # Wächter (#213): Live-Beweis blockiert (Feld ``grund``) und Modell-Wechsel beim Limit.
+    # Aufseher (#213): Live-Beweis blockiert (Feld ``grund``) und Modell-Wechsel beim Limit.
     "blockiert",
     "waechter_modell",
-    # Wächter (#254): Pause bis zum Limit-Reset und der Neustart danach.
+    # Aufseher (#254): Pause bis zum Limit-Reset und der Neustart danach.
     "waechter_pause",
     "waechter_weiter",
     "zusammenfassung",
@@ -204,7 +204,7 @@ def eintrag_schreiben(
 def spiegel_in_laufdatei(repo: Path, ticket: str | int, zeile: dict[str, Any]) -> None:
     """Eine schon versionierte Zeile zusätzlich in die Laufdatei legen (#286).
 
-    Der Wächter liest die versionierte Datei über ``git show origin/<Hauptzweig>`` —
+    Der Aufseher liest die versionierte Datei über ``git show origin/<Hauptzweig>`` —
     bis Commit und Push sieht er die Zeile nicht. Die Laufdatei liest er direkt von
     der Platte. Weil die Rohzeile identisch ist, zählt :func:`lese` sie trotzdem nur
     einmal, und ``eintrag`` überträgt sie später nicht noch einmal.

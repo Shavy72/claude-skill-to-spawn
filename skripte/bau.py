@@ -108,7 +108,7 @@ TO_SPAWN_CLI = Path(_SKILL) / "to_spawn.py"
 STAFFEL_MAX_DEFAULT = 8
 #: Werkzeug-Rechte der Probesitz-Wegwerf-Session (#214): nur git, Ordner anlegen, Dateien.
 PROBESITZ_RECHTE = ("Bash(git *)", "Bash(mkdir *)", "Write", "Edit", "Read")
-#: Auftrag einer Runde (#285) ist ein Wächter-Kommentar, kein Dokument.
+#: Auftrag einer Runde (#285) ist ein Aufseher-Kommentar, kein Dokument.
 AUFTRAG_MAX_ZEICHEN = 4_000
 # Handoffs sind Übersichten, keine Romane — mehr als das wäre ein Fehler in der Vorsession.
 STAFFEL_HANDOFF_MAX_ZEICHEN = 40_000
@@ -429,7 +429,7 @@ def build_prompt(
 def handoff_dirs(ticket: str) -> list[str]:
     """Nur der Ticket-Worktree — und dort beide Handoff-Orte.
 
-    Der Hauptbaum bleibt bewusst außen vor: er ist mit Wächter- und
+    Der Hauptbaum bleibt bewusst außen vor: er ist mit Aufseher- und
     Peer-Sessions geteilt, und ein fremdes ``git checkout``/``pull`` setzt die
     mtime einer Handoff-Datei auf jetzt. Der Hook würde das für eine frische
     Übergabe halten und eine arbeitende Session abschießen. Bau-Sessions
@@ -463,7 +463,7 @@ def staffel_hooks(mit_staffel: bool = True) -> dict:
 
     ``Stop``: zuerst die Frage-Sperre (#321: endet die Antwort mit einer Frage, heißt
     es „Vorschlag nehmen, weitermachen“), dann der Staffel-Hook, danach der Bau-Log-Hook des Skills (Token,
-    Modell, Dauer je Runde); er gibt auch die Umzug-Anfrage des Wächters weiter (#212). ``SubagentStop``: Bau-Log-Zeile je Subagent (#204).
+    Modell, Dauer je Runde); er gibt auch die Umzug-Anfrage des Aufsehers weiter (#212). ``SubagentStop``: Bau-Log-Zeile je Subagent (#204).
     ``PreToolUse``: ``AskUserQuestion`` → Frage-Sperre lehnt ab (#321).
     """
     frage_sperre = FRAGE_SPERRE_BEFEHL
@@ -551,7 +551,7 @@ def exit_code(code: int) -> int:
 
 
 def auftrag_prompt(prompt: str, auftrag: str) -> str:
-    """Auftrag dieser Runde (z. B. Wächter-Kommentar) klar abgesetzt vor den Prompt (#285).
+    """Auftrag dieser Runde (z. B. Aufseher-Kommentar) klar abgesetzt vor den Prompt (#285).
 
     Ohne Auftrag ruft niemand diese Funktion — der Prompt bleibt dann unverändert.
     """
@@ -704,7 +704,7 @@ def umzug_prompt(prompt: str, text: str, branch: str, ticket: str) -> str:
 
 
 def umzug_anfragen_aufraeumen(ticket: str) -> Path:
-    """Alte Umzug-Anfragen des Wächters löschen; Rückgabe: Pfad der Anfrage-Datei."""
+    """Alte Umzug-Anfragen des Aufsehers löschen; Rückgabe: Pfad der Anfrage-Datei."""
     anfrage = REPO / ".to-spawn" / f"umzug-anfrage-{ticket}"
     anfrage.unlink(missing_ok=True)
     Path(f"{anfrage}.laeuft").unlink(missing_ok=True)
@@ -957,7 +957,7 @@ def main() -> int:
     os.environ["CLAUDE_CODE_FORCE_SESSION_PERSISTENCE"] = "1"
 
     # Umzug (#212): bau.py beendet die Session, sobald ``umzug.json`` auftaucht; der
-    # Stop-Hook ``hook-umzug`` liest die Anfrage des Wächters.
+    # Stop-Hook ``hook-umzug`` liest die Anfrage des Aufsehers.
     umzug_datei = out / "umzug.json"
     os.environ["BAU_UMZUG_DATEI"] = str(umzug_datei)
     os.environ["BAU_UMZUG_ANFRAGE"] = str(umzug_anfragen_aufraeumen(ticket))

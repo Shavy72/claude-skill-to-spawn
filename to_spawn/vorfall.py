@@ -44,7 +44,7 @@ KATALOG_PFAD = Path("docs") / "agents" / "FEHLERKATALOG_spawn.md"
 #: Schutz-Spalte für alles, was diese Lernschleife selbst erkannt hat.
 SCHUTZ_AUTOMAT = "🟢 capo (#286)"
 
-#: Wer die Zeile geschrieben hat. Wichtig für capo: eine Vorfall-Zeile des Wächters
+#: Wer die Zeile geschrieben hat. Wichtig für capo: eine Vorfall-Zeile des Aufsehers
 #: ist KEIN Lebenszeichen der Session — sonst tarnt der eigene Fund die tote Session
 #: als lebendig (Regression beim Bau von #286).
 QUELLEN = ("capo", "aufpasser", "session")
@@ -90,7 +90,8 @@ class Vorfall:
 
 
 def _norm(text: Any) -> str:
-    return _ZELLE_RAND.sub(" ", str(text or "")).strip().lower()
+    # #428-alt: alter Rollenname = neuer, sonst wird ein Altvorfall zur Doppelzeile.
+    return _ZELLE_RAND.sub(" ", str(text or "")).strip().lower().replace("wächter", "aufseher")
 
 
 def _zelle(text: Any) -> str:
@@ -156,7 +157,7 @@ def aus_zeilen(zeilen: list[dict[str, Any]]) -> list[Vorfall]:
 def ist_waechter_zeile(zeile: dict[str, Any]) -> bool:
     """Vorfall-Zeile, die capo oder der Aufpasser geschrieben hat — kein Lebenszeichen.
 
-    Ohne diese Unterscheidung hält der Wächter seinen eigenen Fund für eine frische
+    Ohne diese Unterscheidung hält der Aufseher seinen eigenen Fund für eine frische
     Spur der Session und meldet die tote Session ab dem zweiten Tick nicht mehr.
     """
     return zeile.get("typ") == TYP and str(

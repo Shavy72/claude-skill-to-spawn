@@ -59,6 +59,7 @@ if _SKILL not in sys.path:
 from to_spawn import bau_log, config  # noqa: E402
 from to_spawn import gh as gh_modul  # noqa: E402
 from to_spawn import manifest as manifest_modul  # noqa: E402
+from to_spawn.capo import AUFSEHER_KOEPFE  # noqa: E402
 
 # Fenster-Teil (Ablage, Zustands-/URL-Datei, seite, anweisung, mail, aktiv, sitzung) liegt in leitstand_fenster.py.
 if str(_SKRIPTE) not in sys.path:
@@ -379,7 +380,7 @@ def aus_bau_log(ticket: str, zeilen: list[dict[str, Any]]) -> list[Ereignis]:
                     zeit,
                     "info",
                     f"#{nr} Modell gewechselt",
-                    einfach(f"Der Wächter hat das Modell gewechselt: {inhalt}."),
+                    einfach(f"Der Aufseher hat das Modell gewechselt: {inhalt}."),
                     nr,
                 )
             )
@@ -392,9 +393,11 @@ def aus_kommentaren(nummer: str, issue: dict[str, Any], spec: str) -> list[Ereig
     for k in (issue.get("comments") or {}).get("nodes") or []:
         body = str(k.get("body") or "").strip()
         zeit = lokal_iso(k.get("createdAt"))
-        if not body.startswith("Wächter") or not zeit:
+        # Nur echte Marken mit Doppelpunkt (auch die alte vor #428) — „Aufseher-Fenster …“ nicht.
+        kopf = next((k for k in AUFSEHER_KOEPFE if body.startswith(k)), None)
+        if kopf is None or not zeit:
             continue
-        rein = re.sub(r"Wächter:\s*", "", body)
+        rein = body[len(kopf) :].lstrip()
         if "Mensch nötig" in body:
             art = "david"
         elif re.search(r"\b(rot|Fehler|blockiert)\b", body):
@@ -408,7 +411,7 @@ def aus_kommentaren(nummer: str, issue: dict[str, Any], spec: str) -> list[Ereig
 
 
 def ohne_doppelte_david(aus_log: list[Ereignis], kommentare: list[Ereignis]) -> list[Ereignis]:
-    """Bau-Log-„mensch_noetig“ weglassen, wenn der Wächter binnen 5 Min dasselbe kommentiert hat."""
+    """Bau-Log-„mensch_noetig“ weglassen, wenn der Aufseher binnen 5 Min dasselbe kommentiert hat."""
     wache = [t for t in (als_zeit(e.zeit) for e in kommentare if e.art == "david") if t]
 
     def doppelt(e: Ereignis) -> bool:
@@ -639,7 +642,7 @@ def beobachten_fuer(ziel: str, spec: str, ssh_ziel: str) -> list[dict[str, str]]
             {"titel": "Stand als Tabelle", "befehl": f"sessions {spec}"},
             {
                 "titel": "Live zuschauen (lokal)",
-                "befehl": f"Windows-Terminal-Fenster der Spec {spec} – je Ticket ein Tab „bau <N>“, dazu „wache {spec}“",
+                "befehl": f"Windows-Terminal-Fenster der Spec {spec} – je Ticket ein Tab „bau <N>“, dazu „wache {spec}“ (der Aufseher)",
             },
         ]
     return [

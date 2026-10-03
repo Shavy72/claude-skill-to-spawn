@@ -1,4 +1,4 @@
-"""Aufpasser (Hausmeister) für Bau-Sessions im tmux — Ebene 3 über Wächter und Bau-Sessions.
+"""Aufpasser (Hausmeister) für Bau-Sessions im tmux — Ebene 3 über Aufseher und Bau-Sessions.
 
 Läuft per Cron alle 15 Minuten (0 Token, reines Skript) und sieht je tmux-Sitzung
 ``spec-<S>`` nach den Fenstern ``bau <N>`` und ``wache <S>``:
@@ -34,7 +34,7 @@ Läuft per Cron alle 15 Minuten (0 Token, reines Skript) und sieht je tmux-Sitzu
    Text sich ändert — kein Zeit-Reset. Direkt vor jedem Eingriff wird der Pane-Text
    neu gelesen: anders als zu Laufbeginn, arbeitend oder Deploy/Gate inzwischen
    gestartet ⇒ Kette abbrechen (R4). Mehr als 3 Anstupser je Fenster in 24 h ⇒
-   Stufe 3, einmal „braucht David“ (R5). Das Wächter-Fenster geht denselben Weg,
+   Stufe 3, einmal „braucht David“ (R5). Das Aufseher-Fenster geht denselben Weg,
    nur ohne Sicherung (kein Worktree): ``wache.py --resume <id>`` (R1).
    Lebt im Pane nur noch die Shell (Session beendet), wird nie angestupst — der
    Text liefe als Befehl —, sondern nach ``hang_min`` Stille gleich bei Stufe 1
@@ -260,7 +260,7 @@ class Einstellungen:
     tmux_socket: str | None = None
     hang_min: float = HANG_MIN
     bau_vorlage: str | None = None
-    #: Startbefehl des Wächter-Fensters mit {repo} {py} {s} {resume} (R1).
+    #: Startbefehl des Aufseher-Fensters mit {repo} {py} {s} {resume} (R1).
     wache_vorlage: str | None = None
     deploy_muster: str = DEPLOY_MUSTER
     repo: Path | None = None
@@ -345,7 +345,7 @@ class SessionInfo:
 def arbeitet(text: str, status: str | None = None) -> bool:
     """Fenster arbeitet oder wartet auf Antwort → nie anfassen.
 
-    Marker im Pane-Text (auch die Limit-Meldung des Wächters) oder ``status == busy``
+    Marker im Pane-Text (auch die Limit-Meldung des Aufsehers) oder ``status == busy``
     aus der Session-JSON.
     """
     if status == "busy":
@@ -739,7 +739,7 @@ class Aufpasser:
     def __init__(self, e: Einstellungen) -> None:
         self.e = e
         self.jetzt = e.jetzt()
-        #: Deploy-Muster dieses Laufs (mit Repo-Konfig) — Wache vor jedem Eingriff (R4).
+        #: Deploy-Muster dieses Laufs (mit Repo-Konfig) — Deploy-Wache vor jedem Eingriff (R4).
         self.muster = e.deploy_muster
         self.datum = (
             datetime.fromtimestamp(self.jetzt, tz=timezone.utc)
@@ -1033,7 +1033,7 @@ class Aufpasser:
             return
         treffer = _FENSTER_TICKET.search(fenster)
         ticket = treffer.group(1) if treffer else spec
-        # Wächter-Fenster arbeiten in einem Worktree; dessen ``.to-spawn`` liest
+        # Aufseher-Fenster arbeiten in einem Worktree; dessen ``.to-spawn`` liest
         # niemand für ein fremdes Ticket. Darum in den Hauptbaum schreiben, wenn
         # das Fenster nicht der Worktree dieses Tickets ist (#286).
         ziel = self.log_ordner(repo, ticket)
@@ -1072,7 +1072,7 @@ class Aufpasser:
         )
 
     def wache_befehl(self, repo: Path, spec: str, resume: str | None) -> str:
-        """Startbefehl des Wächter-Fensters (R1), analog ``bau_befehl``."""
+        """Startbefehl des Aufseher-Fensters (R1), analog ``bau_befehl``."""
         venv = repo / ".venv" / "bin" / "python"
         py = str(venv) if venv.is_file() else "python3"
         if self.e.wache_vorlage:
@@ -1520,7 +1520,7 @@ class Aufpasser:
         hash_start: str,
         info: SessionInfo | None,
     ) -> None:
-        """Stufe 1 → 2: Worktree sichern (nur ``bau <N>``; der Wächter hat keinen),
+        """Stufe 1 → 2: Worktree sichern (nur ``bau <N>``; der Aufseher hat keinen),
         Fenster mit ``--resume <id>`` fortsetzen, Nachweis (R1: auch ``wache <S>``)."""
         if info is None:
             self._braucht_david(
@@ -1575,7 +1575,7 @@ class Aufpasser:
             )
             return
         if ticket is None:
-            gesichert = "nichts zu sichern (Wächter ohne Worktree)"
+            gesichert = "nichts zu sichern (Aufseher ohne Worktree)"
         elif sha:
             gesichert = f"Änderungen auf sicherung/{ticket} gesichert ({sha[:7]})"
         else:
@@ -1607,7 +1607,7 @@ class Aufpasser:
     def start_erlaubt(self, spec: str, repo: Path, ticket: int | None) -> bool:
         """Regel 1: kein Start bei Stopp-Label oder wenn das Fenster in 6 h schon
         ``START_MAX``-mal gestartet wurde (es verschwindet offenbar wieder).
-        ``ticket`` None = Wächter-Fenster (kein Label, Start-Gedächtnis ``wache-<S>``)."""
+        ``ticket`` None = Aufseher-Fenster (kein Label, Start-Gedächtnis ``wache-<S>``)."""
         name = f"bau {ticket}" if ticket is not None else f"wache {spec}"
         if ticket is not None:
             try:
@@ -1687,7 +1687,7 @@ class Aufpasser:
             return
         if not self.e.trocken:
             self._starts_in_tick += 1
-        wer = f"#{ticket}" if ticket is not None else "Wächter-Fenster"
+        wer = f"#{ticket}" if ticket is not None else "Aufseher-Fenster"
         was = "hatte keine Session" if ticket is not None else "fehlte"
         if not self.e.trocken:
             self.stand.starts.setdefault(
@@ -1727,8 +1727,8 @@ class Aufpasser:
             if not self.start_erlaubt(spec, repo, ticket):
                 continue
             self.fehlendes_fenster(sitzung, spec, repo, ticket)
-        # Wächter-Fenster fehlt (R2): nachstarten, solange die Spec offene Tickets
-        # hat — ist sie fertig, hat der Wächter sich regulär beendet.
+        # Aufseher-Fenster fehlt (R2): nachstarten, solange die Spec offene Tickets
+        # hat — ist sie fertig, hat der Aufseher sich regulär beendet.
         if (
             offen
             and f"wache {spec}" not in vorhanden
@@ -1837,7 +1837,7 @@ def parser_fuellen(ap: argparse.ArgumentParser) -> argparse.ArgumentParser:
     )
     ap.add_argument(
         "--wache-vorlage",
-        help="Startbefehl des Wächter-Fensters mit {repo} {py} {s} {resume} (Vorgabe: scripts/wache.py bzw. Skill)",
+        help="Startbefehl des Aufseher-Fensters mit {repo} {py} {s} {resume} (Vorgabe: scripts/wache.py bzw. Skill)",
     )
     ap.add_argument(
         "--deploy-muster", default=DEPLOY_MUSTER, help="Regex für pgrep -af"

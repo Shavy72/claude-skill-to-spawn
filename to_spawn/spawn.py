@@ -148,7 +148,7 @@ def spawn(
     return subprocess.run(befehl, cwd=str(repo), check=False, env=umgebung).returncode
 
 
-# --- Einzelticket-Neustart (Wächter-Werkzeug) -------------------------------------------------------
+# --- Einzelticket-Neustart (Aufseher-Werkzeug) -------------------------------------------------------
 
 #: Wartezeit, bis ein beendetes Ticket in ``sessions_stand`` als ``aus`` erscheint.
 NEUSTART_WARTE_S = 60
@@ -195,7 +195,7 @@ def neustart(
     beenden: bool = False,
     dry_run: bool = False,
 ) -> int:
-    """Ein Ticket neu starten — Einzeiler für den Wächter.
+    """Ein Ticket neu starten — Einzeiler für den Aufseher.
 
     ``local`` = dieser Rechner (Bau-Server: tmux-Fenster in ``spec-<S>``, PC: wt-Tab),
     ``srv`` = per SSH derselbe Befehl im ``server_repo`` des Bau-Servers. Läuft das

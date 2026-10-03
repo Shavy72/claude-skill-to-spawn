@@ -1,0 +1,15 @@
+                if _LOGIK_MUSTER.search(zeile):
+                    funde.append(f"{pfad.name}:{nr}: {zeile.strip()}")
+>       assert not funde, "Alte Marke in Test-Logik:\n" + "\n".join(funde)
+E       AssertionError: Alte Marke in Test-Logik:
+E         test_waechter_213_weg.py:140: if c["body"].startswith("Wächter: commit_ohne_nummer")
+E         test_waechter_213_weg_echt.py:203: c["body"] for c in daten["comments"] if c["body"].startswith("Wächter:")
+E         test_waechter_213_weg_echt.py:237: c["body"] for c in daten["comments"] if c["body"].startswith("Wächter:")
+E       assert not ['test_waechter_213_weg.py:140: if c["body"].startswith("Wächter: commit_ohne_nummer")', 'test_waechter_213_weg_echt.p...ter:")', 'test_waechter_213_weg_echt.py:237: c["body"] for c in daten["comments"] if c["body"].startswith("Wächter:")']
+
+tests/test_aufseher_428.py:346: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_aufseher_428.py::test_capo_aufpasser_kommentar_ist_nie_davids_antwort
+FAILED tests/test_aufseher_428.py::test_leitstand_erkennt_alte_und_neue_aufseher_marke
+FAILED tests/test_aufseher_428.py::test_tests_filtern_nicht_mit_alter_marke
+3 failed, 9 passed in 1.14s

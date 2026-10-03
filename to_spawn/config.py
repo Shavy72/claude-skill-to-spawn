@@ -39,7 +39,7 @@ DEFAULTS: dict[str, Any] = {
         "ticket": "claude-opus-5-5",
         "ticket_leicht": "claude-sonnet-5",
         "waechter": "claude-opus-5-5",
-        #: Modell, auf das der Wächter beim Nutzungs-Limit wechselt (#213).
+        #: Modell, auf das der Aufseher beim Nutzungs-Limit wechselt (#213).
         "waechter_ausweich": "claude-sonnet-5",
     },
     "effort": {
@@ -60,15 +60,15 @@ DEFAULTS: dict[str, Any] = {
     },
     "regularien": {
         "checkpoint_label": "checkpoint:human",
-        #: Ordner der Belegseiten, den der Wächter je Ticket prüft (#213).
+        #: Ordner der Belegseiten, den der Aufseher je Ticket prüft (#213).
         "belege_ordner": "docs/verify-hard",
     },
-    #: Wächter (#213): Remote Control an, verwaist ab so vielen Stunden ohne Spur.
+    #: Aufseher (#213): Remote Control an, verwaist ab so vielen Stunden ohne Spur.
     "waechter": {
         "remote_control": True,
         "verwaist_stunden": 3,
     },
-    #: Ordner mit den Ticket-Worktrees ``wt-<N>`` für die Wächter-Regel verwaist
+    #: Ordner mit den Ticket-Worktrees ``wt-<N>`` für die Aufseher-Regel verwaist
     #: (leer = Regel von ``worktree_pfad``: Windows ``C:/dev``, sonst ``$BAU_WT_DIR`` bzw. ``~/wt``) (#213).
     "wt_basis": "",
     #: Basis der Ticket-Worktrees für alle Starter (#257): leer = altes Verhalten (Windows

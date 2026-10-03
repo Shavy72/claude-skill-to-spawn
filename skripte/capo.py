@@ -1,4 +1,4 @@
-"""Wächter-Tick für eine Spec: Stand, Bau-Log-Delta, Regel-Verstöße (#213).
+"""Aufseher-Tick für eine Spec: Stand, Bau-Log-Delta, Regel-Verstöße (#213).
 
     python scripts/capo.py <S> [--dry-run] [--kein-katalog] [--uebersicht] [--wt-basis P] [--gh-repo owner/name]
 

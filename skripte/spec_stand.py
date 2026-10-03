@@ -1,7 +1,7 @@
-"""Kompakter Stand aller Tickets einer Spec — für den Bau-Wächter.
+"""Kompakter Stand aller Tickets einer Spec — für den Bau-Aufseher.
 
 Liest NUR GitHub + origin/<Hauptzweig> + Worktree-Ordner. Spricht keine Session an,
-schreibt nichts. Eine Zeile je Ticket, damit ein Wächter-Tick ~1k Token kostet.
+schreibt nichts. Eine Zeile je Ticket, damit ein Aufseher-Tick ~1k Token kostet.
 Repo-neutral (#257 F8): GitHub-Slug aus dem origin, Hauptzweig aus ``gh.hauptzweig``,
 Worktree-Basis aus der Repo-Konfig, Server-Zeile nur mit ``ssh_ziel`` + ``server_repo``.
 

@@ -1,4 +1,4 @@
-"""Capo: der Regel-Prüfer des Bau-Wächters (duoplus-management#213).
+"""Capo: der Regel-Prüfer des Bau-Aufsehers (duoplus-management#213).
 
 Ein Tick liest GitHub (Sub-Issues der Spec), ``origin/<Hauptzweig>``, die
 Ticket-Worktrees und die Bau-Logs — und prüft fünf Regeln:
@@ -87,7 +87,7 @@ REGEL_VORFALL: dict[str, tuple[str, str, str, str]] = {
     "commit_ohne_nummer": (
         "prozess",
         "Arbeit im Repo, aber kein Ticket-Bezug im Commit-Betreff",
-        "Betreff endet nicht auf (#N) — der Wächter ordnet den Commit keinem Ticket zu",
+        "Betreff endet nicht auf (#N) — der Aufseher ordnet den Commit keinem Ticket zu",
         "Betreff mit (#N) abschließen; capo öffnet das Ticket wieder",
     ),
     "beweis_fehlt": (
@@ -135,21 +135,21 @@ REGEL_VORFALL: dict[str, tuple[str, str, str, str]] = {
     "checkpoint_offen": (
         "mensch",
         "Checkpoint wartet über die Frist, die Session hat keinen Vorschlag hinterlassen",
-        "Frage ohne eigenen Vorschlag — der Wächter rät nicht (#285)",
+        "Frage ohne eigenen Vorschlag — der Aufseher rät nicht (#285)",
         "Session stellt jede Checkpoint-Frage mit „Vorschlag: …“",
     ),
     "checkpoint_annahme": (
         "mensch",
         "Ja/Nein-Frage mitten in der Kette, nachts antwortet niemand",
         "Checkpoint ohne Antwort über die Frist (#285)",
-        "Wächter nimmt den Vorschlag der Session nach Doktrin an; David kann kippen",
+        "Aufseher nimmt den Vorschlag der Session nach Doktrin an; David kann kippen",
     ),
 }
 
 #: Vorfall-Worte, wenn eine Regel neu ist und noch nicht in REGEL_VORFALL steht.
 VORFALL_UNBEKANNT = (
     "skill",
-    "Wächter meldet einen Verstoß ohne hinterlegte Lernschleife",
+    "Aufseher meldet einen Verstoß ohne hinterlegte Lernschleife",
     "Regel ist neu und steht noch nicht in REGEL_VORFALL",
     "Regel in to_spawn/capo.py:REGEL_VORFALL mit Klasse/Symptom/Ursache/Lösung ergänzen",
 )
@@ -229,7 +229,7 @@ def alle_commits(repo: Path, ref: str) -> list[Commit]:
 def betreff_hat_nummer(betreff: str, ticket: int) -> bool:
     """Betreff endet mit ``(#N)`` (optional `` [skip ci]``) oder beginnt mit ``typ(#N):`` (E1).
 
-    ``docs(#N): …`` zählt nicht: so heißen Nachträge (Wächter, Handoff), nicht der Bau.
+    ``docs(#N): …`` zählt nicht: so heißen Nachträge (Aufseher, Handoff), nicht der Bau.
     """
     if re.search(rf"\(#{ticket}\)(?: \[skip ci\])?\s*$", betreff):
         return True
@@ -715,7 +715,7 @@ def entscheidung_anhaengen(
             fh.write(zeile + "\n")
     else:
         datei.write_text(
-            "\n".join([*_tabellen_kopf(spec, "Wächter-Annahmen"), zeile]) + "\n",
+            "\n".join([*_tabellen_kopf(spec, "Aufseher-Annahmen"), zeile]) + "\n",
             encoding="utf-8",
         )
     return datei
@@ -959,12 +959,12 @@ def _folge_runde(
     """Nach dem Wiederöffnen weiterbauen lassen (#284).
 
     Baut noch jemand am Ticket, passiert nichts — diese Session sieht den
-    Wächter-Kommentar. Sonst startet hier die nächste Runde ``bau <N> --sofort``,
+    Aufseher-Kommentar. Sonst startet hier die nächste Runde ``bau <N> --sofort``,
     höchstens ``waechter.folgerunden_max`` Mal je Ticket.
     """
     waechter = konfig.get("waechter", {}) if isinstance(konfig.get("waechter"), dict) else {}
     grenze = folgerunden_max(waechter)
-    grund = "; ".join(f"{f.regel} — {f.text}" for f in funde) or "Wächter-Verstoß"
+    grund = "; ".join(f"{f.regel} — {f.text}" for f in funde) or "Aufseher-Verstoß"
     fenster = tmux_fenster(spec)
     laeuft = laeuft_noch(n, fenster, wt_zeit, jetzt)
     if laeuft:
@@ -1007,12 +1007,21 @@ def _folge_runde(
 CHECKPOINT_FRIST_MIN = 60.0
 #: „Vorschlag: …“ in einem Issue-Kommentar — alles danach ist die vorgeschlagene Wahl.
 _VORSCHLAG = re.compile(r"Vorschlag\s*:\s*(.+)", re.IGNORECASE | re.DOTALL)
-#: Anfang jedes Wächter-Kommentars — eigene Kommentare sind nie „Davids Antwort“.
-WAECHTER_KOPF = "Wächter:"
-#: Anfang jedes Issue-Kommentars einer Bau-Session (#402). Session, Wächter und David
+#: Anfang jedes Aufseher-Kommentars — eigene Kommentare sind nie „Davids Antwort“.
+WAECHTER_KOPF = "Aufseher:"
+#: Frühere Marke vor der Umbenennung (#428) — alte Issue-Kommentare bleiben eigene Kommentare.
+ALTE_AUFSEHER_KOEPFE: tuple[str, ...] = ("Wächter:",)  # #428-alt
+#: Alle Marken des Aufsehers (neu + alt) — z. B. für den Leitstand.
+AUFSEHER_KOEPFE: tuple[str, ...] = (WAECHTER_KOPF, *ALTE_AUFSEHER_KOEPFE)
+#: Anfang der Issue-Kommentare des Aufpassers (to_spawn/aufpasser.py), gleiches gh-Konto.
+AUFPASSER_KOPF = "Aufpasser:"
+#: Anfang jedes Issue-Kommentars einer Bau-Session (#402). Session, Aufseher und David
 #: kommentieren mit demselben gh-Konto — der Login trennt sie nicht, nur diese Marke.
 #: Der Bau-Prompt bekommt sie über den Platzhalter ``{SESSION_KOPF}`` (skripte/bau.py).
 SESSION_KOPF = "Bau-Session:"
+#: Marken aller eigenen Kommentare ohne Bau-Session (die prüft ``_ist_session_kommentar``):
+#: so beginnende Kommentare sind nie „Davids Antwort“.
+EIGENE_KOEPFE: tuple[str, ...] = (*AUFSEHER_KOEPFE, AUFPASSER_KOPF)
 
 
 @dataclass
@@ -1083,7 +1092,7 @@ def checkpoint_vorschlag(zeilen: list[dict[str, Any]], kommentare: list[dict[str
     Zählt eine Bau-Log-Zeile ``entscheidung`` mit Wahl und ein Issue-Kommentar, der
     mit :data:`SESSION_KOPF` beginnt und „Vorschlag:“ enthält. Der Login zählt nicht:
     Session und David schreiben mit demselben gh-Konto (#402). Kommentare ohne Marke
-    (auch Wächter-Kommentare) sind nie ein Session-Vorschlag.
+    (auch Aufseher-Kommentare) sind nie ein Session-Vorschlag.
     """
     kandidaten: list[Vorschlag] = []
     for z in zeilen:
@@ -1124,10 +1133,10 @@ def checkpoint_frage_zeit(zeilen: list[dict[str, Any]], kommentare: list[dict[st
 
 
 def davids_antwort(kommentare: list[dict[str, Any]], seit: datetime) -> str:
-    """Login des ersten Kommentars nach ``seit`` ohne Session- oder Wächter-Marke.
+    """Login des ersten Kommentars nach ``seit`` ohne Session- oder Aufseher-Marke.
 
     ``""`` = keine Antwort. Der Login trennt nicht (gleiches gh-Konto, #402) — nur die
-    Marken :data:`SESSION_KOPF` und :data:`WAECHTER_KOPF`.
+    Marken :data:`SESSION_KOPF` und :data:`EIGENE_KOEPFE` (Aufseher, Aufpasser).
     """
     for eintrag in sorted(
         kommentare, key=lambda e: _kommentar_teile(e)[2] or datetime.min.replace(tzinfo=timezone.utc)
@@ -1135,7 +1144,7 @@ def davids_antwort(kommentare: list[dict[str, Any]], seit: datetime) -> str:
         autor, text, zeit = _kommentar_teile(eintrag)
         if zeit is None or zeit <= seit:
             continue
-        if text.lstrip().startswith(WAECHTER_KOPF) or _ist_session_kommentar(text):
+        if text.lstrip().startswith(EIGENE_KOEPFE) or _ist_session_kommentar(text):
             continue
         return autor or "jemand"
     return ""
@@ -1168,7 +1177,7 @@ def _checkpoint(
 ) -> list[str]:
     """Nacht-Checkpoint: nach der Frist gilt der Vorschlag der Session (#285).
 
-    David kann jede Annahme kippen — der Wächter kommentiert sie am Ticket, schreibt
+    David kann jede Annahme kippen — der Aufseher kommentiert sie am Ticket, schreibt
     sie ins Bau-Log und in ``entscheidungen_<S>.md`` und schickt eine Mail. Ohne
     erkennbaren eigenen Vorschlag der Session wird nichts angenommen, nur gemeldet.
     """
@@ -1208,7 +1217,7 @@ def _checkpoint(
             "checkpoint_offen",
             f"Checkpoint ohne Vorschlag #{n}",
             f"Ticket #{n} wartet seit {wartet:.0f} min auf Davids Antwort, aber die "
-            "Session hat keinen eigenen Vorschlag hinterlassen — der Wächter rät nicht.",
+            "Session hat keinen eigenen Vorschlag hinterlassen — der Aufseher rät nicht.",
             f"checkpoint_offen|{n}|{seit.isoformat()}",
         )
         if not dry_run:
@@ -1223,7 +1232,7 @@ def _checkpoint(
     if not _gh_ok(["issue", "comment", str(n), "--repo", gh_repo, "--body", text]):
         return [f"#{n} FEHLER: Checkpoint-Annahme nicht kommentiert"]
     erledigt.add(schluessel)
-    grund = f"Wächter-Annahme nach {frist:.0f} min ohne Davids Antwort (Doktrin, kippbar)" + (
+    grund = f"Aufseher-Annahme nach {frist:.0f} min ohne Davids Antwort (Doktrin, kippbar)" + (
         f" · {vorschlag.grund}" if vorschlag.grund else ""
     )
     frage = vorschlag.frage or f"Checkpoint #{n}"
@@ -1442,7 +1451,7 @@ def vorfall_aus_verstoss(repo: Path, fund: Verstoss, jetzt: datetime) -> vorfall
 def katalog_pflegen(repo: Path, konfig: dict[str, Any], vorfaelle: list[vorfall.Vorfall]) -> list[str]:
     """Neue Vorfälle in den Fehlerkatalog hängen; Rückgabe = Zeilen für den Tick.
 
-    Der Katalog wird gegen parallele Wächter gesperrt (zwei Specs, eine Datei).
+    Der Katalog wird gegen parallele Aufseher gesperrt (zwei Specs, eine Datei).
     Ein Repo ganz ohne Katalog ist kein Fehler (Fremd-Repo, #257) — ein fehlender
     Abschnitt, eine kaputte Tabelle oder eine unschreibbare Datei schon: sonst
     meldet der Tick Erfolg, obwohl nichts gelernt wurde.
@@ -1478,7 +1487,7 @@ def tick(
     katalog: bool = False,
     jetzt: datetime | None = None,
 ) -> TickErgebnis:
-    """Ein Wächter-Tick: Stand + Delta + Verstöße/Aktionen als Textzeilen.
+    """Ein Aufseher-Tick: Stand + Delta + Verstöße/Aktionen als Textzeilen.
 
     Ein echter Tick hält die Sperre der Zustandsdatei; ein Probelauf (``dry_run``)
     schreibt nichts und braucht keine Sperre.
@@ -1725,7 +1734,7 @@ def _tick(
             sichern()
         elif not regeln_aus:
             if checkpoint in label_namen(issue):
-                # #285: nachts entscheidet der Wächter nach Doktrin statt zu warten.
+                # #285: nachts entscheidet der Aufseher nach Doktrin statt zu warten.
                 vorher = len(erledigt)
                 aktionen += _checkpoint(
                     repo,
@@ -1770,7 +1779,7 @@ def _tick(
                         "--repo",
                         gh_repo,
                         "--body",
-                        f"Wächter: {fund.regel} — {fund.text}",
+                        f"{WAECHTER_KOPF} {fund.regel} — {fund.text}",
                     ]
                 ):
                     erledigt.add(schluessel)
@@ -1790,7 +1799,7 @@ def _tick(
                     schluessel,
                 )
 
-    # Der Aufpasser meldet Vorfälle eines Wächter-Fensters auf die Spec-Nummer —
+    # Der Aufpasser meldet Vorfälle eines Aufseher-Fensters auf die Spec-Nummer —
     # die steht nicht in der Kinderliste und käme sonst nie in den Katalog (#286).
     spec_wt = worktree_ordner(spec, wt_basis)
     spec_zeilen = log_vom_ref(repo, ref, spec)
@@ -1818,8 +1827,8 @@ def _tick(
         if dry_run or regeln_aus:
             continue
         text = (
-            f"Wächter: Mensch nötig — {was} (fp {fp}).\n"
-            "Wächter: Die Kette läuft weiter; bitte den Review-Befund von Hand prüfen."
+            f"{WAECHTER_KOPF} Mensch nötig — {was} (fp {fp}).\n"
+            f"{WAECHTER_KOPF} Die Kette läuft weiter; bitte den Review-Befund von Hand prüfen."
         )
         if not _gh_ok(["issue", "comment", ziel, "--repo", gh_repo, "--body", text]):
             aktionen.append(f"#{ziel} FEHLER: kommentieren gescheitert (Mensch nötig)")
@@ -1859,7 +1868,7 @@ def _tick(
                 dry_run,
                 "spec_fertig",
                 f"Spec #{spec} fertig",
-                f"Alle {len(liste)} Tickets von #{spec} sind zu, der Wächter fand keine Verstöße.",
+                f"Alle {len(liste)} Tickets von #{spec} sind zu, der Aufseher fand keine Verstöße.",
                 f"spec_fertig|{spec}",
             )
 
@@ -1880,7 +1889,7 @@ def _wieder_oeffnen(n: int, gh_repo: str, funde: list[Verstoss], dry_run: bool) 
     """Ticket einmal wieder öffnen; letzte Zeile ``#N wieder geöffnet`` = geklappt."""
     if dry_run:
         return [f"#{n} [Probe] würde wieder öffnen"]
-    kommentar = "\n".join(f"Wächter: {f.regel} — {f.text}" for f in funde)
+    kommentar = "\n".join(f"{WAECHTER_KOPF} {f.regel} — {f.text}" for f in funde)
     if _gh_ok(["issue", "reopen", str(n), "--repo", gh_repo, "--comment", kommentar]):
         return [f"#{n} wieder geöffnet"]
     return [f"#{n} FEHLER: wieder öffnen gescheitert"]

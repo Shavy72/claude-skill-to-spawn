@@ -52,7 +52,7 @@ if (Get-Command gh -ErrorAction SilentlyContinue) {
 $cmds = @()
 if (-not $OhneWache -and ($laufend -notcontains $Spec)) { $cmds += "wache $Spec" }
 # Bau-Leitstand (Live-Seite): Tab `leitstand <S>` (Profil-Funktion → skripte/leitstand.py <S> sitzung),
-# nur mit Wächter, bei leitstand.aktiv an (Exit 0) und wenn noch keine Leitstand-Session der Spec läuft.
+# nur mit Aufseher, bei leitstand.aktiv an (Exit 0) und wenn noch keine Leitstand-Session der Spec läuft.
 if (-not $OhneWache) {
     $ErrorActionPreference = "Continue"
     & $py "$PSScriptRoot/skripte/leitstand.py" "$Spec" aktiv | Out-Null

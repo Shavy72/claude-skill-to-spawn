@@ -245,7 +245,7 @@ h1 .specnr{color:var(--muted);font-weight:600}
 .knopf-klein{appearance:none;font:inherit;font-size:13px;background:var(--panel);border:1px solid var(--line-2);border-radius:4px;padding:4px 11px;cursor:pointer;white-space:nowrap;color:var(--ink)}
 .knopf-klein:hover{border-color:var(--run);color:var(--run)}
 
-/* Wächter-Log */
+/* Aufseher-Log */
 .log-chips{display:flex;gap:6px;flex-wrap:wrap;margin-left:auto}
 .log-chip{appearance:none;font:inherit;font-size:13px;padding:3px 11px;border-radius:999px;border:1px solid var(--line-2);background:var(--panel);color:var(--muted);cursor:pointer}
 .log-chip:hover{color:var(--ink)}
@@ -440,7 +440,7 @@ h1 .specnr{color:var(--muted);font-weight:600}
       <button type="button" class="theme-btn" id="theme-btn" aria-label="Farbmodus wechseln">Farbe: automatisch</button>
     </div>
   </header>
-  <p class="stand-alt" id="stand-alt" role="status" hidden>Stand ist alt – der Wächter meldet sich nicht.</p>
+  <p class="stand-alt" id="stand-alt" role="status" hidden>Stand ist alt – der Aufseher meldet sich nicht.</p>
   <div class="meldung" id="meldung" role="status" hidden></div>
 
   <div class="legende-leiste" role="region" aria-label="Legende">
@@ -497,7 +497,7 @@ h1 .specnr{color:var(--muted);font-weight:600}
   </section>
 
   <section class="abschnitt" aria-labelledby="log-h" id="log">
-    <div class="abschnitt-kopf"><h2 id="log-h">Wächter-Log</h2><span class="sub">Meldungen vom Wächter, neueste oben.</span><div class="log-chips" id="log-chips" role="group" aria-label="Meldungen filtern"></div></div>
+    <div class="abschnitt-kopf"><h2 id="log-h">Aufseher-Log</h2><span class="sub">Meldungen vom Aufseher, neueste oben.</span><div class="log-chips" id="log-chips" role="group" aria-label="Meldungen filtern"></div></div>
     <ol class="log-liste" id="log-liste"><li class="log-leer">Noch keine Meldungen.</li></ol>
   </section>
 
@@ -1422,7 +1422,7 @@ h1 .specnr{color:var(--muted);font-weight:600}
     wendeNahtFilterAn();
   }
 
-  /* ---------- Wächter-Log ---------- */
+  /* ---------- Aufseher-Log ---------- */
   const LOGART = { problem: ["Problem", "var(--err)"], david: ["braucht dich", "var(--david)"], befund: ["Befund", "var(--befund)"], info: ["Info", "var(--wait)"] };
   const LOGFILTER = { alle: null, probleme: ["problem", "david"], befunde: ["befund"], info: ["info"] };
   const LOGCHIPS = [["alle", "Alle"], ["probleme", "Probleme"], ["befunde", "Befunde"], ["info", "Info"]];

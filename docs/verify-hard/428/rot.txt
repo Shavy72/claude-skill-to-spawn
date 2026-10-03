@@ -1,0 +1,152 @@
+F.FFFFF                                                                  [100%]
+=================================== FAILURES ===================================
+______ test_grep_waechter_keine_alte_rollenbezeichnung_in_aktiven_dateien ______
+
+    def test_grep_waechter_keine_alte_rollenbezeichnung_in_aktiven_dateien() -> None:
+        funde: list[str] = []
+        for pfad in _aktive_dateien():
+            try:
+                zeilen = pfad.read_text(encoding="utf-8").splitlines()
+            except UnicodeDecodeError:
+                continue
+            for nr, zeile in enumerate(zeilen, 1):
+                for wort in _rollen_treffer(zeile):
+                    funde.append(f"{pfad.relative_to(SKILL)}:{nr}: {wort}")
+>       assert not funde, "Alte Rollenbezeichnung gefunden:\n" + "\n".join(funde[:60])
+E       AssertionError: Alte Rollenbezeichnung gefunden:
+E         spawn_local.ps1:55: Wächter
+E         SKILL.md:28: Wächter
+E         SKILL.md:28: Wächter
+E         SKILL.md:28: Wächter
+E         SKILL.md:36: Wächter
+E         SKILL.md:39: Wächter
+E         SKILL.md:39: Wächter
+E         SKILL.md:54: Wächter
+E         SKILL.md:55: Wächter
+E         SKILL.md:55: Wächter
+E         SKILL.md:55: Wächter
+E         SKILL.md:115: Wache
+E         SKILL.md:117: Wächter
+E         SKILL.md:117: Wächter
+E         SKILL.md:117: Wächter
+E         SKILL.md:118: Wächter
+E         SKILL.md:119: Wächter
+E         SKILL.md:120: Wächter
+E         SKILL.md:120: Wächter
+E         SKILL.md:149: Wächter
+E         to_spawn.py:134: Wächter
+E         to_spawn.py:238: Wächter
+E         to_spawn.py:269: Wächters
+E         to_spawn.py:303: Wächter
+E         to_spawn.py:370: Wächter
+E         to_spawn.py:414: Wächter
+E         to_spawn.py:417: Wächters
+E         to_spawn.py:430: Wächter
+E         README.md:10: watcher
+E         README.md:16: watcher
+E         README.md:29: watcher
+E         README.md:30: watcher
+E         README.md:30: watcher
+E         README.md:47: watcher
+E         repo-scripts/_default.json:6: Wächter
+E         repo-scripts/capo.py:1: Wächter
+E         leitstand/seite.html:248: Wächter
+E         leitstand/seite.html:443: Wächter
+E         leitstand/seite.html:500: Wächter
+E         leitstand/seite.html:500: Wächter
+E         leitstand/seite.html:1425: Wächter
+E         to_spawn/bau_log.py:39: Wächter
+E         to_spawn/bau_log.py:42: Wächter
+E         to_spawn/bau_log.py:207: Wächter
+E         to_spawn/setup.py:8: Wächter
+E         to_spawn/setup.py:47: Wächter
+E         to_spawn/setup.py:143: Wächter
+E         to_spawn/setup.py:221: Wächter
+E         to_spawn/setup.py:288: Wächter
+E         to_spawn/setup.py:335: Wächter
+E         to_spawn/setup.py:339: Wächter
+E         to_spawn/setup.py:412: Wächter
+E         to_spawn/setup.py:436: Wächter
+E         to_spawn/waechter_takt.py:1: Wächter
+E         to_spawn/waechter_takt.py:63: Wächter
+E         to_spawn/waechter_takt.py:63: Wächter
+E         to_spawn/waechter_takt.py:475: Wächter
+E         to_spawn/waechter_takt.py:496: Wächter
+E         to_spawn/spawn.py:151: Wächter
+E         to_spawn/spawn.py:198: Wächter
+E       assert not ['spawn_local.ps1:55: Wächter', 'SKILL.md:28: Wächter', 'SKILL.md:28: Wächter', 'SKILL.md:28: Wächter', 'SKILL.md:36: Wächter', 'SKILL.md:39: Wächter', ...]
+
+tests/test_aufseher_428.py:86: AssertionError
+_____________________ test_skill_md_eine_aufsicht_je_spec ______________________
+
+    def test_skill_md_eine_aufsicht_je_spec() -> None:
+        text = (SKILL / "SKILL.md").read_text(encoding="utf-8")
+>       assert "Je Spec gibt es genau eine Aufsicht: den Aufseher." in text
+E       assert 'Je Spec gibt es genau eine Aufsicht: den Aufseher.' in '---\nname: to-spawn\ndescription: "Alle Ticket-Sessions einer Spec starten, lokal (Terminal-Tabs) oder Bau-Server (tm...]` übernimmt den Prototyp-Zustand (gleiche Doc-IDs).\nNicht verwechseln mit `to_spawn/leitstand.py` (Sperren, #313).\n'
+
+tests/test_aufseher_428.py:100: AssertionError
+__________________ test_nest_bashrc_aufseher_startet_wache_py __________________
+
+tmp_path = PosixPath('/tmp/pytest-of-bau/pytest-3188/test_nest_bashrc_aufseher_star0')
+
+    @pytest.mark.skipif(shutil.which("bash") is None, reason="bash fehlt")
+    def test_nest_bashrc_aufseher_startet_wache_py(tmp_path: Path) -> None:
+        repo = tmp_path / "repo"
+        (repo / "scripts").mkdir(parents=True)
+        (repo / "scripts" / "wache.py").write_text(
+            "import sys\nprint('WACHE_PY', *sys.argv[1:])\n", encoding="utf-8"
+        )
+        block = tmp_path / "funktionen.sh"
+        block.write_text(_bashrc_funktionen(), encoding="utf-8")
+        skript = f'export REPO="{repo}"; source "{block}"; type aufseher >/dev/null && aufseher 42 --dry-run; wache 7'
+        lauf = subprocess.run(
+            ["bash", "-c", skript], capture_output=True, text=True, check=False, timeout=30
+        )
+        assert lauf.returncode == 0, lauf.stderr
+>       assert "WACHE_PY 42 --dry-run" in lauf.stdout
+E       assert 'WACHE_PY 42 --dry-run' in 'WACHE_PY 7\n'
+E        +  where 'WACHE_PY 7\n' = CompletedProcess(args=['bash', '-c', 'export REPO="/tmp/pytest-of-bau/pytest-3188/test_nest_bashrc_aufseher_star0/repo...seher 42 --dry-run; wache 7'], returncode=0, stdout='WACHE_PY 7\n', stderr='bash: line 1: type: aufseher: not found\n').stdout
+
+tests/test_aufseher_428.py:130: AssertionError
+__________ test_nest_bestehende_bashrc_bekommt_aufseher_nachgetragen ___________
+
+    def test_nest_bestehende_bashrc_bekommt_aufseher_nachgetragen() -> None:
+        """Server mit älterem Nest-Kopf (ohne aufseher) bekommen die Funktion idempotent nachgetragen."""
+        text = NEST.read_text(encoding="utf-8")
+>       assert re.search(r"grep -q[^\n]*aufseher\(\)", text), "Nachtrag für bestehende .bashrc fehlt"
+E       AssertionError: Nachtrag für bestehende .bashrc fehlt
+E       assert None
+E        +  where None = <function search at 0x7ff794b720c0>('grep -q[^\\n]*aufseher\\(\\)', '#!/usr/bin/env bash\n# nest_server.sh — macht einen frischen Debian/Ubuntu-Server zum Bau-Server für EIN Repo.\n#\n# ..."\necho "     python3 $SKILL_NUTZER/to_spawn.py nest rechte --eintragen"\necho "     tippen. Danach: tmux → bau <N>"\n')
+E        +    where <function search at 0x7ff794b720c0> = re.search
+
+tests/test_aufseher_428.py:137: AssertionError
+______________ test_install_ps1_registriert_aufseher_neben_wache _______________
+
+    def test_install_ps1_registriert_aufseher_neben_wache() -> None:
+        text = INSTALL_PS1.read_text(encoding="utf-8")
+        m = re.search(r"function aufseher \{(.*?)\n\}", text, re.S)
+>       assert m, "function aufseher fehlt in install.ps1"
+E       AssertionError: function aufseher fehlt in install.ps1
+E       assert None
+
+tests/test_aufseher_428.py:147: AssertionError
+________________ test_install_ps1_aufseher_funktion_laeuft_echt ________________
+
+tmp_path = PosixPath('/tmp/pytest-of-bau/pytest-3188/test_install_ps1_aufseher_funk0')
+
+    @pytest.mark.skipif(shutil.which("pwsh") is None, reason="pwsh fehlt")
+    def test_install_ps1_aufseher_funktion_laeuft_echt(tmp_path: Path) -> None:
+        text = INSTALL_PS1.read_text(encoding="utf-8")
+        m = re.search(r"(function aufseher \{.*?\n\})", text, re.S)
+>       assert m
+E       assert None
+
+tests/test_aufseher_428.py:158: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_aufseher_428.py::test_grep_waechter_keine_alte_rollenbezeichnung_in_aktiven_dateien
+FAILED tests/test_aufseher_428.py::test_skill_md_eine_aufsicht_je_spec - asse...
+FAILED tests/test_aufseher_428.py::test_nest_bashrc_aufseher_startet_wache_py
+FAILED tests/test_aufseher_428.py::test_nest_bestehende_bashrc_bekommt_aufseher_nachgetragen
+FAILED tests/test_aufseher_428.py::test_install_ps1_registriert_aufseher_neben_wache
+FAILED tests/test_aufseher_428.py::test_install_ps1_aufseher_funktion_laeuft_echt
+6 failed, 1 passed in 0.14s

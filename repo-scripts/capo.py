@@ -1,4 +1,4 @@
-"""Weiterleitung auf den Skill to-spawn (#205, Wächter-Tick #213).
+"""Weiterleitung auf den Skill to-spawn (#205, Aufseher-Tick #213).
 
 Die Logik liegt in ``$TO_SPAWN_HOME/skripte/capo.py`` (Vorgabe
 ``~/.claude/skills/to-spawn/skripte/capo.py``), das Repo wird als ``TO_SPAWN_REPO``

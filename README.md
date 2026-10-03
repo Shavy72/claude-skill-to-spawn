@@ -7,13 +7,13 @@
 
 **Spawn every ticket session of a spec at once — one terminal window, one tab per ticket, zero tokens while waiting.**
 
-The last link of a speed-first workflow chain for Claude Code: split the work into small, parallelisable tickets, then start *all* of them in one go. Blocked tickets wait outside Claude (a GitHub poll, no context, no cost) and start themselves the moment their blockers are closed and merged. One extra tab runs a **watcher** session that checks the seams between tickets and never builds anything.
+The last link of a speed-first workflow chain for Claude Code: split the work into small, parallelisable tickets, then start *all* of them in one go. Blocked tickets wait outside Claude (a GitHub poll, no context, no cost) and start themselves the moment their blockers are closed and merged. One extra tab runs a **supervisor (Aufseher)** session that checks the seams between tickets and never builds anything.
 
 ```
- /to-spec  →  /to-tickets  →  /to-spawn  →  bau <N> × n  +  wache <S>
+ /to-spec  →  /to-tickets  →  /to-spawn  →  bau <N> × n  +  aufseher <S>
  spec        vertical slices   one window,    each tab: wait (0 tokens) → claim →
  (issue)     + native          all tabs at     implement → tests → close issue
-             blocked_by edges  once            watcher: seams, proofs, deploy gate
+             blocked_by edges  once            supervisor (Aufseher): seams, proofs, deploy gate
 ```
 
 Why it is fast: tickets are cut fine (each fits one fresh context window), everything without a blocker runs in parallel, and nothing waits *inside* a paid session.
@@ -26,8 +26,8 @@ Why it is fast: tickets are cut fine (each fits one fresh context window), every
 | `spawn_local.ps1` | Deterministic launcher: reads the spec manifest, skips closed/running tickets, opens one Windows Terminal window with `wache <S>` + `bau <N>` tabs, then prints the session table. |
 | `install.ps1` / `install.sh` | Copies the skill to `~/.claude/skills/to-spawn` (old copy moved to `~/.claude/skills/_alt/`), installs the alias skills, optionally copies the repo forwarders (`-Repo` / `--repo`, missing files only) and creates `.to-spawn/config.json`. `install.ps1` also adds the `bau` / `wache` / `sessions` PowerShell functions. |
 | `aliase/` | Alias skills: `/to-spawn-local <S>` (`--ziel local`), `/to-spawn-remote <S>` (`--ziel srv`), `/meta-exec` (old name of `/to-spawn`). |
-| `docs/kontext-manifest.md` | The `/to-tickets` add-on this chain needs: manifest schema, **native GitHub `blocked_by` edges** (the launcher waits on them), per-ticket context package, watcher. Copy into your repo's `docs/agents/`. |
-| `skripte/` | The logic: `bau.py` (one ticket session, waits for blockers outside Claude), `wache.py` (watcher session), `sessions_stand.py` (which sessions are on: off / waiting / running since / ORPHANED), `spec_stand.py` (one line per ticket for the watcher), `spawn_srv.sh` (tmux launcher on the build server). Repo = `TO_SPAWN_REPO`, else the git root of the current directory. |
+| `docs/kontext-manifest.md` | The `/to-tickets` add-on this chain needs: manifest schema, **native GitHub `blocked_by` edges** (the launcher waits on them), per-ticket context package, supervisor (Aufseher). Copy into your repo's `docs/agents/`. |
+| `skripte/` | The logic: `bau.py` (one ticket session, waits for blockers outside Claude), `wache.py` (supervisor session, "Aufseher"), `sessions_stand.py` (which sessions are on: off / waiting / running since / ORPHANED), `spec_stand.py` (one line per ticket for the supervisor), `spawn_srv.sh` (tmux launcher on the build server). Repo = `TO_SPAWN_REPO`, else the git root of the current directory. |
 | `repo-scripts/` | The per-repo half: thin forwarders with the same names (+ `_to_spawn_weiterleitung.py`) that jump into `skripte/`, plus `_default.json`. Per-repo settings live in `.to-spawn/config.json`. |
 
 ## Install
@@ -44,7 +44,7 @@ Requirements: Windows Terminal (`wt`), PowerShell 7, Python 3.12+, `gh` (logged 
 
 1. `/to-spec` — grill the problem, write the spec as an issue (words, decisions, acceptance, ticket cut proposal, tools table).
 2. `/to-tickets` — vertical slices, one issue each, **native `blocked_by` edges** + sub-issues, `## Kontext-Paket` per ticket, manifest `spec-<S>.json` (see `docs/kontext-manifest.md`). Build size per ticket (`klein` / `groß` / `regulär`) decides how much review runs *during* the build; the heavy review panel + deploy run once per wave, not per ticket.
-3. `/to-spawn <S>` — one window, all tabs. Blocked tickets wait for free (GitHub poll every 10 min), start themselves, claim, implement, prove, close. The watcher tab checks seams and proofs and never builds.
+3. `/to-spawn <S>` — one window, all tabs. Blocked tickets wait for free (GitHub poll every 10 min), start themselves, claim, implement, prove, close. The supervisor tab (Aufseher) checks seams and proofs and never builds.
 4. `sessions <S>` — see what is on at any time.
 
 ## Use
@@ -71,7 +71,7 @@ prompts) is ticket #214.
 ## Memory guard (#257)
 
 One OOM kill took down twelve sessions at once (16 GB, no swap). Since then every starter
-(`bau`, `wache`, `spawn_srv.sh`, the Aufpasser cron) asks `to_spawn.py speicher` before
+(`bau`, `aufseher`/`wache`, `spawn_srv.sh`, the Aufpasser cron) asks `to_spawn.py speicher` before
 launching Claude: at most 6 sessions per 16 GB, at least 2 GB free, 20 s between two window
 starts — all three live in `.to-spawn/config.json` under `speicher`. Full means no start
 (exit 5), not a slower start. The nest adds swap sized to RAM (min 8 GiB) and runs the tmux

@@ -67,7 +67,7 @@ def handoff_muster(ticket: str) -> re.Pattern[str]:
     """``HANDOFF_<datum>_<ticket>.md`` — und sonst nichts.
 
     Ein reines Glob ``HANDOFF_*_<N>.md`` würde auch ``HANDOFF_2026-09-18_waechter_192.md``
-    treffen: der Wächter einer Spec 192 hätte die Bau-Session von Ticket 192 beendet.
+    treffen: der Aufseher einer Spec 192 hätte die Bau-Session von Ticket 192 beendet.
     """
     return re.compile(rf"^HANDOFF_\d{{4}}-\d{{2}}-\d{{2}}_{re.escape(ticket)}\.md$")
 

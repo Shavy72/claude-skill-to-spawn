@@ -94,7 +94,7 @@ def test_annahme_nach_frist_mit_vorschlag(welt: dict[str, Path]) -> None:
     assert ergebnis.returncode == 0, _text(ergebnis)
     assert "#902 Checkpoint-Annahme" in ergebnis.stdout, _text(ergebnis)
 
-    annahme = [t for t in _texte(welt, "902") if t.startswith("Wächter: Annahme nach")]
+    annahme = [t for t in _texte(welt, "902") if t.startswith("Aufseher: Annahme nach")]
     assert len(annahme) == 1, _texte(welt, "902")
     assert "nach Doktrin — David kann kippen" in annahme[0]
     assert "sofort aus, weil die Doktrin" in annahme[0]
@@ -118,7 +118,7 @@ def test_vor_der_frist_passiert_nichts(welt: dict[str, Path]) -> None:
     ergebnis = _capo(welt)
     assert ergebnis.returncode == 0, _text(ergebnis)
     assert "#902 Checkpoint wartet" in ergebnis.stdout, _text(ergebnis)
-    assert [t for t in _texte(welt, "902") if t.startswith("Wächter:")] == []
+    assert [t for t in _texte(welt, "902") if t.startswith("Aufseher:")] == []
     assert _labels(welt, "902") == [CHECKPOINT]
     assert _bau_log(welt, "902") == []
     assert _mails(welt) == []
@@ -134,7 +134,7 @@ def test_antwort_von_david_verhindert_annahme(welt: dict[str, Path]) -> None:
     ergebnis = _capo(welt)
     assert ergebnis.returncode == 0, _text(ergebnis)
     assert "hat geantwortet" in ergebnis.stdout, _text(ergebnis)
-    assert [t for t in _texte(welt, "902") if t.startswith("Wächter: Annahme")] == []
+    assert [t for t in _texte(welt, "902") if t.startswith("Aufseher: Annahme")] == []
     assert _labels(welt, "902") == [CHECKPOINT]
     assert _mails(welt) == []
 
@@ -148,7 +148,7 @@ def test_ohne_vorschlag_keine_annahme_nur_meldung(welt: dict[str, Path]) -> None
     ergebnis = _capo(welt)
     assert ergebnis.returncode == 0, _text(ergebnis)
     assert "kein Vorschlag" in ergebnis.stdout, _text(ergebnis)
-    assert [t for t in _texte(welt, "902") if t.startswith("Wächter: Annahme")] == []
+    assert [t for t in _texte(welt, "902") if t.startswith("Aufseher: Annahme")] == []
     assert _labels(welt, "902") == [CHECKPOINT]
     assert _bau_log(welt, "902") == []
     assert "checkpoint_offen" in [m.get("art") for m in _mails(welt)], _mails(welt)

@@ -47,7 +47,7 @@ def test_zweites_schliessen_mit_demselben_verstoss_oeffnet_wieder(
     assert _zustand(welt) == "open", _text(ergebnis)
     assert len(_kommentare(welt, "901")) == 2
     assert all(
-        k.startswith("Wächter: commit_ohne_nummer") for k in _kommentare(welt, "901")
+        k.startswith("Aufseher: commit_ohne_nummer") for k in _kommentare(welt, "901")
     )
 
 
@@ -73,7 +73,7 @@ def test_trailer_test_entfernt_entschuldigt_nichts(welt: dict[str, Path]) -> Non
     )
     _frisch_zu(welt)
     _capo(welt)
-    assert any(k.startswith("Wächter: test_ersetzt") for k in _kommentare(welt, "901"))
+    assert any(k.startswith("Aufseher: test_ersetzt") for k in _kommentare(welt, "901"))
     assert _zustand(welt) == "open"
 
 
