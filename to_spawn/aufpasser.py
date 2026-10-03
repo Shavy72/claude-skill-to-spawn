@@ -361,22 +361,27 @@ def rueckfrage(text: str) -> bool:
     return any(m in text for m in RUECKFRAGE_MARKER)
 
 
-#: Trennlinie über der Statuszeile von Claude Code (Rahmen des Eingabefelds).
-STATUSZEILEN_TRENNER = re.compile(r"^\s*─{20,}")
+#: Rahmenlinie des Claude-Code-Eingabefelds: Zeile nur aus ``─`` (mind. 20).
+EINGABEFELD_LINIE = re.compile(r"\s*─{20,}\s*")
 
 
 def ohne_statuszeile(text: str) -> str:
-    """Bildschirm-Text ohne alles unter der letzten Trennlinie (#429, E18).
+    """Bildschirm-Text ohne die Statuszeile unter dem Eingabefeld (#429, E18).
 
-    Unter dem Eingabefeld zeigt Claude Code die Statuszeile (Sitzungsdauer,
+    Claude Code zeigt unten ein Eingabefeld zwischen zwei Rahmenlinien
+    (``────`` / ``❯ …`` / ``────``) und darunter die Statuszeile (Sitzungsdauer,
     Reset-Uhr, Kontext-Stand). Sie ändert sich von allein und ist keine Arbeit.
-    Ohne Trennlinie (kein Claude-Bildschirm) bleibt der Text ganz.
+    Geschnitten wird nur, wenn genau dieses Eingabefeld zu sehen ist; sonst
+    (Shell, Dialog mit nur einer Linie, fremdes Programm) bleibt der Text ganz.
     """
     zeilen = text.splitlines()
-    for i in range(len(zeilen) - 1, -1, -1):
-        if STATUSZEILEN_TRENNER.match(zeilen[i]):
-            return "\n".join(zeilen[:i])
-    return text
+    linien = [i for i, z in enumerate(zeilen) if EINGABEFELD_LINIE.fullmatch(z)]
+    if len(linien) < 2:
+        return text
+    oben, unten = linien[-2], linien[-1]
+    if not any(z.lstrip().startswith("❯") for z in zeilen[oben + 1 : unten]):
+        return text
+    return "\n".join(zeilen[:unten])
 
 
 def pane_hash(text: str) -> str:

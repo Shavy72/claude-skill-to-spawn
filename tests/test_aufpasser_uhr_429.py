@@ -87,3 +87,25 @@ def test_eintrag_still_bei_tickender_uhr(tmp_path: Path) -> None:
     a.jetzt = 2200.0
     e = a.eintrag("spec-1/bau 9", bildschirm("fertig\n● neu", "2h26m", "03:20"))
     assert e["seit"] == 2200.0, "echte Ausgabe — Fenster arbeitet"
+
+
+def test_dialog_mit_einer_linie_ganzer_text_zaehlt() -> None:
+    """Auswahl-Dialog ohne Eingabefeld: Änderung unter der Linie bleibt Arbeit."""
+    vorher = f"Ausgabe\n{LINIE}\n Plan übernehmen?\n ❯ 1. Ja\n   2. Nein\n"
+    nachher = f"Ausgabe\n{LINIE}\n Plan übernehmen?\n   1. Ja\n ❯ 2. Nein\n"
+    assert aufpasser.pane_hash(vorher) != aufpasser.pane_hash(nachher)
+
+
+def test_shell_ausgabe_mit_linie_ganzer_text_zaehlt() -> None:
+    """Strichlinie in normaler Ausgabe ohne Eingabefeld: nichts abschneiden."""
+    vorher = f"{LINIE}\nBericht\n{LINIE}\nZeile 1\n"
+    nachher = f"{LINIE}\nBericht\n{LINIE}\nZeile 1\nZeile 2\n"
+    assert aufpasser.pane_hash(vorher) != aufpasser.pane_hash(nachher)
+
+
+def test_linie_mit_titel_ist_kein_rahmen() -> None:
+    """``──── Titel ────`` ist keine Rahmenlinie des Eingabefelds."""
+    titel = "─" * 30 + " Titel " + "─" * 30
+    vorher = bildschirm("fertig", "2h06m", "03:20").replace(LINIE, titel, 1)
+    nachher = bildschirm("fertig", "2h07m", "03:20").replace(LINIE, titel, 1)
+    assert aufpasser.pane_hash(vorher) != aufpasser.pane_hash(nachher)
