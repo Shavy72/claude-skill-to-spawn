@@ -361,8 +361,27 @@ def rueckfrage(text: str) -> bool:
     return any(m in text for m in RUECKFRAGE_MARKER)
 
 
+#: Trennlinie über der Statuszeile von Claude Code (Rahmen des Eingabefelds).
+STATUSZEILEN_TRENNER = re.compile(r"^\s*─{20,}")
+
+
+def ohne_statuszeile(text: str) -> str:
+    """Bildschirm-Text ohne alles unter der letzten Trennlinie (#429, E18).
+
+    Unter dem Eingabefeld zeigt Claude Code die Statuszeile (Sitzungsdauer,
+    Reset-Uhr, Kontext-Stand). Sie ändert sich von allein und ist keine Arbeit.
+    Ohne Trennlinie (kein Claude-Bildschirm) bleibt der Text ganz.
+    """
+    zeilen = text.splitlines()
+    for i in range(len(zeilen) - 1, -1, -1):
+        if STATUSZEILEN_TRENNER.match(zeilen[i]):
+            return "\n".join(zeilen[:i])
+    return text
+
+
 def pane_hash(text: str) -> str:
-    return hashlib.sha1(text.encode("utf-8", "replace")).hexdigest()
+    """Hash für „arbeitet oder still“: Statuszeile zählt nicht mit (#429)."""
+    return hashlib.sha1(ohne_statuszeile(text).encode("utf-8", "replace")).hexdigest()
 
 
 def session_id_aus_argv(argv: list[str]) -> str | None:
@@ -1674,7 +1693,9 @@ class Aufpasser:
         if not frei:
             log.warning("%s: Fenster „%s“ nicht gestartet — %s", sitzung, name, grund)
             if self.e.trocken:
-                print(f"[trocken] {sitzung}: Fenster „{name}“ nicht gestartet — {grund}")
+                print(
+                    f"[trocken] {sitzung}: Fenster „{name}“ nicht gestartet — {grund}"
+                )
             return
         if self._starts_in_tick > 0 and not self.e.trocken:
             pause = speicher.staffel_s(konfig)
