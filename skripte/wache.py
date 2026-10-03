@@ -131,6 +131,9 @@ def prompt_bauen(spec: int, repo: str, takt: int, konfig: dict) -> str:
     text = PROMPT.format(
         S=spec, REPO=repo, DATUM=date.today().isoformat(), TAKT=max(600, takt), SKILL=Path(_SKILL).as_posix()
     )
+    if os.name != "nt":
+        # Linux/Bau-Server kennt nur ``python3`` — ``python …`` endet in „command not found“.
+        text = re.sub(r"\bpython(?= )", "python3", text)
     return text.replace("<SSH>", str(konfig.get("ssh_ziel") or "bau-server")).replace(
         "<SERVER_REPO>", str(konfig.get("server_repo") or "<server_repo fehlt in .to-spawn/config.json>")
     )
@@ -196,7 +199,7 @@ B Ticket neu starten (Ticket steht auf „aus“)
   Server: `python {SKILL}/to_spawn.py neustart {S} <N> --ziel srv`
   Erst mit `--dry-run` ansehen, dann ohne.
 C Hängende oder tote Session erkennen und ablösen
-  Erkennen: Befehl A zeigt VERWAIST, oder „läuft seit“ ohne neue Bau-Log-Zeile/Commit seit über 60 min, oder capo meldet „Session tot“. Prüfen: Bau-Server `pstree -p <PID>`, PC: Kinder-Spalte in Befehl A. Auf dem Server greift zusätzlich der Aufpasser (Cron, 15 min): `python3 {SKILL}/skripte/aufpasser.py --trocken` zeigt, was er tun würde.
+  Erkennen: Befehl A zeigt VERWAIST, oder „läuft seit“ ohne neue Bau-Log-Zeile/Commit seit über 60 min, oder capo meldet „Session tot“. Prüfen: Bau-Server `pstree -p <PID>`, PC: Kinder-Spalte in Befehl A. Auf dem Server greift zusätzlich der Aufpasser (Cron, 15 min): `python3 ~/.claude/skills/to-spawn/skripte/aufpasser.py --trocken` (vom PC: `ssh <SSH> 'python3 ~/.claude/skills/to-spawn/skripte/aufpasser.py --trocken'`) zeigt, was er tun würde.
   Ablösen (beendet nur die Claude-Session des Tickets, dann Neustart): `python {SKILL}/to_spawn.py neustart {S} <N> --beenden` (Server: zusätzlich `--ziel srv`). Halbfertige Arbeit im Worktree bleibt liegen, die neue Session übernimmt sie.
 D Session an der Smart-Zone-Grenze übergeben (Handoff-Grenze aus ~/.claude/smart-zone.json)
   Die Ticket-Session schreibt `docs/handoffs/HANDOFF_<datum>_<N>.md` im Ticket-Worktree, committet ihn und hört auf. Staffel ist aus (`staffel.aktiv`) — der Nachfolger kommt von dir:

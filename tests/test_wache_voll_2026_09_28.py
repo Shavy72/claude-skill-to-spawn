@@ -122,3 +122,14 @@ def test_neustart_srv_ohne_server_repo_exit_2(tmp_path: Path) -> None:
 def test_neustart_auftrag_nennt_handoff() -> None:
     assert spawn.neustart_auftrag("") == ""
     assert "docs/handoffs/H_901.md" in spawn.neustart_auftrag("docs/handoffs/H_901.md")
+
+
+def test_prompt_linux_python3_und_aufpasser_serverpfad(wache: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Linux: Befehlsblock nennt ``python3`` statt ``python`` und den festen Aufpasser-Serverpfad."""
+    import re as _re
+
+    monkeypatch.setattr(wache.os, "name", "posix")
+    text = wache.prompt_bauen(900, "x/y", 1800, {"ssh_ziel": "bau-server", "server_repo": "/home/bau/r"})
+    assert _re.search(r"\bpython ", text) is None
+    assert "`python3 ~/.claude/skills/to-spawn/skripte/aufpasser.py --trocken`" in text
+    assert "ssh bau-server 'python3 ~/.claude/skills/to-spawn/skripte/aufpasser.py --trocken'" in text
