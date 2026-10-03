@@ -344,3 +344,16 @@ def test_tests_filtern_nicht_mit_alter_marke() -> None:
             if _LOGIK_MUSTER.search(zeile):
                 funde.append(f"{pfad.name}:{nr}: {zeile.strip()}")
     assert not funde, "Alte Marke in Test-Logik:\n" + "\n".join(funde)
+
+
+def test_vorfall_alter_rollenname_ist_kein_neuer_vorfall(monkeypatch: pytest.MonkeyPatch) -> None:
+    """#428: Ursache mit „Wächter“ und mit „Aufseher“ ist derselbe Vorfall (sonst Doppelzeile im Katalog)."""
+    monkeypatch.syspath_prepend(str(SKILL))
+    from to_spawn.vorfall import Vorfall
+
+    def vorfall(ursache: str) -> Vorfall:
+        return Vorfall(klasse="M", symptom="Checkpoint wartet", ursache=ursache, loesung="Vorschlag")
+
+    alt = vorfall("Frage ohne eigenen Vorschlag — der Wächter rät nicht (#285)")
+    neu = vorfall("Frage ohne eigenen Vorschlag — der Aufseher rät nicht (#285)")
+    assert alt.schluessel() == neu.schluessel()

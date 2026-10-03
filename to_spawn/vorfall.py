@@ -90,7 +90,8 @@ class Vorfall:
 
 
 def _norm(text: Any) -> str:
-    return _ZELLE_RAND.sub(" ", str(text or "")).strip().lower()
+    # #428-alt: alter Rollenname = neuer, sonst wird ein Altvorfall zur Doppelzeile.
+    return _ZELLE_RAND.sub(" ", str(text or "")).strip().lower().replace("wächter", "aufseher")
 
 
 def _zelle(text: Any) -> str:

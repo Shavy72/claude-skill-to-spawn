@@ -1,0 +1,3 @@
+=========================== short test summary info ============================
+FAILED tests/test_aufseher_428.py::test_vorfall_alter_rollenname_ist_kein_neuer_vorfall
+1 failed, 12 deselected in 0.05s
