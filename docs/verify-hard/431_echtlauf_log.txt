@@ -1,0 +1,3 @@
+INFO respawn #9431: Handoff-Auftrag an =spec-9399:@1029 getippt.
+INFO respawn #9431: neues Fenster =spec-9399:@1030 gestartet.
+WARNING Unter Pane-PID 3064002 läuft kein claude-Prozess.

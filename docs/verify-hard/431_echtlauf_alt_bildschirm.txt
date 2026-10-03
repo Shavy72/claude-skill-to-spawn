@@ -1,0 +1,24 @@
+
+
+  Committed 5bc3a36
+
+● Nächster Schritt: Remote einrichten, dann pushen. Ohne Remote ist der Push
+  nicht möglich.
+
+  Beide Dateien sind committet (5bc3a36, Arbeitsbaum danach sauber):
+  - docs/handoffs/HANDOFF_2026-10-04_9431.md
+  - docs/handoffs/START_2026-10-04_9431.txt
+  - Dieses Repo hat keinen Remote, deshalb kein Push.
+  - Ziel der Session 9431 ist nicht festgelegt. Das steht als erster Auftrag im
+    Start-Prompt.
+  - Die Ticket-Stände (#362/#363, Spec 361) stammen aus dem Session-Gedächtnis
+    und sind widersprüchlich. Sie sind im Handoff als ungeprüft markiert.
+
+✻ Cooked for 1m 4s · done 1:08 AM
+                                        ✔ Update installed · Restart to update
+────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────
+  Sonnet 5 · 85.0k (8.0%) · 2m
+  📁 wt-9431 · ⎇ master · 5h: 16% (reset 03:20) · 7d: 59%
+  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents
