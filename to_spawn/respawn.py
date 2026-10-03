@@ -41,6 +41,8 @@ log = logging.getLogger(__name__)
 
 #: Bildschirm-Text, an dem eine frisch gestartete Claude-Session eingabebereit ist.
 BEREIT_MARKER: tuple[str, ...] = ("❯", "? for shortcuts")
+#: Startdialoge, die auch „❯“ zeigen, aber keine Eingabe annehmen (Vertrauens-Abfrage).
+DIALOG_MARKER: tuple[str, ...] = ("trust this folder", "Enter to confirm")
 BEREIT_MAX_S = 120.0
 BILDSCHIRM_MAX_S = 30.0
 TAKT_S = 2.0
@@ -300,6 +302,8 @@ def _startbefehl(
 
 
 def _bereit(text: str) -> bool:
+    if any(dialog in text for dialog in DIALOG_MARKER):
+        return False
     return any(marker in text for marker in BEREIT_MARKER)
 
 

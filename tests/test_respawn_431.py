@@ -463,3 +463,13 @@ def test_tippen_mehrzeilig_als_paste_dann_enter(monkeypatch: pytest.MonkeyPatch)
     assert "-p" in t.aufrufe[1][0]  # Bracketed Paste: TUI sieht einen Block
     assert t.aufrufe[2][0][-1] == "Enter"
     assert not any("-l" in a[0] for a in t.aufrufe)
+
+
+def test_trust_dialog_ist_nicht_bereit() -> None:
+    """Der Vertrauens-Dialog zeigt auch „❯“ — dort darf kein /remote-control landen."""
+    dialog = (
+        " Quick safety check: Is this a project you created or one you trust?\n"
+        " ❯ No, exit\n   Yes, I trust this folder\n Enter to confirm · Esc to cancel"
+    )
+    assert not respawn._bereit(dialog)
+    assert respawn._bereit('❯ Try "fix typecheck errors"\n  ⏵⏵ bypass permissions on')
