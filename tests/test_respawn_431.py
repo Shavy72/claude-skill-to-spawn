@@ -177,6 +177,7 @@ def test_reihenfolge_a_bis_e(umgebung: tuple[Path, Path]) -> None:
         "tippen",
         "tippen",
         "alte_session_beenden",
+        "fenster_schliessen",
         "fenster_umbenennen",
     ]
     getippt = [(a[1], a[2]) for a in fake.aufrufe if a[0] == "tippen"]
@@ -188,6 +189,9 @@ def test_reihenfolge_a_bis_e(umgebung: tuple[Path, Path]) -> None:
     assert getippt[1] == (NEU_ZIEL, "/remote-control")
     assert getippt[2] == (NEU_ZIEL, START_TEXT)
     assert ("alte_session_beenden", 1111) in fake.aufrufe
+    # Altes Fenster zu, bevor das neue „bau N“ heißt — nie zwei Fenster gleichen Namens,
+    # und bau.py im alten Fenster kann keine Folge-Runde mehr starten.
+    assert ("fenster_schliessen", ALT_ZIEL) in fake.aufrufe
     assert ("fenster_umbenennen", NEU_ZIEL, f"bau {TICKET}") in fake.aufrufe
     start = next(a for a in fake.aufrufe if a[0] == "fenster_starten")
     assert (
@@ -435,3 +439,27 @@ def test_cli_duplikat_eine_zeile(
     raus = capsys.readouterr().out
     assert code == 3
     assert raus.count("\n") == 1
+
+
+class _TmuxAufzeichnung(respawn.TmuxWerkzeug):
+    """Echte ``tippen``-Logik, nur der tmux-Aufruf wird aufgezeichnet."""
+
+    def __init__(self) -> None:
+        self.aufrufe: list[tuple[tuple[str, ...], str | None]] = []
+
+    def _tmux(self, *argumente: str, eingabe: str | None = None) -> str:
+        self.aufrufe.append((argumente, eingabe))
+        return ""
+
+
+def test_tippen_mehrzeilig_als_paste_dann_enter(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Zeilenumbrüche per send-keys wären Enter — der Prompt ginge stückweise ab."""
+    monkeypatch.setattr(respawn.time, "sleep", lambda s: None)
+    t = _TmuxAufzeichnung()
+    t.tippen("=spec-1:@2", "Zeile eins\nZeile zwei")
+    befehle = [a[0][0] for a in t.aufrufe]
+    assert befehle == ["load-buffer", "paste-buffer", "send-keys"]
+    assert t.aufrufe[0][1] == "Zeile eins\nZeile zwei"
+    assert "-p" in t.aufrufe[1][0]  # Bracketed Paste: TUI sieht einen Block
+    assert t.aufrufe[2][0][-1] == "Enter"
+    assert not any("-l" in a[0] for a in t.aufrufe)

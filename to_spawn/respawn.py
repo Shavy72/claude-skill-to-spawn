@@ -92,9 +92,10 @@ class Werkzeug(Protocol):
 class TmuxWerkzeug:
     """Echte Umsetzung: tmux über ``subprocess``, Prozesse über ``pgrep``/``/proc``."""
 
-    def _tmux(self, *argumente: str) -> str:
+    def _tmux(self, *argumente: str, eingabe: str | None = None) -> str:
         fertig = subprocess.run(
             [*capo._tmux_befehl(), *argumente],
+            input=eingabe,
             capture_output=True,
             text=True,
             check=True,
@@ -154,8 +155,11 @@ class TmuxWerkzeug:
         return raus.strip()
 
     def tippen(self, ziel: str, text: str) -> None:
-        # Text und Enter getrennt — sonst schluckt die TUI das Enter im Einfügen.
-        self._tmux("send-keys", "-t", ziel, "-l", text)
+        # Text als Bracketed Paste (ein Block, Zeilenumbrüche schicken nichts ab),
+        # dann Enter getrennt — sonst schluckt die TUI das Enter im Einfügen.
+        puffer = f"respawn-{os.getpid()}"
+        self._tmux("load-buffer", "-b", puffer, "-", eingabe=text)
+        self._tmux("paste-buffer", "-p", "-d", "-b", puffer, "-t", ziel)
         time.sleep(1)
         self._tmux("send-keys", "-t", ziel, "Enter")
 
@@ -431,6 +435,8 @@ def _abloesen(
             EXIT_NICHT_BEWIESEN,
             f"{kopf}: neue Session läuft in „{name_neu}“, alte Session (Pane-PID {alt.pane_pid}) nicht beendet",
         )
+    # Altes Fenster zu: kein zweites „bau N“, und bau.py dort startet keine Folge-Runde.
+    w.fenster_schliessen(alt.ziel)
     w.fenster_umbenennen(neu, name_alt)
     return Ergebnis(
         EXIT_OK,
