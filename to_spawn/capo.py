@@ -1591,6 +1591,28 @@ def ruecknahme_sperre(n: int, erledigt: set[str], laeuft: str) -> str:
     return ""
 
 
+def spaeter_geschlossen(gh_repo: str, n: int, stempel: str) -> bool | None:
+    """Wurde #n nach dem Schließen ``stempel`` noch einmal geschlossen? (#448, Issue-Verlauf)
+
+    Fängt, was :func:`merke_schliessen` nicht sehen kann: ein Mensch schließt und
+    öffnet wieder, bevor ein Tick vorbeikommt. ``None`` = Verlauf nicht lesbar.
+    """
+    zeit = _zeit(stempel)
+    code, ausgabe = gh.lauf(
+        [
+            "api",
+            "--paginate",
+            f"repos/{gh_repo}/issues/{n}/timeline?per_page=100",
+            "--jq",
+            '.[] | select(.event == "closed") | .created_at',
+        ]
+    )
+    if code != 0 or zeit is None:
+        log.warning("Issue-Verlauf von #%s nicht lesbar (gh Exit %s).", n, code)
+        return None
+    return any((spaeter := _zeit(z)) is not None and spaeter > zeit for z in ausgabe.split())
+
+
 def fehl_reopen_kandidat(
     n: int, issue: dict[str, Any], eigene: list[Commit], erledigt: set[str], *, checkpoint: str
 ) -> tuple[str, list[str]] | None:
@@ -1882,6 +1904,12 @@ def _tick(
             kandidat = None if vps_fehlt else fehl_reopen_kandidat(n, issue, eigene, erledigt, checkpoint=checkpoint)
             if kandidat is not None and reopen_funde(repo, ref, n, eigene, belege, vps, kopf, alle_zeilen):
                 kandidat = None  # Regeln weiter rot — das Reopen war richtig
+            if kandidat is not None:
+                spaeter = spaeter_geschlossen(gh_repo, n, kandidat[0])
+                if spaeter is None:
+                    aktionen.append(f"#{n} Rücknahme ausgesetzt: Issue-Verlauf nicht lesbar (gh)")
+                if spaeter is not False:
+                    kandidat = None  # danach wieder zu (Mensch) — das jetzige Offen ist nicht capos Reopen
             if kandidat is not None:
                 sperre = ruecknahme_sperre(n, erledigt, laeuft_noch(n, tmux_fenster(spec), wt_zeit, jetzt))
                 if sperre:

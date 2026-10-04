@@ -39,11 +39,16 @@ class FakeGh:
     def __init__(self) -> None:
         self.aufrufe: list[list[str]] = []
         self.fehler: set[str] = set()
+        self.schliess_zeiten: list[str] = []  # Timeline: created_at der closed-Ereignisse
 
     def lauf(self, args: list[str], cwd: Path | None = None) -> tuple[int, str]:
         self.aufrufe.append(list(args))
         if args[:1] == ["issue"] and len(args) > 1 and args[1] in self.fehler:
             return 1, ""
+        if args[:1] == ["api"] and any("/timeline" in a for a in args):
+            if "timeline" in self.fehler:
+                return 1, ""
+            return 0, "\n".join(self.schliess_zeiten)
         return 0, ""
 
     def schliessen(self) -> list[list[str]]:
@@ -445,3 +450,58 @@ def test_reopen_regeln_stimmen_mit_reopen_funde_ueberein() -> None:
             re.findall(r'Verstoss\(\s*ticket,\s*"(\w+)"', inspect.getsource(getattr(capo, name)))
         )
     assert namen == set(capo.REOPEN_REGELN)
+
+
+# --- Fixrunde 2: Mensch schließt + öffnet zwischen zwei Ticks --------------------
+
+
+def test_mensch_schliesst_und_oeffnet_zwischen_ticks_keine_ruecknahme(
+    welt: dict[str, Path],  # noqa: F811
+    fake_gh: FakeGh,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """capo öffnet bei T1; Mensch schließt bei T2 und öffnet wieder, bevor ein Tick es sieht."""
+    _umbenennung_415(welt)
+    t1 = _iso(timedelta(minutes=40))
+    t2 = _iso(timedelta(minutes=20))
+    _erledigt_setzen(welt, f"{N}|test_ersetzt|{t1}")
+    fake_gh.schliess_zeiten = [t1, t2]
+    _kinder(monkeypatch, _issue())
+
+    erg = _tick(welt)
+
+    assert fake_gh.schliessen() == [], erg.zeilen
+    assert not any("zurückgenommen" in z for z in erg.zeilen), erg.zeilen
+
+
+def test_timeline_nur_capos_schliessen_ruecknahme(
+    welt: dict[str, Path],  # noqa: F811
+    fake_gh: FakeGh,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _umbenennung_415(welt)
+    t1 = _iso(timedelta(minutes=40))
+    _erledigt_setzen(welt, f"{N}|test_ersetzt|{t1}")
+    fake_gh.schliess_zeiten = [_iso(timedelta(hours=5)), t1]
+    _kinder(monkeypatch, _issue())
+
+    erg = _tick(welt)
+
+    assert len(fake_gh.schliessen()) == 1, erg.zeilen
+
+
+def test_timeline_nicht_lesbar_keine_ruecknahme(
+    welt: dict[str, Path],  # noqa: F811
+    fake_gh: FakeGh,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _umbenennung_415(welt)
+    t1 = _iso(timedelta(minutes=40))
+    _erledigt_setzen(welt, f"{N}|test_ersetzt|{t1}")
+    fake_gh.fehler.add("timeline")
+    _kinder(monkeypatch, _issue())
+
+    erg = _tick(welt)
+
+    assert fake_gh.schliessen() == [], erg.zeilen
+    assert f"#{N} Rücknahme ausgesetzt: Issue-Verlauf nicht lesbar (gh)" in erg.zeilen, erg.zeilen
