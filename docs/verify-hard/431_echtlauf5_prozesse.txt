@@ -1,0 +1,13 @@
+bau      1479482 1479442  0 16:11 ?        00:00:00  |           |       \_ /bin/sh -c npm install better-sqlite3 --no-package-lock --no-save --silent
+bau      1479483 1479482 51 16:11 ?        00:00:03  |           |           \_ npm install better-sqlite3
+bau      1480351 1480347  0 16:11 ?        00:00:00  |               \_ cut -c1-400
+bau      1480354 1480347  0 16:11 ?        00:00:00  |               \_ tee /home/bau/wt/skill-431/docs/verify-hard/431_echtlauf5_prozesse.txt
+--
+bau      1473943 3327382  0 16:10 pts/23   00:00:00  \_ python3 /home/bau/.claude/skills/to-spawn/skripte/bau.py 466
+bau      1474813 3327382  0 16:10 pts/24   00:00:00  \_ bash -lc export REPO=/home/bau/wt/wt-431 TO_SPAWN_HOME=/home/bau/wt/skill-431; bau 9431 --sofort --ohne-prompt
+bau      1474831 1474813  0 16:10 pts/24   00:00:00      \_ ./.venv/bin/python scripts/bau.py 9431 --sofort --ohne-prompt
+bau      3560185       1  0 Sep26 ?        00:01:58 adb -L tcp:5037 fork-server server --reply-fd 4
+caddy    1027814       1  0 Sep26 ?        00:02:07 /usr/bin/caddy run --environ --config /etc/caddy/Caddyfile
+bau      2904023       1  0 00:44 ?        00:00:00 tmux -L aufpasser-test-2871950 new-session -d -s spec-9001 -n wache 9001 -c /tmp/pytest-of-bau/pytest-3222/test_r2_pane_nur_shell_kein_se0/repo sleep 3600
+# Fragesperre settings.json der neuen Session (/tmp/duoplus-management-bau/9431-20261004-161041-0lc9_sf0): permissions.deny = ['AskUserQuestion']
+# Speicher-Sperre im neuen Fenster: 'bau 9431 wartet auf Speicher (Zyklus 1, Takt 60 s): schon 16 Claude-Sessions (Obergrenze 12)' — claude nie gestartet, bau.py ohne Kind
