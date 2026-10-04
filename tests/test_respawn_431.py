@@ -248,44 +248,41 @@ def test_reihenfolge_a_bis_e(umgebung: tuple[Path, Path]) -> None:
     assert (
         start[1] == "spec-399"
         and start[2] == f"bau {TICKET} neu"
-        and start[3] == str(wt)
+        and start[3] == str(repo)
     )
     assert erg.zeile.startswith(f"respawn #{TICKET}: ok")
     assert "\n" not in erg.zeile
 
 
-def test_startbefehl_ohne_prompt_mit_model_und_effort(
+def test_startbefehl_ohne_prompt_ueber_bau(
     umgebung: tuple[Path, Path],
 ) -> None:
+    # #431 Befund 1: kein nacktes ``claude`` mehr — bau.py liefert die ganze Konfiguration
+    # (Beleg im Detail: tests/test_respawn_431_konfig.py).
     repo, wt = umgebung
     fake = FakeWerkzeug(wt)
     assert _lauf(repo, fake).exit == 0
     befehl = next(a for a in fake.aufrufe if a[0] == "fenster_starten")[4]
     assert START_TEXT not in befehl
-    assert "--model claude-opus-5-5" in befehl
-    assert "--effort medium" in befehl
-    assert f"TO_SPAWN_TICKET={TICKET}" in befehl and f"TO_SPAWN_SPEC={SPEC}" in befehl
-    assert f"BAU_TICKET={TICKET}" in befehl and f"TO_SPAWN_LOG_REPO={wt}" in befehl
-    assert f"TO_SPAWN_LOG_RUECKFALL={repo}" in befehl
-    # Nach ``claude`` folgen nur Schalter mit Wert — kein freies Prompt-Argument.
-    nach_claude = befehl.split(" claude ", 1)[1].split()
-    assert nach_claude == ["--model", "claude-opus-5-5", "--effort", "medium"]
+    assert befehl.startswith("bash -lc ")
+    assert befehl.endswith(f"bau {TICKET} --sofort --ohne-prompt'")
+    assert f"REPO={repo}" in befehl
 
 
-def test_startbefehl_nimmt_werte_aus_konfig(umgebung: tuple[Path, Path]) -> None:
+def test_startbefehl_unabhaengig_von_modell_konfig(umgebung: tuple[Path, Path]) -> None:
+    # Modell/Effort liest bau.py selbst aus der Repo-Konfig — respawn reicht nichts durch.
     repo, wt = umgebung
     fake = FakeWerkzeug(wt)
     from to_spawn import config
 
     konfig = config.lade(repo)
     konfig["modelle"] = {**konfig["modelle"], "ticket": "claude-test-1"}
-    konfig["effort"] = {**konfig["effort"], "ticket": "high"}
     assert (
         respawn.abloesen(repo, SPEC, TICKET, konfig, werkzeug=fake, warte_max=600).exit
         == 0
     )
     befehl = next(a for a in fake.aufrufe if a[0] == "fenster_starten")[4]
-    assert befehl.endswith("claude --model claude-test-1 --effort high")
+    assert "claude-test-1" not in befehl and "--model" not in befehl
 
 
 # --- Schritt d: Handoff / Start-Prompt fehlt ---------------------------------
@@ -438,7 +435,7 @@ def test_dry_run_tut_nichts(umgebung: tuple[Path, Path]) -> None:
     )
     assert erg.exit == 0
     assert fake.namen() == []
-    assert "\n" not in erg.zeile and "--model" in erg.zeile
+    assert "\n" not in erg.zeile and "--ohne-prompt" in erg.zeile
 
 
 # --- CLI ---------------------------------------------------------------------------

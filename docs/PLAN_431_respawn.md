@@ -26,9 +26,11 @@ Variante B (verworfen): nur SKILL.md, Subagent tippt tmux-Befehle selbst — nic
 0. **Duplikat-Prüfung (A5):** Fenster `bau <N>` muss genau einmal existieren (alte Session). Gibt es schon ein Fenster `bau <N> neu`, mehr als ein `bau <N>`, oder mehr als einen `bau.py`-Prozess für Ticket N → Exit 3, nichts anfassen.
 1. **a)** `seit = jetzt()`. In das alte Fenster tippen: Handoff-Auftrag (Skill handoff, Bau-Variante) mit festen Pfaden im Ticket-Worktree (`config.worktree_pfad`):
    `docs/handoffs/HANDOFF_<JJJJ-MM-TT>_<N>.md` und Start-Prompt `docs/handoffs/START_<JJJJ-MM-TT>_<N>.txt`, beide committen, danach nichts mehr tun.
-2. **b)** gleich danach neues Fenster `bau <N> neu` in Sitzung `spec-<S>`, cwd = Ticket-Worktree, Befehl nur
-   `env TO_SPAWN_TICKET=N TO_SPAWN_SPEC=S BAU_TICKET=N TO_SPAWN_LOG_REPO=<wt> TO_SPAWN_LOG_RUECKFALL=<repo> claude --model <modelle.ticket> --effort <effort.ticket>`
-   (Vorgabe Opus 5.5, mittel). **Nie ein Start-Prompt als Argument (V4).**
+2. **b)** gleich danach neues Fenster `bau <N> neu` in Sitzung `spec-<S>`, cwd = Hauptbaum, Befehl
+   `bash -lc 'export REPO=<repo> TO_SPAWN_HOME=<skill>; bau <N> --sofort --ohne-prompt'` — dieselbe Zeile wie die
+   Folge-Runde von capo (`capo.bau_startzeile`). Settings (Frage-Sperre #321, Stop-Hooks), strikte MCP-Config,
+   Session-ID (#236), Modell und Staffel-/Bau-Log-Umgebung kommen allein aus `bau.py` (Prüfbefund 1, Runde 2).
+   **Nie ein Start-Prompt als Argument (V4)** — dafür `--ohne-prompt`.
 3. **c)** warten, bis der Bildschirm des neuen Fensters bereit ist (Marker, max. 120 s; sonst Exit 1, neues Fenster schließen), dann `/remote-control` tippen (E7, A12).
 4. **d)** warten (bis `warte_max`, Vorgabe 1800 s), bis Handoff UND Start-Prompt existieren, nicht leer sind und nach `seit` entstanden (G5: nie mit altem Handoff). Fehlt eins → Exit 2, neues Fenster schließen, alte Session unangetastet.
 5. **e)** Inhalt der Start-Prompt-Datei ins neue Fenster tippen (Text, dann Enter getrennt).

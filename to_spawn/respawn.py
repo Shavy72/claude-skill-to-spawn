@@ -6,8 +6,8 @@ Eine Tür: :func:`abloesen`. Sie löst die laufende Claude-Session im tmux-Fenst
 0. Duplikat-Prüfung (A5): genau ein Fenster ``bau <N>``, kein ``bau <N> neu``,
    höchstens ein ``bau.py``-Prozess für N — sonst Exit 3, nichts anfassen.
 a) Handoff-Auftrag ins alte Fenster (Handoff + Start-Prompt mit festen Pfaden).
-b) neues Fenster ``bau <N> neu`` mit nacktem ``claude --model … --effort …``
-   (nie ein Start-Prompt als Argument, V4).
+b) neues Fenster ``bau <N> neu`` mit ``bau <N> --sofort --ohne-prompt`` wie spawn/capo
+   (Bau-Konfiguration allein aus ``bau.py``; nie ein Start-Prompt als Argument, V4).
 c) warten bis bereit und ruhig, dann ``/remote-control`` tippen (E7) und die
    Bestätigung auf dem Bildschirm prüfen (ein Nachschub-Enter, falls das
    Slash-Menü das erste schluckt) — sonst Exit 1.
@@ -401,25 +401,17 @@ def _handoff_auftrag(handoff: str, start: str) -> str:
     )
 
 
-def _startbefehl(
-    repo: Path, spec: int, ticket: int, wt: str, konfig: dict[str, Any]
-) -> str:
-    modell = str((konfig.get("modelle") or {}).get("ticket") or "claude-opus-5-5")
-    effort = str((konfig.get("effort") or {}).get("ticket") or "medium")
-    teile = [
-        "env",
-        f"TO_SPAWN_TICKET={ticket}",
-        f"TO_SPAWN_SPEC={spec}",
-        f"BAU_TICKET={ticket}",
-        f"TO_SPAWN_LOG_REPO={wt}",
-        f"TO_SPAWN_LOG_RUECKFALL={repo}",
-        "claude",
-        "--model",
-        modell,
-        "--effort",
-        effort,
-    ]
-    return shlex.join(teile)
+def _startbefehl(repo: Path, ticket: int) -> str:
+    """Startbefehl des neuen Fensters: derselbe ``bau <N> --sofort`` wie spawn/capo.
+
+    Settings (Frage-Sperre #321, Stop-Hooks), strikte MCP-Config, Session-ID (#236) und
+    Staffel-/Bau-Log-Umgebung kommen allein aus ``bau.py`` — respawn baut nichts davon
+    nach. ``--ohne-prompt``: der Start-Prompt entsteht erst in Schritt d und wird in
+    Schritt e ins Fenster getippt.
+    """
+    return shlex.join(
+        ["bash", "-lc", capo.bau_startzeile(repo, ticket, "", "--ohne-prompt")]
+    )
 
 
 def _bereit(text: str) -> bool:
@@ -523,11 +515,11 @@ def _ablauf(a: Auftrag, w: Werkzeug, stand: _Stand) -> Ergebnis:
     stand.alt = alt
 
     wt_text = config.worktree_pfad(a.ticket, a.repo)
-    befehl = _startbefehl(a.repo, a.spec, a.ticket, wt_text, a.konfig)
+    befehl = _startbefehl(a.repo, a.ticket)
     if a.dry_run:
         return Ergebnis(
             EXIT_OK,
-            f"{a.kopf}: dry-run — alt {alt.ziel}, neu „{a.name_neu}“ in {a.sitzung}, cwd {wt_text}, Befehl: {befehl}",
+            f"{a.kopf}: dry-run — alt {alt.ziel}, neu „{a.name_neu}“ in {a.sitzung}, cwd {a.repo}, Befehl: {befehl}",
         )
 
     # a) Handoff-Auftrag ins alte Fenster
@@ -538,8 +530,8 @@ def _ablauf(a: Auftrag, w: Werkzeug, stand: _Stand) -> Ergebnis:
     stand.auftrag_getippt = True
     log.info("respawn #%s: Handoff-Auftrag an %s getippt.", a.ticket, alt.ziel)
 
-    # b) neues Fenster, nackter Startbefehl
-    stand.neu = w.fenster_starten(a.sitzung, a.name_neu, wt_text, befehl)
+    # b) neues Fenster: bau.py wie spawn (cwd Hauptbaum, bau.py wechselt selbst in den Worktree)
+    stand.neu = w.fenster_starten(a.sitzung, a.name_neu, str(a.repo), befehl)
     log.info("respawn #%s: neues Fenster %s gestartet.", a.ticket, stand.neu)
 
     _remote_control(w, stand.neu)  # c)

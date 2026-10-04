@@ -1,0 +1,32 @@
+                ],
+                cwd=str(repo),
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                env={**os.environ, "TO_SPAWN_REPO": str(repo)},
+                timeout=120,
+                check=False,
+            )
+            assert fertig.returncode == 0, fertig.stdout + fertig.stderr
+            return fertig.stdout
+    
+        ohne = lauf()
+>       assert "## Auftrag dieser Runde" not in ohne
+E       AssertionError: assert '## Auftrag dieser Runde' not in '## Auftrag ...chritt x/y\n'
+E         
+E         '## Auftrag dieser Runde' is contained here:
+E           ## Auftrag dieser Runde
+E           Diese Runde wurde mit einem eigenen Auftrag gestartet — er gilt vor dem allgemeinen Ticket-Ablauf darunter:
+E           
+E           Weiter ab Handoff docs/handoffs/HANDOFF_2026-10-04_431.md (Ticket-Worktree) — lies ihn zuerst und setze genau dort fort, wo die Vorsession aufgehört hat.
+E           ...
+E         
+E         ...Full output truncated (9 lines hidden), use '-vv' to show
+
+tests/test_capo_checkpoint_285.py:229: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_capo_checkpoint_285.py::test_auftrag_landet_im_prompt - Ass...
+1 failed, 262 passed, 2 skipped in 166.04s (0:02:46)
+--- Nachlauf ohne geerbtes BAU_AUFTRAG (Session-Umgebung): tests/test_capo_checkpoint_285.py
+7 passed in 2.67s

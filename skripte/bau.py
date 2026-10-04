@@ -1,6 +1,6 @@
 """bau — schlanke Claude-Code-Session für genau ein Ticket.
 
-Aufruf: ``python scripts/bau.py <N> [--dry-run] [--model <m>] [--print-prompt] [--sofort] [--takt <s>] [--umzug <branch>@<sha>:<pfad>] [--probesitz] [--auftrag <text>]``
+Aufruf: ``python scripts/bau.py <N> [--dry-run] [--model <m>] [--print-prompt] [--sofort] [--takt <s>] [--umzug <branch>@<sha>:<pfad>] [--probesitz] [--ohne-prompt] [--auftrag <text>]``
 
 Liest das Ticket-Manifest unter ``docs/agents/manifests/*.json`` (SSOT-Schema siehe
 ``docs/agents/kontext-manifest.md``), schaltet alle nicht benötigten Skills
@@ -599,6 +599,16 @@ def resume_prompt(ticket: str) -> str:
     )
 
 
+def prompt_setzen(cmd: list[str], prompt: str, mit_prompt: bool) -> None:
+    """Prompt als letztes Argument setzen: ersetzen, wenn der Befehl schon einen trägt,
+    sonst anhängen (Folge-Runde nach ``--ohne-prompt``, #431 — sonst überschriebe der
+    Prompt den Wert von ``--session-id``)."""
+    if mit_prompt:
+        cmd[-1] = prompt
+    else:
+        cmd.append(prompt)
+
+
 def session_id_setzen(cmd: list[str], out: Path, sid: str | None = None, ticket: str = "", runde: int = 1) -> str:
     """Gesprächs-ID im Befehl setzen (``--resume`` → ``--session-id``, jede Runde frisch),
     in ``session-id.txt`` schreiben und als ``BAU_SESSION_ID`` setzen. Ohne ``sid``:
@@ -755,6 +765,12 @@ def main() -> int:
         "kein Manifest nötig, impliziert --sofort",
     )
     parser.add_argument(
+        "--ohne-prompt",
+        action="store_true",
+        help="respawn (#431): Session ohne ersten Prompt starten — der Auftrag wird danach "
+        "ins Fenster getippt; Konfiguration (Settings, MCP, Session-ID, Umgebung) wie immer",
+    )
+    parser.add_argument(
         "--auftrag",
         metavar="TEXT",
         help="Auftrag dieser Runde (#285): kommt als Abschnitt „## Auftrag dieser Runde“ vor den "
@@ -904,7 +920,10 @@ def main() -> int:
         erster_prompt = resume_prompt(ticket)
     else:
         cmd += ["--session-id", str(uuid.uuid4())]
-    cmd.append(erster_prompt)
+    # ``mit_prompt``: trägt ``cmd`` als letztes Argument einen Prompt? (nicht bei --ohne-prompt)
+    mit_prompt = not args.ohne_prompt
+    if mit_prompt:
+        cmd.append(erster_prompt)
 
     off_count = sum(1 for v in overrides.values() if v == "off")
     log.info("Ticket #%s · Spec #%s · %s", ticket, spec, title)
@@ -926,9 +945,10 @@ def main() -> int:
             return 2
         cmd = praefix + cmd
         print("\nBefehl:")
+        sichtbar = cmd[:-1] if mit_prompt else cmd
         print(
-            " ".join(f'"{c}"' if " " in c or "\n" in c else c for c in cmd[:-1]),
-            '"<prompt>"',
+            " ".join(f'"{c}"' if " " in c or "\n" in c else c for c in sichtbar),
+            '"<prompt>"' if mit_prompt else "",
         )
         return 0
 
@@ -980,7 +1000,7 @@ def main() -> int:
         umgebung = staffel_umgebung(ticket, staffel_datei, runde, fingerabdruck)
         umgebung.update(bau_log_umgebung(ticket, runde, float(umgebung["BAU_SESSION_START"]), effort, spec))
         os.environ.update(umgebung)
-        (out / f"prompt-runde{runde}.txt").write_text(cmd[-1], encoding="utf-8")
+        (out / f"prompt-runde{runde}.txt").write_text(cmd[-1] if mit_prompt else "", encoding="utf-8")
         code, umzug_daten = starte_session(cmd, umzug_datei)
         if umzug_daten is not None:
             # Kein Staffel-Neustart: die Session läuft jetzt auf dem Server weiter.
@@ -1023,7 +1043,8 @@ def main() -> int:
             handoff.name,
             code,
         )
-        cmd[-1] = staffel_prompt(prompt, handoff, runde)
+        prompt_setzen(cmd, staffel_prompt(prompt, handoff, runde), mit_prompt)
+        mit_prompt = True
         session_id_setzen(cmd, out, str(uuid.uuid4()), ticket=ticket, runde=runde)
 
 
