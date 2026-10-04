@@ -69,7 +69,9 @@ def aufseher_abloesen(
     Exit 0: beide Dateien da, ``handoff``/``start_prompt`` gefüllt — der Aufrufer
     beendet die Session und startet den Nachfolger. Exit 2: Dateien fehlen nach
     ``warte_max`` s, Weiter-Auftrag getippt. Exit 1: tmux-Fehler beim Tippen.
-    Gibt nie eine Ausnahme weiter (eine Zeile statt Absturz der Aufsicht).
+    tmux-Fehler werden zur Ergebnis-Zeile; ``respawn._Abbruch`` aus dem Werkzeug
+    (z. B. gestoppte Ablösung beim Tippen) und Lese-Fehler (``OSError``,
+    ``UnicodeDecodeError``) laufen durch — der Aufrufer (:class:`Abloesung`) fängt sie.
     """
     w = werkzeug or respawn.TmuxWerkzeug()
     kopf = f"respawn Aufseher #{spec}"
