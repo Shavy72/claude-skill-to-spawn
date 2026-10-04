@@ -1,0 +1,132 @@
+{
+  "version": 1,
+  "modus": "hinweis",
+  "zeit": "2026-10-04T13:22:24.891672+00:00",
+  "befunde": [
+    {
+      "datei": "to_spawn/capo.py",
+      "zeile": 1,
+      "schwere": "niedrig",
+      "konfidenz": 90,
+      "pruefer": "general-purpose",
+      "text": "Datei wächst 1920→2117 Zeilen.",
+      "status": "gestrichen",
+      "grund": "Stilfrage ohne Fehlerauslöser."
+    },
+    {
+      "datei": "to_spawn/capo.py",
+      "zeile": 1561,
+      "schwere": "niedrig",
+      "konfidenz": 70,
+      "pruefer": "builtin-code-review",
+      "text": "Zustandsschlüssel in erledigt an 4+ Stellen per split zerlegt, kein Parser/Builder.",
+      "status": "behalten",
+      "grund": "Formatänderung träfe 4+ Stellen; Befund an David gemeldet, Umbau greift Altcode."
+    },
+    {
+      "datei": "to_spawn/capo.py",
+      "zeile": 1908,
+      "schwere": "niedrig",
+      "konfidenz": 50,
+      "pruefer": "builtin-code-review",
+      "text": "Fehlerpfad spaeter None/is not False schwer lesbar.",
+      "status": "gestrichen",
+      "grund": "Korrekt, Geschmack."
+    },
+    {
+      "datei": "to_spawn/capo.py",
+      "zeile": 1926,
+      "schwere": "niedrig",
+      "konfidenz": 60,
+      "pruefer": "builtin-code-review",
+      "text": "Erfolg der Rücknahme per Vergleich des Anzeigetexts.",
+      "status": "behalten",
+      "grund": "Behoben in 8432228 (Ergebnis.ok)."
+    },
+    {
+      "datei": "to_spawn/capo.py",
+      "zeile": 348,
+      "schwere": "niedrig",
+      "konfidenz": 50,
+      "pruefer": "builtin-code-review",
+      "text": "Vermerk-Parser zu tolerant.",
+      "status": "gestrichen",
+      "grund": "Bewusst im Docstring als Vertrag."
+    },
+    {
+      "datei": "to_spawn/capo.py",
+      "zeile": 1905,
+      "schwere": "niedrig",
+      "konfidenz": 50,
+      "pruefer": "builtin-code-review",
+      "text": "regel_vps je Kandidat und Tick.",
+      "status": "gestrichen",
+      "grund": "VPS-Kopf einmal je Tick, Prüfung lokal."
+    },
+    {
+      "datei": "to_spawn/capo.py",
+      "zeile": 1927,
+      "schwere": "niedrig",
+      "konfidenz": 50,
+      "pruefer": "builtin-code-review",
+      "text": "ruecknahme|N dauerhaft, nur eine Rücknahme je Ticket.",
+      "status": "gestrichen",
+      "grund": "Gewollt und dokumentiert."
+    },
+    {
+      "datei": "to_spawn/capo.py",
+      "zeile": 1616,
+      "schwere": "niedrig",
+      "konfidenz": 40,
+      "pruefer": "builtin-code-review",
+      "text": "Altzustand ohne Schlüssel → keine Rücknahme.",
+      "status": "gestrichen",
+      "grund": "Schlüssel existierte schon vor dem Diff."
+    }
+  ],
+  "pruefer": [
+    {
+      "name": "general-purpose",
+      "modell": "sonnet",
+      "befunde_roh": 1
+    },
+    {
+      "name": "pr-test-analyzer",
+      "modell": "sonnet",
+      "befunde_roh": 0
+    },
+    {
+      "name": "rot-probe",
+      "modell": null,
+      "befunde_roh": 0
+    },
+    {
+      "name": "builtin-code-review",
+      "modell": "sonnet",
+      "befunde_roh": 12
+    }
+  ],
+  "fix_runde": 2,
+  "repo": "/home/bau/wt/skill-448",
+  "moment": "sitzung",
+  "stufe": "mittel",
+  "sha": "53c6dc2",
+  "fingerprint": "d73732755a342a8b",
+  "dateien": [
+    "tests/test_fehl_reopen_448.py",
+    "to_spawn/capo.py"
+  ],
+  "dauer_s": 420,
+  "token_schaetzung": 260000,
+  "richter": {
+    "modell": "opus",
+    "behalten": 2,
+    "gestrichen": 6
+  },
+  "diff_modus": {
+    "staged": false,
+    "base": "d0a0a82bfae6772a08c2c38b1b6a975e111e88f0"
+  },
+  "text": "Sitzungs-Diff ist Teilmenge des Ticket-Laufs am selben SHA; Befunde gemeinsam. Builtin /code-review als Zwei-Achsen-Review (Standards + Spec, Subagenten sonnet).",
+  "status": "gelb"
+}

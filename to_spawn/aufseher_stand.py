@@ -84,6 +84,7 @@ PHASEN = {
     "staffel_limit": "Staffel-Limit",
     "vorfall": "Vorfall",
     "zusammenfassung": "Zusammenfassung",
+    "ruecknahme": "Rücknahme",
 }
 
 ARBEITET = "arbeitet"

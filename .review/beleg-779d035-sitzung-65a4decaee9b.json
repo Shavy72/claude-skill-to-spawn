@@ -1,0 +1,68 @@
+{
+  "version": 1,
+  "modus": "hinweis",
+  "zeit": "2026-10-04T06:20:00+02:00",
+  "befunde": [
+    {
+      "datei": "to_spawn/capo.py",
+      "zeile": 1621,
+      "schwere": "mittel",
+      "konfidenz": 70,
+      "pruefer": "general-purpose",
+      "status": "behalten",
+      "text": "Schließen+Wiederöffnen durch Mensch zwischen zwei Ticks bleibt unsichtbar (merke_schliessen sieht nur Tick-Zustände); Abhilfe: Timeline-Events/updated_at gegen Zeit des capo-Reopens prüfen. Schaden durch Obergrenze (1 Rücknahme je Ticket) begrenzt."
+    }
+  ],
+  "pruefer": [
+    {
+      "name": "general-purpose",
+      "modell": "sonnet",
+      "befunde_roh": 1
+    },
+    {
+      "name": "pr-test-analyzer",
+      "modell": "sonnet",
+      "befunde_roh": 0
+    },
+    {
+      "name": "builtin-code-review",
+      "befunde_roh": 0,
+      "text": "ausgelassen: Hauptkontext 149k"
+    }
+  ],
+  "fix_runde": 1,
+  "repo": "/home/bau/wt/skill-448",
+  "moment": "sitzung",
+  "stufe": "gross",
+  "sha": "779d035",
+  "fingerprint": "65a4decaee9bb326",
+  "dateien": [
+    "tests/test_fehl_reopen_448.py",
+    "to_spawn/aufseher_stand.py",
+    "to_spawn/bau_log.py",
+    "to_spawn/befund.py",
+    "to_spawn/capo.py"
+  ],
+  "diff_modus": {
+    "staged": false,
+    "base": "7b5e2ba7987eee4f5cbfc19cb2b533bee4ce38e3"
+  },
+  "dauer_s": 300,
+  "token_schaetzung": 90000,
+  "richter": null,
+  "datei_hashes": {
+    "tests/test_fehl_reopen_448.py": "3c938b91b7b7a550",
+    "to_spawn/aufseher_stand.py": "c01740b4854545a7",
+    "to_spawn/bau_log.py": "f97eadae9fd17b76",
+    "to_spawn/befund.py": "0ea2266f78a05ad0",
+    "to_spawn/capo.py": "6fe32eb68228f14a"
+  },
+  "inhalt_hashes": {
+    "tests/test_fehl_reopen_448.py": "edb049ea3258d5ba",
+    "to_spawn/aufseher_stand.py": "88037d85a541c2ae",
+    "to_spawn/bau_log.py": "bd8272cbdb3c89eb",
+    "to_spawn/befund.py": "16c5e34d4ac62d13",
+    "to_spawn/capo.py": "e7ff7da579d5bd1e"
+  },
+  "status": "gelb"
+}

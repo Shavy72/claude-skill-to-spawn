@@ -1,0 +1,14 @@
+collecting ... collected 10 items
+
+tests/test_fehl_reopen_448.py::test_umbenennung_mit_vermerk_ist_kein_test_ersetzt PASSED [ 10%]
+tests/test_fehl_reopen_448.py::test_vermerk_formen_tolerant PASSED       [ 20%]
+tests/test_fehl_reopen_448.py::test_rot_beweis_415_fehl_reopen_wird_zurueckgenommen PASSED [ 30%]
+tests/test_fehl_reopen_448.py::test_echter_roter_befund_bleibt_offen PASSED [ 40%]
+tests/test_fehl_reopen_448.py::test_neuer_commit_nach_schliessen_keine_ruecknahme PASSED [ 50%]
+tests/test_fehl_reopen_448.py::test_doppelschutz_zweiter_tick_nimmt_nicht_nochmal_zurueck PASSED [ 60%]
+tests/test_fehl_reopen_448.py::test_juengster_schliess_stempel_zaehlt PASSED [ 70%]
+tests/test_fehl_reopen_448.py::test_fehlerpfad_gh_close_scheitert PASSED [ 80%]
+tests/test_fehl_reopen_448.py::test_probelauf_schliesst_nichts PASSED    [ 90%]
+tests/test_fehl_reopen_448.py::test_stand_zeigt_ruecknahme PASSED        [100%]
+
+============================== 10 passed in 1.04s ==============================

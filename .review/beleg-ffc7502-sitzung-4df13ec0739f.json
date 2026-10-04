@@ -1,0 +1,205 @@
+{
+  "version": 1,
+  "modus": "hinweis",
+  "zeit": "2026-10-04T06:05:00+02:00",
+  "befunde": [
+    {
+      "datei": "to_spawn/capo.py",
+      "zeile": 1555,
+      "schwere": "mittel",
+      "konfidenz": 75,
+      "pruefer": "silent-failure-hunter+code-reviewer",
+      "text": "Rücknahme prüft nicht, ob der Offen-Zustand von capos Reopen kommt (Mensch schließt + öffnet wieder → capo schließt gegen dessen Willen).",
+      "status": "behalten"
+    },
+    {
+      "datei": "to_spawn/capo.py",
+      "zeile": 1557,
+      "schwere": "niedrig",
+      "konfidenz": 60,
+      "pruefer": "code-reviewer",
+      "text": "Doppelschutz nur je closed_at; wackelnde Regel → Kreislauf Reopen/Rücknahme ohne Obergrenze.",
+      "status": "behalten"
+    },
+    {
+      "datei": "to_spawn/capo.py",
+      "zeile": 1818,
+      "schwere": "mittel",
+      "konfidenz": 60,
+      "pruefer": "silent-failure-hunter+code-reviewer",
+      "text": "Race: Rücknahme schließt, während die Folge-Runden-Session noch baut.",
+      "status": "behalten"
+    },
+    {
+      "datei": "to_spawn/capo.py",
+      "zeile": 367,
+      "schwere": "niedrig",
+      "konfidenz": 70,
+      "pruefer": "silent-failure-hunter+code-reviewer+python-reviewer",
+      "text": "Vermerk test-umbenannt: neuer Name im ganzen Diff gesucht statt in derselben Testdatei.",
+      "status": "behalten"
+    },
+    {
+      "datei": "to_spawn/capo.py",
+      "zeile": 1513,
+      "schwere": "niedrig",
+      "konfidenz": 65,
+      "pruefer": "code-reviewer+python-reviewer",
+      "text": "REOPEN_REGELN dupliziert Regelnamen aus reopen_funde.",
+      "status": "behalten"
+    },
+    {
+      "datei": "tests/test_fehl_reopen_448.py",
+      "zeile": 154,
+      "schwere": "niedrig",
+      "konfidenz": 80,
+      "pruefer": "code-reviewer",
+      "text": "Keine Tests für Sperren (waechter:ok, Checkpoint, vps_fehlt) und Mensch-schließt-und-öffnet-wieder.",
+      "status": "behalten"
+    },
+    {
+      "datei": "to_spawn/capo.py",
+      "zeile": 1818,
+      "schwere": "hoch",
+      "konfidenz": 60,
+      "pruefer": "silent-failure-hunter",
+      "text": "VPS-Regel ohne ssh-Konfig gilt als grün.",
+      "status": "gestrichen",
+      "grund": "ohne ssh entsteht nie ein vps-Reopen-Schlüssel"
+    },
+    {
+      "datei": "to_spawn/capo.py",
+      "zeile": 1832,
+      "schwere": "mittel",
+      "konfidenz": 60,
+      "pruefer": "silent-failure-hunter+python-reviewer",
+      "text": "Erfolg per String-Vergleich.",
+      "status": "gestrichen",
+      "grund": "dokumentierte Zeilen-API wie _wieder_oeffnen"
+    },
+    {
+      "datei": "to_spawn/capo.py",
+      "zeile": 1830,
+      "schwere": "mittel",
+      "konfidenz": 50,
+      "pruefer": "silent-failure-hunter",
+      "text": "bau_log.schreibe ohne Fehlerbehandlung.",
+      "status": "gestrichen",
+      "grund": "spekulativ, Schlüssel vorher gesichert"
+    },
+    {
+      "datei": "to_spawn/capo.py",
+      "zeile": 1818,
+      "schwere": "mittel",
+      "konfidenz": 50,
+      "pruefer": "python-reviewer",
+      "text": "reopen_funde doppelt je Tick.",
+      "status": "gestrichen",
+      "grund": "Zweige schließen sich aus"
+    },
+    {
+      "datei": "to_spawn/capo.py",
+      "zeile": 371,
+      "schwere": "niedrig",
+      "konfidenz": 50,
+      "pruefer": "silent-failure-hunter",
+      "text": "git show Fehler still.",
+      "status": "gestrichen",
+      "grund": "schlägt sicher fehl"
+    },
+    {
+      "datei": "to_spawn/befund.py",
+      "zeile": 136,
+      "schwere": "niedrig",
+      "konfidenz": 50,
+      "pruefer": "silent-failure-hunter",
+      "text": "gh-Fehlertext verworfen.",
+      "status": "gestrichen",
+      "grund": "Muster wie _oeffne"
+    },
+    {
+      "datei": "to_spawn/capo.py",
+      "zeile": 1512,
+      "schwere": "niedrig",
+      "konfidenz": 40,
+      "pruefer": "python-reviewer",
+      "text": "8 Parameter, tiefe Verschachtelung.",
+      "status": "gestrichen",
+      "grund": "Geschmack"
+    }
+  ],
+  "pruefer": [
+    {
+      "name": "general-purpose",
+      "modell": "sonnet",
+      "befunde_roh": 0
+    },
+    {
+      "name": "pr-test-analyzer",
+      "modell": "sonnet",
+      "befunde_roh": 0
+    },
+    {
+      "name": "silent-failure-hunter",
+      "modell": "sonnet",
+      "befunde_roh": 8
+    },
+    {
+      "name": "code-reviewer",
+      "modell": "opus",
+      "befunde_roh": 6
+    },
+    {
+      "name": "python-reviewer",
+      "modell": "sonnet",
+      "befunde_roh": 10
+    },
+    {
+      "name": "rot-probe",
+      "befunde_roh": 0
+    },
+    {
+      "name": "builtin-code-review",
+      "befunde_roh": 0,
+      "text": "ausgelassen: Hauptkontext 125k; ersetzt durch code-reviewer (opus) im Panel"
+    }
+  ],
+  "fix_runde": 0,
+  "repo": "/home/bau/wt/skill-448",
+  "moment": "sitzung",
+  "stufe": "gross",
+  "sha": "ffc7502",
+  "fingerprint": "4df13ec0739fc84b",
+  "dateien": [
+    "tests/test_fehl_reopen_448.py",
+    "to_spawn/aufseher_stand.py",
+    "to_spawn/bau_log.py",
+    "to_spawn/befund.py",
+    "to_spawn/capo.py"
+  ],
+  "diff_modus": {
+    "staged": false,
+    "base": "7b5e2ba7987eee4f5cbfc19cb2b533bee4ce38e3"
+  },
+  "dauer_s": 900,
+  "token_schaetzung": 250000,
+  "richter": {
+    "modell": "opus",
+    "befunde_eingang": 13
+  },
+  "datei_hashes": {
+    "tests/test_fehl_reopen_448.py": "76daf4cf2535f80a",
+    "to_spawn/aufseher_stand.py": "c01740b4854545a7",
+    "to_spawn/bau_log.py": "f97eadae9fd17b76",
+    "to_spawn/befund.py": "0ea2266f78a05ad0",
+    "to_spawn/capo.py": "4251501372d9c79d"
+  },
+  "inhalt_hashes": {
+    "tests/test_fehl_reopen_448.py": "71351ad2b3f64d99",
+    "to_spawn/aufseher_stand.py": "88037d85a541c2ae",
+    "to_spawn/bau_log.py": "bd8272cbdb3c89eb",
+    "to_spawn/befund.py": "16c5e34d4ac62d13",
+    "to_spawn/capo.py": "9f101a61daaa73d5"
+  },
+  "status": "gelb"
+}
