@@ -98,6 +98,7 @@ class Lage:
     prompt_datei: bool  # frische START_*_<N>.txt seit dem letzten Eingriff
     ziel: str | None = None  # tmux-Ziel des Fensters ``bau <N>``
     letzter_start: float | None = None  # jüngster ``session_start`` im Bau-Log
+    log_unlesbar: bool = False  # Bau-Log da, aber Lesen scheiterte (≠ „kein Start“)
 
 
 @dataclass(frozen=True)
@@ -144,6 +145,9 @@ def entscheide(lage: Lage, gemerkt: Gemerkt, jetzt: float, handoff_k: float) -> 
                 return Schritt(
                     "abschliessen", "neue Session arbeitet, Abschluss nachgeholt"
                 )
+            if lage.log_unlesbar:
+                text = "hängt, Bau-Log unlesbar — neue Session nicht prüfbar"
+                return Schritt("melden", f"{text}, Aufseher prüfen")
             return Schritt(
                 "melden", "hängt, keine neue Session belegt — Aufseher prüfen"
             )
@@ -322,7 +326,10 @@ def _respawn(
     Gescheitert → Stufe 5 mit der Zeit NACH ``abloesen`` (ein ``session_start`` des
     abgebrochenen neuen Fensters setzt sonst sofort zurück). Erfolg → Stufe 0 +
     Respawn-Zeit in einem Schreibvorgang; scheitert der (oder das Merken von Stufe
-    5), bleibt Stufe 3 (kein zweites Ablösen), Exit 1 und die Zeile sagt es.
+    5), bleibt Stufe 3 (kein zweites Ablösen), Exit 1 und die Zeile sagt es. Nach
+    gescheitertem Stufe-5-Merken wird Stufe 3 mit der Zeit NACH ``abloesen`` neu
+    gemerkt — sonst wäre der ``session_start`` des abgebrochenen Fensters jünger und
+    ein Folgelauf mit „arbeitet“ schlösse still ab.
     """
     try:
         leitstand.setze_leiter_stufe(ticket, 3, jetzt)
@@ -334,12 +341,15 @@ def _respawn(
         repo, spec, ticket, werkzeug=u.werkzeug(), handoff_seit=gemerkt.seit
     )
     if erg.exit != respawn.EXIT_OK:
+        nach = u.jetzt()
         try:
-            leitstand.setze_leiter_stufe(ticket, 5, u.jetzt())
+            leitstand.setze_leiter_stufe(ticket, 5, nach)
         except (OSError, ValueError, leitstand.ZustandKaputt) as fehler:
             log.warning("leiter #%s: Stufe 5 nicht gemerkt: %s", ticket, fehler)
             text = f"Stufe 3 respawn gescheitert, Stufe 5 nicht gemerkt — {fehler}"
-            return Ergebnis(EXIT_FEHLER, _zeile(ticket, text))
+            return Ergebnis(
+                EXIT_FEHLER, _zeile(ticket, _stufe3_nachziehen(ticket, nach, text))
+            )
         text = f"Stufe 5 respawn gescheitert — {erg.zeile}"
         return Ergebnis(erg.exit, _zeile(ticket, text))
     try:
@@ -350,6 +360,21 @@ def _respawn(
         return Ergebnis(EXIT_FEHLER, _zeile(ticket, text))
     text = f"Stufe 0 {_WORT['respawn']} — Start-Prompt-Datei da"
     return Ergebnis(EXIT_OK, _zeile(ticket, text))
+
+
+def _stufe3_nachziehen(ticket: int, nach: float, text: str) -> str:
+    """Stufe 3 mit Zeit nach ``abloesen`` neu merken; gibt die (ggf. ergänzte) Zeile."""
+    try:
+        leitstand.setze_leiter_stufe(ticket, 3, nach)
+    except (OSError, ValueError, leitstand.ZustandKaputt) as fehler:
+        log.error(
+            "leiter #%s: Stufe 3 nicht neu gemerkt — Folgelauf kann fälschlich "
+            "abschließen: %s",
+            ticket,
+            fehler,
+        )
+        return f"{text}; Stufe 3 nicht neu gemerkt — {fehler}"
+    return text
 
 
 # --- Echte Umwelt ------------------------------------------------------------------------
@@ -397,6 +422,7 @@ class _EchteUmwelt:
             raise RuntimeError(f"#{ticket} ist kein Sub-Issue von Spec #{spec}")
         wt = self.worktree(ticket)
         prompt = seit is not None and respawn.start_prompt_da(wt, ticket, seit)
+        start, unlesbar = self._letzter_start(ticket, wt)
         return Lage(
             offen=blick.lage.offen,
             fenster=blick.lage.fenster,
@@ -404,19 +430,22 @@ class _EchteUmwelt:
             kontext_k=self._kontext_k(ticket, wt),
             prompt_datei=prompt,
             ziel=blick.ziel,
-            letzter_start=self._letzter_start(ticket, wt),
+            letzter_start=start,
+            log_unlesbar=unlesbar,
         )
 
-    def _letzter_start(self, ticket: int, wt: Path) -> float | None:
-        """Jüngster ``session_start`` im Bau-Log — unlesbar = unbekannt (Warnung)."""
+    def _letzter_start(self, ticket: int, wt: Path) -> tuple[float | None, bool]:
+        """Jüngster ``session_start`` im Bau-Log und ob das Lesen scheiterte (Warnung)."""
         try:
             ort = bau_log.log_ort(ticket, wt, self.repo)
             if ort is None:
-                return None
-            return bau_log.letzter_session_start(ort, ticket, hauptbaum=self.repo)
+                return None, False
+            return bau_log.letzter_session_start(
+                ort, ticket, hauptbaum=self.repo
+            ), False
         except (OSError, ValueError, KeyError, TypeError) as fehler:
             log.warning("Bau-Log #%s unlesbar — Start unbekannt: %s", ticket, fehler)
-            return None
+            return None, True
 
     def _kontext_k(self, ticket: int, wt: Path) -> float | None:
         """Kontext der aktuellen Session — Zeilen vor dem letzten Leiter-Respawn zählen nicht."""
