@@ -568,3 +568,217 @@ def test_exit_2_ueber_echte_aufsicht_kein_nachfolger(
     assert [z["exit"] for z in zeilen] == [2, 2], zeilen
     blockiert = _log_zeilen(welt, "blockiert")
     assert len(blockiert) == 1 and "Ablösung" in blockiert[0]["grund"], blockiert
+
+
+# --- 6. Fixrunde 2 (#436): gestoppte Versuche, ruhige Rückkehr, Faden-Randfälle ---------
+
+
+def test_gestoppter_versuch_ist_kein_fehlschlag(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Befund A: Session endet mitten im Versuch → „gestoppt“, kein Fehlschlag, kein blockiert."""
+    from to_spawn import respawn
+
+    ab_halter: list[Any] = []
+
+    def stopp_dann_abbruch() -> None:
+        ab_halter[0]._stopp.set()
+        raise respawn._Abbruch(1, "Session beendet — Ablösung gestoppt")
+
+    wl, zeiten, zeilen = _faden_welt(tmp_path, monkeypatch, [])
+    from to_spawn import respawn_aufseher
+
+    def tuer(cwd: Path, spec: int, pane: str, **_kw: Any) -> Any:
+        zeiten.append(time.monotonic())
+        stopp_dann_abbruch()
+
+    monkeypatch.setattr(respawn_aufseher, "aufseher_abloesen", tuer)
+    ab = wl.Abloesung(tmp_path, 900, tmp_path, versuche_max=1, abstand_s=0.01, warte_s=1)
+    ab_halter.append(ab)
+    with caplog.at_level("INFO", logger="to_spawn.waechter_lauf"):
+        ab.ausloesen(lambda: 60_000, 50_000, lambda: True)
+        assert ab.faden is not None
+        ab.faden.join(10)
+    assert len(zeiten) == 1
+    assert not [r for r in caplog.records if r.levelname == "ERROR"], caplog.text
+    assert any("gestoppt" in r.getMessage() and r.levelname == "INFO" for r in caplog.records)
+    assert not [z for z in zeilen if z["typ"] in ("aufseher_abloesung", "blockiert")], zeilen
+    assert ab.versuche == 0 and not ab.fertig
+
+
+def test_abloesung_session_endete_bleibt_wiederholbar(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Befund J: respawn Exit 0, Session lief nicht mehr → nicht fertig, nächste Session darf."""
+    wl, zeiten, _zeilen = _faden_welt(tmp_path, monkeypatch, [_ok(tmp_path), _ok(tmp_path)])
+    ab = wl.Abloesung(tmp_path, 900, tmp_path, versuche_max=3, abstand_s=0.01, warte_s=1)
+    ab.ausloesen(lambda: 60_000, 50_000, lambda: False)
+    assert ab.faden is not None
+    ab.faden.join(10)
+    assert not ab.fertig and ab.versuche == 0
+    assert not (tmp_path / "abloesung.json").exists()
+    ab.stoppen(timeout=1)
+    ab.ausloesen(lambda: 60_000, 50_000, lambda: True)
+    assert ab.faden is not None
+    ab.faden.join(10)
+    assert len(zeiten) == 2
+    assert (tmp_path / "abloesung.json").is_file()
+
+
+def test_alter_faden_haengt_ablosung_wird_nachgeholt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Befund G: alter Faden hängt noch (tmux) → Warnung, Ablösung wird danach nachgeholt."""
+    import threading
+
+    from to_spawn import respawn_aufseher
+
+    wl, zeiten, _zeilen = _faden_welt(tmp_path, monkeypatch, [])
+    frei = threading.Event()
+    ergebnisse = [_exit2(), _ok(tmp_path)]
+
+    def tuer(cwd: Path, spec: int, pane: str, **_kw: Any) -> Any:
+        zeiten.append(time.monotonic())
+        if len(zeiten) == 1:
+            frei.wait(10)  # hängt wie tmux, ignoriert das Stopp-Signal
+        return ergebnisse.pop(0)
+
+    monkeypatch.setattr(respawn_aufseher, "aufseher_abloesen", tuer)
+    ab = wl.Abloesung(tmp_path, 900, tmp_path, versuche_max=3, abstand_s=0.05, warte_s=1)
+    ab.ausloesen(lambda: 60_000, 50_000, lambda: True)
+    ende = time.monotonic() + 5
+    while not zeiten and time.monotonic() < ende:
+        time.sleep(0.01)
+    ab.stoppen(timeout=0.1)
+    alt = ab.faden
+    assert alt is not None and alt.is_alive()
+    with caplog.at_level("WARNING", logger="to_spawn.waechter_lauf"):
+        ab.ausloesen(lambda: 60_000, 50_000, lambda: True)  # neue Session an der Grenze
+    assert any("nachgeholt" in r.getMessage() for r in caplog.records), caplog.text
+    frei.set()
+    alt.join(10)
+    ende = time.monotonic() + 10
+    while not (tmp_path / "abloesung.json").exists() and time.monotonic() < ende:
+        time.sleep(0.05)
+    assert len(zeiten) == 2, zeiten
+    assert (tmp_path / "abloesung.json").is_file()
+
+
+def test_stopp_werkzeug_tippt_auftrag_ganz_mit_enter(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Befund K: Stopp während des Tippens → Auftrag samt Enter fertig, Stopp erst danach."""
+    import threading
+
+    from to_spawn import respawn, waechter_lauf
+
+    stopp = threading.Event()
+    tmux: list[tuple[str, ...]] = []
+
+    def gestellt(_self: Any, *a: str, eingabe: str | None = None) -> str:
+        tmux.append(a)
+        if a[:1] == ("paste-buffer",):
+            stopp.set()
+        return ""
+
+    monkeypatch.setattr(respawn.TmuxWerkzeug, "_tmux", gestellt)
+    monkeypatch.setattr(respawn, "TIPP_PAUSE_S", 0.01)
+    w = waechter_lauf._StoppWerkzeug(stopp)
+    with pytest.raises(respawn._Abbruch):
+        w.tippen("%5", "Auftrag")
+    assert [a[0] for a in tmux] == ["load-buffer", "paste-buffer", "send-keys"], tmux
+    assert tmux[-1][-1] == "Enter"
+    tmux.clear()
+    with pytest.raises(respawn._Abbruch):  # gestoppt vor dem Einfügen → nichts getippt
+        w.tippen("%5", "Auftrag")
+    assert tmux == []
+
+
+FAKE_CLAUDE_WERKZEUG = r"""#!/usr/bin/env python3
+import json, os, re, sys, time
+from pathlib import Path
+args = sys.argv[1:]
+with open(os.environ["FAKE_PROTOKOLL"], "a", encoding="utf-8") as fh:
+    fh.write(json.dumps(args) + "\n")
+modell = args[args.index("--model") + 1]
+ordner = Path.home() / ".claude" / "projects" / re.sub(r"[^A-Za-z0-9]", "-", os.getcwd())
+ordner.mkdir(parents=True, exist_ok=True)
+if "--resume" in args:
+    if modell != os.environ["FAKE_AUSWEICH"]:
+        sys.exit(0)
+    sid = args[args.index("--resume") + 1]
+    werkzeug = {"type": "assistant", "message": {"id": "msg-tool", "content": [
+        {"type": "text", "text": "Ich prüfe das Gate."},
+        {"type": "tool_use", "id": "toolu_1", "name": "Bash", "input": {"command": "pytest"}}]}}
+    with (ordner / f"{sid}.jsonl").open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(werkzeug) + "\n")
+    time.sleep(float(os.environ.get("FAKE_SCHLAF", "8")))
+    sys.exit(0)
+sid = args[args.index("--session-id") + 1]
+with (ordner / f"{sid}.jsonl").open("a", encoding="utf-8") as fh:
+    fh.write(json.dumps({"type": "user", "message": {"content": "los"}}) + "\n")
+    fh.flush()
+    time.sleep(0.5)
+    fh.write(os.environ["FAKE_LIMIT"] + "\n")
+time.sleep(30)
+"""
+
+
+def test_rueckkehr_auf_opus_wartet_auf_ruhige_session(welt: dict[str, Path]) -> None:
+    """Befund N: offener Werkzeug-Aufruf → kein Wechsel auf Opus, Ausweich-Session läuft zu Ende."""
+    env = _wache_welt(welt)
+    _ausfuehrbar(welt["tmp"] / "claude_bin" / "claude", FAKE_CLAUDE_WERKZEUG)
+    env.update(
+        {
+            "FAKE_LIMIT": _limit_mit_reset(1),
+            "FAKE_AUSWEICH": AUSWEICH,
+            "FAKE_SCHLAF": "8",
+            "TO_SPAWN_RESET_PUFFER_S": "1",
+        }
+    )
+    ergebnis = _wache(welt["repo"], env=env, timeout=120)
+    assert ergebnis.returncode == 0, _text(ergebnis)
+    aufrufe = _aufrufe(welt)
+    modelle = [a[a.index("--model") + 1] for a in aufrufe]
+    assert modelle[1:] == [AUSWEICH], modelle
+    assert not [z for z in _log_zeilen(welt, "waechter_modell") if z["nach"] != AUSWEICH]
+
+
+FAKE_CLAUDE_ZWEI_LIMITS = r"""#!/usr/bin/env python3
+import json, os, re, sys, time
+from pathlib import Path
+args = sys.argv[1:]
+with open(os.environ["FAKE_PROTOKOLL"], "a", encoding="utf-8") as fh:
+    fh.write(json.dumps(args) + "\n")
+zaehler = Path(os.environ["FAKE_PROTOKOLL"]).with_suffix(".zaehler")
+aufruf = int(zaehler.read_text()) + 1 if zaehler.is_file() else 1
+zaehler.write_text(str(aufruf))
+if aufruf > 2:
+    sys.exit(0)
+sid = args[args.index("--resume" if "--resume" in args else "--session-id") + 1]
+ordner = Path.home() / ".claude" / "projects" / re.sub(r"[^A-Za-z0-9]", "-", os.getcwd())
+ordner.mkdir(parents=True, exist_ok=True)
+with (ordner / f"{sid}.jsonl").open("a", encoding="utf-8") as fh:
+    fh.write(json.dumps({"type": "user", "message": {"content": "los"}}) + "\n")
+    fh.flush()
+    time.sleep(0.5)
+    fh.write(os.environ["FAKE_LIMIT" if aufruf == 1 else "FAKE_LIMIT2"] + "\n")
+time.sleep(30)
+"""
+
+
+def test_limit_pause_auf_ausweich_bleibt_vor_rueckkehr_ab(welt: dict[str, Path]) -> None:
+    """Befund P: Limit-Pause auf Ausweich endet, Opus-Limit noch offen → Ausweich bleibt."""
+    env = _wache_welt(welt)
+    _ausfuehrbar(welt["tmp"] / "claude_bin" / "claude", FAKE_CLAUDE_ZWEI_LIMITS)
+    env.update(
+        {
+            "FAKE_LIMIT": _limit_mit_reset(3600),
+            "FAKE_LIMIT2": _limit_mit_reset(1),
+            "TO_SPAWN_RESET_PUFFER_S": "1",
+        }
+    )
+    ergebnis = _wache(welt["repo"], env=env, timeout=120)
+    assert ergebnis.returncode == 0, _text(ergebnis)
+    aufrufe = _aufrufe(welt)
+    modelle = [a[a.index("--model") + 1] for a in aufrufe]
+    assert modelle[1:] == [AUSWEICH, AUSWEICH], modelle
+    assert [z["nach"] for z in _log_zeilen(welt, "waechter_modell")] == [AUSWEICH]
