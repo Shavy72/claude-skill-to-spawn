@@ -42,7 +42,6 @@ def test_prompt_neuer_ablauf(wache: ModuleType) -> None:
     assert "aufraeumen.mjs" in prompt
     assert "--katalog" in prompt
     assert "Abschluss" in prompt
-    assert "3600" not in prompt
 
 
 def test_prompt_formatiert_mit_skill(wache: ModuleType) -> None:
@@ -77,7 +76,6 @@ def test_takt_vorgabe_im_echten_aufruf(tmp_path: Path) -> None:
     )
     assert ergebnis.returncode == 0, ergebnis.stderr
     assert "ScheduleWakeup 1800 s" in ergebnis.stdout
-    assert "3600" not in ergebnis.stdout
     hilfe = subprocess.run(
         [sys.executable, str(WACHE), "--help"], capture_output=True, text=True, encoding="utf-8", check=False
     ).stdout
@@ -89,3 +87,9 @@ def test_wache_modell_opus(wache: ModuleType) -> None:
     assert wache.MODELL == "claude-opus-5-5"
     assert "🧭 Opus" in wache.PROMPT
     assert "Fable" not in wache.PROMPT
+
+
+@pytest.mark.xfail(strict=True, reason="überholt durch E38 (#500): 60 min, wenn nur noch Davids Abnahme offen ist")
+def test_alt_keine_3600_ausnahme(wache: ModuleType) -> None:
+    """Alter Ist-Stand (2026-09-24): Prompt kannte keine 3600-s-Ausnahme."""
+    assert "3600" not in wache.PROMPT

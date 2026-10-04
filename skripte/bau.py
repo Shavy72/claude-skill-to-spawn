@@ -37,7 +37,7 @@ from typing import Any
 _SKILL = str(Path(__file__).resolve().parent.parent)
 if _SKILL not in sys.path:
     sys.path.insert(0, _SKILL)
-from to_spawn import capo, config, context_mode, gh, nest, probesitz, sessions_datei, speicher, umzug, vertrauen  # noqa: E402
+from to_spawn import anleitung, capo, config, context_mode, gh, nest, probesitz, sessions_datei, speicher, umzug, vertrauen  # noqa: E402
 from to_spawn.waechter_lauf import transkript_ordner
 
 # Windows-Konsole ist cp1252 — Umlaute/Pfeile im Prompt brauchen UTF-8.
@@ -407,7 +407,8 @@ def build_prompt(
 ) -> str:
     """Platzhalter der Vorlage füllen — auch die repo-neutralen (#257):
     ``{REPO}`` = owner/name, ``{HAUPTZWEIG}``, ``{CHECKPOINT_LABEL}`` aus der Konfig,
-    ``{SESSION_KOPF}`` = Marke jedes Session-Kommentars aus ``capo.SESSION_KOPF`` (#402)."""
+    ``{SESSION_KOPF}`` = Marke jedes Session-Kommentars aus ``capo.SESSION_KOPF`` (#402),
+    ``{MINDSET}``/``{ABLOESE_SOP}`` = feste Texte aus ``anleitung`` (#500)."""
     konfig = konfig if konfig is not None else config.lade(REPO)
     label = str((konfig.get("regularien") or {}).get("checkpoint_label") or "checkpoint:human")
     return (
@@ -420,6 +421,8 @@ def build_prompt(
         .replace("{HAUPTZWEIG}", gh.hauptzweig(REPO))
         .replace("{CHECKPOINT_LABEL}", label)
         .replace("{SESSION_KOPF}", capo.SESSION_KOPF)
+        .replace("{MINDSET}", anleitung.MINDSET)
+        .replace("{ABLOESE_SOP}", anleitung.ABLOESE_SOP)
     )
 
 

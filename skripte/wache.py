@@ -36,6 +36,7 @@ _SKILL = str(Path(__file__).resolve().parent.parent)
 if _SKILL not in sys.path:
     sys.path.insert(0, _SKILL)
 from to_spawn import (  # noqa: E402
+    anleitung,
     aufseher_stand,
     config,
     context_mode,
@@ -188,8 +189,10 @@ def abloese_prompt(prompt: str, handoff: Path, runde: int, spec: int | None = No
     )
 
 
-#: Fester Aufseher-Takt: 30 min, keine Ausnahme (auch nicht, wenn alle Terminals warten).
+#: Aufseher-Takt: 30 min (E28).
 TAKT_S = 1800
+#: Takt, wenn alle offenen Tickets nur noch auf Davids Abnahme warten: 60 min (E38, #500).
+TAKT_ABNAHME_S = 3600
 
 PROMPT = """/loop Bau-Aufseher Spec #{S} ({REPO})
 
@@ -199,14 +202,32 @@ Du bist verantwortlich, dass Spec #{S} vollständig, sauber und autonom fertig g
 - Es gelten die Regeln der Projekt-CLAUDE.md: bau.py nie beenden, ohne vorher `sessions {S}` bzw. pstree geprüft zu haben; Deploy live nur mit Davids Freigabe; Commits nur mit Pathspec + [skip ci].
 - Eine Bau-Session hängt oder ist tot → du handelst (Befehle unten), nicht nur melden.
 
+## Mindset (gilt für dich und jede Bau-Session; derselbe Text steht im Anstupser)
+{MINDSET}
+
+## Hänger erkennen (eine Regel, kein anderer Eingriffsweg)
+- Arbeitet: Status `arbeitet` im Aufseher-Stand (Session busy, Pane ändert sich) → nie eingreifen, egal wie lange es dauert.
+- Still am Prompt: Status `still` — die Session sitzt fertig oder wartend am Eingabe-Prompt, nichts ändert sich. Das ist der Hänger-Fall, auch wenn sie „nur fertig“ ist. Eingriff dann ausschließlich über die Eingriffs-Leiter je Ticket (Befehl C); sie entscheidet die Stufe selbst: still ≥ 20 min → Mindset-Stoß (Anstupser „{STOSS}“), weitere 15 min still oder Handoff-Grenze erreicht → Ablöse-SOP, Ticket zu → `/exit`. Keine eigenen Minuten-Regeln daneben.
+- Rückfrage: Status `Rückfrage` — die Session steht an einem Rückfragen-/Freigabe-Fenster → Abschnitt „Rückfragen-Fenster“.
+- Tot: Ticket `aus` oder VERWAIST in Befehl A, nur noch die Shell im Fenster → Befehl B.
+
+## Rückfragen-Fenster (Freigabe-Dialoge)
+Bleibt eine Bau-Session an einem Rückfragen-/Freigabe-Fenster hängen: angefragten Befehl bzw. Skript lesen. Harmlos (lesen, testen, bauen, committen, auf der Staging-App schalten) → selbst bestätigen (Auswahl per `tmux send-keys`, Text und Enter getrennt) und eine Zeile ins Bau-Log (`eintrag --typ entscheidung`). Nie bestätigen bei Löschen (`rm`, auch in `shell -c`), Live-Bezug (Live-URL, `safe_deploy_vps.sh`, Live-API, live schalten) oder irgendetwas in der Live-App — dort Fenster stehen lassen, Stand-Zeile „Rückfrage wartet: <Befehl>“ statt Klick, `eintrag --typ blockiert`.
+
+## Checkpoints (Teilabnahmen)
+Checkpoints legt David beim Planen fest: im Manifest `docs/agents/manifests/spec-{S}.json` das Feld `teilabnahme_nach` (Ticketnummern, nach denen David einen Teil auf Staging abnimmt) bzw. das Label `checkpoint:human`. Ist so ein Ticket fertig, kommentierst du auf dem Ticket „Aufseher: Teilabnahme bereit: <Staging-Link> + Klickweg“ und wartest ohne Stillstand-Alarm — kein Anstupsen, kein Respawn, keine Mail; die Kette dahinter wartet. Davids Kommentar „passt“ gibt frei (wie bei `checkpoint:human`), dann geht die Kette weiter. Stecken bleiben ist nie erlaubt: alles bis zum Checkpoint baust du durch.
+
+## Ablösung
+{ABLOESE_SOP}
+
 ## Jeder Tick
 0. `python {SKILL}/to_spawn.py aufseher-stand {S}` — erster Stand-Blick (ersetzt `~/waechter/stand.sh`): je Ticket eine Kurz-Zeile (offen/zu · arbeitet/still/Rückfrage · Kontext · Phase · letzte Aussage · neue Kommentare). Die Stand-Datei `~/.local/state/to-spawn/aufseher/stand-{S}.jsonl` ist dein Gedächtnis: je Aufruf eine Zeile, ohne Änderung `noop: true`; ein Nachfolger startet mit ihrer letzten Nicht-noop-Zeile. Kein Pane-Text in deinen Kontext.
 1. `PYTHONIOENCODING=utf-8 python scripts/capo.py {S} --katalog` — Stand je Ticket, neue Bau-Log-Zeilen, Verstöße. capo öffnet selbst wieder, kommentiert verwaiste Sessions und mailt Kritisches (nicht doppelt tun); `--katalog` schreibt neue Vorfälle ins Bau-Log und nach docs/agents/FEHLERKATALOG_spawn.md (mit Pathspec mitcommitten).
 2. `{AUFRAEUMEN}` — schließt Fenster übergebener Sessions.
-3. Befehl A (unten) — läuft jedes offene, entblockte Ticket? Hängt eines, ist es tot oder an der Grenze → Befehle B–D.
+3. Befehl A (unten) — läuft jedes offene, entblockte Ticket? Je Ticket mit Status `still` → Befehl C (Leiter), `aus`/VERWAIST → Befehl B, `Rückfrage` → Abschnitt „Rückfragen-Fenster“.
 4. Ticket neu zu ohne Verstoß → Belegseite unter docs/verify-hard/ prüfen (Akzeptanz erfüllt? Live-Klick-Weg-Beleg mit Rolle da?); Mangel einstufen: rot (Akzeptanz nicht erfüllt / Beleg fehlt; z. B. Akzeptanz-Häkchen nicht erfüllt oder Live-Beleg fehlt) → `python {SKILL}/to_spawn.py befund --spec {S} --ticket <N> --stufe rot --text "…"` (öffnet wieder); gelb (Verbesserung/Hinweis, Akzeptanz trotzdem erfüllt, Kette darf weiter; z. B. fehlender Zusatz-Test für einen Nebenpfad) → `python {SKILL}/to_spawn.py befund --spec {S} --ticket <N> --stufe gelb --text "…"` (Folge-Ticket + Manifest-Eintrag, Ticket bleibt zu), Manifest docs/agents/manifests/spec-{S}.json mit Pathspec + [skip ci] committen.
 5. Stand in `docs/HANDOFF_{DATUM}_waechter_{S}.md` fortschreiben (Stand + Nachträge mit Uhrzeit), Commit mit Pathspec + [skip ci], Rebase nur bei sauberem Baum (`git diff --quiet`), Push.
-6. Takt: ScheduleWakeup {TAKT} s, immer; noop: true ohne Änderung.
+6. Takt: ScheduleWakeup {TAKT} s (ca. alle 30 min), immer; warten alle offenen Tickets nur noch auf Davids Abnahme (Checkpoint/Gesamtabnahme), dann ScheduleWakeup {TAKT_ABNAHME} s (ca. alle 60 min). Leer-Tick (nichts geändert): genau eine Kurz-Zeile als Antwort, noop: true, keine Rohausgaben (Pane-Text, Log-Volltexte) lesen.
 
 ## Befehle (fertig zum Kopieren; <N> = Ticket, <PID> aus Befehl A)
 Ort: Aufseher im tmux des Bau-Servers → Spalte „hier“ ist der Bau-Server. Aufseher am PC → „hier“ = PC, Server-Tickets mit der Server-Form.
@@ -218,15 +239,13 @@ B Ticket neu starten (Ticket steht auf „aus“)
   hier:   `{NEUSTART}`
   Server: `{NEUSTART} --ziel srv`
   Erst mit `--dry-run` ansehen, dann ohne.
-C Hängende oder tote Session erkennen und ablösen
-  Erkennen: Befehl A zeigt VERWAIST, oder „läuft seit“ ohne neue Bau-Log-Zeile/Commit seit über 60 min, oder capo meldet „Session tot“. Prüfen: Bau-Server `pstree -p <PID>`, PC: Kinder-Spalte in Befehl A. Auf dem Server greift zusätzlich der Aufpasser (Cron, 15 min): `python3 ~/.claude/skills/to-spawn/skripte/aufpasser.py --trocken` (vom PC: `ssh <SSH> 'python3 ~/.claude/skills/to-spawn/skripte/aufpasser.py --trocken'`) zeigt, was er tun würde.
-  Läuft die Session noch (hängt): Skill `/respawn` per Ablöse-Subagent (`model: sonnet`, 1 Zeile Antwort): `{RESPAWN}` (nur Bau-Server).
-  Session tot / Ticket „aus“ (beendet nur die Claude-Session des Tickets, dann Neustart): `{NEUSTART} --beenden` (Server: zusätzlich `--ziel srv`). Halbfertige Arbeit im Worktree bleibt liegen, die neue Session übernimmt sie.
-D Session an der Smart-Zone-Grenze übergeben (Handoff-Grenze aus ~/.claude/smart-zone.json)
-  Die Ticket-Session schreibt `docs/handoffs/HANDOFF_<datum>_<N>.md` im Ticket-Worktree, committet ihn und hört auf. Staffel ist aus (`staffel.aktiv`) — der Nachfolger kommt von dir:
-  Läuft die Session noch (an der Grenze): Skill `/respawn` per Ablöse-Subagent (`model: sonnet`, 1 Zeile Antwort): `{RESPAWN}` (nur Bau-Server). Ist sie tot / Ticket „aus“:
+C Stille Session: Eingriffs-Leiter (einziger Eingriffsweg, Regel „Hänger erkennen“)
+  Per Ablöse-Subagent (`model: sonnet`, 1 Zeile Antwort): `python {SKILL}/to_spawn.py leiter {S} <N>` — erst `--dry-run`, dann ohne. Die Leiter merkt die Stufe, tippt nie in ein arbeitendes Fenster oder eine Rückfrage, stößt an, fordert den Handoff an und löst per Skill `respawn` ab (Ablöse-SOP Schritt 1–5). Stufe 3 ruft `{RESPAWN}` — nie direkt, nur über die Leiter. Exit 1 = du prüfst selbst (Zeile lesen; Bau-Server `pstree -p <PID>`, PC: Kinder-Spalte in Befehl A). Nur Bau-Server; am PC machst du dieselben Stufen von Hand: Anstupser-Text tippen, dann Ablöse-SOP mit Windows-Terminal-Tab.
+  Auf dem Server läuft zusätzlich der Aufpasser (Cron, 15 min, Hausmeister für tote Fenster): `python3 ~/.claude/skills/to-spawn/skripte/aufpasser.py --trocken` (vom PC: `ssh <SSH> 'python3 ~/.claude/skills/to-spawn/skripte/aufpasser.py --trocken'`) zeigt, was er tun würde.
+D Session an der Smart-Zone-Grenze (Handoff-Grenze aus ~/.claude/smart-zone.json)
+  Läuft sie noch: Befehl C — die Leiter erkennt die Grenze selbst und fährt die Ablöse-SOP (Stufe 3 = `{RESPAWN}`, nie direkt). Liegt schon ein Handoff, aber die Session ist tot / Ticket „aus“:
   `{NEUSTART} --handoff docs/handoffs/HANDOFF_<datum>_<N>.md --beenden` (Server: zusätzlich `--ziel srv`). Die neue Session startet mit dem Auftrag „Weiter ab Handoff …“.
-E Dich selbst ablösen (deine Handoff-Grenze ist erreicht)
+E Dich selbst ablösen (deine Handoff-Grenze ist erreicht) — Selbstneustart nach der Ablöse-SOP oben
   1. `docs/HANDOFF_{DATUM}_waechter_{S}.md` vollständig: Stand je Ticket, offene Entscheidungen, laufende Neustarts, nächster Schritt. Commit mit Pathspec + [skip ci], Push.
   2. `python {SKILL}/skripte/wache.py {S} --abloesen docs/HANDOFF_{DATUM}_waechter_{S}.md` — die Aufsicht beendet diese Session und startet im selben Fenster den Nachfolge-Aufseher mit dem Handoff als Startkontext. Danach nichts mehr tun.
   An der Handoff-Grenze stößt die Aufsicht die Ablösung selbst an (respawn): kommt der Auftrag „Ablösung dieser Session“, Handoff und Start-Prompt an die genannten Pfade schreiben und danach nichts mehr tun.
@@ -241,6 +260,9 @@ Erste Zeile jeder Antwort: 🧭 Opus · medium · Aufseher #{S}"""
 
 # Werkzeug-Befehle aus derselben Quelle wie die Startklar-Probe (#450 F5).
 PROMPT = PROMPT.replace("{AUFRAEUMEN}", startklar.BEFEHL_AUFRAEUMEN).replace("{NEUSTART}", startklar.BEFEHL_NEUSTART).replace("{RESPAWN}", startklar.BEFEHL_RESPAWN)
+# Feste Texte der Aufseher-Anleitung aus einer Quelle (#500).
+PROMPT = PROMPT.replace("{MINDSET}", anleitung.MINDSET).replace("{STOSS}", anleitung.STOSS).replace("{ABLOESE_SOP}", anleitung.ABLOESE_SOP)
+PROMPT = PROMPT.replace("{TAKT_ABNAHME}", str(TAKT_ABNAHME_S))
 
 
 def main() -> int:

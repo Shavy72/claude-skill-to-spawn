@@ -85,7 +85,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from to_spawn import bau_log, config, prozessbaum, sessions_datei, speicher, vorfall
+from to_spawn import anleitung, bau_log, config, prozessbaum, sessions_datei, speicher, vorfall
 from to_spawn.waechter_lauf import _LIMIT_TEXT as LIMIT_TEXT
 from to_spawn.waechter_lauf import transkript_ordner
 
@@ -220,10 +220,8 @@ RUECKFRAGE_MARKER = (
     "Trust",
     "Esc to cancel",
 )
-ANSTUPS_TEXT = (
-    "Aufpasser: Du stehst seit {min} min still. Setz deinen Loop/Auftrag genau dort "
-    "fort, wo du warst (Ticket offen? weiterbauen; nichts zu tun? ScheduleWakeup)."
-)
+#: Anstupser: derselbe Mindset-Stoß wie die Eingriffs-Leiter (#500, eine Quelle).
+ANSTUPS_TEXT = anleitung.anstupser("Aufpasser")
 VORLAGE_REPO = "cd {repo} && {py} scripts/bau.py {n}{resume}"
 VORLAGE_SKILL = "cd {repo} && TO_SPAWN_REPO={repo} {py} ~/.claude/skills/to-spawn/skripte/bau.py {n}{resume}"
 VORLAGE_WACHE_REPO = "cd {repo} && {py} scripts/wache.py {s}{resume}"
