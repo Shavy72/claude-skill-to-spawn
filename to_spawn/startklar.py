@@ -6,27 +6,34 @@ Dinge, die im Bau schon einmal mitten im Lauf gefehlt haben:
 
 1. ``venv``       — ``bau <N>`` ruft ``./.venv/bin/python`` im Aufseher-Ordner auf.
    Ein frischer Worktree hat keine ``.venv`` → Exit 127 (Vorfall Lektion V2).
-   Fehlt sie, wird sie angelegt: Symlink auf die ``.venv`` des Hauptrepos, sonst
-   eine neue venv.
+   Fehlt sie, wird sie angelegt: Symlink auf die ``.venv`` des Hauptrepos (Pakete
+   sind dort schon), sonst eine neue venv samt ``pip install -r requirements.txt``.
+   Eine echte venv muss alle Pakete aus ``requirements.txt`` haben.
 2. ``schlüssel``  — API-Schlüssel, die die Tickets brauchen (FAL_KEY, ELEVENLABS…,
    WERKSTATT_TOKEN fehlten mitten im Bau). Werte werden nie ausgegeben/geloggt.
-3. ``werkzeug``   — die Aufseher-Werkzeuge laufen wirklich: erst mit den
-   eingetragenen PreToolUse-Hooks durchspielen (Vorfall V7: der eigene Hook
-   ``claude_git_sperre.py`` blockte ``aufraeumen.mjs``), dann trocken ausführen.
+   Zählen nur Quellen, die ``bau`` lädt (``.env`` im Ordner bzw. im Hauptrepo).
+3. ``werkzeug``   — die Aufseher-Werkzeuge laufen wirklich: der Befehlstext GENAU
+   wie im Aufseher-Prompt (``BEFEHL_*``, eine Quelle mit ``skripte/wache.py``) geht
+   durch ``permissions.deny`` und alle PreToolUse-Hooks (über bash, wie Claude
+   Code; Vorfall V7: ``claude_git_sperre.py`` blockte ``aufraeumen.mjs``), danach
+   ein Trockenlauf.
 
 Warum ein Modul: das Wissen „was heißt startklar“ (Pfade, Hook-Regeln,
-Schlüsselquellen) lebt nur hier. Aufrufer kennen nur ``pruefe`` → ``ausgabe``
-bzw. ``gate`` (Aufseher-Start, ``skripte/wache.py``) und den CLI-Befehl
+Schlüsselquellen, Aufseher-Befehlstexte) lebt nur hier. Aufrufer kennen nur
+``pruefe`` → ``ausgabe`` bzw. ``gate`` (Aufseher-Start, ``skripte/wache.py``),
+``BEFEHL_*``/``aufseher_vorlage``/``befehl_text`` (Prompt) und den CLI-Befehl
 ``to_spawn.py startklar <S>``.
 """
 
 from __future__ import annotations
 
+import fnmatch
 import json
 import logging
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 from collections.abc import Callable, Iterable, Mapping, Sequence
@@ -44,16 +51,30 @@ AUFRAEUMEN = (
 )
 HOOK_TIMEOUT_S = 20
 WERKZEUG_TIMEOUT_S = 60
+GIT_TIMEOUT_S = 20
+GH_TIMEOUT_S = 30
+INTERPRETER_TIMEOUT_S = 60
 VENV_TIMEOUT_S = 300
+PIP_TIMEOUT_S = 900
+#: Werte kürzer als das werden nicht geschwärzt (sonst trifft „1“ jede Zahl).
+GEHEIM_MIN_LAENGE = 6
 #: Umgebungsvariable zum Abschalten des Gates (nur Notfall, wird im Log gewarnt).
 SCHALTER = "TO_SPAWN_STARTKLAR"
 
-#: Läufer: (argv oder Shell-Befehl, cwd, stdin, timeout, Zusatz-Umgebung) → Ergebnis.
+# --- Aufseher-Befehle: eine Quelle für Prompt (skripte/wache.py) und Probe -------
+#: Platzhalter wie im Aufseher-Prompt: ``{S}`` Spec, ``{SKILL}`` Skill-Ordner,
+#: ``<N>`` Ticket. ``python`` wird unter Linux zu ``python3`` (``aufseher_vorlage``).
+BEFEHL_AUFRAEUMEN = "node ~/.claude/hooks/smart-zone/staffel/aufraeumen.mjs --spec {S}"
+BEFEHL_NEUSTART = "python {SKILL}/to_spawn.py neustart {S} <N>"
+
+#: Läufer: (Shell-Befehl, cwd, stdin, timeout, Zusatz-Umgebung) → Ergebnis.
 #: Wirft ``subprocess.TimeoutExpired``/``OSError`` wie ``subprocess.run``.
 Laeufer = Callable[
-    [Sequence[str] | str, Path, str | None, float, Mapping[str, str]],
+    [str, Path, str | None, float, Mapping[str, str]],
     "subprocess.CompletedProcess[str]",
 ]
+#: Issue-Leser: (Ordner, Ticketnummer) → Issue-Text; wirft bei Fehler.
+IssueLeser = Callable[[Path, str], str]
 
 
 @dataclass(frozen=True)
@@ -68,14 +89,17 @@ class Befund:
 
 @dataclass(frozen=True)
 class Werkzeug:
-    """Ein Aufseher-Werkzeug: ``befehl`` genau so, wie der Aufseher ihn tippt.
+    """Ein Aufseher-Werkzeug.
 
-    Platzhalter: ``{spec}``, ``{skill}``, ``{home}``, ``{py}``. ``datei`` muss existieren.
+    ``befehl`` ist die Vorlage, genau so, wie der Aufseher sie tippt (Platzhalter
+    ``{S}``/``{spec}``, ``{SKILL}``/``{skill}``, ``{home}``, ``{py}``, ``<N>``);
+    ``trocken`` wird für den Trockenlauf angehängt. ``datei`` muss existieren.
     """
 
     name: str
     befehl: str
     datei: str
+    trocken: str = ""
 
 
 def _py_name() -> str:
@@ -86,29 +110,67 @@ def _py_name() -> str:
 WERKZEUGE: tuple[Werkzeug, ...] = (
     Werkzeug(
         "aufraeumen",
-        "node {home}/.claude/hooks/smart-zone/staffel/aufraeumen.mjs --spec {spec} --dry-run",
+        BEFEHL_AUFRAEUMEN,
         "{home}/.claude/hooks/smart-zone/staffel/aufraeumen.mjs",
+        " --dry-run",
     ),
-    Werkzeug(
-        "neustart", "{py} {skill}/to_spawn.py neustart --help", "{skill}/to_spawn.py"
-    ),
+    Werkzeug("neustart", BEFEHL_NEUSTART, "{SKILL}/to_spawn.py", " --help"),
 )
 
 
+def aufseher_vorlage(text: str) -> str:
+    """Prompt-Vorlage fürs Betriebssystem: Linux kennt nur ``python3``."""
+    if os.name == "nt":
+        return text
+    return re.sub(r"\bpython(?= )", "python3", text)
+
+
+def skill_pfad() -> str:
+    """Skill-Ordner, wie er in Aufseher-Befehlen steht (posix, für bash gequotet)."""
+    return shlex.quote(SKILL.as_posix())
+
+
+def befehl_text(werkzeug: Werkzeug, spec: int, ticket: int | str) -> str:
+    """Befehl genau so, wie er im Aufseher-Prompt steht (``<N>`` → ``ticket``)."""
+    heim = shlex.quote(Path.home().as_posix())
+    return (
+        aufseher_vorlage(werkzeug.befehl)
+        .format(
+            S=spec,
+            spec=spec,
+            SKILL=skill_pfad(),
+            skill=skill_pfad(),
+            home=heim,
+            py=_py_name(),
+        )
+        .replace("<N>", str(ticket))
+    )
+
+
+def _bash_pfad() -> str | None:
+    """bash wie bei Claude Code: Windows → Git-Bash, sonst ``bash`` im PATH."""
+    if os.name == "nt":
+        for kandidat in (
+            Path(os.environ.get("CLAUDE_CODE_GIT_BASH_PATH", "")),
+            Path("C:/Program Files/Git/bin/bash.exe"),
+        ):
+            if str(kandidat) not in ("", ".") and kandidat.is_file():
+                return str(kandidat)
+    return shutil.which("bash")
+
+
 def _standard_laeufer(
-    befehl: Sequence[str] | str,
+    befehl: str,
     cwd: Path,
     eingabe: str | None,
     timeout: float,
     zusatz: Mapping[str, str],
 ) -> subprocess.CompletedProcess[str]:
-    shell = isinstance(befehl, str)
-    argv: Sequence[str] | str = befehl
-    if shell and os.name != "nt":
-        argv = ["bash", "-c", str(befehl)]
-        shell = False
+    bash = _bash_pfad()
+    if bash is None:
+        raise OSError("bash fehlt (Windows: Git for Windows/Git-Bash installieren)")
     return subprocess.run(
-        argv,
+        [bash, "-c", befehl],
         cwd=str(cwd),
         input=eingabe,
         capture_output=True,
@@ -116,7 +178,6 @@ def _standard_laeufer(
         encoding="utf-8",
         errors="replace",
         timeout=timeout,
-        shell=shell,
         env={**os.environ, **zusatz},
         check=False,
     )
@@ -127,53 +188,86 @@ def _kurz(text: str, laenge: int = 200) -> str:
     return text if len(text) <= laenge else text[: laenge - 1] + "…"
 
 
+def _schwaerzen(text: str, geheim: Iterable[str]) -> str:
+    for wert in sorted(set(geheim), key=len, reverse=True):
+        if len(wert) >= GEHEIM_MIN_LAENGE:
+            text = text.replace(wert, "***")
+    return text
+
+
 # --- Git-Hilfen ----------------------------------------------------------------
+
+
+def _git_lauf(ordner: Path, *args: str) -> subprocess.CompletedProcess[str] | None:
+    """``git <args>`` in ``ordner``; ``None``, wenn git nicht startet/hängt."""
+    try:
+        return subprocess.run(
+            ["git", *args],
+            cwd=str(ordner),
+            capture_output=True,
+            text=True,
+            timeout=GIT_TIMEOUT_S,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as fehler:
+        log.warning("git %s in %s fehlgeschlagen: %s", args[0], ordner, fehler)
+        return None
+
+
+def _git_dirs(ordner: Path) -> tuple[Path, Path] | None:
+    """(gemeinsames .git, eigenes .git) von ``ordner`` oder ``None``."""
+    ergebnis = _git_lauf(
+        ordner, "rev-parse", "--path-format=absolute", "--git-common-dir", "--git-dir"
+    )
+    if ergebnis is None or ergebnis.returncode != 0:
+        return None
+    zeilen = [z for z in ergebnis.stdout.splitlines() if z.strip()]
+    if len(zeilen) != 2:
+        return None
+    return Path(zeilen[0]).resolve(), Path(zeilen[1]).resolve()
 
 
 def hauptrepo(ordner: Path) -> Path | None:
     """Hauptrepo-Ordner, wenn ``ordner`` ein Git-Worktree ist; sonst ``None``."""
-    try:
-        ergebnis = subprocess.run(
-            [
-                "git",
-                "rev-parse",
-                "--path-format=absolute",
-                "--git-common-dir",
-                "--git-dir",
-            ],
-            cwd=str(ordner),
-            capture_output=True,
-            text=True,
-            timeout=20,
-            check=False,
-        )
-    except (OSError, subprocess.TimeoutExpired) as fehler:
-        log.warning("git rev-parse in %s fehlgeschlagen: %s", ordner, fehler)
+    dirs = _git_dirs(ordner)
+    if dirs is None or dirs[0] == dirs[1]:
         return None
-    zeilen = ergebnis.stdout.split()
-    if ergebnis.returncode != 0 or len(zeilen) != 2:
-        return None
-    gemeinsam, eigen = (Path(z).resolve() for z in zeilen)
-    if gemeinsam == eigen:
-        return None
-    return gemeinsam.parent
+    return dirs[0].parent
 
 
 def _ist_ignoriert(ordner: Path, pfad: str) -> bool | None:
-    try:
-        ergebnis = subprocess.run(
-            ["git", "check-ignore", "-q", "--no-index", pfad],
-            cwd=str(ordner),
-            capture_output=True,
-            timeout=20,
-            check=False,
-        )
-    except (OSError, subprocess.TimeoutExpired) as fehler:
-        log.warning("git check-ignore in %s fehlgeschlagen: %s", ordner, fehler)
+    ergebnis = _git_lauf(ordner, "check-ignore", "-q", "--no-index", pfad)
+    if ergebnis is None or ergebnis.returncode not in (0, 1):
         return None
-    if ergebnis.returncode in (0, 1):
-        return ergebnis.returncode == 0
-    return None
+    return ergebnis.returncode == 0
+
+
+def _venv_ausschliessen(ordner: Path) -> str:
+    """Trägt ``/.venv`` in ``<git-common-dir>/info/exclude`` ein (idempotent).
+
+    Ein ``.venv``-Symlink ist eine Datei — ``.venv/`` in ``.gitignore`` greift nicht,
+    und anders als echte venvs bringt er keine eigene ``.gitignore`` mit.
+    """
+    dirs = _git_dirs(ordner)
+    if dirs is None:
+        return " — Warnung: kein Git-Ordner, .venv nicht ausgeschlossen"
+    exclude = dirs[0] / "info" / "exclude"
+    try:
+        zeilen = (
+            exclude.read_text(encoding="utf-8").splitlines()
+            if exclude.is_file()
+            else []
+        )
+        if "/.venv" in zeilen:
+            return ""
+        exclude.parent.mkdir(parents=True, exist_ok=True)
+        vorher = exclude.read_text(encoding="utf-8") if exclude.is_file() else ""
+        trenner = "" if not vorher or vorher.endswith("\n") else "\n"
+        exclude.write_text(f"{vorher}{trenner}/.venv\n", encoding="utf-8")
+    except OSError as fehler:
+        log.warning("%s nicht beschreibbar: %s", exclude, fehler)
+        return f" — Warnung: .venv nicht in .gitignore und {exclude} nicht beschreibbar (nicht committen!)"
+    return f" — .venv stand nicht in .gitignore → /.venv in {exclude} eingetragen"
 
 
 # --- 1. venv -------------------------------------------------------------------
@@ -191,7 +285,7 @@ def _laeuft(python: Path) -> bool:
             subprocess.run(
                 [str(python), "-c", "pass"],
                 capture_output=True,
-                timeout=60,
+                timeout=INTERPRETER_TIMEOUT_S,
                 check=False,
             ).returncode
             == 0
@@ -201,15 +295,11 @@ def _laeuft(python: Path) -> bool:
         return False
 
 
-def _neue_venv(venv: Path) -> str | None:
-    """Legt eine venv an; gibt bei Fehler den Grund zurück."""
+def _ausfuehren(argv: Sequence[str], timeout: float) -> str | None:
+    """Führt ``argv`` aus; gibt bei Fehler den Grund zurück, sonst ``None``."""
     try:
         ergebnis = subprocess.run(
-            [sys.executable, "-m", "venv", str(venv)],
-            capture_output=True,
-            text=True,
-            timeout=VENV_TIMEOUT_S,
-            check=False,
+            list(argv), capture_output=True, text=True, timeout=timeout, check=False
         )
     except (OSError, subprocess.TimeoutExpired) as fehler:
         return str(fehler)
@@ -220,15 +310,86 @@ def _neue_venv(venv: Path) -> str | None:
     return None
 
 
+def _anforderungen(datei: Path) -> list[str]:
+    """Paketnamen aus ``requirements.txt`` (ohne Optionen/Includes/Marker-Zeilen)."""
+    try:
+        zeilen = datei.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError) as fehler:
+        log.warning("%s unlesbar: %s", datei, fehler)
+        return []
+    namen = []
+    for zeile in zeilen:
+        zeile = zeile.split(" #", 1)[0].strip()
+        if not zeile or zeile.startswith(("#", "-")) or ";" in zeile:
+            continue
+        treffer = re.match(r"[A-Za-z0-9][A-Za-z0-9._-]*", zeile)
+        if treffer:
+            namen.append(treffer.group(0))
+    return namen
+
+
+_PAKET_PROBE = (
+    "import importlib.metadata as m, sys\n"
+    "for n in sys.argv[1:]:\n"
+    "    try:\n"
+    "        m.distribution(n)\n"
+    "    except m.PackageNotFoundError:\n"
+    "        print(n)\n"
+)
+
+
+def _fehlende_pakete(python: Path, namen: Sequence[str]) -> list[str] | str:
+    """Pakete, die im Interpreter fehlen — oder Fehlertext, wenn die Probe scheitert."""
+    if not namen:
+        return []
+    try:
+        ergebnis = subprocess.run(
+            [str(python), "-c", _PAKET_PROBE, *namen],
+            capture_output=True,
+            text=True,
+            timeout=INTERPRETER_TIMEOUT_S,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as fehler:
+        return f"Paket-Probe scheitert: {fehler}"
+    if ergebnis.returncode != 0:
+        return f"Paket-Probe scheitert: {_kurz(ergebnis.stderr)}"
+    return ergebnis.stdout.split()
+
+
+def _neue_venv(venv: Path, mit_pip: bool) -> str | None:
+    """Legt eine venv an (``--without-pip``, wenn nichts zu installieren ist)."""
+    argv = [sys.executable, "-m", "venv", str(venv)]
+    if not mit_pip:
+        argv.append("--without-pip")
+    return _ausfuehren(argv, VENV_TIMEOUT_S)
+
+
 def venv_sicherstellen(ordner: Path) -> Befund:
     """Sorgt für eine lauffähige ``<ordner>/.venv`` (Symlink aufs Hauptrepo oder neu)."""
     ordner = Path(ordner)
     venv = ordner / ".venv"
-    behebung = f"im Ordner {ordner}: `{_py_name()} -m venv .venv` bzw. Symlink .venv → <Hauptrepo>/.venv"
+    py = _py_name()
+    anforderungen = ordner / "requirements.txt"
+    pip_befehl = (
+        f"`{_venv_python(Path('.venv')).as_posix()} -m pip install -r requirements.txt`"
+    )
+    behebung = f"im Ordner {ordner}: `{py} -m venv .venv` bzw. Symlink .venv → <Hauptrepo>/.venv"
+    if anforderungen.is_file():
+        behebung += f", dann {pip_befehl}"
     aktion = "vorhanden"
+    zusatz = ""
     if venv.is_symlink() and not _laeuft(_venv_python(venv)):
         log.info("Kaputter .venv-Symlink in %s wird ersetzt.", ordner)
-        venv.unlink()
+        try:
+            venv.unlink()
+        except OSError as fehler:
+            return Befund(
+                "venv",
+                False,
+                f"kaputter .venv-Symlink in {ordner} nicht löschbar: {fehler}",
+                f"Symlink .venv von Hand löschen, dann {behebung}",
+            )
     if not _laeuft(_venv_python(venv)):
         if venv.exists():
             return Befund(
@@ -240,9 +401,12 @@ def venv_sicherstellen(ordner: Path) -> Befund:
         haupt = hauptrepo(ordner)
         quelle = haupt / ".venv" if haupt else None
         if quelle is not None and _laeuft(_venv_python(quelle)):
+            vorher_ignoriert = _ist_ignoriert(ordner, ".venv")
             try:
                 os.symlink(quelle, venv, target_is_directory=True)
                 aktion = f"Symlink → {quelle} angelegt"
+                if vorher_ignoriert is not True:
+                    zusatz = _venv_ausschliessen(ordner)
             except OSError as fehler:
                 log.warning(
                     "Symlink %s → %s scheitert (%s), lege neue venv an.",
@@ -251,18 +415,50 @@ def venv_sicherstellen(ordner: Path) -> Befund:
                     fehler,
                 )
         if not venv.exists():
-            grund = _neue_venv(venv)
+            grund = _neue_venv(venv, mit_pip=anforderungen.is_file())
             if grund:
                 return Befund(
                     "venv", False, f".venv anlegen scheitert: {grund}", behebung
                 )
             aktion = "neu angelegt"
+            if anforderungen.is_file():
+                grund = _ausfuehren(
+                    [
+                        str(_venv_python(venv)),
+                        "-m",
+                        "pip",
+                        "install",
+                        "-q",
+                        "-r",
+                        str(anforderungen),
+                    ],
+                    PIP_TIMEOUT_S,
+                )
+                if grund:
+                    return Befund(
+                        "venv",
+                        False,
+                        f".venv neu angelegt, Pakete fehlen: pip install -r requirements.txt scheitert: {grund}",
+                        f"im Ordner {ordner}: {pip_befehl}",
+                    )
+                aktion += " + requirements.txt installiert"
         if not _laeuft(_venv_python(venv)):
             return Befund(
                 "venv", False, f".venv {aktion}, Interpreter läuft aber nicht", behebung
             )
-    text = f".venv {aktion}, Interpreter läuft"
-    if _ist_ignoriert(ordner, ".venv") is False:
+    if not venv.is_symlink() and anforderungen.is_file():
+        # Symlink aufs Hauptrepo = dessen Pakete; eine echte venv muss sie selbst haben.
+        fehlend = _fehlende_pakete(_venv_python(venv), _anforderungen(anforderungen))
+        if isinstance(fehlend, str) or fehlend:
+            was = fehlend if isinstance(fehlend, str) else ", ".join(fehlend)
+            return Befund(
+                "venv",
+                False,
+                f".venv {aktion}, Pakete aus requirements.txt fehlen: {was}",
+                f"im Ordner {ordner}: {pip_befehl}",
+            )
+    text = f".venv {aktion}, Interpreter läuft{zusatz}"
+    if not zusatz and _ist_ignoriert(ordner, ".venv") is False:
         text += " — Warnung: .venv steht nicht in .gitignore (nicht committen!)"
     return Befund("venv", True, text)
 
@@ -272,12 +468,19 @@ def venv_sicherstellen(ordner: Path) -> Befund:
 _ZEILE = re.compile(r"^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$")
 
 
+class ManifestKaputt(Exception):
+    """Manifest vorhanden, aber unlesbar oder in falscher Form."""
+
+
 def _env_datei(pfad: Path) -> dict[str, str]:
     """Einfacher KEY=VALUE-Parser (Kommentare, ``export``, Anführungszeichen)."""
     werte: dict[str, str] = {}
+    if not pfad.is_file():
+        return werte
     try:
         zeilen = pfad.read_text(encoding="utf-8").splitlines()
-    except (OSError, UnicodeDecodeError):
+    except (OSError, UnicodeDecodeError) as fehler:
+        log.warning("%s unlesbar: %s", pfad, fehler)
         return werte
     for zeile in zeilen:
         if zeile.lstrip().startswith("#"):
@@ -294,77 +497,170 @@ def _env_datei(pfad: Path) -> dict[str, str]:
     return werte
 
 
+def _env_quellen(ordner: Path) -> list[dict[str, str]]:
+    """Die ``.env``-Dateien, die ``bau`` lädt: Ordner und (bei Worktree) Hauptrepo."""
+    quellen = [_env_datei(ordner / ".env")]
+    haupt = hauptrepo(ordner)
+    if haupt is not None:
+        quellen.append(_env_datei(haupt / ".env"))
+    return quellen
+
+
+def _geheime_werte(ordner: Path) -> list[str]:
+    return [w for q in _env_quellen(ordner) for w in q.values() if w]
+
+
+def _manifest_pfad(ordner: Path, spec: int) -> Path:
+    return ordner / "docs" / "agents" / "manifests" / f"spec-{spec}.json"
+
+
 def _manifest_tickets(ordner: Path, spec: int) -> dict[str, dict[str, Any]] | None:
-    pfad = ordner / "docs" / "agents" / "manifests" / f"spec-{spec}.json"
+    """Tickets aus dem Manifest; ``None`` ohne Manifest, ``ManifestKaputt`` bei Fehler."""
+    pfad = _manifest_pfad(ordner, spec)
     if not pfad.is_file():
         return None
     try:
         daten = json.loads(pfad.read_text(encoding="utf-8"))
     except (OSError, ValueError) as fehler:
-        log.warning("Manifest %s unlesbar: %s", pfad, fehler)
-        return None
+        raise ManifestKaputt(f"Manifest {pfad} unlesbar: {fehler}") from fehler
     tickets = daten.get("tickets") if isinstance(daten, dict) else None
-    return (
-        {str(k): v for k, v in tickets.items() if isinstance(v, dict)}
-        if isinstance(tickets, dict)
-        else {}
+    if not isinstance(tickets, dict) or not all(
+        isinstance(v, dict) for v in tickets.values()
+    ):
+        raise ManifestKaputt(
+            f"Manifest {pfad}: Feld tickets ist kein Objekt {{Nummer: {{…}}}}"
+        )
+    return {str(k): v for k, v in tickets.items()}
+
+
+def _beispiel_ticket(ordner: Path, spec: int) -> str:
+    """Erstes Ticket aus dem Manifest für ``<N>`` in Befehlen, sonst ``0``."""
+    try:
+        tickets = _manifest_tickets(ordner, spec)
+    except ManifestKaputt as fehler:
+        log.warning("%s", fehler)
+        return "0"
+    return next(iter(tickets), "0") if tickets else "0"
+
+
+def _gh_issue_text(ordner: Path, nummer: str) -> str:
+    """Issue-Text per ``gh`` (Naht für Tests: ``issue_leser``)."""
+    ergebnis = subprocess.run(
+        [
+            "gh",
+            "issue",
+            "view",
+            nummer,
+            "--json",
+            "title,body",
+            "-q",
+            '.title + "\\n" + .body',
+        ],
+        cwd=str(ordner),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=GH_TIMEOUT_S,
+        check=False,
     )
+    if ergebnis.returncode != 0:
+        raise RuntimeError(_kurz(ergebnis.stderr or f"Exit {ergebnis.returncode}", 120))
+    return ergebnis.stdout
 
 
 def _benoetigt(
-    ordner: Path, spec: int, tickets: dict[str, dict[str, Any]] | None
-) -> list[str]:
+    ordner: Path,
+    tickets: dict[str, dict[str, Any]] | None,
+    issue_leser: IssueLeser,
+) -> tuple[list[str], list[str]]:
+    """(benötigte Schlüssel-Namen, Warnungen)."""
     namen: set[str] = set()
+    warnungen: list[str] = []
     konfig = config.lade(ordner)
     namen.update(
         str(n) for n in (konfig.get("startklar", {}) or {}).get("schluessel", []) or []
     )
     if not tickets:
-        return sorted(namen)
+        return sorted(namen), warnungen
     bekannt = list(_env_datei(ordner / ".env.example"))
-    for ticket in tickets.values():
+    for nummer, ticket in tickets.items():
         namen.update(str(n) for n in ticket.get("schluessel", []) or [])
+        if not bekannt:
+            continue
         text = " ".join(
-            str(ticket.get(feld, "")) for feld in ("title", "umfang", "files")
+            str(ticket.get(feld, "")) for feld in ("title", "umfang", "files", "body")
         )
+        try:
+            text += " " + issue_leser(ordner, nummer)
+        except (OSError, subprocess.TimeoutExpired, RuntimeError) as fehler:
+            warnungen.append(f"Issue #{nummer} nicht lesbar ({fehler})")
         for name in bekannt:
             if re.search(rf"(?<![A-Za-z0-9_]){re.escape(name)}(?![A-Za-z0-9_])", text):
                 namen.add(name)
-    return sorted(namen)
+    return sorted(namen), warnungen
+
+
+def schluessel_behebung_befehl(ordner: Path) -> str:
+    """Befehl, der die Schlüssel aus Bitwarden in ``<ordner>/.env`` schreibt."""
+    return f"{_py_name()} {skill_pfad()}/to_spawn.py nest secrets --ziel {shlex.quote((Path(ordner) / '.env').as_posix())}"
 
 
 def schluessel_pruefen(
-    ordner: Path, spec: int, environ: Mapping[str, str] | None = None
+    ordner: Path,
+    spec: int,
+    environ: Mapping[str, str] | None = None,
+    issue_leser: IssueLeser = _gh_issue_text,
 ) -> list[Befund]:
-    """Prüft, ob alle benötigten Schlüssel einen Wert haben — nennt nur NAMEN."""
+    """Prüft, ob alle benötigten Schlüssel einen Wert haben — nennt nur NAMEN.
+
+    Zählen nur die ``.env``-Quellen, die ``bau`` lädt; steht ein Schlüssel nur in
+    ``environ`` (Umgebung des prüfenden Prozesses), ist das ok mit Warnung.
+    """
     ordner = Path(ordner)
     umgebung = os.environ if environ is None else environ
-    tickets = _manifest_tickets(ordner, spec)
-    benoetigt = _benoetigt(ordner, spec, tickets)
-    quellen = [_env_datei(ordner / ".env")]
-    haupt = hauptrepo(ordner)
-    if haupt is not None:
-        quellen.append(_env_datei(haupt / ".env"))
-    fehlend = [
-        name
-        for name in benoetigt
-        if not (
-            umgebung.get(name, "").strip()
-            or any(q.get(name, "").strip() for q in quellen)
+    try:
+        tickets = _manifest_tickets(ordner, spec)
+    except ManifestKaputt as fehler:
+        return [
+            Befund(
+                "schlüssel",
+                False,
+                str(fehler),
+                "Manifest reparieren (neu erzeugen mit /to-tickets), dann erneut prüfen",
+            )
+        ]
+    benoetigt, warnungen = _benoetigt(ordner, tickets, issue_leser)
+    quellen = _env_quellen(ordner)
+    nur_umgebung = []
+    fehlend = []
+    for name in benoetigt:
+        if any(q.get(name, "").strip() for q in quellen):
+            continue
+        if umgebung.get(name, "").strip():
+            nur_umgebung.append(name)
+        else:
+            fehlend.append(name)
+    if nur_umgebung:
+        warnungen.append(
+            "nur in der Umgebung dieses Prozesses, nicht in .env (bau lädt sie evtl. nicht): "
+            + ", ".join(nur_umgebung)
         )
-    ]
     hinweis = (
         "" if tickets is not None else " (kein Manifest, nur Konfig-Schlüssel geprüft)"
     )
+    warnung = (" — Warnung: " + "; ".join(warnungen)) if warnungen else ""
     if not fehlend:
         liste = ", ".join(benoetigt) if benoetigt else "keine nötig"
-        return [Befund("schlüssel", True, f"Schlüssel vorhanden: {liste}{hinweis}")]
-    befehl = f"python3 {SKILL.as_posix()}/to_spawn.py nest secrets --ziel {(ordner / '.env').as_posix()}"
+        return [
+            Befund("schlüssel", True, f"Schlüssel vorhanden: {liste}{hinweis}{warnung}")
+        ]
+    befehl = schluessel_behebung_befehl(ordner)
     return [
         Befund(
             "schlüssel",
             False,
-            f"Schlüssel fehlt: {name}{hinweis}",
+            f"Schlüssel fehlt: {name}{hinweis}{warnung}",
             f"Bitwarden-Eintrag {name} anlegen/prüfen, dann `{befehl}`",
         )
         for name in fehlend
@@ -401,16 +697,42 @@ def _passt(matcher: str, werkzeug: str = "Bash") -> bool:
         return matcher == werkzeug
 
 
-def _bash_hooks(settings_dateien: Iterable[Path]) -> list[tuple[str, float]]:
+def _timeout(wert: object) -> float:
+    try:
+        zahl = float(wert) if wert not in (None, "") else HOOK_TIMEOUT_S  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        log.warning("Hook-timeout %r keine Zahl — nehme %s s.", wert, HOOK_TIMEOUT_S)
+        return float(HOOK_TIMEOUT_S)
+    return zahl if zahl > 0 else float(HOOK_TIMEOUT_S)
+
+
+@dataclass(frozen=True)
+class _Regeln:
+    """Was eine Bash-Session aus den Settings bekommt."""
+
+    hooks: list[tuple[str, float]]
+    deny: list[str]
+    fehler: list[str]
+
+
+def _regeln(settings_dateien: Iterable[Path]) -> _Regeln:
     hooks: list[tuple[str, float]] = []
+    deny: list[str] = []
+    fehler: list[str] = []
     for datei in settings_dateien:
-        if not Path(datei).is_file():
+        datei = Path(datei)
+        if not datei.is_file():
             continue
         try:
-            daten = json.loads(Path(datei).read_text(encoding="utf-8"))
-        except (OSError, ValueError) as fehler:
-            log.warning("Settings %s unlesbar: %s", datei, fehler)
+            daten = json.loads(datei.read_text(encoding="utf-8"))
+            if not isinstance(daten, dict):
+                raise ValueError("kein JSON-Objekt")
+        except (OSError, ValueError) as grund:
+            log.warning("Settings %s unlesbar: %s", datei, grund)
+            fehler.append(f"Settings {datei} unlesbar: {_kurz(str(grund), 120)}")
             continue
+        regeln = (daten.get("permissions", {}) or {}).get("deny", []) or []
+        deny.extend(str(r) for r in regeln if isinstance(r, str))
         for eintrag in (daten.get("hooks", {}) or {}).get("PreToolUse", []) or []:
             if not isinstance(eintrag, dict) or not _passt(
                 str(eintrag.get("matcher", "") or "")
@@ -422,17 +744,36 @@ def _bash_hooks(settings_dateien: Iterable[Path]) -> list[tuple[str, float]]:
                     and hook.get("type", "command") == "command"
                     and hook.get("command")
                 ):
-                    hooks.append(
-                        (
-                            str(hook["command"]),
-                            float(hook.get("timeout") or HOOK_TIMEOUT_S),
-                        )
-                    )
-    return hooks
+                    hooks.append((str(hook["command"]), _timeout(hook.get("timeout"))))
+    return _Regeln(hooks, deny, fehler)
+
+
+def _deny_trifft(regel: str, befehl: str) -> bool:
+    """``permissions.deny``-Regel gegen einen Bash-Befehl (vereinfacht wie Claude Code).
+
+    ``Bash`` = alles · ``Bash(präfix:*)`` = Präfix · ``Bash(mit*stern)`` = Muster ·
+    ``Bash(text)`` = genau dieser Befehl.
+    """
+    regel = regel.strip()
+    if regel == "Bash":
+        return True
+    treffer = re.fullmatch(r"Bash\((.*)\)", regel, re.DOTALL)
+    if not treffer:
+        return False
+    muster = treffer.group(1).strip()
+    if muster.endswith(":*"):
+        return befehl.startswith(muster[:-2])
+    if "*" in muster:
+        return fnmatch.fnmatchcase(befehl, muster)
+    return befehl == muster
 
 
 def _block_grund(ergebnis: subprocess.CompletedProcess[str]) -> str | None:
-    """Grund, wenn der Hook blockt (Exit 2 oder deny/block per JSON), sonst ``None``."""
+    """Grund, wenn der Hook blockt, sonst ``None``.
+
+    Block = Exit 2, ``permissionDecision`` deny/ask (ask wartet unbeaufsichtigt
+    ewig), ``decision: block`` oder ``continue: false``.
+    """
     if ergebnis.returncode == 2:
         return _kurz(ergebnis.stderr or ergebnis.stdout or "Exit 2")
     if ergebnis.returncode != 0:
@@ -444,39 +785,56 @@ def _block_grund(ergebnis: subprocess.CompletedProcess[str]) -> str | None:
     if not isinstance(daten, dict):
         return None
     spezifisch = daten.get("hookSpecificOutput") or {}
-    if isinstance(spezifisch, dict) and spezifisch.get("permissionDecision") == "deny":
-        return _kurz(str(spezifisch.get("permissionDecisionReason") or "deny"))
+    if isinstance(spezifisch, dict):
+        entscheidung = spezifisch.get("permissionDecision")
+        if entscheidung in ("deny", "ask"):
+            return _kurz(
+                f"{entscheidung}: {spezifisch.get('permissionDecisionReason') or ''}"
+            )
     if daten.get("decision") == "block":
         return _kurz(str(daten.get("reason") or "block"))
+    if daten.get("continue") is False:
+        return _kurz(f"continue: false {daten.get('stopReason') or ''}")
     return None
 
 
-def _platzhalter(text: str, spec: int) -> str:
-    return text.format(
-        spec=spec, skill=SKILL.as_posix(), home=Path.home().as_posix(), py=_py_name()
-    )
-
-
-def _argv(befehl: str) -> Sequence[str] | str:
-    return befehl if os.name == "nt" else shlex.split(befehl)
+def _rot(werkzeug: Werkzeug, text: str, behebung: str) -> Befund:
+    return Befund("werkzeug", False, f"{werkzeug.name}: {text}", behebung)
 
 
 def _probe_eines(
     werkzeug: Werkzeug,
     ordner: Path,
     spec: int,
-    hooks: list[tuple[str, float]],
+    ticket: str,
+    regeln: _Regeln,
     laeufer: Laeufer,
+    geheim: Sequence[str],
 ) -> Befund:
-    befehl = _platzhalter(werkzeug.befehl, spec)
-    datei = Path(_platzhalter(werkzeug.datei, spec))
+    befehl = befehl_text(werkzeug, spec, ticket)
+    datei = Path(
+        werkzeug.datei.format(
+            S=spec,
+            spec=spec,
+            SKILL=SKILL.as_posix(),
+            skill=SKILL.as_posix(),
+            home=Path.home().as_posix(),
+            py=_py_name(),
+        )
+    )
     if not datei.is_file():
-        return Befund(
-            "werkzeug",
-            False,
-            f"{werkzeug.name}: Werkzeug fehlt ({datei})",
+        return _rot(
+            werkzeug,
+            f"Werkzeug fehlt ({datei})",
             "Skill/Hooks neu ausrollen (install.sh)",
         )
+    for regel in regeln.deny:
+        if _deny_trifft(regel, befehl):
+            return _rot(
+                werkzeug,
+                f"permissions.deny `{regel}` verbietet `{befehl}`",
+                "deny-Regel in den Settings lockern, dann erneut prüfen",
+            )
     eingabe = json.dumps(
         {
             "hook_event_name": "PreToolUse",
@@ -487,53 +845,59 @@ def _probe_eines(
         }
     )
     warnungen: list[str] = []
-    for hook, timeout in hooks:
+    for hook, timeout in regeln.hooks:
+        name = f"Hook `{_kurz(hook, 120)}`"
         try:
             ergebnis = laeufer(
                 hook, ordner, eingabe, timeout, {"CLAUDE_PROJECT_DIR": str(ordner)}
             )
         except subprocess.TimeoutExpired:
-            warnungen.append(f"Hook `{_kurz(hook, 80)}` Timeout nach {timeout:.0f} s")
-            continue
+            return _rot(
+                werkzeug,
+                f"{name} Timeout nach {timeout:.0f} s — Ergebnis unbekannt",
+                "Hook von Hand mit dem Befehl prüfen (hängt er?), dann erneut prüfen",
+            )
         except OSError as fehler:
-            warnungen.append(f"Hook `{_kurz(hook, 80)}` startet nicht: {fehler}")
-            continue
+            return _rot(
+                werkzeug,
+                f"{name} startet nicht: {fehler}",
+                "bash/Hook-Programm installieren (Windows: Git-Bash), dann erneut prüfen",
+            )
         grund = _block_grund(ergebnis)
         if grund is not None:
-            return Befund(
-                "werkzeug",
-                False,
-                f"{werkzeug.name}: Hook `{_kurz(hook, 120)}` blockt den Befehl: {grund}",
+            return _rot(
+                werkzeug,
+                f"{name} blockt den Befehl: {_schwaerzen(grund, geheim)}",
                 "Hook-Regel für dieses Werkzeug freigeben (Hook-Datei/Settings anpassen), dann erneut prüfen",
             )
         if ergebnis.returncode != 0:
+            fehlertext = _schwaerzen(_kurz(ergebnis.stderr, 120), geheim)
             warnungen.append(
-                f"Hook `{_kurz(hook, 80)}` Exit {ergebnis.returncode} (kein Block): {_kurz(ergebnis.stderr, 120)}"
+                f"Hook `{_kurz(hook, 80)}` Exit {ergebnis.returncode} (kein Block): {fehlertext}"
             )
     for warnung in warnungen:
         log.warning("%s: %s", werkzeug.name, warnung)
+    trocken = befehl + werkzeug.trocken
     try:
-        lauf = laeufer(_argv(befehl), ordner, None, WERKZEUG_TIMEOUT_S, {})
+        lauf = laeufer(trocken, ordner, None, WERKZEUG_TIMEOUT_S, {})
     except subprocess.TimeoutExpired:
-        return Befund(
-            "werkzeug",
-            False,
-            f"{werkzeug.name}: Trockenlauf Timeout ({WERKZEUG_TIMEOUT_S} s)",
-            f"`{befehl}` von Hand prüfen",
+        return _rot(
+            werkzeug,
+            f"Trockenlauf Timeout ({WERKZEUG_TIMEOUT_S} s)",
+            f"`{trocken}` von Hand prüfen",
         )
     except OSError as fehler:
-        return Befund(
-            "werkzeug",
-            False,
-            f"{werkzeug.name}: Werkzeug fehlt ({fehler})",
-            "Programm installieren (node/python im PATH?)",
+        return _rot(
+            werkzeug,
+            f"Trockenlauf startet nicht ({fehler})",
+            "bash/node/python installieren (Windows: Git-Bash), dann erneut prüfen",
         )
     if lauf.returncode != 0:
-        return Befund(
-            "werkzeug",
-            False,
-            f"{werkzeug.name}: Trockenlauf Exit {lauf.returncode}: {_kurz(lauf.stderr or lauf.stdout, 160)}",
-            f"`{befehl}` von Hand prüfen",
+        fehlertext = _schwaerzen(_kurz(lauf.stderr or lauf.stdout, 160), geheim)
+        return _rot(
+            werkzeug,
+            f"Trockenlauf Exit {lauf.returncode}: {fehlertext}",
+            f"`{trocken}` von Hand prüfen",
         )
     text = f"{werkzeug.name}: Hooks lassen durch, Trockenlauf ok"
     if warnungen:
@@ -548,15 +912,24 @@ def werkzeug_probe(
     laeufer: Laeufer = _standard_laeufer,
     werkzeuge: Sequence[Werkzeug] = WERKZEUGE,
 ) -> list[Befund]:
-    """Spielt jedes Aufseher-Werkzeug durch die PreToolUse-Hooks und trocken durch."""
+    """Spielt jedes Aufseher-Werkzeug durch deny-Regeln, PreToolUse-Hooks und trocken."""
     ordner = Path(ordner)
     dateien = (
         standard_settings_dateien(ordner)
         if settings_dateien is None
         else list(settings_dateien)
     )
-    hooks = _bash_hooks(dateien)
-    return [_probe_eines(w, ordner, spec, hooks, laeufer) for w in werkzeuge]
+    regeln = _regeln(dateien)
+    befunde = [
+        Befund("werkzeug", False, text, "Settings-Datei reparieren (gültiges JSON)")
+        for text in regeln.fehler
+    ]
+    ticket = _beispiel_ticket(ordner, spec)
+    geheim = _geheime_werte(ordner)
+    return befunde + [
+        _probe_eines(w, ordner, spec, ticket, regeln, laeufer, geheim)
+        for w in werkzeuge
+    ]
 
 
 # --- Gesamt --------------------------------------------------------------------
@@ -570,12 +943,13 @@ def pruefe(
     environ: Mapping[str, str] | None = None,
     laeufer: Laeufer = _standard_laeufer,
     werkzeuge: Sequence[Werkzeug] = WERKZEUGE,
+    issue_leser: IssueLeser = _gh_issue_text,
 ) -> list[Befund]:
     """Alle drei Teile: venv, Schlüssel, Werkzeuge."""
     ordner = Path(ordner)
     return [
         venv_sicherstellen(ordner),
-        *schluessel_pruefen(ordner, spec, environ),
+        *schluessel_pruefen(ordner, spec, environ, issue_leser),
         *werkzeug_probe(ordner, spec, settings_dateien, laeufer, werkzeuge),
     ]
 
@@ -598,7 +972,10 @@ def gate(
     environ: Mapping[str, str] | None = None,
     pruefer: Callable[[Path, int], Sequence[Befund]] | None = None,
 ) -> int:
-    """Aufseher-Start freigeben (0) oder verweigern (2). ``TO_SPAWN_STARTKLAR=aus`` schaltet ab."""
+    """Aufseher-Start freigeben (0) oder verweigern (2). ``TO_SPAWN_STARTKLAR=aus`` schaltet ab.
+
+    ``ordner`` = der Ordner, in dem der Aufseher läuft (``fahre(cwd=…)``).
+    """
     umgebung = os.environ if environ is None else environ
     if umgebung.get(SCHALTER, "").strip().lower() == "aus":
         log.warning(

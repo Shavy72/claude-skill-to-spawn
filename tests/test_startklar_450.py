@@ -33,9 +33,28 @@ def _git(ordner: Path, *args: str) -> str:
     ).stdout.strip()
 
 
-def _repo_mit_worktree(tmp_path: Path, venv_im_haupt: bool = True) -> tuple[Path, Path]:
-    """Echtes Hauptrepo + Worktree; Hauptrepo-.venv = Symlink auf den Test-Interpreter."""
-    haupt = tmp_path / "haupt"
+_MINI_VENV: list[Path] = []
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _mini_venv(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Echtes Mini-venv (F15): ``sys.prefix`` hat bei System-Python kein ``bin/python``."""
+    ziel = tmp_path_factory.mktemp("mini") / "venv"
+    subprocess.run(
+        [sys.executable, "-m", "venv", "--without-pip", str(ziel)],
+        check=True,
+        capture_output=True,
+        timeout=300,
+    )
+    _MINI_VENV.append(ziel)
+    return ziel
+
+
+def _repo_mit_worktree(
+    tmp_path: Path, venv_im_haupt: bool = True, name: str = "haupt"
+) -> tuple[Path, Path]:
+    """Echtes Hauptrepo + Worktree; Hauptrepo-.venv = Symlink auf ein echtes Mini-venv."""
+    haupt = tmp_path / name
     haupt.mkdir()
     _git(haupt, "init", "-q", "-b", "master")
     _git(haupt, "config", "user.email", "t@t")
@@ -46,7 +65,7 @@ def _repo_mit_worktree(tmp_path: Path, venv_im_haupt: bool = True) -> tuple[Path
     _git(haupt, "add", ".")
     _git(haupt, "commit", "-q", "-m", "start")
     if venv_im_haupt:
-        os.symlink(sys.prefix, haupt / ".venv", target_is_directory=True)
+        os.symlink(_MINI_VENV[0], haupt / ".venv", target_is_directory=True)
     wt = tmp_path / "wt-1"
     _git(haupt, "worktree", "add", "-q", str(wt), "-b", "ticket/1")
     return haupt, wt
@@ -84,7 +103,7 @@ def test_venv_vorhanden_bleibt_unberuehrt(tmp_path: Path) -> None:
     haupt, _wt = _repo_mit_worktree(tmp_path)
     befund = startklar.venv_sicherstellen(haupt)
     assert befund.ok, befund
-    assert (haupt / ".venv").resolve() == Path(sys.prefix).resolve()
+    assert (haupt / ".venv").resolve() == _MINI_VENV[0].resolve()
 
 
 def test_venv_ohne_hauptrepo_venv_wird_neu_angelegt(tmp_path: Path) -> None:
@@ -344,6 +363,8 @@ def test_echte_werkzeuge_mit_echten_hooks(tmp_path: Path) -> None:
     befunde = startklar.werkzeug_probe(wt, 999999)
     namen = " ".join(b.text for b in befunde)
     assert "aufraeumen" in namen and "neustart" in namen, befunde
+    # F14: nicht nur Namen — die echten Werkzeuge müssen durch die echten Hooks.
+    assert all(b.ok for b in befunde), befunde
 
 
 # --- Ausgabe, Gate, CLI ----------------------------------------------------------
@@ -455,3 +476,333 @@ def test_weg_wache_verweigert_start_bei_rotem_befund(tmp_path: Path) -> None:
     ausgabe = ergebnis.stdout + ergebnis.stderr
     assert ergebnis.returncode == 2, ausgabe
     assert "Start verweigert" in ausgabe and "GIBTS_NICHT_450" in ausgabe
+
+
+# --- Fixrunde 1 (Prüfpanel Runde 1, docs/verify-hard/450/panel_runde1.md) --------
+
+
+def _wache(
+    cwd: Path, repo: Path, heim: Path, *args: str
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, str(SKILL / "skripte" / "wache.py"), str(SPEC), *args],
+        cwd=str(cwd),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        env={**os.environ, "TO_SPAWN_REPO": str(repo), "HOME": str(heim)},
+        timeout=180,
+        check=False,
+    )
+
+
+def _konfig_schluessel(ordner: Path, name: str) -> None:
+    (ordner / ".to-spawn").mkdir(exist_ok=True)
+    (ordner / ".to-spawn" / "config.json").write_text(
+        json.dumps({"startklar": {"schluessel": [name]}}), encoding="utf-8"
+    )
+
+
+def test_f1_wache_prueft_den_ordner_des_aufsehers(tmp_path: Path) -> None:
+    """Gate prüft ``Path.cwd()`` (dort läuft der Aufseher), nicht ``TO_SPAWN_REPO``."""
+    haupt, wt = _repo_mit_worktree(tmp_path)
+    _git(haupt, "remote", "add", "origin", "https://github.com/t/s.git")
+    _konfig_schluessel(haupt, "GIBTS_NICHT_HAUPT")
+    _konfig_schluessel(wt, "GIBTS_NICHT_CWD")
+    ergebnis = _wache(wt, haupt, _heim_mit_werkzeugen(tmp_path))
+    ausgabe = ergebnis.stdout + ergebnis.stderr
+    assert ergebnis.returncode == 2, ausgabe
+    assert "GIBTS_NICHT_CWD" in ausgabe and "GIBTS_NICHT_HAUPT" not in ausgabe
+
+
+def _leere_venv(ordner: Path) -> None:
+    subprocess.run(
+        [sys.executable, "-m", "venv", "--without-pip", str(ordner / ".venv")],
+        check=True,
+        timeout=300,
+    )
+
+
+def test_f2_venv_ohne_pakete_aus_requirements_ist_rot(tmp_path: Path) -> None:
+    ordner = tmp_path / "o"
+    ordner.mkdir()
+    _leere_venv(ordner)
+    (ordner / "requirements.txt").write_text(
+        "# x\ngibts-nicht-450==1.0\n", encoding="utf-8"
+    )
+    befund = startklar.venv_sicherstellen(ordner)
+    assert not befund.ok, befund
+    assert "gibts-nicht-450" in befund.text
+    assert "requirements.txt" in befund.behebung
+
+
+def test_f2_frische_venv_installiert_requirements_scheitern_rot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Rückfall ``-m venv`` + requirements.txt → ``pip install -r``; scheitert es → rot."""
+    _haupt, wt = _repo_mit_worktree(tmp_path, venv_im_haupt=False)
+    (wt / "requirements.txt").write_text("gibts-nicht-450==1.0\n", encoding="utf-8")
+    monkeypatch.setenv("PIP_NO_INDEX", "1")
+    befund = startklar.venv_sicherstellen(wt)
+    assert not befund.ok, befund
+    assert "requirements.txt" in befund.text + befund.behebung
+
+
+def test_f2_venv_mit_allen_paketen_gruen(tmp_path: Path) -> None:
+    ordner = tmp_path / "o"
+    ordner.mkdir()
+    _leere_venv(ordner)
+    (ordner / "requirements.txt").write_text(
+        "# nur Kommentar\n-r andere.txt\nwinpaket; sys_platform == 'win32'\n",
+        encoding="utf-8",
+    )
+    assert startklar.venv_sicherstellen(ordner).ok
+
+
+@pytest.mark.parametrize(
+    "inhalt", ["{kaputt", json.dumps({"tickets": [1, 2]}), json.dumps([1])]
+)
+def test_f3_kaputtes_manifest_ist_rot(tmp_path: Path, inhalt: str) -> None:
+    _haupt, wt = _repo_mit_worktree(tmp_path)
+    pfad = wt / "docs" / "agents" / "manifests" / f"spec-{SPEC}.json"
+    pfad.parent.mkdir(parents=True)
+    pfad.write_text(inhalt, encoding="utf-8")
+    befunde = startklar.schluessel_pruefen(wt, SPEC, environ={})
+    rot = [b for b in befunde if not b.ok]
+    assert rot and "Manifest" in rot[0].text, befunde
+
+
+def test_f4_ohne_bash_ist_probe_rot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(startklar, "_bash_pfad", lambda: None, raising=False)
+    befunde = _probe(tmp_path, [_settings(tmp_path, _HOOK_HARMLOS)])
+    assert befunde and not any(b.ok for b in befunde), befunde
+    assert all("bash" in b.text + b.behebung for b in befunde), befunde
+
+
+# Muster aus dem Git-Sperre-Hook (Vorfall V7): Skript-Sprache (node/python…) +
+# geschützter Pfad ``~/.claude/`` im Rohtext → Exit 2.
+_HOOK_V7 = """import json, re, sys
+d = json.load(sys.stdin)
+cmd = d["tool_input"]["command"]
+if cmd.split()[0].startswith(("python", "perl", "node", "ruby")) and re.search(r"(^|\\s)~/\\.claude/", cmd):
+    print("Git-Sperre (#345): node-Skript schreibt auf geschützte Datei", file=sys.stderr)
+    sys.exit(2)
+"""
+
+_HOOK_MITSCHNITT = """import json, sys
+d = json.load(sys.stdin)
+with open(sys.argv[1], "a", encoding="utf-8") as f:
+    f.write(d["tool_input"]["command"] + "\\n")
+"""
+
+
+def _settings_mit_argument(tmp_path: Path, hook_code: str, argument: str) -> Path:
+    hook = tmp_path / "hook_mitschnitt.py"
+    hook.write_text(hook_code, encoding="utf-8")
+    datei = tmp_path / "settings_mitschnitt.json"
+    befehl = f"{Path(sys.executable).as_posix()} {hook.as_posix()} {argument}"
+    datei.write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "PreToolUse": [{"matcher": "Bash", "hooks": [{"command": befehl}]}]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    return datei
+
+
+@pytest.mark.skipif(not shutil.which("node"), reason="node fehlt")
+def test_f5_v7_hook_sieht_tilde_wie_im_prompt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Vorfall V7 nachgestellt: Hook blockt ``node ~/.claude/…`` — Probe muss das sehen."""
+    heim = _heim_mit_werkzeugen(tmp_path)
+    monkeypatch.setenv("HOME", str(heim))
+    befunde = startklar.werkzeug_probe(
+        tmp_path, SPEC, settings_dateien=[_settings(tmp_path, _HOOK_V7)]
+    )
+    rot = {b.text.split(":")[0] for b in befunde if not b.ok}
+    assert rot == {"aufraeumen"}, befunde
+    assert "Git-Sperre" in " ".join(b.text for b in befunde)
+
+
+@pytest.mark.skipif(not shutil.which("node"), reason="node fehlt")
+def test_f5_hooks_bekommen_prompt_text_woertlich(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    heim = _heim_mit_werkzeugen(tmp_path)
+    monkeypatch.setenv("HOME", str(heim))
+    _manifest(tmp_path, {"451": {"title": "a"}, "452": {"title": "b"}})
+    mitschnitt = tmp_path / "mitschnitt.txt"
+    befunde = startklar.werkzeug_probe(
+        tmp_path,
+        SPEC,
+        settings_dateien=[
+            _settings_mit_argument(tmp_path, _HOOK_MITSCHNITT, mitschnitt.as_posix())
+        ],
+    )
+    assert all(b.ok for b in befunde), befunde
+    py = "python" if os.name == "nt" else "python3"
+    assert mitschnitt.read_text(encoding="utf-8").splitlines() == [
+        f"node ~/.claude/hooks/smart-zone/staffel/aufraeumen.mjs --spec {SPEC}",
+        f"{py} {SKILL.as_posix()}/to_spawn.py neustart {SPEC} 451",
+    ]
+
+
+def test_f5_prompt_und_probe_aus_einer_quelle(tmp_path: Path) -> None:
+    _haupt, wt = _repo_mit_worktree(tmp_path)
+    _git(wt, "remote", "add", "origin", "https://github.com/t/s.git")
+    ergebnis = _wache(wt, wt, _heim_mit_werkzeugen(tmp_path), "--print-prompt")
+    assert ergebnis.returncode == 0, ergebnis.stderr
+    for werkzeug in startklar.WERKZEUGE:
+        assert startklar.befehl_text(werkzeug, SPEC, "<N>") in ergebnis.stdout, werkzeug
+
+
+def test_f7_schluessel_nur_in_umgebung_ist_warnung(tmp_path: Path) -> None:
+    wt = _schluessel_welt(tmp_path)
+    (wt / ".env").write_text("FAL_KEY=a\n", encoding="utf-8")
+    befunde = startklar.schluessel_pruefen(
+        wt, SPEC, environ={"ELEVENLABS_API_KEY": "geheim456"}
+    )
+    assert all(b.ok for b in befunde), befunde
+    text = " ".join(b.text for b in befunde)
+    assert "Warnung" in text and "ELEVENLABS_API_KEY" in text
+    assert "geheim456" not in text
+
+
+def test_f6_issue_text_wird_gescannt_fehler_ist_warnung(tmp_path: Path) -> None:
+    wt = _schluessel_welt(tmp_path)
+    (wt / ".env").write_text("FAL_KEY=a\nELEVENLABS_API_KEY=b\n", encoding="utf-8")
+
+    def leser(_ordner: Path, nummer: str) -> str:
+        if nummer == "453":
+            raise RuntimeError("gh: nicht angemeldet")
+        return "braucht OPENAI_KEY" if nummer == "451" else ""
+
+    befunde = startklar.schluessel_pruefen(wt, SPEC, environ={}, issue_leser=leser)
+    rot = [b for b in befunde if not b.ok]
+    assert rot and "OPENAI_KEY" in rot[0].text, befunde
+    assert "453" in " ".join(b.text for b in befunde)
+
+
+@pytest.mark.parametrize(
+    "antwort",
+    [
+        {"hookSpecificOutput": {"permissionDecision": "ask"}},
+        {"continue": False, "stopReason": "halt"},
+    ],
+)
+def test_f8_ask_und_continue_false_blocken(
+    tmp_path: Path, antwort: dict[str, object]
+) -> None:
+    code = (
+        "import json, sys\nd = json.load(sys.stdin)\n"
+        f"if 'aufraeumen' in d['tool_input']['command']: print(json.dumps({antwort!r}))\n"
+    )
+    rot = [b for b in _probe(tmp_path, [_settings(tmp_path, code)]) if not b.ok]
+    assert len(rot) == 1 and "aufraeumen" in rot[0].text, rot
+
+
+def test_f9_unlesbare_settings_sind_rot(tmp_path: Path) -> None:
+    kaputt = tmp_path / "settings_kaputt.json"
+    kaputt.write_text("{nicht json", encoding="utf-8")
+    befunde = _probe(tmp_path, [kaputt])
+    assert any(not b.ok and "settings_kaputt" in b.text for b in befunde), befunde
+
+
+def test_f9_permissions_deny_bash_regel_blockt(tmp_path: Path) -> None:
+    datei = tmp_path / "settings_deny.json"
+    neustart = _werkzeuge(tmp_path)[1]
+    praefix = startklar.befehl_text(neustart, SPEC, 0).rsplit(" pass", 1)[0]
+    datei.write_text(
+        json.dumps({"permissions": {"deny": [f"Bash({praefix}:*)", "Read(./x)"]}}),
+        encoding="utf-8",
+    )
+    rot = [b for b in _probe(tmp_path, [datei]) if not b.ok]
+    assert len(rot) == 1 and "neustart" in rot[0].text and "deny" in rot[0].text, rot
+
+
+def test_f10_hook_timeout_ist_rot(tmp_path: Path) -> None:
+    datei = _settings(tmp_path, "import time; time.sleep(5)\n")
+    daten = json.loads(datei.read_text(encoding="utf-8"))
+    daten["hooks"]["PreToolUse"][0]["hooks"][0]["timeout"] = 1
+    datei.write_text(json.dumps(daten), encoding="utf-8")
+    befunde = _probe(tmp_path, [datei])
+    assert befunde and not any(b.ok for b in befunde), befunde
+    assert "Timeout" in befunde[0].text
+
+
+def test_n4_hook_timeout_kein_zahlwert(tmp_path: Path) -> None:
+    datei = _settings(tmp_path, _HOOK_HARMLOS)
+    daten = json.loads(datei.read_text(encoding="utf-8"))
+    daten["hooks"]["PreToolUse"][0]["hooks"][0]["timeout"] = "viel"
+    datei.write_text(json.dumps(daten), encoding="utf-8")
+    assert all(b.ok for b in _probe(tmp_path, [datei]))
+
+
+def test_f11_unlink_scheitert_gibt_roten_befund(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _haupt, wt = _repo_mit_worktree(tmp_path)
+    os.symlink(tmp_path / "gibts_nicht", wt / ".venv", target_is_directory=True)
+
+    def nein(self: Path, missing_ok: bool = False) -> None:
+        raise PermissionError("gesperrt")
+
+    monkeypatch.setattr(Path, "unlink", nein)
+    befund = startklar.venv_sicherstellen(wt)
+    assert not befund.ok and "gesperrt" in befund.text, befund
+
+
+def test_f12_pfade_mit_leerzeichen(tmp_path: Path) -> None:
+    (tmp_path / "mit leer").mkdir()
+    _haupt, wt = _repo_mit_worktree(tmp_path / "mit leer")
+    befund = startklar.venv_sicherstellen(wt)
+    assert befund.ok, befund
+    assert (wt / ".venv").is_symlink(), befund
+
+
+def test_f13_platzhalter_gequotet(monkeypatch: pytest.MonkeyPatch) -> None:
+    import shlex
+
+    monkeypatch.setattr(startklar, "SKILL", Path("/tmp/mit leer/skill"))
+    text = startklar.befehl_text(startklar.WERKZEUGE[1], SPEC, "7")
+    assert shlex.split(text)[1:] == [
+        "/tmp/mit leer/skill/to_spawn.py",
+        "neustart",
+        str(SPEC),
+        "7",
+    ]
+
+
+def test_symlink_wird_in_info_exclude_eingetragen(tmp_path: Path) -> None:
+    haupt, wt = _repo_mit_worktree(tmp_path)
+    (wt / ".gitignore").write_text(".venv/\n.env\n", encoding="utf-8")
+    _git(wt, "add", ".gitignore")
+    _git(wt, "commit", "-q", "-m", "gi")
+    assert startklar.venv_sicherstellen(wt).ok
+    assert startklar.venv_sicherstellen(wt).ok
+    assert ".venv" not in _git(wt, "status", "--porcelain")
+    exclude = (haupt / ".git" / "info" / "exclude").read_text(encoding="utf-8")
+    assert exclude.splitlines().count("/.venv") == 1
+
+
+def test_n1_behebung_nennt_passenden_python() -> None:
+    py = "python" if os.name == "nt" else "python3"
+    assert f"{py} " in startklar.schluessel_behebung_befehl(Path("/x"))
+
+
+def test_n2_hook_stderr_ohne_schluesselwerte(tmp_path: Path) -> None:
+    (tmp_path / ".env").write_text("FAL_KEY=supergeheim99\n", encoding="utf-8")
+    code = (
+        "import sys; sys.stdin.read(); "
+        "print('FAL_KEY=supergeheim99', file=sys.stderr); sys.exit(1)\n"
+    )
+    befunde = _probe(tmp_path, [_settings(tmp_path, code)])
+    alles = " ".join(b.text + b.behebung for b in befunde)
+    assert "FAL_KEY" in alles and "supergeheim99" not in alles, befunde
