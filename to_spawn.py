@@ -557,7 +557,6 @@ def main(argv: list[str] | None = None) -> int:
             repo,
             args.spec,
             args.ticket,
-            konfig,
             werkzeug=respawn.TmuxWerkzeug(),
             warte_max=args.warte_max,
             dry_run=args.dry_run,

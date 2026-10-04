@@ -36,11 +36,13 @@ import re
 import shlex
 import signal
 import subprocess
+import threading
 import time
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal, Protocol
+from types import FrameType
+from typing import Literal, Protocol
 
 from to_spawn import capo, config
 
@@ -50,11 +52,14 @@ log = logging.getLogger(__name__)
 BEREIT_MARKER: tuple[str, ...] = ("❯", "? for shortcuts")
 #: Startdialoge, die auch „❯“ zeigen, aber keine Eingabe annehmen (Vertrauens-Abfrage).
 DIALOG_MARKER: tuple[str, ...] = ("trust this folder", "Enter to confirm")
-#: Zeichen, dass Claude wirklich arbeitet (Spinner, Werkzeug-Aufruf) — Paste-Echo zählt nicht.
-ARBEIT_MARKER: tuple[str, ...] = ("esc to interrupt", "✻", "●", "⏺")
+#: Claude arbeitet gerade: Unterbrechen-Hinweis oder Spinner-Zeile „✻ Tut etwas…“.
+#: Begrüßung, „✻ Worked for …“ und abgeschlossene Werkzeug-Aufrufe (●/⏺) sind kein
+#: Arbeitszustand; Zeilen mit dem Eingabezeichen „❯“ (Echo) zählen nie.
+ARBEIT_HINWEIS = "esc to interrupt"
+SPINNER_ZEILE = re.compile(r"^\s*[✻✶✳✢✽]\s+\S.*…")
 #: Texte, die Claude nach erfolgreichem ``/remote-control`` zeigt (klein geschrieben).
 #: Claude Code 2.1 (Echtlauf 2, 04.10.2026): „/remote-control is active · Continue here …“.
-REMOTE_MARKER = ("remote-control is active", "remote control active")
+REMOTE_MARKER: tuple[str, ...] = ("remote-control is active", "remote control active")
 BEREIT_MAX_S = 120.0
 #: So lange muss der bereite Bildschirm unverändert stehen, bevor getippt wird.
 EINGABE_RUHE_S = 3.0
@@ -66,6 +71,8 @@ TIPP_PAUSE_S = 1.0
 #: Frist nach SIGTERM, danach SIGKILL.
 BEENDEN_MAX_S = 30.0
 BEENDEN_TAKT_S = 1.0
+#: So lange darf die alte Session nach Schritt e noch arbeiten (Commit), bevor sie endet.
+ALT_RUHE_MAX_S = 120.0
 WARTE_MAX_VORGABE = 1800.0
 REMOTE_CONTROL = "/remote-control"
 HANDOFF_ORDNER = "docs/handoffs"
@@ -113,7 +120,6 @@ class Auftrag:
     repo: Path
     spec: int
     ticket: int
-    konfig: dict[str, Any] = field(hash=False)
     warte_max: float = WARTE_MAX_VORGABE
     dry_run: bool = False
 
@@ -134,8 +140,27 @@ class Auftrag:
         return f"spec-{self.spec}"
 
 
+class TmuxFehler(RuntimeError):
+    """Ein tmux-Aufruf ist gescheitert (Exit ≠ 0 oder Zeitüberschreitung).
+
+    Trägt Unterbefehl und stderr, damit die Ergebniszeile sagt, was tmux meldete.
+    """
+
+    def __init__(self, unterbefehl: str, stderr: str) -> None:
+        super().__init__(f"tmux {unterbefehl}: {stderr.strip() or 'ohne Meldung'}")
+        self.unterbefehl = unterbefehl
+        self.stderr = stderr
+
+
+class FensterWeg(TmuxFehler):
+    """Das Ziel-Fenster/-Pane gibt es nicht mehr (Session hat sich selbst beendet)."""
+
+
 class Werkzeug(Protocol):
-    """Alle Außenwelt-Zugriffe der Ablösung (Naht für Tests)."""
+    """Alle Außenwelt-Zugriffe der Ablösung (Naht für Tests).
+
+    ``bildschirm`` wirft :class:`FensterWeg`, wenn das Fenster verschwunden ist.
+    """
 
     def fenster_liste(self) -> list[FensterInfo]: ...
     def bau_prozesse(self) -> list[str]: ...
@@ -148,6 +173,7 @@ class Werkzeug(Protocol):
     def fenster_umbenennen(self, ziel: str, name: str) -> None: ...
     def fenster_schliessen(self, ziel: str) -> None: ...
     def alte_session_beenden(self, pane_pid: int) -> Beendet: ...
+    def committet(self, wt: Path, pfade: list[Path]) -> bool: ...
     def jetzt(self) -> float: ...
     def schlafen(self, s: float) -> None: ...
 
@@ -156,14 +182,26 @@ class TmuxWerkzeug:
     """Echte Umsetzung: tmux über ``subprocess``, Prozesse über ``pgrep``/``/proc``."""
 
     def _tmux(self, *argumente: str, eingabe: str | None = None) -> str:
-        fertig = subprocess.run(
-            [*capo._tmux_befehl(), *argumente],
-            input=eingabe,
-            capture_output=True,
-            text=True,
-            check=True,
-            timeout=30,
-        )
+        """Ein tmux-Aufruf; jeder Fehler kommt als :class:`TmuxFehler` (stderr erhalten)."""
+        unterbefehl = argumente[0] if argumente else ""
+        try:
+            fertig = subprocess.run(
+                [*capo._tmux_befehl(), *argumente],
+                input=eingabe,
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=30,
+            )
+        except subprocess.CalledProcessError as fehler:
+            stderr = str(fehler.stderr or "")
+            if "can't find window" in stderr or "can't find pane" in stderr:
+                raise FensterWeg(unterbefehl, stderr) from fehler
+            raise TmuxFehler(unterbefehl, stderr) from fehler
+        except subprocess.TimeoutExpired as fehler:
+            raise TmuxFehler(
+                unterbefehl, f"keine Antwort nach {fehler.timeout} s"
+            ) from fehler
         return fertig.stdout
 
     def fenster_liste(self) -> list[FensterInfo]:
@@ -175,8 +213,8 @@ class TmuxWerkzeug:
                 "-F",
                 "#{session_name}\t#{window_name}\t#{window_id}\t#{pane_pid}\t#{pane_active}",
             )
-        except subprocess.CalledProcessError as fehler:
-            meldung = str(fehler.stderr or "")
+        except TmuxFehler as fehler:
+            meldung = fehler.stderr
             if "no server running" in meldung or "error connecting" in meldung:
                 return []  # Kein tmux-Server = keine Fenster.
             log.error("tmux list-panes scheitert: %s", meldung.strip())
@@ -228,15 +266,27 @@ class TmuxWerkzeug:
         self._tmux("load-buffer", "-b", puffer, "-", eingabe=text)
         self._tmux("paste-buffer", "-p", "-d", "-b", puffer, "-t", ziel)
         self.schlafen(TIPP_PAUSE_S)
-        self._tmux("send-keys", "-t", ziel, "Enter")
+        try:
+            self._tmux("send-keys", "-t", ziel, "Enter")
+        except TmuxFehler:
+            # Kein halber Auftrag im Eingabefeld: Zeile leeren, Fehler weitergeben.
+            try:
+                self._tmux("send-keys", "-t", ziel, "C-u")
+            except TmuxFehler as leeren:
+                log.warning("Eingabe in %s nicht geleert: %s", ziel, leeren)
+            raise
 
     def taste(self, ziel: str, taste: str) -> None:
         self._tmux("send-keys", "-t", ziel, taste)
 
     def bildschirm(self, ziel: str) -> str:
+        """Sichtbarer Text; :class:`FensterWeg` wenn das Fenster fehlt, sonst "" bei Fehlern."""
         try:
             return self._tmux("capture-pane", "-p", "-t", ziel)
-        except subprocess.CalledProcessError:
+        except FensterWeg:
+            raise
+        except TmuxFehler as fehler:
+            log.warning("Bildschirm %s nicht lesbar: %s", ziel, fehler)
             return ""
 
     def fenster_umbenennen(self, ziel: str, name: str) -> None:
@@ -245,8 +295,31 @@ class TmuxWerkzeug:
     def fenster_schliessen(self, ziel: str) -> None:
         try:
             self._tmux("kill-window", "-t", ziel)
-        except subprocess.CalledProcessError:
-            log.warning("Fenster %s ließ sich nicht schließen (schon weg?).", ziel)
+        except TmuxFehler as fehler:
+            log.warning("Fenster %s ließ sich nicht schließen: %s", ziel, fehler)
+
+    def committet(self, wt: Path, pfade: list[Path]) -> bool:
+        """Jede Datei hat einen Commit und keine offene Änderung im Worktree ``wt``."""
+        try:
+            for pfad in pfade:
+                letzter = self._git(wt, "log", "-1", "--format=%H", "--", str(pfad))
+                if not letzter.strip():
+                    return False
+            return not self._git(
+                wt, "status", "--porcelain", "--", *map(str, pfade)
+            ).strip()
+        except (OSError, subprocess.SubprocessError) as fehler:
+            log.warning("Commit-Stand in %s nicht prüfbar: %s", wt, fehler)
+            return False
+
+    def _git(self, wt: Path, *argumente: str) -> str:
+        return subprocess.run(
+            ["git", "-C", str(wt), *argumente],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=30,
+        ).stdout
 
     def alte_session_beenden(self, pane_pid: int) -> Beendet:
         """Beendet den ganzen Prozessbaum des alten Panes (Pane-PID eingeschlossen).
@@ -310,7 +383,7 @@ def _nachkommen(pid: int) -> list[int]:
     return gefunden
 
 
-def _signal(pids: list[int], sig: int) -> None:
+def _signal(pids: list[int], sig: signal.Signals) -> None:
     """Schickt ``sig`` an jede PID; schon beendete Prozesse zählen nicht als Fehler."""
     for pid in pids:
         try:
@@ -319,19 +392,35 @@ def _signal(pids: list[int], sig: int) -> None:
             continue
 
 
+def _proc(pid: int, datei: str) -> bytes:
+    """Rohinhalt von ``/proc/<pid>/<datei>`` (Naht für Tests)."""
+    return Path(f"/proc/{pid}/{datei}").read_bytes()
+
+
 def _ist_claude(pid: int) -> bool:
-    """Prozessname oder argv[0] ist ``claude``."""
+    """Ist ``pid`` eine Claude-Session — nativ (``claude``) oder per npm (``node … claude``)?
+
+    Prozess weg (``FileNotFoundError``/``ProcessLookupError``) heißt „kein Claude“.
+    Unlesbar aus anderem Grund zählt als Claude: lieber warten als eine lebende
+    Session für beendet halten.
+    """
     try:
-        name = Path(f"/proc/{pid}/comm").read_text(encoding="utf-8").strip()
-        argv0 = (
-            Path(f"/proc/{pid}/cmdline")
-            .read_bytes()
-            .split(b"\0", 1)[0]
-            .decode(errors="replace")
-        )
-    except OSError:
+        name = _proc(pid, "comm").decode(errors="replace").strip()
+        argv = [
+            teil.decode(errors="replace") for teil in _proc(pid, "cmdline").split(b"\0")
+        ]
+    except (FileNotFoundError, ProcessLookupError):
         return False
-    return name == "claude" or Path(argv0).name == "claude"
+    except OSError as fehler:
+        log.warning("/proc/%s nicht lesbar (%s) — zählt als Claude.", pid, fehler)
+        return True
+    argv0 = argv[0] if argv else ""
+    if name == "claude" or Path(argv0).name == "claude":
+        return True
+    if name != "node" and Path(argv0).name != "node":
+        return False
+    skript = argv[1] if len(argv) > 1 else ""
+    return Path(skript).name == "claude" or skript.endswith("claude-code/cli.js")
 
 
 def _lebt(pid: int) -> bool:
@@ -397,7 +486,8 @@ def _handoff_auftrag(handoff: str, start: str) -> str:
         "(nur Text, die neue Session liest ihn als ersten Auftrag). Gibt es die Dateien schon, "
         "sind sie aus einer früheren Runde veraltet: komplett mit dem jetzigen Stand "
         "überschreiben, auch wenn sich wenig geändert hat. Beide Dateien committen. "
-        "Danach nichts mehr tun."
+        "Keine Zeile „Staffel: weiter“ ausgeben — die neue Session übernimmt, eine "
+        "Folge-Runde in diesem Fenster wäre eine zweite Session. Danach nichts mehr tun."
     )
 
 
@@ -434,8 +524,35 @@ def _remote_bestaetigt(text: str) -> bool:
     return any(marker in klein for marker in REMOTE_MARKER)
 
 
-def _arbeitszeichen(text: str) -> int:
-    return sum(text.count(m) for m in ARBEIT_MARKER)
+def _arbeitet(text: str) -> bool:
+    """Claude arbeitet gerade (Zustand jetzt, kein Vergleich mit „vorher“).
+
+    Zählt nur Unterbrechen-Hinweis oder Spinner-Zeile; Eingabezeilen (``❯``) nie —
+    sonst wäre ein Echo des Prompts schon „Arbeit“.
+    """
+    for zeile in text.splitlines():
+        if "❯" in zeile:
+            continue
+        if ARBEIT_HINWEIS in zeile or SPINNER_ZEILE.match(zeile):
+            return True
+    return False
+
+
+class _Stabil:
+    """Merkt, seit wann ein Wert unverändert gilt (``None`` = Bedingung verletzt)."""
+
+    def __init__(self, w: Werkzeug) -> None:
+        self._w = w
+        self._wert: object = None
+        self._seit = 0.0
+
+    def seit_mindestens(self, wert: object, dauer: float) -> bool:
+        """True, wenn ``wert`` (nicht None) seit ≥ ``dauer`` s gleich ist und schon einmal so gesehen wurde."""
+        jetzt = self._w.jetzt()
+        if wert is None or wert != self._wert:
+            self._wert, self._seit = wert, jetzt
+            return False
+        return jetzt - self._seit >= dauer
 
 
 def _warte(werkzeug: Werkzeug, max_s: float, bedingung: Callable[[], bool]) -> bool:
@@ -459,7 +576,10 @@ class _Stand:
     alt: FensterInfo | None = None
     auftrag_getippt: bool = False
     neu: str | None = None
+    #: Ab hier arbeitet die neue Session schon — Abbruch schließt sie nicht mehr.
     beenden_begonnen: bool = False
+    #: Name des ersten abfangenen Signals (weitere Signale werden dann ignoriert).
+    signal_name: str | None = None
 
 
 class _Abbruch(Exception):
@@ -471,11 +591,14 @@ class _Abbruch(Exception):
         self.grund = grund
 
 
+_SignalHandler = Callable[[int, FrameType | None], object] | int | signal.Handlers
+_ABGEFANGENE_SIGNALE = (signal.SIGTERM, signal.SIGHUP, signal.SIGINT)
+
+
 def abloesen(
     repo: Path,
     spec: int,
     ticket: int,
-    konfig: dict[str, Any],
     *,
     werkzeug: Werkzeug | None = None,
     warte_max: float = WARTE_MAX_VORGABE,
@@ -483,28 +606,68 @@ def abloesen(
 ) -> Ergebnis:
     """Löst die Session in ``bau <ticket>`` nach SOP a–e ab (siehe Modul-Kommentar).
 
-    Gibt nie eine Ausnahme weiter: jeder Fehler endet als :class:`Ergebnis` mit
-    passendem Exit-Code und genau einer Zeile.
+    Gibt nie eine Ausnahme weiter: jeder Fehler und SIGTERM/SIGHUP/SIGINT enden als
+    :class:`Ergebnis` mit passendem Exit-Code und genau einer Zeile. Nur eine
+    ``BaseException`` von außen (z. B. ``KeyboardInterrupt``) wird nach dem Aufräumen
+    weitergereicht.
     """
     w = werkzeug or TmuxWerkzeug()
-    auftrag = Auftrag(repo, spec, ticket, konfig, warte_max, dry_run)
+    auftrag = Auftrag(repo, spec, ticket, warte_max, dry_run)
     stand = _Stand()
+    alte_handler = _signale_abfangen(stand)
     try:
         erg = _ablauf(auftrag, w, stand)
     except _Abbruch as abbruch:
-        erg = _aufraeumen(auftrag, w, stand, abbruch.exit_code, abbruch.grund)
-    except Exception as fehler:  # Tür gibt nie eine Ausnahme weiter
+        erg = _abbruch_ergebnis(auftrag, w, stand, abbruch.exit_code, abbruch.grund)
+    except Exception as fehler:  # Tür gibt nie eine Ausnahme weiter (BLE001: geloggt)
         log.exception("respawn #%s abgebrochen.", ticket)
         text = f"Fehler — {type(fehler).__name__}: {fehler}"
-        if stand.beenden_begonnen:
-            erg = Ergebnis(
-                EXIT_NICHT_BEWIESEN,
-                f"{auftrag.kopf}: {text} beim Beenden der alten Session — neue Session "
-                f"arbeitet in „{auftrag.name_neu}“, alte evtl. noch offen, Handarbeit nötig",
-            )
-        else:
-            erg = _aufraeumen(auftrag, w, stand, EXIT_NICHT_BEWIESEN, text)
+        erg = _abbruch_ergebnis(auftrag, w, stand, EXIT_NICHT_BEWIESEN, text)
+    except BaseException:
+        log.warning("respawn #%s unterbrochen — räume auf und reiche weiter.", ticket)
+        if not stand.beenden_begonnen:
+            _aufraeumen(auftrag, w, stand, EXIT_NICHT_BEWIESEN, "unterbrochen")
+        raise
+    finally:
+        _signale_zuruecksetzen(alte_handler)
     return Ergebnis(erg.exit, " ".join(erg.zeile.split()))
+
+
+def _signale_abfangen(stand: _Stand) -> dict[signal.Signals, _SignalHandler]:
+    """SIGTERM/SIGHUP/SIGINT werden zu :class:`_Abbruch` (nur im Haupt-Thread möglich)."""
+    if threading.current_thread() is not threading.main_thread():
+        return {}
+
+    def handler(signum: int, frame: FrameType | None) -> None:
+        if stand.signal_name:  # Aufräumen läuft schon — nicht erneut unterbrechen.
+            return
+        stand.signal_name = signal.Signals(signum).name
+        raise _Abbruch(EXIT_NICHT_BEWIESEN, f"abgebrochen durch {stand.signal_name}")
+
+    alte: dict[signal.Signals, _SignalHandler] = {}
+    for sig in _ABGEFANGENE_SIGNALE:
+        vorher = signal.getsignal(sig)
+        alte[sig] = vorher if vorher is not None else signal.SIG_DFL
+        signal.signal(sig, handler)
+    return alte
+
+
+def _signale_zuruecksetzen(alte: dict[signal.Signals, _SignalHandler]) -> None:
+    for sig, vorher in alte.items():
+        signal.signal(sig, vorher)
+
+
+def _abbruch_ergebnis(
+    a: Auftrag, w: Werkzeug, stand: _Stand, exit_code: int, grund: str
+) -> Ergebnis:
+    """Vor dem Beenden: aufräumen. Danach arbeitet die neue Session schon → Handarbeit."""
+    if not stand.beenden_begonnen:
+        return _aufraeumen(a, w, stand, exit_code, grund)
+    return Ergebnis(
+        EXIT_NICHT_BEWIESEN,
+        f"{a.kopf}: {grund} beim Beenden der alten Session — neue Session arbeitet in "
+        f"„{a.name_neu}“, alte evtl. noch offen, Handarbeit nötig",
+    )
 
 
 def _ablauf(a: Auftrag, w: Werkzeug, stand: _Stand) -> Ergebnis:
@@ -514,7 +677,7 @@ def _ablauf(a: Auftrag, w: Werkzeug, stand: _Stand) -> Ergebnis:
         return alt
     stand.alt = alt
 
-    wt_text = config.worktree_pfad(a.ticket, a.repo)
+    wt = Path(config.worktree_pfad(a.ticket, a.repo))
     befehl = _startbefehl(a.repo, a.ticket)
     if a.dry_run:
         return Ergebnis(
@@ -522,22 +685,30 @@ def _ablauf(a: Auftrag, w: Werkzeug, stand: _Stand) -> Ergebnis:
             f"{a.kopf}: dry-run — alt {alt.ziel}, neu „{a.name_neu}“ in {a.sitzung}, cwd {a.repo}, Befehl: {befehl}",
         )
 
-    # a) Handoff-Auftrag ins alte Fenster
+    # a) Handoff-Auftrag ins alte Fenster. Schon vor dem Tippen gesetzt: scheitert nur
+    # das Enter, kann der Auftrag im Eingabefeld stehen — nie „unangetastet“ melden.
     seit = w.jetzt()
-    handoff, start = _dateien(Path(wt_text), a.ticket, seit)
+    handoff, start = _dateien(wt, a.ticket, seit)
     rel_handoff = f"{HANDOFF_ORDNER}/{handoff.name}"
-    w.tippen(alt.ziel, _handoff_auftrag(rel_handoff, f"{HANDOFF_ORDNER}/{start.name}"))
     stand.auftrag_getippt = True
+    w.tippen(alt.ziel, _handoff_auftrag(rel_handoff, f"{HANDOFF_ORDNER}/{start.name}"))
     log.info("respawn #%s: Handoff-Auftrag an %s getippt.", a.ticket, alt.ziel)
 
     # b) neues Fenster: bau.py wie spawn (cwd Hauptbaum, bau.py wechselt selbst in den Worktree)
     stand.neu = w.fenster_starten(a.sitzung, a.name_neu, str(a.repo), befehl)
     log.info("respawn #%s: neues Fenster %s gestartet.", a.ticket, stand.neu)
 
-    _remote_control(w, stand.neu)  # c)
-    gefunden, prompt = _warte_dateien(a, w, handoff, start, seit)  # d)
-    _start_prompt(w, stand.neu, prompt)  # e)
-    return _alte_abloesen(a, w, stand, alt, stand.neu, gefunden.name)
+    try:
+        _remote_control(w, stand.neu)  # c)
+        gefunden_h, gefunden_s, prompt = _warte_dateien(
+            a, w, handoff, start, seit
+        )  # d)
+        _start_prompt(w, stand.neu, prompt)  # e)
+    except FensterWeg as fehler:
+        raise _Abbruch(
+            EXIT_NICHT_BEWIESEN, f"neue Session beendet sich selbst ({fehler})"
+        ) from fehler
+    return _alte_abloesen(a, w, stand, alt, stand.neu, wt, gefunden_h, gefunden_s)
 
 
 def _pruefe_duplikat(a: Auftrag, w: Werkzeug) -> FensterInfo | Ergebnis:
@@ -585,36 +756,34 @@ def _remote_control(w: Werkzeug, neu: str) -> None:
 
 def _warte_ruhig_bereit(w: Werkzeug, ziel: str) -> bool:
     """Bereit-Bildschirm, der :data:`EINGABE_RUHE_S` lang unverändert steht."""
-    ruhig: dict[str, Any] = {"text": None, "seit": 0.0}
+    ruhe = _Stabil(w)
 
     def bedingung() -> bool:
         text = w.bildschirm(ziel)
-        if not _bereit(text):
-            ruhig["text"] = None
-            return False
-        if text != ruhig["text"]:
-            ruhig["text"], ruhig["seit"] = text, w.jetzt()
-            return False
-        return w.jetzt() - ruhig["seit"] >= EINGABE_RUHE_S
+        return ruhe.seit_mindestens(text if _bereit(text) else None, EINGABE_RUHE_S)
 
     return _warte(w, BEREIT_MAX_S, bedingung)
 
 
 def _warte_dateien(
     a: Auftrag, w: Werkzeug, handoff: Path, start: Path, seit: float
-) -> tuple[Path, str]:
-    """Schritt d (G5): Handoff + Start-Prompt frisch, nicht leer, Größe stabil."""
-    letzte: dict[str, Any] = {"stand": None}
-    fund: dict[str, Path] = {}
+) -> tuple[Path, Path, str]:
+    """Schritt d (G5): Handoff + Start-Prompt frisch, nicht leer, Größe stabil.
+
+    Gibt die gefundenen Pfade (Handoff, Start-Prompt) und den Prompt-Text zurück.
+    """
+    stabil = _Stabil(w)
+    fund: list[tuple[Path, Path]] = []
 
     def bedingung() -> bool:
         h, s = _finde(handoff, a.ticket, seit), _finde(start, a.ticket, seit)
-        stand = (h, s, _groesse(h), _groesse(s))
-        stabil = h is not None and s is not None and stand == letzte["stand"]
-        letzte["stand"] = stand
-        if stabil and h and s:
-            fund["handoff"], fund["start"] = h, s
-        return stabil
+        if h is None or s is None:
+            stabil.seit_mindestens(None, 0)
+            return False
+        if stabil.seit_mindestens((h, s, _groesse(h), _groesse(s)), 0):
+            fund.append((h, s))
+            return True
+        return False
 
     if not _warte(w, a.warte_max, bedingung):
         fehlt = [
@@ -623,38 +792,69 @@ def _warte_dateien(
         raise _Abbruch(
             EXIT_HANDOFF_FEHLT, f"nach {int(a.warte_max)} s fehlt {', '.join(fehlt)}"
         )
-    prompt = fund["start"].read_text(encoding="utf-8").strip()
+    h, s = fund[-1]
+    prompt = s.read_text(encoding="utf-8").strip()
     if not prompt:
-        raise _Abbruch(
-            EXIT_HANDOFF_FEHLT, f"Start-Prompt {fund['start'].name} ist leer"
-        )
-    return fund["handoff"], prompt
+        raise _Abbruch(EXIT_HANDOFF_FEHLT, f"Start-Prompt {s.name} ist leer")
+    return h, s, prompt
 
 
 def _start_prompt(w: Werkzeug, neu: str, prompt: str) -> None:
-    """Schritt e (G4): Prompt tippen, auf echtes Arbeitszeichen warten (Echo zählt nicht)."""
-    vorher = _arbeitszeichen(w.bildschirm(neu)) + _arbeitszeichen(prompt)
+    """Schritt e (G4): Prompt tippen, auf echten Arbeitszustand warten (Echo zählt nicht)."""
     w.tippen(neu, prompt)
-    if not _warte(
-        w, BILDSCHIRM_MAX_S, lambda: _arbeitszeichen(w.bildschirm(neu)) > vorher
-    ):
+    if not _warte(w, BILDSCHIRM_MAX_S, lambda: _arbeitet(w.bildschirm(neu))):
         raise _Abbruch(
             EXIT_NICHT_BEWIESEN,
             f"neue Session zeigt {int(BILDSCHIRM_MAX_S)} s nach dem Start-Prompt keine Arbeit",
         )
 
 
+def _alte_ruhig(w: Werkzeug, ziel: str) -> bool:
+    """Alte Session arbeitet :data:`EINGABE_RUHE_S` lang nicht mehr (Fenster weg = ruhig)."""
+    ruhe = _Stabil(w)
+
+    def bedingung() -> bool:
+        try:
+            ruhig = not _arbeitet(w.bildschirm(ziel))
+        except FensterWeg:
+            return True
+        return ruhe.seit_mindestens(True if ruhig else None, EINGABE_RUHE_S)
+
+    return _warte(w, ALT_RUHE_MAX_S, bedingung)
+
+
 def _alte_abloesen(
-    a: Auftrag, w: Werkzeug, stand: _Stand, alt: FensterInfo, neu: str, handoff: str
+    a: Auftrag,
+    w: Werkzeug,
+    stand: _Stand,
+    alt: FensterInfo,
+    neu: str,
+    wt: Path,
+    handoff: Path,
+    start: Path,
 ) -> Ergebnis:
-    """Alte Session beenden, altes Fenster zu, neues in ``bau N`` umbenennen."""
+    """Warten bis die alte ruhig ist, sie beenden, altes Fenster zu, neues umbenennen.
+
+    Unfertiger Commit oder noch aktive alte Session stehen als Hinweis in der Zeile
+    (Exit bleibt 0 — die neue Session arbeitet bewiesen).
+    """
     stand.beenden_begonnen = True
+    hinweise: list[str] = []
+    if not _alte_ruhig(w, alt.ziel):
+        hinweise.append(
+            f"alte Session arbeitete nach {int(ALT_RUHE_MAX_S)} s noch — beendet trotzdem"
+        )
+    if not w.committet(wt, [handoff, start]):
+        hinweise.append(
+            f"Handoff/Start-Prompt nicht committet ({handoff.name}, {start.name})"
+        )
     ausgang = w.alte_session_beenden(alt.pane_pid)
     if ausgang == LEBT:
         return Ergebnis(
             EXIT_NICHT_BEWIESEN,
             f"{a.kopf}: neue Session arbeitet in „{a.name_neu}“, alte (Pane-PID {alt.pane_pid}) "
-            "lebt noch — zwei Sessions offen, Handarbeit nötig",
+            "lebt noch — zwei Sessions offen, Handarbeit nötig"
+            + "".join(f"; {h}" for h in hinweise),
         )
     if ausgang == SCHON_WEG:
         log.info("respawn #%s: alte Session war schon beendet.", a.ticket)
@@ -666,26 +866,26 @@ def _alte_abloesen(
     else:
         try:
             w.fenster_umbenennen(neu, a.name_alt)
-        except Exception as fehler:  # Zustand gehört in die Zeile
+        except RuntimeError as fehler:  # tmux-Fehler: Zustand gehört in die Zeile
             log.exception("respawn #%s: Umbenennen gescheitert.", a.ticket)
             probleme.append(f"Umbenennen in „{a.name_alt}“ gescheitert ({fehler})")
     if probleme:
         return Ergebnis(
             EXIT_NICHT_BEWIESEN,
             f"{a.kopf}: alte Session beendet, neue arbeitet in „{a.name_neu}“ — "
-            f"{'; '.join(probleme)}; Handarbeit nötig",
+            f"{'; '.join([*probleme, *hinweise])}; Handarbeit nötig",
         )
-    return Ergebnis(
-        EXIT_OK,
-        f"{a.kopf}: ok — neue Session im Fenster {a.name_alt}, Handoff {HANDOFF_ORDNER}/{handoff}",
-    )
+    zeile = f"{a.kopf}: ok — neue Session im Fenster {a.name_alt}, Handoff {HANDOFF_ORDNER}/{handoff.name}"
+    if hinweise:
+        zeile += f" — Hinweis: {'; '.join(hinweise)}"
+    return Ergebnis(EXIT_OK, zeile)
 
 
 def _fenster_offen(w: Werkzeug, ziel: str) -> bool:
     """Fenster noch da? Unklar (tmux-Fehler) zählt als offen."""
     try:
         return any(f.ziel == ziel for f in w.fenster_liste())
-    except Exception:  # Unklarheit ehrlich als „offen“ melden
+    except RuntimeError:  # tmux-Fehler: Unklarheit ehrlich als „offen“ melden
         log.exception("Fensterliste nicht lesbar — %s gilt als offen.", ziel)
         return True
 
@@ -701,7 +901,7 @@ def _aufraeumen(
     if stand.neu:
         try:
             w.fenster_schliessen(stand.neu)
-        except Exception:  # Prüfung folgt über die Fensterliste
+        except RuntimeError:  # Prüfung folgt über die Fensterliste
             log.exception("respawn #%s: neues Fenster nicht schließbar.", a.ticket)
         if _fenster_offen(w, stand.neu):
             teile.append(
@@ -713,10 +913,11 @@ def _aufraeumen(
         try:
             w.tippen(stand.alt.ziel, WEITER_AUFTRAG)
             teile.append("Ablösung abgebrochen, alte Session arbeitet weiter")
-        except Exception:  # Zustand gehört in die Zeile
+        except RuntimeError:  # tmux-Fehler: Zustand gehört in die Zeile
             log.exception("respawn #%s: Weiter-Auftrag nicht getippt.", a.ticket)
             teile.append(
-                "alte Session hat den Handoff-Auftrag und wartet untätig, Handarbeit nötig"
+                "alte Session hat den Handoff-Auftrag evtl. erhalten und wartet untätig, "
+                "Handarbeit nötig"
             )
     elif stand.alt:
         teile.append("alte Session unangetastet")

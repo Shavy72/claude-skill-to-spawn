@@ -6,8 +6,10 @@ Echte ``TmuxWerkzeug``-Logik wird über ``subprocess.run`` bzw. ``_tmux`` gestel
 
 from __future__ import annotations
 
+import ast
 import inspect
 import logging
+import shutil
 import signal
 import subprocess
 import sys
@@ -18,7 +20,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from test_respawn_431 import (  # noqa: E402
+from test_respawn_431 import (
     ALT_ZIEL,
     NEU_ZIEL,
     SPEC,
@@ -28,7 +30,7 @@ from test_respawn_431 import (  # noqa: E402
     umgebung,  # noqa: F401  (Fixture)
 )
 
-from to_spawn import respawn  # noqa: E402
+from to_spawn import respawn
 
 
 def _lauf(repo: Path, fake: FakeWerkzeug, warte_max: float = 600) -> respawn.Ergebnis:
@@ -347,7 +349,9 @@ def test_b11_alte_session_ueberlebt_sigkill_heisst_lebt(
     monkeypatch.setattr(respawn, "_nachkommen", lambda pid: [200, 300])
     monkeypatch.setattr(respawn, "_ist_claude", lambda pid: pid == 300)
     monkeypatch.setattr(respawn, "_lebt", lambda pid: True)
-    monkeypatch.setattr(respawn.os, "kill", lambda pid, sig: gesendet.append((pid, sig)))
+    monkeypatch.setattr(
+        respawn.os, "kill", lambda pid, sig: gesendet.append((pid, sig))
+    )
     w = _Uhr()
     assert w.alte_session_beenden(100) == respawn.LEBT
     assert (300, signal.SIGTERM) in gesendet and (300, signal.SIGKILL) in gesendet
@@ -358,15 +362,53 @@ def test_b11_alte_session_ueberlebt_sigkill_heisst_lebt(
 
 
 def test_b12_typen_und_schmale_ausnahmen() -> None:
-    quelle = Path(respawn.__file__).read_text(encoding="utf-8")
     assert respawn.__annotations__.get("REMOTE_MARKER") == "tuple[str, ...]"
     assert (
         inspect.signature(respawn._signal).parameters["sig"].annotation
         == "signal.Signals"
     )
-    assert "dict[str, Any]" not in quelle
-    # Nur die Tür selbst fängt breit (sie gibt nie eine Ausnahme weiter).
-    assert quelle.count("except Exception") == 1
+
+
+def test_b12_nur_die_tuer_faengt_breit() -> None:
+    """Breite ``except``: ruff BLE001 meldet nichts, und per AST gibt es genau einen
+    ``except Exception`` — die Tür in ``abloesen``.
+
+    Statt Quelltext-Zählung (Kommentare und ``BaseException`` brachen die). Ein
+    ``# noqa: BLE001`` an der Tür ginge nicht: ruff nimmt geloggte Handler
+    (``log.exception``) selbst aus, das ``noqa`` wäre RUF100 („unused“).
+    """
+    quelle = Path(respawn.__file__)
+    if shutil.which("ruff"):
+        befehl = ["ruff"]
+    elif shutil.which("uvx"):
+        befehl = ["uvx", "ruff"]
+    else:
+        pytest.skip("weder ruff noch uvx verfügbar")
+    lauf = subprocess.run(
+        [*befehl, "check", "--select", "BLE001", "--no-cache", str(quelle)],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=120,
+    )
+    assert lauf.returncode == 0, lauf.stdout + lauf.stderr
+
+    baum = ast.parse(quelle.read_text(encoding="utf-8"))
+    breit: list[str] = []
+    for funktion in ast.walk(baum):
+        if not isinstance(funktion, ast.FunctionDef):
+            continue
+        for knoten in ast.walk(funktion):
+            if (
+                isinstance(knoten, ast.ExceptHandler)
+                and isinstance(knoten.type, ast.Name)
+                and knoten.type.id in ("Exception", "BaseException")
+                and not any(
+                    isinstance(k, ast.Raise) and k.exc is None for k in ast.walk(knoten)
+                )
+            ):
+                breit.append(funktion.name)
+    assert breit == ["abloesen"], breit
 
 
 def test_offen_a_kein_konfig_mehr() -> None:

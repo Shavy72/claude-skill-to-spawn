@@ -211,11 +211,7 @@ def umgebung(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Pat
 
 
 def _lauf(repo: Path, fake: FakeWerkzeug, warte_max: float = 600) -> respawn.Ergebnis:
-    from to_spawn import config
-
-    return respawn.abloesen(
-        repo, SPEC, TICKET, config.lade(repo), werkzeug=fake, warte_max=warte_max
-    )
+    return respawn.abloesen(repo, SPEC, TICKET, werkzeug=fake, warte_max=warte_max)
 
 
 # --- Erfolgsweg -----------------------------------------------------------
@@ -279,14 +275,7 @@ def test_startbefehl_unabhaengig_von_modell_konfig(umgebung: tuple[Path, Path]) 
     # Modell/Effort liest bau.py selbst aus der Repo-Konfig — respawn reicht nichts durch.
     repo, wt = umgebung
     fake = FakeWerkzeug(wt)
-    from to_spawn import config
-
-    konfig = config.lade(repo)
-    konfig["modelle"] = {**konfig["modelle"], "ticket": "claude-test-1"}
-    assert (
-        respawn.abloesen(repo, SPEC, TICKET, konfig, werkzeug=fake, warte_max=600).exit
-        == 0
-    )
+    assert respawn.abloesen(repo, SPEC, TICKET, werkzeug=fake, warte_max=600).exit == 0
     befehl = next(a for a in fake.aufrufe if a[0] == "fenster_starten")[4]
     assert "claude-test-1" not in befehl and "--model" not in befehl
 
@@ -434,11 +423,7 @@ def test_neues_fenster_nie_bereit_exit1(umgebung: tuple[Path, Path]) -> None:
 def test_dry_run_tut_nichts(umgebung: tuple[Path, Path]) -> None:
     repo, wt = umgebung
     fake = FakeWerkzeug(wt)
-    from to_spawn import config
-
-    erg = respawn.abloesen(
-        repo, SPEC, TICKET, config.lade(repo), werkzeug=fake, dry_run=True
-    )
+    erg = respawn.abloesen(repo, SPEC, TICKET, werkzeug=fake, dry_run=True)
     assert erg.exit == 0
     assert fake.namen() == []
     assert "\n" not in erg.zeile and "--ohne-prompt" in erg.zeile
@@ -799,7 +784,7 @@ class _TmuxFehler(respawn.TmuxWerkzeug):
         self.stderr = stderr
 
     def _tmux(self, *argumente: str, eingabe: str | None = None) -> str:
-        raise respawn.subprocess.CalledProcessError(1, "tmux", "", self.stderr)
+        raise respawn.TmuxFehler("list-panes", self.stderr)
 
 
 def test_fenster_liste_ohne_server_leer() -> None:
@@ -809,7 +794,7 @@ def test_fenster_liste_ohne_server_leer() -> None:
 
 
 def test_fenster_liste_anderer_fehler_wirft() -> None:
-    with pytest.raises(respawn.subprocess.CalledProcessError):
+    with pytest.raises(respawn.TmuxFehler):
         _TmuxFehler("unknown option -- Z").fenster_liste()
 
 
@@ -885,7 +870,7 @@ def test_auftrag_ist_frozen_dataclass(umgebung: tuple[Path, Path]) -> None:
     import dataclasses
 
     repo, _ = umgebung
-    auftrag = respawn.Auftrag(repo, SPEC, TICKET, {}, 600.0, False)
+    auftrag = respawn.Auftrag(repo, SPEC, TICKET, 600.0, False)
     assert (
         auftrag.name_alt == f"bau {TICKET}" and auftrag.name_neu == f"bau {TICKET} neu"
     )
