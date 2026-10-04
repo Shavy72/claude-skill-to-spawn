@@ -42,6 +42,7 @@ from pathlib import Path
 from typing import Any
 
 from to_spawn import config
+from to_spawn.manifest import MANIFEST_ORDNER
 
 log = logging.getLogger("to_spawn.startklar")
 
@@ -373,7 +374,9 @@ def _neue_venv(venv: Path, mit_pip: bool) -> str | None:
 
 
 def venv_sicherstellen(
-    ordner: Path, environ: Mapping[str, str] | None = None
+    ordner: Path,
+    environ: Mapping[str, str] | None = None,
+    spec: int | None = None,
 ) -> Befund:
     """Sorgt für eine lauffähige ``<ordner>/.venv`` (Symlink aufs Hauptrepo oder neu).
 
@@ -381,7 +384,7 @@ def venv_sicherstellen(
     (das Hauptrepo kann veraltet sein). Fehlertexte von pip/Probe sind geschwärzt.
     """
     ordner = Path(ordner)
-    geheim = _geheime_werte(ordner, environ)
+    geheim = _geheime_werte(ordner, environ, spec)
     venv = ordner / ".venv"
     py = _py_name()
     anforderungen = ordner / "requirements.txt"
@@ -594,7 +597,7 @@ def konfig_pruefen(ordner: Path) -> list[Befund]:
 
 
 def _manifest_pfad(ordner: Path, spec: int) -> Path:
-    return ordner / "docs" / "agents" / "manifests" / f"spec-{spec}.json"
+    return ordner / MANIFEST_ORDNER / f"spec-{spec}.json"
 
 
 def _manifest_tickets(ordner: Path, spec: int) -> dict[str, dict[str, Any]] | None:
@@ -648,7 +651,7 @@ def _gh_issue_text(ordner: Path, nummer: str) -> str:
         check=False,
     )
     if ergebnis.returncode != 0:
-        raise RuntimeError(_kurz(ergebnis.stderr or f"Exit {ergebnis.returncode}", 120))
+        raise RuntimeError(ergebnis.stderr or f"Exit {ergebnis.returncode}")
     return ergebnis.stdout
 
 
@@ -666,11 +669,13 @@ def _benoetigt(
     ordner: Path,
     tickets: dict[str, dict[str, Any]] | None,
     issue_leser: IssueLeser,
+    geheim: Iterable[str] = (),
 ) -> _Bedarf:
     """Benötigte Schlüssel-Namen aus Konfig, Manifest und Issue-Texten.
 
     Scheitert das Lesen eines Issues, fragt es die übrigen nicht mehr ab (kein
-    N×Timeout) und meldet die Prüfung als unvollständig.
+    N×Timeout) und meldet die Prüfung als unvollständig. Der Fehlertext wird
+    mit ``geheim`` geschwärzt, bevor er gekürzt wird.
     """
     namen: set[str] = set(_konfig_schluessel(ordner))
     warnungen: list[str] = []
@@ -699,7 +704,8 @@ def _benoetigt(
                 behebung = "GitHub-CLI gh installieren und `gh auth status` prüfen, dann erneut prüfen"
             except (OSError, subprocess.TimeoutExpired, RuntimeError) as fehler:
                 unvollstaendig = (
-                    f"Issue #{nummer} nicht lesbar ({_kurz(str(fehler), 120)})"
+                    f"Issue #{nummer} nicht lesbar "
+                    f"({_kurz(_schwaerzen(str(fehler), geheim), 120)})"
                 )
                 behebung = (
                     "`gh auth status` prüfen (Anmeldung/Netz), dann erneut prüfen"
@@ -746,7 +752,8 @@ def schluessel_pruefen(
                 "Manifest reparieren (neu erzeugen mit /to-tickets), dann erneut prüfen",
             )
         ]
-    bedarf = _benoetigt(ordner, tickets, leser)
+    geheim = _geheime_werte(ordner, umgebung, spec)
+    bedarf = _benoetigt(ordner, tickets, leser, geheim)
     benoetigt, warnungen = bedarf.namen, list(bedarf.warnungen)
     quellen = _env_quellen(ordner)
     nur_umgebung = []
@@ -1093,7 +1100,7 @@ def pruefe(
     """
     ordner = Path(ordner)
     return [
-        venv_sicherstellen(ordner, environ),
+        venv_sicherstellen(ordner, environ, spec),
         *konfig_pruefen(ordner),
         *schluessel_pruefen(
             ordner, spec, environ, issue_leser, manifest_pflicht=manifest_pflicht

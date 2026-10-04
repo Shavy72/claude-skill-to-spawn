@@ -1026,3 +1026,83 @@ def test_r2_wache_import_hat_noqa() -> None:
     assert any(
         z.startswith("from to_spawn import") and "noqa: E402" in z for z in zeilen
     )
+
+
+# --- Fixrunde 3: echtes gh, Gate ohne Manifest ---------------------------------
+
+_GH_ECHT = startklar._gh_issue_text
+
+
+def _gh_welt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Path]:
+    """Worktree mit ``.env.example`` + 2 Tickets, echtes ``_gh_issue_text`` aktiv."""
+    monkeypatch.setattr(startklar, "_gh_issue_text", _GH_ECHT)
+    _haupt, wt = _repo_mit_worktree(tmp_path)
+    (wt / ".env.example").write_text("FAL_KEY=\n", encoding="utf-8")
+    _manifest(wt, {"451": {"title": "a"}, "452": {"title": "b"}})
+    bin_ordner = tmp_path / "bin"
+    bin_ordner.mkdir()
+    monkeypatch.setenv("PATH", str(bin_ordner))
+    return wt, bin_ordner
+
+
+def test_r3_ohne_gh_im_path_ist_rot_gh_nicht_installiert(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    wt, _bin = _gh_welt(tmp_path, monkeypatch)
+    befunde = startklar.schluessel_pruefen(wt, SPEC, environ={})
+    rot = [b for b in befunde if not b.ok]
+    assert rot and "gh nicht installiert" in rot[0].text
+    assert "unvollständig" in rot[0].text
+
+
+def test_r3_gh_exit1_ist_rot_und_fragt_nur_ein_issue(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    wt, bin_ordner = _gh_welt(tmp_path, monkeypatch)
+    zaehl = tmp_path / "aufrufe.txt"
+    gh = bin_ordner / "gh"
+    gh.write_text(
+        f'#!/bin/sh\necho "$3" >> {shlex.quote(str(zaehl))}\necho "not logged in" >&2\nexit 1\n',
+        encoding="utf-8",
+    )
+    gh.chmod(0o755)
+    befunde = startklar.schluessel_pruefen(wt, SPEC, environ={})
+    rot = [b for b in befunde if not b.ok]
+    assert rot and "unvollständig" in rot[0].text
+    assert "not logged in" in rot[0].text
+    assert zaehl.read_text(encoding="utf-8").split() == ["451"]
+    assert "452" in rot[0].text  # nicht geprüft, aber genannt
+
+
+def test_r3_gh_fehlertext_ist_geschwaerzt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    wt, bin_ordner = _gh_welt(tmp_path, monkeypatch)
+    (wt / ".env").write_text("FAL_KEY=geheimer-wert-12345\n", encoding="utf-8")
+    gh = bin_ordner / "gh"
+    gh.write_text(
+        "#!/bin/sh\necho 'token geheimer-wert-12345 abgelehnt' >&2\nexit 1\n",
+        encoding="utf-8",
+    )
+    gh.chmod(0o755)
+    befunde = startklar.schluessel_pruefen(wt, SPEC, environ={})
+    text = " ".join(b.text + b.behebung for b in befunde)
+    assert "unvollständig" in text
+    assert "geheimer-wert-12345" not in text
+
+
+def test_r3_gate_ohne_manifest_laeuft_durch_und_ist_rot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _haupt, wt = _repo_mit_worktree(tmp_path)
+    echt = startklar.pruefe
+
+    def ohne_werkzeuge(ordner: Path, spec: int, **kw: object) -> list[startklar.Befund]:
+        # echtes pruefe samt manifest_pflicht des Gates; nur Werkzeug-Probe neutralisiert
+        return echt(ordner, spec, **{**kw, "werkzeuge": (), "environ": {}})  # type: ignore[arg-type]
+
+    monkeypatch.setattr(startklar, "pruefe", ohne_werkzeuge)
+    assert startklar.gate(wt, SPEC, environ={}) == 2
+    befunde = startklar.pruefe(wt, SPEC, manifest_pflicht=True)
+    rot = [b for b in befunde if not b.ok]
+    assert len(rot) == 1 and "fehlt" in rot[0].text and rot[0].bereich == "schlüssel"
