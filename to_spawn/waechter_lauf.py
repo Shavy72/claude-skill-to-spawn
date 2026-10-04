@@ -24,10 +24,13 @@ Haupt-Modell weiter — das Limit ist dann offen.
 Erzwungene Ablösung (#436, Spec #399 E17): die Aufsicht misst den Kontext jeder neuen
 Modellantwort (``hooks.kontext``: input + cache_read + cache_creation) gegen die
 Handoff-Grenze aus ``~/.claude/smart-zone.json`` (:func:`handoff_grenze`). Erreicht er
-sie, startet genau einmal je :func:`fahre` ein Faden die respawn-Tür
+sie, startet :class:`Abloesung` einen Faden mit der respawn-Tür
 ``respawn_aufseher.aufseher_abloesen`` (Handoff + Start-Prompt ins Pane ``$TMUX_PANE``
 anfordern). Exit 0 → :func:`abloesung_schreiben`; die Abbruch-Bedingung in ``wache.py``
-beendet die Session und startet den Nachfolger. Ohne tmux nur Warnung + Bau-Log-Zeile.
+beendet die Session und startet den Nachfolger. Fehlschlag (Exit 1/2, Ausnahme) →
+neuer Versuch nach :data:`ABLOESE_ABSTAND_S`, höchstens :data:`ABLOESE_VERSUCHE_MAX`,
+dann Warnung + Bau-Log ``blockiert``. Session-Ende stoppt den Faden vor dem Tippen.
+Ohne tmux nur Warnung + Bau-Log-Zeile.
 
 Der Aufpasser (#236) setzt ein stilles Aufseher-Fenster über ``fahre(session_id=…)``
 mit ``--resume`` fort; die Gesprächs-ID steht in ``.to-spawn/sessions/wache-<S>.json``.
@@ -49,7 +52,7 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from . import bau_log, hooks, melder, respawn_aufseher, sessions_datei
+from . import bau_log, hooks, melder, respawn, respawn_aufseher, sessions_datei
 
 log = logging.getLogger("to_spawn.waechter_lauf")
 
@@ -560,14 +563,23 @@ def _melde_stillstand(
 
 
 def _abloesen(
-    repo: Path, spec: int, cwd: Path, kontext: int, grenze: int, laeuft: Callable[[], bool]
-) -> None:
-    """Aufseher an der Handoff-Grenze über die respawn-Tür ablösen (eigener Faden, #436).
+    repo: Path,
+    spec: int,
+    cwd: Path,
+    kontext: int,
+    grenze: int,
+    laeuft: Callable[[], bool],
+    *,
+    werkzeug: respawn.Werkzeug | None = None,
+    warte_max: float = respawn.WARTE_MAX_VORGABE,
+) -> bool:
+    """Ein Ablöse-Versuch über die respawn-Tür (läuft im Faden von :class:`Abloesung`, #436).
 
     Exit 0 und die Session läuft noch → Ablöse-Datei (Pfad aus :data:`ABLOESE_ENV`);
     die Abbruch-Bedingung in ``wache.py`` beendet dann die Session und startet den
     Nachfolger. Die Bau-Log-Zeile steht vor der Ablöse-Datei, damit sie das Ende der
-    Session sicher überlebt.
+    Session sicher überlebt. Rückgabe ``True`` = Fehlschlag, ein neuer Versuch kann
+    helfen (respawn Exit 1/2); ``False`` = erledigt oder Wiederholen sinnlos.
     """
     pane = (os.environ.get("TMUX_PANE") or "").strip()
     if not pane:
@@ -576,7 +588,7 @@ def _abloesen(
         _log_zeile(
             repo, spec, "aufseher_abloesung", kontext=kontext, grenze=grenze, exit=None, zeile=zeile
         )
-        return
+        return False
     log.warning(
         "Aufseher #%s: Kontext %s ≥ Grenze %s — Ablösung über respawn (Pane %s).",
         spec,
@@ -584,7 +596,9 @@ def _abloesen(
         grenze,
         pane,
     )
-    erg = respawn_aufseher.aufseher_abloesen(cwd, spec, pane)
+    erg = respawn_aufseher.aufseher_abloesen(
+        cwd, spec, pane, werkzeug=werkzeug, warte_max=warte_max
+    )
     ziel = (os.environ.get(ABLOESE_ENV) or "").strip()
     zeile = erg.zeile
     schreiben = erg.exit == 0 and erg.handoff is not None
@@ -599,11 +613,166 @@ def _abloesen(
     )
     if not schreiben or erg.handoff is None:
         log.warning("Aufseher #%s: %s", spec, zeile)
-        return
+        return erg.exit != respawn.EXIT_OK
     try:
         abloesung_schreiben(Path(ziel), erg.handoff, erg.start_prompt)
     except OSError as fehler:
         log.error("Aufseher #%s: Ablöse-Datei %s nicht geschrieben: %s", spec, ziel, fehler)
+        return True
+    return False
+
+
+#: Höchstens so viele Ablöse-Versuche je :func:`fahre`; danach Warnung + Bau-Log ``blockiert``
+#: (ein Mensch muss ran). Test-Naht: ``TO_SPAWN_ABLOESE_VERSUCHE``.
+ABLOESE_VERSUCHE_MAX = 3
+#: Mindestabstand (s) zwischen zwei Ablöse-Versuchen — der Aufseher soll nach einem
+#: Weiter-Auftrag erst ein paar Ticks arbeiten. Test-Naht: ``TO_SPAWN_ABLOESE_ABSTAND_S``.
+ABLOESE_ABSTAND_S = 600.0
+#: Wie lange ein Versuch auf Handoff + Start-Prompt wartet (Vorgabe der respawn-Tür).
+#: Test-Naht: ``TO_SPAWN_ABLOESE_WARTE_S``.
+ABLOESE_WARTE_S = respawn.WARTE_MAX_VORGABE
+
+
+class _StoppWerkzeug(respawn.TmuxWerkzeug):
+    """tmux-Werkzeug des Ablöse-Fadens: nach Session-Ende (``stopp``) wird nichts mehr getippt.
+
+    ``tippen`` und ``schlafen`` prüfen das Signal und brechen mit ``respawn._Abbruch`` ab —
+    so landet nie ein Weiter-Auftrag in einer neuen Session im selben Pane.
+    """
+
+    def __init__(self, stopp: threading.Event) -> None:
+        self._stopp = stopp
+
+    def _pruefen(self) -> None:
+        if self._stopp.is_set():
+            raise respawn._Abbruch(respawn.EXIT_NICHT_BEWIESEN, "Session beendet — Ablösung gestoppt")
+
+    def tippen(self, ziel: str, text: str) -> None:
+        self._pruefen()
+        super().tippen(ziel, text)
+
+    def schlafen(self, s: float) -> None:
+        if self._stopp.wait(s):
+            self._pruefen()
+
+
+class Abloesung:
+    """Ablöse-Versuche des Aufsehers je :func:`fahre` (#436): ein Faden, wiederholbar, stoppbar.
+
+    :meth:`ausloesen` (Aufsicht an der Grenze) startet den Faden, falls keiner läuft und
+    weder erledigt noch aufgegeben. Der Faden versucht es bis zu ``versuche_max`` Mal,
+    zwischen zwei Versuchen mindestens ``abstand_s`` Sekunden; Ausnahmen der respawn-Tür
+    zählen als Fehlschlag. :meth:`stoppen` (Session-Ende) hält ihn an, bevor er tippt.
+    """
+
+    def __init__(
+        self,
+        repo: Path,
+        spec: int,
+        cwd: Path,
+        *,
+        versuche_max: int | None = None,
+        abstand_s: float | None = None,
+        warte_s: float | None = None,
+    ) -> None:
+        self.repo, self.spec, self.cwd = repo, spec, cwd
+        self.versuche_max = (
+            versuche_max
+            if versuche_max is not None
+            else int(zahl_aus_umgebung("TO_SPAWN_ABLOESE_VERSUCHE", ABLOESE_VERSUCHE_MAX))
+        )
+        self.abstand_s = (
+            abstand_s
+            if abstand_s is not None
+            else zahl_aus_umgebung("TO_SPAWN_ABLOESE_ABSTAND_S", ABLOESE_ABSTAND_S)
+        )
+        self.warte_s = (
+            warte_s if warte_s is not None else zahl_aus_umgebung("TO_SPAWN_ABLOESE_WARTE_S", ABLOESE_WARTE_S)
+        )
+        self.versuche = 0
+        self.fertig = False  # erledigt oder aufgegeben — nie wieder auslösen
+        self.faden: threading.Thread | None = None
+        self._letzter: float | None = None  # monotonic des letzten Versuchs
+        self._stopp = threading.Event()
+        self._sperre = threading.Lock()
+
+    def ausloesen(self, kontext: Callable[[], int], grenze: int, laeuft: Callable[[], bool]) -> None:
+        """Faden starten, wenn erlaubt; sonst nichts (läuft schon / fertig / Obergrenze)."""
+        with self._sperre:
+            if self.fertig or self.versuche >= self.versuche_max:
+                return
+            if self.faden is not None and self.faden.is_alive():
+                return
+            self.faden = threading.Thread(
+                target=self._lauf,
+                args=(self._stopp, kontext, grenze, laeuft),
+                name="waechter-abloesung",
+                daemon=True,
+            )
+            self.faden.start()
+
+    def stoppen(self, timeout: float) -> None:
+        """Session-Ende: Stop-Signal, Faden abwarten; danach darf eine neue Session neu auslösen."""
+        with self._sperre:
+            stopp, faden = self._stopp, self.faden
+            self._stopp = threading.Event()
+        stopp.set()
+        if faden is not None:
+            faden.join(timeout)
+            if faden.is_alive():
+                log.warning("Aufseher #%s: Ablöse-Faden nach %.0f s nicht beendet.", self.spec, timeout)
+
+    def _lauf(
+        self,
+        stopp: threading.Event,
+        kontext: Callable[[], int],
+        grenze: int,
+        laeuft: Callable[[], bool],
+    ) -> None:
+        while True:
+            rest = 0.0 if self._letzter is None else self._letzter + self.abstand_s - time.monotonic()
+            if stopp.wait(max(0.0, rest)):
+                return
+            with self._sperre:
+                self.versuche += 1
+                self._letzter = time.monotonic()
+                nummer = self.versuche
+            gemessen = kontext()
+            try:
+                fehlschlag = _abloesen(
+                    self.repo,
+                    self.spec,
+                    self.cwd,
+                    gemessen,
+                    grenze,
+                    laeuft,
+                    werkzeug=_StoppWerkzeug(stopp),
+                    warte_max=self.warte_s,
+                )
+            except (OSError, UnicodeDecodeError, respawn._Abbruch) as fehler:
+                zeile = f"Ablöse-Versuch {nummer} gescheitert: {type(fehler).__name__}: {fehler}"
+                log.error("Aufseher #%s: %s", self.spec, zeile)
+                _log_zeile(
+                    self.repo,
+                    self.spec,
+                    "aufseher_abloesung",
+                    kontext=gemessen,
+                    grenze=grenze,
+                    exit=respawn.EXIT_NICHT_BEWIESEN,
+                    zeile=zeile,
+                )
+                fehlschlag = True
+            if not fehlschlag:
+                self.fertig = True
+                return
+            if nummer >= self.versuche_max:
+                self.fertig = True
+                grund = f"Ablösung {nummer}× gescheitert (Obergrenze) — Aufseher läuft über der Grenze weiter"
+                log.warning("Aufseher #%s: %s.", self.spec, grund)
+                _log_zeile(self.repo, self.spec, "blockiert", grund=grund, versuche=nummer)
+                return
+            if stopp.is_set():
+                return
 
 
 def _rueckkehr_ab(eintrag: dict[str, Any] | None, puffer: float) -> float:
@@ -647,7 +816,7 @@ def fahre(
     """
     haupt = modell
     rueckkehr_ab: float | None = None  # Unix-Zeit, ab der das Haupt-Modell wieder darf
-    abloesung_lief = threading.Event()  # genau eine Ablösung je fahre()
+    abloesung = Abloesung(repo, spec, cwd)  # Ablöse-Versuche je fahre(), über Sessions hinweg
     if session_id:
         sid = session_id
         transkript = transkript_ordner(cwd) / f"{sid}.jsonl"
@@ -688,16 +857,14 @@ def fahre(
             datei, ab, takt, lambda _text: None, grenze=grenze or handoff_grenze(modell)
         )
 
-        def bei_grenze(kontext: int, _proc: subprocess.Popen[bytes] = proc) -> None:
-            if abloesung_lief.is_set():
-                return
-            abloesung_lief.set()
-            threading.Thread(
-                target=_abloesen,
-                args=(repo, spec, cwd, kontext, aufsicht.grenze or 0, lambda: _proc.poll() is None),
-                name="waechter-abloesung",
-                daemon=True,
-            ).start()
+        def bei_grenze(
+            _kontext: int,
+            _proc: subprocess.Popen[bytes] = proc,
+            _aufsicht: Aufsicht = aufsicht,
+        ) -> None:
+            abloesung.ausloesen(
+                lambda: _aufsicht.kontext, _aufsicht.grenze or 0, lambda: _proc.poll() is None
+            )
 
         aufsicht.bei_grenze = bei_grenze
 
@@ -761,6 +928,7 @@ def fahre(
                     )
                     aufsicht.halt.set()
                     _beende(proc)
+                    abloesung.stoppen(timeout=takt + 1)
                     return 0
                 if (
                     rueckkehr_ab is not None
@@ -777,6 +945,7 @@ def fahre(
                     break
         aufsicht.halt.set()
         aufsicht.join(timeout=takt + 1)
+        abloesung.stoppen(timeout=takt + 1)  # Session vorbei: Ablöse-Faden tippt nichts mehr
         if zurueck:
             _log_zeile(repo, spec, "waechter_modell", von=modell, nach=haupt, grund="Limit vorbei")
             cmd = resume_befehl(
