@@ -182,6 +182,7 @@ Du bist verantwortlich, dass Spec #{S} vollständig, sauber und autonom fertig g
 - Eine Bau-Session hängt oder ist tot → du handelst (Befehle unten), nicht nur melden.
 
 ## Jeder Tick
+0. `python {SKILL}/to_spawn.py aufseher-stand {S}` — erster Stand-Blick (ersetzt `~/waechter/stand.sh`): je Ticket eine Kurz-Zeile (offen/zu · arbeitet/still/Rückfrage · Kontext · Phase · letzte Aussage · neue Kommentare). Die Stand-Datei `~/.local/state/to-spawn/aufseher/stand-{S}.jsonl` ist dein Gedächtnis: je Aufruf eine Zeile, ohne Änderung `noop: true`; ein Nachfolger startet mit ihrer letzten Nicht-noop-Zeile. Kein Pane-Text in deinen Kontext.
 1. `PYTHONIOENCODING=utf-8 python scripts/capo.py {S} --katalog` — Stand je Ticket, neue Bau-Log-Zeilen, Verstöße. capo öffnet selbst wieder, kommentiert verwaiste Sessions und mailt Kritisches (nicht doppelt tun); `--katalog` schreibt neue Vorfälle ins Bau-Log und nach docs/agents/FEHLERKATALOG_spawn.md (mit Pathspec mitcommitten).
 2. `node ~/.claude/hooks/smart-zone/staffel/aufraeumen.mjs --spec {S}` — schließt Fenster übergebener Sessions.
 3. Befehl A (unten) — läuft jedes offene, entblockte Ticket? Hängt eines, ist es tot oder an der Grenze → Befehle B–D.
@@ -192,6 +193,7 @@ Du bist verantwortlich, dass Spec #{S} vollständig, sauber und autonom fertig g
 ## Befehle (fertig zum Kopieren; <N> = Ticket, <PID> aus Befehl A)
 Ort: Aufseher im tmux des Bau-Servers → Spalte „hier“ ist der Bau-Server. Aufseher am PC → „hier“ = PC, Server-Tickets mit der Server-Form.
 A Stand aller Sessions
+  zuerst: `python {SKILL}/to_spawn.py aufseher-stand {S} --alle` (Kurz-Zeile je Ticket, ersetzt `~/waechter/stand.sh`)
   hier:   `python scripts/sessions_stand.py {S} --alle` (aus / wartet / läuft seit / VERWAIST) · `python {SKILL}/to_spawn.py log {S}` (Token, Dauer je Ticket)
   Server: `ssh <SSH> 'cd <SERVER_REPO> && python3 scripts/sessions_stand.py {S} --alle'`
 B Ticket neu starten (Ticket steht auf „aus“)

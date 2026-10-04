@@ -33,6 +33,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from to_spawn import (  # noqa: E402
     aufpasser,
+    aufseher_stand,
     bau_log,
     config,
     deploy_status,
@@ -467,6 +468,7 @@ def main(argv: list[str] | None = None) -> int:
     nest.richte_parser_ein(unter)
     leitstand.richte_parser_ein(unter)
     waechter_takt.richte_parser_ein(unter)
+    aufseher_stand.richte_parser_ein(unter)
     # Aufpasser (#236): Cron-Hausmeister für die tmux-Fenster; gleiche Argumente wie
     # ``skripte/aufpasser.py``.
     aufpasser.parser_fuellen(
@@ -492,6 +494,9 @@ def main(argv: list[str] | None = None) -> int:
         return waechter_takt.lauf(args)
     if args.befehl == "aufpasser":
         return aufpasser.lauf_mit_args(args)
+    if args.befehl == "aufseher-stand":
+        # Nur lesen + eigene Stand-Datei: legt keine Konfig an (#430).
+        return aufseher_stand.lauf(args, config.repo_wurzel(_repo_aus_umgebung()))
     if args.befehl == "hauptzweig":
         # Nur der Name auf stdout — spawn_srv.sh liest ihn ein (#257).
         print(gh.hauptzweig(config.repo_wurzel(_repo_aus_umgebung())))

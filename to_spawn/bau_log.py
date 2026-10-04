@@ -66,6 +66,24 @@ def hat_log(repo: Path, ticket: str | int) -> bool:
     return log_pfad(repo, ticket).is_file() or lauf_pfad(repo, ticket).is_file()
 
 
+def log_ort(ticket: str | int, worktree: Path, hauptbaum: Path) -> Path | None:
+    """Wo das Bau-Log eines Tickets liegt: zuerst im Ticket-Worktree, sonst im Hauptbaum.
+
+    Dort schreiben die Hooks; der Hauptbaum hält das Log, wenn der Worktree fehlt.
+    ``None`` = kein Log (Ticket noch nicht gestartet). Einzige Stelle dieser Regel
+    für ``sessions_stand.token_text`` und den Aufseher-Stand (#430).
+    """
+    for ort in (worktree, hauptbaum):
+        if hat_log(ort, ticket):  # versioniert oder Laufdatei (Fixrunde #204)
+            return ort
+    return None
+
+
+def kontext_text(spitze_k: float | None) -> str:
+    """Spitzen-Kontext als Text, z. B. „180,2k“; ``—`` ohne Wert (#238, #430)."""
+    return f"{_komma(spitze_k)}k" if spitze_k else "—"
+
+
 #: Rückfall-Ordner für die Laufdatei, wenn der Worktree (noch/nicht mehr) fehlt (#257):
 #: ``bau.py`` setzt ``TO_SPAWN_LOG_RUECKFALL`` auf den Hauptbaum (``TO_SPAWN_REPO`` nimmt es
 #: aus der Session-Umgebung, #205); ``TO_SPAWN_REPO`` gilt außerhalb einer Session.

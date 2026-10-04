@@ -258,12 +258,12 @@ def token_text(ticket: str, repo: Path = REPO) -> str:
     # Bewusst ohne ``repo``: ``worktree_pfad`` liest das Repo selbst aus ``TO_SPAWN_REPO``
     # bzw. dem aktuellen Ordner — genau die Quelle von ``REPO`` oben. Die Alt-Tests (#238)
     # stubben die Funktion mit einem Argument, ein zweites bricht sie (Fixrunde #257).
-    for ort in (Path(config.worktree_pfad(ticket)).expanduser(), repo):
-        if bau_log.hat_log(ort, ticket):  # versioniert oder Laufdatei (Fixrunde #204)
-            # Rückfall-Laufdatei im Hauptbaum kommt dazu (Worktree fehlte beim Schreiben, #257).
-            spitze_k = bau_log.zusammenfassung(ort, ticket, hauptbaum=repo)["spitze_k"]
-            return f"{spitze_k:.1f}".replace(".", ",") + "k" if spitze_k else "—"
-    return "—"
+    ort = bau_log.log_ort(ticket, Path(config.worktree_pfad(ticket)).expanduser(), repo)
+    if ort is None:
+        return bau_log.kontext_text(None)
+    # Rückfall-Laufdatei im Hauptbaum kommt dazu (Worktree fehlte beim Schreiben, #257).
+    spitze_k = bau_log.zusammenfassung(ort, ticket, hauptbaum=repo)["spitze_k"]
+    return bau_log.kontext_text(spitze_k)
 
 
 def token_eintragen(eintraege: dict[str, Eintrag], repo: Path = REPO) -> None:
