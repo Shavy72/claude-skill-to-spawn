@@ -11,3 +11,7 @@ Stand fea167e, Basis 680f018. Prüfer: general-purpose ×2 (sonnet, geteilt), pr
 2. respawn.py ~637–641: Signal während `_abbruch_ergebnis`/`_aufraeumen` nach normalem Abbruch → `_Abbruch` verlässt `abloesen()` gegen den Docstring. Fix: Flag „räumt auf“ vor dem Aufräumen setzen, Handler merkt dann nur.
 3. respawn.py ~818 `_alte_ruhig`: `bildschirm()` liefert bei tmux-Fehler `""` → gilt als ruhig; Wartezeit + Hinweis in der Ergebniszeile fehlen. Fix: unlesbar = nicht ruhig (z. B. `None` unterscheiden), Hinweis in Zeile.
 5. respawn.py:15 Modul-Kommentar Schritt d „alte Session unangetastet“ widerspricht `_aufraeumen` (tippt WEITER_AUFTRAG). Fix: Text korrigieren.
+
+## Hoch (Echtlauf 5, rot)
+6. respawn.py `BEREIT_MAX_S = 120` fest, unabhängig von `--warte-max`. Die neue bau.py wartet unter Last an der Speicher-Sperre („wartet auf Speicher … N Claude-Sessions (Obergrenze 12)“, 60-s-Takte, auch mit `--sofort`) → respawn bricht nach 120 s ab (Exit 1, sauber aufgeräumt). Beleg `431_echtlauf5_*` (Commit 8546611). Entscheidung (Bau-Log): Bereit-Frist hängt an `--warte-max`; solange der neue Bildschirm „wartet auf Speicher“ zeigt, zählt das nicht als Fehler, Ergebniszeile nennt die Wartezeit. Rot-Test zuerst.
+   Echtlauf-Gerüst: wt-431 braucht für den Lauf einen `.venv`-Link und ein Manifest `spec-9399.json` für Ticket 9431 (Echtlauf-5-Agent hat beides angelegt und wieder gelöscht) — Ablauf in `431_echtlauf5_log.txt`/Handoff.
