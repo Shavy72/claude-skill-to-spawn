@@ -563,7 +563,11 @@ class _Abbruch(Exception):
 
 
 _SignalHandler = Callable[[int, FrameType | None], object] | int | signal.Handlers
-_ABGEFANGENE_SIGNALE = (signal.SIGTERM, signal.SIGHUP, signal.SIGINT)
+# SIGHUP gibt es unter Windows nicht — dort nur SIGTERM/SIGINT, sonst bricht schon der Import
+# (to_spawn.py nest am Laptop, setup_bau_server_push.sh).
+_ABGEFANGENE_SIGNALE: tuple[signal.Signals, ...] = tuple(
+    getattr(signal, name) for name in ("SIGTERM", "SIGHUP", "SIGINT") if hasattr(signal, name)
+)
 
 
 def abloesen(
