@@ -45,6 +45,7 @@ from to_spawn import (  # noqa: E402
     probesitz,
     setup,
     speicher,
+    startklar,
     umzug,
     vorfall,
     waechter_takt,
@@ -464,6 +465,11 @@ def main(argv: list[str] | None = None) -> int:
         "--staffel", action="store_true", help="nur die Staffel-Pause in Sekunden ausgeben"
     )
 
+    # Startklar-Prüfung (#450): venv, Schlüssel, Aufseher-Werkzeuge — Exit 0 ok / 1 rot.
+    p_startklar = unter.add_parser("startklar", help="Aufseher-Ordner vor dem Spec-Start prüfen (Exit 0/1)")
+    p_startklar.add_argument("spec", type=int)
+    p_startklar.add_argument("--ordner", type=Path, default=None, help="Aufseher-Ordner (Vorgabe: Repo-Wurzel)")
+
     nest.richte_parser_ein(unter)
     leitstand.richte_parser_ein(unter)
     waechter_takt.richte_parser_ein(unter)
@@ -496,6 +502,11 @@ def main(argv: list[str] | None = None) -> int:
         # Nur der Name auf stdout — spawn_srv.sh liest ihn ein (#257).
         print(gh.hauptzweig(config.repo_wurzel(_repo_aus_umgebung())))
         return 0
+    if args.befehl == "startklar":
+        ordner = args.ordner.resolve() if args.ordner else config.repo_wurzel(_repo_aus_umgebung())
+        code, text = startklar.ausgabe(startklar.pruefe(ordner, args.spec))
+        print(text)
+        return code
     if args.befehl == "speicher":
         # Nur lesen: legt keine Konfig an (kein config.sicherstellen).
         return speicher.cli(config.lade(_repo_aus_umgebung()), nur_staffel=args.staffel)

@@ -103,6 +103,11 @@ DEFAULTS: dict[str, Any] = {
     #: ``min_frei_mib`` MiB frei sind oder schon ``max_sessions`` Claude-Prozesse laufen.
     #: Richtwert: 6 Sessions je 16 GB RAM (Bau-Server, OOM-Absturz 21.09.). ``staffel_s`` =
     #: Pause in Sekunden zwischen zwei Fenster-Starts, damit die Starts sich nicht stapeln.
+    #: Startklar-Prüfung (#450): Schlüssel-NAMEN, die jede Spec dieses Repos braucht
+    #: (zusätzlich zu Manifest-Feld ``schluessel`` und Treffern aus ``.env.example``).
+    "startklar": {
+        "schluessel": [],
+    },
     "speicher": {
         "min_frei_mib": 2048,
         "max_sessions": 6,

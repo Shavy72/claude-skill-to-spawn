@@ -39,6 +39,7 @@ from to_spawn import (  # noqa: E402
     config,
     context_mode,
     speicher,
+    startklar,
     umzug,
     vertrauen,
     waechter_lauf,
@@ -254,6 +255,12 @@ def main() -> int:
     if a.print_prompt:
         print(prompt)
         return 0
+    # Startklar-Prüfung (#450): venv, Schlüssel, Werkzeuge vor dem Aufseher-Start;
+    # nicht beim Probelauf und nicht beim Fortsetzen durch den Aufpasser (--resume).
+    if not a.dry_run and not a.resume:
+        startklar_code = startklar.gate(REPO_ORDNER, a.spec)
+        if startklar_code:
+            return startklar_code
     claude = shutil.which("claude") or "claude"
     # Pflicht-MCP context-mode (#237): der Aufseher startet ohne ``--strict-mcp-config``,
     # das Plugin-MCP lädt also von selbst — nur fehlen darf es nicht.
