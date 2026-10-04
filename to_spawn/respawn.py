@@ -8,7 +8,8 @@ Eine Tür: :func:`abloesen`. Sie löst die laufende Claude-Session im tmux-Fenst
 a) Handoff-Auftrag ins alte Fenster (Handoff + Start-Prompt mit festen Pfaden).
 b) neues Fenster ``bau <N> neu`` mit ``bau <N> --sofort --ohne-prompt`` wie spawn/capo
    (Bau-Konfiguration allein aus ``bau.py``; nie ein Start-Prompt als Argument, V4).
-c) warten bis bereit und ruhig, dann ``/remote-control`` tippen (E7) und die
+c) warten bis bereit und ruhig (Speicher-Wartezeit von bau.py zählt gegen
+   ``--warte-max``, nicht als Fehler), dann ``/remote-control`` tippen (E7) und die
    Bestätigung auf dem Bildschirm prüfen (ein Nachschub-Enter, falls das
    Slash-Menü das erste schluckt) — sonst Exit 1.
 d) warten, bis Handoff UND Start-Prompt frisch (nach Schritt a) und nicht leer da
@@ -39,12 +40,12 @@ import subprocess
 import threading
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from types import FrameType
 from typing import Literal, Protocol
 
-from to_spawn import capo, config
+from to_spawn import capo, config, speicher
 
 log = logging.getLogger(__name__)
 
@@ -60,6 +61,9 @@ SPINNER_ZEILE = re.compile(r"^\s*[✻✶✳✢✽]\s+\S.*…")
 #: Texte, die Claude nach erfolgreichem ``/remote-control`` zeigt (klein geschrieben).
 #: Claude Code 2.1 (Echtlauf 2, 04.10.2026): „/remote-control is active · Continue here …“.
 REMOTE_MARKER: tuple[str, ...] = ("remote-control is active", "remote control active")
+#: Frist für „bereit“ ab Fensterstart. Zeit, in der bau.py noch an der Speicher-Sperre
+#: wartet (:data:`speicher.WARTE_TEXT` auf dem Schirm), zählt nicht hierzu, sondern
+#: gegen ``--warte-max``.
 BEREIT_MAX_S = 120.0
 #: So lange muss der bereite Bildschirm unverändert stehen, bevor getippt wird.
 EINGABE_RUHE_S = 3.0
@@ -511,6 +515,16 @@ def _bereit(text: str) -> bool:
     return any(marker in text for marker in BEREIT_MARKER)
 
 
+def _wartet_auf_speicher(text: str) -> bool:
+    """bau.py wartet gerade an der Speicher-Sperre (vor dem Claude-Start).
+
+    Maßgeblich ist die letzte Zeile mit „Speicher“: nach „Speicher wieder frei“
+    wartet bau.py nicht mehr.
+    """
+    zeilen = [z for z in text.splitlines() if "Speicher" in z]
+    return bool(zeilen) and speicher.WARTE_TEXT in zeilen[-1]
+
+
 def _remote_bestaetigt(text: str) -> bool:
     """``/remote-control`` ist ausgeführt: Bestätigung sichtbar, Befehl nicht mehr in der Eingabe.
 
@@ -580,6 +594,8 @@ class _Stand:
     beenden_begonnen: bool = False
     #: Name des ersten abfangenen Signals (weitere Signale werden dann ignoriert).
     signal_name: str | None = None
+    #: Hinweise für die Ergebniszeile (z. B. Speicher-Wartezeit), Exit bleibt davon unberührt.
+    hinweise: list[str] = field(default_factory=list)
 
 
 class _Abbruch(Exception):
@@ -699,7 +715,11 @@ def _ablauf(a: Auftrag, w: Werkzeug, stand: _Stand) -> Ergebnis:
     log.info("respawn #%s: neues Fenster %s gestartet.", a.ticket, stand.neu)
 
     try:
-        _remote_control(w, stand.neu)  # c)
+        speicher_s = _remote_control(w, stand.neu, a.warte_max)  # c)
+        if speicher_s:
+            stand.hinweise.append(
+                f"neue Session wartete {int(speicher_s)} s auf Speicher"
+            )
         gefunden_h, gefunden_s, prompt = _warte_dateien(
             a, w, handoff, start, seit
         )  # d)
@@ -735,16 +755,23 @@ def _pruefe_duplikat(a: Auftrag, w: Werkzeug) -> FensterInfo | Ergebnis:
     return alte[0]
 
 
-def _remote_control(w: Werkzeug, neu: str) -> None:
-    """Schritt c: bereit + ruhig abwarten, ``/remote-control`` tippen, Bestätigung prüfen."""
-    if not _warte_ruhig_bereit(w, neu):
-        raise _Abbruch(
-            EXIT_NICHT_BEWIESEN,
-            f"neue Session nach {int(BEREIT_MAX_S)} s nicht bereit",
-        )
+def _remote_control(w: Werkzeug, neu: str, warte_max: float) -> float:
+    """Schritt c: bereit + ruhig abwarten, ``/remote-control`` tippen, Bestätigung prüfen.
+
+    Gibt die Sekunden zurück, die bau.py vorher an der Speicher-Sperre wartete.
+    """
+    bereit, speicher_s = _warte_ruhig_bereit(w, neu, warte_max)
+    if not bereit:
+        if speicher_s >= warte_max:
+            grund = f"neue Session wartet nach {int(speicher_s)} s noch auf Speicher"
+        else:
+            grund = f"neue Session nach {int(BEREIT_MAX_S)} s nicht bereit"
+            if speicher_s:
+                grund += f" (davor {int(speicher_s)} s auf Speicher gewartet)"
+        raise _Abbruch(EXIT_NICHT_BEWIESEN, grund)
     w.tippen(neu, REMOTE_CONTROL)
     if _warte(w, REMOTE_MAX_S, lambda: _remote_bestaetigt(w.bildschirm(neu))):
-        return
+        return speicher_s
     # Slash-Menü kann das erste Enter als Auswahl schlucken → ein Nachschub-Enter.
     w.taste(neu, "Enter")
     if not _warte(w, REMOTE_MAX_S, lambda: _remote_bestaetigt(w.bildschirm(neu))):
@@ -752,17 +779,33 @@ def _remote_control(w: Werkzeug, neu: str) -> None:
             EXIT_NICHT_BEWIESEN,
             "Remote Control im neuen Fenster nicht bestätigt (kein Hinweis auf dem Bildschirm)",
         )
+    return speicher_s
 
 
-def _warte_ruhig_bereit(w: Werkzeug, ziel: str) -> bool:
-    """Bereit-Bildschirm, der :data:`EINGABE_RUHE_S` lang unverändert steht."""
+def _warte_ruhig_bereit(w: Werkzeug, ziel: str, warte_max: float) -> tuple[bool, float]:
+    """Bereit-Bildschirm, der :data:`EINGABE_RUHE_S` lang unverändert steht.
+
+    Zwei Uhren: Zeit mit Speicher-Wartezeile zählt gegen ``warte_max``, alle übrige
+    gegen :data:`BEREIT_MAX_S`. Jeder Takt zählt zu dem Zustand, der an seinem Anfang
+    sichtbar war. Gibt (bereit, Sekunden an der Speicher-Sperre) zurück.
+    """
     ruhe = _Stabil(w)
-
-    def bedingung() -> bool:
+    speicher_s = sonst_s = 0.0
+    letzte = w.jetzt()
+    wartete = False
+    while True:
         text = w.bildschirm(ziel)
-        return ruhe.seit_mindestens(text if _bereit(text) else None, EINGABE_RUHE_S)
-
-    return _warte(w, BEREIT_MAX_S, bedingung)
+        jetzt = w.jetzt()
+        if wartete:
+            speicher_s += jetzt - letzte
+        else:
+            sonst_s += jetzt - letzte
+        letzte, wartete = jetzt, _wartet_auf_speicher(text)
+        if ruhe.seit_mindestens(text if _bereit(text) else None, EINGABE_RUHE_S):
+            return True, speicher_s
+        if speicher_s >= warte_max or sonst_s >= BEREIT_MAX_S:
+            return False, speicher_s
+        w.schlafen(TAKT_S)
 
 
 def _warte_dateien(
@@ -839,7 +882,7 @@ def _alte_abloesen(
     (Exit bleibt 0 — die neue Session arbeitet bewiesen).
     """
     stand.beenden_begonnen = True
-    hinweise: list[str] = []
+    hinweise = list(stand.hinweise)
     if not _alte_ruhig(w, alt.ziel):
         hinweise.append(
             f"alte Session arbeitete nach {int(ALT_RUHE_MAX_S)} s noch — beendet trotzdem"
@@ -921,4 +964,5 @@ def _aufraeumen(
             )
     elif stand.alt:
         teile.append("alte Session unangetastet")
+    teile.extend(stand.hinweise)
     return Ergebnis(exit_code, " — ".join(teile))
