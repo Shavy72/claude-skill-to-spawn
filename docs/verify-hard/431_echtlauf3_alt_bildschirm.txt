@@ -1,0 +1,24 @@
+
+✻ Crunched for 26s · done 6:19 AM
+
+❯ Ablösung abgebrochen (respawn). Die neue Session startet nicht — arbeite
+  normal am Ticket weiter. Handoff-Datei und Start-Prompt dürfen liegen
+  bleiben.
+
+● 🎯 Welches Ticket gilt für Worktree 9431? Ich kenne es nicht.
+
+  Im Repo steht nur README.md, und der Handoff nennt kein Ziel. Ich fange erst
+  an, wenn ich Ticket oder Auftrag kenne. Gib mir die Ticketnummer oder den
+  Auftrag.
+
+  Die Stände zu #362/#363 stammen aus dem Gedächtnis und sind nicht geprüft.
+  Einen Remote gibt es auch nicht, ein Push geht also nicht.
+
+✻ Worked for 8s · done 6:34 AM
+
+────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────
+  Sonnet 5.5 · 73.9k (7.0%) · 15m
+  📁 wt-9431 · ⎇ master · 5h: 18% (reset 08:20) · 7d: 68%
+  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents

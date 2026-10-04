@@ -928,3 +928,10 @@ def test_remote_slash_menue_echter_bildschirm_zaehlt_nicht() -> None:
         "────\n"
     )
     assert not respawn._remote_bestaetigt(menue)
+
+
+def test_handoff_auftrag_verlangt_ueberschreiben_alter_dateien() -> None:
+    """Echtlauf 3: Dateien aus früherer Runde lagen schon da, Session schrieb nichts neu."""
+    text = respawn._handoff_auftrag("docs/handoffs/H.md", "docs/handoffs/S.txt")
+    assert "veraltet" in text
+    assert "überschreib" in text

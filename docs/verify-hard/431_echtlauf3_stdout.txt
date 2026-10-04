@@ -1,0 +1,2 @@
+respawn #9431: nach 900 s fehlt HANDOFF_2026-10-04_9431.md, START_2026-10-04_9431.txt — neues Fenster zu — Ablösung abgebrochen, alte Session arbeitet weiter
+Exit 2

@@ -394,7 +394,9 @@ def _handoff_auftrag(handoff: str, start: str) -> str:
     return (
         "Ablösung dieser Session (respawn, Skill handoff, Bau-Variante): Schreib jetzt den "
         f"Handoff nach {handoff} und den Start-Prompt für die neue Session nach {start} "
-        "(nur Text, die neue Session liest ihn als ersten Auftrag). Beide Dateien committen. "
+        "(nur Text, die neue Session liest ihn als ersten Auftrag). Gibt es die Dateien schon, "
+        "sind sie aus einer früheren Runde veraltet: komplett mit dem jetzigen Stand "
+        "überschreiben, auch wenn sich wenig geändert hat. Beide Dateien committen. "
         "Danach nichts mehr tun."
     )
 
