@@ -1,0 +1,13 @@
+INFO respawn #9431: Handoff-Auftrag an =spec-9399:@2165 getippt.
+INFO respawn #9431: neues Fenster =spec-9399:@2166 gestartet.
+WARNING Fenster =spec-9399:@2165 ließ sich nicht schließen: tmux kill-window: can't find window: @2165
+respawn #9431: ok — neue Session im Fenster bau 9431, Handoff docs/handoffs/HANDOFF_2026-10-04_9431.md
+Exit 0
+
+== Zuordnung SOP a-e (Echtlauf 8)
+a) Handoff an alte Session getippt: JA - "INFO respawn #9431: Handoff-Auftrag an =spec-9399:@2165 getippt." (Handoff-Datei docs/handoffs/HANDOFF_2026-10-04_9431.md existiert)
+b) Neues Fenster mit neuer Session: JA - "INFO respawn #9431: neues Fenster =spec-9399:@2166 gestartet." (fenster.txt nach: Fenster 1 @2166)
+c) Neue Session läuft/arbeitet: JA - neu_bildschirm.txt: Opus 5.5, Ticket-Branch ticket/431-respawn-sop, laufender Tool-Aufruf (gh issue view), Prozesse: claude(2568414) mit Kind gh
+d) Alte Session beendet: JA (mit Auffälligkeit) - "WARNING Fenster =spec-9399:@2165 ließ sich nicht schließen: tmux kill-window: can't find window: @2165" = Fenster war schon weg (alte Session beendete sich selbst nach Handoff); nach-Liste zeigt nur @2166
+e) Abschluss: JA - "respawn #9431: ok — neue Session im Fenster bau 9431, Handoff docs/handoffs/HANDOFF_2026-10-04_9431.md"
+Exit 0

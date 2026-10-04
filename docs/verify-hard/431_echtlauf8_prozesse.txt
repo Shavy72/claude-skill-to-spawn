@@ -1,0 +1,30 @@
+== vor (Claude unter spec-9399 Panes, vor respawn)
+1034085 3327382  2948 bash -lc source /home/bau/duoplus-management/.venv/bin/activate 2>/dev/null; unset ANTHROPIC_API_K
+1034104 1034085 341900 claude --model claude-opus-5-5 --dangerously-skip-permissions --remote-control kommentar-welle8 L
+1461554 1461547 260160 /home/bau/.local/bin/claude --model claude-sonnet-5 --allowedTools Bash(/usr/bin/python3 /home/ba
+1536587 1526253 212268 claude
+2044144 1024008 326708 /home/bau/.local/bin/claude --model claude-opus-5-5[1m] --effort medium --fallback-model claude-s
+2098582 3327382  3128 bash -lc unset ANTHROPIC_API_KEY; claude --model claude-opus-5-5 --dangerously-skip-permissions --
+2098588 2098582 306956 claude --model claude-opus-5-5 --dangerously-skip-permissions --remote-control Grill Feature-Scha
+2101316 3327382  3060 bash -lc unset ANTHROPIC_API_KEY; claude --model claude-opus-5-5 --dangerously-skip-permissions --
+2101323 2101316 335560 claude --model claude-opus-5-5 --dangerously-skip-permissions --remote-control Oberaufseher 2 /lo
+2276609 1459519 268928 /home/bau/.local/bin/claude --model claude-opus-5-5[1m] --effort medium --fallback-model claude-s
+2566310 3327382 326304 claude --model claude-sonnet-5-5
+2568414 2568393 291132 /home/bau/.local/bin/claude --settings /tmp/duoplus-management-bau/9431-20261004-202112-6hoxbklw/
+3484420 3327382  2972 bash -c claude --remote-control; bash
+3484422 3484420 296660 claude --remote-control
+claude(2566310)-+-graphify-mcp(2566700)
+                |-node(2566558)
+                |-npm exec @model(2566559)---sh(2566629)---node(2566630)
+                |-npm exec @perpl(2566669)---sh(2566690)---node(2566691)
+                |-npm exec chrome(2566548)---sh(2566621)---chrome-devtools(2566622)---node(2566651)
+                |-npm exec firecr(2566658)---sh(2566682)---node(2566683)
+                `-sh(2568892)---node(2568893)---sh(2568923)---npm install bet(2568926)
+bash(2568387)---python(2568393)---claude(2568414)---node(2568545)
+pgrep -c -x claude: 11 (inkl. Wegwerf-Claude)
+free: Mem 15996 used 6958 free 1070 avail 9038
+== nach
+bash(2568387)---python(2568393)---claude(2568414)-+-bash(2571703)---gh(2571726)
+                                                  `-node(2568545)
+pgrep -c -x claude: 11
+Mem:           15996        6280        1662         462        8845        9716
