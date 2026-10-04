@@ -85,11 +85,13 @@ def test_limit_vorbei_modell_wieder_opus(welt: dict[str, Path]) -> None:
         {
             "FAKE_LIMIT": _limit_mit_reset(2),
             "FAKE_AUSWEICH": AUSWEICH,
-            "FAKE_SCHLAF": "8",
+            # Lange Schlafzeit: die Aufsicht beendet die Ausweich-Session ohnehin — unter Last
+            # darf sie nicht von selbst enden, bevor die Rückkehr greift.
+            "FAKE_SCHLAF": "45",
             "TO_SPAWN_RESET_PUFFER_S": "1",
         }
     )
-    ergebnis = _wache(welt["repo"], env=env)
+    ergebnis = _wache(welt["repo"], env=env, timeout=120)
     assert ergebnis.returncode == 0, _text(ergebnis)
 
     aufrufe = _aufrufe(welt)
@@ -133,7 +135,7 @@ zeile = {
 }
 with (ordner / f"{sid}.jsonl").open("a", encoding="utf-8") as fh:
     fh.write(json.dumps(zeile) + "\n")
-time.sleep(float(os.environ.get("FAKE_SCHLAF", "40")))
+time.sleep(float(os.environ.get("FAKE_SCHLAF", "100")))
 """
 
 #: Gestelltes tmux: nimmt getippten Text auf; ein Handoff-Auftrag lässt den „Aufseher“
@@ -207,9 +209,9 @@ def test_kontext_ueber_grenze_abloesung_ohne_zutun(
     """Grenze erreicht → respawn-Tür tippt den Handoff-Auftrag, Nachfolger startet mit Handoff + Stand."""
     env = _abloese_welt(welt, monkeypatch)
     beginn = time.monotonic()
-    ergebnis = _wache(welt["repo"], env=env)
+    ergebnis = _wache(welt["repo"], env=env, timeout=150)
     assert ergebnis.returncode == 0, _text(ergebnis)
-    assert time.monotonic() - beginn < 35, "Ablösung kam nicht — Aufseher lief bis zum Ende"
+    assert time.monotonic() - beginn < 90, "Ablösung kam nicht — Aufseher lief bis zum Ende"
 
     # Ablösung lief über die respawn-Tür: Handoff-Auftrag ins Pane des Aufsehers.
     getippt = _getippt(welt)
@@ -324,3 +326,83 @@ def test_bau_log_kennt_aufseher_abloesung() -> None:
     from to_spawn import bau_log
 
     assert "aufseher_abloesung" in bau_log.TYPEN
+
+
+# --- 4. Ergänzungen aus dem Review (#436) ------------------------------------------
+
+
+def _smart_zone(env: dict[str, str], haupt_k: int, nicht_opus_k: int) -> None:
+    (Path(env["HOME"]) / ".claude" / "smart-zone.json").write_text(
+        json.dumps({"haupt": {"handoff_k": haupt_k}, "haupt_nicht_opus": {"handoff_k": nicht_opus_k}}),
+        encoding="utf-8",
+    )
+
+
+def test_kontext_unter_grenze_keine_abloesung(
+    welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Kontext 60,5k unter der Opus-Grenze 100k → nichts getippt, keine Bau-Log-Zeile."""
+    env = _abloese_welt(welt, monkeypatch)
+    _smart_zone(env, 100, 40)
+    env["FAKE_SCHLAF"] = "3"
+    ergebnis = _wache(welt["repo"], env=env)
+    assert ergebnis.returncode == 0, _text(ergebnis)
+    assert _getippt(welt) == []
+    assert len(_aufrufe(welt)) == 1
+    assert _log_zeilen(welt, "aufseher_abloesung") == []
+
+
+def test_nicht_opus_modell_nimmt_nicht_opus_grenze(
+    welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Aufseher auf Nicht-Opus: ``haupt_nicht_opus.handoff_k`` (40k) greift, nicht ``haupt`` (100k)."""
+    env = _abloese_welt(welt, monkeypatch)
+    _smart_zone(env, 100, 40)
+    ergebnis = _wache(welt["repo"], "--model", AUSWEICH, env=env, timeout=150)
+    assert ergebnis.returncode == 0, _text(ergebnis)
+    zeilen = _log_zeilen(welt, "aufseher_abloesung")
+    assert len(zeilen) == 1, zeilen
+    assert zeilen[0]["exit"] == 0 and zeilen[0]["grenze"] == 40_000
+    aufrufe = _aufrufe(welt)
+    assert len(aufrufe) == 2, aufrufe
+    assert aufrufe[1][aufrufe[1].index("--model") + 1] == AUSWEICH
+
+
+def test_abloese_datei_nur_ueber_abloesung_schreiben() -> None:
+    """AST: jedes Dict mit Schlüssel ``"handoff"`` in wache.py/waechter_lauf.py liegt in
+    ``abloesung_schreiben`` — kein zweiter Schreiber der Ablöse-Datei."""
+    import ast
+
+    for rel in ("skripte/wache.py", "to_spawn/waechter_lauf.py"):
+        baum = ast.parse((SKILL / rel).read_text(encoding="utf-8"))
+        for funktion in ast.walk(baum):
+            if not isinstance(funktion, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            for knoten in ast.walk(funktion):
+                if isinstance(knoten, ast.Dict) and any(
+                    isinstance(k, ast.Constant) and k.value == "handoff" for k in knoten.keys
+                ):
+                    assert funktion.name == "abloesung_schreiben", (rel, funktion.name, knoten.lineno)
+
+
+def test_abloesen_cli_schreibt_ueber_abloesung_schreiben(tmp_path: Path) -> None:
+    """Weg-Test ``wache.py --abloesen``: die Datei trägt beide Felder von ``abloesung_schreiben``."""
+    import os
+    import subprocess
+
+    handoff = tmp_path / "h.md"
+    handoff.write_text("Stand\n", encoding="utf-8")
+    ziel = tmp_path / "abloesung.json"
+    ergebnis = subprocess.run(
+        [sys.executable, str(SKILL / "skripte" / "wache.py"), SPEC, "--abloesen", str(handoff)],
+        cwd=str(tmp_path),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        env={**os.environ, "TO_SPAWN_REPO": str(tmp_path), "TO_SPAWN_WACHE_ABLOESUNG": str(ziel)},
+        timeout=60,
+        check=False,
+    )
+    assert ergebnis.returncode == 0, ergebnis.stderr
+    assert json.loads(ziel.read_text(encoding="utf-8")) == {"handoff": str(handoff), "start": ""}
+    assert not ziel.with_name(ziel.name + ".neu").exists()

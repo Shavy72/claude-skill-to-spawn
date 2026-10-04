@@ -36,4 +36,4 @@ Der Aufseher wertet nur Exit-Code und diese Zeile aus (E16).
 - 3 Duplikat oder alte Session fehlt: `sessions <S>` prüfen, nichts doppelt starten.
 
 ## Abgrenzung
-`to_spawn.py neustart --handoff/--beenden` bleibt für tote Sessions (Ticket „aus“); `wache.py --abloesen` löst den Aufseher selbst ab.
+`to_spawn.py neustart --handoff/--beenden` bleibt für tote Sessions (Ticket „aus“); `wache.py --abloesen` löst den Aufseher selbst ab. Die Aufseher-Tür `respawn_aufseher.aufseher_abloesen` (`to_spawn/respawn_aufseher.py`) ruft die Aufsicht (`waechter_lauf.fahre`) selbst, sobald der Kontext des Aufsehers die Handoff-Grenze erreicht (#436).

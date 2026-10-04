@@ -36,6 +36,7 @@ _SKILL = str(Path(__file__).resolve().parent.parent)
 if _SKILL not in sys.path:
     sys.path.insert(0, _SKILL)
 from to_spawn import (  # noqa: E402
+    aufseher_stand,
     config,
     context_mode,
     speicher,
@@ -111,8 +112,9 @@ MODELL = "claude-opus-5-5"
 
 #: Vorgabe-Denkstufe; Quelle ist ``waechter_lauf.EFFORT`` (eine Stelle für Aufseher und Takt, #402).
 EFFORT = waechter_lauf.EFFORT
-#: Umgebungsvariable mit dem Pfad der Ablöse-Datei (setzt ``main`` je Lauf).
-ABLOESE_ENV = "TO_SPAWN_WACHE_ABLOESUNG"
+#: Umgebungsvariable mit dem Pfad der Ablöse-Datei (TO_SPAWN_WACHE_ABLOESUNG, setzt ``main`` je Lauf);
+#: Quelle ist ``waechter_lauf.ABLOESE_ENV`` (dort steht auch die einzige Schreibstelle, #436).
+ABLOESE_ENV = waechter_lauf.ABLOESE_ENV
 #: Obergrenze Selbstablösungen je Fenster.
 # ponytail: feste Obergrenze gegen Ablöse-Schleifen, Zähler je Spec im Leitstand wenn Aufseher länger laufen
 MAX_ABLOESUNGEN = 10
@@ -149,24 +151,40 @@ def abloesung_anlegen(handoff: str) -> int:
     if not pfad.is_file():
         print(f"Handoff {pfad} fehlt — erst schreiben und committen.", file=sys.stderr)
         return 2
-    Path(ziel).write_text(json.dumps({"handoff": str(pfad)}), encoding="utf-8")
+    waechter_lauf.abloesung_schreiben(Path(ziel), pfad, "")
     print(f"Ablösung angelegt: Nachfolge-Aufseher startet mit {pfad}.")
     return 0
 
 
-def abloese_prompt(prompt: str, handoff: Path, runde: int) -> str:
-    """Startkontext des Nachfolge-Aufsehers: Handoff des Vorgängers vor dem Auftrag."""
+def abloese_prompt(prompt: str, handoff: Path, runde: int, spec: int | None = None, start: str = "") -> str:
+    """Startkontext des Nachfolge-Aufsehers: Handoff, letzter Stand, Start-Prompt, dann der Auftrag.
+
+    ``spec`` → jüngste Nicht-noop-Zeile der Stand-Datei (``aufseher_stand.letzter_stand``);
+    ``start`` = Start-Prompt des Vorgängers (erzwungene Ablösung über respawn, #436).
+    """
     try:
         inhalt = handoff.read_text(encoding="utf-8")
     except OSError as fehler:
         inhalt = f"(Handoff {handoff} nicht lesbar: {fehler})"
     if len(inhalt) > HANDOFF_MAX_ZEICHEN:
         inhalt = inhalt[:HANDOFF_MAX_ZEICHEN] + "\n(… gekürzt)"
+    stand = ""
+    if spec is not None:
+        try:
+            zeile = aufseher_stand.letzter_stand(spec)
+        except (OSError, ValueError) as fehler:
+            log.warning("Stand-Datei für #%s nicht lesbar: %s", spec, fehler)
+            zeile = None
+        if zeile:
+            zeilen = zeile.get("zeilen")
+            text = "\n".join(str(z) for z in zeilen) if isinstance(zeilen, list) else json.dumps(zeile, ensure_ascii=False)
+            stand = f"----- LETZTER STAND ({zeile.get('zeit') or '?'}) -----\n{text}\n----- STAND ENDE -----\n\n"
+    start_teil = f"----- START-PROMPT DES VORGÄNGERS -----\n{start.strip()}\n----- START ENDE -----\n\n" if start.strip() else ""
     return (
         f"## Aufseher-Ablösung (Runde {runde})\n"
         f"Der Vorgänger-Aufseher hat an seiner Handoff-Grenze übergeben. Sein Handoff ({handoff}) ist "
         f"dein Startkontext — setze dort fort.\n\n"
-        f"----- HANDOFF ANFANG -----\n{inhalt}\n----- HANDOFF ENDE -----\n\n{prompt}"
+        f"----- HANDOFF ANFANG -----\n{inhalt}\n----- HANDOFF ENDE -----\n\n{stand}{start_teil}{prompt}"
     )
 
 
@@ -211,6 +229,7 @@ D Session an der Smart-Zone-Grenze übergeben (Handoff-Grenze aus ~/.claude/smar
 E Dich selbst ablösen (deine Handoff-Grenze ist erreicht)
   1. `docs/HANDOFF_{DATUM}_waechter_{S}.md` vollständig: Stand je Ticket, offene Entscheidungen, laufende Neustarts, nächster Schritt. Commit mit Pathspec + [skip ci], Push.
   2. `python {SKILL}/skripte/wache.py {S} --abloesen docs/HANDOFF_{DATUM}_waechter_{S}.md` — die Aufsicht beendet diese Session und startet im selben Fenster den Nachfolge-Aufseher mit dem Handoff als Startkontext. Danach nichts mehr tun.
+  An der Handoff-Grenze stößt die Aufsicht die Ablösung selbst an (respawn): kommt der Auftrag „Ablösung dieser Session“, Handoff und Start-Prompt an die genannten Pfade schreiben und danach nichts mehr tun.
 
 ## Abschluss
 ABSCHLUSS schon vor Live: Bau fertig, bereit zur Abnahme (alle Bau-Tickets zu oder nur noch Live-Belege/checkpoint:human-Abnahme offen, bzw. „Kette … durch“ oder „SPEC FERTIG“) → PFLICHT Abschluss-Paket `--stand abnahme` (einmal): Rundschau als Artifact (Skill rundschau), `python {SKILL}/skripte/belege_uebersicht.py {S}` und `python {SKILL}/skripte/test_uebersicht.py {S}` je als Artifact, Direkt-Links je Ticket in die Stage-App (staging.url aus .to-spawn/config.json + Route an die richtige Stelle, Rolle im Titel), Zugang nur als Namen (Basic-Auth-Nutzer, App-Rolle, Bitwarden-Eintragsname — nie Passwort), dann `python {SKILL}/skripte/abschluss_paket.py {S} --stand abnahme --stage <url> --rundschau <link> --belege <link> --tests <link> --direkt "<Titel (als Rolle)>=<url>"… --basic-auth-nutzer <name> --app-rolle "<Name (rolle)>" --bitwarden <eintrag>` (schreibt docs/agents/abschluss_{S}.md + mailt David).
@@ -347,7 +366,9 @@ def main() -> int:
         if not abloese_datei.exists():
             return code
         try:
-            handoff = Path(json.loads(abloese_datei.read_text(encoding="utf-8"))["handoff"])
+            daten = json.loads(abloese_datei.read_text(encoding="utf-8"))
+            handoff = Path(daten["handoff"])
+            start = str(daten.get("start") or "")
         except (OSError, ValueError, KeyError, TypeError) as fehler:
             log.error("Ablöse-Datei %s unlesbar (%s) — Aufseher endet.", abloese_datei, fehler)
             return 2
@@ -357,7 +378,7 @@ def main() -> int:
             return 2
         log.info("Aufseher #%s: Ablösung %s — Nachfolge-Aufseher startet mit %s.", a.spec, runde, handoff)
         session_id = None
-        start_prompt = abloese_prompt(prompt, handoff, runde + 1)
+        start_prompt = abloese_prompt(prompt, handoff, runde + 1, a.spec, start)
     return code
 
 
