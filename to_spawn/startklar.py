@@ -67,6 +67,7 @@ SCHALTER = "TO_SPAWN_STARTKLAR"
 #: ``<N>`` Ticket. ``python`` wird unter Linux zu ``python3`` (``aufseher_vorlage``).
 BEFEHL_AUFRAEUMEN = "node ~/.claude/hooks/smart-zone/staffel/aufraeumen.mjs --spec {S}"
 BEFEHL_NEUSTART = "python {SKILL}/to_spawn.py neustart {S} <N>"
+BEFEHL_RESPAWN = "python {SKILL}/to_spawn.py respawn {S} <N>"
 
 #: Läufer: (Shell-Befehl, cwd, stdin, timeout, Zusatz-Umgebung) → Ergebnis.
 #: Wirft ``subprocess.TimeoutExpired``/``OSError`` wie ``subprocess.run``.
@@ -116,6 +117,7 @@ WERKZEUGE: tuple[Werkzeug, ...] = (
         " --dry-run",
     ),
     Werkzeug("neustart", BEFEHL_NEUSTART, "{SKILL}/to_spawn.py", " --help"),
+    Werkzeug("respawn", BEFEHL_RESPAWN, "{SKILL}/to_spawn.py", " --help"),
 )
 
 

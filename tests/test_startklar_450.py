@@ -665,6 +665,7 @@ def test_f5_hooks_bekommen_prompt_text_woertlich(
     assert mitschnitt.read_text(encoding="utf-8").splitlines() == [
         f"node ~/.claude/hooks/smart-zone/staffel/aufraeumen.mjs --spec {SPEC}",
         f"{py} {SKILL.as_posix()}/to_spawn.py neustart {SPEC} 451",
+        f"{py} {SKILL.as_posix()}/to_spawn.py respawn {SPEC} 451",
     ]
 
 

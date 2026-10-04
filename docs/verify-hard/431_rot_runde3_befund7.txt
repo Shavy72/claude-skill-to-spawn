@@ -1,0 +1,73 @@
+FFFF                                                                     [100%]
+=================================== FAILURES ===================================
+______________ test_b7_befehl_respawn_in_startklar_mit_help_probe ______________
+
+    def test_b7_befehl_respawn_in_startklar_mit_help_probe() -> None:
+>       assert startklar.BEFEHL_RESPAWN == "python {SKILL}/to_spawn.py respawn {S} <N>"
+               ^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: module 'to_spawn.startklar' has no attribute 'BEFEHL_RESPAWN'. Did you mean: 'BEFEHL_NEUSTART'?
+
+tests/test_startklar_respawn_431.py:37: AttributeError
+_________________ test_b7_wache_hat_respawn_nicht_hartkodiert __________________
+
+    def test_b7_wache_hat_respawn_nicht_hartkodiert() -> None:
+        quelle = (SKILL / "skripte" / "wache.py").read_text(encoding="utf-8")
+>       assert "to_spawn.py respawn" not in quelle
+E       assert 'to_spawn.py respawn' not in '"""Bau-Aufs...it(main())\n'
+E         
+E         'to_spawn.py respawn' is contained here:
+E           n {SKILL}/to_spawn.py respawn {S} <N>` (nur Bau-Server).
+E         ?           +++++++++++++++++++
+E             Session tot / Ticket „aus“ (beendet nur die Claude-Session des Tickets, dann Neustart): `{NEUSTART} --beenden` (Server: zusätzlich `--ziel srv`). Halbfertige Arbeit im Worktree bleibt liegen, die neue Session übernimmt sie.
+E           D Session an der Smart-Zone-Grenze übergeben (Handoff-Grenze aus ~/.claude/smart-zone.json)
+E             Die Ticket-Session schreibt `docs/handoffs/HANDOFF_<datum>_<N>.md` im Ticket-Worktree, committet ihn und hört auf. Staffel ist aus (`staffel.aktiv`) — der Nachfolger kommt von dir:...
+E         
+E         ...Full output truncated (157 lines hidden), use '-vv' to show
+
+tests/test_startklar_respawn_431.py:46: AssertionError
+__________________ test_b7_prompt_nennt_respawn_aus_startklar __________________
+
+tmp_path = PosixPath('/tmp/pytest-of-bau/pytest-3443/test_b7_prompt_nennt_respawn_a0')
+
+    def test_b7_prompt_nennt_respawn_aus_startklar(tmp_path: Path) -> None:
+        _haupt, wt = _repo_mit_worktree(tmp_path)
+        _git(wt, "remote", "add", "origin", "https://github.com/t/s.git")
+        ergebnis = _wache(wt, wt, _heim_mit_werkzeugen(tmp_path), "--print-prompt")
+        assert ergebnis.returncode == 0, ergebnis.stderr
+>       text = startklar.befehl_text(_respawn(), SPEC, "<N>")
+                                     ^^^^^^^^^^
+
+tests/test_startklar_respawn_431.py:55: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    def _respawn() -> startklar.Werkzeug:
+        treffer = [w for w in startklar.WERKZEUGE if w.name == "respawn"]
+>       assert len(treffer) == 1, startklar.WERKZEUGE
+E       AssertionError: (Werkzeug(name='aufraeumen', befehl='node ~/.claude/hooks/smart-zone/staffel/aufraeumen.mjs --spec {S}', datei='{home}...name='neustart', befehl='python {SKILL}/to_spawn.py neustart {S} <N>', datei='{SKILL}/to_spawn.py', trocken=' --help'))
+E       assert 0 == 1
+E        +  where 0 = len([])
+
+tests/test_startklar_respawn_431.py:32: AssertionError
+_________________________ test_b7_probe_prueft_respawn _________________________
+
+tmp_path = PosixPath('/tmp/pytest-of-bau/pytest-3443/test_b7_probe_prueft_respawn0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7f52e0f185a0>
+
+    def test_b7_probe_prueft_respawn(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("HOME", str(_heim_mit_werkzeugen(tmp_path)))
+        _manifest(tmp_path, {"451": {"title": "a"}})
+        befunde = startklar.werkzeug_probe(tmp_path, SPEC, settings_dateien=[])
+        respawn_befunde = [b for b in befunde if b.text.startswith("respawn")]
+>       assert respawn_befunde and all(b.ok for b in respawn_befunde), befunde
+E       AssertionError: [Befund(bereich='werkzeug', ok=True, text='aufraeumen: Hooks lassen durch, Trockenlauf ok', behebung=''), Befund(bereich='werkzeug', ok=True, text='neustart: Hooks lassen durch, Trockenlauf ok', behebung='')]
+E       assert ([])
+
+tests/test_startklar_respawn_431.py:66: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_startklar_respawn_431.py::test_b7_befehl_respawn_in_startklar_mit_help_probe
+FAILED tests/test_startklar_respawn_431.py::test_b7_wache_hat_respawn_nicht_hartkodiert
+FAILED tests/test_startklar_respawn_431.py::test_b7_prompt_nennt_respawn_aus_startklar
+FAILED tests/test_startklar_respawn_431.py::test_b7_probe_prueft_respawn - As...
+4 failed in 0.65s
