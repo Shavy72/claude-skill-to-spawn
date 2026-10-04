@@ -18,7 +18,8 @@ Stufen (feste Schwellen :data:`STUPS_MIN`, :data:`NACH_STUPS_MIN`,
 3. respawn läuft — VOR dem Ablösen gemerkt (scheitert das Merken: Exit 1, nichts
    abgelöst). Erfolg → Stufe 0 + Respawn-Zeit in einem Schreibvorgang (älterer
    Kontext zählt nicht mehr). Bleibt Stufe 3 stehen (Abschluss nicht gemerkt), wird
-   nie erneut abgelöst: Fenster arbeitet → Abschluss nachholen, sonst Exit 1.
+   nie erneut abgelöst: Fenster arbeitet UND neue Session belegt (``session_start``
+   im Bau-Log jünger als die Stufe-3-Zeit) → Abschluss nachholen, sonst Exit 1.
 4. Ticket zu und Fenster still (ab Mindest-Ruhe) → ``/exit`` tippen, genau einmal.
 5. respawn gescheitert — nichts mehr tippen/starten, jede Ausführung Exit 1, bis das
    Fenster wieder arbeitet oder das Ticket neu beginnt (``session_start`` im Bau-Log
@@ -138,8 +139,13 @@ def entscheide(lage: Lage, gemerkt: Gemerkt, jetzt: float, handoff_k: float) -> 
     stufe = gemerkt.stufe
     if stufe == 3:  # nie erneut ablösen — die frische Session liefe sonst doppelt
         if lage.fenster == aufseher_stand.ARBEITET:
+            # Arbeitet allein beweist nichts — es kann noch die alte Session sein.
+            if _neu_gestartet(lage, gemerkt):
+                return Schritt(
+                    "abschliessen", "neue Session arbeitet, Abschluss nachgeholt"
+                )
             return Schritt(
-                "abschliessen", "arbeitet nach respawn, Abschluss nachgeholt"
+                "melden", "hängt, keine neue Session belegt — Aufseher prüfen"
             )
         vor = _minuten(jetzt, gemerkt.seit)
         text = f"respawn vor {vor} min nicht abgeschlossen — Aufseher prüfen"
@@ -315,8 +321,8 @@ def _respawn(
 
     Gescheitert → Stufe 5 mit der Zeit NACH ``abloesen`` (ein ``session_start`` des
     abgebrochenen neuen Fensters setzt sonst sofort zurück). Erfolg → Stufe 0 +
-    Respawn-Zeit in einem Schreibvorgang; scheitert der, bleibt Stufe 3 (kein
-    zweites Ablösen) und die Zeile sagt es.
+    Respawn-Zeit in einem Schreibvorgang; scheitert der (oder das Merken von Stufe
+    5), bleibt Stufe 3 (kein zweites Ablösen), Exit 1 und die Zeile sagt es.
     """
     try:
         leitstand.setze_leiter_stufe(ticket, 3, jetzt)
@@ -328,7 +334,12 @@ def _respawn(
         repo, spec, ticket, werkzeug=u.werkzeug(), handoff_seit=gemerkt.seit
     )
     if erg.exit != respawn.EXIT_OK:
-        leitstand.setze_leiter_stufe(ticket, 5, u.jetzt())
+        try:
+            leitstand.setze_leiter_stufe(ticket, 5, u.jetzt())
+        except (OSError, ValueError, leitstand.ZustandKaputt) as fehler:
+            log.warning("leiter #%s: Stufe 5 nicht gemerkt: %s", ticket, fehler)
+            text = f"Stufe 3 respawn gescheitert, Stufe 5 nicht gemerkt — {fehler}"
+            return Ergebnis(EXIT_FEHLER, _zeile(ticket, text))
         text = f"Stufe 5 respawn gescheitert — {erg.zeile}"
         return Ergebnis(erg.exit, _zeile(ticket, text))
     try:

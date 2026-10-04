@@ -133,6 +133,11 @@ def test_b3_abschluss_scheitert_kein_zweites_abloesen(
     assert u.wz.getippt == []
 
 
+@pytest.mark.xfail(
+    strict=True,
+    raises=AssertionError,
+    reason="Fixrunde 3 C1: Abschluss nur mit belegter neuer Session (test_leiter_fix3_432)",
+)
 def test_b3_stufe3_fenster_arbeitet_abschluss_nachgeholt(ordner: Path) -> None:
     seit = time.time() - 4 * MINUTE
     leitstand.setze_leiter_stufe(TICKET, 3, seit)
