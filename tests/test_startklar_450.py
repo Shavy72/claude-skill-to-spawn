@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -48,6 +49,13 @@ def _mini_venv(tmp_path_factory: pytest.TempPathFactory) -> Path:
     )
     _MINI_VENV.append(ziel)
     return ziel
+
+
+@pytest.fixture(autouse=True)
+def _gh_still(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Kein echtes ``gh`` gegen Temp-Repos: seit Fixrunde 2 macht ein unlesbares Issue
+    den Befund rot. Tests, die das Lesen prüfen, geben ``issue_leser`` selbst mit."""
+    monkeypatch.setattr(startklar, "_gh_issue_text", lambda _ordner, _nummer: "")
 
 
 def _repo_mit_worktree(
@@ -436,13 +444,19 @@ def _cli(
 def test_cli_startklar_exit_1_und_0(tmp_path: Path) -> None:
     wt = _schluessel_welt(tmp_path)
     heim = _heim_mit_werkzeugen(tmp_path)
-    rot = _cli(wt, heim)
+    # Temp-Repo hat kein GitHub: stilles ``gh`` im PATH (leerer Issue-Text, Exit 0).
+    gh = heim / "bin" / "gh"
+    gh.parent.mkdir()
+    gh.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    gh.chmod(0o755)
+    env = {"PATH": f"{gh.parent}{os.pathsep}{os.environ['PATH']}"}
+    rot = _cli(wt, heim, env)
     assert rot.returncode == 1, rot.stdout + rot.stderr
     assert "❌ schlüssel" in rot.stdout and "FAL_KEY" in rot.stdout
     (wt / ".env").write_text(
         "FAL_KEY=geheim123\nELEVENLABS_API_KEY=geheim456\n", encoding="utf-8"
     )
-    gruen = _cli(wt, heim)
+    gruen = _cli(wt, heim, env)
     if gruen.returncode != 0 and "Hook" in gruen.stdout:
         pytest.skip(f"Systemweiter Hook blockt hier: {gruen.stdout}")
     assert gruen.returncode == 0, gruen.stdout + gruen.stderr
@@ -806,3 +820,209 @@ def test_n2_hook_stderr_ohne_schluesselwerte(tmp_path: Path) -> None:
     befunde = _probe(tmp_path, [_settings(tmp_path, code)])
     alles = " ".join(b.text + b.behebung for b in befunde)
     assert "FAL_KEY" in alles and "supergeheim99" not in alles, befunde
+
+
+# --- Fixrunde 2 (Prüfpanel Runde 2) ----------------------------------------------
+
+
+def test_r2_gate_fehlendes_manifest_ist_rot(tmp_path: Path) -> None:
+    """Gate-Pfad: ohne Manifest ist der Schlüssel-Bedarf unbekannt → rot mit Behebung."""
+    _haupt, wt = _repo_mit_worktree(tmp_path)
+    befunde = startklar.schluessel_pruefen(wt, SPEC, environ={}, manifest_pflicht=True)
+    rot = [b for b in befunde if not b.ok]
+    assert rot, befunde
+    assert "Manifest" in rot[0].text
+    assert "/to-tickets" in rot[0].behebung
+    assert f"docs/agents/manifests/spec-{SPEC}.json" in rot[0].behebung
+
+
+def test_r2_cli_fehlendes_manifest_bleibt_gruen_mit_hinweis(tmp_path: Path) -> None:
+    _haupt, wt = _repo_mit_worktree(tmp_path)
+    befunde = startklar.schluessel_pruefen(wt, SPEC, environ={})
+    assert all(b.ok for b in befunde) and "kein Manifest" in befunde[0].text
+
+
+def test_r2_gate_setzt_manifest_pflicht(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    gesehen: dict[str, object] = {}
+
+    def pruefe(ordner: Path, spec: int, **kw: object) -> list[startklar.Befund]:
+        gesehen.update(kw)
+        return [startklar.Befund("venv", True, "ok")]
+
+    monkeypatch.setattr(startklar, "pruefe", pruefe)
+    assert startklar.gate(tmp_path, SPEC, environ={}) == 0
+    assert gesehen.get("manifest_pflicht") is True
+
+
+def test_r2_ohne_env_example_warnung_issue_scan_uebersprungen(tmp_path: Path) -> None:
+    _haupt, wt = _repo_mit_worktree(tmp_path)
+    _manifest(wt, {"451": {"title": "x"}})
+    befunde = startklar.schluessel_pruefen(
+        wt, SPEC, environ={}, issue_leser=lambda o, n: ""
+    )
+    text = " ".join(b.text for b in befunde)
+    assert "Issue-Scan übersprungen, .env.example fehlt" in text, befunde
+
+
+def test_r2_issue_nicht_lesbar_ist_rot_und_bricht_ab(tmp_path: Path) -> None:
+    wt = _schluessel_welt(tmp_path)
+    (wt / ".env").write_text("FAL_KEY=a\nELEVENLABS_API_KEY=b\n", encoding="utf-8")
+    gefragt: list[str] = []
+
+    def leser(_ordner: Path, nummer: str) -> str:
+        gefragt.append(nummer)
+        raise subprocess.TimeoutExpired("gh", 30)
+
+    befunde = startklar.schluessel_pruefen(wt, SPEC, environ={}, issue_leser=leser)
+    assert gefragt == ["451"], gefragt
+    rot = [b for b in befunde if not b.ok]
+    assert rot, befunde
+    text = " ".join(b.text for b in rot)
+    assert "Schlüssel-Prüfung unvollständig: Issue #451 nicht lesbar" in text
+    assert "452" in text and "453" in text
+    assert "gh auth status" in rot[-1].behebung
+
+
+def test_r2_gh_fehlt_klare_meldung(tmp_path: Path) -> None:
+    wt = _schluessel_welt(tmp_path)
+
+    def leser(_ordner: Path, _nummer: str) -> str:
+        raise FileNotFoundError(2, "No such file or directory", "gh")
+
+    befunde = startklar.schluessel_pruefen(wt, SPEC, environ={}, issue_leser=leser)
+    assert "gh nicht installiert" in " ".join(b.text for b in befunde if not b.ok)
+
+
+def test_r2_kaputte_konfig_ist_rot(tmp_path: Path) -> None:
+    _haupt, wt = _repo_mit_worktree(tmp_path)
+    (wt / ".to-spawn").mkdir()
+    (wt / ".to-spawn" / "config.json").write_text("{kaputt", encoding="utf-8")
+    befunde = startklar.konfig_pruefen(wt)
+    assert befunde and not befunde[0].ok and "config.json" in befunde[0].text
+    (wt / ".to-spawn" / "config.json").write_text("[1, 2]", encoding="utf-8")
+    befunde = startklar.konfig_pruefen(wt)
+    assert befunde and not befunde[0].ok
+    (wt / ".to-spawn" / "config.json").write_text("{}", encoding="utf-8")
+    assert startklar.konfig_pruefen(wt) == []
+
+
+def test_r2_pruefe_meldet_kaputte_konfig(tmp_path: Path) -> None:
+    _haupt, wt = _repo_mit_worktree(tmp_path)
+    (wt / ".to-spawn").mkdir()
+    (wt / ".to-spawn" / "config.json").write_text("{kaputt", encoding="utf-8")
+    befunde = startklar.pruefe(
+        wt,
+        SPEC,
+        settings_dateien=[],
+        environ={},
+        werkzeuge=(),
+        issue_leser=lambda o, n: "",
+    )
+    assert any(not b.ok and "config.json" in b.text for b in befunde), befunde
+
+
+def test_r2_umgebungswerte_werden_geschwaerzt(tmp_path: Path) -> None:
+    _konfig_schluessel(tmp_path, "UMGEBUNGS_KEY")
+    code = (
+        "import sys; sys.stdin.read(); "
+        "print('Wert umgebungsgeheim777', file=sys.stderr); sys.exit(1)\n"
+    )
+    befunde = startklar.werkzeug_probe(
+        tmp_path,
+        SPEC,
+        settings_dateien=[_settings(tmp_path, code)],
+        werkzeuge=_werkzeuge(tmp_path),
+        environ={"UMGEBUNGS_KEY": "umgebungsgeheim777"},
+    )
+    alles = " ".join(b.text + b.behebung for b in befunde)
+    assert "Wert" in alles and "umgebungsgeheim777" not in alles, befunde
+
+
+_GEHEIM64 = "g" * 20 + "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQR"[:44]
+
+
+@pytest.mark.parametrize(("exit_code", "vorlauf"), [(1, 100), (2, 150)])
+def test_r2_erst_schwaerzen_dann_kuerzen(
+    tmp_path: Path, exit_code: int, vorlauf: int
+) -> None:
+    assert len(_GEHEIM64) == 64
+    (tmp_path / ".env").write_text(f"FAL_KEY={_GEHEIM64}\n", encoding="utf-8")
+    code = (
+        "import sys; sys.stdin.read(); "
+        f"print('x' * {vorlauf} + {_GEHEIM64!r}, file=sys.stderr); sys.exit({exit_code})\n"
+    )
+    befunde = _probe(tmp_path, [_settings(tmp_path, code)])
+    alles = " ".join(b.text + b.behebung for b in befunde)
+    assert "xxxx" in alles, befunde
+    assert _GEHEIM64[:8] not in alles, befunde
+
+
+def test_r2_trockenlauf_erst_schwaerzen_dann_kuerzen(tmp_path: Path) -> None:
+    (tmp_path / ".env").write_text(f"FAL_KEY={_GEHEIM64}\n", encoding="utf-8")
+    skript = tmp_path / "laut.py"
+    skript.write_text(
+        f"import sys; print('x' * 120 + {_GEHEIM64!r}, file=sys.stderr); sys.exit(3)\n",
+        encoding="utf-8",
+    )
+    werkzeug = startklar.Werkzeug(
+        "laut", f"{shlex.quote(sys.executable)} {shlex.quote(str(skript))}", str(skript)
+    )
+    befunde = startklar.werkzeug_probe(
+        tmp_path, SPEC, settings_dateien=[], werkzeuge=(werkzeug,)
+    )
+    alles = " ".join(b.text for b in befunde)
+    assert "Exit 3" in alles and _GEHEIM64[:8] not in alles, befunde
+
+
+def test_r2_symlink_venv_paket_probe(tmp_path: Path) -> None:
+    """Symlink aufs Hauptrepo: Pakete aus requirements.txt werden trotzdem geprüft."""
+    _haupt, wt = _repo_mit_worktree(tmp_path)
+    (wt / "requirements.txt").write_text("gibts-nicht-450==1.0\n", encoding="utf-8")
+    befund = startklar.venv_sicherstellen(wt)
+    assert (wt / ".venv").is_symlink()
+    assert not befund.ok and "gibts-nicht-450" in befund.text, befund
+    befund = startklar.venv_sicherstellen(wt)  # vorhandener Symlink
+    assert not befund.ok and "gibts-nicht-450" in befund.text, befund
+
+
+def test_r2_pip_fehler_wird_geschwaerzt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _haupt, wt = _repo_mit_worktree(tmp_path, venv_im_haupt=False)
+    (wt / ".env").write_text("FAL_KEY=geheimpaketxyz123\n", encoding="utf-8")
+    (wt / "requirements.txt").write_text("geheimpaketxyz123==1.0\n", encoding="utf-8")
+    monkeypatch.setenv("PIP_NO_INDEX", "1")
+    befund = startklar.venv_sicherstellen(wt)
+    assert not befund.ok, befund
+    assert "geheimpaketxyz123" not in befund.text + befund.behebung, befund
+
+
+def test_r2_vorhandener_symlink_nicht_ignoriert_kommt_in_exclude(
+    tmp_path: Path,
+) -> None:
+    haupt, wt = _repo_mit_worktree(tmp_path)
+    (wt / ".gitignore").write_text(".env\n", encoding="utf-8")
+    os.symlink(haupt / ".venv", wt / ".venv", target_is_directory=True)
+    befund = startklar.venv_sicherstellen(wt)
+    assert befund.ok, befund
+    exclude = (haupt / ".git" / "info" / "exclude").read_text(encoding="utf-8")
+    assert "/.venv" in exclude.splitlines()
+    assert ".venv" not in _git(wt, "status", "--porcelain", "--", ".venv")
+
+
+def test_r2_anforderungen_ueberspringt_urls(tmp_path: Path) -> None:
+    datei = tmp_path / "requirements.txt"
+    datei.write_text(
+        "requests==2\ngit+https://github.com/x/y.git\nhttps://x.de/p.whl\n",
+        encoding="utf-8",
+    )
+    assert startklar._anforderungen(datei) == ["requests"]
+
+
+def test_r2_wache_import_hat_noqa() -> None:
+    zeilen = (SKILL / "skripte" / "wache.py").read_text(encoding="utf-8").splitlines()
+    assert any(
+        z.startswith("from to_spawn import") and "noqa: E402" in z for z in zeilen
+    )

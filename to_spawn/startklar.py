@@ -79,7 +79,7 @@ IssueLeser = Callable[[Path, str], str]
 
 @dataclass(frozen=True)
 class Befund:
-    """Ein Prüfergebnis. ``bereich`` ist "venv", "schlüssel" oder "werkzeug"."""
+    """Ein Prüfergebnis. ``bereich`` ist "venv", "konfig", "schlüssel" oder "werkzeug"."""
 
     bereich: str
     ok: bool
@@ -295,23 +295,28 @@ def _laeuft(python: Path) -> bool:
         return False
 
 
-def _ausfuehren(argv: Sequence[str], timeout: float) -> str | None:
-    """Führt ``argv`` aus; gibt bei Fehler den Grund zurück, sonst ``None``."""
+def _ausfuehren(
+    argv: Sequence[str], timeout: float, geheim: Iterable[str] = ()
+) -> str | None:
+    """Führt ``argv`` aus; gibt bei Fehler den (geschwärzten) Grund zurück, sonst ``None``."""
     try:
         ergebnis = subprocess.run(
             list(argv), capture_output=True, text=True, timeout=timeout, check=False
         )
     except (OSError, subprocess.TimeoutExpired) as fehler:
-        return str(fehler)
+        return _kurz(_schwaerzen(str(fehler), geheim))
     if ergebnis.returncode != 0:
         return _kurz(
-            ergebnis.stderr or ergebnis.stdout or f"Exit {ergebnis.returncode}"
+            _schwaerzen(
+                ergebnis.stderr or ergebnis.stdout or f"Exit {ergebnis.returncode}",
+                geheim,
+            )
         )
     return None
 
 
 def _anforderungen(datei: Path) -> list[str]:
-    """Paketnamen aus ``requirements.txt`` (ohne Optionen/Includes/Marker-Zeilen)."""
+    """Paketnamen aus ``requirements.txt`` (ohne Optionen/Includes/Marker-/URL-Zeilen)."""
     try:
         zeilen = datei.read_text(encoding="utf-8").splitlines()
     except (OSError, UnicodeDecodeError) as fehler:
@@ -320,7 +325,7 @@ def _anforderungen(datei: Path) -> list[str]:
     namen = []
     for zeile in zeilen:
         zeile = zeile.split(" #", 1)[0].strip()
-        if not zeile or zeile.startswith(("#", "-")) or ";" in zeile:
+        if not zeile or zeile.startswith(("#", "-")) or ";" in zeile or "://" in zeile:
             continue
         treffer = re.match(r"[A-Za-z0-9][A-Za-z0-9._-]*", zeile)
         if treffer:
@@ -338,8 +343,10 @@ _PAKET_PROBE = (
 )
 
 
-def _fehlende_pakete(python: Path, namen: Sequence[str]) -> list[str] | str:
-    """Pakete, die im Interpreter fehlen — oder Fehlertext, wenn die Probe scheitert."""
+def _fehlende_pakete(
+    python: Path, namen: Sequence[str], geheim: Iterable[str] = ()
+) -> list[str] | str:
+    """Pakete, die im Interpreter fehlen — oder (geschwärzter) Fehlertext, wenn die Probe scheitert."""
     if not namen:
         return []
     try:
@@ -351,9 +358,9 @@ def _fehlende_pakete(python: Path, namen: Sequence[str]) -> list[str] | str:
             check=False,
         )
     except (OSError, subprocess.TimeoutExpired) as fehler:
-        return f"Paket-Probe scheitert: {fehler}"
+        return f"Paket-Probe scheitert: {_kurz(_schwaerzen(str(fehler), geheim))}"
     if ergebnis.returncode != 0:
-        return f"Paket-Probe scheitert: {_kurz(ergebnis.stderr)}"
+        return f"Paket-Probe scheitert: {_kurz(_schwaerzen(ergebnis.stderr, geheim))}"
     return ergebnis.stdout.split()
 
 
@@ -365,9 +372,16 @@ def _neue_venv(venv: Path, mit_pip: bool) -> str | None:
     return _ausfuehren(argv, VENV_TIMEOUT_S)
 
 
-def venv_sicherstellen(ordner: Path) -> Befund:
-    """Sorgt für eine lauffähige ``<ordner>/.venv`` (Symlink aufs Hauptrepo oder neu)."""
+def venv_sicherstellen(
+    ordner: Path, environ: Mapping[str, str] | None = None
+) -> Befund:
+    """Sorgt für eine lauffähige ``<ordner>/.venv`` (Symlink aufs Hauptrepo oder neu).
+
+    Pakete aus ``requirements.txt`` werden immer geprüft — auch bei einem Symlink
+    (das Hauptrepo kann veraltet sein). Fehlertexte von pip/Probe sind geschwärzt.
+    """
     ordner = Path(ordner)
+    geheim = _geheime_werte(ordner, environ)
     venv = ordner / ".venv"
     py = _py_name()
     anforderungen = ordner / "requirements.txt"
@@ -433,6 +447,7 @@ def venv_sicherstellen(ordner: Path) -> Befund:
                         str(anforderungen),
                     ],
                     PIP_TIMEOUT_S,
+                    geheim,
                 )
                 if grund:
                     return Befund(
@@ -446,11 +461,16 @@ def venv_sicherstellen(ordner: Path) -> Befund:
             return Befund(
                 "venv", False, f".venv {aktion}, Interpreter läuft aber nicht", behebung
             )
-    if not venv.is_symlink() and anforderungen.is_file():
-        # Symlink aufs Hauptrepo = dessen Pakete; eine echte venv muss sie selbst haben.
-        fehlend = _fehlende_pakete(_venv_python(venv), _anforderungen(anforderungen))
+    if anforderungen.is_file():
+        fehlend = _fehlende_pakete(
+            _venv_python(venv), _anforderungen(anforderungen), geheim
+        )
         if isinstance(fehlend, str) or fehlend:
-            was = fehlend if isinstance(fehlend, str) else ", ".join(fehlend)
+            was = (
+                fehlend
+                if isinstance(fehlend, str)
+                else _schwaerzen(", ".join(fehlend), geheim)
+            )
             return Befund(
                 "venv",
                 False,
@@ -459,7 +479,10 @@ def venv_sicherstellen(ordner: Path) -> Befund:
             )
     text = f".venv {aktion}, Interpreter läuft{zusatz}"
     if not zusatz and _ist_ignoriert(ordner, ".venv") is False:
-        text += " — Warnung: .venv steht nicht in .gitignore (nicht committen!)"
+        if venv.is_symlink():
+            text += _venv_ausschliessen(ordner)
+        else:
+            text += " — Warnung: .venv steht nicht in .gitignore (nicht committen!)"
     return Befund("venv", True, text)
 
 
@@ -506,8 +529,68 @@ def _env_quellen(ordner: Path) -> list[dict[str, str]]:
     return quellen
 
 
-def _geheime_werte(ordner: Path) -> list[str]:
-    return [w for q in _env_quellen(ordner) for w in q.values() if w]
+def _geheime_werte(
+    ordner: Path, environ: Mapping[str, str] | None = None, spec: int | None = None
+) -> list[str]:
+    """Werte zum Schwärzen: alle ``.env``-Werte + Umgebungswerte möglicher Schlüssel.
+
+    Mögliche Schlüssel = Namen aus ``.env``/``.env.example``, Konfig und Manifest
+    (Obermenge der benötigten, ohne ``gh``-Abfrage).
+    """
+    umgebung = os.environ if environ is None else environ
+    quellen = _env_quellen(ordner)
+    namen: set[str] = {n for q in quellen for n in q}
+    namen.update(_env_datei(ordner / ".env.example"))
+    namen.update(_konfig_schluessel(ordner))
+    if spec is not None:
+        try:
+            tickets = _manifest_tickets(ordner, spec) or {}
+        except ManifestKaputt:
+            tickets = {}
+        for ticket in tickets.values():
+            namen.update(str(n) for n in ticket.get("schluessel", []) or [])
+    werte = [w for q in quellen for w in q.values() if w]
+    werte += [umgebung[n] for n in namen if umgebung.get(n)]
+    return werte
+
+
+def _konfig_schluessel(ordner: Path) -> list[str]:
+    """Schlüssel-Namen aus ``startklar.schluessel`` der Repo-Konfig."""
+    konfig = config.lade(ordner)
+    return [
+        str(n) for n in (konfig.get("startklar", {}) or {}).get("schluessel", []) or []
+    ]
+
+
+def konfig_pfad(ordner: Path) -> Path:
+    """Pfad der Repo-Konfig, wie ``config.lade`` ihn liest."""
+    return config.repo_wurzel(Path(ordner)) / config.KONFIG_PFAD
+
+
+def konfig_pruefen(ordner: Path) -> list[Befund]:
+    """Roter Befund, wenn die Repo-Konfig existiert, aber kein gültiges JSON-Objekt ist.
+
+    ``config.lade`` nimmt dann still die Vorgaben — Startklar macht es sichtbar.
+    """
+    datei = konfig_pfad(ordner)
+    if not datei.is_file():
+        return []
+    try:
+        daten = json.loads(datei.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as fehler:
+        grund = f"unlesbar ({_kurz(str(fehler), 120)})"
+    else:
+        if isinstance(daten, dict):
+            return []
+        grund = "kein JSON-Objekt"
+    return [
+        Befund(
+            "konfig",
+            False,
+            f"Konfig {datei} {grund} — es gälten still die Vorgaben",
+            f"{datei} reparieren (gültiges JSON-Objekt) oder löschen, dann erneut prüfen",
+        )
+    ]
 
 
 def _manifest_pfad(ordner: Path, spec: int) -> Path:
@@ -569,21 +652,36 @@ def _gh_issue_text(ordner: Path, nummer: str) -> str:
     return ergebnis.stdout
 
 
+@dataclass(frozen=True)
+class _Bedarf:
+    """Ergebnis von ``_benoetigt``: Namen, Warnungen, ggf. Grund für Unvollständigkeit."""
+
+    namen: list[str]
+    warnungen: list[str]
+    unvollstaendig: str = ""
+    unvollstaendig_behebung: str = ""
+
+
 def _benoetigt(
     ordner: Path,
     tickets: dict[str, dict[str, Any]] | None,
     issue_leser: IssueLeser,
-) -> tuple[list[str], list[str]]:
-    """(benötigte Schlüssel-Namen, Warnungen)."""
-    namen: set[str] = set()
+) -> _Bedarf:
+    """Benötigte Schlüssel-Namen aus Konfig, Manifest und Issue-Texten.
+
+    Scheitert das Lesen eines Issues, fragt es die übrigen nicht mehr ab (kein
+    N×Timeout) und meldet die Prüfung als unvollständig.
+    """
+    namen: set[str] = set(_konfig_schluessel(ordner))
     warnungen: list[str] = []
-    konfig = config.lade(ordner)
-    namen.update(
-        str(n) for n in (konfig.get("startklar", {}) or {}).get("schluessel", []) or []
-    )
     if not tickets:
-        return sorted(namen), warnungen
+        return _Bedarf(sorted(namen), warnungen)
     bekannt = list(_env_datei(ordner / ".env.example"))
+    if not bekannt:
+        warnungen.append("Issue-Scan übersprungen, .env.example fehlt")
+    unvollstaendig = ""
+    behebung = ""
+    nicht_geprueft: list[str] = []
     for nummer, ticket in tickets.items():
         namen.update(str(n) for n in ticket.get("schluessel", []) or [])
         if not bekannt:
@@ -591,14 +689,27 @@ def _benoetigt(
         text = " ".join(
             str(ticket.get(feld, "")) for feld in ("title", "umfang", "files", "body")
         )
-        try:
-            text += " " + issue_leser(ordner, nummer)
-        except (OSError, subprocess.TimeoutExpired, RuntimeError) as fehler:
-            warnungen.append(f"Issue #{nummer} nicht lesbar ({fehler})")
+        if unvollstaendig:
+            nicht_geprueft.append(f"#{nummer}")
+        else:
+            try:
+                text += " " + issue_leser(ordner, nummer)
+            except FileNotFoundError:
+                unvollstaendig = f"Issue #{nummer} nicht lesbar (gh nicht installiert)"
+                behebung = "GitHub-CLI gh installieren und `gh auth status` prüfen, dann erneut prüfen"
+            except (OSError, subprocess.TimeoutExpired, RuntimeError) as fehler:
+                unvollstaendig = (
+                    f"Issue #{nummer} nicht lesbar ({_kurz(str(fehler), 120)})"
+                )
+                behebung = (
+                    "`gh auth status` prüfen (Anmeldung/Netz), dann erneut prüfen"
+                )
         for name in bekannt:
             if re.search(rf"(?<![A-Za-z0-9_]){re.escape(name)}(?![A-Za-z0-9_])", text):
                 namen.add(name)
-    return sorted(namen), warnungen
+    if nicht_geprueft:
+        unvollstaendig += "; Issue-Text nicht geprüft: " + ", ".join(nicht_geprueft)
+    return _Bedarf(sorted(namen), warnungen, unvollstaendig, behebung)
 
 
 def schluessel_behebung_befehl(ordner: Path) -> str:
@@ -610,14 +721,19 @@ def schluessel_pruefen(
     ordner: Path,
     spec: int,
     environ: Mapping[str, str] | None = None,
-    issue_leser: IssueLeser = _gh_issue_text,
+    issue_leser: IssueLeser | None = None,
+    *,
+    manifest_pflicht: bool = False,
 ) -> list[Befund]:
     """Prüft, ob alle benötigten Schlüssel einen Wert haben — nennt nur NAMEN.
 
     Zählen nur die ``.env``-Quellen, die ``bau`` lädt; steht ein Schlüssel nur in
     ``environ`` (Umgebung des prüfenden Prozesses), ist das ok mit Warnung.
+    ``manifest_pflicht`` (Gate): fehlendes Spec-Manifest ist rot statt Hinweis.
+    Ist ein Issue nicht lesbar, ist die Prüfung unvollständig → rot.
     """
     ordner = Path(ordner)
+    leser = _gh_issue_text if issue_leser is None else issue_leser
     umgebung = os.environ if environ is None else environ
     try:
         tickets = _manifest_tickets(ordner, spec)
@@ -630,7 +746,8 @@ def schluessel_pruefen(
                 "Manifest reparieren (neu erzeugen mit /to-tickets), dann erneut prüfen",
             )
         ]
-    benoetigt, warnungen = _benoetigt(ordner, tickets, issue_leser)
+    bedarf = _benoetigt(ordner, tickets, leser)
+    benoetigt, warnungen = bedarf.namen, list(bedarf.warnungen)
     quellen = _env_quellen(ordner)
     nur_umgebung = []
     fehlend = []
@@ -650,20 +767,45 @@ def schluessel_pruefen(
         "" if tickets is not None else " (kein Manifest, nur Konfig-Schlüssel geprüft)"
     )
     warnung = (" — Warnung: " + "; ".join(warnungen)) if warnungen else ""
+    zusatz: list[Befund] = []
+    if tickets is None and manifest_pflicht:
+        zusatz.append(
+            Befund(
+                "schlüssel",
+                False,
+                f"Manifest {_manifest_pfad(ordner, spec)} fehlt — Schlüssel-Bedarf der Tickets unbekannt",
+                f"/to-tickets ausführen bzw. Manifest docs/agents/manifests/spec-{spec}.json ziehen (git pull), dann erneut prüfen",
+            )
+        )
+    if bedarf.unvollstaendig:
+        zusatz.append(
+            Befund(
+                "schlüssel",
+                False,
+                f"Schlüssel-Prüfung unvollständig: {bedarf.unvollstaendig}",
+                bedarf.unvollstaendig_behebung,
+            )
+        )
     if not fehlend:
         liste = ", ".join(benoetigt) if benoetigt else "keine nötig"
         return [
-            Befund("schlüssel", True, f"Schlüssel vorhanden: {liste}{hinweis}{warnung}")
+            Befund(
+                "schlüssel", True, f"Schlüssel vorhanden: {liste}{hinweis}{warnung}"
+            ),
+            *zusatz,
         ]
     befehl = schluessel_behebung_befehl(ordner)
     return [
-        Befund(
-            "schlüssel",
-            False,
-            f"Schlüssel fehlt: {name}{hinweis}{warnung}",
-            f"Bitwarden-Eintrag {name} anlegen/prüfen, dann `{befehl}`",
-        )
-        for name in fehlend
+        *(
+            Befund(
+                "schlüssel",
+                False,
+                f"Schlüssel fehlt: {name}{hinweis}{warnung}",
+                f"Bitwarden-Eintrag {name} anlegen/prüfen, dann `{befehl}`",
+            )
+            for name in fehlend
+        ),
+        *zusatz,
     ]
 
 
@@ -769,13 +911,13 @@ def _deny_trifft(regel: str, befehl: str) -> bool:
 
 
 def _block_grund(ergebnis: subprocess.CompletedProcess[str]) -> str | None:
-    """Grund, wenn der Hook blockt, sonst ``None``.
+    """Grund (roh, ungekürzt, ungeschwärzt), wenn der Hook blockt, sonst ``None``.
 
     Block = Exit 2, ``permissionDecision`` deny/ask (ask wartet unbeaufsichtigt
     ewig), ``decision: block`` oder ``continue: false``.
     """
     if ergebnis.returncode == 2:
-        return _kurz(ergebnis.stderr or ergebnis.stdout or "Exit 2")
+        return ergebnis.stderr or ergebnis.stdout or "Exit 2"
     if ergebnis.returncode != 0:
         return None
     try:
@@ -788,13 +930,11 @@ def _block_grund(ergebnis: subprocess.CompletedProcess[str]) -> str | None:
     if isinstance(spezifisch, dict):
         entscheidung = spezifisch.get("permissionDecision")
         if entscheidung in ("deny", "ask"):
-            return _kurz(
-                f"{entscheidung}: {spezifisch.get('permissionDecisionReason') or ''}"
-            )
+            return f"{entscheidung}: {spezifisch.get('permissionDecisionReason') or ''}"
     if daten.get("decision") == "block":
-        return _kurz(str(daten.get("reason") or "block"))
+        return str(daten.get("reason") or "block")
     if daten.get("continue") is False:
-        return _kurz(f"continue: false {daten.get('stopReason') or ''}")
+        return f"continue: false {daten.get('stopReason') or ''}"
     return None
 
 
@@ -867,11 +1007,11 @@ def _probe_eines(
         if grund is not None:
             return _rot(
                 werkzeug,
-                f"{name} blockt den Befehl: {_schwaerzen(grund, geheim)}",
+                f"{name} blockt den Befehl: {_kurz(_schwaerzen(grund, geheim))}",
                 "Hook-Regel für dieses Werkzeug freigeben (Hook-Datei/Settings anpassen), dann erneut prüfen",
             )
         if ergebnis.returncode != 0:
-            fehlertext = _schwaerzen(_kurz(ergebnis.stderr, 120), geheim)
+            fehlertext = _kurz(_schwaerzen(ergebnis.stderr, geheim), 120)
             warnungen.append(
                 f"Hook `{_kurz(hook, 80)}` Exit {ergebnis.returncode} (kein Block): {fehlertext}"
             )
@@ -893,7 +1033,7 @@ def _probe_eines(
             "bash/node/python installieren (Windows: Git-Bash), dann erneut prüfen",
         )
     if lauf.returncode != 0:
-        fehlertext = _schwaerzen(_kurz(lauf.stderr or lauf.stdout, 160), geheim)
+        fehlertext = _kurz(_schwaerzen(lauf.stderr or lauf.stdout, geheim), 160)
         return _rot(
             werkzeug,
             f"Trockenlauf Exit {lauf.returncode}: {fehlertext}",
@@ -911,6 +1051,7 @@ def werkzeug_probe(
     settings_dateien: Iterable[Path] | None = None,
     laeufer: Laeufer = _standard_laeufer,
     werkzeuge: Sequence[Werkzeug] = WERKZEUGE,
+    environ: Mapping[str, str] | None = None,
 ) -> list[Befund]:
     """Spielt jedes Aufseher-Werkzeug durch deny-Regeln, PreToolUse-Hooks und trocken."""
     ordner = Path(ordner)
@@ -925,7 +1066,7 @@ def werkzeug_probe(
         for text in regeln.fehler
     ]
     ticket = _beispiel_ticket(ordner, spec)
-    geheim = _geheime_werte(ordner)
+    geheim = _geheime_werte(ordner, environ, spec)
     return befunde + [
         _probe_eines(w, ordner, spec, ticket, regeln, laeufer, geheim)
         for w in werkzeuge
@@ -943,14 +1084,23 @@ def pruefe(
     environ: Mapping[str, str] | None = None,
     laeufer: Laeufer = _standard_laeufer,
     werkzeuge: Sequence[Werkzeug] = WERKZEUGE,
-    issue_leser: IssueLeser = _gh_issue_text,
+    issue_leser: IssueLeser | None = None,
+    manifest_pflicht: bool = False,
 ) -> list[Befund]:
-    """Alle drei Teile: venv, Schlüssel, Werkzeuge."""
+    """Alle Teile: venv, Konfig, Schlüssel, Werkzeuge.
+
+    ``manifest_pflicht`` setzt das Gate (fehlendes Manifest = rot); die CLI nicht.
+    """
     ordner = Path(ordner)
     return [
-        venv_sicherstellen(ordner),
-        *schluessel_pruefen(ordner, spec, environ, issue_leser),
-        *werkzeug_probe(ordner, spec, settings_dateien, laeufer, werkzeuge),
+        venv_sicherstellen(ordner, environ),
+        *konfig_pruefen(ordner),
+        *schluessel_pruefen(
+            ordner, spec, environ, issue_leser, manifest_pflicht=manifest_pflicht
+        ),
+        *werkzeug_probe(
+            ordner, spec, settings_dateien, laeufer, werkzeuge, environ=environ
+        ),
     ]
 
 
@@ -982,7 +1132,10 @@ def gate(
             "Startklar-Prüfung abgeschaltet (%s=aus) — Start ohne Prüfung.", SCHALTER
         )
         return 0
-    befunde = (pruefer or pruefe)(Path(ordner), spec)
+    if pruefer is None:
+        befunde = pruefe(Path(ordner), spec, manifest_pflicht=True)
+    else:
+        befunde = pruefer(Path(ordner), spec)
     code, text = ausgabe(befunde)
     for zeile in text.splitlines():
         (log.info if code == 0 else log.error)("Startklar: %s", zeile)

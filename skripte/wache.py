@@ -35,7 +35,7 @@ from pathlib import Path
 _SKILL = str(Path(__file__).resolve().parent.parent)
 if _SKILL not in sys.path:
     sys.path.insert(0, _SKILL)
-from to_spawn import (
+from to_spawn import (  # noqa: E402
     config,
     context_mode,
     speicher,
