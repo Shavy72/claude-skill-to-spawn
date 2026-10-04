@@ -199,6 +199,23 @@ def fremdes_repo(pid: int) -> bool:
     return ordner != wurzel and wurzel not in ordner.parents
 
 
+def ticket_aus_environ(pid: int) -> str | None:
+    """``BAU_TICKET`` aus ``/proc/<pid>/environ`` (#431: ``respawn`` startet ``claude`` ohne ``bau.py``).
+
+    Naht für Tests. Ohne ``/proc`` (Windows) oder ohne Leserecht: ``None``.
+    """
+    try:
+        roh = Path(f"/proc/{pid}/environ").read_bytes()
+    except OSError as e:  # PermissionError ist Unterklasse
+        log.debug("environ von %s nicht lesbar: %s", pid, e)
+        return None
+    for eintrag in roh.split(b"\0"):
+        if eintrag.startswith(b"BAU_TICKET="):
+            wert = eintrag[len(b"BAU_TICKET=") :].decode("ascii", "replace")
+            return wert if wert.isdigit() else None
+    return None
+
+
 def zuordnen(eintraege: dict[str, Eintrag], alle: list[Prozess]) -> None:
     for p in alle:
         if not p.name.lower().startswith("python"):
@@ -246,6 +263,26 @@ def zuordnen(eintraege: dict[str, Eintrag], alle: list[Prozess]) -> None:
             e.session_pid = p.pid
             e.zustand = f"VERWAIST seit {seit}"
             e.ctx = context_mode_zustand(p.pid, alle)
+    # ``respawn``-Sessions (#431): nacktes ``env BAU_TICKET=N claude`` ohne ``bau.py`` — Ticket aus der
+    # Umgebung. ``bau.py``-Treffer und Verwaiste haben Vorrang; Kinder (MCP-``node``) erben die Variable.
+    kandidaten = {
+        p.pid: (p, nr)
+        for p in alle
+        if p.name.lower() in VERWAIST_NAMEN
+        and not fremdes_repo(p.pid)
+        and (nr := ticket_aus_environ(p.pid)) is not None
+    }
+    for pid, (p, nummer) in kandidaten.items():
+        if p.ppid in kandidaten:  # Kind einer Session mit gleicher Variable
+            continue
+        e = eintraege.get(nummer) or Eintrag(nummer, "ticket", "(nicht im Manifest)")
+        eintraege[nummer] = e
+        if e.session_pid:
+            continue
+        e.session_pid = pid
+        seit = p.start.strftime("%H:%M") if p.start else "?"
+        e.zustand = f"läuft seit {seit}"
+        e.ctx = context_mode_zustand(pid, alle)
 
 
 def token_text(ticket: str, repo: Path = REPO) -> str:
