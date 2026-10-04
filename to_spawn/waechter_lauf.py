@@ -836,6 +836,7 @@ class Abloesung:
                 _log_zeile(self.repo, self.spec, "blockiert", grund=grund, versuche=nummer)
                 return
 
+
 #: So viele Byte vom Transkript-Ende reichen für die letzte Gesprächszeile.
 _RUHE_ENDE_BYTES = 256 * 1024
 
