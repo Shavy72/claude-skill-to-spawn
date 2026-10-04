@@ -46,7 +46,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Protocol
 
-from to_spawn import aufseher_stand, bau_log, config, gh, leitstand, respawn
+from to_spawn import anleitung, aufseher_stand, bau_log, config, gh, leitstand, respawn
 
 log = logging.getLogger(__name__)
 
@@ -65,13 +65,8 @@ SMART_ZONE_DATEI = Path("~/.claude/smart-zone.json")
 EXIT_OK = 0
 EXIT_FEHLER = 1
 
-#: Stufe 1 (E11 Richtung 2): Mut machen, Session arbeitet selbst weiter.
-MINDSET_TEXT = (
-    "Aufseher: Du stehst seit {min} min still. Wir bauen nur in Staging — dort kann "
-    "nichts live schaden. Entscheide offene Punkte selbst (Vorschlag nehmen, ins "
-    "Bau-Log), bau das Ticket fertig, bleib in der Smart Zone. Setz deinen Loop genau "
-    "dort fort, wo du warst."
-)
+#: Stufe 1 (E11 Richtung 2): Mindset-Stoß, Text aus der Aufseher-Anleitung (#500).
+MINDSET_TEXT = anleitung.anstupser("Aufseher")
 EXIT_TEXT = "/exit"
 
 #: ``melden`` = nichts tun, Exit 1: der Aufseher muss prüfen.
