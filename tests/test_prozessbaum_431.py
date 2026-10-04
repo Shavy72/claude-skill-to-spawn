@@ -22,7 +22,7 @@ import pytest
 WURZEL = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(WURZEL))
 
-from to_spawn import prozessbaum
+from to_spawn import aufpasser, prozessbaum
 
 
 def _starten(befehl: list[str]) -> subprocess.Popen[bytes]:
@@ -31,6 +31,14 @@ def _starten(befehl: list[str]) -> subprocess.Popen[bytes]:
     proz = subprocess.Popen(befehl)
     threading.Thread(target=proz.wait, daemon=True).start()
     return proz
+
+
+def _bereit_warten(marker: Path) -> None:
+    """Wartet (max. 5 s), bis die Shell den Bereitschafts-Marker geschrieben hat."""
+    ende = time.monotonic() + 5
+    while not marker.exists() and time.monotonic() < ende:
+        time.sleep(0.02)
+    assert marker.exists(), "Shell wurde nicht bereit"
 
 
 @pytest.fixture
@@ -80,10 +88,17 @@ def test_beenden_term_reicht(eltern_mit_kind: subprocess.Popen[bytes]) -> None:
     assert eskaliert == []
 
 
-def test_beenden_eskaliert_zu_kill() -> None:
+def test_beenden_eskaliert_zu_kill(tmp_path: Path) -> None:
     """Ein Prozess, der SIGTERM ignoriert, stirbt erst an der nächsten Stufe."""
-    proz = _starten(["sh", "-c", "trap '' TERM; while :; do sleep 0.1; done"])
-    time.sleep(0.3)
+    marker = tmp_path / "bereit"
+    proz = _starten(
+        [
+            "sh",
+            "-c",
+            f"trap '' TERM; : > {marker}; while :; do sleep 0.1; done",
+        ]
+    )
+    _bereit_warten(marker)
     eskaliert: list[int] = []
     try:
         assert prozessbaum.beenden(
@@ -97,10 +112,17 @@ def test_beenden_eskaliert_zu_kill() -> None:
         proz.wait(timeout=5)
 
 
-def test_beenden_wartet_nur_auf_ziel() -> None:
+def test_beenden_wartet_nur_auf_ziel(tmp_path: Path) -> None:
     """``warten_auf=[]``: Signal geht raus, gewartet wird nicht."""
-    proz = _starten(["sh", "-c", "trap '' TERM; while :; do sleep 0.1; done"])
-    time.sleep(0.3)
+    marker = tmp_path / "bereit"
+    proz = _starten(
+        [
+            "sh",
+            "-c",
+            f"trap '' TERM; : > {marker}; while :; do sleep 0.1; done",
+        ]
+    )
+    _bereit_warten(marker)
     try:
         start = time.monotonic()
         assert prozessbaum.beenden([proz.pid], ((signal.SIGTERM, 30.0),), warten_auf=[])
@@ -147,3 +169,38 @@ def test_kein_zweites_geruest_in_respawn() -> None:
     quelle = (WURZEL / "to_spawn" / "respawn.py").read_text(encoding="utf-8")
     for alt in ("def _nachkommen(", "def _lebt(", "def _signal(", "def _ist_claude("):
         assert alt not in quelle, alt
+
+
+def test_aufpasser_beenden_toetet_ganzen_baum(
+    eltern_mit_kind: subprocess.Popen[bytes],
+) -> None:
+    """``Aufpasser._prozesse_beenden`` räumt gegen einen echten Prozessbaum ab."""
+    baum = prozessbaum.baum(eltern_mit_kind.pid)
+    assert len(baum) == 2
+    aufpasser.Aufpasser._prozesse_beenden(object(), eltern_mit_kind.pid)  # type: ignore[arg-type]
+    eltern_mit_kind.wait(timeout=5)
+    assert not any(prozessbaum.lebt(pid) for pid in baum)
+
+
+def test_aufpasser_beenden_stufen_und_reihenfolge(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Stufen HUP -> TERM -> KILL je 5 s, Kinder vor der Wurzel (reversed)."""
+    aufrufe: list[tuple[object, ...]] = []
+    monkeypatch.setattr(aufpasser, "prozess_baum", lambda pid: [pid, pid + 1, pid + 2])
+    monkeypatch.setattr(
+        prozessbaum,
+        "beenden",
+        lambda *a, **kw: aufrufe.append(a) or True,
+    )
+    aufpasser.Aufpasser._prozesse_beenden(object(), 100)  # type: ignore[arg-type]
+    assert aufrufe == [
+        (
+            [102, 101, 100],
+            (
+                (signal.SIGHUP, 5.0),
+                (signal.SIGTERM, 5.0),
+                (signal.SIGKILL, 5.0),
+            ),
+        )
+    ]

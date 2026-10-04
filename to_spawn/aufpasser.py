@@ -458,10 +458,6 @@ def session_beendet(pane_pid: int) -> bool:
     return True
 
 
-def _prozess_lebt(pid: int) -> bool:
-    return Path(f"/proc/{pid}").exists()
-
-
 def session_laeuft_schon(sid: str, heim: Path | None = None) -> int | None:
     """PID eines lebenden Claude-Prozesses, der laut ``~/.claude/sessions/*.json``
     dieses Gespräch schon führt — sonst None. Schutz vor zwei ``--resume`` auf
