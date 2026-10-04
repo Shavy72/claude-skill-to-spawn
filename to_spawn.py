@@ -35,6 +35,7 @@ from to_spawn import (  # noqa: E402
     aufpasser,
     aufseher_stand,
     bau_log,
+    befund,
     config,
     deploy_status,
     gh,
@@ -190,6 +191,21 @@ def _setup(repo: Path, args: argparse.Namespace) -> int:
     print()
     print(setup.probesitz_block(repo))
     return 0
+
+
+def _befund(args: argparse.Namespace) -> int:
+    """Unterbefehl ``befund`` (#438): Aufseher meldet gelb oder rot, das Modul handelt."""
+    repo = config.repo_wurzel(_repo_aus_umgebung())
+    gh_repo = gh.repo_aus_origin(repo)
+    if not gh_repo:
+        print("FEHLER: kein GitHub-Repo erkannt (origin fehlt oder zeigt nicht auf github.com)")
+        return 2
+    ergebnis = befund.melde(
+        repo, gh_repo, args.spec, args.ticket, args.stufe, args.text, dry_run=args.dry_run
+    )
+    for zeile in ergebnis.zeilen:
+        print(zeile)
+    return 0 if ergebnis.ok else 1
 
 
 def _eintrag(args: argparse.Namespace) -> int:
@@ -469,6 +485,13 @@ def main(argv: list[str] | None = None) -> int:
     leitstand.richte_parser_ein(unter)
     waechter_takt.richte_parser_ein(unter)
     aufseher_stand.richte_parser_ein(unter)
+    # Gelb-Liste (#438): Befund des Aufsehers — gelb → Folge-Ticket, rot → wieder öffnen.
+    p_befund = unter.add_parser("befund", help="Aufseher-Befund melden (gelb/rot)")
+    p_befund.add_argument("--spec", required=True, type=int, help="Spec-Nummer (Manifest)")
+    p_befund.add_argument("--ticket", required=True, type=int, help="Ticket mit dem Befund")
+    p_befund.add_argument("--stufe", required=True, choices=list(befund.STUFEN))
+    p_befund.add_argument("--text", required=True, help="was fehlt / der Hinweis")
+    p_befund.add_argument("--dry-run", action="store_true", help="nur zeigen, nichts tun")
     # Aufpasser (#236): Cron-Hausmeister für die tmux-Fenster; gleiche Argumente wie
     # ``skripte/aufpasser.py``.
     aufpasser.parser_fuellen(
@@ -484,6 +507,8 @@ def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     if args.befehl == "eintrag":
         return _eintrag(args)
+    if args.befehl == "befund":
+        return _befund(args)
     if args.befehl == "umrechnen":
         return _umrechnen(args)
     if args.befehl == "nest":
