@@ -1921,9 +1921,9 @@ def _tick(
                     f"{', '.join(regeln)} beim Schließen {stempel} trifft nicht mehr zu "
                     "(Regeln jetzt grün, kein neuer Ticket-Commit seitdem)."
                 )
-                zeilen_r = befund.zuruecknehmen(n, gh_repo, grund, dry_run)
-                aktionen += zeilen_r
-                if zeilen_r[-1] == f"#{n} Fehl-Reopen zurückgenommen":
+                rueck = befund.zuruecknehmen(n, gh_repo, grund, dry_run)
+                aktionen += rueck.zeilen
+                if rueck.ok:
                     erledigt.update({f"ruecknahme|{n}|{stempel}", f"ruecknahme|{n}"})
                     sichern()
                     bau_log.schreibe(repo, n, "ruecknahme", text=f"Fehl-Reopen zurückgenommen: {grund}")

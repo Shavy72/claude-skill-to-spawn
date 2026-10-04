@@ -54,7 +54,7 @@ Abruf: TypeAlias = Callable[[int], dict[str, Any] | None]
 
 @dataclass(frozen=True)
 class Ergebnis:
-    """Ausgang von :func:`melde`: ``ok`` = Befund vollständig verarbeitet."""
+    """Ausgang von :func:`melde` und :func:`zuruecknehmen`: ``ok`` = vollständig verarbeitet."""
 
     ok: bool
     zeilen: list[str]
@@ -119,23 +119,23 @@ def _oeffne(
     return Ergebnis(ok=False, zeilen=[f"#{n} FEHLER: wieder öffnen gescheitert"])
 
 
-def zuruecknehmen(n: int, gh_repo: str, text: str, dry_run: bool) -> list[str]:
+def zuruecknehmen(n: int, gh_repo: str, text: str, dry_run: bool) -> Ergebnis:
     """Eigenes Fehl-Reopen zurücknehmen: Ticket wieder schließen, mit Kommentar (#448).
 
-    Letzte Zeile ``#N Fehl-Reopen zurückgenommen`` = geklappt; eine ``FEHLER``-Zeile =
-    gescheitert (der nächste Tick versucht es wieder). Ob zurückgenommen werden darf,
+    ``ok`` = Ticket wirklich geschlossen; sonst Probelauf oder gescheitert (``FEHLER``-Zeile,
+    der nächste Tick versucht es wieder). Ob zurückgenommen werden darf,
     entscheidet der Aufrufer (capo).
     """
     if dry_run:
-        return [f"#{n} [Probe] würde Fehl-Reopen zurücknehmen"]
+        return Ergebnis(ok=False, zeilen=[f"#{n} [Probe] würde Fehl-Reopen zurücknehmen"])
     kommentar = f"{KOPF} Fehl-Reopen zurückgenommen — {text}"
     code, _ = gh.lauf(
         ["issue", "close", str(n), "--repo", gh_repo, "--comment", kommentar]
     )
     if code == 0:
-        return [f"#{n} Fehl-Reopen zurückgenommen"]
+        return Ergebnis(ok=True, zeilen=[f"#{n} Fehl-Reopen zurückgenommen"])
     log.warning("Fehl-Reopen #%s nicht zurückgenommen (gh Exit %s).", n, code)
-    return [f"#{n} FEHLER: Fehl-Reopen zurücknehmen gescheitert"]
+    return Ergebnis(ok=False, zeilen=[f"#{n} FEHLER: Fehl-Reopen zurücknehmen gescheitert"])
 
 
 def _titel(ticket: int, text: str) -> str:
