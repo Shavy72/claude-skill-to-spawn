@@ -1,0 +1,12 @@
+=================================== FAILURES ===================================
+E       assert '<prompt>' not in '\nBefehl:\n..."<prompt>"\n'
+E         
+E         '<prompt>' is contained here:
+E           3bc07c55 "<prompt>"
+E         ?           ++++++++
+E       assert not True
+E        +  where True = any(<generator object test_staffel_ohne_prompt_runde1_leer_ab_runde2_mit_prompt.<locals>.<genexpr> at 0x7faa558bcba0>)
+=========================== short test summary info ============================
+FAILED tests/test_rotprobe_tmp_431.py::test_dry_run_ohne_prompt_laeuft_ohne_prompt_argument
+FAILED tests/test_rotprobe_tmp_431.py::test_staffel_ohne_prompt_runde1_leer_ab_runde2_mit_prompt
+2 failed, 1 passed in 0.28s
