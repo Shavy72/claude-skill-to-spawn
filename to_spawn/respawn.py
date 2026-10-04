@@ -5,7 +5,8 @@ Eine Tür: :func:`abloesen`. Sie löst die laufende Claude-Session im tmux-Fenst
 
 0. Duplikat-Prüfung (A5): genau ein Fenster ``bau <N>``, kein ``bau <N> neu``,
    höchstens ein ``bau.py``-Prozess für N — sonst Exit 3, nichts anfassen.
-a) Handoff-Auftrag ins alte Fenster (Handoff + Start-Prompt mit festen Pfaden).
+a) Handoff-Auftrag ins alte Fenster (feste Pfade; entfällt, wenn ihn die Leiter #432
+   seit ``handoff_seit`` getippt hat und beide Dateien frisch da sind).
 b) neues Fenster ``bau <N> neu`` mit ``bau <N> --sofort --ohne-prompt`` wie spawn/capo
    (Bau-Konfiguration allein aus ``bau.py``; nie ein Start-Prompt als Argument, V4).
 c) warten bis bereit und ruhig (Speicher-Wartezeit von bau.py zählt gegen
@@ -129,6 +130,7 @@ class Auftrag:
     ticket: int
     warte_max: float = WARTE_MAX_VORGABE
     dry_run: bool = False
+    handoff_seit: float | None = None
 
     @property
     def kopf(self) -> str:
@@ -397,13 +399,19 @@ def _handoff_auftrag(handoff: str, start: str) -> str:
 
 
 def handoff_auftrag_fuer(wt: Path, ticket: int, jetzt: float) -> str:
-    """Handoff-Auftrag mit den Pfaden von Schritt a (Leiter #432 findet sie so wieder)."""
-    return _handoff_auftrag(*(str(p) for p in _dateien(wt, ticket, jetzt)))
+    """Handoff-Auftrag von Schritt a — einzige Pfadquelle, auch für die Leiter (#432)."""
+    return _handoff_auftrag(
+        *(f"{HANDOFF_ORDNER}/{p.name}" for p in _dateien(wt, ticket, jetzt))
+    )
 
 
 def start_prompt_da(wt: Path, ticket: int, seit: float) -> bool:
     """Frische, nicht leere Start-Prompt-Datei ``START_*_<ticket>.txt`` seit ``seit`` (#432)."""
     return _finde(_dateien(wt, ticket, seit)[1], ticket, seit) is not None
+
+
+def _beide_da(wt: Path, ticket: int, seit: float) -> bool:
+    return all(_finde(p, ticket, seit) for p in _dateien(wt, ticket, seit))
 
 
 def _startbefehl(repo: Path, ticket: int) -> str:
@@ -583,6 +591,7 @@ def abloesen(
     werkzeug: Werkzeug | None = None,
     warte_max: float = WARTE_MAX_VORGABE,
     dry_run: bool = False,
+    handoff_seit: float | None = None,
 ) -> Ergebnis:
     """Löst die Session in ``bau <ticket>`` nach SOP a–e ab (siehe Modul-Kommentar).
 
@@ -592,7 +601,7 @@ def abloesen(
     weitergereicht.
     """
     w = werkzeug or TmuxWerkzeug()
-    auftrag = Auftrag(repo, spec, ticket, warte_max, dry_run)
+    auftrag = Auftrag(repo, spec, ticket, warte_max, dry_run, handoff_seit)
     stand = _Stand()
     alte_handler = _signale_abfangen(stand)
     try:
@@ -672,14 +681,16 @@ def _ablauf(a: Auftrag, w: Werkzeug, stand: _Stand) -> Ergebnis:
             f"{a.kopf}: dry-run — alt {alt.ziel}, neu „{a.name_neu}“ in {a.sitzung}, cwd {a.repo}, Befehl: {befehl}",
         )
 
-    # a) Handoff-Auftrag ins alte Fenster. Schon vor dem Tippen gesetzt: scheitert nur
-    # das Enter, kann der Auftrag im Eingabefeld stehen — nie „unangetastet“ melden.
-    seit = w.jetzt()
-    handoff, start = _dateien(wt, a.ticket, seit)
-    rel_handoff = f"{HANDOFF_ORDNER}/{handoff.name}"
+    # a) Handoff-Auftrag ins alte Fenster (außer die Leiter hat ihn schon getippt und
+    # beide Dateien sind frisch). Schon vor dem Tippen gesetzt: scheitert nur das Enter,
+    # kann der Auftrag im Eingabefeld stehen — nie „unangetastet“ melden.
     stand.auftrag_getippt = True
-    w.tippen(alt.ziel, _handoff_auftrag(rel_handoff, f"{HANDOFF_ORDNER}/{start.name}"))
-    log.info("respawn #%s: Handoff-Auftrag an %s getippt.", a.ticket, alt.ziel)
+    seit = a.handoff_seit
+    if seit is None or not _beide_da(wt, a.ticket, seit):
+        seit = w.jetzt()
+        w.tippen(alt.ziel, handoff_auftrag_fuer(wt, a.ticket, seit))
+        log.info("respawn #%s: Handoff-Auftrag an %s getippt.", a.ticket, alt.ziel)
+    handoff, start = _dateien(wt, a.ticket, seit)
 
     # b) neues Fenster: bau.py wie spawn (cwd Hauptbaum, bau.py wechselt selbst in den Worktree)
     stand.sessions = _DateiSicherung.merken(sessions_datei.pfad(a.repo, str(a.ticket)))

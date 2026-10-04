@@ -341,6 +341,30 @@ def _juengste_je_session(zeilen: Iterable[dict[str, Any]]) -> list[dict[str, Any
     return [*je_id.values(), *ohne_id]
 
 
+def kontext_aktuell_k(
+    repo: Path,
+    ticket: str | int,
+    *,
+    hauptbaum: Path | None = None,
+    nach: float | None = None,
+) -> float | None:
+    """Spitzen-Kontext (k) der aktuellen Hauptsession — für die Eingriffs-Leiter (#432).
+
+    Zählt nur die jüngste ``session_ende``-Zeile (die Hooks schreiben kumulierte
+    Werte, die jüngste Zeile gehört also zur jüngsten Session). ``nach`` (Unix-Zeit,
+    z. B. der letzte Respawn) blendet ältere Zeilen aus. ``None`` = keine passende
+    Zeile oder kein Kontext-Wert — nie der Wert einer abgelösten Session.
+    """
+    enden = [
+        z
+        for z in lese(repo, ticket, hauptbaum=hauptbaum)
+        if z.get("typ") == "session_ende"
+        and (nach is None or _sortier_zeit(z).timestamp() > nach)
+    ]
+    spitzen = _spitzen(enden[-1:])
+    return _k(spitzen[0]) if spitzen else None
+
+
 def _dauer(zeile: dict[str, Any]) -> int:
     try:
         return int(float(zeile.get("dauer_s") or 0))

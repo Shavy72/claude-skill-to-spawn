@@ -477,6 +477,19 @@ def leiter_stufe(ticket: int) -> int:
     return leiter_eintrag(ticket)[0]
 
 
+def merke_leiter_respawn(ticket: int, zeit: float) -> None:
+    """Merkt den letzten erfolgreichen Respawn der Leiter (#432): älterer Kontext zählt nicht."""
+    aendere_zustand(
+        lambda z: z.setdefault("leiter_respawn", {}).__setitem__(str(ticket), zeit)
+    )
+
+
+def leiter_respawn(ticket: int) -> float | None:
+    """Zeit des letzten Respawns durch die Leiter, ``None`` = noch keiner."""
+    wert = lese_zustand().get("leiter_respawn", {}).get(str(ticket))
+    return None if wert is None else float(wert)
+
+
 # --- CLI ----------------------------------------------------------------------
 
 

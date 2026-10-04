@@ -57,7 +57,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 from to_spawn import aufpasser, bau_log, capo, config, gh
 
@@ -398,6 +398,29 @@ def sammeln(spec: int, q: Quellen, vorher: _Vorher) -> _Ergebnis:
         # Eine Zeile statt einer je Ticket: der Aufseher liest die Ausgabe in seinen Kontext.
         log.warning("Kein Bau-Log (Kontext/Phase/Aussage „—“): %s", ", ".join(ohne_log))
     return _Ergebnis(lagen, kommentare, merker)
+
+
+class TicketBlick(NamedTuple):
+    """Ein Ticket aus Sicht des Aufseher-Stands (``None`` = unbekannt)."""
+
+    lage: TicketLage | None  # ``None``: kein Sub-Issue der Spec
+    ziel: str | None  # tmux-Ziel des Fensters ``bau <N>``
+
+
+def ticket_lage(
+    spec: int, ticket: int, q: Quellen, ordner: Path | None = None
+) -> TicketBlick:
+    """Lage eines Tickets wie :func:`stand` sie sieht, plus tmux-Ziel — nur lesen.
+
+    Die Stand-Datei bleibt unberührt (schreiben tut sie nur der Aufseher-Tick).
+    :class:`RuntimeError` wie :func:`sammeln`, wenn gh nichts liefert. Nutzer:
+    Eingriffs-Leiter (#432).
+    """
+    erg = sammeln(spec, q, _vorher(spec, ordner))
+    lage = next((t for t in erg.lagen if t.nummer == ticket), None)
+    fenster = _fenster_liste(spec, q) or {}
+    eintrag = fenster.get(ticket)  # (tmux-Ziel, window_activity)
+    return TicketBlick(lage, eintrag[0] if eintrag else None)
 
 
 def kopf_zeile(spec: int, lagen: list[TicketLage], jetzt: float, noop: bool) -> str:
