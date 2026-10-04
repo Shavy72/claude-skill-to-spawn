@@ -42,7 +42,13 @@ class FakeWerkzeug:
         handoff_anlegen: bool = True,
         prompt_anlegen: bool = True,
         alter_handoff: bool = False,
-        bildschirm_reagiert: bool = True,
+        bildschirm_reagiert: bool | str = True,
+        remote_reaktion: str = "sofort",
+        beenden_ergebnis: str = "beendet",
+        tag_versatz: int = 0,
+        prompt_text: str = START_TEXT + "\n",
+        fehler_bei: dict[str, BaseException] | None = None,
+        schliessen_wirkt: bool = True,
     ) -> None:
         self.wt = wt
         self.aufrufe: list[tuple[Any, ...]] = []
@@ -67,6 +73,19 @@ class FakeWerkzeug:
         self.alter_handoff = alter_handoff
         self.bildschirm_reagiert = bildschirm_reagiert
         self.schirme: dict[str, str] = {ALT_ZIEL: "alte Session arbeitet"}
+        # sofort | nach_enter | nie — wann „/remote-control“ auf dem Schirm bestätigt ist
+        self.remote_reaktion = remote_reaktion
+        self.beenden_ergebnis = beenden_ergebnis
+        self.tag_versatz = tag_versatz
+        self.prompt_text = prompt_text
+        # Methodenname oder „tippen:<ziel>:<text-anfang 15>“ → Ausnahme, einmal geworfen
+        self.fehler_bei = fehler_bei or {}
+        self.schliessen_wirkt = schliessen_wirkt
+        self.nach_schlafen: list[Any] = []
+
+    def _fehler(self, schluessel: str) -> None:
+        if schluessel in self.fehler_bei:
+            raise self.fehler_bei.pop(schluessel)
 
     # --- Abfragen ---------------------------------------------------------
     def fenster_liste(self) -> list[FensterInfo]:
@@ -86,6 +105,9 @@ class FakeWerkzeug:
 
     def schlafen(self, s: float) -> None:
         self.zeit += s
+        haken, self.nach_schlafen = self.nach_schlafen, []
+        for h in haken:
+            h()
 
     # --- Handlungen -------------------------------------------------------
     def fenster_starten(self, sitzung: str, name: str, cwd: str, befehl: str) -> str:
@@ -96,24 +118,53 @@ class FakeWerkzeug:
 
     def tippen(self, ziel: str, text: str) -> None:
         self.aufrufe.append(("tippen", ziel, text))
+        self._fehler("tippen")
+        self._fehler(f"tippen:{ziel}:{text[:15]}")
         if ziel == ALT_ZIEL and "HANDOFF_" in text:
             self._dateien_anlegen()
-        if ziel == NEU_ZIEL and text == START_TEXT and self.bildschirm_reagiert:
-            self.schirme[NEU_ZIEL] += "\n● Lese Handoff …"
+        if ziel == NEU_ZIEL and text == respawn.REMOTE_CONTROL:
+            self.schirme[NEU_ZIEL] += "\n❯ /remote-control"
+            if self.remote_reaktion == "sofort":
+                self._remote_an()
+        if ziel == NEU_ZIEL and text == self.prompt_text.strip() and text:
+            if self.bildschirm_reagiert == "echo":
+                self.schirme[NEU_ZIEL] += f"\n❯ {text}"
+            elif self.bildschirm_reagiert:
+                self.schirme[NEU_ZIEL] += "\n● Lese Handoff …"
+
+    def _remote_an(self) -> None:
+        self.schirme[NEU_ZIEL] = (
+            "Claude Code\n  ⎿ Remote Control active\n❯ \n? for shortcuts"
+        )
+
+    def taste(self, ziel: str, taste: str) -> None:
+        self.aufrufe.append(("taste", ziel, taste))
+        if (
+            ziel == NEU_ZIEL
+            and taste == "Enter"
+            and self.remote_reaktion == "nach_enter"
+        ):
+            self._remote_an()
 
     def fenster_umbenennen(self, ziel: str, name: str) -> None:
         self.aufrufe.append(("fenster_umbenennen", ziel, name))
+        self._fehler("fenster_umbenennen")
 
     def fenster_schliessen(self, ziel: str) -> None:
         self.aufrufe.append(("fenster_schliessen", ziel))
+        if self.schliessen_wirkt:
+            self.fenster = [f for f in self.fenster if f.ziel != ziel]
 
-    def alte_session_beenden(self, pane_pid: int) -> bool:
+    def alte_session_beenden(self, pane_pid: int) -> str:
         self.aufrufe.append(("alte_session_beenden", pane_pid))
-        return True
+        self._fehler("alte_session_beenden")
+        return self.beenden_ergebnis
 
     # --- Hilfen -----------------------------------------------------------
     def _dateien_anlegen(self) -> None:
-        tag = time.strftime("%Y-%m-%d", time.localtime(self.zeit))
+        tag = time.strftime(
+            "%Y-%m-%d", time.localtime(self.zeit + self.tag_versatz * 86400)
+        )
         ordner = self.wt / "docs" / "handoffs"
         ordner.mkdir(parents=True, exist_ok=True)
         stempel = self.zeit + 5
@@ -123,7 +174,7 @@ class FakeWerkzeug:
             os.utime(pfad, (stempel, stempel))
         if self.prompt_anlegen:
             pfad = ordner / f"START_{tag}_{TICKET}.txt"
-            pfad.write_text(START_TEXT + "\n", encoding="utf-8")
+            pfad.write_text(self.prompt_text, encoding="utf-8")
             os.utime(pfad, (stempel, stempel))
 
     def namen(self) -> list[str]:
@@ -452,7 +503,9 @@ class _TmuxAufzeichnung(respawn.TmuxWerkzeug):
         return ""
 
 
-def test_tippen_mehrzeilig_als_paste_dann_enter(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_tippen_mehrzeilig_als_paste_dann_enter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Zeilenumbrüche per send-keys wären Enter — der Prompt ginge stückweise ab."""
     monkeypatch.setattr(respawn.time, "sleep", lambda s: None)
     t = _TmuxAufzeichnung()
@@ -473,3 +526,379 @@ def test_trust_dialog_ist_nicht_bereit() -> None:
     )
     assert not respawn._bereit(dialog)
     assert respawn._bereit('❯ Try "fix typecheck errors"\n  ⏵⏵ bypass permissions on')
+
+
+# --- Fixrunde 2: Echtlauf 1 + Prüfbefunde Runde 1 ------------------------------------
+
+
+def _weiter_getippt(fake: FakeWerkzeug) -> bool:
+    return any(t == respawn.WEITER_AUFTRAG for t in fake.getippt(ALT_ZIEL))
+
+
+class _ProzessWerkzeug(respawn.TmuxWerkzeug):
+    """Echte ``alte_session_beenden``-Logik mit simulierter Uhr."""
+
+    def __init__(self) -> None:
+        self.zeit = 0.0
+
+    def jetzt(self) -> float:
+        return self.zeit
+
+    def schlafen(self, s: float) -> None:
+        self.zeit += s
+
+
+def _prozesse(
+    monkeypatch: pytest.MonkeyPatch,
+    baum: dict[int, list[int]],
+    claude: set[int],
+    stirbt_bei: str = "SIGTERM",
+) -> list[tuple[int, int]]:
+    """Stellt Prozessbaum + Signale; gibt die Liste gesendeter Signale zurück."""
+    gesendet: list[tuple[int, int]] = []
+    tot: set[int] = set()
+
+    def nachkommen(pid: int) -> list[int]:
+        raus: list[int] = []
+        offen = [pid]
+        while offen:
+            for kind in baum.get(offen.pop(), []):
+                raus.append(kind)
+                offen.append(kind)
+        return raus
+
+    def kill(pid: int, sig: int) -> None:
+        gesendet.append((pid, sig))
+        if sig == getattr(respawn.signal, stirbt_bei):
+            tot.add(pid)
+
+    monkeypatch.setattr(respawn, "_nachkommen", nachkommen)
+    monkeypatch.setattr(respawn, "_ist_claude", lambda pid: pid in claude)
+    monkeypatch.setattr(respawn, "_lebt", lambda pid: pid not in tot)
+    monkeypatch.setattr(respawn.os, "kill", kill)
+    return gesendet
+
+
+def test_echtlauf_pane_pid_selbst_ist_claude(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Echtlauf 1: Fenster direkt mit ``claude`` gestartet → Pane-PID IST claude."""
+    gesendet = _prozesse(monkeypatch, {}, {100})
+    assert _ProzessWerkzeug().alte_session_beenden(100) == respawn.BEENDET
+    assert (100, respawn.signal.SIGTERM) in gesendet
+
+
+def test_beenden_ganzer_baum_bau_py_vor_claude(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Befund 8: bau.py darf nach dem Ende von claude keine Folge-Runde starten."""
+    gesendet = _prozesse(monkeypatch, {100: [200], 200: [300]}, {300})
+    assert _ProzessWerkzeug().alte_session_beenden(100) == respawn.BEENDET
+    pids = [pid for pid, _ in gesendet]
+    assert 200 in pids and 300 in pids
+    assert pids.index(200) < pids.index(300)
+
+
+def test_beenden_kein_claude_heisst_schon_weg(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Befund 5: kein claude-Prozess mehr = alte Session hat sich selbst beendet."""
+    _prozesse(monkeypatch, {100: [200]}, set())
+    assert _ProzessWerkzeug().alte_session_beenden(100) == respawn.SCHON_WEG
+
+
+def test_beenden_sigkill_nach_frist(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Befund 5: nach BEENDEN_MAX_S ohne Ende → SIGKILL."""
+    gesendet = _prozesse(monkeypatch, {100: [300]}, {300}, stirbt_bei="SIGKILL")
+    w = _ProzessWerkzeug()
+    assert w.alte_session_beenden(100) == respawn.BEENDET
+    assert (300, respawn.signal.SIGKILL) in gesendet
+    assert w.zeit >= respawn.BEENDEN_MAX_S
+
+
+def test_nachkommen_pgrep_fehler_wirft(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Befund 5: pgrep-Returncode ≥ 2 ist ein Fehler, nicht „keine Kinder“."""
+
+    class Fertig:
+        returncode = 2
+        stdout = ""
+        stderr = "pgrep: kaputt"
+
+    monkeypatch.setattr(respawn.subprocess, "run", lambda *a, **k: Fertig())
+    with pytest.raises(RuntimeError):
+        respawn._nachkommen(100)
+
+
+def test_kern_alte_schon_weg_ist_erfolg(umgebung: tuple[Path, Path]) -> None:
+    repo, wt = umgebung
+    fake = FakeWerkzeug(wt, beenden_ergebnis=respawn.SCHON_WEG)
+    erg = _lauf(repo, fake)
+    assert erg.exit == 0, erg.zeile
+    assert ("fenster_umbenennen", NEU_ZIEL, f"bau {TICKET}") in fake.aufrufe
+
+
+def test_kern_alte_lebt_sagt_zwei_sessions(umgebung: tuple[Path, Path]) -> None:
+    repo, wt = umgebung
+    fake = FakeWerkzeug(wt, beenden_ergebnis=respawn.LEBT)
+    erg = _lauf(repo, fake)
+    assert erg.exit == 1, erg.zeile
+    assert "zwei Sessions" in erg.zeile
+    assert not any(a[0] == "fenster_umbenennen" for a in fake.aufrufe)
+
+
+# --- Echtlauf 1 c): /remote-control muss bestätigt sein -----------------------------
+
+
+def test_remote_control_nie_bestaetigt_exit1(umgebung: tuple[Path, Path]) -> None:
+    repo, wt = umgebung
+    fake = FakeWerkzeug(wt, remote_reaktion="nie")
+    erg = _lauf(repo, fake)
+    assert erg.exit == 1, erg.zeile
+    assert "Remote Control" in erg.zeile
+    assert START_TEXT not in fake.getippt()
+    assert ("fenster_schliessen", NEU_ZIEL) in fake.aufrufe
+    assert ("taste", NEU_ZIEL, "Enter") in fake.aufrufe  # ein Nachschub-Enter
+    assert _weiter_getippt(fake)
+    assert not any(a[0] == "alte_session_beenden" for a in fake.aufrufe)
+
+
+def test_remote_control_nach_zweitem_enter_ok(umgebung: tuple[Path, Path]) -> None:
+    """Slash-Menü schluckt das erste Enter → ein Nachschub-Enter bestätigt."""
+    repo, wt = umgebung
+    fake = FakeWerkzeug(wt, remote_reaktion="nach_enter")
+    erg = _lauf(repo, fake)
+    assert erg.exit == 0, erg.zeile
+    assert ("taste", NEU_ZIEL, "Enter") in fake.aufrufe
+
+
+def test_remote_control_erst_nach_ruhe(umgebung: tuple[Path, Path]) -> None:
+    """Nicht im ersten Moment tippen, in dem „❯“ erscheint."""
+    repo, wt = umgebung
+    fake = FakeWerkzeug(wt)
+    zeiten: dict[str, float] = {}
+    tippen, starten = fake.tippen, fake.fenster_starten
+
+    def starten_mit_zeit(sitzung: str, name: str, cwd: str, befehl: str) -> str:
+        zeiten["start"] = fake.zeit
+        return starten(sitzung, name, cwd, befehl)
+
+    def tippen_mit_zeit(ziel: str, text: str) -> None:
+        if text == respawn.REMOTE_CONTROL:
+            zeiten["remote"] = fake.zeit
+        tippen(ziel, text)
+
+    fake.fenster_starten = starten_mit_zeit  # type: ignore[method-assign]
+    fake.tippen = tippen_mit_zeit  # type: ignore[method-assign]
+    assert _lauf(repo, fake).exit == 0
+    assert zeiten["remote"] - zeiten["start"] >= respawn.EINGABE_RUHE_S
+
+
+def test_remote_control_bestaetigt_erkennung() -> None:
+    assert not respawn._remote_bestaetigt(
+        "❯ /remote-control\n  /remote-control  Start Remote Control"
+    )
+    assert respawn._remote_bestaetigt("  ⎿ Remote Control active\n❯ \n? for shortcuts")
+    assert not respawn._remote_bestaetigt("❯ \n? for shortcuts")
+
+
+# --- Befund 1/2/4: Abbruch nach Schritt a — ehrlich und aufgeräumt ------------------
+
+
+def test_ausnahme_nach_neuem_fenster_schliesst_es(umgebung: tuple[Path, Path]) -> None:
+    repo, wt = umgebung
+    fake = FakeWerkzeug(
+        wt,
+        fehler_bei={f"tippen:{NEU_ZIEL}:{START_TEXT[:15]}": RuntimeError("tmux weg")},
+    )
+    erg = _lauf(repo, fake)
+    assert erg.exit == 1, erg.zeile
+    assert ("fenster_schliessen", NEU_ZIEL) in fake.aufrufe
+    assert _weiter_getippt(fake)
+    assert "arbeitet weiter" in erg.zeile and "tmux weg" in erg.zeile
+    assert not any(a[0] == "alte_session_beenden" for a in fake.aufrufe)
+    assert "\n" not in erg.zeile
+
+
+def test_abbruch_nach_a_alte_bekommt_weiter(umgebung: tuple[Path, Path]) -> None:
+    repo, wt = umgebung
+    fake = FakeWerkzeug(wt, handoff_anlegen=False)
+    erg = _lauf(repo, fake, warte_max=300)
+    assert erg.exit == 2
+    assert _weiter_getippt(fake)
+    assert "arbeitet weiter" in erg.zeile
+
+
+def test_abbruch_weiter_tippen_scheitert_ehrliche_zeile(
+    umgebung: tuple[Path, Path],
+) -> None:
+    repo, wt = umgebung
+    fake = FakeWerkzeug(
+        wt,
+        handoff_anlegen=False,
+        fehler_bei={
+            f"tippen:{ALT_ZIEL}:{respawn.WEITER_AUFTRAG[:15]}": RuntimeError("weg")
+        },
+    )
+    erg = _lauf(repo, fake, warte_max=300)
+    assert erg.exit == 2
+    assert "arbeitet weiter" not in erg.zeile
+    assert "Handarbeit" in erg.zeile
+
+
+def test_bildschirm_nur_echo_zaehlt_nicht(umgebung: tuple[Path, Path]) -> None:
+    """Befund 3: das eingefügte Prompt-Echo ist kein Arbeitszeichen."""
+    repo, wt = umgebung
+    fake = FakeWerkzeug(wt, bildschirm_reagiert="echo")
+    erg = _lauf(repo, fake)
+    assert erg.exit == 1, erg.zeile
+    assert not any(a[0] == "alte_session_beenden" for a in fake.aufrufe)
+
+
+def test_g4_scheitert_neues_fenster_zu(umgebung: tuple[Path, Path]) -> None:
+    """Befund 4: keine zwei Sessions nach gescheitertem G4."""
+    repo, wt = umgebung
+    fake = FakeWerkzeug(wt, bildschirm_reagiert=False)
+    erg = _lauf(repo, fake)
+    assert erg.exit == 1
+    assert ("fenster_schliessen", NEU_ZIEL) in fake.aufrufe
+    assert _weiter_getippt(fake)
+
+
+def test_neues_fenster_laesst_sich_nicht_schliessen(
+    umgebung: tuple[Path, Path],
+) -> None:
+    repo, wt = umgebung
+    fake = FakeWerkzeug(wt, bildschirm_reagiert=False, schliessen_wirkt=False)
+    erg = _lauf(repo, fake)
+    assert erg.exit == 1
+    assert "zwei Sessions" in erg.zeile and "Handarbeit" in erg.zeile
+
+
+# --- Befund 6: Aufräumen nach dem Beenden ------------------------------------------
+
+
+def test_umbenennen_scheitert_zeile_nennt_zustand(umgebung: tuple[Path, Path]) -> None:
+    repo, wt = umgebung
+    fake = FakeWerkzeug(wt, fehler_bei={"fenster_umbenennen": RuntimeError("rename")})
+    erg = _lauf(repo, fake)
+    assert erg.exit == 1, erg.zeile
+    assert f"bau {TICKET} neu" in erg.zeile and "umbenennen" in erg.zeile.lower()
+    assert not _weiter_getippt(fake)
+
+
+def test_altes_fenster_bleibt_offen_zeile_nennt_es(umgebung: tuple[Path, Path]) -> None:
+    repo, wt = umgebung
+    fake = FakeWerkzeug(wt, schliessen_wirkt=False)
+    erg = _lauf(repo, fake)
+    assert erg.exit == 1, erg.zeile
+    assert "altes Fenster" in erg.zeile
+
+
+# --- Befund 7/12: fenster_liste ---------------------------------------------------
+
+
+class _TmuxFehler(respawn.TmuxWerkzeug):
+    def __init__(self, stderr: str) -> None:
+        self.stderr = stderr
+
+    def _tmux(self, *argumente: str, eingabe: str | None = None) -> str:
+        raise respawn.subprocess.CalledProcessError(1, "tmux", "", self.stderr)
+
+
+def test_fenster_liste_ohne_server_leer() -> None:
+    assert (
+        _TmuxFehler("no server running on /tmp/tmux-1000/default").fenster_liste() == []
+    )
+
+
+def test_fenster_liste_anderer_fehler_wirft() -> None:
+    with pytest.raises(respawn.subprocess.CalledProcessError):
+        _TmuxFehler("unknown option -- Z").fenster_liste()
+
+
+def test_fenster_liste_nimmt_aktives_pane() -> None:
+    """Befund 12: bei pane-base-index 1 gibt es kein Pane 0."""
+
+    class Roh(respawn.TmuxWerkzeug):
+        def _tmux(self, *argumente: str, eingabe: str | None = None) -> str:
+            return "spec-1\tbau 7\t@3\t555\t1\nspec-1\tbau 7\t@3\t556\t0\n"
+
+    fenster = Roh().fenster_liste()
+    assert fenster == [FensterInfo("spec-1", "bau 7", "=spec-1:@3", 555)]
+
+
+# --- Befund 13/14: Dateien finden, stabil und nicht leer --------------------------
+
+
+def test_handoff_mit_anderem_datum_wird_gefunden(umgebung: tuple[Path, Path]) -> None:
+    """Befund 13: über Mitternacht schreibt die alte Session mit neuem Datum."""
+    repo, wt = umgebung
+    fake = FakeWerkzeug(wt, tag_versatz=1)
+    erg = _lauf(repo, fake)
+    assert erg.exit == 0, erg.zeile
+    assert START_TEXT in fake.getippt(NEU_ZIEL)
+
+
+def test_leerer_start_prompt_exit2(umgebung: tuple[Path, Path]) -> None:
+    repo, wt = umgebung
+    fake = FakeWerkzeug(wt, prompt_text="  \n\n")
+    erg = _lauf(repo, fake, warte_max=300)
+    assert erg.exit == 2, erg.zeile
+    assert fake.getippt(NEU_ZIEL) == ["/remote-control"]
+
+
+def test_start_prompt_erst_bei_stabiler_groesse(umgebung: tuple[Path, Path]) -> None:
+    """Befund 14: halb geschriebene Datei nicht tippen."""
+    repo, wt = umgebung
+    fake = FakeWerkzeug(wt)
+    voll = START_TEXT + " Teil zwei."
+
+    def anhaengen() -> None:
+        if not fake.getippt(NEU_ZIEL):
+            fake.nach_schlafen.append(anhaengen)
+            return
+        pfad = next((wt / "docs" / "handoffs").glob("START_*"))
+        pfad.write_text(voll + "\n", encoding="utf-8")
+        os.utime(pfad, (fake.zeit, fake.zeit))
+        fake.prompt_text = voll + "\n"
+
+    fake.nach_schlafen.append(anhaengen)
+    erg = _lauf(repo, fake)
+    assert erg.exit == 0, erg.zeile
+    assert fake.getippt(NEU_ZIEL)[-1] == voll
+
+
+# --- Befund 15/9/10 ------------------------------------------------------------------
+
+
+def test_unerwartete_ausnahme_eine_zeile(umgebung: tuple[Path, Path]) -> None:
+    repo, wt = umgebung
+    fake = FakeWerkzeug(
+        wt, fehler_bei={"alte_session_beenden": AttributeError("kaputt")}
+    )
+    erg = _lauf(repo, fake)
+    assert erg.exit == 1
+    assert "\n" not in erg.zeile and "kaputt" in erg.zeile
+    assert "Handarbeit" in erg.zeile
+    # Neue Session hat schon gearbeitet — nicht blind schließen.
+    assert ("fenster_schliessen", NEU_ZIEL) not in fake.aufrufe
+
+
+def test_auftrag_ist_frozen_dataclass(umgebung: tuple[Path, Path]) -> None:
+    import dataclasses
+
+    repo, _ = umgebung
+    auftrag = respawn.Auftrag(repo, SPEC, TICKET, {}, 600.0, False)
+    assert (
+        auftrag.name_alt == f"bau {TICKET}" and auftrag.name_neu == f"bau {TICKET} neu"
+    )
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        auftrag.ticket = 1  # type: ignore[misc]
+
+
+def test_tippen_nutzt_naht_schlafen(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Befund 10: keine direkte Uhr — die Naht ``schlafen`` gilt auch hier."""
+
+    def verboten(s: float) -> None:
+        raise AssertionError("time.sleep direkt benutzt")
+
+    monkeypatch.setattr(respawn.time, "sleep", verboten)
+    t = _TmuxAufzeichnung()
+    geschlafen: list[float] = []
+    t.schlafen = geschlafen.append  # type: ignore[method-assign]
+    t.tippen("=spec-1:@2", "x")
+    assert geschlafen == [respawn.TIPP_PAUSE_S]
