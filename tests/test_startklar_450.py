@@ -1118,3 +1118,19 @@ def test_r4_konfig_falscher_typ_rot_ohne_absturz(
     befunde = startklar.pruefe(wt, SPEC, werkzeuge=(), environ={})
     rot = [b for b in befunde if not b.ok and b.bereich == "konfig"]
     assert len(rot) == 1 and "startklar" in rot[0].text
+
+
+# --- Fixrunde 5: Manifest-Feld schluessel mit falschem Typ ----------------------
+
+
+@pytest.mark.parametrize("wert", [5, "FAL_KEY", ["FAL_KEY", 7]])
+def test_r5_manifest_schluessel_falscher_typ_rot_ohne_absturz(
+    tmp_path: Path, wert: object
+) -> None:
+    _haupt, wt = _repo_mit_worktree(tmp_path)
+    _manifest(wt, {"1": {"title": "x", "schluessel": wert}})
+    befunde = startklar.pruefe(
+        wt, SPEC, werkzeuge=(), environ={}, issue_leser=lambda _o, _n: ""
+    )
+    rot = [b for b in befunde if not b.ok and b.bereich == "schlüssel"]
+    assert len(rot) == 1 and "schluessel" in rot[0].text, befunde
