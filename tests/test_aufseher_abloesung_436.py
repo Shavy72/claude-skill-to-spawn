@@ -406,3 +406,165 @@ def test_abloesen_cli_schreibt_ueber_abloesung_schreiben(tmp_path: Path) -> None
     assert ergebnis.returncode == 0, ergebnis.stderr
     assert json.loads(ziel.read_text(encoding="utf-8")) == {"handoff": str(handoff), "start": ""}
     assert not ziel.with_name(ziel.name + ".neu").exists()
+
+
+# --- 5. Fixrunde Prüfpanel (#436): Ablösung wiederholbar, Faden gefangen + stoppbar ---
+
+
+def _faden_welt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, ergebnisse: list[Any] | None
+) -> tuple[Any, list[float], list[dict[str, Any]]]:
+    """Ablöse-Zustand mit gestellter respawn-Tür (``ergebnisse`` der Reihe nach; Ausnahmen
+    werden geworfen) und mitgeschriebenen Bau-Log-Zeilen. ``None`` = echte Tür."""
+    from to_spawn import respawn_aufseher, waechter_lauf
+
+    zeiten: list[float] = []
+    zeilen: list[dict[str, Any]] = []
+    if ergebnisse is not None:
+
+        def tuer(cwd: Path, spec: int, pane: str, **_kw: Any) -> Any:
+            zeiten.append(time.monotonic())
+            naechstes = ergebnisse.pop(0)
+            if isinstance(naechstes, BaseException):
+                raise naechstes
+            return naechstes
+
+        monkeypatch.setattr(respawn_aufseher, "aufseher_abloesen", tuer)
+    monkeypatch.setattr(
+        waechter_lauf,
+        "_log_zeile",
+        lambda _repo, _spec, typ, **felder: zeilen.append({"typ": typ, **felder}),
+    )
+    monkeypatch.setenv("TMUX_PANE", "%5")
+    monkeypatch.setenv(waechter_lauf.ABLOESE_ENV, str(tmp_path / "abloesung.json"))
+    return waechter_lauf, zeiten, zeilen
+
+
+def _ok(tmp_path: Path) -> Any:
+    from to_spawn import respawn_aufseher
+
+    handoff = tmp_path / "h.md"
+    handoff.write_text("Stand\n", encoding="utf-8")
+    return respawn_aufseher.AufseherErgebnis(0, "ok", handoff, "Start bitte")
+
+
+def _exit2() -> Any:
+    from to_spawn import respawn_aufseher
+
+    return respawn_aufseher.AufseherErgebnis(2, "abgebrochen — fehlt")
+
+
+def test_abloesung_nach_fehlschlag_wiederholt_mit_abstand(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Befund 1: Exit 2 → nach dem Mindestabstand ein zweiter Versuch; Exit 0 → Ablöse-Datei."""
+    wl, zeiten, zeilen = _faden_welt(tmp_path, monkeypatch, [_exit2(), _ok(tmp_path)])
+    ab = wl.Abloesung(tmp_path, 900, tmp_path, versuche_max=3, abstand_s=0.3, warte_s=1)
+    ab.ausloesen(lambda: 60_000, 50_000, lambda: True)
+    assert ab.faden is not None
+    ab.faden.join(10)
+    assert not ab.faden.is_alive()
+    assert len(zeiten) == 2, zeiten
+    assert zeiten[1] - zeiten[0] >= 0.3
+    assert [z["exit"] for z in zeilen if z["typ"] == "aufseher_abloesung"] == [2, 0]
+    assert json.loads((tmp_path / "abloesung.json").read_text(encoding="utf-8"))["start"] == "Start bitte"
+    # Erledigt → ein weiteres Auslösen startet nichts mehr.
+    ab.ausloesen(lambda: 70_000, 50_000, lambda: True)
+    assert len(zeiten) == 2
+
+
+def test_abloesung_obergrenze_warnung_und_blockiert(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Befund 1: nach ``versuche_max`` Fehlschlägen Schluss — eine Warnung + Bau-Log ``blockiert``."""
+    wl, zeiten, zeilen = _faden_welt(tmp_path, monkeypatch, [_exit2(), _exit2(), _exit2()])
+    ab = wl.Abloesung(tmp_path, 900, tmp_path, versuche_max=2, abstand_s=0.05, warte_s=1)
+    with caplog.at_level("WARNING", logger="to_spawn.waechter_lauf"):
+        ab.ausloesen(lambda: 60_000, 50_000, lambda: True)
+        assert ab.faden is not None
+        ab.faden.join(10)
+    assert len(zeiten) == 2, zeiten
+    blockiert = [z for z in zeilen if z["typ"] == "blockiert"]
+    assert len(blockiert) == 1, zeilen
+    assert "Ablösung" in blockiert[0]["grund"] and blockiert[0]["versuche"] == 2
+    assert sum("Obergrenze" in r.getMessage() for r in caplog.records) == 1
+    ab.ausloesen(lambda: 60_000, 50_000, lambda: True)  # gibt auf: kein dritter Versuch
+    assert len(zeiten) == 2
+    assert not (tmp_path / "abloesung.json").exists()
+
+
+def test_abloese_faden_faengt_oserror_unicode_abbruch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Befund 2: Ausnahmen aus der respawn-Tür töten den Faden nicht still — Fehlschlag + Log."""
+    from to_spawn import respawn
+
+    fehler = [
+        UnicodeDecodeError("utf-8", b"\xff", 0, 1, "kaputt"),
+        OSError("Start-Prompt weg"),
+        respawn._Abbruch(1, "Signal"),
+        _ok(tmp_path),
+    ]
+    wl, zeiten, zeilen = _faden_welt(tmp_path, monkeypatch, fehler)
+    ab = wl.Abloesung(tmp_path, 900, tmp_path, versuche_max=4, abstand_s=0.01, warte_s=1)
+    with caplog.at_level("ERROR", logger="to_spawn.waechter_lauf"):
+        ab.ausloesen(lambda: 60_000, 50_000, lambda: True)
+        assert ab.faden is not None
+        ab.faden.join(10)
+    assert len(zeiten) == 4, zeiten
+    assert [z["exit"] for z in zeilen if z["typ"] == "aufseher_abloesung"] == [1, 1, 1, 0]
+    assert sum(r.levelname == "ERROR" for r in caplog.records) >= 3
+    assert (tmp_path / "abloesung.json").is_file()
+
+
+def test_abloese_faden_stoppt_bei_session_ende_vor_tippen(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Befund 3: Session-Ende → Faden endet (join), tippt keinen Weiter-Auftrag mehr ins Pane."""
+    from to_spawn import respawn
+
+    tmux: list[tuple[str, ...]] = []
+    monkeypatch.setattr(
+        respawn.TmuxWerkzeug, "_tmux", lambda _self, *a, eingabe=None: tmux.append(a) or ""
+    )
+    wl, _zeiten, _zeilen = _faden_welt(tmp_path, monkeypatch, None)
+    ab = wl.Abloesung(tmp_path, 900, tmp_path, versuche_max=3, abstand_s=0.01, warte_s=60)
+    ab.ausloesen(lambda: 60_000, 50_000, lambda: True)
+    ende = time.monotonic() + 10
+    while not any(a[:1] == ("paste-buffer",) for a in tmux) and time.monotonic() < ende:
+        time.sleep(0.05)
+    beginn = time.monotonic()
+    ab.stoppen(timeout=5)
+    assert time.monotonic() - beginn < 5
+    assert ab.faden is not None and not ab.faden.is_alive()
+    time.sleep(0.3)
+    eingefuegt = [a for a in tmux if a[:1] == ("paste-buffer",)]
+    assert len(eingefuegt) == 1, tmux  # nur der Handoff-Auftrag, kein Weiter-Auftrag
+
+
+def test_exit_2_ueber_echte_aufsicht_kein_nachfolger(
+    welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Befund 4: Aufseher schreibt nichts (Exit 2) → kein Nachfolger, alter läuft weiter, sichtbar."""
+    env = _abloese_welt(welt, monkeypatch)
+    env.update(
+        {
+            "FAKE_TMUX_SCHREIBT": "0",
+            "FAKE_SCHLAF": "30",
+            "TO_SPAWN_ABLOESE_WARTE_S": "1",
+            "TO_SPAWN_ABLOESE_ABSTAND_S": "1",
+            "TO_SPAWN_ABLOESE_VERSUCHE": "2",
+        }
+    )
+    beginn = time.monotonic()
+    ergebnis = _wache(welt["repo"], env=env, timeout=150)
+    assert ergebnis.returncode == 0, _text(ergebnis)
+    assert time.monotonic() - beginn >= 25, "alter Aufseher wurde beendet"
+    assert len(_aufrufe(welt)) == 1, "Nachfolger gestartet"
+    getippt = _getippt(welt)
+    assert [g["ziel"] for g in getippt] == ["%77"] * 4, getippt
+    assert "Ablösung abgebrochen" in getippt[1]["text"]
+    zeilen = _log_zeilen(welt, "aufseher_abloesung")
+    assert [z["exit"] for z in zeilen] == [2, 2], zeilen
+    blockiert = _log_zeilen(welt, "blockiert")
+    assert len(blockiert) == 1 and "Ablösung" in blockiert[0]["grund"], blockiert
