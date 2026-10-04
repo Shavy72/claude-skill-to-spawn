@@ -1,0 +1,24 @@
+❯ Ablösung abgebrochen (respawn). Die neue Session startet nicht — arbeite
+  normal am Ticket weiter. Handoff-Datei und Start-Prompt dürfen liegen
+  bleiben.
+
+● 🎯 Welches Ticket soll ich bearbeiten?
+
+  Im Repo liegen nur README.md und docs/handoffs/, und das Ziel von Session 9431
+  ist im Handoff ausdrücklich offen. Ein Ticket sehe ich nicht. Ich habe nichts
+  gebaut und brauche von dir die Nummer oder eine kurze Beschreibung.
+
+  Zu #362/#363 (Spec 361) habe ich nur Gedächtnis-Einträge, die sich
+  widersprechen. Die prüfe ich erst am Repo, wenn eins davon dein Ticket ist.
+
+  Einen Remote gibt es weiterhin nicht, also kann ich vorerst nur lokal
+  committen.
+
+✻ Cogitated for 8s · done 7:44 PM
+
+────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────
+  Sonnet 5.5 · 76.2k (8.0%) · 16m
+  📁 wt-9431 · ⎇ master · 5h: 8% (reset 23:30) · 7d: 78%
+  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents

@@ -1,0 +1,4 @@
+INFO respawn #9431: Handoff-Auftrag an =spec-9399:@2161 getippt.
+INFO respawn #9431: neues Fenster =spec-9399:@2162 gestartet.
+respawn #9431: neue Session wartet nach 901 s noch auf Speicher — neues Fenster zu — Ablösung abgebrochen, alte Session arbeitet weiter
+Exit 1
