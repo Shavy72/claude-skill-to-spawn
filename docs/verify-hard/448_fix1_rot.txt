@@ -1,0 +1,25 @@
+____________ test_vermerk_neuer_test_in_anderer_datei_zaehlt_nicht _____________
+
+    def test_vermerk_neuer_test_in_anderer_datei_zaehlt_nicht() -> None:
+        diff = (
+            "diff --git a/tests/test_a.py b/tests/test_a.py\n"
+            "--- a/tests/test_a.py\n+++ b/tests/test_a.py\n"
+            "@@ -1 +0,0 @@\n-def test_alt(a):\n"
+            "diff --git a/tests/test_b.py b/tests/test_b.py\n"
+            "--- a/tests/test_b.py\n+++ b/tests/test_b.py\n"
+            "@@ -0,0 +1 @@\n+def test_neu(a):\n"
+        )
+>       assert capo.umbenannte_tests(diff, "test-umbenannt: test_alt -> test_neu") == set()
+E       AssertionError: assert {'test_alt'} == set()
+E         
+E         Extra items in the left set:
+E         'test_alt'
+E         Use -v to get more diff
+
+tests/test_fehl_reopen_448.py:423: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_fehl_reopen_448.py::test_mensch_schliesst_und_oeffnet_wieder_keine_ruecknahme
+FAILED tests/test_fehl_reopen_448.py::test_folge_runde_laeuft_ruecknahme_wartet
+FAILED tests/test_fehl_reopen_448.py::test_zweite_ruecknahme_nur_gemeldet - A...
+FAILED tests/test_fehl_reopen_448.py::test_vermerk_neuer_test_in_anderer_datei_zaehlt_nicht
+4 failed, 13 passed in 2.24s

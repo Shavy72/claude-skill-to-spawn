@@ -350,10 +350,14 @@ def umbenannte_tests(diff: str, commit_text: str) -> set[str]:
 
     Quelle ist der Vermerk ``test-umbenannt: alt -> neu`` (auch ``→``/``=>``, mehrere
     Paare mit ``,``/``;`` getrennt, Pfade wie ``tests/t.py::test_x`` erlaubt) im
-    Commit-Text. Ein Paar zählt nur, wenn der neue Test im Diff als ``+def`` steht.
-    Eine stille Umbenennung ohne Vermerk bleibt ein Ersatz (Test
-    ``test_test_ersetzt_oeffnet_wieder`` aus #213).
+    Commit-Text. Ein Paar zählt nur, wenn der neue Test als ``+def`` im selben
+    Test-Abschnitt (:func:`_test_abschnitte`, also derselben Datei) steht, aus dem
+    der alte als ``-def`` verschwindet. Ein Diff-Ausschnitt ohne ``diff --git``-Kopf
+    gilt als ein einziger Abschnitt. Eine stille Umbenennung ohne Vermerk bleibt ein
+    Ersatz (Test ``test_test_ersetzt_oeffnet_wieder`` aus #213).
     """
+    mit_kopf = bool(re.search(r"(?m)^diff --git ", diff))
+    teile = list(_test_abschnitte(diff).values()) if mit_kopf else [diff]
     alte: set[str] = set()
     for vermerk in _UMBENANNT.finditer(commit_text):
         for paar in re.split(r"[,;]", vermerk.group(1)):
@@ -363,10 +367,19 @@ def umbenannte_tests(diff: str, commit_text: str) -> set[str]:
             links, rechts = (_PY_NAME.findall(seite) for seite in seiten)
             if not links or not rechts:
                 continue
-            neu = rechts[-1]
-            if re.search(rf"(?m)^\+[ \t]*(?:async[ \t]+)?def[ \t]+{re.escape(neu)}\b", diff):
-                alte.add(links[-1])
+            alt, neu = links[-1], rechts[-1]
+            if any(
+                _def_zeile("+", neu, teil) and (not mit_kopf or _def_zeile("-", alt, teil))
+                for teil in teile
+            ):
+                alte.add(alt)
     return alte
+
+
+def _def_zeile(zeichen: str, name: str, diff: str) -> bool:
+    """Steht ``def <name>`` als ``+``- bzw. ``-``-Zeile im Diff?"""
+    muster = rf"(?m)^{re.escape(zeichen)}[ \t]*(?:async[ \t]+)?def[ \t]+{re.escape(name)}\b"
+    return re.search(muster, diff) is not None
 
 
 def _test_verluste(repo: Path, sha: str) -> list[str]:
@@ -1533,6 +1546,51 @@ def reopen_funde(
     return [f for f in funde if f]
 
 
+def _gesehene_schliessungen(n: int, erledigt: set[str]) -> list[datetime]:
+    """Schließ-Zeitpunkte von #n, die ein Tick gesehen hat (Schlüssel ``geschlossen|N|closed_at``)."""
+    zeiten: list[datetime] = []
+    for schluessel in erledigt:
+        teile = schluessel.split("|")
+        if len(teile) == 3 and teile[0] == "geschlossen" and teile[1] == str(n):
+            zeit = _zeit(teile[2])
+            if zeit is not None:
+                zeiten.append(zeit)
+    return zeiten
+
+
+def merke_schliessen(n: int, closed_at: str, erledigt: set[str]) -> bool:
+    """Gesehenes Schließen von #n festhalten, sobald capo #n schon einmal geöffnet hat (#448).
+
+    Damit weiß :func:`fehl_reopen_kandidat`, dass ein späteres Offen nicht mehr aus
+    capos Reopen stammt. Ohne eigenes Reopen bleibt der Zustand unberührt.
+    ``True`` = neuer Schlüssel, der Aufrufer sichert den Zustand.
+    """
+    schluessel = f"geschlossen|{n}|{closed_at}"
+    if not closed_at or schluessel in erledigt:
+        return False
+    eigenes_reopen = any(
+        (teile := s.split("|"))[0] == str(n) and len(teile) == 3 and teile[1] in REOPEN_REGELN
+        for s in erledigt
+    )
+    if not eigenes_reopen:
+        return False
+    erledigt.add(schluessel)
+    return True
+
+
+def ruecknahme_sperre(n: int, erledigt: set[str], laeuft: str) -> str:
+    """Aktionszeile, falls eine an sich fällige Rücknahme jetzt nicht sein darf — sonst ``""``.
+
+    Je Ticket höchstens eine automatische Rücknahme (Schlüssel ``ruecknahme|N``);
+    solange an #n gebaut wird (``laeuft`` aus :func:`laeuft_noch`), wartet sie.
+    """
+    if f"ruecknahme|{n}" in erledigt:
+        return f"#{n} Fehl-Reopen erneut — nicht zurückgenommen, Mensch prüfen"
+    if laeuft:
+        return f"#{n} Rücknahme wartet: Folge-Runde läuft ({laeuft})"
+    return ""
+
+
 def fehl_reopen_kandidat(
     n: int, issue: dict[str, Any], eigene: list[Commit], erledigt: set[str], *, checkpoint: str
 ) -> tuple[str, list[str]] | None:
@@ -1540,8 +1598,10 @@ def fehl_reopen_kandidat(
 
     Grundlage sind die Schlüssel ``N|Regel|closed_at`` in ``erledigt`` (= capo hat bei
     diesem Schließen wieder geöffnet). ``None``, wenn es keins gibt, es schon
-    zurückgenommen ist, ein Ticket-Commit danach liegt (neue Arbeit, kein Prüferfehler)
-    oder ein Label (``waechter:ok``, Checkpoint) den Fall ohnehin zum Sonderfall macht.
+    zurückgenommen ist, ein Ticket-Commit danach liegt (neue Arbeit, kein Prüferfehler),
+    das Ticket danach nochmals geschlossen war (:func:`merke_schliessen` — dann stammt
+    das jetzige Offen nicht aus capos Reopen) oder ein Label (``waechter:ok``,
+    Checkpoint) den Fall ohnehin zum Sonderfall macht.
     Ob die Regeln jetzt grün sind, prüft der Aufrufer.
     """
     labels = label_namen(issue)
@@ -1558,6 +1618,8 @@ def fehl_reopen_kandidat(
     zeit, stempel = max(mit_zeit)
     if f"ruecknahme|{n}|{stempel}" in erledigt:
         return None
+    if any(spaeter > zeit for spaeter in _gesehene_schliessungen(n, erledigt)):
+        return None  # danach wieder zu (Mensch oder Session) — das jetzige Offen ist nicht capos Reopen
     if any(c.zeit > zeit.timestamp() for c in eigene):
         return None
     return stempel, sorted(je_stempel[stempel])
@@ -1754,6 +1816,8 @@ def _tick(
         if zu:
             grund = str(issue.get("state_reason") or "").lower()
             geschlossen_zeit = _zeit(issue.get("closed_at"))
+            if not dry_run and merke_schliessen(n, str(issue.get("closed_at") or ""), erledigt):
+                sichern()
             if grund in NICHT_GEPLANT:
                 aktionen.append(f"#{n} zu als {grund} — keine Regeln")
                 continue
@@ -1816,7 +1880,14 @@ def _tick(
         elif not regeln_aus:
             # #448: eigenes Fehl-Reopen zurücknehmen, wenn die Regeln jetzt grün sind.
             kandidat = None if vps_fehlt else fehl_reopen_kandidat(n, issue, eigene, erledigt, checkpoint=checkpoint)
-            if kandidat is not None and not reopen_funde(repo, ref, n, eigene, belege, vps, kopf, alle_zeilen):
+            if kandidat is not None and reopen_funde(repo, ref, n, eigene, belege, vps, kopf, alle_zeilen):
+                kandidat = None  # Regeln weiter rot — das Reopen war richtig
+            if kandidat is not None:
+                sperre = ruecknahme_sperre(n, erledigt, laeuft_noch(n, tmux_fenster(spec), wt_zeit, jetzt))
+                if sperre:
+                    aktionen.append(sperre)
+                    kandidat = None
+            if kandidat is not None:
                 stempel, regeln = kandidat
                 grund = (
                     f"{', '.join(regeln)} beim Schließen {stempel} trifft nicht mehr zu "
@@ -1825,7 +1896,7 @@ def _tick(
                 zeilen_r = befund.zuruecknehmen(n, gh_repo, grund, dry_run)
                 aktionen += zeilen_r
                 if zeilen_r[-1] == f"#{n} Fehl-Reopen zurückgenommen":
-                    erledigt.add(f"ruecknahme|{n}|{stempel}")
+                    erledigt.update({f"ruecknahme|{n}|{stempel}", f"ruecknahme|{n}"})
                     sichern()
                     bau_log.schreibe(repo, n, "ruecknahme", text=f"Fehl-Reopen zurückgenommen: {grund}")
                     continue

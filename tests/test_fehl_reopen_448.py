@@ -310,3 +310,138 @@ def test_stand_zeigt_ruecknahme(repo: Path, ordner: Path) -> None:  # noqa: F811
     zeile = next(z for z in ausgabe.splitlines() if z.startswith(f"#{N} "))
     assert "Phase Rücknahme" in zeile, ausgabe
     assert "Fehl-Reopen zurückgenommen" in zeile, ausgabe
+
+
+# --- Fixrunde 1 (#448) ---------------------------------------------------------
+
+
+def test_sperren_im_kandidaten_label_ok_und_checkpoint() -> None:
+    erledigt = {f"{N}|test_ersetzt|{_iso(timedelta(minutes=30))}"}
+    frei = capo.fehl_reopen_kandidat(N, _issue(), [], erledigt, checkpoint="checkpoint:human")
+    assert frei is not None
+    for label in (capo.OK_LABEL, "checkpoint:human"):
+        issue = _issue(labels=[{"name": label}])
+        assert (
+            capo.fehl_reopen_kandidat(N, issue, [], erledigt, checkpoint="checkpoint:human")
+            is None
+        ), label
+
+
+def test_sperre_vps_fehlt_keine_ruecknahme(
+    welt: dict[str, Path],  # noqa: F811
+    fake_gh: FakeGh,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _umbenennung_415(welt)
+    geschlossen = _iso(timedelta(minutes=30))
+    _erledigt_setzen(welt, f"{N}|test_ersetzt|{geschlossen}")
+    _kinder(monkeypatch, _issue())
+    monkeypatch.setattr(capo, "vps_kopf", lambda vps: None)
+
+    capo.tick(
+        welt["repo"], SPEC, GH_REPO, {"vps": {"ssh": "nirgends"}}, wt_basis=str(welt["wt"])
+    )
+
+    assert fake_gh.schliessen() == []
+
+
+def test_mensch_schliesst_und_oeffnet_wieder_keine_ruecknahme(
+    welt: dict[str, Path],  # noqa: F811
+    fake_gh: FakeGh,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """capo öffnet bei T1, Mensch schließt bei T2 (grün), Mensch öffnet bewusst wieder."""
+    _umbenennung_415(welt)
+    t1 = _iso(timedelta(minutes=40))
+    t2 = _iso(timedelta(minutes=20))
+    _erledigt_setzen(welt, f"{N}|test_ersetzt|{t1}")
+    _kinder(monkeypatch, _issue(state="closed", closed_at=t2, state_reason="completed"))
+    _tick(welt)
+    assert fake_gh.schliessen() == []
+
+    _kinder(monkeypatch, _issue())
+    erg = _tick(welt)
+
+    assert fake_gh.schliessen() == [], erg.zeilen
+    assert not any("zurückgenommen" in z for z in erg.zeilen), erg.zeilen
+
+
+def test_folge_runde_laeuft_ruecknahme_wartet(
+    welt: dict[str, Path],  # noqa: F811
+    fake_gh: FakeGh,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _umbenennung_415(welt)
+    geschlossen = _iso(timedelta(minutes=30))
+    _erledigt_setzen(welt, f"{N}|test_ersetzt|{geschlossen}")
+    _kinder(monkeypatch, _issue())
+    monkeypatch.setattr(capo, "tmux_fenster", lambda spec: [f"wache {spec}", f"bau {N}"])
+
+    erg = _tick(welt)
+
+    assert fake_gh.schliessen() == []
+    assert any(
+        z.startswith(f"#{N} Rücknahme wartet: Folge-Runde läuft") for z in erg.zeilen
+    ), erg.zeilen
+    assert f"ruecknahme|{N}|{geschlossen}" not in _erledigt(welt)
+
+
+def test_zweite_ruecknahme_nur_gemeldet(
+    welt: dict[str, Path],  # noqa: F811
+    fake_gh: FakeGh,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _umbenennung_415(welt)
+    erstes = _iso(timedelta(minutes=30))
+    _erledigt_setzen(welt, f"{N}|test_ersetzt|{erstes}")
+    _kinder(monkeypatch, _issue())
+    _tick(welt)
+    assert len(fake_gh.schliessen()) == 1
+    assert f"ruecknahme|{N}" in _erledigt(welt)
+
+    # capo öffnet später erneut fehl (neuer Schließ-Stempel) — keine zweite Rücknahme.
+    zweites = _iso(timedelta(minutes=5))
+    _erledigt_setzen(welt, *_erledigt(welt), f"{N}|test_ersetzt|{zweites}")
+    erg = _tick(welt)
+
+    assert len(fake_gh.schliessen()) == 1, erg.zeilen
+    assert any(
+        f"#{N} Fehl-Reopen erneut — nicht zurückgenommen, Mensch prüfen" in z
+        for z in erg.zeilen
+    ), erg.zeilen
+
+
+def test_vermerk_neuer_test_in_anderer_datei_zaehlt_nicht() -> None:
+    diff = (
+        "diff --git a/tests/test_a.py b/tests/test_a.py\n"
+        "--- a/tests/test_a.py\n+++ b/tests/test_a.py\n"
+        "@@ -1 +0,0 @@\n-def test_alt(a):\n"
+        "diff --git a/tests/test_b.py b/tests/test_b.py\n"
+        "--- a/tests/test_b.py\n+++ b/tests/test_b.py\n"
+        "@@ -0,0 +1 @@\n+def test_neu(a):\n"
+    )
+    assert capo.umbenannte_tests(diff, "test-umbenannt: test_alt -> test_neu") == set()
+    gleiche = (
+        "diff --git a/tests/test_a.py b/tests/test_a.py\n"
+        "--- a/tests/test_a.py\n+++ b/tests/test_a.py\n"
+        "@@ -1 +1 @@\n-def test_alt(a):\n+def test_neu(a):\n"
+    )
+    assert capo.umbenannte_tests(gleiche, "test-umbenannt: test_alt -> test_neu") == {
+        "test_alt"
+    }
+
+
+def test_reopen_regeln_stimmen_mit_reopen_funde_ueberein() -> None:
+    """REOPEN_REGELN ist kein zweiter Pflegeort: Abgleich mit den Regeln aus reopen_funde."""
+    import inspect
+    import re
+
+    quelle = inspect.getsource(capo.reopen_funde)
+    pruefer = set(re.findall(r"\b(regel_\w+)\(", quelle))
+    assert pruefer, quelle
+    namen: set[str] = set()
+    for name in pruefer:
+        namen |= set(
+            re.findall(r'Verstoss\(\s*ticket,\s*"(\w+)"', inspect.getsource(getattr(capo, name)))
+        )
+    assert namen == set(capo.REOPEN_REGELN)
