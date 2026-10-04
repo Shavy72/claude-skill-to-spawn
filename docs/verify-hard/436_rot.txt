@@ -1,0 +1,53 @@
+$ python3 -m pytest -q tests/test_aufseher_abloesung_436.py::test_limit_vorbei_modell_wieder_opus
+# Basis 8e0a126, 2026-10-04T21:05:57+02:00, vor dem Fix
+            {
+                "FAKE_LIMIT": _limit_mit_reset(2),
+                "FAKE_AUSWEICH": AUSWEICH,
+                "FAKE_SCHLAF": "8",
+                "TO_SPAWN_RESET_PUFFER_S": "1",
+            }
+        )
+        ergebnis = _wache(welt["repo"], env=env)
+        assert ergebnis.returncode == 0, _text(ergebnis)
+    
+        aufrufe = _aufrufe(welt)
+        haupt = aufrufe[0][aufrufe[0].index("--model") + 1]
+        assert "opus" in haupt
+        modelle = [a[a.index("--model") + 1] for a in aufrufe]
+>       assert modelle == [haupt, AUSWEICH, haupt], modelle
+E       AssertionError: ['claude-opus-5-5[1m]', 'claude-sonnet-5']
+E       assert ['claude-opus...ude-sonnet-5'] == ['claude-opus...opus-5-5[1m]']
+E         
+E         Right contains one more item: 'claude-opus-5-5[1m]'
+E         Use -v to get more diff
+
+tests/test_aufseher_abloesung_436.py:99: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_aufseher_abloesung_436.py::test_limit_vorbei_modell_wieder_opus
+1 failed in 9.48s
+
+$ python3 -m pytest -q tests/test_aufseher_abloesung_436.py --deselect tests/test_aufseher_abloesung_436.py::test_limit_vorbei_modell_wieder_opus
+# vor dem Fix
+E       AssertionError: Ablösung kam nicht — Aufseher lief bis zum Ende
+E       assert (1476692.777748722 - 1476652.660666016) < 35
+E        +  where 1476692.777748722 = <built-in function monotonic>()
+E        +    where <built-in function monotonic> = time.monotonic
+E       AssertionError: []
+E       assert (0 == 1)
+E        +  where 0 = len([])
+E       ImportError: cannot import name 'respawn_aufseher' from 'to_spawn' (/home/bau/wt/skill-436/to_spawn/__init__.py)
+E       ImportError: cannot import name 'respawn_aufseher' from 'to_spawn' (/home/bau/wt/skill-436/to_spawn/__init__.py)
+E       AssertionError: ['skripte/wache.py']
+E       assert ['skripte/wache.py'] == ['skripte/wac...hter_lauf.py']
+E         
+E         Right contains one more item: 'to_spawn/waechter_lauf.py'
+E         Use -v to get more diff
+E       AssertionError: assert 'aufseher_abloesung' in ('auftrag', 'session_start', 'entscheidung', 'deploy_phase', 'handoff', 'session_ende', ...)
+E        +  where ('auftrag', 'session_start', 'entscheidung', 'deploy_phase', 'handoff', 'session_ende', ...) = <module 'to_spawn.bau_log' from '/home/bau/wt/skill-436/to_spawn/bau_log.py'>.TYPEN
+FAILED tests/test_aufseher_abloesung_436.py::test_kontext_ueber_grenze_abloesung_ohne_zutun
+FAILED tests/test_aufseher_abloesung_436.py::test_ohne_tmux_keine_abloesung_nur_spur
+FAILED tests/test_aufseher_abloesung_436.py::test_aufseher_tuer_exit_0_liefert_handoff_und_start
+FAILED tests/test_aufseher_abloesung_436.py::test_aufseher_tuer_exit_2_tippt_weiter_auftrag
+FAILED tests/test_aufseher_abloesung_436.py::test_abloese_datei_nur_zwei_schreiber
+FAILED tests/test_aufseher_abloesung_436.py::test_bau_log_kennt_aufseher_abloesung
+6 failed, 1 deselected in 43.40s

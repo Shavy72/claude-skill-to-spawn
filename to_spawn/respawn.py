@@ -357,13 +357,17 @@ def _frisch(pfad: Path, seit: float) -> bool:
     return stat.st_size > 0 and stat.st_mtime >= seit - 1
 
 
-def _finde(soll: Path, ticket: int, seit: float) -> Path | None:
-    """Frische Datei: fester Pfad, sonst gleiches Muster mit anderem Datum (Mitternacht)."""
+def _finde(soll: Path, schluessel: int | str, seit: float) -> Path | None:
+    """Frische Datei: erst der feste Pfad, sonst gleiches Muster mit anderem Datum.
+
+    Über Mitternacht schreibt die alte Session evtl. mit neuem Datum (Befund 13).
+    ``schluessel``: Ticket-Nummer oder ``waechter_<S>`` (Aufseher-Tür, #436).
+    """
     if _frisch(soll, seit):
         return soll
     praefix, endung = soll.name.split("_", 1)[0], soll.suffix
     kandidaten = [
-        p for p in soll.parent.glob(f"{praefix}_*_{ticket}{endung}") if _frisch(p, seit)
+        p for p in soll.parent.glob(f"{praefix}_*_{schluessel}{endung}") if _frisch(p, seit)
     ]
     return max(kandidaten, key=lambda p: p.stat().st_mtime, default=None)
 
@@ -683,7 +687,7 @@ def _ablauf(a: Auftrag, w: Werkzeug, stand: _Stand) -> Ergebnis:
                 f"neue Session wartete {int(speicher_s)} s auf Speicher"
             )
         gefunden_h, gefunden_s, prompt = _warte_dateien(
-            a, w, handoff, start, seit
+            w, handoff, start, seit, a.ticket, a.warte_max
         )  # d)
         _start_prompt(w, stand.neu, prompt)  # e)
     except FensterWeg as fehler:
@@ -773,14 +777,18 @@ def _warte_ruhig_bereit(w: Werkzeug, ziel: str, warte_max: float) -> tuple[bool,
 
 
 def _warte_dateien(
-    a: Auftrag, w: Werkzeug, handoff: Path, start: Path, seit: float
+    w: Werkzeug, handoff: Path, start: Path, seit: float, schluessel: int | str, warte_max: float
 ) -> tuple[Path, Path, str]:
-    """Schritt d (G5): Handoff + Start-Prompt frisch, nicht leer, Größe stabil → Pfade, Prompt-Text."""
+    """Schritt d (G5): Handoff + Start-Prompt frisch, nicht leer, Größe stabil.
+
+    Gibt die gefundenen Pfade (Handoff, Start-Prompt) und den Prompt-Text zurück.
+    ``schluessel`` wie bei :func:`_finde` — auch die Aufseher-Tür wartet hiermit (#436).
+    """
     stabil = _Stabil(w)
     fund: list[tuple[Path, Path]] = []
 
     def bedingung() -> bool:
-        h, s = _finde(handoff, a.ticket, seit), _finde(start, a.ticket, seit)
+        h, s = _finde(handoff, schluessel, seit), _finde(start, schluessel, seit)
         if h is None or s is None:
             stabil.seit_mindestens(None, 0)
             return False
@@ -789,12 +797,12 @@ def _warte_dateien(
             return True
         return False
 
-    if not _warte(w, a.warte_max, bedingung):
+    if not _warte(w, warte_max, bedingung):
         fehlt = [
-            p.name for p in (handoff, start) if _finde(p, a.ticket, seit) is None
+            p.name for p in (handoff, start) if _finde(p, schluessel, seit) is None
         ] or ["stabile Dateien"]
         raise _Abbruch(
-            EXIT_HANDOFF_FEHLT, f"nach {int(a.warte_max)} s fehlt {', '.join(fehlt)}"
+            EXIT_HANDOFF_FEHLT, f"nach {int(warte_max)} s fehlt {', '.join(fehlt)}"
         )
     h, s = fund[-1]
     prompt = s.read_text(encoding="utf-8").strip()

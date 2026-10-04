@@ -1,0 +1,40 @@
+E         
+E         Left contains one more item: 'claude-opus-5-5[1m]'
+E         Use -v to get more diff
+
+tests/test_aufseher_abloesung_436.py:741: AssertionError
+____________ test_limit_pause_auf_ausweich_bleibt_vor_rueckkehr_ab _____________
+
+welt = {'repo': PosixPath('/tmp/pytest-of-bau/pytest-3571/test_limit_pause_auf_ausweich_0/repo'), 'gh': PosixPath('/tmp/pytes...uf_ausweich_0/mails.jsonl'), 'wt': PosixPath('/tmp/pytest-of-bau/pytest-3571/test_limit_pause_auf_ausweich_0/wt'), ...}
+
+    def test_limit_pause_auf_ausweich_bleibt_vor_rueckkehr_ab(welt: dict[str, Path]) -> None:
+        """Befund P: Limit-Pause auf Ausweich endet, Opus-Limit noch offen → Ausweich bleibt."""
+        env = _wache_welt(welt)
+        _ausfuehrbar(welt["tmp"] / "claude_bin" / "claude", FAKE_CLAUDE_ZWEI_LIMITS)
+        env.update(
+            {
+                "FAKE_LIMIT": _limit_mit_reset(3600),
+                "FAKE_LIMIT2": _limit_mit_reset(1),
+                "TO_SPAWN_RESET_PUFFER_S": "1",
+            }
+        )
+        ergebnis = _wache(welt["repo"], env=env, timeout=120)
+        assert ergebnis.returncode == 0, _text(ergebnis)
+        aufrufe = _aufrufe(welt)
+        modelle = [a[a.index("--model") + 1] for a in aufrufe]
+>       assert modelle[1:] == [AUSWEICH, AUSWEICH], modelle
+E       AssertionError: ['claude-opus-5-5[1m]', 'claude-sonnet-5', 'claude-opus-5-5[1m]']
+E       assert ['claude-sonn...opus-5-5[1m]'] == ['claude-sonn...ude-sonnet-5']
+E         
+E         At index 1 diff: 'claude-opus-5-5[1m]' != 'claude-sonnet-5'
+E         Use -v to get more diff
+
+tests/test_aufseher_abloesung_436.py:783: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_aufseher_abloesung_436.py::test_gestoppter_versuch_ist_kein_fehlschlag
+FAILED tests/test_aufseher_abloesung_436.py::test_abloesung_session_endete_bleibt_wiederholbar
+FAILED tests/test_aufseher_abloesung_436.py::test_alter_faden_haengt_ablosung_wird_nachgeholt
+FAILED tests/test_aufseher_abloesung_436.py::test_stopp_werkzeug_tippt_auftrag_ganz_mit_enter
+FAILED tests/test_aufseher_abloesung_436.py::test_rueckkehr_auf_opus_wartet_auf_ruhige_session
+FAILED tests/test_aufseher_abloesung_436.py::test_limit_pause_auf_ausweich_bleibt_vor_rueckkehr_ab
+6 failed, 16 deselected in 4.92s

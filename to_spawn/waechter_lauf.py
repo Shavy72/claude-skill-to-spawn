@@ -14,6 +14,24 @@ Hintergrund-Faden die neuen Zeilen seines Transkripts
   fährt danach selbst per ``--resume`` weiter; nennt sie keine (oder liegt der
   Reset mehr als :data:`MAX_WARTE_S` weg), bleibt es bei Mail ``session_tot``.
 
+Rückkehr auf das Haupt-Modell (#436): beim Wechsel aufs Ausweich-Modell merkt sich
+:func:`fahre` den Reset-Zeitpunkt der Limit-Zeile plus Puffer (unbekannt → jetzt +
+:data:`RUECKKEHR_VORGABE_S`). Ist er erreicht, endet die Ausweich-Session, Bau-Log
+``waechter_modell`` (grund „Limit vorbei“) und es geht per ``--resume`` mit dem
+Haupt-Modell weiter. Nach einer Limit-Pause fährt der Aufseher ebenfalls auf dem
+Haupt-Modell weiter — das Limit ist dann offen.
+
+Erzwungene Ablösung (#436, Spec #399 E17): die Aufsicht misst den Kontext jeder neuen
+Modellantwort (``hooks.kontext``: input + cache_read + cache_creation) gegen die
+Handoff-Grenze aus ``~/.claude/smart-zone.json`` (:func:`handoff_grenze`). Erreicht er
+sie, startet :class:`Abloesung` einen Faden mit der respawn-Tür
+``respawn_aufseher.aufseher_abloesen`` (Handoff + Start-Prompt ins Pane ``$TMUX_PANE``
+anfordern). Exit 0 → :func:`abloesung_schreiben`; die Abbruch-Bedingung in ``wache.py``
+beendet die Session und startet den Nachfolger. Fehlschlag (Exit 1/2, Ausnahme) →
+neuer Versuch nach :data:`ABLOESE_ABSTAND_S`, höchstens :data:`ABLOESE_VERSUCHE_MAX`,
+dann Warnung + Bau-Log ``blockiert``. Session-Ende stoppt den Faden vor dem Tippen.
+Ohne tmux nur Warnung + Bau-Log-Zeile.
+
 Der Aufpasser (#236) setzt ein stilles Aufseher-Fenster über ``fahre(session_id=…)``
 mit ``--resume`` fort; die Gesprächs-ID steht in ``.to-spawn/sessions/wache-<S>.json``.
 """
@@ -34,7 +52,7 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from . import bau_log, melder, sessions_datei
+from . import bau_log, hooks, melder, respawn, respawn_aufseher, sessions_datei
 
 log = logging.getLogger("to_spawn.waechter_lauf")
 
@@ -59,6 +77,13 @@ RESET_TOLERANZ_S = 120.0
 #: So oft pausiert der Aufseher in Folge. Danach steht er wie vor #254 — ein Limit,
 #: das nach jedem Neustart sofort wieder greift, ist ein Fall für einen Menschen (F1).
 MAX_PAUSEN = 3
+#: Rückkehr aufs Haupt-Modell, wenn die Limit-Zeile keinen Reset nennt (#436): 5 h.
+RUECKKEHR_VORGABE_S = 5 * 3600.0
+#: Handoff-Grenzen in k-Token, wenn ``~/.claude/smart-zone.json`` fehlt oder schweigt.
+HANDOFF_K_OPUS = 250
+HANDOFF_K_NICHT_OPUS = 200
+#: Umgebungs-Variable mit dem Pfad der Ablöse-Datei (setzt ``wache.py`` je Lauf).
+ABLOESE_ENV = "TO_SPAWN_WACHE_ABLOESUNG"
 
 
 def zahl_aus_umgebung(name: str, vorgabe: float) -> float:
@@ -71,6 +96,44 @@ def zahl_aus_umgebung(name: str, vorgabe: float) -> float:
     except ValueError:
         log.warning("%s=%r ist keine Zahl — es gilt %s.", name, roh, vorgabe)
         return vorgabe
+
+
+def handoff_grenze(modell: str, heim: Path | None = None) -> int:
+    """Handoff-Grenze in Token aus ``~/.claude/smart-zone.json`` (SSOT Doktrin Nr. 1).
+
+    Opus-Modelle → ``haupt.handoff_k``, sonst ``haupt_nicht_opus.handoff_k``; fehlt die
+    Datei oder der Wert, gelten :data:`HANDOFF_K_OPUS` / :data:`HANDOFF_K_NICHT_OPUS`.
+    """
+    opus = "opus" in modell.lower()
+    schluessel, vorgabe = (
+        ("haupt", HANDOFF_K_OPUS) if opus else ("haupt_nicht_opus", HANDOFF_K_NICHT_OPUS)
+    )
+    datei = (heim or Path.home()) / ".claude" / "smart-zone.json"
+    try:
+        daten: Any = json.loads(datei.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as fehler:
+        log.info("Smart-Zone-Datei %s nicht lesbar (%s) — Grenze %s k.", datei, fehler, vorgabe)
+        daten = {}
+    abschnitt = daten.get(schluessel) if isinstance(daten, dict) else None
+    wert = abschnitt.get("handoff_k") if isinstance(abschnitt, dict) else None
+    if isinstance(wert, bool) or not isinstance(wert, (int, float)) or wert <= 0:
+        wert = vorgabe
+    return int(wert * 1000)
+
+
+def abloesung_schreiben(ziel: Path, handoff: Path, start: str = "") -> None:
+    """Ablöse-Datei ``{"handoff", "start"}`` schreiben — die einzige Schreibstelle (#436).
+
+    ``start`` = Text des Start-Prompts (leer bei ``wache.py --abloesen``). Erst eine
+    Nebendatei, dann umbenennen: die Abbruch-Bedingung in ``wache.py`` prüft nur, ob die
+    Datei da ist, und darf nie eine halbe lesen.
+    """
+    neu = ziel.with_name(ziel.name + ".neu")
+    neu.write_text(
+        json.dumps({"handoff": str(handoff), "start": start}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    os.replace(neu, ziel)
 
 
 def transkript_ordner(cwd: Path, heim: Path | None = None) -> Path:
@@ -223,7 +286,12 @@ def _warten(
 
 
 class Aufsicht(threading.Thread):
-    """Liest neue Zeilen einer Transkript-Datei ab Byte ``ab`` und meldet die erste Limit-Zeile."""
+    """Liest neue Zeilen einer Transkript-Datei ab Byte ``ab`` und meldet die erste Limit-Zeile.
+
+    Mit ``grenze`` misst sie zusätzlich den Kontext jeder Modellantwort
+    (``hooks.kontext``) und ruft ``bei_grenze(kontext)`` genau einmal, sobald er die
+    Grenze erreicht (#436).
+    """
 
     def __init__(
         self,
@@ -232,6 +300,8 @@ class Aufsicht(threading.Thread):
         takt: float,
         bei_limit: Callable[[str], None],
         warte_s: float = WARTE_TRANSKRIPT_S,
+        grenze: int | None = None,
+        bei_grenze: Callable[[int], None] | None = None,
     ) -> None:
         super().__init__(name="waechter-aufsicht", daemon=True)
         self.datei = datei
@@ -242,6 +312,25 @@ class Aufsicht(threading.Thread):
         self.halt = threading.Event()
         #: Die gefundene Limit-Zeile — der Rückruf liest daraus die Reset-Uhrzeit (#254).
         self.limit_eintrag: dict[str, Any] | None = None
+        self.grenze = grenze
+        self.bei_grenze = bei_grenze
+        #: Höchster gemessener Kontext dieser Session in Token (#436).
+        self.kontext = 0
+        self._grenze_gemeldet = False
+
+    def _kontext_messen(self, eintrag: dict[str, Any]) -> None:
+        messung = hooks.kontext([eintrag])
+        if messung is None:
+            return
+        self.kontext = max(self.kontext, messung["spitze"])
+        if (
+            self.grenze
+            and self.bei_grenze is not None
+            and not self._grenze_gemeldet
+            and self.kontext >= self.grenze
+        ):
+            self._grenze_gemeldet = True
+            self.bei_grenze(self.kontext)
 
     def _neue_zeilen(self, rest: bytes) -> tuple[list[bytes], bytes]:
         try:
@@ -262,7 +351,10 @@ class Aufsicht(threading.Thread):
             except ValueError as fehler:
                 log.debug("Transkript-Zeile unlesbar (%s): %.80r", fehler, roh)
                 continue
-            if isinstance(eintrag, dict) and ist_limit_zeile(eintrag):
+            if not isinstance(eintrag, dict):
+                continue
+            self._kontext_messen(eintrag)
+            if ist_limit_zeile(eintrag):
                 self.limit_eintrag = eintrag
                 self.bei_limit(_texte(eintrag)[:200] or str(eintrag.get("error")))
                 return True
@@ -470,6 +562,329 @@ def _melde_stillstand(
     _log_zeile(repo, spec, "blockiert", modell=modell, grund=grund)
 
 
+def _abloesen(
+    repo: Path,
+    spec: int,
+    cwd: Path,
+    kontext: int,
+    grenze: int,
+    laeuft: Callable[[], bool],
+    *,
+    werkzeug: respawn.Werkzeug | None = None,
+    warte_max: float = respawn.WARTE_MAX_VORGABE,
+) -> bool:
+    """Ein Ablöse-Versuch über die respawn-Tür (läuft im Faden von :class:`Abloesung`, #436).
+
+    Exit 0 und die Session läuft noch → Ablöse-Datei (Pfad aus :data:`ABLOESE_ENV`);
+    die Abbruch-Bedingung in ``wache.py`` beendet dann die Session und startet den
+    Nachfolger. Die Bau-Log-Zeile steht vor der Ablöse-Datei, damit sie das Ende der
+    Session sicher überlebt. Rückgabe ``True`` = Fehlschlag, ein neuer Versuch kann
+    helfen (respawn Exit 1/2); ``False`` = erledigt oder Wiederholen sinnlos.
+    """
+    pane = (os.environ.get("TMUX_PANE") or "").strip()
+    if not pane:
+        zeile = "keine Ablösung: TMUX_PANE fehlt (kein tmux-Fenster, respawn nur auf dem Bau-Server)"
+        log.warning("Aufseher #%s: Kontext %s ≥ Grenze %s — %s.", spec, kontext, grenze, zeile)
+        _log_zeile(
+            repo, spec, "aufseher_abloesung", kontext=kontext, grenze=grenze, exit=None, zeile=zeile
+        )
+        return False
+    log.warning(
+        "Aufseher #%s: Kontext %s ≥ Grenze %s — Ablösung über respawn (Pane %s).",
+        spec,
+        kontext,
+        grenze,
+        pane,
+    )
+    erg = respawn_aufseher.aufseher_abloesen(
+        cwd, spec, pane, werkzeug=werkzeug, warte_max=warte_max
+    )
+    ziel = (os.environ.get(ABLOESE_ENV) or "").strip()
+    zeile = erg.zeile
+    schreiben = erg.exit == 0 and erg.handoff is not None
+    if schreiben and not ziel:
+        zeile += f" — aber {ABLOESE_ENV} fehlt, kein Nachfolger"
+        schreiben = False
+    elif schreiben and not laeuft():
+        # Session endete im Fenster → wiederholbar: die nächste Session darf neu ablösen.
+        zeile += " — Session schon beendet, kein Nachfolger"
+        _log_zeile(
+            repo, spec, "aufseher_abloesung", kontext=kontext, grenze=grenze, exit=erg.exit, zeile=zeile
+        )
+        log.warning("Aufseher #%s: %s", spec, zeile)
+        return True
+    _log_zeile(
+        repo, spec, "aufseher_abloesung", kontext=kontext, grenze=grenze, exit=erg.exit, zeile=zeile
+    )
+    if not schreiben or erg.handoff is None:
+        log.warning("Aufseher #%s: %s", spec, zeile)
+        return erg.exit != respawn.EXIT_OK
+    try:
+        abloesung_schreiben(Path(ziel), erg.handoff, erg.start_prompt)
+    except OSError as fehler:
+        log.error("Aufseher #%s: Ablöse-Datei %s nicht geschrieben: %s", spec, ziel, fehler)
+        return True
+    return False
+
+
+#: Höchstens so viele Ablöse-Versuche je :func:`fahre`; danach Warnung + Bau-Log ``blockiert``
+#: (ein Mensch muss ran). Test-Naht: ``TO_SPAWN_ABLOESE_VERSUCHE``.
+ABLOESE_VERSUCHE_MAX = 3
+#: Mindestabstand (s) zwischen zwei Ablöse-Versuchen — der Aufseher soll nach einem
+#: Weiter-Auftrag erst ein paar Ticks arbeiten. Test-Naht: ``TO_SPAWN_ABLOESE_ABSTAND_S``.
+ABLOESE_ABSTAND_S = 600.0
+#: Wie lange ein Versuch auf Handoff + Start-Prompt wartet (Vorgabe der respawn-Tür).
+#: Test-Naht: ``TO_SPAWN_ABLOESE_WARTE_S``.
+ABLOESE_WARTE_S = respawn.WARTE_MAX_VORGABE
+
+
+class _StoppWerkzeug(respawn.TmuxWerkzeug):
+    """tmux-Werkzeug des Ablöse-Fadens: nach Session-Ende (``stopp``) wird nichts mehr getippt.
+
+    ``tippen`` und ``schlafen`` prüfen das Signal und brechen mit ``respawn._Abbruch`` ab —
+    so landet nie ein Weiter-Auftrag in einer neuen Session im selben Pane. Ein begonnener
+    Auftrag wird samt Enter fertig getippt (kein halber Text im Pane); der Stopp greift danach.
+    """
+
+    def __init__(self, stopp: threading.Event) -> None:
+        self._stopp = stopp
+        self._tippt = False
+
+    def _pruefen(self) -> None:
+        if self._stopp.is_set():
+            raise respawn._Abbruch(respawn.EXIT_NICHT_BEWIESEN, "Session beendet — Ablösung gestoppt")
+
+    def tippen(self, ziel: str, text: str) -> None:
+        self._pruefen()
+        self._tippt = True
+        try:
+            super().tippen(ziel, text)
+        finally:
+            self._tippt = False
+        self._pruefen()
+
+    def schlafen(self, s: float) -> None:
+        if self._tippt:
+            time.sleep(s)  # zwischen Einfügen und Enter nie abbrechen
+            return
+        if self._stopp.wait(s):
+            self._pruefen()
+
+
+class Abloesung:
+    """Ablöse-Versuche des Aufsehers je :func:`fahre` (#436): ein Faden, wiederholbar, stoppbar.
+
+    :meth:`ausloesen` (Aufsicht an der Grenze) startet den Faden, falls keiner läuft und
+    weder erledigt noch aufgegeben. Der Faden versucht es bis zu ``versuche_max`` Mal,
+    zwischen zwei Versuchen mindestens ``abstand_s`` Sekunden; Ausnahmen der respawn-Tür
+    zählen als Fehlschlag. :meth:`stoppen` (Session-Ende) hält ihn an, bevor er tippt.
+    """
+
+    def __init__(
+        self,
+        repo: Path,
+        spec: int,
+        cwd: Path,
+        *,
+        versuche_max: int | None = None,
+        abstand_s: float | None = None,
+        warte_s: float | None = None,
+    ) -> None:
+        self.repo, self.spec, self.cwd = repo, spec, cwd
+        self.versuche_max = (
+            versuche_max
+            if versuche_max is not None
+            else int(zahl_aus_umgebung("TO_SPAWN_ABLOESE_VERSUCHE", ABLOESE_VERSUCHE_MAX))
+        )
+        self.abstand_s = (
+            abstand_s
+            if abstand_s is not None
+            else zahl_aus_umgebung("TO_SPAWN_ABLOESE_ABSTAND_S", ABLOESE_ABSTAND_S)
+        )
+        self.warte_s = (
+            warte_s if warte_s is not None else zahl_aus_umgebung("TO_SPAWN_ABLOESE_WARTE_S", ABLOESE_WARTE_S)
+        )
+        self.versuche = 0
+        self.fertig = False  # erledigt oder aufgegeben — nie wieder auslösen
+        self.faden: threading.Thread | None = None
+        self._letzter: float | None = None  # monotonic des letzten Versuchs
+        self._stopp = threading.Event()
+        self._sperre = threading.Lock()
+        self._faden_stopp: threading.Event | None = None  # Stopp-Signal des laufenden Fadens
+        # Vorgemerkte Ablösung, solange der Faden einer beendeten Session noch hängt.
+        self._nachholen: tuple[Callable[[], int], int, Callable[[], bool]] | None = None
+
+    def ausloesen(self, kontext: Callable[[], int], grenze: int, laeuft: Callable[[], bool]) -> None:
+        """Faden starten, wenn erlaubt; sonst nichts (läuft schon / fertig / Obergrenze).
+
+        Hängt noch der Faden einer beendeten Session (tmux bis 30 s), wird die Ablösung
+        vorgemerkt und beim Ende des alten Fadens nachgeholt — die Aufsicht meldet die
+        Grenze nur einmal, ein stilles Verwerfen hieße: nie wieder Ablösung.
+        """
+        with self._sperre:
+            if self.fertig or self.versuche >= self.versuche_max:
+                return
+            if self.faden is not None and self.faden.is_alive():
+                if self._faden_stopp is not self._stopp:
+                    log.warning(
+                        "Aufseher #%s: alter Ablöse-Faden läuft noch — Ablösung wird nachgeholt.",
+                        self.spec,
+                    )
+                    self._nachholen = (kontext, grenze, laeuft)
+                return
+            self._starten(kontext, grenze, laeuft)
+
+    def _starten(self, kontext: Callable[[], int], grenze: int, laeuft: Callable[[], bool]) -> None:
+        """Faden mit dem Stopp-Signal der laufenden Session starten (nur unter ``_sperre``)."""
+        self._faden_stopp = self._stopp
+        self.faden = threading.Thread(
+            target=self._lauf,
+            args=(self._stopp, kontext, grenze, laeuft),
+            name="waechter-abloesung",
+            daemon=True,
+        )
+        self.faden.start()
+
+    def stoppen(self, timeout: float) -> None:
+        """Session-Ende: Stop-Signal, Faden abwarten; danach darf eine neue Session neu auslösen."""
+        with self._sperre:
+            stopp, faden = self._stopp, self.faden
+            self._stopp = threading.Event()
+            self._nachholen = None  # Vormerkung galt der beendeten Session
+        stopp.set()
+        if faden is not None:
+            faden.join(timeout)
+            if faden.is_alive():
+                log.warning("Aufseher #%s: Ablöse-Faden nach %.0f s nicht beendet.", self.spec, timeout)
+
+    def _lauf(
+        self,
+        stopp: threading.Event,
+        kontext: Callable[[], int],
+        grenze: int,
+        laeuft: Callable[[], bool],
+    ) -> None:
+        try:
+            self._versuche(stopp, kontext, grenze, laeuft)
+        finally:
+            with self._sperre:
+                nach, self._nachholen = self._nachholen, None
+                if nach is not None and not self.fertig and self.versuche < self.versuche_max:
+                    self._starten(*nach)
+
+    def _gestoppt(self, nummer: int, vorher: float | None) -> None:
+        """Session endete mitten im Versuch: kein Fehlschlag, zählt nicht auf die Obergrenze."""
+        with self._sperre:
+            self.versuche -= 1
+            self._letzter = vorher
+        log.info("Aufseher #%s: Ablöse-Versuch %s gestoppt — Session beendet.", self.spec, nummer)
+
+    def _versuche(
+        self,
+        stopp: threading.Event,
+        kontext: Callable[[], int],
+        grenze: int,
+        laeuft: Callable[[], bool],
+    ) -> None:
+        while True:
+            rest = 0.0 if self._letzter is None else self._letzter + self.abstand_s - time.monotonic()
+            if stopp.wait(max(0.0, rest)):
+                return
+            with self._sperre:
+                vorher = self._letzter
+                self.versuche += 1
+                self._letzter = time.monotonic()
+                nummer = self.versuche
+            gemessen = kontext()
+            try:
+                fehlschlag = _abloesen(
+                    self.repo,
+                    self.spec,
+                    self.cwd,
+                    gemessen,
+                    grenze,
+                    laeuft,
+                    werkzeug=_StoppWerkzeug(stopp),
+                    warte_max=self.warte_s,
+                )
+            except (OSError, UnicodeDecodeError, respawn._Abbruch) as fehler:
+                if stopp.is_set():
+                    self._gestoppt(nummer, vorher)
+                    return
+                zeile = f"Ablöse-Versuch {nummer} gescheitert: {type(fehler).__name__}: {fehler}"
+                log.error("Aufseher #%s: %s", self.spec, zeile)
+                _log_zeile(
+                    self.repo,
+                    self.spec,
+                    "aufseher_abloesung",
+                    kontext=gemessen,
+                    grenze=grenze,
+                    exit=respawn.EXIT_NICHT_BEWIESEN,
+                    zeile=zeile,
+                )
+                fehlschlag = True
+            if not fehlschlag:
+                self.fertig = True
+                return
+            if stopp.is_set() or not laeuft():
+                self._gestoppt(nummer, vorher)
+                return
+            if nummer >= self.versuche_max:
+                self.fertig = True
+                grund = f"Ablösung {nummer}× gescheitert (Obergrenze) — Aufseher läuft über der Grenze weiter"
+                log.warning("Aufseher #%s: %s.", self.spec, grund)
+                _log_zeile(self.repo, self.spec, "blockiert", grund=grund, versuche=nummer)
+                return
+
+
+#: So viele Byte vom Transkript-Ende reichen für die letzte Gesprächszeile.
+_RUHE_ENDE_BYTES = 256 * 1024
+
+
+def session_ruhig(datei: Path, takt: float, jetzt: float | None = None) -> bool:
+    """Session ruhig = gefahrlos beendbar (Modell-Rückkehr, #436): kein laufender Tool-Aufruf.
+
+    Ruhig heißt: Transkript seit mindestens ``takt`` Sekunden unverändert UND die letzte
+    Gesprächszeile (``assistant``/``user``) ist eine Assistent-Antwort ohne ``tool_use``.
+    Kein Transkript oder keine Gesprächszeile → ruhig (nichts läuft, was brechen könnte).
+    """
+    try:
+        stand = datei.stat()
+        if (jetzt if jetzt is not None else time.time()) - stand.st_mtime < takt:
+            return False
+        with datei.open("rb") as fh:
+            fh.seek(max(0, stand.st_size - _RUHE_ENDE_BYTES))
+            ende = fh.read().decode("utf-8", errors="replace")
+    except FileNotFoundError:
+        return True
+    except OSError as fehler:
+        log.warning("Ruhe-Prüfung: %s nicht lesbar: %s", datei, fehler)
+        return False
+    for zeile in reversed(ende.splitlines()):
+        try:
+            eintrag = json.loads(zeile)
+        except ValueError:
+            continue
+        if not isinstance(eintrag, dict) or eintrag.get("type") not in ("assistant", "user"):
+            continue
+        if eintrag["type"] != "assistant":
+            return False  # Nutzer-/Tool-Ergebnis zuletzt → Modell arbeitet
+        nachricht = eintrag.get("message")
+        inhalt = nachricht.get("content") if isinstance(nachricht, dict) else None
+        bloecke = inhalt if isinstance(inhalt, list) else []
+        return not any(isinstance(b, dict) and b.get("type") == "tool_use" for b in bloecke)
+    return True
+
+
+def _rueckkehr_ab(eintrag: dict[str, Any] | None, puffer: float) -> float:
+    """Unix-Zeit, ab der das Haupt-Modell wieder darf: Reset + Puffer, sonst jetzt + 5 h."""
+    ziel = reset_zeitpunkt(eintrag or {})
+    sekunden = (
+        warte_sekunden(ziel, puffer=puffer, hoechstens=float("inf")) if ziel is not None else None
+    )
+    return time.time() + (RUECKKEHR_VORGABE_S if sekunden is None else sekunden)
+
+
 def fahre(
     *,
     claude: str,
@@ -486,6 +901,7 @@ def fahre(
     puffer: float = RESET_PUFFER_S,
     hoechstens: float = MAX_WARTE_S,
     effort: str = "",
+    grenze: int | None = None,
 ) -> int:
     """Aufseher starten und beaufsichtigen; Rückgabe = Exit-Code der letzten Session.
 
@@ -495,8 +911,13 @@ def fahre(
     Die Gesprächs-ID landet in ``<repo>/.to-spawn/sessions/wache-<S>.json`` (R2).
     Auf dem Ausweich-Modell wartet der Aufseher das Limit aus, wenn die Limit-Zeile
     eine Reset-Uhrzeit nennt (#254): ``puffer`` Sekunden obendrauf, länger als
-    ``hoechstens`` wird nie gewartet.
+    ``hoechstens`` wird nie gewartet. Nach dem Limit kehrt der Aufseher aufs Haupt-Modell
+    ``modell`` zurück (#436). ``grenze`` (Token, Test-Naht): Handoff-Grenze für die
+    erzwungene Ablösung; ``None`` → :func:`handoff_grenze` des laufenden Modells.
     """
+    haupt = modell
+    rueckkehr_ab: float | None = None  # Unix-Zeit, ab der das Haupt-Modell wieder darf
+    abloesung = Abloesung(repo, spec, cwd)  # Ablöse-Versuche je fahre(), über Sessions hinweg
     if session_id:
         sid = session_id
         transkript = transkript_ordner(cwd) / f"{sid}.jsonl"
@@ -533,7 +954,20 @@ def fahre(
         auf_ausweich = not ausweich or modell == ausweich
         # Der Rückruf braucht die ganze Limit-Zeile (Reset-Uhrzeit, #254); die Aufsicht
         # legt sie vorher in ``limit_eintrag`` ab, deshalb wird sie zuerst gebaut.
-        aufsicht = Aufsicht(datei, ab, takt, lambda _text: None)
+        aufsicht = Aufsicht(
+            datei, ab, takt, lambda _text: None, grenze=grenze or handoff_grenze(modell)
+        )
+
+        def bei_grenze(
+            _kontext: int,
+            _proc: subprocess.Popen[bytes] = proc,
+            _aufsicht: Aufsicht = aufsicht,
+        ) -> None:
+            abloesung.ausloesen(
+                lambda: _aufsicht.kontext, _aufsicht.grenze or 0, lambda: _proc.poll() is None
+            )
+
+        aufsicht.bei_grenze = bei_grenze
 
         def bei_limit(
             text: str,
@@ -582,6 +1016,7 @@ def fahre(
 
         aufsicht.bei_limit = bei_limit
         aufsicht.start()
+        zurueck = False
         while True:
             try:
                 rc = proc.wait(timeout=takt)
@@ -594,9 +1029,41 @@ def fahre(
                     )
                     aufsicht.halt.set()
                     _beende(proc)
+                    abloesung.stoppen(timeout=takt + 1)
                     return 0
+                if (
+                    rueckkehr_ab is not None
+                    and modell != haupt
+                    and time.time() >= rueckkehr_ab
+                    and session_ruhig(datei, takt)
+                ):
+                    log.info(
+                        "Aufseher #%s: Limit vorbei — zurück von %s auf %s.", spec, modell, haupt
+                    )
+                    zurueck = True
+                    aufsicht.halt.set()
+                    _beende(proc)
+                    rc = 0
+                    break
         aufsicht.halt.set()
         aufsicht.join(timeout=takt + 1)
+        abloesung.stoppen(timeout=takt + 1)  # Session vorbei: Ablöse-Faden tippt nichts mehr
+        if zurueck:
+            _log_zeile(repo, spec, "waechter_modell", von=modell, nach=haupt, grund="Limit vorbei")
+            cmd = resume_befehl(
+                claude,
+                sid,
+                haupt,
+                effort,
+                remote_control,
+                spec,
+                f"Weiter als Bau-Aufseher Spec #{spec}: Das Nutzungs-Limit von {haupt} ist vorbei, "
+                f"Modell-Wechsel {modell} → {haupt}. Nächster Tick wie gehabt "
+                f"(python scripts/capo.py {spec}).",
+            )
+            modell = haupt
+            rueckkehr_ab = None
+            continue
         if not limit.is_set() or (auf_ausweich and not pause):
             return rc
 
@@ -622,6 +1089,14 @@ def fahre(
                 pause_s=round(wartezeit, 1),
                 runde=pausen,
             )
+            if modell != haupt and (rueckkehr_ab is None or time.time() >= rueckkehr_ab):
+                # Limit des Haupt-Modells ist offen → zurück aufs Haupt-Modell (#436);
+                # sonst bleibt der Aufseher auf dem Ausweich-Modell.
+                _log_zeile(
+                    repo, spec, "waechter_modell", von=modell, nach=haupt, grund="Limit-Pause vorbei"
+                )
+                modell = haupt
+                rueckkehr_ab = None
             cmd = resume_befehl(
                 claude,
                 sid,
@@ -642,5 +1117,6 @@ def fahre(
             f"Nächster Tick wie gehabt (python scripts/capo.py {spec}); "
             f"docs/agents/bau_log/{spec}.jsonl beim nächsten Handoff-Commit mitnehmen."
         )
+        rueckkehr_ab = _rueckkehr_ab(aufsicht.limit_eintrag, puffer)
         modell = ausweich
         cmd = resume_befehl(claude, sid, ausweich, effort, remote_control, spec, weiter)

@@ -1,0 +1,40 @@
+_______________ test_exit_2_ueber_echte_aufsicht_kein_nachfolger _______________
+
+welt = {'repo': PosixPath('/tmp/pytest-of-bau/pytest-3554/test_exit_2_ueber_echte_aufsic0/repo'), 'gh': PosixPath('/tmp/pytes...echte_aufsic0/mails.jsonl'), 'wt': PosixPath('/tmp/pytest-of-bau/pytest-3554/test_exit_2_ueber_echte_aufsic0/wt'), ...}
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7f072933e990>
+
+    def test_exit_2_ueber_echte_aufsicht_kein_nachfolger(
+        welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Befund 4: Aufseher schreibt nichts (Exit 2) → kein Nachfolger, alter läuft weiter, sichtbar."""
+        env = _abloese_welt(welt, monkeypatch)
+        env.update(
+            {
+                "FAKE_TMUX_SCHREIBT": "0",
+                "FAKE_SCHLAF": "30",
+                "TO_SPAWN_ABLOESE_WARTE_S": "1",
+                "TO_SPAWN_ABLOESE_ABSTAND_S": "1",
+                "TO_SPAWN_ABLOESE_VERSUCHE": "2",
+            }
+        )
+        beginn = time.monotonic()
+        ergebnis = _wache(welt["repo"], env=env, timeout=150)
+        assert ergebnis.returncode == 0, _text(ergebnis)
+        assert time.monotonic() - beginn >= 25, "alter Aufseher wurde beendet"
+        assert len(_aufrufe(welt)) == 1, "Nachfolger gestartet"
+        getippt = _getippt(welt)
+>       assert [g["ziel"] for g in getippt] == ["%77"] * 4, getippt
+E       AssertionError: [{'ziel': '%77', 'text': 'Ablösung dieser Session (respawn, Skill handoff, Bau-Variante): Schreib jetzt den Handoff na...n — die neue Session übernimmt, eine Folge-Runde in diesem Fenster wäre eine zweite Session. Danach nichts mehr tun.'}]
+E       assert ['%77'] == ['%77', '%77', '%77', '%77']
+E         
+E         Right contains 3 more items, first extra item: '%77'
+E         Use -v to get more diff
+
+tests/test_aufseher_abloesung_436.py:565: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_aufseher_abloesung_436.py::test_abloesung_nach_fehlschlag_wiederholt_mit_abstand
+FAILED tests/test_aufseher_abloesung_436.py::test_abloesung_obergrenze_warnung_und_blockiert
+FAILED tests/test_aufseher_abloesung_436.py::test_abloese_faden_faengt_oserror_unicode_abbruch
+FAILED tests/test_aufseher_abloesung_436.py::test_abloese_faden_stoppt_bei_session_ende_vor_tippen
+FAILED tests/test_aufseher_abloesung_436.py::test_exit_2_ueber_echte_aufsicht_kein_nachfolger
+5 failed, 11 passed in 47.27s

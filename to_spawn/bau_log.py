@@ -47,7 +47,14 @@ TYPEN = (
     "vorfall",
     # Aufseher (#448): eigenes Fehl-Reopen zurückgenommen (Feld ``text``).
     "ruecknahme",
+    # Aufsicht (#436): Kontext an der Handoff-Grenze → Aufseher-Ablösung über respawn
+    # (Felder ``kontext``, ``grenze``, ``exit``, ``zeile``; ``exit`` null = nicht versucht).
+    "aufseher_abloesung",
 )
+
+#: Felder, deren ``None`` als ``null`` stehen bleibt, weil es etwas bedeutet (sonst
+#: fallen ``None``-Felder weg). ``aufseher_abloesung.exit`` null = Ablösung nicht versucht.
+NULL_FELDER: dict[str, frozenset[str]] = {"aufseher_abloesung": frozenset({"exit"})}
 
 LOG_ORDNER = Path("docs") / "agents" / "bau_log"
 LAUF_ORDNER = Path(".to-spawn") / "bau_log"
@@ -158,7 +165,8 @@ def _neue_zeile(ticket: str | int, typ: str, felder: dict[str, Any]) -> dict[str
     if typ not in TYPEN:
         log.warning("Unbekannter Zeilen-Typ %r — wird trotzdem geschrieben.", typ)
     zeile: dict[str, Any] = {"ts": jetzt(), "typ": typ, "ticket": str(ticket)}
-    zeile.update({k: v for k, v in felder.items() if v is not None})
+    bleibt = NULL_FELDER.get(typ, frozenset())
+    zeile.update({k: v for k, v in felder.items() if v is not None or k in bleibt})
     return zeile
 
 

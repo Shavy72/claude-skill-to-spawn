@@ -1,0 +1,4 @@
+Fixrunde Prüfpanel #436 — 2026-10-04T21:53:28+02:00, HEAD vor Fix-Commit bc23500
+Testdatei: python3 -m pytest -q -p no:cacheprovider tests/test_aufseher_abloesung_436.py → 16 passed in 47.26s
+Volle Reihe: timeout 1500 python3 -m pytest -q -p no:cacheprovider (kein xdist)
+1341 passed, 30 skipped in 698.09s (0:11:38) — 0 failed
