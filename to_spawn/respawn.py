@@ -18,7 +18,8 @@ e) Start-Prompt ins neue Fenster tippen, Bildschirm prüfen (G4) — erst dann a
    Session beenden (ganzer Prozessbaum des alten Panes) und das neue Fenster in
    ``bau <N>`` umbenennen.
 
-Jeder Abbruch nach Schritt a schließt das neue Fenster und sagt der alten Session,
+Jeder Abbruch nach Schritt a schließt das neue Fenster, setzt die Sessions-Datei
+``.to-spawn/sessions/<N>.json`` auf den Stand vor Schritt b zurück und sagt der alten Session,
 dass sie weiterarbeiten soll; die Ergebniszeile sagt ehrlich, was davon geklappt hat.
 
 Exit-Codes: 0 abgelöst · 1 neue Session nicht bewiesen · 2 Handoff/Start-Prompt
@@ -45,7 +46,7 @@ from pathlib import Path
 from types import FrameType
 from typing import Literal, Protocol
 
-from to_spawn import capo, config, speicher
+from to_spawn import capo, config, sessions_datei, speicher
 
 log = logging.getLogger(__name__)
 
@@ -584,6 +585,43 @@ def _warte(werkzeug: Werkzeug, max_s: float, bedingung: Callable[[], bool]) -> b
 
 
 @dataclass
+class _DateiSicherung:
+    """Inhalt einer Datei vor einem Schritt — ``zuruecklegen`` stellt ihn wieder her.
+
+    ``inhalt is None`` heißt: vorher gab es die Datei nicht → zurücklegen löscht sie.
+    """
+
+    pfad: Path
+    inhalt: bytes | None
+
+    @classmethod
+    def merken(cls, pfad: Path) -> _DateiSicherung | None:
+        """Sicherung oder None, wenn die Datei unlesbar ist (dann nichts anfassen)."""
+        try:
+            return cls(pfad, pfad.read_bytes())
+        except FileNotFoundError:
+            return cls(pfad, None)
+        except OSError:
+            log.exception(
+                "%s nicht lesbar — wird bei Abbruch nicht zurückgesetzt.", pfad
+            )
+            return None
+
+    def zuruecklegen(self) -> bool:
+        """Alten Stand wiederherstellen; False bei Dateifehler (geloggt)."""
+        try:
+            if self.inhalt is None:
+                self.pfad.unlink(missing_ok=True)
+            elif not self.pfad.exists() or self.pfad.read_bytes() != self.inhalt:
+                self.pfad.parent.mkdir(parents=True, exist_ok=True)
+                self.pfad.write_bytes(self.inhalt)
+        except OSError:
+            log.exception("%s nicht zurückgesetzt.", self.pfad)
+            return False
+        return True
+
+
+@dataclass
 class _Stand:
     """Was bisher passiert ist — entscheidet, wie ein Abbruch aufräumt."""
 
@@ -594,6 +632,9 @@ class _Stand:
     beenden_begonnen: bool = False
     #: Name des ersten abfangenen Signals (weitere Signale werden dann ignoriert).
     signal_name: str | None = None
+    #: Sessions-Datei vor Schritt b: die neue bau.py schreibt ihre Gesprächs-ID schon
+    #: vor Schritt c — bei Abbruch zurück, sonst setzt der Aufpasser die verworfene fort.
+    sessions: _DateiSicherung | None = None
     #: Hinweise für die Ergebniszeile (z. B. Speicher-Wartezeit), Exit bleibt davon unberührt.
     hinweise: list[str] = field(default_factory=list)
 
@@ -711,6 +752,7 @@ def _ablauf(a: Auftrag, w: Werkzeug, stand: _Stand) -> Ergebnis:
     log.info("respawn #%s: Handoff-Auftrag an %s getippt.", a.ticket, alt.ziel)
 
     # b) neues Fenster: bau.py wie spawn (cwd Hauptbaum, bau.py wechselt selbst in den Worktree)
+    stand.sessions = _DateiSicherung.merken(sessions_datei.pfad(a.repo, str(a.ticket)))
     stand.neu = w.fenster_starten(a.sitzung, a.name_neu, str(a.repo), befehl)
     log.info("respawn #%s: neues Fenster %s gestartet.", a.ticket, stand.neu)
 
@@ -952,6 +994,10 @@ def _aufraeumen(
             )
         else:
             teile.append("neues Fenster zu")
+        if stand.sessions and not stand.sessions.zuruecklegen():
+            teile.append(
+                f"Sessions-Datei {stand.sessions.pfad.name} nicht zurückgesetzt, Handarbeit nötig"
+            )
     if stand.auftrag_getippt and stand.alt:
         try:
             w.tippen(stand.alt.ziel, WEITER_AUFTRAG)
