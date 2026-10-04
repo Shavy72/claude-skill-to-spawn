@@ -1,0 +1,24 @@
+  bauen.
+  3. Die Stände zu #362/#363 (Spec 361) am Repo bzw. auf GitHub prüfen, bevor
+  etwas als erledigt gilt.
+  4. Kein Push ohne Remote. Erst Remote einrichten oder David fragen.
+
+  Regeln: Deutsch mit echten Umlauten. Kein „fertig“ ohne Beweis. Commits mit
+  Conventional-Commit-Format.
+
+  Beleg-Commit und Belegdatei zu #363 auf GitHub prüfen · 5s
+  ⎿  $ gh api repos/Shavy72/duoplus-management/commits/af28fa9c5 -q '.sha[0:9]+"
+     "+.commit.message' 2>&1 | head -3; gh api
+     "repos/Shavy72/duoplus-management/contents/docs/verify-hard/363_abnahme.md"
+     -q .path 2>&1
+
+✢ Photosynthesizing… (running PostToolUse hooks… 1/2 · 32s · ↓ 799 tokens)
+  ⎿  Tip: Use /btw to ask a quick side question without interrupting Claude's
+     current work
+
+────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────
+  Opus 5.5 · 74.1k (7.0%) · 1m
+  📁 wt-9431 · ⎇ master · 5h: 18% (reset 08:20) · 7d: 68%
+  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents
