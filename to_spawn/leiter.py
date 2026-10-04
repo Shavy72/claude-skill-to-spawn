@@ -5,24 +5,31 @@ je Ticket auf; sie liest die Lage, entscheidet die nächste Stufe, führt sie au
 gibt GENAU EINE Zeile zurück. Die Stufe merkt sie im Leitstand, damit kein Eingriff
 doppelt passiert.
 
-Stufen (feste Schwellen :data:`STUPS_MIN`, :data:`NACH_STUPS_MIN`):
+Stufen (feste Schwellen :data:`STUPS_MIN`, :data:`NACH_STUPS_MIN`,
+:data:`MIN_RUHE_MIN`, :data:`WARTE_MAX_MIN`):
 
 0. nichts gemerkt — still ≥ 20 min → Mindset-Stupser tippen (Stufe 1).
 1. angestupst — weitere 15 min still → Handoff anfordern (Stufe 2).
-   Handoff-Grenze (Spitzen-Kontext ≥ ``haupt.handoff_k`` der Smart-Zone-SSOT) →
-   sofort Stufe 2, auch aus Stufe 0.
+   Handoff-Grenze (Kontext der aktuellen Session ≥ ``haupt.handoff_k`` der
+   Smart-Zone-SSOT) → sofort Stufe 2, auch aus Stufe 0 — aber erst ab Mindest-Ruhe.
 2. Handoff angefordert — sobald die Start-Prompt-Datei frisch da ist → Stufe 3 =
    Skill ``respawn`` (:func:`respawn.abloesen`), nie ein eigener Startweg; Erfolg →
-   Stufe 0.
-4. Ticket zu und Fenster still → ``/exit`` tippen, genau einmal.
+   Stufe 0 (Respawn-Zeit gemerkt: älterer Kontext zählt nicht mehr). Nach 30 min
+   ohne Datei → Exit 1, Aufseher prüft.
+4. Ticket zu und Fenster still (ab Mindest-Ruhe) → ``/exit`` tippen, genau einmal.
+5. respawn gescheitert — nichts mehr tippen/starten, jede Ausführung Exit 1, bis das
+   Fenster wieder arbeitet.
 
 In ein Fenster, das arbeitet oder eine Rückfrage zeigt, wird nie getippt. Arbeitet
-die Session nach einem Stupser wieder, fällt die Leiter auf Stufe 0 zurück.
+die Session nach einem Stupser (oder nach Stufe 5) wieder, fällt die Leiter auf
+Stufe 0 zurück. Erst wird die Stufe gemerkt, dann getippt — scheitert das Tippen,
+wird nicht nochmal getippt.
 
 :func:`entscheide` ist reine Logik (keine Außenwelt). Alle Außenwelt-Zugriffe laufen
 über das Protokoll :class:`Umwelt`; echt ist :func:`echte_umwelt`, Tests geben ein
 Fake hinein. Exit-Codes: 0 ok (Eingriff oder nichts nötig) · 1 Fehler (tmux/gh/
-Leitstand) · bei Stufe 3 der Exit-Code von ``respawn``.
+Leitstand) oder Aufseher muss prüfen (Stufe 5, Wartegrenze) · bei Stufe 3 der
+Exit-Code von ``respawn``.
 """
 
 from __future__ import annotations
@@ -42,6 +49,10 @@ log = logging.getLogger(__name__)
 STUPS_MIN = 20
 #: Minuten nach dem Stupser (und still), bevor der Handoff angefordert wird.
 NACH_STUPS_MIN = 15
+#: Mindest-Ruhe in Minuten, bevor Handoff-Grenze oder ``/exit`` greifen.
+MIN_RUHE_MIN = 2
+#: Höchste Wartezeit in Stufe 2 auf die Start-Prompt-Datei (wie respawn).
+WARTE_MAX_MIN = int(respawn.WARTE_MAX_VORGABE // 60)
 #: Rückfall der Handoff-Grenze in k-Token (SSOT-Stand 2026-10-04: haupt.handoff_k).
 HANDOFF_K_VORGABE = 250.0
 SMART_ZONE_DATEI = Path("~/.claude/smart-zone.json")
@@ -58,7 +69,10 @@ MINDSET_TEXT = (
 )
 EXIT_TEXT = "/exit"
 
-Aktion = Literal["nichts", "anstupsen", "handoff", "respawn", "exit", "zuruecksetzen"]
+#: ``melden`` = nichts tun, Exit 1: der Aufseher muss prüfen.
+Aktion = Literal[
+    "nichts", "anstupsen", "handoff", "respawn", "exit", "zuruecksetzen", "melden"
+]
 
 
 @dataclass(frozen=True)
@@ -75,7 +89,7 @@ class Lage:
 
 @dataclass(frozen=True)
 class Gemerkt:
-    """Aus dem Leitstand: 0 nichts, 1 angestupst, 2 Handoff angefordert, 4 /exit."""
+    """Aus dem Leitstand: 0 nichts, 1 angestupst, 2 Handoff, 4 /exit, 5 gescheitert."""
 
     stufe: int
     seit: float | None
@@ -113,15 +127,25 @@ def entscheide(lage: Lage, gemerkt: Gemerkt, jetzt: float, handoff_k: float) -> 
     if lage.fenster == aufseher_stand.ARBEITET:
         if stufe == 1:
             return Schritt("zuruecksetzen", "arbeitet wieder nach Stupser")
+        if stufe == 5:
+            return Schritt(
+                "zuruecksetzen", "arbeitet wieder nach gescheitertem respawn"
+            )
         return Schritt("nichts", "arbeitet")
+    if stufe == 5:
+        vor = _minuten(jetzt, gemerkt.seit)
+        return Schritt("melden", f"respawn gescheitert vor {vor} min — Aufseher prüfen")
     if lage.fenster == aufseher_stand.RUECKFRAGE:
         return Schritt("nichts", "Rückfrage offen — Aufseher antwortet")
     if lage.fenster != aufseher_stand.STILL:
         return Schritt("nichts", f"Fenster: {lage.fenster}")
     still = lage.still_min or 0
+    ruhig = still >= MIN_RUHE_MIN
     if lage.offen is False:
         if stufe == 4:
             return Schritt("nichts", "Ticket zu, /exit schon getippt")
+        if not ruhig:
+            return Schritt("nichts", f"Ticket zu, still {still} min < {MIN_RUHE_MIN}")
         return Schritt("exit", f"Ticket zu, still {still} min")
     if stufe == 4:
         return Schritt("zuruecksetzen", "Ticket wieder offen")
@@ -129,8 +153,11 @@ def entscheide(lage: Lage, gemerkt: Gemerkt, jetzt: float, handoff_k: float) -> 
         if lage.prompt_datei:
             return Schritt("respawn", "Start-Prompt-Datei da")
         warte = _minuten(jetzt, gemerkt.seit)
+        if warte >= WARTE_MAX_MIN:
+            text = f"wartet {warte} min auf Prompt-Datei — Aufseher prüfen"
+            return Schritt("melden", text)
         return Schritt("nichts", f"wartet auf Start-Prompt-Datei seit {warte} min")
-    if lage.kontext_k is not None and lage.kontext_k >= handoff_k:
+    if ruhig and lage.kontext_k is not None and lage.kontext_k >= handoff_k:
         return Schritt(
             "handoff", f"Kontext {lage.kontext_k:g}k ≥ Handoff-Grenze {handoff_k:g}k"
         )
@@ -158,6 +185,7 @@ _WORT: dict[str, str] = {
     "respawn": "abgelöst (respawn)",
     "exit": "/exit getippt",
     "zuruecksetzen": "zurückgesetzt",
+    "melden": "",
 }
 
 
@@ -210,34 +238,53 @@ def _plane(u: Umwelt, spec: int, ticket: int) -> Ergebnis:
 
 def _schritt(u: Umwelt, repo: Path, spec: int, ticket: int) -> Ergebnis:
     gemerkt, lage, schritt, jetzt = _lies(u, spec, ticket)
-    neu: tuple[int, float | None] | None = None
+    log.info("leiter #%s: %s → %s (%s)", ticket, gemerkt, schritt.aktion, schritt.grund)
+    if schritt.aktion == "melden":
+        text = f"Stufe {gemerkt.stufe} {schritt.grund}"
+        return Ergebnis(EXIT_FEHLER, _zeile(ticket, text))
     if schritt.aktion == "respawn":
-        erg = respawn.abloesen(repo, spec, ticket, werkzeug=u.werkzeug())
-        if erg.exit != respawn.EXIT_OK:
-            text = f"Stufe 2 respawn gescheitert — {erg.zeile}"
-            return Ergebnis(erg.exit, _zeile(ticket, text))
-        neu = (0, None)
-    elif schritt.aktion in ("anstupsen", "handoff", "exit"):
+        return _respawn(u, repo, spec, ticket, gemerkt, jetzt)
+    stufe = gemerkt.stufe
+    if schritt.aktion in ("anstupsen", "handoff", "exit"):
         if not lage.ziel:
             raise RuntimeError(f"tmux-Ziel von bau {ticket} unbekannt")
         if schritt.aktion == "anstupsen":
-            text = MINDSET_TEXT.format(min=lage.still_min or 0)
-            neu = (1, jetzt)
+            stufe, text = 1, MINDSET_TEXT.format(min=lage.still_min or 0)
         elif schritt.aktion == "handoff":
+            stufe = 2
             text = respawn.handoff_auftrag_fuer(u.worktree(ticket), ticket, jetzt)
-            neu = (2, jetzt)
         else:
-            text = EXIT_TEXT
-            neu = (4, jetzt)
-        u.werkzeug().tippen(lage.ziel, text)
+            stufe, text = 4, EXIT_TEXT
+        # Erst merken, dann tippen: scheitert das Tippen, tippt der nächste Lauf nicht
+        # nochmal (lieber ein Eingriff zu wenig als doppelt).
+        leitstand.setze_leiter_stufe(ticket, stufe, jetzt)
+        try:
+            u.werkzeug().tippen(lage.ziel, text)
+        except (OSError, RuntimeError, ValueError) as fehler:
+            log.warning("leiter #%s: Tippen gescheitert: %s", ticket, fehler)
+            zeile = f"Stufe {stufe} gemerkt, Tippen gescheitert — {fehler}"
+            return Ergebnis(EXIT_FEHLER, _zeile(ticket, zeile))
     elif schritt.aktion == "zuruecksetzen":
-        neu = (0, None)
-    stufe = gemerkt.stufe
-    if neu is not None:
-        leitstand.setze_leiter_stufe(ticket, neu[0], neu[1])
-        stufe = neu[0]
+        stufe = 0
+        leitstand.setze_leiter_stufe(ticket, 0, None)
     text = f"Stufe {stufe} {_WORT[schritt.aktion]} — {schritt.grund}"
-    log.info("leiter #%s: %s → %s (%s)", ticket, gemerkt, schritt.aktion, schritt.grund)
+    return Ergebnis(EXIT_OK, _zeile(ticket, text))
+
+
+def _respawn(
+    u: Umwelt, repo: Path, spec: int, ticket: int, gemerkt: Gemerkt, jetzt: float
+) -> Ergebnis:
+    """Stufe 3: Skill respawn; gescheitert → Stufe 5, Erfolg → Stufe 0 + Zeit merken."""
+    erg = respawn.abloesen(
+        repo, spec, ticket, werkzeug=u.werkzeug(), handoff_seit=gemerkt.seit
+    )
+    if erg.exit != respawn.EXIT_OK:
+        leitstand.setze_leiter_stufe(ticket, 5, jetzt)
+        text = f"Stufe 5 respawn gescheitert — {erg.zeile}"
+        return Ergebnis(erg.exit, _zeile(ticket, text))
+    leitstand.setze_leiter_stufe(ticket, 0, None)
+    leitstand.merke_leiter_respawn(ticket, jetzt)
+    text = f"Stufe 0 {_WORT['respawn']} — Start-Prompt-Datei da"
     return Ergebnis(EXIT_OK, _zeile(ticket, text))
 
 
@@ -281,34 +328,32 @@ class _EchteUmwelt:
 
     def lage(self, spec: int, ticket: int, seit: float | None) -> Lage:
         # Stand-Datei wird nur gelesen — schreiben tut sie der Aufseher-Tick.
-        vorher = aufseher_stand._vorher(spec, None)
-        erg = aufseher_stand.sammeln(spec, self.q, vorher)
-        tl = next((t for t in erg.lagen if t.nummer == ticket), None)
-        if tl is None:
+        blick = aufseher_stand.ticket_lage(spec, ticket, self.q)
+        if blick.lage is None:
             raise RuntimeError(f"#{ticket} ist kein Sub-Issue von Spec #{spec}")
-        fenster = aufseher_stand._fenster_liste(spec, self.q) or {}
-        ziel = fenster[ticket][0] if ticket in fenster else None
         wt = self.worktree(ticket)
         prompt = seit is not None and respawn.start_prompt_da(wt, ticket, seit)
         return Lage(
-            tl.offen,
-            tl.fenster,
-            tl.still_min,
-            self._kontext_k(ticket, wt),
-            prompt,
-            ziel,
+            offen=blick.lage.offen,
+            fenster=blick.lage.fenster,
+            still_min=blick.lage.still_min,
+            kontext_k=self._kontext_k(ticket, wt),
+            prompt_datei=prompt,
+            ziel=blick.ziel,
         )
 
     def _kontext_k(self, ticket: int, wt: Path) -> float | None:
+        """Kontext der aktuellen Session — Zeilen vor dem letzten Leiter-Respawn zählen nicht."""
         try:
             ort = bau_log.log_ort(ticket, wt, self.repo)
             if ort is None:
                 return None
-            wert = bau_log.zusammenfassung(ort, ticket, hauptbaum=self.repo)["spitze_k"]
-        except (OSError, ValueError, KeyError) as fehler:
-            log.warning("Bau-Log #%s unlesbar: %s", ticket, fehler)
+            return bau_log.kontext_aktuell_k(
+                ort, ticket, hauptbaum=self.repo, nach=leitstand.leiter_respawn(ticket)
+            )
+        except (OSError, ValueError, KeyError, TypeError) as fehler:
+            log.warning("Bau-Log #%s unlesbar — Kontext unbekannt: %s", ticket, fehler)
             return None
-        return None if wert is None else float(wert)
 
 
 def echte_umwelt(repo: Path, gh_repo: str) -> Umwelt:

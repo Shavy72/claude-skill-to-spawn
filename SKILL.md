@@ -67,6 +67,10 @@ Ablauf für dich (das Modell), wenn die Konfig fehlt oder der Nutzer „setup“
 - Stufen: still ≥ 20 min → Mindset-Stupser (1) · 15 min später noch still → Handoff anfordern (2), ebenso sofort ab Handoff-Grenze (`haupt.handoff_k` aus `~/.claude/smart-zone.json`) · Start-Prompt-Datei da → Stufe 3 = `respawn` · Ticket zu + still → `/exit` (einmal).
 - Nie tippen, wenn das Fenster arbeitet oder eine Rückfrage zeigt; arbeitet es nach dem Stupser wieder → Stufe 0. Stufe merkt der Leitstand (`leiter_stufe`), kein Doppel-Eingriff.
 - Exit: 0 ok · 1 Fehler (tmux/gh/Leitstand) · bei Stufe 3 der respawn-Exit.
+- Mindest-Ruhe 2 min: Handoff-Grenze und `/exit` greifen erst, wenn das Fenster seit 2 min still ist. Kontext zählt nur die aktuelle Session (nach dem letzten Respawn).
+- Stufe 2 wartet höchstens 30 min auf die Start-Prompt-Datei, dann Exit 1 „Aufseher prüfen“.
+- Stufe 5 „respawn gescheitert“: nichts mehr tippen oder starten, Exit 1; zurückgesetzt wird nur, wenn das Fenster wieder arbeitet oder das Ticket neu beginnt.
+- Reihenfolge: erst die Stufe merken (`leiter_stufe`), dann tippen.
 
 ## Umzug `/to-spawn-of` (#212) — laufende Session auf den Bau-Server verschieben
 

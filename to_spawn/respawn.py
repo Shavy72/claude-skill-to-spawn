@@ -1,35 +1,28 @@
 """Bau-Session nach fester SOP ablösen (#431, Spec #399: E2, E6, E7, E16).
 
-Eine Tür: :func:`abloesen`. Sie löst die laufende Claude-Session im tmux-Fenster
-``bau <N>`` durch eine frische ab — immer in derselben Reihenfolge:
+Eine Tür: :func:`abloesen`. Sie löst die Claude-Session im tmux-Fenster ``bau <N>``
+durch eine frische ab, immer in dieser Reihenfolge:
 
 0. Duplikat-Prüfung (A5): genau ein Fenster ``bau <N>``, kein ``bau <N> neu``,
-   höchstens ein ``bau.py``-Prozess für N — sonst Exit 3, nichts anfassen.
-a) Handoff-Auftrag ins alte Fenster (feste Pfade; entfällt, wenn ihn die Leiter #432
-   seit ``handoff_seit`` getippt hat und beide Dateien frisch da sind).
+   höchstens ein ``bau.py`` für N — sonst Exit 3, nichts anfassen.
+a) Handoff-Auftrag ins alte Fenster (entfällt, wenn ihn die Leiter #432 seit
+   ``handoff_seit`` getippt hat und beide Dateien frisch da sind).
 b) neues Fenster ``bau <N> neu`` mit ``bau <N> --sofort --ohne-prompt`` wie spawn/capo
-   (Bau-Konfiguration allein aus ``bau.py``; nie ein Start-Prompt als Argument, V4).
-c) warten bis bereit und ruhig (Speicher-Wartezeit von bau.py zählt gegen
-   ``--warte-max``, nicht als Fehler), dann ``/remote-control`` tippen (E7) und die
-   Bestätigung auf dem Bildschirm prüfen (ein Nachschub-Enter, falls das
-   Slash-Menü das erste schluckt) — sonst Exit 1.
-d) warten, bis Handoff UND Start-Prompt frisch (nach Schritt a) und nicht leer da
-   sind (G5) — sonst Exit 2, neues Fenster zu, alte Session bekommt den Auftrag
-   weiterzuarbeiten (siehe Abbruch unten).
+   (Konfiguration allein aus ``bau.py``; nie ein Start-Prompt als Argument, V4).
+c) warten bis bereit und ruhig (Speicher-Wartezeit zählt gegen ``--warte-max``),
+   ``/remote-control`` tippen (E7), Bestätigung prüfen (ein Nachschub-Enter) — sonst Exit 1.
+d) warten, bis Handoff UND Start-Prompt frisch und nicht leer da sind (G5) — sonst Exit 2.
 e) Start-Prompt ins neue Fenster tippen, Bildschirm prüfen (G4) — erst dann alte
-   Session beenden (ganzer Prozessbaum des alten Panes) und das neue Fenster in
-   ``bau <N>`` umbenennen.
+   Session beenden (ganzer Prozessbaum) und das neue Fenster in ``bau <N>`` umbenennen.
 
-Jeder Abbruch nach Schritt a schließt das neue Fenster, setzt die Sessions-Datei
-``.to-spawn/sessions/<N>.json`` auf den Stand vor Schritt b zurück und sagt der alten Session,
-dass sie weiterarbeiten soll; die Ergebniszeile sagt ehrlich, was davon geklappt hat.
+Jeder Abbruch nach Schritt a schließt das neue Fenster, setzt ``.to-spawn/sessions/<N>.json``
+auf den Stand vor Schritt b zurück und sagt der alten Session, weiterzuarbeiten.
 
 Exit-Codes: 0 abgelöst · 1 neue Session nicht bewiesen · 2 Handoff/Start-Prompt
-fehlt · 3 Duplikat/alte Session fehlt. :class:`Ergebnis` trägt dazu genau eine
-Zeile für den Ablöse-Subagenten (E16).
+fehlt · 3 Duplikat/alte Session fehlt. :class:`Ergebnis` trägt genau eine Zeile (E16).
 
-Alle Außenwelt-Zugriffe (tmux, Prozesse, Uhr) laufen über das Protokoll
-:class:`Werkzeug`; echt ist :class:`TmuxWerkzeug`, Tests geben ein Fake hinein.
+Außenwelt (tmux, Prozesse, Uhr) nur über das Protokoll :class:`Werkzeug`; echt ist
+:class:`TmuxWerkzeug`, Tests geben ein Fake hinein.
 """
 
 from __future__ import annotations
@@ -304,9 +297,8 @@ class TmuxWerkzeug:
         ).stdout
 
     def alte_session_beenden(self, pane_pid: int) -> Beendet:
-        """Beendet den ganzen Prozessbaum des alten Panes (Pane-PID eingeschlossen).
+        """Beendet den Prozessbaum des alten Panes: erst bau.py & Co., dann claude (keine Folge-Runde).
 
-        Erst bau.py & Co., dann claude — so startet bau.py keine Folge-Runde.
         ``schon_weg``: kein claude-Prozess mehr (Session hat sich selbst beendet).
         """
         baum = prozessbaum.baum(pane_pid)
@@ -366,10 +358,7 @@ def _frisch(pfad: Path, seit: float) -> bool:
 
 
 def _finde(soll: Path, ticket: int, seit: float) -> Path | None:
-    """Frische Datei: erst der feste Pfad, sonst gleiches Muster mit anderem Datum.
-
-    Über Mitternacht schreibt die alte Session evtl. mit neuem Datum (Befund 13).
-    """
+    """Frische Datei: fester Pfad, sonst gleiches Muster mit anderem Datum (Mitternacht)."""
     if _frisch(soll, seit):
         return soll
     praefix, endung = soll.name.split("_", 1)[0], soll.suffix
@@ -415,12 +404,10 @@ def _beide_da(wt: Path, ticket: int, seit: float) -> bool:
 
 
 def _startbefehl(repo: Path, ticket: int) -> str:
-    """Startbefehl des neuen Fensters: derselbe ``bau <N> --sofort`` wie spawn/capo.
+    """Startbefehl des neuen Fensters: ``bau <N> --sofort`` wie spawn/capo.
 
-    Settings (Frage-Sperre #321, Stop-Hooks), strikte MCP-Config, Session-ID (#236) und
-    Staffel-/Bau-Log-Umgebung kommen allein aus ``bau.py`` — respawn baut nichts davon
-    nach. ``--ohne-prompt``: der Start-Prompt entsteht erst in Schritt d und wird in
-    Schritt e ins Fenster getippt.
+    Alle Konfiguration kommt aus ``bau.py``; ``--ohne-prompt``: der Start-Prompt
+    wird erst in Schritt e ins Fenster getippt.
     """
     return shlex.join(
         ["bash", "-lc", capo.bau_startzeile(repo, ticket, "", "--ohne-prompt")]
@@ -435,11 +422,7 @@ def _bereit(text: str) -> bool:
 
 
 def _wartet_auf_speicher(text: str) -> bool:
-    """bau.py wartet gerade an der Speicher-Sperre (vor dem Claude-Start).
-
-    Maßgeblich ist die letzte Zeile mit „Speicher“: nach „Speicher wieder frei“
-    wartet bau.py nicht mehr.
-    """
+    """bau.py wartet an der Speicher-Sperre (letzte „Speicher“-Zeile; „wieder frei“ = nein)."""
     zeilen = [z for z in text.splitlines() if "Speicher" in z]
     return bool(zeilen) and speicher.WARTE_TEXT in zeilen[-1]
 
@@ -463,11 +446,7 @@ def _schirm(w: Werkzeug, ziel: str) -> str:
 
 
 def _arbeitet(text: str) -> bool:
-    """Claude arbeitet gerade (Zustand jetzt, kein Vergleich mit „vorher“).
-
-    Zählt nur Unterbrechen-Hinweis oder Spinner-Zeile; Eingabezeilen (``❯``) nie —
-    sonst wäre ein Echo des Prompts schon „Arbeit“.
-    """
+    """Claude arbeitet gerade: Unterbrechen-Hinweis oder Spinner-Zeile, nie Eingabezeilen (``❯``)."""
     for zeile in text.splitlines():
         if "❯" in zeile:
             continue
@@ -744,10 +723,7 @@ def _pruefe_duplikat(a: Auftrag, w: Werkzeug) -> FensterInfo | Ergebnis:
 
 
 def _remote_control(w: Werkzeug, neu: str, warte_max: float) -> float:
-    """Schritt c: bereit + ruhig abwarten, ``/remote-control`` tippen, Bestätigung prüfen.
-
-    Gibt die Sekunden zurück, die bau.py vorher an der Speicher-Sperre wartete.
-    """
+    """Schritt c: bereit + ruhig, ``/remote-control`` tippen; Rückgabe: Sekunden an der Speicher-Sperre."""
     bereit, speicher_s = _warte_ruhig_bereit(w, neu, warte_max)
     if not bereit:
         if speicher_s >= warte_max:
@@ -799,10 +775,7 @@ def _warte_ruhig_bereit(w: Werkzeug, ziel: str, warte_max: float) -> tuple[bool,
 def _warte_dateien(
     a: Auftrag, w: Werkzeug, handoff: Path, start: Path, seit: float
 ) -> tuple[Path, Path, str]:
-    """Schritt d (G5): Handoff + Start-Prompt frisch, nicht leer, Größe stabil.
-
-    Gibt die gefundenen Pfade (Handoff, Start-Prompt) und den Prompt-Text zurück.
-    """
+    """Schritt d (G5): Handoff + Start-Prompt frisch, nicht leer, Größe stabil → Pfade, Prompt-Text."""
     stabil = _Stabil(w)
     fund: list[tuple[Path, Path]] = []
 

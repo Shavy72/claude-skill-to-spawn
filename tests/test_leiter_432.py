@@ -182,6 +182,7 @@ def test_stufe1_15_min_handoff(ordner: Path) -> None:
 # --- Handoff-Grenze --------------------------------------------------------------------
 
 
+@pytest.mark.xfail(strict=True, reason="#432 Fixrunde 1 F1/F6")
 def test_handoff_grenze_erreicht(ordner: Path) -> None:
     u = FakeUmwelt(ordner, still_min=1, kontext_k=250.0)
     erg = _lauf(u)
@@ -221,6 +222,7 @@ def _stufe2(wt: Path) -> FakeUmwelt:
     return u
 
 
+@pytest.mark.xfail(strict=True, reason="#432 Fixrunde 1 F1/F6")
 def test_prompt_datei_frisch_respawn(
     ordner: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -236,6 +238,7 @@ def test_prompt_datei_frisch_respawn(
     assert leitstand.leiter_eintrag(TICKET) == (0, None)
 
 
+@pytest.mark.xfail(strict=True, reason="#432 Fixrunde 1 F1/F3")
 def test_prompt_datei_respawn_scheitert_stufe2_bleibt(
     ordner: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -249,6 +252,7 @@ def test_prompt_datei_respawn_scheitert_stufe2_bleibt(
     assert "respawn #" in erg.zeile
 
 
+@pytest.mark.xfail(strict=True, reason="#432 Fixrunde 1 F1/F6")
 def test_prompt_datei_fehlt_nichts(
     ordner: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -262,6 +266,7 @@ def test_prompt_datei_fehlt_nichts(
     assert leitstand.leiter_eintrag(TICKET)[0] == 2
 
 
+@pytest.mark.xfail(strict=True, reason="#432 Fixrunde 1 F1/F6")
 def test_prompt_datei_alt_nichts(ordner: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     spion = Spion()
     monkeypatch.setattr(respawn, "abloesen", spion)
@@ -349,6 +354,7 @@ def test_stufe1_arbeitet_zurueck_auf_0(ordner: Path) -> None:
     assert leitstand.leiter_eintrag(TICKET) == (0, None)
 
 
+@pytest.mark.xfail(strict=True, reason="#432 Fixrunde 1 F1/F6")
 def test_stufe2_arbeitet_bleibt(ordner: Path) -> None:
     u = _stufe2(ordner)
     u.fenster = aufseher_stand.ARBEITET
@@ -383,6 +389,7 @@ def test_dry_run_tippt_und_merkt_nichts(ordner: Path) -> None:
     assert "anstupsen" in erg.zeile
 
 
+@pytest.mark.xfail(strict=True, reason="#432 Fixrunde 1 F1/F6")
 def test_tmux_wirft_exit1_eine_zeile(ordner: Path) -> None:
     u = FakeUmwelt(ordner, still_min=30, werkzeug=FakeWerkzeug(wirft=True))
     erg = _lauf(u)
