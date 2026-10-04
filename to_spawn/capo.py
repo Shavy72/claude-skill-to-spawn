@@ -51,7 +51,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from . import bau_log, gh, melder, mensch_noetig, vorfall
+from . import bau_log, befund, gh, melder, mensch_noetig, vorfall
 
 log = logging.getLogger("to_spawn.capo")
 
@@ -1008,7 +1008,7 @@ CHECKPOINT_FRIST_MIN = 60.0
 #: „Vorschlag: …“ in einem Issue-Kommentar — alles danach ist die vorgeschlagene Wahl.
 _VORSCHLAG = re.compile(r"Vorschlag\s*:\s*(.+)", re.IGNORECASE | re.DOTALL)
 #: Anfang jedes Aufseher-Kommentars — eigene Kommentare sind nie „Davids Antwort“.
-WAECHTER_KOPF = "Aufseher:"
+WAECHTER_KOPF = befund.KOPF
 #: Frühere Marke vor der Umbenennung (#428) — alte Issue-Kommentare bleiben eigene Kommentare.
 ALTE_AUFSEHER_KOEPFE: tuple[str, ...] = ("Wächter:",)  # #428-alt
 #: Alle Marken des Aufsehers (neu + alt) — z. B. für den Leitstand.
@@ -1886,13 +1886,8 @@ def _gh_ok(args: list[str]) -> bool:
 
 
 def _wieder_oeffnen(n: int, gh_repo: str, funde: list[Verstoss], dry_run: bool) -> list[str]:
-    """Ticket einmal wieder öffnen; letzte Zeile ``#N wieder geöffnet`` = geklappt."""
-    if dry_run:
-        return [f"#{n} [Probe] würde wieder öffnen"]
-    kommentar = "\n".join(f"{WAECHTER_KOPF} {f.regel} — {f.text}" for f in funde)
-    if _gh_ok(["issue", "reopen", str(n), "--repo", gh_repo, "--comment", kommentar]):
-        return [f"#{n} wieder geöffnet"]
-    return [f"#{n} FEHLER: wieder öffnen gescheitert"]
+    """Ticket einmal wieder öffnen (Regel lebt in :mod:`befund`); Verstöße sind immer rot."""
+    return befund.wieder_oeffnen(n, gh_repo, [(f.regel, f.text) for f in funde], dry_run)
 
 
 def _melde(

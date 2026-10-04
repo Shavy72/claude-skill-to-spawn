@@ -23,7 +23,7 @@ from pathlib import Path
 _SKILL = str(Path(__file__).resolve().parent.parent)
 if _SKILL not in sys.path:
     sys.path.insert(0, _SKILL)
-from to_spawn import config, gh  # noqa: E402
+from to_spawn import befund, config, gh  # noqa: E402
 
 log = logging.getLogger("spec_stand")
 #: Repo, in dem gearbeitet wird: ``TO_SPAWN_REPO`` (setzt die Weiterleitung im Repo), sonst
@@ -67,6 +67,11 @@ def alter(iso: str | None) -> str:
     t = datetime.fromisoformat(iso.replace("Z", "+00:00"))
     m = int((datetime.now(timezone.utc) - t).total_seconds() // 60)
     return f"{m}m" if m < 120 else f"{m // 60}h"
+
+
+def gelb_zeilen(repo: Path, spec: int, abruf: befund.Abruf | None = None) -> list[str]:
+    """Abschnitt „Gelbe Folge-Tickets (Gesamtabnahme)“ (#438); leer ohne gelbe Folgen."""
+    return befund.abschnitt(befund.gelbe_folgen(repo, spec, abruf=abruf))
 
 
 def main() -> int:
@@ -127,6 +132,10 @@ def main() -> int:
         f"Spec #{a.spec} · {haupt} {origin} · VPS {vps or '—'} · offen {offen_gesamt}/{len(kinder)} · {datetime.now():%d.%m. %H:%M}"
     )
     print("\n".join(zeilen))
+    gelb = gelb_zeilen(repo, a.spec)
+    if gelb:
+        print()
+        print("\n".join(gelb))
     return 0
 
 
