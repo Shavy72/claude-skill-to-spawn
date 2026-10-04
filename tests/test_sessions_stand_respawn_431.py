@@ -88,3 +88,20 @@ def test_environ_leser_findet_variable(
 ) -> None:
     monkeypatch.setattr(Path, "read_bytes", lambda self: b"A=1\0BAU_TICKET=431\0B=2\0")
     assert modul.ticket_aus_environ(1) == "431"
+
+
+def test_enkel_mit_gleichem_ticket_steht_vorn_pid_ist_claude(
+    modul: ModuleType,
+) -> None:
+    """Enkel (claude -> bash -> node) erben BAU_TICKET; die Reihenfolge darf nichts ändern (Befund 10)."""
+    P = modul.Prozess
+    alle = [
+        P(52, 51, "node", "node mcp.js", None),
+        P(51, 50, "bash", "bash -c run", None),
+        P(50, 1, "claude", "claude --model x", None),
+    ]
+    modul.ticket_aus_environ = _env({50: "431", 51: "431", 52: "431"})
+    eintraege: dict = {}
+    modul.zuordnen(eintraege, alle)
+    assert list(eintraege) == ["431"]
+    assert eintraege["431"].session_pid == 50

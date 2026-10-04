@@ -38,7 +38,11 @@ from to_spawn import bau_log, config  # noqa: E402
 log = logging.getLogger("sessions_stand")
 #: Repo, in dem gearbeitet wird: ``TO_SPAWN_REPO`` (setzt die Weiterleitung im Repo), sonst
 #: Git-Wurzel des aktuellen Ordners — nie der Ort dieses Skripts (liegt im Skill, #205).
-REPO = Path(os.environ["TO_SPAWN_REPO"]).resolve() if os.environ.get("TO_SPAWN_REPO") else config.repo_wurzel()
+REPO = (
+    Path(os.environ["TO_SPAWN_REPO"]).resolve()
+    if os.environ.get("TO_SPAWN_REPO")
+    else config.repo_wurzel()
+)
 MANIFESTE = REPO / "docs" / "agents" / "manifests"
 #: ``scripts/`` = Weiterleitung im Repo, ``skripte/`` = Direktstart aus dem Skill (#205).
 MUSTER = re.compile(r"(?:scripts|skripte)[\\/](bau|wache)\.py\"?\s+(\d+)")
@@ -85,7 +89,15 @@ def ps_zeilen_parsen(text: str) -> list[Prozess]:
         except ValueError:
             start = None
         name = teile[7]
-        ergebnis.append(Prozess(int(teile[0]), int(teile[1]), name, teile[8] if len(teile) > 8 else name, start))
+        ergebnis.append(
+            Prozess(
+                int(teile[0]),
+                int(teile[1]),
+                name,
+                teile[8] if len(teile) > 8 else name,
+                start,
+            )
+        )
     return ergebnis
 
 
@@ -160,12 +172,20 @@ CONTEXT_MODE_SERVER = re.compile(r"[\\/]start\.mjs(?:\s|\"|$)")
 
 def context_mode_zustand(session_pid: int, alle: list[Prozess]) -> str:
     """``✓`` wenn unter der Claude-Session ein context-mode-Server (``start.mjs``) läuft (#237)."""
-    return "✓" if any(CONTEXT_MODE_SERVER.search(k.cmd) for k in nachkommen(session_pid, alle)) else "✗"
+    return (
+        "✓"
+        if any(CONTEXT_MODE_SERVER.search(k.cmd) for k in nachkommen(session_pid, alle))
+        else "✗"
+    )
 
 
 def manifeste_lesen(spec: str | None) -> dict[str, Eintrag]:
     eintraege: dict[str, Eintrag] = {}
-    dateien = [MANIFESTE / f"spec-{spec}.json"] if spec else sorted(MANIFESTE.glob("spec-*.json"))
+    dateien = (
+        [MANIFESTE / f"spec-{spec}.json"]
+        if spec
+        else sorted(MANIFESTE.glob("spec-*.json"))
+    )
     for d in dateien:
         if not d.exists():
             log.warning("Manifest fehlt: %s", d)
@@ -177,7 +197,9 @@ def manifeste_lesen(spec: str | None) -> dict[str, Eintrag]:
             continue
         s = str(m.get("spec") or "")
         if s and s not in eintraege:
-            eintraege[s] = Eintrag(s, "spec", f"Aufseher Spec #{s} ({m.get('feature', '')})")
+            eintraege[s] = Eintrag(
+                s, "spec", f"Aufseher Spec #{s} ({m.get('feature', '')})"
+            )
         for n, t in (m.get("tickets") or {}).items():
             eintraege[str(n)] = Eintrag(str(n), "ticket", str(t.get("title") or ""))
     return eintraege
@@ -228,7 +250,9 @@ def zuordnen(eintraege: dict[str, Eintrag], alle: list[Prozess]) -> None:
         art, nummer = m.group(1), m.group(2)
         e = eintraege.get(nummer)
         if e is None:
-            e = Eintrag(nummer, "spec" if art == "wache" else "ticket", "(nicht im Manifest)")
+            e = Eintrag(
+                nummer, "spec" if art == "wache" else "ticket", "(nicht im Manifest)"
+            )
             eintraege[nummer] = e
         e.pid = p.pid
         kinder = nachkommen(p.pid, alle)
@@ -248,7 +272,9 @@ def zuordnen(eintraege: dict[str, Eintrag], alle: list[Prozess]) -> None:
     for p in alle:
         if p.name.lower() not in VERWAIST_NAMEN or p.pid in bekannte:
             continue
-        if fremdes_repo(p.pid):  # Claude-Session eines anderen Repos ist hier keine Waise (#212)
+        if fremdes_repo(
+            p.pid
+        ):  # Claude-Session eines anderen Repos ist hier keine Waise (#212)
             continue
         m = VERWAIST.search(p.cmd)
         if not m:
@@ -263,17 +289,35 @@ def zuordnen(eintraege: dict[str, Eintrag], alle: list[Prozess]) -> None:
             e.session_pid = p.pid
             e.zustand = f"VERWAIST seit {seit}"
             e.ctx = context_mode_zustand(p.pid, alle)
-    # ``respawn``-Sessions (#431): nacktes ``env BAU_TICKET=N claude`` ohne ``bau.py`` — Ticket aus der
-    # Umgebung. ``bau.py``-Treffer und Verwaiste haben Vorrang; Kinder (MCP-``node``) erben die Variable.
+    _respawn_sessions_zuordnen(eintraege, alle)
+
+
+def _ist_claude(p: Prozess) -> bool:
+    """Claude-Prozess selbst (``claude``/``claude.exe``, oder ``node`` mit „claude“ in der Kommandozeile)."""
+    name = p.name.lower()
+    return name in {"claude", "claude.exe"} or (
+        name in {"node", "node.exe"} and "claude" in p.cmd.lower()
+    )
+
+
+def _respawn_sessions_zuordnen(
+    eintraege: dict[str, Eintrag], alle: list[Prozess]
+) -> None:
+    """``respawn``-Sessions (#431): nacktes ``env BAU_TICKET=N claude`` ohne ``bau.py`` — Ticket aus der Umgebung.
+
+    ``bau.py``-Treffer und Verwaiste haben Vorrang. Nur Claude-Prozesse zählen; Nachkommen (bash, MCP-``node``)
+    erben die Variable und werden übersprungen, sobald ein Vorfahre ebenfalls Kandidat ist — der oberste gewinnt,
+    unabhängig von der Reihenfolge in ``alle``.
+    """
     kandidaten = {
         p.pid: (p, nr)
         for p in alle
-        if p.name.lower() in VERWAIST_NAMEN
+        if _ist_claude(p)
         and not fremdes_repo(p.pid)
         and (nr := ticket_aus_environ(p.pid)) is not None
     }
     for pid, (p, nummer) in kandidaten.items():
-        if p.ppid in kandidaten:  # Kind einer Session mit gleicher Variable
+        if any(k.pid in kandidaten for k in _vorfahren(pid, alle)):
             continue
         e = eintraege.get(nummer) or Eintrag(nummer, "ticket", "(nicht im Manifest)")
         eintraege[nummer] = e
@@ -283,6 +327,17 @@ def zuordnen(eintraege: dict[str, Eintrag], alle: list[Prozess]) -> None:
         seit = p.start.strftime("%H:%M") if p.start else "?"
         e.zustand = f"läuft seit {seit}"
         e.ctx = context_mode_zustand(pid, alle)
+
+
+def _vorfahren(pid: int, alle: list[Prozess]) -> list[Prozess]:
+    """Vorfahrenkette ab Elternprozess (Gegenstück zu ``nachkommen``; Zyklen abgesichert)."""
+    nach_pid = {p.pid: p for p in alle}
+    kette: list[Prozess] = []
+    aktuell = nach_pid.get(pid)
+    while aktuell is not None and aktuell.ppid in nach_pid and len(kette) < len(alle):
+        aktuell = nach_pid[aktuell.ppid]
+        kette.append(aktuell)
+    return kette
 
 
 def token_text(ticket: str, repo: Path = REPO) -> str:
@@ -321,7 +376,9 @@ def tabelle(eintraege: dict[str, Eintrag], alle_zeigen: bool) -> str:
         kopf = f"Spec #{n}" if e.art == "spec" else f"#{n}"
         pid = f"pid {e.pid}" if e.pid else "—"
         sess = f"session {e.session_pid}" if e.session_pid else ""
-        zeilen.append(f"{kopf:<10} {e.zustand:<18} {pid:<10} {sess:<14} {e.token:<8} {e.ctx:<4} {e.titel[:60]}")
+        zeilen.append(
+            f"{kopf:<10} {e.zustand:<18} {pid:<10} {sess:<14} {e.token:<8} {e.ctx:<4} {e.titel[:60]}"
+        )
     if not zeilen:
         return "(keine Ticket-Sessions gefunden)"
     kopfzeile = f"{'Ticket':<10} {'Zustand':<18} {'Prozess':<10} {'Claude':<14} {'Token':<8} {'ctx':<4} Titel"
@@ -330,9 +387,13 @@ def tabelle(eintraege: dict[str, Eintrag], alle_zeigen: bool) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     ap.add_argument("spec", nargs="?", help="Spec-Nummer (Manifest)")
-    ap.add_argument("--alle", action="store_true", help="auch Tickets ohne Prozess zeigen")
+    ap.add_argument(
+        "--alle", action="store_true", help="auch Tickets ohne Prozess zeigen"
+    )
     a = ap.parse_args(argv)
     eintraege = manifeste_lesen(a.spec)
     alle = prozesse_lesen()
@@ -341,7 +402,9 @@ def main(argv: list[str] | None = None) -> int:
     print(tabelle(eintraege, alle_zeigen=a.alle or bool(a.spec)))
     an = sum(1 for e in eintraege.values() if e.zustand != "aus")
     laufen = sum(1 for e in eintraege.values() if e.zustand.startswith("läuft"))
-    print(f"\n{an} Prozesse an · {laufen} Claude-Sessions laufen · {datetime.now().strftime('%H:%M')}")
+    print(
+        f"\n{an} Prozesse an · {laufen} Claude-Sessions laufen · {datetime.now().strftime('%H:%M')}"
+    )
     return 0
 
 
