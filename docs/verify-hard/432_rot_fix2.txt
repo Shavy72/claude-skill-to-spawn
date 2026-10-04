@@ -1,0 +1,31 @@
+E       AssertionError: assert [(PosixPath('...4156.058972})] == []
+E         
+E         Left contains one more item: (PosixPath('/home/bau/wt/skill-432'), 9399, 9432, {'werkzeug': <test_leiter_432.FakeWerkzeug object at 0x7f4b1c649160>, 'handoff_seit': 1791144156.058972})
+E         Use -v to get more diff
+E       assert [(2, 1791144156.0752954)] == [(3, 1791144456.0752954)]
+E         
+E         At index 0 diff: (2, 1791144156.0752954) != (3, 1791144456.0752954)
+E         Use -v to get more diff
+E       AssertionError: assert 'Stufe 3' in 'leiter #9432: Fehler — OSError: Leitstand nicht schreibbar'
+E        +  where 'leiter #9432: Fehler — OSError: Leitstand nicht schreibbar' = Ergebnis(exit=1, zeile='leiter #9432: Fehler — OSError: Leitstand nicht schreibbar').zeile
+E       assert (3, 1791143916.0908723) == (0, None)
+E         
+E         At index 0 diff: 3 != 0
+E         Use -v to get more diff
+E       AttributeError: module 'to_spawn.leitstand' has no attribute 'schliesse_leiter_respawn'. Did you mean: 'merke_leiter_respawn'?
+E       AssertionError: assert 1 == 0
+E        +  where 1 = Ergebnis(exit=1, zeile='leiter #9432: Stufe 5 respawn gescheitert vor 10 min — Aufseher prüfen').exit
+E       assert (5, 1791144456.109564) == (5, 1791144636.109564)
+E         
+E         At index 1 diff: 1791144456.109564 != 1791144636.109564
+E         Use -v to get more diff
+E       AttributeError: module 'to_spawn.bau_log' has no attribute 'letzter_session_start'
+FAILED tests/test_leiter_fix2_432.py::test_b3_merken_vor_abloesen_scheitert_nichts_abgeloest
+FAILED tests/test_leiter_fix2_432.py::test_b3_stufe3_waehrend_abloesen_gemerkt
+FAILED tests/test_leiter_fix2_432.py::test_b3_abschluss_scheitert_kein_zweites_abloesen
+FAILED tests/test_leiter_fix2_432.py::test_b3_stufe3_fenster_arbeitet_abschluss_nachgeholt
+FAILED tests/test_leiter_fix2_432.py::test_b3_schliesse_respawn_ein_schreibvorgang
+FAILED tests/test_leiter_fix2_432.py::test_b1_stufe5_neuer_session_start_zurueck
+FAILED tests/test_leiter_fix2_432.py::test_b1_stufe5_zeit_erst_nach_abloesen
+FAILED tests/test_leiter_fix2_432.py::test_b1_bau_log_letzter_session_start
+8 failed, 3 passed in 0.13s

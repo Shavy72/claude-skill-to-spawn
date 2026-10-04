@@ -484,6 +484,21 @@ def merke_leiter_respawn(ticket: int, zeit: float) -> None:
     )
 
 
+def schliesse_leiter_respawn(ticket: int, zeit: float) -> None:
+    """Abschluss eines Leiter-Respawns (#432) in EINEM Schreibvorgang: Stufe 0 + Zeit.
+
+    Getrennt geschrieben könnte nach einem Fehler Stufe 0 ohne Respawn-Zeit (alter
+    Kontext zählt wieder) oder die Zeit ohne Stufe 0 stehen bleiben.
+    """
+    schluessel = str(ticket)
+
+    def schreib(z: dict) -> None:
+        z.setdefault("leiter_stufe", {})[schluessel] = {"stufe": 0, "seit": None}
+        z.setdefault("leiter_respawn", {})[schluessel] = zeit
+
+    aendere_zustand(schreib)
+
+
 def leiter_respawn(ticket: int) -> float | None:
     """Zeit des letzten Respawns durch die Leiter, ``None`` = noch keiner."""
     wert = lese_zustand().get("leiter_respawn", {}).get(str(ticket))

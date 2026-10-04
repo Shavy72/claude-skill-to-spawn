@@ -1,0 +1,6 @@
+/home/bau/wt/skill-432/tests/test_umzug_212.py:990: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_umzug_212.py::test_lokale_zustaende_aus_sessions_stand - As...
+FAILED tests/test_umzug_212.py::test_spawn_srv_umzug_laeuft_bereits_exit_4 - ...
+2 failed, 1384 passed, 29 skipped, 7 xfailed in 201.40s (0:03:21)
+Nachlauf test_umzug_212.py allein: 67 passed in 18.96s

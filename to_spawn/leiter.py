@@ -13,12 +13,16 @@ Stufen (feste Schwellen :data:`STUPS_MIN`, :data:`NACH_STUPS_MIN`,
    Handoff-Grenze (Kontext der aktuellen Session ≥ ``haupt.handoff_k`` der
    Smart-Zone-SSOT) → sofort Stufe 2, auch aus Stufe 0 — aber erst ab Mindest-Ruhe.
 2. Handoff angefordert — sobald die Start-Prompt-Datei frisch da ist → Stufe 3 =
-   Skill ``respawn`` (:func:`respawn.abloesen`), nie ein eigener Startweg; Erfolg →
-   Stufe 0 (Respawn-Zeit gemerkt: älterer Kontext zählt nicht mehr). Nach 30 min
+   Skill ``respawn`` (:func:`respawn.abloesen`), nie ein eigener Startweg. Nach 30 min
    ohne Datei → Exit 1, Aufseher prüft.
+3. respawn läuft — VOR dem Ablösen gemerkt (scheitert das Merken: Exit 1, nichts
+   abgelöst). Erfolg → Stufe 0 + Respawn-Zeit in einem Schreibvorgang (älterer
+   Kontext zählt nicht mehr). Bleibt Stufe 3 stehen (Abschluss nicht gemerkt), wird
+   nie erneut abgelöst: Fenster arbeitet → Abschluss nachholen, sonst Exit 1.
 4. Ticket zu und Fenster still (ab Mindest-Ruhe) → ``/exit`` tippen, genau einmal.
 5. respawn gescheitert — nichts mehr tippen/starten, jede Ausführung Exit 1, bis das
-   Fenster wieder arbeitet.
+   Fenster wieder arbeitet oder das Ticket neu beginnt (``session_start`` im Bau-Log
+   jünger als die Stufe-5-Zeit; die wird erst nach dem Ende von ``abloesen`` gesetzt).
 
 In ein Fenster, das arbeitet oder eine Rückfrage zeigt, wird nie getippt. Arbeitet
 die Session nach einem Stupser (oder nach Stufe 5) wieder, fällt die Leiter auf
@@ -71,7 +75,14 @@ EXIT_TEXT = "/exit"
 
 #: ``melden`` = nichts tun, Exit 1: der Aufseher muss prüfen.
 Aktion = Literal[
-    "nichts", "anstupsen", "handoff", "respawn", "exit", "zuruecksetzen", "melden"
+    "nichts",
+    "anstupsen",
+    "handoff",
+    "respawn",
+    "abschliessen",
+    "exit",
+    "zuruecksetzen",
+    "melden",
 ]
 
 
@@ -85,11 +96,12 @@ class Lage:
     kontext_k: float | None  # Spitzen-Kontext aus dem Bau-Log
     prompt_datei: bool  # frische START_*_<N>.txt seit dem letzten Eingriff
     ziel: str | None = None  # tmux-Ziel des Fensters ``bau <N>``
+    letzter_start: float | None = None  # jüngster ``session_start`` im Bau-Log
 
 
 @dataclass(frozen=True)
 class Gemerkt:
-    """Aus dem Leitstand: 0 nichts, 1 angestupst, 2 Handoff, 4 /exit, 5 gescheitert."""
+    """Leitstand: 0 nichts, 1 angestupst, 2 Handoff, 3 respawn läuft, 4 /exit, 5 gescheitert."""
 
     stufe: int
     seit: float | None
@@ -124,6 +136,18 @@ class Umwelt(Protocol):
 def entscheide(lage: Lage, gemerkt: Gemerkt, jetzt: float, handoff_k: float) -> Schritt:
     """Nächster Schritt der Leiter — reine Logik, Regeln im Modul-Kommentar."""
     stufe = gemerkt.stufe
+    if stufe == 3:  # nie erneut ablösen — die frische Session liefe sonst doppelt
+        if lage.fenster == aufseher_stand.ARBEITET:
+            return Schritt(
+                "abschliessen", "arbeitet nach respawn, Abschluss nachgeholt"
+            )
+        vor = _minuten(jetzt, gemerkt.seit)
+        text = f"respawn vor {vor} min nicht abgeschlossen — Aufseher prüfen"
+        return Schritt("melden", text)
+    if stufe == 5 and _neu_gestartet(lage, gemerkt):
+        return Schritt(
+            "zuruecksetzen", "Ticket neu gestartet nach gescheitertem respawn"
+        )
     if lage.fenster == aufseher_stand.ARBEITET:
         if stufe == 1:
             return Schritt("zuruecksetzen", "arbeitet wieder nach Stupser")
@@ -171,6 +195,15 @@ def entscheide(lage: Lage, gemerkt: Gemerkt, jetzt: float, handoff_k: float) -> 
     return Schritt("nichts", f"still {still} min < {STUPS_MIN}")
 
 
+def _neu_gestartet(lage: Lage, gemerkt: Gemerkt) -> bool:
+    """``session_start`` jünger als der gemerkte Eingriff = das Ticket beginnt neu."""
+    return (
+        lage.letzter_start is not None
+        and gemerkt.seit is not None
+        and lage.letzter_start > gemerkt.seit
+    )
+
+
 def _minuten(jetzt: float, seit: float | None) -> int:
     return 0 if seit is None else max(0, int((jetzt - seit) // 60))
 
@@ -183,6 +216,7 @@ _WORT: dict[str, str] = {
     "anstupsen": "angestupst",
     "handoff": "Handoff angefordert",
     "respawn": "abgelöst (respawn)",
+    "abschliessen": "respawn abgeschlossen",
     "exit": "/exit getippt",
     "zuruecksetzen": "zurückgesetzt",
     "melden": "",
@@ -267,6 +301,9 @@ def _schritt(u: Umwelt, repo: Path, spec: int, ticket: int) -> Ergebnis:
     elif schritt.aktion == "zuruecksetzen":
         stufe = 0
         leitstand.setze_leiter_stufe(ticket, 0, None)
+    elif schritt.aktion == "abschliessen":
+        stufe = 0
+        leitstand.schliesse_leiter_respawn(ticket, gemerkt.seit or jetzt)
     text = f"Stufe {stufe} {_WORT[schritt.aktion]} — {schritt.grund}"
     return Ergebnis(EXIT_OK, _zeile(ticket, text))
 
@@ -274,16 +311,32 @@ def _schritt(u: Umwelt, repo: Path, spec: int, ticket: int) -> Ergebnis:
 def _respawn(
     u: Umwelt, repo: Path, spec: int, ticket: int, gemerkt: Gemerkt, jetzt: float
 ) -> Ergebnis:
-    """Stufe 3: Skill respawn; gescheitert → Stufe 5, Erfolg → Stufe 0 + Zeit merken."""
+    """Stufe 3: erst „respawn läuft“ merken, dann Skill respawn.
+
+    Gescheitert → Stufe 5 mit der Zeit NACH ``abloesen`` (ein ``session_start`` des
+    abgebrochenen neuen Fensters setzt sonst sofort zurück). Erfolg → Stufe 0 +
+    Respawn-Zeit in einem Schreibvorgang; scheitert der, bleibt Stufe 3 (kein
+    zweites Ablösen) und die Zeile sagt es.
+    """
+    try:
+        leitstand.setze_leiter_stufe(ticket, 3, jetzt)
+    except (OSError, ValueError, leitstand.ZustandKaputt) as fehler:
+        log.warning("leiter #%s: Stufe 3 nicht gemerkt: %s", ticket, fehler)
+        text = f"Stufe 2 Leitstand nicht schreibbar, nichts abgelöst — {fehler}"
+        return Ergebnis(EXIT_FEHLER, _zeile(ticket, text))
     erg = respawn.abloesen(
         repo, spec, ticket, werkzeug=u.werkzeug(), handoff_seit=gemerkt.seit
     )
     if erg.exit != respawn.EXIT_OK:
-        leitstand.setze_leiter_stufe(ticket, 5, jetzt)
+        leitstand.setze_leiter_stufe(ticket, 5, u.jetzt())
         text = f"Stufe 5 respawn gescheitert — {erg.zeile}"
         return Ergebnis(erg.exit, _zeile(ticket, text))
-    leitstand.setze_leiter_stufe(ticket, 0, None)
-    leitstand.merke_leiter_respawn(ticket, jetzt)
+    try:
+        leitstand.schliesse_leiter_respawn(ticket, jetzt)
+    except (OSError, ValueError, leitstand.ZustandKaputt) as fehler:
+        log.warning("leiter #%s: respawn-Abschluss nicht gemerkt: %s", ticket, fehler)
+        text = f"Stufe 3 abgelöst, Abschluss nicht gemerkt — {fehler}"
+        return Ergebnis(EXIT_FEHLER, _zeile(ticket, text))
     text = f"Stufe 0 {_WORT['respawn']} — Start-Prompt-Datei da"
     return Ergebnis(EXIT_OK, _zeile(ticket, text))
 
@@ -340,7 +393,19 @@ class _EchteUmwelt:
             kontext_k=self._kontext_k(ticket, wt),
             prompt_datei=prompt,
             ziel=blick.ziel,
+            letzter_start=self._letzter_start(ticket, wt),
         )
+
+    def _letzter_start(self, ticket: int, wt: Path) -> float | None:
+        """Jüngster ``session_start`` im Bau-Log — unlesbar = unbekannt (Warnung)."""
+        try:
+            ort = bau_log.log_ort(ticket, wt, self.repo)
+            if ort is None:
+                return None
+            return bau_log.letzter_session_start(ort, ticket, hauptbaum=self.repo)
+        except (OSError, ValueError, KeyError, TypeError) as fehler:
+            log.warning("Bau-Log #%s unlesbar — Start unbekannt: %s", ticket, fehler)
+            return None
 
     def _kontext_k(self, ticket: int, wt: Path) -> float | None:
         """Kontext der aktuellen Session — Zeilen vor dem letzten Leiter-Respawn zählen nicht."""

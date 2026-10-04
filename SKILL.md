@@ -69,7 +69,8 @@ Ablauf für dich (das Modell), wenn die Konfig fehlt oder der Nutzer „setup“
 - Exit: 0 ok · 1 Fehler (tmux/gh/Leitstand) · bei Stufe 3 der respawn-Exit.
 - Mindest-Ruhe 2 min: Handoff-Grenze und `/exit` greifen erst, wenn das Fenster seit 2 min still ist. Kontext zählt nur die aktuelle Session (nach dem letzten Respawn).
 - Stufe 2 wartet höchstens 30 min auf die Start-Prompt-Datei, dann Exit 1 „Aufseher prüfen“.
-- Stufe 5 „respawn gescheitert“: nichts mehr tippen oder starten, Exit 1; zurückgesetzt wird nur, wenn das Fenster wieder arbeitet oder das Ticket neu beginnt.
+- Stufe 3 „respawn läuft“: wird VOR dem Ablösen gemerkt (Merken scheitert → Exit 1, nichts abgelöst); Erfolg → Stufe 0 + Respawn-Zeit in einem Schreibvorgang; bleibt Stufe 3 stehen, wird nie erneut abgelöst (Fenster arbeitet → Abschluss nachgeholt, sonst Exit 1 „Aufseher prüfen“).
+- Stufe 5 „respawn gescheitert“: nichts mehr tippen oder starten, Exit 1; zurückgesetzt wird nur, wenn das Fenster wieder arbeitet oder das Ticket neu beginnt (`session_start` im Bau-Log jünger als die Stufe-5-Zeit).
 - Reihenfolge: erst die Stufe merken (`leiter_stufe`), dann tippen.
 
 ## Umzug `/to-spawn-of` (#212) — laufende Session auf den Bau-Server verschieben

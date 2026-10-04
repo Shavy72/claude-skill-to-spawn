@@ -365,6 +365,22 @@ def kontext_aktuell_k(
     return _k(spitzen[0]) if spitzen else None
 
 
+def letzter_session_start(
+    repo: Path, ticket: str | int, *, hauptbaum: Path | None = None
+) -> float | None:
+    """Unix-Zeit der jüngsten ``session_start``-Zeile — „Ticket beginnt neu“ (#432).
+
+    Zählt Starter- und Hook-Zeilen gleich. ``None`` = keine Zeile mit lesbarer Zeit.
+    """
+    zeiten = [
+        zeitpunkt.timestamp()
+        for z in lese(repo, ticket, hauptbaum=hauptbaum)
+        if z.get("typ") == "session_start"
+        and (zeitpunkt := _zeitpunkt(z.get("ts"))) is not None
+    ]
+    return max(zeiten) if zeiten else None
+
+
 def _dauer(zeile: dict[str, Any]) -> int:
     try:
         return int(float(zeile.get("dauer_s") or 0))
