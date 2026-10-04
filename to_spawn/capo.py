@@ -1170,7 +1170,7 @@ def checkpoint_frage_zeit(zeilen: list[dict[str, Any]], kommentare: list[dict[st
     """Wann hat die Session zuletzt etwas gefragt/gemeldet? ``None`` = keine Spur.
 
     Spuren der Session sind nur Bau-Log-Zeilen ``blockiert``/``entscheidung`` und
-    Kommentare mit :data:`SESSION_KOPF`. Davids Hinweise und Wächter-Kommentare sind
+    Kommentare mit :data:`SESSION_KOPF`. Davids Hinweise und Aufseher-Kommentare sind
     keine Frage (#451) — sonst meldet capo „Checkpoint wartet“ für ein Ticket, an dem
     nie eine Session gebaut hat. Ohne Spur wartet niemand, das Label allein löst nichts aus.
     """

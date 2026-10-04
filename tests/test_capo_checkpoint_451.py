@@ -59,7 +59,7 @@ def test_david_kommentar_ohne_session_spur_keine_zeile_keine_mail(welt: dict[str
     assert ergebnis.returncode == 0, _text(ergebnis)
     assert _checkpoint_zeilen(ergebnis.stdout) == [], _text(ergebnis)
     assert "checkpoint_offen" not in [m.get("art") for m in _mails(welt)], _mails(welt)
-    assert [t for t in _texte(welt, "902") if t.startswith("Wächter:")] == []
+    assert [t for t in _texte(welt, "902") if t.startswith("Aufseher:")] == []
     assert _labels(welt, "902") == [CHECKPOINT]
 
 
@@ -93,7 +93,7 @@ def test_offener_blocker_ueberspringt_checkpoint(welt: dict[str, Path]) -> None:
     ergebnis = _capo(welt)
     assert ergebnis.returncode == 0, _text(ergebnis)
     assert _checkpoint_zeilen(ergebnis.stdout) == [], _text(ergebnis)
-    assert [t for t in _texte(welt, "902") if t.startswith("Wächter: Annahme")] == []
+    assert [t for t in _texte(welt, "902") if t.startswith("Aufseher: Annahme")] == []
     assert _mails(welt) == []
 
 
@@ -114,7 +114,7 @@ def test_blocker_unlesbar_meldet_fehler_ohne_annahme(welt: dict[str, Path], monk
     ergebnis = _capo(welt)
     assert ergebnis.returncode == 1, _text(ergebnis)  # FEHLER-Zeilen machen capo rot
     assert "#902 FEHLER: Blocker nicht lesbar" in ergebnis.stdout, _text(ergebnis)
-    assert [t for t in _texte(welt, "902") if t.startswith("Wächter: Annahme")] == []
+    assert [t for t in _texte(welt, "902") if t.startswith("Aufseher: Annahme")] == []
     assert _mails(welt) == []
 
 
@@ -127,7 +127,7 @@ def _roh(body: str, vor_min: float) -> dict:
 
 
 def test_frage_zeit_ignoriert_kommentare_ohne_session_marke() -> None:
-    kommentare = [_roh(DAVID, 30), _roh("Wächter: Annahme nach 61 min", 20)]
+    kommentare = [_roh(DAVID, 30), _roh("Aufseher: Annahme nach 61 min", 20)]
     assert capo.checkpoint_frage_zeit([], kommentare) is None
 
 
@@ -153,5 +153,5 @@ def test_blocker_format_unbekannt_meldet_fehler(welt: dict[str, Path], eintrag: 
     ergebnis = _capo(welt)
     assert ergebnis.returncode == 1, _text(ergebnis)
     assert "#902 FEHLER: Blocker-Format unbekannt" in ergebnis.stdout, _text(ergebnis)
-    assert [t for t in _texte(welt, "902") if t.startswith("Wächter: Annahme")] == []
+    assert [t for t in _texte(welt, "902") if t.startswith("Aufseher: Annahme")] == []
     assert _mails(welt) == []
