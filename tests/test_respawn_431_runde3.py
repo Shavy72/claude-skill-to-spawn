@@ -1,19 +1,26 @@
 """#431 Fixrunde 3: Befund 6 (Bereit-Frist vs. Speicher-Sperre) und Befund 4
-(Sessions-Datei bei Abbruch zurücksetzen)."""
+(Sessions-Datei bei Abbruch zurücksetzen), Befunde 2, 3, 8."""
 
 from __future__ import annotations
 
 import json
+import logging
+import os
+import signal
 import sys
 from pathlib import Path
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from test_respawn_431 import (
+    ALT_ZIEL,
     NEU_ZIEL,
     SPEC,
     TICKET,
     FakeWerkzeug,
+    _TmuxFehler,
     _weiter_getippt,
     umgebung,  # noqa: F401  (Fixture)
 )
@@ -166,3 +173,101 @@ def test_r3_b6_spaeterer_abbruch_nennt_speicher_wartezeit(
     erg = _lauf(repo, fake, warte_max=300)
     assert erg.exit == 2, erg.zeile
     assert "200 s auf Speicher" in erg.zeile, erg.zeile
+
+
+# --- Befund 2: Signal während des Aufräumens nach normalem Abbruch -------------------
+
+
+def test_r3_b2_signal_waehrend_aufraeumen_verlaesst_abloesen_nicht(
+    umgebung: tuple[Path, Path],  # noqa: F811
+) -> None:
+    """Exit-2-Abbruch räumt auf; ein SIGTERM mitten darin bricht das Aufräumen nicht ab."""
+    repo, wt = umgebung
+    fake = FakeWerkzeug(wt, handoff_anlegen=False)
+    original = fake.fenster_schliessen
+    geschickt: list[bool] = []
+
+    def schliessen(ziel: str) -> None:
+        if not geschickt:
+            geschickt.append(True)
+            os.kill(os.getpid(), signal.SIGTERM)
+        original(ziel)
+
+    fake.fenster_schliessen = schliessen  # type: ignore[method-assign]
+    erg = _lauf(repo, fake, warte_max=30)
+    assert geschickt
+    assert erg.exit == 2, erg.zeile
+    assert _weiter_getippt(fake), "Aufräumen wurde unterbrochen"
+    assert "SIGTERM" in erg.zeile, erg.zeile
+
+
+# --- Befund 3: unlesbarer Bildschirm der alten Session ist nicht „ruhig“ --------------
+
+
+def test_r3_b3_tmux_bildschirm_fehler_liefert_none() -> None:
+    assert _TmuxFehler("server exited unexpectedly").bildschirm("=spec:@1") is None
+
+
+def test_r3_b3_unlesbarer_alter_bildschirm_wartet_und_meldet(
+    umgebung: tuple[Path, Path],  # noqa: F811
+) -> None:
+    repo, wt = umgebung
+    fake = FakeWerkzeug(wt)
+    original = fake.bildschirm
+
+    def bildschirm(ziel: str) -> str | None:
+        if ziel == ALT_ZIEL:
+            fake.aufrufe.append(("bildschirm", ziel))
+            return None
+        return original(ziel)
+
+    fake.bildschirm = bildschirm  # type: ignore[method-assign,assignment]
+    erg = _lauf(repo, fake, warte_max=600)
+    assert erg.exit == 0, erg.zeile
+    assert "nicht lesbar" in erg.zeile, erg.zeile
+    assert fake.zeit >= respawn.ALT_RUHE_MAX_S
+
+
+# --- Befund 8: Sessions-Datei nicht zurücksetzbar → gemeldet, nicht verschluckt -------
+
+
+def test_r3_b8_schreibfehler_beim_zuruecksetzen_wird_gemeldet(
+    umgebung: tuple[Path, Path],  # noqa: F811
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    repo, wt = umgebung
+    datei = sessions_datei.pfad(repo, str(TICKET))
+    sessions_datei.schreiben(repo, str(TICKET), "alt-1234", repo, 3)
+    fake = FakeWerkzeug(wt, handoff_anlegen=False)
+    original = fake.fenster_starten
+
+    def starten(sitzung: str, name: str, cwd: str, befehl: str) -> str:
+        datei.unlink()
+        datei.mkdir()  # Zurückschreiben scheitert jetzt mit OSError
+        return original(sitzung, name, cwd, befehl)
+
+    fake.fenster_starten = starten  # type: ignore[method-assign]
+    with caplog.at_level(logging.ERROR, logger=respawn.log.name):
+        erg = _lauf(repo, fake, warte_max=30)
+    assert erg.exit == 2, erg.zeile
+    assert f"Sessions-Datei {datei.name} nicht zurückgesetzt" in erg.zeile, erg.zeile
+    assert _weiter_getippt(fake)
+    assert "neues Fenster zu" in erg.zeile
+    assert any("nicht zurückgesetzt" in r.getMessage() for r in caplog.records)
+
+
+def test_r3_b8_unlesbare_sessions_datei_wird_bei_abbruch_gemeldet(
+    umgebung: tuple[Path, Path],  # noqa: F811
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    repo, wt = umgebung
+    datei = sessions_datei.pfad(repo, str(TICKET))
+    datei.parent.mkdir(parents=True, exist_ok=True)
+    datei.mkdir()  # Lesen vor Schritt b scheitert mit OSError
+    fake = FakeWerkzeug(wt, handoff_anlegen=False)
+    with caplog.at_level(logging.ERROR, logger=respawn.log.name):
+        erg = _lauf(repo, fake, warte_max=30)
+    assert erg.exit == 2, erg.zeile
+    assert f"Sessions-Datei {datei.name} nicht zurückgesetzt" in erg.zeile, erg.zeile
+    assert _weiter_getippt(fake)
+    assert any(r.levelno >= logging.ERROR for r in caplog.records)

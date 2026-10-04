@@ -13,7 +13,8 @@ c) warten bis bereit und ruhig (Speicher-Wartezeit von bau.py zählt gegen
    Bestätigung auf dem Bildschirm prüfen (ein Nachschub-Enter, falls das
    Slash-Menü das erste schluckt) — sonst Exit 1.
 d) warten, bis Handoff UND Start-Prompt frisch (nach Schritt a) und nicht leer da
-   sind (G5) — sonst Exit 2, neues Fenster zu, alte Session unangetastet.
+   sind (G5) — sonst Exit 2, neues Fenster zu, alte Session bekommt den Auftrag
+   weiterzuarbeiten (siehe Abbruch unten).
 e) Start-Prompt ins neue Fenster tippen, Bildschirm prüfen (G4) — erst dann alte
    Session beenden (ganzer Prozessbaum des alten Panes) und das neue Fenster in
    ``bau <N>`` umbenennen.
@@ -174,7 +175,10 @@ class Werkzeug(Protocol):
     ) -> str: ...
     def tippen(self, ziel: str, text: str) -> None: ...
     def taste(self, ziel: str, taste: str) -> None: ...
-    def bildschirm(self, ziel: str) -> str: ...
+    def bildschirm(self, ziel: str) -> str | None:
+        """Sichtbarer Text des Panes; ``None`` = nicht lesbar (tmux-Fehler)."""
+        ...
+
     def fenster_umbenennen(self, ziel: str, name: str) -> None: ...
     def fenster_schliessen(self, ziel: str) -> None: ...
     def alte_session_beenden(self, pane_pid: int) -> Beendet: ...
@@ -284,15 +288,15 @@ class TmuxWerkzeug:
     def taste(self, ziel: str, taste: str) -> None:
         self._tmux("send-keys", "-t", ziel, taste)
 
-    def bildschirm(self, ziel: str) -> str:
-        """Sichtbarer Text; :class:`FensterWeg` wenn das Fenster fehlt, sonst "" bei Fehlern."""
+    def bildschirm(self, ziel: str) -> str | None:
+        """Sichtbarer Text; :class:`FensterWeg` wenn das Fenster fehlt, ``None`` bei Fehlern."""
         try:
             return self._tmux("capture-pane", "-p", "-t", ziel)
         except FensterWeg:
             raise
         except TmuxFehler as fehler:
             log.warning("Bildschirm %s nicht lesbar: %s", ziel, fehler)
-            return ""
+            return None
 
     def fenster_umbenennen(self, ziel: str, name: str) -> None:
         self._tmux("rename-window", "-t", ziel, name)
@@ -539,6 +543,11 @@ def _remote_bestaetigt(text: str) -> bool:
     return any(marker in klein for marker in REMOTE_MARKER)
 
 
+def _schirm(w: Werkzeug, ziel: str) -> str:
+    """Bildschirmtext fürs Warten auf ein Zeichen: unlesbar zählt wie „noch nichts da“."""
+    return w.bildschirm(ziel) or ""
+
+
 def _arbeitet(text: str) -> bool:
     """Claude arbeitet gerade (Zustand jetzt, kein Vergleich mit „vorher“).
 
@@ -589,14 +598,17 @@ class _DateiSicherung:
     """Inhalt einer Datei vor einem Schritt — ``zuruecklegen`` stellt ihn wieder her.
 
     ``inhalt is None`` heißt: vorher gab es die Datei nicht → zurücklegen löscht sie.
+    ``lesbar=False``: der alte Stand ist unbekannt → zurücklegen fasst nichts an und
+    meldet False, damit der Abbruch „Handarbeit nötig“ sagt statt still zu schweigen.
     """
 
     pfad: Path
     inhalt: bytes | None
+    lesbar: bool = True
 
     @classmethod
-    def merken(cls, pfad: Path) -> _DateiSicherung | None:
-        """Sicherung oder None, wenn die Datei unlesbar ist (dann nichts anfassen)."""
+    def merken(cls, pfad: Path) -> _DateiSicherung:
+        """Sicherung des jetzigen Stands; unlesbar → ``lesbar=False`` (geloggt)."""
         try:
             return cls(pfad, pfad.read_bytes())
         except FileNotFoundError:
@@ -605,10 +617,13 @@ class _DateiSicherung:
             log.exception(
                 "%s nicht lesbar — wird bei Abbruch nicht zurückgesetzt.", pfad
             )
-            return None
+            return cls(pfad, None, lesbar=False)
 
     def zuruecklegen(self) -> bool:
-        """Alten Stand wiederherstellen; False bei Dateifehler (geloggt)."""
+        """Alten Stand wiederherstellen; False bei Dateifehler oder unbekanntem Stand (geloggt)."""
+        if not self.lesbar:
+            log.error("%s war vorher unlesbar — nicht zurückgesetzt.", self.pfad)
+            return False
         try:
             if self.inhalt is None:
                 self.pfad.unlink(missing_ok=True)
@@ -632,6 +647,8 @@ class _Stand:
     beenden_begonnen: bool = False
     #: Name des ersten abfangenen Signals (weitere Signale werden dann ignoriert).
     signal_name: str | None = None
+    #: Aufräumen läuft — ein Signal wird jetzt nur noch gemerkt, nie mehr geworfen.
+    raeumt_auf: bool = False
     #: Sessions-Datei vor Schritt b: die neue bau.py schreibt ihre Gesprächs-ID schon
     #: vor Schritt c — bei Abbruch zurück, sonst setzt der Aufpasser die verworfene fort.
     sessions: _DateiSicherung | None = None
@@ -696,10 +713,15 @@ def _signale_abfangen(stand: _Stand) -> dict[signal.Signals, _SignalHandler]:
         return {}
 
     def handler(signum: int, frame: FrameType | None) -> None:
-        if stand.signal_name:  # Aufräumen läuft schon — nicht erneut unterbrechen.
+        name = signal.Signals(signum).name
+        if stand.raeumt_auf or stand.signal_name:
+            # Aufräumen läuft schon — nicht unterbrechen, nur merken (Docstring abloesen).
+            log.warning("respawn: %s während des Aufräumens — räume weiter auf.", name)
+            stand.signal_name = stand.signal_name or name
+            stand.hinweise.append(f"{name} während des Aufräumens erhalten")
             return
-        stand.signal_name = signal.Signals(signum).name
-        raise _Abbruch(EXIT_NICHT_BEWIESEN, f"abgebrochen durch {stand.signal_name}")
+        stand.signal_name = name
+        raise _Abbruch(EXIT_NICHT_BEWIESEN, f"abgebrochen durch {name}")
 
     alte: dict[signal.Signals, _SignalHandler] = {}
     for sig in _ABGEFANGENE_SIGNALE:
@@ -718,6 +740,7 @@ def _abbruch_ergebnis(
     a: Auftrag, w: Werkzeug, stand: _Stand, exit_code: int, grund: str
 ) -> Ergebnis:
     """Vor dem Beenden: aufräumen. Danach arbeitet die neue Session schon → Handarbeit."""
+    stand.raeumt_auf = True
     if not stand.beenden_begonnen:
         return _aufraeumen(a, w, stand, exit_code, grund)
     return Ergebnis(
@@ -812,11 +835,11 @@ def _remote_control(w: Werkzeug, neu: str, warte_max: float) -> float:
                 grund += f" (davor {int(speicher_s)} s auf Speicher gewartet)"
         raise _Abbruch(EXIT_NICHT_BEWIESEN, grund)
     w.tippen(neu, REMOTE_CONTROL)
-    if _warte(w, REMOTE_MAX_S, lambda: _remote_bestaetigt(w.bildschirm(neu))):
+    if _warte(w, REMOTE_MAX_S, lambda: _remote_bestaetigt(_schirm(w, neu))):
         return speicher_s
     # Slash-Menü kann das erste Enter als Auswahl schlucken → ein Nachschub-Enter.
     w.taste(neu, "Enter")
-    if not _warte(w, REMOTE_MAX_S, lambda: _remote_bestaetigt(w.bildschirm(neu))):
+    if not _warte(w, REMOTE_MAX_S, lambda: _remote_bestaetigt(_schirm(w, neu))):
         raise _Abbruch(
             EXIT_NICHT_BEWIESEN,
             "Remote Control im neuen Fenster nicht bestätigt (kein Hinweis auf dem Bildschirm)",
@@ -836,7 +859,7 @@ def _warte_ruhig_bereit(w: Werkzeug, ziel: str, warte_max: float) -> tuple[bool,
     letzte = w.jetzt()
     wartete = False
     while True:
-        text = w.bildschirm(ziel)
+        text = _schirm(w, ziel)
         jetzt = w.jetzt()
         if wartete:
             speicher_s += jetzt - letzte
@@ -887,25 +910,45 @@ def _warte_dateien(
 def _start_prompt(w: Werkzeug, neu: str, prompt: str) -> None:
     """Schritt e (G4): Prompt tippen, auf echten Arbeitszustand warten (Echo zählt nicht)."""
     w.tippen(neu, prompt)
-    if not _warte(w, BILDSCHIRM_MAX_S, lambda: _arbeitet(w.bildschirm(neu))):
+    if not _warte(w, BILDSCHIRM_MAX_S, lambda: _arbeitet(_schirm(w, neu))):
         raise _Abbruch(
             EXIT_NICHT_BEWIESEN,
             f"neue Session zeigt {int(BILDSCHIRM_MAX_S)} s nach dem Start-Prompt keine Arbeit",
         )
 
 
-def _alte_ruhig(w: Werkzeug, ziel: str) -> bool:
-    """Alte Session arbeitet :data:`EINGABE_RUHE_S` lang nicht mehr (Fenster weg = ruhig)."""
+def _alte_unruhe(w: Werkzeug, ziel: str) -> str | None:
+    """Wartet, bis die alte Session :data:`EINGABE_RUHE_S` lang nicht mehr arbeitet.
+
+    ``None`` = ruhig (Fenster weg zählt als ruhig). Sonst nach :data:`ALT_RUHE_MAX_S`
+    der Hinweis für die Ergebniszeile. Ein unlesbarer Bildschirm zählt nie als ruhig —
+    sonst würde eine womöglich noch schreibende Session ohne Wartezeit beendet.
+    """
     ruhe = _Stabil(w)
+    unlesbar = False
 
     def bedingung() -> bool:
+        nonlocal unlesbar
         try:
-            ruhig = not _arbeitet(w.bildschirm(ziel))
+            text = w.bildschirm(ziel)
         except FensterWeg:
             return True
+        if text is None:
+            unlesbar = True
+            return ruhe.seit_mindestens(None, EINGABE_RUHE_S)
+        ruhig = not _arbeitet(text)
         return ruhe.seit_mindestens(True if ruhig else None, EINGABE_RUHE_S)
 
-    return _warte(w, ALT_RUHE_MAX_S, bedingung)
+    if _warte(w, ALT_RUHE_MAX_S, bedingung):
+        return None
+    if unlesbar:
+        return (
+            f"Bildschirm der alten Session nicht lesbar, nach {int(ALT_RUHE_MAX_S)} s "
+            "beendet trotzdem"
+        )
+    return (
+        f"alte Session arbeitete nach {int(ALT_RUHE_MAX_S)} s noch — beendet trotzdem"
+    )
 
 
 def _alte_abloesen(
@@ -925,10 +968,9 @@ def _alte_abloesen(
     """
     stand.beenden_begonnen = True
     hinweise = list(stand.hinweise)
-    if not _alte_ruhig(w, alt.ziel):
-        hinweise.append(
-            f"alte Session arbeitete nach {int(ALT_RUHE_MAX_S)} s noch — beendet trotzdem"
-        )
+    unruhe = _alte_unruhe(w, alt.ziel)
+    if unruhe:
+        hinweise.append(unruhe)
     if not w.committet(wt, [handoff, start]):
         hinweise.append(
             f"Handoff/Start-Prompt nicht committet ({handoff.name}, {start.name})"
@@ -982,6 +1024,7 @@ def _aufraeumen(
 
     Die Zeile sagt nur, was wirklich geklappt hat.
     """
+    stand.raeumt_auf = True
     teile = [f"{a.kopf}: {grund}"]
     if stand.neu:
         try:

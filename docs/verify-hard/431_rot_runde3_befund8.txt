@@ -1,0 +1,41 @@
+.F                                                                       [100%]
+=================================== FAILURES ===================================
+________ test_r3_b8_unlesbare_sessions_datei_wird_bei_abbruch_gemeldet _________
+
+umgebung = (PosixPath('/tmp/pytest-of-bau/pytest-3432/test_r3_b8_unlesbare_sessions_0/repo'), PosixPath('/tmp/pytest-of-bau/pytest-3432/test_r3_b8_unlesbare_sessions_0/wt/wt-431'))
+caplog = <_pytest.logging.LogCaptureFixture object at 0x7f2ed0e88f50>
+
+    def test_r3_b8_unlesbare_sessions_datei_wird_bei_abbruch_gemeldet(
+        umgebung: tuple[Path, Path],  # noqa: F811
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        repo, wt = umgebung
+        datei = sessions_datei.pfad(repo, str(TICKET))
+        datei.parent.mkdir(parents=True, exist_ok=True)
+        datei.mkdir()  # Lesen vor Schritt b scheitert mit OSError
+        fake = FakeWerkzeug(wt, handoff_anlegen=False)
+        with caplog.at_level(logging.ERROR, logger=respawn.log.name):
+            erg = _lauf(repo, fake, warte_max=30)
+        assert erg.exit == 2, erg.zeile
+>       assert f"Sessions-Datei {datei.name} nicht zurückgesetzt" in erg.zeile, erg.zeile
+E       AssertionError: respawn #431: nach 30 s fehlt HANDOFF_2026-10-04_431.md — neues Fenster zu — Ablösung abgebrochen, alte Session arbeitet weiter
+E       assert 'Sessions-Datei 431.json nicht zurückgesetzt' in 'respawn #431: nach 30 s fehlt HANDOFF_2026-10-04_431.md — neues Fenster zu — Ablösung abgebrochen, alte Session arbeitet weiter'
+E        +  where 'respawn #431: nach 30 s fehlt HANDOFF_2026-10-04_431.md — neues Fenster zu — Ablösung abgebrochen, alte Session arbeitet weiter' = Ergebnis(exit=2, zeile='respawn #431: nach 30 s fehlt HANDOFF_2026-10-04_431.md — neues Fenster zu — Ablösung abgebrochen, alte Session arbeitet weiter').zeile
+
+tests/test_respawn_431_runde3.py:271: AssertionError
+------------------------------ Captured log call -------------------------------
+ERROR    to_spawn.respawn:respawn.py:605 /tmp/pytest-of-bau/pytest-3432/test_r3_b8_unlesbare_sessions_0/repo/.to-spawn/sessions/431.json nicht lesbar — wird bei Abbruch nicht zurückgesetzt.
+Traceback (most recent call last):
+  File "/home/bau/wt/skill-431/to_spawn/respawn.py", line 601, in merken
+    return cls(pfad, pfad.read_bytes())
+                     ~~~~~~~~~~~~~~~^^
+  File "/usr/lib/python3.13/pathlib/_abc.py", line 625, in read_bytes
+    with self.open(mode='rb') as f:
+         ~~~~~~~~~^^^^^^^^^^^
+  File "/usr/lib/python3.13/pathlib/_local.py", line 539, in open
+    return io.open(self, mode, buffering, encoding, errors, newline)
+           ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+IsADirectoryError: [Errno 21] Is a directory: '/tmp/pytest-of-bau/pytest-3432/test_r3_b8_unlesbare_sessions_0/repo/.to-spawn/sessions/431.json'
+=========================== short test summary info ============================
+FAILED tests/test_respawn_431_runde3.py::test_r3_b8_unlesbare_sessions_datei_wird_bei_abbruch_gemeldet
+1 failed, 1 passed, 11 deselected in 0.07s

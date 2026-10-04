@@ -1,0 +1,130 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+________ test_r3_b2_signal_waehrend_aufraeumen_verlaesst_abloesen_nicht ________
+
+repo = PosixPath('/tmp/pytest-of-bau/pytest-3430/test_r3_b2_signal_waehrend_auf0/repo')
+spec = 399, ticket = 431
+werkzeug = <test_respawn_431.FakeWerkzeug object at 0x7f3a29096900>
+warte_max = 30, dry_run = False
+
+    def abloesen(
+        repo: Path,
+        spec: int,
+        ticket: int,
+        *,
+        werkzeug: Werkzeug | None = None,
+        warte_max: float = WARTE_MAX_VORGABE,
+        dry_run: bool = False,
+    ) -> Ergebnis:
+        """Löst die Session in ``bau <ticket>`` nach SOP a–e ab (siehe Modul-Kommentar).
+    
+        Gibt nie eine Ausnahme weiter: jeder Fehler und SIGTERM/SIGHUP/SIGINT enden als
+        :class:`Ergebnis` mit passendem Exit-Code und genau einer Zeile. Nur eine
+        ``BaseException`` von außen (z. B. ``KeyboardInterrupt``) wird nach dem Aufräumen
+        weitergereicht.
+        """
+        w = werkzeug or TmuxWerkzeug()
+        auftrag = Auftrag(repo, spec, ticket, warte_max, dry_run)
+        stand = _Stand()
+        alte_handler = _signale_abfangen(stand)
+        try:
+>           erg = _ablauf(auftrag, w, stand)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+to_spawn/respawn.py:676: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+to_spawn/respawn.py:765: in _ablauf
+    gefunden_h, gefunden_s, prompt = _warte_dateien(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+a = Auftrag(repo=PosixPath('/tmp/pytest-of-bau/pytest-3430/test_r3_b2_signal_waehrend_auf0/repo'), spec=399, ticket=431, warte_max=30, dry_run=False)
+w = <test_respawn_431.FakeWerkzeug object at 0x7f3a29096900>
+handoff = PosixPath('/tmp/pytest-of-bau/pytest-3430/test_r3_b2_signal_waehrend_auf0/wt/wt-431/docs/handoffs/HANDOFF_2026-10-04_431.md')
+start = PosixPath('/tmp/pytest-of-bau/pytest-3430/test_r3_b2_signal_waehrend_auf0/wt/wt-431/docs/handoffs/START_2026-10-04_431.txt')
+seit = 1791126531.882847
+
+    def _warte_dateien(
+        a: Auftrag, w: Werkzeug, handoff: Path, start: Path, seit: float
+    ) -> tuple[Path, Path, str]:
+        """Schritt d (G5): Handoff + Start-Prompt frisch, nicht leer, Größe stabil.
+    
+        Gibt die gefundenen Pfade (Handoff, Start-Prompt) und den Prompt-Text zurück.
+        """
+        stabil = _Stabil(w)
+        fund: list[tuple[Path, Path]] = []
+    
+        def bedingung() -> bool:
+            h, s = _finde(handoff, a.ticket, seit), _finde(start, a.ticket, seit)
+            if h is None or s is None:
+                stabil.seit_mindestens(None, 0)
+                return False
+            if stabil.seit_mindestens((h, s, _groesse(h), _groesse(s)), 0):
+                fund.append((h, s))
+                return True
+            return False
+    
+        if not _warte(w, a.warte_max, bedingung):
+            fehlt = [
+                p.name for p in (handoff, start) if _finde(p, a.ticket, seit) is None
+            ] or ["stabile Dateien"]
+>           raise _Abbruch(
+                EXIT_HANDOFF_FEHLT, f"nach {int(a.warte_max)} s fehlt {', '.join(fehlt)}"
+            )
+E           to_spawn.respawn._Abbruch: nach 30 s fehlt HANDOFF_2026-10-04_431.md
+
+to_spawn/respawn.py:877: _Abbruch
+
+During handling of the above exception, another exception occurred:
+
+umgebung = (PosixPath('/tmp/pytest-of-bau/pytest-3430/test_r3_b2_signal_waehrend_auf0/repo'), PosixPath('/tmp/pytest-of-bau/pytest-3430/test_r3_b2_signal_waehrend_auf0/wt/wt-431'))
+
+    def test_r3_b2_signal_waehrend_aufraeumen_verlaesst_abloesen_nicht(
+        umgebung: tuple[Path, Path],  # noqa: F811
+    ) -> None:
+        """Exit-2-Abbruch räumt auf; ein SIGTERM mitten darin bricht das Aufräumen nicht ab."""
+        repo, wt = umgebung
+        fake = FakeWerkzeug(wt, handoff_anlegen=False)
+        original = fake.fenster_schliessen
+        geschickt: list[bool] = []
+    
+        def schliessen(ziel: str) -> None:
+            if not geschickt:
+                geschickt.append(True)
+                os.kill(os.getpid(), signal.SIGTERM)
+            original(ziel)
+    
+        fake.fenster_schliessen = schliessen  # type: ignore[method-assign]
+>       erg = _lauf(repo, fake, warte_max=30)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_respawn_431_runde3.py:197: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/test_respawn_431_runde3.py:37: in _lauf
+    return respawn.abloesen(repo, SPEC, TICKET, werkzeug=fake, warte_max=warte_max)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+to_spawn/respawn.py:678: in abloesen
+    erg = _abbruch_ergebnis(auftrag, w, stand, abbruch.exit_code, abbruch.grund)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+to_spawn/respawn.py:722: in _abbruch_ergebnis
+    return _aufraeumen(a, w, stand, exit_code, grund)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+to_spawn/respawn.py:988: in _aufraeumen
+    w.fenster_schliessen(stand.neu)
+tests/test_respawn_431_runde3.py:193: in schliessen
+    os.kill(os.getpid(), signal.SIGTERM)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+signum = 15
+frame = <frame at 0x7f3a28e63440, file '/home/bau/wt/skill-431/tests/test_respawn_431_runde3.py', line 193, code schliessen>
+
+    def handler(signum: int, frame: FrameType | None) -> None:
+        if stand.signal_name:  # Aufräumen läuft schon — nicht erneut unterbrechen.
+            return
+        stand.signal_name = signal.Signals(signum).name
+>       raise _Abbruch(EXIT_NICHT_BEWIESEN, f"abgebrochen durch {stand.signal_name}")
+E       to_spawn.respawn._Abbruch: abgebrochen durch SIGTERM
+
+to_spawn/respawn.py:702: _Abbruch
+=========================== short test summary info ============================
+FAILED tests/test_respawn_431_runde3.py::test_r3_b2_signal_waehrend_aufraeumen_verlaesst_abloesen_nicht
+1 failed, 12 deselected in 0.16s

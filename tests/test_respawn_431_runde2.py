@@ -124,14 +124,15 @@ def test_b4_bildschirm_fenster_weg_wirft(monkeypatch: pytest.MonkeyPatch) -> Non
         subprocess.TimeoutExpired(["tmux"], 30),
     ],
 )
-def test_b4_bildschirm_anderer_fehler_leer_mit_warnung(
+def test_b4_bildschirm_anderer_fehler_none_mit_warnung(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
     fehler: BaseException,
 ) -> None:
     monkeypatch.setattr(respawn.subprocess, "run", _run_wirft(fehler))
     with caplog.at_level(logging.WARNING, logger=respawn.log.name):
-        assert respawn.TmuxWerkzeug().bildschirm("=spec-1:@9") == ""
+        # #431 Runde 3 Befund 3: unlesbar ist None, nicht "" (sonst gilt es als ruhig).
+        assert respawn.TmuxWerkzeug().bildschirm("=spec-1:@9") is None
     assert any(r.levelno == logging.WARNING for r in caplog.records)
 
 
