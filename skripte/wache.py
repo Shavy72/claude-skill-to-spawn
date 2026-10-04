@@ -21,12 +21,12 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-import re
 import os
+import re
 import shutil
-import tempfile
 import subprocess
 import sys
+import tempfile
 import time
 from datetime import date
 from pathlib import Path
@@ -39,6 +39,7 @@ from to_spawn import (  # noqa: E402
     config,
     context_mode,
     speicher,
+    startklar,
     umzug,
     vertrauen,
     waechter_lauf,
@@ -128,12 +129,11 @@ def volles_fenster(modell: str) -> str:
 
 def prompt_bauen(spec: int, repo: str, takt: int, konfig: dict) -> str:
     """Aufseher-Prompt mit Server-Befehlen aus der Konfig (``ssh_ziel``, ``server_repo``)."""
-    text = PROMPT.format(
-        S=spec, REPO=repo, DATUM=date.today().isoformat(), TAKT=max(600, takt), SKILL=Path(_SKILL).as_posix()
+    # aufseher_vorlage (#450 F5): Linux/Bau-Server kennt nur ``python3``.
+    vorlage = startklar.aufseher_vorlage(PROMPT)
+    text = vorlage.format(
+        S=spec, REPO=repo, DATUM=date.today().isoformat(), TAKT=max(600, takt), SKILL=startklar.skill_pfad()
     )
-    if os.name != "nt":
-        # Linux/Bau-Server kennt nur ``python3`` — ``python …`` endet in „command not found“.
-        text = re.sub(r"\bpython(?= )", "python3", text)
     return text.replace("<SSH>", str(konfig.get("ssh_ziel") or "bau-server")).replace(
         "<SERVER_REPO>", str(konfig.get("server_repo") or "<server_repo fehlt in .to-spawn/config.json>")
     )
@@ -184,7 +184,7 @@ Du bist verantwortlich, dass Spec #{S} vollständig, sauber und autonom fertig g
 ## Jeder Tick
 0. `python {SKILL}/to_spawn.py aufseher-stand {S}` — erster Stand-Blick (ersetzt `~/waechter/stand.sh`): je Ticket eine Kurz-Zeile (offen/zu · arbeitet/still/Rückfrage · Kontext · Phase · letzte Aussage · neue Kommentare). Die Stand-Datei `~/.local/state/to-spawn/aufseher/stand-{S}.jsonl` ist dein Gedächtnis: je Aufruf eine Zeile, ohne Änderung `noop: true`; ein Nachfolger startet mit ihrer letzten Nicht-noop-Zeile. Kein Pane-Text in deinen Kontext.
 1. `PYTHONIOENCODING=utf-8 python scripts/capo.py {S} --katalog` — Stand je Ticket, neue Bau-Log-Zeilen, Verstöße. capo öffnet selbst wieder, kommentiert verwaiste Sessions und mailt Kritisches (nicht doppelt tun); `--katalog` schreibt neue Vorfälle ins Bau-Log und nach docs/agents/FEHLERKATALOG_spawn.md (mit Pathspec mitcommitten).
-2. `node ~/.claude/hooks/smart-zone/staffel/aufraeumen.mjs --spec {S}` — schließt Fenster übergebener Sessions.
+2. `{AUFRAEUMEN}` — schließt Fenster übergebener Sessions.
 3. Befehl A (unten) — läuft jedes offene, entblockte Ticket? Hängt eines, ist es tot oder an der Grenze → Befehle B–D.
 4. Ticket neu zu ohne Verstoß → Belegseite unter docs/verify-hard/ prüfen (Akzeptanz erfüllt? Live-Klick-Weg-Beleg mit Rolle da?); Mangel einstufen: rot (Akzeptanz nicht erfüllt / Beleg fehlt; z. B. Akzeptanz-Häkchen nicht erfüllt oder Live-Beleg fehlt) → `python {SKILL}/to_spawn.py befund --spec {S} --ticket <N> --stufe rot --text "…"` (öffnet wieder); gelb (Verbesserung/Hinweis, Akzeptanz trotzdem erfüllt, Kette darf weiter; z. B. fehlender Zusatz-Test für einen Nebenpfad) → `python {SKILL}/to_spawn.py befund --spec {S} --ticket <N> --stufe gelb --text "…"` (Folge-Ticket + Manifest-Eintrag, Ticket bleibt zu), Manifest docs/agents/manifests/spec-{S}.json mit Pathspec + [skip ci] committen.
 5. Stand in `docs/HANDOFF_{DATUM}_waechter_{S}.md` fortschreiben (Stand + Nachträge mit Uhrzeit), Commit mit Pathspec + [skip ci], Rebase nur bei sauberem Baum (`git diff --quiet`), Push.
@@ -197,15 +197,15 @@ A Stand aller Sessions
   hier:   `python scripts/sessions_stand.py {S} --alle` (aus / wartet / läuft seit / VERWAIST) · `python {SKILL}/to_spawn.py log {S}` (Token, Dauer je Ticket)
   Server: `ssh <SSH> 'cd <SERVER_REPO> && python3 scripts/sessions_stand.py {S} --alle'`
 B Ticket neu starten (Ticket steht auf „aus“)
-  hier:   `python {SKILL}/to_spawn.py neustart {S} <N>`
-  Server: `python {SKILL}/to_spawn.py neustart {S} <N> --ziel srv`
+  hier:   `{NEUSTART}`
+  Server: `{NEUSTART} --ziel srv`
   Erst mit `--dry-run` ansehen, dann ohne.
 C Hängende oder tote Session erkennen und ablösen
   Erkennen: Befehl A zeigt VERWAIST, oder „läuft seit“ ohne neue Bau-Log-Zeile/Commit seit über 60 min, oder capo meldet „Session tot“. Prüfen: Bau-Server `pstree -p <PID>`, PC: Kinder-Spalte in Befehl A. Auf dem Server greift zusätzlich der Aufpasser (Cron, 15 min): `python3 ~/.claude/skills/to-spawn/skripte/aufpasser.py --trocken` (vom PC: `ssh <SSH> 'python3 ~/.claude/skills/to-spawn/skripte/aufpasser.py --trocken'`) zeigt, was er tun würde.
-  Ablösen (beendet nur die Claude-Session des Tickets, dann Neustart): `python {SKILL}/to_spawn.py neustart {S} <N> --beenden` (Server: zusätzlich `--ziel srv`). Halbfertige Arbeit im Worktree bleibt liegen, die neue Session übernimmt sie.
+  Ablösen (beendet nur die Claude-Session des Tickets, dann Neustart): `{NEUSTART} --beenden` (Server: zusätzlich `--ziel srv`). Halbfertige Arbeit im Worktree bleibt liegen, die neue Session übernimmt sie.
 D Session an der Smart-Zone-Grenze übergeben (Handoff-Grenze aus ~/.claude/smart-zone.json)
   Die Ticket-Session schreibt `docs/handoffs/HANDOFF_<datum>_<N>.md` im Ticket-Worktree, committet ihn und hört auf. Staffel ist aus (`staffel.aktiv`) — der Nachfolger kommt von dir:
-  `python {SKILL}/to_spawn.py neustart {S} <N> --handoff docs/handoffs/HANDOFF_<datum>_<N>.md --beenden` (Server: zusätzlich `--ziel srv`). Die neue Session startet mit dem Auftrag „Weiter ab Handoff …“.
+  `{NEUSTART} --handoff docs/handoffs/HANDOFF_<datum>_<N>.md --beenden` (Server: zusätzlich `--ziel srv`). Die neue Session startet mit dem Auftrag „Weiter ab Handoff …“.
 E Dich selbst ablösen (deine Handoff-Grenze ist erreicht)
   1. `docs/HANDOFF_{DATUM}_waechter_{S}.md` vollständig: Stand je Ticket, offene Entscheidungen, laufende Neustarts, nächster Schritt. Commit mit Pathspec + [skip ci], Push.
   2. `python {SKILL}/skripte/wache.py {S} --abloesen docs/HANDOFF_{DATUM}_waechter_{S}.md` — die Aufsicht beendet diese Session und startet im selben Fenster den Nachfolge-Aufseher mit dem Handoff als Startkontext. Danach nichts mehr tun.
@@ -216,6 +216,10 @@ Danach Aufbau-Prüfung (einmal): `python {SKILL}/skripte/thermo_lauf.py plan {S}
 ENDE erst bei „SPEC FERTIG“ (capo hat docs/agents/entscheidungen_{S}.md geschrieben). Übersichten + Abschluss + docs/agents/thermo_{S}.md mit Pathspec + [skip ci] committen + pushen, Abschlussbericht als Kommentar auf #{S} (max. 10 Zeilen, die Links); bei „SPEC FERTIG“ stop: true.
 
 Erste Zeile jeder Antwort: 🧭 Opus · medium · Aufseher #{S}"""
+
+
+# Werkzeug-Befehle aus derselben Quelle wie die Startklar-Probe (#450 F5).
+PROMPT = PROMPT.replace("{AUFRAEUMEN}", startklar.BEFEHL_AUFRAEUMEN).replace("{NEUSTART}", startklar.BEFEHL_NEUSTART)
 
 
 def main() -> int:
@@ -256,6 +260,12 @@ def main() -> int:
     if a.print_prompt:
         print(prompt)
         return 0
+    # Startklar-Prüfung (#450): venv, Schlüssel, Werkzeuge vor dem Aufseher-Start;
+    # nicht beim Probelauf und nicht beim Fortsetzen durch den Aufpasser (--resume).
+    if not a.dry_run and not a.resume:
+        startklar_code = startklar.gate(Path.cwd(), a.spec)  # Ordner wie fahre(cwd=…) (#450 F1)
+        if startklar_code:
+            return startklar_code
     claude = shutil.which("claude") or "claude"
     # Pflicht-MCP context-mode (#237): der Aufseher startet ohne ``--strict-mcp-config``,
     # das Plugin-MCP lädt also von selbst — nur fehlen darf es nicht.

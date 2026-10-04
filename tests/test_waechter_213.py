@@ -639,7 +639,9 @@ def _wache(
         text=True,
         encoding="utf-8",
         errors="replace",
-        env={**os.environ, "TO_SPAWN_REPO": str(repo), **(env or {})},
+        # Startklar-Prüfung (#450) ist hier nicht Prüfgegenstand (eigene Tests in
+        # test_startklar_450.py) — sonst fehlt in der Testwelt aufraeumen.mjs.
+        env={**os.environ, "TO_SPAWN_REPO": str(repo), "TO_SPAWN_STARTKLAR": "aus", **(env or {})},
         timeout=timeout,
         check=False,
     )
