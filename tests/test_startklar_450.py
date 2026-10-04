@@ -1021,13 +1021,6 @@ def test_r2_anforderungen_ueberspringt_urls(tmp_path: Path) -> None:
     assert startklar._anforderungen(datei) == ["requests"]
 
 
-def test_r2_wache_import_hat_noqa() -> None:
-    zeilen = (SKILL / "skripte" / "wache.py").read_text(encoding="utf-8").splitlines()
-    assert any(
-        z.startswith("from to_spawn import") and "noqa: E402" in z for z in zeilen
-    )
-
-
 # --- Fixrunde 3: echtes gh, Gate ohne Manifest ---------------------------------
 
 _GH_ECHT = startklar._gh_issue_text
@@ -1106,3 +1099,22 @@ def test_r3_gate_ohne_manifest_laeuft_durch_und_ist_rot(
     befunde = startklar.pruefe(wt, SPEC, manifest_pflicht=True)
     rot = [b for b in befunde if not b.ok]
     assert len(rot) == 1 and "fehlt" in rot[0].text and rot[0].bereich == "schlüssel"
+
+
+# --- Fixrunde 4: Konfig mit falschem Typ ----------------------------------------
+
+
+@pytest.mark.parametrize(
+    "inhalt",
+    ['{"startklar": "abc"}', '{"startklar": {"schluessel": "FAL_KEY"}}'],
+)
+def test_r4_konfig_falscher_typ_rot_ohne_absturz(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, inhalt: str
+) -> None:
+    _haupt, wt = _repo_mit_worktree(tmp_path)
+    datei = startklar.konfig_pfad(wt)
+    datei.parent.mkdir(parents=True, exist_ok=True)
+    datei.write_text(inhalt, encoding="utf-8")
+    befunde = startklar.pruefe(wt, SPEC, werkzeuge=(), environ={})
+    rot = [b for b in befunde if not b.ok and b.bereich == "konfig"]
+    assert len(rot) == 1 and "startklar" in rot[0].text

@@ -559,15 +559,31 @@ def _geheime_werte(
 
 def _konfig_schluessel(ordner: Path) -> list[str]:
     """Schlüssel-Namen aus ``startklar.schluessel`` der Repo-Konfig."""
-    konfig = config.lade(ordner)
-    return [
-        str(n) for n in (konfig.get("startklar", {}) or {}).get("schluessel", []) or []
-    ]
+    abschnitt = config.lade(ordner).get("startklar")
+    namen = abschnitt.get("schluessel") if isinstance(abschnitt, dict) else None
+    return [str(n) for n in namen] if isinstance(namen, list) else []
 
 
 def konfig_pfad(ordner: Path) -> Path:
     """Pfad der Repo-Konfig, wie ``config.lade`` ihn liest."""
     return config.repo_wurzel(Path(ordner)) / config.KONFIG_PFAD
+
+
+def _konfig_typfehler(daten: object) -> str | None:
+    """Grund, wenn ``daten`` kein gültiges Konfig-Objekt ist (``startklar.schluessel`` = Liste von Texten)."""
+    if not isinstance(daten, dict):
+        return "kein JSON-Objekt"
+    abschnitt = daten.get("startklar")
+    if abschnitt is None:
+        return None
+    if not isinstance(abschnitt, dict):
+        return "Feld startklar ist kein Objekt"
+    namen = abschnitt.get("schluessel")
+    if namen is not None and not (
+        isinstance(namen, list) and all(isinstance(n, str) for n in namen)
+    ):
+        return "Feld startklar.schluessel ist keine Liste von Texten"
+    return None
 
 
 def konfig_pruefen(ordner: Path) -> list[Befund]:
@@ -583,9 +599,9 @@ def konfig_pruefen(ordner: Path) -> list[Befund]:
     except (OSError, ValueError) as fehler:
         grund = f"unlesbar ({_kurz(str(fehler), 120)})"
     else:
-        if isinstance(daten, dict):
+        grund = _konfig_typfehler(daten)
+        if grund is None:
             return []
-        grund = "kein JSON-Objekt"
     return [
         Befund(
             "konfig",
