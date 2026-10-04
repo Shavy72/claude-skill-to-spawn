@@ -274,6 +274,8 @@ class TmuxWerkzeug:
     def fenster_schliessen(self, ziel: str) -> None:
         try:
             self._tmux("kill-window", "-t", ziel)
+        except FensterWeg:
+            log.info("Fenster %s schon zu (Session hat sich selbst beendet)", ziel)
         except TmuxFehler as fehler:
             log.warning("Fenster %s ließ sich nicht schließen: %s", ziel, fehler)
 
