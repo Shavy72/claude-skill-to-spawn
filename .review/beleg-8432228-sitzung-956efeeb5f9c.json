@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "modus": "hinweis",
+  "zeit": "2026-10-04T13:23:46.517687+00:00",
+  "befunde": [],
+  "pruefer": [
+    {
+      "name": "general-purpose",
+      "modell": "sonnet",
+      "befunde_roh": 0
+    }
+  ],
+  "fix_runde": 3,
+  "repo": "/home/bau/wt/skill-448",
+  "moment": "sitzung",
+  "stufe": "mittel",
+  "sha": "8432228",
+  "fingerprint": "956efeeb5f9c60f2",
+  "dateien": [
+    "tests/test_fehl_reopen_448.py",
+    "to_spawn/befund.py",
+    "to_spawn/capo.py"
+  ],
+  "dauer_s": 60,
+  "token_schaetzung": 50000,
+  "richter": null,
+  "diff_modus": {
+    "staged": false,
+    "base": "d0a0a82bfae6772a08c2c38b1b6a975e111e88f0"
+  },
+  "text": "Delta-Lauf 53c6dc2..8432228 (B4-Fix). Rest des Sitzungs-Diffs geprüft am Stand 53c6dc2 (Beleg beleg-53c6dc2-sitzung-d73732755a34, inkl. pr-test-analyzer, /code-review, Richter). Testdatei seitdem unverändert. Kein Richter nötig, 0 Befunde.",
+  "datei_hashes": {
+    "tests/test_fehl_reopen_448.py": "5ab72d6ea0c4f8e2",
+    "to_spawn/befund.py": "e09aab07c7de8863",
+    "to_spawn/capo.py": "ba46746891b87c46"
+  },
+  "inhalt_hashes": {
+    "tests/test_fehl_reopen_448.py": "dd9c5ec44089fb3b",
+    "to_spawn/befund.py": "f747f1e33b3d0f7d",
+    "to_spawn/capo.py": "bd20ab8ff6515edc"
+  },
+  "status": "gruen"
+}

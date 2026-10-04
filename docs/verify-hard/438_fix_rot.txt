@@ -1,0 +1,25 @@
+
+tests/test_gelb_liste_438.py:448: AttributeError
+___________________ test_fix8_prompt_schritt_4_hat_beispiele ___________________
+
+    def test_fix8_prompt_schritt_4_hat_beispiele() -> None:
+        wache = _lade_skript("wache")
+        text = wache.PROMPT.format(S=SPEC, REPO="r", DATUM="2026-10-04", TAKT=600, SKILL="/skill")
+        schritt4 = next(z for z in text.splitlines() if z.startswith("4."))
+>       assert "Akzeptanz-Häkchen nicht erfüllt" in schritt4
+E       AssertionError: assert 'Akzeptanz-Häkchen nicht erfüllt' in '4. Ticket neu zu ohne Verstoß → Belegseite unter docs/verify-hard/ prüfen (Akzeptanz erfüllt? Live-Klick-Weg-Beleg mi... Manifest-Eintrag, Ticket bleibt zu), Manifest docs/agents/manifests/spec-399.json mit Pathspec + [skip ci] committen.'
+
+tests/test_gelb_liste_438.py:456: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_gelb_liste_438.py::test_fix1_manifest_schreiben_scheitert_meldet_angelegtes_ticket
+FAILED tests/test_gelb_liste_438.py::test_fix2_gleicher_befund_wird_nicht_doppelt_angelegt
+FAILED tests/test_gelb_liste_438.py::test_fix2_anderer_text_legt_weiteres_folge_ticket_an
+FAILED tests/test_gelb_liste_438.py::test_fix3_kaputtes_gelb_von_wird_uebersprungen
+FAILED tests/test_gelb_liste_438.py::test_fix4_status_abruf_scheitert_loggt_nummer
+FAILED tests/test_gelb_liste_438.py::test_fix5_exit_code_folgt_ok_flag - Attr...
+FAILED tests/test_gelb_liste_438.py::test_fix6_kaputtes_manifest_zeigt_fehlerzeile
+FAILED tests/test_gelb_liste_438.py::test_fix7_not_planned_ist_verworfen - As...
+FAILED tests/test_gelb_liste_438.py::test_create_exit_0_ohne_url_ist_fehler
+FAILED tests/test_gelb_liste_438.py::test_kaputtes_manifest_kein_gh_aufruf - ...
+FAILED tests/test_gelb_liste_438.py::test_fix8_prompt_schritt_4_hat_beispiele
+11 failed, 14 passed in 0.35s

@@ -218,7 +218,8 @@ def test_auftrag_landet_im_prompt(tmp_path: Path) -> None:
             text=True,
             encoding="utf-8",
             errors="replace",
-            env={**os.environ, "TO_SPAWN_REPO": str(repo)},
+            # BAU_AUFTRAG der umgebenden Bau-Session darf den Lauf ohne Auftrag nicht färben.
+            env={**{k: v for k, v in os.environ.items() if k != "BAU_AUFTRAG"}, "TO_SPAWN_REPO": str(repo)},
             timeout=120,
             check=False,
         )

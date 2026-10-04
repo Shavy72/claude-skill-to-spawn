@@ -1,0 +1,15 @@
+E       assert 'Phase Rücknahme' in '#415 zu · kein Fenster · Kontext — · Phase — · „Fehl-Reopen zurückgenommen: test_ersetzt“ · — neue Kommentare'
+
+tests/test_fehl_reopen_448.py:282: AssertionError
+------------------------------ Captured log call -------------------------------
+WARNING  to_spawn.bau_log:bau_log.py:157 Unbekannter Zeilen-Typ 'ruecknahme' — wird trotzdem geschrieben.
+=========================== short test summary info ============================
+FAILED tests/test_fehl_reopen_448.py::test_umbenennung_mit_vermerk_ist_kein_test_ersetzt
+FAILED tests/test_fehl_reopen_448.py::test_vermerk_formen_tolerant - Attribut...
+FAILED tests/test_fehl_reopen_448.py::test_rot_beweis_415_fehl_reopen_wird_zurueckgenommen
+FAILED tests/test_fehl_reopen_448.py::test_doppelschutz_zweiter_tick_nimmt_nicht_nochmal_zurueck
+FAILED tests/test_fehl_reopen_448.py::test_juengster_schliess_stempel_zaehlt
+FAILED tests/test_fehl_reopen_448.py::test_fehlerpfad_gh_close_scheitert - As...
+FAILED tests/test_fehl_reopen_448.py::test_probelauf_schliesst_nichts - Asser...
+FAILED tests/test_fehl_reopen_448.py::test_stand_zeigt_ruecknahme - Assertion...
+8 failed, 2 passed in 1.41s

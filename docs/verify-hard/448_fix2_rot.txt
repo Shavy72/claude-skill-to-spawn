@@ -1,0 +1,63 @@
+/bin/bash: line 181: .venv/bin/python: No such file or directory
+.................F.F                                                     [100%]
+=================================== FAILURES ===================================
+______ test_mensch_schliesst_und_oeffnet_zwischen_ticks_keine_ruecknahme _______
+
+welt = {'repo': PosixPath('/tmp/pytest-of-bau/pytest-3365/test_mensch_schliesst_und_oeff1/repo'), 'gh': PosixPath('/tmp/pytes...sst_und_oeff1/mails.jsonl'), 'wt': PosixPath('/tmp/pytest-of-bau/pytest-3365/test_mensch_schliesst_und_oeff1/wt'), ...}
+fake_gh = <test_fehl_reopen_448.FakeGh object at 0x7f49f69ecf50>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7f49f69dd090>
+
+    def test_mensch_schliesst_und_oeffnet_zwischen_ticks_keine_ruecknahme(
+        welt: dict[str, Path],  # noqa: F811
+        fake_gh: FakeGh,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """capo öffnet bei T1; Mensch schließt bei T2 und öffnet wieder, bevor ein Tick es sieht."""
+        _umbenennung_415(welt)
+        t1 = _iso(timedelta(minutes=40))
+        t2 = _iso(timedelta(minutes=20))
+        _erledigt_setzen(welt, f"{N}|test_ersetzt|{t1}")
+        fake_gh.schliess_zeiten = [t1, t2]
+        _kinder(monkeypatch, _issue())
+    
+        erg = _tick(welt)
+    
+>       assert fake_gh.schliessen() == [], erg.zeilen
+E       AssertionError: ['Spec #900 · origin/master 21d4c95 · VPS - · offen 1/1 · 04.10. 15:15', '#415 OFF -          commit:21d4c95 -          log:0', '#415 Fehl-Reopen zurückgenommen']
+E       assert [['issue', 'c...omment', ...]] == []
+E         
+E         Left contains one more item: ['issue', 'close', '415', '--repo', 'test/wegwerf', '--comment', ...]
+E         Use -v to get more diff
+
+tests/test_fehl_reopen_448.py:473: AssertionError
+_________________ test_timeline_nicht_lesbar_keine_ruecknahme __________________
+
+welt = {'repo': PosixPath('/tmp/pytest-of-bau/pytest-3365/test_timeline_nicht_lesbar_kei0/repo'), 'gh': PosixPath('/tmp/pytes...t_lesbar_kei0/mails.jsonl'), 'wt': PosixPath('/tmp/pytest-of-bau/pytest-3365/test_timeline_nicht_lesbar_kei0/wt'), ...}
+fake_gh = <test_fehl_reopen_448.FakeGh object at 0x7f49f68f25f0>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7f49f6a26c50>
+
+    def test_timeline_nicht_lesbar_keine_ruecknahme(
+        welt: dict[str, Path],  # noqa: F811
+        fake_gh: FakeGh,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _umbenennung_415(welt)
+        t1 = _iso(timedelta(minutes=40))
+        _erledigt_setzen(welt, f"{N}|test_ersetzt|{t1}")
+        fake_gh.fehler.add("timeline")
+        _kinder(monkeypatch, _issue())
+    
+        erg = _tick(welt)
+    
+>       assert fake_gh.schliessen() == [], erg.zeilen
+E       AssertionError: ['Spec #900 · origin/master 3ae7266 · VPS - · offen 1/1 · 04.10. 15:15', '#415 OFF -          commit:3ae7266 -          log:0', '#415 Fehl-Reopen zurückgenommen']
+E       assert [['issue', 'c...omment', ...]] == []
+E         
+E         Left contains one more item: ['issue', 'close', '415', '--repo', 'test/wegwerf', '--comment', ...]
+E         Use -v to get more diff
+
+tests/test_fehl_reopen_448.py:506: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_fehl_reopen_448.py::test_mensch_schliesst_und_oeffnet_zwischen_ticks_keine_ruecknahme
+FAILED tests/test_fehl_reopen_448.py::test_timeline_nicht_lesbar_keine_ruecknahme
+2 failed, 18 passed in 6.42s
