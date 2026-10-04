@@ -167,7 +167,11 @@ class Werkzeug(Protocol):
     def fenster_umbenennen(self, ziel: str, name: str) -> None: ...
     def fenster_schliessen(self, ziel: str) -> None: ...
     def alte_session_beenden(self, pane_pid: int) -> Beendet: ...
-    def committet(self, wt: Path, pfade: list[Path]) -> bool: ...
+    def committet(self, wt: Path, pfade: list[Path]) -> bool:
+        """Alle Pfade committet; git-Fehler (``OSError``/``SubprocessError``) fliegen."""
+        ...
+
+    def claude_laeuft(self, pane_pid: int) -> bool: ...
     def jetzt(self) -> float: ...
     def schlafen(self, s: float) -> None: ...
 
@@ -274,18 +278,17 @@ class TmuxWerkzeug:
             log.warning("Fenster %s ließ sich nicht schließen: %s", ziel, fehler)
 
     def committet(self, wt: Path, pfade: list[Path]) -> bool:
-        """Jede Datei hat einen Commit und keine offene Änderung im Worktree ``wt``."""
-        try:
-            for pfad in pfade:
-                letzter = self._git(wt, "log", "-1", "--format=%H", "--", str(pfad))
-                if not letzter.strip():
-                    return False
-            return not self._git(
-                wt, "status", "--porcelain", "--", *map(str, pfade)
-            ).strip()
-        except (OSError, subprocess.SubprocessError) as fehler:
-            log.warning("Commit-Stand in %s nicht prüfbar: %s", wt, fehler)
-            return False
+        """Jede Datei hat einen Commit und keine offene Änderung im Worktree ``wt``.
+
+        git-Fehler werden weitergereicht: „nicht prüfbar“ ist nicht „nicht committet“.
+        """
+        for pfad in pfade:
+            letzter = self._git(wt, "log", "-1", "--format=%H", "--", str(pfad))
+            if not letzter.strip():
+                return False
+        return not self._git(
+            wt, "status", "--porcelain", "--", *map(str, pfade)
+        ).strip()
 
     def _git(self, wt: Path, *argumente: str) -> str:
         return subprocess.run(
@@ -322,6 +325,10 @@ class TmuxWerkzeug:
             return BEENDET
         log.error("claude-Prozess(e) %s leben auch nach SIGKILL.", claude)
         return LEBT
+
+    def claude_laeuft(self, pane_pid: int) -> bool:
+        """Läuft im Prozessbaum des Panes eine Claude-Session (sonst nur Shell)?"""
+        return any(prozessbaum.ist_claude(pid) for pid in prozessbaum.baum(pane_pid))
 
     def jetzt(self) -> float:
         return time.time()
@@ -633,7 +640,8 @@ def _abbruch_ergebnis(
     return Ergebnis(
         EXIT_NICHT_BEWIESEN,
         f"{a.kopf}: {grund} beim Beenden der alten Session — neue Session arbeitet in "
-        f"„{a.name_neu}“, alte evtl. noch offen, Handarbeit nötig",
+        f"„{a.name_neu}“, alte evtl. noch offen, Handarbeit nötig"
+        + "".join(f" — {h}" for h in stand.hinweise),
     )
 
 
@@ -684,7 +692,7 @@ def _ablauf(a: Auftrag, w: Werkzeug, stand: _Stand) -> Ergebnis:
 
 
 def _pruefe_duplikat(a: Auftrag, w: Werkzeug) -> FensterInfo | Ergebnis:
-    """Schritt 0 (A5): genau ein ``bau N``, kein ``bau N neu``, ≤ 1 bau.py — sonst Exit 3."""
+    """Schritt 0 (A5): genau ein ``bau N`` mit Claude, kein ``bau N neu``, ≤ 1 bau.py — sonst Exit 3."""
     fenster = w.fenster_liste()
     alte = [f for f in fenster if f.name == a.name_alt]
     neue = [f for f in fenster if f.name == a.name_neu]
@@ -703,6 +711,11 @@ def _pruefe_duplikat(a: Auftrag, w: Werkzeug) -> FensterInfo | Ergebnis:
         return Ergebnis(
             EXIT_DUPLIKAT,
             f"{a.kopf}: {len(prozesse)} bau.py-Prozesse für #{a.ticket} — nichts angefasst",
+        )
+    if not w.claude_laeuft(alte[0].pane_pid):  # sonst landet der Auftrag in der Shell
+        return Ergebnis(
+            EXIT_DUPLIKAT,
+            f"{a.kopf}: alte Session fehlt — in „{a.name_alt}“ läuft kein Claude, nichts angefasst",
         )
     return alte[0]
 
@@ -858,10 +871,17 @@ def _alte_abloesen(
     unruhe = _alte_unruhe(w, alt.ziel)
     if unruhe:
         hinweise.append(unruhe)
-    if not w.committet(wt, [handoff, start]):
-        hinweise.append(
-            f"Handoff/Start-Prompt nicht committet ({handoff.name}, {start.name})"
-        )
+    try:
+        if not w.committet(wt, [handoff, start]):
+            hinweise.append(
+                f"Handoff/Start-Prompt nicht committet ({handoff.name}, {start.name})"
+            )
+    except (
+        OSError,
+        subprocess.SubprocessError,
+    ) as fehler:  # unklar ≠ „nicht committet“
+        log.warning("respawn #%s: Commit-Stand nicht prüfbar: %s", a.ticket, fehler)
+        hinweise.append(f"Commit-Stand nicht prüfbar ({fehler})")
     ausgang = w.alte_session_beenden(alt.pane_pid)
     if ausgang == LEBT:
         return Ergebnis(
@@ -904,13 +924,20 @@ def _fenster_offen(w: Werkzeug, ziel: str) -> bool:
         return True
 
 
+_UNBEKANNT = "unbekannt"
+"""Fensterliste unlesbar: ob „bau N neu“ offen ist, weiß niemand (zählt als offen)."""
+
+
 def _halb_gestartet(a: Auftrag, w: Werkzeug) -> str | None:
-    """Ziel eines Fensters „bau N neu“, das ``fenster_starten`` trotz Fehler anlegte."""
+    """Ziel eines Fensters „bau N neu“, das ``fenster_starten`` trotz Fehler anlegte.
+
+    ``None``: keins da · :data:`_UNBEKANNT`: Fensterliste unlesbar (wie :func:`_fenster_offen`).
+    """
     try:
         return next((f.ziel for f in w.fenster_liste() if f.name == a.name_neu), None)
-    except RuntimeError:  # tmux-Fehler: nichts gefunden, Zeile sagt nur Bewiesenes
+    except RuntimeError:  # tmux-Fehler: unklar = evtl. offen, die Zeile sagt es
         log.exception("respawn #%s: Fensterliste nicht lesbar.", a.ticket)
-        return None
+        return _UNBEKANNT
 
 
 def _aufraeumen(
@@ -924,7 +951,11 @@ def _aufraeumen(
     teile = [f"{a.kopf}: {grund}"]
     # Start gescheitert (z. B. Zeitüberschreitung), tmux legte das Fenster evtl. trotzdem an.
     neu = stand.neu or (_halb_gestartet(a, w) if stand.sessions else None)
-    if neu:
+    if neu == _UNBEKANNT:
+        teile.append(
+            f"Fenster „{a.name_neu}“ evtl. offen (Fensterliste unlesbar), Handarbeit nötig"
+        )
+    elif neu:
         try:
             w.fenster_schliessen(neu)
         except RuntimeError:  # Prüfung folgt über die Fensterliste

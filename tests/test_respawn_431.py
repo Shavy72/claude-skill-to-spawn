@@ -84,6 +84,8 @@ class FakeWerkzeug:
         self.nach_schlafen: list[Any] = []
         # Antwort von ``committet`` (Handoff + Start-Prompt im Git, #431 Runde 2 Befund 6)
         self.committet_ergebnis = True
+        # Läuft Claude unter der alten Pane? (#431 Runde 5 Befund 6)
+        self.claude_da = True
 
     def _fehler(self, schluessel: str) -> None:
         if schluessel in self.fehler_bei:
@@ -105,6 +107,10 @@ class FakeWerkzeug:
     def committet(self, wt: Path, pfade: list[Path]) -> bool:
         self.aufrufe.append(("committet", wt, tuple(pfade)))
         return self.committet_ergebnis
+
+    def claude_laeuft(self, pane_pid: int) -> bool:
+        self.aufrufe.append(("claude_laeuft", pane_pid))
+        return self.claude_da
 
     def jetzt(self) -> float:
         return self.zeit
@@ -187,7 +193,14 @@ class FakeWerkzeug:
         return [
             a[0]
             for a in self.aufrufe
-            if a[0] not in ("fenster_liste", "bau_prozesse", "bildschirm", "committet")
+            if a[0]
+            not in (
+                "fenster_liste",
+                "bau_prozesse",
+                "bildschirm",
+                "committet",
+                "claude_laeuft",
+            )
         ]
 
     def getippt(self, ziel: str | None = None) -> list[str]:
