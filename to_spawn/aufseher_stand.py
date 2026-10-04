@@ -26,14 +26,22 @@ Quellen:
 - Offen/zu und Kommentar-Zahl: Sub-Issues der Spec (:func:`capo.kinder`). Neue
   Kommentare = Zahl jetzt minus Zahl beim letzten Aufruf (Stand-Datei); erster
   Aufruf ⇒ ``—``.
-- Kontext: Spitzen-Kontext aus dem Bau-Log (:func:`bau_log.zusammenfassung`,
-  gleiche Regel wie ``sessions_stand.token_text``).
+- Kontext: Spitzen-Kontext aus dem Bau-Log (:func:`bau_log.zusammenfassung`);
+  Ort und Format kommen aus :func:`bau_log.log_ort` und :func:`bau_log.kontext_text`
+  (dieselben wie bei ``sessions_stand.token_text``).
 - Phase: Typ der jüngsten Bau-Log-Zeile mit bekanntem Typ (:data:`PHASEN`);
   ``deploy_phase`` zeigt zusätzlich ``phase``/``status`` der Zeile.
 - Letzte Aussage: Feld ``text`` der jüngsten Bau-Log-Zeile, die eins hat.
 
 Fehlt eine Quelle für ein Ticket, steht ``—`` und es gibt eine Warnung; fehlt gh
-ganz oder liefert die Sub-Issue-Liste nichts, bricht :func:`lauf` mit Exit ≠ 0 ab.
+ganz oder liefert die Sub-Issue-Liste nichts (Fehler oder leer), bricht :func:`lauf`
+mit Exit ≠ 0 ab und schreibt keine Zeile in die Stand-Datei.
+
+Fenster-Zustand ``—`` vs. ``kein Fenster``: Antwortet ``tmux list-windows`` für die
+Sitzung ``spec-<S>`` nicht (tmux fehlt, Server aus oder Sitzung fehlt — tmux meldet
+alle drei nur als Exit ≠ 0), ist über Fenster nichts bekannt: jede Zeile zeigt ``—``,
+die Kopfzeile ``tmux nicht lesbar``. ``kein Fenster`` heißt dagegen: Sitzung lesbar,
+aber kein Fenster ``bau <N>`` darin (bzw. dessen Pane nicht lesbar).
 """
 
 from __future__ import annotations
@@ -82,6 +90,9 @@ ARBEITET = "arbeitet"
 STILL = "still"
 RUECKFRAGE = "Rückfrage"
 KEIN_FENSTER = "kein Fenster"
+#: Fenster-Zustand, wenn tmux bzw. die Sitzung ``spec-<S>`` nicht lesbar ist.
+FENSTER_UNBEKANNT = STRICH
+TMUX_HINWEIS = "tmux nicht lesbar"
 
 
 class GhFehlt(RuntimeError):
@@ -130,7 +141,7 @@ class TicketLage:
 
     nummer: int
     offen: bool | None
-    fenster: str  # ARBEITET | STILL | RUECKFRAGE | KEIN_FENSTER
+    fenster: str  # ARBEITET | STILL | RUECKFRAGE | KEIN_FENSTER | FENSTER_UNBEKANNT
     still_min: int | None = None
     kontext: str = STRICH
     phase: str = STRICH
@@ -238,8 +249,8 @@ def _vorher(spec: int, ordner: Path | None) -> _Vorher:
     )
 
 
-def _fenster_liste(spec: int, q: Quellen) -> dict[int, tuple[str, float]]:
-    """Ticket → (tmux-Ziel, window_activity)."""
+def _fenster_liste(spec: int, q: Quellen) -> dict[int, tuple[str, float]] | None:
+    """Ticket → (tmux-Ziel, window_activity); ``None`` = tmux/Sitzung nicht lesbar."""
     raus = q.tmux(
         [
             "list-windows",
@@ -250,10 +261,8 @@ def _fenster_liste(spec: int, q: Quellen) -> dict[int, tuple[str, float]]:
         ]
     )
     if raus is None:
-        log.warning(
-            "tmux-Sitzung spec-%s nicht lesbar — alle Tickets ohne Fenster.", spec
-        )
-        return {}
+        log.warning("tmux-Sitzung spec-%s nicht lesbar — Fenster-Zustand „—“.", spec)
+        return None
     liste: dict[int, tuple[str, float]] = {}
     for zeile in raus.splitlines():
         teile = zeile.split("\t")
@@ -290,20 +299,13 @@ def _fenster_lage(
     return STILL, minuten, merker
 
 
-def _log_ort(n: int, repo: Path) -> Path | None:
-    for ort in (Path(config.worktree_pfad(n, repo)).expanduser(), repo):
-        if bau_log.hat_log(ort, n):
-            return ort
-    return None
-
-
 def _log_lage(n: int, repo: Path) -> tuple[str, str, str] | None:
     """(Kontext, Phase, letzte Aussage) aus dem Bau-Log; ``—`` je fehlendem Teil.
 
     ``None`` = kein Bau-Log (Ticket noch nicht gestartet) — der Aufrufer warnt gesammelt.
     """
     try:
-        ort = _log_ort(n, repo)
+        ort = bau_log.log_ort(n, Path(config.worktree_pfad(n, repo)).expanduser(), repo)
         if ort is None:
             return None
         zeilen = bau_log.lese(ort, n, hauptbaum=repo)
@@ -311,7 +313,7 @@ def _log_lage(n: int, repo: Path) -> tuple[str, str, str] | None:
     except (OSError, ValueError, KeyError) as fehler:
         log.warning("Bau-Log #%s unlesbar: %s", n, fehler)
         return STRICH, STRICH, STRICH
-    kontext = f"{spitze_k:.1f}".replace(".", ",") + "k" if spitze_k else STRICH
+    kontext = bau_log.kontext_text(spitze_k)
     phase = STRICH
     for z in reversed(zeilen):
         typ = str(z.get("typ") or "")
@@ -341,10 +343,18 @@ class _Ergebnis:
 
 
 def sammeln(spec: int, q: Quellen, vorher: _Vorher) -> _Ergebnis:
-    """Lage jedes Sub-Issues der Spec; :class:`RuntimeError`, wenn gh nichts liefert."""
+    """Lage jedes Sub-Issues der Spec; :class:`RuntimeError`, wenn gh nichts liefert.
+
+    „Nichts“ heißt Fehler (``None``) oder leere Liste — eine Spec ohne Sub-Issues hat
+    keinen Stand, der Aufrufer schreibt dann keine Zeile in die Stand-Datei.
+    """
     kinder = q.kinder(spec)
     if kinder is None:
         raise RuntimeError(f"Sub-Issues von Spec #{spec} nicht lesbar (gh)")
+    if not kinder:
+        raise RuntimeError(
+            f"Spec #{spec} hat keine Sub-Issues — Spec-Nummer prüfen (gh)"
+        )
     jetzt = q.jetzt()
     fenster = _fenster_liste(spec, q)
     lagen: list[TicketLage] = []
@@ -357,7 +367,9 @@ def sammeln(spec: int, q: Quellen, vorher: _Vorher) -> _Ergebnis:
         except (KeyError, TypeError, ValueError):
             log.warning("Sub-Issue ohne Nummer übersprungen: %r", kind)
             continue
-        if n in fenster:
+        if fenster is None:
+            zustand, still_min = FENSTER_UNBEKANNT, None
+        elif n in fenster:
             zustand, still_min, m = _fenster_lage(n, *fenster[n], q, vorher, jetzt)
             if m:
                 merker[str(n)] = m
@@ -401,6 +413,8 @@ def kopf_zeile(spec: int, lagen: list[TicketLage], jetzt: float, noop: bool) -> 
             f"{zahl(lambda x: x.fenster == RUECKFRAGE)} Rückfrage"
         ),
     ]
+    if any(x.fenster == FENSTER_UNBEKANNT for x in lagen):
+        teile.append(f"{TMUX_HINWEIS} (Sitzung spec-{spec} fehlt oder tmux aus)")
     if noop:
         teile.append("unverändert (noop)")
     return " · ".join(teile)

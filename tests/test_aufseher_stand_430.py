@@ -419,3 +419,66 @@ def test_skill_md_nennt_aufseher_stand() -> None:
     text = (SKILL / "SKILL.md").read_text(encoding="utf-8")
     assert "aufseher-stand" in text
     assert "stand.sh" in text
+
+
+# --- Fixrunde 1 ---------------------------------------------------------------------
+
+
+def test_spec_ohne_sub_issues_fehler_ohne_stand_zeile(repo: Path, ordner: Path) -> None:
+    """Leere Sub-Issue-Liste = Fehler (Docstring: Exit ≠ 0), keine Zeile in der Stand-Datei."""
+    w = FakeWelt()  # keine Tickets → kinder() liefert []
+    with pytest.raises(RuntimeError, match=f"Spec #{SPEC} hat keine Sub-Issues"):
+        aufseher_stand.stand(SPEC, w.quellen(repo), ordner=ordner)
+    assert not aufseher_stand.stand_datei(SPEC, ordner).exists()
+
+
+def test_cli_spec_ohne_sub_issues_exit_ungleich_null(
+    repo: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    ordner = _cli_welt(tmp_path, monkeypatch)
+    welt_datei = Path(os.environ["FAKE_WELT"])
+    welt = json.loads(welt_datei.read_text(encoding="utf-8"))
+    welt["gh"] = {f"api repos/o/r/issues/{SPEC}/sub_issues?per_page=100": []}
+    welt_datei.write_text(json.dumps(welt), encoding="utf-8")
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("to_spawn_cli", SKILL / "to_spawn.py")
+    assert spec and spec.loader
+    cli = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(cli)
+    code = cli.main(
+        ["aufseher-stand", str(SPEC), "--gh-repo", "o/r", "--stand-ordner", str(ordner)]
+    )
+    fehler = capsys.readouterr().err
+    assert code != 0
+    assert "keine Sub-Issues" in fehler
+    assert not (ordner / f"stand-{SPEC}.jsonl").exists()
+
+
+def test_tmux_nicht_lesbar_strich_statt_kein_fenster(repo: Path, ordner: Path) -> None:
+    """tmux bzw. Sitzung spec-<S> nicht lesbar ≠ „kein Fenster“: Zustand „—“ + Kopf-Hinweis."""
+    w = FakeWelt()
+    w.ticket(460)
+    w.ticket(461, zu=True)
+    q = aufseher_stand.Quellen(
+        repo=repo, kinder=w.kinder, tmux=lambda args: None, jetzt=lambda: w.uhr
+    )
+    text = aufseher_stand.stand(SPEC, q, ordner=ordner, alle=True)
+    kopf = text.splitlines()[0]
+    assert "tmux nicht lesbar" in kopf
+    assert zeile_fuer(text, 460).startswith("#460 offen · — · ")
+    assert zeile_fuer(text, 461).startswith("#461 zu · — · ")
+    assert "kein Fenster" not in text
+
+
+def test_sitzung_lesbar_fenster_fehlt_bleibt_kein_fenster(
+    repo: Path, ordner: Path
+) -> None:
+    w = FakeWelt()
+    w.ticket(462)
+    text = aufseher_stand.stand(SPEC, w.quellen(repo), ordner=ordner)
+    assert zeile_fuer(text, 462).startswith("#462 offen · kein Fenster · ")
+    assert "tmux nicht lesbar" not in text.splitlines()[0]
