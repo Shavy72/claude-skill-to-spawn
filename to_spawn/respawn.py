@@ -52,8 +52,9 @@ BEREIT_MARKER: tuple[str, ...] = ("❯", "? for shortcuts")
 DIALOG_MARKER: tuple[str, ...] = ("trust this folder", "Enter to confirm")
 #: Zeichen, dass Claude wirklich arbeitet (Spinner, Werkzeug-Aufruf) — Paste-Echo zählt nicht.
 ARBEIT_MARKER: tuple[str, ...] = ("esc to interrupt", "✻", "●", "⏺")
-#: Text, den Claude nach erfolgreichem ``/remote-control`` zeigt (klein geschrieben).
-REMOTE_MARKER = "remote control"
+#: Texte, die Claude nach erfolgreichem ``/remote-control`` zeigt (klein geschrieben).
+#: Claude Code 2.1 (Echtlauf 2, 04.10.2026): „/remote-control is active · Continue here …“.
+REMOTE_MARKER = ("remote-control is active", "remote control active")
 BEREIT_MAX_S = 120.0
 #: So lange muss der bereite Bildschirm unverändert stehen, bevor getippt wird.
 EINGABE_RUHE_S = 3.0
@@ -435,7 +436,8 @@ def _remote_bestaetigt(text: str) -> bool:
     eingaben = [z for z in text.splitlines() if z.lstrip().startswith("❯")]
     if eingaben and REMOTE_CONTROL in eingaben[-1]:
         return False
-    return REMOTE_MARKER in text.lower()
+    klein = text.lower()
+    return any(marker in klein for marker in REMOTE_MARKER)
 
 
 def _arbeitszeichen(text: str) -> int:

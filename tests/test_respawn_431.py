@@ -902,3 +902,29 @@ def test_tippen_nutzt_naht_schlafen(monkeypatch: pytest.MonkeyPatch) -> None:
     t.schlafen = geschlafen.append  # type: ignore[method-assign]
     t.tippen("=spec-1:@2", "x")
     assert geschlafen == [respawn.TIPP_PAUSE_S]
+
+
+def test_remote_bestaetigt_echter_bildschirm_claude_2_1() -> None:
+    """Echtlauf 2: Claude Code 2.1 zeigt „/remote-control is active“, nicht „Remote Control“."""
+    echt = (
+        " ▝▝   ▝▝   ~/wt/wt-9431 · /rc\n"
+        "❯ /remote-control\n"
+        "  /remote-control is active · Continue here, on your phone, or at\n"
+        "  https://claude.ai/code/session_x\n"
+        "────\n"
+        "❯ \n"
+        "────\n"
+    )
+    assert respawn._remote_bestaetigt(echt)
+
+
+def test_remote_slash_menue_echter_bildschirm_zaehlt_nicht() -> None:
+    """Offenes Slash-Menü (echte Beschreibung) ist keine Bestätigung."""
+    menue = (
+        "  /remote-control                 Control this session from your phone or\n"
+        "                                  claude.ai/code\n"
+        "────\n"
+        "❯ /remote-control\n"
+        "────\n"
+    )
+    assert not respawn._remote_bestaetigt(menue)
