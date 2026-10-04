@@ -82,6 +82,8 @@ class FakeWerkzeug:
         self.fehler_bei = fehler_bei or {}
         self.schliessen_wirkt = schliessen_wirkt
         self.nach_schlafen: list[Any] = []
+        # Antwort von ``committet`` (Handoff + Start-Prompt im Git, #431 Runde 2 Befund 6)
+        self.committet_ergebnis = True
 
     def _fehler(self, schluessel: str) -> None:
         if schluessel in self.fehler_bei:
@@ -99,6 +101,10 @@ class FakeWerkzeug:
     def bildschirm(self, ziel: str) -> str:
         self.aufrufe.append(("bildschirm", ziel))
         return self.schirme.get(ziel, "")
+
+    def committet(self, wt: Path, pfade: list[Path]) -> bool:
+        self.aufrufe.append(("committet", wt, tuple(pfade)))
+        return self.committet_ergebnis
 
     def jetzt(self) -> float:
         return self.zeit
@@ -130,7 +136,7 @@ class FakeWerkzeug:
             if self.bildschirm_reagiert == "echo":
                 self.schirme[NEU_ZIEL] += f"\n❯ {text}"
             elif self.bildschirm_reagiert:
-                self.schirme[NEU_ZIEL] += "\n● Lese Handoff …"
+                self.schirme[NEU_ZIEL] += "\n✻ Lese Handoff… (esc to interrupt)"
 
     def _remote_an(self) -> None:
         self.schirme[NEU_ZIEL] = (
@@ -181,7 +187,7 @@ class FakeWerkzeug:
         return [
             a[0]
             for a in self.aufrufe
-            if a[0] not in ("fenster_liste", "bau_prozesse", "bildschirm")
+            if a[0] not in ("fenster_liste", "bau_prozesse", "bildschirm", "committet")
         ]
 
     def getippt(self, ziel: str | None = None) -> list[str]:
