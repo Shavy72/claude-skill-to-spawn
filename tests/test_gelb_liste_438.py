@@ -19,7 +19,7 @@ SKILL = Path(__file__).resolve().parent.parent
 if str(SKILL) not in sys.path:
     sys.path.insert(0, str(SKILL))
 
-from to_spawn import befund, gh, manifest  # noqa: E402
+from to_spawn import befund, gh, manifest
 
 SPEC = 399
 TICKET = 410
@@ -82,7 +82,7 @@ def test_gelber_befund_legt_folge_ticket_an_statt_wieder_zu_oeffnen(
 ) -> None:
     zeilen = befund.melde(
         repo, GH_REPO, SPEC, TICKET, "gelb", "Screenshot unscharf", dry_run=False
-    )
+    ).zeilen
 
     assert not any(a[:2] == ["issue", "reopen"] for a in aufrufe)
     creates = [a for a in aufrufe if a[:2] == ["issue", "create"]]
@@ -108,7 +108,7 @@ def test_roter_befund_oeffnet_wieder(repo: Path, aufrufe: list[list[str]]) -> No
     vorher = _manifest_text(repo)
     zeilen = befund.melde(
         repo, GH_REPO, SPEC, TICKET, "rot", "Live-Beleg fehlt", dry_run=False
-    )
+    ).zeilen
 
     reopens = [a for a in aufrufe if a[:2] == ["issue", "reopen"]]
     assert len(reopens) == 1
@@ -200,8 +200,8 @@ def test_spec_stand_ohne_gelbe_folgen_leer(repo: Path) -> None:
 # (f) Probe schreibt nichts
 def test_dry_run_schreibt_nichts(repo: Path, aufrufe: list[list[str]]) -> None:
     vorher = _manifest_text(repo)
-    gelb = befund.melde(repo, GH_REPO, SPEC, TICKET, "gelb", "x", dry_run=True)
-    rot = befund.melde(repo, GH_REPO, SPEC, TICKET, "rot", "x", dry_run=True)
+    gelb = befund.melde(repo, GH_REPO, SPEC, TICKET, "gelb", "x", dry_run=True).zeilen
+    rot = befund.melde(repo, GH_REPO, SPEC, TICKET, "rot", "x", dry_run=True).zeilen
     assert aufrufe == []
     assert _manifest_text(repo) == vorher
     assert any("[Probe]" in z for z in gelb)
@@ -214,7 +214,9 @@ def test_create_scheitert_meldet_fehler(
 ) -> None:
     monkeypatch.setattr(gh, "lauf", lambda args, cwd=None: (1, ""))
     vorher = _manifest_text(repo)
-    zeilen = befund.melde(repo, GH_REPO, SPEC, TICKET, "gelb", "x", dry_run=False)
+    zeilen = befund.melde(
+        repo, GH_REPO, SPEC, TICKET, "gelb", "x", dry_run=False
+    ).zeilen
     assert any("FEHLER" in z for z in zeilen)
     assert _manifest_text(repo) == vorher
 
@@ -240,10 +242,10 @@ def test_manifest_mit_gelbem_eintrag_besteht_feldpruefung(
 def test_cli_befund_ruft_melde(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     gesehen: dict[str, Any] = {}
 
-    def falsch_melde(*args: Any, **kwargs: Any) -> list[str]:
+    def falsch_melde(*args: Any, **kwargs: Any) -> befund.Ergebnis:
         gesehen["args"] = args
         gesehen["kwargs"] = kwargs
-        return ["#410 gelb → Folge-Ticket #999"]
+        return befund.Ergebnis(ok=True, zeilen=["#410 gelb → Folge-Ticket #999"])
 
     monkeypatch.setattr(befund, "melde", falsch_melde)
     monkeypatch.setenv("TO_SPAWN_REPO", str(repo))
@@ -269,3 +271,217 @@ def test_cli_befund_ruft_melde(repo: Path, monkeypatch: pytest.MonkeyPatch) -> N
     )
     assert code == 0
     assert gesehen["args"][1:6] == (GH_REPO, SPEC, TICKET, "gelb", "t")
+
+
+# ---------------------------------------------------------------------------
+# Fixrunde #438 (Review-Befunde 1–7 + Zusatzfälle)
+# ---------------------------------------------------------------------------
+
+
+def _manifest_daten(repo: Path) -> dict[str, Any]:
+    return json.loads(_manifest_text(repo))
+
+
+def _schreibe_manifest(repo: Path, daten: dict[str, Any]) -> None:
+    manifest.manifest_pfad(repo, SPEC).write_text(
+        json.dumps(daten, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+
+
+# Fix 1: Manifest-Schreiben scheitert nach issue create → klare FEHLER-Zeile, Exit ≠ 0
+def test_fix1_manifest_schreiben_scheitert_meldet_angelegtes_ticket(
+    repo: Path, aufrufe: list[list[str]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    vorher = _manifest_text(repo)
+
+    def kaputt(*args: Any, **kwargs: Any) -> None:
+        raise OSError("Platte voll")
+
+    monkeypatch.setattr(os, "replace", kaputt)
+    ergebnis = befund.melde(repo, GH_REPO, SPEC, TICKET, "gelb", "x", dry_run=False)
+    monkeypatch.undo()
+
+    assert ergebnis.ok is False
+    assert any(
+        "FEHLER: Folge-Ticket #999 angelegt, Manifest nicht geschrieben — von Hand eintragen"
+        in z
+        for z in ergebnis.zeilen
+    )
+    assert _manifest_text(repo) == vorher
+    ordner = manifest.manifest_pfad(repo, SPEC).parent
+    assert sorted(p.name for p in ordner.iterdir()) == [f"spec-{SPEC}.json"]
+
+
+# Fix 2: Doppel-Schutz — gleicher Befundtext am gleichen Ticket legt kein zweites Issue an
+def test_fix2_gleicher_befund_wird_nicht_doppelt_angelegt(
+    repo: Path, aufrufe: list[list[str]]
+) -> None:
+    befund.melde(
+        repo, GH_REPO, SPEC, TICKET, "gelb", "Screenshot unscharf", dry_run=False
+    )
+    zweites = befund.melde(
+        repo, GH_REPO, SPEC, TICKET, "gelb", "  Screenshot unscharf \n", dry_run=False
+    )
+    assert len([a for a in aufrufe if a[:2] == ["issue", "create"]]) == 1
+    assert zweites.ok is True
+    assert zweites.zeilen == [f"#{TICKET} gelb schon gemeldet: Folge-Ticket #999"]
+
+
+def test_fix2_anderer_text_legt_weiteres_folge_ticket_an(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    nummern = iter(["999", "1000"])
+    creates: list[list[str]] = []
+
+    def falsch_gh(args: list[str], cwd: Path | None = None) -> tuple[int, str]:
+        if args[:2] == ["issue", "create"]:
+            creates.append(args)
+            return 0, f"https://github.com/{GH_REPO}/issues/{next(nummern)}"
+        return 0, ""
+
+    monkeypatch.setattr(gh, "lauf", falsch_gh)
+    befund.melde(repo, GH_REPO, SPEC, TICKET, "gelb", "eins", dry_run=False)
+    zweites = befund.melde(repo, GH_REPO, SPEC, TICKET, "gelb", "zwei", dry_run=False)
+    assert len(creates) == 2 and zweites.ok
+    tickets = _manifest_daten(repo)["tickets"]
+    assert tickets["999"]["umfang"] == "eins" and tickets["1000"]["umfang"] == "zwei"
+
+
+# Fix 3: kaputtes gelb_von → Warnung + überspringen
+def test_fix3_kaputtes_gelb_von_wird_uebersprungen(
+    repo: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    daten = _manifest_daten(repo)
+    daten["tickets"]["500"] = {"title": "kaputt", "gelb_von": "abc"}
+    daten["tickets"]["501"] = {"title": "gut", "gelb_von": TICKET}
+    _schreibe_manifest(repo, daten)
+    with caplog.at_level("WARNING", logger="to_spawn.befund"):
+        folgen = befund.gelbe_folgen(repo, SPEC, abruf=lambda n: None)
+    assert [f.nummer for f in folgen] == [501]
+    assert any(
+        "500" in r.getMessage() and "gelb_von" in r.getMessage() for r in caplog.records
+    )
+
+
+# Fix 4: Status-Abruf scheitert → Warnung mit Nummer, Status bleibt „unbekannt“
+def test_fix4_status_abruf_scheitert_loggt_nummer(
+    repo: Path, aufrufe: list[list[str]], caplog: pytest.LogCaptureFixture
+) -> None:
+    befund.melde(repo, GH_REPO, SPEC, TICKET, "gelb", "eins", dry_run=False)
+    with caplog.at_level("WARNING", logger="to_spawn.befund"):
+        folgen = befund.gelbe_folgen(repo, SPEC, abruf=lambda n: None)
+    assert [f.status for f in folgen] == ["unbekannt"]
+    assert any(
+        r.levelname == "WARNING" and "#999" in r.getMessage() for r in caplog.records
+    )
+
+
+# Fix 5: Exit-Code aus dem ok-Flag, nicht aus Textsuche
+def _cli(monkeypatch: pytest.MonkeyPatch, repo: Path) -> Any:
+    monkeypatch.setenv("TO_SPAWN_REPO", str(repo))
+    monkeypatch.setattr(gh, "repo_aus_origin", lambda cwd=None, fallback="": GH_REPO)
+    spec = importlib.util.spec_from_file_location(
+        "to_spawn_cli_438_fix", SKILL / "to_spawn.py"
+    )
+    assert spec and spec.loader
+    cli = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(cli)
+    return cli
+
+
+_CLI_ARGS = [
+    "befund",
+    "--spec",
+    str(SPEC),
+    "--ticket",
+    str(TICKET),
+    "--stufe",
+    "gelb",
+    "--text",
+    "t",
+]
+
+
+def test_fix5_exit_code_folgt_ok_flag(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cli = _cli(monkeypatch, repo)
+    monkeypatch.setattr(
+        befund,
+        "melde",
+        lambda *a, **k: befund.Ergebnis(
+            ok=True, zeilen=["#410 gelb → „FEHLER-Seite unscharf“"]
+        ),
+    )
+    assert cli.main(_CLI_ARGS) == 0
+    monkeypatch.setattr(
+        befund,
+        "melde",
+        lambda *a, **k: befund.Ergebnis(ok=False, zeilen=["#410 kaputt"]),
+    )
+    assert cli.main(_CLI_ARGS) == 1
+
+
+# Fix 6: kaputtes Manifest → Fehlerzeile im Abschnitt; fehlendes → still leer
+def test_fix6_kaputtes_manifest_zeigt_fehlerzeile(repo: Path) -> None:
+    manifest.manifest_pfad(repo, SPEC).write_text("{kaputt", encoding="utf-8")
+    spec_stand = _lade_skript("spec_stand")
+    zeilen = spec_stand.gelb_zeilen(repo, SPEC, abruf=lambda n: None)
+    assert zeilen and any("FEHLER" in z for z in zeilen)
+
+
+def test_fix6_fehlendes_manifest_bleibt_leer(tmp_path: Path) -> None:
+    spec_stand = _lade_skript("spec_stand")
+    assert spec_stand.gelb_zeilen(tmp_path, SPEC, abruf=lambda n: None) == []
+
+
+# Fix 7: geschlossen als „not planned“ → verworfen
+def test_fix7_not_planned_ist_verworfen(repo: Path, aufrufe: list[list[str]]) -> None:
+    befund.melde(repo, GH_REPO, SPEC, TICKET, "gelb", "eins", dry_run=False)
+    folgen = befund.gelbe_folgen(
+        repo,
+        SPEC,
+        abruf=lambda n: {
+            "state": "closed",
+            "state_reason": "not_planned",
+            "labels": [],
+        },
+    )
+    assert [f.status for f in folgen] == ["verworfen"]
+    folgen = befund.gelbe_folgen(
+        repo,
+        SPEC,
+        abruf=lambda n: {"state": "closed", "state_reason": "completed", "labels": []},
+    )
+    assert [f.status for f in folgen] == ["gebaut"]
+
+
+# Zusatz: create mit Exit 0, aber ohne Issue-URL → FEHLER, kein Manifest-Eintrag
+def test_create_exit_0_ohne_url_ist_fehler(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(gh, "lauf", lambda args, cwd=None: (0, "irgendwas ohne Link"))
+    vorher = _manifest_text(repo)
+    ergebnis = befund.melde(repo, GH_REPO, SPEC, TICKET, "gelb", "x", dry_run=False)
+    assert ergebnis.ok is False
+    assert any("FEHLER" in z for z in ergebnis.zeilen)
+    assert _manifest_text(repo) == vorher
+
+
+# Zusatz: kaputtes Manifest → kein gh-Aufruf
+def test_kaputtes_manifest_kein_gh_aufruf(repo: Path, aufrufe: list[list[str]]) -> None:
+    manifest.manifest_pfad(repo, SPEC).write_text("{kaputt", encoding="utf-8")
+    ergebnis = befund.melde(repo, GH_REPO, SPEC, TICKET, "gelb", "x", dry_run=False)
+    assert aufrufe == []
+    assert ergebnis.ok is False
+
+
+# Fix 8: Prompt Schritt 4 mit je einem Beispiel für rot und gelb
+def test_fix8_prompt_schritt_4_hat_beispiele() -> None:
+    wache = _lade_skript("wache")
+    text = wache.PROMPT.format(
+        S=SPEC, REPO="r", DATUM="2026-10-04", TAKT=600, SKILL="/skill"
+    )
+    schritt4 = next(z for z in text.splitlines() if z.startswith("4."))
+    assert "Akzeptanz-Häkchen nicht erfüllt" in schritt4
+    assert "Zusatz-Test" in schritt4

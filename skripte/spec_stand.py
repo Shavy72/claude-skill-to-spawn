@@ -70,8 +70,8 @@ def alter(iso: str | None) -> str:
 
 
 def gelb_zeilen(repo: Path, spec: int, abruf: befund.Abruf | None = None) -> list[str]:
-    """Abschnitt „Gelbe Folge-Tickets (Gesamtabnahme)“ (#438); leer ohne gelbe Folgen."""
-    return befund.abschnitt(befund.gelbe_folgen(repo, spec, abruf=abruf))
+    """Abschnitt „Gelbe Folge-Tickets (Gesamtabnahme)“ (#438); leer ohne gelbe Folgen, FEHLER-Zeile bei kaputtem Manifest."""
+    return befund.abschnitt(repo, spec, abruf=abruf)
 
 
 def main() -> int:

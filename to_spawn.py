@@ -199,12 +199,12 @@ def _befund(args: argparse.Namespace) -> int:
     if not gh_repo:
         print("FEHLER: kein GitHub-Repo erkannt (origin fehlt oder zeigt nicht auf github.com)")
         return 2
-    zeilen = befund.melde(
+    ergebnis = befund.melde(
         repo, gh_repo, args.spec, args.ticket, args.stufe, args.text, dry_run=args.dry_run
     )
-    for zeile in zeilen:
+    for zeile in ergebnis.zeilen:
         print(zeile)
-    return 1 if any("FEHLER" in z for z in zeilen) else 0
+    return 0 if ergebnis.ok else 1
 
 
 def _eintrag(args: argparse.Namespace) -> int:
