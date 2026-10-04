@@ -456,14 +456,25 @@ def neue_entscheidung(ticket: int, text: str) -> None:
     aendere_zustand(lambda z: z.setdefault("entscheidungen", []).append(eintrag))
 
 
-def setze_leiter_stufe(ticket: int, stufe: int) -> None:
+def setze_leiter_stufe(ticket: int, stufe: int, seit: float | None = None) -> None:
+    """Merkt Stufe der Eingriffs-Leiter (#432) und Zeitpunkt des letzten Eingriffs."""
+    eintrag = {"stufe": int(stufe), "seit": seit}
     aendere_zustand(
-        lambda z: z.setdefault("leiter_stufe", {}).__setitem__(str(ticket), stufe)
+        lambda z: z.setdefault("leiter_stufe", {}).__setitem__(str(ticket), eintrag)
     )
 
 
+def leiter_eintrag(ticket: int) -> tuple[int, float | None]:
+    """(Stufe, seit) — liest das alte Format (nackte Zahl) und das neue (dict)."""
+    roh = lese_zustand().get("leiter_stufe", {}).get(str(ticket), 0)
+    if isinstance(roh, dict):
+        seit = roh.get("seit")
+        return int(roh.get("stufe") or 0), None if seit is None else float(seit)
+    return int(roh), None
+
+
 def leiter_stufe(ticket: int) -> int:
-    return int(lese_zustand().get("leiter_stufe", {}).get(str(ticket), 0))
+    return leiter_eintrag(ticket)[0]
 
 
 # --- CLI ----------------------------------------------------------------------

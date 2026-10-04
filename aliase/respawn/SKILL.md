@@ -29,6 +29,8 @@ Warte auf das Ende. Antwort = genau die eine Ergebniszeile des Befehls, sonst ni
 ```
 Der Aufseher wertet nur Exit-Code und diese Zeile aus (E16).
 
+Stufe 3 der Leiter ruft respawn: `to_spawn.py leiter <S> <N>` (#432) ruft `respawn.abloesen`, sobald nach angefordertem Handoff die Start-Prompt-Datei da ist.
+
 ## Exit-Codes
 - 0 abgelöst: neue Session läuft im Fenster `bau <N>`.
 - 1 neue Session nicht bewiesen: alte Session läuft weiter, Ursache prüfen (Fenster `bau <N> neu` ansehen).

@@ -41,6 +41,7 @@ from to_spawn import (  # noqa: E402
     gh,
     hooks,
     inventur,
+    leiter,
     leitstand,
     manifest,
     nest,
@@ -340,6 +341,14 @@ def main(argv: list[str] | None = None) -> int:
     )
     p_resp.add_argument("--dry-run", action="store_true", help="nur Duplikat-Prüfung + geplanter Befehl")
 
+    p_leiter = unter.add_parser(
+        "leiter", help="Eingriffs-Leiter je Ticket (#432), stdout genau eine Zeile"
+    )
+    p_leiter.add_argument("spec", type=int)
+    p_leiter.add_argument("ticket", type=int)
+    p_leiter.add_argument("--gh-repo", default="", help="owner/name (sonst aus origin)")
+    p_leiter.add_argument("--dry-run", action="store_true", help="nur entscheiden, nichts tippen/merken")
+
     unter.add_parser(
         "stand", help="Skill-Stand des Bau-Servers prüfen, bei Abweichung pushen (#325)"
     )
@@ -542,6 +551,17 @@ def main(argv: list[str] | None = None) -> int:
     if args.befehl == "aufseher-stand":
         # Nur lesen + eigene Stand-Datei: legt keine Konfig an (#430).
         return aufseher_stand.lauf(args, config.repo_wurzel(_repo_aus_umgebung()))
+    if args.befehl == "leiter":
+        # Nur lesen + Leitstand: legt keine Konfig an; stdout genau eine Zeile (E16).
+        erg = leiter.cli(
+            config.repo_wurzel(_repo_aus_umgebung()),
+            args.spec,
+            args.ticket,
+            args.gh_repo,
+            args.dry_run,
+        )
+        sys.stdout.write(erg.zeile + "\n")
+        return erg.exit
     if args.befehl == "hauptzweig":
         # Nur der Name auf stdout — spawn_srv.sh liest ihn ein (#257).
         print(gh.hauptzweig(config.repo_wurzel(_repo_aus_umgebung())))

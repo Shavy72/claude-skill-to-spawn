@@ -396,6 +396,16 @@ def _handoff_auftrag(handoff: str, start: str) -> str:
     )
 
 
+def handoff_auftrag_fuer(wt: Path, ticket: int, jetzt: float) -> str:
+    """Handoff-Auftrag mit den Pfaden von Schritt a (Leiter #432 findet sie so wieder)."""
+    return _handoff_auftrag(*(str(p) for p in _dateien(wt, ticket, jetzt)))
+
+
+def start_prompt_da(wt: Path, ticket: int, seit: float) -> bool:
+    """Frische, nicht leere Start-Prompt-Datei ``START_*_<ticket>.txt`` seit ``seit`` (#432)."""
+    return _finde(_dateien(wt, ticket, seit)[1], ticket, seit) is not None
+
+
 def _startbefehl(repo: Path, ticket: int) -> str:
     """Startbefehl des neuen Fensters: derselbe ``bau <N> --sofort`` wie spawn/capo.
 
