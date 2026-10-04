@@ -45,6 +45,8 @@ TYPEN = (
     "zusammenfassung",
     # Lernschleife (#286): erkannter Stillstand mit Klasse/Symptom/Ursache/Lösung.
     "vorfall",
+    # Aufseher (#448): eigenes Fehl-Reopen zurückgenommen (Feld ``text``).
+    "ruecknahme",
 )
 
 LOG_ORDNER = Path("docs") / "agents" / "bau_log"

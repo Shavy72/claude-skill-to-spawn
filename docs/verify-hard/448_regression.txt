@@ -1,0 +1,4 @@
+Teilmenge (capo/befund/aufseher/waechter/gelb/vorfall/bau_log/fehl_reopen) — volle Suite > 10 min
+.....................................s..........s............s.......... [ 75%]
+...................ss..............................................s.    [100%]
+279 passed, 6 skipped in 96.93s (0:01:36)

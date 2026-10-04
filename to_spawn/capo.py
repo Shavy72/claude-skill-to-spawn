@@ -78,6 +78,11 @@ _TEST_DATEI = re.compile(r"(^|/)(tests?/|test_[^/]*\.py$|[^/]*_test\.py$|[^/]*\.
 _KEINE_TESTDATEI = re.compile(r"(^|/)(docs|archive)/|(^|/)mutants/")
 _PY_TEST = re.compile(r"^-[ \t]*(?:async[ \t]+)?def[ \t]+(test_\w+)", re.MULTILINE)
 _JS_TEST = re.compile(r"""^-[ \t]*(?:it|test)\([ \t]*(["'`])(.+?)\1""", re.MULTILINE)
+#: Vermerk im Commit-Text für eine bewusste Test-Umbenennung (#448), z. B.
+#: ``test-umbenannt: tests/t.py::test_alt -> tests/t.py::test_neu``.
+_UMBENANNT = re.compile(r"(?im)^[ \t]*test-umbenannt[ \t]*:(.*)$")
+_PFEIL = re.compile(r"[ \t]*(?:→|->|=>)[ \t]*")
+_PY_NAME = re.compile(r"test_\w+")
 
 
 #: Regel → Vorfall für die Lernschleife (#286): Klasse, Symptom, Ursache, Lösung.
@@ -340,12 +345,40 @@ def entfernte_tests(diff: str) -> list[str]:
     return list(dict.fromkeys(namen))
 
 
+def umbenannte_tests(diff: str, commit_text: str) -> set[str]:
+    """Alte Namen bewusst umbenannter Python-Tests (#448) — kein Verlust.
+
+    Quelle ist der Vermerk ``test-umbenannt: alt -> neu`` (auch ``→``/``=>``, mehrere
+    Paare mit ``,``/``;`` getrennt, Pfade wie ``tests/t.py::test_x`` erlaubt) im
+    Commit-Text. Ein Paar zählt nur, wenn der neue Test im Diff als ``+def`` steht.
+    Eine stille Umbenennung ohne Vermerk bleibt ein Ersatz (Test
+    ``test_test_ersetzt_oeffnet_wieder`` aus #213).
+    """
+    alte: set[str] = set()
+    for vermerk in _UMBENANNT.finditer(commit_text):
+        for paar in re.split(r"[,;]", vermerk.group(1)):
+            seiten = _PFEIL.split(paar.strip())
+            if len(seiten) != 2:
+                continue
+            links, rechts = (_PY_NAME.findall(seite) for seite in seiten)
+            if not links or not rechts:
+                continue
+            neu = rechts[-1]
+            if re.search(rf"(?m)^\+[ \t]*(?:async[ \t]+)?def[ \t]+{re.escape(neu)}\b", diff):
+                alte.add(links[-1])
+    return alte
+
+
 def _test_verluste(repo: Path, sha: str) -> list[str]:
     code, diff = _git(repo, "show", "--format=", "-M", "--unified=0", sha)
     if code != 0:
         return []
     abschnitte = _test_abschnitte(diff)
     verluste = entfernte_tests("".join(abschnitte.values()))
+    if verluste:
+        code_text, commit_text = _git(repo, "show", "-s", "--format=%B", sha)
+        umbenannt = umbenannte_tests(diff, commit_text if code_text == 0 else "")
+        verluste = [name for name in verluste if name not in umbenannt]
     for status, pfad in _dateien(repo, sha):
         if status != "D" or not ist_testdatei(pfad):
             continue
@@ -1476,6 +1509,60 @@ def katalog_pflegen(repo: Path, konfig: dict[str, Any], vorfaelle: list[vorfall.
     return zeilen
 
 
+#: Regeln, nach denen capo ein geschlossenes Ticket wieder öffnet (#448: Grundlage der Rücknahme).
+REOPEN_REGELN = frozenset({"commit_ohne_nummer", "beweis_fehlt", "test_ersetzt", "vps_ungleich_origin"})
+
+
+def reopen_funde(
+    repo: Path,
+    ref: str,
+    n: int,
+    eigene: list[Commit],
+    belege: str,
+    vps: dict[str, Any],
+    kopf: str | None,
+    alle_zeilen: list[dict[str, Any]],
+) -> list[Verstoss]:
+    """Alle Verstöße, die ein geschlossenes Ticket wieder öffnen (regel_vps nur mit VPS-Konfig)."""
+    funde = [
+        regel_commit(n, eigene),
+        regel_beweis(repo, ref, n, eigene, belege),
+        regel_tests(repo, n, eigene),
+        regel_vps(repo, n, eigene, vps, kopf, alle_zeilen) if vps.get("ssh") else None,
+    ]
+    return [f for f in funde if f]
+
+
+def fehl_reopen_kandidat(
+    n: int, issue: dict[str, Any], eigene: list[Commit], erledigt: set[str], *, checkpoint: str
+) -> tuple[str, list[str]] | None:
+    """(closed_at, Regeln) des jüngsten capo-Reopens von #n, falls eine Rücknahme in Frage kommt (#448).
+
+    Grundlage sind die Schlüssel ``N|Regel|closed_at`` in ``erledigt`` (= capo hat bei
+    diesem Schließen wieder geöffnet). ``None``, wenn es keins gibt, es schon
+    zurückgenommen ist, ein Ticket-Commit danach liegt (neue Arbeit, kein Prüferfehler)
+    oder ein Label (``waechter:ok``, Checkpoint) den Fall ohnehin zum Sonderfall macht.
+    Ob die Regeln jetzt grün sind, prüft der Aufrufer.
+    """
+    labels = label_namen(issue)
+    if OK_LABEL in labels or checkpoint in labels:
+        return None
+    je_stempel: dict[str, list[str]] = {}
+    for schluessel in erledigt:
+        teile = schluessel.split("|")
+        if len(teile) == 3 and teile[0] == str(n) and teile[1] in REOPEN_REGELN:
+            je_stempel.setdefault(teile[2], []).append(teile[1])
+    mit_zeit = [(zeit, stempel) for stempel in je_stempel if (zeit := _zeit(stempel)) is not None]
+    if not mit_zeit:
+        return None
+    zeit, stempel = max(mit_zeit)
+    if f"ruecknahme|{n}|{stempel}" in erledigt:
+        return None
+    if any(c.zeit > zeit.timestamp() for c in eigene):
+        return None
+    return stempel, sorted(je_stempel[stempel])
+
+
 def tick(
     repo: Path,
     spec: int,
@@ -1684,13 +1771,7 @@ def _tick(
                 aktionen.append(f"#{n} prüfe später (zu seit {minuten:.0f} min, Karenz {karenz:.0f} min)")
                 wartet += 1
                 continue
-            funde = [
-                regel_commit(n, eigene),
-                regel_beweis(repo, ref, n, eigene, belege),
-                regel_tests(repo, n, eigene),
-                regel_vps(repo, n, eigene, vps, kopf, alle_zeilen) if vps.get("ssh") else None,
-            ]
-            funde_ok = [f for f in funde if f]
+            funde_ok = reopen_funde(repo, ref, n, eigene, belege, vps, kopf, alle_zeilen)
             if ausgangsstand:
                 erg.alt += funde_ok
                 for f in funde_ok:
@@ -1733,6 +1814,23 @@ def _tick(
             )
             sichern()
         elif not regeln_aus:
+            # #448: eigenes Fehl-Reopen zurücknehmen, wenn die Regeln jetzt grün sind.
+            kandidat = None if vps_fehlt else fehl_reopen_kandidat(n, issue, eigene, erledigt, checkpoint=checkpoint)
+            if kandidat is not None and not reopen_funde(repo, ref, n, eigene, belege, vps, kopf, alle_zeilen):
+                stempel, regeln = kandidat
+                grund = (
+                    f"{', '.join(regeln)} beim Schließen {stempel} trifft nicht mehr zu "
+                    "(Regeln jetzt grün, kein neuer Ticket-Commit seitdem)."
+                )
+                zeilen_r = befund.zuruecknehmen(n, gh_repo, grund, dry_run)
+                aktionen += zeilen_r
+                if zeilen_r[-1] == f"#{n} Fehl-Reopen zurückgenommen":
+                    erledigt.add(f"ruecknahme|{n}|{stempel}")
+                    sichern()
+                    bau_log.schreibe(repo, n, "ruecknahme", text=f"Fehl-Reopen zurückgenommen: {grund}")
+                    continue
+                if dry_run:
+                    continue
             if checkpoint in label_namen(issue):
                 # #285: nachts entscheidet der Aufseher nach Doktrin statt zu warten.
                 vorher = len(erledigt)

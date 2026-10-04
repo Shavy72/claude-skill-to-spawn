@@ -119,6 +119,25 @@ def _oeffne(
     return Ergebnis(ok=False, zeilen=[f"#{n} FEHLER: wieder öffnen gescheitert"])
 
 
+def zuruecknehmen(n: int, gh_repo: str, text: str, dry_run: bool) -> list[str]:
+    """Eigenes Fehl-Reopen zurücknehmen: Ticket wieder schließen, mit Kommentar (#448).
+
+    Letzte Zeile ``#N Fehl-Reopen zurückgenommen`` = geklappt; eine ``FEHLER``-Zeile =
+    gescheitert (der nächste Tick versucht es wieder). Ob zurückgenommen werden darf,
+    entscheidet der Aufrufer (capo).
+    """
+    if dry_run:
+        return [f"#{n} [Probe] würde Fehl-Reopen zurücknehmen"]
+    kommentar = f"{KOPF} Fehl-Reopen zurückgenommen — {text}"
+    code, _ = gh.lauf(
+        ["issue", "close", str(n), "--repo", gh_repo, "--comment", kommentar]
+    )
+    if code == 0:
+        return [f"#{n} Fehl-Reopen zurückgenommen"]
+    log.warning("Fehl-Reopen #%s nicht zurückgenommen (gh Exit %s).", n, code)
+    return [f"#{n} FEHLER: Fehl-Reopen zurücknehmen gescheitert"]
+
+
 def _titel(ticket: int, text: str) -> str:
     erste = (text.strip().splitlines() or [""])[0]
     kurz = erste if len(erste) <= 60 else erste[:59] + "…"
