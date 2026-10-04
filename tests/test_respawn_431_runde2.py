@@ -370,13 +370,12 @@ def test_b12_typen_und_schmale_ausnahmen() -> None:
     )
 
 
-def test_b12_nur_die_tuer_faengt_breit() -> None:
-    """Breite ``except``: ruff BLE001 meldet nichts, und per AST gibt es genau einen
-    ``except Exception`` — die Tür in ``abloesen``.
+def test_b12_ruff_meldet_kein_breites_except() -> None:
+    """ruff BLE001 meldet nichts. Ein ``# noqa: BLE001`` an der Tür ginge nicht: ruff
+    nimmt geloggte Handler (``log.exception``) selbst aus, das ``noqa`` wäre RUF100.
 
-    Statt Quelltext-Zählung (Kommentare und ``BaseException`` brachen die). Ein
-    ``# noqa: BLE001`` an der Tür ginge nicht: ruff nimmt geloggte Handler
-    (``log.exception``) selbst aus, das ``noqa`` wäre RUF100 („unused“).
+    Ohne ruff/uvx wird nur dieser Teil übersprungen — der AST-Teil steht in
+    :func:`test_b12_nur_die_tuer_faengt_breit` und läuft immer (#431 Runde 4, Befund 7).
     """
     quelle = Path(respawn.__file__)
     if shutil.which("ruff"):
@@ -394,6 +393,14 @@ def test_b12_nur_die_tuer_faengt_breit() -> None:
     )
     assert lauf.returncode == 0, lauf.stdout + lauf.stderr
 
+
+def test_b12_nur_die_tuer_faengt_breit() -> None:
+    """Per AST gibt es genau einen ``except Exception`` — die Tür in ``abloesen``.
+
+    Statt Quelltext-Zählung (Kommentare und ``BaseException`` brachen die). Braucht
+    kein ruff, skippt also nie.
+    """
+    quelle = Path(respawn.__file__)
     baum = ast.parse(quelle.read_text(encoding="utf-8"))
     breit: list[str] = []
     for funktion in ast.walk(baum):

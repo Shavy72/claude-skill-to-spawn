@@ -812,7 +812,7 @@ def _alte_unruhe(w: Werkzeug, ziel: str) -> str | None:
     sonst würde eine womöglich noch schreibende Session ohne Wartezeit beendet.
     """
     ruhe = _Stabil(w)
-    unlesbar = False
+    unlesbar = False  # nur der letzte Zustand zählt für den Hinweis
 
     def bedingung() -> bool:
         nonlocal unlesbar
@@ -820,8 +820,8 @@ def _alte_unruhe(w: Werkzeug, ziel: str) -> str | None:
             text = w.bildschirm(ziel)
         except FensterWeg:
             return True
+        unlesbar = text is None
         if text is None:
-            unlesbar = True
             return ruhe.seit_mindestens(None, EINGABE_RUHE_S)
         ruhig = not _arbeitet(text)
         return ruhe.seit_mindestens(True if ruhig else None, EINGABE_RUHE_S)
@@ -904,6 +904,15 @@ def _fenster_offen(w: Werkzeug, ziel: str) -> bool:
         return True
 
 
+def _halb_gestartet(a: Auftrag, w: Werkzeug) -> str | None:
+    """Ziel eines Fensters „bau N neu“, das ``fenster_starten`` trotz Fehler anlegte."""
+    try:
+        return next((f.ziel for f in w.fenster_liste() if f.name == a.name_neu), None)
+    except RuntimeError:  # tmux-Fehler: nichts gefunden, Zeile sagt nur Bewiesenes
+        log.exception("respawn #%s: Fensterliste nicht lesbar.", a.ticket)
+        return None
+
+
 def _aufraeumen(
     a: Auftrag, w: Werkzeug, stand: _Stand, exit_code: int, grund: str
 ) -> Ergebnis:
@@ -913,21 +922,23 @@ def _aufraeumen(
     """
     stand.raeumt_auf = True
     teile = [f"{a.kopf}: {grund}"]
-    if stand.neu:
+    # Start gescheitert (z. B. Zeitüberschreitung), tmux legte das Fenster evtl. trotzdem an.
+    neu = stand.neu or (_halb_gestartet(a, w) if stand.sessions else None)
+    if neu:
         try:
-            w.fenster_schliessen(stand.neu)
+            w.fenster_schliessen(neu)
         except RuntimeError:  # Prüfung folgt über die Fensterliste
             log.exception("respawn #%s: neues Fenster nicht schließbar.", a.ticket)
-        if _fenster_offen(w, stand.neu):
+        if _fenster_offen(w, neu):
             teile.append(
                 f"zwei Sessions offen („{a.name_neu}“ ließ sich nicht schließen), Handarbeit nötig"
             )
         else:
             teile.append("neues Fenster zu")
-        if stand.sessions and not stand.sessions.zuruecklegen():
-            teile.append(
-                f"Sessions-Datei {stand.sessions.pfad.name} nicht zurückgesetzt, Handarbeit nötig"
-            )
+    if stand.sessions and not stand.sessions.zuruecklegen():
+        teile.append(
+            f"Sessions-Datei {stand.sessions.pfad.name} nicht zurückgesetzt, Handarbeit nötig"
+        )
     if stand.auftrag_getippt and stand.alt:
         try:
             w.tippen(stand.alt.ziel, WEITER_AUFTRAG)
