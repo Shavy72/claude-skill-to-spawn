@@ -1180,11 +1180,16 @@ def checkpoint_vorschlag(zeilen: list[dict[str, Any]], kommentare: list[dict[str
 def checkpoint_frage_zeit(zeilen: list[dict[str, Any]], kommentare: list[dict[str, Any]]) -> datetime | None:
     """Wann hat die Session zuletzt etwas gefragt/gemeldet? ``None`` = keine Spur.
 
-    Ohne jede Spur (kein Kommentar, keine ``blockiert``- oder ``entscheidung``-Zeile)
-    wartet niemand auf eine Antwort — das Label allein löst nichts aus.
+    Spuren der Session sind nur Bau-Log-Zeilen ``blockiert``/``entscheidung`` und
+    Kommentare mit :data:`SESSION_KOPF`. Davids Hinweise und Aufseher-Kommentare sind
+    keine Frage (#451) — sonst meldet capo „Checkpoint wartet“ für ein Ticket, an dem
+    nie eine Session gebaut hat. Ohne Spur wartet niemand, das Label allein löst nichts aus.
     """
     zeiten = [_zeit(z.get("ts")) for z in zeilen if z.get("typ") in ("blockiert", "entscheidung")]
-    zeiten += [_kommentar_teile(e)[2] for e in kommentare]
+    for eintrag in kommentare:
+        _, text, zeit = _kommentar_teile(eintrag)
+        if _ist_session_kommentar(text):
+            zeiten.append(zeit)
     echte = [z for z in zeiten if z is not None]
     return max(echte) if echte else None
 
@@ -1237,6 +1242,8 @@ def _checkpoint(
     David kann jede Annahme kippen — der Aufseher kommentiert sie am Ticket, schreibt
     sie ins Bau-Log und in ``entscheidungen_<S>.md`` und schickt eine Mail. Ohne
     erkennbaren eigenen Vorschlag der Session wird nichts angenommen, nur gemeldet.
+    Solange ein Blocker offen ist, ruht der Checkpoint (keine Zeile); ist der
+    Blocker-Stand nicht lesbar, kommt eine FEHLER-Zeile statt einer Annahme (#451).
     """
     waechter = konfig.get("waechter", {}) if isinstance(konfig.get("waechter"), dict) else {}
     frist = checkpoint_frist(waechter)
@@ -1247,6 +1254,14 @@ def _checkpoint(
     frage_zeit = checkpoint_frage_zeit(zeilen, kommentare)
     if vorschlag is None and frage_zeit is None:
         return []  # Label gesetzt, aber noch keine Frage gestellt
+    # Erst nach der Spur fragen: spart den gh-Aufruf und macht capo ohne Frage nie rot.
+    blocker = gh.blocked_by(gh_repo, str(n))
+    if blocker is None:
+        return [f"#{n} FEHLER: Blocker nicht lesbar — Checkpoint ungeprüft"]
+    if not all(isinstance(b, dict) and b.get("state") for b in blocker):
+        return [f"#{n} FEHLER: Blocker-Format unbekannt — Checkpoint ungeprüft"]
+    if any(str(b["state"]).lower() != "closed" for b in blocker):
+        return []  # #451: noch blockiert — Checkpoint ruht, bis alle Blocker zu sind
     seit = vorschlag.zeit if vorschlag else frage_zeit
     if seit is None:
         return []

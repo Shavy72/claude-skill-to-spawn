@@ -69,6 +69,8 @@ def _checkpoint(
     def json_lauf(args: list[str], cwd: Path | None = None) -> Any:
         if args[:2] == ["api", "user"]:
             return login
+        if args[:1] == ["api"] and args[1].endswith("/dependencies/blocked_by"):
+            return []  # #451: Checkpoint prüft vorher die Blocker — hier keine
         return None
 
     monkeypatch.setattr(gh, "json_lauf", json_lauf)
@@ -228,6 +230,8 @@ def _checkpoint_ueber_gh(
             return {"login": KONTO}
         if args[:1] == ["api"] and "/comments" in args[1]:
             return kommentare
+        if args[:1] == ["api"] and args[1].endswith("/dependencies/blocked_by"):
+            return []  # #451: Checkpoint prüft vorher die Blocker — hier keine
         return None
 
     monkeypatch.setattr(gh, "json_lauf", json_lauf)
