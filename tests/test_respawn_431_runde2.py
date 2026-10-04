@@ -30,7 +30,7 @@ from test_respawn_431 import (
     umgebung,  # noqa: F401  (Fixture)
 )
 
-from to_spawn import respawn
+from to_spawn import prozessbaum, respawn
 
 
 def _lauf(repo: Path, fake: FakeWerkzeug, warte_max: float = 600) -> respawn.Ergebnis:
@@ -296,7 +296,7 @@ def _proc_tabelle(
             raise wert
         return wert
 
-    monkeypatch.setattr(respawn, "_proc", proc)
+    monkeypatch.setattr(prozessbaum, "_proc", proc)
 
 
 @pytest.mark.parametrize(
@@ -317,16 +317,16 @@ def test_b9_ist_claude_erkennt_npm_node(
     monkeypatch: pytest.MonkeyPatch, comm: bytes, cmdline: bytes, erwartet: bool
 ) -> None:
     _proc_tabelle(monkeypatch, {"comm": comm, "cmdline": cmdline})
-    assert respawn._ist_claude(4711) is erwartet
+    assert prozessbaum.ist_claude(4711) is erwartet
 
 
 def test_b9_unlesbar_zaehlt_als_lebend_weg_nicht(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _proc_tabelle(monkeypatch, {"comm": PermissionError(), "cmdline": b""})
-    assert respawn._ist_claude(4711) is True
+    assert prozessbaum.ist_claude(4711) is True
     _proc_tabelle(monkeypatch, {"comm": FileNotFoundError(), "cmdline": b""})
-    assert respawn._ist_claude(4711) is False
+    assert prozessbaum.ist_claude(4711) is False
 
 
 # --- Befund 11: echter LEBT-Pfad -----------------------------------------------------
@@ -347,9 +347,9 @@ def test_b11_alte_session_ueberlebt_sigkill_heisst_lebt(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     gesendet: list[tuple[int, int]] = []
-    monkeypatch.setattr(respawn, "_nachkommen", lambda pid: [200, 300])
-    monkeypatch.setattr(respawn, "_ist_claude", lambda pid: pid == 300)
-    monkeypatch.setattr(respawn, "_lebt", lambda pid: True)
+    monkeypatch.setattr(prozessbaum, "baum", lambda pid: [pid, 200, 300])
+    monkeypatch.setattr(prozessbaum, "ist_claude", lambda pid: pid == 300)
+    monkeypatch.setattr(prozessbaum, "lebt", lambda pid: True)
     monkeypatch.setattr(
         respawn.os, "kill", lambda pid, sig: gesendet.append((pid, sig))
     )
@@ -365,7 +365,7 @@ def test_b11_alte_session_ueberlebt_sigkill_heisst_lebt(
 def test_b12_typen_und_schmale_ausnahmen() -> None:
     assert respawn.__annotations__.get("REMOTE_MARKER") == "tuple[str, ...]"
     assert (
-        inspect.signature(respawn._signal).parameters["sig"].annotation
+        inspect.signature(prozessbaum.senden).parameters["sig"].annotation
         == "signal.Signals"
     )
 

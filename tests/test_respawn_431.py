@@ -20,7 +20,7 @@ import pytest
 SKILL = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SKILL))
 
-from to_spawn import respawn
+from to_spawn import prozessbaum, respawn
 from to_spawn.respawn import FensterInfo
 
 SPEC = 399
@@ -560,9 +560,10 @@ def _prozesse(
         if sig == getattr(respawn.signal, stirbt_bei):
             tot.add(pid)
 
-    monkeypatch.setattr(respawn, "_nachkommen", nachkommen)
-    monkeypatch.setattr(respawn, "_ist_claude", lambda pid: pid in claude)
-    monkeypatch.setattr(respawn, "_lebt", lambda pid: pid not in tot)
+    # Prozessbaum-Wissen liegt seit #431 Runde 4 in ``to_spawn.prozessbaum``.
+    monkeypatch.setattr(prozessbaum, "baum", lambda pid: [pid, *nachkommen(pid)])
+    monkeypatch.setattr(prozessbaum, "ist_claude", lambda pid: pid in claude)
+    monkeypatch.setattr(prozessbaum, "lebt", lambda pid: pid not in tot)
     monkeypatch.setattr(respawn.os, "kill", kill)
     return gesendet
 
@@ -598,17 +599,16 @@ def test_beenden_sigkill_nach_frist(monkeypatch: pytest.MonkeyPatch) -> None:
     assert w.zeit >= respawn.BEENDEN_MAX_S
 
 
-def test_nachkommen_pgrep_fehler_wirft(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Befund 5: pgrep-Returncode ≥ 2 ist ein Fehler, nicht „keine Kinder“."""
+def test_nachkommen_pgrep_fehler_wirft(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Befund 5: Baum nicht ermittelbar ist ein Fehler, nicht „keine Kinder“.
 
-    class Fertig:
-        returncode = 2
-        stdout = ""
-        stderr = "pgrep: kaputt"
-
-    monkeypatch.setattr(respawn.subprocess, "run", lambda *a, **k: Fertig())
-    with pytest.raises(RuntimeError):
-        respawn._nachkommen(100)
+    Seit #431 Runde 4 liest ``prozessbaum.baum`` ``/proc`` statt ``pgrep -P``.
+    """
+    monkeypatch.setattr(prozessbaum, "_PROC", tmp_path / "fehlt")
+    with pytest.raises(OSError):
+        _ProzessWerkzeug().alte_session_beenden(100)
 
 
 def test_kern_alte_schon_weg_ist_erfolg(umgebung: tuple[Path, Path]) -> None:

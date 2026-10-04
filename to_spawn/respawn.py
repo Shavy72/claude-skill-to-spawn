@@ -47,7 +47,8 @@ from pathlib import Path
 from types import FrameType
 from typing import Literal, Protocol
 
-from to_spawn import capo, config, sessions_datei, speicher
+from to_spawn import capo, config, prozessbaum, sessions_datei, speicher, tmux_aufruf
+from to_spawn.tmux_aufruf import FensterWeg, TmuxFehler
 
 log = logging.getLogger(__name__)
 
@@ -146,22 +147,6 @@ class Auftrag:
         return f"spec-{self.spec}"
 
 
-class TmuxFehler(RuntimeError):
-    """Ein tmux-Aufruf ist gescheitert (Exit ≠ 0 oder Zeitüberschreitung).
-
-    Trägt Unterbefehl und stderr, damit die Ergebniszeile sagt, was tmux meldete.
-    """
-
-    def __init__(self, unterbefehl: str, stderr: str) -> None:
-        super().__init__(f"tmux {unterbefehl}: {stderr.strip() or 'ohne Meldung'}")
-        self.unterbefehl = unterbefehl
-        self.stderr = stderr
-
-
-class FensterWeg(TmuxFehler):
-    """Das Ziel-Fenster/-Pane gibt es nicht mehr (Session hat sich selbst beendet)."""
-
-
 class Werkzeug(Protocol):
     """Alle Außenwelt-Zugriffe der Ablösung (Naht für Tests).
 
@@ -191,27 +176,8 @@ class TmuxWerkzeug:
     """Echte Umsetzung: tmux über ``subprocess``, Prozesse über ``pgrep``/``/proc``."""
 
     def _tmux(self, *argumente: str, eingabe: str | None = None) -> str:
-        """Ein tmux-Aufruf; jeder Fehler kommt als :class:`TmuxFehler` (stderr erhalten)."""
-        unterbefehl = argumente[0] if argumente else ""
-        try:
-            fertig = subprocess.run(
-                [*capo._tmux_befehl(), *argumente],
-                input=eingabe,
-                capture_output=True,
-                text=True,
-                check=True,
-                timeout=30,
-            )
-        except subprocess.CalledProcessError as fehler:
-            stderr = str(fehler.stderr or "")
-            if "can't find window" in stderr or "can't find pane" in stderr:
-                raise FensterWeg(unterbefehl, stderr) from fehler
-            raise TmuxFehler(unterbefehl, stderr) from fehler
-        except subprocess.TimeoutExpired as fehler:
-            raise TmuxFehler(
-                unterbefehl, f"keine Antwort nach {fehler.timeout} s"
-            ) from fehler
-        return fertig.stdout
+        """Ein tmux-Aufruf (Naht für Tests); Fehler siehe :mod:`to_spawn.tmux_aufruf`."""
+        return tmux_aufruf.aufrufen(*argumente, eingabe=eingabe)
 
     def fenster_liste(self) -> list[FensterInfo]:
         """Je Fenster das aktive Pane (unabhängig von ``pane-base-index``)."""
@@ -336,111 +302,32 @@ class TmuxWerkzeug:
         Erst bau.py & Co., dann claude — so startet bau.py keine Folge-Runde.
         ``schon_weg``: kein claude-Prozess mehr (Session hat sich selbst beendet).
         """
-        baum = [pane_pid, *_nachkommen(pane_pid)]
-        claude = [pid for pid in baum if _ist_claude(pid)]
+        baum = prozessbaum.baum(pane_pid)
+        claude = [pid for pid in baum if prozessbaum.ist_claude(pid)]
         andere = [pid for pid in baum if pid not in claude]
-        _signal([*andere, *claude], signal.SIGTERM)
+        tot = prozessbaum.beenden(
+            [*andere, *claude],
+            ((signal.SIGTERM, BEENDEN_MAX_S), (signal.SIGKILL, 5 * BEENDEN_TAKT_S)),
+            warten_auf=claude,
+            takt_s=BEENDEN_TAKT_S,
+            schlafen=self.schlafen,
+            eskalation=lambda _sig, _lebende: log.warning(
+                "claude %s lebt %s s nach SIGTERM — SIGKILL.", claude, BEENDEN_MAX_S
+            ),
+        )
         if not claude:
             log.info("Unter Pane-PID %s läuft kein claude-Prozess mehr.", pane_pid)
             return SCHON_WEG
-        if self._warte_tot(claude, BEENDEN_MAX_S):
-            return BEENDET
-        log.warning(
-            "claude %s lebt %s s nach SIGTERM — SIGKILL.", claude, BEENDEN_MAX_S
-        )
-        _signal([pid for pid in baum if _lebt(pid)], signal.SIGKILL)
-        if self._warte_tot(claude, 5 * BEENDEN_TAKT_S):
+        if tot:
             return BEENDET
         log.error("claude-Prozess(e) %s leben auch nach SIGKILL.", claude)
         return LEBT
-
-    def _warte_tot(self, pids: list[int], max_s: float) -> bool:
-        """True, sobald keiner der ``pids`` mehr lebt (Uhr über die Naht)."""
-        ende = self.jetzt() + max_s
-        while any(_lebt(pid) for pid in pids):
-            if self.jetzt() >= ende:
-                return False
-            self.schlafen(BEENDEN_TAKT_S)
-        return True
 
     def jetzt(self) -> float:
         return time.time()
 
     def schlafen(self, s: float) -> None:
         time.sleep(s)
-
-
-def _nachkommen(pid: int) -> list[int]:
-    """Alle Nachkommen von ``pid`` (rekursiv über ``pgrep -P``)."""
-    gefunden: list[int] = []
-    offen = [pid]
-    while offen:
-        eltern = offen.pop()
-        fertig = subprocess.run(
-            ["pgrep", "-P", str(eltern)],
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=30,
-        )
-        if fertig.returncode not in (0, 1):
-            raise RuntimeError(f"pgrep -P {eltern} scheitert: {fertig.stderr.strip()}")
-        for zeile in fertig.stdout.split():
-            if zeile.isdigit() and int(zeile) not in gefunden:
-                gefunden.append(int(zeile))
-                offen.append(int(zeile))
-    return gefunden
-
-
-def _signal(pids: list[int], sig: signal.Signals) -> None:
-    """Schickt ``sig`` an jede PID; schon beendete Prozesse zählen nicht als Fehler."""
-    for pid in pids:
-        try:
-            os.kill(pid, sig)
-        except ProcessLookupError:
-            continue
-
-
-def _proc(pid: int, datei: str) -> bytes:
-    """Rohinhalt von ``/proc/<pid>/<datei>`` (Naht für Tests)."""
-    return Path(f"/proc/{pid}/{datei}").read_bytes()
-
-
-def _ist_claude(pid: int) -> bool:
-    """Ist ``pid`` eine Claude-Session — nativ (``claude``) oder per npm (``node … claude``)?
-
-    Prozess weg (``FileNotFoundError``/``ProcessLookupError``) heißt „kein Claude“.
-    Unlesbar aus anderem Grund zählt als Claude: lieber warten als eine lebende
-    Session für beendet halten.
-    """
-    try:
-        name = _proc(pid, "comm").decode(errors="replace").strip()
-        argv = [
-            teil.decode(errors="replace") for teil in _proc(pid, "cmdline").split(b"\0")
-        ]
-    except (FileNotFoundError, ProcessLookupError):
-        return False
-    except OSError as fehler:
-        log.warning("/proc/%s nicht lesbar (%s) — zählt als Claude.", pid, fehler)
-        return True
-    argv0 = argv[0] if argv else ""
-    if name == "claude" or Path(argv0).name == "claude":
-        return True
-    if name != "node" and Path(argv0).name != "node":
-        return False
-    skript = argv[1] if len(argv) > 1 else ""
-    return Path(skript).name == "claude" or skript.endswith("claude-code/cli.js")
-
-
-def _lebt(pid: int) -> bool:
-    """Prozess existiert noch (auch wenn er uns nicht gehört)."""
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    return True
 
 
 # --- Reine Hilfen -----------------------------------------------------------------
