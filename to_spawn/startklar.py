@@ -632,6 +632,14 @@ def _manifest_tickets(ordner: Path, spec: int) -> dict[str, dict[str, Any]] | No
         raise ManifestKaputt(
             f"Manifest {pfad}: Feld tickets ist kein Objekt {{Nummer: {{…}}}}"
         )
+    for nummer, ticket in tickets.items():
+        namen = ticket.get("schluessel")
+        if namen is not None and not (
+            isinstance(namen, list) and all(isinstance(n, str) for n in namen)
+        ):
+            raise ManifestKaputt(
+                f"Manifest {pfad}: Feld tickets.{nummer}.schluessel ist keine Liste von Texten"
+            )
     return {str(k): v for k, v in tickets.items()}
 
 
