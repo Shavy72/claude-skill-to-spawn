@@ -456,14 +456,53 @@ def neue_entscheidung(ticket: int, text: str) -> None:
     aendere_zustand(lambda z: z.setdefault("entscheidungen", []).append(eintrag))
 
 
-def setze_leiter_stufe(ticket: int, stufe: int) -> None:
+def setze_leiter_stufe(ticket: int, stufe: int, seit: float | None = None) -> None:
+    """Merkt Stufe der Eingriffs-Leiter (#432) und Zeitpunkt des letzten Eingriffs."""
+    eintrag = {"stufe": int(stufe), "seit": seit}
     aendere_zustand(
-        lambda z: z.setdefault("leiter_stufe", {}).__setitem__(str(ticket), stufe)
+        lambda z: z.setdefault("leiter_stufe", {}).__setitem__(str(ticket), eintrag)
     )
 
 
+def leiter_eintrag(ticket: int) -> tuple[int, float | None]:
+    """(Stufe, seit) — liest das alte Format (nackte Zahl) und das neue (dict)."""
+    roh = lese_zustand().get("leiter_stufe", {}).get(str(ticket), 0)
+    if isinstance(roh, dict):
+        seit = roh.get("seit")
+        return int(roh.get("stufe") or 0), None if seit is None else float(seit)
+    return int(roh), None
+
+
 def leiter_stufe(ticket: int) -> int:
-    return int(lese_zustand().get("leiter_stufe", {}).get(str(ticket), 0))
+    return leiter_eintrag(ticket)[0]
+
+
+def merke_leiter_respawn(ticket: int, zeit: float) -> None:
+    """Merkt den letzten erfolgreichen Respawn der Leiter (#432): älterer Kontext zählt nicht."""
+    aendere_zustand(
+        lambda z: z.setdefault("leiter_respawn", {}).__setitem__(str(ticket), zeit)
+    )
+
+
+def schliesse_leiter_respawn(ticket: int, zeit: float) -> None:
+    """Abschluss eines Leiter-Respawns (#432) in EINEM Schreibvorgang: Stufe 0 + Zeit.
+
+    Getrennt geschrieben könnte nach einem Fehler Stufe 0 ohne Respawn-Zeit (alter
+    Kontext zählt wieder) oder die Zeit ohne Stufe 0 stehen bleiben.
+    """
+    schluessel = str(ticket)
+
+    def schreib(z: dict) -> None:
+        z.setdefault("leiter_stufe", {})[schluessel] = {"stufe": 0, "seit": None}
+        z.setdefault("leiter_respawn", {})[schluessel] = zeit
+
+    aendere_zustand(schreib)
+
+
+def leiter_respawn(ticket: int) -> float | None:
+    """Zeit des letzten Respawns durch die Leiter, ``None`` = noch keiner."""
+    wert = lese_zustand().get("leiter_respawn", {}).get(str(ticket))
+    return None if wert is None else float(wert)
 
 
 # --- CLI ----------------------------------------------------------------------

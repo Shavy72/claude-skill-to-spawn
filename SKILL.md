@@ -62,6 +62,17 @@ Ablauf für dich (das Modell), wenn die Konfig fehlt oder der Nutzer „setup“
 
 - Alias-Skill `/respawn` (`aliase/respawn/SKILL.md`), Logik `to_spawn/respawn.py`: Aufseher löst eine hängende oder an der Handoff-Grenze stehende Bau-Session nach fester SOP ab (`to_spawn.py respawn <S> <N>`, über Ablöse-Subagent, Exit 0–3). Nur Bau-Server; `neustart --beenden` bleibt für tote Sessions.
 
+## Eingriffs-Leiter `leiter` (#432)
+- Logik `to_spawn/leiter.py`, Aufruf `to_spawn.py leiter <S> <N> [--dry-run]` — nur über einen Ablöse-Subagenten (`model: sonnet`, Antwort = die eine Zeile). stdout genau 1 Zeile `leiter #<N>: Stufe <x> <aktion> — <grund>`.
+- Stufen: still ≥ 20 min → Mindset-Stupser (1) · 15 min später noch still → Handoff anfordern (2), ebenso sofort ab Handoff-Grenze (`haupt.handoff_k` aus `~/.claude/smart-zone.json`) · Start-Prompt-Datei da → Stufe 3 = `respawn` · Ticket zu + still → `/exit` (einmal).
+- Nie tippen, wenn das Fenster arbeitet oder eine Rückfrage zeigt; arbeitet es nach dem Stupser wieder → Stufe 0. Stufe merkt der Leitstand (`leiter_stufe`), kein Doppel-Eingriff.
+- Exit: 0 ok · 1 Fehler (tmux/gh/Leitstand) · bei Stufe 3 der respawn-Exit.
+- Mindest-Ruhe 2 min: Handoff-Grenze und `/exit` greifen erst, wenn das Fenster seit 2 min still ist. Kontext zählt nur die aktuelle Session (nach dem letzten Respawn).
+- Stufe 2 wartet höchstens 30 min auf die Start-Prompt-Datei, dann Exit 1 „Aufseher prüfen“.
+- Stufe 3 „respawn läuft“: wird VOR dem Ablösen gemerkt (Merken scheitert → Exit 1, nichts abgelöst); Erfolg → Stufe 0 + Respawn-Zeit in einem Schreibvorgang; bleibt Stufe 3 stehen, wird nie erneut abgelöst (Abschluss nachgeholt nur, wenn das Fenster arbeitet UND eine neue Session belegt ist — `session_start` im Bau-Log jünger als die Stufe-3-Zeit; sonst Exit 1 „Aufseher prüfen“).
+- Stufe 5 „respawn gescheitert“: nichts mehr tippen oder starten, Exit 1; zurückgesetzt wird nur, wenn das Fenster wieder arbeitet oder das Ticket neu beginnt (`session_start` im Bau-Log jünger als die Stufe-5-Zeit).
+- Reihenfolge: erst die Stufe merken (`leiter_stufe`), dann tippen.
+
 ## Umzug `/to-spawn-of` (#212) — laufende Session auf den Bau-Server verschieben
 
 - Alias-Skill `/to-spawn-of` (`aliase/to-spawn-of/SKILL.md`), Logik `to_spawn/umzug.py`. In einer Bau-Session (`BAU_TICKET`): Handoff mit Zeile `Umzug: server` (auch als Überschrift `## Umzug: server`; nie `Staffel: weiter`), eigene Arbeit mit Pathspec committen (auch neue Dateien — ungetrackte außer dem Handoff = Weigerung, git-ignorierte zählen nicht), dann `python ~/.claude/skills/to-spawn/to_spawn.py umzug <N> --handoff <pfad> [--dry-run]`. Das Skript committet nur den Handoff, pusht den Branch (Beweis `ls-remote` = HEAD, `ls-remote`-Fehler = Exit 1), startet per `ssh <ssh_ziel>` im Server-Repo (`server_repo`, Vorgabe `~/<Repo-Ordner>`) `spawn_srv.sh <S> --tickets <N> --ohne-wache --umzug <branch>@<sha>:<pfad>` (läuft das Ticket dort schon: Exit 4 → Abbruch; bricht SSH ab, wird einmal geprüft, ob der Server trotzdem läuft) und beendet die lokale Session erst nach Beweis (tmux-Fenster `bau <N>` + `sessions <S>` nicht `aus`, bis 90 s) über `BAU_UMZUG_DATEI` → `bau.py` beendet das Claude-Kind (Windows: `taskkill /T` für den ganzen Baum, danach Prüfung; nicht beendet = laute Meldung, Exit 1), keine Staffel-Runde. Liegt `<BAU_UMZUG_ANFRAGE>.laeuft`, schreibt der Umzug sein Ergebnis hinein (`exit`, `grund`) für den Aufseher. Exit 0 = umgezogen · 3 = Weigerung · 1 = Server nicht bewiesen, lokal läuft weiter.

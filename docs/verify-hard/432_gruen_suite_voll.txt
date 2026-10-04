@@ -1,0 +1,9 @@
+Volle Suite #432, 8 parallele Teile (pytest-xdist fehlt), 2026-10-04T21:24:23+02:00
+Teil 0: 151 passed, 6 skipped in 24.21s exit 0 
+Teil 1: 184 passed, 2 skipped in 55.06s exit 0 
+Teil 2: 183 passed, 15 skipped in 68.09s (0:01:08) exit 0 
+Teil 3: 333 passed in 237.44s (0:03:57) exit 0 
+Teil 4: 114 passed, 3 skipped in 70.64s (0:01:10) exit 0 
+Teil 5: 98 passed, 3 skipped in 126.83s (0:02:06) exit 0 
+Teil 6: 94 passed in 32.86s exit 0 
+Teil 7: 198 passed, 1 skipped in 31.01s exit 0 

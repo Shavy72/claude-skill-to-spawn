@@ -1,0 +1,40 @@
+    def test_f8_ticket_lage_kein_sub_issue(welt: tuple[stand_test.FakeWelt, Path]) -> None:
+        w, repo = welt
+>       blick = aufseher_stand.ticket_lage(stand_test.SPEC, 999, w.quellen(repo))
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: module 'to_spawn.aufseher_stand' has no attribute 'ticket_lage'. Did you mean: 'TicketLage'?
+
+tests/test_leiter_fix1_432.py:356: AttributeError
+_______________ test_skill_md_nennt_stufe5_ruhe_und_wartegrenze ________________
+
+    def test_skill_md_nennt_stufe5_ruhe_und_wartegrenze() -> None:
+        text = (SKILL / "SKILL.md").read_text(encoding="utf-8")
+        abschnitt = text[text.index("Eingriffs-Leiter") :]
+        for wort in ("Stufe 5", "Mindest-Ruhe", "30 min"):
+>           assert wort in abschnitt, wort
+E           AssertionError: Stufe 5
+E           assert 'Stufe 5' in 'Eingriffs-Leiter `leiter` (#432)\n- Logik `to_spawn/leiter.py`, Aufruf `to_spawn.py leiter <S> <N> [--dry-run]` — nur...]` übernimmt den Prototyp-Zustand (gleiche Doc-IDs).\nNicht verwechseln mit `to_spawn/leitstand.py` (Sperren, #313).\n'
+
+tests/test_leiter_fix1_432.py:403: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_leiter_fix1_432.py::test_f1_handoff_grenze_still_1_min_nichts
+FAILED tests/test_leiter_fix1_432.py::test_f1_bau_log_kontext_juengste_session_nach_zeit
+FAILED tests/test_leiter_fix1_432.py::test_f1_bau_log_kontext_ohne_zeilen - A...
+FAILED tests/test_leiter_fix1_432.py::test_f1_respawn_merkt_zeit - AttributeE...
+FAILED tests/test_leiter_fix1_432.py::test_f2_leiter_gibt_handoff_seit_weiter
+FAILED tests/test_leiter_fix1_432.py::test_f2_abloesen_ueberspringt_a_bei_frischen_dateien
+FAILED tests/test_leiter_fix1_432.py::test_f2_abloesen_tippt_a_wenn_dateien_alt
+FAILED tests/test_leiter_fix1_432.py::test_f2_eine_pfadquelle_relativ - Asser...
+FAILED tests/test_leiter_fix1_432.py::test_f3_respawn_gescheitert_stufe5_kein_zweiter_versuch
+FAILED tests/test_leiter_fix1_432.py::test_f3_stufe5_arbeitet_wieder_zurueck
+FAILED tests/test_leiter_fix1_432.py::test_f4_stufe2_wartegrenze[29-0] - Attr...
+FAILED tests/test_leiter_fix1_432.py::test_f4_stufe2_wartegrenze[30-1] - Attr...
+FAILED tests/test_leiter_fix1_432.py::test_f5_exit_mindest_ruhe[1-getippt0]
+FAILED tests/test_leiter_fix1_432.py::test_f6_tippen_scheitert_stufe_gemerkt_kein_zweites_tippen
+FAILED tests/test_leiter_fix1_432.py::test_f6_leitstand_fehler_nichts_getippt
+FAILED tests/test_leiter_fix1_432.py::test_f7_leiter_ohne_private_aufseher_funktionen
+FAILED tests/test_leiter_fix1_432.py::test_f8_echte_lage_kontext_nach_respawn
+FAILED tests/test_leiter_fix1_432.py::test_f8_kontext_typeerror_unbekannt - A...
+FAILED tests/test_leiter_fix1_432.py::test_f8_ticket_lage_kein_sub_issue - At...
+FAILED tests/test_leiter_fix1_432.py::test_skill_md_nennt_stufe5_ruhe_und_wartegrenze
+20 failed, 6 passed in 0.30s

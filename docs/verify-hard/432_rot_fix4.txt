@@ -1,0 +1,7 @@
+FAILED tests/test_leiter_fix4_432.py::test_d2_folgelauf_nach_stufe5_schreibfehler_schliesst_nicht_ab
+FAILED tests/test_leiter_fix4_432.py::test_d1_stufe3_nach_abloesen_neu_gemerkt_juenger_als_start
+FAILED tests/test_leiter_fix4_432.py::test_d1_stufe5_und_stufe3_nicht_merkbar_exit1_keine_ausnahme
+FAILED tests/test_leiter_fix4_432.py::test_d3_entscheide_stufe3_bau_log_unlesbar_nennt_ursache
+FAILED tests/test_leiter_fix4_432.py::test_d3_echte_lage_leser_wirft_log_unlesbar
+FAILED tests/test_leiter_fix4_432.py::test_d3_echte_lage_ohne_bau_log_nicht_unlesbar
+6 failed, 1 passed in 0.16s

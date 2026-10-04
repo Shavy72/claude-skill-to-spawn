@@ -1,0 +1,6 @@
+............                                                             [100%]
+76 passed, 8 xfailed in 0.48s
+FAILED tests/test_aufpasser_236.py::test_deploy_wache_zaehlt_nur_programm_nicht_prompt
+FAILED tests/test_umzug_212.py::test_spawn_srv_umzug_laeuft_bereits_exit_4 - ...
+FAILED tests/test_umzug_212.py::test_lokale_zustaende_aus_sessions_stand - As...
+3 failed, 1399 passed, 29 skipped, 8 xfailed in 214.89s (0:03:34)

@@ -1,0 +1,119 @@
+.FFFFF....                                                               [100%]
+=================================== FAILURES ===================================
+____________ test_c1_stufe3_arbeitet_ohne_neue_session_meldet[None] ____________
+
+ordner = PosixPath('/tmp/pytest-of-bau/pytest-3580/test_c1_stufe3_arbeitet_ohne_n0/wt')
+versatz = None
+
+    @pytest.mark.parametrize("versatz", [None, -2 * MINUTE, 0.0])
+    def test_c1_stufe3_arbeitet_ohne_neue_session_meldet(
+        ordner: Path, versatz: float | None
+    ) -> None:
+        u, seit = _stufe3_arbeitet(ordner, versatz)
+        erg = _lauf(u)
+>       assert erg.exit == 1
+E       AssertionError: assert 0 == 1
+E        +  where 0 = Ergebnis(exit=0, zeile='leiter #9432: Stufe 0 respawn abgeschlossen — arbeitet nach respawn, Abschluss nachgeholt').exit
+
+tests/test_leiter_fix3_432.py:68: AssertionError
+___________ test_c1_stufe3_arbeitet_ohne_neue_session_meldet[-120.0] ___________
+
+ordner = PosixPath('/tmp/pytest-of-bau/pytest-3580/test_c1_stufe3_arbeitet_ohne_n1/wt')
+versatz = -120.0
+
+    @pytest.mark.parametrize("versatz", [None, -2 * MINUTE, 0.0])
+    def test_c1_stufe3_arbeitet_ohne_neue_session_meldet(
+        ordner: Path, versatz: float | None
+    ) -> None:
+        u, seit = _stufe3_arbeitet(ordner, versatz)
+        erg = _lauf(u)
+>       assert erg.exit == 1
+E       AssertionError: assert 0 == 1
+E        +  where 0 = Ergebnis(exit=0, zeile='leiter #9432: Stufe 0 respawn abgeschlossen — arbeitet nach respawn, Abschluss nachgeholt').exit
+
+tests/test_leiter_fix3_432.py:68: AssertionError
+____________ test_c1_stufe3_arbeitet_ohne_neue_session_meldet[0.0] _____________
+
+ordner = PosixPath('/tmp/pytest-of-bau/pytest-3580/test_c1_stufe3_arbeitet_ohne_n2/wt')
+versatz = 0.0
+
+    @pytest.mark.parametrize("versatz", [None, -2 * MINUTE, 0.0])
+    def test_c1_stufe3_arbeitet_ohne_neue_session_meldet(
+        ordner: Path, versatz: float | None
+    ) -> None:
+        u, seit = _stufe3_arbeitet(ordner, versatz)
+        erg = _lauf(u)
+>       assert erg.exit == 1
+E       AssertionError: assert 0 == 1
+E        +  where 0 = Ergebnis(exit=0, zeile='leiter #9432: Stufe 0 respawn abgeschlossen — arbeitet nach respawn, Abschluss nachgeholt').exit
+
+tests/test_leiter_fix3_432.py:68: AssertionError
+_________ test_c1_entscheide_stufe3_arbeitet_ohne_start_kein_abschluss _________
+
+    def test_c1_entscheide_stufe3_arbeitet_ohne_start_kein_abschluss() -> None:
+        jetzt = 1_800_000_000.0
+        gemerkt = leiter.Gemerkt(3, jetzt - 5 * MINUTE)
+        lage = leiter.Lage(
+            offen=True,
+            fenster=aufseher_stand.ARBEITET,
+            still_min=None,
+            kontext_k=None,
+            prompt_datei=False,
+            ziel="=spec-1:2",
+            letzter_start=None,
+        )
+>       assert leiter.entscheide(lage, gemerkt, jetzt, 250.0).aktion == "melden"
+E       AssertionError: assert 'abschliessen' == 'melden'
+E         
+E         - melden
+E         + abschliessen
+
+tests/test_leiter_fix3_432.py:89: AssertionError
+______________ test_c1_stufe5_schreibfehler_exit1_keine_ausnahme _______________
+
+ordner = PosixPath('/tmp/pytest-of-bau/pytest-3580/test_c1_stufe5_schreibfehler_e0/wt')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7f4c69267750>
+
+    def test_c1_stufe5_schreibfehler_exit1_keine_ausnahme(
+        ordner: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def gescheitert(repo: Path, spec: int, ticket: int, **_kw: Any) -> respawn.Ergebnis:
+            return respawn.Ergebnis(2, f"respawn #{ticket}: neues Fenster startet nicht")
+    
+        monkeypatch.setattr(respawn, "abloesen", gescheitert)
+        u = fix2_test._stufe2(ordner)
+        _start_datei(ordner, u.uhr - MINUTE)
+        echt = leitstand.setze_leiter_stufe
+    
+        def stufe5_kaputt(ticket: int, stufe: int, seit: float | None) -> None:
+            if stufe == 5:
+                raise leitstand.ZustandKaputt("Leitstand kaputt")
+            echt(ticket, stufe, seit)
+    
+        monkeypatch.setattr(leitstand, "setze_leiter_stufe", stufe5_kaputt)
+        # Kein Netz der Tür: eine durchgereichte Ausnahme fiele hier sichtbar auf.
+>       erg = leiter._respawn(
+            u, ordner, 1, TICKET, leiter.Gemerkt(2, u.uhr - MINUTE), u.uhr
+        )
+
+tests/test_leiter_fix3_432.py:110: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+to_spawn/leiter.py:331: in _respawn
+    leitstand.setze_leiter_stufe(ticket, 5, u.jetzt())
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+ticket = 9432, stufe = 5, seit = 1791145072.529843
+
+    def stufe5_kaputt(ticket: int, stufe: int, seit: float | None) -> None:
+        if stufe == 5:
+>           raise leitstand.ZustandKaputt("Leitstand kaputt")
+E           to_spawn.leitstand.ZustandKaputt: Leitstand kaputt
+
+tests/test_leiter_fix3_432.py:105: ZustandKaputt
+=========================== short test summary info ============================
+FAILED tests/test_leiter_fix3_432.py::test_c1_stufe3_arbeitet_ohne_neue_session_meldet[None]
+FAILED tests/test_leiter_fix3_432.py::test_c1_stufe3_arbeitet_ohne_neue_session_meldet[-120.0]
+FAILED tests/test_leiter_fix3_432.py::test_c1_stufe3_arbeitet_ohne_neue_session_meldet[0.0]
+FAILED tests/test_leiter_fix3_432.py::test_c1_entscheide_stufe3_arbeitet_ohne_start_kein_abschluss
+FAILED tests/test_leiter_fix3_432.py::test_c1_stufe5_schreibfehler_exit1_keine_ausnahme
+5 failed, 5 passed in 0.18s

@@ -1,0 +1,57 @@
+..FF.................................................................... [ 55%]
+..........................................................               [100%]
+=================================== FAILURES ===================================
+_______________________ test_prompt_datei_frisch_respawn _______________________
+
+ordner = PosixPath('/tmp/pytest-of-bau/pytest-3559/test_prompt_datei_frisch_respa0/wt')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7f0703a8a9f0>
+
+    def test_prompt_datei_frisch_respawn(
+        ordner: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        spion = Spion()
+        monkeypatch.setattr(respawn, "abloesen", spion)
+>       u = _stufe2(ordner)
+            ^^^^^^^^^^^^^^^
+
+tests/test_leiter_432.py:229: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+wt = PosixPath('/tmp/pytest-of-bau/pytest-3559/test_prompt_datei_frisch_respa0/wt')
+
+    def _stufe2(wt: Path) -> FakeUmwelt:
+        u = FakeUmwelt(wt, still_min=1, kontext_k=260.0)
+        _lauf(u)
+>       assert leitstand.leiter_eintrag(TICKET)[0] == 2
+E       assert 0 == 2
+
+tests/test_leiter_432.py:218: AssertionError
+______________ test_prompt_datei_respawn_scheitert_stufe2_bleibt _______________
+
+ordner = PosixPath('/tmp/pytest-of-bau/pytest-3559/test_prompt_datei_respawn_sche0/wt')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7f0703ce3ce0>
+
+    def test_prompt_datei_respawn_scheitert_stufe2_bleibt(
+        ordner: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        spion = Spion(exit_code=2)
+        monkeypatch.setattr(respawn, "abloesen", spion)
+>       u = _stufe2(ordner)
+            ^^^^^^^^^^^^^^^
+
+tests/test_leiter_432.py:244: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+wt = PosixPath('/tmp/pytest-of-bau/pytest-3559/test_prompt_datei_respawn_sche0/wt')
+
+    def _stufe2(wt: Path) -> FakeUmwelt:
+        u = FakeUmwelt(wt, still_min=1, kontext_k=260.0)
+        _lauf(u)
+>       assert leitstand.leiter_eintrag(TICKET)[0] == 2
+E       assert 0 == 2
+
+tests/test_leiter_432.py:218: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_leiter_432.py::test_prompt_datei_frisch_respawn - assert 0 ...
+FAILED tests/test_leiter_432.py::test_prompt_datei_respawn_scheitert_stufe2_bleibt
+2 failed, 128 passed, 1281 deselected in 3.40s
