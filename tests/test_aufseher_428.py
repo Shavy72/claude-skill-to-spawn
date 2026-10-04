@@ -31,6 +31,7 @@ AUSGENOMMENE_ORDNER: tuple[str, ...] = (
     "__pycache__",
     ".pytest_cache",
     ".ruff_cache",
+    ".review",  # lokale Review-Belege (git-ignoriert, zitieren Prüfer-Texte)
     "tests",  # Testdaten, Fixtures, alte Rot-/Grün-Ausgaben
     "docs/verify-hard",  # Belegseiten früherer Tickets (historisch)
 )

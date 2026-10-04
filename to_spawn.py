@@ -45,6 +45,7 @@ from to_spawn import (  # noqa: E402
     manifest,
     nest,
     probesitz,
+    respawn,
     setup,
     speicher,
     startklar,
@@ -326,6 +327,19 @@ def main(argv: list[str] | None = None) -> int:
     p_neu.add_argument("--beenden", action="store_true", help="laufende Claude-Session vorher beenden")
     p_neu.add_argument("--dry-run", action="store_true", help="nur zeigen, nichts starten/beenden")
 
+    p_resp = unter.add_parser(
+        "respawn", help="Bau-Session nach SOP a–e ablösen (#431), stdout genau eine Zeile"
+    )
+    p_resp.add_argument("spec", type=int)
+    p_resp.add_argument("ticket", type=int)
+    p_resp.add_argument(
+        "--warte-max",
+        type=float,
+        default=respawn.WARTE_MAX_VORGABE,
+        help="max. Sekunden auf Handoff + Start-Prompt (1800)",
+    )
+    p_resp.add_argument("--dry-run", action="store_true", help="nur Duplikat-Prüfung + geplanter Befehl")
+
     unter.add_parser(
         "stand", help="Skill-Stand des Bau-Servers prüfen, bei Abweichung pushen (#325)"
     )
@@ -579,6 +593,17 @@ def main(argv: list[str] | None = None) -> int:
             tickets=_tickets(args.tickets),
             dry_run=args.dry_run,
         )
+    if args.befehl == "respawn":
+        erg = respawn.abloesen(
+            repo,
+            args.spec,
+            args.ticket,
+            werkzeug=respawn.TmuxWerkzeug(),
+            warte_max=args.warte_max,
+            dry_run=args.dry_run,
+        )
+        sys.stdout.write(erg.zeile + "\n")
+        return erg.exit
     if args.befehl == "neustart":
         return spawn_modul.neustart(
             repo,

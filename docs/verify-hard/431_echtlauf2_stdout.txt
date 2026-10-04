@@ -1,0 +1,2 @@
+respawn #9431: Remote Control im neuen Fenster nicht bestätigt (kein Hinweis auf dem Bildschirm) — neues Fenster zu — Ablösung abgebrochen, alte Session arbeitet weiter
+Exit 1

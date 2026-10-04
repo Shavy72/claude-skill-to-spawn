@@ -1,0 +1,40 @@
+            P(13, 11, "bash", "bash -c git status", None),
+        ]
+        eintraege = {"431": modul.Eintrag("431", "ticket", "t")}
+        modul.zuordnen(eintraege, alle)
+        assert list(eintraege) == ["431"]
+        e = eintraege["431"]
+        assert e.pid == 10 and e.session_pid == 11
+        assert e.zustand.startswith("läuft")
+        assert "VERWAIST" not in e.zustand
+>       assert not hasattr(modul, "_respawn_sessions_zuordnen")
+E       AssertionError: assert not True
+E        +  where True = hasattr(<module 'sessions_stand_431' from '/home/bau/wt/skill-431/skripte/sessions_stand.py'>, '_respawn_sessions_zuordnen')
+
+tests/test_sessions_stand_respawn_431.py:64: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_respawn_431_runde2.py::test_b2_handoff_auftrag_tippen_scheitert_zeile_ehrlich
+FAILED tests/test_respawn_431_runde2.py::test_b2_tippen_enter_scheitert_leert_eingabe
+FAILED tests/test_respawn_431_runde2.py::test_b3_tmux_fehler_traegt_stderr_und_unterbefehl
+FAILED tests/test_respawn_431_runde2.py::test_b4_bildschirm_fenster_weg_wirft
+FAILED tests/test_respawn_431_runde2.py::test_b4_bildschirm_anderer_fehler_leer_mit_warnung[fehler0]
+FAILED tests/test_respawn_431_runde2.py::test_b4_bildschirm_anderer_fehler_leer_mit_warnung[fehler1]
+FAILED tests/test_respawn_431_runde2.py::test_b4_neues_fenster_weg_bricht_sofort_ab
+FAILED tests/test_respawn_431_runde2.py::test_b5_eingeklappter_paste_mit_markern_im_prompt_zaehlt_als_arbeit
+FAILED tests/test_respawn_431_runde2.py::test_b5_arbeitet_nur_zustandsmarker
+FAILED tests/test_respawn_431_runde2.py::test_b6_beenden_erst_wenn_alte_ruhig
+FAILED tests/test_respawn_431_runde2.py::test_b6_handoff_nicht_committet_steht_in_zeile
+FAILED tests/test_respawn_431_runde2.py::test_b7_sigterm_raeumt_auf_und_gibt_eine_zeile
+FAILED tests/test_respawn_431_runde2.py::test_b7_keyboardinterrupt_raeumt_auf_und_reicht_weiter
+FAILED tests/test_respawn_431_runde2.py::test_b8_fenster_schliessen_timeout_wirft_nicht
+FAILED tests/test_respawn_431_runde2.py::test_b9_ist_claude_erkennt_npm_node[claude\n-claude\x00--model\x00x\x00-True]
+FAILED tests/test_respawn_431_runde2.py::test_b9_ist_claude_erkennt_npm_node[node\n-node\x00/usr/local/bin/claude\x00--effort\x00high\x00-True]
+FAILED tests/test_respawn_431_runde2.py::test_b9_ist_claude_erkennt_npm_node[node\n-node\x00/usr/lib/node_modules/@anthropic-ai/claude-code/cli.js\x00-True]
+FAILED tests/test_respawn_431_runde2.py::test_b9_ist_claude_erkennt_npm_node[node\n-node\x00/home/x/.claude/plugins/context-mode/start.mjs\x00-False]
+FAILED tests/test_respawn_431_runde2.py::test_b9_ist_claude_erkennt_npm_node[bash\n-bash\x00-lc\x00claude\x00-False]
+FAILED tests/test_respawn_431_runde2.py::test_b9_unlesbar_zaehlt_als_lebend_weg_nicht
+FAILED tests/test_respawn_431_runde2.py::test_b12_typen_und_schmale_ausnahmen
+FAILED tests/test_respawn_431_runde2.py::test_offen_a_kein_konfig_mehr - asse...
+FAILED tests/test_respawn_431_runde2.py::test_offen_b_handoff_auftrag_verbietet_staffel_marker
+FAILED tests/test_sessions_stand_respawn_431.py::test_respawn_session_unter_bau_py_wird_genau_einmal_gezaehlt
+24 failed, 1 passed in 0.47s

@@ -1,0 +1,30 @@
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Folge-Runde nach ``--ohne-prompt``: Prompt wird angehängt, die Session-ID bleibt Schalterwert."""
+        bau = _lade_bau(monkeypatch, tmp_path)
+        cmd = ["claude", "--settings", "s.json", "--session-id", "alt-id"]
+>       bau.prompt_setzen(cmd, "Staffel-Text", mit_prompt=False)
+        ^^^^^^^^^^^^^^^^^
+E       AttributeError: module 'bau_321' has no attribute 'prompt_setzen'
+
+tests/test_respawn_431_konfig.py:141: AttributeError
+_______________________ test_bau_hilfe_kennt_ohne_prompt _______________________
+
+    def test_bau_hilfe_kennt_ohne_prompt() -> None:
+        hilfe = subprocess.run(
+            [sys.executable, str(SKRIPTE / "bau.py"), "--help"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=False,
+        ).stdout
+>       assert "--ohne-prompt" in hilfe
+E       AssertionError: assert '--ohne-prompt' in 'usage: bau.py [-h] [--dry-run] [--model MODEL] [--print-prompt] [--sofort]\n              [--takt TAKT] [--staffel-ma...                       Umgebungsvariable BAU_AUFTRAG (ohne beides bleibt der\n                        Prompt gleich)\n'
+
+tests/test_respawn_431_konfig.py:155: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_respawn_431_konfig.py::test_respawn_startet_ueber_bau_wie_capo
+FAILED tests/test_respawn_431_konfig.py::test_bau_mit_respawn_schaltern_gibt_volle_konfiguration
+FAILED tests/test_respawn_431_konfig.py::test_ohne_prompt_staffel_runde_haengt_prompt_an_statt_id_zu_ueberschreiben
+FAILED tests/test_respawn_431_konfig.py::test_bau_hilfe_kennt_ohne_prompt - A...
+4 failed in 0.30s

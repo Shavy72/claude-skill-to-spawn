@@ -1,0 +1,49 @@
+FF.F                                                                     [100%]
+=================================== FAILURES ===================================
+_____ test_r3_b6_speicher_warten_laenger_als_bereit_frist_ist_kein_fehler ______
+
+umgebung = (PosixPath('/tmp/pytest-of-bau/pytest-3420/test_r3_b6_speicher_warten_lae0/repo'), PosixPath('/tmp/pytest-of-bau/pytest-3420/test_r3_b6_speicher_warten_lae0/wt/wt-431'))
+
+    def test_r3_b6_speicher_warten_laenger_als_bereit_frist_ist_kein_fehler(
+        umgebung: tuple[Path, Path],  # noqa: F811
+    ) -> None:
+        repo, wt = umgebung
+        fake = FakeWerkzeug(wt)
+        _speicher_sperre(fake, respawn.BEREIT_MAX_S + 180)
+        erg = _lauf(repo, fake, warte_max=600)
+>       assert erg.exit == 0, erg.zeile
+E       AssertionError: respawn #431: neue Session nach 120 s nicht bereit — neues Fenster zu — Ablösung abgebrochen, alte Session arbeitet weiter
+E       assert 1 == 0
+E        +  where 1 = Ergebnis(exit=1, zeile='respawn #431: neue Session nach 120 s nicht bereit — neues Fenster zu — Ablösung abgebrochen, alte Session arbeitet weiter').exit
+
+tests/test_respawn_431_runde3.py:63: AssertionError
+______ test_r3_b6_speicher_warten_ueber_warte_max_bricht_mit_wartezeit_ab ______
+
+umgebung = (PosixPath('/tmp/pytest-of-bau/pytest-3420/test_r3_b6_speicher_warten_ueb0/repo'), PosixPath('/tmp/pytest-of-bau/pytest-3420/test_r3_b6_speicher_warten_ueb0/wt/wt-431'))
+
+    def test_r3_b6_speicher_warten_ueber_warte_max_bricht_mit_wartezeit_ab(
+        umgebung: tuple[Path, Path],  # noqa: F811
+    ) -> None:
+        repo, wt = umgebung
+        fake = FakeWerkzeug(wt)
+        _speicher_sperre(fake, 10_000)
+        erg = _lauf(repo, fake, warte_max=400)
+        assert erg.exit == 1, erg.zeile
+>       assert "Speicher" in erg.zeile
+E       AssertionError: assert 'Speicher' in 'respawn #431: neue Session nach 120 s nicht bereit — neues Fenster zu — Ablösung abgebrochen, alte Session arbeitet weiter'
+E        +  where 'respawn #431: neue Session nach 120 s nicht bereit — neues Fenster zu — Ablösung abgebrochen, alte Session arbeitet weiter' = Ergebnis(exit=1, zeile='respawn #431: neue Session nach 120 s nicht bereit — neues Fenster zu — Ablösung abgebrochen, alte Session arbeitet weiter').zeile
+
+tests/test_respawn_431_runde3.py:76: AssertionError
+___________ test_r3_b6_wartet_auf_speicher_nur_letzte_speicher_zeile ___________
+
+    def test_r3_b6_wartet_auf_speicher_nur_letzte_speicher_zeile() -> None:
+>       assert respawn._wartet_auf_speicher(SPEICHER_SCHIRM)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: module 'to_spawn.respawn' has no attribute '_wartet_auf_speicher'
+
+tests/test_respawn_431_runde3.py:101: AttributeError
+=========================== short test summary info ============================
+FAILED tests/test_respawn_431_runde3.py::test_r3_b6_speicher_warten_laenger_als_bereit_frist_ist_kein_fehler
+FAILED tests/test_respawn_431_runde3.py::test_r3_b6_speicher_warten_ueber_warte_max_bricht_mit_wartezeit_ab
+FAILED tests/test_respawn_431_runde3.py::test_r3_b6_wartet_auf_speicher_nur_letzte_speicher_zeile
+3 failed, 1 passed, 3 deselected in 0.19s

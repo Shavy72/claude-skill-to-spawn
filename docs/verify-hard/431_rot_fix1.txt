@@ -1,0 +1,51 @@
+F..................F                                                     [100%]
+=================================== FAILURES ===================================
+___________________________ test_reihenfolge_a_bis_e ___________________________
+
+umgebung = (PosixPath('/tmp/pytest-of-bau/pytest-3237/test_reihenfolge_a_bis_e0/repo'), PosixPath('/tmp/pytest-of-bau/pytest-3237/test_reihenfolge_a_bis_e0/wt/wt-431'))
+
+    def test_reihenfolge_a_bis_e(umgebung: tuple[Path, Path]) -> None:
+        repo, wt = umgebung
+        fake = FakeWerkzeug(wt)
+        erg = _lauf(repo, fake)
+        assert erg.exit == 0, erg.zeile
+        namen = fake.namen()
+        # a) Handoff-Auftrag ins alte Fenster, b) neues Fenster, c) /remote-control, e) Prompt, dann beenden + umbenennen
+>       assert namen == [
+            "tippen",
+            "fenster_starten",
+            "tippen",
+            "tippen",
+            "alte_session_beenden",
+            "fenster_schliessen",
+            "fenster_umbenennen",
+        ]
+E       AssertionError: assert ['tippen', 'f...r_umbenennen'] == ['tippen', 'f...liessen', ...]
+E         
+E         At index 5 diff: 'fenster_umbenennen' != 'fenster_schliessen'
+E         Right contains one more item: 'fenster_umbenennen'
+E         Use -v to get more diff
+
+tests/test_respawn_431.py:174: AssertionError
+_________________ test_tippen_mehrzeilig_als_paste_dann_enter __________________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7f315957e4d0>
+
+    def test_tippen_mehrzeilig_als_paste_dann_enter(monkeypatch: pytest.MonkeyPatch) -> None:
+        """Zeilenumbrüche per send-keys wären Enter — der Prompt ginge stückweise ab."""
+        monkeypatch.setattr(respawn.time, "sleep", lambda s: None)
+        t = _TmuxAufzeichnung()
+        t.tippen("=spec-1:@2", "Zeile eins\nZeile zwei")
+        befehle = [a[0][0] for a in t.aufrufe]
+>       assert befehle == ["load-buffer", "paste-buffer", "send-keys"]
+E       AssertionError: assert ['send-keys', 'send-keys'] == ['load-buffer..., 'send-keys']
+E         
+E         At index 0 diff: 'send-keys' != 'load-buffer'
+E         Right contains one more item: 'send-keys'
+E         Use -v to get more diff
+
+tests/test_respawn_431.py:461: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_respawn_431.py::test_reihenfolge_a_bis_e - AssertionError: ...
+FAILED tests/test_respawn_431.py::test_tippen_mehrzeilig_als_paste_dann_enter
+2 failed, 18 passed in 0.63s

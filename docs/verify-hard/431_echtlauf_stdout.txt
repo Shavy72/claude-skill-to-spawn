@@ -1,0 +1,2 @@
+respawn #9431: neue Session läuft in „bau 9431 neu“, alte Session (Pane-PID 3064002) nicht beendet
+exit=1

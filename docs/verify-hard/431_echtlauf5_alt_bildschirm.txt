@@ -1,0 +1,24 @@
+
+✻ Cooked for 58s · done 4:11 PM
+
+❯ Ablösung abgebrochen (respawn). Die neue Session startet nicht — arbeite
+  normal am Ticket weiter. Handoff-Datei und Start-Prompt dürfen liegen
+  bleiben.
+
+● 🎯 Welches Ticket / Ziel soll ich übernehmen?
+
+  Im Repo liegt nur README.md und docs/handoffs/. Ein Ticket ist dort nicht
+  hinterlegt. Der Handoff nennt #362/#363 (Spec 361), aber nur aus dem
+  Gedächtnis und ungeprüft.
+
+  Nenn mir das Ticket oder das Ziel dieser Worktree-Session. Bis dahin baue ich
+  nichts.
+
+✻ Churned for 8s · done 4:12 PM
+
+────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────
+  Sonnet 5.5 · 75.7k (8.0%) · 2m
+  📁 wt-9431 · ⎇ master · 5h: 15% (reset 18:30) · 7d: 72%
+  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents

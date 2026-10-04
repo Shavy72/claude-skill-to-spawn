@@ -35,6 +35,10 @@ VORGABE: dict[str, int] = {"min_frei_mib": 2048, "max_sessions": 6, "staffel_s":
 #: Exit-Code der CLI (``to_spawn.py speicher``) und der Starter, wenn kein Platz ist.
 EXIT_VOLL = 5
 
+#: Kernstück der Wartezeile von :func:`auf_platz_warten` (``<wer> wartet auf Speicher …``).
+#: respawn erkennt daran auf dem Bildschirm, dass bau.py noch vor dem Claude-Start wartet.
+WARTE_TEXT = "wartet auf Speicher"
+
 
 def _meminfo_pfad() -> Path:
     return Path(os.environ.get("TO_SPAWN_SPEICHER_MEMINFO") or "/proc/meminfo")
@@ -182,7 +186,7 @@ def auf_platz_warten(
             return zyklen
         zyklen += 1
         if zyklen == 1 or zyklen % meldung_alle == 0:
-            text = f"{wer} wartet auf Speicher (Zyklus {zyklen}, Takt {takt_s} s): {grund}"
+            text = f"{wer} {WARTE_TEXT} (Zyklus {zyklen}, Takt {takt_s} s): {grund}"
             print(text, file=sys.stderr)
             log.info("%s", text)
         schlafen(takt_s)

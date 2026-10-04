@@ -1,0 +1,47 @@
+FF.                                                                      [100%]
+=================================== FAILURES ===================================
+___________ test_r3_b4_abbruch_schreibt_alte_sessions_datei_zurueck ____________
+
+umgebung = (PosixPath('/tmp/pytest-of-bau/pytest-3421/test_r3_b4_abbruch_schreibt_al0/repo'), PosixPath('/tmp/pytest-of-bau/pytest-3421/test_r3_b4_abbruch_schreibt_al0/wt/wt-431'))
+
+    def test_r3_b4_abbruch_schreibt_alte_sessions_datei_zurueck(
+        umgebung: tuple[Path, Path],  # noqa: F811
+    ) -> None:
+        repo, wt = umgebung
+        datei = sessions_datei.pfad(repo, str(TICKET))
+        sessions_datei.schreiben(repo, str(TICKET), "alt-1234", repo, 3)
+        vorher = datei.read_bytes()
+        fake = FakeWerkzeug(wt, handoff_anlegen=False)
+        _bau_schreibt_sessions(fake, repo)
+        erg = _lauf(repo, fake, warte_max=30)
+        assert erg.exit == 2, erg.zeile
+>       assert datei.read_bytes() == vorher
+E       assert b'{\n "sessio...:03+02:00"\n}' == b'{\n "sessio...:03+02:00"\n}'
+E         
+E         At index 18 diff: b'n' != b'a'
+E         Use -v to get more diff
+
+tests/test_respawn_431_runde3.py:132: AssertionError
+_____________ test_r3_b4_abbruch_ohne_vorherige_datei_loescht_sie ______________
+
+umgebung = (PosixPath('/tmp/pytest-of-bau/pytest-3421/test_r3_b4_abbruch_ohne_vorher0/repo'), PosixPath('/tmp/pytest-of-bau/pytest-3421/test_r3_b4_abbruch_ohne_vorher0/wt/wt-431'))
+
+    def test_r3_b4_abbruch_ohne_vorherige_datei_loescht_sie(
+        umgebung: tuple[Path, Path],  # noqa: F811
+    ) -> None:
+        repo, wt = umgebung
+        datei = sessions_datei.pfad(repo, str(TICKET))
+        fake = FakeWerkzeug(wt, handoff_anlegen=False)
+        _bau_schreibt_sessions(fake, repo)
+        erg = _lauf(repo, fake, warte_max=30)
+        assert erg.exit == 2, erg.zeile
+>       assert not datei.exists()
+E       AssertionError: assert not True
+E        +  where True = exists()
+E        +    where exists = PosixPath('/tmp/pytest-of-bau/pytest-3421/test_r3_b4_abbruch_ohne_vorher0/repo/.to-spawn/sessions/431.json').exists
+
+tests/test_respawn_431_runde3.py:145: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_respawn_431_runde3.py::test_r3_b4_abbruch_schreibt_alte_sessions_datei_zurueck
+FAILED tests/test_respawn_431_runde3.py::test_r3_b4_abbruch_ohne_vorherige_datei_loescht_sie
+2 failed, 1 passed, 4 deselected in 0.12s

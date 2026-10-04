@@ -1,0 +1,65 @@
+FF                                                                       [100%]
+=================================== FAILURES ===================================
+________________ test_r3_b3_tmux_bildschirm_fehler_liefert_none ________________
+
+    def test_r3_b3_tmux_bildschirm_fehler_liefert_none() -> None:
+>       assert _TmuxFehler("server exited unexpectedly").bildschirm("=spec:@1") is None
+E       AssertionError: assert '' is None
+E        +  where '' = bildschirm('=spec:@1')
+E        +    where bildschirm = <test_respawn_431._TmuxFehler object at 0x7ffa137becf0>.bildschirm
+E        +      where <test_respawn_431._TmuxFehler object at 0x7ffa137becf0> = _TmuxFehler('server exited unexpectedly')
+
+tests/test_respawn_431_runde3.py:208: AssertionError
+------------------------------ Captured log call -------------------------------
+WARNING  to_spawn.respawn:respawn.py:294 Bildschirm =spec:@1 nicht lesbar: tmux list-panes: server exited unexpectedly
+___________ test_r3_b3_unlesbarer_alter_bildschirm_wartet_und_meldet ___________
+
+umgebung = (PosixPath('/tmp/pytest-of-bau/pytest-3431/test_r3_b3_unlesbarer_alter_bi0/repo'), PosixPath('/tmp/pytest-of-bau/pytest-3431/test_r3_b3_unlesbarer_alter_bi0/wt/wt-431'))
+
+    def test_r3_b3_unlesbarer_alter_bildschirm_wartet_und_meldet(
+        umgebung: tuple[Path, Path],  # noqa: F811
+    ) -> None:
+        repo, wt = umgebung
+        fake = FakeWerkzeug(wt)
+        original = fake.bildschirm
+    
+        def bildschirm(ziel: str) -> str | None:
+            if ziel == ALT_ZIEL:
+                fake.aufrufe.append(("bildschirm", ziel))
+                return None
+            return original(ziel)
+    
+        fake.bildschirm = bildschirm  # type: ignore[method-assign,assignment]
+        erg = _lauf(repo, fake, warte_max=600)
+>       assert erg.exit == 0, erg.zeile
+E       AssertionError: respawn #431: Fehler — AttributeError: 'NoneType' object has no attribute 'splitlines' beim Beenden der alten Session — neue Session arbeitet in „bau 431 neu“, alte evtl. noch offen, Handarbeit nötig
+E       assert 1 == 0
+E        +  where 1 = Ergebnis(exit=1, zeile="respawn #431: Fehler — AttributeError: 'NoneType' object has no attribute 'splitlines' beim Beenden der alten Session — neue Session arbeitet in „bau 431 neu“, alte evtl. noch offen, Handarbeit nötig").exit
+
+tests/test_respawn_431_runde3.py:226: AssertionError
+------------------------------ Captured log call -------------------------------
+ERROR    to_spawn.respawn:respawn.py:680 respawn #431 abgebrochen.
+Traceback (most recent call last):
+  File "/home/bau/wt/skill-431/to_spawn/respawn.py", line 676, in abloesen
+    erg = _ablauf(auftrag, w, stand)
+  File "/home/bau/wt/skill-431/to_spawn/respawn.py", line 773, in _ablauf
+    return _alte_abloesen(a, w, stand, alt, stand.neu, wt, gefunden_h, gefunden_s)
+  File "/home/bau/wt/skill-431/to_spawn/respawn.py", line 928, in _alte_abloesen
+    if not _alte_ruhig(w, alt.ziel):
+           ~~~~~~~~~~~^^^^^^^^^^^^^
+  File "/home/bau/wt/skill-431/to_spawn/respawn.py", line 908, in _alte_ruhig
+    return _warte(w, ALT_RUHE_MAX_S, bedingung)
+  File "/home/bau/wt/skill-431/to_spawn/respawn.py", line 577, in _warte
+    if bedingung():
+       ~~~~~~~~~^^
+  File "/home/bau/wt/skill-431/to_spawn/respawn.py", line 903, in bedingung
+    ruhig = not _arbeitet(w.bildschirm(ziel))
+                ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+  File "/home/bau/wt/skill-431/to_spawn/respawn.py", line 548, in _arbeitet
+    for zeile in text.splitlines():
+                 ^^^^^^^^^^^^^^^
+AttributeError: 'NoneType' object has no attribute 'splitlines'
+=========================== short test summary info ============================
+FAILED tests/test_respawn_431_runde3.py::test_r3_b3_tmux_bildschirm_fehler_liefert_none
+FAILED tests/test_respawn_431_runde3.py::test_r3_b3_unlesbarer_alter_bildschirm_wartet_und_meldet
+2 failed, 11 deselected in 0.07s

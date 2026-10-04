@@ -1,0 +1,2 @@
+respawn #9431: ok — neue Session im Fenster bau 9431, Handoff docs/handoffs/HANDOFF_2026-10-04_9431.md
+Exit 0

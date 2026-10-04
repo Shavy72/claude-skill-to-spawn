@@ -1,0 +1,8 @@
+E       AssertionError: assert False
+E        +  where False = <function _remote_bestaetigt at 0x7f62b5ac2a20>(' ▝▝   ▝▝   ~/wt/wt-9431 · /rc\n❯ /remote-control\n  /remote-control is active · Continue here, on your phone, or at\n  https://claude.ai/code/session_x\n────\n❯ \n────\n')
+E        +    where <function _remote_bestaetigt at 0x7f62b5ac2a20> = respawn._remote_bestaetigt
+
+tests/test_respawn_431.py:918: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_respawn_431.py::test_remote_bestaetigt_echter_bildschirm_claude_2_1
+1 failed, 1 passed, 49 deselected in 0.24s

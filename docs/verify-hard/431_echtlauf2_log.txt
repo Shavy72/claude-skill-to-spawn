@@ -1,0 +1,2 @@
+INFO respawn #9431: Handoff-Auftrag an =spec-9399:@1692 getippt.
+INFO respawn #9431: neues Fenster =spec-9399:@1693 gestartet.

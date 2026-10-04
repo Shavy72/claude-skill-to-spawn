@@ -1,0 +1,18 @@
+  einrichten oder David fragen.
+  Regeln: Deutsch mit echten Umlauten. Kein „fertig“ ohne Beweis. Commits mit
+  Conventional-Commit-Format.
+  Ran 1 shell command
+● Ich bin in wt-431, der Text nennt wt-9431. Prüfe dort.
+  Prüfe Issue-Stände 362/363/431 und Herkunft von 9431 · 2s
+  ⎿  $ cd /home/bau/wt/wt-431; for n in 362 363 431; do gh issue view $n --json
+     number,title,state,closedAt -q '"\(.number) \(.state) \(.closedAt)
+     \(.title)"' 2>&1; done; grep -rl "9431" docs scripts 2>/dev/null | head
+✻ Osmosing… (30s · ↓ 1.0k tokens)
+  ⎿  Tip: Get pinged on your phone when long tasks finish · enable push
+     notifications in /config
+────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────
+  Opus 5.5 · 56.0k (6.0%) · 0m
+  📁 wt-431 · ⎇ ticket/431-respawn-sop · 5h: 13% (reset 23:30) · 7d: 80%
+  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents

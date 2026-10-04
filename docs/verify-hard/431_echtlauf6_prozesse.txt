@@ -1,0 +1,9 @@
+# 17:34:13
+1461554 1461547    01:25:20 /home/bau/.local/bin/claude --model claude-sonnet-5 --allowedTools Bash(/usr/bin/python3 /home/bau/.claude/skills/to-spawn/skripte/leitstand.py *) Artifact ArtifactData Too
+1969779 3327382       15:52 claude --model claude-sonnet-5-5
+1977346 3327382       15:03 bash -lc export REPO=/home/bau/wt/wt-431 TO_SPAWN_HOME=/home/bau/wt/skill-431; bau 9431 --sofort --ohne-prompt
+1977358 1977346       15:03 ./.venv/bin/python scripts/bau.py 9431 --sofort --ohne-prompt
+2021898 2021895       01:45 du -sh /tmp/claude-1000 /home/bau/wt/fremdrepo /home/bau/wt/grill-409 /home/bau/wt/grill-410 /home/bau/wt/grill-411 /home/bau/wt/kat-tmp /home/bau/wt/skill-204 /home/bau/wt
+# nach Abbruch 17:35
+1461554 1461547    01:26:02 /home/bau/.local/bin/claude --model claude-sonnet-5 --allowedTools Bash(/usr/bin/python3 /home/bau/.claude/skills/to-spawn/skripte/leitstand.py *) Artifact ArtifactData Too
+1969779 3327382       16:35 claude --model claude-sonnet-5-5

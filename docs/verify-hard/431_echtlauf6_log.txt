@@ -1,0 +1,24 @@
+Echtlauf 6 — respawn #431 (Skill-Stand 6e4178a, skill-431) auf Wegwerf-Ticket 9431 / Spec 9399
+Datum 2026-10-04, Bau-Server. Urteil: ROT (Exit 1) — Ursache Umgebung, kein Code-Fehler belegt.
+
+Gerüst: .venv-Link in wt-431 -> /home/bau/duoplus-management/.venv, Manifest docs/agents/manifests/spec-9399.json (Ticket 9431).
+TO_SPAWN_HOME greift: Dry-Run-Befehl „export REPO=/home/bau/wt/wt-431 TO_SPAWN_HOME=/home/bau/wt/skill-431; bau 9431 --sofort --ohne-prompt“.
+
+17:18:20 tmux spec-9399 / „bau 9431“ mit claude --model claude-sonnet-5-5 gestartet, 17:18:51 bereit.
+17:19:08 respawn 9399 9431 --warte-max 900 gestartet.
+
+0) Duplikat-Prüfung: GRÜN — genau ein „bau 9431“ (@2083), weiter.
+a) Handoff-Auftrag: GRÜN — getippt an @2083; alte Session schrieb docs/handoffs/HANDOFF_2026-10-04_9431.md (17:19:50) und START_2026-10-04_9431.txt (17:19:54) in wt-9431.
+b) neues Fenster: GRÜN — „bau 9431 neu“ @2084, Kette bash -lc -> ./.venv/bin/python scripts/bau.py 9431 --sofort --ohne-prompt.
+c) bereit + /remote-control: NICHT ERREICHT — bau.py wartete Zyklus 1..15 „wartet auf Speicher: schon 17 Claude-Sessions (Obergrenze 12)“.
+   Das Warten zählte wie gewollt gegen --warte-max (Befund 6 korrekt umgesetzt: kein Sofort-Fehler, ehrliche Meldung).
+   17:34:15 Abbruch nach 901 s: „neue Session wartet nach 901 s noch auf Speicher“ (to_spawn/respawn.py:831), Exit 1.
+d) Handoff/Start-Prompt prüfen: NICHT ERREICHT (Dateien lagen aber seit 17:19:54 vor).
+e) Start-Prompt + alte beenden: NICHT ERREICHT.
+
+Abbruch-Pfad: GRÜN — Fenster @2084 und bau.py-Prozess weg (prozesse.txt „nach Abbruch“), alte Session @2083 lebt
+und bekam „normal am Ticket weiter“ (alt_bildschirm.txt), .to-spawn/sessions/9431.json gab es vorher und nachher nicht.
+
+Ursache rot: Bau-Server voll — 17 Claude-Sessions über die ganze Laufzeit (Obergrenze 12), zusätzlich Platte / zu 100 %
+(df: 503G, 0 frei; alte Session meldete „Transcript writes are failing (disk full — ENOSPC)“).
+Schritte c–e sind damit in Echtlauf 6 unbewiesen; Wiederholung erst, wenn Platz und Sessions unter Grenze.

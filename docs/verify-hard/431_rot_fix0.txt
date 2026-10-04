@@ -1,0 +1,20 @@
+
+tests/test_sessions_stand_respawn_431.py:73: AttributeError
+______________________ test_environ_leser_findet_variable ______________________
+
+modul = <module 'sessions_stand_431' from '/home/bau/wt/skill-431/skripte/sessions_stand.py'>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7f2fe56299d0>
+
+    def test_environ_leser_findet_variable(modul: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(Path, "read_bytes", lambda self: b"A=1\0BAU_TICKET=431\0B=2\0")
+>       assert modul.ticket_aus_environ(1) == "431"
+               ^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: module 'sessions_stand_431' has no attribute 'ticket_aus_environ'
+
+tests/test_sessions_stand_respawn_431.py:78: AttributeError
+=========================== short test summary info ============================
+FAILED tests/test_sessions_stand_respawn_431.py::test_respawn_session_ohne_bau_py_laeuft
+FAILED tests/test_sessions_stand_respawn_431.py::test_kindprozess_der_respawn_session_zaehlt_nicht
+FAILED tests/test_sessions_stand_respawn_431.py::test_environ_leser_ohne_rechte_ist_still
+FAILED tests/test_sessions_stand_respawn_431.py::test_environ_leser_findet_variable
+4 failed, 1 passed in 0.14s

@@ -202,9 +202,11 @@ B Ticket neu starten (Ticket steht auf „aus“)
   Erst mit `--dry-run` ansehen, dann ohne.
 C Hängende oder tote Session erkennen und ablösen
   Erkennen: Befehl A zeigt VERWAIST, oder „läuft seit“ ohne neue Bau-Log-Zeile/Commit seit über 60 min, oder capo meldet „Session tot“. Prüfen: Bau-Server `pstree -p <PID>`, PC: Kinder-Spalte in Befehl A. Auf dem Server greift zusätzlich der Aufpasser (Cron, 15 min): `python3 ~/.claude/skills/to-spawn/skripte/aufpasser.py --trocken` (vom PC: `ssh <SSH> 'python3 ~/.claude/skills/to-spawn/skripte/aufpasser.py --trocken'`) zeigt, was er tun würde.
-  Ablösen (beendet nur die Claude-Session des Tickets, dann Neustart): `{NEUSTART} --beenden` (Server: zusätzlich `--ziel srv`). Halbfertige Arbeit im Worktree bleibt liegen, die neue Session übernimmt sie.
+  Läuft die Session noch (hängt): Skill `/respawn` per Ablöse-Subagent (`model: sonnet`, 1 Zeile Antwort): `{RESPAWN}` (nur Bau-Server).
+  Session tot / Ticket „aus“ (beendet nur die Claude-Session des Tickets, dann Neustart): `{NEUSTART} --beenden` (Server: zusätzlich `--ziel srv`). Halbfertige Arbeit im Worktree bleibt liegen, die neue Session übernimmt sie.
 D Session an der Smart-Zone-Grenze übergeben (Handoff-Grenze aus ~/.claude/smart-zone.json)
   Die Ticket-Session schreibt `docs/handoffs/HANDOFF_<datum>_<N>.md` im Ticket-Worktree, committet ihn und hört auf. Staffel ist aus (`staffel.aktiv`) — der Nachfolger kommt von dir:
+  Läuft die Session noch (an der Grenze): Skill `/respawn` per Ablöse-Subagent (`model: sonnet`, 1 Zeile Antwort): `{RESPAWN}` (nur Bau-Server). Ist sie tot / Ticket „aus“:
   `{NEUSTART} --handoff docs/handoffs/HANDOFF_<datum>_<N>.md --beenden` (Server: zusätzlich `--ziel srv`). Die neue Session startet mit dem Auftrag „Weiter ab Handoff …“.
 E Dich selbst ablösen (deine Handoff-Grenze ist erreicht)
   1. `docs/HANDOFF_{DATUM}_waechter_{S}.md` vollständig: Stand je Ticket, offene Entscheidungen, laufende Neustarts, nächster Schritt. Commit mit Pathspec + [skip ci], Push.
@@ -219,7 +221,7 @@ Erste Zeile jeder Antwort: 🧭 Opus · medium · Aufseher #{S}"""
 
 
 # Werkzeug-Befehle aus derselben Quelle wie die Startklar-Probe (#450 F5).
-PROMPT = PROMPT.replace("{AUFRAEUMEN}", startklar.BEFEHL_AUFRAEUMEN).replace("{NEUSTART}", startklar.BEFEHL_NEUSTART)
+PROMPT = PROMPT.replace("{AUFRAEUMEN}", startklar.BEFEHL_AUFRAEUMEN).replace("{NEUSTART}", startklar.BEFEHL_NEUSTART).replace("{RESPAWN}", startklar.BEFEHL_RESPAWN)
 
 
 def main() -> int:

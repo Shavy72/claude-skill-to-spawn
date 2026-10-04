@@ -902,6 +902,21 @@ def _bau_skript(repo: Path) -> Path:
     return Path(__file__).resolve().parent.parent / "skripte" / "bau.py"
 
 
+def bau_startzeile(repo: Path, ticket: int, auftrag: str = "", *schalter: str) -> str:
+    """Shell-Zeile, mit der ein tmux-Fenster eine Bau-Session startet (``bash -lc``).
+
+    Einziger Ort für den Vorspann (``REPO``/``TO_SPAWN_HOME`` wie ``skripte/spawn_srv.sh``,
+    sonst startet ``bau`` in einem anderen Repo, #212). Die Konfiguration der Session
+    (Settings, MCP, Session-ID, Staffel-Umgebung) liefert allein ``bau.py``. ``schalter``
+    hängt weitere ``bau``-Schalter an (respawn #431: ``--ohne-prompt``).
+    """
+    skill = Path(__file__).resolve().parent.parent
+    vorspann = f"REPO={shlex.quote(str(repo))} TO_SPAWN_HOME={shlex.quote(str(skill))}"
+    if auftrag.strip():
+        vorspann += f" BAU_AUFTRAG={shlex.quote(_kurz(auftrag, AUFTRAG_MAX_ZEICHEN))}"
+    return f"export {vorspann}; {shlex.join(['bau', str(ticket), '--sofort', *schalter])}"
+
+
 def folge_befehl(repo: Path, spec: int, ticket: int, fenster: list[str] | None, auftrag: str = "") -> list[str]:
     """Startbefehl der Folge-Runde: tmux-Fenster wie ``spawn_srv.sh``, ohne tmux lokal.
 
@@ -912,11 +927,7 @@ def folge_befehl(repo: Path, spec: int, ticket: int, fenster: list[str] | None, 
     """
     if fenster is None:
         return [sys.executable, str(_bau_skript(repo)), str(ticket), "--sofort"]
-    skill = Path(__file__).resolve().parent.parent
-    vorspann = f"REPO={shlex.quote(str(repo))} TO_SPAWN_HOME={shlex.quote(str(skill))}"
-    if auftrag.strip():
-        vorspann += f" BAU_AUFTRAG={shlex.quote(_kurz(auftrag, AUFTRAG_MAX_ZEICHEN))}"
-    innen = f"export {vorspann}; bau {ticket} --sofort"
+    innen = bau_startzeile(repo, ticket, auftrag)
     kopf = ["new-window", "-t", f"=spec-{spec}"] if fenster else ["new-session", "-d", "-s", f"spec-{spec}"]
     return [
         *_tmux_befehl(),

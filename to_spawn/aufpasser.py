@@ -75,6 +75,7 @@ import logging
 import os
 import re
 import shlex
+import signal
 import subprocess
 import sys
 import tempfile
@@ -84,7 +85,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from to_spawn import bau_log, config, sessions_datei, speicher, vorfall
+from to_spawn import bau_log, config, prozessbaum, sessions_datei, speicher, vorfall
 from to_spawn.waechter_lauf import _LIMIT_TEXT as LIMIT_TEXT
 from to_spawn.waechter_lauf import transkript_ordner
 
@@ -415,23 +416,6 @@ def prozess_argv_text(pid: int) -> str:
     return " ".join(_argv(pid))
 
 
-def _prozess_kinder() -> dict[int, list[int]]:
-    kinder: dict[int, list[int]] = {}
-    for eintrag in Path("/proc").iterdir():
-        if not eintrag.name.isdigit():
-            continue
-        try:
-            stat = (eintrag / "stat").read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            continue
-        # ``pid (comm) zustand ppid …`` — comm darf Leerzeichen und Klammern enthalten.
-        rest = stat[stat.rfind(")") + 2 :].split()
-        if len(rest) < 2:
-            continue
-        kinder.setdefault(int(rest[1]), []).append(int(eintrag.name))
-    return kinder
-
-
 def _vorfahren(pid: int) -> set[int]:
     """``pid`` und seine Eltern bis init — die eigene Aufrufkette ist nie ein Deploy."""
     kette: set[int] = set()
@@ -447,15 +431,9 @@ def _vorfahren(pid: int) -> set[int]:
     return kette
 
 
-def prozess_baum(pid: int) -> list[int]:
-    """``pid`` selbst und alle Nachfahren (Breite zuerst)."""
-    kinder = _prozess_kinder()
-    baum, warteschlange = [], [pid]
-    while warteschlange:
-        p = warteschlange.pop(0)
-        baum.append(p)
-        warteschlange.extend(kinder.get(p, []))
-    return baum
+# Prozessbaum und „lebt“ kommen aus dem gemeinsamen Modul (auch respawn nutzt es).
+prozess_baum = prozessbaum.baum
+_prozess_lebt = prozessbaum.lebt
 
 
 def session_beendet(pane_pid: int) -> bool:
@@ -478,10 +456,6 @@ def session_beendet(pane_pid: int) -> bool:
         if Path(argv[0]).name.lstrip("-") not in SHELLS:
             return False
     return True
-
-
-def _prozess_lebt(pid: int) -> bool:
-    return Path(f"/proc/{pid}").exists()
 
 
 def session_laeuft_schon(sid: str, heim: Path | None = None) -> int | None:
@@ -1189,26 +1163,14 @@ class Aufpasser:
         """Alten Prozessbaum des Panes beenden: SIGHUP, bis 5 s warten, SIGTERM, nach
         weiteren 5 s SIGKILL — sonst liefe dieselbe Session doppelt."""
         baum = prozess_baum(pane_pid) if pane_pid else []
-        for signal in (1, 15, 9):
-            baum = [pid for pid in baum if _prozess_lebt(pid)]
-            if not baum:
-                return
-            if signal != 1:
-                log.warning(
-                    "Pane %s: %d Prozesse überlebt, Signal %d",
-                    pane_pid,
-                    len(baum),
-                    signal,
-                )
-            for pid in reversed(baum):
-                try:
-                    os.kill(pid, signal)
-                except ProcessLookupError:
-                    continue
-            for _ in range(50):
-                if not any(_prozess_lebt(pid) for pid in baum):
-                    return
-                time.sleep(0.1)
+        prozessbaum.beenden(
+            list(reversed(baum)),
+            ((signal.SIGHUP, 5.0), (signal.SIGTERM, 5.0), (signal.SIGKILL, 5.0)),
+            takt_s=0.1,
+            eskalation=lambda sig, lebende: log.warning(
+                "Pane %s: %d Prozesse überlebt, Signal %d", pane_pid, len(lebende), sig
+            ),
+        )
 
     def _fenster_schliessen(
         self, ziel: str, freigabe: Freigabe, pane_pid: int = 0
