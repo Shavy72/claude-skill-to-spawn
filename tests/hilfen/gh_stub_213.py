@@ -21,6 +21,8 @@ Kommentare dürfen als Text (Autor ``bot``, Zeit jetzt) oder als Objekt
 ``GH_STUB_PROTOKOLL`` (Pfad): jeder Aufruf wird als Zeile angehängt.
 ``GH_STUB_FEHLER`` (z. B. ``comment`` oder ``reopen,comment``): diese Aufrufe enden mit Exit 1.
 ``api user`` → ``{"login": <Zustand ``login``, Vorgabe bau-bot>}`` (#402).
+``api repos/<slug>/issues/<N>/dependencies/blocked_by`` → Zustand ``blocker[N]``
+(Liste ``{"number", "state"}``, Vorgabe leer); ``GH_STUB_FEHLER=blocked_by`` → Exit 1 (#451).
 ``labels`` (Liste von Namen) und ``state_reason`` im Issue werden durchgereicht (Fixrunde #213).
 """
 
@@ -91,6 +93,13 @@ def main() -> int:
         if treffer:
             kinder = daten.get("sub", {}).get(treffer.group(1), [])
             print(json.dumps([_issue(str(k), daten) for k in kinder]))
+            return 0
+        treffer = re.search(r"issues/(\d+)/dependencies/blocked_by", args[1])
+        if treffer:
+            if "blocked_by" in os.environ.get("GH_STUB_FEHLER", "").split(","):
+                print("gh-Ersatz #213: blocked_by absichtlich gescheitert", file=sys.stderr)
+                return 1
+            print(json.dumps(daten.get("blocker", {}).get(treffer.group(1), [])))
             return 0
         treffer = re.search(r"issues/(\d+)/comments", args[1])
         if treffer:
