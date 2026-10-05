@@ -1,0 +1,185 @@
+{
+  "spec": 330,
+  "feature": "sounds-katalog",
+  "tickets": {
+    "331": {
+      "title": "Ton-Schritt: eine Zeile + Sound-Pop-up, flüssiges Wählen, Handy-Layout",
+      "schaetzung_k": 60,
+      "umfang": "Zeile + Pop-up, Wählen ohne Busy-Sperre, Vorhören, 390-px-Fix",
+      "skills": [
+        "user-flow-lens",
+        "mobile-first-dashboard",
+        "uiux-viewport-testing",
+        "webapp-testing"
+      ],
+      "mcp": [
+        "chrome-devtools"
+      ],
+      "docs": [
+        "docs/DESIGN_DOKTRIN.md",
+        "CONTEXT.md"
+      ],
+      "files": [
+        "web/static/js/strasse2.js:3543-3727",
+        "web/static/js/strasse2.js:1476-1489",
+        "web/static/js/strasse2.js:1113-1125",
+        "web/static/js/strasse2.js:6191-6209",
+        "web/static/js/strasse2.js:4058-4090",
+        "web/static/css/strasse2.css:2102-2208",
+        "web/static/css/strasse2.css:2897-2905",
+        "web/templates/_strasse2_rumpf.html",
+        "tests/test_browser_297_ton_schritt_knoepfe.py:1-40"
+      ]
+    },
+    "332": {
+      "title": "Ton-Schritt: Begriff Sound, Schild „Sounds“, Regler grau, Karten-Schilder",
+      "schaetzung_k": 40,
+      "umfang": "Texte DE/EN, Schild, Regler-grau-Logik, Karten-Schilder",
+      "skills": [
+        "user-flow-lens",
+        "german-umlauts"
+      ],
+      "mcp": [
+        "chrome-devtools"
+      ],
+      "docs": [
+        "CONTEXT.md"
+      ],
+      "files": [
+        "web/static/js/strasse2.js:501",
+        "web/static/js/strasse2.js:1244-1286",
+        "web/services/ton_erklaerung.py:129-153",
+        "web/translations/en.json"
+      ]
+    },
+    "333": {
+      "title": "Sammler-Kern: Vorlage einsammeln → Gesammelter Sound mit Sprach-Filter, Dubletten, Häufigkeit",
+      "schaetzung_k": 65,
+      "umfang": "Katalog-Schema additiv, Einsammel-Funktion, Einwurf-Haken, API-Felder + Sortierung",
+      "skills": [
+        "python-patterns",
+        "python-testing",
+        "database-migrations"
+      ],
+      "mcp": [
+        "graphify-mcp"
+      ],
+      "docs": [
+        "CONTEXT.md",
+        "docs/CLAUDE_DOCTRINES.md"
+      ],
+      "files": [
+        "web/services/strasse_audio.py:400-426",
+        "web/services/strasse_audio.py:432-559",
+        "web/services/strasse_audio.py:299-350",
+        "web/services/concept_intake.py:1519-1578",
+        "web/services/suite_stt.py:71-90",
+        "web/routes/production_street.py:1558-1680",
+        "web/services/fremd_aufzeichnung.py:174-230",
+        "tests/test_strasse_audio.py:276-309, tests/test_musik_api.py:171-213"
+      ]
+    },
+    "334": {
+      "title": "Nachscan aller Vorlagen + Übernahme der 5 Schnelllösungs-Sounds",
+      "schaetzung_k": 35,
+      "umfang": "Idempotenter Ein-mal-Lauf über concept_shelf, Verknüpfung Nr. 3–7",
+      "skills": [
+        "python-patterns"
+      ],
+      "mcp": [],
+      "docs": [
+        "CONTEXT.md"
+      ],
+      "files": [
+        "scripts/backfill_phase_history.py:1-25",
+        "web/services/concept_shelf.py:1479-1508",
+        "web/services/strasse_audio.py:522-559"
+      ]
+    },
+    "335": {
+      "title": "Namens-Kette: Instagram → Shazam → Geschätzter Name",
+      "schaetzung_k": 45,
+      "umfang": "IG-Stufe auch für Zweitweg/Upload, Gemini-Namensschätzung, Name-Quelle",
+      "skills": [
+        "python-testing",
+        "cost-aware-llm-pipeline"
+      ],
+      "mcp": [],
+      "docs": [
+        "CONTEXT.md"
+      ],
+      "files": [
+        "web/services/musik_erkennung.py:37,62,114-155,222-256",
+        "web/services/concept_intake.py:1377,1428-1435,1519-1534",
+        "web/services/concept_shelf.py:66",
+        "tests/test_musik_erkennung.py:264-296"
+      ]
+    },
+    "336": {
+      "title": "Stimmung: Sounds und Vorlagen bekommen Stimmung, Suche + Filter im Pop-up (DE/EN)",
+      "schaetzung_k": 55,
+      "umfang": "Feste zweisprachige Stimmungs-Liste, Gemini-Bewertung Sound + Vorlage, Pop-up-Suche/Filter",
+      "skills": [
+        "cost-aware-llm-pipeline",
+        "user-flow-lens"
+      ],
+      "mcp": [
+        "chrome-devtools"
+      ],
+      "docs": [
+        "CONTEXT.md"
+      ],
+      "files": [
+        "web/services/concept_analyse_gemini.py:198-266",
+        "web/services/concept_analyse_gemini.py:514-628",
+        "web/translations/en.json"
+      ]
+    },
+    "337": {
+      "title": "Sound-Vorschlag + Vorauswahl nach Vorlagen-Ton",
+      "schaetzung_k": 50,
+      "umfang": "Vorschlags-Punktzahl, Vorauswahl-Regel, passt-gut im Pop-up, Hinweis-Text",
+      "skills": [
+        "user-flow-lens",
+        "python-testing"
+      ],
+      "mcp": [
+        "chrome-devtools"
+      ],
+      "docs": [
+        "CONTEXT.md"
+      ],
+      "files": [
+        "web/routes/production_street.py:1558-1608,1640-1680",
+        "web/services/ton_erklaerung.py:184-211",
+        "web/static/js/strasse2.js:3543-3560,3633-3646"
+      ]
+    },
+    "338": {
+      "title": "Schleife mit weichem Übergang für kurze Sounds",
+      "schaetzung_k": 25,
+      "umfang": "Überblendung am Schleifenpunkt im Mix",
+      "skills": [
+        "ffmpeg-production"
+      ],
+      "mcp": [],
+      "docs": [],
+      "files": [
+        "web/services/strasse_audio.py:1080-1120",
+        "web/services/reel_street.py:7739-7815",
+        "tests/test_musik_drei_pegel_138.py:1-20"
+      ]
+    },
+    "339": {
+      "title": "Abnahme Sounds-Katalog durch David",
+      "schaetzung_k": 10,
+      "umfang": "Davids Live-Abnahme",
+      "skills": [],
+      "mcp": [],
+      "docs": [
+        "docs/agents/handoffs/2026-09-25_sounds-katalog_grill-entscheidungen.md"
+      ],
+      "files": []
+    }
+  }
+}
