@@ -395,3 +395,72 @@ def test_echte_naht_leiter_echter_prozess_meldet_fehler(welt: dict) -> None:
     assert lauf.code == 1
     assert f"#{TICKET}" in lauf.zeile
     assert "GitHub-Repo unbekannt" in lauf.zeile
+
+
+def test_wache_main_startet_blick_vor_fahre_und_stoppt_danach(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``wache.main`` umschließt alle Aufseher-Runden mit dem Handoff-Blick (#542):
+    Blick an → ``fahre`` (auch nach einer Ablösung) → Blick aus. Die Naht ist die echte
+    ``EchteNaht`` mit Repo-Wurzel, Aufseher-Ordner und GitHub-Slug aus ``wache``."""
+    import importlib.util
+    from contextlib import contextmanager
+
+    quelle = Path(__file__).resolve().parent.parent / "skripte" / "wache.py"
+    modul_spec = importlib.util.spec_from_file_location("wache_blick_542", quelle)
+    assert modul_spec is not None and modul_spec.loader is not None
+    wache = importlib.util.module_from_spec(modul_spec)
+    modul_spec.loader.exec_module(wache)
+
+    reihe: list[str] = []
+    naehte: list[Any] = []
+
+    @contextmanager
+    def laeuft(spec: int, naht: Any, **_kw: Any):  # noqa: ANN202
+        assert spec == SPEC
+        naehte.append(naht)
+        reihe.append("blick_an")
+        try:
+            yield None
+        finally:
+            reihe.append("blick_aus")
+
+    def fahre(**kw: Any) -> int:
+        reihe.append("fahre")
+        if reihe.count("fahre") == 1:  # erste Runde löst sich ab → zweite Runde
+            (tmp_path / "h.md").write_text("Handoff\n", encoding="utf-8")
+            Path(os.environ[wache.ABLOESE_ENV]).write_text(
+                json.dumps({"handoff": str(tmp_path / "h.md")}), encoding="utf-8"
+            )
+        return 0
+
+    monkeypatch.setattr(handoff_blick, "laeuft", laeuft)
+    monkeypatch.setattr(wache.waechter_lauf, "fahre", fahre)
+    monkeypatch.setattr(wache, "repo_slug_oder_abbruch", lambda: "o/r")
+    monkeypatch.setattr(wache, "start_ordner", lambda: tmp_path)
+    monkeypatch.setattr(wache, "auf_speicher_warten", lambda *a, **k: 0)
+    monkeypatch.setattr(wache, "abloese_prompt", lambda *a, **k: "weiter")
+    monkeypatch.setattr(wache.config, "sicherstellen", lambda *a, **k: None)
+    monkeypatch.setattr(wache.config, "lade", lambda *a, **k: {})
+    monkeypatch.setattr(wache.startklar, "gate", lambda *a, **k: 0)
+    monkeypatch.setattr(wache.context_mode, "pruefen", lambda **k: tmp_path)
+    monkeypatch.setattr(wache.vertrauen, "still_sicherstellen", lambda *a, **k: None)
+    monkeypatch.setattr(wache.tempfile, "mkdtemp", lambda **k: str(tmp_path))
+    # main() setzt/entfernt Umgebung — vorher registrieren, damit sie zurückgesetzt wird.
+    for name in (
+        "CLAUDE_CODE_FORCE_SESSION_PERSISTENCE",
+        "BAU_UMZUG_DATEI",
+        "TO_SPAWN_WACHE_SPEC",
+        wache.ABLOESE_ENV,
+    ):
+        monkeypatch.setenv(name, "")
+    monkeypatch.delenv("CLAUDE_CODE_CHILD_SESSION", raising=False)
+    monkeypatch.delenv("TO_SPAWN_REPO", raising=False)
+    monkeypatch.setattr(sys, "argv", ["wache.py", str(SPEC)])
+
+    assert wache.main() == 0
+    assert reihe == ["blick_an", "fahre", "fahre", "blick_aus"]
+    assert len(naehte) == 1 and isinstance(naehte[0], handoff_blick.EchteNaht)
+    assert naehte[0].repo == wache.REPO_ORDNER
+    assert naehte[0].ordner == tmp_path
+    assert naehte[0].gh_repo == "o/r"
