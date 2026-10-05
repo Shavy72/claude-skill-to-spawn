@@ -222,15 +222,21 @@ _FENSTER_TICKET = re.compile(r"bau[ _-]?(\d+)")
 SHELLS = frozenset({"bash", "sh", "zsh", "dash", "fish", "ksh"})
 #: Deploy-Prozesse älter als das sind Waisen.
 DEPLOY_ALTER_MAX_S = 6 * 3600
-DEPLOY_MUSTER = r"safe_deploy_vps\.sh|deploy_schlange|staging_deploy\.sh"
+DEPLOY_MUSTER = (
+    r"safe_deploy_vps\.sh|deploy_schlange|staging_deploy\.sh|server_tuer\.sh"
+)
 #: Gate/Testlauf: sperrt nur das eigene Fenster (Fensterbaum oder Ticket-Worktree),
 #: nie den ganzen Server — fremde Testläufe halten keinen Platz fest (#592).
+#: Welche Deploy-Aufrufe ebenso nur prüfen, entscheidet ``deploy_art`` (#598).
 GATE_MUSTER = r"pytest"
 #: Grenze voll + Session idle + Ticket zu: so lange vor dem Schließen warten und
 #: dann den Fenstertext vergleichen, statt die volle Karenz abzusitzen (#592).
 KARENZ_PLATZNOT_S = 30
 #: Ticket zu: so lange darf Claude nach ``/exit`` brauchen, dann wird es beendet (#592).
 EXIT_WARTEN_S = 30
+#: Nach ``/exit``: so lange darf die Fenster-Shell brauchen, um den nächsten
+#: Kettenbefehl zu starten, bevor das Fenster als „nur noch Shell“ gilt (#598).
+KETTE_RUHE_S = 1.0
 STOPP_LABELS = frozenset({"ready-for-human", "needs-info", "wontfix"})
 CRON_MARKE = "# to-spawn aufpasser"
 CRON_TAKT = "*/15 * * * *"
@@ -489,6 +495,35 @@ BEENDEN_STUFEN = tuple(
 #: Ausgang von ``_fenster_schliessen``: Fenster zu, Claude per ``/exit`` beendet,
 #: Claude nach ``/exit`` zwangsbeendet, Claude lebt trotz allem noch.
 Schliessart = Literal["fenster", "exit", "zwang", "offen"]
+
+
+DeployArt = Literal["live", "pruef"]
+
+
+def deploy_art(argv: list[str]) -> DeployArt | None:
+    """Einzige Stelle, die einen Prozess als Deploy einstuft (#598).
+
+    ``live`` — echter Deploy, sperrt serverweit: ``safe_deploy_vps.sh`` ohne
+    ``--nur-gate`` (auch ``--rebuild-runner``, ``--to``), ``staging_deploy.sh``,
+    die Live-Tür der Deploy-Schlange (``ssh … server_tuer.sh``).
+    ``pruef`` — Gate/Prüflauf, sperrt nur das eigene Fenster: ``pytest``,
+    ``safe_deploy_vps.sh --nur-gate``, ``deploy_schlange.py`` selbst (der Dienst
+    deployt nur über die Kinder oben, die einzeln zählen).
+    ``None`` — nichts davon. Skriptnamen zählen nur in ``argv[:3]``: der Prompt
+    einer Claude-Session nennt sie als Text.
+    """
+    if not argv:
+        return None
+    if Path(argv[0]).name == "ssh":
+        return "live" if "server_tuer.sh" in argv[-1] else None
+    kopf = " ".join(argv[:3])
+    if "safe_deploy_vps.sh" in kopf:
+        return "pruef" if "--nur-gate" in " ".join(argv).split() else "live"
+    if "staging_deploy.sh" in kopf:
+        return "live"
+    if "deploy_schlange" in kopf or re.search(GATE_MUSTER, kopf):
+        return "pruef"
+    return None
 
 
 def _pids_beenden(pids: list[int], wer: str) -> bool:
@@ -976,22 +1011,32 @@ class Aufpasser:
     def deploy_laeuft(self, muster_text: str | None = None) -> list[str]:
         """Prozesse, die auf das Deploy-Muster passen (ohne uns selbst, ohne Waisen).
 
-        Sperrt serverweit; Regeln der Trefferzählung in :meth:`_prozesse_treffer`.
+        Sperrt serverweit; Prüfläufe (``deploy_art`` „pruef“) zählen nicht — die
+        sperren nur ihr Fenster (:meth:`gate_im_fenster`). Regeln der Trefferzählung
+        in :meth:`_prozesse_treffer`.
         """
         return [
             kopf
-            for _, kopf in self._prozesse_treffer(muster_text or self.e.deploy_muster)
+            for _, kopf, art in self._prozesse_treffer(
+                muster_text or self.e.deploy_muster
+            )
+            if art != "pruef"
         ]
 
     def gate_im_fenster(self, f: Fenster, worktree: Path | None) -> str | None:
-        """Läuft ein Gate (``pytest``) genau dieses Fensters? Dann dessen Kopfzeile.
+        """Läuft ein Gate/Prüflauf (``deploy_art`` „pruef“) genau dieses Fensters?
+        Dann dessen Kopfzeile.
 
         Zählt nur, wenn der Prozess im Prozessbaum des Panes hängt oder sein
         Arbeitsordner im Ticket-Worktree liegt — fremde Testläufe (andere Worktrees,
         andere Repos) sperren dieses Fenster nicht (#592). ``worktree`` None (z. B.
         ``wache``-Fenster) ⇒ nur der Fensterbaum zählt.
         """
-        treffer = self._prozesse_treffer(GATE_MUSTER)
+        treffer = [
+            (pid, kopf)
+            for pid, kopf, art in self._prozesse_treffer(f"{GATE_MUSTER}|{self.muster}")
+            if art == "pruef"
+        ]
         if not treffer:
             return None
         baum = set(prozess_baum(f.pane_pid)) if f.pane_pid else set()
@@ -1005,11 +1050,14 @@ class Aufpasser:
                     return kopf
         return None
 
-    def _prozesse_treffer(self, muster_text: str) -> list[tuple[int, str]]:
-        """(PID, Kopfzeile) der Prozesse, die auf ``muster_text`` passen.
+    def _prozesse_treffer(
+        self, muster_text: str
+    ) -> list[tuple[int, str, DeployArt | None]]:
+        """(PID, Kopfzeile, ``deploy_art``) der Prozesse, die auf ``muster_text`` passen.
 
         ``pgrep -af`` liefert die Kandidaten; gezählt wird nur ein Treffer im Programm,
-        Skript oder ersten Argument (``argv[:3]``) — der Prompt einer Claude-Session
+        Skript oder ersten Argument (``argv[:3]``; Live-Tür per ssh: ``deploy_art``)
+        — der Prompt einer Claude-Session
         nennt ``safe_deploy_vps.sh`` und ``pytest`` als Text, ist aber kein Deploy.
         Die eigene Aufrufkette (Cron, Shell) zählt nie; Prozesse älter als 6 h sind
         verwaist („Waise ignoriert“).
@@ -1029,8 +1077,10 @@ class Aufpasser:
             pid, _, args = zeile.partition(" ")
             if not pid.isdigit() or int(pid) in eigene:
                 continue
-            kopf = " ".join(_argv(int(pid))[:3]) or args
-            if not muster.search(kopf):
+            argv = _argv(int(pid))
+            kopf = " ".join(argv[:3]) or args
+            art = deploy_art(argv)
+            if not muster.search(kopf) and art != "live":
                 continue
             alter = self._prozess_alter_s(int(pid))
             if alter is not None and alter > DEPLOY_ALTER_MAX_S:
@@ -1041,7 +1091,7 @@ class Aufpasser:
                     kopf[:120],
                 )
                 continue
-            treffer.append((int(pid), kopf[:200]))
+            treffer.append((int(pid), kopf[:200], art))
         return treffer
 
     def sitzungen(self) -> list[tuple[str, str]]:
@@ -1351,13 +1401,16 @@ class Aufpasser:
         freigabe: Freigabe,
         pane_pid: int = 0,
         kette_beenden: bool = False,
+        ticket: int | None = None,
     ) -> Schliessart:
         """Einzige Stelle, die ein Fenster schließt — nur mit gültiger Freigabe.
 
         Lebt Claude im Fensterbaum, endet nur Claude (``/exit``, nach
         ``exit_warten_s`` beenden) samt seinen Kindern; Fenster und bau.py-Kette
         leben weiter (#592). ``kette_beenden``: das ganze Fenster endet samt Kette —
-        wenn deren Folge-Ticket schon woanders läuft (#598). Ergebnis siehe ``Schliessart``.
+        wenn deren Folge-Ticket schon woanders läuft (#598). Läuft nach ``/exit`` keine
+        Kette (``ticket``) weiter, bleibt nur eine Shell: das Fenster geht gleich zu
+        („fenster“), statt 15 min später ein zweites Mal. Ergebnis siehe ``Schliessart``.
         """
         if not isinstance(freigabe, Freigabe):
             raise TypeError("Fenster schließen braucht eine Freigabe")
@@ -1372,16 +1425,35 @@ class Aufpasser:
             return "fenster"
         baum = prozess_baum(pane_pid) if pane_pid else []
         claude = [pid for pid in baum if prozessbaum.ist_claude(pid)]
-        if kette_beenden or not claude:
+        nach_exit = bool(claude) and not kette_beenden
+        if nach_exit:
+            ende = self._claude_exit(ziel, claude)
+            if ende == "offen" or self._kette_lebt(pane_pid, ticket):
+                return ende
+            log.info("%s: nach /exit keine Kette, nur Shell — Fenster geht zu", ziel)
+        try:
             self.tmux("kill-window", "-t", ziel)
-            self._prozesse_beenden(pane_pid)
-            return "fenster"
+        except RuntimeError as fehler:
+            # Nach /exit kann das Fenster mit seiner Shell schon selbst zu sein.
+            if not nach_exit:
+                raise
+            log.info("%s: Fenster schon zu (%s)", ziel, fehler)
+        self._prozesse_beenden(pane_pid)
+        return "fenster"
+
+    def _claude_exit(self, ziel: str, claude: list[int]) -> Schliessart:
+        """Claude per ``/exit`` beenden, nach ``exit_warten_s`` samt Kindern hart.
+
+        Ergebnis „exit“ (sauber), „zwang“ (beendet) oder „offen“ (lebt noch).
+        """
         # Claude-Teilbaum vor /exit merken: endet Claude, hängen seine Kinder
         # (MCP-Server, pytest) nicht mehr im Fensterbaum. bau.py und Shell liegen
         # über Claude und gehören nie dazu.
         # ponytail: gemerkte PIDs könnten Sekunden später neu vergeben sein,
         # Upgrade: Startzeit aus /proc/<pid>/stat mit vergleichen.
         teilbaum = list(dict.fromkeys(p for c in claude for p in prozess_baum(c)))
+        # Halber Text im Eingabefeld machte aus /exit eine Nachricht.
+        self.tmux("send-keys", "-t", ziel, "C-u")
         self._eingeben(ziel, "/exit")
         frist = time.monotonic() + self.e.exit_warten_s
         while any(_prozess_lebt(pid) for pid in claude) and time.monotonic() < frist:
@@ -1397,6 +1469,25 @@ class Aufpasser:
             log.error("%s: Claude %s lebt nach /exit und Beenden noch", ziel, claude)
             return "offen"
         return "exit" if sauber else "zwang"
+
+    def _kette_lebt(self, pane_pid: int, ticket: int | None) -> bool:
+        """Läuft nach ``/exit`` noch etwas außer Shells im Fenster (bau.py, nächster
+        Kettenbefehl) oder steht ein Folge-Ticket in der Shell-Zeile? Die Shell bekommt
+        ``KETTE_RUHE_S``, den nächsten Befehl zu starten. Unlesbar ⇒ ja (nichts kappen).
+        """
+        if ticket is not None and kette_folge(pane_pid, ticket):
+            return True
+        frist = time.monotonic() + KETTE_RUHE_S
+        while True:
+            try:
+                if not session_beendet(pane_pid):
+                    return True
+            except OSError as fehler:
+                log.warning("Prozessbaum %s nicht lesbar: %s", pane_pid, fehler)
+                return True
+            if time.monotonic() >= frist:
+                return False
+            time.sleep(0.1)
 
     def _fenster_fortsetzen(
         self,
@@ -1854,6 +1945,7 @@ class Aufpasser:
             freigabe_ticket_zu(ticket, sha),
             f.pane_pid,
             kette_beenden=bool(doppelt),
+            ticket=ticket,
         )
         if ende == "offen":
             log.error("%s: Claude lebt noch — nicht als geschlossen gemeldet", f.name)

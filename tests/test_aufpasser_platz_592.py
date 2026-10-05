@@ -161,6 +161,8 @@ def _lauf_kurze_karenz(welt: Welt) -> int:
     # Attribut statt Konstruktor-Argument: so bleibt der Test auch auf dem Stand
     # vor #592 lauffähig (Rot-Beweis zeigt das Verhalten, keinen TypeError).
     e.karenz_platznot_s = 0.5
+    # Attrappe endet nicht auf /exit: ohne kurze Frist säße jeder Lauf 30 s ab.
+    e.exit_warten_s = 1
     return aufpasser.lauf_mit_einstellungen(e)
 
 

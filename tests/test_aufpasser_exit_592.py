@@ -12,6 +12,7 @@ Nur Linux mit tmux (wie ``test_aufpasser_236``).
 from __future__ import annotations
 
 import os
+import subprocess
 import time
 import uuid
 from collections.abc import Iterator
@@ -143,3 +144,57 @@ def test_ohne_claude_wird_fenster_geschlossen(zu_9003: Welt) -> None:
 def _fenster_nach_pause() -> list[str]:
     time.sleep(0.5)
     return fenster_namen()
+
+
+# --- Fehlerwege (Review 5194800) ---------------------------------------------
+
+
+def test_claude_lebt_nach_beenden_offen_keine_meldung(zu_9003: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
+    """``_fenster_schliessen`` → „offen“: nichts melden, Stand-Eintrag bleibt."""
+    welt = zu_9003
+    monkeypatch.setattr(aufpasser, "_pids_beenden", lambda pids, wer: False)
+    welt.fenster_still(9003, f"{welt.bin}/claude --session-id {uuid.uuid4()} x")
+    assert _lauf(welt, exit_warten_s=1) == 0
+    assert "bau 9003" in _fenster_nach_pause()
+    assert "Claude lebt noch — nicht als geschlossen gemeldet" in welt.log(), welt.log()
+    assert welt.kommentare() == []
+    assert any(k.endswith("/bau 9003") for k in welt.stand().get("fenster", {}))
+
+
+def _einstellungen(welt: Welt) -> aufpasser.Einstellungen:
+    return aufpasser.Einstellungen(
+        zustand=welt.zustand,
+        tmux_socket=SOCKET,
+        hang_min=90,
+        bau_vorlage=welt.vorlage,
+        deploy_muster=f"aufpasser-probe-niemals-{os.getpid()}",
+    )
+
+
+def test_worktree_nicht_lesbar_kein_eingriff(welt: Welt, caplog: pytest.LogCaptureFixture) -> None:
+    f = aufpasser.Fenster(sitzung="spec-x", spec="x", index="1", name="bau 9003", pfad="", pane_pid=0)
+    kein_repo = welt.tmp / "kein-repo"
+    kein_repo.mkdir()
+    with caplog.at_level("ERROR"):
+        assert aufpasser.Aufpasser(_einstellungen(welt)).vor_eingriff(f, "", kein_repo) is False
+    assert "Worktree nicht lesbar" in caplog.text
+
+
+def test_ohne_worktree_zaehlt_nur_fensterbaum(welt: Welt) -> None:
+    """``worktree`` None (z. B. ``wache``): ein pytest außerhalb des Fensterbaums sperrt nicht."""
+    pytest_datei = welt.tmp / "gate" / "pytest"
+    pytest_datei.parent.mkdir()
+    pytest_datei.write_text("#!/bin/bash\nsleep 3600\n", encoding="utf-8")
+    pytest_datei.chmod(0o755)
+    eltern = subprocess.Popen(["bash", "-c", f"{pytest_datei}; true"], cwd=str(welt.tmp), start_new_session=True)
+    try:
+        time.sleep(0.5)
+        a = aufpasser.Aufpasser(_einstellungen(welt))
+        draussen = aufpasser.Fenster(sitzung="s", spec="x", index="1", name="wache x", pfad="", pane_pid=0)
+        assert a.gate_im_fenster(draussen, None) is None
+        drin = aufpasser.Fenster(sitzung="s", spec="x", index="1", name="wache x", pfad="", pane_pid=eltern.pid)
+        kopf = a.gate_im_fenster(drin, None)
+        assert kopf is not None and str(pytest_datei) in kopf, kopf
+    finally:
+        os.killpg(eltern.pid, 15)
+        eltern.wait()
