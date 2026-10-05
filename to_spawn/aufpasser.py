@@ -187,6 +187,12 @@ EREIGNIS_VORFALL: dict[str, tuple[str, str, str, str]] = {
         "Keine Gesprächs-ID gemerkt, der Aufpasser kann nicht fortsetzen",
         "Neue Runde starten (bau <N> --sofort); Sitzungs-Datei der Session prüfen",
     ),
+    "folge_handoff_fehler": (
+        "skill",
+        "Folge-Session ab Handoff startet nicht — die Arbeit bleibt liegen",
+        "Neustart ab Handoff-Datei scheiterte (Exit ≠ 0: Pfad, Vorlage oder Repo stimmt nicht)",
+        "Fehlertext im Aufpasser-Log lesen, Folge-Session von Hand ab Handoff starten",
+    ),
     "angestupst": (
         "skill",
         "Session steht still und muss angestupst werden",
