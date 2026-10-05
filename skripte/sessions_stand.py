@@ -33,7 +33,7 @@ from pathlib import Path
 _SKILL = str(Path(__file__).resolve().parent.parent)
 if _SKILL not in sys.path:
     sys.path.insert(0, _SKILL)
-from to_spawn import bau_log, config  # noqa: E402
+from to_spawn import bau_log, config, konsole  # noqa: E402
 
 log = logging.getLogger("sessions_stand")
 #: Repo, in dem gearbeitet wird: ``TO_SPAWN_REPO`` (setzt die Weiterleitung im Repo), sonst
@@ -292,6 +292,7 @@ def tabelle(eintraege: dict[str, Eintrag], alle_zeigen: bool) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
+    konsole.utf8_ausgabe()
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("spec", nargs="?", help="Spec-Nummer (Manifest)")

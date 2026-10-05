@@ -213,10 +213,14 @@ _bau_py() {  # bau/aufseher/wache/sessions: Weiterleitung im Repo, sonst direkt 
     echo "$skript weder in $REPO/scripts noch im Skill to-spawn gefunden" >&2; return 1
   fi
 }
+_klon_fuer_spec() {  # sessions <S>: Spec-Klon ~/<praefix>-<S> (z. B. duoplus-551), sonst $REPO
+  local praefix; praefix="$(basename "$REPO")"; praefix="${praefix%-*}"
+  if [[ "${1:-}" =~ ^[0-9]+$ ]] && [ -d "$HOME/$praefix-$1" ]; then echo "$HOME/$praefix-$1"; else echo "$REPO"; fi
+}
 bau()      { _bau_py bau.py "$@"; }
 aufseher() { _bau_py wache.py "$@"; }  # Aufseher der Spec (#428); wache = alter Alias
 wache()    { _bau_py wache.py "$@"; }
-sessions() { _bau_py sessions_stand.py "$@"; }
+sessions() { REPO="$(_klon_fuer_spec "${1:-}")" _bau_py sessions_stand.py "$@"; }
 
 EOF
     cat "$NUTZER_HOME/.bashrc" 2>/dev/null || true
