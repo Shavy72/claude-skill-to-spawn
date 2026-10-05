@@ -42,6 +42,7 @@ from to_spawn import (  # noqa: E402
     context_mode,
     speicher,
     startklar,
+    terminal_maus,
     umzug,
     vertrauen,
     waechter_lauf,
@@ -363,6 +364,8 @@ def main() -> int:
     # Eine Session im Worktree darf nicht das Repo des Launchers erben (#205).
     os.environ.pop("TO_SPAWN_REPO", None)
     os.environ["CLAUDE_CODE_FORCE_SESSION_PERSISTENCE"] = "1"
+    # Klick-Sperre nur für lokal gespawnte Sessions (Windows, Maus-Müll im Eingabefeld).
+    terminal_maus.maus_ruhig()
     # Umzug (#212): /to-spawn-of im Aufseher zieht alle Sessions um und beendet am Ende
     # diese Aufseher-Session über die Umzug-Datei (Temp-Ordner je Lauf).
     lauf_ordner = Path(tempfile.mkdtemp(prefix=f"wache-{a.spec}-"))

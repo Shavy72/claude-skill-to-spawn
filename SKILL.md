@@ -98,7 +98,7 @@ Ablauf für dich (das Modell), wenn die Konfig fehlt oder der Nutzer „setup“
 ## Harte Regeln (aus Vorfällen 17.09.2026)
 
 - **Nie `bau.py` beenden ohne vorher `sessions <S>`.** Nur Zustand `wartet` darf gekillt werden. Ein gekilltes `bau.py` hinterlässt sein Claude-Kind verwaist; ein Neustart erzeugt ein Duplikat im selben Worktree (#187).
-- **Keine Umgebungs-Variablen und kein `;` im Tab-Befehl** — `wt` liest `;` als Tab-Trenner, es entstehen kaputte Tabs in einem zweiten Fenster. Env (Transkript-Persistenz `CLAUDE_CODE_FORCE_SESSION_PERSISTENCE=1`) setzen `bau.py`/`wache.py` selbst (seit 2d3bb5351).
+- **Keine Umgebungs-Variablen und kein `;` im Tab-Befehl** — `wt` liest `;` als Tab-Trenner, es entstehen kaputte Tabs in einem zweiten Fenster. Env (Transkript-Persistenz `CLAUDE_CODE_FORCE_SESSION_PERSISTENCE=1`) setzen `bau.py`/`wache.py` selbst (seit 2d3bb5351). Ebenso die Klick-Sperre `CLAUDE_CODE_DISABLE_MOUSE_CLICKS=1` (nur Windows, `to_spawn/terminal_maus.py`, auch `leitstand`): keine Maus-Bewegungsmeldungen, also kein `[555;10;1M`-Müll im Eingabefeld; Kopieren per Shift+Ziehen. Nie global in `settings.json` `env` setzen — das überschreibt den Prozess-Wert.
 - Nach dem Spawn immer per Prozessliste prüfen, nie „läuft“ behaupten.
 - ⊗-Tabs erst schließen, wenn `sessions` keine VERWAIST-Zeile mehr zeigt.
 - Tabs schließen kann `wt` nicht per Befehl; ganze Fenster schließt David.

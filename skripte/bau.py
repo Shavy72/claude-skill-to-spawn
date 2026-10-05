@@ -37,7 +37,7 @@ from typing import Any
 _SKILL = str(Path(__file__).resolve().parent.parent)
 if _SKILL not in sys.path:
     sys.path.insert(0, _SKILL)
-from to_spawn import anleitung, capo, config, context_mode, gh, nest, probesitz, sessions_datei, speicher, umzug, vertrauen  # noqa: E402
+from to_spawn import anleitung, capo, config, context_mode, gh, nest, probesitz, sessions_datei, speicher, terminal_maus, umzug, vertrauen  # noqa: E402
 from to_spawn.waechter_lauf import transkript_ordner
 
 # Windows-Konsole ist cp1252 — Umlaute/Pfeile im Prompt brauchen UTF-8.
@@ -986,6 +986,8 @@ def main() -> int:
     # Eine Session im Worktree darf nicht das Repo des Launchers erben (#205).
     os.environ.pop("TO_SPAWN_REPO", None)
     os.environ["CLAUDE_CODE_FORCE_SESSION_PERSISTENCE"] = "1"
+    # Klick-Sperre nur für lokal gespawnte Sessions (Windows, Maus-Müll im Eingabefeld).
+    terminal_maus.maus_ruhig()
 
     # Umzug (#212): bau.py beendet die Session, sobald ``umzug.json`` auftaucht; der
     # Stop-Hook ``hook-umzug`` liest die Anfrage des Aufsehers.

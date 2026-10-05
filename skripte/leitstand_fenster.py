@@ -23,7 +23,7 @@ _SKRIPTE = Path(__file__).resolve().parent
 _SKILL = str(_SKRIPTE.parent)
 if _SKILL not in sys.path:
     sys.path.insert(0, _SKILL)
-from to_spawn import config, melder  # noqa: E402
+from to_spawn import config, melder, terminal_maus  # noqa: E402
 
 log = logging.getLogger("leitstand_seite")
 
@@ -350,6 +350,9 @@ def sitzung(ablage: Ablage, *, probe: bool = False) -> int:
         log.error("Leitstand-Session für Spec %s läuft schon (Sperre belegt).", ablage.spec)
         return 2
     env = {**os.environ, "TO_SPAWN_REPO": str(ablage.repo), "PYTHONIOENCODING": "utf-8"}
+    env.pop("CLAUDE_CODE_CHILD_SESSION", None)  # Kind-Markierung = kein Transkript/Resume (wie bau.py)
+    env["CLAUDE_CODE_FORCE_SESSION_PERSISTENCE"] = "1"
+    terminal_maus.maus_ruhig(env)  # Klick-Sperre nur hier, nicht global (Windows)
     try:
         # Vordergrund im eigenen Fenster (braucht die Konsole) — kein Hintergrundstart.
         return subprocess.run([claude, *befehl[1:]], cwd=str(ablage.repo), env=env, check=False).returncode  # noqa: S603
