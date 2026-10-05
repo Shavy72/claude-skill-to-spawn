@@ -25,6 +25,11 @@ Stufen (feste Schwellen :data:`STUPS_MIN`, :data:`NACH_STUPS_MIN`,
    Fenster wieder arbeitet oder das Ticket neu beginnt (``session_start`` im Bau-Log
    jünger als die Stufe-5-Zeit; die wird erst nach dem Ende von ``abloesen`` gesetzt).
 
+Eigener Handoff (#542): Hat die Session in Stufe 0/1 selbst einen Handoff committet und
+arbeitet seit :data:`eigener_handoff.STILL_MIN` Minuten nicht, startet die Leiter die
+Folge-Session ab diesem Handoff neu (Aktion ``folge_handoff``) — Regel und Start in
+:mod:`to_spawn.eigener_handoff`.
+
 Am PC (Windows, #501) ist nichts tippbar: :func:`fuer_rechner` macht aus Stufe 1/2
 direkt Stufe 3 (Zeile „PC: Stufe 1 übersprungen“), aus ``/exit`` eine Meldung.
 
@@ -49,7 +54,17 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Protocol
 
-from to_spawn import anleitung, aufseher_stand, bau_log, config, gh, leitstand, pc_fenster, respawn
+from to_spawn import (
+    anleitung,
+    aufseher_stand,
+    bau_log,
+    config,
+    eigener_handoff,
+    gh,
+    leitstand,
+    pc_fenster,
+    respawn,
+)
 
 log = logging.getLogger(__name__)
 
@@ -82,6 +97,7 @@ Aktion = Literal[
     "exit",
     "zuruecksetzen",
     "melden",
+    "folge_handoff",
 ]
 
 
@@ -97,6 +113,8 @@ class Lage:
     ziel: str | None = None  # tmux-Ziel des Fensters ``bau <N>``
     letzter_start: float | None = None  # jüngster ``session_start`` im Bau-Log
     log_unlesbar: bool = False  # Bau-Log da, aber Lesen scheiterte (≠ „kein Start“)
+    #: Committeter eigener Handoff der aktuellen Session (#542), ``None`` = keiner.
+    eigener_handoff: eigener_handoff.Treffer | None = None
 
 
 @dataclass(frozen=True)
@@ -130,6 +148,9 @@ class Umwelt(Protocol):
     def worktree(self, ticket: int) -> Path: ...
     def werkzeug(self) -> respawn.Werkzeug | pc_fenster.PcWerkzeug:
         """Werkzeug von respawn: tmux (``tippen`` = Text einfügen, Enter getrennt) oder PC."""
+        ...
+    def folge_ab_handoff(self, spec: int, ticket: int, treffer: eigener_handoff.Treffer) -> int:
+        """Folge-Session ab eigenem Handoff starten (#542); Exit-Code des Neustarts."""
         ...
 
 
@@ -181,6 +202,12 @@ def entscheide(lage: Lage, gemerkt: Gemerkt, jetzt: float, handoff_k: float) -> 
         return Schritt("exit", f"Ticket zu, still {still} min")
     if stufe == 4:
         return Schritt("zuruecksetzen", "Ticket wieder offen")
+    treffer = lage.eigener_handoff
+    if stufe in eigener_handoff.STUFEN and treffer is not None:
+        seit = treffer.still_min(jetzt)
+        if treffer.faellig(jetzt):
+            return Schritt("folge_handoff", f"eigener Handoff {treffer.datei}, seit {seit} min still")
+        return Schritt("nichts", f"eigener Handoff vor {seit} min < {eigener_handoff.STILL_MIN}")
     if stufe == 2:
         if lage.prompt_datei:
             return Schritt("respawn", "Start-Prompt-Datei da")
@@ -249,6 +276,7 @@ _WORT: dict[str, str] = {
     "exit": "/exit getippt",
     "zuruecksetzen": "zurückgesetzt",
     "melden": "",
+    "folge_handoff": "neu gestartet ab eigenem Handoff",
 }
 
 
@@ -308,6 +336,11 @@ def _schritt(u: Umwelt, repo: Path, spec: int, ticket: int) -> Ergebnis:
         return Ergebnis(EXIT_FEHLER, _zeile(ticket, text))
     if schritt.aktion == "respawn":
         return _respawn(u, repo, spec, ticket, gemerkt, jetzt)
+    if schritt.aktion == "folge_handoff" and lage.eigener_handoff is not None:
+        code = u.folge_ab_handoff(spec, ticket, lage.eigener_handoff)
+        if code != 0:
+            return Ergebnis(EXIT_FEHLER, _zeile(ticket, f"Neustart ab Handoff gescheitert (Exit {code}) — {schritt.grund}"))
+        return Ergebnis(EXIT_OK, _zeile(ticket, f"Stufe 0 {_WORT[schritt.aktion]} — {schritt.grund}"))
     stufe = gemerkt.stufe
     if schritt.aktion in ("anstupsen", "handoff", "exit"):
         if not lage.ziel:
@@ -444,6 +477,7 @@ class _EchteUmwelt:
         wt = self.worktree(ticket)
         prompt = seit is not None and respawn.start_prompt_da(wt, ticket, seit)
         start, unlesbar = self._letzter_start(ticket, wt)
+        treffer = eigener_handoff.finde(wt, ticket, eigener_handoff.grenze(start, ticket))
         return Lage(
             offen=blick.lage.offen,
             fenster=blick.lage.fenster,
@@ -453,7 +487,12 @@ class _EchteUmwelt:
             ziel=blick.ziel,
             letzter_start=start,
             log_unlesbar=unlesbar,
+            eigener_handoff=treffer,
         )
+
+    def folge_ab_handoff(self, spec: int, ticket: int, treffer: eigener_handoff.Treffer) -> int:
+        # Die Leiter hält ihre Sperre ``leiter-<N>`` schon selbst.
+        return eigener_handoff.folge_starten(self.repo, spec, ticket, treffer, sperren=False)
 
     def _letzter_start(self, ticket: int, wt: Path) -> tuple[float | None, bool]:
         """Jüngster ``session_start`` im Bau-Log und ob das Lesen scheiterte (Warnung)."""

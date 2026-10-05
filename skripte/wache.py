@@ -50,7 +50,22 @@ from to_spawn import (  # noqa: E402
 log = logging.getLogger("wache")
 #: Repo, in dem gearbeitet wird: ``TO_SPAWN_REPO`` (setzt die Weiterleitung im Repo), sonst
 #: Git-Wurzel des aktuellen Ordners — nie der Ort dieses Skripts (liegt im Skill, #205).
-REPO_ORDNER = Path(os.environ["TO_SPAWN_REPO"]).resolve() if os.environ.get("TO_SPAWN_REPO") else config.repo_wurzel()
+def start_ordner() -> Path:
+    """Ordner der Aufseher-Session (#542): der aktuelle Ordner, wenn er in einem Git-Repo
+    liegt (Haupt-Repo oder Worktree — dort läuft der Aufseher, #450 F1). Sonst
+    ``TO_SPAWN_REPO`` bzw. ``REPO`` aus der Umgebung, wenn das ein Ordner ist: Ein Neustart
+    aus einem fremden Ordner (z. B. Aufpasser, tmux im Heimordner) landet so trotzdem im Repo."""
+    cwd = Path.cwd().resolve()
+    if any((k / ".git").exists() for k in (cwd, *cwd.parents)):
+        return cwd
+    for name in ("TO_SPAWN_REPO", "REPO"):
+        wert = os.environ.get(name, "").strip()
+        if wert and Path(wert).expanduser().is_dir():
+            return Path(wert).expanduser().resolve()
+    return Path.cwd()
+
+
+REPO_ORDNER = Path(os.environ["TO_SPAWN_REPO"]).resolve() if os.environ.get("TO_SPAWN_REPO") else config.repo_wurzel(start_ordner())
 
 
 def repo_aus_origin(fallback: str = "") -> str:
@@ -245,6 +260,7 @@ C Stille Session: Eingriffs-Leiter (einziger Eingriffsweg, Regel „Hänger erke
 D Session an der Smart-Zone-Grenze (Handoff-Grenze aus ~/.claude/smart-zone.json)
   Läuft sie noch: Befehl C — die Leiter erkennt die Grenze selbst und fährt die Ablöse-SOP (Stufe 3 = `{RESPAWN}`, nie direkt). Liegt schon ein Handoff, aber die Session ist tot / Ticket „aus“:
   `{NEUSTART} --handoff docs/handoffs/HANDOFF_<datum>_<N>.md --beenden` (Server: zusätzlich `--ziel srv`). Die neue Session startet mit dem Auftrag „Weiter ab Handoff …“.
+  Session mit eigenem committetem Handoff startet Leiter/Aufpasser automatisch neu; nicht von Hand nachtragen.
 E Dich selbst ablösen (deine Handoff-Grenze ist erreicht) — Selbstneustart nach der Ablöse-SOP oben
   1. `docs/HANDOFF_{DATUM}_waechter_{S}.md` vollständig: Stand je Ticket, offene Entscheidungen, laufende Neustarts, nächster Schritt. Commit mit Pathspec + [skip ci], Push.
   2. `python {SKILL}/skripte/wache.py {S} --abloesen docs/HANDOFF_{DATUM}_waechter_{S}.md` — die Aufsicht beendet diese Session und startet im selben Fenster den Nachfolge-Aufseher mit dem Handoff als Startkontext. Danach nichts mehr tun.
@@ -305,8 +321,9 @@ def main() -> int:
         return 0
     # Startklar-Prüfung (#450): venv, Schlüssel, Werkzeuge vor dem Aufseher-Start;
     # nicht beim Probelauf und nicht beim Fortsetzen durch den Aufpasser (--resume).
+    ordner = start_ordner()  # vor dem Entfernen von TO_SPAWN_REPO unten (#542)
     if not a.dry_run and not a.resume:
-        startklar_code = startklar.gate(Path.cwd(), a.spec)  # Ordner wie fahre(cwd=…) (#450 F1)
+        startklar_code = startklar.gate(ordner, a.spec)  # Ordner wie fahre(cwd=…) (#450 F1)
         if startklar_code:
             return startklar_code
     claude = shutil.which("claude") or "claude"
@@ -367,7 +384,7 @@ def main() -> int:
             ausweich=ausweich,
             remote_control=remote_control,
             repo=REPO_ORDNER,
-            cwd=Path.cwd(),
+            cwd=ordner,
             takt=waechter_lauf.zahl_aus_umgebung("TO_SPAWN_AUFSICHT_TAKT", waechter_lauf.TAKT_S)
             or waechter_lauf.TAKT_S,
             puffer=waechter_lauf.zahl_aus_umgebung("TO_SPAWN_RESET_PUFFER_S", waechter_lauf.RESET_PUFFER_S),

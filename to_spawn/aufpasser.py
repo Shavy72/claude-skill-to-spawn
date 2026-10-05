@@ -85,7 +85,16 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from to_spawn import anleitung, bau_log, config, prozessbaum, sessions_datei, speicher, vorfall
+from to_spawn import (
+    anleitung,
+    bau_log,
+    config,
+    eigener_handoff,
+    prozessbaum,
+    sessions_datei,
+    speicher,
+    vorfall,
+)
 from to_spawn.waechter_lauf import _LIMIT_TEXT as LIMIT_TEXT
 from to_spawn.waechter_lauf import transkript_ordner
 
@@ -1348,6 +1357,35 @@ class Aufpasser:
         e["stupser"] = stupser
         return stupser
 
+    def folge_ab_handoff(
+        self, f: Fenster, ticket: int, repo: Path, schluessel: str, hash_start: str
+    ) -> bool:
+        """Eigener committeter Handoff + Session arbeitet nicht → Folge-Session (#542).
+
+        Die Zeit seit dem Handoff-Commit zählt als Stille (nicht ``hang_min``); Regel in
+        :mod:`to_spawn.eigener_handoff`. True = Neustart erledigt (Fenster fertig geprüft).
+        """
+        treffer = eigener_handoff.pruefe(repo, ticket, self.jetzt)
+        if treffer is None or not self.vor_eingriff(f, hash_start):
+            return False
+        if self.e.trocken:
+            print(f"[trocken] #{ticket}: Neustart ab eigenem Handoff {treffer.datei}")
+            return True
+        code = eigener_handoff.folge_starten(repo, int(f.spec), ticket, treffer, sperren=True)
+        if code != 0:
+            log.error("%s: Neustart ab Handoff %s gescheitert (Exit %s)", f.name, treffer.datei, code)
+            return False
+        self.stand.fenster.pop(schluessel, None)
+        self.melden(
+            f.spec,
+            repo,
+            schluessel,
+            "folge_handoff",
+            f"„{f.name}“ hat Handoff {treffer.datei} committet und ist seit "
+            f"{treffer.still_min(self.jetzt)} min still — Folge-Session ab Handoff gestartet.",
+        )
+        return True
+
     def fenster_pruefen(self, f: Fenster, repo: Path, offen: set[int]) -> None:
         schluessel = f"{f.sitzung}/{f.name}"
         text = self.pane_text(f.ziel)
@@ -1383,6 +1421,13 @@ class Aufpasser:
                     "rueckfrage",
                     f"„{f.name}“ wartet seit {int(still_min)} min auf eine Ja/Nein-Bestätigung — braucht David.",
                 )
+            return
+        if (
+            ticket is not None
+            and ticket in offen
+            and not arbeitend
+            and self.folge_ab_handoff(f, ticket, repo, schluessel, hash_start)
+        ):
             return
         if arbeitend or still_min < self.e.hang_min:
             return
