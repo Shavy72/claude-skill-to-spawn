@@ -207,7 +207,7 @@ def neue_namen(repo: Path, basis: str, kopf: str, dateien: list[str]) -> dict[st
             elif zeile.startswith("@@"):
                 im_kopf = False
             continue
-        if aktuell is None or zeile[:1] not in "+-":
+        if aktuell is None or not zeile or zeile[0] not in "+-":
             continue
         endung = Path(aktuell).suffix.lower()
         if endung in _PY_ENDUNGEN:
