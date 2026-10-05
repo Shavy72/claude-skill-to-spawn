@@ -214,7 +214,13 @@ _FENSTER_TICKET = re.compile(r"bau[ _-]?(\d+)")
 SHELLS = frozenset({"bash", "sh", "zsh", "dash", "fish", "ksh"})
 #: Deploy-Prozesse älter als das sind Waisen.
 DEPLOY_ALTER_MAX_S = 6 * 3600
-DEPLOY_MUSTER = r"safe_deploy_vps\.sh|deploy_schlange|staging_deploy\.sh|pytest"
+DEPLOY_MUSTER = r"safe_deploy_vps\.sh|deploy_schlange|staging_deploy\.sh"
+#: Gate/Testlauf: sperrt nur das eigene Fenster (Fensterbaum oder Ticket-Worktree),
+#: nie den ganzen Server — fremde Testläufe halten keinen Platz fest (#592).
+GATE_MUSTER = r"pytest"
+#: Grenze voll + Session idle + Ticket zu: so lange vor dem Schließen warten und
+#: dann den Fenstertext vergleichen, statt die volle Karenz abzusitzen (#592).
+KARENZ_PLATZNOT_S = 30
 STOPP_LABELS = frozenset({"ready-for-human", "needs-info", "wontfix"})
 CRON_MARKE = "# to-spawn aufpasser"
 CRON_TAKT = "*/15 * * * *"
@@ -284,6 +290,8 @@ class Einstellungen:
     heim: Path | None = None
     #: Künstliche Pause zwischen Lesen und Eingriff (nur Tests, Fix F6).
     verzoegerung_s: float = 0.0
+    #: Wartezeit vor dem Schließen bei voller Session-Grenze (Tests setzen sie klein).
+    karenz_platznot_s: float = KARENZ_PLATZNOT_S
 
     def __post_init__(self) -> None:
         if self.hang_min < HANG_MIN_UNTERGRENZE:
@@ -423,6 +431,14 @@ def _argv(pid: int) -> list[str]:
     except OSError:
         return []
     return [t.decode("utf-8", "replace") for t in roh.split(b"\0") if t]
+
+
+def _prozess_cwd(pid: int) -> Path | None:
+    """Arbeitsordner eines Prozesses aus ``/proc/<pid>/cwd``, ``None`` = unbekannt."""
+    try:
+        return Path(os.readlink(f"/proc/{pid}/cwd"))
+    except OSError:
+        return None
 
 
 def prozess_argv_text(pid: int) -> str:
@@ -862,13 +878,44 @@ class Aufpasser:
     def deploy_laeuft(self, muster_text: str | None = None) -> list[str]:
         """Prozesse, die auf das Deploy-Muster passen (ohne uns selbst, ohne Waisen).
 
+        Sperrt serverweit; Regeln der Trefferzählung in :meth:`_prozesse_treffer`.
+        """
+        return [
+            kopf
+            for _, kopf in self._prozesse_treffer(muster_text or self.e.deploy_muster)
+        ]
+
+    def gate_im_fenster(self, f: Fenster, worktree: Path | None) -> str | None:
+        """Läuft ein Gate (``pytest``) genau dieses Fensters? Dann dessen Kopfzeile.
+
+        Zählt nur, wenn der Prozess im Prozessbaum des Panes hängt oder sein
+        Arbeitsordner im Ticket-Worktree liegt — fremde Testläufe (andere Worktrees,
+        andere Repos) sperren dieses Fenster nicht (#592). ``worktree`` None (z. B.
+        ``wache``-Fenster) ⇒ nur der Fensterbaum zählt.
+        """
+        treffer = self._prozesse_treffer(GATE_MUSTER)
+        if not treffer:
+            return None
+        baum = set(prozess_baum(f.pane_pid)) if f.pane_pid else set()
+        wt = worktree.resolve() if worktree is not None else None
+        for pid, kopf in treffer:
+            if pid in baum:
+                return kopf
+            if wt is not None:
+                cwd = _prozess_cwd(pid)
+                if cwd is not None and cwd.is_relative_to(wt):
+                    return kopf
+        return None
+
+    def _prozesse_treffer(self, muster_text: str) -> list[tuple[int, str]]:
+        """(PID, Kopfzeile) der Prozesse, die auf ``muster_text`` passen.
+
         ``pgrep -af`` liefert die Kandidaten; gezählt wird nur ein Treffer im Programm,
         Skript oder ersten Argument (``argv[:3]``) — der Prompt einer Claude-Session
         nennt ``safe_deploy_vps.sh`` und ``pytest`` als Text, ist aber kein Deploy.
         Die eigene Aufrufkette (Cron, Shell) zählt nie; Prozesse älter als 6 h sind
         verwaist („Waise ignoriert“).
         """
-        muster_text = muster_text or self.e.deploy_muster
         try:
             raus = self.sh("pgrep", "-af", muster_text, timeout=30)
         except RuntimeError as fehler:
@@ -896,7 +943,7 @@ class Aufpasser:
                     kopf[:120],
                 )
                 continue
-            treffer.append(kopf[:200])
+            treffer.append((int(pid), kopf[:200]))
         return treffer
 
     def sitzungen(self) -> list[tuple[str, str]]:
@@ -1286,9 +1333,10 @@ class Aufpasser:
             return None
         return sichern(worktree, ticket, self.jetzt)
 
-    def vor_eingriff(self, f: Fenster, hash_start: str) -> bool:
-        """Direkt vor jedem Eingriff neu lesen: Text anders als zu Laufbeginn oder
-        arbeitend ⇒ Kette abbrechen (False)."""
+    def vor_eingriff(self, f: Fenster, hash_start: str, repo: Path) -> bool:
+        """Direkt vor jedem Eingriff neu lesen: Deploy (serverweit), Gate dieses
+        Fensters (Fensterbaum oder Ticket-Worktree in ``repo``), Text anders als zu
+        Laufbeginn oder arbeitend ⇒ Kette abbrechen (False)."""
         if self.e.verzoegerung_s:
             time.sleep(self.e.verzoegerung_s)
         deploy = self.deploy_laeuft(self.muster)
@@ -1299,8 +1347,24 @@ class Aufpasser:
                 deploy[0],
             )
             return False
-        text = self.pane_text(f.ziel)
         info = self.session(f)
+        worktree: Path | None = None
+        if f.ticket is not None:
+            try:
+                worktree = worktree_finden(repo, f.ticket, info.cwd if info else None)
+            except RuntimeError as fehler:
+                # Ohne Worktree-Wissen kein sicheres Gate-Urteil — lieber nichts anfassen.
+                log.error(
+                    "%s: Worktree nicht lesbar: %s — kein Eingriff", f.name, fehler
+                )
+                return False
+        gate = self.gate_im_fenster(f, worktree)
+        if gate:
+            log.info(
+                "%s: Gate läuft in diesem Fenster (%s) — kein Eingriff", f.name, gate
+            )
+            return False
+        text = self.pane_text(f.ziel)
         if pane_hash(text) != hash_start or arbeitet(
             text, info.status if info else None
         ):
@@ -1380,7 +1444,7 @@ class Aufpasser:
         gemerkt = [treffer.datei, treffer.commit_zeit]
         if eintrag is not None and eintrag.get("handoff_fehler") == gemerkt:
             return False  # dieser Handoff ist schon einmal gescheitert — erst ein neuer startet wieder
-        if not self.vor_eingriff(f, hash_start):
+        if not self.vor_eingriff(f, hash_start, repo):
             return False
         if self.e.trocken:
             print(f"[trocken] #{ticket}: Neustart ab eigenem Handoff {treffer.datei}")
@@ -1436,20 +1500,21 @@ class Aufpasser:
         ticket = f.ticket
         arbeitend = arbeitet(text, status)
 
-        if (
-            ticket is not None
-            and ticket not in offen
-            and not arbeitend
-            and still_min >= KARENZ_MIN
-        ):
-            try:
-                zu = self.ticket_zu(ticket, repo)
-            except RuntimeError as fehler:
-                log.error("%s: Ticket-Zustand nicht lesbar: %s", f.name, fehler)
-                zu = False
-            if zu:
-                self.ticket_zu_schliessen(f, ticket, repo, schluessel, hash_start, info)
-                return
+        if ticket is not None and ticket not in offen and not arbeitend:
+            # Volle Grenze + idle Session: nicht 15 min Karenz absitzen, sondern kurz
+            # warten und Text vergleichen — der Platz wird gebraucht (#592).
+            platznot = still_min < KARENZ_MIN and self._platznot(repo, info)
+            if still_min >= KARENZ_MIN or platznot:
+                try:
+                    zu = self.ticket_zu(ticket, repo)
+                except RuntimeError as fehler:
+                    log.error("%s: Ticket-Zustand nicht lesbar: %s", f.name, fehler)
+                    zu = False
+                if zu:
+                    self.ticket_zu_schliessen(
+                        f, ticket, repo, schluessel, hash_start, info, platznot
+                    )
+                    return
 
         if rueckfrage(text):
             if still_min >= RUECKFRAGE_MIN:
@@ -1510,7 +1575,7 @@ class Aufpasser:
                     f"„{f.name}“ wurde {STUPSER_MAX}× angestupst und wird immer wieder still — braucht David.",
                 )
                 return
-            if not self.vor_eingriff(f, hash_start):
+            if not self.vor_eingriff(f, hash_start, repo):
                 return
             self.anstupsen(f.ziel, still_min)
             if not self.e.trocken:
@@ -1539,6 +1604,17 @@ class Aufpasser:
                 f"„{f.name}“ reagiert nach Anstupsen und Fortsetzen nicht — braucht David.",
             )
 
+    def _platznot(self, repo: Path, info: SessionInfo | None) -> bool:
+        """Grenze voll (Speicher/Session-Zahl) und die Session meldet selbst ``idle``."""
+        if info is None or not info.aus_json or info.status != "idle":
+            return False
+        try:
+            konfig = config.lade(repo)
+        except (OSError, ValueError) as fehler:
+            log.warning("%s: Konfig nicht lesbar: %s", repo, fehler)
+            return False
+        return not speicher.platz_frei(konfig)[0]
+
     def ticket_zu_schliessen(
         self,
         f: Fenster,
@@ -1547,7 +1623,15 @@ class Aufpasser:
         schluessel: str,
         hash_start: str,
         info: SessionInfo | None,
+        platznot: bool = False,
     ) -> None:
+        if platznot and not self.e.trocken:
+            log.info(
+                "%s: Ticket zu, Grenze voll — %g s Gegenprobe statt Karenz",
+                f.name,
+                self.e.karenz_platznot_s,
+            )
+            time.sleep(self.e.karenz_platznot_s)
         try:
             sha = self.sichern_worktree(repo, ticket, info.cwd if info else None)
         except RuntimeError as fehler:
@@ -1562,7 +1646,7 @@ class Aufpasser:
                 f"„{f.name}“: Ticket zu, aber Sicherung fehlgeschlagen — braucht David.",
             )
             return
-        if not self.vor_eingriff(f, hash_start):
+        if not self.vor_eingriff(f, hash_start, repo):
             return
         self._fenster_schliessen(f.ziel, freigabe_ticket_zu(ticket, sha), f.pane_pid)
         if not self.e.trocken:
@@ -1618,7 +1702,7 @@ class Aufpasser:
                     f"„{f.name}“ weiter still — Sicherung fehlgeschlagen — braucht David.",
                 )
                 return
-        if not self.vor_eingriff(f, hash_start):
+        if not self.vor_eingriff(f, hash_start, repo):
             return
         cwd = info.cwd if info.cwd and info.cwd.is_dir() else repo
         if ticket is not None:
