@@ -16,6 +16,8 @@
 #                             der JSON (Nachfix N3: Nachweis-Fenster NACHWEIS_S)
 #   FAKE_CLAUDE_EXIT_BEI_EINGABE=1 → liest stdin zeilenweise und endet bei ``/exit``
 #                             (#592: Aufpasser beendet per /exit statt kill-window)
+#   FAKE_CLAUDE_KIND_PID=<datei> → startet ein Kind, das SIGHUP ignoriert (wie ein
+#                             MCP-Server), und schreibt dessen PID in ``datei``
 # Schutz: ins echte Login-Home wird nie geschrieben — Tests setzen ein Temp-HOME.
 
 sid=""
@@ -67,6 +69,10 @@ fi
 
 if [ "${FAKE_CLAUDE_STATUS:-}" = "exit" ]; then
   exit 0
+fi
+if [ -n "${FAKE_CLAUDE_KIND_PID:-}" ]; then
+  ( trap '' HUP; exec sleep 3600 ) </dev/null >/dev/null 2>&1 &
+  echo $! > "$FAKE_CLAUDE_KIND_PID"
 fi
 if [ "${FAKE_CLAUDE_EXIT_BEI_EINGABE:-}" = "1" ]; then
   while IFS= read -r zeile; do

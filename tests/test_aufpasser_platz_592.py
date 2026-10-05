@@ -174,6 +174,17 @@ def test_volle_grenze_schliesst_frisches_idle_fenster(zu_9003: Welt, monkeypatch
     assert any("„bau 9003“ geschlossen (Ticket zu)." in k for k in welt.kommentare())
 
 
+def test_volle_grenze_ohne_session_json_bleibt_frisches_fenster(zu_9003: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Volle Grenze, aber kein Session-JSON (``aus_json`` False): keine kurze Karenz."""
+    welt = zu_9003
+    _grenze(welt, monkeypatch, max_sessions=2)
+    welt.fenster_still(9003, f"FAKE_CLAUDE_OHNE_JSON=1 {welt.bin}/claude --session-id {uuid.uuid4()} x")
+    assert _lauf_kurze_karenz(welt) == 0
+    time.sleep(0.5)
+    assert "bau 9003" in fenster_namen(), welt.log()
+    assert welt.kommentare() == []
+
+
 def test_ohne_volle_grenze_bleibt_frisches_idle_fenster(zu_9003: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
     welt = zu_9003
     _grenze(welt, monkeypatch, max_sessions=5)

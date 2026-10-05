@@ -71,11 +71,17 @@ def test_claude_endet_per_exit_kette_laeuft_weiter(zu_9003: Welt) -> None:
     welt = zu_9003
     marker = welt.tmp / "weiter.txt"
     welt.fenster_still(9003, _kette(welt, marker, "FAKE_CLAUDE_EXIT_BEI_EINGABE=1 "))
-    assert _lauf(welt, exit_warten_s=10) == 0
+    # Große Frist, kurze Laufzeit: Claude endete durch /exit, nicht durch Zwangsbeenden.
+    start = time.monotonic()
+    assert _lauf(welt, exit_warten_s=60) == 0
+    assert time.monotonic() - start < 20, welt.log()
+    assert "nach /exit noch da" not in welt.log(), welt.log()
     assert _warte_auf(marker), welt.log()
     assert marker.read_text(encoding="utf-8").strip() == "weiter"
     assert "bau 9003" in _fenster_nach_pause()
-    assert any("„bau 9003“ geschlossen (Ticket zu)." in k and "/exit" in k for k in welt.kommentare()), welt.kommentare()
+    assert any("„bau 9003“ geschlossen (Ticket zu)." in k and "Per /exit beendet" in k for k in welt.kommentare()), (
+        welt.kommentare()
+    )
 
 
 def test_claude_ignoriert_exit_wird_beendet_kette_laeuft_weiter(zu_9003: Welt) -> None:
@@ -85,6 +91,43 @@ def test_claude_ignoriert_exit_wird_beendet_kette_laeuft_weiter(zu_9003: Welt) -
     assert _lauf(welt, exit_warten_s=1) == 0
     assert _warte_auf(marker), welt.log()
     assert "bau 9003" in _fenster_nach_pause()
+    treffer = [k for k in welt.kommentare() if "„bau 9003“ geschlossen (Ticket zu)." in k]
+    assert len(treffer) == 1 and "Per /exit beendet" not in treffer[0], welt.kommentare()
+    assert "/exit ohne Wirkung" in treffer[0], welt.kommentare()
+
+
+def test_kinder_von_claude_enden_nach_exit(zu_9003: Welt) -> None:
+    """Ein SIGHUP-ignorierendes Kind (wie ein MCP-Server) überlebt Claudes /exit nicht."""
+    welt = zu_9003
+    marker = welt.tmp / "weiter.txt"
+    kind_datei = welt.tmp / "kind.pid"
+    env = f"FAKE_CLAUDE_EXIT_BEI_EINGABE=1 FAKE_CLAUDE_KIND_PID={kind_datei} "
+    welt.fenster_still(9003, _kette(welt, marker, env))
+    assert _warte_auf(kind_datei), welt.log()
+    kind = int(kind_datei.read_text(encoding="utf-8").strip())
+    assert _lauf(welt, exit_warten_s=30) == 0
+    assert _warte_auf(marker), welt.log()
+    assert not _pid_lebt(kind), welt.log()
+    assert "bau 9003" in _fenster_nach_pause()
+
+
+def test_kette_im_fenster_kein_eingriff_fuer_fremdes_ticket(zu_9003: Welt) -> None:
+    """Fenster „bau 9003“, aber bau.py arbeitet schon an 9004 (Kette): nichts schließen."""
+    welt = zu_9003
+    welt.fenster_still(9003, 'python3 -c "import time; time.sleep(3600)" scripts/bau.py 9004')
+    assert _lauf(welt, exit_warten_s=1) == 0
+    assert "bau 9003" in _fenster_nach_pause(), welt.log()
+    assert welt.kommentare() == []
+    assert "bau.py arbeitet an Ticket 9004" in welt.log(), welt.log()
+
+
+def _pid_lebt(pid: int) -> bool:
+    """Lebt ``pid`` noch (Zombies zählen als tot)?"""
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
+    except OSError:
+        return False
+    return stat[stat.rfind(")") + 2] != "Z"
 
 
 def test_ohne_claude_wird_fenster_geschlossen(zu_9003: Welt) -> None:

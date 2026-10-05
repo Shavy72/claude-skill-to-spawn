@@ -91,6 +91,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Literal
 
 from to_spawn import (
     anleitung,
@@ -475,6 +476,43 @@ def _vorfahren(pid: int) -> set[int]:
 # Prozessbaum und „lebt“ kommen aus dem gemeinsamen Modul (auch respawn nutzt es).
 prozess_baum = prozessbaum.baum
 _prozess_lebt = prozessbaum.lebt
+
+#: Stufen zum Beenden eines Prozessbaums: SIGHUP, SIGTERM, SIGKILL mit je 5 s Frist.
+BEENDEN_STUFEN = ((signal.SIGHUP, 5.0), (signal.SIGTERM, 5.0), (signal.SIGKILL, 5.0))
+
+#: Ausgang von ``_fenster_schliessen``: Fenster zu, Claude per ``/exit`` beendet,
+#: Claude nach ``/exit`` zwangsbeendet, Claude lebt trotz allem noch.
+Schliessart = Literal["fenster", "exit", "zwang", "offen"]
+
+
+def _pids_beenden(pids: list[int], wer: str) -> bool:
+    """``pids`` stufenweise beenden (``BEENDEN_STUFEN``) — Kinder zuerst übergeben.
+
+    ``wer`` steht in der Logzeile, wenn Prozesse eine Stufe überleben.
+    Ergebnis: True, wenn am Ende keiner mehr lebt.
+    """
+    return prozessbaum.beenden(
+        pids,
+        BEENDEN_STUFEN,
+        takt_s=0.1,
+        eskalation=lambda sig, lebende: log.warning(
+            "%s: %d Prozesse überlebt, Signal %d", wer, len(lebende), sig
+        ),
+    )
+
+
+def bau_ticket_im_baum(pane_pid: int) -> int | None:
+    """Ticket des bau.py, das gerade im Fensterbaum läuft (``… bau.py <N> …``).
+
+    In einer Fenster-Kette (``bau N; bau M``) heißt das Fenster nach N weiter
+    „bau N“, obwohl bau.py schon M bearbeitet. ``None`` = kein bau.py im Baum.
+    """
+    for pid in prozess_baum(pane_pid) if pane_pid else []:
+        argv = _argv(pid)
+        for i, teil in enumerate(argv[:-1]):
+            if teil.endswith("bau.py") and argv[i + 1].isdigit():
+                return int(argv[i + 1])
+    return None
 
 
 def session_beendet(pane_pid: int) -> bool:
@@ -1235,23 +1273,16 @@ class Aufpasser:
         """Alten Prozessbaum des Panes beenden: SIGHUP, bis 5 s warten, SIGTERM, nach
         weiteren 5 s SIGKILL — sonst liefe dieselbe Session doppelt."""
         baum = prozess_baum(pane_pid) if pane_pid else []
-        prozessbaum.beenden(
-            list(reversed(baum)),
-            ((signal.SIGHUP, 5.0), (signal.SIGTERM, 5.0), (signal.SIGKILL, 5.0)),
-            takt_s=0.1,
-            eskalation=lambda sig, lebende: log.warning(
-                "Pane %s: %d Prozesse überlebt, Signal %d", pane_pid, len(lebende), sig
-            ),
-        )
+        _pids_beenden(list(reversed(baum)), f"Pane {pane_pid}")
 
     def _fenster_schliessen(
         self, ziel: str, freigabe: Freigabe, pane_pid: int = 0
-    ) -> bool:
+    ) -> Schliessart:
         """Einzige Stelle, die ein Fenster schließt — nur mit gültiger Freigabe.
 
         Lebt Claude im Fensterbaum, endet nur Claude (``/exit``, nach
-        ``exit_warten_s`` beenden); Fenster und bau.py-Kette leben weiter (#592).
-        Ergebnis: True, wenn per ``/exit`` beendet statt das Fenster geschlossen.
+        ``exit_warten_s`` beenden) samt seinen Kindern; Fenster und bau.py-Kette
+        leben weiter (#592). Ergebnis siehe ``Schliessart``.
         """
         if not isinstance(freigabe, Freigabe):
             raise TypeError("Fenster schließen braucht eine Freigabe")
@@ -1263,26 +1294,34 @@ class Aufpasser:
         )
         if self.e.trocken:
             print(f"[trocken] Fenster {ziel} schließen ({freigabe.grund})")
-            return False
+            return "fenster"
         baum = prozess_baum(pane_pid) if pane_pid else []
         claude = [pid for pid in baum if prozessbaum.ist_claude(pid)]
         if not claude:
             self.tmux("kill-window", "-t", ziel)
             self._prozesse_beenden(pane_pid)
-            return False
+            return "fenster"
+        # Claude-Teilbaum vor /exit merken: endet Claude, hängen seine Kinder
+        # (MCP-Server, pytest) nicht mehr im Fensterbaum. bau.py und Shell liegen
+        # über Claude und gehören nie dazu.
+        # ponytail: gemerkte PIDs könnten Sekunden später neu vergeben sein,
+        # Upgrade: Startzeit aus /proc/<pid>/stat mit vergleichen.
+        teilbaum = list(dict.fromkeys(p for c in claude for p in prozess_baum(c)))
         self._eingeben(ziel, "/exit")
         frist = time.monotonic() + self.e.exit_warten_s
         while any(_prozess_lebt(pid) for pid in claude) and time.monotonic() < frist:
             time.sleep(0.2)
-        for pid in claude:
-            if _prozess_lebt(pid):
-                log.warning("%s: Claude %s nach /exit noch da — wird beendet", ziel, pid)
-                prozessbaum.beenden(
-                    list(reversed(prozess_baum(pid))),
-                    ((signal.SIGHUP, 5.0), (signal.SIGTERM, 5.0), (signal.SIGKILL, 5.0)),
-                    warten_auf=[pid],
-                )
-        return True
+        sauber = not any(_prozess_lebt(pid) for pid in claude)
+        if not sauber:
+            log.warning("%s: Claude %s nach /exit noch da — wird beendet", ziel, claude)
+        reste = [pid for pid in teilbaum if _prozess_lebt(pid)]
+        if reste:
+            log.info("%s: %d Prozesse aus Claudes Baum übrig — werden beendet", ziel, len(reste))
+            _pids_beenden(list(reversed(reste)), ziel)
+        if any(_prozess_lebt(pid) for pid in claude):
+            log.error("%s: Claude %s lebt nach /exit und Beenden noch", ziel, claude)
+            return "offen"
+        return "exit" if sauber else "zwang"
 
     def _fenster_fortsetzen(
         self,
@@ -1541,7 +1580,9 @@ class Aufpasser:
             # Volle Grenze + idle Session: nicht 15 min Karenz absitzen, sondern kurz
             # warten und Text vergleichen — der Platz wird gebraucht (#592).
             platznot = still_min < KARENZ_MIN and self._platznot(repo, info)
-            if still_min >= KARENZ_MIN or platznot:
+            if (still_min >= KARENZ_MIN or platznot) and not self._fremdes_ticket(
+                f, ticket
+            ):
                 try:
                     zu = self.ticket_zu(ticket, repo)
                 except RuntimeError as fehler:
@@ -1641,6 +1682,24 @@ class Aufpasser:
                 f"„{f.name}“ reagiert nach Anstupsen und Fortsetzen nicht — braucht David.",
             )
 
+    @staticmethod
+    def _fremdes_ticket(f: Fenster, ticket: int) -> bool:
+        """bau.py im Fensterbaum arbeitet an einem anderen Ticket als der Fenstername.
+
+        Fenster-Kette (``bau N; bau M``): nach N läuft M im Fenster „bau N“ — dann
+        kein Ticket-zu-Eingriff für N (keine Sicherung, kein ``/exit``).
+        """
+        lauf = bau_ticket_im_baum(f.pane_pid)
+        if lauf is None or lauf == ticket:
+            return False
+        log.info(
+            "%s: bau.py arbeitet an Ticket %d — kein Eingriff für Ticket %d",
+            f.name,
+            lauf,
+            ticket,
+        )
+        return True
+
     def _platznot(self, repo: Path, info: SessionInfo | None) -> bool:
         """Grenze voll (Speicher/Session-Zahl) und die Session meldet selbst ``idle``."""
         if info is None or not info.aus_json or info.status != "idle":
@@ -1685,16 +1744,21 @@ class Aufpasser:
             return
         if not self.vor_eingriff(f, hash_start, repo):
             return
-        per_exit = self._fenster_schliessen(
+        ende = self._fenster_schliessen(
             f.ziel, freigabe_ticket_zu(ticket, sha), f.pane_pid
         )
+        if ende == "offen":
+            log.error("%s: Claude lebt noch — nicht als geschlossen gemeldet", f.name)
+            return
         if not self.e.trocken:
             self.stand.fenster.pop(schluessel, None)
         zusatz = (
             f" Änderungen auf sicherung/{ticket} gesichert ({sha[:7]})." if sha else ""
         )
-        if per_exit:
+        if ende == "exit":
             zusatz += " Per /exit beendet, Kette läuft weiter."
+        elif ende == "zwang":
+            zusatz += " /exit ohne Wirkung, Claude beendet, Kette läuft weiter."
         self.melden(
             f.spec,
             repo,
