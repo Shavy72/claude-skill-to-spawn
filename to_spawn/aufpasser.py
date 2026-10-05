@@ -478,7 +478,13 @@ prozess_baum = prozessbaum.baum
 _prozess_lebt = prozessbaum.lebt
 
 #: Stufen zum Beenden eines Prozessbaums: SIGHUP, SIGTERM, SIGKILL mit je 5 s Frist.
-BEENDEN_STUFEN = ((signal.SIGHUP, 5.0), (signal.SIGTERM, 5.0), (signal.SIGKILL, 5.0))
+#: SIGHUP/SIGKILL gibt es unter Windows nicht — dort bleibt nur SIGTERM, sonst bricht
+#: schon der Import (Muster wie ``respawn._ABGEFANGENE_SIGNALE``).
+BEENDEN_STUFEN = tuple(
+    (getattr(signal, name), 5.0)
+    for name in ("SIGHUP", "SIGTERM", "SIGKILL")
+    if hasattr(signal, name)
+)
 
 #: Ausgang von ``_fenster_schliessen``: Fenster zu, Claude per ``/exit`` beendet,
 #: Claude nach ``/exit`` zwangsbeendet, Claude lebt trotz allem noch.
