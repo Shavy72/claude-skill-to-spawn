@@ -507,18 +507,61 @@ def _pids_beenden(pids: list[int], wer: str) -> bool:
     )
 
 
-def bau_ticket_im_baum(pane_pid: int) -> int | None:
-    """Ticket des bau.py, das gerade im Fensterbaum läuft (``… bau.py <N> …``).
+#: ``bau <N>`` bzw. ``… bau.py <N>`` in der Kommandozeile einer Ketten-Shell.
+_BAU_AUFRUF = re.compile(r"\bbau(?:\.py)?\s+(\d+)\b")
+
+
+def _baum_lesen(pane_pid: int) -> list[int]:
+    """Fensterbaum; nicht lesbar (``/proc`` weg) ⇒ leer — Aufrufer fallen zurück."""
+    try:
+        return prozess_baum(pane_pid) if pane_pid else []
+    except OSError as fehler:
+        log.warning("Prozessbaum %s nicht lesbar: %s", pane_pid, fehler)
+        return []
+
+
+def bau_lauf_im_baum(pane_pid: int) -> tuple[int, int] | None:
+    """(PID, Ticket) des bau.py, das gerade im Fensterbaum läuft (``… bau.py <N> …``).
 
     In einer Fenster-Kette (``bau N; bau M``) heißt das Fenster nach N weiter
     „bau N“, obwohl bau.py schon M bearbeitet. ``None`` = kein bau.py im Baum.
     """
-    for pid in prozess_baum(pane_pid) if pane_pid else []:
+    for pid in _baum_lesen(pane_pid):
         argv = _argv(pid)
         for i, teil in enumerate(argv[:-1]):
             if teil.endswith("bau.py") and argv[i + 1].isdigit():
-                return int(argv[i + 1])
+                return pid, int(argv[i + 1])
     return None
+
+
+def echtes_ticket(f: Fenster) -> int | None:
+    """Ticket, das in diesem Fenster wirklich läuft (#598).
+
+    Läuft bau.py im Fensterbaum, zählt dessen Ticket (Fenster-Kette); sonst — oder
+    wenn die Prozessliste nicht lesbar ist — der Fenstername „bau <N>“.
+    """
+    lauf = bau_lauf_im_baum(f.pane_pid)
+    return lauf[1] if lauf else f.ticket
+
+
+def kette_folge(pane_pid: int, ticket: int) -> list[int]:
+    """Tickets, die die Fenster-Kette nach ``ticket`` noch startet.
+
+    Gelesen aus den Kommandozeilen der Shells im Fensterbaum (``bash -lc '…; bau N;
+    bau M'``); Claude (Prompt-Text) zählt nie. Steht ``ticket`` nicht darin, gelten
+    alle anderen als Folge — lieber einmal zu vorsichtig als ein Doppel-Start.
+    ponytail: von Hand getippte Ketten stehen in keiner Kommandozeile; Upgrade:
+    Kette beim Start als Datei je Fenster ablegen.
+    """
+    funde: list[int] = []
+    for pid in _baum_lesen(pane_pid):
+        argv = _argv(pid)
+        if argv and Path(argv[0]).name.lstrip("-") in SHELLS:
+            funde.extend(int(n) for n in _BAU_AUFRUF.findall(" ".join(argv)))
+    funde = list(dict.fromkeys(funde))
+    if ticket in funde:
+        return funde[funde.index(ticket) + 1 :]
+    return funde
 
 
 def session_beendet(pane_pid: int) -> bool:
@@ -1040,6 +1083,27 @@ class Aufpasser:
             )
         return liste
 
+    def belegte_tickets(self, ausser_pane: int = 0) -> set[int]:
+        """Tickets, die in einem Pane dieses tmux-Servers laufen oder in dessen
+        Fenster-Kette noch folgen (#598) — ``ausser_pane`` zählt nicht mit."""
+        belegt: set[int] = set()
+        try:
+            raus = self.tmux("list-panes", "-a", "-F", "#{window_name}\t#{pane_pid}")
+        except RuntimeError as fehler:
+            log.warning("Panes nicht lesbar: %s — nur Fensternamen zählen", fehler)
+            return belegt
+        for zeile in raus.splitlines():
+            name, _, pid_text = zeile.partition("\t")
+            pane_pid = int(pid_text) if pid_text.isdigit() else 0
+            if pane_pid == ausser_pane:
+                continue
+            f = Fenster("", "", "", name, "", pane_pid)
+            ticket = echtes_ticket(f)
+            if ticket is not None:
+                belegt.add(ticket)
+                belegt.update(kette_folge(pane_pid, ticket))
+        return belegt
+
     def repo_ordner(self, fenster: list[Fenster]) -> Path | None:
         for f in fenster:
             pfad = Path(f.pfad)
@@ -1282,13 +1346,18 @@ class Aufpasser:
         _pids_beenden(list(reversed(baum)), f"Pane {pane_pid}")
 
     def _fenster_schliessen(
-        self, ziel: str, freigabe: Freigabe, pane_pid: int = 0
+        self,
+        ziel: str,
+        freigabe: Freigabe,
+        pane_pid: int = 0,
+        kette_beenden: bool = False,
     ) -> Schliessart:
         """Einzige Stelle, die ein Fenster schließt — nur mit gültiger Freigabe.
 
         Lebt Claude im Fensterbaum, endet nur Claude (``/exit``, nach
         ``exit_warten_s`` beenden) samt seinen Kindern; Fenster und bau.py-Kette
-        leben weiter (#592). Ergebnis siehe ``Schliessart``.
+        leben weiter (#592). ``kette_beenden``: das ganze Fenster endet samt Kette —
+        wenn deren Folge-Ticket schon woanders läuft (#598). Ergebnis siehe ``Schliessart``.
         """
         if not isinstance(freigabe, Freigabe):
             raise TypeError("Fenster schließen braucht eine Freigabe")
@@ -1303,7 +1372,7 @@ class Aufpasser:
             return "fenster"
         baum = prozess_baum(pane_pid) if pane_pid else []
         claude = [pid for pid in baum if prozessbaum.ist_claude(pid)]
-        if not claude:
+        if kette_beenden or not claude:
             self.tmux("kill-window", "-t", ziel)
             self._prozesse_beenden(pane_pid)
             return "fenster"
@@ -1365,6 +1434,43 @@ class Aufpasser:
             )
         finally:
             self.tmux("set-option", "-w", "-t", ziel, "-u", "remain-on-exit")
+
+    def _kette_fortsetzen(
+        self, f: Fenster, ticket: int, freigabe: Freigabe, cwd: Path, befehl: str
+    ) -> Fenster:
+        """Fenster-Kette (#598): Ticket ``ticket`` hängt im Fenster „bau N“.
+
+        Nur sein bau.py samt Kindern endet — die Kette dahinter läuft weiter —, und
+        die Session geht im eigenen Fenster „bau <ticket>“ mit ``befehl`` weiter.
+        Ergebnis: das neue Fenster. Jeder Fehlschlag ist ein ``RuntimeError``.
+        """
+        if not isinstance(freigabe, Freigabe) or not freigabe.session_id:
+            raise TypeError("Fenster fortsetzen braucht eine Freigabe mit Gesprächs-ID")
+        name = f"bau {ticket}"
+        if any(x.name == name for x in self.fenster(f.sitzung, f.spec)):
+            raise RuntimeError(f"Fenster „{name}“ gibt es schon")
+        log.info(
+            "Fenster %s: Kette, #%d fortsetzen (%s): %s",
+            f.ziel,
+            ticket,
+            freigabe.grund,
+            befehl,
+        )
+        if self.e.trocken:
+            print(
+                f"[trocken] Fenster {f.ziel}: bau.py {ticket} beenden, „{name}“ starten: {befehl}"
+            )
+            return f
+        lauf = bau_lauf_im_baum(f.pane_pid)
+        if lauf is None or lauf[1] != ticket:
+            raise RuntimeError(f"bau.py {ticket} läuft nicht mehr in „{f.name}“")
+        if not _pids_beenden(list(reversed(prozess_baum(lauf[0]))), f.name):
+            raise RuntimeError(f"bau.py {ticket} lebt nach dem Beenden noch")
+        self.fenster_starten(f.sitzung, name, cwd, befehl)
+        neu = next((x for x in self.fenster(f.sitzung, f.spec) if x.name == name), None)
+        if neu is None:
+            raise RuntimeError(f"Fenster „{name}“ nach dem Start nicht da")
+        return neu
 
     def _fortsetzen_nachweisen(self, f: Fenster, sid: str) -> bool:
         """Bis ``NACHWEIS_S`` prüfen, ob im Fenster wieder eine Session mit
@@ -1431,9 +1537,10 @@ class Aufpasser:
             return False
         info = self.session(f)
         worktree: Path | None = None
-        if f.ticket is not None:
+        ticket = echtes_ticket(f)
+        if ticket is not None:
             try:
-                worktree = worktree_finden(repo, f.ticket, info.cwd if info else None)
+                worktree = worktree_finden(repo, ticket, info.cwd if info else None)
             except RuntimeError as fehler:
                 # Ohne Worktree-Wissen kein sicheres Gate-Urteil — lieber nichts anfassen.
                 log.error(
@@ -1579,16 +1686,16 @@ class Aufpasser:
         e = self.eintrag(schluessel, text)
         hash_start = e["hash"]
         still_min = (self.jetzt - e["seit"]) / 60
-        ticket = f.ticket
+        ticket = echtes_ticket(f)
+        if ticket != f.ticket:
+            log.info("%s: bau.py arbeitet an Ticket %s", f.name, ticket)
         arbeitend = arbeitet(text, status)
 
         if ticket is not None and ticket not in offen and not arbeitend:
             # Volle Grenze + idle Session: nicht 15 min Karenz absitzen, sondern kurz
             # warten und Text vergleichen — der Platz wird gebraucht (#592).
             platznot = still_min < KARENZ_MIN and self._platznot(repo, info)
-            if (still_min >= KARENZ_MIN or platznot) and not self._fremdes_ticket(
-                f, ticket
-            ):
+            if still_min >= KARENZ_MIN or platznot:
                 try:
                     zu = self.ticket_zu(ticket, repo)
                 except RuntimeError as fehler:
@@ -1688,24 +1795,6 @@ class Aufpasser:
                 f"„{f.name}“ reagiert nach Anstupsen und Fortsetzen nicht — braucht David.",
             )
 
-    @staticmethod
-    def _fremdes_ticket(f: Fenster, ticket: int) -> bool:
-        """bau.py im Fensterbaum arbeitet an einem anderen Ticket als der Fenstername.
-
-        Fenster-Kette (``bau N; bau M``): nach N läuft M im Fenster „bau N“ — dann
-        kein Ticket-zu-Eingriff für N (keine Sicherung, kein ``/exit``).
-        """
-        lauf = bau_ticket_im_baum(f.pane_pid)
-        if lauf is None or lauf == ticket:
-            return False
-        log.info(
-            "%s: bau.py arbeitet an Ticket %d — kein Eingriff für Ticket %d",
-            f.name,
-            lauf,
-            ticket,
-        )
-        return True
-
     def _platznot(self, repo: Path, info: SessionInfo | None) -> bool:
         """Grenze voll (Speicher/Session-Zahl) und die Session meldet selbst ``idle``."""
         if info is None or not info.aus_json or info.status != "idle":
@@ -1750,8 +1839,21 @@ class Aufpasser:
             return
         if not self.vor_eingriff(f, hash_start, repo):
             return
+        # Folgt in der Kette ein Ticket, das schon woanders läuft, endet das ganze
+        # Fenster — nach /exit startete die Kette sonst ein zweites bau.py (#598).
+        folge = kette_folge(f.pane_pid, ticket)
+        doppelt = sorted(set(folge) & self.belegte_tickets(f.pane_pid)) if folge else []
+        if doppelt:
+            log.info(
+                "%s: Folge-Ticket %s läuft schon woanders — ganzes Fenster endet",
+                f.name,
+                doppelt,
+            )
         ende = self._fenster_schliessen(
-            f.ziel, freigabe_ticket_zu(ticket, sha), f.pane_pid
+            f.ziel,
+            freigabe_ticket_zu(ticket, sha),
+            f.pane_pid,
+            kette_beenden=bool(doppelt),
         )
         if ende == "offen":
             log.error("%s: Claude lebt noch — nicht als geschlossen gemeldet", f.name)
@@ -1820,10 +1922,18 @@ class Aufpasser:
             befehl = self.bau_befehl(repo, ticket, resume=sid)
         else:
             befehl = self.wache_befehl(repo, f.spec, resume=sid)
+        # Kette: bau.py arbeitet an einem anderen Ticket als der Fenstername (#598).
+        kette = ticket is not None and f.ticket is not None and ticket != f.ticket
+        neu = f
         try:
-            self._fenster_fortsetzen(
-                f.ziel, freigabe_gesichert(sid, sha), cwd, befehl, f.pane_pid
-            )
+            if kette:
+                neu = self._kette_fortsetzen(
+                    f, ticket, freigabe_gesichert(sid, sha), cwd, befehl
+                )
+            else:
+                self._fenster_fortsetzen(
+                    f.ziel, freigabe_gesichert(sid, sha), cwd, befehl, f.pane_pid
+                )
         except RuntimeError as fehler:
             # Prozess ist womöglich schon beendet, das Fenster aber leer: nicht
             # noch einmal versuchen, sondern David rufen (Stufe 3).
@@ -1843,26 +1953,31 @@ class Aufpasser:
             gesichert = f"Änderungen auf sicherung/{ticket} gesichert ({sha[:7]})"
         else:
             gesichert = "nichts zu sichern"
-        if not self.e.trocken and not self._fortsetzen_nachweisen(f, sid):
+        if kette and not self.e.trocken:
+            # Die Session lebt jetzt in „bau <M>“; das alte Fenster fährt die Kette weiter.
+            self.stand.fenster.pop(schluessel, None)
+            schluessel = f"{neu.sitzung}/{neu.name}"
+            self.stand.fenster[schluessel] = e
+        if not self.e.trocken and not self._fortsetzen_nachweisen(neu, sid):
             self._braucht_david(
                 e,
-                f,
+                neu,
                 repo,
                 schluessel,
                 "fortsetzen_fehlgeschlagen",
-                f"„{f.name}“: {gesichert}, aber Fortsetzen fehlgeschlagen "
+                f"„{neu.name}“: {gesichert}, aber Fortsetzen fehlgeschlagen "
                 f"(Session {sid[:8]} nicht wieder da) — braucht David.",
             )
             return
         if not self.e.trocken:
-            e.update(hash=pane_hash(self.pane_text(f.ziel)))
+            e.update(hash=pane_hash(self.pane_text(neu.ziel)))
         e.update(stufe=2, eingriff=self.jetzt, seit=self.jetzt)
         self.melden(
             f.spec,
             repo,
             schluessel,
             "fortgesetzt",
-            f"„{f.name}“ nach Anstupsen weiter still — {gesichert}, Session {sid[:8]}… fortgesetzt.",
+            f"„{neu.name}“ nach Anstupsen weiter still — {gesichert}, Session {sid[:8]}… fortgesetzt.",
         )
 
     # -- Ein Lauf ----------------------------------------------------------------
@@ -1986,8 +2101,15 @@ class Aufpasser:
             ", ".join(sorted(vorhanden)),
             sorted(offen) or "-",
         )
-        for ticket in sorted(offen):
-            if f"bau {ticket}" in vorhanden:
+        fehlend = [t for t in sorted(offen) if f"bau {t}" not in vorhanden]
+        # Läuft das Ticket schon in einer Fenster-Kette (oder folgt dort noch),
+        # kein eigenes Fenster — sonst zwei Sessions auf einem Ticket (#598).
+        belegt = self.belegte_tickets() if fehlend else set()
+        for ticket in fehlend:
+            if ticket in belegt:
+                log.info(
+                    "%s: #%d läuft in einer Fenster-Kette — kein Start", sitzung, ticket
+                )
                 continue
             if not self.start_erlaubt(spec, repo, ticket):
                 continue
