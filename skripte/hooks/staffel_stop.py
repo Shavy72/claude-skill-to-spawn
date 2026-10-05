@@ -36,8 +36,18 @@ import sys
 import time
 from pathlib import Path
 
+
 # Prozess-Wissen (Session finden, beenden — Linux und Windows) lebt im Skill-Paket.
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+# Liegt diese Datei nicht im Skill (alte Repo-Kopie ``scripts/hooks/``), gilt der
+# installierte Skill (``$TO_SPAWN_HOME``, Vorgabe ``~/.claude/skills/to-spawn``).
+def _skill_wurzel() -> Path:
+    neben = Path(__file__).resolve().parents[2]
+    if (neben / "to_spawn" / "prozessbaum.py").is_file():
+        return neben
+    return Path(os.environ.get("TO_SPAWN_HOME") or Path.home() / ".claude" / "skills" / "to-spawn")
+
+
+sys.path.insert(0, str(_skill_wurzel()))
 from to_spawn import prozessbaum  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s staffel_stop: %(message)s")
@@ -61,12 +71,12 @@ def fingerabdruck(datei: Path) -> str:
 
 
 def handoff_muster(ticket: str) -> re.Pattern[str]:
-    """``HANDOFF_<datum>_<ticket>.md`` — und sonst nichts.
+    """``HANDOFF_<datum>_<ticket>.md``, optional mit Suffix (``_runde2``, ``_r2``) — sonst nichts.
 
     Ein reines Glob ``HANDOFF_*_<N>.md`` würde auch ``HANDOFF_2026-09-18_waechter_192.md``
     treffen: der Aufseher einer Spec 192 hätte die Bau-Session von Ticket 192 beendet.
     """
-    return re.compile(rf"^HANDOFF_\d{{4}}-\d{{2}}-\d{{2}}_{re.escape(ticket)}\.md$")
+    return re.compile(rf"^HANDOFF_\d{{4}}-\d{{2}}-\d{{2}}_{re.escape(ticket)}(_[\w-]+)?\.md$")
 
 
 def frischer_handoff(ordner: list[Path], ticket: str, seit: float) -> Path | None:
@@ -75,7 +85,7 @@ def frischer_handoff(ordner: list[Path], ticket: str, seit: float) -> Path | Non
     schon_uebergeben = os.environ.get("BAU_STAFFEL_FINGERABDRUCK") or ""
     treffer: list[tuple[float, Path]] = []
     for verzeichnis in ordner:
-        for datei in verzeichnis.glob(f"HANDOFF_*_{ticket}.md"):
+        for datei in verzeichnis.glob(f"HANDOFF_*_{ticket}*.md"):
             if not muster.match(datei.name):
                 continue
             try:
@@ -143,8 +153,12 @@ def beenden(pid: int) -> bool:
     Der Hook darf NICHT warten: Claude Code führt Stop-Hooks synchron aus und läuft
     erst nach dem Hook weiter (Weg-Test 18.09.2026: sonst endete jede Session mit
     SIGKILL). Den Rest erledigt ein abgelöster Nachläufer in ``prozessbaum``.
+    Sein Ergebnis (Exit-Code von ``taskkill`` bzw. SIGKILL) steht in
+    ``<BAU_STAFFEL_DATEI>.nachlauf.log``, ein Fehlschlag als ``WARNUNG``.
     """
-    if not prozessbaum.session_beenden(pid):
+    staffel_datei = os.environ.get("BAU_STAFFEL_DATEI")
+    protokoll = Path(f"{staffel_datei}.nachlauf.log") if staffel_datei else None
+    if not prozessbaum.session_beenden(pid, protokoll):
         log.warning("Session %d nicht beendbar — keine Staffel", pid)
         return False
     return True
@@ -182,7 +196,12 @@ def main() -> int:
         return 0
 
     runde = os.environ.get("BAU_STAFFEL_RUNDE") or "1"
-    log.info("Handoff %s frisch — Session %d wird beendet (Runde %s)", handoff.name, ziel, runde)
+    log.info(
+        "Handoff %s frisch — Session %d wird beendet (Runde %s)",
+        handoff.name,
+        ziel,
+        runde,
+    )
     if not beenden(ziel):
         return 0
     Path(staffel_datei).parent.mkdir(parents=True, exist_ok=True)
