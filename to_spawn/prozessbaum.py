@@ -172,22 +172,24 @@ def ohne_fenster() -> dict[str, Any]:
     return {}
 
 
-def ist_session_zeile(zeile: str) -> bool:
+def ist_session_zeile(zeile: str, *, windows: bool = _WINDOWS) -> bool:
     """Ist diese Kommandozeile die Claude-Session selbst?
 
     Ein Teilstring-Treffer auf „claude" genügt nicht: der direkte Vorfahr des
     Hooks ist ``/bin/sh -c <hook-befehl>``, und dieser Befehl kann „claude" im
     Pfad tragen (``~/.claude/…``). Getroffen wird nur ein Programm, das
     ``claude`` heißt oder im Paket ``claude-code`` liegt. Unter Windows zählen
-    Anführungszeichen und die Endung ``.exe`` nicht zum Namen.
+    Anführungszeichen und die Endung ``.exe`` nicht zum Namen. ``windows`` wählt
+    die Zeilenform; Standard ist das laufende System, Windows-Prozesslisten
+    (``_prozesse_windows``) übergeben ``True`` unabhängig davon.
     """
-    teile = [t.strip('"') for t in zeile.split()] if _WINDOWS else zeile.split()
+    teile = [t.strip('"') for t in zeile.split()] if windows else zeile.split()
     if not teile:
         return False
     if any(marke in zeile for marke in NIE_SESSION):
         return False
     programm = Path(teile[0]).name
-    if _WINDOWS and programm.lower().endswith(".exe"):
+    if windows and programm.lower().endswith(".exe"):
         programm = programm[:-4]
     if programm in WRAPPER_NAMEN and "-c" in teile[1:3]:
         return False

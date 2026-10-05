@@ -157,7 +157,8 @@ def lauf_aus(prozesse: dict[int, tuple[int, str, int]], ticket: int) -> Lauf:
     # ist der Treffer ohne Treffer-Kind (sonst hinge es an der Reihenfolge der Prozessliste).
     for bau in (p for p in treffer if not treffer.intersection(kinder.get(p, []))):
         for pid in nachkommen(bau):
-            if not prozessbaum.ist_session_zeile(prozesse[pid][1]):
+            # Die Liste hat immer Windows-Form (``_prozesse_windows``), egal wo die Logik läuft.
+            if not prozessbaum.ist_session_zeile(prozesse[pid][1], windows=True):
                 continue
             start = _unix(prozesse[pid][2])
             arbeitet = start is not None and any(
