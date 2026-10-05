@@ -59,7 +59,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, NamedTuple
 
-from to_spawn import aufpasser, bau_log, capo, config, gh
+from to_spawn import aufpasser, bau_log, capo, config, gh, pc_fenster
 
 log = logging.getLogger("to_spawn.aufseher_stand")
 
@@ -110,6 +110,9 @@ class Quellen:
     #: ``tmux <args>`` → stdout, ``None`` = tmux fehlt oder Exit ≠ 0.
     tmux: Callable[[list[str]], str | None]
     jetzt: Callable[[], float] = time.time
+    #: Am PC (kein tmux, #501): Ticket → Sekunden seit dem letzten Transkript-Eintrag
+    #: (``None`` = keine Session). Gesetzt = PC-Weg, tmux wird nicht gefragt.
+    pc_still: Callable[[int], float | None] | None = None
 
 
 def _tmux_echt(args: list[str]) -> str | None:
@@ -133,7 +136,26 @@ def echte_quellen(repo: Path, gh_repo: str) -> Quellen:
     """Quellen des Rechners; :class:`GhFehlt`, wenn ``gh`` nicht da ist."""
     if gh.gh_befehl() is None:
         raise GhFehlt("gh nicht gefunden (PATH bzw. TO_SPAWN_GH_STUB)")
-    return Quellen(repo=repo, kinder=lambda s: capo.kinder(gh_repo, s), tmux=_tmux_echt)
+    pc_still = None
+    if pc_fenster.am_pc():
+        def pc_still(n: int) -> float | None:
+            return pc_fenster.still_s(repo, n, time.time())
+    return Quellen(
+        repo=repo, kinder=lambda s: capo.kinder(gh_repo, s), tmux=_tmux_echt, pc_still=pc_still
+    )
+
+
+#: Am PC gilt eine Session als arbeitend, wenn ihr Transkript jünger ist als das.
+PC_ARBEITET_S = 120.0
+
+
+def _pc_lage(still_s: float | None) -> tuple[str, int | None]:
+    """Fenster-Zustand am PC aus der Transkript-Zeit (Rückfragen sind dort nicht sichtbar)."""
+    if still_s is None:
+        return KEIN_FENSTER, None
+    if still_s < PC_ARBEITET_S:
+        return ARBEITET, None
+    return STILL, int(still_s // 60)
 
 
 @dataclass(frozen=True)
@@ -357,7 +379,7 @@ def sammeln(spec: int, q: Quellen, vorher: _Vorher) -> _Ergebnis:
             f"Spec #{spec} hat keine Sub-Issues — Spec-Nummer prüfen (gh)"
         )
     jetzt = q.jetzt()
-    fenster = _fenster_liste(spec, q)
+    fenster = None if q.pc_still else _fenster_liste(spec, q)
     lagen: list[TicketLage] = []
     kommentare: dict[str, int] = {}
     merker: dict[str, dict[str, Any]] = {}
@@ -368,7 +390,9 @@ def sammeln(spec: int, q: Quellen, vorher: _Vorher) -> _Ergebnis:
         except (KeyError, TypeError, ValueError):
             log.warning("Sub-Issue ohne Nummer übersprungen: %r", kind)
             continue
-        if fenster is None:
+        if q.pc_still is not None:
+            zustand, still_min = _pc_lage(q.pc_still(n))
+        elif fenster is None:
             zustand, still_min = FENSTER_UNBEKANNT, None
         elif n in fenster:
             zustand, still_min, m = _fenster_lage(n, *fenster[n], q, vorher, jetzt)
@@ -418,8 +442,8 @@ def ticket_lage(
     """
     erg = sammeln(spec, q, _vorher(spec, ordner))
     lage = next((t for t in erg.lagen if t.nummer == ticket), None)
-    fenster = _fenster_liste(spec, q) or {}
-    eintrag = fenster.get(ticket)  # (tmux-Ziel, window_activity)
+    fenster = {} if q.pc_still else (_fenster_liste(spec, q) or {})
+    eintrag = fenster.get(ticket)  # (tmux-Ziel, window_activity); am PC kein Ziel
     return TicketBlick(lage, eintrag[0] if eintrag else None)
 
 

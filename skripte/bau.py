@@ -1,6 +1,6 @@
 """bau — schlanke Claude-Code-Session für genau ein Ticket.
 
-Aufruf: ``python scripts/bau.py <N> [--dry-run] [--model <m>] [--print-prompt] [--sofort] [--takt <s>] [--umzug <branch>@<sha>:<pfad>] [--probesitz] [--ohne-prompt] [--auftrag <text>]``
+Aufruf: ``python scripts/bau.py <N> [--dry-run] [--model <m>] [--print-prompt] [--sofort] [--takt <s>] [--umzug <branch>@<sha>:<pfad>] [--probesitz] [--ohne-prompt] [--remote-control] [--auftrag <text>]``
 
 Liest das Ticket-Manifest unter ``docs/agents/manifests/*.json`` (SSOT-Schema siehe
 ``docs/agents/kontext-manifest.md``), schaltet alle nicht benötigten Skills
@@ -774,6 +774,11 @@ def main() -> int:
         "ins Fenster getippt; Konfiguration (Settings, MCP, Session-ID, Umgebung) wie immer",
     )
     parser.add_argument(
+        "--remote-control",
+        action="store_true",
+        help="respawn am PC (#501): Session mit Remote Control „bau <N>“ starten",
+    )
+    parser.add_argument(
         "--auftrag",
         metavar="TEXT",
         help="Auftrag dieser Runde (#285): kommt als Abschnitt „## Auftrag dieser Runde“ vor den "
@@ -916,6 +921,9 @@ def main() -> int:
         cmd.append("--no-chrome")
     if model:
         cmd += ["--model", model]
+    if args.remote_control:
+        # respawn am PC (#501): kein tmux zum Nachtippen von ``/remote-control``.
+        cmd += ["--remote-control", f"bau {ticket}"]
     # Feste Gesprächs-ID (#236): der Aufpasser liest sie aus dem Prozessbaum und setzt
     # die Session nach einer Sicherung mit ``--resume`` fort.
     if args.resume:

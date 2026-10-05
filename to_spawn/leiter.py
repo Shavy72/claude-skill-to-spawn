@@ -25,6 +25,9 @@ Stufen (feste Schwellen :data:`STUPS_MIN`, :data:`NACH_STUPS_MIN`,
    Fenster wieder arbeitet oder das Ticket neu beginnt (``session_start`` im Bau-Log
    jünger als die Stufe-5-Zeit; die wird erst nach dem Ende von ``abloesen`` gesetzt).
 
+Am PC (Windows, #501) ist nichts tippbar: :func:`fuer_rechner` macht aus Stufe 1/2
+direkt Stufe 3 (Zeile „PC: Stufe 1 übersprungen“), aus ``/exit`` eine Meldung.
+
 In ein Fenster, das arbeitet oder eine Rückfrage zeigt, wird nie getippt. Arbeitet
 die Session nach einem Stupser (oder nach Stufe 5) wieder, fällt die Leiter auf
 Stufe 0 zurück. Erst wird die Stufe gemerkt, dann getippt — scheitert das Tippen,
@@ -125,8 +128,8 @@ class Umwelt(Protocol):
     def lage(self, spec: int, ticket: int, seit: float | None) -> Lage: ...
     def handoff_k(self) -> float: ...
     def worktree(self, ticket: int) -> Path: ...
-    def werkzeug(self) -> respawn.Werkzeug:
-        """tmux-Werkzeug von respawn: ``tippen`` = Text einfügen, Enter getrennt."""
+    def werkzeug(self) -> respawn.Werkzeug | respawn.PcWerkzeug:
+        """Werkzeug von respawn: tmux (``tippen`` = Text einfügen, Enter getrennt) oder PC."""
         ...
 
 
@@ -200,6 +203,22 @@ def entscheide(lage: Lage, gemerkt: Gemerkt, jetzt: float, handoff_k: float) -> 
     return Schritt("nichts", f"still {still} min < {STUPS_MIN}")
 
 
+#: Vermerk in der Zeile, wenn der PC-Weg das Tippen überspringt (#501 E10).
+PC_VERMERK = "PC: Stufe 1 übersprungen"
+
+
+def fuer_rechner(schritt: Schritt, kann_tippen: bool) -> Schritt:
+    """Am PC (nichts tippbar) wird aus Anstupsen/Handoff-Anfordern direkt die Ablösung,
+    aus ``/exit`` eine Meldung an den Aufseher — reine Logik."""
+    if kann_tippen:
+        return schritt
+    if schritt.aktion in ("anstupsen", "handoff"):
+        return Schritt("respawn", f"{PC_VERMERK} — {schritt.grund}")
+    if schritt.aktion == "exit":
+        return Schritt("melden", f"{schritt.grund}, PC: /exit nicht tippbar — Aufseher prüfen")
+    return schritt
+
+
 def _neu_gestartet(lage: Lage, gemerkt: Gemerkt) -> bool:
     """``session_start`` jünger als der gemerkte Eingriff = das Ticket beginnt neu."""
     return (
@@ -266,7 +285,8 @@ def _lies(u: Umwelt, spec: int, ticket: int) -> tuple[Gemerkt, Lage, Schritt, fl
     gemerkt = Gemerkt(stufe, seit)
     jetzt = u.jetzt()
     lage = u.lage(spec, ticket, seit if stufe == 2 else None)
-    return gemerkt, lage, entscheide(lage, gemerkt, jetzt, u.handoff_k()), jetzt
+    schritt = entscheide(lage, gemerkt, jetzt, u.handoff_k())
+    return gemerkt, lage, fuer_rechner(schritt, respawn.kann_tippen(u.werkzeug())), jetzt
 
 
 def _plane(u: Umwelt, spec: int, ticket: int) -> Ergebnis:
@@ -353,7 +373,8 @@ def _respawn(
         log.warning("leiter #%s: respawn-Abschluss nicht gemerkt: %s", ticket, fehler)
         text = f"Stufe 3 abgelöst, Abschluss nicht gemerkt — {fehler}"
         return Ergebnis(EXIT_FEHLER, _zeile(ticket, text))
-    text = f"Stufe 0 {_WORT['respawn']} — Start-Prompt-Datei da"
+    grund = "Start-Prompt-Datei da" if respawn.kann_tippen(u.werkzeug()) else PC_VERMERK
+    text = f"Stufe 0 {_WORT['respawn']} — {grund}"
     return Ergebnis(EXIT_OK, _zeile(ticket, text))
 
 
@@ -396,7 +417,7 @@ class _EchteUmwelt:
     def __init__(self, repo: Path, quellen: aufseher_stand.Quellen) -> None:
         self.repo = repo
         self.q = quellen
-        self._werkzeug = respawn.TmuxWerkzeug()
+        self._werkzeug = respawn.werkzeug_fuer_rechner()
 
     def jetzt(self) -> float:
         return self.q.jetzt()
@@ -407,7 +428,7 @@ class _EchteUmwelt:
     def worktree(self, ticket: int) -> Path:
         return Path(config.worktree_pfad(ticket, self.repo)).expanduser()
 
-    def werkzeug(self) -> respawn.Werkzeug:
+    def werkzeug(self) -> respawn.Werkzeug | respawn.PcWerkzeug:
         return self._werkzeug
 
     def lage(self, spec: int, ticket: int, seit: float | None) -> Lage:

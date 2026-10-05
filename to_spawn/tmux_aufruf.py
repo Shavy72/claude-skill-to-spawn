@@ -1,7 +1,7 @@
 """Ein tmux-Aufruf mit klaren Fehlern: :class:`TmuxFehler` trägt Unterbefehl + stderr.
 
 Welches tmux läuft (``TO_SPAWN_TMUX``), entscheidet ``capo._tmux_befehl``. Hier steht
-nur, wie ein Aufruf scheitert: Exit ≠ 0 oder Zeitüberschreitung → :class:`TmuxFehler`,
+nur, wie ein Aufruf scheitert: Exit ≠ 0, Zeitüberschreitung oder kein tmux → :class:`TmuxFehler`,
 fehlendes Fenster/Pane → :class:`FensterWeg`.
 """
 
@@ -45,6 +45,8 @@ def aufrufen(*argumente: str, eingabe: str | None = None) -> str:
         if "can't find window" in stderr or "can't find pane" in stderr:
             raise FensterWeg(unterbefehl, stderr) from fehler
         raise TmuxFehler(unterbefehl, stderr) from fehler
+    except OSError as fehler:  # tmux fehlt (z. B. am PC: FileNotFoundError, #501)
+        raise TmuxFehler(unterbefehl, f"nicht aufrufbar ({fehler})") from fehler
     except subprocess.TimeoutExpired as fehler:
         raise TmuxFehler(
             unterbefehl, f"keine Antwort nach {fehler.timeout} s"

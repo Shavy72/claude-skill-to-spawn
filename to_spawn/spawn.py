@@ -177,11 +177,21 @@ def _neustart_lokal_befehl(repo: Path, spec: int, ticket: int, auftrag: str) -> 
     if sys.platform != "win32":
         fenster = capo.tmux_fenster(spec)
         return capo.folge_befehl(repo, spec, ticket, fenster, auftrag), fenster is not None
+    return wt_tab_befehl(repo, ticket, auftrag), False
+
+
+def wt_tab_befehl(repo: Path, ticket: int, auftrag: str, *schalter: str) -> list[str]:
+    """argv für einen Windows-Terminal-Tab ``bau <N>`` (``bau.py <N> --sofort``) — einzige Stelle.
+
+    ``schalter`` hängt weitere ``bau.py``-Schalter an (respawn am PC: ``--remote-control``).
+    """
     innen = f"python '{capo._bau_skript(repo)}' {ticket} --sofort"
     if auftrag:
         # wt trennt Tabs an ';' — der Auftrag darf keins enthalten; ' für pwsh verdoppeln.
         innen += " --auftrag '" + auftrag.replace(";", ",").replace("'", "''") + "'"
-    return ["wt", "-w", "0", "new-tab", "--title", f"bau {ticket}", "-d", str(repo), "pwsh", "-NoExit", "-Command", innen], False
+    if schalter:
+        innen += " " + " ".join(schalter)
+    return ["wt", "-w", "0", "new-tab", "--title", f"bau {ticket}", "-d", str(repo), "pwsh", "-NoExit", "-Command", innen]
 
 
 def neustart(

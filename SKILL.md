@@ -61,7 +61,7 @@ Ablauf für dich (das Modell), wenn die Konfig fehlt oder der Nutzer „setup“
 
 ## Ablösen `/respawn` (#431)
 
-- Alias-Skill `/respawn` (`aliase/respawn/SKILL.md`), Logik `to_spawn/respawn.py`: Aufseher löst eine hängende oder an der Handoff-Grenze stehende Bau-Session nach fester SOP ab (`to_spawn.py respawn <S> <N>`, über Ablöse-Subagent, Exit 0–3). Nur Bau-Server; `neustart --beenden` bleibt für tote Sessions.
+- Alias-Skill `/respawn` (`aliase/respawn/SKILL.md`), Logik `to_spawn/respawn.py`: Aufseher löst eine hängende oder an der Handoff-Grenze stehende Bau-Session nach fester SOP ab (`to_spawn.py respawn <S> <N>`, über Ablöse-Subagent, Exit 0–3). Am PC (Windows, #501): alte Session samt `bau.py` per `taskkill /T` beenden, neuer Windows-Terminal-Tab `bau <N>` mit `--remote-control` und Handoff-Auftrag (jüngster `docs/handoffs/HANDOFF_*_<N>.md`), Beleg = neue Session in der Prozessliste; nichts wird getippt. `neustart --beenden` bleibt für tote Sessions.
 
 ## Eingriffs-Leiter `leiter` (#432)
 - Logik `to_spawn/leiter.py`, Aufruf `to_spawn.py leiter <S> <N> [--dry-run]` — nur über einen Ablöse-Subagenten (`model: sonnet`, Antwort = die eine Zeile). stdout genau 1 Zeile `leiter #<N>: Stufe <x> <aktion> — <grund>`.

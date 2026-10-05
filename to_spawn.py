@@ -618,7 +618,7 @@ def main(argv: list[str] | None = None) -> int:
             repo,
             args.spec,
             args.ticket,
-            werkzeug=respawn.TmuxWerkzeug(),
+            werkzeug=respawn.werkzeug_fuer_rechner(),
             warte_max=args.warte_max,
             dry_run=args.dry_run,
         )
