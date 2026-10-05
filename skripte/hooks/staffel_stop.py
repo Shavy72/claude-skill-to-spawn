@@ -31,23 +31,20 @@ import logging
 import os
 import re
 import shutil
-import signal
 import subprocess
 import sys
 import time
 from pathlib import Path
 
+# Prozess-Wissen (Session finden, beenden — Linux und Windows) lebt im Skill-Paket.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from to_spawn import prozessbaum  # noqa: E402
+
 logging.basicConfig(level=logging.INFO, format="%(levelname)s staffel_stop: %(message)s")
 log = logging.getLogger("staffel_stop")
 
-MAX_VORFAHREN = 12
-# Frist, die eine Session zum geordneten Beenden bekommt, bevor SIGKILL folgt.
-NACHLAUF_SEKUNDEN = 20.0
 # Ausdrücklicher Übergabe-Wunsch im Handoff — tolerant gegen Fettschrift.
 STAFFEL_MARKER = re.compile(r"^\s*\**\s*staffel\s*\**\s*:\s*\**\s*weiter", re.IGNORECASE | re.MULTILINE)
-# Prozesse, die nie die Session sind (Hook-Wrapper, Launcher, Terminal-Multiplexer).
-WRAPPER_NAMEN = ("sh", "bash", "dash", "zsh", "env")
-NIE_SESSION = ("bau.py", "staffel_stop.py")
 
 
 def handoff_dirs_aus_umgebung() -> list[Path]:
@@ -124,124 +121,36 @@ def ticket_offen(ticket: str) -> bool:
     return str(zustand).upper() == "OPEN"
 
 
-def _cmdline(pid: int) -> str:
-    try:
-        rohwert = Path(f"/proc/{pid}/cmdline").read_bytes()
-    except OSError:
-        return ""
-    return rohwert.replace(b"\x00", b" ").decode("utf-8", "replace")
-
-
-def _ppid(pid: int) -> int | None:
-    try:
-        zeilen = Path(f"/proc/{pid}/status").read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return None
-    for zeile in zeilen.splitlines():
-        if zeile.startswith("PPid:"):
-            try:
-                return int(zeile.split()[1])
-            except (IndexError, ValueError):
-                return None
-    return None
-
-
 def ist_session_zeile(zeile: str) -> bool:
-    """Ist diese Kommandozeile die Claude-Session selbst?
-
-    Ein Teilstring-Treffer auf „claude" genügt nicht: der direkte Vorfahr des
-    Hooks ist ``/bin/sh -c <hook-befehl>``, und dieser Befehl kann „claude" im
-    Pfad tragen (``~/.claude/…``). Getroffen wird nur ein Programm, das
-    ``claude`` heißt oder im Paket ``claude-code`` liegt.
-    """
-    teile = zeile.split()
-    if not teile:
-        return False
-    if any(marke in zeile for marke in NIE_SESSION):
-        return False
-    if Path(teile[0]).name in WRAPPER_NAMEN and "-c" in teile[1:3]:
-        return False
-    for teil in teile:
-        if teil.startswith("-"):
-            continue
-        pfad = Path(teil)
-        if pfad.name.startswith("claude"):
-            return True
-        if "claude-code" in pfad.parts:
-            return True
-    return False
+    """Ist diese Kommandozeile die Claude-Session selbst? Regel: ``prozessbaum``."""
+    return prozessbaum.ist_session_zeile(zeile)
 
 
 def claude_vorfahr(pid: int) -> int | None:
-    """Erster Vorfahr, dessen Kommandozeile die Session ist (enthält ``claude``).
+    """Erster Vorfahr, der die Session ist — Linux über ``/proc``, Windows über
+    ``Win32_Process`` (#501).
 
     Der Launcher selbst (``bau.py``) darf nie getroffen werden — er startet die
-    Folge-Session. Deshalb wird die Kette abgebrochen, sobald ``bau.py``
-    auftaucht, und ohne Treffer ``None`` zurückgegeben.
+    Folge-Session. Oberhalb von ``BAU_LAUNCHER_PID`` wird nie gesucht.
     """
     grenze = os.environ.get("BAU_LAUNCHER_PID") or ""
-    aktuell = _ppid(pid)
-    for _ in range(MAX_VORFAHREN):
-        if aktuell is None or aktuell <= 1:
-            return None
-        if grenze and str(aktuell) == grenze:
-            # Oberhalb des Launchers liegen fremde Sessions (z. B. die Session,
-            # aus der bau.py gestartet wurde). Dort wird nie gesucht.
-            return None
-        zeile = _cmdline(aktuell)
-        if "bau.py" in zeile:
-            return None
-        if ist_session_zeile(zeile):
-            return aktuell
-        aktuell = _ppid(aktuell)
-    return None
+    return prozessbaum.session_vorfahr(pid, grenze=int(grenze) if grenze.isdigit() else None)
 
 
 def beenden(pid: int) -> bool:
-    """SIGTERM an die Session — und einen abgekoppelten Nachläufer für den Notnagel.
+    """Session beenden, ohne auf ihren Tod zu warten.
 
-    Der Hook darf hier NICHT auf den Tod der Session warten: Claude Code führt
-    Stop-Hooks synchron aus und läuft erst nach dem Hook weiter, die Session
-    käme also gar nicht dazu, das Signal zu verarbeiten (im Weg-Test
-    18.09.2026 endete jede Session dadurch mit SIGKILL/Exit -9 statt
-    kontrolliert). Die Eskalation läuft deshalb in einem eigenen Prozess mit
-    eigener Sitzung, damit sie das Sterben der Session überlebt.
+    Der Hook darf NICHT warten: Claude Code führt Stop-Hooks synchron aus und läuft
+    erst nach dem Hook weiter (Weg-Test 18.09.2026: sonst endete jede Session mit
+    SIGKILL). Den Rest erledigt ein abgelöster Nachläufer in ``prozessbaum``.
     """
-    try:
-        os.kill(pid, signal.SIGTERM)
-    except OSError as exc:
-        log.warning("SIGTERM an PID %d fehlgeschlagen: %s — keine Staffel", pid, exc)
+    if not prozessbaum.session_beenden(pid):
+        log.warning("Session %d nicht beendbar — keine Staffel", pid)
         return False
-    try:
-        subprocess.Popen(
-            [sys.executable, str(Path(__file__).resolve()), "--nachlauf", str(pid)],
-            start_new_session=True,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-    except OSError as exc:
-        log.warning("Nachläufer für PID %d nicht gestartet: %s", pid, exc)
     return True
 
 
-def nachlauf(pid: int, frist: float = NACHLAUF_SEKUNDEN) -> int:
-    """Wartet ``frist`` Sekunden und schickt SIGKILL, falls die Session noch lebt."""
-    ende = time.monotonic() + frist
-    while time.monotonic() < ende:
-        if not Path(f"/proc/{pid}").exists():
-            return 0
-        time.sleep(0.2)
-    try:
-        os.kill(pid, signal.SIGKILL)
-    except OSError:
-        return 0
-    return 0
-
-
 def main() -> int:
-    if len(sys.argv) >= 3 and sys.argv[1] == "--nachlauf":
-        return nachlauf(int(sys.argv[2]))
     try:
         eingabe = json.loads(sys.stdin.read() or "{}")
     except json.JSONDecodeError:

@@ -994,8 +994,6 @@ def main() -> int:
 
     # Staffel-Schleife: jede Runde eine eigene Session, Übergabe über die Staffel-Datei.
     staffel_datei.unlink(missing_ok=True)
-    if sys.platform != "linux":
-        log.warning("Staffel braucht /proc — auf %s bleibt die Übergabe von Hand.", sys.platform)
     runde = 1
     fingerabdruck = ""
     session_id_setzen(cmd, out, ticket=ticket, runde=runde)
