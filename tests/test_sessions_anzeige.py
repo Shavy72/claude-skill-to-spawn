@@ -62,3 +62,25 @@ def test_sessions_nimmt_spec_klon_sonst_repo(tmp_path: Path) -> None:
     assert lauf.returncode == 0, lauf.stderr
     zeilen = lauf.stdout.splitlines()
     assert zeilen == ["KLON duoplus-551 551", "KLON duoplus-management 999", "KLON duoplus-management"]
+
+
+@pytest.mark.skipif(_bash() is None, reason="bash fehlt")
+def test_nest_nachtrag_ersetzt_alte_sessions_funktion_idempotent(tmp_path: Path) -> None:
+    text = NEST.read_text(encoding="utf-8")
+    m = re.search(r"^# Nachtrag: ältere Nest-Köpfe kennen _klon.*?^fi\n", text, re.DOTALL | re.MULTILINE)
+    assert m, "Nachtrag für bestehende .bashrc fehlt"
+    (tmp_path / ".bashrc").write_text(
+        '_bau_py() { :; }\nsessions() { _bau_py sessions_stand.py "$@"; }\n', encoding="utf-8", newline="\n"
+    )
+    blk = tmp_path / "blk.sh"
+    blk.write_text(m.group(0), encoding="utf-8", newline="\n")
+    for _ in range(2):
+        lauf = subprocess.run(
+            [_bash() or "bash", str(blk)],
+            env={**__import__("os").environ, "NUTZER_HOME": str(tmp_path)},
+            capture_output=True, text=True, check=False, timeout=30,
+        )
+        assert lauf.returncode == 0, lauf.stderr
+    neu = (tmp_path / ".bashrc").read_text(encoding="utf-8")
+    assert neu.count("_klon_fuer_spec() {") == 1
+    assert '_klon_fuer_spec "${1:-}"' in neu
