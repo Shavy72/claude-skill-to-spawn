@@ -545,7 +545,7 @@ def worktree_ordner(ticket: int, basis: str) -> Path:
     regel = getattr(config, "worktree_pfad", None)
     if callable(regel):
         return Path(regel(ticket))
-    wurzel = "C:/dev" if sys.platform == "win32" else os.environ.get("BAU_WT_DIR") or "~/wt"
+    wurzel = os.environ.get("BAU_WT_DIR") or ("C:/dev" if sys.platform == "win32" else "~/wt")
     return Path(wurzel).expanduser() / f"wt-{ticket}"
 
 

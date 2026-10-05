@@ -638,17 +638,28 @@ ABLOESE_ABSTAND_S = 600.0
 ABLOESE_WARTE_S = respawn.WARTE_MAX_VORGABE
 
 
-class _StoppWerkzeug(respawn.TmuxWerkzeug):
+class _StoppWerkzeug:
     """tmux-Werkzeug des Ablöse-Fadens: nach Session-Ende (``stopp``) wird nichts mehr getippt.
 
     ``tippen`` und ``schlafen`` prüfen das Signal und brechen mit ``respawn._Abbruch`` ab —
     so landet nie ein Weiter-Auftrag in einer neuen Session im selben Pane. Ein begonnener
     Auftrag wird samt Enter fertig getippt (kein halber Text im Pane); der Stopp greift danach.
+
+    Hülle statt Unterklasse: das innere Werkzeug entsteht erst beim Bau aus
+    ``respawn.TmuxWerkzeug``. Eine Unterklasse band die Basis schon beim Import dieses
+    Moduls — war ``respawn.TmuxWerkzeug`` da gerade ersetzt (Test-Naht der CLI), brach
+    der Import mit ``TypeError``. Alle übrigen Aufrufe reicht ``__getattr__`` durch; das
+    innere ``schlafen`` zeigt auf das stopp-bewusste, wie es eine Unterklasse täte.
     """
 
     def __init__(self, stopp: threading.Event) -> None:
         self._stopp = stopp
         self._tippt = False
+        self._innen = respawn.TmuxWerkzeug()
+        self._innen.schlafen = self.schlafen  # type: ignore[method-assign]
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._innen, name)
 
     def _pruefen(self) -> None:
         if self._stopp.is_set():
@@ -658,7 +669,7 @@ class _StoppWerkzeug(respawn.TmuxWerkzeug):
         self._pruefen()
         self._tippt = True
         try:
-            super().tippen(ziel, text)
+            self._innen.tippen(ziel, text)
         finally:
             self._tippt = False
         self._pruefen()

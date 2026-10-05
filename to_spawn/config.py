@@ -140,7 +140,7 @@ def repo_wurzel(start: Path | None = None) -> Path:
 
 
 def worktree_pfad(ticket: str | int, repo: Path | None = None) -> str:
-    """Wohin der Worktree eines Tickets gehört — Windows ``C:/dev``, Linux unter ``$BAU_WT_DIR``.
+    """Wohin der Worktree eines Tickets gehört — unter ``$BAU_WT_DIR``, sonst Windows ``C:/dev``, Linux ``~/wt``.
 
     Steht ``worktree_basis`` in der Repo-Konfig (#257), gilt sie auf jeder Plattform
     (``~`` wird aufgelöst). Einzige Stelle dieser Regel: ``bau.py`` (Start + Bau-Log-Ziel),
@@ -152,9 +152,9 @@ def worktree_pfad(ticket: str | int, repo: Path | None = None) -> str:
     basis = str(lade(repo).get("worktree_basis") or "").strip()
     if basis:
         return f"{Path(basis).expanduser().as_posix().rstrip('/')}/wt-{ticket}"
-    if sys.platform == "win32":
-        return f"C:/dev/wt-{ticket}"
-    basis = os.environ.get("BAU_WT_DIR") or "~/wt"
+    # Gesetztes BAU_WT_DIR gilt auf jeder Plattform (Tests/Leiter/Aufpasser auf dem PC
+    # sähen sonst C:/dev statt des vorgegebenen Ordners); ohne es die Plattform-Vorgabe.
+    basis = os.environ.get("BAU_WT_DIR") or ("C:/dev" if sys.platform == "win32" else "~/wt")
     return f"{Path(basis).expanduser().as_posix().rstrip('/')}/wt-{ticket}"
 
 
