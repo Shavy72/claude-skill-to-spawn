@@ -14,6 +14,8 @@
 #   FAKE_CLAUDE_SID=<id>      → ID, wenn argv keine trägt (Weg-Test F1, zwei Fenster)
 #   FAKE_CLAUDE_JSON_VERZOEGERUNG_S=<n> → wartet ``n`` Sekunden vor dem Schreiben
 #                             der JSON (Nachfix N3: Nachweis-Fenster NACHWEIS_S)
+#   FAKE_CLAUDE_EXIT_BEI_EINGABE=1 → liest stdin zeilenweise und endet bei ``/exit``
+#                             (#592: Aufpasser beendet per /exit statt kill-window)
 # Schutz: ins echte Login-Home wird nie geschrieben — Tests setzen ein Temp-HOME.
 
 sid=""
@@ -64,6 +66,12 @@ elif [ -z "$FAKE_CLAUDE_OHNE_JSON" ]; then
 fi
 
 if [ "${FAKE_CLAUDE_STATUS:-}" = "exit" ]; then
+  exit 0
+fi
+if [ "${FAKE_CLAUDE_EXIT_BEI_EINGABE:-}" = "1" ]; then
+  while IFS= read -r zeile; do
+    [ "$zeile" = "/exit" ] && exit 0
+  done
   exit 0
 fi
 sleep 3600

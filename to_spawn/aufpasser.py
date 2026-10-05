@@ -3,10 +3,12 @@
 Läuft per Cron alle 15 Minuten (0 Token, reines Skript) und sieht je tmux-Sitzung
 ``spec-<S>`` nach den Fenstern ``bau <N>`` und ``wache <S>``:
 
-0. **Deploy-Wache:** läuft ein Deploy oder Gate (``--deploy-muster`` plus die Skripte
-   aus ``.to-spawn/config.json`` gegen ``pgrep -af``), wird in diesem Lauf nichts
+0. **Deploy-Wache:** läuft ein Deploy (``--deploy-muster`` plus die Skripte aus
+   ``.to-spawn/config.json`` gegen ``pgrep -af``), wird in diesem Lauf nichts
    angefasst — nur die Hashes werden fortgeschrieben. Prozesse älter als 6 h zählen
-   nicht (verwaiste Läufe), sie werden als „Waise ignoriert“ geloggt.
+   nicht (verwaiste Läufe), sie werden als „Waise ignoriert“ geloggt. Ein Gate
+   (``pytest``) sperrt nur das eigene Fenster — im Fensterbaum oder im
+   Ticket-Worktree —, nie den ganzen Server (#592).
 1. **Fehlendes Fenster:** offenes Unter-Ticket ohne ``bau <N>`` (oder fehlendes
    ``wache <S>`` bei offenen Tickets) → Fenster anlegen. Liegt
    ``<repo>/.to-spawn/sessions/<N>.json`` (``wache-<S>.json``) und das Transkript
@@ -17,7 +19,12 @@ Läuft per Cron alle 15 Minuten (0 Token, reines Skript) und sieht je tmux-Sitzu
    „braucht David“.
 2. **Ticket zu:** ``bau <N>`` mit geschlossenem Ticket, Pane-Text seit ≥ 15 min
    unverändert und keine laufende Arbeit → Worktree sichern (falls schmutzig),
-   Fenster schließen.
+   Session beenden. Ist die Grenze voll (Speicher/Session-Zahl) und meldet die
+   Session ``idle``, reicht statt 15 min eine kurze Gegenprobe
+   (``karenz_platznot_s``). Lebt im Fensterbaum Claude, bekommt es ``/exit`` und bis
+   ``exit_warten_s`` Zeit, Reste werden beendet — Fenster und bau.py-Kette leben
+   weiter, das nächste Ticket startet (#592). Ohne Claude wird das Fenster
+   geschlossen.
 3. **Stilles Fenster** (Pane-Text ≥ ``hang_min`` Minuten unverändert und Session
    nicht ``busy``), Sicherheitskette mit Zähler ``stufe`` je Fenster:
    - Stufe 0 → anstupsen (Text ins Fenster tippen).
@@ -221,6 +228,8 @@ GATE_MUSTER = r"pytest"
 #: Grenze voll + Session idle + Ticket zu: so lange vor dem Schließen warten und
 #: dann den Fenstertext vergleichen, statt die volle Karenz abzusitzen (#592).
 KARENZ_PLATZNOT_S = 30
+#: Ticket zu: so lange darf Claude nach ``/exit`` brauchen, dann wird es beendet (#592).
+EXIT_WARTEN_S = 30
 STOPP_LABELS = frozenset({"ready-for-human", "needs-info", "wontfix"})
 CRON_MARKE = "# to-spawn aufpasser"
 CRON_TAKT = "*/15 * * * *"
@@ -292,6 +301,8 @@ class Einstellungen:
     verzoegerung_s: float = 0.0
     #: Wartezeit vor dem Schließen bei voller Session-Grenze (Tests setzen sie klein).
     karenz_platznot_s: float = KARENZ_PLATZNOT_S
+    #: Wartezeit auf das Ende von Claude nach ``/exit`` (Tests setzen sie klein).
+    exit_warten_s: float = EXIT_WARTEN_S
 
     def __post_init__(self) -> None:
         if self.hang_min < HANG_MIN_UNTERGRENZE:
@@ -1235,8 +1246,13 @@ class Aufpasser:
 
     def _fenster_schliessen(
         self, ziel: str, freigabe: Freigabe, pane_pid: int = 0
-    ) -> None:
-        """Einzige Stelle, die ein Fenster schließt — nur mit gültiger Freigabe."""
+    ) -> bool:
+        """Einzige Stelle, die ein Fenster schließt — nur mit gültiger Freigabe.
+
+        Lebt Claude im Fensterbaum, endet nur Claude (``/exit``, nach
+        ``exit_warten_s`` beenden); Fenster und bau.py-Kette leben weiter (#592).
+        Ergebnis: True, wenn per ``/exit`` beendet statt das Fenster geschlossen.
+        """
         if not isinstance(freigabe, Freigabe):
             raise TypeError("Fenster schließen braucht eine Freigabe")
         log.info(
@@ -1247,9 +1263,26 @@ class Aufpasser:
         )
         if self.e.trocken:
             print(f"[trocken] Fenster {ziel} schließen ({freigabe.grund})")
-            return
-        self.tmux("kill-window", "-t", ziel)
-        self._prozesse_beenden(pane_pid)
+            return False
+        baum = prozess_baum(pane_pid) if pane_pid else []
+        claude = [pid for pid in baum if prozessbaum.ist_claude(pid)]
+        if not claude:
+            self.tmux("kill-window", "-t", ziel)
+            self._prozesse_beenden(pane_pid)
+            return False
+        self._eingeben(ziel, "/exit")
+        frist = time.monotonic() + self.e.exit_warten_s
+        while any(_prozess_lebt(pid) for pid in claude) and time.monotonic() < frist:
+            time.sleep(0.2)
+        for pid in claude:
+            if _prozess_lebt(pid):
+                log.warning("%s: Claude %s nach /exit noch da — wird beendet", ziel, pid)
+                prozessbaum.beenden(
+                    list(reversed(prozess_baum(pid))),
+                    ((signal.SIGHUP, 5.0), (signal.SIGTERM, 5.0), (signal.SIGKILL, 5.0)),
+                    warten_auf=[pid],
+                )
+        return True
 
     def _fenster_fortsetzen(
         self,
@@ -1310,14 +1343,18 @@ class Aufpasser:
                 return False
             time.sleep(1)
 
+    def _eingeben(self, ziel: str, text: str) -> None:
+        """Text wörtlich ins Fenster tippen, 1 s warten, dann Enter."""
+        self.tmux("send-keys", "-t", ziel, "-l", text)
+        time.sleep(1)
+        self.tmux("send-keys", "-t", ziel, "Enter")
+
     def anstupsen(self, ziel: str, still_min: float) -> None:
         text = ANSTUPS_TEXT.format(min=int(still_min))
         if self.e.trocken:
             print(f"[trocken] {ziel}: anstupsen")
             return
-        self.tmux("send-keys", "-t", ziel, "-l", text)
-        time.sleep(1)
-        self.tmux("send-keys", "-t", ziel, "Enter")
+        self._eingeben(ziel, text)
         time.sleep(1)
 
     def sichern_worktree(
@@ -1648,12 +1685,16 @@ class Aufpasser:
             return
         if not self.vor_eingriff(f, hash_start, repo):
             return
-        self._fenster_schliessen(f.ziel, freigabe_ticket_zu(ticket, sha), f.pane_pid)
+        per_exit = self._fenster_schliessen(
+            f.ziel, freigabe_ticket_zu(ticket, sha), f.pane_pid
+        )
         if not self.e.trocken:
             self.stand.fenster.pop(schluessel, None)
         zusatz = (
             f" Änderungen auf sicherung/{ticket} gesichert ({sha[:7]})." if sha else ""
         )
+        if per_exit:
+            zusatz += " Per /exit beendet, Kette läuft weiter."
         self.melden(
             f.spec,
             repo,
