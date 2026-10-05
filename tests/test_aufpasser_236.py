@@ -442,11 +442,18 @@ def test_deploy_prozess_nichts_angefasst(welt: Welt) -> None:
 
 
 def test_deploy_wache_zaehlt_nur_programm_nicht_prompt(tmp_path: Path) -> None:
-    """Der Prompt einer Claude-Session nennt ``safe_deploy_vps.sh`` — das ist kein Deploy."""
+    """Der Prompt einer Claude-Session nennt ``safe_deploy_vps.sh`` — das ist kein Deploy.
+
+    Der Test zählt echte Prozesse der Maschine. Auf dem Bau-Server laufen echte
+    ``safe_deploy_vps.sh`` fremder Sessions, unter ``-n 8`` auch die Deploy-Attrappen
+    anderer Tests — darum trägt das Skript einen nur hier vorkommenden Namen
+    (``safe_deploy_vps_probe_<id>.sh``) und das Muster prüft genau diesen.
+    """
+    probe = f"safe_deploy_vps_probe_{uuid.uuid4().hex[:12]}.sh"
     binaer = tmp_path / "bin"
     binaer.mkdir()
     shutil.copy2(HILFEN / "fake_claude_schlaeft.sh", binaer / "claude")
-    skript = tmp_path / "safe_deploy_vps.sh"
+    skript = tmp_path / probe
     skript.write_text("#!/bin/bash\nsleep 3600\n", encoding="utf-8")
     skript.chmod(0o755)
     e = aufpasser.Einstellungen(
@@ -457,7 +464,7 @@ def test_deploy_wache_zaehlt_nur_programm_nicht_prompt(tmp_path: Path) -> None:
             str(binaer / "claude"),
             "--model",
             "x",
-            "Ticket: bash scripts/safe_deploy_vps.sh",
+            f"Ticket: bash scripts/{probe}",
         ],
         start_new_session=True,
     )
@@ -465,13 +472,13 @@ def test_deploy_wache_zaehlt_nur_programm_nicht_prompt(tmp_path: Path) -> None:
         time.sleep(0.5)
         # pytest selbst läuft gerade — auch das zählt hier nicht: argv[:3] von pytest ist
         # ``python -m pytest`` und trifft; deshalb gegen ein eigenes Muster prüfen.
-        e.deploy_muster = r"safe_deploy_vps\.sh"
+        e.deploy_muster = re.escape(probe)
         assert aufpasser.Aufpasser(e).deploy_laeuft() == []
         deploy = subprocess.Popen([str(skript)], start_new_session=True)
         try:
             time.sleep(0.5)
             treffer = aufpasser.Aufpasser(e).deploy_laeuft()
-            assert treffer and "safe_deploy_vps.sh" in treffer[0], treffer
+            assert treffer and probe in treffer[0], treffer
         finally:
             os.killpg(deploy.pid, 15)
             deploy.wait()
