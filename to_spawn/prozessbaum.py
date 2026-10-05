@@ -310,7 +310,7 @@ def session_vorfahr(pid: int, *, grenze: int | None = None) -> int | None:
     return None
 
 
-def session_beenden(pid: int) -> bool:
+def session_beenden(pid: int, protokoll: Path | None = None) -> bool:
     """Beendet die Session ``pid``, ohne darauf zu warten. False = gar nicht angestoßen.
 
     Der Aufrufer (Stop-Hook) ist selbst ein Kind der Session und darf nicht warten:
@@ -320,7 +320,14 @@ def session_beenden(pid: int) -> bool:
     Linux: SIGTERM sofort, der Nachläufer schickt SIGKILL nach ``NACHLAUF_SEKUNDEN``.
     Windows kennt kein SIGTERM: der Nachläufer wartet, bis der Aufrufer fertig ist, und
     beendet dann den ganzen Baum (``taskkill /T /F`` — auch MCP-Server und Shells).
+
+    ``protokoll``: Datei, an die der Nachläufer eine Ergebnis-Zeile anhängt (seine eigene
+    Ausgabe sieht niemand). Ein gescheitertes ``taskkill`` steht dort als ``WARNUNG``.
     """
+    if _WINDOWS and not _lebt_windows(pid):
+        # Ohne diese Prüfung würde der Nachläufer eine inzwischen recycelte PID samt Baum beenden.
+        log.warning("PID %d lebt nicht (mehr) — nichts zu beenden", pid)
+        return False
     if not _WINDOWS:
         try:
             os.kill(pid, signal.SIGTERM)
@@ -328,6 +335,8 @@ def session_beenden(pid: int) -> bool:
             log.warning("SIGTERM an PID %d fehlgeschlagen: %s", pid, exc)
             return False
     befehl = [sys.executable, str(Path(__file__).resolve()), "--nachlauf", str(pid), str(os.getpid())]
+    if protokoll is not None:
+        befehl += ["--protokoll", str(protokoll)]
     optionen: dict[str, Any] = ohne_fenster() if _WINDOWS else {"start_new_session": True}
     try:
         subprocess.Popen(
@@ -363,7 +372,19 @@ def _lebt_windows(pid: int) -> bool:
         kernel.CloseHandle(griff)
 
 
-def _nachlauf(pid: int, aufrufer: int, frist: float = NACHLAUF_SEKUNDEN) -> int:
+def _protokolliere(protokoll: Path | None, zeile: str) -> None:
+    """Hängt ``zeile`` mit Zeitstempel an ``protokoll`` — Fehler beim Schreiben sind kein Abbruch."""
+    if protokoll is None:
+        return
+    try:
+        protokoll.parent.mkdir(parents=True, exist_ok=True)
+        with protokoll.open("a", encoding="utf-8") as datei:
+            datei.write(f"{time.strftime('%Y-%m-%dT%H:%M:%S')} {zeile}\n")
+    except OSError as exc:
+        log.warning("Nachlauf-Protokoll %s nicht schreibbar: %s", protokoll, exc)
+
+
+def _nachlauf(pid: int, aufrufer: int, frist: float = NACHLAUF_SEKUNDEN, protokoll: Path | None = None) -> int:
     """Notnagel im eigenen Prozess (siehe ``session_beenden``)."""
     ende = time.monotonic() + frist
     if _WINDOWS:
@@ -372,20 +393,32 @@ def _nachlauf(pid: int, aufrufer: int, frist: float = NACHLAUF_SEKUNDEN) -> int:
         erg = subprocess.run(
             ["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True, check=False, **ohne_fenster()
         )
-        log.info("taskkill /T /F %d → Exit %d", pid, erg.returncode)
+        if erg.returncode == 0:
+            log.info("taskkill /T /F %d → Exit 0", pid)
+            _protokolliere(protokoll, f"OK taskkill /T /F {pid} → Exit 0")
+        else:
+            meldung = (erg.stdout or b"").decode(errors="replace").strip() + (erg.stderr or b"").decode(
+                errors="replace"
+            ).strip()
+            log.warning("taskkill /T /F %d → Exit %d: %s", pid, erg.returncode, meldung)
+            _protokolliere(protokoll, f"WARNUNG taskkill /T /F {pid} → Exit {erg.returncode}: {meldung[:200]}")
         return 0
     while time.monotonic() < ende:
         if not lebt(pid):
+            _protokolliere(protokoll, f"OK Session {pid} nach SIGTERM beendet")
             return 0
         time.sleep(0.2)
     try:
         os.kill(pid, signal.SIGKILL)
-    except OSError:
+    except OSError as exc:
+        _protokolliere(protokoll, f"OK Session {pid} vor SIGKILL beendet ({exc})")
         return 0
+    _protokolliere(protokoll, f"OK SIGKILL an Session {pid} nach {frist:.0f} s")
     return 0
 
 
 if __name__ == "__main__":
     if len(sys.argv) >= 4 and sys.argv[1] == "--nachlauf":
-        sys.exit(_nachlauf(int(sys.argv[2]), int(sys.argv[3])))
+        _ziel = Path(sys.argv[5]) if len(sys.argv) >= 6 and sys.argv[4] == "--protokoll" else None
+        sys.exit(_nachlauf(int(sys.argv[2]), int(sys.argv[3]), protokoll=_ziel))
     sys.exit(2)

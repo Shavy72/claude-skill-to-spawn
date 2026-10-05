@@ -159,3 +159,111 @@ def test_suche_endet_an_launcher_grenze(tmp_path: Path) -> None:
     env["BAU_LAUNCHER_PID"] = str(os.getpid())
     subprocess.run([sys.executable, str(kind)], env=env, check=True, timeout=60, **_ohne_fenster())
     assert json.loads(ergebnis.read_text()) is None
+
+
+def test_handoff_mit_runden_suffix_zaehlt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """``HANDOFF_<datum>_<N>_runde2.md`` ist ein Handoff von Ticket N — fremde Tickets nie.
+
+    Die Projekt-Kopie des Hooks kannte das Suffix schon; seit #501 lebt es nur noch hier.
+    """
+    sys.path.insert(0, str(HOOK_ORDNER))
+    import staffel_stop
+
+    monkeypatch.delenv("BAU_STAFFEL_FINGERABDRUCK", raising=False)
+    muster = staffel_stop.handoff_muster("192")
+    assert muster.match("HANDOFF_2026-10-05_192.md")
+    assert muster.match("HANDOFF_2026-10-05_192_runde2.md")
+    assert muster.match("HANDOFF_2026-10-05_192_r2.md")
+    assert not muster.match("HANDOFF_2026-10-05_1920.md")
+    assert not muster.match("HANDOFF_2026-10-05_waechter_192.md")
+
+    seit = time.time() - 5
+    (tmp_path / "HANDOFF_2026-10-05_1920.md").write_text("Staffel: weiter\n", encoding="utf-8")
+    datei = tmp_path / "HANDOFF_2026-10-05_192_runde2.md"
+    datei.write_text("Staffel: weiter\n", encoding="utf-8")
+    assert staffel_stop.frischer_handoff([tmp_path], "192", seit) == datei
+
+
+def _kette(tmp_path: Path, namen: list[str], *, grenze_index: int | None) -> int | None:
+    """Startet ``namen[0]`` → ``namen[1]`` → … → Hook-Kind; liefert ``claude_vorfahr`` des Kinds.
+
+    Jedes Glied ist ein eigenes Python-Skript mit seinem Namen in der Kommandozeile
+    (``claude.py`` zählt als Session, ``bau.py`` als Launcher). ``grenze_index`` macht
+    dieses Glied zur ``BAU_LAUNCHER_PID`` — wie ``bau.py`` es für seine Sessions setzt.
+    """
+    ergebnis = tmp_path / "vorfahr.json"
+    kind = tmp_path / "hook_kind.py"
+    kind.write_text(
+        textwrap.dedent(
+            f"""
+            import json, os, sys
+            sys.path.insert(0, {str(HOOK_ORDNER)!r})
+            import staffel_stop
+            json.dump(staffel_stop.claude_vorfahr(os.getpid()), open({str(ergebnis)!r}, "w"))
+            """
+        ),
+        encoding="utf-8",
+    )
+    naechstes = kind
+    for index in reversed(range(len(namen))):
+        ordner = tmp_path / f"glied{index}"
+        ordner.mkdir()
+        glied = ordner / namen[index]
+        setzt_grenze = index == grenze_index
+        glied.write_text(
+            textwrap.dedent(
+                f"""
+                import os, subprocess, sys
+                env = dict(os.environ)
+                if {setzt_grenze!r}:
+                    env["BAU_LAUNCHER_PID"] = str(os.getpid())
+                subprocess.run([sys.executable, {str(naechstes)!r}], env=env, timeout=60)
+                """
+            ),
+            encoding="utf-8",
+        )
+        naechstes = glied
+    env = dict(os.environ)
+    env.pop("BAU_LAUNCHER_PID", None)
+    subprocess.run([sys.executable, str(naechstes)], env=env, check=True, timeout=90, **_ohne_fenster())
+    return json.loads(ergebnis.read_text())
+
+
+def test_grenze_schuetzt_session_oberhalb_des_launchers(tmp_path: Path) -> None:
+    """claude.py → Launcher (Grenze) → Hook-Kind: die Session oberhalb bleibt unangetastet.
+
+    Gegenprobe ohne Grenze: dieselbe Kette findet ``claude.py`` — der Test wird also
+    unabhängig davon rot, ob über pytest eine echte Claude-Session läuft.
+    """
+    (tmp_path / "mit").mkdir()
+    assert _kette(tmp_path / "mit", ["claude.py", "launcher.py"], grenze_index=1) is None
+    (tmp_path / "ohne").mkdir()
+    assert _kette(tmp_path / "ohne", ["claude.py", "launcher.py"], grenze_index=None) is not None
+
+
+def test_suche_bricht_an_bau_py_ab(tmp_path: Path) -> None:
+    """claude.py → bau.py → Hook-Kind ohne Grenze: ``bau.py`` beendet die Suche (nie darüber)."""
+    assert _kette(tmp_path, ["claude.py", "bau.py"], grenze_index=None) is None
+
+
+def test_nachlauf_schreibt_ergebnis_ins_protokoll(tmp_path: Path) -> None:
+    """Der Nachläufer protokolliert sein Ergebnis; ein gescheitertes taskkill ist eine WARNUNG."""
+    tot = subprocess.Popen([sys.executable, "-c", "pass"], **_ohne_fenster())
+    tot.wait(timeout=30)
+    protokoll = tmp_path / "staffel.json.nachlauf.log"
+    assert prozessbaum._nachlauf(tot.pid, tot.pid, frist=1.0, protokoll=protokoll) == 0
+    zeile = protokoll.read_text(encoding="utf-8")
+    if WINDOWS:
+        assert "WARNUNG taskkill /T /F" in zeile and "Exit 0" not in zeile, zeile
+    else:
+        assert zeile.split(" ", 1)[1].startswith("OK "), zeile
+
+
+def test_beenden_einer_toten_pid_stoesst_nichts_an(tmp_path: Path) -> None:
+    """Ziel schon weg → False, kein Nachläufer (unter Windows sonst taskkill auf eine fremde, recycelte PID)."""
+    tot = subprocess.Popen([sys.executable, "-c", "pass"], **_ohne_fenster())
+    tot.wait(timeout=30)
+    protokoll = tmp_path / "nachlauf.log"
+    assert prozessbaum.session_beenden(tot.pid, protokoll) is False
+    time.sleep(1.0)
+    assert not protokoll.exists()
