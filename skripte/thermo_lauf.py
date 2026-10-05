@@ -1,16 +1,17 @@
-"""Thermo-Review einer fertigen Spec: Aufbau-Prüfung planen und Befunde in ein Sammel-Issue.
+"""Thermo-Review einer fertigen Spec: Aufbau-Prüfung planen und Befunde im Marker sammeln.
 
 Aufruf:
 ``python thermo_lauf.py plan <S> [--repo <pfad>] [--basis <sha>] [--kopf <ref>]``
-``python thermo_lauf.py sammeln <S> [--repo <pfad>] [--ohne-github]``
+``python thermo_lauf.py sammeln <S> [--repo <pfad>]`` (``--ohne-github`` ohne Wirkung seit E15)
 
 ``plan`` bestimmt den Code-Diff der ganzen Spec, teilt ihn auf parallele Prüfer (Subagenten mit
-``model: opus``) auf und gibt JSON mit fertigen Prompts aus. Exit 0 = Teile geplant, 2 = keine
+``model: opus``) auf und gibt JSON mit fertigen Prompts aus. Jeder Prompt nennt die neuen Namen der
+ganzen Spec (alle Teile), damit der Prüfer ticket-übergreifend Dopplungen findet (E15, #582). Exit 0 = Teile geplant, 2 = keine
 Code-Änderung, 4 = schon erledigt (Marker da) oder läuft schon (Sperre jünger als 120 min), 1 = Fehler.
 
 ``sammeln`` liest ``<befunde_ordner>/teil-*.json``, dedupliziert, sortiert und schreibt den Marker
-``docs/agents/thermo_<S>.md``. Bei Befunden hoch/mittel genau ein GitHub-Issue (``gh``).
-Nur Befunde — kein Umbau in der Spec.
+``docs/agents/thermo_<S>.md`` — er trägt die Code-Befunde für die Abschluss-Mail, kein GitHub-Issue
+(E15, #582). Nur Befunde — kein Umbau in der Spec.
 Exit 0 = fertig, 1 = Fehler, 3 = mindestens ein Teil fehlt (kein Marker, ``lauf.json`` bleibt liegen —
 fehlenden Teil erneut starten, dann ``sammeln`` wiederholen).
 """
@@ -38,7 +39,17 @@ SCHWERE = ("hoch", "mittel", "niedrig")
 
 _CODE_ENDUNGEN = frozenset({".py", ".js", ".ts", ".tsx", ".jsx", ".mjs", ".css", ".html", ".sh", ".ps1"})
 _RAUS_ORDNER = frozenset({"tests", "docs", "archive", "graphify-out"})
+# Alte Marker (vor E15) trugen eine Issue-URL — bleibt für Idempotenz lesbar.
 _ISSUE_URL = re.compile(r"^Issue: (https://\S+)", re.M)
+MAX_NAMEN = 150
+_PY_ENDUNGEN = frozenset({".py"})
+_JS_ENDUNGEN = frozenset({".js", ".ts", ".tsx", ".jsx", ".mjs"})
+_PY_NAME = re.compile(r"^\s*(?:async\s+def|def|class)\s+([A-Za-z_]\w*)")
+_JS_IDENT = r"[A-Za-z_$][\w$]*"
+_JS_NAME = re.compile(
+    rf"\bfunction\s*\*?\s*({_JS_IDENT})\s*\(|\bclass\s+({_JS_IDENT})"
+    rf"|\b(?:const|let)\s+({_JS_IDENT})\s*=\s*(?:async\s+)?(?:function\b|\([^)]*\)\s*=>|{_JS_IDENT}\s*=>)"
+)
 
 
 class Fehler(Exception):
@@ -170,7 +181,63 @@ def aufteilen(dateien: dict[str, int], g: Grenzen) -> tuple[list[list[str]], lis
     return teile[: g.max_teile], ausgelassen
 
 
-def prompt(repo: Path, spec: int, nr: int, gesamt: int, basis: str, kopf: str, dateien: list[str]) -> str:
+def neue_namen(repo: Path, basis: str, kopf: str, dateien: list[str]) -> dict[str, list[str]]:
+    """Neu definierte Namen (Python def/class, JS/TS function/class/Pfeil-const) je Datei, aus Plus-Zeilen."""
+    if not dateien:
+        return {}
+    namen: dict[str, set[str]] = {}
+    aktuell: str | None = None
+    for zeile in _git(repo, "diff", "-U0", "--no-renames", f"{basis}..{kopf}", "--", *dateien).splitlines():
+        if zeile.startswith("+++ "):
+            aktuell = zeile[6:] if zeile.startswith("+++ b/") else None
+            continue
+        if aktuell is None or not zeile.startswith("+"):
+            continue
+        endung = Path(aktuell).suffix.lower()
+        if endung in _PY_ENDUNGEN:
+            treffer = [m.group(1)] if (m := _PY_NAME.match(zeile[1:])) else []
+        elif endung in _JS_ENDUNGEN:
+            treffer = [g for m in _JS_NAME.finditer(zeile[1:]) for g in m.groups() if g]
+        else:
+            continue
+        if treffer:
+            namen.setdefault(aktuell, set()).update(treffer)
+    return {d: sorted(n) for d, n in sorted(namen.items())}
+
+
+def _namen_zeilen(namen: dict[str, list[str]]) -> list[str]:
+    """Prompt-Block mit den neuen Namen der ganzen Spec, gedeckelt auf ``MAX_NAMEN``."""
+    if not namen:
+        return ["Neue Namen der ganzen Spec: keine gefunden"]
+    zeilen = ["Neue Namen der ganzen Spec (alle Teile):"]
+    rest = MAX_NAMEN
+    weggelassen = 0
+    for datei, liste in namen.items():
+        if rest <= 0:
+            weggelassen += len(liste)
+            continue
+        zeilen.append(f"- {datei}: {', '.join(liste[:rest])}")
+        weggelassen += max(0, len(liste) - rest)
+        rest -= len(liste)
+    if weggelassen:
+        zeilen.append(f"- … {weggelassen} weitere")
+    zeilen.append(
+        "Prüfe über Teil-Grenzen hinweg und im übrigen Code (rg -n <name>), ob es das schon gibt: "
+        "doppelte Helfer, zwei Namen für dasselbe Ding, auseinanderlaufende Schnittstellen."
+    )
+    return zeilen
+
+
+def prompt(
+    repo: Path,
+    spec: int,
+    nr: int,
+    gesamt: int,
+    basis: str,
+    kopf: str,
+    dateien: list[str],
+    namen: dict[str, list[str]] | None = None,
+) -> str:
     return "\n".join(
         [
             "Schätzung: ~60k Token · Lese-Budget: nur der Diff unten + je Datei max 300 Zeilen Umfeld",
@@ -181,6 +248,7 @@ def prompt(repo: Path, spec: int, nr: int, gesamt: int, basis: str, kopf: str, d
             f"Diff: git -C {repo} diff {basis}..{kopf} -- {' '.join(dateien)}",
             "Fokus Aufbau: Riesen-Dateien, verstreute Sonder-ifs, dünne Wrapper, Umbau-Chancen mit "
             "Verhaltensgleichheit. KEINE Bug-Jagd, kein Stil-Kleinkram (macht review-dirigent).",
+            *_namen_zeilen(namen or {}),
             "Höchstens 8 Befunde.",
             "Antwort NUR JSON:",
             f'{{"teil": {nr}, "befunde": [{{"datei": "...", "zeile": 123, "schwere": "hoch|mittel|niedrig", '
@@ -232,12 +300,13 @@ def plan(repo: Path, spec: int, basis: str | None, kopf_ref: str) -> int:
         print(f"Keine Code-Änderung in Spec #{spec} ({basis[:7]}..{kopf[:7]}) — kein Thermo-Lauf.")
         return 2
     gruppen, ausgelassen = aufteilen(dateien, lade_grenzen(repo))
+    namen = neue_namen(repo, basis, kopf, sorted(dateien))
     teile = [
         {
             "nr": nr,
             "dateien": gruppe,
             "diff_zeilen": sum(dateien[d] for d in gruppe),
-            "prompt": prompt(repo, spec, nr, len(gruppen), basis, kopf, gruppe),
+            "prompt": prompt(repo, spec, nr, len(gruppen), basis, kopf, gruppe, namen),
         }
         for nr, gruppe in enumerate(gruppen, 1)
     ]
@@ -308,7 +377,7 @@ def _tabelle(befunde: list[dict[str, Any]]) -> list[str]:
 
 
 def _marker_text(
-    spec: int, lauf: dict[str, Any], befunde: list[dict[str, Any]], vermerke: list[str], issue: str
+    spec: int, lauf: dict[str, Any], befunde: list[dict[str, Any]], vermerke: list[str]
 ) -> str:
     basis, kopf = str(lauf.get("basis") or "?")[:7], str(lauf.get("kopf") or "?")[:7]
     zeilen = [
@@ -316,7 +385,7 @@ def _marker_text(
         "",
         f"Stand: {datetime.now().astimezone().isoformat(timespec='seconds')}",
         f"Basis..Kopf: `{basis}..{kopf}`",
-        f"Issue: {issue}",
+        "Code-Befunde: gehen als dritter Teil in die Abschluss-Mail (E15, #582).",
         "",
         f"## Befunde ({len(befunde)})",
         "",
@@ -326,56 +395,6 @@ def _marker_text(
     ausgelassen = lauf.get("ausgelassen") or []
     zeilen += ["", "## Ausgelassene Dateien", ""] + ([f"- `{d}`" for d in ausgelassen] or ["Keine."])
     return "\n".join(zeilen) + "\n"
-
-
-def _issue_body(spec: int, befunde: list[dict[str, Any]]) -> str:
-    wichtig = [b for b in befunde if b["schwere"] != "niedrig"]
-    niedrig = [b for b in befunde if b["schwere"] == "niedrig"]
-    zeilen = [
-        f"Strenge Aufbau-Prüfung (Thermo-Review) über den Code-Diff von Spec #{spec}.",
-        "Nur Befunde, kein Umbau in der Spec — zerlegen per `/to-tickets`.",
-        "",
-        "## Hoch / mittel",
-        "",
-        *_tabelle(wichtig),
-    ]
-    if niedrig:
-        zeilen += [
-            "",
-            f"<details><summary>Niedrig ({len(niedrig)})</summary>",
-            "",
-            *_tabelle(niedrig),
-            "",
-            "</details>",
-        ]
-    zeilen += ["", f"Spec: #{spec}"]
-    return "\n".join(zeilen) + "\n"
-
-
-def _gh_issue(repo: Path, spec: int, body: Path) -> str:
-    lauf = subprocess.run(
-        [
-            "gh",
-            "issue",
-            "create",
-            "--title",
-            f"Aufbau-Befunde Spec #{spec} (Thermo-Review)",
-            "--label",
-            "needs-triage",
-            "--body-file",
-            str(body),
-        ],
-        cwd=repo,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        check=False,
-    )
-    url = next((z for z in reversed(lauf.stdout.split()) if z.startswith("https://")), "")
-    if lauf.returncode != 0 or not url:
-        raise Fehler(f"gh issue create fehlgeschlagen (Exit {lauf.returncode}): {lauf.stderr.strip()}")
-    return url
 
 
 _TEIL_DATEI = re.compile(r"teil-(\d+)\.json")
@@ -419,7 +438,7 @@ def _fehlende_teile_meldung(fehlend: list[int], lauf: dict[str, Any]) -> str:
     return "\n\n".join(bloecke)
 
 
-def sammeln(repo: Path, spec: int, ohne_github: bool) -> int:
+def sammeln(repo: Path, spec: int) -> int:
     ordner = befunde_ordner(repo, spec)
     marker = marker_pfad(repo, spec)
     sperre = ordner / "lauf.json"
@@ -450,28 +469,9 @@ def sammeln(repo: Path, spec: int, ohne_github: bool) -> int:
                     gesehen.add(schluessel)
                     befunde.append(b)
         befunde.sort(key=lambda b: (SCHWERE.index(b["schwere"]), b["datei"], b["zeile"]))
-        wichtig = any(b["schwere"] != "niedrig" for b in befunde)
-        if not wichtig:
-            issue = "kein Issue (nur niedrige oder keine Befunde)"
-        elif ohne_github:
-            issue = "nicht angelegt (--ohne-github)"
-        else:
-            issue = "wird angelegt …"
         marker.parent.mkdir(parents=True, exist_ok=True)
-        marker.write_text(_marker_text(spec, lauf, befunde, vermerke, issue), encoding="utf-8")
-        if wichtig and not ohne_github:
-            ordner.mkdir(parents=True, exist_ok=True)
-            body = ordner / "issue_body.md"
-            body.write_text(_issue_body(spec, befunde), encoding="utf-8")
-            try:
-                issue = _gh_issue(repo, spec, body)
-            except Fehler:
-                marker.write_text(
-                    _marker_text(spec, lauf, befunde, vermerke, "Fehler beim Anlegen (gh)"), encoding="utf-8"
-                )
-                raise
-            marker.write_text(_marker_text(spec, lauf, befunde, vermerke, issue), encoding="utf-8")
-        print(f"Marker: {marker} · {len(befunde)} Befunde · Issue: {issue}")
+        marker.write_text(_marker_text(spec, lauf, befunde, vermerke), encoding="utf-8")
+        print(f"Marker: {marker} · {len(befunde)} Befunde")
         return 0
     finally:
         sperre.unlink(missing_ok=True)
@@ -492,13 +492,13 @@ def main(argv: list[str] | None = None) -> int:
     p_sam = unter.add_parser("sammeln")
     p_sam.add_argument("spec", type=int)
     p_sam.add_argument("--repo", default=".")
-    p_sam.add_argument("--ohne-github", action="store_true")
+    p_sam.add_argument("--ohne-github", action="store_true", help="ohne Wirkung seit E15 (kein Issue mehr)")
     args = parser.parse_args(argv)
     repo = Path(args.repo).resolve()
     try:
         if args.befehl == "plan":
             return plan(repo, args.spec, args.basis, args.kopf)
-        return sammeln(repo, args.spec, args.ohne_github)
+        return sammeln(repo, args.spec)
     except Fehler as fehler:
         log.error("%s", fehler)
         return 1

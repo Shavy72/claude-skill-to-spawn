@@ -130,6 +130,7 @@ def _teile(ordner: Path, *inhalte: str) -> None:
         (ordner / f"teil-{nr}.json").write_text(inhalt, encoding="utf-8")
 
 
+@pytest.mark.xfail(strict=True, reason="überholt durch E15: kein Sammel-Issue, Marker nennt kein --ohne-github mehr")
 def test_sammeln_marker_sortierung_dedup_idempotent(repo: Path) -> None:
     ordner = repo / ".to-spawn" / f"thermo_{SPEC}"
     b1 = {"datei": "web/a.py", "zeile": 10, "schwere": "niedrig", "titel": "Klein", "vorschlag": "später"}
@@ -213,6 +214,7 @@ def test_sammeln_ohne_lauf_json_keine_erwartung_geht_durch(repo: Path) -> None:
     assert (repo / "docs" / "agents" / f"thermo_{SPEC}.md").exists()
 
 
+@pytest.mark.xfail(strict=True, reason="überholt durch E15: kein Sammel-Issue, Marker spricht nicht mehr von Issues")
 def test_sammeln_nur_niedrig_kein_issue(repo: Path) -> None:
     ordner = repo / ".to-spawn" / f"thermo_{SPEC}"
     b = {"datei": "web/a.py", "zeile": 1, "schwere": "niedrig", "titel": "Klein", "vorschlag": "egal"}
@@ -221,3 +223,85 @@ def test_sammeln_nur_niedrig_kein_issue(repo: Path) -> None:
     assert lauf.returncode == 0
     marker = (repo / "docs" / "agents" / f"thermo_{SPEC}.md").read_text(encoding="utf-8")
     assert "kein Issue" in marker
+
+
+# --- E15 (#582): ticket-übergreifende Prüfung, kein Sammel-Issue ---------------------------------
+
+
+def _schreib_code(repo: Path, pfad: str, namen: list[str], fuell: int = 900) -> None:
+    datei = repo / pfad
+    datei.parent.mkdir(parents=True, exist_ok=True)
+    kopf = "".join(f"def {n}(x):\n    return x\n\n" for n in namen)
+    datei.write_text(kopf + "".join(f"zeile_{i} = {i}\n" for i in range(fuell)), encoding="utf-8")
+
+
+def test_plan_jeder_teil_kennt_namen_der_ganzen_spec(repo: Path) -> None:
+    """Jeder Prüfer sieht die neuen Namen aller Teile und prüft Dopplung/Namen/Schnittstellen (E15)."""
+    _manifest(repo, ["web/knopf.py", "web/aus.py"])
+    _schreib_code(repo, "web/knopf.py", ["knopf_farbe", "lade_knopf"])
+    _schreib_code(repo, "web/aus.py", ["aus_farbe", "lade_aus"])
+    _commit(repo, "feat: Knopf (#901)")
+    lauf = _lauf(repo, "plan", "--kopf", "HEAD")
+    assert lauf.returncode == 0, lauf.stderr
+    teile = json.loads(lauf.stdout)["teile"]
+    assert len(teile) == 2
+    for teil in teile:
+        text = teil["prompt"]
+        for name in ("knopf_farbe", "lade_knopf", "aus_farbe", "lade_aus"):
+            assert name in text, (teil["nr"], name)
+        assert "web/knopf.py" in text and "web/aus.py" in text
+        assert "doppelte Helfer" in text
+        assert "zwei Namen für dasselbe Ding" in text
+        assert "auseinanderlaufende Schnittstellen" in text
+        assert "übrigen Code" in text
+    # Alte Namen vor der Spec (alt.py) gehören nicht in die Liste.
+    assert "zeile_0" not in teile[0]["prompt"].split("Neue Namen")[1]
+
+
+def _gh_attrappe(tmp_path: Path) -> tuple[dict[str, str], Path]:
+    """Falsches ``gh`` vorn im PATH: protokolliert jeden Aufruf, damit der Test ihn sieht."""
+    ordner = tmp_path / "bin"
+    ordner.mkdir()
+    spur = tmp_path / "gh_aufrufe.txt"
+    gh = ordner / "gh"
+    gh.write_text(f'#!/bin/sh\necho "$@" >> "{spur}"\necho https://github.com/x/y/issues/1\n', encoding="utf-8")
+    gh.chmod(0o755)
+    return {**os.environ, "PATH": f"{ordner}{os.pathsep}{os.environ.get('PATH', '')}"}, spur
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="gh-Attrappe ist ein sh-Skript")
+def test_sammeln_hoch_legt_kein_issue_an_marker_traegt_befunde(repo: Path, tmp_path: Path) -> None:
+    ordner = repo / ".to-spawn" / f"thermo_{SPEC}"
+    b1 = {"datei": "web/b.py", "zeile": 5, "schwere": "hoch", "titel": "Riesen-Datei", "vorschlag": "zerlegen"}
+    b2 = {"datei": "web/c.py", "zeile": 7, "schwere": "mittel", "titel": "Zwei Namen", "vorschlag": "einen nehmen"}
+    _teile(ordner, json.dumps({"teil": 1, "befunde": [b1, b2]}))
+    env, spur = _gh_attrappe(tmp_path)
+    lauf = subprocess.run(
+        [sys.executable, str(SKRIPT), "sammeln", str(SPEC), "--repo", str(repo)],
+        capture_output=True, text=True, encoding="utf-8", env=env, timeout=120, check=False,
+    )
+    assert lauf.returncode == 0, lauf.stderr
+    assert not spur.exists(), spur.read_text(encoding="utf-8")
+    marker = (repo / "docs" / "agents" / f"thermo_{SPEC}.md").read_text(encoding="utf-8")
+    assert "| Datei:Zeile | Schwere | Titel | Vorschlag |" in marker
+    assert "Riesen-Datei" in marker and "Zwei Namen" in marker
+    assert "https://" not in marker
+    assert not (ordner / "issue_body.md").exists()
+
+
+def test_sammeln_sortierung_dedup_ohne_issue(repo: Path) -> None:
+    """Nachfolger des überholten Sortier-Tests ohne Issue-Annahme (E15/E17)."""
+    ordner = repo / ".to-spawn" / f"thermo_{SPEC}"
+    b1 = {"datei": "web/a.py", "zeile": 10, "schwere": "niedrig", "titel": "Klein", "vorschlag": "später"}
+    b2 = {"datei": "web/b.py", "zeile": 5, "schwere": "hoch", "titel": "Riesen-Datei", "vorschlag": "zerlegen"}
+    b3 = {"datei": "web/c.py", "zeile": 7, "schwere": "mittel", "titel": "Sonder-ifs", "vorschlag": "Tabelle"}
+    _teile(ordner, json.dumps({"teil": 1, "befunde": [b1, b2]}), json.dumps({"teil": 2, "befunde": [b3, b2]}), "{kaputt")
+    (ordner / "lauf.json").write_text(json.dumps({"start": "2026-09-27T10:00:00+02:00"}), encoding="utf-8")
+    assert _lauf(repo, "sammeln").returncode == 0
+    marker = (repo / "docs" / "agents" / f"thermo_{SPEC}.md").read_text(encoding="utf-8")
+    assert marker.count("Riesen-Datei") == 1
+    assert marker.index("Riesen-Datei") < marker.index("Sonder-ifs") < marker.index("Klein")
+    assert "teil-3.json" in marker and "kaputt" in marker
+    assert "Issue" not in marker
+    assert not (ordner / "lauf.json").exists()
+    assert _lauf(repo, "sammeln").returncode == 0
