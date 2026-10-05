@@ -38,7 +38,7 @@ fi
 # --- 2. Skill kopieren (ohne Git, Caches) ------------------------------------
 mkdir -p "$ZIEL"
 for eintrag in SKILL.md README.md LICENSE to_spawn.py install.sh install.ps1 spawn_local.ps1 spawn_srv.ps1 \
-               to_spawn skripte repo-scripts aliase tests docs nest; do
+               to_spawn skripte repo-scripts aliase tests docs nest leitstand; do
   if [ -e "$HIER/$eintrag" ]; then
     cp -a "$HIER/$eintrag" "$ZIEL/"
   fi
