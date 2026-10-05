@@ -19,7 +19,7 @@ import subprocess
 import sys
 import time
 from collections.abc import Callable, Iterator, Sequence
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any
 
 log = logging.getLogger(__name__)
@@ -188,7 +188,8 @@ def ist_session_zeile(zeile: str, *, windows: bool = _WINDOWS) -> bool:
         return False
     if any(marke in zeile for marke in NIE_SESSION):
         return False
-    programm = Path(teile[0]).name
+    pfad_art = PureWindowsPath if windows else Path
+    programm = pfad_art(teile[0]).name
     if windows and programm.lower().endswith(".exe"):
         programm = programm[:-4]
     if programm in WRAPPER_NAMEN and "-c" in teile[1:3]:
@@ -196,7 +197,7 @@ def ist_session_zeile(zeile: str, *, windows: bool = _WINDOWS) -> bool:
     for teil in teile:
         if teil.startswith("-"):
             continue
-        pfad = Path(teil)
+        pfad = pfad_art(teil)
         if pfad.name.startswith("claude"):
             return True
         if "claude-code" in pfad.parts:
