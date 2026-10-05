@@ -306,7 +306,7 @@ class TmuxWerkzeug:
         andere = [pid for pid in baum if pid not in claude]
         tot = prozessbaum.beenden(
             [*andere, *claude],
-            ((signal.SIGTERM, BEENDEN_MAX_S), (signal.SIGKILL, 5 * BEENDEN_TAKT_S)),
+            ((signal.SIGTERM, BEENDEN_MAX_S), (getattr(signal, "SIGKILL", signal.SIGTERM), 5 * BEENDEN_TAKT_S)),
             warten_auf=claude,
             takt_s=BEENDEN_TAKT_S,
             schlafen=self.schlafen,
