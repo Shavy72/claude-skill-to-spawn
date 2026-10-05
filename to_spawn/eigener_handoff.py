@@ -10,7 +10,8 @@ Regel: Ein eigener Handoff zählt, wenn
 
 * ``docs/handoffs/HANDOFF_<datum>_<N>.md`` im Ticket-Worktree getrackt ist,
 * die Datei keine uncommitteten Änderungen hat (``git status --porcelain`` leer),
-* ihr letzter Commit jünger ist als der jüngste ``session_start`` im Bau-Log UND
+* ihr letzter Commit (Autor-Zeit, rebase-fest) jünger ist als der jüngste
+  ``session_start`` im Bau-Log UND
   jünger als der letzte Leiter-Respawn/Neustart (sonst gehört er zur Vorsession oder
   wurde schon benutzt),
 * die Leiter das Ticket nicht selbst gerade ablöst (Leiter-Stufe 0 oder 1).
@@ -47,16 +48,32 @@ ORDNER = "docs/handoffs"
 
 @dataclass(frozen=True)
 class Treffer:
-    """Ein committeter eigener Handoff: Pfad relativ zum Worktree + Commit-Zeit."""
+    """Ein committeter eigener Handoff: Pfad relativ zum Worktree + Handoff-Zeit.
+
+    ``commit_zeit`` ist die **Autor-Zeit** des letzten Commits der Datei (Epoch-Sekunden,
+    ``git log %at``), nicht die Committer-Zeit: ein Rebase setzt die Committer-Zeit auf
+    „jetzt“ und ließe so einen alten Handoff (vor dem Sitzungsstart) frisch aussehen; die
+    Autor-Zeit bleibt beim Rebase gleich. Der Feldname bleibt, weil Aufrufer
+    (z. B. :mod:`to_spawn.aufpasser`) ihn lesen und speichern.
+    """
 
     datei: str
     commit_zeit: float
+
+    @property
+    def faellig_ab(self) -> float:
+        """Ab wann (Epoch-Sekunden) der Handoff fällig ist: Handoff-Zeit + :data:`STILL_MIN`
+        Minuten. Einzige Stelle der Fälligkeits-Regel — :meth:`faellig` und
+        :func:`pruefe` fragen nur hier; Anzeigen können damit „fällig ab …“ zeigen,
+        ohne die Regel nachzubauen."""
+        return self.commit_zeit + STILL_MIN * 60
 
     def still_min(self, jetzt: float) -> int:
         return max(0, int((jetzt - self.commit_zeit) // 60))
 
     def faellig(self, jetzt: float) -> bool:
-        return self.still_min(jetzt) >= STILL_MIN
+        """``True``, sobald ``jetzt`` :attr:`faellig_ab` erreicht hat."""
+        return jetzt >= self.faellig_ab
 
 
 def _git(wt: Path, *args: str) -> str:
@@ -82,7 +99,8 @@ def finde(wt: Path, ticket: int, letzter_start: float | None) -> Treffer | None:
         for datei in (d for d in dateien if name.fullmatch(d)):
             if _git(wt, "status", "--porcelain", "--", datei).strip():
                 continue  # Änderungen nicht committet — Session schreibt noch
-            roh = _git(wt, "log", "-1", "--format=%ct", "--", datei).strip()
+            # Autor-Zeit (%at): bleibt beim Rebase gleich, die Committer-Zeit nicht.
+            roh = _git(wt, "log", "-1", "--format=%at", "--", datei).strip()
             if not roh or float(roh) <= letzter_start:
                 continue
             if beste is None or float(roh) > beste.commit_zeit:
@@ -101,8 +119,14 @@ def grenze(letzter_start: float | None, ticket: int) -> float | None:
     return max(letzter_start, leitstand.leiter_respawn(ticket) or 0.0)
 
 
-def pruefe(repo: Path, ticket: int, jetzt: float) -> Treffer | None:
-    """Fälliger eigener Handoff von ``ticket`` (Worktree + Bau-Log wie die Leiter), sonst ``None``."""
+def aktuell(repo: Path, ticket: int) -> Treffer | None:
+    """Gültiger eigener Handoff von ``ticket`` — egal, ob schon fällig — sonst ``None``.
+
+    Prüft alle Bedingungen der Regel (Leiter-Stufe, Worktree + Bau-Log wie die Leiter,
+    committet, sauber, jünger als :func:`grenze`) außer der Fälligkeit. Für Anzeigen, die
+    einen Handoff schon vor :attr:`Treffer.faellig_ab` zeigen wollen; wer neu starten
+    will, fragt :func:`pruefe`.
+    """
     if leitstand.leiter_stufe(ticket) not in STUFEN:
         return None
     wt = Path(config.worktree_pfad(ticket, repo)).expanduser()
@@ -118,7 +142,13 @@ def pruefe(repo: Path, ticket: int, jetzt: float) -> Treffer | None:
             "#%s: Bau-Log unlesbar — kein Neustart ab Handoff (%s)", ticket, fehler
         )
         return None
-    treffer = finde(wt, ticket, grenze(start, ticket))
+    return finde(wt, ticket, grenze(start, ticket))
+
+
+def pruefe(repo: Path, ticket: int, jetzt: float) -> Treffer | None:
+    """Fälliger eigener Handoff von ``ticket`` (:func:`aktuell` + Fälligkeit ab
+    :attr:`Treffer.faellig_ab`), sonst ``None``."""
+    treffer = aktuell(repo, ticket)
     return treffer if treffer is not None and treffer.faellig(jetzt) else None
 
 
