@@ -152,7 +152,10 @@ def lauf_aus(prozesse: dict[int, tuple[int, str, int]], ticket: int) -> Lauf:
         return alle
 
     muster = re.compile(rf"bau\.py[\"']?\s+{ticket}(\s|$)")
-    for bau in (p for p, (_, zeile, _) in prozesse.items() if muster.search(zeile) and "python" in zeile.lower()):
+    treffer = {p for p, (_, zeile, _) in prozesse.items() if muster.search(zeile) and "python" in zeile.lower()}
+    # Die Tab-Zeile ``pwsh -Command "python '…bau.py' <N>"`` trifft das Muster auch; ``bau.py``
+    # ist der Treffer ohne Treffer-Kind (sonst hinge es an der Reihenfolge der Prozessliste).
+    for bau in (p for p in treffer if not treffer.intersection(kinder.get(p, []))):
         for pid in nachkommen(bau):
             if not prozessbaum.ist_session_zeile(prozesse[pid][1]):
                 continue
@@ -164,7 +167,8 @@ def lauf_aus(prozesse: dict[int, tuple[int, str, int]], ticket: int) -> Lauf:
             neben = [
                 k
                 for k in kinder.get(eltern, [])
-                if k != bau and not prozesse[k][1].strip('" ').lower().endswith(_TAB_BEIWERK)
+                # Kommandozeile wie ``\??\C:\…\conhost.exe 0x4``: Programmname zählt, nicht das Zeilenende.
+                if k != bau and not any(b in prozesse[k][1].lower() for b in _TAB_BEIWERK)
             ]
             tab = eltern if muster.search(prozesse.get(eltern, (0, "", 0))[1]) and not neben else None
             return Lauf(tab, bau, pid, start, arbeitet)
