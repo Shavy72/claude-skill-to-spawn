@@ -269,6 +269,7 @@ def test_reihenfolge_a_bis_e(umgebung: tuple[Path, Path]) -> None:
     assert "\n" not in erg.zeile
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="Linux-Server: bash quotet Windows-Pfade anders")
 def test_startbefehl_ohne_prompt_ueber_bau(
     umgebung: tuple[Path, Path],
 ) -> None:
@@ -603,6 +604,7 @@ def test_beenden_kein_claude_heisst_schon_weg(monkeypatch: pytest.MonkeyPatch) -
     assert _ProzessWerkzeug().alte_session_beenden(100) == respawn.SCHON_WEG
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="signal.SIGKILL fehlt auf Windows")
 def test_beenden_sigkill_nach_frist(monkeypatch: pytest.MonkeyPatch) -> None:
     """Befund 5: nach BEENDEN_MAX_S ohne Ende → SIGKILL."""
     gesendet = _prozesse(monkeypatch, {100: [300]}, {300}, stirbt_bei="SIGKILL")
