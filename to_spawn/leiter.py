@@ -49,7 +49,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Protocol
 
-from to_spawn import anleitung, aufseher_stand, bau_log, config, gh, leitstand, respawn
+from to_spawn import anleitung, aufseher_stand, bau_log, config, gh, leitstand, pc_fenster, respawn
 
 log = logging.getLogger(__name__)
 
@@ -128,7 +128,7 @@ class Umwelt(Protocol):
     def lage(self, spec: int, ticket: int, seit: float | None) -> Lage: ...
     def handoff_k(self) -> float: ...
     def worktree(self, ticket: int) -> Path: ...
-    def werkzeug(self) -> respawn.Werkzeug | respawn.PcWerkzeug:
+    def werkzeug(self) -> respawn.Werkzeug | pc_fenster.PcWerkzeug:
         """Werkzeug von respawn: tmux (``tippen`` = Text einfügen, Enter getrennt) oder PC."""
         ...
 
@@ -205,13 +205,18 @@ def entscheide(lage: Lage, gemerkt: Gemerkt, jetzt: float, handoff_k: float) -> 
 
 #: Vermerk in der Zeile, wenn der PC-Weg das Tippen überspringt (#501 E10).
 PC_VERMERK = "PC: Stufe 1 übersprungen"
+#: Am PC ersetzt die Ablösung (Session beenden, ohne eigenen Handoff) das Anstupsen — darum
+#: erst nach langer echter Stille; Stille zählt dort Subagenten und Werkzeug-Prozesse mit.
+PC_ABLOESE_MIN = 60
 
 
-def fuer_rechner(schritt: Schritt, kann_tippen: bool) -> Schritt:
-    """Am PC (nichts tippbar) wird aus Anstupsen/Handoff-Anfordern direkt die Ablösung,
-    aus ``/exit`` eine Meldung an den Aufseher — reine Logik."""
+def fuer_rechner(schritt: Schritt, kann_tippen: bool, still_min: int | None = None) -> Schritt:
+    """Am PC (nichts tippbar): Handoff-Anfordern (Kontext-Grenze) wird direkt die Ablösung,
+    Anstupsen erst ab ``PC_ABLOESE_MIN`` still, ``/exit`` eine Meldung — reine Logik."""
     if kann_tippen:
         return schritt
+    if schritt.aktion == "anstupsen" and (still_min or 0) < PC_ABLOESE_MIN:
+        return Schritt("nichts", f"PC: still {still_min or 0} min < {PC_ABLOESE_MIN}, noch keine Ablösung")
     if schritt.aktion in ("anstupsen", "handoff"):
         return Schritt("respawn", f"{PC_VERMERK} — {schritt.grund}")
     if schritt.aktion == "exit":
@@ -286,7 +291,7 @@ def _lies(u: Umwelt, spec: int, ticket: int) -> tuple[Gemerkt, Lage, Schritt, fl
     jetzt = u.jetzt()
     lage = u.lage(spec, ticket, seit if stufe == 2 else None)
     schritt = entscheide(lage, gemerkt, jetzt, u.handoff_k())
-    return gemerkt, lage, fuer_rechner(schritt, respawn.kann_tippen(u.werkzeug())), jetzt
+    return gemerkt, lage, fuer_rechner(schritt, pc_fenster.kann_tippen(u.werkzeug()), lage.still_min), jetzt
 
 
 def _plane(u: Umwelt, spec: int, ticket: int) -> Ergebnis:
@@ -373,7 +378,7 @@ def _respawn(
         log.warning("leiter #%s: respawn-Abschluss nicht gemerkt: %s", ticket, fehler)
         text = f"Stufe 3 abgelöst, Abschluss nicht gemerkt — {fehler}"
         return Ergebnis(EXIT_FEHLER, _zeile(ticket, text))
-    grund = "Start-Prompt-Datei da" if respawn.kann_tippen(u.werkzeug()) else PC_VERMERK
+    grund = "Start-Prompt-Datei da" if pc_fenster.kann_tippen(u.werkzeug()) else PC_VERMERK
     text = f"Stufe 0 {_WORT['respawn']} — {grund}"
     return Ergebnis(EXIT_OK, _zeile(ticket, text))
 
@@ -428,7 +433,7 @@ class _EchteUmwelt:
     def worktree(self, ticket: int) -> Path:
         return Path(config.worktree_pfad(ticket, self.repo)).expanduser()
 
-    def werkzeug(self) -> respawn.Werkzeug | respawn.PcWerkzeug:
+    def werkzeug(self) -> respawn.Werkzeug | pc_fenster.PcWerkzeug:
         return self._werkzeug
 
     def lage(self, spec: int, ticket: int, seit: float | None) -> Lage:

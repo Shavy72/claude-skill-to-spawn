@@ -22,13 +22,7 @@ Exit-Codes: 0 abgelöst · 1 neue Session nicht bewiesen · 2 Handoff/Start-Prom
 fehlt · 3 Duplikat/alte Session fehlt. :class:`Ergebnis` trägt genau eine Zeile (E16).
 
 Außenwelt (tmux, Prozesse, Uhr) nur über das Protokoll :class:`Werkzeug`; echt ist
-:class:`TmuxWerkzeug`, Tests geben ein Fake hinein.
-
-Am PC (Windows, #501 E10) gibt es kein tmux: :func:`werkzeug_fuer_rechner` liefert dort
-:class:`PcWerkzeug`, und :func:`abloesen` nimmt den kurzen PC-Weg — alte Session samt
-``bau.py`` beenden, neuen Windows-Terminal-Tab ``bau <N>`` mit Remote Control und dem
-Handoff-Auftrag öffnen, neue Session in der Prozessliste belegen (sonst Exit 1).
-Nichts wird getippt; die Ablöse-Schritte a, c–e entfallen.
+:class:`TmuxWerkzeug` (am PC :class:`pc_fenster.PcWerkzeug`), Tests geben ein Fake hinein.
 """
 
 from __future__ import annotations
@@ -339,33 +333,9 @@ class TmuxWerkzeug:
         time.sleep(s)
 
 
-class PcWerkzeug:
-    """Am PC (Windows, #501): nichts tippen, nichts lesen — finden, beenden, Tab starten."""
-
-    def alte_session(self, repo: Path, spec: int, ticket: int) -> pc_fenster.Alte:
-        return pc_fenster.alte_session(repo, spec, ticket)
-
-    def baum_beenden(self, pid: int) -> bool:
-        return pc_fenster.baum_beenden(pid)
-
-    def tab_starten(self, repo: Path, ticket: int, auftrag: str) -> None:
-        pc_fenster.tab_starten(repo, ticket, auftrag)
-
-    def jetzt(self) -> float:
-        return time.time()
-
-    def schlafen(self, s: float) -> None:
-        time.sleep(s)
-
-
-def werkzeug_fuer_rechner() -> Werkzeug | PcWerkzeug:
-    """Das Werkzeug dieses Rechners: tmux (Bau-Server/Linux) oder PC — einzige Auswahl."""
-    return PcWerkzeug() if pc_fenster.am_pc() else TmuxWerkzeug()
-
-
-def kann_tippen(w: object) -> bool:
-    """Kann das Werkzeug in ein Fenster tippen? Am PC nicht (kein Anstupsen, #501)."""
-    return not isinstance(w, PcWerkzeug)
+def werkzeug_fuer_rechner() -> Werkzeug | pc_fenster.PcWerkzeug:
+    """Einzige Plattform-Weiche: tmux; am PC (#501) ohne antwortendes tmux :mod:`pc_fenster`."""
+    return pc_fenster.werkzeug(TmuxWerkzeug())
 
 
 # --- Reine Hilfen -----------------------------------------------------------------
@@ -618,18 +588,16 @@ def abloesen(
     """Löst die Session in ``bau <ticket>`` nach SOP a–e ab (siehe Modul-Kommentar).
 
     Gibt nie eine Ausnahme weiter: jeder Fehler und SIGTERM/SIGHUP/SIGINT enden als
-    :class:`Ergebnis` mit passendem Exit-Code und genau einer Zeile. Nur eine
-    ``BaseException`` von außen (z. B. ``KeyboardInterrupt``) wird nach dem Aufräumen
-    weitergereicht.
+    :class:`Ergebnis` mit Exit-Code und genau einer Zeile (auch der PC-Weg); nur eine
+    ``BaseException`` von außen (z. B. ``KeyboardInterrupt``) reicht sie nach dem Aufräumen weiter.
     """
     w = werkzeug or werkzeug_fuer_rechner()
     auftrag = Auftrag(repo, spec, ticket, warte_max, dry_run, handoff_seit)
-    if isinstance(w, PcWerkzeug):
-        return _abloesen_pc(auftrag, w)
-    stand = _Stand()
+    stand = _Stand()  # PC-Weg füllt ihn nie → Aufräumen bleibt dort ein No-op
     alte_handler = _signale_abfangen(stand)
     try:
-        erg = _ablauf(auftrag, w, stand)
+        pc = isinstance(w, pc_fenster.PcWerkzeug)
+        erg = pc_fenster.abloesen(auftrag, w) if pc else _ablauf(auftrag, w, stand)  # type: ignore[arg-type]
     except _Abbruch as abbruch:
         erg = _abbruch_ergebnis(auftrag, w, stand, abbruch.exit_code, abbruch.grund)
     except Exception as fehler:  # Tür gibt nie eine Ausnahme weiter (BLE001: geloggt)
@@ -644,89 +612,6 @@ def abloesen(
     finally:
         _signale_zuruecksetzen(alte_handler)
     return Ergebnis(erg.exit, " ".join(erg.zeile.split()))
-
-
-#: Takt, in dem der PC-Weg in der Prozessliste nach der neuen Session sucht.
-PC_TAKT_S = 3.0
-#: Höchstens so lange (und nie länger als ``--warte-max``) wartet der PC-Weg auf die neue
-#: Session — ``wt`` meldet einen nicht geöffneten Tab nicht (Befund 04.10.2026).
-PC_BELEG_MAX_S = 300.0
-
-
-def _abloesen_pc(a: Auftrag, w: PcWerkzeug) -> Ergebnis:
-    """PC-Weg (#501 E10); gibt nie eine Ausnahme weiter."""
-    try:
-        erg = _ablauf_pc(a, w)
-    except Exception as fehler:  # Tür gibt nie eine Ausnahme weiter (geloggt)
-        log.exception("respawn #%s (PC) abgebrochen.", a.ticket)
-        erg = Ergebnis(EXIT_NICHT_BEWIESEN, f"{a.kopf}: Fehler (PC) — {type(fehler).__name__}: {fehler}")
-    return Ergebnis(erg.exit, " ".join(erg.zeile.split()))
-
-
-def _pc_handoff(wt: Path, ticket: int, seit: float | None) -> Path | None:
-    """Jüngster Handoff des Tickets (sonst Start-Prompt); mit ``seit`` nur frische."""
-    ordner = wt / HANDOFF_ORDNER
-    for muster in (f"HANDOFF_*_{ticket}.md", f"START_*_{ticket}.txt"):
-        kandidaten = [
-            p for p in ordner.glob(muster) if _frisch(p, seit if seit is not None else 0.0)
-        ]
-        if kandidaten:
-            return max(kandidaten, key=lambda p: p.stat().st_mtime)
-    return None
-
-
-def _ablauf_pc(a: Auftrag, w: PcWerkzeug) -> Ergebnis:
-    from to_spawn import spawn  # spät: spawn zieht capo/probesitz nach
-
-    alt = w.alte_session(a.repo, a.spec, a.ticket)
-    opfer = alt.bau_pid or alt.session_pid
-    if alt.session_pid is None or opfer is None:
-        return Ergebnis(
-            EXIT_DUPLIKAT,
-            f"{a.kopf}: alte Session fehlt — für „{a.name_alt}“ läuft kein Claude, nichts angefasst",
-        )
-    wt = Path(config.worktree_pfad(a.ticket, a.repo)).expanduser()
-    datei = _pc_handoff(wt, a.ticket, a.handoff_seit)
-    pfad = f"{HANDOFF_ORDNER}/{datei.name}" if datei else ""
-    auftrag = spawn.neustart_auftrag(pfad)
-    was = f"Handoff {pfad}" if datei else "ohne Handoff (normaler Start)"
-    alt_text = f"bau.py {alt.bau_pid or '-'}, claude {alt.session_pid}"
-    if a.dry_run:
-        return Ergebnis(
-            EXIT_OK,
-            f"{a.kopf}: dry-run (PC) — alte Session beenden ({alt_text}), neuer Tab "
-            f"„{a.name_alt}“ mit Remote Control, {was}",
-        )
-    if not w.baum_beenden(opfer):
-        return Ergebnis(
-            EXIT_NICHT_BEWIESEN,
-            f"{a.kopf}: alte Session ({alt_text}) lebt nach taskkill — nichts gestartet, Handarbeit nötig",
-        )
-    log.info("respawn #%s (PC): alte Session beendet (%s).", a.ticket, alt_text)
-    try:
-        w.tab_starten(a.repo, a.ticket, auftrag)
-    except OSError as fehler:
-        return Ergebnis(
-            EXIT_NICHT_BEWIESEN,
-            f"{a.kopf}: alte Session beendet, neuer Tab nicht gestartet ({fehler}) — Handarbeit nötig",
-        )
-    frist = min(a.warte_max, PC_BELEG_MAX_S)
-    ende = w.jetzt() + frist
-    while True:
-        neu = w.alte_session(a.repo, a.spec, a.ticket).session_pid
-        if neu is not None and neu != alt.session_pid:
-            return Ergebnis(
-                EXIT_OK,
-                f"{a.kopf}: ok (PC) — alte Session ({alt_text}) beendet, neue Session "
-                f"{neu} im Tab „{a.name_alt}“, {was}",
-            )
-        if w.jetzt() >= ende:
-            return Ergebnis(
-                EXIT_NICHT_BEWIESEN,
-                f"{a.kopf}: alte Session beendet, Tab „{a.name_alt}“ gestartet — neue Session "
-                f"nach {int(frist)} s nicht in der Prozessliste",
-            )
-        w.schlafen(PC_TAKT_S)
 
 
 def _signale_abfangen(stand: _Stand) -> dict[signal.Signals, _SignalHandler]:
