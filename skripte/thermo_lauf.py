@@ -65,7 +65,7 @@ class Grenzen:
 
 def _git(repo: Path, *args: str) -> str:
     lauf = subprocess.run(
-        ["git", "-C", str(repo), *args],
+        ["git", "-C", str(repo), "-c", "core.quotePath=false", *args],
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -182,16 +182,32 @@ def aufteilen(dateien: dict[str, int], g: Grenzen) -> tuple[list[list[str]], lis
 
 
 def neue_namen(repo: Path, basis: str, kopf: str, dateien: list[str]) -> dict[str, list[str]]:
-    """Neu definierte Namen (Python def/class, JS/TS function/class/Pfeil-const) je Datei, aus Plus-Zeilen."""
+    """Neu definierte Namen (Python def/class, JS/TS function/class/Pfeil-const) je Datei.
+
+    Heuristik über ``+``-Zeilen des Diffs; Namen, die auch in ``-``-Zeilen derselben Datei stehen
+    (geänderte Signatur, verschobene Funktion), gelten als alt und fallen weg.
+    """
     if not dateien:
         return {}
-    namen: dict[str, set[str]] = {}
+    plus: dict[str, set[str]] = {}
+    minus: dict[str, set[str]] = {}
     aktuell: str | None = None
-    for zeile in _git(repo, "diff", "-U0", "--no-renames", f"{basis}..{kopf}", "--", *dateien).splitlines():
-        if zeile.startswith("+++ "):
-            aktuell = zeile[6:] if zeile.startswith("+++ b/") else None
+    im_kopf = False
+    roh = _git(
+        repo, "diff", "-U0", "--no-renames", "--src-prefix=a/", "--dst-prefix=b/", f"{basis}..{kopf}", "--", *dateien
+    )
+    for zeile in roh.splitlines():
+        if zeile.startswith("diff --git "):
+            aktuell, im_kopf = None, True
             continue
-        if aktuell is None or not zeile.startswith("+"):
+        if im_kopf:
+            if zeile.startswith("+++ "):
+                # Leerzeichen im Pfad: git hängt einen Tab an.
+                aktuell = zeile[6:].rstrip("\t") if zeile.startswith("+++ b/") else None
+            elif zeile.startswith("@@"):
+                im_kopf = False
+            continue
+        if aktuell is None or zeile[:1] not in "+-":
             continue
         endung = Path(aktuell).suffix.lower()
         if endung in _PY_ENDUNGEN:
@@ -201,14 +217,17 @@ def neue_namen(repo: Path, basis: str, kopf: str, dateien: list[str]) -> dict[st
         else:
             continue
         if treffer:
-            namen.setdefault(aktuell, set()).update(treffer)
-    return {d: sorted(n) for d, n in sorted(namen.items())}
+            (plus if zeile[0] == "+" else minus).setdefault(aktuell, set()).update(treffer)
+    namen = {d: sorted(n - minus.get(d, set())) for d, n in sorted(plus.items())}
+    return {d: n for d, n in namen.items() if n}
 
 
-def _namen_zeilen(namen: dict[str, list[str]]) -> list[str]:
+def _namen_zeilen(namen: dict[str, list[str]] | None) -> list[str]:
     """Prompt-Block mit den neuen Namen der ganzen Spec, gedeckelt auf ``MAX_NAMEN``."""
+    if namen is None:
+        return ["Neue Namen der ganzen Spec: nicht ermittelt (git-Fehler) — Dopplung trotzdem per rg -n prüfen."]
     if not namen:
-        return ["Neue Namen der ganzen Spec: keine gefunden"]
+        return ["Neue Namen der ganzen Spec: keine gefunden (ausgewertet: Python, JS/TS)"]
     zeilen = ["Neue Namen der ganzen Spec (alle Teile):"]
     rest = MAX_NAMEN
     weggelassen = 0
@@ -236,11 +255,12 @@ def prompt(
     basis: str,
     kopf: str,
     dateien: list[str],
-    namen: dict[str, list[str]] | None = None,
+    namen: dict[str, list[str]] | None,
 ) -> str:
     return "\n".join(
         [
-            "Schätzung: ~60k Token · Lese-Budget: nur der Diff unten + je Datei max 300 Zeilen Umfeld",
+            "Schätzung: ~60k Token · Lese-Budget: nur der Diff unten + je Datei max 300 Zeilen Umfeld "
+            "+ rg -n für die Namensliste",
             f"Rolle: Prüfer Thermo, Teil {nr}/{gesamt}, Spec #{spec}.",
             "Lies ~/.claude/skills/thermo-nuclear-code-quality-review/SKILL.md und befolge es nur als Prüfer.",
             "Verbote: nie Dateien ändern (kein Edit/Write), keine Git-Schreibbefehle, kein stash/checkout, "
@@ -248,7 +268,7 @@ def prompt(
             f"Diff: git -C {repo} diff {basis}..{kopf} -- {' '.join(dateien)}",
             "Fokus Aufbau: Riesen-Dateien, verstreute Sonder-ifs, dünne Wrapper, Umbau-Chancen mit "
             "Verhaltensgleichheit. KEINE Bug-Jagd, kein Stil-Kleinkram (macht review-dirigent).",
-            *_namen_zeilen(namen or {}),
+            *_namen_zeilen(namen),
             "Höchstens 8 Befunde.",
             "Antwort NUR JSON:",
             f'{{"teil": {nr}, "befunde": [{{"datei": "...", "zeile": 123, "schwere": "hoch|mittel|niedrig", '
@@ -300,7 +320,11 @@ def plan(repo: Path, spec: int, basis: str | None, kopf_ref: str) -> int:
         print(f"Keine Code-Änderung in Spec #{spec} ({basis[:7]}..{kopf[:7]}) — kein Thermo-Lauf.")
         return 2
     gruppen, ausgelassen = aufteilen(dateien, lade_grenzen(repo))
-    namen = neue_namen(repo, basis, kopf, sorted(dateien))
+    try:
+        namen: dict[str, list[str]] | None = neue_namen(repo, basis, kopf, sorted(dateien))
+    except Fehler as fehler:
+        log.warning("Namensliste nicht ermittelt (%s) — plane ohne", fehler)
+        namen = None
     teile = [
         {
             "nr": nr,
@@ -385,7 +409,7 @@ def _marker_text(
         "",
         f"Stand: {datetime.now().astimezone().isoformat(timespec='seconds')}",
         f"Basis..Kopf: `{basis}..{kopf}`",
-        "Code-Befunde: gehen als dritter Teil in die Abschluss-Mail (E15, #582).",
+        "Code-Befunde: gehen als dritter Teil in die Abschluss-Mail (#586, E15).",
         "",
         f"## Befunde ({len(befunde)})",
         "",

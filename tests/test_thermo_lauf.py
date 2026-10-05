@@ -237,8 +237,10 @@ def _schreib_code(repo: Path, pfad: str, namen: list[str], fuell: int = 900) -> 
 
 def test_plan_jeder_teil_kennt_namen_der_ganzen_spec(repo: Path) -> None:
     """Jeder Prüfer sieht die neuen Namen aller Teile und prüft Dopplung/Namen/Schnittstellen (E15)."""
+    _schreib_code(repo, "web/knopf.py", ["alter_name"], fuell=0)
+    _commit(repo, "chore: alter Stand vor der Spec")
     _manifest(repo, ["web/knopf.py", "web/aus.py"])
-    _schreib_code(repo, "web/knopf.py", ["knopf_farbe", "lade_knopf"])
+    _schreib_code(repo, "web/knopf.py", ["alter_name", "knopf_farbe", "lade_knopf"])
     _schreib_code(repo, "web/aus.py", ["aus_farbe", "lade_aus"])
     _commit(repo, "feat: Knopf (#901)")
     lauf = _lauf(repo, "plan", "--kopf", "HEAD")
@@ -254,8 +256,8 @@ def test_plan_jeder_teil_kennt_namen_der_ganzen_spec(repo: Path) -> None:
         assert "zwei Namen für dasselbe Ding" in text
         assert "auseinanderlaufende Schnittstellen" in text
         assert "übrigen Code" in text
-    # Alte Namen vor der Spec (alt.py) gehören nicht in die Liste.
-    assert "zeile_0" not in teile[0]["prompt"].split("Neue Namen")[1]
+    # Namen, die es vor der Spec schon gab, gehören nicht in die Liste.
+    assert "alter_name" not in teile[0]["prompt"].split("Neue Namen")[1]
 
 
 def _gh_attrappe(tmp_path: Path) -> tuple[dict[str, str], Path]:
@@ -305,3 +307,32 @@ def test_sammeln_sortierung_dedup_ohne_issue(repo: Path) -> None:
     assert "Issue" not in marker
     assert not (ordner / "lauf.json").exists()
     assert _lauf(repo, "sammeln").returncode == 0
+
+
+def test_plan_namen_auch_bei_leerzeichen_und_umlaut_im_pfad(repo: Path) -> None:
+    """Gequotete Pfade (Umlaut) und Tab-Suffix (Leerzeichen) dürfen keine Namen verschlucken."""
+    _manifest(repo, ["web/grüße.py", "web/zwei teile.py"])
+    _schreib_code(repo, "web/grüße.py", ["gruss_helfer"], fuell=5)
+    _schreib_code(repo, "web/zwei teile.py", ["teil_helfer"], fuell=5)
+    _commit(repo, "feat: Pfade (#901)")
+    lauf = _lauf(repo, "plan", "--kopf", "HEAD")
+    assert lauf.returncode == 0, lauf.stderr
+    text = json.loads(lauf.stdout)["teile"][0]["prompt"]
+    assert "- web/grüße.py: gruss_helfer" in text
+    assert "- web/zwei teile.py: teil_helfer" in text
+
+
+def test_plan_geaenderte_signatur_ist_kein_neuer_name(repo: Path) -> None:
+    """Steht ein Name auch in einer ``-``-Zeile (Signatur geändert), ist er nicht neu (Review #582)."""
+    datei = repo / "web" / "sig.py"
+    datei.parent.mkdir(parents=True, exist_ok=True)
+    datei.write_text("def bleibt(a):\n    return a\n", encoding="utf-8")
+    _commit(repo, "chore: alte Signatur")
+    _manifest(repo, ["web/sig.py"])
+    datei.write_text("def bleibt(a, b):\n    return a\n\n\ndef ganz_neu():\n    return 1\n", encoding="utf-8")
+    _commit(repo, "feat: Signatur (#901)")
+    lauf = _lauf(repo, "plan", "--kopf", "HEAD")
+    assert lauf.returncode == 0, lauf.stderr
+    text = json.loads(lauf.stdout)["teile"][0]["prompt"]
+    assert "- web/sig.py: ganz_neu" in text
+    assert "bleibt" not in text.split("Neue Namen")[1]
