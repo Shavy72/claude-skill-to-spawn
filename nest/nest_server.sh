@@ -213,7 +213,7 @@ _bau_py() {  # bau/aufseher/wache/sessions: Weiterleitung im Repo, sonst direkt 
     echo "$skript weder in $REPO/scripts noch im Skill to-spawn gefunden" >&2; return 1
   fi
 }
-_klon_fuer_spec() {  # sessions <S>: Spec-Klon ~/<praefix>-<S> (z. B. duoplus-551), sonst $REPO
+_klon_fuer_spec() {  # sessions <S>: Spec-Klon ~/<praefix>-<S> (z. B. repo-551), sonst $REPO
   local praefix; praefix="$(basename "$REPO")"; praefix="${praefix%-*}"
   if [[ "${1:-}" =~ ^[0-9]+$ ]] && [ -d "$HOME/$praefix-$1" ]; then echo "$HOME/$praefix-$1"; else echo "$REPO"; fi
 }
@@ -235,6 +235,27 @@ aufseher() { _bau_py wache.py "$@"; }
 EOF
     cat "$NUTZER_HOME/.bashrc" 2>/dev/null || true
   } > "$NUTZER_HOME/.bashrc.neu" && mv "$NUTZER_HOME/.bashrc.neu" "$NUTZER_HOME/.bashrc"
+fi
+# Nachtrag: ältere Nest-Köpfe kennen _klon_fuer_spec nicht — sessions <S> nimmt den Spec-Klon (idempotent).
+if ! grep -q '_klon_fuer_spec()' "$NUTZER_HOME/.bashrc" 2>/dev/null    && grep -q '^sessions() { _bau_py sessions_stand.py "\$@"; }' "$NUTZER_HOME/.bashrc" 2>/dev/null; then
+  python3 - "$NUTZER_HOME/.bashrc" <<'PYEOF'
+import sys
+pfad = sys.argv[1]
+text = open(pfad, encoding="utf-8").read()
+alt = 'sessions() { _bau_py sessions_stand.py "$@"; }'
+helfer = (
+    '_klon_fuer_spec() {  # sessions <S>: Spec-Klon ~/<praefix>-<S> (z. B. repo-551), sonst $REPO
+'
+    '  local praefix; praefix="$(basename "$REPO")"; praefix="${praefix%-*}"
+'
+    '  if [[ "${1:-}" =~ ^[0-9]+$ ]] && [ -d "$HOME/$praefix-$1" ]; then echo "$HOME/$praefix-$1"; else echo "$REPO"; fi
+'
+    '}
+'
+)
+neu = 'sessions() { REPO="$(_klon_fuer_spec "${1:-}")" _bau_py sessions_stand.py "$@"; }'
+open(pfad, "w", encoding="utf-8").write(text.replace(alt, helfer + neu, 1))
+PYEOF
 fi
 chown "$NUTZER:$NUTZER" "$NUTZER_HOME/.bashrc"
 ok "tmux.conf + .bashrc (bau/aufseher/wache/sessions, cd ins Repo)"
