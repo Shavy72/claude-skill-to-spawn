@@ -1364,7 +1364,8 @@ class Aufpasser:
         """Eigener committeter Handoff + Session arbeitet nicht → Folge-Session (#542).
 
         Die Zeit seit dem Handoff-Commit zählt als Stille (nicht ``hang_min``); Regel in
-        :mod:`to_spawn.eigener_handoff`. True = Neustart erledigt (Fenster fertig geprüft).
+        :mod:`to_spawn.eigener_handoff`. True = Fenster fertig geprüft (Neustart erledigt oder nichts zu tun, siehe
+        :data:`eigener_handoff.EXIT_NICHTS`; nur bei echtem Start Meldung + Fensterstand weg).
         """
         treffer = eigener_handoff.pruefe(repo, ticket, self.jetzt)
         if treffer is None:
@@ -1385,6 +1386,10 @@ class Aufpasser:
         except Exception:  # noqa: BLE001 - ein Fenster darf die übrigen nicht stoppen
             log.exception("%s: Neustart ab Handoff %s abgestürzt", f.name, treffer.datei)
             code = -1
+        if code == eigener_handoff.EXIT_NICHTS:
+            # Sperre belegt / nicht mehr fällig: nichts gestartet — still, Fensterstand
+            # bleibt, kein Merker; der nächste Takt prüft neu.
+            return True
         if code != 0:
             log.error(
                 "%s: Neustart ab Handoff %s gescheitert (Exit %s)",

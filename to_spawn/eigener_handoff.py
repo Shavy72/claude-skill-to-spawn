@@ -38,8 +38,10 @@ log = logging.getLogger(__name__)
 STILL_MIN = 2
 #: Leiter-Stufen, in denen der Neustart ab eigenem Handoff greifen darf.
 STUFEN = (0, 1)
-#: Exit-Code von :func:`folge_starten`, wenn die Sperre belegt oder nichts mehr fällig ist.
-EXIT_NICHTS = 0
+#: Rückgabe von :func:`folge_starten`, wenn die Sperre belegt oder nichts mehr fällig ist:
+#: es wurde NICHTS gestartet. Bewusst weder 0 (= gestartet) noch ein Fehlercode von
+#: ``spawn.neustart`` (1-3 …) — Aufrufer müssen es getrennt behandeln.
+EXIT_NICHTS = 10
 ORDNER = "docs/handoffs"
 
 

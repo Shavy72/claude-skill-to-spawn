@@ -464,3 +464,21 @@ def test_folge_starten_nicht_mehr_faellig_in_sperre_startet_nicht(
     )
     assert code == eigener_handoff.EXIT_NICHTS
     assert welt["gestartet"] == []
+
+
+def test_aufpasser_belegte_leiter_sperre_meldet_nichts_und_behaelt_fenster(
+    welt: dict, tmp_path: Path
+) -> None:
+    """#542: Sperre belegt = nichts gestartet; kein folge_handoff, Fensterstand bleibt."""
+    _handoff(welt["wt"], JETZT - 5 * MINUTE)
+    a, meldungen = _aufpasser(tmp_path)
+    f = _fenster()
+    schluessel = f"{f.sitzung}/{f.name}"
+    halter = leitstand.versuche(f"leiter-{TICKET}", "test-halter")
+    assert halter is not None
+    with halter:
+        a.fenster_pruefen(f, welt["haupt"], {TICKET})
+    assert not any(m.startswith("folge_handoff") for m in meldungen)
+    assert schluessel in a.stand.fenster
+    assert "handoff_fehler" not in a.stand.fenster[schluessel]
+    assert welt["gestartet"] == []

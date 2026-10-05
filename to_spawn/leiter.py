@@ -338,6 +338,8 @@ def _schritt(u: Umwelt, repo: Path, spec: int, ticket: int) -> Ergebnis:
         return _respawn(u, repo, spec, ticket, gemerkt, jetzt)
     if schritt.aktion == "folge_handoff" and lage.eigener_handoff is not None:
         code = u.folge_ab_handoff(spec, ticket, lage.eigener_handoff)
+        if code == eigener_handoff.EXIT_NICHTS:
+            return Ergebnis(EXIT_OK, _zeile(ticket, "Neustart ab Handoff: nichts zu tun"))
         if code != 0:
             return Ergebnis(EXIT_FEHLER, _zeile(ticket, f"Neustart ab Handoff gescheitert (Exit {code}) — {schritt.grund}"))
         return Ergebnis(EXIT_OK, _zeile(ticket, f"Stufe 0 {_WORT[schritt.aktion]} — {schritt.grund}"))
