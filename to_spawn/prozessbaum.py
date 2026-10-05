@@ -234,6 +234,9 @@ def _vorfahren_linux(pid: int) -> Iterator[tuple[int, str]]:
 
 #: Alle Prozesse als JSON: p = PID, e = Eltern-PID, c = Kommandozeile, t = Startzeit.
 _PS_PROZESSE = (
+    # UTF-8-Ausgabe: im OEM-Zeichensatz würden Nicht-ASCII-Zeichen fremder Kommandozeilen
+    # (Prompts mit „…“, Emoji) zu 0x1A bzw. ungültigem UTF-8 und brächen das JSON.
+    "[Console]::OutputEncoding = [Text.Encoding]::UTF8; "
     "Get-CimInstance Win32_Process | ForEach-Object { [pscustomobject]@{ "
     "p = [int]$_.ProcessId; e = [int]$_.ParentProcessId; c = [string]$_.CommandLine; "
     "t = $(if ($_.CreationDate) { $_.CreationDate.ToFileTimeUtc() } else { 0 }) } } "
@@ -260,7 +263,9 @@ def _prozesse_windows() -> dict[int, tuple[int, str, int]]:
                 **ohne_fenster(),
             )
             if aus.returncode == 0 and aus.stdout.strip():
-                daten = json.loads(aus.stdout)
+                # strict=False: Kommandozeilen dürfen rohe Steuerzeichen tragen (Prompt mit
+                # Zeilenumbruch/Tab) — PowerShells ConvertTo-Json maskiert sie nicht immer.
+                daten = json.loads(aus.stdout, strict=False)
                 break
             log.warning(
                 "Prozessliste Versuch %d: Exit %d, %s", versuch, aus.returncode, (aus.stderr or "leer").strip()[:200]

@@ -267,3 +267,25 @@ def test_beenden_einer_toten_pid_stoesst_nichts_an(tmp_path: Path) -> None:
     assert prozessbaum.session_beenden(tot.pid, protokoll) is False
     time.sleep(1.0)
     assert not protokoll.exists()
+
+
+@pytest.mark.skipif(not WINDOWS, reason="Win32_Process-Momentaufnahme gibt es nur unter Windows")
+def test_prozessliste_traegt_kommandozeile_mit_zeilenumbruch() -> None:
+    """Zeilenumbruch und Nicht-ASCII in Kommandozeilen dürfen die Momentaufnahme nicht leeren.
+
+    Probesitz-Punkt 6 (2026-10-05) blieb rot: eine fremde Kommandozeile mit rohem
+    Steuerzeichen brach ``json.loads`` — leere Liste, kein Vorfahr, keine Staffel. Das
+    Zeichen (0x1A) entstand, weil PowerShell im OEM-Zeichensatz statt UTF-8 ausgab.
+    """
+    mit_umbruch = subprocess.Popen(
+        [sys.executable, "-c", "import time\ntime.sleep(60)  # „Staffel“ ✓"], **_ohne_fenster()
+    )
+    try:
+        time.sleep(1.0)
+        prozesse = prozessbaum._prozesse_windows()
+        assert mit_umbruch.pid in prozesse
+        assert os.getpid() in prozesse
+        assert "„Staffel“ ✓" in prozesse[mit_umbruch.pid][1]
+    finally:
+        mit_umbruch.kill()
+        mit_umbruch.wait(timeout=30)
