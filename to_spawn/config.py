@@ -198,21 +198,69 @@ def gitignore_ergaenzen(wurzel: Path) -> bool:
     return True
 
 
-def lade(repo: Path | None = None) -> dict[str, Any]:
-    """Konfiguration des Repos, mit Vorgaben aufgefüllt."""
-    wurzel = repo_wurzel(repo)
-    datei = wurzel / KONFIG_PFAD
-    if not datei.is_file():
-        return dict(DEFAULTS)
+class Konfig(dict):  # type: ignore[type-arg]
+    """Geladene Konfiguration: ein normales ``dict``, das zusätzlich seine Datei kennt.
+
+    ``datei`` = die ``.to-spawn/config.json``, aus der :func:`lade` gelesen hat (auch
+    wenn sie fehlte und nur Vorgaben gelten). Über sie liest :func:`frisch` neu ein —
+    lange Warteschleifen sehen so Änderungen, ohne dass ein Aufrufer einen Pfad kennt.
+    Gleichheit, JSON und ``dict(…)`` verhalten sich wie beim normalen ``dict``. Werte, die
+    ein Aufrufer im Speicher ändert, ersetzt :func:`frisch` wieder durch die Datei.
+    """
+
+    def __init__(self, werte: dict[str, Any], datei: Path | None = None) -> None:
+        super().__init__(werte)
+        self.datei = datei
+        #: Warnung „Datei kaputt“ schon geschrieben — einmal je kaputter Strecke, nicht je Zyklus.
+        self.kaputt_gemeldet = False
+
+
+def _lies(datei: Path) -> tuple[dict[str, Any] | None, str]:
+    """(Inhalt, Fehler) der Konfig-Datei; Inhalt ``None`` = unlesbar, kaputt oder kein Objekt."""
     try:
         eigen = json.loads(datei.read_text(encoding="utf-8"))
     except (OSError, ValueError) as fehler:
-        log.warning("Konfig unlesbar (%s) — Vorgaben gelten: %s", datei, fehler)
-        return dict(DEFAULTS)
+        return None, str(fehler)
     if not isinstance(eigen, dict):
-        log.warning("Konfig ist kein Objekt (%s) — Vorgaben gelten.", datei)
-        return dict(DEFAULTS)
-    return _mische(DEFAULTS, eigen)
+        return None, "kein Objekt"
+    return eigen, ""
+
+
+def lade(repo: Path | None = None) -> dict[str, Any]:
+    """Konfiguration des Repos, mit Vorgaben aufgefüllt (eine :class:`Konfig`)."""
+    wurzel = repo_wurzel(repo)
+    datei = wurzel / KONFIG_PFAD
+    if not datei.is_file():
+        return Konfig(DEFAULTS, datei)
+    eigen, fehler = _lies(datei)
+    if eigen is None:
+        log.warning("Konfig unlesbar (%s) — Vorgaben gelten: %s", datei, fehler)
+        return Konfig(DEFAULTS, datei)
+    return Konfig(_mische(DEFAULTS, eigen), datei)
+
+
+def frisch(konfig: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Dieselbe Konfiguration, jetzt neu von der Platte gelesen — für lange Warteschleifen.
+
+    Nur eine :class:`Konfig` aus :func:`lade` kennt ihre Datei; jedes andere ``dict``
+    (auch ``None``) kommt unverändert zurück. Sonst gilt dasselbe wie bei :func:`lade`
+    (fehlende Datei oder fehlende Felder → Vorgaben) — mit einer Ausnahme: ist die Datei
+    unlesbar oder kein gültiges JSON-Objekt (z. B. halb gespeichert), gelten die bisherigen
+    Werte weiter, mit einer Warnung im Log je kaputter Strecke. Eine Warteschleife stürzt so
+    nie an der Konfig ab und springt bei einem Tippfehler nicht auf die Vorgaben.
+    """
+    datei = konfig.datei if isinstance(konfig, Konfig) else None
+    if datei is None:
+        return konfig
+    if not datei.is_file():
+        return Konfig(DEFAULTS, datei)
+    eigen, fehler = _lies(datei)
+    if eigen is None:
+        if not konfig.kaputt_gemeldet:
+            log.warning("Konfig unlesbar (%s) — bisherige Werte gelten weiter: %s", datei, fehler)
+            konfig.kaputt_gemeldet = True
+        return konfig
+    return Konfig(_mische(DEFAULTS, eigen), datei)
 
 
 def sicherstellen(repo: Path | None = None) -> Path:

@@ -10,7 +10,7 @@ Repo-Konfig (``DEFAULTS["speicher"]``):
 * ``max_sessions`` — höchstens so viele Prozesse mit ``argv[0]``-Basename ``claude``
   dürfen schon laufen (Richtwert 6 je 16 GB).
 
-Nur Standardbibliothek, nur Linux: auf anderen Systemen gibt es kein Urteil,
+Nur Standardbibliothek (plus ``to_spawn.config``), nur Linux: auf anderen Systemen gibt es kein Urteil,
 also „frei“. Test-Tür: die Umgebungsvariablen ``TO_SPAWN_SPEICHER_MEMINFO``
 (Pfad einer meminfo-Datei) und ``TO_SPAWN_SPEICHER_PROC`` (Ordner im Aufbau von
 ``/proc``) ersetzen den echten ``/proc`` — so bleibt das Ergebnis in Tests
@@ -27,10 +27,12 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from to_spawn import config
+
 log = logging.getLogger("to_spawn.speicher")
 
-#: Vorgabe, falls die Konfig den Block ``speicher`` nicht kennt (gleich ``config.DEFAULTS``).
-VORGABE: dict[str, int] = {"min_frei_mib": 2048, "max_sessions": 6, "staffel_s": 20}
+#: Vorgabe, falls die Konfig den Block ``speicher`` nicht kennt — eine Quelle: ``config.DEFAULTS``.
+VORGABE: dict[str, int] = dict(config.DEFAULTS["speicher"])
 
 #: Exit-Code der CLI (``to_spawn.py speicher``) und der Starter, wenn kein Platz ist.
 EXIT_VOLL = 5
@@ -174,9 +176,15 @@ def auf_platz_warten(
     und meldet den Grund im ersten und danach jedem ``meldung_alle``-ten Durchlauf auf
     stderr und im Log. ``pruefen``/``schlafen`` sind Test-Türen. Aufpasser und
     ``spawn_srv.sh`` behalten ihr Exit/Auslassen (sie starten viele Fenster).
+
+    Jeder Zyklus prüft mit den Grenzen, die gerade in ``.to-spawn/config.json`` stehen
+    (:func:`config.frisch`): wer ``max_sessions``/``min_frei_mib`` ändert, erreicht auch
+    schon wartende Fenster — ohne Neustart (Vorfall 05.10.). Kaputte Datei mitten im
+    Warten → die letzten gültigen Werte gelten weiter.
     """
     zyklen = 0
     while True:
+        konfig = config.frisch(konfig)
         frei, grund = pruefen(konfig)
         if frei:
             if zyklen:
