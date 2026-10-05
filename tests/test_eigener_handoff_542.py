@@ -390,3 +390,77 @@ def test_f_wache_cwd_im_git_repo_schlaegt_umgebung(
     monkeypatch.chdir(hier)
     monkeypatch.setenv(name, str(fremd))
     assert _wache().start_ordner() == hier.resolve()
+
+
+# --- Review-Nachtrag: Fehlschlag melden, Sperre ------------------------------------
+
+
+def test_aufpasser_neustart_fehlschlag_meldet_einmal_und_wiederholt_nicht(
+    welt: dict, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _handoff(welt["wt"], JETZT - 5 * MINUTE)
+    versuche: list[int] = []
+
+    def kaputt(repo: Path, spec: int, ticket: int, konfig: dict, **kw: Any) -> int:
+        versuche.append(ticket)
+        return 3
+
+    monkeypatch.setattr(spawn, "neustart", kaputt)
+    a, meldungen = _aufpasser(tmp_path)
+    a.fenster_pruefen(_fenster(), welt["haupt"], {TICKET})
+    a.fenster_pruefen(_fenster(), welt["haupt"], {TICKET})
+    assert len(versuche) == 1
+    assert [m for m in meldungen if m.startswith("folge_handoff_fehler")] != []
+    assert len([m for m in meldungen if m.startswith("folge_handoff_fehler")]) == 1
+    # Neuer Handoff (neuer Commit) → wieder ein Versuch.
+    (welt["wt"] / HANDOFF).write_text("# Handoff Neuer Stand", encoding="utf-8")
+    _git(welt["wt"], "add", HANDOFF)
+    _git(welt["wt"], "commit", "-q", "-m", "docs: Handoff neu", zeit=JETZT - 4 * MINUTE)
+    a.fenster_pruefen(_fenster(), welt["haupt"], {TICKET})
+    assert len(versuche) == 2
+
+
+def test_aufpasser_neustart_ausnahme_wird_gemeldet_nicht_geworfen(
+    welt: dict, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _handoff(welt["wt"], JETZT - 5 * MINUTE)
+
+    def wirft(*a: Any, **kw: Any) -> int:
+        raise OSError("tmux weg")
+
+    monkeypatch.setattr(spawn, "neustart", wirft)
+    a, meldungen = _aufpasser(tmp_path)
+    a.fenster_pruefen(_fenster(), welt["haupt"], {TICKET})
+    assert any(m.startswith("folge_handoff_fehler") for m in meldungen)
+
+
+def test_folge_starten_belegte_leiter_sperre_startet_nicht(welt: dict) -> None:
+    from to_spawn import eigener_handoff
+
+    _handoff(welt["wt"], JETZT - 5 * MINUTE)
+    treffer = eigener_handoff.pruefe(welt["haupt"], TICKET, JETZT)
+    assert treffer is not None
+    halter = leitstand.versuche(f"leiter-{TICKET}", "test-halter")
+    assert halter is not None
+    with halter:
+        code = eigener_handoff.folge_starten(
+            welt["haupt"], SPEC, TICKET, treffer, sperren=True
+        )
+    assert code == eigener_handoff.EXIT_NICHTS
+    assert welt["gestartet"] == []
+
+
+def test_folge_starten_nicht_mehr_faellig_in_sperre_startet_nicht(
+    welt: dict, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from to_spawn import eigener_handoff
+
+    _handoff(welt["wt"], JETZT - 5 * MINUTE)
+    treffer = eigener_handoff.pruefe(welt["haupt"], TICKET, JETZT)
+    assert treffer is not None
+    monkeypatch.setattr(eigener_handoff, "pruefe", lambda *a, **k: None)
+    code = eigener_handoff.folge_starten(
+        welt["haupt"], SPEC, TICKET, treffer, sperren=True
+    )
+    assert code == eigener_handoff.EXIT_NICHTS
+    assert welt["gestartet"] == []

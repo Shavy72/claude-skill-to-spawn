@@ -137,6 +137,7 @@ MELDUNG_EINMAL_PRO_TAG = frozenset(
         "start_fehlgeschlagen",
         "stupser_erschoepft",
         "session_beendet",
+        "folge_handoff_fehler",
     }
 )
 #: Ereignis → Vorfall (Klasse, Symptom, Ursache, Lösung) für die Lernschleife (#286).
@@ -1366,14 +1367,41 @@ class Aufpasser:
         :mod:`to_spawn.eigener_handoff`. True = Neustart erledigt (Fenster fertig geprüft).
         """
         treffer = eigener_handoff.pruefe(repo, ticket, self.jetzt)
-        if treffer is None or not self.vor_eingriff(f, hash_start):
+        if treffer is None:
+            return False
+        eintrag = self.stand.fenster.get(schluessel)
+        gemerkt = [treffer.datei, treffer.commit_zeit]
+        if eintrag is not None and eintrag.get("handoff_fehler") == gemerkt:
+            return False  # dieser Handoff ist schon einmal gescheitert — erst ein neuer startet wieder
+        if not self.vor_eingriff(f, hash_start):
             return False
         if self.e.trocken:
             print(f"[trocken] #{ticket}: Neustart ab eigenem Handoff {treffer.datei}")
             return True
-        code = eigener_handoff.folge_starten(repo, int(f.spec), ticket, treffer, sperren=True)
+        try:
+            code = eigener_handoff.folge_starten(
+                repo, int(f.spec), ticket, treffer, sperren=True
+            )
+        except Exception:  # noqa: BLE001 - ein Fenster darf die übrigen nicht stoppen
+            log.exception("%s: Neustart ab Handoff %s abgestürzt", f.name, treffer.datei)
+            code = -1
         if code != 0:
-            log.error("%s: Neustart ab Handoff %s gescheitert (Exit %s)", f.name, treffer.datei, code)
+            log.error(
+                "%s: Neustart ab Handoff %s gescheitert (Exit %s)",
+                f.name,
+                treffer.datei,
+                code,
+            )
+            if eintrag is not None:
+                eintrag["handoff_fehler"] = gemerkt
+            self.melden(
+                f.spec,
+                repo,
+                schluessel,
+                "folge_handoff_fehler",
+                f"„{f.name}“: Neustart ab Handoff {treffer.datei} gescheitert "
+                f"(Exit {code}) — kein weiterer Versuch für diesen Handoff.",
+            )
             return False
         self.stand.fenster.pop(schluessel, None)
         self.melden(
