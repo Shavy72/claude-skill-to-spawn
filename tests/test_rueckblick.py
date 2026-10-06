@@ -284,3 +284,105 @@ def test_abgelaufene_sperre_blockiert_nicht(repo: Path) -> None:
     lauf = _lauf(repo, SPEC, "--ohne-bau-server")
     assert lauf.returncode == 0, lauf.stdout + lauf.stderr
     assert (ordner / "auftrag.md").exists()
+
+
+def _modul():  # noqa: ANN202 — Modul des Skripts, für Tests an den Grenzen (Fern-Antwort, Sperre, Klone)
+    import importlib.util
+
+    for pfad in (SKRIPT.parent, SKRIPT.parent.parent):
+        if str(pfad) not in sys.path:
+            sys.path.insert(0, str(pfad))
+    spec = importlib.util.spec_from_file_location("rueckblick_test", SKRIPT)
+    assert spec and spec.loader
+    modul = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(modul)
+    return modul
+
+
+def test_vertrag_fern_logs_unterbefehl_gleich_lokal(repo: Path) -> None:
+    """Runde 3, Punkt 1: stdout von ``logs <S>`` (echter Unterprozess) → ``_fern_antwort`` = lokale Logs."""
+    rb = _modul()
+    lauf = subprocess.run(
+        [sys.executable, str(SKRIPT), "logs", str(SPEC), "--repo", str(repo)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        env={**os.environ, "PYTHONIOENCODING": "utf-8"},
+        timeout=120,
+        check=False,
+    )
+    assert lauf.returncode == 0, lauf.stderr
+    fern, orte = rb._fern_antwort("Bau-Server x", lauf.stdout)
+    lokal, lokal_orte = rb.server_logs(repo.resolve(), ["901", "902", "903"])
+    assert fern == lokal
+    assert fern["901"] and fern["902"] and not fern["903"]
+    assert orte[0] == ("Bau-Server x: per SSH gelesen", False)
+    assert orte[1:] == [(f"Bau-Server: {text}", rot) for text, rot in lokal_orte]
+
+
+@pytest.mark.parametrize(
+    "stdout",
+    [
+        "{kaputt",
+        "",
+        "null",
+        '[{"tickets": {}, "orte": []}]',
+        '{"tickets": ["901"], "orte": []}',
+        '{"tickets": {"901": "zeile"}, "orte": []}',
+        '{"tickets": {}, "orte": [{"text": 1, "rot": true}]}',
+        '{"tickets": {}, "orte": [{"text": "x", "rot": "ja"}]}',
+        '{"orte": []}',
+    ],
+)
+def test_fern_antwort_kaputt_oder_typfalsch_rot(stdout: str) -> None:
+    """Runde 3, Punkt 1: kaputtes/typfalsches JSON = genau ein roter Ort, keine Ausnahme, keine Logs."""
+    logs, orte = _modul()._fern_antwort("Bau-Server x", stdout)
+    assert logs == {}
+    assert len(orte) == 1 and orte[0][1] is True
+    assert orte[0][0].startswith("Bau-Server x: Antwort unbrauchbar (")
+
+
+def test_fern_antwort_zeilen_falscher_typ_rot() -> None:
+    """Runde 3, Punkt 1: Zeilen, die kein JSON-Objekt-Text sind, werden gezählt und rot gemeldet."""
+    stdout = json.dumps({"tickets": {"901": [1, {"a": 1}, "[1]", '{"typ": "vorfall"}']}, "orte": []})
+    logs, orte = _modul()._fern_antwort("Bau-Server x", stdout)
+    assert logs == {"901": {'{"typ": "vorfall"}'}}
+    assert ("Bau-Server x: Antwort, 3 Zeilen verworfen", True) in orte
+
+
+def test_sperre_bei_schreibfehler_wieder_weg(tmp_path: Path) -> None:
+    """Runde 3, Punkt 2: Schreibfehler nach dem Anlegen der Sperre → Sperre weg, Fehler fliegt weiter."""
+    sperre = tmp_path / "lauf.json"
+    with pytest.raises(TypeError):
+        _modul()._sperre_anlegen(sperre, {"start": object()})  # nicht serialisierbar = Schreibfehler
+    assert not sperre.exists()
+
+
+def test_server_ohne_origin_rot(tmp_path: Path) -> None:
+    """Runde 3, Punkt 3: server_repo ohne origin → Spec-Klone nicht suchbar = roter Ort, nicht still."""
+    server = tmp_path / "server"
+    server.mkdir()
+    _git(server, "init", "-q", "-b", "master")
+    _, orte = _modul().server_logs(server, ["901"])
+    rot = [text for text, r in orte if r and text.startswith("Spec-Klone neben ") and "kein origin" in text]
+    assert rot, orte
+
+
+def test_server_nachbarordner_nicht_lesbar_rot(repo: Path, tmp_path: Path) -> None:
+    """Runde 3, Punkt 3: OSError beim Auflisten neben server_repo → roter Ort statt Absturz."""
+    eltern = tmp_path / "gesperrt"
+    eltern.mkdir()
+    server = eltern / "duoplus-management"
+    _git(tmp_path, "clone", "-q", str(repo), str(server))
+    _konfig(repo, server_repo=str(server))
+    eltern.chmod(0o300)  # betretbar, aber nicht auflistbar
+    try:
+        if os.access(eltern, os.R_OK):
+            pytest.skip("Rechte greifen nicht (root)")
+        lauf = _lauf(repo, SPEC)
+    finally:
+        eltern.chmod(0o700)
+    assert lauf.returncode == 0, lauf.stdout + lauf.stderr
+    kopf = lauf.stdout.split("Auftrag: ")[0]
+    assert "🔴 Bau-Server: Spec-Klone neben " in kopf, kopf
+    assert UNVOLL in kopf
