@@ -114,6 +114,7 @@ def _spec_fertig_ohne_mail(welt: dict[str, Path], mail: dict[str, object]) -> No
     _gh_setzen(welt, "902", state="closed", closed_at=_iso())
 
 
+@pytest.mark.xfail(strict=True, reason="überholt durch #588: keine capo-Kurzmail mehr (E16)")
 def test_ohne_mail_befehl_spec_fertig_exit_0(welt: dict[str, Path]) -> None:
     _spec_fertig_ohne_mail(welt, {"ziel": "", "nur_kritisch": True})
     for _ in range(2):
@@ -125,6 +126,7 @@ def test_ohne_mail_befehl_spec_fertig_exit_0(welt: dict[str, Path]) -> None:
     assert _mails(welt) == []
 
 
+@pytest.mark.xfail(strict=True, reason="überholt durch #588: keine capo-Kurzmail mehr (E16)")
 def test_leerer_mail_befehl_ist_auch_nicht_eingerichtet(welt: dict[str, Path]) -> None:
     _spec_fertig_ohne_mail(welt, {"befehl": [], "nur_kritisch": True})
     ergebnis = _capo(welt)
@@ -132,6 +134,7 @@ def test_leerer_mail_befehl_ist_auch_nicht_eingerichtet(welt: dict[str, Path]) -
     assert "Mail nicht eingerichtet (mail.befehl leer)" in ergebnis.stdout
 
 
+@pytest.mark.xfail(strict=True, reason="überholt durch #588: keine capo-Kurzmail mehr (E16)")
 def test_konfigurierter_mail_befehl_scheitert_bleibt_fehler(
     welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
