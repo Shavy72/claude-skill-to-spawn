@@ -463,6 +463,12 @@ def _marker(repo: Path, rueckblick: bool = True, thermo: bool = True) -> None:
         (ordner / f"thermo_{SPEC}.md").write_text(_THERMO, encoding="utf-8")
 
 
+def _git_stand(repo: Path) -> None:
+    (repo / ".git").rmdir()
+    for befehl in (["init", "-q"], ["add", "-A"], ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "x"]):
+        subprocess.run(["git", *befehl], cwd=repo, check=True, capture_output=True)
+
+
 def _abgelegt(repo: Path, tmp_path: Path) -> Path:
     postfach = _mail_konfig(repo, tmp_path)
     bau_log = repo / ".to-spawn" / "bau_log"
@@ -473,6 +479,7 @@ def _abgelegt(repo: Path, tmp_path: Path) -> Path:
     ]
     (bau_log / "901.jsonl").write_text("".join(json.dumps(z) + "\n" for z in zeilen), encoding="utf-8")
     _wirkungskreis(repo, 0, "Wirkungskreis: web/app.py, web/static/knopf.js\n")
+    _git_stand(repo)  # Belegseiten liest capo.belegseiten aus dem Git-Stand (git ls-tree)
     ablage = _unter("ablegen", repo, *_LINKS, "--spec-fertig", _FERTIG, env=_env(tmp_path))
     assert ablage.returncode == 0, ablage.stdout + ablage.stderr
     assert (repo / ".to-spawn" / f"abschluss_{SPEC}_paket.json").is_file()
@@ -560,3 +567,52 @@ def test_ablegen_zweimal_erster_spec_fertig_gewinnt(repo: Path, tmp_path: Path) 
     lauf = _unter("nachsehen", repo, "--jetzt", "2026-10-06T12:01:00+02:00", "--dry-run", env=_env(tmp_path))
     assert lauf.returncode == 0, lauf.stdout + lauf.stderr
     assert f"Rückblick fehlgeschlagen: Thermo-Marker docs/agents/thermo_{SPEC}.md fehlt" in lauf.stdout
+
+
+# --- #586 Fixrunde: nachsehen stürzt nie ab, Ablage je Stand, früher Doppel-Schutz -------------------
+
+
+def test_nachsehen_kaputter_marker_mail_geht_trotzdem(repo: Path, tmp_path: Path) -> None:
+    postfach = _abgelegt(repo, tmp_path)
+    _marker(repo)
+    (repo / "docs" / "agents" / f"rueckblick_{SPEC}.md").write_bytes(b"\xff\xfe kaputt \xc3")
+    lauf = _unter("nachsehen", repo, "--jetzt", "2026-10-06T10:05:00+02:00", env=_env(tmp_path))
+    assert lauf.returncode == 0, lauf.stdout + lauf.stderr
+    mails = _mails(postfach)
+    assert len(mails) == 1
+    assert f"Rückblick fehlgeschlagen: Rückblick-Marker docs/agents/rueckblick_{SPEC}.md unlesbar:" in mails[0]["text"]
+
+
+def test_ablage_je_stand_live_ueberschreibt_staging_nicht(repo: Path, tmp_path: Path) -> None:
+    _abgelegt(repo, tmp_path)
+    staging = (repo / ".to-spawn" / f"abschluss_{SPEC}_paket.json").read_text(encoding="utf-8")
+    live = _unter("ablegen", repo, *_LINKS, "--stand", "live", "--spec-fertig", _FERTIG, env=_env(tmp_path))
+    assert live.returncode == 0, live.stdout + live.stderr
+    assert (repo / ".to-spawn" / f"abschluss_{SPEC}_paket.json").read_text(encoding="utf-8") == staging
+    assert json.loads((repo / ".to-spawn" / f"abschluss_{SPEC}_live_paket.json").read_text())["paket"]["stand"] == "live"
+    _marker(repo)
+    probe = _unter(
+        "nachsehen", repo, "--stand", "live", "--jetzt", "2026-10-06T10:05:00+02:00", "--dry-run", env=_env(tmp_path)
+    )
+    assert probe.returncode == 0, probe.stdout + probe.stderr
+    assert f"Spec {SPEC} live — alles zum Durchschauen" in probe.stdout
+
+
+def test_nachsehen_nach_versand_ohne_marker_exit_0_keine_zweite_mail(repo: Path, tmp_path: Path) -> None:
+    postfach = _abgelegt(repo, tmp_path)
+    _marker(repo)
+    erst = _unter("nachsehen", repo, "--jetzt", "2026-10-06T10:05:00+02:00", env=_env(tmp_path))
+    assert erst.returncode == 0, erst.stdout + erst.stderr
+    (repo / "docs" / "agents" / f"rueckblick_{SPEC}.md").unlink()
+    (repo / "docs" / "agents" / f"thermo_{SPEC}.md").unlink()
+    nochmal = _unter("nachsehen", repo, "--jetzt", "2026-10-06T10:06:00+02:00", env=_env(tmp_path))
+    assert nochmal.returncode == 0, nochmal.stdout + nochmal.stderr
+    assert len(_mails(postfach)) == 1
+
+
+def test_nachsehen_wirkungskreis_leer(repo: Path, tmp_path: Path) -> None:
+    _abgelegt(repo, tmp_path)
+    _marker(repo)
+    _wirkungskreis(repo, 0, "")
+    text = _unter("nachsehen", repo, "--jetzt", "2026-10-06T10:05:00+02:00", "--dry-run", env=_env(tmp_path)).stdout
+    assert "Wirkungskreis nicht ermittelt: keine Ausgabe" in text

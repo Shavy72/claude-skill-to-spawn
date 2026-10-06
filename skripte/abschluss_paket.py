@@ -19,12 +19,12 @@ Ordner-Override für Tests: ``TO_SPAWN_ABSCHLUSS_ORDNER``.
 Eine Mail je Spec (#586), zusätzlich zum Aufruf oben:
 
 * ``abschluss_paket.py ablegen <S> <gleiche Argumente> [--spec-fertig <ISO>]`` baut das Paket
-  (gleicher Geheimnis-Check), mailt nicht und legt es als ``.to-spawn/abschluss_<S>_paket.json`` ab.
+  (gleicher Geheimnis-Check), mailt nicht und legt es als ``.to-spawn/abschluss_<S>[_live]_paket.json`` ab.
   Eine schon abgelegte SPEC-FERTIG-Zeit bleibt (erste gewinnt). Exit 0, 2 = Passwort/falsches Argument.
-* ``abschluss_paket.py nachsehen <S> [--jetzt <ISO>] [--repo <pfad>] [--dry-run]`` verschickt die eine
+* ``abschluss_paket.py nachsehen <S> [--stand abnahme|live] [--jetzt <ISO>] [--repo <pfad>] [--dry-run]`` verschickt die eine
   Mail (Spec-Teil mit „Je Ticket“ + „Wirkungskreis“ → System-Teil = Rückblick-Marker
   ``docs/agents/rueckblick_<S>.md`` → Code-Befunde = Thermo-Marker ``docs/agents/thermo_<S>.md``),
-  sobald beide Marker da sind; fehlt einer ``WARTE_MINUTEN`` (120) nach SPEC FERTIG noch, geht sie mit
+  sobald beide Marker da sind; fehlt einer ``WARTE_MINUTEN`` (= Thermo-Sperre, 120) nach SPEC FERTIG noch, geht sie mit
   Vermerk „Rückblick fehlgeschlagen: …“ raus. Gleicher Mail-Schlüssel wie oben.
   Exit 0 = verschickt/schon verschickt/Probe, 1 = Mail-Befehl gescheitert, 2 = keine Ablage,
   3 = wartet noch.
@@ -51,6 +51,7 @@ _SKRIPTE = str(Path(__file__).resolve().parent)
 if _SKRIPTE not in sys.path:
     sys.path.insert(0, _SKRIPTE)
 from test_uebersicht import lade_tickets  # noqa: E402
+from thermo_lauf import SPERRE_MIN  # noqa: E402
 from thermo_lauf import marker_pfad as thermo_marker_pfad  # noqa: E402
 
 from to_spawn import bau_log, capo, config, melder  # noqa: E402
@@ -340,13 +341,16 @@ def main(argv: list[str] | None = None) -> int:
 # --- #586: eine Mail je Spec (ablegen bei SPEC FERTIG, nachsehen bis Rückblick + Thermo da) ---------
 
 #: So lange wartet ``nachsehen`` nach SPEC FERTIG auf Rückblick- und Thermo-Marker, dann geht die
-#: Mail mit Vermerk raus.
-WARTE_MINUTEN = 120
+#: Mail mit Vermerk raus — ausdrücklich dieselbe Grenze wie die Thermo-Sperre (Grill E16).
+WARTE_MINUTEN = SPERRE_MIN
+# Echter Lauf über Spec 578 brauchte 137 s (graphify update + affected je Datei).
+WIRKUNGSKREIS_ZEITLIMIT_S = 600
 
 
-def ablage_pfad(repo: Path, spec: int) -> Path:
-    """Abgelegtes Paket einer Spec (schreibt ``ablegen``, liest ``nachsehen``)."""
-    return repo / ".to-spawn" / f"abschluss_{spec}_paket.json"
+def ablage_pfad(repo: Path, spec: int, stand: str = "abnahme") -> Path:
+    """Abgelegtes Paket einer Spec je Stand (schreibt ``ablegen``, liest ``nachsehen``)."""
+    endung = "_live" if stand == "live" else ""
+    return repo / ".to-spawn" / f"abschluss_{spec}{endung}_paket.json"
 
 
 def rueckblick_pfad(repo: Path, spec: int) -> Path:
@@ -373,7 +377,7 @@ def ablegen(argv: list[str]) -> int:
     a = ap.parse_args(argv)
     repo = _repo(a.repo)
     p, neue_form = _paket(a, ap, repo)
-    datei = ablage_pfad(repo, p.spec)
+    datei = ablage_pfad(repo, p.spec, p.stand)
     fertig = _zeit(a.spec_fertig, ap, "--spec-fertig").isoformat(timespec="seconds")
     alt = melder.lade_json(datei)
     if alt.get("spec_fertig"):
@@ -389,17 +393,21 @@ def ablegen(argv: list[str]) -> int:
 
 def _ticket_zeilen(repo: Path, spec: int, konfig: dict[str, Any]) -> list[str]:
     """Je Ticket: Titel, Umfang aus der jüngsten Bau-Log-Zusammenfassung, Belegseiten (wie capo)."""
-    regularien = konfig.get("regularien") if isinstance(konfig.get("regularien"), dict) else {}
-    ordner = str(regularien.get("belege_ordner") or "docs/verify-hard").strip("/") or "docs/verify-hard"
-    eintraege = sorted((repo / ordner).iterdir()) if (repo / ordner).is_dir() else []
+    ordner = capo.belege_ordner(konfig)
     zeilen = []
     for nr, titel in _tickets(repo, spec):
-        umfang = str(bau_log.zusammenfassung(repo, nr).get("umfang_ist") or "").replace("\n", " ").strip()
-        belege = [f"{ordner}/{e.name}" for e in eintraege if nr.isdigit() and capo.beleg_passt(e.name, int(nr))]
-        zeilen.append(
-            f"- #{nr} {titel.strip()} — {umfang or 'kein Bau-Log'} · "
-            f"Vorher/Nachher: {', '.join(belege) or 'Belegseite fehlt'}"
-        )
+        try:
+            umfang = str(bau_log.zusammenfassung(repo, nr).get("umfang_ist") or "").replace("\n", " ").strip()
+            umfang = umfang or "kein Bau-Log"
+        except (OSError, ValueError) as fehler:
+            log.warning("Bau-Log #%s unlesbar: %s", nr, fehler)
+            umfang = f"Bau-Log unlesbar: {fehler}"
+        try:
+            belege = ", ".join(capo.belegseiten(repo, int(nr), ordner=ordner)) or "Belegseite fehlt"
+        except (OSError, ValueError) as fehler:
+            log.warning("Belegseite #%s nicht ermittelt: %s", nr, fehler)
+            belege = f"Belegseite nicht ermittelt: {fehler}"
+        zeilen.append(f"- #{nr} {titel.strip()} — {umfang} · Vorher/Nachher: {belege}")
     return zeilen or ["- (keine Tickets im Manifest)"]
 
 
@@ -410,19 +418,20 @@ def wirkungskreis(repo: Path, spec: int) -> str:
         return f"Wirkungskreis nicht ermittelt: scripts/wirkungskreis.py fehlt in {repo.name}"
     try:
         lauf = subprocess.run(
-            [sys.executable, str(skript), str(spec), "--repo", str(repo)],
+            [sys.executable, "-X", "utf8", str(skript), str(spec), "--repo", str(repo)],
             cwd=str(repo),
+            env={**os.environ, "PYTHONIOENCODING": "utf-8"},
             capture_output=True,
             text=True,
             encoding="utf-8",
             errors="replace",
-            timeout=melder.ZEITLIMIT_S,
+            timeout=WIRKUNGSKREIS_ZEITLIMIT_S,
             check=False,
         )
     except (OSError, subprocess.TimeoutExpired) as fehler:
         return f"Wirkungskreis nicht ermittelt: {fehler}"
     if lauf.returncode in (0, 2):
-        return lauf.stdout.strip()
+        return lauf.stdout.strip() or "Wirkungskreis nicht ermittelt: keine Ausgabe"
     return f"Wirkungskreis nicht ermittelt: Exit {lauf.returncode} — {(lauf.stderr or lauf.stdout).strip()[-300:]}"
 
 
@@ -462,12 +471,13 @@ def nachsehen(argv: list[str]) -> int:
     """
     ap = argparse.ArgumentParser(description="Abgelegtes Abschluss-Paket als eine Mail verschicken.")
     ap.add_argument("spec", type=int)
+    ap.add_argument("--stand", choices=("abnahme", "live"), default="abnahme", help="welche Ablage")
     ap.add_argument("--jetzt", default=None, help="Zeitpunkt jetzt (ISO), sonst Uhr")
     ap.add_argument("--repo", type=Path, default=None)
     ap.add_argument("--dry-run", action="store_true", help="Mailtext zeigen, nichts schreiben, nichts mailen")
     a = ap.parse_args(argv)
     repo = _repo(a.repo)
-    datei = ablage_pfad(repo, a.spec)
+    datei = ablage_pfad(repo, a.spec, a.stand)
     ablage = melder.lade_json(datei)
     try:
         roh = dict(ablage["paket"])
@@ -479,8 +489,15 @@ def nachsehen(argv: list[str]) -> int:
             f"FEHLER: keine gültige Ablage {datei} ({fehler!r}) — erst „abschluss_paket.py ablegen {a.spec} …“.\n"
         )
         return 2
+    schluessel = f"abschluss_{p.spec}{_endung(p)}"
+    if not a.dry_run and melder.schon_gesendet(repo, schluessel):
+        log.info("Mail zu %s schon verschickt — nichts zu tun.", schluessel)
+        return 0
     jetzt = _zeit(a.jetzt, ap, "--jetzt")
     minuten = (jetzt - fertig).total_seconds() / 60
+    if minuten < 0:
+        log.warning("SPEC FERTIG %s liegt nach jetzt %s — zähle als 0 Minuten.", fertig, jetzt)
+        minuten = 0.0
     marker = {
         "System": ("Rückblick-Marker", rueckblick_pfad(repo, p.spec)),
         "Code": ("Thermo-Marker", thermo_marker_pfad(repo, p.spec)),
@@ -490,32 +507,35 @@ def nachsehen(argv: list[str]) -> int:
         namen = ", ".join(str(marker[n][1].relative_to(repo)) for n in fehlen)
         sys.stdout.write(f"wartet: {namen} fehlt noch ({int(minuten)} von {WARTE_MINUTEN} Minuten nach SPEC FERTIG)\n")
         return 3
+    unlesbar: set[str] = set()
 
     def teil(name: str) -> str:
+        """Marker-Inhalt unverändert oder Vermerk — nie ein Absturz, sonst gäbe es nie eine Mail (E14)."""
         art, pfad = marker[name]
+        pfad_rel = pfad.relative_to(repo).as_posix()
         if name in fehlen:
-            pfad_rel = pfad.relative_to(repo).as_posix()
             return f"Rückblick fehlgeschlagen: {art} {pfad_rel} fehlt {WARTE_MINUTEN} Minuten nach SPEC FERTIG"
-        return pfad.read_text(encoding="utf-8")
+        try:
+            return pfad.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as fehler:
+            log.warning("%s %s unlesbar: %s", art, pfad_rel, fehler)
+            unlesbar.add(name)
+            return f"Rückblick fehlgeschlagen: {art} {pfad_rel} unlesbar: {fehler}"
 
     system = teil("System")
-    if "System" not in fehlen:
+    if "System" not in fehlen and "System" not in unlesbar:
         system = f"{system.rstrip()}\n\nAbhaken per Chat: „Rückblick {p.spec}: 1 ja, 2 nein“"
     konfig = config.lade(repo)
     neue_form = bool(ablage.get("neue_form"))
     text = mail_text(repo, p, neue_form, konfig, system, teil("Code"))
     titel = betreff(p, neue_form)
-    schluessel = f"abschluss_{p.spec}{_endung(p)}"
     md_datei, offen = _md_datei(repo, p), _offen_datei(repo, p)
     if a.dry_run:
         _probe(md_datei, text, offen, titel, konfig)
         return 0
-    if melder.schon_gesendet(repo, schluessel):
-        log.info("Mail „%s“ schon verschickt (%s) — nichts zu tun.", titel, schluessel)
-        return 0
     _schreiben(md_datei, text, offen, _offen_daten(repo, p))
     if not melder.mail_eingerichtet(konfig):
-        log.info("Mail nicht eingerichtet (mail.befehl leer) — nur Datei.")
+        log.warning("Mail nicht eingerichtet (mail.befehl leer) — nur Datei %s, keine Mail.", md_datei)
         return 0
     if not melder.melden(repo, "spec_fertig", titel, text, schluessel, konfig=konfig):
         log.warning("Mail „%s“ nicht verschickt (Befehl gescheitert).", titel)
