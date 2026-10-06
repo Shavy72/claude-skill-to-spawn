@@ -15,6 +15,19 @@ Ohne ``--belege``/``--direkt``/Zugang/``--tun``/``live`` bleibt die alte Kurzfor
 Die Mail nennt nur Namen, nie ein Passwort; steht in einem Argument etwas wie ``passwort=`` oder
 ``https://nutzer:pass@``, bricht das Skript mit Exit 2 ab, ohne etwas zu schreiben oder zu mailen.
 Ordner-Override für Tests: ``TO_SPAWN_ABSCHLUSS_ORDNER``.
+
+Eine Mail je Spec (#586), zusätzlich zum Aufruf oben:
+
+* ``abschluss_paket.py ablegen <S> <gleiche Argumente> [--spec-fertig <ISO>]`` baut das Paket
+  (gleicher Geheimnis-Check), mailt nicht und legt es als ``.to-spawn/abschluss_<S>_paket.json`` ab.
+  Eine schon abgelegte SPEC-FERTIG-Zeit bleibt (erste gewinnt). Exit 0, 2 = Passwort/falsches Argument.
+* ``abschluss_paket.py nachsehen <S> [--jetzt <ISO>] [--repo <pfad>] [--dry-run]`` verschickt die eine
+  Mail (Spec-Teil mit „Je Ticket“ + „Wirkungskreis“ → System-Teil = Rückblick-Marker
+  ``docs/agents/rueckblick_<S>.md`` → Code-Befunde = Thermo-Marker ``docs/agents/thermo_<S>.md``),
+  sobald beide Marker da sind; fehlt einer ``WARTE_MINUTEN`` (120) nach SPEC FERTIG noch, geht sie mit
+  Vermerk „Rückblick fehlgeschlagen: …“ raus. Gleicher Mail-Schlüssel wie oben.
+  Exit 0 = verschickt/schon verschickt/Probe, 1 = Mail-Befehl gescheitert, 2 = keine Ablage,
+  3 = wartet noch.
 """
 
 from __future__ import annotations
@@ -24,8 +37,9 @@ import json
 import logging
 import os
 import re
+import subprocess
 import sys
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -37,8 +51,9 @@ _SKRIPTE = str(Path(__file__).resolve().parent)
 if _SKRIPTE not in sys.path:
     sys.path.insert(0, _SKRIPTE)
 from test_uebersicht import lade_tickets  # noqa: E402
+from thermo_lauf import marker_pfad as thermo_marker_pfad  # noqa: E402
 
-from to_spawn import config, melder  # noqa: E402
+from to_spawn import bau_log, capo, config, melder  # noqa: E402
 
 log = logging.getLogger("abschluss_paket")
 
@@ -212,23 +227,26 @@ def _parser() -> argparse.ArgumentParser:
     return ap
 
 
-def main(argv: list[str] | None = None) -> int:
-    argv = list(sys.argv[1:] if argv is None else argv)
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+def _geheimnis_abbruch(argv: list[str]) -> bool:
+    """Passwort in einem Argument → Meldung auf stderr und ``True`` (Aufrufer endet mit Exit 2)."""
     stelle = geheimnis_in(argv)
     if stelle:
         sys.stderr.write(
             f"FEHLER: {stelle} enthält ein Passwort — die Mail nennt nur Namen. Passwort weglassen, "
             "nur den Bitwarden-Eintrag nennen (--bitwarden). Nichts geschrieben, nichts gemailt.\n"
         )
-        return 2
-    ap = _parser()
-    a = ap.parse_args(argv)
-    direkt = _direkt(a.direkt, ap)
-    repo = (
-        a.repo or (Path(os.environ["TO_SPAWN_REPO"]) if os.environ.get("TO_SPAWN_REPO") else config.repo_wurzel())
+    return bool(stelle)
+
+
+def _repo(roh: Path | None) -> Path:
+    return (
+        roh or (Path(os.environ["TO_SPAWN_REPO"]) if os.environ.get("TO_SPAWN_REPO") else config.repo_wurzel())
     ).resolve()
-    projekt = repo.name
+
+
+def _paket(a: argparse.Namespace, ap: argparse.ArgumentParser, repo: Path) -> tuple[Paket, bool]:
+    """Paket aus den Argumenten bauen; zweiter Wert: neue Form (sonst alte Kurzform „3 Links“)."""
+    direkt = _direkt(a.direkt, ap)
     rollen = [r.strip() for r in a.app_rolle if r.strip()]
     neue_form = bool(a.belege or direkt or a.basic_auth_nutzer or rollen or a.bitwarden or a.tun or a.stand == "live")
     p = Paket(
@@ -245,12 +263,24 @@ def main(argv: list[str] | None = None) -> int:
         tun=tun_saetze(repo, a.spec, a.tun, a.stand),
         stand=a.stand,
     )
-    text = markdown_voll(p) if neue_form else markdown(p.spec, p.stage, p.rundschau, p.tests, p.saetze)
-    endung = "_live" if p.stand == "live" else ""
-    md_datei = repo / "docs" / "agents" / f"abschluss_{p.spec}{endung}.md"
-    offen = abschluss_ordner() / "offen" / f"{projekt}_{p.spec}.json"
-    daten: dict[str, Any] = {
-        "projekt": projekt,
+    return p, neue_form
+
+
+def _endung(p: Paket) -> str:
+    return "_live" if p.stand == "live" else ""
+
+
+def _md_datei(repo: Path, p: Paket) -> Path:
+    return repo / "docs" / "agents" / f"abschluss_{p.spec}{_endung(p)}.md"
+
+
+def _offen_datei(repo: Path, p: Paket) -> Path:
+    return abschluss_ordner() / "offen" / f"{repo.name}_{p.spec}.json"
+
+
+def _offen_daten(repo: Path, p: Paket) -> dict[str, Any]:
+    return {
+        "projekt": repo.name,
         "repo": str(repo),
         "spec": p.spec,
         "stage": p.stage,
@@ -262,22 +292,233 @@ def main(argv: list[str] | None = None) -> int:
         "zugang": {"basic_auth_nutzer": p.basic_auth_nutzer, "app_rollen": p.app_rollen, "bitwarden": p.bitwarden},
         "erstellt": datetime.now().isoformat(timespec="seconds"),
     }
-    konfig = config.lade(repo)
-    titel = betreff(p, neue_form)
-    if a.dry_run:
-        mail = "ja" if melder.mail_eingerichtet(konfig) else "nein (mail.befehl leer)"
-        sys.stdout.write(f"[Probe] {md_datei}\n{text}\n[Probe] {offen}\n[Probe] Mail „{titel}“: {mail}\n")
-        return 0
+
+
+def _probe(md_datei: Path, text: str, offen: Path, titel: str, konfig: dict[str, Any]) -> None:
+    mail = "ja" if melder.mail_eingerichtet(konfig) else "nein (mail.befehl leer)"
+    sys.stdout.write(f"[Probe] {md_datei}\n{text}\n[Probe] {offen}\n[Probe] Mail „{titel}“: {mail}\n")
+
+
+def _schreiben(md_datei: Path, text: str, offen: Path, daten: dict[str, Any]) -> None:
     md_datei.parent.mkdir(parents=True, exist_ok=True)
     md_datei.write_text(text, encoding="utf-8")
     offen.parent.mkdir(parents=True, exist_ok=True)
     offen.write_text(json.dumps(daten, ensure_ascii=False, indent=2), encoding="utf-8")
     log.info("Abschluss geschrieben: %s · %s", md_datei, offen)
+
+
+def main(argv: list[str] | None = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+    if argv[:1] == ["ablegen"]:
+        return ablegen(argv[1:])
+    if argv[:1] == ["nachsehen"]:
+        return nachsehen(argv[1:])
+    if _geheimnis_abbruch(argv):
+        return 2
+    ap = _parser()
+    a = ap.parse_args(argv)
+    repo = _repo(a.repo)
+    p, neue_form = _paket(a, ap, repo)
+    text = markdown_voll(p) if neue_form else markdown(p.spec, p.stage, p.rundschau, p.tests, p.saetze)
+    md_datei, offen = _md_datei(repo, p), _offen_datei(repo, p)
+    konfig = config.lade(repo)
+    titel = betreff(p, neue_form)
+    if a.dry_run:
+        _probe(md_datei, text, offen, titel, konfig)
+        return 0
+    _schreiben(md_datei, text, offen, _offen_daten(repo, p))
     if not melder.mail_eingerichtet(konfig):
         log.info("Mail nicht eingerichtet (mail.befehl leer) — nur Datei.")
         return 0
-    if not melder.melden(repo, "spec_fertig", titel, text, f"abschluss_{p.spec}{endung}", konfig=konfig):
+    if not melder.melden(repo, "spec_fertig", titel, text, f"abschluss_{p.spec}{_endung(p)}", konfig=konfig):
         log.warning("Mail „%s“ nicht verschickt (schon gesendet oder Befehl gescheitert).", titel)
+        return 1
+    return 0
+
+
+# --- #586: eine Mail je Spec (ablegen bei SPEC FERTIG, nachsehen bis Rückblick + Thermo da) ---------
+
+#: So lange wartet ``nachsehen`` nach SPEC FERTIG auf Rückblick- und Thermo-Marker, dann geht die
+#: Mail mit Vermerk raus.
+WARTE_MINUTEN = 120
+
+
+def ablage_pfad(repo: Path, spec: int) -> Path:
+    """Abgelegtes Paket einer Spec (schreibt ``ablegen``, liest ``nachsehen``)."""
+    return repo / ".to-spawn" / f"abschluss_{spec}_paket.json"
+
+
+def rueckblick_pfad(repo: Path, spec: int) -> Path:
+    """Marker des Rückblicks (#581/#585)."""
+    return repo / "docs" / "agents" / f"rueckblick_{spec}.md"
+
+
+def _zeit(text: str | None, ap: argparse.ArgumentParser, schalter: str) -> datetime:
+    """ISO-Zeitpunkt (ohne Zone = Ortszeit) oder jetzt; falsches Format → Exit 2."""
+    if not text:
+        return datetime.now().astimezone()
+    try:
+        return datetime.fromisoformat(text).astimezone()
+    except ValueError:
+        ap.error(f"{schalter} „{text}“: erwartet ISO-Zeitpunkt wie 2026-10-06T10:00:00+02:00")
+
+
+def ablegen(argv: list[str]) -> int:
+    """Paket bauen und ablegen, nicht mailen. Eine schon abgelegte SPEC-FERTIG-Zeit bleibt."""
+    if _geheimnis_abbruch(argv):
+        return 2
+    ap = _parser()
+    ap.add_argument("--spec-fertig", default=None, help="Zeitpunkt „SPEC FERTIG“ (ISO), sonst jetzt")
+    a = ap.parse_args(argv)
+    repo = _repo(a.repo)
+    p, neue_form = _paket(a, ap, repo)
+    datei = ablage_pfad(repo, p.spec)
+    fertig = _zeit(a.spec_fertig, ap, "--spec-fertig").isoformat(timespec="seconds")
+    alt = melder.lade_json(datei)
+    if alt.get("spec_fertig"):
+        fertig = str(alt["spec_fertig"])
+    daten = {"paket": asdict(p), "neue_form": neue_form, "spec_fertig": fertig}
+    if a.dry_run:
+        sys.stdout.write(f"[Probe] {datei}\n{json.dumps(daten, ensure_ascii=False, indent=2)}\n")
+        return 0
+    melder.speichere_json(datei, daten)
+    log.info("Abschluss-Paket abgelegt: %s (SPEC FERTIG %s)", datei, fertig)
+    return 0
+
+
+def _ticket_zeilen(repo: Path, spec: int, konfig: dict[str, Any]) -> list[str]:
+    """Je Ticket: Titel, Umfang aus der jüngsten Bau-Log-Zusammenfassung, Belegseiten (wie capo)."""
+    regularien = konfig.get("regularien") if isinstance(konfig.get("regularien"), dict) else {}
+    ordner = str(regularien.get("belege_ordner") or "docs/verify-hard").strip("/") or "docs/verify-hard"
+    eintraege = sorted((repo / ordner).iterdir()) if (repo / ordner).is_dir() else []
+    zeilen = []
+    for nr, titel in _tickets(repo, spec):
+        umfang = str(bau_log.zusammenfassung(repo, nr).get("umfang_ist") or "").replace("\n", " ").strip()
+        belege = [f"{ordner}/{e.name}" for e in eintraege if nr.isdigit() and capo.beleg_passt(e.name, int(nr))]
+        zeilen.append(
+            f"- #{nr} {titel.strip()} — {umfang or 'kein Bau-Log'} · "
+            f"Vorher/Nachher: {', '.join(belege) or 'Belegseite fehlt'}"
+        )
+    return zeilen or ["- (keine Tickets im Manifest)"]
+
+
+def wirkungskreis(repo: Path, spec: int) -> str:
+    """Ausgabe von ``scripts/wirkungskreis.py`` (#583): Exit 0 = Text, Exit 2 = „nicht ermittelbar: …“."""
+    skript = repo / "scripts" / "wirkungskreis.py"
+    if not skript.is_file():
+        return f"Wirkungskreis nicht ermittelt: scripts/wirkungskreis.py fehlt in {repo.name}"
+    try:
+        lauf = subprocess.run(
+            [sys.executable, str(skript), str(spec), "--repo", str(repo)],
+            cwd=str(repo),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=melder.ZEITLIMIT_S,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as fehler:
+        return f"Wirkungskreis nicht ermittelt: {fehler}"
+    if lauf.returncode in (0, 2):
+        return lauf.stdout.strip()
+    return f"Wirkungskreis nicht ermittelt: Exit {lauf.returncode} — {(lauf.stderr or lauf.stdout).strip()[-300:]}"
+
+
+def mail_text(repo: Path, p: Paket, neue_form: bool, konfig: dict[str, Any], system: str, befunde: str) -> str:
+    """Die eine Mail: Spec-Teil → System-Teil (Rückblick) → Code-Befunde (Thermo)."""
+    heute = markdown_voll(p) if neue_form else markdown(p.spec, p.stage, p.rundschau, p.tests, p.saetze)
+    return "\n".join(
+        [
+            "## Spec-Teil",
+            "",
+            heute,
+            "### Je Ticket",
+            "",
+            *_ticket_zeilen(repo, p.spec, konfig),
+            "",
+            "### Wirkungskreis",
+            "",
+            wirkungskreis(repo, p.spec),
+            "",
+            "## System-Teil",
+            "",
+            system.rstrip("\n"),
+            "",
+            "## Code-Befunde",
+            "",
+            befunde.rstrip("\n"),
+            "",
+        ]
+    )
+
+
+def nachsehen(argv: list[str]) -> int:
+    """Mail verschicken, sobald Rückblick + Thermo da sind (oder WARTE_MINUTEN um sind).
+
+    Exit 0 = verschickt/schon verschickt/Probe, 1 = Mail-Befehl gescheitert, 2 = keine Ablage,
+    3 = wartet noch auf einen Marker.
+    """
+    ap = argparse.ArgumentParser(description="Abgelegtes Abschluss-Paket als eine Mail verschicken.")
+    ap.add_argument("spec", type=int)
+    ap.add_argument("--jetzt", default=None, help="Zeitpunkt jetzt (ISO), sonst Uhr")
+    ap.add_argument("--repo", type=Path, default=None)
+    ap.add_argument("--dry-run", action="store_true", help="Mailtext zeigen, nichts schreiben, nichts mailen")
+    a = ap.parse_args(argv)
+    repo = _repo(a.repo)
+    datei = ablage_pfad(repo, a.spec)
+    ablage = melder.lade_json(datei)
+    try:
+        roh = dict(ablage["paket"])
+        roh["direkt"] = [(str(t), str(u)) for t, u in roh.get("direkt") or []]
+        p = Paket(**roh)
+        fertig = datetime.fromisoformat(str(ablage["spec_fertig"])).astimezone()
+    except (KeyError, TypeError, ValueError) as fehler:
+        sys.stderr.write(
+            f"FEHLER: keine gültige Ablage {datei} ({fehler!r}) — erst „abschluss_paket.py ablegen {a.spec} …“.\n"
+        )
+        return 2
+    jetzt = _zeit(a.jetzt, ap, "--jetzt")
+    minuten = (jetzt - fertig).total_seconds() / 60
+    marker = {
+        "System": ("Rückblick-Marker", rueckblick_pfad(repo, p.spec)),
+        "Code": ("Thermo-Marker", thermo_marker_pfad(repo, p.spec)),
+    }
+    fehlen = [name for name, (_art, pfad) in marker.items() if not pfad.is_file()]
+    if fehlen and minuten < WARTE_MINUTEN:
+        namen = ", ".join(str(marker[n][1].relative_to(repo)) for n in fehlen)
+        sys.stdout.write(f"wartet: {namen} fehlt noch ({int(minuten)} von {WARTE_MINUTEN} Minuten nach SPEC FERTIG)\n")
+        return 3
+
+    def teil(name: str) -> str:
+        art, pfad = marker[name]
+        if name in fehlen:
+            pfad_rel = pfad.relative_to(repo).as_posix()
+            return f"Rückblick fehlgeschlagen: {art} {pfad_rel} fehlt {WARTE_MINUTEN} Minuten nach SPEC FERTIG"
+        return pfad.read_text(encoding="utf-8")
+
+    system = teil("System")
+    if "System" not in fehlen:
+        system = f"{system.rstrip()}\n\nAbhaken per Chat: „Rückblick {p.spec}: 1 ja, 2 nein“"
+    konfig = config.lade(repo)
+    neue_form = bool(ablage.get("neue_form"))
+    text = mail_text(repo, p, neue_form, konfig, system, teil("Code"))
+    titel = betreff(p, neue_form)
+    schluessel = f"abschluss_{p.spec}{_endung(p)}"
+    md_datei, offen = _md_datei(repo, p), _offen_datei(repo, p)
+    if a.dry_run:
+        _probe(md_datei, text, offen, titel, konfig)
+        return 0
+    if melder.schon_gesendet(repo, schluessel):
+        log.info("Mail „%s“ schon verschickt (%s) — nichts zu tun.", titel, schluessel)
+        return 0
+    _schreiben(md_datei, text, offen, _offen_daten(repo, p))
+    if not melder.mail_eingerichtet(konfig):
+        log.info("Mail nicht eingerichtet (mail.befehl leer) — nur Datei.")
+        return 0
+    if not melder.melden(repo, "spec_fertig", titel, text, schluessel, konfig=konfig):
+        log.warning("Mail „%s“ nicht verschickt (Befehl gescheitert).", titel)
         return 1
     return 0
 
