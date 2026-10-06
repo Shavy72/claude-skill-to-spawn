@@ -1,18 +1,28 @@
-"""Rückblick einer fertigen Spec: Bau-Logs aller Tickets einsammeln und Auftrag an die Rückblick-KI schreiben.
+"""Rückblick einer fertigen Spec: Bau-Logs aller Tickets einsammeln, Auftrag an die Rückblick-KI schreiben
+und ihr Ergebnis als nummerierte Vorschläge in die Marker-Datei übernehmen.
 
 Aufruf:
 ``python rueckblick.py planen <S> [--repo <pfad>] [--ohne-bau-server]``
+``python rueckblick.py sammeln <S> [--repo <pfad>]``
 
 ``planen`` liest das Manifest ``docs/agents/manifests/spec-<S>.json``, vereinigt je Ticket die
 Bau-Log-Zeilen aller Ablageorte (doppelte Zeilen einmal) und schreibt
 ``.to-spawn/rueckblick/<S>/auftrag.md`` + ``lauf.json`` (Sperre). Erste Zeile auf stdout und im
 Auftrag: ``Datenlage: <x> von <n> Tickets mit Bau-Log``. Gezählt werden nur feste Namen (Feld
-``regel`` der ``vorfall``-Zeilen), freie Texte nie. Schritt „sammeln“ (Marker
-``docs/agents/rueckblick_<S>.md``) ist nicht Teil dieses Skripts.
+``regel`` der ``vorfall``-Zeilen), freie Texte nie. Die Datenlage-Zeilen landen zusätzlich in
+``lauf.json`` (Feld ``datenlage``), damit „sammeln“ genau die Lage übernimmt, die die KI gesehen hat.
 
-Exit-Codes wie ``thermo_lauf.py plan``: 0 = Auftrag geschrieben, 4 = schon erledigt (Marker da)
-oder läuft schon (Sperre jünger als 120 min), 1 = Fehler. (Thermos 2 „keine Code-Änderung“ gibt es
+Exit-Codes ``planen`` wie ``thermo_lauf.py plan``: 0 = Auftrag geschrieben, 4 = schon erledigt (Marker
+da) oder läuft schon (Sperre jünger als 120 min), 1 = Fehler. (Thermos 2 „keine Code-Änderung“ gibt es
 hier nicht — fehlende Logs sind eine Datenlage, kein Abbruch.)
+
+``sammeln`` liest ``ergebnis.json`` der Rückblick-KI und schreibt den Marker
+``docs/agents/rueckblick_<S>.md``: Datenlage oben, darunter die Vorschläge nummeriert in der Reihenfolge
+der KI (teuerster zuerst) mit Maßnahmen-Weg, oder „Rückblick: keine Vorschläge“. Der Marker ist der
+Abschnitt, den die Abschluss-Mail unverändert übernimmt. Kein GitHub-Issue, keine Kästchen, keine
+andere Datei — David hakt per Chat ab. Exit-Codes: 0 = Marker geschrieben, 4 = schon erledigt,
+3 = ``ergebnis.json`` fehlt, 1 = Ergebnis kaputt oder ``planen`` nicht gelaufen. Bei 1 (nach
+``planen``), 3 und 0 ist die Sperre danach frei, damit ein neuer Versuch nicht 120 min wartet.
 
 Ablageorte:
 - Repo: ``<repo>/docs/agents/bau_log/<N>.jsonl``
@@ -69,8 +79,15 @@ UNVOLLSTAENDIG = "🔴 Datenlage unvollständig"
 Ort = tuple[str, bool]
 #: Pfad dieses Skripts im installierten Skill auf dem Bau-Server.
 FERN_SKRIPT = "~/.claude/skills/to-spawn/skripte/rueckblick.py"
+#: Die vier Maßnahmen-Wege (E6), stärkster zuerst — Auftrag und Marker nennen sie nur von hier.
+WEGE = {
+    1: "Prüf-Skript / capo-Regel / Hook",
+    2: "Review-Auftrag für `review-dirigent`",
+    3: "Hinweis im Ticket-Kontext-Paket von `to-tickets`",
+    4: "Text-Regel in CLAUDE.md",
+}
 
-AUFTRAG = """## Auftrag an die Rückblick-KI
+AUFTRAG = f"""## Auftrag an die Rückblick-KI
 
 Methode: Skill `mp-retro`. Werte nur die Daten oben aus, rate keine fehlenden Logs dazu.
 
@@ -83,10 +100,10 @@ Leitfrage je Fehlerbild: „Erkannt wird er schon, wie verhindern wir ihn vorher
 3. Erkennt eine Prüfung den Fehler schon (Beispiel `session_verwaist`), ist der Kandidat
    „Ursache beheben“: ein Ticket gegen die Ursache, keine neue Text-Zeile.
 4. Je Kandidat den höchsten möglichen Weg wählen, stärkster zuerst:
-   - Weg 1: Prüf-Skript / capo-Regel / Hook (bricht maschinell, kein Agent überliest es)
-   - Weg 2: Review-Auftrag für `review-dirigent`
-   - Weg 3: Hinweis im Ticket-Kontext-Paket von `to-tickets`
-   - Weg 4: Text-Regel in CLAUDE.md — Weg 4 nur mit Begründung, warum Weg 1–3 nicht gehen.
+   - Weg 1: {WEGE[1]} (bricht maschinell, kein Agent überliest es)
+   - Weg 2: {WEGE[2]}
+   - Weg 3: {WEGE[3]}
+   - Weg 4: {WEGE[4]} — Weg 4 nur mit Begründung, warum Weg 1–3 nicht gehen.
 5. Die 2–3 teuersten Kandidaten (Tickets × Aufwand) oben.
 
 ## Ergebnisformat
@@ -94,7 +111,7 @@ Leitfrage je Fehlerbild: „Erkannt wird er schon, wie verhindern wir ihn vorher
 Schreibe `ergebnis.json` in diesen Ordner (liest der spätere Schritt „sammeln“):
 
 ```json
-{"spec": <S>, "kandidaten": [{
+{{"spec": <S>, "kandidaten": [{{
   "titel": "kurz",
   "fehlerbild": "fester Name oder Gruppe freier Texte",
   "tickets": [331, 333],
@@ -104,7 +121,7 @@ Schreibe `ergebnis.json` in diesen Ordner (liest der spätere Schritt „sammeln
   "vorhandene_pruefung": "nicht angeschlossen | kaputt | erkennt schon | keine",
   "ursache_beheben": false,
   "begruendung_weg4": "nur bei weg 4: warum 1–3 nicht gehen"
-}]}
+}}]}}
 ```
 Reihenfolge der Liste = Rang, teuerster zuerst.
 """
@@ -468,6 +485,7 @@ def _planen_gesperrt(repo: Path, spec: int, tickets: list[str], ohne_bau_server:
         "mit_log": [t for t in tickets if logs.get(t)],
         "ohne_log": [t for t in tickets if not logs.get(t)],
         "orte": [text for text, _ in orte],
+        "datenlage": kopf,
         "auftrag": str(auftrag),
         "ergebnis": str(ordner / "ergebnis.json"),
     }
@@ -475,6 +493,114 @@ def _planen_gesperrt(repo: Path, spec: int, tickets: list[str], ohne_bau_server:
     print("\n".join(kopf))
     print(f"Auftrag: {auftrag}")
     return 0
+
+
+def _text(kandidat: dict[str, Any], feld: str, nr: int) -> str:
+    wert = kandidat.get(feld)
+    if not isinstance(wert, str) or not wert.strip():
+        raise Fehler(f"Kandidat {nr}: '{feld}' fehlt oder ist leer")
+    return wert.strip()
+
+
+def _pruefe_kandidat(kandidat: object, nr: int) -> dict[str, Any]:
+    """Ein Kandidat aus ``ergebnis.json`` → bereinigte Felder; jede Abweichung ist ein ``Fehler`` mit Grund.
+
+    Streng statt nachsichtig: ein still übersprungener Kandidat wäre ein Vorschlag, den David nie sieht.
+    """
+    if not isinstance(kandidat, dict):
+        raise Fehler(f"Kandidat {nr}: kein Objekt, sondern {type(kandidat).__name__}")
+    weg = kandidat.get("weg")
+    if isinstance(weg, bool) or weg not in WEGE:
+        raise Fehler(f"Kandidat {nr}: 'weg' muss 1–4 sein, ist {weg!r}")
+    tickets = kandidat.get("tickets", [])
+    if not isinstance(tickets, list) or any(isinstance(t, bool) or not isinstance(t, (int, str)) for t in tickets):
+        raise Fehler(f"Kandidat {nr}: 'tickets' ist keine Liste aus Ticketnummern")
+    geprueft: dict[str, Any] = {
+        "titel": _text(kandidat, "titel", nr),
+        "massnahme": _text(kandidat, "massnahme", nr),
+        "weg": weg,
+        "tickets": [str(t).lstrip("#") for t in tickets],
+        "ursache_beheben": kandidat.get("ursache_beheben") is True,
+    }
+    for feld in ("fehlerbild", "kosten", "vorhandene_pruefung"):
+        geprueft[feld] = str(kandidat.get(feld) or "").strip()
+    if weg == 4:
+        geprueft["begruendung_weg4"] = _text(kandidat, "begruendung_weg4", nr)
+    return geprueft
+
+
+def lies_ergebnis(pfad: Path, spec: int) -> list[dict[str, Any]]:
+    """``ergebnis.json`` der Rückblick-KI → geprüfte Kandidaten in Rang-Reihenfolge (teuerster zuerst)."""
+    try:
+        daten = json.loads(pfad.read_text(encoding="utf-8"))
+    except ValueError as fehler:
+        raise Fehler(f"{pfad} ist kein gültiges JSON: {fehler}") from fehler
+    except OSError as fehler:
+        raise Fehler(f"{pfad} nicht lesbar: {fehler}") from fehler
+    if not isinstance(daten, dict):
+        raise Fehler(f"{pfad}: kein Objekt mit 'kandidaten'")
+    if "spec" in daten and daten["spec"] != spec:
+        raise Fehler(f"{pfad}: 'spec' ist {daten['spec']!r}, erwartet {spec}")
+    kandidaten = daten.get("kandidaten")
+    if not isinstance(kandidaten, list):
+        raise Fehler(f"{pfad}: 'kandidaten' fehlt oder ist keine Liste")
+    return [_pruefe_kandidat(k, nr) for nr, k in enumerate(kandidaten, 1)]
+
+
+def marker_text(spec: int, datenlage_zeilen: list[str], kandidaten: list[dict[str, Any]]) -> str:
+    """Abschnitt für die Abschluss-Mail: Datenlage oben, dann nummerierte Vorschläge, teuerster zuerst."""
+    zeilen = [f"Rückblick Spec #{spec}", "", *datenlage_zeilen, ""]
+    if not kandidaten:
+        return "\n".join([*zeilen, "Rückblick: keine Vorschläge"]) + "\n"
+    wort = "Vorschlag" if len(kandidaten) == 1 else "Vorschläge"
+    zeilen += [f"Rückblick: {len(kandidaten)} {wort} (teuerster zuerst)", ""]
+    for nr, k in enumerate(kandidaten, 1):
+        zeilen.append(f"{nr}. {k['titel']} — Weg {k['weg']} ({WEGE[k['weg']]})")
+        if k["ursache_beheben"]:
+            zeilen.append("   - Ursache beheben: eine Prüfung erkennt den Fehler schon, Ticket gegen die Ursache")
+        teile = [
+            ("Fehlerbild", k["fehlerbild"]),
+            ("Tickets", ", ".join(f"#{t}" for t in k["tickets"])),
+            ("Kosten", k["kosten"]),
+            ("Maßnahme", k["massnahme"]),
+            ("Vorhandene Prüfung", k["vorhandene_pruefung"]),
+            ("Begründung Weg 4", k.get("begruendung_weg4", "")),
+        ]
+        zeilen += [f"   - {name}: {wert}" for name, wert in teile if wert]
+    return "\n".join(zeilen) + "\n"
+
+
+def sammeln(repo: Path, spec: int) -> int:
+    marker = marker_pfad(repo, spec)
+    if marker.exists():
+        print(f"Schon erledigt: {marker}")
+        return 4
+    ordner = rueckblick_ordner(repo, spec)
+    sperre = ordner / "lauf.json"
+    try:
+        try:
+            lauf = json.loads(sperre.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as fehler:
+            raise Fehler(f"{sperre} fehlt oder kaputt ({fehler}) — erst 'planen {spec}' laufen lassen") from fehler
+        datenlage_zeilen = lauf.get("datenlage") if isinstance(lauf, dict) else None
+        if not isinstance(datenlage_zeilen, list) or not all(isinstance(z, str) for z in datenlage_zeilen):
+            raise Fehler(f"{sperre}: keine Datenlage — 'planen {spec}' mit diesem Skill-Stand neu laufen lassen")
+        ergebnis = ordner / "ergebnis.json"
+        if not ergebnis.exists():
+            print(f"Ergebnis fehlt: {ergebnis} — Rückblick-KI hat nichts geschrieben; 'planen {spec}' neu starten.")
+            return 3
+        text = marker_text(spec, datenlage_zeilen, lies_ergebnis(ergebnis, spec))
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        zwischen = marker.with_name(marker.name + ".tmp")
+        try:
+            zwischen.write_text(text, encoding="utf-8")
+            zwischen.replace(marker)  # halber Marker würde die Mail unvollständig auslösen
+        finally:
+            zwischen.unlink(missing_ok=True)
+        print(f"Marker: {marker}")
+        return 0
+    finally:
+        sperre.unlink(missing_ok=True)
 
 
 def logs_ausgeben(repo: Path, spec: int) -> int:
@@ -493,12 +619,15 @@ def main(argv: list[str] | None = None) -> int:
         if hasattr(strom, "reconfigure"):
             strom.reconfigure(encoding="utf-8")
     logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(name)s: %(message)s")
-    parser = argparse.ArgumentParser(description="Rückblick einer Spec planen.")
+    parser = argparse.ArgumentParser(description="Rückblick einer Spec planen und Ergebnis sammeln.")
     unter = parser.add_subparsers(dest="befehl", required=True)
     p_plan = unter.add_parser("planen")
     p_plan.add_argument("spec", type=int)
     p_plan.add_argument("--repo", default=".")
     p_plan.add_argument("--ohne-bau-server", action="store_true")
+    p_sam = unter.add_parser("sammeln")
+    p_sam.add_argument("spec", type=int)
+    p_sam.add_argument("--repo", default=".")
     p_logs = unter.add_parser("logs")
     p_logs.add_argument("spec", type=int)
     p_logs.add_argument("--repo", default=".")
@@ -507,6 +636,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.befehl == "planen":
             return planen(repo, args.spec, args.ohne_bau_server)
+        if args.befehl == "sammeln":
+            return sammeln(repo, args.spec)
         return logs_ausgeben(repo, args.spec)
     except Fehler as fehler:
         log.error("%s", fehler)

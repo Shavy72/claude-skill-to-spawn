@@ -386,3 +386,165 @@ def test_server_nachbarordner_nicht_lesbar_rot(repo: Path, tmp_path: Path) -> No
     kopf = lauf.stdout.split("Auftrag: ")[0]
     assert "🔴 Bau-Server: Spec-Klone neben " in kopf, kopf
     assert UNVOLL in kopf
+
+
+# --- Schritt „sammeln“ (#585) ---------------------------------------------------------------------
+
+
+def _sammeln(repo: Path, spec: int, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, str(SKRIPT), "sammeln", str(spec), "--repo", str(repo)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env={**os.environ, "PYTHONIOENCODING": "utf-8", **(env or {})},
+        timeout=120,
+        check=False,
+    )
+
+
+def _kandidat(titel: str, weg: int, **mehr: object) -> dict:
+    return {
+        "titel": titel,
+        "fehlerbild": f"Bild {titel}",
+        "tickets": [901, 902],
+        "kosten": f"Kosten {titel}",
+        "weg": weg,
+        "massnahme": f"Maßnahme {titel}",
+        "vorhandene_pruefung": "keine",
+        "ursache_beheben": False,
+        **mehr,
+    }
+
+
+def _ergebnis(repo: Path, daten: object) -> Path:
+    pfad = repo / ".to-spawn" / "rueckblick" / str(SPEC) / "ergebnis.json"
+    text = daten if isinstance(daten, str) else json.dumps(daten, ensure_ascii=False)
+    pfad.write_text(text, encoding="utf-8")
+    return pfad
+
+
+def _gh_falle(tmp_path: Path) -> tuple[dict[str, str], Path]:
+    """Falsches ``gh`` vorn im PATH: jeder Aufruf hinterlässt eine Spur — sammeln darf es nie rufen."""
+    ordner = tmp_path / "bin"
+    ordner.mkdir()
+    spur = tmp_path / "gh_aufgerufen"
+    gh = ordner / "gh"
+    gh.write_text(f"#!/bin/sh\necho \"$@\" >> {spur}\nexit 0\n", encoding="utf-8")
+    gh.chmod(0o755)
+    return {"PATH": f"{ordner}{os.pathsep}{os.environ.get('PATH', '')}"}, spur
+
+
+def _stand(repo: Path) -> dict[str, bytes]:
+    """Alle Dateien des Repos außer .git und dem Laufordner des Rückblicks."""
+    lauf = repo / ".to-spawn" / "rueckblick"
+    return {
+        p.relative_to(repo).as_posix(): p.read_bytes()
+        for p in repo.rglob("*")
+        if p.is_file() and ".git" not in p.relative_to(repo).parts and lauf not in p.parents
+    }
+
+
+def test_sammeln_marker_datenlage_ueber_nummerierten_vorschlaegen(repo: Path, tmp_path: Path) -> None:
+    assert _lauf(repo, SPEC, "--ohne-bau-server").returncode == 0
+    _ergebnis(
+        repo,
+        {
+            "spec": SPEC,
+            "kandidaten": [
+                _kandidat("Teuerster", 1, vorhandene_pruefung="erkennt schon", ursache_beheben=True),
+                _kandidat("Zweiter", 2),
+                _kandidat("Dritter", 3),
+                _kandidat("Vierter", 4, begruendung_weg4="Kein Programm kann das prüfen"),
+            ],
+        },
+    )
+    vorher = _stand(repo)
+    env, spur = _gh_falle(tmp_path)
+    lauf = _sammeln(repo, SPEC, env)
+    assert lauf.returncode == 0, lauf.stderr
+    marker = repo / "docs" / "agents" / f"rueckblick_{SPEC}.md"
+    text = marker.read_text(encoding="utf-8")
+    assert "Datenlage: 2 von 3 Tickets mit Bau-Log" in text
+    assert UNVOLL in text and "🔴 #903: kein Bau-Log" in text
+    stellen = [text.index(f"{n}. ") for n in (1, 2, 3, 4)]
+    assert text.index("Datenlage:") < stellen[0]
+    assert stellen == sorted(stellen)
+    assert [text.index(t) for t in ("Teuerster", "Zweiter", "Dritter", "Vierter")] == sorted(
+        text.index(t) for t in ("Teuerster", "Zweiter", "Dritter", "Vierter")
+    )
+    assert "Rückblick: 4 Vorschläge" in text
+    assert "Weg 1 (Prüf-Skript / capo-Regel / Hook)" in text
+    assert "Weg 4 (Text-Regel in CLAUDE.md)" in text
+    assert "Kein Programm kann das prüfen" in text
+    assert "Ursache beheben" in text
+    assert "#901, #902" in text and "Maßnahme Zweiter" in text and "Kosten Dritter" in text
+    assert "Rückblick 900: 1 ja, 2 nein" not in text  # Abhak-Hinweis gehört der Mail (#586)
+    assert not spur.exists(), "sammeln darf gh nie aufrufen"
+    nachher = _stand(repo)
+    assert set(nachher) - set(vorher) == {f"docs/agents/rueckblick_{SPEC}.md"}
+    assert {k: v for k, v in nachher.items() if k in vorher} == vorher
+    assert not (repo / ".to-spawn" / "rueckblick" / str(SPEC) / "lauf.json").exists()
+    assert str(marker) in lauf.stdout
+
+
+def test_sammeln_keine_vorschlaege_mit_datenlage(repo: Path) -> None:
+    assert _lauf(repo, SPEC, "--ohne-bau-server").returncode == 0
+    _ergebnis(repo, {"spec": SPEC, "kandidaten": []})
+    lauf = _sammeln(repo, SPEC)
+    assert lauf.returncode == 0, lauf.stderr
+    text = (repo / "docs" / "agents" / f"rueckblick_{SPEC}.md").read_text(encoding="utf-8")
+    assert "Rückblick: keine Vorschläge" in text
+    assert "Datenlage: 2 von 3 Tickets mit Bau-Log" in text
+    assert "1. " not in text
+
+
+def test_sammeln_ergebnis_fehlt_exit3_sperre_frei(repo: Path) -> None:
+    assert _lauf(repo, SPEC, "--ohne-bau-server").returncode == 0
+    lauf = _sammeln(repo, SPEC)
+    assert lauf.returncode == 3
+    assert "ergebnis.json" in lauf.stdout + lauf.stderr
+    assert not (repo / ".to-spawn" / "rueckblick" / str(SPEC) / "lauf.json").exists()
+    assert not (repo / "docs" / "agents" / f"rueckblick_{SPEC}.md").exists()
+
+
+@pytest.mark.parametrize(
+    ("daten", "grund"),
+    [
+        ("{kaputt", "kein gültiges JSON"),
+        ({"spec": SPEC}, "kandidaten"),
+        ({"spec": SPEC, "kandidaten": {"a": 1}}, "kandidaten"),
+        ({"spec": 1, "kandidaten": []}, "spec"),
+        ({"spec": SPEC, "kandidaten": [_kandidat("X", 5)]}, "weg"),
+        ({"spec": SPEC, "kandidaten": [_kandidat("X", True)]}, "weg"),
+        ({"spec": SPEC, "kandidaten": [_kandidat("X", 4)]}, "begruendung_weg4"),
+        ({"spec": SPEC, "kandidaten": [_kandidat("", 1)]}, "titel"),
+        ({"spec": SPEC, "kandidaten": [_kandidat("X", 1, massnahme=" ")]}, "massnahme"),
+        ({"spec": SPEC, "kandidaten": [_kandidat("X", 1, tickets="901")]}, "tickets"),
+        ({"spec": SPEC, "kandidaten": ["text"]}, "Kandidat 1"),
+    ],
+)
+def test_sammeln_ergebnis_kaputt_exit1_grund_sperre_frei(repo: Path, daten: object, grund: str) -> None:
+    assert _lauf(repo, SPEC, "--ohne-bau-server").returncode == 0
+    _ergebnis(repo, daten)
+    lauf = _sammeln(repo, SPEC)
+    assert lauf.returncode == 1
+    assert grund in lauf.stderr
+    assert not (repo / ".to-spawn" / "rueckblick" / str(SPEC) / "lauf.json").exists()
+    assert not (repo / "docs" / "agents" / f"rueckblick_{SPEC}.md").exists()
+
+
+def test_sammeln_ohne_planen_exit1(repo: Path) -> None:
+    lauf = _sammeln(repo, SPEC)
+    assert lauf.returncode == 1
+    assert "planen" in lauf.stderr
+    assert not (repo / "docs" / "agents" / f"rueckblick_{SPEC}.md").exists()
+
+
+def test_sammeln_schon_erledigt_exit4(repo: Path) -> None:
+    marker = repo / "docs" / "agents" / f"rueckblick_{SPEC}.md"
+    marker.write_text("fertig\n", encoding="utf-8")
+    lauf = _sammeln(repo, SPEC)
+    assert lauf.returncode == 4
+    assert marker.read_text(encoding="utf-8") == "fertig\n"
