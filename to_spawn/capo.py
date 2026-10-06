@@ -51,7 +51,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from . import bau_log, befund, gh, melder, mensch_noetig, staging_schalter, vorfall
+from . import bau_log, befund, config, gh, melder, mensch_noetig, staging_schalter, vorfall
 
 log = logging.getLogger("to_spawn.capo")
 
@@ -285,12 +285,32 @@ def regel_commit(ticket: int, eigene: list[Commit]) -> Verstoss | None:
     )
 
 
-def regel_beweis(repo: Path, ref: str, ticket: int, eigene: list[Commit], ordner: str) -> Verstoss | None:
-    ordner = ordner.strip("/") or "docs/verify-hard"
+#: Beleg-Ordner, wenn ``regularien.belege_ordner`` in der Repo-Konfig fehlt.
+BELEGE_ORDNER = "docs/verify-hard"
+
+
+def belege_ordner(konfig: dict[str, Any]) -> str:
+    """Beleg-Ordner aus ``regularien.belege_ordner`` (ohne Schrägstriche am Rand), sonst Vorgabe."""
+    regularien = konfig.get("regularien") if isinstance(konfig.get("regularien"), dict) else {}
+    return str(regularien.get("belege_ordner") or BELEGE_ORDNER).strip("/") or BELEGE_ORDNER
+
+
+def belegseiten(repo: Path, ticket: int, *, ref: str = "HEAD", ordner: str | None = None) -> list[str]:
+    """Belegseiten eines Tickets: Repo-Pfade unter dem Beleg-Ordner am Stand ``ref`` (``git ls-tree``).
+
+    ``ordner`` fehlt → aus der Repo-Konfig. Git nicht lesbar → leere Liste (wie „kein Beleg“).
+    """
+    ordner = (ordner if ordner is not None else belege_ordner(config.lade(repo))).strip("/") or BELEGE_ORDNER
     code, text = _git(repo, "ls-tree", "-r", "--name-only", ref, "--", ordner)
     namen = text.splitlines() if code == 0 else []
-    for commit in eigene:
-        namen += [pfad for _, pfad in _dateien(repo, commit.sha) if pfad.startswith(ordner + "/")]
+    return [pfad for pfad in namen if beleg_passt(pfad[len(ordner) + 1 :], ticket)]
+
+
+def regel_beweis(repo: Path, ref: str, ticket: int, eigene: list[Commit], ordner: str) -> Verstoss | None:
+    ordner = ordner.strip("/") or BELEGE_ORDNER
+    if belegseiten(repo, ticket, ref=ref, ordner=ordner):
+        return None
+    namen = [pfad for commit in eigene for _, pfad in _dateien(repo, commit.sha) if pfad.startswith(ordner + "/")]
     if any(beleg_passt(pfad[len(ordner) + 1 :], ticket) for pfad in namen):
         return None
     if eigene and all(_nur_doku(repo, c.sha) for c in eigene):
@@ -1750,7 +1770,7 @@ def _tick(
     stunden = float(waechter.get("verwaist_stunden") or 3)
     karenz = 0.0 if sofort else karenz_minuten(waechter)
     regularien = konfig.get("regularien", {}) if isinstance(konfig.get("regularien"), dict) else {}
-    belege = str(regularien.get("belege_ordner") or "docs/verify-hard")
+    belege = belege_ordner(konfig)
     checkpoint = str(regularien.get("checkpoint_label") or "checkpoint:human")
     vps = konfig.get("vps") if isinstance(konfig.get("vps"), dict) else {}
     kopf = vps_kopf(vps) if vps.get("ssh") else None

@@ -427,3 +427,192 @@ def test_abschluss_paket_live_standard_tun_saetze(repo: Path, tmp_path: Path) ->
     assert "Die echte App kurz über die Direkt-Links durchklicken." in teil
     assert "Abnahme-Ticket #905 schließen." in teil
     assert "Zettel" not in teil
+
+
+# --- #586: eine Mail je Spec — ablegen + nachsehen ------------------------------------------------
+
+_FERTIG = "2026-10-06T10:00:00+02:00"
+_RUECKBLICK = "Rückblick: keine Vorschläge\n\nDatenlage: 4 Tickets, 0 Vorfälle, 2 Bau-Logs.\n"
+_THERMO = "# Thermo 900\n\n- to_spawn/capo.py wächst (2143 Zeilen)\n"
+
+
+def _unter(befehl: str, repo: Path, *args: str, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, str(SKRIPTE / "abschluss_paket.py"), befehl, str(SPEC), "--repo", str(repo), *args],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env={**os.environ, "PYTHONIOENCODING": "utf-8", **(env or {})},
+        timeout=120,
+        check=False,
+    )
+
+
+def _wirkungskreis(repo: Path, exit_code: int, text: str) -> None:
+    skript = repo / "scripts" / "wirkungskreis.py"
+    skript.parent.mkdir(parents=True, exist_ok=True)
+    skript.write_text(f"import sys\nsys.stdout.write({text!r})\nsys.exit({exit_code})\n", encoding="utf-8")
+
+
+def _marker(repo: Path, rueckblick: bool = True, thermo: bool = True) -> None:
+    ordner = repo / "docs" / "agents"
+    if rueckblick:
+        (ordner / f"rueckblick_{SPEC}.md").write_text(_RUECKBLICK, encoding="utf-8")
+    if thermo:
+        (ordner / f"thermo_{SPEC}.md").write_text(_THERMO, encoding="utf-8")
+
+
+def _git_stand(repo: Path) -> None:
+    (repo / ".git").rmdir()
+    for befehl in (["init", "-q"], ["add", "-A"], ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "x"]):
+        subprocess.run(["git", *befehl], cwd=repo, check=True, capture_output=True)
+
+
+def _abgelegt(repo: Path, tmp_path: Path) -> Path:
+    postfach = _mail_konfig(repo, tmp_path)
+    bau_log = repo / ".to-spawn" / "bau_log"
+    bau_log.mkdir(parents=True)
+    zeilen = [
+        {"ts": "2026-10-06T08:00:00+02:00", "typ": "zusammenfassung", "ticket": "901", "umfang": "alter Stand"},
+        {"ts": "2026-10-06T09:00:00+02:00", "typ": "zusammenfassung", "ticket": "901", "umfang": "Knopf zeigt Status"},
+    ]
+    (bau_log / "901.jsonl").write_text("".join(json.dumps(z) + "\n" for z in zeilen), encoding="utf-8")
+    _wirkungskreis(repo, 0, "Wirkungskreis: web/app.py, web/static/knopf.js\n")
+    _git_stand(repo)  # Belegseiten liest capo.belegseiten aus dem Git-Stand (git ls-tree)
+    ablage = _unter("ablegen", repo, *_LINKS, "--spec-fertig", _FERTIG, env=_env(tmp_path))
+    assert ablage.returncode == 0, ablage.stdout + ablage.stderr
+    assert (repo / ".to-spawn" / f"abschluss_{SPEC}_paket.json").is_file()
+    assert _mails(postfach) == []  # ablegen mailt nie
+    return postfach
+
+
+def test_nachsehen_probe_drei_teile_in_reihenfolge(repo: Path, tmp_path: Path) -> None:
+    postfach = _abgelegt(repo, tmp_path)
+    _marker(repo)
+    probe = _unter("nachsehen", repo, "--jetzt", "2026-10-06T10:05:00+02:00", "--dry-run", env=_env(tmp_path))
+    assert probe.returncode == 0, probe.stdout + probe.stderr
+    text = probe.stdout
+    spec, system, code = (text.index(k) for k in ("## Spec-Teil", "## System-Teil", "## Code-Befunde"))
+    assert spec < system < code
+    assert text.index("Spec 900 fertig — 3 Links") < system
+    assert _mails(postfach) == [] and not (repo / "docs" / "agents" / f"abschluss_{SPEC}.md").exists()
+
+
+def test_nachsehen_je_ticket_umfang_belegseite_wirkungskreis(repo: Path, tmp_path: Path) -> None:
+    _abgelegt(repo, tmp_path)
+    _marker(repo)
+    text = _unter("nachsehen", repo, "--jetzt", "2026-10-06T10:05:00+02:00", "--dry-run", env=_env(tmp_path)).stdout
+    teil = text.split("## Spec-Teil", 1)[1].split("## System-Teil", 1)[0]
+    assert "#901 Knopf zeigt den Status — Knopf zeigt Status" in teil  # jüngste zusammenfassung
+    assert "#902 Handy schaltet sich aus — kein Bau-Log" in teil
+    assert "docs/verify-hard/901_gruen.txt" in teil and "docs/verify-hard/903.md" in teil
+    assert "docs/verify-hard/9010" not in teil  # fremde Nummer zählt nicht
+    assert "#904 Ohne Beleg — kein Bau-Log · Vorher/Nachher: Belegseite fehlt" in teil
+    assert "Wirkungskreis: web/app.py, web/static/knopf.js" in teil.split("Wirkungskreis", 1)[1]
+    _wirkungskreis(repo, 2, "nicht ermittelbar: kein Merge-Commit\n")
+    text = _unter("nachsehen", repo, "--jetzt", "2026-10-06T10:05:00+02:00", "--dry-run", env=_env(tmp_path)).stdout
+    assert "nicht ermittelbar: kein Merge-Commit" in text
+
+
+def test_nachsehen_rueckblick_marker_unveraendert(repo: Path, tmp_path: Path) -> None:
+    _abgelegt(repo, tmp_path)
+    _marker(repo)
+    text = _unter("nachsehen", repo, "--jetzt", "2026-10-06T10:05:00+02:00", "--dry-run", env=_env(tmp_path)).stdout
+    system = text.split("## System-Teil", 1)[1].split("## Code-Befunde", 1)[0]
+    assert _RUECKBLICK in system
+    assert f"Abhaken per Chat: „Rückblick {SPEC}: 1 ja, 2 nein“" in system
+    assert _THERMO in text.split("## Code-Befunde", 1)[1]
+
+
+def test_nachsehen_marker_fehlt_wartet_dann_vermerk(repo: Path, tmp_path: Path) -> None:
+    postfach = _abgelegt(repo, tmp_path)
+    _marker(repo, rueckblick=False)
+    frueh = _unter("nachsehen", repo, "--jetzt", "2026-10-06T11:59:00+02:00", env=_env(tmp_path))
+    assert frueh.returncode == 3, frueh.stdout + frueh.stderr
+    assert _mails(postfach) == [] and not (repo / "docs" / "agents" / f"abschluss_{SPEC}.md").exists()
+    spaet = _unter("nachsehen", repo, "--jetzt", "2026-10-06T12:01:00+02:00", env=_env(tmp_path))
+    assert spaet.returncode == 0, spaet.stdout + spaet.stderr
+    mails = _mails(postfach)
+    assert [m["betreff"] for m in mails] == [f"Spec {SPEC} fertig — 3 Links"] and mails[0]["art"] == "spec_fertig"
+    system = mails[0]["text"].split("## System-Teil", 1)[1].split("## Code-Befunde", 1)[0]
+    assert (
+        f"Rückblick fehlgeschlagen: Rückblick-Marker docs/agents/rueckblick_{SPEC}.md fehlt "
+        "120 Minuten nach SPEC FERTIG" in system
+    )
+    assert _THERMO in mails[0]["text"]
+    assert (repo / "docs" / "agents" / f"abschluss_{SPEC}.md").is_file()
+
+
+def test_nachsehen_zweimal_genau_eine_mail(repo: Path, tmp_path: Path) -> None:
+    postfach = _abgelegt(repo, tmp_path)
+    _marker(repo)
+    for _ in range(2):
+        lauf = _unter("nachsehen", repo, "--jetzt", "2026-10-06T10:05:00+02:00", env=_env(tmp_path))
+        assert lauf.returncode == 0, lauf.stdout + lauf.stderr
+    assert len(_mails(postfach)) == 1
+
+
+def test_nachsehen_ohne_ablage_exit_2(repo: Path, tmp_path: Path) -> None:
+    lauf = _unter("nachsehen", repo, env=_env(tmp_path))
+    assert lauf.returncode == 2 and "Ablage" in lauf.stderr
+
+
+def test_ablegen_zweimal_erster_spec_fertig_gewinnt(repo: Path, tmp_path: Path) -> None:
+    _abgelegt(repo, tmp_path)
+    nochmal = _unter("ablegen", repo, *_LINKS, "--spec-fertig", "2026-10-06T13:00:00+02:00", env=_env(tmp_path))
+    assert nochmal.returncode == 0, nochmal.stdout + nochmal.stderr
+    _marker(repo, thermo=False)
+    # 121 min nach dem ERSTEN Zeitpunkt → Vermerk statt Warten.
+    lauf = _unter("nachsehen", repo, "--jetzt", "2026-10-06T12:01:00+02:00", "--dry-run", env=_env(tmp_path))
+    assert lauf.returncode == 0, lauf.stdout + lauf.stderr
+    assert f"Rückblick fehlgeschlagen: Thermo-Marker docs/agents/thermo_{SPEC}.md fehlt" in lauf.stdout
+
+
+# --- #586 Fixrunde: nachsehen stürzt nie ab, Ablage je Stand, früher Doppel-Schutz -------------------
+
+
+def test_nachsehen_kaputter_marker_mail_geht_trotzdem(repo: Path, tmp_path: Path) -> None:
+    postfach = _abgelegt(repo, tmp_path)
+    _marker(repo)
+    (repo / "docs" / "agents" / f"rueckblick_{SPEC}.md").write_bytes(b"\xff\xfe kaputt \xc3")
+    lauf = _unter("nachsehen", repo, "--jetzt", "2026-10-06T10:05:00+02:00", env=_env(tmp_path))
+    assert lauf.returncode == 0, lauf.stdout + lauf.stderr
+    mails = _mails(postfach)
+    assert len(mails) == 1
+    assert f"Rückblick fehlgeschlagen: Rückblick-Marker docs/agents/rueckblick_{SPEC}.md unlesbar:" in mails[0]["text"]
+
+
+def test_ablage_je_stand_live_ueberschreibt_staging_nicht(repo: Path, tmp_path: Path) -> None:
+    _abgelegt(repo, tmp_path)
+    staging = (repo / ".to-spawn" / f"abschluss_{SPEC}_paket.json").read_text(encoding="utf-8")
+    live = _unter("ablegen", repo, *_LINKS, "--stand", "live", "--spec-fertig", _FERTIG, env=_env(tmp_path))
+    assert live.returncode == 0, live.stdout + live.stderr
+    assert (repo / ".to-spawn" / f"abschluss_{SPEC}_paket.json").read_text(encoding="utf-8") == staging
+    assert json.loads((repo / ".to-spawn" / f"abschluss_{SPEC}_live_paket.json").read_text())["paket"]["stand"] == "live"
+    _marker(repo)
+    probe = _unter(
+        "nachsehen", repo, "--stand", "live", "--jetzt", "2026-10-06T10:05:00+02:00", "--dry-run", env=_env(tmp_path)
+    )
+    assert probe.returncode == 0, probe.stdout + probe.stderr
+    assert f"Spec {SPEC} live — alles zum Durchschauen" in probe.stdout
+
+
+def test_nachsehen_nach_versand_ohne_marker_exit_0_keine_zweite_mail(repo: Path, tmp_path: Path) -> None:
+    postfach = _abgelegt(repo, tmp_path)
+    _marker(repo)
+    erst = _unter("nachsehen", repo, "--jetzt", "2026-10-06T10:05:00+02:00", env=_env(tmp_path))
+    assert erst.returncode == 0, erst.stdout + erst.stderr
+    (repo / "docs" / "agents" / f"rueckblick_{SPEC}.md").unlink()
+    (repo / "docs" / "agents" / f"thermo_{SPEC}.md").unlink()
+    nochmal = _unter("nachsehen", repo, "--jetzt", "2026-10-06T10:06:00+02:00", env=_env(tmp_path))
+    assert nochmal.returncode == 0, nochmal.stdout + nochmal.stderr
+    assert len(_mails(postfach)) == 1
+
+
+def test_nachsehen_wirkungskreis_leer(repo: Path, tmp_path: Path) -> None:
+    _abgelegt(repo, tmp_path)
+    _marker(repo)
+    _wirkungskreis(repo, 0, "")
+    text = _unter("nachsehen", repo, "--jetzt", "2026-10-06T10:05:00+02:00", "--dry-run", env=_env(tmp_path)).stdout
+    assert "Wirkungskreis nicht ermittelt: keine Ausgabe" in text
