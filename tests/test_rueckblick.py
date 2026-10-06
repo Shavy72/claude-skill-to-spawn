@@ -596,3 +596,12 @@ def test_sammeln_schon_erledigt_exit4(repo: Path) -> None:
     lauf = _sammeln(repo, SPEC)
     assert lauf.returncode == 4
     assert marker.read_text(encoding="utf-8") == "fertig\n"
+
+
+def test_auftrag_ergebnisformat_und_wege_gerendert(repo: Path) -> None:
+    """Auftrag ist ein f-String: JSON-Beispiel und Weg-Zeilen müssen fertig gerendert ankommen."""
+    auftrag = _auftrag(_lauf(repo, SPEC, "--ohne-bau-server"))
+    assert '{"spec": <S>, "kandidaten": [{' in auftrag and "}]}" in auftrag
+    assert "{{" not in auftrag and "WEGE[" not in auftrag
+    assert "- Weg 1: Prüf-Skript / capo-Regel / Hook (bricht maschinell" in auftrag
+    assert "- Weg 4: Text-Regel in CLAUDE.md — Weg 4 nur mit Begründung" in auftrag
