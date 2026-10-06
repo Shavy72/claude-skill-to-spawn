@@ -277,7 +277,8 @@ def prompt(
     )
 
 
-def _sperre_aktiv(sperre: Path) -> bool:
+def sperre_aktiv(sperre: Path) -> bool:
+    """``True``, solange die Sperre jünger als ``SPERRE_MIN`` ist (Startzeit im JSON, sonst Dateizeit)."""
     try:
         start = datetime.fromisoformat(json.loads(sperre.read_text(encoding="utf-8"))["start"])
     except FileNotFoundError:
@@ -286,6 +287,9 @@ def _sperre_aktiv(sperre: Path) -> bool:
         log.warning("Sperre %s unlesbar (%s) — nehme Dateizeit", sperre, fehler)
         start = datetime.fromtimestamp(sperre.stat().st_mtime).astimezone()
     return datetime.now().astimezone() - start.astimezone() < timedelta(minutes=SPERRE_MIN)
+
+
+_sperre_aktiv = sperre_aktiv  # alter Name
 
 
 def _issue_url(marker: Path) -> str | None:
@@ -303,7 +307,7 @@ def plan(repo: Path, spec: int, basis: str | None, kopf_ref: str) -> int:
         print(f"Schon erledigt: {marker}" + (f" · Issue: {url}" if (url := _issue_url(marker)) else ""))
         return 4
     sperre = ordner / "lauf.json"
-    if _sperre_aktiv(sperre):
+    if sperre_aktiv(sperre):
         print(f"Thermo-Lauf Spec #{spec} läuft schon (Sperre {sperre}, jünger als {SPERRE_MIN} min).")
         return 4
     manifest, tickets = lade_manifest(repo, spec)

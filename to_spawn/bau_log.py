@@ -177,7 +177,11 @@ def _haenge_an(datei: Path, rohzeilen: Iterable[str]) -> None:
             fh.write(roh + "\n")
 
 
-def _rohzeilen(datei: Path) -> list[str]:
+def rohzeilen(datei: Path) -> list[str]:
+    """Nicht-leere Zeilen einer Log-Datei, ungeparst; fehlende Datei = leer.
+
+    ``OSError``/``UnicodeDecodeError`` gehen an den Aufrufer (unlesbar ≠ leer).
+    """
     if not datei.is_file():
         return []
     return [z.strip() for z in datei.read_text(encoding="utf-8").splitlines() if z.strip()]
@@ -208,9 +212,9 @@ def schreibe(repo: Path, ticket: str | int, typ: str, **felder: Any) -> dict[str
 
 def _laufzeilen(repo: Path, ticket: str | int, hauptbaum: Path | None) -> list[str]:
     """Rohzeilen der Laufdatei im ``repo`` plus der Rückfall-Laufdatei im ``hauptbaum`` (#257)."""
-    zeilen = _rohzeilen(lauf_pfad(repo, ticket))
+    zeilen = rohzeilen(lauf_pfad(repo, ticket))
     if hauptbaum is not None and hauptbaum.resolve() != repo.resolve():
-        zeilen += _rohzeilen(lauf_pfad(hauptbaum, ticket))
+        zeilen += rohzeilen(lauf_pfad(hauptbaum, ticket))
     return zeilen
 
 
@@ -222,7 +226,7 @@ def eintrag_schreiben(
     ``hauptbaum`` = Ort der Rückfall-Laufdatei (Zeilen vor dem Worktree, #257)."""
     zeile = _neue_zeile(ticket, typ, felder)
     fest = log_pfad(repo, ticket)
-    fehlend = _fehlende(_rohzeilen(fest), _laufzeilen(repo, ticket, hauptbaum))
+    fehlend = _fehlende(rohzeilen(fest), _laufzeilen(repo, ticket, hauptbaum))
     if fehlend:
         log.info("Bau-Log #%s: %d Zeile(n) aus der Laufdatei übertragen.", ticket, len(fehlend))
     _haenge_an(fest, [*fehlend, json.dumps(zeile, ensure_ascii=False)])
@@ -239,14 +243,14 @@ def spiegel_in_laufdatei(repo: Path, ticket: str | int, zeile: dict[str, Any]) -
     """
     roh = json.dumps(zeile, ensure_ascii=False)
     lauf = lauf_pfad(repo, ticket)
-    if roh in _rohzeilen(lauf):
+    if roh in rohzeilen(lauf):
         return
     _haenge_an(lauf, [roh])
 
 
 def _lese_datei(datei: Path) -> list[tuple[str, dict[str, Any]]]:
     paare: list[tuple[str, dict[str, Any]]] = []
-    for roh in _rohzeilen(datei):
+    for roh in rohzeilen(datei):
         try:
             eintrag = json.loads(roh)
         except ValueError:
