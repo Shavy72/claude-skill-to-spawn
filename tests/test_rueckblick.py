@@ -12,7 +12,7 @@ import time
 import shutil
 import subprocess
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -446,6 +446,7 @@ def _stand(repo: Path) -> dict[str, bytes]:
     }
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="gh-Falle ist ein sh-Skript")
 def test_sammeln_marker_datenlage_ueber_nummerierten_vorschlaegen(repo: Path, tmp_path: Path) -> None:
     assert _lauf(repo, SPEC, "--ohne-bau-server").returncode == 0
     _ergebnis(
@@ -471,16 +472,15 @@ def test_sammeln_marker_datenlage_ueber_nummerierten_vorschlaegen(repo: Path, tm
     stellen = [text.index(f"{n}. ") for n in (1, 2, 3, 4)]
     assert text.index("Datenlage:") < stellen[0]
     assert stellen == sorted(stellen)
-    assert [text.index(t) for t in ("Teuerster", "Zweiter", "Dritter", "Vierter")] == sorted(
-        text.index(t) for t in ("Teuerster", "Zweiter", "Dritter", "Vierter")
-    )
+    pos = [text.index(t) for t in ("Teuerster", "Zweiter", "Dritter", "Vierter")]
+    assert pos == sorted(pos)
     assert "Rückblick: 4 Vorschläge" in text
     assert "Weg 1 (Prüf-Skript / capo-Regel / Hook)" in text
     assert "Weg 4 (Text-Regel in CLAUDE.md)" in text
     assert "Kein Programm kann das prüfen" in text
     assert "Ursache beheben" in text
     assert "#901, #902" in text and "Maßnahme Zweiter" in text and "Kosten Dritter" in text
-    assert "Rückblick 900: 1 ja, 2 nein" not in text  # Abhak-Hinweis gehört der Mail (#586)
+    assert "ja, 2 nein" not in text  # Abhak-Hinweis gehört der Mail (#586)
     assert not spur.exists(), "sammeln darf gh nie aufrufen"
     nachher = _stand(repo)
     assert set(nachher) - set(vorher) == {f"docs/agents/rueckblick_{SPEC}.md"}
@@ -523,6 +523,12 @@ def test_sammeln_ergebnis_fehlt_exit3_sperre_frei(repo: Path) -> None:
         ({"spec": SPEC, "kandidaten": [_kandidat("X", 1, massnahme=" ")]}, "massnahme"),
         ({"spec": SPEC, "kandidaten": [_kandidat("X", 1, tickets="901")]}, "tickets"),
         ({"spec": SPEC, "kandidaten": ["text"]}, "Kandidat 1"),
+        ({"spec": SPEC, "kandidaten": [_kandidat("X", [1])]}, "weg"),
+        ({"spec": SPEC, "kandidaten": [_kandidat("X", 1, tickets=["#"])]}, "tickets"),
+        ({"spec": SPEC, "kandidaten": [_kandidat("X", 1, tickets=[])]}, "tickets"),
+        ({"spec": SPEC, "kandidaten": [_kandidat("X", 1, kosten=0)]}, "kosten"),
+        ({"spec": SPEC, "kandidaten": [_kandidat("X", 1, ursache_beheben="true")]}, "ursache_beheben"),
+        ({"kandidaten": []}, "spec"),
     ],
 )
 def test_sammeln_ergebnis_kaputt_exit1_grund_sperre_frei(repo: Path, daten: object, grund: str) -> None:
@@ -540,6 +546,48 @@ def test_sammeln_ohne_planen_exit1(repo: Path) -> None:
     assert lauf.returncode == 1
     assert "planen" in lauf.stderr
     assert not (repo / "docs" / "agents" / f"rueckblick_{SPEC}.md").exists()
+
+
+def _sperre(repo: Path, start: datetime) -> Path:
+    """lauf.json, wie ``planen`` sie anlegt, bevor die Datenlage feststeht."""
+    pfad = repo / ".to-spawn" / "rueckblick" / str(SPEC) / "lauf.json"
+    pfad.parent.mkdir(parents=True, exist_ok=True)
+    pfad.write_text(json.dumps({"start": start.isoformat(), "spec": SPEC}), encoding="utf-8")
+    return pfad
+
+
+def test_sammeln_planen_laeuft_noch_exit4_sperre_bleibt(repo: Path) -> None:
+    sperre = _sperre(repo, datetime.now().astimezone())
+    lauf = _sammeln(repo, SPEC)
+    assert lauf.returncode == 4, lauf.stderr
+    assert "planen läuft noch" in lauf.stdout + lauf.stderr
+    assert sperre.exists()
+
+
+def test_sammeln_ohne_datenlage_abgelaufen_exit1_sperre_frei(repo: Path) -> None:
+    sperre = _sperre(repo, datetime.now().astimezone() - timedelta(minutes=500))
+    lauf = _sammeln(repo, SPEC)
+    assert lauf.returncode == 1
+    assert "Datenlage" in lauf.stderr
+    assert not sperre.exists()
+
+
+def test_planen_loescht_altes_ergebnis(repo: Path) -> None:
+    (repo / ".to-spawn" / "rueckblick" / str(SPEC)).mkdir(parents=True, exist_ok=True)
+    alt = _ergebnis(repo, {"spec": SPEC, "kandidaten": [_kandidat("Alt", 1)]})
+    assert _lauf(repo, SPEC, "--ohne-bau-server").returncode == 0
+    assert not alt.exists()
+    assert _sammeln(repo, SPEC).returncode == 3
+
+
+def test_sammeln_zeilenumbruch_im_titel_bricht_nummerierung_nicht(repo: Path) -> None:
+    assert _lauf(repo, SPEC, "--ohne-bau-server").returncode == 0
+    _ergebnis(repo, {"spec": SPEC, "kandidaten": [_kandidat("Erste\nZeile", 1, fehlerbild="a\n\nb")]})
+    lauf = _sammeln(repo, SPEC)
+    assert lauf.returncode == 0, lauf.stderr
+    zeilen = (repo / "docs" / "agents" / f"rueckblick_{SPEC}.md").read_text(encoding="utf-8").splitlines()
+    assert "1. Erste Zeile — Weg 1 (Prüf-Skript / capo-Regel / Hook)" in zeilen
+    assert "   - Fehlerbild: a b" in zeilen
 
 
 def test_sammeln_schon_erledigt_exit4(repo: Path) -> None:

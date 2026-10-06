@@ -20,9 +20,10 @@ hier nicht — fehlende Logs sind eine Datenlage, kein Abbruch.)
 ``docs/agents/rueckblick_<S>.md``: Datenlage oben, darunter die Vorschläge nummeriert in der Reihenfolge
 der KI (teuerster zuerst) mit Maßnahmen-Weg, oder „Rückblick: keine Vorschläge“. Der Marker ist der
 Abschnitt, den die Abschluss-Mail unverändert übernimmt. Kein GitHub-Issue, keine Kästchen, keine
-andere Datei — David hakt per Chat ab. Exit-Codes: 0 = Marker geschrieben, 4 = schon erledigt,
-3 = ``ergebnis.json`` fehlt, 1 = Ergebnis kaputt oder ``planen`` nicht gelaufen. Bei 1 (nach
-``planen``), 3 und 0 ist die Sperre danach frei, damit ein neuer Versuch nicht 120 min wartet.
+andere Datei — David hakt per Chat ab. Exit-Codes: 0 = Marker geschrieben, 4 = schon erledigt oder
+``planen`` läuft noch, 3 = ``ergebnis.json`` fehlt, 1 = Ergebnis kaputt oder ``planen`` nicht gelaufen.
+Bei 0, 1 und 3 ist die Sperre danach frei, damit ein neuer Versuch nicht 120 min wartet; bei „``planen``
+läuft noch“ bleibt sie stehen. ``planen`` löscht ein altes ``ergebnis.json`` vor dem neuen Auftrag.
 
 Ablageorte:
 - Repo: ``<repo>/docs/agents/bau_log/<N>.jsonl``
@@ -476,6 +477,7 @@ def _planen_gesperrt(repo: Path, spec: int, tickets: list[str], ohne_bau_server:
     sperre = ordner / "lauf.json"
     logs, orte = sammle(repo, spec, tickets, ohne_bau_server)
     kopf = datenlage(tickets, logs, orte)
+    (ordner / "ergebnis.json").unlink(missing_ok=True)  # Neuversuch darf nie ein altes Ergebnis lesen
     auftrag = ordner / "auftrag.md"
     auftrag.write_text(auftrag_text(spec, tickets, logs, kopf), encoding="utf-8")
     lauf = {
@@ -495,11 +497,20 @@ def _planen_gesperrt(repo: Path, spec: int, tickets: list[str], ohne_bau_server:
     return 0
 
 
-def _text(kandidat: dict[str, Any], feld: str, nr: int) -> str:
+def _text(kandidat: dict[str, Any], feld: str, nr: int, pflicht: bool = True) -> str:
+    """Textfeld → eine Zeile (Leerraum normalisiert, damit Umbrüche die Nummerierung nicht brechen).
+
+    Optionale Felder: fehlt/None → leer; sonst muss es ``str`` sein (kein Python-repr in der Mail).
+    """
     wert = kandidat.get(feld)
-    if not isinstance(wert, str) or not wert.strip():
+    if wert is None and not pflicht:
+        return ""
+    if not isinstance(wert, str):
+        raise Fehler(f"Kandidat {nr}: '{feld}' fehlt oder ist kein Text, ist {wert!r}")
+    wert = " ".join(wert.split())
+    if pflicht and not wert:
         raise Fehler(f"Kandidat {nr}: '{feld}' fehlt oder ist leer")
-    return wert.strip()
+    return wert
 
 
 def _pruefe_kandidat(kandidat: object, nr: int) -> dict[str, Any]:
@@ -510,20 +521,28 @@ def _pruefe_kandidat(kandidat: object, nr: int) -> dict[str, Any]:
     if not isinstance(kandidat, dict):
         raise Fehler(f"Kandidat {nr}: kein Objekt, sondern {type(kandidat).__name__}")
     weg = kandidat.get("weg")
-    if isinstance(weg, bool) or weg not in WEGE:
+    if type(weg) is not int or weg not in WEGE:
         raise Fehler(f"Kandidat {nr}: 'weg' muss 1–4 sein, ist {weg!r}")
-    tickets = kandidat.get("tickets", [])
-    if not isinstance(tickets, list) or any(isinstance(t, bool) or not isinstance(t, (int, str)) for t in tickets):
-        raise Fehler(f"Kandidat {nr}: 'tickets' ist keine Liste aus Ticketnummern")
+    tickets = kandidat.get("tickets")
+    nummern = (
+        [str(t).lstrip("#") for t in tickets if type(t) in (int, str)]
+        if isinstance(tickets, list) and tickets
+        else []
+    )
+    if not nummern or len(nummern) != len(tickets) or not all(n.isdigit() for n in nummern):
+        raise Fehler(f"Kandidat {nr}: 'tickets' ist keine nicht leere Liste aus Ticketnummern, ist {tickets!r}")
+    ursache = kandidat.get("ursache_beheben", False)
+    if not isinstance(ursache, bool):
+        raise Fehler(f"Kandidat {nr}: 'ursache_beheben' muss true/false sein, ist {ursache!r}")
     geprueft: dict[str, Any] = {
         "titel": _text(kandidat, "titel", nr),
         "massnahme": _text(kandidat, "massnahme", nr),
         "weg": weg,
-        "tickets": [str(t).lstrip("#") for t in tickets],
-        "ursache_beheben": kandidat.get("ursache_beheben") is True,
+        "tickets": nummern,
+        "ursache_beheben": ursache,
     }
     for feld in ("fehlerbild", "kosten", "vorhandene_pruefung"):
-        geprueft[feld] = str(kandidat.get(feld) or "").strip()
+        geprueft[feld] = _text(kandidat, feld, nr, pflicht=False)
     if weg == 4:
         geprueft["begruendung_weg4"] = _text(kandidat, "begruendung_weg4", nr)
     return geprueft
@@ -539,8 +558,8 @@ def lies_ergebnis(pfad: Path, spec: int) -> list[dict[str, Any]]:
         raise Fehler(f"{pfad} nicht lesbar: {fehler}") from fehler
     if not isinstance(daten, dict):
         raise Fehler(f"{pfad}: kein Objekt mit 'kandidaten'")
-    if "spec" in daten and daten["spec"] != spec:
-        raise Fehler(f"{pfad}: 'spec' ist {daten['spec']!r}, erwartet {spec}")
+    if type(daten.get("spec")) is not int or daten["spec"] != spec:
+        raise Fehler(f"{pfad}: 'spec' fehlt oder ist {daten.get('spec')!r}, erwartet {spec}")
     kandidaten = daten.get("kandidaten")
     if not isinstance(kandidaten, list):
         raise Fehler(f"{pfad}: 'kandidaten' fehlt oder ist keine Liste")
@@ -571,18 +590,29 @@ def marker_text(spec: int, datenlage_zeilen: list[str], kandidaten: list[dict[st
 
 
 def sammeln(repo: Path, spec: int) -> int:
+    """``ergebnis.json`` der Rückblick-KI → Marker ``docs/agents/rueckblick_<S>.md``.
+
+    Exit 0 = Marker geschrieben, 4 = schon erledigt oder ``planen`` läuft noch (Sperre ohne Datenlage,
+    jünger als ``SPERRE_MIN``; Sperre bleibt), 3 = ``ergebnis.json`` fehlt, 1 = Fehler (``Fehler``).
+    Außer bei 4 ist die Sperre danach frei.
+    """
     marker = marker_pfad(repo, spec)
     if marker.exists():
         print(f"Schon erledigt: {marker}")
         return 4
     ordner = rueckblick_ordner(repo, spec)
     sperre = ordner / "lauf.json"
+    freigeben = True
     try:
         try:
             lauf = json.loads(sperre.read_text(encoding="utf-8"))
         except (OSError, ValueError) as fehler:
             raise Fehler(f"{sperre} fehlt oder kaputt ({fehler}) — erst 'planen {spec}' laufen lassen") from fehler
         datenlage_zeilen = lauf.get("datenlage") if isinstance(lauf, dict) else None
+        if datenlage_zeilen is None and sperre_aktiv(sperre):
+            freigeben = False  # Sperre gehört dem laufenden planen
+            print(f"Rückblick Spec #{spec}: planen läuft noch (Sperre {sperre}) — später erneut sammeln.")
+            return 4
         if not isinstance(datenlage_zeilen, list) or not all(isinstance(z, str) for z in datenlage_zeilen):
             raise Fehler(f"{sperre}: keine Datenlage — 'planen {spec}' mit diesem Skill-Stand neu laufen lassen")
         ergebnis = ordner / "ergebnis.json"
@@ -600,7 +630,8 @@ def sammeln(repo: Path, spec: int) -> int:
         print(f"Marker: {marker}")
         return 0
     finally:
-        sperre.unlink(missing_ok=True)
+        if freigeben:
+            sperre.unlink(missing_ok=True)
 
 
 def logs_ausgeben(repo: Path, spec: int) -> int:
