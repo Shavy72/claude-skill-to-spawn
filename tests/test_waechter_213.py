@@ -555,6 +555,7 @@ def test_uebersicht_schreibt_tabelle(welt: dict[str, Path]) -> None:
     assert re.search(r"\| #902 \| [^|]+ \| Welche Tabelle \| SQLite \| schon da \|", text)
 
 
+@pytest.mark.xfail(strict=True, reason="überholt durch #588: keine capo-Kurzmail mehr (E16)")
 def test_spec_fertig_meldet_und_schreibt_uebersicht(welt: dict[str, Path]) -> None:
     _commit(welt["repo"], "feat: A (#901)", _beleg("901"))
     _commit(welt["repo"], "feat: B (#902)", _beleg("902"))

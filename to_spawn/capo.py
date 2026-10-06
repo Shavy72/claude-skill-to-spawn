@@ -2104,16 +2104,14 @@ def _tick(
             erg.zeilen.append(
                 f"SPEC FERTIG — alle {len(liste)} Tickets zu, keine Verstöße{alt_hinweis}. Übersicht: {pfad}"
             )
-            erg.zeilen += _melde(
-                repo,
-                konfig,
-                gh_repo,
-                dry_run,
-                "spec_fertig",
-                f"Spec #{spec} fertig",
-                f"Alle {len(liste)} Tickets von #{spec} sind zu, der Aufseher fand keine Verstöße.",
-                f"spec_fertig|{spec}",
-            )
+        if not zustand.get("abschluss_mail_erledigt"):
+            # Eine Mail je Spec (#588): nachsehen verschickt das abgelegte Paket, sobald Thermo +
+            # Rückblick da sind (oder 120 min um) — keine eigene capo-Kurzmail mehr.
+            try:
+                erg.zeilen += abschluss_anstossen(repo, spec, zustand, dry_run)
+            except Exception as fehler:  # ein Ausreißer darf den Tick (sichern) nicht abbrechen
+                log.exception("Abschluss-Mail Spec #%s: unerwarteter Fehler", spec)
+                erg.zeilen.append(f"FEHLER: Abschluss-Mail — unerwarteter Fehler ({type(fehler).__name__}: {fehler}).")
         if not zustand.get("staging_schalter_erledigt"):
             # Staging-Hauptschalter der Spec AN (#563, Spec #548 E3) — Live nie automatisch.
             try:
@@ -2143,6 +2141,57 @@ def _gh_ok(args: list[str]) -> bool:
 def _wieder_oeffnen(n: int, gh_repo: str, funde: list[Verstoss], dry_run: bool) -> list[str]:
     """Ticket einmal wieder öffnen (Regel lebt in :mod:`befund`); Verstöße sind immer rot."""
     return befund.wieder_oeffnen(n, gh_repo, [(f.regel, f.text) for f in funde], dry_run)
+
+
+#: ``nachsehen`` ruft den Wirkungskreis (bis 600 s) — Luft darüber für Mail und Start.
+ABSCHLUSS_ZEITLIMIT_S = 720
+
+
+def _abschluss_lauf(repo: Path, befehl: str, spec: int, *args: str) -> tuple[int, str]:
+    """``skripte/abschluss_paket.py <befehl> <S> --repo <repo> …``; Rückgabe (Exit, Ausgabe)."""
+    skript = Path(__file__).resolve().parent.parent / "skripte" / "abschluss_paket.py"
+    lauf = subprocess.run(
+        [sys.executable, "-X", "utf8", str(skript), befehl, str(spec), "--repo", str(repo), *args],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env={**os.environ, "PYTHONIOENCODING": "utf-8"},
+        timeout=ABSCHLUSS_ZEITLIMIT_S,
+        check=False,
+    )
+    return lauf.returncode, (lauf.stdout.strip() or lauf.stderr.strip())[-300:]
+
+
+def abschluss_anstossen(repo: Path, spec: int, zustand: dict[str, Any], dry_run: bool) -> list[str]:
+    """Abschluss-Mail nach SPEC FERTIG anstoßen (#588): ``abschluss_paket.py nachsehen``.
+
+    Exit 0 → erledigt (``zustand["abschluss_mail_erledigt"]``), 3 → wartet auf Thermo/Rückblick,
+    2 → keine Ablage: capo legt einmal selbst ab (Links „fehlt“) und sieht erneut nach — eine spätere
+    Ablage des Aufsehers überschreibt das Paket, die SPEC-FERTIG-Zeit bleibt. Fehler → FEHLER-Zeile,
+    der nächste Tick versucht es wieder.
+    """
+    if dry_run:
+        return [f"[Probe] Abschluss-Mail: abschluss_paket.py nachsehen {spec}"]
+    try:
+        code, text = _abschluss_lauf(repo, "nachsehen", spec)
+        if code == 2:
+            stage = str((config.lade(repo).get("staging") or {}).get("url") or "") or "fehlt"
+            grund = "fehlt (Aufseher hat kein Paket abgelegt)"
+            jetzt = datetime.now().astimezone().isoformat(timespec="seconds")
+            args = ["--stage", stage, "--rundschau", grund, "--tests", grund, "--spec-fertig", jetzt]
+            code, text = _abschluss_lauf(repo, "ablegen", spec, *args)
+            if code != 0:
+                return [f"FEHLER: Abschluss-Mail — Notfall-Ablage gescheitert (Exit {code}: {text})."]
+            code, text = _abschluss_lauf(repo, "nachsehen", spec)
+    except (OSError, subprocess.TimeoutExpired) as fehler:
+        return [f"FEHLER: Abschluss-Mail — nachsehen nicht gelaufen ({fehler}); nächster Tick versucht es wieder."]
+    if code == 0:
+        zustand["abschluss_mail_erledigt"] = datetime.now().astimezone().isoformat(timespec="seconds")
+        return ["Abschluss-Mail: verschickt/erledigt"]
+    if code == 3:
+        return [f"Abschluss-Mail wartet: {text}"]
+    return [f"FEHLER: Abschluss-Mail — nachsehen Exit {code}: {text} (nächster Tick versucht es wieder)."]
 
 
 def _melde(

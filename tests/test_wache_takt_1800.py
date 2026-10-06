@@ -44,6 +44,7 @@ def test_prompt_neuer_ablauf(wache: ModuleType) -> None:
     assert "Abschluss" in prompt
 
 
+@pytest.mark.xfail(strict=True, reason="überholt durch #588: Aufruf heißt jetzt abschluss_paket.py ablegen (E16)")
 def test_prompt_formatiert_mit_skill(wache: ModuleType) -> None:
     text = wache.PROMPT.format(S=900, REPO="x/y", DATUM="2026-09-24", TAKT=1800, SKILL="/skill")
     assert "ScheduleWakeup 1800 s" in text
