@@ -51,7 +51,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from . import bau_log, befund, gh, melder, mensch_noetig, vorfall
+from . import bau_log, befund, gh, melder, mensch_noetig, staging_schalter, vorfall
 
 log = logging.getLogger("to_spawn.capo")
 
@@ -2094,6 +2094,18 @@ def _tick(
                 f"Alle {len(liste)} Tickets von #{spec} sind zu, der Aufseher fand keine Verstöße.",
                 f"spec_fertig|{spec}",
             )
+        if not zustand.get("staging_schalter_erledigt"):
+            # Staging-Hauptschalter der Spec AN (#563, Spec #548 E3) — Live nie automatisch.
+            try:
+                schalter = staging_schalter.schalte_an(repo, gh_repo, spec, dry_run)
+            except Exception as fehler:  # ein Ausreißer darf den Tick (sichern) nicht abbrechen
+                log.exception("Staging-Schalter Spec #%s: unerwarteter Fehler", spec)
+                schalter = staging_schalter.Ergebnis(
+                    [f"FEHLER: Staging-Schalter — unerwarteter Fehler ({type(fehler).__name__}: {fehler})."], False
+                )
+            erg.zeilen += schalter.zeilen
+            if schalter.erledigt and not dry_run:
+                zustand["staging_schalter_erledigt"] = jetzt.isoformat(timespec="seconds")
 
     if MAIL_AUS in erg.zeilen:  # je Tick nur einmal, nicht je Meldung
         erste = erg.zeilen.index(MAIL_AUS)
