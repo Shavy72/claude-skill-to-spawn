@@ -240,24 +240,30 @@ def _origin(repo: Path) -> str | None:
     return lauf.stdout.strip() or None
 
 
-def server_klone(server: Path) -> list[Path]:
+def server_klone(server: Path) -> tuple[list[Path], list[Ort]]:
     """``server_repo`` + Spec-Klone daneben: Ordner ``<Name>-<Zahl>`` mit demselben ``origin``.
 
     Erkannt über ``origin``, nicht über den Namen: der Bau-Server klont ``duoplus-management`` als
-    ``duoplus-551``, der Präfix ist also nicht der Name des ``server_repo``.
+    ``duoplus-551``, der Präfix ist also nicht der Name des ``server_repo``. Lässt sich nicht suchen
+    (kein ``origin``, Ordner nicht auflistbar), kommt nur ``server`` zurück plus ein roter Ort.
     """
+    name = f"Spec-Klone neben {server.as_posix()}"
     eigen = _origin(server)
     if eigen is None:
-        return [server]
-    kandidaten = sorted(p for p in server.parent.iterdir() if p != server and re.fullmatch(r".+-\d+", p.name))
-    return [server, *(p for p in kandidaten if p.is_dir() and _origin(p) == eigen)]
+        return [server], [(f"{name}: nicht gesucht (kein origin in {server.name})", True)]
+    try:
+        kandidaten = sorted(p for p in server.parent.iterdir() if p != server and re.fullmatch(r".+-\d+", p.name))
+    except OSError as fehler:
+        log.warning("%s nicht auflistbar: %s", server.parent, fehler)
+        return [server], [(f"{name}: nicht lesbar ({fehler})", True)]
+    return [server, *(p for p in kandidaten if p.is_dir() and _origin(p) == eigen)], []
 
 
 def server_logs(server: Path, tickets: list[str]) -> tuple[dict[str, set[str]], list[Ort]]:
     """Logs aller Klone des Bau-Servers samt Worktrees — lokal und im Fern-Unterbefehl ``logs`` gleich."""
     logs: dict[str, set[str]] = {t: set() for t in tickets}
-    orte: list[Ort] = []
-    for klon in server_klone(server):
+    klone, orte = server_klone(server)
+    for klon in klone:
         teil, teil_orte = lokale_logs(klon, tickets)
         for t in tickets:
             logs[t] |= teil[t]
@@ -428,15 +434,23 @@ def _sperre_anlegen(sperre: Path, inhalt: dict[str, Any]) -> bool:
     """Sperre atomar anlegen (``open(..., "x")``); eine abgelaufene wird vorher entfernt. ``False`` = belegt."""
     for _ in range(2):
         try:
-            with sperre.open("x", encoding="utf-8") as datei:
-                datei.write(json.dumps(inhalt, ensure_ascii=False))
-            return True
+            datei = sperre.open("x", encoding="utf-8")
         except FileExistsError:
             if sperre_aktiv(sperre):
                 return False
             # ponytail: zwei Läufe, die dieselbe abgelaufene Sperre gleichzeitig löschen, können beide
             # starten; Upgrade: Sperre per os.replace auf eindeutigen Namen übernehmen.
             sperre.unlink(missing_ok=True)
+            continue
+        fertig = False
+        try:
+            with datei:
+                datei.write(json.dumps(inhalt, ensure_ascii=False))
+            fertig = True
+        finally:
+            if not fertig:  # halbe Sperre darf keinen 120-min-Stillstand hinterlassen (Datei erst zu, dann weg)
+                sperre.unlink(missing_ok=True)
+        return True
     return False
 
 
