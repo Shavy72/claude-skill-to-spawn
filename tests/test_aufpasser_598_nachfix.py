@@ -14,6 +14,7 @@ Nur Linux mit tmux (wie ``test_aufpasser_236``).
 from __future__ import annotations
 
 import subprocess
+import time
 import uuid
 from collections.abc import Iterator
 from pathlib import Path
@@ -25,6 +26,7 @@ from test_aufpasser_236 import (  # noqa: F401 — ``welt`` ist ein Fixture
     SPEC,
     Welt,
     fenster_namen,
+    fenster_ziel,
     tmux,
     welt,
 )
@@ -64,9 +66,19 @@ def _geschlossen(welt: Welt) -> list[str]:
         (["bash", "scripts/safe_deploy_vps.sh", "--rebuild-runner"], "live"),
         (["bash", "scripts/safe_deploy_vps.sh", "--to", "abc1234"], "live"),
         (["bash", "scripts/staging/staging_deploy.sh"], "live"),
-        (["ssh", "clawy-vps", "bash /opt/duoplus-management/scripts/server_tuer.sh abc"], "live"),
+        (
+            [
+                "ssh",
+                "clawy-vps",
+                "bash /opt/duoplus-management/scripts/server_tuer.sh abc",
+            ],
+            "live",
+        ),
         (["ssh", "clawy-vps", "git rev-parse HEAD"], None),
-        (["claude", "--model", "x", "y", "Ticket: bash scripts/safe_deploy_vps.sh"], None),
+        (
+            ["claude", "--model", "x", "y", "Ticket: bash scripts/safe_deploy_vps.sh"],
+            None,
+        ),
         ([], None),
     ],
 )
@@ -106,10 +118,16 @@ def _deploy_attrappe(welt: Welt, name: str) -> Path:
     [("safe_deploy_vps.sh", "--nur-gate"), ("deploy_schlange.py",)],
     ids=["nur-gate", "deploy-schlange"],
 )
-def test_fremder_pruef_lauf_sperrt_nicht(zu_9003: Welt, aufruf: tuple[str, ...]) -> None:
+def test_fremder_pruef_lauf_sperrt_nicht(
+    zu_9003: Welt, aufruf: tuple[str, ...]
+) -> None:
     welt = zu_9003
     skript = _deploy_attrappe(welt, aufruf[0])
-    fremd = subprocess.Popen(["bash", str(skript), *aufruf[1:]], cwd=str(welt.tmp / PROBE), start_new_session=True)
+    fremd = subprocess.Popen(
+        ["bash", str(skript), *aufruf[1:]],
+        cwd=str(welt.tmp / PROBE),
+        start_new_session=True,
+    )
     try:
         welt.fenster_still(9003, "sleep 3600")
         _still_seit_20_min(welt)
@@ -134,7 +152,11 @@ def test_pruef_lauf_im_fensterbaum_haelt_fenster(zu_9003: Welt) -> None:
 def test_echter_deploy_sperrt_serverweit(zu_9003: Welt) -> None:
     welt = zu_9003
     skript = _deploy_attrappe(welt, "safe_deploy_vps.sh")
-    fremd = subprocess.Popen(["bash", str(skript), "--skip-ci"], cwd=str(welt.tmp / PROBE), start_new_session=True)
+    fremd = subprocess.Popen(
+        ["bash", str(skript), "--skip-ci"],
+        cwd=str(welt.tmp / PROBE),
+        start_new_session=True,
+    )
     try:
         welt.fenster_still(9003, "sleep 3600")
         _still_seit_20_min(welt)
@@ -159,7 +181,9 @@ def test_ohne_kette_nur_shell_fenster_zu_einmal_gemeldet(zu_9003: Welt) -> None:
     assert _lauf(welt, exit_warten_s=30) == 0
     assert "bau 9003" not in _fenster_nach_pause(), welt.log()
     treffer = _geschlossen(welt)
-    assert len(treffer) == 1 and "Kette läuft weiter" not in treffer[0], welt.kommentare()
+    assert len(treffer) == 1 and "Kette läuft weiter" not in treffer[0], (
+        welt.kommentare()
+    )
     # Zweiter Lauf (15 min später): nichts mehr zu schließen, keine zweite Meldung.
     assert (
         aufpasser.lauf_mit_einstellungen(
@@ -180,7 +204,8 @@ def test_mit_kette_meldung_kette_laeuft_weiter(zu_9003: Welt) -> None:
     welt = zu_9003
     sid = uuid.uuid4()
     welt.fenster_still(
-        9003, f'bash -c "FAKE_CLAUDE_EXIT_BEI_EINGABE=1 {welt.bin}/claude --session-id {sid} x; sleep 3600"'
+        9003,
+        f'bash -c "FAKE_CLAUDE_EXIT_BEI_EINGABE=1 {welt.bin}/claude --session-id {sid} x; sleep 3600"',
     )
     assert _lauf(welt, exit_warten_s=30) == 0
     assert "bau 9003" in _fenster_nach_pause(), welt.log()
@@ -196,9 +221,46 @@ def test_eingabefeld_wird_vor_exit_geleert(zu_9003: Welt) -> None:
     welt = zu_9003
     sid = uuid.uuid4()
     welt.fenster_still(
-        9003, f'bash -c "FAKE_CLAUDE_EXIT_BEI_EINGABE=1 {welt.bin}/claude --session-id {sid} x; sleep 3600"'
+        9003,
+        f'bash -c "FAKE_CLAUDE_EXIT_BEI_EINGABE=1 {welt.bin}/claude --session-id {sid} x; sleep 3600"',
     )
     tmux("send-keys", "-t", f"={SITZUNG}:bau 9003", "-l", "halber Text")
     assert _lauf(welt, exit_warten_s=5) == 0
     treffer = _geschlossen(welt)
-    assert len(treffer) == 1 and "Per /exit beendet" in treffer[0], (welt.kommentare(), welt.log())
+    assert len(treffer) == 1 and "Per /exit beendet" in treffer[0], (
+        welt.kommentare(),
+        welt.log(),
+    )
+
+
+# --- Review A: Schließen trifft das eigene Fenster, nie den neuen Index ---------
+
+
+def test_kill_window_nach_exit_trifft_nicht_fremdes_fenster_am_alten_index(
+    zu_9003: Welt, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Nach ``/exit`` ist das Fenster oft schon von selbst zu; tmux vergibt seinen
+    Index an das nächste ``new-window``. ``kill-window`` darf dieses fremde Fenster
+    nicht treffen — Ziel ist die ``window_id``, nicht der Index."""
+    welt = zu_9003
+    sid = uuid.uuid4()
+    welt.fenster_still(
+        9003,
+        f'bash -c "FAKE_CLAUDE_EXIT_BEI_EINGABE=1 {welt.bin}/claude --session-id {sid} x"',
+    )
+    alt = fenster_ziel("bau 9003")
+
+    def fremdes_fenster_am_alten_index(self: aufpasser.Aufpasser, *_: object) -> bool:
+        for _ in range(50):
+            if "bau 9003" not in fenster_namen():
+                break
+            time.sleep(0.1)
+        tmux("new-window", "-d", "-t", alt, "-n", "fremd", "sleep 3600")
+        return False
+
+    monkeypatch.setattr(
+        aufpasser.Aufpasser, "_kette_lebt", fremdes_fenster_am_alten_index
+    )
+    assert _lauf(welt, exit_warten_s=30) == 0
+    assert "fremd" in _fenster_nach_pause(), welt.log()
+    assert len(_geschlossen(welt)) == 1, welt.kommentare()

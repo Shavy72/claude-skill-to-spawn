@@ -357,6 +357,14 @@ class Fenster:
         return f"={self.sitzung}:{self.index}"
 
     @property
+    def fest(self) -> str:
+        """Stabiles tmux-Ziel für Eingriffe nach Wartezeiten: die ``window_id`` gehört
+        nur diesem Fenster. Den Index vergibt tmux nach dem Schließen neu — ein
+        späteres Schließen träfe sonst ein fremdes Fenster (#598). Ohne
+        ``window_id`` (alte Daten) der Index."""
+        return self.window_id or self.ziel
+
+    @property
     def ticket(self) -> int | None:
         treffer = re.fullmatch(r"bau (\d+)", self.name)
         return int(treffer.group(1)) if treffer else None
@@ -1941,7 +1949,7 @@ class Aufpasser:
                 doppelt,
             )
         ende = self._fenster_schliessen(
-            f.ziel,
+            f.fest,
             freigabe_ticket_zu(ticket, sha),
             f.pane_pid,
             kette_beenden=bool(doppelt),
@@ -2024,7 +2032,7 @@ class Aufpasser:
                 )
             else:
                 self._fenster_fortsetzen(
-                    f.ziel, freigabe_gesichert(sid, sha), cwd, befehl, f.pane_pid
+                    f.fest, freigabe_gesichert(sid, sha), cwd, befehl, f.pane_pid
                 )
         except RuntimeError as fehler:
             # Prozess ist womöglich schon beendet, das Fenster aber leer: nicht
@@ -2062,7 +2070,7 @@ class Aufpasser:
             )
             return
         if not self.e.trocken:
-            e.update(hash=pane_hash(self.pane_text(neu.ziel)))
+            e.update(hash=pane_hash(self.pane_text(neu.fest)))
         e.update(stufe=2, eingriff=self.jetzt, seit=self.jetzt)
         self.melden(
             f.spec,
