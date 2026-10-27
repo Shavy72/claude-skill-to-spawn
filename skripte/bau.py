@@ -326,6 +326,13 @@ def warte_modus(args: argparse.Namespace) -> str | None:
     return "nur_offen" if args.sofort else "voll"
 
 
+
+def blocker_schranke(ticket: str, args: argparse.Namespace) -> None:
+    """Die eine Stelle in main (#906): je nach ``warte_modus`` auf Blocker warten oder nicht."""
+    modus = warte_modus(args)
+    if modus is not None:
+        auf_blocker_warten(ticket, max(60, args.takt), nur_offene=modus == "nur_offen")
+
 def auf_speicher_warten(
     konfig: dict,
     *,
@@ -998,9 +1005,7 @@ def main() -> int:
         )
         return 0
 
-    modus = warte_modus(args)
-    if modus is not None:
-        auf_blocker_warten(ticket, max(60, args.takt), nur_offene=modus == "nur_offen")
+    blocker_schranke(ticket, args)
     # Speicher-Schutz (#257 Paket B, Fixrunde 1 F3), die EINE Stelle vor dem Prozessstart
     # (gilt für Erststart, --resume und --umzug): RAM knapp oder Obergrenze an
     # Claude-Sessions erreicht → warten statt Exit 5, damit das Fenster und der Grund bleiben.

@@ -172,3 +172,32 @@ def test_warte_modus(
 ) -> None:
     bau = _lade_bau(tmp_path, monkeypatch)
     assert bau.warte_modus(_args(**kw)) == erwartet
+
+
+# --- Aufruf in main: warte_modus → auf_blocker_warten ------------------------------
+
+
+@pytest.mark.parametrize(
+    ("kw", "erwartet"),
+    [
+        ({}, [("906", 60, False)]),
+        ({"sofort": True}, [("906", 60, True)]),
+        ({"sofort": True, "umzug": "b@s:p"}, []),
+        ({"resume": "abc"}, []),
+    ],
+)
+def test_blocker_schranke_ruft_warten_passend(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    kw: dict[str, object],
+    erwartet: list[tuple[str, int, bool]],
+) -> None:
+    bau = _lade_bau(tmp_path, monkeypatch)
+    aufrufe: list[tuple[str, int, bool]] = []
+    monkeypatch.setattr(
+        bau,
+        "auf_blocker_warten",
+        lambda t, takt, *, nur_offene=False: aufrufe.append((t, takt, nur_offene)),
+    )
+    bau.blocker_schranke("906", _args(takt=30, **kw))
+    assert aufrufe == erwartet
