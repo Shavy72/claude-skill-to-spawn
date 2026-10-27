@@ -13,6 +13,10 @@ schreibt sie ihren Handoff und beendet sich über den Stop-Hook
 Staffel-Datei im Session-Temp, zählt die Runde hoch und startet im selben Fenster
 die Folge-Session mit dem Handoff-Inhalt als Startkontext — ohne Token-Kosten
 für die Übergabe.
+
+Blocker (#906): Vor dem Start wartet der Launcher auf native Blocker. Ohne ``--sofort``
+muss jeder Blocker zu sein und seinen Commit auf dem Hauptzweig haben; mit ``--sofort``
+nur zu sein. ``--umzug``, ``--resume`` und ``--probesitz`` warten nicht.
 """
 
 from __future__ import annotations
@@ -245,19 +249,29 @@ def _gh_json(gh: str, *args: str) -> object | None:
         return None
 
 
-def blocker_offen(ticket: str) -> list[str]:
+def blocker_offen(ticket: str, *, nur_offene: bool = False) -> list[str]:
     """Gründe, warum #ticket noch nicht starten darf (leer = frei).
 
     Zwei Prüfungen wie im Loop-Prompt: jeder Blocker muss CLOSED sein und
     seinen Commit ``(#<Blocker>)`` auf ``origin/<Hauptzweig>`` haben — sonst baut die
     Session auf einem Stand ohne die Blocker-Arbeit. Bei gh-/git-Fehlern gilt
     „offen" (fail-closed), damit kein Loop vorzeitig losläuft.
+
+    ``nur_offene`` (``--sofort``, #906): nur nicht geschlossene Blocker zählen, die
+    Commit-Prüfung macht die Session selbst. gh fehlt oder Abfrage scheitert →
+    Warnung und frei (vor #906 prüfte ``--sofort`` gar nicht).
     """
     gh_bin = shutil.which("gh")
     if gh_bin is None:
+        if nur_offene:
+            log.warning("Ticket #%s: gh fehlt — Blocker ungeprüft, Session startet (--sofort).", ticket)
+            return []
         return ["gh fehlt"]
     deps = _gh_json(gh_bin, "api", f"repos/{GH_REPO}/issues/{ticket}/dependencies/blocked_by")
     if not isinstance(deps, list):
+        if nur_offene:
+            log.warning("Ticket #%s: Blocker-Abfrage fehlgeschlagen — Session startet (--sofort).", ticket)
+            return []
         return ["Blocker-Abfrage fehlgeschlagen"]
     gruende: list[str] = []
     haupt = f"origin/{gh.hauptzweig(REPO)}"  # master/main/… je Repo (#257)
@@ -265,6 +279,8 @@ def blocker_offen(ticket: str) -> list[str]:
         nr, state = d.get("number"), d.get("state")
         if state != "closed":
             gruende.append(f"#{nr} offen")
+            continue
+        if nur_offene:
             continue
         subprocess.run(["git", "fetch", "-q", "origin"], cwd=REPO, check=False)
         found = subprocess.run(
@@ -280,11 +296,11 @@ def blocker_offen(ticket: str) -> list[str]:
     return gruende
 
 
-def auf_blocker_warten(ticket: str, takt: int) -> None:
+def auf_blocker_warten(ticket: str, takt: int, *, nur_offene: bool = False, schlafen=time.sleep) -> None:
     """Pollt alle ``takt`` Sekunden, bis #ticket frei ist. Kostet keine Token."""
     runde = 0
     while True:
-        gruende = blocker_offen(ticket)
+        gruende = blocker_offen(ticket, nur_offene=nur_offene)
         if not gruende:
             if runde:
                 log.info("Ticket #%s ist frei — Session startet.", ticket)
@@ -297,7 +313,17 @@ def auf_blocker_warten(ticket: str, takt: int) -> None:
             takt // 60,
             datetime.now().strftime("%H:%M"),
         )
-        time.sleep(takt)
+        schlafen(takt)
+
+
+def warte_modus(args: argparse.Namespace) -> str | None:
+    """Blocker-Warten vor dem Start (#906): ``"voll"``, ``"nur_offen"`` (``--sofort``) oder ``None``.
+
+    ``--umzug``, ``--resume`` und ``--probesitz`` setzen laufende Arbeit fort → kein Warten.
+    """
+    if args.umzug or args.resume or args.probesitz:
+        return None
+    return "nur_offen" if args.sofort else "voll"
 
 
 def auf_speicher_warten(
@@ -742,7 +768,11 @@ def main() -> int:
     parser.add_argument("--dry-run", action="store_true", help="nur Zusammenfassung + Befehl")
     parser.add_argument("--model", help="Claude-Modell (überschreibt Manifest)")
     parser.add_argument("--print-prompt", action="store_true", help="nur den Prompt ausgeben")
-    parser.add_argument("--sofort", action="store_true", help="nicht auf Blocker warten (Session prüft selbst)")
+    parser.add_argument(
+        "--sofort",
+        action="store_true",
+        help="nur auf offene Blocker warten, Commit-Prüfung macht die Session (#906)",
+    )
     parser.add_argument("--takt", type=int, default=600, help="Sekunden zwischen zwei Blocker-Prüfungen (600)")
     parser.add_argument(
         "--staffel-max",
@@ -968,8 +998,9 @@ def main() -> int:
         )
         return 0
 
-    if not args.sofort and not args.umzug and not args.resume:
-        auf_blocker_warten(ticket, max(60, args.takt))
+    modus = warte_modus(args)
+    if modus is not None:
+        auf_blocker_warten(ticket, max(60, args.takt), nur_offene=modus == "nur_offen")
     # Speicher-Schutz (#257 Paket B, Fixrunde 1 F3), die EINE Stelle vor dem Prozessstart
     # (gilt für Erststart, --resume und --umzug): RAM knapp oder Obergrenze an
     # Claude-Sessions erreicht → warten statt Exit 5, damit das Fenster und der Grund bleiben.
