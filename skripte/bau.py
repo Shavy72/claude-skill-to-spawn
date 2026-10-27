@@ -37,7 +37,7 @@ from typing import Any
 _SKILL = str(Path(__file__).resolve().parent.parent)
 if _SKILL not in sys.path:
     sys.path.insert(0, _SKILL)
-from to_spawn import anleitung, capo, config, context_mode, gh, nest, probesitz, sessions_datei, speicher, terminal_maus, umzug, vertrauen  # noqa: E402
+from to_spawn import anleitung, capo, config, context_mode, gh, nest, probesitz, sessions_datei, sitzung_env, speicher, terminal_maus, umzug, vertrauen  # noqa: E402
 from to_spawn.waechter_lauf import transkript_ordner
 
 # Windows-Konsole ist cp1252 — Umlaute/Pfeile im Prompt brauchen UTF-8.
@@ -809,6 +809,8 @@ def main() -> int:
 
     default = load_default(Path(_SKILL) / "repo-scripts" / "_default.json" if args.probesitz else None)
     found = None if args.probesitz else find_manifest(ticket)
+    # Optionales Spec-Feld ``effort`` (low…max): nur diese Spec bekommt ``--effort``, sonst bleibt der Befehl gleich.
+    spec_effort: str | None = None
     if args.probesitz:
         # Wegwerf-Ticket: kein Manifest, kein gh — der Auftrag ist fest (#214).
         entry = {}
@@ -816,6 +818,7 @@ def main() -> int:
     elif found:
         manifest, entry = found
         spec = str(manifest.get("spec", "?"))
+        spec_effort = manifest.get("effort") or None
         title = entry.get("title") or f"Ticket {ticket}"
     else:
         log.warning("Kein Manifest führt Ticket #%s — nur Core, Spec aus gh.", ticket)
@@ -902,7 +905,7 @@ def main() -> int:
     # Vorrang: --model > Repo-Konfig ``modelle.ticket`` (#205) > _default.json.
     konfig = config.lade(REPO)
     model = args.model or konfig.get("modelle", {}).get("ticket") or default.get("model")
-    effort = konfig.get("effort", {}).get("ticket")
+    effort = spec_effort or konfig.get("effort", {}).get("ticket")
     claude = shutil.which("claude") or "claude"
     cmd = [
         claude,
@@ -921,6 +924,8 @@ def main() -> int:
         cmd.append("--no-chrome")
     if model:
         cmd += ["--model", model]
+    if spec_effort:
+        cmd += ["--effort", spec_effort]
     if args.remote_control:
         # respawn am PC (#501): kein tmux zum Nachtippen von ``/remote-control``.
         cmd += ["--remote-control", f"bau {ticket}"]
@@ -982,7 +987,9 @@ def main() -> int:
     # Aus einer Claude-Session gestartet erben Kind-Sessions die Markierung
     # CLAUDE_CODE_CHILD_SESSION und speichern kein Transkript (kein Resume nach
     # Absturz, Beleg 17.09.2026). Persistenz deshalb ausdrücklich erzwingen.
-    os.environ.pop("CLAUDE_CODE_CHILD_SESSION", None)
+    sauber = sitzung_env.ohne_sitzung()  # alle Sitzungs-Variablen, nicht nur CHILD_SESSION
+    os.environ.clear()
+    os.environ.update(sauber)
     # Eine Session im Worktree darf nicht das Repo des Launchers erben (#205).
     os.environ.pop("TO_SPAWN_REPO", None)
     os.environ["CLAUDE_CODE_FORCE_SESSION_PERSISTENCE"] = "1"

@@ -37,7 +37,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, TextIO
 
-from . import bau_log, config, melder, nest
+from . import bau_log, config, melder, nest, sitzung_env
 
 log = logging.getLogger("to_spawn.probesitz")
 
@@ -740,9 +740,8 @@ def wegwerf_lauf(
     try:
         worktree_anlegen(worktree, repo, ticket)
         argv = [sys.executable, str(skill / "skripte" / "bau.py"), ticket, "--probesitz", "--sofort", "--staffel-max", "2", "--model", modell or MODELL_VORGABE]
-        env = dict(os.environ)
+        env = sitzung_env.ohne_sitzung()  # sonst Child Session: kein Transkript/Resume
         env["TO_SPAWN_REPO"] = str(repo)
-        env.pop("CLAUDE_CODE_CHILD_SESSION", None)
         lauf = session_starter(argv, cwd=worktree, env=env, zeitlimit_s=zeitlimit_s, beobachter=beobachter, ticket=ticket, ausgabe=ausgabe)
         # Worktree-Datei + Rückfall-Laufdatei im Hauptbaum (Zeilen vor dem Worktree, #257)
         p5, p6 = werte_bau_log(bau_log.lese(worktree, ticket, hauptbaum=repo))
