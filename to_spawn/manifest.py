@@ -178,6 +178,8 @@ def pruefe(
     for nummer in bericht.tickets:
         _pruefe_felder(bericht, nummer, tickets[nummer], grenze)
 
+    _pruefe_effort(bericht, daten, spec)
+
     github: dict[str, dict[str, Any] | None] = {}
     if mit_github:
         github = _hole_github(repo, bericht)
@@ -185,6 +187,17 @@ def pruefe(
     if github:
         _pruefe_github(repo, bericht, github, konfig)
     return bericht
+
+
+def _pruefe_effort(bericht: Bericht, daten: dict[str, Any], spec: int | str) -> None:
+    """Optionales Spec-Feld ``effort``: fehlt es, gilt der claude-Standard; sonst nur gültige Stufen."""
+    from .setup import EFFORTS  # spät: setup zieht viele Module, Manifest bleibt leicht
+
+    if "effort" in daten and daten["effort"] not in EFFORTS:
+        bericht.fehler.append(
+            f"effort {daten['effort']!r} in spec-{spec}.json ungültig — erlaubt: {', '.join(EFFORTS)} "
+            "(oder Feld weglassen)."
+        )
 
 
 def _pruefe_felder(bericht: Bericht, nummer: str, roh: Any, grenze: float) -> None:
