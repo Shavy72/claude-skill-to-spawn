@@ -304,11 +304,11 @@ def auf_speicher_warten(
     konfig: dict,
     *,
     wer: str = "bau",
-    pruefen=speicher.platz_frei,
+    pruefen=speicher.zulassen,  # Notbremsen speicher.platz_frei + Budget (#1184)
     schlafen=time.sleep,
     takt_s: int = 60,
 ) -> int:
-    """Warten, bis ``speicher.platz_frei`` frei meldet; Rückgabe = Zahl der Wartezyklen (#257 F3)."""
+    """Warten, bis ``speicher.zulassen`` frei meldet (#1184 Budget); Rückgabe = Zahl der Wartezyklen (#257 F3)."""
     return speicher.auf_platz_warten(konfig, wer=wer, pruefen=pruefen, schlafen=schlafen, takt_s=takt_s)
 
 
@@ -984,6 +984,8 @@ def main() -> int:
     if praefix is None:
         return 2
     cmd = praefix + cmd
+    # Gemeinsame Bau-Slice + Temp auf Platte (#1184), außen um die Sandbox.
+    cmd = speicher.slice_praefix(konfig, f"bau-{ticket}") + cmd
 
     # Vertrauens-Dialog vorab bestätigen (#257): ohne Terminal-Antwort hinge die Session
     # an „Do you trust the files in this folder?“ — Fehler nur als Warnung.

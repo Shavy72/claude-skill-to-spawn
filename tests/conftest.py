@@ -66,6 +66,10 @@ def _speicher_immer_frei(
     (ordner / "proc").mkdir()
     monkeypatch.setenv("TO_SPAWN_SPEICHER_MEMINFO", str(meminfo))
     monkeypatch.setenv("TO_SPAWN_SPEICHER_PROC", str(ordner / "proc"))
+    monkeypatch.setenv("TO_SPAWN_ZULASSUNG_STAND", str(ordner / "zulassung.json"))  # #1184
+    monkeypatch.setenv("TO_SPAWN_GESCHLOSSEN_ORDNER", str(ordner))  # #1184
+    monkeypatch.setenv("TO_SPAWN_AUFPASSER_WAISEN", "aus")  # #1184: keine echten Sessions beenden
+    monkeypatch.setenv("TO_SPAWN_BAU_SLICE", "aus")  # #1184: keine echten systemd-Scopes
 
 
 @pytest.fixture(autouse=True)

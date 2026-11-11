@@ -113,6 +113,25 @@ DEFAULTS: dict[str, Any] = {
         "max_sessions": 6,
         "staffel_s": 20,
     },
+    #: Zulassung nach Speicher-Budget (#1184, ``speicher.zulassen``): ein Start braucht
+    #: ``reserve_mib + bedarf_mib`` frei, nach Abzug von ``bedarf_mib`` je Session, die in
+    #: den letzten ``anlauf_s`` Sekunden zugelassen wurde. Bedarf 1,5 GB = Claude + MCP-
+    #: Server (Messung 11.11.: 17 claude 4,6 GB + 10 graphify-mcp 2,6 GB). ``max_sessions``
+    #: oben bleibt nur Notbremse.
+    "zulassung": {
+        "reserve_mib": 4096,
+        "bedarf_mib": 1536,
+        "anlauf_s": 180,
+    },
+    #: Bau-Schutz (#1184, ``speicher.slice_praefix``): Sessions starten in der gemeinsamen
+    #: Slice (Summen-Deckel, Werte nur in ``~/bau-schutz/einrichten.sh`` auf dem Server),
+    #: mit Temp auf Platte und ``oom_score_adj`` (Session stirbt vor sshd/tmux). ``slice``
+    #: leer = aus.
+    "bau_schutz": {
+        "slice": "bau.slice",
+        "tmpdir": "/var/tmp/bau",
+        "choom": 300,
+    },
 }
 
 KONFIG_PFAD = Path(".to-spawn") / "config.json"

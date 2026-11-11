@@ -1,0 +1,452 @@
+      1       0    1585 /sbin/init
+      2       0    1585 [kthreadd]
+      3       2    1585 [pool_workqueue_release]
+      4       2    1585 [kworker/R-kvfree_rcu_reclaim]
+      5       2    1585 [kworker/R-rcu_gp]
+      6       2    1585 [kworker/R-sync_wq]
+      7       2    1585 [kworker/R-slub_flushwq]
+      8       2    1585 [kworker/R-netns]
+     10       2    1585 [kworker/0:0H-events_highpri]
+     12       2    1585 [kworker/u32:0-ipv6_addrconf]
+     13       2    1585 [kworker/R-mm_percpu_wq]
+     14       2    1585 [rcu_tasks_kthread]
+     15       2    1585 [rcu_tasks_rude_kthread]
+     16       2    1585 [rcu_tasks_trace_kthread]
+     17       2    1585 [ksoftirqd/0]
+     18       2    1585 [rcu_preempt]
+     19       2    1585 [rcu_exp_par_gp_kthread_worker/0]
+     20       2    1585 [rcu_exp_gp_kthread_worker]
+     21       2    1585 [migration/0]
+     22       2    1585 [idle_inject/0]
+     23       2    1585 [cpuhp/0]
+     24       2    1585 [cpuhp/1]
+     25       2    1585 [idle_inject/1]
+     26       2    1585 [migration/1]
+     27       2    1585 [ksoftirqd/1]
+     29       2    1585 [kworker/1:0H-events_highpri]
+     30       2    1585 [cpuhp/2]
+     31       2    1585 [idle_inject/2]
+     32       2    1585 [migration/2]
+     33       2    1585 [ksoftirqd/2]
+     35       2    1585 [kworker/2:0H-events_highpri]
+     36       2    1585 [cpuhp/3]
+     37       2    1585 [idle_inject/3]
+     38       2    1585 [migration/3]
+     39       2    1585 [ksoftirqd/3]
+     41       2    1585 [kworker/3:0H-events_highpri]
+     42       2    1585 [cpuhp/4]
+     43       2    1585 [idle_inject/4]
+     44       2    1585 [migration/4]
+     45       2    1585 [ksoftirqd/4]
+     47       2    1585 [kworker/4:0H-events_highpri]
+     48       2    1585 [cpuhp/5]
+     49       2    1585 [idle_inject/5]
+     50       2    1585 [migration/5]
+     51       2    1585 [ksoftirqd/5]
+     53       2    1585 [kworker/5:0H-events_highpri]
+     54       2    1585 [cpuhp/6]
+     55       2    1585 [idle_inject/6]
+     56       2    1585 [migration/6]
+     57       2    1585 [ksoftirqd/6]
+     59       2    1585 [kworker/6:0H-events_highpri]
+     60       2    1585 [cpuhp/7]
+     61       2    1585 [idle_inject/7]
+     62       2    1585 [migration/7]
+     63       2    1585 [ksoftirqd/7]
+     65       2    1585 [kworker/7:0H-events_highpri]
+     68       2    1585 [kworker/u35:0-iou_exit]
+     79       2    1585 [kworker/u33:1-iou_exit]
+     81       2    1585 [kworker/u33:3-ext4-rsv-conversion]
+     82       2    1585 [kworker/u33:4-iou_exit]
+     85       2    1585 [kdevtmpfs]
+     86       2    1585 [kworker/R-inet_frag_wq]
+     87       2    1585 [kauditd]
+     88       2    1585 [khungtaskd]
+     89       2    1585 [oom_reaper]
+     90       2    1585 [kworker/R-writeback]
+     91       2    1585 [kcompactd0]
+     92       2    1585 [ksmd]
+     93       2    1585 [khugepaged]
+     94       2    1585 [kworker/R-kintegrityd]
+     95       2    1585 [kworker/R-kblockd]
+     96       2    1585 [kworker/R-blkcg_punt_bio]
+     97       2    1585 [irq/9-acpi]
+     99       2    1585 [kworker/1:1-mm_percpu_wq]
+    100       2    1585 [kworker/4:1-events]
+    101       2    1585 [kworker/R-tpm_dev_wq]
+    102       2    1585 [kworker/R-edac-poller]
+    103       2    1585 [kworker/R-devfreq_wq]
+    104       2    1585 [kworker/R-quota_events_unbound]
+    105       2    1585 [kworker/u40:1-ext4-rsv-conversion]
+    106       2    1585 [kworker/7:1H-kblockd]
+    107       2    1585 [kswapd0]
+    117       2    1585 [kworker/R-kthrotld]
+    122       2    1585 [kworker/R-acpi_thermal_pm]
+    123       2    1585 [kworker/R-mld]
+    124       2    1585 [kworker/R-ipv6_addrconf]
+    125       2    1585 [kworker/6:1H-kblockd]
+    127       2    1585 [kworker/u32:1-ipv6_addrconf]
+    131       2    1585 [kworker/R-kstrp]
+    133       2    1585 [kworker/u41:0]
+    134       2    1585 [kworker/u42:0]
+    135       2    1585 [kworker/u43:0]
+    136       2    1585 [kworker/u44:0]
+    137       2    1585 [kworker/u45:0]
+    138       2    1585 [kworker/u46:0]
+    139       2    1585 [kworker/u47:0]
+    140       2    1585 [kworker/u48:0]
+    141       2    1585 [kworker/u49:0]
+    146       2    1585 [kworker/u38:1-ext4-rsv-conversion]
+    195       2    1585 [kworker/0:1H-kblockd]
+    210       2    1585 [kworker/5:1-cgroup_release]
+    244       2    1585 [kworker/3:1H-kblockd]
+    251       2    1585 [kworker/4:1H-kblockd]
+    252       2    1585 [kworker/2:1H-kblockd]
+    254       2    1585 [kworker/5:1H-kblockd]
+    276       2    1585 [kworker/1:1H-kblockd]
+    281       2    1584 [kworker/R-ata_sff]
+    282       2    1584 [scsi_eh_0]
+    283       2    1584 [kworker/R-scsi_tmf_0]
+    284       2    1584 [scsi_eh_1]
+    285       2    1584 [kworker/R-scsi_tmf_1]
+    289       2    1584 [kworker/5:3-events]
+    290       2    1584 [kworker/R-ttm]
+    316       2    1584 [kworker/u36:1-ext4-rsv-conversion]
+    318       2    1584 [kworker/6:2-cgroup_release]
+    320       2    1584 [jbd2/vda4-8]
+    321       2    1584 [kworker/R-ext4-rsv-conversion]
+    368       1    1583 /usr/lib/systemd/systemd-journald
+    396       1    1583 /usr/lib/systemd/systemd-timesyncd
+    421       1    1583 /usr/lib/systemd/systemd-udevd
+    432       2    1583 [psimon]
+    475       2    1583 [kworker/R-cryptd]
+    500       2    1583 [kworker/u40:3-ext4-rsv-conversion]
+    531       2    1583 [kworker/u39:3-writeback]
+    538       2    1583 [kworker/u34:3-iou_exit]
+    542       2    1583 [kworker/u34:5-iou_exit]
+    557       2    1583 [kworker/u39:4-iou_exit]
+    674       2    1582 [jbd2/vda3-8]
+    675       2    1582 [kworker/R-ext4-rsv-conversion]
+    801       1    1582 /usr/sbin/cron -f
+    802       1    1582 /usr/bin/dbus-daemon --system --address=systemd: --nofork --nopidfile --systemd-activation --syslog-only
+    810       1    1582 /usr/sbin/qemu-ga
+    816       1    1582 /usr/lib/systemd/systemd-logind
+    879       1    1582 tmux new-session -d -s kommentar -n claude -c /home/bau/kommentar-funnel unset ANTHROPIC_API_KEY; while true; do claude --remote-control kommentar-funnel; sleep 3; done
+    886     879    1582 sh -c unset ANTHROPIC_API_KEY; while true; do claude --remote-control kommentar-funnel; sleep 3; done
+    890     879    1582 sh -c cd /home/bau/reel-remix && git pull -q --ff-only; . /home/bau/reel-remix-venv/bin/activate; set -a; . ./.env 2>/dev/null || true; set +a; claude --remote-control "reel-remix"; exec bash
+    891     886    1582 claude --remote-control kommentar-funnel
+   1179     891    1580 npm exec chrome-devtools-mcp@1.8.0 --headless
+   1180     891    1580 /usr/bin/node /home/bau/.claude/plugins/cache/context-mode/context-mode/1.0.169/start.mjs
+   1181     891    1580 npm exec @modelcontextprotocol/server-pdf --stdio
+   1273       2    1580 [kworker/u35:10-ext4-rsv-conversion]
+   1326       1    1580 /usr/bin/caddy run --environ --config /etc/caddy/Caddyfile
+   1330     891    1580 npm exec firecrawl-mcp@3.24.0
+   1332       1    1580 /sbin/agetty -o -- \u --noreset --noclear - linux
+   1333       1    1580 /usr/lib/systemd/systemd --user
+   1335       1    1580 /usr/bin/containerd
+   1343    1333    1580 (sd-pam)
+   1353     890    1580 claude --remote-control reel-remix
+   1391    1333    1580 /usr/bin/pulseaudio --daemonize=no --log-target=journal
+   1396       1    1579 /usr/libexec/rtkit-daemon
+   1404       1    1579 /usr/sbin/dockerd -H fd:// --containerd=/run/containerd/containerd.sock
+   1407       1    1579 /usr/lib/polkit-1/polkitd --no-debug --log-level=notice
+   1459    1333    1579 /usr/bin/dbus-daemon --session --address=systemd: --nofork --nopidfile --systemd-activation --syslog-only
+   1463    1179    1579 sh -c chrome-devtools-mcp --headless
+   1464    1463    1579 chrome-devtools-mcp
+   1474    1181    1579 sh -c mcp-pdf-server --stdio
+   1475    1474    1579 node /home/bau/.npm/_npx/6583fba12287d067/node_modules/.bin/mcp-pdf-server --stdio
+   1538    1330    1579 sh -c firecrawl-mcp
+   1539    1538    1579 node /home/bau/.npm/_npx/db0efa1a1ed40fd1/node_modules/.bin/firecrawl-mcp
+   1597     891    1579 npm exec @perplexity-ai/mcp-server@1.2.0
+   1624    1464    1579 /usr/bin/node /home/bau/.npm/_npx/4c14ca9d614c46a6/node_modules/chrome-devtools-mcp/build/src/telemetry/watchdog/main.js --parent-pid=1464 --app-version=1.8.0 --os-type=3
+   1636     891    1578 /home/bau/.local/share/uv/tools/graphifyy/bin/python /home/bau/.local/bin/graphify-mcp /home/bau/duoplus-management/graphify-out/graph.json
+   1666    1353    1578 npm exec chrome-devtools-mcp@1.8.0 --headless
+   1667    1353    1578 /usr/bin/node /home/bau/.claude/plugins/cache/context-mode/context-mode/1.0.169/start.mjs
+   1668    1353    1578 npm exec @modelcontextprotocol/server-pdf --stdio
+   1800       2    1578 [kworker/u38:10-writeback]
+   1833    1597    1578 sh -c perplexity-mcp
+   1842    1833    1578 node /home/bau/.npm/_npx/ba10a73795e7449a/node_modules/.bin/perplexity-mcp
+   1929    1353    1577 npm exec firecrawl-mcp@3.24.0
+   2035    1404    1577 /usr/sbin/docker-proxy -proto tcp -host-ip 0.0.0.0 -host-port 55324 -container-ip 172.18.0.3 -container-port 8025
+   2064    1404    1577 /usr/sbin/docker-proxy -proto tcp -host-ip :: -host-port 55324 -container-ip 172.18.0.3 -container-port 8025
+   2082    1404    1577 /usr/sbin/docker-proxy -proto tcp -host-ip 0.0.0.0 -host-port 55322 -container-ip 172.18.0.6 -container-port 5432
+   2093    1404    1577 /usr/sbin/docker-proxy -proto tcp -host-ip :: -host-port 55322 -container-ip 172.18.0.6 -container-port 5432
+   2115       1    1577 /usr/bin/containerd-shim-runc-v2 -namespace moby -id bda2ae3cf32404a2840fbd43bde6ae82f9f117630d1f649bf7d16e402c4fbad1 -address /run/containerd/containerd.sock
+   2116    1404    1577 /usr/sbin/docker-proxy -proto tcp -host-ip 0.0.0.0 -host-port 55321 -container-ip 172.18.0.5 -container-port 8000
+   2124       1    1577 /usr/bin/containerd-shim-runc-v2 -namespace moby -id be34521f599bfb46596c50cb7b83e0928abd9dd33cc17fb42e19c70152c57d72 -address /run/containerd/containerd.sock
+   2146       1    1577 /usr/bin/containerd-shim-runc-v2 -namespace moby -id b453ecc0a4d133cbb243dcec43b845a7e252dcd0d411d812529fd0fd74ad2ea5 -address /run/containerd/containerd.sock
+   2150    1404    1577 /usr/sbin/docker-proxy -proto tcp -host-ip :: -host-port 55321 -container-ip 172.18.0.5 -container-port 8000
+   2190       1    1577 /usr/bin/containerd-shim-runc-v2 -namespace moby -id 89c7ffb68860394239f41e550f725298fb66280b6276e9de8146eea2dce9977e -address /run/containerd/containerd.sock
+   2194       1    1577 /usr/bin/containerd-shim-runc-v2 -namespace moby -id b03b4d049ef895f2b6bb6f851665fe6ded7f019dfe535918d1e48eb09d331717 -address /run/containerd/containerd.sock
+   2276       1    1577 /usr/bin/containerd-shim-runc-v2 -namespace moby -id 5e4bd4cec4978a3bc25d5171f232ea77ff828e49d55cd52c3ac86cd810d313f3 -address /run/containerd/containerd.sock
+   2290       1    1577 /usr/bin/containerd-shim-runc-v2 -namespace moby -id 951fb36a8e14b158cb91ade337e9898b8f2a31bb12f7278d3be45113da2891d5 -address /run/containerd/containerd.sock
+   2345    2190    1577 /mailpit
+   2351    2194    1577 python -m werkstatt.pfoertner
+   2353    2124    1577 python -m werkstatt.pfoertner
+   2354    2115    1577 python -m werkstatt.netz_proxy
+   2365    2146    1577 /bin/postgrest
+   2378    2290    1577 nginx: master process /usr/local/openresty/nginx/sbin/nginx -p /usr/local/kong -c nginx.conf
+   2397    2276    1577 /nix/var/nix/profiles/default/bin/postgres -D /etc/postgresql
+   2490    1666    1577 sh -c chrome-devtools-mcp --headless
+   2491    2490    1577 chrome-devtools-mcp
+   2863    1668    1576 sh -c mcp-pdf-server --stdio
+   2865    2863    1576 node /home/bau/.npm/_npx/6583fba12287d067/node_modules/.bin/mcp-pdf-server --stdio
+   3199       1    1576 /usr/bin/containerd-shim-runc-v2 -namespace moby -id 58541486f0e568c26a1cc4398bbbed2933bcfc2c0dc6d081f7f472bb0f9bec6a -address /run/containerd/containerd.sock
+   3301    3199    1576 auth
+   3526    2397    1576 postgres: main: checkpointer 
+   3527    2397    1576 postgres: main: background writer 
+   3542    2397    1576 postgres: main: walwriter 
+   3543    2397    1576 postgres: main: autovacuum launcher 
+   3544    2397    1576 postgres: main: pg_net 0.20.4 worker 
+   3549    2397    1576 postgres: main: pg_cron launcher 
+   3554    2397    1576 postgres: main: logical replication launcher 
+   3973    2491    1576 /usr/bin/node /home/bau/.npm/_npx/4c14ca9d614c46a6/node_modules/chrome-devtools-mcp/build/src/telemetry/watchdog/main.js --parent-pid=2491 --app-version=1.8.0 --os-type=3
+   3986    2397    1576 postgres: main: authenticator postgres 172.18.0.2(60398) idle
+   4059    1404    1576 /usr/sbin/docker-proxy -proto tcp -host-ip 127.0.0.1 -host-port 8301 -container-ip 172.30.211.2 -container-port 8200
+   4080    1404    1576 /usr/sbin/docker-proxy -proto tcp -host-ip 127.0.0.1 -host-port 8300 -container-ip 172.30.211.3 -container-port 8000
+   4095       1    1576 /usr/bin/containerd-shim-runc-v2 -namespace moby -id 1e69987dbfd57f01b6c7df4e290e3eaeba8cb83cc6d068612b8afbf25d4a785b -address /run/containerd/containerd.sock
+   4127       1    1576 /usr/bin/containerd-shim-runc-v2 -namespace moby -id f27a51718b6c7293be57193e78310723559766c9dd3880a2b739410675a571e0 -address /run/containerd/containerd.sock
+   4145    4095    1576 /usr/local/bin/python3.12 /usr/local/bin/uvicorn visual_editor.backend.main:app --host 0.0.0.0 --port 8200 --workers 1
+   4158    4127    1576 /usr/local/bin/python3.12 /usr/local/bin/gunicorn -c /app/gunicorn.conf.py web.app:create_app()
+   4171    1929    1576 sh -c firecrawl-mcp
+   4172    4171    1576 node /home/bau/.npm/_npx/db0efa1a1ed40fd1/node_modules/.bin/firecrawl-mcp
+   4231    1353    1575 npm exec @perplexity-ai/mcp-server@1.2.0
+   4237    1353    1575 /home/bau/.local/share/uv/tools/graphifyy/bin/python /home/bau/.local/bin/graphify-mcp /home/bau/duoplus-management/graphify-out/graph.json
+   4254    2378    1575 nginx: worker process
+   4255    4158    1575 /usr/local/bin/python3.12 /usr/local/bin/gunicorn -c /app/gunicorn.conf.py web.app:create_app()
+   4256    4158    1575 /usr/local/bin/python3.12 /usr/local/bin/gunicorn -c /app/gunicorn.conf.py web.app:create_app()
+   4268    4231    1574 sh -c perplexity-mcp
+   4269    4268    1574 node /home/bau/.npm/_npx/ba10a73795e7449a/node_modules/.bin/perplexity-mcp
+   4527       2    1555 [kworker/u37:4-ext4-rsv-conversion]
+   5293       1    1460 /usr/bin/python3 /home/bau/deploy-schlange/deploy_schlange.py
+   5408    5293    1458 bash scripts/safe_deploy_vps.sh --nur-gate
+   5492    5408    1457 bash scripts/safe_deploy_vps.sh --nur-gate
+  25299       1    1303 adb -L tcp:5037 fork-server server --reply-fd 4
+  31531       2    1249 [kworker/0:0-events]
+  41802       2    1175 [kworker/2:0-events]
+  42148       2    1172 [kworker/u40:0-ext4-rsv-conversion]
+  60946       2    1042 [kworker/u38:0-ext4-rsv-conversion]
+  65430       2     990 [kworker/4:0-ata_sff]
+  87668       2     864 [kworker/u37:1-flush-254:0]
+  87836       2     864 [kworker/u39:2-flush-254:0]
+  88654       2     862 [kworker/u35:3-iou_exit]
+ 104913       2     782 [kworker/3:1-cgroup_free]
+ 118675       2     704 [kworker/u34:2-ext4-rsv-conversion]
+ 118822       2     703 [kworker/u36:6-flush-254:0]
+ 119018       2     703 [kworker/u37:6-flush-254:0]
+ 119618       2     703 [kworker/u36:8-flush-254:0]
+ 120759       2     700 [kworker/7:2-cgroup_free]
+ 129635       2     645 [kworker/1:0-cgwb_release]
+ 130408       2     638 [kworker/7:3-events]
+ 136240       2     589 [kworker/0:1-events]
+ 136654    5408     574 /home/bau/duoplus-management/.venv/bin/python -m pytest tests/ --tb=short -rfE -p no:cacheprovider -n 8 --dist loadfile -m not slow --basetemp /home/bau/tmp/pytest-gate-5408 --timeout=600
+ 136658  136654     573 /home/bau/duoplus-management/.venv/bin/python -u -c import sys;exec(eval(sys.stdin.readline()))
+ 136758  136654     571 /home/bau/duoplus-management/.venv/bin/python -u -c import sys;exec(eval(sys.stdin.readline()))
+ 136761  136654     571 /home/bau/duoplus-management/.venv/bin/python -u -c import sys;exec(eval(sys.stdin.readline()))
+ 136764  136654     571 /home/bau/duoplus-management/.venv/bin/python -u -c import sys;exec(eval(sys.stdin.readline()))
+ 136767  136654     571 /home/bau/duoplus-management/.venv/bin/python -u -c import sys;exec(eval(sys.stdin.readline()))
+ 136770  136654     571 /home/bau/duoplus-management/.venv/bin/python -u -c import sys;exec(eval(sys.stdin.readline()))
+ 136773  136654     571 /home/bau/duoplus-management/.venv/bin/python -u -c import sys;exec(eval(sys.stdin.readline()))
+ 136776  136654     571 /home/bau/duoplus-management/.venv/bin/python -u -c import sys;exec(eval(sys.stdin.readline()))
+ 138062  136758     551 /home/bau/duoplus-management/.venv/bin/python -c from multiprocessing.resource_tracker import main;main(17)
+ 151039       2     489 [kworker/6:0-cgroup_free]
+ 152818       2     479 [kworker/3:0-events]
+ 154087       1     472 sshd: /usr/sbin/sshd -D [listener] 0 of 10-100 startups
+ 154172       2     470 [kworker/2:1-events]
+ 154918  136776     463 /home/bau/duoplus-management/.venv/bin/python -c from multiprocessing.resource_tracker import main;main(17)
+ 182364     879     338 bash -lc export REPO=/home/bau/duoplus-1170 TO_SPAWN_HOME=/home/bau/.claude/skills/to-spawn TO_SPAWN_REPO=/home/bau/duoplus-1170; wache 1170 --resume 5791c930-f059-4bc5-b48c-fe1ccb3e48fa
+ 182372  182364     338 ./.venv/bin/python scripts/wache.py 1170 --resume 5791c930-f059-4bc5-b48c-fe1ccb3e48fa
+ 182429  182372     337 /home/bau/.local/bin/claude --resume 5791c930-f059-4bc5-b48c-fe1ccb3e48fa --model claude-opus-5-5[1m] --effort medium --remote-control Aufseher #1170 Aufpasser: Weiter als Bau-Aufseher Spec #1170 
+ 182735       2     337 [kworker/u39:0-ext4-rsv-conversion]
+ 182891  182429     336 npm exec chrome-devtools-mcp@1.8.0 --headless
+ 182897  182429     336 /usr/bin/node /home/bau/.claude/plugins/cache/context-mode/context-mode/1.0.169/start.mjs
+ 182898  182429     336 npm exec @modelcontextprotocol/server-pdf --stdio
+ 183031       2     335 [kworker/u33:5-iou_exit]
+ 183033       2     335 [kworker/u33:6-iou_exit]
+ 183035       2     335 [kworker/u33:7-writeback]
+ 183037       2     335 [kworker/u33:8-events_unbound]
+ 183069  182429     335 npm exec firecrawl-mcp@3.24.0
+ 183082  182891     335 sh -c chrome-devtools-mcp --headless
+ 183083  183082     335 chrome-devtools-mcp
+ 183089  182898     335 sh -c mcp-pdf-server --stdio
+ 183090  183089     335 node /home/bau/.npm/_npx/6583fba12287d067/node_modules/.bin/mcp-pdf-server --stdio
+ 183193  183069     334 sh -c firecrawl-mcp
+ 183208  183193     334 node /home/bau/.npm/_npx/db0efa1a1ed40fd1/node_modules/.bin/firecrawl-mcp
+ 183230  182429     334 npm exec @perplexity-ai/mcp-server@1.2.0
+ 183302  183083     334 /usr/bin/node /home/bau/.npm/_npx/4c14ca9d614c46a6/node_modules/chrome-devtools-mcp/build/src/telemetry/watchdog/main.js --parent-pid=183083 --app-version=1.8.0 --os-type=3
+ 183339  182429     333 /home/bau/.local/share/uv/tools/graphifyy/bin/python /home/bau/.local/bin/graphify-mcp /home/bau/duoplus-management/graphify-out/graph.json
+ 183359  183230     333 sh -c perplexity-mcp
+ 183360  183359     333 node /home/bau/.npm/_npx/ba10a73795e7449a/node_modules/.bin/perplexity-mcp
+ 183663       2     329 [kworker/u37:0-iou_exit]
+ 183747       2     329 [kworker/u35:1-iou_exit]
+ 185292       2     318 [kworker/u38:2-ext4-rsv-conversion]
+ 186088       2     314 [kworker/u35:2-ext4-rsv-conversion]
+ 188487       2     295 [kworker/u36:0-ext4-rsv-conversion]
+ 188492       2     295 [kworker/u36:2-ext4-rsv-conversion]
+ 189137       2     287 [kworker/u35:4]
+ 189138       2     287 [kworker/u35:5-ext4-rsv-conversion]
+ 190567     879     278 bash -lc export REPO=/home/bau/duoplus-1170 TO_SPAWN_HOME=/home/bau/.claude/skills/to-spawn TO_SPAWN_REPO=/home/bau/duoplus-1170; bau 1171 --resume a1f07a9a-eda4-433f-a5df-8d04654e8e16
+ 190573  190567     278 ./.venv/bin/python scripts/bau.py 1171 --resume a1f07a9a-eda4-433f-a5df-8d04654e8e16
+ 190586  190573     277 /home/bau/.local/bin/claude --settings /tmp/duoplus-management-bau/1171-20261112-003738-p4x5kuys/settings.json --mcp-config /tmp/duoplus-management-bau/1171-20261112-003738-p4x5kuys/mcp.json --str
+ 190606       2     277 [kworker/u39:1-ext4-rsv-conversion]
+ 190608       2     277 [kworker/u39:5-writeback]
+ 190869       2     277 [kworker/u34:0-ext4-rsv-conversion]
+ 191239  190586     276 node /home/bau/.claude/plugins/cache/context-mode/context-mode/1.0.169/start.mjs
+ 191306       2     275 [kworker/u36:3-ext4-rsv-conversion]
+ 191308       2     275 [kworker/u36:4-flush-254:0]
+ 191310       2     275 [kworker/u36:5-flush-254:0]
+ 191313       2     275 [kworker/u36:7-ext4-rsv-conversion]
+ 191319       2     275 [kworker/u36:9-ext4-rsv-conversion]
+ 191321       2     275 [kworker/u36:10-writeback]
+ 191323       2     275 [kworker/u36:11-flush-254:0]
+ 191601       2     271 [kworker/u38:3-ext4-rsv-conversion]
+ 191674     879     270 bash -lc export REPO=/home/bau/duoplus-1170 TO_SPAWN_HOME=/home/bau/.claude/skills/to-spawn BAU_AUFTRAG='Weiter ab Handoff docs/handoffs/HANDOFF_2026-11-11_1173.md (Ticket-Worktree) — lies ihn z
+ 191690  191674     270 ./.venv/bin/python scripts/bau.py 1173 --sofort
+ 191792     879     270 bash -lc export REPO=/home/bau/duoplus-1170 TO_SPAWN_HOME=/home/bau/.claude/skills/to-spawn; bau 1178 --sofort
+ 191803  191792     270 ./.venv/bin/python scripts/bau.py 1178 --sofort
+ 191846  191690     270 /home/bau/.local/bin/claude --settings /tmp/duoplus-management-bau/1173-20261112-003746-akd63x_l/settings.json --mcp-config /tmp/duoplus-management-bau/1173-20261112-003746-akd63x_l/mcp.json --str
+ 191852     879     270 bash -lc export REPO=/home/bau/duoplus-1170 TO_SPAWN_HOME=/home/bau/.claude/skills/to-spawn; bau 1180 --sofort
+ 191858  191852     270 ./.venv/bin/python scripts/bau.py 1180 --sofort
+ 191904     879     269 bash -lc export REPO=/home/bau/duoplus-1170 TO_SPAWN_HOME=/home/bau/.claude/skills/to-spawn; bau 1182 --sofort
+ 191911  191904     269 ./.venv/bin/python scripts/bau.py 1182 --sofort
+ 191966  191858     269 /home/bau/.local/bin/claude --settings /tmp/duoplus-management-bau/1180-20261112-003747-fkbryc06/settings.json --mcp-config /tmp/duoplus-management-bau/1180-20261112-003747-fkbryc06/mcp.json --str
+ 191967  191803     269 /home/bau/.local/bin/claude --settings /tmp/duoplus-management-bau/1178-20261112-003747-ze6jdbhi/settings.json --mcp-config /tmp/duoplus-management-bau/1178-20261112-003747-ze6jdbhi/mcp.json --str
+ 192163  191911     268 /home/bau/.local/bin/claude --settings /tmp/duoplus-management-bau/1182-20261112-003747-2hs_iqna/settings.json --mcp-config /tmp/duoplus-management-bau/1182-20261112-003747-2hs_iqna/mcp.json --str
+ 192386  191846     267 node /home/bau/.claude/plugins/cache/context-mode/context-mode/1.0.169/start.mjs
+ 193046  192163     265 node /home/bau/.claude/plugins/cache/context-mode/context-mode/1.0.169/start.mjs
+ 193150  191967     264 node /home/bau/.claude/plugins/cache/context-mode/context-mode/1.0.169/start.mjs
+ 193168  191966     264 node /home/bau/.claude/plugins/cache/context-mode/context-mode/1.0.169/start.mjs
+ 193517       2     262 [kworker/u40:2-ext4-rsv-conversion]
+ 193877       2     260 [kworker/u34:1-ext4-rsv-conversion]
+ 193879       2     260 [kworker/u34:4-ext4-rsv-conversion]
+ 196482     879     247 sh -c bash -lc 'export REPO=/home/bau/duoplus-1170 TO_SPAWN_HOME=/home/bau/.claude/skills/to-spawn; bau 1174'
+ 196485  196482     247 bash -lc export REPO=/home/bau/duoplus-1170 TO_SPAWN_HOME=/home/bau/.claude/skills/to-spawn; bau 1174
+ 196494     879     247 sh -c bash -lc 'export REPO=/home/bau/duoplus-1170 TO_SPAWN_HOME=/home/bau/.claude/skills/to-spawn; bau 1175'
+ 196500  196485     247 ./.venv/bin/python scripts/bau.py 1174
+ 196501  196494     247 bash -lc export REPO=/home/bau/duoplus-1170 TO_SPAWN_HOME=/home/bau/.claude/skills/to-spawn; bau 1175
+ 196509     879     247 sh -c bash -lc 'export REPO=/home/bau/duoplus-1170 TO_SPAWN_HOME=/home/bau/.claude/skills/to-spawn; bau 1176'
+ 196513  196509     247 bash -lc export REPO=/home/bau/duoplus-1170 TO_SPAWN_HOME=/home/bau/.claude/skills/to-spawn; bau 1176
+ 196518  196501     247 ./.venv/bin/python scripts/bau.py 1175
+ 196520     879     247 sh -c bash -lc 'export REPO=/home/bau/duoplus-1170 TO_SPAWN_HOME=/home/bau/.claude/skills/to-spawn; bau 1179'
+ 196522  196520     247 bash -lc export REPO=/home/bau/duoplus-1170 TO_SPAWN_HOME=/home/bau/.claude/skills/to-spawn; bau 1179
+ 196529  196513     247 ./.venv/bin/python scripts/bau.py 1176
+ 196533  196522     247 ./.venv/bin/python scripts/bau.py 1179
+ 196534     879     247 sh -c bash -lc 'export REPO=/home/bau/duoplus-1170 TO_SPAWN_HOME=/home/bau/.claude/skills/to-spawn; bau 1181'
+ 196535  196534     247 bash -lc export REPO=/home/bau/duoplus-1170 TO_SPAWN_HOME=/home/bau/.claude/skills/to-spawn; bau 1181
+ 196549  196535     247 ./.venv/bin/python scripts/bau.py 1181
+ 201330       2     233 [kworker/u37:2-ext4-rsv-conversion]
+ 203538       2     225 [kworker/u34:6]
+ 204314       2     223 [kworker/u40:4-events_unbound]
+ 204316       2     223 [kworker/u40:5-iou_exit]
+ 204332       2     223 [kworker/u40:6-ext4-rsv-conversion]
+ 205062       2     221 [kworker/u37:3-iou_exit]
+ 207691  191846     212 /bin/bash -c source /home/bau/.claude/shell-snapshots/snapshot-bash-1794440283817-lnfk1p.sh 2>/dev/null || true && shopt -u extglob 2>/dev/null || true && { \builtin unalias -- 'which'; \builtin u
+ 207692  207691     212 python3 scripts/ticket_status.py warte ticket/1173-warmhalten --max-min 90
+ 211196       2     202 [kworker/1:2-events]
+ 216149  192163     176 /bin/bash -c source /home/bau/.claude/shell-snapshots/snapshot-bash-1794440294931-0w7pug.sh 2>/dev/null || true && shopt -u extglob 2>/dev/null || true && { \builtin unalias -- 'which'; \builtin u
+ 216150  216149     176 timeout 900 python3 -m pytest -q -n 8 tests/ -k funnel or regel or prompt or gehirn or schreib or persona -p no:cacheprovider
+ 216151  216150     176 /usr/bin/python3 -m pytest -q -n 8 tests/ -k funnel or regel or prompt or gehirn or schreib or persona -p no:cacheprovider
+ 216491  216151     174 /usr/bin/python3 -u -c import sys;exec(eval(sys.stdin.readline()))
+ 216499  216151     174 /usr/bin/python3 -u -c import sys;exec(eval(sys.stdin.readline()))
+ 216508  216151     174 /usr/bin/python3 -u -c import sys;exec(eval(sys.stdin.readline()))
+ 216511  216151     174 /usr/bin/python3 -u -c import sys;exec(eval(sys.stdin.readline()))
+ 216537  216151     174 /usr/bin/python3 -u -c import sys;exec(eval(sys.stdin.readline()))
+ 216550  216151     174 /usr/bin/python3 -u -c import sys;exec(eval(sys.stdin.readline()))
+ 216555  216151     174 /usr/bin/python3 -u -c import sys;exec(eval(sys.stdin.readline()))
+ 216560  216151     173 /usr/bin/python3 -u -c import sys;exec(eval(sys.stdin.readline()))
+ 216699       2     172 [kworker/1:3-cgroup_free]
+ 216701       2     172 [kworker/0:2]
+ 218749       2     152 [kworker/u38:4-ext4-rsv-conversion]
+ 218819  190586     152 /bin/bash -c source /home/bau/.claude/shell-snapshots/snapshot-bash-1794440267458-fy8xkw.sh 2>/dev/null || true && shopt -u extglob 2>/dev/null || true && { \builtin unalias -- 'which'; \builtin u
+ 218845  218819     152 timeout 590 python3 -m pytest -q -p no:cacheprovider -n 8 tests/test_950_messenger_satz.py tests/test_996_englisch.py tests/test_996_herz.py tests/test_alters_regel_ausgang_e63.py tests/test_alter
+ 218846  218819     152 /bin/bash -c source /home/bau/.claude/shell-snapshots/snapshot-bash-1794440267458-fy8xkw.sh 2>/dev/null || true && shopt -u extglob 2>/dev/null || true && { \builtin unalias -- 'which'; \builtin u
+ 218847  218819     152 cut -c1-200
+ 218848  218819     152 tee /tmp/claude-1000/-home-bau-duoplus-1170/a1f07a9a-eda4-433f-a5df-8d04654e8e16/scratchpad/end.txt
+ 218849  218846     152 ugrep -G --ignore-files --hidden -I --exclude-dir=.git --exclude-dir=.svn --exclude-dir=.hg --exclude-dir=.bzr --exclude-dir=.jj --exclude-dir=.sl -E ^(FAILED|ERROR )|passed|failed
+ 218850  218845     152 /usr/bin/python3 -m pytest -q -p no:cacheprovider -n 8 tests/test_950_messenger_satz.py tests/test_996_englisch.py tests/test_996_herz.py tests/test_alters_regel_ausgang_e63.py tests/test_alters_r
+ 218936  218850     150 /usr/bin/python3 -u -c import sys;exec(eval(sys.stdin.readline()))
+ 219014  218850     150 /usr/bin/python3 -u -c import sys;exec(eval(sys.stdin.readline()))
+ 219054  218850     150 /usr/bin/python3 -u -c import sys;exec(eval(sys.stdin.readline()))
+ 219065  218850     150 /usr/bin/python3 -u -c import sys;exec(eval(sys.stdin.readline()))
+ 219110  218850     149 /usr/bin/python3 -u -c import sys;exec(eval(sys.stdin.readline()))
+ 219113  218850     149 /usr/bin/python3 -u -c import sys;exec(eval(sys.stdin.readline()))
+ 219117  218850     149 /usr/bin/python3 -u -c import sys;exec(eval(sys.stdin.readline()))
+ 219120  218850     149 /usr/bin/python3 -u -c import sys;exec(eval(sys.stdin.readline()))
+ 221871  190586     133 /bin/bash -c source /home/bau/.claude/shell-snapshots/snapshot-bash-1794440267458-fy8xkw.sh 2>/dev/null || true && shopt -u extglob 2>/dev/null || true && { \builtin unalias -- 'which'; \builtin u
+ 221873  221871     133 xargs timeout 900 python3 -m pytest -q -n 8 -rfE -p no:cacheprovider
+ 221905  221873     133 timeout 900 python3 -m pytest -q -n 8 -rfE -p no:cacheprovider tests/test_1057_bio_ohne_persona_namen.py tests/test_1057_bio_im_prompt.py tests/test_1057_luecken_pruefer.py tests/test_1057_luecken
+ 221906  221905     133 /usr/bin/python3 -m pytest -q -n 8 -rfE -p no:cacheprovider tests/test_1057_bio_ohne_persona_namen.py tests/test_1057_bio_im_prompt.py tests/test_1057_luecken_pruefer.py tests/test_1057_luecken_ge
+ 222547  221906     130 /usr/bin/python3 -u -c import sys;exec(eval(sys.stdin.readline()))
+ 222588  221906     130 /usr/bin/python3 -u -c import sys;exec(eval(sys.stdin.readline()))
+ 222602  221906     130 /usr/bin/python3 -u -c import sys;exec(eval(sys.stdin.readline()))
+ 222605  221906     130 /usr/bin/python3 -u -c import sys;exec(eval(sys.stdin.readline()))
+ 222609  221906     130 /usr/bin/python3 -u -c import sys;exec(eval(sys.stdin.readline()))
+ 222620  221906     130 /usr/bin/python3 -u -c import sys;exec(eval(sys.stdin.readline()))
+ 222692  221906     129 /usr/bin/python3 -u -c import sys;exec(eval(sys.stdin.readline()))
+ 222703  221906     129 /usr/bin/python3 -u -c import sys;exec(eval(sys.stdin.readline()))
+ 222910       2     128 [kworker/7:0-cgroup_free]
+ 222952  154087     128 sshd-session: bau [priv]
+ 222986  222952     126 sshd-session: bau@notty
+ 222988  222986     125 bash -c sleep 150; free -m; pgrep -c -f "pytest"; tmux list-windows -t spec-1170 -F "#I #W"; for w in "wache 1170" "bau 1183"; do echo "== $w"; tmux capture-pane -p -t "=spec-1170:$w" | grep -v "^
+ 222989  222988     125 sleep 150
+ 224057       2     120 [kworker/u39:6-flush-254:0]
+ 224058       2     120 [kworker/u39:7-flush-254:0]
+ 224059       2     120 [kworker/u39:8-ext4-rsv-conversion]
+ 224644       2     118 [kworker/6:1-events]
+ 225148  191846     116 /bin/bash -c source /home/bau/.claude/shell-snapshots/snapshot-bash-1794440283817-lnfk1p.sh 2>/dev/null || true && shopt -u extglob 2>/dev/null || true && { \builtin unalias -- 'which'; \builtin u
+ 225171  225148     116 /home/bau/duoplus-management/.venv/bin/python -m pytest tests/test_dm_funnel_nach_link_948_weg.py tests/test_dm_funnel_nachfassen_948.py tests/test_dm_funnel_nachfassen_1145_weg.py tests/test_funn
+ 225172  225148     116 tail -25
+ 225260       1     115 /usr/lib/systemd/systemd-oomd
+ 225416       2     115 [psimon]
+ 227449       2     108 [kworker/u37:5-ext4-rsv-conversion]
+ 227576  191967     107 /bin/bash -c source /home/bau/.claude/shell-snapshots/snapshot-bash-1794440293714-986sug.sh 2>/dev/null || true && shopt -u extglob 2>/dev/null || true && { \builtin unalias -- 'which'; \builtin u
+ 227607  227576     107 timeout 600 python3 -m pytest tests/test_dm_funnel_stolperer_1178.py -q -p no:cacheprovider -rA
+ 227608  227576     107 /bin/bash -c source /home/bau/.claude/shell-snapshots/snapshot-bash-1794440293714-986sug.sh 2>/dev/null || true && shopt -u extglob 2>/dev/null || true && { \builtin unalias -- 'which'; \builtin u
+ 227609  227608     107 ugrep -G --ignore-files --hidden -I --exclude-dir=.git --exclude-dir=.svn --exclude-dir=.hg --exclude-dir=.bzr --exclude-dir=.jj --exclude-dir=.sl -E ^(FAILED|PASSED|E  +AssertionError|[0-9]+ (fai
+ 227610  227607     107 /usr/bin/python3 -m pytest tests/test_dm_funnel_stolperer_1178.py -q -p no:cacheprovider -rA
+ 229198       2     101 [kworker/5:0]
+ 230576  190586      94 /bin/bash -c source /home/bau/.claude/shell-snapshots/snapshot-bash-1794440267458-fy8xkw.sh 2>/dev/null || true && shopt -u extglob 2>/dev/null || true && { \builtin unalias -- 'which'; \builtin u
+ 230578  230576      94 timeout 170 python3 -m pytest -q -p no:cacheprovider -n 8 --timeout=60 tests/conftest.py tests/alter_altwege_e63.py tests/test_1057_nachtrag_gehirn.py tests/test_1057_luecken_regel.py tests/test_1
+ 230579  230578      94 /usr/bin/python3 -m pytest -q -p no:cacheprovider -n 8 --timeout=60 tests/conftest.py tests/alter_altwege_e63.py tests/test_1057_nachtrag_gehirn.py tests/test_1057_luecken_regel.py tests/test_1057
+ 230991  230579      91 /usr/bin/python3 -u -c import sys;exec(eval(sys.stdin.readline()))
+ 231004  230579      91 /usr/bin/python3 -u -c import sys;exec(eval(sys.stdin.readline()))
+ 231032  230579      91 /usr/bin/python3 -u -c import sys;exec(eval(sys.stdin.readline()))
+ 231045  230579      91 /usr/bin/python3 -u -c import sys;exec(eval(sys.stdin.readline()))
+ 231077  230579      91 /usr/bin/python3 -u -c import sys;exec(eval(sys.stdin.readline()))
+ 231193  230579      90 /usr/bin/python3 -u -c import sys;exec(eval(sys.stdin.readline()))
+ 231198  230579      90 /usr/bin/python3 -u -c import sys;exec(eval(sys.stdin.readline()))
+ 231248  230579      90 /usr/bin/python3 -u -c import sys;exec(eval(sys.stdin.readline()))
+ 231297  190586      90 /bin/bash -c source /home/bau/.claude/shell-snapshots/snapshot-bash-1794440267458-fy8xkw.sh 2>/dev/null || true && shopt -u extglob 2>/dev/null || true && { \builtin unalias -- 'which'; \builtin u
+ 231298  231297      90 timeout 300 python3 -m pytest -q -p no:cacheprovider -n 4 tests/test_lead_sperre_1171_f14_f17.py tests/test_funnel_ausgang_lead_mode_1169.py tests/test_dm_funnel_lead_mode_1169_weg.py
+ 231299  231298      90 /usr/bin/python3 -m pytest -q -p no:cacheprovider -n 4 tests/test_lead_sperre_1171_f14_f17.py tests/test_funnel_ausgang_lead_mode_1169.py tests/test_dm_funnel_lead_mode_1169_weg.py
+ 231469  231299      87 /usr/bin/python3 -u -c import sys;exec(eval(sys.stdin.readline()))
+ 231472  231299      87 /usr/bin/python3 -u -c import sys;exec(eval(sys.stdin.readline()))
+ 231480  231299      87 /usr/bin/python3 -u -c import sys;exec(eval(sys.stdin.readline()))
+ 231488  231299      87 /usr/bin/python3 -u -c import sys;exec(eval(sys.stdin.readline()))
+ 232979       2      77 [kworker/6:3-cgroup_free]
+ 233863       2      72 [kworker/4:2-ata_sff]
+ 234021       2      70 [kworker/u38:5-ext4-rsv-conversion]
+ 234022       2      70 [kworker/u38:6-ext4-rsv-conversion]
+ 241207       2      28 [kworker/u37:7-flush-254:0]
+ 241208       2      28 [kworker/u37:8-flush-254:0]
+ 241209       2      28 [kworker/u37:9-flush-254:0]
+ 241210       2      28 [kworker/u37:10-ext4-rsv-conversion]
+ 241211       2      28 [kworker/u37:11]
+ 242757       2      21 [kworker/u36:12]
+ 244696  136767      12 /home/bau/duoplus-management/.venv/lib/python3.13/site-packages/playwright/driver/node /home/bau/duoplus-management/.venv/lib/python3.13/site-packages/playwright/driver/package/cli.js run-driver
+ 244928  244696      10 /home/bau/.cache/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-linux64/chrome-headless-shell --disable-field-trial-config --disable-background-networking --disable-background-ti
+ 245014  244928      10 /home/bau/.cache/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-linux64/chrome-headless-shell --type=zygote --no-zygote-sandbox --no-sandbox --headless
+ 245017  244928      10 /home/bau/.cache/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-linux64/chrome-headless-shell --type=zygote --no-sandbox --headless
+ 245073  245014       9 /home/bau/.cache/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-linux64/chrome-headless-shell --type=gpu-process --no-sandbox --disable-dev-shm-usage --disable-breakpad --headles
+ 245087  244928       9 /home/bau/.cache/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-linux64/chrome-headless-shell --type=utility --utility-sub-type=network.mojom.NetworkService --lang=en-US --servic
+ 245136  245017       9 /home/bau/.cache/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-linux64/chrome-headless-shell --type=renderer --headless=old --no-sandbox --disable-dev-shm-usage --disable-back-f
+ 246663  154087       1 sshd-session: bau [priv]
+ 246946  246663       0 sshd-session: bau@notty
+ 247001    5408       0 sleep 1
+ 247009  216560       0 /usr/bin/ffmpeg -v error -y -i /home/bau/.cache/pytest-tmp/fa57c7ca98d2-216151/popen-gw7/test_fuellwort_beantwortet_sei2/funnel_medien/1/voice/1d7029a6059a4e278fb9e6d92e61facf.wav -map_metadata -1
+ 247053  219054       0 /usr/bin/ffmpeg -v error -y -i /home/bau/.cache/pytest-tmp/01a8ecf4d9a3-218850/popen-gw2/test_funnel_an_offenes_bild_au0/funnel_medien/1/voice/06282144b1e6465794e3952c270dcd2d.wav -map_metadata -1
+ 247054    5492       0 sleep 2
+ 247060  246946       0 bash -c ps -eo pid=,ppid=,etimes=,args= | cut -c1-220
+ 247061  219113       0 ffmpeg -v error -y -f lavfi -i sine=frequency=330:duration=1 /home/bau/.cache/pytest-tmp/01a8ecf4d9a3-218850/popen-gw5/test_funnel_an_bild_und_memo_a0/vorrat_quellen/vorrat_bruecke.wav
+ 247062  247060       0 ps -eo pid=,ppid=,etimes=,args=
+ 247063  247060       0 cut -c1-220

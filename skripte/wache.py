@@ -119,11 +119,11 @@ def auf_speicher_warten(
     konfig: dict,
     *,
     wer: str = "Aufseher",
-    pruefen=speicher.platz_frei,
+    pruefen=speicher.zulassen,  # Notbremsen speicher.platz_frei + Budget (#1184)
     schlafen=time.sleep,
     takt_s: int = 60,
 ) -> int:
-    """Warten, bis ``speicher.platz_frei`` frei meldet; Rückgabe = Zahl der Wartezyklen (#257 F3)."""
+    """Warten, bis ``speicher.zulassen`` frei meldet (#1184 Budget); Rückgabe = Zahl der Wartezyklen (#257 F3)."""
     return speicher.auf_platz_warten(konfig, wer=wer, pruefen=pruefen, schlafen=schlafen, takt_s=takt_s)
 
 

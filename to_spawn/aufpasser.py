@@ -101,6 +101,7 @@ from to_spawn import (
     prozessbaum,
     sessions_datei,
     speicher,
+    verwaist,
     vorfall,
 )
 from to_spawn.waechter_lauf import _LIMIT_TEXT as LIMIT_TEXT
@@ -1903,7 +1904,8 @@ class Aufpasser:
         except (OSError, ValueError) as fehler:
             log.warning("%s: Konfig nicht lesbar: %s", repo, fehler)
             return False
-        return not speicher.platz_frei(konfig)[0]
+        # speicher.platz_frei (Notbremsen) + Budget, ohne Vormerkung (#1184)
+        return not speicher.zulassen(konfig, reservieren=False)[0]
 
     def ticket_zu_schliessen(
         self,
@@ -1974,6 +1976,7 @@ class Aufpasser:
             "geschlossen",
             f"„{f.name}“ geschlossen (Ticket zu).{zusatz}",
         )
+        verwaist.protokollieren("ticket-zu", f"{f.spec}/{f.name}", zusatz.strip())
 
     def sichern_und_fortsetzen(
         self,
@@ -2148,7 +2151,7 @@ class Aufpasser:
         # an Claude-Sessions erreicht ist — der nächste Tick prüft neu. Zwischen zwei
         # echten Starts in einem Tick liegt die Staffel-Pause (nicht im Trockenlauf).
         konfig = config.lade(repo)
-        frei, grund = speicher.platz_frei(konfig)
+        frei, grund = speicher.zulassen(konfig, reservieren=False)  # bau.py merkt selbst vor
         if not frei:
             log.warning("%s: Fenster „%s“ nicht gestartet — %s", sitzung, name, grund)
             if self.e.trocken:
@@ -2294,6 +2297,32 @@ class Aufpasser:
                 self.sitzung_pruefen(sitzung, spec, fenster, repo)
             except RuntimeError as fehler:
                 log.error("%s: Sitzung übersprungen: %s", sitzung, fehler)
+        self.waisen_beenden()
+
+    def waisen_beenden(self) -> None:
+        """Verwaiste Bau-Sessions (claude ohne tmux-Fenster, #1184) beenden + protokollieren.
+
+        Test-Tür ``TO_SPAWN_AUFPASSER_WAISEN=aus``: Tests mit tmux-Attrappen sähen sonst
+        echte Sessions der Testmaschine als verwaist.
+        """
+        if sys.platform != "linux" or os.environ.get("TO_SPAWN_AUFPASSER_WAISEN") == "aus":
+            return
+        try:
+            ps_text = self.sh("ps", "-eo", "pid=,ppid=,etimes=,args=")
+            panes = self.tmux(
+                "list-panes", "-a", "-F", "#{session_name}	#{window_id}	#{window_name}	#{pane_pid}"
+            )
+        except (RuntimeError, OSError) as fehler:
+            log.warning("Waisen-Suche übersprungen: %s", fehler)
+            return
+        for waise in verwaist.verwaiste_sessions(ps_text, panes):
+            wer = f"claude {waise.pid} (#{waise.ticket})"
+            if self.e.trocken:
+                print(f"[trocken] verwaiste Session {wer} würde beendet")
+                continue
+            tot = _pids_beenden(list(reversed(prozess_baum(waise.pid))) or [waise.pid], wer)
+            log.warning("verwaiste Session %s beendet (%s): %s", wer, "ok" if tot else "Reste leben", waise.befehl)
+            verwaist.protokollieren("verwaist", wer, f"{waise.alter_s // 60} min alt, {waise.befehl}")
 
 
 # --- Kommandozeile -------------------------------------------------------------

@@ -10,6 +10,15 @@ Repo-Konfig (``DEFAULTS["speicher"]``):
 * ``max_sessions`` — höchstens so viele Prozesse mit ``argv[0]``-Basename ``claude``
   dürfen schon laufen (Richtwert 6 je 16 GB).
 
+**Zulassung nach Speicher-Budget (#1184):** :func:`zulassen` ist die Tür der Starter.
+Sie prüft zusätzlich zu den zwei Notbremsen oben, ob nach Abzug der schon zugelassenen,
+noch anlaufenden Sessions ``reserve_mib + bedarf_mib`` frei bleiben (Block
+``zulassung`` in ``config.DEFAULTS``). Zulassungen stehen mit Zeitstempel in einer
+gemeinsamen Datei (``~/.to-spawn-zulassung.json``, Test-Tür ``TO_SPAWN_ZULASSUNG_STAND``),
+gesperrt per ``flock`` — so lassen zehn gleichzeitig wartende ``bau.py`` nicht zehn
+Sessions auf denselben freien Speicher los. Grenzwerte leben nur hier und in
+``config.DEFAULTS``; Aufrufer fragen nur „darf ich starten?“.
+
 Nur Standardbibliothek (plus ``to_spawn.config``), nur Linux: auf anderen Systemen gibt es kein Urteil,
 also „frei“. Test-Tür: die Umgebungsvariablen ``TO_SPAWN_SPEICHER_MEMINFO``
 (Pfad einer meminfo-Datei) und ``TO_SPAWN_SPEICHER_PROC`` (Ordner im Aufbau von
@@ -19,6 +28,7 @@ unabhängig von den Sessions, die gerade auf der Testmaschine laufen.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import sys
@@ -33,6 +43,9 @@ log = logging.getLogger("to_spawn.speicher")
 
 #: Vorgabe, falls die Konfig den Block ``speicher`` nicht kennt — eine Quelle: ``config.DEFAULTS``.
 VORGABE: dict[str, int] = dict(config.DEFAULTS["speicher"])
+
+#: Vorgabe des Budget-Blocks ``zulassung`` (#1184) — eine Quelle: ``config.DEFAULTS``.
+ZULASSUNG_VORGABE: dict[str, int] = dict(config.DEFAULTS["zulassung"])
 
 #: Exit-Code der CLI (``to_spawn.py speicher``) und der Starter, wenn kein Platz ist.
 EXIT_VOLL = 5
@@ -160,11 +173,152 @@ def platz_frei(
     )
 
 
+def budget(konfig: dict[str, Any] | None) -> dict[str, int]:
+    """Die Zahlen aus ``konfig["zulassung"]``, fehlende aus der Vorgabe (#1184)."""
+    block = (konfig or {}).get("zulassung") if isinstance(konfig, dict) else None
+    werte = dict(ZULASSUNG_VORGABE)
+    if isinstance(block, dict):
+        for name in ZULASSUNG_VORGABE:
+            wert = block.get(name)
+            if isinstance(wert, (int, float)) and not isinstance(wert, bool) and wert >= 0:
+                werte[name] = int(wert)
+    return werte
+
+
+def _stand_pfad() -> Path:
+    return Path(os.environ.get("TO_SPAWN_ZULASSUNG_STAND") or Path.home() / ".to-spawn-zulassung.json")
+
+
+def budget_urteil(
+    konfig: dict[str, Any] | None, frei: int, anlaufend: int
+) -> tuple[bool, str]:
+    """Reine Rechnung: reicht ``frei`` (MiB) nach Abzug von ``anlaufend`` vorgemerkten Sessions?
+
+    Regel: ``frei − anlaufend × bedarf ≥ reserve + bedarf``. Die Reserve gehört sshd,
+    tmux, Aufseher und dem Deploy-Gate — Sessions bekommen nur, was darüber liegt.
+    """
+    werte = budget(konfig)
+    vorgemerkt = anlaufend * werte["bedarf_mib"]
+    rest = frei - vorgemerkt
+    noetig = werte["reserve_mib"] + werte["bedarf_mib"]
+    text = (
+        f"{_gb_text(frei)} frei, {_gb_text(vorgemerkt)} für {anlaufend} anlaufende Sessions "
+        f"vorgemerkt, nötig {_gb_text(noetig)} (Bedarf {_gb_text(werte['bedarf_mib'])} "
+        f"+ Reserve {_gb_text(werte['reserve_mib'])})"
+    )
+    if rest < noetig:
+        return False, f"Speicher-Budget voll: {text}"
+    return True, f"Speicher-Budget frei: {text}"
+
+
+def _starts_lesen(datei: Path) -> list[float]:
+    try:
+        roh = json.loads(datei.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []  # fehlend/kaputt = keine Vormerkungen; schlimmstenfalls eine Staffel zu früh
+    starts = roh.get("starts") if isinstance(roh, dict) else None
+    if not isinstance(starts, list):
+        return []
+    return [float(t) for t in starts if isinstance(t, (int, float)) and not isinstance(t, bool)]
+
+
+def zulassen(
+    konfig: dict[str, Any] | None,
+    *,
+    reservieren: bool = True,
+    frei: int | None = None,
+    sessions: int | None = None,
+    jetzt: float | None = None,
+) -> tuple[bool, str]:
+    """(darf starten?, Satz dazu) — die Zulassung aller Starter (#1184).
+
+    Erst die Notbremsen aus :func:`platz_frei` (Mindestmaß, ``max_sessions``), dann das
+    Budget (:func:`budget_urteil`) gegen alle Zulassungen der letzten ``anlauf_s``
+    Sekunden — eine frische Session belegt ihren Speicher erst nach dem Anlauf, ohne
+    Vormerkung sähe jeder Wartende denselben freien Speicher. ``reservieren=False`` =
+    nur fragen (Aufpasser-Vorprüfung, CLI), ``True`` = bei Ja den Start vormerken.
+    Kein Linux / keine Messung → wie :func:`platz_frei` „frei“.
+    """
+    if sys.platform != "linux":
+        return platz_frei(konfig, frei, sessions)
+    if frei is None:
+        frei = frei_mib()
+    ok, grund = platz_frei(konfig, frei, sessions)
+    if not ok or frei is None:
+        return ok, grund
+    try:
+        import fcntl  # nur Linux
+    except ImportError:  # Test-Tür sys.platform="linux" auf Windows
+        return budget_urteil(konfig, frei, 0)
+
+    datei = _stand_pfad()
+    zeit = time.time() if jetzt is None else jetzt
+    anlauf = budget(konfig)["anlauf_s"]
+    try:
+        datei.parent.mkdir(parents=True, exist_ok=True)
+        griff = open(datei.with_name(datei.name + ".lock"), "a+", encoding="utf-8")  # noqa: SIM115
+    except OSError as fehler:
+        log.warning("Zulassung: Sperrdatei nicht nutzbar (%s) — nur Budget ohne Vormerkung", fehler)
+        return budget_urteil(konfig, frei, 0)
+    with griff:
+        fcntl.flock(griff, fcntl.LOCK_EX)
+        starts = [t for t in _starts_lesen(datei) if 0 <= zeit - t < anlauf]
+        ok, text = budget_urteil(konfig, frei, len(starts))
+        if ok and reservieren:
+            starts.append(zeit)
+            tmp = datei.with_name(datei.name + ".neu")
+            tmp.write_text(json.dumps({"starts": starts}), encoding="utf-8")
+            os.replace(tmp, datei)
+    return ok, text
+
+
+def slice_praefix(
+    konfig: dict[str, Any] | None,
+    einheit: str,
+    *,
+    uid: int | None = None,
+    hat: Callable[[str], object] | None = None,
+    bus_da: Callable[[Path], bool] | None = None,
+) -> list[str]:
+    """Präfix-Wörter, die einen Claude-Start in die Bau-Slice legen (#1184), sonst ``[]``.
+
+    ``systemd-run --user --scope --slice=<slice> --unit=<einheit> -- choom -n <n> --
+    env TMPDIR=<tmpdir> …`` — ``--scope``, ``choom`` und ``env`` führen per exec aus, die
+    PID bleibt die von ``claude`` (Aufpasser und Zählung sehen sie weiter). Kein Linux,
+    ``slice`` leer, Werkzeug fehlt oder kein User-Bus → ``[]`` mit Warnung, nie Abbruch.
+    ``uid``/``hat``/``bus_da`` = Test-Türen.
+    """
+    block = (konfig or {}).get("bau_schutz") if isinstance(konfig, dict) else None
+    werte = {**config.DEFAULTS["bau_schutz"], **(block if isinstance(block, dict) else {})}
+    if sys.platform != "linux" or not werte.get("slice") or os.environ.get("TO_SPAWN_BAU_SLICE") == "aus":
+        return []  # TO_SPAWN_BAU_SLICE=aus: Test-Tür (Suite auf Linux startet Attrappen, keine Scopes)
+    import shutil
+
+    finde = hat or shutil.which
+    fehlt = [w for w in ("systemd-run", "choom") if not finde(w)]
+    nutzer = os.getuid() if uid is None else uid  # type: ignore[attr-defined,unused-ignore]
+    laufzeit = f"/run/user/{nutzer}"  # Text, nicht Path: bleibt auch in Windows-Tests POSIX
+    if fehlt or not (bus_da or Path.exists)(Path(laufzeit, "bus")):
+        log.warning("Start ohne Bau-Slice: %s", f"fehlt {', '.join(fehlt)}" if fehlt else "kein User-Bus")
+        return []
+    return [
+        "env",
+        f"XDG_RUNTIME_DIR={laufzeit}",
+        f"DBUS_SESSION_BUS_ADDRESS=unix:path={laufzeit}/bus",
+        "systemd-run", "--user", "--scope", "--quiet",
+        f"--slice={werte['slice']}",
+        f"--unit={einheit}-{os.getpid()}",
+        "--",
+        "choom", "-n", str(int(werte["choom"])), "--",
+        "env", f"TMPDIR={werte['tmpdir']}",
+    ]  # fmt: skip
+
+
 def auf_platz_warten(
     konfig: dict[str, Any] | None,
     *,
     wer: str = "Session",
-    pruefen: Callable[[dict[str, Any] | None], tuple[bool, str]] = platz_frei,
+    pruefen: Callable[[dict[str, Any] | None], tuple[bool, str]] = zulassen,
     schlafen: Callable[[float], object] = time.sleep,
     takt_s: int = 60,
     meldung_alle: int = 5,
@@ -208,6 +362,6 @@ def cli(konfig: dict[str, Any] | None, nur_staffel: bool = False) -> int:
     if nur_staffel:
         print(staffel_s(konfig))
         return 0
-    ok, grund = platz_frei(konfig)
+    ok, grund = zulassen(konfig, reservieren=False)
     print(grund)
     return 0 if ok else EXIT_VOLL
