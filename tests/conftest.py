@@ -47,6 +47,7 @@ def _platte_kein_urteil(monkeypatch: pytest.MonkeyPatch) -> None:
     from to_spawn import speicher
 
     monkeypatch.setattr(speicher, "platte_frei_gb", lambda pfad=None: None)
+    monkeypatch.setenv("TO_SPAWN_PLATTE", "aus")  # Subprozesse erben nur Env, nicht den Patch oben
     # Seit #257 Fixrunde 1 (F5) brechen bau.py/wache.py ohne GitHub-Origin mit Exit 2 ab
     # (kein stiller DuoPlus-Rückfall mehr). Die Weg-Tests arbeiten mit lokalen bare-Origins
     # → die ausdrückliche Vorgabe ``TO_SPAWN_GH_REPO`` gilt nur, wenn kein GitHub-Origin

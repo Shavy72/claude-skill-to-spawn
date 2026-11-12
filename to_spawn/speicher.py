@@ -229,7 +229,14 @@ PLATTE_RAEUMEN_ABSTAND_S = 1800
 
 
 def platte_frei_gb(pfad: Path | None = None) -> float | None:
-    """Freie GB auf der Platte von ``pfad`` (Vorgabe Home); ``None`` = nicht messbar."""
+    """Freie GB auf der Platte von ``pfad`` (Vorgabe Home); ``None`` = nicht messbar.
+
+    ``TO_SPAWN_PLATTE=aus`` = Test-Tür: kein Urteil. Testprozesse (wache/bau als Subprozess)
+    erben nur Env — ohne sie mäße ein Test mit ``HOME`` in einem kleinen tmpfs „knapp“
+    und startete echtes Aufräumen (docker prune, journalctl, /tmp).
+    """
+    if os.environ.get("TO_SPAWN_PLATTE") == "aus":
+        return None
     try:
         return shutil.disk_usage(pfad or Path.home()).free / 1024**3
     except OSError:

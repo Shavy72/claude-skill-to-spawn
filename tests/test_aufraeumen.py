@@ -10,6 +10,7 @@ from __future__ import annotations
 import datetime as dt
 import os
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -109,6 +110,17 @@ def test_loesch_sperre_schuetzt_home_und_claude(tmp_path: Path) -> None:
     assert aufraeumen._loesch_sperre(tmp_path / ".claude" / "x", tmp_path)
     (tmp_path / "duoplus-1").mkdir()
     assert aufraeumen._loesch_sperre(tmp_path / "duoplus-1", tmp_path) is None
+
+
+def test_platten_tuer_gilt_auch_im_subprozess(tmp_path: Path) -> None:
+    """Subprozess (wie wache.py im Weg-Test) misst die Platte nie — sonst echtes Aufräumen."""
+    code = "from to_spawn import speicher; print(speicher.platte_frei_gb())"
+    wurzel = Path(__file__).resolve().parent.parent
+    aus = subprocess.run(
+        [sys.executable, "-c", code], cwd=wurzel, capture_output=True, text=True, check=True,
+        env={**os.environ, "HOME": str(tmp_path)},
+    )  # fmt: skip
+    assert aus.stdout.strip() == "None"
 
 
 def test_platten_sperre_raeumt_auf_dann_ablehnung(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -215,7 +227,9 @@ def test_trocken_worktree_bleibt_ohne_protokoll(welt: dict[str, Path]) -> None:
 
 
 @pytest.mark.parametrize("besetzt", [True, None])
-def test_besetzt_oder_unmessbar_bleibt(monkeypatch: pytest.MonkeyPatch, welt: dict[str, Path], besetzt: bool | None) -> None:
+def test_besetzt_oder_unmessbar_bleibt(
+    monkeypatch: pytest.MonkeyPatch, welt: dict[str, Path], besetzt: bool | None
+) -> None:
     wt, home = welt["wt"], welt["home"]
     monkeypatch.setattr(aufraeumen, "_arbeitet_darin", lambda pfad: (besetzt, "Messung: Probe"))
     assert aufraeumen.darf_weg(wt, geschlossen=True) == (False, "Messung: Probe")
