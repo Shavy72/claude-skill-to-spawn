@@ -31,6 +31,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import shutil
 import sys
 import time
 from collections.abc import Callable
@@ -160,9 +161,7 @@ def platz_frei(
     if frei is None and sessions is None:
         return True, "Speicher: kein Urteil (/proc nicht lesbar) — Start erlaubt"
     if frei is not None and frei < werte["min_frei_mib"]:
-        return False, (
-            f"Speicher knapp: {_gb_text(frei)} frei, Mindestmaß {_gb_text(werte['min_frei_mib'])}"
-        )
+        return False, (f"Speicher knapp: {_gb_text(frei)} frei, Mindestmaß {_gb_text(werte['min_frei_mib'])}")
     if sessions is not None and sessions >= werte["max_sessions"]:
         return False, f"schon {sessions} Claude-Sessions (Obergrenze {werte['max_sessions']})"
     frei_text = _gb_text(frei) if frei is not None else "unbekannt"
@@ -189,9 +188,7 @@ def _stand_pfad() -> Path:
     return Path(os.environ.get("TO_SPAWN_ZULASSUNG_STAND") or Path.home() / ".to-spawn-zulassung.json")
 
 
-def budget_urteil(
-    konfig: dict[str, Any] | None, frei: int, anlaufend: int
-) -> tuple[bool, str]:
+def budget_urteil(konfig: dict[str, Any] | None, frei: int, anlaufend: int) -> tuple[bool, str]:
     """Reine Rechnung: reicht ``frei`` (MiB) nach Abzug von ``anlaufend`` vorgemerkten Sessions?
 
     Regel: ``frei − anlaufend × bedarf ≥ reserve + bedarf``. Die Reserve gehört sshd,
@@ -222,6 +219,59 @@ def _starts_lesen(datei: Path) -> list[float]:
     return [float(t) for t in starts if isinstance(t, (int, float)) and not isinstance(t, bool)]
 
 
+#: Mindestabstand zweier Aufräum-Läufe aus der Platten-Sperre (Stempel-Datei, alle Starter).
+#: ponytail: fester Abstand, eigener Konfig-Key erst, wenn 30 min nicht passen.
+PLATTE_RAEUMEN_ABSTAND_S = 1800
+
+
+def platte_frei_gb(pfad: Path | None = None) -> float | None:
+    """Freie GB auf der Platte von ``pfad`` (Vorgabe Home); ``None`` = nicht messbar."""
+    try:
+        return shutil.disk_usage(pfad or Path.home()).free / 1024**3
+    except OSError:
+        return None
+
+
+def _raeumen_stempel() -> Path:
+    return _stand_pfad().with_name(".to-spawn-aufraeumen.stand")
+
+
+def platte_urteil(konfig: dict[str, Any] | None, *, raeumen: bool = True) -> tuple[bool, str]:
+    """(genug Platte?, Satz dazu) — unter ``platte_min_gb`` erst einmal aufräumen (#1184).
+
+    ``raeumen=False`` = nur fragen. Aufgeräumt wird höchstens alle
+    :data:`PLATTE_RAEUMEN_ABSTAND_S` Sekunden, sonst räumte jeder Wartezyklus neu auf.
+    Nicht messbar → kein Urteil, also frei.
+    """
+    grenze = budget(konfig)["platte_min_gb"]
+    frei = platte_frei_gb()
+    if frei is None or frei >= grenze:
+        return True, "Platte: genug frei"
+    stempel = _raeumen_stempel()
+    try:
+        zuletzt = stempel.stat().st_mtime
+    except OSError:
+        zuletzt = 0.0
+    if raeumen and time.time() - zuletzt >= PLATTE_RAEUMEN_ABSTAND_S:
+        from to_spawn import aufraeumen  # spät: aufraeumen braucht speicher nicht, hält Import schlank
+
+        log.warning("Platte knapp (%.1f GB frei, Mindestmaß %s GB) — räume auf", frei, grenze)
+        try:
+            stempel.touch()
+        except OSError as fehler:
+            log.warning("Aufräum-Stempel nicht schreibbar: %s", fehler)
+        try:
+            aufraeumen.taeglich()
+        except OSError as fehler:
+            log.warning("Aufräumen gescheitert: %s", fehler)
+        frei = platte_frei_gb()
+        if frei is None or frei >= grenze:
+            return True, "Platte: nach Aufräumen genug frei"
+    grund = f"Platte voll: {frei:.1f} GB frei, Mindestmaß {grenze} GB".replace(".", ",", 1)
+    log.warning("%s", grund)
+    return False, grund
+
+
 def zulassen(
     konfig: dict[str, Any] | None,
     *,
@@ -232,7 +282,8 @@ def zulassen(
 ) -> tuple[bool, str]:
     """(darf starten?, Satz dazu) — die Zulassung aller Starter (#1184).
 
-    Erst die Notbremsen aus :func:`platz_frei` (Mindestmaß, ``max_sessions``), dann das
+    Erst die Notbremsen aus :func:`platz_frei` (Mindestmaß, ``max_sessions``), dann die
+    Platte (:func:`platte_urteil`, räumt nur bei ``reservieren`` auf), dann das
     Budget (:func:`budget_urteil`) gegen alle Zulassungen der letzten ``anlauf_s``
     Sekunden — eine frische Session belegt ihren Speicher erst nach dem Anlauf, ohne
     Vormerkung sähe jeder Wartende denselben freien Speicher. ``reservieren=False`` =
@@ -245,6 +296,9 @@ def zulassen(
         frei = frei_mib()
     ok, grund = platz_frei(konfig, frei, sessions)
     if not ok or frei is None:
+        return ok, grund
+    ok, grund = platte_urteil(konfig, raeumen=reservieren)
+    if not ok:
         return ok, grund
     try:
         import fcntl  # nur Linux

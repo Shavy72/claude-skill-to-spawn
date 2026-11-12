@@ -1,0 +1,13 @@
+# Platte hält sich selbst sauber (#1184): fertige Worktrees/Klone, Docker-Reste,
+# alte Test-Ordner, User-Journal. Log: journalctl --user -u bau-aufraeumen,
+# ~/geloescht-<Datum>.txt, ~/braucht-blick.txt. Keine Mail.
+# Einrichten: cp nest/bau-aufraeumen.* ~/.config/systemd/user/ &&
+#   systemctl --user daemon-reload && systemctl --user enable --now bau-aufraeumen.timer
+[Unit]
+Description=to-spawn: Platte aufräumen (#1184)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/env python3 %h/.claude/skills/to-spawn/to_spawn.py aufraeumen
+Nice=10
+IOSchedulingClass=idle

@@ -1,0 +1,11 @@
+# Täglich aufräumen (#1184); Persistent=true holt einen verpassten Lauf nach dem Hochfahren nach.
+[Unit]
+Description=to-spawn: Platte täglich aufräumen (#1184)
+
+[Timer]
+OnCalendar=*-*-* 04:30:00
+RandomizedDelaySec=15min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

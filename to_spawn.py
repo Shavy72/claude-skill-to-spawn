@@ -33,6 +33,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from to_spawn import (  # noqa: E402
     aufpasser,
+    aufraeumen,
     aufseher_stand,
     bau_log,
     befund,
@@ -505,6 +506,10 @@ def main(argv: list[str] | None = None) -> int:
         "--staffel", action="store_true", help="nur die Staffel-Pause in Sekunden ausgeben"
     )
 
+    # Platte aufräumen (#1184): fertige Worktrees/Klone + Bau-Müll; Timer nest/bau-aufraeumen.timer.
+    p_raeumen = unter.add_parser("aufraeumen", help="fertige Worktrees/Klone und Bau-Müll entfernen")
+    p_raeumen.add_argument("--trocken", action="store_true", help="nur zeigen, nichts löschen")
+
     # Startklar-Prüfung (#450): venv, Schlüssel, Aufseher-Werkzeuge — Exit 0 ok / 1 rot.
     p_startklar = unter.add_parser("startklar", help="Aufseher-Ordner vor dem Spec-Start prüfen (Exit 0/1)")
     p_startklar.add_argument("spec", type=int)
@@ -571,6 +576,8 @@ def main(argv: list[str] | None = None) -> int:
         code, text = startklar.ausgabe(startklar.pruefe(ordner, args.spec))
         print(text)
         return code
+    if args.befehl == "aufraeumen":
+        return aufraeumen.cli(trocken=args.trocken)
     if args.befehl == "speicher":
         # Nur lesen: legt keine Konfig an (kein config.sicherstellen).
         return speicher.cli(config.lade(_repo_aus_umgebung()), nur_staffel=args.staffel)
