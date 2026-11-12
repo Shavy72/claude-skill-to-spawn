@@ -123,7 +123,14 @@ def test_platten_tuer_gilt_auch_im_subprozess(tmp_path: Path) -> None:
     assert aus.stdout.strip() == "None"
 
 
-def test_platten_sperre_raeumt_auf_dann_ablehnung(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+@pytest.fixture
+def freigabe_echt(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Aufräum-Freigabe wie im Server-Startweg; ``taeglich`` ist im Test immer Attrappe.
+    Gepatcht statt Env: pytest setzt ``PYTEST_CURRENT_TEST`` je Phase neu."""
+    monkeypatch.setattr(speicher, "aufraeumen_freigegeben", lambda: True)
+
+
+def test_platten_sperre_raeumt_auf_dann_ablehnung(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, freigabe_echt: None) -> None:
     monkeypatch.setenv("TO_SPAWN_ZULASSUNG_STAND", str(tmp_path / "zulassung.json"))
     messungen = iter([10.0, 12.0, 12.0])
     monkeypatch.setattr(speicher, "platte_frei_gb", lambda pfad=None: next(messungen))
@@ -137,7 +144,7 @@ def test_platten_sperre_raeumt_auf_dann_ablehnung(monkeypatch: pytest.MonkeyPatc
     assert laeufe == [False]
 
 
-def test_platten_sperre_in_zulassen(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_platten_sperre_in_zulassen(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, freigabe_echt: None) -> None:
     monkeypatch.setattr(speicher.sys, "platform", "linux")
     monkeypatch.setenv("TO_SPAWN_ZULASSUNG_STAND", str(tmp_path / "zulassung.json"))
     messungen = iter([5.0, 5.0, 40.0])

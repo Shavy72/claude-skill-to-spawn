@@ -247,10 +247,24 @@ def _raeumen_stempel() -> Path:
     return _stand_pfad().with_name(".to-spawn-aufraeumen.stand")
 
 
+def aufraeumen_freigegeben() -> bool:
+    """Darf die Platten-Sperre selbst zerstörend aufräumen? Nur mit ``TO_SPAWN_AUFRAEUMEN=echt``.
+
+    Vorfall #1184: Testprozesse hielten die Platte für knapp und lösten so ``docker prune``,
+    ``journalctl --vacuum`` und Löschen unter ``/var/tmp/bau`` aus. Darum räumt die
+    Start-Zulassung nur auf ausdrückliche Freigabe (Bau-Startweg auf dem Server,
+    ``skripte/spawn_srv.sh``) und nie unter pytest — ``PYTEST_CURRENT_TEST`` erben auch
+    Subprozesse. Ohne Freigabe: nur warten + Log-Zeile; der Timer und
+    ``to_spawn.py aufraeumen`` gehen nicht über diese Tür.
+    """
+    return os.environ.get("TO_SPAWN_AUFRAEUMEN") == "echt" and "PYTEST_CURRENT_TEST" not in os.environ
+
+
 def platte_urteil(konfig: dict[str, Any] | None, *, raeumen: bool = True) -> tuple[bool, str]:
     """(genug Platte?, Satz dazu) — unter ``platte_min_gb`` erst einmal aufräumen (#1184).
 
-    ``raeumen=False`` = nur fragen. Aufgeräumt wird höchstens alle
+    ``raeumen=False`` = nur fragen. Aufräumen zusätzlich nur mit
+    :func:`aufraeumen_freigegeben`. Aufgeräumt wird höchstens alle
     :data:`PLATTE_RAEUMEN_ABSTAND_S` Sekunden, sonst räumte jeder Wartezyklus neu auf.
     Nicht messbar → kein Urteil, also frei.
     """
@@ -263,7 +277,14 @@ def platte_urteil(konfig: dict[str, Any] | None, *, raeumen: bool = True) -> tup
         zuletzt = stempel.stat().st_mtime
     except OSError:
         zuletzt = 0.0
-    if raeumen and time.time() - zuletzt >= PLATTE_RAEUMEN_ABSTAND_S:
+    if raeumen and not aufraeumen_freigegeben():
+        log.warning(
+            "Platte knapp (%.1f GB frei, Mindestmaß %s GB) — Aufräumen nicht freigegeben "
+            "(TO_SPAWN_AUFRAEUMEN=echt fehlt), nur warten",
+            frei,
+            grenze,
+        )
+    elif raeumen and time.time() - zuletzt >= PLATTE_RAEUMEN_ABSTAND_S:
         from to_spawn import aufraeumen  # spät: aufraeumen braucht speicher nicht, hält Import schlank
 
         log.warning("Platte knapp (%.1f GB frei, Mindestmaß %s GB) — räume auf", frei, grenze)

@@ -41,13 +41,14 @@ def _keine_to_spawn_umgebung(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
-def _platte_kein_urteil(monkeypatch: pytest.MonkeyPatch) -> None:
+def _platte_kein_urteil(monkeypatch: pytest.MonkeyPatch, _keine_to_spawn_umgebung: None) -> None:
     """Platten-Sperre (#1184) misst in Tests nie die echte Platte — sonst räumte eine
     knappe Testmaschine mitten im Lauf echte Worktrees auf. Eigene Tests setzen den Wert."""
     from to_spawn import speicher
 
     monkeypatch.setattr(speicher, "platte_frei_gb", lambda pfad=None: None)
     monkeypatch.setenv("TO_SPAWN_PLATTE", "aus")  # Subprozesse erben nur Env, nicht den Patch oben
+    monkeypatch.setenv("TO_SPAWN_AUFRAEUMEN", "aus")  # hart: nie echtes Aufräumen aus der Zulassung
     # Seit #257 Fixrunde 1 (F5) brechen bau.py/wache.py ohne GitHub-Origin mit Exit 2 ab
     # (kein stiller DuoPlus-Rückfall mehr). Die Weg-Tests arbeiten mit lokalen bare-Origins
     # → die ausdrückliche Vorgabe ``TO_SPAWN_GH_REPO`` gilt nur, wenn kein GitHub-Origin

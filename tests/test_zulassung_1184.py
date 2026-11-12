@@ -225,3 +225,57 @@ def test_slice_praefix_legt_tmpdir_an_und_faellt_weich(monkeypatch: pytest.Monke
     praefix = _server_praefix(monkeypatch, kaputt)
     assert praefix[-4:] == ["choom", "-n", "300", "--"]
     assert not any(w.startswith("TMPDIR=") for w in praefix)
+
+
+# --- Platten-Sperre räumt nur mit Freigabe (#1184, Vorfall Bau-Server-Testlauf) ----------
+
+
+@pytest.fixture
+def platte_knapp(linux_mit_sperre: Path, monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Platte knapp + Befehls-Protokoll an allen Ausführ-Stellen (Subprozess, Löschen)."""
+    import os
+    import shutil
+    import subprocess
+
+    protokoll: list[str] = []
+
+    def aufzeichnen(name: str):  # noqa: ANN202
+        def attrappe(*args: object, **_kw: object) -> None:
+            protokoll.append(f"{name} {args[:1]}")
+            raise AssertionError(f"externer Befehl ohne Freigabe: {name} {args[:1]}")
+
+        return attrappe
+
+    monkeypatch.setattr(subprocess, "run", aufzeichnen("run"))
+    monkeypatch.setattr(subprocess, "Popen", aufzeichnen("Popen"))
+    monkeypatch.setattr(shutil, "rmtree", aufzeichnen("rmtree"))
+    monkeypatch.setattr(os, "remove", aufzeichnen("remove"))
+    monkeypatch.setattr(os, "unlink", aufzeichnen("unlink"))
+    monkeypatch.setattr(speicher, "platte_frei_gb", lambda pfad=None: 0.5)
+    return protokoll
+
+
+@pytest.mark.parametrize("freigabe", [None, "aus", "echt"])
+def test_platte_knapp_ohne_freigabe_kein_externer_befehl(
+    platte_knapp: list[str], monkeypatch: pytest.MonkeyPatch, freigabe: str | None
+) -> None:
+    # "echt" zählt unter pytest nie (PYTEST_CURRENT_TEST erben auch Subprozesse).
+    if freigabe is None:
+        monkeypatch.delenv("TO_SPAWN_AUFRAEUMEN", raising=False)
+    else:
+        monkeypatch.setenv("TO_SPAWN_AUFRAEUMEN", freigabe)
+    ok, grund = speicher.zulassen(None, frei=40 * GB, sessions=0)
+    assert not ok and grund.startswith("Platte voll")
+    assert platte_knapp == []
+
+
+def test_platte_knapp_mit_freigabe_raeumt_auf(platte_knapp: list[str], monkeypatch: pytest.MonkeyPatch) -> None:
+    from to_spawn import aufraeumen
+
+    gerufen: list[bool] = []
+    monkeypatch.setattr(aufraeumen, "taeglich", lambda **_kw: gerufen.append(True) or 0)
+    monkeypatch.setenv("TO_SPAWN_AUFRAEUMEN", "echt")
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+    speicher.zulassen(None, frei=40 * GB, sessions=0)
+    assert gerufen == [True]
+    assert platte_knapp == []

@@ -127,7 +127,9 @@ SESSION="spec-$SPEC"
 # ~/.bashrc (``REPO``), sonst startet ``bau`` in einem anderen Repo (#212). Seit #257 rufen
 # die Fenster die Skill-Skripte direkt auf (``bau.py``/``wache.py``), nicht die Shell-
 # Funktionen ``bau``/``wache`` aus ~/.bashrc — ein Fremd-Repo hat die nicht.
-VORSPANN="export REPO=$(printf %q "$REPO") TO_SPAWN_HOME=$(printf %q "$SKILL_HOME") TO_SPAWN_REPO=$(printf %q "$REPO");"
+# TO_SPAWN_AUFRAEUMEN=echt: nur hier darf die Platten-Sperre selbst aufräumen (#1184,
+# speicher.aufraeumen_freigegeben; unter pytest trotzdem nie).
+VORSPANN="export REPO=$(printf %q "$REPO") TO_SPAWN_HOME=$(printf %q "$SKILL_HOME") TO_SPAWN_REPO=$(printf %q "$REPO") TO_SPAWN_AUFRAEUMEN=echt;"
 # GEPLANT = echte Fensterbefehle, KURZ = Kurzform ``bau <N> [--umzug …]`` / ``wache <S>`` für
 # Anzeige und Fenstername (erste zwei Wörter; sessions_stand/aufpasser lesen die Namen) —
 # beide Listen laufen parallel.
