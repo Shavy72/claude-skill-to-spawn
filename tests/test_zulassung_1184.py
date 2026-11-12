@@ -163,7 +163,7 @@ def test_slice_praefix_server(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(speicher.sys, "platform", "linux")
     monkeypatch.delenv("TO_SPAWN_BAU_SLICE", raising=False)
     praefix = speicher.slice_praefix(
-        None, "bau-7", uid=1000, hat=lambda _: True, bus_da=lambda _: True
+        None, "bau-7", uid=1000, hat=lambda _: True, bus_da=lambda _: True, anlegen=lambda _: None
     )
     text = " ".join(praefix)
     assert "systemd-run --user --scope --quiet --slice=bau.slice --unit=bau-7-" in text
@@ -198,3 +198,30 @@ def test_slice_praefix_aus_ohne_bus_oder_leer(monkeypatch: pytest.MonkeyPatch) -
         )
         == []
     )
+
+
+def _server_praefix(monkeypatch: pytest.MonkeyPatch, anlegen) -> list[str]:  # noqa: ANN001
+    monkeypatch.setattr(speicher.sys, "platform", "linux")
+    monkeypatch.delenv("TO_SPAWN_BAU_SLICE", raising=False)
+    return speicher.slice_praefix(None, "bau-7", uid=1000, hat=lambda _: True, bus_da=lambda _: True, anlegen=anlegen)
+
+
+def test_slice_praefix_unit_name_je_start_eindeutig(monkeypatch: pytest.MonkeyPatch) -> None:
+    """S12a: zwei Staffel-Runden im selben bau.py bekommen verschiedene Scope-Namen."""
+    namen = [next(w for w in _server_praefix(monkeypatch, lambda _: None) if w.startswith("--unit=")) for _ in range(2)]
+    assert namen[0] != namen[1]
+    assert all(n.startswith("--unit=bau-7-") for n in namen)
+
+
+def test_slice_praefix_legt_tmpdir_an_und_faellt_weich(monkeypatch: pytest.MonkeyPatch) -> None:
+    """S12b: TMPDIR wird angelegt; scheitert das, fehlt nur der TMPDIR-Teil."""
+    angelegt: list[Path] = []
+    assert _server_praefix(monkeypatch, angelegt.append)[-2:] == ["env", "TMPDIR=/var/tmp/bau"]
+    assert angelegt == [Path("/var/tmp/bau")]
+
+    def kaputt(_p: Path) -> None:
+        raise PermissionError("nein")
+
+    praefix = _server_praefix(monkeypatch, kaputt)
+    assert praefix[-4:] == ["choom", "-n", "300", "--"]
+    assert not any(w.startswith("TMPDIR=") for w in praefix)

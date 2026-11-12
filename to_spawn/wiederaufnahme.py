@@ -36,27 +36,55 @@ log = logging.getLogger("to_spawn.wiederaufnahme")
 KLON_MUSTER = re.compile(r".+-(\d+)")
 
 
+#: Wiederholungen der gh-Abfrage nach dem Boot (Netz/gh oft noch nicht bereit, #1184 S7).
+GH_VERSUCHE = 5
+GH_TAKT_S = 60.0
+
+
 def offene_specs(
     heim: Path,
     ist_offen: Callable[[str, Path], bool | None] | None = None,
+    *,
+    versuche: int = 1,
+    takt_s: float = GH_TAKT_S,
+    schlafen: Callable[[float], object] = time.sleep,
+    unlesbar: list[str] | None = None,
 ) -> list[tuple[str, Path]]:
     """``(spec, klon)`` je Klon unter ``heim`` mit ``.to-spawn/sessions/`` und offenem
-    Spec-Issue. Nicht lesbares GitHub zählt als nicht offen (kein Blindstart)."""
+    Spec-Issue. Nicht lesbares GitHub zählt als nicht offen (kein Blindstart); solche Specs
+    werden bis zu ``versuche``-mal im Abstand ``takt_s`` erneut gefragt. Was danach noch
+    unlesbar ist, landet in ``unlesbar`` (falls übergeben)."""
     pruefen = ist_offen or (lambda spec, klon: gh.ticket_offen(spec, cwd=klon))
-    gefunden: list[tuple[str, Path]] = []
+    rest: list[tuple[str, Path]] = []
     for klon in sorted(heim.iterdir() if heim.is_dir() else []):
         treffer = KLON_MUSTER.fullmatch(klon.name)
-        if not treffer or not (klon / ".to-spawn" / "sessions").is_dir():
-            continue
-        spec = treffer.group(1)
-        offen = pruefen(spec, klon)
-        if offen is None:
-            log.warning("Spec #%s (%s): GitHub nicht lesbar — übersprungen", spec, klon)
-        elif offen:
-            gefunden.append((spec, klon))
-        else:
-            log.info("Spec #%s (%s): Issue zu — nichts zu tun", spec, klon)
-    return gefunden
+        if treffer and (klon / ".to-spawn" / "sessions").is_dir():
+            rest.append((treffer.group(1), klon))
+    gefunden: list[tuple[str, Path]] = []
+    for versuch in range(1, max(1, versuche) + 1):
+        if versuch > 1:
+            log.info(
+                "GitHub nicht lesbar für Spec %s — Versuch %d/%d in %g s",
+                ", ".join(f"#{s}" for s, _ in rest), versuch, versuche, takt_s,
+            )  # fmt: skip
+            schlafen(takt_s)
+        offen_unklar: list[tuple[str, Path]] = []
+        for spec, klon in rest:
+            offen = pruefen(spec, klon)
+            if offen is None:
+                offen_unklar.append((spec, klon))
+            elif offen:
+                gefunden.append((spec, klon))
+            else:
+                log.info("Spec #%s (%s): Issue zu — nichts zu tun", spec, klon)
+        rest = offen_unklar
+        if not rest:
+            break
+    for spec, klon in rest:
+        log.warning("Spec #%s (%s): GitHub nicht lesbar — übersprungen", spec, klon)
+    if unlesbar is not None:
+        unlesbar.extend(spec for spec, _ in rest)
+    return sorted(gefunden, key=lambda t: t[1])
 
 
 def _tmux(*args: str) -> subprocess.CompletedProcess[str]:
@@ -116,11 +144,27 @@ def aufseher_starten(spec: str, klon: Path, *, trocken: bool = False) -> bool:
     return True
 
 
-def wiederaufnehmen(heim: Path, *, trocken: bool = False) -> int:
-    """Je offener Spec ohne tmux-Sitzung einmal den Aufseher; Exit 1, wenn ein Start scheiterte."""
+def wiederaufnehmen(
+    heim: Path,
+    *,
+    trocken: bool = False,
+    versuche: int = GH_VERSUCHE,
+    takt_s: float = GH_TAKT_S,
+    schlafen: Callable[[float], object] = time.sleep,
+) -> int:
+    """Je offener Spec ohne tmux-Sitzung einmal den Aufseher; Exit 1, wenn ein Start
+    scheiterte oder GitHub für eine Spec auch nach ``versuche`` Abfragen unlesbar blieb
+    (die Unit startet dann neu, statt still nichts zu tun)."""
     code = 0
     gestartet = 0
-    specs = offene_specs(heim)
+    unlesbar: list[str] = []
+    specs = offene_specs(heim, versuche=versuche, takt_s=takt_s, schlafen=schlafen, unlesbar=unlesbar)
+    if unlesbar:
+        log.warning(
+            "Wiederaufnahme unvollständig: GitHub nach %d Versuchen nicht lesbar für Spec %s",
+            versuche, ", ".join(f"#{s}" for s in unlesbar),
+        )  # fmt: skip
+        code = 1
     if specs and not trocken:
         tmux_dienst_abwarten()
     for spec, klon in specs:

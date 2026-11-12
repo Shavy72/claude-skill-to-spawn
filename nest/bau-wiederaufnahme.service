@@ -10,11 +10,18 @@
 [Unit]
 Description=to-spawn: Bau nach Neustart wiederaufnehmen (#1184)
 After=default.target
+# Netz für Restart=on-failure: höchstens 3 Neustarts je Stunde.
+StartLimitIntervalSec=1h
+StartLimitBurst=3
 
 [Service]
 Type=oneshot
-# ponytail: feste 30 s auf Netz/gh, Upgrade-Pfad: gh-Probe mit Wiederholung im Modul.
+# Erste 30 s Schonfrist für Netz/gh; das Modul fragt unlesbares gh danach noch 5× im
+# 60-s-Takt und endet sonst mit Exit 1 → Neustart der Unit (oneshot+Restart braucht
+# systemd ≥ 244, Bau-Server hat 257).
 ExecStartPre=/bin/sleep 30
+Restart=on-failure
+RestartSec=120
 WorkingDirectory=%h/.claude/skills/to-spawn
 ExecStart=/usr/bin/env python3 -m to_spawn.wiederaufnahme
 # tmux-Server lebt in dieser Unit weiter — nie mit der Unit beenden.

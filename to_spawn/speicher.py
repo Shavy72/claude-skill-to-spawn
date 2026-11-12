@@ -28,6 +28,7 @@ unabhängig von den Sessions, die gerade auf der Testmaschine laufen.
 
 from __future__ import annotations
 
+import itertools
 import json
 import logging
 import os
@@ -54,6 +55,9 @@ EXIT_VOLL = 5
 #: Kernstück der Wartezeile von :func:`auf_platz_warten` (``<wer> wartet auf Speicher …``).
 #: respawn erkennt daran auf dem Bildschirm, dass bau.py noch vor dem Claude-Start wartet.
 WARTE_TEXT = "wartet auf Speicher"
+
+#: Laufende Nummer je Prozess für eindeutige Scope-Namen in :func:`slice_praefix`.
+_UNIT_ZAEHLER = itertools.count(1)
 
 
 def _meminfo_pfad() -> Path:
@@ -333,14 +337,18 @@ def slice_praefix(
     uid: int | None = None,
     hat: Callable[[str], object] | None = None,
     bus_da: Callable[[Path], bool] | None = None,
+    anlegen: Callable[[Path], object] | None = None,
 ) -> list[str]:
     """Präfix-Wörter, die einen Claude-Start in die Bau-Slice legen (#1184), sonst ``[]``.
 
-    ``systemd-run --user --scope --slice=<slice> --unit=<einheit> -- choom -n <n> --
+    ``systemd-run --user --scope --slice=<slice> --unit=<einheit>-<pid>-<n> -- choom -n <n> --
     env TMPDIR=<tmpdir> …`` — ``--scope``, ``choom`` und ``env`` führen per exec aus, die
     PID bleibt die von ``claude`` (Aufpasser und Zählung sehen sie weiter). Kein Linux,
     ``slice`` leer, Werkzeug fehlt oder kein User-Bus → ``[]`` mit Warnung, nie Abbruch.
-    ``uid``/``hat``/``bus_da`` = Test-Türen.
+    Jeder Aufruf liefert einen eigenen Unit-Namen (Zähler je Prozess), damit die nächste
+    Staffel-Runde nicht an „unit already exists“ scheitert — darum je Start neu aufrufen.
+    ``tmpdir`` wird angelegt; klappt das nicht, fällt nur der ``TMPDIR``-Teil weg.
+    ``uid``/``hat``/``bus_da``/``anlegen`` = Test-Türen.
     """
     block = (konfig or {}).get("bau_schutz") if isinstance(konfig, dict) else None
     werte = {**config.DEFAULTS["bau_schutz"], **(block if isinstance(block, dict) else {})}
@@ -355,16 +363,23 @@ def slice_praefix(
     if fehlt or not (bus_da or Path.exists)(Path(laufzeit, "bus")):
         log.warning("Start ohne Bau-Slice: %s", f"fehlt {', '.join(fehlt)}" if fehlt else "kein User-Bus")
         return []
+    tmp_teil: list[str] = []
+    if werte.get("tmpdir"):
+        try:
+            (anlegen or (lambda p: p.mkdir(parents=True, exist_ok=True)))(Path(werte["tmpdir"]))
+            tmp_teil = ["env", f"TMPDIR={werte['tmpdir']}"]
+        except OSError as exc:
+            log.warning("TMPDIR %s nicht anlegbar (%s) — Start ohne eigenes TMPDIR", werte["tmpdir"], exc)
     return [
         "env",
         f"XDG_RUNTIME_DIR={laufzeit}",
         f"DBUS_SESSION_BUS_ADDRESS=unix:path={laufzeit}/bus",
         "systemd-run", "--user", "--scope", "--quiet",
         f"--slice={werte['slice']}",
-        f"--unit={einheit}-{os.getpid()}",
+        f"--unit={einheit}-{os.getpid()}-{next(_UNIT_ZAEHLER)}",
         "--",
         "choom", "-n", str(int(werte["choom"])), "--",
-        "env", f"TMPDIR={werte['tmpdir']}",
+        *tmp_teil,
     ]  # fmt: skip
 
 

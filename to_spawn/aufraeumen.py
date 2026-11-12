@@ -29,6 +29,7 @@ import subprocess
 import sys
 import time
 from collections.abc import Callable
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -38,6 +39,17 @@ log = logging.getLogger("to_spawn.aufraeumen")
 
 #: Test-Ordner unter ``bau_schutz.tmpdir`` älter als das fliegen raus (Linux).
 TMP_ALTER_S = 2 * 24 * 3600
+
+#: Spec-Klone (``~/duoplus-<nr>``) erst so lange nach dem Schließen des Spec-Issues weg.
+SPEC_KLON_RUHE_S = 3 * 24 * 3600
+
+#: Ignorierte Ordner, die vor dem Löschen nicht gesichert werden (groß, wiederherstellbar).
+MASSEN_ORDNER = frozenset(
+    {"node_modules", ".venv", "venv", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache", ".tox", "dist", "build"}
+)
+
+#: Größer als das wird eine ignorierte Datei nicht gesichert — der Ordner bleibt dann.
+SICHERUNG_MAX_BYTES = 5 * 1024 * 1024
 
 #: Obergrenze des User-Journals (``journalctl --user --vacuum-size``).
 JOURNAL_GRENZE = "200M"
@@ -163,7 +175,7 @@ def darf_weg(pfad: Path, *, geschlossen: bool) -> tuple[bool, str]:
         if code != 0 or liste.count("worktree ") > 1:
             return False, "Klon hat noch verknüpfte Worktrees"
     besetzt, detail = _arbeitet_darin(pfad)
-    if besetzt:
+    if besetzt is None or besetzt:
         return False, detail
     return True, f"geschlossen, sauber, alles auf origin; {detail}"
 
@@ -246,16 +258,85 @@ def _entfernen(pfad: Path, home: Path) -> str | None:
     return None
 
 
+def _wirf(fehler: OSError) -> None:
+    raise fehler  # os.walk verschluckt Lesefehler sonst still
+
+
+def _ignorierte_dateien(pfad: Path) -> list[Path] | None:
+    """Ignorierte Dateien (z. B. ``.env``) relativ zu ``pfad``, ohne Massen-Ordner und Links.
+
+    ``None`` = ``git ls-files`` scheitert. Ignorierte Ordner listet git als Ganzes; sie
+    werden ohne Links durchlaufen, Massen-Ordner darin übersprungen.
+    """
+    code, ausgabe = _git(["ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"], pfad)
+    if code != 0:
+        return None
+    dateien: list[Path] = []
+    for eintrag in filter(None, ausgabe.split("\0")):
+        rel = Path(eintrag.rstrip("/"))
+        ort = pfad / rel
+        if MASSEN_ORDNER & set(rel.parts) or ort.is_symlink():
+            continue
+        if ort.is_file():
+            dateien.append(rel)
+            continue
+        for wurzel, ordner, namen in os.walk(ort, onerror=_wirf):
+            ordner[:] = [o for o in ordner if o not in MASSEN_ORDNER]
+            for name in namen:
+                datei = Path(wurzel, name)
+                if not datei.is_symlink():
+                    dateien.append(datei.relative_to(pfad))
+    return dateien
+
+
+def _sichern(pfad: Path, home: Path, trocken: bool) -> str | None:
+    """Ignorierte Dateien von ``pfad`` nach ``<home>/aufraeum-sicherung/<ordnername>/`` kopieren.
+
+    Rückgabe = Grund, warum ``pfad`` bleiben muss (git scheitert, Datei > 5 MB, Kopie
+    scheitert), sonst ``None``. Ziel existiert schon → Ordnername mit Zeitstempel.
+    ``trocken`` = nur loggen, was gesichert würde.
+    """
+    try:
+        dateien = _ignorierte_dateien(pfad)
+        if dateien is None:
+            return "ignorierte Dateien nicht lesbar (git ls-files scheitert)"
+        for rel in dateien:
+            if (pfad / rel).lstat().st_size > SICHERUNG_MAX_BYTES:
+                return f"ignorierte Datei zu groß für Sicherung (> 5 MB): {rel}"
+        if not dateien:
+            return None
+        if trocken:
+            log.info("trocken: würde sichern aus %s: %s", pfad, ", ".join(str(r) for r in dateien))
+            return None
+        ziel = home / "aufraeum-sicherung" / pfad.name
+        if ziel.exists():
+            ziel = ziel.with_name(f"{pfad.name}-{time.strftime('%Y%m%d-%H%M%S')}")
+        ziel.mkdir(parents=True)  # kein exist_ok: nie in eine fremde Sicherung kopieren
+        for rel in dateien:
+            (ziel / rel).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(pfad / rel, ziel / rel)
+    except OSError as fehler:
+        return f"Sicherung ignorierter Dateien scheitert: {fehler}"
+    log.info("gesichert: %s Datei(en) aus %s nach %s", len(dateien), pfad, ziel)
+    return None
+
+
 def nach_ende(pfad: Path, *, geschlossen: bool, home: Path | None = None, trocken: bool = False) -> bool:
     """Nach dem Ende einer Bau-Session: ``pfad`` entfernen, wenn :func:`darf_weg` ja sagt.
 
     True = entfernt (bzw. bei ``trocken`` = würde entfernt). Nein → Zeile in
-    ``~/braucht-blick.txt``. ``home`` = Ordner der Log-Dateien und Lösch-Wurzel (Tests).
+    ``~/braucht-blick.txt``. Vorher werden ignorierte Dateien (``.env`` …) nach
+    ``~/aufraeum-sicherung/<ordnername>/`` gesichert; scheitert das → bleibt.
+    ``home`` = Ordner der Log-Dateien, Sicherungs- und Lösch-Wurzel (Tests).
     """
     heim = home or Path.home()
     ok, grund = darf_weg(pfad, geschlossen=geschlossen)
     if not ok:
         _blick(heim, pfad, grund)
+        return False
+    sicherung = _sichern(pfad, heim, trocken)
+    if sicherung:
+        _blick(heim, pfad, sicherung)
         return False
     if trocken:
         log.info("trocken: würde entfernen %s (%s)", pfad, grund)
@@ -292,14 +373,26 @@ def kandidaten(home: Path) -> list[Path]:
     return gefunden
 
 
-def _geschlossen(pfad: Path, nr: int) -> bool | None:
+def _zeitpunkt(text: Any) -> float | None:
+    """``closedAt`` von gh (``2026-11-10T12:00:00Z``) als Epoch-Sekunden; ``None`` = unlesbar."""
+    if not isinstance(text, str) or not text:
+        return None
+    try:
+        zeit = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return zeit.timestamp() if zeit.tzinfo else None
+
+
+def _geschlossen(pfad: Path, nr: int) -> tuple[bool, float | None] | None:
+    """(Issue ``nr`` geschlossen?, Schließzeit oder ``None``); ``None`` = nicht abfragbar."""
     repo = gh.repo_aus_origin(pfad)
     if not repo:
         return None
-    daten = gh.json_lauf(["issue", "view", str(nr), "--repo", repo, "--json", "state"], cwd=pfad)
+    daten = gh.json_lauf(["issue", "view", str(nr), "--repo", repo, "--json", "state,closedAt"], cwd=pfad)
     if not isinstance(daten, dict) or "state" not in daten:
         return None
-    return str(daten["state"]).upper() == "CLOSED"
+    return str(daten["state"]).upper() == "CLOSED", _zeitpunkt(daten.get("closedAt"))
 
 
 def _befehl(args: list[str], trocken: bool) -> None:
@@ -315,15 +408,38 @@ def _befehl(args: list[str], trocken: bool) -> None:
     log.info("%s → Exit %s %s", " ".join(args), fertig.returncode, letzte[0])
 
 
-def _tmp_alt(trocken: bool, jetzt: float) -> int:
-    wurzel = Path(str(config.DEFAULTS["bau_schutz"]["tmpdir"]))
+def _frisch_darin(pfad: Path, grenze: float) -> bool:
+    """True, sobald ``pfad`` selbst oder irgendein Eintrag darin mtime ≥ ``grenze`` hat.
+
+    Bricht beim ersten frischen Treffer ab, folgt keinen Links; Lesefehler → ``OSError``.
+    """
+    if pfad.lstat().st_mtime >= grenze:
+        return True
+    if pfad.is_symlink() or not pfad.is_dir():
+        return False
+    for wurzel, ordner, namen in os.walk(pfad, onerror=_wirf):
+        for name in (*ordner, *namen):
+            if os.lstat(os.path.join(wurzel, name)).st_mtime >= grenze:
+                return True
+    return False
+
+
+def _tmp_alt(trocken: bool, jetzt: float, wurzel: Path | None = None) -> int:
+    """Einträge unter ``bau_schutz.tmpdir`` entfernen, deren ganzer Baum älter als
+    :data:`TMP_ALTER_S` ist und in denen sicher kein Prozess arbeitet. ``wurzel`` = Tests."""
+    if wurzel is None:
+        wurzel = Path(str(config.lade()["bau_schutz"]["tmpdir"]))
     if not wurzel.is_dir() or wurzel.is_symlink():
         return 0
     echt = wurzel.resolve()
     weg = 0
     for kind in echt.iterdir():
         try:
-            if kind.is_symlink() or kind.parent != echt or jetzt - kind.lstat().st_mtime < TMP_ALTER_S:
+            if kind.is_symlink() or kind.parent != echt or _frisch_darin(kind, jetzt - TMP_ALTER_S):
+                continue
+            besetzt, detail = _arbeitet_darin(kind)
+            if besetzt is not False:
+                log.info("Test-Ordner bleibt: %s (%s)", kind, detail)
                 continue
             if trocken:
                 log.info("trocken: würde entfernen %s", kind)
@@ -349,10 +465,18 @@ def taeglich(*, trocken: bool = False, home: Path | None = None) -> int:
         if nr is None:
             _blick(heim, pfad, "keine Ticket-/Spec-Nummer erkennbar")
             continue
-        zu = _geschlossen(pfad, nr)
-        if zu is None:
+        zustand = _geschlossen(pfad, nr)
+        if zustand is None:
             _blick(heim, pfad, f"Zustand von #{nr} nicht abfragbar")
             continue
+        zu, seit = zustand
+        if zu and re.fullmatch(r"duoplus-\d+", pfad.name):
+            if seit is None:
+                _blick(heim, pfad, f"Schließzeit von #{nr} nicht lesbar")
+                continue
+            if time.time() - seit < SPEC_KLON_RUHE_S:
+                log.info("bleibt: %s (Spec #%s erst seit weniger als 3 Tagen geschlossen)", pfad, nr)
+                continue
         weg += nach_ende(pfad, geschlossen=zu, home=heim, trocken=trocken)
     if sys.platform == "linux":
         _befehl(["docker", "image", "prune", "-f"], trocken)

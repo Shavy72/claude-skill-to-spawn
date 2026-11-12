@@ -106,6 +106,9 @@ FRAGE_SPERRE_BEFEHL = "node ~/.claude/hooks/smart-zone/staffel/frage-sperre.mjs"
 #: CLI des Skills (Bau-Log-Hooks #204, Umzug-Anfrage #212) — dieselbe Skill-Wurzel wie oben in sys.path.
 TO_SPAWN_CLI = Path(_SKILL) / "to_spawn.py"
 STAFFEL_MAX_DEFAULT = 8
+#: Endet ein Start in der Bau-Slice schneller mit Exit ≠ 0, gilt der Slice-Start als
+#: gescheitert (#1184 S12) — dann einmal ohne Slice-Präfix.
+SLICE_FEHLSTART_S = 5.0
 #: Werkzeug-Rechte der Probesitz-Wegwerf-Session (#214): nur git, Ordner anlegen, Dateien.
 PROBESITZ_RECHTE = ("Bash(git *)", "Bash(mkdir *)", "Write", "Edit", "Read")
 #: Auftrag einer Runde (#285) ist ein Aufseher-Kommentar, kein Dokument.
@@ -975,24 +978,32 @@ def main() -> int:
 
     if not args.sofort and not args.umzug and not args.resume:
         auf_blocker_warten(ticket, max(60, args.takt))
+
     # Pause-Guard (#1184): die gemeinsame Tür aller Starter (Aufpasser frisch und
     # --resume, Aufseher, Kette, respawn). bau:pause/zu → nie starten, auch nicht fortsetzen.
     # Nach dem Blocker-Warten geprüft, damit ein Label aus der Wartezeit zählt.
-    sperre = None if args.probesitz else gh.start_sperre(ticket, cwd=REPO)
-    if sperre:
-        log.warning("Ticket #%s: %s — kein Start, keine Fortsetzung.", ticket, sperre)
+    def gesperrt() -> bool:
+        sperre = None if args.probesitz else gh.start_sperre(ticket, cwd=REPO)
+        if sperre:
+            log.warning("Ticket #%s: %s — kein Start, keine Fortsetzung.", ticket, sperre)
+        return bool(sperre)
+
+    if gesperrt():
         return 0
     # Speicher-Schutz (#257 Paket B, Fixrunde 1 F3), die EINE Stelle vor dem Prozessstart
     # (gilt für Erststart, --resume und --umzug): RAM knapp oder Obergrenze an
     # Claude-Sessions erreicht → warten statt Exit 5, damit das Fenster und der Grund bleiben.
     auf_speicher_warten(konfig, wer=f"bau {ticket}")
+    # Zweite Prüfung (#1184 S10): ein Label oder Schließen aus der Speicher-Wartezeit zählt.
+    if gesperrt():
+        return 0
     # Sandbox erst jetzt (#210): Worktree entsteht vom frischen origin-Stand (nest holt ihn).
     praefix = nest.sandbox_start(konfig, worktree_pfad(ticket), REPO)
     if praefix is None:
         return 2
     cmd = praefix + cmd
-    # Gemeinsame Bau-Slice + Temp auf Platte (#1184), außen um die Sandbox.
-    cmd = speicher.slice_praefix(konfig, f"bau-{ticket}") + cmd
+    # Gemeinsame Bau-Slice + Temp auf Platte (#1184) legt die Staffel-Schleife je Runde
+    # außen um die Sandbox (eigener Scope-Name je Start).
 
     # Vertrauens-Dialog vorab bestätigen (#257): ohne Terminal-Antwort hinge die Session
     # an „Do you trust the files in this folder?“ — Fehler nur als Warnung.
@@ -1033,7 +1044,14 @@ def main() -> int:
         umgebung.update(bau_log_umgebung(ticket, runde, float(umgebung["BAU_SESSION_START"]), effort, spec))
         os.environ.update(umgebung)
         (out / f"prompt-runde{runde}.txt").write_text(cmd[-1] if mit_prompt else "", encoding="utf-8")
-        code, umzug_daten = starte_session(cmd, umzug_datei)
+        slice_woerter = speicher.slice_praefix(konfig, f"bau-{ticket}")
+        beginn = time.monotonic()
+        code, umzug_daten = starte_session(slice_woerter + cmd, umzug_datei)
+        # ponytail: „sofort gescheitert“ = Exit ≠ 0 binnen SLICE_FEHLSTART_S, auch ein früh
+        # sterbendes claude zählt; Upgrade-Pfad: systemd-run-Fehler am stderr erkennen.
+        if slice_woerter and umzug_daten is None and code != 0 and time.monotonic() - beginn < SLICE_FEHLSTART_S:
+            log.warning("Start in der Bau-Slice scheiterte sofort (Exit %s) — einmal ohne Slice.", code)
+            code, umzug_daten = starte_session(cmd, umzug_datei)
         if umzug_daten is not None:
             # Kein Staffel-Neustart: die Session läuft jetzt auf dem Server weiter.
             staffel_datei.unlink(missing_ok=True)
