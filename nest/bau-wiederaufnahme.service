@@ -1,0 +1,25 @@
+# Bau nach Server-Neustart wiederaufnehmen (#1184): je offener Spec (Klon ~/<name>-<S>
+# mit .to-spawn/sessions/, Spec-Issue offen) einmal tmux-Sitzung spec-<S> mit „wache <S>“
+# (--resume, wenn gemerkt). Die bau-Fenster stellt danach der Aufpasser-Cron mit --resume
+# gestaffelt wieder her. Log: journalctl --user -u bau-wiederaufnahme. Keine Mail.
+# Einrichten (als Nutzer bau):
+#   sudo loginctl enable-linger bau
+#   cp nest/bau-wiederaufnahme.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable bau-wiederaufnahme.service
+# Probe ohne Start: cd ~/.claude/skills/to-spawn && python3 -m to_spawn.wiederaufnahme --dry-run
+[Unit]
+Description=to-spawn: Bau nach Neustart wiederaufnehmen (#1184)
+After=default.target
+
+[Service]
+Type=oneshot
+# ponytail: feste 30 s auf Netz/gh, Upgrade-Pfad: gh-Probe mit Wiederholung im Modul.
+ExecStartPre=/bin/sleep 30
+WorkingDirectory=%h/.claude/skills/to-spawn
+ExecStart=/usr/bin/env python3 -m to_spawn.wiederaufnahme
+# tmux-Server lebt in dieser Unit weiter — nie mit der Unit beenden.
+RemainAfterExit=yes
+KillMode=process
+
+[Install]
+WantedBy=default.target

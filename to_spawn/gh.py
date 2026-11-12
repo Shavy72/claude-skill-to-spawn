@@ -86,9 +86,7 @@ def repo_aus_origin(cwd: Path | None = None, fallback: str = "") -> str:
 
 def blocked_by(repo_slug: str, ticket: str, cwd: Path | None = None) -> list[dict] | None:
     """Native Blocker-Kanten eines Tickets (``None`` = Abfrage fehlgeschlagen)."""
-    daten = json_lauf(
-        ["api", f"repos/{repo_slug}/issues/{ticket}/dependencies/blocked_by"], cwd=cwd
-    )
+    daten = json_lauf(["api", f"repos/{repo_slug}/issues/{ticket}/dependencies/blocked_by"], cwd=cwd)
     return daten if isinstance(daten, list) else None
 
 
@@ -102,12 +100,41 @@ def ticket_offen(ticket: str, cwd: Path | None = None) -> bool | None:
 
 def ticket_daten(ticket: str, cwd: Path | None = None) -> dict[str, Any] | None:
     """Zustand, Labels, Text und Zuständige eines Issues (``None`` bei Fehler)."""
-    daten = json_lauf(
-        ["issue", "view", str(ticket), "--json", "state,labels,body,assignees"], cwd=cwd
-    )
+    daten = json_lauf(["issue", "view", str(ticket), "--json", "state,labels,body,assignees"], cwd=cwd)
     if not isinstance(daten, dict) or "state" not in daten:
         return None
     return daten
+
+
+#: Labels, mit denen ``bau.py`` ein Ticket weder startet noch fortsetzt (#1184).
+#: ``bau:lokal`` fehlt bewusst: es heißt nur „nicht auf dem Bau-Server“ — am PC läuft es.
+BAU_SPERR_LABELS = frozenset({"bau:pause", "wontfix"})
+
+
+def sperre_grund(daten: dict[str, Any] | None) -> str | None:
+    """Grund, warum ein Ticket nicht (weiter) gebaut werden darf — ``None`` = frei.
+
+    ``daten`` wie :func:`ticket_daten`. Nicht lesbar zählt als gesperrt (fail-closed):
+    lieber einen Takt warten als ein pausiertes Ticket starten.
+    """
+    if not isinstance(daten, dict) or "state" not in daten:
+        return "Ticket-Zustand nicht lesbar"
+    if str(daten["state"]).upper() != "OPEN":
+        return "Ticket geschlossen"
+    namen = {str(e.get("name") if isinstance(e, dict) else e) for e in daten.get("labels") or []}
+    gesperrt = sorted(namen & BAU_SPERR_LABELS)
+    return f"Label {', '.join(gesperrt)}" if gesperrt else None
+
+
+def start_sperre(ticket: str, cwd: Path | None = None) -> str | None:
+    """:func:`sperre_grund` für ``ticket`` live aus GitHub — die EINE Prüfung vor jedem
+    Claude-Start in ``bau.py`` (Erststart, ``--resume``, Kette, respawn; #1184).
+
+    Test-Tür ``TO_SPAWN_START_SPERRE=aus`` (setzt ``tests/conftest.py``): Start-Tests
+    ohne echtes GitHub."""
+    if os.environ.get("TO_SPAWN_START_SPERRE") == "aus":
+        return None
+    return sperre_grund(ticket_daten(ticket, cwd=cwd))
 
 
 def _git_ausgabe(args: list[str], cwd: Path) -> tuple[int, str]:
@@ -181,8 +208,6 @@ def label_sicherstellen(
         log.warning("gh fehlt — Label %s nicht angelegt (gh label create %s).", label, label)
         return False
     if code != 0:
-        log.warning(
-            "Label %s nicht angelegt (gh Exit %s) — von Hand: gh label create %s", label, code, label
-        )
+        log.warning("Label %s nicht angelegt (gh Exit %s) — von Hand: gh label create %s", label, code, label)
         return False
     return True

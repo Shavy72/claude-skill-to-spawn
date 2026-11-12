@@ -975,6 +975,13 @@ def main() -> int:
 
     if not args.sofort and not args.umzug and not args.resume:
         auf_blocker_warten(ticket, max(60, args.takt))
+    # Pause-Guard (#1184): die gemeinsame Tür aller Starter (Aufpasser frisch und
+    # --resume, Aufseher, Kette, respawn). bau:pause/zu → nie starten, auch nicht fortsetzen.
+    # Nach dem Blocker-Warten geprüft, damit ein Label aus der Wartezeit zählt.
+    sperre = None if args.probesitz else gh.start_sperre(ticket, cwd=REPO)
+    if sperre:
+        log.warning("Ticket #%s: %s — kein Start, keine Fortsetzung.", ticket, sperre)
+        return 0
     # Speicher-Schutz (#257 Paket B, Fixrunde 1 F3), die EINE Stelle vor dem Prozessstart
     # (gilt für Erststart, --resume und --umzug): RAM knapp oder Obergrenze an
     # Claude-Sessions erreicht → warten statt Exit 5, damit das Fenster und der Grund bleiben.
