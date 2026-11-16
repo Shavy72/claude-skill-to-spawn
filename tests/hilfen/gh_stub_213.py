@@ -89,6 +89,11 @@ def main() -> int:
         if args[1:2] == ["user"]:  # gh-Login der Session (#402), Vorgabe ``bau-bot``
             print(json.dumps({"login": daten.get("login", "bau-bot")}))
             return 0
+        treffer = re.fullmatch(r"repos/[^/]+/[^/]+/issues/(\d+)", args[1])
+        if treffer:  # einzelnes Issue samt Text (#563: Hauptschalter aus dem Spec-Text)
+            eintrag = daten.get("issues", {}).get(treffer.group(1), {})
+            print(json.dumps({**_issue(treffer.group(1), daten), "body": eintrag.get("body", "")}, ensure_ascii=False))
+            return 0
         treffer = re.search(r"issues/(\d+)/sub_issues", args[1])
         if treffer:
             kinder = daten.get("sub", {}).get(treffer.group(1), [])
