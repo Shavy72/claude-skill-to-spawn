@@ -172,6 +172,20 @@ def ohne_fenster() -> dict[str, Any]:
     return {}
 
 
+def ist_wrapper_zeile(zeile: str) -> bool:
+    """Reicht diese Kommandozeile nur einen Befehl weiter (``sh -c '…'``, ``bash -lc '…'``)?
+
+    Ein solcher Wrapper ist bloß Elternprozess des echten Programms, kein eigener Lauf:
+    ein tmux-Fenster startet den Launcher als ``sh -c '… bau.py <N> …; exec bash'``, und
+    eine Duplikat-Prüfung darf ihn nicht als zweiten ``bau.py`` zählen. Eine führende PID
+    (Zeilenform von ``pgrep -af``) wird übersprungen.
+    """
+    teile = zeile.split()
+    if teile and teile[0].isdigit():
+        teile = teile[1:]
+    return len(teile) >= 2 and Path(teile[0]).name in WRAPPER_NAMEN and teile[1].startswith("-") and "c" in teile[1]
+
+
 def ist_session_zeile(zeile: str, *, windows: bool = _WINDOWS) -> bool:
     """Ist diese Kommandozeile die Claude-Session selbst?
 

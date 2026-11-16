@@ -341,22 +341,9 @@ def werkzeug_fuer_rechner() -> Werkzeug | pc_fenster.PcWerkzeug:
 # --- Reine Hilfen -----------------------------------------------------------------
 
 
-_SHELLS = frozenset({"sh", "bash", "dash", "zsh"})
-
-
 def _bau_pid_fuer(zeile: str, ticket: int) -> bool:
-    """``pgrep -af``-Zeile gehört zu ``bau.py <ticket>``.
-
-    Ein Shell-Wrapper (``sh -c '… bau.py <N> …; exec bash'``, so startet ein tmux-Fenster
-    den Launcher) zählt nicht: er ist nur der Elternprozess des echten ``python bau.py``
-    und kein zweiter Lauf — sonst meldet die Duplikat-Prüfung fälschlich zwei bau.py.
-    """
-    teile = zeile.split()
-    if teile and teile[0].isdigit():
-        teile = teile[1:]  # PID aus pgrep -af
-    if len(teile) >= 2 and Path(teile[0]).name in _SHELLS and teile[1].startswith("-") and "c" in teile[1]:
-        return False
-    return re.search(rf"bau\.py\s+{ticket}(\s|$)", zeile) is not None
+    """``pgrep -af``-Zeile gehört zu ``bau.py <ticket>``; ein Shell-Wrapper (tmux-Start) ist kein zweiter Lauf."""
+    return re.search(rf"bau\.py\s+{ticket}(\s|$)", zeile) is not None and not prozessbaum.ist_wrapper_zeile(zeile)
 
 
 def _dateien(wt: Path, ticket: int, seit: float) -> tuple[Path, Path]:
