@@ -71,3 +71,13 @@ def test_takt_prompt_format_ohne_fehler() -> None:
     from to_spawn import waechter_takt
 
     waechter_takt.PROMPT.format(S=900, REPO="x/y", SKILL="/skill", LISTE="- x", NOTIZ="(leer)")
+
+
+@pytest.mark.parametrize("name", ["wache", "takt"])
+def test_thermo_ohne_sammel_issue(name: str) -> None:
+    """E15 (#582): kein Sammel-Issue mehr, Befunde stehen nur im Marker für die Abschluss-Mail."""
+    prompt = _prompts()[name]
+    assert "Sammel-Issue" not in prompt
+    assert "Issue-URL" not in prompt
+    pos_sammeln = prompt.find("thermo_lauf.py sammeln")
+    assert "Code-Befunde" in prompt[pos_sammeln:]
