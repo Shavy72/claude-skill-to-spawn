@@ -50,6 +50,7 @@ from to_spawn import (  # noqa: E402
     setup,
     speicher,
     startklar,
+    ticketstand,
     umzug,
     vorfall,
     waechter_takt,
@@ -514,6 +515,7 @@ def main(argv: list[str] | None = None) -> int:
     leitstand.richte_parser_ein(unter)
     waechter_takt.richte_parser_ein(unter)
     aufseher_stand.richte_parser_ein(unter)
+    ticketstand.richte_parser_ein(unter)
     # Gelb-Liste (#438): Befund des Aufsehers — gelb → Folge-Ticket, rot → wieder öffnen.
     p_befund = unter.add_parser("befund", help="Aufseher-Befund melden (gelb/rot)")
     p_befund.add_argument("--spec", required=True, type=int, help="Spec-Nummer (Manifest)")
@@ -548,6 +550,9 @@ def main(argv: list[str] | None = None) -> int:
         return waechter_takt.lauf(args)
     if args.befehl == "aufpasser":
         return aufpasser.lauf_mit_args(args)
+    if args.befehl == "ticketstand":
+        # Nur lesen: Tabelle „X von Y fertig“ für jeden Aufseher-Tick.
+        return ticketstand.lauf(args, config.repo_wurzel(_repo_aus_umgebung()))
     if args.befehl == "aufseher-stand":
         # Nur lesen + eigene Stand-Datei: legt keine Konfig an (#430).
         return aufseher_stand.lauf(args, config.repo_wurzel(_repo_aus_umgebung()))
