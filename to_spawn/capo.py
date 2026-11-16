@@ -52,7 +52,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from . import bau_log, befund, config, gh, melder, mensch_noetig, vorfall
+from . import bau_log, befund, config, gh, melder, mensch_noetig, staging_schalter, vorfall
 
 log = logging.getLogger("to_spawn.capo")
 
@@ -2486,6 +2486,18 @@ def _tick(
             )
         if not dry_run and not zustand.get("spec_fertig_seit"):
             zustand["spec_fertig_seit"] = jetzt.astimezone().isoformat(timespec="seconds")
+        if not zustand.get("staging_schalter_erledigt"):
+            # Staging-Hauptschalter der Spec AN (#563, Spec #548 E3) — Live nie automatisch.
+            try:
+                schalter = staging_schalter.schalte_an(repo, gh_repo, spec, dry_run)
+            except Exception as fehler:  # ein Ausreißer darf den Tick (sichern) nicht abbrechen
+                log.exception("Staging-Schalter Spec #%s: unerwarteter Fehler", spec)
+                schalter = staging_schalter.Ergebnis(
+                    [f"FEHLER: Staging-Schalter — unerwarteter Fehler ({type(fehler).__name__}: {fehler})."], False
+                )
+            erg.zeilen += schalter.zeilen
+            if schalter.erledigt and not dry_run:
+                zustand["staging_schalter_erledigt"] = jetzt.isoformat(timespec="seconds")
     # Eine Mail je Spec (#588): nachsehen verschickt das abgelegte Paket, sobald Thermo + Rückblick da
     # sind (oder 120 min um). Hängt an „SPEC FERTIG einmal gesehen“ — ein später wieder geöffnetes
     # Ticket hält die Mail nicht auf.

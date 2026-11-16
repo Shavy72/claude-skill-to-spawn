@@ -870,9 +870,12 @@ def test_fix_sandbox_start_pflicht_bricht_ab(tmp_path: Path, haupt: Path) -> Non
 
 def test_fix_bau_py_praefix_nach_blocker_warten() -> None:
     text = (SKRIPTE / "bau.py").read_text(encoding="utf-8")
-    warten = text.index("auf_blocker_warten(ticket, max(60, args.takt))")
+    # Seit #906 wartet main über die eine Stelle blocker_schranke() (ruft auf_blocker_warten).
+    warten = text.index("\n    blocker_schranke(ticket, args)\n")
     echt = text.index("nest.sandbox_start(konfig, worktree_pfad(ticket), REPO)")
     assert echt > warten
+    schranke = text[text.index("def blocker_schranke(") :]
+    assert "auf_blocker_warten(ticket, " in schranke.split("\ndef ", 1)[0]
 
 
 def test_fix_worktree_anlegen_holt_origin(tmp_path: Path) -> None:
