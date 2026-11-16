@@ -148,9 +148,17 @@ def prozesse_lesen() -> list[Prozess]:
 
 
 def nachkommen(pid: int, alle: list[Prozess]) -> list[Prozess]:
-    kinder = [p for p in alle if p.ppid == pid]
-    for k in list(kinder):
-        kinder.extend(nachkommen(k.pid, alle))
+    """Alle Nachfahren von ``pid``; Windows recycelt PIDs, darum Zyklen-Schutz."""
+    gesehen = {pid}
+    kinder: list[Prozess] = []
+    offen = [pid]
+    while offen:
+        eltern = offen.pop()
+        for p in alle:
+            if p.ppid == eltern and p.pid not in gesehen:
+                gesehen.add(p.pid)
+                kinder.append(p)
+                offen.append(p.pid)
     return kinder
 
 

@@ -41,6 +41,7 @@ from to_spawn import (  # noqa: E402
     config,
     context_mode,
     handoff_blick,
+    sitzung_env,
     speicher,
     startklar,
     terminal_maus,
@@ -361,7 +362,9 @@ def main() -> int:
     # Aus einer Claude-Session gestartet erben Kind-Sessions die Markierung
     # CLAUDE_CODE_CHILD_SESSION und speichern kein Transkript (kein Resume nach
     # Absturz, Beleg 17.09.2026). Persistenz deshalb ausdrücklich erzwingen.
-    os.environ.pop("CLAUDE_CODE_CHILD_SESSION", None)
+    sauber = sitzung_env.ohne_sitzung()  # alle Sitzungs-Variablen, nicht nur CHILD_SESSION
+    os.environ.clear()
+    os.environ.update(sauber)
     # Eine Session im Worktree darf nicht das Repo des Launchers erben (#205).
     os.environ.pop("TO_SPAWN_REPO", None)
     os.environ["CLAUDE_CODE_FORCE_SESSION_PERSISTENCE"] = "1"
