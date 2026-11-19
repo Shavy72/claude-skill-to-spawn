@@ -42,6 +42,7 @@ import logging
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import time
@@ -638,16 +639,30 @@ def _passt(pfad: str, muster: list[str]) -> bool:
     return False
 
 
+def _ssh_programm() -> str:
+    """ssh wie die Shell auflösen (unter Windows auch ``ssh.cmd``/``.bat`` über PATHEXT)."""
+    return shutil.which("ssh") or "ssh"
+
+
+def _server_pfad(pfad: str) -> str:
+    """Pfad für die Server-Shell quoten; ein führendes ``~/`` bleibt offen, damit der Server es auflöst."""
+    if pfad == "~":
+        return "~"
+    if pfad.startswith("~/"):
+        return "~/" + shlex.quote(pfad[2:])
+    return shlex.quote(pfad)
+
+
 def vps_kopf(vps: dict[str, Any]) -> str | None:
     """Voller SHA von ``HEAD`` auf dem VPS (``None`` = nicht lesbar)."""
     befehl = [
-        "ssh",
+        _ssh_programm(),
         "-o",
         "BatchMode=yes",
         "-o",
         "ConnectTimeout=10",
         str(vps["ssh"]),
-        f"cd {shlex.quote(str(vps.get('pfad') or '.'))} && git rev-parse HEAD",
+        f"cd {_server_pfad(str(vps.get('pfad') or '.'))} && git rev-parse HEAD",
     ]
     try:
         fertig = subprocess.run(
@@ -673,8 +688,17 @@ FREIGABE_STANDARD = "~/.config/to-spawn/live_freigabe"
 FREIGABE_MAX_ALTER_S = 24 * 3600  # wie scripts/staging/deploy_ziel.py
 
 
+class _StagingUnlesbar(Exception):
+    """Staging-Log per ssh nicht lesbar — das ist kein „Commit fehlt auf Staging“ (#1407)."""
+
+
 def _staging_zeilen(vps: dict[str, Any]) -> list[str] | None:
     """Zeilen des Staging-Deploy-Logs; lokal, sonst per ``vps.staging_ssh`` vom Bau-Server.
+
+    ``None`` = kein Staging-Stand: Datei fehlt lokal ohne ``staging_ssh``, oder die Verbindung
+    steht, aber ``tail`` scheitert auf dem Server (Log fehlt, z. B. Exit 1). Nur ein
+    Verbindungsfehler (ssh Exit 255, Zeitüberschreitung, ssh nicht startbar) gibt
+    ``_StagingUnlesbar`` (Warnung ist dann schon geloggt).
 
     Am PC liegt das Log nur auf dem Bau-Server. Ohne diesen Weg sah capo dort nie
     einen Staging-Stand und öffnete fertige Nur-Staging-Tickets immer wieder (#1332).
@@ -687,24 +711,41 @@ def _staging_zeilen(vps: dict[str, Any]) -> list[str] | None:
     host = vps.get("staging_ssh")
     if not host:
         return None
-    befehl = ["ssh", "-o", "ConnectTimeout=8", "-o", "BatchMode=yes", str(host), f"tail -n 200 {shlex.quote(pfad_text)}"]
+    befehl = [
+        _ssh_programm(),
+        "-o",
+        "ConnectTimeout=8",
+        "-o",
+        "BatchMode=yes",
+        str(host),
+        f"tail -n 200 {_server_pfad(pfad_text)}",
+    ]
     try:
         lauf = subprocess.run(befehl, capture_output=True, text=True, encoding="utf-8", timeout=30, check=False)
     except (OSError, subprocess.SubprocessError) as fehler:
         log.warning("Staging-Log über %s nicht lesbar: %s", host, fehler)
-        return None
-    if lauf.returncode != 0:
+        raise _StagingUnlesbar from fehler
+    if lauf.returncode == 255:  # ssh selbst gescheitert (Verbindung/Anmeldung)
         log.warning("Staging-Log über %s nicht lesbar (Exit %s).", host, lauf.returncode)
+        raise _StagingUnlesbar
+    if lauf.returncode != 0:  # Verbindung stand, Log fehlt auf dem Server = kein Staging-Stand
+        log.warning(
+            "Staging-Log auf %s fehlt (Exit %s): %s", host, lauf.returncode, lauf.stderr.strip()[:200]
+        )
         return None
     return lauf.stdout.splitlines()
 
 
 def staging_kopf(vps: dict[str, Any]) -> str | None:
-    """SHA des letzten grünen Staging-Deploys (``None`` = Datei fehlt/kein grüner Stand)."""
-    zeilen = _staging_zeilen(vps)
-    if zeilen is None:
+    """SHA des letzten grünen Staging-Deploys (``None`` = Datei fehlt/nicht lesbar/kein grüner Stand)."""
+    try:
+        return _gruener_sha(_staging_zeilen(vps))
+    except _StagingUnlesbar:
         return None
-    for zeile in reversed(zeilen):
+
+
+def _gruener_sha(zeilen: list[str] | None) -> str | None:
+    for zeile in reversed(zeilen or []):
         try:
             eintrag = json.loads(zeile)
         except ValueError:
@@ -716,6 +757,31 @@ def staging_kopf(vps: dict[str, Any]) -> str | None:
         ):
             return str(eintrag["sha"])
     return None
+
+
+class StagingStand:
+    """Staging-Kopf eines Takts: höchstens ein Abruf, das Ergebnis (auch ``None``) gilt für den ganzen Takt.
+
+    Aufrufer fragen nur ``kopf()``. Wie (lokal oder ssh) und wie oft gelesen wird, steht
+    allein hier: ein hängender Bau-Server kostet so je Takt einmal die Zeitgrenze, nicht
+    einmal je Commit und Ticket (#1407).
+    """
+
+    def __init__(self, vps: dict[str, Any]) -> None:
+        self._vps = vps
+        self._geholt = False
+        self._kopf: str | None = None
+        self.unlesbar = False  # ssh-Aussetzer: Staging-Prüfung für diesen Takt aussetzen
+
+    def kopf(self) -> str | None:
+        if not self._geholt:
+            self._geholt = True
+            try:
+                self._kopf = _gruener_sha(_staging_zeilen(self._vps))
+            except _StagingUnlesbar:
+                self.unlesbar = True
+                log.warning("Staging-Stand nicht lesbar — Staging-Prüfung in diesem Takt ausgesetzt.")
+        return self._kopf
 
 
 def live_freigabe(vps: dict[str, Any], ticket: int) -> bool:
@@ -736,9 +802,11 @@ def regel_vps(
     vps: dict[str, Any],
     kopf: str | None,
     log_zeilen: list[dict],
+    staging_stand: StagingStand | None = None,
 ) -> Verstoss | None:
     if kopf is None or not eigene:
         return None
+    staging_stand = staging_stand or StagingStand(vps)
     muster = [str(m) for m in vps.get("deploy_pfade") or []]
     relevant = [
         c for c in eigene if any(_passt(p, muster) for _, p in _dateien(repo, c.sha))
@@ -749,7 +817,9 @@ def regel_vps(
         code, _ = _git(repo, "merge-base", "--is-ancestor", commit.sha, kopf)
         if code == 1:
             # Seit 22.09. deployen Bau-Sessions nur nach Staging; live nur mit Zettel.
-            staging = staging_kopf(vps)
+            staging = staging_stand.kopf()
+            if staging_stand.unlesbar and not live_freigabe(vps, ticket):
+                return None  # nicht lesbar ≠ fehlt auf Staging (#1407), Log-Zeile kommt aus StagingStand
             if staging and not live_freigabe(vps, ticket):
                 auf_staging, _ = _git(
                     repo, "merge-base", "--is-ancestor", commit.sha, staging
@@ -1901,13 +1971,14 @@ def reopen_funde(
     vps: dict[str, Any],
     kopf: str | None,
     alle_zeilen: list[dict[str, Any]],
+    staging_stand: StagingStand | None = None,
 ) -> list[Verstoss]:
     """Alle Verstöße, die ein geschlossenes Ticket wieder öffnen (regel_vps nur mit VPS-Konfig)."""
     funde = [
         regel_commit(n, eigene),
         regel_beweis(repo, ref, n, eigene, belege),
         regel_tests(repo, n, eigene),
-        regel_vps(repo, n, eigene, vps, kopf, alle_zeilen) if vps.get("ssh") else None,
+        regel_vps(repo, n, eigene, vps, kopf, alle_zeilen, staging_stand) if vps.get("ssh") else None,
     ]
     return [f for f in funde if f]
 
@@ -2123,6 +2194,7 @@ def _tick(
     checkpoint = str(regularien.get("checkpoint_label") or "checkpoint:human")
     vps = konfig.get("vps") if isinstance(konfig.get("vps"), dict) else {}
     kopf = vps_kopf(vps) if vps.get("ssh") else None
+    staging_stand = StagingStand(vps)  # je Takt höchstens ein Abruf (#1407)
     vps_fehlt = bool(vps.get("ssh")) and kopf is None
     if vps_fehlt:
         kopfzeilen.append(
@@ -2263,7 +2335,7 @@ def _tick(
                 wartet += 1
                 continue
             funde_ok = reopen_funde(
-                repo, ref, n, eigene, belege, vps, kopf, alle_zeilen
+                repo, ref, n, eigene, belege, vps, kopf, alle_zeilen, staging_stand
             )
             if ausgangsstand:
                 erg.alt += funde_ok
@@ -2323,7 +2395,7 @@ def _tick(
                 )
             )
             if kandidat is not None and reopen_funde(
-                repo, ref, n, eigene, belege, vps, kopf, alle_zeilen
+                repo, ref, n, eigene, belege, vps, kopf, alle_zeilen, staging_stand
             ):
                 kandidat = None  # Regeln weiter rot — das Reopen war richtig
             if kandidat is not None:
@@ -2478,6 +2550,16 @@ def _tick(
     if katalog and not dry_run:
         aktionen += katalog_pflegen(repo, konfig, gelernt)
 
+    # #1407: unlesbares Staging ist kein „fehlt“, aber auch kein Beleg „liegt drauf“ — Abschluss zurückhalten.
+    unlesbar_takte = int(zustand.get("staging_unlesbar_takte") or 0) + 1 if staging_stand.unlesbar else 0
+    zustand["staging_unlesbar_takte"] = unlesbar_takte
+    if unlesbar_takte >= STAGING_UNLESBAR_LAUT:
+        kopfzeilen.append(
+            f"FEHLER: Staging seit {unlesbar_takte} Takten nicht lesbar — Regel vps für Tickets ohne Zettel aus, "
+            "Spec-Abschluss zurückgehalten."
+        )
+    elif staging_stand.unlesbar:
+        kopfzeilen.append("FEHLER: Staging nicht lesbar — Regel vps teils ausgesetzt, Spec-Abschluss zurückgehalten.")
     erg.zeilen += kopfzeilen
     erg.zeilen.append(
         f"Spec #{spec} · {ref} {ref_kurz} · VPS {kopf[:7] if kopf else '-'} · offen {offen}/{len(liste)} · "
@@ -2496,6 +2578,7 @@ def _tick(
         and not erg.verstoesse
         and not regeln_aus
         and not vps_fehlt
+        and not staging_stand.unlesbar
     )
     if erg.fertig:
         alt_hinweis = f" ({len(erg.alt)} alte aus dem Ausgangsstand)" if erg.alt else ""
@@ -2562,6 +2645,8 @@ ABSCHLUSS_ZEITLIMIT_S = 720
 ABLEGEN_ZEITLIMIT_S = 60
 #: Ab so vielen Fehlversuchen in Folge einmal ein Kommentar auf dem Spec-Issue.
 ABSCHLUSS_ALARM_AB = 3
+#: Ab so vielen unlesbaren Staging-Takten in Folge eine eigene FEHLER-Kopfzeile (#1407), keine Mail.
+STAGING_UNLESBAR_LAUT = 3
 
 
 def _abschluss_lauf(repo: Path, befehl: str, spec: int, *args: str) -> tuple[int, str, str]:

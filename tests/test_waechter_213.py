@@ -17,6 +17,7 @@ import stat
 import subprocess
 import sys
 import time
+from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -379,6 +380,8 @@ def _ssh_fake(welt: dict[str, Path], sha: str) -> dict[str, str]:
     binaer = welt["tmp"] / "bin"
     binaer.mkdir(exist_ok=True)
     _ausfuehrbar(binaer / "ssh", f"#!/bin/sh\necho {sha}\n")
+    # Windows: CreateProcess findet die sh-Datei ohne Endung nicht, capo löst ssh über PATHEXT auf.
+    (binaer / "ssh.cmd").write_text(f"@echo {sha}\r\n", encoding="utf-8")
     return {"PATH": f"{binaer}{os.pathsep}{os.environ['PATH']}"}
 
 
@@ -835,5 +838,301 @@ def test_staging_kopf_liest_per_ssh_wenn_lokal_fehlt(tmp_path: Path, monkeypatch
     monkeypatch.setattr(capo_mod.subprocess, "run", falsch_ssh)
     vps = {"staging_log": str(tmp_path / "fehlt.jsonl"), "staging_ssh": "bau-server"}
     assert capo_mod.staging_kopf(vps) == "abc1234"
-    assert aufrufe and aufrufe[0][0] == "ssh" and "bau-server" in aufrufe[0]
+    assert aufrufe and Path(aufrufe[0][0]).stem.lower() == "ssh" and "bau-server" in aufrufe[0]
     assert capo_mod.staging_kopf({"staging_log": str(tmp_path / "fehlt.jsonl")}) is None
+
+
+def _ssh_zaehler(
+    monkeypatch: pytest.MonkeyPatch, antwort: Callable[[list[str]], subprocess.CompletedProcess[str]]
+) -> list[list[str]]:
+    """ssh-Aufrufe aus capo abfangen (externer Dienst); git läuft echt weiter."""
+    from to_spawn import capo as capo_mod
+
+    echt = capo_mod.subprocess.run
+    aufrufe: list[list[str]] = []
+
+    def run(befehl: list[str], **kw: object) -> subprocess.CompletedProcess[str]:
+        if Path(str(befehl[0])).stem.lower() != "ssh":
+            return echt(befehl, **kw)  # type: ignore[call-overload]
+        aufrufe.append(befehl)
+        return antwort(befehl)
+
+    monkeypatch.setattr(capo_mod.subprocess, "run", run)
+    return aufrufe
+
+
+def test_staging_kopf_einmal_je_takt_bei_mehreren_commits(
+    welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#1407: drei Ticket-Commits, alle auf Staging → genau ein ssh je Takt, nicht drei."""
+    from to_spawn import capo as capo_mod
+
+    repo = welt["repo"]
+    live = _git(repo, "rev-parse", "HEAD")
+    for i in range(3):
+        staging = _commit(repo, f"feat: Teil {i} (#901)", {f"web/teil{i}.py": f"x = {i}\n"})
+    zeile = json.dumps({"sha": staging, "ergebnis": "gruen"})
+    aufrufe = _ssh_zaehler(monkeypatch, lambda b: subprocess.CompletedProcess(b, 0, stdout=zeile + "\n", stderr=""))
+    eigene = capo_mod.ticket_commits(capo_mod.alle_commits(repo, "HEAD"), 901)
+    assert len(eigene) == 3
+    vps = {
+        "ssh": "vps-test",
+        "deploy_pfade": ["web/"],
+        "staging_log": str(welt["tmp"] / "fehlt.jsonl"),
+        "staging_ssh": "bau-server",
+        "freigabe_ordner": str(welt["tmp"] / "keine_freigabe"),
+    }
+    assert capo_mod.regel_vps(repo, 901, eigene, vps, live, []) is None
+    assert len(aufrufe) == 1, aufrufe
+
+
+def test_staging_log_mit_tilde_wird_auf_server_aufgeloest(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """#1407: ``~/…`` muss der Server-Shell offen bleiben; der Rest bleibt gequotet."""
+    from to_spawn import capo as capo_mod
+
+    zeile = json.dumps({"sha": "abc1234", "ergebnis": "gruen"})
+    aufrufe = _ssh_zaehler(monkeypatch, lambda b: subprocess.CompletedProcess(b, 0, stdout=zeile + "\n", stderr=""))
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    vps = {"staging_log": "~/staging/deploys; rm -rf x.jsonl", "staging_ssh": "bau-server"}
+    assert capo_mod.staging_kopf(vps) == "abc1234"
+    befehl = aufrufe[0][-1]
+    assert befehl == "tail -n 200 ~/'staging/deploys; rm -rf x.jsonl'", befehl
+
+
+def test_staging_abruf_fehlgeschlagen_nicht_wiederholt_im_takt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """#1407: ein Takt, mehrere Tickets; ein gescheiterter Abruf wird nicht wiederholt."""
+    from to_spawn import capo as capo_mod
+
+    aufrufe = _ssh_zaehler(monkeypatch, lambda b: subprocess.CompletedProcess(b, 255, stdout="", stderr="weg"))
+    stand = capo_mod.StagingStand({"staging_log": str(tmp_path / "fehlt.jsonl"), "staging_ssh": "bau-server"})
+    assert stand.kopf() is None
+    assert stand.kopf() is None
+    assert len(aufrufe) == 1
+
+
+def test_staging_kopf_exit_ungleich_null_ist_none(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """#1407: ssh-Exit ≠ 0 → kein Staging-Stand, Warnung im Log."""
+    from to_spawn import capo as capo_mod
+
+    _ssh_zaehler(monkeypatch, lambda b: subprocess.CompletedProcess(b, 255, stdout="", stderr="weg"))
+    vps = {"staging_log": str(tmp_path / "fehlt.jsonl"), "staging_ssh": "bau-server"}
+    with caplog.at_level("WARNING"):
+        assert capo_mod.staging_kopf(vps) is None
+    assert "Exit 255" in caplog.text
+
+
+def test_staging_kopf_zeitueberschreitung_ist_none(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """#1407: ssh hängt bis zur Zeitgrenze → kein Staging-Stand, Warnung im Log, kein Absturz."""
+    from to_spawn import capo as capo_mod
+
+    def haengt(befehl: list[str]) -> subprocess.CompletedProcess[str]:
+        raise subprocess.TimeoutExpired(befehl, 30)
+
+    _ssh_zaehler(monkeypatch, haengt)
+    vps = {"staging_log": str(tmp_path / "fehlt.jsonl"), "staging_ssh": "bau-server"}
+    with caplog.at_level("WARNING"):
+        assert capo_mod.staging_kopf(vps) is None
+    assert "nicht lesbar" in caplog.text
+
+
+def test_staging_unlesbar_oeffnet_nicht_wieder(
+    welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """#1407: ssh-Aussetzer beim Staging-Log zählt nie als „fehlt auf Staging“ → kein Verstoß, eine Log-Zeile."""
+    from to_spawn import capo as capo_mod
+
+    repo = welt["repo"]
+    live = _git(repo, "rev-parse", "HEAD")
+    _commit(repo, "feat: Seite (#901)", {"web/seite.py": "x = 1\n"})
+    aufrufe = _ssh_zaehler(monkeypatch, lambda b: subprocess.CompletedProcess(b, 255, stdout="", stderr="weg"))
+    eigene = capo_mod.ticket_commits(capo_mod.alle_commits(repo, "HEAD"), 901)
+    vps = {
+        "ssh": "vps-test",
+        "deploy_pfade": ["web/"],
+        "staging_log": str(welt["tmp"] / "fehlt.jsonl"),
+        "staging_ssh": "bau-server",
+        "freigabe_ordner": str(welt["tmp"] / "keine_freigabe"),
+    }
+    stand = capo_mod.StagingStand(vps)
+    with caplog.at_level("WARNING"):
+        assert capo_mod.regel_vps(repo, 901, eigene, vps, live, [], stand) is None
+        assert capo_mod.regel_vps(repo, 901, eigene, vps, live, [], stand) is None
+    assert len(aufrufe) == 1
+    assert caplog.text.count("Staging-Prüfung in diesem Takt ausgesetzt") == 1, caplog.text
+
+
+def _ssh_protokoll_fake(
+    welt: dict[str, Path], vps_sha: str, staging_sha: str, staging_exit: int = 0
+) -> tuple[dict[str, str], Path]:
+    """ssh-Attrappe als Prozess (capo läuft als Unterprozess): VPS-HEAD bzw. Staging-Log, jeder Aufruf protokolliert.
+
+    ``staging_exit`` ≠ 0: ``tail`` scheitert mit diesem Exit (ssh-Aussetzer zum Bau-Server).
+    """
+    binaer = welt["tmp"] / "bin"
+    binaer.mkdir(exist_ok=True)
+    protokoll = welt["tmp"] / "ssh_aufrufe.txt"
+    fake = binaer / "ssh_fake.py"
+    fake.write_text(
+        "import json, sys\n"
+        f"open({str(protokoll)!r}, 'a', encoding='utf-8').write(' '.join(sys.argv[1:]) + chr(10))\n"
+        "befehl = sys.argv[-1]\n"
+        "if befehl.startswith('tail'):\n"
+        f"    if {staging_exit}:\n"
+        f"        sys.exit({staging_exit})\n"
+        f"    print(json.dumps({{'sha': {staging_sha!r}, 'ergebnis': 'gruen'}}))\n"
+        "else:\n"
+        f"    print({vps_sha!r})\n",
+        encoding="utf-8",
+    )
+    _ausfuehrbar(binaer / "ssh", f'#!/bin/sh\nexec "{sys.executable}" "{fake}" "$@"\n')
+    (binaer / "ssh.cmd").write_text(f'@"{sys.executable}" "{fake}" %*\r\n', encoding="utf-8")
+    return {"PATH": f"{binaer}{os.pathsep}{os.environ['PATH']}"}, protokoll
+
+
+def test_tick_teilt_staging_stand_ueber_mehrere_tickets(welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch) -> None:
+    """#1407: zwei geschlossene Nur-Staging-Tickets in einem Takt → Staging-Log genau einmal per ssh."""
+    live = _git(welt["repo"], "rev-parse", "HEAD")
+    daten = _gh_zustand(welt)
+    daten["sub"][SPEC] = [901, 902, 903]
+    daten["issues"]["903"] = dict(daten["issues"]["901"])
+    welt["gh"].write_text(json.dumps(daten), encoding="utf-8")
+    _konfig(
+        welt,
+        vps={
+            "ssh": "vps-test",
+            "pfad": "/opt/x",
+            "deploy_pfade": ["web/"],
+            "staging_log": str(welt["tmp"] / "fehlt.jsonl"),
+            "staging_ssh": "bau-server",
+            "freigabe_ordner": str(welt["tmp"] / "keine_freigabe"),
+        },
+    )
+    _commit(welt["repo"], "feat: Seite (#901)", {"web/a.py": "x = 1\n", **_beleg("901")})
+    staging = _commit(welt["repo"], "feat: Seite (#903)", {"web/b.py": "x = 2\n", **_beleg("903")})
+    env, protokoll = _ssh_protokoll_fake(welt, live, staging)
+    for name, wert in env.items():
+        monkeypatch.setenv(name, wert)
+    ergebnis = _capo(welt)
+    assert ergebnis.returncode == 0, _text(ergebnis)
+    zeilen = protokoll.read_text(encoding="utf-8").splitlines()
+    assert sum("tail -n 200" in z for z in zeilen) == 1, zeilen
+    assert _kommentare(welt, "901") == [] and _kommentare(welt, "903") == [], _text(ergebnis)
+
+
+def _staging_ssh_welt(welt: dict[str, Path]) -> tuple[str, str]:
+    """Commits #901/#902 fehlen auf dem VPS, Staging nur per ssh lesbar; gibt (VPS-Kopf, Ticket-Kopf)."""
+    live = _git(welt["repo"], "rev-parse", "HEAD")
+    _konfig(
+        welt,
+        waechter={"karenz_minuten": 0},
+        vps={
+            "ssh": "vps-test",
+            "pfad": "/opt/x",
+            "deploy_pfade": ["web/"],
+            "staging_log": str(welt["tmp"] / "fehlt.jsonl"),
+            "staging_ssh": "bau-server",
+            "freigabe_ordner": str(welt["tmp"] / "keine_freigabe"),
+        },
+    )
+    _commit(welt["repo"], "feat: A (#901)", {"web/a.py": "x = 1\n", **_beleg("901")})
+    kopf = _commit(welt["repo"], "feat: B (#902)", {"web/b.py": "x = 2\n", **_beleg("902")})
+    return live, kopf
+
+
+def _capo_zustand(welt: dict[str, Path]) -> dict:
+    dateien = list(welt["zustand"].glob(f"*_{SPEC}.json"))
+    return json.loads(dateien[0].read_text(encoding="utf-8")) if dateien else {}
+
+
+def test_staging_unlesbar_haelt_spec_abschluss_zurueck(welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch) -> None:
+    """#1407: alle Tickets zu, Commit nicht live, Staging-Log per ssh Exit 255 → keine SPEC FERTIG, kein spec_fertig_seit."""
+    _gh_setzen(welt, "902", state="closed", closed_at=_iso())
+    live, kopf = _staging_ssh_welt(welt)
+    env, _ = _ssh_protokoll_fake(welt, live, kopf, staging_exit=255)
+    for name, wert in env.items():
+        monkeypatch.setenv(name, wert)
+    ergebnis = _capo(welt)
+    assert "SPEC FERTIG" not in ergebnis.stdout, _text(ergebnis)
+    assert "Staging nicht lesbar" in ergebnis.stdout, _text(ergebnis)
+    assert not _capo_zustand(welt).get("spec_fertig_seit"), _capo_zustand(welt)
+    assert _kommentare(welt, "901") == [] and _kommentare(welt, "902") == [], _text(ergebnis)
+
+
+def test_staging_dauerhaft_unlesbar_meldet_kopfzeile_bis_lesbar(
+    welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#1407: ab STAGING_UNLESBAR_LAUT Takten in Folge eigene FEHLER-Kopfzeile; ein lesbarer Takt nimmt sie weg."""
+    from to_spawn import capo as capo_mod
+
+    _gh_setzen(welt, "902", state="open")  # Spec bleibt offen: kein Abschluss im lesbaren Takt
+    _gh_setzen(welt, "901", state="closed", closed_at=_iso())
+    live, kopf = _staging_ssh_welt(welt)
+    env, _ = _ssh_protokoll_fake(welt, live, kopf, staging_exit=255)
+    for name, wert in env.items():
+        monkeypatch.setenv(name, wert)
+    laut = capo_mod.STAGING_UNLESBAR_LAUT
+    ausgaben = [_capo(welt).stdout for _ in range(laut)]
+    assert all("Staging seit" not in a for a in ausgaben[:-1]), ausgaben
+    assert f"Staging seit {laut} Takten nicht lesbar" in ausgaben[-1], ausgaben[-1]
+    _ssh_protokoll_fake(welt, live, kopf)  # Bau-Server wieder erreichbar
+    ergebnis = _capo(welt)
+    assert "Staging seit" not in ergebnis.stdout, _text(ergebnis)
+    assert "Staging nicht lesbar" not in ergebnis.stdout, _text(ergebnis)
+    assert not _capo_zustand(welt).get("staging_unlesbar_takte"), _capo_zustand(welt)
+
+
+def test_staging_log_fehlt_auf_server_ist_lesbar_und_meldet_verstoss(
+    welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#1407: Verbindung steht, ``tail`` endet mit Exit 1 („No such file“) → nicht unlesbar, Verstoß wie vor #1407."""
+    from to_spawn import capo as capo_mod
+
+    repo = welt["repo"]
+    live = _git(repo, "rev-parse", "HEAD")
+    _commit(repo, "feat: Seite (#901)", {"web/seite.py": "x = 1\n"})
+    _ssh_zaehler(
+        monkeypatch,
+        lambda b: subprocess.CompletedProcess(b, 1, stdout="", stderr="tail: cannot open 'x': No such file or directory"),
+    )
+    eigene = capo_mod.ticket_commits(capo_mod.alle_commits(repo, "HEAD"), 901)
+    vps = {
+        "ssh": "vps-test",
+        "deploy_pfade": ["web/"],
+        "staging_log": str(welt["tmp"] / "fehlt.jsonl"),
+        "staging_ssh": "bau-server",
+        "freigabe_ordner": str(welt["tmp"] / "keine_freigabe"),
+    }
+    stand = capo_mod.StagingStand(vps)
+    verstoss = capo_mod.regel_vps(repo, 901, eigene, vps, live, [], stand)
+    assert not stand.unlesbar
+    assert verstoss is not None and verstoss.regel == "vps_ungleich_origin", verstoss
+
+
+def test_staging_log_fehlt_auf_server_zaehlt_nicht_als_unlesbar(
+    welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#1407: ``tail`` Exit 1 im echten Takt → keine „Staging nicht lesbar“-Zeile, Zähler bleibt 0."""
+    _gh_setzen(welt, "902", state="open")
+    _gh_setzen(welt, "901", state="closed", closed_at=_iso())
+    live, kopf = _staging_ssh_welt(welt)
+    env, _ = _ssh_protokoll_fake(welt, live, kopf, staging_exit=1)
+    for name, wert in env.items():
+        monkeypatch.setenv(name, wert)
+    ergebnis = _capo(welt)
+    assert "Staging nicht lesbar" not in ergebnis.stdout, _text(ergebnis)
+    assert not _capo_zustand(welt).get("staging_unlesbar_takte"), _capo_zustand(welt)
+
+
+def test_vps_kopf_pfad_mit_tilde_bleibt_fuer_server_offen(monkeypatch: pytest.MonkeyPatch) -> None:
+    """#1407: ``vps.pfad`` mit ``~/`` darf nicht ganz gequotet werden, der Rest schon."""
+    from to_spawn import capo as capo_mod
+
+    sha = "a" * 40
+    aufrufe = _ssh_zaehler(monkeypatch, lambda b: subprocess.CompletedProcess(b, 0, stdout=sha + "\n", stderr=""))
+    assert capo_mod.vps_kopf({"ssh": "vps-test", "pfad": "~/app; rm -rf x"}) == sha
+    assert aufrufe[0][-1] == "cd ~/'app; rm -rf x' && git rev-parse HEAD", aufrufe[0][-1]
