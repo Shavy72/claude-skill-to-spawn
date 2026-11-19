@@ -1086,6 +1086,48 @@ def test_staging_dauerhaft_unlesbar_meldet_kopfzeile_bis_lesbar(
     assert not _capo_zustand(welt).get("staging_unlesbar_takte"), _capo_zustand(welt)
 
 
+def test_staging_log_fehlt_auf_server_ist_lesbar_und_meldet_verstoss(
+    welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#1407: Verbindung steht, ``tail`` endet mit Exit 1 („No such file“) → nicht unlesbar, Verstoß wie vor #1407."""
+    from to_spawn import capo as capo_mod
+
+    repo = welt["repo"]
+    live = _git(repo, "rev-parse", "HEAD")
+    _commit(repo, "feat: Seite (#901)", {"web/seite.py": "x = 1\n"})
+    _ssh_zaehler(
+        monkeypatch,
+        lambda b: subprocess.CompletedProcess(b, 1, stdout="", stderr="tail: cannot open 'x': No such file or directory"),
+    )
+    eigene = capo_mod.ticket_commits(capo_mod.alle_commits(repo, "HEAD"), 901)
+    vps = {
+        "ssh": "vps-test",
+        "deploy_pfade": ["web/"],
+        "staging_log": str(welt["tmp"] / "fehlt.jsonl"),
+        "staging_ssh": "bau-server",
+        "freigabe_ordner": str(welt["tmp"] / "keine_freigabe"),
+    }
+    stand = capo_mod.StagingStand(vps)
+    verstoss = capo_mod.regel_vps(repo, 901, eigene, vps, live, [], stand)
+    assert not stand.unlesbar
+    assert verstoss is not None and verstoss.regel == "vps_ungleich_origin", verstoss
+
+
+def test_staging_log_fehlt_auf_server_zaehlt_nicht_als_unlesbar(
+    welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#1407: ``tail`` Exit 1 im echten Takt → keine „Staging nicht lesbar“-Zeile, Zähler bleibt 0."""
+    _gh_setzen(welt, "902", state="open")
+    _gh_setzen(welt, "901", state="closed", closed_at=_iso())
+    live, kopf = _staging_ssh_welt(welt)
+    env, _ = _ssh_protokoll_fake(welt, live, kopf, staging_exit=1)
+    for name, wert in env.items():
+        monkeypatch.setenv(name, wert)
+    ergebnis = _capo(welt)
+    assert "Staging nicht lesbar" not in ergebnis.stdout, _text(ergebnis)
+    assert not _capo_zustand(welt).get("staging_unlesbar_takte"), _capo_zustand(welt)
+
+
 def test_vps_kopf_pfad_mit_tilde_bleibt_fuer_server_offen(monkeypatch: pytest.MonkeyPatch) -> None:
     """#1407: ``vps.pfad`` mit ``~/`` darf nicht ganz gequotet werden, der Rest schon."""
     from to_spawn import capo as capo_mod

@@ -695,8 +695,10 @@ class _StagingUnlesbar(Exception):
 def _staging_zeilen(vps: dict[str, Any]) -> list[str] | None:
     """Zeilen des Staging-Deploy-Logs; lokal, sonst per ``vps.staging_ssh`` vom Bau-Server.
 
-    ``None`` = kein Staging-Weg (Datei fehlt, kein ``staging_ssh``). Scheitert der ssh-Abruf,
-    kommt ``_StagingUnlesbar`` (Warnung ist dann schon geloggt).
+    ``None`` = kein Staging-Stand: Datei fehlt lokal ohne ``staging_ssh``, oder die Verbindung
+    steht, aber ``tail`` scheitert auf dem Server (Log fehlt, z. B. Exit 1). Nur ein
+    Verbindungsfehler (ssh Exit 255, Zeitüberschreitung, ssh nicht startbar) gibt
+    ``_StagingUnlesbar`` (Warnung ist dann schon geloggt).
 
     Am PC liegt das Log nur auf dem Bau-Server. Ohne diesen Weg sah capo dort nie
     einen Staging-Stand und öffnete fertige Nur-Staging-Tickets immer wieder (#1332).
@@ -723,9 +725,14 @@ def _staging_zeilen(vps: dict[str, Any]) -> list[str] | None:
     except (OSError, subprocess.SubprocessError) as fehler:
         log.warning("Staging-Log über %s nicht lesbar: %s", host, fehler)
         raise _StagingUnlesbar from fehler
-    if lauf.returncode != 0:
+    if lauf.returncode == 255:  # ssh selbst gescheitert (Verbindung/Anmeldung)
         log.warning("Staging-Log über %s nicht lesbar (Exit %s).", host, lauf.returncode)
         raise _StagingUnlesbar
+    if lauf.returncode != 0:  # Verbindung stand, Log fehlt auf dem Server = kein Staging-Stand
+        log.warning(
+            "Staging-Log auf %s fehlt (Exit %s): %s", host, lauf.returncode, lauf.stderr.strip()[:200]
+        )
+        return None
     return lauf.stdout.splitlines()
 
 
