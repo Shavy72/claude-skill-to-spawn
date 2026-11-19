@@ -23,7 +23,6 @@ import json
 import logging
 import os
 import re
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -43,6 +42,7 @@ from to_spawn import (  # noqa: E402
     handoff_blick,
     sitzung_env,
     speicher,
+    starter,
     startklar,
     terminal_maus,
     umzug,
@@ -330,7 +330,7 @@ def main() -> int:
         startklar_code = startklar.gate(ordner, a.spec)  # Ordner wie fahre(cwd=…) (#450 F1)
         if startklar_code:
             return startklar_code
-    claude = shutil.which("claude") or "claude"
+    claude = starter.finde("claude")  # unter Test nur die Attrappe (#1406)
     # Pflicht-MCP context-mode (#237): der Aufseher startet ohne ``--strict-mcp-config``,
     # das Plugin-MCP lädt also von selbst — nur fehlen darf es nicht.
     try:
