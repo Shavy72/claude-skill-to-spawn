@@ -968,7 +968,15 @@ def test_keine_id_ohne_session_json_und_argv(tmp_path: Path) -> None:
     sich das cwd). Ohne Session-JSON und ohne argv-ID gibt es keine ID."""
     binaer = tmp_path / "bin"
     binaer.mkdir()
-    shutil.copy2(HILFEN / "fake_claude_schlaeft.sh", binaer / "claude")
+    claude = binaer / "claude"
+    if os.name != "nt":
+        shutil.copy2(HILFEN / "fake_claude_schlaeft.sh", claude)
+        start = [str(claude)]
+    else:
+        # Windows startet kein #!/bin/bash (WinError 193, #1406): gleiche Rolle mit
+        # FAKE_CLAUDE_OHNE_JSON — schlafen, keine Session-Datei — als Python-Attrappe.
+        claude.write_text("import time\ntime.sleep(3600)\n", encoding="utf-8")
+        start = [sys.executable, str(claude)]
     arbeit = tmp_path / "arbeit"
     arbeit.mkdir()
     heim = tmp_path / "heim"
@@ -976,9 +984,7 @@ def test_keine_id_ohne_session_json_und_argv(tmp_path: Path) -> None:
     ordner.mkdir(parents=True)
     umgebung = {k: v for k, v in os.environ.items() if k not in ("TMUX", "TMUX_PANE")}
     umgebung.update(HOME=str(heim), FAKE_CLAUDE_OHNE_JSON="1")
-    prozess = subprocess.Popen(
-        [str(binaer / "claude"), "nur ein Prompt"], cwd=str(arbeit), env=umgebung
-    )
+    prozess = subprocess.Popen([*start, "nur ein Prompt"], cwd=str(arbeit), env=umgebung)
     try:
         time.sleep(1.2)
         (ordner / f"{uuid.uuid4()}.jsonl").write_text("{}\n", encoding="utf-8")

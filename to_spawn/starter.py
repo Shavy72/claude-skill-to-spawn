@@ -145,7 +145,18 @@ _CMD_SONDER = re.compile(r'([()%!^"<>&|])')
 def _cmd_zeile(argv: list[str]) -> str:
     """Befehlszeile für ``cmd.exe /c``: jedes Argument nach MS-C-Regeln in ``"…"``, danach jedes
     cmd-Sonderzeichen (auch ``"`` und ``%``) mit ``^`` entschärft. So wertet cmd.exe ``& | < > ^ %``
-    nie aus und das Programm erhält genau ``argv`` (``list2cmdline`` quotet nur bei Leerzeichen)."""
+    nie aus und ein ``.exe``-Ziel erhält genau ``argv``.
+
+    Grenzen (``ValueError``, kein Start): ``\\n``/``\\r`` schneidet cmd.exe ab — immer abgelehnt.
+    Ein Batch-Ziel (``.cmd``/``.bat`` wie der npm-Shim, oder Endung unklar) wertet ``%*`` ein
+    zweites Mal aus; ein ``"`` im Argument öffnet dort eine Befehlsinjektion (BatBadBut) — dann
+    abgelehnt. Prompts mit solchen Zeichen gehören per Datei/stdin übergeben."""
+    if any("\n" in arg or "\r" in arg for arg in argv):
+        raise ValueError("Notnagel: Zeilenumbruch im Argument würde von cmd.exe abgeschnitten")
+    if Path(shutil.which(argv[0]) or argv[0]).suffix.lower() not in {".exe", ".com"} and any(
+        '"' in arg for arg in argv[1:]
+    ):
+        raise ValueError("Notnagel: Anführungszeichen im Argument eines Batch-Ziels (BatBadBut)")
 
     def quote(arg: str) -> str:
         teile: list[str] = []
@@ -163,11 +174,21 @@ def _cmd_zeile(argv: list[str]) -> str:
 
 @overload
 def starte(
-    cmd: Sequence[str], *, cwd: Path | str | None = ..., warten: Literal[False] = ..., notnagel: type[OSError] | None = ..., **popen_args: Any
+    cmd: Sequence[str],
+    *,
+    cwd: Path | str | None = ...,
+    warten: Literal[False] = ...,
+    notnagel: type[OSError] | None = ...,
+    **popen_args: Any,
 ) -> subprocess.Popen[Any]: ...
 @overload
 def starte(
-    cmd: Sequence[str], *, cwd: Path | str | None = ..., warten: Literal[True], notnagel: type[OSError] | None = ..., **popen_args: Any
+    cmd: Sequence[str],
+    *,
+    cwd: Path | str | None = ...,
+    warten: Literal[True],
+    notnagel: type[OSError] | None = ...,
+    **popen_args: Any,
 ) -> subprocess.CompletedProcess[Any]: ...
 def starte(
     cmd: Sequence[str],

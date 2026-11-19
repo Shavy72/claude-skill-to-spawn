@@ -110,6 +110,8 @@ REST_START: frozenset[tuple[str, str]] = frozenset()
 KEIN_START = frozenset(
     {
         ("to_spawn/prozessbaum.py", "session_beenden"),  # beendet Prozesse
+        ("to_spawn/prozessbaum.py", "_prozesse_windows"),  # powershell -Command: WMI-Prozessliste lesen
+        ("skripte/sessions_stand.py", "prozesse_lesen"),  # powershell -Command: WMI-Prozessliste lesen
         ("to_spawn/setup.py", "pruefe_start"),  # Versions-Probe
         ("skripte/abschluss_paket.py", "wirkungskreis"),  # Repo-Skript, Ausgabe gelesen
         ("skripte/bau.py", "ticket_from_gh"),  # gh
@@ -139,10 +141,25 @@ KEIN_START = frozenset(
     }
 )
 
-_TMUX_START = {"new-window", "new-tab", "split-window", "new-session"}
+_TMUX_START = {"new-window", "new-tab", "split-window", "new-session", "respawn-window", "respawn-pane"}
 _START_PROGRAMM = {"claude", "claude.exe", "claude.cmd", "wt", "wt.exe"}
 _LAUF = {"run", "call", "check_call", "check_output"}
-_OS_START = {"system", "startfile", "execv", "execvp", "execvpe", "spawnv", "spawnvp", "spawnl", "popen"}
+_SHELL = {"powershell", "pwsh", "cmd", "bash", "sh", "zsh"}
+_SHELL_BEFEHL = {"-c", "-lc", "-command", "/c", "/k"}
+
+
+def _traeger_fn(knoten: ast.expr, aliase: dict[str, str]) -> tuple[str, str]:
+    """``(Modul, Funktion)`` eines Namens/Attributs, Aliase aufgelöst."""
+    if isinstance(knoten, ast.Attribute):
+        return aliase.get(_name(knoten.value), _name(knoten.value)), knoten.attr
+    traeger, _, fn = aliase.get(_name(knoten), _name(knoten)).rpartition(".")
+    return traeger, fn
+
+
+def _ist_startfunktion(traeger: str, fn: str) -> bool:
+    if traeger == "os":
+        return fn in {"system", "startfile", "popen"} or fn.startswith(("spawn", "exec", "posix_spawn"))
+    return fn == "Popen" or fn.startswith("create_subprocess")
 
 
 def _name(knoten: ast.expr) -> str:
@@ -177,18 +194,15 @@ def _ist_start(aufruf: ast.Call, aliase: dict[str, str] | None = None) -> bool:
     if any(k.arg == "start" and isinstance(k.value, ast.Constant) and k.value.value is True for k in aufruf.keywords):
         return False  # ``start=True``: Helfer leitet über die Tür (tmux_aufruf.aufrufen, Aufpasser.sh)
     aliase = aliase or {}
-    func = aufruf.func
-    if isinstance(func, ast.Attribute):
-        traeger, fn = aliase.get(_name(func.value), _name(func.value)), func.attr
-    else:
-        traeger, _, fn = aliase.get(_name(func), _name(func)).rpartition(".")
-    if fn == "Popen" or fn.startswith("create_subprocess") or (traeger == "os" and fn in _OS_START):
+    traeger, fn = _traeger_fn(aufruf.func, aliase)
+    if _ist_startfunktion(traeger, fn):
         return True
-    konstanten = [k for a in aufruf.args for k in _konstanten(a)]
-    if any(k in _TMUX_START for k in konstanten):
+    # ``args=`` zählt wie das erste Positionsargument
+    werte = [*aufruf.args, *(k.value for k in aufruf.keywords if k.arg == "args")]
+    if any(k in _TMUX_START for a in werte for k in _konstanten(a)):
         return True
-    if traeger == "subprocess" and fn in _LAUF and aufruf.args:
-        liste = aufruf.args[0]
+    if traeger == "subprocess" and fn in _LAUF and werte:
+        liste = werte[0]
         if (
             not isinstance(liste, (ast.List, ast.Tuple))
             or not liste.elts
@@ -196,7 +210,14 @@ def _ist_start(aufruf: ast.Call, aliase: dict[str, str] | None = None) -> bool:
         ):
             return True  # dynamischer Befehl
         programm = liste.elts[0].value
-        return isinstance(programm, str) and Path(programm).name.lower() in _START_PROGRAMM
+        if not isinstance(programm, str):
+            return False
+        name = Path(programm).name.lower()
+        if name in _START_PROGRAMM:
+            return True
+        # Shell als Programm mit Befehlsschalter: ``bash -lc …``, ``powershell -c …``, ``cmd /c …``
+        rest = [k.lower() for k in _konstanten(liste)[1:] if isinstance(k, str)]
+        return name.removesuffix(".exe") in _SHELL and any(k in _SHELL_BEFEHL for k in rest)
     return False
 
 
@@ -204,13 +225,26 @@ def _funde_in(quelle: str, rel: str) -> set[tuple[str, str]]:
     funde: set[tuple[str, str]] = set()
     baum = ast.parse(quelle)
     aliase = _aliase(baum)
+    aufgerufen = {id(k.func) for k in ast.walk(baum) if isinstance(k, ast.Call)}
+    # Typ-Hinweise (``prozess: subprocess.Popen[Any]``) referenzieren nur den Typ
+    hinweise = [getattr(k, f, None) for k in ast.walk(baum) for f in ("annotation", "returns")]
+    aufgerufen |= {id(n) for h in hinweise if isinstance(h, ast.AST) for n in ast.walk(h)}
+
+    def referenz(kind: ast.AST) -> bool:
+        """Start-Funktion als Wert statt Aufruf: ``lauf = subprocess.Popen``, ``lauf = run``."""
+        if id(kind) in aufgerufen or not isinstance(kind, (ast.Attribute, ast.Name)):
+            return False
+        if not isinstance(kind.ctx, ast.Load):
+            return False
+        traeger, fn = _traeger_fn(kind, aliase)
+        return _ist_startfunktion(traeger, fn) or (traeger == "subprocess" and fn in _LAUF)
 
     def besuche(knoten: ast.AST, ort: str) -> None:
         for kind in ast.iter_child_nodes(knoten):
             hier = ort
             if isinstance(kind, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
                 hier = f"{ort}.{kind.name}" if ort else kind.name
-            if isinstance(kind, ast.Call) and _ist_start(kind, aliase):
+            if (isinstance(kind, ast.Call) and _ist_start(kind, aliase)) or referenz(kind):
                 funde.add((rel, hier or "<modul>"))
             besuche(kind, hier)
 
@@ -218,14 +252,15 @@ def _funde_in(quelle: str, rel: str) -> set[tuple[str, str]]:
     return funde
 
 
-_AUSSER = {"tests", ".git", ".review", ".ruff_cache", "__pycache__", ".venv", "node_modules"}
+#: Werkzeug-Ordner überall ausgenommen; Tests nur im obersten ``tests/``.
+_AUSSER = {".git", ".review", ".ruff_cache", "__pycache__", ".venv", "node_modules"}
 
 
-def _start_stellen() -> set[tuple[str, str]]:
+def _start_stellen(wurzel: Path = SKILL) -> set[tuple[str, str]]:
     funde: set[tuple[str, str]] = set()
-    for datei in SKILL.rglob("*.py"):  # ganzes Repo außer Tests und Werkzeug-Ordnern
-        rel = datei.relative_to(SKILL).as_posix()
-        if _AUSSER & set(Path(rel).parts):
+    for datei in wurzel.rglob("*.py"):  # ganzes Repo außer Tests und Werkzeug-Ordnern
+        rel = datei.relative_to(wurzel).as_posix()
+        if Path(rel).parts[0] == "tests" or _AUSSER & set(Path(rel).parts):
             continue
         if rel != "to_spawn/starter.py":
             funde |= _funde_in(datei.read_text(encoding="utf-8"), rel)
@@ -243,6 +278,21 @@ def _start_stellen() -> set[tuple[str, str]]:
         'from subprocess import Popen\ndef f():\n    Popen(["x"])',
         "from subprocess import run as r\ndef f(befehl):\n    r(befehl)",
         'from os import system\ndef f():\n    system("x")',
+        # Fixrunde #1406 (Review 2b/Abschluss): je Lücke ein Fall, der vorher durchging
+        'import subprocess\ndef f():\n    subprocess.run(["tmux", "respawn-window", "-k", "-t", "x"])',
+        'import subprocess\ndef f():\n    subprocess.run(["tmux", "respawn-pane", "-k"])',
+        'import os\ndef f():\n    os.spawnve(os.P_NOWAIT, "x", ["x"], {})',
+        'import os\ndef f():\n    os.execlp("x", "x")',
+        'from os import posix_spawn\ndef f():\n    posix_spawn("x", ["x"], {})',
+        'import subprocess\ndef f(z):\n    subprocess.run(["powershell", "-c", z])',
+        'import subprocess\ndef f(z):\n    subprocess.run(["pwsh", "-NoProfile", "-Command", z])',
+        'import subprocess\ndef f(z):\n    subprocess.run(["bash", "-lc", z])',
+        'import subprocess\ndef f():\n    subprocess.run(["cmd", "/c", "start", "x"])',
+        "import subprocess\ndef f(befehl):\n    subprocess.run(args=befehl)",
+        'import subprocess\ndef f():\n    subprocess.run(args=["claude", "-p", "x"])',
+        'import subprocess\ndef f():\n    lauf = subprocess.Popen\n    lauf(["x"])',
+        'import subprocess\ndef f(w):\n    lauf = subprocess.run if w else subprocess.Popen\n    lauf(["x"])',
+        'from subprocess import run\ndef f():\n    lauf = run\n    lauf(["x"])',
     ],
 )
 def test_pruef_test_meldet_versteckte_start(quelle: str) -> None:
@@ -259,6 +309,15 @@ def test_pruef_test_meldet_versteckte_start(quelle: str) -> None:
 )
 def test_pruef_test_laesst_lese_befehle_durch(quelle: str) -> None:
     assert _funde_in(quelle, "probe.py") == set()
+
+
+def test_pruef_test_sucht_auch_in_unter_ordnern_namens_tests(tmp_path: Path) -> None:
+    """Nur der oberste ``tests/`` ist ausgenommen, nicht etwa ``to_spawn/tests/``."""
+    for rel in ("tests/probe.py", "to_spawn/tests/probe.py"):
+        datei = tmp_path / rel
+        datei.parent.mkdir(parents=True, exist_ok=True)
+        datei.write_text('import subprocess\ndef f():\n    subprocess.Popen(["x"])\n', encoding="utf-8")
+    assert _start_stellen(tmp_path) == {("to_spawn/tests/probe.py", "f")}
 
 
 def test_keine_start_stelle_ausserhalb_der_tuer() -> None:
@@ -290,3 +349,40 @@ def test_shell_notnagel_entschaerft_cmd_sonderzeichen(tmp_path: Path, monkeypatc
     lauf = starter.starte([sys.executable, str(skript), str(beleg), *args], cwd=tmp_path, warten=True, timeout=60)
     assert lauf.returncode == 0
     assert json.loads(beleg.read_text(encoding="utf-8")) == args
+
+
+_CMD_ATTRAPPE = '@"{python}" "{skript}" %*\r\n'
+
+
+@pytest.mark.skipif(os.name != "nt", reason="cmd.exe-Notnagel gibt es nur unter Windows")
+@pytest.mark.parametrize(
+    "argument",
+    ['a\\"&echo PWN>pwn.txt', 'a"&echo PWN>pwn.txt', "zeile1\nzeile2", "zeile1\rzeile2"],
+)
+def test_shell_notnagel_lehnt_umbruch_und_anfuehrung_bei_cmd_ziel_ab(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, argument: str
+) -> None:
+    """Abschluss-Review 1/2: Bei einem ``.cmd``-Ziel (wie der npm-Shim ``claude.cmd``) wertet
+    cmd.exe ``%*`` ein zweites Mal aus — ``a\\"&…`` liefe dort als eigener Befehl (BatBadBut),
+    ein Zeilenumbruch schnitte das Argument still ab. Beides muss laut scheitern, ohne Start."""
+    attrappen = Path(os.environ[starter.TEST_BIN_ENV])
+    skript = attrappen / "zeig_argv.py"
+    skript.write_text(
+        "import json, pathlib, sys\npathlib.Path(sys.argv[1]).write_text(json.dumps(sys.argv[2:]))\n",
+        encoding="utf-8",
+    )
+    shim = attrappen / "zeig.cmd"
+    shim.write_text(_CMD_ATTRAPPE.format(python=sys.executable, skript=skript), encoding="utf-8")
+    beleg = tmp_path / "argv.json"
+    echt = subprocess.run
+
+    def ohne_direktstart(befehl: object, **kw: object) -> object:
+        if not kw.get("shell"):
+            raise FileNotFoundError("Direktstart simuliert gescheitert")
+        return echt(befehl, **kw)  # type: ignore[call-overload]
+
+    monkeypatch.setattr(subprocess, "run", ohne_direktstart)
+    with pytest.raises(ValueError, match="Notnagel"):
+        starter.starte([str(shim), str(beleg), argument], cwd=tmp_path, warten=True, timeout=60)
+    assert not (tmp_path / "pwn.txt").exists(), "zweiter Befehl lief"
+    assert not beleg.exists(), "Ziel lief trotz Ablehnung"
