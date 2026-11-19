@@ -974,14 +974,8 @@ def test_keine_id_ohne_session_json_und_argv(tmp_path: Path) -> None:
     binaer = tmp_path / "bin"
     binaer.mkdir()
     claude = binaer / "claude"
-    if os.name != "nt":
-        shutil.copy2(HILFEN / "fake_claude_schlaeft.sh", claude)
-        start = [str(claude)]
-    else:
-        # Windows startet kein #!/bin/bash (WinError 193, #1406): gleiche Rolle mit
-        # FAKE_CLAUDE_OHNE_JSON — schlafen, keine Session-Datei — als Python-Attrappe.
-        claude.write_text("import time\ntime.sleep(3600)\n", encoding="utf-8")
-        start = [sys.executable, str(claude)]
+    shutil.copy2(HILFEN / "fake_claude_schlaeft.sh", claude)
+    start = [str(claude)]
     arbeit = tmp_path / "arbeit"
     arbeit.mkdir()
     heim = tmp_path / "heim"

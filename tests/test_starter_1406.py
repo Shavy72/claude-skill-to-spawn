@@ -147,6 +147,8 @@ _TMUX_START = {
     *("run-shell", "if-shell", "pipe-pane", "display-popup"),  # starten selbst ein Programm
 }
 _START_PROGRAMM = {"claude", "claude.exe", "claude.cmd", "wt", "wt.exe"}
+#: ``ssh`` startet immer etwas auf dem Ziel: den Fern-Befehl oder eine Login-Shell (#1406, B1).
+_FERN_PROGRAMM = {"ssh", "ssh.exe"}
 _LAUF = {"run", "call", "check_call", "check_output"}
 _SHELL = {"powershell", "pwsh", "cmd", "bash", "sh", "zsh"}
 _SHELL_BEFEHL = {"-c", "-lc", "-command", "/c", "/k"}
@@ -163,6 +165,10 @@ def _traeger_fn(knoten: ast.expr, aliase: dict[str, str]) -> tuple[str, str]:
 def _ist_startfunktion(traeger: str, fn: str) -> bool:
     if traeger == "os":
         return fn in {"system", "startfile", "popen"} or fn.startswith(("spawn", "exec", "posix_spawn"))
+    if traeger == "pty":
+        return fn == "spawn"
+    if traeger == "subprocess" and fn in {"getoutput", "getstatusoutput"}:
+        return True  # Shell-String
     return fn == "Popen" or fn.startswith("create_subprocess")
 
 
@@ -180,7 +186,7 @@ def _aliase(baum: ast.AST) -> dict[str, str]:
         if isinstance(knoten, ast.Import):
             for teil in knoten.names:
                 namen[teil.asname or teil.name] = teil.name
-        elif isinstance(knoten, ast.ImportFrom) and knoten.module in ("subprocess", "os", "asyncio"):
+        elif isinstance(knoten, ast.ImportFrom) and knoten.module in ("subprocess", "os", "asyncio", "pty"):
             for teil in knoten.names:
                 namen[teil.asname or teil.name] = f"{knoten.module}.{teil.name}"
     return namen
@@ -217,7 +223,7 @@ def _ist_start(aufruf: ast.Call, aliase: dict[str, str] | None = None) -> bool:
         if not isinstance(programm, str):
             return False
         name = Path(programm).name.lower()
-        if name in _START_PROGRAMM:
+        if name in _START_PROGRAMM or name in _FERN_PROGRAMM:
             return True
         # Shell als Programm mit Befehlsschalter: ``bash -lc …``, ``powershell -c …``, ``cmd /c …``
         rest = [k.lower() for k in _konstanten(liste)[1:] if isinstance(k, str)]
@@ -307,6 +313,13 @@ def _start_stellen(wurzel: Path = SKILL) -> set[tuple[str, str]]:
         'import subprocess\ndef f():\n    subprocess.run(["tmux", "if-shell", "true", "neww"])',
         'import subprocess\ndef f():\n    subprocess.run(["tmux", "pipe-pane", "-o", "cat"])',
         'import subprocess\ndef f():\n    subprocess.run(["tmux", "display-popup", "claude"])',
+        # Mini-Runde #1406 (End-Review B1/G1): ssh mit Fern-Befehl, Shell-String-Helfer, pty
+        'import subprocess\ndef f(ziel, befehl):\n    subprocess.run(["ssh", "-o", "BatchMode=yes", ziel, befehl])',
+        'import subprocess\ndef f():\n    subprocess.check_output(["ssh.exe", "bau-server", "bash x.sh"])',
+        "import subprocess\ndef f(z):\n    subprocess.getoutput(z)",
+        "from subprocess import getstatusoutput\ndef f(z):\n    getstatusoutput(z)",
+        'import pty\ndef f():\n    pty.spawn(["bash"])',
+        'from pty import spawn\ndef f():\n    spawn(["bash"])',
     ],
 )
 def test_pruef_test_meldet_versteckte_start(quelle: str) -> None:
@@ -459,3 +472,9 @@ def test_direktstart_cmd_ziel_lehnt_anfuehrung_ab(tmp_path: Path) -> None:
         starter.starte([str(shim), str(beleg), 'a"&echo.>pwn.txt'], cwd=tmp_path, warten=True, timeout=60)
     assert not (tmp_path / "pwn.txt").exists(), "zweiter Befehl lief"
     assert not beleg.exists(), "Ziel lief trotz Ablehnung"
+
+
+@pytest.mark.parametrize("ziel", ["x.cmd.", "x.bat ", "x.CMD. .", "x.cmd"])
+def test_batch_ziel_mit_punkt_oder_leerzeichen_am_ende(ziel: str) -> None:
+    """End-Review G4: Windows schneidet ``.``/Leerzeichen am Ende ab und startet doch über cmd."""
+    assert starter._endung(ziel) in {".cmd", ".bat"}

@@ -23,7 +23,7 @@ from to_spawn import aufpasser, pc_fenster, respawn, spawn, starter, tmux_aufruf
 
 
 def test_tmux_fenster_ohne_attrappe_gesperrt(tmp_path: Path) -> None:
-    with pytest.raises(starter.StartGesperrt):
+    with pytest.raises(starter.StartGesperrt, match="verboten: tmux "):
         respawn.TmuxWerkzeug().fenster_starten("spec-1", "bau 1", str(tmp_path), "true")
 
 
@@ -44,12 +44,12 @@ def test_aufpasser_fenster_ohne_attrappe_gesperrt(tmp_path: Path) -> None:
     a = aufpasser.Aufpasser(
         aufpasser.Einstellungen(zustand=tmp_path / "stand.json", tmux_socket="nie-benutzt", trocken=False)
     )
-    with pytest.raises(starter.StartGesperrt):
+    with pytest.raises(starter.StartGesperrt, match="verboten: tmux "):
         a.fenster_starten("spec-1", "bau 1", tmp_path, "true")
 
 
 def test_wt_tab_ohne_attrappe_gesperrt(tmp_path: Path) -> None:
-    with pytest.raises(starter.StartGesperrt):
+    with pytest.raises(starter.StartGesperrt, match=r"(?i)verboten: [^→(]*\bwt(\.exe)? "):
         pc_fenster.tab_starten(tmp_path, 1406, "")
 
 
@@ -95,7 +95,7 @@ def test_leitstand_sitzung_ohne_attrappe_gesperrt(tmp_path: Path, monkeypatch: p
     repo = tmp_path / "repo"
     repo.mkdir()
     _nie_starten(monkeypatch)
-    with pytest.raises(starter.StartGesperrt):
+    with pytest.raises(starter.StartGesperrt, match=r"(?i)verboten: [^→(]*\bclaude(\.exe|\.cmd)? "):
         lf.sitzung(lf.Ablage(repo=repo, spec="1406"))
 
 
@@ -103,14 +103,14 @@ def test_spawn_ohne_attrappe_gesperrt(tmp_path: Path, monkeypatch: pytest.Monkey
     sauber = type("Bericht", (), {"sauber": True, "text": lambda self: "sauber"})()
     monkeypatch.setattr(spawn.manifest, "pruefe", lambda *_a, **_k: sauber)
     _nie_starten(monkeypatch)
-    with pytest.raises(starter.StartGesperrt):
+    with pytest.raises(starter.StartGesperrt, match=r"(?i)verboten: [^→(]*\b(bash|pwsh|powershell)(\.exe)? "):
         spawn.spawn(tmp_path, 1406, {}, ziel="local")
 
 
 def test_spawn_neustart_server_ohne_attrappe_gesperrt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(spawn.stand, "sichere_stand", lambda *_a, **_k: 0)
     _nie_starten(monkeypatch)
-    with pytest.raises(starter.StartGesperrt):
+    with pytest.raises(starter.StartGesperrt, match="verboten: ssh "):
         spawn.neustart(tmp_path, 1406, 1, {"server_repo": "~/repo"}, ziel="srv")
 
 
@@ -121,5 +121,5 @@ def test_spawn_neustart_pc_tab_ohne_attrappe_gesperrt(tmp_path: Path, monkeypatc
     aus = type("Eintrag", (), {"zustand": "aus", "pid": None, "session_pid": None})()
     monkeypatch.setattr(spawn, "ticket_eintrag", lambda *_a: aus)
     _nie_starten(monkeypatch)
-    with pytest.raises(starter.StartGesperrt):
+    with pytest.raises(starter.StartGesperrt, match=r"(?i)verboten: [^→(]*\bwt(\.exe)? "):
         spawn.neustart(tmp_path, 1406, 1, {}, ziel="local")

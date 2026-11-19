@@ -131,10 +131,16 @@ def _cd(ordner: str) -> str:
 
 
 def _ssh(ziel: str, befehl: str, timeout: float) -> subprocess.CompletedProcess[str] | None:
-    """Ein Befehl per SSH; ``None`` bei Zeitüberschreitung oder fehlendem ``ssh``."""
+    """Ein Befehl per SSH; ``None`` bei Zeitüberschreitung oder fehlendem ``ssh``.
+
+    Läuft über die Start-Tür (#1406): ``spawn_srv.sh`` startet echte Server-Sessions; unter
+    Test nur die ``ssh``-Attrappe aus ``TO_SPAWN_TEST_BIN``, sonst ``StartGesperrt``.
+    """
     try:
-        return subprocess.run(
+        return starter.starte(
             ["ssh", "-o", "BatchMode=yes", ziel, befehl],
+            warten=True,
+            notnagel=None,  # fehlendes ssh → OSError unten, nie über die Shell
             capture_output=True,
             text=True,
             encoding="utf-8",

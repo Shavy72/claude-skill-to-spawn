@@ -147,7 +147,10 @@ def welt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path]:
     binaer = tmp_path / "bin"
     binaer.mkdir()
     _ausfuehrbar(binaer / "ssh", SSH_STUB)
+    # Windows übersieht ``ssh`` ohne Endung im PATH und nähme das echte ssh.exe (#1406, B1)
+    (binaer / "ssh.cmd").write_text(f'@"{sys.executable}" "%~dp0ssh" %*\r\n', encoding="utf-8")
     monkeypatch.setenv("PATH", f"{binaer}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.setenv("TO_SPAWN_TEST_BIN", str(binaer))  # Start-Tür: nur diese Attrappe startet
     monkeypatch.setenv("SSH_STUB_LOG", str(tmp_path / "ssh.log"))
     monkeypatch.setenv("SSH_STUB_MODUS", "ok")
     monkeypatch.setenv("TO_SPAWN_SSH_ZIEL", "bau-server")
@@ -1309,3 +1312,26 @@ def test_umzug_nur_im_fliesstext_bleibt_weigerung(welt: dict[str, Path]) -> None
     pfad = _handoff(welt["wt"], "# Handoff\n\nDer Umzug: server kommt später.\n")
     assert _umzug(welt, pfad) == umzug.EXIT_WEIGERUNG
     assert _ssh_aufrufe(welt) == []
+
+
+# --- Start-Tür #1406 (End-Review B1): Server-Start per ssh nur über die Tür ----------------
+
+
+@pytest.mark.parametrize("ohne_bin", [False, True], ids=["leerer_test_bin", "ohne_test_bin"])
+def test_ssh_ohne_attrappe_gesperrt(monkeypatch: pytest.MonkeyPatch, ohne_bin: bool) -> None:
+    """Unter Test ohne ``ssh``-Attrappe: ``StartGesperrt``, kein Prozess entsteht."""
+    from to_spawn import starter
+
+    if ohne_bin:
+        monkeypatch.delenv(starter.TEST_BIN_ENV, raising=False)
+    gestartet: list[object] = []
+
+    def nie(*a: object, **_k: object) -> None:
+        gestartet.append(a)
+        raise AssertionError("subprocess trotz Sperre aufgerufen")
+
+    monkeypatch.setattr(subprocess, "Popen", nie)
+    monkeypatch.setattr(subprocess, "run", nie)
+    with pytest.raises(starter.StartGesperrt, match="ssh"):
+        umzug._ssh("bau-server", umzug.spawn_befehl(SPEC, TICKET, "~/repo"), 1)
+    assert gestartet == []

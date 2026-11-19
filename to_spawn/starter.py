@@ -150,7 +150,8 @@ def _nur_attrappe(argv: list[str], env: Mapping[str, str] | None = None) -> list
 
 def _endung(programm: str) -> str:
     """Endung des Programms, wie Windows es auflöst (``claude`` → ``.cmd`` beim npm-Shim)."""
-    return Path(shutil.which(programm) or programm).suffix.lower()
+    # Windows schneidet „.“/Leerzeichen am Ende ab: ``x.cmd.`` startet doch über cmd.exe (BatBadBut)
+    return Path(Path(shutil.which(programm) or programm).name.rstrip(". ")).suffix.lower()
 
 
 _CMD_SONDER = re.compile(r'([()%!^"<>&|])')
