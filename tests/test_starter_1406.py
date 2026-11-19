@@ -88,12 +88,6 @@ REST_START = frozenset(
         ("to_spawn/waechter_takt.py", "starte_claude"),  # Takt-Claude
         ("to_spawn/waechter_takt.py", "starte_abgeloest"),  # Hintergrund-Prozess (Ablösung)
         ("to_spawn/capo.py", "_starte_folge_runde"),  # Folge-Runde (tmux/lokal)
-        ("skripte/leitstand_fenster.py", "sitzung"),  # Leitstand-Claude (subprocess.run)
-        ("to_spawn/spawn.py", "spawn"),  # spawn_local.ps1 / spawn_srv (wt-Tabs, tmux)
-        ("to_spawn/spawn.py", "neustart"),  # wt-Tab bzw. ssh → to_spawn.py auf dem Server
-        ("to_spawn/aufpasser.py", "Aufpasser.fenster_starten"),  # tmux new-window
-        ("to_spawn/respawn.py", "TmuxWerkzeug.fenster_starten"),  # tmux new-window
-        ("to_spawn/pc_fenster.py", "tab_starten"),  # wt-Tab „bau <N>“ (nicht im Entwurf gelistet)
     }
 )
 
@@ -109,7 +103,7 @@ KEIN_START = frozenset(
         ("skripte/leitstand.py", "starte"),  # Kind-Prozess mit gefangener Ausgabe
         ("skripte/spec_stand.py", "sh"),  # Lese-Befehle
         ("skripte/hooks/staffel_stop.py", "ticket_offen"),  # gh
-        ("to_spawn/aufpasser.py", "Aufpasser.sh"),  # Lese-Befehle (tmux list/capture)
+        ("to_spawn/aufpasser.py", "Aufpasser.sh"),  # Lese-Befehle (tmux list/capture); start=True → Tür
         ("to_spawn/aufseher_stand.py", "_tmux_echt"),  # tmux lesen
         ("to_spawn/capo.py", "vps_kopf"),  # ssh lesen
         ("to_spawn/capo.py", "_staging_zeilen"),  # ssh lesen
@@ -127,7 +121,7 @@ KEIN_START = frozenset(
         ("to_spawn/startklar.py", "_laeuft"),  # Python-Probe
         ("to_spawn/startklar.py", "_ausfuehren"),  # Prüfbefehle
         ("to_spawn/startklar.py", "_fehlende_pakete"),  # Python-Probe
-        ("to_spawn/tmux_aufruf.py", "aufrufen"),  # tmux-Hilfe; Fenster-Starts siehe REST_START
+        ("to_spawn/tmux_aufruf.py", "aufrufen"),  # tmux-Hilfe; start=True → Tür
     }
 )
 
@@ -144,6 +138,8 @@ def _name(knoten: ast.expr) -> str:
 
 def _ist_start(aufruf: ast.Call) -> bool:
     """Popen, os-Start, tmux/wt-Fenster-Konstante oder ``subprocess.run`` mit dynamischem Befehl."""
+    if any(k.arg == "start" and isinstance(k.value, ast.Constant) and k.value.value is True for k in aufruf.keywords):
+        return False  # ``start=True``: Helfer leitet über die Tür (tmux_aufruf.aufrufen, Aufpasser.sh)
     fn = _name(aufruf.func)
     traeger = _name(aufruf.func.value) if isinstance(aufruf.func, ast.Attribute) else ""
     if fn == "Popen" or fn.startswith("create_subprocess") or (traeger == "os" and fn in _OS_START):

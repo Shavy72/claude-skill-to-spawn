@@ -245,6 +245,13 @@ def welt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Welt]:
     (binaer / "bau_protokoll.sh").chmod(0o755)
     monkeypatch.setenv("PATH", f"{binaer}{os.pathsep}{os.environ['PATH']}")
     monkeypatch.delenv("TMUX", raising=False)
+    # Start-Tür #1406: Fenster-Starts nur über den Attrappen-Ordner; das echte tmux läuft
+    # hier auf dem eigenen Test-Socket, darum dort als Weiterleitung (kein Symlink: die Tür
+    # prüft den aufgelösten Pfad).
+    weiter = Path(os.environ["TO_SPAWN_TEST_BIN"]) / "tmux"
+    echt = shutil.which("tmux") or "tmux"
+    weiter.write_text(f'#!/bin/sh\nexec {echt} "$@"\n', encoding="utf-8")
+    weiter.chmod(0o755)
     protokoll_gh = tmp_path / "gh_protokoll.txt"
     monkeypatch.setenv("GH_STUB_PROTOKOLL", str(protokoll_gh))
     # Vorgabe: nur 9002 ist Unter-Ticket; Tests mit 9003 setzen es selbst.
