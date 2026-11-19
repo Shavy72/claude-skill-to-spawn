@@ -252,6 +252,7 @@ def test_kind_session_erbt_kein_to_spawn_repo(
     umgebung = {
         **os.environ,
         "PATH": f"{binaer}{os.pathsep}{os.environ['PATH']}",
+        "TO_SPAWN_TEST_BIN": str(binaer),  # Start-Tür (#1406): nur diese Attrappe startet
         "TO_SPAWN_REPO": str(repo),
         "FAKE_UMGEBUNG": str(beweis),
         "TMPDIR": str(temp),

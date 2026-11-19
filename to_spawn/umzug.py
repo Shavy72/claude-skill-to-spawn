@@ -35,6 +35,8 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any, TextIO
 
+from . import starter
+
 log = logging.getLogger("to_spawn.umzug")
 
 EXIT_OK = 0
@@ -928,9 +930,7 @@ def starte_mit_umzug_wache(
     """
     datei.unlink(missing_ok=True)
     try:
-        prozess: subprocess.Popen[Any] = subprocess.Popen(list(cmd))
-    except FileNotFoundError:
-        prozess = subprocess.Popen(subprocess.list2cmdline(list(cmd)), shell=True)
+        prozess: subprocess.Popen[Any] = starter.starte(list(cmd), notnagel=FileNotFoundError)
     except OSError as fehler:
         log.error("Start von %s scheiterte: %s", cmd[0] if cmd else "?", fehler)
         raise

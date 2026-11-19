@@ -76,18 +76,26 @@ def test_sperre_gilt_im_kind_prozess_ohne_pytest_merker(tmp_path: Path) -> None:
     assert "echter Start im Test verboten" in lauf.stderr, lauf.stderr
 
 
+def test_tuer_laesst_skill_python_nur_mit_test_merker_durch(tmp_path: Path) -> None:
+    """Teil 2a: ``[sys.executable, <Skill-Skript>]`` (z. B. ``to_spawn.py takt``) darf starten,
+    wenn das Kind den Test-Merker erbt; ``-c`` und eine Umgebung ohne Merker bleiben gesperrt."""
+    skript = Path(os.environ[starter.TEST_BIN_ENV]) / "kind.py"
+    skript.write_text("import sys; sys.exit(7)\n", encoding="utf-8")
+    lauf = starter.starte([sys.executable, str(skript)], cwd=tmp_path, warten=True, timeout=60)
+    assert lauf.returncode == 7
+    with pytest.raises(starter.StartGesperrt):
+        starter.starte([sys.executable, "-c", "pass"], cwd=tmp_path, warten=True)
+    ohne = {k: v for k, v in os.environ.items() if k not in ("PYTEST_CURRENT_TEST", starter.TESTLAUF_ENV)}
+    with pytest.raises(starter.StartGesperrt):
+        starter.starte([sys.executable, str(skript)], cwd=tmp_path, warten=True, env=ohne)
+
+
 # --- Prüf-Test: keine Start-Stelle außerhalb der Tür -------------------------------------
 
 #: Start-Stellen, die Teil 1 von #1406 noch NICHT auf ``starter.starte`` umgestellt hat.
 #: Teil 2 stellt sie um und streicht sie hier; danach ist die Liste leer.
 REST_START = frozenset(
     {
-        ("to_spawn/umzug.py", "starte_mit_umzug_wache"),  # Bau-Session-Claude (bau.py) + Shell-Notnagel
-        ("to_spawn/bau_loop.py", "run_ticket"),  # Claude-Lauf je Ticket
-        ("to_spawn/probesitz.py", "session_fahren"),  # Probesitz-Claude
-        ("to_spawn/waechter_takt.py", "starte_claude"),  # Takt-Claude
-        ("to_spawn/waechter_takt.py", "starte_abgeloest"),  # Hintergrund-Prozess (Ablösung)
-        ("to_spawn/capo.py", "_starte_folge_runde"),  # Folge-Runde (tmux/lokal)
         ("skripte/leitstand_fenster.py", "sitzung"),  # Leitstand-Claude (subprocess.run)
         ("to_spawn/spawn.py", "spawn"),  # spawn_local.ps1 / spawn_srv (wt-Tabs, tmux)
         ("to_spawn/spawn.py", "neustart"),  # wt-Tab bzw. ssh → to_spawn.py auf dem Server

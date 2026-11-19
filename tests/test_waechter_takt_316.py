@@ -455,7 +455,8 @@ def test_l_zwei_stop_hooks_hoechstens_ein_takt(welt: dict[str, Any]) -> None:
 def test_m_claude_nicht_startbar_ist_fehler(welt: dict[str, Any]) -> None:
     """Befund 8: Startfehler (OSError) → Exit 1, Log-Zeile, Merker bleibt."""
     _alt_merker(welt)
-    fehlt = welt["tmp"] / "gibt-es-nicht" / "claude"
+    # Im Attrappen-Ordner, sonst sperrt die Start-Tür (#1406) vor dem eigentlichen OSError.
+    fehlt = Path(os.environ["TO_SPAWN_TEST_BIN"]) / "gibt-es-nicht" / "claude"
     lauf = _takt(welt, "--claude", str(fehlt))
     assert lauf.returncode == 1, lauf.stdout + lauf.stderr
     assert "FEHLER" in lauf.stdout and "Traceback" not in lauf.stderr

@@ -280,6 +280,7 @@ def test_r2_bau_schreibt_sessions_datei(repo_bau: Path, tmp_path: Path) -> None:
     temp.mkdir()
     env = {
         "PATH": f"{binaer}{os.pathsep}{os.environ['PATH']}",
+        "TO_SPAWN_TEST_BIN": str(binaer),  # Start-Tür (#1406): nur diese Attrappe startet
         "FAKE_ARGV": str(beweis),
         "TMPDIR": str(temp),
     }

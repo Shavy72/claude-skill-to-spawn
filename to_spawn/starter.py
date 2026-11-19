@@ -10,11 +10,15 @@ Für Aufrufer:
   ``subprocess.run``. Alle weiteren Schlüsselwort-Argumente (``env``, ``creationflags`` wie
   ``CREATE_NO_WINDOW|CREATE_NEW_PROCESS_GROUP``, ``stdin`` …) gehen unverändert durch.
   Scheitert der direkte Start mit ``OSError`` (Windows: ``claude`` ist ein ``.cmd``-Shim),
-  startet die Tür einmal über die Shell.
+  startet die Tür einmal über die Shell. ``notnagel`` engt das ein (z. B. ``FileNotFoundError``)
+  oder schaltet es mit ``None`` ab — der Fehler geht dann unverändert an den Aufrufer.
 - Unter Test (``PYTEST_CURRENT_TEST`` oder ``TO_SPAWN_TESTLAUF`` gesetzt — beide erben sich in
   Kind-Prozesse wie ``wache.py``/``bau.py``) startet die Tür nur Programme, die im Ordner
   ``TO_SPAWN_TEST_BIN`` liegen. Alles andere bricht mit ``StartGesperrt`` ab, bevor ein Prozess
   entsteht. Warum Umgebung statt monkeypatch: monkeypatch erreicht keine Kind-Prozesse.
+  Einzige Ausnahme: ``[sys.executable, <Skript>]`` mit einem Skript aus diesem Skill-Ordner
+  oder ``TO_SPAWN_TEST_BIN`` (z. B. ``to_spawn.py takt``), wenn die Kind-Umgebung den
+  Test-Merker trägt — das Kind startet dann selbst wieder nur durch diese Tür.
 
 ``tests/test_starter_1406.py`` prüft per Quelltext-Suche, dass keine Start-Stelle an dieser
 Tür vorbeigeht.
@@ -28,7 +32,7 @@ import shlex
 import shutil
 import subprocess
 import sys
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, Literal, overload
 
@@ -39,6 +43,7 @@ TESTLAUF_ENV = "TO_SPAWN_TESTLAUF"
 #: Ordner der Test-Attrappen; nur was hier liegt, darf unter Test starten.
 TEST_BIN_ENV = "TO_SPAWN_TEST_BIN"
 _TEST_MERKER = ("PYTEST_CURRENT_TEST", TESTLAUF_ENV)
+_SKILL = Path(__file__).resolve().parent.parent
 
 
 class StartGesperrt(RuntimeError):
@@ -83,45 +88,71 @@ def _windows_skript(pfad: Path) -> list[str]:
     return [str(pfad)]
 
 
-def _nur_attrappe(argv: list[str]) -> list[str]:
+def _innen(pfad: Path, ordner: Path) -> bool:
+    """Liegt der absolute ``pfad`` in ``ordner``? Fehlt die Datei, meldet der Start selbst
+    ``FileNotFoundError`` — ein fehlendes Programm im Attrappen-Ordner startet nichts Echtes."""
+    try:
+        return pfad.is_absolute() and pfad.resolve().is_relative_to(ordner.resolve())
+    except OSError:
+        return False
+
+
+def _skill_python(argv: list[str], ordner: Path | None, env: Mapping[str, str] | None) -> bool:
+    """``[sys.executable, <Skript aus Skill/Attrappen-Ordner>, …]`` mit Test-Merker im Kind."""
+    if len(argv) < 2 or not any((os.environ if env is None else env).get(n) for n in _TEST_MERKER):
+        return False
+    try:
+        ist_python = Path(argv[0]).resolve() == Path(sys.executable).resolve()
+    except OSError:
+        return False
+    skript = Path(argv[1])
+    return ist_python and skript.is_file() and any(_innen(skript, o) for o in (_SKILL, ordner) if o is not None)
+
+
+def _nur_attrappe(argv: list[str], env: Mapping[str, str] | None = None) -> list[str]:
     """Unter Test: ``argv`` nur zulassen, wenn das Programm im Attrappen-Ordner liegt."""
     ordner = _test_bin()
     programm = argv[0]
+    if _skill_python(argv, ordner, env):
+        return argv
     if ordner is None:
         raise StartGesperrt(f"echter Start im Test verboten: {programm} ({TEST_BIN_ENV} fehlt)")
     pfad = Path(programm) if ("/" in programm or os.sep in programm) else Path(finde(programm))
-    try:
-        drin = pfad.is_file() and pfad.resolve().is_relative_to(ordner.resolve())
-    except OSError:
-        drin = False
-    if not drin:
+    if not _innen(pfad, ordner):
         raise StartGesperrt(f"echter Start im Test verboten: {programm} → {pfad} liegt nicht in {ordner}")
     return [*_windows_skript(pfad), *argv[1:]]
 
 
 @overload
 def starte(
-    cmd: Sequence[str], *, cwd: Path | str | None = ..., warten: Literal[False] = ..., **popen_args: Any
+    cmd: Sequence[str], *, cwd: Path | str | None = ..., warten: Literal[False] = ..., notnagel: type[OSError] | None = ..., **popen_args: Any
 ) -> subprocess.Popen[Any]: ...
 @overload
 def starte(
-    cmd: Sequence[str], *, cwd: Path | str | None = ..., warten: Literal[True], **popen_args: Any
+    cmd: Sequence[str], *, cwd: Path | str | None = ..., warten: Literal[True], notnagel: type[OSError] | None = ..., **popen_args: Any
 ) -> subprocess.CompletedProcess[Any]: ...
 def starte(
-    cmd: Sequence[str], *, cwd: Path | str | None = None, warten: bool = False, **popen_args: Any
+    cmd: Sequence[str],
+    *,
+    cwd: Path | str | None = None,
+    warten: bool = False,
+    notnagel: type[OSError] | None = OSError,
+    **popen_args: Any,
 ) -> subprocess.Popen[Any] | subprocess.CompletedProcess[Any]:
     """Startet ``cmd`` (siehe Modul-Kommentar); unter Test nur Attrappen, sonst ``StartGesperrt``."""
     argv = [str(teil) for teil in cmd]
     if not argv:
         raise ValueError("starte: leerer Befehl")
     if unter_test():
-        argv = _nur_attrappe(argv)
+        argv = _nur_attrappe(argv, popen_args.get("env"))
     ordner = str(cwd) if cwd is not None else None
     log.info("Start: %s (cwd %s)", argv[0], ordner)
     lauf: Any = subprocess.run if warten else subprocess.Popen
     try:
         return lauf(argv, cwd=ordner, **popen_args)  # noqa: S603 — Liste, kein Shell
     except OSError as fehler:
+        if notnagel is None or not isinstance(fehler, notnagel):
+            raise
         # Windows: ``claude`` ist ein .cmd-Shim, der nur über die Shell startet.
         log.warning("Direkter Start von %s scheiterte (%s) — Notnagel über die Shell", argv[0], fehler)
         zeile = subprocess.list2cmdline(argv) if os.name == "nt" else shlex.join(argv)

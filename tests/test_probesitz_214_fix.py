@@ -193,7 +193,10 @@ KIND = (
 
 
 def _kind_argv(pidfile: Path) -> list[str]:
-    return [sys.executable, "-c", KIND, str(pidfile)]
+    """Kind als Skript im Attrappen-Ordner, sonst sperrt die Start-Tür den Start (#1406)."""
+    kind = Path(os.environ["TO_SPAWN_TEST_BIN"]) / "kind_214.py"
+    kind.write_text(KIND, encoding="utf-8")
+    return [sys.executable, str(kind), str(pidfile)]
 
 
 def _pid_lesen(pidfile: Path) -> int:

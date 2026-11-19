@@ -432,6 +432,7 @@ def _bau(
     umgebung = {
         **os.environ,
         "PATH": f"{binaer}{os.pathsep}{os.environ['PATH']}",
+        "TO_SPAWN_TEST_BIN": str(binaer),  # Start-Tür (#1406): nur diese Attrappe startet
         "TO_SPAWN_REPO": str(repo),
         "FAKE_AUSGABE": str(tmp_path / "fake"),
         "FAKE_MODUS": modus,
@@ -853,14 +854,16 @@ def test_sessions_stand_zaehlt_nur_prozesse_im_eigenen_repo(tmp_path: Path) -> N
 
 
 def _kind_mit_umzug(datei: Path) -> list[str]:
-    """Kind, das die Umzug-Datei schreibt und dann weiterläuft (wie eine Session nach Exit 0)."""
-    return [
-        sys.executable,
-        "-c",
-        "import pathlib, sys, time; "
-        "pathlib.Path(sys.argv[1]).write_text('{\"ziel\": \"bau-server\"}'); time.sleep(60)",
-        str(datei),
-    ]
+    """Kind, das die Umzug-Datei schreibt und dann weiterläuft (wie eine Session nach Exit 0).
+
+    Als Skript im Attrappen-Ordner, sonst sperrt die Start-Tür den Start (#1406)."""
+    kind = Path(os.environ["TO_SPAWN_TEST_BIN"]) / "kind_mit_umzug.py"
+    kind.write_text(
+        "import pathlib, sys, time\n"
+        "pathlib.Path(sys.argv[1]).write_text('{\"ziel\": \"bau-server\"}'); time.sleep(60)\n",
+        encoding="utf-8",
+    )
+    return [sys.executable, str(kind), str(datei)]
 
 
 # --- Befund 1: Windows — ganzen Prozessbaum beenden, danach prüfen ---------------
@@ -1266,6 +1269,7 @@ def test_start_notnagel_nur_bei_datei_fehlt(
         return echt([sys.executable, "-c", "pass"])
 
     monkeypatch.setattr(umzug.subprocess, "Popen", popen)
+    _ausfuehrbar(Path(os.environ["TO_SPAWN_TEST_BIN"]) / "claude", FAKE_CLAUDE)  # Start-Tür (#1406)
     code, daten = umzug.starte_mit_umzug_wache(["claude", "x"], tmp_path / "u.json", takt=0.05)
     assert aufrufe == [False, True]
     assert code == 0 and daten is None
@@ -1284,6 +1288,7 @@ def test_start_andere_oserror_wird_geworfen(
         return echt([sys.executable, "-c", "pass"])
 
     monkeypatch.setattr(umzug.subprocess, "Popen", popen)
+    _ausfuehrbar(Path(os.environ["TO_SPAWN_TEST_BIN"]) / "claude", FAKE_CLAUDE)  # Start-Tür (#1406)
     with caplog.at_level("ERROR"), pytest.raises(PermissionError):
         umzug.starte_mit_umzug_wache(["claude", "x"], tmp_path / "u.json", takt=0.05)
     assert aufrufe == [False]

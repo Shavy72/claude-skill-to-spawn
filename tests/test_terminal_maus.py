@@ -145,6 +145,7 @@ def test_bau_session_sieht_klick_sperre(
     repo.mkdir()
     ergebnis = _mess_claude(tmp_path / "bin")
     monkeypatch.setenv("PATH", f"{tmp_path / 'bin'}{os.pathsep}{os.environ.get('PATH', '')}")
+    monkeypatch.setenv("TO_SPAWN_TEST_BIN", str(tmp_path / "bin"))  # Start-Tür (#1406): nur diese Attrappe startet
     monkeypatch.setenv("MAUS_PROBE_DATEI", str(ergebnis))
     monkeypatch.setenv("TO_SPAWN_REPO", str(repo))
     monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
@@ -182,6 +183,7 @@ def test_wache_session_sieht_klick_sperre(
     subprocess.run(["git", "init", "-q", str(repo)], check=True, capture_output=True, creationflags=OHNE_FENSTER)
     ergebnis = _mess_claude(tmp_path / "bin")
     monkeypatch.setenv("PATH", f"{tmp_path / 'bin'}{os.pathsep}{os.environ.get('PATH', '')}")
+    monkeypatch.setenv("TO_SPAWN_TEST_BIN", str(tmp_path / "bin"))  # Start-Tür (#1406): nur diese Attrappe startet
     monkeypatch.setenv("MAUS_PROBE_DATEI", str(ergebnis))
     monkeypatch.setenv("TO_SPAWN_REPO", str(repo))
     monkeypatch.setenv("TO_SPAWN_GH_REPO", "test/terminal-maus")
@@ -220,6 +222,7 @@ def test_leitstand_session_sieht_klick_sperre(tmp_path: Path) -> None:
     env = {k: v for k, v in os.environ.items() if not k.startswith("TO_SPAWN_") and k != VARIABLE}
     env.update(
         PATH=f"{tmp_path / 'bin'}{os.pathsep}{os.environ.get('PATH', '')}",
+        TO_SPAWN_TEST_BIN=str(tmp_path / "bin"),  # Start-Tür (#1406): nur diese Attrappe startet
         MAUS_PROBE_DATEI=str(ergebnis),
         TO_SPAWN_REPO=str(repo),
         TO_SPAWN_WAECHTER_ORDNER=str(tmp_path / "waechter"),
