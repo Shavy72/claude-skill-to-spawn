@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -97,8 +98,16 @@ def _innen(pfad: Path, ordner: Path) -> bool:
         return False
 
 
+#: Skill-Skripte, die unter Test als Kind starten dürfen (Skript → Pflicht-Unterbefehl oder ``None``).
+#: Beide starten selbst nur durch diese Tür. Neue Einträge nur mit Grund.
+_SKILL_KINDER: dict[Path, str | None] = {
+    _SKILL / "to_spawn.py": "takt",  # waechter_takt.starte_abgeloest
+    _SKILL / "skripte" / "bau.py": None,  # capo._starte_folge_runde, probesitz (Bau-Lauf)
+}
+
+
 def _skill_python(argv: list[str], ordner: Path | None, env: Mapping[str, str] | None) -> bool:
-    """``[sys.executable, <Skript aus Skill/Attrappen-Ordner>, …]`` mit Test-Merker im Kind."""
+    """``[sys.executable, <Skript aus _SKILL_KINDER oder Attrappen-Ordner>, …]`` mit Test-Merker im Kind."""
     if len(argv) < 2 or not any((os.environ if env is None else env).get(n) for n in _TEST_MERKER):
         return False
     try:
@@ -106,7 +115,14 @@ def _skill_python(argv: list[str], ordner: Path | None, env: Mapping[str, str] |
     except OSError:
         return False
     skript = Path(argv[1])
-    return ist_python and skript.is_file() and any(_innen(skript, o) for o in (_SKILL, ordner) if o is not None)
+    if not ist_python or not skript.is_file():
+        return False
+    if ordner is not None and _innen(skript, ordner):
+        return True
+    for kind, befehl in _SKILL_KINDER.items():
+        if skript.is_absolute() and skript.resolve() == kind.resolve():
+            return befehl is None or (len(argv) > 2 and argv[2] == befehl)
+    return False
 
 
 def _nur_attrappe(argv: list[str], env: Mapping[str, str] | None = None) -> list[str]:
@@ -121,6 +137,28 @@ def _nur_attrappe(argv: list[str], env: Mapping[str, str] | None = None) -> list
     if not _innen(pfad, ordner):
         raise StartGesperrt(f"echter Start im Test verboten: {programm} → {pfad} liegt nicht in {ordner}")
     return [*_windows_skript(pfad), *argv[1:]]
+
+
+_CMD_SONDER = re.compile(r'([()%!^"<>&|])')
+
+
+def _cmd_zeile(argv: list[str]) -> str:
+    """Befehlszeile für ``cmd.exe /c``: jedes Argument nach MS-C-Regeln in ``"…"``, danach jedes
+    cmd-Sonderzeichen (auch ``"`` und ``%``) mit ``^`` entschärft. So wertet cmd.exe ``& | < > ^ %``
+    nie aus und das Programm erhält genau ``argv`` (``list2cmdline`` quotet nur bei Leerzeichen)."""
+
+    def quote(arg: str) -> str:
+        teile: list[str] = []
+        striche = 0
+        for zeichen in arg:
+            if zeichen == "\\":
+                striche += 1
+                continue
+            teile.append("\\" * (2 * striche + 1) + '"' if zeichen == '"' else "\\" * striche + zeichen)
+            striche = 0
+        return '"' + "".join(teile) + "\\" * (2 * striche) + '"'
+
+    return _CMD_SONDER.sub(r"^\1", " ".join(quote(arg) for arg in argv))
 
 
 @overload
@@ -155,5 +193,5 @@ def starte(
             raise
         # Windows: ``claude`` ist ein .cmd-Shim, der nur über die Shell startet.
         log.warning("Direkter Start von %s scheiterte (%s) — Notnagel über die Shell", argv[0], fehler)
-        zeile = subprocess.list2cmdline(argv) if os.name == "nt" else shlex.join(argv)
+        zeile = _cmd_zeile(argv) if os.name == "nt" else shlex.join(argv)
         return lauf(zeile, cwd=ordner, shell=True, **popen_args)  # noqa: S602

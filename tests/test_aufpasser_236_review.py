@@ -305,7 +305,7 @@ def test_r2_wache_schreibt_sessions_datei(
     heim = tmp_path / "heim"
     heim.mkdir()
     monkeypatch.setenv("HOME", str(heim))
-    attrappe = tmp_path / "claude_kurz.sh"
+    attrappe = Path(os.environ["TO_SPAWN_TEST_BIN"]) / "claude_kurz.sh"  # Start-Tür (#1406)
     attrappe.write_text("#!/bin/bash\nexit 0\n", encoding="utf-8")
     attrappe.chmod(0o755)
     code = waechter_lauf.fahre(

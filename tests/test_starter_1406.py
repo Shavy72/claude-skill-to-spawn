@@ -9,6 +9,7 @@ leere Ordner, ``subprocess.Popen`` ist im Sperr-Fall zusätzlich abgefangen.
 from __future__ import annotations
 
 import ast
+import json
 import os
 import subprocess
 import sys
@@ -90,6 +91,14 @@ def test_tuer_laesst_skill_python_nur_mit_test_merker_durch(tmp_path: Path) -> N
         starter.starte([sys.executable, str(skript)], cwd=tmp_path, warten=True, env=ohne)
 
 
+def test_tuer_sperrt_anderes_skill_skript_unter_test(tmp_path: Path) -> None:
+    """Review 2a (d): nur ``to_spawn.py takt`` und ``skripte/bau.py`` aus dem Skill dürfen starten."""
+    with pytest.raises(starter.StartGesperrt):
+        starter.starte([sys.executable, str(SKILL / "skripte" / "leitstand.py")], cwd=tmp_path, warten=True)
+    with pytest.raises(starter.StartGesperrt):
+        starter.starte([sys.executable, str(SKILL / "to_spawn.py"), "spawn", "1"], cwd=tmp_path, warten=True)
+
+
 # --- Prüf-Test: keine Start-Stelle außerhalb der Tür -------------------------------------
 
 #: Start-Stellen, die noch NICHT über ``starter.starte`` laufen. Seit Teil 2 von #1406 leer —
@@ -131,6 +140,7 @@ KEIN_START = frozenset(
 )
 
 _TMUX_START = {"new-window", "new-tab", "split-window", "new-session"}
+_START_PROGRAMM = {"claude", "claude.exe", "claude.cmd", "wt", "wt.exe"}
 _LAUF = {"run", "call", "check_call", "check_output"}
 _OS_START = {"system", "startfile", "execv", "execvp", "execvpe", "spawnv", "spawnvp", "spawnl", "popen"}
 
@@ -141,42 +151,114 @@ def _name(knoten: ast.expr) -> str:
     return knoten.id if isinstance(knoten, ast.Name) else ""
 
 
-def _ist_start(aufruf: ast.Call) -> bool:
-    """Popen, os-Start, tmux/wt-Fenster-Konstante oder ``subprocess.run`` mit dynamischem Befehl."""
+def _aliase(baum: ast.AST) -> dict[str, str]:
+    """Lokaler Name → echter Name: ``import subprocess as sp`` → ``sp: subprocess``,
+    ``from subprocess import run as r`` → ``r: subprocess.run``."""
+    namen: dict[str, str] = {}
+    for knoten in ast.walk(baum):
+        if isinstance(knoten, ast.Import):
+            for teil in knoten.names:
+                namen[teil.asname or teil.name] = teil.name
+        elif isinstance(knoten, ast.ImportFrom) and knoten.module in ("subprocess", "os", "asyncio"):
+            for teil in knoten.names:
+                namen[teil.asname or teil.name] = f"{knoten.module}.{teil.name}"
+    return namen
+
+
+def _konstanten(knoten: ast.expr) -> list[object]:
+    if isinstance(knoten, (ast.List, ast.Tuple)):
+        return [e.value for e in knoten.elts if isinstance(e, ast.Constant)]
+    return [knoten.value] if isinstance(knoten, ast.Constant) else []
+
+
+def _ist_start(aufruf: ast.Call, aliase: dict[str, str] | None = None) -> bool:
+    """Popen, os-Start, tmux/wt-Fenster-Konstante, Claude/wt als Programm oder ``subprocess.run``
+    mit dynamischem Befehl. ``aliase`` löst ``import … as`` und ``from … import`` auf."""
     if any(k.arg == "start" and isinstance(k.value, ast.Constant) and k.value.value is True for k in aufruf.keywords):
         return False  # ``start=True``: Helfer leitet über die Tür (tmux_aufruf.aufrufen, Aufpasser.sh)
-    fn = _name(aufruf.func)
-    traeger = _name(aufruf.func.value) if isinstance(aufruf.func, ast.Attribute) else ""
+    aliase = aliase or {}
+    func = aufruf.func
+    if isinstance(func, ast.Attribute):
+        traeger, fn = aliase.get(_name(func.value), _name(func.value)), func.attr
+    else:
+        traeger, _, fn = aliase.get(_name(func), _name(func)).rpartition(".")
     if fn == "Popen" or fn.startswith("create_subprocess") or (traeger == "os" and fn in _OS_START):
         return True
-    if any(isinstance(a, ast.Constant) and a.value in _TMUX_START for a in aufruf.args):
+    konstanten = [k for a in aufruf.args for k in _konstanten(a)]
+    if any(k in _TMUX_START for k in konstanten):
         return True
     if traeger == "subprocess" and fn in _LAUF and aufruf.args:
-        erstes = aufruf.args[0]
-        fest = isinstance(erstes, (ast.List, ast.Tuple)) and erstes.elts and isinstance(erstes.elts[0], ast.Constant)
-        return not fest  # fester Literal-Befehl (git, gh, …) = Lese-Befehl
+        liste = aufruf.args[0]
+        if (
+            not isinstance(liste, (ast.List, ast.Tuple))
+            or not liste.elts
+            or not isinstance(liste.elts[0], ast.Constant)
+        ):
+            return True  # dynamischer Befehl
+        programm = liste.elts[0].value
+        return isinstance(programm, str) and Path(programm).name.lower() in _START_PROGRAMM
     return False
+
+
+def _funde_in(quelle: str, rel: str) -> set[tuple[str, str]]:
+    funde: set[tuple[str, str]] = set()
+    baum = ast.parse(quelle)
+    aliase = _aliase(baum)
+
+    def besuche(knoten: ast.AST, ort: str) -> None:
+        for kind in ast.iter_child_nodes(knoten):
+            hier = ort
+            if isinstance(kind, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                hier = f"{ort}.{kind.name}" if ort else kind.name
+            if isinstance(kind, ast.Call) and _ist_start(kind, aliase):
+                funde.add((rel, hier or "<modul>"))
+            besuche(kind, hier)
+
+    besuche(baum, "")
+    return funde
+
+
+_AUSSER = {"tests", ".git", ".review", ".ruff_cache", "__pycache__", ".venv", "node_modules"}
 
 
 def _start_stellen() -> set[tuple[str, str]]:
     funde: set[tuple[str, str]] = set()
-    dateien = [*SKILL.joinpath("to_spawn").rglob("*.py"), *SKILL.joinpath("skripte").rglob("*.py")]
-    for datei in dateien:
+    for datei in SKILL.rglob("*.py"):  # ganzes Repo außer Tests und Werkzeug-Ordnern
         rel = datei.relative_to(SKILL).as_posix()
-        if rel == "to_spawn/starter.py":
+        if _AUSSER & set(Path(rel).parts):
             continue
-
-        def besuche(knoten: ast.AST, ort: str) -> None:
-            for kind in ast.iter_child_nodes(knoten):
-                hier = ort
-                if isinstance(kind, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                    hier = f"{ort}.{kind.name}" if ort else kind.name
-                if isinstance(kind, ast.Call) and _ist_start(kind):
-                    funde.add((rel, hier or "<modul>"))  # noqa: B023 — sofort ausgewertet
-                besuche(kind, hier)
-
-        besuche(ast.parse(datei.read_text(encoding="utf-8")), "")
+        if rel != "to_spawn/starter.py":
+            funde |= _funde_in(datei.read_text(encoding="utf-8"), rel)
     return funde
+
+
+@pytest.mark.parametrize(
+    "quelle",
+    [
+        'import subprocess\ndef f():\n    subprocess.run(["claude", "-p", "x"])',
+        'import subprocess\ndef f():\n    subprocess.run(["wt", "new-tab", "x"])',
+        'import subprocess\ndef f():\n    subprocess.run(["tmux", "new-window", "-n", "x"])',
+        "import subprocess as sp\ndef f(befehl):\n    sp.run(befehl)",
+        'import subprocess as sp\ndef f():\n    sp.check_call(["claude"])',
+        'from subprocess import Popen\ndef f():\n    Popen(["x"])',
+        "from subprocess import run as r\ndef f(befehl):\n    r(befehl)",
+        'from os import system\ndef f():\n    system("x")',
+    ],
+)
+def test_pruef_test_meldet_versteckte_start(quelle: str) -> None:
+    assert _funde_in(quelle, "probe.py") == {("probe.py", "f")}
+
+
+@pytest.mark.parametrize(
+    "quelle",
+    [
+        'import subprocess\ndef f():\n    subprocess.run(["git", "status"])',
+        'import subprocess as sp\ndef f():\n    sp.run(["tmux", "list-windows"])',
+        'from subprocess import run\ndef f():\n    run(["gh", "issue", "view"])',
+    ],
+)
+def test_pruef_test_laesst_lese_befehle_durch(quelle: str) -> None:
+    assert _funde_in(quelle, "probe.py") == set()
 
 
 def test_keine_start_stelle_ausserhalb_der_tuer() -> None:
@@ -186,3 +268,25 @@ def test_keine_start_stelle_ausserhalb_der_tuer() -> None:
     assert not neu, f"Neue Start-Stelle an der Tür vorbei — über to_spawn.starter.starte starten: {neu}"
     assert not weg, f"Umgestellt oder verschwunden — aus REST_START streichen: {weg}"
     assert not sorted(KEIN_START - _start_stellen()), "KEIN_START enthält Einträge ohne Treffer"
+
+
+def test_shell_notnagel_entschaerft_cmd_sonderzeichen(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Review Teil 1: ``& | < > ^ %`` ohne Leerzeichen darf die Shell nicht auswerten."""
+    skript = Path(os.environ[starter.TEST_BIN_ENV]) / "zeig_argv.py"
+    skript.write_text(
+        "import json, pathlib, sys\npathlib.Path(sys.argv[1]).write_text(json.dumps(sys.argv[2:]))\n",
+        encoding="utf-8",
+    )
+    beleg = tmp_path / "argv.json"
+    args = ["a&b", "x|y", "<z>", "^q", "%PATH%", 'zit"at', "ende\\", "(k)", "!x!", "mit leer", ""]
+    echt = subprocess.run
+
+    def ohne_direktstart(befehl: object, **kw: object) -> object:
+        if not kw.get("shell"):
+            raise FileNotFoundError("Direktstart simuliert gescheitert")
+        return echt(befehl, **kw)  # type: ignore[call-overload]
+
+    monkeypatch.setattr(subprocess, "run", ohne_direktstart)
+    lauf = starter.starte([sys.executable, str(skript), str(beleg), *args], cwd=tmp_path, warten=True, timeout=60)
+    assert lauf.returncode == 0
+    assert json.loads(beleg.read_text(encoding="utf-8")) == args
