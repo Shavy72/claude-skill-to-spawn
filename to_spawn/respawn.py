@@ -174,9 +174,12 @@ class Werkzeug(Protocol):
 class TmuxWerkzeug:
     """Echte Umsetzung: tmux über ``subprocess``, Prozesse über ``pgrep``/``/proc``."""
 
-    def _tmux(self, *argumente: str, eingabe: str | None = None) -> str:
-        """Ein tmux-Aufruf (Naht für Tests); Fehler siehe :mod:`to_spawn.tmux_aufruf`."""
-        return tmux_aufruf.aufrufen(*argumente, eingabe=eingabe)
+    def _tmux(self, *argumente: str, eingabe: str | None = None, start: bool = False) -> str:
+        """Ein tmux-Aufruf (Naht für Tests); Fehler siehe :mod:`to_spawn.tmux_aufruf`.
+
+        ``start=True`` für Aufrufe, die etwas starten — die gehen durch die Start-Tür (#1406).
+        """
+        return tmux_aufruf.aufrufen(*argumente, eingabe=eingabe, start=start)
 
     def fenster_liste(self) -> list[FensterInfo]:
         """Je Fenster das aktive Pane (unabhängig von ``pane-base-index``)."""
@@ -230,6 +233,7 @@ class TmuxWerkzeug:
             "-c",
             cwd,
             befehl,
+            start=True,
         )
         return raus.strip()
 

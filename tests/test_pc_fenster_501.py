@@ -152,19 +152,29 @@ class _WtAufnahme:
         return subprocess.CompletedProcess(befehl, self.exit_code, "", "" if not self.exit_code else "0x80070002")
 
 
+def _wt_attrappe() -> Path:
+    """``wt`` als Attrappe im Ordner der Start-Tür (#1406); gestartet wird über die Aufnahme."""
+    attrappe = Path(os.environ["TO_SPAWN_TEST_BIN"]) / "wt"
+    attrappe.write_text("", encoding="utf-8")
+    return attrappe
+
+
 def test_tab_start_nutzt_befehl_aus_wt_tab_befehl(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    attrappe = _wt_attrappe()
     wt = _WtAufnahme()
     monkeypatch.setattr(pc_fenster.subprocess, "run", wt)
     auftrag = "Weiter ab Handoff docs/handoffs/HANDOFF_x_501.md; los"
     pc_fenster.PcWerkzeug().tab_starten(tmp_path, 501, auftrag)
     assert len(wt.aufrufe) == 1
     befehl, kw = wt.aufrufe[0]
-    assert befehl == spawn.wt_tab_befehl(tmp_path, 501, auftrag, "--remote-control")
-    assert befehl[:2] == ["wt", "-w"] and "bau 501" in befehl
+    soll = spawn.wt_tab_befehl(tmp_path, 501, auftrag, "--remote-control")
+    assert soll[0] == "wt" and befehl == [str(attrappe), *soll[1:]]  # Tür setzt den Attrappen-Pfad ein
+    assert befehl[1] == "-w" and "bau 501" in befehl
     assert kw.get("cwd") == str(tmp_path)
 
 
 def test_tab_start_wt_fehler_wird_oserror(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _wt_attrappe()
     monkeypatch.setattr(pc_fenster.subprocess, "run", _WtAufnahme(exit_code=1))
     with pytest.raises(OSError, match="wt Exit 1"):
         pc_fenster.tab_starten(tmp_path, 501, "")

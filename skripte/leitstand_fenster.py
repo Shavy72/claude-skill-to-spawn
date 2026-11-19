@@ -11,8 +11,6 @@ import json
 import logging
 import os
 import re
-import shutil
-import subprocess
 import sys
 from dataclasses import dataclass
 from datetime import datetime
@@ -23,7 +21,7 @@ _SKRIPTE = Path(__file__).resolve().parent
 _SKILL = str(_SKRIPTE.parent)
 if _SKILL not in sys.path:
     sys.path.insert(0, _SKILL)
-from to_spawn import config, melder, sitzung_env, terminal_maus  # noqa: E402
+from to_spawn import config, melder, sitzung_env, starter, terminal_maus  # noqa: E402
 
 log = logging.getLogger("leitstand_seite")
 
@@ -341,8 +339,8 @@ def sitzung(ablage: Ablage, *, probe: bool = False) -> int:
     if probe:
         print(json.dumps(befehl, ensure_ascii=False))
         return 0
-    claude = shutil.which("claude")
-    if not claude:
+    claude = starter.finde("claude")  # unter Test nur die Attrappe (#1406)
+    if not Path(claude).is_file():
         log.error("claude nicht gefunden — Leitstand-Session nicht gestartet.")
         return 127
     sperre = nimm_sperre(ablage.sitzung_sperre)
@@ -355,7 +353,7 @@ def sitzung(ablage: Ablage, *, probe: bool = False) -> int:
     terminal_maus.maus_ruhig(env)  # Klick-Sperre nur hier, nicht global (Windows)
     try:
         # Vordergrund im eigenen Fenster (braucht die Konsole) — kein Hintergrundstart.
-        return subprocess.run([claude, *befehl[1:]], cwd=str(ablage.repo), env=env, check=False).returncode  # noqa: S603
+        return starter.starte([claude, *befehl[1:]], cwd=ablage.repo, env=env, check=False, warten=True).returncode
     finally:
         sperre.close()
 

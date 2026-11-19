@@ -12,13 +12,12 @@ import logging
 import os
 import shlex
 import shutil
-import subprocess
 import sys
 import time
 from pathlib import Path
 from typing import Any, Sequence, TextIO
 
-from . import capo, manifest, probesitz, stand
+from . import capo, manifest, probesitz, stand, starter
 
 log = logging.getLogger("to_spawn.spawn")
 
@@ -145,7 +144,7 @@ def spawn(
         return 0
     # Das Skript arbeitet im Repo des Aufrufs, nicht im Repo aus ~/.bashrc (#212/#257).
     umgebung = {**os.environ, "TO_SPAWN_REPO": str(repo)}
-    return subprocess.run(befehl, cwd=str(repo), check=False, env=umgebung).returncode
+    return starter.starte(befehl, cwd=repo, check=False, env=umgebung, warten=True).returncode
 
 
 # --- Einzelticket-Neustart (Aufseher-Werkzeug) -------------------------------------------------------
@@ -234,7 +233,7 @@ def neustart(
         )
         befehl = ["ssh", str(konfig.get("ssh_ziel") or "bau-server"), fern]
         print(" ".join(befehl[:2]), repr(fern))
-        return subprocess.run(befehl, cwd=str(repo), check=False).returncode
+        return starter.starte(befehl, cwd=repo, check=False, warten=True).returncode
 
     os.environ["TO_SPAWN_REPO"] = str(repo)
     eintrag = ticket_eintrag(spec, ticket)
@@ -264,7 +263,7 @@ def neustart(
     if dry_run:
         return 0
     if sys.platform == "win32":
-        return subprocess.run(befehl, cwd=str(repo), check=False).returncode
+        return starter.starte(befehl, cwd=repo, check=False, warten=True).returncode
     grund = capo._starte_folge_runde(repo, ticket, befehl, ueber_tmux, auftrag)
     if grund:
         log.error("#%s: Start fehlgeschlagen — %s", ticket, grund)
