@@ -2543,6 +2543,16 @@ def _tick(
     if katalog and not dry_run:
         aktionen += katalog_pflegen(repo, konfig, gelernt)
 
+    # #1407: unlesbares Staging ist kein „fehlt“, aber auch kein Beleg „liegt drauf“ — Abschluss zurückhalten.
+    unlesbar_takte = int(zustand.get("staging_unlesbar_takte") or 0) + 1 if staging_stand.unlesbar else 0
+    zustand["staging_unlesbar_takte"] = unlesbar_takte
+    if unlesbar_takte >= STAGING_UNLESBAR_LAUT:
+        kopfzeilen.append(
+            f"FEHLER: Staging seit {unlesbar_takte} Takten nicht lesbar — Regel vps für Tickets ohne Zettel aus, "
+            "Spec-Abschluss zurückgehalten."
+        )
+    elif staging_stand.unlesbar:
+        kopfzeilen.append("FEHLER: Staging nicht lesbar — Regel vps teils ausgesetzt, Spec-Abschluss zurückgehalten.")
     erg.zeilen += kopfzeilen
     erg.zeilen.append(
         f"Spec #{spec} · {ref} {ref_kurz} · VPS {kopf[:7] if kopf else '-'} · offen {offen}/{len(liste)} · "
@@ -2561,6 +2571,7 @@ def _tick(
         and not erg.verstoesse
         and not regeln_aus
         and not vps_fehlt
+        and not staging_stand.unlesbar
     )
     if erg.fertig:
         alt_hinweis = f" ({len(erg.alt)} alte aus dem Ausgangsstand)" if erg.alt else ""
@@ -2627,6 +2638,8 @@ ABSCHLUSS_ZEITLIMIT_S = 720
 ABLEGEN_ZEITLIMIT_S = 60
 #: Ab so vielen Fehlversuchen in Folge einmal ein Kommentar auf dem Spec-Issue.
 ABSCHLUSS_ALARM_AB = 3
+#: Ab so vielen unlesbaren Staging-Takten in Folge eine eigene FEHLER-Kopfzeile (#1407), keine Mail.
+STAGING_UNLESBAR_LAUT = 3
 
 
 def _abschluss_lauf(repo: Path, befehl: str, spec: int, *args: str) -> tuple[int, str, str]:
