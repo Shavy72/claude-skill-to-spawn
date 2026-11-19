@@ -174,21 +174,11 @@ def _cmd_zeile(argv: list[str]) -> str:
 
 @overload
 def starte(
-    cmd: Sequence[str],
-    *,
-    cwd: Path | str | None = ...,
-    warten: Literal[False] = ...,
-    notnagel: type[OSError] | None = ...,
-    **popen_args: Any,
+    cmd: Sequence[str], *, cwd: Path | str | None = ..., warten: Literal[False] = ..., notnagel: type[OSError] | None = ..., **popen_args: Any
 ) -> subprocess.Popen[Any]: ...
 @overload
 def starte(
-    cmd: Sequence[str],
-    *,
-    cwd: Path | str | None = ...,
-    warten: Literal[True],
-    notnagel: type[OSError] | None = ...,
-    **popen_args: Any,
+    cmd: Sequence[str], *, cwd: Path | str | None = ..., warten: Literal[True], notnagel: type[OSError] | None = ..., **popen_args: Any
 ) -> subprocess.CompletedProcess[Any]: ...
 def starte(
     cmd: Sequence[str],
