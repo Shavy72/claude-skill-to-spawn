@@ -819,3 +819,21 @@ def test_datum_im_belegpfad_ist_keine_nummer() -> None:
     assert capo.beleg_passt("2026-09-18_203_staffel/BEWEIS.md", 203) is True
     assert capo.beleg_passt("2026-09-18_andere/BEWEIS.md", 18) is False
     assert capo.beleg_passt("abnahme_18.md", 18) is True
+
+
+def test_staging_kopf_liest_per_ssh_wenn_lokal_fehlt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """PC-Aufseher: Log nur auf dem Bau-Server → per vps.staging_ssh holen (#1332)."""
+    from to_spawn import capo as capo_mod
+
+    zeile = json.dumps({"sha": "abc1234", "ergebnis": "gruen"})
+    aufrufe: list[list[str]] = []
+
+    def falsch_ssh(befehl: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+        aufrufe.append(befehl)
+        return subprocess.CompletedProcess(befehl, 0, stdout=zeile + "\n", stderr="")
+
+    monkeypatch.setattr(capo_mod.subprocess, "run", falsch_ssh)
+    vps = {"staging_log": str(tmp_path / "fehlt.jsonl"), "staging_ssh": "bau-server"}
+    assert capo_mod.staging_kopf(vps) == "abc1234"
+    assert aufrufe and aufrufe[0][0] == "ssh" and "bau-server" in aufrufe[0]
+    assert capo_mod.staging_kopf({"staging_log": str(tmp_path / "fehlt.jsonl")}) is None

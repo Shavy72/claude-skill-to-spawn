@@ -673,12 +673,36 @@ FREIGABE_STANDARD = "~/.config/to-spawn/live_freigabe"
 FREIGABE_MAX_ALTER_S = 24 * 3600  # wie scripts/staging/deploy_ziel.py
 
 
+def _staging_zeilen(vps: dict[str, Any]) -> list[str] | None:
+    """Zeilen des Staging-Deploy-Logs; lokal, sonst per ``vps.staging_ssh`` vom Bau-Server.
+
+    Am PC liegt das Log nur auf dem Bau-Server. Ohne diesen Weg sah capo dort nie
+    einen Staging-Stand und öffnete fertige Nur-Staging-Tickets immer wieder (#1332).
+    """
+    pfad_text = str(vps.get("staging_log") or STAGING_LOG_STANDARD)
+    try:
+        return Path(pfad_text).expanduser().read_text(encoding="utf-8").splitlines()
+    except OSError:
+        pass
+    host = vps.get("staging_ssh")
+    if not host:
+        return None
+    befehl = ["ssh", "-o", "ConnectTimeout=8", "-o", "BatchMode=yes", str(host), f"tail -n 200 {shlex.quote(pfad_text)}"]
+    try:
+        lauf = subprocess.run(befehl, capture_output=True, text=True, encoding="utf-8", timeout=30, check=False)
+    except (OSError, subprocess.SubprocessError) as fehler:
+        log.warning("Staging-Log über %s nicht lesbar: %s", host, fehler)
+        return None
+    if lauf.returncode != 0:
+        log.warning("Staging-Log über %s nicht lesbar (Exit %s).", host, lauf.returncode)
+        return None
+    return lauf.stdout.splitlines()
+
+
 def staging_kopf(vps: dict[str, Any]) -> str | None:
     """SHA des letzten grünen Staging-Deploys (``None`` = Datei fehlt/kein grüner Stand)."""
-    pfad = Path(str(vps.get("staging_log") or STAGING_LOG_STANDARD)).expanduser()
-    try:
-        zeilen = pfad.read_text(encoding="utf-8").splitlines()
-    except OSError:
+    zeilen = _staging_zeilen(vps)
+    if zeilen is None:
         return None
     for zeile in reversed(zeilen):
         try:
