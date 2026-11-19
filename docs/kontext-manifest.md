@@ -39,7 +39,7 @@ Loop-Prompt (Domino: wartet auf Blocker → claimt Ticket → `/implement` → s
   die Session nicht selbst explorieren muss.
 - Ticket-Schlüssel = echte GitHub-Issue-Nummer (String).
 - **Pflicht je Ticket (seit #206):** `schaetzung_k` (Zahl, Tausend Token, > 0 und
-  < `staffel.grenze_k` aus `.to-spawn/config.json`, Vorgabe 200) und `umfang`
+  < `staffel.grenze_k` aus `.to-spawn/config.json`, Vorgabe 240) und `umfang`
   (Klartext, kurz: was das Ticket umfasst). Ohne beide Felder weigert sich `to-spawn`.
 
 ## Core-Set (immer geladen, unabhängig vom Manifest)
@@ -99,7 +99,7 @@ jede Fehlerzeile nennt ihre Abhilfe.
 
 **Weigerung (Exit 3) bei:**
 - Pflichtfeld (`schaetzung_k` oder `umfang`) fehlt
-- Schätzung ≥ 200 (bzw. `staffel.grenze_k`)
+- Schätzung ≥ 240 (bzw. `staffel.grenze_k`)
 - Ticket-Schlüssel doppelt im Manifest
 - gewähltes Ticket (`--tickets` / `-Tickets`) steht nicht im Manifest — die
   Auswahl läuft immer durch die Prüfung, die Regeln gelten fürs ganze Manifest

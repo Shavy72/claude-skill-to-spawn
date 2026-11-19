@@ -613,7 +613,7 @@ def lernstoff(repo: Path, letzte: int = 30, grenze_k: float | None = None) -> st
     if grenze_k is None:
         from . import config
 
-        grenze_k = float(config.lade(repo).get("staffel", {}).get("grenze_k", 200))
+        grenze_k = float(config.lade(repo).get("staffel", {}).get("grenze_k", 240))
     aus_manifest = _manifest_eintraege(repo)
     zeilen = ["Lernstoff aus dem Bau-Log (Schätzung → Ist, Sessions je Ticket, jüngste zuerst):"]
     daten: list[dict[str, Any]] = []

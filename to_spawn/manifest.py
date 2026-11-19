@@ -153,7 +153,7 @@ def pruefe(
         bericht.fehler.append(f"{fehler} — Manifest reparieren oder mit /to-tickets neu anlegen.")
         return bericht
 
-    grenze = float(konfig.get("staffel", {}).get("grenze_k", 200))
+    grenze = float(konfig.get("staffel", {}).get("grenze_k", 240))
     tickets: dict[str, Any] = daten["tickets"]
     bericht.tickets = sorted(tickets, key=ticket_schluessel)
 

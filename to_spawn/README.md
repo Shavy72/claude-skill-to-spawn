@@ -186,7 +186,7 @@ Fehlt die Datei, gelten die Vorgaben aus `to_spawn/config.py`:
   "modelle": {"ticket": "claude-opus-5", "ticket_leicht": "claude-sonnet-5",
               "waechter": "claude-fable-5-1"},
   "effort": {"ticket": "medium", "ticket_leicht": "low", "waechter": "low"},
-  "staffel": {"modus": "eltern", "grenze_k": 200, "max_staffeln": 3},
+  "staffel": {"modus": "eltern", "grenze_k": 240, "max_staffeln": 3},
   "mail": {"ziel": "", "nur_kritisch": true},
   "staging": {"url": "", "zugang_datei": ""},
   "speicher": {"min_frei_mib": 2048, "max_sessions": 6, "staffel_s": 20}

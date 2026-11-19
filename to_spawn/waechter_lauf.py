@@ -80,7 +80,7 @@ MAX_PAUSEN = 3
 #: Rückkehr aufs Haupt-Modell, wenn die Limit-Zeile keinen Reset nennt (#436): 5 h.
 RUECKKEHR_VORGABE_S = 5 * 3600.0
 #: Handoff-Grenzen in k-Token, wenn ``~/.claude/smart-zone.json`` fehlt oder schweigt.
-HANDOFF_K_OPUS = 250
+HANDOFF_K_OPUS = 300
 HANDOFF_K_NICHT_OPUS = 200
 #: Umgebungs-Variable mit dem Pfad der Ablöse-Datei (setzt ``wache.py`` je Lauf).
 ABLOESE_ENV = "TO_SPAWN_WACHE_ABLOESUNG"

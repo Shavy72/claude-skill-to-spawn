@@ -49,7 +49,7 @@ DEFAULTS: dict[str, Any] = {
     },
     "staffel": {
         "modus": "eltern",
-        "grenze_k": 200,
+        "grenze_k": 240,
         "max_staffeln": 3,
     },
     "mail": {
