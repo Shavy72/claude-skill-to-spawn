@@ -42,6 +42,7 @@ import logging
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import time
@@ -638,10 +639,24 @@ def _passt(pfad: str, muster: list[str]) -> bool:
     return False
 
 
+def _ssh_programm() -> str:
+    """ssh wie die Shell auflösen (unter Windows auch ``ssh.cmd``/``.bat`` über PATHEXT)."""
+    return shutil.which("ssh") or "ssh"
+
+
+def _server_pfad(pfad: str) -> str:
+    """Pfad für die Server-Shell quoten; ein führendes ``~/`` bleibt offen, damit der Server es auflöst."""
+    if pfad == "~":
+        return "~"
+    if pfad.startswith("~/"):
+        return "~/" + shlex.quote(pfad[2:])
+    return shlex.quote(pfad)
+
+
 def vps_kopf(vps: dict[str, Any]) -> str | None:
     """Voller SHA von ``HEAD`` auf dem VPS (``None`` = nicht lesbar)."""
     befehl = [
-        "ssh",
+        _ssh_programm(),
         "-o",
         "BatchMode=yes",
         "-o",
@@ -687,7 +702,15 @@ def _staging_zeilen(vps: dict[str, Any]) -> list[str] | None:
     host = vps.get("staging_ssh")
     if not host:
         return None
-    befehl = ["ssh", "-o", "ConnectTimeout=8", "-o", "BatchMode=yes", str(host), f"tail -n 200 {shlex.quote(pfad_text)}"]
+    befehl = [
+        _ssh_programm(),
+        "-o",
+        "ConnectTimeout=8",
+        "-o",
+        "BatchMode=yes",
+        str(host),
+        f"tail -n 200 {_server_pfad(pfad_text)}",
+    ]
     try:
         lauf = subprocess.run(befehl, capture_output=True, text=True, encoding="utf-8", timeout=30, check=False)
     except (OSError, subprocess.SubprocessError) as fehler:
@@ -718,6 +741,26 @@ def staging_kopf(vps: dict[str, Any]) -> str | None:
     return None
 
 
+class StagingStand:
+    """Staging-Kopf eines Takts: höchstens ein Abruf, das Ergebnis (auch ``None``) gilt für den ganzen Takt.
+
+    Aufrufer fragen nur ``kopf()``. Wie (lokal oder ssh) und wie oft gelesen wird, steht
+    allein hier: ein hängender Bau-Server kostet so je Takt einmal die Zeitgrenze, nicht
+    einmal je Commit und Ticket (#1407).
+    """
+
+    def __init__(self, vps: dict[str, Any]) -> None:
+        self._vps = vps
+        self._geholt = False
+        self._kopf: str | None = None
+
+    def kopf(self) -> str | None:
+        if not self._geholt:
+            self._geholt = True
+            self._kopf = staging_kopf(self._vps)
+        return self._kopf
+
+
 def live_freigabe(vps: dict[str, Any], ticket: int) -> bool:
     """True, wenn Davids Live-Zettel ``<ordner>/<ticket>`` existiert und jünger als 24 h ist."""
     zettel = Path(
@@ -736,9 +779,11 @@ def regel_vps(
     vps: dict[str, Any],
     kopf: str | None,
     log_zeilen: list[dict],
+    staging_stand: StagingStand | None = None,
 ) -> Verstoss | None:
     if kopf is None or not eigene:
         return None
+    staging_stand = staging_stand or StagingStand(vps)
     muster = [str(m) for m in vps.get("deploy_pfade") or []]
     relevant = [
         c for c in eigene if any(_passt(p, muster) for _, p in _dateien(repo, c.sha))
@@ -749,7 +794,7 @@ def regel_vps(
         code, _ = _git(repo, "merge-base", "--is-ancestor", commit.sha, kopf)
         if code == 1:
             # Seit 22.09. deployen Bau-Sessions nur nach Staging; live nur mit Zettel.
-            staging = staging_kopf(vps)
+            staging = staging_stand.kopf()
             if staging and not live_freigabe(vps, ticket):
                 auf_staging, _ = _git(
                     repo, "merge-base", "--is-ancestor", commit.sha, staging
@@ -1901,13 +1946,14 @@ def reopen_funde(
     vps: dict[str, Any],
     kopf: str | None,
     alle_zeilen: list[dict[str, Any]],
+    staging_stand: StagingStand | None = None,
 ) -> list[Verstoss]:
     """Alle Verstöße, die ein geschlossenes Ticket wieder öffnen (regel_vps nur mit VPS-Konfig)."""
     funde = [
         regel_commit(n, eigene),
         regel_beweis(repo, ref, n, eigene, belege),
         regel_tests(repo, n, eigene),
-        regel_vps(repo, n, eigene, vps, kopf, alle_zeilen) if vps.get("ssh") else None,
+        regel_vps(repo, n, eigene, vps, kopf, alle_zeilen, staging_stand) if vps.get("ssh") else None,
     ]
     return [f for f in funde if f]
 
@@ -2123,6 +2169,7 @@ def _tick(
     checkpoint = str(regularien.get("checkpoint_label") or "checkpoint:human")
     vps = konfig.get("vps") if isinstance(konfig.get("vps"), dict) else {}
     kopf = vps_kopf(vps) if vps.get("ssh") else None
+    staging_stand = StagingStand(vps)  # je Takt höchstens ein Abruf (#1407)
     vps_fehlt = bool(vps.get("ssh")) and kopf is None
     if vps_fehlt:
         kopfzeilen.append(
@@ -2263,7 +2310,7 @@ def _tick(
                 wartet += 1
                 continue
             funde_ok = reopen_funde(
-                repo, ref, n, eigene, belege, vps, kopf, alle_zeilen
+                repo, ref, n, eigene, belege, vps, kopf, alle_zeilen, staging_stand
             )
             if ausgangsstand:
                 erg.alt += funde_ok
@@ -2323,7 +2370,7 @@ def _tick(
                 )
             )
             if kandidat is not None and reopen_funde(
-                repo, ref, n, eigene, belege, vps, kopf, alle_zeilen
+                repo, ref, n, eigene, belege, vps, kopf, alle_zeilen, staging_stand
             ):
                 kandidat = None  # Regeln weiter rot — das Reopen war richtig
             if kandidat is not None:

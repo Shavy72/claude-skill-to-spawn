@@ -17,6 +17,7 @@ import stat
 import subprocess
 import sys
 import time
+from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -379,6 +380,8 @@ def _ssh_fake(welt: dict[str, Path], sha: str) -> dict[str, str]:
     binaer = welt["tmp"] / "bin"
     binaer.mkdir(exist_ok=True)
     _ausfuehrbar(binaer / "ssh", f"#!/bin/sh\necho {sha}\n")
+    # Windows: CreateProcess findet die sh-Datei ohne Endung nicht, capo löst ssh über PATHEXT auf.
+    (binaer / "ssh.cmd").write_text(f"@echo {sha}\r\n", encoding="utf-8")
     return {"PATH": f"{binaer}{os.pathsep}{os.environ['PATH']}"}
 
 
@@ -835,5 +838,105 @@ def test_staging_kopf_liest_per_ssh_wenn_lokal_fehlt(tmp_path: Path, monkeypatch
     monkeypatch.setattr(capo_mod.subprocess, "run", falsch_ssh)
     vps = {"staging_log": str(tmp_path / "fehlt.jsonl"), "staging_ssh": "bau-server"}
     assert capo_mod.staging_kopf(vps) == "abc1234"
-    assert aufrufe and aufrufe[0][0] == "ssh" and "bau-server" in aufrufe[0]
+    assert aufrufe and Path(aufrufe[0][0]).stem.lower() == "ssh" and "bau-server" in aufrufe[0]
     assert capo_mod.staging_kopf({"staging_log": str(tmp_path / "fehlt.jsonl")}) is None
+
+
+def _ssh_zaehler(
+    monkeypatch: pytest.MonkeyPatch, antwort: Callable[[list[str]], subprocess.CompletedProcess[str]]
+) -> list[list[str]]:
+    """ssh-Aufrufe aus capo abfangen (externer Dienst); git läuft echt weiter."""
+    from to_spawn import capo as capo_mod
+
+    echt = capo_mod.subprocess.run
+    aufrufe: list[list[str]] = []
+
+    def run(befehl: list[str], **kw: object) -> subprocess.CompletedProcess[str]:
+        if Path(str(befehl[0])).stem.lower() != "ssh":
+            return echt(befehl, **kw)  # type: ignore[call-overload]
+        aufrufe.append(befehl)
+        return antwort(befehl)
+
+    monkeypatch.setattr(capo_mod.subprocess, "run", run)
+    return aufrufe
+
+
+def test_staging_kopf_einmal_je_takt_bei_mehreren_commits(
+    welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#1407: drei Ticket-Commits, alle auf Staging → genau ein ssh je Takt, nicht drei."""
+    from to_spawn import capo as capo_mod
+
+    repo = welt["repo"]
+    live = _git(repo, "rev-parse", "HEAD")
+    for i in range(3):
+        staging = _commit(repo, f"feat: Teil {i} (#901)", {f"web/teil{i}.py": f"x = {i}\n"})
+    zeile = json.dumps({"sha": staging, "ergebnis": "gruen"})
+    aufrufe = _ssh_zaehler(monkeypatch, lambda b: subprocess.CompletedProcess(b, 0, stdout=zeile + "\n", stderr=""))
+    eigene = capo_mod.ticket_commits(capo_mod.alle_commits(repo, "HEAD"), 901)
+    assert len(eigene) == 3
+    vps = {
+        "ssh": "vps-test",
+        "deploy_pfade": ["web/"],
+        "staging_log": str(welt["tmp"] / "fehlt.jsonl"),
+        "staging_ssh": "bau-server",
+        "freigabe_ordner": str(welt["tmp"] / "keine_freigabe"),
+    }
+    assert capo_mod.regel_vps(repo, 901, eigene, vps, live, []) is None
+    assert len(aufrufe) == 1, aufrufe
+
+
+def test_staging_log_mit_tilde_wird_auf_server_aufgeloest(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """#1407: ``~/…`` muss der Server-Shell offen bleiben; der Rest bleibt gequotet."""
+    from to_spawn import capo as capo_mod
+
+    zeile = json.dumps({"sha": "abc1234", "ergebnis": "gruen"})
+    aufrufe = _ssh_zaehler(monkeypatch, lambda b: subprocess.CompletedProcess(b, 0, stdout=zeile + "\n", stderr=""))
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    vps = {"staging_log": "~/staging/deploys; rm -rf x.jsonl", "staging_ssh": "bau-server"}
+    assert capo_mod.staging_kopf(vps) == "abc1234"
+    befehl = aufrufe[0][-1]
+    assert befehl == "tail -n 200 ~/'staging/deploys; rm -rf x.jsonl'", befehl
+
+
+def test_staging_abruf_fehlgeschlagen_nicht_wiederholt_im_takt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#1407: ein Takt, mehrere Tickets; ein gescheiterter Abruf wird nicht wiederholt."""
+    from to_spawn import capo as capo_mod
+
+    aufrufe = _ssh_zaehler(monkeypatch, lambda b: subprocess.CompletedProcess(b, 255, stdout="", stderr="weg"))
+    stand = capo_mod.StagingStand({"staging_log": str(tmp_path / "fehlt.jsonl"), "staging_ssh": "bau-server"})
+    assert stand.kopf() is None
+    assert stand.kopf() is None
+    assert len(aufrufe) == 1
+
+
+def test_staging_kopf_exit_ungleich_null_ist_none(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """#1407: ssh-Exit ≠ 0 → kein Staging-Stand, Warnung im Log."""
+    from to_spawn import capo as capo_mod
+
+    _ssh_zaehler(monkeypatch, lambda b: subprocess.CompletedProcess(b, 255, stdout="", stderr="weg"))
+    vps = {"staging_log": str(tmp_path / "fehlt.jsonl"), "staging_ssh": "bau-server"}
+    with caplog.at_level("WARNING"):
+        assert capo_mod.staging_kopf(vps) is None
+    assert "Exit 255" in caplog.text
+
+
+def test_staging_kopf_zeitueberschreitung_ist_none(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """#1407: ssh hängt bis zur Zeitgrenze → kein Staging-Stand, Warnung im Log, kein Absturz."""
+    from to_spawn import capo as capo_mod
+
+    def haengt(befehl: list[str]) -> subprocess.CompletedProcess[str]:
+        raise subprocess.TimeoutExpired(befehl, 30)
+
+    _ssh_zaehler(monkeypatch, haengt)
+    vps = {"staging_log": str(tmp_path / "fehlt.jsonl"), "staging_ssh": "bau-server"}
+    with caplog.at_level("WARNING"):
+        assert capo_mod.staging_kopf(vps) is None
+    assert "nicht lesbar" in caplog.text
