@@ -199,6 +199,13 @@ def welt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path]:
     monkeypatch.setenv("TO_SPAWN_GH_STUB", str(GH_STUB))
     monkeypatch.setenv("GH_STUB213_ZUSTAND", str(gh))
     monkeypatch.setenv("TO_SPAWN_WAECHTER_ORDNER", str(zustand))
+    # tmux nie echt (#1406): echtes ``tmux new-window`` startete auf dem Bau-Server eine
+    # Session. Ersatz wie Linux ohne Session: list-windows Exit 1, new-window nur Protokoll.
+    monkeypatch.setenv(
+        "TO_SPAWN_TMUX",
+        json.dumps([sys.executable, str(GH_STUB.parent / "tmux_stub_284.py"), str(tmp_path / "tmux_aufrufe.jsonl")]),
+    )
+    monkeypatch.setenv("FAKE_TMUX_FENSTER", str(tmp_path / "keine_tmux_session.txt"))
     for name in ("MAIL_FAKE_EXIT", "TO_SPAWN_TICKET", "TO_SPAWN_LOG_REPO"):
         monkeypatch.delenv(name, raising=False)
     welt = {

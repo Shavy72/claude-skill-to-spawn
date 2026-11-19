@@ -23,7 +23,7 @@ if str(SKILL) not in sys.path:
 
 from to_spawn import starter  # noqa: E402
 
-ATTRAPPE = """#!/usr/bin/env python3
+ATTRAPPE = f"""#!{sys.executable}
 import sys
 from pathlib import Path
 Path(sys.argv[1]).write_text("gestartet", encoding="utf-8")
@@ -141,7 +141,11 @@ KEIN_START = frozenset(
     }
 )
 
-_TMUX_START = {"new-window", "new-tab", "split-window", "new-session", "respawn-window", "respawn-pane"}
+_TMUX_START = {
+    *("new-window", "new-tab", "split-window", "new-session", "respawn-window", "respawn-pane"),
+    *("neww", "splitw", "new", "respawnw", "respawnp"),  # tmux-Kurzformen (Nachrunde #1406, B2)
+    *("run-shell", "if-shell", "pipe-pane", "display-popup"),  # starten selbst ein Programm
+}
 _START_PROGRAMM = {"claude", "claude.exe", "claude.cmd", "wt", "wt.exe"}
 _LAUF = {"run", "call", "check_call", "check_output"}
 _SHELL = {"powershell", "pwsh", "cmd", "bash", "sh", "zsh"}
@@ -293,6 +297,16 @@ def _start_stellen(wurzel: Path = SKILL) -> set[tuple[str, str]]:
         'import subprocess\ndef f():\n    lauf = subprocess.Popen\n    lauf(["x"])',
         'import subprocess\ndef f(w):\n    lauf = subprocess.run if w else subprocess.Popen\n    lauf(["x"])',
         'from subprocess import run\ndef f():\n    lauf = run\n    lauf(["x"])',
+        # Nachrunde #1406 (Review Fixrunde B2): tmux-Kurzformen und startende Unterbefehle
+        'import subprocess\ndef f():\n    subprocess.run(["tmux", "neww", "bash"])',
+        'import subprocess\ndef f():\n    subprocess.run(["tmux", "splitw", "bash"])',
+        'import subprocess\ndef f():\n    subprocess.run(["tmux", "new", "-s", "x"])',
+        'import subprocess\ndef f():\n    subprocess.run(["tmux", "respawnw", "-k"])',
+        'import subprocess\ndef f():\n    subprocess.run(["tmux", "respawnp", "-k"])',
+        'import subprocess\ndef f():\n    subprocess.run(["tmux", "run-shell", "claude"])',
+        'import subprocess\ndef f():\n    subprocess.run(["tmux", "if-shell", "true", "neww"])',
+        'import subprocess\ndef f():\n    subprocess.run(["tmux", "pipe-pane", "-o", "cat"])',
+        'import subprocess\ndef f():\n    subprocess.run(["tmux", "display-popup", "claude"])',
     ],
 )
 def test_pruef_test_meldet_versteckte_start(quelle: str) -> None:
@@ -384,5 +398,64 @@ def test_shell_notnagel_lehnt_umbruch_und_anfuehrung_bei_cmd_ziel_ab(
     monkeypatch.setattr(subprocess, "run", ohne_direktstart)
     with pytest.raises(ValueError, match="Notnagel"):
         starter.starte([str(shim), str(beleg), argument], cwd=tmp_path, warten=True, timeout=60)
+    assert not (tmp_path / "pwn.txt").exists(), "zweiter Befehl lief"
+    assert not beleg.exists(), "Ziel lief trotz Ablehnung"
+
+
+def _zeig_cmd_ziel() -> tuple[Path, Path]:
+    """``.cmd``-Attrappe (wie npm-Shim ``claude.cmd``), die ihr argv als JSON ablegt."""
+    attrappen = Path(os.environ[starter.TEST_BIN_ENV])
+    skript = attrappen / "zeig_argv.py"
+    skript.write_text(
+        "import json, pathlib, sys\npathlib.Path(sys.argv[1]).write_text(json.dumps(sys.argv[2:]))\n",
+        encoding="utf-8",
+    )
+    shim = attrappen / "zeig.cmd"
+    shim.write_text(_CMD_ATTRAPPE.format(python=sys.executable, skript=skript), encoding="utf-8")
+    return shim, attrappen / "argv.json"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Batch-Ziele (.cmd/.bat) gibt es nur unter Windows")
+@pytest.mark.parametrize("argument", ["a&echo.>pwn.txt", "x|echo.>pwn.txt"])
+def test_direktstart_cmd_ziel_schleust_keinen_zweiten_befehl_ein(tmp_path: Path, argument: str) -> None:
+    """Review Fixrunde B1: ``finde("claude")`` liefert beim npm-Shim ``claude.CMD``; der
+    Direktstart reichte ``a&echo.>…`` (ohne Leerzeichen, also ohne Anführung durch
+    ``list2cmdline``) unentschärft an cmd.exe — ein zweiter Befehl lief."""
+    shim, beleg = _zeig_cmd_ziel()
+    lauf = starter.starte([str(shim), str(beleg), argument], cwd=tmp_path, warten=True, timeout=60)
+    assert not (tmp_path / "pwn.txt").exists(), "zweiter Befehl lief"
+    assert lauf.returncode == 0
+    assert json.loads(beleg.read_text(encoding="utf-8")) == [argument]
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Batch-Ziele (.cmd/.bat) gibt es nur unter Windows")
+@pytest.mark.parametrize("weg", ["direkt", "notnagel"])
+def test_cmd_ziel_bekommt_sonderzeichen_als_text(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, weg: str) -> None:
+    """Review Fixrunde B3: bei ``.cmd``-Ziel kommen ``& | ^ % < > ( )`` (ohne ``"``) auf beiden
+    Wegen unverändert als Text an und starten keinen Befehl."""
+    shim, beleg = _zeig_cmd_ziel()
+    args = ["a&echo.>pwn.txt", "x|y", "<z>", "^q", "%PATH%", "(k)", "!x!", "mit leer", "ende\\"]
+    if weg == "notnagel":
+        echt = subprocess.run
+
+        def ohne_direktstart(befehl: object, **kw: object) -> object:
+            if not kw.get("shell"):
+                raise FileNotFoundError("Direktstart simuliert gescheitert")
+            return echt(befehl, **kw)  # type: ignore[call-overload]
+
+        monkeypatch.setattr(subprocess, "run", ohne_direktstart)
+    lauf = starter.starte([str(shim), str(beleg), *args], cwd=tmp_path, warten=True, timeout=60)
+    assert lauf.returncode == 0
+    assert not (tmp_path / "pwn.txt").exists(), "zweiter Befehl lief"
+    assert json.loads(beleg.read_text(encoding="utf-8")) == args
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Batch-Ziele (.cmd/.bat) gibt es nur unter Windows")
+def test_direktstart_cmd_ziel_lehnt_anfuehrung_ab(tmp_path: Path) -> None:
+    """Review Fixrunde B1: ``a"&echo.>…`` lief im Direktstart als zweiter Befehl; jetzt gilt
+    die Notnagel-Regel (BatBadBut) auch hier — laut scheitern, ohne Start."""
+    shim, beleg = _zeig_cmd_ziel()
+    with pytest.raises(ValueError, match="BatBadBut"):
+        starter.starte([str(shim), str(beleg), 'a"&echo.>pwn.txt'], cwd=tmp_path, warten=True, timeout=60)
     assert not (tmp_path / "pwn.txt").exists(), "zweiter Befehl lief"
     assert not beleg.exists(), "Ziel lief trotz Ablehnung"

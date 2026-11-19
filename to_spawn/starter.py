@@ -16,9 +16,13 @@ Für Aufrufer:
   Kind-Prozesse wie ``wache.py``/``bau.py``) startet die Tür nur Programme, die im Ordner
   ``TO_SPAWN_TEST_BIN`` liegen. Alles andere bricht mit ``StartGesperrt`` ab, bevor ein Prozess
   entsteht. Warum Umgebung statt monkeypatch: monkeypatch erreicht keine Kind-Prozesse.
-  Einzige Ausnahme: ``[sys.executable, <Skript>]`` mit einem Skript aus diesem Skill-Ordner
-  oder ``TO_SPAWN_TEST_BIN`` (z. B. ``to_spawn.py takt``), wenn die Kind-Umgebung den
-  Test-Merker trägt — das Kind startet dann selbst wieder nur durch diese Tür.
+  Einzige Ausnahme: ``[sys.executable, <Skript>]`` mit einem Skript aus ``_SKILL_KINDER``,
+  ``TO_SPAWN_TEST_BIN`` oder dem Attrappen-Ordner des Skills ``tests/hilfen`` (tmux-/claude-
+  Ersatz), wenn die Kind-Umgebung den Test-Merker trägt — das Kind startet dann selbst wieder
+  nur durch diese Tür.
+- Windows, Ziel ``.cmd``/``.bat`` (npm-Shim ``claude.cmd``): kein Direktstart, denn
+  ``CreateProcess`` reicht die Zeile still an cmd.exe weiter und ``a&calc`` liefe als zweiter
+  Befehl (BatBadBut). Die Tür nimmt dann immer den entschärften Weg über ``_cmd_zeile``.
 
 ``tests/test_starter_1406.py`` prüft per Quelltext-Suche, dass keine Start-Stelle an dieser
 Tür vorbeigeht.
@@ -45,6 +49,10 @@ TESTLAUF_ENV = "TO_SPAWN_TESTLAUF"
 TEST_BIN_ENV = "TO_SPAWN_TEST_BIN"
 _TEST_MERKER = ("PYTEST_CURRENT_TEST", TESTLAUF_ENV)
 _SKILL = Path(__file__).resolve().parent.parent
+#: Attrappen des Skills selbst (``tmux_stub_284.py``, ``claude_aufzeichnung_316.py`` …): unter
+#: Test als ``[sys.executable, <Datei hier>]`` erlaubt, wie Dateien aus ``TO_SPAWN_TEST_BIN``.
+_TEST_HILFEN = _SKILL / "tests" / "hilfen"
+_BATCH = {".cmd", ".bat"}
 
 
 class StartGesperrt(RuntimeError):
@@ -107,7 +115,8 @@ _SKILL_KINDER: dict[Path, str | None] = {
 
 
 def _skill_python(argv: list[str], ordner: Path | None, env: Mapping[str, str] | None) -> bool:
-    """``[sys.executable, <Skript aus _SKILL_KINDER oder Attrappen-Ordner>, …]`` mit Test-Merker im Kind."""
+    """``[sys.executable, <Skript aus _SKILL_KINDER, Attrappen-Ordner oder _TEST_HILFEN>, …]``
+    mit Test-Merker im Kind."""
     if len(argv) < 2 or not any((os.environ if env is None else env).get(n) for n in _TEST_MERKER):
         return False
     try:
@@ -117,7 +126,7 @@ def _skill_python(argv: list[str], ordner: Path | None, env: Mapping[str, str] |
     skript = Path(argv[1])
     if not ist_python or not skript.is_file():
         return False
-    if ordner is not None and _innen(skript, ordner):
+    if any(o is not None and _innen(skript, o) for o in (ordner, _TEST_HILFEN)):
         return True
     for kind, befehl in _SKILL_KINDER.items():
         if skript.is_absolute() and skript.resolve() == kind.resolve():
@@ -139,6 +148,11 @@ def _nur_attrappe(argv: list[str], env: Mapping[str, str] | None = None) -> list
     return [*_windows_skript(pfad), *argv[1:]]
 
 
+def _endung(programm: str) -> str:
+    """Endung des Programms, wie Windows es auflöst (``claude`` → ``.cmd`` beim npm-Shim)."""
+    return Path(shutil.which(programm) or programm).suffix.lower()
+
+
 _CMD_SONDER = re.compile(r'([()%!^"<>&|])')
 
 
@@ -153,7 +167,7 @@ def _cmd_zeile(argv: list[str]) -> str:
     abgelehnt. Prompts mit solchen Zeichen gehören per Datei/stdin übergeben."""
     if any("\n" in arg or "\r" in arg for arg in argv):
         raise ValueError("Notnagel: Zeilenumbruch im Argument würde von cmd.exe abgeschnitten")
-    if Path(shutil.which(argv[0]) or argv[0]).suffix.lower() not in {".exe", ".com"} and any(
+    if _endung(argv[0]) not in {".exe", ".com"} and any(
         '"' in arg for arg in argv[1:]
     ):
         raise ValueError("Notnagel: Anführungszeichen im Argument eines Batch-Ziels (BatBadBut)")
@@ -197,6 +211,10 @@ def starte(
     ordner = str(cwd) if cwd is not None else None
     log.info("Start: %s (cwd %s)", argv[0], ordner)
     lauf: Any = subprocess.run if warten else subprocess.Popen
+    if os.name == "nt" and _endung(argv[0]) in _BATCH:
+        # Batch-Ziel: Direktstart reichte argv unentschärft an cmd.exe (BatBadBut, #1406)
+        log.info("Batch-Ziel %s — Start über die entschärfte cmd-Zeile", argv[0])
+        return lauf(_cmd_zeile(argv), cwd=ordner, shell=True, **popen_args)  # noqa: S602
     try:
         return lauf(argv, cwd=ordner, **popen_args)  # noqa: S603 — Liste, kein Shell
     except OSError as fehler:

@@ -962,6 +962,11 @@ def test_session_id_aus_argv() -> None:
     assert aufpasser.session_id_aus_argv(["claude", "prompt"]) is None
 
 
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason="Linux-Test: session_finden/prozess_baum lesen /proc (prozessbaum._kinder); "
+    "unter Windows war er nie grün (2b1fba4: WinError 193 beim .sh-Start)",
+)
 def test_keine_id_ohne_session_json_und_argv(tmp_path: Path) -> None:
     """geändert wegen Fix F1: der Transkript-Fallback (neueste ``.jsonl``) ist weg —
     er lieferte nachweislich die ID einer fremden Session (alle Bau-Fenster teilen
