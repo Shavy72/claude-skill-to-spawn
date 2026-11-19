@@ -900,9 +900,7 @@ def test_staging_log_mit_tilde_wird_auf_server_aufgeloest(tmp_path: Path, monkey
     assert befehl == "tail -n 200 ~/'staging/deploys; rm -rf x.jsonl'", befehl
 
 
-def test_staging_abruf_fehlgeschlagen_nicht_wiederholt_im_takt(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_staging_abruf_fehlgeschlagen_nicht_wiederholt_im_takt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """#1407: ein Takt, mehrere Tickets; ein gescheiterter Abruf wird nicht wiederholt."""
     from to_spawn import capo as capo_mod
 
@@ -940,3 +938,90 @@ def test_staging_kopf_zeitueberschreitung_ist_none(
     with caplog.at_level("WARNING"):
         assert capo_mod.staging_kopf(vps) is None
     assert "nicht lesbar" in caplog.text
+
+
+def test_staging_unlesbar_oeffnet_nicht_wieder(
+    welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """#1407: ssh-Aussetzer beim Staging-Log zählt nie als „fehlt auf Staging“ → kein Verstoß, eine Log-Zeile."""
+    from to_spawn import capo as capo_mod
+
+    repo = welt["repo"]
+    live = _git(repo, "rev-parse", "HEAD")
+    _commit(repo, "feat: Seite (#901)", {"web/seite.py": "x = 1\n"})
+    aufrufe = _ssh_zaehler(monkeypatch, lambda b: subprocess.CompletedProcess(b, 255, stdout="", stderr="weg"))
+    eigene = capo_mod.ticket_commits(capo_mod.alle_commits(repo, "HEAD"), 901)
+    vps = {
+        "ssh": "vps-test",
+        "deploy_pfade": ["web/"],
+        "staging_log": str(welt["tmp"] / "fehlt.jsonl"),
+        "staging_ssh": "bau-server",
+        "freigabe_ordner": str(welt["tmp"] / "keine_freigabe"),
+    }
+    stand = capo_mod.StagingStand(vps)
+    with caplog.at_level("WARNING"):
+        assert capo_mod.regel_vps(repo, 901, eigene, vps, live, [], stand) is None
+        assert capo_mod.regel_vps(repo, 901, eigene, vps, live, [], stand) is None
+    assert len(aufrufe) == 1
+    assert caplog.text.count("Staging-Prüfung in diesem Takt ausgesetzt") == 1, caplog.text
+
+
+def _ssh_protokoll_fake(welt: dict[str, Path], vps_sha: str, staging_sha: str) -> tuple[dict[str, str], Path]:
+    """ssh-Attrappe als Prozess (capo läuft als Unterprozess): VPS-HEAD bzw. Staging-Log, jeder Aufruf protokolliert."""
+    binaer = welt["tmp"] / "bin"
+    binaer.mkdir(exist_ok=True)
+    protokoll = welt["tmp"] / "ssh_aufrufe.txt"
+    fake = binaer / "ssh_fake.py"
+    fake.write_text(
+        "import json, sys\n"
+        f"open({str(protokoll)!r}, 'a', encoding='utf-8').write(' '.join(sys.argv[1:]) + chr(10))\n"
+        "befehl = sys.argv[-1]\n"
+        "if befehl.startswith('tail'):\n"
+        f"    print(json.dumps({{'sha': {staging_sha!r}, 'ergebnis': 'gruen'}}))\n"
+        "else:\n"
+        f"    print({vps_sha!r})\n",
+        encoding="utf-8",
+    )
+    _ausfuehrbar(binaer / "ssh", f'#!/bin/sh\nexec "{sys.executable}" "{fake}" "$@"\n')
+    (binaer / "ssh.cmd").write_text(f'@"{sys.executable}" "{fake}" %*\r\n', encoding="utf-8")
+    return {"PATH": f"{binaer}{os.pathsep}{os.environ['PATH']}"}, protokoll
+
+
+def test_tick_teilt_staging_stand_ueber_mehrere_tickets(welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch) -> None:
+    """#1407: zwei geschlossene Nur-Staging-Tickets in einem Takt → Staging-Log genau einmal per ssh."""
+    live = _git(welt["repo"], "rev-parse", "HEAD")
+    daten = _gh_zustand(welt)
+    daten["sub"][SPEC] = [901, 902, 903]
+    daten["issues"]["903"] = dict(daten["issues"]["901"])
+    welt["gh"].write_text(json.dumps(daten), encoding="utf-8")
+    _konfig(
+        welt,
+        vps={
+            "ssh": "vps-test",
+            "pfad": "/opt/x",
+            "deploy_pfade": ["web/"],
+            "staging_log": str(welt["tmp"] / "fehlt.jsonl"),
+            "staging_ssh": "bau-server",
+            "freigabe_ordner": str(welt["tmp"] / "keine_freigabe"),
+        },
+    )
+    _commit(welt["repo"], "feat: Seite (#901)", {"web/a.py": "x = 1\n", **_beleg("901")})
+    staging = _commit(welt["repo"], "feat: Seite (#903)", {"web/b.py": "x = 2\n", **_beleg("903")})
+    env, protokoll = _ssh_protokoll_fake(welt, live, staging)
+    for name, wert in env.items():
+        monkeypatch.setenv(name, wert)
+    ergebnis = _capo(welt)
+    assert ergebnis.returncode == 0, _text(ergebnis)
+    zeilen = protokoll.read_text(encoding="utf-8").splitlines()
+    assert sum("tail -n 200" in z for z in zeilen) == 1, zeilen
+    assert _kommentare(welt, "901") == [] and _kommentare(welt, "903") == [], _text(ergebnis)
+
+
+def test_vps_kopf_pfad_mit_tilde_bleibt_fuer_server_offen(monkeypatch: pytest.MonkeyPatch) -> None:
+    """#1407: ``vps.pfad`` mit ``~/`` darf nicht ganz gequotet werden, der Rest schon."""
+    from to_spawn import capo as capo_mod
+
+    sha = "a" * 40
+    aufrufe = _ssh_zaehler(monkeypatch, lambda b: subprocess.CompletedProcess(b, 0, stdout=sha + "\n", stderr=""))
+    assert capo_mod.vps_kopf({"ssh": "vps-test", "pfad": "~/app; rm -rf x"}) == sha
+    assert aufrufe[0][-1] == "cd ~/'app; rm -rf x' && git rev-parse HEAD", aufrufe[0][-1]

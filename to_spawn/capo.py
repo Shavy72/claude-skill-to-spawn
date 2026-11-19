@@ -662,7 +662,7 @@ def vps_kopf(vps: dict[str, Any]) -> str | None:
         "-o",
         "ConnectTimeout=10",
         str(vps["ssh"]),
-        f"cd {shlex.quote(str(vps.get('pfad') or '.'))} && git rev-parse HEAD",
+        f"cd {_server_pfad(str(vps.get('pfad') or '.'))} && git rev-parse HEAD",
     ]
     try:
         fertig = subprocess.run(
@@ -688,8 +688,15 @@ FREIGABE_STANDARD = "~/.config/to-spawn/live_freigabe"
 FREIGABE_MAX_ALTER_S = 24 * 3600  # wie scripts/staging/deploy_ziel.py
 
 
+class _StagingUnlesbar(Exception):
+    """Staging-Log per ssh nicht lesbar — das ist kein „Commit fehlt auf Staging“ (#1407)."""
+
+
 def _staging_zeilen(vps: dict[str, Any]) -> list[str] | None:
     """Zeilen des Staging-Deploy-Logs; lokal, sonst per ``vps.staging_ssh`` vom Bau-Server.
+
+    ``None`` = kein Staging-Weg (Datei fehlt, kein ``staging_ssh``). Scheitert der ssh-Abruf,
+    kommt ``_StagingUnlesbar`` (Warnung ist dann schon geloggt).
 
     Am PC liegt das Log nur auf dem Bau-Server. Ohne diesen Weg sah capo dort nie
     einen Staging-Stand und öffnete fertige Nur-Staging-Tickets immer wieder (#1332).
@@ -715,19 +722,23 @@ def _staging_zeilen(vps: dict[str, Any]) -> list[str] | None:
         lauf = subprocess.run(befehl, capture_output=True, text=True, encoding="utf-8", timeout=30, check=False)
     except (OSError, subprocess.SubprocessError) as fehler:
         log.warning("Staging-Log über %s nicht lesbar: %s", host, fehler)
-        return None
+        raise _StagingUnlesbar from fehler
     if lauf.returncode != 0:
         log.warning("Staging-Log über %s nicht lesbar (Exit %s).", host, lauf.returncode)
-        return None
+        raise _StagingUnlesbar
     return lauf.stdout.splitlines()
 
 
 def staging_kopf(vps: dict[str, Any]) -> str | None:
-    """SHA des letzten grünen Staging-Deploys (``None`` = Datei fehlt/kein grüner Stand)."""
-    zeilen = _staging_zeilen(vps)
-    if zeilen is None:
+    """SHA des letzten grünen Staging-Deploys (``None`` = Datei fehlt/nicht lesbar/kein grüner Stand)."""
+    try:
+        return _gruener_sha(_staging_zeilen(vps))
+    except _StagingUnlesbar:
         return None
-    for zeile in reversed(zeilen):
+
+
+def _gruener_sha(zeilen: list[str] | None) -> str | None:
+    for zeile in reversed(zeilen or []):
         try:
             eintrag = json.loads(zeile)
         except ValueError:
@@ -753,11 +764,16 @@ class StagingStand:
         self._vps = vps
         self._geholt = False
         self._kopf: str | None = None
+        self.unlesbar = False  # ssh-Aussetzer: Staging-Prüfung für diesen Takt aussetzen
 
     def kopf(self) -> str | None:
         if not self._geholt:
             self._geholt = True
-            self._kopf = staging_kopf(self._vps)
+            try:
+                self._kopf = _gruener_sha(_staging_zeilen(self._vps))
+            except _StagingUnlesbar:
+                self.unlesbar = True
+                log.warning("Staging-Stand nicht lesbar — Staging-Prüfung in diesem Takt ausgesetzt.")
         return self._kopf
 
 
@@ -795,6 +811,8 @@ def regel_vps(
         if code == 1:
             # Seit 22.09. deployen Bau-Sessions nur nach Staging; live nur mit Zettel.
             staging = staging_stand.kopf()
+            if staging_stand.unlesbar and not live_freigabe(vps, ticket):
+                return None  # nicht lesbar ≠ fehlt auf Staging (#1407), Log-Zeile kommt aus StagingStand
             if staging and not live_freigabe(vps, ticket):
                 auf_staging, _ = _git(
                     repo, "merge-base", "--is-ancestor", commit.sha, staging
