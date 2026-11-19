@@ -22,7 +22,7 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple, Protocol, TypeVar
 
-from to_spawn import config, prozessbaum, sessions_datei
+from to_spawn import config, prozessbaum, sessions_datei, starter
 
 if TYPE_CHECKING:
     from to_spawn.respawn import Auftrag, Ergebnis
@@ -104,8 +104,8 @@ def tab_starten(repo: Path, ticket: int, auftrag: str) -> None:
     """
     befehl = tab_befehl(repo, ticket, auftrag)
     log.info("Neuer Tab: %s", befehl)
-    erg = subprocess.run(
-        befehl, cwd=str(repo), capture_output=True, text=True, check=False, **prozessbaum.ohne_fenster()
+    erg = starter.starte(
+        befehl, cwd=repo, capture_output=True, text=True, check=False, warten=True, **prozessbaum.ohne_fenster()
     )
     if erg.returncode != 0:
         raise OSError(f"wt Exit {erg.returncode}: {(erg.stderr or '').strip() or 'ohne Meldung'}")

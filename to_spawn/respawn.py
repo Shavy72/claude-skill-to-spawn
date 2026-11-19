@@ -174,9 +174,12 @@ class Werkzeug(Protocol):
 class TmuxWerkzeug:
     """Echte Umsetzung: tmux über ``subprocess``, Prozesse über ``pgrep``/``/proc``."""
 
-    def _tmux(self, *argumente: str, eingabe: str | None = None) -> str:
-        """Ein tmux-Aufruf (Naht für Tests); Fehler siehe :mod:`to_spawn.tmux_aufruf`."""
-        return tmux_aufruf.aufrufen(*argumente, eingabe=eingabe)
+    def _tmux(self, *argumente: str, eingabe: str | None = None, start: bool = False) -> str:
+        """Ein tmux-Aufruf (Naht für Tests); Fehler siehe :mod:`to_spawn.tmux_aufruf`.
+
+        ``start=True`` für Aufrufe, die etwas starten — die gehen durch die Start-Tür (#1406).
+        """
+        return tmux_aufruf.aufrufen(*argumente, eingabe=eingabe, start=start)
 
     def fenster_liste(self) -> list[FensterInfo]:
         """Je Fenster das aktive Pane (unabhängig von ``pane-base-index``)."""
@@ -230,6 +233,7 @@ class TmuxWerkzeug:
             "-c",
             cwd,
             befehl,
+            start=True,
         )
         return raus.strip()
 
@@ -496,49 +500,6 @@ def _warte(werkzeug: Werkzeug, max_s: float, bedingung: Callable[[], bool]) -> b
 
 
 @dataclass
-class _DateiSicherung:
-    """Inhalt einer Datei vor einem Schritt — ``zuruecklegen`` stellt ihn wieder her.
-
-    ``inhalt is None`` heißt: vorher gab es die Datei nicht → zurücklegen löscht sie.
-    ``lesbar=False``: der alte Stand ist unbekannt → zurücklegen fasst nichts an und
-    meldet False, damit der Abbruch „Handarbeit nötig“ sagt statt still zu schweigen.
-    """
-
-    pfad: Path
-    inhalt: bytes | None
-    lesbar: bool = True
-
-    @classmethod
-    def merken(cls, pfad: Path) -> _DateiSicherung:
-        """Sicherung des jetzigen Stands; unlesbar → ``lesbar=False`` (geloggt)."""
-        try:
-            return cls(pfad, pfad.read_bytes())
-        except FileNotFoundError:
-            return cls(pfad, None)
-        except OSError:
-            log.exception(
-                "%s nicht lesbar — wird bei Abbruch nicht zurückgesetzt.", pfad
-            )
-            return cls(pfad, None, lesbar=False)
-
-    def zuruecklegen(self) -> bool:
-        """Alten Stand wiederherstellen; False bei Dateifehler oder unbekanntem Stand (geloggt)."""
-        if not self.lesbar:
-            log.error("%s war vorher unlesbar — nicht zurückgesetzt.", self.pfad)
-            return False
-        try:
-            if self.inhalt is None:
-                self.pfad.unlink(missing_ok=True)
-            elif not self.pfad.exists() or self.pfad.read_bytes() != self.inhalt:
-                self.pfad.parent.mkdir(parents=True, exist_ok=True)
-                self.pfad.write_bytes(self.inhalt)
-        except OSError:
-            log.exception("%s nicht zurückgesetzt.", self.pfad)
-            return False
-        return True
-
-
-@dataclass
 class _Stand:
     """Was bisher passiert ist — entscheidet, wie ein Abbruch aufräumt."""
 
@@ -553,7 +514,7 @@ class _Stand:
     raeumt_auf: bool = False
     #: Sessions-Datei vor Schritt b: die neue bau.py schreibt ihre Gesprächs-ID schon
     #: vor Schritt c — bei Abbruch zurück, sonst setzt der Aufpasser die verworfene fort.
-    sessions: _DateiSicherung | None = None
+    sessions: sessions_datei.Sicherung | None = None
     #: Hinweise für die Ergebniszeile (z. B. Speicher-Wartezeit), Exit bleibt davon unberührt.
     hinweise: list[str] = field(default_factory=list)
 
@@ -685,7 +646,7 @@ def _ablauf(a: Auftrag, w: Werkzeug, stand: _Stand) -> Ergebnis:
     handoff, start = _dateien(wt, a.ticket, seit)
 
     # b) neues Fenster: bau.py wie spawn (cwd Hauptbaum, bau.py wechselt selbst in den Worktree)
-    stand.sessions = _DateiSicherung.merken(sessions_datei.pfad(a.repo, str(a.ticket)))
+    stand.sessions = sessions_datei.Sicherung.merken(sessions_datei.pfad(a.repo, str(a.ticket)))
     stand.neu = w.fenster_starten(a.sitzung, a.name_neu, str(a.repo), befehl)
     log.info("respawn #%s: neues Fenster %s gestartet.", a.ticket, stand.neu)
 

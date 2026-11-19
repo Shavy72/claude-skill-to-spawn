@@ -97,12 +97,37 @@ def repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return arbeit
 
 
+def _claude_attrappe(claude: Path, mitschrift: Path | None = None) -> None:
+    """``claude``-Attrappe, die ``fake_claude.py`` startet; mit ``mitschrift`` hängt sie vorher
+    ``spec=$TO_SPAWN_SPEC`` an.
+
+    Linux: Shell-Skript mit ``exec`` (PID bleibt). Windows startet kein ``#!/bin/sh``
+    (WinError 193, #1406): dort ein Python-Skript, das die Start-Tür über den laufenden
+    Python startet (``starter._windows_skript``).
+    """
+    if os.name != "nt":
+        vorlauf = f'printf "spec=%s\n" "$TO_SPAWN_SPEC" >> "{mitschrift}"\n' if mitschrift else ""
+        claude.write_text(f'#!/bin/sh\n{vorlauf}exec "{sys.executable}" "{FAKE_CLAUDE}" "$@"\n', encoding="utf-8")
+    else:
+        vorlauf = (
+            f"with open({str(mitschrift)!r}, 'a', encoding='utf-8') as aus:\n"
+            "    aus.write('spec=' + os.environ.get('TO_SPAWN_SPEC', '') + '\\n')\n"
+            if mitschrift
+            else ""
+        )
+        claude.write_text(
+            "#!/usr/bin/env python\nimport os, subprocess, sys\n"
+            + vorlauf
+            + f"sys.exit(subprocess.run([sys.executable, {str(FAKE_CLAUDE)!r}, *sys.argv[1:]]).returncode)\n",
+            encoding="utf-8",
+        )
+    claude.chmod(0o755)
+
+
 def _umgebung(tmp_path: Path, wt_basis: Path) -> dict[str, str]:
     binaer = tmp_path / "bin"
     binaer.mkdir(exist_ok=True)
-    claude = binaer / "claude"
-    claude.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{FAKE_CLAUDE}" "$@"\n', encoding="utf-8")
-    claude.chmod(0o755)
+    _claude_attrappe(binaer / "claude")
     heim = tmp_path / "heim"
     heim.mkdir(exist_ok=True)
     context_mode_attrappe.plugin_anlegen(heim)  # Pflicht-Plugin seit #237
@@ -111,6 +136,7 @@ def _umgebung(tmp_path: Path, wt_basis: Path) -> dict[str, str]:
     umgebung = {
         **os.environ,
         "PATH": f"{binaer}{os.pathsep}{os.environ['PATH']}",
+        "TO_SPAWN_TEST_BIN": str(binaer),  # Start-Tür (#1406): nur diese Attrappe startet
         "HOME": str(heim),
         "TMPDIR": str(temp),
         "BAU_WT_DIR": str(wt_basis),
@@ -479,14 +505,7 @@ def test_weg_claude_session_sieht_to_spawn_spec(repo: Path, tmp_path: Path) -> N
     umgebung["FAKE_CLAUDE_SZENARIO"] = "fertig"
     umgebung.pop("TO_SPAWN_SPEC", None)
     mitschrift = tmp_path / "spec-mitschrift.txt"
-    claude = tmp_path / "bin" / "claude"
-    claude.write_text(
-        "#!/bin/sh\n"
-        f'printf "spec=%s\n" "$TO_SPAWN_SPEC" >> "{mitschrift}"\n'
-        f'exec "{sys.executable}" "{FAKE_CLAUDE}" "$@"\n',
-        encoding="utf-8",
-    )
-    claude.chmod(0o755)
+    _claude_attrappe(tmp_path / "bin" / "claude", mitschrift)
 
     ergebnis = _lauf([sys.executable, str(SKRIPTE / "bau.py"), TICKET, "--sofort"], repo, umgebung)
     assert ergebnis.returncode == 0, ergebnis.stdout + ergebnis.stderr

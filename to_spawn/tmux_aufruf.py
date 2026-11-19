@@ -2,14 +2,15 @@
 
 Welches tmux läuft (``TO_SPAWN_TMUX``), entscheidet ``capo._tmux_befehl``. Hier steht
 nur, wie ein Aufruf scheitert: Exit ≠ 0, Zeitüberschreitung oder kein tmux → :class:`TmuxFehler`,
-fehlendes Fenster/Pane → :class:`FensterWeg`.
+fehlendes Fenster/Pane → :class:`FensterWeg`. ``start=True`` (neues Fenster) läuft über die
+Start-Tür :mod:`to_spawn.starter` (#1406).
 """
 
 from __future__ import annotations
 
 import subprocess
 
-from to_spawn import capo
+from to_spawn import capo, starter
 
 
 class TmuxFehler(RuntimeError):
@@ -28,18 +29,18 @@ class FensterWeg(TmuxFehler):
     """Das Ziel-Fenster/-Pane gibt es nicht mehr (Session hat sich selbst beendet)."""
 
 
-def aufrufen(*argumente: str, eingabe: str | None = None) -> str:
-    """Ein tmux-Aufruf; Ausgabe als Text, jeder Fehler als :class:`TmuxFehler`."""
+def aufrufen(*argumente: str, eingabe: str | None = None, start: bool = False) -> str:
+    """Ein tmux-Aufruf; Ausgabe als Text, jeder Fehler als :class:`TmuxFehler`.
+
+    ``start=True``: der Aufruf startet etwas (``new-window``) und geht durch die Start-Tür.
+    """
     unterbefehl = argumente[0] if argumente else ""
+    lauf_args = {"input": eingabe, "capture_output": True, "text": True, "check": True, "timeout": 30}
     try:
-        fertig = subprocess.run(
-            [*capo._tmux_befehl(), *argumente],
-            input=eingabe,
-            capture_output=True,
-            text=True,
-            check=True,
-            timeout=30,
-        )
+        if start:
+            fertig = starter.starte([*capo._tmux_befehl(), *argumente], warten=True, **lauf_args)
+        else:
+            fertig = subprocess.run([*capo._tmux_befehl(), *argumente], **lauf_args)
     except subprocess.CalledProcessError as fehler:
         stderr = str(fehler.stderr or "")
         if "can't find window" in stderr or "can't find pane" in stderr:

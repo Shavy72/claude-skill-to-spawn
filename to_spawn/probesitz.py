@@ -37,7 +37,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, TextIO
 
-from . import bau_log, config, melder, nest, sitzung_env
+from . import bau_log, config, melder, nest, sitzung_env, starter
 
 log = logging.getLogger("to_spawn.probesitz")
 
@@ -534,9 +534,10 @@ def session_fahren(
     with tempfile.NamedTemporaryFile(
         "w", prefix=f"probesitz-{ticket}-", suffix=".log", delete=False, encoding="utf-8"
     ) as protokoll:
-        prozess = subprocess.Popen(
+        prozess = starter.starte(
             argv,
-            cwd=str(cwd),
+            cwd=cwd,
+            notnagel=None,
             env=env,
             stdin=subprocess.DEVNULL,
             stdout=protokoll,

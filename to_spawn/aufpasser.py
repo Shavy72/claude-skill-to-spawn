@@ -101,6 +101,7 @@ from to_spawn import (
     prozessbaum,
     sessions_datei,
     speicher,
+    starter,
     vorfall,
 )
 from to_spawn.waechter_lauf import _LIMIT_TEXT as LIMIT_TEXT
@@ -923,18 +924,27 @@ class Aufpasser:
 
     # -- Werkzeuge ---------------------------------------------------------------
 
-    def sh(self, *args: str, cwd: Path | None = None, timeout: float = 120) -> str:
+    def sh(
+        self, *args: str, cwd: Path | None = None, timeout: float = 120, start: bool = False
+    ) -> str:
+        """Befehl ausführen, Ausgabe zurück; Exit ≠ 0 → ``RuntimeError``.
+
+        ``start=True`` für Aufrufe, die etwas starten — die gehen durch die Start-Tür (#1406).
+        """
+        optionen = {
+            "cwd": str(cwd) if cwd else None,
+            "capture_output": True,
+            "text": True,
+            "encoding": "utf-8",
+            "errors": "replace",
+            "check": False,
+            "timeout": timeout,
+        }
         try:
-            ergebnis = subprocess.run(
-                args,
-                cwd=str(cwd) if cwd else None,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                check=False,
-                timeout=timeout,
-            )
+            if start:
+                ergebnis = starter.starte(args, warten=True, **optionen)
+            else:
+                ergebnis = subprocess.run(args, **optionen)
         except subprocess.TimeoutExpired:
             raise RuntimeError(
                 f"{' '.join(args[:4])}: Zeitgrenze {timeout:g} s überschritten"
@@ -945,9 +955,9 @@ class Aufpasser:
             raise RuntimeError(f"{' '.join(args[:4])}: {ergebnis.stderr.strip()[:300]}")
         return ergebnis.stdout
 
-    def tmux(self, *args: str) -> str:
+    def tmux(self, *args: str, start: bool = False) -> str:
         socket = ["-L", self.e.tmux_socket] if self.e.tmux_socket else []
-        return self.sh("tmux", *socket, *args)
+        return self.sh("tmux", *socket, *args, start=start)
 
     def _stand_laden(self) -> Stand:
         datei = self.e.zustand / "stand.json"
@@ -1370,6 +1380,7 @@ class Aufpasser:
             "-c",
             str(cwd),
             f"bash -lc {shlex.quote(befehl)}",
+            start=True,
         )
 
     def _start_nachweisen(self, sitzung: str, name: str) -> bool:
@@ -1530,6 +1541,7 @@ class Aufpasser:
                 "-c",
                 str(cwd),
                 f"bash -lc {shlex.quote(befehl)}",
+                start=True,
             )
         finally:
             self.tmux("set-option", "-w", "-t", ziel, "-u", "remain-on-exit")

@@ -147,7 +147,10 @@ def welt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path]:
     binaer = tmp_path / "bin"
     binaer.mkdir()
     _ausfuehrbar(binaer / "ssh", SSH_STUB)
+    # Windows übersieht ``ssh`` ohne Endung im PATH und nähme das echte ssh.exe (#1406, B1)
+    (binaer / "ssh.cmd").write_text(f'@"{sys.executable}" "%~dp0ssh" %*\r\n', encoding="utf-8")
     monkeypatch.setenv("PATH", f"{binaer}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.setenv("TO_SPAWN_TEST_BIN", str(binaer))  # Start-Tür: nur diese Attrappe startet
     monkeypatch.setenv("SSH_STUB_LOG", str(tmp_path / "ssh.log"))
     monkeypatch.setenv("SSH_STUB_MODUS", "ok")
     monkeypatch.setenv("TO_SPAWN_SSH_ZIEL", "bau-server")
@@ -432,6 +435,7 @@ def _bau(
     umgebung = {
         **os.environ,
         "PATH": f"{binaer}{os.pathsep}{os.environ['PATH']}",
+        "TO_SPAWN_TEST_BIN": str(binaer),  # Start-Tür (#1406): nur diese Attrappe startet
         "TO_SPAWN_REPO": str(repo),
         "FAKE_AUSGABE": str(tmp_path / "fake"),
         "FAKE_MODUS": modus,
@@ -853,14 +857,16 @@ def test_sessions_stand_zaehlt_nur_prozesse_im_eigenen_repo(tmp_path: Path) -> N
 
 
 def _kind_mit_umzug(datei: Path) -> list[str]:
-    """Kind, das die Umzug-Datei schreibt und dann weiterläuft (wie eine Session nach Exit 0)."""
-    return [
-        sys.executable,
-        "-c",
-        "import pathlib, sys, time; "
-        "pathlib.Path(sys.argv[1]).write_text('{\"ziel\": \"bau-server\"}'); time.sleep(60)",
-        str(datei),
-    ]
+    """Kind, das die Umzug-Datei schreibt und dann weiterläuft (wie eine Session nach Exit 0).
+
+    Als Skript im Attrappen-Ordner, sonst sperrt die Start-Tür den Start (#1406)."""
+    kind = Path(os.environ["TO_SPAWN_TEST_BIN"]) / "kind_mit_umzug.py"
+    kind.write_text(
+        "import pathlib, sys, time\n"
+        "pathlib.Path(sys.argv[1]).write_text('{\"ziel\": \"bau-server\"}'); time.sleep(60)\n",
+        encoding="utf-8",
+    )
+    return [sys.executable, str(kind), str(datei)]
 
 
 # --- Befund 1: Windows — ganzen Prozessbaum beenden, danach prüfen ---------------
@@ -1266,6 +1272,7 @@ def test_start_notnagel_nur_bei_datei_fehlt(
         return echt([sys.executable, "-c", "pass"])
 
     monkeypatch.setattr(umzug.subprocess, "Popen", popen)
+    _ausfuehrbar(Path(os.environ["TO_SPAWN_TEST_BIN"]) / "claude", FAKE_CLAUDE)  # Start-Tür (#1406)
     code, daten = umzug.starte_mit_umzug_wache(["claude", "x"], tmp_path / "u.json", takt=0.05)
     assert aufrufe == [False, True]
     assert code == 0 and daten is None
@@ -1284,6 +1291,7 @@ def test_start_andere_oserror_wird_geworfen(
         return echt([sys.executable, "-c", "pass"])
 
     monkeypatch.setattr(umzug.subprocess, "Popen", popen)
+    _ausfuehrbar(Path(os.environ["TO_SPAWN_TEST_BIN"]) / "claude", FAKE_CLAUDE)  # Start-Tür (#1406)
     with caplog.at_level("ERROR"), pytest.raises(PermissionError):
         umzug.starte_mit_umzug_wache(["claude", "x"], tmp_path / "u.json", takt=0.05)
     assert aufrufe == [False]
@@ -1304,3 +1312,26 @@ def test_umzug_nur_im_fliesstext_bleibt_weigerung(welt: dict[str, Path]) -> None
     pfad = _handoff(welt["wt"], "# Handoff\n\nDer Umzug: server kommt später.\n")
     assert _umzug(welt, pfad) == umzug.EXIT_WEIGERUNG
     assert _ssh_aufrufe(welt) == []
+
+
+# --- Start-Tür #1406 (End-Review B1): Server-Start per ssh nur über die Tür ----------------
+
+
+@pytest.mark.parametrize("ohne_bin", [False, True], ids=["leerer_test_bin", "ohne_test_bin"])
+def test_ssh_ohne_attrappe_gesperrt(monkeypatch: pytest.MonkeyPatch, ohne_bin: bool) -> None:
+    """Unter Test ohne ``ssh``-Attrappe: ``StartGesperrt``, kein Prozess entsteht."""
+    from to_spawn import starter
+
+    if ohne_bin:
+        monkeypatch.delenv(starter.TEST_BIN_ENV, raising=False)
+    gestartet: list[object] = []
+
+    def nie(*a: object, **_k: object) -> None:
+        gestartet.append(a)
+        raise AssertionError("subprocess trotz Sperre aufgerufen")
+
+    monkeypatch.setattr(subprocess, "Popen", nie)
+    monkeypatch.setattr(subprocess, "run", nie)
+    with pytest.raises(starter.StartGesperrt, match="ssh"):
+        umzug._ssh("bau-server", umzug.spawn_befehl(SPEC, TICKET, "~/repo"), 1)
+    assert gestartet == []

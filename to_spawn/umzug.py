@@ -35,6 +35,8 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any, TextIO
 
+from . import starter
+
 log = logging.getLogger("to_spawn.umzug")
 
 EXIT_OK = 0
@@ -129,10 +131,16 @@ def _cd(ordner: str) -> str:
 
 
 def _ssh(ziel: str, befehl: str, timeout: float) -> subprocess.CompletedProcess[str] | None:
-    """Ein Befehl per SSH; ``None`` bei Zeitüberschreitung oder fehlendem ``ssh``."""
+    """Ein Befehl per SSH; ``None`` bei Zeitüberschreitung oder fehlendem ``ssh``.
+
+    Läuft über die Start-Tür (#1406): ``spawn_srv.sh`` startet echte Server-Sessions; unter
+    Test nur die ``ssh``-Attrappe aus ``TO_SPAWN_TEST_BIN``, sonst ``StartGesperrt``.
+    """
     try:
-        return subprocess.run(
+        return starter.starte(
             ["ssh", "-o", "BatchMode=yes", ziel, befehl],
+            warten=True,
+            notnagel=None,  # fehlendes ssh → OSError unten, nie über die Shell
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -928,9 +936,7 @@ def starte_mit_umzug_wache(
     """
     datei.unlink(missing_ok=True)
     try:
-        prozess: subprocess.Popen[Any] = subprocess.Popen(list(cmd))
-    except FileNotFoundError:
-        prozess = subprocess.Popen(subprocess.list2cmdline(list(cmd)), shell=True)
+        prozess: subprocess.Popen[Any] = starter.starte(list(cmd), notnagel=FileNotFoundError)
     except OSError as fehler:
         log.error("Start von %s scheiterte: %s", cmd[0] if cmd else "?", fehler)
         raise

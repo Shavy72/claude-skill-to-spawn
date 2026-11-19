@@ -52,7 +52,7 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from . import bau_log, hooks, melder, respawn, respawn_aufseher, sessions_datei
+from . import bau_log, hooks, melder, respawn, respawn_aufseher, sessions_datei, starter
 
 log = logging.getLogger("to_spawn.waechter_lauf")
 
@@ -429,13 +429,8 @@ def resume_befehl(
 
 
 def _starte(cmd: list[str], cwd: Path) -> subprocess.Popen[bytes]:
-    try:
-        return subprocess.Popen(cmd, cwd=str(cwd))
-    except OSError:
-        # Windows: ``claude`` ist ein .cmd-Shim, der nur über die Shell startet.
-        return subprocess.Popen(
-            " ".join(f'"{c}"' for c in cmd), cwd=str(cwd), shell=True
-        )
+    """Aufseher-Session über die Start-Tür (unter Test nur Attrappen, #1406)."""
+    return starter.starte(cmd, cwd=cwd)
 
 
 def _beende(proc: subprocess.Popen[bytes]) -> None:

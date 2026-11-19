@@ -53,7 +53,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from . import bau_log, befund, config, gh, melder, mensch_noetig, staging_schalter, vorfall
+from . import bau_log, befund, config, gh, melder, mensch_noetig, staging_schalter, starter, vorfall
 
 log = logging.getLogger("to_spawn.capo")
 
@@ -1326,8 +1326,10 @@ def _starte_folge_runde(
 ) -> str:
     """Folge-Runde starten; ``""`` = geklappt, sonst der Grund des Fehlschlags."""
     if ueber_tmux:
-        fertig = subprocess.run(
+        fertig = starter.starte(
             befehl,
+            warten=True,
+            notnagel=None,
             capture_output=True,
             text=True,
             errors="replace",
@@ -1341,9 +1343,10 @@ def _starte_folge_runde(
     ordner.mkdir(parents=True, exist_ok=True)
     protokoll = ordner / f"folgerunde-{ticket}.log"
     with protokoll.open("a", encoding="utf-8") as fh:
-        subprocess.Popen(
+        starter.starte(
             befehl,
-            cwd=str(repo),
+            cwd=repo,
+            notnagel=None,
             env=folge_umgebung(auftrag),
             stdout=fh,
             stderr=subprocess.STDOUT,

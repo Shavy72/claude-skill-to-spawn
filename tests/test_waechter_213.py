@@ -200,6 +200,13 @@ def welt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path]:
     monkeypatch.setenv("TO_SPAWN_GH_STUB", str(GH_STUB))
     monkeypatch.setenv("GH_STUB213_ZUSTAND", str(gh))
     monkeypatch.setenv("TO_SPAWN_WAECHTER_ORDNER", str(zustand))
+    # tmux nie echt (#1406): echtes ``tmux new-window`` startete auf dem Bau-Server eine
+    # Session. Ersatz wie Linux ohne Session: list-windows Exit 1, new-window nur Protokoll.
+    monkeypatch.setenv(
+        "TO_SPAWN_TMUX",
+        json.dumps([sys.executable, str(GH_STUB.parent / "tmux_stub_284.py"), str(tmp_path / "tmux_aufrufe.jsonl")]),
+    )
+    monkeypatch.setenv("FAKE_TMUX_FENSTER", str(tmp_path / "keine_tmux_session.txt"))
     for name in ("MAIL_FAKE_EXIT", "TO_SPAWN_TICKET", "TO_SPAWN_LOG_REPO"):
         monkeypatch.delenv(name, raising=False)
     welt = {
@@ -701,12 +708,24 @@ def _wache_welt(welt: dict[str, Path]) -> dict[str, str]:
         "FAKE_PROTOKOLL": str(welt["tmp"] / "claude_aufrufe.jsonl"),
         "FAKE_LIMIT": json.dumps(LIMIT_ZEILE, ensure_ascii=False),
         "TO_SPAWN_AUFSICHT_TAKT": "0.2",
+        # Start-Tür (#1406): unter Test startet nur, was in diesem Ordner liegt.
+        "TO_SPAWN_TEST_BIN": str(binaer),
     }
 
 
 def _aufrufe(welt: dict[str, Path]) -> list[list[str]]:
     datei = welt["tmp"] / "claude_aufrufe.jsonl"
     return [json.loads(z) for z in datei.read_text(encoding="utf-8").splitlines() if z]
+
+
+def test_wache_loest_claude_als_attrappe_auf_1406(welt: dict[str, Path]) -> None:
+    """#1406: Derselbe Weg wie ``test_wache_wechselt_bei_limit_auf_ausweich_modell`` muss die
+    Attrappe ``claude`` (ohne Endung) finden. Vorher fand Windows' ``shutil.which`` die echte
+    ``claude.EXE`` und der Test startete eine echte Aufseher-Session. Trockenlauf: startet nichts."""
+    ergebnis = _wache(welt["repo"], "--dry-run", env=_wache_welt(welt))
+    assert ergebnis.returncode == 0, _text(ergebnis)
+    programm = ergebnis.stdout.strip().splitlines()[-1].split(" --model", 1)[0]
+    assert Path(programm).parent == welt["tmp"] / "claude_bin", programm
 
 
 def test_wache_wechselt_bei_limit_auf_ausweich_modell(welt: dict[str, Path]) -> None:

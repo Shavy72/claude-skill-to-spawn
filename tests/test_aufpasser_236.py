@@ -244,7 +244,15 @@ def welt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Welt]:
     )
     (binaer / "bau_protokoll.sh").chmod(0o755)
     monkeypatch.setenv("PATH", f"{binaer}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.setenv("TO_SPAWN_TEST_BIN", str(binaer))  # Start-Tür (#1406): nur diese Attrappe startet
     monkeypatch.delenv("TMUX", raising=False)
+    # Start-Tür #1406: Fenster-Starts nur über den Attrappen-Ordner; das echte tmux läuft
+    # hier auf dem eigenen Test-Socket, darum dort als Weiterleitung (kein Symlink: die Tür
+    # prüft den aufgelösten Pfad).
+    weiter = Path(os.environ["TO_SPAWN_TEST_BIN"]) / "tmux"
+    echt = shutil.which("tmux") or "tmux"
+    weiter.write_text(f'#!/bin/sh\nexec {echt} "$@"\n', encoding="utf-8")
+    weiter.chmod(0o755)
     protokoll_gh = tmp_path / "gh_protokoll.txt"
     monkeypatch.setenv("GH_STUB_PROTOKOLL", str(protokoll_gh))
     # Vorgabe: nur 9002 ist Unter-Ticket; Tests mit 9003 setzen es selbst.
@@ -879,6 +887,7 @@ def test_bau_resume_wartet_nicht_auf_blocker(repo_bau: Path, tmp_path: Path) -> 
     env = {
         "HOME": str(heim),
         "PATH": f"{binaer}{os.pathsep}{os.environ['PATH']}",
+        "TO_SPAWN_TEST_BIN": str(binaer),  # Start-Tür (#1406): nur diese Attrappe startet
         "FAKE_ARGV": str(beweis),
         "TMPDIR": str(temp),
         # Blocker 950 ist laut Stub „closed“, hat aber keinen Commit auf origin/master
@@ -908,6 +917,7 @@ def test_bau_neue_session_schreibt_id(repo_bau: Path, tmp_path: Path) -> None:
     temp.mkdir()
     env = {
         "PATH": f"{binaer}{os.pathsep}{os.environ['PATH']}",
+        "TO_SPAWN_TEST_BIN": str(binaer),  # Start-Tür (#1406): nur diese Attrappe startet
         "FAKE_ARGV": str(beweis),
         "TMPDIR": str(temp),
     }
@@ -952,13 +962,20 @@ def test_session_id_aus_argv() -> None:
     assert aufpasser.session_id_aus_argv(["claude", "prompt"]) is None
 
 
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason="Linux-Test: session_finden/prozess_baum lesen /proc (prozessbaum._kinder); "
+    "unter Windows war er nie grün (2b1fba4: WinError 193 beim .sh-Start)",
+)
 def test_keine_id_ohne_session_json_und_argv(tmp_path: Path) -> None:
     """geändert wegen Fix F1: der Transkript-Fallback (neueste ``.jsonl``) ist weg —
     er lieferte nachweislich die ID einer fremden Session (alle Bau-Fenster teilen
     sich das cwd). Ohne Session-JSON und ohne argv-ID gibt es keine ID."""
     binaer = tmp_path / "bin"
     binaer.mkdir()
-    shutil.copy2(HILFEN / "fake_claude_schlaeft.sh", binaer / "claude")
+    claude = binaer / "claude"
+    shutil.copy2(HILFEN / "fake_claude_schlaeft.sh", claude)
+    start = [str(claude)]
     arbeit = tmp_path / "arbeit"
     arbeit.mkdir()
     heim = tmp_path / "heim"
@@ -966,9 +983,7 @@ def test_keine_id_ohne_session_json_und_argv(tmp_path: Path) -> None:
     ordner.mkdir(parents=True)
     umgebung = {k: v for k, v in os.environ.items() if k not in ("TMUX", "TMUX_PANE")}
     umgebung.update(HOME=str(heim), FAKE_CLAUDE_OHNE_JSON="1")
-    prozess = subprocess.Popen(
-        [str(binaer / "claude"), "nur ein Prompt"], cwd=str(arbeit), env=umgebung
-    )
+    prozess = subprocess.Popen([*start, "nur ein Prompt"], cwd=str(arbeit), env=umgebung)
     try:
         time.sleep(1.2)
         (ordner / f"{uuid.uuid4()}.jsonl").write_text("{}\n", encoding="utf-8")

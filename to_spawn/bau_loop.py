@@ -22,7 +22,7 @@ import time
 from pathlib import Path
 from typing import Any, Sequence
 
-from . import bau_log, config, gh, hooks
+from . import bau_log, config, gh, hooks, starter
 
 log = logging.getLogger("to_spawn.bau_loop")
 
@@ -128,7 +128,7 @@ def run_ticket(
             text=f"Session {staffel}/{grenze} gestartet.",
         )
 
-        prozess = subprocess.Popen(aktuell, cwd=str(wurzel), env=basis)
+        prozess = starter.starte(aktuell, cwd=wurzel, env=basis, notnagel=None)
         stopp = threading.Event()
         waechter: threading.Thread | None = None
         if modus == "eltern":

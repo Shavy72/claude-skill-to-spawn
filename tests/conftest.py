@@ -78,3 +78,19 @@ def _waechter_sofort(
         monkeypatch.setenv("TO_SPAWN_WAECHTER_SOFORT", "1")
     else:
         monkeypatch.delenv("TO_SPAWN_WAECHTER_SOFORT", raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _start_nur_attrappen(
+    tmp_path_factory: pytest.TempPathFactory,
+    monkeypatch: pytest.MonkeyPatch,
+    _keine_to_spawn_umgebung: None,
+) -> None:
+    """Start-Schutz (#1406): ``to_spawn.starter`` startet unter Test nur Attrappen.
+
+    Setzt nur die beiden Variablen; sie erben sich in Kind-Prozesse (``wache.py``,
+    ``bau.py``), wo monkeypatch nicht hinreicht. Attrappen gehören in den Ordner
+    ``TO_SPAWN_TEST_BIN``. Läuft nach ``_keine_to_spawn_umgebung`` (löscht ``TO_SPAWN_*``).
+    """
+    monkeypatch.setenv("TO_SPAWN_TESTLAUF", "1")
+    monkeypatch.setenv("TO_SPAWN_TEST_BIN", str(tmp_path_factory.mktemp("start-attrappen")))
