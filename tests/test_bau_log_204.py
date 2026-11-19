@@ -111,6 +111,7 @@ def _umgebung(tmp_path: Path, wt_basis: Path) -> dict[str, str]:
     umgebung = {
         **os.environ,
         "PATH": f"{binaer}{os.pathsep}{os.environ['PATH']}",
+        "TO_SPAWN_TEST_BIN": str(binaer),  # Start-Tür (#1406): nur diese Attrappe startet
         "HOME": str(heim),
         "TMPDIR": str(temp),
         "BAU_WT_DIR": str(wt_basis),

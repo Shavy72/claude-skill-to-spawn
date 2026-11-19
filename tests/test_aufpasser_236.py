@@ -244,6 +244,7 @@ def welt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Welt]:
     )
     (binaer / "bau_protokoll.sh").chmod(0o755)
     monkeypatch.setenv("PATH", f"{binaer}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.setenv("TO_SPAWN_TEST_BIN", str(binaer))  # Start-Tür (#1406): nur diese Attrappe startet
     monkeypatch.delenv("TMUX", raising=False)
     protokoll_gh = tmp_path / "gh_protokoll.txt"
     monkeypatch.setenv("GH_STUB_PROTOKOLL", str(protokoll_gh))
@@ -879,6 +880,7 @@ def test_bau_resume_wartet_nicht_auf_blocker(repo_bau: Path, tmp_path: Path) -> 
     env = {
         "HOME": str(heim),
         "PATH": f"{binaer}{os.pathsep}{os.environ['PATH']}",
+        "TO_SPAWN_TEST_BIN": str(binaer),  # Start-Tür (#1406): nur diese Attrappe startet
         "FAKE_ARGV": str(beweis),
         "TMPDIR": str(temp),
         # Blocker 950 ist laut Stub „closed“, hat aber keinen Commit auf origin/master
@@ -908,6 +910,7 @@ def test_bau_neue_session_schreibt_id(repo_bau: Path, tmp_path: Path) -> None:
     temp.mkdir()
     env = {
         "PATH": f"{binaer}{os.pathsep}{os.environ['PATH']}",
+        "TO_SPAWN_TEST_BIN": str(binaer),  # Start-Tür (#1406): nur diese Attrappe startet
         "FAKE_ARGV": str(beweis),
         "TMPDIR": str(temp),
     }

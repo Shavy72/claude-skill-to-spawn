@@ -96,6 +96,7 @@ def test_bau_mit_respawn_schaltern_gibt_volle_konfiguration(
     env = {
         **os.environ,
         "PATH": f"{binaer}{os.pathsep}{os.environ['PATH']}",
+        "TO_SPAWN_TEST_BIN": str(binaer),  # Start-Tür (#1406): nur diese Attrappe startet
         "TO_SPAWN_REPO": str(welt["haupt"]),
         "FAKE_AUSGABE": str(tmp / "fake"),
         "TMPDIR": str(temp),

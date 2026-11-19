@@ -31,7 +31,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from . import capo, config, gh, leitstand, waechter_lauf
+from . import capo, config, gh, leitstand, starter, waechter_lauf
 
 log = logging.getLogger("to_spawn.waechter_takt")
 
@@ -253,8 +253,8 @@ def _timeout_s() -> float:
 
 def starte_claude(cmd: list[str], repo: Path, prompt: str) -> int:
     """Claude ohne Shell starten, Prompt über stdin; wirft ``OSError``/``TimeoutExpired``."""
-    proc = subprocess.Popen(  # noqa: S603 — Liste, kein Shell, Prompt nur über stdin
-        cmd, cwd=str(repo), stdin=subprocess.PIPE, env=_kind_env()
+    proc = starter.starte(  # Liste, kein Shell, Prompt nur über stdin
+        cmd, cwd=repo, notnagel=None, stdin=subprocess.PIPE, env=_kind_env()
     )
     try:
         proc.communicate(prompt.encode("utf-8"), timeout=_timeout_s())
@@ -400,9 +400,10 @@ def starte_abgeloest(spec: int, repo: Path, grund: str) -> bool:
     with log_datei(spec).open("a", encoding="utf-8") as ausgabe:
         ausgabe.write(f"--- {_jetzt_iso()} Takt #{spec} ausgelöst: {grund}\n")
         ausgabe.flush()
-        subprocess.Popen(  # noqa: S603 — fester Befehl, kein Shell
+        starter.starte(  # fester Befehl, kein Shell
             cmd,
-            cwd=str(SKILL),
+            cwd=SKILL,
+            notnagel=None,
             stdin=subprocess.DEVNULL,
             stdout=ausgabe,
             stderr=subprocess.STDOUT,
