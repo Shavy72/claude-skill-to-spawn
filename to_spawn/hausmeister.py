@@ -142,6 +142,35 @@ class _Bleibt(Exception):
         self.fehler = fehler
 
 
+@dataclass(frozen=True)
+class Rundgang:
+    """Ein Lauf über alle Ordner (:func:`rundgang`).
+
+    ``gelaufen=False`` heißt: es wurde gar nicht aufgeräumt, ``grund`` sagt in Klartext
+    warum. ``wartet=True`` ist dabei kein Fehler — ein anderer Lauf hält die Sperre und
+    räumt gerade selbst auf. ``fehler`` zählt Ordner, die wegen eines Fehlers blieben.
+    """
+
+    gelaufen: bool
+    grund: str
+    ergebnisse: tuple[Ergebnis, ...] = ()
+    wartet: bool = False
+
+    @property
+    def fehler(self) -> int:
+        return sum(1 for e in self.ergebnisse if e.fehler)
+
+    @property
+    def geloescht(self) -> int:
+        """Gelöscht (im Probelauf: würde gelöscht)."""
+        return sum(1 for e in self.ergebnisse if e.art != "bleibt")
+
+    @property
+    def bleibt(self) -> int:
+        """Nach den Regeln geblieben (ohne Fehler)."""
+        return sum(1 for e in self.ergebnisse if e.art == "bleibt" and not e.fehler)
+
+
 @dataclass
 class _Stand:
     ticket: int | None = None
@@ -162,13 +191,29 @@ def aufraeumen_alles(
 
     Bei Platznot zuerst die Ordner mit der ältesten Ticket-Schließung, ohne 24 h
     Wartezeit, bis wieder genug frei ist (siehe Modul-Kommentar). Läuft schon ein
-    anderer Lauf (Sperre), oder scheitert die Ordnersuche: ``[]``.
+    anderer Lauf (Sperre), oder scheitert die Ordnersuche: ``[]`` — wer das
+    unterscheiden muss, nimmt :func:`rundgang`.
     """
-    return _aufraeumen_alles(loeschen=loeschen, jetzt=jetzt) or []
+    return list(rundgang(loeschen=loeschen, jetzt=jetzt).ergebnisse)
 
 
-def _aufraeumen_alles(*, loeschen: bool, jetzt: float | None) -> list[Ergebnis] | None:
-    """Wie :func:`aufraeumen_alles`; ``None`` = Aufräumen gescheitert (geloggt)."""
+def rundgang(*, loeschen: bool, jetzt: float | None = None) -> Rundgang:
+    """Wie :func:`aufraeumen_alles`, sagt aber, ob überhaupt aufgeräumt wurde; wirft nie.
+
+    Für Aufrufer, die „erledigt“ festhalten (capo-Schlussschritt): belegte Sperre,
+    gescheiterte Ordnersuche und jeder unerwartete Fehler ergeben ``gelaufen=False``
+    mit Klartext-Grund statt einer leeren Liste, die wie „nichts zu tun“ aussieht.
+    """
+    try:
+        return _rundgang(loeschen=loeschen, jetzt=jetzt)
+    except Exception as fehler:  # Vertrag: wirft nie
+        log.exception("Hausmeister: Rundgang gescheitert")
+        return Rundgang(
+            False, f"unerwarteter Fehler ({type(fehler).__name__}: {fehler})"
+        )
+
+
+def _rundgang(*, loeschen: bool, jetzt: float | None) -> Rundgang:
     try:
         sperre = _sperre_nehmen()
     except OSError as fehler:
@@ -176,7 +221,9 @@ def _aufraeumen_alles(*, loeschen: bool, jetzt: float | None) -> list[Ergebnis] 
         sperre = None
     if sperre is False:
         log.info("Hausmeister: anderer Lauf läuft schon — dieser räumt nicht auf")
-        return []
+        return Rundgang(
+            False, "ein anderer Lauf räumt gerade auf (Sperre belegt)", wartet=True
+        )
     try:
         return _alle_ordner(loeschen=loeschen, jetzt=jetzt)
     finally:
@@ -184,7 +231,7 @@ def _aufraeumen_alles(*, loeschen: bool, jetzt: float | None) -> list[Ergebnis] 
             sperre.close()  # gibt die flock-Sperre frei
 
 
-def _alle_ordner(*, loeschen: bool, jetzt: float | None) -> list[Ergebnis] | None:
+def _alle_ordner(*, loeschen: bool, jetzt: float | None) -> Rundgang:
     try:
         kandidaten = _kandidaten()
         anteil = _frei_anteil()
@@ -192,9 +239,11 @@ def _alle_ordner(*, loeschen: bool, jetzt: float | None) -> list[Ergebnis] | Non
             # ponytail: Schließzeit kommt hier und in den Regeln je einmal per gh; Cache, falls zu langsam.
             zeiten = {k: _schliesszeit(k) for k in kandidaten}
             kandidaten.sort(key=lambda k: (zeiten[k] is None, zeiten[k] or 0.0, str(k)))
-    except Exception:  # Vertrag: wirft nie
+    except Exception as fehler:  # Vertrag: wirft nie
         log.exception("Hausmeister: Aufräumen gescheitert (Ordnersuche/Reihenfolge)")
-        return None
+        return Rundgang(
+            False, f"Ordnersuche gescheitert ({type(fehler).__name__}: {fehler})"
+        )
     ergebnisse: list[Ergebnis] = []
     for ordner in kandidaten:
         erg = _aufraeumen(
@@ -203,7 +252,7 @@ def _alle_ordner(*, loeschen: bool, jetzt: float | None) -> list[Ergebnis] | Non
         ergebnisse.append(erg)
         if erg.art != "bleibt" and not erg.trocken:
             anteil = _frei_anteil()
-    return ergebnisse
+    return Rundgang(True, "", tuple(ergebnisse))
 
 
 def start_erlaubt(*, loeschen: bool = True) -> tuple[bool, str]:
@@ -227,7 +276,8 @@ def _start_pruefen(loeschen: bool) -> tuple[bool, str]:
     anteil = _frei_anteil()
     zusatz = ""
     if _ist_platznot(anteil):
-        if _aufraeumen_alles(loeschen=loeschen, jetzt=None) is None:
+        rund = rundgang(loeschen=loeschen)
+        if not rund.gelaufen and not rund.wartet:
             zusatz = " (Aufräumen gescheitert, siehe Log)"
         anteil = _frei_anteil()
     if anteil is None:
