@@ -10,6 +10,7 @@
 # ohne SHA geht weiter) und prüft keine Regularien. Läuft das Ticket hier schon:
 # Exit 4, nichts gestartet. --nur-wache startet nur Aufseher + Leitstand (fehlende).
 # Exit 5: Speicher voll (to_spawn.py speicher) — begonnene Fenster laufen, der Rest nicht.
+# Exit 7: Platte voll (Start-Check des Hausmeisters, #1369) — wie Exit 5.
 # Exit 6: Speicherprüfung kaputt oder Hauptzweig nicht ermittelbar — nichts weiter gestartet.
 # Eine tmux-Session je Spec (``spec-<S>``), darin ``wache <S>``, ``leitstand <S>`` und
 # je Ticket ein Fenster ``bau <N>``. Gewartet wird in bau.py (0 Token).
@@ -37,7 +38,7 @@ while [ $# -gt 0 ]; do
     --umzug) UMZUG_REF="${2:-}"; OHNE_REGULARIEN=1; shift 2 ;;
     --ohne-regularien) OHNE_REGULARIEN=1; shift ;;
     --nur-wache) NUR_WACHE=1; shift ;;
-    -h|--help) sed -n '2,16p' "${BASH_SOURCE[0]}"; exit 0 ;;
+    -h|--help) sed -n '2,17p' "${BASH_SOURCE[0]}"; exit 0 ;;
     *)
       if [ -z "$SPEC" ]; then SPEC="$1"; shift; else echo "Unbekanntes Argument: $1" >&2; exit 2; fi ;;
   esac
@@ -186,13 +187,15 @@ for i in "${!GEPLANT[@]}"; do echo "  - ${KURZ[$i]}  →  ${GEPLANT[$i]}"; done
 STAFFEL="$(TO_SPAWN_REPO="$REPO" "$PY" "$SKILL_HOME/to_spawn.py" speicher --staffel 2>/dev/null || echo 20)"
 case "$STAFFEL" in ''|*[!0-9]*) STAFFEL=20 ;; esac
 
-# speicher_pruefen <Kurzname>: 0 = frei, 5 = voll (Meldung), 6 = Prüfung kaputt (Meldung).
+# speicher_pruefen <Kurzname>: 0 = frei, 5 = voll (Meldung), 7 = Platte voll (Meldung, #1369),
+# 6 = Prüfung kaputt (Meldung).
 speicher_pruefen() {
   local rc=0 stand
   stand="$(TO_SPAWN_REPO="$REPO" "$PY" "$SKILL_HOME/to_spawn.py" speicher 2>&1)" || rc=$?
   case "$rc" in
     0) return 0 ;;
     5) echo "nicht gestartet: $1 — $stand" >&2; return 5 ;;
+    7) echo "nicht gestartet: $1 — $stand" >&2; return 7 ;;
     *) echo "Speicherprüfung kaputt (to_spawn.py speicher Exit $rc): $stand" >&2; return 6 ;;
   esac
 }

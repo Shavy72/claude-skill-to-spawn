@@ -498,10 +498,10 @@ def main(argv: list[str] | None = None) -> int:
         help="Claude-Projektordner mit den Transkripten",
     )
 
-    # Speicher-Schutz (#257 Paket B): Stand drucken, Exit 0 = frei, 5 = voll;
+    # Speicher-Schutz (#257 Paket B): Stand drucken, Exit 0 = frei, 5 = voll, 7 = Platte voll (#1369);
     # ``--staffel`` gibt nur die Pause in Sekunden aus (für spawn_srv.sh).
     p_speicher = unter.add_parser(
-        "speicher", help="darf noch eine Claude-Session starten? (Exit 0 frei / 5 voll)"
+        "speicher", help="darf noch eine Claude-Session starten? (Exit 0 frei / 5 voll / 7 Platte voll)"
     )
     p_speicher.add_argument(
         "--staffel", action="store_true", help="nur die Staffel-Pause in Sekunden ausgeben"

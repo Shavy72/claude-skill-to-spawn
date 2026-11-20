@@ -36,6 +36,10 @@ VORGABE: dict[str, int] = dict(config.DEFAULTS["speicher"])
 
 #: Exit-Code der CLI (``to_spawn.py speicher``) und der Starter, wenn kein Platz ist.
 EXIT_VOLL = 5
+#: Exit-Code der CLI, wenn der Hausmeister die Platte zu voll meldet (#1369).
+EXIT_PLATTE = 7
+#: Takt von :func:`auf_platte_warten` — der Hausmeister-Lauf fragt gh, also selten.
+PLATTE_TAKT_S = 900
 
 #: Kernstück der Wartezeile von :func:`auf_platz_warten` (``<wer> wartet auf Speicher …``).
 #: respawn erkennt daran auf dem Bildschirm, dass bau.py noch vor dem Claude-Start wartet.
@@ -200,14 +204,54 @@ def auf_platz_warten(
         schlafen(takt_s)
 
 
+def _platte_pruefen() -> tuple[bool, str]:
+    """Start-Check der Platte — die Entscheidung trifft der Hausmeister (#1369)."""
+    from to_spawn import hausmeister  # spät: hausmeister → aufpasser → speicher
+
+    return hausmeister.start_erlaubt()
+
+
+def auf_platte_warten(
+    *,
+    wer: str = "Session",
+    pruefen: Callable[[], tuple[bool, str]] = _platte_pruefen,
+    schlafen: Callable[[float], object] = time.sleep,
+    takt_s: int = PLATTE_TAKT_S,
+) -> int:
+    """Wartet, bis der Hausmeister die Platte für einen Start frei gibt; Rückgabe = Wartezyklen.
+
+    Wie :func:`auf_platz_warten`: das Fenster bleibt offen, der Grund steht auf stderr
+    und im Log. ``pruefen``/``schlafen`` sind Test-Türen.
+    """
+    zyklen = 0
+    while True:
+        frei, grund = pruefen()
+        if frei:
+            if zyklen:
+                text = f"{wer}: Platte wieder frei nach {zyklen} Wartezyklen — {grund}"
+                print(text, file=sys.stderr)
+                log.info("%s", text)
+            return zyklen
+        zyklen += 1
+        text = f"{wer} wartet auf Platz auf der Platte (Zyklus {zyklen}, Takt {takt_s} s): {grund}"
+        print(text, file=sys.stderr)
+        log.info("%s", text)
+        schlafen(takt_s)
+
+
 def cli(konfig: dict[str, Any] | None, nur_staffel: bool = False) -> int:
-    """Unterbefehl ``to_spawn.py speicher``: Stand drucken, Exit 0 = frei, 5 = voll.
+    """Unterbefehl ``to_spawn.py speicher``: Stand drucken, Exit 0 = frei, 5 = voll,
+    7 = Platte voll (Start-Check des Hausmeisters, vor der RAM-Prüfung).
 
     ``--staffel`` druckt nur die Sekundenzahl der Staffel (für Shell-Skripte).
     """
     if nur_staffel:
         print(staffel_s(konfig))
         return 0
+    platte_ok, platte_grund = _platte_pruefen()
+    if not platte_ok:
+        print(platte_grund)
+        return EXIT_PLATTE
     ok, grund = platz_frei(konfig)
     print(grund)
     return 0 if ok else EXIT_VOLL

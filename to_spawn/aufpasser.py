@@ -241,6 +241,8 @@ KETTE_RUHE_S = 1.0
 STOPP_LABELS = frozenset({"ready-for-human", "needs-info", "wontfix", "bau:lokal", "bau:pause"})
 CRON_MARKE = "# to-spawn aufpasser"
 CRON_TAKT = "*/15 * * * *"
+#: Datei im Zustandsordner, in die der Cron-Lauf schreibt (Aufpasser-Log für Menschen).
+CRON_LOG = "cron.out"
 SKRIPT_STARTER = Path(__file__).resolve().parent.parent / "skripte" / "aufpasser.py"
 ARBEITS_MARKER = (
     "esc to interrupt",
@@ -895,7 +897,7 @@ def cron_einrichten(
     """
     alt = _crontab("-l")
     zeilen = alt.stdout.splitlines() if alt.returncode == 0 else []
-    zeile = f"{CRON_TAKT} {python} {skript} >> {zustand}/cron.out 2>&1  {CRON_MARKE}"
+    zeile = f"{CRON_TAKT} {python} {skript} >> {zustand}/{CRON_LOG} 2>&1  {CRON_MARKE}"
 
     def ist_aufpasser(z: str) -> bool:
         return CRON_MARKE in z or (
@@ -2300,8 +2302,26 @@ class Aufpasser:
                 sperre.close()
         return code
 
+    def _hausmeister_lauf(self) -> None:
+        """Einmal je Takt alles Fertige aufräumen (#1369); die Regeln kennt nur der Hausmeister."""
+        from to_spawn import hausmeister  # spät: hausmeister importiert aufpasser
+
+        try:
+            ergebnisse = hausmeister.aufraeumen_alles(loeschen=not self.e.trocken)
+        except Exception:  # Aufräumen darf den Lauf nie aufhalten
+            log.exception("Hausmeister-Lauf gescheitert")
+            return
+        weg = sum(1 for e in ergebnisse if e.art != "bleibt")
+        log.info(
+            "Hausmeister: %d gelöscht, %d bleibt%s",
+            weg,
+            len(ergebnisse) - weg,
+            " (trocken)" if self.e.trocken else "",
+        )
+
     def _lauf(self) -> None:
         self._starts_in_tick = 0
+        self._hausmeister_lauf()
         gesehen: list[tuple[str, str, list[Fenster], Path]] = []
         for sitzung, spec in self.sitzungen():
             try:

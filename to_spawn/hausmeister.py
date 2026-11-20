@@ -37,10 +37,21 @@ Jede Entscheidung schreibt eine JSON-Zeile nach ``TO_SPAWN_HAUSMEISTER_LOG``
 Log nicht schreibbar ⇒ bleibt. Scheitert danach das Löschen, folgt eine zweite Zeile
 „bleibt“. :func:`liste_fuer_david` liest daraus die Ordner, über die David selbst
 entscheiden muss.
+
+Zweite Tür (#1369): :func:`aufraeumen_alles` wendet dieselben Regeln auf alle Ordner
+unter den Wurzeln an. Platznot (weniger als :data:`PLATZNOT_ANTEIL` der Platte frei):
+Ordner mit geschlossenem Ticket gehen sofort, auch vor Ablauf der 24 h — älteste
+Schließung zuerst, nach jeder Löschung neu gemessen; alle übrigen Regeln gelten
+unverändert. :func:`start_erlaubt` ist der Start-Check (``to_spawn.py speicher``,
+``bau.py``): unter :data:`STARTSPERRE_ANTEIL` frei startet nichts Neues, eine Zeile geht
+ins Aufpasser-Log (``cron.out``) und ins Hindernis-Log. Die Grenzen leben nur hier.
+Test-Naht ``TO_SPAWN_HAUSMEISTER_PLATTE``: Anteil frei (Zahl) oder Datei mit einem
+Anteil je Zeile (jede Messung nimmt den nächsten, der letzte bleibt).
 """
 
 from __future__ import annotations
 
+import glob
 import json
 import logging
 import os
@@ -52,7 +63,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Literal
 
-from to_spawn import aufpasser, gh
+from to_spawn import aufpasser, gh, hindernis
 
 log = logging.getLogger("to_spawn.hausmeister")
 
@@ -65,6 +76,10 @@ EIGENE_REPOS = ("shavy72/duoplus-management", "shavy72/claude-skill-to-spawn")
 HAUPTREPO_NAMEN = ("duoplus-management", "claude-skill-to-spawn")
 WURZELN_STANDARD = ("~/wt/*", "~/wt-*", "~/duoplus-[0-9]*", "C:/dev/wt-*")
 MINDEST_ZU_SEKUNDEN = 24 * 3600
+#: Unter diesem Anteil freier Platte gilt Platznot: fertige Ordner gehen vor Ablauf der 24 h.
+PLATZNOT_ANTEIL = 0.15
+#: Unter diesem Anteil freier Platte startet keine neue Session.
+STARTSPERRE_ANTEIL = 0.05
 #: Ignorierte Dateien, die beim Löschen mit weg dürfen (Git-Glob-Pathspecs).
 ERZEUGNISSE = (
     "**/__pycache__/**",
@@ -123,12 +138,71 @@ def aufraeumen(
     ordner: Path, *, loeschen: bool = False, jetzt: float | None = None
 ) -> Ergebnis:
     """Entscheidet (und löscht mit ``loeschen=True``) einen Arbeitsordner; wirft nie."""
+    return _aufraeumen(ordner, loeschen=loeschen, jetzt=jetzt, platznot=False)
+
+
+def aufraeumen_alles(
+    *, loeschen: bool = False, jetzt: float | None = None
+) -> list[Ergebnis]:
+    """Alle Ordner unter den Wurzeln nach den Regeln von :func:`aufraeumen`; wirft nie.
+
+    Bei Platznot zuerst die Ordner mit der ältesten Ticket-Schließung, ohne 24 h
+    Wartezeit, bis wieder genug frei ist (siehe Modul-Kommentar).
+    """
+    try:
+        kandidaten = _kandidaten()
+        anteil = _frei_anteil()
+    except Exception:  # Vertrag: wirft nie
+        log.exception("Hausmeister: Ordnersuche gescheitert")
+        return []
+    if _ist_platznot(anteil):
+        # ponytail: Schließzeit kommt hier und in den Regeln je einmal per gh; Cache, falls zu langsam.
+        zeiten = {k: _schliesszeit(k) for k in kandidaten}
+        kandidaten.sort(key=lambda k: (zeiten[k] is None, zeiten[k] or 0.0, str(k)))
+    ergebnisse: list[Ergebnis] = []
+    for ordner in kandidaten:
+        erg = _aufraeumen(
+            ordner, loeschen=loeschen, jetzt=jetzt, platznot=_ist_platznot(anteil)
+        )
+        ergebnisse.append(erg)
+        if erg.art != "bleibt" and not erg.trocken:
+            anteil = _frei_anteil()
+    return ergebnisse
+
+
+def start_erlaubt(*, loeschen: bool = True) -> tuple[bool, str]:
+    """Start-Check: (darf eine neue Session starten?, Satz für Menschen); wirft nie.
+
+    Bei Platznot erst :func:`aufraeumen_alles`, dann neu messen (ohne Platznot lohnt
+    der Lauf mit seinen gh-Abfragen nicht — die Platte bliebe über der Startsperre).
+    Messung unmöglich → kein Urteil, Start erlaubt.
+    """
+    anteil = _frei_anteil()
+    if _ist_platznot(anteil):
+        aufraeumen_alles(loeschen=loeschen)
+        anteil = _frei_anteil()
+    if anteil is None:
+        return True, "Platte: kein Urteil (nicht messbar) — Start erlaubt"
+    if anteil >= STARTSPERRE_ANTEIL:
+        return True, f"Platte frei: {_prozent(anteil)} frei"
+    satz = (
+        f"Platte voll: nur {_prozent(anteil)} frei (Startsperre unter "
+        f"{_prozent(STARTSPERRE_ANTEIL)}), auch nach dem Aufräumen — keine neue Session"
+    )
+    _aufpasser_log(satz)
+    hindernis.melden("platte_voll", satz, frei_anteil=round(anteil, 4))
+    return False, satz
+
+
+def _aufraeumen(
+    ordner: Path, *, loeschen: bool, jetzt: float | None, platznot: bool
+) -> Ergebnis:
     ordner = Path(os.path.abspath(Path(ordner).expanduser()))
     trocken = not loeschen
     stand = _Stand()
     ziel: tuple[Path, bool] | None = None
     try:
-        erg, ziel = _regeln(ordner, trocken, jetzt, stand)
+        erg, ziel = _regeln(ordner, trocken, jetzt, stand, platznot)
     except _Bleibt as b:
         erg = _bleibt(ordner, trocken, stand, b)
     except Exception as fehler:  # Vertrag: wirft nie, im Zweifel bleibt
@@ -190,7 +264,7 @@ def _bleibt(ordner: Path, trocken: bool, stand: _Stand, b: _Bleibt) -> Ergebnis:
 
 
 def _regeln(
-    ordner: Path, trocken: bool, jetzt: float | None, stand: _Stand
+    ordner: Path, trocken: bool, jetzt: float | None, stand: _Stand, platznot: bool
 ) -> tuple[Ergebnis, tuple[Path, bool] | None]:
     """Alle Regeln; Rückgabe (Ergebnis, Lösch-Ziel oder None). „bleibt“ = ``_Bleibt``."""
     # 1 Aufräum-Bereich (nur der aufgelöste Pfad zählt), Symlink nie
@@ -209,7 +283,7 @@ def _regeln(
     stand.ticket = ticket = _ticket_nummer(ordner, echt)
 
     # 5/6 Ticket zu, seit mindestens 24 h
-    _ticket_lange_zu(ticket, jetzt)
+    _ticket_lange_zu(ticket, jetzt, platznot)
 
     # 7 Prozess im Ordner
     _kein_prozess(echt)
@@ -218,7 +292,9 @@ def _regeln(
     koepfe, zu_sichern, status_vorher = _ungesichertes(echt, ist_worktree)
     art: Art = "gesichert und gelöscht" if (koepfe or zu_sichern) else "gelöscht"
     if trocken:
-        return Ergebnis(ordner, art, _grund(art, ticket), ticket, trocken=True), None
+        return Ergebnis(
+            ordner, art, _grund(art, ticket, platznot), ticket, trocken=True
+        ), None
     if koepfe or zu_sichern:
         try:
             stand.sicherung = aufpasser.sichern(
@@ -241,7 +317,12 @@ def _regeln(
 
     # 9 Löschen (erst nach der Log-Zeile, siehe aufraeumen)
     erg = Ergebnis(
-        ordner, art, _grund(art, ticket), ticket, stand.sicherung, trocken=False
+        ordner,
+        art,
+        _grund(art, ticket, platznot),
+        ticket,
+        stand.sicherung,
+        trocken=False,
     )
     return erg, (echt, ist_worktree)
 
@@ -280,7 +361,7 @@ def _ticket_nummer(ordner: Path, echt: Path) -> int:
     return ticket
 
 
-def _ticket_lange_zu(ticket: int, jetzt: float | None) -> None:
+def _ticket_lange_zu(ticket: int, jetzt: float | None, platznot: bool = False) -> None:
     daten = gh.json_lauf(
         ["issue", "view", str(ticket), "-R", TICKET_REPO, "--json", "state,closedAt"]
     )
@@ -291,15 +372,116 @@ def _ticket_lange_zu(ticket: int, jetzt: float | None) -> None:
     zu_seit = _zeitpunkt(daten.get("closedAt"))
     if zu_seit is None:
         raise _Bleibt(f"Ticket #{ticket}: Schließzeit unbekannt")
+    if platznot:
+        return  # Platznot: geschlossen reicht, die 24 h entfallen
     jetzt_ts = jetzt if jetzt is not None else time.time()
     if jetzt_ts - zu_seit < MINDEST_ZU_SEKUNDEN:
         raise _Bleibt(f"Ticket #{ticket} erst seit weniger als 24 h zu")
 
 
-def _grund(art: Art, ticket: int) -> str:
+def _grund(art: Art, ticket: int, platznot: bool = False) -> str:
+    zu = (
+        f"Ticket #{ticket} zu, Platznot (unter {_prozent(PLATZNOT_ANTEIL)} frei)"
+        if platznot
+        else f"Ticket #{ticket} seit über 24 h zu"
+    )
     if art == "gelöscht":
-        return f"Ticket #{ticket} seit über 24 h zu, nichts Ungesichertes"
-    return f"Ticket #{ticket} seit über 24 h zu, Ungesichertes auf sicherung/{ticket}"
+        return f"{zu}, nichts Ungesichertes"
+    return f"{zu}, Ungesichertes auf sicherung/{ticket}"
+
+
+# --- Platte ---------------------------------------------------------------------
+
+
+def _kandidaten() -> list[Path]:
+    """Alle Ordner, die auf ein Wurzel-Muster passen (ohne Doppelte), sortiert."""
+    gefunden: dict[Path, None] = {}
+    for muster in _wurzeln():
+        for treffer in sorted(glob.glob(muster)):
+            pfad = Path(os.path.abspath(treffer))
+            if pfad.is_dir():
+                gefunden.setdefault(pfad, None)
+    return list(gefunden)
+
+
+def _schliesszeit(ordner: Path) -> float | None:
+    """Schließzeit des Tickets zum Ordner (für die Reihenfolge), ``None`` = offen/unbekannt."""
+    try:
+        ticket = _ticket_nummer(ordner, ordner.resolve())
+        daten = gh.json_lauf(
+            [
+                "issue",
+                "view",
+                str(ticket),
+                "-R",
+                TICKET_REPO,
+                "--json",
+                "state,closedAt",
+            ]
+        )
+    except (
+        _Bleibt,
+        OSError,
+        RuntimeError,
+    ):  # nur Reihenfolge — die Regeln entscheiden danach selbst
+        return None
+    if not isinstance(daten, dict) or str(daten.get("state", "")).upper() != "CLOSED":
+        return None
+    return _zeitpunkt(daten.get("closedAt"))
+
+
+def _ist_platznot(anteil: float | None) -> bool:
+    return anteil is not None and anteil < PLATZNOT_ANTEIL
+
+
+def _frei_anteil() -> float | None:
+    """Anteil freier Platte (0..1) im Home-Ordner, ``None`` = nicht messbar."""
+    roh = os.environ.get("TO_SPAWN_HAUSMEISTER_PLATTE", "").strip()
+    if roh:
+        return _naht_anteil(roh)
+    try:
+        stand = shutil.disk_usage(Path.home())
+    except OSError:
+        return None
+    return stand.free / stand.total if stand.total else None
+
+
+def _naht_anteil(roh: str) -> float | None:
+    try:
+        return float(roh)
+    except ValueError:
+        pass
+    datei = Path(roh)
+    try:
+        werte = [
+            z.strip()
+            for z in datei.read_text(encoding="utf-8").splitlines()
+            if z.strip()
+        ]
+        if len(werte) > 1:
+            datei.write_text("".join(f"{w}\n" for w in werte[1:]), encoding="utf-8")
+        return float(werte[0]) if werte else None
+    except (OSError, ValueError):
+        return None
+
+
+def _prozent(anteil: float) -> str:
+    """0.15 → „15 %“, 0.034 → „3,4 %“."""
+    wert = round(anteil * 100, 1)
+    text = f"{int(wert)}" if wert == int(wert) else f"{wert:.1f}".replace(".", ",")
+    return f"{text} %"
+
+
+def _aufpasser_log(satz: str) -> None:
+    """Eine Zeile ins Aufpasser-Log (``cron.out`` im Aufpasser-Zustandsordner)."""
+    try:
+        datei = aufpasser.zustand_standard() / aufpasser.CRON_LOG
+        datei.parent.mkdir(parents=True, exist_ok=True)
+        zeit = datetime.now().astimezone().isoformat(timespec="seconds")
+        with datei.open("a", encoding="utf-8") as f:
+            f.write(f"{zeit} Hausmeister: {satz}\n")
+    except OSError as fehler:
+        log.warning("Aufpasser-Log nicht schreibbar: %s", fehler)
 
 
 def _wurzeln() -> list[str]:
