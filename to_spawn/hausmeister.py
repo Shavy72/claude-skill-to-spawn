@@ -73,7 +73,7 @@ try:
 except ImportError:  # Windows: ohne Sperre (Laptop-Teil #1373)
     fcntl = None  # type: ignore[assignment]
 
-from to_spawn import aufpasser, gh, hindernis
+from to_spawn import aufpasser, docker_reste, gh, hindernis
 
 log = logging.getLogger("to_spawn.hausmeister")
 
@@ -163,11 +163,15 @@ def aufraeumen_alles(
     Bei Platznot zuerst die Ordner mit der ältesten Ticket-Schließung, ohne 24 h
     Wartezeit, bis wieder genug frei ist (siehe Modul-Kommentar). Läuft schon ein
     anderer Lauf (Sperre), oder scheitert die Ordnersuche: ``[]``.
+    Mit ``loeschen=True`` gibt derselbe Lauf einmal täglich Docker-Reste frei
+    (:mod:`to_spawn.docker_reste`, #1372); Probelauf und Start-Check nie.
     """
-    return _aufraeumen_alles(loeschen=loeschen, jetzt=jetzt) or []
+    return _aufraeumen_alles(loeschen=loeschen, jetzt=jetzt, docker=loeschen) or []
 
 
-def _aufraeumen_alles(*, loeschen: bool, jetzt: float | None) -> list[Ergebnis] | None:
+def _aufraeumen_alles(
+    *, loeschen: bool, jetzt: float | None, docker: bool = False
+) -> list[Ergebnis] | None:
     """Wie :func:`aufraeumen_alles`; ``None`` = Aufräumen gescheitert (geloggt)."""
     try:
         sperre = _sperre_nehmen()
@@ -178,7 +182,10 @@ def _aufraeumen_alles(*, loeschen: bool, jetzt: float | None) -> list[Ergebnis] 
         log.info("Hausmeister: anderer Lauf läuft schon — dieser räumt nicht auf")
         return []
     try:
-        return _alle_ordner(loeschen=loeschen, jetzt=jetzt)
+        ergebnisse = _alle_ordner(loeschen=loeschen, jetzt=jetzt)
+        if docker:  # unter derselben Sperre: nie zwei Docker-Läufe gleichzeitig
+            docker_reste.freigeben(_log_pfad().parent, jetzt=jetzt)
+        return ergebnisse
     finally:
         if sperre:
             sperre.close()  # gibt die flock-Sperre frei
