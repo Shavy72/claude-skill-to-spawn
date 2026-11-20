@@ -170,18 +170,25 @@ def _texte(eintrag: dict[str, Any]) -> str:
     return ""
 
 
-def ist_limit_zeile(eintrag: dict[str, Any]) -> bool:
-    """Limit-Meldung von Claude Code (nicht: ein Zitat im Nutzer- oder Werkzeug-Text)."""
-    if eintrag.get("type") != "assistant":
-        return False
-    fehler = (
+def _ist_fehlerzeile(eintrag: dict[str, Any]) -> bool:
+    """Künstliche Assistent-Zeile von Claude Code (API-Fehler, 529, Credit, Limit …)."""
+    return eintrag.get("type") == "assistant" and (
         bool(eintrag.get("isApiErrorMessage"))
         or (eintrag.get("message") or {}).get("model") == "<synthetic>"
     )
-    if not fehler:
+
+
+def ist_limit_zeile(eintrag: dict[str, Any]) -> bool:
+    """Limit-Meldung von Claude Code (nicht: ein Zitat im Nutzer- oder Werkzeug-Text)."""
+    if not _ist_fehlerzeile(eintrag):
         return False
     # ``error == "rate_limit"`` allein reicht nicht: auch kurze API-Drosselungen tragen es.
     return bool(_LIMIT_TEXT.search(_texte(eintrag)))
+
+
+def ist_echte_antwort(eintrag: dict[str, Any]) -> bool:
+    """Echte Modellantwort — nur sie zählt als Arbeit und setzt den Pausen-Zähler zurück."""
+    return eintrag.get("type") == "assistant" and not _ist_fehlerzeile(eintrag)
 
 
 def _zone(name: str | None, rueckfall: tzinfo | None) -> tzinfo | None:
@@ -417,7 +424,7 @@ class Aufsicht(threading.Thread):
                 self.limit_eintrag = eintrag
                 self.bei_limit(_texte(eintrag)[:200] or str(eintrag.get("error")))
                 return True
-            if eintrag.get("type") == "assistant":
+            if ist_echte_antwort(eintrag):
                 self.gearbeitet = True
         return False
 

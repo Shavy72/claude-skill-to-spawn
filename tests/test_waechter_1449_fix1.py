@@ -132,3 +132,42 @@ def test_probe_zeitablauf_gilt_als_zu(tmp_path: Path, monkeypatch: Any) -> None:
     beginn = time.monotonic()
     assert waechter_lauf.limit_offen(str(attrappe), AUSWEICH, tmp_path) is False
     assert time.monotonic() - beginn < 5
+
+
+#: Wie ``FAKE_CLAUDE_ARBEIT``, nur ist die Zeile vor dem Limit eine künstliche Fehlerzeile
+#: von Claude Code (529 Overloaded) statt echter Arbeit — die Session tut nichts.
+FAKE_CLAUDE_FEHLER = FAKE_CLAUDE_ARBEIT.replace(
+    'arbeit = {"type"',
+    'arbeit = json.loads(os.environ["FAKE_FEHLERZEILE"])\n_alt = {"type"',
+)
+
+FEHLERZEILE_529 = json.dumps(
+    {
+        "type": "assistant",
+        "isApiErrorMessage": True,
+        "error": "overloaded",
+        "message": {
+            "model": "<synthetic>",
+            "role": "assistant",
+            "content": [{"type": "text", "text": "API Error: 529 Overloaded"}],
+        },
+    }
+)
+
+
+def test_fehlerzeile_vor_limit_zaehlt_nicht_als_arbeit(welt: dict[str, Path]) -> None:
+    """Fix-Runde 2 (B1): künstliche Fehlerzeilen setzen den Pausen-Zähler nicht zurück."""
+    env = {
+        **_wache_welt(welt),
+        "FAKE_LIMIT": _limit_in_stunden(40),
+        "FAKE_LIMIT_LAEUFE": str(waechter_lauf.MAX_PAUSEN + 3),
+        "FAKE_FEHLERZEILE": FEHLERZEILE_529,
+        "TO_SPAWN_LIMIT_PROBE_S": "0.3",
+    }
+    _ausfuehrbar(welt["tmp"] / "claude_bin" / "claude", FAKE_CLAUDE_FEHLER)
+    ergebnis = _wache(welt["repo"], "--model", AUSWEICH, env=env, timeout=90)
+    assert ergebnis.returncode == 0, _text(ergebnis)
+    starts, _proben = _aufrufe(welt)
+    assert len(starts) == waechter_lauf.MAX_PAUSEN + 1, starts
+    arten = [m["art"] for m in _mails(welt)]
+    assert arten[-1] == "session_tot", arten
