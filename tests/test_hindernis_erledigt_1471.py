@@ -48,7 +48,9 @@ def test_ende_zeile_schliesst_fruehere_und_neue_meldung_oeffnet_wieder(
     assert [(z["art"], z["anzahl"]) for z in offen] == [("platte_unmessbar", 1)]
 
 
-def test_erledigt_schreibt_nur_fuer_offene_arten(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_erledigt_schreibt_nur_fuer_offene_arten(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     datei = tmp_path / "h.jsonl"
     monkeypatch.setenv("TO_SPAWN_HINDERNIS_LOG", str(datei))
     assert hindernis.erledigt("platte_voll") == []  # nichts offen → keine Zeile
@@ -60,7 +62,9 @@ def test_erledigt_schreibt_nur_fuer_offene_arten(tmp_path: Path, monkeypatch: py
     assert len(hindernis.lesen()) == 2
 
 
-def test_gesunder_start_check_schliesst_hindernisse(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_gesunder_start_check_schliesst_hindernisse(
+    welt: Welt, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setenv("TO_SPAWN_HINDERNIS_LOG", str(welt.tmp / "h.jsonl"))
     _platte(welt, monkeypatch, 0.01)
     ok, _ = hausmeister.start_erlaubt(loeschen=False)
@@ -76,3 +80,28 @@ def test_gesunder_start_check_schliesst_hindernisse(welt: Welt, monkeypatch: pyt
     assert ok, satz
     assert hindernis.offene() == []
     assert hindernis.kurzzeile() is None
+
+
+def test_jede_gemeldete_art_wird_geschlossen() -> None:
+    """Jeder ``_spur``-Aufruf nennt eine Art-Konstante aus ``HINDERNIS_ARTEN`` — kein
+    Text-Literal. Sonst bliebe eine neue Art ohne Tupel-Eintrag für immer offen."""
+    import ast
+    import inspect
+
+    baum = ast.parse(inspect.getsource(hausmeister))
+    aufrufe = [
+        k
+        for k in ast.walk(baum)
+        if isinstance(k, ast.Call)
+        and isinstance(k.func, ast.Name)
+        and k.func.id == "_spur"
+    ]
+    assert aufrufe, "keine _spur-Aufrufe gefunden"
+    for aufruf in aufrufe:
+        arg = aufruf.args[0]
+        assert isinstance(arg, ast.Name), (
+            f"Zeile {aufruf.lineno}: Art als Literal statt Konstante"
+        )
+        assert getattr(hausmeister, arg.id) in hausmeister.HINDERNIS_ARTEN, (
+            f"Zeile {aufruf.lineno}: {arg.id} fehlt in HINDERNIS_ARTEN"
+        )

@@ -119,7 +119,11 @@ PLATZNOT_ANTEIL = 0.15
 #: Unter diesem Anteil freier Platte startet keine neue Session.
 STARTSPERRE_ANTEIL = 0.05
 #: Hindernis-Arten des Start-Checks; ein gesunder Check schließt alle (#1471).
-HINDERNIS_ARTEN = ("platte_voll", "platte_unmessbar", "hausmeister_fehler")
+#: ``_spur`` nimmt nur diese Konstanten (Test ``test_jede_gemeldete_art_wird_geschlossen``).
+ART_PLATTE_VOLL = "platte_voll"
+ART_PLATTE_UNMESSBAR = "platte_unmessbar"
+ART_HAUSMEISTER_FEHLER = "hausmeister_fehler"
+HINDERNIS_ARTEN = (ART_PLATTE_VOLL, ART_PLATTE_UNMESSBAR, ART_HAUSMEISTER_FEHLER)
 #: Sperrdatei gegen parallele Aufräum-Läufe, im Ordner des Hausmeister-Logs.
 SPERR_DATEI = "hausmeister.lock"
 #: Zeitlimit je gh-Abfrage in Sekunden.
@@ -322,7 +326,7 @@ def start_erlaubt(*, loeschen: bool = True) -> tuple[bool, str]:
     except Exception as fehler:  # Vertrag: wirft nie, im Zweifel starten
         log.exception("Hausmeister: Start-Check gescheitert")
         satz = f"Platte: Start-Check gescheitert ({fehler}) — Start erlaubt"
-        _spur("hausmeister_fehler", satz)
+        _spur(ART_HAUSMEISTER_FEHLER, satz)
         return True, satz
 
 
@@ -336,17 +340,19 @@ def _start_pruefen(loeschen: bool) -> tuple[bool, str]:
         anteil = _frei_anteil()
     if anteil is None:
         satz = f"Platte nicht messbar — kein Urteil, Start erlaubt{zusatz}"
-        _spur("platte_unmessbar", satz)
+        _spur(ART_PLATTE_UNMESSBAR, satz)
         return True, satz
     if anteil >= STARTSPERRE_ANTEIL:
-        hindernis.erledigt(*HINDERNIS_ARTEN)  # #1471: gesunder Check = Hindernisse vorbei
+        hindernis.erledigt(
+            *HINDERNIS_ARTEN
+        )  # #1471: gesunder Check = Hindernisse vorbei
         return True, f"Platte frei: {_prozent(anteil)} frei{zusatz}"
     nach = "trotz gescheitertem Aufräumen" if zusatz else "auch nach dem Aufräumen"
     satz = (
         f"Platte voll: nur {_prozent(anteil)} frei (Startsperre unter "
         f"{_prozent(STARTSPERRE_ANTEIL)}), {nach} — keine neue Session"
     )
-    _spur("platte_voll", satz, frei_anteil=round(anteil, 4))
+    _spur(ART_PLATTE_VOLL, satz, frei_anteil=round(anteil, 4))
     return False, satz
 
 
@@ -1237,7 +1243,9 @@ def _unlesbar_pruefen(pid: int, basis: Path, fehler: OSError) -> None:
 # --- Vierte Tür: halb angelegter Ordner (#1374) ----------------------------------
 
 
-def halb_angelegt_entfernen(hauptrepo: Path, worktree: Path, neuer_zweig: str | None = None) -> bool:
+def halb_angelegt_entfernen(
+    hauptrepo: Path, worktree: Path, neuer_zweig: str | None = None
+) -> bool:
     """Entfernt einen eben angelegten Worktree, dessen Füllen gescheitert ist; wirft nie.
 
     Nur für den Anleger (``nest.worktree_anlegen``) direkt nach dem Fehlschlag: der
@@ -1324,7 +1332,9 @@ def _als_worktree_eingetragen(hauptrepo: Path, worktree: Path) -> bool:
     except (RuntimeError, OSError) as fehler:
         log.warning("git worktree list in %s scheiterte: %s", hauptrepo, fehler)
         return False
-    pfade = [z[len("worktree ") :] for z in liste.splitlines() if z.startswith("worktree ")]
+    pfade = [
+        z[len("worktree ") :] for z in liste.splitlines() if z.startswith("worktree ")
+    ]
     ziel = worktree.resolve()
     return any(Path(x).resolve() == ziel for x in pfade[1:])
 

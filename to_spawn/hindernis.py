@@ -125,6 +125,9 @@ def erledigt(*arten: str) -> list[str]:
     Ruft die Stelle, die bei gesundem Zustand vorbeikommt (z. B. Start-Check mit
     messbarer, freier Platte). Nicht offene Arten schreiben nichts — so wächst das Log
     bei jedem gesunden Lauf nicht. Rückgabe: die geschlossenen Arten.
+    Lesen und Schreiben sind nicht atomar (das Modul hat keine Sperre): schlimmstenfalls
+    schließt eine Ende-Zeile eine Meldung, die ein paralleler Lauf Sekunden zuvor
+    schrieb — harmlos, weil derselbe Zustand beim nächsten Start-Check neu gemeldet wird.
     """
     offen = {str(z.get("art")) for z in offene()}
     zu = [art for art in arten if art in offen]
