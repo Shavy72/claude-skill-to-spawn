@@ -57,6 +57,12 @@ Platte nicht messbar ⇒ Start erlaubt (im Zweifel starten), aber mit Warnung, Z
 schließt eine nicht blockierende Sperre (:data:`SPERR_DATEI` neben dem Log) aus; wer sie
 nicht bekommt, räumt nicht auf. gh-Abfragen enden nach :data:`GH_ZEITLIMIT_S` (git hat
 300 s in :func:`aufpasser.git_lauf`); Zeitüberschreitung ⇒ bleibt mit Fehler.
+
+Dritte Tür (#1374): :func:`halb_angelegt_entfernen` entfernt für den Anleger
+(``nest.worktree_anlegen``) einen eben angelegten Worktree, dessen Füllen scheiterte —
+ohne die Lösch-Regeln oben, denn er trägt noch keine Arbeit; nur Worktrees, die im
+übergebenen Hauptrepo eingetragen sind. Ausnahme zu „Log nicht schreibbar ⇒ bleibt“:
+hier wird trotzdem entfernt, ein stehender leerer Ordner wäre schädlicher.
 """
 
 from __future__ import annotations
@@ -142,7 +148,9 @@ class Ergebnis:
 class _Bleibt(Exception):
     """Eine Regel (oder ein Fehler) hält den Ordner fest."""
 
-    def __init__(self, grund: str, *, fuer_david: bool = False, fehler: bool = False) -> None:
+    def __init__(
+        self, grund: str, *, fuer_david: bool = False, fehler: bool = False
+    ) -> None:
         super().__init__(grund)
         self.grund = grund
         self.fuer_david = fuer_david
@@ -155,12 +163,16 @@ class _Stand:
     sicherung: str | None = None
 
 
-def aufraeumen(ordner: Path, *, loeschen: bool = False, jetzt: float | None = None) -> Ergebnis:
+def aufraeumen(
+    ordner: Path, *, loeschen: bool = False, jetzt: float | None = None
+) -> Ergebnis:
     """Entscheidet (und löscht mit ``loeschen=True``) einen Arbeitsordner; wirft nie."""
     return _aufraeumen(ordner, loeschen=loeschen, jetzt=jetzt, platznot=False)
 
 
-def aufraeumen_alles(*, loeschen: bool = False, jetzt: float | None = None) -> list[Ergebnis]:
+def aufraeumen_alles(
+    *, loeschen: bool = False, jetzt: float | None = None
+) -> list[Ergebnis]:
     """Alle Ordner unter den Wurzeln nach den Regeln von :func:`aufraeumen`; wirft nie.
 
     Bei Platznot zuerst die Ordner mit der ältesten Ticket-Schließung, ohne 24 h
@@ -200,7 +212,9 @@ def _alle_ordner(*, loeschen: bool, jetzt: float | None) -> list[Ergebnis] | Non
         return None
     ergebnisse: list[Ergebnis] = []
     for ordner in kandidaten:
-        erg = _aufraeumen(ordner, loeschen=loeschen, jetzt=jetzt, platznot=_ist_platznot(anteil))
+        erg = _aufraeumen(
+            ordner, loeschen=loeschen, jetzt=jetzt, platznot=_ist_platznot(anteil)
+        )
         ergebnisse.append(erg)
         if erg.art != "bleibt" and not erg.trocken:
             anteil = _frei_anteil()
@@ -272,7 +286,9 @@ def _sperre_nehmen() -> IO[str] | None | bool:
     return f
 
 
-def _aufraeumen(ordner: Path, *, loeschen: bool, jetzt: float | None, platznot: bool) -> Ergebnis:
+def _aufraeumen(
+    ordner: Path, *, loeschen: bool, jetzt: float | None, platznot: bool
+) -> Ergebnis:
     ordner = Path(os.path.abspath(Path(ordner).expanduser()))
     trocken = not loeschen
     stand = _Stand()
@@ -298,7 +314,9 @@ def _aufraeumen(ordner: Path, *, loeschen: bool, jetzt: float | None, platznot: 
     try:
         _loeschen(*ziel)
     except (RuntimeError, OSError) as fehler:
-        erg = replace(erg, art="bleibt", grund=f"Löschen gescheitert: {fehler}", fehler=True)
+        erg = replace(
+            erg, art="bleibt", grund=f"Löschen gescheitert: {fehler}", fehler=True
+        )
         _log_schreiben(erg)
     return erg
 
@@ -368,10 +386,14 @@ def _regeln(
     koepfe, zu_sichern, status_vorher = _ungesichertes(echt, ist_worktree)
     art: Art = "gesichert und gelöscht" if (koepfe or zu_sichern) else "gelöscht"
     if trocken:
-        return Ergebnis(ordner, art, _grund(art, ticket, platznot), ticket, trocken=True), None
+        return Ergebnis(
+            ordner, art, _grund(art, ticket, platznot), ticket, trocken=True
+        ), None
     if koepfe or zu_sichern:
         try:
-            stand.sicherung = aufpasser.sichern(echt, ticket, jetzt, zusatz_koepfe=koepfe)
+            stand.sicherung = aufpasser.sichern(
+                echt, ticket, jetzt, zusatz_koepfe=koepfe
+            )
         except RuntimeError as fehler:
             raise _Bleibt(f"Sicherung gescheitert: {fehler}", fehler=True) from None
         if stand.sicherung is None:
@@ -511,7 +533,9 @@ def _frei_anteil() -> float | None:
     if roh:
         anteil = _naht_anteil(roh)
         if anteil is None:
-            log.warning("Platte nicht messbar: TO_SPAWN_HAUSMEISTER_PLATTE=%r ungültig", roh)
+            log.warning(
+                "Platte nicht messbar: TO_SPAWN_HAUSMEISTER_PLATTE=%r ungültig", roh
+            )
         return anteil
     anteile: list[float] = []
     for basis in _platten_basen():
@@ -551,7 +575,11 @@ def _naht_anteil(roh: str) -> float | None:
         pass
     datei = Path(roh)
     try:
-        werte = [z.strip() for z in datei.read_text(encoding="utf-8").splitlines() if z.strip()]
+        werte = [
+            z.strip()
+            for z in datei.read_text(encoding="utf-8").splitlines()
+            if z.strip()
+        ]
         if len(werte) > 1:
             datei.write_text("".join(f"{w}\n" for w in werte[1:]), encoding="utf-8")
         return float(werte[0]) if werte else None
@@ -625,7 +653,9 @@ def _git_oder_none(cwd: Path, *args: str) -> str | None:
 
 
 def _hat_verknuepfte_worktrees(repo: Path) -> bool:
-    for zeile in aufpasser.git_lauf(repo, "worktree", "list", "--porcelain").splitlines():
+    for zeile in aufpasser.git_lauf(
+        repo, "worktree", "list", "--porcelain"
+    ).splitlines():
         if zeile.startswith("worktree "):
             pfad = Path(zeile[len("worktree ") :])
             if pfad.is_dir() and pfad.resolve() != repo:
@@ -634,7 +664,9 @@ def _hat_verknuepfte_worktrees(repo: Path) -> bool:
 
 
 def _hauptrepo(worktree: Path) -> Path:
-    gemeinsam = Path(aufpasser.git_lauf(worktree, "rev-parse", "--git-common-dir").strip())
+    gemeinsam = Path(
+        aufpasser.git_lauf(worktree, "rev-parse", "--git-common-dir").strip()
+    )
     if not gemeinsam.is_absolute():
         gemeinsam = (worktree / gemeinsam).resolve()
     return gemeinsam.parent
@@ -676,12 +708,16 @@ def _gleiche_kopie(haupt: Path | None, repo: Path, rel: str) -> bool:
         return False
     hier, dort = repo / rel, haupt / rel
     try:
-        return hier.is_file() and dort.is_file() and hier.read_bytes() == dort.read_bytes()
+        return (
+            hier.is_file() and dort.is_file() and hier.read_bytes() == dort.read_bytes()
+        )
     except OSError:
         return False
 
 
-def _ungesichertes(repo: Path, ist_worktree: bool) -> tuple[list[str], bool, list[tuple[str, str]]]:
+def _ungesichertes(
+    repo: Path, ist_worktree: bool
+) -> tuple[list[str], bool, list[tuple[str, str]]]:
     """Regel 8: (ungepushte Köpfe, zu sichernde Dateien da?, Status-Schnappschuss).
 
     Alles, was die Sicherung nicht retten kann, wirft ``_Bleibt``.
@@ -690,7 +726,9 @@ def _ungesichertes(repo: Path, ist_worktree: bool) -> tuple[list[str], bool, lis
         aufpasser.git_lauf(repo, "fetch", "--prune", "-q", "origin")
     except RuntimeError as fehler:
         raise _Bleibt(f"git fetch origin gescheitert: {fehler}", fehler=True) from None
-    if not ist_worktree and _git_oder_none(repo, "rev-parse", "--verify", "-q", "refs/stash"):
+    if not ist_worktree and _git_oder_none(
+        repo, "rev-parse", "--verify", "-q", "refs/stash"
+    ):
         raise _Bleibt("Stash vorhanden (git stash list)", fuer_david=True)
     for zeile in aufpasser.git_lauf(repo, "ls-files", "-s").splitlines():
         if zeile.startswith("160000 "):
@@ -704,7 +742,9 @@ def _ungesichertes(repo: Path, ist_worktree: bool) -> tuple[list[str], bool, lis
     haupt = _hauptrepo(repo) if ist_worktree else None
     for pfad in sorted(geheim):
         if not _gleiche_kopie(haupt, repo, pfad):
-            raise _Bleibt(f"Geheimnis-Datei {pfad} nicht gleich im Hauptrepo", fuer_david=True)
+            raise _Bleibt(
+                f"Geheimnis-Datei {pfad} nicht gleich im Hauptrepo", fuer_david=True
+            )
     erzeugnis = {p for xy, p in _status(repo, *_glob(ERZEUGNISSE)) if xy == "!!"}
     for xy, pfad in alle:
         if xy == "!!" and pfad not in geheim and pfad not in erzeugnis:
@@ -725,7 +765,9 @@ def _ungesichertes(repo: Path, ist_worktree: bool) -> tuple[list[str], bool, lis
             *_glob(aufpasser.SICHERUNG_AUSSCHLUSS),
         ).split()
         if leck:
-            raise _Bleibt(f"Geheimnis-Datei {leck[0]} in ungepushtem Commit", fuer_david=True)
+            raise _Bleibt(
+                f"Geheimnis-Datei {leck[0]} in ungepushtem Commit", fuer_david=True
+            )
     return koepfe, zu_sichern, alle
 
 
@@ -735,11 +777,17 @@ def _ungepushte_koepfe(repo: Path, ist_worktree: bool) -> list[str]:
     if not ist_worktree:
         refs += [
             r
-            for r in aufpasser.git_lauf(repo, "for-each-ref", "--format=%(refname)").split()
+            for r in aufpasser.git_lauf(
+                repo, "for-each-ref", "--format=%(refname)"
+            ).split()
             if not r.startswith("refs/remotes/")
         ]
     return [
-        ref for ref in refs if aufpasser.git_lauf(repo, "rev-list", "-n", "1", ref, "--not", "--remotes=origin").strip()
+        ref
+        for ref in refs
+        if aufpasser.git_lauf(
+            repo, "rev-list", "-n", "1", ref, "--not", "--remotes=origin"
+        ).strip()
     ]
 
 
@@ -849,8 +897,23 @@ def halb_angelegt_entfernen(hauptrepo: Path, worktree: Path, neuer_zweig: str | 
             trocken=False,
         )
     )
+    if not _als_worktree_eingetragen(hauptrepo, worktree):
+        _log_schreiben(
+            Ergebnis(
+                worktree,
+                "bleibt",
+                "halb angelegt, aber kein Worktree dieses Hauptrepos: nicht angefasst",
+                ticket,
+                trocken=False,
+                fehler=True,
+            )
+        )
+        log.error("%s ist kein Worktree von %s, bleibt stehen", worktree, hauptrepo)
+        return False
     try:
-        _loeschen(worktree, ist_worktree=True)
+        # Bekanntes Hauptrepo statt Ableitung aus dem halben Ordner: ist er kein
+        # Worktree, liefe git sonst die Eltern hoch und träfe ein fremdes Repo.
+        aufpasser.git_lauf(hauptrepo, "worktree", "remove", "--force", str(worktree))
     except (RuntimeError, OSError) as fehler:
         _log_schreiben(
             Ergebnis(
@@ -864,12 +927,38 @@ def halb_angelegt_entfernen(hauptrepo: Path, worktree: Path, neuer_zweig: str | 
         )
         log.error("Halber Worktree %s ließ sich nicht entfernen: %s", worktree, fehler)
         return False
+    try:
+        aufpasser.git_lauf(hauptrepo, "worktree", "prune")
+    except (RuntimeError, OSError) as fehler:
+        log.warning("git worktree prune nach %s scheiterte: %s", worktree, fehler)
     if neuer_zweig:
         try:
             aufpasser.git_lauf(hauptrepo, "branch", "-D", neuer_zweig)
-        except RuntimeError as fehler:
-            log.warning("Neuer Zweig %s blieb stehen: %s", neuer_zweig, fehler)
+        except (RuntimeError, OSError) as fehler:
+            _log_schreiben(
+                Ergebnis(
+                    worktree,
+                    "bleibt",
+                    f"halb angelegt, Ordner weg, Zweig {neuer_zweig} blieb: {fehler}",
+                    ticket,
+                    trocken=False,
+                    fehler=True,
+                )
+            )
+            log.error("Neuer Zweig %s blieb stehen: %s", neuer_zweig, fehler)
     return True
+
+
+def _als_worktree_eingetragen(hauptrepo: Path, worktree: Path) -> bool:
+    """True, wenn ``worktree`` in ``git worktree list`` von ``hauptrepo`` steht (kein Hauptordner)."""
+    try:
+        liste = aufpasser.git_lauf(hauptrepo, "worktree", "list", "--porcelain")
+    except (RuntimeError, OSError) as fehler:
+        log.warning("git worktree list in %s scheiterte: %s", hauptrepo, fehler)
+        return False
+    pfade = [z[len("worktree ") :] for z in liste.splitlines() if z.startswith("worktree ")]
+    ziel = worktree.resolve()
+    return any(Path(x).resolve() == ziel for x in pfade[1:])
 
 
 # --- Löschen + Log --------------------------------------------------------------
@@ -918,7 +1007,8 @@ def altbestand_festhalten(ordner: Iterable[Path]) -> Path:
         return pfad
     if daten.get("freigegeben") is True:
         log.warning(
-            "Hausmeister: Altbestand-Liste %s ist schon freigegeben — %d Ordner nicht ergänzt",
+            "Hausmeister: Altbestand-Liste %s ist schon freigegeben — %d Ordner nicht "
+            "ergänzt",
             pfad,
             len(neu),
         )
@@ -930,7 +1020,9 @@ def altbestand_festhalten(ordner: Iterable[Path]) -> Path:
             liste.append(o)
     pfad.parent.mkdir(parents=True, exist_ok=True)
     zwischen = pfad.with_name(pfad.name + ".neu")
-    zwischen.write_text(json.dumps(daten, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    zwischen.write_text(
+        json.dumps(daten, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
     os.replace(zwischen, pfad)  # nie eine halb geschriebene Liste
     return pfad
 
@@ -945,7 +1037,9 @@ def _kein_altbestand(echt: Path) -> None:
         try:
             altbestand_festhalten([*_kandidaten(), echt])
         except OSError as fehler:
-            raise _Bleibt(f"Altbestand-Liste {pfad} nicht anlegbar: {fehler}", fehler=True) from None
+            raise _Bleibt(
+                f"Altbestand-Liste {pfad} nicht anlegbar: {fehler}", fehler=True
+            ) from None
         log.warning(
             "Hausmeister: Altbestand-Liste fehlte — alle Ordner festgehalten in %s",
             pfad,
@@ -955,7 +1049,9 @@ def _kein_altbestand(echt: Path) -> None:
     except (FileNotFoundError, NotADirectoryError):  # Datei gibt es nicht (Server)
         return
     except (OSError, ValueError) as fehler:
-        raise _Bleibt(f"Altbestand-Liste {pfad} unlesbar: {fehler}", fehler=True) from None
+        raise _Bleibt(
+            f"Altbestand-Liste {pfad} unlesbar: {fehler}", fehler=True
+        ) from None
     liste = daten.get("ordner") if isinstance(daten, dict) else None
     if not isinstance(liste, list) or not all(isinstance(o, str) for o in liste):
         raise _Bleibt(f"Altbestand-Liste {pfad} kaputt", fehler=True)
@@ -968,7 +1064,11 @@ def _kein_altbestand(echt: Path) -> None:
 
 def _log_pfad() -> Path:
     roh = os.environ.get("TO_SPAWN_HAUSMEISTER_LOG")
-    return Path(roh).expanduser() if roh else Path.home() / ".claude" / "to-spawn" / "hausmeister.jsonl"
+    return (
+        Path(roh).expanduser()
+        if roh
+        else Path.home() / ".claude" / "to-spawn" / "hausmeister.jsonl"
+    )
 
 
 def _log_schreiben(erg: Ergebnis) -> bool:

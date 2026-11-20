@@ -205,10 +205,14 @@ def worktree_anlegen(worktree: Path, hauptrepo: Path, ticket: str | None) -> Non
         raise NestFehler(f"git worktree add scheiterte: {ergebnis.stderr.strip()[:300]}")
     try:
         _auschecken_ohne_beleg_bilder(worktree, capo.belege_ordner(config.lade(hauptrepo)))
-    except NestFehler:
-        # Halber Ordner muss weg (sonst arbeitet die Session in einem leeren Ordner);
-        # Löschen kennt nur der Hausmeister (#1368).
-        hausmeister.halb_angelegt_entfernen(hauptrepo, worktree, zweig if zweig_neu else None)
+    except Exception as fehler:
+        # Jeder Fehler beim Füllen (auch OSError, kaputte Konfig): halber Ordner muss weg,
+        # sonst arbeitet die Session in einem leeren Ordner. Löschen kennt nur der Hausmeister (#1368).
+        if not hausmeister.halb_angelegt_entfernen(hauptrepo, worktree, zweig if zweig_neu else None):
+            raise NestFehler(
+                f"Halber Arbeitsordner {worktree} steht noch (Hausmeister-Log prüfen), "
+                f"vor dem nächsten Start von Hand entfernen: {fehler}"
+            ) from fehler
         raise
     log.info("Worktree angelegt: %s (Zweig %s)", worktree, zweig)
 
@@ -245,7 +249,11 @@ def _auschecken_ohne_beleg_bilder(worktree: Path, belege: str) -> None:
     )
     if alte.returncode != 0:
         raise NestFehler(f"git ls-files scheiterte: {alte.stderr.decode(errors='replace').strip()[:300]}")
-    bilder = [n for n in alte.stdout.split(b"\0") if n.lower().endswith(BELEG_BILDER) and BELEG_FIXTUR_ORDNER not in n]
+    bilder = [
+        n
+        for n in alte.stdout.split(b"\0")
+        if n.lower().endswith(BELEG_BILDER) and BELEG_FIXTUR_ORDNER not in n
+    ]
     if bilder:
         markiert = subprocess.run(
             ["git", "-C", str(worktree), "update-index", "--skip-worktree", "-z", "--stdin"],

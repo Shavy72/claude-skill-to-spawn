@@ -202,15 +202,16 @@ def test_halber_ordner_geht_ueber_den_hausmeister(
         ("gelöscht", 81, False)
     ]
     assert "halb angelegt" in zeilen[0]["grund"]
+    assert _git(haupt, "branch", "--list", "ticket-81") == "", "neuer Zweig muss weg"
 
 
 def test_halber_ordner_echter_git_fehler_bleibt_mit_fehlerzeile(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Echter Git-Fehlerpfad (keine Attrappe): Ordner ist kein Worktree des Repos.
+    """Echtes Git, keine Attrappe: Ordner ist kein Worktree dieses Hauptrepos.
 
-    Der Hausmeister wirft nicht, meldet ``False`` und schreibt „bleibt“ mit ``fehler``;
-    der Ordner und der übergebene Zweig bleiben stehen.
+    Der Hausmeister wirft nicht, fasst ihn nicht an (Schutz vor fremder Arbeit), meldet
+    ``False`` und schreibt „bleibt“ mit ``fehler``; Ordner und Zweig bleiben stehen.
     """
     import json
 
@@ -229,3 +230,22 @@ def test_halber_ordner_echter_git_fehler_bleibt_mit_fehlerzeile(
     assert _git(haupt, "branch", "--list", "ticket-82") != ""
     zeilen = [json.loads(z) for z in log_datei.read_text(encoding="utf-8").splitlines()]
     assert zeilen[-1]["art"] == "bleibt" and zeilen[-1]["fehler"] is True
+
+
+def test_oserror_beim_fuellen_raeumt_halben_ordner_weg(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Prüfpanel: auch ein Fehler außer ``NestFehler`` (z. B. OSError) räumt auf."""
+    from to_spawn import nest
+
+    haupt = _repo_mit_belegen(tmp_path)
+    wt = tmp_path / "wt" / "wt-83"
+
+    def _scheitert(*_: object) -> None:
+        raise OSError("Platte voll (Probe)")
+
+    monkeypatch.setattr(nest, "_auschecken_ohne_beleg_bilder", _scheitert)
+    with pytest.raises(OSError):
+        nest.worktree_anlegen(wt, haupt, "83")
+    assert not wt.exists()
+    assert "wt-83" not in _git(haupt, "worktree", "list")
