@@ -39,6 +39,7 @@ from to_spawn import (  # noqa: E402
     config,
     deploy_status,
     gh,
+    hausmeister,
     hooks,
     inventur,
     leiter,
@@ -523,6 +524,10 @@ def main(argv: list[str] | None = None) -> int:
     p_befund.add_argument("--stufe", required=True, choices=list(befund.STUFEN))
     p_befund.add_argument("--text", required=True, help="was fehlt / der Hinweis")
     p_befund.add_argument("--dry-run", action="store_true", help="nur zeigen, nichts tun")
+    # Hausmeister (#1368): alten Arbeitsordner prüfen (Trockenlauf) bzw. aufräumen.
+    p_aufr = unter.add_parser("aufraeumen", help="alten Arbeitsordner aufräumen (Vorgabe: Trockenlauf)")
+    p_aufr.add_argument("ordner", type=Path)
+    p_aufr.add_argument("--loeschen", action="store_true", help="wirklich sichern und löschen")
     # Aufpasser (#236): Cron-Hausmeister für die tmux-Fenster; gleiche Argumente wie
     # ``skripte/aufpasser.py``.
     aufpasser.parser_fuellen(
@@ -550,6 +555,11 @@ def main(argv: list[str] | None = None) -> int:
         return waechter_takt.lauf(args)
     if args.befehl == "aufpasser":
         return aufpasser.lauf_mit_args(args)
+    if args.befehl == "aufraeumen":
+        erg = hausmeister.aufraeumen(args.ordner, loeschen=args.loeschen)
+        modus = "trocken" if erg.trocken else "echt"
+        print(f"{erg.ordner}: {erg.art} ({erg.grund}) [{modus}]")
+        return 1 if erg.fehler else 0  # „bleibt“ aus einer Regel ist kein Fehler
     if args.befehl == "ticketstand":
         # Nur lesen: Tabelle „X von Y fertig“ für jeden Aufseher-Tick.
         return ticketstand.lauf(args, config.repo_wurzel(_repo_aus_umgebung()))
