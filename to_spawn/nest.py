@@ -317,17 +317,59 @@ def sandbox_einstellungen(
     }
 
 
+#: Installer der Git-Hooks im Klon (Projekt-Repo, #1442). Welche Hooks, steht nur dort.
+GIT_HOOKS_INSTALLER = Path("scripts") / "hooks" / "install_git_hooks.sh"
+
+
+def git_hooks_einrichten(klon: Path) -> bool:
+    """Ruft den Hook-Installer des Klons auf (u. a. pre-push: master-Sperre, #1442/#1445).
+
+    Git-Hooks liegen im gemeinsamen Git-Ordner; der Installer schreibt dorthin, also gilt
+    der Aufruf für den Hauptklon und alle seine Worktrees. Idempotent. Fehlt der Installer
+    (alter Projekt-Stand, fremdes Repo) oder scheitert er: Warnung im Log, ``False``, kein
+    Abbruch — sonst startet ein alter Stand nie mehr.
+    """
+    installer = klon / GIT_HOOKS_INSTALLER
+    if not installer.is_file():
+        log.warning("Push-Sperre nicht eingerichtet: %s fehlt im Klon", installer)
+        return False
+    try:
+        ergebnis = subprocess.run(
+            ["sh", str(installer), str(klon)],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as fehler:
+        log.warning("Push-Sperre nicht eingerichtet: %s scheiterte (%s)", installer, fehler)
+        return False
+    if ergebnis.returncode != 0:
+        log.warning(
+            "Push-Sperre nicht eingerichtet: %s endete mit %d: %s",
+            installer,
+            ergebnis.returncode,
+            ergebnis.stderr.strip()[:300],
+        )
+        return False
+    log.info("Git-Hooks eingerichtet (Push-Sperre): %s", installer)
+    return True
+
+
 def sandbox_vorbereiten(
     ziel: str,
     hauptrepo: Path,
     konfig: Mapping[str, Any] | None = None,
     home: Path | None = None,
 ) -> Path:
-    """Worktree sicherstellen und seine ``sandbox.json`` schreiben. Rückgabe: Dateipfad."""
+    """Worktree sicherstellen, Git-Hooks einrichten, ``sandbox.json`` schreiben. Rückgabe: Dateipfad."""
     hauptrepo = hauptrepo.resolve()
     worktree, ticket = worktree_von(ziel)
     worktree_anlegen(worktree, hauptrepo, ticket)
     worktree = worktree.resolve()
+    # Installer aus dem Worktree (frischer origin-Stand); er schreibt in den gemeinsamen
+    # Hook-Ordner des Hauptklons. Vor der Sandbox: dort ist der Hook-Ordner gesperrt.
+    git_hooks_einrichten(worktree)
     einstellungen = sandbox_einstellungen(
         worktree,
         hauptrepo,
@@ -1017,6 +1059,7 @@ __all__: Sequence[str] = (
     "sandbox_praefix",
     "sandbox_start",
     "sandbox_vorbereiten",
+    "git_hooks_einrichten",
     "setze_onboarding",
     "uebernehme_einstellungen",
 )
