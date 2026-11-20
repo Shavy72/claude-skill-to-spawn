@@ -217,16 +217,10 @@ def _warte_lauf(args: argparse.Namespace) -> int:
     """Wartet auf einen laufenden Lauf, ohne die eigene Session zu finden (#1456, S16/P16).
 
     stdout: PIDs der Treffer beim Start, eine je Zeile. Exit 0 = kein Lauf (mehr),
-    1 = Frist abgelaufen, Lauf lebt noch (``--frist 0`` = nur nachsehen).
+    1 = Frist abgelaufen (``--frist 0`` = nur nachsehen), 2 = Fehler/nicht unterstützt
+    (ungültige Regex, Windows).
     """
-    pids = prozessbaum.laufende(args.muster)
-    for pid in pids:
-        print(pid)
-    if prozessbaum.warte_auf_lauf(args.muster, frist_s=args.frist):
-        log.info("warte-lauf: kein Lauf (mehr) für %r", args.muster)
-        return 0
-    log.info("warte-lauf: Frist %s s abgelaufen, läuft noch: %r", args.frist, args.muster)
-    return 1
+    return prozessbaum.warte_lauf_befehl(args.muster, args.frist)
 
 
 def _eintrag(args: argparse.Namespace) -> int:
@@ -476,7 +470,11 @@ def main(argv: list[str] | None = None) -> int:
     unter.add_parser("hook-umzug", help="Stop-Hook: Umzug-Anfrage des Aufsehers (JSON auf stdin)")
 
     # Warte-Hilfe (#1456): Ersatz für ``while pgrep -f …`` — findet die eigene Session nicht.
-    p_warte = unter.add_parser("warte-lauf", help="warten, bis ein Lauf (Regex auf Kommandozeile) endet")
+    p_warte = unter.add_parser(
+        "warte-lauf",
+        description="Wartet auf einen Lauf. Exit 0 = fertig, 1 = Frist abgelaufen, 2 = Fehler/nicht unterstützt (ungültige Regex, Windows).",
+        help="warten, bis ein Lauf (Regex auf Kommandozeile) endet; Exit 0 fertig, 1 Frist abgelaufen, 2 Fehler/nicht unterstützt",
+    )
     p_warte.add_argument("muster", help="Regex auf die Kommandozeile des Laufs")
     p_warte.add_argument("--frist", type=float, default=900, help="höchstens so viele Sekunden warten (Vorgabe 900)")
 
