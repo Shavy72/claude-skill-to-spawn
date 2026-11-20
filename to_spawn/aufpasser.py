@@ -105,7 +105,7 @@ from to_spawn import (
     vorfall,
 )
 from to_spawn.waechter_lauf import _LIMIT_TEXT as LIMIT_TEXT
-from to_spawn.waechter_lauf import limit_offen, transkript_ordner
+from to_spawn.waechter_lauf import ist_echte_antwort, limit_offen, transkript_ordner
 
 log = logging.getLogger("aufpasser")
 
@@ -446,8 +446,44 @@ def limit_pause(text: str) -> bool:
         return False
     if any(z.lstrip().startswith(NEUE_AUSGABE) for z in zeilen[treffer[-1] + 1 :]):
         return False
-    rest = "\n".join(z for z in text.splitlines() if not _ist_limit_zeile(z))
-    return not arbeitet(rest)
+    return not arbeitet(ohne_limit_zeilen(text))
+
+
+def ohne_limit_zeilen(text: str) -> str:
+    """Pane-Text ohne Limit-Zeilen — was bleibt, entscheidet über „arbeitet“."""
+    return "\n".join(z for z in text.splitlines() if not _ist_limit_zeile(z))
+
+
+#: So viele Bytes vom Transkript-Ende reichen für die letzte echte Antwort (#1463).
+TRANSKRIPT_ENDE_BYTES = 512_000
+
+
+def fenster_modell(transkript: Path) -> str | None:
+    """Modell der letzten echten Antwort im Transkript einer Session (#1463).
+
+    Künstliche Zeilen von Claude Code (Limit, API-Fehler, ``<synthetic>``) zählen nicht.
+    Kein Transkript/keine Antwort → ``None`` (der Aufrufer nimmt das Konfig-Modell).
+
+    ponytail: liest nur die letzten :data:`TRANSKRIPT_ENDE_BYTES`; liegt die letzte
+    Antwort weiter vorn, gilt das Konfig-Modell — Upgrade: rückwärts blockweise lesen.
+    """
+    try:
+        with transkript.open("rb") as datei:
+            datei.seek(0, os.SEEK_END)
+            datei.seek(max(0, datei.tell() - TRANSKRIPT_ENDE_BYTES))
+            zeilen = datei.read().decode("utf-8", "replace").splitlines()
+    except OSError:
+        return None
+    for zeile in reversed(zeilen):
+        try:
+            eintrag = json.loads(zeile)
+        except ValueError:
+            continue
+        if isinstance(eintrag, dict) and ist_echte_antwort(eintrag):
+            modell = (eintrag.get("message") or {}).get("model")
+            if isinstance(modell, str) and modell:
+                return modell
+    return None
 
 
 def rueckfrage(text: str) -> bool:
@@ -1768,29 +1804,44 @@ class Aufpasser:
         """:func:`arbeitet`, aber ein ``bau``-Fenster in Limit-Pause gilt als still,
         sobald die Limit-Probe aus #1449 das Limit offen meldet (#1453).
 
+        Steht unter der Limit-Zeile schon neue Ausgabe, ist sie alt: dann zählt nur
+        der Rest des Textes (B3, #1463) — fertige Arbeit darunter heißt „still“.
+
         Aufseher-Fenster bleiben außen vor: der Aufseher wartet sein Limit selbst ab.
         """
         if not arbeitet(text, status):
             return False
-        if f.ist_wache or status == "busy" or not limit_pause(text):
+        if f.ist_wache or status == "busy":
             return True
-        return not self._limit_offen(repo)
+        if limit_pause(text):
+            return not self._limit_offen(f, repo)
+        return arbeitet(ohne_limit_zeilen(text))
 
-    def _limit_offen(self, repo: Path) -> bool:
-        """Limit-Probe mit Programm und Ticket-Modell aus der Repo-Konfig, gedrosselt.
+    def _fenster_modell(self, f: Fenster) -> str | None:
+        """Modell, mit dem das Fenster zuletzt geantwortet hat (Transkript, #1463)."""
+        info = self.session(f)
+        if not info or not info.cwd:
+            return None
+        return fenster_modell(
+            transkript_ordner(info.cwd, self.e.heim) / f"{info.session_id}.jsonl"
+        )
+
+    def _limit_offen(self, f: Fenster, repo: Path) -> bool:
+        """Limit-Probe mit dem Modell des Fensters (#1463), gedrosselt.
+
+        Modell aus dem Session-Transkript; fehlt es, ``modelle.ticket`` der Repo-Konfig.
 
         Höchstens eine echte Probe je :data:`LIMIT_PROBE_ABSTAND_S` je (Programm, Modell),
         über Läufe hinweg (Merker in ``stand.json``); dazwischen gilt das letzte Ergebnis.
         Im Trockenlauf keine Probe (kostet Abo): nur melden, Limit gilt als zu.
-
-        ponytail: prüft nur ``modelle.ticket``; leichte Tickets (``ticket_leicht``)
-        laufen auf einem anderen Modell — Upgrade: Modell aus dem Fenster/Session lesen.
         """
         konfig = config.lade(repo)
         claude = str(konfig.get("runner") or "claude")
-        modell = str((konfig.get("modelle") or {}).get("ticket") or "")
+        modell = self._fenster_modell(f) or str(
+            (konfig.get("modelle") or {}).get("ticket") or ""
+        )
         if not modell:
-            log.warning("Limit-Probe: kein Ticket-Modell in der Konfig — gilt als zu.")
+            log.warning("Limit-Probe: kein Modell (Transkript/Konfig) — gilt als zu.")
             return False
         schluessel = f"{claude}|{modell}"
         letzte = self.stand.limit_proben.get(schluessel)

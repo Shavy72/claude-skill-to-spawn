@@ -106,7 +106,10 @@ def test_limit_oben_darunter_neue_arbeit_kein_anstoss(tmp_path: Path, monkeypatc
     text = bildschirm(LIMIT + "\n\n❯ weiter\n\n⏺ Lese die Datei\n✻ Baked for 40s")
     a, f, spur = _aufpasser(tmp_path, monkeypatch, text, offen=True)
     a.fenster_pruefen(f, tmp_path, {TICKET})
-    assert spur["stupser"] == [] and spur["probe"] == []
+    # #1463 (B3): darunter steht fertige Arbeit („Baked for 40s“), seit 2 h still — die
+    # Limit-Zeile ist alt, also Anstoß ohne Probe. Laufende Arbeit darunter: Gegenprobe in
+    # test_aufpasser_limit_modell_1463.py::test_limit_oben_arbeit_laeuft_darunter_kein_anstoss.
+    assert spur["stupser"] == [f.ziel] and spur["probe"] == []
 
 
 def test_ohne_limit_text_wie_bisher(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
