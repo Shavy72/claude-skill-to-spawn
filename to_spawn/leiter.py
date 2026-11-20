@@ -195,7 +195,7 @@ def entscheide(lage: Lage, gemerkt: Gemerkt, jetzt: float, handoff_k: float) -> 
         return Schritt("melden", f"respawn gescheitert vor {vor} min — Aufseher prüfen")
     if lage.fenster == aufseher_stand.RUECKFRAGE:
         return Schritt("nichts", "Rückfrage offen — Aufseher antwortet")
-    if lage.fenster == aufseher_stand.KEIN_FENSTER and lage.offen is True:
+    if lage.fenster == aufseher_stand.KEIN_FENSTER:
         folge = _folge_ab_handoff(lage, gemerkt, jetzt)
         if folge is not None:
             return folge
@@ -239,8 +239,9 @@ def entscheide(lage: Lage, gemerkt: Gemerkt, jetzt: float, handoff_k: float) -> 
 def _folge_ab_handoff(lage: Lage, gemerkt: Gemerkt, jetzt: float) -> Schritt | None:
     """Nachfolger ab eigenem Handoff? Einzige Stelle dieser Entscheidung in der Leiter.
 
-    Aufrufer garantieren: Fenster still oder weg (nie „arbeitet“/Rückfrage), Ticket
-    nicht zu. Greift in :data:`eigener_handoff.STUFEN` und in Stufe 2 ohne
+    Aufrufer garantieren: Fenster still oder weg (nie „arbeitet“/Rückfrage). Start nur
+    bei sicher offenem Ticket (``offen is True``) — unbekannter Status (gh-Fehler)
+    heißt im Zweifel kein Start (#1390). Greift in :data:`eigener_handoff.STUFEN` und in Stufe 2 ohne
     START-Datei (#1426: die alte Session schrieb nur den Handoff — ohne das bliebe das
     Ticket nach :data:`WARTE_MAX_MIN` stehen); dort zählt nur ein Handoff, der nach der
     Anforderung committet wurde. Mit START-Datei bleibt Stufe 2 beim respawn.
@@ -248,7 +249,7 @@ def _folge_ab_handoff(lage: Lage, gemerkt: Gemerkt, jetzt: float) -> Schritt | N
     derselbe Handoff ist danach kein Treffer mehr. ``None`` = nicht zuständig.
     """
     treffer = lage.eigener_handoff
-    if treffer is None:
+    if treffer is None or lage.offen is not True:
         return None
     stufe = gemerkt.stufe
     nach_anforderung = treffer.commit_zeit > (gemerkt.seit or 0.0)

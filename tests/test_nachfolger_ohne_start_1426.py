@@ -98,7 +98,7 @@ class Umwelt:
         welt: dict[str, Any],
         fenster: str,
         still_min: int | None = None,
-        offen: bool = True,
+        offen: bool | None = True,
         prompt_datei: bool = False,
     ) -> None:
         self.haupt, self.wt = welt["haupt"], welt["wt"]
@@ -213,3 +213,46 @@ def test_f_start_datei_weg_unveraendert(mit_handoff: bool) -> None:
     )
     schritt = leiter.entscheide(lage, leiter.Gemerkt(2, JETZT - 15 * MINUTE), JETZT, 250.0)
     assert schritt.aktion == "respawn"
+
+
+# Fix-Runde 1: im Zweifel kein Start (#1390) — Ticket-Status unbekannt (gh-Fehler).
+def test_g_stufe2_still_status_unbekannt_kein_start(welt: dict[str, Any]) -> None:
+    leitstand.setze_leiter_stufe(TICKET, 2, JETZT - 30 * MINUTE)
+    _handoff(welt["wt"], JETZT - 25 * MINUTE)
+    still = aufpasser.ARBEITET_STILL_MIN
+    erg = _takt(welt, fenster=aufseher_stand.STILL, still_min=still, offen=None)
+    assert welt["gestartet"] == [], erg.zeile
+
+
+def test_h_fenster_weg_status_unbekannt_kein_start(welt: dict[str, Any]) -> None:
+    _handoff(welt["wt"], JETZT - 10 * MINUTE)
+    erg = _takt(welt, fenster=aufseher_stand.KEIN_FENSTER, offen=None)
+    assert welt["gestartet"] == [], erg.zeile
+
+
+# Handoff VOR der Anforderung committet → gehört nicht zur Anforderung, kein Start.
+def test_i_stufe2_handoff_vor_anforderung_kein_start(welt: dict[str, Any]) -> None:
+    leitstand.setze_leiter_stufe(TICKET, 2, JETZT - 15 * MINUTE)
+    _handoff(welt["wt"], JETZT - 20 * MINUTE)
+    erg = _takt(welt, fenster=aufseher_stand.KEIN_FENSTER)
+    assert welt["gestartet"] == [], erg.zeile
+    assert leitstand.leiter_eintrag(TICKET)[0] == 2
+
+
+# Start scheitert → Aufseher-Meldung (Exit 1), Merker bleibt, nächster Takt versucht neu.
+def test_j_start_scheitert_meldet_und_versucht_erneut(
+    welt: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    versuche: list[int] = []
+
+    def scheitert(repo: Path, spec: int, ticket: int, konfig: dict, **kw: Any) -> int:
+        versuche.append(ticket)
+        return 3
+
+    monkeypatch.setattr(spawn, "neustart", scheitert)
+    _handoff(welt["wt"], JETZT - 10 * MINUTE)
+    erg = _takt(welt, fenster=aufseher_stand.KEIN_FENSTER)
+    assert erg.exit == leiter.EXIT_FEHLER and "gescheitert" in erg.zeile, erg.zeile
+    assert leitstand.leiter_eintrag(TICKET) == (0, None)
+    erg = _takt(welt, fenster=aufseher_stand.KEIN_FENSTER)
+    assert len(versuche) == 2 and erg.exit == leiter.EXIT_FEHLER, erg.zeile
