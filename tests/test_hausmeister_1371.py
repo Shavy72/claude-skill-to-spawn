@@ -108,18 +108,45 @@ def test_trockenlauf_loescht_nichts_schreibt_aber_log(
     assert [z["trocken"] for z in _zweig_zeilen(w)] == [True]
 
 
-def test_anlegen_zaehlt_nicht_die_letzte_nachsicherung(
+def _nachsichern(
+    welt: Welt, monkeypatch: pytest.MonkeyPatch, nr: int, vor_tagen: float
+) -> None:
+    wt = welt.heim / "wt" / f"wt-{nr}"
+    (wt / f"spaeter-{vor_tagen}.txt").write_text("neu\n", encoding="utf-8")
+    zeit = datetime.fromtimestamp(welt.jetzt - vor_tagen * TAG, tz=timezone.utc)
+    monkeypatch.setenv("GIT_COMMITTER_DATE", zeit.isoformat())
+    try:
+        assert aufpasser.sichern(wt, nr)
+    finally:
+        monkeypatch.delenv("GIT_COMMITTER_DATE")
+
+
+def test_alte_kette_mit_alter_nachsicherung_geht(
     zweig_welt: Welt, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Die Kette wächst bei jeder Sicherung; 90 Tage zählen ab dem ersten Glied."""
+    """Angelegt vor 120 Tagen, zuletzt nachgesichert vor 95 Tagen ⇒ weg."""
     w = zweig_welt
-    _sicherung(w, monkeypatch, 31, 91)
-    wt = w.heim / "wt" / "wt-31"
-    (wt / "spaeter.txt").write_text("neu\n", encoding="utf-8")
-    assert aufpasser.sichern(wt, 31)
+    _sicherung(w, monkeypatch, 31, 120)
+    _nachsichern(w, monkeypatch, 31, 95)
     erg = hausmeister.sicherungen_aufraeumen(loeschen=True, jetzt=w.jetzt)
     assert [(e.zweig, e.art) for e in erg] == [("sicherung/31", "gelöscht")]
     assert "sicherung/31" not in _zweige(w)
+
+
+def test_frische_nachsicherung_haelt_den_zweig(
+    zweig_welt: Welt, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Prüfpanel #1371: Ticket läuft > 90 Tage, Aufpasser sichert noch ⇒ bleibt.
+
+    Sonst Lösch-Schleife: der Aufpasser legt den Zweig mit der alten Kette neu an,
+    der Hausmeister löscht ihn am nächsten Tag wieder.
+    """
+    w = zweig_welt
+    _sicherung(w, monkeypatch, 31, 91)
+    _nachsichern(w, monkeypatch, 31, 0)
+    erg = hausmeister.sicherungen_aufraeumen(loeschen=True, jetzt=w.jetzt)
+    assert [(e.zweig, e.art) for e in erg] == [("sicherung/31", "bleibt")]
+    assert "sicherung/31" in _zweige(w)
 
 
 def test_hoechstens_einmal_taeglich(
@@ -205,6 +232,9 @@ def test_remote_nicht_erreichbar_wirft_nie(
     erg = hausmeister.sicherungen_aufraeumen(loeschen=True, jetzt=welt.jetzt)
     assert len(erg) == 1 and erg[0].fehler and erg[0].art == "bleibt"
     assert [z["fehler"] for z in _zweig_zeilen(welt)] == [True]
+    # Kein Tagesstempel nach reinem Fehler: der nächste Takt versucht es wieder.
+    erg = hausmeister.sicherungen_aufraeumen(loeschen=True, jetzt=welt.jetzt + 900)
+    assert len(erg) == 1 and erg[0].fehler
 
 
 def test_zweig_bewegt_seit_dem_lesen_bleibt(

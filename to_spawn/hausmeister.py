@@ -52,6 +52,9 @@ Dritte Tür (#1371, E41): :func:`sicherungen_aufraeumen` löscht Zweige
 ``sicherung/<Zahl>`` auf den eigenen GitHub-Repos 90 Tage (:data:`SICHERUNG_TAGE`)
 nach dem Anlegen — andere Zweige nie. Angelegt = ältester Aufpasser-Sicherungs-Commit
 der Kette (Betreff „Aufpasser: Sicherung #<N> …“); fehlt er, bleibt der Zweig.
+Auch die jüngste Sicherung der Kette muss 90 Tage alt sein: sichert der Aufpasser ein
+langes Ticket noch, bleibt der Zweig (sonst Lösch-Schleife, der Aufpasser legt ihn mit
+der alten Kette sofort neu an).
 Gelöscht wird nur mit Lease auf den gelesenen Stand (neue Sicherung dazwischen ⇒
 bleibt). Läuft im Takt von :func:`aufraeumen_alles` mit, höchstens einmal täglich je
 Modus (Trockenlauf verbraucht den Tag des echten Laufs nicht). Gelesen wird über einen
@@ -165,6 +168,7 @@ def aufraeumen_alles(
         anteil = _frei_anteil()
     except Exception:  # Vertrag: wirft nie
         log.exception("Hausmeister: Ordnersuche gescheitert")
+        _sicherungen_im_takt(loeschen, jetzt)
         return []
     if _ist_platznot(anteil):
         # ponytail: Schließzeit kommt hier und in den Regeln je einmal per gh; Cache, falls zu langsam.
@@ -178,9 +182,16 @@ def aufraeumen_alles(
         ergebnisse.append(erg)
         if erg.art != "bleibt" and not erg.trocken:
             anteil = _frei_anteil()
-    # E41: Sicherungs-Zweige im selben Takt, die Tür selbst begrenzt auf einmal täglich.
-    sicherungen_aufraeumen(loeschen=loeschen, jetzt=jetzt)
+    _sicherungen_im_takt(loeschen, jetzt)
     return ergebnisse
+
+
+def _sicherungen_im_takt(loeschen: bool, jetzt: float | None) -> None:
+    """E41: Sicherungs-Zweige im Takt von :func:`aufraeumen_alles` (Tür begrenzt auf täglich)."""
+    try:
+        sicherungen_aufraeumen(loeschen=loeschen, jetzt=jetzt)
+    except Exception:  # Vertrag: wirft nie — Ordner-Ergebnisse gehen vor
+        log.exception("Hausmeister: Sicherungs-Zweige gescheitert")
 
 
 def start_erlaubt(*, loeschen: bool = True) -> tuple[bool, str]:
@@ -264,6 +275,7 @@ def liste_fuer_david(log_datei: Path | None = None) -> list[Path]:
 SICHERUNG_TAGE = 90
 #: Höchstens ein Lauf je Modus in diesem Abstand.
 SICHERUNG_TAKT_SEKUNDEN = 24 * 3600
+_TAG = 24 * 3600.0
 _SICHERUNG_REMOTES = tuple(
     f"https://github.com/{slug}"
     for slug in ("Shavy72/duoplus-management", "Shavy72/claude-skill-to-spawn")
@@ -298,18 +310,35 @@ def sicherungen_aufraeumen(
     if not _sicherung_takt_faellig(modus, jetzt):
         return []
     ergebnisse: list[ZweigErgebnis] = []
-    for remote in _sicherung_remotes():
+    remotes = _sicherung_remotes()
+    erreicht = not remotes
+    for remote in remotes:
         try:
             ergebnisse += _sicherungen_eines_remotes(remote, loeschen, jetzt)
+            erreicht = True
         except Exception as fehler:  # Vertrag: wirft nie
             log.exception("Hausmeister: Sicherungs-Zweige auf %s", remote)
             erg = ZweigErgebnis(
-                remote, "", "", None, "bleibt", f"Fehler: {fehler}", not loeschen, True
+                remote=remote,
+                zweig="",
+                sha="",
+                angelegt=None,
+                art="bleibt",
+                grund=f"Fehler: {fehler}",
+                trocken=not loeschen,
+                fehler=True,
             )
             _zweig_log(erg)
             ergebnisse.append(erg)
-    _sicherung_takt_merken(modus, jetzt)
+    if erreicht:  # kein Remote erreicht ⇒ nächster Takt versucht es wieder
+        _sicherung_takt_merken(modus, jetzt)
     return ergebnisse
+
+
+def _git_ohne_frage(cwd: Path, *args: str) -> str:
+    """git ohne Passwort-Abfrage: ohne Zugang scheitert der Aufruf, statt 300 s zu warten."""
+    env = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GIT_ASKPASS": ""}
+    return aufpasser.git_lauf(cwd, *args, env=env)
 
 
 def _sicherung_remotes() -> list[str]:
@@ -358,14 +387,16 @@ def _sicherung_cache(remote: str) -> Path:
     if not (cache / "HEAD").is_file():
         cache.mkdir(parents=True, exist_ok=True)
         aufpasser.git_lauf(cache, "init", "-q", "--bare")
-        for schluessel, wert in (
-            ("core.repositoryformatversion", "1"),
-            ("extensions.partialClone", "origin"),
-            ("remote.origin.promisor", "true"),
-            ("remote.origin.partialclonefilter", "tree:0"),
-        ):
-            aufpasser.git_lauf(cache, "config", schluessel, wert)
-    aufpasser.git_lauf(cache, "config", "remote.origin.url", remote)
+    # Jedes Mal setzen (idempotent): eine halb gescheiterte Einrichtung holte sonst
+    # beim nächsten Fetch still das ganze Repo samt Dateien.
+    for schluessel, wert in (
+        ("core.repositoryformatversion", "1"),
+        ("extensions.partialClone", "origin"),
+        ("remote.origin.promisor", "true"),
+        ("remote.origin.partialclonefilter", "tree:0"),
+        ("remote.origin.url", remote),
+    ):
+        aufpasser.git_lauf(cache, "config", schluessel, wert)
     return cache
 
 
@@ -373,7 +404,7 @@ def _sicherungen_eines_remotes(
     remote: str, loeschen: bool, jetzt: float
 ) -> list[ZweigErgebnis]:
     cache = _sicherung_cache(remote)
-    aufpasser.git_lauf(
+    _git_ohne_frage(
         cache,
         "fetch",
         "-q",
@@ -391,14 +422,28 @@ def _sicherungen_eines_remotes(
         treffer = _SICHERUNG_REF.match(ref)
         if not treffer:
             continue  # z. B. sicherung/abc — nie anfassen
-        nr = int(treffer.group(1))
-        erg = _sicherung_entscheiden(cache, remote, nr, sha, loeschen, jetzt)
+        nr = treffer.group(1)  # Ziffern unverändert (``007`` bleibt ``007``)
+        try:
+            erg = _sicherung_entscheiden(cache, remote, nr, sha, loeschen, jetzt)
+        except Exception as fehler:  # ein kaputter Zweig hält die übrigen nicht auf
+            log.exception("Hausmeister: Zweig sicherung/%s auf %s", nr, remote)
+            erg = ZweigErgebnis(
+                remote=remote,
+                zweig=f"sicherung/{nr}",
+                sha=sha,
+                angelegt=None,
+                art="bleibt",
+                grund=f"Fehler: {fehler}",
+                trocken=not loeschen,
+                fehler=True,
+            )
+            _zweig_log(erg)
         ergebnisse.append(erg)
     return ergebnisse
 
 
 def _sicherung_entscheiden(
-    cache: Path, remote: str, nr: int, sha: str, loeschen: bool, jetzt: float
+    cache: Path, remote: str, nr: str, sha: str, loeschen: bool, jetzt: float
 ) -> ZweigErgebnis:
     zweig = f"sicherung/{nr}"
     trocken = not loeschen
@@ -421,7 +466,8 @@ def _sicherung_entscheiden(
             trocken,
         )
     angelegt = float(min(int(z) for z in zeiten))
-    tage = (jetzt - angelegt) / (24 * 3600)
+    tage = (jetzt - angelegt) / _TAG
+    zuletzt = (jetzt - float(max(int(z) for z in zeiten))) / _TAG
     if tage < SICHERUNG_TAGE:
         return ZweigErgebnis(
             remote,
@@ -432,13 +478,25 @@ def _sicherung_entscheiden(
             f"erst {tage:.0f} Tage alt (Grenze {SICHERUNG_TAGE})",
             trocken,
         )
+    if zuletzt < SICHERUNG_TAGE:
+        return ZweigErgebnis(
+            remote,
+            zweig,
+            sha,
+            angelegt,
+            "bleibt",
+            f"vor {tage:.0f} Tagen angelegt, aber zuletzt vor {zuletzt:.0f} Tagen "
+            f"gesichert (Grenze {SICHERUNG_TAGE}) — Ticket läuft noch",
+            trocken,
+        )
     erg = ZweigErgebnis(
         remote,
         zweig,
         sha,
         angelegt,
         "gelöscht",
-        f"vor {tage:.0f} Tagen angelegt (Grenze {SICHERUNG_TAGE} Tage)",
+        f"vor {tage:.0f} Tagen angelegt, zuletzt vor {zuletzt:.0f} Tagen gesichert "
+        f"(Grenze {SICHERUNG_TAGE} Tage)",
         trocken,
     )
     if not _zweig_log(erg):
@@ -463,7 +521,7 @@ def _sicherung_entscheiden(
 def _zweig_loeschen(cache: Path, zweig: str, sha: str) -> None:
     """Löscht ``zweig`` auf dem Remote nur, wenn er noch auf ``sha`` steht (Lease)."""
     ref = f"refs/heads/{zweig}"
-    aufpasser.git_lauf(
+    _git_ohne_frage(
         cache, "push", "-q", f"--force-with-lease={ref}:{sha}", "origin", f":{ref}"
     )
 
