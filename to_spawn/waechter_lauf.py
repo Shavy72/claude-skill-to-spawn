@@ -52,7 +52,7 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from . import bau_log, hooks, melder, respawn, respawn_aufseher, sessions_datei, starter
+from . import bau_log, hooks, mcp_profil, melder, respawn, respawn_aufseher, sessions_datei, starter
 
 log = logging.getLogger("to_spawn.waechter_lauf")
 
@@ -105,9 +105,7 @@ def handoff_grenze(modell: str, heim: Path | None = None) -> int:
     Datei oder der Wert, gelten :data:`HANDOFF_K_OPUS` / :data:`HANDOFF_K_NICHT_OPUS`.
     """
     opus = "opus" in modell.lower()
-    schluessel, vorgabe = (
-        ("haupt", HANDOFF_K_OPUS) if opus else ("haupt_nicht_opus", HANDOFF_K_NICHT_OPUS)
-    )
+    schluessel, vorgabe = ("haupt", HANDOFF_K_OPUS) if opus else ("haupt_nicht_opus", HANDOFF_K_NICHT_OPUS)
     datei = (heim or Path.home()) / ".claude" / "smart-zone.json"
     try:
         daten: Any = json.loads(datei.read_text(encoding="utf-8"))
@@ -138,12 +136,7 @@ def abloesung_schreiben(ziel: Path, handoff: Path, start: str = "") -> None:
 
 def transkript_ordner(cwd: Path, heim: Path | None = None) -> Path:
     """Ordner, in den Claude Code die Transkripte einer Arbeitsmappe schreibt."""
-    return (
-        (heim or Path.home())
-        / ".claude"
-        / "projects"
-        / re.sub(r"[^A-Za-z0-9]", "-", str(cwd))
-    )
+    return (heim or Path.home()) / ".claude" / "projects" / re.sub(r"[^A-Za-z0-9]", "-", str(cwd))
 
 
 def _texte(eintrag: dict[str, Any]) -> str:
@@ -151,11 +144,7 @@ def _texte(eintrag: dict[str, Any]) -> str:
     if isinstance(inhalt, str):
         return inhalt
     if isinstance(inhalt, list):
-        return " ".join(
-            str(b.get("text") or "")
-            for b in inhalt
-            if isinstance(b, dict) and b.get("type") == "text"
-        )
+        return " ".join(str(b.get("text") or "") for b in inhalt if isinstance(b, dict) and b.get("type") == "text")
     return ""
 
 
@@ -163,10 +152,7 @@ def ist_limit_zeile(eintrag: dict[str, Any]) -> bool:
     """Limit-Meldung von Claude Code (nicht: ein Zitat im Nutzer- oder Werkzeug-Text)."""
     if eintrag.get("type") != "assistant":
         return False
-    fehler = (
-        bool(eintrag.get("isApiErrorMessage"))
-        or (eintrag.get("message") or {}).get("model") == "<synthetic>"
-    )
+    fehler = bool(eintrag.get("isApiErrorMessage")) or (eintrag.get("message") or {}).get("model") == "<synthetic>"
     if not fehler:
         return False
     # ``error == "rate_limit"`` allein reicht nicht: auch kurze API-Drosselungen tragen es.
@@ -227,17 +213,13 @@ def _aus_text(text: str, jetzt: datetime) -> datetime | None:
     ortszeit = jetzt.astimezone(_zone(treffer["zone"], jetzt.tzinfo))
     # ``fold=1``: an der Zeitumstellung gibt es die Stunde zweimal — erst nach der
     # zweiten ist das Limit wirklich offen (F7).
-    ziel = ortszeit.replace(
-        hour=stunde, minute=minute, second=0, microsecond=0, fold=1
-    )
+    ziel = ortszeit.replace(hour=stunde, minute=minute, second=0, microsecond=0, fold=1)
     if ziel <= ortszeit:
         ziel += timedelta(days=1)  # über Mitternacht hinweg
     return ziel
 
 
-def reset_zeitpunkt(
-    eintrag: dict[str, Any], jetzt: datetime | None = None
-) -> datetime | None:
+def reset_zeitpunkt(eintrag: dict[str, Any], jetzt: datetime | None = None) -> datetime | None:
     """Wann das Nutzungs-Limit wieder aufgeht; ``None``, wenn die Zeile es nicht sagt."""
     jetzt = jetzt or datetime.now().astimezone()
     return _aus_quota(eintrag) or _aus_text(_texte(eintrag), jetzt)
@@ -271,9 +253,7 @@ def warte_sekunden(
     return sekunden
 
 
-def _warten(
-    sekunden: float, takt: float, abbruch: Callable[[], bool] | None
-) -> bool:
+def _warten(sekunden: float, takt: float, abbruch: Callable[[], bool] | None) -> bool:
     """Die Pause absitzen; ``False``, wenn ``abbruch`` vorher greift (z. B. Umzug, #212)."""
     ende = time.monotonic() + sekunden
     while True:
@@ -323,12 +303,7 @@ class Aufsicht(threading.Thread):
         if messung is None:
             return
         self.kontext = max(self.kontext, messung["spitze"])
-        if (
-            self.grenze
-            and self.bei_grenze is not None
-            and not self._grenze_gemeldet
-            and self.kontext >= self.grenze
-        ):
+        if self.grenze and self.bei_grenze is not None and not self._grenze_gemeldet and self.kontext >= self.grenze:
             self._grenze_gemeldet = True
             self.bei_grenze(self.kontext)
 
@@ -369,11 +344,7 @@ class Aufsicht(threading.Thread):
             zeilen, rest = self._neue_zeilen(rest)
             if self._limit_in(zeilen) or zuletzt:
                 return
-            if (
-                not gewarnt
-                and not self.datei.is_file()
-                and time.monotonic() - beginn > self.warte_s
-            ):
+            if not gewarnt and not self.datei.is_file() and time.monotonic() - beginn > self.warte_s:
                 gewarnt = True
                 log.warning(
                     "Transkript %s nach %.0f s nicht da — Limit-Erkennung blind.",
@@ -429,8 +400,8 @@ def resume_befehl(
 
 
 def _starte(cmd: list[str], cwd: Path) -> subprocess.Popen[bytes]:
-    """Aufseher-Session über die Start-Tür (unter Test nur Attrappen, #1406)."""
-    return starter.starte(cmd, cwd=cwd)
+    """Aufseher-Session über die Start-Tür (unter Test nur Attrappen, #1406), schlankes MCP-Profil (#1428)."""
+    return starter.starte(mcp_profil.schlank(cmd), cwd=cwd)
 
 
 def _beende(proc: subprocess.Popen[bytes]) -> None:
@@ -533,9 +504,7 @@ def _melde_pause(
     )
 
 
-def _melde_stillstand(
-    repo: Path, spec: int, sid: str, modell: str, text: str, grund: str
-) -> None:
+def _melde_stillstand(repo: Path, spec: int, sid: str, modell: str, text: str, grund: str) -> None:
     """Aufseher bleibt stehen: Mail wie vor #254 — und eine Spur im Bau-Log (F5)."""
     try:
         raus = melder.melden(
@@ -580,9 +549,7 @@ def _abloesen(
     if not pane:
         zeile = "keine Ablösung: TMUX_PANE fehlt (kein tmux-Fenster, respawn nur auf dem Bau-Server)"
         log.warning("Aufseher #%s: Kontext %s ≥ Grenze %s — %s.", spec, kontext, grenze, zeile)
-        _log_zeile(
-            repo, spec, "aufseher_abloesung", kontext=kontext, grenze=grenze, exit=None, zeile=zeile
-        )
+        _log_zeile(repo, spec, "aufseher_abloesung", kontext=kontext, grenze=grenze, exit=None, zeile=zeile)
         return False
     log.warning(
         "Aufseher #%s: Kontext %s ≥ Grenze %s — Ablösung über respawn (Pane %s).",
@@ -591,9 +558,7 @@ def _abloesen(
         grenze,
         pane,
     )
-    erg = respawn_aufseher.aufseher_abloesen(
-        cwd, spec, pane, werkzeug=werkzeug, warte_max=warte_max
-    )
+    erg = respawn_aufseher.aufseher_abloesen(cwd, spec, pane, werkzeug=werkzeug, warte_max=warte_max)
     ziel = (os.environ.get(ABLOESE_ENV) or "").strip()
     zeile = erg.zeile
     schreiben = erg.exit == 0 and erg.handoff is not None
@@ -603,14 +568,10 @@ def _abloesen(
     elif schreiben and not laeuft():
         # Session endete im Fenster → wiederholbar: die nächste Session darf neu ablösen.
         zeile += " — Session schon beendet, kein Nachfolger"
-        _log_zeile(
-            repo, spec, "aufseher_abloesung", kontext=kontext, grenze=grenze, exit=erg.exit, zeile=zeile
-        )
+        _log_zeile(repo, spec, "aufseher_abloesung", kontext=kontext, grenze=grenze, exit=erg.exit, zeile=zeile)
         log.warning("Aufseher #%s: %s", spec, zeile)
         return True
-    _log_zeile(
-        repo, spec, "aufseher_abloesung", kontext=kontext, grenze=grenze, exit=erg.exit, zeile=zeile
-    )
+    _log_zeile(repo, spec, "aufseher_abloesung", kontext=kontext, grenze=grenze, exit=erg.exit, zeile=zeile)
     if not schreiben or erg.handoff is None:
         log.warning("Aufseher #%s: %s", spec, zeile)
         return erg.exit != respawn.EXIT_OK
@@ -703,9 +664,7 @@ class Abloesung:
             else int(zahl_aus_umgebung("TO_SPAWN_ABLOESE_VERSUCHE", ABLOESE_VERSUCHE_MAX))
         )
         self.abstand_s = (
-            abstand_s
-            if abstand_s is not None
-            else zahl_aus_umgebung("TO_SPAWN_ABLOESE_ABSTAND_S", ABLOESE_ABSTAND_S)
+            abstand_s if abstand_s is not None else zahl_aus_umgebung("TO_SPAWN_ABLOESE_ABSTAND_S", ABLOESE_ABSTAND_S)
         )
         self.warte_s = (
             warte_s if warte_s is not None else zahl_aus_umgebung("TO_SPAWN_ABLOESE_WARTE_S", ABLOESE_WARTE_S)
@@ -885,9 +844,7 @@ def session_ruhig(datei: Path, takt: float, jetzt: float | None = None) -> bool:
 def _rueckkehr_ab(eintrag: dict[str, Any] | None, puffer: float) -> float:
     """Unix-Zeit, ab der das Haupt-Modell wieder darf: Reset + Puffer, sonst jetzt + 5 h."""
     ziel = reset_zeitpunkt(eintrag or {})
-    sekunden = (
-        warte_sekunden(ziel, puffer=puffer, hoechstens=float("inf")) if ziel is not None else None
-    )
+    sekunden = warte_sekunden(ziel, puffer=puffer, hoechstens=float("inf")) if ziel is not None else None
     return time.time() + (RUECKKEHR_VORGABE_S if sekunden is None else sekunden)
 
 
@@ -942,8 +899,7 @@ def fahre(
             effort,
             remote_control,
             spec,
-            f"Aufpasser: Weiter als Bau-Aufseher Spec #{spec} genau dort, wo du warst — "
-            "nächster Tick wie gehabt.",
+            f"Aufpasser: Weiter als Bau-Aufseher Spec #{spec} genau dort, wo du warst — nächster Tick wie gehabt.",
         )
     else:
         sid = str(uuid.uuid4())
@@ -960,18 +916,14 @@ def fahre(
         auf_ausweich = not ausweich or modell == ausweich
         # Der Rückruf braucht die ganze Limit-Zeile (Reset-Uhrzeit, #254); die Aufsicht
         # legt sie vorher in ``limit_eintrag`` ab, deshalb wird sie zuerst gebaut.
-        aufsicht = Aufsicht(
-            datei, ab, takt, lambda _text: None, grenze=grenze or handoff_grenze(modell)
-        )
+        aufsicht = Aufsicht(datei, ab, takt, lambda _text: None, grenze=grenze or handoff_grenze(modell))
 
         def bei_grenze(
             _kontext: int,
             _proc: subprocess.Popen[bytes] = proc,
             _aufsicht: Aufsicht = aufsicht,
         ) -> None:
-            abloesung.ausloesen(
-                lambda: _aufsicht.kontext, _aufsicht.grenze or 0, lambda: _proc.poll() is None
-            )
+            abloesung.ausloesen(lambda: _aufsicht.kontext, _aufsicht.grenze or 0, lambda: _proc.poll() is None)
 
         aufsicht.bei_grenze = bei_grenze
 
@@ -988,18 +940,12 @@ def fahre(
         ) -> None:
             _gruende.append(text)
             _limit.set()
-            log.warning(
-                "Aufseher #%s: Nutzungs-Limit erkannt (%s) — %s", spec, _modell, text
-            )
+            log.warning("Aufseher #%s: Nutzungs-Limit erkannt (%s) — %s", spec, _modell, text)
             if not _auf:
                 _beende(_proc)
                 return
             ziel = reset_zeitpunkt(_aufsicht.limit_eintrag or {})
-            wartezeit = (
-                warte_sekunden(ziel, puffer=puffer, hoechstens=hoechstens)
-                if ziel is not None
-                else None
-            )
+            wartezeit = warte_sekunden(ziel, puffer=puffer, hoechstens=hoechstens) if ziel is not None else None
             if _runde > MAX_PAUSEN:
                 # Limit greift nach jedem Neustart sofort wieder — hier hilft nur ein Mensch (F1).
                 _melde_stillstand(
@@ -1013,9 +959,7 @@ def fahre(
                 return
             if ziel is None or wartezeit is None:
                 # Keine brauchbare Uhrzeit → wie vor #254: melden, Fenster stehen lassen.
-                _melde_stillstand(
-                    repo, spec, sid, _modell, text, "keine brauchbare Reset-Uhrzeit"
-                )
+                _melde_stillstand(repo, spec, sid, _modell, text, "keine brauchbare Reset-Uhrzeit")
                 return
             _pause.append((ziel, wartezeit))
             _beende(_proc)
@@ -1043,9 +987,7 @@ def fahre(
                     and time.time() >= rueckkehr_ab
                     and session_ruhig(datei, takt)
                 ):
-                    log.info(
-                        "Aufseher #%s: Limit vorbei — zurück von %s auf %s.", spec, modell, haupt
-                    )
+                    log.info("Aufseher #%s: Limit vorbei — zurück von %s auf %s.", spec, modell, haupt)
                     zurueck = True
                     aufsicht.halt.set()
                     _beende(proc)
@@ -1098,9 +1040,7 @@ def fahre(
             if modell != haupt and (rueckkehr_ab is None or time.time() >= rueckkehr_ab):
                 # Limit des Haupt-Modells ist offen → zurück aufs Haupt-Modell (#436);
                 # sonst bleibt der Aufseher auf dem Ausweich-Modell.
-                _log_zeile(
-                    repo, spec, "waechter_modell", von=modell, nach=haupt, grund="Limit-Pause vorbei"
-                )
+                _log_zeile(repo, spec, "waechter_modell", von=modell, nach=haupt, grund="Limit-Pause vorbei")
                 modell = haupt
                 rueckkehr_ab = None
             cmd = resume_befehl(

@@ -31,7 +31,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from . import capo, config, gh, leitstand, starter, waechter_lauf
+from . import capo, config, gh, leitstand, mcp_profil, starter, waechter_lauf
 
 log = logging.getLogger("to_spawn.waechter_takt")
 
@@ -230,6 +230,7 @@ def claude_befehl(claude: str, konfig: dict[str, Any], spec: int) -> list[str]:
     modell = str(modelle.get("waechter") or MODELL)
     ausweich = str(modelle.get("waechter_ausweich") or "")
     cmd = waechter_lauf.befehl(claude, modell, ausweich, False, spec, "", effort=waechter_lauf.effort(konfig))
+    cmd = mcp_profil.schlank(cmd)  # nur Pflicht-MCP (#1428)
     return [*claude_start(claude), *cmd[1:-1], "-p"]
 
 

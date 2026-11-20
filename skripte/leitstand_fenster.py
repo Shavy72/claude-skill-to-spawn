@@ -21,7 +21,7 @@ _SKRIPTE = Path(__file__).resolve().parent
 _SKILL = str(_SKRIPTE.parent)
 if _SKILL not in sys.path:
     sys.path.insert(0, _SKILL)
-from to_spawn import config, melder, sitzung_env, starter, terminal_maus  # noqa: E402
+from to_spawn import config, mcp_profil, melder, sitzung_env, starter, terminal_maus  # noqa: E402
 
 log = logging.getLogger("leitstand_seite")
 
@@ -199,10 +199,12 @@ def erlaubte_werkzeuge(python: str, skript: str, ordner: str) -> list[str]:
 
 
 def sitzung_befehl(modell: str, werkzeuge: list[str], anweisung: str, takt: str = TAKT) -> list[str]:
+    """Leitstand-Session mit schlankem MCP-Profil (#1428)."""
     return [
         "claude",
         "--model",
         modell,
+        *mcp_profil.flags(),
         "--allowedTools",
         *werkzeuge,
         "--",
