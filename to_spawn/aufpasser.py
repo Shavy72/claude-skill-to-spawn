@@ -98,6 +98,7 @@ from to_spawn import (
     bau_log,
     config,
     eigener_handoff,
+    halt,
     prozessbaum,
     sessions_datei,
     speicher,
@@ -2135,6 +2136,10 @@ class Aufpasser:
         ``START_MAX``-mal gestartet wurde (es verschwindet offenbar wieder).
         ``ticket`` None = Aufseher-Fenster (kein Label, Start-Gedächtnis ``wache-<S>``)."""
         name = f"bau {ticket}" if ticket is not None else f"wache {spec}"
+        angehalten = halt.pruefen(repo)  # Halt der Spec (#1444)
+        if angehalten is not None:
+            log.info("%s: %s — kein Start", name, angehalten.text())
+            return False
         if ticket is not None:
             try:
                 daten = self.ticket_lesen(ticket, repo)

@@ -31,7 +31,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from . import capo, config, gh, leitstand, starter, waechter_lauf
+from . import capo, config, gh, halt, leitstand, starter, waechter_lauf
 
 log = logging.getLogger("to_spawn.waechter_takt")
 
@@ -293,6 +293,11 @@ def takt(
         print(f"Takt #{spec} läuft schon — steige aus.")
         return 0
     with schein:
+        # Halt der Spec (#1444): prüft die Bedingung und hebt ihn ggf. selbst auf.
+        angehalten = halt.pruefen(repo)
+        if angehalten is not None:
+            print(f"Takt #{spec}: {angehalten.text()} — steige aus.")
+            return 0
         konfig = config.lade(repo)
         try:
             merker = leitstand.lese_zustand().get("takt", {}).get(str(spec))
