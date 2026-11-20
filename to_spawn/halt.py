@@ -54,6 +54,9 @@ ARTEN = ("ticket_zu", "commit", "bis")
 #: Ablauf eines Halts ohne gültige Bedingung (Altbestand, kaputt/unlesbar) und
 #: Höchstdauer am Stück „nicht prüfbar“.
 ALT_FRIST = timedelta(hours=24)
+#: Merker-Schlüssel, wenn weder ``seit`` noch Änderungsdatum lesbar sind (auch Fehler-Zweig
+#: von ``pruefen``); ``anlegen`` löscht jeden alten Merker, damit keiner einen neuen Halt trifft.
+SEIT_UNBEKANNT = "unbekannt"
 GIT_TIMEOUT_S = 60
 _SHA = re.compile(r"^[0-9a-f]{7,40}$")
 
@@ -148,6 +151,7 @@ def anlegen(klon: Path, grund: str, bedingung: Bedingung, wer: str = "") -> Halt
         bedingung=bedingung,
     )
     datei.parent.mkdir(parents=True, exist_ok=True)
+    _merker_setzen(klon, halt, None)  # Rest-Merker eines früheren Halts zählt nie mit
     zwischen = datei.with_suffix(".json.tmp")
     zwischen.write_text(json.dumps(asdict(halt), ensure_ascii=False, indent=2), encoding="utf-8")
     os.replace(zwischen, datei)
@@ -217,7 +221,7 @@ def _lies(klon: Path) -> Halt | None:
                 mtime = datetime.fromtimestamp(datei.stat().st_mtime, timezone.utc).astimezone()
                 seit = mtime.isoformat(timespec="seconds")
             except OSError:
-                seit = "unbekannt"  # ponytail: fester Schlüssel, ein Rest-Merker könnte passen; Merker hängt am Halt
+                seit = SEIT_UNBEKANNT
         halt = Halt(
             grund=str(daten.get("grund") or "(ohne Grund)"),
             seit=seit,
@@ -313,13 +317,19 @@ def pruefen(klon: Path, *, aufheben: bool = True, wer: str = "befehl") -> Halt |
         halt = _lies(klon)
         return None if halt is None else _pruefe(klon, halt, aufheben=aufheben, wer=wer)
     except Exception:  # Zusage „wirft nie“ — Fehler darf keinen Takt/Aufpasser-Lauf abbrechen
-        log.exception("Halt-Prüfung in %s gescheitert — Halt bleibt", klon)
-        # ponytail: dauerhafter Fehler hält ohne 24-h-Frist, Upgrade = Merker auch hier
-        return halt or Halt("(Halt-Prüfung gescheitert)", "unbekannt", "?", None)
+        log.exception("Halt-Prüfung in %s gescheitert — gilt als nicht prüfbar", klon)
+    # Dauerhafter Programmfehler = nicht prüfbar ⇒ dieselbe 24-h-Frist ab erster Beobachtung.
+    halt = halt or Halt("(Halt-Prüfung gescheitert)", SEIT_UNBEKANNT, "?", None)
+    try:
+        return _pruefe(klon, halt, aufheben=aufheben, wer=wer, pruefbar=False)
+    except Exception:  # auch die Frist scheitert ⇒ im Zweifel hält der Halt
+        log.exception("Frist für gescheiterte Halt-Prüfung in %s nicht auswertbar — Halt bleibt", klon)
+        return halt
 
 
-def _pruefe(klon: Path, halt: Halt, *, aufheben: bool, wer: str) -> Halt | None:
-    erfuellt = _erfuellt(klon, halt.bedingung)
+def _pruefe(klon: Path, halt: Halt, *, aufheben: bool, wer: str, pruefbar: bool = True) -> Halt | None:
+    """``pruefbar=False``: Bedingung nicht abfragen (Fehler-Zweig), nur die Frist zählt."""
+    erfuellt = _erfuellt(klon, halt.bedingung) if pruefbar else None
     merker: datetime | None = None  # Soll-Stand des Merkers „nicht prüfbar seit“
     if erfuellt is None:
         merker = _merker_seit(klon, halt) or _jetzt()
