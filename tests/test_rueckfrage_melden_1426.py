@@ -118,3 +118,49 @@ def test_grenze_aus_dem_aufpasser() -> None:
     )
     schritt = leiter.entscheide(lage, leiter.Gemerkt(0, None), time.time(), 250.0)
     assert schritt.aktion == "melden"
+
+
+# --- Fix-Runde 1: Aufrufkette Aufseher-Takt → Leiter für Rückfrage-Fenster -----------
+# Der Aufseher-Takt ist eine Claude-Session; ihr Eingang ist der Prompt aus
+# ``skripte/wache.py``. Die Leiter (Befehl C) läuft nur dort, wo der Prompt sie nennt —
+# ``handoff_blick`` ruft sie nur für stille Fenster. Ohne Verweis im Abschnitt
+# „Rückfragen-Fenster“ wäre der Zweig „braucht David“ aus ac9f9d9 ein toter Pfad.
+
+
+def _wache_prompt() -> str:
+    import importlib.util
+
+    datei = Path(__file__).resolve().parent.parent / "skripte" / "wache.py"
+    spec = importlib.util.spec_from_file_location("wache_rueckfrage_1426", datei)
+    assert spec is not None and spec.loader is not None
+    modul = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(modul)
+    text: str = modul.prompt_bauen(SPEC, "o/r", 1800, {})
+    return text
+
+
+def _abschnitt(text: str, titel: str) -> str:
+    kopf = f"## {titel}"
+    assert kopf in text, titel
+    rest = text.split(kopf, 1)[1]
+    return rest.split("\n## ", 1)[0]
+
+
+def test_aufseher_ruft_leiter_auch_fuer_rueckfrage_fenster() -> None:
+    abschnitt = _abschnitt(_wache_prompt(), "Rückfragen-Fenster (Freigabe-Dialoge)")
+    assert "Befehl C" in abschnitt, abschnitt
+    assert "braucht David" in abschnitt, abschnitt
+    # Grenze nicht doppelt im Prompt: sie lebt nur im Aufpasser.
+    assert f"{aufpasser.RUECKFRAGE_MIN} min" not in abschnitt
+
+
+def test_kette_rueckfrage_20_min_endet_bei_braucht_david(wt: Path) -> None:
+    """Fenster „Rückfrage seit 20 min“: Prompt schickt zur Leiter, Leiter meldet."""
+    assert "Befehl C" in _abschnitt(
+        _wache_prompt(), "Rückfragen-Fenster (Freigabe-Dialoge)"
+    )
+    u = Umwelt(wt, DIALOG, still_min=20)
+    erg = leiter.eingreifen(SKILL, SPEC, TICKET, umwelt=u)
+    assert erg.exit == leiter.EXIT_FEHLER, erg.zeile
+    assert "braucht David" in erg.zeile and "20 min" in erg.zeile
+    assert u.wz.getippt == []
