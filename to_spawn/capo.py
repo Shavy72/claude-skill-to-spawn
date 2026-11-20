@@ -1737,11 +1737,35 @@ def fertig_urteil(repo: Path, spec: int, gh_repo: str = "") -> str | None:
     sie, meldet aber (noch) nicht fertig · sonst der Zeitpunkt ``spec_fertig_seit``. Das Urteil
     selbst fällt nur :func:`tick` (``erg.fertig``); hier wird es nur gelesen.
     """
-    datei = _zustand_datei(repo, gh_repo, spec)
-    if not datei.is_file():
-        _fremder_zustand_melden(datei, spec)
+    datei = _gefuehrte_zustand_datei(repo, gh_repo, spec)
+    if datei is None:
+        _fremder_zustand_melden(_zustand_datei(repo, gh_repo, spec), spec)
         return None
     return str(melder.lade_json(datei).get("spec_fertig_seit") or "")
+
+
+def _gefuehrte_zustand_datei(repo: Path, gh_repo: str, spec: int) -> Path | None:
+    """capos Zustandsdatei der Spec für dieses Repo — auch unter abweichendem ``--gh-repo`` (#1470).
+
+    Erst der Name aus ``gh_repo``/origin; fehlt die Datei, die gleichnummerige, in der capo dieses
+    lokale Repo vermerkt hat (Feld ``repo``, schreibt :func:`_tick`). So muss kein Aufrufer das
+    Repo kennen, mit dem capo läuft. ``None`` = capo führt die Spec für dieses Repo nicht.
+    """
+    datei = _zustand_datei(repo, gh_repo, spec)
+    if datei.is_file():
+        return datei
+    if not datei.parent.is_dir():
+        return None
+    # ponytail: Abgleich über den Pfad, Worktree-Aufrufer verfehlen ihn; Upgrade: --git-common-dir vergleichen
+    ziel = str(repo.resolve())
+    for kandidat in sorted(datei.parent.glob(f"*_{spec}.json")):
+        try:
+            daten = json.loads(kandidat.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue  # fremde kaputte Datei: Zugehörigkeit unklar, nicht sperren
+        if isinstance(daten, dict) and daten.get("repo") == ziel:
+            return kandidat
+    return None
 
 
 def fertig_luecke(repo: Path, spec: int, gh_repo: str = "") -> tuple[Path, str] | None:
@@ -1754,7 +1778,9 @@ def fertig_luecke(repo: Path, spec: int, gh_repo: str = "") -> tuple[Path, str] 
     urteil = fertig_urteil(repo, spec, gh_repo)
     if urteil is None or urteil:
         return None
-    datei = _zustand_datei(repo, gh_repo, spec)
+    datei = _gefuehrte_zustand_datei(repo, gh_repo, spec)
+    if datei is None:
+        return None
     try:
         daten = json.loads(datei.read_text(encoding="utf-8"))
     except (OSError, ValueError) as fehler:
@@ -1765,10 +1791,10 @@ def fertig_luecke(repo: Path, spec: int, gh_repo: str = "") -> tuple[Path, str] 
 
 
 def _fremder_zustand_melden(datei: Path, spec: int) -> None:
-    """Liegt capos Zustand der Spec unter anderem Repo-Namen (``--gh-repo`` ≠ origin), Log-Zeile (#1410).
+    """Liegt ein Zustand gleicher Nummer ohne Vermerk für dieses Repo da, Log-Zeile (#1410, #1470).
 
-    Ohne Meldung fiele die Sperre still weg; gesperrt wird nicht, weil die Nummer auch zu einem
-    anderen Repo gehören kann.
+    Alt-Zustand (vor #1470 ohne Feld ``repo``) oder anderes Repo mit gleicher Nummer: gesperrt
+    wird nicht, weil die Zugehörigkeit unklar ist; ohne Meldung fiele die Sperre still weg.
     """
     if not datei.parent.is_dir():
         return
@@ -2220,6 +2246,7 @@ def _tick(
 
     datei = _zustand_datei(repo, gh_repo, spec)
     zustand = melder.lade_json(datei)
+    zustand["repo"] = str(repo.resolve())  # Sperre in abschluss_paket.py findet die Datei darüber (#1470)
     erledigt = set(zustand.get("erledigt") or [])
     gelesen: dict[str, int] = dict(zustand.get("log_zeilen") or {})
     folgerunden: dict[str, int] = dict(zustand.get("folgerunden") or {})
