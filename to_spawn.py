@@ -559,7 +559,7 @@ def main(argv: list[str] | None = None) -> int:
         erg = hausmeister.aufraeumen(args.ordner, loeschen=args.loeschen)
         modus = "trocken" if erg.trocken else "echt"
         print(f"{erg.ordner}: {erg.art} ({erg.grund}) [{modus}]")
-        return 0
+        return 1 if erg.fehler else 0  # „bleibt“ aus einer Regel ist kein Fehler
     if args.befehl == "ticketstand":
         # Nur lesen: Tabelle „X von Y fertig“ für jeden Aufseher-Tick.
         return ticketstand.lauf(args, config.repo_wurzel(_repo_aus_umgebung()))

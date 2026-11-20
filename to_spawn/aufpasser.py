@@ -755,8 +755,13 @@ def _git(cwd: Path, *args: str, env: dict[str, str] | None = None) -> str:
     return ergebnis.stdout
 
 
+#: Öffentlicher Name für andere Module (Hausmeister #1368); ``_git`` bleibt.
+git_lauf = _git
+
+
 def worktree_schmutzig(worktree: Path) -> bool:
-    return bool(_git(worktree, "status", "--porcelain").strip())
+    # ``status.showUntrackedFiles=no`` darf neue Dateien nicht verstecken (#1368).
+    return bool(_git(worktree, "status", "--porcelain", "--untracked-files=normal").strip())
 
 
 def worktree_finden(repo: Path, ticket: int, cwd: Path | None = None) -> Path | None:
