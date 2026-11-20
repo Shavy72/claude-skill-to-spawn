@@ -14,12 +14,14 @@ Schnittstelle (Format und Prüfung leben nur hier):
   hebt es den Halt selbst auf und schreibt das ins Halt-Log. Nicht prüfbar
   (gh/git-Fehler) ⇒ Halt bleibt, Warnung im Log, kein Absturz — länger als
   ``ALT_FRIST`` am Stück nicht prüfbar ⇒ Halt hebt sich mit Warnung auf.
-  ``aufheben=False`` (Trockenlauf) ändert keine Datei; ``wer`` steht im Log. Wirft nie.
+  ``aufheben=False`` (Trockenlauf) ändert keine Datei; ``wer`` steht im Log. Wirft nie:
+  unerwarteter Fehler ⇒ ``log.exception``, Halt bleibt.
 - :func:`aufheben` — von Hand (``wer`` steht im Log).
 
 Bedingungen: ``ticket_zu`` (Issue N geschlossen), ``commit`` (Commit X auf dem
 Hauptzweig von origin), ``bis`` (Zeitpunkt erreicht). Eine Datei ohne gültige
-Bedingung (alter Halt von Hand, kaputtes JSON, unlesbar) gilt als ``bis`` Anlage + 24 h.
+Bedingung (alter Halt von Hand, unbekannte Art, kaputtes JSON, unlesbar) gilt als
+„nicht prüfbar“: Frist 24 h ab der ersten Beobachtung durch eine Prüfung, nie ab ``seit``.
 
 Befehle: ``python -m to_spawn.halt anlegen --grund … (--ticket-zu N | --commit SHA
 | --bis ISO)`` · ``pruefen`` · ``aufheben --wer …`` (je ``--repo-dir``, Vorgabe cwd).
@@ -98,10 +100,14 @@ class Halt:
     grund: str
     seit: str
     wer: str
-    bedingung: Bedingung
+    bedingung: Bedingung | None  # None = Datei ohne gültige Bedingung ⇒ nicht prüfbar
 
     def text(self) -> str:
-        return f"Halt seit {self.seit} ({self.wer}): {self.grund} — {self.bedingung.text()}"
+        return f"Halt seit {self.seit} ({self.wer}): {self.grund} — {_bedingung_text(self.bedingung)}"
+
+
+def _bedingung_text(b: Bedingung | None) -> str:
+    return b.text() if b is not None else f"ohne gültige Bedingung (fällt {ALT_FRIST} nach erster Prüfung)"
 
 
 def _schreibe_log(klon: Path, ereignis: str, halt: Halt, **felder: Any) -> None:
@@ -199,28 +205,26 @@ def _lies(klon: Path) -> Halt | None:
             bedingung=Bedingung(str(b["art"]), str(b["wert"])),
         )
     except (ValueError, KeyError, TypeError) as fehler:
-        # Altbestand/kaputt: nie ewig stehen, nie still weg — 24 h ab Anlage.
+        # Altbestand/kaputt: gilt als nicht prüfbar ⇒ Frist ab erster Beobachtung (pruefen).
+        # ``seit`` ist nur der stabile Merker-Schlüssel, nie der Fristbeginn.
+        daten: Any = {}
         try:
             daten = json.loads(roh or "")
-            seit = _zeit(str(daten["seit"]))  # kein dict ⇒ TypeError ⇒ unten {}
+            seit = _zeit(str(daten["seit"])).isoformat(timespec="seconds")  # kein dict ⇒ TypeError
         except (ValueError, KeyError, TypeError):
-            daten = {}
+            daten = daten if isinstance(daten, dict) else {}
             try:
-                seit = datetime.fromtimestamp(datei.stat().st_mtime, timezone.utc).astimezone()
+                mtime = datetime.fromtimestamp(datei.stat().st_mtime, timezone.utc).astimezone()
+                seit = mtime.isoformat(timespec="seconds")
             except OSError:
-                seit = _jetzt() - ALT_FRIST  # nicht einmal das Alter lesbar ⇒ nie ewig blockieren
+                seit = "unbekannt"  # ponytail: fester Schlüssel, ein Rest-Merker könnte passen; Merker hängt am Halt
         halt = Halt(
             grund=str(daten.get("grund") or "(ohne Grund)"),
-            seit=seit.isoformat(timespec="seconds"),
+            seit=seit,
             wer=str(daten.get("wer") or "?"),
-            bedingung=Bedingung("bis", (seit + ALT_FRIST).isoformat(timespec="seconds")),
+            bedingung=None,
         )
-        log.warning(
-            "%s nicht lesbar oder ohne gültige Bedingung (%s) — gilt %s",
-            datei,
-            fehler,
-            halt.bedingung.text(),
-        )
+        log.warning("%s nicht lesbar oder ohne gültige Bedingung (%s) — %s", datei, fehler, halt.text())
         return halt
 
 
@@ -247,8 +251,10 @@ def _commit_auf_hauptzweig(klon: Path, sha: str) -> bool | None:
     return {0: True, 1: False}.get(code)  # sonst unbekannter Commit/Fehler
 
 
-def _erfuellt(klon: Path, b: Bedingung) -> bool | None:
-    """``True``/``False``; ``None`` = nicht prüfbar."""
+def _erfuellt(klon: Path, b: Bedingung | None) -> bool | None:
+    """``True``/``False``; ``None`` = nicht prüfbar (auch: keine gültige Bedingung)."""
+    if b is None:
+        return None
     if b.art == "bis":
         return _jetzt() >= _zeit(b.wert)
     if b.art == "ticket_zu":
@@ -295,11 +301,24 @@ def pruefen(klon: Path, *, aufheben: bool = True, wer: str = "befehl") -> Halt |
     """Aktiver Halt oder ``None``; erfüllte Bedingung hebt ihn hier selbst auf (``wer`` ins Log).
 
     ``aufheben=False`` (Trockenlauf jedes Aufrufers): gleiches Ergebnis, aber keine
-    Datei wird geändert — die einzige Stelle, die darüber entscheidet, ist unten.
+    Datei wird geändert — die einzige Stelle, die darüber entscheidet, ist ``_pruefe``.
+    Ist die Bedingung nicht prüfbar (gh/git-Fehler, keine gültige Bedingung), bleibt der
+    Halt; 24 h nach der ersten solchen Beobachtung hebt er sich auf — entschieden, weil
+    kein Stillstand ohne Grund sein darf (20.11.: #1307 stand ~10 h an einem Halt ohne Grund).
+    Wirft nie: jeder unerwartete Fehler wird mit Traceback geloggt, der Halt bleibt —
+    Aufrufer (Takt, Aufpasser) brauchen kein eigenes ``try``.
     """
-    halt = _lies(klon)
-    if halt is None:
-        return None
+    halt: Halt | None = None
+    try:
+        halt = _lies(klon)
+        return None if halt is None else _pruefe(klon, halt, aufheben=aufheben, wer=wer)
+    except Exception:  # Zusage „wirft nie“ — Fehler darf keinen Takt/Aufpasser-Lauf abbrechen
+        log.exception("Halt-Prüfung in %s gescheitert — Halt bleibt", klon)
+        # ponytail: dauerhafter Fehler hält ohne 24-h-Frist, Upgrade = Merker auch hier
+        return halt or Halt("(Halt-Prüfung gescheitert)", "unbekannt", "?", None)
+
+
+def _pruefe(klon: Path, halt: Halt, *, aufheben: bool, wer: str) -> Halt | None:
     erfuellt = _erfuellt(klon, halt.bedingung)
     merker: datetime | None = None  # Soll-Stand des Merkers „nicht prüfbar seit“
     if erfuellt is None:
@@ -307,21 +326,18 @@ def pruefen(klon: Path, *, aufheben: bool = True, wer: str = "befehl") -> Halt |
         bleibt = _jetzt() - merker < ALT_FRIST
         anlass = f"nicht prüfbar seit {merker.isoformat(timespec='seconds')} (> {ALT_FRIST})"
         if bleibt:
-            log.warning("Halt-Bedingung nicht prüfbar (%s) — Halt bleibt.", halt.bedingung.text())
-        else:
-            log.warning("Halt-Bedingung %s — Halt aufgehoben: %s", anlass, halt.grund)
+            log.warning("Halt-Bedingung nicht prüfbar (%s) — Halt bleibt.", _bedingung_text(halt.bedingung))
     else:
         bleibt = not erfuellt
-        anlass = "Bedingung erfüllt"
-        if erfuellt:
-            log.info("Halt aufgehoben (Bedingung erfüllt: %s): %s", halt.bedingung.text(), halt.grund)
+        anlass = f"Bedingung erfüllt: {_bedingung_text(halt.bedingung)}"
     # Einzige Schreib-Entscheidung: Trockenlauf meldet nur.
     if not aufheben:
         if not bleibt:
-            log.info("Trockenlauf: Halt würde aufgehoben (%s)", anlass)
+            log.info("Halt würde aufheben (Trockenlauf) — %s: %s", anlass, halt.grund)
     elif bleibt:
         _merker_setzen(klon, halt, merker)
     else:
+        log.log(logging.INFO if erfuellt else logging.WARNING, "Halt aufgehoben (%s): %s", anlass, halt.grund)
         _entfernen(klon, halt, wer, anlass)
     return halt if bleibt else None
 

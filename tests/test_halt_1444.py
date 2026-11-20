@@ -125,9 +125,19 @@ def test_alter_halt_ohne_bedingung_laeuft_nach_24h_ab(klon: Path, caplog: pytest
     seit = (datetime.now(timezone.utc) - timedelta(hours=25)).isoformat()
     (klon / halt.DATEI).write_text(json.dumps({"grund": "von Hand", "seit": seit}), encoding="utf-8")
     with caplog.at_level(logging.WARNING, logger="to_spawn.halt"):
-        assert halt.pruefen(klon) is None
+        assert halt.pruefen(klon) is not None  # Fix-Runde 3: Frist ab erster Beobachtung, nie ab ``seit``
     assert any("ohne gültige Bedingung" in r.getMessage() for r in caplog.records)
+    _merker_altern(klon)
+    assert halt.pruefen(klon) is None
     assert not (klon / halt.DATEI).exists()
+
+
+def _merker_altern(klon: Path) -> None:
+    """Merker „nicht prüfbar seit“ über die Frist zurückdatieren (erste Beobachtung vor > 24 h)."""
+    merker = klon / halt.MERKER_DATEI
+    stand = json.loads(merker.read_text(encoding="utf-8"))
+    stand["seit"] = (datetime.now(timezone.utc) - halt.ALT_FRIST - timedelta(minutes=1)).isoformat()
+    merker.write_text(json.dumps(stand), encoding="utf-8")
 
 
 # -- Fix-Runde 1 (Review #1444) ---------------------------------------------------
@@ -217,7 +227,8 @@ def test_nicht_pruefbar_hebt_nach_frist_auf(
     assert any("nicht prüfbar" in r.getMessage() and "aufgehoben" in r.getMessage() for r in caplog.records)
 
 
-def test_probelauf_laesst_erfuellten_halt_liegen(klon: Path) -> None:
+def test_probelauf_laesst_erfuellten_halt_liegen(klon: Path, tmp_path: Path) -> None:
+    _mit_origin(klon, tmp_path)  # Takt läuft nach der Halt-Prüfung weiter und braucht origin/master
     vorbei = (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat()
     halt.anlegen(klon, "kurz", halt.Bedingung("bis", vorbei))
     assert halt.pruefen(klon, aufheben=False) is None
@@ -243,7 +254,10 @@ def test_probelauf_laesst_erfuellten_halt_liegen(klon: Path) -> None:
         encoding="utf-8",
         timeout=120,
     )
-    assert (klon / halt.DATEI).exists(), lauf.stdout + lauf.stderr
+    ausgabe = lauf.stdout + lauf.stderr
+    assert lauf.returncode == 0, ausgabe  # Absturz vor/in der Halt-Prüfung ⇒ rot
+    assert "würde aufheben (Trockenlauf)" in ausgabe, ausgabe
+    assert (klon / halt.DATEI).exists(), ausgabe
     assert [z["ereignis"] for z in _log(klon)] == ["angelegt"]
 
 
@@ -268,13 +282,12 @@ def test_unlesbare_halt_datei_wirft_nie(klon: Path, caplog: pytest.LogCaptureFix
     with caplog.at_level(logging.WARNING, logger="to_spawn.halt"):
         assert halt.pruefen(klon) is not None  # blockiert diese Spec
     assert any("nicht lesbar" in r.getMessage() for r in caplog.records)
-    alt = (datetime.now(timezone.utc) - timedelta(hours=25)).timestamp()
-    os.utime(datei, (alt, alt))
-    assert halt.pruefen(klon) is None  # Frist ab Änderungszeit
+    _merker_altern(klon)
+    assert halt.pruefen(klon) is None  # Frist ab erster Beobachtung (Fix-Runde 3)
     assert not datei.exists()
     datei.mkdir()  # Ordner statt Datei ⇒ IsADirectoryError
     assert halt.pruefen(klon) is not None
-    os.utime(datei, (alt, alt))
+    _merker_altern(klon)
     assert halt.pruefen(klon) is None  # Löschen scheitert ⇒ Warnung, keine Ausnahme
 
 
@@ -378,3 +391,75 @@ def test_befehlszeile_anlegen_pruefen_aufheben(klon: Path, capsys: pytest.Captur
     assert halt.main([*basis, "pruefen"]) == 0
     assert capsys.readouterr().out.strip().endswith("Kein Halt.")
     assert [z["ereignis"] for z in _log(klon)] == ["angelegt", "aufgehoben"]
+
+
+# -- Fix-Runde 3 (Review #1444 Runde 2) -------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "inhalt",
+    [
+        {"art": "neu_in_spaeterer_version", "wert": "x"},
+        {"art": "ticket_zu", "wert": "#12"},
+        "liste",
+        "null",
+    ],
+)
+def test_ungueltige_bedingung_alter_seit_bleibt_bis_frist_ab_beobachtung(klon: Path, inhalt: object) -> None:
+    """Befund 1/6: ``seit`` 3 Tage alt hebt nie sofort auf — Frist zählt ab dem ersten Takt."""
+    seit = (datetime.now(timezone.utc) - timedelta(days=3)).isoformat()
+    if inhalt == "liste":
+        roh = json.dumps([{"grund": "x", "seit": seit}])
+    elif inhalt == "null":
+        roh = "null"
+    else:
+        roh = json.dumps({"grund": "von Hand", "seit": seit, "bedingung": inhalt})
+    datei = klon / halt.DATEI
+    datei.write_text(roh, encoding="utf-8")
+    alt = (datetime.now(timezone.utc) - timedelta(days=3)).timestamp()
+    os.utime(datei, (alt, alt))
+    assert halt.pruefen(klon) is not None
+    assert halt.pruefen(klon) is not None  # zweiter Takt: Merker hält die erste Beobachtung
+    assert datei.exists() and (klon / halt.MERKER_DATEI).exists()
+    _merker_altern(klon)
+    assert halt.pruefen(klon) is None
+    assert not datei.exists()
+
+
+def test_leere_gh_antwort_halt_bleibt(klon: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Befund 5: gh Exit 0 ohne Ausgabe ⇒ nicht prüfbar ⇒ Halt bleibt."""
+    halt.anlegen(klon, "Vorrang", halt.Bedingung("ticket_zu", "1346"))
+    monkeypatch.setenv("GH_STUB_LEER", "1346")
+    assert halt.pruefen(klon) is not None
+    assert (klon / halt.DATEI).exists()
+    assert (klon / halt.MERKER_DATEI).exists()
+
+
+def test_trockenlauf_meldet_nicht_aufgehoben(klon: Path, caplog: pytest.LogCaptureFixture) -> None:
+    """Befund 4: im Trockenlauf keine Meldung „Halt aufgehoben“, nur „würde aufheben“."""
+    vorbei = (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat()
+    halt.anlegen(klon, "kurz", halt.Bedingung("bis", vorbei))
+    with caplog.at_level(logging.INFO, logger="to_spawn.halt"):
+        assert halt.pruefen(klon, aufheben=False) is None
+    meldungen = [r.getMessage() for r in caplog.records]
+    assert not any("Halt aufgehoben" in m for m in meldungen), meldungen
+    assert any("würde aufheben (Trockenlauf)" in m for m in meldungen), meldungen
+
+
+@pytest.mark.parametrize("stelle", ["_erfuellt", "_lies"])
+def test_pruefen_wirft_nie_halt_bleibt(
+    klon: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, stelle: str
+) -> None:
+    """Teil B: unerwarteter Fehler in der Prüfung ⇒ geloggt, Halt bleibt, kein Absturz des Aufrufers."""
+    spaeter = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+    halt.anlegen(klon, "Nachtruhe", halt.Bedingung("bis", spaeter))
+
+    def kaputt(*_a: object, **_k: object) -> None:
+        raise RuntimeError("unerwartet")
+
+    monkeypatch.setattr(halt, stelle, kaputt)
+    with caplog.at_level(logging.ERROR, logger="to_spawn.halt"):
+        ergebnis = halt.pruefen(klon)
+    assert ergebnis is not None and ergebnis.text()
+    assert (klon / halt.DATEI).exists()
+    assert any(r.exc_info for r in caplog.records)
