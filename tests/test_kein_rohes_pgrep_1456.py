@@ -39,10 +39,24 @@ ROHES_PGREP_F = re.compile(r"\bpgrep\b[^|;&\n]*?\s-[a-zA-Z]*f")
 linux = pytest.mark.skipif(sys.platform == "win32", reason="liest /proc")
 
 
-def _fundstellen() -> list[str]:
+def _dateien(root: Path) -> list[Path]:
+    """Von git verwaltete (und neue, nicht ignorierte) Dateien; ohne git der Baum ohne `.git/`, `.review/`."""
+    try:
+        ausgabe = subprocess.run(
+            ["git", "-C", str(root), "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+            capture_output=True,
+            check=True,
+            timeout=30,
+        ).stdout.decode("utf-8", errors="replace")
+        return sorted(root / n for n in ausgabe.split("\0") if n)
+    except (OSError, subprocess.SubprocessError):
+        return sorted(d for d in root.rglob("*") if not {".git", ".review"} & set(d.relative_to(root).parts))
+
+
+def _fundstellen(root: Path = REPO) -> list[str]:
     raus = []
-    for datei in sorted(REPO.rglob("*")):
-        rel = datei.relative_to(REPO).as_posix()
+    for datei in _dateien(root):
+        rel = datei.relative_to(root).as_posix()
         if not datei.is_file() or datei.suffix not in GEPRUEFTE_ENDUNGEN:
             continue
         if rel.startswith(AUSGENOMMEN) and not WEG_SKRIPT.match(rel):
@@ -139,3 +153,24 @@ def test_cli_warte_lauf_ohne_lauf_exit_0_und_mit_frist_0_exit_1() -> None:
     finally:
         lauf.kill()
         lauf.wait()
+
+
+def test_review_ordner_und_fallback_baum(tmp_path: Path) -> None:
+    """Ohne git: Datei-Baum, aber `.review/` (Belege mit Zitaten) bleibt außen; echte Funde bleiben."""
+    (tmp_path / ".review").mkdir()
+    (tmp_path / ".review" / "beleg.json").write_text('{"cmd": "pgrep -af x"}\n', encoding="utf-8")
+    assert _fundstellen(tmp_path) == []
+    (tmp_path / "warte.sh").write_text("while pgrep -f x; do sleep 1; done\n", encoding="utf-8")
+    assert len(_fundstellen(tmp_path)) == 1
+
+
+def test_git_repo_prueft_nur_verwaltete_dateien(tmp_path: Path) -> None:
+    """Mit git: ignoriertes `.review/` zählt nicht, verwaltete und neue Dateien zählen."""
+    git = ["git", "-C", str(tmp_path)]
+    subprocess.run([*git, "init", "-q"], check=True)
+    (tmp_path / ".gitignore").write_text(".review/\n", encoding="utf-8")
+    (tmp_path / ".review").mkdir()
+    (tmp_path / ".review" / "beleg.json").write_text('{"cmd": "pgrep -af x"}\n', encoding="utf-8")
+    (tmp_path / "warte.sh").write_text("pgrep -f x\n", encoding="utf-8")
+    funde = _fundstellen(tmp_path)
+    assert len(funde) == 1 and funde[0].startswith("warte.sh:1")
