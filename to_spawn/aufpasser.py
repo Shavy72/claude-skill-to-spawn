@@ -2312,10 +2312,12 @@ class Aufpasser:
             log.exception("Hausmeister-Lauf gescheitert")
             return
         weg = sum(1 for e in ergebnisse if e.art != "bleibt")
-        log.info(
-            "Hausmeister: %d gelöscht, %d bleibt%s",
+        fehler = sum(1 for e in ergebnisse if e.fehler)
+        (log.warning if fehler else log.info)(
+            "Hausmeister: %d gelöscht, %d bleibt, %d Fehler%s",
             weg,
-            len(ergebnisse) - weg,
+            len(ergebnisse) - weg - fehler,
+            fehler,
             " (trocken)" if self.e.trocken else "",
         )
 

@@ -189,9 +189,10 @@ case "$STAFFEL" in ''|*[!0-9]*) STAFFEL=20 ;; esac
 
 # speicher_pruefen <Kurzname>: 0 = frei, 5 = voll (Meldung), 7 = Platte voll (Meldung, #1369),
 # 6 = Prüfung kaputt (Meldung).
+# Zweites Argument --trocken (Probelauf): nur messen, der Hausmeister löscht nie.
 speicher_pruefen() {
   local rc=0 stand
-  stand="$(TO_SPAWN_REPO="$REPO" "$PY" "$SKILL_HOME/to_spawn.py" speicher 2>&1)" || rc=$?
+  stand="$(TO_SPAWN_REPO="$REPO" "$PY" "$SKILL_HOME/to_spawn.py" speicher ${2:+"$2"} 2>&1)" || rc=$?
   case "$rc" in
     0) return 0 ;;
     5) echo "nicht gestartet: $1 — $stand" >&2; return 5 ;;
@@ -203,7 +204,7 @@ speicher_pruefen() {
 if [ "$DRY_RUN" -eq 1 ]; then
   echo "Staffel: $STAFFEL s zwischen den Fenstern, Speicherprüfung vor jedem Start"
   rc=0
-  speicher_pruefen "Probelauf" || rc=$?
+  speicher_pruefen "Probelauf" --trocken || rc=$?
   [ "$rc" -eq 6 ] && exit 6
   echo "Probelauf — nichts gestartet."
   exit 0

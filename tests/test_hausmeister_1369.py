@@ -265,3 +265,148 @@ def test_hindernis_wirft_nie(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
     assert (zeile["art"], zeile["text"], zeile["ticket"]) == ("test", "geht", 5)
     assert {"zeit", "wer"} <= set(zeile)
     json.dumps(zeile)
+
+
+# --- Fixrunde 1 -----------------------------------------------------------------
+
+
+def test_f1_probelauf_speicher_trocken_loescht_nie(
+    welt: Welt, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Probelauf/Status (``speicher --trocken``) misst nur — bei Platznot bleibt der Ordner."""
+    alt = welt.worktree(51)
+    welt.ticket(51, "CLOSED", 3)
+    _platte(welt, monkeypatch, 0.10)
+    lauf = subprocess.run(
+        [sys.executable, str(SKILL / "to_spawn.py"), "speicher", "--trocken"],
+        capture_output=True,
+        text=True,
+        check=False,
+        env={**os.environ, "TO_SPAWN_REPO": str(welt.haupt)},
+    )
+    assert lauf.returncode in (0, 5), lauf.stdout + lauf.stderr
+    assert alt.is_dir()
+    assert all(z["trocken"] for z in welt.zeilen())
+    # spawn_srv.sh --dry-run gibt den Probelauf weiter.
+    quelle = (SKILL / "skripte" / "spawn_srv.sh").read_text(encoding="utf-8")
+    zeile = next(z for z in quelle.splitlines() if 'speicher_pruefen "Probelauf"' in z)
+    assert "--trocken" in zeile, zeile
+
+
+def test_f2_platte_unmessbar_start_erlaubt_mit_spur(
+    welt: Welt, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setenv("TO_SPAWN_HAUSMEISTER_PLATTE", str(welt.tmp / "gibt-es-nicht"))
+    hindernis_log = welt.tmp / "h.jsonl"
+    monkeypatch.setenv("TO_SPAWN_HINDERNIS_LOG", str(hindernis_log))
+    with caplog.at_level("WARNING", logger="to_spawn.hausmeister"):
+        ok, satz = hausmeister.start_erlaubt()
+    assert ok, satz
+    assert any(
+        r.levelname == "WARNING" and "TO_SPAWN_HAUSMEISTER_PLATTE" in r.getMessage()
+        for r in caplog.records
+    ), caplog.text
+    cron_out = aufpasser.zustand_standard() / aufpasser.CRON_LOG
+    zeilen = cron_out.read_text(encoding="utf-8").splitlines()
+    assert len(zeilen) == 1 and "nicht messbar" in zeilen[0], zeilen
+    assert [z["art"] for z in hindernis.lesen()] == ["platte_unmessbar"]
+
+
+def test_f3_platznot_sortierung_wirft_nie(
+    welt: Welt, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    welt.worktree(61)
+    welt.ticket(61, "CLOSED", 3)
+    _platte(welt, monkeypatch, 0.10)
+
+    def kaputt(_ordner: Path) -> float | None:
+        raise ValueError("Sortierung kaputt")
+
+    monkeypatch.setattr(hausmeister, "_schliesszeit", kaputt)
+    with caplog.at_level("ERROR", logger="to_spawn.hausmeister"):
+        assert hausmeister.aufraeumen_alles(loeschen=True, jetzt=welt.jetzt) == []
+    assert "Aufräumen gescheitert" in caplog.text
+    ok, satz = hausmeister.start_erlaubt()
+    assert ok and "Aufräumen gescheitert" in satz, satz
+
+
+def test_f3_start_erlaubt_rundum_schutz(
+    welt: Welt, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setenv("TO_SPAWN_HINDERNIS_LOG", str(welt.tmp / "h.jsonl"))
+
+    def kaputt() -> float | None:
+        raise ValueError("Messung kaputt")
+
+    monkeypatch.setattr(hausmeister, "_frei_anteil", kaputt)
+    with caplog.at_level("ERROR", logger="to_spawn.hausmeister"):
+        ok, satz = hausmeister.start_erlaubt()
+    assert ok, satz
+    assert "Messung kaputt" in caplog.text
+    assert [z["art"] for z in hindernis.lesen()] == ["hausmeister_fehler"]
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="fcntl nur unter Unix")
+def test_f4_paralleler_lauf_raeumt_nicht(
+    welt: Welt, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    import fcntl
+
+    alt = welt.worktree(71)
+    welt.ticket(71, "CLOSED", 48)
+    _platte(welt, monkeypatch, 0.50)
+    sperre = welt.log.parent / hausmeister.SPERR_DATEI
+    with sperre.open("a") as f:
+        fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        with caplog.at_level("INFO", logger="to_spawn.hausmeister"):
+            assert hausmeister.aufraeumen_alles(loeschen=True, jetzt=welt.jetzt) == []
+        assert alt.is_dir()
+        assert "läuft schon" in caplog.text
+    # Sperre frei → nächster Lauf räumt auf.
+    hausmeister.aufraeumen_alles(loeschen=True, jetzt=welt.jetzt)
+    assert not alt.exists()
+
+
+def test_f5_gh_zeitlimit_ordner_bleibt(
+    welt: Welt, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    wt = welt.worktree(81)
+    welt.ticket(81, "CLOSED", 48)
+    gh = welt.tmp / "bin" / "gh"
+    langsam = gh.read_text(encoding="utf-8").replace("exec ", "sleep 3\nexec ", 1)
+    gh.write_text(langsam, encoding="utf-8")
+    monkeypatch.setattr(hausmeister, "GH_ZEITLIMIT_S", 1)
+    r = welt.aufraeumen(wt, loeschen=True)
+    assert wt.is_dir()
+    assert r.art == "bleibt" and r.fehler, r
+
+
+def test_f6_respawn_erkennt_platten_warten(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from to_spawn import respawn
+
+    antworten = iter([(False, "Platte voll: nur 3 % frei"), (True, "Platte frei")])
+    speicher.auf_platte_warten(
+        wer="bau 1", pruefen=lambda: next(antworten), schlafen=lambda _s: None
+    )
+    zeilen = capsys.readouterr().err.splitlines()
+    assert len(zeilen) == 2, zeilen
+    assert respawn._wartet_auf_speicher("Start\n" + zeilen[0])
+    assert not respawn._wartet_auf_speicher("\n".join(zeilen))
+
+
+def test_f_aufpasser_zaehlt_fehler_getrennt(
+    welt: Welt, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    welt.worktree(91)  # kein Ticket-Eintrag → gh scheitert → bleibt mit Fehler
+    _platte(welt, monkeypatch, 0.50)
+    zustand = welt.tmp / "zustand"
+    e = aufpasser.Einstellungen(
+        zustand=zustand,
+        tmux_socket=f"hausmeister1369-{os.getpid()}",
+        deploy_muster=f"hausmeister1369-niemals-{os.getpid()}",
+    )
+    assert aufpasser.lauf_mit_einstellungen(e) == 0
+    text = (zustand / "aufpasser.log").read_text(encoding="utf-8")
+    assert re.search(r"Hausmeister: 0 gelöscht, 0 bleibt, 1 Fehler", text), text

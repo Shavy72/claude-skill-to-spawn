@@ -47,6 +47,11 @@ unverändert. :func:`start_erlaubt` ist der Start-Check (``to_spawn.py speicher`
 ins Aufpasser-Log (``cron.out``) und ins Hindernis-Log. Die Grenzen leben nur hier.
 Test-Naht ``TO_SPAWN_HAUSMEISTER_PLATTE``: Anteil frei (Zahl) oder Datei mit einem
 Anteil je Zeile (jede Messung nimmt den nächsten, der letzte bleibt).
+Platte nicht messbar ⇒ Start erlaubt (im Zweifel starten), aber mit Warnung, Zeile in
+``cron.out`` und Hindernis ``platte_unmessbar``. Parallele :func:`aufraeumen_alles`-Läufe
+schließt eine nicht blockierende Sperre (:data:`SPERR_DATEI` neben dem Log) aus; wer sie
+nicht bekommt, räumt nicht auf. gh-Abfragen enden nach :data:`GH_ZEITLIMIT_S` (git hat
+300 s in :func:`aufpasser.git_lauf`); Zeitüberschreitung ⇒ bleibt mit Fehler.
 """
 
 from __future__ import annotations
@@ -61,7 +66,12 @@ import time
 from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
-from typing import Literal
+from typing import IO, Literal
+
+try:
+    import fcntl
+except ImportError:  # Windows: ohne Sperre (Laptop-Teil #1373)
+    fcntl = None  # type: ignore[assignment]
 
 from to_spawn import aufpasser, gh, hindernis
 
@@ -80,6 +90,10 @@ MINDEST_ZU_SEKUNDEN = 24 * 3600
 PLATZNOT_ANTEIL = 0.15
 #: Unter diesem Anteil freier Platte startet keine neue Session.
 STARTSPERRE_ANTEIL = 0.05
+#: Sperrdatei gegen parallele Aufräum-Läufe, im Ordner des Hausmeister-Logs.
+SPERR_DATEI = "hausmeister.lock"
+#: Zeitlimit je gh-Abfrage in Sekunden.
+GH_ZEITLIMIT_S = 60
 #: Ignorierte Dateien, die beim Löschen mit weg dürfen (Git-Glob-Pathspecs).
 ERZEUGNISSE = (
     "**/__pycache__/**",
@@ -147,18 +161,40 @@ def aufraeumen_alles(
     """Alle Ordner unter den Wurzeln nach den Regeln von :func:`aufraeumen`; wirft nie.
 
     Bei Platznot zuerst die Ordner mit der ältesten Ticket-Schließung, ohne 24 h
-    Wartezeit, bis wieder genug frei ist (siehe Modul-Kommentar).
+    Wartezeit, bis wieder genug frei ist (siehe Modul-Kommentar). Läuft schon ein
+    anderer Lauf (Sperre), oder scheitert die Ordnersuche: ``[]``.
     """
+    return _aufraeumen_alles(loeschen=loeschen, jetzt=jetzt) or []
+
+
+def _aufraeumen_alles(*, loeschen: bool, jetzt: float | None) -> list[Ergebnis] | None:
+    """Wie :func:`aufraeumen_alles`; ``None`` = Aufräumen gescheitert (geloggt)."""
+    try:
+        sperre = _sperre_nehmen()
+    except OSError as fehler:
+        log.warning("Hausmeister: Sperre nicht nutzbar (%s) — laufe ohne", fehler)
+        sperre = None
+    if sperre is False:
+        log.info("Hausmeister: anderer Lauf läuft schon — dieser räumt nicht auf")
+        return []
+    try:
+        return _alle_ordner(loeschen=loeschen, jetzt=jetzt)
+    finally:
+        if sperre:
+            sperre.close()  # gibt die flock-Sperre frei
+
+
+def _alle_ordner(*, loeschen: bool, jetzt: float | None) -> list[Ergebnis] | None:
     try:
         kandidaten = _kandidaten()
         anteil = _frei_anteil()
+        if _ist_platznot(anteil):
+            # ponytail: Schließzeit kommt hier und in den Regeln je einmal per gh; Cache, falls zu langsam.
+            zeiten = {k: _schliesszeit(k) for k in kandidaten}
+            kandidaten.sort(key=lambda k: (zeiten[k] is None, zeiten[k] or 0.0, str(k)))
     except Exception:  # Vertrag: wirft nie
-        log.exception("Hausmeister: Ordnersuche gescheitert")
-        return []
-    if _ist_platznot(anteil):
-        # ponytail: Schließzeit kommt hier und in den Regeln je einmal per gh; Cache, falls zu langsam.
-        zeiten = {k: _schliesszeit(k) for k in kandidaten}
-        kandidaten.sort(key=lambda k: (zeiten[k] is None, zeiten[k] or 0.0, str(k)))
+        log.exception("Hausmeister: Aufräumen gescheitert (Ordnersuche/Reihenfolge)")
+        return None
     ergebnisse: list[Ergebnis] = []
     for ordner in kandidaten:
         erg = _aufraeumen(
@@ -175,23 +211,63 @@ def start_erlaubt(*, loeschen: bool = True) -> tuple[bool, str]:
 
     Bei Platznot erst :func:`aufraeumen_alles`, dann neu messen (ohne Platznot lohnt
     der Lauf mit seinen gh-Abfragen nicht — die Platte bliebe über der Startsperre).
-    Messung unmöglich → kein Urteil, Start erlaubt.
+    ``loeschen=False`` (Probelauf, Status) misst nur und löscht nie. Messung unmöglich
+    oder unerwarteter Fehler → Start erlaubt, mit Spur in cron.out und Hindernis-Log.
     """
+    try:
+        return _start_pruefen(loeschen)
+    except Exception as fehler:  # Vertrag: wirft nie, im Zweifel starten
+        log.exception("Hausmeister: Start-Check gescheitert")
+        satz = f"Platte: Start-Check gescheitert ({fehler}) — Start erlaubt"
+        _spur("hausmeister_fehler", satz)
+        return True, satz
+
+
+def _start_pruefen(loeschen: bool) -> tuple[bool, str]:
     anteil = _frei_anteil()
+    zusatz = ""
     if _ist_platznot(anteil):
-        aufraeumen_alles(loeschen=loeschen)
+        if _aufraeumen_alles(loeschen=loeschen, jetzt=None) is None:
+            zusatz = " (Aufräumen gescheitert, siehe Log)"
         anteil = _frei_anteil()
     if anteil is None:
-        return True, "Platte: kein Urteil (nicht messbar) — Start erlaubt"
+        satz = f"Platte nicht messbar — kein Urteil, Start erlaubt{zusatz}"
+        _spur("platte_unmessbar", satz)
+        return True, satz
     if anteil >= STARTSPERRE_ANTEIL:
-        return True, f"Platte frei: {_prozent(anteil)} frei"
+        return True, f"Platte frei: {_prozent(anteil)} frei{zusatz}"
+    nach = "trotz gescheitertem Aufräumen" if zusatz else "auch nach dem Aufräumen"
     satz = (
         f"Platte voll: nur {_prozent(anteil)} frei (Startsperre unter "
-        f"{_prozent(STARTSPERRE_ANTEIL)}), auch nach dem Aufräumen — keine neue Session"
+        f"{_prozent(STARTSPERRE_ANTEIL)}), {nach} — keine neue Session"
     )
-    _aufpasser_log(satz)
-    hindernis.melden("platte_voll", satz, frei_anteil=round(anteil, 4))
+    _spur("platte_voll", satz, frei_anteil=round(anteil, 4))
     return False, satz
+
+
+def _spur(art: str, satz: str, **felder: object) -> None:
+    """Eine Zeile in cron.out und im Hindernis-Log."""
+    _aufpasser_log(satz)
+    hindernis.melden(art, satz, **felder)
+
+
+def _sperre_nehmen() -> IO[str] | None | bool:
+    """Sperrdatei (nicht blockierend): offene Datei = Sperre gehalten, ``False`` =
+    anderer Lauf hält sie, ``None`` = ohne fcntl (Windows) kein Sperren."""
+    if fcntl is None:
+        return None
+    datei = _log_pfad().parent / SPERR_DATEI
+    datei.parent.mkdir(parents=True, exist_ok=True)
+    f = datei.open("a", encoding="utf-8")
+    try:
+        fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        f.close()
+        return False
+    except OSError:
+        f.close()
+        raise
+    return f
 
 
 def _aufraeumen(
@@ -362,9 +438,7 @@ def _ticket_nummer(ordner: Path, echt: Path) -> int:
 
 
 def _ticket_lange_zu(ticket: int, jetzt: float | None, platznot: bool = False) -> None:
-    daten = gh.json_lauf(
-        ["issue", "view", str(ticket), "-R", TICKET_REPO, "--json", "state,closedAt"]
-    )
+    daten = _ticket_daten(ticket)
     if not isinstance(daten, dict) or "state" not in daten:
         raise _Bleibt(f"Ticket #{ticket} nicht abfragbar", fehler=True)
     if str(daten["state"]).upper() != "CLOSED":
@@ -408,17 +482,7 @@ def _schliesszeit(ordner: Path) -> float | None:
     """Schließzeit des Tickets zum Ordner (für die Reihenfolge), ``None`` = offen/unbekannt."""
     try:
         ticket = _ticket_nummer(ordner, ordner.resolve())
-        daten = gh.json_lauf(
-            [
-                "issue",
-                "view",
-                str(ticket),
-                "-R",
-                TICKET_REPO,
-                "--json",
-                "state,closedAt",
-            ]
-        )
+        daten = _ticket_daten(ticket)
     except (
         _Bleibt,
         OSError,
@@ -430,6 +494,14 @@ def _schliesszeit(ordner: Path) -> float | None:
     return _zeitpunkt(daten.get("closedAt"))
 
 
+def _ticket_daten(ticket: int) -> object:
+    """``gh issue view`` (state, closedAt) mit Zeitlimit; ``None`` = nicht abfragbar."""
+    return gh.json_lauf(
+        ["issue", "view", str(ticket), "-R", TICKET_REPO, "--json", "state,closedAt"],
+        timeout=GH_ZEITLIMIT_S,
+    )
+
+
 def _ist_platznot(anteil: float | None) -> bool:
     return anteil is not None and anteil < PLATZNOT_ANTEIL
 
@@ -438,12 +510,21 @@ def _frei_anteil() -> float | None:
     """Anteil freier Platte (0..1) im Home-Ordner, ``None`` = nicht messbar."""
     roh = os.environ.get("TO_SPAWN_HAUSMEISTER_PLATTE", "").strip()
     if roh:
-        return _naht_anteil(roh)
+        anteil = _naht_anteil(roh)
+        if anteil is None:
+            log.warning(
+                "Platte nicht messbar: TO_SPAWN_HAUSMEISTER_PLATTE=%r ungültig", roh
+            )
+        return anteil
     try:
         stand = shutil.disk_usage(Path.home())
-    except OSError:
+    except OSError as fehler:
+        log.warning("Platte nicht messbar: %s", fehler)
         return None
-    return stand.free / stand.total if stand.total else None
+    if not stand.total:
+        log.warning("Platte nicht messbar: Gesamtgröße 0")
+        return None
+    return stand.free / stand.total
 
 
 def _naht_anteil(roh: str) -> float | None:
