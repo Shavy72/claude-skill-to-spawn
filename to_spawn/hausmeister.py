@@ -29,8 +29,13 @@ Dateien, die die Sicherung NICHT mitnimmt, gehen beim Löschen verloren — daru
   jede andere ignorierte Datei ⇒ bleibt.
 - Eingebettete Repos und Submodule (Sicherung sähe nur den Gitlink) ⇒ bleibt.
 
-Prozesse kommen aus ``/proc``; ohne ``/proc`` (Windows) bleibt jeder Ordner —
-Laptop-Teil ist Ticket #1373.
+Prozesse kommen aus ``/proc``; unter Windows (Laptop, ``C:/dev/wt-*``, #1373) aus
+``Get-CimInstance Win32_Process`` plus einer Umbenennungs-Probe nur im echten Lauf
+(Windows-Wissen in :mod:`to_spawn.hausmeister_windows`, Tür bleibt hier). Plattenplatz
+misst die Platte der Wurzeln, nicht Home. Altbestand (#1373, E16): Ordner in
+:func:`altbestand_pfad` bleiben im echten Lauf, bis David die Liste freigibt; der
+Trockenlauf zeigt die echte Regel. Fehlt die Liste unter Windows, hält der erste echte
+Lauf zuerst alle vorhandenen Ordner fest (am Server: keine Wirkung).
 
 Jede Entscheidung schreibt eine JSON-Zeile nach ``TO_SPAWN_HAUSMEISTER_LOG``
 (Standard ``~/.claude/to-spawn/hausmeister.jsonl``), beim Löschen VOR dem Löschen;
@@ -76,7 +81,9 @@ import logging
 import os
 import re
 import shutil
+import sys
 import time
+from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
@@ -84,10 +91,10 @@ from typing import IO, Literal
 
 try:
     import fcntl
-except ImportError:  # Windows: ohne Sperre (Laptop-Teil #1373)
+except ImportError:  # Windows: Sperre über hausmeister_windows (#1373)
     fcntl = None  # type: ignore[assignment]
 
-from to_spawn import aufpasser, docker_reste, gh, hindernis
+from to_spawn import aufpasser, docker_reste, gh, hausmeister_windows, hindernis
 
 log = logging.getLogger("to_spawn.hausmeister")
 
@@ -108,6 +115,8 @@ STARTSPERRE_ANTEIL = 0.05
 SPERR_DATEI = "hausmeister.lock"
 #: Zeitlimit je gh-Abfrage in Sekunden.
 GH_ZEITLIMIT_S = 60
+# Plattform-Naht (Tests stellen "win32" ein); nur _ist_windows() liest sie
+_PLATTFORM = sys.platform
 #: Ignorierte Dateien, die beim Löschen mit weg dürfen (Git-Glob-Pathspecs).
 ERZEUGNISSE = (
     "**/__pycache__/**",
@@ -339,10 +348,11 @@ def _spur(art: str, satz: str, **felder: object) -> None:
 
 def _sperre_nehmen() -> IO[str] | None | bool:
     """Sperrdatei (nicht blockierend): offene Datei = Sperre gehalten, ``False`` =
-    anderer Lauf hält sie, ``None`` = ohne fcntl (Windows) kein Sperren."""
-    if fcntl is None:
-        return None
+    anderer Lauf hält sie, ``None`` = Plattform ohne Sperre. Windows: msvcrt-Sperre
+    auf derselben Datei (:func:`hausmeister_windows.sperre_nehmen`)."""
     datei = _log_pfad().parent / SPERR_DATEI
+    if _ist_windows() or fcntl is None:
+        return hausmeister_windows.sperre_nehmen(datei)
     datei.parent.mkdir(parents=True, exist_ok=True)
     f = datei.open("a", encoding="utf-8")
     try:
@@ -714,6 +724,8 @@ def _regeln(
     if not ordner.is_dir():
         raise _Bleibt("Ordner fehlt")
     echt = ordner.resolve()
+    if not trocken:  # Trockenlauf zeigt die echte Regel (Altbestand-Liste für David)
+        _kein_altbestand(echt)
 
     # 2/3 Git-Ordner? Hauptrepo? Eigenes Repo?
     ist_worktree = _git_ordner_pruefen(echt)
@@ -748,7 +760,7 @@ def _regeln(
             )
 
     # Gegenprobe direkt vor dem Löschen: nichts Neues, alles auf origin, kein Prozess
-    _kein_prozess(echt)
+    _kein_prozess(echt, probe=True)
     if _status(echt) != status_vorher:
         raise _Bleibt("Ordner hat sich während der Sicherung geändert")
     if _ungepushte_koepfe(echt, ist_worktree):
@@ -870,7 +882,10 @@ def _ist_platznot(anteil: float | None) -> bool:
 
 
 def _frei_anteil() -> float | None:
-    """Anteil freier Platte (0..1) im Home-Ordner, ``None`` = nicht messbar."""
+    """Anteil freier Platte (0..1) der Wurzeln, ``None`` = nicht messbar.
+
+    Gemessen wird die Platte jeder existierenden Wurzel-Basis (am Laptop das
+    Laufwerk von ``C:/dev``), der knappste Wert zählt; ohne Wurzel-Basis Home."""
     roh = os.environ.get("TO_SPAWN_HAUSMEISTER_PLATTE", "").strip()
     if roh:
         anteil = _naht_anteil(roh)
@@ -879,15 +894,35 @@ def _frei_anteil() -> float | None:
                 "Platte nicht messbar: TO_SPAWN_HAUSMEISTER_PLATTE=%r ungültig", roh
             )
         return anteil
-    try:
-        stand = shutil.disk_usage(Path.home())
-    except OSError as fehler:
-        log.warning("Platte nicht messbar: %s", fehler)
-        return None
-    if not stand.total:
-        log.warning("Platte nicht messbar: Gesamtgröße 0")
-        return None
-    return stand.free / stand.total
+    anteile: list[float] = []
+    for basis in _platten_basen():
+        try:
+            stand = shutil.disk_usage(basis)
+        except OSError as fehler:
+            log.warning("Platte nicht messbar (%s): %s", basis, fehler)
+            return None
+        if not stand.total:
+            log.warning("Platte nicht messbar (%s): Gesamtgröße 0", basis)
+            return None
+        anteile.append(stand.free / stand.total)
+    return min(anteile)
+
+
+def _platten_basen() -> list[Path]:
+    """Fester Teil jedes Wurzel-Musters vor dem ersten Glob-Zeichen, nur existierende,
+    ohne Doppelte; keiner existiert ⇒ ``[Path.home()]``."""
+    basen: dict[Path, None] = {}
+    for muster in _wurzeln():
+        teile: list[str] = []
+        for teil in Path(muster).parts:
+            if glob.has_magic(teil):
+                break
+            teile.append(teil)
+        if teile:
+            basis = Path(*teile)
+            if basis.is_dir():
+                basen.setdefault(basis, None)
+    return list(basen) or [Path.home()]
 
 
 def _naht_anteil(roh: str) -> float | None:
@@ -1116,10 +1151,23 @@ def _ungepushte_koepfe(repo: Path, ist_worktree: bool) -> list[str]:
 # --- Prozesse -------------------------------------------------------------------
 
 
-def _kein_prozess(ordner: Path) -> None:
+def _ist_windows() -> bool:
+    return _PLATTFORM == "win32"
+
+
+def _kein_prozess(ordner: Path, *, probe: bool = False) -> None:
     """Regel 7: ``_Bleibt``, falls ein Prozess im Ordner arbeitet (cwd, exe, offene
-    Datei) oder das nicht feststellbar ist. Ohne ``/proc`` (Windows) bleibt jeder
-    Ordner — Laptop-Teil Ticket #1373."""
+    Datei) oder das nicht feststellbar ist. Linux über ``/proc``; Windows über die
+    CIM-Prozessliste, mit ``probe=True`` (nur echter Lauf, direkt vor dem Löschen)
+    zusätzlich die Umbenennungs-Probe (siehe :mod:`to_spawn.hausmeister_windows`)."""
+    if _ist_windows():
+        try:
+            hausmeister_windows.kein_prozess(ordner)
+            if probe:
+                hausmeister_windows.umbenennen_probe(ordner)
+        except hausmeister_windows.Bleibt as b:
+            raise _Bleibt(b.grund, fuer_david=b.fuer_david, fehler=b.fehler) from None
+        return
     proc = Path("/proc")
     try:
         pids = [int(p.name) for p in proc.iterdir() if p.name.isdigit()]
@@ -1184,8 +1232,97 @@ def _loeschen(ordner: Path, ist_worktree: bool) -> None:
         hauptrepo = _hauptrepo(ordner)
         aufpasser.git_lauf(hauptrepo, "worktree", "remove", "--force", str(ordner))
         aufpasser.git_lauf(hauptrepo, "worktree", "prune")
+    elif sys.version_info >= (3, 12):
+        shutil.rmtree(ordner, onexc=hausmeister_windows.schreibschutz_weg)
     else:
-        shutil.rmtree(ordner)
+        shutil.rmtree(ordner, onerror=hausmeister_windows.schreibschutz_weg)
+
+
+def altbestand_pfad() -> Path:
+    """Liste des Laptop-Altbestands (E16), neben dem Hausmeister-Log."""
+    return _log_pfad().parent / "altbestand.json"
+
+
+def altbestand_festhalten(ordner: Iterable[Path]) -> Path:
+    """Hält Ordner als Altbestand fest: sie bleiben im echten Lauf, bis David die Liste
+    freigibt (``"freigegeben": true`` in der Datei). Schreibt
+    ``{"freigegeben": false, "erstellt": <iso>, "ordner": [<posix, aufgelöst>]}``.
+    Gibt es die Datei schon, kommen neue Ordner dazu, keiner geht weg. Ist sie schon
+    freigegeben oder kaputt, bleibt sie unverändert (Warnung im Log; eine kaputte Liste
+    hält per Regel jeden Ordner fest). Rückgabe: Pfad der Datei. ``OSError`` geht an
+    den Aufrufer."""
+    pfad = altbestand_pfad()
+    neu = [Path(o).expanduser().resolve().as_posix() for o in ordner]
+    try:
+        daten = json.loads(pfad.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        daten = {
+            "freigegeben": False,
+            "erstellt": datetime.now().astimezone().isoformat(timespec="seconds"),
+            "ordner": [],
+        }
+    except ValueError:
+        log.warning("Hausmeister: Altbestand-Liste %s kaputt — nicht ergänzt", pfad)
+        return pfad
+    liste = daten.get("ordner") if isinstance(daten, dict) else None
+    if not isinstance(liste, list):
+        log.warning("Hausmeister: Altbestand-Liste %s kaputt — nicht ergänzt", pfad)
+        return pfad
+    if daten.get("freigegeben") is True:
+        log.warning(
+            "Hausmeister: Altbestand-Liste %s ist schon freigegeben — %d Ordner nicht "
+            "ergänzt",
+            pfad,
+            len(neu),
+        )
+        return pfad
+    bekannt = {os.path.normcase(str(o)) for o in liste}
+    for o in neu:
+        if os.path.normcase(o) not in bekannt:
+            bekannt.add(os.path.normcase(o))
+            liste.append(o)
+    pfad.parent.mkdir(parents=True, exist_ok=True)
+    zwischen = pfad.with_name(pfad.name + ".neu")
+    zwischen.write_text(
+        json.dumps(daten, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+    os.replace(zwischen, pfad)  # nie eine halb geschriebene Liste
+    return pfad
+
+
+def _kein_altbestand(echt: Path) -> None:
+    """Altbestand-Regel (nur echter Lauf): gelistet und nicht freigegeben ⇒ bleibt;
+    Datei kaputt/unlesbar ⇒ jeder Ordner bleibt mit Fehler. Datei fehlt: am Server keine
+    Wirkung; unter Windows hält der Lauf zuerst alle vorhandenen Ordner fest — der
+    erste Lauf am Laptop löscht nie ohne Davids Ja."""
+    pfad = altbestand_pfad()
+    if _ist_windows() and not os.path.lexists(pfad):
+        try:
+            altbestand_festhalten([*_kandidaten(), echt])
+        except OSError as fehler:
+            raise _Bleibt(
+                f"Altbestand-Liste {pfad} nicht anlegbar: {fehler}", fehler=True
+            ) from None
+        log.warning(
+            "Hausmeister: Altbestand-Liste fehlte — alle Ordner festgehalten in %s",
+            pfad,
+        )
+    try:
+        daten = json.loads(pfad.read_text(encoding="utf-8"))
+    except (FileNotFoundError, NotADirectoryError):  # Datei gibt es nicht (Server)
+        return
+    except (OSError, ValueError) as fehler:
+        raise _Bleibt(
+            f"Altbestand-Liste {pfad} unlesbar: {fehler}", fehler=True
+        ) from None
+    liste = daten.get("ordner") if isinstance(daten, dict) else None
+    if not isinstance(liste, list) or not all(isinstance(o, str) for o in liste):
+        raise _Bleibt(f"Altbestand-Liste {pfad} kaputt", fehler=True)
+    if daten.get("freigegeben") is True:
+        return
+    schluessel = os.path.normcase(str(echt))
+    if any(os.path.normcase(str(Path(o))) == schluessel for o in liste):
+        raise _Bleibt(f"Altbestand, wartet auf Davids Ja (Liste {pfad})")
 
 
 def _log_pfad() -> Path:

@@ -40,6 +40,7 @@ from to_spawn import (  # noqa: E402
     deploy_status,
     gh,
     hausmeister,
+    hausmeister_aufgabe,
     hooks,
     inventur,
     leiter,
@@ -196,6 +197,34 @@ def _setup(repo: Path, args: argparse.Namespace) -> int:
     print()
     print(setup.probesitz_block(repo))
     return 0
+
+
+def _aufraeumen(args: argparse.Namespace, ap: argparse.ArgumentParser) -> int:
+    """Hausmeister-CLI (#1368/#1373); Exit 1 nur bei Fehlern, „bleibt“ ist keiner."""
+    if args.aufgabe_einrichten:
+        try:
+            print(hausmeister_aufgabe.aufgabe_einrichten(trocken=args.trocken))
+        except RuntimeError as fehler:
+            print(f"Hausmeister-Aufgabe nicht eingerichtet: {fehler}", file=sys.stderr)
+            return 1
+        return 0
+    if args.altbestand_liste:
+        try:
+            print(f"Altbestand-Liste: {hausmeister_aufgabe.loesch_liste(args.altbestand_liste)}")
+        except (RuntimeError, OSError) as fehler:
+            print(f"Altbestand-Liste nicht geschrieben: {fehler}", file=sys.stderr)
+            return 1
+        return 0
+    if args.alles:
+        ergebnisse = hausmeister.aufraeumen_alles(loeschen=args.loeschen)
+    elif args.ordner:
+        ergebnisse = [hausmeister.aufraeumen(args.ordner, loeschen=args.loeschen)]
+    else:
+        ap.error("aufraeumen: Ordner, --alles, --aufgabe-einrichten oder --altbestand-liste angeben")
+    for erg in ergebnisse:
+        modus = "trocken" if erg.trocken else "echt"
+        print(f"{erg.ordner}: {erg.art} ({erg.grund}) [{modus}]")
+    return 1 if any(e.fehler for e in ergebnisse) else 0
 
 
 def _befund(args: argparse.Namespace) -> int:
@@ -531,8 +560,17 @@ def main(argv: list[str] | None = None) -> int:
     p_befund.add_argument("--dry-run", action="store_true", help="nur zeigen, nichts tun")
     # Hausmeister (#1368): alten Arbeitsordner prüfen (Trockenlauf) bzw. aufräumen.
     p_aufr = unter.add_parser("aufraeumen", help="alten Arbeitsordner aufräumen (Vorgabe: Trockenlauf)")
-    p_aufr.add_argument("ordner", type=Path)
+    p_aufr.add_argument("ordner", type=Path, nargs="?")
     p_aufr.add_argument("--loeschen", action="store_true", help="wirklich sichern und löschen")
+    # Hausmeister am Laptop (#1373): alle Ordner, tägliche Windows-Aufgabe, Altbestand-Liste.
+    p_aufr.add_argument("--alles", action="store_true", help="alle Ordner unter den Wurzeln")
+    p_aufr.add_argument(
+        "--aufgabe-einrichten", action="store_true", help="tägliche Windows-Aufgabe einrichten"
+    )
+    p_aufr.add_argument("--trocken", action="store_true", help="mit --aufgabe-einrichten: nur zeigen")
+    p_aufr.add_argument(
+        "--altbestand-liste", type=Path, metavar="DATEI.md", help="Lösch-Liste für David schreiben"
+    )
     # Aufpasser (#236): Cron-Hausmeister für die tmux-Fenster; gleiche Argumente wie
     # ``skripte/aufpasser.py``.
     aufpasser.parser_fuellen(
@@ -561,10 +599,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.befehl == "aufpasser":
         return aufpasser.lauf_mit_args(args)
     if args.befehl == "aufraeumen":
-        erg = hausmeister.aufraeumen(args.ordner, loeschen=args.loeschen)
-        modus = "trocken" if erg.trocken else "echt"
-        print(f"{erg.ordner}: {erg.art} ({erg.grund}) [{modus}]")
-        return 1 if erg.fehler else 0  # „bleibt“ aus einer Regel ist kein Fehler
+        return _aufraeumen(args, ap)
     if args.befehl == "ticketstand":
         # Nur lesen: Tabelle „X von Y fertig“ für jeden Aufseher-Tick.
         return ticketstand.lauf(args, config.repo_wurzel(_repo_aus_umgebung()))
