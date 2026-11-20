@@ -50,6 +50,8 @@ def _aufpasser(
     text: str,
     offen: bool,
     name: str = f"bau {TICKET}",
+    jetzt: float = JETZT,
+    trocken: bool = False,
 ) -> tuple[aufpasser.Aufpasser, aufpasser.Fenster, dict[str, list]]:
     spur: dict[str, list] = {"probe": [], "stupser": [], "fortsetzen": []}
 
@@ -61,7 +63,9 @@ def _aufpasser(
     monkeypatch.setattr(aufpasser, "bau_lauf_im_baum", lambda pid: None)
     monkeypatch.setattr(aufpasser, "worktree_finden", lambda *a, **k: None)
     a = aufpasser.Aufpasser(
-        aufpasser.Einstellungen(zustand=tmp / "stand.json", tmux_socket="nie-benutzt", jetzt=lambda: JETZT)
+        aufpasser.Einstellungen(
+            zustand=tmp / "stand.json", tmux_socket="nie-benutzt", jetzt=lambda: jetzt, trocken=trocken
+        )
     )
     a.pane_text = lambda ziel: text  # type: ignore[method-assign]
     a.session = lambda f: aufpasser.SessionInfo("sid", None, "idle", 4242)  # type: ignore[method-assign]
@@ -75,7 +79,7 @@ def _aufpasser(
     # Seit zwei Stunden derselbe Text: weit über der Hänge-Schwelle.
     a.stand.fenster[f"{f.sitzung}/{f.name}"] = {
         "hash": aufpasser.pane_hash(text),
-        "seit": JETZT - 2 * 3600,
+        "seit": jetzt - 2 * 3600,
         "stufe": 0,
     }
     return a, f, spur
@@ -95,7 +99,7 @@ def test_limit_zu_kein_anstoss_keine_dauerschleife(tmp_path: Path, monkeypatch: 
     a.fenster_pruefen(f, tmp_path, {TICKET})
     assert spur["stupser"] == [] and spur["fortsetzen"] == []
     # Eine Probe je Aufpasser-Lauf, nicht je Prüfung.
-    assert len(spur["probe"]) <= 1
+    assert len(spur["probe"]) == 1
 
 
 def test_limit_oben_darunter_neue_arbeit_kein_anstoss(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -123,3 +127,60 @@ def test_aufseher_fenster_mit_limit_text_unberuehrt(tmp_path: Path, monkeypatch:
     a, f, spur = _aufpasser(tmp_path, monkeypatch, bildschirm(LIMIT), offen=True, name="wache 1365")
     a.fenster_pruefen(f, tmp_path, set())
     assert spur["stupser"] == [] and spur["probe"] == []
+
+
+# -- Fix-Runde 1: Drossel (B1) und Trockenlauf (B2) ---------------------------------
+
+
+def _lauf(
+    tmp: Path, monkeypatch: pytest.MonkeyPatch, jetzt: float, offen: bool = False
+) -> dict[str, list]:
+    """Ein Aufpasser-Lauf (neue Instanz = Neustart) mit Stand-Schreiben am Ende."""
+    a, f, spur = _aufpasser(
+        tmp, monkeypatch, bildschirm(LIMIT), offen=offen, jetzt=jetzt
+    )
+    a.fenster_pruefen(f, tmp, {TICKET})
+    a._stand_schreiben()
+    return spur
+
+
+def test_drossel_zweite_probe_innerhalb_30_min_bleibt_aus(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """B1: Limit zu — der nächste Lauf 15 min später fragt die Probe nicht erneut."""
+    assert len(_lauf(tmp_path, monkeypatch, JETZT)["probe"]) == 1
+    spur = _lauf(tmp_path, monkeypatch, JETZT + 15 * 60)
+    assert spur["probe"] == [] and spur["stupser"] == []
+
+
+def test_drossel_nach_30_min_wieder_probe(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert len(_lauf(tmp_path, monkeypatch, JETZT)["probe"]) == 1
+    spur = _lauf(
+        tmp_path, monkeypatch, JETZT + aufpasser.LIMIT_PROBE_ABSTAND_S, offen=True
+    )
+    assert len(spur["probe"]) == 1 and len(spur["stupser"]) == 1
+
+
+def test_drossel_ueberlebt_neustart_im_stand(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Der Zeitstempel liegt in ``stand.json`` — ein frischer Aufpasser sieht ihn."""
+    _lauf(tmp_path, monkeypatch, JETZT)
+    roh = (tmp_path / "stand.json" / "stand.json").read_text(encoding="utf-8")
+    assert "limit_proben" in roh
+    spur = _lauf(tmp_path, monkeypatch, JETZT + 29 * 60, offen=True)
+    assert spur["probe"] == [] and spur["stupser"] == []
+
+
+def test_trockenlauf_ruft_probe_nicht_auf(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """B2: ``--trocken`` kostet kein Abo — nur melden, dass geprüft würde."""
+    a, f, spur = _aufpasser(
+        tmp_path, monkeypatch, bildschirm(LIMIT), offen=True, trocken=True
+    )
+    a.fenster_pruefen(f, tmp_path, {TICKET})
+    assert spur["probe"] == [] and spur["stupser"] == []
+    assert "[trocken] Limit-Probe würde laufen" in capsys.readouterr().out

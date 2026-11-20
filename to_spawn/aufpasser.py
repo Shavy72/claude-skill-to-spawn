@@ -134,6 +134,9 @@ START_NACHWEIS_S = 5.0
 #: Mehr als so viele Anstupser je Fenster im Zeitfenster ⇒ „braucht David“ (R5).
 STUPSER_MAX = 3
 STUPSER_FENSTER_S = 24 * 3600
+#: Limit-Probe (#1453) höchstens einmal je so viele Sekunden je (Programm, Modell);
+#: der Zeitstempel liegt in ``stand.json`` und überlebt so den 15-min-Cron-Neustart.
+LIMIT_PROBE_ABSTAND_S = 30 * 60
 #: Meldungen ohne Eingriff kommen je Fenster/Ereignis nur einmal am Tag ins Issue;
 #: jeder Eingriff (gestartet, angestupst, fortgesetzt, geschlossen) immer (R3).
 MELDUNG_EINMAL_PRO_TAG = frozenset(
@@ -969,6 +972,8 @@ class Stand:
     meldungen: dict[str, float] = field(default_factory=dict)
     #: Start-Gedächtnis je Ticket: Zeitstempel der Fenster-Starts (Regel 1).
     starts: dict[str, list[float]] = field(default_factory=dict)
+    #: Letzte Limit-Probe je ``Programm|Modell``: ``{"zeit": t, "offen": bool}`` (#1453).
+    limit_proben: dict[str, dict] = field(default_factory=dict)
 
 
 class Aufpasser:
@@ -987,8 +992,6 @@ class Aufpasser:
         #: ab dem zweiten Start wartet der Tick ``staffel_s`` Sekunden, damit die
         #: Claude-Starts sich nicht stapeln. Am Tick-Anfang wieder 0.
         self._starts_in_tick = 0
-        #: Ergebnis der Limit-Probe je (Programm, Modell): höchstens eine Probe je Lauf (#1453).
-        self._limit_proben: dict[tuple[str, str], bool] = {}
 
     # -- Werkzeuge ---------------------------------------------------------------
 
@@ -1039,6 +1042,7 @@ class Aufpasser:
             starts={
                 k: [float(t) for t in v] for k, v in (roh.get("starts") or {}).items()
             },
+            limit_proben=dict(roh.get("limit_proben") or {}),
         )
 
     def _stand_schreiben(self) -> None:
@@ -1051,6 +1055,11 @@ class Aufpasser:
             for k, v in self.stand.starts.items()
         }
         starts = {k: v for k, v in starts.items() if v}
+        limit_proben = {
+            k: v
+            for k, v in self.stand.limit_proben.items()
+            if self.jetzt - float(v.get("zeit", 0)) < LIMIT_PROBE_ABSTAND_S
+        }
         self.e.zustand.mkdir(parents=True, exist_ok=True)
         (self.e.zustand / "stand.json").write_text(
             json.dumps(
@@ -1058,6 +1067,7 @@ class Aufpasser:
                     "fenster": self.stand.fenster,
                     "meldungen": meldungen,
                     "starts": starts,
+                    "limit_proben": limit_proben,
                 },
                 ensure_ascii=False,
                 indent=1,
@@ -1762,7 +1772,11 @@ class Aufpasser:
         return not self._limit_offen(repo)
 
     def _limit_offen(self, repo: Path) -> bool:
-        """Limit-Probe mit Programm und Ticket-Modell aus der Repo-Konfig, je Lauf gemerkt.
+        """Limit-Probe mit Programm und Ticket-Modell aus der Repo-Konfig, gedrosselt.
+
+        Höchstens eine echte Probe je :data:`LIMIT_PROBE_ABSTAND_S` je (Programm, Modell),
+        über Läufe hinweg (Merker in ``stand.json``); dazwischen gilt das letzte Ergebnis.
+        Im Trockenlauf keine Probe (kostet Abo): nur melden, Limit gilt als zu.
 
         ponytail: prüft nur ``modelle.ticket``; leichte Tickets (``ticket_leicht``)
         laufen auf einem anderen Modell — Upgrade: Modell aus dem Fenster/Session lesen.
@@ -1773,10 +1787,18 @@ class Aufpasser:
         if not modell:
             log.warning("Limit-Probe: kein Ticket-Modell in der Konfig — gilt als zu.")
             return False
-        schluessel = (claude, modell)
-        if schluessel not in self._limit_proben:
-            self._limit_proben[schluessel] = limit_offen(claude, modell, repo)
-        return self._limit_proben[schluessel]
+        schluessel = f"{claude}|{modell}"
+        letzte = self.stand.limit_proben.get(schluessel)
+        if letzte and self.jetzt - float(letzte.get("zeit", 0)) < LIMIT_PROBE_ABSTAND_S:
+            return bool(letzte.get("offen"))
+        if self.e.trocken:
+            print(
+                f"[trocken] Limit-Probe würde laufen ({claude}, {modell}) — gilt als zu"
+            )
+            return False
+        offen = limit_offen(claude, modell, repo)
+        self.stand.limit_proben[schluessel] = {"zeit": self.jetzt, "offen": offen}
+        return offen
 
     def eintrag(self, schluessel: str, text: str) -> dict:
         """Hash/Zeit fortschreiben. Ändert sich der Text nach einem Eingriff
