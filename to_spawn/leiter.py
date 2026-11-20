@@ -28,7 +28,8 @@ Stufen (feste Schwellen :data:`STUPS_MIN`, :data:`NACH_STUPS_MIN`,
 Eigener Handoff (#542): Hat die Session in Stufe 0/1 selbst einen Handoff committet und
 arbeitet seit :data:`eigener_handoff.STILL_MIN` Minuten nicht, startet die Leiter die
 Folge-Session ab diesem Handoff neu (Aktion ``folge_handoff``) — Regel und Start in
-:mod:`to_spawn.eigener_handoff`.
+:mod:`to_spawn.eigener_handoff`. Das gilt auch, wenn das Fenster weg ist, und in Stufe 2
+ohne START-Datei (#1426) — Entscheidung nur in :func:`_folge_ab_handoff`.
 
 Am PC (Windows, #501) ist nichts tippbar: :func:`fuer_rechner` macht aus Stufe 1/2
 direkt Stufe 3 (Zeile „PC: Stufe 1 übersprungen“), aus ``/exit`` eine Meldung.
@@ -150,7 +151,10 @@ class Umwelt(Protocol):
     def werkzeug(self) -> respawn.Werkzeug | pc_fenster.PcWerkzeug:
         """Werkzeug von respawn: tmux (``tippen`` = Text einfügen, Enter getrennt) oder PC."""
         ...
-    def folge_ab_handoff(self, spec: int, ticket: int, treffer: eigener_handoff.Treffer) -> int:
+
+    def folge_ab_handoff(
+        self, spec: int, ticket: int, treffer: eigener_handoff.Treffer
+    ) -> int:
         """Folge-Session ab eigenem Handoff starten (#542); Exit-Code des Neustarts."""
         ...
 
@@ -191,6 +195,10 @@ def entscheide(lage: Lage, gemerkt: Gemerkt, jetzt: float, handoff_k: float) -> 
         return Schritt("melden", f"respawn gescheitert vor {vor} min — Aufseher prüfen")
     if lage.fenster == aufseher_stand.RUECKFRAGE:
         return Schritt("nichts", "Rückfrage offen — Aufseher antwortet")
+    if lage.fenster == aufseher_stand.KEIN_FENSTER and lage.offen is True:
+        folge = _folge_ab_handoff(lage, gemerkt, jetzt)
+        if folge is not None:
+            return folge
     if lage.fenster != aufseher_stand.STILL:
         return Schritt("nichts", f"Fenster: {lage.fenster}")
     still = lage.still_min or 0
@@ -203,12 +211,9 @@ def entscheide(lage: Lage, gemerkt: Gemerkt, jetzt: float, handoff_k: float) -> 
         return Schritt("exit", f"Ticket zu, still {still} min")
     if stufe == 4:
         return Schritt("zuruecksetzen", "Ticket wieder offen")
-    treffer = lage.eigener_handoff
-    if stufe in eigener_handoff.STUFEN and treffer is not None:
-        seit = treffer.still_min(jetzt)
-        if treffer.faellig(jetzt):
-            return Schritt("folge_handoff", f"eigener Handoff {treffer.datei}, seit {seit} min still")
-        return Schritt("nichts", f"eigener Handoff vor {seit} min < {eigener_handoff.STILL_MIN}")
+    folge = _folge_ab_handoff(lage, gemerkt, jetzt)
+    if folge is not None:
+        return folge
     if stufe == 2:
         if lage.prompt_datei:
             return Schritt("respawn", "Start-Prompt-Datei da")
@@ -231,6 +236,36 @@ def entscheide(lage: Lage, gemerkt: Gemerkt, jetzt: float, handoff_k: float) -> 
     return Schritt("nichts", f"still {still} min < {STUPS_MIN}")
 
 
+def _folge_ab_handoff(lage: Lage, gemerkt: Gemerkt, jetzt: float) -> Schritt | None:
+    """Nachfolger ab eigenem Handoff? Einzige Stelle dieser Entscheidung in der Leiter.
+
+    Aufrufer garantieren: Fenster still oder weg (nie „arbeitet“/Rückfrage), Ticket
+    nicht zu. Greift in :data:`eigener_handoff.STUFEN` und in Stufe 2 ohne
+    START-Datei (#1426: die alte Session schrieb nur den Handoff — ohne das bliebe das
+    Ticket nach :data:`WARTE_MAX_MIN` stehen); dort zählt nur ein Handoff, der nach der
+    Anforderung committet wurde. Mit START-Datei bleibt Stufe 2 beim respawn.
+    Doppelstart-Schutz: nach dem Start rückt :func:`eigener_handoff.grenze` vor,
+    derselbe Handoff ist danach kein Treffer mehr. ``None`` = nicht zuständig.
+    """
+    treffer = lage.eigener_handoff
+    if treffer is None:
+        return None
+    stufe = gemerkt.stufe
+    nach_anforderung = treffer.commit_zeit > (gemerkt.seit or 0.0)
+    if stufe not in eigener_handoff.STUFEN and not (
+        stufe == 2 and not lage.prompt_datei and nach_anforderung
+    ):
+        return None
+    seit = treffer.still_min(jetzt)
+    if treffer.faellig(jetzt):
+        return Schritt(
+            "folge_handoff", f"eigener Handoff {treffer.datei}, seit {seit} min still"
+        )
+    return Schritt(
+        "nichts", f"eigener Handoff vor {seit} min < {eigener_handoff.STILL_MIN}"
+    )
+
+
 #: Vermerk in der Zeile, wenn der PC-Weg das Tippen überspringt (#501 E10).
 PC_VERMERK = "PC: Stufe 1 übersprungen"
 #: Am PC ersetzt die Ablösung (Session beenden, ohne eigenen Handoff) das Anstupsen — darum
@@ -238,17 +273,24 @@ PC_VERMERK = "PC: Stufe 1 übersprungen"
 PC_ABLOESE_MIN = 60
 
 
-def fuer_rechner(schritt: Schritt, kann_tippen: bool, still_min: int | None = None) -> Schritt:
+def fuer_rechner(
+    schritt: Schritt, kann_tippen: bool, still_min: int | None = None
+) -> Schritt:
     """Am PC (nichts tippbar): Handoff-Anfordern (Kontext-Grenze) wird direkt die Ablösung,
     Anstupsen erst ab ``PC_ABLOESE_MIN`` still, ``/exit`` eine Meldung — reine Logik."""
     if kann_tippen:
         return schritt
     if schritt.aktion == "anstupsen" and (still_min or 0) < PC_ABLOESE_MIN:
-        return Schritt("nichts", f"PC: still {still_min or 0} min < {PC_ABLOESE_MIN}, noch keine Ablösung")
+        return Schritt(
+            "nichts",
+            f"PC: still {still_min or 0} min < {PC_ABLOESE_MIN}, noch keine Ablösung",
+        )
     if schritt.aktion in ("anstupsen", "handoff"):
         return Schritt("respawn", f"{PC_VERMERK} — {schritt.grund}")
     if schritt.aktion == "exit":
-        return Schritt("melden", f"{schritt.grund}, PC: /exit nicht tippbar — Aufseher prüfen")
+        return Schritt(
+            "melden", f"{schritt.grund}, PC: /exit nicht tippbar — Aufseher prüfen"
+        )
     return schritt
 
 
@@ -320,7 +362,12 @@ def _lies(u: Umwelt, spec: int, ticket: int) -> tuple[Gemerkt, Lage, Schritt, fl
     jetzt = u.jetzt()
     lage = u.lage(spec, ticket, seit if stufe == 2 else None)
     schritt = entscheide(lage, gemerkt, jetzt, u.handoff_k())
-    return gemerkt, lage, fuer_rechner(schritt, pc_fenster.kann_tippen(u.werkzeug()), lage.still_min), jetzt
+    return (
+        gemerkt,
+        lage,
+        fuer_rechner(schritt, pc_fenster.kann_tippen(u.werkzeug()), lage.still_min),
+        jetzt,
+    )
 
 
 def _plane(u: Umwelt, spec: int, ticket: int) -> Ergebnis:
@@ -340,10 +387,21 @@ def _schritt(u: Umwelt, repo: Path, spec: int, ticket: int) -> Ergebnis:
     if schritt.aktion == "folge_handoff" and lage.eigener_handoff is not None:
         code = u.folge_ab_handoff(spec, ticket, lage.eigener_handoff)
         if code == eigener_handoff.EXIT_NICHTS:
-            return Ergebnis(EXIT_OK, _zeile(ticket, "Neustart ab Handoff: nichts zu tun"))
+            return Ergebnis(
+                EXIT_OK, _zeile(ticket, "Neustart ab Handoff: nichts zu tun")
+            )
         if code != 0:
-            return Ergebnis(EXIT_FEHLER, _zeile(ticket, f"Neustart ab Handoff gescheitert (Exit {code}) — {schritt.grund}"))
-        return Ergebnis(EXIT_OK, _zeile(ticket, f"Stufe 0 {_WORT[schritt.aktion]} — {schritt.grund}"))
+            return Ergebnis(
+                EXIT_FEHLER,
+                _zeile(
+                    ticket,
+                    f"Neustart ab Handoff gescheitert (Exit {code}) — {schritt.grund}",
+                ),
+            )
+        return Ergebnis(
+            EXIT_OK,
+            _zeile(ticket, f"Stufe 0 {_WORT[schritt.aktion]} — {schritt.grund}"),
+        )
     stufe = gemerkt.stufe
     if schritt.aktion in ("anstupsen", "handoff", "exit"):
         if not lage.ziel:
@@ -414,7 +472,9 @@ def _respawn(
         log.warning("leiter #%s: respawn-Abschluss nicht gemerkt: %s", ticket, fehler)
         text = f"Stufe 3 abgelöst, Abschluss nicht gemerkt — {fehler}"
         return Ergebnis(EXIT_FEHLER, _zeile(ticket, text))
-    grund = "Start-Prompt-Datei da" if pc_fenster.kann_tippen(u.werkzeug()) else PC_VERMERK
+    grund = (
+        "Start-Prompt-Datei da" if pc_fenster.kann_tippen(u.werkzeug()) else PC_VERMERK
+    )
     text = f"Stufe 0 {_WORT['respawn']} — {grund}"
     return Ergebnis(EXIT_OK, _zeile(ticket, text))
 
@@ -425,8 +485,7 @@ def _stufe3_nachziehen(ticket: int, nach: float, text: str) -> str:
         leitstand.setze_leiter_stufe(ticket, 3, nach)
     except (OSError, ValueError, leitstand.ZustandKaputt) as fehler:
         log.error(
-            "leiter #%s: Stufe 3 nicht neu gemerkt — Folgelauf kann fälschlich "
-            "abschließen: %s",
+            "leiter #%s: Stufe 3 nicht neu gemerkt — Folgelauf kann fälschlich abschließen: %s",
             ticket,
             fehler,
         )
@@ -480,7 +539,9 @@ class _EchteUmwelt:
         wt = self.worktree(ticket)
         prompt = seit is not None and respawn.start_prompt_da(wt, ticket, seit)
         start, unlesbar = self._letzter_start(ticket, wt)
-        treffer = eigener_handoff.finde(wt, ticket, eigener_handoff.grenze(start, ticket))
+        treffer = eigener_handoff.finde(
+            wt, ticket, eigener_handoff.grenze(start, ticket)
+        )
         return Lage(
             offen=blick.lage.offen,
             fenster=blick.lage.fenster,
@@ -493,9 +554,13 @@ class _EchteUmwelt:
             eigener_handoff=treffer,
         )
 
-    def folge_ab_handoff(self, spec: int, ticket: int, treffer: eigener_handoff.Treffer) -> int:
+    def folge_ab_handoff(
+        self, spec: int, ticket: int, treffer: eigener_handoff.Treffer
+    ) -> int:
         # Die Leiter hält ihre Sperre ``leiter-<N>`` schon selbst.
-        return eigener_handoff.folge_starten(self.repo, spec, ticket, treffer, sperren=False)
+        return eigener_handoff.folge_starten(
+            self.repo, spec, ticket, treffer, sperren=False
+        )
 
     def _letzter_start(self, ticket: int, wt: Path) -> tuple[float | None, bool]:
         """Jüngster ``session_start`` im Bau-Log und ob das Lesen scheiterte (Warnung)."""
