@@ -105,7 +105,7 @@ from to_spawn import (
     vorfall,
 )
 from to_spawn.waechter_lauf import _LIMIT_TEXT as LIMIT_TEXT
-from to_spawn.waechter_lauf import transkript_ordner
+from to_spawn.waechter_lauf import limit_offen, transkript_ordner
 
 log = logging.getLogger("aufpasser")
 
@@ -247,9 +247,15 @@ SKRIPT_STARTER = Path(__file__).resolve().parent.parent / "skripte" / "aufpasser
 ARBEITS_MARKER = (
     "esc to interrupt",
     "background agent",
+)
+#: Limit-Meldung im Fenster: zählt in :func:`arbeitet` mit, ist aber im ``bau``-Fenster
+#: ein eigener Zustand „Limit-Pause“ (:func:`limit_pause`, #1453).
+LIMIT_MARKER = (
     "usage limit",
     "limit reset",
 )
+#: Zeilenanfang neuer Claude-Ausgabe bzw. neuer Eingabe unter einer Limit-Zeile.
+NEUE_AUSGABE = ("⏺", "●", "✻", "❯", ">")
 # Warte-Zeile von bau.py (Blocker offen). Nur diese Form zählt — „nächste Prüfung“
 # allein stand am 21.09. als Claude-Prosa im Scrollback eines idle Fensters.
 BLOCKER_WARTEN = re.compile(r"Ticket #\d+ wartet \(.*\) — nächste Prüfung in \d+ min")
@@ -406,10 +412,34 @@ def arbeitet(text: str, status: str | None = None) -> bool:
     if status == "busy":
         return True
     return (
-        any(m in text for m in ARBEITS_MARKER + RUECKFRAGE_MARKER)
+        any(m in text for m in ARBEITS_MARKER + LIMIT_MARKER + RUECKFRAGE_MARKER)
         or bool(BLOCKER_WARTEN.search(text))
         or bool(LIMIT_TEXT.search(text))
     )
+
+
+def _ist_limit_zeile(zeile: str) -> bool:
+    return any(m in zeile for m in LIMIT_MARKER) or bool(LIMIT_TEXT.search(zeile))
+
+
+def limit_pause(text: str) -> bool:
+    """Fenster steht nur wegen des Nutzungs-Limits still (#1453).
+
+    Wahr, wenn eine Limit-Zeile die letzte Ausgabe über dem Eingabefeld ist (darunter
+    keine neue Ausgabe/Eingabe) und ohne die Limit-Zeilen nichts nach Arbeit aussieht.
+    Ob das Limit wieder offen ist, sagt diese Funktion nicht — das prüft die Probe.
+    """
+    zeilen = ohne_statuszeile(text).splitlines()
+    linien = [i for i, z in enumerate(zeilen) if EINGABEFELD_LINIE.fullmatch(z)]
+    if linien:
+        zeilen = zeilen[: linien[-1]]
+    treffer = [i for i, z in enumerate(zeilen) if _ist_limit_zeile(z)]
+    if not treffer:
+        return False
+    if any(z.lstrip().startswith(NEUE_AUSGABE) for z in zeilen[treffer[-1] + 1 :]):
+        return False
+    rest = "\n".join(z for z in text.splitlines() if not _ist_limit_zeile(z))
+    return not arbeitet(rest)
 
 
 def rueckfrage(text: str) -> bool:
@@ -957,6 +987,8 @@ class Aufpasser:
         #: ab dem zweiten Start wartet der Tick ``staffel_s`` Sekunden, damit die
         #: Claude-Starts sich nicht stapeln. Am Tick-Anfang wieder 0.
         self._starts_in_tick = 0
+        #: Ergebnis der Limit-Probe je (Programm, Modell): höchstens eine Probe je Lauf (#1453).
+        self._limit_proben: dict[tuple[str, str], bool] = {}
 
     # -- Werkzeuge ---------------------------------------------------------------
 
@@ -1701,8 +1733,8 @@ class Aufpasser:
             )
             return False
         text = self.pane_text(f.ziel)
-        if pane_hash(text) != hash_start or arbeitet(
-            text, info.status if info else None
+        if pane_hash(text) != hash_start or self._arbeitet(
+            f, text, info.status if info else None, repo
         ):
             log.info("%s: inzwischen aktiv — kein Eingriff", f.name)
             e = self.stand.fenster.get(f"{f.sitzung}/{f.name}")
@@ -1714,6 +1746,37 @@ class Aufpasser:
         return True
 
     # -- Regeln je Fenster -------------------------------------------------------
+
+    def _arbeitet(
+        self, f: Fenster, text: str, status: str | None, repo: Path
+    ) -> bool:
+        """:func:`arbeitet`, aber ein ``bau``-Fenster in Limit-Pause gilt als still,
+        sobald die Limit-Probe aus #1449 das Limit offen meldet (#1453).
+
+        Aufseher-Fenster bleiben außen vor: der Aufseher wartet sein Limit selbst ab.
+        """
+        if not arbeitet(text, status):
+            return False
+        if f.ist_wache or status == "busy" or not limit_pause(text):
+            return True
+        return not self._limit_offen(repo)
+
+    def _limit_offen(self, repo: Path) -> bool:
+        """Limit-Probe mit Programm und Ticket-Modell aus der Repo-Konfig, je Lauf gemerkt.
+
+        ponytail: prüft nur ``modelle.ticket``; leichte Tickets (``ticket_leicht``)
+        laufen auf einem anderen Modell — Upgrade: Modell aus dem Fenster/Session lesen.
+        """
+        konfig = config.lade(repo)
+        claude = str(konfig.get("runner") or "claude")
+        modell = str((konfig.get("modelle") or {}).get("ticket") or "")
+        if not modell:
+            log.warning("Limit-Probe: kein Ticket-Modell in der Konfig — gilt als zu.")
+            return False
+        schluessel = (claude, modell)
+        if schluessel not in self._limit_proben:
+            self._limit_proben[schluessel] = limit_offen(claude, modell, repo)
+        return self._limit_proben[schluessel]
 
     def eintrag(self, schluessel: str, text: str) -> dict:
         """Hash/Zeit fortschreiben. Ändert sich der Text nach einem Eingriff
@@ -1836,7 +1899,7 @@ class Aufpasser:
         ticket = echtes_ticket(f)
         if ticket != f.ticket:
             log.info("%s: bau.py arbeitet an Ticket %s", f.name, ticket)
-        arbeitend = arbeitet(text, status)
+        arbeitend = self._arbeitet(f, text, status, repo)
 
         if ticket is not None and ticket not in offen and not arbeitend:
             # Volle Grenze + idle Session: nicht 15 min Karenz absitzen, sondern kurz
