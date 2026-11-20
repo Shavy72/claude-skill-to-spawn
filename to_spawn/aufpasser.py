@@ -137,6 +137,11 @@ STUPSER_FENSTER_S = 24 * 3600
 #: Limit-Probe (#1453) höchstens einmal je so viele Sekunden je (Programm, Modell);
 #: der Zeitstempel liegt in ``stand.json`` und überlebt so den 15-min-Cron-Neustart.
 LIMIT_PROBE_ABSTAND_S = 30 * 60
+
+
+def _probe_gueltig(eintrag: dict, jetzt: float) -> bool:
+    """Probe-Eintrag zählt nur mit Alter in [0, Abstand) — Zukunftszeit = unbekannt."""
+    return 0 <= jetzt - float(eintrag.get("zeit", 0)) < LIMIT_PROBE_ABSTAND_S
 #: Meldungen ohne Eingriff kommen je Fenster/Ereignis nur einmal am Tag ins Issue;
 #: jeder Eingriff (gestartet, angestupst, fortgesetzt, geschlossen) immer (R3).
 MELDUNG_EINMAL_PRO_TAG = frozenset(
@@ -1058,7 +1063,7 @@ class Aufpasser:
         limit_proben = {
             k: v
             for k, v in self.stand.limit_proben.items()
-            if self.jetzt - float(v.get("zeit", 0)) < LIMIT_PROBE_ABSTAND_S
+            if _probe_gueltig(v, self.jetzt)
         }
         self.e.zustand.mkdir(parents=True, exist_ok=True)
         (self.e.zustand / "stand.json").write_text(
@@ -1789,7 +1794,7 @@ class Aufpasser:
             return False
         schluessel = f"{claude}|{modell}"
         letzte = self.stand.limit_proben.get(schluessel)
-        if letzte and self.jetzt - float(letzte.get("zeit", 0)) < LIMIT_PROBE_ABSTAND_S:
+        if letzte and _probe_gueltig(letzte, self.jetzt):
             return bool(letzte.get("offen"))
         if self.e.trocken:
             print(

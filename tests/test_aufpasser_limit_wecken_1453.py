@@ -184,3 +184,24 @@ def test_trockenlauf_ruft_probe_nicht_auf(
     a.fenster_pruefen(f, tmp_path, {TICKET})
     assert spur["probe"] == [] and spur["stupser"] == []
     assert "[trocken] Limit-Probe würde laufen" in capsys.readouterr().out
+
+
+# -- Fix-Runde 2: Zeit in der Zukunft im Stand ---------------------------------------
+
+
+def test_zukunftszeit_im_stand_sperrt_probe_nicht(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Uhr verstellt/Datei kopiert: Eintrag aus der Zukunft gilt als „keine Probe bekannt“."""
+    import json
+
+    _lauf(tmp_path, monkeypatch, JETZT)
+    datei = tmp_path / "stand.json" / "stand.json"
+    roh = json.loads(datei.read_text(encoding="utf-8"))
+    for eintrag in roh["limit_proben"].values():
+        eintrag["zeit"] = JETZT + 10 * 86400
+    datei.write_text(json.dumps(roh), encoding="utf-8")
+    spur = _lauf(tmp_path, monkeypatch, JETZT + 60)
+    assert len(spur["probe"]) == 1
+    neu = json.loads(datei.read_text(encoding="utf-8"))
+    assert [e["zeit"] for e in neu["limit_proben"].values()] == [JETZT + 60]
