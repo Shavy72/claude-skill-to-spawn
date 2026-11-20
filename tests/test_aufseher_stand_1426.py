@@ -167,3 +167,28 @@ def test_hauptsession_fertig_helfer_laeuft_bleibt_arbeitet() -> None:
     # Ohne Helfer-Zeile bleibt es beim Urteil „still“ (#1301).
     ohne = f"{NACH_HANDOFF}\n\n{_LINIE}\n❯ \n{_LINIE}\n\n  ⏵⏵ bypass permissions on · ↓ to manage\n\n  ● main"
     assert aufpasser.arbeitet(ohne, None, 25.0) is False
+
+
+def test_getippter_text_im_feld_faellt_auf_die_muster_zurueck() -> None:
+    """Review #1426 B2: Feld nicht leer (eingereihte Nachricht) → Grenze greift nicht."""
+    bild = f"{NACH_HANDOFF}\n\n{_LINIE}\n❯ mach weiter\n{_LINIE}\n\n  ⏵⏵ bypass permissions on"
+    assert aufpasser.arbeitet(bild, None, 600.0) is True
+
+
+def test_rueckfrage_verfaellt_nie() -> None:
+    """Review #1426 B2: offene Rückfrage bleibt auch nach Stunden „arbeitet“."""
+    bild = (
+        f"⏺ Bash(rm -rf build)\n  Do you want to proceed?\n  ❯ 1. Yes\n    2. No\n\n"
+        f"{_LINIE}\n❯ \n{_LINIE}"
+    )
+    assert aufpasser.rueckfrage(bild)
+    assert aufpasser.arbeitet(bild, None, 600.0) is True
+
+
+def test_grenze_genau_bei_zwanzig_minuten() -> None:
+    """Review #1426 B3: knapp darunter noch das alte Urteil, ab 20 min still."""
+    bild = bildschirm(NACH_HANDOFF)
+    grenze = aufpasser.ARBEITET_STILL_MIN
+    assert grenze == 20
+    assert aufpasser.arbeitet(bild, None, grenze - 0.1) is True
+    assert aufpasser.arbeitet(bild, None, float(grenze)) is False
