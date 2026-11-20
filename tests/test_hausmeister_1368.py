@@ -322,6 +322,28 @@ def test_loeschen_nur_im_hausmeister() -> None:
     )
 
 
+def test_zweig_loeschen_nur_im_hausmeister() -> None:
+    """#1439: keine Lösch-Refspec, kein ``push --delete``, kein ``branch -D`` außer im Hausmeister."""
+    import re
+
+    muster = [
+        re.compile(r"""(?:^|[\s"'`(\[,]):refs/heads/""", re.M),
+        re.compile(r"""push\b[^\n]{0,60}?(?:--delete|[\s"']-d\b|[\s"']-d["'])"""),
+        re.compile(r"""branch\b[^\n]{0,60}?(?:--delete|[\s"']-D\b|[\s"']-D["'])"""),
+    ]
+    dateien = sorted((SKILL / "to_spawn").glob("*.py")) + [SKILL / "to_spawn.py"]
+    treffer = []
+    for datei in dateien:
+        rel = datei.relative_to(SKILL).as_posix()
+        # ponytail: probesitz.py löscht nur seinen eigenen probesitz-<N>-Wegwerfzweig.
+        if rel in ("to_spawn/hausmeister.py", "to_spawn/probesitz.py"):
+            continue
+        text = datei.read_text(encoding="utf-8")
+        if any(m.search(text) for m in muster):
+            treffer.append(rel)
+    assert not treffer, f"Zweig-Löschen außerhalb des Hausmeisters: {treffer}"
+
+
 # 10
 def test_je_aufruf_genau_eine_json_zeile(welt: Welt) -> None:
     wt = welt.worktree(20)
