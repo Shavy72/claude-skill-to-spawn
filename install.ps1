@@ -21,7 +21,7 @@ if (Test-Path $ziel) {
 }
 New-Item -ItemType Directory -Force $ziel | Out-Null
 foreach ($f in @("SKILL.md", "README.md", "LICENSE", "to_spawn.py", "install.sh", "install.ps1", "spawn_local.ps1", "spawn_srv.ps1",
-                 "to_spawn", "skripte", "repo-scripts", "aliase", "tests", "docs", "nest", "leitstand")) {
+                 "to_spawn", "skripte", "repo-scripts", "aliase", "skills", "tests", "docs", "nest", "leitstand")) {
     $quelle = Join-Path $hier $f
     if (Test-Path $quelle) { Copy-Item $quelle (Join-Path $ziel $f) -Recurse -Force }
 }
@@ -33,6 +33,16 @@ foreach ($aliasOrdner in Get-ChildItem (Join-Path $hier "aliase") -Directory) {
     New-Item -ItemType Directory -Force $aliasZiel | Out-Null
     Copy-Item (Join-Path $aliasOrdner.FullName "SKILL.md") (Join-Path $aliasZiel "SKILL.md") -Force
     Write-Host "Alias installiert: $aliasZiel"
+}
+# Mitgelieferte Skills (skills/<name>/ → ~/.claude/skills/<name>, ganzer Ordner, #1433)
+$mitOrdner = Join-Path $hier "skills"
+if (Test-Path $mitOrdner) {
+    foreach ($skillOrdner in Get-ChildItem $mitOrdner -Directory) {
+        $skillZiel = Join-Path $skills $skillOrdner.Name
+        New-Item -ItemType Directory -Force $skillZiel | Out-Null
+        Copy-Item (Join-Path $skillOrdner.FullName "*") $skillZiel -Recurse -Force
+        Write-Host "Skill installiert: $skillZiel"
+    }
 }
 
 # PowerShell-Profil: bau / wache / sessions (nur ergänzen, nie überschreiben)

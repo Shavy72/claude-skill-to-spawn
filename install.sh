@@ -38,7 +38,7 @@ fi
 # --- 2. Skill kopieren (ohne Git, Caches) ------------------------------------
 mkdir -p "$ZIEL"
 for eintrag in SKILL.md README.md LICENSE to_spawn.py install.sh install.ps1 spawn_local.ps1 spawn_srv.ps1 \
-               to_spawn skripte repo-scripts aliase tests docs nest leitstand; do
+               to_spawn skripte repo-scripts aliase skills tests docs nest leitstand; do
   if [ -e "$HIER/$eintrag" ]; then
     cp -a "$HIER/$eintrag" "$ZIEL/"
   fi
@@ -53,6 +53,16 @@ for alias_ordner in "$HIER"/aliase/*/; do
   mkdir -p "$SKILLS/$name"
   cp "$alias_ordner/SKILL.md" "$SKILLS/$name/SKILL.md"
   echo "Alias installiert: $SKILLS/$name"
+done
+
+# --- 3b. Mitgelieferte Skills (skills/<name>/ → ~/.claude/skills/<name>, ganzer Ordner, #1433) --
+for skill_ordner in "$HIER"/skills/*/; do
+  [ -d "$skill_ordner" ] || continue
+  name="$(basename "$skill_ordner")"
+  mkdir -p "$SKILLS/$name"
+  cp -a "$skill_ordner". "$SKILLS/$name/"
+  find "$SKILLS/$name" -name __pycache__ -prune -exec rm -rf {} +
+  echo "Skill installiert: $SKILLS/$name"
 done
 
 # --- 4. Repo-Hälfte (optional): nur fehlende Dateien --------------------------
