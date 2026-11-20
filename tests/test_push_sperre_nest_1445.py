@@ -30,9 +30,7 @@ from to_spawn import nest
 HILFEN = Path(__file__).parent / "hilfen" / "push_sperre_1442"
 
 
-def _welt(
-    tmp_path: Path, mit_installer: bool = True, installer: str | None = None
-) -> tuple[Path, Path]:
+def _welt(tmp_path: Path, mit_installer: bool = True, installer: str | None = None) -> tuple[Path, Path]:
     """Bare-origin mit (oder ohne) Hook-Dateien, daneben ein Hauptklon. Rückgabe (klon, heim).
 
     ``installer``: eigener Installer-Text statt der Projekt-Kopie (Fehlerzweige).
@@ -126,9 +124,7 @@ def _arbeit_committen(ordner: Path) -> None:
     _git(ordner, "commit", "-m", "Arbeit")
 
 
-def test_bau_start_mit_sandbox_aus_sperrt_master_push(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_bau_start_mit_sandbox_aus_sperrt_master_push(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """B1: ``bau.main`` mit ``sandbox.modus "aus"`` (Ist aller Klone) richtet die Sperre ein.
 
     ``main()``, ``nest.sandbox_start`` und der Installer laufen echt; gestellt sind nur
@@ -185,9 +181,7 @@ def test_installer_kommt_aus_origin_nicht_aus_dem_arbeitsordner(tmp_path: Path) 
     assert "pre-push-master-sperre.sh" in hook.read_text(encoding="utf-8")
 
 
-def test_installer_exit_ungleich_null_warnt_ohne_abbruch(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture
-) -> None:
+def test_installer_exit_ungleich_null_warnt_ohne_abbruch(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     klon, _heim = _welt(tmp_path, installer="#!/bin/sh\necho kaputt >&2\nexit 3\n")
     with caplog.at_level(logging.WARNING, logger=nest.log.name):
         assert nest.git_hooks_einrichten(klon) is False
@@ -202,6 +196,21 @@ def test_installer_timeout_warnt_ohne_abbruch(
     with caplog.at_level(logging.WARNING, logger=nest.log.name):
         assert nest.git_hooks_einrichten(klon) is False
     assert "Push-Sperre nicht eingerichtet" in caplog.text and "timed out" in caplog.text
+
+
+def test_oserror_beim_schreiben_bricht_start_nicht_ab(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Fix-Runde 2: Platte voll/Rechte beim Ablegen der Hook-Dateien → Warnung, ``False``, kein Wurf."""
+    klon, _heim = _welt(tmp_path)
+
+    def _platte_voll(_self: Path, _daten: bytes) -> int:
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(Path, "write_bytes", _platte_voll)
+    with caplog.at_level(logging.WARNING, logger=nest.log.name):
+        assert nest.git_hooks_einrichten(klon) is False
+    assert "Push-Sperre nicht eingerichtet" in caplog.text and "No space left" in caplog.text
 
 
 PROJEKT_KLON = Path.home() / "duoplus-leit"

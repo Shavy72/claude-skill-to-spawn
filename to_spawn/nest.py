@@ -249,11 +249,7 @@ def _auschecken_ohne_beleg_bilder(worktree: Path, belege: str) -> None:
     )
     if alte.returncode != 0:
         raise NestFehler(f"git ls-files scheiterte: {alte.stderr.decode(errors='replace').strip()[:300]}")
-    bilder = [
-        n
-        for n in alte.stdout.split(b"\0")
-        if n.lower().endswith(BELEG_BILDER) and BELEG_FIXTUR_ORDNER not in n
-    ]
+    bilder = [n for n in alte.stdout.split(b"\0") if n.lower().endswith(BELEG_BILDER) and BELEG_FIXTUR_ORDNER not in n]
     if bilder:
         markiert = subprocess.run(
             ["git", "-C", str(worktree), "update-index", "--skip-worktree", "-z", "--stdin"],
@@ -354,11 +350,12 @@ def git_hooks_einrichten(klon: Path) -> bool:
         log.warning("Push-Sperre nicht eingerichtet: %s fehlt auf %s im Klon %s", GIT_HOOKS_INSTALLER, ref, klon)
         return False
     # Fehlt nur die Sperre: Installer legt den Hook trotzdem an, der warnt dann beim Push.
-    with tempfile.TemporaryDirectory(prefix="to-spawn-hooks-") as tmp:
-        for name, inhalt in inhalte.items():
-            (Path(tmp) / name).write_bytes(inhalt)
-        installer = Path(tmp) / GIT_HOOKS_INSTALLER.name
-        try:
+    # Temp-Ordner + Schreiben mit im try: Platte voll/Rechte dürfen den Start nie abbrechen.
+    try:
+        with tempfile.TemporaryDirectory(prefix="to-spawn-hooks-") as tmp:
+            for name, inhalt in inhalte.items():
+                (Path(tmp) / name).write_bytes(inhalt)
+            installer = Path(tmp) / GIT_HOOKS_INSTALLER.name
             ergebnis = subprocess.run(
                 ["sh", str(installer), str(klon)],
                 capture_output=True,
@@ -366,9 +363,9 @@ def git_hooks_einrichten(klon: Path) -> bool:
                 timeout=GIT_HOOKS_TIMEOUT_S,
                 check=False,
             )
-        except (OSError, subprocess.TimeoutExpired) as fehler:
-            log.warning("Push-Sperre nicht eingerichtet: Installer von %s scheiterte (%s)", ref, fehler)
-            return False
+    except (OSError, subprocess.TimeoutExpired) as fehler:
+        log.warning("Push-Sperre nicht eingerichtet: Installer von %s scheiterte (%s)", ref, fehler)
+        return False
     if ergebnis.returncode != 0:
         log.warning(
             "Push-Sperre nicht eingerichtet: Installer von %s endete mit %d: %s",
