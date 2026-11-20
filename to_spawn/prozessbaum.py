@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -330,6 +331,51 @@ def session_vorfahr(pid: int, *, grenze: int | None = None) -> int | None:
         if ist_session_zeile(zeile):
             return aktuell
     return None
+
+
+def laufende(muster: str) -> list[int]:
+    """PIDs, deren Kommandozeile die Regex ``muster`` trifft — ohne den Fragenden selbst.
+
+    Ersatz für ``pgrep -f`` (#1456, Fehlerkatalog S16/P16): das Muster steht meist auch
+    in der eigenen Kommandozeile oder im Prompt der wartenden Claude-Session, ``pgrep -f``
+    trifft dann sich selbst. Ausgenommen sind deshalb die eigene PID mit allen
+    Vorfahren, jede Claude-Session und jeder Shell-Wrapper (``bash -c '…'``) — gezählt
+    wird nur das Programm, das tatsächlich läuft.
+    """
+    # ponytail: nur Linux (/proc); Windows-Sessions bräuchten _prozesse_windows als Quelle.
+    if _WINDOWS:
+        raise RuntimeError("laufende/warte-lauf liest /proc — nur unter Linux")
+    regex = re.compile(muster)
+    eigene = {os.getpid(), *(pid for pid, _ in _vorfahren_linux(os.getpid()))}
+    raus = []
+    for eintrag in _PROC.iterdir():
+        if not eintrag.name.isdigit() or int(eintrag.name) in eigene:
+            continue
+        zeile = _cmdline_linux(int(eintrag.name)).strip()
+        if zeile and regex.search(zeile) and not ist_session_zeile(zeile) and not ist_wrapper_zeile(zeile):
+            raus.append(int(eintrag.name))
+    return sorted(raus)
+
+
+def warte_auf_lauf(
+    muster: str,
+    frist_s: float,
+    takt_s: float = 1.0,
+    schlafen: Callable[[float], None] = time.sleep,
+) -> bool:
+    """Wartet, bis die jetzt laufenden Treffer von ``laufende(muster)`` beendet sind.
+
+    True = kein Lauf (mehr), False = nach ``frist_s`` lebt noch einer. Später
+    gestartete Läufe zählen nicht — gewartet wird auf das, was beim Aufruf lief.
+    Ein beendeter, noch nicht abgeholter Prozess (Zombie, leere Kommandozeile) gilt
+    als fertig; eine wiedervergebene PID zählt nur, wenn sie das Muster trifft.
+    """
+    pids = set(laufende(muster))
+    for _ in range(round(frist_s / takt_s)):
+        if not pids & set(laufende(muster)):
+            return True
+        schlafen(takt_s)
+    return not pids & set(laufende(muster))
 
 
 def session_beenden(pid: int, protokoll: Path | None = None) -> bool:

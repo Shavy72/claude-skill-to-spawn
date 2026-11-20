@@ -46,6 +46,7 @@ from to_spawn import (  # noqa: E402
     manifest,
     nest,
     probesitz,
+    prozessbaum,
     respawn,
     setup,
     speicher,
@@ -210,6 +211,22 @@ def _befund(args: argparse.Namespace) -> int:
     for zeile in ergebnis.zeilen:
         print(zeile)
     return 0 if ergebnis.ok else 1
+
+
+def _warte_lauf(args: argparse.Namespace) -> int:
+    """Wartet auf einen laufenden Lauf, ohne die eigene Session zu finden (#1456, S16/P16).
+
+    stdout: PIDs der Treffer beim Start, eine je Zeile. Exit 0 = kein Lauf (mehr),
+    1 = Frist abgelaufen, Lauf lebt noch (``--frist 0`` = nur nachsehen).
+    """
+    pids = prozessbaum.laufende(args.muster)
+    for pid in pids:
+        print(pid)
+    if prozessbaum.warte_auf_lauf(args.muster, frist_s=args.frist):
+        log.info("warte-lauf: kein Lauf (mehr) für %r", args.muster)
+        return 0
+    log.info("warte-lauf: Frist %s s abgelaufen, läuft noch: %r", args.frist, args.muster)
+    return 1
 
 
 def _eintrag(args: argparse.Namespace) -> int:
@@ -458,6 +475,11 @@ def main(argv: list[str] | None = None) -> int:
     p_alle.add_argument("--dry-run", action="store_true", help="nur den Plan zeigen")
     unter.add_parser("hook-umzug", help="Stop-Hook: Umzug-Anfrage des Aufsehers (JSON auf stdin)")
 
+    # Warte-Hilfe (#1456): Ersatz für ``while pgrep -f …`` — findet die eigene Session nicht.
+    p_warte = unter.add_parser("warte-lauf", help="warten, bis ein Lauf (Regex auf Kommandozeile) endet")
+    p_warte.add_argument("muster", help="Regex auf die Kommandozeile des Laufs")
+    p_warte.add_argument("--frist", type=float, default=900, help="höchstens so viele Sekunden warten (Vorgabe 900)")
+
     p_eintrag = unter.add_parser("eintrag", help="Klartext-Zeile ins Bau-Log des Tickets")
     p_eintrag.add_argument("--ticket", help="Ticket-Nummer (sonst TO_SPAWN_TICKET/wt-<N>)")
     p_eintrag.add_argument(
@@ -538,6 +560,8 @@ def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     if args.befehl == "eintrag":
         return _eintrag(args)
+    if args.befehl == "warte-lauf":
+        return _warte_lauf(args)
     if args.befehl == "befund":
         return _befund(args)
     if args.befehl == "umrechnen":
