@@ -14,6 +14,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+import pytest
 from test_waechter_213 import (  # noqa: F401  (welt = Fixture)
     LIMIT_ZEILE,
     _aufrufe,
@@ -83,6 +84,7 @@ def test_wache_pausiert_bis_zum_reset_und_faehrt_selbst_weiter(
     assert [m["art"] for m in _mails(welt)] == ["waechter_pause"]
 
 
+@pytest.mark.xfail(strict=True, reason="Ist-Stand vor #1449: ferner/unbekannter Reset hieß session_tot, jetzt Probe-Pause")
 def test_wache_ohne_uhrzeit_meldet_session_tot_und_wartet_nicht(
     welt: dict[str, Path],
 ) -> None:
@@ -101,6 +103,7 @@ def test_wache_ohne_uhrzeit_meldet_session_tot_und_wartet_nicht(
     assert "waechter_pause" not in _log_typen(welt)
 
 
+@pytest.mark.xfail(strict=True, reason="Ist-Stand vor #1449: ferner/unbekannter Reset hieß session_tot, jetzt Probe-Pause")
 def test_wache_wartet_nicht_ueber_die_obergrenze(welt: dict[str, Path]) -> None:
     """Reset Tage weg (Wochen-Limit) → Mail wie heute statt Endlos-Pause."""
     env = {

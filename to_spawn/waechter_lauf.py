@@ -12,7 +12,10 @@ Hintergrund-Faden die neuen Zeilen seines Transkripts
 * Aufseher läuft schon auf dem Ausweich-Modell → Reset-Uhrzeit aus der Limit-Zeile
   lesen (#254): nennt sie eine, pausiert der Aufseher bis dahin (plus Puffer) und
   fährt danach selbst per ``--resume`` weiter; nennt sie keine (oder liegt der
-  Reset mehr als :data:`MAX_WARTE_S` weg), bleibt es bei Mail ``session_tot``.
+  Reset mehr als :data:`MAX_WARTE_S` weg), wird es eine Probe-Pause (#1449): alle
+  :data:`LIMIT_PROBE_TAKT_S` fragt :func:`limit_offen`, ob das Limit früher offen ist,
+  und der Aufseher fährt dann weiter — spätestens am Reset bzw. nach
+  :data:`MAX_PROBE_PAUSE_S`. Erst nach :data:`MAX_PAUSEN` Runden Mail ``session_tot``.
 
 Rückkehr auf das Haupt-Modell (#436): beim Wechsel aufs Ausweich-Modell merkt sich
 :func:`fahre` den Reset-Zeitpunkt der Limit-Zeile plus Puffer (unbekannt → jetzt +
@@ -68,9 +71,17 @@ TAKT_S = 5.0
 WARTE_TRANSKRIPT_S = 60.0
 #: Puffer nach dem Reset, bevor der Aufseher weiterfährt (#254).
 RESET_PUFFER_S = 120.0
-#: Obergrenze der Pause. Darüber (z. B. Wochen-Limit) meldet der Aufseher wie bisher
-#: und bleibt stehen — lieber ein Mensch als eine Pause über Tage.
+#: Obergrenze der blinden Pause bis zum Reset. Liegt der Reset weiter weg (z. B.
+#: Wochen-Limit) oder nennt die Zeile keinen, wird es eine Probe-Pause (#1449).
 MAX_WARTE_S = 6 * 3600.0
+#: Takt der Probe in einer Probe-Pause (#1449): so oft fragt ein kurzes ``claude -p``,
+#: ob das Limit früher wieder offen ist (Guthaben, Abo-Wechsel, Reset früher).
+LIMIT_PROBE_TAKT_S = 15 * 60.0
+#: Längste Probe-Pause (#1449): ein Wochen-Limit plus einen Tag. Danach Neustart wie nach
+#: jeder Pause; greift das Limit sofort wieder, begrenzt :data:`MAX_PAUSEN` die Runden.
+MAX_PROBE_PAUSE_S = 8 * 24 * 3600.0
+#: Sekunden, nach denen eine hängende Probe als „zu“ gilt.
+PROBE_TIMEOUT_S = 120.0
 #: So weit darf ein Reset zurückliegen und noch gelten. Weiter zurück heißt: die Zeile
 #: meint ein anderes Fenster — sonst startet der Aufseher im Takt des Puffers neu (F1).
 RESET_TOLERANZ_S = 120.0
@@ -271,18 +282,62 @@ def warte_sekunden(
     return sekunden
 
 
+def limit_offen(claude: str, modell: str, cwd: Path) -> bool:
+    """Probe (#1449): ist das Nutzungs-Limit von ``modell`` wieder offen?
+
+    Ein kurzes ``claude -p`` ohne gespeicherte Session über dasselbe Programm und Abo wie
+    der Aufseher; ``ANTHROPIC_API_KEY`` fliegt aus der Umgebung, die Probe rechnet nie über
+    den API-Key ab. Offen = Exit 0 und kein Limit-Text. Jeder Fehler zählt als „zu“.
+    """
+    env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
+    try:
+        lauf = starter.starte(
+            [claude, "-p", "--model", modell, "--no-session-persistence", "Antworte nur: ok"],
+            cwd=cwd,
+            warten=True,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=PROBE_TIMEOUT_S,
+            env=env,
+        )
+    except (OSError, subprocess.SubprocessError, starter.StartGesperrt) as fehler:
+        log.info("Limit-Probe %s gescheitert (%s) — gilt als zu.", modell, fehler)
+        return False
+    antwort = f"{lauf.stdout or ''}\n{lauf.stderr or ''}"
+    offen = lauf.returncode == 0 and not _LIMIT_TEXT.search(antwort)
+    log.info("Limit-Probe %s: %s (Exit %s)", modell, "offen" if offen else "zu", lauf.returncode)
+    return offen
+
+
 def _warten(
-    sekunden: float, takt: float, abbruch: Callable[[], bool] | None
+    sekunden: float,
+    takt: float,
+    abbruch: Callable[[], bool] | None,
+    offen: Callable[[], bool] | None = None,
+    probe_takt: float = LIMIT_PROBE_TAKT_S,
 ) -> bool:
-    """Die Pause absitzen; ``False``, wenn ``abbruch`` vorher greift (z. B. Umzug, #212)."""
+    """Die Pause absitzen; ``False``, wenn ``abbruch`` vorher greift (z. B. Umzug, #212).
+
+    Mit ``offen`` (Probe, #1449) endet die Pause früher, sobald ``offen()`` — alle
+    ``probe_takt`` Sekunden gefragt — ``True`` meldet.
+    """
     ende = time.monotonic() + sekunden
+    probe_ab = time.monotonic() + probe_takt
     while True:
         if abbruch is not None and abbruch():
             return False
-        rest = ende - time.monotonic()
-        if rest <= 0:
+        jetzt = time.monotonic()
+        if jetzt >= ende:
             return True
-        time.sleep(min(takt, rest))
+        if offen is not None and jetzt >= probe_ab:
+            if offen():
+                return True
+            probe_ab = time.monotonic() + probe_takt
+            continue
+        naechste = probe_ab - jetzt if offen is not None else float("inf")
+        time.sleep(max(0.0, min(takt, ende - jetzt, naechste)))
 
 
 class Aufsicht(threading.Thread):
@@ -908,6 +963,8 @@ def fahre(
     hoechstens: float = MAX_WARTE_S,
     effort: str = "",
     grenze: int | None = None,
+    probe_takt: float = LIMIT_PROBE_TAKT_S,
+    probe_hoechstens: float = MAX_PROBE_PAUSE_S,
 ) -> int:
     """Aufseher starten und beaufsichtigen; Rückgabe = Exit-Code der letzten Session.
 
@@ -917,7 +974,9 @@ def fahre(
     Die Gesprächs-ID landet in ``<repo>/.to-spawn/sessions/wache-<S>.json`` (R2).
     Auf dem Ausweich-Modell wartet der Aufseher das Limit aus, wenn die Limit-Zeile
     eine Reset-Uhrzeit nennt (#254): ``puffer`` Sekunden obendrauf, länger als
-    ``hoechstens`` wird nie gewartet. Nach dem Limit kehrt der Aufseher aufs Haupt-Modell
+    ``hoechstens`` wird nie blind gewartet — weiter weg oder unbekannt heißt Probe-Pause
+    (#1449): alle ``probe_takt`` s :func:`limit_offen`, höchstens ``probe_hoechstens`` s.
+    Nach dem Limit kehrt der Aufseher aufs Haupt-Modell
     ``modell`` zurück (#436). ``grenze`` (Token, Test-Naht): Handoff-Grenze für die
     erzwungene Ablösung; ``None`` → :func:`handoff_grenze` des laufenden Modells.
     """
@@ -957,6 +1016,7 @@ def fahre(
         limit = threading.Event()
         gruende: list[str] = []
         pause: list[tuple[datetime, float]] = []
+        probe = threading.Event()  # Pause endet früher, sobald die Probe „offen“ meldet (#1449)
         auf_ausweich = not ausweich or modell == ausweich
         # Der Rückruf braucht die ganze Limit-Zeile (Reset-Uhrzeit, #254); die Aufsicht
         # legt sie vorher in ``limit_eintrag`` ab, deshalb wird sie zuerst gebaut.
@@ -985,6 +1045,7 @@ def fahre(
             _pause: list[tuple[datetime, float]] = pause,
             _aufsicht: Aufsicht = aufsicht,
             _runde: int = pausen + 1,
+            _probe: threading.Event = probe,
         ) -> None:
             _gruende.append(text)
             _limit.set()
@@ -1012,11 +1073,16 @@ def fahre(
                 )
                 return
             if ziel is None or wartezeit is None:
-                # Keine brauchbare Uhrzeit → wie vor #254: melden, Fenster stehen lassen.
-                _melde_stillstand(
-                    repo, spec, sid, _modell, text, "keine brauchbare Reset-Uhrzeit"
+                # Reset fern, unbekannt oder veraltet (#1449): nicht aufgeben, sondern
+                # Probe-Pause — sie endet, sobald das Limit offen ist, spätestens am Reset.
+                fern = (
+                    warte_sekunden(ziel, puffer=puffer, hoechstens=float("inf"))
+                    if ziel is not None
+                    else None
                 )
-                return
+                wartezeit = min(probe_hoechstens if fern is None else fern, probe_hoechstens)
+                ziel = datetime.now().astimezone() + timedelta(seconds=wartezeit)
+                _probe.set()
             _pause.append((ziel, wartezeit))
             _beende(_proc)
 
@@ -1084,7 +1150,8 @@ def fahre(
                 ziel,
                 wartezeit,
             )
-            if not _warten(wartezeit, takt, abbruch):
+            offen = (lambda _m=modell: limit_offen(claude, _m, cwd)) if probe.is_set() else None
+            if not _warten(wartezeit, takt, abbruch, offen, probe_takt):
                 log.info("Aufseher #%s: Abbruch während der Limit-Pause.", spec)
                 return 0
             _log_zeile(
@@ -1111,7 +1178,7 @@ def fahre(
                 remote_control,
                 spec,
                 f"Weiter als Bau-Aufseher Spec #{spec}: Das Nutzungs-Limit ist seit "
-                f"{ziel.astimezone():%H:%M} wieder offen, die Pause ist vorbei. "
+                f"{datetime.now().astimezone():%H:%M} wieder offen, die Pause ist vorbei. "
                 f"Nächster Tick wie gehabt (python scripts/capo.py {spec}); "
                 f"docs/agents/bau_log/{spec}.jsonl beim nächsten Handoff-Commit mitnehmen.",
             )

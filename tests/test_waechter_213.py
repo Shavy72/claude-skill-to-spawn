@@ -680,6 +680,9 @@ from pathlib import Path
 args = sys.argv[1:]
 with open(os.environ["FAKE_PROTOKOLL"], "a", encoding="utf-8") as fh:
     fh.write(json.dumps(args) + "\n")
+if "-p" in args and "--session-id" not in args and "--resume" not in args:
+    print("ok")  # Limit-Probe (#1449): Limit offen
+    sys.exit(0)
 if "--resume" in args:
     sys.exit(0)
 sid = args[args.index("--session-id") + 1]
@@ -708,6 +711,7 @@ def _wache_welt(welt: dict[str, Path]) -> dict[str, str]:
         "FAKE_PROTOKOLL": str(welt["tmp"] / "claude_aufrufe.jsonl"),
         "FAKE_LIMIT": json.dumps(LIMIT_ZEILE, ensure_ascii=False),
         "TO_SPAWN_AUFSICHT_TAKT": "0.2",
+        "TO_SPAWN_LIMIT_PROBE_S": "0.3",  # Limit-Probe (#1449) im Test-Takt
         # Start-Tür (#1406): unter Test startet nur, was in diesem Ordner liegt.
         "TO_SPAWN_TEST_BIN": str(binaer),
     }

@@ -412,6 +412,14 @@ def main() -> int:
                 abbruch=lambda: umzug_datei.exists() or abloese_datei.exists(),
                 session_id=session_id,
                 effort=effort,
+                probe_takt=waechter_lauf.zahl_aus_umgebung(
+                    "TO_SPAWN_LIMIT_PROBE_S", waechter_lauf.LIMIT_PROBE_TAKT_S
+                )
+                or waechter_lauf.LIMIT_PROBE_TAKT_S,
+                probe_hoechstens=waechter_lauf.zahl_aus_umgebung(
+                    "TO_SPAWN_LIMIT_PROBE_MAX_S", waechter_lauf.MAX_PROBE_PAUSE_S
+                )
+                or waechter_lauf.MAX_PROBE_PAUSE_S,
             )
             umzug_daten = umzug.lies_umzug(umzug_datei)
             if umzug_daten is not None:

@@ -195,6 +195,7 @@ def test_wache_steht_nach_mehreren_pausen_still(welt: dict[str, Path]) -> None:
     assert "blockiert" in typen, "Stillstand muss eine Spur im Bau-Log hinterlassen"
 
 
+@pytest.mark.xfail(strict=True, reason="Ist-Stand vor #1449: ferner/unbekannter Reset hieß session_tot, jetzt Probe-Pause")
 def test_wache_ohne_uhrzeit_schreibt_blockiert_ins_bau_log(
     welt: dict[str, Path],
 ) -> None:
