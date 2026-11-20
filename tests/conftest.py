@@ -118,6 +118,8 @@ def _hausmeister_nur_im_test(
     monkeypatch.setenv("TO_SPAWN_HAUSMEISTER_PLATTE", "1")
     # #1371: keine echten GitHub-Remotes — sonst löschte ein Test alte sicherung/*-Zweige.
     monkeypatch.setenv("TO_SPAWN_HAUSMEISTER_ZWEIG_REPOS", "")
+    # #1439: Zweig-Lauf fasst keine echten Hauptrepos an (leer = keine).
+    monkeypatch.setenv("TO_SPAWN_HAUSMEISTER_HAUPTREPOS", "")
     # #1372: Docker-Reste nie echt — „true“ statt docker, keine Staging-Sperre.
     monkeypatch.setenv("TO_SPAWN_HAUSMEISTER_DOCKER", shutil.which("true") or "/bin/true")
     monkeypatch.setenv("TO_SPAWN_STAGING_SPERRE", str(ordner / "keine-staging-sperre"))
