@@ -28,6 +28,8 @@ Eine Mail je Spec (#586), zusätzlich zum Aufruf oben:
   Vermerk „Rückblick fehlgeschlagen: …“ raus. Gleicher Mail-Schlüssel wie oben.
   Exit 0 = verschickt/schon verschickt/Probe, 1 = Mail-Befehl gescheitert, 2 = keine Ablage,
   3 = wartet noch.
+* Beide verweigern mit Exit 4, solange capo die Spec führt, aber nicht „SPEC FERTIG“ meldet (#1410):
+  das Fertig-Urteil fällt nur capo, nie die Aufseher-Session.
 """
 
 from __future__ import annotations
@@ -368,6 +370,26 @@ def _zeit(text: str | None, ap: argparse.ArgumentParser, schalter: str) -> datet
         ap.error(f"{schalter} „{text}“: erwartet ISO-Zeitpunkt wie 2026-10-06T10:00:00+02:00")
 
 
+#: Exit-Code, wenn capo die Spec führt, aber nicht „fertig“ meldet (#1410).
+NICHT_FERTIG = 4
+
+
+def capo_sperre(repo: Path, spec: int) -> bool:
+    """``True`` = Aufruf verweigert: das Urteil „Spec fertig“ fällt nur capo (#1410).
+
+    Führt capo die Spec (Zustandsdatei da), braucht ``ablegen``/``nachsehen`` dessen
+    ``spec_fertig_seit`` — sonst könnte die Aufseher-Session die Abschluss-Mail an capo vorbei
+    anstoßen (z. B. Staging nicht lesbar, #1407). Ohne Zustandsdatei (Handlauf) keine Sperre.
+    """
+    if capo.fertig_urteil(repo, spec) != "":
+        return False
+    sys.stderr.write(
+        f"FEHLER: capo meldet Spec {spec} nicht fertig — Abschluss nur nach capo-„SPEC FERTIG“ (#1410), "
+        "nichts abgelegt/verschickt.\n"
+    )
+    return True
+
+
 def ablegen(argv: list[str]) -> int:
     """Paket bauen und ablegen, nicht mailen. Eine schon abgelegte SPEC-FERTIG-Zeit bleibt."""
     if _geheimnis_abbruch(argv):
@@ -377,6 +399,8 @@ def ablegen(argv: list[str]) -> int:
     a = ap.parse_args(argv)
     repo = _repo(a.repo)
     p, neue_form = _paket(a, ap, repo)
+    if capo_sperre(repo, p.spec):
+        return NICHT_FERTIG
     datei = ablage_pfad(repo, p.spec, p.stand)
     fertig = _zeit(a.spec_fertig, ap, "--spec-fertig").isoformat(timespec="seconds")
     alt = melder.lade_json(datei)
@@ -467,7 +491,7 @@ def nachsehen(argv: list[str]) -> int:
     """Mail verschicken, sobald Rückblick + Thermo da sind (oder WARTE_MINUTEN um sind).
 
     Exit 0 = verschickt/schon verschickt/Probe, 1 = Mail-Befehl gescheitert, 2 = keine Ablage,
-    3 = wartet noch auf einen Marker.
+    3 = wartet noch auf einen Marker, 4 = capo meldet nicht fertig (#1410).
     """
     ap = argparse.ArgumentParser(description="Abgelegtes Abschluss-Paket als eine Mail verschicken.")
     ap.add_argument("spec", type=int)
@@ -477,6 +501,8 @@ def nachsehen(argv: list[str]) -> int:
     ap.add_argument("--dry-run", action="store_true", help="Mailtext zeigen, nichts schreiben, nichts mailen")
     a = ap.parse_args(argv)
     repo = _repo(a.repo)
+    if capo_sperre(repo, a.spec):
+        return NICHT_FERTIG
     datei = ablage_pfad(repo, a.spec, a.stand)
     ablage = melder.lade_json(datei)
     try:

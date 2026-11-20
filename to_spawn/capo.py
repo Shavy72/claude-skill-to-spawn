@@ -1730,6 +1730,19 @@ def _zustand_datei(repo: Path, gh_repo: str, spec: int) -> Path:
     return melder.zustand_ordner() / f"{melder.repo_kennung(repo, gh_repo)}_{spec}.json"
 
 
+def fertig_urteil(repo: Path, spec: int, gh_repo: str = "") -> str | None:
+    """capos Urteil „Spec fertig“ für Aufrufer außerhalb des Ticks (#1410).
+
+    ``None`` = capo führt die Spec nicht (keine Zustandsdatei, z. B. Handlauf) · ``""`` = capo führt
+    sie, meldet aber (noch) nicht fertig · sonst der Zeitpunkt ``spec_fertig_seit``. Das Urteil
+    selbst fällt nur :func:`tick` (``erg.fertig``); hier wird es nur gelesen.
+    """
+    datei = _zustand_datei(repo, gh_repo, spec)
+    if not datei.is_file():
+        return None
+    return str(melder.lade_json(datei).get("spec_fertig_seit") or "")
+
+
 def _sperr_versuch(fh: Any) -> bool | None:
     """Nicht blockierend sperren: ``True`` = gesperrt, ``False`` = belegt, ``None`` = kein Werkzeug."""
     try:
@@ -2596,6 +2609,7 @@ def _tick(
             )
         if not dry_run and not zustand.get("spec_fertig_seit"):
             zustand["spec_fertig_seit"] = jetzt.astimezone().isoformat(timespec="seconds")
+            sichern()  # abschluss_paket.py liest das Urteil aus der Datei (#1410) — noch in diesem Tick
         if not zustand.get("staging_schalter_erledigt"):
             # Staging-Hauptschalter der Spec AN (#563, Spec #548 E3) — Live nie automatisch.
             try:
