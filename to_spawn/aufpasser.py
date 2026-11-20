@@ -2131,12 +2131,19 @@ class Aufpasser:
 
     # -- Ein Lauf ----------------------------------------------------------------
 
-    def start_erlaubt(self, spec: str, repo: Path, ticket: int | None) -> bool:
-        """Regel 1: kein Start bei Stopp-Label oder wenn das Fenster in 6 h schon
-        ``START_MAX``-mal gestartet wurde (es verschwindet offenbar wieder).
-        ``ticket`` None = Aufseher-Fenster (kein Label, Start-Gedächtnis ``wache-<S>``)."""
+    def halt_der_spec(self, repo: Path) -> halt.Halt | None:
+        """Halt der Spec (#1444); im Trockenlauf wird nichts aufgehoben."""
+        return halt.pruefen(repo, aufheben=not self.e.trocken, wer="aufpasser")
+
+    def start_erlaubt(
+        self, spec: str, repo: Path, ticket: int | None, *, halt_geprueft: bool = False
+    ) -> bool:
+        """Regel 1: kein Start bei Halt der Spec, Stopp-Label oder wenn das Fenster in
+        6 h schon ``START_MAX``-mal gestartet wurde (es verschwindet offenbar wieder).
+        ``ticket`` None = Aufseher-Fenster (kein Label, Start-Gedächtnis ``wache-<S>``).
+        ``halt_geprueft``: Aufrufer hat den Halt für diese Spec schon geprüft."""
         name = f"bau {ticket}" if ticket is not None else f"wache {spec}"
-        angehalten = halt.pruefen(repo)  # Halt der Spec (#1444)
+        angehalten = None if halt_geprueft else self.halt_der_spec(repo)
         if angehalten is not None:
             log.info("%s: %s — kein Start", name, angehalten.text())
             return False
@@ -2255,24 +2262,28 @@ class Aufpasser:
             sorted(offen) or "-",
         )
         fehlend = [t for t in sorted(offen) if f"bau {t}" not in vorhanden]
+        angehalten = self.halt_der_spec(repo)  # einmal je Spec (#1444)
+        if angehalten is not None:
+            log.info("%s: %s — kein Start", sitzung, angehalten.text())
         # Läuft das Ticket schon in einer Fenster-Kette (oder folgt dort noch),
         # kein eigenes Fenster — sonst zwei Sessions auf einem Ticket (#598).
-        belegt = self.belegte_tickets() if fehlend else set()
-        for ticket in fehlend:
+        belegt = self.belegte_tickets() if fehlend and angehalten is None else set()
+        for ticket in fehlend if angehalten is None else []:
             if ticket in belegt:
                 log.info(
                     "%s: #%d läuft in einer Fenster-Kette — kein Start", sitzung, ticket
                 )
                 continue
-            if not self.start_erlaubt(spec, repo, ticket):
+            if not self.start_erlaubt(spec, repo, ticket, halt_geprueft=True):
                 continue
             self.fehlendes_fenster(sitzung, spec, repo, ticket)
         # Aufseher-Fenster fehlt (R2): nachstarten, solange die Spec offene Tickets
         # hat — ist sie fertig, hat der Aufseher sich regulär beendet.
         if (
             offen
+            and angehalten is None
             and f"wache {spec}" not in vorhanden
-            and self.start_erlaubt(spec, repo, None)
+            and self.start_erlaubt(spec, repo, None, halt_geprueft=True)
         ):
             self.fehlendes_fenster(sitzung, spec, repo, None)
         for f in fenster:

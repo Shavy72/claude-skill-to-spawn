@@ -276,3 +276,105 @@ def test_unlesbare_halt_datei_wirft_nie(klon: Path, caplog: pytest.LogCaptureFix
     assert halt.pruefen(klon) is not None
     os.utime(datei, (alt, alt))
     assert halt.pruefen(klon) is None  # Löschen scheitert ⇒ Warnung, keine Ausnahme
+
+
+# -- Fix-Runde 2 (Review #1444) ---------------------------------------------------
+
+
+def _aufpasser(tmp_path: Path, trocken: bool):
+    from to_spawn import aufpasser
+
+    return aufpasser.Aufpasser(
+        aufpasser.Einstellungen(zustand=tmp_path / "zustand", tmux_socket="nie-benutzt", trocken=trocken)
+    )
+
+
+def test_aufpasser_trockenlauf_aendert_nichts(klon: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Punkt 1: Trockenlauf des Aufpassers hebt einen erfüllten Halt nicht auf, schreibt keinen Merker."""
+    vorbei = (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat()
+    halt.anlegen(klon, "kurz", halt.Bedingung("bis", vorbei))
+    pa = _aufpasser(tmp_path, trocken=True)
+    assert pa.start_erlaubt("1307", klon, None) is True  # würde aufgehoben ⇒ Start im Probelauf gezeigt
+    assert (klon / halt.DATEI).exists()
+    assert [z["ereignis"] for z in _log(klon)] == ["angelegt"]
+    # Nicht prüfbar im Trockenlauf ⇒ auch kein Merker.
+    assert halt.aufheben(klon, "test")
+    monkeypatch.setenv("GH_STUB_KAPUTT", "1346")
+    halt.anlegen(klon, "Vorrang", halt.Bedingung("ticket_zu", "1346"))
+    assert pa.start_erlaubt("1307", klon, None) is False
+    assert not (klon / halt.MERKER_DATEI).exists()
+
+
+def test_aufheben_nennt_wer_hebt(klon: Path, tmp_path: Path) -> None:
+    """Befund 5: Log nennt, wer aufgehoben hat (Aufpasser/Befehl), nicht immer „takt“."""
+    vorbei = (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat()
+    halt.anlegen(klon, "kurz", halt.Bedingung("bis", vorbei))
+    assert _aufpasser(tmp_path, trocken=False).start_erlaubt("1307", klon, None) is True
+    assert _log(klon)[-1]["wer_hebt"] == "aufpasser"
+    halt.anlegen(klon, "kurz", halt.Bedingung("bis", vorbei))
+    assert halt.main(["--repo-dir", str(klon), "pruefen"]) == 0
+    assert _log(klon)[-1]["wer_hebt"] == "befehl"
+
+
+def test_aufpasser_prueft_halt_einmal_je_spec(klon: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Befund 6: ``sitzung_pruefen`` prüft den Halt einmal je Spec, nicht je fehlendem Fenster."""
+    from to_spawn import aufpasser
+
+    pa = _aufpasser(tmp_path, trocken=True)
+    spaeter = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+    halt.anlegen(klon, "Nachtruhe", halt.Bedingung("bis", spaeter))
+    echt = halt.pruefen
+    aufrufe: list[Path] = []
+
+    def zaehlen(k: Path, **kw: object) -> object:
+        aufrufe.append(k)
+        return echt(k, **kw)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(aufpasser.halt, "pruefen", zaehlen)
+    monkeypatch.setattr(pa, "offene_tickets", lambda spec, repo: {5, 6, 7})
+    monkeypatch.setattr(pa, "belegte_tickets", lambda: set())
+    gestartet: list[object] = []
+    monkeypatch.setattr(pa, "fehlendes_fenster", lambda *a: gestartet.append(a))
+    pa.sitzung_pruefen("spec-1307", "1307", [], klon)
+    assert gestartet == []
+    assert len(aufrufe) == 1
+
+
+def test_commit_bedingung_drin_nicht_drin_unbekannt(klon: Path, tmp_path: Path) -> None:
+    """Befund 8: Commit auf origin/master ⇒ auf; nur lokal ⇒ bleibt; unbekannter SHA ⇒ bleibt + Merker."""
+    _mit_origin(klon, tmp_path)
+    _git(klon, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "zwei")
+    lokal = _git(klon, "rev-parse", "HEAD")
+    halt.anlegen(klon, "warte", halt.Bedingung("commit", lokal))
+    assert halt.pruefen(klon) is not None  # nur lokal, nicht auf origin/master
+    _git(klon, "push", "-q", "origin", "master")
+    assert halt.pruefen(klon) is None
+    # Unbekannter SHA (Datei von Hand, an anlegen vorbei) ⇒ nicht prüfbar ⇒ bleibt.
+    (klon / halt.DATEI).write_text(
+        json.dumps(
+            {
+                "grund": "Tippfehler",
+                "seit": datetime.now(timezone.utc).isoformat(),
+                "wer": "t",
+                "bedingung": {"art": "commit", "wert": "deadbeefdeadbeef"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert halt.pruefen(klon) is not None
+    assert (klon / halt.MERKER_DATEI).exists()
+
+
+def test_befehlszeile_anlegen_pruefen_aufheben(klon: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """Befund 9: ganzer Weg über ``main``; doppeltes Anlegen ⇒ Exit 2."""
+    spaeter = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+    basis = ["--repo-dir", str(klon)]
+    assert halt.main([*basis, "anlegen", "--grund", "Nachtruhe", "--bis", spaeter, "--wer", "leit"]) == 0
+    assert halt.main([*basis, "anlegen", "--grund", "noch einer", "--bis", spaeter]) == 2
+    assert halt.main([*basis, "pruefen"]) == 0
+    assert "Nachtruhe" in capsys.readouterr().out
+    assert halt.main([*basis, "aufheben", "--wer", "leit"]) == 0
+    assert not (klon / halt.DATEI).exists()
+    assert halt.main([*basis, "pruefen"]) == 0
+    assert capsys.readouterr().out.strip().endswith("Kein Halt.")
+    assert [z["ereignis"] for z in _log(klon)] == ["angelegt", "aufgehoben"]
