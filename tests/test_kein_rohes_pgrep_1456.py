@@ -48,9 +48,13 @@ def _dateien(root: Path) -> list[Path]:
             check=True,
             timeout=30,
         ).stdout.decode("utf-8", errors="replace")
-        return sorted(root / n for n in ausgabe.split("\0") if n)
+        dateien = sorted(root / n for n in ausgabe.split("\0") if n)
+        if dateien:
+            return dateien
     except (OSError, subprocess.SubprocessError):
-        return sorted(d for d in root.rglob("*") if not {".git", ".review"} & set(d.relative_to(root).parts))
+        pass
+    # git ohne Treffer (z. B. Ordner liegt in äußerem Repo, das ihn ignoriert) = wie git-Fehler
+    return sorted(d for d in root.rglob("*") if not {".git", ".review"} & set(d.relative_to(root).parts))
 
 
 def _fundstellen(root: Path = REPO) -> list[str]:
@@ -68,6 +72,7 @@ def _fundstellen(root: Path = REPO) -> list[str]:
 
 
 def test_kein_rohes_pgrep_f_in_skripten_und_vorlagen() -> None:
+    assert "to_spawn.py" in {d.name for d in _dateien(REPO)}, "Prüf-Check hat nichts geprüft (to_spawn.py fehlt in der Dateiliste)"
     funde = _fundstellen()
     assert funde == [], (
         "Rohes `pgrep -f` findet die eigene Session (S16/P16) — stattdessen "
@@ -174,3 +179,13 @@ def test_git_repo_prueft_nur_verwaltete_dateien(tmp_path: Path) -> None:
     (tmp_path / "warte.sh").write_text("pgrep -f x\n", encoding="utf-8")
     funde = _fundstellen(tmp_path)
     assert len(funde) == 1 and funde[0].startswith("warte.sh:1")
+
+
+def test_ignorierender_aeusserer_git_ordner_prueft_trotzdem(tmp_path: Path) -> None:
+    """Skill-Ordner liegt in äußerem Repo, das ihn ignoriert: git meldet Exit 0 mit leerer Liste."""
+    subprocess.run(["git", "-C", str(tmp_path), "init", "-q"], check=True)
+    (tmp_path / ".gitignore").write_text("skill/\n", encoding="utf-8")
+    skill = tmp_path / "skill"
+    skill.mkdir()
+    (skill / "warte.sh").write_text("while pgrep -f x; do sleep 1; done\n", encoding="utf-8")
+    assert len(_fundstellen(skill)) == 1
