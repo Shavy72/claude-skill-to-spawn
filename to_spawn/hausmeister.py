@@ -71,6 +71,13 @@ Modus (Trockenlauf verbraucht den Tag des echten Laufs nicht). Gelesen wird übe
 Zwischenspeicher nur mit Commits (``--filter=tree:0``) neben dem Log. Jede Löschung =
 eine JSON-Zeile im Hausmeister-Log (Feld ``zweig``), vor dem Löschen. Test-Naht
 ``TO_SPAWN_HAUSMEISTER_ZWEIG_REPOS``: Remote-URLs (Leerzeichen-getrennt, leer = keine).
+
+Vierte Tür (#1374): :func:`halb_angelegt_entfernen` entfernt für den Anleger
+(``nest.worktree_anlegen``) einen eben angelegten Worktree, dessen Füllen scheiterte —
+ohne die Lösch-Regeln oben, denn er trägt noch keine Arbeit; nur Worktrees, die im
+übergebenen Hauptrepo eingetragen sind. Ausnahme zu „Log nicht schreibbar ⇒ bleibt“:
+hier wird trotzdem entfernt, ein stehender leerer Ordner wäre schädlicher. Die
+Zeile „gelöscht“ folgt hier erst nach dem Entfernen (je Ordner eine Zeile).
 """
 
 from __future__ import annotations
@@ -1222,6 +1229,101 @@ def _unlesbar_pruefen(pid: int, basis: Path, fehler: OSError) -> None:
         return
     if basis.exists():
         raise _Bleibt(f"Prozess {pid}: /proc nicht lesbar ({fehler})")
+
+
+# --- Vierte Tür: halb angelegter Ordner (#1374) ----------------------------------
+
+
+def halb_angelegt_entfernen(hauptrepo: Path, worktree: Path, neuer_zweig: str | None = None) -> bool:
+    """Entfernt einen eben angelegten Worktree, dessen Füllen gescheitert ist; wirft nie.
+
+    Nur für den Anleger (``nest.worktree_anlegen``) direkt nach dem Fehlschlag: der
+    Ordner wurde mit ``--no-checkout`` angelegt und trägt noch keine Arbeit, darum
+    gelten die Lösch-Regeln von :func:`aufraeumen` (Ticket zu, 24 h, Sicherung) hier
+    nicht. Bliebe er stehen, kehrte der nächste Anleger-Aufruf früh zurück und die
+    Session arbeitete in einem leeren Ordner, in dem alles als gelöscht gilt.
+
+    ``neuer_zweig``: Zweig, den der Anleger eben erst erzeugt hat; er geht mit weg.
+    Ein schon vorhandener Zweig trägt Arbeit und wird nie übergeben. Commits eines
+    vorhandenen Zweigs überleben ``worktree remove`` ohnehin im Hauptrepo.
+
+    Rückgabe ``True`` = Ordner weg. ``False`` = er blieb; Grund im Hausmeister-Log
+    (``fehler=True``). Anders als bei :func:`aufraeumen` löscht ein nicht schreibbares
+    Log hier trotzdem: der leere Ordner wäre schädlicher als eine fehlende Log-Zeile.
+    """
+    ticket = _nummer(worktree.name, _NAME_MUSTER)
+    if not _als_worktree_eingetragen(hauptrepo, worktree):
+        _log_schreiben(
+            Ergebnis(
+                worktree,
+                "bleibt",
+                "halb angelegt, aber kein Worktree dieses Hauptrepos: nicht angefasst",
+                ticket,
+                trocken=False,
+                fehler=True,
+            )
+        )
+        log.error("%s ist kein Worktree von %s, bleibt stehen", worktree, hauptrepo)
+        return False
+    try:
+        # Bekanntes Hauptrepo statt Ableitung aus dem halben Ordner: ist er kein
+        # Worktree, liefe git sonst die Eltern hoch und träfe ein fremdes Repo.
+        aufpasser.git_lauf(hauptrepo, "worktree", "remove", "--force", str(worktree))
+    except (RuntimeError, OSError) as fehler:
+        _log_schreiben(
+            Ergebnis(
+                worktree,
+                "bleibt",
+                f"halb angelegt, Entfernen scheiterte: {fehler}",
+                ticket,
+                trocken=False,
+                fehler=True,
+            )
+        )
+        log.error("Halber Worktree %s ließ sich nicht entfernen: %s", worktree, fehler)
+        return False
+    try:
+        aufpasser.git_lauf(hauptrepo, "worktree", "prune")
+    except (RuntimeError, OSError) as fehler:
+        log.warning("git worktree prune nach %s scheiterte: %s", worktree, fehler)
+    # Zeile erst nach dem Entfernen: je Ordner genau eine Zeile „gelöscht“ oder „bleibt“.
+    _log_schreiben(
+        Ergebnis(
+            worktree,
+            "gelöscht",
+            "halb angelegt: Füllen scheiterte (#1374)",
+            ticket,
+            trocken=False,
+        )
+    )
+    if neuer_zweig:
+        try:
+            aufpasser.git_lauf(hauptrepo, "branch", "-D", neuer_zweig)
+        except (RuntimeError, OSError) as fehler:
+            _log_schreiben(
+                Ergebnis(
+                    worktree,
+                    "bleibt",
+                    f"halb angelegt, Ordner weg, Zweig {neuer_zweig} blieb: {fehler}",
+                    ticket,
+                    trocken=False,
+                    fehler=True,
+                )
+            )
+            log.error("Neuer Zweig %s blieb stehen: %s", neuer_zweig, fehler)
+    return True
+
+
+def _als_worktree_eingetragen(hauptrepo: Path, worktree: Path) -> bool:
+    """True, wenn ``worktree`` in ``git worktree list`` von ``hauptrepo`` steht (kein Hauptordner)."""
+    try:
+        liste = aufpasser.git_lauf(hauptrepo, "worktree", "list", "--porcelain")
+    except (RuntimeError, OSError) as fehler:
+        log.warning("git worktree list in %s scheiterte: %s", hauptrepo, fehler)
+        return False
+    pfade = [z[len("worktree ") :] for z in liste.splitlines() if z.startswith("worktree ")]
+    ziel = worktree.resolve()
+    return any(Path(x).resolve() == ziel for x in pfade[1:])
 
 
 # --- Löschen + Log --------------------------------------------------------------
