@@ -806,6 +806,7 @@ def sichern(
     ticket: int,
     jetzt: float | None = None,
     zusatz_koepfe: Sequence[str] = (),
+    kopf: str | None = None,
 ) -> str | None:
     """Arbeitsstand als Commit auf ``sicherung/<N>`` sichern und pushen.
 
@@ -818,8 +819,12 @@ def sichern(
     ``zusatz_koepfe`` (Refs/SHAs, z. B. lokale Zweige mit Commits auf keinem Remote):
     werden zusätzliche Eltern, damit der Push sie mitnimmt — dann gibt es auch bei
     sauberem Baum einen Commit (Baum = ``HEAD``). Leer ⇒ Verhalten wie zuvor (#1368).
+
+    ``kopf`` (Zweig ohne Arbeitsordner, Hausmeister #1439): sichert diesen Stand statt
+    ``HEAD`` + Arbeitsdateien — Baum = Baum von ``kopf``, keine Datei aus dem Ordner
+    (im Hauptrepo läge dort fremde Arbeit); geht auch im Bare-Repo. Immer ein Commit.
     """
-    if not zusatz_koepfe and not worktree_schmutzig(worktree):
+    if kopf is None and not zusatz_koepfe and not worktree_schmutzig(worktree):
         return None
     handle, index = tempfile.mkstemp(prefix="aufpasser-index-")
     os.close(handle)
@@ -827,11 +832,15 @@ def sichern(
     env = {**os.environ, **GIT_IDENTITAET, "GIT_INDEX_FILE": index}
     ref = f"refs/heads/sicherung/{ticket}"
     try:
-        kopf = _git(worktree, "rev-parse", "HEAD").strip()
-        _git(worktree, "read-tree", kopf, env=env)
-        ausschluss = [f":(exclude,glob){m}" for m in SICHERUNG_AUSSCHLUSS]
-        _git(worktree, "add", "-A", "--", ".", *ausschluss, env=env)
-        baum = _git(worktree, "write-tree", env=env).strip()
+        if kopf is None:
+            kopf = _git(worktree, "rev-parse", "HEAD").strip()
+            _git(worktree, "read-tree", kopf, env=env)
+            ausschluss = [f":(exclude,glob){m}" for m in SICHERUNG_AUSSCHLUSS]
+            _git(worktree, "add", "-A", "--", ".", *ausschluss, env=env)
+            baum = _git(worktree, "write-tree", env=env).strip()
+        else:
+            kopf = _git(worktree, "rev-parse", "--verify", f"{kopf}^{{commit}}").strip()
+            baum = _git(worktree, "rev-parse", f"{kopf}^{{tree}}").strip()
         eltern = ["-p", kopf]
         vorige = _ref_lesen(worktree, ref)
         gesehen = {kopf}

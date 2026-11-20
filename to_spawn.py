@@ -215,6 +215,21 @@ def _aufraeumen(args: argparse.Namespace, ap: argparse.ArgumentParser) -> int:
             print(f"Altbestand-Liste nicht geschrieben: {fehler}", file=sys.stderr)
             return 1
         return 0
+    if args.zweige_probelauf:
+        try:
+            print(hausmeister.zweige_probelauf(args.zweige_probelauf))
+        except OSError as fehler:
+            print(f"Probelauf-Liste nicht geschrieben: {fehler}", file=sys.stderr)
+            return 1
+        return 0
+    if args.zweig:  # Zweig-Tür (#1439), z. B. aus der Deploy-Schlange
+        if not args.repo:
+            ap.error("aufraeumen --zweig braucht --repo")
+        erg = hausmeister.zweig_aufraeumen(
+            args.repo, args.zweig, uebernommen_tip=args.uebernommen_tip, loeschen=args.loeschen
+        )
+        print(f"{erg.zweig}: {erg.art} ({erg.grund}) [{'trocken' if erg.trocken else 'echt'}]")
+        return 1 if erg.fehler else 0
     if args.alles:
         ergebnisse = hausmeister.aufraeumen_alles(loeschen=args.loeschen)
     elif args.ordner:
@@ -570,6 +585,13 @@ def main(argv: list[str] | None = None) -> int:
     p_aufr.add_argument("--trocken", action="store_true", help="mit --aufgabe-einrichten: nur zeigen")
     p_aufr.add_argument(
         "--altbestand-liste", type=Path, metavar="DATEI.md", help="Lösch-Liste für David schreiben"
+    )
+    # Ticket-Zweige (#1439): ein Zweig (Schlange) bzw. Probelauf-Liste aller Zweige.
+    p_aufr.add_argument("--zweig", help="Zweig ticket/<N>-… aufräumen (statt eines Ordners)")
+    p_aufr.add_argument("--repo", help="mit --zweig: Repo-Pfad (sein origin zählt)")
+    p_aufr.add_argument("--uebernommen-tip", help="mit --zweig: Stand, den die Schlange übernahm")
+    p_aufr.add_argument(
+        "--zweige-probelauf", type=Path, metavar="DATEI", help="Probelauf-Liste aller Ticket-Zweige"
     )
     # Aufpasser (#236): Cron-Hausmeister für die tmux-Fenster; gleiche Argumente wie
     # ``skripte/aufpasser.py``.

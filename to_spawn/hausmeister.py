@@ -17,8 +17,10 @@ zählt nur ``--remotes=origin``. Beim Klon (``.git`` ist Ordner) zählen alle lo
 Refs außer ``refs/remotes`` (Zweige, Tags, Notes) + HEAD, denn mit dem Klon sterben
 sie alle; ein Stash bleibt. Beim verknüpften Worktree (``.git`` ist Datei) nur HEAD:
 die übrigen Refs gehören dem Hauptrepo und überleben das ``worktree remove`` — sie
-dort mitzusichern hieße fremde Arbeit als „Sicherung #N“ hochzuladen. Gesichert wird
-über :func:`to_spawn.aufpasser.sichern` (ohne ``SICHERUNG_AUSSCHLUSS``).
+dort mitzusichern hieße fremde Arbeit als „Sicherung #N“ hochzuladen. Den lokalen Zweig
+des Worktrees räumt :func:`_loeschen` danach über die Zweig-Tür (#1439) im Hauptrepo
+weg, nach deren Regeln. Gesichert wird über :func:`to_spawn.aufpasser.sichern` (ohne
+``SICHERUNG_AUSSCHLUSS``).
 
 Dateien, die die Sicherung NICHT mitnimmt, gehen beim Löschen verloren — darum:
 - Geheimnisse (``SICHERUNG_AUSSCHLUSS``, z. B. ``.env*``, ``*.key``), geändert, neu
@@ -72,7 +74,24 @@ Zwischenspeicher nur mit Commits (``--filter=tree:0``) neben dem Log. Jede Lösc
 eine JSON-Zeile im Hausmeister-Log (Feld ``zweig``), vor dem Löschen. Test-Naht
 ``TO_SPAWN_HAUSMEISTER_ZWEIG_REPOS``: Remote-URLs (Leerzeichen-getrennt, leer = keine).
 
-Vierte Tür (#1374): :func:`halb_angelegt_entfernen` entfernt für den Anleger
+Vierte Tür (#1439): :func:`zweig_aufraeumen` räumt einen fertigen Zweig ``ticket/<N>-…``
+weg — auf dem Remote (Vorgabe) oder lokal im Hauptrepo; immer sichern → prüfen →
+löschen. Fertig (:func:`zweig_fertig`, einzige Stelle): die Schlange hat genau diesen
+Stand übernommen (``uebernommen_tip``, dann fehlt nichts — nach ihrem Rebase stehen
+dieselben Änderungen unter anderen SHAs auf master) oder Ticket #N ist zu; fehlend =
+Commits weder auf ``origin/master`` noch auf einem ``sicherung/*``-Zweig, nie
+``git branch --merged``. Fehlendes geht erst über :func:`aufpasser.sichern` (``kopf=``,
+ohne Arbeitsdateien) nach ``sicherung/<N>``, Gegenprobe, dann Remote-Löschen mit Lease
+auf den geprüften Stand bzw. lokal ``branch -D`` (nie, wenn in einem Worktree
+ausgecheckt). Ohne Ticket-Nummer bleibt der Zweig und steht in :func:`liste_fuer_david`.
+Remote-Zweige liest der Zwischenspeicher der Sicherungs-Zweige. :func:`zweige_aufraeumen`
+läuft im Takt von :func:`aufraeumen_alles` höchstens täglich je Modus: je Hauptrepo
+``fetch --prune`` + ``worktree prune`` (nur echt), lokale ``ticket/*`` ohne Arbeitsordner,
+dann alle ``ticket/*`` der Sicherungs-Remotes. Test-Naht ``TO_SPAWN_HAUSMEISTER_HAUPTREPOS``
+(Pfade, Leerzeichen-getrennt, leer = keine). :func:`zweige_probelauf` schreibt die Liste
+für David, ohne etwas zu ändern.
+
+Fünfte Tür (#1374): :func:`halb_angelegt_entfernen` entfernt für den Anleger
 (``nest.worktree_anlegen``) einen eben angelegten Worktree, dessen Füllen scheiterte —
 ohne die Lösch-Regeln oben, denn er trägt noch keine Arbeit; nur Worktrees, die im
 übergebenen Hauptrepo eingetragen sind. Ausnahme zu „Log nicht schreibbar ⇒ bleibt“:
@@ -284,6 +303,7 @@ def _alle_ordner(*, loeschen: bool, jetzt: float | None) -> Rundgang:
     except Exception as fehler:  # Vertrag: wirft nie
         log.exception("Hausmeister: Aufräumen gescheitert (Ordnersuche/Reihenfolge)")
         _sicherungen_im_takt(loeschen, jetzt)
+        _zweige_im_takt(loeschen, jetzt)
         return Rundgang(
             False, f"Ordnersuche gescheitert ({type(fehler).__name__}: {fehler})"
         )
@@ -296,6 +316,7 @@ def _alle_ordner(*, loeschen: bool, jetzt: float | None) -> Rundgang:
         if erg.art != "bleibt" and not erg.trocken:
             anteil = _frei_anteil()
     _sicherungen_im_takt(loeschen, jetzt)
+    _zweige_im_takt(loeschen, jetzt)
     return Rundgang(True, "", tuple(ergebnisse))
 
 
@@ -305,6 +326,14 @@ def _sicherungen_im_takt(loeschen: bool, jetzt: float | None) -> None:
         sicherungen_aufraeumen(loeschen=loeschen, jetzt=jetzt)
     except Exception:  # Vertrag: wirft nie — Ordner-Ergebnisse gehen vor
         log.exception("Hausmeister: Sicherungs-Zweige gescheitert")
+
+
+def _zweige_im_takt(loeschen: bool, jetzt: float | None) -> None:
+    """#1439: Ticket-Zweige im Takt von :func:`aufraeumen_alles` (Tür begrenzt auf täglich)."""
+    try:
+        zweige_aufraeumen(loeschen=loeschen, jetzt=jetzt)
+    except Exception:  # Vertrag: wirft nie — Ordner-Ergebnisse gehen vor
+        log.exception("Hausmeister: Ticket-Zweige gescheitert")
 
 
 def start_erlaubt(*, loeschen: bool = True) -> tuple[bool, str]:
@@ -409,7 +438,10 @@ def _aufraeumen(
 
 
 def liste_fuer_david(log_datei: Path | None = None) -> list[Path]:
-    """Ordner aller Log-Zeilen mit ``fuer_david=True``, jeder nur einmal (Reihenfolge des Logs)."""
+    """Ordner aller Log-Zeilen mit ``fuer_david=True``, jeder nur einmal (Reihenfolge des Logs).
+
+    Zweig-Zeilen (#1439) erscheinen als ``<remote> <zweig>``.
+    """
     datei = log_datei or _log_pfad()
     try:
         zeilen = datei.read_text(encoding="utf-8").splitlines()
@@ -421,8 +453,12 @@ def liste_fuer_david(log_datei: Path | None = None) -> list[Path]:
             daten = json.loads(zeile)
         except ValueError:
             continue
-        if isinstance(daten, dict) and daten.get("fuer_david") and daten.get("ordner"):
+        if not isinstance(daten, dict) or not daten.get("fuer_david"):
+            continue
+        if daten.get("ordner"):
             gesehen.setdefault(Path(daten["ordner"]), None)
+        elif daten.get("zweig"):
+            gesehen.setdefault(Path(f"{daten.get('remote') or ''} {daten['zweig']}"), None)
     return list(gesehen)
 
 
@@ -440,16 +476,18 @@ _SICHERUNG_REF = re.compile(r"^refs/sicherung/(\d+)$")
 
 @dataclass(frozen=True)
 class ZweigErgebnis:
-    """Entscheidung für einen Zweig ``sicherung/<N>`` (oder einen Remote-Fehler)."""
+    """Entscheidung für einen Zweig ``sicherung/<N>`` bzw. ``ticket/*`` (#1439) oder einen Fehler."""
 
-    remote: str
-    zweig: str  # "sicherung/<N>"; leer bei Fehler am ganzen Remote
+    remote: str  # Remote-URL; bei ``ort="lokal"`` der Pfad des Hauptrepos
+    zweig: str  # "sicherung/<N>" / "ticket/…"; leer bei Fehler am ganzen Remote/Repo
     sha: str
     angelegt: float | None
-    art: Literal["gelöscht", "bleibt"]
+    art: Literal["gelöscht", "gesichert+gelöscht", "bleibt"]
     grund: str
     trocken: bool = True
     fehler: bool = False
+    ort: Literal["remote", "lokal"] = "remote"
+    fuer_david: bool = False
 
 
 def sicherungen_aufraeumen(
@@ -699,8 +737,343 @@ def _zweig_log(erg: ZweigErgebnis) -> bool:
             "grund": erg.grund,
             "trocken": erg.trocken,
             "fehler": erg.fehler,
+            "ort": erg.ort,
+            "fuer_david": erg.fuer_david,
         }
     )
+
+
+# --- Ticket-Zweige (#1439) --------------------------------------------------------
+
+Ort = Literal["remote", "lokal"]
+
+
+class _Nachgeschoben(RuntimeError):
+    """Zweig steht beim Löschen nicht mehr auf dem geprüften Stand (Lease hielt)."""
+
+
+@dataclass(frozen=True)
+class _ZweigOrt:
+    """Wo ein Zweig gelesen wird: Zwischenspeicher des Remotes oder lokales Hauptrepo."""
+
+    cwd: Path
+    remote: str  # Remote-URL bzw. Pfad des Hauptrepos (Ergebnis, Log)
+    ort: Ort
+
+    def ref(self, zweig: str) -> str:
+        return f"refs/zweige/{zweig}" if self.ort == "remote" else f"refs/heads/{zweig}"
+
+    @property
+    def master(self) -> str:
+        return "refs/haupt/master" if self.ort == "remote" else "refs/remotes/origin/master"
+
+    def sicherung(self, nr: int) -> str:
+        basis = "refs/sicherung" if self.ort == "remote" else "refs/remotes/origin/sicherung"
+        return f"{basis}/{nr}"
+
+    @property
+    def sicherungen(self) -> str:
+        return "refs/sicherung/*" if self.ort == "remote" else "refs/remotes/origin/sicherung/*"
+
+
+def zweig_fertig(
+    repo: Path | str,
+    zweig: str,
+    *,
+    uebernommen_tip: str | None = None,
+    ort: Ort = "remote",
+) -> tuple[bool, list[str], str]:
+    """(übernommen?, fehlende Commits, Grund) für ``zweig`` — die einzige „fertig“-Stelle.
+
+    Übernommen = Zweig ``ticket/<N>-…`` und (``uebernommen_tip`` ist genau der aktuelle
+    Stand oder Ticket #N zu). Fehlend = Commits weder auf ``origin/master`` noch auf
+    einem ``sicherung/*``-Zweig; hat die Schlange genau diesen Stand übernommen, fehlt
+    nichts (ihr Rebase brachte dieselben Änderungen unter anderen SHAs auf master).
+    Holt vorher den aktuellen Stand (fetch). ``repo``: Pfad (bei ``ort="remote"`` zählt
+    dessen origin) oder Remote-URL. git-/gh-Fehler ⇒ RuntimeError.
+    """
+    nr = _zweig_ticket(zweig)
+    if nr is None:
+        return False, [], "keine Ticket-Nummer im Zweig (nur ticket/<N>-…)"
+    o = _zweig_ort(repo, ort)
+    _zweig_holen(o)
+    stand = _zweig_stand(o, zweig)
+    if stand is None:
+        return False, [], f"{zweig} gibt es {'auf origin' if ort == 'remote' else 'lokal'} nicht"
+    tip = (uebernommen_tip or "").strip().lower()
+    if len(tip) >= 7 and stand.startswith(tip):
+        return True, [], f"Schlange hat genau diesen Stand übernommen ({stand[:7]})"
+    fehlende = _zweig_fehlende(o, stand)
+    daten = _ticket_daten(nr)
+    if not isinstance(daten, dict) or "state" not in daten:
+        raise RuntimeError(f"Ticket #{nr} nicht abfragbar")
+    if str(daten["state"]).upper() != "CLOSED":
+        anders = f"Stand {stand[:7]} ≠ übernommen {tip[:7]}, " if tip else ""
+        return False, fehlende, f"{anders}Ticket #{nr} offen"
+    if fehlende:
+        return True, fehlende, f"Ticket #{nr} zu, {len(fehlende)} Commit(s) nur auf dem Zweig"
+    return True, [], f"Ticket #{nr} zu, alles auf master oder sicherung/*"
+
+
+def zweig_aufraeumen(
+    repo: Path | str,
+    zweig: str,
+    *,
+    uebernommen_tip: str | None = None,
+    loeschen: bool = False,
+    ort: Ort = "remote",
+) -> ZweigErgebnis:
+    """Räumt einen fertigen Zweig weg: sichern → prüfen → löschen; wirft nie.
+
+    Trocken (``loeschen=False``) ändert nichts, auch nicht die Sicherung; ``art`` zeigt
+    dann, was der echte Lauf täte. Jede Entscheidung = eine Zeile im Hausmeister-Log.
+    """
+    try:
+        return _zweig_entscheiden(repo, zweig, uebernommen_tip, not loeschen, ort)
+    except Exception as fehler:  # Vertrag: wirft nie
+        log.exception("Hausmeister: Zweig %s in %s", zweig, repo)
+        erg = ZweigErgebnis(str(repo), zweig, "", None, "bleibt", f"Fehler: {fehler}", not loeschen, True, ort)
+        _zweig_log(erg)
+        return erg
+
+
+def zweige_aufraeumen(*, loeschen: bool = False, jetzt: float | None = None) -> list[ZweigErgebnis]:
+    """Täglicher Lauf über alle ``ticket/*``-Zweige (Hauptrepos lokal + Remotes); wirft nie.
+
+    Höchstens einmal täglich je Modus, sonst ``[]``. Erreicht der Lauf kein Repo und
+    keinen Remote, bleibt der Tag offen (nächster Takt versucht es wieder).
+    """
+    jetzt = time.time() if jetzt is None else jetzt
+    modus = "zweige-loeschen" if loeschen else "zweige-trocken"
+    if not _sicherung_takt_faellig(modus, jetzt):
+        return []
+    ergebnisse, erreicht = _zweige_lauf(loeschen)
+    if erreicht:
+        _sicherung_takt_merken(modus, jetzt)
+    return ergebnisse
+
+
+def zweige_probelauf(datei: Path) -> Path:
+    """Probelauf (nie löschend): eine Zeile je Zweig mit Gruppe nach ``datei``; ``wip/*`` gezählt."""
+    ergebnisse, _ = _zweige_lauf(False)
+    zeit = datetime.now().astimezone().isoformat(timespec="seconds")
+    zeilen = [f"Probelauf Ticket-Zweige (#1439), {zeit} — nichts gelöscht, nichts gesichert", ""]
+    zeilen += [_probe_zeile(e) for e in ergebnisse]
+    zeilen += [""] + _wip_zaehlen()
+    datei.parent.mkdir(parents=True, exist_ok=True)
+    datei.write_text("\n".join(zeilen) + "\n", encoding="utf-8")
+    return datei
+
+
+def _zweig_entscheiden(repo: Path | str, zweig: str, tip: str | None, trocken: bool, ort: Ort) -> ZweigErgebnis:
+    def ergebnis(art: Art | str, grund: str, sha: str = "", **extra: bool) -> ZweigErgebnis:
+        erg = ZweigErgebnis(quelle, zweig, sha, None, art, grund, trocken, ort=ort, **extra)  # type: ignore[arg-type]
+        _zweig_log(erg)
+        return erg
+
+    quelle = str(repo)
+    nr = _zweig_ticket(zweig)
+    if nr is None:
+        return ergebnis("bleibt", "keine Ticket-Nummer im Zweig — David entscheidet", fuer_david=True)
+    o = _zweig_ort(repo, ort)
+    quelle = o.remote
+    if ort == "lokal" and (wo := _ausgecheckt_in(o.cwd, zweig)):
+        return ergebnis("bleibt", f"in Arbeitsordner {wo} ausgecheckt")
+    fertig, fehlende, grund = zweig_fertig(repo, zweig, uebernommen_tip=tip, ort=ort)
+    sha = _zweig_stand(o, zweig) or ""
+    if not fertig or not sha:
+        return ergebnis("bleibt", grund, sha)
+    art = "gesichert+gelöscht" if fehlende else "gelöscht"
+    if fehlende and ort == "lokal":  # Remote-Commits liegen schon auf GitHub, lokale nicht
+        leck = aufpasser.git_lauf(
+            o.cwd, "log", "--format=", "--name-only", sha, "--not", o.master,
+            f"--glob={o.sicherungen}", "--", *_glob(aufpasser.SICHERUNG_AUSSCHLUSS),
+        ).split()  # fmt: skip
+        if leck:
+            return ergebnis("bleibt", f"Geheimnis-Datei {leck[0]} in ungesichertem Commit", sha, fuer_david=True)
+    if trocken:
+        return ergebnis(art, grund, sha)
+    if fehlende:
+        try:
+            _zweig_sichern(o, nr, sha)
+        except RuntimeError as fehler:
+            return ergebnis("bleibt", f"Sicherung gescheitert: {fehler}", sha, fehler=True)
+        if _zweig_fehlende(o, sha):  # Gegenprobe gegen den frisch geholten Remote-Stand
+            return ergebnis("bleibt", "nach der Sicherung fehlen noch Commits", sha, fehler=True)
+        grund = f"{grund}, gesichert auf sicherung/{nr}"
+    erg = ZweigErgebnis(quelle, zweig, sha, None, art, grund, False, ort=ort)  # type: ignore[arg-type]
+    if not _zweig_log(erg):  # Log vor dem Löschen
+        return replace(erg, art="bleibt", grund="Hausmeister-Log nicht schreibbar — ohne Log kein Löschen", fehler=True)
+    try:
+        _zweig_weg(o, zweig, sha)
+    except _Nachgeschoben as fehler:
+        return ergebnis("bleibt", f"nach der Prüfung nachgeschoben, nächster Lauf entscheidet neu ({fehler})", sha)
+    except RuntimeError as fehler:
+        return ergebnis("bleibt", f"Löschen gescheitert: {fehler}", sha, fehler=True)
+    return erg
+
+
+def _zweige_lauf(loeschen: bool) -> tuple[list[ZweigErgebnis], bool]:
+    """Ein Lauf über Hauptrepos (lokal) und Remotes; (Ergebnisse, irgendwas erreicht?)."""
+    ergebnisse: list[ZweigErgebnis] = []
+    hauptrepos, remotes = _hauptrepos(), _sicherung_remotes()
+    erreicht = not (hauptrepos or remotes)
+    for repo in hauptrepos:
+        try:
+            _git_ohne_frage(repo, "fetch", "-q", "--prune", "origin")
+            if loeschen:  # trocken ändert nichts, auch keine Worktree-Verwaltung
+                aufpasser.git_lauf(repo, "worktree", "prune")
+            zweige = _refs(repo, "refs/heads/ticket/", "refs/heads/")
+            belegt = _ausgecheckte(repo)
+            erreicht = True
+        except (RuntimeError, OSError) as fehler:  # ein Repo hält die übrigen nicht auf
+            ergebnisse.append(_zweig_fehler(str(repo), "lokal", loeschen, fehler))
+            continue
+        for zweig in zweige:
+            if zweig not in belegt:
+                ergebnisse.append(zweig_aufraeumen(repo, zweig, loeschen=loeschen, ort="lokal"))
+    for remote in remotes:
+        try:
+            o = _zweig_ort(remote, "remote")
+            _zweig_holen(o)
+            zweige = _refs(o.cwd, "refs/zweige/ticket/", "refs/zweige/")
+            erreicht = True
+        except (RuntimeError, OSError) as fehler:
+            ergebnisse.append(_zweig_fehler(remote, "remote", loeschen, fehler))
+            continue
+        # ponytail: zweig_fertig holt je Zweig neu (ein fetch je Zweig), Sammel-Fetch, falls zu langsam.
+        ergebnisse += [zweig_aufraeumen(remote, z, loeschen=loeschen) for z in zweige]
+    return ergebnisse, erreicht
+
+
+def _zweig_fehler(remote: str, ort: Ort, loeschen: bool, fehler: Exception) -> ZweigErgebnis:
+    log.warning("Hausmeister: Ticket-Zweige in %s: %s", remote, fehler)
+    erg = ZweigErgebnis(remote, "", "", None, "bleibt", f"Fehler: {fehler}", not loeschen, True, ort)
+    _zweig_log(erg)
+    return erg
+
+
+def _hauptrepos() -> list[Path]:
+    roh = os.environ.get("TO_SPAWN_HAUSMEISTER_HAUPTREPOS")
+    if roh is not None:
+        return [Path(p).expanduser() for p in roh.split()]
+    # ponytail: nur ~/<Name> (Bau-Server); Laptop-Pfade per Naht, falls dort nötig.
+    return [Path.home() / n for n in HAUPTREPO_NAMEN if (Path.home() / n / ".git").is_dir()]
+
+
+def _zweig_ticket(zweig: str) -> int | None:
+    treffer = _ZWEIG_MUSTER.match(zweig)
+    return int(treffer.group(1)) if treffer and zweig.startswith("ticket/") else None
+
+
+def _zweig_ort(repo: Path | str, ort: Ort) -> _ZweigOrt:
+    if ort == "lokal":
+        return _ZweigOrt(Path(repo), str(repo), "lokal")
+    url = str(repo)
+    if Path(url).is_dir():
+        url = aufpasser.git_lauf(Path(url), "config", "--get", "remote.origin.url").strip()
+    return _ZweigOrt(_sicherung_cache(url), url, "remote")
+
+
+def _zweig_holen(o: _ZweigOrt) -> None:
+    if o.ort == "lokal":
+        _git_ohne_frage(o.cwd, "fetch", "-q", "--prune", "origin")
+        return
+    _git_ohne_frage(
+        o.cwd, "fetch", "-q", "--prune", "--no-tags", "origin",
+        f"+refs/heads/master:{o.master}",
+        "+refs/heads/sicherung/*:refs/sicherung/*",
+        "+refs/heads/ticket/*:refs/zweige/ticket/*",
+    )  # fmt: skip
+
+
+def _zweig_stand(o: _ZweigOrt, zweig: str) -> str | None:
+    return _git_oder_none(o.cwd, "rev-parse", "--verify", "-q", f"{o.ref(zweig)}^{{commit}}") or None
+
+
+def _zweig_fehlende(o: _ZweigOrt, sha: str) -> list[str]:
+    """Commits von ``sha``, die weder auf master noch auf einem ``sicherung/*`` liegen."""
+    return aufpasser.git_lauf(o.cwd, "rev-list", sha, "--not", o.master, f"--glob={o.sicherungen}").split()
+
+
+def _zweig_sichern(o: _ZweigOrt, nr: int, sha: str) -> None:
+    """``sha`` auf ``sicherung/<nr>`` (Aufpasser-Weg, #1371 liest die Anlegezeit), dann holen."""
+    if o.ort == "remote":  # eigener Zwischenspeicher: maßgeblich ist der Remote-Stand
+        _git_oder_none(o.cwd, "update-ref", "-d", f"refs/heads/sicherung/{nr}")
+    zusatz = [o.sicherung(nr)] if _git_oder_none(o.cwd, "rev-parse", "--verify", "-q", o.sicherung(nr)) else []
+    aufpasser.sichern(o.cwd, nr, kopf=sha, zusatz_koepfe=zusatz)
+    _git_ohne_frage(o.cwd, "fetch", "-q", "origin", f"+refs/heads/sicherung/{nr}:{o.sicherung(nr)}")
+
+
+def _zweig_weg(o: _ZweigOrt, zweig: str, sha: str) -> None:
+    """Löscht nur, wenn der Zweig noch auf ``sha`` steht; sonst :class:`_Nachgeschoben`."""
+    if o.ort == "remote":
+        try:
+            _zweig_loeschen(o.cwd, zweig, sha)
+        except RuntimeError as fehler:
+            if "stale info" in str(fehler) or "[rejected]" in str(fehler):
+                raise _Nachgeschoben(str(fehler)) from None
+            raise
+        return
+    if wo := _ausgecheckt_in(o.cwd, zweig):
+        raise _Nachgeschoben(f"inzwischen in {wo} ausgecheckt")
+    if _zweig_stand(o, zweig) != sha:
+        raise _Nachgeschoben("lokal weitergeschrieben")
+    aufpasser.git_lauf(o.cwd, "branch", "-D", zweig)
+
+
+def _refs(repo: Path, praefix: str, ab: str) -> list[str]:
+    roh = aufpasser.git_lauf(repo, "for-each-ref", "--format=%(refname)", praefix)
+    return [r[len(ab) :] for r in roh.split()]
+
+
+def _ausgecheckte(repo: Path) -> dict[str, str]:
+    """Zweig → Arbeitsordner aller in ``repo`` ausgecheckten Zweige (auch das Hauptrepo)."""
+    belegt: dict[str, str] = {}
+    ordner = ""
+    for zeile in aufpasser.git_lauf(repo, "worktree", "list", "--porcelain").splitlines():
+        if zeile.startswith("worktree "):
+            ordner = zeile[len("worktree ") :]
+        elif zeile.startswith("branch refs/heads/"):
+            belegt[zeile[len("branch refs/heads/") :]] = ordner
+    return belegt
+
+
+def _ausgecheckt_in(repo: Path, zweig: str) -> str | None:
+    return _ausgecheckte(repo).get(zweig)
+
+
+def _probe_zeile(e: ZweigErgebnis) -> str:
+    wo = f"{e.remote} [{e.ort}]"
+    if not e.zweig:
+        return f"{wo}: Fehler — {e.grund}"
+    if e.art == "gelöscht":
+        gruppe = f"löschen ({e.grund})"
+    elif e.art == "gesichert+gelöscht":
+        gruppe = f"sichern+löschen ({e.grund})"
+    elif _zweig_ticket(e.zweig) is None:
+        gruppe = "ohne Ticket-Nummer"
+    else:
+        gruppe = f"bleibt: {e.grund}"
+    return f"{wo} {e.zweig}: {gruppe}"
+
+
+def _wip_zaehlen() -> list[str]:
+    """Nur zählen (#1439, Out of Scope: wip/* löschen) — je Hauptrepo und Remote eine Zeile."""
+    zeilen = []
+    for repo in _hauptrepos():
+        try:
+            n = len(_refs(repo, "refs/heads/wip/", "refs/heads/"))
+            zeilen.append(f"{repo} [lokal] wip/*: {n} Zweig(e), nur gezählt — bleiben")
+        except RuntimeError as fehler:
+            zeilen.append(f"{repo} [lokal] wip/*: nicht zählbar ({fehler})")
+    for remote in _sicherung_remotes():
+        try:
+            roh = _git_ohne_frage(_sicherung_cache(remote), "ls-remote", "--heads", "origin", "refs/heads/wip/*")
+            zeilen.append(f"{remote} [remote] wip/*: {len(roh.splitlines())} Zweig(e), nur gezählt — bleiben")
+        except RuntimeError as fehler:
+            zeilen.append(f"{remote} [remote] wip/*: nicht zählbar ({fehler})")
+    return zeilen
 
 
 # --- Regeln ---------------------------------------------------------------------
@@ -1332,8 +1705,11 @@ def _als_worktree_eingetragen(hauptrepo: Path, worktree: Path) -> bool:
 def _loeschen(ordner: Path, ist_worktree: bool) -> None:
     if ist_worktree:
         hauptrepo = _hauptrepo(ordner)
+        zweig = _git_oder_none(ordner, "symbolic-ref", "--short", "-q", "HEAD")
         aufpasser.git_lauf(hauptrepo, "worktree", "remove", "--force", str(ordner))
         aufpasser.git_lauf(hauptrepo, "worktree", "prune")
+        if zweig and zweig.startswith("ticket/"):  # #1439: wirft nie, entscheidet selbst
+            zweig_aufraeumen(hauptrepo, zweig, loeschen=True, ort="lokal")
     elif sys.version_info >= (3, 12):
         shutil.rmtree(ordner, onexc=hausmeister_windows.schreibschutz_weg)
     else:
