@@ -152,9 +152,7 @@ def platz_frei(
     if frei is None and sessions is None:
         return True, "Speicher: kein Urteil (/proc nicht lesbar) — Start erlaubt"
     if frei is not None and frei < werte["min_frei_mib"]:
-        return False, (
-            f"Speicher knapp: {_gb_text(frei)} frei, Mindestmaß {_gb_text(werte['min_frei_mib'])}"
-        )
+        return False, (f"Speicher knapp: {_gb_text(frei)} frei, Mindestmaß {_gb_text(werte['min_frei_mib'])}")
     if sessions is not None and sessions >= werte["max_sessions"]:
         return False, f"schon {sessions} Claude-Sessions (Obergrenze {werte['max_sessions']})"
     frei_text = _gb_text(frei) if frei is not None else "unbekannt"
@@ -215,48 +213,62 @@ def _platte_pruefen(loeschen: bool = True) -> tuple[bool, str]:
     return hausmeister.start_erlaubt(loeschen=loeschen)
 
 
+def _platte_knapp() -> bool:
+    """Nur messen: herrscht Platznot (der Start-Check räumt dann lange auf)?
+
+    Messung unmöglich oder Fehler ⇒ ``True`` (lieber eine Warte-Zeile zu viel)."""
+    from to_spawn import hausmeister  # spät: hausmeister → aufpasser → speicher
+
+    try:
+        anteil = hausmeister._frei_anteil()
+    except Exception:  # Messfehler: wie Platznot behandeln, Start-Check entscheidet
+        log.exception("Platte: Vorab-Messung gescheitert")
+        return True
+    return anteil is None or hausmeister._ist_platznot(anteil)
+
+
 def auf_platte_warten(
     *,
     wer: str = "Session",
     pruefen: Callable[[], tuple[bool, str]] = _platte_pruefen,
     schlafen: Callable[[float], object] = time.sleep,
     takt_s: int = PLATTE_TAKT_S,
+    knapp: Callable[[], bool] | None = None,
 ) -> int:
     """Wartet, bis der Hausmeister die Platte für einen Start frei gibt; Rückgabe = Wartezyklen.
 
     Wie :func:`auf_platz_warten`: das Fenster bleibt offen, der Grund steht auf stderr
-    und im Log. ``pruefen``/``schlafen`` sind Test-Türen.
+    und im Log. ``pruefen``/``schlafen``/``knapp`` sind Test-Türen. Bei genug Platz
+    bleibt alles still — „wartet“ erscheint nur, wenn wirklich gewartet wird.
+    ``knapp=None``: mit dem echten Start-Check misst :func:`_platte_knapp`; mit einer
+    eingesetzten Prüf-Tür gilt Platznot (die Tür spielt den langen Hausmeister-Lauf).
     """
-    # Schon vor der ersten Prüfung eine Zeile mit WARTE_TEXT: bei Platznot räumt der
-    # Hausmeister darin synchron auf (gh/git, Minuten) — respawn erkennt daran das Warten.
-    vorab = f"{wer} {WARTE_TEXT} auf der Platte: Hausmeister prüft"
-    print(vorab, file=sys.stderr)
-    log.info("%s", vorab)
+    if knapp is None:
+        knapp = _platte_knapp if pruefen is _platte_pruefen else (lambda: True)
+    # Bei Platznot schon vor der ersten Prüfung eine Zeile mit WARTE_TEXT: der
+    # Hausmeister räumt darin synchron auf (gh/git, Minuten) — respawn erkennt daran
+    # das Warten. Ohne Platznot ist die Prüfung kurz, eine Vorab-Zeile wäre falsch.
+    if knapp():
+        vorab = f"{wer} {WARTE_TEXT} auf der Platte: Hausmeister prüft"
+        print(vorab, file=sys.stderr)
+        log.info("%s", vorab)
     zyklen = 0
     while True:
         frei, grund = pruefen()
         if frei:
             if zyklen:
-                text = (
-                    f"{wer}: Speicher auf der Platte wieder frei nach {zyklen} "
-                    f"Wartezyklen — {grund}"
-                )
+                text = f"{wer}: Speicher auf der Platte wieder frei nach {zyklen} Wartezyklen — {grund}"
                 print(text, file=sys.stderr)
                 log.info("%s", text)
             return zyklen
         zyklen += 1
-        text = (
-            f"{wer} {WARTE_TEXT} auf der Platte (Zyklus {zyklen}, Takt {takt_s} s): "
-            f"{grund}"
-        )
+        text = f"{wer} {WARTE_TEXT} auf der Platte (Zyklus {zyklen}, Takt {takt_s} s): {grund}"
         print(text, file=sys.stderr)
         log.info("%s", text)
         schlafen(takt_s)
 
 
-def cli(
-    konfig: dict[str, Any] | None, nur_staffel: bool = False, trocken: bool = False
-) -> int:
+def cli(konfig: dict[str, Any] | None, nur_staffel: bool = False, trocken: bool = False) -> int:
     """Unterbefehl ``to_spawn.py speicher``: Stand drucken, Exit 0 = frei, 5 = voll,
     7 = Platte voll (Start-Check des Hausmeisters, vor der RAM-Prüfung).
 
