@@ -10,10 +10,12 @@ Regeln (alle hier, nirgends sonst):
 - Nie während eines Staging-Neubaus: ``scripts/staging/staging_deploy.sh`` hält die
   ganze Zeit (Image-Bau bis Rauchtest) eine flock-Sperre auf
   :data:`STAGING_SPERRE_STANDARD`. Ist sie belegt, passiert nichts, der nächste Takt
-  versucht es neu. Die Sperre wird nur geprüft und sofort wieder frei gegeben, damit ein
-  gleichzeitig startender Staging-Deploy nicht an „anderer Deploy läuft“ scheitert.
-  Zweite Sicherung dafür: :data:`MINDEST_ALTER` — Images und Cache jünger als 24 h
-  bleiben immer, also auch alles, was ein gerade startender Neubau braucht.
+  versucht es neu. Ist sie frei, hält dieser Lauf sie selbst, bis beide Befehle fertig
+  sind — ``image prune -a`` sieht nur das Bau-Datum, ein Grund-Image wie
+  ``python:3.12-slim`` fiele sonst mitten in einen gerade startenden Neubau. Ein
+  Staging-Deploy wartet so lange (``flock -w`` in ``staging_deploy.sh``, länger als
+  2 × :data:`ZEITLIMIT_S`). Sperre nicht prüfbar (Rechte, Ordner) ⇒ im Zweifel nicht
+  räumen. :data:`MINDEST_ALTER`: Images und Cache jünger als 24 h bleiben immer.
 - Nur die Befehle in :data:`BEFEHLE`: ``image prune`` und ``builder prune``. Nie
   ``volume``, nie ``system prune`` (``--volumes`` wäre dort ein Schalter weg) —
   Volumes wie ``werkstatt-live_werkstatt-arbeit`` bleiben unberührt. Der stündliche
@@ -35,7 +37,7 @@ import subprocess
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Literal
+from typing import IO, Literal
 
 try:
     import fcntl
@@ -48,7 +50,7 @@ ABSTAND_S = 24 * 3600
 MINDEST_ALTER = "until=24h"
 STAGING_SPERRE_STANDARD = "/home/bau/staging/.deploy.lock"
 STAND_DATEI = "docker_reste.jsonl"
-ZEITLIMIT_S = 15 * 60
+ZEITLIMIT_S = 5 * 60  # je Befehl; Staging-Deploy wartet bis 15 min
 #: Die einzigen Docker-Befehle dieses Moduls (Prüf-Test: nie „volume“).
 BEFEHLE: tuple[tuple[str, ...], ...] = (
     ("image", "prune", "-a", "-f", "--filter", MINDEST_ALTER),
@@ -79,11 +81,17 @@ def _freigeben(ordner: Path, jetzt: float) -> Ausgang:
         return "kein_server"
     stand = ordner / STAND_DATEI
     letzte = _letzter_lauf(stand)
-    if letzte is not None and jetzt - letzte < ABSTAND_S:
+    if letzte is not None and 0 <= jetzt - letzte < ABSTAND_S:
         return "nicht_faellig"
-    if _staging_baut():
+    sperre = _staging_sperre_nehmen()
+    if sperre is None:
         log.info("Docker-Reste: Staging-Neubau läuft — nächster Takt")
         return "staging_baut"
+    with sperre:  # Schließen gibt die flock-Sperre frei
+        return _laufen(stand, jetzt)
+
+
+def _laufen(stand: Path, jetzt: float) -> Ausgang:
     zeile: dict[str, object] = {"zeit": jetzt, "uhrzeit": _uhrzeit(jetzt)}
     fehler: list[str] = []
     for befehl in BEFEHLE:
@@ -98,8 +106,11 @@ def _freigeben(ordner: Path, jetzt: float) -> Ausgang:
     if fehler:
         zeile["fehler"] = fehler
     _anhaengen(stand, zeile)
-    (log.warning if fehler else log.info)("Docker-Reste: %s", zeile)
-    return "fehler" if fehler else "freigegeben"
+    if fehler:
+        log.warning("Docker-Reste: %s", zeile)
+        return "fehler"
+    log.info("Docker-Reste: %s", zeile)
+    return "freigegeben"
 
 
 def _docker(befehl: tuple[str, ...]) -> tuple[bool, str]:
@@ -123,20 +134,37 @@ def _docker(befehl: tuple[str, ...]) -> tuple[bool, str]:
     return True, lauf.stdout
 
 
-def _staging_baut() -> bool:
-    """True, solange ``staging_deploy.sh`` seine Sperre hält. Keine Datei = kein Neubau."""
+class _OhneSperre:
+    """Platzhalter, wenn es keine Staging-Sperrdatei gibt (Staging nie eingerichtet)."""
+
+    def __enter__(self) -> None:
+        return None
+
+    def __exit__(self, *_: object) -> None:
+        return None
+
+
+def _staging_sperre_nehmen() -> IO[str] | _OhneSperre | None:
+    """Staging-Sperre nicht blockierend nehmen; ``None`` = Neubau läuft oder unklar.
+
+    Keine Datei = Staging nie eingerichtet, also kein Neubau (die Datei legt nur
+    ``staging_deploy.sh`` an, nie dieser Lauf).
+    """
+    assert fcntl is not None
     pfad = Path(os.environ.get("TO_SPAWN_STAGING_SPERRE") or STAGING_SPERRE_STANDARD)
     try:
         datei = pfad.open("r")
     except FileNotFoundError:
-        return False
-    with datei:
-        try:
-            fcntl.flock(datei, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            return True
-        fcntl.flock(datei, fcntl.LOCK_UN)
-    return False
+        return _OhneSperre()
+    except OSError as fehler:
+        log.warning("Docker-Reste: Staging-Sperre %s nicht prüfbar (%s)", pfad, fehler)
+        return None
+    try:
+        fcntl.flock(datei, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:  # BlockingIOError = Deploy hält sie
+        datei.close()
+        return None
+    return datei
 
 
 def _letzter_lauf(stand: Path) -> float | None:
@@ -144,6 +172,11 @@ def _letzter_lauf(stand: Path) -> float | None:
     try:
         zeilen = stand.read_text(encoding="utf-8").splitlines()
     except FileNotFoundError:
+        return None
+    except (OSError, UnicodeDecodeError) as fehler:
+        log.warning(
+            "Docker-Reste: %s unlesbar (%s) — gilt als nie gelaufen", stand, fehler
+        )
         return None
     for roh in reversed(zeilen):
         try:
