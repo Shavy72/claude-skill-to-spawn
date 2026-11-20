@@ -2608,6 +2608,8 @@ def _tick(
             erg.zeilen += schalter.zeilen
             if schalter.erledigt and not dry_run:
                 zustand["staging_schalter_erledigt"] = jetzt.isoformat(timespec="seconds")
+    if (zustand.get("spec_fertig_seit") or (erg.fertig and dry_run)) and not zustand.get("aufraeumen_erledigt"):
+        erg.zeilen += _hausmeister_schluss(spec, zustand, jetzt, dry_run)
     # Eine Mail je Spec (#588): nachsehen verschickt das abgelegte Paket, sobald Thermo + Rückblick da
     # sind (oder 120 min um). Hängt an „SPEC FERTIG einmal gesehen“ — ein später wieder geöffnetes
     # Ticket hält die Mail nicht auf.
@@ -2627,6 +2629,29 @@ def _tick(
     if any("FEHLER" in z for z in erg.zeilen):
         erg.exit_code = 1
     return erg
+
+
+def _hausmeister_schluss(spec: int, zustand: dict[str, Any], jetzt: datetime, dry_run: bool) -> list[str]:
+    """Fester Schlussschritt nach SPEC FERTIG (#1370): einmal alles Fertige aufräumen.
+
+    Ruft nur die Tür des Hausmeisters — welche Ordner wann weg dürfen, weiß allein er.
+    Erfolg setzt ``aufraeumen_erledigt`` (nicht im Probelauf); ein Fehler ergibt eine
+    FEHLER-Zeile, der nächste Tick versucht es erneut, der Tick bricht nie ab.
+    """
+    from to_spawn import hausmeister  # spät: hausmeister importiert aufpasser
+
+    try:
+        ergebnisse = hausmeister.aufraeumen_alles(loeschen=not dry_run)
+    except Exception as fehler:  # ein Ausreißer darf den Tick (sichern) nicht abbrechen
+        log.exception("Hausmeister Spec #%s: unerwarteter Fehler", spec)
+        return [f"FEHLER: Hausmeister — unerwarteter Fehler ({type(fehler).__name__}: {fehler})."]
+    weg = sum(1 for e in ergebnisse if e.art != "bleibt")
+    kaputt = sum(1 for e in ergebnisse if e.fehler)
+    rest = len(ergebnisse) - weg - kaputt
+    if dry_run:
+        return [f"Hausmeister (Probe): {weg} würde löschen, {rest} bleibt, {kaputt} Fehler."]
+    zustand["aufraeumen_erledigt"] = jetzt.isoformat(timespec="seconds")
+    return [f"Hausmeister: {weg} gelöscht, {rest} bleibt, {kaputt} Fehler."]
 
 
 def _gh_ok(args: list[str]) -> bool:
