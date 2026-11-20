@@ -11,6 +11,7 @@ Dateien. Die Zeitgrenzen selbst prüft ``test_waechter_213_fix.py`` ohne Schalte
 from __future__ import annotations
 
 import os
+import shutil
 import sys
 from pathlib import Path
 
@@ -117,3 +118,6 @@ def _hausmeister_nur_im_test(
     monkeypatch.setenv("TO_SPAWN_HAUSMEISTER_PLATTE", "1")
     # #1371: keine echten GitHub-Remotes — sonst löschte ein Test alte sicherung/*-Zweige.
     monkeypatch.setenv("TO_SPAWN_HAUSMEISTER_ZWEIG_REPOS", "")
+    # #1372: Docker-Reste nie echt — „true“ statt docker, keine Staging-Sperre.
+    monkeypatch.setenv("TO_SPAWN_HAUSMEISTER_DOCKER", shutil.which("true") or "/bin/true")
+    monkeypatch.setenv("TO_SPAWN_STAGING_SPERRE", str(ordner / "keine-staging-sperre"))
