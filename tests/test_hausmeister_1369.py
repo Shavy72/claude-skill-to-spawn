@@ -391,8 +391,10 @@ def test_f6_respawn_erkennt_platten_warten(
         wer="bau 1", pruefen=lambda: next(antworten), schlafen=lambda _s: None
     )
     zeilen = capsys.readouterr().err.splitlines()
-    assert len(zeilen) == 2, zeilen
+    # Vorab-Zeile (Hausmeister prüft), Wartezeile, „wieder frei“ (Nachprüfung Fixrunde).
+    assert len(zeilen) == 3, zeilen
     assert respawn._wartet_auf_speicher("Start\n" + zeilen[0])
+    assert respawn._wartet_auf_speicher("Start\n" + zeilen[1])
     assert not respawn._wartet_auf_speicher("\n".join(zeilen))
 
 
@@ -410,3 +412,18 @@ def test_f_aufpasser_zaehlt_fehler_getrennt(
     assert aufpasser.lauf_mit_einstellungen(e) == 0
     text = (zustand / "aufpasser.log").read_text(encoding="utf-8")
     assert re.search(r"Hausmeister: 0 gelöscht, 0 bleibt, 1 Fehler", text), text
+
+
+def test_nachpruefung_wartezeile_vor_erster_pruefung(capsys) -> None:
+    """Nachprüfung Fixrunde: respawn muss das Warten schon während des ersten
+    (bei Platznot langen) Hausmeister-Laufs erkennen — Zeile vor dem ersten pruefen()."""
+    from to_spawn import speicher
+
+    gesehen: list[str] = []
+
+    def pruefen() -> tuple[bool, str]:
+        gesehen.append(capsys.readouterr().err)
+        return True, "Platte frei"
+
+    speicher.auf_platte_warten(wer="bau 1", pruefen=pruefen, schlafen=lambda _s: None)
+    assert gesehen and speicher.WARTE_TEXT in gesehen[0]

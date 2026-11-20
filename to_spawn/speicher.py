@@ -227,6 +227,11 @@ def auf_platte_warten(
     Wie :func:`auf_platz_warten`: das Fenster bleibt offen, der Grund steht auf stderr
     und im Log. ``pruefen``/``schlafen`` sind Test-Türen.
     """
+    # Schon vor der ersten Prüfung eine Zeile mit WARTE_TEXT: bei Platznot räumt der
+    # Hausmeister darin synchron auf (gh/git, Minuten) — respawn erkennt daran das Warten.
+    vorab = f"{wer} {WARTE_TEXT} auf der Platte: Hausmeister prüft"
+    print(vorab, file=sys.stderr)
+    log.info("%s", vorab)
     zyklen = 0
     while True:
         frei, grund = pruefen()
