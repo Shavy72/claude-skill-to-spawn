@@ -189,3 +189,10 @@ def test_ohne_hausmeister_sperre_kein_docker(
     monkeypatch.setattr(hausmeister, "_sperre_nehmen", kaputt)
     hausmeister.aufraeumen_alles(loeschen=True, jetzt=1_000_000.0)
     assert _aufrufe(welt) == []
+
+
+def test_capo_schlussschritt_rundgang_fasst_docker_nie_an(welt: dict[str, Path]) -> None:
+    """#1370-Rundgang (capo nach SPEC FERTIG) räumt Ordner, Docker bleibt beim Takt."""
+    rund = hausmeister.rundgang(loeschen=True, jetzt=1_000_000.0)
+    assert rund.gelaufen
+    assert _aufrufe(welt) == []

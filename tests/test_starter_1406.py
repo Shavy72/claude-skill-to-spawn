@@ -113,6 +113,7 @@ KEIN_START = frozenset(
         ("to_spawn/prozessbaum.py", "_prozesse_windows"),  # powershell -Command: WMI-Prozessliste lesen
         ("skripte/sessions_stand.py", "prozesse_lesen"),  # powershell -Command: WMI-Prozessliste lesen
         ("to_spawn/setup.py", "pruefe_start"),  # Versions-Probe
+        ("to_spawn/docker_reste.py", "_docker"),  # docker image/builder prune, gefangene Ausgabe (#1372)
         ("skripte/abschluss_paket.py", "wirkungskreis"),  # Repo-Skript, Ausgabe gelesen
         ("skripte/bau.py", "ticket_from_gh"),  # gh
         ("skripte/bau.py", "_gh_json"),  # gh
