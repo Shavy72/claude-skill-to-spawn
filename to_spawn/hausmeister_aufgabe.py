@@ -26,7 +26,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from to_spawn import hausmeister
+from to_spawn import hausmeister, starter
 
 log = logging.getLogger(__name__)
 
@@ -156,14 +156,15 @@ def ticket_ende_anstossen() -> None:
     try:
         fehlerdatei.parent.mkdir(parents=True, exist_ok=True)
         with fehlerdatei.open("ab") as stderr:  # Kind erbt den Handle, Eltern schließen
-            subprocess.Popen(
+            starter.starte(  # einzige Start-Tür (#1406)
                 [sys.executable, str(_CLI), *_LAUF_ARGS],
+                notnagel=None,
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
                 stderr=stderr,
                 creationflags=CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP,
             )
-    except OSError as fehler:
+    except (OSError, starter.StartGesperrt) as fehler:
         log.warning("Hausmeister am Ticket-Ende nicht gestartet: %s", fehler)
 
 

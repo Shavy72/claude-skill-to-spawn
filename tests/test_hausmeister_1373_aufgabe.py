@@ -293,6 +293,8 @@ def test_ticket_ende_windows_ohne_fenster_nie_detached(
     monkeypatch.setenv("TO_SPAWN_HAUSMEISTER_LOG", str(tmp_path / "hm" / "h.jsonl"))
     gestartet: list = []
     monkeypatch.setattr(hausmeister_aufgabe, "_ist_windows", lambda: True)
+    # Popen ist ersetzt, also startet nichts Echtes; die Tür soll bis Popen durchreichen.
+    monkeypatch.setattr(hausmeister_aufgabe.starter, "unter_test", lambda: False)
     monkeypatch.setattr(
         hausmeister_aufgabe.subprocess,
         "Popen",
@@ -333,9 +335,20 @@ def test_ticket_ende_fehler_nur_geloggt(
     def kaputt(*a, **k):
         raise OSError("kein Start")
 
+    monkeypatch.setattr(hausmeister_aufgabe.starter, "unter_test", lambda: False)
     monkeypatch.setattr(hausmeister_aufgabe.subprocess, "Popen", kaputt)
     hausmeister_aufgabe.ticket_ende_anstossen()
     assert "kein Start" in caplog.text
+
+
+def test_ticket_ende_geht_durch_die_start_tuer(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, tmp_path: Path
+) -> None:
+    """Unter Test sperrt die Start-Tür (#1406) den echten Start — nur Log, kein Absturz."""
+    monkeypatch.setenv("TO_SPAWN_HAUSMEISTER_LOG", str(tmp_path / "hm" / "h.jsonl"))
+    monkeypatch.setattr(hausmeister_aufgabe, "_ist_windows", lambda: True)
+    hausmeister_aufgabe.ticket_ende_anstossen()
+    assert "nicht gestartet" in caplog.text
 
 
 def test_bau_py_stoesst_am_ende_an_und_install_richtet_ein() -> None:
