@@ -220,6 +220,11 @@ def test_nicht_pruefbar_hebt_nach_frist_auf(
     stand = json.loads(merker.read_text(encoding="utf-8"))
     stand["seit"] = (datetime.now(timezone.utc) - halt.ALT_FRIST - timedelta(minutes=1)).isoformat()
     merker.write_text(json.dumps(stand), encoding="utf-8")
+    # #1465: gh nur nicht erreichbar ⇒ hält auch nach der Frist (im Zweifel hält der Halt).
+    assert halt.pruefen(klon) is not None
+    # Ticket gibt es nachweislich nicht ⇒ Frist hebt auf.
+    monkeypatch.delenv("GH_STUB_KAPUTT")
+    monkeypatch.setenv("GH_STUB_FEHLT", "1346")
     with caplog.at_level(logging.WARNING, logger="to_spawn.halt"):
         assert halt.pruefen(klon) is None
     assert not datei.exists() and not merker.exists()
