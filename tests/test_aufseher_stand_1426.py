@@ -127,3 +127,43 @@ def test_limit_wartet_bleibt_arbeitet() -> None:
     """Session wartet am Limit auf die Freigabe von außen → nie still."""
     bild = bildschirm("● You've hit your limit · resets 3pm")
     assert aufpasser.arbeitet(bild, None, 240.0) is True
+
+
+#: Echtes Bild vom Bau-Server (20.11.2026, unterer Rand): Hauptsession arbeitet,
+#: ein Hintergrund-Helfer läuft, seine Zeile steht unter dem Eingabefeld.
+_LINIE = "─" * 36
+_HELFER_UNTEN = (
+    "  ⏵⏵ bypass permissions on (shift+tab to cycle) · esc to interrupt · ↓ to man…\n"
+    "\n"
+    "  ● main\n"
+    "  ◯ general-purpose  Suche Einfügestelle für Abnahme-Skr… 53s · ↓ 68.3k tokens"
+)
+ECHTES_HELFER_BILD = (
+    "* Cooking… (1m 26s · ↓ 8.7k tokens)\n"
+    "  ⎿  Tip: Use /btw to ask a side question without interrupting Claude\n"
+    "\n"
+    f"{_LINIE}\n❯ \n{_LINIE}\n\n{_HELFER_UNTEN}"
+)
+
+
+def test_echtes_helfer_bild_bleibt_arbeitet() -> None:
+    """Review #1426 (a): echtes Bild mit Helfer-Zeile unter dem Feld → arbeitet."""
+    assert aufpasser.arbeitet(ECHTES_HELFER_BILD, None, 25.0) is True
+
+
+def test_hauptsession_fertig_helfer_laeuft_bleibt_arbeitet() -> None:
+    """Review #1426 (a): Hauptsession hat ihren Zug beendet (kein Spinner, kein
+    „esc to interrupt“), oben steht nur noch die alte Agent-Zeile, unten tickt die
+    Zeile des laufenden Helfers. Oben ändert sich 25 min nichts — trotzdem Arbeit,
+    sonst stupst die Leiter nach 20 min an und löst danach ab."""
+    unten = (
+        "  ⏵⏵ bypass permissions on (shift+tab to cycle) · ↓ to manage\n"
+        "\n"
+        "  ● main\n"
+        "  ◯ general-purpose  Gate-Lauf prüfen… 24m 10s · ↓ 112.4k tokens"
+    )
+    bild = f"{NACH_HANDOFF}\n\n{_LINIE}\n❯ \n{_LINIE}\n\n{unten}"
+    assert aufpasser.arbeitet(bild, None, 25.0) is True
+    # Ohne Helfer-Zeile bleibt es beim Urteil „still“ (#1301).
+    ohne = f"{NACH_HANDOFF}\n\n{_LINIE}\n❯ \n{_LINIE}\n\n  ⏵⏵ bypass permissions on · ↓ to manage\n\n  ● main"
+    assert aufpasser.arbeitet(ohne, None, 25.0) is False

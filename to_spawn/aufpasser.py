@@ -251,6 +251,10 @@ ARBEITS_MARKER = (
     "usage limit",
     "limit reset",
 )
+#: Zeile eines laufenden Hintergrund-Helfers in der Liste unter dem Eingabefeld,
+#: z. B. ``◯ general-purpose  Suche … 53s · ↓ 68.3k tokens`` (Zeit- und
+#: Token-Zähler ticken). Die Zeile ``● main`` trägt keinen Zähler und zählt nicht.
+HELFER_ZEILE = re.compile(r"^\s*[◯○◉●]\s+\S.*·\s*[↓↑]\s*[\d.,]+k?\s+tokens", re.M)
 # Warte-Zeile von bau.py (Blocker offen). Nur diese Form zählt — „nächste Prüfung“
 # allein stand am 21.09. als Claude-Prosa im Scrollback eines idle Fensters.
 BLOCKER_WARTEN = re.compile(r"Ticket #\d+ wartet \(.*\) — nächste Prüfung in \d+ min")
@@ -421,7 +425,9 @@ def arbeitet(
         and (feld := _eingabefeld(text.splitlines())) is not None
         and feld.leer
     ):
-        return any(m in feld.darunter for m in ARBEITS_MARKER)
+        return any(m in feld.darunter for m in ARBEITS_MARKER) or bool(
+            HELFER_ZEILE.search(feld.darunter)
+        )
     if status == "busy":
         return True
     return any(m in text for m in ARBEITS_MARKER)
