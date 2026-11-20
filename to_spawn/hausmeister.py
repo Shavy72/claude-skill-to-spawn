@@ -62,7 +62,8 @@ Dritte Tür (#1374): :func:`halb_angelegt_entfernen` entfernt für den Anleger
 (``nest.worktree_anlegen``) einen eben angelegten Worktree, dessen Füllen scheiterte —
 ohne die Lösch-Regeln oben, denn er trägt noch keine Arbeit; nur Worktrees, die im
 übergebenen Hauptrepo eingetragen sind. Ausnahme zu „Log nicht schreibbar ⇒ bleibt“:
-hier wird trotzdem entfernt, ein stehender leerer Ordner wäre schädlicher.
+hier wird trotzdem entfernt, ein stehender leerer Ordner wäre schädlicher. Die
+Zeile „gelöscht“ folgt hier erst nach dem Entfernen (je Ordner eine Zeile).
 """
 
 from __future__ import annotations
@@ -888,15 +889,6 @@ def halb_angelegt_entfernen(hauptrepo: Path, worktree: Path, neuer_zweig: str | 
     Log hier trotzdem: der leere Ordner wäre schädlicher als eine fehlende Log-Zeile.
     """
     ticket = _nummer(worktree.name, _NAME_MUSTER)
-    _log_schreiben(
-        Ergebnis(
-            worktree,
-            "gelöscht",
-            "halb angelegt: Füllen scheiterte (#1374)",
-            ticket,
-            trocken=False,
-        )
-    )
     if not _als_worktree_eingetragen(hauptrepo, worktree):
         _log_schreiben(
             Ergebnis(
@@ -931,6 +923,16 @@ def halb_angelegt_entfernen(hauptrepo: Path, worktree: Path, neuer_zweig: str | 
         aufpasser.git_lauf(hauptrepo, "worktree", "prune")
     except (RuntimeError, OSError) as fehler:
         log.warning("git worktree prune nach %s scheiterte: %s", worktree, fehler)
+    # Zeile erst nach dem Entfernen: je Ordner genau eine Zeile „gelöscht“ oder „bleibt“.
+    _log_schreiben(
+        Ergebnis(
+            worktree,
+            "gelöscht",
+            "halb angelegt: Füllen scheiterte (#1374)",
+            ticket,
+            trocken=False,
+        )
+    )
     if neuer_zweig:
         try:
             aufpasser.git_lauf(hauptrepo, "branch", "-D", neuer_zweig)

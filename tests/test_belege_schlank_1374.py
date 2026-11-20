@@ -229,7 +229,9 @@ def test_halber_ordner_echter_git_fehler_bleibt_mit_fehlerzeile(
     assert (fremd / "arbeit.txt").is_file()
     assert _git(haupt, "branch", "--list", "ticket-82") != ""
     zeilen = [json.loads(z) for z in log_datei.read_text(encoding="utf-8").splitlines()]
-    assert zeilen[-1]["art"] == "bleibt" and zeilen[-1]["fehler"] is True
+    assert [(z["art"], z["fehler"]) for z in zeilen] == [("bleibt", True)], (
+        "kein „gelöscht“ für einen Ordner, der stehen blieb"
+    )
 
 
 def test_oserror_beim_fuellen_raeumt_halben_ordner_weg(
