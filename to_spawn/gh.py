@@ -111,6 +111,34 @@ def ticket_offen(ticket: str, cwd: Path | None = None) -> bool | None:
     return str(daten["state"]).upper() == "OPEN"
 
 
+def ticket_existiert(ticket: str, cwd: Path | None = None) -> bool | None:
+    """``True``/``False``; ``None``, wenn GitHub nicht sicher antwortet (Netz, Auth, gh fehlt).
+
+    ``False`` nur bei der eindeutigen gh-Meldung „Could not resolve to an issue“ — ein
+    Netzfehler darf nie als „gibt es nicht“ gelten (#1444).
+    """
+    vorspann = gh_befehl()
+    if vorspann is None:
+        return None
+    try:
+        fertig = subprocess.run(
+            [*vorspann, "issue", "view", str(ticket), "--json", "state"],
+            cwd=str(cwd) if cwd else None,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+            timeout=60,
+        )
+    except (OSError, subprocess.TimeoutExpired) as fehler:
+        log.warning("gh issue view %s gescheitert: %s", ticket, fehler)
+        return None
+    if fertig.returncode == 0:
+        return True
+    return False if "Could not resolve to an issue" in (fertig.stderr or "") else None
+
+
 def ticket_daten(ticket: str, cwd: Path | None = None) -> dict[str, Any] | None:
     """Zustand, Labels, Text und Zuständige eines Issues (``None`` bei Fehler)."""
     daten = json_lauf(

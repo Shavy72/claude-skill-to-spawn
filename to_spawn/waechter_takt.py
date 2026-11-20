@@ -294,7 +294,7 @@ def takt(
         return 0
     with schein:
         # Halt der Spec (#1444): prüft die Bedingung und hebt ihn ggf. selbst auf.
-        angehalten = halt.pruefen(repo)
+        angehalten = halt.pruefen(repo, aufheben=not dry_run)
         if angehalten is not None:
             print(f"Takt #{spec}: {angehalten.text()} — steige aus.")
             return 0

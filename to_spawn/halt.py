@@ -8,14 +8,18 @@ Ablauf ist nicht anlegbar (19.11.: #1307 stand 10 h, weil niemand den Halt aufho
 Schnittstelle (Format und Prüfung leben nur hier):
 
 - :func:`anlegen` — Grund + :class:`Bedingung` Pflicht, sonst ``ValueError``.
+- :func:`anlegen` lehnt Bedingungen ab, deren Ticket/Commit es nicht gibt; ist
+  GitHub/origin nicht erreichbar, legt es trotzdem an (die Frist unten fängt Tippfehler).
 - :func:`pruefen` — aktiver :class:`Halt` oder ``None``; ist die Bedingung erfüllt,
   hebt es den Halt selbst auf und schreibt das ins Halt-Log. Nicht prüfbar
-  (gh/git-Fehler) ⇒ Halt bleibt, Warnung im Log, kein Absturz.
+  (gh/git-Fehler) ⇒ Halt bleibt, Warnung im Log, kein Absturz — länger als
+  ``ALT_FRIST`` am Stück nicht prüfbar ⇒ Halt hebt sich mit Warnung auf.
+  ``aufheben=False`` (Probelauf) ändert keine Datei. Wirft nie.
 - :func:`aufheben` — von Hand (``wer`` steht im Log).
 
 Bedingungen: ``ticket_zu`` (Issue N geschlossen), ``commit`` (Commit X auf dem
 Hauptzweig von origin), ``bis`` (Zeitpunkt erreicht). Eine Datei ohne gültige
-Bedingung (alter Halt von Hand, kaputtes JSON) gilt als ``bis`` Anlage + 24 h.
+Bedingung (alter Halt von Hand, kaputtes JSON, unlesbar) gilt als ``bis`` Anlage + 24 h.
 
 Befehle: ``python -m to_spawn.halt anlegen --grund … (--ticket-zu N | --commit SHA
 | --bis ISO)`` · ``pruefen`` · ``aufheben --wer …`` (je ``--repo-dir``, Vorgabe cwd).
@@ -41,8 +45,12 @@ log = logging.getLogger("to_spawn.halt")
 
 DATEI = Path(".to-spawn") / "halt.json"
 LOG_DATEI = Path(".to-spawn") / "halt_log.jsonl"
+#: Erster Fehlschlag der Prüfung (eigene Datei: ein Takt schreibt nie ``halt.json``
+#: zurück, das hebt keinen gerade von Hand aufgehobenen Halt wieder auf).
+MERKER_DATEI = Path(".to-spawn") / "halt_nicht_pruefbar.json"
 ARTEN = ("ticket_zu", "commit", "bis")
-#: Ablauf eines Halts ohne gültige Bedingung (Altbestand, von Hand geschrieben).
+#: Ablauf eines Halts ohne gültige Bedingung (Altbestand, kaputt/unlesbar) und
+#: Höchstdauer am Stück „nicht prüfbar“.
 ALT_FRIST = timedelta(hours=24)
 GIT_TIMEOUT_S = 60
 _SHA = re.compile(r"^[0-9a-f]{7,40}$")
@@ -97,7 +105,12 @@ class Halt:
 
 
 def _schreibe_log(klon: Path, ereignis: str, halt: Halt, **felder: Any) -> None:
-    zeile = {"ts": _jetzt().isoformat(timespec="seconds"), "ereignis": ereignis, **asdict(halt), **felder}
+    zeile = {
+        "ts": _jetzt().isoformat(timespec="seconds"),
+        "ereignis": ereignis,
+        **asdict(halt),
+        **felder,
+    }
     datei = klon / LOG_DATEI
     datei.parent.mkdir(parents=True, exist_ok=True)
     with datei.open("a", encoding="utf-8", newline="\n") as fh:
@@ -113,6 +126,15 @@ def anlegen(klon: Path, grund: str, bedingung: Bedingung, wer: str = "") -> Halt
     datei = klon / DATEI
     if datei.exists():
         raise FileExistsError(f"{datei} liegt schon — erst aufheben")
+    bekannt = _bedingung_bekannt(klon, bedingung)
+    if bekannt is False:
+        was = "Ticket #" if bedingung.art == "ticket_zu" else "Commit "
+        raise ValueError(f"{was}{bedingung.wert} gibt es nicht — Halt nicht angelegt")
+    if bekannt is None:
+        log.warning(
+            "%s nicht überprüfbar (GitHub/origin nicht erreichbar) — Halt trotzdem angelegt",
+            bedingung.text(),
+        )
     halt = Halt(
         grund=grund.strip(),
         seit=_jetzt().isoformat(timespec="seconds"),
@@ -128,13 +150,46 @@ def anlegen(klon: Path, grund: str, bedingung: Bedingung, wer: str = "") -> Halt
     return halt
 
 
+def _bedingung_bekannt(klon: Path, b: Bedingung) -> bool | None:
+    """Gibt es Ticket/Commit? ``None`` = nicht entscheidbar (Netz) — nie fälschlich ``False``."""
+    if b.art == "ticket_zu":
+        return gh.ticket_existiert(b.wert, cwd=klon)
+    if b.art == "commit":
+        try:
+            abruf = subprocess.run(
+                ["git", "fetch", "-q", "origin"],
+                cwd=klon,
+                capture_output=True,
+                check=False,
+                timeout=GIT_TIMEOUT_S,
+            ).returncode
+            da = subprocess.run(
+                ["git", "cat-file", "-e", f"{b.wert}^{{commit}}"],
+                cwd=klon,
+                capture_output=True,
+                check=False,
+                timeout=GIT_TIMEOUT_S,
+            ).returncode
+        except (OSError, subprocess.TimeoutExpired) as fehler:
+            log.warning("git für Halt-Bedingung gescheitert: %s", fehler)
+            return None
+        if da == 0:
+            return True
+        return False if abruf == 0 else None  # fetch gescheitert ⇒ vielleicht nur nicht geholt
+    return True
+
+
 def _lies(klon: Path) -> Halt | None:
     datei = klon / DATEI
     try:
-        roh = datei.read_text(encoding="utf-8")
+        roh: str | None = datei.read_text(encoding="utf-8")
     except FileNotFoundError:
         return None
+    except (OSError, UnicodeDecodeError) as fehler:  # Rechte, Ordner, Kodierung
+        roh, lesefehler = None, fehler
     try:
+        if roh is None:
+            raise ValueError(f"nicht lesbar: {lesefehler}")
         daten = json.loads(roh)
         b = daten["bedingung"]
         return Halt(
@@ -146,18 +201,26 @@ def _lies(klon: Path) -> Halt | None:
     except (ValueError, KeyError, TypeError) as fehler:
         # Altbestand/kaputt: nie ewig stehen, nie still weg — 24 h ab Anlage.
         try:
-            daten = json.loads(roh)
+            daten = json.loads(roh or "")
             seit = _zeit(str(daten["seit"]))  # kein dict ⇒ TypeError ⇒ unten {}
         except (ValueError, KeyError, TypeError):
             daten = {}
-            seit = datetime.fromtimestamp(datei.stat().st_mtime, timezone.utc).astimezone()
+            try:
+                seit = datetime.fromtimestamp(datei.stat().st_mtime, timezone.utc).astimezone()
+            except OSError:
+                seit = _jetzt() - ALT_FRIST  # nicht einmal das Alter lesbar ⇒ nie ewig blockieren
         halt = Halt(
             grund=str(daten.get("grund") or "(ohne Grund)"),
             seit=seit.isoformat(timespec="seconds"),
             wer=str(daten.get("wer") or "?"),
             bedingung=Bedingung("bis", (seit + ALT_FRIST).isoformat(timespec="seconds")),
         )
-        log.warning("%s ohne gültige Bedingung (%s) — gilt %s", datei, fehler, halt.bedingung.text())
+        log.warning(
+            "%s nicht lesbar oder ohne gültige Bedingung (%s) — gilt %s",
+            datei,
+            fehler,
+            halt.bedingung.text(),
+        )
         return halt
 
 
@@ -194,20 +257,76 @@ def _erfuellt(klon: Path, b: Bedingung) -> bool | None:
     return _commit_auf_hauptzweig(klon, b.wert)
 
 
-def pruefen(klon: Path) -> Halt | None:
-    """Aktiver Halt oder ``None``; erfüllte Bedingung hebt ihn hier selbst auf."""
+def _nicht_pruefbar_seit(klon: Path, halt: Halt, merken: bool) -> datetime:
+    """Erster Fehlschlag der Prüfung für genau diesen Halt (``seit`` als Schlüssel)."""
+    datei = klon / MERKER_DATEI
+    try:
+        stand = json.loads(datei.read_text(encoding="utf-8"))
+        if stand["halt_seit"] == halt.seit:
+            return _zeit(str(stand["seit"]))
+    except (OSError, UnicodeDecodeError, ValueError, KeyError, TypeError):
+        pass  # fehlt/kaputt/fremder Halt ⇒ ab jetzt zählen
+    jetzt = _jetzt()
+    if merken:
+        try:
+            datei.write_text(
+                json.dumps(
+                    {
+                        "halt_seit": halt.seit,
+                        "seit": jetzt.isoformat(timespec="seconds"),
+                    }
+                ),
+                encoding="utf-8",
+            )
+        except OSError as fehler:
+            log.warning("Merker %s nicht schreibbar: %s", datei, fehler)
+    return jetzt
+
+
+def _entfernen(klon: Path, halt: Halt, wer: str, anlass: str) -> None:
+    """Halt-Datei + Merker weg, Log-Zeile; Dateifehler nur als Warnung (wirft nie)."""
+    try:
+        (klon / DATEI).unlink(missing_ok=True)
+        (klon / MERKER_DATEI).unlink(missing_ok=True)
+        _schreibe_log(klon, "aufgehoben", halt, wer_hebt=wer, anlass=anlass)
+    except OSError as fehler:
+        log.warning("Halt-Datei nicht entfernbar (%s) — gilt trotzdem als aufgehoben", fehler)
+
+
+def pruefen(klon: Path, *, aufheben: bool = True) -> Halt | None:
+    """Aktiver Halt oder ``None``; erfüllte Bedingung hebt ihn hier selbst auf.
+
+    ``aufheben=False`` (Probelauf): gleiches Ergebnis, aber keine Datei wird geändert.
+    """
     halt = _lies(klon)
     if halt is None:
         return None
     erfuellt = _erfuellt(klon, halt.bedingung)
     if erfuellt is None:
-        log.warning("Halt-Bedingung nicht prüfbar (%s) — Halt bleibt.", halt.bedingung.text())
+        seit = _nicht_pruefbar_seit(klon, halt, merken=aufheben)
+        if _jetzt() - seit < ALT_FRIST:
+            log.warning(
+                "Halt-Bedingung nicht prüfbar (%s) — Halt bleibt.",
+                halt.bedingung.text(),
+            )
+            return halt
+        anlass = f"nicht prüfbar seit {seit.isoformat(timespec='seconds')} (> {ALT_FRIST})"
+        log.warning("Halt-Bedingung %s — Halt aufgehoben: %s", anlass, halt.grund)
+    elif not erfuellt:
+        if aufheben:
+            (klon / MERKER_DATEI).unlink(missing_ok=True)
         return halt
-    if not erfuellt:
-        return halt
-    (klon / DATEI).unlink(missing_ok=True)
-    _schreibe_log(klon, "aufgehoben", halt, wer_hebt="takt", anlass="Bedingung erfüllt")
-    log.info("Halt aufgehoben (Bedingung erfüllt: %s): %s", halt.bedingung.text(), halt.grund)
+    else:
+        anlass = "Bedingung erfüllt"
+        log.info(
+            "Halt aufgehoben (Bedingung erfüllt: %s): %s",
+            halt.bedingung.text(),
+            halt.grund,
+        )
+    if aufheben:
+        _entfernen(klon, halt, "takt", anlass)
+    else:
+        log.info("Probelauf: Halt würde aufgehoben (%s)", anlass)
     return None
 
 
@@ -216,8 +335,7 @@ def aufheben(klon: Path, wer: str) -> bool:
     halt = _lies(klon)
     if halt is None:
         return False
-    (klon / DATEI).unlink(missing_ok=True)
-    _schreibe_log(klon, "aufgehoben", halt, wer_hebt=wer, anlass="von Hand")
+    _entfernen(klon, halt, wer, "von Hand")
     log.info("Halt von Hand aufgehoben (%s): %s", wer, halt.grund)
     return True
 

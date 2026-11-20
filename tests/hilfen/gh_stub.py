@@ -14,6 +14,8 @@ Umgebung: ``GH_STUB_ZU`` (Komma-Liste geschlossener Tickets),
 "assignees": [..]}}`` — wird bei ``issue view`` in die Antwort gemischt;
 ohne die Variable bleibt die Antwort wie bisher nur ``state``),
 ``GH_STUB_KAPUTT`` (Komma-Liste: ``issue view`` dieser Nummern scheitert mit Exit 1),
+``GH_STUB_FEHLT`` (Komma-Liste: ``issue view`` meldet wie echtes gh „Could not resolve to an
+issue“, Exit 1 — Ticket gibt es nicht, #1444),
 ``GH_STUB_UNTER`` (``<S>:<n1>|<n2>,<S2>:<n3>`` — Unter-Tickets je Spec; Zustand je
 Nummer wie bisher über ``GH_STUB_ZU``),
 ``GH_STUB_PROTOKOLL`` (Pfad: jeder Aufruf wird als Zeile angehängt).
@@ -82,6 +84,13 @@ def main() -> int:
         nummer = args[2]
         if nummer in _liste("GH_STUB_KAPUTT"):
             print("gh: Abfrage gescheitert", file=sys.stderr)
+            return 1
+        if nummer in _liste("GH_STUB_FEHLT"):
+            print(
+                f"GraphQL: Could not resolve to an issue or pull request with the number of {nummer}."
+                " (repository.issue)",
+                file=sys.stderr,
+            )
             return 1
         antwort = {"state": "CLOSED" if nummer in _zu() else "OPEN"}
         antwort.update(_zusatz(nummer))
