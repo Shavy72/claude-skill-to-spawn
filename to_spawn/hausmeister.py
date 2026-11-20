@@ -29,8 +29,11 @@ Dateien, die die Sicherung NICHT mitnimmt, gehen beim Löschen verloren — daru
   jede andere ignorierte Datei ⇒ bleibt.
 - Eingebettete Repos und Submodule (Sicherung sähe nur den Gitlink) ⇒ bleibt.
 
-Prozesse kommen aus ``/proc``; ohne ``/proc`` (Windows) bleibt jeder Ordner —
-Laptop-Teil ist Ticket #1373.
+Prozesse kommen aus ``/proc``; unter Windows (Laptop, ``C:/dev/wt-*``, #1373) aus
+``Get-CimInstance Win32_Process`` plus einer Umbenennungs-Probe (siehe
+:func:`_kein_prozess`). Plattenplatz misst die Platte der Wurzeln, nicht Home.
+Altbestand (#1373, E16): Ordner in :func:`altbestand_pfad` bleiben, bis David die
+Liste freigibt.
 
 Jede Entscheidung schreibt eine JSON-Zeile nach ``TO_SPAWN_HAUSMEISTER_LOG``
 (Standard ``~/.claude/to-spawn/hausmeister.jsonl``), beim Löschen VOR dem Löschen;
@@ -62,7 +65,11 @@ import logging
 import os
 import re
 import shutil
+import stat
+import subprocess
+import sys
 import time
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
@@ -94,6 +101,12 @@ STARTSPERRE_ANTEIL = 0.05
 SPERR_DATEI = "hausmeister.lock"
 #: Zeitlimit je gh-Abfrage in Sekunden.
 GH_ZEITLIMIT_S = 60
+# Windows-Prozessliste (PowerShell/CIM): Zeitlimit in Sekunden
+PS_ZEITLIMIT_S = 60
+# Plattform-Naht (Tests stellen "win32" ein); nur _ist_windows() liest sie
+_PLATTFORM = sys.platform
+_POWERSHELL = "powershell"
+_umbenennen: Callable[[Path, Path], None] = os.rename
 #: Ignorierte Dateien, die beim Löschen mit weg dürfen (Git-Glob-Pathspecs).
 ERZEUGNISSE = (
     "**/__pycache__/**",
@@ -351,6 +364,7 @@ def _regeln(
     if not ordner.is_dir():
         raise _Bleibt("Ordner fehlt")
     echt = ordner.resolve()
+    _kein_altbestand(echt)
 
     # 2/3 Git-Ordner? Hauptrepo? Eigenes Repo?
     ist_worktree = _git_ordner_pruefen(echt)
@@ -507,7 +521,10 @@ def _ist_platznot(anteil: float | None) -> bool:
 
 
 def _frei_anteil() -> float | None:
-    """Anteil freier Platte (0..1) im Home-Ordner, ``None`` = nicht messbar."""
+    """Anteil freier Platte (0..1) der Wurzeln, ``None`` = nicht messbar.
+
+    Gemessen wird die Platte jeder existierenden Wurzel-Basis (am Laptop das
+    Laufwerk von ``C:/dev``), der knappste Wert zählt; ohne Wurzel-Basis Home."""
     roh = os.environ.get("TO_SPAWN_HAUSMEISTER_PLATTE", "").strip()
     if roh:
         anteil = _naht_anteil(roh)
@@ -516,15 +533,35 @@ def _frei_anteil() -> float | None:
                 "Platte nicht messbar: TO_SPAWN_HAUSMEISTER_PLATTE=%r ungültig", roh
             )
         return anteil
-    try:
-        stand = shutil.disk_usage(Path.home())
-    except OSError as fehler:
-        log.warning("Platte nicht messbar: %s", fehler)
-        return None
-    if not stand.total:
-        log.warning("Platte nicht messbar: Gesamtgröße 0")
-        return None
-    return stand.free / stand.total
+    anteile: list[float] = []
+    for basis in _platten_basen():
+        try:
+            stand = shutil.disk_usage(basis)
+        except OSError as fehler:
+            log.warning("Platte nicht messbar (%s): %s", basis, fehler)
+            return None
+        if not stand.total:
+            log.warning("Platte nicht messbar (%s): Gesamtgröße 0", basis)
+            return None
+        anteile.append(stand.free / stand.total)
+    return min(anteile)
+
+
+def _platten_basen() -> list[Path]:
+    """Fester Teil jedes Wurzel-Musters vor dem ersten Glob-Zeichen, nur existierende,
+    ohne Doppelte; keiner existiert ⇒ ``[Path.home()]``."""
+    basen: dict[Path, None] = {}
+    for muster in _wurzeln():
+        teile: list[str] = []
+        for teil in Path(muster).parts:
+            if glob.has_magic(teil):
+                break
+            teile.append(teil)
+        if teile:
+            basis = Path(*teile)
+            if basis.is_dir():
+                basen.setdefault(basis, None)
+    return list(basen) or [Path.home()]
 
 
 def _naht_anteil(roh: str) -> float | None:
@@ -753,10 +790,17 @@ def _ungepushte_koepfe(repo: Path, ist_worktree: bool) -> list[str]:
 # --- Prozesse -------------------------------------------------------------------
 
 
+def _ist_windows() -> bool:
+    return _PLATTFORM == "win32"
+
+
 def _kein_prozess(ordner: Path) -> None:
     """Regel 7: ``_Bleibt``, falls ein Prozess im Ordner arbeitet (cwd, exe, offene
-    Datei) oder das nicht feststellbar ist. Ohne ``/proc`` (Windows) bleibt jeder
-    Ordner — Laptop-Teil Ticket #1373."""
+    Datei) oder das nicht feststellbar ist. Linux über ``/proc``, Windows über
+    :func:`_kein_prozess_windows`."""
+    if _ist_windows():
+        _kein_prozess_windows(ordner)
+        return
     proc = Path("/proc")
     try:
         pids = [int(p.name) for p in proc.iterdir() if p.name.isdigit()]
@@ -794,6 +838,111 @@ def _kein_prozess(ordner: Path) -> None:
             raise _Bleibt(f"Prozess {pid} arbeitet im Ordner oder hat Dateien offen")
 
 
+def _pfad_norm(pfad: str | Path) -> str:
+    """Vergleichsform für Windows-Pfade: ``/`` statt Backslash, klein, ohne Schluss-``/``."""
+    return str(pfad).replace("\\", "/").rstrip("/").lower()
+
+
+def _kein_prozess_windows(ordner: Path) -> None:
+    """Windows-Teil von Regel 7. (a) Prozessliste per CIM: Treffer, wenn
+    ``ExecutablePath`` im Ordner liegt oder ``CommandLine`` den Ordnerpfad enthält
+    (Groß/Klein egal, ``/`` = Backslash; ``wt-13`` trifft nicht ``wt-130``). Die cwd steht
+    dort nicht, darum (b) Umbenennungs-Probe: Windows verweigert das Umbenennen eines
+    Ordners, in dem ein Prozess arbeitet oder eine Datei offen hat. Jeder unklare
+    Fehler ⇒ bleibt."""
+    o = _pfad_norm(ordner)
+    im_text = re.compile(re.escape(o) + r"(?![^/\s\"'])")
+    for pid, befehl, exe in _windows_prozesse():
+        if pid == os.getpid():
+            continue  # dieser Lauf selbst (z. B. Ordner als CLI-Argument)
+        exe_n = _pfad_norm(exe) if exe else ""
+        if (
+            exe_n == o
+            or exe_n.startswith(o + "/")
+            or (befehl and im_text.search(_pfad_norm(befehl)))
+        ):
+            raise _Bleibt(f"Prozess {pid} arbeitet im Ordner oder hat Dateien offen")
+    _umbenennen_probe(ordner)
+
+
+def _windows_prozesse() -> list[tuple[int | None, str | None, str | None]]:
+    """``(ProcessId, CommandLine, ExecutablePath)`` aller Prozesse; ``_Bleibt`` mit
+    Fehler, wenn PowerShell fehlt, hängt oder Unlesbares liefert."""
+    befehl = (
+        "Get-CimInstance Win32_Process | Select-Object ProcessId,CommandLine,"
+        "ExecutablePath | ConvertTo-Json -Compress"
+    )
+    try:
+        lauf = subprocess.run(
+            [_POWERSHELL, "-NoProfile", "-NonInteractive", "-Command", befehl],
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=PS_ZEITLIMIT_S,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except (OSError, subprocess.SubprocessError) as fehler:
+        raise _Bleibt(
+            f"Prozessliste nicht lesbar (PowerShell: {fehler})", fehler=True
+        ) from None
+    if lauf.returncode != 0:
+        raise _Bleibt(
+            f"Prozessliste nicht lesbar (PowerShell Exit {lauf.returncode})",
+            fehler=True,
+        )
+    kaputt = _Bleibt("Prozessliste nicht lesbar (PowerShell-JSON)", fehler=True)
+    try:
+        daten = json.loads(lauf.stdout)
+    except ValueError:
+        raise kaputt from None
+    if isinstance(daten, dict):
+        daten = [daten]  # ConvertTo-Json: ein Prozess ⇒ Objekt statt Liste
+    if not isinstance(daten, list) or not all(isinstance(e, dict) for e in daten):
+        raise kaputt
+    return [
+        (
+            e["ProcessId"] if isinstance(e.get("ProcessId"), int) else None,
+            e["CommandLine"] if isinstance(e.get("CommandLine"), str) else None,
+            e["ExecutablePath"] if isinstance(e.get("ExecutablePath"), str) else None,
+        )
+        for e in daten
+    ]
+
+
+def _umbenennen_probe(ordner: Path) -> None:
+    """Ordner kurz auf ``<name>.hausmeister-probe`` und zurück; verweigert ⇒ bleibt."""
+    probe = ordner.with_name(ordner.name + ".hausmeister-probe")
+    if os.path.lexists(probe):
+        raise _Bleibt(f"Probe-Ziel {probe} existiert schon", fehler=True)
+    try:
+        _umbenennen(ordner, probe)
+    except PermissionError:
+        raise _Bleibt(
+            "Ordner in Benutzung (Windows verweigert das Umbenennen)"
+        ) from None
+    except OSError as fehler:
+        raise _Bleibt(
+            f"Umbenennungs-Probe gescheitert: {fehler}", fehler=True
+        ) from None
+    try:
+        _umbenennen(probe, ordner)
+    except OSError as fehler:
+        log.error(
+            "Hausmeister: Rückbenennen gescheitert — Ordner liegt jetzt unter %s "
+            "statt %s (%s); bitte von Hand zurückbenennen",
+            probe,
+            ordner,
+            fehler,
+        )
+        raise _Bleibt(
+            f"Rückbenennen gescheitert, Ordner liegt unter {probe}",
+            fuer_david=True,
+            fehler=True,
+        ) from None
+
+
 def _link_lesen(pid: int, link: Path) -> str | None:
     try:
         return os.readlink(link)
@@ -821,8 +970,67 @@ def _loeschen(ordner: Path, ist_worktree: bool) -> None:
         hauptrepo = _hauptrepo(ordner)
         aufpasser.git_lauf(hauptrepo, "worktree", "remove", "--force", str(ordner))
         aufpasser.git_lauf(hauptrepo, "worktree", "prune")
+    elif sys.version_info >= (3, 12):
+        shutil.rmtree(ordner, onexc=_schreibschutz_weg)
     else:
-        shutil.rmtree(ordner)
+        shutil.rmtree(ordner, onerror=_schreibschutz_weg)
+
+
+def _schreibschutz_weg(funktion: Callable[[str], object], pfad: str, _: object) -> None:
+    """rmtree-Handler: Schreibschutz von Elternordner und Eintrag nehmen (Windows:
+    Nur-Lese-Dateien in ``.git/objects``), dann erneut; scheitert das, fliegt es."""
+    for ziel in (os.path.dirname(pfad), pfad):
+        if os.path.lexists(ziel) and not os.path.islink(ziel):
+            os.chmod(ziel, os.stat(ziel).st_mode | stat.S_IWRITE)
+    funktion(pfad)
+
+
+def altbestand_pfad() -> Path:
+    """Liste des Laptop-Altbestands (E16), neben dem Hausmeister-Log."""
+    return _log_pfad().parent / "altbestand.json"
+
+
+def altbestand_festhalten(ordner: Iterable[Path]) -> Path:
+    """Hält Ordner als Altbestand fest: sie bleiben, bis David die Liste freigibt
+    (``"freigegeben": true`` in der Datei). Schreibt
+    ``{"freigegeben": false, "erstellt": <iso>, "ordner": [<posix, aufgelöst>]}``.
+    Gibt es die Datei schon, bleibt sie unverändert (die Liste vom ersten Mal gilt).
+    Rückgabe: Pfad der Datei. ``OSError`` geht an den Aufrufer."""
+    pfad = altbestand_pfad()
+    daten = {
+        "freigegeben": False,
+        "erstellt": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "ordner": [Path(o).expanduser().resolve().as_posix() for o in ordner],
+    }
+    pfad.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with pfad.open("x", encoding="utf-8") as f:
+            f.write(json.dumps(daten, ensure_ascii=False, indent=2) + "\n")
+    except FileExistsError:
+        pass
+    return pfad
+
+
+def _kein_altbestand(echt: Path) -> None:
+    """Altbestand-Regel: gelistet und nicht freigegeben ⇒ bleibt; Datei fehlt ⇒ keine
+    Wirkung; Datei kaputt/unlesbar ⇒ jeder Ordner bleibt mit Fehler."""
+    pfad = altbestand_pfad()
+    try:
+        daten = json.loads(pfad.read_text(encoding="utf-8"))
+    except (FileNotFoundError, NotADirectoryError):  # Datei gibt es nicht
+        return
+    except (OSError, ValueError) as fehler:
+        raise _Bleibt(
+            f"Altbestand-Liste {pfad} unlesbar: {fehler}", fehler=True
+        ) from None
+    liste = daten.get("ordner") if isinstance(daten, dict) else None
+    if not isinstance(liste, list) or not all(isinstance(o, str) for o in liste):
+        raise _Bleibt(f"Altbestand-Liste {pfad} kaputt", fehler=True)
+    if daten.get("freigegeben") is True:
+        return
+    schluessel = os.path.normcase(str(echt))
+    if any(os.path.normcase(str(Path(o))) == schluessel for o in liste):
+        raise _Bleibt(f"Altbestand, wartet auf Davids Ja (Liste {pfad})")
 
 
 def _log_pfad() -> Path:
