@@ -52,6 +52,17 @@ Platte nicht messbar ⇒ Start erlaubt (im Zweifel starten), aber mit Warnung, Z
 schließt eine nicht blockierende Sperre (:data:`SPERR_DATEI` neben dem Log) aus; wer sie
 nicht bekommt, räumt nicht auf. gh-Abfragen enden nach :data:`GH_ZEITLIMIT_S` (git hat
 300 s in :func:`aufpasser.git_lauf`); Zeitüberschreitung ⇒ bleibt mit Fehler.
+
+Dritte Tür (#1371, E41): :func:`sicherungen_aufraeumen` löscht Zweige
+``sicherung/<Zahl>`` auf den eigenen GitHub-Repos 90 Tage (:data:`SICHERUNG_TAGE`)
+nach dem Anlegen — andere Zweige nie. Angelegt = ältester Aufpasser-Sicherungs-Commit
+der Kette (Betreff „Aufpasser: Sicherung #<N> …“); fehlt er, bleibt der Zweig.
+Gelöscht wird nur mit Lease auf den gelesenen Stand (neue Sicherung dazwischen ⇒
+bleibt). Läuft im Takt von :func:`aufraeumen_alles` mit, höchstens einmal täglich je
+Modus (Trockenlauf verbraucht den Tag des echten Laufs nicht). Gelesen wird über einen
+Zwischenspeicher nur mit Commits (``--filter=tree:0``) neben dem Log. Jede Löschung =
+eine JSON-Zeile im Hausmeister-Log (Feld ``zweig``), vor dem Löschen. Test-Naht
+``TO_SPAWN_HAUSMEISTER_ZWEIG_REPOS``: Remote-URLs (Leerzeichen-getrennt, leer = keine).
 """
 
 from __future__ import annotations
@@ -252,6 +263,8 @@ def _alle_ordner(*, loeschen: bool, jetzt: float | None) -> Rundgang:
         ergebnisse.append(erg)
         if erg.art != "bleibt" and not erg.trocken:
             anteil = _frei_anteil()
+    # E41: Sicherungs-Zweige im selben Takt, die Tür selbst begrenzt auf einmal täglich.
+    sicherungen_aufraeumen(loeschen=loeschen, jetzt=jetzt)
     return Rundgang(True, "", tuple(ergebnisse))
 
 
@@ -371,6 +384,236 @@ def liste_fuer_david(log_datei: Path | None = None) -> list[Path]:
         if isinstance(daten, dict) and daten.get("fuer_david") and daten.get("ordner"):
             gesehen.setdefault(Path(daten["ordner"]), None)
     return list(gesehen)
+
+
+#: Zweige ``sicherung/<N>`` gehen so viele Tage nach dem Anlegen (E41).
+SICHERUNG_TAGE = 90
+#: Höchstens ein Lauf je Modus in diesem Abstand.
+SICHERUNG_TAKT_SEKUNDEN = 24 * 3600
+_SICHERUNG_REMOTES = tuple(
+    f"https://github.com/{slug}"
+    for slug in ("Shavy72/duoplus-management", "Shavy72/claude-skill-to-spawn")
+)
+_SICHERUNG_REF = re.compile(r"^refs/sicherung/(\d+)$")
+
+
+@dataclass(frozen=True)
+class ZweigErgebnis:
+    """Entscheidung für einen Zweig ``sicherung/<N>`` (oder einen Remote-Fehler)."""
+
+    remote: str
+    zweig: str  # "sicherung/<N>"; leer bei Fehler am ganzen Remote
+    sha: str
+    angelegt: float | None
+    art: Literal["gelöscht", "bleibt"]
+    grund: str
+    trocken: bool = True
+    fehler: bool = False
+
+
+def sicherungen_aufraeumen(
+    *, loeschen: bool = False, jetzt: float | None = None
+) -> list[ZweigErgebnis]:
+    """Löscht ``sicherung/<N>``-Zweige 90 Tage nach dem Anlegen; wirft nie.
+
+    Höchstens einmal täglich je Modus, sonst ``[]``. Junge Zweige stehen nur im
+    Ergebnis (ohne Log-Zeile), Löschungen und Fehler je eine Log-Zeile.
+    """
+    jetzt = time.time() if jetzt is None else jetzt
+    modus = "loeschen" if loeschen else "trocken"
+    if not _sicherung_takt_faellig(modus, jetzt):
+        return []
+    ergebnisse: list[ZweigErgebnis] = []
+    for remote in _sicherung_remotes():
+        try:
+            ergebnisse += _sicherungen_eines_remotes(remote, loeschen, jetzt)
+        except Exception as fehler:  # Vertrag: wirft nie
+            log.exception("Hausmeister: Sicherungs-Zweige auf %s", remote)
+            erg = ZweigErgebnis(
+                remote, "", "", None, "bleibt", f"Fehler: {fehler}", not loeschen, True
+            )
+            _zweig_log(erg)
+            ergebnisse.append(erg)
+    _sicherung_takt_merken(modus, jetzt)
+    return ergebnisse
+
+
+def _sicherung_remotes() -> list[str]:
+    roh = os.environ.get("TO_SPAWN_HAUSMEISTER_ZWEIG_REPOS")
+    if roh is None:
+        return list(_SICHERUNG_REMOTES)
+    return roh.split()  # Leerzeichen-getrennt: URLs enthalten „:“
+
+
+def _sicherung_ordner() -> Path:
+    return _log_pfad().parent / "sicherungs-zweige"
+
+
+def _sicherung_takt_faellig(modus: str, jetzt: float) -> bool:
+    try:
+        stand = json.loads((_sicherung_ordner() / "takt.json").read_text("utf-8"))
+        zuletzt = float(stand[modus])
+    except (OSError, ValueError, KeyError, TypeError):
+        return True
+    # Uhr zurückgestellt (zuletzt in der Zukunft) ⇒ fällig, sonst hinge der Lauf fest.
+    return not 0 <= jetzt - zuletzt < SICHERUNG_TAKT_SEKUNDEN
+
+
+def _sicherung_takt_merken(modus: str, jetzt: float) -> None:
+    datei = _sicherung_ordner() / "takt.json"
+    try:
+        try:
+            stand = json.loads(datei.read_text("utf-8"))
+            if not isinstance(stand, dict):
+                stand = {}
+        except (OSError, ValueError):
+            stand = {}
+        stand[modus] = jetzt
+        datei.parent.mkdir(parents=True, exist_ok=True)
+        datei.write_text(json.dumps(stand), encoding="utf-8")
+    except OSError as fehler:
+        log.warning(
+            "Hausmeister: Takt der Sicherungs-Zweige nicht schreibbar: %s", fehler
+        )
+
+
+def _sicherung_cache(remote: str) -> Path:
+    """Zwischenspeicher je Remote: nur Commits (Bäume/Dateien bleiben auf GitHub)."""
+    name = re.sub(r"[^A-Za-z0-9]+", "-", remote).strip("-")[-80:] or "remote"
+    cache = _sicherung_ordner() / f"{name}.git"
+    if not (cache / "HEAD").is_file():
+        cache.mkdir(parents=True, exist_ok=True)
+        aufpasser.git_lauf(cache, "init", "-q", "--bare")
+        for schluessel, wert in (
+            ("core.repositoryformatversion", "1"),
+            ("extensions.partialClone", "origin"),
+            ("remote.origin.promisor", "true"),
+            ("remote.origin.partialclonefilter", "tree:0"),
+        ):
+            aufpasser.git_lauf(cache, "config", schluessel, wert)
+    aufpasser.git_lauf(cache, "config", "remote.origin.url", remote)
+    return cache
+
+
+def _sicherungen_eines_remotes(
+    remote: str, loeschen: bool, jetzt: float
+) -> list[ZweigErgebnis]:
+    cache = _sicherung_cache(remote)
+    aufpasser.git_lauf(
+        cache,
+        "fetch",
+        "-q",
+        "--prune",
+        "--no-tags",
+        "origin",
+        "+refs/heads/sicherung/*:refs/sicherung/*",
+    )
+    roh = aufpasser.git_lauf(
+        cache, "for-each-ref", "--format=%(refname) %(objectname)", "refs/sicherung/"
+    )
+    ergebnisse = []
+    for zeile in roh.splitlines():
+        ref, _, sha = zeile.partition(" ")
+        treffer = _SICHERUNG_REF.match(ref)
+        if not treffer:
+            continue  # z. B. sicherung/abc — nie anfassen
+        nr = int(treffer.group(1))
+        erg = _sicherung_entscheiden(cache, remote, nr, sha, loeschen, jetzt)
+        ergebnisse.append(erg)
+    return ergebnisse
+
+
+def _sicherung_entscheiden(
+    cache: Path, remote: str, nr: int, sha: str, loeschen: bool, jetzt: float
+) -> ZweigErgebnis:
+    zweig = f"sicherung/{nr}"
+    trocken = not loeschen
+    zeiten = aufpasser.git_lauf(
+        cache,
+        "log",
+        "--format=%ct",
+        "-E",
+        f"--grep=^Aufpasser: Sicherung #{nr}( |$)",
+        sha,
+    ).split()
+    if not zeiten:
+        return ZweigErgebnis(
+            remote,
+            zweig,
+            sha,
+            None,
+            "bleibt",
+            "Anlegezeit nicht belegbar (kein Aufpasser-Sicherungs-Commit)",
+            trocken,
+        )
+    angelegt = float(min(int(z) for z in zeiten))
+    tage = (jetzt - angelegt) / (24 * 3600)
+    if tage < SICHERUNG_TAGE:
+        return ZweigErgebnis(
+            remote,
+            zweig,
+            sha,
+            angelegt,
+            "bleibt",
+            f"erst {tage:.0f} Tage alt (Grenze {SICHERUNG_TAGE})",
+            trocken,
+        )
+    erg = ZweigErgebnis(
+        remote,
+        zweig,
+        sha,
+        angelegt,
+        "gelöscht",
+        f"vor {tage:.0f} Tagen angelegt (Grenze {SICHERUNG_TAGE} Tage)",
+        trocken,
+    )
+    if not _zweig_log(erg):
+        return replace(
+            erg,
+            art="bleibt",
+            grund="Hausmeister-Log nicht schreibbar — ohne Log kein Löschen",
+            fehler=True,
+        )
+    if trocken:
+        return erg
+    try:
+        _zweig_loeschen(cache, zweig, sha)
+    except RuntimeError as fehler:
+        erg = replace(
+            erg, art="bleibt", grund=f"Löschen gescheitert: {fehler}", fehler=True
+        )
+        _zweig_log(erg)
+    return erg
+
+
+def _zweig_loeschen(cache: Path, zweig: str, sha: str) -> None:
+    """Löscht ``zweig`` auf dem Remote nur, wenn er noch auf ``sha`` steht (Lease)."""
+    ref = f"refs/heads/{zweig}"
+    aufpasser.git_lauf(
+        cache, "push", "-q", f"--force-with-lease={ref}:{sha}", "origin", f":{ref}"
+    )
+
+
+def _zweig_log(erg: ZweigErgebnis) -> bool:
+    log.info("Hausmeister: %s %s — %s (%s)", erg.remote, erg.zweig, erg.art, erg.grund)
+    angelegt = (
+        datetime.fromtimestamp(erg.angelegt).astimezone().isoformat(timespec="seconds")
+        if erg.angelegt is not None
+        else None
+    )
+    return _log_zeile(
+        {
+            "zeit": datetime.now().astimezone().isoformat(timespec="seconds"),
+            "remote": erg.remote,
+            "zweig": erg.zweig,
+            "sha": erg.sha,
+            "angelegt": angelegt,
+            "art": erg.art,
+            "grund": erg.grund,
+            "trocken": erg.trocken,
+            "fehler": erg.fehler,
+        }
+    )
 
 
 # --- Regeln ---------------------------------------------------------------------
@@ -898,6 +1141,11 @@ def _log_schreiben(erg: Ergebnis) -> bool:
         "fehler": erg.fehler,
     }
     log.info("Hausmeister: %s — %s (%s)", erg.ordner, erg.art, erg.grund)
+    return _log_zeile(zeile)
+
+
+def _log_zeile(zeile: dict[str, object]) -> bool:
+    """Eine JSON-Zeile ins Hausmeister-Log; False = nicht schreibbar."""
     try:
         datei = _log_pfad()
         datei.parent.mkdir(parents=True, exist_ok=True)

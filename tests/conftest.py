@@ -93,7 +93,9 @@ def _start_nur_attrappen(
     ``TO_SPAWN_TEST_BIN``. Läuft nach ``_keine_to_spawn_umgebung`` (löscht ``TO_SPAWN_*``).
     """
     monkeypatch.setenv("TO_SPAWN_TESTLAUF", "1")
-    monkeypatch.setenv("TO_SPAWN_TEST_BIN", str(tmp_path_factory.mktemp("start-attrappen")))
+    monkeypatch.setenv(
+        "TO_SPAWN_TEST_BIN", str(tmp_path_factory.mktemp("start-attrappen"))
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -115,3 +117,5 @@ def _hausmeister_nur_im_test(
     monkeypatch.setenv("TO_SPAWN_HAUSMEISTER_LOG", str(ordner / "hausmeister.jsonl"))
     monkeypatch.setenv("TO_SPAWN_HINDERNIS_LOG", str(ordner / "hindernisse.jsonl"))
     monkeypatch.setenv("TO_SPAWN_HAUSMEISTER_PLATTE", "1")
+    # #1371: keine echten GitHub-Remotes — sonst löschte ein Test alte sicherung/*-Zweige.
+    monkeypatch.setenv("TO_SPAWN_HAUSMEISTER_ZWEIG_REPOS", "")
