@@ -1110,4 +1110,10 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    finally:
+        # Ticket-Ende (#1373): am Laptop räumt der Hausmeister im Hintergrund auf (Server: Aufpasser).
+        from to_spawn import hausmeister_aufgabe
+
+        hausmeister_aufgabe.ticket_ende_anstossen()
