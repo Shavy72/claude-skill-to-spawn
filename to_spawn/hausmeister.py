@@ -73,7 +73,7 @@ try:
 except ImportError:  # Windows: ohne Sperre (Laptop-Teil #1373)
     fcntl = None  # type: ignore[assignment]
 
-from to_spawn import aufpasser, gh, hindernis
+from to_spawn import aufpasser, docker_reste, gh, hindernis
 
 log = logging.getLogger("to_spawn.hausmeister")
 
@@ -193,8 +193,12 @@ def aufraeumen_alles(
     Wartezeit, bis wieder genug frei ist (siehe Modul-Kommentar). Läuft schon ein
     anderer Lauf (Sperre), oder scheitert die Ordnersuche: ``[]`` — wer das
     unterscheiden muss, nimmt :func:`rundgang`.
+    Mit ``loeschen=True`` gibt derselbe Lauf einmal täglich Docker-Reste frei
+    (:mod:`to_spawn.docker_reste`, #1372); Probelauf und Start-Check nie.
     """
-    return list(rundgang(loeschen=loeschen, jetzt=jetzt).ergebnisse)
+    return list(
+        _rundgang_sicher(loeschen=loeschen, jetzt=jetzt, docker=loeschen).ergebnisse
+    )
 
 
 def rundgang(*, loeschen: bool, jetzt: float | None = None) -> Rundgang:
@@ -204,8 +208,13 @@ def rundgang(*, loeschen: bool, jetzt: float | None = None) -> Rundgang:
     gescheiterte Ordnersuche und jeder unerwartete Fehler ergeben ``gelaufen=False``
     mit Klartext-Grund statt einer leeren Liste, die wie „nichts zu tun“ aussieht.
     """
+    return _rundgang_sicher(loeschen=loeschen, jetzt=jetzt, docker=False)
+
+
+def _rundgang_sicher(*, loeschen: bool, jetzt: float | None, docker: bool) -> Rundgang:
+    """Kern von :func:`rundgang`; ``docker=True`` nur aus :func:`aufraeumen_alles`."""
     try:
-        return _rundgang(loeschen=loeschen, jetzt=jetzt)
+        return _rundgang(loeschen=loeschen, jetzt=jetzt, docker=docker)
     except Exception as fehler:  # Vertrag: wirft nie
         log.exception("Hausmeister: Rundgang gescheitert")
         return Rundgang(
@@ -213,7 +222,7 @@ def rundgang(*, loeschen: bool, jetzt: float | None = None) -> Rundgang:
         )
 
 
-def _rundgang(*, loeschen: bool, jetzt: float | None) -> Rundgang:
+def _rundgang(*, loeschen: bool, jetzt: float | None, docker: bool) -> Rundgang:
     try:
         sperre = _sperre_nehmen()
     except OSError as fehler:
@@ -225,7 +234,10 @@ def _rundgang(*, loeschen: bool, jetzt: float | None) -> Rundgang:
             False, "ein anderer Lauf räumt gerade auf (Sperre belegt)", wartet=True
         )
     try:
-        return _alle_ordner(loeschen=loeschen, jetzt=jetzt)
+        ergebnis = _alle_ordner(loeschen=loeschen, jetzt=jetzt)
+        if docker:  # unter derselben Sperre: nie zwei Docker-Läufe gleichzeitig
+            docker_reste.freigeben(_log_pfad().parent, jetzt=jetzt)
+        return ergebnis
     finally:
         if sperre:
             sperre.close()  # gibt die flock-Sperre frei
