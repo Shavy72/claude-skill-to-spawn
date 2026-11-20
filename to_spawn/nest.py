@@ -30,7 +30,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from to_spawn import capo, config, gh, inventur
+from to_spawn import capo, config, gh, hausmeister, inventur
 
 log = logging.getLogger("to_spawn.nest")
 
@@ -206,13 +206,9 @@ def worktree_anlegen(worktree: Path, hauptrepo: Path, ticket: str | None) -> Non
     try:
         _auschecken_ohne_beleg_bilder(worktree, capo.belege_ordner(config.lade(hauptrepo)))
     except NestFehler:
-        # Halber Ordner muss weg: sonst kehrt der nächste Aufruf bei exists() früh zurück
-        # und die Session arbeitet in einem leeren Ordner, in dem alles als gelöscht gilt.
-        weg = _git(hauptrepo, "worktree", "remove", "--force", str(worktree))
-        if weg.returncode != 0:
-            log.error("Halber Worktree %s ließ sich nicht entfernen: %s", worktree, weg.stderr.strip()[:200])
-        elif zweig_neu:
-            _git(hauptrepo, "branch", "-D", zweig)
+        # Halber Ordner muss weg (sonst arbeitet die Session in einem leeren Ordner);
+        # Löschen kennt nur der Hausmeister (#1368).
+        hausmeister.halb_angelegt_entfernen(hauptrepo, worktree, zweig if zweig_neu else None)
         raise
     log.info("Worktree angelegt: %s (Zweig %s)", worktree, zweig)
 
@@ -249,11 +245,7 @@ def _auschecken_ohne_beleg_bilder(worktree: Path, belege: str) -> None:
     )
     if alte.returncode != 0:
         raise NestFehler(f"git ls-files scheiterte: {alte.stderr.decode(errors='replace').strip()[:300]}")
-    bilder = [
-        n
-        for n in alte.stdout.split(b"\0")
-        if n.lower().endswith(BELEG_BILDER) and BELEG_FIXTUR_ORDNER not in n
-    ]
+    bilder = [n for n in alte.stdout.split(b"\0") if n.lower().endswith(BELEG_BILDER) and BELEG_FIXTUR_ORDNER not in n]
     if bilder:
         markiert = subprocess.run(
             ["git", "-C", str(worktree), "update-index", "--skip-worktree", "-z", "--stdin"],

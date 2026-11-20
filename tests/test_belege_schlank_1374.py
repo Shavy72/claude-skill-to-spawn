@@ -175,3 +175,57 @@ def test_fehler_beim_fuellen_laesst_vorhandenen_zweig_stehen(
     assert _git(haupt, "branch", "--list", "ticket-79") != "", (
         "vorhandener Zweig bleibt"
     )
+
+
+def test_halber_ordner_geht_ueber_den_hausmeister(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Aufseher 20.11.: Lösch-Wissen nur im Hausmeister; seine Log-Zeile belegt den Weg."""
+    import json
+
+    from to_spawn import nest
+
+    log_datei = tmp_path / "hausmeister.jsonl"
+    monkeypatch.setenv("TO_SPAWN_HAUSMEISTER_LOG", str(log_datei))
+    haupt = _repo_mit_belegen(tmp_path)
+    wt = tmp_path / "wt" / "wt-81"
+
+    def _scheitert(*_: object) -> None:
+        raise nest.NestFehler("Füllen scheiterte (Probe)")
+
+    monkeypatch.setattr(nest, "_auschecken_ohne_beleg_bilder", _scheitert)
+    with pytest.raises(nest.NestFehler):
+        nest.worktree_anlegen(wt, haupt, "81")
+    assert not wt.exists()
+    zeilen = [json.loads(z) for z in log_datei.read_text(encoding="utf-8").splitlines()]
+    assert [(z["art"], z["ticket"], z["trocken"]) for z in zeilen] == [
+        ("gelöscht", 81, False)
+    ]
+    assert "halb angelegt" in zeilen[0]["grund"]
+
+
+def test_halber_ordner_echter_git_fehler_bleibt_mit_fehlerzeile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Echter Git-Fehlerpfad (keine Attrappe): Ordner ist kein Worktree des Repos.
+
+    Der Hausmeister wirft nicht, meldet ``False`` und schreibt „bleibt“ mit ``fehler``;
+    der Ordner und der übergebene Zweig bleiben stehen.
+    """
+    import json
+
+    from to_spawn import hausmeister
+
+    log_datei = tmp_path / "hausmeister.jsonl"
+    monkeypatch.setenv("TO_SPAWN_HAUSMEISTER_LOG", str(log_datei))
+    haupt = _repo_mit_belegen(tmp_path)
+    _git(haupt, "branch", "ticket-82", "origin/master")
+    fremd = tmp_path / "wt" / "wt-82"
+    fremd.mkdir(parents=True)
+    (fremd / "arbeit.txt").write_text("nicht anfassen", encoding="utf-8")
+
+    assert hausmeister.halb_angelegt_entfernen(haupt, fremd, None) is False
+    assert (fremd / "arbeit.txt").is_file()
+    assert _git(haupt, "branch", "--list", "ticket-82") != ""
+    zeilen = [json.loads(z) for z in log_datei.read_text(encoding="utf-8").splitlines()]
+    assert zeilen[-1]["art"] == "bleibt" and zeilen[-1]["fehler"] is True
