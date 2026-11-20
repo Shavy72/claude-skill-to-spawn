@@ -30,7 +30,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from to_spawn import config, gh, inventur
+from to_spawn import capo, config, gh, inventur
 
 log = logging.getLogger("to_spawn.nest")
 
@@ -183,6 +183,8 @@ def worktree_anlegen(worktree: Path, hauptrepo: Path, ticket: str | None) -> Non
     """Legt den Worktree an, wenn er fehlt; ein vorhandener bleibt unberührt.
 
     Vorher ``git fetch origin``, damit der neue Zweig auf dem frischen Stand beginnt.
+    Die Bilder der alten Belege (``regularien.belege_ordner``, Vorgabe ``docs/verify-hard``)
+    kommen nicht auf die Platte (#1374, E17, siehe ``_auschecken_ohne_beleg_bilder``).
     """
     if worktree.exists():
         return
@@ -191,16 +193,73 @@ def worktree_anlegen(worktree: Path, hauptrepo: Path, ticket: str | None) -> Non
         abruf = _git(hauptrepo, "fetch", "-q", "origin")
         if abruf.returncode != 0:
             log.warning("git fetch origin scheiterte: %s", abruf.stderr.strip()[:200])
-    if _git(hauptrepo, "rev-parse", "--verify", "--quiet", zweig).returncode == 0:
-        ergebnis = _git(hauptrepo, "worktree", "add", str(worktree), zweig)
+    zweig_neu = _git(hauptrepo, "rev-parse", "--verify", "--quiet", zweig).returncode != 0
+    if not zweig_neu:
+        ergebnis = _git(hauptrepo, "worktree", "add", "--no-checkout", str(worktree), zweig)
     else:
         basis = _standard_zweig(hauptrepo)
         if basis is None:
             raise NestFehler(f"{hauptrepo}: kein origin/{gh.hauptzweig(hauptrepo)} (Hauptzweig laut Konfig/origin)")
-        ergebnis = _git(hauptrepo, "worktree", "add", "-b", zweig, str(worktree), basis)
+        ergebnis = _git(hauptrepo, "worktree", "add", "--no-checkout", "-b", zweig, str(worktree), basis)
     if ergebnis.returncode != 0:
         raise NestFehler(f"git worktree add scheiterte: {ergebnis.stderr.strip()[:300]}")
+    try:
+        _auschecken_ohne_beleg_bilder(worktree, capo.belege_ordner(config.lade(hauptrepo)))
+    except NestFehler:
+        # Halber Ordner muss weg: sonst kehrt der nächste Aufruf bei exists() früh zurück
+        # und die Session arbeitet in einem leeren Ordner, in dem alles als gelöscht gilt.
+        weg = _git(hauptrepo, "worktree", "remove", "--force", str(worktree))
+        if weg.returncode != 0:
+            log.error("Halber Worktree %s ließ sich nicht entfernen: %s", worktree, weg.stderr.strip()[:200])
+        elif zweig_neu:
+            _git(hauptrepo, "branch", "-D", zweig)
+        raise
     log.info("Worktree angelegt: %s (Zweig %s)", worktree, zweig)
+
+
+BELEG_BILDER = (b".png", b".webp", b".jpg", b".jpeg", b".gif")
+
+
+def _auschecken_ohne_beleg_bilder(worktree: Path, belege: str) -> None:
+    """Füllt einen mit ``--no-checkout`` angelegten Worktree, ohne die Belegbilder zu schreiben.
+
+    Die alten Belege sind rund 75 % eines Arbeitsordners (E17, B13) und bleiben auf
+    GitHub; davon sind die Bilder (``BELEG_BILDER``) rund 87 %. Nur die Bilder bleiben
+    weg: Tests lesen alte Text-Belege und Test-Videos (Probe #1374: alles ausgeblendet
+    = 132 Tests rot, nur Bilder = 0 zusätzlich rot). Bewusst kein Sparse-Checkout: dort
+    weist ``git add`` neue Belege ab. Hier tragen nur die schon versionierten Bilder das
+    ``skip-worktree``-Kennzeichen; Git hält sie für unverändert, statt sie als gelöscht
+    zu sehen. Neue Belege sind gewöhnliche Dateien und lassen sich wie immer ablegen
+    und committen.
+    Grenzen: Die Ersparnis gilt nur beim Anlegen; Belege, die später per Rebase/Merge
+    dazukommen oder sich auf origin ändern, landen normal auf der Platte. Eine lokale
+    Änderung an einem alten (gekennzeichneten) Belegbild sieht Git nicht.
+    """
+    index = _git(worktree, "reset", "-q")  # --no-checkout lässt den Index leer
+    if index.returncode != 0:
+        raise NestFehler(f"git reset im neuen Worktree scheiterte: {index.stderr.strip()[:300]}")
+    # Bytes statt Text: Belegnamen mit Umlauten dürfen an keiner Locale scheitern.
+    alte = subprocess.run(
+        ["git", "-C", str(worktree), "ls-files", "-z", "--", belege],
+        capture_output=True,
+        check=False,
+    )
+    if alte.returncode != 0:
+        raise NestFehler(f"git ls-files scheiterte: {alte.stderr.decode(errors='replace').strip()[:300]}")
+    bilder = [n for n in alte.stdout.split(b"\0") if n.lower().endswith(BELEG_BILDER)]
+    if bilder:
+        markiert = subprocess.run(
+            ["git", "-C", str(worktree), "update-index", "--skip-worktree", "-z", "--stdin"],
+            input=b"\0".join(bilder) + b"\0",
+            capture_output=True,
+            check=False,
+        )
+        if markiert.returncode != 0:
+            fehler = markiert.stderr.decode(errors="replace").strip()[:300]
+            raise NestFehler(f"Belege ausblenden scheiterte: {fehler}")
+    fuellen = _git(worktree, "checkout", "-q", "--", ".")
+    if fuellen.returncode != 0:
+        raise NestFehler(f"git checkout im neuen Worktree scheiterte: {fuellen.stderr.strip()[:300]}")
 
 
 def sandbox_einstellungen(
