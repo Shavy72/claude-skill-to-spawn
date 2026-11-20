@@ -40,7 +40,13 @@ CREATE_NEW_PROCESS_GROUP = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x000
 
 _CLI = Path(__file__).resolve().parent.parent / "to_spawn.py"
 _LAUF_ARGS = ("aufraeumen", "--alles", "--loeschen")
-_GRUPPEN = ("Löschbar", "Sichern + löschen", "Bleibt (mit Grund)", "Ohne Ticket-Nummer")
+_GRUPPEN = (
+    "Löschbar",
+    "Sichern + löschen",
+    "Bleibt (mit Grund)",
+    "Ohne Ticket-Nummer",
+    "Für David (selbst prüfen)",
+)
 
 
 def _ist_windows() -> bool:
@@ -140,19 +146,23 @@ def ticket_ende_anstossen() -> None:
     """Nach einer lokalen Bau-Session einen Hausmeister-Lauf im Hintergrund starten; wirft nie.
 
     Nur Windows: auf dem Server stößt der Aufpasser-Cron den Hausmeister an. Ohne
-    Fenster, eigene Prozessgruppe (überlebt das Ende von bau.py), Ausgabe verworfen —
-    Ergebnisse stehen im Hausmeister-Log.
+    Fenster, eigene Prozessgruppe (überlebt das Ende von bau.py). Ergebnisse stehen im
+    Hausmeister-Log; stderr (z. B. Absturz beim Start) hängt an ``hausmeister-start.err``
+    daneben.
     """
     if not _ist_windows():
         return
+    fehlerdatei = hausmeister._log_pfad().parent / "hausmeister-start.err"
     try:
-        subprocess.Popen(
-            [sys.executable, str(_CLI), *_LAUF_ARGS],
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            creationflags=CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP,
-        )
+        fehlerdatei.parent.mkdir(parents=True, exist_ok=True)
+        with fehlerdatei.open("ab") as stderr:  # Kind erbt den Handle, Eltern schließen
+            subprocess.Popen(
+                [sys.executable, str(_CLI), *_LAUF_ARGS],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=stderr,
+                creationflags=CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP,
+            )
     except OSError as fehler:
         log.warning("Hausmeister am Ticket-Ende nicht gestartet: %s", fehler)
 
@@ -185,8 +195,10 @@ def _gruppe(erg: hausmeister.Ergebnis) -> str:
         return _GRUPPEN[0]
     if erg.art == "gesichert und gelöscht":
         return _GRUPPEN[1]
-    if erg.ticket is None or erg.fuer_david:
+    if erg.ticket is None:
         return _GRUPPEN[3]
+    if erg.fuer_david:
+        return _GRUPPEN[4]
     return _GRUPPEN[2]
 
 

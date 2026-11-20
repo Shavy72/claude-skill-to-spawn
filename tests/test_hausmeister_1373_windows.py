@@ -10,6 +10,7 @@ nachgestellt. Git-Ordner, Remote und Löschen sind echt (Welt aus #1368).
 # ruff: noqa: F811 — ``welt`` kommt als Fixture aus dem #1368-Test und wird als Parameter genannt.
 from __future__ import annotations
 
+import errno
 import json
 import logging
 import os
@@ -25,7 +26,7 @@ from test_hausmeister_1368 import (  # noqa: F401 — ``welt`` ist ein Fixture
     welt,
 )
 
-from to_spawn import hausmeister
+from to_spawn import hausmeister, hausmeister_windows
 
 # Aufzeichnung: Get-CimInstance Win32_Process | Select-Object ProcessId,CommandLine,
 # ExecutablePath | ConvertTo-Json -Compress (gekürzt; System-Prozesse ohne Pfad).
@@ -60,10 +61,15 @@ def win(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> Welt:
     ps = welt.tmp / "bin" / "powershell"
     ps.write_text(PS_ATTRAPPE, encoding="utf-8")
     ps.chmod(0o755)
-    monkeypatch.setattr(hausmeister, "_POWERSHELL", str(ps))
+    monkeypatch.setattr(hausmeister_windows, "_POWERSHELL", str(ps))
     aufzeichnung = welt.tmp / "ps.json"
     monkeypatch.setenv("PS_AUFZEICHNUNG", str(aufzeichnung))
     _prozesse(welt, AUFZEICHNUNG_LEER)
+    # Laptop nach dem Einrichten: leere Altbestand-Liste (ohne Datei hielte der erste
+    # echte Lauf alles fest, siehe test_win_ohne_altbestand_datei_haelt_erst_alles_fest).
+    altbestand = hausmeister.altbestand_pfad()
+    altbestand.parent.mkdir(parents=True, exist_ok=True)
+    altbestand.write_text('{"freigegeben": false, "ordner": []}\n', encoding="utf-8")
     return welt
 
 
@@ -189,7 +195,7 @@ def test_win_umbenennen_verweigert_bleibt(
     def verweigert(alt: str | Path, neu: str | Path) -> None:
         raise PermissionError(32, "Der Prozess kann nicht auf die Datei zugreifen")
 
-    monkeypatch.setattr(hausmeister, "_umbenennen", verweigert)
+    monkeypatch.setattr(hausmeister_windows, "_umbenennen", verweigert)
     r = win.aufraeumen(wt, loeschen=True)
     assert r.art == "bleibt" and not r.fehler and "in Benutzung" in r.grund
     assert wt.is_dir()
@@ -210,7 +216,7 @@ def test_win_rueckbenennen_scheitert_bleibt_laut(
             return
         raise PermissionError(5, "Zugriff verweigert")
 
-    monkeypatch.setattr(hausmeister, "_umbenennen", erst_ja_dann_nein)
+    monkeypatch.setattr(hausmeister_windows, "_umbenennen", erst_ja_dann_nein)
     with caplog.at_level(logging.ERROR, logger=hausmeister.log.name):
         r = win.aufraeumen(wt, loeschen=True)
     assert r.art == "bleibt" and r.fehler
@@ -246,7 +252,9 @@ def test_win_powershell_fehlt_bleibt_fehler(
 ) -> None:
     wt = win.worktree(42)
     win.ticket(42, "CLOSED", 48)
-    monkeypatch.setattr(hausmeister, "_POWERSHELL", str(win.tmp / "gibt-es-nicht"))
+    monkeypatch.setattr(
+        hausmeister_windows, "_POWERSHELL", str(win.tmp / "gibt-es-nicht")
+    )
     r = win.aufraeumen(wt, loeschen=True)
     assert r.art == "bleibt" and r.fehler and "PowerShell" in r.grund
     assert wt.is_dir()
@@ -260,7 +268,7 @@ def test_win_powershell_zeitlimit_bleibt_fehler(
     (win.tmp / "bin" / "powershell").write_text(
         "#!/bin/sh\nsleep 5\n", encoding="utf-8"
     )
-    monkeypatch.setattr(hausmeister, "PS_ZEITLIMIT_S", 0.5)
+    monkeypatch.setattr(hausmeister_windows, "PS_ZEITLIMIT_S", 0.5)
     r = win.aufraeumen(wt, loeschen=True)
     assert r.art == "bleibt" and r.fehler
     assert wt.is_dir()
@@ -333,7 +341,8 @@ def test_altbestand_festhalten_schreibt_einmal(welt: Welt) -> None:
     assert daten["ordner"] == [a.resolve().as_posix()]
     assert hausmeister.altbestand_festhalten([a, b]) == pfad
     assert json.loads(pfad.read_text(encoding="utf-8"))["ordner"] == [
-        a.resolve().as_posix()
+        a.resolve().as_posix(),
+        b.resolve().as_posix(),  # ergänzt, nie entfernt (Fixrunde 1)
     ]
 
 
@@ -403,3 +412,69 @@ def test_echt_windows_unterprozess_mit_cwd_im_ordner_bleibt(welt: Welt) -> None:
     finally:
         proc.kill()
         proc.wait()
+
+
+# --- Fixrunde 1 -----------------------------------------------------------------
+
+
+def test_win_ohne_altbestand_datei_haelt_erst_alles_fest(win: Welt) -> None:
+    wt = win.worktree(51)  # sonst löschbar
+    win.ticket(51, "CLOSED", 48)
+    hausmeister.altbestand_pfad().unlink()
+    erg = hausmeister.aufraeumen_alles(loeschen=True, jetzt=win.jetzt)
+    assert wt.is_dir()
+    assert [e.art for e in erg if e.ordner.name == "wt-51"] == ["bleibt"]
+    daten = json.loads(hausmeister.altbestand_pfad().read_text(encoding="utf-8"))
+    assert daten["freigegeben"] is False
+    assert wt.resolve().as_posix() in daten["ordner"]
+
+
+def test_win_trockenlauf_ohne_umbenennungs_probe(
+    win: Welt, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    wt = win.worktree(52)
+    win.ticket(52, "CLOSED", 48)
+    aufrufe: list[str] = []
+    monkeypatch.setattr(
+        hausmeister_windows, "_umbenennen", lambda alt, neu: aufrufe.append(str(neu))
+    )
+    assert win.aufraeumen(wt).art == "gelöscht"
+    assert hausmeister.aufraeumen_alles(jetzt=win.jetzt)
+    assert aufrufe == [] and wt.is_dir()
+
+
+class _Msvcrt:
+    """Naht für ``msvcrt`` (gibt es nur unter Windows); ``LK_NBLCK`` wie dort = 2."""
+
+    LK_NBLCK = 2
+
+    def __init__(self, fehler: OSError | None = None) -> None:
+        self.fehler = fehler
+        self.aufrufe: list[tuple[int, int]] = []
+
+    def locking(self, fd: int, modus: int, laenge: int) -> None:
+        self.aufrufe.append((modus, laenge))
+        if self.fehler:
+            raise self.fehler
+
+
+def test_win_sperre_belegt_raeumt_nicht_auf(
+    win: Welt, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    wt = win.worktree(53)
+    win.ticket(53, "CLOSED", 48)
+    m = _Msvcrt(OSError(errno.EACCES, "Permission denied"))
+    monkeypatch.setattr(hausmeister_windows, "_msvcrt", m, raising=False)
+    assert hausmeister.aufraeumen_alles(loeschen=True, jetzt=win.jetzt) == []
+    assert m.aufrufe == [(2, 1)] and wt.is_dir()
+
+
+def test_win_sperre_frei_raeumt_auf(win: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
+    wt = win.worktree(54)
+    win.ticket(54, "CLOSED", 48)
+    m = _Msvcrt()
+    monkeypatch.setattr(hausmeister_windows, "_msvcrt", m, raising=False)
+    erg = hausmeister.aufraeumen_alles(loeschen=True, jetzt=win.jetzt)
+    assert m.aufrufe == [(2, 1)]
+    assert [e.art for e in erg if e.ordner.name == "wt-54"] == ["gelöscht"]
+    assert not wt.exists()

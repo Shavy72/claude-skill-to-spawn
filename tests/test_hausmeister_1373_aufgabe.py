@@ -10,6 +10,8 @@ gestellt). Echte schtasks-Läufe nur auf Windows (skipif).
 # ruff: noqa: F811 — ``welt`` kommt als Fixture aus dem #1368-Test und wird als Parameter genannt.
 from __future__ import annotations
 
+import json
+import logging
 import os
 import subprocess
 import sys
@@ -231,35 +233,27 @@ def test_loesch_liste_vier_gruppen_loescht_nichts(
     ]
 
 
-def test_loesch_liste_gescheitert_meldet_fehler(
-    welt: Welt, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    monkeypatch.setattr(hausmeister, "aufraeumen_alles", lambda **kw: None)
-    with pytest.raises(RuntimeError, match="Sperre"):
-        hausmeister_aufgabe.loesch_liste(tmp_path / "x.md")
-    assert not (tmp_path / "x.md").exists()
+@pytest.mark.skipif(sys.platform == "win32", reason="fcntl nur unter Unix")
+def test_loesch_liste_sperre_belegt_meldet_fehler(welt: Welt, tmp_path: Path) -> None:
+    import fcntl
+
+    wt = welt.worktree(35)  # ein Kandidat: leeres Ergebnis heißt dann „kein Lauf“
+    sperre = hausmeister.altbestand_pfad().with_name(hausmeister.SPERR_DATEI)
+    sperre.parent.mkdir(parents=True, exist_ok=True)
+    with sperre.open("a", encoding="utf-8") as f:
+        fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)  # anderer Lauf hält sie
+        with pytest.raises(RuntimeError, match="Sperre"):
+            hausmeister_aufgabe.loesch_liste(tmp_path / "x.md")
+    assert not (tmp_path / "x.md").exists() and wt.is_dir()
 
 
 def test_cli_altbestand_liste_im_unterprozess(welt: Welt) -> None:
     ordner = _vier_ordner(welt)
     vorher = _ordner_stand(welt)
     ziel = welt.tmp / "cli-liste.md"
-    # Teil A (altbestand_festhalten) kommt per Merge; bis dahin stellt der Test sie.
-    code = (
-        "import runpy, sys; sys.path.insert(0, sys.argv[1]); from pathlib import Path; "
-        "from to_spawn import hausmeister\n"
-        "if not hasattr(hausmeister, 'altbestand_festhalten'):\n"
-        "    hausmeister.altbestand_festhalten = lambda o: Path(sys.argv[2])\n"
-        "sys.argv = [sys.argv[3]] + sys.argv[4:]\n"
-        "runpy.run_path(sys.argv[0], run_name='__main__')\n"
-    )
     lauf = subprocess.run(
         [
             sys.executable,
-            "-c",
-            code,
-            str(SKILL),
-            str(welt.tmp / "altbestand.json"),
             str(SKILL / "to_spawn.py"),
             "aufraeumen",
             "--altbestand-liste",
@@ -294,8 +288,9 @@ def test_cli_ordner_weiter_unveraendert(welt: Welt) -> None:
 
 
 def test_ticket_ende_windows_ohne_fenster_nie_detached(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    monkeypatch.setenv("TO_SPAWN_HAUSMEISTER_LOG", str(tmp_path / "hm" / "h.jsonl"))
     gestartet: list = []
     monkeypatch.setattr(hausmeister_aufgabe, "_ist_windows", lambda: True)
     monkeypatch.setattr(
@@ -313,7 +308,10 @@ def test_ticket_ende_windows_ohne_fenster_nie_detached(
     ]
     assert kw["creationflags"] == 0x08000000 | 0x00000200
     assert not kw["creationflags"] & 0x00000008  # DETACHED_PROCESS
-    assert kw["stdout"] is subprocess.DEVNULL and kw["stderr"] is subprocess.DEVNULL
+    assert kw["stdout"] is subprocess.DEVNULL
+    # stderr landet neben dem Hausmeister-Log (Startfehler sonst unsichtbar)
+    assert kw["stderr"].name == str(tmp_path / "hm" / "hausmeister-start.err")
+    assert kw["stderr"].closed  # Elternprozess schließt seine Kopie
     assert "start_new_session" not in kw
 
 
@@ -386,3 +384,102 @@ def test_echt_windows_zweimal_einrichten(
         subprocess.run(
             ["schtasks", "/Delete", "/TN", name, "/F"], capture_output=True, check=False
         )
+
+
+# --- Fixrunde 1 -----------------------------------------------------------------
+
+
+def test_loesch_liste_mit_echter_altbestand_datei_zeigt_echte_gruppen(
+    welt: Welt,
+) -> None:
+    ordner = _vier_ordner(welt)
+    pfad = hausmeister.altbestand_festhalten(ordner)  # echte Datei, keine Attrappe
+    ziel = welt.tmp / "liste" / "altbestand.md"
+    hausmeister_aufgabe.loesch_liste(ziel)
+    text = ziel.read_text(encoding="utf-8")
+    assert "## Löschbar (1)" in text and "## Sichern + löschen (1)" in text
+    assert "## Bleibt (mit Grund) (1)" in text and "## Ohne Ticket-Nummer (1)" in text
+    assert all(o.is_dir() for o in ordner)
+    assert sorted(json.loads(pfad.read_text(encoding="utf-8"))["ordner"]) == sorted(
+        o.resolve().as_posix() for o in ordner
+    )
+
+
+def test_altbestand_festhalten_ergaenzt_nie_entfernt(welt: Welt) -> None:
+    a, b = welt.worktree(36), welt.worktree(37)
+    pfad = hausmeister.altbestand_festhalten([a])
+    hausmeister.altbestand_festhalten([b])
+    daten = json.loads(pfad.read_text(encoding="utf-8"))
+    assert daten["ordner"] == [a.resolve().as_posix(), b.resolve().as_posix()]
+    assert daten["freigegeben"] is False
+
+
+def test_altbestand_freigegeben_bleibt_unveraendert(
+    welt: Welt, caplog: pytest.LogCaptureFixture
+) -> None:
+    a, b = welt.worktree(38), welt.worktree(39)
+    pfad = hausmeister.altbestand_festhalten([a])
+    daten = json.loads(pfad.read_text(encoding="utf-8"))
+    daten["freigegeben"] = True
+    pfad.write_text(json.dumps(daten), encoding="utf-8")
+    vorher = pfad.read_text(encoding="utf-8")
+    with caplog.at_level(logging.WARNING, logger=hausmeister.log.name):
+        hausmeister.altbestand_festhalten([b])
+    assert pfad.read_text(encoding="utf-8") == vorher
+    assert "freigegeben" in caplog.text
+
+
+def test_fuer_david_mit_ticket_eigene_gruppe() -> None:
+    e = hausmeister.Ergebnis(
+        Path("/x/wt-77"), "bleibt", "Geheimnis", 77, fuer_david=True
+    )
+    ohne = hausmeister.Ergebnis(Path("/x/wt-ohne"), "bleibt", "keine Nummer", None)
+    assert hausmeister_aufgabe._gruppe(e) == "Für David (selbst prüfen)"
+    assert hausmeister_aufgabe._gruppe(ohne) == "Ohne Ticket-Nummer"
+
+
+def _bau_modul(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    import importlib.util
+
+    monkeypatch.setenv("TO_SPAWN_REPO", str(tmp_path))
+    name = f"bau_1373_{uuid.uuid4().hex}"
+    spec = importlib.util.spec_from_file_location(name, SKILL / "skripte" / "bau.py")
+    assert spec is not None and spec.loader is not None
+    bau = importlib.util.module_from_spec(spec)
+    sys.modules[name] = bau
+    try:
+        spec.loader.exec_module(bau)
+    finally:
+        sys.modules.pop(name, None)
+    return bau
+
+
+def test_bau_ticket_ende_nur_nach_echtem_lauf(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    bau = _bau_modul(monkeypatch, tmp_path)
+    angestossen: list[int] = []
+    monkeypatch.setattr(
+        hausmeister_aufgabe, "ticket_ende_anstossen", lambda: angestossen.append(1)
+    )
+    assert bau._ECHTER_LAUF is False  # --dry-run / --print-prompt setzen ihn nie
+    bau.ticket_ende_anstossen()
+    assert angestossen == []
+    monkeypatch.setattr(bau, "_ECHTER_LAUF", True)
+    bau.ticket_ende_anstossen()
+    assert angestossen == [1]
+
+
+def test_bau_ticket_ende_fehler_nur_warnung(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    bau = _bau_modul(monkeypatch, tmp_path)
+
+    def kaputt() -> None:
+        raise RuntimeError("kaputt")
+
+    monkeypatch.setattr(hausmeister_aufgabe, "ticket_ende_anstossen", kaputt)
+    monkeypatch.setattr(bau, "_ECHTER_LAUF", True)
+    with caplog.at_level(logging.WARNING):
+        bau.ticket_ende_anstossen()  # wirft nicht, Exit-Code von main() bleibt
+    assert "kaputt" in caplog.text

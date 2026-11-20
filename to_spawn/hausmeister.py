@@ -30,10 +30,12 @@ Dateien, die die Sicherung NICHT mitnimmt, gehen beim Löschen verloren — daru
 - Eingebettete Repos und Submodule (Sicherung sähe nur den Gitlink) ⇒ bleibt.
 
 Prozesse kommen aus ``/proc``; unter Windows (Laptop, ``C:/dev/wt-*``, #1373) aus
-``Get-CimInstance Win32_Process`` plus einer Umbenennungs-Probe (siehe
-:func:`_kein_prozess`). Plattenplatz misst die Platte der Wurzeln, nicht Home.
-Altbestand (#1373, E16): Ordner in :func:`altbestand_pfad` bleiben, bis David die
-Liste freigibt.
+``Get-CimInstance Win32_Process`` plus einer Umbenennungs-Probe nur im echten Lauf
+(Windows-Wissen in :mod:`to_spawn.hausmeister_windows`, Tür bleibt hier). Plattenplatz
+misst die Platte der Wurzeln, nicht Home. Altbestand (#1373, E16): Ordner in
+:func:`altbestand_pfad` bleiben im echten Lauf, bis David die Liste freigibt; der
+Trockenlauf zeigt die echte Regel. Fehlt die Liste unter Windows, hält der erste echte
+Lauf zuerst alle vorhandenen Ordner fest (am Server: keine Wirkung).
 
 Jede Entscheidung schreibt eine JSON-Zeile nach ``TO_SPAWN_HAUSMEISTER_LOG``
 (Standard ``~/.claude/to-spawn/hausmeister.jsonl``), beim Löschen VOR dem Löschen;
@@ -65,11 +67,9 @@ import logging
 import os
 import re
 import shutil
-import stat
-import subprocess
 import sys
 import time
-from collections.abc import Callable, Iterable
+from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
@@ -77,10 +77,10 @@ from typing import IO, Literal
 
 try:
     import fcntl
-except ImportError:  # Windows: ohne Sperre (Laptop-Teil #1373)
+except ImportError:  # Windows: Sperre über hausmeister_windows (#1373)
     fcntl = None  # type: ignore[assignment]
 
-from to_spawn import aufpasser, gh, hindernis
+from to_spawn import aufpasser, gh, hausmeister_windows, hindernis
 
 log = logging.getLogger("to_spawn.hausmeister")
 
@@ -101,12 +101,8 @@ STARTSPERRE_ANTEIL = 0.05
 SPERR_DATEI = "hausmeister.lock"
 #: Zeitlimit je gh-Abfrage in Sekunden.
 GH_ZEITLIMIT_S = 60
-# Windows-Prozessliste (PowerShell/CIM): Zeitlimit in Sekunden
-PS_ZEITLIMIT_S = 60
 # Plattform-Naht (Tests stellen "win32" ein); nur _ist_windows() liest sie
 _PLATTFORM = sys.platform
-_POWERSHELL = "powershell"
-_umbenennen: Callable[[Path, Path], None] = os.rename
 #: Ignorierte Dateien, die beim Löschen mit weg dürfen (Git-Glob-Pathspecs).
 ERZEUGNISSE = (
     "**/__pycache__/**",
@@ -266,10 +262,11 @@ def _spur(art: str, satz: str, **felder: object) -> None:
 
 def _sperre_nehmen() -> IO[str] | None | bool:
     """Sperrdatei (nicht blockierend): offene Datei = Sperre gehalten, ``False`` =
-    anderer Lauf hält sie, ``None`` = ohne fcntl (Windows) kein Sperren."""
-    if fcntl is None:
-        return None
+    anderer Lauf hält sie, ``None`` = Plattform ohne Sperre. Windows: msvcrt-Sperre
+    auf derselben Datei (:func:`hausmeister_windows.sperre_nehmen`)."""
     datei = _log_pfad().parent / SPERR_DATEI
+    if _ist_windows() or fcntl is None:
+        return hausmeister_windows.sperre_nehmen(datei)
     datei.parent.mkdir(parents=True, exist_ok=True)
     f = datei.open("a", encoding="utf-8")
     try:
@@ -364,7 +361,8 @@ def _regeln(
     if not ordner.is_dir():
         raise _Bleibt("Ordner fehlt")
     echt = ordner.resolve()
-    _kein_altbestand(echt)
+    if not trocken:  # Trockenlauf zeigt die echte Regel (Altbestand-Liste für David)
+        _kein_altbestand(echt)
 
     # 2/3 Git-Ordner? Hauptrepo? Eigenes Repo?
     ist_worktree = _git_ordner_pruefen(echt)
@@ -399,7 +397,7 @@ def _regeln(
             )
 
     # Gegenprobe direkt vor dem Löschen: nichts Neues, alles auf origin, kein Prozess
-    _kein_prozess(echt)
+    _kein_prozess(echt, probe=True)
     if _status(echt) != status_vorher:
         raise _Bleibt("Ordner hat sich während der Sicherung geändert")
     if _ungepushte_koepfe(echt, ist_worktree):
@@ -794,12 +792,18 @@ def _ist_windows() -> bool:
     return _PLATTFORM == "win32"
 
 
-def _kein_prozess(ordner: Path) -> None:
+def _kein_prozess(ordner: Path, *, probe: bool = False) -> None:
     """Regel 7: ``_Bleibt``, falls ein Prozess im Ordner arbeitet (cwd, exe, offene
-    Datei) oder das nicht feststellbar ist. Linux über ``/proc``, Windows über
-    :func:`_kein_prozess_windows`."""
+    Datei) oder das nicht feststellbar ist. Linux über ``/proc``; Windows über die
+    CIM-Prozessliste, mit ``probe=True`` (nur echter Lauf, direkt vor dem Löschen)
+    zusätzlich die Umbenennungs-Probe (siehe :mod:`to_spawn.hausmeister_windows`)."""
     if _ist_windows():
-        _kein_prozess_windows(ordner)
+        try:
+            hausmeister_windows.kein_prozess(ordner)
+            if probe:
+                hausmeister_windows.umbenennen_probe(ordner)
+        except hausmeister_windows.Bleibt as b:
+            raise _Bleibt(b.grund, fuer_david=b.fuer_david, fehler=b.fehler) from None
         return
     proc = Path("/proc")
     try:
@@ -838,111 +842,6 @@ def _kein_prozess(ordner: Path) -> None:
             raise _Bleibt(f"Prozess {pid} arbeitet im Ordner oder hat Dateien offen")
 
 
-def _pfad_norm(pfad: str | Path) -> str:
-    """Vergleichsform für Windows-Pfade: ``/`` statt Backslash, klein, ohne Schluss-``/``."""
-    return str(pfad).replace("\\", "/").rstrip("/").lower()
-
-
-def _kein_prozess_windows(ordner: Path) -> None:
-    """Windows-Teil von Regel 7. (a) Prozessliste per CIM: Treffer, wenn
-    ``ExecutablePath`` im Ordner liegt oder ``CommandLine`` den Ordnerpfad enthält
-    (Groß/Klein egal, ``/`` = Backslash; ``wt-13`` trifft nicht ``wt-130``). Die cwd steht
-    dort nicht, darum (b) Umbenennungs-Probe: Windows verweigert das Umbenennen eines
-    Ordners, in dem ein Prozess arbeitet oder eine Datei offen hat. Jeder unklare
-    Fehler ⇒ bleibt."""
-    o = _pfad_norm(ordner)
-    im_text = re.compile(re.escape(o) + r"(?![^/\s\"'])")
-    for pid, befehl, exe in _windows_prozesse():
-        if pid == os.getpid():
-            continue  # dieser Lauf selbst (z. B. Ordner als CLI-Argument)
-        exe_n = _pfad_norm(exe) if exe else ""
-        if (
-            exe_n == o
-            or exe_n.startswith(o + "/")
-            or (befehl and im_text.search(_pfad_norm(befehl)))
-        ):
-            raise _Bleibt(f"Prozess {pid} arbeitet im Ordner oder hat Dateien offen")
-    _umbenennen_probe(ordner)
-
-
-def _windows_prozesse() -> list[tuple[int | None, str | None, str | None]]:
-    """``(ProcessId, CommandLine, ExecutablePath)`` aller Prozesse; ``_Bleibt`` mit
-    Fehler, wenn PowerShell fehlt, hängt oder Unlesbares liefert."""
-    befehl = (
-        "Get-CimInstance Win32_Process | Select-Object ProcessId,CommandLine,"
-        "ExecutablePath | ConvertTo-Json -Compress"
-    )
-    try:
-        lauf = subprocess.run(
-            [_POWERSHELL, "-NoProfile", "-NonInteractive", "-Command", befehl],
-            check=False,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=PS_ZEITLIMIT_S,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-        )
-    except (OSError, subprocess.SubprocessError) as fehler:
-        raise _Bleibt(
-            f"Prozessliste nicht lesbar (PowerShell: {fehler})", fehler=True
-        ) from None
-    if lauf.returncode != 0:
-        raise _Bleibt(
-            f"Prozessliste nicht lesbar (PowerShell Exit {lauf.returncode})",
-            fehler=True,
-        )
-    kaputt = _Bleibt("Prozessliste nicht lesbar (PowerShell-JSON)", fehler=True)
-    try:
-        daten = json.loads(lauf.stdout)
-    except ValueError:
-        raise kaputt from None
-    if isinstance(daten, dict):
-        daten = [daten]  # ConvertTo-Json: ein Prozess ⇒ Objekt statt Liste
-    if not isinstance(daten, list) or not all(isinstance(e, dict) for e in daten):
-        raise kaputt
-    return [
-        (
-            e["ProcessId"] if isinstance(e.get("ProcessId"), int) else None,
-            e["CommandLine"] if isinstance(e.get("CommandLine"), str) else None,
-            e["ExecutablePath"] if isinstance(e.get("ExecutablePath"), str) else None,
-        )
-        for e in daten
-    ]
-
-
-def _umbenennen_probe(ordner: Path) -> None:
-    """Ordner kurz auf ``<name>.hausmeister-probe`` und zurück; verweigert ⇒ bleibt."""
-    probe = ordner.with_name(ordner.name + ".hausmeister-probe")
-    if os.path.lexists(probe):
-        raise _Bleibt(f"Probe-Ziel {probe} existiert schon", fehler=True)
-    try:
-        _umbenennen(ordner, probe)
-    except PermissionError:
-        raise _Bleibt(
-            "Ordner in Benutzung (Windows verweigert das Umbenennen)"
-        ) from None
-    except OSError as fehler:
-        raise _Bleibt(
-            f"Umbenennungs-Probe gescheitert: {fehler}", fehler=True
-        ) from None
-    try:
-        _umbenennen(probe, ordner)
-    except OSError as fehler:
-        log.error(
-            "Hausmeister: Rückbenennen gescheitert — Ordner liegt jetzt unter %s "
-            "statt %s (%s); bitte von Hand zurückbenennen",
-            probe,
-            ordner,
-            fehler,
-        )
-        raise _Bleibt(
-            f"Rückbenennen gescheitert, Ordner liegt unter {probe}",
-            fuer_david=True,
-            fehler=True,
-        ) from None
-
-
 def _link_lesen(pid: int, link: Path) -> str | None:
     try:
         return os.readlink(link)
@@ -971,18 +870,9 @@ def _loeschen(ordner: Path, ist_worktree: bool) -> None:
         aufpasser.git_lauf(hauptrepo, "worktree", "remove", "--force", str(ordner))
         aufpasser.git_lauf(hauptrepo, "worktree", "prune")
     elif sys.version_info >= (3, 12):
-        shutil.rmtree(ordner, onexc=_schreibschutz_weg)
+        shutil.rmtree(ordner, onexc=hausmeister_windows.schreibschutz_weg)
     else:
-        shutil.rmtree(ordner, onerror=_schreibschutz_weg)
-
-
-def _schreibschutz_weg(funktion: Callable[[str], object], pfad: str, _: object) -> None:
-    """rmtree-Handler: Schreibschutz von Elternordner und Eintrag nehmen (Windows:
-    Nur-Lese-Dateien in ``.git/objects``), dann erneut; scheitert das, fliegt es."""
-    for ziel in (os.path.dirname(pfad), pfad):
-        if os.path.lexists(ziel) and not os.path.islink(ziel):
-            os.chmod(ziel, os.stat(ziel).st_mode | stat.S_IWRITE)
-    funktion(pfad)
+        shutil.rmtree(ordner, onerror=hausmeister_windows.schreibschutz_weg)
 
 
 def altbestand_pfad() -> Path:
@@ -991,33 +881,72 @@ def altbestand_pfad() -> Path:
 
 
 def altbestand_festhalten(ordner: Iterable[Path]) -> Path:
-    """Hält Ordner als Altbestand fest: sie bleiben, bis David die Liste freigibt
-    (``"freigegeben": true`` in der Datei). Schreibt
+    """Hält Ordner als Altbestand fest: sie bleiben im echten Lauf, bis David die Liste
+    freigibt (``"freigegeben": true`` in der Datei). Schreibt
     ``{"freigegeben": false, "erstellt": <iso>, "ordner": [<posix, aufgelöst>]}``.
-    Gibt es die Datei schon, bleibt sie unverändert (die Liste vom ersten Mal gilt).
-    Rückgabe: Pfad der Datei. ``OSError`` geht an den Aufrufer."""
+    Gibt es die Datei schon, kommen neue Ordner dazu, keiner geht weg. Ist sie schon
+    freigegeben oder kaputt, bleibt sie unverändert (Warnung im Log; eine kaputte Liste
+    hält per Regel jeden Ordner fest). Rückgabe: Pfad der Datei. ``OSError`` geht an
+    den Aufrufer."""
     pfad = altbestand_pfad()
-    daten = {
-        "freigegeben": False,
-        "erstellt": datetime.now().astimezone().isoformat(timespec="seconds"),
-        "ordner": [Path(o).expanduser().resolve().as_posix() for o in ordner],
-    }
-    pfad.parent.mkdir(parents=True, exist_ok=True)
+    neu = [Path(o).expanduser().resolve().as_posix() for o in ordner]
     try:
-        with pfad.open("x", encoding="utf-8") as f:
-            f.write(json.dumps(daten, ensure_ascii=False, indent=2) + "\n")
-    except FileExistsError:
-        pass
+        daten = json.loads(pfad.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        daten = {
+            "freigegeben": False,
+            "erstellt": datetime.now().astimezone().isoformat(timespec="seconds"),
+            "ordner": [],
+        }
+    except ValueError:
+        log.warning("Hausmeister: Altbestand-Liste %s kaputt — nicht ergänzt", pfad)
+        return pfad
+    liste = daten.get("ordner") if isinstance(daten, dict) else None
+    if not isinstance(liste, list):
+        log.warning("Hausmeister: Altbestand-Liste %s kaputt — nicht ergänzt", pfad)
+        return pfad
+    if daten.get("freigegeben") is True:
+        log.warning(
+            "Hausmeister: Altbestand-Liste %s ist schon freigegeben — %d Ordner nicht "
+            "ergänzt",
+            pfad,
+            len(neu),
+        )
+        return pfad
+    bekannt = {os.path.normcase(str(o)) for o in liste}
+    for o in neu:
+        if os.path.normcase(o) not in bekannt:
+            bekannt.add(os.path.normcase(o))
+            liste.append(o)
+    pfad.parent.mkdir(parents=True, exist_ok=True)
+    zwischen = pfad.with_name(pfad.name + ".neu")
+    zwischen.write_text(
+        json.dumps(daten, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+    os.replace(zwischen, pfad)  # nie eine halb geschriebene Liste
     return pfad
 
 
 def _kein_altbestand(echt: Path) -> None:
-    """Altbestand-Regel: gelistet und nicht freigegeben ⇒ bleibt; Datei fehlt ⇒ keine
-    Wirkung; Datei kaputt/unlesbar ⇒ jeder Ordner bleibt mit Fehler."""
+    """Altbestand-Regel (nur echter Lauf): gelistet und nicht freigegeben ⇒ bleibt;
+    Datei kaputt/unlesbar ⇒ jeder Ordner bleibt mit Fehler. Datei fehlt: am Server keine
+    Wirkung; unter Windows hält der Lauf zuerst alle vorhandenen Ordner fest — der
+    erste Lauf am Laptop löscht nie ohne Davids Ja."""
     pfad = altbestand_pfad()
+    if _ist_windows() and not os.path.lexists(pfad):
+        try:
+            altbestand_festhalten([*_kandidaten(), echt])
+        except OSError as fehler:
+            raise _Bleibt(
+                f"Altbestand-Liste {pfad} nicht anlegbar: {fehler}", fehler=True
+            ) from None
+        log.warning(
+            "Hausmeister: Altbestand-Liste fehlte — alle Ordner festgehalten in %s",
+            pfad,
+        )
     try:
         daten = json.loads(pfad.read_text(encoding="utf-8"))
-    except (FileNotFoundError, NotADirectoryError):  # Datei gibt es nicht
+    except (FileNotFoundError, NotADirectoryError):  # Datei gibt es nicht (Server)
         return
     except (OSError, ValueError) as fehler:
         raise _Bleibt(

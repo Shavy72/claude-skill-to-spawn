@@ -50,6 +50,8 @@ for stream in (sys.stdout, sys.stderr):
         stream.reconfigure(encoding="utf-8")
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 log = logging.getLogger("bau")
+#: True, sobald main() einen echten Lauf beginnt (nicht --dry-run/--print-prompt), #1373.
+_ECHTER_LAUF = False
 
 #: Repo, in dem gearbeitet wird: ``TO_SPAWN_REPO`` (setzt die Weiterleitung im Repo), sonst
 #: Git-Wurzel des aktuellen Ordners — nie der Ort dieses Skripts (liegt im Skill, #205).
@@ -1009,6 +1011,8 @@ def main() -> int:
             '"<prompt>"' if mit_prompt else "",
         )
         return 0
+    global _ECHTER_LAUF
+    _ECHTER_LAUF = True  # ab hier echter Lauf (Ticket-Ende stößt den Hausmeister an)
 
     blocker_schranke(ticket, args)
     # Speicher-Schutz (#257 Paket B, Fixrunde 1 F3), die EINE Stelle vor dem Prozessstart
@@ -1109,11 +1113,22 @@ def main() -> int:
         session_id_setzen(cmd, out, str(uuid.uuid4()), ticket=ticket, runde=runde)
 
 
-if __name__ == "__main__":
+def ticket_ende_anstossen() -> None:
+    """Ticket-Ende (#1373): nach einem echten Lauf räumt am Laptop der Hausmeister im
+    Hintergrund auf (Server: Aufpasser). Nie nach --dry-run/--print-prompt/Abbruch; wirft nie."""
+    if not _ECHTER_LAUF:
+        return
     try:
-        sys.exit(main())
-    finally:
-        # Ticket-Ende (#1373): am Laptop räumt der Hausmeister im Hintergrund auf (Server: Aufpasser).
         from to_spawn import hausmeister_aufgabe
 
         hausmeister_aufgabe.ticket_ende_anstossen()
+    except Exception as fehler:  # Aufräumen darf den Exit-Code von main() nie ändern
+        log.warning(
+            "Hausmeister am Ticket-Ende nicht angestoßen: %s", fehler, exc_info=True
+        )
+
+
+if __name__ == "__main__":
+    exit_wert = main()  # Abbruch (Ausnahme, Strg+C) fliegt durch: kein Anstoßen
+    ticket_ende_anstossen()
+    sys.exit(exit_wert)
