@@ -195,3 +195,14 @@ def test_sauberer_lauf_loescht_merker_frist_zaehlt_neu(klon: Path, monkeypatch: 
     monkeypatch.setattr(halt, "_erfuellt", _kaputt)
     assert halt.pruefen(klon) is not None
     assert (klon / halt.DATEI).exists()
+
+
+def test_programmfehler_haelt_gueltigen_halt_ueber_frist(klon: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fix-Runde 1: wirft ``_erfuellt`` dauerhaft, Ticket existiert ⇒ Halt bleibt auch nach der Frist."""
+    halt.anlegen(klon, "Vorrang", halt.Bedingung("ticket_zu", "1346"))
+    monkeypatch.setattr(halt, "_erfuellt", _kaputt)
+    assert halt.pruefen(klon) is not None
+    _merker_altern(klon)
+    assert halt.pruefen(klon) is not None
+    assert (klon / halt.DATEI).exists()
+    assert _sicherungen(klon) == []

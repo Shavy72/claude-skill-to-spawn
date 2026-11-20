@@ -343,8 +343,9 @@ def pruefen(klon: Path, *, aufheben: bool = True, wer: str = "befehl") -> Halt |
     Datei wird geändert — die einzige Stelle, die darüber entscheidet, ist ``_pruefe``.
     Ist die Bedingung nicht prüfbar, bleibt der Halt. gh/git nicht erreichbar bei gültiger
     Bedingung ⇒ ohne Frist („nicht prüfbar“ ist nicht „Grund weg“, #1465). Keine gültige
-    Bedingung, Ticket/Commit gibt es nicht oder Programmfehler ⇒ 24 h nach der ersten
+    Bedingung oder Ticket/Commit gibt es nachweislich nicht ⇒ 24 h nach der ersten
     Beobachtung hebt er sich auf — kein Stillstand ohne Grund (20.11.: #1307 stand ~10 h).
+    Dauerhafter Programmfehler bei Ticket/Commit-Bedingung zählt wie Werkzeug-Ausfall: Halt bleibt.
     Wirft nie: unerwarteter Fehler ⇒ Traceback einmal je Halt, der Halt bleibt —
     Aufrufer (Takt, Aufpasser) brauchen kein eigenes ``try``.
     """
@@ -375,7 +376,9 @@ def _pruefe(klon: Path, halt: Halt, *, aufheben: bool, wer: str, pruefbar: bool 
         merker = erster or _jetzt()
         # Frist nur, wenn der Grund nachweislich weg/ungültig ist; Werkzeug-Ausfall hält (#1465).
         bleibt = _jetzt() - merker < ALT_FRIST or (
-            pruefbar and halt.bedingung is not None and _bedingung_bekannt(klon, halt.bedingung) is not False
+            halt.bedingung is not None
+            and halt.bedingung.art != "bis"  # Zeit-Bedingung braucht kein Werkzeug: Programmfehler ⇒ Frist
+            and _bedingung_bekannt(klon, halt.bedingung) is not False
         )
         anlass = f"nicht prüfbar seit {merker.isoformat(timespec='seconds')} (> {ALT_FRIST})"
         if bleibt and erster is None:  # Warnung nur einmal je Halt (Merker = schon gemeldet)

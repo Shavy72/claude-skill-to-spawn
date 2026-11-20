@@ -113,6 +113,7 @@ def test_bis_zeitpunkt_laeuft_ab(klon: Path) -> None:
 def test_nicht_pruefbar_halt_bleibt(
     klon: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
+    """Erst Werkzeug-Ausfall (Halt bleibt auch nach der Frist, #1465), dann Ticket nachweislich weg (Frist hebt auf)."""
     monkeypatch.setenv("GH_STUB_KAPUTT", "1346")
     halt.anlegen(klon, "Vorrang", halt.Bedingung("ticket_zu", "1346"))
     with caplog.at_level(logging.WARNING, logger="to_spawn.halt"):
