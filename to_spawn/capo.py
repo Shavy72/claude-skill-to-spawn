@@ -1726,8 +1726,25 @@ def _checkpoint(
 # --- Tick -----------------------------------------------------------------------
 
 
+def _zustand_name(kennung: str, spec: int) -> str:
+    """Dateiname der capo-Zustandsdatei; ``kennung="*"`` ergibt das Glob-Muster aller Repos."""
+    return f"{kennung}_{spec}.json"
+
+
 def _zustand_datei(repo: Path, gh_repo: str, spec: int) -> Path:
-    return melder.zustand_ordner() / f"{melder.repo_kennung(repo, gh_repo)}_{spec}.json"
+    return melder.zustand_ordner() / _zustand_name(melder.repo_kennung(repo, gh_repo), spec)
+
+
+def _repo_vermerk(repo: Path) -> str:
+    """Wofür capo eine Spec führt: das gemeinsame Git-Verzeichnis (#1470).
+
+    Haupt-Repo und alle seine Worktrees ergeben denselben Wert. Kein Git-Repo bzw. git fehlt →
+    Rückfall auf den aufgelösten Pfad. Vermerken (:func:`_tick`) und Finden nutzen nur diese Funktion.
+    """
+    code, aus = _git(repo, "rev-parse", "--path-format=absolute", "--git-common-dir")
+    if code == 0 and aus.strip():
+        return str(Path(aus.strip()).resolve())
+    return str(repo.resolve())
 
 
 def fertig_urteil(repo: Path, spec: int, gh_repo: str = "") -> str | None:
@@ -1756,16 +1773,17 @@ def _gefuehrte_zustand_datei(repo: Path, gh_repo: str, spec: int) -> Path | None
         return datei
     if not datei.parent.is_dir():
         return None
-    # ponytail: Abgleich über den Pfad, Worktree-Aufrufer verfehlen ihn; Upgrade: --git-common-dir vergleichen
-    ziel = str(repo.resolve())
-    for kandidat in sorted(datei.parent.glob(f"*_{spec}.json")):
+    ziel = _repo_vermerk(repo)
+    treffer: list[tuple[float, Path]] = []
+    for kandidat in datei.parent.glob(_zustand_name("*", spec)):
         try:
             daten = json.loads(kandidat.read_text(encoding="utf-8"))
+            geaendert = kandidat.stat().st_mtime
         except (OSError, ValueError):
             continue  # fremde kaputte Datei: Zugehörigkeit unklar, nicht sperren
         if isinstance(daten, dict) and daten.get("repo") == ziel:
-            return kandidat
-    return None
+            treffer.append((geaendert, kandidat))
+    return max(treffer)[1] if treffer else None  # mehrere Vermerke: die jüngste Datei zählt
 
 
 def fertig_luecke(repo: Path, spec: int, gh_repo: str = "") -> tuple[Path, str] | None:
@@ -2246,7 +2264,7 @@ def _tick(
 
     datei = _zustand_datei(repo, gh_repo, spec)
     zustand = melder.lade_json(datei)
-    zustand["repo"] = str(repo.resolve())  # Sperre in abschluss_paket.py findet die Datei darüber (#1470)
+    zustand["repo"] = _repo_vermerk(repo)  # Sperre in abschluss_paket.py findet die Datei darüber (#1470)
     erledigt = set(zustand.get("erledigt") or [])
     gelesen: dict[str, int] = dict(zustand.get("log_zeilen") or {})
     folgerunden: dict[str, int] = dict(zustand.get("folgerunden") or {})

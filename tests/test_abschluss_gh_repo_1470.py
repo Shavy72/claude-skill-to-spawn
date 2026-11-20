@@ -58,3 +58,45 @@ def test_tick_mit_abweichendem_gh_repo_sperrt_abschluss(
     luecke = capo.fertig_luecke(welt["repo"], int(SPEC_213))
     assert luecke is not None, "Sperre findet capos Zustand unter dem --gh-repo-Namen nicht"
     assert luecke[1] == "Feld spec_fertig_seit fehlt", luecke
+
+
+def test_tick_im_hauptrepo_sperrt_abschluss_aus_worktree(
+    welt: dict[str, Path],  # noqa: F811 (Fixture-Parameter)
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """capo-Tick im Haupt-Repo mit ``--gh-repo`` ≠ origin, Abschluss aus einem echten Worktree → Sperre greift."""
+    import subprocess
+
+    from test_waechter_213 import SPEC as SPEC_213
+    from test_waechter_213 import _beleg, _commit
+
+    monkeypatch.setattr(capo, "abschluss_anstossen", lambda *_a, **_k: [])
+    _commit(welt["repo"], "feat: A (#901)", _beleg("901"))
+    capo.tick(welt["repo"], int(SPEC_213), "test/wegwerf", {}, wt_basis=str(welt["wt"]))
+    baum = welt["repo"].parent / "baum_1470"
+    subprocess.run(
+        ["git", "worktree", "add", "--detach", str(baum)], cwd=welt["repo"], check=True, capture_output=True
+    )
+    luecke = capo.fertig_luecke(baum, int(SPEC_213))
+    assert luecke is not None, "Sperre verfehlt capos Zustand beim Aufruf aus einem Worktree"
+
+
+def test_mehrere_vermerke_juengste_datei_gewinnt(
+    repo: Path,  # noqa: F811
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Zwei Zustandsdateien mit gleichem Repo-Vermerk → die zuletzt geänderte zählt, nicht die alphabetisch erste."""
+    import os
+
+    ordner = tmp_path / "w"
+    ordner.mkdir(parents=True)
+    monkeypatch.setenv("TO_SPAWN_WAECHTER_ORDNER", str(ordner))
+    vermerk = str(repo.resolve())
+    alt = ordner / f"a_alt_{SPEC}.json"
+    alt.write_text(json.dumps({"repo": vermerk, "spec_fertig_seit": "2026-01-01T00:00:00+00:00"}), encoding="utf-8")
+    os.utime(alt, (1_000_000_000, 1_000_000_000))
+    neu = ordner / f"b_neu_{SPEC}.json"
+    neu.write_text(json.dumps({"erledigt": [], "repo": vermerk}), encoding="utf-8")
+    luecke = capo.fertig_luecke(repo, SPEC)
+    assert luecke is not None and luecke[0] == neu, luecke
