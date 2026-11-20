@@ -118,6 +118,8 @@ MINDEST_ZU_SEKUNDEN = 24 * 3600
 PLATZNOT_ANTEIL = 0.15
 #: Unter diesem Anteil freier Platte startet keine neue Session.
 STARTSPERRE_ANTEIL = 0.05
+#: Hindernis-Arten des Start-Checks; ein gesunder Check schließt alle (#1471).
+HINDERNIS_ARTEN = ("platte_voll", "platte_unmessbar", "hausmeister_fehler")
 #: Sperrdatei gegen parallele Aufräum-Läufe, im Ordner des Hausmeister-Logs.
 SPERR_DATEI = "hausmeister.lock"
 #: Zeitlimit je gh-Abfrage in Sekunden.
@@ -337,6 +339,7 @@ def _start_pruefen(loeschen: bool) -> tuple[bool, str]:
         _spur("platte_unmessbar", satz)
         return True, satz
     if anteil >= STARTSPERRE_ANTEIL:
+        hindernis.erledigt(*HINDERNIS_ARTEN)  # #1471: gesunder Check = Hindernisse vorbei
         return True, f"Platte frei: {_prozent(anteil)} frei{zusatz}"
     nach = "trotz gescheitertem Aufräumen" if zusatz else "auch nach dem Aufräumen"
     satz = (

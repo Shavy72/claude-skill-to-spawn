@@ -93,23 +93,44 @@ def offene(
 ) -> list[dict[str, Any]]:
     """Offene Hindernisse der letzten 24 h, je ``art`` nur die jüngste Zeile (neueste zuerst).
 
-    Offen = Zeile ohne ``erledigt: true``. Jede Ergebnis-Zeile trägt ``anzahl`` (wie oft
-    die Art im Fenster auftrat) und ``zeitpunkt`` (datetime). Zeilen ohne lesbare Zeit
-    zählen nicht. Fehlende Datei → leer, wirft nie.
+    Eine Zeile mit ``erledigt`` genau ``True`` (Ende-Zeile, siehe :func:`erledigt`)
+    schließt alle früheren Zeilen ihrer Art; eine spätere Meldung öffnet sie wieder.
+    Jede Ergebnis-Zeile trägt ``anzahl`` (wie oft die Art seit dem letzten Ende im
+    Fenster auftrat) und ``zeitpunkt`` (datetime). Zeilen ohne lesbare Zeit zählen
+    nicht. Fehlende Datei → leer, wirft nie.
     """
     grenze = (jetzt or datetime.now().astimezone()) - FENSTER
     je_art: dict[str, dict[str, Any]] = {}
+    gelesen: list[tuple[datetime, dict[str, Any]]] = []
     for zeile in lesen(datei):
         zeit = _zeitpunkt(zeile.get("zeit"))
-        if zeit is None or zeit < grenze or zeile.get("erledigt"):
-            continue
+        if zeit is not None and zeit >= grenze:
+            gelesen.append((zeit, zeile))
+    for zeit, zeile in sorted(gelesen, key=lambda paar: paar[0]):
         art = str(zeile.get("art", "?"))
+        if zeile.get("erledigt") is True:
+            je_art.pop(art, None)
+            continue
         alt = je_art.get(art)
         anzahl = (alt["anzahl"] if alt else 0) + 1
         if alt is None or zeit >= alt["zeitpunkt"]:
             je_art[art] = {**zeile, "zeitpunkt": zeit}
         je_art[art]["anzahl"] = anzahl
     return sorted(je_art.values(), key=lambda z: z["zeitpunkt"], reverse=True)
+
+
+def erledigt(*arten: str) -> list[str]:
+    """Meldet das Ende: je genannte Art, die gerade offen ist, eine Ende-Zeile; wirft nie.
+
+    Ruft die Stelle, die bei gesundem Zustand vorbeikommt (z. B. Start-Check mit
+    messbarer, freier Platte). Nicht offene Arten schreiben nichts — so wächst das Log
+    bei jedem gesunden Lauf nicht. Rückgabe: die geschlossenen Arten.
+    """
+    offen = {str(z.get("art")) for z in offene()}
+    zu = [art for art in arten if art in offen]
+    for art in zu:
+        melden(art, "behoben", erledigt=True)
+    return zu
 
 
 def kurzzeile(
