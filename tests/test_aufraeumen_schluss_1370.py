@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import ast
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -68,10 +69,17 @@ def _zustand(welt: dict[str, Path]) -> dict:  # noqa: F811
     return json.loads(dateien[0].read_text(encoding="utf-8")) if dateien else {}
 
 
-def _spec_fertig(welt: dict[str, Path]) -> None:  # noqa: F811
+def _spec_fertig(welt: dict[str, Path], *, rueckblick: bool = True) -> None:  # noqa: F811
+    """Alle Tickets zu; ``rueckblick=True`` legt Rückblick + Thermo ab, damit die
+    Abschluss-Mail im selben Tick erledigt ist (der Hausmeister läuft erst danach)."""
     _commit(welt["repo"], "feat: A (#901)", _beleg("901"))
     _commit(welt["repo"], "feat: B (#902)", _beleg("902"))
     _gh_setzen(welt, "902", state="closed", closed_at=_iso())
+    if rueckblick:
+        ordner = welt["repo"] / "docs" / "agents"
+        ordner.mkdir(parents=True, exist_ok=True)
+        (ordner / f"rueckblick_{SPEC}.md").write_text("Rückblick: keine Vorschläge\n", encoding="utf-8")
+        (ordner / f"thermo_{SPEC}.md").write_text("# Thermo\n\n- nichts auffällig\n", encoding="utf-8")
 
 
 def test_spec_fertig_raeumt_einmal_auf(welt: dict[str, Path], hm: Path) -> None:  # noqa: F811
@@ -112,13 +120,13 @@ def test_fehler_im_hausmeister_zeile_und_naechster_tick_erneut(
 ) -> None:
     _spec_fertig(welt)
 
-    def kaputt(**_: object) -> list[hausmeister.Ergebnis]:
+    def kaputt(**_: object) -> hausmeister.Rundgang:
         raise RuntimeError("Platte weg")
 
     with pytest.MonkeyPatch.context() as mp:
         mp.setenv("TO_SPAWN_REPO", str(welt["repo"]))
         mp.chdir(welt["repo"])
-        mp.setattr(hausmeister, "aufraeumen_alles", kaputt)
+        mp.setattr(hausmeister, "rundgang", kaputt)
         konfig = config.lade(welt["repo"])
         erg = capo.tick(
             welt["repo"], int(SPEC), "test/wegwerf", konfig, wt_basis=str(welt["wt"])
@@ -135,6 +143,118 @@ def test_fehler_im_hausmeister_zeile_und_naechster_tick_erneut(
         zweiter
     )
     assert _zustand(welt).get("aufraeumen_erledigt")
+
+
+def _tick(welt: dict[str, Path], **ersatz: object) -> list[str]:  # noqa: F811
+    """Ein capo-Tick im Prozess; ``ersatz`` = Attribute des Hausmeisters (nur Nähte)."""
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv("TO_SPAWN_REPO", str(welt["repo"]))
+        mp.chdir(welt["repo"])
+        for name, wert in ersatz.items():
+            mp.setattr(hausmeister, name, wert)
+        konfig = config.lade(welt["repo"])
+        return capo.tick(
+            welt["repo"], int(SPEC), "test/wegwerf", konfig, wt_basis=str(welt["wt"])
+        ).zeilen
+
+
+def _sperre_halten(hm: Path):
+    fcntl = pytest.importorskip("fcntl")
+    sperre = (hm.parent / hausmeister.SPERR_DATEI).open("a", encoding="utf-8")
+    fcntl.flock(sperre, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    return sperre
+
+
+def test_sperre_belegt_wartet_ohne_marker_und_ohne_fehlversuch(
+    welt: dict[str, Path],  # noqa: F811
+    hm: Path,
+) -> None:
+    _spec_fertig(welt)
+    sperre = _sperre_halten(hm)
+    try:
+        erster = _capo(welt)
+    finally:
+        sperre.close()
+    assert "Hausmeister wartet:" in erster.stdout, _text(erster)
+    assert "FEHLER: Hausmeister" not in erster.stdout, _text(erster)
+    assert _laeufe(hm) == []
+    assert not _zustand(welt).get("aufraeumen_erledigt")
+    assert not _zustand(welt).get("aufraeumen_versuche")
+    zweiter = _capo(welt)
+    assert "Hausmeister: 0 gelöscht, 1 bleibt, 0 Fehler" in zweiter.stdout, _text(zweiter)
+    assert _zustand(welt).get("aufraeumen_erledigt")
+
+
+def test_ordnersuche_scheitert_drei_versuche_dann_aufgegeben(
+    welt: dict[str, Path],  # noqa: F811
+    hm: Path,
+) -> None:
+    _spec_fertig(welt)
+
+    def unlesbar() -> list[Path]:
+        raise OSError("Wurzel nicht lesbar")
+
+    for versuch in (1, 2):
+        text = "\n".join(_tick(welt, _kandidaten=unlesbar))
+        assert (
+            "FEHLER: Hausmeister — Ordnersuche gescheitert (OSError: Wurzel nicht lesbar)."
+            in text
+        ), text
+        assert "aufgegeben" not in text, text
+        assert not _zustand(welt).get("aufraeumen_erledigt")
+        assert _zustand(welt).get("aufraeumen_versuche") == versuch
+    text = "\n".join(_tick(welt, _kandidaten=unlesbar))
+    assert (
+        "FEHLER: Hausmeister — nach 3 Versuchen aufgegeben, Netz ist der Aufpasser-Takt"
+        in text
+    ), text
+    assert _zustand(welt).get("aufraeumen_erledigt")
+    assert "Hausmeister" not in "\n".join(_tick(welt, _kandidaten=unlesbar))
+
+
+def test_ordner_mit_fehler_zeile_mit_namen_ohne_marker(
+    welt: dict[str, Path],  # noqa: F811
+    hm: Path,
+) -> None:
+    """Echter Fehlerweg: eigener Git-Ordner, GitHub kennt das Ticket nicht (gh Exit 1)."""
+    ordner = Path(str(hm.parent / "hm_wurzel" / "wt-903"))
+    ordner.mkdir()
+    for args in (
+        ["init", "-q"],
+        ["remote", "add", "origin", "https://github.com/Shavy72/duoplus-management"],
+    ):
+        subprocess.run(["git", *args], cwd=ordner, check=True, capture_output=True)
+    _spec_fertig(welt)
+    erster = _capo(welt)
+    assert "FEHLER: Hausmeister — 1 Ordner: wt-903" in erster.stdout, _text(erster)
+    laeufe = _laeufe(hm)
+    assert any(lauf.get("fehler") for lauf in laeufe), laeufe
+    assert not _zustand(welt).get("aufraeumen_erledigt")
+    assert _zustand(welt).get("aufraeumen_versuche") == 1
+
+
+def test_hausmeister_erst_nach_abschluss_mail(
+    welt: dict[str, Path],  # noqa: F811
+    hm: Path,
+) -> None:
+    _spec_fertig(welt, rueckblick=False)
+    erster = _capo(welt)
+    assert "SPEC FERTIG" in erster.stdout, _text(erster)
+    assert "Abschluss-Mail wartet" in erster.stdout, _text(erster)
+    assert "Hausmeister" not in erster.stdout, _text(erster)
+    assert _laeufe(hm) == []
+    assert not _zustand(welt).get("aufraeumen_erledigt")
+
+
+def test_rundgang_bei_sperre_nicht_gelaufen(hm: Path) -> None:
+    sperre = _sperre_halten(hm)
+    try:
+        rund = hausmeister.rundgang(loeschen=True)
+    finally:
+        sperre.close()
+    assert rund.gelaufen is False and rund.wartet is True, rund
+    assert rund.grund and rund.ergebnisse == () and rund.fehler == 0
+    assert hausmeister.aufraeumen_alles(loeschen=False) != []  # frei: läuft wieder
 
 
 # --- Prüf-Test: Aufrufer rufen nur die Tür, Regeln kennt nur der Hausmeister ---------------
