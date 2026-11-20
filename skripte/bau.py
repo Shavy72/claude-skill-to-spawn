@@ -1021,6 +1021,9 @@ def main() -> int:
     # Platte (#1369): Start-Check des Hausmeisters, bei voller Platte warten (Takt ~15 min).
     speicher.auf_platte_warten(wer=f"bau {ticket}")
     auf_speicher_warten(konfig, wer=f"bau {ticket}")
+    # Push-Sperre (#1445): Git-Hooks vor JEDEM Start (Erststart, --resume, --umzug),
+    # unabhängig vom Sandbox-Modus; Quelle origin, nie der Arbeitsordner.
+    nest.git_hooks_einrichten(REPO)
     # Sandbox erst jetzt (#210): Worktree entsteht vom frischen origin-Stand (nest holt ihn).
     praefix = nest.sandbox_start(konfig, worktree_pfad(ticket), REPO)
     if praefix is None:

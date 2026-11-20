@@ -319,40 +319,65 @@ def sandbox_einstellungen(
 
 #: Installer der Git-Hooks im Klon (Projekt-Repo, #1442). Welche Hooks, steht nur dort.
 GIT_HOOKS_INSTALLER = Path("scripts") / "hooks" / "install_git_hooks.sh"
+#: Hook-Datei, die der Installer neben sich erwartet (``dirname "$0"``) und vergleicht.
+GIT_HOOKS_SPERRE = Path("scripts") / "hooks" / "pre-push-master-sperre.sh"
+GIT_HOOKS_TIMEOUT_S = 60
 
 
 def git_hooks_einrichten(klon: Path) -> bool:
-    """Ruft den Hook-Installer des Klons auf (u. a. pre-push: master-Sperre, #1442/#1445).
+    """Richtet die Git-Hooks des Projekts ein (u. a. pre-push: master-Sperre, #1442/#1445).
 
-    Git-Hooks liegen im gemeinsamen Git-Ordner; der Installer schreibt dorthin, also gilt
-    der Aufruf für den Hauptklon und alle seine Worktrees. Idempotent. Fehlt der Installer
-    (alter Projekt-Stand, fremdes Repo) oder scheitert er: Warnung im Log, ``False``, kein
-    Abbruch — sonst startet ein alter Stand nie mehr.
+    Aufruf vor jedem Session-Start (``bau.py``, ``wache.py``, CLI ``nest sandbox``),
+    unabhängig vom Sandbox-Modus. Installer und Sperre kommen aus dem Git-Objekt
+    ``origin/<hauptzweig>`` des Klons, nie aus dem Arbeitsordner: den darf eine Session
+    beschreiben, der Installer läuft aber mit den Rechten des Starters (#1445 B2).
+    Die Hooks liegen im gemeinsamen Git-Ordner, also gilt ein Aufruf für Hauptklon und
+    alle Worktrees. Idempotent. Fehlt der Installer auf origin (alter Stand, fremdes
+    Repo) oder scheitert er: Warnung im Log, ``False``, kein Abbruch.
     """
-    installer = klon / GIT_HOOKS_INSTALLER
-    if not installer.is_file():
-        log.warning("Push-Sperre nicht eingerichtet: %s fehlt im Klon", installer)
+    ref = f"origin/{gh.hauptzweig(klon)}"
+    inhalte: dict[str, bytes] = {}
+    for datei in (GIT_HOOKS_INSTALLER, GIT_HOOKS_SPERRE):
+        try:
+            gezeigt = subprocess.run(
+                ["git", "-C", str(klon), "show", f"{ref}:{datei.as_posix()}"],
+                capture_output=True,
+                timeout=GIT_HOOKS_TIMEOUT_S,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired) as fehler:
+            log.warning("Push-Sperre nicht eingerichtet: git show %s scheiterte (%s)", ref, fehler)
+            return False
+        if gezeigt.returncode == 0:
+            inhalte[datei.name] = gezeigt.stdout
+    if GIT_HOOKS_INSTALLER.name not in inhalte:
+        log.warning("Push-Sperre nicht eingerichtet: %s fehlt auf %s im Klon %s", GIT_HOOKS_INSTALLER, ref, klon)
         return False
-    try:
-        ergebnis = subprocess.run(
-            ["sh", str(installer), str(klon)],
-            capture_output=True,
-            text=True,
-            timeout=60,
-            check=False,
-        )
-    except (OSError, subprocess.TimeoutExpired) as fehler:
-        log.warning("Push-Sperre nicht eingerichtet: %s scheiterte (%s)", installer, fehler)
-        return False
+    # Fehlt nur die Sperre: Installer legt den Hook trotzdem an, der warnt dann beim Push.
+    with tempfile.TemporaryDirectory(prefix="to-spawn-hooks-") as tmp:
+        for name, inhalt in inhalte.items():
+            (Path(tmp) / name).write_bytes(inhalt)
+        installer = Path(tmp) / GIT_HOOKS_INSTALLER.name
+        try:
+            ergebnis = subprocess.run(
+                ["sh", str(installer), str(klon)],
+                capture_output=True,
+                text=True,
+                timeout=GIT_HOOKS_TIMEOUT_S,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired) as fehler:
+            log.warning("Push-Sperre nicht eingerichtet: Installer von %s scheiterte (%s)", ref, fehler)
+            return False
     if ergebnis.returncode != 0:
         log.warning(
-            "Push-Sperre nicht eingerichtet: %s endete mit %d: %s",
-            installer,
+            "Push-Sperre nicht eingerichtet: Installer von %s endete mit %d: %s",
+            ref,
             ergebnis.returncode,
             ergebnis.stderr.strip()[:300],
         )
         return False
-    log.info("Git-Hooks eingerichtet (Push-Sperre): %s", installer)
+    log.info("Git-Hooks eingerichtet (Push-Sperre) aus %s: %s", ref, klon)
     return True
 
 
@@ -362,14 +387,11 @@ def sandbox_vorbereiten(
     konfig: Mapping[str, Any] | None = None,
     home: Path | None = None,
 ) -> Path:
-    """Worktree sicherstellen, Git-Hooks einrichten, ``sandbox.json`` schreiben. Rückgabe: Dateipfad."""
+    """Worktree sicherstellen und seine ``sandbox.json`` schreiben. Rückgabe: Dateipfad."""
     hauptrepo = hauptrepo.resolve()
     worktree, ticket = worktree_von(ziel)
     worktree_anlegen(worktree, hauptrepo, ticket)
     worktree = worktree.resolve()
-    # Installer aus dem Worktree (frischer origin-Stand); er schreibt in den gemeinsamen
-    # Hook-Ordner des Hauptklons. Vor der Sandbox: dort ist der Hook-Ordner gesperrt.
-    git_hooks_einrichten(worktree)
     einstellungen = sandbox_einstellungen(
         worktree,
         hauptrepo,
@@ -995,6 +1017,7 @@ def lauf(args: argparse.Namespace) -> int:
             return 0
         if befehl == "sandbox":
             repo = (args.repo or config.repo_wurzel()).resolve()
+            git_hooks_einrichten(repo)
             print(sandbox_vorbereiten(args.ziel, repo, home=heim))
             return 0
         if befehl == "secrets":
