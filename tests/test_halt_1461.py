@@ -7,6 +7,7 @@ Echte Halt-Datei, echter Merker; die Attrappe ist nur der erzwungene Programmfeh
 from __future__ import annotations
 
 import json
+import logging
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -74,3 +75,44 @@ def test_alter_merker_greift_nicht_bei_neuem_halt(klon: Path, monkeypatch: pytes
     _merker_altern(klon)  # eigene Frist abgelaufen ⇒ fällt
     assert halt.pruefen(klon) is None
     assert not (klon / halt.DATEI).exists()
+
+
+def test_lese_fehler_einmal_dann_sauber_haelt_ueber_frist_hinaus(
+    klon: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    halt.anlegen(klon, "Nachtruhe", _bis_spaeter())
+    echt = halt._lies
+    monkeypatch.setattr(halt, "_lies", _kaputt)
+    assert halt.pruefen(klon) is not None  # Schluckauf, Merker gesetzt
+    monkeypatch.setattr(halt, "_lies", echt)
+    assert halt.pruefen(klon) is not None  # sauber ⇒ Merker weg
+    assert not (klon / halt.MERKER_DATEI).exists()
+    jetzt = datetime.now(timezone.utc)
+    monkeypatch.setattr(halt, "_jetzt", lambda: jetzt + halt.ALT_FRIST + timedelta(hours=1))
+    assert halt.pruefen(klon) is not None  # Fehler-Merker hebt den gesunden Halt nicht auf
+    assert (klon / halt.DATEI).exists()
+
+
+def test_fristablauf_benennt_datei_um_statt_zu_loeschen(klon: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    halt.anlegen(klon, "Nachtruhe", _bis_spaeter())
+    original = (klon / halt.DATEI).read_text(encoding="utf-8")
+    monkeypatch.setattr(halt, "_lies", _kaputt)
+    assert halt.pruefen(klon) is not None
+    _merker_altern(klon)
+    assert halt.pruefen(klon) is None
+    assert not (klon / halt.DATEI).exists()
+    gesichert = list((klon / halt.DATEI).parent.glob(f"{Path(halt.DATEI).name}.aufgehoben-*"))
+    assert len(gesichert) == 1
+    assert gesichert[0].read_text(encoding="utf-8") == original
+
+
+def test_warnung_nicht_pruefbar_nur_einmal_je_halt(
+    klon: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    halt.anlegen(klon, "Nachtruhe", _bis_spaeter())
+    monkeypatch.setattr(halt, "_erfuellt", lambda *_a, **_k: None)
+    with caplog.at_level(logging.WARNING, logger="to_spawn.halt"):
+        for _ in range(3):
+            assert halt.pruefen(klon) is not None
+    warnungen = [r for r in caplog.records if "nicht prüfbar" in r.getMessage()]
+    assert len(warnungen) == 1

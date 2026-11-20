@@ -13,9 +13,11 @@ Schnittstelle (Format und Prüfung leben nur hier):
 - :func:`pruefen` — aktiver :class:`Halt` oder ``None``; ist die Bedingung erfüllt,
   hebt es den Halt selbst auf und schreibt das ins Halt-Log. Nicht prüfbar
   (gh/git-Fehler) ⇒ Halt bleibt, Warnung im Log, kein Absturz — länger als
-  ``ALT_FRIST`` am Stück nicht prüfbar ⇒ Halt hebt sich mit Warnung auf.
+  ``ALT_FRIST`` am Stück nicht prüfbar ⇒ Halt hebt sich mit Warnung auf; die Datei
+  wird dabei nur umbenannt (``halt.json.aufgehoben-<zeit>``), nie gelöscht.
   ``aufheben=False`` (Trockenlauf) ändert keine Datei; ``wer`` steht im Log. Wirft nie:
-  unerwarteter Fehler ⇒ ``log.exception``, Halt bleibt.
+  unerwarteter Fehler ⇒ ``log.exception``, Halt bleibt
+  (bis zur Frist; dann Umbenennen wie oben).
 - :func:`aufheben` — von Hand (``wer`` steht im Log).
 
 Bedingungen: ``ticket_zu`` (Issue N geschlossen), ``commit`` (Commit X auf dem
@@ -291,12 +293,27 @@ def _merker_setzen(klon: Path, halt: Halt, seit: datetime | None) -> None:
         log.warning("Merker %s nicht schreibbar: %s", datei, fehler)
 
 
-def _entfernen(klon: Path, halt: Halt, wer: str, anlass: str) -> None:
-    """Halt-Datei + Merker weg, Log-Zeile; Dateifehler nur als Warnung (wirft nie)."""
+def _entfernen(klon: Path, halt: Halt, wer: str, anlass: str, *, sichern: bool = False) -> None:
+    """Halt-Datei + Merker weg, Log-Zeile; Dateifehler nur als Warnung (wirft nie).
+
+    ``sichern`` (Fristablauf ohne prüfbare Bedingung): Datei wird umbenannt statt gelöscht,
+    Rohinhalt (gekürzt) bzw. Lesefehler steht in der Log-Zeile — sichern → prüfen → löschen.
+    """
     try:
-        (klon / DATEI).unlink(missing_ok=True)
+        felder: dict[str, Any] = {}
+        datei = klon / DATEI
+        if sichern and datei.exists():
+            try:
+                felder["roh"] = datei.read_text(encoding="utf-8", errors="replace")[:500]
+            except OSError as fehler:
+                felder["roh_fehler"] = str(fehler)
+            ziel = datei.with_name(f"{datei.name}.aufgehoben-{_jetzt().strftime('%Y%m%dT%H%M%S')}")
+            datei.rename(ziel)
+            felder["gesichert_als"] = ziel.name
+        else:
+            datei.unlink(missing_ok=True)
         (klon / MERKER_DATEI).unlink(missing_ok=True)
-        _schreibe_log(klon, "aufgehoben", halt, wer_hebt=wer, anlass=anlass)
+        _schreibe_log(klon, "aufgehoben", halt, wer_hebt=wer, anlass=anlass, **felder)
     except OSError as fehler:
         log.warning("Halt-Datei nicht entfernbar (%s) — gilt trotzdem als aufgehoben", fehler)
 
@@ -332,10 +349,11 @@ def _pruefe(klon: Path, halt: Halt, *, aufheben: bool, wer: str, pruefbar: bool 
     erfuellt = _erfuellt(klon, halt.bedingung) if pruefbar else None
     merker: datetime | None = None  # Soll-Stand des Merkers „nicht prüfbar seit“
     if erfuellt is None:
-        merker = _merker_seit(klon, halt) or _jetzt()
+        erster = _merker_seit(klon, halt)
+        merker = erster or _jetzt()
         bleibt = _jetzt() - merker < ALT_FRIST
         anlass = f"nicht prüfbar seit {merker.isoformat(timespec='seconds')} (> {ALT_FRIST})"
-        if bleibt:
+        if bleibt and erster is None:  # Warnung nur einmal je Halt (Merker = schon gemeldet)
             log.warning("Halt-Bedingung nicht prüfbar (%s) — Halt bleibt.", _bedingung_text(halt.bedingung))
     else:
         bleibt = not erfuellt
@@ -348,7 +366,7 @@ def _pruefe(klon: Path, halt: Halt, *, aufheben: bool, wer: str, pruefbar: bool 
         _merker_setzen(klon, halt, merker)
     else:
         log.log(logging.INFO if erfuellt else logging.WARNING, "Halt aufgehoben (%s): %s", anlass, halt.grund)
-        _entfernen(klon, halt, wer, anlass)
+        _entfernen(klon, halt, wer, anlass, sichern=erfuellt is None)
     return halt if bleibt else None
 
 
