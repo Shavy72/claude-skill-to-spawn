@@ -317,7 +317,7 @@ def _fenster_lage(
     minuten = max(0, int((jetzt - seit) // 60))
     if aufpasser.rueckfrage(text):
         return RUECKFRAGE, minuten, merker
-    if aufpasser.arbeitet(text):
+    if aufpasser.arbeitet(text, still_min=(jetzt - seit) / 60):
         return ARBEITET, None, merker
     return STILL, minuten, merker
 

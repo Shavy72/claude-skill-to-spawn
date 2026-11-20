@@ -115,6 +115,9 @@ except ImportError:  # pragma: no cover - Windows
     fcntl = None  # type: ignore[assignment]
 
 HANG_MIN = 90
+#: Claude-Fenster am leeren Prompt, so lange unverändert → gilt nicht mehr als
+#: arbeitend, egal welche alte Zeile im Bild steht oder ob ``busy`` hängt (#1426).
+ARBEITET_STILL_MIN = 20
 #: Wakeups wartender Loop-Sessions kommen spätestens alle 60 min — darunter wäre
 #: eine wartende Session „still“.
 HANG_MIN_UNTERGRENZE = 61
@@ -392,19 +395,36 @@ class SessionInfo:
     aus_json: bool = True
 
 
-def arbeitet(text: str, status: str | None = None) -> bool:
+def arbeitet(
+    text: str, status: str | None = None, still_min: float | None = None
+) -> bool:
     """Fenster arbeitet oder wartet auf Antwort → nie anfassen.
 
-    Marker im Pane-Text (auch die Limit-Meldung des Aufsehers) oder ``status == busy``
-    aus der Session-JSON.
+    Die eine Regel für Aufpasser und Aufseher-Stand. Arbeit heißt: Marker im Pane-Text
+    (auch die Limit-Meldung des Aufsehers) oder ``status == busy`` aus der Session-JSON.
+
+    ``still_min`` = Minuten, seit sich der Pane-Text (ohne Statuszeile, siehe
+    :func:`pane_hash`) nicht mehr geändert hat. Steht ein Claude-Fenster am leeren
+    Prompt und ist es seit :data:`ARBEITET_STILL_MIN` unverändert, zählen alte Zeilen
+    im Bild („Waiting for background agent“, eingefrorener Spinner) und ein
+    hängender ``busy``-Status nicht mehr (#1426: #1301 49 min, #1342 12 h „arbeitet“).
+    Echte Arbeit lässt die Spinner-Zeile ticken und ändert den Hash. Ausnahmen, die
+    nie verfallen: offene Rückfrage, Warten am Limit, Warte-Zeile von bau.py (kein
+    Eingabefeld) und Marker unter dem Eingabefeld — dort zeichnet Claude Code jedes
+    Bild neu, z. B. laufende Hintergrund-Helfer. ``None`` (Dauer unbekannt) = nur die Muster.
     """
+    if BLOCKER_WARTEN.search(text) or LIMIT_TEXT.search(text) or rueckfrage(text):
+        return True
+    if (
+        still_min is not None
+        and still_min >= ARBEITET_STILL_MIN
+        and (feld := _eingabefeld(text.splitlines())) is not None
+        and feld.leer
+    ):
+        return any(m in feld.darunter for m in ARBEITS_MARKER)
     if status == "busy":
         return True
-    return (
-        any(m in text for m in ARBEITS_MARKER + RUECKFRAGE_MARKER)
-        or bool(BLOCKER_WARTEN.search(text))
-        or bool(LIMIT_TEXT.search(text))
-    )
+    return any(m in text for m in ARBEITS_MARKER)
 
 
 def rueckfrage(text: str) -> bool:
@@ -425,13 +445,31 @@ def ohne_statuszeile(text: str) -> str:
     (Shell, Dialog mit nur einer Linie, fremdes Programm) bleibt der Text ganz.
     """
     zeilen = text.splitlines()
+    feld = _eingabefeld(zeilen)
+    if feld is None:
+        return text
+    return "\n".join(zeilen[: feld.unten])
+
+
+@dataclass(frozen=True)
+class _Eingabefeld:
+    unten: int  # Zeilen-Index der unteren Rahmenlinie
+    leer: bool  # nur ``❯``, nichts getippt
+    darunter: str  # Statuszeile(n) unter dem Feld, von Claude Code jedes Bild neu
+
+
+def _eingabefeld(zeilen: list[str]) -> _Eingabefeld | None:
+    """Das Claude-Code-Eingabefeld (letztes Linienpaar mit ``❯`` dazwischen) oder ``None``."""
     linien = [i for i, z in enumerate(zeilen) if EINGABEFELD_LINIE.fullmatch(z)]
     if len(linien) < 2:
-        return text
+        return None
     oben, unten = linien[-2], linien[-1]
-    if not any(z.lstrip().startswith("❯") for z in zeilen[oben + 1 : unten]):
-        return text
-    return "\n".join(zeilen[:unten])
+    innen = [z.strip() for z in zeilen[oben + 1 : unten]]
+    prompt = [z for z in innen if z.startswith("❯")]
+    if not prompt:
+        return None
+    leer = [z for z in innen if z] == ["❯"]
+    return _Eingabefeld(unten, leer, "\n".join(zeilen[unten + 1 :]))
 
 
 def pane_hash(text: str) -> str:
@@ -1665,11 +1703,12 @@ class Aufpasser:
             )
             return False
         text = self.pane_text(f.ziel)
+        e = self.stand.fenster.get(f"{f.sitzung}/{f.name}")
+        still_min = (self.jetzt - e["seit"]) / 60 if e is not None else None
         if pane_hash(text) != hash_start or arbeitet(
-            text, info.status if info else None
+            text, info.status if info else None, still_min
         ):
             log.info("%s: inzwischen aktiv — kein Eingriff", f.name)
-            e = self.stand.fenster.get(f"{f.sitzung}/{f.name}")
             if e is not None and pane_hash(text) != hash_start:
                 e["hash"], e["seit"] = pane_hash(text), self.jetzt
                 if e.get("stufe", 0):
@@ -1800,7 +1839,7 @@ class Aufpasser:
         ticket = echtes_ticket(f)
         if ticket != f.ticket:
             log.info("%s: bau.py arbeitet an Ticket %s", f.name, ticket)
-        arbeitend = arbeitet(text, status)
+        arbeitend = arbeitet(text, status, still_min)
 
         if ticket is not None and ticket not in offen and not arbeitend:
             # Volle Grenze + idle Session: nicht 15 min Karenz absitzen, sondern kurz
