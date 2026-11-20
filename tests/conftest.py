@@ -93,9 +93,7 @@ def _start_nur_attrappen(
     ``TO_SPAWN_TEST_BIN``. Läuft nach ``_keine_to_spawn_umgebung`` (löscht ``TO_SPAWN_*``).
     """
     monkeypatch.setenv("TO_SPAWN_TESTLAUF", "1")
-    monkeypatch.setenv(
-        "TO_SPAWN_TEST_BIN", str(tmp_path_factory.mktemp("start-attrappen"))
-    )
+    monkeypatch.setenv("TO_SPAWN_TEST_BIN", str(tmp_path_factory.mktemp("start-attrappen")))
 
 
 @pytest.fixture(autouse=True)
