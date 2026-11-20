@@ -34,7 +34,8 @@ ohne START-Datei (#1426) — Entscheidung nur in :func:`_folge_ab_handoff`.
 Am PC (Windows, #501) ist nichts tippbar: :func:`fuer_rechner` macht aus Stufe 1/2
 direkt Stufe 3 (Zeile „PC: Stufe 1 übersprungen“), aus ``/exit`` eine Meldung.
 
-In ein Fenster, das arbeitet oder eine Rückfrage zeigt, wird nie getippt. Arbeitet
+In ein Fenster, das arbeitet oder eine Rückfrage zeigt, wird nie getippt. Steht eine
+Rückfrage seit :data:`aufpasser.RUECKFRAGE_MIN` Minuten, meldet die Leiter (#1426). Arbeitet
 die Session nach einem Stupser (oder nach Stufe 5) wieder, fällt die Leiter auf
 Stufe 0 zurück. Erst wird die Stufe gemerkt, dann getippt — scheitert das Tippen,
 wird nicht nochmal getippt.
@@ -57,6 +58,7 @@ from typing import Literal, Protocol
 
 from to_spawn import (
     anleitung,
+    aufpasser,
     aufseher_stand,
     bau_log,
     config,
@@ -194,6 +196,10 @@ def entscheide(lage: Lage, gemerkt: Gemerkt, jetzt: float, handoff_k: float) -> 
         vor = _minuten(jetzt, gemerkt.seit)
         return Schritt("melden", f"respawn gescheitert vor {vor} min — Aufseher prüfen")
     if lage.fenster == aufseher_stand.RUECKFRAGE:
+        # Rechte-/Vertrauens-Dialog: nie tippen, ab der Aufpasser-Grenze melden (#1426).
+        still = lage.still_min or 0
+        if still >= aufpasser.RUECKFRAGE_MIN:
+            return Schritt("melden", f"Rückfrage seit {still} min — braucht David")
         return Schritt("nichts", "Rückfrage offen — Aufseher antwortet")
     if lage.fenster == aufseher_stand.KEIN_FENSTER:
         folge = _folge_ab_handoff(lage, gemerkt, jetzt)
