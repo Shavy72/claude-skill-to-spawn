@@ -333,7 +333,8 @@ def _warten(
             return True
         if offen is not None and jetzt >= probe_ab:
             if offen():
-                return True
+                # Die Probe kann bis PROBE_TIMEOUT_S blockieren — Abbruch danach noch einmal fragen.
+                return not (abbruch is not None and abbruch())
             probe_ab = time.monotonic() + probe_takt
             continue
         naechste = probe_ab - jetzt if offen is not None else float("inf")
@@ -371,6 +372,9 @@ class Aufsicht(threading.Thread):
         self.bei_grenze = bei_grenze
         #: Höchster gemessener Kontext dieser Session in Token (#436).
         self.kontext = 0
+        #: Eine echte Modellantwort (keine Limit-Zeile) seit ``ab`` — die Session arbeitet
+        #: wieder; der Pausen-Zähler beginnt dann neu (#1449).
+        self.gearbeitet = False
         self._grenze_gemeldet = False
 
     def _kontext_messen(self, eintrag: dict[str, Any]) -> None:
@@ -413,6 +417,8 @@ class Aufsicht(threading.Thread):
                 self.limit_eintrag = eintrag
                 self.bei_limit(_texte(eintrag)[:200] or str(eintrag.get("error")))
                 return True
+            if eintrag.get("type") == "assistant":
+                self.gearbeitet = True
         return False
 
     def run(self) -> None:
@@ -557,21 +563,31 @@ def _melde_pause(
     sekunden: float,
     grund: str,
     runde: int,
+    probe_takt: float | None = None,
 ) -> None:
     """Mail und Bau-Log-Zeile vor der Limit-Pause (#254).
 
     Die Runde steht im Melde-Schlüssel: sonst entprellt der Melder die zweite Pause
-    derselben Session weg und eine Schleife liefe unsichtbar (F6).
+    derselben Session weg und eine Schleife liefe unsichtbar (F6). Mit ``probe_takt``
+    ist es eine Probe-Pause (#1449): sie endet, sobald das Limit offen ist.
     """
     bis = f"{ziel.astimezone():%d.%m. %H:%M}"
+    if probe_takt is None:
+        betreff = f"Aufseher #{spec} pausiert bis {bis}"
+        dauer = f"bis {bis} ({sekunden / 60:.0f} min), danach fährt er selbst weiter."
+    else:
+        betreff = f"Aufseher #{spec} pausiert, bis das Limit offen ist"
+        dauer = (
+            f"— er prüft alle {probe_takt / 60:.0f} min und fährt selbst weiter, "
+            f"sobald das Limit offen ist, spätestens {bis}."
+        )
     try:
         melder.melden(
             repo,
             "waechter_pause",
-            f"Aufseher #{spec} pausiert bis {bis}",
+            betreff,
             f"Aufseher #{spec}: {modell} hat das Limit erreicht ({grund}). "
-            f"Pause {runde} von {MAX_PAUSEN} bis {bis} ({sekunden / 60:.0f} min), "
-            "danach fährt er selbst weiter.",
+            f"Pause {runde} von {MAX_PAUSEN} {dauer}",
             f"waechter_pause|{spec}|{sid}|{runde}|{int(ziel.timestamp())}",
         )
     except (OSError, ValueError, subprocess.SubprocessError) as fehler:
@@ -1044,11 +1060,14 @@ def fahre(
             _modell: str = modell,
             _pause: list[tuple[datetime, float]] = pause,
             _aufsicht: Aufsicht = aufsicht,
-            _runde: int = pausen + 1,
+            _vorher: int = pausen,
             _probe: threading.Event = probe,
         ) -> None:
             _gruende.append(text)
             _limit.set()
+            # Pausen zählen nur in Folge: hat die Session seit der letzten Pause gearbeitet,
+            # ist das eine neue erste Pause (#1449).
+            _runde = 1 if _aufsicht.gearbeitet else _vorher + 1
             log.warning(
                 "Aufseher #%s: Nutzungs-Limit erkannt (%s) — %s", spec, _modell, text
             )
@@ -1142,8 +1161,18 @@ def fahre(
         grund = gruende[0] if gruende else "Nutzungs-Limit"
         if auf_ausweich:
             ziel, wartezeit = pause[0]
-            pausen += 1
-            _melde_pause(repo, spec, sid, modell, ziel, wartezeit, grund, pausen)
+            pausen = 1 if aufsicht.gearbeitet else pausen + 1
+            _melde_pause(
+                repo,
+                spec,
+                sid,
+                modell,
+                ziel,
+                wartezeit,
+                grund,
+                pausen,
+                probe_takt if probe.is_set() else None,
+            )
             log.warning(
                 "Aufseher #%s: Limit-Pause bis %s (%.0f s) — danach fährt er selbst weiter.",
                 spec,
