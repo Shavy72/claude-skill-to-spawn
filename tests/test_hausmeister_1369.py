@@ -44,7 +44,11 @@ def _drei_ordner(welt: Welt) -> tuple[Path, Path, Path]:
 
 
 def _geloescht(welt: Welt) -> list[str]:
-    return [Path(z["ordner"]).name for z in welt.zeilen() if z["art"] != "bleibt"]
+    return [
+        Path(z["ordner"]).name
+        for z in welt.zeilen()
+        if z.get("ordner") and z["art"] != "bleibt"
+    ]
 
 
 def test_platznot_loescht_fertige_sofort_aelteste_zuerst(

@@ -264,3 +264,62 @@ def test_cli_aufraeumen_zweig_exit_0_eine_zeile(zw: Welt) -> None:
     assert len(p.stdout.strip().splitlines()) == 1
     assert "ticket/53-test" not in _heads(zw)
     assert wt.exists()
+
+
+def test_lokaler_repo_pfad_wie_die_schlange_loescht_ohne_sicherung(zw: Welt) -> None:
+    """Schlange ruft mit dem Klon-Pfad (origin → Bare-Remote): Zweig weg, keine sicherung/*."""
+    zw.worktree(54)
+    zw.ticket(54, "OPEN")
+    tip = _tip(zw, "ticket/54-test")
+    r = hausmeister.zweig_aufraeumen(zw.haupt, "ticket/54-test", loeschen=True, uebernommen_tip=tip)
+    assert r.art == "gelöscht" and not r.fehler
+    assert "ticket/54-test" not in _heads(zw)
+    assert not [h for h in _heads(zw) if h.startswith("sicherung/")]
+
+
+def test_cli_mit_lokalem_repo_pfad_loescht_ohne_sicherung(zw: Welt) -> None:
+    zw.worktree(55)
+    zw.ticket(55, "OPEN")
+    tip = _tip(zw, "ticket/55-test")
+    p = subprocess.run(
+        [
+            sys.executable, str(SKILL / "to_spawn.py"), "aufraeumen",
+            "--zweig", "ticket/55-test", "--repo", str(zw.haupt),
+            "--uebernommen-tip", tip, "--loeschen",
+        ],
+        capture_output=True, text=True, encoding="utf-8",
+        env=os.environ.copy(), cwd=str(SKILL),
+    )  # fmt: skip
+    assert p.returncode == 0, p.stderr
+    assert "ticket/55-test" not in _heads(zw)
+    assert not [h for h in _heads(zw) if h.startswith("sicherung/")]
+
+
+def test_probelauf_gruppe_je_zweig_exakt_und_wip_gezaehlt(zw: Welt, tmp_path: Path) -> None:
+    wt = zw.worktree(56)
+    git(wt, "push", "-q", "origin", "HEAD:master")  # übernommen → löschen
+    zw.ticket(56, "CLOSED", vor_stunden=48)
+    wt57 = zw.worktree(57)
+    _commit(wt57, "eigen57.txt", "nur hier\n")
+    git(wt57, "push", "-q", "origin", "ticket/57-test")
+    zw.ticket(57, "CLOSED", vor_stunden=48)  # Commit nur auf Zweig → sichern+löschen
+    zw.worktree(58)
+    zw.ticket(58, "OPEN")  # bleibt
+    _commit(zw.haupt, "o.txt", "o\n")
+    git(zw.haupt, "push", "-q", "origin", "HEAD:refs/heads/ticket/ohne-nummer")
+    git(zw.haupt, "push", "-q", "origin", "HEAD:refs/heads/wip/1439-x")
+    pfad = hausmeister.zweige_probelauf(tmp_path / "probe.txt")
+    zeilen = Path(pfad).read_text(encoding="utf-8").splitlines()
+
+    def gruppe(z: str) -> str:
+        z_ = [x for x in zeilen if f" {z}: " in x]
+        assert len(z_) >= 1, z
+        return z_[0].split(f" {z}: ", 1)[1]
+
+    assert gruppe("ticket/56-test").startswith("löschen (")
+    assert gruppe("ticket/57-test").startswith("sichern+löschen (")
+    assert gruppe("ticket/58-test").startswith("bleibt: ")
+    assert gruppe("ticket/ohne-nummer") == "ohne Ticket-Nummer"
+    assert not any(" wip/1439-x: " in x for x in zeilen)  # nie als Zweig bewertet
+    assert any("wip/*: 1 Zweig(e)" in x and "[remote]" in x for x in zeilen)
+    assert "wip/1439-x" in _heads(zw)
