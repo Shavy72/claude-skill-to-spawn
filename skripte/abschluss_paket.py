@@ -380,12 +380,18 @@ def capo_sperre(repo: Path, spec: int) -> bool:
     Führt capo die Spec (Zustandsdatei da), braucht ``ablegen``/``nachsehen`` dessen
     ``spec_fertig_seit`` — sonst könnte die Aufseher-Session die Abschluss-Mail an capo vorbei
     anstoßen (z. B. Staging nicht lesbar, #1407). Ohne Zustandsdatei (Handlauf) keine Sperre.
+    Kaputte Datei oder Alt-Zustand ohne ``spec_fertig_seit`` sperren ebenfalls (sichere Seite);
+    der Text nennt Datei, Grund und Ausweg. Gilt für ``--stand abnahme`` und ``--stand live`` gleich.
     """
-    if capo.fertig_urteil(repo, spec) != "":
+    luecke = capo.fertig_luecke(repo, spec)
+    if luecke is None:
         return False
+    datei, grund = luecke
     sys.stderr.write(
         f"FEHLER: capo meldet Spec {spec} nicht fertig — Abschluss nur nach capo-„SPEC FERTIG“ (#1410), "
-        "nichts abgelegt/verschickt.\n"
+        f"nichts abgelegt/verschickt. Zustandsdatei {datei}: {grund}. Ausweg: capo schreibt das Urteil "
+        "beim nächsten Durchlauf selbst, sobald die Spec fertig ist; wer die Spec ohne capo abschließt, "
+        "tut das bewusst von Hand.\n"
     )
     return True
 

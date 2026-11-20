@@ -1739,8 +1739,47 @@ def fertig_urteil(repo: Path, spec: int, gh_repo: str = "") -> str | None:
     """
     datei = _zustand_datei(repo, gh_repo, spec)
     if not datei.is_file():
+        _fremder_zustand_melden(datei, spec)
         return None
     return str(melder.lade_json(datei).get("spec_fertig_seit") or "")
+
+
+def fertig_luecke(repo: Path, spec: int, gh_repo: str = "") -> tuple[Path, str] | None:
+    """Warum capo die Spec (noch) nicht fertig meldet — für die Sperre in ``abschluss_paket.py`` (#1410).
+
+    ``None`` = keine Sperre (capo führt die Spec nicht oder meldet fertig) · sonst
+    ``(Zustandsdatei, Grund)``. Kaputt oder unklar zählt als „nicht fertig“ (sichere Seite):
+    Grund „nicht lesbar …“ bei kaputtem JSON, „Feld spec_fertig_seit fehlt“ sonst.
+    """
+    urteil = fertig_urteil(repo, spec, gh_repo)
+    if urteil is None or urteil:
+        return None
+    datei = _zustand_datei(repo, gh_repo, spec)
+    try:
+        daten = json.loads(datei.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as fehler:
+        return datei, f"nicht lesbar ({type(fehler).__name__})"
+    if not isinstance(daten, dict):
+        return datei, "nicht lesbar (kein JSON-Objekt)"
+    return datei, "Feld spec_fertig_seit fehlt"
+
+
+def _fremder_zustand_melden(datei: Path, spec: int) -> None:
+    """Liegt capos Zustand der Spec unter anderem Repo-Namen (``--gh-repo`` ≠ origin), Log-Zeile (#1410).
+
+    Ohne Meldung fiele die Sperre still weg; gesperrt wird nicht, weil die Nummer auch zu einem
+    anderen Repo gehören kann.
+    """
+    if not datei.parent.is_dir():
+        return
+    fremde = sorted(p.name for p in datei.parent.glob(f"*_{spec}.json"))
+    if fremde:
+        log.warning(
+            "capo-Zustand %s fehlt, aber %s liegt da — Repo-Name weicht ab (--gh-repo ≠ origin?); "
+            "keine Fertig-Sperre (#1410).",
+            datei,
+            ", ".join(fremde),
+        )
 
 
 def _sperr_versuch(fh: Any) -> bool | None:
