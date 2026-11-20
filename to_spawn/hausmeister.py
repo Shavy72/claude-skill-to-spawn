@@ -416,7 +416,7 @@ def _aufraeumen(
         erg = _bleibt(ordner, trocken, stand, b)
     except Exception as fehler:  # Vertrag: wirft nie, im Zweifel bleibt
         log.exception("Hausmeister: Fehler bei %s", ordner)
-        erg = _bleibt(ordner, trocken, stand, _Bleibt(f"Fehler: {fehler}", fehler=True))
+        erg = _bleibt(ordner, trocken, stand, _Bleibt(f"Fehler: {_kurz(fehler)}", fehler=True))
     if ziel is None:
         _log_schreiben(erg)
         return erg
@@ -432,7 +432,7 @@ def _aufraeumen(
         _loeschen(*ziel)
     except (RuntimeError, OSError) as fehler:
         erg = replace(
-            erg, art="bleibt", grund=f"Löschen gescheitert: {fehler}", fehler=True
+            erg, art="bleibt", grund=f"Löschen gescheitert: {_kurz(fehler)}", fehler=True
         )
         _log_schreiben(erg)
     return erg
@@ -519,7 +519,7 @@ def sicherungen_aufraeumen(
                 sha="",
                 angelegt=None,
                 art="bleibt",
-                grund=f"Fehler: {fehler}",
+                grund=f"Fehler: {_kurz(fehler)}",
                 trocken=not loeschen,
                 fehler=True,
             )
@@ -628,7 +628,7 @@ def _sicherungen_eines_remotes(
                 sha=sha,
                 angelegt=None,
                 art="bleibt",
-                grund=f"Fehler: {fehler}",
+                grund=f"Fehler: {_kurz(fehler)}",
                 trocken=not loeschen,
                 fehler=True,
             )
@@ -707,7 +707,7 @@ def _sicherung_entscheiden(
         _zweig_loeschen(cache, zweig, sha)
     except RuntimeError as fehler:
         erg = replace(
-            erg, art="bleibt", grund=f"Löschen gescheitert: {fehler}", fehler=True
+            erg, art="bleibt", grund=f"Löschen gescheitert: {_kurz(fehler)}", fehler=True
         )
         _zweig_log(erg)
     return erg
@@ -769,13 +769,14 @@ class _ZweigOrt:
     cwd: Path
     remote: str  # Remote-URL bzw. Pfad des Hauptrepos (Ergebnis, Log)
     ort: Ort
+    haupt: str = "master"  # Hauptzweig des Remotes (:func:`_hauptzweig`)
 
     def ref(self, zweig: str) -> str:
         return f"refs/zweige/{zweig}" if self.ort == "remote" else f"refs/heads/{zweig}"
 
     @property
-    def master(self) -> str:
-        return "refs/haupt/master" if self.ort == "remote" else "refs/remotes/origin/master"
+    def haupt_ref(self) -> str:
+        return f"refs/haupt/{self.haupt}" if self.ort == "remote" else f"refs/remotes/origin/{self.haupt}"
 
     def sicherung(self, nr: int) -> str:
         basis = "refs/sicherung" if self.ort == "remote" else "refs/remotes/origin/sicherung"
@@ -799,7 +800,7 @@ def zweig_fertig(
     Antwort bezieht; gelöscht werden darf nur er (Lease), nie ein später gelesener.
 
     Übernommen = Zweig ``ticket/<N>-…`` und (``uebernommen_tip`` ist genau der aktuelle
-    Stand oder Ticket #N zu). Fehlend = Commits weder auf ``origin/master`` noch auf
+    Stand oder Ticket #N zu). Fehlend = Commits weder auf dem Hauptzweig (``origin/HEAD``) noch auf
     einem ``sicherung/*``-Zweig; hat die Schlange genau diesen Stand übernommen, fehlt
     nichts (ihr Rebase brachte dieselben Änderungen unter anderen SHAs auf master).
     Holt vorher den aktuellen Stand (fetch; ``holen=False``, wenn der Aufrufer für den
@@ -827,7 +828,7 @@ def zweig_fertig(
         return False, fehlende, f"{anders}Ticket #{nr} offen", stand
     if fehlende:
         return True, fehlende, f"Ticket #{nr} zu, {len(fehlende)} Commit(s) nur auf dem Zweig", stand
-    return True, [], f"Ticket #{nr} zu, alles auf master oder sicherung/*", stand
+    return True, [], f"Ticket #{nr} zu, alles auf {o.haupt} oder sicherung/*", stand
 
 
 def zweig_aufraeumen(
@@ -854,7 +855,7 @@ def _zweig_aufraeumen(
         return _zweig_entscheiden(repo, zweig, tip, not loeschen, ort, holen)
     except Exception as fehler:  # Vertrag: wirft nie
         log.exception("Hausmeister: Zweig %s in %s", zweig, repo)
-        erg = ZweigErgebnis(str(repo), zweig, "", None, "bleibt", f"Fehler: {fehler}", not loeschen, True, ort)
+        erg = ZweigErgebnis(str(repo), zweig, "", None, "bleibt", f"Fehler: {_kurz(fehler)}", not loeschen, True, ort)
         _zweig_log(erg)
         return erg
 
@@ -915,7 +916,7 @@ def _zweig_entscheiden(
     art = "gesichert+gelöscht" if fehlende else "gelöscht"
     if fehlende and ort == "lokal":  # Remote-Commits liegen schon auf GitHub, lokale nicht
         leck = aufpasser.git_lauf(
-            o.cwd, "log", "--format=", "--name-only", sha, "--not", o.master,
+            o.cwd, "log", "--format=", "--name-only", sha, "--not", o.haupt_ref,
             f"--glob={o.sicherungen}", "--", *_glob(aufpasser.SICHERUNG_AUSSCHLUSS),
         ).split()  # fmt: skip
         if leck:
@@ -926,7 +927,7 @@ def _zweig_entscheiden(
         try:
             _zweig_sichern(o, nr, sha)
         except RuntimeError as fehler:
-            return ergebnis("bleibt", f"Sicherung gescheitert: {fehler}", sha, fehler=True)
+            return ergebnis("bleibt", f"Sicherung gescheitert: {_kurz(fehler)}", sha, fehler=True)
         if _zweig_fehlende(o, sha):  # Gegenprobe gegen den frisch geholten Remote-Stand
             return ergebnis("bleibt", "nach der Sicherung fehlen noch Commits", sha, fehler=True)
         grund = f"{grund}, gesichert auf sicherung/{nr}"
@@ -938,7 +939,7 @@ def _zweig_entscheiden(
     except _Nachgeschoben as fehler:
         return ergebnis("bleibt", f"nach der Prüfung nachgeschoben, nächster Lauf entscheidet neu ({fehler})", sha)
     except RuntimeError as fehler:
-        return ergebnis("bleibt", f"Löschen gescheitert: {fehler}", sha, fehler=True)
+        return ergebnis("bleibt", f"Löschen gescheitert: {_kurz(fehler)}", sha, fehler=True)
     _zweig_log(erg)
     return erg
 
@@ -978,7 +979,7 @@ def _zweige_lauf(loeschen: bool) -> tuple[list[ZweigErgebnis], bool]:
 
 def _zweig_fehler(remote: str, ort: Ort, loeschen: bool, fehler: Exception) -> ZweigErgebnis:
     log.warning("Hausmeister: Ticket-Zweige in %s: %s", remote, fehler)
-    erg = ZweigErgebnis(remote, "", "", None, "bleibt", f"Fehler: {fehler}", not loeschen, True, ort)
+    erg = ZweigErgebnis(remote, "", "", None, "bleibt", f"Fehler: {_kurz(fehler)}", not loeschen, True, ort)
     _zweig_log(erg)
     return erg
 
@@ -998,11 +999,43 @@ def _zweig_ticket(zweig: str) -> int | None:
 
 def _zweig_ort(repo: Path | str, ort: Ort) -> _ZweigOrt:
     if ort == "lokal":
-        return _ZweigOrt(Path(repo), str(repo), "lokal")
+        return _ZweigOrt(Path(repo), str(repo), "lokal", _hauptzweig(Path(repo), str(repo)))
     url = str(repo)
     if Path(url).is_dir():
         url = aufpasser.git_lauf(Path(url), "config", "--get", "remote.origin.url").strip()
-    return _ZweigOrt(_sicherung_cache(url), url, "remote")
+    cache = _sicherung_cache(url)
+    return _ZweigOrt(cache, url, "remote", _hauptzweig(cache, url))
+
+
+#: Hauptzweig je Remote/Repo, nur erfolgreich ermittelte (ein ls-remote je Lauf).
+_HAUPTZWEIGE: dict[str, str] = {}
+
+
+def _hauptzweig(cwd: Path, schluessel: str) -> str:
+    """Hauptzweig von ``origin`` in ``cwd`` — die einzige Stelle dafür (Skill-Repo: ``main``).
+
+    Lokal ``origin/HEAD``, sonst ``ls-remote --symref``; nicht ermittelbar ⇒ ``master``.
+    """
+    kopf = (_git_oder_none(cwd, "symbolic-ref", "-q", "refs/remotes/origin/HEAD") or "").strip()
+    if kopf.startswith("refs/remotes/origin/"):
+        return kopf.removeprefix("refs/remotes/origin/")
+    if schluessel in _HAUPTZWEIGE:
+        return _HAUPTZWEIGE[schluessel]
+    try:
+        aus = _git_ohne_frage(cwd, "ls-remote", "--symref", "origin", "HEAD")
+    except RuntimeError:
+        return "master"
+    for zeile in aus.splitlines():
+        teile = zeile.split()
+        if len(teile) >= 2 and teile[0] == "ref:" and teile[1].startswith("refs/heads/"):
+            _HAUPTZWEIGE[schluessel] = teile[1].removeprefix("refs/heads/")
+            return _HAUPTZWEIGE[schluessel]
+    return "master"
+
+
+def _kurz(fehler: Exception) -> str:
+    """Erste Zeile eines Fehlers als Grund — nie git-Hilfetext über mehrere Zeilen."""
+    return (str(fehler).strip().splitlines() or [type(fehler).__name__])[0]
 
 
 def _zweig_holen(o: _ZweigOrt) -> None:
@@ -1011,7 +1044,7 @@ def _zweig_holen(o: _ZweigOrt) -> None:
         return
     _git_ohne_frage(
         o.cwd, "fetch", "-q", "--prune", "--no-tags", "origin",
-        f"+refs/heads/master:{o.master}",
+        f"+refs/heads/{o.haupt}:{o.haupt_ref}",
         "+refs/heads/sicherung/*:refs/sicherung/*",
         "+refs/heads/ticket/*:refs/zweige/ticket/*",
     )  # fmt: skip
@@ -1022,8 +1055,8 @@ def _zweig_stand(o: _ZweigOrt, zweig: str) -> str | None:
 
 
 def _zweig_fehlende(o: _ZweigOrt, sha: str) -> list[str]:
-    """Commits von ``sha``, die weder auf master noch auf einem ``sicherung/*`` liegen."""
-    return aufpasser.git_lauf(o.cwd, "rev-list", sha, "--not", o.master, f"--glob={o.sicherungen}").split()
+    """Commits von ``sha``, die weder auf dem Hauptzweig noch auf einem ``sicherung/*`` liegen."""
+    return aufpasser.git_lauf(o.cwd, "rev-list", sha, "--not", o.haupt_ref, f"--glob={o.sicherungen}").split()
 
 
 def _zweig_sichern(o: _ZweigOrt, nr: int, sha: str) -> None:
@@ -1162,7 +1195,7 @@ def _regeln(
                 echt, ticket, jetzt, zusatz_koepfe=koepfe
             )
         except RuntimeError as fehler:
-            raise _Bleibt(f"Sicherung gescheitert: {fehler}", fehler=True) from None
+            raise _Bleibt(f"Sicherung gescheitert: {_kurz(fehler)}", fehler=True) from None
         if stand.sicherung is None:
             raise _Bleibt(
                 "Sicherung lieferte nichts, obwohl Ungesichertes erkannt wurde",
@@ -1492,7 +1525,7 @@ def _ungesichertes(
     try:
         aufpasser.git_lauf(repo, "fetch", "--prune", "-q", "origin")
     except RuntimeError as fehler:
-        raise _Bleibt(f"git fetch origin gescheitert: {fehler}", fehler=True) from None
+        raise _Bleibt(f"git fetch origin gescheitert: {_kurz(fehler)}", fehler=True) from None
     if not ist_worktree and _git_oder_none(
         repo, "rev-parse", "--verify", "-q", "refs/stash"
     ):
