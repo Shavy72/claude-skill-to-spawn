@@ -218,6 +218,9 @@ def worktree_anlegen(worktree: Path, hauptrepo: Path, ticket: str | None) -> Non
 
 
 BELEG_BILDER = (b".png", b".webp", b".jpg", b".jpeg", b".gif")
+# Bilder in ``assets/``-Unterordnern sind echte Aufzeichnungen, die Tests lesen (z. B.
+# docs/verify-hard/849/assets); sie bleiben auf der Platte (Probe #1374: 11 Dateien, 9,6 MB).
+BELEG_FIXTUR_ORDNER = b"/assets/"
 
 
 def _auschecken_ohne_beleg_bilder(worktree: Path, belege: str) -> None:
@@ -226,7 +229,7 @@ def _auschecken_ohne_beleg_bilder(worktree: Path, belege: str) -> None:
     Die alten Belege sind rund 75 % eines Arbeitsordners (E17, B13) und bleiben auf
     GitHub; davon sind die Bilder (``BELEG_BILDER``) rund 87 %. Nur die Bilder bleiben
     weg: Tests lesen alte Text-Belege und Test-Videos (Probe #1374: alles ausgeblendet
-    = 132 Tests rot, nur Bilder = 0 zusätzlich rot). Bewusst kein Sparse-Checkout: dort
+    = 132 Tests rot; nur Bilder außer ``assets/`` = 0 zusätzlich rot). Bewusst kein Sparse-Checkout: dort
     weist ``git add`` neue Belege ab. Hier tragen nur die schon versionierten Bilder das
     ``skip-worktree``-Kennzeichen; Git hält sie für unverändert, statt sie als gelöscht
     zu sehen. Neue Belege sind gewöhnliche Dateien und lassen sich wie immer ablegen
@@ -246,7 +249,11 @@ def _auschecken_ohne_beleg_bilder(worktree: Path, belege: str) -> None:
     )
     if alte.returncode != 0:
         raise NestFehler(f"git ls-files scheiterte: {alte.stderr.decode(errors='replace').strip()[:300]}")
-    bilder = [n for n in alte.stdout.split(b"\0") if n.lower().endswith(BELEG_BILDER)]
+    bilder = [
+        n
+        for n in alte.stdout.split(b"\0")
+        if n.lower().endswith(BELEG_BILDER) and BELEG_FIXTUR_ORDNER not in n
+    ]
     if bilder:
         markiert = subprocess.run(
             ["git", "-C", str(worktree), "update-index", "--skip-worktree", "-z", "--stdin"],

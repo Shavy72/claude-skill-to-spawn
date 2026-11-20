@@ -31,6 +31,10 @@ def _repo_mit_belegen(tmp_path: Path) -> Path:
         (quelle / "docs" / "verify-hard" / "alt" / f"weitere.{endung}").write_bytes(
             b"\x02" * 8
         )
+    (quelle / "docs" / "verify-hard" / "alt" / "assets").mkdir()
+    (quelle / "docs" / "verify-hard" / "alt" / "assets" / "roh.jpg").write_bytes(
+        b"\x03" * 8
+    )
     (quelle / "docs" / "verify-hard" / "alt" / "probe.mp4").write_bytes(b"\x01" * 64)
     (quelle / "docs" / "anleitung.md").write_text("bleibt\n", encoding="utf-8")
     _git(quelle, "add", "-A")
@@ -64,6 +68,9 @@ def test_neuer_arbeitsordner_ohne_alte_belegbilder(tmp_path: Path) -> None:
     alt = wt / "docs" / "verify-hard" / "alt"
     assert (alt / "beleg.md").is_file(), "Text-Belege bleiben (Tests lesen sie)"
     assert (alt / "probe.mp4").is_file(), "Videos bleiben (Tests nutzen sie)"
+    assert (alt / "assets" / "roh.jpg").is_file(), (
+        "assets/-Bilder bleiben (Tests lesen sie)"
+    )
     assert not (alt / "bild.webp").exists()
     assert not list(alt.glob("weitere.*")), "jpg/jpeg/gif ebenfalls ausgeblendet"
     assert not (alt / "prüfung größe.PNG").exists(), "Umlaut-Namen, Großschreibung"
@@ -93,6 +100,7 @@ def test_neuer_beleg_wird_committed_ohne_alte_zu_loeschen(tmp_path: Path) -> Non
         "docs/verify-hard/alt",
     )
     assert alte.splitlines() == [
+        "docs/verify-hard/alt/assets/roh.jpg",
         "docs/verify-hard/alt/beleg.md",
         "docs/verify-hard/alt/bild.webp",
         "docs/verify-hard/alt/probe.mp4",
