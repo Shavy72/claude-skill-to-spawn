@@ -30,8 +30,13 @@ def gh_befehl() -> list[str] | None:
     return [pfad] if pfad else None
 
 
-def lauf(args: list[str], cwd: Path | None = None) -> tuple[int, str]:
-    """``gh <args>`` ausführen; gibt (Exit-Code, stdout) zurück."""
+def lauf(
+    args: list[str], cwd: Path | None = None, timeout: float | None = None
+) -> tuple[int, str]:
+    """``gh <args>`` ausführen; gibt (Exit-Code, stdout) zurück.
+
+    ``timeout`` in Sekunden (Standard: keins); überschritten → Exit 124, leeres stdout.
+    """
     vorspann = gh_befehl()
     if vorspann is None:
         return 127, ""
@@ -44,16 +49,22 @@ def lauf(args: list[str], cwd: Path | None = None) -> tuple[int, str]:
             encoding="utf-8",
             errors="replace",
             check=False,
+            timeout=timeout,
         )
+    except subprocess.TimeoutExpired:
+        log.warning("gh %s: Zeitlimit %s s überschritten", " ".join(args[:3]), timeout)
+        return 124, ""
     except OSError as fehler:
         log.warning("gh-Aufruf fehlgeschlagen: %s", fehler)
         return 127, ""
     return fertig.returncode, (fertig.stdout or "").strip()
 
 
-def json_lauf(args: list[str], cwd: Path | None = None) -> Any:
+def json_lauf(
+    args: list[str], cwd: Path | None = None, timeout: float | None = None
+) -> Any:
     """Wie :func:`lauf`, aber stdout als JSON (``None`` bei Fehler)."""
-    code, ausgabe = lauf(args, cwd=cwd)
+    code, ausgabe = lauf(args, cwd=cwd, timeout=timeout)
     if code != 0 or not ausgabe:
         return None
     try:

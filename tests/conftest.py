@@ -94,3 +94,24 @@ def _start_nur_attrappen(
     """
     monkeypatch.setenv("TO_SPAWN_TESTLAUF", "1")
     monkeypatch.setenv("TO_SPAWN_TEST_BIN", str(tmp_path_factory.mktemp("start-attrappen")))
+
+
+@pytest.fixture(autouse=True)
+def _hausmeister_nur_im_test(
+    tmp_path_factory: pytest.TempPathFactory,
+    monkeypatch: pytest.MonkeyPatch,
+    _keine_to_spawn_umgebung: None,
+) -> None:
+    """Hausmeister (#1369) räumt in Tests nie echte Ordner auf.
+
+    Start-Check (``to_spawn.py speicher``, ``bau.py``) und Aufpasser rufen
+    ``hausmeister.aufraeumen_alles`` — ohne diese Fixture liefe das mit
+    ``loeschen=True`` über die echten ``~/wt/*`` der Testmaschine. Wurzeln zeigen
+    auf einen leeren Ordner, Logs in ``tmp``, Platte gilt als frei. Tests mit
+    eigener Welt (``test_hausmeister_1368/1369``) setzen die Variablen neu.
+    """
+    ordner = tmp_path_factory.mktemp("hausmeister")
+    monkeypatch.setenv("TO_SPAWN_HAUSMEISTER_WURZELN", str(ordner / "keine" / "*"))
+    monkeypatch.setenv("TO_SPAWN_HAUSMEISTER_LOG", str(ordner / "hausmeister.jsonl"))
+    monkeypatch.setenv("TO_SPAWN_HINDERNIS_LOG", str(ordner / "hindernisse.jsonl"))
+    monkeypatch.setenv("TO_SPAWN_HAUSMEISTER_PLATTE", "1")

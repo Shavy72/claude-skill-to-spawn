@@ -87,7 +87,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -241,6 +241,8 @@ KETTE_RUHE_S = 1.0
 STOPP_LABELS = frozenset({"ready-for-human", "needs-info", "wontfix", "bau:lokal", "bau:pause"})
 CRON_MARKE = "# to-spawn aufpasser"
 CRON_TAKT = "*/15 * * * *"
+#: Datei im Zustandsordner, in die der Cron-Lauf schreibt (Aufpasser-Log für Menschen).
+CRON_LOG = "cron.out"
 SKRIPT_STARTER = Path(__file__).resolve().parent.parent / "skripte" / "aufpasser.py"
 ARBEITS_MARKER = (
     "esc to interrupt",
@@ -265,15 +267,18 @@ VORLAGE_REPO = "cd {repo} && {py} scripts/bau.py {n}{resume}"
 VORLAGE_SKILL = "cd {repo} && TO_SPAWN_REPO={repo} {py} ~/.claude/skills/to-spawn/skripte/bau.py {n}{resume}"
 VORLAGE_WACHE_REPO = "cd {repo} && {py} scripts/wache.py {s}{resume}"
 VORLAGE_WACHE_SKILL = "cd {repo} && TO_SPAWN_REPO={repo} {py} ~/.claude/skills/to-spawn/skripte/wache.py {s}{resume}"
-#: Nie in eine Sicherung: Geheimnisse und Zugangsdateien.
+#: Nie in eine Sicherung: Geheimnisse und Zugangsdateien — in JEDEM Unterordner.
+#: Glob-Muster für ``:(exclude,glob)``: ohne ``glob``-Magie ist ``.env.*`` an den
+#: Pfadanfang gebunden und ``web/.env.local`` wäre mit hochgeladen worden (#1368).
 SICHERUNG_AUSSCHLUSS = (
-    ".env",
-    ".env.*",
-    "*.env",
-    "*zugang*",
-    "*.pem",
-    "*.key",
-    ".credentials.json",
+    "**/.env",
+    "**/.env.*",
+    "**/*.env",
+    "**/*zugang*",
+    "**/*zugang*/**",
+    "**/*.pem",
+    "**/*.key",
+    "**/.credentials.json",
 )
 GIT_IDENTITAET = {
     "GIT_AUTHOR_NAME": "Aufpasser",
@@ -752,8 +757,13 @@ def _git(cwd: Path, *args: str, env: dict[str, str] | None = None) -> str:
     return ergebnis.stdout
 
 
+#: Öffentlicher Name für andere Module (Hausmeister #1368); ``_git`` bleibt.
+git_lauf = _git
+
+
 def worktree_schmutzig(worktree: Path) -> bool:
-    return bool(_git(worktree, "status", "--porcelain").strip())
+    # ``status.showUntrackedFiles=no`` darf neue Dateien nicht verstecken (#1368).
+    return bool(_git(worktree, "status", "--porcelain", "--untracked-files=normal").strip())
 
 
 def worktree_finden(repo: Path, ticket: int, cwd: Path | None = None) -> Path | None:
@@ -791,7 +801,12 @@ def _ref_lesen(worktree: Path, ref: str) -> str | None:
         return None
 
 
-def sichern(worktree: Path, ticket: int, jetzt: float | None = None) -> str | None:
+def sichern(
+    worktree: Path,
+    ticket: int,
+    jetzt: float | None = None,
+    zusatz_koepfe: Sequence[str] = (),
+) -> str | None:
     """Arbeitsstand als Commit auf ``sicherung/<N>`` sichern und pushen.
 
     Kein stash, kein Branch-Wechsel, kein Index-Zugriff: temporärer ``GIT_INDEX_FILE``
@@ -799,8 +814,12 @@ def sichern(worktree: Path, ticket: int, jetzt: float | None = None) -> str | No
     ``write-tree`` → ``commit-tree`` mit Eltern ``HEAD`` und (falls vorhanden) der
     vorigen ``sicherung/<N>`` → ``update-ref`` → ``push`` (kein ``+``, die Kette ist
     fast-forward). Rückgabe = Commit-SHA; sauberer Baum → None. Fehler ⇒ RuntimeError.
+
+    ``zusatz_koepfe`` (Refs/SHAs, z. B. lokale Zweige mit Commits auf keinem Remote):
+    werden zusätzliche Eltern, damit der Push sie mitnimmt — dann gibt es auch bei
+    sauberem Baum einen Commit (Baum = ``HEAD``). Leer ⇒ Verhalten wie zuvor (#1368).
     """
-    if not worktree_schmutzig(worktree):
+    if not zusatz_koepfe and not worktree_schmutzig(worktree):
         return None
     handle, index = tempfile.mkstemp(prefix="aufpasser-index-")
     os.close(handle)
@@ -810,13 +829,21 @@ def sichern(worktree: Path, ticket: int, jetzt: float | None = None) -> str | No
     try:
         kopf = _git(worktree, "rev-parse", "HEAD").strip()
         _git(worktree, "read-tree", kopf, env=env)
-        ausschluss = [f":(exclude){m}" for m in SICHERUNG_AUSSCHLUSS]
+        ausschluss = [f":(exclude,glob){m}" for m in SICHERUNG_AUSSCHLUSS]
         _git(worktree, "add", "-A", "--", ".", *ausschluss, env=env)
         baum = _git(worktree, "write-tree", env=env).strip()
         eltern = ["-p", kopf]
         vorige = _ref_lesen(worktree, ref)
-        if vorige and vorige != kopf:
-            eltern += ["-p", vorige]
+        gesehen = {kopf}
+        for weiterer in [vorige or "", *zusatz_koepfe]:
+            sha = (
+                _git(worktree, "rev-parse", "--verify", f"{weiterer}^{{commit}}").strip()
+                if weiterer
+                else ""
+            )
+            if sha and sha not in gesehen:
+                gesehen.add(sha)
+                eltern += ["-p", sha]
         zeit = datetime.fromtimestamp(
             jetzt or time.time(), tz=timezone.utc
         ).astimezone()
@@ -870,7 +897,7 @@ def cron_einrichten(
     """
     alt = _crontab("-l")
     zeilen = alt.stdout.splitlines() if alt.returncode == 0 else []
-    zeile = f"{CRON_TAKT} {python} {skript} >> {zustand}/cron.out 2>&1  {CRON_MARKE}"
+    zeile = f"{CRON_TAKT} {python} {skript} >> {zustand}/{CRON_LOG} 2>&1  {CRON_MARKE}"
 
     def ist_aufpasser(z: str) -> bool:
         return CRON_MARKE in z or (
@@ -2275,8 +2302,28 @@ class Aufpasser:
                 sperre.close()
         return code
 
+    def _hausmeister_lauf(self) -> None:
+        """Einmal je Takt alles Fertige aufräumen (#1369); die Regeln kennt nur der Hausmeister."""
+        from to_spawn import hausmeister  # spät: hausmeister importiert aufpasser
+
+        try:
+            ergebnisse = hausmeister.aufraeumen_alles(loeschen=not self.e.trocken)
+        except Exception:  # Aufräumen darf den Lauf nie aufhalten
+            log.exception("Hausmeister-Lauf gescheitert")
+            return
+        weg = sum(1 for e in ergebnisse if e.art != "bleibt")
+        fehler = sum(1 for e in ergebnisse if e.fehler)
+        (log.warning if fehler else log.info)(
+            "Hausmeister: %d gelöscht, %d bleibt, %d Fehler%s",
+            weg,
+            len(ergebnisse) - weg - fehler,
+            fehler,
+            " (trocken)" if self.e.trocken else "",
+        )
+
     def _lauf(self) -> None:
         self._starts_in_tick = 0
+        self._hausmeister_lauf()
         gesehen: list[tuple[str, str, list[Fenster], Path]] = []
         for sitzung, spec in self.sitzungen():
             try:
