@@ -10,7 +10,7 @@ Weg-Tests mit echtem lokalem Bare-Remote aus ``test_hausmeister_1368`` (Fixture
 # ruff: noqa: F811 — ``welt`` kommt als Fixture aus dem #1368-Test und wird als Parameter genannt.
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -37,7 +37,7 @@ def _sicherung(
 ) -> str:
     """Echte Sicherung über ``aufpasser.sichern``, angelegt vor ``vor_tagen`` Tagen."""
     wt = welt.worktree(nr, schmutzig=True)
-    zeit = datetime.fromtimestamp(welt.jetzt - vor_tagen * TAG, tz=timezone.utc)
+    zeit = datetime.fromtimestamp(welt.jetzt - vor_tagen * TAG, tz=UTC)
     monkeypatch.setenv("GIT_COMMITTER_DATE", zeit.isoformat())
     try:
         sha = aufpasser.sichern(wt, nr, jetzt=welt.jetzt - vor_tagen * TAG)
@@ -113,7 +113,7 @@ def _nachsichern(
 ) -> None:
     wt = welt.heim / "wt" / f"wt-{nr}"
     (wt / f"spaeter-{vor_tagen}.txt").write_text("neu\n", encoding="utf-8")
-    zeit = datetime.fromtimestamp(welt.jetzt - vor_tagen * TAG, tz=timezone.utc)
+    zeit = datetime.fromtimestamp(welt.jetzt - vor_tagen * TAG, tz=UTC)
     monkeypatch.setenv("GIT_COMMITTER_DATE", zeit.isoformat())
     try:
         assert aufpasser.sichern(wt, nr)
@@ -191,7 +191,7 @@ def test_andere_zweige_nie_angefasst(
 ) -> None:
     """Nur ``sicherung/<Zahl>``: alte Zweige mit anderem Namen bleiben."""
     w = zweig_welt
-    alt = datetime.fromtimestamp(w.jetzt - 200 * TAG, tz=timezone.utc).isoformat()
+    alt = datetime.fromtimestamp(w.jetzt - 200 * TAG, tz=UTC).isoformat()
     monkeypatch.setenv("GIT_COMMITTER_DATE", alt)
     monkeypatch.setenv("GIT_AUTHOR_DATE", alt)
     saat = w.tmp / "alt"
@@ -211,7 +211,7 @@ def test_ohne_aufpasser_betreff_bleibt_der_zweig(
 ) -> None:
     """Anlegezeit nicht belegbar ⇒ im Zweifel bleibt (keine Schätzung über die Spitze)."""
     w = zweig_welt
-    alt = datetime.fromtimestamp(w.jetzt - 200 * TAG, tz=timezone.utc).isoformat()
+    alt = datetime.fromtimestamp(w.jetzt - 200 * TAG, tz=UTC).isoformat()
     monkeypatch.setenv("GIT_COMMITTER_DATE", alt)
     saat = w.tmp / "alt"
     git(w.tmp, "clone", "-q", ORIGIN, str(saat))
