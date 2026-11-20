@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import fcntl
 import json
-import os
 import stat
 from collections.abc import Iterator
 from pathlib import Path
@@ -28,6 +27,9 @@ def welt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str, 
     docker.write_text(
         "#!/bin/sh\n"
         f'echo "$*" >> "{aufrufe}"\n'
+        'if [ -n "$STAGING_SPERRE_PRUEFEN" ]; then '
+        'flock -n "$TO_SPAWN_STAGING_SPERRE" true && echo frei >> "$STAGING_SPERRE_PRUEFEN" '
+        '|| echo gehalten >> "$STAGING_SPERRE_PRUEFEN"; fi\n'
         'if [ -n "$DOCKER_ATTRAPPE_EXIT" ]; then echo kaputt >&2; exit "$DOCKER_ATTRAPPE_EXIT"; fi\n'
         'echo "Total reclaimed space: 1.5GB"\n',
         encoding="utf-8",
@@ -137,14 +139,53 @@ def test_pruef_befehle_enthalten_nie_volume_oder_system() -> None:
     }
 
 
-def test_pruef_kein_docker_aufruf_ausserhalb_der_befehlsliste() -> None:
-    """Kein zweiter Weg zu Docker im Modul: nur ``_docker`` ruft ``subprocess``."""
-    quelle = Path(docker_reste.__file__).read_text(encoding="utf-8")
-    assert quelle.count("subprocess.run(") == 1
-    code = "\n".join(
-        z
-        for z in quelle.splitlines()
-        if not z.lstrip().startswith(("#", '"', "-", "``"))
+def test_staging_sperre_bleibt_waehrend_docker_laeuft_gehalten(
+    welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Grund-Images (älter als 24 h) dürfen nie mitten in einen Staging-Bau fallen."""
+    beleg = welt["stand"].parent.parent / "sperre_beleg.txt"
+    monkeypatch.setenv("STAGING_SPERRE_PRUEFEN", str(beleg))
+    hausmeister.aufraeumen_alles(loeschen=True, jetzt=1_000_000.0)
+    assert beleg.read_text(encoding="utf-8").split() == ["gehalten", "gehalten"]
+    # danach wieder frei, ein Staging-Deploy kommt durch
+    with welt["sperre"].open("r") as f:
+        fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+
+def test_unlesbare_staging_sperre_heisst_im_zweifel_nicht_raeumen(
+    welt: dict[str, Path],
+) -> None:
+    welt["sperre"].unlink()
+    welt["sperre"].mkdir()  # IsADirectoryError statt FileNotFoundError
+    assert (
+        docker_reste.freigeben(welt["stand"].parent, jetzt=1_000_000.0)
+        == "staging_baut"
     )
-    assert '"volume' not in code and "'volume" not in code
-    assert os.path.basename(docker_reste.STAGING_SPERRE_STANDARD) == ".deploy.lock"
+    assert _aufrufe(welt) == []
+
+
+def test_stand_in_der_zukunft_blockiert_nicht_fuer_immer(welt: dict[str, Path]) -> None:
+    welt["stand"].parent.mkdir(parents=True, exist_ok=True)
+    welt["stand"].write_text('{"zeit": 9999999999}\n', encoding="utf-8")
+    assert (
+        docker_reste.freigeben(welt["stand"].parent, jetzt=1_000_000.0) == "freigegeben"
+    )
+
+
+def test_kaputte_stand_datei_heisst_nie_gelaufen(welt: dict[str, Path]) -> None:
+    welt["stand"].parent.mkdir(parents=True, exist_ok=True)
+    welt["stand"].write_bytes(b"\xff\xfe kaputt\n")
+    assert (
+        docker_reste.freigeben(welt["stand"].parent, jetzt=1_000_000.0) == "freigegeben"
+    )
+
+
+def test_ohne_hausmeister_sperre_kein_docker(
+    welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def kaputt() -> None:
+        raise OSError("Sperre nicht nutzbar")
+
+    monkeypatch.setattr(hausmeister, "_sperre_nehmen", kaputt)
+    hausmeister.aufraeumen_alles(loeschen=True, jetzt=1_000_000.0)
+    assert _aufrufe(welt) == []

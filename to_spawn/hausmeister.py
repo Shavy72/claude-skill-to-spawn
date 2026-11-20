@@ -183,7 +183,7 @@ def _aufraeumen_alles(
         return []
     try:
         ergebnisse = _alle_ordner(loeschen=loeschen, jetzt=jetzt)
-        if docker:  # unter derselben Sperre: nie zwei Docker-Läufe gleichzeitig
+        if docker and sperre:  # nur unter gehaltener Sperre: nie zwei Docker-Läufe
             docker_reste.freigeben(_log_pfad().parent, jetzt=jetzt)
         return ergebnisse
     finally:
