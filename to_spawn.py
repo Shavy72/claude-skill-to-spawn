@@ -498,13 +498,18 @@ def main(argv: list[str] | None = None) -> int:
         help="Claude-Projektordner mit den Transkripten",
     )
 
-    # Speicher-Schutz (#257 Paket B): Stand drucken, Exit 0 = frei, 5 = voll;
+    # Speicher-Schutz (#257 Paket B): Stand drucken, Exit 0 = frei, 5 = voll,
+    # 7 = Platte voll (#1369); ``--trocken`` misst nur (Probelauf, Status);
     # ``--staffel`` gibt nur die Pause in Sekunden aus (für spawn_srv.sh).
     p_speicher = unter.add_parser(
-        "speicher", help="darf noch eine Claude-Session starten? (Exit 0 frei / 5 voll)"
+        "speicher",
+        help="darf noch eine Claude-Session starten? (Exit 0 frei / 5 voll / 7 Platte voll)",
     )
     p_speicher.add_argument(
         "--staffel", action="store_true", help="nur die Staffel-Pause in Sekunden ausgeben"
+    )
+    p_speicher.add_argument(
+        "--trocken", action="store_true", help="nur messen, nie aufräumen (Probelauf, Status)"
     )
 
     # Startklar-Prüfung (#450): venv, Schlüssel, Aufseher-Werkzeuge — Exit 0 ok / 1 rot.
@@ -588,7 +593,9 @@ def main(argv: list[str] | None = None) -> int:
         return code
     if args.befehl == "speicher":
         # Nur lesen: legt keine Konfig an (kein config.sicherstellen).
-        return speicher.cli(config.lade(_repo_aus_umgebung()), nur_staffel=args.staffel)
+        return speicher.cli(
+            config.lade(_repo_aus_umgebung()), nur_staffel=args.staffel, trocken=args.trocken
+        )
 
     repo = config.repo_wurzel()
     if args.befehl == "inventur":
