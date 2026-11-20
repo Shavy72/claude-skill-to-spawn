@@ -27,6 +27,10 @@ def _repo_mit_belegen(tmp_path: Path) -> Path:
     (quelle / "docs" / "verify-hard" / "alt" / "prüfung größe.PNG").write_bytes(
         b"\x89" * 64
     )
+    for endung in ("jpg", "jpeg", "gif"):
+        (quelle / "docs" / "verify-hard" / "alt" / f"weitere.{endung}").write_bytes(
+            b"\x02" * 8
+        )
     (quelle / "docs" / "verify-hard" / "alt" / "probe.mp4").write_bytes(b"\x01" * 64)
     (quelle / "docs" / "anleitung.md").write_text("bleibt\n", encoding="utf-8")
     _git(quelle, "add", "-A")
@@ -61,6 +65,7 @@ def test_neuer_arbeitsordner_ohne_alte_belegbilder(tmp_path: Path) -> None:
     assert (alt / "beleg.md").is_file(), "Text-Belege bleiben (Tests lesen sie)"
     assert (alt / "probe.mp4").is_file(), "Videos bleiben (Tests nutzen sie)"
     assert not (alt / "bild.webp").exists()
+    assert not list(alt.glob("weitere.*")), "jpg/jpeg/gif ebenfalls ausgeblendet"
     assert not (alt / "prüfung größe.PNG").exists(), "Umlaut-Namen, Großschreibung"
     assert _git(wt, "status", "--short", "--", ".", ":!.to-spawn") == "", (
         "fehlende Belege dürfen nicht als gelöscht gelten"
@@ -92,6 +97,9 @@ def test_neuer_beleg_wird_committed_ohne_alte_zu_loeschen(tmp_path: Path) -> Non
         "docs/verify-hard/alt/bild.webp",
         "docs/verify-hard/alt/probe.mp4",
         "docs/verify-hard/alt/prüfung größe.PNG",
+        "docs/verify-hard/alt/weitere.gif",
+        "docs/verify-hard/alt/weitere.jpeg",
+        "docs/verify-hard/alt/weitere.jpg",
     ]
 
 
@@ -130,10 +138,32 @@ def test_fehler_beim_fuellen_raeumt_halben_ordner_weg(
 
 
 def test_vorhandener_ticket_zweig_ohne_alte_belege(tmp_path: Path) -> None:
-    """Wiederaufnahme: der Ticket-Zweig existiert schon (mit eigenem Beleg)."""
+    """Wiederaufnahme: der Ticket-Zweig existiert schon."""
     haupt = _repo_mit_belegen(tmp_path)
     _git(haupt, "branch", "ticket-77", "origin/master")
     wt = _arbeitsordner(tmp_path, haupt)
     assert _git(wt, "branch", "--show-current") == "ticket-77"
     assert not (wt / "docs" / "verify-hard" / "alt" / "bild.webp").exists()
     assert _git(wt, "status", "--short", "--", ".", ":!.to-spawn") == ""
+
+
+def test_fehler_beim_fuellen_laesst_vorhandenen_zweig_stehen(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Gegenprobe zum Aufräumen: ein schon vorhandener Ticket-Zweig trägt Arbeit, nie löschen."""
+    from to_spawn import nest
+
+    haupt = _repo_mit_belegen(tmp_path)
+    _git(haupt, "branch", "ticket-79", "origin/master")
+    wt = tmp_path / "wt" / "wt-79"
+
+    def _scheitert(*_: object) -> None:
+        raise nest.NestFehler("Füllen scheiterte (Probe)")
+
+    monkeypatch.setattr(nest, "_auschecken_ohne_beleg_bilder", _scheitert)
+    with pytest.raises(nest.NestFehler):
+        nest.worktree_anlegen(wt, haupt, "79")
+    assert not wt.exists()
+    assert _git(haupt, "branch", "--list", "ticket-79") != "", (
+        "vorhandener Zweig bleibt"
+    )
