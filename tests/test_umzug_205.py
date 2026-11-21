@@ -26,6 +26,7 @@ sys.path.insert(0, str(SKILL))
 
 from to_spawn import config  # noqa: E402
 from git_bash import git_bash  # noqa: E402  (tests/hilfen, Pfad setzt conftest)
+from windows_attrappen import windows_starter  # noqa: E402
 
 
 def _bash() -> str:
@@ -240,12 +241,9 @@ def test_kind_session_erbt_kein_to_spawn_repo(
     claude = binaer / "claude"
     claude.write_text(FAKE_CLAUDE, encoding="utf-8")
     claude.chmod(0o755)
-    if sys.platform == "win32":
-        # Ohne Endung findet ``shutil.which`` die Attrappe unter Windows nicht (PATHEXT) und
-        # startet das echte ``claude.exe`` — der Shim leitet auf die Attrappe um.
-        (binaer / "claude.cmd").write_text(
-            f'@"{sys.executable}" "%~dp0claude" %*\r\n', encoding="utf-8"
-        )
+    # Windows: ``claude.exe`` neben der Attrappe — eine ``.cmd``-Hülle liefe über cmd.exe, dort
+    # verweigert der Notnagel den mehrzeiligen Start-Prompt (#68). Linux: nichts zu tun.
+    windows_starter(claude)
     beweis = tmp_path / "umgebung.json"
     temp = tmp_path / "tmp"
     temp.mkdir()
