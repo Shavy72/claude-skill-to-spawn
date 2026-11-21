@@ -22,7 +22,8 @@ Regeln (alle hier, nirgends sonst):
   Volumes wie ``werkstatt-live_werkstatt-arbeit`` bleiben unberührt. Der stündliche
   Cron ``docker builder prune -f --filter until=3h`` (crontab ``bau``) räumt nur
   verwaisten Cache; hier geht zusätzlich der unbenutzte, nicht verwaiste Cache (``-a``).
-- Ohne fcntl (Windows/Laptop) läuft nichts: E42 gilt nur für den Bau-Server.
+- Ohne flock (Windows/Laptop, :func:`to_spawn.sperre.flock_vorhanden`) läuft nichts:
+  E42 gilt nur für den Bau-Server.
 
 Test-Nähte: ``TO_SPAWN_HAUSMEISTER_DOCKER`` (Docker-Programm, Standard ``docker``),
 ``TO_SPAWN_STAGING_SPERRE`` (Pfad der Staging-Sperre, hat Vorrang vor der Maschinen-Liste).
@@ -42,11 +43,11 @@ from pathlib import Path
 from typing import Literal
 
 from . import config
+from . import sperre as _sperre
 
-try:
-    import fcntl
-except ImportError:  # Windows: kein Bau-Server
-    fcntl = None  # type: ignore[assignment]
+#: Nur noch Alt-Naht für ältere Tests (``skipif``/Gegen-Sperre); gesperrt wird hier allein
+#: über :func:`to_spawn.sperre.halte`.
+fcntl = _sperre._fcntl
 
 log = logging.getLogger("to_spawn.docker_reste")
 
@@ -82,7 +83,7 @@ def freigeben(ordner: Path, *, jetzt: float | None = None) -> Ausgang:
 
 
 def _freigeben(ordner: Path, jetzt: float) -> Ausgang:
-    if fcntl is None:
+    if not _sperre.flock_vorhanden():
         return "kein_server"
     stand = ordner / STAND_DATEI
     letzte = _letzter_lauf(stand)
@@ -153,21 +154,17 @@ def _staging_sperre_nehmen() -> ExitStack | None:
     Keine Datei = Staging nie eingerichtet, also kein Neubau (die Datei legt nur
     ``staging_deploy.sh`` an, nie dieser Lauf). Schließen des Stapels gibt alle frei.
     """
-    assert fcntl is not None
     stapel = ExitStack()
     for pfad in _sperr_pfade():
-        try:
-            datei = pfad.open("r")
-        except FileNotFoundError:
+        if not os.path.lexists(pfad):  # nie angelegt; halte() legte sie sonst an
             continue
+        try:
+            gehalten = stapel.enter_context(_sperre.halte(pfad))
         except OSError as fehler:
             log.warning("Docker-Reste: Staging-Sperre %s nicht prüfbar (%s)", pfad, fehler)
             stapel.close()
             return None
-        stapel.enter_context(datei)
-        try:
-            fcntl.flock(datei, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except OSError:  # BlockingIOError = Deploy hält sie
+        if not gehalten:  # Deploy hält sie
             stapel.close()
             return None
     return stapel
