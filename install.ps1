@@ -9,6 +9,8 @@
 #   -ClaudeMd  globale CLAUDE.md für die Regel-Blöcke (Vorgabe %USERPROFILE%\.claude\CLAUDE.md)
 param([string]$Repo = "", [string]$Skills = "", [string]$ClaudeMd = "")
 $ErrorActionPreference = "Stop"
+# Ausgabe immer UTF-8 (Umlaute in Meldungen): sonst schreibt PowerShell umgeleitet in der OEM-Codepage.
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $hier = Split-Path -Parent $MyInvocation.MyCommand.Path
 if (-not $Skills) { $Skills = Join-Path $env:USERPROFILE ".claude\skills" }
 if (-not $ClaudeMd) { $ClaudeMd = Join-Path $env:USERPROFILE ".claude\CLAUDE.md" }
