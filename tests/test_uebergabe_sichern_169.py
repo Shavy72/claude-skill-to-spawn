@@ -90,6 +90,17 @@ def test_trocken_meldet_was_geschaehe_ohne_zu_schreiben(skill: dict[str, Path]) 
     assert not (skill["tmp"] / "tresor").exists()
 
 
+def test_trocken_kopiert_keine_uebergabe(skill: dict[str, Path]) -> None:
+    datei = skill["tmp"] / "leit" / ".claude-handoff-loop.md"
+    datei.parent.mkdir()
+    datei.write_text("Übergabe\n", encoding="utf-8")
+    erg = us.sichern([datei], trocken=True)
+    assert erg.fehler == [] and datei in erg.kopiert
+    assert f"würde {len(erg.kopiert)} Datei(en)" in erg.zeile()
+    assert not (skill["tmp"] / "tresor").exists()
+    assert datei in us.sichern([datei]).kopiert  # echt: wird geschrieben
+
+
 # --- Punkt 2: Inhaltsprüfung vor dem Upload ---------------------------------------------
 
 
