@@ -45,6 +45,32 @@ def test_zu_weites_muster_sperrt_auch_reine_doku_aenderung(tmp_path: Path, muste
     )
 
 
+#: Fix-Runde 1 (PR 187): Muster, die echte geänderte Code-/Test-Dateien treffen, aber keine erfundenen.
+ROT_TEST = "def test_rot():\n    assert False\n"
+ECHTE_CODE_TREFFER = [
+    ("rechnen.py", "rechnen.py", "def addiere(a, b):\n    return a - b\n"),
+    ("re*", "rechnen.py", "def addiere(a, b):\n    return a - b\n"),
+    ("tests/**", "tests/test_rechnen.py", ROT_TEST),
+    ("*test*", "tests/test_rechnen.py", ROT_TEST),
+]
+
+
+@pytest.mark.parametrize(("muster", "datei", "text"), ECHTE_CODE_TREFFER)
+def test_muster_trifft_echte_geaenderte_code_datei_keine_abkuerzung(
+    tmp_path: Path, muster: str, datei: str, text: str
+) -> None:
+    probe = sofort_test._probe(tmp_path / "py")
+    sofort_test._erklaere(probe, ["docs/**", muster])  # Commit A, Tag base = A
+    sofort_test._commit(probe, datei, text)  # Commit B: Code/Test, Lauf rot
+    code, zeile = sofort_test._tuer(probe)
+    doku = sofort_test._stufe(zeile, "doku")
+    assert doku["grund"] != "nur Doku", zeile
+    assert doku["grund"].startswith("pruefen.doku_pfade zu weit"), doku
+    assert f"„{muster}“" in doku["grund"], doku
+    assert sofort_test._stufe(zeile, "voll")["lief"] is True
+    assert code == 1, zeile
+
+
 @pytest.mark.parametrize("muster", [["docs/**", "README.md"], ["*.md"], ["docs/*.md", "CHANGELOG"]])
 def test_enge_muster_bleiben_gueltig(tmp_path: Path, muster: list[str]) -> None:
     from to_spawn.pruef import sofort

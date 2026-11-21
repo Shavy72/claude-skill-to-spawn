@@ -148,7 +148,7 @@ def _doku_muster(repo: Path, basis: str, pfade: list[str]) -> tuple[list[str], s
     if not isinstance(muster, list) or not muster or not all(isinstance(m, str) and m for m in muster):
         log.warning("%s: %r", DOKU_PFADE_UNGUELTIG, muster)
         return [], DOKU_PFADE_UNGUELTIG
-    zu_weit = next((m for m in muster if _trifft_code(m)), None)
+    zu_weit = next((m for m in muster if _trifft_code(m, pfade)), None)
     if zu_weit is not None:
         grund = f"pruefen.doku_pfade zu weit: „{zu_weit}“ trifft Code-Dateien"
         log.warning("%s (Konfig in %s) — keine Abkürzung, volle Prüfung", grund, basis)
@@ -162,11 +162,18 @@ def _doku_muster(repo: Path, basis: str, pfade: list[str]) -> tuple[list[str], s
 _CODE_STELLVERTRETER = tuple(
     f"{ordner}x{endung}" for linter in _LINTER for endung in sorted(linter.endungen) for ordner in ("", "a/b/")
 )
+#: Alle Linter-Endungen (klein): eine geänderte Datei damit ist nie Doku, egal welches Muster sie trifft.
+_CODE_ENDUNGEN = frozenset().union(*(linter.endungen for linter in _LINTER))
 
 
-def _trifft_code(muster: str) -> bool:
-    """True, wenn ``muster`` eine Code-Datei treffen würde — dann taugt die ganze Liste nicht."""
-    return any(fnmatch.fnmatchcase(pfad, muster) for pfad in _CODE_STELLVERTRETER)
+def _trifft_code(muster: str, pfade: list[str]) -> bool:
+    """True, wenn ``muster`` eine Code-Datei trifft — dann taugt die ganze Liste nicht.
+
+    Geprüft gegen Stellvertreter (``**``, ``*.py`` …) und gegen die wirklich geänderten Pfade mit
+    Code-Endung (``app.py``, ``tests/**``, ``*test*`` …, Fix-Runde 1 zu #164).
+    """
+    echte = [pfad for pfad in pfade if PurePosixPath(pfad).suffix.lower() in _CODE_ENDUNGEN]
+    return any(fnmatch.fnmatchcase(pfad, muster) for pfad in (*_CODE_STELLVERTRETER, *echte))
 
 
 def _symlinks(repo: Path, basis: str) -> set[str] | None:
