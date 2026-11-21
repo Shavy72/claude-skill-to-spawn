@@ -1739,11 +1739,15 @@ def sperre(datei: Path, warten_s: float = SPERRE_S) -> Iterator[bool]:
 
     Werkzeug (fcntl/msvcrt/O_EXCL) versteckt :func:`to_spawn.sperre.halte` (#95). Ein
     Sperrfehler außer „belegt“ (z. B. ENOLCK) gilt wie bisher als belegt: kein Tick.
+    Sperr-Datei nicht öffenbar ⇒ :class:`to_spawn.sperre.SperreNichtOeffenbar` fliegt
+    durch (#165), der Aufrufer meldet ``FEHLER`` statt „anderer Lauf“.
     """
     pfad = datei.with_name(datei.name + ".lock")
     with contextlib.ExitStack() as stapel:
         try:
             gehalten = stapel.enter_context(_sperre.halte(pfad, warten=warten_s))
+        except _sperre.SperreNichtOeffenbar:
+            raise
         except OSError as fehler:
             log.warning("Sperre %s nicht nehmbar (%s) — gilt als belegt.", pfad, fehler)
             gehalten = False
@@ -1871,7 +1875,11 @@ def katalog_pflegen(
     if not vorfaelle:
         return []
     pfad = vorfall.katalog_pfad(repo, konfig)
-    with sperre(pfad, _sperr_wartezeit()) as frei:
+    with contextlib.ExitStack() as stapel:
+        try:
+            frei = stapel.enter_context(sperre(pfad, _sperr_wartezeit()))
+        except _sperre.SperreNichtOeffenbar as fehler:
+            return [f"FEHLER: Katalog — {fehler}"]
         if not frei:
             return [
                 "Katalog: ein anderer Lauf hält die Datei — dieser Tick lässt sie aus"
@@ -2054,7 +2062,13 @@ def tick(
     if dry_run:
         return _tick(repo, spec, gh_repo, konfig, wt_basis, True, katalog, jetzt)
     datei = _zustand_datei(repo, gh_repo, spec)
-    with sperre(datei, _sperr_wartezeit()) as frei:
+    with contextlib.ExitStack() as stapel:
+        try:
+            frei = stapel.enter_context(sperre(datei, _sperr_wartezeit()))
+        except _sperre.SperreNichtOeffenbar as fehler:
+            erg = TickErgebnis(exit_code=1)
+            erg.zeilen.append(f"FEHLER: {fehler} — Tick übersprungen.")
+            return erg
         if not frei:
             erg = TickErgebnis(exit_code=1)
             erg.zeilen.append(
