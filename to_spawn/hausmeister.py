@@ -164,21 +164,23 @@ ERZEUGNISSE = (
     "data/.secret_key",  # Flask-Sitzungsschlüssel, legt web/config.py selbst neu an
 )
 
+# #1526: Ticket-Nummer 1–4999 (8080, 20261121, 993675 sind Port/Datum/Hash, keine Tickets).
+# ponytail: feste Obergrenze, anheben, wenn die Tickets an 4000 heranreichen.
+_TICKET_NR = r"([1-9]\d{0,2}|[1-4]\d{3})"
 _NAME_MUSTER = (
-    re.compile(r"^wt-(\d+)(?:-.*)?$"),
-    re.compile(r"^skill-(\d+)$"),
-    re.compile(r"^duoplus-(\d+)$"),
-    re.compile(r"^t(\d+)$"),
     # #1526: nur bekannte Formen, Name bis zum Ende verankert — im Zweifel keine Nummer.
-    # wt-1292f, skill-1371-basis: Präfix, Zahl, dann Ende, ein Buchstabe oder -<wort>
-    # (skill-4821f3c ist ein Commit-Hash-Rest, kein Ticket).
-    re.compile(r"^(?:wt|skill|duoplus)-(\d{3,5})(?:[a-z]|-[a-z][a-z0-9-]*)?$"),
+    # wt-1292f, skill-1371-basis, wt-1313-3, wt-1375-7c: Präfix, Zahl, dann Ende, ein
+    # Buchstabe, -<wort> oder kurzes -<1–2 Ziffern>[buchstabe]
+    # (skill-4821f3c ist ein Commit-Hash-Rest, wt-2026-11-21 ein Datum, kein Ticket).
+    re.compile(
+        rf"^(?:wt|skill|duoplus)-{_TICKET_NR}(?:[a-z]|-\d{{1,2}}[a-z]?|-[a-z][a-z0-9-]*)?$"
+    ),
     # t1490a, a1279 (Aufseher): nur t/a als Präfix (x500, v2026-backup sind keine Tickets)
-    re.compile(r"^[ta](\d{3,5})[a-z]?$"),
+    re.compile(rf"^[ta]{_TICKET_NR}[a-z]?$"),
     # 1489, 1331-linux: nackte Zahl nur allein oder mit einem Wort aus enger Liste
     # (2026-11-21-sicherung, 8080-notizen, 805_fremd_backup sind keine Tickets).
     # Hinter einem Wort zählt sie nie: schlange-einspielen-1121 ist ein Datum.
-    re.compile(r"^(\d{3,5})(?:-(?:linux|lauf|breit|master))?$"),
+    re.compile(rf"^{_TICKET_NR}(?:-(?:linux|lauf|breit|master))?$"),
 )
 _ZWEIG_MUSTER = re.compile(
     r"^(?:(?:ticket|fix|wip|aufseher)/|fix-|abschluss-)(\d+)(?:-.*)?$"

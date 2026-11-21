@@ -116,3 +116,37 @@ def test_keine_nummer_aus_hash_datum_freier_zahl(name: str) -> None:
 )
 def test_echte_ordnernamen_bleiben_lesbar(name: str, nr: int) -> None:
     assert hausmeister._nummer(name, hausmeister._NAME_MUSTER) == nr
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "wt-2026-11-21",  # Datum hinter wt- (Review 5957c7a)
+        "wt-2026-11-21-sicherung",
+        "wt-8080-notizen",  # freie Zahl hinter wt-
+        "skill-20261121",  # Datum ohne Trenner
+    ],
+)
+def test_keine_nummer_aus_datum_oder_freier_zahl_hinter_praefix(name: str) -> None:
+    assert hausmeister._nummer(name, hausmeister._NAME_MUSTER) is None
+
+
+@pytest.mark.parametrize(
+    ("name", "nr"),
+    [
+        ("wt-1375", 1375),
+        ("wt-1375-7c", 1375),
+        ("wt-1313-3", 1313),
+        ("wt-627-waechter", 627),
+        ("duoplus-1307", 1307),
+    ],
+)
+def test_echte_wt_ordner_mit_kurzem_zusatz_bleiben_lesbar(name: str, nr: int) -> None:
+    assert hausmeister._nummer(name, hausmeister._NAME_MUSTER) == nr
+
+
+@pytest.mark.parametrize(
+    "pfad", ["scripts/x.pyc", "foo__pycache__/x.pyc", "sub/data/.secret_key"]
+)
+def test_grenzfaelle_gelten_nicht_als_neu_erzeugbar(pfad: str) -> None:
+    assert not hausmeister._neu_erzeugbar(pfad)
