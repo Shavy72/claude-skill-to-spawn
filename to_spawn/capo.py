@@ -795,51 +795,39 @@ def live_freigabe(vps: dict[str, Any], ticket: int) -> bool:
         return False
 
 
-#: Strenge Ticket-Klammer wie ``schlange_spur.TICKET_GRUPPE``: ``(#12)`` oder ``(#12, #13)``.
-_TICKET_GRUPPE = re.compile(r"\([ \t]*(#\d+(?:[ \t]*,[ \t]*#\d+)*)[ \t]*\)")
-
-
 def live_gedeckt(repo: Path, vps: dict[str, Any], ticket: int, kopf: str, sha: str) -> bool:
-    """Geht ``sha`` laut Deploy-Dienst live? Nur, wenn JEDES Ticket im Stand ``kopf..sha`` gedeckt ist.
+    """Nimmt der Deploy-Dienst den Stand ``kopf..sha`` live? Urteil allein bei der SSOT im Repo.
 
-    Das Urteil fällt die SSOT ``scripts/staging/deploy_ziel.py --deckung`` im Repo (#395, #1207):
-    ein Ticket-Zettel allein deckt kein fremdes Ticket im selben Stand. Fehlt das Skript (Fremd-Repo)
-    oder antwortet es nicht, zählt wie bisher nur der Zettel des eigenen Tickets.
+    ``scripts/schlange_deckung.py`` rechnet Schlüssel und Deckung mit derselben Funktion wie die
+    Deploy-Schlange (#395, #1207): ein Ticket-Zettel allein deckt kein fremdes Ticket im Stand.
+    Antwort: Exit 0 = gedeckt, 1 = nicht gedeckt, JSON ``{"gedeckt", "offen"}``. Fehlt das Skript
+    (Fremd-Repo, alter Stand) oder antwortet es anders: wie früher zählt nur der eigene Zettel.
     """
-    ziel_py = repo / "scripts" / "staging" / "deploy_ziel.py"
-    code, text = _git(repo, "log", "--no-merges", "--format=%H%x09%s", f"{kopf}..{sha}")
-    if not ziel_py.is_file() or code != 0:
+    deckung_py = repo / "scripts" / "schlange_deckung.py"
+    if not deckung_py.is_file():
         return live_freigabe(vps, ticket)
-    # ponytail: Stand = kopf..sha, ohne Harmlos-Filter (docs/*.md) und ohne Rest des Merge-Schritts
-    # wie freigabe_schritte der Schlange; Upgrade: deploy_ziel.py rechnet die Schlüssel selbst.
-    schluessel: list[str] = [str(ticket)]
-    for zeile in text.splitlines():
-        commit, _, betreff = zeile.partition("\t")
-        nummern = [n for g in _TICKET_GRUPPE.findall(betreff) for n in re.findall(r"\d+", g)]
-        for key in nummern or [commit]:
-            if key and key not in schluessel:
-                schluessel.append(key)
-    ordner = str(Path(str(vps.get("freigabe_ordner") or FREIGABE_STANDARD)).expanduser())
     befehl = [
         sys.executable,
-        str(ziel_py),
-        "--deckung",
-        ",".join(schluessel),
+        str(deckung_py),
+        kopf,
+        sha,
+        "--repo",
+        str(repo),
         "--manifeste",
         str(repo / "docs" / "agents" / "manifests"),
         "--freigabe-ordner",
-        ordner,
+        str(Path(str(vps.get("freigabe_ordner") or FREIGABE_STANDARD)).expanduser()),
     ]
     try:
         lauf = subprocess.run(befehl, capture_output=True, text=True, encoding="utf-8", timeout=60, check=False)
-        daten = json.loads(lauf.stdout or "null") if lauf.returncode == 0 else None
+        daten = json.loads(lauf.stdout or "null") if lauf.returncode in (0, 1) else None
     except (OSError, subprocess.SubprocessError, ValueError) as fehler:
         log.warning("Deckung für #%s nicht prüfbar (%s) — nur eigener Zettel zählt.", ticket, fehler)
         return live_freigabe(vps, ticket)
-    if not isinstance(daten, dict):
+    if not isinstance(daten, dict) or daten.get("gedeckt") is not (lauf.returncode == 0):
         log.warning("Deckung für #%s nicht prüfbar (Exit %s) — nur eigener Zettel zählt.", ticket, lauf.returncode)
         return live_freigabe(vps, ticket)
-    return all(daten.get(key) is True for key in schluessel)
+    return daten["gedeckt"]
 
 
 def regel_vps(
@@ -865,8 +853,9 @@ def regel_vps(
         if code == 1:
             # Seit 22.09. deployen Bau-Sessions nur nach Staging; live nur mit Zettel.
             staging = staging_stand.kopf()
-            # Live erwartet nur, wenn der Deploy-Dienst den Stand live nimmt (#1207), nicht schon beim Ticket-Zettel.
-            live = live_gedeckt(repo, vps, ticket, kopf, commit.sha)
+            # Live erwartet nur, wenn der Deploy-Dienst den Stand live nimmt (#1207), nicht schon beim
+            # Ticket-Zettel. Ohne Staging-Stand zählt das Urteil nicht — dann kein Unterprozess.
+            live = (staging_stand.unlesbar or bool(staging)) and live_gedeckt(repo, vps, ticket, kopf, commit.sha)
             if staging_stand.unlesbar and not live:
                 return None  # nicht lesbar ≠ fehlt auf Staging (#1407), Log-Zeile kommt aus StagingStand
             if staging and not live:

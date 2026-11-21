@@ -1157,18 +1157,26 @@ def test_vps_kopf_pfad_mit_tilde_bleibt_fuer_server_offen(monkeypatch: pytest.Mo
     assert aufrufe[0][-1] == "cd ~/'app; rm -rf x' && git rev-parse HEAD", aufrufe[0][-1]
 
 
-# --- #1207: Deckung wie der Deploy-Dienst (deploy_ziel.deckung) ---------------
+# --- #1207: Deckung wie der Deploy-Dienst (scripts/schlange_deckung.py) --------
 
-#: Echte SSOT aus dem Haupt-Repo (scripts/staging/deploy_ziel.py), keine Nachbildung.
-_HAUPT_REPOS = [
-    Path(p).expanduser()
-    for p in (os.environ.get("TO_SPAWN_HAUPT_REPO_TEST") or "", "~/duoplus-leit", "~/duoplus-management", "C:/dev/duoplus-management")
-    if p
-]
-_DEPLOY_ZIEL = next(
-    (r / "scripts" / "staging" / "deploy_ziel.py" for r in _HAUPT_REPOS if (r / "scripts" / "staging" / "deploy_ziel.py").is_file()),
-    None,
-)
+#: Echte SSOT aus dem Haupt-Repo (scripts/schlange_deckung.py + deploy_ziel.py + schlange_spur.py), keine
+#: Nachbildung. Gelesen beim Import, weil conftest ``TO_SPAWN_*`` je Test löscht.
+_HAUPT_REPO_TEST = os.environ.get("TO_SPAWN_HAUPT_REPO_TEST") or ""
+_SCRIPTS = Path(_HAUPT_REPO_TEST).expanduser() / "scripts" if _HAUPT_REPO_TEST else None
+#: Dateien, die capos Deckungs-Befehl im Repo braucht (relativ zu scripts/).
+_DECKUNG_DATEIEN = ("schlange_deckung.py", "schlange_spur.py", "staging/deploy_ziel.py")
+
+
+def test_1207_haupt_repo_variable_zeigt_auf_deploy_ziel() -> None:
+    """Gesetzte Variable ohne Skript ist ein Fehler, kein stiller Skip der #1207-Tests."""
+    if _SCRIPTS is None:
+        pytest.skip(
+            "TO_SPAWN_HAUPT_REPO_TEST nicht gesetzt — #1207-Weg-Tests brauchen das Haupt-Repo"
+        )
+    fehlt = [d for d in _DECKUNG_DATEIEN if not (_SCRIPTS / d).is_file()]
+    assert not fehlt, (
+        f"TO_SPAWN_HAUPT_REPO_TEST gesetzt, aber unter {_SCRIPTS} fehlt: {fehlt}"
+    )
 
 
 def _vps_deckung(
@@ -1176,19 +1184,29 @@ def _vps_deckung(
     monkeypatch: pytest.MonkeyPatch,
     zettel: list[str],
     manifest: dict | None = None,
-) -> None:
-    """#901 mit Zettel-Lage ``zettel``; im Stand davor fremdes #902 (web/), alles auf Staging, live alt."""
-    if _DEPLOY_ZIEL is None:
-        pytest.skip("deploy_ziel.py aus dem Haupt-Repo nicht gefunden (TO_SPAWN_HAUPT_REPO_TEST setzen)")
-    dateien = {"scripts/staging/deploy_ziel.py": _DEPLOY_ZIEL.read_text(encoding="utf-8")}
+    davor: tuple[str, dict[str, str]] = (
+        "feat: Fremd (#902)",
+        {"web/fremd.py": "y = 1\n"},
+    ),
+) -> str:
+    """#901 mit Zettel-Lage ``zettel``; im Stand davor Commit ``davor``, alles auf Staging, live alt.
+
+    Zettel-Namen mit ``{davor}`` werden durch den SHA des Davor-Commits ersetzt; Rückgabe = dieser SHA.
+    """
+    if _SCRIPTS is None:
+        pytest.skip(
+            "TO_SPAWN_HAUPT_REPO_TEST nicht gesetzt — #1207-Weg-Tests brauchen das Haupt-Repo"
+        )
+    dateien = {
+        f"scripts/{d}": (_SCRIPTS / d).read_text(encoding="utf-8")
+        for d in _DECKUNG_DATEIEN
+    }
     if manifest is not None:
         dateien["docs/agents/manifests/spec-900.json"] = json.dumps(manifest)
     vorher = _commit(welt["repo"], "chore: Deploy-Ziel (#1)", dateien)
     log = welt["tmp"] / "deploys.jsonl"
     freigabe = welt["tmp"] / "live_freigabe"
     freigabe.mkdir()
-    for name in zettel:
-        (freigabe / name).write_text("ok\n", encoding="utf-8")
     _konfig(
         welt,
         vps={
@@ -1199,11 +1217,18 @@ def _vps_deckung(
             "freigabe_ordner": str(freigabe),
         },
     )
-    _commit(welt["repo"], "feat: Fremd (#902)", {"web/fremd.py": "y = 1\n"})
-    kopf = _commit(welt["repo"], "feat: Seite (#901)", {"web/seite.py": "x = 1\n", **_beleg()})
-    log.write_text(json.dumps({"sha": kopf, "ergebnis": "gruen"}) + "\n", encoding="utf-8")
+    zwischen = _commit(welt["repo"], *davor)
+    for name in zettel:
+        (freigabe / name.format(davor=zwischen)).write_text("ok\n", encoding="utf-8")
+    kopf = _commit(
+        welt["repo"], "feat: Seite (#901)", {"web/seite.py": "x = 1\n", **_beleg()}
+    )
+    log.write_text(
+        json.dumps({"sha": kopf, "ergebnis": "gruen"}) + "\n", encoding="utf-8"
+    )
     for name, wert in _ssh_fake(welt, vorher).items():
         monkeypatch.setenv(name, wert)
+    return zwischen
 
 
 def test_1207_ticket_zettel_fremdes_ticket_ohne_zettel_auf_staging_bleibt_zu(
@@ -1230,4 +1255,94 @@ def test_1207_spec_zettel_deckt_alle_tickets_oeffnet_wieder(
     """Spec-Zettel 900 deckt #901 und #902 über das Manifest (deploy_ziel.eltern_specs)."""
     _vps_deckung(welt, monkeypatch, zettel=["900"], manifest={"spec": "900", "tickets": {"901": {}, "902": {}}})
     _capo(welt)
-    assert any(k.startswith("Aufseher: vps_ungleich_origin") for k in _kommentare(welt, "901"))
+    assert any(
+        k.startswith("Aufseher: vps_ungleich_origin") for k in _kommentare(welt, "901")
+    )
+
+
+def test_1207_docs_commit_ohne_nummer_live_gescheitert_meldet(
+    welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review-Fall: Doku-Commit ohne Nummer blockiert die Schlange nie → Stand geht live; liegt er
+    nicht auf dem VPS, ist das Live-Deploy gescheitert und capo muss melden."""
+    _vps_deckung(
+        welt,
+        monkeypatch,
+        zettel=["901"],
+        davor=("docs: Notiz", {"docs/notiz.md": "n\n"}),
+    )
+    _capo(welt)
+    assert any(
+        k.startswith("Aufseher: vps_ungleich_origin") for k in _kommentare(welt, "901")
+    )
+
+
+def test_1207_sha_zettel_sieben_zeichen_deckt_code_commit_ohne_nummer(
+    welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SHA-Zettel mit 7 Zeichen deckt den Code-Commit ohne Nummer wie in der Schlange → live erwartet."""
+    _vps_deckung(
+        welt,
+        monkeypatch,
+        zettel=["901", "{davor:.7}"],
+        davor=("fix: schnell", {"web/fremd.py": "y = 1\n"}),
+    )
+    _capo(welt)
+    assert any(
+        k.startswith("Aufseher: vps_ungleich_origin") for k in _kommentare(welt, "901")
+    )
+
+
+def _live_gedeckt_welt(
+    tmp_path: Path, zettel: bool, skript: str | None
+) -> tuple[Path, dict]:
+    repo = tmp_path / "repo"
+    (repo / "scripts" / "staging").mkdir(parents=True)
+    # Alter Haupt-Repo-Stand: deploy_ziel.py ist da, der Deckungs-Befehl (noch) nicht.
+    (repo / "scripts" / "staging" / "deploy_ziel.py").write_text(
+        "print('{}')\n", encoding="utf-8"
+    )
+    if skript is not None:
+        (repo / "scripts" / "schlange_deckung.py").write_text(skript, encoding="utf-8")
+    ordner = tmp_path / "zettel"
+    ordner.mkdir()
+    if zettel:
+        (ordner / "901").write_text("ok\n", encoding="utf-8")
+    return repo, {"freigabe_ordner": str(ordner)}
+
+
+@pytest.mark.parametrize("zettel", [True, False])
+def test_1207_rueckfall_skript_fehlt_nur_eigener_zettel(
+    tmp_path: Path, zettel: bool
+) -> None:
+    from to_spawn import capo as capo_mod
+
+    repo, vps = _live_gedeckt_welt(tmp_path, zettel, None)
+    assert capo_mod.live_gedeckt(repo, vps, 901, "a" * 40, "b" * 40) is zettel
+
+
+@pytest.mark.parametrize("zettel", [True, False])
+def test_1207_rueckfall_alter_stand_exit_2_nur_eigener_zettel(
+    tmp_path: Path, zettel: bool
+) -> None:
+    """Deckungs-Befehl antwortet mit Exit 2 (falscher Aufruf, argparse): Antwort zählt nicht."""
+    from to_spawn import capo as capo_mod
+
+    alt = "import sys\nprint('{\"gedeckt\": true}')\nsys.exit(2)\n"
+    repo, vps = _live_gedeckt_welt(tmp_path, zettel, alt)
+    assert capo_mod.live_gedeckt(repo, vps, 901, "a" * 40, "b" * 40) is zettel
+
+
+@pytest.mark.parametrize("zettel", [True, False])
+def test_1207_rueckfall_zeitlimit_nur_eigener_zettel(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, zettel: bool
+) -> None:
+    from to_spawn import capo as capo_mod
+
+    repo, vps = _live_gedeckt_welt(tmp_path, zettel, "print('{\"gedeckt\": true}')\n")
+
+    def haengt(befehl: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+        raise subprocess.TimeoutExpired(befehl, 60)
+
+    monkeypatch.setattr(capo_mod.subprocess, "run", haengt)
+    assert capo_mod.live_gedeckt(repo, vps, 901, "a" * 40, "b" * 40) is zettel
