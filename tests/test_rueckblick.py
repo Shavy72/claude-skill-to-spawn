@@ -148,8 +148,10 @@ def test_bau_server_nicht_erreichbar(repo: Path) -> None:
     lauf = _lauf(repo, SPEC)
     assert lauf.returncode == 0, lauf.stderr
     assert lauf.stdout.splitlines()[0] == "Datenlage: 2 von 3 Tickets mit Bau-Log"
-    assert "nicht erreichbar (" in lauf.stdout
-    assert "nicht erreichbar (" in _auftrag(lauf)
+    # Grund aus stderr der Attrappe (Exit 255) muss durchkommen, nicht nur das Etikett (Review #1528).
+    grund = "nicht erreichbar (ssh: Could not resolve hostname rueckblick-test.invalid)"
+    assert grund in lauf.stdout
+    assert grund in _auftrag(lauf)
 
 
 def test_spec330_echte_logs_session_verwaist_oben(tmp_path: Path) -> None:
