@@ -95,3 +95,24 @@ Wortlaut 1:1 (Tippfehler bleiben stehen) und danach eine Verdichtung in prüfbar
 - Laufende Arbeiten auf dem Bau-Server entweder übernehmen und ausrichten oder beenden und neu
   aufsetzen — freie Wahl.
 - Erst aufhören, wenn das Ziel sicher erreicht ist.
+
+---
+
+## L2 — Nachfolge-Sessions folgen demselben Auftrag (David, 2026-11-21)
+
+### Wortlaut (1:1)
+
+> okay die soll aber dem selben promt folgen und autonom entschidungen treffen usw
+>
+> und folgende sessions ebenos
+
+Anlass: Die erste Ober-Aufsicht hatte sich selbst durch eine Nachfolge-Session abgelöst.
+
+### Verdichtung in prüfbare Anforderungen (L2)
+
+- **A13 Auftrag vererbt sich 1:1:** Jede Nachfolge-Session — die erste wie die zehnte, Leit-Session,
+  Aufseher oder Bau-Session, am PC wie auf dem Server — arbeitet nach demselben Auftrag wie ihre
+  Vorgängerin. Der Wortlaut (L1) wird bei jeder Ablösung unverändert mitgegeben, nie als
+  Zusammenfassung. Schärft A12.
+- **A14 Autonomie vererbt sich mit:** Auch jede Nachfolge-Session entscheidet selbst und fragt
+  David nicht (A11, N1). Eine Übergabe, die Wortlaut oder Autonomie-Regel nicht enthält, ist ungültig.
