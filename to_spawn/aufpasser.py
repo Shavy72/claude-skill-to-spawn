@@ -791,6 +791,34 @@ def _ref_lesen(worktree: Path, ref: str) -> str | None:
         return None
 
 
+def _skip_worktree_uebernehmen(worktree: Path, env: dict[str, str]) -> None:
+    """Skip-Worktree-Bits des echten Index in den Temp-Index (``env``) übertragen (#1505).
+
+    ``read-tree`` setzt sie nicht; ohne sie sähe ``add --sparse -A`` jede nicht ausgecheckte
+    Datei eines schlanken Ordners als gelöscht und die Sicherung verlöre sie.
+    """
+    # ``-z``: Pfade mit Umlauten/Leerzeichen unverändert, ohne C-Quoting.
+    pfade = [z[2:] for z in _git(worktree, "ls-files", "-t", "-z").split("\0") if z.startswith("S ")]
+    if not pfade:
+        return
+    try:
+        ergebnis = subprocess.run(
+            ["git", "update-index", "--skip-worktree", "-z", "--stdin"],
+            cwd=str(worktree),
+            env=env,
+            input="\0".join(pfade) + "\0",
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=False,
+            timeout=300,
+        )
+    except subprocess.TimeoutExpired:
+        raise RuntimeError("git update-index --skip-worktree: Zeitgrenze 300 s") from None
+    if ergebnis.returncode != 0:
+        raise RuntimeError(f"git update-index --skip-worktree: {ergebnis.stderr.strip()[:300]}")
+
+
 def sichern(worktree: Path, ticket: int, jetzt: float | None = None) -> str | None:
     """Arbeitsstand als Commit auf ``sicherung/<N>`` sichern und pushen.
 
@@ -810,8 +838,10 @@ def sichern(worktree: Path, ticket: int, jetzt: float | None = None) -> str | No
     try:
         kopf = _git(worktree, "rev-parse", "HEAD").strip()
         _git(worktree, "read-tree", kopf, env=env)
+        _skip_worktree_uebernehmen(worktree, env)
         ausschluss = [f":(exclude){m}" for m in SICHERUNG_AUSSCHLUSS]
-        _git(worktree, "add", "-A", "--", ".", *ausschluss, env=env)
+        # ``--sparse``: neue Dateien außerhalb der Sparse-Regel (schlanker Ordner, #1505) mitsichern.
+        _git(worktree, "add", "--sparse", "-A", "--", ".", *ausschluss, env=env)
         baum = _git(worktree, "write-tree", env=env).strip()
         eltern = ["-p", kopf]
         vorige = _ref_lesen(worktree, ref)
