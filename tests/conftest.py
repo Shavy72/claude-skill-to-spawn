@@ -11,6 +11,7 @@ Dateien. Die Zeitgrenzen selbst prüft ``test_waechter_213_fix.py`` ohne Schalte
 from __future__ import annotations
 
 import os
+import shutil
 import sys
 from pathlib import Path
 
@@ -94,3 +95,31 @@ def _start_nur_attrappen(
     """
     monkeypatch.setenv("TO_SPAWN_TESTLAUF", "1")
     monkeypatch.setenv("TO_SPAWN_TEST_BIN", str(tmp_path_factory.mktemp("start-attrappen")))
+
+
+@pytest.fixture(autouse=True)
+def _hausmeister_nur_im_test(
+    tmp_path_factory: pytest.TempPathFactory,
+    monkeypatch: pytest.MonkeyPatch,
+    _keine_to_spawn_umgebung: None,
+) -> None:
+    """Hausmeister (#1369) räumt in Tests nie echte Ordner auf.
+
+    Start-Check (``to_spawn.py speicher``, ``bau.py``) und Aufpasser rufen
+    ``hausmeister.aufraeumen_alles`` — ohne diese Fixture liefe das mit
+    ``loeschen=True`` über die echten ``~/wt/*`` der Testmaschine. Wurzeln zeigen
+    auf einen leeren Ordner, Logs in ``tmp``, Platte gilt als frei. Tests mit
+    eigener Welt (``test_hausmeister_1368/1369``) setzen die Variablen neu.
+    """
+    ordner = tmp_path_factory.mktemp("hausmeister")
+    monkeypatch.setenv("TO_SPAWN_HAUSMEISTER_WURZELN", str(ordner / "keine" / "*"))
+    monkeypatch.setenv("TO_SPAWN_HAUSMEISTER_LOG", str(ordner / "hausmeister.jsonl"))
+    monkeypatch.setenv("TO_SPAWN_HINDERNIS_LOG", str(ordner / "hindernisse.jsonl"))
+    monkeypatch.setenv("TO_SPAWN_HAUSMEISTER_PLATTE", "1")
+    # #1371: keine echten GitHub-Remotes — sonst löschte ein Test alte sicherung/*-Zweige.
+    monkeypatch.setenv("TO_SPAWN_HAUSMEISTER_ZWEIG_REPOS", "")
+    # #1439: Zweig-Lauf fasst keine echten Hauptrepos an (leer = keine).
+    monkeypatch.setenv("TO_SPAWN_HAUSMEISTER_HAUPTREPOS", "")
+    # #1372: Docker-Reste nie echt — „true“ statt docker, keine Staging-Sperre.
+    monkeypatch.setenv("TO_SPAWN_HAUSMEISTER_DOCKER", shutil.which("true") or "/bin/true")
+    monkeypatch.setenv("TO_SPAWN_STAGING_SPERRE", str(ordner / "keine-staging-sperre"))

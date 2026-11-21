@@ -135,4 +135,11 @@ if (Test-Path $cj) {
         } else { Write-Host "Glocke schon gesetzt." }
     } catch { Write-Warning "Glocke nicht gesetzt ($_) — von Hand: in einer Claude-Session /config → Notifications → terminal_bell" }
 }
+# Hausmeister (#1373): tägliche Windows-Aufgabe räumt fertige Arbeitsordner auf (idempotent).
+# Fehler nur melden — die übrige Einrichtung bleibt gültig.
+# try/catch: unter $ErrorActionPreference = "Stop" wirft PowerShell 5.1 bei stderr-Ausgabe mit 2>&1.
+try {
+    $hm = python (Join-Path $ziel "to_spawn.py") aufraeumen --aufgabe-einrichten 2>&1
+    if ($LASTEXITCODE -eq 0) { Write-Host "$hm" } else { Write-Warning "Hausmeister-Aufgabe nicht eingerichtet: $hm" }
+} catch { Write-Warning "Hausmeister-Aufgabe nicht eingerichtet: $_" }
 Write-Host "Fertig. Neues Terminal öffnen (Profil neu laden), dann im Repo: /to-spawn <SpecNr> (fragt lokal/Server) · /to-spawn-local <S> · /to-spawn-remote <S>"
