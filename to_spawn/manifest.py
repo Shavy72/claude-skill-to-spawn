@@ -18,14 +18,15 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from . import gh
+from . import config, gh
 
 log = logging.getLogger("to_spawn.manifest")
 
 #: Exit-Code der Weigerung (Regularien nicht erfüllt).
 EXIT_WEIGERUNG = 3
 
-MANIFEST_ORDNER = Path("docs") / "agents" / "manifests"
+#: Vorgabe-Ordner der Manifeste (Alias für Aufrufer/Tests; es gilt ``pfade.manifeste``).
+MANIFEST_ORDNER = Path(config.DEFAULTS["pfade"]["manifeste"])
 _MANIFEST_NAME = re.compile(r"spec-(\d+)\.json")
 #: Überschrift „Blocked by“ (#, ##, ### …, Doppelpunkt optional); Rest der Zeile zählt mit.
 _BLOCKED_BY_KOPF = re.compile(r"^\s{0,3}#{1,6}\s*blocked by\s*:?\s*(.*)$", re.IGNORECASE)
@@ -43,13 +44,18 @@ def ticket_schluessel(nummer: Any) -> tuple[int, int | str]:
     return (0, int(text)) if text.isdigit() else (1, text)
 
 
+def manifest_ordner(repo: Path) -> Path:
+    """Manifest-Ordner aus ``pfade.manifeste`` (fehlt er: Vorgabe), unter ``repo`` wie übergeben."""
+    return config.pfad(config.Konfig(config.lade(repo), repo / config.KONFIG_PFAD), "manifeste")
+
+
 def manifest_pfad(repo: Path, spec: int | str) -> Path:
-    return repo / MANIFEST_ORDNER / f"spec-{spec}.json"
+    return manifest_ordner(repo) / f"spec-{spec}.json"
 
 
 def alle_manifeste(repo: Path) -> dict[str, Path]:
     """Alle Manifeste ``spec-<Zahl>.json`` des Repos, Spec-Nummer → Pfad."""
-    ordner = repo / MANIFEST_ORDNER
+    ordner = manifest_ordner(repo)
     if not ordner.is_dir():
         return {}
     gefunden: dict[str, Path] = {}
@@ -235,7 +241,7 @@ def _pruefe_andere_manifeste(
     zählt wie offen (fail-closed).
     """
     eigene = set(bericht.tickets)
-    ordner = repo / MANIFEST_ORDNER
+    ordner = manifest_ordner(repo)
     eigene_datei = manifest_pfad(repo, bericht.spec).name
     dateien = sorted(ordner.glob("spec-*.json")) if ordner.is_dir() else []
     for datei in dateien:
