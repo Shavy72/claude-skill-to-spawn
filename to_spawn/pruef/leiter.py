@@ -50,6 +50,8 @@ class Stufe:
     #: Einmalige Wiederholung der roten Tests (3b-4): Befehl, eigene Zeit, erst rot → dann grün.
     wiederholung: str = ""
     wiederholung_s: float = 0.0
+    #: Zweiter voller Lauf nach grüner Einzel-Wiederholung: eigene Zeit (0 = nicht gelaufen).
+    voll_nochmal_s: float = 0.0
     wackler: tuple[str, ...] = ()
 
 
@@ -96,6 +98,7 @@ def _voll(repo: Path, adapter: Adapter) -> Stufe:
         ausgabe="" if zweit.gruen else stufe.ausgabe,
         wiederholung=" ".join(zweit.befehl),
         wiederholung_s=zweit.dauer_s,
+        voll_nochmal_s=zweit.voll_s,
         wackler=zweit.wackler,
     )
 

@@ -34,9 +34,10 @@ def test_erst_rot_dann_gruen_ist_wackler_nie_still_gruen(tmp_path: Path) -> None
     assert [w["test"] for w in zeile["wackler"]] == [
         "tests/test_rechnen.py::test_addiere"
     ]
-    assert zaehler.read_text(encoding="utf-8") == "2"
+    assert zaehler.read_text(encoding="utf-8") == "3"
     stufe = zeile["stufen"][0]
     assert stufe["wiederholung_s"] > 0
+    assert stufe["voll_nochmal_s"] > 0
     assert "--lf" in stufe["wiederholung"]
     liste = probe / ".to-spawn" / "pruef" / "wackler.jsonl"
     eintrag = json.loads(liste.read_text(encoding="utf-8").strip().splitlines()[-1])
@@ -167,6 +168,9 @@ class _Stellvertreter:
     def nochmal_befehl(self, befehl: list[str], code: int) -> list[str] | None:
         return self._befehl
 
+    def voll_nochmal_befehl(self, befehl: list[str]) -> list[str]:
+        return self._befehl
+
     def rote(self, ausgabe: str) -> set[str]:
         from to_spawn.pruef.adapter_py import ADAPTER
 
@@ -228,6 +232,11 @@ class _EchtePytestDeutung(_Stellvertreter):
 
         return ADAPTER.gelaufen(ausgabe)
 
+    def bestanden(self, ausgabe: str) -> int | None:
+        from to_spawn.pruef.adapter_py import ADAPTER
+
+        return ADAPTER.bestanden(ausgabe)
+
 
 _ERST_GANZ = ".F.                                                     [3/3]\nFAILED t.py::test_a - x\n"
 _ERST_ABGEBROCHEN = (
@@ -286,3 +295,54 @@ def test_gelaufen_liest_nur_den_fortschritt_vor_den_berichten() -> None:
     # Gefälschter Fortschritt aus der Testausgabe (nach den Berichten) zählt nicht.
     gefaelscht = ".F\n==== FAILURES ====\n---- Captured stdout call ----\n.. [9/9]\n"
     assert ADAPTER.gelaufen(gefaelscht) is None
+
+
+# --- Fix-Runde 3 (Review PR #126): nie grün gelaufen ist kein Wackler ---------------------------
+
+_ROT_DANN = (
+    "import pytest\n\n"
+    "def test_0gruen():\n    pass\n\n"
+    "def test_3rot_dann():\n"
+    "    z = pathlib.Path({zaehler}); lauf = int(z.read_text()) + 1\n"
+    "    z.write_text(str(lauf))\n"
+    "    if lauf >= 2:\n        pytest.{art}('weg')\n"
+    "    assert False\n"
+)
+
+
+@pytest.mark.parametrize("art", ["skip", "xfail"])
+def test_rot_dann_uebersprungen_ist_kein_wackler(tmp_path: Path, art: str) -> None:
+    """Fälle 7a/7b: Wiederholung überspringt den roten Test (Exit 0), er lief nie grün."""
+    probe = _probe_mehrere(tmp_path, _ROT_DANN.replace("{art}", art))
+    erg = tuer._tuer(probe, "base", "HEAD")
+    assert erg.returncode == 1, erg.stdout + erg.stderr
+    zeile = tuer._zeile(erg)
+    assert zeile["urteil"] == "rot"
+    assert zeile["wackler"] == []
+
+
+def test_nur_im_vollen_lauf_rot_ist_kein_wackler(tmp_path: Path) -> None:
+    """Fall 7d: reihenfolge-abhängig, allein grün, im vollen Lauf immer rot."""
+    probe = _probe_mehrere(
+        tmp_path,
+        "ZUSTAND = []\n\n"
+        "def test_a_verschmutzt():\n    ZUSTAND.append(1)\n\n"
+        "def test_b_braucht_sauber():\n    assert ZUSTAND == []\n",
+    )
+    erg = tuer._tuer(probe, "base", "HEAD")
+    assert erg.returncode == 1, erg.stdout + erg.stderr
+    zeile = tuer._zeile(erg)
+    assert zeile["urteil"] == "rot"
+    assert zeile["wackler"] == []
+    assert zeile["stufen"][0]["voll_nochmal_s"] > 0
+
+
+def test_bestanden_liest_die_schlusszeile() -> None:
+    from to_spawn.pruef.adapter_py import ADAPTER
+
+    assert ADAPTER.bestanden("s  [1/1]\n1 skipped in 0.01s") == 0
+    assert ADAPTER.bestanden("x  [1/1]\n1 xfailed in 0.01s") == 0
+    assert ADAPTER.bestanden(".  [1/1]\n1 passed, 1 warning in 0.01s") == 1
+    assert ADAPTER.bestanden("F.  [2/2]\n1 failed, 1 passed in 0.1s") == 1
+    assert ADAPTER.bestanden("==== 3 passed, 2 deselected in 0.1s ====") == 3
+    assert ADAPTER.bestanden("") is None

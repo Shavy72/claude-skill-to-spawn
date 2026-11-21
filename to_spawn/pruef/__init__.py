@@ -96,6 +96,7 @@ def pruefen(repo: Path, basis: str, ziel: str) -> Urteil:
                 "befehl": stufe.befehl,
                 "wiederholung": stufe.wiederholung,
                 "wiederholung_s": stufe.wiederholung_s,
+                "voll_nochmal_s": stufe.voll_nochmal_s,
             }
             for stufe in liste
         ],
