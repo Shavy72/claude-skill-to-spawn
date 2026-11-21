@@ -64,10 +64,10 @@ from typing import Any
 _SKILL = str(Path(__file__).resolve().parent.parent)
 if _SKILL not in sys.path:
     sys.path.insert(0, _SKILL)
-from thermo_lauf import SPERRE_MIN, Fehler, sperre_aktiv  # noqa: E402
+from thermo_lauf import SPERRE_MIN, Fehler, repo_ordner, sperre_aktiv  # noqa: E402
 
 from to_spawn import config  # noqa: E402
-from to_spawn.bau_log import LAUF_ORDNER, LOG_ORDNER, rohzeilen  # noqa: E402
+from to_spawn.bau_log import LAUF_ORDNER, rohzeilen  # noqa: E402
 from to_spawn.spawn import fern_ordner  # noqa: E402
 from to_spawn.umzug import _ssh, server_repo  # noqa: E402
 
@@ -133,12 +133,12 @@ def rueckblick_ordner(repo: Path, spec: int) -> Path:
 
 
 def marker_pfad(repo: Path, spec: int) -> Path:
-    return repo / "docs" / "agents" / f"rueckblick_{spec}.md"
+    return repo_ordner(repo, "agenten") / f"rueckblick_{spec}.md"
 
 
 def lade_tickets(repo: Path, spec: int) -> list[str]:
     """Ticketnummern aus dem Manifest — ``tickets`` als dict (Nummer → Daten) oder Liste."""
-    pfad = repo / "docs" / "agents" / "manifests" / f"spec-{spec}.json"
+    pfad = repo_ordner(repo, "manifeste") / f"spec-{spec}.json"
     try:
         tickets = json.loads(pfad.read_text(encoding="utf-8")).get("tickets") or []
     except (OSError, ValueError, AttributeError) as fehler:
@@ -226,7 +226,7 @@ def lokale_logs(repo: Path, tickets: Iterable[str]) -> tuple[dict[str, set[str]]
     """Bau-Log-Zeilen je Ticket aus Repo + Laufdateien aller Worktrees, dazu je Ort eine Statuszeile."""
     tickets = list(tickets)
     logs: dict[str, set[str]] = {t: set() for t in tickets}
-    ordner = repo / LOG_ORDNER
+    ordner = repo_ordner(repo, "bau_log")
     if ordner.is_dir():
         dateien = ((t, ordner / f"{t}.jsonl") for t in tickets)
         orte = [_ort(f"Repo {ordner.as_posix()}", *_lies_dateien(logs, dateien))]

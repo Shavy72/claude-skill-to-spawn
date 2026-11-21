@@ -51,7 +51,7 @@ _SKRIPTE = str(Path(__file__).resolve().parent)
 if _SKRIPTE not in sys.path:
     sys.path.insert(0, _SKRIPTE)
 from test_uebersicht import lade_tickets  # noqa: E402
-from thermo_lauf import SPERRE_MIN  # noqa: E402
+from thermo_lauf import SPERRE_MIN, repo_ordner  # noqa: E402
 from thermo_lauf import marker_pfad as thermo_marker_pfad  # noqa: E402
 
 from to_spawn import bau_log, capo, config, melder  # noqa: E402
@@ -272,7 +272,7 @@ def _endung(p: Paket) -> str:
 
 
 def _md_datei(repo: Path, p: Paket) -> Path:
-    return repo / "docs" / "agents" / f"abschluss_{p.spec}{_endung(p)}.md"
+    return repo_ordner(repo, "agenten") / f"abschluss_{p.spec}{_endung(p)}.md"
 
 
 def _offen_datei(repo: Path, p: Paket) -> Path:
@@ -355,7 +355,7 @@ def ablage_pfad(repo: Path, spec: int, stand: str = "abnahme") -> Path:
 
 def rueckblick_pfad(repo: Path, spec: int) -> Path:
     """Marker des Rückblicks (#581/#585)."""
-    return repo / "docs" / "agents" / f"rueckblick_{spec}.md"
+    return repo_ordner(repo, "agenten") / f"rueckblick_{spec}.md"
 
 
 def _zeit(text: str | None, ap: argparse.ArgumentParser, schalter: str) -> datetime:
@@ -412,10 +412,12 @@ def _ticket_zeilen(repo: Path, spec: int, konfig: dict[str, Any]) -> list[str]:
 
 
 def wirkungskreis(repo: Path, spec: int) -> str:
-    """Ausgabe von ``scripts/wirkungskreis.py`` (#583): Exit 0 = Text, Exit 2 = „nicht ermittelbar: …“."""
-    skript = repo / "scripts" / "wirkungskreis.py"
+    """Ausgabe von ``befehle.wirkungskreis`` (#583, L1 #46): Exit 0 = Text, Exit 2 = „nicht ermittelbar: …“."""
+    roh = (config.lade(repo).get("befehle") or {}).get("wirkungskreis")
+    name = roh.strip() if isinstance(roh, str) and roh.strip() else config.DEFAULTS["befehle"]["wirkungskreis"]
+    skript = repo / name
     if not skript.is_file():
-        return f"Wirkungskreis nicht ermittelt: scripts/wirkungskreis.py fehlt in {repo.name}"
+        return f"Wirkungskreis nicht ermittelt: {name} fehlt in {repo.name}"
     try:
         lauf = subprocess.run(
             [sys.executable, "-X", "utf8", str(skript), str(spec), "--repo", str(repo)],
