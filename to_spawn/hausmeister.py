@@ -169,10 +169,16 @@ _NAME_MUSTER = (
     re.compile(r"^skill-(\d+)$"),
     re.compile(r"^duoplus-(\d+)$"),
     re.compile(r"^t(\d+)$"),
-    # #1526: 3–5 Ziffern am Anfang, nach wt-/skill-/duoplus- oder einem Buchstaben
-    # (wt-1292f, 1331-linux, t1490a, a1279) — nie hinter einem Wort: in
-    # schlange-einspielen-1121 ist 1121 ein Datum, kein Ticket.
-    re.compile(r"^(?:(?:wt|skill|duoplus)-|[a-z])?(\d{3,5})(?!\d)"),
+    # #1526: nur bekannte Formen, Name bis zum Ende verankert — im Zweifel keine Nummer.
+    # wt-1292f, skill-1371-basis: Präfix, Zahl, dann Ende, ein Buchstabe oder -<wort>
+    # (skill-4821f3c ist ein Commit-Hash-Rest, kein Ticket).
+    re.compile(r"^(?:wt|skill|duoplus)-(\d{3,5})(?:[a-z]|-[a-z][a-z0-9-]*)?$"),
+    # t1490a, a1279 (Aufseher): nur t/a als Präfix (x500, v2026-backup sind keine Tickets)
+    re.compile(r"^[ta](\d{3,5})[a-z]?$"),
+    # 1489, 1331-linux: nackte Zahl nur allein oder mit einem Wort aus enger Liste
+    # (2026-11-21-sicherung, 8080-notizen, 805_fremd_backup sind keine Tickets).
+    # Hinter einem Wort zählt sie nie: schlange-einspielen-1121 ist ein Datum.
+    re.compile(r"^(\d{3,5})(?:-(?:linux|lauf|breit|master))?$"),
 )
 _ZWEIG_MUSTER = re.compile(
     r"^(?:(?:ticket|fix|wip|aufseher)/|fix-|abschluss-)(\d+)(?:-.*)?$"

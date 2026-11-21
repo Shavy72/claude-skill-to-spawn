@@ -87,3 +87,32 @@ def test_datum_hinter_wort_ist_kein_ticket(welt: Welt) -> None:
     r = welt.aufraeumen(wt, loeschen=True)
     assert r.art == "bleibt" and "keine Ticket-Nummer" in r.grund, r.grund
     assert wt.is_dir()
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "skill-4821f3c",  # Commit-Hash-Rest
+        "skill-123abcd",
+        "2026-11-21-sicherung",  # Datum
+        "v2026-backup",
+        "8080-notizen",  # freie Zahl
+        "x500",
+        "805_fremd_backup",  # echter Ordner auf dem Bau-Server
+    ],
+)
+def test_keine_nummer_aus_hash_datum_freier_zahl(name: str) -> None:
+    assert hausmeister._nummer(name, hausmeister._NAME_MUSTER) is None
+
+
+@pytest.mark.parametrize(
+    ("name", "nr"),
+    [
+        ("skill-1426a", 1426),
+        ("1342-lauf", 1342),
+        ("t1490b", 1490),
+        ("wt-1293-push", 1293),
+    ],
+)
+def test_echte_ordnernamen_bleiben_lesbar(name: str, nr: int) -> None:
+    assert hausmeister._nummer(name, hausmeister._NAME_MUSTER) == nr
