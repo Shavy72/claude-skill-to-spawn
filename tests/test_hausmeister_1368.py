@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
+from conftest import attrappe
 
 SKILL = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SKILL))
@@ -38,9 +39,13 @@ if a[:2] == ["issue", "view"]:
         sys.exit(1)
     print(json.dumps(e))
     sys.exit(0)
+if a[:2] == ["pr", "list"]:
+    prs = json.load(open(os.environ["GH_PRS"])) if os.environ.get("GH_PRS") else dict()
+    kopf = a[a.index("--head") + 1] if "--head" in a else ""
+    print(json.dumps(prs.get(kopf, [])))
+    sys.exit(0)
 sys.exit(1)
 """
-GH_ATTRAPPE = "#!/bin/sh\nexec {py} -c '" + GH_ATTRAPPE_PY + '\' "$@"\n'
 
 
 def git(cwd: Path, *args: str) -> str:
@@ -138,9 +143,7 @@ def welt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Welt:
 
     bin_ = tmp_path / "bin"
     bin_.mkdir()
-    gh = bin_ / "gh"
-    gh.write_text(GH_ATTRAPPE.format(py=sys.executable), encoding="utf-8")
-    gh.chmod(0o755)
+    attrappe(bin_, "gh", GH_ATTRAPPE_PY)
     if sys.platform == "win32":
         # #68: Windows startet ``bin/gh`` (Shell-Skript ohne Endung) nicht — sonst liefe
         # das echte gh gegen GitHub. Gleiche Attrappe über die Test-Tür TO_SPAWN_GH_STUB.
@@ -617,9 +620,7 @@ def test_s10_env_in_ungepushtem_commit_bleibt(welt: Welt) -> None:
 # T1
 def test_t1_sicherung_scheitert_bleibt(welt: Welt) -> None:
     wt = welt.worktree(47, schmutzig=True)
-    haken = welt.bare / "hooks" / "pre-receive"
-    haken.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
-    haken.chmod(0o755)
+    attrappe(welt.bare / "hooks", "pre-receive", "raise SystemExit(1)\n")
     welt.ticket(47, "CLOSED", 48)
     r = welt.aufraeumen(wt, loeschen=True)
     assert r.art == "bleibt" and r.fehler and "Sicherung" in r.grund

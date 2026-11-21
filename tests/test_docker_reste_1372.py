@@ -8,11 +8,11 @@ ist eine Attrappe: ein Skript, das seine Argumente mitschreibt.
 from __future__ import annotations
 
 import json
-import stat
 from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+from conftest import attrappe
 
 from to_spawn import docker_reste, hausmeister
 
@@ -26,17 +26,24 @@ TAG = 24 * 3600
 def welt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str, Path]]:
     aufrufe = tmp_path / "docker_aufrufe.txt"
     docker = tmp_path / "docker"
-    docker.write_text(
-        "#!/bin/sh\n"
-        f'echo "$*" >> "{aufrufe}"\n'
-        'if [ -n "$STAGING_SPERRE_PRUEFEN" ]; then '
-        'flock -n "$TO_SPAWN_STAGING_SPERRE" true && echo frei >> "$STAGING_SPERRE_PRUEFEN" '
-        '|| echo gehalten >> "$STAGING_SPERRE_PRUEFEN"; fi\n'
-        'if [ -n "$DOCKER_ATTRAPPE_EXIT" ]; then echo kaputt >&2; exit "$DOCKER_ATTRAPPE_EXIT"; fi\n'
-        'echo "Total reclaimed space: 1.5GB"\n',
-        encoding="utf-8",
+    attrappe(
+        tmp_path,
+        "docker",
+        f"""
+        import os, subprocess, sys
+        with open({str(aufrufe)!r}, "a", encoding="utf-8") as f:
+            f.write(" ".join(sys.argv[1:]) + "\\n")
+        pruef = os.environ.get("STAGING_SPERRE_PRUEFEN")
+        if pruef:
+            frei = subprocess.run(["flock", "-n", os.environ["TO_SPAWN_STAGING_SPERRE"], "true"]).returncode == 0
+            with open(pruef, "a", encoding="utf-8") as f:
+                f.write(("frei" if frei else "gehalten") + "\\n")
+        if os.environ.get("DOCKER_ATTRAPPE_EXIT"):
+            print("kaputt", file=sys.stderr)
+            raise SystemExit(int(os.environ["DOCKER_ATTRAPPE_EXIT"]))
+        print("Total reclaimed space: 1.5GB")
+        """,
     )
-    docker.chmod(docker.stat().st_mode | stat.S_IXUSR)
     log_ordner = tmp_path / "hm"
     monkeypatch.setenv(
         "TO_SPAWN_HAUSMEISTER_LOG", str(log_ordner / "hausmeister.jsonl")

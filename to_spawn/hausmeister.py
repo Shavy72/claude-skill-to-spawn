@@ -128,7 +128,15 @@ from datetime import datetime
 from pathlib import Path
 from typing import Literal
 
-from to_spawn import aufpasser, config, docker_reste, gh, hausmeister_windows, hindernis
+from to_spawn import (
+    aufpasser,
+    config,
+    docker_reste,
+    gh,
+    hausmeister_windows,
+    hindernis,
+    uebergabe_sichern,
+)
 from to_spawn import sperre as _sperre
 
 log = logging.getLogger("to_spawn.hausmeister")
@@ -508,6 +516,7 @@ def _alle_ordner(*, loeschen: bool, jetzt: float | None) -> Rundgang:
             anteil = _frei_anteil()
     _kennzahl_schreiben(ergebnisse, trocken=not loeschen)
     _zweige_im_takt(loeschen, jetzt)
+    uebergabe_sichern.sichern()  # L5 #145: Netz für vergessene Ablösungen, wirft nie
     return Rundgang(True, "", tuple(ergebnisse))
 
 
@@ -1390,9 +1399,14 @@ def _regeln(
 
     # 4 Ticket-Nummer aus Name und Zweig (None = keine, #1536)
     stand.ticket = ticket = _ticket_nummer(ordner, echt)
+    # 4b #135: die Nummer zählt nur im Ticket-Repo selbst (skill-103 ist kein App-Ticket #103)
+    slug = _origin_slug(echt)
+    fremd = ticket is not None and not _nummer_zaehlt(slug)
+    if fremd:
+        stand.ticket = None
 
     # 5/6 Ticket zu, seit mindestens 24 h; keine laufende Spec-Sitzung
-    if ticket is not None:
+    if ticket is not None and not fremd:
         _ticket_lange_zu(ticket, jetzt, platznot, _origin_slug(echt))
         _keine_spec_sitzung(ticket)
 
@@ -1403,12 +1417,18 @@ def _regeln(
     if ticket is None:
         raise _Bleibt("keine Ticket-Nummer", fuer_david=True)
 
+    # 7c #135: ein offener Pull-Request zum Zweig hält jeden Ordner
+    _kein_offener_pull_request(echt, slug)
+
     # 8 Ungesichertes prüfen (auch trocken: fetch, Geheimnisse, Ignoriertes)
     koepfe, zu_sichern, status_vorher = _ungesichertes(echt, ist_worktree)
     art: Art = "gesichert und gelöscht" if (koepfe or zu_sichern) else "gelöscht"
-    grund = _grund(art, ticket, platznot)
+    if fremd:  # 8b #135: ohne gültiges Ticket nur, was nachweislich fertig ist
+        grund = _fremd_fertig(echt, ticket, bool(koepfe or zu_sichern), jetzt)
+    else:
+        grund = _grund(art, ticket, platznot)
     if trocken:
-        return Ergebnis(ordner, art, grund, ticket, trocken=True), None
+        return Ergebnis(ordner, art, grund, stand.ticket, trocken=True), None
     if koepfe or zu_sichern:
         try:
             stand.sicherung = aufpasser.sichern(
@@ -1430,7 +1450,7 @@ def _regeln(
         raise _Bleibt("nach der Sicherung noch Commits auf keinem Remote", fehler=True)
 
     # 9 Löschen (erst nach der Log-Zeile, siehe aufraeumen)
-    erg = Ergebnis(ordner, art, grund, ticket, stand.sicherung, trocken=False)
+    erg = Ergebnis(ordner, art, grund, stand.ticket, stand.sicherung, trocken=False)
     return erg, (echt, ist_worktree)
 
 
@@ -1514,6 +1534,75 @@ def _ticket_nummer(ordner: Path, echt: Path) -> int | None:
             fuer_david=True,
         )
     return aus_name if aus_name is not None else aus_zweig
+
+
+def _nummer_zaehlt(slug: str) -> bool:
+    """#135: Nummer aus Ordner/Zweig gilt nur, wenn ``origin`` (``slug``) selbst das Ticket-Repo ist.
+
+    Sonst gehört sie zu einem anderen Repo (``skill-103`` = Skill-Issue, nicht App-Ticket #103);
+    der Ordner darf dann nur weg, wenn er nachweislich fertig ist (:func:`_fremd_fertig`).
+    Einzige Stelle für diese Zuordnung — Ordner-Präfixe dürfen beliebige Repos treffen.
+    """
+    ticket_repo = _ticket_repo_fuer(slug) if slug.strip() else None
+    return ticket_repo is not None and ticket_repo.strip().lower() == slug.strip().lower()
+
+
+def _kein_offener_pull_request(echt: Path, slug: str) -> None:
+    """#135: offener Pull-Request zum ausgecheckten Zweig ⇒ ``_Bleibt``; nicht abfragbar ⇒ ``_Bleibt``.
+
+    Losgelöster Kopf hat keinen Zweig, zu dem ein Pull-Request gehören kann."""
+    zweig = _git_oder_none(echt, "symbolic-ref", "--short", "-q", "HEAD")
+    if not zweig:
+        return
+    daten = gh.json_lauf(
+        ["pr", "list", "-R", slug, "--head", zweig, "--state", "open", "--json", "number"],
+        timeout=GH_ZEITLIMIT_S,
+    )
+    if not isinstance(daten, list):
+        raise _Bleibt(f"Pull-Requests zu {zweig} nicht abfragbar", fehler=True)
+    if daten:
+        nr = daten[0].get("number") if isinstance(daten[0], dict) else "?"
+        raise _Bleibt(f"Pull-Request #{nr} zu {zweig} offen")
+
+
+def _fremd_fertig(echt: Path, ticket: int, ungesichert: bool, jetzt: float | None) -> str:
+    """#135: Ordner mit Nummer eines anderen Repos darf nur weg, wenn nichts zu sichern ist,
+    sein Kopf im Hauptzweig von origin liegt und seit 24 h nichts geändert wurde; sonst ``_Bleibt``.
+    Rückgabe: Grund für Log und Ergebnis."""
+    vorne = f"#{ticket} ist kein Ticket dieses Repos"
+    if ungesichert:
+        raise _Bleibt(f"{vorne}: Änderungen oder Commits nicht im Hauptzweig gesichert", fuer_david=True)
+    haupt = _hauptzweig(echt, str(echt))
+    offen = _git_oder_none(echt, "rev-list", "-n", "1", "HEAD", "--not", f"refs/remotes/origin/{haupt}")
+    if offen is None:
+        raise _Bleibt(f"{vorne}: origin/{haupt} nicht lesbar", fehler=True)
+    if offen:
+        raise _Bleibt(f"{vorne}: Kopf nicht in origin/{haupt}")
+    jetzt_ts = jetzt if jetzt is not None else time.time()
+    if jetzt_ts - _juengste_aenderung(echt) < MINDEST_ZU_SEKUNDEN:
+        raise _Bleibt(f"{vorne}: frisch geändert (vor weniger als 24 h)")
+    return f"{vorne}; Kopf in origin/{haupt}, Baum sauber, seit 24 h unverändert, kein Pull-Request offen"
+
+
+def _juengste_aenderung(echt: Path) -> float:
+    """Jüngste Änderungszeit im Ordner (ohne ``.git``-Inhalt) und in Index/HEAD seines Git-Ordners.
+
+    ponytail: läuft durch den ganzen Baum; bei riesigen Ordnern (node_modules) teuer —
+    dann auf ``git status``-Pfade plus Git-Ordner begrenzen."""
+    neu = 0.0
+    pfade: list[str] = [str(echt)]
+    git_ordner = _git_oder_none(echt, "rev-parse", "--absolute-git-dir")
+    if git_ordner:
+        pfade += [os.path.join(git_ordner, n) for n in ("index", "HEAD", os.path.join("logs", "HEAD"))]
+    for wurzel, unter, dateien in os.walk(echt):
+        unter[:] = [u for u in unter if u != ".git"]
+        pfade += [os.path.join(wurzel, n) for n in (*unter, *dateien)]
+    for pfad in pfade:
+        try:
+            neu = max(neu, os.lstat(pfad).st_mtime)
+        except OSError:  # in der Zwischenzeit verschwunden: zählt nicht als Änderung
+            continue
+    return neu
 
 
 def _ticket_lange_zu(
