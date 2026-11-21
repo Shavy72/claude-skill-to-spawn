@@ -41,6 +41,7 @@ def test_lade_skript_ohne_skill_skript_wirft_importerror(tmp_path: Path, monkeyp
 
 
 def test_capo_vorlage_kopfzeile_wie_app() -> None:
-    # App-Stand (DuoPlus 088d75eb9): Kopfzeile verweist auf den Titel von #213.
+    # Kopfzeile verweist auf #213, Rollenname nach #428 (E1) „Aufseher“. Die Vorlage ist die
+    # Quelle: eine App-Fassung mit altem Rollennamen ist veraltet und wird nachgezogen.
     kopf = (einrichten._VORLAGEN / "capo.py").read_text(encoding="utf-8").splitlines()[0]
-    assert kopf == '"""Weiterleitung auf den Skill to-spawn (#205, Wächter-Tick #213).'
+    assert kopf == '"""Weiterleitung auf den Skill to-spawn (#205, Aufseher-Tick #213).'
