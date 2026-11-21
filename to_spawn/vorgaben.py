@@ -57,3 +57,5 @@ STAGING_SPERREN: list[str] = ["/home/bau/staging/.deploy.lock"]
 #: Hausmeister: Such-Muster der Worktree-Wurzeln (#4) und Ordner-Präfixe (#5).
 HAUSMEISTER_WURZELN: list[str] = ["~/wt/*", "~/wt-*", "~/duoplus-[0-9]*", "C:/dev/wt-*"]
 HAUSMEISTER_ORDNER_PRAEFIXE: list[str] = ["wt", "skill", "duoplus"]
+#: Hausmeister: Ordnernamen, die immer bleiben (#1536), zusätzlich zu den Hauptrepos.
+HAUSMEISTER_GESCHUETZTE_ORDNER: list[str] = ["duoplus-leit", "deploy-schlange", "obsidian"]

@@ -179,7 +179,7 @@ HAUPTREPO_NAMEN = _hauptrepo_namen_aus(_VORGABE_REPOS)
 #: #1536: Ordnernamen, die immer bleiben (Server und PC), auch ohne Git — dazu kommen die
 #: Hauptrepos der Maschinen-Liste (:func:`_geschuetzte_ordner`). Laufende Spec-Klone schützen
 #: offenes Ticket und tmux-Sitzung ``spec-<N>``.
-GESCHUETZTE_ORDNER = (*HAUPTREPO_NAMEN, "duoplus-leit", "deploy-schlange", "obsidian")
+GESCHUETZTE_ORDNER = (*HAUPTREPO_NAMEN, *config.HAUSMEISTER_GESCHUETZTE_ORDNER)
 #: #1536: Kennzahl je Takt, eigene Datei neben dem Hausmeister-Log (:func:`_kennzahl_pfad`).
 KENNZAHL_DATEI = "hausmeister_kennzahl.jsonl"
 WURZELN_STANDARD = tuple(config.MASCHINE_DEFAULTS["hausmeister"]["wurzeln"])
@@ -210,7 +210,10 @@ def _hauptrepo_namen() -> tuple[str, ...]:
 
 
 def _geschuetzte_ordner() -> tuple[str, ...]:
-    return tuple(dict.fromkeys((*GESCHUETZTE_ORDNER, *_hauptrepo_namen())))
+    """Eingebaute Liste + Hauptrepos + ``hausmeister.geschuetzte_ordner`` — nur addierend."""
+    roh = config.maschine()["hausmeister"].get("geschuetzte_ordner")
+    extra = [n.strip() for n in roh if isinstance(n, str) and n.strip()] if isinstance(roh, list) else []
+    return tuple(dict.fromkeys((*GESCHUETZTE_ORDNER, *_hauptrepo_namen(), *extra)))
 MINDEST_ZU_SEKUNDEN = 24 * 3600
 #: Unter diesem Anteil freier Platte gilt Platznot: fertige Ordner gehen vor Ablauf der 24 h.
 PLATZNOT_ANTEIL = 0.15
@@ -1670,9 +1673,17 @@ def _echt_unter_home(pfad: Path) -> bool:
     return pfad.is_absolute() and heim in echt.parents
 
 
+def _versteckt_unter_home(pfad: Path) -> bool:
+    """Ein Teil unterhalb des Home beginnt mit ``.`` (``~/.ssh``, ``~/a/.cache``)."""
+    heim = Path.home().parts
+    rest = pfad.parts[len(heim) :] if pfad.parts[: len(heim)] == heim else pfad.parts
+    return any(teil.startswith(".") for teil in rest)
+
+
 def _wurzel_erlaubt(muster: str) -> bool:
     """Wurzel-Muster der Liste: Vorgabe (z. B. ``C:/dev/wt-*``) oder fester Teil vor dem
-    ersten Glob-Zeichen echt unter dem Home (``~/*``, ``/tmp/*`` fallen weg)."""
+    ersten Glob-Zeichen echt unter dem Home (``~/*``, ``/tmp/*`` fallen weg) und ohne
+    versteckten Ordner (``~/.ssh/*``: Schlüssel/Einstellungen, keine Worktrees)."""
     if muster in WURZELN_STANDARD:
         return True
     teile: list[str] = []
@@ -1680,7 +1691,7 @@ def _wurzel_erlaubt(muster: str) -> bool:
         if glob.has_magic(teil):
             break
         teile.append(teil)
-    if teile and _echt_unter_home(Path(*teile)):
+    if teile and _echt_unter_home(Path(*teile)) and not _versteckt_unter_home(Path(*teile)):
         return True
     _ablehnen("Wurzel", muster)
     return False

@@ -193,6 +193,26 @@ Fehlt die Datei, gelten die Vorgaben aus `to_spawn/config.py`:
 }
 ```
 
+### Fremdes Repo: diese Schlüssel setzen (L1 Etappe 1)
+
+Die heutigen Werte des ersten App-Repos stehen nur in `to_spawn/vorgaben.py`; jedes andere
+Modul liest sie über `config.lade` / `config.pfad` / `config.maschine`. Ein fremdes Repo
+überschreibt, was bei ihm anders ist — fehlende Schlüssel gelten als Vorgabe.
+
+- Repo (`.to-spawn/config.json`): `pfade.{manifeste,bau_log,agenten}`,
+  `deploy.skripte[]` (`name`, `art` live/pruef, `pruef_schalter`, `fern`),
+  `staging.schalter`, `befehle.wirkungskreis`, `vps.staging_log`, `worktree_basis`, `hauptzweig`.
+- Maschine (`~/.config/to-spawn/maschine.json`, Env `TO_SPAWN_MASCHINE`): `repos[]`
+  (`slug`, `pfad`, `ticket_repo`, `worktree_basis`), `staging_sperren[]`,
+  `hausmeister.{wurzeln,ordner_praefixe}` und `hausmeister.geschuetzte_ordner` — Letzteres
+  schützt nur zusätzlich, die eingebaute Liste bleibt immer gültig. Wurzeln mit verstecktem
+  Ordner (`~/.ssh/*`) lehnt der Hausmeister ab.
+
+Der Prüf-Test `tests/test_feste_namen_l1.py` bricht den Build, sobald im Skill-Code ein
+fester Name oder Pfad auftaucht (`duoplus`, `Shavy72/`, `docs/agents/manifests`,
+`docs/agents/bau_log`, `scripts/bau.py`/`wache.py`, Heim-Pfade). Muster und Ausnahmen
+stehen nur dort; jede Ausnahme nennt Datei, Muster, Höchstzahl der Zeilen und Grund.
+
 ## Speicher (#257 Paket B)
 
 Lehre aus dem OOM-Absturz 21.09. (16 GB, kein Swap, 12 Sessions): `to_spawn/speicher.py`

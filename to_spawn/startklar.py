@@ -42,7 +42,7 @@ from pathlib import Path
 from typing import Any
 
 from to_spawn import config
-from to_spawn.manifest import manifest_pfad
+from to_spawn.manifest import manifest_im_repo, manifest_pfad
 
 log = logging.getLogger("to_spawn.startklar")
 
@@ -807,7 +807,7 @@ def schluessel_pruefen(
                 "schlüssel",
                 False,
                 f"Manifest {_manifest_pfad(ordner, spec)} fehlt — Schlüssel-Bedarf der Tickets unbekannt",
-                f"/to-tickets ausführen bzw. Manifest docs/agents/manifests/spec-{spec}.json ziehen (git pull), dann erneut prüfen",
+                f"/to-tickets ausführen bzw. Manifest {manifest_im_repo(ordner, spec)} ziehen (git pull), dann erneut prüfen",
             )
         )
     if bedarf.unvollstaendig:
