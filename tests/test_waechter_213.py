@@ -1304,6 +1304,19 @@ def _live_gedeckt_welt(
     )
     if skript is not None:
         (repo / "scripts" / "schlange_deckung.py").write_text(skript, encoding="utf-8")
+    # #1504: capo liest Skript und Manifeste aus origin/master — Stand also pushen.
+    fern = tmp_path / "fern.git"
+    subprocess.run(
+        ["git", "init", "-q", "--bare", "-b", "master", str(fern)],
+        check=True,
+        capture_output=True,
+    )
+    _git(repo, "init", "-q", "-b", "master")
+    _git(repo, "config", "user.email", "test@example.invalid")
+    _git(repo, "config", "user.name", "Test")
+    _git(repo, "remote", "add", "origin", str(fern))
+    _git(repo, "add", "-A")
+    _commit(repo, "chore: Stand (#1)", {})
     ordner = tmp_path / "zettel"
     ordner.mkdir()
     if zettel:

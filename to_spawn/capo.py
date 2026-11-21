@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import contextlib
 import fnmatch
+import io
 import json
 import logging
 import os
@@ -45,6 +46,8 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tarfile
+import tempfile
 import time
 import urllib.parse
 from collections.abc import Callable, Iterator
@@ -795,6 +798,49 @@ def live_freigabe(vps: dict[str, Any], ticket: int) -> bool:
         return False
 
 
+class _StandUnlesbar(Exception):
+    """Der Deckungs-Stand (origin/<Hauptzweig>) ließ sich nicht lesen."""
+
+
+@contextlib.contextmanager
+def _deckungs_stand(repo: Path) -> Iterator[Path | None]:
+    """Der Stand, aus dem die Deploy-Schlange deckt — einzige Stelle mit diesem Wissen (#1504).
+
+    Die Schlange rechnet in ihrem Klon auf ``origin/master``; ein ungepushtes Manifest oder Skript
+    im Arbeitsbaum darf capos Urteil deshalb nicht ändern. Liefert einen Wegwerf-Ordner mit
+    ``scripts/`` und ``docs/agents/manifests/`` aus ``origin/<Hauptzweig>`` (``git archive``,
+    Stand des letzten ``git fetch`` in :func:`tick`). ``None``: Deckungs-Skript fehlt dort
+    (Fremd-Repo, alter Stand). Wirft :class:`_StandUnlesbar`, wenn der Ref oder das Archiv
+    nicht lesbar ist — der Aufrufer wertet das als „nicht gedeckt“ (fail-closed).
+    """
+    ref = haupt_ref(repo)
+    if ref is None:
+        raise _StandUnlesbar("kein origin/<Hauptzweig>")
+    if _git(repo, "cat-file", "-e", f"{ref}:scripts/schlange_deckung.py")[0] != 0:
+        yield None
+        return
+    manifeste = "docs/agents/manifests"
+    pfade = ["scripts"] + ([manifeste] if _git(repo, "cat-file", "-e", f"{ref}:{manifeste}")[0] == 0 else [])
+    with tempfile.TemporaryDirectory(prefix="capo-deckung-") as ordner:
+        ziel = Path(ordner)
+        try:
+            archiv = subprocess.run(
+                ["git", "archive", "--format=tar", ref, "--", *pfade],
+                cwd=str(repo),
+                capture_output=True,
+                timeout=GIT_ZEIT_S,
+                check=False,
+            )
+            if archiv.returncode != 0:
+                raise _StandUnlesbar(f"git archive {ref} Exit {archiv.returncode}")
+            with tarfile.open(fileobj=io.BytesIO(archiv.stdout)) as tar:
+                tar.extractall(ziel, filter="data")
+        except (OSError, subprocess.SubprocessError, tarfile.TarError) as fehler:
+            raise _StandUnlesbar(str(fehler)) from fehler
+        (ziel / manifeste).mkdir(parents=True, exist_ok=True)
+        yield ziel
+
+
 def live_gedeckt(repo: Path, vps: dict[str, Any], ticket: int, kopf: str, sha: str) -> bool:
     """Nimmt der Deploy-Dienst ``sha`` beim nächsten Lauf live? Urteil allein bei der SSOT im Repo.
 
@@ -805,27 +851,29 @@ def live_gedeckt(repo: Path, vps: dict[str, Any], ticket: int, kopf: str, sha: s
     Fehlt das Skript ganz (Fremd-Repo, alter Stand), zählt wie früher nur der eigene Zettel.
     Jede andere unbrauchbare Antwort (Exit ≠ 0/1, Zeitlimit, kein JSON, Widerspruch) heißt
     „nicht gedeckt“ mit Warnzeile — nie Rückfall auf den eigenen Zettel (sonst Fehlalarm).
+    Skript und Manifeste kommen aus :func:`_deckungs_stand` (origin/master, #1504); ist der Stand
+    unlesbar, heißt das ebenfalls „nicht gedeckt“ mit Warnzeile.
     """
-    deckung_py = repo / "scripts" / "schlange_deckung.py"
-    if not deckung_py.is_file():
-        return live_freigabe(vps, ticket)
-    befehl = [
-        sys.executable,
-        str(deckung_py),
-        kopf,
-        sha,
-        "--bis-spitze",
-        "--repo",
-        str(repo),
-        "--manifeste",
-        str(repo / "docs" / "agents" / "manifests"),
-        "--freigabe-ordner",
-        str(Path(str(vps.get("freigabe_ordner") or FREIGABE_STANDARD)).expanduser()),
-    ]
     try:
-        lauf = subprocess.run(befehl, capture_output=True, text=True, encoding="utf-8", timeout=60, check=False)
-        daten = json.loads(lauf.stdout or "null") if lauf.returncode in (0, 1) else None
-    except (OSError, subprocess.SubprocessError, ValueError) as fehler:
+        with _deckungs_stand(repo) as stand:
+            if stand is None:
+                return live_freigabe(vps, ticket)
+            befehl = [
+                sys.executable,
+                str(stand / "scripts" / "schlange_deckung.py"),
+                kopf,
+                sha,
+                "--bis-spitze",
+                "--repo",
+                str(repo),
+                "--manifeste",
+                str(stand / "docs" / "agents" / "manifests"),
+                "--freigabe-ordner",
+                str(Path(str(vps.get("freigabe_ordner") or FREIGABE_STANDARD)).expanduser()),
+            ]
+            lauf = subprocess.run(befehl, capture_output=True, text=True, encoding="utf-8", timeout=60, check=False)
+            daten = json.loads(lauf.stdout or "null") if lauf.returncode in (0, 1) else None
+    except (OSError, subprocess.SubprocessError, ValueError, _StandUnlesbar) as fehler:
         log.warning("Deckung für #%s nicht prüfbar (%s) — gilt als nicht gedeckt.", ticket, fehler)
         return False
     if not isinstance(daten, dict) or daten.get("gedeckt") is not (lauf.returncode == 0):
