@@ -25,6 +25,7 @@ der Nachläufer des Stop-Hooks, der dann evtl. seine ``OK``-Zeile nicht mehr sch
 
 from __future__ import annotations
 
+import ctypes
 import logging
 import sys
 from collections.abc import Iterator
@@ -42,7 +43,13 @@ _PROZESS_RECHTE = 0x0100 | 0x0001  # PROCESS_SET_QUOTA | PROCESS_TERMINATE
 @contextmanager
 def gebunden(prozess: Any) -> Iterator[None]:
     """Hält ``prozess`` samt allen Nachkommen für die Dauer des Blocks in einem Job (siehe oben)."""
-    griff = _job_fuer(int(prozess.pid)) if _WINDOWS else None
+    griff: int | None = None
+    if _WINDOWS:
+        try:
+            griff = _job_fuer(int(prozess.pid))
+        except (OSError, AttributeError, TypeError, ValueError, ctypes.ArgumentError) as fehler:
+            # Ein Job-Fehler darf den Bau nie abbrechen — die Session läuft dann ohne Job.
+            log.warning("Job für Session %s nicht angelegt (%s) — ohne Job", prozess.pid, fehler)
     try:
         yield
     finally:
@@ -52,7 +59,6 @@ def gebunden(prozess: Any) -> Iterator[None]:
 
 
 def _kernel() -> Any:
-    import ctypes
     from ctypes import wintypes
 
     kernel = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
@@ -68,7 +74,6 @@ def _kernel() -> Any:
 
 def _job_fuer(pid: int) -> int | None:
     """Neuer Job mit KILL_ON_JOB_CLOSE, ``pid`` aufgenommen; Griff oder ``None`` bei Fehler."""
-    import ctypes
     from ctypes import wintypes
 
     class _Basis(ctypes.Structure):
@@ -99,21 +104,29 @@ def _job_fuer(pid: int) -> int | None:
     if not job:
         log.warning("Job für Session %d nicht angelegt (Fehler %d) — ohne Job", pid, ctypes.get_last_error())
         return None
-    grenzen = _Erweitert()
-    grenzen.BasicLimitInformation.LimitFlags = _KILL_ON_JOB_CLOSE
-    prozess = kernel.OpenProcess(_PROZESS_RECHTE, False, pid)
-    ok = (
-        bool(prozess)
-        and bool(
-            kernel.SetInformationJobObject(job, _JOB_ERWEITERTE_GRENZEN, ctypes.byref(grenzen), ctypes.sizeof(grenzen))
+    ok = False
+    prozess = None
+    try:
+        grenzen = _Erweitert()
+        grenzen.BasicLimitInformation.LimitFlags = _KILL_ON_JOB_CLOSE
+        prozess = kernel.OpenProcess(_PROZESS_RECHTE, False, pid)
+        ok = (
+            bool(prozess)
+            and bool(
+                kernel.SetInformationJobObject(
+                    job, _JOB_ERWEITERTE_GRENZEN, ctypes.byref(grenzen), ctypes.sizeof(grenzen)
+                )
+            )
+            and bool(kernel.AssignProcessToJobObject(job, prozess))
         )
-        and bool(kernel.AssignProcessToJobObject(job, prozess))
-    )
-    fehler = ctypes.get_last_error()
-    if prozess:
-        kernel.CloseHandle(prozess)
+        fehler = ctypes.get_last_error()
+    finally:
+        # Griffe auch bei Ausnahme schließen; der Job-Griff bleibt nur bei Erfolg offen.
+        if prozess:
+            kernel.CloseHandle(prozess)
+        if not ok:
+            kernel.CloseHandle(job)
     if not ok:
-        kernel.CloseHandle(job)
         log.warning("Session %d nicht in Job aufgenommen (Fehler %d) — ohne Job", pid, fehler)
         return None
     log.info("Session %d in Job aufgenommen (KILL_ON_JOB_CLOSE)", pid)
