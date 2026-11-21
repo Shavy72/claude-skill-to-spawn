@@ -160,6 +160,8 @@ ERZEUGNISSE = (
     "**/*.log",
     "**/.coverage",
     "**/htmlcov/**",
+    "**/.review/**",  # Belege des Review-Werkzeugs (eigenes .gitignore mit *)
+    "data/.secret_key",  # Flask-Sitzungsschlüssel, legt web/config.py selbst neu an
 )
 
 _NAME_MUSTER = (
@@ -1569,14 +1571,16 @@ def _ungesichertes(
     for _, pfad in alle:
         if pfad.endswith("/"):
             raise _Bleibt(f"eingebettetes Repo {pfad}", fuer_david=True)
+    # Ein ignoriertes Erzeugnis (z. B. __pycache__/tempo_zugang.*.pyc) ist nie ein Geheimnis
+    erzeugnis = {p for xy, p in _status(repo, *_glob(ERZEUGNISSE)) if xy == "!!"}
     geheim = {p for _, p in _status(repo, *_glob(aufpasser.SICHERUNG_AUSSCHLUSS))}
+    geheim -= erzeugnis
     haupt = _hauptrepo(repo) if ist_worktree else None
     for pfad in sorted(geheim):
         if not _gleiche_kopie(haupt, repo, pfad):
             raise _Bleibt(
                 f"Geheimnis-Datei {pfad} nicht gleich im Hauptrepo", fuer_david=True
             )
-    erzeugnis = {p for xy, p in _status(repo, *_glob(ERZEUGNISSE)) if xy == "!!"}
     for xy, pfad in alle:
         if xy == "!!" and pfad not in geheim and pfad not in erzeugnis:
             raise _Bleibt(f"ignorierte Datei {pfad} ist kein bekanntes Erzeugnis")
