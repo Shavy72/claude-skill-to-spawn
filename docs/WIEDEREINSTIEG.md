@@ -32,6 +32,13 @@ was zum Weiterbauen nötig ist.
 
 ## 3. Stand
 
+- **2026-11-21 22:27 (Server-Uhr):** Seit dem letzten Eintrag gemergt: Pull-Requests 131, 132, 133
+  (Windows-Reste P7c-b, P7d, P7e), 141 (Issue 87, to-tickets) und 143 (Issue 138, Installer-Randfälle).
+  Offen im Pull-Request: 126 (Issue 103, Fix-Runde 3 im Review), 127 (Issue 100, Fix-Runde 3 im Review),
+  134 (Issue 93, als Letzter der Welle), 137 (P7c-a, Windows grün gemeldet, Linux-Lauf läuft),
+  142 (Issue 94, Fix-Runde 1 nach Review-Befund), 146 (Issue 88, Spec schließen).
+  In Arbeit ohne Pull-Request: Issue 136 (Temp-Ordner aufräumen, L4). Als Nächstes: Issues 135, 129,
+  144, 145. Abnahme: noch keine M-Zeile belegt.
 - **2026-11-21 22:25 (PC-Uhr):** Etappe 0 fertig (sechs Bremsen-Tickets im App-Repo geschlossen).
   Etappe 1 auf dem Bau-Server gebaut und installiert; Windows offen (Issue 68, Pakete P7c–P7f,
   fünf Pull-Requests offen). Etappe 2 in 13 Pakete geschnitten (Issues 85–97), zwei gemergt.
