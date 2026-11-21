@@ -13,7 +13,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from to_spawn import speicher
+from to_spawn import speicher, temp_ordner
 
 #: RAM je Test-Worker (MiB), Grundlage des Deckels.
 # ponytail: Schätzwert, nicht gemessen; Upgrade: Spitze je Worker messen (3b-5).
@@ -40,6 +40,7 @@ def lauf(befehl: list[str], ordner: Path) -> Lauf:
         erg = subprocess.run(
             befehl,
             cwd=ordner,
+            env={**os.environ, **temp_ordner.umgebung()},  # #136: Temp nie auf die RAM-Platte
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
