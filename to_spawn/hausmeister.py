@@ -132,23 +132,85 @@ try:
 except ImportError:  # Windows: Sperre über hausmeister_windows (#1373)
     fcntl = None  # type: ignore[assignment]
 
-from to_spawn import aufpasser, docker_reste, gh, hausmeister_windows, hindernis
+from to_spawn import aufpasser, config, docker_reste, gh, hausmeister_windows, hindernis
 
 log = logging.getLogger("to_spawn.hausmeister")
 
 Art = Literal["gelöscht", "gesichert und gelöscht", "bleibt"]
 
-#: Issues (Tickets) liegen immer hier, auch für Skill-Repo-Ordner.
-TICKET_REPO = "Shavy72/duoplus-management"
-EIGENE_REPOS = ("shavy72/duoplus-management", "shavy72/claude-skill-to-spawn")
+
+# --- Maschinen-Liste (L1 Etappe 1) ------------------------------------------------
+# Repos, Wurzeln und Ordner-Präfixe kommen aus ``config.maschine()``; fehlt sie oder ist sie
+# kaputt, gelten ``config.MASCHINE_DEFAULTS`` (= das alte Verhalten). Env-Nähte
+# ``TO_SPAWN_HAUSMEISTER_*`` gewinnen. Oberste Regel: nie mehr löschen als vorher —
+# Schutzlisten wachsen nur, Unklares heißt „bleibt“. Die Konstanten unten sind die Vorgaben
+# (Aliase für Aufrufer und Tests), wirksam sind die Funktionen ``_eigene_repos()`` usw.
+
+
+def _ticket_repo_aus(repos: list[dict[str, str]]) -> str | None:
+    """Das eine Ticket-Repo aller Einträge; ``None`` = keins, mehrere oder unklar.
+
+    Nie aus dem ``slug`` geraten: ein falsches Repo könnte ein fremdes geschlossenes #N
+    melden. Leeres ``ticket_repo`` gilt nur, wenn der ``slug`` selbst das ausdrückliche
+    Ticket-Repo eines anderen Eintrags ist (Vorgabe: DuoPlus, Skill-Ordner fragen dort).
+    """
+    explizit = {t for e in repos if (t := (e.get("ticket_repo") or "").strip())}
+    bekannt = {t.lower() for t in explizit}
+    for e in repos:
+        if not (e.get("ticket_repo") or "").strip() and (e.get("slug") or "").strip().lower() not in bekannt:
+            return None
+    return next(iter(explizit)) if len(explizit) == 1 else None
+
+
+def _hauptrepo_namen_aus(repos: list[dict[str, str]]) -> tuple[str, ...]:
+    return tuple(Path(p).expanduser().name for e in repos if (p := (e.get("pfad") or "").strip()))
+
+
+def _remotes_aus(repos: list[dict[str, str]]) -> tuple[str, ...]:
+    return tuple(f"https://github.com/{s}" for e in repos if (s := (e.get("slug") or "").strip()))
+
+
+_VORGABE_REPOS: list[dict[str, str]] = config.MASCHINE_DEFAULTS["repos"]
+#: Issues (Tickets) liegen immer hier, auch für Skill-Repo-Ordner (Vorgabe).
+TICKET_REPO = _ticket_repo_aus(_VORGABE_REPOS) or ""
+EIGENE_REPOS = tuple(e["slug"].lower() for e in _VORGABE_REPOS if e.get("slug"))
 #: Namen der Haupt-Arbeitskopien — nie aufräumen.
-HAUPTREPO_NAMEN = ("duoplus-management", "claude-skill-to-spawn")
-#: #1536: die eine Liste geschützter Ordner (Ordnername, Server und PC) — bleiben immer,
-#: auch ohne Git. Laufende Spec-Klone schützen offenes Ticket und tmux-Sitzung ``spec-<N>``.
+HAUPTREPO_NAMEN = _hauptrepo_namen_aus(_VORGABE_REPOS)
+#: #1536: Ordnernamen, die immer bleiben (Server und PC), auch ohne Git — dazu kommen die
+#: Hauptrepos der Maschinen-Liste (:func:`_geschuetzte_ordner`). Laufende Spec-Klone schützen
+#: offenes Ticket und tmux-Sitzung ``spec-<N>``.
 GESCHUETZTE_ORDNER = (*HAUPTREPO_NAMEN, "duoplus-leit", "deploy-schlange", "obsidian")
 #: #1536: Kennzahl je Takt, eigene Datei neben dem Hausmeister-Log (:func:`_kennzahl_pfad`).
 KENNZAHL_DATEI = "hausmeister_kennzahl.jsonl"
-WURZELN_STANDARD = ("~/wt/*", "~/wt-*", "~/duoplus-[0-9]*", "C:/dev/wt-*")
+WURZELN_STANDARD = tuple(config.MASCHINE_DEFAULTS["hausmeister"]["wurzeln"])
+ORDNER_PRAEFIXE_STANDARD = tuple(config.MASCHINE_DEFAULTS["hausmeister"]["ordner_praefixe"])
+
+
+def _maschinen_repos() -> list[dict[str, str]]:
+    return config.maschine()["repos"]
+
+
+def _ticket_repo() -> str | None:
+    """Repo für ``gh issue view``; ``None`` = keins oder nicht eindeutig (⇒ Ticket nicht abfragbar).
+
+    ponytail: ein Ticket-Repo je Maschine; mehrere Apps mit eigenen Tickets brauchen das
+    Ticket-Repo je Ordner (aus dessen ``origin``).
+    """
+    return _ticket_repo_aus(_maschinen_repos())
+
+
+def _eigene_repos() -> frozenset[str]:
+    """Slugs (klein), deren Ordner der Hausmeister aufräumen darf."""
+    return frozenset(s.lower() for e in _maschinen_repos() if (s := e["slug"].strip()))
+
+
+def _hauptrepo_namen() -> tuple[str, ...]:
+    """Vorgaben plus Maschinen-Liste: eine kürzere Liste hieße mehr löschen."""
+    return tuple(dict.fromkeys((*HAUPTREPO_NAMEN, *_hauptrepo_namen_aus(_maschinen_repos()))))
+
+
+def _geschuetzte_ordner() -> tuple[str, ...]:
+    return tuple(dict.fromkeys((*GESCHUETZTE_ORDNER, *_hauptrepo_namen())))
 MINDEST_ZU_SEKUNDEN = 24 * 3600
 #: Unter diesem Anteil freier Platte gilt Platznot: fertige Ordner gehen vor Ablauf der 24 h.
 PLATZNOT_ANTEIL = 0.15
@@ -219,21 +281,40 @@ _TICKET_NR = r"([1-9]\d{0,2}|[1-4]\d{3})"
 _TICKET_NR_LANG = r"([1-9]\d{2}|[1-4]\d{3})"
 # Jahr-Monat am Namensende (wt-2026-11) ist ein Datum, keine Ticket-Form.
 _KEIN_JAHR_MONAT = r"(?!20\d\d-(?:0?[1-9]|1[0-2])$)"
-_NAME_MUSTER = (
-    # #1526: nur bekannte Formen, Name bis zum Ende verankert — im Zweifel keine Nummer.
-    # wt-1292f, skill-1371-basis, wt-1313-3, wt-1375-7c: Präfix, Zahl, dann Ende, ein
-    # Buchstabe, -<wort> oder kurzes -<1–2 Ziffern>[buchstabe]
-    # (skill-4821f3c ist ein Commit-Hash-Rest, wt-2026-11-21 ein Datum, kein Ticket).
-    re.compile(
-        rf"^(?:wt|skill|duoplus)-{_KEIN_JAHR_MONAT}{_TICKET_NR}(?:[a-z]|-\d{{1,2}}[a-z]?|-[a-z][a-z0-9-]*)?$"
-    ),
+def _name_muster_fuer(praefixe: tuple[str, ...]) -> tuple[re.Pattern[str], ...]:
+    """Ticket-Formen im Ordnernamen; ``praefixe`` sind Text (kein Regex), leer = ohne Präfix-Form."""
+    muster: list[re.Pattern[str]] = []
+    if praefixe:
+        # #1526: nur bekannte Formen, Name bis zum Ende verankert — im Zweifel keine Nummer.
+        # wt-1292f, skill-1371-basis, wt-1313-3, wt-1375-7c: Präfix, Zahl, dann Ende, ein
+        # Buchstabe, -<wort> oder kurzes -<1–2 Ziffern>[buchstabe]
+        # (skill-4821f3c ist ein Commit-Hash-Rest, wt-2026-11-21 ein Datum, kein Ticket).
+        wahl = "|".join(map(re.escape, praefixe))
+        muster.append(
+            re.compile(
+                rf"^(?:{wahl})-{_KEIN_JAHR_MONAT}{_TICKET_NR}(?:[a-z]|-\d{{1,2}}[a-z]?|-[a-z][a-z0-9-]*)?$"
+            )
+        )
     # t1490a, a1279 (Aufseher): nur t/a als Präfix (x500, v2026-backup sind keine Tickets)
-    re.compile(rf"^[ta]{_TICKET_NR_LANG}[a-z]?$"),
+    muster.append(re.compile(rf"^[ta]{_TICKET_NR_LANG}[a-z]?$"))
     # 1489, 1331-linux: nackte Zahl nur allein oder mit einem Wort aus enger Liste
     # (2026-11-21-sicherung, 8080-notizen, 805_fremd_backup sind keine Tickets).
     # Hinter einem Wort zählt sie nie: schlange-einspielen-1121 ist ein Datum.
-    re.compile(rf"^{_TICKET_NR_LANG}(?:-(?:linux|lauf|breit|master))?$"),
-)
+    muster.append(re.compile(rf"^{_TICKET_NR_LANG}(?:-(?:linux|lauf|breit|master))?$"))
+    return tuple(muster)
+
+
+#: Vorgabe (Alias für Tests); wirksam ist :func:`_name_muster`.
+_NAME_MUSTER = _name_muster_fuer(ORDNER_PRAEFIXE_STANDARD)
+
+
+def _name_muster() -> tuple[re.Pattern[str], ...]:
+    """Ticket-Formen mit den Ordner-Präfixen der Maschinen-Liste (``hausmeister.ordner_praefixe``)."""
+    roh = config.maschine()["hausmeister"]["ordner_praefixe"]
+    praefixe = tuple(p.strip() for p in roh if isinstance(p, str) and p.strip())
+    return _NAME_MUSTER if praefixe == ORDNER_PRAEFIXE_STANDARD else _name_muster_fuer(praefixe)
+
+
 _ZWEIG_MUSTER = re.compile(
     r"^(?:(?:ticket|fix|wip|aufseher)/|fix-|abschluss-)(\d+)(?:-.*)?$"
 )
@@ -551,10 +632,8 @@ SICHERUNG_TAGE = 90
 #: Höchstens ein Lauf je Modus in diesem Abstand.
 SICHERUNG_TAKT_SEKUNDEN = 24 * 3600
 _TAG = 24 * 3600.0
-_SICHERUNG_REMOTES = tuple(
-    f"https://github.com/{slug}"
-    for slug in ("Shavy72/duoplus-management", "Shavy72/claude-skill-to-spawn")
-)
+#: Vorgabe (Alias); wirksam ist :func:`_sicherung_remotes`.
+_SICHERUNG_REMOTES = _remotes_aus(_VORGABE_REPOS)
 _SICHERUNG_REF = re.compile(r"^refs/sicherung/(\d+)$")
 
 
@@ -624,7 +703,7 @@ def _git_ohne_frage(cwd: Path, *args: str) -> str:
 def _sicherung_remotes() -> list[str]:
     roh = os.environ.get("TO_SPAWN_HAUSMEISTER_ZWEIG_REPOS")
     if roh is None:
-        return list(_SICHERUNG_REMOTES)
+        return list(_remotes_aus(_maschinen_repos()))
     return roh.split()  # Leerzeichen-getrennt: URLs enthalten „:“
 
 
@@ -1088,8 +1167,8 @@ def _hauptrepos() -> list[Path]:
     roh = os.environ.get("TO_SPAWN_HAUSMEISTER_HAUPTREPOS")
     if roh is not None:
         return [Path(p).expanduser() for p in roh.split()]
-    # ponytail: nur ~/<Name> (Bau-Server); Laptop-Pfade per Naht, falls dort nötig.
-    return [Path.home() / n for n in HAUPTREPO_NAMEN if (Path.home() / n / ".git").is_dir()]
+    pfade = (Path(p).expanduser() for e in _maschinen_repos() if (p := e["pfad"].strip()))
+    return [p for p in dict.fromkeys(pfade) if (p / ".git").is_dir()]
 
 
 def _zweig_ticket(zweig: str) -> int | None:
@@ -1267,7 +1346,7 @@ def _regeln(
     if not ordner.is_dir():
         raise _Bleibt("Ordner fehlt")
     echt = ordner.resolve()
-    if {ordner.name, echt.name} & set(GESCHUETZTE_ORDNER):
+    if {ordner.name, echt.name} & set(_geschuetzte_ordner()):
         raise _Bleibt("geschützter Ordner")
     if not trocken:  # Trockenlauf zeigt die echte Regel (Altbestand-Liste für David)
         _kein_altbestand(echt)
@@ -1337,12 +1416,12 @@ def _git_ordner_pruefen(echt: Path) -> bool | None:
         raise _Bleibt(f"kein eigener Git-Ordner (gehört zu {oben})", fuer_david=True)
     ist_worktree = (echt / ".git").is_file()
     if not ist_worktree:
-        if echt.name in HAUPTREPO_NAMEN:
+        if echt.name in _hauptrepo_namen():
             raise _Bleibt("Hauptrepo")
         if _hat_verknuepfte_worktrees(echt):
             raise _Bleibt("Hauptrepo mit verknüpften Worktrees")
     url = _git_oder_none(echt, "config", "--get", "remote.origin.url") or ""
-    if _slug(url).lower() not in EIGENE_REPOS:
+    if _slug(url).lower() not in _eigene_repos():
         raise _Bleibt(f"fremdes Repo ({url or 'ohne origin'})", fuer_david=True)
     return ist_worktree
 
@@ -1395,7 +1474,7 @@ def _keine_spec_sitzung(ticket: int) -> None:
 
 def _ticket_nummer(ordner: Path, echt: Path) -> int | None:
     zweig = _git_oder_none(echt, "symbolic-ref", "--short", "-q", "HEAD") or ""
-    aus_name = _nummer(ordner.name, _NAME_MUSTER)
+    aus_name = _nummer(ordner.name, _name_muster())
     aus_zweig = _nummer(zweig, (_ZWEIG_MUSTER,))
     if aus_name is not None and aus_zweig is not None and aus_name != aus_zweig:
         raise _Bleibt(
@@ -1465,8 +1544,12 @@ def _schliesszeit(ordner: Path) -> float | None:
 
 def _ticket_daten(ticket: int) -> object:
     """``gh issue view`` (state, closedAt) mit Zeitlimit; ``None`` = nicht abfragbar."""
+    repo = _ticket_repo()
+    if repo is None:
+        log.warning("Hausmeister: kein eindeutiges Ticket-Repo in der Maschinen-Liste — #%s bleibt", ticket)
+        return None
     return gh.json_lauf(
-        ["issue", "view", str(ticket), "-R", TICKET_REPO, "--json", "state,closedAt"],
+        ["issue", "view", str(ticket), "-R", repo, "--json", "state,closedAt"],
         timeout=GH_ZEITLIMIT_S,
     )
 
@@ -1559,8 +1642,58 @@ def _aufpasser_log(satz: str) -> None:
 
 def _wurzeln() -> list[str]:
     roh = os.environ.get("TO_SPAWN_HAUSMEISTER_WURZELN")
-    muster = roh.split(os.pathsep) if roh else list(WURZELN_STANDARD)
-    return [os.path.expanduser(m) for m in muster if m.strip()]
+    if roh:
+        muster = roh.split(os.pathsep)
+    else:
+        maschine = config.maschine()
+        muster = [m for m in maschine["hausmeister"]["wurzeln"] if isinstance(m, str) and _wurzel_erlaubt(m)]
+        muster += [b for e in maschine["repos"] if (b := _basis_muster(e["worktree_basis"]))]
+    return list(dict.fromkeys(os.path.expanduser(m) for m in muster if m.strip()))
+
+
+#: Schon gemeldete abgelehnte Wurzeln (``_wurzeln`` läuft je Ordner, eine Log-Zeile reicht).
+_ABGELEHNT_GEMELDET: set[str] = set()
+
+
+def _ablehnen(art: str, wert: str) -> None:
+    if wert.strip() and wert not in _ABGELEHNT_GEMELDET:
+        _ABGELEHNT_GEMELDET.add(wert)
+        log.warning("Hausmeister: %s %r ignoriert — nur echte Unterordner des Home", art, wert)
+
+
+def _echt_unter_home(pfad: Path) -> bool:
+    """Absolut und nach Auflösen (Symlinks) echt unter dem Home — nicht Home, nicht darüber."""
+    try:
+        echt, heim = pfad.resolve(), Path.home().resolve()
+    except (OSError, RuntimeError):
+        return False
+    return pfad.is_absolute() and heim in echt.parents
+
+
+def _wurzel_erlaubt(muster: str) -> bool:
+    """Wurzel-Muster der Liste: Vorgabe (z. B. ``C:/dev/wt-*``) oder fester Teil vor dem
+    ersten Glob-Zeichen echt unter dem Home (``~/*``, ``/tmp/*`` fallen weg)."""
+    if muster in WURZELN_STANDARD:
+        return True
+    teile: list[str] = []
+    for teil in Path(os.path.expanduser(muster.strip())).parts:
+        if glob.has_magic(teil):
+            break
+        teile.append(teil)
+    if teile and _echt_unter_home(Path(*teile)):
+        return True
+    _ablehnen("Wurzel", muster)
+    return False
+
+
+def _basis_muster(basis: str) -> str | None:
+    """``worktree_basis`` als Wurzel-Muster ``<basis>/*`` (Glob-Zeichen escaped);
+    ``None``, wenn sie kein echter Unterordner des Home ist."""
+    pfad = Path(basis.strip()).expanduser()
+    if not basis.strip() or not _echt_unter_home(pfad):
+        _ablehnen("worktree_basis", basis)
+        return None
+    return os.path.join(glob.escape(str(pfad)), "*")
 
 
 def _im_bereich(ordner: Path) -> bool:
@@ -1856,7 +1989,7 @@ def halb_angelegt_entfernen(hauptrepo: Path, worktree: Path, neuer_zweig: str | 
     (``fehler=True``). Anders als bei :func:`aufraeumen` löscht ein nicht schreibbares
     Log hier trotzdem: der leere Ordner wäre schädlicher als eine fehlende Log-Zeile.
     """
-    ticket = _nummer(worktree.name, _NAME_MUSTER)
+    ticket = _nummer(worktree.name, _name_muster())
     if not _als_worktree_eingetragen(hauptrepo, worktree):
         _log_schreiben(
             Ergebnis(
