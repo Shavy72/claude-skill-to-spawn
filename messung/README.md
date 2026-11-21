@@ -4,6 +4,7 @@ Alle Läufe mit `nice -n 10`. Nur Linux (nutzt git, nice, psutil). Pfade immer a
 
 Voraussetzungen: Python 3.13, uv-venv mit pytest 9.2.0, pytest-impacted 0.38.1,
 pytest-testmon 2.3.1, pytest-xdist 3.8.0, psutil, coverage. Für `node`: Node 22 + vitest 5.1.1.
+`fehler_reihe.py` importiert psutil vor dem Argument-Parsen: auch `--help` läuft nur im venv mit psutil.
 
 ## Schlangen-Skripte (nur lesen, Standardbibliothek)
 `<schlangen-ordner>` enthält `fahrtenbuch.jsonl`, `klon/`, `laeufe/`.

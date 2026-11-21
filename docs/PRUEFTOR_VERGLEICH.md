@@ -14,7 +14,13 @@ Dieses Dokument baut nichts. Es vergleicht Ansätze, legt Messwerte vor und empf
   Probe-Repos (Python, Node), (d) Test-Auswahl am DuoPlus-Klon (Zwischenstand, 2 Rückblick-Läufe).
 - **Maschine:** Bau-Server Linux, 8 Kerne. Last während der Messungen 10–13 (Probe) bzw. 11–19
   (DuoPlus); alle Läufe mit `nice`. Zeiten sind darum verrauscht, je Wert meist ein Lauf.
-- **Windows:** nichts gemessen (siehe Abschnitt 5).
+- **Windows:** nichts gemessen (siehe Abschnitt 5; Messung zugeordnet Paket 3b-2, Abschnitt 6.4).
+- **Vorbehalt „0 von 34“:** Die Rückfall-Regeln R1–R4 sind aus genau den 34 eingebauten Fehlern
+  abgeleitet, an denen danach „0 übersehen“ gemessen wurde [PROBE]. Der Wert zeigt nur: die Regeln
+  decken die bekannten Fehlgriffe. Er ist **kein Nachweis für M12**; dafür verlangt 3b-2 eine zweite,
+  vorher unbekannte Fehlerreihe (Abschnitt 6.4).
+- **Ergänzt nach Gegenlesen (2026-11-21):** dritte Variante „schneller Voll-Lauf“ (6.2), Mess-Vorstufe
+  3b-0 vor den Bau-Paketen (6.4), R1-Quote in DuoPlus als Lücke (5).
 
 ### Quellen (Kürzel in allen Tabellen)
 
@@ -63,7 +69,7 @@ Simulators wird gegen [SIM]-Ist verglichen.
 
 | Ansatz | Was es ist | Quelle | Messwert (eigen) | Stärke | Schwäche | Windows |
 |---|---|---|---|---|---|---|
-| **Voll-Lauf** | alle Tests | – | Probe Py 122 Tests ~1–2 s, Node 61 Tests ~1–3 s [PROBE]; DuoPlus grün VOLL Median 1839 s [SIM] | findet per Definition alles, was die Suite findet | DuoPlus 30 min, bremst jede kleine Änderung (N8) | ja |
+| **Voll-Lauf** | alle Tests | – | Probe Py 122 Tests ~1–2 s, Node 61 Tests ~2,5–3,6 s [PROBE]; DuoPlus grün VOLL Median 1839 s [SIM] | findet per Definition alles, was die Suite findet | DuoPlus 30 min, bremst jede kleine Änderung (N8) | ja |
 | **Heutiger Eigenbau** `gate_auswahl.py` + `gate_cache.py` | Namen + Import-Graph, Urteil SKIP/VOLL/AUSWAHL, Hüllen-Heuristik (Pfad-Literale, `mock.patch`-Strings) | [RA] Ist-Zustand | Auswahl 0,2–0,6 s je Lauf; ce8a95f: 944 Tests, beide roten Dateien drin; conftest-Änderung → VOLL [DP] | schnell, deckt Nicht-Python-Bezüge per Dateinamen ab [DP] | Eigenbau (A19/N7), repo-spezifisch (A20), ~951 Zeilen Heuristik [RA] | unbelegt |
 | **A: statischer Import-Graph** `pytest-impacted` 0.38.1 (Py), `vitest --changed` 5.1.1 (Node) | git-Diff + AST-Import-Graph transitiv; conftest wirkt auf alles darunter; Voll-Trigger für Abhängigkeits-/Prüf-Konfig eingebaut | https://github.com/promptromp/pytest-impacted · https://vitest.dev/config/forcereruntriggers | Probe roh: Py 9 von 22, Node 3 von 12 übersehen; mit R1+R2 **0/22 und 0/12** [PROBE]. DuoPlus: 74–113 s je Auswahl, ce8a95f 129 Tests, **`test_gate_bash_240.py` verpasst** [DP] | keine Datenbank, kein Kaltstart, worktree-neutral, Doku → 0 Tests, Abhängigkeit/Konfig → voll [PROBE] | sieht keine Daten-/Template-/Konfig-Dateien, keine dynamischen Importe, keine `mock.patch`-Strings [PROBE]; nur EIN Namespace-Modul, DuoPlus mit `--module .` langsam, `.venv` im Repo macht es unbrauchbar (> 3 min) [DP] | Metadaten „OS Independent“, braucht git.exe [PROBE]; nicht gemessen |
 | **B: Laufzeit-Abdeckung** `pytest-testmon` 2.3.1 | Coverage je Test, Fingerprint der ausgeführten Blöcke, SQLite-DB `.testmondata` | https://www.testmon.org/ · Pfad-Issues https://github.com/tarpas/pytest-testmon/issues/251, /266 | Probe roh: Py **7 von 22** übersehen; mit R1+R3+R4 0/22 [PROBE]. Wählt feiner (Blatt-Fehler 5 statt 10 Tests) [PROBE]. Kopierte DB im 2. Worktree ging [PROBE]. DuoPlus: nicht gemessen [DP] | fängt dynamische Importe und String-Patches [PROBE] | `pytest.ini`- und reine `requirements.txt`-Textänderung → 0 Tests (falsch für M11) [PROBE]; Code beim Import (Re-Export in `__init__`) unsichtbar [PROBE]; DB je Worktree; DuoPlus-DB seit 09.10. defekt [RA]; kein Node-Gegenstück [PROBE] | Classifier Windows [PROBE]; nicht gemessen |
@@ -165,6 +171,12 @@ Rückfall-Regeln (Vorschlag aus [PROBE]):
 
 Einschränkung: R1/R2 sind im Skript nachgerechnet, nicht als Werkzeug-Schalter gefahren [PROBE].
 
+**Überanpassung:** R1–R4 sind nachträglich aus genau diesen übersehenen Fällen abgeleitet ([PROBE]
+„Regeln, die die Messung braucht“) und an denselben Fällen gemessen. „0 von 34“ ist darum eine Messung
+an den eigenen Übungsfällen: Nachweis „Regeln decken die bekannten Fehlgriffe“, **kein Nachweis für
+M12**. R2 greift zudem nur, weil die Plugin-Module im Probe-Repo keinen statischen Importeur haben
+(Bauart der Fälle); ein dynamischer Import neben einem statischen Nachbar-Import ist nicht geprüft.
+
 ### 4.3 DuoPlus-Klon (Zwischenstand, master `b5b23086c`) [DP]
 
 | Messung | Wert |
@@ -177,7 +189,11 @@ Einschränkung: R1/R2 sind im Skript nachgerechnet, nicht als Werkzeug-Schalter 
 
 Eingebaute Fehler in DuoPlus: **0** (vorbereitet, nicht gestartet). Rückblick: 2 von geplant 55 Läufen.
 Der verpasste Fall ist eine Testdatei, die ein Shell-Skript als Text prüft (kein Python-Import) [DP].
-Ob R1 ihn gefangen hätte, hängt daran, ob in ce8a95f eine Nicht-Code-Datei geändert war — **unbelegt**.
+**R1 hätte ihn gefangen (belegt):** `git show --stat ce8a95f` im Schlangen-Klon zeigt
+`scripts/safe_deploy_vps.sh` (99 Zeilen geändert) neben `scripts/gate_nacht_voll.py` und zwei Testdateien.
+Das Shell-Skript ist eine Nicht-Code-Datei im Sinn von R1 → voll. Gefangen ist der Fehlgriff damit aber
+nur per Voll-Lauf, nicht durch eine Auswahl; der Fall zeigt auch, dass R1 in DuoPlus oft auf „voll“
+fällt (Quote siehe Abschnitt 5).
 
 ### 4.4 Schlange
 
@@ -187,7 +203,15 @@ zufälliger Fangquote) in [SIM] „Annahmen“.
 ## 5. Lücken — was nicht gemessen ist
 
 - **Windows:** keine Messung, nur PyPI-/npm-Metadaten [PROBE]. Offen: Pfadtrenner in R1-Globs, git.exe
-  für impacted, Defender-Bremse für venv/SQLite [RA].
+  für impacted, Defender-Bremse für venv/SQLite [RA]. Zugeordnet: Paket 3b-2 (Abnahme M10/M11 am PC,
+  Befehl in 6.4); M10 gilt erst danach voll.
+- **R1-Quote in DuoPlus:** wie oft R1 auf „voll“ springt, ist nicht nachgemessen. Schnellzählung des
+  Gegenlesers (nicht nachgemessen): 337 von 2088 Commits seit 07.11. = 16 % ändern eine Nicht-Code-,
+  Nicht-Doku-Datei; je Ticket (mehrere Commits) liegt der Anteil höher. Folge: mindestens dieser Anteil
+  läuft voll, der Tempo-Gewinn der Auswahl (M13, A16) gilt nur für den Rest. Messung in 3b-0.
+- **Überanpassung der Regeln:** R1–R4 nur an den Fällen geprüft, aus denen sie abgeleitet sind (4.2).
+  Zweite, unbekannte Fehlerreihe in 3b-2.
+- **RAM-Spitze von impacted in DuoPlus:** nicht gemessen (nur Dauer 74–113 s [DP]).
 - **DuoPlus M12:** keine eingebauten Fehler, nur 2 Rückblick-Läufe; testmon, worksteal, Voll-Läufe nicht
   gestartet (Last 11–19) [DP]. Ein echter Fehlgriff von impacted belegt [DP].
 - **Tempo-Gewinn der Auswahl in DuoPlus:** unbelegt. Mini-Repo zeigt keinen Gewinn (Tests zu billig)
@@ -207,19 +231,22 @@ zufälliger Fangquote) in [SIM] „Annahmen“.
 
 ## 6. Empfehlung für 3b
 
-### 6.1 Was die Messung festlegt (gilt für beide Varianten)
+### 6.1 Was die Messung festlegt (gilt für alle Varianten)
 
 - Keine Auswahl allein besteht M12; jede braucht Rückfall-Regeln und den Voll-Lauf als Netz [PROBE][RA].
 - Für die Schlange zählt zuerst die Gate-Dauer; Schlangen-Umbau allein erreicht M13 nicht [SIM].
 - Batch ausbauen und Spuren nach Ordner: nicht bauen [SIM].
 
-### 6.2 Zwei Design-Varianten
+### 6.2 Drei Design-Varianten
 
-Beide haben dieselbe Tür: `to_spawn.py pruefen <basis> <ziel>` → Exit 0 grün, 1 rot, 2 Gate-Fehler
+Variante 1 und 2 unterscheiden sich nur im Auswahl-Kasten (grundverschieden sind die Auswahl-Ansätze
+A und B, nicht die Designs). Variante 3 ist das echte Gegen-Design: keine Auswahl.
+
+Alle haben dieselbe Tür: `to_spawn.py pruefen <basis> <ziel>` → Exit 0 grün, 1 rot, 2 Gate-Fehler
 (trennt die 9 % Gate-Fehler vom echten Rot, Vorschlag [RB]) plus eine Prüf-Protokoll-Zeile (JSON).
 Der Aufrufer sagt nur „von wo bis wo“.
 
-**Variante 1 — zustandslos: statischer Graph + Regeln (empfohlen)**
+**Variante 1 — zustandslos: statischer Graph + Regeln**
 
 Kästen:
 - **Erkennen** — versteckt: Sprache, Test-Werkzeug, Paket-Wurzeln. Adapter Python (pytest) und Node (vitest/jest).
@@ -249,23 +276,55 @@ Stärke: feinste Auswahl (Blatt-Fehler 5 statt 10 Tests [PROBE]), fängt dynamis
 Schwäche: Zustand je Worktree (10 Kopien, Pfad-Issues #251/#266 [RA]), Seed-Läufe kosten Maschinenzeit,
 DuoPlus-DB war schon einmal wochenlang defekt [RA], R1+R3+R4 nötig, zwei Auswahl-Mechaniken (Py/Node).
 
+**Variante 3 — keine Auswahl: Voll-Lauf schneller machen**
+
+Kästen: Erkennen und Protokoll wie Variante 1. **Leiter** nur mit Stufe 0 Cache (Tree-SHA + Hash
+Lock/Konfig), 1 Sofort-Prüfung, 2 nur Doku → ausgelassen, 4 voll; keine Stufe 3. **Ausführen** ist der
+Kern: xdist `worksteal` statt `loadfile`, Teile nach Laufzeit (`pytest-split least_duration`) statt
+Dateizahl, Sammelzeit senken (Dateiliste, `testpaths`/`norecursedirs`), langsamste Testdateien zuerst
+bzw. aufteilen, Rüstzeit je Gate-Lauf senken. **Wackler** mit Quarantäne wie Variante 1.
+
+Vorhandene Messwerte für den Hebel:
+- Voll-Lauf heute: grün VOLL Median 1839 s [SIM] Annahme 4; Gate grün P90 1997 s [VZ] a).
+- Rüstzeit je Gate-Lauf 73 s (Median, n = 39) [SIM] „Annahmen“; Sammeln 91,7 s [DP] — zusammen ein
+  fester Sockel von rund 165 s je Lauf (Summe, nicht als Ganzes gemessen).
+- Langsamste Testdatei 381 s [VZ] e): unter `loadfile` hält sie einen Worker allein so lange fest [RA].
+- Teures Setup: ~2,2 Worker-s je Test [RA] (aus `befund_gate.md`, nicht nachgemessen).
+- Wackler: bei Google 84 % der Grün→Rot-Wechsel [RB]; eigener Anteil am DuoPlus-Rot (16 % [VZ] d)) unbelegt.
+- **Nicht gemessen:** worksteal gegen loadfile in DuoPlus [DP], pytest-split, Treffer-Quote des groben
+  Caches, Wirkung von Pfad-Ausschlüssen auf die Sammelzeit.
+
+Stärke: kein Fehlgriff möglich, M12/N9 per Definition; kein Zustand außer dem Cache; jeder Gewinn wirkt
+auch auf alle Voll-Läufe der anderen Varianten (R1–R3, conftest, Sammelpunkt vor Staging; R1 allein
+≥ 16 % der Commits, Schnellzählung, Abschnitt 5); kein Eigenbau einer Auswahl (N7).
+Schwäche: verletzt M11 Fall 2 („kleine Code-Änderung → nur betroffene Tests“) — allein nicht
+abnahmefähig; Tempo-Gewinn unbelegt. Rechnung (nicht gemessen): weil P90 die Gate-Laufzeit ist [SIM],
+verlangt M13 P90 ≤ 1213 s grob einen Voll-Lauf ≤ 1213 s, also mindestens 34 % kürzer als 1839 s.
+
 **Vergleich**
 
-| Frage | Variante 1 | Variante 2 |
-|---|---|---|
-| Tür | gleich schmal | gleich schmal |
-| Zustand zu pflegen | keiner | DB je Worktree + Seed-Lauf |
-| M10 „sofort bereit“ | ja (kein Kaltstart) [PROBE] | erst nach Seed-Lauf |
-| M12 Probe | 0/34 mit R1+R2 [PROBE] | 0/22 Py mit R1+R3+R4, Node über V1 [PROBE] |
-| Auswahl-Feinheit | gröber | feiner |
-| Windows | Metadaten ok, ungemessen | Metadaten ok, ungemessen; SQLite + Defender Risiko [RA] |
-| Änderung an einer Regel | ein Kasten (Leiter) | Leiter + Karten-Pflege |
+| Frage | Variante 1 | Variante 2 | Variante 3 |
+|---|---|---|---|
+| Tür | gleich schmal | gleich schmal | gleich schmal |
+| Zustand zu pflegen | keiner | DB je Worktree + Seed-Lauf | nur Cache (optional) |
+| M10 „sofort bereit“ | ja (kein Kaltstart) [PROBE] | erst nach Seed-Lauf | ja |
+| M11 drei Fälle | ja [PROBE] | Konfig-Fälle nur mit R3 [PROBE] | **nein** (Fall 2) |
+| M12 Probe | 0/34 mit R1+R2 [PROBE], nur an den Übungsfällen (4.2), kein M12-Nachweis | 0/22 Py mit R1+R3+R4, Node über V1 [PROBE], ebenso | per Definition 0 |
+| Auswahl-Feinheit | gröber | feiner | keine |
+| Tempo DuoPlus | unbelegt; Auswahl allein 74–113 s [DP] | nicht gemessen | unbelegt; heute 1839 s voll [SIM] |
+| Wirkt auf Voll-Läufe | nein | nein | ja |
+| Windows | Metadaten ok, ungemessen | Metadaten ok, ungemessen; SQLite + Defender Risiko [RA] | xdist ja [PROBE], Rest ungemessen |
+| Änderung an einer Regel | ein Kasten (Leiter) | Leiter + Karten-Pflege | ein Kasten (Leiter) |
 
-**Empfehlung: Variante 1.** Sie erfüllt M10–M12 im Probe-Repo ohne Zustand und ohne Kaltstart.
-testmon bleibt eine spätere, optionale Verfeinerung hinter derselben Tür, falls die DuoPlus-Messung zeigt,
-dass die gröbere Auswahl Tempo kostet. Der heutige Eigenbau `gate_auswahl.py` bleibt für DuoPlus bis
-Etappe 5 die Ausnahme (`befehle.pruefen`); seine Regel „Nicht-Python-Bezug per Dateiname“ ist genau die
-Lücke, die R1 abdeckt [DP] — ob R1 sie vollständig ersetzt, entscheidet erst der DuoPlus-Fehler-Einbau.
+**Empfehlung: Kombination aus Variante 1 und 3, Variante 2 nicht bauen.** Variante 1 ist nötig, weil
+nur sie M11 ohne Zustand und Kaltstart erfüllt [PROBE]; Variante 3 allein fällt an M11 Fall 2 durch.
+Der Ausführen-Kasten von Variante 3 kommt dazu, weil die Daten den Hebel dort zeigen: P90 ist
+Gate-Laufzeit [SIM], R1 schickt mindestens rund 16 % der Commits voll (Schnellzählung), und die
+Auswahl kostet in DuoPlus heute allein 74–113 s [DP] — beides ist Voll-Lauf-Zeit oder Sockel, den
+nur Variante 3 senkt. Ob die Auswahl in DuoPlus überhaupt lohnt, entscheidet die Mess-Vorstufe 3b-0
+mit festem Abbruch-Kriterium; reißt es, läuft DuoPlus nur mit Variante 3 und der Eigenbau
+`gate_auswahl.py` bleibt bis Etappe 5 die Ausnahme (`befehle.pruefen`). testmon bleibt eine spätere,
+optionale Verfeinerung hinter derselben Tür.
 
 ### 6.3 Schlange (nach dem Werkzeugkasten, nicht Teil der Tür)
 
@@ -277,12 +336,35 @@ Reihenfolge nach [SIM]: (1) Vorprüfung = `pruefen` Stufe 1–3 vor Eintritt in 
 
 | Paket | Inhalt | Abnahme an |
 |---|---|---|
-| 3b-1 | Tür `pruefen`, Erkennen (Py/Node), Protokoll, Stufen 1 und 4 (voll), Exit 0/1/2 | **M10**: beide frischen Probe-Repos liefern Urteil + Protokoll ohne Vorarbeit (Linux; Windows in Etappe 4) |
-| 3b-2 | Stufen 2 und 3 (impacted / vitest `--changed`) + R1–R3, Grund im Protokoll | **M11** (drei Fälle) + **M12** Probe: `messung/fehler_reihe.py` gegen `pruefen`, 0 von 34 übersehen, R1/R2 diesmal als echte Schalter |
-| 3b-3 | Stufe 0 Cache (Tree-SHA + Lock/Konfig), Ausführung worksteal unter RAM-Deckel, Dateiliste statt deselect, `--lf` zuerst | **M13** Probe: kleine Änderung < 2 min; zweiter Lauf desselben Stands = Cache-Treffer |
+| 3b-0 | **Mess-Vorstufe, kein Bau** (billig, vor allem anderen): Rückblick 55 Läufe mit `impacted` und Pfad-Ausschluss `archive/`/`.venv`; Auswahl-Dauer und RAM-Spitze; R1-Quote je Ticket aus dem Fahrtenbuch (nachgemessen statt Schnellzählung); einmal voll `worksteal` gegen `loadfile` (nur bei Last ≤ 12) | Zahlen in Abschnitt 4.3/5 nachgetragen, Entscheidung nach Abbruch-Kriterium (unten) protokolliert |
+| 3b-1 | Tür `pruefen`, Erkennen (Py/Node), Protokoll, Stufen 1 und 4 (voll), Exit 0/1/2 | **M10** Linux: beide frischen Probe-Repos liefern Urteil + Protokoll ohne Vorarbeit |
+| 3b-2 | Stufen 2 und 3 (impacted / vitest `--changed`) + R1–R3, Grund im Protokoll; R1-Globs mit Windows-Pfaden (`\` → `/` vor dem Abgleich) + Prüf-Test mit `\`-Pfaden | **M11** (drei Fälle) + **M12** Probe: (a) alte Reihe 34 bleibt grün (Rückfall-Schutz, kein Nachweis); (b) **zweite, vorher unbekannte Fehlerreihe ≥ 20 Fehler**, erzeugt von einem frischen Helfer, der R1–R4 nicht kennt; Regeln vor der Messung eingefroren (Commit-SHA im Protokoll); übersieht die Auswahl einen → Regel ergänzen **und** erneut mit wieder neuer Reihe messen. **M10/M11 Windows** am PC durch die Ober-Aufsicht (Befehl unten); M10 gilt erst danach voll |
+| 3b-3 | Ausführen (Variante 3): Stufe 0 Cache (Tree-SHA + Lock/Konfig), worksteal unter RAM-Deckel, `pytest-split` nach Laufzeit, Dateiliste statt deselect, `--lf` zuerst | **M13** Probe: kleine Änderung < 2 min (heute schon < 5 s [PROBE]) und zweiter Lauf desselben Stands = Cache-Treffer; Messpunkt DuoPlus: Voll-Lauf vorher/nachher am selben Stand |
 | 3b-4 | Wackler: 1 Wiederholung der roten Tests, Ergebnis `wackler`, Liste | eingebauter Wackel-Test im Probe-Repo erscheint als `wackler`, nie still grün (Vorschlag, keine M-Zeile) |
-| 3b-5 | DuoPlus-Messung vollenden: Rückblick 55 Läufe + ≥ 20 eingebaute Fehler (Ziele in [DP] vorbereitet), `pruefen` gegen Eigenbau gegen voll; Bremse 2 Gates messen | **M12** DuoPlus (0 übersehen) und Entscheidung, ob V1 dort reicht |
+| 3b-5 | DuoPlus: ≥ 20 eingebaute Fehler (Ziele in [DP] vorbereitet; Regel wie 3b-2 b: frischer Helfer, Regeln eingefroren, bei Fehlgriff neue Reihe), `pruefen` gegen Eigenbau gegen voll; Bremse 2 Gates messen | **M12** DuoPlus (0 übersehen) |
 | 3b-6 | Vorprüfung vor der Schlange, ggf. zweiter Gate-Platz | **M13** DuoPlus: Median ≤ 112 s und P90 ≤ 1213 s (Hälfte von [VZ] 223/2426), 10 Tickets gleichzeitig ohne RAM-Riss und ohne Wartezeit > 15 min |
+
+**Abbruch-Kriterium 3b-0** (Schwellen gesetzt aus M13 „mindestens halbiert“, nicht gemessen): Für
+DuoPlus wird auf Variante 3 allein gewechselt (Auswahl dort aus, Eigenbau bleibt Ausnahme), wenn eines gilt:
+(a) im Median kosten Auswahl + Lauf der Auswahl ≥ 50 % des Voll-Laufs am selben Stand;
+(b) R1–R3 schicken ≥ 50 % der Tickets voll;
+(c) der Rückblick zeigt einen Fehlgriff, den R1–R3 nicht fangen.
+Sonst Kombination wie empfohlen. Wird gewechselt, gilt M12 DuoPlus nur formal (kein Auswahl-Fehlgriff
+möglich) — das ist eine Plan-Frage an die Leit-Session, keine stille Abnahme.
+
+**Befehl Windows-PC (3b-2, Ober-Aufsicht, PowerShell):** gilt erst, wenn 3b-2 gebaut ist;
+`gen_py.py`/`gen_node.py` brauchen nur die Standardbibliothek.
+
+```
+git clone https://github.com/Shavy72/claude-skill-to-spawn C:/dev/wt-pruef-win
+python C:/dev/wt-pruef-win/messung/gen_py.py --ziel C:/dev/probe-win
+python C:/dev/wt-pruef-win/messung/gen_node.py --ziel C:/dev/probe-win
+cd C:/dev/probe-win/py; git init -q; git add -A; git commit -qm base; git tag base
+python C:/dev/wt-pruef-win/to_spawn.py pruefen base HEAD
+```
+
+Danach je ein Doku-, ein Code- und ein `requirements.txt`-Commit, je `pruefen base HEAD`; dasselbe in
+`C:/dev/probe-win/node` (vorher `npm install`). Abnahme: Urteil + Protokoll-Zeile je Fall mit Grund.
 
 Ehrlicher Ausblick zu 3b-6: Laut [SIM] erreicht keine Schlangen-Strategie allein M13; die Hälfte von P90
 geht nur über kürzere Gates (3b-2/3b-3 in DuoPlus) und weniger Rote. Ob das reicht, ist **unbelegt**.
