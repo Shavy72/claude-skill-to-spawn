@@ -42,20 +42,6 @@ def _sha(repo: Path, ref: str) -> str | None:
     return erg.stdout.strip() if erg.returncode == 0 else None
 
 
-#: Ungetrackte Caches: ändern den geprüften Code nicht, gelten in jeder Ordnertiefe.
-_CACHE_ORDNER = frozenset({"__pycache__", ".pytest_cache", ".ruff_cache", ".mypy_cache"})
-#: Ungetrackte Installationen: nur ganz oben im Repo (``src/venv/`` kann Code sein → zählt).
-_INSTALL_ORDNER = frozenset({".venv", "venv", "node_modules"})
-
-
-def _ist_werkzeug_ordner(pfad: str) -> bool:
-    """``git status`` (normal) meldet neue Ordner als ``ordner/``; Dateien gleichen Namens zählen."""
-    if not pfad.endswith("/"):
-        return False
-    teile = pfad.rstrip("/").split("/")
-    return teile[-1] in _CACHE_ORDNER or (len(teile) == 1 and teile[0] in _INSTALL_ORDNER)
-
-
 def _git_status(repo: Path, *args: str) -> tuple[str, str]:
     """(Ausgabe, Ursache) von ``git status --porcelain -z <args>``; Ursache ≠ "" = gescheitert."""
     try:
@@ -82,6 +68,7 @@ def _ungespeichert(repo: Path) -> list[str]:
     gibt es Grün für einen Stand, den keiner committet hat. Ausgenommen: Laufdateien unter
     ``.to-spawn/`` (Protokoll, Marker, Sitzungen) und ungetrackte Werkzeug-Ordner (nur als
     Ordner-Eintrag: Caches in jeder Tiefe, ``.venv``/``venv``/``node_modules`` nur ganz oben).
+    Per ``.gitignore`` Verstecktes meldet ``git status`` nicht — das deckt ``cache.schluessel`` ab.
     Die Konfig ``.to-spawn/config.json`` zählt immer — auch neu oder per ``.gitignore`` versteckt.
     ``normal`` fasst neue Ordner zu ``ordner/`` zusammen.
     """
@@ -101,7 +88,7 @@ def _ungespeichert(repo: Path) -> list[str]:
         art, pfad = eintrag[:2], eintrag[3:]
         if art[0] in "RC":
             next(eintraege, None)  # -z: Quellpfad einer Umbenennung folgt als eigener Eintrag
-        if art == "??" and _ist_werkzeug_ordner(pfad):
+        if art == "??" and cache.ist_werkzeug_ordner(pfad):
             continue
         offen.append(pfad)
     if konfig_raus.strip("\0"):

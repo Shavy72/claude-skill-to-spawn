@@ -7,9 +7,17 @@ Schlüssel, Ablageort und Verfall leben nur hier. Der Aufrufer kennt drei Schrit
 
 Schlüssel = SHA-256 über: Tree-SHA von ``ziel`` und ``basis`` (Stufe 1 prüft die Änderung gegen
 ``basis``), Inhalt der Lock- und Prüf-Konfig-Dateien ganz oben im Repo (auch ungetrackt oder per
-``.gitignore`` versteckt — getrackte stecken ohnehin im Tree), ``PYTEST_ADDOPTS``, Quelltext des
-Prüf-Pakets selbst und die Umgebung (Interpreter, installierte Pakete der Repo-venv bzw. des
-laufenden Interpreters, ``node_modules/.package-lock.json``).
+``.gitignore`` versteckt — getrackte stecken ohnehin im Tree), Name + Inhalt jeder per
+``.gitignore``/``info/exclude`` versteckten Datei außerhalb der Werkzeug-Ordner und ``.to-spawn/``
+(mehr als ``_VERSTECKT_MAX_DATEIEN`` Dateien oder ``_VERSTECKT_MAX_BYTES`` → kein Schlüssel),
+Quelltext des Prüf-Pakets selbst, die ganze Prozess-Umgebung (alle Variablen mit Wert; nur die
+flüchtigen aus ``_FLUECHTIG`` zählen ohne Wert) und der Interpreter samt installierten Paketen
+der Repo-venv bzw. des laufenden Interpreters, ``node_modules/.package-lock.json``.
+
+Nicht abgedeckt (Grenze): Dateien außerhalb des Repos (z. B. ``~/.config``, ein ``.env`` im
+Elternordner), Inhalt der Werkzeug-Ordner (Caches; Installationen nur über die Paketliste),
+Werte der Variablen in ``_FLUECHTIG``, Zeit/Netz/Zufall im Test selbst. Ignorierte Laufausgaben
+anderer Werkzeuge (z. B. ``.review/``) stehen mit im Schlüssel: kosten höchstens einen Lauf.
 
 Ablage: eine JSON-Datei je Schlüssel im Nutzer-Cache-Ordner (``%LOCALAPPDATA%`` unter Windows,
 sonst ``$XDG_CACHE_HOME`` bzw. ``~/.cache``) unter ``to-spawn/pruef/`` — nie im Arbeitsbaum.
@@ -66,6 +74,86 @@ _KONFIG = (
 #: Umgebungs-Merkmale, die ein Paket-Install verändert.
 _UMGEBUNG = (".venv/pyvenv.cfg", "venv/pyvenv.cfg", "node_modules/.package-lock.json")
 _PAKET = Path(__file__).resolve().parent
+#: Ungetrackte Caches: ändern den geprüften Code nicht, gelten in jeder Ordnertiefe.
+CACHE_ORDNER = frozenset({"__pycache__", ".pytest_cache", ".ruff_cache", ".mypy_cache"})
+#: Ungetrackte Installationen: nur ganz oben im Repo (``src/venv/`` kann Code sein → zählt).
+INSTALL_ORDNER = frozenset({".venv", "venv", "node_modules"})
+#: Laufdateien von to-spawn (Protokoll, Marker); die Konfig darin steht schon in ``_KONFIG``.
+_LAUF_ORDNER = ".to-spawn/"
+#: Deckel für versteckte Dateien im Schlüssel; darüber kein Schlüssel (voll laufen).
+_VERSTECKT_MAX_DATEIEN = 2000
+_VERSTECKT_MAX_BYTES = 32 * 1024 * 1024
+#: Umgebungsvariablen, deren Wert je Shell/Terminal/Sitzung wechselt: zählt nur, ob sie gesetzt sind.
+_FLUECHTIG = frozenset(
+    {
+        "_",
+        "PWD",
+        "OLDPWD",
+        "SHLVL",
+        "PYTEST_CURRENT_TEST",
+        "TMUX",
+        "TMUX_PANE",
+        "STY",
+        "WINDOW",
+        "WINDOWID",
+        "TERM_SESSION_ID",
+        "WT_SESSION",
+        "SSH_CLIENT",
+        "SSH_CONNECTION",
+        "SSH_TTY",
+        "SSH_AUTH_SOCK",
+        "XDG_SESSION_ID",
+        "DBUS_SESSION_BUS_ADDRESS",
+        "CLAUDE_PID",
+        "CLAUDE_CODE_SESSION_ID",
+        "CLAUDE_CODE_BRIDGE_SESSION_ID",
+        "CLAUDE_CODE_MESSAGING_SOCKET",
+        "CLAUDE_CODE_MESSAGING_TOKEN",
+        "CLAUDE_CODE_CHILD_NOTES_DIR",
+    }
+)
+
+
+def ist_werkzeug_ordner(pfad: str) -> bool:
+    """``git status`` (normal) meldet neue Ordner als ``ordner/``; Dateien gleichen Namens zählen."""
+    if not pfad.endswith("/"):
+        return False
+    teile = pfad.rstrip("/").split("/")
+    return teile[-1] in CACHE_ORDNER or (len(teile) == 1 and teile[0] in INSTALL_ORDNER)
+
+
+def _versteckte(repo: Path) -> list[str]:
+    """Per ``.gitignore``/``info/exclude`` versteckte Dateien, sortiert; ``OSError`` = unklar.
+
+    Ohne Werkzeug-Ordner (Caches, Installationen) und ``.to-spawn/``: alles andere kann pytest
+    einsammeln, importieren oder ein Test lesen (versteckter Test, ``conftest.py``, ``.env``).
+    """
+    erg = subprocess.run(
+        ["git", "ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory"],
+        cwd=repo,
+        capture_output=True,
+        check=False,
+    )
+    if erg.returncode != 0:
+        raise OSError(f"git ls-files: {erg.stderr.decode(errors='replace').strip()}")
+    dateien: list[str] = []
+    for eintrag in erg.stdout.decode("utf-8", "surrogateescape").split("\0"):
+        if not eintrag or eintrag.startswith(_LAUF_ORDNER) or ist_werkzeug_ordner(eintrag):
+            continue
+        if not eintrag.endswith("/"):
+            dateien.append(eintrag)
+            continue
+        for wurzel, unter, namen in os.walk(repo / eintrag):
+            unter[:] = [u for u in unter if u not in CACHE_ORDNER]
+            ort = Path(wurzel).relative_to(repo).as_posix()
+            dateien += [f"{ort}/{n}" for n in namen]
+    return sorted(dateien)
+
+
+def _umwelt() -> str:
+    """Ganze Umgebung (sortiert); flüchtige Variablen nur mit Namen, ohne Wert."""
+    paare = sorted((k, "" if k in _FLUECHTIG else v) for k, v in os.environ.items())
+    return json.dumps(paare)
 
 
 def ordner() -> Path:
@@ -125,11 +213,18 @@ def schluessel(repo: Path, basis: str, ziel: str) -> str | None:
             _datei(hasher, repo / name, name)
         for quelle in sorted(_PAKET.glob("*.py")):
             _datei(hasher, quelle, f"pruef/{quelle.name}")
+        versteckt = _versteckte(repo)
+        groesse = sum((repo / name).stat().st_size for name in versteckt if (repo / name).is_file())
+        if len(versteckt) > _VERSTECKT_MAX_DATEIEN or groesse > _VERSTECKT_MAX_BYTES:
+            log.info("Prüf-Cache: %d versteckte Dateien (%d Byte), kein Cache", len(versteckt), groesse)
+            return None
+        for name in versteckt:
+            _datei(hasher, repo / name, f"versteckt/{name}")
         pakete = _pakete(repo)
     except (OSError, ValueError) as fehler:
         log.warning("Prüf-Cache: Schlüssel nicht bestimmbar (%s)", fehler)
         return None
-    umgebung = [sys.executable, sys.version, os.environ.get("PYTEST_ADDOPTS", ""), *pakete]
+    umgebung = [sys.executable, sys.version, _umwelt(), *pakete]
     hasher.update("\0".join(umgebung).encode())
     return hasher.hexdigest()
 

@@ -161,6 +161,8 @@ def test_voll_lauf_parallel_mit_worksteal_nur_wenn_repo_xdist_nennt(tmp_path: Pa
     _git(probe, "commit", "-qm", "xdist")
     zeile = _zeile(_tuer(probe, "base", "HEAD"))
     assert zeile["urteil"] == "grün"
+    if ausfuehren.worker() <= 1:  # Tür läuft als eigener Prozess: Worker-Zahl hier nicht patchbar
+        pytest.skip("nur 1 Worker frei: worksteal ungeprüft (Urteil grün geprüft)")
     if ausfuehren.worker() > 1:
         assert "--dist worksteal" in zeile["stufen"][-1]["befehl"]
         assert "+xdist" in zeile["werkzeug"][0]
