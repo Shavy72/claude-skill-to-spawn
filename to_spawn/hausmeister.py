@@ -1142,6 +1142,14 @@ def _zweig_entscheiden(
         ).split()  # fmt: skip
         if leck:
             return ergebnis("bleibt", f"Geheimnis-Datei {leck[0]} in ungesichertem Commit", sha, fuer_david=True)
+        try:  # #169: dieselbe Sperre wie der Zweig-Upload, Übergaben nie auf sicherung/<N>
+            gesperrt = uebergabe_sichern.gesperrte_pfade(o.cwd, sha, "--not", o.haupt_ref, f"--glob={o.sicherungen}")
+        except OSError as fehler:
+            return ergebnis("bleibt", f"Prüfung gesperrter Pfade gescheitert: {_kurz(fehler)}", sha, fehler=True)
+        if gesperrt:
+            log.error("Sicherung von %s verweigert: %s nie öffentlich", zweig, ", ".join(gesperrt))
+            grund = f"Sicherung verweigert: {', '.join(gesperrt)} nie öffentlich"
+            return ergebnis("bleibt", grund, sha, fehler=True, fuer_david=True)
     if trocken:
         return ergebnis(art, grund, sha)
     if fehlende:

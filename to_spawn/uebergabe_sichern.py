@@ -224,22 +224,33 @@ def darf_hochladen(zweig: str) -> bool:
 
 
 def nie_oeffentlich(pfad: str) -> bool:
-    """``pfad`` (Repo-relativ, ``/``-getrennt) ist eine Übergabe oder ein Entscheidungs-Log."""
-    name = PurePosixPath(pfad).name
-    return any(fnmatch(name, muster) for muster in MUSTER_JE_REPO)
+    """``pfad`` (Repo-relativ, ``/``-getrennt) ist eine Übergabe oder ein Entscheidungs-Log.
+
+    Groß-/Kleinschreibung zählt nicht (``.CLAUDE-HANDOFF.md`` ist auch gesperrt).
+    """
+    name = PurePosixPath(pfad).name.lower()
+    return any(fnmatch(name, muster.lower()) for muster in MUSTER_JE_REPO)
+
+
+def gesperrte_pfade(ordner: Path, *bereich: str) -> list[str]:
+    """Pfade nach :func:`nie_oeffentlich` in allen Commits von ``bereich`` (rev-list-Argumente).
+
+    Die eine Prüfung vor jedem Push eines Zweigs. Ganze Historie statt Endstand: auch eine
+    wieder gelöschte Übergabe würde mitgepusht. ``-z`` hält Nicht-ASCII-Pfade ungequotet,
+    ``--diff-merges=separate`` zeigt Dateien, die erst in einer Merge-Auflösung entstehen.
+    """
+    aus = _git(
+        ordner, "log", "-z", "--name-only", "--diff-merges=separate", "--format=", *bereich
+    )
+    if aus.returncode != 0:
+        raise OSError(aus.stderr.strip() or f"git log {' '.join(bereich)} gescheitert")
+    pfade = (p.strip("\n") for p in aus.stdout.split("\0"))
+    return sorted({p for p in pfade if p and nie_oeffentlich(p)})
 
 
 def _gesperrte_pfade(ordner: Path, zweig: str) -> list[str]:
-    """Pfade nach :func:`nie_oeffentlich` in Commits von ``zweig``, die ``origin`` noch fehlen.
-
-    Ganze Historie statt Endstand: auch eine wieder gelöschte Übergabe würde mitgepusht.
-    """
-    aus = _git(
-        ordner, "log", "--name-only", "--format=", zweig, "--not", "--remotes=origin"
-    )
-    if aus.returncode != 0:
-        raise OSError(aus.stderr.strip() or f"git log {zweig} gescheitert")
-    return sorted({p for p in aus.stdout.splitlines() if p and nie_oeffentlich(p)})
+    """:func:`gesperrte_pfade` für Commits von ``zweig``, die ``origin`` noch fehlen."""
+    return gesperrte_pfade(ordner, zweig, "--not", "--remotes=origin")
 
 
 def _hochladen(repo: Path, erg: Sicherung) -> None:
