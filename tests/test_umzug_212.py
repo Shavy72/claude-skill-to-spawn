@@ -469,6 +469,7 @@ def _bau(
         "FAKE_AUSGABE": str(tmp_path / "fake"),
         "FAKE_MODUS": modus,
         "TMPDIR": str(temp),
+        "TO_SPAWN_TEMP_ORDNER": str(temp),  # #136: bau.py legt seine Temp-Dateien hier ab
         "BAU_WT_DIR": str(tmp_path / "wt"),
     }
     for weg in ("LOCALAPPDATA", "BAU_UMZUG_DATEI", "BAU_UMZUG_ANFRAGE"):
