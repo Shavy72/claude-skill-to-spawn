@@ -636,3 +636,81 @@ def test_kaputte_konfig_prueft_voll_und_meldet(
     assert _stufe(urteil.zeile, "doku")["grund"] == grund
     assert _stufe(urteil.zeile, "voll")["lief"] is True
     assert any(r.levelname == "WARNING" for r in caplog.records), caplog.records
+
+
+# --- Fix-Runde 4 (#100): der geprüfte Commit bestimmt nie selbst, wie streng er geprüft wird ---
+
+KONFIG_GEAENDERT = "Konfig geändert (.to-spawn/config.json)"
+
+
+def _konfig(ordner: Path, muster: object) -> None:
+    (ordner / ".to-spawn").mkdir(exist_ok=True)
+    (ordner / ".to-spawn" / "config.json").write_text(
+        json.dumps({"pruefen": {"doku_pfade": muster}}), encoding="utf-8"
+    )
+
+
+@pytest.mark.parametrize(
+    ("basis_muster", "neu_muster"),
+    [(["docs/**"], ["*"]), (["docs/**"], ["**"]), (None, [".to-spawn/*", "README.md"]), (["*"], ["*"])],
+)
+def test_konfig_im_selben_commit_geaendert_prueft_voll(
+    tmp_path: Path, basis_muster: object, neu_muster: object
+) -> None:
+    probe = _angriff(tmp_path / "b9", _F1C)
+    if basis_muster is not None:
+        _erklaere(probe, basis_muster)
+    _konfig(probe, neu_muster)
+    (probe / ".to-spawn" / "config.json").write_text(
+        json.dumps({"pruefen": {"doku_pfade": neu_muster}, "x": 1}), encoding="utf-8"
+    )
+    _commit(probe, "README.md", "# Titel\n\tEingerückt\n")
+    _voll_rot(probe, KONFIG_GEAENDERT)
+
+
+def test_konfig_erst_im_commit_angelegt_prueft_voll(tmp_path: Path) -> None:
+    probe = _angriff(tmp_path / "b9neu", _F1C)
+    with (probe / ".gitignore").open("a", encoding="utf-8") as datei:
+        datei.write(".to-spawn/*\n!.to-spawn/config.json\n")
+    _konfig(probe, ["**"])
+    _commit(probe, "README.md", "# Titel\n\tEingerückt\n")
+    _voll_rot(probe, KONFIG_GEAENDERT)
+
+
+def test_doku_muster_kommen_aus_der_basis(tmp_path: Path) -> None:
+    probe = _probe(tmp_path / "py")
+    _erklaere(probe, ["README.md"])
+    _commit(probe, "README.md", "# Probe\n\nNeu.\n")
+    _konfig(probe, ["docs/**"])  # Arbeitsbaum erklärt README nicht mehr — gilt nicht, Basis zählt
+    from to_spawn.pruef import sofort
+
+    assert sofort._doku_muster(probe, "base", ["README.md"]) == (["README.md"], "")
+
+
+@pytest.mark.parametrize("art", ["ungespeichert", "untracked", "ignoriert"])
+def test_konfig_nicht_committet_ist_gate_fehler(tmp_path: Path, art: str) -> None:
+    probe = _probe(tmp_path / "py")
+    if art == "ungespeichert":
+        _erklaere(probe, ["docs/**"])
+    elif art == "ignoriert":
+        with (probe / ".gitignore").open("a", encoding="utf-8") as datei:
+            datei.write(".to-spawn/\n")
+        _git(probe, "add", "-A")
+        _git(probe, "commit", "-qm", "ignoriert")
+        _git(probe, "tag", "-f", "base")
+    _commit(probe, "README.md", "# Probe\n\nNeu.\n")
+    _konfig(probe, ["*"])
+    code, zeile = _tuer(probe)
+    assert code == 2, zeile
+    assert ".to-spawn/config.json" in zeile["fehler_kurz"], zeile
+    assert not (probe / "lief.txt").exists()
+
+
+def test_laufdateien_unter_to_spawn_sind_nicht_ungespeichert(tmp_path: Path) -> None:
+    from to_spawn import pruef
+
+    probe = _probe(tmp_path / "py")
+    for pfad in ("pruef/protokoll.jsonl", "sessions/a.json", "stand.json"):
+        (probe / ".to-spawn" / pfad).parent.mkdir(parents=True, exist_ok=True)
+        (probe / ".to-spawn" / pfad).write_text("{}", encoding="utf-8")
+    assert pruef._ungespeichert(probe) == []

@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from to_spawn import config
 from to_spawn.pruef import adapter_node, adapter_py, leiter, protokoll
 
 _ADAPTER: tuple[leiter.Adapter, ...] = (adapter_py.ADAPTER, adapter_node.ADAPTER)
@@ -55,26 +56,11 @@ def _ist_werkzeug_ordner(pfad: str) -> bool:
     return teile[-1] in _CACHE_ORDNER or (len(teile) == 1 and teile[0] in _INSTALL_ORDNER)
 
 
-def _ungespeichert(repo: Path) -> list[str]:
-    """Pfade, die vom ausgecheckten Commit abweichen; ``["? (git status: <Ursache>)"]`` = unklar.
-
-    Geprüft wird der Arbeitsbaum, das Urteil gilt aber dem SHA — beides muss gleich sein, sonst
-    gibt es Grün für einen Stand, den keiner committet hat. Ausgenommen: ``.to-spawn/`` (eigenes
-    Protokoll) und ungetrackte Werkzeug-Ordner (nur als Ordner-Eintrag: Caches in jeder Tiefe,
-    ``.venv``/``venv``/``node_modules`` nur ganz oben). ``normal`` fasst neue Ordner zu ``ordner/`` zusammen.
-    """
+def _git_status(repo: Path, *args: str) -> tuple[str, str]:
+    """(Ausgabe, Ursache) von ``git status --porcelain -z <args>``; Ursache ≠ "" = gescheitert."""
     try:
         erg = subprocess.run(
-            [
-                "git",
-                "status",
-                "--porcelain",
-                "-z",
-                "--untracked-files=normal",
-                "--",
-                ".",
-                ":(exclude).to-spawn",
-            ],
+            ["git", "status", "--porcelain", "-z", *args],
             cwd=repo,
             capture_output=True,
             text=True,
@@ -83,28 +69,43 @@ def _ungespeichert(repo: Path) -> list[str]:
             check=False,
         )
     except OSError as fehler:
-        kurz = str(fehler)
-    else:
-        if erg.returncode == 0:
-            kurz = ""
-        else:
-            kurz = (erg.stderr.strip().splitlines() or [f"Exit {erg.returncode}"])[0]
+        return "", str(fehler)
+    if erg.returncode == 0:
+        return erg.stdout, ""
+    return "", (erg.stderr.strip().splitlines() or [f"Exit {erg.returncode}"])[0]
+
+
+def _ungespeichert(repo: Path) -> list[str]:
+    """Pfade, die vom ausgecheckten Commit abweichen; ``["? (git status: <Ursache>)"]`` = unklar.
+
+    Geprüft wird der Arbeitsbaum, das Urteil gilt aber dem SHA — beides muss gleich sein, sonst
+    gibt es Grün für einen Stand, den keiner committet hat. Ausgenommen: Laufdateien unter
+    ``.to-spawn/`` (Protokoll, Marker, Sitzungen) und ungetrackte Werkzeug-Ordner (nur als
+    Ordner-Eintrag: Caches in jeder Tiefe, ``.venv``/``venv``/``node_modules`` nur ganz oben).
+    Die Konfig ``.to-spawn/config.json`` zählt immer — auch neu oder per ``.gitignore`` versteckt.
+    ``normal`` fasst neue Ordner zu ``ordner/`` zusammen.
+    """
+    konfig = config.KONFIG_PFAD.as_posix()
+    raus, kurz = _git_status(repo, "--untracked-files=normal", "--", ".", ":(exclude).to-spawn")
+    konfig_raus = ""
+    if not kurz:
+        konfig_raus, kurz = _git_status(repo, "--untracked-files=all", "--ignored=matching", "--", konfig)
     if kurz:
         log.warning("git status in %s gescheitert: %s", repo, kurz)
         return [f"? (git status: {kurz})"]
     offen: list[str] = []
-    eintraege = iter(erg.stdout.split("\0"))
+    eintraege = iter(raus.split("\0"))
     for eintrag in eintraege:
         if not eintrag:
             continue
         art, pfad = eintrag[:2], eintrag[3:]
         if art[0] in "RC":
-            next(
-                eintraege, None
-            )  # -z: Quellpfad einer Umbenennung folgt als eigener Eintrag
+            next(eintraege, None)  # -z: Quellpfad einer Umbenennung folgt als eigener Eintrag
         if art == "??" and _ist_werkzeug_ordner(pfad):
             continue
         offen.append(pfad)
+    if konfig_raus.strip("\0"):
+        offen.append(konfig)
     return offen
 
 

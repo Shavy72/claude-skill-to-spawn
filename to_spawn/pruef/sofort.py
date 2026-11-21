@@ -8,7 +8,8 @@ ungespeicherte und neue), welcher Linter zu welcher Endung gehört und wo er lie
 „Nur Doku“ (M11) gibt es nur für Repos, die ihre Doku-Pfade selbst erklären: Schlüssel
 ``pruefen.doku_pfade`` in ``.to-spawn/config.json``, eine Liste von Mustern relativ zur
 Repo-Wurzel mit ``/`` (``fnmatch``, Groß/klein zählt, ``*`` passt auch über ``/``), z. B.
-``["docs/**", "README.md"]``. Warum: Ob Code eine Datei liest, lässt sich nicht erraten (Tests über
+``["docs/**", "README.md"]``. Es gilt die Konfig im Stand der Basis, nie die des geprüften Commits;
+ändert der Commit die Konfig, prüft die Leiter voll. Warum: Ob Code eine Datei liest, lässt sich nicht erraten (Tests über
 ``git ls-files``, ``iterdir``, Symlinks, ``mimetypes``) — nur das Repo weiß es. Abkürzung nur, wenn
 JEDE geänderte Datei (neu, gelöscht, bei Umbenennung alter und neuer Pfad) unter ein Muster fällt,
 keine davon ein Symlink ist und kein getrackter Symlink auf sie zeigt. Fehlt der Schlüssel, ist er
@@ -21,6 +22,7 @@ ausgelassen (``lief=False`` + Grund) und die Leiter prüft voll weiter.
 from __future__ import annotations
 
 import fnmatch
+import json
 import logging
 import os
 import shutil
@@ -43,6 +45,9 @@ OHNE_DOKU_PFADE = "Doku-Pfade nicht erklärt (pruefen.doku_pfade)"
 DOKU_PFADE_UNGUELTIG = "pruefen.doku_pfade ungültig (Liste von Pfad-Mustern erwartet)"
 SYMLINK = "Symlink geändert oder zeigt auf geänderte Datei"
 SYMLINK_UNKLAR = "Symlinks unklar (git ls-files/ls-tree gescheitert)"
+KONFIG_GEAENDERT = "Konfig geändert (.to-spawn/config.json)"
+#: Geänderte Pfade (casefold), die die Abkürzung sperren: die Konfig selbst oder ihr Ordner als Symlink.
+_KONFIG_PFADE = frozenset({config.KONFIG_PFAD.as_posix().casefold(), config.KONFIG_PFAD.parent.as_posix().casefold()})
 #: git-Modus eines Symlinks.
 _SYMLINK_MODUS = "120000"
 
@@ -115,12 +120,25 @@ def geaendert(repo: Path, basis: str) -> list[str] | None:
     return sorted({pfad for pfad in (raus + neu).split("\0") if pfad})
 
 
-def _doku_muster(repo: Path) -> tuple[list[str], str]:
-    """(Muster, Grund): erklärte Doku-Pfade des Repos; leere Liste = keine Abkürzung, Grund steht drin.
+def _doku_muster(repo: Path, basis: str, pfade: list[str]) -> tuple[list[str], str]:
+    """(Muster, Grund): erklärte Doku-Pfade aus dem Stand ``basis``; leere Liste = keine Abkürzung.
 
-    Kaputte Konfig meldet ``config.lade`` (Warnung), danach gelten die Vorgaben ohne Schlüssel.
+    Einzige Stelle der Regel „der geprüfte Commit bestimmt nie selbst, wie streng er geprüft
+    wird“: Die Konfig kommt aus ``basis`` (nie aus dem Arbeitsbaum, auch kein Symlink dorthin),
+    und ändert der Commit sie selbst (oder ``.to-spawn`` als Ganzes), gibt es nie die Abkürzung.
+    Fehlt sie in ``basis`` oder ist sie kaputt (Warnung): keine Muster, die Leiter prüft voll.
     """
-    pruefen = config.lade(repo).get("pruefen")
+    if any(pfad.casefold() in _KONFIG_PFADE for pfad in pfade):
+        return [], KONFIG_GEAENDERT
+    code, text = _git(repo, "show", f"{basis}:{config.KONFIG_PFAD.as_posix()}")
+    if code != 0:
+        return [], OHNE_DOKU_PFADE
+    try:
+        eigen = json.loads(text)
+    except ValueError as fehler:
+        log.warning("Konfig in %s unlesbar — keine Doku-Pfade: %s", basis, fehler)
+        return [], OHNE_DOKU_PFADE
+    pruefen = eigen.get("pruefen") if isinstance(eigen, dict) else None
     muster = pruefen.get("doku_pfade") if isinstance(pruefen, dict) else None
     if muster is None:
         return [], OHNE_DOKU_PFADE
@@ -146,7 +164,7 @@ def _symlinks(repo: Path, basis: str) -> set[str] | None:
 
 def _nicht_nur_doku(repo: Path, basis: str, pfade: list[str]) -> str:
     """Grund, warum die Abkürzung „nur Doku“ nicht gilt; "" = alle Pfade sind erklärte Doku."""
-    muster, grund = _doku_muster(repo)
+    muster, grund = _doku_muster(repo, basis, pfade)
     if not muster:
         return grund
     if not all(any(fnmatch.fnmatchcase(pfad, m) for m in muster) for pfad in pfade):
