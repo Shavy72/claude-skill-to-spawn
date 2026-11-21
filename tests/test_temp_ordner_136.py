@@ -58,12 +58,13 @@ def test_bau_session_bekommt_temp_umgebung() -> None:
     assert "os.environ.update(temp_ordner.umgebung())" in text
 
 
-def _rest(ordner: Path, *, alt: bool = True) -> Path:
+def _rest(ordner: Path, nr: int | None = None, *, alt: bool = True) -> Path:
     ordner.mkdir(parents=True)
     (ordner / "datei.txt").write_text("x", encoding="utf-8")
+    if nr is not None:
+        _markieren(ordner, nr)
     if alt:
-        for p in (ordner / "datei.txt", ordner):
-            os.utime(p, (ALT, ALT))
+        _alt_baum(ordner)
     return ordner
 
 
@@ -71,39 +72,26 @@ def _rest(ordner: Path, *, alt: bool = True) -> Path:
 def test_hausmeister_raeumt_temp_reste_geschlossener_tickets(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    platte = tmp_path / "tmp-bau"
-    altbestand = tmp_path / "ram"
-    monkeypatch.setenv("TO_SPAWN_TEMP_ORDNER", str(platte))
-    monkeypatch.setenv(
-        "TO_SPAWN_TEMP_RESTE",
-        os.pathsep.join([str(altbestand / "*"), str(altbestand / "claude-*" / "*")]),
-    )
-    zu = {1335, 1499, 136, 1500, 1600}
-    monkeypatch.setattr(
-        hausmeister,
-        "_ticket_daten",
-        lambda nr, slug=None: {"state": "CLOSED" if nr in zu else "OPEN"},
-    )
+    # Fix-Runde 3: nur markierte Ordner unter der Temp-Wurzel zählen, Namen nie.
+    platte = _wurzel(tmp_path, monkeypatch, {1335, 1499, 136, 1500, 1600, 1601})
     weg = [
-        _rest(altbestand / "t1335"),
-        _rest(altbestand / "claude-1000" / "mut1499"),
-        _rest(platte / "tmp_136"),
+        _rest(platte / "t1335", 1335),
+        _rest(platte / "mut1499", 1499),
+        _rest(platte / "irgendwas", 136),
     ]
-    os.utime(altbestand / "claude-1000", (ALT, ALT))
     bleibt = [
-        altbestand / "claude-1000",  # Such-Eltern, nie selbst ein Rest
-        _rest(altbestand / "t1400"),  # Ticket offen
-        _rest(altbestand / "t1500", alt=False),  # frisch
-        _rest(altbestand / "tmpk3j2x9"),  # kein Ticket-Name
-        _rest(altbestand / "t1600"),  # Prozess darin
+        _rest(platte / "t1400", 1400),  # Ticket offen
+        _rest(platte / "t1500", 1500, alt=False),  # frisch
+        _rest(platte / "t1601"),  # kein Marker, Ticket zu
+        _rest(platte / "t1600", 1600),  # Prozess darin
     ]
-    (altbestand / "t1700").symlink_to(altbestand / "t1600")  # Symlink nie
+    (platte / "t1700").symlink_to(platte / "t1600")  # Symlink nie
 
     hausmeister.aufraeumen_alles(loeschen=False)
     assert all(p.exists() for p in weg + bleibt), "Probelauf löscht nie"
 
     prozess = subprocess.Popen(
-        [sys.executable, "-c", "import time; time.sleep(60)"], cwd=altbestand / "t1600"
+        [sys.executable, "-c", "import time; time.sleep(60)"], cwd=platte / "t1600"
     )
     try:
         hausmeister.aufraeumen_alles(loeschen=True)
@@ -112,7 +100,7 @@ def test_hausmeister_raeumt_temp_reste_geschlossener_tickets(
         prozess.wait()
     assert [p for p in weg if p.exists()] == []
     assert [p for p in bleibt if not p.exists()] == []
-    assert (altbestand / "t1700").is_symlink()
+    assert (platte / "t1700").is_symlink()
     log = Path(os.environ["TO_SPAWN_HAUSMEISTER_LOG"]).read_text(encoding="utf-8")
     assert {str(p) for p in weg} <= {json.loads(z)["ordner"] for z in log.splitlines()}
 
@@ -184,39 +172,26 @@ def _git(cwd: Path, *args: str) -> None:
     subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, text=True)
 
 
-def _altbestand(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, zu: set[int]) -> Path:
-    altbestand = tmp_path / "ram"
-    altbestand.mkdir()
-    monkeypatch.setenv("TO_SPAWN_TEMP_ORDNER", str(tmp_path / "platte"))
-    monkeypatch.setenv("TO_SPAWN_TEMP_RESTE", str(altbestand / "*"))
-    monkeypatch.setattr(
-        hausmeister,
-        "_ticket_daten",
-        lambda nr, slug=None: {"state": "CLOSED" if nr in zu else "OPEN"},
-    )
-    return altbestand
-
-
 @pytest.mark.skipif(sys.platform == "win32", reason="Unix-Sockets + /proc (Linux)")
 def test_tmux_socket_ordner_und_sockets_im_baum_bleiben(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     import socket
 
-    altbestand = _altbestand(tmp_path, monkeypatch, {1000, 1001})
+    altbestand = _wurzel(tmp_path, monkeypatch, {1000, 1001})
     socks = []
     for ordner in (altbestand / "tmux-1000", altbestand / "t1001"):
         ordner.mkdir()
+        if ordner.name == "t1001":
+            _markieren(ordner, 1001)
         s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         s.bind(str(ordner / "default"))
         s.listen(1)
         socks.append(s)
         _alt_machen(ordner)
     try:
-        assert altbestand / "tmux-1000" not in {p for p, _ in temp_ordner.reste()}, (
-            "tmux-1000 ist kein Ticket"
-        )
         ergebnis = dict(temp_ordner.aufraeumen(loeschen=True))
+        assert altbestand / "tmux-1000" not in ergebnis, "tmux-1000 trägt keinen Marker"
     finally:
         for s in socks:
             s.close()
@@ -229,7 +204,7 @@ def test_tmux_socket_ordner_und_sockets_im_baum_bleiben(
 def test_rest_mit_ungepushter_arbeit_bleibt_mit_grund(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    altbestand = _altbestand(tmp_path, monkeypatch, set(range(1000, 1100)))
+    altbestand = _wurzel(tmp_path, monkeypatch, set(range(1000, 1100)))
     quelle = tmp_path / "quelle.git"
     _git(tmp_path, "init", "-q", "--bare", str(quelle))
     saat = tmp_path / "saat"
@@ -287,7 +262,7 @@ def test_rest_mit_ungepushter_arbeit_bleibt_mit_grund(
     bleibt = [ohne_remote, neu, ungepusht, tief]
     weg = [sauber, pytest_rest]
     for p in bleibt + weg:
-        _alt_machen(p)
+        _alt_machen(_markieren(p, int(p.name[1:])))
 
     ergebnis = dict(temp_ordner.aufraeumen(loeschen=True))
     assert [p for p in bleibt if not p.exists()] == []
@@ -296,31 +271,16 @@ def test_rest_mit_ungepushter_arbeit_bleibt_mit_grund(
         assert "ungesichert" in ergebnis[p], ergebnis[p]
 
 
-def test_rest_namen_nur_bekannte_praefixe(
+def test_nur_der_marker_macht_einen_rest_nie_der_name(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    altbestand = _altbestand(tmp_path, monkeypatch, set())
-    namen = [
-        "t1335",
-        "mut1499",
-        "tmp_136",
-        "beweis_1400",
-        "tmux-1000",
-        "tmp_2026-11-21",
-        "x500",
-        "systemd-1234",
-        "pt-fix12",
-    ]
+    altbestand = _wurzel(tmp_path, monkeypatch, set())
+    namen = ["t1335", "mut1499", "tmp_136", "beweis_1400", "tmux-1000", "pt-fix12"]
     for name in namen:
         (altbestand / name).mkdir()
-    gefunden = {p.name: nr for p, nr in temp_ordner.reste()}
-    assert gefunden == {
-        "t1335": 1335,
-        "mut1499": 1499,
-        "tmp_136": 136,
-        "beweis_1400": 1400,
-        "pt-fix12": 12,
-    }
+    (altbestand / "x500").mkdir()
+    _markieren(altbestand / "x500", 500)
+    assert [p.name for p, _ in temp_ordner.aufraeumen(loeschen=False)] == ["x500"]
 
 
 def test_fremder_besitzer_ist_kein_rest(
@@ -328,11 +288,14 @@ def test_fremder_besitzer_ist_kein_rest(
 ) -> None:
     if not hasattr(os, "getuid"):
         pytest.skip("kein UID-Modell")
-    altbestand = _altbestand(tmp_path, monkeypatch, set())
+    altbestand = _wurzel(tmp_path, monkeypatch, {1335})
     (altbestand / "t1335").mkdir()
+    _alt_baum(_markieren(altbestand / "t1335", 1335))
     echt = os.getuid()
     monkeypatch.setattr(os, "getuid", lambda: echt + 1)
-    assert temp_ordner.reste() == []
+    ergebnis = dict(temp_ordner.aufraeumen(loeschen=True))
+    assert (altbestand / "t1335").exists()
+    assert "fremder Besitzer" in ergebnis[altbestand / "t1335"]
 
 
 def test_temp_ordner_weist_wurzel_und_home_ab_warnt_bei_langem_pfad(
@@ -366,19 +329,16 @@ def test_temp_ordner_weist_wurzel_und_home_ab_warnt_bei_langem_pfad(
     assert len(auf_dem_server) <= temp_ordner.MAX_LAENGE <= 24
 
 
-def test_rest_muster_ohne_ausbruch_wurzel_oder_home(
+def test_temp_wurzel_ueber_symlink_aufs_home_abgelehnt(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     heim = tmp_path / "h"
-    (heim / "ram").mkdir(parents=True)
+    heim.mkdir()
     monkeypatch.setenv("HOME", str(heim))
-    monkeypatch.setenv("TO_SPAWN_TEMP_ORDNER", str(tmp_path / "platte"))
-    gut = str(heim / "ram" / "*")
-    monkeypatch.setenv(
-        "TO_SPAWN_TEMP_RESTE",
-        os.pathsep.join(["/*", "~/*", str(heim / "ram" / ".." / "*"), gut]),
-    )
-    assert temp_ordner._muster() == [str(tmp_path / "platte" / "*"), gut]
+    monkeypatch.setenv("USERPROFILE", str(heim))
+    (tmp_path / "link").symlink_to(heim)
+    monkeypatch.setenv("TO_SPAWN_TEMP_ORDNER", str(tmp_path / "link"))
+    assert temp_ordner.pfad() == heim / "tmp-bau"
 
 
 def test_sandbox_darf_in_den_temp_ordner_schreiben(
@@ -421,10 +381,10 @@ def _alt_baum(ordner: Path) -> Path:
 def test_frische_datei_tief_im_baum_haelt_den_rest(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    altbestand = _altbestand(tmp_path, monkeypatch, {1016, 1017})
+    altbestand = _wurzel(tmp_path, monkeypatch, {1016, 1017})
     tief = altbestand / "tmp-1016"
     (tief / "a" / "b").mkdir(parents=True)
-    _alt_baum(tief)
+    _alt_baum(_markieren(tief, 1016))
     (tief / "a" / "b" / "neu.txt").write_text("frische Arbeit", encoding="utf-8")
     os.utime(
         tief / "a" / "b", (ALT, ALT)
@@ -432,7 +392,7 @@ def test_frische_datei_tief_im_baum_haelt_den_rest(
     kontrolle = altbestand / "tmp-1017"
     (kontrolle / "a" / "b").mkdir(parents=True)
     (kontrolle / "a" / "b" / "alt.txt").write_text("alt", encoding="utf-8")
-    _alt_baum(kontrolle)
+    _alt_baum(_markieren(kontrolle, 1017))
 
     ergebnis = dict(temp_ordner.aufraeumen(loeschen=True))
     assert (tief / "a" / "b" / "neu.txt").exists(), ergebnis[tief]
@@ -444,7 +404,7 @@ def test_frische_datei_tief_im_baum_haelt_den_rest(
 def test_reflog_stash_und_abgehaengter_head_halten_den_rest(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    altbestand = _altbestand(tmp_path, monkeypatch, set(range(1010, 1020)))
+    altbestand = _wurzel(tmp_path, monkeypatch, set(range(1010, 1020)))
     quelle = tmp_path / "quelle.git"
     _git(tmp_path, "init", "-q", "--bare", "-b", "main", str(quelle))
     saat = tmp_path / "saat"
@@ -473,10 +433,119 @@ def test_reflog_stash_und_abgehaengter_head_halten_den_rest(
     sauber = klon("t-1019")
     bleibt = [reflog, abgehaengt, stash]
     for p in [*bleibt, sauber]:
-        _alt_baum(p)
+        _alt_baum(_markieren(p, int(p.name.removeprefix("t-"))))
 
     ergebnis = dict(temp_ordner.aufraeumen(loeschen=True))
     assert [p for p in bleibt if not p.exists()] == []
     for p in bleibt:
         assert "ungesichert" in ergebnis[p], ergebnis[p]
     assert not sauber.exists(), ergebnis[sauber]
+
+
+# --- Fix-Runde 3 (Prüfer-Urteil PR 148, dirigent_136_fix2): nur Markiertes wird geräumt ----
+
+
+def _markieren(ordner: Path, nr: int, repo: str | None = None) -> Path:
+    """Marker wie :func:`temp_ordner.anlegen` ihn schreibt (für Ordner aus git clone/mkdir)."""
+    inhalt = {
+        "repo": hausmeister._ticket_repo() if repo is None else repo,
+        "ticket": nr,
+        "angelegt": ALT,
+        "von": "test",
+    }
+    (ordner / ".to-spawn-temp.json").write_text(json.dumps(inhalt), encoding="utf-8")
+    return ordner
+
+
+def _wurzel(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, zu: set[int]) -> Path:
+    wurzel = tmp_path / "w"  # kurz: Unix-Sockets darunter brauchen < 108 Zeichen
+    wurzel.mkdir()
+    monkeypatch.setenv("TO_SPAWN_TEMP_ORDNER", str(wurzel))
+    monkeypatch.setattr(
+        hausmeister,
+        "_ticket_daten",
+        lambda nr, slug=None: {"state": "CLOSED" if nr in zu else "OPEN"},
+    )
+    return wurzel
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Prozess-Probe über /proc (Linux)")
+def test_ordner_ohne_marker_bleibt_auch_mit_ticket_nummer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    wurzel = _wurzel(tmp_path, monkeypatch, {414, 21, 1121})
+    namen = ["beweis_414", "tmp_21-11", "tmp-1121"]
+    for name in namen:
+        (wurzel / name).mkdir()
+        (wurzel / name / "bild.png").write_bytes(b"\x89PNG")
+        _alt_baum(wurzel / name)
+    ergebnis = dict(temp_ordner.aufraeumen(loeschen=True))
+    for name in namen:
+        assert (wurzel / name / "bild.png").exists(), (name, ergebnis)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Symlinks + /proc (Linux)")
+def test_symlink_ordner_oder_marker_bleibt_ziel_heil(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    wurzel = _wurzel(tmp_path, monkeypatch, {1070, 1071, 1072})
+    aussen = tmp_path / "heim" / "t1070"
+    aussen.mkdir(parents=True)
+    (aussen / "arbeit.txt").write_text("echt", encoding="utf-8")
+    _alt_baum(_markieren(aussen, 1070))
+    (wurzel / "t1070").symlink_to(aussen)
+    echter_marker = _markieren(tmp_path / "heim", 1072) / ".to-spawn-temp.json"
+    mit_link = wurzel / "t1072"
+    mit_link.mkdir()
+    (mit_link / ".to-spawn-temp.json").symlink_to(echter_marker)
+    _alt_baum(mit_link)
+    ergebnis = dict(temp_ordner.aufraeumen(loeschen=True))
+    assert (aussen / "arbeit.txt").exists()
+    assert (wurzel / "t1070").is_symlink()
+    assert mit_link.exists(), ergebnis
+    assert echter_marker.exists()
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Prozess-Probe über /proc (Linux)")
+def test_marker_mit_fremdem_repo_oder_kaputt_bleibt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    wurzel = _wurzel(tmp_path, monkeypatch, {1073, 1074})
+    fremd = wurzel / "t1073"
+    fremd.mkdir()
+    _alt_baum(_markieren(fremd, 1073, repo="fremd/anderes-repo"))
+    kaputt = wurzel / "t1074"
+    kaputt.mkdir()
+    (kaputt / ".to-spawn-temp.json").write_text("{kein json", encoding="utf-8")
+    _alt_baum(kaputt)
+    ergebnis = dict(temp_ordner.aufraeumen(loeschen=True))
+    assert fremd.exists() and "fremdes Repo" in ergebnis[fremd], ergebnis
+    assert kaputt.exists() and "Marker ungültig" in ergebnis[kaputt], ergebnis
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Prozess-Probe über /proc (Linux)")
+def test_markierter_alter_sauberer_ordner_wird_geraeumt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    wurzel = _wurzel(tmp_path, monkeypatch, {1075})
+    rest = wurzel / "t1075"
+    rest.mkdir()
+    (rest / "lauf.txt").write_text("alt", encoding="utf-8")
+    _alt_baum(_markieren(rest, 1075))
+    ergebnis = dict(temp_ordner.aufraeumen(loeschen=True))
+    assert not rest.exists(), ergebnis
+
+
+def test_anlegen_schreibt_marker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    wurzel = _wurzel(tmp_path, monkeypatch, set())
+    ordner = temp_ordner.anlegen(1076, von="test")
+    assert ordner.parent == wurzel and ordner.name.startswith("t1076-")
+    marker = json.loads((ordner / temp_ordner.MARKER).read_text(encoding="utf-8"))
+    assert marker["ticket"] == 1076 and marker["von"] == "test"
+    assert marker["repo"] == hausmeister._ticket_repo()
+    assert isinstance(marker["angelegt"], float)
+    assert dict(temp_ordner.aufraeumen(loeschen=False))[ordner].startswith("bleibt:")
+    with pytest.raises(ValueError):
+        temp_ordner.anlegen(0)

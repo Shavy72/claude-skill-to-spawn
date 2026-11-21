@@ -61,5 +61,3 @@ HAUSMEISTER_ORDNER_PRAEFIXE: list[str] = ["wt", "skill", "duoplus"]
 HAUSMEISTER_GESCHUETZTE_ORDNER: list[str] = ["duoplus-leit", "deploy-schlange", "obsidian"]
 #: Temp-Ordner auf der Platte statt RAM-Platte /tmp (#136); Maschinen-Liste ``temp_ordner``.
 TEMP_ORDNER: str = "~/tmp-bau"
-#: Altbestand-Muster der Temp-Reste (#136); Maschinen-Liste ``temp_reste`` ersetzt die Liste.
-TEMP_RESTE: list[str] = ["/tmp/*", "/tmp/claude-*/*", "~/AppData/Local/Temp/*"]

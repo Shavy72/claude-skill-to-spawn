@@ -290,9 +290,8 @@ def _hausmeister_nur_im_test(
     # #1372: Docker-Reste nie echt — „true“ statt docker, keine Staging-Sperre.
     monkeypatch.setenv("TO_SPAWN_HAUSMEISTER_DOCKER", shutil.which("true") or "/bin/true")
     monkeypatch.setenv("TO_SPAWN_STAGING_SPERRE", str(ordner / "keine-staging-sperre"))
-    # #136: Temp-Ordner und Temp-Reste nie echt (kein ~/tmp-bau, kein Altbestand in /tmp).
+    # #136: Temp-Ordner nie echt (kein ~/tmp-bau).
     monkeypatch.setenv("TO_SPAWN_TEMP_ORDNER", str(ordner / "temp"))
-    monkeypatch.setenv("TO_SPAWN_TEMP_RESTE", "")
     # #145: Sicherung (Rundgang, Aufseher-Ablösung) schreibt nur in tmp, lädt keine echten Zweige hoch.
     monkeypatch.setenv("TO_SPAWN_SICHERUNG_ZIEL", str(ordner / "sicherung"))
     monkeypatch.setenv("TO_SPAWN_SICHERUNG_ZWEIG_REPOS", "")

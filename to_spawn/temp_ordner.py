@@ -1,4 +1,4 @@
-"""Temp-Ordner des Bau-Systems (#136): wo Temp liegt, was ein Rest ist, wann er weg darf.
+"""Temp-Ordner des Bau-Systems (#136): wo Temp liegt, was uns gehört, wann es weg darf.
 
 Warum: der System-Temp ist auf dem Bau-Server eine RAM-Platte (tmpfs). Testläufe und alte
 Ticket-Kopien füllten sie am 21.11.2026 bis „No space left on device“. Darum bekommen
@@ -7,42 +7,46 @@ Bau-Sessions, Aufseher und die Prüf-Tür ``TMPDIR``/``TEMP``/``TMP`` aus genau 
 
 Schnittstelle:
 
-- :func:`pfad` — der Temp-Ordner auf der Platte (``TO_SPAWN_TEMP_ORDNER``, sonst
+- :func:`pfad` — die Temp-Wurzel auf der Platte (``TO_SPAWN_TEMP_ORDNER``, sonst
   Maschinen-Liste ``temp_ordner``, Rückfall ``config.MASCHINE_DEFAULTS``), wird angelegt. Nie
-  ``/``, das Home oder ein Ordner darüber (sonst Rückfall mit Warnung). Länger als
-  :data:`MAX_LAENGE` Zeichen gibt eine Warnung: tmux-/Unix-Sockets unter pytest-``tmp_path``
-  brauchen < 108 Zeichen, lange Temp-Pfade lassen solche Tests scheitern.
+  ``/``, das Home oder ein Ordner darüber, auch nicht über einen Symlink (sonst Rückfall mit
+  Warnung). Länger als :data:`MAX_LAENGE` Zeichen gibt eine Warnung: tmux-/Unix-Sockets unter
+  pytest-``tmp_path`` brauchen < 108 Zeichen, lange Temp-Pfade lassen solche Tests scheitern.
 - :func:`umgebung` — die drei Variablen für ``os.environ``/``subprocess``; ``{}``, wenn
   der Ordner nicht anlegbar ist (dann bleibt der System-Temp, nie ein Start-Abbruch).
-- :func:`aufraeumen` — ein Hausmeister-Schritt: Temp-Reste geschlossener Tickets im
-  Temp-Ordner und im Altbestand (``TO_SPAWN_TEMP_RESTE``, sonst Maschinen-Liste
-  ``temp_reste``). Prüfen, Log und Löschen nimmt es vom Hausmeister
-  (:mod:`to_spawn.hausmeister`), damit es nur eine Lösch-Stelle gibt.
+- :func:`anlegen` — ein neuer Temp-Ordner für ein Ticket unter der Wurzel, mit Marker-Datei
+  :data:`MARKER` (Repo, Ticket, Anlege-Zeit, erzeugt von). Nur so entsteht ein Ordner, den
+  :func:`aufraeumen` je anfasst.
+- :func:`aufraeumen` — ein Hausmeister-Schritt über die markierten Ordner. Prüfen, Log und
+  Löschen nimmt es vom Hausmeister (:mod:`to_spawn.hausmeister`), damit es nur eine
+  Lösch-Stelle gibt.
 
-Ein Rest ist wegwerfbar, wenn alles gilt (sonst bleibt er, Grund im Ergebnis; im Zweifel
-bleibt er immer):
+**Geräumt wird nur, was der Skill selbst angelegt und gekennzeichnet hat.** Der Marker ist der
+einzige Beweis für „gehört uns“; Ordnernamen zählen nie. Ein Ordner ist wegwerfbar, wenn alles
+gilt (sonst bleibt er, Grund im Ergebnis; im Zweifel bleibt er immer):
 
-1. echter Ordner (kein Symlink), eigener Besitzer (UID), Name aus :data:`PRAEFIXE` +
-   Ticket-Nummer (``t1335``, ``mut1499``, ``tmp_136``; kein Datum wie ``tmp_2026-11-21``,
-   kein ``tmux-1000``/``systemd-…``);
-2. Ticket zu; kein Prozess darin;
-3. **nichts Frisches oder Ungesichertes im Baum** (:func:`_baum_pruefen`, die EINE Stelle
+1. direkter Unterordner der Temp-Wurzel, echter Ordner (kein Symlink), eigener Besitzer (UID),
+   aufgelöster Pfad liegt direkt unter der aufgelösten Wurzel;
+2. gültiger Marker: echte Datei (kein Symlink), eigener Besitzer, JSON mit Ticket-Nummer und
+   Repo = Ticket-Repo der Maschine (fremdes Repo, kaputter oder fehlender Marker ⇒ bleibt);
+3. Ticket nachweislich zu (jeder Fehler ⇒ bleibt); kein Prozess darin;
+4. **nichts Frisches oder Ungesichertes im Baum** (:func:`_baum_pruefen`, die EINE Stelle
    dieser Regel, ein Lauf über den ganzen Baum): nichts jünger als :data:`ALTER_S` (jede
    Ebene, ``.git``-Inneres ausgenommen), kein Socket/FIFO (lebender Server), in jedem
    Git-Repo keine Commits auf keinem Remote (Zweige, HEAD, Stash und Reflog), keine
    geänderten oder neuen nicht ignorierten Dateien, kein Repo ohne Arbeitsbaum.
 
-Ordner, unter denen andere Muster suchen (z. B. ``claude-1000`` für ``claude-*/*``), sind
-nie selbst ein Rest. Muster mit ``..`` oder mit ``/``/Home als Such-Ordner fallen weg.
+ponytail: Reste ohne Marker (alter Bestand im System-Temp, ``claude-*``) räumt dieses Modul
+nie; Upgrade: Liste mit Davids Freigabe, wie ``altbestand_festhalten``.
 """
 
 from __future__ import annotations
 
-import glob
+import json
 import logging
 import os
-import re
 import stat
+import tempfile
 import time
 from pathlib import Path
 
@@ -54,22 +58,21 @@ log = logging.getLogger("to_spawn.temp_ordner")
 ALTER_S = 24 * 3600
 #: Längster Temp-Ordner ohne Warnung (Vorgabe auf dem Bau-Server: 17 Zeichen).
 MAX_LAENGE = 24
-#: Bekannte Präfixe von Ticket-Resten (Text, kein Regex). Alles andere ist kein Rest.
-PRAEFIXE: tuple[str, ...] = ("t", "mut", "tmp", "beweis", "dp", "pt-fix")
-_REST_NAME = re.compile(
-    rf"^(?:{'|'.join(map(re.escape, PRAEFIXE))})[-_]?"
-    r"(?!20\d\d(?:[-_]\d|$))([1-9]\d{1,3})(?:[-_].*)?$"
-)
+#: Marker-Datei in jedem von :func:`anlegen` erzeugten Ordner — der Beweis „gehört uns“.
+MARKER = ".to-spawn-temp.json"
+#: Größter Marker, der gelesen wird (mehr ist kein Marker von uns).
+_MARKER_MAX = 4096
 
 
 def _gefaehrlich(ordner: Path) -> bool:
-    """``/``, das Home oder ein Ordner darüber: dort wäre jeder Unterordner ein Rest."""
-    heim = Path(os.path.abspath(Path("~").expanduser()))
-    return ordner == Path(ordner.anchor) or ordner == heim or ordner in heim.parents
+    """``/``, das Home oder ein Ordner darüber (aufgelöst): dort wäre jeder Unterordner Rest."""
+    echt = Path(os.path.realpath(ordner))
+    heim = Path(os.path.realpath(Path("~").expanduser()))
+    return echt == Path(echt.anchor) or echt == heim or echt in heim.parents
 
 
 def pfad() -> Path:
-    """Temp-Ordner auf der Platte (angelegt); ``OSError`` geht an den Aufrufer."""
+    """Temp-Wurzel auf der Platte (angelegt); ``OSError`` geht an den Aufrufer."""
     vorgabe = config.MASCHINE_DEFAULTS["temp_ordner"]
     umg = os.environ.get("TO_SPAWN_TEMP_ORDNER", "").strip()  # Test-Tür
     roh = umg or str(config.maschine()["temp_ordner"]).strip() or vorgabe
@@ -99,43 +102,75 @@ def umgebung() -> dict[str, str]:
     return {"TMPDIR": ordner, "TEMP": ordner, "TMP": ordner}
 
 
-def _muster() -> list[str]:
-    umg = os.environ.get("TO_SPAWN_TEMP_RESTE")  # Test-Tür; "" = kein Altbestand
-    reste = (
-        umg.split(os.pathsep) if umg is not None else config.maschine()["temp_reste"]
+def anlegen(ticket: int, *, repo: str | None = None, von: str = "to_spawn") -> Path:
+    """Neuer Ordner ``t<ticket>-…`` unter :func:`pfad` mit Marker; nur ihn räumt der Hausmeister.
+
+    ``repo`` = Ticket-Repo (Vorgabe: das Ticket-Repo der Maschine), ``von`` = Erzeuger (für
+    den Menschen, der den Ordner findet). ``ValueError`` bei ungültiger Nummer oder ohne
+    Ticket-Repo, ``OSError`` geht an den Aufrufer.
+    """
+    from . import hausmeister as hm  # spät: hausmeister ruft dieses Modul
+
+    if isinstance(ticket, bool) or not isinstance(ticket, int) or ticket <= 0:
+        raise ValueError(f"Ticket-Nummer ungültig: {ticket!r}")
+    repo = (repo or hm._ticket_repo() or "").strip()
+    if not repo:
+        raise ValueError(
+            "kein eindeutiges Ticket-Repo — Temp-Ordner ohne Marker gäbe es nie"
+        )
+    ordner = Path(tempfile.mkdtemp(prefix=f"t{ticket}-", dir=pfad()))
+    inhalt = {"repo": repo, "ticket": ticket, "angelegt": time.time(), "von": von}
+    fd = os.open(
+        ordner / MARKER,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+        0o600,
     )
-    muster = [os.path.join(str(pfad()), "*")]
-    for m in reste:
-        if not isinstance(m, str) or not m.strip():
-            continue
-        roh = os.path.expanduser(m.strip())
-        if ".." in Path(roh).parts or _gefaehrlich(
-            Path(os.path.abspath(os.path.dirname(roh)))
-        ):
-            log.warning("Temp-Rest-Muster %s abgelehnt (.. oder Wurzel/Home)", m)
-            continue
-        muster.append(roh)
-    return list(dict.fromkeys(muster))
+    with os.fdopen(fd, "w", encoding="utf-8") as datei:
+        json.dump(inhalt, datei)
+    return ordner
 
 
-def reste() -> list[tuple[Path, int]]:
-    """Kandidaten (Ordner, Ticket-Nummer) unter allen Mustern, ohne Such-Eltern, sortiert."""
-    muster = _muster()
-    eltern = {os.path.abspath(t) for m in muster for t in glob.glob(os.path.dirname(m))}
+def _markierte(wurzel: Path) -> list[Path]:
+    """Direkte Unterordner der Wurzel, in denen ein Marker liegt (gültig oder nicht), sortiert."""
+    with os.scandir(wurzel) as it:
+        return sorted(
+            Path(e.path) for e in it if os.path.lexists(os.path.join(e.path, MARKER))
+        )
+
+
+def _marker_ticket(ordner: Path, wurzel: Path) -> int:
+    """Regeln 1+2: Ticket-Nummer aus dem gültigen Marker, sonst ``_Bleibt`` mit Grund."""
+    from . import hausmeister as hm
+
     uid = os.getuid() if hasattr(os, "getuid") else None
-    gefunden: dict[Path, int] = {}
-    for m in muster:
-        for treffer in sorted(glob.glob(m)):
-            if os.path.abspath(treffer) in eltern:
-                continue  # Such-Eltern (``claude-1000``) sind nie selbst ein Rest
-            p = Path(os.path.abspath(treffer))
-            treffer_name = _REST_NAME.match(p.name)
-            if not treffer_name or p.is_symlink() or not p.is_dir():
-                continue
-            if uid is not None and p.stat().st_uid != uid:
-                continue  # fremder Besitzer: nie unser Rest
-            gefunden.setdefault(p, int(treffer_name.group(1)))
-    return sorted(gefunden.items())
+    info = os.lstat(ordner)
+    if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+        raise hm._Bleibt("kein echter Ordner (Symlink)")
+    if uid is not None and info.st_uid != uid:
+        raise hm._Bleibt("fremder Besitzer")
+    if Path(os.path.realpath(ordner)).parent != wurzel:
+        raise hm._Bleibt("liegt aufgelöst nicht unter der Temp-Wurzel")
+    marker = ordner / MARKER
+    if os.path.islink(marker):
+        raise hm._Bleibt("Marker ist ein Symlink")
+    fd = os.open(marker, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    with os.fdopen(fd, "rb") as datei:
+        m = os.fstat(datei.fileno())
+        if not stat.S_ISREG(m.st_mode) or (uid is not None and m.st_uid != uid):
+            raise hm._Bleibt("Marker keine eigene Datei")
+        roh = datei.read(_MARKER_MAX + 1)
+    try:
+        daten = json.loads(roh) if len(roh) <= _MARKER_MAX else None
+    except ValueError:
+        daten = None
+    ticket = daten.get("ticket") if isinstance(daten, dict) else None
+    if isinstance(ticket, bool) or not isinstance(ticket, int) or ticket <= 0:
+        raise hm._Bleibt("Marker ungültig")
+    repo = daten.get("repo")
+    eigen = (hm._ticket_repo() or "").strip().lower()
+    if not isinstance(repo, str) or not eigen or repo.strip().lower() != eigen:
+        raise hm._Bleibt(f"fremdes Repo im Marker ({repo!r})")
+    return ticket
 
 
 def _baum_pruefen(ordner: Path, jetzt: float) -> None:
@@ -182,7 +217,8 @@ def _repo_pruefen(repo: Path, rel: str, ist_worktree: bool) -> None:
     from . import hausmeister as hm
 
     try:
-        if [p for xy, p in hm._status(repo) if xy != "!!"]:
+        eigen = {MARKER} if rel == "." else set()  # der Marker selbst ist keine Arbeit
+        if [p for xy, p in hm._status(repo) if xy != "!!" and p not in eigen]:
             raise hm._Bleibt(f"ungesichert: geänderte/neue Dateien in {rel}")
         if hm._ungepushte_koepfe(repo, ist_worktree):
             raise hm._Bleibt(f"ungesichert: Commits auf keinem Remote in {rel}")
@@ -196,22 +232,23 @@ def _repo_pruefen(repo: Path, rel: str, ist_worktree: bool) -> None:
 
 
 def aufraeumen(*, loeschen: bool, jetzt: float | None = None) -> list[tuple[Path, str]]:
-    """Ein Hausmeister-Schritt über alle Temp-Reste; Rückgabe (Ordner, Grund) je Rest.
+    """Ein Hausmeister-Schritt über alle markierten Ordner; Rückgabe (Ordner, Grund) je Ordner.
 
     ``loeschen=False``: nur entscheiden. Gelöscht wird nur, was wegwerfbar ist (Regeln
     im Modul-Kommentar), mit Log-Zeile im Hausmeister-Log vorher („ohne Log kein
-    Löschen“). Wirft nie.
+    Löschen“). Ordner ohne Marker tauchen nicht auf. Wirft nie.
     """
     jetzt = time.time() if jetzt is None else jetzt
     try:
-        kandidaten = reste()
+        wurzel = Path(os.path.realpath(pfad()))
+        kandidaten = _markierte(wurzel)
     except OSError as fehler:
         log.warning("Temp-Reste: Suche gescheitert (%s)", fehler)
         return []
     ergebnis: list[tuple[Path, str]] = []
-    zu: dict[tuple[int, str], bool] = {}  # ein gh-Aufruf je Ticket, nicht je Rest
-    for ordner, ticket in kandidaten:
-        grund = _entscheiden(ordner, ticket, jetzt, zu)
+    zu: dict[int, bool] = {}  # ein gh-Aufruf je Ticket, nicht je Ordner
+    for ordner in kandidaten:
+        ticket, grund = _entscheiden(ordner, wurzel, jetzt, zu)
         if grund is None:
             grund = f"Temp-Rest von Ticket #{ticket} (zu, alt, kein Prozess, nichts Ungesichertes)"
             if loeschen:
@@ -221,31 +258,29 @@ def aufraeumen(*, loeschen: bool, jetzt: float | None = None) -> list[tuple[Path
 
 
 def _entscheiden(
-    ordner: Path, ticket: int, jetzt: float, zu: dict[tuple[int, str], bool]
-) -> str | None:
-    """``None`` = wegwerfbar, sonst der Grund, warum der Rest bleibt."""
+    ordner: Path, wurzel: Path, jetzt: float, zu: dict[int, bool]
+) -> tuple[int, str | None]:
+    """(Ticket, ``None``) = wegwerfbar, sonst (Ticket oder 0, Grund, warum er bleibt)."""
     from . import hausmeister as hm  # spät: hausmeister ruft dieses Modul
 
+    ticket = 0
     try:
-        # Ist der Rest selbst ein Klon, gilt die Nummer in seinem Repo; sonst im Ticket-Repo
-        # der Maschine. ponytail: Reste ohne Git aus anderen Repos schützen Alter, Prozess-
-        # und Baum-Regel; Upgrade: Repo-Kürzel im Rest-Namen.
-        slug = hm._origin_slug(ordner) if (ordner / ".git").exists() else ""
-        if (ticket, slug) not in zu:
-            daten = hm._ticket_daten(ticket, slug or None)
-            zu[(ticket, slug)] = (
+        ticket = _marker_ticket(ordner, wurzel)
+        if ticket not in zu:  # Marker-Repo = Ticket-Repo der Maschine (geprüft)
+            daten = hm._ticket_daten(ticket)
+            zu[ticket] = (
                 isinstance(daten, dict)
                 and str(daten.get("state", "")).upper() == "CLOSED"
             )
-        if not zu[(ticket, slug)]:
-            return "bleibt: Ticket offen oder unbekannt"
+        if not zu[ticket]:
+            return ticket, "bleibt: Ticket offen oder unbekannt"
         hm._kein_prozess(ordner)
         _baum_pruefen(ordner, jetzt)
     except hm._Bleibt as b:
-        return f"bleibt: {b.grund}"
+        return ticket, f"bleibt: {b.grund}"
     except (OSError, RuntimeError, ValueError) as fehler:
-        return f"bleibt: Fehler {type(fehler).__name__}: {fehler}"
-    return None
+        return ticket, f"bleibt: Fehler {type(fehler).__name__}: {fehler}"
+    return ticket, None
 
 
 def _weg(ordner: Path, ticket: int, grund: str, jetzt: float) -> str:
