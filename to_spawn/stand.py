@@ -36,26 +36,23 @@ TIMEOUT_PUSH_S = 900
 
 
 def _argv(befehl: str) -> list[str]:
-    """Text-Befehl → argv; ``python``/``python3`` → laufender Interpreter, ``bash`` unter
-    Windows → Git-Bash."""
+    """Text-Befehl → argv; ``python``/``python3`` → laufender Interpreter."""
     teile = shlex.split(befehl)
     if teile and teile[0] in ("python", "python3"):
         teile[0] = sys.executable
-    elif teile and teile[0] == "bash" and sys.platform == "win32":
-        teile[0] = bash_wahl.bash()
     return teile
 
 
 def _lauf(befehl: str, repo: Path, timeout_s: float) -> int | None:
     """Befehl im Repo ausführen; ``None``, wenn das Programm nicht startet oder hängt."""
     try:
+        teile = _argv(befehl)
+        # Push-Kette (nest_push.sh) soll denselben Python nehmen wie der Aufrufer.
+        umgebung = {**os.environ, "TO_SPAWN_PY": sys.executable}
+        if teile and teile[0] == "bash":  # Tür für bash: Git-Bash unter Windows, ohne Pfadsperre
+            return bash_wahl.lauf(teile[1:], cwd=str(repo), timeout=timeout_s, env=umgebung).returncode
         return subprocess.run(
-            _argv(befehl),
-            cwd=str(repo),
-            check=False,
-            timeout=timeout_s,
-            # Push-Kette (nest_push.sh) soll denselben Python nehmen wie der Aufrufer.
-            env={**os.environ, "TO_SPAWN_PY": sys.executable},
+            teile, cwd=str(repo), check=False, timeout=timeout_s, env=umgebung
         ).returncode
     except subprocess.TimeoutExpired:
         log.error(
