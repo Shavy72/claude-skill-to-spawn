@@ -29,6 +29,7 @@ TAG = 24 * 3600.0
 @pytest.fixture
 def zweig_welt(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> Welt:
     monkeypatch.setenv("TO_SPAWN_HAUSMEISTER_ZWEIG_REPOS", ORIGIN)
+    monkeypatch.setenv("TO_SPAWN_HAUSMEISTER_ZWEIGE_LOESCHEN", "1")  # #1491: Löschen nur mit Schalter
     return welt
 
 
@@ -229,6 +230,7 @@ def test_remote_nicht_erreichbar_wirft_nie(
     monkeypatch.setenv(
         "TO_SPAWN_HAUSMEISTER_ZWEIG_REPOS", str(welt.tmp / "gibt-es-nicht.git")
     )
+    monkeypatch.setenv("TO_SPAWN_HAUSMEISTER_ZWEIGE_LOESCHEN", "1")  # #1491: Löschen nur mit Schalter
     erg = hausmeister.sicherungen_aufraeumen(loeschen=True, jetzt=welt.jetzt)
     assert len(erg) == 1 and erg[0].fehler and erg[0].art == "bleibt"
     assert [z["fehler"] for z in _zweig_zeilen(welt)] == [True]

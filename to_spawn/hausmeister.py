@@ -136,6 +136,8 @@ WURZELN_STANDARD = ("~/wt/*", "~/wt-*", "~/duoplus-[0-9]*", "C:/dev/wt-*")
 MINDEST_ZU_SEKUNDEN = 24 * 3600
 #: Unter diesem Anteil freier Platte gilt Platznot: fertige Ordner gehen vor Ablauf der 24 h.
 PLATZNOT_ANTEIL = 0.15
+#: #1491: Zweige löscht der Hausmeister nur, wenn diese Variable genau „1“ ist (:func:`zweige_loeschen_an`).
+ZWEIGE_SCHALTER = "TO_SPAWN_HAUSMEISTER_ZWEIGE_LOESCHEN"
 #: Unter diesem Anteil freier Platte startet keine neue Session.
 STARTSPERRE_ANTEIL = 0.05
 #: Sperrdatei gegen parallele Aufräum-Läufe, im Ordner des Hausmeister-Logs.
@@ -303,7 +305,6 @@ def _alle_ordner(*, loeschen: bool, jetzt: float | None) -> Rundgang:
             kandidaten.sort(key=lambda k: (zeiten[k] is None, zeiten[k] or 0.0, str(k)))
     except Exception as fehler:  # Vertrag: wirft nie
         log.exception("Hausmeister: Aufräumen gescheitert (Ordnersuche/Reihenfolge)")
-        _sicherungen_im_takt(loeschen, jetzt)
         _zweige_im_takt(loeschen, jetzt)
         return Rundgang(
             False, f"Ordnersuche gescheitert ({type(fehler).__name__}: {fehler})"
@@ -316,21 +317,31 @@ def _alle_ordner(*, loeschen: bool, jetzt: float | None) -> Rundgang:
         ergebnisse.append(erg)
         if erg.art != "bleibt" and not erg.trocken:
             anteil = _frei_anteil()
-    _sicherungen_im_takt(loeschen, jetzt)
     _zweige_im_takt(loeschen, jetzt)
     return Rundgang(True, "", tuple(ergebnisse))
 
 
-def _sicherungen_im_takt(loeschen: bool, jetzt: float | None) -> None:
-    """E41: Sicherungs-Zweige im Takt von :func:`aufraeumen_alles` (Tür begrenzt auf täglich)."""
+def zweige_loeschen_an() -> bool:
+    """#1491: Räumt der Hausmeister Zweige weg? Nur mit ``TO_SPAWN_HAUSMEISTER_ZWEIGE_LOESCHEN=1``.
+
+    Die EINE Stelle der Regel: gilt für ``sicherung/*`` und ``ticket/*`` (GitHub und
+    Tages-Lauf über die Hauptrepos), für jeden Aufrufer gleich (Aufpasser, capo,
+    Start-Check, Handaufruf). Standard aus. Welche Repos, sagen weiter
+    ``…_ZWEIG_REPOS``/``…_HAUPTREPOS``. Unberührt: der lokale ``ticket/*``-Zweig eines
+    entfernten Worktrees (:func:`_loeschen`, vorher gesichert) und der reine Probelauf.
+    """
+    return os.environ.get(ZWEIGE_SCHALTER, "").strip() == "1"
+
+
+def _zweige_im_takt(loeschen: bool, jetzt: float | None) -> None:
+    """E41/#1439: Sicherungs- und Ticket-Zweige im Takt von :func:`aufraeumen_alles` (täglich)."""
+    if not zweige_loeschen_an():
+        log.info("Hausmeister: Zweig-Löschen aus (%s=1 fehlt) — alle Zweige bleiben", ZWEIGE_SCHALTER)
+        return
     try:
         sicherungen_aufraeumen(loeschen=loeschen, jetzt=jetzt)
     except Exception:  # Vertrag: wirft nie — Ordner-Ergebnisse gehen vor
         log.exception("Hausmeister: Sicherungs-Zweige gescheitert")
-
-
-def _zweige_im_takt(loeschen: bool, jetzt: float | None) -> None:
-    """#1439: Ticket-Zweige im Takt von :func:`aufraeumen_alles` (Tür begrenzt auf täglich)."""
     try:
         zweige_aufraeumen(loeschen=loeschen, jetzt=jetzt)
     except Exception:  # Vertrag: wirft nie — Ordner-Ergebnisse gehen vor
@@ -497,9 +508,12 @@ def sicherungen_aufraeumen(
 ) -> list[ZweigErgebnis]:
     """Löscht ``sicherung/<N>``-Zweige 90 Tage nach dem Anlegen; wirft nie.
 
-    Höchstens einmal täglich je Modus, sonst ``[]``. Junge Zweige stehen nur im
-    Ergebnis (ohne Log-Zeile), Löschungen und Fehler je eine Log-Zeile.
+    Nur mit Schalter (:func:`zweige_loeschen_an`), sonst ``[]``. Höchstens einmal
+    täglich je Modus, sonst ``[]``. Junge Zweige stehen nur im Ergebnis (ohne
+    Log-Zeile), Löschungen und Fehler je eine Log-Zeile.
     """
+    if not zweige_loeschen_an():  # #1491: Schalter aus ⇒ nichts, auch kein Takt verbraucht
+        return []
     jetzt = time.time() if jetzt is None else jetzt
     modus = "loeschen" if loeschen else "trocken"
     if not _sicherung_takt_faellig(modus, jetzt):
@@ -863,9 +877,12 @@ def _zweig_aufraeumen(
 def zweige_aufraeumen(*, loeschen: bool = False, jetzt: float | None = None) -> list[ZweigErgebnis]:
     """Täglicher Lauf über alle ``ticket/*``-Zweige (Hauptrepos lokal + Remotes); wirft nie.
 
-    Höchstens einmal täglich je Modus, sonst ``[]``. Erreicht der Lauf kein Repo und
-    keinen Remote, bleibt der Tag offen (nächster Takt versucht es wieder).
+    Nur mit Schalter (:func:`zweige_loeschen_an`), sonst ``[]``. Höchstens einmal
+    täglich je Modus, sonst ``[]``. Erreicht der Lauf kein Repo und keinen Remote,
+    bleibt der Tag offen (nächster Takt versucht es wieder).
     """
+    if not zweige_loeschen_an():  # #1491: Schalter aus ⇒ nichts, auch kein Takt verbraucht
+        return []
     jetzt = time.time() if jetzt is None else jetzt
     modus = "zweige-loeschen" if loeschen else "zweige-trocken"
     if not _sicherung_takt_faellig(modus, jetzt):
