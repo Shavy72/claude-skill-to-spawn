@@ -1155,3 +1155,79 @@ def test_vps_kopf_pfad_mit_tilde_bleibt_fuer_server_offen(monkeypatch: pytest.Mo
     aufrufe = _ssh_zaehler(monkeypatch, lambda b: subprocess.CompletedProcess(b, 0, stdout=sha + "\n", stderr=""))
     assert capo_mod.vps_kopf({"ssh": "vps-test", "pfad": "~/app; rm -rf x"}) == sha
     assert aufrufe[0][-1] == "cd ~/'app; rm -rf x' && git rev-parse HEAD", aufrufe[0][-1]
+
+
+# --- #1207: Deckung wie der Deploy-Dienst (deploy_ziel.deckung) ---------------
+
+#: Echte SSOT aus dem Haupt-Repo (scripts/staging/deploy_ziel.py), keine Nachbildung.
+_HAUPT_REPOS = [
+    Path(p).expanduser()
+    for p in (os.environ.get("TO_SPAWN_HAUPT_REPO_TEST") or "", "~/duoplus-leit", "~/duoplus-management", "C:/dev/duoplus-management")
+    if p
+]
+_DEPLOY_ZIEL = next(
+    (r / "scripts" / "staging" / "deploy_ziel.py" for r in _HAUPT_REPOS if (r / "scripts" / "staging" / "deploy_ziel.py").is_file()),
+    None,
+)
+
+
+def _vps_deckung(
+    welt: dict[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    zettel: list[str],
+    manifest: dict | None = None,
+) -> None:
+    """#901 mit Zettel-Lage ``zettel``; im Stand davor fremdes #902 (web/), alles auf Staging, live alt."""
+    if _DEPLOY_ZIEL is None:
+        pytest.skip("deploy_ziel.py aus dem Haupt-Repo nicht gefunden (TO_SPAWN_HAUPT_REPO_TEST setzen)")
+    dateien = {"scripts/staging/deploy_ziel.py": _DEPLOY_ZIEL.read_text(encoding="utf-8")}
+    if manifest is not None:
+        dateien["docs/agents/manifests/spec-900.json"] = json.dumps(manifest)
+    vorher = _commit(welt["repo"], "chore: Deploy-Ziel (#1)", dateien)
+    log = welt["tmp"] / "deploys.jsonl"
+    freigabe = welt["tmp"] / "live_freigabe"
+    freigabe.mkdir()
+    for name in zettel:
+        (freigabe / name).write_text("ok\n", encoding="utf-8")
+    _konfig(
+        welt,
+        vps={
+            "ssh": "vps-test",
+            "pfad": "/opt/x",
+            "deploy_pfade": ["web/"],
+            "staging_log": str(log),
+            "freigabe_ordner": str(freigabe),
+        },
+    )
+    _commit(welt["repo"], "feat: Fremd (#902)", {"web/fremd.py": "y = 1\n"})
+    kopf = _commit(welt["repo"], "feat: Seite (#901)", {"web/seite.py": "x = 1\n", **_beleg()})
+    log.write_text(json.dumps({"sha": kopf, "ergebnis": "gruen"}) + "\n", encoding="utf-8")
+    for name, wert in _ssh_fake(welt, vorher).items():
+        monkeypatch.setenv(name, wert)
+
+
+def test_1207_ticket_zettel_fremdes_ticket_ohne_zettel_auf_staging_bleibt_zu(
+    welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#1191: Zettel nur für das eigene Ticket, #902 im Stand ohne Zettel → Dienst bleibt auf Staging."""
+    _vps_deckung(welt, monkeypatch, zettel=["901"])
+    ergebnis = _capo(welt)
+    assert _kommentare(welt, "901") == [], _text(ergebnis)
+    assert _gh_zustand(welt)["issues"]["901"]["state"] == "closed"
+
+
+def test_1207_alle_tickets_gedeckt_aber_nicht_live_oeffnet_wieder(
+    welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _vps_deckung(welt, monkeypatch, zettel=["901", "902"])
+    _capo(welt)
+    assert any(k.startswith("Aufseher: vps_ungleich_origin") for k in _kommentare(welt, "901"))
+
+
+def test_1207_spec_zettel_deckt_alle_tickets_oeffnet_wieder(
+    welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Spec-Zettel 900 deckt #901 und #902 über das Manifest (deploy_ziel.eltern_specs)."""
+    _vps_deckung(welt, monkeypatch, zettel=["900"], manifest={"spec": "900", "tickets": {"901": {}, "902": {}}})
+    _capo(welt)
+    assert any(k.startswith("Aufseher: vps_ungleich_origin") for k in _kommentare(welt, "901"))
