@@ -144,13 +144,13 @@ def _cli(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
 
 
 def test_pruefen_legt_konfig_an(repo: Path) -> None:
-    ergebnis = _cli(repo, "pruefen", "900", "--ohne-github")
+    ergebnis = _cli(repo, "regularien", "900", "--ohne-github")
     assert ergebnis.returncode == 0, ergebnis.stdout + ergebnis.stderr
     assert (repo / ".to-spawn" / "config.json").is_file()
 
 
 def test_pruefen_probelauf_legt_nichts_an(repo: Path) -> None:
-    _cli(repo, "pruefen", "900", "--ohne-github", "--dry-run")
+    _cli(repo, "regularien", "900", "--ohne-github", "--dry-run")
     assert not (repo / ".to-spawn" / "config.json").exists()
 
 
@@ -367,7 +367,7 @@ def test_modell_kommt_aus_der_repo_konfig(repo: Path, name: str, nummer: str, mo
 
 @pytest.mark.parametrize(("name", "nummer"), [("bau", "901"), ("wache", "900")])
 def test_probelauf_legt_keine_konfig_an(repo: Path, name: str, nummer: str) -> None:
-    """``--dry-run`` = keine Seiteneffekte, wie bei ``to_spawn.py pruefen --dry-run``."""
+    """``--dry-run`` = keine Seiteneffekte, wie bei ``to_spawn.py regularien --dry-run``."""
     ergebnis = _probelauf(repo, name, nummer)
     assert ergebnis.returncode == 0, ergebnis.stdout + ergebnis.stderr
     assert not (repo / ".to-spawn" / "config.json").exists()

@@ -111,7 +111,7 @@ def _assistant(usage: dict, sidechain: bool = False) -> dict:
 def test_pruefen_weigert_sich_ohne_schaetzung(repo: Path) -> None:
     """(a) Fehlt ``schaetzung_k``, startet nichts — Exit 3 mit klarer Anweisung."""
     _manifest_schreiben(repo, {TICKETS[0]: {"title": "ohne Schätzung", "umfang": "irgendwas"}})
-    ergebnis = _cli(repo, "pruefen", str(SPEC))
+    ergebnis = _cli(repo, "regularien", str(SPEC))
     assert ergebnis.returncode == 3, ergebnis.stdout + ergebnis.stderr
     assert "schaetzung_k" in ergebnis.stdout
     assert "/to-tickets" in ergebnis.stdout
@@ -123,14 +123,14 @@ def test_pruefen_weigert_sich_bei_zu_grossem_ticket(repo: Path) -> None:
         repo,
         {TICKETS[0]: {"title": "zu groß", "schaetzung_k": 250, "umfang": "riesig"}},
     )
-    ergebnis = _cli(repo, "pruefen", str(SPEC))
+    ergebnis = _cli(repo, "regularien", str(SPEC))
     assert ergebnis.returncode == 3, ergebnis.stdout
     assert "über der Grenze" in ergebnis.stdout
 
 
 def test_pruefen_geht_durch_bei_vollstaendigem_manifest(repo: Path) -> None:
     """Gegenprobe: vollständiges Manifest → Exit 0."""
-    ergebnis = _cli(repo, "pruefen", str(SPEC))
+    ergebnis = _cli(repo, "regularien", str(SPEC))
     assert ergebnis.returncode == 0, ergebnis.stdout + ergebnis.stderr
 
 

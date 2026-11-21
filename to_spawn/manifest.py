@@ -277,7 +277,7 @@ def _pruefe_andere_manifeste(
 def _github_fehler(bericht: Bericht, wo: str) -> str:
     return (
         f"GitHub-Abfrage {wo} fehlgeschlagen — `gh auth status` prüfen; bewusst ohne "
-        f"GitHub: `pruefen {bericht.spec} --ohne-github`."
+        f"GitHub: `regularien {bericht.spec} --ohne-github`."
     )
 
 
@@ -440,7 +440,7 @@ def _pruefe_checkpoint_am_ende(
     Blockiert, weil es hinten dran hängt, ist gewollt (Abnahme-Ticket). Steht der
     Checkpoint dagegen VOR anderen Tickets, wartet nachts die ganze Kette auf eine
     Antwort — solche Fragen gehören in den Grill vor den Spawn. Seit #325 ein Fehler
-    (``pruefen`` weigert sich), keine Warnung mehr.
+    (``regularien`` weigert sich), keine Warnung mehr.
     """
     wartende = [
         n

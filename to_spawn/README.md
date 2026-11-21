@@ -12,7 +12,8 @@ Immer im Repo-Wurzelordner ausführen:
 | Befehl | Wirkung |
 |---|---|
 | `python to_spawn.py spawn <S> [--ziel local\|srv] [--tickets a,b] [--dry-run]` | prüft die Regularien, fragt „lokal (1) oder Server (2)?" und startet das Terminal-Skript |
-| `python to_spawn.py pruefen <S> [--tickets a,b] [--ohne-github]` | nur die Regularien; Exit 0 = frei, **Exit 3 = Weigerung** |
+| `python to_spawn.py regularien <S> [--tickets a,b] [--ohne-github]` | nur die Regularien; Exit 0 = frei, **Exit 3 = Weigerung** (alter Name `pruefen <S>` leitet mit Warnung weiter) |
+| `python to_spawn.py pruefen <basis> <ziel> [--repo P]` | Prüf-Werkzeugkasten (#99): erkennt Python/Node, prüft `ziel` (muss ausgecheckt sein) voll, eine JSON-Zeile auf stdout und in `.to-spawn/pruef/protokoll.jsonl`; **Exit 0 = grün, 1 = rot, 2 = Gate-Fehler** (Werkzeug fehlt/kaputt, nicht der Code) |
 | `python to_spawn.py log <S>` | Gesamt-Tabelle aller Tickets der Spec (Schätzung, Ist, Sessions, Staffel, Subagenten, Dauer) |
 | `python to_spawn.py lernstoff [--letzte 30]` | Zeilen für `/to-tickets` (Schätzung → Ist, Sessions, Faktor je Ticket + Faustregeln für den Schnitt) |
 | `python to_spawn.py deploy-status [--datei P] [--ticket N] [--still-min 60]` | liest nur die Deploy-Statusdatei (Vorgabe `<Repo>/.deploy_status.jsonl`, sonst `DEPLOY_STATUS_DATEI`), schreibt jede neue Phase als `deploy_phase` ins Bau-Log des Repos, in dem die Datei liegt (ohne Doppel; Ticket aus `--ticket`, `BAU_TICKET` oder `wt-<N>`), Ausgabe ≤ 3 Zeilen; **Exit 0 = grün, 1 = rot (auch: Gate-Prozess laut PID tot ohne Ende-Zeile), 3 = läuft, 4 = still über der Grenze oder Zeitstempel unlesbar, 2 = keine Datei** |
@@ -29,7 +30,7 @@ Immer im Repo-Wurzelordner ausführen:
 
 ## Regularien (Weigerung, Exit 3)
 
-Gelesen wird `docs/agents/manifests/spec-<S>.json`. `pruefen <S> [--tickets a,b] [--ohne-github]`
+Gelesen wird `docs/agents/manifests/spec-<S>.json`. `regularien <S> [--tickets a,b] [--ohne-github]`
 läuft automatisch vor jedem Spawn (`spawn`, `scripts/spawn_srv.sh`,
 `spawn_local.ps1`); Exit 0 = frei, **Exit 3 = Weigerung**, nichts wird gestartet,
 jede Fehlerzeile nennt ihre Abhilfe.
