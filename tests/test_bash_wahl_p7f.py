@@ -7,6 +7,7 @@ Windows-Python als vorhandene Datei ankommen. Attrappen nur für die Rechenlogik
 
 from __future__ import annotations
 
+import ast
 import os
 import shlex
 import shutil
@@ -87,3 +88,81 @@ def test_wsl_stub_regel() -> None:
     assert bash_wahl.ist_wsl_stub(r"C:\Users\x\AppData\Local\Microsoft\WindowsApps\bash.exe")
     assert not bash_wahl.ist_wsl_stub(r"C:\Program Files\Git\bin\bash.exe")
     assert not bash_wahl.ist_wsl_stub("/usr/bin/bash")
+
+
+# --- Prüf-Test: bash startet nur über bash_wahl.lauf ------------------------------------
+
+#: Bewusste bash-Stellen außerhalb der Tür, Schlüssel (Datei, Funktion). Neue nur mit Grund.
+BASH_AUSNAHMEN = frozenset(
+    {
+        ("to_spawn/spawn.py", "_befehl_unix"),  # nur Nicht-Windows-Zweig (ziel local), Linux-bash
+        ("to_spawn/capo.py", "folge_befehl"),  # `bash -lc` als Text im tmux-Fenster
+        ("to_spawn/respawn.py", "_startbefehl"),  # `bash -lc` als Text im tmux-Fenster
+    }
+)
+
+_TUER = "to_spawn/bash_wahl.py"
+_SUBPROCESS = {"run", "Popen", "call", "check_call", "check_output"}
+
+
+def _ist_bash(knoten: ast.AST) -> bool:
+    """``"bash"``/``"/bin/bash"``/``"bash.exe"`` oder ``shutil.which("bash")``."""
+    if isinstance(knoten, ast.Constant) and isinstance(knoten.value, str):
+        return knoten.value.replace("\\", "/").rsplit("/", 1)[-1].lower() in ("bash", "bash.exe")
+    return isinstance(knoten, ast.Call) and any(_ist_bash(a) for a in knoten.args)
+
+
+def bash_stellen(wurzel: Path) -> set[tuple[str, str]]:
+    """(Datei, Funktion) mit bash als argv-Element oder ``subprocess.*("bash …")`` als Text."""
+    treffer: set[tuple[str, str]] = set()
+    for ordner in ("to_spawn", "skripte"):
+        for datei in sorted((wurzel / ordner).rglob("*.py")):
+            rel = datei.relative_to(wurzel).as_posix()
+            if rel == _TUER:
+                continue
+            baum = ast.parse(datei.read_text(encoding="utf-8"), filename=rel)
+            for funktion in ast.walk(baum):
+                if not isinstance(funktion, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    continue
+                for k in ast.walk(funktion):
+                    argv = isinstance(k, (ast.List, ast.Tuple)) and any(_ist_bash(e) for e in k.elts)
+                    text = (
+                        isinstance(k, ast.Call)
+                        and isinstance(k.func, ast.Attribute)
+                        and k.func.attr in _SUBPROCESS
+                        and bool(k.args)
+                        and isinstance(k.args[0], ast.Constant)
+                        and isinstance(k.args[0].value, str)
+                        and k.args[0].value.split(" ", 1)[0].rsplit("/", 1)[-1] in ("bash", "bash.exe")
+                    )
+                    if argv or text:
+                        treffer.add((rel, funktion.name))
+    return treffer
+
+
+def test_bash_startet_nur_ueber_die_tuer() -> None:
+    stellen = bash_stellen(SKILL)
+    neu = sorted(stellen - BASH_AUSNAHMEN)
+    assert not neu, f"bash an bash_wahl.lauf vorbei — über to_spawn.bash_wahl.lauf starten: {neu}"
+    weg = sorted(BASH_AUSNAHMEN - stellen)
+    assert not weg, f"Ausnahme ohne Treffer, aus BASH_AUSNAHMEN streichen: {weg}"
+
+
+def test_bash_pruefung_findet_direkten_start(tmp_path: Path) -> None:
+    (tmp_path / "to_spawn").mkdir()
+    (tmp_path / "skripte").mkdir()
+    (tmp_path / "to_spawn" / "neu.py").write_text(
+        "import subprocess\n"
+        "def los():\n    subprocess.run(['bash', '-c', 'echo x'])\n"
+        "def text():\n    subprocess.Popen('bash -c true', shell=True)\n"
+        "def gesucht():\n    subprocess.run([shutil.which('bash'), 'x.sh'])\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "skripte" / "ok.py").write_text(
+        "def f():\n    return ['sh', '-c', 'bash ist nur Text']\n", encoding="utf-8"
+    )
+    assert bash_stellen(tmp_path) == {
+        ("to_spawn/neu.py", "los"),
+        ("to_spawn/neu.py", "text"),
+        ("to_spawn/neu.py", "gesucht"),
+    }
