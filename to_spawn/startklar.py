@@ -162,15 +162,6 @@ def befehl_text(werkzeug: Werkzeug, spec: int, ticket: int | str) -> str:
     )
 
 
-def _bash_pfad() -> str | None:
-    """bash für die Probe-Befehle — Wahl in ``to_spawn.bash_wahl``; fehlt sie → ``None``."""
-    try:
-        return bash_wahl.bash()
-    except FileNotFoundError as fehler:
-        log.warning("%s", fehler)
-        return None
-
-
 def _standard_laeufer(
     befehl: str,
     cwd: Path,
@@ -178,11 +169,9 @@ def _standard_laeufer(
     timeout: float,
     zusatz: Mapping[str, str],
 ) -> subprocess.CompletedProcess[str]:
-    bash = _bash_pfad()
-    if bash is None:
-        raise OSError("bash fehlt (Windows: Git for Windows/Git-Bash installieren)")
-    return subprocess.run(
-        [bash, "-c", befehl],
+    """Probe-Befehl in bash (Tür ``to_spawn.bash_wahl``); fehlt bash → ``FileNotFoundError``."""
+    return bash_wahl.lauf(
+        ["-c", befehl],
         cwd=str(cwd),
         input=eingabe,
         capture_output=True,
@@ -190,8 +179,7 @@ def _standard_laeufer(
         encoding="utf-8",
         errors="replace",
         timeout=timeout,
-        env=bash_wahl.bash_umgebung({**os.environ, **zusatz}),
-        check=False,
+        env={**os.environ, **zusatz},
     )
 
 

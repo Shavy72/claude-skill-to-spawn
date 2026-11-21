@@ -16,7 +16,7 @@ import subprocess
 import sys
 import textwrap
 from collections.abc import Iterator
-from pathlib import Path, PureWindowsPath
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -30,6 +30,8 @@ if _HILFEN not in sys.path:
     sys.path.insert(0, _HILFEN)
 
 from git_bash import git_bash  # noqa: E402 — liegt in ``tests/hilfen`` (Pfad oben)
+
+from to_spawn import bash_wahl  # noqa: E402 — Pfad setzt ``git_bash``
 
 _WINDOWS = sys.platform == "win32"
 
@@ -46,7 +48,7 @@ ZEITGRENZE_S = 600
 _NUR_POSIX = frozenset({"posix"})
 
 
-def braucht_fehlt(name: str, plattform: str = sys.platform, finde=shutil.which) -> str | None:
+def braucht_fehlt(name: str, plattform: str = sys.platform, finde=None) -> str | None:
     """Grund, warum der Test-Bedarf ``name`` hier fehlt (``None`` = vorhanden), #68 P7b.
 
     Einzige Stelle dieses Wissens: ``posix`` fehlt unter Windows; ``bash`` zählt unter
@@ -55,13 +57,13 @@ def braucht_fehlt(name: str, plattform: str = sys.platform, finde=shutil.which) 
     """
     if name in _NUR_POSIX:
         return "nur POSIX (Linux/macOS)" if plattform == "win32" else None
-    pfad = finde(name)
+    if name == "bash" and finde is None:  # echte Suche: die eine Tür ``bash_wahl``
+        return None if git_bash() else "keine bash gefunden (Windows: nur WSL-Stub oder gar keine)"
+    pfad = (finde or shutil.which)(name)
     if pfad is None:
         return f"{name} fehlt im PATH"
-    if name == "bash" and plattform == "win32":
-        teile = {t.lower() for t in PureWindowsPath(pfad).parts}
-        if "system32" in teile or "windowsapps" in teile:
-            return f"bash ist nur der WSL-Stub ({pfad})"
+    if name == "bash" and plattform == "win32" and bash_wahl.ist_wsl_stub(pfad):
+        return f"bash ist nur der WSL-Stub ({pfad})"
     return None
 
 

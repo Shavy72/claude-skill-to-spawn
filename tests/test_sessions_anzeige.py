@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import re
-import shutil
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
+from git_bash import git_bash  # tests/hilfen: eine Tür ``to_spawn.bash_wahl``
 
 SKILL = Path(__file__).resolve().parent.parent
 NEST = SKILL / "nest" / "nest_server.sh"
@@ -43,8 +43,7 @@ def _funktionen() -> str:
 
 def _bash() -> str | None:
     """Git-Bash (Windows: ``bash`` im PATH ist oft WSL ohne /bin/bash) oder System-bash."""
-    git_bash = Path("C:/Program Files/Git/bin/bash.exe")
-    return str(git_bash) if git_bash.exists() else shutil.which("bash")
+    return git_bash()
 
 
 @pytest.mark.skipif(_bash() is None, reason="bash fehlt")
