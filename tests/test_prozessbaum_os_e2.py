@@ -1,10 +1,10 @@
 """prozessbaum: die öffentlichen Türen wählen das Betriebssystem selbst (Skill-Issue #92).
 
-``lebt()``, ``prozesse()`` und ``baum()`` lesen unter Windows die WMI-Prozessliste bzw.
-fragen den Kernel, unter Linux ``/proc``. Der Windows-Weg wird hier als reine
-Rechenlogik geprüft: ``/proc`` zeigt ins Leere, PowerShell liefert eine Ausgabe im
-echten Format von ``ConvertTo-Json -Compress`` (Startzeit = ``ToFileTimeUtc``), der
-Kernel-Zugriff ist eine Attrappe von ``kernel32``.
+``lebt()``, ``prozesse()`` und ``baum()`` lesen unter Windows die Kernel-Prozessliste
+bzw. fragen den Kernel, unter Linux ``/proc``. Der Windows-Weg wird hier als reine
+Rechenlogik geprüft: ``/proc`` zeigt ins Leere, die Kernel-Nähte (Momentaufnahme,
+Kommandozeile, ``kernel32``) sind Attrappen. Seit #154 startet keine Abfrage mehr einen
+Prozess (vorher PowerShell + WMI); den echten Kernel-Weg prüft ``test_prozessbaum_echt_154``.
 """
 
 from __future__ import annotations
@@ -23,28 +23,39 @@ from to_spawn import prozessbaum
 
 REPO = Path(__file__).resolve().parent.parent
 
-# Echte Form der PowerShell-Ausgabe von ``_PS_PROZESSE``: eine Zeile, Felder p/e/c/t.
+# PID → (Eltern-PID, Kommandozeile, Startzeit als FILETIME).
 # 10 = Terminal, 11/12 = Kinder, 13 = Enkel, 20 = Fremder mit recycelter Eltern-PID 10
 # (startete VOR dem heutigen Prozess 10 — gehört nicht zum Baum).
-_PS_AUSGABE = (
-    '[{"p":0,"e":0,"c":"","t":0},'
-    '{"p":10,"e":4,"c":"\\"C:\\\\Program Files\\\\WindowsApps\\\\wt.exe\\"","t":133780000000000000},'
-    '{"p":11,"e":10,"c":"pwsh.exe -NoLogo","t":133780000010000000},'
-    '{"p":12,"e":10,"c":"claude.exe --remote-control „bau 7“","t":133780000020000000},'
-    '{"p":13,"e":12,"c":"node mcp-server.js","t":133780000030000000},'
-    '{"p":20,"e":10,"c":"alt.exe","t":133770000000000000}]\r\n'
-)
+_PROZESSE = {
+    0: (0, "", 0),
+    10: (4, '"C:\\Program Files\\WindowsApps\\wt.exe"', 133780000000000000),
+    11: (10, "pwsh.exe -NoLogo", 133780000010000000),
+    12: (10, "claude.exe --remote-control „bau 7“", 133780000020000000),
+    13: (12, "node mcp-server.js", 133780000030000000),
+    20: (10, "alt.exe", 133770000000000000),
+}
 
 
 @pytest.fixture
 def windows(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> list[list[str]]:
-    """Erzwingt den Windows-Zweig; ``/proc`` fehlt, PowerShell liefert ``_PS_AUSGABE``."""
+    """Erzwingt den Windows-Zweig; ``/proc`` fehlt, die Kernel-Nähte liefern ``_PROZESSE``.
+
+    Ergebnis: Liste der Prozess-Starts (``subprocess.run``) — muss leer bleiben.
+    """
     aufrufe: list[list[str]] = []
 
     def run(befehl: list[str], **_: object) -> subprocess.CompletedProcess[str]:
         aufrufe.append(befehl)
-        return subprocess.CompletedProcess(befehl, 0, stdout=_PS_AUSGABE, stderr="")
+        return subprocess.CompletedProcess(befehl, 0, stdout="", stderr="")
 
+    def momentaufnahme() -> dict[int, tuple[int, int]]:
+        return {pid: (eltern, start) for pid, (eltern, _, start) in _PROZESSE.items()}
+
+    def kommandozeile(pid: int) -> str:
+        return _PROZESSE[pid][1] if pid in _PROZESSE else ""
+
+    monkeypatch.setattr(prozessbaum, "_momentaufnahme_windows", momentaufnahme)
+    monkeypatch.setattr(prozessbaum, "_kommandozeile_windows", kommandozeile)
     monkeypatch.setattr(prozessbaum, "_WINDOWS", True)
     monkeypatch.setattr(prozessbaum, "_PROC", tmp_path / "kein-proc")
     monkeypatch.setattr(prozessbaum.subprocess, "run", run)
@@ -54,12 +65,12 @@ def windows(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> list[list[str]]:
     return aufrufe
 
 
-def test_prozesse_windows_aus_wmi_liste(windows: list[list[str]]) -> None:
+def test_prozesse_windows_aus_momentaufnahme(windows: list[list[str]]) -> None:
     liste = prozessbaum.prozesse()
     assert liste[12] == (10, "claude.exe --remote-control „bau 7“", 133780000020000000)
     assert liste[10][1] == '"C:\\Program Files\\WindowsApps\\wt.exe"'
     assert set(liste) == {0, 10, 11, 12, 13, 20}
-    assert windows and windows[0][0] == "powershell"
+    assert windows == [], "Prozessliste startet keinen Prozess (#154)"
 
 
 def test_baum_windows_ohne_recycelte_fremde(windows: list[list[str]]) -> None:

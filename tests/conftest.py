@@ -14,6 +14,7 @@ import os
 import shutil
 import subprocess
 import sys
+import textwrap
 from collections.abc import Iterator
 from pathlib import Path, PureWindowsPath
 from typing import Any
@@ -62,6 +63,26 @@ def braucht_fehlt(name: str, plattform: str = sys.platform, finde=shutil.which) 
         if "system32" in teile or "windowsapps" in teile:
             return f"bash ist nur der WSL-Stub ({pfad})"
     return None
+
+
+def attrappe(ordner: Path, name: str, python_code: str) -> Path:
+    """Ausführbare Programm-Attrappe ``ordner/name`` (z. B. ``gh``, ``ssh``), #93.
+
+    Einzige Stelle des Wissens, wie eine Attrappe je Betriebssystem startbar wird:
+    POSIX ein Python-Skript mit Shebang auf den laufenden Interpreter
+    (``sys.executable``, kein festes ``python3``), Windows zusätzlich ``name.cmd``
+    als Hülle (PATHEXT findet sie). Das Verhalten (Ausgabe, Exit-Code, Protokoll,
+    stdin, Antwort je Argument) steht allein in ``python_code``; er wird
+    ``textwrap.dedent``-bereinigt. ``ordner`` wird bei Bedarf angelegt.
+    Rückgabe: Pfad des Skripts.
+    """
+    ordner.mkdir(parents=True, exist_ok=True)
+    skript = ordner / name
+    skript.write_text(f"#!{sys.executable}\n{textwrap.dedent(python_code)}", encoding="utf-8")
+    skript.chmod(skript.stat().st_mode | 0o111)
+    if os.name == "nt":
+        (ordner / f"{name}.cmd").write_text(f'@"{sys.executable}" "{skript}" %*\r\n', encoding="utf-8")
+    return skript
 
 
 def pytest_configure(config: pytest.Config) -> None:
@@ -308,3 +329,19 @@ def _maschine_liste_im_test(
     Tests mit eigenem ``setenv("TO_SPAWN_MASCHINE", …)`` überschreiben den Wert.
     """
     monkeypatch.setenv("TO_SPAWN_MASCHINE", str(tmp_path / "to-spawn-maschine" / "maschine.json"))
+
+
+@pytest.fixture(autouse=True)
+def _pruef_cache_im_test(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    _keine_to_spawn_umgebung: None,
+) -> None:
+    """Prüf-Cache (#102) liegt je Test unter ``tmp_path``, nie im echten Nutzer-Cache.
+
+    Probe-Repos gleichen Inhalts haben denselben Tree-SHA: ohne eigene Ablage je Test träfe ein
+    Test den grünen Eintrag eines anderen (z. B. „pytest fehlt“ würde grün).
+    """
+    ablage = str(tmp_path / "nutzer-cache")
+    monkeypatch.setenv("XDG_CACHE_HOME", ablage)
+    monkeypatch.setenv("LOCALAPPDATA", ablage)

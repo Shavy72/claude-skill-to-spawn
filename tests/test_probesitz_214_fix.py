@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from conftest import attrappe
 
 SKILL = Path(__file__).resolve().parent.parent
 CLI = SKILL / "to_spawn.py"
@@ -414,8 +415,7 @@ def heim(tmp_path: Path) -> Path:
     context_mode_attrappe.plugin_anlegen(home)
     binaer = home / "bin"
     binaer.mkdir()
-    (binaer / "claude").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-    (binaer / "claude").chmod(0o755)
+    attrappe(binaer, "claude", "raise SystemExit(0)")
     return home
 
 

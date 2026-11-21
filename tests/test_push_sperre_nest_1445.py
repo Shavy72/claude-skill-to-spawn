@@ -173,7 +173,7 @@ def test_installer_kommt_aus_origin_nicht_aus_dem_arbeitsordner(tmp_path: Path) 
     klon, _heim = _welt(tmp_path)
     marke = tmp_path / "boese-gelaufen"
     (klon / "scripts" / "hooks" / "install_git_hooks.sh").write_text(
-        f"#!/bin/sh\ntouch {marke}\nexit 0\n", encoding="utf-8"
+        f"touch {marke}\nexit 0\n", encoding="utf-8"
     )
     assert nest.git_hooks_einrichten(klon) is True
     assert not marke.exists(), "Installer aus dem Arbeitsordner ausgeführt"
@@ -182,7 +182,7 @@ def test_installer_kommt_aus_origin_nicht_aus_dem_arbeitsordner(tmp_path: Path) 
 
 
 def test_installer_exit_ungleich_null_warnt_ohne_abbruch(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
-    klon, _heim = _welt(tmp_path, installer="#!/bin/sh\necho kaputt >&2\nexit 3\n")
+    klon, _heim = _welt(tmp_path, installer="echo kaputt >&2\nexit 3\n")
     with caplog.at_level(logging.WARNING, logger=nest.log.name):
         assert nest.git_hooks_einrichten(klon) is False
     assert "endete mit 3" in caplog.text and "kaputt" in caplog.text
@@ -191,7 +191,7 @@ def test_installer_exit_ungleich_null_warnt_ohne_abbruch(tmp_path: Path, caplog:
 def test_installer_timeout_warnt_ohne_abbruch(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    klon, _heim = _welt(tmp_path, installer="#!/bin/sh\nsleep 5\n")
+    klon, _heim = _welt(tmp_path, installer="sleep 5\n")
     monkeypatch.setattr(nest, "GIT_HOOKS_TIMEOUT_S", 1)
     with caplog.at_level(logging.WARNING, logger=nest.log.name):
         assert nest.git_hooks_einrichten(klon) is False

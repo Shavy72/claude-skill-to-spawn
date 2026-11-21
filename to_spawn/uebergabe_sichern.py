@@ -36,7 +36,7 @@ from . import config
 log = logging.getLogger("to_spawn.uebergabe_sichern")
 
 #: Öffentliche Repos, in die nie gesichert wird (und deren Zweige hochgeladen werden).
-OEFFENTLICHE_SLUGS: tuple[str, ...] = ("Shavy72/claude-skill-to-spawn",)
+OEFFENTLICHE_SLUGS: tuple[str, ...] = config.OEFFENTLICHE_SLUGS
 #: Muster je Repo aus ``repos[]`` (relativ zum Repo-Ordner).
 MUSTER_JE_REPO: tuple[str, ...] = (".claude-handoff*.md", "entscheidungen.md")
 TRESOR_UNTERORDNER = Path("to-spawn") / "sicherung"

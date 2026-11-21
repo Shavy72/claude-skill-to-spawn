@@ -17,6 +17,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from conftest import attrappe
 from test_hausmeister_1368 import (  # noqa: F401 — ``welt`` ist ein Fixture
     Welt,
     _commit,
@@ -247,9 +248,7 @@ def test_sicher_sicherung_scheitert_bleibt_mit_fehler(welt: Welt) -> None:
     klon = welt.klon("wt/wt-1612")  # Fix-Runde 1: ohne Ticket-Nummer bliebe er vorher
     welt.ticket(1612, "CLOSED", 48)
     _commit(klon, "nur-lokal.txt", "nicht gepusht\n")
-    sperre = welt.bare / "hooks" / "pre-receive"
-    sperre.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
-    sperre.chmod(0o755)
+    attrappe(welt.bare / "hooks", "pre-receive", "raise SystemExit(1)\n")
     _altern(welt)
     r = welt.aufraeumen(klon, loeschen=True)
     assert r.art == "bleibt" and r.fehler, r.grund

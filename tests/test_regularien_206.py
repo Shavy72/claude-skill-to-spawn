@@ -9,12 +9,12 @@ from __future__ import annotations
 
 import json
 import os
-import stat
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
+from conftest import attrappe
 
 SKILL = Path(__file__).resolve().parent.parent
 CLI = SKILL / "to_spawn.py"
@@ -324,9 +324,14 @@ def test_spawn_weigert_sich_und_startet_kein_pwsh(
     bin_ordner = tmp_path / "bin"
     bin_ordner.mkdir()
     for name in ("pwsh", "powershell"):
-        programm = bin_ordner / name
-        programm.write_text(f'#!/bin/sh\necho "$@" >> "{marker}"\n', encoding="utf-8")
-        programm.chmod(programm.stat().st_mode | stat.S_IEXEC)
+        attrappe(
+            bin_ordner,
+            name,
+            f"""
+            with open({str(marker)!r}, "a", encoding="utf-8") as f:
+                f.write(" ".join(__import__("sys").argv[1:]) + "\\n")
+            """,
+        )
     args = ["spawn", str(SPEC), "--ziel", "srv"] + (["--dry-run"] if probelauf else [])
     ergebnis = _cli(
         repo, *args, zusatz_env={"PATH": f"{bin_ordner}{os.pathsep}{os.environ['PATH']}"}
@@ -488,9 +493,14 @@ def test_f1_spawn_mit_fremder_auswahl_startet_kein_pwsh(
     bin_ordner = tmp_path / "bin"
     bin_ordner.mkdir()
     for name in ("pwsh", "powershell"):
-        programm = bin_ordner / name
-        programm.write_text(f'#!/bin/sh\necho "$@" >> "{marker}"\n', encoding="utf-8")
-        programm.chmod(programm.stat().st_mode | stat.S_IEXEC)
+        attrappe(
+            bin_ordner,
+            name,
+            f"""
+            with open({str(marker)!r}, "a", encoding="utf-8") as f:
+                f.write(" ".join(__import__("sys").argv[1:]) + "\\n")
+            """,
+        )
     args = ["spawn", str(SPEC), "--ziel", "srv", "--tickets", "999"]
     args += ["--dry-run"] if probelauf else []
     ergebnis = _cli(

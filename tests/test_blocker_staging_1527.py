@@ -23,6 +23,7 @@ from types import ModuleType
 from typing import Any
 
 import pytest
+from conftest import attrappe
 
 SKILL = Path(__file__).resolve().parent.parent
 SKRIPTE = SKILL / "skripte"
@@ -91,14 +92,7 @@ def _fake_gh(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, deps: object) -> N
     bin_dir.mkdir(exist_ok=True)
     daten = tmp_path / "deps.json"
     daten.write_text(json.dumps(deps), encoding="utf-8")
-    stub = bin_dir / "gh_stub.py"
-    stub.write_text(f"import sys\nsys.stdout.write(open(r'{daten}', encoding='utf-8').read())\n", encoding="utf-8")
-    if os.name == "nt":
-        (bin_dir / "gh.cmd").write_text(f'@"{sys.executable}" "{stub}" %*\n', encoding="utf-8")
-    else:
-        skript = bin_dir / "gh"
-        skript.write_text(f"#!/bin/sh\nexec '{sys.executable}' '{stub}' \"$@\"\n", encoding="utf-8")
-        skript.chmod(0o755)
+    attrappe(bin_dir, "gh", f"import sys\nsys.stdout.write(open({str(daten)!r}, encoding='utf-8').read())\n")
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
 
 

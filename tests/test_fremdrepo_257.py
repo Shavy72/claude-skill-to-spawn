@@ -25,6 +25,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from conftest import attrappe
 
 SKILL = Path(__file__).resolve().parent.parent
 SKRIPTE = SKILL / "skripte"
@@ -141,9 +142,15 @@ def test_label_sicherstellen_mit_gh_stub(tmp_path: Path, monkeypatch: pytest.Mon
     binaer = tmp_path / "bin"
     binaer.mkdir()
     protokoll = tmp_path / "gh-aufrufe.txt"
-    stub = binaer / "gh"
-    stub.write_text(f'#!/bin/sh\necho "$@" >> "{protokoll}"\nexit 0\n', encoding="utf-8")
-    stub.chmod(0o755)
+    attrappe(
+        binaer,
+        "gh",
+        f"""
+        import sys
+        with open({str(protokoll)!r}, "a", encoding="utf-8") as f:
+            f.write(" ".join(sys.argv[1:]) + "\\n")
+        """,
+    )
     monkeypatch.setenv("PATH", f"{binaer}{os.pathsep}{os.environ.get('PATH', '')}")
     repo = tmp_path / "label-repo"
     repo.mkdir()

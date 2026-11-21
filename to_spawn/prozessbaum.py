@@ -5,9 +5,9 @@ beide den ganzen Prozessbaum eines tmux-Panes. Der Staffel-Hook findet die eigen
 Claude-Session in der Vorfahren-Kette und beendet sie: ``session_vorfahr`` und
 ``session_beenden``. Unter Windows laufen außerdem ``lebt``, ``prozesse``, ``baum``,
 ``senden`` und ``beenden`` (#501, #92, #68): sie wählen selbst zwischen ``/proc`` und der
-WMI-Prozessliste. Wie der Baum gelesen wird, was „lebt“ heißt, wie eine Claude-Session
-erkannt wird und wie Signale stufenweise eskalieren, steht nur hier. Die Aufrufer wählen
-nur Stufen (Signal + Wartezeit), Reihenfolge der PIDs und worauf gewartet wird.
+Kernel-Prozessliste (ctypes, kein Prozess-Start, #154). Wie der Baum gelesen wird, was
+„lebt“ heißt, wie eine Claude-Session erkannt wird und wie Signale stufenweise eskalieren,
+steht nur hier. Die Aufrufer wählen nur Stufen (Signal + Wartezeit), Reihenfolge der PIDs und worauf gewartet wird.
 
 Windows: jedes Signal wird zu ``TerminateProcess`` (so macht es ``os.kill``) — die erste
 Stufe beendet also schon hart, ``SIGTERM`` lässt sich nicht abfangen. Nur ``ist_claude``
@@ -16,7 +16,8 @@ liest weiter ``/proc`` (unter Windows immer „kein Claude“).
 
 from __future__ import annotations
 
-import json
+import ctypes
+import functools
 import logging
 import os
 import signal
@@ -38,20 +39,21 @@ Stufe = tuple[signal.Signals, float]
 def _kinder() -> dict[int, list[int]]:
     """Eltern-PID → Kind-PIDs; Prozessliste unlesbar = Fehler (``OSError``).
 
-    Linux aus ``/proc/*/stat``, Windows aus der WMI-Prozessliste. Windows trägt die
-    Eltern-PID nur bei der Geburt ein und vergibt PIDs neu: ein Kind, dessen Eltern-PID
-    fehlt (Elternteil tot) oder einem später gestarteten Prozess gehört, hängt an keinem
-    Baum — sonst beendete ``beenden`` Fremde mit. Unbekannte Startzeit (0) zählt als echt.
+    Linux aus ``/proc/*/stat``, Windows aus der Kernel-Prozessliste (ohne
+    Kommandozeilen). Windows trägt die Eltern-PID nur bei der Geburt ein und vergibt
+    PIDs neu: ein Kind, dessen Eltern-PID fehlt (Elternteil tot) oder einem später
+    gestarteten Prozess gehört, hängt an keinem Baum — sonst beendete ``beenden`` Fremde
+    mit. Unbekannte Startzeit (0) zählt als echt.
     """
     kinder: dict[int, list[int]] = {}
     if _WINDOWS:
-        liste = _prozesse_windows()
-        if not liste:  # „keine Prozesse“ gibt es nicht — leer heißt: WMI nicht lesbar
+        liste = _momentaufnahme_windows()
+        if not liste:  # „keine Prozesse“ gibt es nicht — leer heißt: Liste nicht lesbar
             raise OSError("Windows-Prozessliste nicht lesbar")
-        for pid, (eltern, _, start) in liste.items():
+        for pid, (eltern, start) in liste.items():
             vorfahr = liste.get(eltern)
             # Recycelte PID: ein „Eltern“-Prozess, der nach dem Kind startete, ist ein Fremder.
-            if pid != eltern and vorfahr is not None and not (vorfahr[2] and start and vorfahr[2] > start):
+            if pid != eltern and vorfahr is not None and not (vorfahr[1] and start and vorfahr[1] > start):
                 kinder.setdefault(eltern, []).append(pid)
         return kinder
     for eintrag in _PROC.iterdir():
@@ -89,7 +91,8 @@ def prozesse() -> dict[int, tuple[int, str, int]]:
     """PID → (Eltern-PID, Kommandozeile, Startzeit) aller Prozesse; unlesbar = leer.
 
     Die Startzeit taugt nur zum Vergleich untereinander (Linux: Ticks seit Boot,
-    Windows: FILETIME).
+    Windows: FILETIME; 0 = unbekannt). Liest jede Kommandozeile — wer nur den Baum
+    braucht, nimmt ``baum`` (unter Windows ohne Kommandozeilen, deutlich billiger).
     """
     if _WINDOWS:
         return _prozesse_windows()
@@ -308,68 +311,146 @@ def _vorfahren_linux(pid: int) -> Iterator[tuple[int, str]]:
         aktuell = _ppid_linux(aktuell)
 
 
-#: Alle Prozesse als JSON: p = PID, e = Eltern-PID, c = Kommandozeile, t = Startzeit.
-_PS_PROZESSE = (
-    # UTF-8-Ausgabe: im OEM-Zeichensatz würden Nicht-ASCII-Zeichen fremder Kommandozeilen
-    # (Prompts mit „…“, Emoji) zu 0x1A bzw. ungültigem UTF-8 und brächen das JSON.
-    "[Console]::OutputEncoding = [Text.Encoding]::UTF8; "
-    "Get-CimInstance Win32_Process | ForEach-Object { [pscustomobject]@{ "
-    "p = [int]$_.ProcessId; e = [int]$_.ParentProcessId; c = [string]$_.CommandLine; "
-    "t = $(if ($_.CreationDate) { $_.CreationDate.ToFileTimeUtc() } else { 0 }) } } "
-    "| ConvertTo-Json -Compress"
-)
+# --- Windows-Prozessliste ohne Prozess-Start (#154) ---------------------------------------
+# Früher startete jede Abfrage PowerShell + WMI ``Win32_Process`` (~1,4 s). Jetzt liefert ein
+# einziger Kernel-Aufruf ``NtQuerySystemInformation(SystemProcessInformation)`` PID,
+# Eltern-PID und Startzeit aller Prozesse — dieselbe Quelle, aus der auch die Toolhelp-
+# Momentaufnahme (``CreateToolhelp32Snapshot``) liest; Toolhelp lässt aber die Startzeit weg,
+# die dann je Prozess per ``OpenProcess`` nachgeholt werden müsste (gemessen: Toolhelp
+# allein ~25 ms, mit Startzeiten ~36 ms, dieser Weg ~10 ms bei ~750 Prozessen). Die
+# Kommandozeile (``NtQueryInformationProcess``) wird nur gelesen, wo ein Aufrufer sie
+# braucht (``prozesse``, Vorfahren-Kette); nicht zu öffnende Prozesse (geschützte
+# Systemprozesse, erhöhte Prozesse fremder Konten) haben eine leere — wie WMI ohne Admin.
+
+_SYSTEM_PROCESS_INFORMATION = 5  # SYSTEM_INFORMATION_CLASS
+_PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+_PROCESS_COMMAND_LINE_INFORMATION = 60  # PROCESSINFOCLASS, ab Windows 8.1
+_STATUS_INFO_LENGTH_MISMATCH = 0xC0000004
+#: Startgröße des Puffers; wächst bei Bedarf und merkt sich nur die Größe, nie Daten.
+_puffer_bytes = 2 << 20
+
+
+class _UnicodeString(ctypes.Structure):
+    """``UNICODE_STRING``: Länge in Bytes, Zeiger auf UTF-16."""
+
+    _fields_ = [("Length", ctypes.c_ushort), ("MaximumLength", ctypes.c_ushort), ("Buffer", ctypes.c_void_p)]
+
+
+class _ProzessInfo(ctypes.Structure):
+    """Kopf von ``SYSTEM_PROCESS_INFORMATION`` (``winternl.h``) bis zur Eltern-PID."""
+
+    _fields_ = [
+        ("NextEntryOffset", ctypes.c_ulong),
+        ("NumberOfThreads", ctypes.c_ulong),
+        ("WorkingSetPrivateSize", ctypes.c_longlong),
+        ("HardFaultCount", ctypes.c_ulong),
+        ("NumberOfThreadsHighWatermark", ctypes.c_ulong),
+        ("CycleTime", ctypes.c_ulonglong),
+        ("CreateTime", ctypes.c_longlong),
+        ("UserTime", ctypes.c_longlong),
+        ("KernelTime", ctypes.c_longlong),
+        ("ImageName", _UnicodeString),
+        ("BasePriority", ctypes.c_long),
+        ("UniqueProcessId", ctypes.c_void_p),
+        ("InheritedFromUniqueProcessId", ctypes.c_void_p),
+    ]
+
+
+@functools.cache
+def _win32() -> tuple[Any, Any]:
+    """(kernel32, ntdll) mit Signaturen — eigene Instanzen, ``ctypes.windll`` bleibt unberührt.
+
+    Nur 64-Bit-Python: ``_ProzessInfo`` und die Zeiger-Felder sind für x64 geprüft; ein
+    32-Bit-Python (unter WOW64) bekäme ohne diese Prüfung still falsche Listen.
+    """
+    if ctypes.sizeof(ctypes.c_void_p) != 8:
+        raise OSError(
+            "Windows-Prozessliste braucht 64-Bit-Python "
+            f"(dieses Python hat {ctypes.sizeof(ctypes.c_void_p) * 8}-Bit-Zeiger)"
+        )
+    kernel = ctypes.WinDLL("kernel32")  # type: ignore[attr-defined]
+    nt = ctypes.WinDLL("ntdll")  # type: ignore[attr-defined]
+    zeiger, ulong = ctypes.c_void_p, ctypes.c_ulong
+    kernel.OpenProcess.argtypes, kernel.OpenProcess.restype = [ulong, ctypes.c_int, ulong], zeiger
+    kernel.CloseHandle.argtypes = [zeiger]
+    nt.NtQuerySystemInformation.argtypes = [ulong, zeiger, ulong, ctypes.POINTER(ulong)]
+    nt.NtQuerySystemInformation.restype = ulong
+    nt.NtQueryInformationProcess.argtypes = [zeiger, ulong, zeiger, ulong, ctypes.POINTER(ulong)]
+    nt.NtQueryInformationProcess.restype = ulong
+    return kernel, nt
+
+
+def _momentaufnahme_windows() -> dict[int, tuple[int, int]]:
+    """PID → (Eltern-PID, Startzeit als FILETIME, 0 = unbekannt); unlesbar = ``OSError``."""
+    global _puffer_bytes
+    _, nt = _win32()
+    noetig = ctypes.c_ulong(0)
+    for _ in range(5):  # die Liste kann zwischen zwei Versuchen wachsen
+        puffer = ctypes.create_string_buffer(_puffer_bytes)
+        status = nt.NtQuerySystemInformation(_SYSTEM_PROCESS_INFORMATION, puffer, _puffer_bytes, ctypes.byref(noetig))
+        if status != _STATUS_INFO_LENGTH_MISMATCH:
+            break
+        _puffer_bytes = max(_puffer_bytes * 2, noetig.value + (1 << 16))
+    if status:
+        raise OSError(f"NtQuerySystemInformation: Status 0x{status:08X}")
+    liste: dict[int, tuple[int, int]] = {}
+    versatz = 0
+    while True:
+        eintrag = _ProzessInfo.from_buffer(puffer, versatz)
+        liste[eintrag.UniqueProcessId or 0] = (eintrag.InheritedFromUniqueProcessId or 0, max(eintrag.CreateTime, 0))
+        if not eintrag.NextEntryOffset:
+            return liste
+        versatz += eintrag.NextEntryOffset
+
+
+def _kommandozeile_windows(pid: int) -> str:
+    """Kommandozeile von ``pid``; nicht lesbar (weg, geschützt) = ``""``."""
+    kernel, nt = _win32()
+    griff = kernel.OpenProcess(_PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    if not griff:
+        return ""
+    try:
+        laenge = ctypes.c_ulong(0)
+        status = nt.NtQueryInformationProcess(griff, _PROCESS_COMMAND_LINE_INFORMATION, None, 0, ctypes.byref(laenge))
+        if status != _STATUS_INFO_LENGTH_MISMATCH or laenge.value < ctypes.sizeof(_UnicodeString):
+            return ""
+        puffer = ctypes.create_string_buffer(laenge.value)
+        if nt.NtQueryInformationProcess(griff, _PROCESS_COMMAND_LINE_INFORMATION, puffer, laenge, ctypes.byref(laenge)):
+            return ""
+        text = _UnicodeString.from_buffer(puffer)
+        return ctypes.wstring_at(text.Buffer, text.Length // 2) if text.Buffer and text.Length else ""
+    finally:
+        kernel.CloseHandle(griff)
 
 
 def _prozesse_windows() -> dict[int, tuple[int, str, int]]:
-    """PID → (Eltern-PID, Kommandozeile, Startzeit) aller Prozesse; Fehler = leer.
-
-    WMI antwortet unter Last gelegentlich leer oder mit Fehler — bis zu drei Versuche.
-    """
-    daten: Any = None
-    for versuch in range(1, 4):
-        try:
-            aus = subprocess.run(
-                ["powershell", "-NoProfile", "-NonInteractive", "-Command", _PS_PROZESSE],
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=60,
-                check=False,
-                **ohne_fenster(),
-            )
-            if aus.returncode == 0 and aus.stdout.strip():
-                # strict=False: Kommandozeilen dürfen rohe Steuerzeichen tragen (Prompt mit
-                # Zeilenumbruch/Tab) — PowerShells ConvertTo-Json maskiert sie nicht immer.
-                daten = json.loads(aus.stdout, strict=False)
-                break
-            log.warning(
-                "Prozessliste Versuch %d: Exit %d, %s", versuch, aus.returncode, (aus.stderr or "leer").strip()[:200]
-            )
-        except (OSError, subprocess.TimeoutExpired, ValueError) as fehler:
-            log.warning("Prozessliste Versuch %d nicht lesbar: %s", versuch, fehler)
-        time.sleep(0.5)
-    if daten is None:
+    """PID → (Eltern-PID, Kommandozeile, Startzeit) aller Prozesse; Fehler = leer."""
+    try:
+        liste = _momentaufnahme_windows()
+    except OSError as fehler:
+        log.warning("Windows-Prozessliste nicht lesbar: %s", fehler)
         return {}
-    if isinstance(daten, dict):
-        daten = [daten]
-    return {int(d["p"]): (int(d["e"]), d.get("c") or "", int(d.get("t") or 0)) for d in daten}
+    return {pid: (eltern, _kommandozeile_windows(pid), start) for pid, (eltern, start) in liste.items()}
 
 
 def _vorfahren_windows(pid: int) -> Iterator[tuple[int, str]]:
-    """Wie ``_vorfahren_linux``, aus einer Momentaufnahme von ``Win32_Process``.
+    """Wie ``_vorfahren_linux``, aus einer Momentaufnahme (Kommandozeile nur der Vorfahren).
 
     Windows vergibt PIDs neu: ein „Eltern“-Prozess, der nach dem Kind gestartet wurde,
     ist ein Fremder mit recycelter Nummer — dort endet die Kette.
     """
-    prozesse = _prozesse_windows()
+    try:
+        prozesse = _momentaufnahme_windows()
+    except OSError as fehler:
+        log.warning("Windows-Prozessliste nicht lesbar: %s", fehler)
+        return
     kind = prozesse.get(pid)
     while kind is not None:
-        eltern_pid, _, kind_start = kind
+        eltern_pid, kind_start = kind
         eltern = prozesse.get(eltern_pid)
-        if eltern is None or eltern_pid == 0 or (eltern[2] and kind_start and eltern[2] > kind_start):
+        if eltern is None or eltern_pid == 0 or (eltern[1] and kind_start and eltern[1] > kind_start):
             return
-        yield eltern_pid, eltern[1]
+        yield eltern_pid, _kommandozeile_windows(eltern_pid)
         kind = eltern
 
 
