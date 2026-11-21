@@ -345,3 +345,19 @@ def _maschine_liste_im_test(
     Tests mit eigenem ``setenv("TO_SPAWN_MASCHINE", …)`` überschreiben den Wert.
     """
     monkeypatch.setenv("TO_SPAWN_MASCHINE", str(tmp_path / "to-spawn-maschine" / "maschine.json"))
+
+
+@pytest.fixture(autouse=True)
+def _pruef_cache_im_test(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    _keine_to_spawn_umgebung: None,
+) -> None:
+    """Prüf-Cache (#102) liegt je Test unter ``tmp_path``, nie im echten Nutzer-Cache.
+
+    Probe-Repos gleichen Inhalts haben denselben Tree-SHA: ohne eigene Ablage je Test träfe ein
+    Test den grünen Eintrag eines anderen (z. B. „pytest fehlt“ würde grün).
+    """
+    ablage = str(tmp_path / "nutzer-cache")
+    monkeypatch.setenv("XDG_CACHE_HOME", ablage)
+    monkeypatch.setenv("LOCALAPPDATA", ablage)

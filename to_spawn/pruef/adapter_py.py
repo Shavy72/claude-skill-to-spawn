@@ -38,6 +38,33 @@ _SCHLUSS = re.compile(
 _CACHE_PREFIX = "cache_dir="
 
 
+#: Dateien, in denen ein Repo pytest-xdist als eigene Abhängigkeit nennt.
+_XDIST_QUELLEN = (
+    "requirements*.txt",
+    "tests/requirements*.txt",
+    "pyproject.toml",
+    "setup.cfg",
+    "tox.ini",
+    "pytest.ini",
+)
+
+
+def _will_xdist(repo: Path) -> bool:
+    """Nennt das Repo pytest-xdist selbst? Nur dann sind seine Tests für parallele Läufe gedacht.
+
+    Ohne diese Zusage liefe ein Repo mit reihenfolge- oder ressourcen-abhängigen Tests parallel
+    anders als seriell (z. B. Grün statt Rot bei geteiltem Modul-Zustand).
+    """
+    for muster in _XDIST_QUELLEN:
+        for datei in repo.glob(muster):
+            try:
+                if "xdist" in datei.read_text(encoding="utf-8", errors="replace").lower():
+                    return True
+            except OSError:
+                continue
+    return False
+
+
 def _python(repo: Path) -> str:
     """Interpreter des Repos: eigenes ``.venv``/``venv`` (Linux und Windows), sonst der laufende."""
     for ordner in (".venv", "venv"):
@@ -75,8 +102,20 @@ class PythonAdapter:
         # ``--sw`` bricht trotzdem nach dem ersten Rot ab (Exit 2 = rot, nie Wackler).
         # ponytail: Cache-Ordner bleiben im Temp-Verzeichnis liegen, Aufräumen im Leiter, wenn es stört.
         cache = tempfile.mkdtemp(prefix="to_spawn_pytest_cache_")
+        # Parallel nur, wenn das Repo pytest-xdist selbst nennt, es im Repo-Interpreter da ist und
+        # > 1 Worker passt: ``worksteal`` gibt freien Workern Tests der langsamen ab (statt
+        # ``loadfile``: eine Datei hält einen Worker fest).
+        # ponytail: Teilen nach Laufzeit (pytest-split) erst, wenn mehrere Gate-Rechner teilen (3b-6).
+        anzahl = ausfuehren.worker()
+        parallel = (
+            ["-n", str(anzahl), "--dist", "worksteal"]
+            if anzahl > 1
+            and _will_xdist(repo)
+            and ausfuehren.lauf([python, "-c", "import xdist"], repo).code == 0
+            else []
+        )
         return Plan(
-            werkzeug=f"pytest@{version}",
+            werkzeug=f"pytest@{version}" + (f"+xdist×{anzahl}" if parallel else ""),
             befehl=[
                 python,
                 "-m",
@@ -87,6 +126,7 @@ class PythonAdapter:
                 f"cache_dir={cache}",
                 "-o",
                 "console_output_style=count",
+                *parallel,
             ],
             fehler="",
         )
