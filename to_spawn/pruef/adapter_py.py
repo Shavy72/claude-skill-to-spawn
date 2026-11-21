@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import re
 import sys
+import tempfile
 from pathlib import Path
 
 from to_spawn.pruef import ausfuehren
@@ -23,6 +24,10 @@ _MERKMALE = (
 #: Zeile der pytest-Kurzfassung je rotem Test: ``FAILED <knoten-id>[ - <grund>]`` (auch ERROR).
 #: Eine Parameter-Klammer gehört ganz zur Kennung, auch mit „ - “ darin (``test_p[a - b]``).
 _ROT_ZEILE = re.compile(r"^(?:FAILED|ERROR) (.+?(?:\[.*?\])?)(?: - .*)?$", re.MULTILINE)
+#: Fortschritt bei ``console_output_style=count``: Zeile endet auf ``[k/N]``.
+_FORTSCHRITT = re.compile(r"\[\s*(\d+)/(\d+)\]$")
+#: Abschnitts-Kopf (``==== FAILURES ====`` …): ab hier Berichte, kein Fortschritt mehr.
+_ABSCHNITT = re.compile(r"^={3,} .+ ={3,}$")
 
 
 def _python(repo: Path) -> str:
@@ -54,11 +59,27 @@ class PythonAdapter:
                 fehler=f"pytest fehlt für {python} (pip install pytest)",
             )
         version = probe.ausgabe.strip().split()[-1] if probe.ausgabe.strip() else "?"
-        # ``--maxfail=0`` übersteuert ``-x``/``--maxfail=N`` aus ``addopts``: der erste Lauf geht
-        # immer durch, sonst fehlen nie gelaufene rote Tests und ein Wackler sähe wie Grün aus.
+        # Kommandozeile schlägt ``addopts``/``PYTEST_ADDOPTS``:
+        # - ``--maxfail=0`` übersteuert ``-x``/``--maxfail=N``.
+        # - frischer ``cache_dir`` je Prüfung: ``--lf``/``--sw`` aus ``addopts`` wählen nie anhand
+        #   eines alten Laufs Tests ab (sonst Grün trotz rotem Test); die Wiederholung erbt ihn.
+        # - ``console_output_style=count`` belegt ``[k/N]``: Grundlage für ``gelaufen``.
+        # ``--sw`` bricht trotzdem nach dem ersten Rot ab (Exit 2 = rot, nie Wackler).
+        # ponytail: Cache-Ordner bleiben im Temp-Verzeichnis liegen, Aufräumen im Leiter, wenn es stört.
+        cache = tempfile.mkdtemp(prefix="to_spawn_pytest_cache_")
         return Plan(
             werkzeug=f"pytest@{version}",
-            befehl=[python, "-m", "pytest", "-q", "--maxfail=0"],
+            befehl=[
+                python,
+                "-m",
+                "pytest",
+                "-q",
+                "--maxfail=0",
+                "-o",
+                f"cache_dir={cache}",
+                "-o",
+                "console_output_style=count",
+            ],
             fehler="",
         )
 
@@ -79,6 +100,18 @@ class PythonAdapter:
 
     def rote(self, ausgabe: str) -> set[str]:
         return {treffer.strip() for treffer in _ROT_ZEILE.findall(ausgabe)}
+
+    def gelaufen(self, ausgabe: str) -> int | None:
+        # Letzter Fortschritt vor dem ersten Bericht-Abschnitt; nur ``[N/N]`` belegt „alle
+        # ausgewählten liefen“. Fehlt er (``-s``, Abbruch, ``Interrupted``), ist es unbelegt.
+        letzter = None
+        for zeile in ausgabe.splitlines():
+            if _ABSCHNITT.match(zeile) and "test session starts" not in zeile:
+                break
+            letzter = _FORTSCHRITT.search(zeile.rstrip()) or letzter
+        if letzter is None or letzter.group(1) != letzter.group(2):
+            return None
+        return int(letzter.group(2))
 
 
 ADAPTER = PythonAdapter()

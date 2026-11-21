@@ -186,3 +186,103 @@ def test_wiederholung_ohne_aussage_bleibt_rot(
     erg = wackler.nochmal(_Stellvertreter(code, text), tmp_path, ["x"], erst)
     assert erg is not None
     assert (erg.gruen, erg.wackler) == (False, ())
+
+
+# --- Fix-Runde 2 (Review PR #126): Cache-Auswahl und unbelegt vollständige Läufe --------------
+
+
+@pytest.mark.parametrize("auswahl", ["--sw", "--stepwise", "--lf"])
+def test_cache_auswahl_in_addopts_ueberspringt_keinen_roten_test(
+    tmp_path: Path, auswahl: str
+) -> None:
+    """Zwei Prüfungen nacheinander: der zweite Stand bricht einen vorher grünen Test."""
+    probe = _probe_mehrere(
+        tmp_path,
+        "def test_0():\n    pass\n\ndef test_1():\n    assert False\n",
+        f"addopts = {auswahl}\n",
+    )
+    assert tuer._tuer(probe, "base", "HEAD").returncode == 1
+    (probe / "tests" / "test_rechnen.py").write_text(
+        "def test_0():\n    assert False\n\ndef test_1():\n    pass\n", encoding="utf-8"
+    )
+    tuer._git(probe, "commit", "-q", "-am", "bricht test_0")
+    erg = tuer._tuer(probe, "base", "HEAD")
+    assert erg.returncode == 1, erg.stdout + erg.stderr
+    assert tuer._zeile(erg)["urteil"] == "rot"
+
+
+def test_stepwise_abbruch_mit_wackler_bleibt_rot(tmp_path: Path) -> None:
+    probe = _probe_mehrere(
+        tmp_path, _WACKEL + _DAUERROT.format(n=2), "addopts = --sw\n"
+    )
+    erg = tuer._tuer(probe, "base", "HEAD")
+    assert erg.returncode == 1, erg.stdout + erg.stderr
+    assert tuer._zeile(erg)["urteil"] == "rot"
+
+
+class _EchtePytestDeutung(_Stellvertreter):
+    """Wie ``_Stellvertreter``, aber mit allem, was der Python-Adapter aus Ausgaben liest."""
+
+    def gelaufen(self, ausgabe: str) -> int | None:
+        from to_spawn.pruef.adapter_py import ADAPTER
+
+        return ADAPTER.gelaufen(ausgabe)
+
+
+_ERST_GANZ = ".F.                                                     [3/3]\nFAILED t.py::test_a - x\n"
+_ERST_ABGEBROCHEN = (
+    ".F\nFAILED t.py::test_a - x\n!!! Interrupted: stopping after 1 failures !!!\n"
+)
+
+
+@pytest.mark.parametrize(
+    ("erst_text", "zweit_text"),
+    [
+        (
+            _ERST_ABGEBROCHEN,
+            ".                                           [1/1]\n1 passed",
+        ),
+        (_ERST_GANZ, ""),
+        (_ERST_GANZ, "no tests ran"),
+        (_ERST_GANZ, ".                                           [1/2]\n1 passed"),
+    ],
+    ids=[
+        "erster-lauf-abgebrochen",
+        "wiederholung-stumm",
+        "nichts-gelaufen",
+        "teilweise",
+    ],
+)
+def test_unbelegt_vollstaendiger_lauf_ist_nie_gruen(
+    tmp_path: Path, erst_text: str, zweit_text: str
+) -> None:
+    from to_spawn.pruef import ausfuehren, wackler
+
+    erst = ausfuehren.Lauf(1, erst_text, 0.1)
+    erg = wackler.nochmal(_EchtePytestDeutung(0, zweit_text), tmp_path, ["x"], erst)
+    assert erg is None or erg.gruen is False
+
+
+def test_belegt_vollstaendig_bleibt_wackler(tmp_path: Path) -> None:
+    from to_spawn.pruef import ausfuehren, wackler
+
+    erst = ausfuehren.Lauf(1, _ERST_GANZ, 0.1)
+    zweit = ".                                                     [1/1]\n1 passed"
+    erg = wackler.nochmal(_EchtePytestDeutung(0, zweit), tmp_path, ["x"], erst)
+    assert erg is not None
+    assert (erg.gruen, erg.wackler) == (True, ("t.py::test_a",))
+
+
+def test_gelaufen_liest_nur_den_fortschritt_vor_den_berichten() -> None:
+    from to_spawn.pruef.adapter_py import ADAPTER
+
+    assert ADAPTER.gelaufen(".F.  [3/3]\n1 failed, 2 passed") == 3
+    assert (
+        ADAPTER.gelaufen("t.py::test_a PASSED  [ 1/2]\nt.py::test_b PASSED  [ 2/2]\n")
+        == 2
+    )
+    assert ADAPTER.gelaufen(".F\n!!! Interrupted !!!\n") is None
+    assert ADAPTER.gelaufen(".F  [2/3]\n") is None
+    # Gefälschter Fortschritt aus der Testausgabe (nach den Berichten) zählt nicht.
+    gefaelscht = ".F\n==== FAILURES ====\n---- Captured stdout call ----\n.. [9/9]\n"
+    assert ADAPTER.gelaufen(gefaelscht) is None
