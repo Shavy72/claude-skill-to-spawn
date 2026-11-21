@@ -358,7 +358,16 @@ class _ProzessInfo(ctypes.Structure):
 
 @functools.cache
 def _win32() -> tuple[Any, Any]:
-    """(kernel32, ntdll) mit Signaturen — eigene Instanzen, ``ctypes.windll`` bleibt unberührt."""
+    """(kernel32, ntdll) mit Signaturen — eigene Instanzen, ``ctypes.windll`` bleibt unberührt.
+
+    Nur 64-Bit-Python: ``_ProzessInfo`` und die Zeiger-Felder sind für x64 geprüft; ein
+    32-Bit-Python (unter WOW64) bekäme ohne diesen Wächter still falsche Listen.
+    """
+    if ctypes.sizeof(ctypes.c_void_p) != 8:
+        raise OSError(
+            "Windows-Prozessliste braucht 64-Bit-Python "
+            f"(dieses Python hat {ctypes.sizeof(ctypes.c_void_p) * 8}-Bit-Zeiger)"
+        )
     kernel = ctypes.WinDLL("kernel32")  # type: ignore[attr-defined]
     nt = ctypes.WinDLL("ntdll")  # type: ignore[attr-defined]
     zeiger, ulong = ctypes.c_void_p, ctypes.c_ulong
