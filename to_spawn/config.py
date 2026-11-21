@@ -14,7 +14,7 @@ Schnittstelle für die Aufrufer (L1 Etappe 1, Pakete P1–P5):
 - ``maschine() -> dict``: Maschinen-Liste ``~/.config/to-spawn/maschine.json``
   (Env ``TO_SPAWN_MASCHINE`` lenkt um) mit ``repos[]`` (``slug``, ``pfad``,
   ``ticket_repo``, ``worktree_basis``), ``staging_sperren[]`` und
-  ``hausmeister.{wurzeln,ordner_praefixe}`` — Dinge, die je Maschine gelten, nicht je Repo.
+  ``hausmeister.{wurzeln,ordner_praefixe}``, ``temp_ordner``, ``temp_reste`` — Dinge, die je Maschine gelten, nicht je Repo.
   ``hausmeister.geschuetzte_ordner`` (Liste von Ordnernamen) schützt nur zusätzlich zu
   ``HAUSMEISTER_GESCHUETZTE_ORDNER`` — nie Vorgabe-Ersatz, darum nicht in ``MASCHINE_DEFAULTS``.
 - ``maschine_eintragen(repo) -> dict``: trägt das Repo in die Maschinen-Liste ein
@@ -167,6 +167,9 @@ MASCHINE_DEFAULTS: dict[str, Any] = {
         "wurzeln": list(vorgaben.HAUSMEISTER_WURZELN),
         "ordner_praefixe": list(vorgaben.HAUSMEISTER_ORDNER_PRAEFIXE),
     },
+    # #136: Temp-Ordner auf der Platte und Muster des Temp-Altbestands (to_spawn/temp_ordner.py)
+    "temp_ordner": vorgaben.TEMP_ORDNER,
+    "temp_reste": list(vorgaben.TEMP_RESTE),
 }
 #: Ordnernamen, die der Hausmeister immer stehen lässt; ``hausmeister.geschuetzte_ordner`` ergänzt nur.
 HAUSMEISTER_GESCHUETZTE_ORDNER: tuple[str, ...] = tuple(vorgaben.HAUSMEISTER_GESCHUETZTE_ORDNER)

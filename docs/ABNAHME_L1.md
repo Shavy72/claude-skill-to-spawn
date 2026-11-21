@@ -25,7 +25,7 @@ Urteile: **belegt** · **teilweise** · **abweichend** (Soll anders erfüllt, mi
 | W1 | Suite sammelbar | `gruen_l1_p7a.txt` (Linux-Simulation), P7b 497 passed | belegt (Linux-Simulation) |
 | W2 | Windows-Lauf am PC | PC-Befehl im Kommentar an #68 | offen → #68 |
 
-## Abnahme M1–M13
+## Abnahme M1–M14
 
 | # | Soll | Beleg | Urteil |
 |---|---|---|---|
@@ -42,6 +42,7 @@ Urteile: **belegt** · **teilweise** · **abweichend** (Soll anders erfüllt, mi
 | M11 | Kleinste Prüfung, drei Fälle | – | noch nicht geprüft |
 | M12 | ≥ 20 absichtliche Fehler, 0 übersehen (DuoPlus ggf. „nicht anwendbar, weil keine Auswahl läuft“, siehe Plan-Stand) | – | noch nicht geprüft |
 | M13 | `PRUEFTOR_VERGLEICH.md`, Tempo gemessen | – | noch nicht geprüft |
+| M14 | Aufräumen ohne David: Arbeitsordner und Temp-Kopie eines geschlossenen Tickets (auch `/tmp`) räumt der Hausmeister selbst, kein Schutz-Hook blockt, kein Lösch-Auftrag an David | Teilbeleg #136: `tests/test_temp_ordner_136.py` (Reste zu/offen/frisch/Prozess/Socket/ungesichert, Schutz-Hook lässt `aufraeumen --alles --loeschen` durch); Probe-Lauf mit absichtlichen Resten fehlt | noch nicht geprüft |
 
 ## Offene Punkte
 
