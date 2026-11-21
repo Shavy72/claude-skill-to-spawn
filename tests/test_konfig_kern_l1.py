@@ -132,6 +132,7 @@ def test_maschine_ohne_datei_gibt_vorgaben(maschine_datei: Path) -> None:
 
 
 def test_maschine_standardort_unter_home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.delenv("TO_SPAWN_MASCHINE", raising=False)  # conftest lenkt sonst in tmp_path um
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
     assert config.maschine_datei() == tmp_path / ".config" / "to-spawn" / "maschine.json"
 
@@ -219,3 +220,13 @@ def test_maschine_eintragen_ueberschreibt_kaputte_datei_nie(tmp_path: Path, masc
     maschine_datei.write_text("{halb", encoding="utf-8")
     assert config.maschine_eintragen(repo)["slug"] == "o/app"
     assert maschine_datei.read_text(encoding="utf-8") == "{halb"
+
+
+def test_conftest_lenkt_maschine_liste_in_tmp_path(tmp_path: Path) -> None:
+    """Ohne eigenes ``setenv`` liest und schreibt kein Test die echte Maschinen-Liste."""
+    assert config.maschine_datei().is_relative_to(tmp_path)
+    echt = Path.home() / ".config" / "to-spawn" / "maschine.json"  # nur ``stat``, nie schreiben
+    vorher = echt.stat().st_mtime_ns if echt.exists() else None
+    config.maschine_eintragen(_repo(tmp_path, origin="https://github.com/o/app.git"))
+    assert config.maschine_datei().is_file()
+    assert (echt.stat().st_mtime_ns if echt.exists() else None) == vorher

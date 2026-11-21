@@ -123,3 +123,18 @@ def _hausmeister_nur_im_test(
     # #1372: Docker-Reste nie echt — „true“ statt docker, keine Staging-Sperre.
     monkeypatch.setenv("TO_SPAWN_HAUSMEISTER_DOCKER", shutil.which("true") or "/bin/true")
     monkeypatch.setenv("TO_SPAWN_STAGING_SPERRE", str(ordner / "keine-staging-sperre"))
+
+
+@pytest.fixture(autouse=True)
+def _maschine_liste_im_test(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    _keine_to_spawn_umgebung: None,
+) -> None:
+    """Maschinen-Liste (L1 #46) liegt in Tests immer unter ``tmp_path``.
+
+    Ohne diese Fixture läse/schriebe ``config.maschine``/``maschine_eintragen`` die echte
+    ``~/.config/to-spawn/maschine.json`` der Testmaschine. Die Datei wird nicht angelegt;
+    Tests mit eigenem ``setenv("TO_SPAWN_MASCHINE", …)`` überschreiben den Wert.
+    """
+    monkeypatch.setenv("TO_SPAWN_MASCHINE", str(tmp_path / "to-spawn-maschine" / "maschine.json"))
