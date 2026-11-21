@@ -43,6 +43,9 @@ LABEL_VERSCHOBEN = "verschoben"
 SCHAETZUNG_GELB_K = 30
 #: Regel-Name im Reopen-Kommentar eines roten Aufseher-Befunds.
 REGEL_ROT = "Belegseite"
+#: Höchstzahl nicht-leerer Zeilen je Aufseher-Kommentar (#1522, Fehlerkatalog S13):
+#: jeder Kommentar landet im Kontext der Bau-Session.
+KOMMENTAR_MAX_ZEILEN = 2
 UEBERSCHRIFT = "Gelbe Folge-Tickets (Gesamtabnahme)"
 
 _ISSUE_URL = re.compile(r"/issues/(\d+)\s*$")
@@ -94,6 +97,35 @@ def melde(
     return _folge_ticket(repo, gh_repo, int(spec), n, text, dry_run)
 
 
+def kuerze(text: str) -> str:
+    """Kommentartext auf höchstens :data:`KOMMENTAR_MAX_ZEILEN` nicht-leere Zeilen kürzen.
+
+    Leerzeilen fallen weg; was darüber liegt, ersetzt ein Vermerk am Ende der letzten
+    Zeile (``… +N Zeilen gekürzt``) — die vollen Gründe stehen im Aufseher-Log.
+    """
+    zeilen = [z.rstrip() for z in text.splitlines() if z.strip()]
+    rest = len(zeilen) - KOMMENTAR_MAX_ZEILEN
+    zeilen = zeilen[:KOMMENTAR_MAX_ZEILEN]
+    if rest > 0:
+        zeilen[-1] += f" … +{rest} Zeilen gekürzt"
+    return "\n".join(zeilen)
+
+
+def kommentiere(n: int | str, gh_repo: str, text: str, befehl: str = "comment") -> bool:
+    """Einzige Schreib-Stelle für Aufseher-Kommentare auf GitHub (#1522); ``True`` = geklappt.
+
+    ``befehl`` = ``comment`` (nur kommentieren), ``reopen`` oder ``close`` (Kommentar am
+    Zustandswechsel). Der Text wird immer mit :func:`kuerze` gekürzt; ein Prüf-Test
+    bricht, wenn irgendwo am Modul vorbei kommentiert wird.
+    """
+    schalter = "--body" if befehl == "comment" else "--comment"
+    args = ["issue", befehl, str(n), "--repo", gh_repo, schalter]
+    code, _ = gh.lauf([*args, kuerze(text)])
+    if code != 0:
+        log.warning("gh issue %s #%s gescheitert (Exit %s).", befehl, n, code)
+    return code == 0
+
+
 def wieder_oeffnen(
     n: int, gh_repo: str, gruende: Sequence[tuple[str, str]], dry_run: bool
 ) -> list[str]:
@@ -111,10 +143,7 @@ def _oeffne(
     if dry_run:
         return Ergebnis(ok=True, zeilen=[f"#{n} [Probe] würde wieder öffnen"])
     kommentar = "\n".join(f"{KOPF} {regel} — {text}" for regel, text in gruende)
-    code, _ = gh.lauf(
-        ["issue", "reopen", str(n), "--repo", gh_repo, "--comment", kommentar]
-    )
-    if code == 0:
+    if kommentiere(n, gh_repo, kommentar, befehl="reopen"):
         return Ergebnis(ok=True, zeilen=[f"#{n} wieder geöffnet"])
     return Ergebnis(ok=False, zeilen=[f"#{n} FEHLER: wieder öffnen gescheitert"])
 
@@ -129,12 +158,9 @@ def zuruecknehmen(n: int, gh_repo: str, text: str, dry_run: bool) -> Ergebnis:
     if dry_run:
         return Ergebnis(ok=False, zeilen=[f"#{n} [Probe] würde Fehl-Reopen zurücknehmen"])
     kommentar = f"{KOPF} Fehl-Reopen zurückgenommen — {text}"
-    code, _ = gh.lauf(
-        ["issue", "close", str(n), "--repo", gh_repo, "--comment", kommentar]
-    )
-    if code == 0:
+    if kommentiere(n, gh_repo, kommentar, befehl="close"):
         return Ergebnis(ok=True, zeilen=[f"#{n} Fehl-Reopen zurückgenommen"])
-    log.warning("Fehl-Reopen #%s nicht zurückgenommen (gh Exit %s).", n, code)
+    log.warning("Fehl-Reopen #%s nicht zurückgenommen.", n)
     return Ergebnis(ok=False, zeilen=[f"#{n} FEHLER: Fehl-Reopen zurücknehmen gescheitert"])
 
 
