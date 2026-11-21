@@ -46,6 +46,11 @@ _SKILL_HEIMAT = "Heimat des Skills selbst (Installations-Hinweis), kein App-Name
 AUSNAHMEN: dict[tuple[str, str], tuple[tuple[str, ...], str]] = {
     # Bestandstests nageln den Wortlaut fest (Tests nur addieren, nie ersetzen), ps1-Rückfälle
     ("to_spawn/umzug.py", "duoplus"): (("ng ``scripts/<skript>`` (DuoPlus), läuft der Befehl unver",), _DOKU),
+    # Start-Marker byte-gleich mit dem App-Skript, sonst ValueError dort (Review PR #110, Befund 2)
+    ("to_spawn/globale_regeln.py", "duoplus"): (
+        ("start (Quelle duoplus-management/docs/agents/global/{name}.md) -->",),
+        "Marker-Zeile gleich mit App-Skript install_global_claude_blocks.py",
+    ),
     ("skripte/wache.py", "repo-skript"): (
         (
             "Aufruf: ``python scripts/wache.py <S> [--model <m>] [--tak",
