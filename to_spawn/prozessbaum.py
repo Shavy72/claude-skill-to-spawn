@@ -361,7 +361,7 @@ def _win32() -> tuple[Any, Any]:
     """(kernel32, ntdll) mit Signaturen — eigene Instanzen, ``ctypes.windll`` bleibt unberührt.
 
     Nur 64-Bit-Python: ``_ProzessInfo`` und die Zeiger-Felder sind für x64 geprüft; ein
-    32-Bit-Python (unter WOW64) bekäme ohne diesen Wächter still falsche Listen.
+    32-Bit-Python (unter WOW64) bekäme ohne diese Prüfung still falsche Listen.
     """
     if ctypes.sizeof(ctypes.c_void_p) != 8:
         raise OSError(
