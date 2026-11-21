@@ -21,7 +21,8 @@ _MERKMALE = (
     "requirements.txt",
 )
 #: Zeile der pytest-Kurzfassung je rotem Test: ``FAILED <knoten-id>[ - <grund>]`` (auch ERROR).
-_ROT_ZEILE = re.compile(r"^(?:FAILED|ERROR) (.+?)(?: - .*)?$", re.MULTILINE)
+#: Eine Parameter-Klammer gehört ganz zur Kennung, auch mit „ - “ darin (``test_p[a - b]``).
+_ROT_ZEILE = re.compile(r"^(?:FAILED|ERROR) (.+?(?:\[.*?\])?)(?: - .*)?$", re.MULTILINE)
 
 
 def _python(repo: Path) -> str:
@@ -53,9 +54,11 @@ class PythonAdapter:
                 fehler=f"pytest fehlt für {python} (pip install pytest)",
             )
         version = probe.ausgabe.strip().split()[-1] if probe.ausgabe.strip() else "?"
+        # ``--maxfail=0`` übersteuert ``-x``/``--maxfail=N`` aus ``addopts``: der erste Lauf geht
+        # immer durch, sonst fehlen nie gelaufene rote Tests und ein Wackler sähe wie Grün aus.
         return Plan(
             werkzeug=f"pytest@{version}",
-            befehl=[python, "-m", "pytest", "-q"],
+            befehl=[python, "-m", "pytest", "-q", "--maxfail=0"],
             fehler="",
         )
 
