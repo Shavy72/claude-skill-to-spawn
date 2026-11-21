@@ -7,7 +7,8 @@ Aufruf: ``python tmux_stub_284.py <protokoll> <tmux-argumente…>``
 
 * ``list-windows`` → Fensternamen aus der Datei ``FAKE_TMUX_FENSTER`` (eine je
   Zeile); fehlt die Datei, gibt es die Session nicht → Exit 1 wie bei tmux.
-* ``new-window`` / ``new-session`` → Aufruf als JSON-Zeile ins Protokoll, Exit 0.
+* ``new-window`` / ``new-session`` → Aufruf als JSON-Zeile ins Protokoll, Exit 0;
+  ``new-window`` ohne Session (Datei fehlt) → Exit 1 wie bei tmux.
 
 Jeder Aufruf landet als JSON-Zeile im Protokoll, auch ``list-windows``.
 """
@@ -32,6 +33,9 @@ def main() -> int:
             return 1
         print(datei.read_text(encoding="utf-8").strip())
         return 0
+    if args[:1] == ["new-window"] and not Path(os.environ["FAKE_TMUX_FENSTER"]).is_file():
+        print("can't find session", file=sys.stderr)  # wie echtes tmux ohne Session (#1412)
+        return 1
     if args[:1] in (["new-window"], ["new-session"]):
         return 0
     print(f"tmux-Ersatz #284: unbekannter Aufruf {args}", file=sys.stderr)

@@ -646,7 +646,7 @@ def _ablauf(a: Auftrag, w: Werkzeug, stand: _Stand) -> Ergebnis:
     handoff, start = _dateien(wt, a.ticket, seit)
 
     # b) neues Fenster: bau.py wie spawn (cwd Hauptbaum, bau.py wechselt selbst in den Worktree)
-    stand.sessions = sessions_datei.Sicherung.merken(sessions_datei.pfad(a.repo, str(a.ticket)))
+    stand.sessions = sessions_datei.Sicherung.merken(a.repo, str(a.ticket))
     stand.neu = w.fenster_starten(a.sitzung, a.name_neu, str(a.repo), befehl)
     log.info("respawn #%s: neues Fenster %s gestartet.", a.ticket, stand.neu)
 
