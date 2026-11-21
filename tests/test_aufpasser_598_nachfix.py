@@ -35,6 +35,8 @@ from test_aufpasser_platz_592 import _beenden, _still_seit_20_min
 
 from to_spawn import aufpasser
 
+pytestmark = pytest.mark.braucht("tmux")  # (#68)
+
 #: Eigener Ordnername: das Muster von ``test_aufpasser_platz_592`` (``aufp592probe``)
 #: sieht die Deploy-Attrappen hier nicht.
 PROBE = "aufp598probe"

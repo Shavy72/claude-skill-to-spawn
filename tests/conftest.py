@@ -13,7 +13,7 @@ from __future__ import annotations
 import os
 import shutil
 import sys
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 import pytest
 
@@ -30,7 +30,54 @@ if _HILFEN not in sys.path:
 ZEITGRENZE_S = 600
 
 
+#: Plattform-Bedarf, der kein Programm im PATH ist (``@pytest.mark.braucht("posix")``):
+#: POSIX-Dateirechte, ``signal.SIGKILL``, ``/proc`` — unter Windows nicht vorhanden.
+_NUR_POSIX = frozenset({"posix"})
+
+
+def braucht_fehlt(name: str, plattform: str = sys.platform, finde=shutil.which) -> str | None:
+    """Grund, warum der Test-Bedarf ``name`` hier fehlt (``None`` = vorhanden), #68 P7b.
+
+    Einzige Stelle dieses Wissens: ``posix`` fehlt unter Windows; ``bash`` zählt unter
+    Windows nur als echte Shell (Git-Bash), nicht als WSL-Stub aus ``System32``/
+    ``WindowsApps`` (startet ohne Distribution nicht); sonst Programm im PATH.
+    """
+    if name in _NUR_POSIX:
+        return "nur POSIX (Linux/macOS)" if plattform == "win32" else None
+    pfad = finde(name)
+    if pfad is None:
+        return f"{name} fehlt im PATH"
+    if name == "bash" and plattform == "win32":
+        teile = {t.lower() for t in PureWindowsPath(pfad).parts}
+        if "system32" in teile or "windowsapps" in teile:
+            return f"bash ist nur der WSL-Stub ({pfad})"
+    return None
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    config.addinivalue_line(
+        "markers",
+        'braucht(*namen): Test braucht Programm im PATH (z. B. "tmux", "bash") oder "posix"; fehlt es → skip (#68)',
+    )
+
+
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    _braucht_ueberspringen(items)
+    _zeitgrenze_setzen(config, items)
+
+
+def _braucht_ueberspringen(items: list[pytest.Item]) -> None:
+    gruende: dict[str, str | None] = {}
+    for item in items:
+        for marke in item.iter_markers("braucht"):
+            for name in marke.args:
+                if name not in gruende:
+                    gruende[name] = braucht_fehlt(name)
+                if gruende[name]:
+                    item.add_marker(pytest.mark.skip(reason=f"braucht {name}: {gruende[name]}"))
+
+
+def _zeitgrenze_setzen(config: pytest.Config, items: list[pytest.Item]) -> None:
     if not config.pluginmanager.hasplugin("timeout"):
         return
     if config.getoption("timeout", None) is not None or config.getini("timeout"):

@@ -239,6 +239,7 @@ def test_baue_befehl_windows_bleibt_pwsh(monkeypatch: pytest.MonkeyPatch) -> Non
 # --- 6. skripte/spawn_srv.sh --------------------------------------------------
 
 
+@pytest.mark.braucht("bash")  # (#68)
 def test_spawn_srv_bash_syntax_ok() -> None:
     ergebnis = subprocess.run(
         ["bash", "-n", str(SKRIPTE / "spawn_srv.sh")], capture_output=True, text=True, check=False
@@ -261,6 +262,7 @@ def test_spawn_srv_fenster_ohne_shell_funktionen() -> None:
 
 
 @pytest.mark.skipif(shutil.which("tmux") is None, reason="spawn_srv.sh verlangt tmux")
+@pytest.mark.braucht("bash")  # (#68)
 def test_spawn_srv_dry_run_zeigt_origin_main(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Echter Trockenlauf in einem Repo mit Hauptzweig ``main`` und ohne ~/.bashrc-Funktionen:
     ``--ohne-regularien`` spart gh, ``--dry-run`` startet kein tmux-Fenster (B5 + B6)."""

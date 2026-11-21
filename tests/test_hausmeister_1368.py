@@ -119,7 +119,7 @@ def welt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Welt:
     gitconfig = tmp_path / "gitconfig"
     gitconfig.write_text(
         f"[user]\n\tname = Test\n\temail = t@example.org\n[init]\n\tdefaultBranch = master\n"
-        f'[url "{bare}"]\n\tinsteadOf = {ORIGIN}\n',
+        f'[url "{bare.as_posix()}"]\n\tinsteadOf = {ORIGIN}\n',
         encoding="utf-8",
     )
     monkeypatch.setenv("HOME", str(tmp_path))

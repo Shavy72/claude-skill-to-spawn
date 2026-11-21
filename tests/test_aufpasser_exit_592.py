@@ -29,6 +29,8 @@ from test_aufpasser_236 import (  # noqa: F401 — ``welt`` ist ein Fixture
 
 from to_spawn import aufpasser
 
+pytestmark = pytest.mark.braucht("tmux")  # (#68)
+
 
 @pytest.fixture()
 def zu_9003(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> Iterator[Welt]:

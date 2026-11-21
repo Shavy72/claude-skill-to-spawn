@@ -109,6 +109,7 @@ def _gh_stub(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Pat
 # --- F1: nest/nest_server.sh — transienter Dienst per Symlink ------------------
 
 
+@pytest.mark.braucht("bash")  # (#68)
 def test_nest_server_bash_syntax_ok() -> None:
     ergebnis = subprocess.run(
         ["bash", "-n", str(SKILL / "nest" / "nest_server.sh")], capture_output=True, text=True, check=False

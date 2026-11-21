@@ -251,7 +251,7 @@ def test_hook_protokolliert_fehlenden_worktree(repo: Path, tmp_path: Path) -> No
             repo,
             befehl,
             json.dumps({"session_id": "s", "transcript_path": "/gibt/es/nicht.jsonl"}),
-            {"TO_SPAWN_TICKET": TICKET, "TO_SPAWN_LOG_REPO": str(fehlt), "HOME": str(heim)},
+            {"TO_SPAWN_TICKET": TICKET, "TO_SPAWN_LOG_REPO": str(fehlt), "HOME": str(heim), "USERPROFILE": str(heim)},
         )
         assert ergebnis.returncode == 0, ergebnis.stderr
     protokoll = heim / ".claude" / "to-spawn" / "hooks.log"
@@ -274,7 +274,7 @@ def test_hook_ohne_schreibbares_heim_laeuft_weiter(repo: Path, tmp_path: Path) -
         repo,
         "hook-stop",
         json.dumps({"session_id": "s", "transcript_path": "/gibt/es/nicht.jsonl"}),
-        {"TO_SPAWN_TICKET": TICKET, "TO_SPAWN_LOG_REPO": str(ziel), "HOME": str(heim)},
+        {"TO_SPAWN_TICKET": TICKET, "TO_SPAWN_LOG_REPO": str(ziel), "HOME": str(heim), "USERPROFILE": str(heim)},
     )
     assert ergebnis.returncode == 0, ergebnis.stderr
     assert [z["typ"] for z in bau_log.lese(ziel, TICKET)] == ["session_start", "session_ende"]
@@ -309,6 +309,7 @@ def hook_umgebung(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     heim = tmp_path / "heim-intern"
     heim.mkdir()
     monkeypatch.setenv("HOME", str(heim))
+    monkeypatch.setenv("USERPROFILE", str(heim))  # (#68)
     monkeypatch.setenv("TO_SPAWN_TICKET", TICKET)
     monkeypatch.setenv("TO_SPAWN_LOG_REPO", str(ziel))
     # Session läuft seit 1000 s — ein Subagent darf das nicht als eigene Dauer melden.

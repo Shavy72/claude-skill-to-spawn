@@ -40,6 +40,7 @@ from to_spawn import (  # noqa: E402
     config,
     context_mode,
     handoff_blick,
+    konsole,
     manifest,
     nest,
     sitzung_env,
@@ -290,6 +291,7 @@ PROMPT = PROMPT.replace("{TAKT_ABNAHME}", str(TAKT_ABNAHME_S))
 
 
 def main() -> int:
+    konsole.utf8_ausgabe()  # Prompt enthält „→“, Windows-Konsole ist cp1252 (#68)
     ap = argparse.ArgumentParser(description="Bau-Aufseher-Session für eine Spec.")
     ap.add_argument("spec", type=int, help="Spec-Issue-Nummer")
     ap.add_argument(

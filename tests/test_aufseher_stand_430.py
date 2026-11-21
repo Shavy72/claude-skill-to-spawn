@@ -381,6 +381,7 @@ def test_cli_ohne_gh_fehler(
     leer.mkdir()
     umgebung = {k: v for k, v in os.environ.items() if k != "TO_SPAWN_GH_STUB"}
     umgebung["PATH"] = str(leer)
+    umgebung["PYTHONUTF8"] = "1"  # (#68)
     fertig = subprocess.run(
         [
             sys.executable,
@@ -394,6 +395,7 @@ def test_cli_ohne_gh_fehler(
         ],
         capture_output=True,
         text=True,
+        encoding="utf-8",  # (#68)
         env=umgebung,
         cwd=repo,
         check=False,

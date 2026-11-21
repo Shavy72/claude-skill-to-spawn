@@ -28,6 +28,8 @@ from test_aufpasser_236 import (  # noqa: F401 — ``welt`` ist ein Fixture
 
 from to_spawn import aufpasser
 
+pytestmark = pytest.mark.braucht("tmux")  # (#68)
+
 
 #: Ordnername der pytest-Attrappe — verankert das Deploy-Muster an diesem Test.
 PROBE = "aufp592probe"

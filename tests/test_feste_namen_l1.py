@@ -11,6 +11,7 @@ verschieben nichts). Eine Ausnahme ohne Treffer ist veraltet und muss raus.
 from __future__ import annotations
 
 import re
+import subprocess
 from pathlib import Path
 
 SKILL = Path(__file__).resolve().parents[1]
@@ -26,7 +27,7 @@ MUSTER: dict[str, re.Pattern[str]] = {
 }
 
 #: Ordner (Skill-Wurzel-relativ) und Dateitypen, die zum Skill-Code zählen. ``tests/`` nicht.
-ORDNER = ("to_spawn", "skripte", "scripts", "repo-scripts", "leitstand", "aliase")
+ORDNER = ("to_spawn", "skripte", "scripts", "repo-scripts", "leitstand", "aliase", "nest")
 ENDUNGEN = {".py", ".sh", ".ps1", ".json", ".html", ""}
 
 #: Die eine Vorgabe-Stelle: hier lebt das DuoPlus-Wissen gewollt.
@@ -46,10 +47,10 @@ AUSNAHMEN: dict[tuple[str, str], tuple[int, str]] = {
     ("repo-scripts/_default.json", "bau-log-ordner"): (1, _TEXT_BESTANDSTEST + " (test_bau_log_204.py)"),
     ("spawn_local.ps1", "manifest-ordner"): (2, "Rückfall vor config.pfad (test_starter_shell_l1.py) + Kopf-Kommentar"),
     ("spawn_local.ps1", "repo-skript"): (1, _WEITERLEITUNG + " (test_starter_shell_l1.py)"),
-    ("spawn_local.ps1", "duoplus"): (1, "Prozess-Erkennung alter Worktrees duoplus-bau/<N> (Rest P7b)"),
     ("install.ps1", "repo-skript"): (10, _WEITERLEITUNG + " (test_starter_shell_l1.py)"),
     ("install.ps1", "manifest-ordner"): (1, "Rückfall vor config.pfad (test_starter_shell_l1.py)"),
     ("install.ps1", "github-konto"): (1, _SKILL_HEIMAT),
+    ("nest/nest_server.sh", "heim-pfad"): (2, "Root-Schlüssel des frischen Servers (/root/.ssh), Systempfad, kein Nutzername"),
     # Weiterleitungs-Rückfall: Repo-Skript, sonst Skill-Skript
     ("to_spawn/aufpasser.py", "repo-skript"): (4, _WEITERLEITUNG + " (VORLAGE_*_REPO, Hilfe-Text)"),
     ("to_spawn/aufpasser.py", "duoplus"): (1, _DOKU),
@@ -154,3 +155,16 @@ def test_pruefung_wird_rot_bei_neuem_festen_namen() -> None:
         _zeilen_treffer(rel, "\n".join([*stellen.values()] * 5), funde)
         assert {m for _, m in funde} >= set(stellen)
         assert len(_verstoesse(funde)) >= len(stellen), rel
+
+
+#: Ordner ohne Skill-Code: Tests, Doku, Review-Belege (Prüf-Ergebnisse, keine Logik).
+NICHT_GESCANNT = frozenset({"tests", "docs", ".review"})
+
+
+def test_jeder_code_ordner_wird_gescannt() -> None:
+    """P7b (#79): ein neuer Code-Ordner fällt nicht still aus dem Scan (Dirigent P6b, :39)."""
+    erfasst = subprocess.run(
+        ["git", "-C", str(SKILL), "ls-files"], capture_output=True, text=True, encoding="utf-8", check=True
+    ).stdout.splitlines()
+    ordner = {teil.split("/", 1)[0] for teil in erfasst if "/" in teil and Path(teil).suffix in ENDUNGEN - {""}}
+    assert sorted(ordner - set(ORDNER) - NICHT_GESCANNT) == []

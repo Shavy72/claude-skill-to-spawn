@@ -482,6 +482,7 @@ def test_weg_wache_verweigert_start_bei_rotem_befund(tmp_path: Path) -> None:
             **os.environ,
             "TO_SPAWN_REPO": str(wt),
             "HOME": str(heim),
+            "USERPROFILE": str(heim),  # (#68)
             "PATH": os.environ["PATH"],
         },
         timeout=180,
@@ -504,7 +505,7 @@ def _wache(
         capture_output=True,
         text=True,
         encoding="utf-8",
-        env={**os.environ, "TO_SPAWN_REPO": str(repo), "HOME": str(heim)},
+        env={**os.environ, "TO_SPAWN_REPO": str(repo), "HOME": str(heim), "USERPROFILE": str(heim)},
         timeout=180,
         check=False,
     )
@@ -637,6 +638,7 @@ def test_f5_v7_hook_sieht_tilde_wie_im_prompt(
     """Vorfall V7 nachgestellt: Hook blockt ``node ~/.claude/…`` — Probe muss das sehen."""
     heim = _heim_mit_werkzeugen(tmp_path)
     monkeypatch.setenv("HOME", str(heim))
+    monkeypatch.setenv("USERPROFILE", str(heim))  # (#68)
     befunde = startklar.werkzeug_probe(
         tmp_path, SPEC, settings_dateien=[_settings(tmp_path, _HOOK_V7)]
     )
@@ -651,6 +653,7 @@ def test_f5_hooks_bekommen_prompt_text_woertlich(
 ) -> None:
     heim = _heim_mit_werkzeugen(tmp_path)
     monkeypatch.setenv("HOME", str(heim))
+    monkeypatch.setenv("USERPROFILE", str(heim))  # (#68)
     _manifest(tmp_path, {"451": {"title": "a"}, "452": {"title": "b"}})
     mitschnitt = tmp_path / "mitschnitt.txt"
     befunde = startklar.werkzeug_probe(

@@ -28,7 +28,7 @@ def _hook(home: Path, befehl: str, cwd: Path) -> subprocess.CompletedProcess[str
         text=True,
         encoding="utf-8",
         errors="replace",
-        env={**os.environ, "SKILL_SCHUTZ_WURZEL": str(home), "HOME": str(home)},
+        env={**os.environ, "SKILL_SCHUTZ_WURZEL": str(home), "HOME": str(home), "PYTHONUTF8": "1"},
         check=False,
     )
 
