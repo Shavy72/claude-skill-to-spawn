@@ -25,7 +25,7 @@ Urteile: **belegt** · **teilweise** · **abweichend** (Soll anders erfüllt, mi
 | W1 | Suite sammelbar | `gruen_l1_p7a.txt` (Linux-Simulation), P7b 497 passed | belegt (Linux-Simulation) |
 | W2 | Windows-Lauf am PC | PC-Befehl im Kommentar an #68 | offen → #68 |
 
-## Abnahme M1–M13
+## Abnahme M1–M15
 
 | # | Soll | Beleg | Urteil |
 |---|---|---|---|
@@ -42,6 +42,8 @@ Urteile: **belegt** · **teilweise** · **abweichend** (Soll anders erfüllt, mi
 | M11 | Kleinste Prüfung, drei Fälle | – | noch nicht geprüft |
 | M12 | ≥ 20 absichtliche Fehler, 0 übersehen (DuoPlus ggf. „nicht anwendbar, weil keine Auswahl läuft“, siehe Plan-Stand) | – | noch nicht geprüft |
 | M13 | `PRUEFTOR_VERGLEICH.md`, Tempo gemessen | – | noch nicht geprüft |
+| M14 | Aufräumen ohne David (L4): Reste im Probe-Lauf, Hausmeister räumt, kein Lösch-Auftrag an David | – | offen |
+| M15 | Kaltstart-Probe (L5) | Kaltstart-Probe 21.11.2026 auf dem Bau-Server: frische Sonnet-Session nur mit `docs/WIEDEREINSTIEG.md`, Urteil BESTANDEN, 0 verhindernde Lücken; Windows-Seite offen | belegt (Bau-Server), Windows offen |
 
 ## Offene Punkte
 

@@ -17,6 +17,7 @@ from pathlib import Path
 from types import ModuleType
 
 import pytest
+from conftest import attrappe
 
 SKILL = Path(__file__).resolve().parents[1]
 OHNE_FENSTER = getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -40,9 +41,7 @@ def _wegwerf_repo(tmp_path: Path, konfig: dict[str, str] | None) -> Path:
 def _ssh_stub(tmp_path: Path) -> dict[str, str]:
     stub = tmp_path / "stub"
     stub.mkdir()
-    (stub / "ssh.cmd").write_text("@echo SSH-STUB %*\r\n@exit /b 0\r\n", encoding="utf-8")
-    (stub / "ssh").write_text('#!/bin/sh\necho "SSH-STUB $*"\n', encoding="utf-8")
-    os.chmod(stub / "ssh", 0o755)
+    attrappe(stub, "ssh", 'import sys\nprint("SSH-STUB " + " ".join(sys.argv[1:]))\n')
     return {**os.environ, "PATH": str(stub) + os.pathsep + os.environ.get("PATH", ""), "PYTHONIOENCODING": "utf-8"}
 
 

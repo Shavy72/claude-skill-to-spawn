@@ -12,6 +12,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from conftest import attrappe
 
 SKRIPT = Path(__file__).resolve().parent.parent / "skripte" / "thermo_lauf.py"
 SPEC = 900
@@ -265,9 +266,15 @@ def _gh_attrappe(tmp_path: Path) -> tuple[dict[str, str], Path]:
     ordner = tmp_path / "bin"
     ordner.mkdir()
     spur = tmp_path / "gh_aufrufe.txt"
-    gh = ordner / "gh"
-    gh.write_text(f'#!/bin/sh\necho "$@" >> "{spur}"\necho https://github.com/x/y/issues/1\n', encoding="utf-8")
-    gh.chmod(0o755)
+    attrappe(
+        ordner,
+        "gh",
+        f"""
+        with open({str(spur)!r}, "a", encoding="utf-8") as f:
+            f.write(" ".join(__import__("sys").argv[1:]) + "\\n")
+        print("https://github.com/x/y/issues/1")
+        """,
+    )
     return {**os.environ, "PATH": f"{ordner}{os.pathsep}{os.environ.get('PATH', '')}"}, spur
 
 

@@ -377,7 +377,7 @@ def test_f5_gh_zeitlimit_ordner_bleibt(
     wt = welt.worktree(81)
     welt.ticket(81, "CLOSED", 48)
     gh = welt.tmp / "bin" / "gh"
-    langsam = gh.read_text(encoding="utf-8").replace("exec ", "sleep 3\nexec ", 1)
+    langsam = gh.read_text(encoding="utf-8").replace("\n", "\nimport time\ntime.sleep(3)\n", 1)
     gh.write_text(langsam, encoding="utf-8")
     monkeypatch.setattr(hausmeister, "GH_ZEITLIMIT_S", 1)
     r = welt.aufraeumen(wt, loeschen=True)

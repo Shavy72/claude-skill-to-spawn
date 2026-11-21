@@ -30,6 +30,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from conftest import attrappe
 
 SKILL = Path(__file__).resolve().parent.parent
 SKRIPTE = SKILL / "skripte"
@@ -91,17 +92,19 @@ def _gh_stub(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Pat
     binaer = tmp_path / "bin"
     binaer.mkdir()
     protokoll = tmp_path / "gh-aufrufe.txt"
-    stub = binaer / "gh"
-    stub.write_text(
-        "#!/bin/sh\n"
-        f'echo "$@" >> "{protokoll}"\n'
-        'if [ "$1" = "api" ]; then\n'
-        '  if [ -n "$LABEL_VORHANDEN" ]; then exit 0; else exit 1; fi\n'
-        "fi\n"
-        "exit 0\n",
-        encoding="utf-8",
+    stub = attrappe(
+        binaer,
+        "gh",
+        f"""
+        import os
+        import sys
+        with open({str(protokoll)!r}, "a", encoding="utf-8") as f:
+            f.write(" ".join(sys.argv[1:]) + "\\n")
+        if sys.argv[1:2] == ["api"]:
+            sys.exit(0 if os.environ.get("LABEL_VORHANDEN") else 1)
+        sys.exit(0)
+        """,
     )
-    stub.chmod(0o755)
     monkeypatch.setenv("PATH", f"{binaer}{os.pathsep}{os.environ.get('PATH', '')}")
     return protokoll, stub
 

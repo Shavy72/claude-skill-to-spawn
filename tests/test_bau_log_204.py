@@ -17,6 +17,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from conftest import attrappe
 
 SKILL = Path(__file__).resolve().parent.parent
 CLI = SKILL / "to_spawn.py"
@@ -101,13 +102,24 @@ def _claude_attrappe(claude: Path, mitschrift: Path | None = None) -> None:
     """``claude``-Attrappe, die ``fake_claude.py`` startet; mit ``mitschrift`` hängt sie vorher
     ``spec=$TO_SPAWN_SPEC`` an.
 
-    Linux: Shell-Skript mit ``exec`` (PID bleibt). Windows startet kein ``#!/bin/sh``
+    Linux: Python-Skript mit ``os.execv`` (PID bleibt). Windows startet kein Shell-Skript
     (WinError 193, #1406): dort ein Python-Skript, das die Start-Tür über den laufenden
     Python startet (``starter._windows_skript``).
     """
     if os.name != "nt":
-        vorlauf = f'printf "spec=%s\n" "$TO_SPAWN_SPEC" >> "{mitschrift}"\n' if mitschrift else ""
-        claude.write_text(f'#!/bin/sh\n{vorlauf}exec "{sys.executable}" "{FAKE_CLAUDE}" "$@"\n', encoding="utf-8")
+        vorlauf = (
+            f"with open({str(mitschrift)!r}, 'a', encoding='utf-8') as aus:\n"
+            "    aus.write('spec=' + os.environ.get('TO_SPAWN_SPEC', '') + '\\n')\n"
+            if mitschrift
+            else ""
+        )
+        attrappe(
+            claude.parent,
+            claude.name,
+            "import os, sys\n"
+            + vorlauf
+            + f"os.execv({sys.executable!r}, [{sys.executable!r}, {str(FAKE_CLAUDE)!r}, *sys.argv[1:]])\n",
+        )
     else:
         vorlauf = (
             f"with open({str(mitschrift)!r}, 'a', encoding='utf-8') as aus:\n"

@@ -170,6 +170,8 @@ MASCHINE_DEFAULTS: dict[str, Any] = {
 }
 #: Ordnernamen, die der Hausmeister immer stehen lässt; ``hausmeister.geschuetzte_ordner`` ergänzt nur.
 HAUSMEISTER_GESCHUETZTE_ORDNER: tuple[str, ...] = tuple(vorgaben.HAUSMEISTER_GESCHUETZTE_ORDNER)
+#: Öffentliche Repos (Slugs), in die die Übergabe-Sicherung nie schreibt.
+OEFFENTLICHE_SLUGS: tuple[str, ...] = tuple(vorgaben.OEFFENTLICHE_SLUGS)
 #: Felder eines Eintrags in ``repos[]``; fehlende Felder gelten als "" (= ableiten).
 REPO_FELDER = ("slug", "pfad", "ticket_repo", "worktree_basis")
 
