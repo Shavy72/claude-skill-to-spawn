@@ -22,7 +22,7 @@ import time
 from pathlib import Path
 from typing import Any, Sequence
 
-from . import bau_log, config, gh, hooks, starter
+from . import bau_log, config, gh, hooks, sitzungsjob, starter
 
 log = logging.getLogger("to_spawn.bau_loop")
 
@@ -139,7 +139,9 @@ def run_ticket(
             )
             waechter.start()
         try:
-            code = prozess.wait()
+            # Job hält den ganzen Baum, auch Git-Bash-Kinder; Blockende beendet den Rest (#122).
+            with sitzungsjob.gebunden(prozess):
+                code = prozess.wait()
         finally:
             stopp.set()
             if waechter is not None:
