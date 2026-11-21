@@ -2,6 +2,7 @@
 
 Führt die echten Funktionen aus leitstand/seite.html per node mit minimalem DOM-Stub aus.
 """
+
 import json
 import shutil
 import subprocess
@@ -12,7 +13,8 @@ import pytest
 SEITE = Path(__file__).resolve().parent.parent / "leitstand" / "seite.html"
 
 HARNESS = r"""
-const src = require("fs").readFileSync(process.argv[2], "utf8");
+// Zeilenenden vereinheitlichen: ein Windows-Checkout (core.autocrlf) liefert CRLF.
+const src = require("fs").readFileSync(process.argv[2], "utf8").replace(/\r\n/g, "\n");
 const a = src.indexOf("  /* ---------- Daten ---------- */");
 const b = src.indexOf("  // Log-Anzeige baut");
 const c = src.indexOf("  function uebernehme(");
@@ -71,7 +73,9 @@ def test_stoerung_bleibt_nach_abo_fehler_sichtbar(tmp_path: Path) -> None:
 def _lauf(tmp_path: Path, modus: str) -> dict:
     js = tmp_path / "harness.js"
     js.write_text(HARNESS, encoding="utf-8")
-    res = subprocess.run(["node", str(js), str(SEITE), modus], capture_output=True, text=True, encoding="utf-8", timeout=60)
+    res = subprocess.run(
+        ["node", str(js), str(SEITE), modus], capture_output=True, text=True, encoding="utf-8", timeout=60
+    )
     assert res.returncode == 0, res.stderr
     return json.loads(res.stdout.strip().splitlines()[-1])
 
