@@ -460,12 +460,24 @@ def test_abloesung_nach_fehlschlag_wiederholt_mit_abstand(
     """Befund 1: Exit 2 → nach dem Mindestabstand ein zweiter Versuch; Exit 0 → Ablöse-Datei."""
     wl, zeiten, zeilen = _faden_welt(tmp_path, monkeypatch, [_exit2(), _ok(tmp_path)])
     ab = wl.Abloesung(tmp_path, 900, tmp_path, versuche_max=3, abstand_s=0.3, warte_s=1)
+    # Uhr aus dem geprüften Objekt: ``_letzter`` je Versuch, nicht die Tür-Zeit (Flacker #1502).
+    from to_spawn import respawn_aufseher
+
+    starts: list[float | None] = []
+    tuer = respawn_aufseher.aufseher_abloesen
+
+    def tuer_mit_uhr(*args: Any, **kw: Any) -> Any:
+        starts.append(ab._letzter)
+        return tuer(*args, **kw)
+
+    monkeypatch.setattr(respawn_aufseher, "aufseher_abloesen", tuer_mit_uhr)
     ab.ausloesen(lambda: 60_000, 50_000, lambda: True)
     assert ab.faden is not None
     ab.faden.join(10)
     assert not ab.faden.is_alive()
     assert len(zeiten) == 2, zeiten
-    assert zeiten[1] - zeiten[0] >= 0.3
+    assert len(starts) == 2 and None not in starts, starts
+    assert starts[1] - starts[0] >= 0.3  # type: ignore[operator]
     assert [z["exit"] for z in zeilen if z["typ"] == "aufseher_abloesung"] == [2, 0]
     assert json.loads((tmp_path / "abloesung.json").read_text(encoding="utf-8"))["start"] == "Start bitte"
     # Erledigt → ein weiteres Auslösen startet nichts mehr.
