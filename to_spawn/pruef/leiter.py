@@ -1,7 +1,7 @@
 """Leiter des Prüf-Werkzeugkastens: welche Stufen laufen und in welcher Reihenfolge (Paket-intern, #99).
 
-Sprachfrei — kennt nur die Adapter-Schnittstelle. In 3b-1a gibt es nur Stufe 4 (voll) je
-erkanntem Adapter; Sofort-Prüfung, Auswahl und die Regeln R1–R3 kommen in 3b-1b/3b-2a.
+Sprachfrei — kennt nur die Adapter-Schnittstelle. Zuerst Stufe 1 sofort + Stufe 2 doku (``sofort``,
+#100), dann Stufe 4 (voll) je erkanntem Adapter; Auswahl und die Regeln R1–R3 kommen in 3b-2a.
 """
 
 from __future__ import annotations
@@ -10,9 +10,11 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Protocol
 
-from to_spawn.pruef import ausfuehren, wackler
+from to_spawn.pruef import ausfuehren, sofort, wackler
 
 GRUEN, ROT, GATE_FEHLER = 0, 1, 2
+#: Stufe lief nicht (``lief=False`` + Grund) — zählt nie als Grün, ändert das Urteil nicht.
+AUSGELASSEN = -1
 #: Höchstens so viele Zeilen gehen als ``fehler_kurz`` ins Protokoll.
 FEHLER_ZEILEN = 20
 
@@ -103,9 +105,18 @@ def _voll(repo: Path, adapter: Adapter) -> Stufe:
     )
 
 
-def stufen(repo: Path, adapter_liste: tuple[Adapter, ...]) -> list[Stufe]:
-    """Alle Stufen für ``repo``; leer, wenn kein Adapter das Repo erkennt."""
-    return [_voll(repo, adapter) for adapter in adapter_liste if adapter.erkennt(repo)]
+def stufen(repo: Path, adapter_liste: tuple[Adapter, ...], basis: str) -> list[Stufe]:
+    """Alle Stufen für ``repo`` gegen ``basis``; leer, wenn kein Adapter das Repo erkennt."""
+    erkannt = [adapter for adapter in adapter_liste if adapter.erkennt(repo)]
+    if not erkannt:
+        return []
+    vorn, halt = sofort.stufen(repo, basis)
+    if halt:
+        return vorn + [
+            Stufe("voll", a.name, False, halt, 0.0, "", "", AUSGELASSEN, "")
+            for a in erkannt
+        ]
+    return vorn + [_voll(repo, adapter) for adapter in erkannt]
 
 
 def ergebnis(liste: list[Stufe]) -> tuple[int, str]:

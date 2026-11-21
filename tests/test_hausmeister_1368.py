@@ -21,13 +21,14 @@ import pytest
 SKILL = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SKILL))
 
+from conftest import altbestand_wie_eingerichtet
 from to_spawn import aufpasser, hausmeister
 
 ORIGIN = "https://github.com/Shavy72/duoplus-management"
 STUNDE = 3600.0
 
-GH_ATTRAPPE = """#!/bin/sh
-exec {py} -c '
+#: Python-Kern der gh-Attrappe: ``gh issue view <nr>`` liest ``GH_TICKETS``.
+GH_ATTRAPPE_PY = """
 import json, os, sys
 a = sys.argv[1:]
 if a[:2] == ["issue", "view"]:
@@ -37,9 +38,14 @@ if a[:2] == ["issue", "view"]:
         sys.exit(1)
     print(json.dumps(e))
     sys.exit(0)
+if a[:2] == ["pr", "list"]:
+    prs = json.load(open(os.environ["GH_PRS"])) if os.environ.get("GH_PRS") else dict()
+    kopf = a[a.index("--head") + 1] if "--head" in a else ""
+    print(json.dumps(prs.get(kopf, [])))
+    sys.exit(0)
 sys.exit(1)
-' "$@"
 """
+GH_ATTRAPPE = "#!/bin/sh\nexec {py} -c '" + GH_ATTRAPPE_PY + '\' "$@"\n'
 
 
 def git(cwd: Path, *args: str) -> str:
@@ -140,6 +146,12 @@ def welt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Welt:
     gh = bin_ / "gh"
     gh.write_text(GH_ATTRAPPE.format(py=sys.executable), encoding="utf-8")
     gh.chmod(0o755)
+    if sys.platform == "win32":
+        # #68: Windows startet ``bin/gh`` (Shell-Skript ohne Endung) nicht — sonst liefe
+        # das echte gh gegen GitHub. Gleiche Attrappe über die Test-Tür TO_SPAWN_GH_STUB.
+        gh_py = bin_ / "gh_attrappe.py"
+        gh_py.write_text(GH_ATTRAPPE_PY, encoding="utf-8")
+        monkeypatch.setenv("TO_SPAWN_GH_STUB", str(gh_py))
     tickets = tmp_path / "tickets.json"
     tickets.write_text("{}", encoding="utf-8")
     log = tmp_path / "hausmeister.jsonl"
@@ -150,6 +162,7 @@ def welt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Welt:
         os.pathsep.join([f"{heim}/wt/*", f"{heim}/wt-*", f"{heim}/duoplus-*"]),
     )
     monkeypatch.setenv("TO_SPAWN_HAUSMEISTER_LOG", str(log))
+    altbestand_wie_eingerichtet()  # Windows: Laptop-Stand nach dem Einrichten (#68)
     return Welt(tmp_path, heim, bare, haupt, log, tickets, time.time())
 
 

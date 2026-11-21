@@ -15,6 +15,8 @@ Ohne ``--belege``/``--direkt``/Zugang/``--tun``/``live`` bleibt die alte Kurzfor
 Die Mail nennt nur Namen, nie ein Passwort; steht in einem Argument etwas wie ``passwort=`` oder
 ``https://nutzer:pass@``, bricht das Skript mit Exit 2 ab, ohne etwas zu schreiben oder zu mailen.
 Ordner-Override für Tests: ``TO_SPAWN_ABSCHLUSS_ORDNER``.
+Das Skript schließt die Spec nicht: die Spec schließt nur ``to_spawn.py spec-schliessen <S>``
+(prüft offene Spec- und Folge-Tickets, E2-4 #88).
 
 Eine Mail je Spec (#586), zusätzlich zum Aufruf oben:
 

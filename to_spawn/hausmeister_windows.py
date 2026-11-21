@@ -3,15 +3,15 @@
 Nur :mod:`to_spawn.hausmeister` ruft dieses Modul; die Lösch-Regeln leben allein dort.
 Hier steckt, wie man unter Windows erkennt, ob ein Prozess im Ordner arbeitet
 (CIM-Prozessliste, Umbenennungs-Probe), wie die Sperre gegen parallele Läufe geht
-(``msvcrt.locking``) und wie ``rmtree`` Nur-Lese-Dateien wegbekommt. Was einen Ordner
+(:func:`to_spawn.sperre.halte`) und wie ``rmtree`` Nur-Lese-Dateien wegbekommt. Was einen Ordner
 festhält, meldet :class:`Bleibt`; ``hausmeister`` übersetzt es in seine Regel-Sprache.
 
-Test-Nähte: :data:`_POWERSHELL`, :data:`PS_ZEITLIMIT_S`, :data:`_umbenennen`, :data:`_msvcrt`.
+Test-Nähte: :data:`_POWERSHELL`, :data:`PS_ZEITLIMIT_S`, :data:`_umbenennen`, :data:`_msvcrt`
+(gesetzt = erzwingt den msvcrt-Zweig von :mod:`to_spawn.sperre` mit diesem Modul).
 """
 
 from __future__ import annotations
 
-import errno
 import json
 import logging
 import os
@@ -19,13 +19,11 @@ import re
 import stat
 import subprocess
 from collections.abc import Callable
+from contextlib import ExitStack
 from pathlib import Path
-from typing import IO, Any
+from typing import Any
 
-try:
-    import msvcrt as _msvcrt_modul
-except ImportError:  # nicht Windows
-    _msvcrt_modul = None
+from to_spawn import sperre as _sperre
 
 log = logging.getLogger("to_spawn.hausmeister.windows")
 
@@ -33,9 +31,7 @@ log = logging.getLogger("to_spawn.hausmeister.windows")
 PS_ZEITLIMIT_S = 60
 _POWERSHELL = "powershell"
 _umbenennen: Callable[[Path, Path], None] = os.rename
-_msvcrt: Any = _msvcrt_modul
-# msvcrt.locking meldet einen fremd gehaltenen Bereich je nach CRT mit EACCES oder EDEADLOCK.
-_BELEGT = {errno.EACCES, getattr(errno, "EDEADLOCK", errno.EDEADLK)}
+_msvcrt: Any = None
 
 
 class Bleibt(Exception):
@@ -153,24 +149,14 @@ def umbenennen_probe(ordner: Path) -> None:
         ) from None
 
 
-def sperre_nehmen(datei: Path) -> IO[str] | None | bool:
-    """Nicht blockierende Sperre per ``msvcrt.locking`` (1 Byte ab Anfang): offene Datei =
-    gehalten, ``False`` = anderer Lauf hält sie, ``None`` = ohne msvcrt kein Sperren."""
-    if _msvcrt is None:
-        return None
-    datei.parent.mkdir(parents=True, exist_ok=True)
-    f = datei.open("a", encoding="utf-8")
-    try:
-        f.seek(0)
-        # ponytail: Freigabe erst beim close() durchs Betriebssystem; reicht bei einem Lauf
-        # pro Tag. Upgrade: vor close() LK_UNLCK, falls Läufe dicht folgen.
-        _msvcrt.locking(f.fileno(), _msvcrt.LK_NBLCK, 1)
-    except OSError as fehler:
-        f.close()
-        if fehler.errno in _BELEGT:
-            return False
-        raise
-    return f
+def sperre_nehmen(datei: Path) -> ExitStack | bool:
+    """Nicht blockierende Sperre über :func:`to_spawn.sperre.halte`: Stapel = gehalten
+    (``close()`` gibt frei), ``False`` = anderer Lauf hält sie."""
+    stapel = ExitStack()
+    if not stapel.enter_context(_sperre.halte(datei, msvcrt=_msvcrt)):
+        stapel.close()
+        return False
+    return stapel
 
 
 def schreibschutz_weg(funktion: Callable[[str], object], pfad: str, _: object) -> None:
