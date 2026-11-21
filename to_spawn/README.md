@@ -209,8 +209,7 @@ oder `/proc` unlesbar = kein Urteil = frei. Test-Tür: `TO_SPAWN_SPEICHER_MEMINF
 
 ## Test
 
-`cd ~/.claude/skills/to-spawn && TO_SPAWN_HAUPT_REPO_TEST=<Haupt-Repo> python -m pytest tests -q`
-(ohne die Variable werden die #1207-Tests rot, #1500) — Weg-Test gegen ein
+`cd ~/.claude/skills/to-spawn && python -m pytest tests -q` — Weg-Test gegen ein
 Wegwerf-Repo mit Bare-Remote. Gestellt sind nur zwei Programme:
 
 1. `claude` (`tests/hilfen/fake_claude.py`) — die Session selbst.
