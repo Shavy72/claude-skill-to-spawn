@@ -20,7 +20,9 @@ set -euo pipefail
 # Repo: TO_SPAWN_REPO (setzt die Weiterleitung scripts/spawn_srv.sh im Repo), sonst Git-Wurzel
 # des aktuellen Ordners. Skill-Ordner = Ordner über skripte/ (dieses Skript liegt im Skill, #205).
 REPO="${TO_SPAWN_REPO:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
-SKILL_HOME="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Windows (Git Bash): ``pwd -W`` liefert ``C:/…`` statt ``/c/…`` — Python/Node verstehen nur die
+# Windows-Form, wenn Claude Code ``MSYS_NO_PATHCONV=1`` vererbt (keine Pfad-Umsetzung). Linux: ``pwd``.
+SKILL_HOME="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && { pwd -W 2>/dev/null || pwd; })"
 cd "$REPO"
 
 SPEC=""
@@ -66,7 +68,7 @@ PY=python3
 
 # Manifest-Ordner aus der Repo-Konfig (pfade.manifeste, L1 P4b); fehlt der Schlüssel, gilt die
 # Vorgabe aus to_spawn/config.py. Nicht ermittelbar → Abbruch, kein stiller Rückfall (F4).
-MANIFESTE="$(TO_SPAWN_REPO="$REPO" "$PY" -c 'import sys; sys.path.insert(0, sys.argv[1]); from pathlib import Path; from to_spawn import config; print(config.pfad(config.lade(Path(sys.argv[2])), "manifeste"))' "$SKILL_HOME" "$REPO")" \
+MANIFESTE="$(TO_SPAWN_REPO="$REPO" "$PY" -c 'import sys; sys.path.insert(0, sys.argv[1]); from pathlib import Path; from to_spawn import config; print(config.pfad(config.lade(Path(sys.argv[2])), "manifeste").as_posix())' "$SKILL_HOME" "$REPO")" \
   || { echo "Manifest-Ordner nicht ermittelbar (to_spawn.config.pfad)." >&2; exit 2; }
 MANIFEST="$MANIFESTE/spec-$SPEC.json"
 [ -f "$MANIFEST" ] || { echo "Manifest fehlt: $MANIFEST" >&2; exit 2; }
