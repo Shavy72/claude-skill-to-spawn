@@ -1,0 +1,225 @@
+"""L5 #145: Übergaben + Entscheidungs-Log von selbst sichern, Zweige hochladen, Stand aktuell.
+
+Alle Dateien liegen in ``tmp_path``; die Maschinen-Liste zeigt per ``TO_SPAWN_MASCHINE`` auf eine
+Test-Datei. Einzige Ausnahme: der Stand-Prüftest liest ``docs/WIEDEREINSTIEG.md`` dieses Repos.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import subprocess
+import sys
+from datetime import datetime, timedelta
+from pathlib import Path
+
+import pytest
+
+from to_spawn import uebergabe_sichern as us
+
+WURZEL = Path(__file__).resolve().parent.parent
+#: Frist zwischen jüngstem Merge auf main und jüngstem Stand-Eintrag (Uhren der Maschinen weichen ab).
+STAND_FRIST = timedelta(hours=24)
+STAND_ZEILE = re.compile(r"^- \*\*(\d{4}-\d{2}-\d{2} \d{2}:\d{2})", re.MULTILINE)
+
+
+def _git(cwd: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", *args], cwd=cwd, check=True, capture_output=True, text=True
+    ).stdout.strip()
+
+
+@pytest.fixture
+def welt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path]:
+    home = tmp_path / "home"
+    repo = home / "leit"
+    repo.mkdir(parents=True)
+    (repo / ".claude-handoff-loop.md").write_text("Übergabe 1\n", encoding="utf-8")
+    (repo / "entscheidungen.md").write_text("E1 Grund\n", encoding="utf-8")
+    extra = home / "systemcheck" / "notiz.md"
+    extra.parent.mkdir()
+    extra.write_text("Schnitt\n", encoding="utf-8")
+    maschine = tmp_path / "maschine.json"
+    maschine.write_text(
+        json.dumps(
+            {
+                "repos": [{"slug": "test/leit", "pfad": str(repo)}],
+                "sicherung": {"dateien": [str(home / "systemcheck" / "*.md")]},
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("TO_SPAWN_MASCHINE", str(maschine))
+    monkeypatch.setenv("OBSIDIAN_VAULT", str(tmp_path / "tresor-fehlt"))
+    monkeypatch.setenv(us.UMGEBUNG_ZIEL, str(tmp_path / "tresor"))
+    return {"home": home, "repo": repo, "extra": extra, "tmp": tmp_path}
+
+
+def test_sichert_uebergabe_log_und_muster_nur_bei_aenderung(
+    welt: dict[str, Path],
+) -> None:
+    erg = us.sichern()
+    assert erg.fehler == []
+    assert erg.ziel is not None and erg.ziel.parent == welt["tmp"] / "tresor"
+    namen = sorted(p.name for p in erg.ziel.iterdir())
+    assert namen == [
+        "leit__claude-handoff-loop.md",
+        "leit__entscheidungen.md",
+        "systemcheck__notiz.md",
+    ]
+    assert len(erg.kopiert) == 3
+    assert us.sichern().kopiert == []  # unverändert → nichts neu geschrieben
+    (welt["repo"] / ".claude-handoff-loop.md").write_text(
+        "Übergabe 2\n", encoding="utf-8"
+    )
+    zweit = us.sichern()
+    assert [p.name for p in zweit.kopiert] == [".claude-handoff-loop.md"]
+    assert (erg.ziel / "leit__claude-handoff-loop.md").read_text(
+        encoding="utf-8"
+    ) == "Übergabe 2\n"
+
+
+def test_ausdrueckliche_datei_wird_mitgesichert(welt: dict[str, Path]) -> None:
+    handoff = welt["tmp"] / "wt" / "docs" / "handoffs" / "HANDOFF_x_waechter_7.md"
+    handoff.parent.mkdir(parents=True)
+    handoff.write_text("Aufseher\n", encoding="utf-8")
+    erg = us.sichern([handoff])
+    assert (
+        erg.ziel is not None
+        and (erg.ziel / "handoffs__HANDOFF_x_waechter_7.md").is_file()
+    )
+
+
+def test_ziel_im_skill_repo_wird_verweigert(
+    welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(us, "_skill_wurzel", lambda: welt["tmp"] / "skill")
+    monkeypatch.setenv(
+        us.UMGEBUNG_ZIEL, str(welt["tmp"] / "skill" / "docs" / "sicherung")
+    )
+    erg = us.sichern()
+    assert erg.ziel is None and erg.kopiert == []
+    assert not (welt["tmp"] / "skill").exists()
+
+
+def test_ziel_in_oeffentlichem_klon_wird_verweigert_privater_tresor_nicht(
+    tmp_path: Path,
+) -> None:
+    klon = tmp_path / "klon"
+    klon.mkdir()
+    _git(klon, "init", "-q")
+    _git(
+        klon,
+        "remote",
+        "add",
+        "origin",
+        "https://github.com/Shavy72/claude-skill-to-spawn.git",
+    )
+    assert us.ist_oeffentlich(klon / "sicherung")
+    tresor = tmp_path / "tresor"
+    tresor.mkdir()
+    _git(tresor, "init", "-q")
+    _git(tresor, "remote", "add", "origin", "git@github.com:someone/obsidian-vault.git")
+    assert not us.ist_oeffentlich(tresor / "to-spawn" / "sicherung")
+
+
+def test_vorgabe_ziel_nie_im_oeffentlichen_repo(
+    welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Rot, sobald eine Vorgabe (ohne Konfig) ins Skill-Repo zeigt."""
+    monkeypatch.delenv(us.UMGEBUNG_ZIEL)
+    ohne_tresor = us.ziel_ordner()
+    assert ohne_tresor.is_relative_to(welt["home"] / ".local" / "share")
+    tresor = welt["tmp"] / "vault"
+    tresor.mkdir()
+    monkeypatch.setenv("OBSIDIAN_VAULT", str(tresor))
+    mit_tresor = us.ziel_ordner()
+    assert mit_tresor.is_relative_to(tresor)
+    for ziel in (ohne_tresor, mit_tresor):
+        assert not us.ist_oeffentlich(ziel)
+        assert not ziel.resolve().is_relative_to(WURZEL)
+
+
+def test_zweige_hochladen_nie_ticket_oder_hauptzweig(
+    welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tmp = welt["tmp"]
+    origin = tmp / "origin.git"
+    _git(tmp, "init", "-q", "--bare", "-b", "main", str(origin))
+    repo = tmp / "skill"
+    _git(tmp, "clone", "-q", str(origin), str(repo))
+    for k, v in (
+        ("user.email", "t@t"),
+        ("user.name", "t"),
+        ("commit.gpgsign", "false"),
+    ):
+        _git(repo, "config", k, v)
+    _git(repo, "checkout", "-q", "-b", "main")
+    _git(repo, "commit", "-q", "--allow-empty", "-m", "basis")
+    _git(repo, "push", "-q", "origin", "main")
+    _git(repo, "commit", "-q", "--allow-empty", "-m", "main lokal")
+    for zweig in ("l5/arbeit", "ticket/9-x"):
+        wt = tmp / zweig.replace("/", "-")
+        _git(repo, "worktree", "add", "-q", "-b", zweig, str(wt), "main")
+        _git(wt, "commit", "-q", "--allow-empty", "-m", f"wip {zweig}")
+    monkeypatch.setenv(us.UMGEBUNG_ZWEIG_REPOS, str(repo))
+    erg = us.sichern()
+    assert erg.hochgeladen == ["skill:l5/arbeit"], erg.fehler
+    entfernt = _git(origin, "for-each-ref", "--format=%(refname:short)", "refs/heads")
+    assert sorted(entfernt.split()) == ["l5/arbeit", "main"]
+    assert (
+        _git(origin, "rev-list", "--count", "main") == "1"
+    )  # main lokal nicht hochgeladen
+    assert us.sichern().hochgeladen == []  # nichts Neues → kein zweiter Push
+
+
+def test_tuer_sichern_ueber_cli(welt: dict[str, Path]) -> None:
+    datei = welt["tmp"] / "ober" / "ober_aufsicht.md"
+    datei.parent.mkdir()
+    datei.write_text("PC\n", encoding="utf-8")
+    env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
+    aus = subprocess.run(
+        [sys.executable, str(WURZEL / "to_spawn.py"), "sichern", str(datei)],
+        cwd=welt["repo"],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    assert aus.returncode == 0, aus.stderr
+    assert "4 Datei(en)" in aus.stdout
+    assert list((welt["tmp"] / "tresor").glob("*/ober__ober_aufsicht.md"))
+
+
+def _stand_veraltet(text: str, merge: datetime, frist: timedelta = STAND_FRIST) -> bool:
+    """``True``, wenn der jüngste Stand-Eintrag älter ist als ``merge`` minus ``frist``."""
+    abschnitt = text.split("## 3. Stand", 1)[-1].split("\n## ", 1)[0]
+    zeiten = [
+        datetime.strptime(t, "%Y-%m-%d %H:%M") for t in STAND_ZEILE.findall(abschnitt)
+    ]
+    return not zeiten or max(zeiten) + frist < merge
+
+
+def test_stand_pruefung_logik() -> None:
+    text = "## 3. Stand\n\n- **2026-11-21 22:37 (Server-Uhr):** x\n- **2026-11-20 10:00:** y\n\n## 4. Weiter\n"
+    assert not _stand_veraltet(text, datetime(2026, 11, 22, 12, 0))
+    assert _stand_veraltet(text, datetime(2026, 11, 23, 0, 0))
+    assert _stand_veraltet("## 3. Stand\n\nnichts\n", datetime(2026, 1, 1))
+
+
+def test_wiedereinstieg_stand_nicht_aelter_als_juengster_merge() -> None:
+    try:
+        roh = _git(WURZEL, "log", "-1", "--merges", "--format=%ct", "HEAD")
+    except (OSError, subprocess.CalledProcessError):
+        pytest.skip("kein git-Verlauf")
+    if not roh:
+        pytest.skip("kein Merge im Verlauf (flacher Klon)")
+    text = (WURZEL / "docs" / "WIEDEREINSTIEG.md").read_text(encoding="utf-8")
+    merge = datetime.fromtimestamp(int(roh))
+    assert not _stand_veraltet(text, merge), (
+        f"docs/WIEDEREINSTIEG.md: jüngster Stand-Eintrag älter als Merge {merge:%Y-%m-%d %H:%M} "
+        f"minus {STAND_FRIST} — Abschnitt „Stand“ fortschreiben (L5)."
+    )
