@@ -6,11 +6,11 @@ erkanntem Adapter; Sofort-Prüfung, Auswahl und die Regeln R1–R3 kommen in 3b-
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Protocol
 
-from to_spawn.pruef import ausfuehren
+from to_spawn.pruef import ausfuehren, wackler
 
 GRUEN, ROT, GATE_FEHLER = 0, 1, 2
 #: Höchstens so viele Zeilen gehen als ``fehler_kurz`` ins Protokoll.
@@ -47,6 +47,10 @@ class Stufe:
     werkzeug: str
     ergebnis: int
     ausgabe: str
+    #: Einmalige Wiederholung der roten Tests (3b-4): Befehl, eigene Zeit, erst rot → dann grün.
+    wiederholung: str = ""
+    wiederholung_s: float = 0.0
+    wackler: tuple[str, ...] = ()
 
 
 def _kurz(text: str) -> str:
@@ -70,7 +74,7 @@ def _voll(repo: Path, adapter: Adapter) -> Stufe:
         )
     erg = ausfuehren.lauf(plan.befehl, repo)
     ergebnis = adapter.deute(erg.code)
-    return Stufe(
+    stufe = Stufe(
         "voll",
         adapter.name,
         True,
@@ -80,6 +84,19 @@ def _voll(repo: Path, adapter: Adapter) -> Stufe:
         plan.werkzeug,
         ergebnis,
         erg.ausgabe if ergebnis != GRUEN else "",
+    )
+    zweit = (
+        wackler.nochmal(adapter, repo, plan.befehl, erg) if ergebnis == ROT else None
+    )
+    if zweit is None:
+        return stufe
+    return replace(
+        stufe,
+        ergebnis=GRUEN if zweit.gruen else ROT,
+        ausgabe="" if zweit.gruen else stufe.ausgabe,
+        wiederholung=" ".join(zweit.befehl),
+        wiederholung_s=zweit.dauer_s,
+        wackler=zweit.wackler,
     )
 
 

@@ -94,12 +94,19 @@ def pruefen(repo: Path, basis: str, ziel: str) -> Urteil:
                 "grund": stufe.grund,
                 "dauer_s": stufe.dauer_s,
                 "befehl": stufe.befehl,
+                "wiederholung": stufe.wiederholung,
+                "wiederholung_s": stufe.wiederholung_s,
             }
             for stufe in liste
         ],
         werkzeug=[stufe.werkzeug for stufe in liste],
         fehler_kurz=fehler_kurz,
         gesamt_s=time.monotonic() - start,
+        wackler=[
+            {"test": test, "adapter": stufe.adapter}
+            for stufe in liste
+            for test in stufe.wackler
+        ],
     )
     protokoll.schreibe(repo, zeile)
     return Urteil(exit_code, zeile)

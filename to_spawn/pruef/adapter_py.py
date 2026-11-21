@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -19,6 +20,8 @@ _MERKMALE = (
     "conftest.py",
     "requirements.txt",
 )
+#: Zeile der pytest-Kurzfassung je rotem Test: ``FAILED <knoten-id>[ - <grund>]`` (auch ERROR).
+_ROT_ZEILE = re.compile(r"^(?:FAILED|ERROR) (.+?)(?: - .*)?$", re.MULTILINE)
 
 
 def _python(repo: Path) -> str:
@@ -64,6 +67,15 @@ class PythonAdapter:
         if code in (1, 2):
             return 1
         return 2
+
+    def nochmal_befehl(self, befehl: list[str], code: int) -> list[str] | None:
+        # Wiederholung nur bei echtem Test-Rot (1); Sammelfehler (2) wackeln nicht.
+        # ``--lf`` ist pytest-eigen (cacheprovider); ``--lfnf none``: ohne Cache läuft nichts
+        # (Exit 5) statt alles, dann bleibt es beim ersten Rot.
+        return [*befehl, "--lf", "--lfnf", "none"] if code == 1 else None
+
+    def rote(self, ausgabe: str) -> set[str]:
+        return {treffer.strip() for treffer in _ROT_ZEILE.findall(ausgabe)}
 
 
 ADAPTER = PythonAdapter()
