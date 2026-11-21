@@ -87,8 +87,21 @@ def _stufe(zeile: dict, name: str) -> dict:
     return treffer[0]
 
 
+def _erklaere(ordner: Path, muster: object, roh: str | None = None) -> None:
+    """Repo erklärt seine Doku-Pfade (``pruefen.doku_pfade``) bzw. ``roh`` als Konfig-Text; neue Basis."""
+    (ordner / ".to-spawn").mkdir(exist_ok=True)
+    text = roh if roh is not None else json.dumps({"pruefen": {"doku_pfade": muster}})
+    (ordner / ".to-spawn" / "config.json").write_text(text, encoding="utf-8")
+    with (ordner / ".gitignore").open("a", encoding="utf-8") as datei:
+        datei.write(".to-spawn/*\n!.to-spawn/config.json\n")
+    _git(ordner, "add", "-A")
+    _git(ordner, "commit", "-qm", "konfig")
+    _git(ordner, "tag", "-f", "base")
+
+
 def test_m11_fall_1_nur_readme_laeuft_kein_test(tmp_path: Path) -> None:
     probe = _probe(tmp_path / "py")
+    _erklaere(probe, ["README.md"])
     _commit(probe, "README.md", "# Probe\n\nNeuer Absatz.\n")
     start = time.monotonic()
     code, zeile = _tuer(probe)
@@ -150,7 +163,7 @@ def test_doku_die_ein_test_liest_ist_nicht_nur_doku(tmp_path: Path) -> None:
     _git(probe, "tag", "-f", "base")
     _commit(probe, "README.md", "# Probe\n\nGeändert.\n")
     urteil = pruef.pruefen(probe, "base", "HEAD")
-    assert _stufe(urteil.zeile, "doku")["grund"] == "nicht nur Doku geändert"
+    assert _stufe(urteil.zeile, "doku")["grund"] == "Doku-Pfade nicht erklärt (pruefen.doku_pfade)"
     assert _stufe(urteil.zeile, "voll")["lief"] is True
 
 
@@ -163,7 +176,7 @@ def test_ungespeicherte_code_aenderung_hebt_nur_doku_auf(tmp_path: Path) -> None
     _commit(probe, "README.md", "# Probe\n\nGeändert.\n")
     (probe / "neu.py").write_text("X = 1\n", encoding="utf-8")  # neu, nicht committet
     liste, halt = sofort.stufen(probe, "base")
-    assert [s.grund for s in liste if s.name == "doku"] == ["nicht nur Doku geändert"]
+    assert [s.grund for s in liste if s.name == "doku"] == ["Doku-Pfade nicht erklärt (pruefen.doku_pfade)"]
     assert halt == ""
 
 
@@ -207,7 +220,7 @@ def test_prompt_md_die_code_liest_ist_keine_doku_und_rot(tmp_path: Path) -> None
     _commit(probe, "prompts/system.md", "nein\n")
     code, zeile = _tuer(probe)
     assert code == 1, zeile
-    assert _stufe(zeile, "doku")["grund"] == "nicht nur Doku geändert"
+    assert _stufe(zeile, "doku")["grund"] == "Doku-Pfade nicht erklärt (pruefen.doku_pfade)"
     assert "test_lies" in zeile["fehler_kurz"]
 
 
@@ -225,7 +238,7 @@ def test_md_in_ordner_den_code_liest_ist_keine_doku(tmp_path: Path) -> None:
     _commit(probe, "vorlagen/eins.md", "nein\n")
     code, zeile = _tuer(probe)
     assert code == 1, zeile
-    assert _stufe(zeile, "doku")["grund"] == "nicht nur Doku geändert"
+    assert _stufe(zeile, "doku")["grund"] == "Doku-Pfade nicht erklärt (pruefen.doku_pfade)"
 
 
 def test_md_die_code_per_endungs_glob_liest_ist_keine_doku(tmp_path: Path) -> None:
@@ -245,7 +258,7 @@ def test_md_die_code_per_endungs_glob_liest_ist_keine_doku(tmp_path: Path) -> No
     _commit(probe, "HILFE.md", "nein\n")
     code, zeile = _tuer(probe)
     assert code == 1, zeile
-    assert _stufe(zeile, "doku")["grund"] == "nicht nur Doku geändert"
+    assert _stufe(zeile, "doku")["grund"] == "Doku-Pfade nicht erklärt (pruefen.doku_pfade)"
 
 
 def test_umbenannte_code_datei_meldet_alt_und_neu_und_ist_keine_doku(
@@ -263,7 +276,7 @@ def test_umbenannte_code_datei_meldet_alt_und_neu_und_ist_keine_doku(
     assert {"rechnen.py", "rechner.py"} <= set(sofort.geaendert(probe, "base") or [])
     code, zeile = _tuer(probe)
     assert code == 0, zeile
-    assert _stufe(zeile, "doku")["grund"] == "nicht nur Doku geändert"
+    assert _stufe(zeile, "doku")["grund"] == "Doku-Pfade nicht erklärt (pruefen.doku_pfade)"
     assert _stufe(zeile, "voll")["lief"] is True
 
 
@@ -274,7 +287,7 @@ def test_geloeschte_code_datei_ist_keine_doku(tmp_path: Path) -> None:
     code, zeile = _tuer(probe)
     assert code == 1, zeile  # Test findet rechnen nicht mehr → voll lief und ist rot
     assert _stufe(zeile, "sofort")["grund"] == "keine Code-Datei geändert"
-    assert _stufe(zeile, "doku")["grund"] == "nicht nur Doku geändert"
+    assert _stufe(zeile, "doku")["grund"] == "Doku-Pfade nicht erklärt (pruefen.doku_pfade)"
 
 
 def test_datei_ohne_endung_ist_keine_doku(tmp_path: Path) -> None:
@@ -282,7 +295,7 @@ def test_datei_ohne_endung_ist_keine_doku(tmp_path: Path) -> None:
     _commit(probe, "LIZENZ", "frei\n")
     code, zeile = _tuer(probe)
     assert code == 0, zeile
-    assert _stufe(zeile, "doku")["grund"] == "nicht nur Doku geändert"
+    assert _stufe(zeile, "doku")["grund"] == "Doku-Pfade nicht erklärt (pruefen.doku_pfade)"
     assert _stufe(zeile, "voll")["lief"] is True
     assert (probe / "lief.txt").exists()
 
@@ -381,7 +394,7 @@ def test_md_per_endswith_aus_berechnetem_ordner_ist_keine_doku_und_rot(
     _commit(probe, "haupt_texte/eins.md", "nein\n")
     code, zeile = _tuer(probe)
     assert code == 1, zeile
-    assert _stufe(zeile, "doku")["grund"] == "nicht nur Doku geändert"
+    assert _stufe(zeile, "doku")["grund"] == "Doku-Pfade nicht erklärt (pruefen.doku_pfade)"
     assert "test_lies" in zeile["fehler_kurz"]
 
 
@@ -396,9 +409,11 @@ def test_readme_commit_mit_ungetracktem_code_ist_nie_gruen(tmp_path: Path) -> No
 
 
 def test_git_status_scheitert_meldet_ursache_und_loggt(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from to_spawn import pruef
+
+    monkeypatch.setenv("LC_ALL", "C")  # geprüft wird git-Text auf Englisch
 
     kein_repo = tmp_path / "leer"
     kein_repo.mkdir()
@@ -432,3 +447,192 @@ def test_ungetrackter_code_in_unterordner_venv_ist_ungespeichert(
         "", encoding="utf-8"
     )  # Datei, kein Werkzeug-Ordner
     assert pruef._ungespeichert(probe) == ["node_modules", "src/venv/y.py"]
+
+
+# --- Fix-Runde 3 (#100): „nur Doku“ nur für erklärte Doku-Pfade, sonst voll (Angriffe F1b–F8) ---
+
+OHNE = "Doku-Pfade nicht erklärt (pruefen.doku_pfade)"
+_TEST_APP = 'from app import f\n\ndef test_f():\n    assert f() == "ok"\n'
+
+
+def _angriff(ordner: Path, dateien: dict[str, str], links: dict[str, str] | None = None) -> Path:
+    """Grünes Repo aus ``dateien`` + ``tests/test_app.py`` (``f() == "ok"``), Symlinks ``links``; Tag ``base``."""
+    ordner.mkdir()
+    alle = {
+        ".gitignore": "__pycache__/\n.pytest_cache/\n",
+        "conftest.py": "",
+        "tests/test_app.py": _TEST_APP,
+        **dateien,
+    }
+    for pfad, text in alle.items():
+        (ordner / pfad).parent.mkdir(parents=True, exist_ok=True)
+        (ordner / pfad).write_text(text, encoding="utf-8")
+    for link, ziel in (links or {}).items():
+        try:
+            os.symlink(ziel, ordner / link)
+        except OSError as fehler:  # Windows ohne Symlink-Recht
+            pytest.skip(f"Symlink nicht anlegbar: {fehler}")
+    _git(ordner, "init", "-q")
+    _git(ordner, "add", "-A")
+    _git(ordner, "commit", "-qm", "base")
+    _git(ordner, "tag", "base")
+    return ordner
+
+
+def _voll_rot(ordner: Path, grund: str) -> None:
+    code, zeile = _tuer(ordner)
+    assert code == 1, zeile
+    assert _stufe(zeile, "doku")["grund"] == grund
+    assert _stufe(zeile, "voll")["lief"] is True
+    assert "test_" in zeile["fehler_kurz"], zeile
+
+
+_F1C = {
+    "README.md": "# Titel\n",
+    "app.py": 'def f():\n    return "ok"\n',
+    "tests/test_hygiene.py": textwrap.dedent("""\
+        import subprocess
+        from pathlib import Path
+        WURZEL = Path(__file__).resolve().parents[1]
+        def test_keine_tabs():
+            dateien = subprocess.run(["git", "ls-files"], cwd=WURZEL, capture_output=True,
+                                     text=True).stdout.split()
+            for d in dateien:
+                assert "\\t" not in (WURZEL / d).read_text(errors="ignore"), d
+        """),
+}
+_F6 = {"doku/x.md": "ok\n", "app.py": 'from pathlib import Path\ndef f():\n    return (Path(__file__).parent / "vorlage.txt").read_text().strip()\n'}
+_ITERDIR = 'from pathlib import Path\ndef f():\n    return sorted((Path(__file__).parent / "zz").iterdir())[0].read_text().strip()\n'
+
+
+def test_f1c_hygiene_test_ueber_git_ls_files_ohne_konfig_voll_und_rot(tmp_path: Path) -> None:
+    probe = _angriff(tmp_path / "f1c", _F1C)
+    _commit(probe, "README.md", "# Titel\n\tEingerückt\n")
+    _voll_rot(probe, OHNE)
+
+
+def test_f1b_iterdir_ueber_ordner_aus_env_ohne_konfig_voll_und_rot(tmp_path: Path) -> None:
+    probe = _angriff(
+        tmp_path / "f1b",
+        {
+            "texte/gruss.md": "ok\n",
+            "app.py": 'import os\nfrom pathlib import Path\ndef f():\n    d = Path(os.environ["APP_DATEN"])\n'
+            "    return next(p for p in sorted(d.iterdir())).read_text().strip()\n",
+            "tests/conftest.py": textwrap.dedent("""\
+                import os, sys
+                from pathlib import Path
+                w = Path(__file__).resolve().parents[1]
+                sys.path.insert(0, str(w))
+                os.environ.setdefault("APP_DATEN", str(next(
+                    p for p in sorted(w.iterdir())
+                    if p.is_dir() and not p.name.startswith((".", "_")) and p.name != "tests")))
+                """),
+        },
+    )
+    _commit(probe, "texte/gruss.md", "bad\n")
+    _voll_rot(probe, OHNE)
+
+
+def test_f6_symlink_auf_doku_ohne_konfig_voll_und_rot(tmp_path: Path) -> None:
+    probe = _angriff(tmp_path / "f6", _F6, {"vorlage.txt": "doku/x.md"})
+    _commit(probe, "doku/x.md", "bad\n")
+    _voll_rot(probe, OHNE)
+
+
+def test_f7b_git_mv_aendert_erste_datei_im_ordner_ohne_konfig_voll_und_rot(tmp_path: Path) -> None:
+    probe = _angriff(tmp_path / "f7b", {"zz/a.md": "ok\n", "zz/m.md": "bad\n", "app.py": _ITERDIR})
+    _git(probe, "mv", "zz/a.md", "zz/z.md")
+    _git(probe, "commit", "-qm", "mv")
+    _voll_rot(probe, OHNE)
+
+
+def test_f8_erkennung_per_mimetypes_ohne_konfig_voll_und_rot(tmp_path: Path) -> None:
+    probe = _angriff(
+        tmp_path / "f8",
+        {
+            "zz/a.md": "ok\n",
+            "zz/b.py": "x\n",
+            "app.py": "import mimetypes\nfrom pathlib import Path\ndef f():\n"
+            '    d = Path(__file__).parent / "zz"\n'
+            '    return next(p for p in d.iterdir() if mimetypes.guess_type(p.name)[0] == "text/markdown")'
+            ".read_text().strip()\n",
+        },
+    )
+    _commit(probe, "zz/a.md", "bad\n")
+    _voll_rot(probe, OHNE)
+
+
+def test_erklaerter_pfad_mit_unterordner_ist_nur_doku(tmp_path: Path) -> None:
+    probe = _probe(tmp_path / "py")
+    (probe / "docs" / "teil").mkdir(parents=True)
+    (probe / "docs" / "teil" / "a.md").write_text("alt\n", encoding="utf-8")
+    _erklaere(probe, ["docs/**", "README.md"])
+    _commit(probe, "docs/teil/a.md", "neu\n")
+    (probe / "README.md").unlink()  # gelöscht, aber erklärt
+    _commit(probe, "docs/neu.md", "neu\n")
+    code, zeile = _tuer(probe)
+    assert code == 0, zeile
+    assert (_stufe(zeile, "voll")["lief"], _stufe(zeile, "voll")["grund"]) == (False, "nur Doku")
+    assert not (probe / "lief.txt").exists()
+
+
+def test_datei_ausserhalb_der_erklaerten_pfade_prueft_voll(tmp_path: Path) -> None:
+    probe = _angriff(tmp_path / "aussen", _F1C)
+    _erklaere(probe, ["docs/**"])
+    _commit(probe, "README.md", "# Titel\n\tEingerückt\n")
+    _voll_rot(probe, "nicht nur Doku geändert")
+
+
+def test_symlink_auf_erklaerte_doku_prueft_voll(tmp_path: Path) -> None:
+    probe = _angriff(tmp_path / "f6k", _F6, {"vorlage.txt": "doku/x.md"})
+    _erklaere(probe, ["doku/**"])
+    _commit(probe, "doku/x.md", "bad\n")
+    _voll_rot(probe, "Symlink geändert oder zeigt auf geänderte Datei")
+
+
+def test_neuer_symlink_im_erklaerten_pfad_prueft_voll(tmp_path: Path) -> None:
+    probe = _probe(tmp_path / "py")
+    _erklaere(probe, ["docs/**"])
+    (probe / "docs").mkdir()
+    try:
+        os.symlink("../rechnen.py", probe / "docs" / "code.md")
+    except OSError as fehler:
+        pytest.skip(f"Symlink nicht anlegbar: {fehler}")
+    _git(probe, "add", "-A")
+    _git(probe, "commit", "-qm", "link")
+    code, zeile = _tuer(probe)
+    assert code == 0, zeile
+    assert _stufe(zeile, "doku")["grund"] == "Symlink geändert oder zeigt auf geänderte Datei"
+    assert _stufe(zeile, "voll")["lief"] is True
+
+
+def test_umbenennung_aus_erklaertem_pfad_heraus_prueft_voll(tmp_path: Path) -> None:
+    probe = _angriff(tmp_path / "mv", {"docs/a.md": "bad\n", "zz/m.md": "ok\n", "app.py": _ITERDIR})
+    _erklaere(probe, ["docs/**"])
+    _git(probe, "mv", "docs/a.md", "zz/a.md")
+    _git(probe, "commit", "-qm", "mv")
+    _voll_rot(probe, "nicht nur Doku geändert")
+
+
+@pytest.mark.parametrize(
+    ("roh", "grund"),
+    [
+        ("{kaputt", OHNE),
+        ('{"pruefen": {"doku_pfade": "docs/**"}}', "pruefen.doku_pfade ungültig (Liste von Pfad-Mustern erwartet)"),
+        ('{"pruefen": {"doku_pfade": []}}', "pruefen.doku_pfade ungültig (Liste von Pfad-Mustern erwartet)"),
+    ],
+)
+def test_kaputte_konfig_prueft_voll_und_meldet(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, roh: str, grund: str
+) -> None:
+    from to_spawn import pruef
+
+    probe = _angriff(tmp_path / "kaputt", _F1C)
+    _erklaere(probe, None, roh=roh)
+    _commit(probe, "README.md", "# Titel\n\tEingerückt\n")
+    with caplog.at_level("WARNING"):
+        urteil = pruef.pruefen(probe, "base", "HEAD")
+    assert urteil.exit == 1, urteil.zeile
+    assert _stufe(urteil.zeile, "doku")["grund"] == grund
+    assert _stufe(urteil.zeile, "voll")["lief"] is True
+    assert any(r.levelname == "WARNING" for r in caplog.records), caplog.records

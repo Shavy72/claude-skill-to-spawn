@@ -56,11 +56,12 @@ def _ist_werkzeug_ordner(pfad: str) -> bool:
 
 
 def _ungespeichert(repo: Path) -> list[str]:
-    """Pfade, die vom ausgecheckten Commit abweichen; ``["?"]`` = unklar (git scheitert).
+    """Pfade, die vom ausgecheckten Commit abweichen; ``["? (git status: <Ursache>)"]`` = unklar.
 
     Geprüft wird der Arbeitsbaum, das Urteil gilt aber dem SHA — beides muss gleich sein, sonst
     gibt es Grün für einen Stand, den keiner committet hat. Ausgenommen: ``.to-spawn/`` (eigenes
-    Protokoll) und ungetrackte Werkzeug-Ordner. ``normal`` fasst neue Ordner zu ``ordner/`` zusammen.
+    Protokoll) und ungetrackte Werkzeug-Ordner (nur als Ordner-Eintrag: Caches in jeder Tiefe,
+    ``.venv``/``venv``/``node_modules`` nur ganz oben). ``normal`` fasst neue Ordner zu ``ordner/`` zusammen.
     """
     try:
         erg = subprocess.run(

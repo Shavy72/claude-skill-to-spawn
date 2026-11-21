@@ -3,7 +3,16 @@
 Schnittstelle zur Leiter: ``stufen(repo, basis) -> (liste, halt)``. ``liste`` sind die Stufen
 „sofort“ und „doku“ fürs Protokoll; ``halt`` ≠ "" heißt, die übrigen Stufen laufen nicht (Grund
 steht drin: „nur Doku“ oder schnell rot). Versteckt hier: welche Dateien geändert sind (git, auch
-ungespeicherte und neue), was als Doku gilt, welcher Linter zu welcher Endung gehört und wo er liegt.
+ungespeicherte und neue), welcher Linter zu welcher Endung gehört und wo er liegt.
+
+„Nur Doku“ (M11) gibt es nur für Repos, die ihre Doku-Pfade selbst erklären: Schlüssel
+``pruefen.doku_pfade`` in ``.to-spawn/config.json``, eine Liste von Mustern relativ zur
+Repo-Wurzel mit ``/`` (``fnmatch``, Groß/klein zählt, ``*`` passt auch über ``/``), z. B.
+``["docs/**", "README.md"]``. Warum: Ob Code eine Datei liest, lässt sich nicht erraten (Tests über
+``git ls-files``, ``iterdir``, Symlinks, ``mimetypes``) — nur das Repo weiß es. Abkürzung nur, wenn
+JEDE geänderte Datei (neu, gelöscht, bei Umbenennung alter und neuer Pfad) unter ein Muster fällt,
+keine davon ein Symlink ist und kein getrackter Symlink auf sie zeigt. Fehlt der Schlüssel, ist er
+ungültig oder die Konfig kaputt: nie Abkürzung, die Leiter prüft voll (fail-closed).
 
 Kein falsches Grün: fehlt ein Linter oder ist unklar, was geändert ist, wird die Stufe
 ausgelassen (``lief=False`` + Grund) und die Leiter prüft voll weiter.
@@ -11,6 +20,8 @@ ausgelassen (``lief=False`` + Grund) und die Leiter prüft voll weiter.
 
 from __future__ import annotations
 
+import fnmatch
+import logging
 import os
 import shutil
 import subprocess
@@ -19,19 +30,21 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
+from to_spawn import config
 from to_spawn.pruef import ausfuehren, leiter
+
+log = logging.getLogger("to_spawn.pruef")
 
 NUR_DOKU = "nur Doku"
 ROT_HALT = "Stufe sofort rot (schnell rot)"
 
-#: Doku = nur diese Endungen (Erlaubnis-Liste: Unbekanntes ist nie Doku). ``.txt`` fehlt bewusst
-#: (``requirements.txt``).
-_DOKU_ENDUNGEN = frozenset({".md", ".markdown", ".rst", ".adoc"})
-#: Gesucht wird in allen getrackten Dateien außer Doku (Code, Tests, Konfig, Skripte).
-_NICHT_DOKU_PFADE = (
-    ".",
-    *(f":(exclude,glob)**/*{endung}" for endung in sorted(_DOKU_ENDUNGEN)),
-)
+NICHT_NUR_DOKU = "nicht nur Doku geändert"
+OHNE_DOKU_PFADE = "Doku-Pfade nicht erklärt (pruefen.doku_pfade)"
+DOKU_PFADE_UNGUELTIG = "pruefen.doku_pfade ungültig (Liste von Pfad-Mustern erwartet)"
+SYMLINK = "Symlink geändert oder zeigt auf geänderte Datei"
+SYMLINK_UNKLAR = "Symlinks unklar (git ls-files/ls-tree gescheitert)"
+#: git-Modus eines Symlinks.
+_SYMLINK_MODUS = "120000"
 
 
 @dataclass(frozen=True)
@@ -102,21 +115,58 @@ def geaendert(repo: Path, basis: str) -> list[str] | None:
     return sorted({pfad for pfad in (raus + neu).split("\0") if pfad})
 
 
-def _ist_doku(repo: Path, pfad: str) -> bool:
-    if PurePosixPath(pfad).suffix.lower() not in _DOKU_ENDUNGEN:
-        return False
-    # Im Zweifel keine Doku: Kommt in irgendeiner Nicht-Doku-Datei der Dateiname, ein Ordnername
-    # des Pfads (Code liest den Ordner) oder die nackte Endung (``.md``: deckt ``*.md``,
-    # ``endswith(".md")``, ``suffix == ".md"``) vor, liest Code sie womöglich zur Laufzeit.
-    # -i: Windows-Dateisystem ignoriert Groß/klein. Teilwort-Treffer machen nur vorsichtiger.
-    # git grep: 0 gefunden, 1 nicht gefunden, sonst unklar → keine Doku.
-    # ponytail: Code, der auch die Endung berechnet (``".m" + "d"``), fällt durch;
-    # Upgrade: Konfig-Schlüssel pruefen.doku_muster je Repo, wenn ein solcher Fall auftaucht.
-    teile = PurePosixPath(pfad)
-    muster = [teile.name, *teile.parts[:-1], teile.suffix]
-    suche = [arg for wort in muster for arg in ("-e", wort)]
-    code, _ = _git(repo, "grep", "-q", "-i", "-F", *suche, "--", *_NICHT_DOKU_PFADE)
-    return code == 1
+def _doku_muster(repo: Path) -> tuple[list[str], str]:
+    """(Muster, Grund): erklärte Doku-Pfade des Repos; leere Liste = keine Abkürzung, Grund steht drin.
+
+    Kaputte Konfig meldet ``config.lade`` (Warnung), danach gelten die Vorgaben ohne Schlüssel.
+    """
+    pruefen = config.lade(repo).get("pruefen")
+    muster = pruefen.get("doku_pfade") if isinstance(pruefen, dict) else None
+    if muster is None:
+        return [], OHNE_DOKU_PFADE
+    if not isinstance(muster, list) or not muster or not all(isinstance(m, str) and m for m in muster):
+        log.warning("%s: %r", DOKU_PFADE_UNGUELTIG, muster)
+        return [], DOKU_PFADE_UNGUELTIG
+    return muster, ""
+
+
+def _symlinks(repo: Path, basis: str) -> set[str] | None:
+    """Getrackte Symlinks im Index und in ``basis`` (git-Modus 120000); ``None`` = unklar."""
+    links: set[str] = set()
+    for args in (("ls-files", "-s", "-z"), ("ls-tree", "-r", "-z", basis)):
+        code, raus = _git(repo, *args)
+        if code != 0:
+            return None
+        for eintrag in filter(None, raus.split("\0")):
+            kopf, _, pfad = eintrag.partition("\t")
+            if kopf.split(" ", 1)[0] == _SYMLINK_MODUS:
+                links.add(pfad)
+    return links
+
+
+def _nicht_nur_doku(repo: Path, basis: str, pfade: list[str]) -> str:
+    """Grund, warum die Abkürzung „nur Doku“ nicht gilt; "" = alle Pfade sind erklärte Doku."""
+    muster, grund = _doku_muster(repo)
+    if not muster:
+        return grund
+    if not all(any(fnmatch.fnmatchcase(pfad, m) for m in muster) for pfad in pfade):
+        return NICHT_NUR_DOKU
+    links = _symlinks(repo, basis)
+    if links is None:
+        return SYMLINK_UNKLAR
+    if any(pfad in links or (repo / pfad).is_symlink() for pfad in pfade):
+        return SYMLINK
+    geaenderte = [(repo / pfad).resolve() for pfad in pfade]
+    for link in links:
+        datei = repo / link
+        if not datei.exists() and not datei.is_symlink():
+            continue  # nur in basis, im Arbeitsbaum gelöscht — wäre selbst geändert (oben)
+        if not datei.is_symlink():
+            return SYMLINK  # Windows ohne Symlink-Recht: Ziel nicht auflösbar → im Zweifel voll
+        ziel = datei.resolve()
+        if any(ziel == pfad or ziel in pfad.parents for pfad in geaenderte):
+            return SYMLINK
+    return ""
 
 
 def _ausgelassen(name: str, adapter: str, grund: str, werkzeug: str = "") -> leiter.Stufe:
@@ -182,13 +232,14 @@ def stufen(repo: Path, basis: str) -> tuple[list[leiter.Stufe], str]:
     if any(stufe.ergebnis == leiter.ROT for stufe in liste):
         return [*liste, _ausgelassen("doku", "", ROT_HALT)], ROT_HALT
     doku_start = time.monotonic()
-    nur_doku = all(_ist_doku(repo, pfad) for pfad in pfade)
+    grund = _nicht_nur_doku(repo, basis, pfade)
+    nur_doku = not grund
     liste.append(
         leiter.Stufe(
             "doku",
             "",
             True,
-            NUR_DOKU if nur_doku else "nicht nur Doku geändert",
+            grund or NUR_DOKU,
             round(time.monotonic() - doku_start, 2),
             "",
             "",
