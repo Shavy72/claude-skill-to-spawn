@@ -8,8 +8,16 @@ jeder Fehler ergibt ``art="bleibt"`` mit dem Fehler als Grund und ``fehler=True`
 
 Reihenfolge (erste zutreffende Regel gewinnt), Vertrag ``docs/verify-hard/1368/API.md``:
 Aufräum-Bereich (aufgelöster Pfad, Symlink bleibt) → Hauptrepo → eigenes Repo →
-Ticket-Nummer → Ticket zu → 24 h → kein Prozess im Ordner (cwd, exe, offene
-Dateien) → Prüfung des Ungesicherten → Sicherung → Gegenprobe → Log → löschen.
+Ticket-Nummer → Ticket zu → 24 h → keine tmux-Sitzung ``spec-<N>`` → kein Prozess im
+Ordner (cwd, exe, offene Dateien) → Prüfung des Ungesicherten → Sicherung → Gegenprobe →
+Log → löschen. Vorab: Namen aus :data:`GESCHUETZTE_ORDNER` bleiben immer.
+
+#1536 — Behalten ist die Ausnahme mit echtem Grund. Ordner ohne Ticket-Nummer und Ordner
+ganz ohne Git (kein ``.git`` oder verwaister Worktree, dessen Hauptrepo fehlt) bleiben
+immer, ``fuer_david=True`` — ohne Git gibt es nichts, wohin sie sich sichern ließen.
+Unterordner eines fremden Repos und unlesbare Git-Ordner bleiben. Je Takt schreibt :func:`aufraeumen_alles` eine Zeile
+nach :data:`KENNZAHL_DATEI` neben dem Log („x von y gelöscht, z bleiben“, Bleib-Gründe
+gezählt) — eigene Datei, damit Leser des Ordner-Logs nur Ordner-Zeilen sehen.
 
 Ungesichert heißt: geänderte/neue Dateien oder Commits auf keinem Remote. Vorher
 ``git fetch --prune origin`` (veraltete Tracking-Refs täuschen „gepusht“ vor), dann
@@ -29,6 +37,8 @@ Dateien, die die Sicherung NICHT mitnimmt, gehen beim Löschen verloren — daru
   Geheimnisse in ungepushten Commits würde die Sicherung hochladen ⇒ bleibt, David.
 - Ignorierte Dateien: nur bekannte Erzeugnisse (:data:`ERZEUGNISSE`) dürfen weg,
   jede andere ignorierte Datei ⇒ bleibt.
+- Datenbanken (``aufpasser.NIE_HOCHLADEN``) lädt die Sicherung nie hoch: weg dürfen nur
+  kleine Test-Kopien (:func:`ist_test_db`), jede andere ⇒ bleibt, ``fuer_david=True``.
 - Eingebettete Repos und Submodule (Sicherung sähe nur den Gitlink) ⇒ bleibt.
 
 Prozesse kommen aus ``/proc``; unter Windows (Laptop, ``C:/dev/wt-*``, #1373) aus
@@ -107,6 +117,7 @@ import logging
 import os
 import re
 import shutil
+import subprocess
 import sys
 import time
 from collections.abc import Iterable
@@ -132,6 +143,11 @@ TICKET_REPO = "Shavy72/duoplus-management"
 EIGENE_REPOS = ("shavy72/duoplus-management", "shavy72/claude-skill-to-spawn")
 #: Namen der Haupt-Arbeitskopien — nie aufräumen.
 HAUPTREPO_NAMEN = ("duoplus-management", "claude-skill-to-spawn")
+#: #1536: die eine Liste geschützter Ordner (Ordnername, Server und PC) — bleiben immer,
+#: auch ohne Git. Laufende Spec-Klone schützen offenes Ticket und tmux-Sitzung ``spec-<N>``.
+GESCHUETZTE_ORDNER = (*HAUPTREPO_NAMEN, "duoplus-leit", "deploy-schlange", "obsidian")
+#: #1536: Kennzahl je Takt, eigene Datei neben dem Hausmeister-Log (:func:`_kennzahl_pfad`).
+KENNZAHL_DATEI = "hausmeister_kennzahl.jsonl"
 WURZELN_STANDARD = ("~/wt/*", "~/wt-*", "~/duoplus-[0-9]*", "C:/dev/wt-*")
 MINDEST_ZU_SEKUNDEN = 24 * 3600
 #: Unter diesem Anteil freier Platte gilt Platznot: fertige Ordner gehen vor Ablauf der 24 h.
@@ -162,7 +178,39 @@ ERZEUGNISSE = (
     "**/htmlcov/**",
     "**/.review/**",  # Belege des Review-Werkzeugs (eigenes .gitignore mit *)
     "data/.secret_key",  # Flask-Sitzungsschlüssel, legt web/config.py selbst neu an
+    # #1536: Laufzeit-Reste (Datenbanken nicht hier, sondern :func:`ist_test_db`).
+    "**/*.lock",
+    "**/*.pyc.[0-9]*",  # halb geschriebenes Kompilat (Windows)
+    "logs/**",
+    "graphify-out/**",
+    # Fix-Runde 2: in den Daten-Ordnern nur Vorschaubilder — Uploads/Reels halten den Ordner.
+    "data/content_studio/**/.thumb_*",
+    "data/reel_street/**/.thumb_*",
 )
+#: #1536: Datenbanken, die als Test-Kopie weg dürfen — Pfad relativ zum Arbeitsordner
+#: (samt ``-wal``/``-shm``). So legen App und Tests sie an (``account_db.DB_PATH`` u. a.).
+TEST_DB_PFADE = ("accounts.db", "data/funnel.db", "data/rum.db", "web/test.db")
+#: #1536: größer ist keine Test-Kopie mehr (Bau-Server 21.11.: größte 1,6 MB).
+TEST_DB_GRENZE_BYTES = 50 * 1024 * 1024
+
+
+def ist_test_db(repo: Path, pfad: str) -> bool:
+    """#1536: einzige Regel, welche Datenbank-Datei (``aufpasser.NIE_HOCHLADEN``) Wegwerf-Ware
+    ist: bekannter Pfad aus :data:`TEST_DB_PFADE` (auch ``-wal``/``-shm``) UND höchstens
+    :data:`TEST_DB_GRENZE_BYTES` groß. Nicht messbar ⇒ keine Test-Ware (im Zweifel bleibt)."""
+    for endung in ("-wal", "-shm"):
+        if pfad.endswith(".db" + endung):
+            pfad_db = pfad[: -len(endung)]
+            break
+    else:
+        pfad_db = pfad
+    if pfad_db not in TEST_DB_PFADE:
+        return False
+    try:
+        return (repo / pfad).lstat().st_size <= TEST_DB_GRENZE_BYTES
+    except OSError:
+        return False
+
 
 # #1526: Ticket-Nummer 1–4999 (8080, 20261121, 993675 sind Port/Datum/Hash, keine Tickets).
 # ponytail: feste Obergrenze, anheben, wenn die Tickets an 4000 heranreichen.
@@ -339,6 +387,7 @@ def _alle_ordner(*, loeschen: bool, jetzt: float | None) -> Rundgang:
         ergebnisse.append(erg)
         if erg.art != "bleibt" and not erg.trocken:
             anteil = _frei_anteil()
+    _kennzahl_schreiben(ergebnisse, trocken=not loeschen)
     _zweige_im_takt(loeschen, jetzt)
     return Rundgang(True, "", tuple(ergebnisse))
 
@@ -1218,28 +1267,37 @@ def _regeln(
     if not ordner.is_dir():
         raise _Bleibt("Ordner fehlt")
     echt = ordner.resolve()
+    if {ordner.name, echt.name} & set(GESCHUETZTE_ORDNER):
+        raise _Bleibt("geschützter Ordner")
     if not trocken:  # Trockenlauf zeigt die echte Regel (Altbestand-Liste für David)
         _kein_altbestand(echt)
 
-    # 2/3 Git-Ordner? Hauptrepo? Eigenes Repo?
+    # 2/3 Git-Ordner? Hauptrepo? Eigenes Repo? (None = gar kein Git, #1536)
     ist_worktree = _git_ordner_pruefen(echt)
+    if ist_worktree is None:  # #1536: ohne Git nichts sicherbar ⇒ bleibt immer
+        raise _Bleibt("kein eigener Git-Ordner (nicht sicherbar)", fuer_david=True)
 
-    # 4 Ticket-Nummer aus Name und Zweig
+    # 4 Ticket-Nummer aus Name und Zweig (None = keine, #1536)
     stand.ticket = ticket = _ticket_nummer(ordner, echt)
 
-    # 5/6 Ticket zu, seit mindestens 24 h
-    _ticket_lange_zu(ticket, jetzt, platznot)
+    # 5/6 Ticket zu, seit mindestens 24 h; keine laufende Spec-Sitzung
+    if ticket is not None:
+        _ticket_lange_zu(ticket, jetzt, platznot)
+        _keine_spec_sitzung(ticket)
 
     # 7 Prozess im Ordner
     _kein_prozess(echt)
 
+    # 7b #1536: ohne Ticket-Nummer bleibt immer (nach Prozess-Regel: der Grund zeigt den Prozess)
+    if ticket is None:
+        raise _Bleibt("keine Ticket-Nummer", fuer_david=True)
+
     # 8 Ungesichertes prüfen (auch trocken: fetch, Geheimnisse, Ignoriertes)
     koepfe, zu_sichern, status_vorher = _ungesichertes(echt, ist_worktree)
     art: Art = "gesichert und gelöscht" if (koepfe or zu_sichern) else "gelöscht"
+    grund = _grund(art, ticket, platznot)
     if trocken:
-        return Ergebnis(
-            ordner, art, _grund(art, ticket, platznot), ticket, trocken=True
-        ), None
+        return Ergebnis(ordner, art, grund, ticket, trocken=True), None
     if koepfe or zu_sichern:
         try:
             stand.sicherung = aufpasser.sichern(
@@ -1261,24 +1319,22 @@ def _regeln(
         raise _Bleibt("nach der Sicherung noch Commits auf keinem Remote", fehler=True)
 
     # 9 Löschen (erst nach der Log-Zeile, siehe aufraeumen)
-    erg = Ergebnis(
-        ordner,
-        art,
-        _grund(art, ticket, platznot),
-        ticket,
-        stand.sicherung,
-        trocken=False,
-    )
+    erg = Ergebnis(ordner, art, grund, ticket, stand.sicherung, trocken=False)
     return erg, (echt, ist_worktree)
 
 
-def _git_ordner_pruefen(echt: Path) -> bool:
-    """Regeln 2/3; Rückgabe: verknüpfter Worktree (True) oder Klon (False)."""
+def _git_ordner_pruefen(echt: Path) -> bool | None:
+    """Regeln 2/3; Rückgabe: verknüpfter Worktree (True), Klon (False) oder gar kein Git
+    (None, #1536: kein ``.git`` oder verwaister Worktree, dessen Git-Ordner fehlt)."""
     if _git_oder_none(echt, "rev-parse", "--is-inside-git-dir") == "true":
         raise _Bleibt("Git-Verwaltungsordner (Hauptrepo)")
     oben = _git_oder_none(echt, "rev-parse", "--show-toplevel")
-    if oben is None or Path(oben).resolve() != echt:
-        raise _Bleibt("kein eigener Git-Ordner", fuer_david=True)
+    if oben is None:
+        if _ohne_git(echt):
+            return None
+        raise _Bleibt("Git-Ordner nicht lesbar (git rev-parse scheitert)", fehler=True)
+    if Path(oben).resolve() != echt:  # Unterordner eines anderen Repos: nie löschen
+        raise _Bleibt(f"kein eigener Git-Ordner (gehört zu {oben})", fuer_david=True)
     ist_worktree = (echt / ".git").is_file()
     if not ist_worktree:
         if echt.name in HAUPTREPO_NAMEN:
@@ -1291,7 +1347,53 @@ def _git_ordner_pruefen(echt: Path) -> bool:
     return ist_worktree
 
 
-def _ticket_nummer(ordner: Path, echt: Path) -> int:
+def _ohne_git(echt: Path) -> bool:
+    """Kein ``.git`` im Ordner, oder eine ``.git``-Datei, deren ``gitdir`` fehlt (der
+    Worktree eines gelöschten Hauptrepos). Ein ``.git``-Ordner, an dem git scheitert,
+    ist kaputt oder fremd — der zählt nicht als „ohne Git“."""
+    marke = echt / ".git"
+    if not os.path.lexists(marke):
+        return True
+    if marke.is_symlink() or not marke.is_file():
+        return False
+    try:
+        zeile = marke.read_text(encoding="utf-8", errors="replace").strip()
+    except OSError:
+        return False
+    if not zeile.startswith("gitdir:"):
+        return False
+    ziel = Path(zeile[len("gitdir:") :].strip())
+    if not ziel.is_absolute():
+        ziel = echt / ziel
+    return not os.path.lexists(ziel)
+
+
+def _keine_spec_sitzung(ticket: int) -> None:
+    """#1536: lebt die tmux-Sitzung ``spec-<N>``, arbeitet die Spec noch ⇒ ``_Bleibt``.
+    Ohne tmux (PC) oder ohne tmux-Server gibt es keine Sitzung."""
+    try:
+        lauf = subprocess.run(
+            ["tmux", "list-sessions", "-F", "#{session_name}"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=GH_ZEITLIMIT_S,
+            check=False,
+        )
+    except FileNotFoundError:
+        return
+    except (OSError, subprocess.TimeoutExpired) as fehler:
+        raise _Bleibt(f"tmux nicht abfragbar: {_kurz(fehler)}", fehler=True) from None
+    if lauf.returncode != 0:
+        if "no server running" in lauf.stderr or "error connecting" in lauf.stderr:
+            return
+        raise _Bleibt(f"tmux nicht abfragbar: {lauf.stderr.strip()[:200]}", fehler=True)
+    if f"spec-{ticket}" in lauf.stdout.split():
+        raise _Bleibt(f"tmux-Sitzung spec-{ticket} läuft")
+
+
+def _ticket_nummer(ordner: Path, echt: Path) -> int | None:
     zweig = _git_oder_none(echt, "symbolic-ref", "--short", "-q", "HEAD") or ""
     aus_name = _nummer(ordner.name, _NAME_MUSTER)
     aus_zweig = _nummer(zweig, (_ZWEIG_MUSTER,))
@@ -1300,10 +1402,7 @@ def _ticket_nummer(ordner: Path, echt: Path) -> int:
             f"Ordnername (#{aus_name}) und Zweig {zweig} (#{aus_zweig}) widersprechen sich",
             fuer_david=True,
         )
-    ticket = aus_name if aus_name is not None else aus_zweig
-    if ticket is None:
-        raise _Bleibt("keine Ticket-Nummer in Ordnername oder Zweig", fuer_david=True)
-    return ticket
+    return aus_name if aus_name is not None else aus_zweig
 
 
 def _ticket_lange_zu(ticket: int, jetzt: float | None, platznot: bool = False) -> None:
@@ -1323,11 +1422,10 @@ def _ticket_lange_zu(ticket: int, jetzt: float | None, platznot: bool = False) -
 
 
 def _grund(art: Art, ticket: int, platznot: bool = False) -> str:
-    zu = (
-        f"Ticket #{ticket} zu, Platznot (unter {_prozent(PLATZNOT_ANTEIL)} frei)"
-        if platznot
-        else f"Ticket #{ticket} seit über 24 h zu"
-    )
+    if platznot:
+        zu = f"Ticket #{ticket} zu, Platznot (unter {_prozent(PLATZNOT_ANTEIL)} frei)"
+    else:
+        zu = f"Ticket #{ticket} seit über 24 h zu"
     if art == "gelöscht":
         return f"{zu}, nichts Ungesichertes"
     return f"{zu}, Ungesichertes auf sicherung/{ticket}"
@@ -1351,6 +1449,8 @@ def _schliesszeit(ordner: Path) -> float | None:
     """Schließzeit des Tickets zum Ordner (für die Reihenfolge), ``None`` = offen/unbekannt."""
     try:
         ticket = _ticket_nummer(ordner, ordner.resolve())
+        if ticket is None:
+            return None
         daten = _ticket_daten(ticket)
     except (
         _Bleibt,
@@ -1524,9 +1624,10 @@ def _hauptrepo(worktree: Path) -> Path:
 
 
 def _neu_erzeugbar(pfad: str) -> bool:
-    """Kompilat unter ``__pycache__`` oder ``data/.secret_key`` (legt die App neu an)."""
+    """Kompilat (auch ``.pyc.<zahl>``) unter ``__pycache__`` oder ``data/.secret_key``."""
     teile = pfad.split("/")
-    return pfad == "data/.secret_key" or (pfad.endswith(".pyc") and "__pycache__" in teile[:-1])
+    kompilat = re.search(r"\.pyc(?:\.\d+)?$", pfad) is not None
+    return pfad == "data/.secret_key" or (kompilat and "__pycache__" in teile[:-1])
 
 
 def _glob(muster: tuple[str, ...]) -> list[str]:
@@ -1601,15 +1702,23 @@ def _ungesichertes(
     # Ein .env unter .review/, node_modules/, .to-spawn/ bleibt Geheimnis.
     geheim -= {p for p in erzeugnis if _neu_erzeugbar(p)}
     haupt = _hauptrepo(repo) if ist_worktree else None
-    for pfad in sorted(geheim):
-        if not _gleiche_kopie(haupt, repo, pfad):
-            raise _Bleibt(
-                f"Geheimnis-Datei {pfad} nicht gleich im Hauptrepo", fuer_david=True
-            )
+    ungleich = [p for p in sorted(geheim) if not _gleiche_kopie(haupt, repo, p)]
+    if ungleich:
+        raise _Bleibt(
+            f"Geheimnis-Datei {ungleich[0]} nicht gleich im Hauptrepo", fuer_david=True
+        )
+    # #1536: Datenbanken lädt die Sicherung nie hoch — weg dürfen nur Test-Kopien.
+    datenbanken = {p for _, p in _status(repo, *_glob(aufpasser.NIE_HOCHLADEN))}
+    fremd = sorted(p for p in datenbanken if not ist_test_db(repo, p))
+    if fremd:
+        raise _Bleibt(
+            f"Datenbank {fremd[0]} ist keine Test-Kopie (nicht sicherbar)", fuer_david=True
+        )
     for xy, pfad in alle:
-        if xy == "!!" and pfad not in geheim and pfad not in erzeugnis:
+        if xy == "!!" and pfad not in geheim | erzeugnis | datenbanken:
             raise _Bleibt(f"ignorierte Datei {pfad} ist kein bekanntes Erzeugnis")
-    zu_sichern = any(xy != "!!" and p not in geheim for xy, p in alle)
+    nicht_hoch = geheim | datenbanken
+    zu_sichern = any(xy != "!!" and p not in nicht_hoch for xy, p in alle)
 
     koepfe = _ungepushte_koepfe(repo, ist_worktree)
     if koepfe:
@@ -1928,6 +2037,40 @@ def _kein_altbestand(echt: Path) -> None:
         raise _Bleibt(f"Altbestand, wartet auf Davids Ja (Liste {pfad})")
 
 
+def _kennzahl_schreiben(ergebnisse: list[Ergebnis], *, trocken: bool) -> None:
+    """#1536: je Takt eine Zeile ``art="kennzahl"`` in :func:`_kennzahl_pfad` — „x von y gelöscht, z bleiben“
+    und die Bleib-Gründe gezählt (Zahlen im Grund als ``N``, ohne Klammer-Zusatz)."""
+    geloescht = sum(1 for e in ergebnisse if e.art != "bleibt")
+    gruende: dict[str, int] = {}
+    for e in ergebnisse:
+        if e.art == "bleibt":
+            schluessel = re.sub(r"\d+", "N", e.grund.split(" (", 1)[0])
+            gruende[schluessel] = gruende.get(schluessel, 0) + 1
+    satz = (
+        f"{geloescht} von {len(ergebnisse)} gelöscht, "
+        f"{len(ergebnisse) - geloescht} bleiben"
+    )
+    log.info("Hausmeister: Kennzahl %s%s", satz, " (trocken)" if trocken else "")
+    _log_zeile(
+        {
+            "zeit": datetime.now().astimezone().isoformat(timespec="seconds"),
+            "art": "kennzahl",
+            "grund": satz,
+            "trocken": trocken,
+            "gesamt": len(ergebnisse),
+            "geloescht": geloescht,
+            "bleiben": len(ergebnisse) - geloescht,
+            "fehler": sum(1 for e in ergebnisse if e.fehler),
+            "bleib_gruende": dict(sorted(gruende.items(), key=lambda kv: -kv[1])),
+        },
+        _kennzahl_pfad(),
+    )
+
+
+def _kennzahl_pfad() -> Path:
+    return _log_pfad().with_name(KENNZAHL_DATEI)
+
+
 def _log_pfad() -> Path:
     roh = os.environ.get("TO_SPAWN_HAUSMEISTER_LOG")
     return (
@@ -1954,10 +2097,10 @@ def _log_schreiben(erg: Ergebnis) -> bool:
     return _log_zeile(zeile)
 
 
-def _log_zeile(zeile: dict[str, object]) -> bool:
-    """Eine JSON-Zeile ins Hausmeister-Log; False = nicht schreibbar."""
+def _log_zeile(zeile: dict[str, object], datei: Path | None = None) -> bool:
+    """Eine JSON-Zeile ins Hausmeister-Log (oder ``datei``); False = nicht schreibbar."""
     try:
-        datei = _log_pfad()
+        datei = datei or _log_pfad()
         datei.parent.mkdir(parents=True, exist_ok=True)
         with datei.open("a", encoding="utf-8") as f:
             f.write(json.dumps(zeile, ensure_ascii=False) + "\n")
