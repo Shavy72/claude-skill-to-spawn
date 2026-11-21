@@ -516,7 +516,8 @@ def _alle_ordner(*, loeschen: bool, jetzt: float | None) -> Rundgang:
             anteil = _frei_anteil()
     _kennzahl_schreiben(ergebnisse, trocken=not loeschen)
     _zweige_im_takt(loeschen, jetzt)
-    uebergabe_sichern.sichern()  # L5 #145: Netz für vergessene Ablösungen, wirft nie
+    # L5 #145: Netz für vergessene Ablösungen, wirft nie; Probelauf schreibt/lädt nichts (#169).
+    uebergabe_sichern.sichern(trocken=not loeschen)
     return Rundgang(True, "", tuple(ergebnisse))
 
 

@@ -739,7 +739,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.befehl == "aufraeumen":
         return _aufraeumen(args, ap)
     if args.befehl == "sichern":
-        return uebergabe_sichern.lauf(args.dateien)
+        return uebergabe_sichern.lauf(args.dateien, trocken=args.trocken)
     if args.befehl == "ticketstand":
         # Nur lesen: Tabelle „X von Y fertig“ für jeden Aufseher-Tick.
         return ticketstand.lauf(args, config.repo_wurzel(_repo_aus_umgebung()))

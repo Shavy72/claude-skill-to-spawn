@@ -17,7 +17,11 @@ Alles Wissen dazu lebt nur hier (Maschinen-Liste ``~/.config/to-spawn/maschine.j
 - ``zweige_slugs``: Repos, deren angefangene Zweige hochgeladen werden (Vorgabe: das Skill-Repo).
 
 Öffentlich-Sperre (hart): liegt das Ziel im Skill-Repo oder in einem Klon davon (öffentlich),
-wird nichts kopiert. Rohe Übergaben gehören nie in ein öffentliches Repo.
+wird nichts kopiert. Rohe Übergaben gehören nie in ein öffentliches Repo: ein Zweig, dessen
+noch nicht hochgeladene Commits einen Pfad nach :data:`MUSTER_JE_REPO` enthalten
+(:func:`nie_oeffentlich`), wird laut verweigert (#169). ``.gitignore`` führt dieselben Muster.
+
+Probelauf (``trocken=True``, #169): schreibt und lädt nichts, meldet nur, was geschähe.
 """
 
 from __future__ import annotations
@@ -29,7 +33,8 @@ import socket
 import subprocess
 import tempfile
 from dataclasses import dataclass, field
-from pathlib import Path
+from fnmatch import fnmatch
+from pathlib import Path, PurePosixPath
 
 from . import config
 
@@ -37,7 +42,8 @@ log = logging.getLogger("to_spawn.uebergabe_sichern")
 
 #: Öffentliche Repos, in die nie gesichert wird (und deren Zweige hochgeladen werden).
 OEFFENTLICHE_SLUGS: tuple[str, ...] = config.OEFFENTLICHE_SLUGS
-#: Muster je Repo aus ``repos[]`` (relativ zum Repo-Ordner).
+#: Muster je Repo aus ``repos[]`` (relativ zum Repo-Ordner). Zugleich die einzige Liste der
+#: Dateinamen, die nie öffentlich werden (:func:`nie_oeffentlich`, ``.gitignore``).
 MUSTER_JE_REPO: tuple[str, ...] = (".claude-handoff*.md", "entscheidungen.md")
 TRESOR_UNTERORDNER = Path("to-spawn") / "sicherung"
 #: Zweige, die nie hochgeladen werden: Hauptzweige; ``ticket/*`` mergt die Deploy-Schlange sofort.
@@ -52,21 +58,34 @@ UMGEBUNG_ZWEIG_REPOS = "TO_SPAWN_SICHERUNG_ZWEIG_REPOS"
 
 @dataclass
 class Sicherung:
-    """Ergebnis: ``kopiert`` = neu geschriebene Kopien, ``hochgeladen`` = ``repo:zweig``."""
+    """Ergebnis: ``kopiert`` = neu geschriebene Kopien, ``hochgeladen`` = ``repo:zweig``.
+
+    Mit ``trocken`` stehen dort, was geschrieben bzw. hochgeladen würde.
+    """
 
     ziel: Path | None
     kopiert: list[Path] = field(default_factory=list)
     hochgeladen: list[str] = field(default_factory=list)
     fehler: list[str] = field(default_factory=list)
+    trocken: bool = False
 
     def zeile(self) -> str:
+        kopf = "Sicherung (Probelauf): " if self.trocken else "Sicherung: "
         if self.ziel is None:
-            return "Sicherung: kein erlaubtes Ziel — " + "; ".join(self.fehler)
-        teile = [f"{len(self.kopiert)} Datei(en) nach {self.ziel}"]
-        teile.append(f"{len(self.hochgeladen)} Zweig(e) hochgeladen")
+            return kopf + "kein erlaubtes Ziel — " + "; ".join(self.fehler)
+        if self.trocken:
+            teile = [
+                f"würde {len(self.kopiert)} Datei(en) nach {self.ziel} schreiben",
+                f"würde {len(self.hochgeladen)} Zweig(e) hochladen",
+            ]
+        else:
+            teile = [
+                f"{len(self.kopiert)} Datei(en) nach {self.ziel}",
+                f"{len(self.hochgeladen)} Zweig(e) hochgeladen",
+            ]
         if self.fehler:
             teile.append(f"{len(self.fehler)} Fehler: " + "; ".join(self.fehler))
-        return "Sicherung: " + ", ".join(teile)
+        return kopf + ", ".join(teile)
 
 
 def _gruppe() -> dict[str, object]:
@@ -148,12 +167,14 @@ def kopie_name(quelle: Path) -> str:
     return f"{quelle.resolve().parent.name}__{quelle.name.lstrip('.')}"
 
 
-def _kopieren(quelle: Path, ziel: Path) -> bool:
-    """Kopiert atomar, nur wenn der Inhalt sich geändert hat; ``True`` = geschrieben."""
+def _kopieren(quelle: Path, ziel: Path, *, trocken: bool) -> bool:
+    """Kopiert atomar, nur wenn der Inhalt sich geändert hat; ``True`` = geschrieben (würde)."""
     daten = quelle.read_bytes()
     datei = ziel / kopie_name(quelle)
     if datei.is_file() and datei.read_bytes() == daten:
         return False
+    if trocken:
+        return True
     fd, tmp = tempfile.mkstemp(prefix=".sicherung-", dir=ziel)
     try:
         with os.fdopen(fd, "wb") as strom:
@@ -202,6 +223,25 @@ def darf_hochladen(zweig: str) -> bool:
     )
 
 
+def nie_oeffentlich(pfad: str) -> bool:
+    """``pfad`` (Repo-relativ, ``/``-getrennt) ist eine Übergabe oder ein Entscheidungs-Log."""
+    name = PurePosixPath(pfad).name
+    return any(fnmatch(name, muster) for muster in MUSTER_JE_REPO)
+
+
+def _gesperrte_pfade(ordner: Path, zweig: str) -> list[str]:
+    """Pfade nach :func:`nie_oeffentlich` in Commits von ``zweig``, die ``origin`` noch fehlen.
+
+    Ganze Historie statt Endstand: auch eine wieder gelöschte Übergabe würde mitgepusht.
+    """
+    aus = _git(
+        ordner, "log", "--name-only", "--format=", zweig, "--not", "--remotes=origin"
+    )
+    if aus.returncode != 0:
+        raise OSError(aus.stderr.strip() or f"git log {zweig} gescheitert")
+    return sorted({p for p in aus.stdout.splitlines() if p and nie_oeffentlich(p)})
+
+
 def _hochladen(repo: Path, erg: Sicherung) -> None:
     # ponytail: nur Commits, nicht der lose Arbeitsstand; wip-Schnappschuss (git stash create) wenn nötig.
     for ordner, zweig in _worktree_zweige(repo):
@@ -210,6 +250,21 @@ def _hochladen(repo: Path, erg: Sicherung) -> None:
         offen = _git(ordner, "rev-list", "--count", f"origin/{zweig}..{zweig}")
         if offen.returncode == 0 and offen.stdout.strip() == "0":
             continue  # nichts Neues
+        gesperrt = _gesperrte_pfade(ordner, zweig)
+        if gesperrt:
+            erg.fehler.append(
+                f"Push {repo.name}:{zweig} verweigert — enthält {', '.join(gesperrt)}"
+            )
+            log.error(
+                "Sicherung: Push %s:%s verweigert, Übergabe/Entscheidungs-Log im Zweig: %s",
+                repo.name,
+                zweig,
+                ", ".join(gesperrt),
+            )
+            continue
+        if erg.trocken:
+            erg.hochgeladen.append(f"{repo.name}:{zweig}")
+            continue
         aus = _git(ordner, "push", "origin", f"refs/heads/{zweig}:refs/heads/{zweig}")
         if aus.returncode == 0:
             erg.hochgeladen.append(f"{repo.name}:{zweig}")
@@ -217,14 +272,15 @@ def _hochladen(repo: Path, erg: Sicherung) -> None:
             erg.fehler.append(f"Push {repo.name}:{zweig} — {aus.stderr.strip()[:200]}")
 
 
-def sichern(dateien: list[Path] | None = None) -> Sicherung:
+def sichern(dateien: list[Path] | None = None, *, trocken: bool = False) -> Sicherung:
     """Sichert ``dateien`` + die bekannten Übergaben/Logs dieser Maschine, lädt Zweige hoch.
 
     Wirft nie; Fehler stehen in :attr:`Sicherung.fehler` und im Log. Liegt das Ziel in einem
     öffentlichen Repo, wird nichts kopiert (``ziel`` = ``None``), Zweige werden trotzdem
-    hochgeladen (die liegen ohnehin im Repo).
+    hochgeladen (die liegen ohnehin im Repo) — außer sie enthalten Übergaben/Logs (#169).
+    ``trocken=True`` (Probelauf): nichts schreiben, nichts hochladen, nur melden (#169).
     """
-    erg = Sicherung(None)
+    erg = Sicherung(None, trocken=trocken)
     try:
         ziel = ziel_ordner()
         if ist_oeffentlich(ziel):
@@ -235,11 +291,12 @@ def sichern(dateien: list[Path] | None = None) -> Sicherung:
                 "Sicherung: %s liegt in einem öffentlichen Repo — nichts kopiert", ziel
             )
         else:
-            ziel.mkdir(parents=True, exist_ok=True)
+            if not trocken:
+                ziel.mkdir(parents=True, exist_ok=True)
             erg.ziel = ziel
             for quelle in _quellen(list(dateien or [])):
                 try:
-                    if _kopieren(quelle, ziel):
+                    if _kopieren(quelle, ziel, trocken=trocken):
                         erg.kopiert.append(quelle)
                 except OSError as fehler:
                     erg.fehler.append(f"{quelle.name}: {fehler}")
@@ -265,9 +322,14 @@ def richte_parser_ein(unter: object) -> None:
         help="Übergaben + Entscheidungs-Log sichern, Zweige hochladen (L5, #145)",
     )
     p.add_argument("dateien", type=Path, nargs="*", help="zusätzliche Übergabe-Dateien")
+    p.add_argument(
+        "--trocken",
+        action="store_true",
+        help="nur zeigen, was gesichert und hochgeladen würde (#169)",
+    )
 
 
-def lauf(dateien: list[Path]) -> int:
-    erg = sichern(dateien)
+def lauf(dateien: list[Path], *, trocken: bool = False) -> int:
+    erg = sichern(dateien, trocken=trocken)
     print(erg.zeile())
     return 1 if erg.fehler else 0
