@@ -99,7 +99,7 @@ def test_frisches_nest_sperrt_master_push_im_modus_tickets(tmp_path: Path) -> No
 
     auf_master = _push(wt, tmp_path, "refs/heads/master")
     assert auf_master.returncode != 0, f"Push auf master ging durch:\n{auf_master.stderr}"
-    assert "SCHLANGE_MODUS=tickets" in auf_master.stderr
+    assert "Modus tickets" in auf_master.stderr
     assert "Arbeit" not in _git(klon, "log", "-1", "--format=%s", "origin/master")
 
     auf_ticket = _push(wt, tmp_path, "refs/heads/ticket/1445-probe")
@@ -165,7 +165,7 @@ def test_bau_start_mit_sandbox_aus_sperrt_master_push(tmp_path: Path, monkeypatc
     _arbeit_committen(klon)
     auf_master = _push(klon, tmp_path, "refs/heads/master")
     assert auf_master.returncode != 0, f"Push auf master ging durch:\n{auf_master.stderr}"
-    assert "SCHLANGE_MODUS=tickets" in auf_master.stderr
+    assert "Modus tickets" in auf_master.stderr
 
 
 def test_installer_kommt_aus_origin_nicht_aus_dem_arbeitsordner(tmp_path: Path) -> None:
