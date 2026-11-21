@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from to_spawn import config
-from to_spawn.pruef import adapter_node, adapter_py, leiter, protokoll
+from to_spawn.pruef import adapter_node, adapter_py, cache, leiter, protokoll
 
 _ADAPTER: tuple[leiter.Adapter, ...] = (adapter_py.ADAPTER, adapter_node.ADAPTER)
 log = logging.getLogger("to_spawn.pruef")
@@ -129,9 +129,7 @@ def pruefen(repo: Path, basis: str, ziel: str) -> Urteil:
     basis_sha, ziel_sha, kopf = _sha(repo, basis), _sha(repo, ziel), _sha(repo, "HEAD")
     if basis_sha is None or ziel_sha is None:
         fehlt = basis if basis_sha is None else ziel
-        return _gate_fehler(
-            repo, basis, ziel, f"Stand „{fehlt}“ in {repo} nicht gefunden (git)", start
-        )
+        return _gate_fehler(repo, basis, ziel, f"Stand „{fehlt}“ in {repo} nicht gefunden (git)", start)
     # ponytail: geprüft wird der Arbeitsbaum, darum muss ziel ausgecheckt sein;
     # Upgrade: eigener Worktree je ziel, wenn die Schlange fremde Stände prüft (3b-6).
     if ziel_sha != kopf:
@@ -151,6 +149,29 @@ def pruefen(repo: Path, basis: str, ziel: str) -> Urteil:
             f"Arbeitsbaum nicht gespeichert (erst committen): {', '.join(offen[:5])}",
             start,
         )
+    schluessel = cache.schluessel(repo, basis_sha, ziel_sha)
+    if cache.treffer(schluessel):
+        zeile = protokoll.zeile(
+            basis=basis_sha,
+            ziel=ziel_sha,
+            exit_code=leiter.GRUEN,
+            stufen=[
+                {
+                    "name": "cache",
+                    "adapter": "",
+                    "lief": True,
+                    "grund": "Stand schon grün geprüft (Stufe 0)",
+                    "dauer_s": round(time.monotonic() - start, 2),
+                    "befehl": "",
+                }
+            ],
+            werkzeug=[],
+            fehler_kurz="",
+            gesamt_s=time.monotonic() - start,
+            cache_treffer=True,
+        )
+        protokoll.schreibe(repo, zeile)
+        return Urteil(leiter.GRUEN, zeile)
     liste = leiter.stufen(repo, _ADAPTER, basis_sha)
     if not liste:
         return _gate_fehler(
@@ -182,11 +203,8 @@ def pruefen(repo: Path, basis: str, ziel: str) -> Urteil:
         werkzeug=[stufe.werkzeug for stufe in liste if stufe.werkzeug],
         fehler_kurz=fehler_kurz,
         gesamt_s=time.monotonic() - start,
-        wackler=[
-            {"test": test, "adapter": stufe.adapter}
-            for stufe in liste
-            for test in stufe.wackler
-        ],
+        wackler=[{"test": test, "adapter": stufe.adapter} for stufe in liste for test in stufe.wackler],
     )
     protokoll.schreibe(repo, zeile)
+    cache.merke(schluessel, zeile)
     return Urteil(exit_code, zeile)
