@@ -137,20 +137,22 @@ def platz_frei(
 ) -> tuple[bool, str]:
     """(darf starten?, Satz dazu) — die Entscheidung aller Starter.
 
-    ``frei``/``sessions`` = Messwerte für Tests; ohne Angabe wird gemessen. Kein
-    Linux oder Messung unmöglich → kein Urteil, also frei (lieber starten als
-    grundlos blockieren). Der Satz ist für Menschen: „Speicher knapp: 1,2 GB frei,
-    Mindestmaß 2 GB“ oder „schon 6 Claude-Sessions (Obergrenze 6)“.
+    ``frei``/``sessions`` = Messwerte für Tests; ohne Angabe wird gemessen. Vorgegebene
+    Werte (Parameter oder ``TO_SPAWN_SPEICHER_MEMINFO``/``TO_SPAWN_SPEICHER_PROC``)
+    gelten auf jeder Plattform; selbst gemessen wird nur unter Linux. Kein Wert →
+    kein Urteil, also frei (lieber starten als grundlos blockieren). Der Satz ist für
+    Menschen: „Speicher knapp: 1,2 GB frei, Mindestmaß 2 GB“ oder „schon 6
+    Claude-Sessions (Obergrenze 6)“.
     """
-    if sys.platform != "linux":
-        return True, "Speicher: kein Urteil (kein Linux) — Start erlaubt"
+    linux = sys.platform == "linux"
     werte = grenzen(konfig)
-    if frei is None:
+    if frei is None and (linux or os.environ.get("TO_SPAWN_SPEICHER_MEMINFO")):
         frei = frei_mib()
-    if sessions is None:
+    if sessions is None and (linux or os.environ.get("TO_SPAWN_SPEICHER_PROC")):
         sessions = claude_sessions()
     if frei is None and sessions is None:
-        return True, "Speicher: kein Urteil (/proc nicht lesbar) — Start erlaubt"
+        grund = "/proc nicht lesbar" if linux else "kein Linux"
+        return True, f"Speicher: kein Urteil ({grund}) — Start erlaubt"
     if frei is not None and frei < werte["min_frei_mib"]:
         return False, (f"Speicher knapp: {_gb_text(frei)} frei, Mindestmaß {_gb_text(werte['min_frei_mib'])}")
     if sessions is not None and sessions >= werte["max_sessions"]:

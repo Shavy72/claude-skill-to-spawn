@@ -2,7 +2,7 @@
 
 Versteckt, woher der Stand kommt: im Git-Klon aus ``git rev-parse``, in der installierten
 Kopie (dort liegt kein ``.git``) aus dem Stempel ``STAND.json``, den der Installer schreibt
-(``{commit, zeit, quelle, klon}``). Der Vergleich fragt ``main`` des Skill-Repos per
+(``{commit, zeit, quelle, klon, dirty}``). Der Vergleich fragt ``main`` des Skill-Repos per
 ``git ls-remote`` (kein ssh zu einem Server, kein Abbruch ohne Netz).
 
 Türen: :func:`stand` (Kurz-SHA oder ``""``) und :func:`vergleich` (Zustand + Text);
@@ -98,10 +98,19 @@ def vergleich(skill: Path = SKILL) -> tuple[str, str]:
         )
     stempel = _lies_stempel(skill)
     commit, quelle = stempel.get("commit", ""), stempel.get("quelle", "")
-    if not commit or not quelle:
+    if not commit:
         return (
             UNBEKANNT,
-            f"kein {STEMPEL} mit Commit und Quelle — einmal neu installieren",
+            f"kein {STEMPEL} mit Commit — einmal aus dem Git-Klon neu installieren",
+        )
+    if not quelle:
+        klon = stempel.get("klon") or "<Skill-Klon>"
+        return (
+            UNBEKANNT,
+            (
+                f"Stand {commit[:KURZ]} aus Klon ohne origin ({klon}) — Vergleich mit {ZWEIG} "
+                f"erst nach: git -C {klon} remote add origin <url>, dann neu installieren"
+            ),
         )
     antwort = _git(skill, "ls-remote", quelle, f"refs/heads/{ZWEIG}")
     if not antwort:
@@ -110,6 +119,10 @@ def vergleich(skill: Path = SKILL) -> tuple[str, str]:
             f"Hinweis: {ZWEIG} von {quelle} nicht erreichbar, Stand {commit[:KURZ]}",
         )
     entfernt = antwort.split()[0]
+    if entfernt == commit and stempel.get("dirty") == "ja":
+        return UNBEKANNT, (
+            f"{commit[:KURZ]} = {ZWEIG}, aber mit ungespeicherten Änderungen im Klon installiert (dirty)"
+        )
     if entfernt == commit:
         return AKTUELL, f"{commit[:KURZ]} = {ZWEIG}"
     # ponytail: nur SHA-Gleichheit, eine Installation von einem Zweig vor main gilt als veraltet;
@@ -121,15 +134,23 @@ def vergleich(skill: Path = SKILL) -> tuple[str, str]:
 
 
 def stempel(ziel: Path, klon: Path) -> dict[str, str]:
-    """Schreibt ``ziel/STAND.json`` aus dem Git-Klon ``klon`` (Commit, Zeit, Quelle, Klon)."""
+    """Schreibt ``ziel/STAND.json`` aus dem Git-Klon ``klon`` (Commit, Zeit, Quelle, Klon, Dirty).
+
+    ``dirty`` ist ``"ja"``, wenn der kopierte Arbeitsbaum vom Commit abweicht (``git status
+    --porcelain``), ``"nein"`` bei sauberem Klon, ``"unbekannt"`` ohne git.
+    """
+    status = _git(klon, "status", "--porcelain")
     daten = {
         "commit": _git(klon, "rev-parse", "HEAD") or "",
         "zeit": datetime.datetime.now(datetime.UTC).isoformat(timespec="seconds"),
         "quelle": _git(klon, "remote", "get-url", "origin") or "",
         "klon": str(klon.resolve()),
+        "dirty": "unbekannt" if status is None else ("ja" if status else "nein"),
     }
     if not daten["commit"]:
         log.warning("%s ist kein Git-Klon — Stand bleibt unbekannt", klon)
+    elif not daten["quelle"]:
+        log.warning("%s hat kein origin — Vergleich mit %s nicht möglich", klon, ZWEIG)
     (ziel / STEMPEL).write_text(json.dumps(daten, indent=2) + "\n", encoding="utf-8")
     return daten
 

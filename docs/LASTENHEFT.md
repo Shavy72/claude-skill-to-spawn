@@ -156,3 +156,65 @@ Anlass: Zwischenstand der Ober-Aufsicht am 21.11.2026, 20:06. Schärft N6 und di
 - **N7** keine Bastel- oder Behelfslösungen beim Prüfen und im Gate
 - **N8** keine unnötigen Prüfungen, die das Bau-Tempo bremsen
 - **N9** kein Tempo auf Kosten der Stabilität — schneller heißt nie, dass Fehler durchrutschen
+
+---
+
+## L4 — Aufräumen landet nie bei David (David, 2026-11-21)
+
+### Wortlaut (1:1)
+
+> ja was soll denn das mann darum geht es doch warum soll ich irgendwas manuell weider löschen das ist doch genau das worum es geht!!
+
+Im selben Zug in einem zweiten Fenster (Ober-Aufsicht Session 2):
+
+> haben doch extra funktionen die sowas autoamtiscch löschen was soll ich da machen
+
+Anlass: Die Ober-Aufsicht hatte David einen Lösch-Befehl für zwei alte Test-Kopien im `/tmp` des
+Bau-Servers hingelegt („geparkt für David“), weil ein Schutz-Hook das Löschen aus der Session
+blockte. Genau das ist der Fehler, den L1 (N1, N2) abstellen soll.
+
+### Verdichtung in prüfbare Anforderungen (L4)
+
+- **A22 Aufräumen macht das System selbst:** Reste fertiger Arbeit (Arbeitsordner, Test-Kopien,
+  Temp-Ordner, Zweige, Fenster) räumt der Hausmeister oder die Session, die sie findet — auf jeder
+  Maschine, auch in `/tmp`. David bekommt dazu nie einen Befehl, eine Frage oder einen Hinweis
+  „bitte löschen“.
+- **A23 Ein Schutz, der sicheres Aufräumen blockt, ist ein System-Fehler:** Blockt ein Hook oder
+  eine Sperre das Löschen von sicher Wegwerfbarem (Ticket zu, kein Prozess, nichts Frisches), wird
+  das nicht an David weitergereicht, sondern an der Wurzel behoben: Der Hausmeister bekommt den
+  Weg, und der Fall wird als Issue im Skill-Repo gebaut. Bis dahin räumt die Ober-Aufsicht selbst.
+- **A24 „Wartet auf David“ nur für echte Entscheidungen:** In Übergaben und Berichten steht unter
+  „wartet auf David“ nur, was wirklich nur er entscheiden kann (App-Live, Geld, Konten echter
+  Personen). Aufräumen, RAM, Platte, Neustarts gehören nie dorthin.
+
+**Ausdrücklich nicht gewollt (L4)**
+
+- **N10** kein Handgriff für David beim Aufräumen — kein Befehl zum Abtippen, kein „geparkt für David“
+
+---
+
+## L5 — Jederzeit weiterbauen können (David, 2026-11-21)
+
+### Wortlaut (1:1)
+
+> okay alles soll gu dokumenterit werden das jeder zeit falls der bau abgebrochen werden sollte daran weiter gerabeiet werden kann in richtugn des großen Ziels dahinter
+
+Anlass: Zwischenstand 22:16 — der Bau läuft über viele sich ablösende Sessions auf zwei Maschinen;
+Übergaben lagen bis dahin teils nur als Datei auf einer Maschine.
+
+### Verdichtung in prüfbare Anforderungen (L5)
+
+- **A25 Ein Einstieg:** Es gibt genau ein Dokument, bei dem man anfängt: `docs/WIEDEREINSTIEG.md`.
+  Es nennt Ziel, Fundorte, Stand und die Schritte zum Weiterbauen — verständlich ohne Chat.
+- **A26 Gesichert, nicht nur auf einer Maschine:** Auftrag, Plan, Abnahme und jede offene Arbeit
+  liegen im Repo (Dokumente, Issues, Pull-Requests, hochgeladene Zweige). Übergaben und
+  Entscheidungs-Log beider Maschinen werden von selbst in den privaten Notiz-Tresor gespiegelt.
+- **A27 Immer aktuell:** Der Stand wird nach jedem gemergten Paket und bei jeder Ablösung
+  fortgeschrieben. Angefangene Arbeit wird mindestens bei jeder Ablösung hochgeladen. Ein Abbruch
+  kostet höchstens die Arbeit seit dem letzten Hochladen.
+- **A28 Bewiesen:** Eine frische Session ohne Chat und ohne Übergabe-Datei findet allein über den
+  Einstieg den richtigen Stand und den richtigen nächsten Schritt (Kaltstart-Probe).
+
+**Ausdrücklich nicht gewollt (L5)**
+
+- **N11** kein Wissen, das nur in einem Chat, im Kopf einer Session oder auf einer einzigen Maschine liegt
