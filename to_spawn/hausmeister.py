@@ -128,7 +128,15 @@ from datetime import datetime
 from pathlib import Path
 from typing import Literal
 
-from to_spawn import aufpasser, config, docker_reste, gh, hausmeister_windows, hindernis
+from to_spawn import (
+    aufpasser,
+    config,
+    docker_reste,
+    gh,
+    hausmeister_windows,
+    hindernis,
+    uebergabe_sichern,
+)
 from to_spawn import sperre as _sperre
 
 log = logging.getLogger("to_spawn.hausmeister")
@@ -508,6 +516,7 @@ def _alle_ordner(*, loeschen: bool, jetzt: float | None) -> Rundgang:
             anteil = _frei_anteil()
     _kennzahl_schreiben(ergebnisse, trocken=not loeschen)
     _zweige_im_takt(loeschen, jetzt)
+    uebergabe_sichern.sichern()  # L5 #145: Netz für vergessene Ablösungen, wirft nie
     return Rundgang(True, "", tuple(ergebnisse))
 
 
