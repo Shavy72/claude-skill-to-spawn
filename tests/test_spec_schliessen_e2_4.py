@@ -82,6 +82,13 @@ def _stub_main(args: list[str]) -> int:
     if args[:1] != ["api"]:
         print(f"Stub kennt den Aufruf nicht: {args}", file=sys.stderr)
         return 2
+    # Fehler-Schalter: GitHub antwortet mit Fehler (Netz weg, 5xx).
+    if os.environ.get("E24_GH_API_FEHLER"):
+        print("HTTP 502: Bad Gateway", file=sys.stderr)
+        return 1
+    if args[1:3] == ["-X", "POST"] and os.environ.get("E24_GH_POST_FEHLER"):
+        print("HTTP 502: Bad Gateway", file=sys.stderr)
+        return 1
     if args[1:3] == ["-X", "POST"]:
         ziel, feld = args[3], args[5]
         name, _, wert = feld.partition("=")
@@ -328,6 +335,93 @@ def test_hook_sperrt_auch_issue_edit_und_api_state_closed(tmp_path: Path) -> Non
     ):
         erlaubt = lauf(frei)
         assert erlaubt.returncode == 0, (frei, erlaubt.stdout, erlaubt.stderr)
+
+
+def _hook(repo: Path, umgebung: dict[str, str], befehl: str) -> subprocess.CompletedProcess[str]:
+    eingabe = {"tool_name": "Bash", "tool_input": {"command": befehl}, "cwd": str(repo)}
+    return _cli(repo, umgebung, "hook-spec-sperre", eingabe=json.dumps(eingabe))
+
+
+def test_hook_trennt_nur_ausserhalb_von_anfuehrungszeichen(tmp_path: Path) -> None:
+    """Review PR 146: Trenner im Kommentar, Zeilen-Fortsetzung, Klammern umgingen die
+    Sperre; eine Commit-Nachricht, die den Befehl nur nennt, wurde falsch gesperrt."""
+    repo, _, umgebung = _aufbau(tmp_path)
+    for roh in (
+        f'gh issue close -c "fertig; alles grün" {SPEC}',
+        f'gh issue close --comment="a & b" {SPEC}',
+        f"gh issue close -c 'x | y' {SPEC}",
+        f'gh issue close -c ";" {SPEC}',
+        f"gh issue close \\\n  {SPEC}",
+        f"(gh issue close {SPEC})",
+        f"echo $(gh issue close {SPEC})",
+        f"GH_PAGER= gh issue close {SPEC}",
+        f"git status; gh issue close {SPEC}\necho fertig",
+        # Urteil dirigent_88_fertig: Schalter mit Wert, Shell-Umweg, voller Pfad, --input.
+        f"gh issue close --duplicate-of 12 {SPEC}",
+        f'bash -c "gh issue close {SPEC}"',
+        f"sh -c 'cd x && gh issue close {SPEC}'",
+        f'eval "gh issue close {SPEC}"',
+        f"/usr/bin/gh issue close {SPEC}",
+        f"gh api repos/{SLUG}/issues/{SPEC} -X PATCH --input datei.json",
+        f"echo '{{}}' | gh api repos/{SLUG}/issues/{SPEC} --method PATCH --input -",
+    ):
+        abgelehnt = _hook(repo, umgebung, roh)
+        assert abgelehnt.returncode == 2, (roh, abgelehnt.stdout, abgelehnt.stderr)
+        assert f"spec-schliessen {SPEC}" in abgelehnt.stderr
+    for frei in (
+        f'git commit -m "doku: gh issue close {SPEC} verboten"',
+        f'echo "gh issue close {SPEC}"',
+        f"cat > t.py <<'EOF'\nbefehl = \"gh issue close {SPEC}\"\nEOF",
+        f'gh issue close {ANDERES} -c "nicht #{SPEC}; gh issue close {SPEC}"',
+        f"echo gh issue close {SPEC}",
+        f"gh issue close --duplicate-of {SPEC} {ANDERES}",
+        f"gh api repos/{SLUG}/issues/{SPEC}/comments --input body.json",
+    ):
+        erlaubt = _hook(repo, umgebung, frei)
+        assert erlaubt.returncode == 0, (frei, erlaubt.stdout, erlaubt.stderr)
+
+
+def test_hook_laesst_bei_eigenem_fehler_durch(tmp_path: Path) -> None:
+    """Fail-open: kaputte Eingabe oder fremder Ordner hält die Bau-Session nie an."""
+    repo, _, umgebung = _aufbau(tmp_path)
+    kaputt = _cli(repo, umgebung, "hook-spec-sperre", eingabe="{kein json")
+    assert kaputt.returncode == 0, kaputt.stdout + kaputt.stderr
+    ohne = _cli(repo, umgebung, "hook-spec-sperre", eingabe=json.dumps({"tool_name": "Bash", "cwd": str(repo)}))
+    assert ohne.returncode == 0, ohne.stdout + ohne.stderr
+    fremd = json.dumps(
+        {"tool_name": "Bash", "tool_input": {"command": f"gh issue close {SPEC}"}, "cwd": str(tmp_path / "fehlt")}
+    )
+    aussen = _cli(repo, umgebung, "hook-spec-sperre", eingabe=fremd)
+    assert aussen.returncode == 0, aussen.stdout + aussen.stderr
+
+
+def test_spec_schliessen_schliesst_nicht_bei_gh_fehler(tmp_path: Path) -> None:
+    repo, weltdatei, umgebung = _aufbau(tmp_path)
+    lauf = _cli(repo, umgebung | {"E24_GH_API_FEHLER": "1"}, "spec-schliessen", str(SPEC))
+    assert lauf.returncode == 1, lauf.stdout + lauf.stderr
+    assert "geschlossen" not in _welt(weltdatei)
+
+
+def test_spec_schliessen_schliesst_nicht_bei_kaputtem_manifest(tmp_path: Path) -> None:
+    repo, weltdatei, umgebung = _aufbau(tmp_path)
+    (repo / "docs" / "agents" / "manifests" / f"spec-{SPEC}.json").write_text("{kaputt", encoding="utf-8")
+    lauf = _cli(repo, umgebung, "spec-schliessen", str(SPEC))
+    assert lauf.returncode == 1, lauf.stdout + lauf.stderr
+    assert "geschlossen" not in _welt(weltdatei)
+
+
+def test_befund_wiederholt_haengt_folge_ticket_nachtraeglich_an(tmp_path: Path) -> None:
+    """Scheitert das Anhängen beim ersten ``befund --spec``, holt der zweite Aufruf es nach."""
+    repo, weltdatei, umgebung = _aufbau(tmp_path)
+    args = ("befund", "--spec", str(SPEC), "--ticket", str(TICKET), "--stufe", "gelb", "--text", "Randfall")
+    erst = _cli(repo, umgebung | {"E24_GH_POST_FEHLER": "1"}, *args)
+    assert erst.returncode != 0, erst.stdout + erst.stderr
+    neu = int(re.search(r"Folge-Ticket #(\d+)", erst.stdout).group(1))  # type: ignore[union-attr]
+    assert neu not in _welt(weltdatei)["unter"].get(str(SPEC), [])
+    zweit = _cli(repo, umgebung, *args)
+    assert zweit.returncode == 0, zweit.stdout + zweit.stderr
+    assert neu in _welt(weltdatei)["unter"][str(SPEC)]
+    assert len([n for n in _manifest(repo) if _manifest(repo)[n].get("gelb_von") == TICKET]) == 1
 
 
 if __name__ == "__main__":

@@ -79,6 +79,10 @@ class GelbeFolge:
     status: str  # gebaut | verworfen | verschoben | offen | unbekannt
 
 
+#: Zeitlimit je Status-Abruf; überschritten zählt als „unbekannt“ (schließt nicht).
+GH_ZEITLIMIT_S = 30
+
+
 def melde(
     repo: Path,
     gh_repo: str,
@@ -240,10 +244,11 @@ def _folge_ticket(
         )
     vorhanden = _schon_gemeldet(daten["tickets"], ticket, umfang)
     if vorhanden is not None:
-        return Ergebnis(
-            ok=True,
-            zeilen=[f"#{ticket} gelb schon gemeldet: Folge-Ticket #{vorhanden}"],
-        )
+        zeilen = [f"#{ticket} gelb schon gemeldet: Folge-Ticket #{vorhanden}"]
+        if dry_run:
+            return Ergebnis(ok=True, zeilen=zeilen)
+        # Wiederholung holt ein früher gescheitertes Anhängen nach (anhaengen ist idempotent).
+        return _an_spec_haengen(repo, gh_repo, spec, int(vorhanden), zeilen)
     if dry_run:
         return Ergebnis(
             ok=True,
@@ -345,7 +350,9 @@ def _abruf_github(repo: Path) -> Abruf:
     def abruf(n: int) -> dict[str, Any] | None:
         if not slug:
             return None
-        daten = gh.json_lauf(["api", f"repos/{slug}/issues/{n}"], cwd=repo)
+        daten = gh.json_lauf(
+            ["api", f"repos/{slug}/issues/{n}"], cwd=repo, timeout=GH_ZEITLIMIT_S
+        )
         return daten if isinstance(daten, dict) else None
 
     return abruf

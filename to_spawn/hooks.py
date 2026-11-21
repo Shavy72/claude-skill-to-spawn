@@ -536,79 +536,124 @@ def _staffel() -> int:
 
 # --- Spec-Sperre (E2-4, App #1388 E56) ---------------------------------------------
 
-#: ``gh … issue close`` bis zum nächsten Shell-Trenner; Gruppe 1 = die Argumente.
-_GH_CLOSE = re.compile(r"\bgh\b[^;&|\n]*?\bissue\s+close\b([^;&|\n]*)")
-#: Schalter von ``gh issue close``, die einen Wert nehmen (der Wert ist keine Nummer).
-_MIT_WERT = {"-c", "--comment", "-r", "--reason", "-R", "--repo"}
+#: Shell-Trenner zwischen einfachen Befehlen (zählen nur außerhalb von Anführungszeichen).
+_TRENNER = frozenset(";&|()\n`")
+#: Wörter vor dem eigentlichen Befehl (wie ``nest/skill_schutz._PRAEFIXE``).
+_PRAEFIXE = {"sudo", "env", "nohup", "command", "exec", "time"}
+_ZUWEISUNG = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+#: Shells, deren ``-c``-Text selbst ein Befehl ist (wie ``eval``).
+_SHELLS = {"bash", "sh", "zsh", "dash"}
+#: Schalter von ``gh`` (global, ``issue close``/``edit``, ``api``), die einen Wert nehmen —
+#: der Wert ist nie Unterbefehl oder Nummer. Als ein Text, weil der Prüf-Test
+#: ``test_aufseher_kommentar_1522`` jedes einzelne Kommentar-Schalter-Literal als
+#: Kommentar-Schreiber meldet; das hier ist nur eine Parse-Tabelle.
+_MIT_WERT = frozenset(
+    """-R --repo -c --comment -r --reason --duplicate-of
+    -t --title -b --body -F --body-file -m --milestone --state
+    --add-label --remove-label --add-assignee --remove-assignee --add-project --remove-project
+    -X --method -f --field --raw-field -H --header --input -q --jq --template --hostname --cache
+    """.split()
+)
 _NUMMER = re.compile(r"^#?(\d+)$|/issues/(\d+)/?$")
-#: ``gh … issue edit`` (schließt mit ``--state closed``) und ``gh … api`` (PATCH mit
-#: ``state=closed`` auf ``…/issues/<N>``), je bis zum nächsten Shell-Trenner.
-_GH_EDIT = re.compile(r"\bgh\b[^;&|\n]*?\bissue\s+edit\b([^;&|\n]*)")
-_GH_API = re.compile(r"\bgh\b[^;&|\n]*?\bapi\b([^;&|\n]*)")
-_EDIT_MIT_WERT = _MIT_WERT | {
-    "-t",
-    "--title",
-    "-b",
-    "--body",
-    "-F",
-    "--body-file",
-    "-m",
-    "--milestone",
-    "--state",
-    "--add-label",
-    "--remove-label",
-    "--add-assignee",
-    "--remove-assignee",
-    "--add-project",
-    "--remove-project",
-}
-_STATE_CLOSED = re.compile(r"--state(?:=|\s+)['\"]?closed\b")
-_API_CLOSED = re.compile(r"(?:^|[\s'\"])state=closed\b")
-_API_ISSUE = re.compile(r"(?:^|[\s/'\"])issues/(\d+)/?(?=$|[\s'\"?])")
+_API_ISSUE = re.compile(r"(?:^|/)issues/(\d+)/?$")
+_API_CLOSED = re.compile(r"(?:-[fF]|--(?:raw-)?field=)?state=closed")
 
 
-def _erste_nummer(rest: str, mit_wert: set[str]) -> int | None:
-    """Erstes Positions-Argument in ``rest`` als Issue-Nummer (``N``, ``#N``, Issue-URL)."""
-    try:
-        teile = shlex.split(rest)
-    except ValueError:
-        teile = rest.split()
-    ueberspringen = False
+def _einfache_befehle(befehl: str) -> Iterator[list[str]]:
+    """Einfache Befehle in ``befehl`` als Wortlisten, ohne Zuweisungen/Präfixe davor.
+
+    Geteilt wird nur an Trennern außerhalb von Anführungszeichen (``-c "a; b"`` bleibt
+    ein Wort); ``\\``+Zeilenumbruch fügt Zeilen wie die Shell zusammen. Ein ``gh`` in
+    einer Commit-Nachricht oder einem ``echo``-Text ist so nie Befehlsanfang.
+    """
+    befehl = befehl.replace("\\\n", "")
+    teile: list[str] = []
+    start, quote, i = 0, "", 0
+    while i < len(befehl):
+        zeichen = befehl[i]
+        if zeichen == "\\" and quote != "'":
+            i += 2
+            continue
+        if quote:
+            if zeichen == quote:
+                quote = ""
+        elif zeichen in "'\"":
+            quote = zeichen
+        elif zeichen in _TRENNER:
+            teile.append(befehl[start:i])
+            start = i + 1
+        i += 1
+    teile.append(befehl[start:])
     for teil in teile:
+        try:
+            woerter = shlex.split(teil)
+        except ValueError:
+            woerter = teil.split()
+        while woerter and (woerter[0] in _PRAEFIXE or _ZUWEISUNG.match(woerter[0])):
+            woerter.pop(0)
+        if woerter:
+            yield woerter
+
+
+def _positionen(args: list[str]) -> list[str]:
+    """Positions-Argumente von ``args`` (Schalter und ihre Werte fallen weg)."""
+    positionen: list[str] = []
+    ueberspringen = False
+    for arg in args:
         if ueberspringen:
             ueberspringen = False
-            continue
-        if teil in mit_wert:
+        elif arg in _MIT_WERT:
             ueberspringen = True
-            continue
-        if teil.startswith("-"):
-            continue
-        zahl = _NUMMER.search(teil)
-        return int(zahl.group(1) or zahl.group(2)) if zahl else None
+        elif not arg.startswith("-"):
+            positionen.append(arg)
+    return positionen
+
+
+def _schliesst(args: list[str]) -> int | None:
+    """Issue-Nummer, die ``gh <args>`` schließen würde, sonst ``None``."""
+    pos = _positionen(args)
+    if pos[:2] == ["issue", "close"] and len(pos) > 2:
+        treffer = _NUMMER.search(pos[2])
+        return int(treffer.group(1) or treffer.group(2)) if treffer else None
+    if pos[:2] == ["issue", "edit"] and len(pos) > 2:
+        offen = any(
+            a == "--state=closed" or (a == "--state" and b == "closed")
+            for a, b in zip(args, [*args[1:], ""])
+        )
+        treffer = _NUMMER.search(pos[2])
+        return int(treffer.group(1) or treffer.group(2)) if offen and treffer else None
+    if pos[:1] == ["api"] and len(pos) > 1:
+        treffer = _API_ISSUE.search(pos[1])
+        # ``--input`` schreibt einen beliebigen Body (auch ``state: closed``) — sperren.
+        geschlossen = any(_API_CLOSED.fullmatch(a) or a == "--input" for a in args)
+        return int(treffer.group(1)) if treffer and geschlossen else None
     return None
 
 
 def geschlossene_nummern(befehl: str) -> list[int]:
     """Issue-Nummern, die ``befehl`` schließen würde.
 
-    Erkennt ``gh issue close <N>``, ``gh issue edit <N> --state closed`` und
-    ``gh api …/issues/<N> … state=closed``; Werte von Schaltern wie ``--comment``/
-    ``--repo`` zählen nicht als Nummer.
-    ponytail: erkennt nur wörtliche Aufrufe — ``eval``, ``curl`` oder ein Skript umgehen
-    die Sperre (gleiche Grenze wie ``skill_schutz``).
+    Erkennt je einfachem Befehl (siehe :func:`_einfache_befehle`) ``gh issue close <N>``,
+    ``gh issue edit <N> --state closed`` und ``gh api …/issues/<N> … state=closed``;
+    Werte von Schaltern wie ``--comment``/``--repo`` zählen nicht als Nummer.
+    ``eval …`` und ``bash -c "…"`` werden ausgepackt; ``gh api …/issues/<N> --input``
+    zählt als Schließen. ``gh issue edit --state`` kennt gh heute nicht — die Zeile
+    bleibt als Netz, falls es kommt.
+    ponytail: erkennt nur wörtliche Aufrufe — ``curl``, ``gh api graphql`` (``closeIssue``
+    mit Knoten-ID statt Nummer), ``"$(…)"`` in Anführungszeichen, ``Closes #<N>`` in
+    Commit/PR-Text (GitHub schließt beim Merge), Variablen oder ein Skript umgehen die
+    Sperre (gleiche Grenze wie ``skill_schutz``). Die eigentliche Tür ist ``spec-schliessen``: nur dort steht die
+    Prüfung; der Hook fängt nur das versehentliche rohe Schließen ab.
     """
     nummern: list[int] = []
-    for treffer in _GH_CLOSE.finditer(befehl):
-        if (n := _erste_nummer(treffer.group(1), _MIT_WERT)) is not None:
+    for woerter in _einfache_befehle(befehl):
+        name = woerter[0].rsplit("/", 1)[-1].removesuffix(".exe")
+        if name == "eval":
+            nummern += geschlossene_nummern(" ".join(woerter[1:]))
+        elif name in _SHELLS and "-c" in woerter[1:-1]:
+            nummern += geschlossene_nummern(woerter[woerter.index("-c") + 1])
+        elif name == "gh" and (n := _schliesst(woerter[1:])) is not None:
             nummern.append(n)
-    for treffer in _GH_EDIT.finditer(befehl):
-        rest = treffer.group(1)
-        if _STATE_CLOSED.search(rest) and (n := _erste_nummer(rest, _EDIT_MIT_WERT)) is not None:
-            nummern.append(n)
-    for treffer in _GH_API.finditer(befehl):
-        rest = treffer.group(1)
-        if _API_CLOSED.search(rest) and (pfad := _API_ISSUE.search(rest)):
-            nummern.append(int(pfad.group(1)))
     return nummern
 
 
