@@ -7,7 +7,7 @@ setzt sie für Worktree und Repo-Wurzel, bevor ``claude`` startet.
 
 Mehrere Starter (``spawn_srv.sh`` startet viele Fenster kurz nacheinander) ändern die
 Datei gleichzeitig — Lesen und Schreiben laufen deshalb unter der Sperrdatei
-``<claude_json>.to-spawn.lock`` (``fcntl.flock``, auf Windows ``msvcrt.locking``;
+``<claude_json>.to-spawn.lock`` (:func:`to_spawn.sperre.halte`, wartet bis 60 s;
 klappt die Sperre nicht, geht es mit Warnung ohne sie weiter) (#257 F6).
 """
 
@@ -20,9 +20,13 @@ import os
 import tempfile
 from collections.abc import Iterator
 from pathlib import Path
-from typing import IO, Any
+from typing import Any
+
+from . import sperre
 
 log = logging.getLogger("to_spawn.vertrauen")
+#: So lange wartet ein Starter auf einen anderen, dann geht es mit Warnung ohne Sperre weiter.
+SPERRE_WARTEN_S = 60.0
 
 
 def claude_json_pfad() -> Path:
@@ -58,56 +62,22 @@ def sperrdatei_pfad(claude_json: Path) -> Path:
     return claude_json.parent / f"{claude_json.name}.to-spawn.lock"
 
 
-def _sperren(griff: IO[str]) -> bool:
-    """Exklusive Sperre auf die offene Sperrdatei; ``False`` wenn das Betriebssystem nicht mitspielt."""
-    try:
-        if os.name == "nt":
-            import msvcrt
-
-            msvcrt.locking(griff.fileno(), msvcrt.LK_LOCK, 1)
-        else:
-            import fcntl
-
-            fcntl.flock(griff.fileno(), fcntl.LOCK_EX)
-    except (OSError, ImportError, AttributeError) as fehler:
-        log.warning("Sperre auf %s nicht möglich (%s) — weiter ohne Sperre.", griff.name, fehler)
-        return False
-    return True
-
-
-def _entsperren(griff: IO[str]) -> None:
-    try:
-        if os.name == "nt":
-            import msvcrt
-
-            griff.seek(0)
-            msvcrt.locking(griff.fileno(), msvcrt.LK_UNLCK, 1)
-        else:
-            import fcntl
-
-            fcntl.flock(griff.fileno(), fcntl.LOCK_UN)
-    except (OSError, ImportError, AttributeError) as fehler:
-        log.warning("Sperre auf %s nicht gelöst (%s).", griff.name, fehler)
-
-
 @contextlib.contextmanager
 def gesperrt(claude_json: Path) -> Iterator[None]:
-    """Sperrdatei um Lesen + Schreiben von ``claude_json``; Fehler → Warnung, ohne Sperre weiter."""
-    sperre = sperrdatei_pfad(claude_json)
-    try:
-        sperre.parent.mkdir(parents=True, exist_ok=True)
-        griff: IO[str] | None = open(sperre, "a+", encoding="utf-8")  # noqa: SIM115 — bleibt bis zum Ende offen
-    except OSError as fehler:
-        log.warning("Sperrdatei %s nicht anlegbar (%s) — weiter ohne Sperre.", sperre, fehler)
-        griff = None
-    gehalten = griff is not None and _sperren(griff)
-    try:
+    """Sperrdatei um Lesen + Schreiben von ``claude_json``; Fehler → Warnung, ohne Sperre weiter.
+
+    Wartet höchstens :data:`SPERRE_WARTEN_S` auf einen anderen Starter (#95).
+    """
+    pfad = sperrdatei_pfad(claude_json)
+    with contextlib.ExitStack() as stapel:
+        try:
+            gehalten = stapel.enter_context(sperre.halte(pfad, warten=SPERRE_WARTEN_S))
+        except OSError as fehler:
+            log.warning("Sperre auf %s nicht möglich (%s) — weiter ohne Sperre.", pfad, fehler)
+            gehalten = True  # Warnung schon geschrieben
+        if not gehalten:
+            log.warning("Sperre auf %s nach %s s noch belegt — weiter ohne Sperre.", pfad, SPERRE_WARTEN_S)
         yield
-    finally:
-        if griff is not None:
-            if gehalten:
-                _entsperren(griff)
-            griff.close()
 
 
 def sicherstellen(*pfade: Path, claude_json: Path | None = None) -> list[str]:
