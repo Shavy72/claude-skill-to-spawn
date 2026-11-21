@@ -147,13 +147,19 @@ Art = Literal["gelöscht", "gesichert und gelöscht", "bleibt"]
 # (Aliase für Aufrufer und Tests), wirksam sind die Funktionen ``_eigene_repos()`` usw.
 
 
-def _ticket_repos(repos: list[dict[str, str]]) -> set[str]:
-    """Ticket-Repo je Eintrag (``ticket_repo``, leer = ``slug``)."""
-    return {t for e in repos if (t := (e.get("ticket_repo") or e.get("slug") or "").strip())}
+def _ticket_repo_aus(repos: list[dict[str, str]]) -> str | None:
+    """Das eine Ticket-Repo aller Einträge; ``None`` = keins, mehrere oder unklar.
 
-
-def _eindeutig(werte: set[str]) -> str | None:
-    return next(iter(werte)) if len(werte) == 1 else None
+    Nie aus dem ``slug`` geraten: ein falsches Repo könnte ein fremdes geschlossenes #N
+    melden. Leeres ``ticket_repo`` gilt nur, wenn der ``slug`` selbst das ausdrückliche
+    Ticket-Repo eines anderen Eintrags ist (Vorgabe: DuoPlus, Skill-Ordner fragen dort).
+    """
+    explizit = {t for e in repos if (t := (e.get("ticket_repo") or "").strip())}
+    bekannt = {t.lower() for t in explizit}
+    for e in repos:
+        if not (e.get("ticket_repo") or "").strip() and (e.get("slug") or "").strip().lower() not in bekannt:
+            return None
+    return next(iter(explizit)) if len(explizit) == 1 else None
 
 
 def _hauptrepo_namen_aus(repos: list[dict[str, str]]) -> tuple[str, ...]:
@@ -166,7 +172,7 @@ def _remotes_aus(repos: list[dict[str, str]]) -> tuple[str, ...]:
 
 _VORGABE_REPOS: list[dict[str, str]] = config.MASCHINE_DEFAULTS["repos"]
 #: Issues (Tickets) liegen immer hier, auch für Skill-Repo-Ordner (Vorgabe).
-TICKET_REPO = _eindeutig(_ticket_repos(_VORGABE_REPOS)) or ""
+TICKET_REPO = _ticket_repo_aus(_VORGABE_REPOS) or ""
 EIGENE_REPOS = tuple(e["slug"].lower() for e in _VORGABE_REPOS if e.get("slug"))
 #: Namen der Haupt-Arbeitskopien — nie aufräumen.
 HAUPTREPO_NAMEN = _hauptrepo_namen_aus(_VORGABE_REPOS)
@@ -190,7 +196,7 @@ def _ticket_repo() -> str | None:
     ponytail: ein Ticket-Repo je Maschine; mehrere Apps mit eigenen Tickets brauchen das
     Ticket-Repo je Ordner (aus dessen ``origin``).
     """
-    return _eindeutig(_ticket_repos(_maschinen_repos()))
+    return _ticket_repo_aus(_maschinen_repos())
 
 
 def _eigene_repos() -> frozenset[str]:
@@ -1640,23 +1646,54 @@ def _wurzeln() -> list[str]:
         muster = roh.split(os.pathsep)
     else:
         maschine = config.maschine()
-        muster = [m for m in maschine["hausmeister"]["wurzeln"] if isinstance(m, str)]
+        muster = [m for m in maschine["hausmeister"]["wurzeln"] if isinstance(m, str) and _wurzel_erlaubt(m)]
         muster += [b for e in maschine["repos"] if (b := _basis_muster(e["worktree_basis"]))]
     return list(dict.fromkeys(os.path.expanduser(m) for m in muster if m.strip()))
 
 
-def _basis_muster(basis: str) -> str | None:
-    """``worktree_basis`` als Wurzel-Muster ``<basis>/*``; ``None`` für leer, relativ, Home oder darüber."""
-    if not basis.strip():
-        return None
-    pfad = Path(basis.strip()).expanduser()
+#: Schon gemeldete abgelehnte Wurzeln (``_wurzeln`` läuft je Ordner, eine Log-Zeile reicht).
+_ABGELEHNT_GEMELDET: set[str] = set()
+
+
+def _ablehnen(art: str, wert: str) -> None:
+    if wert.strip() and wert not in _ABGELEHNT_GEMELDET:
+        _ABGELEHNT_GEMELDET.add(wert)
+        log.warning("Hausmeister: %s %r ignoriert — nur echte Unterordner des Home", art, wert)
+
+
+def _echt_unter_home(pfad: Path) -> bool:
+    """Absolut und nach Auflösen (Symlinks) echt unter dem Home — nicht Home, nicht darüber."""
     try:
         echt, heim = pfad.resolve(), Path.home().resolve()
     except (OSError, RuntimeError):
+        return False
+    return pfad.is_absolute() and heim in echt.parents
+
+
+def _wurzel_erlaubt(muster: str) -> bool:
+    """Wurzel-Muster der Liste: Vorgabe (z. B. ``C:/dev/wt-*``) oder fester Teil vor dem
+    ersten Glob-Zeichen echt unter dem Home (``~/*``, ``/tmp/*`` fallen weg)."""
+    if muster in WURZELN_STANDARD:
+        return True
+    teile: list[str] = []
+    for teil in Path(os.path.expanduser(muster.strip())).parts:
+        if glob.has_magic(teil):
+            break
+        teile.append(teil)
+    if teile and _echt_unter_home(Path(*teile)):
+        return True
+    _ablehnen("Wurzel", muster)
+    return False
+
+
+def _basis_muster(basis: str) -> str | None:
+    """``worktree_basis`` als Wurzel-Muster ``<basis>/*`` (Glob-Zeichen escaped);
+    ``None``, wenn sie kein echter Unterordner des Home ist."""
+    pfad = Path(basis.strip()).expanduser()
+    if not basis.strip() or not _echt_unter_home(pfad):
+        _ablehnen("worktree_basis", basis)
         return None
-    if not pfad.is_absolute() or echt == heim or echt in heim.parents:
-        return None
-    return str(pfad / "*")
+    return os.path.join(glob.escape(str(pfad)), "*")
 
 
 def _im_bereich(ordner: Path) -> bool:
