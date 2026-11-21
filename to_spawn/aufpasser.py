@@ -91,7 +91,7 @@ from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from to_spawn import (
     anleitung,
@@ -223,9 +223,54 @@ _FENSTER_TICKET = re.compile(r"bau[ _-]?(\d+)")
 SHELLS = frozenset({"bash", "sh", "zsh", "dash", "fish", "ksh"})
 #: Deploy-Prozesse älter als das sind Waisen.
 DEPLOY_ALTER_MAX_S = 6 * 3600
-DEPLOY_MUSTER = (
-    r"safe_deploy_vps\.sh|deploy_schlange|staging_deploy\.sh|server_tuer\.sh"
-)
+#: Deploy-Skripte ohne Repo-Konfig: ``deploy.skripte`` der Vorgabe (L1 #7/#8).
+VORGABE_SKRIPTE: list[dict[str, Any]] = config.DEFAULTS["deploy"]["skripte"]
+#: Regex, das auf keine Befehlszeile passt (in Python und pgrep-ERE): Muster ohne Skripte.
+NIE_MUSTER = "$^"
+
+
+def deploy_muster_aus(skripte: Iterable[dict[str, Any]]) -> str:
+    """``pgrep``-Regex aus den Skriptnamen, ODER-verknüpft; leere Liste ⇒ :data:`NIE_MUSTER`."""
+    return "|".join(dict.fromkeys(re.escape(s["name"]) for s in skripte)) or NIE_MUSTER
+
+
+def deploy_skripte(konfig: dict[str, Any]) -> list[dict[str, Any]]:
+    """Gültige Einträge aus ``deploy.skripte`` der Konfig (Trust-Grenze: Repo-Datei).
+
+    Kein Objekt/keine Liste ⇒ Vorgabe. Ein Eintrag zählt nur mit nicht-leerem
+    ``name`` und ``art`` "live"/"pruef"; fehlt ``pruef_schalter`` bzw. ``fern``, gilt
+    "" bzw. False. Ungültige Einträge fallen mit Warnung weg.
+    """
+    deploy = konfig.get("deploy")
+    roh = deploy.get("skripte") if isinstance(deploy, dict) else None
+    if not isinstance(roh, list):
+        if roh is not None:
+            log.warning("deploy.skripte ist keine Liste — Vorgabe gilt")
+        return VORGABE_SKRIPTE
+    gueltig = []
+    for s in roh:
+        name = s.get("name") if isinstance(s, dict) else None
+        if (
+            not isinstance(name, str)
+            or not name.strip()
+            or s.get("art") not in ("live", "pruef")
+        ):
+            log.warning("deploy.skripte: Eintrag ungültig, übersprungen: %r", s)
+            continue
+        schalter = s.get("pruef_schalter")
+        gueltig.append(
+            {
+                "name": name,
+                "art": s["art"],
+                "pruef_schalter": schalter if isinstance(schalter, str) else "",
+                "fern": s.get("fern") is True,
+            }
+        )
+    return gueltig
+
+
+#: Alter Name, Tests lesen ihn: Muster der Vorgabe-Skripte.
+DEPLOY_MUSTER = deploy_muster_aus(VORGABE_SKRIPTE)
 #: Gate/Testlauf: sperrt nur das eigene Fenster (Fensterbaum oder Ticket-Worktree),
 #: nie den ganzen Server — fremde Testläufe halten keinen Platz fest (#592).
 #: Welche Deploy-Aufrufe ebenso nur prüfen, entscheidet ``deploy_art`` (#598).
@@ -305,7 +350,8 @@ class Einstellungen:
     bau_vorlage: str | None = None
     #: Startbefehl des Aufseher-Fensters mit {repo} {py} {s} {resume} (R1).
     wache_vorlage: str | None = None
-    deploy_muster: str = DEPLOY_MUSTER
+    #: Fester ``pgrep``-Regex; None ⇒ aus ``deploy.skripte`` der Repo-Konfigs.
+    deploy_muster: str | None = None
     repo: Path | None = None
     trocken: bool = False
     jetzt: Callable[[], float] = time.time
@@ -514,8 +560,13 @@ Schliessart = Literal["fenster", "exit", "zwang", "offen"]
 DeployArt = Literal["live", "pruef"]
 
 
-def deploy_art(argv: list[str]) -> DeployArt | None:
+def deploy_art(
+    argv: list[str], skripte: Sequence[dict[str, Any]] | None = None
+) -> DeployArt | None:
     """Einzige Stelle, die einen Prozess als Deploy einstuft (#598).
+
+    Die Skripte kommen aus ``deploy.skripte`` (:func:`deploy_skripte`, None ⇒ Vorgabe);
+    die Beispiele unten sind die DuoPlus-Vorgabe. Erster Treffer in Listenreihenfolge zählt.
 
     ``live`` — echter Deploy, sperrt serverweit: ``safe_deploy_vps.sh`` ohne
     ``--nur-gate`` (auch ``--rebuild-runner``, ``--to``), ``staging_deploy.sh``,
@@ -528,15 +579,19 @@ def deploy_art(argv: list[str]) -> DeployArt | None:
     """
     if not argv:
         return None
+    liste = VORGABE_SKRIPTE if skripte is None else skripte
     if Path(argv[0]).name == "ssh":
-        return "live" if "server_tuer.sh" in argv[-1] else None
+        for s in liste:
+            if s["fern"] and s["name"] in argv[-1]:
+                return s["art"]
+        return None
     kopf = " ".join(argv[:3])
-    if "safe_deploy_vps.sh" in kopf:
-        return "pruef" if "--nur-gate" in " ".join(argv).split() else "live"
-    if "staging_deploy.sh" in kopf:
-        return "live"
-    if "deploy_schlange" in kopf:
-        return "pruef"
+    for s in liste:
+        if s["fern"] or s["name"] not in kopf:
+            continue
+        if s["pruef_schalter"] and s["pruef_schalter"] in " ".join(argv).split():
+            return "pruef"
+        return s["art"]
     # pytest zählt nur als Programmname (``pytest``, ``python -m pytest``), nie als
     # Pfadteil — sonst wäre jeder Prozess unter ``/tmp/pytest-of-<nutzer>/`` ein Gate (#1411).
     # Tokens trennen auch an Shell-Zeichen/Anführung (``cd x && pytest;``, ``"pytest"``), der
@@ -954,7 +1009,9 @@ class Aufpasser:
         self.e = e
         self.jetzt = e.jetzt()
         #: Deploy-Muster dieses Laufs (mit Repo-Konfig) — Deploy-Wache vor jedem Eingriff (R4).
-        self.muster = e.deploy_muster
+        self.muster = e.deploy_muster or DEPLOY_MUSTER
+        #: Deploy-Skripte dieses Laufs (``deploy.skripte`` der Repos) für ``deploy_art``.
+        self.skripte: list[dict[str, Any]] = VORGABE_SKRIPTE
         self.datum = (
             datetime.fromtimestamp(self.jetzt, tz=timezone.utc)
             .astimezone()
@@ -1044,15 +1101,23 @@ class Aufpasser:
     # -- Lesen -------------------------------------------------------------------
 
     def deploy_muster_fuer(self, repos: Iterable[Path]) -> str:
-        """``--deploy-muster`` plus die Skripte aus ``.to-spawn/config.json`` der Repos
-        (``deploy_befehl``, ``staging_start`` — jeweils der Basename), ODER-verknüpft."""
-        teile = [self.e.deploy_muster]
+        """Deploy-Muster dieses Laufs, ODER-verknüpft; setzt :attr:`skripte`.
+
+        ``--deploy-muster`` (fest) oder sonst die Namen aus ``deploy.skripte`` der Repos
+        (keine lesbare Konfig ⇒ Vorgabe), dazu ``deploy_befehl``/``staging_start`` der
+        Repo-Konfigs (jeweils der Basename)."""
+        teile = [self.e.deploy_muster] if self.e.deploy_muster else []
+        skripte: dict[str, dict[str, Any]] = {}
+        gelesen = False
         for repo in repos:
             try:
                 konfig = config.lade(repo)
             except (OSError, ValueError) as fehler:
                 log.warning("%s: Konfig nicht lesbar: %s", repo, fehler)
                 continue
+            gelesen = True
+            for s in deploy_skripte(konfig):
+                skripte.setdefault(s["name"], s)
             for schluessel in ("deploy_befehl", "staging_start"):
                 wert = konfig.get(schluessel)
                 if not isinstance(wert, str) or not wert.strip():
@@ -1061,7 +1126,10 @@ class Aufpasser:
                     name = Path(wort).name
                     if name.endswith((".sh", ".py")):
                         teile.append(re.escape(name))
-        return "|".join(dict.fromkeys(teile))
+        self.skripte = list(skripte.values()) if gelesen else VORGABE_SKRIPTE
+        if not self.e.deploy_muster and self.skripte:
+            teile.insert(0, deploy_muster_aus(self.skripte))
+        return "|".join(dict.fromkeys(teile)) or NIE_MUSTER
 
     def _prozess_alter_s(self, pid: int) -> float | None:
         try:
@@ -1079,9 +1147,7 @@ class Aufpasser:
         """
         return [
             kopf
-            for _, kopf, art in self._prozesse_treffer(
-                muster_text or self.e.deploy_muster
-            )
+            for _, kopf, art in self._prozesse_treffer(muster_text or self.muster)
             if art != "pruef"
         ]
 
@@ -1141,7 +1207,7 @@ class Aufpasser:
                 continue
             argv = _argv(int(pid))
             kopf = " ".join(argv[:3]) or args
-            art = deploy_art(argv)
+            art = deploy_art(argv, self.skripte)
             if not muster.search(kopf) and art != "live":
                 continue
             alter = self._prozess_alter_s(int(pid))
@@ -1219,9 +1285,7 @@ class Aufpasser:
     def repo_ordner(self, fenster: list[Fenster]) -> Path | None:
         for f in fenster:
             pfad = Path(f.pfad)
-            if (pfad / "scripts" / "bau.py").is_file() or (
-                pfad / ".to-spawn" / "config.json"
-            ).is_file():
+            if (pfad / config.KONFIG_PFAD).is_file():
                 return pfad
         if self.e.repo:
             return self.e.repo
@@ -2403,7 +2467,9 @@ def parser_fuellen(ap: argparse.ArgumentParser) -> argparse.ArgumentParser:
         help="Startbefehl des Aufseher-Fensters mit {repo} {py} {s} {resume} (Vorgabe: scripts/wache.py bzw. Skill)",
     )
     ap.add_argument(
-        "--deploy-muster", default=DEPLOY_MUSTER, help="Regex für pgrep -af"
+        "--deploy-muster",
+        default=None,
+        help="Regex für pgrep -af (Vorgabe: aus deploy.skripte der Repo-Konfig)",
     )
     ap.add_argument(
         "--repo", type=Path, help="Repo-Ordner, falls kein Fenster ihn verrät"
