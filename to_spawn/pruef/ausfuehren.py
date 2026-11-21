@@ -16,7 +16,7 @@ from pathlib import Path
 from to_spawn import speicher
 
 #: RAM je Test-Worker (MiB), Grundlage des Deckels.
-# ponytail: Schätzwert, nicht gemessen; Upgrade: Spitze je Worker messen (3b-5 DuoPlus).
+# ponytail: Schätzwert, nicht gemessen; Upgrade: Spitze je Worker messen (3b-5).
 JE_WORKER_MIB = 512
 #: Ohne lesbaren freien Speicher (z. B. Windows) höchstens so viele Worker.
 OHNE_RAM_WERT = 2
