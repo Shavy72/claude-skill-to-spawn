@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -88,9 +90,17 @@ def test_install_sh_heutiger_aufruf_gleich(tmp_path: Path) -> None:
     assert (repo / VORGABE / "_default.json").is_file()
     assert (repo / "scripts" / "bau.py").is_file()
     assert (ziel / "skripte" / "spawn_srv.sh").is_file()
+    skills = tmp_path / "skills"
+    assert not (skills / "_alt").exists()
+    installiert = sorted(p.name for p in skills.iterdir() if p.is_dir())
+    assert "to-spawn" in installiert and "to-spawn-local" in installiert
     zweiter = _install(tmp_path, repo)
     assert zweiter.returncode == 0, zweiter.stderr
-    assert len(list((tmp_path / "skills" / "_alt").glob("to-spawn-*"))) == 1
+    # Je installiertem Skill-Ordner genau eine Sicherung _alt/<name>-<JJJJMMTT-hhmmss>, alle aus einem Lauf.
+    sicherungen = [re.fullmatch(r"(.+)-(\d{8}-\d{6})", p.name) for p in (skills / "_alt").iterdir()]
+    assert all(sicherungen), [p.name for p in (skills / "_alt").iterdir()]
+    assert sorted(m.group(1) for m in sicherungen) == installiert
+    assert len({m.group(2) for m in sicherungen}) == 1
 
 
 def test_ps1_rueckfall_ergaenzt_alter_weg_bleibt() -> None:
@@ -102,3 +112,23 @@ def test_ps1_rueckfall_ergaenzt_alter_weg_bleibt() -> None:
     for skript in ("bau.py", "wache.py", "sessions_stand.py"):
         assert f"\\.claude\\skills\\to-spawn\\skripte\\{skript}" in inst
         assert f'Test-Path "./scripts/{skript}"' in inst
+
+
+def test_install_sh_mit_pycache_in_repo_scripts(tmp_path: Path) -> None:
+    """#155: liegt ``repo-scripts/__pycache__`` im Skill, bricht der Installer nicht ab und kopiert keinen Bytecode."""
+    kopie = tmp_path / "skill"
+    shutil.copytree(SKILL, kopie, ignore=shutil.ignore_patterns(".git"))
+    (kopie / "repo-scripts" / "__pycache__").mkdir(exist_ok=True)
+    (kopie / "repo-scripts" / "__pycache__" / "x.pyc").write_bytes(b"\0")
+    repo = _repo(tmp_path)
+    lauf = subprocess.run(
+        ["bash", str(kopie / "install.sh"), "--skills", str(tmp_path / "skills"), "--repo", str(repo)],
+        cwd=tmp_path,
+        env=_env(tmp_path, repo),
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert lauf.returncode == 0, lauf.stderr
+    assert (repo / "scripts" / "bau.py").is_file()
+    assert not (repo / "scripts" / "__pycache__").exists()

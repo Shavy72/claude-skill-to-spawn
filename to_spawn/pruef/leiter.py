@@ -1,18 +1,20 @@
 """Leiter des Prüf-Werkzeugkastens: welche Stufen laufen und in welcher Reihenfolge (Paket-intern, #99).
 
-Sprachfrei — kennt nur die Adapter-Schnittstelle. In 3b-1a gibt es nur Stufe 4 (voll) je
-erkanntem Adapter; Sofort-Prüfung, Auswahl und die Regeln R1–R3 kommen in 3b-1b/3b-2a.
+Sprachfrei — kennt nur die Adapter-Schnittstelle. Zuerst Stufe 1 sofort + Stufe 2 doku (``sofort``,
+#100), dann Stufe 4 (voll) je erkanntem Adapter; Auswahl und die Regeln R1–R3 kommen in 3b-2a.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Protocol
 
-from to_spawn.pruef import ausfuehren
+from to_spawn.pruef import ausfuehren, sofort, wackler
 
 GRUEN, ROT, GATE_FEHLER = 0, 1, 2
+#: Stufe lief nicht (``lief=False`` + Grund) — zählt nie als Grün, ändert das Urteil nicht.
+AUSGELASSEN = -1
 #: Höchstens so viele Zeilen gehen als ``fehler_kurz`` ins Protokoll.
 FEHLER_ZEILEN = 20
 
@@ -47,6 +49,12 @@ class Stufe:
     werkzeug: str
     ergebnis: int
     ausgabe: str
+    #: Einmalige Wiederholung der roten Tests (3b-4): Befehl, eigene Zeit, erst rot → dann grün.
+    wiederholung: str = ""
+    wiederholung_s: float = 0.0
+    #: Zweiter voller Lauf nach grüner Einzel-Wiederholung: eigene Zeit (0 = nicht gelaufen).
+    voll_nochmal_s: float = 0.0
+    wackler: tuple[str, ...] = ()
 
 
 def _kurz(text: str) -> str:
@@ -70,7 +78,7 @@ def _voll(repo: Path, adapter: Adapter) -> Stufe:
         )
     erg = ausfuehren.lauf(plan.befehl, repo)
     ergebnis = adapter.deute(erg.code)
-    return Stufe(
+    stufe = Stufe(
         "voll",
         adapter.name,
         True,
@@ -81,11 +89,34 @@ def _voll(repo: Path, adapter: Adapter) -> Stufe:
         ergebnis,
         erg.ausgabe if ergebnis != GRUEN else "",
     )
+    zweit = (
+        wackler.nochmal(adapter, repo, plan.befehl, erg) if ergebnis == ROT else None
+    )
+    if zweit is None:
+        return stufe
+    return replace(
+        stufe,
+        ergebnis=GRUEN if zweit.gruen else ROT,
+        ausgabe="" if zweit.gruen else stufe.ausgabe,
+        wiederholung=" ".join(zweit.befehl),
+        wiederholung_s=zweit.dauer_s,
+        voll_nochmal_s=zweit.voll_s,
+        wackler=zweit.wackler,
+    )
 
 
-def stufen(repo: Path, adapter_liste: tuple[Adapter, ...]) -> list[Stufe]:
-    """Alle Stufen für ``repo``; leer, wenn kein Adapter das Repo erkennt."""
-    return [_voll(repo, adapter) for adapter in adapter_liste if adapter.erkennt(repo)]
+def stufen(repo: Path, adapter_liste: tuple[Adapter, ...], basis: str) -> list[Stufe]:
+    """Alle Stufen für ``repo`` gegen ``basis``; leer, wenn kein Adapter das Repo erkennt."""
+    erkannt = [adapter for adapter in adapter_liste if adapter.erkennt(repo)]
+    if not erkannt:
+        return []
+    vorn, halt = sofort.stufen(repo, basis)
+    if halt:
+        return vorn + [
+            Stufe("voll", a.name, False, halt, 0.0, "", "", AUSGELASSEN, "")
+            for a in erkannt
+        ]
+    return vorn + [_voll(repo, adapter) for adapter in erkannt]
 
 
 def ergebnis(liste: list[Stufe]) -> tuple[int, str]:

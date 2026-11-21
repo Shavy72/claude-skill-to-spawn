@@ -6,6 +6,11 @@ Aufruf (im Repo-Wurzelordner):
     python ~/.claude/skills/to-spawn/to_spawn.py stand            # Skill-Stand Bau-Server sichern (#325)
     python ~/.claude/skills/to-spawn/to_spawn.py regularien <S> [--tickets a,b] [--ohne-github]
     python ~/.claude/skills/to-spawn/to_spawn.py pruefen <basis> <ziel> [--repo <pfad>]  # Exit 0/1/2 + JSON (#99)
+    python ~/.claude/skills/to-spawn/to_spawn.py anhaengen <S> <N> [--blockiert-von B,…] \
+        [--schaetzung K] [--umfang TEXT] [--datei PFAD:a-b …] [--trocken]  # Ticket nachtragen (E2-2)
+    python ~/.claude/skills/to-spawn/to_spawn.py befund --spec <S> --ticket <N> --stufe gelb --text "…"  # Folge-Ticket
+    python ~/.claude/skills/to-spawn/to_spawn.py spec-schliessen <S>  # Spec schließen mit Sperre (E2-4, Exit 0/1)
+    python ~/.claude/skills/to-spawn/to_spawn.py hook-spec-sperre    # PreToolUse-Hook (Bash), JSON auf stdin
     python ~/.claude/skills/to-spawn/to_spawn.py log <S>
     python ~/.claude/skills/to-spawn/to_spawn.py lernstoff [--letzte 30]
     python ~/.claude/skills/to-spawn/to_spawn.py setup [--zeigen|--standard|--terminal …]
@@ -54,9 +59,11 @@ from to_spawn import (  # noqa: E402
     pruef,
     respawn,
     setup,
+    spec_rand,
     speicher,
     startklar,
     ticketstand,
+    uebergabe_sichern,
     umzug,
     vorfall,
     waechter_takt,
@@ -226,7 +233,7 @@ def _setup(repo: Path, args: argparse.Namespace) -> int:
         )
     print(setup.SCHLUSS_SATZ)
     # Checkpoint-Label im GitHub-Repo anlegen (#257) — Weigerung „Kein Checkpoint-Ticket“ vorbeugen.
-    label = str(config.lade(repo).get("regularien", {}).get("checkpoint_label") or "checkpoint:human")
+    label = manifest.checkpoint_label(config.lade(repo))
     if gh.label_sicherstellen(repo, label):
         print(f"  Label {label} im GitHub-Repo vorhanden.")
     else:
@@ -292,6 +299,38 @@ def _befund(args: argparse.Namespace) -> int:
     for zeile in ergebnis.zeilen:
         print(zeile)
     return 0 if ergebnis.ok else 1
+
+
+def _spec_schliessen(args: argparse.Namespace) -> int:
+    """Unterbefehl ``spec-schliessen`` (E2-4): schließt die Spec nur ohne offene Folge-Tickets."""
+    repo = config.repo_wurzel(_repo_aus_umgebung())
+    gh_repo = gh.repo_aus_origin(repo)
+    if not gh_repo:
+        print("FEHLER: kein GitHub-Repo erkannt (origin fehlt oder zeigt nicht auf github.com)")
+        return 2
+    ergebnis = befund.spec_schliessen(repo, gh_repo, args.spec)
+    for zeile in ergebnis.zeilen:
+        print(zeile)
+    return 0 if ergebnis.ok else 1
+
+
+def _anhaengen(args: argparse.Namespace) -> int:
+    """Unterbefehl ``anhaengen`` (E2-2): Issue an Spec hängen — Kanten, Manifest, Unter-Issue."""
+    repo = config.repo_wurzel(_repo_aus_umgebung())
+    ergebnis = spec_rand.anhaengen(
+        repo,
+        args.spec,
+        args.ticket,
+        config.lade(repo),
+        blockiert_von=_tickets(args.blockiert_von) or [],
+        schaetzung_k=args.schaetzung,
+        umfang=args.umfang,
+        dateien=args.datei,
+        trocken=args.trocken,
+    )
+    for zeile in ergebnis.zeilen:
+        print(zeile)
+    return ergebnis.exit
 
 
 def _eintrag(args: argparse.Namespace) -> int:
@@ -448,6 +487,19 @@ def main(argv: list[str] | None = None) -> int:
     p_pruefen.add_argument("--repo", type=Path, help="Repo-Ordner (Vorgabe: aktueller Ordner)")
     _regularien_optionen(p_pruefen)  # nur für die Weiterleitung ``pruefen <S>``
 
+    # Spec-Rand (E2-2): ein Issue nachträglich an eine Spec hängen (= „Ticket nachtragen“).
+    p_anh = unter.add_parser(
+        "anhaengen", help="Issue an Spec hängen: Blocker-Kanten, Abnahme-Kante, Manifest, Unter-Issue"
+    )
+    p_anh.add_argument("spec", type=int, help="Spec-Nummer (Eltern-Issue + Manifest)")
+    p_anh.add_argument("ticket", type=int, help="anzuhängendes Issue")
+    p_anh.add_argument("--blockiert-von", default="", metavar="B,…", help="Blocker-Tickets (Komma)")
+    p_anh.add_argument("--schaetzung", type=float, metavar="K", help="schaetzung_k (Tausend Token)")
+    p_anh.add_argument("--umfang", metavar="TEXT", help="umfang (ein Satz Klartext)")
+    p_anh.add_argument(
+        "--datei", action="append", default=[], metavar="PFAD:a-b", help="files-Eintrag (mehrfach)"
+    )
+    p_anh.add_argument("--trocken", action="store_true", help="Schritte zeigen, nichts schreiben")
     p_log = unter.add_parser("log", help="Gesamt-Tabelle aus dem Bau-Log")
     p_log.add_argument("spec")
 
@@ -532,6 +584,13 @@ def main(argv: list[str] | None = None) -> int:
     )
     unter.add_parser("hook-stop", help="Stop-Hook (JSON auf stdin)")
     unter.add_parser("hook-subagent-stop", help="SubagentStop-Hook (JSON auf stdin)")
+    unter.add_parser(
+        "hook-spec-sperre", help="PreToolUse-Hook: rohes `gh issue close <Spec>` sperren (E2-4)"
+    )
+    p_schliessen = unter.add_parser(
+        "spec-schliessen", help="Spec schließen, nur wenn alle Folge-Tickets erledigt sind (E2-4)"
+    )
+    p_schliessen.add_argument("spec", type=int)
     # Umzug einer Bau-Session auf den Bau-Server (/to-spawn-of, #212).
     p_umzug = unter.add_parser("umzug", help="diese Bau-Session auf den Bau-Server umziehen")
     p_umzug.add_argument("ticket")
@@ -607,9 +666,15 @@ def main(argv: list[str] | None = None) -> int:
     waechter_takt.richte_parser_ein(unter)
     aufseher_stand.richte_parser_ein(unter)
     ticketstand.richte_parser_ein(unter)
+    uebergabe_sichern.richte_parser_ein(unter)
     # Gelb-Liste (#438): Befund des Aufsehers — gelb → Folge-Ticket, rot → wieder öffnen.
-    p_befund = unter.add_parser("befund", help="Aufseher-Befund melden (gelb/rot)")
-    p_befund.add_argument("--spec", required=True, type=int, help="Spec-Nummer (Manifest)")
+    # E2-4: einzige Tür für Folge-Tickets (auch Bau-Sessions) — nie roh `gh issue create`.
+    p_befund = unter.add_parser(
+        "befund", help="Befund melden: gelb → Folge-Ticket an der Spec, rot → wieder öffnen"
+    )
+    p_befund.add_argument(
+        "--spec", required=True, type=int, help="Herkunfts-Spec (Manifest, Unter-Issue)"
+    )
     p_befund.add_argument("--ticket", required=True, type=int, help="Ticket mit dem Befund")
     p_befund.add_argument("--stufe", required=True, choices=list(befund.STUFEN))
     p_befund.add_argument("--text", required=True, help="was fehlt / der Hinweis")
@@ -650,11 +715,17 @@ def main(argv: list[str] | None = None) -> int:
         return _hook_stop_mit_umzug()
     if args.befehl == "hook-subagent-stop":
         return hooks.hook_subagent_stop()
+    if args.befehl == "hook-spec-sperre":
+        return hooks.hook_spec_sperre()
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     if args.befehl == "eintrag":
         return _eintrag(args)
     if args.befehl == "befund":
         return _befund(args)
+    if args.befehl == "spec-schliessen":
+        return _spec_schliessen(args)
+    if args.befehl == "anhaengen":
+        return _anhaengen(args)
     if args.befehl == "umrechnen":
         return _umrechnen(args)
     if args.befehl == "nest":
@@ -667,6 +738,8 @@ def main(argv: list[str] | None = None) -> int:
         return aufpasser.lauf_mit_args(args)
     if args.befehl == "aufraeumen":
         return _aufraeumen(args, ap)
+    if args.befehl == "sichern":
+        return uebergabe_sichern.lauf(args.dateien)
     if args.befehl == "ticketstand":
         # Nur lesen: Tabelle „X von Y fertig“ für jeden Aufseher-Tick.
         return ticketstand.lauf(args, config.repo_wurzel(_repo_aus_umgebung()))

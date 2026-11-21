@@ -704,6 +704,9 @@ def _wache_welt(welt: dict[str, Path]) -> dict[str, str]:
     return {
         "PATH": f"{binaer}{os.pathsep}{os.environ['PATH']}",
         "HOME": str(heim),
+        # Windows: ``Path.home()`` liest USERPROFILE, nicht HOME — sonst lesen wache.py und das
+        # Fake-claude das echte Heim (smart-zone.json, Transkripte) statt der Testwelt (#68).
+        "USERPROFILE": str(heim),
         "FAKE_PROTOKOLL": str(welt["tmp"] / "claude_aufrufe.jsonl"),
         "FAKE_LIMIT": json.dumps(LIMIT_ZEILE, ensure_ascii=False),
         "TO_SPAWN_AUFSICHT_TAKT": "0.2",

@@ -176,3 +176,35 @@ def test_alter_aufruf_pruefen_s_leitet_auf_regularien(repo: Path) -> None:  # no
     assert (alt.returncode, alt.stdout) == (neu.returncode, neu.stdout)
     assert "heißt jetzt „to_spawn.py regularien" in alt.stderr
     assert "heißt jetzt" not in neu.stderr
+
+
+def test_ungespeicherter_arbeitsbaum_ist_gate_fehler_nicht_gruen(
+    tmp_path: Path,
+) -> None:
+    """Roter Commit + lokal reparierter Baum darf nie Grün für den roten SHA ergeben (#100)."""
+    probe = _probe_py(tmp_path / "py", test_text="assert addiere(2, 2) == 5")
+    test_datei = probe / "tests" / "test_rechnen.py"
+    test_datei.write_text(
+        test_datei.read_text(encoding="utf-8").replace("== 5", "== 4"), encoding="utf-8"
+    )
+    erg = _tuer(probe, "base", "HEAD")
+    assert erg.returncode == 2, erg.stdout + erg.stderr
+    assert "Arbeitsbaum nicht gespeichert" in _zeile(erg)["fehler_kurz"]
+    test_datei.write_text("x", encoding="utf-8")
+    _git(probe, "checkout", "--", "tests/test_rechnen.py")
+    (probe / "helfer.py").write_text(
+        "X = 1\n", encoding="utf-8"
+    )  # neu, nicht committet
+    erg = _tuer(probe, "base", "HEAD")
+    assert erg.returncode == 2, erg.stdout + erg.stderr
+    assert "helfer.py" in _zeile(erg)["fehler_kurz"]
+
+
+def test_cache_ordner_nach_lauf_machen_baum_nicht_ungespeichert(tmp_path: Path) -> None:
+    probe = _probe_py(tmp_path / "py")
+    assert _tuer(probe, "base", "HEAD").returncode == 0
+    assert (probe / ".pytest_cache").exists() or (
+        probe / "tests" / "__pycache__"
+    ).exists()
+    erg = _tuer(probe, "base", "HEAD")
+    assert erg.returncode == 0, erg.stdout + erg.stderr

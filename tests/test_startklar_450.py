@@ -366,7 +366,7 @@ def test_werkzeug_fehlt_oder_scheitert(tmp_path: Path) -> None:
 
 def test_echte_werkzeuge_mit_echten_hooks(tmp_path: Path) -> None:
     """Echtes ``aufraeumen.mjs`` + echte Settings, falls vorhanden — Befund je Werkzeug."""
-    if not (startklar.AUFRAEUMEN.is_file() and shutil.which("node")):
+    if not (startklar.aufraeumen_pfad().is_file() and shutil.which("node")):
         pytest.skip("aufraeumen.mjs oder node fehlt")
     _haupt, wt = _repo_mit_worktree(tmp_path)
     befunde = startklar.werkzeug_probe(wt, 999999)

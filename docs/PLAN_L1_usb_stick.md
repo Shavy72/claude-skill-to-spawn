@@ -175,6 +175,15 @@ verhaltensgleich, Staging zuerst, App-Live bleibt Davids Entscheidung.
   2 min. DuoPlus: Median und langsamstes Zehntel von Push bis Urteil vorher/nachher, nachher
   mindestens halbiert. Zehn Tickets gleichzeitig laufen durch, ohne dass der RAM-Deckel reißt
   oder ein Ticket länger als 15 min wartet.
+- **M14** (L4, A22–A24) Aufräumen ohne David: Im Probe-Lauf werden absichtlich Reste hinterlassen
+  (Arbeitsordner und Temp-Kopie eines geschlossenen Tickets, auch auf der RAM-Platte `/tmp`). Der
+  Hausmeister räumt beides von selbst, kein Schutz-Hook blockt ihn, und in allen
+  Sitzungs-Protokollen und Übergaben des Laufs steht kein einziger Lösch-Auftrag an David.
+- **M15** (L5, A25–A28) Kaltstart-Probe: Eine frische Session ohne Chat und ohne Übergabe-Datei
+  bekommt nur „Lies `docs/WIEDEREINSTIEG.md`“. Sie nennt danach Stand und nächsten Schritt; die
+  Ober-Aufsicht vergleicht beides mit der Wirklichkeit (offene Pull-Requests, Issues, laufende
+  Fenster) — keine Abweichung. Einmal mitten im Bau, einmal vor „fertig“. Zusätzlich: Übergaben
+  und Entscheidungs-Log beider Maschinen liegen höchstens eine Ablösung alt im Notiz-Tresor.
 
 Jede M-Zeile braucht einen Beleg (Befehl + Ausgabe oder Protokoll-Zeile) in
 `docs/ABNAHME_L1.md` im Skill-Repo.
@@ -227,3 +236,15 @@ Jede M-Zeile braucht einen Beleg (Befehl + Ausgabe oder Protokoll-Zeile) in
   F6 teilweise (Server belegt, PC offen #68) · F7 abweichend (Trocken-Entscheidungen gleich; Probe-Eintrag
   in der Maschinen-Liste legte den Hausmeister still, Trockenlauf zeigte es nicht, #112). M1–M13 noch
   nicht geprüft.
+- 2026-11-21 22:15 (PC-Uhr, Ober-Aufsicht Session 1) — **Neuer Lastenheft-Eintrag L4** (David):
+  Aufräumen landet nie bei David. Abnahme **M14** neu; „fertig“ = M1–M14. Anlass: zwei alte
+  Test-Kopien in `/tmp` wurden David als Lösch-Befehl hingelegt (Fehler der Ober-Aufsicht); sie
+  sind gelöscht. Wurzel: Skill-Issue 136 (Temp-Ordner auf die Platte, Hausmeister räumt ihn).
+- 2026-11-21 22:25 (PC-Uhr, Ober-Aufsicht Session 1) — **Neuer Lastenheft-Eintrag L5** (David):
+  jederzeit weiterbauen können. Neu: `docs/WIEDEREINSTIEG.md` (ein Einstieg), Abnahme **M15**
+  (Kaltstart-Probe); „fertig“ = M1–M15. Pflege des Abschnitts „Stand“ dort liegt bei der führenden
+  Leit-Session. Übergaben und Entscheidungs-Log werden in den privaten Notiz-Tresor gespiegelt
+  (`projects/bau-system/`); das selbsttätige Spiegeln ist noch zu bauen (Issue folgt).
+- 2026-11-21 22:37 (Server-Uhr, von `leit 70`) — Etappe 1/Windows: 152 (Issue 144 zu), 153 (roter Test `test_aufseher_428` behoben), 137 (P7c-a) gemergt; Sperre `to_spawn/prozessbaum.py` aufgehoben. Fix-Runde: 127, 142, 146, 148.
+- Etappe 3, 3b-0 entschieden: Abbruch-Kriterium greift (b: 59,3 % der Tickets laufen wegen R1–R3 ohnehin voll; c: 3 rote Läufe fängt R1–R3 nicht, Eigenbau übersieht 2). DuoPlus: Variante 3, kein Auswählen, schnellerer Voll-Lauf (Issue 102 vor 101). Auswahl (101) bleibt Werkzeug für andere Repos, gilt erst mit M12; Kriterium (a) offen bis Teil b.
+- Neue Issues 155 (install.sh/`__pycache__`), 156 (Prüf-Test to-tickets). Als Nächstes: 135, 129, 145, 102, 101, 104.

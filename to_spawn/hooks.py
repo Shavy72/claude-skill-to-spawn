@@ -17,13 +17,15 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
+import shlex
 import sys
 from collections.abc import Iterator
 from datetime import datetime
 from pathlib import Path
 from typing import Any, TextIO
 
-from . import bau_log, config
+from . import bau_log, befund, config
 
 log = logging.getLogger("to_spawn.hooks")
 
@@ -530,3 +532,161 @@ def umrechnen(repo: Path, ticket: str, transkripte: Path) -> tuple[int, int]:
 def _staffel() -> int:
     roh = os.environ.get("TO_SPAWN_STAFFEL", "1")
     return int(roh) if roh.isdigit() else 1
+
+
+# --- Spec-Sperre (E2-4, App #1388 E56) ---------------------------------------------
+
+#: Shell-Trenner zwischen einfachen Befehlen (zählen nur außerhalb von Anführungszeichen).
+_TRENNER = frozenset(";&|()\n`")
+#: Wörter vor dem eigentlichen Befehl (wie ``nest/skill_schutz._PRAEFIXE``).
+_PRAEFIXE = {"sudo", "env", "nohup", "command", "exec", "time"}
+_ZUWEISUNG = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+#: Shells, deren ``-c``-Text selbst ein Befehl ist (wie ``eval``).
+_SHELLS = {"bash", "sh", "zsh", "dash"}
+#: Schalter von ``gh`` (global, ``issue close``/``edit``, ``api``), die einen Wert nehmen —
+#: der Wert ist nie Unterbefehl oder Nummer. Als ein Text, weil der Prüf-Test
+#: ``test_aufseher_kommentar_1522`` jedes einzelne Kommentar-Schalter-Literal als
+#: Kommentar-Schreiber meldet; das hier ist nur eine Parse-Tabelle.
+_MIT_WERT = frozenset(
+    """-R --repo -c --comment -r --reason --duplicate-of
+    -t --title -b --body -F --body-file -m --milestone --state
+    --add-label --remove-label --add-assignee --remove-assignee --add-project --remove-project
+    -X --method -f --field --raw-field -H --header --input -q --jq --template --hostname --cache
+    """.split()
+)
+_NUMMER = re.compile(r"^#?(\d+)$|/issues/(\d+)/?$")
+_API_ISSUE = re.compile(r"(?:^|/)issues/(\d+)/?$")
+_API_CLOSED = re.compile(r"(?:-[fF]|--(?:raw-)?field=)?state=closed")
+
+
+def _einfache_befehle(befehl: str) -> Iterator[list[str]]:
+    """Einfache Befehle in ``befehl`` als Wortlisten, ohne Zuweisungen/Präfixe davor.
+
+    Geteilt wird nur an Trennern außerhalb von Anführungszeichen (``-c "a; b"`` bleibt
+    ein Wort); ``\\``+Zeilenumbruch fügt Zeilen wie die Shell zusammen. Ein ``gh`` in
+    einer Commit-Nachricht oder einem ``echo``-Text ist so nie Befehlsanfang.
+    """
+    befehl = befehl.replace("\\\n", "")
+    teile: list[str] = []
+    start, quote, i = 0, "", 0
+    while i < len(befehl):
+        zeichen = befehl[i]
+        if zeichen == "\\" and quote != "'":
+            i += 2
+            continue
+        if quote:
+            if zeichen == quote:
+                quote = ""
+        elif zeichen in "'\"":
+            quote = zeichen
+        elif zeichen in _TRENNER:
+            teile.append(befehl[start:i])
+            start = i + 1
+        i += 1
+    teile.append(befehl[start:])
+    for teil in teile:
+        try:
+            woerter = shlex.split(teil)
+        except ValueError:
+            woerter = teil.split()
+        while woerter and (woerter[0] in _PRAEFIXE or _ZUWEISUNG.match(woerter[0])):
+            woerter.pop(0)
+        if woerter:
+            yield woerter
+
+
+def _positionen(args: list[str]) -> list[str]:
+    """Positions-Argumente von ``args`` (Schalter und ihre Werte fallen weg)."""
+    positionen: list[str] = []
+    ueberspringen = False
+    for arg in args:
+        if ueberspringen:
+            ueberspringen = False
+        elif arg in _MIT_WERT:
+            ueberspringen = True
+        elif not arg.startswith("-"):
+            positionen.append(arg)
+    return positionen
+
+
+def _schliesst(args: list[str]) -> int | None:
+    """Issue-Nummer, die ``gh <args>`` schließen würde, sonst ``None``."""
+    pos = _positionen(args)
+    if pos[:2] == ["issue", "close"] and len(pos) > 2:
+        treffer = _NUMMER.search(pos[2])
+        return int(treffer.group(1) or treffer.group(2)) if treffer else None
+    if pos[:2] == ["issue", "edit"] and len(pos) > 2:
+        offen = any(
+            a == "--state=closed" or (a == "--state" and b == "closed")
+            for a, b in zip(args, [*args[1:], ""])
+        )
+        treffer = _NUMMER.search(pos[2])
+        return int(treffer.group(1) or treffer.group(2)) if offen and treffer else None
+    if pos[:1] == ["api"] and len(pos) > 1:
+        treffer = _API_ISSUE.search(pos[1])
+        # ``--input`` schreibt einen beliebigen Body (auch ``state: closed``) — sperren.
+        geschlossen = any(_API_CLOSED.fullmatch(a) or a == "--input" for a in args)
+        return int(treffer.group(1)) if treffer and geschlossen else None
+    return None
+
+
+def geschlossene_nummern(befehl: str) -> list[int]:
+    """Issue-Nummern, die ``befehl`` schließen würde.
+
+    Erkennt je einfachem Befehl (siehe :func:`_einfache_befehle`) ``gh issue close <N>``,
+    ``gh issue edit <N> --state closed`` und ``gh api …/issues/<N> … state=closed``;
+    Werte von Schaltern wie ``--comment``/``--repo`` zählen nicht als Nummer.
+    ``eval …`` und ``bash -c "…"`` werden ausgepackt; ``gh api …/issues/<N> --input``
+    zählt als Schließen. ``gh issue edit --state`` kennt gh heute nicht — die Zeile
+    bleibt als Netz, falls es kommt.
+    ponytail: erkennt nur wörtliche Aufrufe — ``curl``, ``gh api graphql`` (``closeIssue``
+    mit Knoten-ID statt Nummer), ``"$(…)"`` in Anführungszeichen, ``Closes #<N>`` in
+    Commit/PR-Text (GitHub schließt beim Merge), Variablen oder ein Skript umgehen die
+    Sperre (gleiche Grenze wie ``skill_schutz``). Die eigentliche Tür ist ``spec-schliessen``: nur dort steht die
+    Prüfung; der Hook fängt nur das versehentliche rohe Schließen ab.
+    """
+    nummern: list[int] = []
+    for woerter in _einfache_befehle(befehl):
+        name = woerter[0].rsplit("/", 1)[-1].removesuffix(".exe")
+        if name == "eval":
+            nummern += geschlossene_nummern(" ".join(woerter[1:]))
+        elif name in _SHELLS and "-c" in woerter[1:-1]:
+            nummern += geschlossene_nummern(woerter[woerter.index("-c") + 1])
+        elif name == "gh" and (n := _schliesst(woerter[1:])) is not None:
+            nummern.append(n)
+    return nummern
+
+
+def hook_spec_sperre(strom: TextIO | None = None, fehler: TextIO | None = None) -> int:
+    """PreToolUse-Hook (Bash) der Bau-Session: rohes ``gh issue close <Spec>`` ablehnen.
+
+    Exit 2 + Hinweis auf ``to_spawn.py spec-schliessen <S>`` (stderr geht an Claude),
+    sobald der Befehl eine Nummer schließt, für die :func:`befund.ist_spec` gilt — dieselbe
+    Definition, die ``spec-schliessen`` nutzt. Alles andere: Exit 0. Ein Fehler im Hook
+    lässt den Befehl durch (die Session darf nie hängen bleiben, #204).
+    """
+    try:
+        daten = _eingabe(strom or sys.stdin)
+        roh = daten.get("tool_input")
+        befehl = roh.get("command") if isinstance(roh, dict) else None
+        if not isinstance(befehl, str):
+            return 0
+        start = daten.get("cwd")
+        repo = config.repo_wurzel(Path(start) if isinstance(start, str) and start else None)
+        specs = [n for n in geschlossene_nummern(befehl) if befund.ist_spec(repo, n)]
+    except Exception:  # der Hook darf die Bau-Session nie stören
+        log.exception("Spec-Sperre fehlgeschlagen — Befehl wird nicht geprüft.")
+        return 0
+    if not specs:
+        return 0
+    s = specs[0]
+    (fehler or sys.stderr).write(
+        f"Gesperrt: #{s} ist eine Spec — nie roh mit `gh issue close` schließen. "
+        f"Stattdessen `python {SKILL_CLI} spec-schliessen {s}`: prüft die Folge-Tickets "
+        "und schließt nur, wenn alle gebaut, geschlossen oder gebündelt sind.\n"
+    )
+    return 2
+
+
+#: Pfad der Skill-CLI für den Hinweis (dort liegt sie in jeder Installation).
+SKILL_CLI = (Path(__file__).resolve().parent.parent / "to_spawn.py").as_posix()

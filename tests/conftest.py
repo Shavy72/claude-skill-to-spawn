@@ -12,16 +12,26 @@ from __future__ import annotations
 
 import os
 import shutil
+import subprocess
 import sys
 import textwrap
+from collections.abc import Iterator
 from pathlib import Path, PureWindowsPath
+from typing import Any
 
 import pytest
+
+# Kein Bytecode im Quellbaum: Tests laden u. a. ``repo-scripts/*.py`` per Dateipfad (#155).
+sys.dont_write_bytecode = True
 
 # Test-Helfer (``tests/hilfen``) einmal importierbar machen — z. B. ``context_mode_attrappe`` (#237).
 _HILFEN = str(Path(__file__).resolve().parent / "hilfen")
 if _HILFEN not in sys.path:
     sys.path.insert(0, _HILFEN)
+
+from git_bash import git_bash  # noqa: E402 — liegt in ``tests/hilfen`` (Pfad oben)
+
+_WINDOWS = sys.platform == "win32"
 
 #: Zeitgrenze je Test in Sekunden (#68): ein hängender Test (unter Windows z. B.
 #: ``test_aufseher_abloesung_436``) darf die Suite nicht unbegrenzt aufhalten. Gilt nur,
@@ -106,6 +116,98 @@ def _zeitgrenze_setzen(config: pytest.Config, items: list[pytest.Item]) -> None:
     for item in items:
         if item.get_closest_marker("timeout") is None:
             item.add_marker(pytest.mark.timeout(ZEITGRENZE_S))
+
+
+def altbestand_wie_eingerichtet() -> Path | None:
+    """Legt unter Windows die Altbestand-Liste an, wie ein eingerichteter Laptop sie hat (#68).
+
+    Aufruf in Hausmeister-Welten, nachdem ``TO_SPAWN_HAUSMEISTER_LOG`` gesetzt ist. Grund:
+    Fehlt die Liste unter Windows, hält der erste echte Lauf absichtlich alle Ordner fest
+    (#1373, E16) — die Regel-Tests setzen aber den eingerichteten Zustand voraus. Geschrieben
+    wird die leere, nicht freigegebene Liste (``{"freigegeben": false, "ordner": []}``):
+    sie hält keinen Ordner fest, und ``altbestand_festhalten`` ergänzt sie weiter wie echt.
+    Pfad kommt aus ``hausmeister.altbestand_pfad()`` (eine Stelle). Linux/macOS: nichts,
+    Rückgabe ``None`` (dort hat die fehlende Liste keine Wirkung).
+    """
+    if not _WINDOWS:
+        return None
+    from to_spawn import hausmeister
+
+    pfad = hausmeister.altbestand_pfad()
+    pfad.parent.mkdir(parents=True, exist_ok=True)
+    pfad.write_text('{"freigegeben": false, "ordner": []}\n', encoding="utf-8")
+    return pfad
+
+
+#: Programmnamen, die unter Windows auf Git-Bash zeigen müssen (#68): ``CreateProcess``
+#: sucht ``System32`` VOR ``PATH`` ab, ein blankes ``"bash"`` träfe dort immer den WSL-Stub.
+_BASH_NAMEN = frozenset({"bash", "bash.exe"})
+
+
+def _bash_aufloesen(args: Any) -> Any:
+    """Ersetzt unter Windows ein blankes ``bash`` als Programm durch Git-Bash.
+
+    Nur Listen/Tupel, deren erstes Element genau ``bash``/``bash.exe`` ist (kein Pfad);
+    alles andere geht unverändert durch. Fehlt Git-Bash, überspringt der laufende Test mit
+    Grund — die geprüfte Sache braucht eine echte Bash, und der WSL-Stub ist keine.
+    """
+    if not isinstance(args, (list, tuple)) or not args:
+        return args
+    if str(args[0]).lower() not in _BASH_NAMEN:
+        return args
+    bash = git_bash()
+    if bash is None:
+        pytest.skip("braucht bash: keine Git-Bash gefunden (nur WSL-Stub oder gar keine)")
+    return type(args)([bash, *args[1:]])
+
+
+@pytest.fixture(autouse=True)
+def _git_bash_statt_wsl_stub(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Unter Windows startet ein blankes ``bash`` aus Tests Git-Bash, nie den WSL-Stub (#68).
+
+    Zwei Wege, beide nur unter ``win32``: (1) ``subprocess.Popen`` (trägt ``run``,
+    ``check_output``, ``call``) löst ``["bash", …]`` über ``_bash_aufloesen`` auf;
+    (2) der Git-Bash-Ordner steht vorn in ``PATH`` — für Kindprozesse, die ``bash`` per
+    ``shutil.which`` suchen. Linux/macOS: keine Wirkung.
+    """
+    if not _WINDOWS:
+        return
+    original = subprocess.Popen.__init__
+
+    def _init(self: subprocess.Popen, args: Any, *rest: Any, **kw: Any) -> None:
+        if kw.get("executable") is None:
+            args = _bash_aufloesen(args)
+        original(self, args, *rest, **kw)
+
+    monkeypatch.setattr(subprocess.Popen, "__init__", _init)
+    bash = git_bash()
+    if bash is not None:
+        ordner = str(Path(bash).parent)
+        monkeypatch.setenv("PATH", f"{ordner}{os.pathsep}{os.environ.get('PATH', '')}")
+
+
+class _HeimMonkeyPatch(pytest.MonkeyPatch):
+    """``MonkeyPatch``, das unter Windows ``HOME`` nach ``USERPROFILE`` mitzieht (#68).
+
+    ``os.path.expanduser``/``Path.home()`` lesen unter Windows ``USERPROFILE``, nicht
+    ``HOME``. Tests biegen den Heimordner per ``setenv("HOME", …)`` um; diese eine Stelle
+    zieht ``USERPROFILE`` mit (``delenv("HOME")`` lässt ``USERPROFILE`` stehen). Ein
+    ausdrückliches ``setenv("USERPROFILE", …)`` danach gewinnt. Linux/macOS: wie das
+    eingebaute ``MonkeyPatch``.
+    """
+
+    def setenv(self, name: str, value: str, prepend: str | None = None) -> None:
+        super().setenv(name, value, prepend)
+        if _WINDOWS and name == "HOME" and prepend is None:
+            super().setenv("USERPROFILE", value)
+
+
+@pytest.fixture
+def monkeypatch() -> Iterator[pytest.MonkeyPatch]:
+    """Ersetzt das eingebaute ``monkeypatch`` durch ``_HeimMonkeyPatch`` (Rückbau wie dort)."""
+    mp = _HeimMonkeyPatch()
+    yield mp
+    mp.undo()
 
 
 _SOFORT_MODULE = frozenset({"test_waechter_213", "test_waechter_213_weg"})
@@ -209,6 +311,9 @@ def _hausmeister_nur_im_test(
     # #1372: Docker-Reste nie echt — „true“ statt docker, keine Staging-Sperre.
     monkeypatch.setenv("TO_SPAWN_HAUSMEISTER_DOCKER", shutil.which("true") or "/bin/true")
     monkeypatch.setenv("TO_SPAWN_STAGING_SPERRE", str(ordner / "keine-staging-sperre"))
+    # #145: Sicherung (Rundgang, Aufseher-Ablösung) schreibt nur in tmp, lädt keine echten Zweige hoch.
+    monkeypatch.setenv("TO_SPAWN_SICHERUNG_ZIEL", str(ordner / "sicherung"))
+    monkeypatch.setenv("TO_SPAWN_SICHERUNG_ZWEIG_REPOS", "")
 
 
 @pytest.fixture(autouse=True)

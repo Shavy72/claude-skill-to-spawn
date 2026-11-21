@@ -24,7 +24,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import respawn
+from . import respawn, uebergabe_sichern
 
 log = logging.getLogger("to_spawn.respawn_aufseher")
 
@@ -100,5 +100,6 @@ def aufseher_abloesen(
             log.warning("%s: Weiter-Auftrag nicht getippt: %s", kopf, fehler)
         zeile = f"{kopf}: abgebrochen — {abbruch.grund}; Aufseher arbeitet weiter"
         return AufseherErgebnis(abbruch.exit_code, " ".join(zeile.split()))
+    uebergabe_sichern.sichern([gefunden])  # L5 #145: bei jeder Ablösung, wirft nie
     zeile = f"{kopf}: Handoff {gefunden.name} da — Nachfolger übernimmt"
     return AufseherErgebnis(respawn.EXIT_OK, zeile, gefunden, prompt)
