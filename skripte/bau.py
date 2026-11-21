@@ -1100,9 +1100,13 @@ def main() -> int:
         umgebung = staffel_umgebung(ticket, staffel_datei, runde, fingerabdruck)
         umgebung.update(bau_log_umgebung(ticket, runde, float(umgebung["BAU_SESSION_START"]), effort, spec))
         os.environ.update(umgebung)
-        # Ticket während Blocker-Wartezeit oder Vorrunde geschlossen → keine neue Runde (#97).
-        if not args.probesitz and not startstelle.weiter_erlaubt(ticket, REPO):
-            return 0
+        # Ticket während Blocker-Wartezeit oder Vorrunde geschlossen → keine neue Runde (#97);
+        # Stand unbekannt → laut Exit 2, nie still wie „geschlossen“ (#191).
+        if not args.probesitz:
+            weiter = startstelle.weiter_entscheidung(ticket, REPO)
+            if not weiter.erlaubt:
+                print(weiter.grund, file=sys.stderr if weiter.exit_code else sys.stdout, flush=True)
+                return weiter.exit_code
         (out / f"prompt-runde{runde}.txt").write_text(cmd[-1] if mit_prompt else "", encoding="utf-8")
         code, umzug_daten = starte_session(cmd, umzug_datei)
         if umzug_daten is not None:
