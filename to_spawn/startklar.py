@@ -40,7 +40,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from to_spawn import bash_wahl, config
+from to_spawn import bash_wahl, config, gh
 from to_spawn.manifest import manifest_im_repo, manifest_pfad
 
 log = logging.getLogger("to_spawn.startklar")
@@ -653,10 +653,17 @@ def _beispiel_ticket(ordner: Path, spec: int) -> str:
 
 
 def _gh_issue_text(ordner: Path, nummer: str) -> str:
-    """Issue-Text per ``gh`` (Naht für Tests: ``issue_leser``)."""
+    """Issue-Text per ``gh`` (Naht für Tests: ``issue_leser``).
+
+    Den Aufruf-Vorspann liefert die eine ``gh``-Tür (:func:`gh.gh_befehl`) — sie findet
+    unter Windows auch ``gh.cmd``/``gh.bat`` über PATHEXT. ``gh`` fehlt → ``FileNotFoundError``.
+    """
+    vorspann = gh.gh_befehl()
+    if vorspann is None:
+        raise FileNotFoundError("gh")
     ergebnis = subprocess.run(
         [
-            "gh",
+            *vorspann,
             "issue",
             "view",
             nummer,
