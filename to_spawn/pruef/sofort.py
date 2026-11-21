@@ -245,6 +245,24 @@ def _nicht_nur_doku(repo: Path, basis: str, pfade: list[str]) -> str:
     return ""
 
 
+def erklaerte_doku(repo: Path, basis: str, pfade: list[str]) -> frozenset[str]:
+    """Die Pfade aus ``pfade``, die erklärte Doku sind (#101 Fix-Runde 1).
+
+    Einzige Stelle für „was ist Doku“, auch für die Rückfall-Regeln in ``regeln``: Muster aus
+    ``pruefen.doku_pfade`` im Stand ``basis`` (geprüft gegen alle ``pfade``), Doku-Datei (Endung,
+    kein Shebang), keine Symlink-Verbindung. Ohne erklärte Doku-Pfade ist nichts Doku.
+    """
+    muster, _ = _doku_muster(repo, basis, pfade)
+    kandidaten = [
+        pfad
+        for pfad in pfade
+        if muster and _ist_doku_datei(repo, basis, pfad) and any(fnmatch.fnmatchcase(pfad, m) for m in muster)
+    ]
+    if kandidaten and _nicht_nur_doku(repo, basis, kandidaten):
+        return frozenset()  # Symlink-Verbindung oder unklar: im Zweifel keine Doku
+    return frozenset(kandidaten)
+
+
 def _ausgelassen(name: str, adapter: str, grund: str, werkzeug: str = "") -> leiter.Stufe:
     return leiter.Stufe(name, adapter, False, grund, 0.0, "", werkzeug, leiter.AUSGELASSEN, "")
 

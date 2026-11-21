@@ -47,9 +47,10 @@ NEU_INSTALLIEREN = {"P19", "N10"}
         ("test\\setup.js", "node", "R3"),
         ("app\\util\\text.py", "py", ""),
         ("src\\format.js", "node", ""),
-        ("docs\\handbuch.txt", "py", ""),
-        ("README.md", "node", ""),
-        (".\\bild.PNG", "py", ""),
+        # Fix-Runde 1: ohne erklärte Doku (sofort.erklaerte_doku) ist auch .md/.txt/Bild kein Doku.
+        ("docs\\handbuch.txt", "py", "R1"),
+        ("README.md", "node", "R1"),
+        (".\\bild.PNG", "py", "R1"),
     ],
 )
 def test_regeln_mit_windows_pfaden(pfad: str, adapter: str, anfang: str) -> None:
@@ -73,8 +74,16 @@ def test_risiko_pfade_und_unklare_lagen_pruefen_voll() -> None:
 def test_r2_nur_bei_code_aenderung() -> None:
     assert regeln.nach_auswahl(0, ["app\\x.py"], "py").startswith("R2")
     assert regeln.nach_auswahl(None, ["README.md"], "py").startswith("R2")
-    assert regeln.nach_auswahl(0, ["README.md"], "py") == ""
+    assert regeln.nach_auswahl(0, ["README.md"], "py", {"README.md"}) == ""
+    assert regeln.nach_auswahl(0, ["README.md"], "py").startswith("R2")  # Fix-Runde 1: nicht erklärt
     assert regeln.nach_auswahl(3, ["app/x.py"], "py") == ""
+
+
+def test_erklaerte_doku_laesst_auswahl_zu_windows_pfade() -> None:
+    assert regeln.vorab(["docs\\handbuch.txt", "app\\x.py"], "py", [], doku={"docs/handbuch.txt"}) == ""
+    assert regeln.vorab([".\\bild.PNG"], "py", [], doku={"bild.PNG"}) == ""
+    assert regeln.vorab(["app/x.py"], "py", [], offen=["app/y.py"]).startswith("AB")
+    assert regeln.vorab(["app/x.py"], "py", [], offen=None).startswith("AB")
 
 
 def test_zaehle_alles_abgewaehlt_ist_null_tests() -> None:
@@ -226,5 +235,8 @@ def test_rot_beweis_ohne_r1_wird_bekannter_fall_uebersehen(
     probe: dict[str, Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(regeln, "vorab", functools.partial(regeln.vorab, r1=False))
+    # Fix-Runde 1: auch das 0-Tests-Netz aus (alles gilt als erklärte Doku), sonst fängt es R1-Fälle.
+    nach = regeln.nach_auswahl
+    monkeypatch.setattr(regeln, "nach_auswahl", lambda n, pfade, adapter, doku=(): nach(n, pfade, adapter, pfade))
     r1_faelle = [f for f in _alle() if f[1] in {"P09", "P11", "P18", "N05"}]
     assert _uebersehen(probe, r1_faelle) != []

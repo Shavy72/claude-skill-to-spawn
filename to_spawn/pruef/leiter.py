@@ -104,7 +104,15 @@ def _voll(repo: Path, adapter: Adapter, grund: str) -> Stufe:
 
 def _pruefe(repo: Path, adapter: Adapter, basis: str, pfade: list[str] | None) -> Stufe:
     """Stufe 3 (Auswahl), wenn ``regeln`` sie erlaubt und sie ≥ 1 Test wählt, sonst Stufe 4 (voll)."""
-    grund = regeln.vorab(pfade, adapter.name, regeln.risiko_pfade(repo), protokoll.letztes_urteil(repo))
+    doku = sofort.erklaerte_doku(repo, basis, pfade or [])
+    grund = regeln.vorab(
+        pfade,
+        adapter.name,
+        regeln.risiko_pfade(repo),
+        protokoll.letztes_urteil(repo),
+        doku=doku,
+        offen=sofort.geaendert(repo, "HEAD"),
+    )
     if grund:
         return _voll(repo, adapter, grund)
     plan = adapter.auswahl(repo, basis)
@@ -112,12 +120,13 @@ def _pruefe(repo: Path, adapter: Adapter, basis: str, pfade: list[str] | None) -
         return _voll(repo, adapter, f"Auswahl nicht möglich: {plan.fehler}")
     erg = ausfuehren.lauf(plan.befehl, repo)
     n, gesamt = adapter.zaehle(erg.code, erg.ausgabe)
-    grund = regeln.nach_auswahl(n, pfade or [], adapter.name)
+    grund = regeln.nach_auswahl(n, pfade or [], adapter.name, doku)
     if grund:
         return _voll(repo, adapter, grund)
     wahl = _wahl(adapter, "", n, gesamt)
     if n == 0:
-        # Kein Test betroffen (nur Doku): pytest meldet Exit 5, das ist hier Grün, kein Gate-Fehler.
+        # Kein Test betroffen (nur erklärte Doku, regeln.nach_auswahl): pytest meldet Exit 5, das ist
+        # hier Grün, kein Gate-Fehler.
         return Stufe(
             "auswahl",
             adapter.name,

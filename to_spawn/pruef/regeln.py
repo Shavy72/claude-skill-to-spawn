@@ -5,10 +5,14 @@ Auswahl und ``nach_auswahl`` danach; ``""`` heißt „Auswahl reicht“, sonst s
 Protokoll drin und die Leiter prüft voll. Pfade kommen relativ zum Repo; ``\\`` wird vor jedem
 Abgleich zu ``/`` (Windows).
 
-- **R1** Nicht-Code-Datei geändert (außer reiner Doku) → voll: Daten-, Template-, Konfig-Dateien und
-  Skripte sieht kein Import-Graph.
-- **R2** Code-Datei geändert und Auswahl wählt 0 Tests, oder Auswahl nicht zählbar → voll („nicht bestimmbar“): z. B. dynamisch
-  geladene Module oder ``mock.patch``-Strings ohne statischen Importeur.
+- **R1** Nicht-Code-Datei geändert (außer erklärter Doku) → voll: Daten-, Template-, Konfig-Dateien und
+  Skripte sieht kein Import-Graph. Was Doku ist, entscheidet nur ``sofort.erklaerte_doku``
+  (``pruefen.doku_pfade``, #164); die Leiter reicht das Ergebnis als ``doku`` herein.
+- **R2** Auswahl wählt 0 Tests, aber nicht nur erklärte Doku ist geändert, oder Auswahl nicht zählbar
+  → voll („nicht bestimmbar“): z. B. dynamisch geladene Module oder ``mock.patch``-Strings ohne
+  statischen Importeur.
+- **AB** Arbeitsbaum nicht sauber (geänderte oder neue, nicht ignorierte Dateien) → voll: Die
+  Auswahl sieht nur ``basis..HEAD``, der Lauf aber den Arbeitsbaum.
 - **R3** Prüf-Konfig, Abhängigkeiten, ``conftest.py``, Test-Setup oder ``pruefen.risiko_pfade`` aus
   ``.to-spawn/config.json`` geändert → voll.
 - **LF** Der letzte Lauf im Protokoll war rot → voll; so laufen die zuletzt roten Tests sicher mit
@@ -24,6 +28,7 @@ from __future__ import annotations
 import fnmatch
 import hashlib
 import json
+from collections.abc import Collection, Sequence
 from pathlib import Path, PurePosixPath
 
 #: Code-Endungen je Adapter; alles andere ist für diesen Adapter Nicht-Code (R1).
@@ -31,9 +36,6 @@ CODE_ENDUNGEN = {
     "py": frozenset({".py", ".pyi"}),
     "node": frozenset({".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".mts", ".cts"}),
 }
-#: Reine Doku (R1-Ausnahme): überall nur Markdown und Bilder, unter ``docs/`` auch Text-Doku.
-_DOKU_UEBERALL = frozenset({".md", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"})
-_DOKU_IN_DOCS = _DOKU_UEBERALL | {".rst", ".txt", ".adoc", ".pdf"}
 #: R3: Prüf-Konfig, Abhängigkeiten, Test-Setup (Muster auf den Dateinamen, Groß/klein egal).
 _R3_NAMEN = (
     "conftest.py",
@@ -72,14 +74,6 @@ def normal(pfad: str) -> str:
     return pfad[2:] if pfad.startswith("./") else pfad
 
 
-def _ist_doku(pfad: str) -> bool:
-    datei = PurePosixPath(pfad)
-    endung = datei.suffix.lower()
-    if pfad.startswith("docs/"):
-        return endung in _DOKU_IN_DOCS
-    return endung in _DOKU_UEBERALL
-
-
 def _ist_r3(pfad: str, risiko: list[str]) -> bool:
     name = PurePosixPath(pfad).name.lower()
     return any(fnmatch.fnmatchcase(name, muster) for muster in _R3_NAMEN) or any(
@@ -112,8 +106,14 @@ def vorab(
     risiko: list[str] | None,
     letztes_urteil: str = "",
     r1: bool = True,
+    doku: Collection[str] = frozenset(),
+    offen: Sequence[str] | None = (),
 ) -> str:
-    """Grund für „voll“ vor der Auswahl; ``""`` = Auswahl darf laufen. ``r1=False`` nur im Rot-Beweis."""
+    """Grund für „voll“ vor der Auswahl; ``""`` = Auswahl darf laufen. ``r1=False`` nur im Rot-Beweis.
+
+    ``doku`` = erklärte Doku aus ``sofort.erklaerte_doku``; ``offen`` = Änderungen im Arbeitsbaum
+    gegen ``HEAD`` (``sofort.geaendert(repo, "HEAD")``), ``None`` = unklar.
+    """
     if pfade is None:
         return "geänderte Dateien unbekannt (git diff gescheitert)"
     if not pfade:
@@ -122,13 +122,18 @@ def vorab(
         return "R3: pruefen.risiko_pfade unlesbar"
     if letztes_urteil == _ROT:
         return "LF: letzter Lauf rot, zuletzt rote Tests laufen mit"
+    if offen is None:
+        return "AB: Arbeitsbaum unklar (git gescheitert)"
+    if offen:
+        return f"AB: Arbeitsbaum nicht sauber ({normal(offen[0])}), Auswahl sieht nur Commits"
     liste = [normal(pfad) for pfad in pfade]
     r3 = next((pfad for pfad in liste if _ist_r3(pfad, risiko)), None)
     if r3 is not None:
         return f"R3: Prüf-Konfig/Abhängigkeit geändert ({r3})"
     code = CODE_ENDUNGEN.get(adapter, frozenset())
+    erklaert = {normal(pfad) for pfad in doku}
     fremd = next(
-        (pfad for pfad in liste if PurePosixPath(pfad).suffix.lower() not in code and not _ist_doku(pfad)),
+        (pfad for pfad in liste if PurePosixPath(pfad).suffix.lower() not in code and pfad not in erklaert),
         None,
     )
     if r1 and fremd is not None:
@@ -136,16 +141,21 @@ def vorab(
     return ""
 
 
-def nach_auswahl(n: int | None, pfade: list[str], adapter: str) -> str:
+def nach_auswahl(n: int | None, pfade: list[str], adapter: str, doku: Collection[str] = frozenset()) -> str:
     """Grund für „voll“ nach der Auswahl (R2); ``""`` = Auswahl ist sicher.
 
-    0 Tests ohne geänderte Code-Datei ist richtig (nur Doku, die R1 durchlässt).
+    0 Tests ist nur sicher, wenn alle ``pfade`` erklärte Doku (``doku``) sind; sonst voll —
+    Sicherheitsnetz, auch wenn R1 nicht gegriffen hat.
     """
     if n is None:
         return "R2: Auswahl nicht zählbar"
     code = CODE_ENDUNGEN.get(adapter, frozenset())
     if n == 0 and any(PurePosixPath(normal(pfad)).suffix.lower() in code for pfad in pfade):
         return "R2: Code geändert, Auswahl wählt 0 Tests (nicht bestimmbar)"
+    erklaert = {normal(pfad) for pfad in doku}
+    fremd = next((normal(pfad) for pfad in pfade if normal(pfad) not in erklaert), None) if n == 0 else None
+    if fremd is not None:
+        return f"R2: Auswahl wählt 0 Tests, aber keine erklärte Doku geändert ({fremd})"
     return ""
 
 
