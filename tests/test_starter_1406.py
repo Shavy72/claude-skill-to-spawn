@@ -140,6 +140,10 @@ KEIN_START = frozenset(
         ("to_spawn/startklar.py", "_ausfuehren"),  # Prüfbefehle
         ("to_spawn/startklar.py", "_fehlende_pakete"),  # Python-Probe
         ("to_spawn/tmux_aufruf.py", "aufrufen"),  # tmux-Hilfe; start=True → Tür
+        # messung/: Mess-Skripte Prüftor-Vergleich (PR #82), nicht installiert, starten keine Session
+        ("messung/fehler_reihe.py", "run"),  # Popen pytest/node-Testlauf, RAM-Messung, Ausgabe gelesen
+        ("messung/rueckblick_auswahl_duoplus.py", "gate_auswahl"),  # gate_auswahl.py, Ausgabe gelesen
+        ("messung/rueckblick_auswahl_duoplus.py", "impacted"),  # impacted-tests, Ausgabe gelesen
     }
 )
 
