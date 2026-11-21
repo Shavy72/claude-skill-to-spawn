@@ -219,3 +219,11 @@ Jede M-Zeile braucht einen Beleg (Befehl + Ausgabe oder Protokoll-Zeile) in
   benannt (kein Schein-Nachweis). M12 muss dann im Probe-Repo mit zweiter, unbekannter Fehlerreihe
   (≥ 20 Fehler) voll erfüllt sein. Grund: Davids L3 „nachweislich gut … nur das was mindestens
   notwendig ist“ (abgeleitet aus Lastenheft L3).
+- 2026-11-21 21:25 (Server-Uhr, im Auftrag von `leit 62`) — **Skill auf dem Bau-Server installiert:
+  c2f4c07** (21.11. 21:06). Etappe 2 geschnitten (Issues #85–#97), Etappe 3b geschnitten (#98–#106).
+  **Abnahme Etappe 1** in `docs/ABNAHME_L1.md`: F1 belegt für c2f4c07, main rot (`messung/`, #113) · F2 offen (Voll-Lauf folgt) · F3 offen
+  (`--pruefen` Exit 3 nur wegen Weiterleitungs-Vorlage hinter App-Fassung, Gegenprobe Exit 0, #111) ·
+  F4 belegt (`skill_stand` leer, #89) · F5 abweichend (dry-run zeigt nur, echter spawn zieht nach) ·
+  F6 teilweise (Server belegt, PC offen #68) · F7 abweichend (Trocken-Entscheidungen gleich; Probe-Eintrag
+  in der Maschinen-Liste legte den Hausmeister still, Trockenlauf zeigte es nicht, #112). M1–M13 noch
+  nicht geprüft.

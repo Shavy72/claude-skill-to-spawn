@@ -27,6 +27,11 @@ from to_spawn import aufpasser, prozessbaum
 WINDOWS = sys.platform == "win32"
 #: SIGKILL gibt es unter Windows nicht; dort beendet jedes Signal per ``TerminateProcess`` hart.
 SIGKILL = getattr(signal, "SIGKILL", signal.SIGTERM)
+#: Interpreter für echte Prozessbäume. Unter Windows ist das ``python.exe`` einer venv nur ein
+#: Starter, der das Basis-Python als zweiten Prozess startet: aus „Eltern + Kind“ würden vier
+#: Prozesse, die erst nach und nach erscheinen — Tests sähen halbe Bäume und ließen beim
+#: Aufräumen die späten Enkel stehen. Das Basis-Python startet ohne Zwischenprozess.
+PYTHON = getattr(sys, "_base_executable", sys.executable) if WINDOWS else sys.executable
 
 
 def _starten(befehl: list[str]) -> subprocess.Popen[bytes]:
@@ -55,7 +60,7 @@ def eltern_mit_kind() -> Iterator[subprocess.Popen[bytes]]:
     """
     kind = "import time; time.sleep(30)"
     eltern = f"import subprocess, sys; subprocess.Popen([sys.executable, '-c', {kind!r}]).wait()"
-    proz = _starten([sys.executable, "-c", eltern])
+    proz = _starten([PYTHON, "-c", eltern])
     try:
         ende = time.monotonic() + 5
         while len(prozessbaum.baum(proz.pid)) < 2 and time.monotonic() < ende:
@@ -156,12 +161,8 @@ def test_baum_proc_unlesbar_ist_fehler(
 
 @pytest.mark.skipif(not WINDOWS, reason="nur Windows")
 def test_baum_windows_momentaufnahme_fehlt_ist_fehler(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Windows: scheitert die Toolhelp-Momentaufnahme, heißt das Fehler, nicht „keine Kinder“."""
-
-    def kaputt() -> dict[int, int]:
-        raise OSError("Momentaufnahme gescheitert")
-
-    monkeypatch.setattr(prozessbaum, "_eltern_windows", kaputt)
+    """Windows: liefert WMI keine Prozessliste, heißt das Fehler, nicht „keine Kinder“."""
+    monkeypatch.setattr(prozessbaum, "_prozesse_windows", dict)
     with pytest.raises(OSError):
         prozessbaum.baum(os.getpid())
 
@@ -184,29 +185,33 @@ def test_beenden_windows_erste_stufe_beendet_hart(tmp_path: Path) -> None:
         proz.wait(timeout=5)
 
 
+def _liste(monkeypatch: pytest.MonkeyPatch, eltern: dict[int, int], starts: dict[int, int]) -> None:
+    """WMI-Prozessliste als Attrappe: PID → (Eltern-PID, Kommandozeile, Startzeit; 0 = unbekannt)."""
+    liste = {pid: (vater, "", starts.get(pid, 0)) for pid, vater in eltern.items()}
+    monkeypatch.setattr(prozessbaum, "_prozesse_windows", lambda: liste)
+
+
 @pytest.mark.skipif(not WINDOWS, reason="nur Windows")
 def test_baum_windows_ohne_fremde_mit_recycelter_eltern_pid(monkeypatch: pytest.MonkeyPatch) -> None:
     """Windows: ein Prozess, der vor seinem angeblichen Elternteil startete, gehört nicht zum Baum."""
-    monkeypatch.setattr(prozessbaum, "_eltern_windows", lambda: {10: 1, 11: 10, 12: 10, 13: 12})
-    starts = {1: 0, 10: 100, 11: 150, 12: 50, 13: 200}  # 12 ist älter als „Eltern“ 10
-    monkeypatch.setattr(prozessbaum, "_startzeit_windows", starts.get)
+    eltern = {1: 0, 10: 1, 11: 10, 12: 10, 13: 12}
+    starts = {1: 1, 10: 100, 11: 150, 12: 50, 13: 200}  # 12 ist älter als „Eltern“ 10
+    _liste(monkeypatch, eltern, starts)
     assert prozessbaum.baum(10) == [10, 11]
 
 
 @pytest.mark.skipif(not WINDOWS, reason="nur Windows")
 def test_baum_windows_unbekannte_startzeit_zaehlt_als_kind(monkeypatch: pytest.MonkeyPatch) -> None:
     """Windows: ohne lesbare Startzeit (kein Zugriff) zählt die Eltern-PID als echt."""
-    monkeypatch.setattr(prozessbaum, "_eltern_windows", lambda: {10: 1, 11: 10, 12: 10, 1: 1})
-    starts = {1: 0, 10: 100, 12: 50}  # 11 ohne Startzeit, 12 älter als „Eltern“ 10
-    monkeypatch.setattr(prozessbaum, "_startzeit_windows", starts.get)
+    starts = {1: 1, 10: 100, 12: 50}  # 11 ohne Startzeit (WMI: 0), 12 älter als „Eltern“ 10
+    _liste(monkeypatch, {1: 1, 10: 1, 11: 10, 12: 10}, starts)
     assert prozessbaum.baum(10) == [10, 11]
 
 
 @pytest.mark.skipif(not WINDOWS, reason="nur Windows")
 def test_baum_windows_waisen_toter_eltern_pid_fehlen(monkeypatch: pytest.MonkeyPatch) -> None:
     """Windows: fehlt die Eltern-PID in der Momentaufnahme (Elternteil tot), hängt kein Waise daran."""
-    monkeypatch.setattr(prozessbaum, "_eltern_windows", lambda: {10: 1, 14: 99, 15: 14})
-    monkeypatch.setattr(prozessbaum, "_startzeit_windows", lambda _pid: None)
+    _liste(monkeypatch, {10: 1, 14: 99, 15: 14}, {})
     assert prozessbaum.baum(99) == [99]
     assert prozessbaum.baum(14) == [14, 15]
 

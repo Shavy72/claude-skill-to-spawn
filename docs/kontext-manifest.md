@@ -81,7 +81,7 @@ bei Bedarf zusätzlich listet: `duoplus-api` (Cloud-Phone-API), `postproxy-api` 
    Issue-Body, dazu `## Werkzeuge` aus der Spec-Tabelle, setzt native Blocker-Kanten
    (`dependencies/blocked_by`) und schreibt `docs/agents/manifests/spec-<S>.json`
    (Ticket-Nummern = echte Issue-Nummern, je Ticket `schaetzung_k` + `umfang` Pflicht).
-   Abschluss: `to_spawn.py pruefen <S>` muss Exit 0 liefern, sonst nachbessern.
+   Abschluss: `to_spawn.py regularien <S>` muss Exit 0 liefern, sonst nachbessern.
 3. **`/to-spawn <S>`** (Skill `~/.claude/skills/to-spawn`, GitHub `Shavy72/claude-skill-to-spawn`)
    prüft zuerst die Regularien (siehe unten), erst danach öffnet es ein Windows-Terminal-Fenster
    mit `wache <S>` (dem Aufseher) + einem Tab `bau <N>` je offenem Ticket — alle auf
@@ -92,7 +92,7 @@ bei Bedarf zusätzlich listet: `duoplus-api` (Cloud-Phone-API), `postproxy-api` 
 
 ## Regularien vor dem Spawn (Pflicht)
 
-`python ~/.claude/skills/to-spawn/to_spawn.py pruefen <S> [--tickets a,b] [--ohne-github]` läuft
+`python ~/.claude/skills/to-spawn/to_spawn.py regularien <S> [--tickets a,b] [--ohne-github]` läuft
 automatisch vor jedem Spawn (`to_spawn.py spawn`, `scripts/spawn_srv.sh`,
 `spawn_local.ps1`). Exit 0 = frei, **Exit 3 = Weigerung**, nichts wird gestartet;
 jede Fehlerzeile nennt ihre Abhilfe.
