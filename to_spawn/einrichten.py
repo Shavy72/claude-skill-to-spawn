@@ -22,6 +22,7 @@ from __future__ import annotations
 import copy
 import json
 import logging
+import os
 import subprocess
 import sys
 import urllib.parse
@@ -43,6 +44,8 @@ _MANIFEST_VORLAGE = "_default.json"
 _EXCLUDE_KOPF = "# to-spawn Einrichter: lokale Laufdateien (nicht versioniert)"
 #: Zeitlimit je ``gh``-Aufruf (Sekunden): ein hängendes ``gh`` hält den Spawn nicht auf.
 _GH_TIMEOUT = 15.0
+#: Zeitlimit je ``git``-Aufruf (Sekunden); Zeitlimit = Exit 124 (gilt als getrackt).
+_GIT_TIMEOUT = 15.0
 
 #: Ergebnis von ``pruefe``: ``DA`` = in Ordnung, ``FEHLT`` = ``lege_an`` kann es
 #: richten, ``LUECKE`` = nur von Hand zu richten (große Lücke).
@@ -79,22 +82,60 @@ def _git(wurzel: Path, *args: str) -> tuple[int, str]:
             encoding="utf-8",
             errors="replace",
             check=False,
+            timeout=_GIT_TIMEOUT,
         )
+    except subprocess.TimeoutExpired:
+        log.warning(
+            "git %s: Zeitlimit %s s überschritten", " ".join(args[:2]), _GIT_TIMEOUT
+        )
+        return 124, ""
     except OSError:
         return 127, ""
     return fertig.returncode, fertig.stdout.strip()
 
 
 def _getrackt(wurzel: Path, datei: Path) -> bool:
-    """Fail-closed: nur ``ls-files``-Exit 1 heißt ungetrackt; Git-Fehler gilt als getrackt."""
+    """Fail-closed: nur ``ls-files``-Exit 1 heißt ungetrackt; Git-Fehler gilt als getrackt.
+
+    Der Pfad wird ohne Auflösen von Symlinks geprüft (ein getrackter Link bleibt
+    getrackt); liegt er nicht unter der Wurzel, gilt er als getrackt.
+    """
     try:
-        rel = datei.resolve().relative_to(wurzel.resolve()).as_posix()
+        rel = Path(os.path.abspath(datei)).relative_to(os.path.abspath(wurzel))
     except ValueError:
-        return False
-    code = _git(wurzel, "ls-files", "--error-unmatch", "--", rel)[0]
+        return True
+    code = _git(wurzel, "ls-files", "--error-unmatch", "--", rel.as_posix())[0]
     if code not in (0, 1):
         log.warning("git ls-files Exit %s für %s — gilt als getrackt", code, rel)
     return code != 1
+
+
+class SchreibVerbot(OSError):
+    """Der Schreib-Schutz verweigert ein Ziel: große Lücke, kein Anleger-Fehler (Exit bleibt 0)."""
+
+
+def _schreib_schutz(wurzel: Path, datei: Path, *, grenze: Path | None = None) -> None:
+    """Einzige Schreib-Tür des Einrichters: wirft ``OSError``, wenn ``datei`` tabu ist.
+
+    Geschrieben wird nur, wenn (a) der Pfad ohne Symlink-Auflösung ungetrackt ist
+    (entfällt bei ``grenze``, z. B. Git-Ordner für ``info/exclude``), (b) weder
+    ``datei`` noch ein Eltern-Ordner bis ``grenze`` (Vorgabe: Repo-Wurzel) ein
+    Symlink ist und (c) das aufgelöste Ziel unter der aufgelösten ``grenze`` liegt.
+    Jeder Zweifel = nicht schreiben (:class:`SchreibVerbot`), der Ablauf meldet die Lücke.
+    """
+    basis = Path(os.path.abspath(grenze if grenze is not None else wurzel))
+    pfad = Path(os.path.abspath(datei))
+    if grenze is None and _getrackt(wurzel, pfad):
+        raise SchreibVerbot(f"getrackt, nicht geschrieben: {pfad}")
+    if basis not in pfad.parents:
+        raise SchreibVerbot(f"außerhalb {basis}, nicht geschrieben: {pfad}")
+    stufe = pfad
+    while stufe != basis:
+        if stufe.is_symlink():
+            raise SchreibVerbot(f"Symlink {stufe}, nicht geschrieben: {pfad}")
+        stufe = stufe.parent
+    if basis.resolve() not in pfad.resolve().parents:
+        raise SchreibVerbot(f"Ziel außerhalb {basis}, nicht geschrieben: {pfad}")
 
 
 def _rel(wurzel: Path, datei: Path) -> str | None:
@@ -123,6 +164,7 @@ def _lege_konfig_an(ort: Ort) -> None:
     datei = _konfig_datei(ort)
     if datei.exists():
         return
+    _schreib_schutz(ort.wurzel, datei)
     if sys.stdin.isatty():
         setup.erster_start(
             ort.wurzel,
@@ -171,6 +213,7 @@ def _lege_worktree_basis_an(ort: Ort) -> None:
     ):
         return
     roh["worktree_basis"] = config.worktree_basis_vorgabe(ort.wurzel)
+    _schreib_schutz(ort.wurzel, datei)
     setup._schreibe_atomar(datei, roh)
 
 
@@ -187,6 +230,7 @@ def _lege_manifest_an(ort: Ort) -> None:
     datei = _manifest_datei(ort)
     if datei.exists():
         return
+    _schreib_schutz(ort.wurzel, datei)
     datei.parent.mkdir(parents=True, exist_ok=True)
     datei.write_bytes((_VORLAGEN / _MANIFEST_VORLAGE).read_bytes())
 
@@ -226,6 +270,13 @@ def _lege_gitignore_an(ort: Ort) -> None:
     if code != 0 or not pfad:
         raise OSError("git rev-parse --git-path info/exclude scheiterte")
     datei = Path(pfad) if Path(pfad).is_absolute() else ort.wurzel / pfad
+    code, git_ordner = _git(ort.wurzel, "rev-parse", "--git-common-dir")
+    if code != 0 or not git_ordner:
+        raise OSError("git rev-parse --git-common-dir scheiterte")
+    grenze = (
+        Path(git_ordner) if Path(git_ordner).is_absolute() else ort.wurzel / git_ordner
+    )
+    _schreib_schutz(ort.wurzel, datei, grenze=grenze)
     vorhanden = datei.read_text(encoding="utf-8") if datei.is_file() else ""
     zeilen = [
         z for z in dict.fromkeys(offen.values()) if z not in vorhanden.splitlines()
@@ -336,6 +387,7 @@ def _pruefe_weiterleitungen(ort: Ort) -> Befund:
 def _lege_weiterleitungen_an(ort: Ort) -> None:
     frei, _ = _veraltet(ort)
     for ziel in frei:
+        _schreib_schutz(ort.wurzel, ziel)
         ziel.write_bytes((_VORLAGEN / ziel.name).read_bytes())
 
 
@@ -439,6 +491,11 @@ def einrichten(
             if baustein.lege_an is not None:
                 try:
                     baustein.lege_an(ort)
+                except SchreibVerbot as verbot:
+                    log.warning("Anleger %s: %s", baustein.name, verbot)
+                    ausgabe.write(f"  {baustein.name}: {LUECKE} — {verbot}\n")
+                    luecken.append(baustein.name)
+                    continue
                 except (OSError, ValueError, subprocess.SubprocessError) as fehler:
                     log.error("Anleger %s scheiterte: %s", baustein.name, fehler)
                     ausgabe.write(
@@ -473,7 +530,10 @@ def einrichten(
     stand = {"skill_stand": _skill_stand(), "bausteine": neu}
     if stand != roh:
         try:
+            _schreib_schutz(ort.wurzel, stand_datei)
             setup._schreibe_atomar(stand_datei, stand)
+        except SchreibVerbot as verbot:
+            log.warning("stand.json nicht geschrieben: %s", verbot)
         except OSError as fehler:
             log.error("stand.json nicht geschrieben (%s): %s", stand_datei, fehler)
             code = 1

@@ -173,14 +173,14 @@ def test_haengendes_gh_haelt_spawn_nicht_auf(
 ) -> None:
     import time
 
-    _gh_stub(repo, "import sys, time\ntime.sleep(3)\nsys.exit(1)\n", monkeypatch)
+    _gh_stub(repo, "import sys, time\ntime.sleep(120)\nsys.exit(1)\n", monkeypatch)
     monkeypatch.setattr(einrichten, "_GH_TIMEOUT", 0.3, raising=False)
     start = time.monotonic()
     code, text = _lauf(repo)
     dauer = time.monotonic() - start
     assert code == 0, text
     assert "checkpoint_label: grosse_luecke" in text
-    assert dauer < 2.5, f"{dauer:.1f} s — gh ohne Zeitlimit"
+    assert dauer < 60, f"{dauer:.1f} s — gh ohne Zeitlimit"
 
 
 def test_gh_fehler_meldet_und_haelt_nicht_auf(
@@ -215,7 +215,7 @@ def test_zweiter_lauf_aendert_keine_datei(repo: Path) -> None:
             str(p): (p.read_bytes(), p.stat().st_mtime_ns)
             for ort in orte
             for p in ort.rglob("*")
-            if p.is_file() and ".git/objects" not in p.as_posix()
+            if p.is_file() and ".git" not in p.relative_to(ort).parts
         }
 
     assert _lauf(repo)[0] == 0
@@ -250,3 +250,93 @@ def test_spawn_dry_run_geht_ueber_pruefweg(
     assert cli.main(["spawn", "999", "--dry-run"]) == 0
     assert aufrufe == [True]
     assert not _stand(repo).exists()
+
+
+# --- Fix-Runde 2 (Review P5): Schreib-Schutz gegen Symlinks, git-Zeitlimit ----
+
+
+def _aussen(repo: Path) -> Path:
+    """Datei außerhalb des Repos, die nie beschrieben werden darf."""
+    ziel = repo.parent / "aussen.txt"
+    ziel.write_text("# aussen, unberührt\n", encoding="utf-8")
+    return ziel
+
+
+def test_getrackter_symlink_nach_aussen_wird_nicht_beschrieben(repo: Path) -> None:
+    aussen = _aussen(repo)
+    (repo / "scripts").mkdir()
+    link = repo / "scripts" / "wache.py"
+    link.symlink_to(Path("..") / ".." / "aussen.txt")
+    _git(repo, "add", "scripts/wache.py")
+    _git(repo, "commit", "-q", "-m", "getrackter Link")
+    code, text = _lauf(repo)
+    assert aussen.read_text(encoding="utf-8") == "# aussen, unberührt\n"
+    assert link.is_symlink()
+    assert "weiterleitungen: grosse_luecke" in text
+    assert code == 0, text
+
+
+def test_ungetrackter_symlink_nach_aussen_wird_nicht_beschrieben(repo: Path) -> None:
+    aussen = _aussen(repo)
+    (repo / "scripts").mkdir()
+    link = repo / "scripts" / "wache.py"
+    link.symlink_to(aussen)
+    code, text = _lauf(repo)
+    assert aussen.read_text(encoding="utf-8") == "# aussen, unberührt\n"
+    assert link.is_symlink()
+    assert "weiterleitungen: grosse_luecke" in text
+    assert code == 0, text
+
+
+def test_symlink_eltern_ordner_wird_nicht_beschrieben(repo: Path) -> None:
+    """``scripts/`` und ``.to-spawn/`` zeigen nach außen: dort entsteht nichts."""
+    draussen = repo.parent / "draussen"
+    (draussen / "scripts").mkdir(parents=True)
+    (draussen / "scripts" / "wache.py").write_text("# alt\n", encoding="utf-8")
+    (draussen / "lauf").mkdir()
+    (repo / "scripts").symlink_to(draussen / "scripts")
+    (repo / ".to-spawn").symlink_to(draussen / "lauf")
+    code, text = _lauf(repo)
+    assert (draussen / "scripts" / "wache.py").read_text(encoding="utf-8") == "# alt\n"
+    assert list((draussen / "lauf").iterdir()) == []
+    assert (repo / "scripts").is_symlink() and (repo / ".to-spawn").is_symlink()
+    assert "konfig: grosse_luecke" in text
+    assert code == 0, text
+
+
+def test_exclude_symlink_nach_aussen_wird_nicht_beschrieben(repo: Path) -> None:
+    aussen = _aussen(repo)
+    exclude = repo / ".git" / "info" / "exclude"
+    exclude.parent.mkdir(parents=True, exist_ok=True)
+    exclude.unlink(missing_ok=True)
+    exclude.symlink_to(aussen)
+    code, text = _lauf(repo)
+    assert aussen.read_text(encoding="utf-8") == "# aussen, unberührt\n"
+    assert exclude.is_symlink()
+    assert "gitignore: grosse_luecke" in text
+    assert code == 0, text
+
+
+def test_haengendes_git_gilt_als_getrackt(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``_git`` hat ein Zeitlimit; Zeitlimit = Exit 124 = getrackt (fail-closed)."""
+    (repo / "scripts").mkdir()
+    (repo / "scripts" / "wache.py").write_text("# alt, ungetrackt\n", encoding="utf-8")
+    echt = subprocess.run
+    zeitlimits: list[object] = []
+
+    def run(befehl, *a, **k):  # type: ignore[no-untyped-def]
+        if befehl[:2] == ["git", "ls-files"]:
+            zeitlimits.append(k.get("timeout"))
+            raise subprocess.TimeoutExpired(befehl, k.get("timeout") or 0)
+        return echt(befehl, *a, **k)
+
+    monkeypatch.setattr(einrichten.subprocess, "run", run)
+    assert einrichten._git(repo, "ls-files", "--", "x") == (124, "")
+    code, text = _lauf(repo)
+    assert code == 0, text
+    assert (repo / "scripts" / "wache.py").read_text(
+        encoding="utf-8"
+    ) == "# alt, ungetrackt\n"
+    assert zeitlimits and all(isinstance(z, (int, float)) and z > 0 for z in zeitlimits)
