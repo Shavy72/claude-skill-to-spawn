@@ -77,7 +77,12 @@ def kein_prozess(ordner: Path) -> None:
 def _prozesse() -> list[tuple[int | None, str | None, str | None]]:
     """``(ProcessId, CommandLine, ExecutablePath)`` aller Prozesse; :class:`Bleibt` mit
     Fehler, wenn PowerShell fehlt, hängt oder Unlesbares liefert."""
-    befehl = "Get-CimInstance Win32_Process | Select-Object ProcessId,CommandLine,ExecutablePath | ConvertTo-Json -Compress"
+    # Ausgabe fest auf UTF-8 (#1496): Windows PowerShell 5.1 schreibt sonst in der
+    # Konsolen-Codepage und macht aus „…“ in einer CommandLine nacktes " — kaputtes JSON.
+    befehl = (
+        "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; "
+        "Get-CimInstance Win32_Process | Select-Object ProcessId,CommandLine,ExecutablePath | ConvertTo-Json -Compress"
+    )
     try:
         lauf = subprocess.run(
             [_POWERSHELL, "-NoProfile", "-NonInteractive", "-Command", befehl],
