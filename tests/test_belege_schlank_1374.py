@@ -13,8 +13,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
-
-from tests.test_nest_210 import _cli, _git, _neues_repo, _umgebung
+from test_nest_210 import _cli, _git, _neues_repo, _umgebung
 
 
 def _repo_mit_belegen(tmp_path: Path) -> Path:

@@ -22,6 +22,24 @@ _HILFEN = str(Path(__file__).resolve().parent / "hilfen")
 if _HILFEN not in sys.path:
     sys.path.insert(0, _HILFEN)
 
+#: Zeitgrenze je Test in Sekunden (#68): ein hängender Test (unter Windows z. B.
+#: ``test_aufseher_abloesung_436``) darf die Suite nicht unbegrenzt aufhalten. Gilt nur,
+#: wenn ``pytest-timeout`` installiert ist (``tests/requirements.txt``) und weder
+#: ``--timeout`` noch ``timeout``-Einstellung gesetzt ist; eigene ``@pytest.mark.timeout``
+#: gehen vor. 600 s liegt weit über dem längsten Einzeltest auf dem ausgelasteten Bau-Server.
+ZEITGRENZE_S = 600
+
+
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    if not config.pluginmanager.hasplugin("timeout"):
+        return
+    if config.getoption("timeout", None) is not None or config.getini("timeout"):
+        return
+    for item in items:
+        if item.get_closest_marker("timeout") is None:
+            item.add_marker(pytest.mark.timeout(ZEITGRENZE_S))
+
+
 _SOFORT_MODULE = frozenset({"test_waechter_213", "test_waechter_213_weg"})
 
 

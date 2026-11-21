@@ -11,7 +11,6 @@ git (Bare-Origin + Worktree), Temp-HOME. Gestellt sind nur ``gh`` (Stub) und
 from __future__ import annotations
 
 import ast
-import fcntl
 import hashlib
 import json
 import os
@@ -45,6 +44,11 @@ from test_aufpasser_236 import (  # noqa: F401 — ``welt`` ist ein Fixture
 
 from to_spawn import aufpasser
 from to_spawn.waechter_lauf import transkript_ordner
+
+# Nur Linux mit tmux; ohne fcntl (Windows) die Datei samt Nachfolgern überspringen statt Sammelfehler (#68).
+fcntl = pytest.importorskip(
+    "fcntl", reason="Aufpasser-Weg-Tests nur unter Linux (fcntl, tmux)"
+)
 
 BAU_CLAUDE = """#!/bin/bash
 # Start-Attrappe, die wie bau.py eine Claude-Session startet (hier: die Schlaf-Attrappe).

@@ -178,6 +178,10 @@ def test_r3_b6_spaeterer_abbruch_nennt_speicher_wartezeit(
 # --- Befund 2: Signal während des Aufräumens nach normalem Abbruch -------------------
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="os.kill(getpid, SIGTERM) beendet unter Windows den ganzen pytest-Lauf (TerminateProcess, #68)",
+)
 def test_r3_b2_signal_waehrend_aufraeumen_verlaesst_abloesen_nicht(
     umgebung: tuple[Path, Path],  # noqa: F811
 ) -> None:

@@ -1,0 +1,7 @@
+# Test-Abhängigkeiten der Skill-Suite (#68). Installieren: python -m pip install -r tests/requirements.txt
+pytest
+pytest-xdist
+# Zeitgrenze je Test (tests/conftest.py aktiviert sie nur, wenn das Plugin da ist)
+pytest-timeout
+# Zeitzonen-Namen (Europe/Berlin) — unter Windows fehlt die System-Zeitzonen-Datenbank
+tzdata; sys_platform == "win32"
