@@ -83,10 +83,7 @@ def repo(tmp_path: Path) -> Path:
     _git(r, "worktree", "add", "-q", "-b", "ticket/902", str(wt))
     _zeilen(
         wt / ".to-spawn" / "bau_log" / "902.jsonl",
-        [
-            _vorfall("902", "session_verwaist", "2026-09-26T08:00:00+02:00"),
-            _zus("902", FREI, "2026-09-26T09:00:00+02:00"),
-        ],
+        [_vorfall("902", "session_verwaist", "2026-09-26T08:00:00+02:00"), _zus("902", FREI, "2026-09-26T09:00:00+02:00")],
     )
     return r
 
@@ -445,7 +442,7 @@ def _gh_falle(tmp_path: Path) -> tuple[dict[str, str], Path]:
     ordner.mkdir()
     spur = tmp_path / "gh_aufgerufen"
     gh = ordner / "gh"
-    gh.write_text(f'#!/bin/sh\necho "$@" >> {spur}\nexit 0\n', encoding="utf-8")
+    gh.write_text(f"#!/bin/sh\necho \"$@\" >> {spur}\nexit 0\n", encoding="utf-8")
     gh.chmod(0o755)
     return {"PATH": f"{ordner}{os.pathsep}{os.environ.get('PATH', '')}"}, spur
 

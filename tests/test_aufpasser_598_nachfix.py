@@ -127,7 +127,9 @@ def _deploy_attrappe(welt: Welt, name: str) -> Path:
     [("safe_deploy_vps.sh", "--nur-gate"), ("deploy_schlange.py",)],
     ids=["nur-gate", "deploy-schlange"],
 )
-def test_fremder_pruef_lauf_sperrt_nicht(zu_9003: Welt, aufruf: tuple[str, ...]) -> None:
+def test_fremder_pruef_lauf_sperrt_nicht(
+    zu_9003: Welt, aufruf: tuple[str, ...]
+) -> None:
     welt = zu_9003
     skript = _deploy_attrappe(welt, aufruf[0])
     fremd = subprocess.Popen(
@@ -188,7 +190,9 @@ def test_ohne_kette_nur_shell_fenster_zu_einmal_gemeldet(zu_9003: Welt) -> None:
     assert _lauf(welt, exit_warten_s=30) == 0
     assert "bau 9003" not in _fenster_nach_pause(), welt.log()
     treffer = _geschlossen(welt)
-    assert len(treffer) == 1 and "Kette läuft weiter" not in treffer[0], welt.kommentare()
+    assert len(treffer) == 1 and "Kette läuft weiter" not in treffer[0], (
+        welt.kommentare()
+    )
     # Zweiter Lauf (15 min später): nichts mehr zu schließen, keine zweite Meldung.
     assert (
         aufpasser.lauf_mit_einstellungen(
@@ -263,7 +267,9 @@ def test_kill_window_nach_exit_trifft_nicht_fremdes_fenster_am_alten_index(
         tmux("new-window", "-d", "-t", alt, "-n", "fremd", "sleep 3600")
         return False
 
-    monkeypatch.setattr(aufpasser.Aufpasser, "_kette_lebt", fremdes_fenster_am_alten_index)
+    monkeypatch.setattr(
+        aufpasser.Aufpasser, "_kette_lebt", fremdes_fenster_am_alten_index
+    )
     assert _lauf(welt, exit_warten_s=30) == 0
     assert "fremd" in _fenster_nach_pause(), welt.log()
     assert len(_geschlossen(welt)) == 1, welt.kommentare()
