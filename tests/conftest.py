@@ -20,6 +20,9 @@ from typing import Any
 
 import pytest
 
+# Kein Bytecode im Quellbaum: Tests laden u. a. ``repo-scripts/*.py`` per Dateipfad (#155).
+sys.dont_write_bytecode = True
+
 # Test-Helfer (``tests/hilfen``) einmal importierbar machen — z. B. ``context_mode_attrappe`` (#237).
 _HILFEN = str(Path(__file__).resolve().parent / "hilfen")
 if _HILFEN not in sys.path:
