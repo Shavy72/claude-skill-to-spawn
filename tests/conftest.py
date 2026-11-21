@@ -293,6 +293,9 @@ def _hausmeister_nur_im_test(
     # #136: Temp-Ordner und Temp-Reste nie echt (kein ~/tmp-bau, kein Altbestand in /tmp).
     monkeypatch.setenv("TO_SPAWN_TEMP_ORDNER", str(ordner / "temp"))
     monkeypatch.setenv("TO_SPAWN_TEMP_RESTE", "")
+    # #145: Sicherung (Rundgang, Aufseher-Ablösung) schreibt nur in tmp, lädt keine echten Zweige hoch.
+    monkeypatch.setenv("TO_SPAWN_SICHERUNG_ZIEL", str(ordner / "sicherung"))
+    monkeypatch.setenv("TO_SPAWN_SICHERUNG_ZWEIG_REPOS", "")
 
 
 @pytest.fixture(autouse=True)

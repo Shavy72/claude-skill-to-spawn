@@ -1,14 +1,21 @@
-"""Befunde des Aufsehers: gelb → Folge-Ticket, nur rot öffnet wieder (#438).
+"""Befunde und Folge-Tickets: gelb → Folge-Ticket der Spec, nur rot öffnet wieder (#438, E2-4).
 
 Einzige Stelle der Regel, was ein Befund an einem geschlossenen Ticket auslöst:
 
 * **rot** (Akzeptanz nicht erfüllt, Beleg fehlt): Ticket mit Kommentar
   ``Aufseher: <regel> — <text>`` wieder öffnen. capo nutzt :func:`wieder_oeffnen`
   für seine Maschinen-Verstöße (Commit/Beweis/Tests/VPS) — dieselben Zeilen.
-* **gelb** (Hinweis, Kette darf weiter): neues Folge-Ticket auf GitHub anlegen und
-  im Manifest der Spec eintragen (``gelb_von``, ``schaetzung_k``, ``umfang``,
-  ``title``). Das Ticket selbst bleibt zu. Das Folge-Ticket wird bewusst kein
-  Sub-Issue der Spec — sonst hielte ein verschobenes Ticket „Spec fertig“ auf.
+* **gelb** (Hinweis, Kette darf weiter): neues Folge-Ticket auf GitHub anlegen, im
+  Manifest der Spec mit Herkunft eintragen (``gelb_von``, ``schaetzung_k``, ``umfang``,
+  ``title``) und über :func:`spec_rand.anhaengen` an die Spec hängen (Kanten,
+  Unter-Issue). Das Ticket selbst bleibt zu. Bau-Sessions und Aufseher legen
+  Folge-Tickets nur so an (``to_spawn.py befund --spec <S>``), nie per rohem
+  ``gh issue create`` — sonst hat das Ticket keinen Besitzer (E25/E56).
+
+Folge-Tickets halten das Schließen der Spec auf (umgedreht seit E2-4):
+:func:`spec_offen` ist die einzige Regel, wann eine Spec schließbar ist. Der Befehl
+``to_spawn.py spec-schliessen`` fragt sie; der Hook ``hook-spec-sperre`` sperrt rohes
+``gh issue close`` für jede Nummer, für die :func:`ist_spec` gilt.
 
 :func:`melde` liefert ein :class:`Ergebnis` (``ok`` + Ausgabezeilen); der Exit-Code
 der CLI hängt nur an ``ok``, nie an Textsuche in den Zeilen.
@@ -20,17 +27,14 @@ Ausgabezeilen — ein kaputtes Manifest wird dort als FEHLER-Zeile sichtbar.
 
 from __future__ import annotations
 
-import json
 import logging
-import os
 import re
-import tempfile
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, TypeAlias
 
-from . import gh, manifest
+from . import config, gh, manifest, spec_rand
 
 log = logging.getLogger("to_spawn.befund")
 
@@ -73,6 +77,10 @@ class GelbeFolge:
     gelb_von: int
     titel: str
     status: str  # gebaut | verworfen | verschoben | offen | unbekannt
+
+
+#: Zeitlimit je Status-Abruf; überschritten zählt als „unbekannt“ (schließt nicht).
+GH_ZEITLIMIT_S = 30
 
 
 def melde(
@@ -212,26 +220,6 @@ def _schon_gemeldet(tickets: dict[str, Any], ticket: int, umfang: str) -> str | 
     return None
 
 
-def _schreibe_atomar(datei: Path, daten: dict[str, Any]) -> None:
-    """JSON über eine Zwischendatei im selben Ordner + ``os.replace`` schreiben.
-
-    Ein Abbruch lässt die alte Datei ganz stehen; die Zwischendatei wird aufgeräumt.
-    ``OSError`` geht an den Aufrufer.
-    """
-    inhalt = json.dumps(daten, ensure_ascii=False, indent=2) + "\n"
-    fd, tmp_name = tempfile.mkstemp(
-        dir=datei.parent, prefix=f".{datei.name}.", suffix=".tmp"
-    )
-    tmp = Path(tmp_name)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write(inhalt)
-        os.replace(tmp, datei)
-    except OSError:
-        tmp.unlink(missing_ok=True)
-        raise
-
-
 def _folge_ticket(
     repo: Path, gh_repo: str, spec: int, ticket: int, text: str, dry_run: bool
 ) -> Ergebnis:
@@ -256,10 +244,11 @@ def _folge_ticket(
         )
     vorhanden = _schon_gemeldet(daten["tickets"], ticket, umfang)
     if vorhanden is not None:
-        return Ergebnis(
-            ok=True,
-            zeilen=[f"#{ticket} gelb schon gemeldet: Folge-Ticket #{vorhanden}"],
-        )
+        zeilen = [f"#{ticket} gelb schon gemeldet: Folge-Ticket #{vorhanden}"]
+        if dry_run:
+            return Ergebnis(ok=True, zeilen=zeilen)
+        # Wiederholung holt ein früher gescheitertes Anhängen nach (anhaengen ist idempotent).
+        return _an_spec_haengen(repo, gh_repo, spec, int(vorhanden), zeilen)
     if dry_run:
         return Ergebnis(
             ok=True,
@@ -267,7 +256,7 @@ def _folge_ticket(
         )
 
     body = (
-        f"Teil von Spec #{spec}, gelber Befund aus #{ticket} (Aufseher).\n\n"
+        f"Teil von Spec #{spec}, gelber Befund aus #{ticket}.\n\n"
         f"{umfang}\n\n"
         f"Steht im Manifest spec-{spec}.json mit `gelb_von: {ticket}`; "
         f"Label `{LABEL_VERSCHOBEN}` = bewusst auf später geschoben."
@@ -294,7 +283,7 @@ def _folge_ticket(
         "gelb_von": ticket,
     }
     try:
-        _schreibe_atomar(datei, daten)
+        manifest.schreibe_atomar(datei, daten)
     except OSError as fehler:
         log.error(
             "Manifest %s nicht geschrieben (Folge-Ticket #%s): %s", datei, neu, fehler
@@ -308,12 +297,39 @@ def _folge_ticket(
                 )
             ],
         )
-    return Ergebnis(
-        ok=True,
-        zeilen=[
-            f"#{ticket} gelb → Folge-Ticket #{neu} angelegt, im Manifest {datei.name}"
-        ],
-    )
+    zeilen = [f"#{ticket} gelb → Folge-Ticket #{neu} angelegt, im Manifest {datei.name}"]
+    return _an_spec_haengen(repo, gh_repo, spec, int(neu), zeilen)
+
+
+def _an_spec_haengen(
+    repo: Path, gh_repo: str, spec: int, neu: int, zeilen: list[str]
+) -> Ergebnis:
+    """Folge-Ticket über :func:`spec_rand.anhaengen` an die Spec hängen (Kanten, Unter-Issue).
+
+    Der Manifest-Eintrag steht schon (mit ``gelb_von``) — damit zählt das Ticket für
+    :func:`spec_offen` sofort, auch wenn das Anhängen scheitert. ``anhaengen`` arbeitet
+    gegen ``origin``; zeigt ``origin`` nicht auf ``gh_repo`` (Repo ohne GitHub-Zweig),
+    bleibt es beim Manifest-Eintrag. Exit 3 (Prüfung bemängelt andere Tickets) ist kein
+    Fehler des Folge-Tickets.
+    """
+    if gh.repo_aus_origin(repo) != gh_repo:
+        log.warning(
+            "origin von %s ist nicht %s — Folge-Ticket #%s nur im Manifest", repo, gh_repo, neu
+        )
+        return Ergebnis(ok=True, zeilen=zeilen)
+    lauf = spec_rand.anhaengen(repo, spec, neu, config.lade(repo))
+    if lauf.exit == spec_rand.EXIT_FEHLER:
+        return Ergebnis(
+            ok=False,
+            zeilen=[
+                *zeilen,
+                *lauf.zeilen,
+                f"FEHLER: #{neu} nicht an Spec #{spec} gehängt — `to_spawn.py anhaengen {spec} {neu}` erneut",
+            ],
+        )
+    if lauf.exit != 0:
+        zeilen.append(f"Hinweis: Manifest-Prüfung der Spec #{spec} meldet Mängel — `to_spawn.py pruefen`")
+    return Ergebnis(ok=True, zeilen=[*zeilen, f"#{neu} hängt an Spec #{spec}"])
 
 
 def _status(daten: dict[str, Any] | None) -> str:
@@ -334,7 +350,9 @@ def _abruf_github(repo: Path) -> Abruf:
     def abruf(n: int) -> dict[str, Any] | None:
         if not slug:
             return None
-        daten = gh.json_lauf(["api", f"repos/{slug}/issues/{n}"], cwd=repo)
+        daten = gh.json_lauf(
+            ["api", f"repos/{slug}/issues/{n}"], cwd=repo, timeout=GH_ZEITLIMIT_S
+        )
         return daten if isinstance(daten, dict) else None
 
     return abruf
@@ -409,3 +427,73 @@ def abschnitt(repo: Path, spec: int | str, abruf: Abruf | None = None) -> list[s
     return [UEBERSCHRIFT] + [
         f"#{f.nummer} {f.status:<10} aus #{f.gelb_von}  {f.titel}" for f in folgen
     ]
+
+
+#: Status, mit dem ein Folge-Ticket das Schließen der Spec nicht aufhält: gebaut,
+#: geschlossen (verworfen) oder gebündelt — Label ``verschoben`` = in ein Sammel-Issue
+#: gelegt bzw. bewusst auf später geschoben (E25). ``offen``/``unbekannt`` halten auf.
+#: ponytail: Bündel = nur das Label, kein Verweis aufs Sammel-Issue; Feld ``sammel`` im
+#: Manifest, wenn David das Sammel-Issue nachverfolgen will.
+ERLEDIGT = frozenset({"gebaut", "verworfen", "verschoben"})
+
+
+def ist_spec(repo: Path, nummer: int | str) -> bool:
+    """``True``, wenn ``nummer`` eine Spec dieses Repos ist (Manifest ``spec-<N>.json`` liegt da)."""
+    return manifest.manifest_pfad(repo, nummer).is_file()
+
+
+def spec_offen(repo: Path, spec: int | str, abruf: Abruf | None = None) -> list[str]:
+    """Einzige Regel „darf die Spec schließen?“ — leer = ja, sonst je Hindernis eine Zeile.
+
+    Hindernisse: keine Spec (kein Manifest), Manifest kaputt, reguläres Spec-Ticket oder
+    Folge-Ticket weder gebaut noch geschlossen noch gebündelt (Status nicht in :data:`ERLEDIGT`, auch ``unbekannt``
+    — fail-closed).
+    """
+    if not ist_spec(repo, spec):
+        return [f"#{spec} ist keine Spec dieses Repos (kein Manifest spec-{spec}.json)"]
+    holen = abruf or _abruf_github(repo)
+    try:
+        folgen = gelbe_folgen(repo, spec, abruf=holen)
+    except ManifestKaputt as fehler:
+        return [f"Manifest {fehler} — Folge-Tickets unbekannt"]
+    stand = [(t, titel, _status(holen(t))) for t, titel in _spec_tickets(repo, spec)]
+    hindernisse = [f"#{t} {s:<10} Spec-Ticket  {titel}" for t, titel, s in stand if s not in ERLEDIGT]
+    return hindernisse + [
+        f"#{f.nummer} {f.status:<10} aus #{f.gelb_von}  {f.titel}"
+        for f in folgen
+        if f.status not in ERLEDIGT
+    ]
+
+
+def _spec_tickets(repo: Path, spec: int | str) -> list[tuple[int, str]]:
+    """Reguläre Spec-Tickets aus dem Manifest (Einträge ohne ``gelb_von``)."""
+    daten, _ = manifest.lies_json(manifest.manifest_pfad(repo, spec))
+    tickets = daten.get("tickets") if isinstance(daten, dict) else None
+    return [
+        (int(n), str(e.get("title", "")))
+        for n, e in sorted((tickets or {}).items(), key=lambda p: manifest.ticket_schluessel(p[0]))
+        if n.isdigit() and isinstance(e, dict) and "gelb_von" not in e
+    ]
+
+
+def spec_schliessen(
+    repo: Path, gh_repo: str, spec: int, abruf: Abruf | None = None
+) -> Ergebnis:
+    """Spec-Issue schließen, wenn :func:`spec_offen` nichts meldet; sonst Abbruch mit Liste."""
+    hindernisse = spec_offen(repo, spec, abruf=abruf)
+    if hindernisse:
+        return Ergebnis(
+            ok=False,
+            zeilen=[
+                (
+                    f"Spec #{spec} bleibt offen — {len(hindernisse)} Hindernis(se), "
+                    "Folge-Tickets erst bauen, schließen oder ins Sammel-Issue legen "
+                    f"(Label `{LABEL_VERSCHOBEN}`):"
+                ),
+                *(f"  {z}" for z in hindernisse),
+            ],
+        )
+    text = f"Spec geschlossen über `to_spawn.py spec-schliessen {spec}` — alle Folge-Tickets erledigt."
+    if kommentiere(spec, gh_repo, text, befehl="close"):
+        return Ergebnis(ok=True, zeilen=[f"Spec #{spec} geschlossen"])
+    return Ergebnis(ok=False, zeilen=[f"FEHLER: Spec #{spec} nicht geschlossen (gh issue close)"])

@@ -38,6 +38,11 @@ if a[:2] == ["issue", "view"]:
         sys.exit(1)
     print(json.dumps(e))
     sys.exit(0)
+if a[:2] == ["pr", "list"]:
+    prs = json.load(open(os.environ["GH_PRS"])) if os.environ.get("GH_PRS") else dict()
+    kopf = a[a.index("--head") + 1] if "--head" in a else ""
+    print(json.dumps(prs.get(kopf, [])))
+    sys.exit(0)
 sys.exit(1)
 """
 GH_ATTRAPPE = "#!/bin/sh\nexec {py} -c '" + GH_ATTRAPPE_PY + '\' "$@"\n'

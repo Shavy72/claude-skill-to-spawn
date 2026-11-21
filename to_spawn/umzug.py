@@ -35,7 +35,7 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any, TextIO
 
-from . import manifest, starter
+from . import manifest, sitzungsjob, starter
 
 log = logging.getLogger("to_spawn.umzug")
 
@@ -969,10 +969,13 @@ def starte_mit_umzug_wache(
     )
     faden.start()
     try:
-        code = prozess.wait()
-    except KeyboardInterrupt:
-        _baum_beenden(prozess, frist)
-        code = prozess.wait()
+        # Job hält den ganzen Baum, auch Git-Bash-Kinder; Blockende beendet den Rest (#122).
+        with sitzungsjob.gebunden(prozess):
+            try:
+                code = prozess.wait()
+            except KeyboardInterrupt:
+                _baum_beenden(prozess, frist)
+                code = prozess.wait()
     finally:
         stopp.set()
         faden.join(timeout=frist * 2 + takt * 3)

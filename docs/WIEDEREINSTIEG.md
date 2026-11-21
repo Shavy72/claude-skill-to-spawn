@@ -5,7 +5,20 @@ Bau-Systems („USB-Stick“, Lastenheft L1–L5) fortsetzen soll — nach einem
 Maschinen-Ausfall oder einer langen Pause. Es braucht keinen Chat und keine Übergabe-Datei.
 
 Pflege: Die führende Leit-Session hält den Abschnitt „Stand“ aktuell (nach jedem gemergten
-Paket einer Etappe und bei jeder Ablösung). Regel dazu: Lastenheft L5.
+Paket einer Etappe und bei jeder Ablösung). Regel dazu: Lastenheft L5. Der Test
+`tests/test_uebergabe_sichern_145.py` wird rot, wenn der jüngste Stand-Eintrag mehr als 24 Stunden
+älter ist als der jüngste Merge.
+
+**Ablösungs-Regel (Leit-Session, Aufseher, Ober-Aufsicht):** vor dem Start der Nachfolgerin
+1. hier im Abschnitt „Stand“ einen Eintrag schreiben (Stand, als Nächstes),
+2. `python <skill>/to_spawn.py sichern <Übergabe-Datei> [<Entscheidungs-Log>]` aufrufen. Das kopiert
+   Übergabe und Entscheidungs-Log in den privaten Sicherungs-Ordner der Maschine (Vorgabe:
+   Notiz-Tresor `to-spawn/sicherung/<Rechnername>/`, ohne Tresor `~/.local/share/to-spawn/sicherung/`;
+   eigener Ort: Maschinen-Liste, Gruppe `sicherung`, Schlüssel `ziel`) und lädt angefangene Zweige
+   des Skill-Repos hoch (nie `main`/`master`, nie `ticket/*`). Ein Ziel in einem öffentlichen Repo
+   wird verweigert.
+
+Die Aufseher-Ablösung und jeder Hausmeister-Rundgang rufen dieselbe Sicherung von selbst auf.
 
 ## 1. Das Ziel in vier Sätzen
 
@@ -31,6 +44,17 @@ Sind die Übergaben verloren, reicht dieses Repo: Auftrag, Plan, Abnahme und Iss
 was zum Weiterbauen nötig ist.
 
 ## 3. Stand
+
+- **2026-11-21 22:59 (Server-Uhr, main 4e2447e):** Gemergt: Pull-Request 160 (Issue 145,
+  `to_spawn/uebergabe_sichern`: Übergaben und Entscheidungs-Log sichern sich von selbst; Issue 145 bleibt
+  offen: Kaltstart-Probe M15, Windows-Lauf, `sicherung.dateien` eintragen), 127 (Issue 100 zu; Prüf-Tür
+  Stufe 1 und 2), 166 (Issue 156 zu; Prüf-Test to-tickets). Offen im Pull-Request: 134, 146, 148, 161, 167.
+
+- **2026-11-21 22:51 (Server-Uhr, main 0118fde):** Gemergt: Pull-Request 159 (alte Rollenbezeichnung
+  entfernt), 158 (Issue 155 zu), 142 (Issue 94 zu), 151 (Issue 122, Windows-Job-Objekt). Offen im
+  Pull-Request: 127 (Issue 100, Merge läuft), 160 (Issue 145), 146 (Issue 88), 148 (Issue 136, Fix-Runde 2),
+  134 (Issue 93), 161 (Issue 154, vom PC). Bau läuft zu Issue 135, 95, 156. Als Nächstes: 129 nach 135;
+  102 vor 101, 104, 149; 96, 97.
 
 - **2026-11-21 22:37 (Server-Uhr):** Gemergt: Pull-Request 152 (Issue 144 zu), 153 (roter Test
   `test_aufseher_428` auf main behoben), 137 (P7c-a, Windows-Testaufbau; die Sperre für
