@@ -381,6 +381,53 @@ def test_hook_trennt_nur_ausserhalb_von_anfuehrungszeichen(tmp_path: Path) -> No
         assert erlaubt.returncode == 0, (frei, erlaubt.stdout, erlaubt.stderr)
 
 
+def test_hook_sperrt_schluesselwoerter_praefix_schalter_shell_gruppe_und_gleich_form(tmp_path: Path) -> None:
+    """Issue 175 (Rest aus PR 146): Befehlsanfang hinter Shell-Schlüsselwort, Klammerblock
+    oder Präfix mit Schalter, ``-c`` in einer Schalter-Gruppe und ``--input=`` kamen durch."""
+    repo, _, umgebung = _aufbau(tmp_path)
+    for roh in (
+        # die fünf Beispiele aus dem Issue
+        f"if true; then gh issue close {SPEC}; fi",
+        f"{{ gh issue close {SPEC}; }}",
+        f"sudo -u bau gh issue close {SPEC}",
+        f"bash -lc 'gh issue close {SPEC}'",
+        f"gh api repos/{SLUG}/issues/{SPEC} -X PATCH --input=datei.json",
+        # dieselben Klassen in anderer Schreibweise
+        f"if gh issue close {SPEC}; then echo ok; fi",
+        f"while true; do gh issue close {SPEC}; done",
+        f"! gh issue close {SPEC}",
+        f"env -u GH_PAGER gh issue close {SPEC}",
+        f"sudo -E -u bau /usr/bin/gh issue close {SPEC}",
+        f"bash -ec 'gh issue close {SPEC}'",
+        f"bash -o pipefail -c 'gh issue close {SPEC}'",
+        f"gh api repos/{SLUG}/issues/{SPEC} -X PATCH -fstate=closed",
+        f"gh api repos/{SLUG}/issues/{SPEC} -X PATCH -F=state=closed",
+    ):
+        abgelehnt = _hook(repo, umgebung, roh)
+        assert abgelehnt.returncode == 2, (roh, abgelehnt.stdout, abgelehnt.stderr)
+        assert f"spec-schliessen {SPEC}" in abgelehnt.stderr
+
+
+def test_hook_gegenprobe_175_harmlose_befehle_bleiben_frei(tmp_path: Path) -> None:
+    """Gegenprobe zu Issue 175: das neue Zerlegen sperrt nichts, was nur ``gh`` nennt."""
+    repo, _, umgebung = _aufbau(tmp_path)
+    for frei in (
+        f'if true; then echo "gh issue close {SPEC}"; fi',
+        f"{{ echo gh issue close {SPEC}; }}",
+        f"sudo -u bau echo gh issue close {SPEC}",
+        f"bash -lc 'echo gh issue close {SPEC}'",
+        f"bash -l skript.sh gh issue close {SPEC}",
+        f"gh api repos/{SLUG}/issues/{SPEC}/comments --input=body.json",
+        f"gh api repos/{SLUG}/issues/{SPEC} --jq=.state",
+        f"gh api repos/{SLUG}/issues/{SPEC}/comments -fbody=state=closed",
+        f"gh issue edit {SPEC} --body=state=closed",
+        f"gh issue close {ANDERES} --comment=#{SPEC}",
+        f"sudo -u bau gh issue close {ANDERES}",
+    ):
+        erlaubt = _hook(repo, umgebung, frei)
+        assert erlaubt.returncode == 0, (frei, erlaubt.stdout, erlaubt.stderr)
+
+
 def test_hook_laesst_bei_eigenem_fehler_durch(tmp_path: Path) -> None:
     """Fail-open: kaputte Eingabe oder fremder Ordner hält die Bau-Session nie an."""
     repo, _, umgebung = _aufbau(tmp_path)
