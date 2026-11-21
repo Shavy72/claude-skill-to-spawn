@@ -1,6 +1,7 @@
 """Weg-Test für ``rueckblick.py planen`` (#581): echtes Mini-Repo mit git-Worktree, Aufruf als Unterprozess.
 
-Kein Mock: git echt, SSH echt gegen einen nicht auflösbaren Host. Der Spec-330-Test liest die
+Kein Mock: git echt; SSH als Attrappe über die Start-Tür (#1406), die wie echtes ssh gegen
+einen nicht auflösbaren Host antwortet (#1528) — der Test braucht kein echtes ssh. Der Spec-330-Test liest die
 echten Bau-Logs (unverändert kopiert nach ``tests/hilfen/rueckblick_spec330``).
 """
 
@@ -82,7 +83,10 @@ def repo(tmp_path: Path) -> Path:
     _git(r, "worktree", "add", "-q", "-b", "ticket/902", str(wt))
     _zeilen(
         wt / ".to-spawn" / "bau_log" / "902.jsonl",
-        [_vorfall("902", "session_verwaist", "2026-09-26T08:00:00+02:00"), _zus("902", FREI, "2026-09-26T09:00:00+02:00")],
+        [
+            _vorfall("902", "session_verwaist", "2026-09-26T08:00:00+02:00"),
+            _zus("902", FREI, "2026-09-26T09:00:00+02:00"),
+        ],
     )
     return r
 
@@ -126,7 +130,6 @@ def test_zaehlung_feste_namen_oben_freie_texte_ungezaehlt(repo: Path) -> None:
     assert auftrag.count(FREI) == 2
 
 
-@pytest.mark.skipif(shutil.which("ssh") is None, reason="kein ssh auf diesem Rechner")
 def test_bau_server_nicht_erreichbar(repo: Path) -> None:
     konfig = repo / ".to-spawn" / "config.json"
     konfig.write_text(
@@ -440,7 +443,7 @@ def _gh_falle(tmp_path: Path) -> tuple[dict[str, str], Path]:
     ordner.mkdir()
     spur = tmp_path / "gh_aufgerufen"
     gh = ordner / "gh"
-    gh.write_text(f"#!/bin/sh\necho \"$@\" >> {spur}\nexit 0\n", encoding="utf-8")
+    gh.write_text(f'#!/bin/sh\necho "$@" >> {spur}\nexit 0\n', encoding="utf-8")
     gh.chmod(0o755)
     return {"PATH": f"{ordner}{os.pathsep}{os.environ.get('PATH', '')}"}, spur
 
