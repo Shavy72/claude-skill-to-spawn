@@ -8,9 +8,12 @@ Repo-Kennzeichen ist nur noch ``.to-spawn/config.json`` (Fundstelle 9).
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 import time
 from pathlib import Path
+
+import pytest
 
 from to_spawn import aufpasser
 from to_spawn.aufpasser import Aufpasser, Einstellungen, Fenster, deploy_art
@@ -110,6 +113,10 @@ def test_repo_kennzeichen_nur_konfig(tmp_path: Path) -> None:
 # --- P6a: Lücken aus dem P2a-Review ------------------------------------------------
 
 
+@pytest.mark.skipif(
+    shutil.which("pgrep") is None or not Path("/proc").is_dir(),
+    reason="Deploy-Wache liest Prozesse über pgrep und /proc — beides gibt es nur unter Linux",
+)
 def test_echter_deploy_prozess_ohne_schluessel_heisst_live(tmp_path: Path) -> None:
     """Weg ohne Attrappe: echter Prozess, echtes ``pgrep``, Vorgabe-Skripte (kein ``deploy.skripte``)."""
     skript = tmp_path / "safe_deploy_vps.sh"
@@ -163,3 +170,12 @@ def test_pruef_ohne_schalter_ist_immer_pruef(tmp_path: Path) -> None:
     a.deploy_muster_fuer({_repo(tmp_path, {"deploy": {"skripte": [{"name": "gate.sh", "art": "pruef"}]}})})
     assert deploy_art(["bash", "gate.sh"], a.skripte) == "pruef"
     assert deploy_art(["bash", "gate.sh", "--irgendwas"], a.skripte) == "pruef"
+
+
+def test_pgrep_fehlt_deploy_wache_fail_closed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ohne ``pgrep`` im PATH bricht die Deploy-Wache ab statt „kein Deploy“ zu melden —
+    auch unter Windows, wo der Systemtext übersetzt ist („WinError 2 …“)."""
+    a = _aufpasser(tmp_path)
+    monkeypatch.setenv("PATH", str(tmp_path))
+    with pytest.raises(RuntimeError, match="pgrep nicht nutzbar"):
+        a._prozesse_treffer("safe_deploy_vps")
