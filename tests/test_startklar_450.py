@@ -596,7 +596,10 @@ def test_f3_kaputtes_manifest_ist_rot(tmp_path: Path, inhalt: str) -> None:
 def test_f4_ohne_bash_ist_probe_rot(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(startklar, "_bash_pfad", lambda: None, raising=False)
+    def _fehlt() -> str:
+        raise FileNotFoundError("bash fehlt im PATH (Paket bash installieren)")
+
+    monkeypatch.setattr(startklar.bash_wahl, "bash", _fehlt)
     befunde = _probe(tmp_path, [_settings(tmp_path, _HOOK_HARMLOS)])
     assert befunde and not any(b.ok for b in befunde), befunde
     assert all("bash" in b.text + b.behebung for b in befunde), befunde

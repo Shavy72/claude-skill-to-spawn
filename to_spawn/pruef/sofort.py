@@ -12,8 +12,11 @@ Repo-Wurzel mit ``/`` (``fnmatch``, Groß/klein zählt, ``*`` passt auch über `
 ändert der Commit die Konfig, prüft die Leiter voll. Warum: Ob Code eine Datei liest, lässt sich nicht erraten (Tests über
 ``git ls-files``, ``iterdir``, Symlinks, ``mimetypes``) — nur das Repo weiß es. Abkürzung nur, wenn
 JEDE geänderte Datei (neu, gelöscht, bei Umbenennung alter und neuer Pfad) unter ein Muster fällt,
-keine davon ein Symlink ist und kein getrackter Symlink auf sie zeigt. Fehlt der Schlüssel, ist er
-ungültig oder die Konfig kaputt: nie Abkürzung, die Leiter prüft voll (fail-closed).
+eine Doku-Endung hat (Erlaubnisliste ``_DOKU_ENDUNGEN``/``_DOKU_NAMEN``), keine davon ein Symlink ist und kein getrackter Symlink auf sie zeigt. Fehlt der Schlüssel, ist er
+ungültig oder die Konfig kaputt: nie Abkürzung, die Leiter prüft voll (fail-closed). Gleiches gilt,
+wenn ein Muster eine Nicht-Doku-Datei trifft (``**``, ``*``, ``*.py``, ``*.sh``, ``Makefile``, #164): Die
+Basis kann ein Vorgänger-Commit sein, darum prüft die Tür die Weite selbst, statt der Basis-Wahl
+des Aufrufers zu vertrauen.
 
 Kein falsches Grün: fehlt ein Linter oder ist unklar, was geändert ist, wird die Stufe
 ausgelassen (``lief=False`` + Grund) und die Leiter prüft voll weiter.
@@ -145,7 +148,62 @@ def _doku_muster(repo: Path, basis: str, pfade: list[str]) -> tuple[list[str], s
     if not isinstance(muster, list) or not muster or not all(isinstance(m, str) and m for m in muster):
         log.warning("%s: %r", DOKU_PFADE_UNGUELTIG, muster)
         return [], DOKU_PFADE_UNGUELTIG
+    code_pfade = [pfad for pfad in pfade if not _ist_doku_datei(repo, basis, pfad)]
+    zu_weit = next((m for m in muster if _trifft_code(m, code_pfade)), None)
+    if zu_weit is not None:
+        grund = f"pruefen.doku_pfade zu weit: „{zu_weit}“ trifft Code-Dateien"
+        log.warning("%s (Konfig in %s) — keine Abkürzung, volle Prüfung", grund, basis)
+        return [], grund
     return muster, ""
+
+
+#: Stellvertreter für Code-Dateien (je Linter-Endung, Wurzel und Unterordner): Ein Doku-Muster, das
+#: einen davon trifft (``**``, ``*``, ``**/*``, ``*.*``, ``*.py`` …), ist zu weit — gilt auch, wenn es
+#: aus einem Vorgänger-Commit stammt und die Basis ``HEAD~1`` ist (#164).
+_CODE_STELLVERTRETER = tuple(
+    f"{ordner}x{endung}" for linter in _LINTER for endung in sorted(linter.endungen) for ordner in ("", "a/b/")
+)
+#: Erlaubnisliste (einzige Stelle, #164 Fix-Runde 2): nur Dateien mit diesen Endungen (klein) können
+#: Doku sein, egal welches Muster sie trifft. Eine Verbotsliste von Code-Endungen ist nie vollständig
+#: (``.sh``, ``.json``, ``Makefile``, Shebang-Skripte …). Ohne Endung nie Doku, außer diesen Namen.
+_DOKU_ENDUNGEN = frozenset({".md", ".txt", ".rst", ".adoc", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".pdf"})
+_DOKU_NAMEN = frozenset({"LICENSE", "README", "CHANGELOG"})
+_SHEBANG = "#!"
+
+
+def _ist_doku_datei(repo: Path, basis: str, pfad: str) -> bool:
+    """True, wenn ``pfad`` Doku sein kann: Doku-Endung bzw. -Name und kein Shebang in Zeile 1.
+
+    Shebang zählt im Arbeitsbaum und im Stand ``basis`` (gelöscht, alter Pfad bei Umbenennung);
+    ist der Inhalt an keiner der beiden Stellen lesbar: im Zweifel Code. Muster entscheiden zusätzlich.
+    """
+    datei = PurePosixPath(pfad)
+    if not (datei.suffix.lower() in _DOKU_ENDUNGEN if datei.suffix else datei.name in _DOKU_NAMEN):
+        return False
+    gelesen = False
+    try:
+        with (repo / pfad).open("rb") as roh:
+            if roh.read(len(_SHEBANG)) == _SHEBANG.encode():
+                return False
+        gelesen = True
+    except FileNotFoundError:
+        pass
+    except OSError as fehler:
+        log.warning("%s unlesbar — gilt als Code: %s", pfad, fehler)
+        return False
+    code, text = _git(repo, "show", f"{basis}:{pfad}")
+    if code == 0 and text.startswith(_SHEBANG):
+        return False
+    return gelesen or code == 0
+
+
+def _trifft_code(muster: str, code_pfade: list[str]) -> bool:
+    """True, wenn ``muster`` eine Nicht-Doku-Datei trifft — dann taugt die ganze Liste nicht.
+
+    Geprüft gegen Stellvertreter (``**``, ``*.py`` …) und gegen jeden wirklich geänderten Pfad, der
+    keine Doku-Datei ist (``app.py``, ``run.sh``, ``Makefile``, Shebang-Skript, ``tests/**`` …, #164).
+    """
+    return any(fnmatch.fnmatchcase(pfad, muster) for pfad in (*_CODE_STELLVERTRETER, *code_pfade))
 
 
 def _symlinks(repo: Path, basis: str) -> set[str] | None:

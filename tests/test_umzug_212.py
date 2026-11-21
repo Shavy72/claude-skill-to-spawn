@@ -25,7 +25,7 @@ SKRIPTE = SKILL / "skripte"
 
 sys.path.insert(0, str(SKILL))
 
-from to_spawn import config, prozessbaum, umzug  # noqa: E402
+from to_spawn import bash_wahl, config, prozessbaum, umzug  # noqa: E402
 from windows_attrappen import windows_starter  # noqa: E402
 
 HEUTE = "2026-09-18"
@@ -469,6 +469,7 @@ def _bau(
         "FAKE_AUSGABE": str(tmp_path / "fake"),
         "FAKE_MODUS": modus,
         "TMPDIR": str(temp),
+        "TO_SPAWN_TEMP_ORDNER": str(temp),  # #136: bau.py legt seine Temp-Dateien hier ab
         "BAU_WT_DIR": str(tmp_path / "wt"),
     }
     for weg in ("LOCALAPPDATA", "BAU_UMZUG_DATEI", "BAU_UMZUG_ANFRAGE"):
@@ -570,8 +571,8 @@ def test_bau_umzug_handoff_fehlt_exit_2(welt: dict[str, Path]) -> None:
 
 
 def _spawn_srv(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        ["bash", str(SKRIPTE / "spawn_srv.sh"), *args],
+    return bash_wahl.lauf(
+        [str(SKRIPTE / "spawn_srv.sh"), *args],
         cwd=str(repo),
         env={**os.environ, "TO_SPAWN_REPO": str(repo)},
         capture_output=True,
@@ -579,7 +580,6 @@ def _spawn_srv(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
         encoding="utf-8",
         errors="replace",
         timeout=120,
-        check=False,
     )
 
 
