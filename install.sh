@@ -67,6 +67,7 @@ for eintrag in SKILL.md README.md LICENSE to_spawn.py install.sh install.ps1 spa
 done
 sichere_und_kopiere to-spawn "${quellen[@]}"
 chmod +x "$ZIEL/skripte/spawn_srv.sh" "$ZIEL/repo-scripts/spawn_srv.sh" "$ZIEL"/nest/*.sh
+python3 "$ZIEL/to_spawn/skill_stand.py" --stempel "$ZIEL" --klon "$HIER"
 echo "Skill installiert: $ZIEL"
 
 # --- 3. Alias-Skills ----------------------------------------------------------

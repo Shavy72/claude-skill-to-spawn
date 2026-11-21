@@ -51,6 +51,9 @@ function Sichere-UndKopiere([string]$name, [string[]]$quellen) {
 $quellen = foreach ($f in @("SKILL.md", "README.md", "LICENSE", "to_spawn.py", "install.sh", "install.ps1", "spawn_local.ps1", "spawn_srv.ps1",
                            "to_spawn", "skripte", "repo-scripts", "aliase", "tests", "docs", "nest", "leitstand", "kette")) { Join-Path $hier $f }
 Sichere-UndKopiere "to-spawn" $quellen
+$env:PYTHONIOENCODING = "utf-8"
+python (Join-Path (Join-Path $ziel "to_spawn") "skill_stand.py") --stempel $ziel --klon $hier
+if ($LASTEXITCODE -ne 0) { throw "Skill-Stand nicht gestempelt: $ziel" }
 Write-Host "Skill installiert: $ziel"
 foreach ($aliasOrdner in Get-ChildItem (Join-Path $hier "aliase") -Directory) {
     Sichere-UndKopiere $aliasOrdner.Name @(Get-ChildItem $aliasOrdner.FullName -Force | ForEach-Object { $_.FullName })

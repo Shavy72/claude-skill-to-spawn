@@ -31,7 +31,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TextIO
 
-from . import config, gh, setup, umzug
+from . import config, gh, setup, skill_stand, umzug
 
 log = logging.getLogger("to_spawn.einrichten")
 
@@ -420,6 +420,12 @@ def _pruefe_venv(ort: Ort) -> Befund:
     return LUECKE, f".venv kaputt: {python} fehlt"
 
 
+def _pruefe_skill_aktuell(ort: Ort) -> Befund:
+    """Installierte Kopie gegen ``main`` des Skill-Repos; nicht erreichbar = nur Hinweis."""
+    zustand, text = skill_stand.vergleich()
+    return (LUECKE, text) if zustand == skill_stand.VERALTET else (DA, text)
+
+
 _BAUSTEINE: list[Baustein] = [
     Baustein("konfig", 1, _pruefe_konfig, _lege_konfig_an),
     Baustein("worktree_basis", 1, _pruefe_worktree_basis, _lege_worktree_basis_an),
@@ -431,15 +437,11 @@ _BAUSTEINE: list[Baustein] = [
     Baustein("server_klon", 1, _pruefe_server_klon),
     Baustein("gh", 1, _pruefe_gh),
     Baustein("venv", 1, _pruefe_venv),
+    Baustein("skill_aktuell", 1, _pruefe_skill_aktuell),
 ]
 
 
 # --- Ablauf -------------------------------------------------------------------
-
-
-def _skill_stand() -> str:
-    code, kopf = _git(_SKILL, "rev-parse", "--short", "HEAD")
-    return kopf if code == 0 else ""
 
 
 def _lies_stand(datei: Path) -> dict:
@@ -532,7 +534,7 @@ def einrichten(
             return EXIT_ABWEICHUNG
         ausgabe.write("alles da und aktuell\n")
         return 0
-    stand = {"skill_stand": _skill_stand(), "bausteine": neu}
+    stand = {"skill_stand": skill_stand.stand(), "bausteine": neu}
     if stand != roh:
         try:
             _schreib_schutz(ort.wurzel, stand_datei)
