@@ -45,32 +45,76 @@ def _starten(befehl: list[str]) -> subprocess.Popen[bytes]:
 Starter = Callable[[list[str]], "subprocess.Popen[bytes]"]
 
 
-def _abraeumen(wurzel: int, start: int, frist: float = 5.0) -> list[int]:
-    """Beendet ``wurzel`` samt aller Nachfahren hart; Ergebnis: wer nach ``frist`` noch lebt.
+def _familie(
+    liste: dict[int, tuple[int, str, int]], familie: dict[int, int]
+) -> tuple[dict[int, int], list[int], list[int]]:
+    """Familie fortschreiben; Ergebnis: (Familie, zu beenden, nicht beendbar wegen Startzeit 0).
+
+    ``familie`` merkt je Mitglied PID → Startzeit. Beendet wird nur, wer mit genau dieser
+    Startzeit noch läuft — eine schon tote Familien-PID, die Windows neu vergab, gehört einem
+    Fremden. Ein Kind zählt nur, wenn es nicht vor seinem Elternteil startete und die
+    Eltern-PID nicht inzwischen einem Fremden gehört (sonst wären dessen Kinder „unsere“).
+    Unbekannte Startzeit (0) heißt: nie beenden, sondern melden.
+    """
+    familie = dict(familie)
+
+    def echt(pid: int) -> bool:
+        return familie[pid] != 0 and liste[pid][2] == familie[pid]
+
+    unklar = {pid for pid, beginn in familie.items() if beginn == 0}
+    gewachsen = True
+    while gewachsen:
+        gewachsen = False
+        for pid, (eltern, _, beginn) in liste.items():
+            if pid in familie or eltern not in familie or not familie[eltern]:
+                continue
+            if eltern in liste and not echt(eltern):
+                continue  # Eltern-PID gehört jetzt einem Fremden
+            if not beginn:
+                unklar.add(pid)
+            elif beginn >= familie[eltern]:
+                familie[pid] = beginn
+                gewachsen = True
+    lebende = [pid for pid in familie if pid in liste and echt(pid)]
+    return familie, lebende, sorted(pid for pid in unklar if pid in liste)
+
+
+def test_familie_verschont_recycelte_und_unbekannte_pids() -> None:
+    """Abräumen trifft nur Prozesse mit gemerkter Startzeit; Fremde und Unklare bleiben stehen."""
+    liste = {
+        10: (1, "", 100),  # Wurzel, lebt
+        11: (10, "", 150),  # echtes Kind
+        12: (99, "", 300),  # Waise: Elternteil 12er-Familie 99 tot, später gestartet
+        20: (1, "", 900),  # tote Familien-PID 20 neu vergeben an einen Fremden
+        21: (20, "", 950),  # Kind des Fremden
+        13: (10, "", 0),  # Kind ohne lesbare Startzeit
+        14: (10, "", 50),  # älter als die Wurzel: recycelte Eltern-PID
+    }
+    familie, lebende, unklar = _familie(liste, {10: 100, 99: 120, 20: 130})
+    assert sorted(lebende) == [10, 11, 12]
+    assert unklar == [13]
+    assert 21 not in familie and 14 not in familie
+    # Wurzel ohne Startzeit: nie beenden, klar melden.
+    _, lebende, unklar = _familie({30: (1, "", 0)}, {30: 0})
+    assert lebende == [] and unklar == [30]
+
+
+def _abraeumen(wurzel: int, start: int, frist: float = 5.0) -> tuple[list[int], list[int]]:
+    """Beendet ``wurzel`` samt aller Nachfahren hart; Ergebnis: (lebt nach ``frist`` noch,
+    blieb wegen unbekannter Startzeit unangetastet).
 
     Folgt den Eltern-PIDs aus ``prozessbaum.prozesse`` auch über schon tote Glieder: unter
     Windows ist Git-Bash-``sh.exe`` nur ein Starter für ``bash.exe``, und MSYS-Forks überleben
-    ihren beendeten Elternteil. ``prozessbaum.baum`` sieht solche Waisen nicht mehr (Elternteil
-    tot), ein ``proz.kill()`` trifft nur den Starter. Wer vor ``start`` (Startzeit der Wurzel)
-    lief, ist ein Fremder mit recycelter Eltern-PID und bleibt verschont.
+    ihren beendeten Elternteil. Fremde mit recycelter PID schützt ``_familie``.
     """
-    # ponytail: eine schon tote PID der Familie, die Windows binnen ``frist`` neu vergibt,
-    # träfe einen Fremden; Job-Objekt je Test, falls das je auffällt.
-    familie = [wurzel]
+    # Eigener Lauf statt ``prozessbaum.baum``: ``baum`` lässt Waisen toter Eltern bewusst aus,
+    # genau die müssen hier mit weg.
+    familie = {wurzel: start}
     ende = time.monotonic() + frist
     while True:
-        liste = prozessbaum.prozesse()
-        gewachsen = True
-        while gewachsen:
-            gewachsen = False
-            for pid, (eltern, _, beginn) in liste.items():
-                fremd = bool(start and beginn and beginn < start)
-                if pid not in familie and eltern in familie and not fremd:
-                    familie.append(pid)
-                    gewachsen = True
-        lebende = [pid for pid in familie if pid in liste]
+        familie, lebende, unklar = _familie(prozessbaum.prozesse(), familie)
         if not lebende or time.monotonic() > ende:
-            return lebende
+            return lebende, unklar
         prozessbaum.senden(lebende, SIGKILL)  # Wurzel zuerst: danach entstehen keine neuen Forks
         time.sleep(0.05)
 
@@ -89,7 +133,10 @@ def starten() -> Iterator[Starter]:
     try:
         yield _start
     finally:
-        reste = [pid for wurzel, start in wurzeln for pid in _abraeumen(wurzel, start)]
+        ergebnisse = [_abraeumen(wurzel, start) for wurzel, start in wurzeln]
+        reste = [pid for lebende, _ in ergebnisse for pid in lebende]
+        unklar = [pid for _, offen in ergebnisse for pid in offen]
+        assert not unklar, f"Startzeit unbekannt, aus Vorsicht nicht beendet: {unklar}"
         assert not reste, f"Kindprozesse überlebten das Abräumen: {reste}"
 
 
