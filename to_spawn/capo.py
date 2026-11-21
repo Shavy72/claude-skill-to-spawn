@@ -683,7 +683,8 @@ def vps_kopf(vps: dict[str, Any]) -> str | None:
     return sha
 
 
-STAGING_LOG_STANDARD = "/home/bau/staging/deploys.jsonl"
+#: Vorgabe von ``vps.staging_log`` (L1 #46); Name bleibt für Aufrufer.
+STAGING_LOG_STANDARD: str = config.DEFAULTS["vps"]["staging_log"]
 FREIGABE_STANDARD = "~/.config/to-spawn/live_freigabe"
 FREIGABE_MAX_ALTER_S = 24 * 3600  # wie scripts/staging/deploy_ziel.py
 
@@ -1058,7 +1059,8 @@ def _zelle(text: str) -> str:
 
 
 def entscheidungs_datei(repo: Path, spec: int) -> Path:
-    return repo / "docs" / "agents" / f"entscheidungen_{spec}.md"
+    """``<pfade.agenten>/entscheidungen_<S>.md`` (Vorgabe ``docs/agents``, L1 #46)."""
+    return config.pfad(config.lade(repo), "agenten") / f"entscheidungen_{spec}.md"
 
 
 def _tabellen_kopf(spec: int, quelle: str) -> list[str]:
@@ -1104,7 +1106,7 @@ def entscheidung_anhaengen(
 
 
 def uebersicht(repo: Path, ref: str | None, spec: int, tickets: list[int]) -> Path:
-    """Schreibt ``docs/agents/entscheidungen_<S>.md`` (alle Entscheidungen der Spec)."""
+    """Schreibt :func:`entscheidungs_datei` (alle Entscheidungen der Spec)."""
     zeilen = [
         f"# Entscheidungen Spec #{spec}",
         "",
@@ -1127,7 +1129,7 @@ def uebersicht(repo: Path, ref: str | None, spec: int, tickets: list[int]) -> Pa
             anzahl += 1
     if not anzahl:
         zeilen += ["", "_Keine Entscheidungen im Bau-Log._"]
-    datei = repo / "docs" / "agents" / f"entscheidungen_{spec}.md"
+    datei = entscheidungs_datei(repo, spec)
     datei.parent.mkdir(parents=True, exist_ok=True)
     datei.write_text("\n".join(zeilen) + "\n", encoding="utf-8")
     return datei
