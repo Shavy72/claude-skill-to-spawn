@@ -887,6 +887,7 @@ def test_bau_resume_wartet_nicht_auf_blocker(repo_bau: Path, tmp_path: Path) -> 
         "TO_SPAWN_TEST_BIN": str(binaer),  # Start-Tür (#1406): nur diese Attrappe startet
         "FAKE_ARGV": str(beweis),
         "TMPDIR": str(temp),
+        "TO_SPAWN_TEMP_ORDNER": str(temp),  # #136: bau.py legt seine Temp-Dateien hier ab
         # Blocker 950 ist laut Stub „closed“, hat aber keinen Commit auf origin/master
         # → ohne --resume würde bau.py hier warten (Takt ≥ 60 s).
         "GH_STUB_BLOCKER": "901:950",
@@ -917,6 +918,7 @@ def test_bau_neue_session_schreibt_id(repo_bau: Path, tmp_path: Path) -> None:
         "TO_SPAWN_TEST_BIN": str(binaer),  # Start-Tür (#1406): nur diese Attrappe startet
         "FAKE_ARGV": str(beweis),
         "TMPDIR": str(temp),
+        "TO_SPAWN_TEMP_ORDNER": str(temp),  # #136: bau.py legt seine Temp-Dateien hier ab
     }
     ergebnis = _bau(repo_bau, "--sofort", env=env)
     assert ergebnis.returncode == 0, ergebnis.stdout + ergebnis.stderr

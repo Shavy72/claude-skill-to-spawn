@@ -1697,8 +1697,13 @@ class Aufpasser:
 
     def _fortsetzen_nachweisen(self, f: Fenster, sid: str) -> bool:
         """Bis ``NACHWEIS_S`` prüfen, ob im Fenster wieder eine Session mit
-        ``sessions/<pid>.json`` und derselben ID läuft."""
+        ``sessions/<pid>.json`` und derselben ID läuft.
+
+        Gilt erst, wenn die Session bei zwei Abfragen nacheinander (1 s Abstand)
+        da ist: eine Session, die gleich nach dem Start wieder endet, schreibt ihre
+        Datei kurz und löscht sie — ein einzelner Treffer hinge an der Zeitplanung (#149)."""
         frist = time.monotonic() + NACHWEIS_S
+        zuletzt_da = False
         while True:
             try:
                 pane_pid = int(
@@ -1709,10 +1714,13 @@ class Aufpasser:
                 )
             except (RuntimeError, ValueError):
                 pane_pid = 0
+            da = False
             if pane_pid:
                 info = session_finden(pane_pid, f.window_id, f.pane_id, self.e.heim)
-                if info and info.aus_json and info.session_id == sid:
-                    return True
+                da = bool(info and info.aus_json and info.session_id == sid)
+            if da and zuletzt_da:
+                return True
+            zuletzt_da = da
             if time.monotonic() >= frist:
                 return False
             time.sleep(1)
@@ -2182,7 +2190,17 @@ class Aufpasser:
             self.stand.fenster.pop(schluessel, None)
             schluessel = f"{neu.sitzung}/{neu.name}"
             self.stand.fenster[schluessel] = e
-        if not self.e.trocken and not self._fortsetzen_nachweisen(neu, sid):
+        nachgewiesen = self.e.trocken or self._fortsetzen_nachweisen(neu, sid)
+        text_neu = ""
+        if nachgewiesen and not self.e.trocken:
+            # Unter Last kann die Session gleich nach dem Nachweis wieder sterben;
+            # dann ist das Fenster weg und der Lauf darf nicht abbrechen (#149).
+            try:
+                text_neu = self.pane_text(neu.fest)
+            except RuntimeError as fehler:
+                log.error("Fenster %s nach dem Nachweis weg: %s", neu.ziel, fehler)
+                nachgewiesen = False
+        if not nachgewiesen:
             self._braucht_david(
                 e,
                 neu,
@@ -2194,7 +2212,7 @@ class Aufpasser:
             )
             return
         if not self.e.trocken:
-            e.update(hash=pane_hash(self.pane_text(neu.fest)))
+            e.update(hash=pane_hash(text_neu))
         e.update(stufe=2, eingriff=self.jetzt, seit=self.jetzt)
         self.melden(
             f.spec,

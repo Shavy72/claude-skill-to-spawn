@@ -30,7 +30,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from to_spawn import capo, config, gh, hausmeister, inventur
+from to_spawn import capo, config, gh, hausmeister, inventur, temp_ordner
 
 log = logging.getLogger("to_spawn.nest")
 
@@ -293,6 +293,10 @@ def sandbox_einstellungen(
     for name in (".claude", ".claude.json", ".cache", ".npm"):
         schreiben.append(str(heim / name))
     schreiben.append("/tmp")
+    try:  # #136: TMPDIR der Session liegt auf der Platte, nicht in /tmp
+        schreiben.append(str(temp_ordner.pfad()))
+    except OSError as fehler:
+        log.warning("Temp-Ordner nicht anlegbar, Sandbox ohne ihn: %s", fehler)
     claude = heim / ".claude"
     for name in ("settings.json", "settings.local.json", "hooks", "skills", "agents"):
         sperre_schreiben.append(str(claude / name))

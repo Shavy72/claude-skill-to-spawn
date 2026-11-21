@@ -30,9 +30,7 @@ def gh_befehl() -> list[str] | None:
     return [pfad] if pfad else None
 
 
-def lauf(
-    args: list[str], cwd: Path | None = None, timeout: float | None = None
-) -> tuple[int, str]:
+def lauf(args: list[str], cwd: Path | None = None, timeout: float | None = None) -> tuple[int, str]:
     """``gh <args>`` ausführen; gibt (Exit-Code, stdout) zurück.
 
     ``timeout`` in Sekunden (Standard: keins); überschritten → Exit 124, leeres stdout.
@@ -60,9 +58,7 @@ def lauf(
     return fertig.returncode, (fertig.stdout or "").strip()
 
 
-def json_lauf(
-    args: list[str], cwd: Path | None = None, timeout: float | None = None
-) -> Any:
+def json_lauf(args: list[str], cwd: Path | None = None, timeout: float | None = None) -> Any:
     """Wie :func:`lauf`, aber stdout als JSON (``None`` bei Fehler)."""
     code, ausgabe = lauf(args, cwd=cwd, timeout=timeout)
     if code != 0 or not ausgabe:
@@ -119,9 +115,7 @@ def repo_aus_origin(cwd: Path | None = None, fallback: str = "") -> str:
 
 def blocked_by(repo_slug: str, ticket: str, cwd: Path | None = None) -> list[dict] | None:
     """Native Blocker-Kanten eines Tickets (``None`` = Abfrage fehlgeschlagen)."""
-    daten = json_lauf(
-        ["api", f"repos/{repo_slug}/issues/{ticket}/dependencies/blocked_by"], cwd=cwd
-    )
+    daten = json_lauf(["api", f"repos/{repo_slug}/issues/{ticket}/dependencies/blocked_by"], cwd=cwd)
     return daten if isinstance(daten, list) else None
 
 
@@ -146,9 +140,24 @@ def offene_blocker(deps: list[dict]) -> list[int]:
     return sorted(int(d["number"]) for d in deps if not blocker_erledigt(d))
 
 
+#: Zeitgrenze (s) der Ticket-Stand-Abfrage (#191): hängt gh, wird daraus „unbekannt“.
+TICKET_STAND_TIMEOUT_S = 30.0
+#: Überschreibt :data:`TICKET_STAND_TIMEOUT_S` (Tests kürzen damit).
+TICKET_STAND_TIMEOUT_ENV = "TO_SPAWN_GH_TIMEOUT"
+
+
+def ticket_stand_timeout() -> float:
+    """Zeitgrenze für :func:`ticket_offen`; ungültiger Env-Wert → Standard."""
+    try:
+        wert = float(os.environ.get(TICKET_STAND_TIMEOUT_ENV) or TICKET_STAND_TIMEOUT_S)
+    except ValueError:
+        return TICKET_STAND_TIMEOUT_S
+    return wert if wert > 0 else TICKET_STAND_TIMEOUT_S
+
+
 def ticket_offen(ticket: str, cwd: Path | None = None) -> bool | None:
-    """``True`` wenn das Issue offen ist, ``False`` wenn zu, ``None`` bei Fehler."""
-    daten = json_lauf(["issue", "view", str(ticket), "--json", "state"], cwd=cwd)
+    """``True`` wenn das Issue offen ist, ``False`` wenn zu, ``None`` bei Fehler/Zeitüberschreitung."""
+    daten = json_lauf(["issue", "view", str(ticket), "--json", "state"], cwd=cwd, timeout=ticket_stand_timeout())
     if not isinstance(daten, dict) or "state" not in daten:
         return None
     return str(daten["state"]).upper() == "OPEN"
@@ -156,9 +165,7 @@ def ticket_offen(ticket: str, cwd: Path | None = None) -> bool | None:
 
 def ticket_daten(ticket: str, cwd: Path | None = None) -> dict[str, Any] | None:
     """Zustand, Labels, Text und Zuständige eines Issues (``None`` bei Fehler)."""
-    daten = json_lauf(
-        ["issue", "view", str(ticket), "--json", "state,labels,body,assignees"], cwd=cwd
-    )
+    daten = json_lauf(["issue", "view", str(ticket), "--json", "state,labels,body,assignees"], cwd=cwd)
     if not isinstance(daten, dict) or "state" not in daten:
         return None
     return daten
@@ -240,8 +247,6 @@ def label_sicherstellen(
         log.warning("gh fehlt — Label %s nicht angelegt (gh label create %s).", label, label)
         return False
     if code != 0:
-        log.warning(
-            "Label %s nicht angelegt (gh Exit %s) — von Hand: gh label create %s", label, code, label
-        )
+        log.warning("Label %s nicht angelegt (gh Exit %s) — von Hand: gh label create %s", label, code, label)
         return False
     return True
