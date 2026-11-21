@@ -245,3 +245,6 @@ Jede M-Zeile braucht einen Beleg (Befehl + Ausgabe oder Protokoll-Zeile) in
   (Kaltstart-Probe); „fertig“ = M1–M15. Pflege des Abschnitts „Stand“ dort liegt bei der führenden
   Leit-Session. Übergaben und Entscheidungs-Log werden in den privaten Notiz-Tresor gespiegelt
   (`projects/bau-system/`); das selbsttätige Spiegeln ist noch zu bauen (Issue folgt).
+- 2026-11-21 22:37 (Server-Uhr, von `leit 70`) — Etappe 1/Windows: 152 (Issue 144 zu), 153 (roter Test `test_aufseher_428` behoben), 137 (P7c-a) gemergt; Sperre `to_spawn/prozessbaum.py` aufgehoben. Fix-Runde: 127, 142, 146, 148.
+- Etappe 3, 3b-0 entschieden: Abbruch-Kriterium greift (b: 59,3 % der Tickets laufen wegen R1–R3 ohnehin voll; c: 3 rote Läufe fängt R1–R3 nicht, Eigenbau übersieht 2). DuoPlus: Variante 3, kein Auswählen, schnellerer Voll-Lauf (Issue 102 vor 101). Auswahl (101) bleibt Werkzeug für andere Repos, gilt erst mit M12; Kriterium (a) offen bis Teil b.
+- Neue Issues 155 (install.sh/`__pycache__`), 156 (Prüf-Test to-tickets). Als Nächstes: 135, 129, 145, 102, 101, 104.
