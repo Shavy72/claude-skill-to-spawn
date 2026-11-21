@@ -60,13 +60,17 @@ if [ "$NUR_WACHE" -eq 1 ] && [ "$OHNE_WACHE" -eq 1 ]; then
   exit 2
 fi
 
-MANIFEST="docs/agents/manifests/spec-$SPEC.json"
-[ -f "$MANIFEST" ] || { echo "Manifest fehlt: $MANIFEST" >&2; exit 2; }
-command -v tmux >/dev/null || { echo "tmux ist nicht installiert." >&2; exit 2; }
-
 # Python für die Skill-Aufrufe: Repo-venv, wenn vorhanden, sonst python3 (#257 F4: ein PY für alles).
 PY=python3
 [ -x "$REPO/.venv/bin/python" ] && PY="$REPO/.venv/bin/python"
+
+# Manifest-Ordner aus der Repo-Konfig (pfade.manifeste, L1 P4b); fehlt der Schlüssel, gilt die
+# Vorgabe aus to_spawn/config.py. Nicht ermittelbar → Abbruch, kein stiller Rückfall (F4).
+MANIFESTE="$(TO_SPAWN_REPO="$REPO" "$PY" -c 'import sys; sys.path.insert(0, sys.argv[1]); from pathlib import Path; from to_spawn import config; print(config.pfad(config.lade(Path(sys.argv[2])), "manifeste"))' "$SKILL_HOME" "$REPO")" \
+  || { echo "Manifest-Ordner nicht ermittelbar (to_spawn.config.pfad)." >&2; exit 2; }
+MANIFEST="$MANIFESTE/spec-$SPEC.json"
+[ -f "$MANIFEST" ] || { echo "Manifest fehlt: $MANIFEST" >&2; exit 2; }
+command -v tmux >/dev/null || { echo "tmux ist nicht installiert." >&2; exit 2; }
 
 # --- 1. Stand holen (nie rebase/stash im geteilten Baum) --------------------
 # Hauptzweig je Repo (master/main/…, #257): Konfig, origin/HEAD, main, master. Leer oder
