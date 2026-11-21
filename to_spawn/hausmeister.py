@@ -121,18 +121,23 @@ import subprocess
 import sys
 import time
 from collections.abc import Iterable
+from contextlib import ExitStack
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
-from typing import IO, Literal
+from typing import Literal
 
-try:
-    import fcntl
-except ImportError:  # Windows: Sperre über hausmeister_windows (#1373)
-    fcntl = None  # type: ignore[assignment]
-
-from to_spawn import aufpasser, config, docker_reste, gh, hausmeister_windows, hindernis
+from to_spawn import (
+    aufpasser,
+    config,
+    docker_reste,
+    gh,
+    hausmeister_windows,
+    hindernis,
+    uebergabe_sichern,
+)
+from to_spawn import sperre as _sperre
 
 log = logging.getLogger("to_spawn.hausmeister")
 
@@ -484,7 +489,7 @@ def _rundgang(*, loeschen: bool, jetzt: float | None, docker: bool) -> Rundgang:
         return ergebnis
     finally:
         if sperre:
-            sperre.close()  # gibt die flock-Sperre frei
+            sperre.close()  # gibt die Sperre frei
 
 
 def _alle_ordner(*, loeschen: bool, jetzt: float | None) -> Rundgang:
@@ -511,6 +516,7 @@ def _alle_ordner(*, loeschen: bool, jetzt: float | None) -> Rundgang:
             anteil = _frei_anteil()
     _kennzahl_schreiben(ergebnisse, trocken=not loeschen)
     _zweige_im_takt(loeschen, jetzt)
+    uebergabe_sichern.sichern()  # L5 #145: Netz für vergessene Ablösungen, wirft nie
     return Rundgang(True, "", tuple(ergebnisse))
 
 
@@ -587,24 +593,18 @@ def _spur(art: str, satz: str, **felder: object) -> None:
     hindernis.melden(art, satz, **felder)
 
 
-def _sperre_nehmen() -> IO[str] | None | bool:
-    """Sperrdatei (nicht blockierend): offene Datei = Sperre gehalten, ``False`` =
-    anderer Lauf hält sie, ``None`` = Plattform ohne Sperre. Windows: msvcrt-Sperre
-    auf derselben Datei (:func:`hausmeister_windows.sperre_nehmen`)."""
+def _sperre_nehmen() -> ExitStack | None | bool:
+    """Sperrdatei (nicht blockierend, :func:`to_spawn.sperre.halte`): Stapel = Sperre
+    gehalten (``close()`` gibt frei), ``False`` = anderer Lauf hält sie. Windows über
+    :func:`hausmeister_windows.sperre_nehmen` (dort die msvcrt-Test-Naht)."""
     datei = _log_pfad().parent / SPERR_DATEI
-    if _ist_windows() or fcntl is None:
+    if _ist_windows():
         return hausmeister_windows.sperre_nehmen(datei)
-    datei.parent.mkdir(parents=True, exist_ok=True)
-    f = datei.open("a", encoding="utf-8")
-    try:
-        fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except BlockingIOError:
-        f.close()
+    stapel = ExitStack()
+    if not stapel.enter_context(_sperre.halte(datei)):
+        stapel.close()
         return False
-    except OSError:
-        f.close()
-        raise
-    return f
+    return stapel
 
 
 def _aufraeumen(
