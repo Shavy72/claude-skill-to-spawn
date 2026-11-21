@@ -169,8 +169,14 @@ _NAME_MUSTER = (
     re.compile(r"^skill-(\d+)$"),
     re.compile(r"^duoplus-(\d+)$"),
     re.compile(r"^t(\d+)$"),
+    # #1526: 3–5 Ziffern am Anfang, nach wt-/skill-/duoplus- oder einem Buchstaben
+    # (wt-1292f, 1331-linux, t1490a, a1279) — nie hinter einem Wort: in
+    # schlange-einspielen-1121 ist 1121 ein Datum, kein Ticket.
+    re.compile(r"^(?:(?:wt|skill|duoplus)-|[a-z])?(\d{3,5})(?!\d)"),
 )
-_ZWEIG_MUSTER = re.compile(r"^(?:ticket|fix|wip)/(\d+)(?:-.*)?$")
+_ZWEIG_MUSTER = re.compile(
+    r"^(?:(?:ticket|fix|wip|aufseher)/|fix-|abschluss-)(\d+)(?:-.*)?$"
+)
 _GITHUB_SLUG = re.compile(r"github\.com[:/]+([^/\s]+/[^/\s]+?)(?:\.git)?/?$")
 
 
