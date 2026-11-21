@@ -133,6 +133,15 @@ def test_bau_server_nicht_erreichbar(repo: Path) -> None:
         json.dumps({"ssh_ziel": "rueckblick-test.invalid", "server_repo": "/gibt/es/nicht/rueckblick"}),
         encoding="utf-8",
     )
+    # Seit der Start-Tür (#1406) startet der Test kein echtes ssh mehr: die Attrappe
+    # antwortet wie ssh bei unbekanntem Host (Exit 255, Grund in stderr) (#1411).
+    attrappe = Path(os.environ["TO_SPAWN_TEST_BIN"]) / "ssh"
+    attrappe.write_text(
+        f"#!{sys.executable}\nimport sys\n"
+        "sys.stderr.write('ssh: Could not resolve hostname rueckblick-test.invalid\\n')\nsys.exit(255)\n",
+        encoding="utf-8",
+    )
+    attrappe.chmod(0o755)
     lauf = _lauf(repo, SPEC)
     assert lauf.returncode == 0, lauf.stderr
     assert lauf.stdout.splitlines()[0] == "Datenlage: 2 von 3 Tickets mit Bau-Log"

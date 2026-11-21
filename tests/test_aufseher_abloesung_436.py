@@ -460,12 +460,22 @@ def test_abloesung_nach_fehlschlag_wiederholt_mit_abstand(
     """Befund 1: Exit 2 → nach dem Mindestabstand ein zweiter Versuch; Exit 0 → Ablöse-Datei."""
     wl, zeiten, zeilen = _faden_welt(tmp_path, monkeypatch, [_exit2(), _ok(tmp_path)])
     ab = wl.Abloesung(tmp_path, 900, tmp_path, versuche_max=3, abstand_s=0.3, warte_s=1)
-    ab.ausloesen(lambda: 60_000, 50_000, lambda: True)
+    # Versuchsbeginn messen, nicht den Tür-Eintritt: ``kontext`` ruft der Faden direkt nach
+    # dem Merken der Startzeit, die Tür erst nach Log-Ausgabe — deren Dauer schwankt unter
+    # Last und ließ den Abstand an der Tür unter 0,3 s fallen (#1411).
+    beginne: list[float] = []
+
+    def kontext() -> int:
+        beginne.append(time.monotonic())
+        return 60_000
+
+    ab.ausloesen(kontext, 50_000, lambda: True)
     assert ab.faden is not None
     ab.faden.join(10)
     assert not ab.faden.is_alive()
     assert len(zeiten) == 2, zeiten
-    assert zeiten[1] - zeiten[0] >= 0.3
+    assert len(beginne) == 2, beginne
+    assert beginne[1] - beginne[0] >= 0.3
     assert [z["exit"] for z in zeilen if z["typ"] == "aufseher_abloesung"] == [2, 0]
     assert json.loads((tmp_path / "abloesung.json").read_text(encoding="utf-8"))["start"] == "Start bitte"
     # Erledigt → ein weiteres Auslösen startet nichts mehr.

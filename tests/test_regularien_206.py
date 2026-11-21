@@ -18,6 +18,12 @@ import pytest
 
 SKILL = Path(__file__).resolve().parent.parent
 CLI = SKILL / "to_spawn.py"
+sys.path.insert(0, str(SKILL))
+
+from to_spawn import config  # noqa: E402
+
+#: Ticket-Grenze aus der Vorgabe-Konfig — eine Quelle, kein Zahlen-Abschreiben (#1411).
+GRENZE = int(config.DEFAULTS["staffel"]["grenze_k"])
 GH_STUB = Path(__file__).resolve().parent / "hilfen" / "gh_stub.py"
 
 SPEC = 900
@@ -101,15 +107,18 @@ def test_fehlendes_umfang_feld_weigert_sich(repo: Path) -> None:
 
 
 def test_schaetzung_genau_200_ist_weigerung(repo: Path) -> None:
-    """Die Spec verlangt „unter 200k“ — 200 genau reicht nicht."""
-    _manifest_schreiben(repo, {TICKETS[0]: _voll(schaetzung=200)})
+    """Die Spec verlangt „unter <Grenze>k“ — genau die Grenze reicht nicht.
+
+    Name aus der Zeit der 200k-Grenze; die Zahl kommt seit #1411 aus ``GRENZE``.
+    """
+    _manifest_schreiben(repo, {TICKETS[0]: _voll(schaetzung=GRENZE)})
     ergebnis = _cli(repo, "pruefen", str(SPEC))
     assert ergebnis.returncode == 3, _ausgabe(ergebnis)
-    assert "in Teil-Tickets je unter 200k schneiden (/to-tickets)" in ergebnis.stdout
+    assert f"in Teil-Tickets je unter {GRENZE}k schneiden (/to-tickets)" in ergebnis.stdout
 
 
 def test_schaetzung_199_geht_durch(repo: Path) -> None:
-    _manifest_schreiben(repo, {TICKETS[0]: _voll(schaetzung=199)})
+    _manifest_schreiben(repo, {TICKETS[0]: _voll(schaetzung=GRENZE - 1)})
     ergebnis = _cli(repo, "pruefen", str(SPEC))
     assert ergebnis.returncode == 0, _ausgabe(ergebnis)
     assert "FEHLER" not in ergebnis.stdout
@@ -416,7 +425,7 @@ def test_lernstoff_faustregeln(repo: Path) -> None:
     text = ergebnis.stdout
     assert "Faustregeln für den Schnitt:" in text
     assert (
-        "Schätzungen lagen im Mittel bei Faktor 1,3 — Schätzung × 1,3 muss unter 200k bleiben."
+        f"Schätzungen lagen im Mittel bei Faktor 1,3 — Schätzung × 1,3 muss unter {GRENZE}k bleiben."
         in text
     )
     assert "Datenbank+Oberfläche brauchte im Mittel 1,8 Sessions (n=5)" in text
