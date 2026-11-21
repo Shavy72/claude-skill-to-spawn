@@ -21,6 +21,7 @@ import pytest
 SKILL = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SKILL))
 
+from conftest import altbestand_wie_eingerichtet
 from to_spawn import aufpasser, hausmeister
 
 ORIGIN = "https://github.com/Shavy72/duoplus-management"
@@ -150,6 +151,7 @@ def welt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Welt:
         os.pathsep.join([f"{heim}/wt/*", f"{heim}/wt-*", f"{heim}/duoplus-*"]),
     )
     monkeypatch.setenv("TO_SPAWN_HAUSMEISTER_LOG", str(log))
+    altbestand_wie_eingerichtet()  # Windows: Laptop-Stand nach dem Einrichten (#68)
     return Welt(tmp_path, heim, bare, haupt, log, tickets, time.time())
 
 
