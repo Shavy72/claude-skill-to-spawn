@@ -8,6 +8,9 @@ Aufruf (im Repo-Wurzelordner):
     python ~/.claude/skills/to-spawn/to_spawn.py pruefen <basis> <ziel> [--repo <pfad>]  # Exit 0/1/2 + JSON (#99)
     python ~/.claude/skills/to-spawn/to_spawn.py anhaengen <S> <N> [--blockiert-von B,…] \
         [--schaetzung K] [--umfang TEXT] [--datei PFAD:a-b …] [--trocken]  # Ticket nachtragen (E2-2)
+    python ~/.claude/skills/to-spawn/to_spawn.py befund --spec <S> --ticket <N> --stufe gelb --text "…"  # Folge-Ticket
+    python ~/.claude/skills/to-spawn/to_spawn.py spec-schliessen <S>  # Spec schließen mit Sperre (E2-4, Exit 0/1)
+    python ~/.claude/skills/to-spawn/to_spawn.py hook-spec-sperre    # PreToolUse-Hook (Bash), JSON auf stdin
     python ~/.claude/skills/to-spawn/to_spawn.py log <S>
     python ~/.claude/skills/to-spawn/to_spawn.py lernstoff [--letzte 30]
     python ~/.claude/skills/to-spawn/to_spawn.py setup [--zeigen|--standard|--terminal …]
@@ -297,6 +300,19 @@ def _befund(args: argparse.Namespace) -> int:
     return 0 if ergebnis.ok else 1
 
 
+def _spec_schliessen(args: argparse.Namespace) -> int:
+    """Unterbefehl ``spec-schliessen`` (E2-4): schließt die Spec nur ohne offene Folge-Tickets."""
+    repo = config.repo_wurzel(_repo_aus_umgebung())
+    gh_repo = gh.repo_aus_origin(repo)
+    if not gh_repo:
+        print("FEHLER: kein GitHub-Repo erkannt (origin fehlt oder zeigt nicht auf github.com)")
+        return 2
+    ergebnis = befund.spec_schliessen(repo, gh_repo, args.spec)
+    for zeile in ergebnis.zeilen:
+        print(zeile)
+    return 0 if ergebnis.ok else 1
+
+
 def _anhaengen(args: argparse.Namespace) -> int:
     """Unterbefehl ``anhaengen`` (E2-2): Issue an Spec hängen — Kanten, Manifest, Unter-Issue."""
     repo = config.repo_wurzel(_repo_aus_umgebung())
@@ -567,6 +583,13 @@ def main(argv: list[str] | None = None) -> int:
     )
     unter.add_parser("hook-stop", help="Stop-Hook (JSON auf stdin)")
     unter.add_parser("hook-subagent-stop", help="SubagentStop-Hook (JSON auf stdin)")
+    unter.add_parser(
+        "hook-spec-sperre", help="PreToolUse-Hook: rohes `gh issue close <Spec>` sperren (E2-4)"
+    )
+    p_schliessen = unter.add_parser(
+        "spec-schliessen", help="Spec schließen, nur wenn alle Folge-Tickets erledigt sind (E2-4)"
+    )
+    p_schliessen.add_argument("spec", type=int)
     # Umzug einer Bau-Session auf den Bau-Server (/to-spawn-of, #212).
     p_umzug = unter.add_parser("umzug", help="diese Bau-Session auf den Bau-Server umziehen")
     p_umzug.add_argument("ticket")
@@ -643,8 +666,13 @@ def main(argv: list[str] | None = None) -> int:
     aufseher_stand.richte_parser_ein(unter)
     ticketstand.richte_parser_ein(unter)
     # Gelb-Liste (#438): Befund des Aufsehers — gelb → Folge-Ticket, rot → wieder öffnen.
-    p_befund = unter.add_parser("befund", help="Aufseher-Befund melden (gelb/rot)")
-    p_befund.add_argument("--spec", required=True, type=int, help="Spec-Nummer (Manifest)")
+    # E2-4: einzige Tür für Folge-Tickets (auch Bau-Sessions) — nie roh `gh issue create`.
+    p_befund = unter.add_parser(
+        "befund", help="Befund melden: gelb → Folge-Ticket an der Spec, rot → wieder öffnen"
+    )
+    p_befund.add_argument(
+        "--spec", required=True, type=int, help="Herkunfts-Spec (Manifest, Unter-Issue)"
+    )
     p_befund.add_argument("--ticket", required=True, type=int, help="Ticket mit dem Befund")
     p_befund.add_argument("--stufe", required=True, choices=list(befund.STUFEN))
     p_befund.add_argument("--text", required=True, help="was fehlt / der Hinweis")
@@ -685,11 +713,15 @@ def main(argv: list[str] | None = None) -> int:
         return _hook_stop_mit_umzug()
     if args.befehl == "hook-subagent-stop":
         return hooks.hook_subagent_stop()
+    if args.befehl == "hook-spec-sperre":
+        return hooks.hook_spec_sperre()
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     if args.befehl == "eintrag":
         return _eintrag(args)
     if args.befehl == "befund":
         return _befund(args)
+    if args.befehl == "spec-schliessen":
+        return _spec_schliessen(args)
     if args.befehl == "anhaengen":
         return _anhaengen(args)
     if args.befehl == "umrechnen":

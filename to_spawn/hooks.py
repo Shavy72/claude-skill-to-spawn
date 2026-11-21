@@ -17,13 +17,15 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
+import shlex
 import sys
 from collections.abc import Iterator
 from datetime import datetime
 from pathlib import Path
 from typing import Any, TextIO
 
-from . import bau_log, config
+from . import bau_log, befund, config
 
 log = logging.getLogger("to_spawn.hooks")
 
@@ -530,3 +532,78 @@ def umrechnen(repo: Path, ticket: str, transkripte: Path) -> tuple[int, int]:
 def _staffel() -> int:
     roh = os.environ.get("TO_SPAWN_STAFFEL", "1")
     return int(roh) if roh.isdigit() else 1
+
+
+# --- Spec-Sperre (E2-4, App #1388 E56) ---------------------------------------------
+
+#: ``gh … issue close`` bis zum nächsten Shell-Trenner; Gruppe 1 = die Argumente.
+_GH_CLOSE = re.compile(r"\bgh\b[^;&|\n]*?\bissue\s+close\b([^;&|\n]*)")
+#: Schalter von ``gh issue close``, die einen Wert nehmen (der Wert ist keine Nummer).
+_MIT_WERT = {"-c", "--comment", "-r", "--reason", "-R", "--repo"}
+_NUMMER = re.compile(r"^#?(\d+)$|/issues/(\d+)/?$")
+
+
+def geschlossene_nummern(befehl: str) -> list[int]:
+    """Issue-Nummern, die ``befehl`` per ``gh issue close`` schließen würde.
+
+    Nimmt je ``gh issue close`` das erste Positions-Argument (Nummer, ``#N`` oder
+    Issue-URL); Werte von ``--comment``/``--reason``/``--repo`` zählen nicht.
+    ponytail: erkennt nur den wörtlichen Aufruf — ``gh api … state=closed``, ``eval``
+    oder ein Skript umgehen die Sperre (gleiche Grenze wie ``skill_schutz``).
+    """
+    nummern: list[int] = []
+    for treffer in _GH_CLOSE.finditer(befehl):
+        rest = treffer.group(1)
+        try:
+            teile = shlex.split(rest)
+        except ValueError:
+            teile = rest.split()
+        ueberspringen = False
+        for teil in teile:
+            if ueberspringen:
+                ueberspringen = False
+                continue
+            if teil in _MIT_WERT:
+                ueberspringen = True
+                continue
+            if teil.startswith("-"):
+                continue
+            if zahl := _NUMMER.search(teil):
+                nummern.append(int(zahl.group(1) or zahl.group(2)))
+            break
+    return nummern
+
+
+def hook_spec_sperre(strom: TextIO | None = None, fehler: TextIO | None = None) -> int:
+    """PreToolUse-Hook (Bash) der Bau-Session: rohes ``gh issue close <Spec>`` ablehnen.
+
+    Exit 2 + Hinweis auf ``to_spawn.py spec-schliessen <S>`` (stderr geht an Claude),
+    sobald der Befehl eine Nummer schließt, für die :func:`befund.ist_spec` gilt — dieselbe
+    Definition, die ``spec-schliessen`` nutzt. Alles andere: Exit 0. Ein Fehler im Hook
+    lässt den Befehl durch (die Session darf nie hängen bleiben, #204).
+    """
+    try:
+        daten = _eingabe(strom or sys.stdin)
+        roh = daten.get("tool_input")
+        befehl = roh.get("command") if isinstance(roh, dict) else None
+        if not isinstance(befehl, str):
+            return 0
+        start = daten.get("cwd")
+        repo = config.repo_wurzel(Path(start) if isinstance(start, str) and start else None)
+        specs = [n for n in geschlossene_nummern(befehl) if befund.ist_spec(repo, n)]
+    except Exception:  # noqa: BLE001 — der Hook darf die Bau-Session nie stören
+        log.exception("Spec-Sperre fehlgeschlagen — Befehl wird nicht geprüft.")
+        return 0
+    if not specs:
+        return 0
+    s = specs[0]
+    (fehler or sys.stderr).write(
+        f"Gesperrt: #{s} ist eine Spec — nie roh mit `gh issue close` schließen. "
+        f"Stattdessen `python {SKILL_CLI} spec-schliessen {s}`: prüft die Folge-Tickets "
+        "und schließt nur, wenn alle gebaut, geschlossen oder gebündelt sind.\n"
+    )
+    return 2
+
+
+#: Pfad der Skill-CLI für den Hinweis (dort liegt sie in jeder Installation).
+SKILL_CLI = (Path(__file__).resolve().parent.parent / "to_spawn.py").as_posix()
