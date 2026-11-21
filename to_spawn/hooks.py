@@ -118,9 +118,7 @@ def summiere(eintraege: list[dict[str, Any]]) -> dict[str, int]:
         summe["cache_read"] += _zahl(verbrauch.get("cache_read_input_tokens"))
         summe["cache_creation"] += _zahl(verbrauch.get("cache_creation_input_tokens"))
         summe["output"] += _zahl(verbrauch.get("output_tokens"))
-    summe["gesamt"] = (
-        summe["input"] + summe["cache_read"] + summe["cache_creation"] + summe["output"]
-    )
+    summe["gesamt"] = summe["input"] + summe["cache_read"] + summe["cache_creation"] + summe["output"]
     return summe
 
 
@@ -243,10 +241,7 @@ def _erster_zeitpunkt(eintraege: list[dict[str, Any]]) -> str | None:
 
 
 def _hat_zeile(repo: Path, ticket: str, typ: str, session_id: str) -> bool:
-    return any(
-        z.get("typ") == typ and z.get("session_id") == session_id
-        for z in bau_log.lese(repo, ticket)
-    )
+    return any(z.get("typ") == typ and z.get("session_id") == session_id for z in bau_log.lese(repo, ticket))
 
 
 PROTOKOLL = Path(".claude") / "to-spawn" / "hooks.log"
@@ -264,9 +259,7 @@ def _datei_protokoll() -> None:
         handler = logging.FileHandler(ziel, encoding="utf-8")
     except (OSError, RuntimeError):
         return
-    handler.setFormatter(
-        logging.Formatter("%(asctime)s %(levelname)s [pid %(process)d] %(name)s: %(message)s")
-    )
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s [pid %(process)d] %(name)s: %(message)s"))
     handler.set_name("to-spawn-hooks")
     wurzel = logging.getLogger("to_spawn")
     for alt in [h for h in wurzel.handlers if h.get_name() == "to-spawn-hooks"]:
@@ -538,11 +531,18 @@ def _staffel() -> int:
 
 #: Shell-Trenner zwischen einfachen Befehlen (zählen nur außerhalb von Anführungszeichen).
 _TRENNER = frozenset(";&|()\n`")
-#: Wörter vor dem eigentlichen Befehl (wie ``nest/skill_schutz._PRAEFIXE``).
-_PRAEFIXE = {"sudo", "env", "nohup", "command", "exec", "time"}
+#: Befehle, die den eigentlichen Befehl als Argument starten (wie ``nest/skill_schutz._PRAEFIXE``);
+#: ihre Schalter (``sudo -u bau``) überspringt :func:`_befehlskern`.
+_PRAEFIXE = {"sudo", "doas", "env", "nohup", "command", "exec", "time", "nice"}
+#: Shell-Schlüsselwörter, nach denen ein neuer Befehl beginnt (``then gh …``, ``{ gh …; }``).
+_SCHLUESSELWOERTER = {"if", "then", "else", "elif", "while", "until", "do", "!", "{", "}", "fi", "done"}
 _ZUWEISUNG = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 #: Shells, deren ``-c``-Text selbst ein Befehl ist (wie ``eval``).
 _SHELLS = {"bash", "sh", "zsh", "dash"}
+#: Shell-Schalter mit eigenem Wert (``bash -o pipefail -c …``) — der Wert ist nie der ``-c``-Text.
+_SHELL_MIT_WERT = {"-o", "+o", "-O", "+O", "--rcfile", "--init-file"}
+#: Namen, die :func:`geschlossene_nummern` selbst auswertet.
+_ZIELE = {"gh", "eval", *_SHELLS}
 #: Schalter von ``gh`` (global, ``issue close``/``edit``, ``api``), die einen Wert nehmen —
 #: der Wert ist nie Unterbefehl oder Nummer. Als ein Text, weil der Prüf-Test
 #: ``test_aufseher_kommentar_1522`` jedes einzelne Kommentar-Schalter-Literal als
@@ -556,7 +556,9 @@ _MIT_WERT = frozenset(
 )
 _NUMMER = re.compile(r"^#?(\d+)$|/issues/(\d+)/?$")
 _API_ISSUE = re.compile(r"(?:^|/)issues/(\d+)/?$")
-_API_CLOSED = re.compile(r"(?:-[fF]|--(?:raw-)?field=)?state=closed")
+_API_CLOSED = re.compile(r"state=closed")
+#: ``gh api``-Schalter, deren Wert ein Feld des Bodys ist.
+_API_FELD = {"-f", "-F", "--field", "--raw-field"}
 
 
 def _einfache_befehle(befehl: str) -> Iterator[list[str]]:
@@ -589,43 +591,107 @@ def _einfache_befehle(befehl: str) -> Iterator[list[str]]:
             woerter = shlex.split(teil)
         except ValueError:
             woerter = teil.split()
-        while woerter and (woerter[0] in _PRAEFIXE or _ZUWEISUNG.match(woerter[0])):
-            woerter.pop(0)
+        woerter = _befehlskern(woerter)
         if woerter:
             yield woerter
 
 
-def _positionen(args: list[str]) -> list[str]:
-    """Positions-Argumente von ``args`` (Schalter und ihre Werte fallen weg)."""
-    positionen: list[str] = []
-    ueberspringen = False
+def _befehlskern(woerter: list[str]) -> list[str]:
+    """``woerter`` ab dem eigentlichen Befehl: Zuweisungen, Schlüsselwörter und Präfixe weg.
+
+    Hinter einem Präfix (``sudo``, ``env`` …) fallen auch seine Schalter weg; ein Wort direkt
+    nach einem Schalter gilt als dessen Wert (``sudo -u bau gh …``), außer es ist selbst ein
+    Ziel wie ``gh``. Im Zweifel bleibt so eher ``gh`` übrig als ein harmloser Befehl —
+    ``sudo -E echo gh issue close 5`` wird gesperrt (fail-closed, kommt praktisch nicht vor).
+    """
+    i, nach_praefix = 0, False
+    while i < len(woerter):
+        wort = woerter[i]
+        if wort in _SCHLUESSELWOERTER or _ZUWEISUNG.match(wort):
+            i += 1
+        elif wort in _PRAEFIXE:
+            i, nach_praefix = i + 1, True
+        elif nach_praefix and wort.startswith("-"):
+            i += 1
+            folgend = woerter[i] if i < len(woerter) else ""
+            if "=" not in wort and not folgend.startswith("-") and _name(folgend) not in _ZIELE:
+                i += 1
+        else:
+            break
+    return woerter[i:]
+
+
+def _name(wort: str) -> str:
+    """Befehlsname ohne Pfad und ``.exe`` (``/usr/bin/gh`` → ``gh``)."""
+    return wort.rsplit("/", 1)[-1].removesuffix(".exe")
+
+
+def _shell_text(args: list[str]) -> str | None:
+    """Der ``-c``-Text von ``bash <args>``, sonst ``None``.
+
+    ``-c`` darf in einer Schalter-Gruppe stecken (``-lc``, ``-ec``); der Text ist dann das
+    erste Positions-Argument, wie bei der Shell selbst.
+    """
+    mit_c, ueberspringen = False, False
     for arg in args:
         if ueberspringen:
             ueberspringen = False
-        elif arg in _MIT_WERT:
+        elif arg in _SHELL_MIT_WERT:
             ueberspringen = True
-        elif not arg.startswith("-"):
+        elif arg.startswith(("--", "+")):
+            continue
+        elif arg.startswith("-") and len(arg) > 1:
+            mit_c = mit_c or "c" in arg[1:]
+        else:
+            return arg if mit_c else None
+    return None
+
+
+def _zerlegen(args: list[str]) -> tuple[list[str], list[tuple[str, str]]]:
+    """``gh``-Argumente in Positionen und ``(schalter, wert)``-Paare.
+
+    Alle Schreibweisen eines Schalters landen in derselben Form: ``--input datei``,
+    ``--input=datei``, ``-f state=closed``, ``-fstate=closed`` und ``-f=state=closed``.
+    Schalter ohne Wert (``--web``) stehen mit leerem Wert da.
+    """
+    positionen: list[str] = []
+    schalter: list[tuple[str, str]] = []
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        i += 1
+        if not arg.startswith("-") or arg == "-":
             positionen.append(arg)
-    return positionen
+            continue
+        if arg.startswith("--") and "=" in arg:
+            name, wert = arg.split("=", 1)
+        elif not arg.startswith("--") and len(arg) > 2 and arg[:2] in _MIT_WERT:
+            name, wert = arg[:2], arg[2:].removeprefix("=")
+        elif arg in _MIT_WERT:
+            name, wert = arg, args[i] if i < len(args) else ""
+            i += 1
+        else:
+            name, wert = arg, ""
+        schalter.append((name, wert))
+    return positionen, schalter
 
 
 def _schliesst(args: list[str]) -> int | None:
     """Issue-Nummer, die ``gh <args>`` schließen würde, sonst ``None``."""
-    pos = _positionen(args)
+    pos, schalter = _zerlegen(args)
     if pos[:2] == ["issue", "close"] and len(pos) > 2:
         treffer = _NUMMER.search(pos[2])
         return int(treffer.group(1) or treffer.group(2)) if treffer else None
     if pos[:2] == ["issue", "edit"] and len(pos) > 2:
-        offen = any(
-            a == "--state=closed" or (a == "--state" and b == "closed")
-            for a, b in zip(args, [*args[1:], ""])
-        )
         treffer = _NUMMER.search(pos[2])
-        return int(treffer.group(1) or treffer.group(2)) if offen and treffer else None
+        zu = ("--state", "closed") in schalter
+        return int(treffer.group(1) or treffer.group(2)) if zu and treffer else None
     if pos[:1] == ["api"] and len(pos) > 1:
         treffer = _API_ISSUE.search(pos[1])
         # ``--input`` schreibt einen beliebigen Body (auch ``state: closed``) — sperren.
-        geschlossen = any(_API_CLOSED.fullmatch(a) or a == "--input" for a in args)
+        geschlossen = any(
+            name == "--input" or (name in _API_FELD and _API_CLOSED.fullmatch(wert)) for name, wert in schalter
+        )
         return int(treffer.group(1)) if treffer and geschlossen else None
     return None
 
@@ -647,11 +713,11 @@ def geschlossene_nummern(befehl: str) -> list[int]:
     """
     nummern: list[int] = []
     for woerter in _einfache_befehle(befehl):
-        name = woerter[0].rsplit("/", 1)[-1].removesuffix(".exe")
+        name = _name(woerter[0])
         if name == "eval":
             nummern += geschlossene_nummern(" ".join(woerter[1:]))
-        elif name in _SHELLS and "-c" in woerter[1:-1]:
-            nummern += geschlossene_nummern(woerter[woerter.index("-c") + 1])
+        elif name in _SHELLS and (text := _shell_text(woerter[1:])) is not None:
+            nummern += geschlossene_nummern(text)
         elif name == "gh" and (n := _schliesst(woerter[1:])) is not None:
             nummern.append(n)
     return nummern
