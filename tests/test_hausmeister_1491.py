@@ -148,3 +148,66 @@ def test_mit_schalter_loescht_wie_bisher_ueber_jeden_weg(
     zeilen = capo._hausmeister_schluss(1491, {}, datetime.now(UTC), False)
     assert zeilen and "Hausmeister" in zeilen[0]
     assert not _auf_remote(ohne)
+
+
+# --- Fix 1 (Review M1): Zweig-Tür und Lösch-Senke ---------------------------------
+
+
+def _cli():
+    import importlib.util
+
+    from test_hausmeister_1368 import SKILL
+
+    spec = importlib.util.spec_from_file_location(
+        "to_spawn_cli_1491", SKILL / "to_spawn.py"
+    )
+    assert spec and spec.loader
+    cli = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(cli)
+    return cli
+
+
+def test_ohne_schalter_befehl_zweig_tuer_loescht_nicht_auf_github(
+    ohne: Welt, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    pushes: list[tuple[str, ...]] = []
+    echt = hausmeister._git_ohne_frage
+
+    def zaehlt(cwd, *args: str):
+        if args and args[0] == "push":
+            pushes.append(args)
+        return echt(cwd, *args)
+
+    monkeypatch.setattr(hausmeister, "_git_ohne_frage", zaehlt)
+    code = _cli().main(["aufraeumen", "--zweig", ZWEIG, "--repo", ORIGIN, "--loeschen"])
+    aus = capsys.readouterr().out
+    assert pushes == []  # weder Lösch-Push noch Sicherungs-Push Richtung GitHub
+    assert _auf_remote(ohne)
+    assert "Zweig-Löschen aus" in aus
+    assert (
+        code == 1
+    )  # Aufrufer (z. B. Deploy-Schlange) merkt: verlangt, aber nicht gelöscht
+
+
+def test_ohne_schalter_zweig_tuer_trocken_zeigt_aus(ohne: Welt) -> None:
+    r = hausmeister.zweig_aufraeumen(ORIGIN, ZWEIG)
+    assert (r.art, r.trocken, r.fehler) == ("bleibt", True, False)
+    assert "Zweig-Löschen aus" in r.grund
+    assert _auf_remote(ohne)
+
+
+def test_loesch_senke_ohne_schalter_pusht_nie(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv(SCHALTER, raising=False)
+    aufrufe: list[tuple[str, ...]] = []
+    monkeypatch.setattr(
+        hausmeister, "_git_ohne_frage", lambda cwd, *a: aufrufe.append(a)
+    )
+    with pytest.raises(RuntimeError, match="Zweig-Löschen aus"):
+        hausmeister._zweig_loeschen(tmp_path, ZWEIG, "0" * 40)
+    assert aufrufe == []
+    monkeypatch.setenv(SCHALTER, "1")  # Gegenprobe: mit Schalter genau ein Lösch-Push
+    hausmeister._zweig_loeschen(tmp_path, ZWEIG, "0" * 40)
+    assert [a[0] for a in aufrufe] == ["push"]

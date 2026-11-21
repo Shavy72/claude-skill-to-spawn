@@ -138,6 +138,8 @@ MINDEST_ZU_SEKUNDEN = 24 * 3600
 PLATZNOT_ANTEIL = 0.15
 #: #1491: Zweige löscht der Hausmeister nur, wenn diese Variable genau „1“ ist (:func:`zweige_loeschen_an`).
 ZWEIGE_SCHALTER = "TO_SPAWN_HAUSMEISTER_ZWEIGE_LOESCHEN"
+#: Grund/Log-Text, wenn der Schalter fehlt (eine Formulierung für Takt, Zweig-Tür und Senke).
+ZWEIGE_AUS = f"Zweig-Löschen aus ({ZWEIGE_SCHALTER}=1 fehlt)"
 #: Unter diesem Anteil freier Platte startet keine neue Session.
 STARTSPERRE_ANTEIL = 0.05
 #: Sperrdatei gegen parallele Aufräum-Läufe, im Ordner des Hausmeister-Logs.
@@ -336,7 +338,7 @@ def zweige_loeschen_an() -> bool:
 def _zweige_im_takt(loeschen: bool, jetzt: float | None) -> None:
     """E41/#1439: Sicherungs- und Ticket-Zweige im Takt von :func:`aufraeumen_alles` (täglich)."""
     if not zweige_loeschen_an():
-        log.info("Hausmeister: Zweig-Löschen aus (%s=1 fehlt) — alle Zweige bleiben", ZWEIGE_SCHALTER)
+        log.info("Hausmeister: %s — alle Zweige bleiben", ZWEIGE_AUS)
         return
     try:
         sicherungen_aufraeumen(loeschen=loeschen, jetzt=jetzt)
@@ -728,7 +730,13 @@ def _sicherung_entscheiden(
 
 
 def _zweig_loeschen(cache: Path, zweig: str, sha: str) -> None:
-    """Löscht ``zweig`` auf dem Remote nur, wenn er noch auf ``sha`` steht (Lease)."""
+    """Löscht ``zweig`` auf dem Remote nur, wenn er noch auf ``sha`` steht (Lease).
+
+    #1491: Die Lösch-Senke für GitHub — ohne Schalter (:func:`zweige_loeschen_an`) wirft sie
+    :class:`_ZweigLoeschenAus`, bevor irgendein Push abgeht. So kommt kein Aufrufer vorbei.
+    """
+    if not zweige_loeschen_an():
+        raise _ZweigLoeschenAus(ZWEIGE_AUS)
     ref = f"refs/heads/{zweig}"
     _git_ohne_frage(
         cache, "push", "-q", f"--force-with-lease={ref}:{sha}", "origin", f":{ref}"
@@ -774,6 +782,10 @@ _PROBELAUF: ContextVar[bool] = ContextVar("hausmeister_probelauf", default=False
 
 class _Nachgeschoben(RuntimeError):
     """Zweig steht beim Löschen nicht mehr auf dem geprüften Stand (Lease hielt)."""
+
+
+class _ZweigLoeschenAus(RuntimeError):
+    """#1491: Lösch-Push auf GitHub verlangt, aber der Schalter fehlt — nichts gelöscht."""
 
 
 @dataclass(frozen=True)
@@ -930,6 +942,8 @@ def _zweig_entscheiden(
     fertig, fehlende, grund, sha = zweig_fertig(repo, zweig, uebernommen_tip=tip, ort=ort, holen=holen)
     if not fertig or not sha:
         return ergebnis("bleibt", grund, sha)
+    if ort == "remote" and not zweige_loeschen_an():  # #1491: vor Sicherungs-Push und Absicht-Zeile
+        return ergebnis("bleibt", ZWEIGE_AUS, sha, fehler=not trocken)
     art = "gesichert+gelöscht" if fehlende else "gelöscht"
     if fehlende and ort == "lokal":  # Remote-Commits liegen schon auf GitHub, lokale nicht
         leck = aufpasser.git_lauf(
