@@ -190,3 +190,72 @@ def test_takt_je_repo_einmal_und_grund_nur_bei_wechsel(
     aufpasser.Aufpasser.klone_nachziehen(selbst)
     assert (klon / "neu.txt").is_file()
     assert not any(k.startswith("nachziehen:") for k in selbst.stand.meldungen)
+
+
+# --- Fix-Runde 2 (Review B1, B4, B5) ----------------------------------------
+
+
+def _aufpasser_mit_fenster(klon: Path, text: list[str]) -> SimpleNamespace:
+    """tmux (externer Dienst) ersetzt: ein Pane in ``klon``, Bildschirm aus ``text``."""
+
+    def tmux(*args: str) -> str:
+        if args[0] == "list-panes":
+            return f"{klon}\t%1" if "\t" in args[-1] else str(klon)
+        return text[0]
+
+    return SimpleNamespace(
+        tmux=tmux,
+        pane_text=lambda ziel: tmux("capture-pane", "-p", "-t", ziel),
+        e=SimpleNamespace(trocken=False),
+        stand=aufpasser.Stand(),
+        jetzt=1000.0,
+    )
+
+
+def test_b1_arbeitendes_fenster_wird_nicht_nachgezogen(tmp_path: Path) -> None:
+    _, klon = _aufbau(tmp_path)
+    vorher = _git(klon, "rev-parse", "HEAD")
+    text = ["● Bash(pytest tests -q)\n  ⎿ Running…\n✻ Thinking… (esc to interrupt)"]
+    selbst = _aufpasser_mit_fenster(klon, text)
+    aufpasser.Aufpasser.klone_nachziehen(selbst)
+    assert _git(klon, "rev-parse", "HEAD") == vorher
+    assert any("Fenster arbeitet" in k for k in selbst.stand.meldungen)
+    # Fenster steht wieder still am Prompt → jetzt nachziehen
+    text[0] = "╭──╮\n│ > │\n╰──╯\n  ? for shortcuts"
+    aufpasser.Aufpasser.klone_nachziehen(selbst)
+    assert (klon / "neu.txt").is_file()
+
+
+def test_b4_fetch_laesst_fetch_head_der_session_stehen(tmp_path: Path) -> None:
+    _, klon = _aufbau(tmp_path)
+    fetch_head = Path(_git(klon, "rev-parse", "--absolute-git-dir")) / "FETCH_HEAD"
+    fetch_head.write_text("eigener Stand der Session\n", encoding="utf-8")
+    assert aufpasser.klon_nachziehen(klon) == "nachgezogen"
+    assert fetch_head.read_text(encoding="utf-8") == "eigener Stand der Session\n"
+
+
+def test_b5_zeitgrenze_beendet_ganze_prozessgruppe(tmp_path: Path) -> None:
+    _, klon = _aufbau(tmp_path)
+    pid_datei = tmp_path / "helfer.pid"
+    helfer = tmp_path / "haeng.sh"
+    helfer.write_text(f"#!/bin/sh\necho $$ > {pid_datei}\nexec sleep 30\n")
+    helfer.chmod(0o755)
+    with pytest.raises(RuntimeError, match="Zeitgrenze"):
+        aufpasser._git(
+            klon,
+            "-c",
+            "protocol.ext.allow=always",
+            "fetch",
+            f"ext::{helfer}",
+            zeitgrenze=2,
+        )
+    pid = int(pid_datei.read_text().strip())
+    lebt = (
+        subprocess.run(
+            ["kill", "-0", str(pid)], capture_output=True, check=False
+        ).returncode
+        == 0
+    )
+    if lebt:
+        subprocess.run(["kill", "-9", str(pid)], check=False)
+    assert not lebt, "Remote-Helfer überlebt die Zeitgrenze"
