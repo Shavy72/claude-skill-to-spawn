@@ -42,7 +42,7 @@ from pathlib import Path
 from typing import Any
 
 from to_spawn import config
-from to_spawn.manifest import MANIFEST_ORDNER
+from to_spawn.manifest import manifest_pfad
 
 log = logging.getLogger("to_spawn.startklar")
 
@@ -615,7 +615,7 @@ def konfig_pruefen(ordner: Path) -> list[Befund]:
 
 
 def _manifest_pfad(ordner: Path, spec: int) -> Path:
-    return ordner / MANIFEST_ORDNER / f"spec-{spec}.json"
+    return manifest_pfad(ordner, spec)
 
 
 def _manifest_tickets(ordner: Path, spec: int) -> dict[str, dict[str, Any]] | None:

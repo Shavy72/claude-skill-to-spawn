@@ -144,3 +144,45 @@ def test_schalter_aus_konfig(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
     (tmp_path / "werkzeug" / "umschalter.py").write_text("", encoding="utf-8")
     text = _schalte_probe(tmp_path, monkeypatch)
     assert "werkzeug/umschalter.py an demo_funktion.an" in text, text
+
+
+# --- P6a: Lücken aus dem P2b-Review ------------------------------------------------
+
+
+def test_staging_log_aus_echter_repo_konfig(tmp_path: Path) -> None:
+    log = tmp_path / "eigen.jsonl"
+    log.write_text("eins\nzwei\n", encoding="utf-8")
+    _konfig(tmp_path, {"vps": {"staging_log": str(log)}})
+    assert capo._staging_zeilen(config.lade(tmp_path)["vps"]) == ["eins", "zwei"]
+
+
+@pytest.mark.skipif(docker_reste.fcntl is None, reason="flock nur auf dem Bau-Server")
+def test_sperre_nicht_pruefbar_heisst_staging_baut(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    ordner = tmp_path / "ist-ein-ordner.lock"  # open("r") → IsADirectoryError, kein FileNotFoundError
+    ordner.mkdir()
+    _maschine(tmp_path, monkeypatch, {"staging_sperren": [str(ordner)]})
+    assert docker_reste._staging_sperre_nehmen() is None
+
+
+@pytest.mark.skipif(docker_reste.fcntl is None, reason="flock nur auf dem Bau-Server")
+@pytest.mark.parametrize("sperren", [[], ["fehlt.lock"]])
+def test_staging_nie_eingerichtet_heisst_kein_neubau(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sperren: list[str]
+) -> None:
+    _maschine(tmp_path, monkeypatch, {"staging_sperren": [str(tmp_path / s) for s in sperren]})
+    sperre = docker_reste._staging_sperre_nehmen()
+    assert sperre is not None
+    sperre.close()
+
+
+@pytest.mark.skipif(docker_reste.fcntl is None, reason="flock nur auf dem Bau-Server")
+def test_sperre_env_gewinnt_beim_nehmen(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    fcntl = docker_reste.fcntl
+    frei, env = tmp_path / "frei.lock", tmp_path / "env.lock"
+    frei.touch()
+    env.touch()
+    _maschine(tmp_path, monkeypatch, {"staging_sperren": [str(frei)]})
+    monkeypatch.setenv("TO_SPAWN_STAGING_SPERRE", str(env))
+    with env.open("r") as halter:
+        fcntl.flock(halter, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        assert docker_reste._staging_sperre_nehmen() is None

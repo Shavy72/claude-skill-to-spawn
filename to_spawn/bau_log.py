@@ -74,6 +74,18 @@ def log_ordner(repo: Path) -> Path:
     return config.pfad(config.Konfig(config.lade(repo), repo / config.KONFIG_PFAD), "bau_log")
 
 
+def log_im_repo(repo: Path, ticket: str | int) -> str:
+    """Versionierte Datei als Repo-Pfad (``/``-getrennt) für ``git show`` und Texte an den Aufseher.
+
+    Liegt ``pfade.bau_log`` außerhalb des Repos, kommt der absolute Pfad (``git show`` findet ihn dann nicht).
+    """
+    datei = log_pfad(repo, ticket)
+    try:
+        return datei.relative_to(repo).as_posix()
+    except ValueError:
+        return datei.as_posix()
+
+
 def lauf_pfad(repo: Path, ticket: str | int) -> Path:
     """Unversionierte Laufdatei (schreiben Hooks und Starter)."""
     return repo / LAUF_ORDNER / f"{ticket}.jsonl"

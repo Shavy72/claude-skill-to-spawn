@@ -35,7 +35,7 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any, TextIO
 
-from . import starter
+from . import manifest, starter
 
 log = logging.getLogger("to_spawn.umzug")
 
@@ -325,9 +325,9 @@ def lokales_ende_anstossen(daten: dict[str, Any]) -> None:
 
 
 def spec_von_ticket(ticket: str, orte: Sequence[Path]) -> str | None:
-    """Spec-Nummer aus dem ersten ``docs/agents/manifests/*.json``, das das Ticket führt."""
+    """Spec-Nummer aus dem ersten Manifest (``pfade.manifeste``), das das Ticket führt."""
     for ort in orte:
-        for datei in sorted((ort / "docs" / "agents" / "manifests").glob("*.json")):
+        for datei in sorted(manifest.manifest_ordner(ort).glob("*.json")):
             if datei.name == "_default.json":
                 continue
             try:
@@ -570,7 +570,7 @@ def _sessions_stand(repo: Path) -> ModuleType:
     sys.modules[spec.name] = modul
     spec.loader.exec_module(modul)
     modul.REPO = repo
-    modul.MANIFESTE = repo / "docs" / "agents" / "manifests"
+    modul.MANIFESTE = manifest.manifest_ordner(repo)
     return modul
 
 

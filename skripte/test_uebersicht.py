@@ -26,7 +26,7 @@ from pathlib import Path
 _SKILL = str(Path(__file__).resolve().parent.parent)
 if _SKILL not in sys.path:
     sys.path.insert(0, _SKILL)
-from to_spawn import config  # noqa: E402
+from to_spawn import config, manifest  # noqa: E402
 
 log = logging.getLogger("test_uebersicht")
 
@@ -172,9 +172,7 @@ def werte_ticket(verify_hard: Path, nummer: str, titel: str) -> Karte:
 
 def lade_tickets(repo: Path, spec: int) -> list[tuple[str, str]]:
     """``[(nummer, titel)]`` aus dem Spec-Manifest (Tickets als Objekt oder Liste)."""
-    konfig = config.Konfig(config.lade(repo), repo / config.KONFIG_PFAD)  # ponytail: nach P3a → manifest.manifest_ordner
-    manifest = config.pfad(konfig, "manifeste") / f"spec-{spec}.json"
-    daten = json.loads(manifest.read_text(encoding="utf-8"))
+    daten = json.loads(manifest.manifest_pfad(repo, spec).read_text(encoding="utf-8"))
     tickets = daten.get("tickets") or {}
     if isinstance(tickets, dict):
         return [(str(n), str((t or {}).get("title", ""))) for n, t in tickets.items()]
