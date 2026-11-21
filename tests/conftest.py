@@ -288,6 +288,22 @@ def _start_nur_attrappen(
 
 
 @pytest.fixture(autouse=True)
+def _start_stelle_im_test(
+    tmp_path_factory: pytest.TempPathFactory,
+    monkeypatch: pytest.MonkeyPatch,
+    _keine_to_spawn_umgebung: None,
+) -> None:
+    """Start-Stelle (#97): Sperren je Test in eigenem Ordner, Tickets gelten als offen.
+
+    Ohne den Ordner teilten parallele Tests mit gleicher Ticket-Nummer eine Sperre;
+    ohne ``TO_SPAWN_TEST_TICKET_OFFEN`` fragte jeder ``bau.main``-Test echtes gh.
+    Tests der Start-Stelle selbst löschen die zweite Variable (``tests/test_startstelle_97.py``).
+    """
+    monkeypatch.setenv("TO_SPAWN_START_SPERREN", str(tmp_path_factory.mktemp("start-sperren")))
+    monkeypatch.setenv("TO_SPAWN_TEST_TICKET_OFFEN", "1")
+
+
+@pytest.fixture(autouse=True)
 def _hausmeister_nur_im_test(
     tmp_path_factory: pytest.TempPathFactory,
     monkeypatch: pytest.MonkeyPatch,

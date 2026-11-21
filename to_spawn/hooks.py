@@ -532,8 +532,14 @@ def _staffel() -> int:
 #: Shell-Trenner zwischen einfachen Befehlen (zählen nur außerhalb von Anführungszeichen).
 _TRENNER = frozenset(";&|()\n`")
 #: Befehle, die den eigentlichen Befehl als Argument starten (wie ``nest/skill_schutz._PRAEFIXE``);
-#: ihre Schalter (``sudo -u bau``) überspringt :func:`_befehlskern`.
-_PRAEFIXE = {"sudo", "doas", "env", "nohup", "command", "exec", "time", "nice"}
+#: ihre Schalter (``sudo -u bau``) überspringt :func:`_befehlskern`. Verglichen wird der
+#: Name ohne Pfad (``/usr/bin/env`` zählt wie ``env``).
+_PRAEFIXE = {
+    *("sudo", "doas", "env", "nohup", "command", "exec", "time", "nice"),
+    *("timeout", "stdbuf", "setsid", "builtin", "coproc"),
+}
+#: Dauer-Argument von ``timeout`` (``30``, ``5m``, ``1.5s``) — steht vor dem eigentlichen Befehl.
+_DAUER = re.compile(r"^\d+(\.\d+)?[smhd]?$")
 #: Shell-Schlüsselwörter, nach denen ein neuer Befehl beginnt (``then gh …``, ``{ gh …; }``).
 _SCHLUESSELWOERTER = {"if", "then", "else", "elif", "while", "until", "do", "!", "{", "}", "fi", "done"}
 _ZUWEISUNG = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
@@ -567,14 +573,25 @@ def _einfache_befehle(befehl: str) -> Iterator[list[str]]:
     Geteilt wird nur an Trennern außerhalb von Anführungszeichen (``-c "a; b"`` bleibt
     ein Wort); ``\\``+Zeilenumbruch fügt Zeilen wie die Shell zusammen. Ein ``gh`` in
     einer Commit-Nachricht oder einem ``echo``-Text ist so nie Befehlsanfang.
+    Ausnahme wie bei der Shell: ``$(…)`` und Backticks in doppelten Anführungszeichen
+    laufen als Befehl — ihr Inhalt wird wie Text ohne Quotes zerlegt, danach gilt der
+    alte Quote-Zustand wieder (Stapel ``offen``: schließendes Zeichen + Quote davor).
     """
     befehl = befehl.replace("\\\n", "")
     teile: list[str] = []
+    offen: list[tuple[str, str]] = []
     start, quote, i = 0, "", 0
     while i < len(befehl):
         zeichen = befehl[i]
         if zeichen == "\\" and quote != "'":
             i += 2
+            continue
+        if quote == '"' and (zeichen == "`" or befehl.startswith("$(", i)):
+            offen.append((zeichen if zeichen == "`" else ")", quote))
+            quote = ""
+            teile.append(befehl[start:i])
+            i += 1 if zeichen == "`" else 2
+            start = i
             continue
         if quote:
             if zeichen == quote:
@@ -582,6 +599,10 @@ def _einfache_befehle(befehl: str) -> Iterator[list[str]]:
         elif zeichen in "'\"":
             quote = zeichen
         elif zeichen in _TRENNER:
+            if offen and zeichen == offen[-1][0]:
+                quote = offen.pop()[1]
+            elif zeichen in "(`":
+                offen.append((")" if zeichen == "(" else "`", ""))
             teile.append(befehl[start:i])
             start = i + 1
         i += 1
@@ -609,8 +630,12 @@ def _befehlskern(woerter: list[str]) -> list[str]:
         wort = woerter[i]
         if wort in _SCHLUESSELWOERTER or _ZUWEISUNG.match(wort):
             i += 1
-        elif wort in _PRAEFIXE:
+        elif wort == "function":
+            i += 2  # ``function f { gh …; }``: Name überspringen, ``{`` ist Schlüsselwort
+        elif _name(wort) in _PRAEFIXE:
             i, nach_praefix = i + 1, True
+        elif nach_praefix and _DAUER.match(wort):
+            i += 1
         elif nach_praefix and wort.startswith("-"):
             i += 1
             folgend = woerter[i] if i < len(woerter) else ""
@@ -706,7 +731,7 @@ def geschlossene_nummern(befehl: str) -> list[int]:
     zählt als Schließen. ``gh issue edit --state`` kennt gh heute nicht — die Zeile
     bleibt als Netz, falls es kommt.
     ponytail: erkennt nur wörtliche Aufrufe — ``curl``, ``gh api graphql`` (``closeIssue``
-    mit Knoten-ID statt Nummer), ``"$(…)"`` in Anführungszeichen, ``Closes #<N>`` in
+    mit Knoten-ID statt Nummer), ``Closes #<N>`` in
     Commit/PR-Text (GitHub schließt beim Merge), Variablen oder ein Skript umgehen die
     Sperre (gleiche Grenze wie ``skill_schutz``). Die eigentliche Tür ist ``spec-schliessen``: nur dort steht die
     Prüfung; der Hook fängt nur das versehentliche rohe Schließen ab.
