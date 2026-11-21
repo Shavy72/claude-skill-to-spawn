@@ -1055,7 +1055,8 @@ class Aufpasser:
                 f"{' '.join(args[:4])}: Zeitgrenze {timeout:g} s überschritten"
             ) from None
         except FileNotFoundError as fehler:
-            raise RuntimeError(f"{' '.join(args[:4])}: {fehler}") from None
+            # Fester Kennsatz: der Systemtext ist unter Windows übersetzt („WinError 2 …“).
+            raise RuntimeError(f"{' '.join(args[:4])}: No such file — {fehler}") from None
         if ergebnis.returncode != 0:
             raise RuntimeError(f"{' '.join(args[:4])}: {ergebnis.stderr.strip()[:300]}")
         return ergebnis.stdout

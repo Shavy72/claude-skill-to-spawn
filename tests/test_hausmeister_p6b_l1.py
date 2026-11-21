@@ -7,6 +7,7 @@ fallen weg — dort liegen Schlüssel und Einstellungen, keine Worktrees.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -55,4 +56,7 @@ def test_versteckte_wurzel_abgelehnt(
 ) -> None:
     heim = _home(monkeypatch, tmp_path)
     _maschine({"repos": [], "hausmeister": {"wurzeln": [wurzel, "~/bau/*"]}})
-    assert hausmeister._wurzeln() == [str(heim / "bau" / "*")]
+    # gleiche Erwartung wie die übrigen Wurzel-Tests: der Text von ``expanduser``
+    # (unter Windows gemischte Trenner; Glob und ``match`` nehmen beide)
+    assert heim == Path(os.path.expanduser("~"))
+    assert hausmeister._wurzeln() == [os.path.expanduser("~/bau/*")]
