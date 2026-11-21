@@ -286,6 +286,22 @@ def _start_nur_attrappen(
 
 
 @pytest.fixture(autouse=True)
+def _start_stelle_im_test(
+    tmp_path_factory: pytest.TempPathFactory,
+    monkeypatch: pytest.MonkeyPatch,
+    _keine_to_spawn_umgebung: None,
+) -> None:
+    """Start-Stelle (#97): Sperren je Test in eigenem Ordner, Tickets gelten als offen.
+
+    Ohne den Ordner teilten parallele Tests mit gleicher Ticket-Nummer eine Sperre;
+    ohne ``TO_SPAWN_TEST_TICKET_OFFEN`` fragte jeder ``bau.main``-Test echtes gh.
+    Tests der Start-Stelle selbst löschen die zweite Variable (``tests/test_startstelle_97.py``).
+    """
+    monkeypatch.setenv("TO_SPAWN_START_SPERREN", str(tmp_path_factory.mktemp("start-sperren")))
+    monkeypatch.setenv("TO_SPAWN_TEST_TICKET_OFFEN", "1")
+
+
+@pytest.fixture(autouse=True)
 def _hausmeister_nur_im_test(
     tmp_path_factory: pytest.TempPathFactory,
     monkeypatch: pytest.MonkeyPatch,
@@ -329,3 +345,19 @@ def _maschine_liste_im_test(
     Tests mit eigenem ``setenv("TO_SPAWN_MASCHINE", …)`` überschreiben den Wert.
     """
     monkeypatch.setenv("TO_SPAWN_MASCHINE", str(tmp_path / "to-spawn-maschine" / "maschine.json"))
+
+
+@pytest.fixture(autouse=True)
+def _pruef_cache_im_test(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    _keine_to_spawn_umgebung: None,
+) -> None:
+    """Prüf-Cache (#102) liegt je Test unter ``tmp_path``, nie im echten Nutzer-Cache.
+
+    Probe-Repos gleichen Inhalts haben denselben Tree-SHA: ohne eigene Ablage je Test träfe ein
+    Test den grünen Eintrag eines anderen (z. B. „pytest fehlt“ würde grün).
+    """
+    ablage = str(tmp_path / "nutzer-cache")
+    monkeypatch.setenv("XDG_CACHE_HOME", ablage)
+    monkeypatch.setenv("LOCALAPPDATA", ablage)

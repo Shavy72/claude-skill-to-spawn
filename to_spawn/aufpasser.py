@@ -2373,12 +2373,15 @@ class Aufpasser:
     def _sperren(self) -> object | None:
         """Lauf-Sperre ``<zustand>/lock`` (:func:`to_spawn.sperre.halte`, nicht
         blockierend). Belegt ⇒ None. Sperr-Fehler (z. B. ENOLCK) gelten wie vor #94
-        als belegt: lieber einen Takt auslassen als ungesperrt doppelt eingreifen."""
+        als belegt: lieber einen Takt auslassen als ungesperrt doppelt eingreifen.
+        Sperr-Datei nicht öffenbar ⇒ :class:`to_spawn.sperre.SperreNichtOeffenbar` (#165)."""
         if self.e.trocken:
             return object()
         stapel = ExitStack()
         try:
             gehalten = stapel.enter_context(_sperre.halte(self.e.zustand / "lock"))
+        except _sperre.SperreNichtOeffenbar:
+            raise
         except OSError as fehler:
             log.warning("Lauf-Sperre %s nicht nutzbar (%s) — gilt als belegt", self.e.zustand / "lock", fehler)
             gehalten = False
@@ -2388,7 +2391,11 @@ class Aufpasser:
         return stapel
 
     def lauf(self) -> int:
-        sperre = self._sperren()
+        try:
+            sperre = self._sperren()
+        except _sperre.SperreNichtOeffenbar:
+            log.exception("Lauf-Sperre nicht öffenbar — Aufpasser endet mit Fehler")
+            return 1
         if sperre is None:
             log.info("Aufpasser läuft schon (Sperre belegt) — dieser Lauf endet")
             return 0
