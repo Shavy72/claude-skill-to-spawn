@@ -91,9 +91,7 @@ def test_beenden_term_reicht(eltern_mit_kind: subprocess.Popen[bytes]) -> None:
     kind = baum[1]
     stufen = ((signal.SIGTERM, 5.0), (SIGKILL, 5.0))
     eskaliert: list[int] = []
-    assert prozessbaum.beenden(
-        list(reversed(baum)), stufen, eskalation=lambda sig, _: eskaliert.append(sig)
-    )
+    assert prozessbaum.beenden(list(reversed(baum)), stufen, eskalation=lambda sig, _: eskaliert.append(sig))
     eltern_mit_kind.wait(timeout=5)
     assert not prozessbaum.lebt(kind)
     assert eskaliert == []
@@ -145,9 +143,7 @@ def test_beenden_wartet_nur_auf_ziel(tmp_path: Path) -> None:
 
 
 @pytest.mark.skipif(WINDOWS, reason="/proc gibt es nur unter Linux; Windows-Fall siehe unten")
-def test_baum_proc_unlesbar_ist_fehler(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_baum_proc_unlesbar_ist_fehler(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Ein nicht lesbares ``/proc`` heißt Fehler, nicht „keine Kinder“."""
     monkeypatch.setattr(prozessbaum, "_PROC", tmp_path / "fehlt")
     with pytest.raises(OSError):
@@ -193,6 +189,44 @@ def test_baum_windows_ohne_fremde_mit_recycelter_eltern_pid(monkeypatch: pytest.
     assert prozessbaum.baum(10) == [10, 11]
 
 
+@pytest.mark.skipif(not WINDOWS, reason="nur Windows")
+def test_baum_windows_unbekannte_startzeit_zaehlt_als_kind(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Windows: ohne lesbare Startzeit (kein Zugriff) zählt die Eltern-PID als echt."""
+    monkeypatch.setattr(prozessbaum, "_eltern_windows", lambda: {10: 1, 11: 10, 12: 10, 1: 1})
+    starts = {1: 0, 10: 100, 12: 50}  # 11 ohne Startzeit, 12 älter als „Eltern“ 10
+    monkeypatch.setattr(prozessbaum, "_startzeit_windows", starts.get)
+    assert prozessbaum.baum(10) == [10, 11]
+
+
+@pytest.mark.skipif(not WINDOWS, reason="nur Windows")
+def test_baum_windows_waisen_toter_eltern_pid_fehlen(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Windows: fehlt die Eltern-PID in der Momentaufnahme (Elternteil tot), hängt kein Waise daran."""
+    monkeypatch.setattr(prozessbaum, "_eltern_windows", lambda: {10: 1, 14: 99, 15: 14})
+    monkeypatch.setattr(prozessbaum, "_startzeit_windows", lambda _pid: None)
+    assert prozessbaum.baum(99) == [99]
+    assert prozessbaum.baum(14) == [14, 15]
+
+
+@pytest.mark.skipif(not WINDOWS, reason="nur Windows")
+@pytest.mark.parametrize("noch_lebend", [True, False])
+def test_senden_windows_oserror_wirft_nicht(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, noch_lebend: bool
+) -> None:
+    """Windows: ``OSError`` beim Signal wirft nie; geloggt wird nur, wenn der Prozess noch lebt."""
+
+    def kill_scheitert(_pid: int, _sig: int) -> None:
+        raise OSError(87, "Falscher Parameter")
+
+    monkeypatch.setattr(prozessbaum.os, "kill", kill_scheitert)
+    monkeypatch.setattr(prozessbaum, "lebt", lambda _pid: noch_lebend)
+    with caplog.at_level("WARNING", logger=prozessbaum.log.name):
+        prozessbaum.senden([4711, 4712], signal.SIGTERM)
+    warnungen = [r for r in caplog.records if "fehlgeschlagen" in r.getMessage()]
+    assert len(warnungen) == (2 if noch_lebend else 0)
+    if noch_lebend:
+        assert "4711" in warnungen[0].getMessage()
+
+
 def _importe(datei: Path) -> set[str]:
     namen: set[str] = set()
     for knoten in ast.walk(ast.parse(datei.read_text(encoding="utf-8"))):
@@ -210,9 +244,7 @@ def test_respawn_und_aufpasser_nutzen_prozessbaum(modul: str) -> None:
 
 
 def test_respawn_unter_1000_zeilen() -> None:
-    zeilen = (
-        (WURZEL / "to_spawn" / "respawn.py").read_text(encoding="utf-8").count("\n")
-    )
+    zeilen = (WURZEL / "to_spawn" / "respawn.py").read_text(encoding="utf-8").count("\n")
     assert zeilen < 1000, f"respawn.py hat {zeilen} Zeilen"
 
 
@@ -248,8 +280,6 @@ def test_aufpasser_beenden_stufen_und_reihenfolge(
     aufpasser.Aufpasser._prozesse_beenden(object(), 100)  # type: ignore[arg-type]
     # Windows kennt weder SIGHUP noch SIGKILL: dort bleibt nur die SIGTERM-Stufe.
     stufen = (
-        ((signal.SIGTERM, 5.0),)
-        if WINDOWS
-        else ((signal.SIGHUP, 5.0), (signal.SIGTERM, 5.0), (signal.SIGKILL, 5.0))
+        ((signal.SIGTERM, 5.0),) if WINDOWS else ((signal.SIGHUP, 5.0), (signal.SIGTERM, 5.0), (signal.SIGKILL, 5.0))
     )
     assert aufrufe == [([102, 101, 100], stufen)]
