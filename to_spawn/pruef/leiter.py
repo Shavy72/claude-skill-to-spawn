@@ -6,11 +6,11 @@ Sprachfrei — kennt nur die Adapter-Schnittstelle. Zuerst Stufe 1 sofort + Stuf
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Protocol
 
-from to_spawn.pruef import ausfuehren, sofort
+from to_spawn.pruef import ausfuehren, sofort, wackler
 
 GRUEN, ROT, GATE_FEHLER = 0, 1, 2
 #: Stufe lief nicht (``lief=False`` + Grund) — zählt nie als Grün, ändert das Urteil nicht.
@@ -49,6 +49,12 @@ class Stufe:
     werkzeug: str
     ergebnis: int
     ausgabe: str
+    #: Einmalige Wiederholung der roten Tests (3b-4): Befehl, eigene Zeit, erst rot → dann grün.
+    wiederholung: str = ""
+    wiederholung_s: float = 0.0
+    #: Zweiter voller Lauf nach grüner Einzel-Wiederholung: eigene Zeit (0 = nicht gelaufen).
+    voll_nochmal_s: float = 0.0
+    wackler: tuple[str, ...] = ()
 
 
 def _kurz(text: str) -> str:
@@ -72,7 +78,7 @@ def _voll(repo: Path, adapter: Adapter) -> Stufe:
         )
     erg = ausfuehren.lauf(plan.befehl, repo)
     ergebnis = adapter.deute(erg.code)
-    return Stufe(
+    stufe = Stufe(
         "voll",
         adapter.name,
         True,
@@ -82,6 +88,20 @@ def _voll(repo: Path, adapter: Adapter) -> Stufe:
         plan.werkzeug,
         ergebnis,
         erg.ausgabe if ergebnis != GRUEN else "",
+    )
+    zweit = (
+        wackler.nochmal(adapter, repo, plan.befehl, erg) if ergebnis == ROT else None
+    )
+    if zweit is None:
+        return stufe
+    return replace(
+        stufe,
+        ergebnis=GRUEN if zweit.gruen else ROT,
+        ausgabe="" if zweit.gruen else stufe.ausgabe,
+        wiederholung=" ".join(zweit.befehl),
+        wiederholung_s=zweit.dauer_s,
+        voll_nochmal_s=zweit.voll_s,
+        wackler=zweit.wackler,
     )
 
 
