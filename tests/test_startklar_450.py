@@ -290,7 +290,9 @@ def _werkzeuge(tmp_path: Path) -> tuple[startklar.Werkzeug, ...]:
 def _settings(tmp_path: Path, hook_code: str, matcher: str = "Bash") -> Path:
     hook = tmp_path / f"hook_{abs(hash(hook_code))}.py"
     hook.write_text(hook_code, encoding="utf-8")
-    datei = tmp_path / f"settings_{matcher}_{abs(hash(hook_code))}.json"
+    # Matcher steht nur im JSON; im Dateinamen nur sein Hash — „|“ und „*“ sind unter
+    # Windows als Dateiname verboten.
+    datei = tmp_path / f"settings_{abs(hash((matcher, hook_code)))}.json"
     befehl = f"{Path(sys.executable).as_posix()} {hook.as_posix()}"
     datei.write_text(
         json.dumps(
