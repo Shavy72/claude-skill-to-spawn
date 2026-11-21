@@ -24,6 +24,10 @@ sys.path.insert(0, str(WURZEL))
 
 from to_spawn import aufpasser, prozessbaum
 
+WINDOWS = sys.platform == "win32"
+#: SIGKILL gibt es unter Windows nicht; dort beendet jedes Signal per ``TerminateProcess`` hart.
+SIGKILL = getattr(signal, "SIGKILL", signal.SIGTERM)
+
 
 def _starten(befehl: list[str]) -> subprocess.Popen[bytes]:
     """Startet ``befehl`` und räumt ihn im Hintergrund ab — wie tmux es mit dem Pane
@@ -43,8 +47,15 @@ def _bereit_warten(marker: Path) -> None:
 
 @pytest.fixture
 def eltern_mit_kind() -> Iterator[subprocess.Popen[bytes]]:
-    """Eine Shell, die selbst ein ``sleep`` als Kind startet und dann wartet."""
-    proz = _starten(["sh", "-c", "sleep 30 & wait"])
+    """Ein Elternprozess, der selbst einen schlafenden Prozess als Kind startet und wartet.
+
+    Python statt ``sh -c "sleep 30 & wait"``: unter Windows hängen die Kinder einer
+    Git-Bash-Shell (MSYS-``fork``) nicht am Windows-Elternteil, der Baum wäre dort nur die
+    Shell. Mit Python entsteht auf beiden Systemen ein echter Baum aus zwei Prozessen.
+    """
+    kind = "import time; time.sleep(30)"
+    eltern = f"import subprocess, sys; subprocess.Popen([sys.executable, '-c', {kind!r}]).wait()"
+    proz = _starten([sys.executable, "-c", eltern])
     try:
         ende = time.monotonic() + 5
         while len(prozessbaum.baum(proz.pid)) < 2 and time.monotonic() < ende:
@@ -53,8 +64,8 @@ def eltern_mit_kind() -> Iterator[subprocess.Popen[bytes]]:
     finally:
         for pid in reversed(prozessbaum.baum(proz.pid)):
             try:
-                os.kill(pid, signal.SIGKILL)
-            except ProcessLookupError:
+                os.kill(pid, SIGKILL)
+            except OSError:  # schon beendet (Windows meldet das nicht als ProcessLookupError)
                 pass
         proz.wait(timeout=5)
 
@@ -78,7 +89,7 @@ def test_lebt_echt_und_tot() -> None:
 def test_beenden_term_reicht(eltern_mit_kind: subprocess.Popen[bytes]) -> None:
     baum = prozessbaum.baum(eltern_mit_kind.pid)
     kind = baum[1]
-    stufen = ((signal.SIGTERM, 5.0), (signal.SIGKILL, 5.0))
+    stufen = ((signal.SIGTERM, 5.0), (SIGKILL, 5.0))
     eskaliert: list[int] = []
     assert prozessbaum.beenden(
         list(reversed(baum)), stufen, eskalation=lambda sig, _: eskaliert.append(sig)
@@ -88,6 +99,7 @@ def test_beenden_term_reicht(eltern_mit_kind: subprocess.Popen[bytes]) -> None:
     assert eskaliert == []
 
 
+@pytest.mark.skipif(WINDOWS, reason="Windows: SIGTERM ist TerminateProcess und lässt sich nicht ignorieren")
 def test_beenden_eskaliert_zu_kill(tmp_path: Path) -> None:
     """Ein Prozess, der SIGTERM ignoriert, stirbt erst an der nächsten Stufe."""
     marker = tmp_path / "bereit"
@@ -95,15 +107,15 @@ def test_beenden_eskaliert_zu_kill(tmp_path: Path) -> None:
         [
             "sh",
             "-c",
-            f"trap '' TERM; : > {marker}; while :; do sleep 0.1; done",
+            f"trap '' TERM; : > {marker.as_posix()}; while :; do sleep 0.1; done",
         ]
     )
-    _bereit_warten(marker)
     eskaliert: list[int] = []
     try:
+        _bereit_warten(marker)
         assert prozessbaum.beenden(
             [proz.pid],
-            ((signal.SIGTERM, 0.5), (signal.SIGKILL, 5.0)),
+            ((signal.SIGTERM, 0.5), (SIGKILL, 5.0)),
             eskalation=lambda sig, lebende: eskaliert.append(sig),
         )
         assert eskaliert == [signal.SIGKILL]
@@ -119,11 +131,11 @@ def test_beenden_wartet_nur_auf_ziel(tmp_path: Path) -> None:
         [
             "sh",
             "-c",
-            f"trap '' TERM; : > {marker}; while :; do sleep 0.1; done",
+            f"trap '' TERM; : > {marker.as_posix()}; while :; do sleep 0.1; done",
         ]
     )
-    _bereit_warten(marker)
     try:
+        _bereit_warten(marker)
         start = time.monotonic()
         assert prozessbaum.beenden([proz.pid], ((signal.SIGTERM, 30.0),), warten_auf=[])
         assert time.monotonic() - start < 2
@@ -132,6 +144,7 @@ def test_beenden_wartet_nur_auf_ziel(tmp_path: Path) -> None:
         proz.wait(timeout=5)
 
 
+@pytest.mark.skipif(WINDOWS, reason="/proc gibt es nur unter Linux; Windows-Fall siehe unten")
 def test_baum_proc_unlesbar_ist_fehler(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -139,6 +152,45 @@ def test_baum_proc_unlesbar_ist_fehler(
     monkeypatch.setattr(prozessbaum, "_PROC", tmp_path / "fehlt")
     with pytest.raises(OSError):
         prozessbaum.baum(1)
+
+
+@pytest.mark.skipif(not WINDOWS, reason="nur Windows")
+def test_baum_windows_momentaufnahme_fehlt_ist_fehler(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Windows: scheitert die Toolhelp-Momentaufnahme, heißt das Fehler, nicht „keine Kinder“."""
+
+    def kaputt() -> dict[int, int]:
+        raise OSError("Momentaufnahme gescheitert")
+
+    monkeypatch.setattr(prozessbaum, "_eltern_windows", kaputt)
+    with pytest.raises(OSError):
+        prozessbaum.baum(os.getpid())
+
+
+@pytest.mark.skipif(not WINDOWS, reason="nur Windows")
+def test_beenden_windows_erste_stufe_beendet_hart(tmp_path: Path) -> None:
+    """Windows: auch eine Shell, die SIGTERM ignorieren will, endet schon in der ersten Stufe."""
+    marker = tmp_path / "bereit"
+    proz = _starten(["sh", "-c", f"trap '' TERM; : > {marker.as_posix()}; while :; do sleep 0.1; done"])
+    eskaliert: list[int] = []
+    try:
+        _bereit_warten(marker)
+        assert prozessbaum.beenden(
+            [proz.pid], ((signal.SIGTERM, 5.0),), eskalation=lambda sig, _: eskaliert.append(sig)
+        )
+        assert eskaliert == []
+        assert not prozessbaum.lebt(proz.pid)
+    finally:
+        proz.kill()
+        proz.wait(timeout=5)
+
+
+@pytest.mark.skipif(not WINDOWS, reason="nur Windows")
+def test_baum_windows_ohne_fremde_mit_recycelter_eltern_pid(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Windows: ein Prozess, der vor seinem angeblichen Elternteil startete, gehört nicht zum Baum."""
+    monkeypatch.setattr(prozessbaum, "_eltern_windows", lambda: {10: 1, 11: 10, 12: 10, 13: 12})
+    starts = {1: 0, 10: 100, 11: 150, 12: 50, 13: 200}  # 12 ist älter als „Eltern“ 10
+    monkeypatch.setattr(prozessbaum, "_startzeit_windows", starts.get)
+    assert prozessbaum.baum(10) == [10, 11]
 
 
 def _importe(datei: Path) -> set[str]:
@@ -194,13 +246,10 @@ def test_aufpasser_beenden_stufen_und_reihenfolge(
         lambda *a, **kw: aufrufe.append(a) or True,
     )
     aufpasser.Aufpasser._prozesse_beenden(object(), 100)  # type: ignore[arg-type]
-    assert aufrufe == [
-        (
-            [102, 101, 100],
-            (
-                (signal.SIGHUP, 5.0),
-                (signal.SIGTERM, 5.0),
-                (signal.SIGKILL, 5.0),
-            ),
-        )
-    ]
+    # Windows kennt weder SIGHUP noch SIGKILL: dort bleibt nur die SIGTERM-Stufe.
+    stufen = (
+        ((signal.SIGTERM, 5.0),)
+        if WINDOWS
+        else ((signal.SIGHUP, 5.0), (signal.SIGTERM, 5.0), (signal.SIGKILL, 5.0))
+    )
+    assert aufrufe == [([102, 101, 100], stufen)]

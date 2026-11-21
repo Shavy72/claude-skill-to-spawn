@@ -3,14 +3,20 @@
 respawn (alte Session ablösen) und aufpasser (Fenster schließen/fortsetzen) beenden
 beide den ganzen Prozessbaum eines tmux-Panes. Der Staffel-Hook findet die eigene
 Claude-Session in der Vorfahren-Kette und beendet sie: ``session_vorfahr`` und
-``session_beenden`` — die einzigen Teile, die auch unter Windows laufen (#501). Wie der Baum aus ``/proc`` gelesen wird,
-was „lebt“ heißt, wie eine Claude-Session erkannt wird und wie Signale stufenweise
-eskalieren, steht nur hier. Die Aufrufer wählen nur Stufen (Signal + Wartezeit),
-Reihenfolge der PIDs und worauf gewartet wird.
+``session_beenden`` (Linux + Windows, #501). Wie der Baum gelesen wird (Linux ``/proc``,
+Windows Toolhelp-Momentaufnahme, #68), was „lebt“ heißt, wie eine Claude-Session erkannt
+wird und wie Signale stufenweise eskalieren, steht nur hier. Die Aufrufer wählen nur
+Stufen (Signal + Wartezeit), Reihenfolge der PIDs und worauf gewartet wird.
+
+Windows: ``baum``, ``lebt``, ``senden`` und ``beenden`` laufen dort mit derselben
+Schnittstelle. Jedes Signal wird zu ``TerminateProcess`` (so macht es ``os.kill``) — die
+erste Stufe beendet also schon hart, ``SIGTERM`` lässt sich nicht abfangen. Nur
+``ist_claude`` liest weiter ``/proc`` (unter Windows immer „kein Claude“).
 """
 
 from __future__ import annotations
 
+import functools
 import json
 import logging
 import os
@@ -31,7 +37,12 @@ Stufe = tuple[signal.Signals, float]
 
 
 def _kinder() -> dict[int, list[int]]:
-    """Eltern-PID → Kind-PIDs aus ``/proc/*/stat``; ``/proc`` selbst unlesbar = Fehler."""
+    """Eltern-PID → Kind-PIDs; Prozessliste unlesbar = Fehler (``OSError``).
+
+    Linux aus ``/proc/*/stat``, Windows aus der Toolhelp-Momentaufnahme (``_kinder_windows``).
+    """
+    if _WINDOWS:
+        return _kinder_windows()
     kinder: dict[int, list[int]] = {}
     for eintrag in _PROC.iterdir():
         if not eintrag.name.isdigit():
@@ -60,7 +71,9 @@ def baum(pid: int) -> list[int]:
 
 
 def lebt(pid: int) -> bool:
-    """Prozess existiert noch (``/proc/<pid>`` vorhanden, auch Zombies)."""
+    """Prozess existiert noch (Linux: ``/proc/<pid>`` vorhanden, auch Zombies; Windows: läuft noch)."""
+    if _WINDOWS:
+        return _lebt_windows(pid)
     return (_PROC / str(pid)).exists()
 
 
@@ -94,12 +107,22 @@ def ist_claude(pid: int) -> bool:
 
 
 def senden(pids: Sequence[int], sig: signal.Signals) -> None:
-    """Schickt ``sig`` an jede PID in Listenfolge; schon beendete zählen nicht als Fehler."""
+    """Schickt ``sig`` an jede PID in Listenfolge; schon beendete zählen nicht als Fehler.
+
+    Windows meldet einen beendeten Prozess nicht als ``ProcessLookupError``, sondern als
+    ``OSError`` (ungültiger Parameter bzw. Zugriff verweigert, solange noch ein Handle offen
+    ist) — dort zählt nur ein Fehler an einem noch lebenden Prozess, und der landet im Log.
+    """
     for pid in pids:
         try:
             os.kill(pid, sig)
         except ProcessLookupError:
             continue
+        except OSError as fehler:
+            if not _WINDOWS:
+                raise
+            if lebt(pid):
+                log.warning("Signal %s an PID %d fehlgeschlagen: %s", sig, pid, fehler)
 
 
 def _warte_tot(
@@ -392,6 +415,128 @@ def _lebt_windows(pid: int) -> bool:
         return code.value == 259  # STILL_ACTIVE
     finally:
         kernel.CloseHandle(griff)
+
+
+@functools.cache
+def _kernel32() -> Any:
+    """Eigene ``kernel32``-Bindung mit Signaturen für Toolhelp und Prozesszeiten (nur Windows).
+
+    Eigene Instanz statt ``ctypes.windll.kernel32``: gesetzte ``argtypes`` gelten sonst für
+    jeden anderen Nutzer im Prozess.
+    """
+    import ctypes
+    from ctypes import wintypes
+
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
+    eintrag_zeiger = ctypes.POINTER(_prozesseintrag())
+    kernel.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+    kernel.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
+    kernel.Process32FirstW.argtypes = [wintypes.HANDLE, eintrag_zeiger]
+    kernel.Process32NextW.argtypes = [wintypes.HANDLE, eintrag_zeiger]
+    kernel.OpenProcess.restype = wintypes.HANDLE
+    kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    zeit = ctypes.POINTER(ctypes.c_ulonglong)
+    kernel.GetProcessTimes.argtypes = [wintypes.HANDLE, zeit, zeit, zeit, zeit]
+    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    return kernel
+
+
+@functools.cache
+def _prozesseintrag() -> Any:
+    """``PROCESSENTRY32W`` als ctypes-Struktur (erst bei Bedarf gebaut, nur Windows)."""
+    import ctypes
+    from ctypes import wintypes
+
+    class ProzessEintrag(ctypes.Structure):
+        _fields_ = [
+            ("dwSize", wintypes.DWORD),
+            ("cntUsage", wintypes.DWORD),
+            ("th32ProcessID", wintypes.DWORD),
+            ("th32DefaultHeapID", ctypes.c_size_t),
+            ("th32ModuleID", wintypes.DWORD),
+            ("cntThreads", wintypes.DWORD),
+            ("th32ParentProcessID", wintypes.DWORD),
+            ("pcPriClassBase", ctypes.c_long),
+            ("dwFlags", wintypes.DWORD),
+            ("szExeFile", ctypes.c_wchar * 260),
+        ]
+
+    return ProzessEintrag
+
+
+def _eltern_windows() -> dict[int, int]:
+    """PID → Eltern-PID aller Prozesse aus einer Toolhelp-Momentaufnahme; scheitert sie: ``OSError``.
+
+    Toolhelp statt ``Get-CimInstance``: kein PowerShell-Start (Sekunden, unter Last leer),
+    keine neue Abhängigkeit, eine Momentaufnahme dauert Millisekunden — ``beenden`` fragt im
+    100-ms-Takt.
+    """
+    import ctypes
+
+    kernel = _kernel32()
+    schnapp = kernel.CreateToolhelp32Snapshot(0x2, 0)  # TH32CS_SNAPPROCESS
+    if schnapp is None or schnapp == ctypes.c_void_p(-1).value:  # INVALID_HANDLE_VALUE
+        raise ctypes.WinError(ctypes.get_last_error())  # type: ignore[attr-defined]
+    try:
+        eintrag = _prozesseintrag()()
+        eintrag.dwSize = ctypes.sizeof(eintrag)
+        eltern: dict[int, int] = {}
+        weiter = kernel.Process32FirstW(schnapp, ctypes.byref(eintrag))
+        while weiter:
+            eltern[int(eintrag.th32ProcessID)] = int(eintrag.th32ParentProcessID)
+            weiter = kernel.Process32NextW(schnapp, ctypes.byref(eintrag))
+    finally:
+        kernel.CloseHandle(schnapp)
+    if not eltern:
+        raise OSError("Toolhelp-Momentaufnahme ohne Prozesse")
+    return eltern
+
+
+def _startzeit_windows(pid: int) -> int | None:
+    """Startzeit von ``pid`` (FILETIME-Ticks), ``None`` = nicht abfragbar (weg, kein Zugriff)."""
+    import ctypes
+
+    kernel = _kernel32()
+    griff = kernel.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+    if not griff:
+        return None
+    try:
+        start, ende, kern, nutzer = (ctypes.c_ulonglong() for _ in range(4))
+        if not kernel.GetProcessTimes(
+            griff, ctypes.byref(start), ctypes.byref(ende), ctypes.byref(kern), ctypes.byref(nutzer)
+        ):
+            return None
+        return int(start.value)
+    finally:
+        kernel.CloseHandle(griff)
+
+
+def _kinder_windows() -> dict[int, list[int]]:
+    """Wie ``_kinder``, für Windows.
+
+    Windows trägt die Eltern-PID nur bei der Geburt ein und vergibt PIDs neu: ist der echte
+    Elternteil längst tot, kann seine Nummer einem Fremden gehören. Ein Kind, das *vor* dem
+    angeblichen Elternteil gestartet wurde, ist deshalb kein Kind — sonst beendete
+    ``beenden`` fremde Prozesse mit. Unbekannte Startzeit (kein Zugriff) zählt als echt:
+    solche Prozesse könnte der Aufrufer ohnehin nicht beenden.
+    """
+    eltern = _eltern_windows()
+    startzeiten: dict[int, int | None] = {}
+
+    def startzeit(pid: int) -> int | None:
+        if pid not in startzeiten:
+            startzeiten[pid] = _startzeit_windows(pid)
+        return startzeiten[pid]
+
+    kinder: dict[int, list[int]] = {}
+    for pid, eltern_pid in eltern.items():
+        if pid == eltern_pid or pid == 0 or eltern_pid not in eltern:
+            continue
+        kind_start, eltern_start = startzeit(pid), startzeit(eltern_pid)
+        if kind_start is not None and eltern_start is not None and kind_start < eltern_start:
+            continue
+        kinder.setdefault(eltern_pid, []).append(pid)
+    return kinder
 
 
 def _protokolliere(protokoll: Path | None, zeile: str) -> None:
