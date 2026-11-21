@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from to_spawn import config
-from to_spawn.pruef import adapter_node, adapter_py, cache, leiter, protokoll
+from to_spawn.pruef import adapter_node, adapter_py, cache, leiter, protokoll, regeln
 
 _ADAPTER: tuple[leiter.Adapter, ...] = (adapter_py.ADAPTER, adapter_node.ADAPTER)
 log = logging.getLogger("to_spawn.pruef")
@@ -187,9 +187,10 @@ def pruefen(repo: Path, basis: str, ziel: str) -> Urteil:
             }
             for stufe in liste
         ],
-        werkzeug=[stufe.werkzeug for stufe in liste if stufe.werkzeug],
+        werkzeug=[stufe.werkzeug for stufe in liste if stufe.werkzeug] + [regeln.stand()],
         fehler_kurz=fehler_kurz,
         gesamt_s=time.monotonic() - start,
+        auswahl=[stufe.auswahl for stufe in liste if stufe.auswahl] or None,
         wackler=[{"test": test, "adapter": stufe.adapter} for stufe in liste for test in stufe.wackler],
     )
     protokoll.schreibe(repo, zeile)
