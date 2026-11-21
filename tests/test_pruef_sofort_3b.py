@@ -8,6 +8,7 @@ Marker-Datei — fehlt sie, lief kein Test.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -102,7 +103,10 @@ def test_m11_fall_1_nur_readme_laeuft_kein_test(tmp_path: Path) -> None:
 
 
 # Echte Werkzeug-Grenze: ohne ruff gibt es keine Stufe 1 für Python (Fall „fehlt“ prüft der Test unten).
-@pytest.mark.skipif(shutil.which("ruff") is None, reason="ruff nicht im PATH")
+# In CI (CI gesetzt) ist ruff Pflicht: dort scheitert der Test, statt still übersprungen zu werden.
+@pytest.mark.skipif(
+    shutil.which("ruff") is None and not os.environ.get("CI"), reason="ruff nicht im PATH"
+)
 def test_syntax_fehler_ist_rot_in_stufe_1_und_voll_laeuft_nicht(tmp_path: Path) -> None:
     probe = _probe(tmp_path / "py")
     _commit(probe, "rechnen.py", "def addiere(a, b)\n    return a + b\n")
@@ -353,3 +357,78 @@ def test_eslint_gruen_rot_und_kaputt(
         assert "app.js" in stufe.ausgabe
     if exit_code == 2:
         assert stufe.grund.startswith("eslint lief nicht (Exit 2")
+
+
+# --- Fix-Runde 2 (#100): nackte Endung, git-Ursache, Werkzeug-Ordner nur als Ordner-Eintrag ---
+
+
+def test_md_per_endswith_aus_berechnetem_ordner_ist_keine_doku_und_rot(
+    tmp_path: Path,
+) -> None:
+    # Ordner berechnet, Dateiname und ``*.md`` stehen nirgends im Code — nur ``.md`` als Endung.
+    probe = _probe_laufzeit(
+        tmp_path / "py",
+        """\
+        import os, pathlib
+        def lies():
+            ordner = pathlib.Path(__file__).parent / "_".join(["haupt", "texte"])
+            return "".join(
+                (ordner / f).read_text() for f in os.listdir(ordner) if f.endswith(".md")
+            )
+        """,
+        {"haupt_texte/eins.md": "ja\n"},
+    )
+    _commit(probe, "haupt_texte/eins.md", "nein\n")
+    code, zeile = _tuer(probe)
+    assert code == 1, zeile
+    assert _stufe(zeile, "doku")["grund"] == "nicht nur Doku geändert"
+    assert "test_lies" in zeile["fehler_kurz"]
+
+
+def test_readme_commit_mit_ungetracktem_code_ist_nie_gruen(tmp_path: Path) -> None:
+    # Ursprüngliche Aussage des in Runde 1 umgeschriebenen Tests, jetzt wieder über die Tür.
+    probe = _probe(tmp_path / "py")
+    _commit(probe, "README.md", "# Probe\n\nGeändert.\n")
+    (probe / "neu.py").write_text("X = 1\n", encoding="utf-8")
+    code, zeile = _tuer(probe)
+    assert code == 2, zeile
+    assert "neu.py" in zeile["fehler_kurz"]
+
+
+def test_git_status_scheitert_meldet_ursache_und_loggt(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    from to_spawn import pruef
+
+    kein_repo = tmp_path / "leer"
+    kein_repo.mkdir()
+    with caplog.at_level("WARNING", logger="to_spawn.pruef"):
+        offen = pruef._ungespeichert(kein_repo)
+    assert len(offen) == 1 and offen[0].startswith("?"), offen
+    assert "not a git repository" in offen[0].lower(), offen
+    assert any("git status" in r.getMessage() for r in caplog.records), caplog.records
+
+
+def test_ungetrackter_code_in_unterordner_venv_ist_ungespeichert(
+    tmp_path: Path,
+) -> None:
+    from to_spawn import pruef
+
+    probe = _probe(tmp_path / "py")
+    (probe / "src" / "venv").mkdir(parents=True)
+    (probe / "src" / "venv" / "x.py").write_text("X = 1\n", encoding="utf-8")
+    assert pruef._ungespeichert(probe) == [
+        "src/"
+    ]  # normal: neuer Ordner zusammengefasst
+    _git(probe, "add", "src/venv/x.py")
+    _git(probe, "commit", "-qm", "src")
+    (probe / "src" / "venv" / "y.py").write_text("Y = 1\n", encoding="utf-8")
+    assert pruef._ungespeichert(probe) == ["src/venv/y.py"]
+    (probe / "src" / "__pycache__").mkdir()
+    (probe / "src" / "__pycache__" / "x.pyc").write_bytes(b"\0")
+    (probe / ".venv").mkdir()
+    (probe / ".venv" / "a").write_text("", encoding="utf-8")
+    (probe / "node_modules").write_text(
+        "", encoding="utf-8"
+    )  # Datei, kein Werkzeug-Ordner
+    assert pruef._ungespeichert(probe) == ["node_modules", "src/venv/y.py"]

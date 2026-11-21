@@ -106,13 +106,14 @@ def _ist_doku(repo: Path, pfad: str) -> bool:
     if PurePosixPath(pfad).suffix.lower() not in _DOKU_ENDUNGEN:
         return False
     # Im Zweifel keine Doku: Kommt in irgendeiner Nicht-Doku-Datei der Dateiname, ein Ordnername
-    # des Pfads (Code liest den Ordner) oder das Endungs-Glob (``*.md``) vor, liest Code sie
-    # womöglich zur Laufzeit. -i: Windows-Dateisystem ignoriert Groß/klein. Teilwort-Treffer
-    # machen nur vorsichtiger. git grep: 0 gefunden, 1 nicht gefunden, sonst unklar → keine Doku.
-    # ponytail: Code, der Doku über berechnete Pfade ohne diese Wörter liest, fällt durch;
+    # des Pfads (Code liest den Ordner) oder die nackte Endung (``.md``: deckt ``*.md``,
+    # ``endswith(".md")``, ``suffix == ".md"``) vor, liest Code sie womöglich zur Laufzeit.
+    # -i: Windows-Dateisystem ignoriert Groß/klein. Teilwort-Treffer machen nur vorsichtiger.
+    # git grep: 0 gefunden, 1 nicht gefunden, sonst unklar → keine Doku.
+    # ponytail: Code, der auch die Endung berechnet (``".m" + "d"``), fällt durch;
     # Upgrade: Konfig-Schlüssel pruefen.doku_muster je Repo, wenn ein solcher Fall auftaucht.
     teile = PurePosixPath(pfad)
-    muster = [teile.name, *teile.parts[:-1], f"*{teile.suffix}"]
+    muster = [teile.name, *teile.parts[:-1], teile.suffix]
     suche = [arg for wort in muster for arg in ("-e", wort)]
     code, _ = _git(repo, "grep", "-q", "-i", "-F", *suche, "--", *_NICHT_DOKU_PFADE)
     return code == 1

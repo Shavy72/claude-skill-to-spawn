@@ -8,6 +8,7 @@ Stufen und Protokoll-Format bleiben im Paket. Jeder Lauf hängt ``Urteil.zeile``
 
 from __future__ import annotations
 
+import logging
 import subprocess
 import time
 from dataclasses import dataclass
@@ -17,6 +18,7 @@ from typing import Any
 from to_spawn.pruef import adapter_node, adapter_py, leiter, protokoll
 
 _ADAPTER: tuple[leiter.Adapter, ...] = (adapter_py.ADAPTER, adapter_node.ADAPTER)
+log = logging.getLogger("to_spawn.pruef")
 
 
 @dataclass(frozen=True)
@@ -39,18 +41,18 @@ def _sha(repo: Path, ref: str) -> str | None:
     return erg.stdout.strip() if erg.returncode == 0 else None
 
 
-#: Ungetrackte Werkzeug-Ordner (Caches, Installationen): ändern den geprüften Code nicht.
-_WERKZEUG_ORDNER = frozenset(
-    {
-        "__pycache__",
-        ".pytest_cache",
-        ".ruff_cache",
-        ".mypy_cache",
-        ".venv",
-        "venv",
-        "node_modules",
-    }
-)
+#: Ungetrackte Caches: ändern den geprüften Code nicht, gelten in jeder Ordnertiefe.
+_CACHE_ORDNER = frozenset({"__pycache__", ".pytest_cache", ".ruff_cache", ".mypy_cache"})
+#: Ungetrackte Installationen: nur ganz oben im Repo (``src/venv/`` kann Code sein → zählt).
+_INSTALL_ORDNER = frozenset({".venv", "venv", "node_modules"})
+
+
+def _ist_werkzeug_ordner(pfad: str) -> bool:
+    """``git status`` (normal) meldet neue Ordner als ``ordner/``; Dateien gleichen Namens zählen."""
+    if not pfad.endswith("/"):
+        return False
+    teile = pfad.rstrip("/").split("/")
+    return teile[-1] in _CACHE_ORDNER or (len(teile) == 1 and teile[0] in _INSTALL_ORDNER)
 
 
 def _ungespeichert(repo: Path) -> list[str]:
@@ -79,10 +81,16 @@ def _ungespeichert(repo: Path) -> list[str]:
             errors="replace",
             check=False,
         )
-    except OSError:
-        return ["?"]
-    if erg.returncode != 0:
-        return ["?"]
+    except OSError as fehler:
+        kurz = str(fehler)
+    else:
+        if erg.returncode == 0:
+            kurz = ""
+        else:
+            kurz = (erg.stderr.strip().splitlines() or [f"Exit {erg.returncode}"])[0]
+    if kurz:
+        log.warning("git status in %s gescheitert: %s", repo, kurz)
+        return [f"? (git status: {kurz})"]
     offen: list[str] = []
     eintraege = iter(erg.stdout.split("\0"))
     for eintrag in eintraege:
@@ -93,7 +101,7 @@ def _ungespeichert(repo: Path) -> list[str]:
             next(
                 eintraege, None
             )  # -z: Quellpfad einer Umbenennung folgt als eigener Eintrag
-        if art == "??" and _WERKZEUG_ORDNER & set(pfad.rstrip("/").split("/")):
+        if art == "??" and _ist_werkzeug_ordner(pfad):
             continue
         offen.append(pfad)
     return offen
