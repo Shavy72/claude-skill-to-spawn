@@ -12,7 +12,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
+import tempfile
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -93,6 +95,29 @@ def lies_json(datei: Path) -> tuple[Any, list[str]]:
 
     daten = json.loads(datei.read_text(encoding="utf-8"), object_pairs_hook=haken)
     return daten, doppelt
+
+
+def schreibe_atomar(datei: Path, daten: dict[str, Any]) -> None:
+    """JSON über eine Zwischendatei im selben Ordner + ``os.replace`` schreiben.
+
+    Ein Abbruch lässt die alte Datei ganz stehen; die Zwischendatei wird aufgeräumt.
+    ``OSError`` geht an den Aufrufer.
+    """
+    inhalt = json.dumps(daten, ensure_ascii=False, indent=2) + "\n"
+    fd, tmp_name = tempfile.mkstemp(dir=datei.parent, prefix=f".{datei.name}.", suffix=".tmp")
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(inhalt)
+        os.replace(tmp, datei)
+    except OSError:
+        tmp.unlink(missing_ok=True)
+        raise
+
+
+def checkpoint_label(konfig: dict[str, Any]) -> str:
+    """Label des Abnahme-Tickets (``regularien.checkpoint_label``, Vorgabe ``checkpoint:human``)."""
+    return str(konfig.get("regularien", {}).get("checkpoint_label", "checkpoint:human"))
 
 
 def lade_manifest_mit_doppelten(repo: Path, spec: int | str) -> tuple[dict[str, Any], list[str]]:
@@ -339,7 +364,7 @@ def _pruefe_github(
     konfig: dict[str, Any],
 ) -> None:
     eigene = set(bericht.tickets)
-    label = str(konfig.get("regularien", {}).get("checkpoint_label", "checkpoint:human"))
+    label = checkpoint_label(konfig)
     mit_kante = 0
     labels_gesehen = False
     checkpoints: list[str] = []
