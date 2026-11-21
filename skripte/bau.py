@@ -15,8 +15,9 @@ die Folge-Session mit dem Handoff-Inhalt als Startkontext — ohne Token-Kosten
 für die Übergabe.
 
 Blocker (#906): Vor dem Start wartet der Launcher auf native Blocker. Ohne ``--sofort``
-muss jeder Blocker zu sein und seinen Commit auf dem Hauptzweig haben; mit ``--sofort``
-nur zu sein. ``--umzug``, ``--resume`` und ``--probesitz`` warten nicht.
+muss jeder Blocker erledigt sein (zu oder ``staging:fertig``, #1527, Regel in
+``gh.blocker_erledigt``) und seinen Commit auf dem Hauptzweig haben; mit ``--sofort``
+nur erledigt sein. ``--umzug``, ``--resume`` und ``--probesitz`` warten nicht.
 """
 
 from __future__ import annotations
@@ -278,8 +279,8 @@ def blocker_offen(ticket: str, *, nur_offene: bool = False) -> list[str]:
     gruende: list[str] = []
     haupt = f"origin/{gh.hauptzweig(REPO)}"  # master/main/… je Repo (#257)
     for d in deps:
-        nr, state = d.get("number"), d.get("state")
-        if state != "closed":
+        nr = d.get("number")
+        if not gh.blocker_erledigt(d):  # zu oder staging:fertig (#1527)
             gruende.append(f"#{nr} offen")
             continue
         if nur_offene:
