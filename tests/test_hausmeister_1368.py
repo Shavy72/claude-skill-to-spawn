@@ -454,11 +454,11 @@ def test_s2_ignorierte_datei_bleibt(welt: Welt) -> None:
     wt = welt.worktree(35)
     _commit(wt, ".gitignore", "daten/\n__pycache__/\n", push=True)
     (wt / "daten").mkdir()
-    (wt / "daten" / "wichtig.db").write_text("x", encoding="utf-8")
+    (wt / "daten" / "wichtig.dat").write_text("x", encoding="utf-8")
     welt.ticket(35, "CLOSED", 48)
     r = welt.aufraeumen(wt, loeschen=True)
-    assert r.art == "bleibt" and "daten/wichtig.db" in r.grund
-    assert (wt / "daten" / "wichtig.db").is_file()
+    assert r.art == "bleibt" and "daten/wichtig.dat" in r.grund
+    assert (wt / "daten" / "wichtig.dat").is_file()
 
 
 def test_s2_nur_erzeugnisse_ignoriert_wird_geloescht(welt: Welt) -> None:

@@ -167,7 +167,7 @@ def test_aufpasser_trocken_loescht_nichts(
     )
     assert aufpasser.lauf_mit_einstellungen(e) == 0
     assert alt.is_dir()
-    assert [z["trocken"] for z in welt.zeilen()] == [True]
+    assert [z["trocken"] for z in welt.zeilen() if z.get("ordner")] == [True]
 
 
 def test_bau_start_wartet_bei_voller_platte(
