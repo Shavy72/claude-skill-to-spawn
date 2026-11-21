@@ -22,10 +22,10 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
+from conftest import attrappe
 
 from test_waechter_213 import (  # noqa: F401  (welt = Fixture)
     SPEC,
-    _ausfuehrbar,
     _beleg,
     _capo,
     _commit,
@@ -422,7 +422,7 @@ def test_vps_unlesbar_kein_spec_fertig(
     _frisch_zu(welt, "902")
     binaer = welt["tmp"] / "bin"
     binaer.mkdir(exist_ok=True)
-    _ausfuehrbar(binaer / "ssh", "#!/bin/sh\necho 'Verbindung weg' >&2\nexit 255\n")
+    attrappe(binaer, "ssh", 'import sys\nprint("Verbindung weg", file=sys.stderr)\nraise SystemExit(255)\n')
     import os
 
     monkeypatch.setenv("PATH", f"{binaer}{os.pathsep}{os.environ['PATH']}")

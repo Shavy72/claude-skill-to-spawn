@@ -19,6 +19,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from conftest import attrappe
 from test_hausmeister_1368 import (  # noqa: F401 — ``welt`` ist ein Fixture
     Welt,
     _klon_mit_nebenzweig_commit,
@@ -48,7 +49,7 @@ AUFZEICHNUNG_LEER = [
 ]
 
 # Python statt ``sh``: unter Windows startet die Attrappe als ``.exe`` (``windows_starter``, #68).
-PS_ATTRAPPE = f"""#!{sys.executable}
+PS_ATTRAPPE = """
 import os, sys
 with open(os.environ["PS_AUFZEICHNUNG"], encoding="utf-8") as datei:
     sys.stdout.write(datei.read())
@@ -64,8 +65,7 @@ def _win(pfad: Path) -> str:
 def win(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> Welt:
     monkeypatch.setattr(hausmeister, "_PLATTFORM", "win32")
     ps = welt.tmp / "bin" / "powershell"
-    ps.write_text(PS_ATTRAPPE, encoding="utf-8")
-    ps.chmod(0o755)
+    attrappe(ps.parent, ps.name, PS_ATTRAPPE)
     monkeypatch.setattr(hausmeister_windows, "_POWERSHELL", str(windows_starter(ps)))
     aufzeichnung = welt.tmp / "ps.json"
     monkeypatch.setenv("PS_AUFZEICHNUNG", str(aufzeichnung))
@@ -270,9 +270,7 @@ def test_win_powershell_zeitlimit_bleibt_fehler(
 ) -> None:
     wt = win.worktree(43)
     win.ticket(43, "CLOSED", 48)
-    (win.tmp / "bin" / "powershell").write_text(
-        f"#!{sys.executable}\nimport time\ntime.sleep(5)\n", encoding="utf-8"
-    )
+    attrappe(win.tmp / "bin", "powershell", "import time\ntime.sleep(5)\n")
     monkeypatch.setattr(hausmeister_windows, "PS_ZEITLIMIT_S", 0.5)
     r = win.aufraeumen(wt, loeschen=True)
     assert r.art == "bleibt" and r.fehler

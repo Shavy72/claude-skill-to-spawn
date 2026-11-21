@@ -16,6 +16,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from conftest import attrappe
 
 SKILL = Path(__file__).resolve().parent.parent
 CLI = SKILL / "to_spawn.py"
@@ -82,14 +83,6 @@ def _cli(
         timeout=60,
         check=False,
     )
-
-
-def _programm(ordner: Path, name: str, inhalt: str) -> Path:
-    ordner.mkdir(parents=True, exist_ok=True)
-    datei = ordner / name
-    datei.write_text("#!/bin/sh\n" + inhalt, encoding="utf-8")
-    datei.chmod(0o755)
-    return datei
 
 
 # --- onboarding ------------------------------------------------------------------
@@ -289,7 +282,7 @@ def test_bau_probelauf_zeigt_sandbox_praefix(tmp_path: Path, modus: str) -> None
     repo = _bau_repo(tmp_path, modus)
     binaer = tmp_path / "bin"
     for name in ("srt", "bwrap", "claude"):
-        _programm(binaer, name, "exit 0\n")
+        attrappe(binaer, name, "raise SystemExit(0)\n")
     wt_basis = tmp_path / "wt"
     umgebung = _umgebung(
         tmp_path,
@@ -314,18 +307,33 @@ def test_bau_probelauf_zeigt_sandbox_praefix(tmp_path: Path, modus: str) -> None
 # --- secrets ----------------------------------------------------------------------
 
 BWS_STUB = f"""
-[ "$BWS_ACCESS_TOKEN" = "{TOKEN}" ] || {{ echo "Token fehlt" >&2; exit 9; }}
-echo "$@" > "$FAKE_BWS_ARGS"
-if [ -n "$FAKE_BWS_EXIT" ]; then echo "Fehler: gestellt" >&2; exit "$FAKE_BWS_EXIT"; fi
-if [ -n "$FAKE_BWS_KAPUTT" ]; then echo "kein json"; exit 0; fi
-printf '%s' '[{{"id":"1","key":"API_KEY","value":"{GEHEIM_1}"}},{{"id":"2","key":"ZWEI","value":"{GEHEIM_2}"}}]'
+import os, sys
+if os.environ.get("BWS_ACCESS_TOKEN") != "{TOKEN}":
+    print("Token fehlt", file=sys.stderr)
+    sys.exit(9)
+with open(os.environ["FAKE_BWS_ARGS"], "w", encoding="utf-8") as f:
+    f.write(" ".join(sys.argv[1:]) + "\\n")
+if os.environ.get("FAKE_BWS_EXIT"):
+    print("Fehler: gestellt", file=sys.stderr)
+    sys.exit(int(os.environ["FAKE_BWS_EXIT"]))
+if os.environ.get("FAKE_BWS_KAPUTT"):
+    print("kein json")
+    sys.exit(0)
+sys.stdout.write('[{{"id":"1","key":"API_KEY","value":"{GEHEIM_1}"}},{{"id":"2","key":"ZWEI","value":"{GEHEIM_2}"}}]')
+"""
+
+# Protokoll-Attrappe: hängt "name args" als Zeile an (wie echo "name $*" >> datei)
+_PROTOKOLL = """
+import sys
+with open({protokoll!r}, "a", encoding="utf-8") as f:
+    f.write(" ".join(["{name}", *sys.argv[1:]]) + "\\n")
 """
 
 
 @pytest.fixture()
 def bws_welt(tmp_path: Path) -> tuple[Path, dict[str, str]]:
     binaer = tmp_path / "bin"
-    _programm(binaer, "bws", BWS_STUB)
+    attrappe(binaer, "bws", BWS_STUB)
     heim = tmp_path / "heim"
     heim.mkdir()
     umgebung = _umgebung(
@@ -503,9 +511,9 @@ def test_werkzeuge_cli_alles_da_exit_0(tmp_path: Path) -> None:
     binaer = tmp_path / "bin"
     protokoll = tmp_path / "aufrufe.txt"
     for rezept in nest.REZEPTE:
-        _programm(binaer, rezept.befehl, f'echo "{rezept.befehl} $*" >> "{protokoll}"\n')
+        attrappe(binaer, rezept.befehl, _PROTOKOLL.format(protokoll=str(protokoll), name=rezept.befehl))
     for name in ("apt-get", "npm", "sudo"):
-        _programm(binaer, name, f'echo "{name} $*" >> "{protokoll}"\n')
+        attrappe(binaer, name, _PROTOKOLL.format(protokoll=str(protokoll), name=name))
     ergebnis = _cli(
         "werkzeuge", "--repo", str(repo),
         cwd=tmp_path, env=_umgebung(claude_home.parent, PATH=str(binaer)),
@@ -749,7 +757,7 @@ def test_fix_bau_probelauf_ohne_sandbox_konfig_ohne_srt(tmp_path: Path) -> None:
     (repo / ".to-spawn" / "config.json").write_text("{}", encoding="utf-8")
     binaer = tmp_path / "bin"
     for name in ("srt", "bwrap", "claude"):
-        _programm(binaer, name, "exit 0\n")
+        attrappe(binaer, name, "raise SystemExit(0)\n")
     umgebung = _umgebung(
         tmp_path, PATH=f"{binaer}{os.pathsep}{os.environ['PATH']}",
         BAU_WT_DIR=str(tmp_path / "wt"),
@@ -768,7 +776,7 @@ def test_fix_secrets_null_schluessel_schreibt_nichts(
 ) -> None:
     _heim, umgebung = bws_welt
     binaer = Path(umgebung["PATH"].split(os.pathsep)[0])
-    _programm(binaer, "bws", "printf '[]'\n")
+    attrappe(binaer, "bws", "import sys; sys.stdout.write('[]')\n")
     ziel = tmp_path / ".env"
     ergebnis = _cli(
         "secrets", "--ziel", str(ziel), cwd=tmp_path,
@@ -789,7 +797,7 @@ def test_fix_env_wert_einfache_anfuehrung_rundreise(
     binaer = Path(umgebung["PATH"].split(os.pathsep)[0])
     schwierig = "dummy it's $HOME \"x\" #y"
     daten = json.dumps([{"key": "SCHWER", "value": schwierig}])
-    _programm(binaer, "bws", f"cat <<'JSON'\n{daten}\nJSON\n")
+    attrappe(binaer, "bws", f"import sys; sys.stdout.write({daten!r} + '\\n')\n")
     ziel = tmp_path / ".env"
     ergebnis = _cli(
         "secrets", "--ziel", str(ziel), cwd=tmp_path,

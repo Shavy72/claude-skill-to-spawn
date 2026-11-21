@@ -12,12 +12,12 @@ from __future__ import annotations
 import json
 import os
 import shlex
-import stat
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
+from conftest import attrappe
 
 SKILL = Path(__file__).resolve().parent.parent
 CLI = SKILL / "to_spawn.py"
@@ -202,16 +202,14 @@ def _terminal_marker(tmp: Path) -> tuple[Path, dict[str, str]]:
     bin_ordner = tmp / "bin"
     bin_ordner.mkdir()
     for name in ("pwsh", "powershell"):
-        if os.name == "nt":
-            (bin_ordner / f"{name}.cmd").write_text(
-                f'@echo %* >> "{marker}"\r\n', encoding="utf-8"
-            )
-        else:
-            programm = bin_ordner / name
-            programm.write_text(
-                f'#!/bin/sh\necho "$@" >> "{marker}"\n', encoding="utf-8"
-            )
-            programm.chmod(programm.stat().st_mode | stat.S_IEXEC)
+        attrappe(
+            bin_ordner,
+            name,
+            f"""
+            with open({str(marker)!r}, "a", encoding="utf-8") as f:
+                f.write(" ".join(__import__("sys").argv[1:]) + "\\n")
+            """,
+        )
     return marker, {"PATH": f"{bin_ordner}{os.pathsep}{os.environ['PATH']}"}
 
 

@@ -18,6 +18,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from conftest import attrappe
 
 SKILL = Path(__file__).resolve().parent.parent
 CLI = SKILL / "to_spawn.py"
@@ -89,9 +90,7 @@ def _pfad_mit(tmp_path: Path, *befehle: str) -> str:
     ordner = tmp_path / "bin"
     ordner.mkdir(exist_ok=True)
     for befehl in befehle:
-        datei = ordner / befehl
-        datei.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-        datei.chmod(0o755)
+        attrappe(ordner, befehl, "raise SystemExit(0)\n")
     return str(ordner)
 
 
@@ -467,9 +466,7 @@ def _pfad_mit_exit(tmp_path: Path, befehl: str, code: int) -> str:
     """Wegwerf-PATH mit einem Befehl, der mit ``code`` endet."""
     ordner = tmp_path / f"bin-{befehl}-{code}"
     ordner.mkdir(exist_ok=True)
-    datei = ordner / befehl
-    datei.write_text(f"#!/bin/sh\nexit {code}\n", encoding="utf-8")
-    datei.chmod(0o755)
+    attrappe(ordner, befehl, f"raise SystemExit({code})\n")
     return str(ordner)
 
 
