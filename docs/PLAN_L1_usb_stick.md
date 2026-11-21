@@ -134,3 +134,6 @@ Jede M-Zeile braucht einen Beleg (Befehl + Ausgabe oder Protokoll-Zeile) in
 ## Stand
 
 - 2026-11-21 19:20 — Plan angelegt, Kette benachrichtigt. Etappe 0 läuft.
+- 2026-11-21 19:30 (Server-Uhr) — Etappe 0: App-Tickets #1539, #1445 gemergt und geschlossen; #1385, #1429, #1537 hochgeladen, laufen in der Schlange; #1536 (Hausmeister räumt `~/wt`): zwei Reviews „Hartes: nein“, Fix-Runde 2 läuft, danach Merge, Install, erster echter Hausmeister-Lauf. Installiert auf dem Bau-Server: 7c1500c.
+- Einordnung: alle offenen System-Tickets im App-Repo eingeordnet; Sammel-Issues im Skill-Repo: Etappe 1 = 49, Etappe 2 = 50, Etappe 3 = 51, Etappe 4 = 52, Etappe 5 = 53; 110 App-Tickets mit Link geschlossen (offen 453 → 343), 24 bleiben App.
+- Etappe 1: Schnitt in sieben Pakete P0–P6; P0 Konfig-Kern gemergt (Pull-Request 48, main 2aea41e, Issue 46). P2a (Aufpasser) und P5 (Einrichter) im Bau; P2b, P3a, P3b, P4a, P4b folgen, P1 (Hausmeister) nach Merge von #1536, P6 (Prüf-Test „keine festen Namen“ + Doku) zuletzt. Noch nichts von Etappe 1 installiert.
