@@ -4,7 +4,7 @@
 # (sofern nicht -OhneWache) zuerst einen Tab `wache <S>` und einen Tab `leitstand <S>` (Schalter leitstand.aktiv). Prüft danach per scripts/sessions_stand.py.
 param(
     [Parameter(Mandatory = $true)][int]$Spec,
-    [string[]]$Tickets = @(),   # per -File kommt "51,52" als ein String an (#37) — unten selbst getrennt
+    $Tickets = @(),   # bewusst ohne Typ (#37): per -File kommt "51,52" als ein String an (#37) — unten selbst getrennt
     [switch]$OhneWache,
     [int]$Window = -1,      # -1 = neues Fenster, sonst wt-Fenster-ID (z. B. 1 = bestehendes erstes Fenster)
     [switch]$DryRun
@@ -19,7 +19,7 @@ foreach ($t in $Tickets) {
         exit 2
     }
 }
-$Tickets = @($Tickets | ForEach-Object { [int]$_ })
+$Tickets = @($Tickets | ForEach-Object { [int]$_ })  # untypisiert: bleiben Zahlen
 
 # Regularien zuerst (#206): bei Weigerung startet kein einziger Tab. Eine Auswahl
 # (-Tickets) geht mit in die Prüfung — jede Nummer muss im Manifest stehen.

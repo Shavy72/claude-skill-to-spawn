@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
 
 import pytest
 
-SKRIPT = Path(__file__).resolve().parents[1] / "spawn_local.ps1"
+SKRIPT = Path(os.environ.get("SPAWN_LOCAL_SKRIPT") or Path(__file__).resolve().parents[1] / "spawn_local.ps1")
 PS = shutil.which("pwsh") or shutil.which("powershell")
 
 pytestmark = pytest.mark.skipif(PS is None, reason="weder pwsh noch powershell vorhanden")
@@ -31,3 +33,17 @@ def test_keine_zahl_gibt_klare_meldung_und_exit_2(tmp_path: Path) -> None:
     lauf = _lauf(tmp_path, "51,abc")
     assert lauf.returncode == 2
     assert "abc" in lauf.stdout + lauf.stderr
+
+
+def test_komma_liste_kommt_als_zwei_tickets_beim_pruefer_an(tmp_path: Path) -> None:
+    # Vorher las die Landeseinstellung „51,52“ als Tausenderzahl 5152 (ein falsches Ticket).
+    pfad = tmp_path / "docs" / "agents" / "manifests"
+    pfad.mkdir(parents=True)
+    (pfad / "spec-48.json").write_text(
+        json.dumps({"spec": 48, "feature": "T", "tickets": {"51": {"title": "A"}, "52": {"title": "B"}}}),
+        encoding="utf-8",
+    )
+    lauf = _lauf(tmp_path, "51,52")
+    ausgabe = lauf.stdout + lauf.stderr
+    assert "5152" not in ausgabe
+    assert "2 Tickets" in ausgabe
