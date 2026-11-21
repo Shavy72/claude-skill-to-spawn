@@ -1687,7 +1687,7 @@ def _checkpoint(
     if dry_run:
         return [f"#{n} [Probe] würde Vorschlag annehmen: {_kurz(vorschlag.wahl)}"]
     text = f"{WAECHTER_KOPF} Annahme nach {frist:.0f} min nach Doktrin — David kann kippen. Vorschlag: {vorschlag.wahl}"
-    if not _gh_ok(["issue", "comment", str(n), "--repo", gh_repo, "--body", text]):
+    if not befund.kommentiere(n, gh_repo, text):
         return [f"#{n} FEHLER: Checkpoint-Annahme nicht kommentiert"]
     erledigt.add(schluessel)
     grund = (
@@ -2476,16 +2476,8 @@ def _tick(
                     continue
                 if schluessel in erledigt:
                     aktionen[-1] += " (heute schon kommentiert)"
-                elif _gh_ok(
-                    [
-                        "issue",
-                        "comment",
-                        str(n),
-                        "--repo",
-                        gh_repo,
-                        "--body",
-                        f"{WAECHTER_KOPF} {fund.regel} — {fund.text}",
-                    ]
+                elif befund.kommentiere(
+                    n, gh_repo, f"{WAECHTER_KOPF} {fund.regel} — {fund.text}"
                 ):
                     erledigt.add(schluessel)
                     sichern()
@@ -2537,7 +2529,7 @@ def _tick(
             f"{WAECHTER_KOPF} Mensch nötig — {was} (fp {fp}).\n"
             f"{WAECHTER_KOPF} Die Kette läuft weiter; bitte den Review-Befund von Hand prüfen."
         )
-        if not _gh_ok(["issue", "comment", ziel, "--repo", gh_repo, "--body", text]):
+        if not befund.kommentiere(ziel, gh_repo, text):
             aktionen.append(f"#{ziel} FEHLER: kommentieren gescheitert (Mensch nötig)")
             continue
         bau_log.schreibe(
@@ -2790,8 +2782,8 @@ def abschluss_anstossen(
     fehl = int(zustand.get("abschluss_fehlversuche") or 0) + 1
     zustand["abschluss_fehlversuche"] = fehl
     if fehl >= ABSCHLUSS_ALARM_AB and not zustand.get("abschluss_alarm"):
-        text = f"{WAECHTER_KOPF} Abschluss-Mail scheitert seit {fehl} Ticks: {grund} — bitte prüfen"
-        if _gh_ok(["issue", "comment", str(spec), "--repo", gh_repo, "--body", text]):
+        text = f"{WAECHTER_KOPF} Abschluss-Mail scheitert seit {fehl} Ticks: {_kurz(grund, 300)} — bitte prüfen"
+        if befund.kommentiere(spec, gh_repo, text):
             zustand["abschluss_alarm"] = datetime.now().astimezone().isoformat(timespec="seconds")
         else:
             zeilen.append(f"FEHLER: Abschluss-Mail — Kommentar auf #{spec} nicht geschrieben.")
