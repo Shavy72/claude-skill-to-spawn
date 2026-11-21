@@ -1330,7 +1330,7 @@ def test_1207_rueckfall_alter_stand_exit_2_nur_eigener_zettel(
 
     alt = "import sys\nprint('{\"gedeckt\": true}')\nsys.exit(2)\n"
     repo, vps = _live_gedeckt_welt(tmp_path, zettel, alt)
-    assert capo_mod.live_gedeckt(repo, vps, 901, "a" * 40, "b" * 40) is zettel
+    assert capo_mod.live_gedeckt(repo, vps, 901, "a" * 40, "b" * 40) is False  # Fix-Runde 2 (M1): kein Rückfall auf den eigenen Zettel
 
 
 @pytest.mark.parametrize("zettel", [True, False])
@@ -1345,4 +1345,79 @@ def test_1207_rueckfall_zeitlimit_nur_eigener_zettel(
         raise subprocess.TimeoutExpired(befehl, 60)
 
     monkeypatch.setattr(capo_mod.subprocess, "run", haengt)
-    assert capo_mod.live_gedeckt(repo, vps, 901, "a" * 40, "b" * 40) is zettel
+    assert capo_mod.live_gedeckt(repo, vps, 901, "a" * 40, "b" * 40) is False  # Fix-Runde 2 (M1): kein Rückfall auf den eigenen Zettel
+
+
+# --- #1207 Fix-Runde 2: Bereich bis zur master-Spitze (H1), Fehler → nicht gedeckt (M1) ---------
+
+
+def test_1207_sha_zettel_auf_der_spitze_deckt_frueheren_ticket_commit(
+    welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """H1: Zettel auf der master-Spitze (späterer Schritt) deckt #901 wie in der Schlange → live erwartet."""
+    _vps_deckung(
+        welt, monkeypatch, zettel=[], davor=("docs: Notiz", {"docs/notiz.md": "n\n"})
+    )
+    spitze = _commit(welt["repo"], "feat: Später (#903)", {"web/spaeter.py": "z = 1\n"})
+    (welt["tmp"] / "live_freigabe" / spitze[:7]).write_text("ok\n", encoding="utf-8")
+    _capo(welt)
+    assert any(
+        k.startswith("Aufseher: vps_ungleich_origin") for k in _kommentare(welt, "901")
+    )
+
+
+def _antwort_skript(code: int, ausgabe: str) -> str:
+    return f"import sys\nprint({ausgabe!r})\nsys.exit({code})\n"
+
+
+@pytest.mark.parametrize(
+    "skript",
+    [
+        _antwort_skript(2, '{"gedeckt": true}'),  # Exit 2 (falscher Aufruf)
+        _antwort_skript(3, '{"gedeckt": true}'),  # Exit ≠ 0/1
+        _antwort_skript(0, "kaputt"),  # Nicht-JSON
+        _antwort_skript(0, "[true]"),  # kein dict
+        _antwort_skript(1, '{"gedeckt": true}'),  # Widerspruch Exit ↔ gedeckt
+    ],
+    ids=["exit2", "exit3", "kein_json", "kein_dict", "widerspruch"],
+)
+def test_1207_fehler_nicht_gedeckt_trotz_eigenem_zettel_mit_warnung(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, skript: str
+) -> None:
+    """M1: Befehl da, Antwort unbrauchbar → nicht gedeckt + Warnzeile, nie Rückfall auf den eigenen Zettel."""
+    from to_spawn import capo as capo_mod
+
+    repo, vps = _live_gedeckt_welt(tmp_path, True, skript)
+    with caplog.at_level("WARNING"):
+        assert capo_mod.live_gedeckt(repo, vps, 901, "a" * 40, "b" * 40) is False
+    assert "nicht prüfbar" in caplog.text
+
+
+def test_1207_zeitlimit_nicht_gedeckt_trotz_eigenem_zettel_mit_warnung(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    from to_spawn import capo as capo_mod
+
+    repo, vps = _live_gedeckt_welt(tmp_path, True, "print('{\"gedeckt\": true}')\n")
+
+    def haengt(befehl: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+        raise subprocess.TimeoutExpired(befehl, 60)
+
+    monkeypatch.setattr(capo_mod.subprocess, "run", haengt)
+    with caplog.at_level("WARNING"):
+        assert capo_mod.live_gedeckt(repo, vps, 901, "a" * 40, "b" * 40) is False
+    assert "nicht prüfbar" in caplog.text
+
+
+def test_1207_befehl_bekommt_bis_spitze(tmp_path: Path) -> None:
+    """Bereichs-Wahl liegt im Befehl: capo übergibt nur ``--bis-spitze``, rechnet keinen Bereich."""
+    from to_spawn import capo as capo_mod
+
+    skript = (
+        "import json, sys\n"
+        "ok = '--bis-spitze' in sys.argv\n"
+        "print(json.dumps({'gedeckt': ok, 'offen': []}))\n"
+        "sys.exit(0 if ok else 1)\n"
+    )
+    repo, vps = _live_gedeckt_welt(tmp_path, False, skript)
+    assert capo_mod.live_gedeckt(repo, vps, 901, "a" * 40, "b" * 40) is True

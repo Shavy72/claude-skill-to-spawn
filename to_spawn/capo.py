@@ -796,12 +796,15 @@ def live_freigabe(vps: dict[str, Any], ticket: int) -> bool:
 
 
 def live_gedeckt(repo: Path, vps: dict[str, Any], ticket: int, kopf: str, sha: str) -> bool:
-    """Nimmt der Deploy-Dienst den Stand ``kopf..sha`` live? Urteil allein bei der SSOT im Repo.
+    """Nimmt der Deploy-Dienst ``sha`` beim nächsten Lauf live? Urteil allein bei der SSOT im Repo.
 
-    ``scripts/schlange_deckung.py`` rechnet Schlüssel und Deckung mit derselben Funktion wie die
-    Deploy-Schlange (#395, #1207): ein Ticket-Zettel allein deckt kein fremdes Ticket im Stand.
-    Antwort: Exit 0 = gedeckt, 1 = nicht gedeckt, JSON ``{"gedeckt", "offen"}``. Fehlt das Skript
-    (Fremd-Repo, alter Stand) oder antwortet es anders: wie früher zählt nur der eigene Zettel.
+    ``scripts/schlange_deckung.py --bis-spitze`` wählt den Bereich wie die Deploy-Schlange
+    (``kopf..origin/master``) und rechnet Schlüssel und Deckung mit derselben Funktion (#395, #1207):
+    ein Ticket-Zettel allein deckt kein fremdes Ticket, ein SHA-Zettel auf der Spitze deckt alles davor.
+    Antwort: Exit 0 = gedeckt, 1 = nicht gedeckt, JSON ``{"gedeckt", "offen"}``.
+    Fehlt das Skript ganz (Fremd-Repo, alter Stand), zählt wie früher nur der eigene Zettel.
+    Jede andere unbrauchbare Antwort (Exit ≠ 0/1, Zeitlimit, kein JSON, Widerspruch) heißt
+    „nicht gedeckt“ mit Warnzeile — nie Rückfall auf den eigenen Zettel (sonst Fehlalarm).
     """
     deckung_py = repo / "scripts" / "schlange_deckung.py"
     if not deckung_py.is_file():
@@ -811,6 +814,7 @@ def live_gedeckt(repo: Path, vps: dict[str, Any], ticket: int, kopf: str, sha: s
         str(deckung_py),
         kopf,
         sha,
+        "--bis-spitze",
         "--repo",
         str(repo),
         "--manifeste",
@@ -822,11 +826,11 @@ def live_gedeckt(repo: Path, vps: dict[str, Any], ticket: int, kopf: str, sha: s
         lauf = subprocess.run(befehl, capture_output=True, text=True, encoding="utf-8", timeout=60, check=False)
         daten = json.loads(lauf.stdout or "null") if lauf.returncode in (0, 1) else None
     except (OSError, subprocess.SubprocessError, ValueError) as fehler:
-        log.warning("Deckung für #%s nicht prüfbar (%s) — nur eigener Zettel zählt.", ticket, fehler)
-        return live_freigabe(vps, ticket)
+        log.warning("Deckung für #%s nicht prüfbar (%s) — gilt als nicht gedeckt.", ticket, fehler)
+        return False
     if not isinstance(daten, dict) or daten.get("gedeckt") is not (lauf.returncode == 0):
-        log.warning("Deckung für #%s nicht prüfbar (Exit %s) — nur eigener Zettel zählt.", ticket, lauf.returncode)
-        return live_freigabe(vps, ticket)
+        log.warning("Deckung für #%s nicht prüfbar (Exit %s) — gilt als nicht gedeckt.", ticket, lauf.returncode)
+        return False
     return daten["gedeckt"]
 
 
