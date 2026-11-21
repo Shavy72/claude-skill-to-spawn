@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from . import bau_log
+from . import bau_log, config
 
 log = logging.getLogger("to_spawn.vorfall")
 
@@ -38,8 +38,10 @@ KLASSEN: dict[str, tuple[str, str]] = {
     "mensch": ("M", "### 3.5"),
 }
 
-#: Vorgabe-Ort des Katalogs im Repo (Konfig: ``regularien.fehlerkatalog``).
-KATALOG_PFAD = Path("docs") / "agents" / "FEHLERKATALOG_spawn.md"
+#: Dateiname des Katalogs im Agenten-Ordner (``pfade.agenten``).
+KATALOG_NAME = "FEHLERKATALOG_spawn.md"
+#: Vorgabe-Ort des Katalogs (Alias; Konfig: ``regularien.fehlerkatalog``, sonst ``pfade.agenten``).
+KATALOG_PFAD = Path(config.DEFAULTS["pfade"]["agenten"]) / KATALOG_NAME
 
 #: Schutz-Spalte für alles, was diese Lernschleife selbst erkannt hat.
 SCHUTZ_AUTOMAT = "🟢 capo (#286)"
@@ -252,10 +254,16 @@ def eintrag_felder(
 
 
 def katalog_pfad(repo: Path, konfig: dict[str, Any] | None = None) -> Path:
-    """Ort des Fehlerkatalogs: Konfig ``regularien.fehlerkatalog``, sonst Vorgabe."""
+    """Ort des Fehlerkatalogs: Konfig ``regularien.fehlerkatalog``, sonst im Ordner ``pfade.agenten``.
+
+    Ohne ``konfig`` gilt für den Agenten-Ordner die Repo-Konfig (``regularien`` nur aus ``konfig``).
+    """
     regularien = (konfig or {}).get("regularien")
     ort = str((regularien or {}).get("fehlerkatalog") or "") if isinstance(regularien, dict) else ""
-    return repo / (ort or KATALOG_PFAD)
+    if ort:
+        return repo / ort
+    werte = config.lade(repo) if konfig is None else konfig
+    return config.pfad(config.Konfig(werte, repo / config.KONFIG_PFAD), "agenten") / KATALOG_NAME
 
 
 def _abschnitt_grenzen(zeilen: list[str], praefix: str) -> tuple[int, int] | None:

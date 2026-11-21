@@ -24,6 +24,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from . import config
+
 log = logging.getLogger("to_spawn.bau_log")
 
 #: Erlaubte Zeilen-Typen (``staffel_limit`` meldet das Ende der Staffel-Kette).
@@ -56,14 +58,20 @@ TYPEN = (
 #: fallen ``None``-Felder weg). ``aufseher_abloesung.exit`` null = Ablösung nicht versucht.
 NULL_FELDER: dict[str, frozenset[str]] = {"aufseher_abloesung": frozenset({"exit"})}
 
-LOG_ORDNER = Path("docs") / "agents" / "bau_log"
+#: Vorgabe-Ordner der versionierten Logs (Alias für Aufrufer/Tests; es gilt ``pfade.bau_log``).
+LOG_ORDNER = Path(config.DEFAULTS["pfade"]["bau_log"])
 LAUF_ORDNER = Path(".to-spawn") / "bau_log"
 _WT_MUSTER = re.compile(r"wt-(\d+)")
 
 
 def log_pfad(repo: Path, ticket: str | int) -> Path:
     """Versionierte Datei (schreibt nur ``eintrag``)."""
-    return repo / LOG_ORDNER / f"{ticket}.jsonl"
+    return log_ordner(repo) / f"{ticket}.jsonl"
+
+
+def log_ordner(repo: Path) -> Path:
+    """Ordner der versionierten Logs aus ``pfade.bau_log`` (fehlt er: Vorgabe), unter ``repo`` wie übergeben."""
+    return config.pfad(config.Konfig(config.lade(repo), repo / config.KONFIG_PFAD), "bau_log")
 
 
 def lauf_pfad(repo: Path, ticket: str | int) -> Path:
@@ -139,8 +147,6 @@ def log_repo(fallback: Path | None = None, *, versioniert: bool = False) -> Path
         return None
     if fallback is not None:
         return fallback
-    from . import config
-
     return config.repo_wurzel()
 
 
@@ -286,7 +292,7 @@ def lese(repo: Path, ticket: str | int, *, hauptbaum: Path | None = None) -> lis
 
 def alle_tickets(repo: Path) -> list[str]:
     nummern: set[str] = set()
-    for ordner in (repo / LOG_ORDNER, repo / LAUF_ORDNER):
+    for ordner in (log_ordner(repo), repo / LAUF_ORDNER):
         if ordner.is_dir():
             nummern.update(p.stem for p in ordner.glob("*.jsonl") if p.stem.isdigit())
     return sorted(nummern, key=int)
