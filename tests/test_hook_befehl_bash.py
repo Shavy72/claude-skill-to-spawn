@@ -44,7 +44,7 @@ def _python_befehle(hooks: dict) -> list[str]:
 def test_python_hooks_findet_bash_programm_und_skript(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     bau = _lade_bau(monkeypatch, tmp_path)
     befehle = _python_befehle(bau.staffel_hooks())
-    assert len(befehle) == 3
+    assert len(befehle) == 4  # + hook-spec-sperre (E2-4, #88)
     for befehl in befehle:
         # Echte Bash zerlegt den Befehl wie Claude Code; Programm und Skript müssen auffindbar sein.
         pruefung = f'set -- {befehl}; command -v "$1" >/dev/null && [ -f "$2" ]'

@@ -504,12 +504,14 @@ def staffel_hooks(mit_staffel: bool = True) -> dict:
     ``Stop``: zuerst die Frage-Sperre (#321: endet die Antwort mit einer Frage, heißt
     es „Vorschlag nehmen, weitermachen“), dann der Staffel-Hook, danach der Bau-Log-Hook des Skills (Token,
     Modell, Dauer je Runde); er gibt auch die Umzug-Anfrage des Aufsehers weiter (#212). ``SubagentStop``: Bau-Log-Zeile je Subagent (#204).
-    ``PreToolUse``: ``AskUserQuestion`` → Frage-Sperre lehnt ab (#321).
+    ``PreToolUse``: ``AskUserQuestion`` → Frage-Sperre lehnt ab (#321); ``Bash`` → Spec-Sperre
+    lehnt rohes ``gh issue close <Spec>`` ab und nennt ``to_spawn.py spec-schliessen`` (E2-4).
     """
     frage_sperre = FRAGE_SPERRE_BEFEHL
     staffel = hook_befehl(Path(sys.executable), staffel_hook_pfad(REPO))
     bau_log_stop = hook_befehl(Path(sys.executable), TO_SPAWN_CLI, "hook-stop")
     bau_log_sub = hook_befehl(Path(sys.executable), TO_SPAWN_CLI, "hook-subagent-stop")
+    spec_sperre = hook_befehl(Path(sys.executable), TO_SPAWN_CLI, "hook-spec-sperre")
     stop = [{"type": "command", "command": frage_sperre}]
     if mit_staffel:
         stop.append({"type": "command", "command": staffel})
@@ -517,7 +519,10 @@ def staffel_hooks(mit_staffel: bool = True) -> dict:
     return {
         "Stop": [{"hooks": stop}],
         "SubagentStop": [{"hooks": [{"type": "command", "command": bau_log_sub}]}],
-        "PreToolUse": [{"matcher": "AskUserQuestion", "hooks": [{"type": "command", "command": frage_sperre}]}],
+        "PreToolUse": [
+            {"matcher": "AskUserQuestion", "hooks": [{"type": "command", "command": frage_sperre}]},
+            {"matcher": "Bash", "hooks": [{"type": "command", "command": spec_sperre}]},
+        ],
     }
 
 
