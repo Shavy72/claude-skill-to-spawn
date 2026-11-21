@@ -26,6 +26,8 @@ from test_hausmeister_1368 import (  # noqa: F401 — ``welt`` ist ein Fixture
     welt,
 )
 
+from windows_attrappen import windows_starter
+
 from to_spawn import hausmeister, hausmeister_windows
 
 # Aufzeichnung: Get-CimInstance Win32_Process | Select-Object ProcessId,CommandLine,
@@ -45,8 +47,11 @@ AUFZEICHNUNG_LEER = [
     },
 ]
 
-PS_ATTRAPPE = """#!/bin/sh
-cat "$PS_AUFZEICHNUNG"
+# Python statt ``sh``: unter Windows startet die Attrappe als ``.exe`` (``windows_starter``, #68).
+PS_ATTRAPPE = f"""#!{sys.executable}
+import os, sys
+with open(os.environ["PS_AUFZEICHNUNG"], encoding="utf-8") as datei:
+    sys.stdout.write(datei.read())
 """
 
 
@@ -61,7 +66,7 @@ def win(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> Welt:
     ps = welt.tmp / "bin" / "powershell"
     ps.write_text(PS_ATTRAPPE, encoding="utf-8")
     ps.chmod(0o755)
-    monkeypatch.setattr(hausmeister_windows, "_POWERSHELL", str(ps))
+    monkeypatch.setattr(hausmeister_windows, "_POWERSHELL", str(windows_starter(ps)))
     aufzeichnung = welt.tmp / "ps.json"
     monkeypatch.setenv("PS_AUFZEICHNUNG", str(aufzeichnung))
     _prozesse(welt, AUFZEICHNUNG_LEER)
@@ -266,7 +271,7 @@ def test_win_powershell_zeitlimit_bleibt_fehler(
     wt = win.worktree(43)
     win.ticket(43, "CLOSED", 48)
     (win.tmp / "bin" / "powershell").write_text(
-        "#!/bin/sh\nsleep 5\n", encoding="utf-8"
+        f"#!{sys.executable}\nimport time\ntime.sleep(5)\n", encoding="utf-8"
     )
     monkeypatch.setattr(hausmeister_windows, "PS_ZEITLIMIT_S", 0.5)
     r = win.aufraeumen(wt, loeschen=True)
