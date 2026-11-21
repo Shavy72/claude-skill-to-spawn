@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import ast
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -168,10 +169,31 @@ def test_maschine_eintragen_neu_und_wiederholbar(tmp_path: Path, maschine_datei:
     assert len(m["repos"]) == 3  # Vorgabe-Repos bleiben erhalten
     assert m["repos"][-1] == eintrag
     vorher = maschine_datei.read_bytes()
+    os.utime(maschine_datei, (1, 1))  # alte Zeit: grobe Dateisystem-Uhr macht den Vergleich nicht zufällig grün
     mtime = maschine_datei.stat().st_mtime_ns
     assert config.maschine_eintragen(repo) == eintrag
     assert maschine_datei.read_bytes() == vorher
     assert maschine_datei.stat().st_mtime_ns == mtime  # nichts geschrieben
+    assert not list(maschine_datei.parent.glob(".maschine-*"))  # keine Temp-Reste
+
+
+
+def test_maschine_eintragen_schreibfehler_raeumt_auf(
+    tmp_path: Path, maschine_datei: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``OSError`` beim Ersetzen geht an den Aufrufer, Temp-Datei weg, alte Datei bytegleich."""
+    repo = _repo(tmp_path, origin="https://github.com/o/app.git")
+    maschine_datei.parent.mkdir(parents=True)
+    maschine_datei.write_text(json.dumps({"repos": []}), encoding="utf-8")
+    vorher = maschine_datei.read_bytes()
+
+    def wirft(*_args: object, **_kwargs: object) -> None:
+        raise OSError("Platte voll")
+
+    monkeypatch.setattr(config.os, "replace", wirft)
+    with pytest.raises(OSError, match="Platte voll"):
+        config.maschine_eintragen(repo)
+    assert maschine_datei.read_bytes() == vorher
     assert not list(maschine_datei.parent.glob(".maschine-*"))  # keine Temp-Reste
 
 
