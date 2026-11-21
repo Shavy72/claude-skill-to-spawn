@@ -27,6 +27,7 @@ from pathlib import Path
 from types import ModuleType
 
 import pytest
+from conftest import attrappe
 
 SKILL = Path(__file__).resolve().parent.parent
 SKRIPTE = SKILL / "skripte"
@@ -56,14 +57,12 @@ def _fake_gh(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, deps: object | Non
     """``gh`` im PATH: gibt ``deps`` als JSON aus; ``None`` = Abfrage scheitert (Exit 1)."""
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
-    skript = bin_dir / "gh"
     if deps is None:
-        skript.write_text("#!/bin/sh\necho 'HTTP 502' >&2\nexit 1\n", encoding="utf-8")
+        attrappe(bin_dir, "gh", 'import sys\nprint("HTTP 502", file=sys.stderr)\nraise SystemExit(1)')
     else:
         daten = tmp_path / "deps.json"
         daten.write_text(json.dumps(deps), encoding="utf-8")
-        skript.write_text(f"#!/bin/sh\ncat '{daten}'\n", encoding="utf-8")
-    skript.chmod(0o755)
+        attrappe(bin_dir, "gh", f"import sys\nsys.stdout.write(open({str(daten)!r}, encoding='utf-8').read())")
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
 
 

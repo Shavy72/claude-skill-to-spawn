@@ -14,6 +14,7 @@ import logging
 from pathlib import Path
 
 import pytest
+from conftest import attrappe
 from test_hausmeister_1368 import (  # noqa: F401 — ``welt`` ist ein Fixture
     ORIGIN,
     Welt,
@@ -85,8 +86,7 @@ def test_loeschen_scheitert_log_zeigt_absicht_statt_geloescht(zw: Welt) -> None:
     git(wt, "push", "-q", "origin", "HEAD:master")
     zw.ticket(61, "CLOSED", vor_stunden=48)
     haken = zw.bare / "hooks" / "pre-receive"
-    haken.write_text("#!/bin/sh\necho nein >&2\nexit 1\n", encoding="utf-8")
-    haken.chmod(0o755)
+    attrappe(zw.bare / "hooks", "pre-receive", 'import sys; print("nein", file=sys.stderr); sys.exit(1)\n')
     r = hausmeister.zweig_aufraeumen(ORIGIN, "ticket/61-test", loeschen=True)
     assert r.art == "bleibt" and r.fehler
     assert "ticket/61-test" in _heads(zw)

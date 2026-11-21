@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from conftest import attrappe
 
 SKILL = Path(__file__).resolve().parent.parent
 CLI = SKILL / "to_spawn.py"
@@ -26,8 +27,9 @@ sys.path.insert(0, str(SKILL))
 import context_mode_attrappe  # noqa: E402  (tests/hilfen, Pfad setzt conftest)
 from to_spawn import bau_log, config, melder, probesitz, setup  # noqa: E402
 
-GH_WRAPPER = """#!/bin/sh
-exec {py} {stub} "$@"
+GH_WRAPPER = """
+import os
+os.execv({py!r}, [{py!r}, {stub!r}, *__import__("sys").argv[1:]])
 """
 
 
@@ -518,12 +520,8 @@ def heim(tmp_path: Path) -> Path:
     context_mode_attrappe.plugin_anlegen(home)
     binaer = home / "bin"
     binaer.mkdir()
-    (binaer / "gh").write_text(
-        GH_WRAPPER.format(py=sys.executable, stub=HILFEN / "gh_stub.py"), encoding="utf-8"
-    )
-    (binaer / "gh").chmod(0o755)
-    (binaer / "claude").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-    (binaer / "claude").chmod(0o755)
+    attrappe(binaer, "gh", GH_WRAPPER.format(py=sys.executable, stub=str(HILFEN / "gh_stub.py")))
+    attrappe(binaer, "claude", "raise SystemExit(0)")
     return home
 
 

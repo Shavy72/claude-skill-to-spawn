@@ -15,6 +15,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pytest
+from conftest import attrappe
 
 SKILL = Path(__file__).resolve().parent.parent
 CLI = SKILL / "to_spawn.py"
@@ -147,9 +148,7 @@ def test_startet_nicht_wird_nicht_installiert_mit_grund() -> None:
 
 
 def test_echte_startpruefung_faengt_fehler(tmp_path: Path) -> None:
-    kaputt = tmp_path / "tmux"
-    kaputt.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
-    kaputt.chmod(0o755)
+    kaputt = attrappe(tmp_path, "tmux", "raise SystemExit(1)")
     grund = setup.pruefe_start("tmux", str(kaputt))
     assert grund
     assert setup.pruefe_start("tmux", str(tmp_path / "gibt-es-nicht"))
