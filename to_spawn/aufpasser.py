@@ -98,6 +98,7 @@ from to_spawn import (
     bau_log,
     config,
     eigener_handoff,
+    gh,
     prozessbaum,
     sessions_datei,
     speicher,
@@ -756,6 +757,55 @@ def worktree_schmutzig(worktree: Path) -> bool:
     return bool(_git(worktree, "status", "--porcelain").strip())
 
 
+def klon_nachziehen(ordner: Path) -> str:
+    """Klon einer laufenden Session auf ``origin/<Hauptzweig>`` vorspulen (#1497).
+
+    Ohne diesen Schritt zieht nur der Spawn einen Klon nach; Hooks und Skripte, die
+    aus dem Arbeitsordner laufen, veralten dann still. Eingeschaltet je Repo über
+    ``nachziehen`` in ``.to-spawn/config.json`` — gelesen aus ``origin/<Hauptzweig>``,
+    nie aus dem (evtl. alten) Arbeitsordner. Nur auf dem Hauptzweig, nur
+    ``--ff-only``: eigene Commits oder kollidierende Änderungen lassen den Klon
+    unberührt. Danach läuft ``nachziehen.danach`` (argv-Liste, muss idempotent sein,
+    z. B. ein Hook-Installer) — in jedem Lauf, damit auch ein schon aktueller Klon
+    seine Hooks bekommt. Rückgabe: ``aus`` · ``nachgezogen`` · ``aktuell`` ·
+    ``übersprungen: <Grund>``.
+    """
+    try:
+        wurzel = Path(_git(ordner, "rev-parse", "--show-toplevel").strip())
+        haupt = gh.hauptzweig(wurzel)
+        _git(wurzel, "fetch", "-q", "origin", haupt)
+        roh = _git(wurzel, "show", f"origin/{haupt}:.to-spawn/config.json")
+    except RuntimeError:
+        return "aus"
+    try:
+        einstellung = json.loads(roh).get("nachziehen")
+    except (json.JSONDecodeError, AttributeError):
+        return "aus"
+    if not isinstance(einstellung, dict):
+        return "aus"
+    try:
+        zweig = _git(wurzel, "rev-parse", "--abbrev-ref", "HEAD").strip()
+        if zweig != haupt:
+            return f"übersprungen: Zweig {zweig}, nicht {haupt}"
+        vorher = _git(wurzel, "rev-parse", "HEAD").strip()
+        _git(wurzel, "merge", "-q", "--ff-only", f"origin/{haupt}")
+        ergebnis = "aktuell" if _git(wurzel, "rev-parse", "HEAD").strip() == vorher else "nachgezogen"
+    except RuntimeError as fehler:
+        log.warning("%s: nicht vorspulbar — unberührt: %s", wurzel, fehler)
+        return f"übersprungen: {fehler}"
+    danach = einstellung.get("danach")
+    if isinstance(danach, list) and danach and all(isinstance(t, str) for t in danach):
+        try:
+            lauf = subprocess.run(danach, cwd=str(wurzel), capture_output=True, text=True, timeout=120, check=False)
+            if lauf.returncode != 0:
+                log.warning("%s: nachziehen.danach Exit %s: %s", wurzel, lauf.returncode, lauf.stderr.strip()[:300])
+        except (OSError, subprocess.TimeoutExpired) as fehler:
+            log.warning("%s: nachziehen.danach scheiterte: %s", wurzel, fehler)
+    if ergebnis == "nachgezogen":
+        log.info("%s: auf origin/%s vorgespult", wurzel, haupt)
+    return ergebnis
+
+
 def worktree_finden(repo: Path, ticket: int, cwd: Path | None = None) -> Path | None:
     """Worktree eines Tickets aus ``git worktree list`` — Basename ``wt-<N>``, sonst
     ``cwd`` der Session, falls es ein registrierter Worktree ist.
@@ -1171,6 +1221,22 @@ class Aufpasser:
                 belegt.add(ticket)
                 belegt.update(kette_folge(pane_pid, ticket))
         return belegt
+
+    def klone_nachziehen(self) -> None:
+        """Jeden Ordner, in dem irgendein tmux-Pane steht (auch Leit-Sessions außerhalb
+        ``spec-<S>``), per :func:`klon_nachziehen` vorspulen (#1497)."""
+        try:
+            pfade = set(self.tmux("list-panes", "-a", "-F", "#{pane_current_path}").splitlines())
+        except RuntimeError as fehler:
+            log.warning("Panes nicht lesbar — kein Nachziehen: %s", fehler)
+            return
+        for pfad in sorted(p for p in pfade if p.strip()):
+            if self.e.trocken:
+                print(f"[trocken] nachziehen: {pfad}")
+                continue
+            ergebnis = klon_nachziehen(Path(pfad))
+            if ergebnis != "aus":
+                log.info("nachziehen %s: %s", pfad, ergebnis)
 
     def repo_ordner(self, fenster: list[Fenster]) -> Path | None:
         for f in fenster:
@@ -2301,6 +2367,7 @@ class Aufpasser:
                 except RuntimeError as fehler:
                     log.error("%s: Fenster nicht lesbar: %s", sitzung, fehler)
             return
+        self.klone_nachziehen()
         for sitzung, spec, fenster, repo in gesehen:
             try:
                 self.sitzung_pruefen(sitzung, spec, fenster, repo)
