@@ -32,6 +32,12 @@ was zum Weiterbauen nötig ist.
 
 ## 3. Stand
 
+- **2026-11-21 22:51 (Server-Uhr, main 0118fde):** Gemergt: Pull-Request 159 (alte Rollenbezeichnung
+  entfernt), 158 (Issue 155 zu), 142 (Issue 94 zu), 151 (Issue 122, Windows-Job-Objekt). Offen im
+  Pull-Request: 127 (Issue 100, Merge läuft), 160 (Issue 145), 146 (Issue 88), 148 (Issue 136, Fix-Runde 2),
+  134 (Issue 93), 161 (Issue 154, vom PC). Bau läuft zu Issue 135, 95, 156. Als Nächstes: 129 nach 135;
+  102 vor 101, 104, 149; 96, 97.
+
 - **2026-11-21 22:37 (Server-Uhr):** Gemergt: Pull-Request 152 (Issue 144 zu), 153 (roter Test
   `test_aufseher_428` auf main behoben), 137 (P7c-a, Windows-Testaufbau; die Sperre für
   `to_spawn/prozessbaum.py` ist damit aufgehoben). In Fix-Runde nach Prüfer-Urteil: 127 (Issue 100,
