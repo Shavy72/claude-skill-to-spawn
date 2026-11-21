@@ -1,6 +1,7 @@
 """Weg-Test für ``rueckblick.py planen`` (#581): echtes Mini-Repo mit git-Worktree, Aufruf als Unterprozess.
 
-Kein Mock: git echt, SSH echt gegen einen nicht auflösbaren Host. Der Spec-330-Test liest die
+Kein Mock: git echt; SSH als Attrappe über die Start-Tür (#1406), die wie echtes ssh gegen
+einen nicht auflösbaren Host antwortet (#1528) — der Test braucht kein echtes ssh. Der Spec-330-Test liest die
 echten Bau-Logs (unverändert kopiert nach ``tests/hilfen/rueckblick_spec330``).
 """
 
@@ -126,18 +127,28 @@ def test_zaehlung_feste_namen_oben_freie_texte_ungezaehlt(repo: Path) -> None:
     assert auftrag.count(FREI) == 2
 
 
-@pytest.mark.skipif(shutil.which("ssh") is None, reason="kein ssh auf diesem Rechner")
 def test_bau_server_nicht_erreichbar(repo: Path) -> None:
     konfig = repo / ".to-spawn" / "config.json"
     konfig.write_text(
         json.dumps({"ssh_ziel": "rueckblick-test.invalid", "server_repo": "/gibt/es/nicht/rueckblick"}),
         encoding="utf-8",
     )
+    # Seit der Start-Tür (#1406) startet der Test kein echtes ssh mehr: die Attrappe
+    # antwortet wie ssh bei unbekanntem Host (Exit 255, Grund in stderr) (#1411).
+    attrappe = Path(os.environ["TO_SPAWN_TEST_BIN"]) / "ssh"
+    attrappe.write_text(
+        f"#!{sys.executable}\nimport sys\n"
+        "sys.stderr.write('ssh: Could not resolve hostname rueckblick-test.invalid\\n')\nsys.exit(255)\n",
+        encoding="utf-8",
+    )
+    attrappe.chmod(0o755)
     lauf = _lauf(repo, SPEC)
     assert lauf.returncode == 0, lauf.stderr
     assert lauf.stdout.splitlines()[0] == "Datenlage: 2 von 3 Tickets mit Bau-Log"
-    assert "nicht erreichbar (" in lauf.stdout
-    assert "nicht erreichbar (" in _auftrag(lauf)
+    # Grund aus stderr der Attrappe (Exit 255) muss durchkommen, nicht nur das Etikett (Review #1528).
+    grund = "nicht erreichbar (ssh: Could not resolve hostname rueckblick-test.invalid)"
+    assert grund in lauf.stdout
+    assert grund in _auftrag(lauf)
 
 
 def test_spec330_echte_logs_session_verwaist_oben(tmp_path: Path) -> None:

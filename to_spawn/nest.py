@@ -249,11 +249,7 @@ def _auschecken_ohne_beleg_bilder(worktree: Path, belege: str) -> None:
     )
     if alte.returncode != 0:
         raise NestFehler(f"git ls-files scheiterte: {alte.stderr.decode(errors='replace').strip()[:300]}")
-    bilder = [
-        n
-        for n in alte.stdout.split(b"\0")
-        if n.lower().endswith(BELEG_BILDER) and BELEG_FIXTUR_ORDNER not in n
-    ]
+    bilder = [n for n in alte.stdout.split(b"\0") if n.lower().endswith(BELEG_BILDER) and BELEG_FIXTUR_ORDNER not in n]
     if bilder:
         markiert = subprocess.run(
             ["git", "-C", str(worktree), "update-index", "--skip-worktree", "-z", "--stdin"],
@@ -315,6 +311,71 @@ def sandbox_einstellungen(
             "denyWrite": sperre_schreiben,
         },
     }
+
+
+#: Installer der Git-Hooks im Klon (Projekt-Repo, #1442). Welche Hooks, steht nur dort.
+GIT_HOOKS_INSTALLER = Path("scripts") / "hooks" / "install_git_hooks.sh"
+#: Hook-Datei, die der Installer neben sich erwartet (``dirname "$0"``) und vergleicht.
+GIT_HOOKS_SPERRE = Path("scripts") / "hooks" / "pre-push-master-sperre.sh"
+GIT_HOOKS_TIMEOUT_S = 60
+
+
+def git_hooks_einrichten(klon: Path) -> bool:
+    """Richtet die Git-Hooks des Projekts ein (u. a. pre-push: master-Sperre, #1442/#1445).
+
+    Aufruf vor jedem Session-Start (``bau.py``, ``wache.py``, CLI ``nest sandbox``),
+    unabhängig vom Sandbox-Modus. Installer und Sperre kommen aus dem Git-Objekt
+    ``origin/<hauptzweig>`` des Klons, nie aus dem Arbeitsordner: den darf eine Session
+    beschreiben, der Installer läuft aber mit den Rechten des Starters (#1445 B2).
+    Die Hooks liegen im gemeinsamen Git-Ordner, also gilt ein Aufruf für Hauptklon und
+    alle Worktrees. Idempotent. Fehlt der Installer auf origin (alter Stand, fremdes
+    Repo) oder scheitert er: Warnung im Log, ``False``, kein Abbruch.
+    """
+    ref = f"origin/{gh.hauptzweig(klon)}"
+    inhalte: dict[str, bytes] = {}
+    for datei in (GIT_HOOKS_INSTALLER, GIT_HOOKS_SPERRE):
+        try:
+            gezeigt = subprocess.run(
+                ["git", "-C", str(klon), "show", f"{ref}:{datei.as_posix()}"],
+                capture_output=True,
+                timeout=GIT_HOOKS_TIMEOUT_S,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired) as fehler:
+            log.warning("Push-Sperre nicht eingerichtet: git show %s scheiterte (%s)", ref, fehler)
+            return False
+        if gezeigt.returncode == 0:
+            inhalte[datei.name] = gezeigt.stdout
+    if GIT_HOOKS_INSTALLER.name not in inhalte:
+        log.warning("Push-Sperre nicht eingerichtet: %s fehlt auf %s im Klon %s", GIT_HOOKS_INSTALLER, ref, klon)
+        return False
+    # Fehlt nur die Sperre: Installer legt den Hook trotzdem an, der warnt dann beim Push.
+    # Temp-Ordner + Schreiben mit im try: Platte voll/Rechte dürfen den Start nie abbrechen.
+    try:
+        with tempfile.TemporaryDirectory(prefix="to-spawn-hooks-") as tmp:
+            for name, inhalt in inhalte.items():
+                (Path(tmp) / name).write_bytes(inhalt)
+            installer = Path(tmp) / GIT_HOOKS_INSTALLER.name
+            ergebnis = subprocess.run(
+                ["sh", str(installer), str(klon)],
+                capture_output=True,
+                text=True,
+                timeout=GIT_HOOKS_TIMEOUT_S,
+                check=False,
+            )
+    except (OSError, subprocess.TimeoutExpired) as fehler:
+        log.warning("Push-Sperre nicht eingerichtet: Installer von %s scheiterte (%s)", ref, fehler)
+        return False
+    if ergebnis.returncode != 0:
+        log.warning(
+            "Push-Sperre nicht eingerichtet: Installer von %s endete mit %d: %s",
+            ref,
+            ergebnis.returncode,
+            ergebnis.stderr.strip()[:300],
+        )
+        return False
+    log.info("Git-Hooks eingerichtet (Push-Sperre) aus %s: %s", ref, klon)
+    return True
 
 
 def sandbox_vorbereiten(
@@ -953,6 +1014,7 @@ def lauf(args: argparse.Namespace) -> int:
             return 0
         if befehl == "sandbox":
             repo = (args.repo or config.repo_wurzel()).resolve()
+            git_hooks_einrichten(repo)
             print(sandbox_vorbereiten(args.ziel, repo, home=heim))
             return 0
         if befehl == "secrets":
@@ -1017,6 +1079,7 @@ __all__: Sequence[str] = (
     "sandbox_praefix",
     "sandbox_start",
     "sandbox_vorbereiten",
+    "git_hooks_einrichten",
     "setze_onboarding",
     "uebernehme_einstellungen",
 )

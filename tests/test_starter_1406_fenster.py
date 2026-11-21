@@ -10,6 +10,7 @@ import importlib.util
 import os
 import subprocess
 import sys
+import types
 from pathlib import Path
 from types import ModuleType
 
@@ -115,8 +116,12 @@ def test_spawn_neustart_server_ohne_attrappe_gesperrt(tmp_path: Path, monkeypatc
 
 
 def test_spawn_neustart_pc_tab_ohne_attrappe_gesperrt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """PC-Zweig (wt-Tab); ``sys.platform`` gestellt, damit er auch unter Linux läuft."""
-    monkeypatch.setattr(spawn.sys, "platform", "win32")
+    """PC-Zweig (wt-Tab); ``sys.platform`` gestellt, damit er auch unter Linux läuft.
+
+    Nur ``spawn`` sieht „win32“ (eigenes ``sys``-Abbild): global gestellt nähme
+    ``shutil.which`` unter Linux den Windows-Zweig und stürzte an ``_winapi`` ab (#1411).
+    """
+    monkeypatch.setattr(spawn, "sys", types.SimpleNamespace(**{**vars(sys), "platform": "win32"}))
     monkeypatch.setenv("TO_SPAWN_REPO", str(tmp_path))  # neustart setzt es selbst — so räumt monkeypatch auf
     aus = type("Eintrag", (), {"zustand": "aus", "pid": None, "session_pid": None})()
     monkeypatch.setattr(spawn, "ticket_eintrag", lambda *_a: aus)
