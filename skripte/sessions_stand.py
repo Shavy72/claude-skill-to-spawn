@@ -39,7 +39,8 @@ log = logging.getLogger("sessions_stand")
 #: Repo, in dem gearbeitet wird: ``TO_SPAWN_REPO`` (setzt die Weiterleitung im Repo), sonst
 #: Git-Wurzel des aktuellen Ordners — nie der Ort dieses Skripts (liegt im Skill, #205).
 REPO = Path(os.environ["TO_SPAWN_REPO"]).resolve() if os.environ.get("TO_SPAWN_REPO") else config.repo_wurzel()
-MANIFESTE = REPO / "docs" / "agents" / "manifests"
+# ponytail: nach Merge von P3a → manifest.manifest_ordner(REPO)
+MANIFESTE = config.pfad(config.Konfig(config.lade(REPO), REPO / config.KONFIG_PFAD), "manifeste")
 #: ``scripts/`` = Weiterleitung im Repo, ``skripte/`` = Direktstart aus dem Skill (#205).
 MUSTER = re.compile(r"(?:scripts|skripte)[\\/](bau|wache)\.py\"?\s+(\d+)")
 #: Claude-Session aus ``bau``: der Settings-Pfad trägt die Ticket-Nummer (``<repo>-bau\\<N>-<zeit>[-<anhang>]``,

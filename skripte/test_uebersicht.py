@@ -172,7 +172,8 @@ def werte_ticket(verify_hard: Path, nummer: str, titel: str) -> Karte:
 
 def lade_tickets(repo: Path, spec: int) -> list[tuple[str, str]]:
     """``[(nummer, titel)]`` aus dem Spec-Manifest (Tickets als Objekt oder Liste)."""
-    manifest = repo / "docs" / "agents" / "manifests" / f"spec-{spec}.json"
+    konfig = config.Konfig(config.lade(repo), repo / config.KONFIG_PFAD)  # ponytail: nach P3a → manifest.manifest_ordner
+    manifest = config.pfad(konfig, "manifeste") / f"spec-{spec}.json"
     daten = json.loads(manifest.read_text(encoding="utf-8"))
     tickets = daten.get("tickets") or {}
     if isinstance(tickets, dict):

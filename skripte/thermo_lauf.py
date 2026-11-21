@@ -29,6 +29,12 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+# Skill-Wurzel in sys.path, damit ``to_spawn`` importierbar ist (#205).
+_SKILL = str(Path(__file__).resolve().parent.parent)
+if _SKILL not in sys.path:
+    sys.path.insert(0, _SKILL)
+from to_spawn import config, gh  # noqa: E402
+
 log = logging.getLogger("thermo_lauf")
 
 MAX_DATEIEN = 8
@@ -81,8 +87,17 @@ def befunde_ordner(repo: Path, spec: int) -> Path:
     return repo / ".to-spawn" / f"thermo_{spec}"
 
 
+def repo_ordner(repo: Path, name: str) -> Path:
+    """Ordner ``pfade.<name>`` aus der Repo-Konfig, genau unter dem übergebenen ``repo`` (L1 #46).
+
+    ponytail: Umhüllen mit ``Konfig`` hält den Pfad unter ``repo`` (nicht aufgelöst); nach Merge
+    von P3a für ``manifeste``/``bau_log`` → ``manifest.manifest_ordner``/``bau_log.log_ordner``.
+    """
+    return config.pfad(config.Konfig(config.lade(repo), repo / config.KONFIG_PFAD), name)
+
+
 def marker_pfad(repo: Path, spec: int) -> Path:
-    return repo / "docs" / "agents" / f"thermo_{spec}.md"
+    return repo_ordner(repo, "agenten") / f"thermo_{spec}.md"
 
 
 def lade_grenzen(repo: Path) -> Grenzen:
@@ -115,7 +130,7 @@ def ist_code(pfad: str) -> bool:
 
 
 def lade_manifest(repo: Path, spec: int) -> tuple[Path, dict[str, Any]]:
-    pfad = repo / "docs" / "agents" / "manifests" / f"spec-{spec}.json"
+    pfad = repo_ordner(repo, "manifeste") / f"spec-{spec}.json"
     try:
         tickets = json.loads(pfad.read_text(encoding="utf-8")).get("tickets") or {}
     except (OSError, ValueError, AttributeError) as fehler:
@@ -516,7 +531,7 @@ def main(argv: list[str] | None = None) -> int:
     p_plan.add_argument("spec", type=int)
     p_plan.add_argument("--repo", default=".")
     p_plan.add_argument("--basis")
-    p_plan.add_argument("--kopf", default="origin/master")
+    p_plan.add_argument("--kopf", help="Standard: origin/<Hauptzweig>")
     p_sam = unter.add_parser("sammeln")
     p_sam.add_argument("spec", type=int)
     p_sam.add_argument("--repo", default=".")
@@ -525,7 +540,7 @@ def main(argv: list[str] | None = None) -> int:
     repo = Path(args.repo).resolve()
     try:
         if args.befehl == "plan":
-            return plan(repo, args.spec, args.basis, args.kopf)
+            return plan(repo, args.spec, args.basis, args.kopf or f"origin/{gh.hauptzweig(repo)}")
         return sammeln(repo, args.spec)
     except Fehler as fehler:
         log.error("%s", fehler)

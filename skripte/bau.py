@@ -57,7 +57,8 @@ _ECHTER_LAUF = False
 #: Repo, in dem gearbeitet wird: ``TO_SPAWN_REPO`` (setzt die Weiterleitung im Repo), sonst
 #: Git-Wurzel des aktuellen Ordners — nie der Ort dieses Skripts (liegt im Skill, #205).
 REPO = Path(os.environ["TO_SPAWN_REPO"]).resolve() if os.environ.get("TO_SPAWN_REPO") else config.repo_wurzel()
-MANIFEST_DIR = REPO / "docs" / "agents" / "manifests"
+# ponytail: nach Merge von P3a → manifest.manifest_ordner(REPO)
+MANIFEST_DIR = config.pfad(config.Konfig(config.lade(REPO), REPO / config.KONFIG_PFAD), "manifeste")
 HOME = Path.home()
 CLAUDE_DIR = HOME / ".claude"
 
