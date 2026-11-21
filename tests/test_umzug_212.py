@@ -25,7 +25,7 @@ SKRIPTE = SKILL / "skripte"
 
 sys.path.insert(0, str(SKILL))
 
-from to_spawn import config, umzug  # noqa: E402
+from to_spawn import config, prozessbaum, umzug  # noqa: E402
 from windows_attrappen import windows_starter  # noqa: E402
 
 HEUTE = "2026-09-18"
@@ -487,6 +487,9 @@ def _bau(
 
 
 def _lebt(pid: int) -> bool:
+    if sys.platform == "win32":
+        # ``os.kill(pid, 0)`` ist unter Windows ``TerminateProcess`` bzw. WinError 87 (#68).
+        return prozessbaum.lebt(pid)
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
@@ -588,6 +591,7 @@ def test_spawn_srv_umzug_nur_mit_einem_ticket(welt: dict[str, Path]) -> None:
     assert "genau ein" in ergebnis.stderr
 
 
+@pytest.mark.braucht("tmux")  # spawn_srv.sh startet tmux (Bau-Server), Windows ohne tmux (#68)
 def test_spawn_srv_umzug_probelauf_zeigt_fenster(welt: dict[str, Path]) -> None:
     ergebnis = _spawn_srv(
         welt["haupt"],
@@ -606,6 +610,7 @@ def test_spawn_srv_umzug_probelauf_zeigt_fenster(welt: dict[str, Path]) -> None:
     assert "wache 9120" not in ausgabe
 
 
+@pytest.mark.braucht("tmux")  # spawn_srv.sh startet tmux (Bau-Server), Windows ohne tmux (#68)
 def test_spawn_srv_nur_wache(welt: dict[str, Path]) -> None:
     ergebnis = _spawn_srv(welt["haupt"], SPEC, "--nur-wache", "--ohne-regularien", "--dry-run")
     ausgabe = ergebnis.stdout + ergebnis.stderr
@@ -1009,6 +1014,7 @@ def test_umzug_alle_wartet_wird_laeuft_nach_serverstart(
 # --- Befund 4: läuft auf dem Server schon → Umzug bricht ab -------------------------
 
 
+@pytest.mark.braucht("tmux")  # spawn_srv.sh startet tmux (Bau-Server), Windows ohne tmux (#68)
 def test_spawn_srv_umzug_laeuft_bereits_exit_4(welt: dict[str, Path]) -> None:
     schlaefer = subprocess.Popen(
         [sys.executable, "-c", "import time; time.sleep(60)", str(SKRIPTE / "bau.py"), TICKET],
@@ -1167,6 +1173,7 @@ def test_bau_umzug_fetch_fehler_exit_2(welt: dict[str, Path]) -> None:
     assert not (welt["tmp"] / "fake" / "aufrufe.txt").exists()
 
 
+@pytest.mark.braucht("tmux")  # spawn_srv.sh startet tmux (Bau-Server), Windows ohne tmux (#68)
 def test_spawn_srv_reicht_sha_ref_durch(welt: dict[str, Path]) -> None:
     ref = f"ticket-9121@{'a' * 40}:{HANDOFF_REL}"
     ergebnis = _spawn_srv(

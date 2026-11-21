@@ -15,11 +15,12 @@ import ast
 import logging
 import os
 import shlex
-import shutil
 import subprocess
 import sys
 from pathlib import Path
 from typing import Any
+
+from to_spawn import bash_wahl
 
 log = logging.getLogger("to_spawn.stand")
 
@@ -34,25 +35,6 @@ TIMEOUT_PRUEFEN_S = 180
 TIMEOUT_PUSH_S = 900
 
 
-def _git_bash() -> str:
-    """Git-Bash unter Windows: ``GIT_BASH``, Standardpfad, dann neben ``git`` gesucht.
-
-    Ein nacktes ``bash`` trifft unter Windows ``System32\bash.exe`` (WSL ohne /bin/bash).
-    """
-    kandidaten = [os.environ.get("GIT_BASH") or "", "C:/Program Files/Git/bin/bash.exe"]
-    git = shutil.which("git")
-    if git:
-        kandidaten += [
-            str(p / "bin" / "bash.exe") for p in Path(git).resolve().parents[:3]
-        ]
-    for kandidat in kandidaten:
-        if kandidat and Path(kandidat).is_file():
-            return kandidat
-    raise ValueError(
-        "Git-Bash nicht gefunden (GIT_BASH setzen oder Git für Windows installieren)"
-    )
-
-
 def _argv(befehl: str) -> list[str]:
     """Text-Befehl → argv; ``python``/``python3`` → laufender Interpreter, ``bash`` unter
     Windows → Git-Bash."""
@@ -60,7 +42,7 @@ def _argv(befehl: str) -> list[str]:
     if teile and teile[0] in ("python", "python3"):
         teile[0] = sys.executable
     elif teile and teile[0] == "bash" and sys.platform == "win32":
-        teile[0] = _git_bash()
+        teile[0] = bash_wahl.bash()
     return teile
 
 

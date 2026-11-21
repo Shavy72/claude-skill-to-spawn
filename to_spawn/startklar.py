@@ -33,7 +33,6 @@ import logging
 import os
 import re
 import shlex
-import shutil
 import subprocess
 import sys
 from collections.abc import Callable, Iterable, Mapping, Sequence
@@ -41,7 +40,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from to_spawn import config
+from to_spawn import bash_wahl, config
 from to_spawn.manifest import manifest_im_repo, manifest_pfad
 
 log = logging.getLogger("to_spawn.startklar")
@@ -164,15 +163,12 @@ def befehl_text(werkzeug: Werkzeug, spec: int, ticket: int | str) -> str:
 
 
 def _bash_pfad() -> str | None:
-    """bash wie bei Claude Code: Windows → Git-Bash, sonst ``bash`` im PATH."""
-    if os.name == "nt":
-        for kandidat in (
-            Path(os.environ.get("CLAUDE_CODE_GIT_BASH_PATH", "")),
-            Path("C:/Program Files/Git/bin/bash.exe"),
-        ):
-            if str(kandidat) not in ("", ".") and kandidat.is_file():
-                return str(kandidat)
-    return shutil.which("bash")
+    """bash für die Probe-Befehle — Wahl in ``to_spawn.bash_wahl``; fehlt sie → ``None``."""
+    try:
+        return bash_wahl.bash()
+    except FileNotFoundError as fehler:
+        log.warning("%s", fehler)
+        return None
 
 
 def _standard_laeufer(
@@ -194,7 +190,7 @@ def _standard_laeufer(
         encoding="utf-8",
         errors="replace",
         timeout=timeout,
-        env={**os.environ, **zusatz},
+        env=bash_wahl.bash_umgebung({**os.environ, **zusatz}),
         check=False,
     )
 
