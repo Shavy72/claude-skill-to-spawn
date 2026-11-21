@@ -25,10 +25,12 @@ bleibt er immer):
 1. echter Ordner (kein Symlink), eigener Besitzer (UID), Name aus :data:`PRAEFIXE` +
    Ticket-Nummer (``t1335``, ``mut1499``, ``tmp_136``; kein Datum wie ``tmp_2026-11-21``,
    kein ``tmux-1000``/``systemd-…``);
-2. nichts darin jünger als :data:`ALTER_S`; Ticket zu; kein Prozess darin;
-3. **nichts Ungesichertes im Baum** (:func:`_baum_pruefen`, die EINE Stelle dieser Regel):
-   kein Socket/FIFO (lebender Server), in jedem Git-Repo keine Commits auf keinem Remote,
-   keine geänderten oder neuen nicht ignorierten Dateien, kein Repo ohne Arbeitsbaum.
+2. Ticket zu; kein Prozess darin;
+3. **nichts Frisches oder Ungesichertes im Baum** (:func:`_baum_pruefen`, die EINE Stelle
+   dieser Regel, ein Lauf über den ganzen Baum): nichts jünger als :data:`ALTER_S` (jede
+   Ebene, ``.git``-Inneres ausgenommen), kein Socket/FIFO (lebender Server), in jedem
+   Git-Repo keine Commits auf keinem Remote (Zweige, HEAD, Stash und Reflog), keine
+   geänderten oder neuen nicht ignorierten Dateien, kein Repo ohne Arbeitsbaum.
 
 Ordner, unter denen andere Muster suchen (z. B. ``claude-1000`` für ``claude-*/*``), sind
 nie selbst ein Rest. Muster mit ``..`` oder mit ``/``/Home als Such-Ordner fallen weg.
@@ -44,11 +46,11 @@ import stat
 import time
 from pathlib import Path
 
-from . import config
+from . import aufpasser, config
 
 log = logging.getLogger("to_spawn.temp_ordner")
 
-#: Nichts Frisches: jüngste Änderung (Ordner + oberste Ebene) mindestens so alt.
+#: Nichts Frisches: jüngste Änderung im ganzen Baum (ohne ``.git``-Inneres) mindestens so alt.
 ALTER_S = 24 * 3600
 #: Längster Temp-Ordner ohne Warnung (Vorgabe auf dem Bau-Server: 17 Zeichen).
 MAX_LAENGE = 24
@@ -73,10 +75,16 @@ def pfad() -> Path:
     roh = umg or str(config.maschine()["temp_ordner"]).strip() or vorgabe
     ordner = Path(os.path.abspath(Path(roh).expanduser()))
     if _gefaehrlich(ordner):
-        log.warning("Temp-Ordner %s abgelehnt (Wurzel oder Home) — Vorgabe gilt", ordner)
+        log.warning(
+            "Temp-Ordner %s abgelehnt (Wurzel oder Home) — Vorgabe gilt", ordner
+        )
         ordner = Path(os.path.abspath(Path(vorgabe).expanduser()))
     elif not umg and len(str(ordner)) > MAX_LAENGE:
-        log.warning("Temp-Ordner %s ist länger als %s Zeichen — Unix-Sockets darunter scheitern", ordner, MAX_LAENGE)
+        log.warning(
+            "Temp-Ordner %s ist länger als %s Zeichen — Unix-Sockets darunter scheitern",
+            ordner,
+            MAX_LAENGE,
+        )
     ordner.mkdir(parents=True, exist_ok=True)
     return ordner
 
@@ -93,13 +101,17 @@ def umgebung() -> dict[str, str]:
 
 def _muster() -> list[str]:
     umg = os.environ.get("TO_SPAWN_TEMP_RESTE")  # Test-Tür; "" = kein Altbestand
-    reste = umg.split(os.pathsep) if umg is not None else config.maschine()["temp_reste"]
+    reste = (
+        umg.split(os.pathsep) if umg is not None else config.maschine()["temp_reste"]
+    )
     muster = [os.path.join(str(pfad()), "*")]
     for m in reste:
         if not isinstance(m, str) or not m.strip():
             continue
         roh = os.path.expanduser(m.strip())
-        if ".." in Path(roh).parts or _gefaehrlich(Path(os.path.abspath(os.path.dirname(roh)))):
+        if ".." in Path(roh).parts or _gefaehrlich(
+            Path(os.path.abspath(os.path.dirname(roh)))
+        ):
             log.warning("Temp-Rest-Muster %s abgelehnt (.. oder Wurzel/Home)", m)
             continue
         muster.append(roh)
@@ -126,29 +138,20 @@ def reste() -> list[tuple[Path, int]]:
     return sorted(gefunden.items())
 
 
-def _juengste_aenderung(ordner: Path) -> float:
-    # ponytail: nur Ordner + oberste Ebene (2-GB-Bäume nicht ganz ablaufen); laufende
-    # Schreiber tiefer unten fängt die Prozess-Regel.
-    zeiten = [ordner.stat().st_mtime]
-    with os.scandir(ordner) as eintraege:
-        for e in eintraege:
-            try:
-                zeiten.append(e.stat(follow_symlinks=False).st_mtime)
-            except OSError:
-                continue
-    return max(zeiten)
+def _baum_pruefen(ordner: Path, jetzt: float) -> None:
+    """Regel 3: ``_Bleibt``, wenn im Baum etwas Frisches, Ungesichertes oder Lebendes liegt.
 
-
-def _baum_pruefen(ordner: Path) -> None:
-    """Regel 3: ``_Bleibt``, wenn im Baum etwas Ungesichertes oder Lebendes liegt.
-
-    Symlinks werden nie verfolgt, ``.git`` nie betreten. ponytail: in ``pytest-of-*``-Bäumen
+    Ein Lauf über den ganzen Baum, damit keine Ebene ungeprüft bleibt. Symlinks werden nie
+    verfolgt, ``.git`` nie betreten (seine Zeit zählt nicht: ``git status`` schreibt dort den
+    Index; frische Commits fängt die Repo-Prüfung). ponytail: in ``pytest-of-*``-Bäumen
     (Wegwerf-Ordner von pytest, pytest löscht sie selbst nach drei Läufen) zählen nur
     Sockets/FIFOs, keine Test-Repos; Upgrade: auch dort Repos prüfen, wenn dort je echte
     Arbeit liegt.
     """
     from . import hausmeister as hm
 
+    if jetzt - ordner.stat(follow_symlinks=False).st_mtime < ALTER_S:
+        raise hm._Bleibt("frisch")
     stapel = [(ordner, False)]
     while stapel:
         d, in_pytest = stapel.pop()
@@ -161,11 +164,18 @@ def _baum_pruefen(ordner: Path) -> None:
         elif not in_pytest and {"HEAD", "objects", "refs"} <= namen:
             raise hm._Bleibt(f"ungesichert: Git-Repo ohne Arbeitsbaum in {rel}")
         for e in eintraege:
-            art = e.stat(follow_symlinks=False).st_mode
+            info = e.stat(follow_symlinks=False)
+            art = info.st_mode
+            if e.name != ".git" and jetzt - info.st_mtime < ALTER_S:
+                raise hm._Bleibt(f"frisch ({rel}/{e.name})")
             if stat.S_ISSOCK(art) or stat.S_ISFIFO(art):
-                raise hm._Bleibt(f"Socket/FIFO im Baum ({rel}/{e.name}) — ein Server lebt evtl.")
+                raise hm._Bleibt(
+                    f"Socket/FIFO im Baum ({rel}/{e.name}) — ein Server lebt evtl."
+                )
             if stat.S_ISDIR(art) and e.name != ".git":
-                stapel.append((Path(e.path), in_pytest or e.name.startswith("pytest-of-")))
+                stapel.append(
+                    (Path(e.path), in_pytest or e.name.startswith("pytest-of-"))
+                )
 
 
 def _repo_pruefen(repo: Path, rel: str, ist_worktree: bool) -> None:
@@ -176,6 +186,11 @@ def _repo_pruefen(repo: Path, rel: str, ist_worktree: bool) -> None:
             raise hm._Bleibt(f"ungesichert: geänderte/neue Dateien in {rel}")
         if hm._ungepushte_koepfe(repo, ist_worktree):
             raise hm._Bleibt(f"ungesichert: Commits auf keinem Remote in {rel}")
+        # Reflog: verlassene Commits (abgehängter HEAD, alte Stashes) hängen an keinem Ref mehr.
+        if aufpasser.git_lauf(
+            repo, "rev-list", "-n", "1", "--reflog", "--not", "--remotes=origin"
+        ).strip():
+            raise hm._Bleibt(f"ungesichert: Commits nur im Reflog in {rel}")
     except RuntimeError as fehler:  # leeres/kaputtes Repo: nicht prüfbar ⇒ bleibt
         raise hm._Bleibt(f"ungesichert: Repo {rel} nicht prüfbar ({fehler})") from None
 
@@ -200,29 +215,32 @@ def aufraeumen(*, loeschen: bool, jetzt: float | None = None) -> list[tuple[Path
         if grund is None:
             grund = f"Temp-Rest von Ticket #{ticket} (zu, alt, kein Prozess, nichts Ungesichertes)"
             if loeschen:
-                grund = _weg(ordner, ticket, grund)
+                grund = _weg(ordner, ticket, grund, jetzt)
         ergebnis.append((ordner, grund))
     return ergebnis
 
 
-def _entscheiden(ordner: Path, ticket: int, jetzt: float, zu: dict[tuple[int, str], bool]) -> str | None:
+def _entscheiden(
+    ordner: Path, ticket: int, jetzt: float, zu: dict[tuple[int, str], bool]
+) -> str | None:
     """``None`` = wegwerfbar, sonst der Grund, warum der Rest bleibt."""
     from . import hausmeister as hm  # spät: hausmeister ruft dieses Modul
 
     try:
-        if jetzt - _juengste_aenderung(ordner) < ALTER_S:
-            return "bleibt: frisch"
         # Ist der Rest selbst ein Klon, gilt die Nummer in seinem Repo; sonst im Ticket-Repo
         # der Maschine. ponytail: Reste ohne Git aus anderen Repos schützen Alter, Prozess-
         # und Baum-Regel; Upgrade: Repo-Kürzel im Rest-Namen.
         slug = hm._origin_slug(ordner) if (ordner / ".git").exists() else ""
         if (ticket, slug) not in zu:
             daten = hm._ticket_daten(ticket, slug or None)
-            zu[(ticket, slug)] = isinstance(daten, dict) and str(daten.get("state", "")).upper() == "CLOSED"
+            zu[(ticket, slug)] = (
+                isinstance(daten, dict)
+                and str(daten.get("state", "")).upper() == "CLOSED"
+            )
         if not zu[(ticket, slug)]:
             return "bleibt: Ticket offen oder unbekannt"
         hm._kein_prozess(ordner)
-        _baum_pruefen(ordner)
+        _baum_pruefen(ordner, jetzt)
     except hm._Bleibt as b:
         return f"bleibt: {b.grund}"
     except (OSError, RuntimeError, ValueError) as fehler:
@@ -230,18 +248,20 @@ def _entscheiden(ordner: Path, ticket: int, jetzt: float, zu: dict[tuple[int, st
     return None
 
 
-def _weg(ordner: Path, ticket: int, grund: str) -> str:
+def _weg(ordner: Path, ticket: int, grund: str, jetzt: float) -> str:
     """Gegenprobe (Prozess + Baum), Log-Zeile, dann der Lösch-Weg des Hausmeisters."""
     from . import hausmeister as hm
 
     try:
         hm._kein_prozess(ordner, probe=True)
-        _baum_pruefen(ordner)
+        _baum_pruefen(ordner, jetzt)
     except hm._Bleibt as b:
         return f"bleibt: {b.grund}"
     except (OSError, RuntimeError, ValueError) as fehler:
         return f"bleibt: Fehler {type(fehler).__name__}: {fehler}"
-    if not hm._log_schreiben(hm.Ergebnis(ordner, "gelöscht", grund, ticket, trocken=False)):
+    if not hm._log_schreiben(
+        hm.Ergebnis(ordner, "gelöscht", grund, ticket, trocken=False)
+    ):
         return "bleibt: Hausmeister-Log nicht schreibbar — ohne Log kein Löschen"
     try:
         hm._loeschen(ordner, False)
