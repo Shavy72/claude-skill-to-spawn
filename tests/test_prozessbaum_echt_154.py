@@ -7,6 +7,7 @@ nach dem Beenden dürfen sie nirgends mehr stehen.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import subprocess
 import sys
@@ -66,9 +67,14 @@ def test_echter_baum_mit_kommandozeile_und_ende() -> None:
         assert not prozessbaum.lebt(eltern.pid) and not prozessbaum.lebt(kind)
         assert kind not in prozessbaum.baum(eltern.pid)
     finally:
-        for pid in (kind, eltern.pid):
-            if pid and prozessbaum.lebt(pid):
-                prozessbaum.senden([pid], prozessbaum.signal.SIGTERM)
-        eltern.wait(timeout=10)
+        # Aufräumen wirft nie selbst (sonst verdeckte es die eigentliche Assertion): erst den
+        # ganzen Baum einsammeln (auch ein Kind, dessen PID nie gelesen wurde), dann hart beenden.
+        reste = [kind] if kind else []
+        if eltern.poll() is None:
+            with contextlib.suppress(OSError):
+                reste += prozessbaum.baum(eltern.pid)[1:]
+            eltern.kill()
+        prozessbaum.senden([pid for pid in reste if prozessbaum.lebt(pid)], prozessbaum.signal.SIGTERM)
+        eltern.wait()  # nach kill() sofort zurück; ohne Zeitgrenze, die selbst werfen könnte
         if eltern.stdout is not None:
             eltern.stdout.close()
