@@ -101,3 +101,58 @@ def test_1504_origin_master_unlesbar_fail_closed(tmp_path: Path, caplog: pytest.
     with caplog.at_level("WARNING"):
         assert _gedeckt(repo, vps) is False
     assert "nicht prüfbar" in caplog.text
+
+
+def _gepusht_mit_manifest(tmp_path: Path) -> tuple[Path, dict[str, str]]:
+    repo, vps = _welt(tmp_path)
+    _manifest_schreiben(repo)
+    _git(repo, "add", _MANIFEST)
+    _git(repo, "commit", "-q", "-m", "docs: Manifest (#900)")
+    _git(repo, "push", "-q", "origin", "HEAD:master")
+    return repo, vps
+
+
+@pytest.mark.parametrize("code", [124, 127])
+def test_1504_baum_abfrage_gescheitert_fail_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, code: int
+) -> None:
+    """Git-Abfrage nach dem Skript scheitert kurz (Zeitablauf/OSError): nicht „fehlt“, also kein Zettel-Rückfall."""
+    repo, vps = _gepusht_mit_manifest(tmp_path)
+    echt = capo._git
+
+    def wackelig(r: Path, *args: str) -> tuple[int, str]:
+        if args[:1] in (("cat-file",), ("ls-tree",)):
+            return code, ""
+        return echt(r, *args)
+
+    monkeypatch.setattr(capo, "_git", wackelig)
+    assert _gedeckt(repo, vps) is False  # Zettel 901 liegt — „gedeckt“ wäre fail-open
+
+
+def test_1504_skript_fehlt_auf_origin_master_zaehlt_zettel(tmp_path: Path) -> None:
+    """Gegenprobe: Skript gibt es auf origin/master wirklich nicht → wie früher nur der eigene Zettel."""
+    repo, vps = _welt(tmp_path)
+    _git(repo, "rm", "-q", "scripts/schlange_deckung.py")
+    _git(repo, "commit", "-q", "-m", "chore: ohne Deckung (#2)")
+    _git(repo, "push", "-q", "origin", "HEAD:master")
+    assert _gedeckt(repo, vps) is True
+
+
+def test_1504_entpackt_nur_gebrauchte_dateien(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """``git archive`` holt nur die Deckungs-Dateien und Manifeste, nicht ganz ``scripts/``."""
+    repo, vps = _gepusht_mit_manifest(tmp_path)
+    (repo / "scripts" / "fremd.py").write_text("x = 1\n", encoding="utf-8")
+    _git(repo, "add", "scripts")
+    _git(repo, "commit", "-q", "-m", "chore: fremd (#3)")
+    _git(repo, "push", "-q", "origin", "HEAD:master")
+    echt = subprocess.run
+    archiv_pfade: list[list[str]] = []
+
+    def lauf(cmd: list[str], *a: object, **k: object) -> subprocess.CompletedProcess:
+        if cmd[:2] == ["git", "archive"]:
+            archiv_pfade.append(cmd[cmd.index("--") + 1 :])
+        return echt(cmd, *a, **k)
+
+    monkeypatch.setattr(capo.subprocess, "run", lauf)
+    assert _gedeckt(repo, vps) is True
+    assert archiv_pfade == [["scripts/schlange_deckung.py", "docs/agents/manifests"]]

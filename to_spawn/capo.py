@@ -802,25 +802,45 @@ class _StandUnlesbar(Exception):
     """Der Deckungs-Stand (origin/<Hauptzweig>) ließ sich nicht lesen."""
 
 
+# Was das Deckungs-Skript zum Laufen braucht: es selbst, sein Import ``schlange_spur`` und
+# ``staging/deploy_ziel.py`` (Unterprozess). Erstes Element = das Skript.
+_DECKUNG_DATEIEN = ("scripts/schlange_deckung.py", "scripts/schlange_spur.py", "scripts/staging/deploy_ziel.py")
+_MANIFESTE = "docs/agents/manifests"
+
+
+@dataclass(frozen=True)
+class _Stand:
+    """Entpackter Deckungs-Stand: Pfad zum Skript und zum Manifest-Ordner."""
+
+    skript: Path
+    manifeste: Path
+
+
 @contextlib.contextmanager
-def _deckungs_stand(repo: Path) -> Iterator[Path | None]:
+def _deckungs_stand(repo: Path) -> Iterator[_Stand | None]:
     """Der Stand, aus dem die Deploy-Schlange deckt — einzige Stelle mit diesem Wissen (#1504).
 
     Die Schlange rechnet in ihrem Klon auf ``origin/master``; ein ungepushtes Manifest oder Skript
-    im Arbeitsbaum darf capos Urteil deshalb nicht ändern. Liefert einen Wegwerf-Ordner mit
-    ``scripts/`` und ``docs/agents/manifests/`` aus ``origin/<Hauptzweig>`` (``git archive``,
-    Stand des letzten ``git fetch`` in :func:`tick`). ``None``: Deckungs-Skript fehlt dort
-    (Fremd-Repo, alter Stand). Wirft :class:`_StandUnlesbar`, wenn der Ref oder das Archiv
-    nicht lesbar ist — der Aufrufer wertet das als „nicht gedeckt“ (fail-closed).
+    im Arbeitsbaum darf capos Urteil deshalb nicht ändern. Entpackt nur :data:`_DECKUNG_DATEIEN`
+    und die Manifeste aus ``origin/<Hauptzweig>`` (``git archive``, Stand des letzten ``git fetch``
+    in :func:`tick`) in einen Wegwerf-Ordner. ``None``: Deckungs-Skript gibt es dort nachweislich
+    nicht (Fremd-Repo, alter Stand). Wirft :class:`_StandUnlesbar`, wenn Ref, Baum-Abfrage
+    (Zeitablauf, OSError, …) oder Archiv scheitern — der Aufrufer wertet das als „nicht gedeckt“
+    (fail-closed); eine gescheiterte Abfrage heißt nie „fehlt“.
     """
     ref = haupt_ref(repo)
     if ref is None:
         raise _StandUnlesbar("kein origin/<Hauptzweig>")
-    if _git(repo, "cat-file", "-e", f"{ref}:scripts/schlange_deckung.py")[0] != 0:
+    code, text = _git(repo, "ls-tree", "-r", "-z", "--name-only", ref, "--", *_DECKUNG_DATEIEN, _MANIFESTE)
+    if code != 0:
+        raise _StandUnlesbar(f"git ls-tree {ref} Exit {code}")
+    vorhanden = set(filter(None, text.split("\0")))
+    if _DECKUNG_DATEIEN[0] not in vorhanden:
         yield None
         return
-    manifeste = "docs/agents/manifests"
-    pfade = ["scripts"] + ([manifeste] if _git(repo, "cat-file", "-e", f"{ref}:{manifeste}")[0] == 0 else [])
+    pfade = [d for d in _DECKUNG_DATEIEN if d in vorhanden]
+    if any(n.startswith(_MANIFESTE + "/") for n in vorhanden):
+        pfade.append(_MANIFESTE)
     with tempfile.TemporaryDirectory(prefix="capo-deckung-") as ordner:
         ziel = Path(ordner)
         try:
@@ -837,8 +857,8 @@ def _deckungs_stand(repo: Path) -> Iterator[Path | None]:
                 tar.extractall(ziel, filter="data")
         except (OSError, subprocess.SubprocessError, tarfile.TarError) as fehler:
             raise _StandUnlesbar(str(fehler)) from fehler
-        (ziel / manifeste).mkdir(parents=True, exist_ok=True)
-        yield ziel
+        (ziel / _MANIFESTE).mkdir(parents=True, exist_ok=True)
+        yield _Stand(skript=ziel / _DECKUNG_DATEIEN[0], manifeste=ziel / _MANIFESTE)
 
 
 def live_gedeckt(repo: Path, vps: dict[str, Any], ticket: int, kopf: str, sha: str) -> bool:
@@ -860,14 +880,14 @@ def live_gedeckt(repo: Path, vps: dict[str, Any], ticket: int, kopf: str, sha: s
                 return live_freigabe(vps, ticket)
             befehl = [
                 sys.executable,
-                str(stand / "scripts" / "schlange_deckung.py"),
+                str(stand.skript),
                 kopf,
                 sha,
                 "--bis-spitze",
                 "--repo",
                 str(repo),
                 "--manifeste",
-                str(stand / "docs" / "agents" / "manifests"),
+                str(stand.manifeste),
                 "--freigabe-ordner",
                 str(Path(str(vps.get("freigabe_ordner") or FREIGABE_STANDARD)).expanduser()),
             ]
