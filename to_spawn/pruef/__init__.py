@@ -72,7 +72,7 @@ def pruefen(repo: Path, basis: str, ziel: str) -> Urteil:
             f"ziel {ziel} ist nicht ausgecheckt (HEAD {kopf})",
             start,
         )
-    liste = leiter.stufen(repo, _ADAPTER)
+    liste = leiter.stufen(repo, _ADAPTER, basis_sha)
     if not liste:
         return _gate_fehler(
             repo,
@@ -97,7 +97,7 @@ def pruefen(repo: Path, basis: str, ziel: str) -> Urteil:
             }
             for stufe in liste
         ],
-        werkzeug=[stufe.werkzeug for stufe in liste],
+        werkzeug=[stufe.werkzeug for stufe in liste if stufe.werkzeug],
         fehler_kurz=fehler_kurz,
         gesamt_s=time.monotonic() - start,
     )
