@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import stat
 import subprocess
 import sys
@@ -298,7 +299,8 @@ def test_bau_probelauf_zeigt_sandbox_praefix(tmp_path: Path, modus: str) -> None
     assert ergebnis.returncode == 0, ausgabe
     datei = wt_basis / "wt-901" / ".to-spawn" / "sandbox.json"
     if modus == "an":
-        assert f"{binaer / 'srt'} --settings {datei}" in ausgabe, ausgabe
+        # Erwartung über shutil.which wie bau.py selbst: Windows findet srt.CMD (#68).
+        assert f"{shutil.which('srt', path=str(binaer))} --settings {datei}" in ausgabe, ausgabe
     else:
         assert "--settings " + str(datei) not in ausgabe
     assert not (wt_basis / "wt-901").exists(), "Probelauf darf nichts anlegen"
@@ -571,7 +573,7 @@ def test_rechte_anzeige_enthaelt_worktree_ordner(tmp_path: Path) -> None:
     wt = tmp_path / "wt-ordner"
     ergebnis = _cli("rechte", cwd=tmp_path, env=_umgebung(heim, BAU_WT_DIR=str(wt)))
     assert ergebnis.returncode == 0, ergebnis.stderr
-    assert str(wt) in ergebnis.stdout
+    assert json.dumps(str(wt))[1:-1] in ergebnis.stdout  # JSON-Form (Windows: \) (#68)
     assert "Bash(git status:*)" in ergebnis.stdout
     assert "Bash(gh issue edit:*)" in ergebnis.stdout
     assert "additionalDirectories" in ergebnis.stdout
@@ -659,7 +661,8 @@ def test_nest_push_trocken_zeigt_auswahl(tmp_path: Path) -> None:
         ["bash", str(NEST / "nest_push.sh"), "--trocken", "--host-root", "probe-root",
          "--repo", str(repo)],
         capture_output=True, text=True, timeout=60, check=False,
-        env=_umgebung(claude_home.parent),
+        # TO_SPAWN_PY: Python des Aufrufers (#325) statt eines fremden python3 im PATH (#68).
+        env=_umgebung(claude_home.parent, TO_SPAWN_PY=sys.executable),
     )
     ausgabe = ergebnis.stdout + ergebnis.stderr
     assert ergebnis.returncode == 0, ausgabe
@@ -671,7 +674,9 @@ def test_nest_push_trocken_zeigt_auswahl(tmp_path: Path) -> None:
 def test_ssh_durch_sandbox_ohne_proxy_bricht_ab(tmp_path: Path) -> None:
     ergebnis = subprocess.run(
         ["bash", str(NEST / "ssh_durch_sandbox.sh"), "h", "22"],
-        env={"PATH": "/usr/bin:/bin"}, capture_output=True, text=True, timeout=30,
+        # TO_SPAWN_PY: unter Windows liegt kein Python in /usr/bin (#68).
+        env={"PATH": "/usr/bin:/bin", "TO_SPAWN_PY": sys.executable},
+        capture_output=True, text=True, timeout=30,
         check=False,
     )
     assert ergebnis.returncode != 0
@@ -1026,7 +1031,7 @@ def test_fix_ssh_helfer_connect_ohne_anmeldung_in_argv(tmp_path: Path) -> None:
     ergebnis = subprocess.run(
         ["bash", str(NEST / "ssh_durch_sandbox.sh"), "10.0.0.9", "22"],
         input=b"hallo\n",
-        env={"PATH": "/usr/bin:/bin",
+        env={"PATH": "/usr/bin:/bin", "TO_SPAWN_PY": sys.executable,  # (#68)
              "HTTPS_PROXY": f"http://nutzer:dummy-auth@127.0.0.1:{proxy.port}"},
         capture_output=True, timeout=30, check=False,
     )
