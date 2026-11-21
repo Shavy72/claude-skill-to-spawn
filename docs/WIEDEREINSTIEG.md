@@ -45,6 +45,16 @@ was zum Weiterbauen nötig ist.
 
 ## 3. Stand
 
+- **2026-11-21 23:06 (Server-Uhr, main 175c8ec):** Gemergt: Pull-Request 170 (Nachbesserung
+  Windows-Job-Objekt zu 151; Issue 122 bleibt offen bis zum Lauf am PC), 146 (Issue 88 zu: Folge-Tickets
+  über befund, Spec schließen mit Sperre), 167 (Issue 135 bleibt offen: Hausmeister zählt Nummern nur im
+  Ticket-Repo, offener Pull-Request hält den Ordner). Pull-Request 161 (Issue 154, Windows-Prozessabfrage)
+  nicht gemergt: Linux-Lauf rot, `test_aufseher_428` findet die alte Rollenbezeichnung in
+  `to_spawn/prozessbaum.py`. Offen im Pull-Request: 134, 148 (dritte Fix-Runde: geräumt wird nur noch
+  selbst Gekennzeichnetes), 171 (Issue 95). Neu: Issue 169 (Sicherung: Probelauf lädt hoch, keine
+  Inhaltsprüfung). Auf dem Bau-Server ist der Skill mit Stand 34a7ab1 installiert, die Sicherung ist
+  eingerichtet. Prüf-Tür Stufe 1 und 2 (Pull-Request 127) am Code belegt: `to_spawn/pruef/sofort.py`.
+
 - **2026-11-21 22:59 (Server-Uhr, main 4e2447e):** Gemergt: Pull-Request 160 (Issue 145,
   `to_spawn/uebergabe_sichern`: Übergaben und Entscheidungs-Log sichern sich von selbst; Issue 145 bleibt
   offen: Kaltstart-Probe M15, Windows-Lauf, `sicherung.dateien` eintragen), 127 (Issue 100 zu; Prüf-Tür
