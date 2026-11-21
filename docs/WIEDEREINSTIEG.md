@@ -45,6 +45,11 @@ was zum Weiterbauen nötig ist.
 
 ## 3. Stand
 
+- **2026-11-21 22:59 (Server-Uhr, main 4e2447e):** Gemergt: Pull-Request 160 (Issue 145,
+  `to_spawn/uebergabe_sichern`: Übergaben und Entscheidungs-Log sichern sich von selbst; Issue 145 bleibt
+  offen: Kaltstart-Probe M15, Windows-Lauf, `sicherung.dateien` eintragen), 127 (Issue 100 zu; Prüf-Tür
+  Stufe 1 und 2), 166 (Issue 156 zu; Prüf-Test to-tickets). Offen im Pull-Request: 134, 146, 148, 161, 167.
+
 - **2026-11-21 22:51 (Server-Uhr, main 0118fde):** Gemergt: Pull-Request 159 (alte Rollenbezeichnung
   entfernt), 158 (Issue 155 zu), 142 (Issue 94 zu), 151 (Issue 122, Windows-Job-Objekt). Offen im
   Pull-Request: 127 (Issue 100, Merge läuft), 160 (Issue 145), 146 (Issue 88), 148 (Issue 136, Fix-Runde 2),
