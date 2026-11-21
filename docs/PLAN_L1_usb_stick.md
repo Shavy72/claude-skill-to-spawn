@@ -175,6 +175,10 @@ verhaltensgleich, Staging zuerst, App-Live bleibt Davids Entscheidung.
   2 min. DuoPlus: Median und langsamstes Zehntel von Push bis Urteil vorher/nachher, nachher
   mindestens halbiert. Zehn Tickets gleichzeitig laufen durch, ohne dass der RAM-Deckel reißt
   oder ein Ticket länger als 15 min wartet.
+- **M14** (L4, A22–A24) Aufräumen ohne David: Im Probe-Lauf werden absichtlich Reste hinterlassen
+  (Arbeitsordner und Temp-Kopie eines geschlossenen Tickets, auch auf der RAM-Platte `/tmp`). Der
+  Hausmeister räumt beides von selbst, kein Schutz-Hook blockt ihn, und in allen
+  Sitzungs-Protokollen und Übergaben des Laufs steht kein einziger Lösch-Auftrag an David.
 
 Jede M-Zeile braucht einen Beleg (Befehl + Ausgabe oder Protokoll-Zeile) in
 `docs/ABNAHME_L1.md` im Skill-Repo.
@@ -227,3 +231,7 @@ Jede M-Zeile braucht einen Beleg (Befehl + Ausgabe oder Protokoll-Zeile) in
   F6 teilweise (Server belegt, PC offen #68) · F7 abweichend (Trocken-Entscheidungen gleich; Probe-Eintrag
   in der Maschinen-Liste legte den Hausmeister still, Trockenlauf zeigte es nicht, #112). M1–M13 noch
   nicht geprüft.
+- 2026-11-21 22:15 (PC-Uhr, Ober-Aufsicht Session 1) — **Neuer Lastenheft-Eintrag L4** (David):
+  Aufräumen landet nie bei David. Abnahme **M14** neu; „fertig“ = M1–M14. Anlass: zwei alte
+  Test-Kopien in `/tmp` wurden David als Lösch-Befehl hingelegt (Fehler der Ober-Aufsicht); sie
+  sind gelöscht. Wurzel: Skill-Issue 136 (Temp-Ordner auf die Platte, Hausmeister räumt ihn).
