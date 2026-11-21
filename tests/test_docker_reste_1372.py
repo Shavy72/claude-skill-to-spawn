@@ -7,7 +7,6 @@ ist eine Attrappe: ein Skript, das seine Argumente mitschreibt.
 
 from __future__ import annotations
 
-import fcntl
 import json
 import stat
 from collections.abc import Iterator
@@ -16,6 +15,9 @@ from pathlib import Path
 import pytest
 
 from to_spawn import docker_reste, hausmeister
+
+# Echte flock-Sperre wie staging_deploy.sh — gibt es nur unter Unix (#68: Windows sammelt sonst nicht).
+fcntl = pytest.importorskip("fcntl", reason="flock-Sperre nur unter Unix (Bau-Server)")
 
 TAG = 24 * 3600
 

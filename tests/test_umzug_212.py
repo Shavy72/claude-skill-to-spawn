@@ -1072,6 +1072,10 @@ def test_umzug_alle_raeumt_anfrage_bei_strg_c(
     assert not Path(f"{anfrage}.laeuft").exists()
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="os.kill(getpid, SIGTERM) beendet unter Windows den ganzen pytest-Lauf (TerminateProcess, #68)",
+)
 def test_umzug_alle_raeumt_anfrage_bei_sigterm(
     alle, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

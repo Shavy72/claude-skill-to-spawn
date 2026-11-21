@@ -22,9 +22,9 @@ import sys
 from pathlib import Path
 
 import pytest
+from test_bau_ohne_prompt_431 import _lade_bau
+from test_nest_210 import _cli, _git, _neues_repo, _umgebung
 
-from tests.test_bau_ohne_prompt_431 import _lade_bau
-from tests.test_nest_210 import _cli, _git, _neues_repo, _umgebung
 from to_spawn import nest
 
 HILFEN = Path(__file__).parent / "hilfen" / "push_sperre_1442"
