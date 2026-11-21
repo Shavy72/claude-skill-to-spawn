@@ -40,6 +40,7 @@ from to_spawn import (  # noqa: E402
     config,
     context_mode,
     handoff_blick,
+    nest,
     sitzung_env,
     speicher,
     starter,
@@ -330,6 +331,8 @@ def main() -> int:
         startklar_code = startklar.gate(ordner, a.spec)  # Ordner wie fahre(cwd=…) (#450 F1)
         if startklar_code:
             return startklar_code
+    if not a.dry_run:  # Push-Sperre (#1445) auch für den Aufseher, gleiche Funktion wie bau.py
+        nest.git_hooks_einrichten(ordner)
     claude = starter.finde("claude")  # unter Test nur die Attrappe (#1406)
     # Pflicht-MCP context-mode (#237): der Aufseher startet ohne ``--strict-mcp-config``,
     # das Plugin-MCP lädt also von selbst — nur fehlen darf es nicht.
