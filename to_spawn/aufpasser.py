@@ -280,6 +280,9 @@ SICHERUNG_AUSSCHLUSS = (
     "**/*.key",
     "**/.credentials.json",
 )
+#: #1536: Datenbanken (Test-Kopien, oft Abzüge echter Daten, beliebig groß) gehen nie in
+#: eine Sicherung — auch nicht, wenn sie nicht ignoriert sind. Wegwerf-Ware, kein Geheimnis.
+NIE_HOCHLADEN = ("**/*.db", "**/*.db-wal", "**/*.db-shm")
 GIT_IDENTITAET = {
     "GIT_AUTHOR_NAME": "Aufpasser",
     "GIT_AUTHOR_EMAIL": "aufpasser@to-spawn.invalid",
@@ -835,7 +838,9 @@ def sichern(
         if kopf is None:
             kopf = _git(worktree, "rev-parse", "HEAD").strip()
             _git(worktree, "read-tree", kopf, env=env)
-            ausschluss = [f":(exclude,glob){m}" for m in SICHERUNG_AUSSCHLUSS]
+            ausschluss = [
+                f":(exclude,glob){m}" for m in (*SICHERUNG_AUSSCHLUSS, *NIE_HOCHLADEN)
+            ]
             _git(worktree, "add", "-A", "--", ".", *ausschluss, env=env)
             baum = _git(worktree, "write-tree", env=env).strip()
         else:

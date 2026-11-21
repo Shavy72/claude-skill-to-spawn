@@ -19,7 +19,8 @@ Log → löschen. Vorab: Namen aus :data:`GESCHUETZTE_ORDNER` bleiben immer.
 (kein ``.git`` oder verwaister Worktree, dessen Hauptrepo fehlt) gehen ohne Sicherung —
 es gibt nichts, wohin sie sich sichern ließen. Unterordner eines fremden Repos und
 unlesbare Git-Ordner bleiben. Je Takt schreibt :func:`aufraeumen_alles` eine Zeile
-``art="kennzahl"`` („x von y gelöscht, z bleiben“, Bleib-Gründe gezählt).
+nach :data:`KENNZAHL_DATEI` neben dem Log („x von y gelöscht, z bleiben“, Bleib-Gründe
+gezählt) — eigene Datei, damit Leser des Ordner-Logs nur Ordner-Zeilen sehen.
 
 Ungesichert heißt: geänderte/neue Dateien oder Commits auf keinem Remote. Vorher
 ``git fetch --prune origin`` (veraltete Tracking-Refs täuschen „gepusht“ vor), dann
@@ -148,6 +149,8 @@ HAUPTREPO_NAMEN = ("duoplus-management", "claude-skill-to-spawn")
 #: #1536: die eine Liste geschützter Ordner (Ordnername, Server und PC) — bleiben immer,
 #: auch ohne Git. Laufende Spec-Klone schützen offenes Ticket und tmux-Sitzung ``spec-<N>``.
 GESCHUETZTE_ORDNER = (*HAUPTREPO_NAMEN, "duoplus-leit", "deploy-schlange", "obsidian")
+#: #1536: Kennzahl je Takt, eigene Datei neben dem Hausmeister-Log (:func:`_kennzahl_pfad`).
+KENNZAHL_DATEI = "hausmeister_kennzahl.jsonl"
 #: #1536: Ordner ohne Ticket-Nummer sichern nach ``sicherung/0``.
 OHNE_TICKET = 0
 WURZELN_STANDARD = ("~/wt/*", "~/wt-*", "~/duoplus-[0-9]*", "C:/dev/wt-*")
@@ -1465,8 +1468,8 @@ def _grund(
         zu = f"Ticket #{ticket} zu, Platznot (unter {_prozent(PLATZNOT_ANTEIL)} frei)"
     else:
         zu = f"Ticket #{ticket} seit über 24 h zu"
-    if ohne_git:
-        return f"{zu}, kein Git-Ordner, {verlassen}"
+    if ohne_git:  # ohne Nummer steht „unberührt“ schon in ``zu``
+        return f"{zu}, kein Git-Ordner" + ("" if ticket is None else f", {verlassen}")
     if verworfen:
         zu += f", {verworfen} Geheimnis-Datei(en) ungesichert verworfen ({verlassen})"
     if art == "gelöscht":
@@ -1755,7 +1758,9 @@ def _ungesichertes(
     for xy, pfad in alle:
         if xy == "!!" and pfad not in geheim and pfad not in erzeugnis:
             raise _Bleibt(f"ignorierte Datei {pfad} ist kein bekanntes Erzeugnis")
-    zu_sichern = any(xy != "!!" and p not in geheim for xy, p in alle)
+    # #1536: Datenbanken lädt die Sicherung nie hoch — sie allein machen nichts „zu sichern“.
+    nicht_hoch = geheim | {p for _, p in _status(repo, *_glob(aufpasser.NIE_HOCHLADEN))}
+    zu_sichern = any(xy != "!!" and p not in nicht_hoch for xy, p in alle)
 
     koepfe = _ungepushte_koepfe(repo, ist_worktree)
     if koepfe:
@@ -2075,7 +2080,7 @@ def _kein_altbestand(echt: Path) -> None:
 
 
 def _kennzahl_schreiben(ergebnisse: list[Ergebnis], *, trocken: bool) -> None:
-    """#1536: je Takt eine Log-Zeile ``art="kennzahl"`` — „x von y gelöscht, z bleiben“
+    """#1536: je Takt eine Zeile ``art="kennzahl"`` in :func:`_kennzahl_pfad` — „x von y gelöscht, z bleiben“
     und die Bleib-Gründe gezählt (Zahlen im Grund als ``N``, ohne Klammer-Zusatz)."""
     geloescht = sum(1 for e in ergebnisse if e.art != "bleibt")
     gruende: dict[str, int] = {}
@@ -2099,8 +2104,13 @@ def _kennzahl_schreiben(ergebnisse: list[Ergebnis], *, trocken: bool) -> None:
             "bleiben": len(ergebnisse) - geloescht,
             "fehler": sum(1 for e in ergebnisse if e.fehler),
             "bleib_gruende": dict(sorted(gruende.items(), key=lambda kv: -kv[1])),
-        }
+        },
+        _kennzahl_pfad(),
     )
+
+
+def _kennzahl_pfad() -> Path:
+    return _log_pfad().with_name(KENNZAHL_DATEI)
 
 
 def _log_pfad() -> Path:
@@ -2129,10 +2139,10 @@ def _log_schreiben(erg: Ergebnis) -> bool:
     return _log_zeile(zeile)
 
 
-def _log_zeile(zeile: dict[str, object]) -> bool:
-    """Eine JSON-Zeile ins Hausmeister-Log; False = nicht schreibbar."""
+def _log_zeile(zeile: dict[str, object], datei: Path | None = None) -> bool:
+    """Eine JSON-Zeile ins Hausmeister-Log (oder ``datei``); False = nicht schreibbar."""
     try:
-        datei = _log_pfad()
+        datei = datei or _log_pfad()
         datei.parent.mkdir(parents=True, exist_ok=True)
         with datei.open("a", encoding="utf-8") as f:
             f.write(json.dumps(zeile, ensure_ascii=False) + "\n")

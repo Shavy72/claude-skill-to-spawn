@@ -12,6 +12,7 @@ gestellt ist nur ``gh`` (Ticket-Zustand).
 # ruff: noqa: F811 — ``welt`` kommt als Fixture aus dem #1368-Test und wird als Parameter genannt.
 from __future__ import annotations
 
+import json
 import shutil
 import subprocess
 from pathlib import Path
@@ -157,8 +158,10 @@ def test_soll4_kennzahl_zeile_je_takt(welt: Welt) -> None:
     _ordner(welt, "wt/reste")
     hausmeister.aufraeumen_alles(jetzt=welt.jetzt)
     zeilen = welt.zeilen()
-    kennzahl = [z for z in zeilen if z.get("art") == "kennzahl"]
-    assert len(kennzahl) == 1
+    assert all(z.get("ordner") for z in zeilen)  # Ordner-Log bleibt rein (Leser zählen Zeilen)
+    datei = welt.log.with_name(hausmeister.KENNZAHL_DATEI)
+    kennzahl = [json.loads(z) for z in datei.read_text(encoding="utf-8").splitlines()]
+    assert [z["art"] for z in kennzahl] == ["kennzahl"]
     k = kennzahl[0]
     assert (k["gesamt"], k["geloescht"], k["bleiben"]) == (3, 1, 2)
     assert k["grund"] == "1 von 3 gelöscht, 2 bleiben" and k["trocken"] is True
@@ -270,3 +273,44 @@ def test_sicher_pruefung_scheitert_bleibt_mit_fehler(welt: Welt) -> None:
         assert ordner.is_dir()
     finally:
         (ordner / "zu").chmod(0o755)
+
+
+def test_sicherung_laedt_keine_datenbank_hoch(welt: Welt) -> None:
+    """Nicht ignorierte Test-DB (evtl. Abzug echter Daten) geht nie nach ``sicherung/…``."""
+    wt = welt.worktree(1609)
+    (wt / "kopie.db").write_text(GEHEIM + "\n", encoding="utf-8")
+    (wt / "notiz.txt").write_text("ungesichert\n", encoding="utf-8")
+    welt.ticket(1609, "CLOSED", 48)
+    r = welt.aufraeumen(wt, loeschen=True)
+    assert r.art == "gesichert und gelöscht", r.grund
+    assert welt.im_bare("show", f"{r.sicherung}:notiz.txt") == "ungesichert\n"
+    assert GEHEIM not in _alle_inhalte(welt)
+    assert not wt.exists()
+
+
+def test_nur_datenbank_braucht_keine_sicherung(welt: Welt) -> None:
+    wt = welt.worktree(1610)
+    (wt / "test.db").write_text("x", encoding="utf-8")
+    welt.ticket(1610, "CLOSED", 48)
+    r = welt.aufraeumen(wt, loeschen=True)
+    assert r.art == "gelöscht" and not r.sicherung, r.grund
+    assert not wt.exists()
+
+
+def test_sicher_datenbank_im_geschuetzten_ordner_bleibt(welt: Welt) -> None:
+    ordner = _ordner(welt, "wt/deploy-schlange", ("daten/accounts.db",))
+    _altern(welt)
+    r = welt.aufraeumen(ordner, loeschen=True)
+    assert r.art == "bleibt" and "geschützt" in r.grund, r.grund
+    assert (ordner / "daten" / "accounts.db").is_file()
+
+
+def test_sicher_datenbank_im_ordner_offenen_tickets_bleibt(welt: Welt) -> None:
+    wt = welt.worktree(1611)
+    _commit(wt, ".gitignore", "*.db\n", push=True)
+    (wt / "accounts.db").write_text("x", encoding="utf-8")
+    _altern(welt)
+    welt.ticket(1611, "OPEN")
+    r = welt.aufraeumen(wt, loeschen=True)
+    assert r.art == "bleibt" and "offen" in r.grund, r.grund
+    assert (wt / "accounts.db").is_file()
