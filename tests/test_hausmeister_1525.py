@@ -49,3 +49,16 @@ def test_echte_zugang_env_bleibt(welt: Welt) -> None:
     assert r.art == "bleibt" and r.fuer_david, r.grund
     assert "scripts/x_zugang.env" in r.grund
     assert (wt / "scripts" / "x_zugang.env").is_file()
+
+
+def test_geheimnis_unter_erzeugnis_ordner_bleibt(welt: Welt) -> None:
+    """Fix-Runde: nur ``__pycache__/*.pyc`` und ``data/.secret_key`` fallen aus der
+    Geheimnis-Prüfung — ein ``.review/x_zugang.env`` geht nie ungesichert mit weg."""
+    wt = welt.worktree(1528)
+    _erzeugnisse_anlegen(wt)
+    (wt / ".review" / "x_zugang.env").write_text("TOKEN=1\n", encoding="utf-8")
+    welt.ticket(1528, "CLOSED", 48)
+    r = welt.aufraeumen(wt, loeschen=True)
+    assert r.art == "bleibt" and r.fuer_david, r.grund
+    assert ".review/x_zugang.env" in r.grund
+    assert (wt / ".review" / "x_zugang.env").is_file()

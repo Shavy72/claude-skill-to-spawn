@@ -1511,6 +1511,12 @@ def _hauptrepo(worktree: Path) -> Path:
     return gemeinsam.parent
 
 
+def _neu_erzeugbar(pfad: str) -> bool:
+    """Kompilat unter ``__pycache__`` oder ``data/.secret_key`` (legt die App neu an)."""
+    teile = pfad.split("/")
+    return pfad == "data/.secret_key" or (pfad.endswith(".pyc") and "__pycache__" in teile[:-1])
+
+
 def _glob(muster: tuple[str, ...]) -> list[str]:
     return [f":(glob){m}" for m in muster]
 
@@ -1577,10 +1583,11 @@ def _ungesichertes(
     for _, pfad in alle:
         if pfad.endswith("/"):
             raise _Bleibt(f"eingebettetes Repo {pfad}", fuer_david=True)
-    # Ein ignoriertes Erzeugnis (z. B. __pycache__/tempo_zugang.*.pyc) ist nie ein Geheimnis
     erzeugnis = {p for xy, p in _status(repo, *_glob(ERZEUGNISSE)) if xy == "!!"}
     geheim = {p for _, p in _status(repo, *_glob(aufpasser.SICHERUNG_AUSSCHLUSS))}
-    geheim -= erzeugnis
+    # Nur sicher neu Erzeugbares ist nie ein Geheimnis (__pycache__/tempo_zugang.*.pyc).
+    # Ein .env unter .review/, node_modules/, .to-spawn/ bleibt Geheimnis.
+    geheim -= {p for p in erzeugnis if _neu_erzeugbar(p)}
     haupt = _hauptrepo(repo) if ist_worktree else None
     for pfad in sorted(geheim):
         if not _gleiche_kopie(haupt, repo, pfad):
