@@ -2617,6 +2617,14 @@ def _tick(
         except Exception as fehler:  # ein Ausreißer darf den Tick (sichern) nicht abbrechen
             log.exception("Abschluss-Mail Spec #%s: unerwarteter Fehler", spec)
             erg.zeilen.append(f"FEHLER: Abschluss-Mail — unerwarteter Fehler ({type(fehler).__name__}: {fehler}).")
+    # Aufräumen erst nach der Abschluss-Mail (#1370): dann hat der Rückblick die Laufdateien
+    # der Worktrees schon gesammelt.
+    if (
+        (zustand.get("spec_fertig_seit") or (erg.fertig and dry_run))
+        and (zustand.get("abschluss_mail_erledigt") or dry_run)
+        and not zustand.get("aufraeumen_erledigt")
+    ):
+        erg.zeilen += _hausmeister_schluss(spec, zustand, jetzt, dry_run)
 
     if MAIL_AUS in erg.zeilen:  # je Tick nur einmal, nicht je Meldung
         erste = erg.zeilen.index(MAIL_AUS)
@@ -2627,6 +2635,48 @@ def _tick(
     if any("FEHLER" in z for z in erg.zeilen):
         erg.exit_code = 1
     return erg
+
+
+def _hausmeister_schluss(spec: int, zustand: dict[str, Any], jetzt: datetime, dry_run: bool) -> list[str]:
+    """Fester Schlussschritt nach der Abschluss-Mail (#1370): einmal alles Fertige aufräumen.
+
+    Ruft nur die Tür des Hausmeisters — welche Ordner wann weg dürfen, weiß allein er.
+    ``aufraeumen_erledigt`` nur, wenn der Rundgang wirklich lief und kein Ordner mit Fehler
+    blieb (nicht im Probelauf). Belegte Sperre → Wartezeile, nächster Tick erneut. Sonst
+    FEHLER-Zeile und ``aufraeumen_versuche`` +1; ab :data:`HAUSMEISTER_VERSUCHE` in Folge
+    trotzdem erledigt (kein Dauer-Rot), das Netz bleibt der Aufpasser-Takt.
+    """
+    from to_spawn import hausmeister  # spät: hausmeister importiert aufpasser
+
+    try:
+        rund = hausmeister.rundgang(loeschen=not dry_run)
+    except Exception as fehler:  # Vertrag sagt „wirft nie“; der Tick (sichern) bricht nie ab
+        log.exception("Hausmeister Spec #%s: unerwarteter Fehler", spec)
+        rund = hausmeister.Rundgang(False, f"unerwarteter Fehler ({type(fehler).__name__}: {fehler})")
+    if dry_run:
+        if not rund.gelaufen:
+            return [f"Hausmeister (Probe): nicht gelaufen — {rund.grund}."]
+        return [f"Hausmeister (Probe): {rund.geloescht} würde löschen, {rund.bleibt} bleibt, {rund.fehler} Fehler."]
+    if rund.wartet:
+        return [f"Hausmeister wartet: {rund.grund}."]
+    if rund.gelaufen and not rund.fehler:
+        zustand.pop("aufraeumen_versuche", None)
+        zustand["aufraeumen_erledigt"] = jetzt.isoformat(timespec="seconds")
+        return [f"Hausmeister: {rund.geloescht} gelöscht, {rund.bleibt} bleibt, 0 Fehler."]
+    if rund.gelaufen:
+        namen = ", ".join(e.ordner.name for e in rund.ergebnisse if e.fehler)
+        zeile = f"FEHLER: Hausmeister — {rund.fehler} Ordner: {namen} ({rund.geloescht} gelöscht, {rund.bleibt} bleibt)."
+        zeilen = [zeile]
+    else:
+        zeilen = [f"FEHLER: Hausmeister — {rund.grund}."]
+    versuche = int(zustand.get("aufraeumen_versuche") or 0) + 1
+    zustand["aufraeumen_versuche"] = versuche
+    if versuche >= HAUSMEISTER_VERSUCHE:
+        zustand["aufraeumen_erledigt"] = jetzt.isoformat(timespec="seconds")
+        zeilen.append(
+            f"FEHLER: Hausmeister — nach {versuche} Versuchen aufgegeben, Netz ist der Aufpasser-Takt"
+        )
+    return zeilen
 
 
 def _gh_ok(args: list[str]) -> bool:
@@ -2648,6 +2698,8 @@ ABSCHLUSS_ZEITLIMIT_S = 720
 ABLEGEN_ZEITLIMIT_S = 60
 #: Ab so vielen Fehlversuchen in Folge einmal ein Kommentar auf dem Spec-Issue.
 ABSCHLUSS_ALARM_AB = 3
+#: Nach so vielen gescheiterten Hausmeister-Schlussschritten in Folge gilt er als erledigt (#1370).
+HAUSMEISTER_VERSUCHE = 3
 #: Ab so vielen unlesbaren Staging-Takten in Folge eine eigene FEHLER-Kopfzeile (#1407), keine Mail.
 STAGING_UNLESBAR_LAUT = 3
 
