@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -88,9 +89,17 @@ def test_install_sh_heutiger_aufruf_gleich(tmp_path: Path) -> None:
     assert (repo / VORGABE / "_default.json").is_file()
     assert (repo / "scripts" / "bau.py").is_file()
     assert (ziel / "skripte" / "spawn_srv.sh").is_file()
+    skills = tmp_path / "skills"
+    assert not (skills / "_alt").exists()
+    installiert = sorted(p.name for p in skills.iterdir() if p.is_dir())
+    assert "to-spawn" in installiert and "to-spawn-local" in installiert
     zweiter = _install(tmp_path, repo)
     assert zweiter.returncode == 0, zweiter.stderr
-    assert len(list((tmp_path / "skills" / "_alt").glob("to-spawn-*"))) == 1
+    # Je installiertem Skill-Ordner genau eine Sicherung _alt/<name>-<JJJJMMTT-hhmmss>, alle aus einem Lauf.
+    sicherungen = [re.fullmatch(r"(.+)-(\d{8}-\d{6})", p.name) for p in (skills / "_alt").iterdir()]
+    assert all(sicherungen), [p.name for p in (skills / "_alt").iterdir()]
+    assert sorted(m.group(1) for m in sicherungen) == installiert
+    assert len({m.group(2) for m in sicherungen}) == 1
 
 
 def test_ps1_rueckfall_ergaenzt_alter_weg_bleibt() -> None:
