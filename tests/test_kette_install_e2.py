@@ -13,6 +13,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 SKILL = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SKILL))
 
@@ -165,3 +167,154 @@ def test_pruefe_erkennt_veralteten_block_und_schreibe_ersetzt_an_ort_und_stelle(
     assert (
         subprocess.run(cli, cwd=SKILL, capture_output=True, check=False).returncode == 0
     )
+
+
+# --- Fix-Runde 1 (Review PR #110) ---------------------------------------------
+
+# Nachbildung von start_marker() aus duoplus-management scripts/install_global_claude_blocks.py
+# (Z. 29). Das App-Skript sucht genau diese Zeile; beide Werkzeuge müssen denselben Block finden.
+APP_START = "<!-- global:{name}:start (Quelle duoplus-management/docs/agents/global/{name}.md) -->"
+APP_ENDE = "<!-- global:{name}:ende -->"
+
+
+def _app_datei(ordner: Path = globale_regeln.QUELL_ORDNER) -> str:
+    """CLAUDE.md, wie das App-Skript sie schreibt (Blöcke mit Leerzeile getrennt)."""
+    bloecke = [
+        f"{APP_START.format(name=q.stem)}\n{q.read_text(encoding='utf-8').strip()}\n{APP_ENDE.format(name=q.stem)}\n"
+        for q in sorted(ordner.glob("*.md"))
+    ]
+    return "\n".join(bloecke)
+
+
+def _installiere(art: str, heim: Path) -> subprocess.CompletedProcess[str]:
+    if art == "sh":
+        return _install_sh(heim)
+    befehl = [PWSH or "pwsh", "-NoProfile", "-File", str(SKILL / "install.ps1")]
+    befehl += ["-Skills", str(heim / "skills"), "-ClaudeMd", str(heim / "CLAUDE.md")]
+    return subprocess.run(
+        befehl,
+        env=_umgebung(heim),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+
+
+INSTALLER = [
+    "sh",
+    pytest.param(
+        "ps1",
+        marks=pytest.mark.skipif(
+            not PWSH, reason="pwsh fehlt — install.ps1 am PC prüfen"
+        ),
+    ),
+]
+
+
+def test_to_spec_liest_projekt_skill_im_uebergang() -> None:
+    """Befund 1: bis E2-12 verdeckt der persönliche Skill den Projekt-Skill — Übergangszeile."""
+    text = (SKILL / "kette" / "skills" / "to-spec" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
+    zeile = next(
+        (z for z in text.splitlines() if ".claude/skills/to-spec/SKILL.md" in z), ""
+    )
+    assert zeile, "to-spec: Übergangszeile für .claude/skills/to-spec/SKILL.md fehlt"
+    assert "Vorrang" in zeile and ".to-spawn/kette.md" in zeile
+    assert text.index(zeile) < text.index("## Process")
+
+
+def test_marker_vertraeglich_mit_app_skript(tmp_path: Path) -> None:
+    """Befund 2: was das eine Werkzeug schreibt, findet das Marker-Muster des anderen."""
+    ziel = tmp_path / "CLAUDE.md"
+    globale_regeln.schreibe(ziel)
+    text = ziel.read_text(encoding="utf-8")
+    for name in REGELN:
+        assert text.count(APP_START.format(name=name)) == 1
+        assert text.count(APP_ENDE.format(name=name)) == 1
+    app = tmp_path / "app.md"
+    app.write_text(_app_datei(), encoding="utf-8")
+    assert globale_regeln.pruefe(app), "App-Stand gilt dem Skill-Modul als veraltet"
+    assert not globale_regeln.schreibe(app)
+
+
+def test_crlf_datei_behaelt_zeilenenden(tmp_path: Path) -> None:
+    """Befund 3: fremde CRLF-Datei bleibt CRLF, zweiter Lauf byte-gleich."""
+    ziel = tmp_path / "CLAUDE.md"
+    ziel.write_bytes(b"# Eigene Regeln\r\n\r\nbleibt stehen\r\n")
+    assert globale_regeln.schreibe(ziel)
+    roh = ziel.read_bytes()
+    assert roh.startswith(b"# Eigene Regeln\r\n\r\nbleibt stehen\r\n")
+    assert b"\n" not in roh.replace(b"\r\n", b""), "LF ohne CR in CRLF-Datei"
+    assert globale_regeln.pruefe(ziel)
+    assert not globale_regeln.schreibe(ziel)
+    assert ziel.read_bytes() == roh
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Symlinks brauchen unter Windows Rechte")
+def test_symlink_bleibt_symlink(tmp_path: Path) -> None:
+    """Befund 4: CLAUDE.md als Verknüpfung — das Ziel wird beschrieben, der Link bleibt."""
+    echt = tmp_path / "echt.md"
+    echt.write_text("# Eigene Regeln\n", encoding="utf-8")
+    link = tmp_path / "CLAUDE.md"
+    link.symlink_to(echt)
+    assert globale_regeln.schreibe(link)
+    assert link.is_symlink()
+    assert globale_regeln.pruefe(echt)
+
+
+def test_doppelter_block_wird_abgelehnt(tmp_path: Path) -> None:
+    """Befund 5: zwei Start-Marker (oder zwei Enden) → ValueError, Datei bleibt unverändert."""
+    ziel = tmp_path / "CLAUDE.md"
+    globale_regeln.schreibe(ziel)
+    einfach = ziel.read_text(encoding="utf-8")
+    ziel.write_text(einfach + "\n" + einfach, encoding="utf-8")
+    vorher = ziel.read_bytes()
+    with pytest.raises(ValueError, match="Marker"):
+        globale_regeln.schreibe(ziel)
+    with pytest.raises(ValueError, match="Marker"):
+        globale_regeln.pruefe(ziel)
+    assert ziel.read_bytes() == vorher
+
+
+@pytest.mark.parametrize("art", INSTALLER)
+def test_installer_zweiter_lauf_byte_gleich_fremdes_bleibt(
+    art: str, tmp_path: Path
+) -> None:
+    """Befund 6: beide Installer — fremder Inhalt bleibt, zweiter Lauf byte-gleich."""
+    (tmp_path / "CLAUDE.md").write_text(
+        "# Eigene Regeln\n\nbleibt stehen\n", encoding="utf-8"
+    )
+    lauf = _installiere(art, tmp_path)
+    assert lauf.returncode == 0, lauf.stdout + lauf.stderr
+    _pruefe_installiert(tmp_path)
+    vorher = (tmp_path / "CLAUDE.md").read_bytes()
+    assert vorher.startswith(b"# Eigene Regeln\n\nbleibt stehen\n")
+    lauf = _installiere(art, tmp_path)
+    assert lauf.returncode == 0, lauf.stdout + lauf.stderr
+    assert (tmp_path / "CLAUDE.md").read_bytes() == vorher
+
+
+@pytest.mark.parametrize("art", INSTALLER)
+def test_installer_sichert_abweichenden_alten_skill_und_behaelt_agents(
+    art: str, tmp_path: Path
+) -> None:
+    """Befunde 7/8: alter Skill landet unverändert in _alt/, agents/ geht nicht verloren,
+    Dateien nur im alten Stand werden gemeldet."""
+    alt = tmp_path / "skills" / "to-spec"
+    (alt / "agents").mkdir(parents=True)
+    (alt / "SKILL.md").write_text("alter eigener Stand\n", encoding="utf-8")
+    (alt / "agents" / "openai.yaml").write_text("alt: ja\n", encoding="utf-8")
+    (alt / "eigene_notiz.md").write_text("nur hier\n", encoding="utf-8")
+    lauf = _installiere(art, tmp_path)
+    assert lauf.returncode == 0, lauf.stdout + lauf.stderr
+    gesichert = list((tmp_path / "skills" / "_alt").glob("to-spec-*"))
+    assert len(gesichert) == 1
+    assert (gesichert[0] / "SKILL.md").read_text(
+        encoding="utf-8"
+    ) == "alter eigener Stand\n"
+    assert (gesichert[0] / "eigene_notiz.md").exists()
+    for name in ("to-spec", "grill-with-docs"):
+        assert (tmp_path / "skills" / name / "agents" / "openai.yaml").is_file(), name
+    assert "eigene_notiz.md" in lauf.stdout, "Datei nur im alten Stand nicht gemeldet"

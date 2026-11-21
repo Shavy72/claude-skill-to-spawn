@@ -3,9 +3,12 @@
 Jede Quelldatei wird ein Block zwischen zwei eigenen Marker-Zeilen; ein erneuter Lauf
 ersetzt den Block an Ort und Stelle statt eine Kopie anzuhängen. Eine neue Regel heißt:
 eine Datei unter ``kette/global/`` anlegen — sonst nichts. Port von
-``scripts/install_global_claude_blocks.py`` aus dem ersten App-Repo; die Start-Zeile wird
-nur am Präfix ``<!-- global:<name>:start`` erkannt, damit Blöcke mit alter Quellangabe
-ersetzt statt verdoppelt werden.
+``scripts/install_global_claude_blocks.py`` aus dem ersten App-Repo. Die
+Start-Zeile ist absichtlich byte-gleich mit der des App-Skripts (das sucht die volle Zeile):
+beide Werkzeuge schreiben so dieselbe Datei und keins findet beim anderen nur eine halbe
+Marker-Zeile. Erkannt wird die Start-Zeile hier nur am Präfix ``<!-- global:<name>:start``,
+damit Blöcke mit anderer Quellangabe ersetzt statt verdoppelt werden. Zeilenenden der
+Zieldatei (LF/CRLF) bleiben erhalten.
 
 Türen: :func:`schreibe` (Datei auf Soll bringen) und :func:`pruefe` (ist sie auf Soll?).
 Aufruf: ``python -m to_spawn.globale_regeln --ziel <CLAUDE.md> [--pruefen]``.
@@ -24,7 +27,9 @@ QUELL_ORDNER = Path(__file__).resolve().parents[1] / "kette" / "global"
 
 
 def start_marker(name: str) -> str:
-    return f"<!-- global:{name}:start (Quelle claude-skill-to-spawn/kette/global/{name}.md) -->"
+    # Gleich mit start_marker() in scripts/install_global_claude_blocks.py des ersten App-Repos —
+    # nur gemeinsam ändern (Quelle der Regeln ist inzwischen kette/global/ hier).
+    return f"<!-- global:{name}:start (Quelle duoplus-management/docs/agents/global/{name}.md) -->"
 
 
 def ende_marker(name: str) -> str:
@@ -42,28 +47,36 @@ def _bloecke(ordner: Path) -> dict[str, str]:
     return bloecke
 
 
-def _setze_block(text: str, name: str, block: str) -> str:
-    """``text`` mit ersetztem Block ``name``, sonst mit angehängtem Block."""
-    start = text.find(f"<!-- global:{name}:start")
-    ende_zeile = ende_marker(name)
-    ende = text.find(ende_zeile)
-    if start != -1 and ende > start:
-        ende += len(ende_zeile)
-        if text[ende : ende + 1] == "\n":
-            ende += 1
-        return text[:start] + block + text[ende:]
-    if start != -1 or ende != -1:
+def _setze_block(text: str, name: str, block: str, nl: str = "\n") -> str:
+    """``text`` mit ersetztem Block ``name``, sonst mit angehängtem Block.
+
+    ``nl`` ist das Zeilenende der Zieldatei. Wirft ``ValueError``, wenn die Marker nicht
+    genau ein Paar (Start vor Ende) bilden — halber oder doppelter Block wird nie geraten.
+    """
+    start_praefix, ende_zeile = f"<!-- global:{name}:start", ende_marker(name)
+    anzahl = (text.count(start_praefix), text.count(ende_zeile))
+    if anzahl == (0, 0):
+        block = block.replace("\n", nl)
+        return block if not text else text.rstrip("\r\n") + nl + nl + block
+    start, ende = text.find(start_praefix), text.find(ende_zeile)
+    if anzahl != (1, 1) or ende < start:
         raise ValueError(
-            f"Block {name}: nur eine Marker-Zeile gefunden — von Hand prüfen"
+            f"Block {name}: Marker-Zeilen kein einzelnes Paar (Start {anzahl[0]}×, "
+            f"Ende {anzahl[1]}×) — von Hand prüfen"
         )
-    return block if not text else text.rstrip("\n") + "\n\n" + block
+    ende += len(ende_zeile)
+    if text.startswith(nl, ende):
+        ende += len(nl)
+    return text[:start] + block.replace("\n", nl) + text[ende:]
 
 
 def _soll(ziel: Path, ordner: Path) -> tuple[str, str]:
-    alt = ziel.read_text(encoding="utf-8") if ziel.exists() else ""
+    # Bytes statt read_text: kein Umschreiben der Zeilenenden (Windows-CRLF bleibt CRLF).
+    alt = ziel.read_bytes().decode("utf-8") if ziel.exists() else ""
+    nl = "\r\n" if "\r\n" in alt else "\n"
     neu = alt
     for name, block in _bloecke(ordner).items():
-        neu = _setze_block(neu, name, block)
+        neu = _setze_block(neu, name, block, nl)
     return alt, neu
 
 
@@ -76,14 +89,16 @@ def pruefe(ziel: Path, ordner: Path = QUELL_ORDNER) -> bool:
 def schreibe(ziel: Path, ordner: Path = QUELL_ORDNER) -> bool:
     """Bringt ``ziel`` auf Soll; True, wenn geschrieben wurde. Aktuelle Datei bleibt byte-gleich.
 
-    Wirft ``ValueError`` bei halbem Block (nur eine Marker-Zeile) — dann wird nichts geschrieben.
+    Wirft ``ValueError`` bei halbem oder doppeltem Block — dann wird nichts geschrieben.
+    Ist ``ziel`` eine Verknüpfung, wird ihr Ziel beschrieben; die Verknüpfung bleibt.
     """
+    ziel = ziel.resolve()
     alt, neu = _soll(ziel, ordner)
     if neu == alt:
         return False
     ziel.parent.mkdir(parents=True, exist_ok=True)
     zwischen = ziel.with_name(ziel.name + ".neu")
-    zwischen.write_text(neu, encoding="utf-8")
+    zwischen.write_bytes(neu.encode("utf-8"))
     zwischen.replace(ziel)
     return True
 

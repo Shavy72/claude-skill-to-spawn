@@ -44,6 +44,8 @@ _SKILL_HEIMAT = "Heimat des Skills selbst (Installations-Hinweis), kein App-Name
 AUSNAHMEN: dict[tuple[str, str], tuple[int, str]] = {
     # Bestandstests nageln den Wortlaut fest (Tests nur addieren, nie ersetzen), ps1-Rückfälle
     ("to_spawn/umzug.py", "duoplus"): (1, _DOKU),
+    # Start-Marker byte-gleich mit dem App-Skript, sonst ValueError dort (Review PR #110, Befund 2)
+    ("to_spawn/globale_regeln.py", "duoplus"): (1, "Marker-Zeile gleich mit App-Skript install_global_claude_blocks.py"),
     ("skripte/wache.py", "repo-skript"): (2, "Aufruf-Docstring der Weiterleitung"),
     ("repo-scripts/_default.json", "bau-log-ordner"): (1, _TEXT_BESTANDSTEST + " (test_bau_log_204.py)"),
     ("spawn_local.ps1", "manifest-ordner"): (2, "Rückfall vor config.pfad (test_starter_shell_l1.py) + Kopf-Kommentar"),

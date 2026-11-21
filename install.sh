@@ -31,44 +31,55 @@ if [ -e "$ZIEL" ] && [ "$(cd "$ZIEL" && pwd -P)" = "$(cd "$HIER" && pwd -P)" ]; 
   exit 2
 fi
 
-# --- 1. Alten Stand sichern (verschieben, nie löschen) -----------------------
-if [ -e "$ZIEL" ]; then
-  SICHERUNG="$SKILLS/_alt/to-spawn-$(date +%Y%m%d-%H%M%S)"
-  mkdir -p "$SKILLS/_alt"
-  mv "$ZIEL" "$SICHERUNG"
-  echo "Alter Stand gesichert: $SICHERUNG"
-fi
+ZEIT="$(date +%Y%m%d-%H%M%S)"
 
-# --- 2. Skill kopieren (ohne Git, Caches) ------------------------------------
-mkdir -p "$ZIEL"
+# sichere_und_kopiere <name> <quelle>...: alten Ordner <skills>/<name> nach _alt/<name>-<zeit>
+# verschieben (nie löschen), dann jede vorhandene <quelle> hinein kopieren. Dateien, die es nur
+# im alten Stand gibt, werden gemeldet (liegen weiter in der Sicherung).
+sichere_und_kopiere() {
+  local name="$1" ziel="$SKILLS/$1" sicherung="" quelle datei
+  shift
+  if [ -e "$ziel" ]; then
+    sicherung="$SKILLS/_alt/$name-$ZEIT"
+    while [ -e "$sicherung" ]; do sicherung="$sicherung-1"; done
+    mkdir -p "$SKILLS/_alt"
+    mv "$ziel" "$sicherung"
+    echo "Alter Stand gesichert: $sicherung"
+  fi
+  mkdir -p "$ziel"
+  for quelle in "$@"; do
+    if [ -e "$quelle" ]; then cp -a "$quelle" "$ziel/"; fi
+  done
+  find "$ziel" \( -name __pycache__ -o -name .pytest_cache -o -name .ruff_cache \) -prune -exec rm -rf {} +
+  if [ -n "$sicherung" ]; then
+    (cd "$sicherung" && find . \( -name __pycache__ -o -name .pytest_cache -o -name .ruff_cache \) -prune -o -type f -print) |
+      while IFS= read -r datei; do
+        if [ ! -e "$ziel/$datei" ]; then echo "Hinweis: nur im alten Stand (liegt in $sicherung): ${datei#./}"; fi
+      done
+  fi
+}
+
+# --- 1+2. Alten Stand sichern, Skill kopieren (ohne Git, Caches) -------------
+quellen=()
 for eintrag in SKILL.md README.md LICENSE to_spawn.py install.sh install.ps1 spawn_local.ps1 spawn_srv.ps1 \
                to_spawn skripte repo-scripts aliase tests docs nest leitstand kette; do
-  if [ -e "$HIER/$eintrag" ]; then
-    cp -a "$HIER/$eintrag" "$ZIEL/"
-  fi
+  quellen+=("$HIER/$eintrag")
 done
-find "$ZIEL" \( -name __pycache__ -o -name .pytest_cache -o -name .ruff_cache \) -prune -exec rm -rf {} +
+sichere_und_kopiere to-spawn "${quellen[@]}"
 chmod +x "$ZIEL/skripte/spawn_srv.sh" "$ZIEL/repo-scripts/spawn_srv.sh" "$ZIEL"/nest/*.sh
 echo "Skill installiert: $ZIEL"
 
 # --- 3. Alias-Skills ----------------------------------------------------------
 for alias_ordner in "$HIER"/aliase/*/; do
   name="$(basename "$alias_ordner")"
-  mkdir -p "$SKILLS/$name"
-  cp "$alias_ordner/SKILL.md" "$SKILLS/$name/SKILL.md"
+  sichere_und_kopiere "$name" "$alias_ordner"/*
   echo "Alias installiert: $SKILLS/$name"
 done
 
 # --- 3b. Kette: Skills (grill-with-docs, to-spec, ...) + globale Regel-Blöcke ----
-ZEIT="$(date +%Y%m%d-%H%M%S)"
 for kette_ordner in "$HIER"/kette/skills/*/; do
   name="$(basename "$kette_ordner")"
-  if [ -e "$SKILLS/$name" ]; then
-    mkdir -p "$SKILLS/_alt"
-    mv "$SKILLS/$name" "$SKILLS/_alt/$name-$ZEIT"
-    echo "Alter Stand gesichert: $SKILLS/_alt/$name-$ZEIT"
-  fi
-  cp -a "$kette_ordner" "$SKILLS/$name"
+  sichere_und_kopiere "$name" "$kette_ordner"*
   echo "Kette-Skill installiert: $SKILLS/$name"
 done
 PYTHONPATH="$ZIEL" python3 -m to_spawn.globale_regeln --ziel "$CLAUDE_MD"

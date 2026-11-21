@@ -19,6 +19,8 @@ Dieser Abschnitt geht jedem anderen Text dieses Skills und jedem Projekt-Zusatz 
 
 > **Projekt-Zusatz (Pflicht, zuerst prüfen):** Liegt im Arbeitsordner `.to-spawn/kette.md`, dann diese Datei jetzt lesen. Sie gilt **zusätzlich** zu diesem Skill, nie statt: Projekt-Erweiterungen wie eine Werkzeug-Tabelle `## Werkzeuge` kommen dazu, der Text hier bleibt verbindlich. Der Abschnitt „Beschluss-Protokoll“ oben geht auch dem Projekt-Zusatz vor.
 
+> **Übergang (bis das Projekt eine `.to-spawn/kette.md` hat):** Liegt im Arbeitsordner `.claude/skills/to-spec/SKILL.md`, dann diese Datei zusätzlich lesen; solange es keine `.to-spawn/kette.md` gibt, haben ihre Projekt-Regeln (z. B. `## Hauptschalter`, `## Werkzeuge`) Vorrang vor dem übrigen Text hier. Der Abschnitt „Beschluss-Protokoll“ oben geht auch ihr vor.
+
 This skill takes the decision protocol (see „Beschluss-Protokoll“ above) and codebase understanding and produces a spec. Do NOT interview the user beyond the confirmations required above; just synthesize what the protocol decides.
 
 The issue tracker and triage label vocabulary should have been provided to you. If not, tell the user to run `/setup-matt-pocock-skills`.
