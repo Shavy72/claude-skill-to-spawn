@@ -72,7 +72,7 @@ def baum_beenden(pid: int) -> bool:
 
     True = weg (auch: war schon weg). Ohne Fenster gestartet (CREATE_NO_WINDOW).
     """
-    if not prozessbaum._lebt_windows(pid):
+    if not prozessbaum.lebt(pid):
         return True
     erg = subprocess.run(
         ["taskkill", "/PID", str(pid), "/T", "/F"],
@@ -84,7 +84,7 @@ def baum_beenden(pid: int) -> bool:
     log.info("taskkill /T /F %d → Exit %d %s", pid, erg.returncode, (erg.stderr or "").strip())
     ende = time.monotonic() + BEENDEN_MAX_S
     while time.monotonic() < ende:
-        if not prozessbaum._lebt_windows(pid):
+        if not prozessbaum.lebt(pid):
             return True
         time.sleep(_TAKT_S)
     return False
@@ -157,7 +157,7 @@ def lauf_aus(prozesse: dict[int, tuple[int, str, int]], ticket: int) -> Lauf:
     # ist der Treffer ohne Treffer-Kind (sonst hinge es an der Reihenfolge der Prozessliste).
     for bau in (p for p in treffer if not treffer.intersection(kinder.get(p, []))):
         for pid in nachkommen(bau):
-            # Die Liste hat immer Windows-Form (``_prozesse_windows``), egal wo die Logik läuft.
+            # Die Liste hat immer Windows-Form (``prozesse()`` unter Windows), egal wo die Logik läuft.
             if not prozessbaum.ist_session_zeile(prozesse[pid][1], windows=True):
                 continue
             start = _unix(prozesse[pid][2])
@@ -178,7 +178,7 @@ def lauf_aus(prozesse: dict[int, tuple[int, str, int]], ticket: int) -> Lauf:
 
 def lauf(ticket: int) -> Lauf:
     """:func:`lauf_aus` über die echte Prozessliste."""
-    return lauf_aus(prozessbaum._prozesse_windows(), ticket)
+    return lauf_aus(prozessbaum.prozesse(), ticket)
 
 
 def still_s(repo: Path, ticket: int, jetzt: float) -> float | None:
