@@ -1,17 +1,42 @@
-"""Repo-Konfiguration ``.to-spawn/config.json`` mit Vorgabewerten.
+"""Repo-Konfiguration ``.to-spawn/config.json`` und Maschinen-Liste — die eine Tür (#46).
 
 Fehlt die Datei, gelten die Vorgaben unten — der Skill läuft also in jedem Repo
 ohne Setup. Vorhandene Felder überschreiben die Vorgaben (verschachtelt).
+
+Schnittstelle für die Aufrufer (L1 Etappe 1, Pakete P1–P5):
+
+- ``lade(repo) -> dict``: Repo-Konfig mit Vorgaben aufgefüllt. Neue Gruppen:
+  ``pfade.{manifeste,bau_log,agenten}``, ``deploy.skripte`` (Liste ``name``/``art``/
+  ``pruef_schalter``/``fern``), ``staging.schalter``, ``befehle.wirkungskreis``,
+  ``vps.staging_log``.
+- ``pfad(konfig, name) -> Path``: ein ``pfade.<name>``-Ordner als Pfad unter der
+  Repo-Wurzel (absolute Werte und ``~`` gelten wie eingetragen).
+- ``maschine() -> dict``: Maschinen-Liste ``~/.config/to-spawn/maschine.json``
+  (Env ``TO_SPAWN_MASCHINE`` lenkt um) mit ``repos[]`` (``slug``, ``pfad``,
+  ``ticket_repo``, ``worktree_basis``), ``staging_sperren[]`` und
+  ``hausmeister.{wurzeln,ordner_praefixe}`` — Dinge, die je Maschine gelten, nicht je Repo.
+- ``maschine_eintragen(repo) -> dict``: trägt das Repo in die Maschinen-Liste ein
+  (wiederholbar ohne Schaden, atomar geschrieben), Rückgabe = sein Eintrag.
+
+Regeln: fehlender Schlüssel = Vorgabe = heutiges Verhalten, nie Abbruch; fehlende oder
+kaputte Datei = Vorgaben; leerer Wert = „ableiten“ (wie ``hauptzweig``). Die heutigen
+DuoPlus-Werte stehen nur in ``to_spawn/vorgaben.py`` — kein anderes Modul importiert sie.
+Env-Nähte der Aufrufer (``TO_SPAWN_HAUSMEISTER_*``, ``TO_SPAWN_STAGING_SPERRE``) behalten
+Vorrang vor der Maschinen-Liste; das prüft jeder Aufrufer selbst.
 """
 
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import os
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
+
+from . import vorgaben
 
 log = logging.getLogger("to_spawn.config")
 
@@ -28,9 +53,7 @@ TERMINAL_ADAPTER: dict[str, tuple[str, ...]] = {
 #: Claude-Prozess laut Doku nicht beenden kann (siehe README, Abschnitt Staffel).
 DEFAULTS: dict[str, Any] = {
     "ziel_default": "srv",
-    "terminal": {
-        plattform: adapter[0] for plattform, adapter in TERMINAL_ADAPTER.items()
-    },
+    "terminal": {plattform: adapter[0] for plattform, adapter in TERMINAL_ADAPTER.items()},
     "ssh_ziel": "bau-server",
     #: Repo-Ordner auf dem Bau-Server (leer = ``~/<Name des Repo-Ordners>``), für den Umzug (#212).
     "server_repo": "",
@@ -86,6 +109,23 @@ DEFAULTS: dict[str, Any] = {
     "staging": {
         "url": "",
         "zugang_datei": "",
+        #: Schalter-Skript im App-Repo, relativ zur Repo-Wurzel (L1 #46).
+        "schalter": vorgaben.STAGING_SCHALTER,
+    },
+    #: Ordner im App-Repo, relativ zur Repo-Wurzel; Zugriff über :func:`pfad` (L1 #46).
+    "pfade": dict(vorgaben.PFADE),
+    #: Deploy-Skripte für den Aufpasser: ``name``, ``art`` ("live"/"pruef"),
+    #: ``pruef_schalter`` (macht "live" zu "pruef", "" = keiner), ``fern`` (nur per ssh) (L1 #46).
+    "deploy": {
+        "skripte": copy.deepcopy(vorgaben.DEPLOY_SKRIPTE),
+    },
+    #: App-Befehle, die der Skill aufruft, relativ zur Repo-Wurzel (L1 #46).
+    "befehle": {
+        "wirkungskreis": vorgaben.BEFEHL_WIRKUNGSKREIS,
+    },
+    #: VPS-Regel des Aufsehers; ``ssh`` fehlt in der Vorgabe → Regel aus (L1 #46: nur das Staging-Log).
+    "vps": {
+        "staging_log": vorgaben.STAGING_LOG,
     },
     #: Sandbox je Worktree (#210), Opt-in je Repo: "an" = Session läuft in ``srt``.
     #: ``pflicht`` (bei "an"): fehlt srt/bwrap oder scheitert der Worktree → kein Start;
@@ -116,6 +156,18 @@ DEFAULTS: dict[str, Any] = {
 }
 
 KONFIG_PFAD = Path(".to-spawn") / "config.json"
+
+#: Vorgaben der Maschinen-Liste (L1 #46): je Maschine, nicht je Repo.
+MASCHINE_DEFAULTS: dict[str, Any] = {
+    "repos": copy.deepcopy(vorgaben.REPOS),
+    "staging_sperren": list(vorgaben.STAGING_SPERREN),
+    "hausmeister": {
+        "wurzeln": list(vorgaben.HAUSMEISTER_WURZELN),
+        "ordner_praefixe": list(vorgaben.HAUSMEISTER_ORDNER_PRAEFIXE),
+    },
+}
+#: Felder eines Eintrags in ``repos[]``; fehlende Felder gelten als "" (= ableiten).
+REPO_FELDER = ("slug", "pfad", "ticket_repo", "worktree_basis")
 
 
 def _mische(vorgabe: dict[str, Any], eigen: dict[str, Any]) -> dict[str, Any]:
@@ -291,9 +343,7 @@ def sicherstellen(repo: Path | None = None) -> Path:
 
 def staffel_modus(konfig: dict[str, Any]) -> str:
     """ "hook" oder "eltern" — Umgebungsvariable ``TO_SPAWN_STAFFEL_MODUS`` gewinnt."""
-    modus = os.environ.get("TO_SPAWN_STAFFEL_MODUS") or str(
-        konfig.get("staffel", {}).get("modus", "eltern")
-    )
+    modus = os.environ.get("TO_SPAWN_STAFFEL_MODUS") or str(konfig.get("staffel", {}).get("modus", "eltern"))
     return modus if modus in ("hook", "eltern") else "eltern"
 
 
@@ -322,3 +372,124 @@ def terminal_fuer(konfig: dict[str, Any], plattform: str | None = None) -> str:
     if isinstance(wert, str) and wert in TERMINAL_ADAPTER[system]:
         return wert
     return standard
+
+
+def _wurzel_von(konfig: dict[str, Any]) -> Path:
+    """Repo-Wurzel einer Konfig: aus ihrer Datei, sonst ``TO_SPAWN_REPO``, sonst der aktuelle Ordner."""
+    datei = konfig.datei if isinstance(konfig, Konfig) else None
+    if datei is not None:
+        return datei.parent.parent
+    roh = os.environ.get("TO_SPAWN_REPO")
+    return repo_wurzel(Path(roh).expanduser() if roh else None)
+
+
+def pfad(konfig: dict[str, Any], name: str) -> Path:
+    """Ordner ``pfade.<name>`` als Pfad unter der Repo-Wurzel (L1 #46).
+
+    ``name`` ist einer aus ``DEFAULTS["pfade"]`` (``manifeste``, ``bau_log``, ``agenten``);
+    ein anderer Name ist ein Programmierfehler (``KeyError``). Fehlt der Wert oder ist er
+    leer bzw. kein Text, gilt die Vorgabe. ``~`` und absolute Werte gelten wie eingetragen.
+    """
+    vorgabe = DEFAULTS["pfade"][name]
+    gruppe = konfig.get("pfade")
+    wert = gruppe.get(name) if isinstance(gruppe, dict) else None
+    text = wert.strip() if isinstance(wert, str) and wert.strip() else vorgabe
+    return _wurzel_von(konfig) / Path(text).expanduser()
+
+
+def maschine_datei() -> Path:
+    """Ort der Maschinen-Liste: ``TO_SPAWN_MASCHINE``, sonst ``~/.config/to-spawn/maschine.json``."""
+    roh = os.environ.get("TO_SPAWN_MASCHINE")
+    if roh:
+        return Path(roh).expanduser()
+    return Path.home() / ".config" / "to-spawn" / "maschine.json"
+
+
+def _repo_eintrag(roh: Any) -> dict[str, str] | None:
+    """Ein ``repos[]``-Eintrag mit allen Feldern als Text, ``None`` = unbrauchbar (kein Objekt)."""
+    if not isinstance(roh, dict):
+        return None
+    return {feld: str(roh.get(feld) or "") for feld in REPO_FELDER}
+
+
+def maschine() -> dict[str, Any]:
+    """Maschinen-Liste, mit Vorgaben aufgefüllt (L1 #46) — nie Abbruch.
+
+    Fehlt die Datei oder ist sie kaputt, gelten ``MASCHINE_DEFAULTS`` (Warnung im Log bei
+    kaputt). Jeder fehlende Schlüssel gilt einzeln als Vorgabe; eine vorhandene Liste
+    ersetzt die Vorgabe-Liste ganz (keine Vereinigung). ``repos[]``-Einträge haben immer
+    alle Felder aus ``REPO_FELDER``; Einträge, die kein Objekt sind, fallen weg.
+    """
+    datei = maschine_datei()
+    eigen: dict[str, Any] = {}
+    if datei.is_file():
+        gelesen, fehler = _lies(datei)
+        if gelesen is None:
+            log.warning("Maschinen-Liste unlesbar (%s) — Vorgaben gelten: %s", datei, fehler)
+        else:
+            eigen = gelesen
+    ergebnis = _mische(copy.deepcopy(MASCHINE_DEFAULTS), eigen)
+    for schluessel, vorgabe in MASCHINE_DEFAULTS.items():
+        if not isinstance(ergebnis.get(schluessel), type(vorgabe)):
+            ergebnis[schluessel] = copy.deepcopy(vorgabe)
+    for schluessel, vorgabe in MASCHINE_DEFAULTS["hausmeister"].items():
+        if not isinstance(ergebnis["hausmeister"].get(schluessel), list):
+            ergebnis["hausmeister"][schluessel] = list(vorgabe)
+    ergebnis["repos"] = [e for e in map(_repo_eintrag, ergebnis["repos"]) if e is not None]
+    return ergebnis
+
+
+def _gleicher_ort(a: str, b: Path) -> bool:
+    """``a`` (Text aus der Liste, ``~`` erlaubt) zeigt auf denselben Ordner wie ``b``."""
+    try:
+        return Path(a).expanduser().resolve() == b
+    except (OSError, ValueError):
+        return False
+
+
+def maschine_eintragen(repo: Path | None = None) -> dict[str, str]:
+    """Trägt das Repo in ``repos[]`` der Maschinen-Liste ein und gibt seinen Eintrag zurück.
+
+    Schlüssel ist der Ordner (``pfad``). Neu: ``slug`` aus ``origin``, ``worktree_basis`` aus
+    der Repo-Konfig, ``ticket_repo`` leer (= ableiten). Schon da: nur leere Felder werden
+    ergänzt, Eingetragenes bleibt. Fehlt die Datei, sind die Vorgaben die Basis — die
+    Vorgabe-Repos bleiben also erhalten. Geschrieben wird nur bei Änderung, atomar
+    (temporäre Datei + ``os.replace``). Eine kaputte Datei wird nie überschrieben: dann
+    Warnung und Rückgabe des Eintrags ohne Schreiben. Ein Schreibfehler (``OSError``)
+    geht an den Aufrufer (Einrichter), die alte Datei bleibt dabei unberührt.
+    """
+    from . import gh  # spät: gh importiert config
+
+    wurzel = repo_wurzel(repo)
+    datei = maschine_datei()
+    neu = {
+        "slug": gh.repo_aus_origin(wurzel),
+        "pfad": wurzel.as_posix(),
+        "ticket_repo": "",
+        "worktree_basis": str(lade(wurzel).get("worktree_basis") or ""),
+    }
+    if datei.is_file() and _lies(datei)[0] is None:
+        log.warning("Maschinen-Liste unlesbar (%s) — nicht überschrieben", datei)
+        return neu
+    daten = maschine()
+    for eintrag in daten["repos"]:
+        if _gleicher_ort(eintrag["pfad"], wurzel):
+            fehlend = {k: v for k, v in neu.items() if v and not eintrag[k]}
+            if not fehlend and datei.is_file():
+                return eintrag
+            eintrag.update(fehlend)
+            break
+    else:
+        eintrag = neu
+        daten["repos"].append(eintrag)
+    datei.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix=".maschine-", suffix=".tmp", dir=datei.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as strom:
+            strom.write(json.dumps(daten, indent=2, ensure_ascii=False) + "\n")
+        os.replace(tmp, datei)
+    except OSError:
+        Path(tmp).unlink(missing_ok=True)
+        raise
+    log.info("Maschinen-Liste: %s eingetragen (%s)", wurzel, datei)
+    return eintrag
