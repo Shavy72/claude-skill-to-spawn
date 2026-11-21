@@ -18,6 +18,7 @@ Halter-Einstieg (Tests, Deploy-Dienst): ``python -m to_spawn.leitstand halte <na
 from __future__ import annotations
 
 import argparse
+import errno
 import json
 import logging
 import os
@@ -68,14 +69,8 @@ def _sperr_ordner() -> Path:
 
 
 def _pruefe_name(name: str, *, intern_erlaubt: bool = False) -> str:
-    if (
-        not isinstance(name, str)
-        or not NAME_MUSTER.fullmatch(name)
-        or name in {".", ".."}
-    ):
-        raise ValueError(
-            f"ungültiger Sperr-Name: {name!r} (erlaubt: A-Z a-z 0-9 . _ -)"
-        )
+    if not isinstance(name, str) or not NAME_MUSTER.fullmatch(name) or name in {".", ".."}:
+        raise ValueError(f"ungültiger Sperr-Name: {name!r} (erlaubt: A-Z a-z 0-9 . _ -)")
     if name.startswith("_") and not intern_erlaubt:
         # „_“ vorn gehört dem Leitstand selbst (z. B. ``_zustand``).
         raise ValueError(f"Sperr-Name {name!r} ist intern (beginnt mit „_“)")
@@ -120,11 +115,12 @@ def _probe_frei(pfad: Path) -> bool | None:
         os.close(os.open(pfad, os.O_RDWR))
         with _sperre.halte(pfad) as gehalten:
             return gehalten
-    except FileNotFoundError:
-        return None
-    except PermissionError:
+    except OSError as fehler:
+        # Nach errno, nicht nach Klasse: halte() verpackt Fehler als SperreNichtOeffenbar (#195).
+        if fehler.errno == errno.ENOENT:
+            return None
         # Nur Windows: Datei wird gerade gelöscht. Linux: fehlende Rechte — nie still „frei“.
-        if sys.platform == "win32":
+        if fehler.errno in (errno.EACCES, errno.EPERM) and sys.platform == "win32":
             return None
         raise
 
@@ -218,9 +214,7 @@ def _nimm(name: str, halter: str) -> Halteschein | None:
         return None
     try:
         # Rest eines abgestürzten Halters sofort weg, damit ``stand()`` ihn nie zeigt.
-        _mit_wiederholung(
-            (ordner / f"{name}.halter.json").unlink, f"alte Halter-Datei {name} löschen"
-        )
+        _mit_wiederholung((ordner / f"{name}.halter.json").unlink, f"alte Halter-Datei {name} löschen")
         _schreibe_atomar(
             ordner / f"{name}.halter.json",
             {"halter": halter, "pid": os.getpid(), "seit": _jetzt_iso()},
@@ -252,9 +246,7 @@ def _lebende_wartende(name: str) -> list[tuple[Path, dict]]:
             continue
         if alter < _ZETTEL_ANLAUF_S:
             continue  # wird gerade angelegt
-        _mit_wiederholung(
-            zettel.unlink, f"toten Wartezettel {zettel.name} wegräumen", anzahl=3
-        )
+        _mit_wiederholung(zettel.unlink, f"toten Wartezettel {zettel.name} wegräumen", anzahl=3)
     return lebende
 
 
@@ -294,9 +286,7 @@ def _entferne_zettel(zettel: Path, stapel: ExitStack) -> None:
 
 
 @contextmanager
-def sperre(
-    name: str, halter: str, *, warte_s: float | None = None, takt_s: float = 0.1
-) -> Iterator[Halteschein]:
+def sperre(name: str, halter: str, *, warte_s: float | None = None, takt_s: float = 0.1) -> Iterator[Halteschein]:
     """Blockiert in der Reihe (FIFO), bis die Sperre frei ist; ``warte_s`` → ``SperreBelegt``."""
     _pruefe_name(name)
     ende = None if warte_s is None else time.monotonic() + warte_s
@@ -432,9 +422,7 @@ def neue_entscheidung(ticket: int, text: str) -> None:
 def setze_leiter_stufe(ticket: int, stufe: int, seit: float | None = None) -> None:
     """Merkt Stufe der Eingriffs-Leiter (#432) und Zeitpunkt des letzten Eingriffs."""
     eintrag = {"stufe": int(stufe), "seit": seit}
-    aendere_zustand(
-        lambda z: z.setdefault("leiter_stufe", {}).__setitem__(str(ticket), eintrag)
-    )
+    aendere_zustand(lambda z: z.setdefault("leiter_stufe", {}).__setitem__(str(ticket), eintrag))
 
 
 def leiter_eintrag(ticket: int) -> tuple[int, float | None]:
@@ -452,9 +440,7 @@ def leiter_stufe(ticket: int) -> int:
 
 def merke_leiter_respawn(ticket: int, zeit: float) -> None:
     """Merkt den letzten erfolgreichen Respawn der Leiter (#432): älterer Kontext zählt nicht."""
-    aendere_zustand(
-        lambda z: z.setdefault("leiter_respawn", {}).__setitem__(str(ticket), zeit)
-    )
+    aendere_zustand(lambda z: z.setdefault("leiter_respawn", {}).__setitem__(str(ticket), zeit))
 
 
 def schliesse_leiter_respawn(ticket: int, zeit: float) -> None:
@@ -483,9 +469,7 @@ def leiter_respawn(ticket: int) -> float | None:
 
 def richte_parser_ein(unter: Any) -> None:
     """Hängt ``leitstand`` mit Unterbefehlen an den Parser von ``to_spawn.py``."""
-    p_ls = unter.add_parser(
-        "leitstand", help="Leitstand: gemeinsame Sperren und Zustand"
-    )
+    p_ls = unter.add_parser("leitstand", help="Leitstand: gemeinsame Sperren und Zustand")
     ls_unter = p_ls.add_subparsers(dest="leitstand_befehl", required=True)
 
     p_st = ls_unter.add_parser("stand", help="Sperren: Halter und Wartende")

@@ -417,7 +417,13 @@ def test_f4_fortsetzen_auch_als_letztes_fenster_sitzung_lebt(welt: Welt) -> None
     assert welt.eintrag("bau 9002")["stufe"] == 2
 
 
-def test_f5_nachweis_fehlt_meldung_stufe_3(welt: Welt) -> None:
+def test_f5_nachweis_fehlt_meldung_stufe_3(
+    welt: Welt, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Die Attrappe schreibt bei ``exit`` keine Session-Datei, der Nachweis kann
+    # also nie gelingen: die volle Frist (120 s) abzuwarten prüft nichts mehr,
+    # verlängert nur das Fenster für fremde Störungen im Voll-Lauf (#149).
+    monkeypatch.setattr(aufpasser, "NACHWEIS_S", 3)
     welt.worktree(9002, schmutzig=False)
     sid = str(uuid.uuid4())
     _fenster(welt, "bau 9002", f"{welt.bin}/claude --session-id {sid} x")
@@ -431,6 +437,35 @@ def test_f5_nachweis_fehlt_meldung_stufe_3(welt: Welt) -> None:
     assert welt.lauf("--bau-vorlage", vorlage) == 0
     argv = welt.protokoll_bau.read_text(encoding="utf-8").splitlines()
     assert argv == [f"9002 --resume {sid}"]
+    treffer = [
+        k
+        for k in welt.kommentare()
+        if f"Fortsetzen fehlgeschlagen (Session {sid[:8]} nicht wieder da) — braucht David"
+        in k
+    ]
+    assert len(treffer) == 1, welt.kommentare()
+    assert welt.eintrag("bau 9002")["stufe"] == 3
+
+
+def test_f5_fenster_weg_nach_nachweis_meldung_statt_absturz(
+    welt: Welt, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#149: Stirbt die fortgesetzte Session gleich nach dem Nachweis (unter Last
+    sah der Nachweis ihre Session-Datei noch), ist das Fenster weg. Der Lauf darf
+    dann nicht mit tmux „can't find window“ abbrechen, sondern meldet Stufe 3."""
+    welt.worktree(9002, schmutzig=False)
+    sid = str(uuid.uuid4())
+    _fenster(welt, "bau 9002", f"{welt.bin}/claude --session-id {sid} x")
+    _still_seit(welt, "bau 9002", 100, stufe=1, eingriff=time.time() - 100 * 60)
+
+    def nachweis_dann_weg(self: aufpasser.Aufpasser, f: object, s: str) -> bool:
+        tmux("kill-window", "-t", fenster_ziel("bau 9002"))
+        return True
+
+    monkeypatch.setattr(
+        aufpasser.Aufpasser, "_fortsetzen_nachweisen", nachweis_dann_weg
+    )
+    assert welt.lauf("--bau-vorlage", _bau_claude_vorlage(welt)) == 0
     treffer = [
         k
         for k in welt.kommentare()

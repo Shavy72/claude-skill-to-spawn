@@ -21,7 +21,9 @@ Ablösung (respawn startet ``bau.py <N> --sofort --ohne-prompt``): die neue Sess
 aber nur eine Ablösung je Ticket gleichzeitig. Sie übernimmt die Ticket-Sperre, sobald
 die alte Session endet — danach ist sie wieder „die eine“ Session.
 
-:func:`weiter_erlaubt` prüft vor jeder Staffel-Runde erneut, ob das Ticket noch offen ist.
+:func:`weiter_entscheidung` prüft vor jeder Staffel-Runde erneut, ob das Ticket noch offen
+ist; ein unbekannter Stand wird kurz wiederholt und endet sonst laut mit Exit 2 (#191).
+Die gh-Abfrage hat eine Zeitgrenze (``gh.TICKET_STAND_TIMEOUT_S``), bau.py hängt nie stumm.
 
 Test-Naht: unter Test (``starter.unter_test()``) mit ``TO_SPAWN_TEST_TICKET_OFFEN=1``
 gilt jedes Ticket als offen; ``TO_SPAWN_START_SPERREN`` lenkt den Sperr-Ordner um.
@@ -34,6 +36,7 @@ import logging
 import os
 import re
 import threading
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -48,6 +51,11 @@ SPERR_ORDNER_ENV = "TO_SPAWN_START_SPERREN"
 TEST_OFFEN_ENV = "TO_SPAWN_TEST_TICKET_OFFEN"
 #: Exit-Code, wenn der Ticket-Stand nicht bestimmbar ist (laut, fail-closed).
 EXIT_UNKLAR = 2
+#: Vor einer Staffel-Runde: so oft wird ein unbekannter Ticket-Stand gefragt (#191).
+STAND_VERSUCHE = 3
+#: Pause (s) zwischen den Versuchen; Umgebungsvariable kürzt sie (Tests).
+STAND_ABSTAND_S = 5.0
+STAND_ABSTAND_ENV = "TO_SPAWN_STAND_ABSTAND"
 
 #: Liefert ``True`` (offen), ``False`` (zu) oder ``None`` (unbekannt).
 TicketPruefer = Callable[[str, "Path | None"], "bool | None"]
@@ -84,7 +92,7 @@ def _pruefen(ticket: str, cwd: Path | None, pruefer: TicketPruefer | None) -> En
     offen = _zustand(ticket, cwd, pruefer)
     if offen is None:
         grund = (
-            f"bau {ticket}: Ticket-Stand nicht bestimmbar (gh fehlt/Fehler) — KEIN Start "
+            f"bau {ticket}: Ticket-Stand nicht bestimmbar (gh fehlt/Fehler/Zeitüberschreitung) — KEIN Start "
             "(fail-closed). gh prüfen, dann neu starten."
         )
         log.error("%s", grund)
@@ -157,6 +165,37 @@ def _uebernehmen_wenn_frei(haupt: Path, abloese_stapel: contextlib.ExitStack) ->
     threading.Thread(target=warten, name="start-sperre-uebernahme", daemon=True).start()
 
 
+def weiter_entscheidung(
+    ticket: str,
+    cwd: Path | None = None,
+    *,
+    pruefer: TicketPruefer | None = None,
+    abstand: float | None = None,
+) -> Entscheidung:
+    """Vor jeder Staffel-Runde: Ticket noch offen? (#191)
+
+    Offen → weiter; geschlossen → Ende mit Exit 0. Unbekannt (gh-Aussetzer) wird bis zu
+    :data:`STAND_VERSUCHE`-mal mit ``abstand`` Sekunden Pause neu gefragt (Standard aus
+    :data:`STAND_ABSTAND_ENV`, sonst :data:`STAND_ABSTAND_S`); bleibt es unbekannt →
+    laut, Exit :data:`EXIT_UNKLAR` — nie still wie „geschlossen“.
+    """
+    if abstand is None:
+        try:
+            abstand = float(os.environ.get(STAND_ABSTAND_ENV) or STAND_ABSTAND_S)
+        except ValueError:
+            abstand = STAND_ABSTAND_S
+    for versuch in range(1, STAND_VERSUCHE + 1):
+        entscheidung = _pruefen(str(ticket), cwd, pruefer)
+        if entscheidung.exit_code != EXIT_UNKLAR:
+            return entscheidung
+        if versuch < STAND_VERSUCHE:
+            log.warning(
+                "bau %s: Ticket-Stand unbekannt, Versuch %d/%d — neuer Versuch.", ticket, versuch, STAND_VERSUCHE
+            )
+            time.sleep(max(0.0, abstand))
+    return entscheidung
+
+
 def weiter_erlaubt(ticket: str, cwd: Path | None = None, *, pruefer: TicketPruefer | None = None) -> bool:
-    """Vor jeder Staffel-Runde: Ticket noch offen? Unbekannt zählt als Nein (fail-closed)."""
+    """Wie :func:`weiter_entscheidung`, nur ja/nein (unbekannt = Nein, ohne Wiederholung)."""
     return _pruefen(str(ticket), cwd, pruefer).erlaubt

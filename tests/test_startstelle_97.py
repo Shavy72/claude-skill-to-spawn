@@ -154,7 +154,7 @@ def test_bau_main_geht_durch_die_startstelle() -> None:
         if isinstance(k, ast.Call) and isinstance(k.func, ast.Name) and k.func.id == "starte_session"
     ]
     betreten = [z for z, name in aufrufe if name == "betreten"]
-    weiter = [z for z, name in aufrufe if name == "weiter_erlaubt"]
+    weiter = [z for z, name in aufrufe if name in ("weiter_erlaubt", "weiter_entscheidung")]
     assert len(betreten) == 1 and starts, (aufrufe, starts)
     assert betreten[0] < min(starts)
     assert weiter and min(weiter) < min(starts), "Staffel-Runden prüfen den Ticket-Stand neu"
