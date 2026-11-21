@@ -99,7 +99,7 @@ def _ausgabe(ergebnis: subprocess.CompletedProcess[str]) -> str:
 
 def test_fehlendes_umfang_feld_weigert_sich(repo: Path) -> None:
     _manifest_schreiben(repo, {TICKETS[0]: {"title": "ohne Umfang", "schaetzung_k": 100}})
-    ergebnis = _cli(repo, "pruefen", str(SPEC))
+    ergebnis = _cli(repo, "regularien", str(SPEC))
     assert ergebnis.returncode == 3, _ausgabe(ergebnis)
     assert "umfang" in ergebnis.stdout
     assert "WEIGERUNG — nichts gestartet." in ergebnis.stdout
@@ -112,14 +112,14 @@ def test_schaetzung_genau_200_ist_weigerung(repo: Path) -> None:
     Name aus der Zeit der 200k-Grenze; die Zahl kommt seit #1411 aus ``GRENZE``.
     """
     _manifest_schreiben(repo, {TICKETS[0]: _voll(schaetzung=GRENZE)})
-    ergebnis = _cli(repo, "pruefen", str(SPEC))
+    ergebnis = _cli(repo, "regularien", str(SPEC))
     assert ergebnis.returncode == 3, _ausgabe(ergebnis)
     assert f"in Teil-Tickets je unter {GRENZE}k schneiden (/to-tickets)" in ergebnis.stdout
 
 
 def test_schaetzung_199_geht_durch(repo: Path) -> None:
     _manifest_schreiben(repo, {TICKETS[0]: _voll(schaetzung=GRENZE - 1)})
-    ergebnis = _cli(repo, "pruefen", str(SPEC))
+    ergebnis = _cli(repo, "regularien", str(SPEC))
     assert ergebnis.returncode == 0, _ausgabe(ergebnis)
     assert "FEHLER" not in ergebnis.stdout
 
@@ -127,7 +127,7 @@ def test_schaetzung_199_geht_durch(repo: Path) -> None:
 @pytest.mark.parametrize("wert", [0, -5, True])
 def test_schaetzung_muss_positive_zahl_sein(repo: Path, wert: object) -> None:
     _manifest_schreiben(repo, {TICKETS[0]: {"title": "x", "schaetzung_k": wert, "umfang": "y"}})
-    ergebnis = _cli(repo, "pruefen", str(SPEC))
+    ergebnis = _cli(repo, "regularien", str(SPEC))
     assert ergebnis.returncode == 3, _ausgabe(ergebnis)
     assert "schaetzung_k" in ergebnis.stdout
 
@@ -139,7 +139,7 @@ def test_doppelter_ticket_schluessel_weigert_sich(repo: Path) -> None:
         f'{{"spec": {SPEC}, "tickets": {{"901": {eintrag}, "902": {eintrag}, "901": {eintrag}}}}}'
     )
     (_manifest_ordner(repo) / f"spec-{SPEC}.json").write_text(text, encoding="utf-8")
-    ergebnis = _cli(repo, "pruefen", str(SPEC))
+    ergebnis = _cli(repo, "regularien", str(SPEC))
     assert ergebnis.returncode == 3, _ausgabe(ergebnis)
     assert "#901 steht zweimal im Manifest (doppelt belegt)" in ergebnis.stdout
     assert f"spec-{SPEC}.json zusammenführen" in ergebnis.stdout
@@ -150,7 +150,7 @@ def test_doppelter_ticket_schluessel_weigert_sich(repo: Path) -> None:
 
 def test_ticket_offen_in_zweitem_manifest_weigert_sich(repo: Path) -> None:
     _manifest_schreiben(repo, {TICKETS[0]: _voll()}, spec=800)
-    ergebnis = _cli(repo, "pruefen", str(SPEC))
+    ergebnis = _cli(repo, "regularien", str(SPEC))
     assert ergebnis.returncode == 3, _ausgabe(ergebnis)
     assert "#901 steht auch in spec-800.json — doppelt belegt" in ergebnis.stdout
     assert "Aus einem Manifest streichen." in ergebnis.stdout
@@ -161,7 +161,7 @@ def test_ticket_zu_in_zweitem_manifest_ist_egal(
 ) -> None:
     _manifest_schreiben(repo, {TICKETS[0]: _voll()}, spec=800)
     monkeypatch.setenv("GH_STUB_ZU", TICKETS[0])
-    ergebnis = _cli(repo, "pruefen", str(SPEC))
+    ergebnis = _cli(repo, "regularien", str(SPEC))
     assert ergebnis.returncode == 0, _ausgabe(ergebnis)
     assert "spec-800.json" not in ergebnis.stdout
 
@@ -173,7 +173,7 @@ def test_fremde_dateinamen_und_kaputtes_manifest(repo: Path) -> None:
         json.dumps({"tickets": {TICKETS[0]: _voll()}}), encoding="utf-8"
     )
     (ordner / "spec-801.json").write_text("{ kaputt", encoding="utf-8")
-    ergebnis = _cli(repo, "pruefen", str(SPEC))
+    ergebnis = _cli(repo, "regularien", str(SPEC))
     assert ergebnis.returncode == 0, _ausgabe(ergebnis)
     assert "vorlage-900.json" not in ergebnis.stdout
     assert "Warnung" in ergebnis.stdout and "spec-801.json" in ergebnis.stdout
@@ -196,7 +196,7 @@ def test_body_verweis_ohne_native_kante_weigert_sich(
             }
         },
     )
-    ergebnis = _cli(repo, "pruefen", str(SPEC))
+    ergebnis = _cli(repo, "regularien", str(SPEC))
     assert ergebnis.returncode == 3, _ausgabe(ergebnis)
     assert (
         "#902: laut Ticket-Text blockiert von #901, aber die native Kante fehlt" in ergebnis.stdout
@@ -215,7 +215,7 @@ def test_body_verweis_mit_kante_geht_durch(
         monkeypatch,
         {TICKETS[1]: {"labels": ["checkpoint:human"], "body": "## Blocked by\n- #901\n"}},
     )
-    ergebnis = _cli(repo, "pruefen", str(SPEC))
+    ergebnis = _cli(repo, "regularien", str(SPEC))
     assert ergebnis.returncode == 0, _ausgabe(ergebnis)
 
 
@@ -228,7 +228,7 @@ def test_entwurfs_nummer_im_body_ist_warnung(
         monkeypatch,
         {TICKETS[1]: {"labels": ["checkpoint:human"], "body": "## Blocked by\n- #3\n- #901\n"}},
     )
-    ergebnis = _cli(repo, "pruefen", str(SPEC))
+    ergebnis = _cli(repo, "regularien", str(SPEC))
     assert ergebnis.returncode == 0, _ausgabe(ergebnis)
     assert "#902: Blocker-Verweis #3 ist kein Ticket dieser Spec" in ergebnis.stdout
 
@@ -246,7 +246,7 @@ def test_geschlossenes_ticket_ueberspringt_body_pruefung(
             TICKETS[1]: {"labels": [], "body": "## Blocked by\n- #901\n"},
         },
     )
-    ergebnis = _cli(repo, "pruefen", str(SPEC))
+    ergebnis = _cli(repo, "regularien", str(SPEC))
     assert ergebnis.returncode == 0, _ausgabe(ergebnis)
     assert "native Kante fehlt" not in ergebnis.stdout
 
@@ -255,7 +255,7 @@ def test_fehlendes_checkpoint_label_weigert_sich(
     repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _gh_daten(tmp_path, monkeypatch, {t: {"labels": ["enhancement"]} for t in TICKETS})
-    ergebnis = _cli(repo, "pruefen", str(SPEC))
+    ergebnis = _cli(repo, "regularien", str(SPEC))
     assert ergebnis.returncode == 3, _ausgabe(ergebnis)
     assert (
         "Kein Checkpoint-Ticket: keins der Tickets trägt das Label checkpoint:human"
@@ -274,13 +274,13 @@ def test_vorhandenes_checkpoint_label_geht_durch(
         monkeypatch,
         {TICKETS[0]: {"labels": ["enhancement"]}, TICKETS[1]: {"labels": ["checkpoint:human"]}},
     )
-    ergebnis = _cli(repo, "pruefen", str(SPEC))
+    ergebnis = _cli(repo, "regularien", str(SPEC))
     assert ergebnis.returncode == 0, _ausgabe(ergebnis)
     assert "Checkpoint" not in ergebnis.stdout
 
 
 def test_ohne_labels_in_antwort_nur_warnung(repo: Path) -> None:
-    ergebnis = _cli(repo, "pruefen", str(SPEC))
+    ergebnis = _cli(repo, "regularien", str(SPEC))
     assert ergebnis.returncode == 0, _ausgabe(ergebnis)
     assert "Checkpoint ungeprüft (GitHub-Antwort ohne Labels)" in ergebnis.stdout
 
@@ -294,7 +294,7 @@ def test_belegtes_ticket_ist_nur_warnung(
         monkeypatch,
         {TICKETS[0]: {"labels": ["checkpoint:human"], "assignees": ["Shavy72"]}},
     )
-    ergebnis = _cli(repo, "pruefen", str(SPEC))
+    ergebnis = _cli(repo, "regularien", str(SPEC))
     assert ergebnis.returncode == 0, _ausgabe(ergebnis)
     assert "#901 ist schon belegt (Assignee Shavy72)" in ergebnis.stdout
     assert f"sessions {SPEC}" in ergebnis.stdout
@@ -303,12 +303,12 @@ def test_belegtes_ticket_ist_nur_warnung(
 def test_github_abfrage_scheitert_weigert_sich(repo: Path, tmp_path: Path) -> None:
     """Fail-closed: kaputtes gh ist ein Fehler, keine Warnung mehr."""
     kaputt = {"TO_SPAWN_GH_STUB": str(tmp_path / "gibt_es_nicht.py")}
-    ergebnis = _cli(repo, "pruefen", str(SPEC), zusatz_env=kaputt)
+    ergebnis = _cli(repo, "regularien", str(SPEC), zusatz_env=kaputt)
     assert ergebnis.returncode == 3, _ausgabe(ergebnis)
     assert "GitHub-Abfrage für #901 fehlgeschlagen" in ergebnis.stdout
     assert "gh auth status" in ergebnis.stdout
-    assert f"pruefen {SPEC} --ohne-github" in ergebnis.stdout
-    bewusst = _cli(repo, "pruefen", str(SPEC), "--ohne-github", zusatz_env=kaputt)
+    assert f"regularien {SPEC} --ohne-github" in ergebnis.stdout
+    bewusst = _cli(repo, "regularien", str(SPEC), "--ohne-github", zusatz_env=kaputt)
     assert bewusst.returncode == 0, _ausgabe(bewusst)
 
 
@@ -450,7 +450,7 @@ def test_f1_pruefen_auswahl_ausserhalb_manifest_weigert_sich(
     repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _gh_daten(tmp_path, monkeypatch, _CP_902)
-    ergebnis = _cli(repo, "pruefen", str(SPEC), "--tickets", "901,999")
+    ergebnis = _cli(repo, "regularien", str(SPEC), "--tickets", "901,999")
     assert ergebnis.returncode == 3, _ausgabe(ergebnis)
     assert (
         f"#999 steht nicht im Manifest spec-{SPEC}.json — erst /to-tickets "
@@ -463,7 +463,7 @@ def test_f1_pruefen_auswahl_im_manifest_geht_durch(
     repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _gh_daten(tmp_path, monkeypatch, _CP_902)
-    ergebnis = _cli(repo, "pruefen", str(SPEC), "--tickets", "901, #902")
+    ergebnis = _cli(repo, "regularien", str(SPEC), "--tickets", "901, #902")
     assert ergebnis.returncode == 0, _ausgabe(ergebnis)
 
 
@@ -474,7 +474,7 @@ def test_f1_regeln_laufen_trotz_auswahl_ueber_ganzes_manifest(
         repo, {TICKETS[0]: _voll(), TICKETS[1]: {"title": "ohne Umfang", "schaetzung_k": 50}}
     )
     _gh_daten(tmp_path, monkeypatch, _CP_902)
-    ergebnis = _cli(repo, "pruefen", str(SPEC), "--tickets", TICKETS[0])
+    ergebnis = _cli(repo, "regularien", str(SPEC), "--tickets", TICKETS[0])
     assert ergebnis.returncode == 3, _ausgabe(ergebnis)
     assert "#902: Feld umfang (Klartext) fehlt" in ergebnis.stdout
 
@@ -512,7 +512,7 @@ def test_f2_offener_fremder_verweis_ohne_kante_weigert_sich(
         monkeypatch,
         {TICKETS[1]: {"labels": ["checkpoint:human"], "body": "## Blocked by\n- #901\n- #950\n"}},
     )
-    ergebnis = _cli(repo, "pruefen", str(SPEC))
+    ergebnis = _cli(repo, "regularien", str(SPEC))
     assert ergebnis.returncode == 3, _ausgabe(ergebnis)
     assert (
         "#902: laut Ticket-Text blockiert von #950 (offen, nicht in dieser Spec), aber keine "
@@ -532,7 +532,7 @@ def test_f2_geschlossener_fremder_verweis_ist_warnung(
         monkeypatch,
         {TICKETS[1]: {"labels": ["checkpoint:human"], "body": "## Blocked by\n- #901\n- #950\n"}},
     )
-    ergebnis = _cli(repo, "pruefen", str(SPEC))
+    ergebnis = _cli(repo, "regularien", str(SPEC))
     assert ergebnis.returncode == 0, _ausgabe(ergebnis)
     assert "Warnung #902: Blocker-Verweis #950 ist kein Ticket dieser Spec" in ergebnis.stdout
 
@@ -547,7 +547,7 @@ def test_f2_zustand_nicht_abfragbar_weigert_sich(
         monkeypatch,
         {TICKETS[1]: {"labels": ["checkpoint:human"], "body": "## Blocked by\n- #901\n- #950\n"}},
     )
-    ergebnis = _cli(repo, "pruefen", str(SPEC))
+    ergebnis = _cli(repo, "regularien", str(SPEC))
     assert ergebnis.returncode == 3, _ausgabe(ergebnis)
     assert "GitHub-Abfrage für Blocker-Verweis #950 fehlgeschlagen" in ergebnis.stdout
 
@@ -561,7 +561,7 @@ def test_f2_fremder_verweis_mit_nativer_kante_ist_still(
         monkeypatch,
         {TICKETS[1]: {"labels": ["checkpoint:human"], "body": "## Blocked by\n- #901\n- #950\n"}},
     )
-    ergebnis = _cli(repo, "pruefen", str(SPEC))
+    ergebnis = _cli(repo, "regularien", str(SPEC))
     assert ergebnis.returncode == 0, _ausgabe(ergebnis)
     assert "#950" not in ergebnis.stdout
 
@@ -580,7 +580,7 @@ def test_f2_zustand_je_nummer_nur_einmal_abgefragt(
             TICKETS[1]: {"labels": ["checkpoint:human"], "body": "## Blocked by\n- #901\n- #950\n"},
         },
     )
-    ergebnis = _cli(repo, "pruefen", str(SPEC))
+    ergebnis = _cli(repo, "regularien", str(SPEC))
     assert ergebnis.returncode == 0, _ausgabe(ergebnis)
     aufrufe = protokoll.read_text(encoding="utf-8").splitlines()
     assert sum(1 for z in aufrufe if z.startswith("issue view 950 ")) == 1, aufrufe
@@ -609,7 +609,7 @@ def test_f3_schreibweisen_werden_erkannt(
 ) -> None:
     monkeypatch.setenv("GH_STUB_BLOCKER", "")
     _gh_daten(tmp_path, monkeypatch, {TICKETS[1]: {"labels": ["checkpoint:human"], "body": body}})
-    ergebnis = _cli(repo, "pruefen", str(SPEC))
+    ergebnis = _cli(repo, "regularien", str(SPEC))
     assert ergebnis.returncode == 3, _ausgabe(ergebnis)
     assert "#902: laut Ticket-Text blockiert von #901, aber die native Kante fehlt" in (
         ergebnis.stdout
@@ -628,7 +628,7 @@ def test_f3_abschnitt_endet_an_klarer_grenze(
     repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, body: str
 ) -> None:
     _gh_daten(tmp_path, monkeypatch, {TICKETS[1]: {"labels": ["checkpoint:human"], "body": body}})
-    ergebnis = _cli(repo, "pruefen", str(SPEC))
+    ergebnis = _cli(repo, "regularien", str(SPEC))
     assert ergebnis.returncode == 0, _ausgabe(ergebnis)
     assert "#950" not in ergebnis.stdout
 
@@ -639,7 +639,7 @@ def test_f3_kein_verweis_woerter(
 ) -> None:
     body = f"## Blocked by\n{leer}\n\n**Blocked by:** {leer}\n"
     _gh_daten(tmp_path, monkeypatch, {TICKETS[1]: {"labels": ["checkpoint:human"], "body": body}})
-    ergebnis = _cli(repo, "pruefen", str(SPEC))
+    ergebnis = _cli(repo, "regularien", str(SPEC))
     assert ergebnis.returncode == 0, _ausgabe(ergebnis)
     assert "Blocker-Verweis" not in ergebnis.stdout
 
@@ -652,7 +652,7 @@ def test_f4_geschlossener_checkpoint_bei_offenen_tickets_weigert_sich(
 ) -> None:
     monkeypatch.setenv("GH_STUB_ZU", TICKETS[1])
     _gh_daten(tmp_path, monkeypatch, _CP_902)
-    ergebnis = _cli(repo, "pruefen", str(SPEC))
+    ergebnis = _cli(repo, "regularien", str(SPEC))
     assert ergebnis.returncode == 3, _ausgabe(ergebnis)
     assert (
         "Checkpoint-Ticket #902 ist schon zu, aber #901 ist offen — neues Abnahme-Ticket "
@@ -664,7 +664,7 @@ def test_f4_offener_checkpoint_ohne_kante_weigert_sich(
     repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _gh_daten(tmp_path, monkeypatch, {TICKETS[0]: {"labels": ["checkpoint:human"]}})
-    ergebnis = _cli(repo, "pruefen", str(SPEC))
+    ergebnis = _cli(repo, "regularien", str(SPEC))
     assert ergebnis.returncode == 3, _ausgabe(ergebnis)
     assert (
         "Checkpoint-Ticket #901 hat keine native Kante — es startet sofort statt nach den "
@@ -679,7 +679,7 @@ def test_f4_checkpoint_allein_offen_geht_durch(
     monkeypatch.setenv("GH_STUB_BLOCKER", "")
     monkeypatch.setenv("GH_STUB_ZU", TICKETS[0])
     _gh_daten(tmp_path, monkeypatch, _CP_902)
-    ergebnis = _cli(repo, "pruefen", str(SPEC))
+    ergebnis = _cli(repo, "regularien", str(SPEC))
     assert ergebnis.returncode == 0, _ausgabe(ergebnis)
 
 
@@ -694,7 +694,7 @@ def test_f5_nicht_numerischer_schluessel_stuerzt_nicht(
     _manifest_schreiben(repo, eintraege)
     _manifest_schreiben(repo, {"neu": _voll()}, spec=800)
     _gh_daten(tmp_path, monkeypatch, _CP_902)
-    ergebnis = _cli(repo, "pruefen", str(SPEC))
+    ergebnis = _cli(repo, "regularien", str(SPEC))
     assert ergebnis.returncode == 3, _ausgabe(ergebnis)
     assert "Traceback" not in ergebnis.stderr
     assert "#neu steht auch in spec-800.json" in ergebnis.stdout
@@ -707,7 +707,7 @@ def test_f5_ticket_manifest_mit_namen_zaehlt_mit(
         json.dumps({"tickets": {TICKETS[0]: _voll()}}), encoding="utf-8"
     )
     _gh_daten(tmp_path, monkeypatch, _CP_902)
-    ergebnis = _cli(repo, "pruefen", str(SPEC))
+    ergebnis = _cli(repo, "regularien", str(SPEC))
     assert ergebnis.returncode == 3, _ausgabe(ergebnis)
     assert "#901 steht auch in spec-800-ticket-901.json — doppelt belegt" in ergebnis.stdout
 
@@ -720,14 +720,14 @@ def test_f5_eigene_datei_mit_namen_zaehlt_nicht_doppelt(
         json.dumps({"tickets": {TICKETS[0]: _voll(), TICKETS[1]: _voll()}}), encoding="utf-8"
     )
     _gh_daten(tmp_path, monkeypatch, _CP_902)
-    ergebnis = _cli(repo, "pruefen", "149-ticket-179")
+    ergebnis = _cli(repo, "regularien", "149-ticket-179")
     assert ergebnis.returncode == 0, _ausgabe(ergebnis)
     assert "steht auch in" not in ergebnis.stdout
 
 
 def test_f5_ohne_github_bleibt_zweites_manifest_fehler(repo: Path) -> None:
     _manifest_schreiben(repo, {TICKETS[0]: _voll()}, spec=800)
-    ergebnis = _cli(repo, "pruefen", str(SPEC), "--ohne-github")
+    ergebnis = _cli(repo, "regularien", str(SPEC), "--ohne-github")
     assert ergebnis.returncode == 3, _ausgabe(ergebnis)
     assert "#901 steht auch in spec-800.json" in ergebnis.stdout
     assert "(Zustand ohne GitHub unbekannt)" in ergebnis.stdout
@@ -737,7 +737,7 @@ def test_f5_ohne_github_bleibt_zweites_manifest_fehler(repo: Path) -> None:
 
 
 def test_f6_hilfetext_ohne_github(repo: Path) -> None:
-    ergebnis = _cli(repo, "pruefen", "--help", zusatz_env={"COLUMNS": "200"})
+    ergebnis = _cli(repo, "regularien", "--help", zusatz_env={"COLUMNS": "200"})
     assert ergebnis.returncode == 0, _ausgabe(ergebnis)
     assert "GitHub-Teil auslassen (Kanten, Checkpoint, Belegung, Zustände)" in ergebnis.stdout
     assert "--tickets" in ergebnis.stdout
