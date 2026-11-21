@@ -1,6 +1,6 @@
 """Weg-Tests: Checkpoint mitten in der Kette ist ein Fehler (duoplus-management#325).
 
-Echt laufen: CLI (``to_spawn.py pruefen``), Manifest, Git-Repo.
+Echt laufen: CLI (``to_spawn.py regularien``), Manifest, Git-Repo.
 Gestellt ist nur die ``gh``-CLI (GitHub ist ein externer Dienst, per
 ``TO_SPAWN_GH_STUB``).
 """
@@ -74,7 +74,7 @@ def _checkpoints(
 
 def _pruefen(repo: Path) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        [sys.executable, str(CLI), "pruefen", str(SPEC)],
+        [sys.executable, str(CLI), "regularien", str(SPEC)],
         cwd=str(repo),
         capture_output=True,
         text=True,

@@ -1683,15 +1683,17 @@ def _versteckt_unter_home(pfad: Path) -> bool:
 def _wurzel_erlaubt(muster: str) -> bool:
     """Wurzel-Muster der Liste: Vorgabe (z. B. ``C:/dev/wt-*``) oder fester Teil vor dem
     ersten Glob-Zeichen echt unter dem Home (``~/*``, ``/tmp/*`` fallen weg) und ohne
-    versteckten Ordner (``~/.ssh/*``: Schlüssel/Einstellungen, keine Worktrees)."""
+    versteckten Ordner im ganzen Muster, auch nach dem ersten Glob-Zeichen (``~/.ssh/*``,
+    ``~/x/wt-*/.ssh``: Schlüssel/Einstellungen, keine Worktrees; ``..`` fällt mit weg)."""
     if muster in WURZELN_STANDARD:
         return True
+    pfad = Path(os.path.expanduser(muster.strip()))
     teile: list[str] = []
-    for teil in Path(os.path.expanduser(muster.strip())).parts:
+    for teil in pfad.parts:
         if glob.has_magic(teil):
             break
         teile.append(teil)
-    if teile and _echt_unter_home(Path(*teile)) and not _versteckt_unter_home(Path(*teile)):
+    if teile and _echt_unter_home(Path(*teile)) and not _versteckt_unter_home(pfad):
         return True
     _ablehnen("Wurzel", muster)
     return False
