@@ -1,10 +1,9 @@
 """Hausmeister #1536: Behalten ist die Ausnahme mit echtem Grund.
 
-Neu: Test-Datenbanken, Sperren, Logs, graphify-out, Daten-Ordner und ``.pyc.<zahl>`` sind
-Erzeugnisse; Ordner ohne Ticket-Nummer oder ohne Git gehen nach
-:data:`hausmeister.UNBERUEHRT_TAGE` Tagen ohne Änderung; ungleiche Geheimnis-Dateien
-gehen ungesichert mit weg, wenn das Ticket zu und der Ordner so lange unberührt ist; je
-Takt eine Kennzahl-Zeile im Log. Dazu je Schutz-Regel ein Test.
+Neu: Test-Datenbanken (:func:`hausmeister.ist_test_db`), Sperren, Logs, graphify-out,
+Daten-Ordner und ``.pyc.<zahl>`` sind Erzeugnisse; jede andere Datenbank, Ordner ohne
+Ticket-Nummer oder ohne Git und ungleiche Geheimnis-Dateien halten den Ordner — auch
+alt (Fix-Runde 1); je Takt eine Kennzahl-Zeile im Log. Dazu je Schutz-Regel ein Test.
 Weg-Tests mit echtem Wegwerf-Git und lokalem bare-„origin“ (Fixture ``welt`` aus #1368);
 gestellt ist nur ``gh`` (Ticket-Zustand).
 """
@@ -28,6 +27,8 @@ from test_hausmeister_1368 import (  # noqa: F401 — ``welt`` ist ein Fixture
 from to_spawn import hausmeister
 
 TAG = 24 * 3600.0
+#: Weit genug, dass eine frühere Alters-Regel („verlassen“) gegriffen hätte.
+ALT_TAGE = 30
 GEHEIM = "TOKEN=geheim-1536-wert"
 
 
@@ -39,8 +40,8 @@ def eigenes_tmux(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _altern(welt: Welt) -> None:
-    """Die Uhr springt über die Unberührt-Grenze (Dateien bleiben, wie sie sind)."""
-    welt.jetzt += (hausmeister.UNBERUEHRT_TAGE + 1) * TAG
+    """Die Uhr springt :data:`ALT_TAGE` Tage weiter (Dateien bleiben, wie sie sind)."""
+    welt.jetzt += ALT_TAGE * TAG
 
 
 def _ordner(welt: Welt, rel: str, dateien: tuple[str, ...] = ("notiz.txt",)) -> Path:
@@ -90,61 +91,49 @@ def test_soll1_test_db_lock_logs_daten_pyc_zahl_sind_erzeugnisse(welt: Welt) -> 
     assert not wt.exists()
 
 
-# --- Soll 2: ohne Ticket-Nummer, ohne Git ------------------------------------------
+# --- Soll 2: ohne Ticket-Nummer, ohne Git bleiben (Out of Scope #1536) -------------
 
 
-def test_soll2_ohne_git_erst_nach_unberuehrt_tagen_weg(welt: Welt) -> None:
+def test_soll2_ohne_git_bleibt_auch_alt(welt: Welt) -> None:
     ordner = _ordner(welt, "wt/reste-notizen")
-    r = welt.aufraeumen(ordner, loeschen=True)
-    assert r.art == "bleibt" and not r.fehler, r.grund
-    assert ordner.is_dir()
     _altern(welt)
     r = welt.aufraeumen(ordner, loeschen=True)
-    assert r.art == "gelöscht", r.grund
-    assert not ordner.exists()
+    assert r.art == "bleibt" and r.fuer_david and not r.fehler, r.grund
+    assert (ordner / "notiz.txt").is_file()
 
 
-def test_soll2_verwaister_worktree_alt_und_ticket_zu_geht_weg(welt: Welt) -> None:
+def test_soll2_verwaister_worktree_alt_und_ticket_zu_bleibt(welt: Welt) -> None:
     ordner = _ordner(welt, "wt/wt-1602", ("arbeit.txt",))
     (ordner / ".git").write_text(f"gitdir: {welt.tmp / 'gibt-es-nicht' / 'worktrees' / 'wt-1602'}\n", encoding="utf-8")
     _altern(welt)
     welt.ticket(1602, "CLOSED", 48)
     r = welt.aufraeumen(ordner, loeschen=True)
-    assert r.art == "gelöscht", r.grund
-    assert not ordner.exists()
+    assert r.art == "bleibt" and r.fuer_david and "kein eigener Git-Ordner" in r.grund, r.grund
+    assert (ordner / "arbeit.txt").is_file()
 
 
-def test_soll2_git_ohne_nummer_alt_wird_gesichert_und_geloescht(welt: Welt) -> None:
+def test_soll2_git_ohne_nummer_bleibt_auch_alt(welt: Welt) -> None:
     spiel = welt.heim / "wt" / "spielwiese"
     git(welt.haupt, "worktree", "add", "-q", "-b", "spielwiese", str(spiel))
     (spiel / "neu.txt").write_text("ungesichert\n", encoding="utf-8")
-    assert welt.aufraeumen(spiel, loeschen=True).art == "bleibt"  # jung
     _altern(welt)
     r = welt.aufraeumen(spiel, loeschen=True)
-    assert r.art == "gesichert und gelöscht", r.grund
-    assert not spiel.exists()
-    sicherung = r.sicherung
-    assert sicherung
-    assert welt.im_bare("show", f"{sicherung}:neu.txt") == "ungesichert\n"
+    assert r.art == "bleibt" and r.fuer_david and "Ticket-Nummer" in r.grund, r.grund
+    assert (spiel / "neu.txt").read_text(encoding="utf-8") == "ungesichert\n"
 
 
 # --- Soll 3: Geheimnis-Dateien ----------------------------------------------------
 
 
-def test_soll3_geheimnis_ungleich_ticket_zu_alt_geht_ohne_upload(welt: Welt) -> None:
+def test_soll3_geheimnis_ungleich_bleibt_auch_alt(welt: Welt) -> None:
     wt = welt.worktree(1604, schmutzig=True)
     (wt / ".env").write_text(GEHEIM + "\n", encoding="utf-8")  # Hauptrepo hat keine
-    welt.ticket(1604, "CLOSED", 48)
-    r = welt.aufraeumen(wt, loeschen=True)
-    assert r.art == "bleibt" and r.fuer_david, r.grund  # jung: Regel wie bisher
     _altern(welt)
     welt.ticket(1604, "CLOSED", 48)
     r = welt.aufraeumen(wt, loeschen=True)
-    assert r.art == "gesichert und gelöscht", r.grund
-    assert not wt.exists()
-    assert "ungesichert" in welt.im_bare("show", f"{r.sicherung}:geaendert.txt")
+    assert r.art == "bleibt" and r.fuer_david and ".env" in r.grund, r.grund
+    assert (wt / ".env").read_text(encoding="utf-8") == GEHEIM + "\n"
     assert GEHEIM not in _alle_inhalte(welt)
-    assert GEHEIM not in welt.log.read_text(encoding="utf-8")
 
 
 # --- Soll 4: Kennzahl je Takt -----------------------------------------------------
@@ -197,10 +186,13 @@ def test_sicher_offenes_ticket_bleibt_auch_alt(welt: Welt) -> None:
     ohne_git = _ordner(welt, "wt/wt-1608-reste")
     _altern(welt)
     welt.ticket(1608, "OPEN")
-    for ordner in (wt, ohne_git):
-        r = welt.aufraeumen(ordner, loeschen=True)
-        assert r.art == "bleibt" and "offen" in r.grund, r.grund
-        assert ordner.is_dir()
+    r = welt.aufraeumen(wt, loeschen=True)
+    assert r.art == "bleibt" and "offen" in r.grund, r.grund
+    assert wt.is_dir()
+    # Fix-Runde 1: ohne Git bleibt der Ordner schon vor der Ticket-Abfrage.
+    r = welt.aufraeumen(ohne_git, loeschen=True)
+    assert r.art == "bleibt" and r.fuer_david, r.grund
+    assert ohne_git.is_dir()
 
 
 def test_sicher_prozess_im_alten_ordner_ohne_git_bleibt(welt: Welt) -> None:
@@ -209,7 +201,7 @@ def test_sicher_prozess_im_alten_ordner_ohne_git_bleibt(welt: Welt) -> None:
     proc = subprocess.Popen(["sleep", "60"], cwd=ordner)
     try:
         r = welt.aufraeumen(ordner, loeschen=True)
-        assert r.art == "bleibt" and "Prozess" in r.grund, r.grund
+        assert r.art == "bleibt", r.grund  # Fix-Runde 1: ohne Git bleibt er schon vorher
         assert ordner.is_dir()
     finally:
         proc.kill()
@@ -218,7 +210,7 @@ def test_sicher_prozess_im_alten_ordner_ohne_git_bleibt(welt: Welt) -> None:
 
 @pytest.mark.skipif(shutil.which("tmux") is None, reason="tmux fehlt")
 def test_sicher_spec_klon_mit_lebender_tmux_sitzung_bleibt(welt: Welt) -> None:
-    ordner = _ordner(welt, "duoplus-1607")
+    ordner = welt.klon("duoplus-1607")  # Fix-Runde 1: echter Klon, ohne Git bliebe er immer
     _altern(welt)
     welt.ticket(1607, "CLOSED", 48)
     subprocess.run(
@@ -252,7 +244,8 @@ def test_sicher_ausserhalb_der_wurzeln_bleibt(welt: Welt) -> None:
 
 
 def test_sicher_sicherung_scheitert_bleibt_mit_fehler(welt: Welt) -> None:
-    klon = welt.klon("wt/spielklon")
+    klon = welt.klon("wt/wt-1612")  # Fix-Runde 1: ohne Ticket-Nummer bliebe er vorher
+    welt.ticket(1612, "CLOSED", 48)
     _commit(klon, "nur-lokal.txt", "nicht gepusht\n")
     sperre = welt.bare / "hooks" / "pre-receive"
     sperre.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
@@ -269,7 +262,8 @@ def test_sicher_pruefung_scheitert_bleibt_mit_fehler(welt: Welt) -> None:
     (ordner / "zu").chmod(0)
     try:
         r = welt.aufraeumen(ordner, loeschen=True)
-        assert r.art == "bleibt" and r.fehler, r.grund
+        # Fix-Runde 1: ohne Git bleibt der Ordner schon vor jeder Messung (kein Fehler mehr).
+        assert r.art == "bleibt", r.grund
         assert ordner.is_dir()
     finally:
         (ordner / "zu").chmod(0o755)
@@ -278,7 +272,7 @@ def test_sicher_pruefung_scheitert_bleibt_mit_fehler(welt: Welt) -> None:
 def test_sicherung_laedt_keine_datenbank_hoch(welt: Welt) -> None:
     """Nicht ignorierte Test-DB (evtl. Abzug echter Daten) geht nie nach ``sicherung/…``."""
     wt = welt.worktree(1609)
-    (wt / "kopie.db").write_text(GEHEIM + "\n", encoding="utf-8")
+    (wt / "accounts.db").write_text(GEHEIM + "\n", encoding="utf-8")
     (wt / "notiz.txt").write_text("ungesichert\n", encoding="utf-8")
     welt.ticket(1609, "CLOSED", 48)
     r = welt.aufraeumen(wt, loeschen=True)
@@ -290,7 +284,7 @@ def test_sicherung_laedt_keine_datenbank_hoch(welt: Welt) -> None:
 
 def test_nur_datenbank_braucht_keine_sicherung(welt: Welt) -> None:
     wt = welt.worktree(1610)
-    (wt / "test.db").write_text("x", encoding="utf-8")
+    (wt / "accounts.db").write_text("x", encoding="utf-8")
     welt.ticket(1610, "CLOSED", 48)
     r = welt.aufraeumen(wt, loeschen=True)
     assert r.art == "gelöscht" and not r.sicherung, r.grund
@@ -314,3 +308,70 @@ def test_sicher_datenbank_im_ordner_offenen_tickets_bleibt(welt: Welt) -> None:
     r = welt.aufraeumen(wt, loeschen=True)
     assert r.art == "bleibt" and "offen" in r.grund, r.grund
     assert (wt / "accounts.db").is_file()
+
+
+# --- Fix-Runde 1: nur bekannte Test-Ware ist Wegwerf-Ware (H1) ----------------------
+
+
+def _db_ordner(welt: Welt, nr: int, dateien: dict[str, int]) -> Path:
+    """Worktree eines seit 48 h geschlossenen Tickets mit ignorierten DB-Dateien
+    (Name → Größe in Byte; große Dateien sparse, kosten keinen Platz)."""
+    wt = welt.worktree(nr)
+    _commit(wt, ".gitignore", "*.db\n*.db-wal\n*.db-shm\n", push=True)
+    for name, groesse in dateien.items():
+        (wt / name).parent.mkdir(parents=True, exist_ok=True)
+        with open(wt / name, "wb") as f:
+            f.truncate(groesse)
+    _altern(welt)
+    welt.ticket(nr, "CLOSED", 48)
+    return wt
+
+
+def test_h1_wal_und_shm_einer_fremden_db_halten_den_ordner(welt: Welt) -> None:
+    wt = _db_ordner(welt, 1620, {"echt.db-wal": 10, "echt.db-shm": 10})
+    r = welt.aufraeumen(wt, loeschen=True)
+    assert r.art == "bleibt" and r.fuer_david and "echt.db-" in r.grund, r.grund
+    assert (wt / "echt.db-wal").is_file() and (wt / "echt.db-shm").is_file()
+
+
+def test_h1_test_db_name_im_unterordner_haelt_den_ordner(welt: Welt) -> None:
+    wt = _db_ordner(welt, 1621, {"daten/accounts.db": 10})
+    r = welt.aufraeumen(wt, loeschen=True)
+    assert r.art == "bleibt" and r.fuer_david and "daten/accounts.db" in r.grund, r.grund
+    assert (wt / "daten" / "accounts.db").is_file()
+
+
+def test_h1_grosse_unbekannte_db_im_geschlossenen_ticket_bleibt(welt: Welt) -> None:
+    wt = _db_ordner(welt, 1622, {"daten/echt.db": hausmeister.TEST_DB_GRENZE_BYTES + 1})
+    r = welt.aufraeumen(wt, loeschen=True)
+    assert r.art == "bleibt" and r.fuer_david and "daten/echt.db" in r.grund, r.grund
+    assert (wt / "daten" / "echt.db").is_file()
+
+
+def test_h1_zu_grosse_accounts_db_bleibt(welt: Welt) -> None:
+    gross = hausmeister.TEST_DB_GRENZE_BYTES + 1
+    wt = _db_ordner(welt, 1623, {"accounts.db": 10, "accounts.db-wal": gross})
+    r = welt.aufraeumen(wt, loeschen=True)
+    assert r.art == "bleibt" and r.fuer_david and "accounts.db-wal" in r.grund, r.grund
+    assert (wt / "accounts.db-wal").is_file()
+
+
+def test_h1_nicht_ignorierte_fremde_db_bleibt_statt_ungesichert_weg(welt: Welt) -> None:
+    wt = welt.worktree(1624)
+    (wt / "kopie.db").write_text(GEHEIM + "\n", encoding="utf-8")
+    welt.ticket(1624, "CLOSED", 48)
+    r = welt.aufraeumen(wt, loeschen=True)
+    assert r.art == "bleibt" and r.fuer_david and "kopie.db" in r.grund, r.grund
+    assert (wt / "kopie.db").read_text(encoding="utf-8") == GEHEIM + "\n"
+    assert GEHEIM not in _alle_inhalte(welt)
+
+
+def test_h1_kleine_bekannte_test_dbs_gehen_weg(welt: Welt) -> None:
+    wt = _db_ordner(
+        welt,
+        1625,
+        {"accounts.db": 10, "accounts.db-wal": 10, "data/funnel.db": 10, "data/rum.db": 10},
+    )
+    r = welt.aufraeumen(wt, loeschen=True)
+    assert r.art == "gelöscht", r.grund
+    assert not wt.exists()

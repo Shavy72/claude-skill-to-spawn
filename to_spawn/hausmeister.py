@@ -12,13 +12,10 @@ Ticket-Nummer → Ticket zu → 24 h → keine tmux-Sitzung ``spec-<N>`` → kei
 Ordner (cwd, exe, offene Dateien) → Prüfung des Ungesicherten → Sicherung → Gegenprobe →
 Log → löschen. Vorab: Namen aus :data:`GESCHUETZTE_ORDNER` bleiben immer.
 
-#1536 — Behalten ist die Ausnahme mit echtem Grund. Verlassen heißt: seit
-:data:`UNBERUEHRT_TAGE` Tagen keine Änderung im Ordner (jüngste mtime ohne ``.git``,
-:func:`_unberuehrt`). Verlassene Ordner ohne Ticket-Nummer laufen durch dieselbe Kette
-(Ungesichertes nach ``sicherung/0``, :data:`OHNE_TICKET`); verlassene Ordner ganz ohne Git
-(kein ``.git`` oder verwaister Worktree, dessen Hauptrepo fehlt) gehen ohne Sicherung —
-es gibt nichts, wohin sie sich sichern ließen. Unterordner eines fremden Repos und
-unlesbare Git-Ordner bleiben. Je Takt schreibt :func:`aufraeumen_alles` eine Zeile
+#1536 — Behalten ist die Ausnahme mit echtem Grund. Ordner ohne Ticket-Nummer und Ordner
+ganz ohne Git (kein ``.git`` oder verwaister Worktree, dessen Hauptrepo fehlt) bleiben
+immer, ``fuer_david=True`` — ohne Git gibt es nichts, wohin sie sich sichern ließen.
+Unterordner eines fremden Repos und unlesbare Git-Ordner bleiben. Je Takt schreibt :func:`aufraeumen_alles` eine Zeile
 nach :data:`KENNZAHL_DATEI` neben dem Log („x von y gelöscht, z bleiben“, Bleib-Gründe
 gezählt) — eigene Datei, damit Leser des Ordner-Logs nur Ordner-Zeilen sehen.
 
@@ -36,12 +33,12 @@ weg, nach deren Regeln. Gesichert wird über :func:`to_spawn.aufpasser.sichern` 
 Dateien, die die Sicherung NICHT mitnimmt, gehen beim Löschen verloren — darum:
 - Geheimnisse (``SICHERUNG_AUSSCHLUSS``, z. B. ``.env*``, ``*.key``), geändert, neu
   oder ignoriert: dürfen nur weg, wenn das Hauptrepo des Worktrees dieselbe Datei mit
-  gleichem Inhalt hat; sonst (und beim Klon immer) bleibt, ``fuer_david=True`` — außer
-  der Ordner ist verlassen (#1536): dann gehen sie ungesichert mit weg (Ticket zu bzw.
-  ohne Ticket-Nummer); hochgeladen werden sie nie, ins Log kommt nur der Pfad.
+  gleichem Inhalt hat; sonst (und beim Klon immer) bleibt, ``fuer_david=True``.
   Geheimnisse in ungepushten Commits würde die Sicherung hochladen ⇒ bleibt, David.
 - Ignorierte Dateien: nur bekannte Erzeugnisse (:data:`ERZEUGNISSE`) dürfen weg,
   jede andere ignorierte Datei ⇒ bleibt.
+- Datenbanken (``aufpasser.NIE_HOCHLADEN``) lädt die Sicherung nie hoch: weg dürfen nur
+  kleine Test-Kopien (:func:`ist_test_db`), jede andere ⇒ bleibt, ``fuer_david=True``.
 - Eingebettete Repos und Submodule (Sicherung sähe nur den Gitlink) ⇒ bleibt.
 
 Prozesse kommen aus ``/proc``; unter Windows (Laptop, ``C:/dev/wt-*``, #1373) aus
@@ -123,7 +120,7 @@ import shutil
 import subprocess
 import sys
 import time
-from collections.abc import Callable, Iterable
+from collections.abc import Iterable
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from datetime import datetime
@@ -151,13 +148,8 @@ HAUPTREPO_NAMEN = ("duoplus-management", "claude-skill-to-spawn")
 GESCHUETZTE_ORDNER = (*HAUPTREPO_NAMEN, "duoplus-leit", "deploy-schlange", "obsidian")
 #: #1536: Kennzahl je Takt, eigene Datei neben dem Hausmeister-Log (:func:`_kennzahl_pfad`).
 KENNZAHL_DATEI = "hausmeister_kennzahl.jsonl"
-#: #1536: Ordner ohne Ticket-Nummer sichern nach ``sicherung/0``.
-OHNE_TICKET = 0
 WURZELN_STANDARD = ("~/wt/*", "~/wt-*", "~/duoplus-[0-9]*", "C:/dev/wt-*")
 MINDEST_ZU_SEKUNDEN = 24 * 3600
-#: #1536: so viele Tage ohne Änderung im Ordner (ohne ``.git``) gilt er als verlassen —
-#: dann gehen auch Ordner ohne Ticket-Nummer, ohne Git und ungleiche Geheimnis-Dateien.
-UNBERUEHRT_TAGE = 7
 #: Unter diesem Anteil freier Platte gilt Platznot: fertige Ordner gehen vor Ablauf der 24 h.
 PLATZNOT_ANTEIL = 0.15
 #: #1491: Zweige löscht der Hausmeister nur, wenn diese Variable genau „1“ ist (:func:`zweige_loeschen_an`).
@@ -186,11 +178,7 @@ ERZEUGNISSE = (
     "**/htmlcov/**",
     "**/.review/**",  # Belege des Review-Werkzeugs (eigenes .gitignore mit *)
     "data/.secret_key",  # Flask-Sitzungsschlüssel, legt web/config.py selbst neu an
-    # #1536: Test-Kopien und Laufzeit-Reste. Gilt nur in Arbeitsordnern — geschützte
-    # Ordner (Live-Daten) räumt der Hausmeister nie, darum keine Größengrenze für *.db.
-    "**/*.db",
-    "**/*.db-wal",
-    "**/*.db-shm",
+    # #1536: Laufzeit-Reste (Datenbanken nicht hier, sondern :func:`ist_test_db`).
     "**/*.lock",
     "**/*.pyc.[0-9]*",  # halb geschriebenes Kompilat (Windows)
     "logs/**",
@@ -198,6 +186,30 @@ ERZEUGNISSE = (
     "data/content_studio/**",
     "data/reel_street/**",
 )
+#: #1536: Datenbanken, die als Test-Kopie weg dürfen — Pfad relativ zum Arbeitsordner
+#: (samt ``-wal``/``-shm``). So legen App und Tests sie an (``account_db.DB_PATH`` u. a.).
+TEST_DB_PFADE = ("accounts.db", "data/funnel.db", "data/rum.db", "web/test.db")
+#: #1536: größer ist keine Test-Kopie mehr (Bau-Server 21.11.: größte 1,6 MB).
+TEST_DB_GRENZE_BYTES = 50 * 1024 * 1024
+
+
+def ist_test_db(repo: Path, pfad: str) -> bool:
+    """#1536: einzige Regel, welche Datenbank-Datei (``aufpasser.NIE_HOCHLADEN``) Wegwerf-Ware
+    ist: bekannter Pfad aus :data:`TEST_DB_PFADE` (auch ``-wal``/``-shm``) UND höchstens
+    :data:`TEST_DB_GRENZE_BYTES` groß. Nicht messbar ⇒ keine Test-Ware (im Zweifel bleibt)."""
+    for endung in ("-wal", "-shm"):
+        if pfad.endswith(".db" + endung):
+            pfad_db = pfad[: -len(endung)]
+            break
+    else:
+        pfad_db = pfad
+    if pfad_db not in TEST_DB_PFADE:
+        return False
+    try:
+        return (repo / pfad).lstat().st_size <= TEST_DB_GRENZE_BYTES
+    except OSError:
+        return False
+
 
 # #1526: Ticket-Nummer 1–4999 (8080, 20261121, 993675 sind Port/Datum/Hash, keine Tickets).
 # ponytail: feste Obergrenze, anheben, wenn die Tickets an 4000 heranreichen.
@@ -1261,20 +1273,8 @@ def _regeln(
 
     # 2/3 Git-Ordner? Hauptrepo? Eigenes Repo? (None = gar kein Git, #1536)
     ist_worktree = _git_ordner_pruefen(echt)
-
-    # #1536: verlassen? (einmal gemessen; ohne Git zuerst, spart die Ticket-Abfrage)
-    alter: list[bool] = []
-
-    def verlassen() -> bool:  # einmal messen, nur wenn eine Regel es braucht
-        if not alter:
-            alter.append(_unberuehrt(echt, jetzt))
-        return alter[0]
-
-    if ist_worktree is None and not verlassen():
-        raise _Bleibt(
-            f"kein eigener Git-Ordner, vor weniger als {UNBERUEHRT_TAGE} Tagen geändert",
-            fuer_david=True,
-        )
+    if ist_worktree is None:  # #1536: ohne Git nichts sicherbar ⇒ bleibt immer
+        raise _Bleibt("kein eigener Git-Ordner (nicht sicherbar)", fuer_david=True)
 
     # 4 Ticket-Nummer aus Name und Zweig (None = keine, #1536)
     stand.ticket = ticket = _ticket_nummer(ordner, echt)
@@ -1287,31 +1287,20 @@ def _regeln(
     # 7 Prozess im Ordner
     _kein_prozess(echt)
 
-    # 7b #1536: ohne Ticket-Nummer oder ohne Git nur, wenn verlassen
-    if (ticket is None or ist_worktree is None) and not verlassen():
-        was = "keine Ticket-Nummer" if ticket is None else "kein eigener Git-Ordner"
-        raise _Bleibt(
-            f"{was}, vor weniger als {UNBERUEHRT_TAGE} Tagen geändert", fuer_david=True
-        )
-    if ist_worktree is None:  # nichts zu sichern: prüfen → löschen
-        grund = _grund("gelöscht", ticket, platznot, ohne_git=True)
-        if trocken:
-            return Ergebnis(ordner, "gelöscht", grund, ticket, trocken=True), None
-        _kein_prozess(echt, probe=True)
-        return Ergebnis(ordner, "gelöscht", grund, ticket, trocken=False), (echt, False)
+    # 7b #1536: ohne Ticket-Nummer bleibt immer (nach Prozess-Regel: der Grund zeigt den Prozess)
+    if ticket is None:
+        raise _Bleibt("keine Ticket-Nummer", fuer_david=True)
 
     # 8 Ungesichertes prüfen (auch trocken: fetch, Geheimnisse, Ignoriertes)
-    koepfe, zu_sichern, status_vorher, verworfen = _ungesichertes(
-        echt, ist_worktree, verlassen
-    )
+    koepfe, zu_sichern, status_vorher = _ungesichertes(echt, ist_worktree)
     art: Art = "gesichert und gelöscht" if (koepfe or zu_sichern) else "gelöscht"
-    grund = _grund(art, ticket, platznot, verworfen=verworfen)
+    grund = _grund(art, ticket, platznot)
     if trocken:
         return Ergebnis(ordner, art, grund, ticket, trocken=True), None
     if koepfe or zu_sichern:
         try:
             stand.sicherung = aufpasser.sichern(
-                echt, OHNE_TICKET if ticket is None else ticket, jetzt, zusatz_koepfe=koepfe
+                echt, ticket, jetzt, zusatz_koepfe=koepfe
             )
         except RuntimeError as fehler:
             raise _Bleibt(f"Sicherung gescheitert: {_kurz(fehler)}", fehler=True) from None
@@ -1378,28 +1367,6 @@ def _ohne_git(echt: Path) -> bool:
     return not os.path.lexists(ziel)
 
 
-def _unberuehrt(ordner: Path, jetzt: float | None) -> bool:
-    """#1536: seit :data:`UNBERUEHRT_TAGE` Tagen nichts geändert — jüngste mtime aller
-    Einträge (ohne ``.git``: den fasst der Hausmeister selbst per ``fetch`` an; Symlinks
-    nicht verfolgt). Nicht lesbar ⇒ ``_Bleibt`` mit Fehler."""
-    # ponytail: liest den ganzen Baum je Ordner; Stichprobe/Cache, falls der Takt zu lang wird.
-    try:
-        juengste = ordner.lstat().st_mtime
-        offen = [ordner]
-        while offen:
-            with os.scandir(offen.pop()) as eintraege:
-                for e in eintraege:
-                    if e.name == ".git":
-                        continue
-                    juengste = max(juengste, e.stat(follow_symlinks=False).st_mtime)
-                    if e.is_dir(follow_symlinks=False):
-                        offen.append(Path(e.path))
-    except OSError as fehler:
-        raise _Bleibt(f"Alter nicht messbar: {fehler}", fehler=True) from None
-    jetzt_ts = jetzt if jetzt is not None else time.time()
-    return jetzt_ts - juengste >= UNBERUEHRT_TAGE * _TAG
-
-
 def _keine_spec_sitzung(ticket: int) -> None:
     """#1536: lebt die tmux-Sitzung ``spec-<N>``, arbeitet die Spec noch ⇒ ``_Bleibt``.
     Ohne tmux (PC) oder ohne tmux-Server gibt es keine Sitzung."""
@@ -1453,28 +1420,14 @@ def _ticket_lange_zu(ticket: int, jetzt: float | None, platznot: bool = False) -
         raise _Bleibt(f"Ticket #{ticket} erst seit weniger als 24 h zu")
 
 
-def _grund(
-    art: Art,
-    ticket: int | None,
-    platznot: bool = False,
-    *,
-    ohne_git: bool = False,
-    verworfen: int = 0,
-) -> str:
-    verlassen = f"seit über {UNBERUEHRT_TAGE} Tagen unberührt"
-    if ticket is None:
-        zu = f"keine Ticket-Nummer, {verlassen}"
-    elif platznot:
+def _grund(art: Art, ticket: int, platznot: bool = False) -> str:
+    if platznot:
         zu = f"Ticket #{ticket} zu, Platznot (unter {_prozent(PLATZNOT_ANTEIL)} frei)"
     else:
         zu = f"Ticket #{ticket} seit über 24 h zu"
-    if ohne_git:  # ohne Nummer steht „unberührt“ schon in ``zu``
-        return f"{zu}, kein Git-Ordner" + ("" if ticket is None else f", {verlassen}")
-    if verworfen:
-        zu += f", {verworfen} Geheimnis-Datei(en) ungesichert verworfen ({verlassen})"
     if art == "gelöscht":
         return f"{zu}, nichts Ungesichertes"
-    return f"{zu}, Ungesichertes auf sicherung/{OHNE_TICKET if ticket is None else ticket}"
+    return f"{zu}, Ungesichertes auf sicherung/{ticket}"
 
 
 # --- Platte ---------------------------------------------------------------------
@@ -1720,13 +1673,11 @@ def _gleiche_kopie(haupt: Path | None, repo: Path, rel: str) -> bool:
 
 
 def _ungesichertes(
-    repo: Path, ist_worktree: bool, verlassen: Callable[[], bool]
-) -> tuple[list[str], bool, list[tuple[str, str]], int]:
-    """Regel 8: (ungepushte Köpfe, zu sichernde Dateien da?, Status-Schnappschuss,
-    Zahl ungesichert verworfener Geheimnis-Dateien).
+    repo: Path, ist_worktree: bool
+) -> tuple[list[str], bool, list[tuple[str, str]]]:
+    """Regel 8: (ungepushte Köpfe, zu sichernde Dateien da?, Status-Schnappschuss).
 
-    Alles, was die Sicherung nicht retten kann, wirft ``_Bleibt`` — außer ungleichen
-    Geheimnis-Dateien eines verlassenen Ordners (``verlassen()``, #1536).
+    Alles, was die Sicherung nicht retten kann, wirft ``_Bleibt``.
     """
     try:
         aufpasser.git_lauf(repo, "fetch", "--prune", "-q", "origin")
@@ -1751,15 +1702,21 @@ def _ungesichertes(
     geheim -= {p for p in erzeugnis if _neu_erzeugbar(p)}
     haupt = _hauptrepo(repo) if ist_worktree else None
     ungleich = [p for p in sorted(geheim) if not _gleiche_kopie(haupt, repo, p)]
-    if ungleich and not verlassen():
+    if ungleich:
         raise _Bleibt(
             f"Geheimnis-Datei {ungleich[0]} nicht gleich im Hauptrepo", fuer_david=True
         )
+    # #1536: Datenbanken lädt die Sicherung nie hoch — weg dürfen nur Test-Kopien.
+    datenbanken = {p for _, p in _status(repo, *_glob(aufpasser.NIE_HOCHLADEN))}
+    fremd = sorted(p for p in datenbanken if not ist_test_db(repo, p))
+    if fremd:
+        raise _Bleibt(
+            f"Datenbank {fremd[0]} ist keine Test-Kopie (nicht sicherbar)", fuer_david=True
+        )
     for xy, pfad in alle:
-        if xy == "!!" and pfad not in geheim and pfad not in erzeugnis:
+        if xy == "!!" and pfad not in geheim | erzeugnis | datenbanken:
             raise _Bleibt(f"ignorierte Datei {pfad} ist kein bekanntes Erzeugnis")
-    # #1536: Datenbanken lädt die Sicherung nie hoch — sie allein machen nichts „zu sichern“.
-    nicht_hoch = geheim | {p for _, p in _status(repo, *_glob(aufpasser.NIE_HOCHLADEN))}
+    nicht_hoch = geheim | datenbanken
     zu_sichern = any(xy != "!!" and p not in nicht_hoch for xy, p in alle)
 
     koepfe = _ungepushte_koepfe(repo, ist_worktree)
@@ -1779,7 +1736,7 @@ def _ungesichertes(
             raise _Bleibt(
                 f"Geheimnis-Datei {leck[0]} in ungepushtem Commit", fuer_david=True
             )
-    return koepfe, zu_sichern, alle, len(ungleich)
+    return koepfe, zu_sichern, alle
 
 
 def _ungepushte_koepfe(repo: Path, ist_worktree: bool) -> list[str]:
