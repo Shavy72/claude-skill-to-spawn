@@ -144,7 +144,10 @@ def spawn(
         return 0
     # Das Skript arbeitet im Repo des Aufrufs, nicht im Repo aus ~/.bashrc (#212/#257).
     umgebung = {**os.environ, "TO_SPAWN_REPO": str(repo)}
-    return starter.starte(befehl, cwd=repo, check=False, env=umgebung, warten=True).returncode
+    rc = starter.starte(befehl, cwd=repo, check=False, env=umgebung, warten=True).returncode
+    if rc != 0:
+        log.error("Terminal-Skript endete mit Exit %s — es wurde nichts (vollständig) gestartet; Ausgabe siehe oben.", rc)
+    return rc
 
 
 # --- Einzelticket-Neustart (Aufseher-Werkzeug) -------------------------------------------------------
