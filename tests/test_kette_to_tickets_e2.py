@@ -21,9 +21,10 @@ SKILL = Path(__file__).resolve().parents[1]
 KETTE = SKILL / "kette"
 TO_TICKETS = KETTE / "skills" / "to-tickets" / "SKILL.md"
 
-#: ``to_spawn.py <befehl> <rest der Zeile>`` — Befehl = erstes Wort nach dem Skript.
-BEFEHL = re.compile(r"to_spawn\.py\s+([a-z][a-z0-9-]*)([^\n`]*)")
-SCHALTER = re.compile(r"(?<![\w-])(--[a-z][a-z0-9-]*)")
+#: ``to_spawn.py <befehl> <rest der Zeile>`` — Befehl = erstes Wort nach dem Skript, auch mit
+#: Anführungszeichen um Pfad oder Befehl und in jeder Groß-/Kleinschreibung (#144).
+BEFEHL = re.compile(r"to_spawn\.py[\"']?\s+[\"']?([A-Za-z][A-Za-z0-9-]*)([^\n`]*)")
+SCHALTER = re.compile(r"(?<![\w-])(--[A-Za-z][A-Za-z0-9-]*)")
 VERBOTEN = ("Shavy72/", "docs/agents/manifests")
 PFLICHT_TO_TICKETS = (
     "<!-- pflicht:beschluss-protokoll -->",
@@ -116,3 +117,35 @@ def test_pruefung_wird_rot_bei_unbekanntem_befehl() -> None:
     assert m and m.group(1) == "anhaengen"
     assert "--gibtsnicht" not in _hilfe("anhaengen")[1]
     assert _hilfe("gibtsnicht")[0] != 0
+
+
+@pytest.mark.parametrize(
+    ("zeile", "befehl"),
+    [
+        ('`python "$SKILL/to_spawn.py" erfunden`', "erfunden"),
+        ("`python '$SKILL/to_spawn.py' erfunden`", "erfunden"),
+        ("`python to_spawn.py Erfunden`", "Erfunden"),
+        ('`python "C:\\skills\\to_spawn.py" "Erfunden"`', "Erfunden"),
+    ],
+)
+def test_pruefung_erkennt_jede_schreibweise(zeile: str, befehl: str) -> None:
+    """#144: Anführungszeichen um Pfad oder Befehl und Großschreibung entgehen dem Muster nicht."""
+    m = BEFEHL.search(zeile)
+    assert m and m.group(1) == befehl, f"Muster übersieht {zeile!r}"
+    assert _hilfe(befehl)[0] != 0
+
+
+def test_jeder_schalter_im_to_tickets_text_existiert() -> None:
+    """#144: auch Schalter außerhalb einer Aufruf-Zeile (``Erst mit `--trocken` …``) gegen den Parser prüfen."""
+    text = TO_TICKETS.read_text(encoding="utf-8") if TO_TICKETS.is_file() else ""
+    hilfen = "".join(_hilfe(b)[1] for b in {m.group(1) for m in BEFEHL.finditer(text)})
+    unbekannt = sorted({s for s in SCHALTER.findall(text) if s not in hilfen})
+    assert "--trocken" in SCHALTER.findall(text), "Selbstprobe: --trocken nicht erfasst"
+    assert not unbekannt, f"to-tickets nennt unbekannte Schalter: {unbekannt}"
+
+
+def test_parent_satz_widerspricht_anhaengen_nicht() -> None:
+    """#144: ``anhaengen`` macht das Ticket zum Unter-Issue — ein pauschales „parent nie ändern“ widerspricht dem."""
+    text = TO_TICKETS.read_text(encoding="utf-8") if TO_TICKETS.is_file() else ""
+    assert "modify any parent issue" not in text
+    assert "Unter-Issue" in text
