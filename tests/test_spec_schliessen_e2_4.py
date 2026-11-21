@@ -293,5 +293,42 @@ def test_hook_aus_bau_session_sperrt_rohes_spec_schliessen(tmp_path: Path, monke
         assert erlaubt.returncode == 0, (frei, erlaubt.stdout, erlaubt.stderr)
 
 
+def test_spec_schliessen_bricht_ab_bei_offenem_regulaerem_spec_ticket(tmp_path: Path) -> None:
+    repo, weltdatei, umgebung = _aufbau(tmp_path)
+    welt = _welt(weltdatei)
+    welt["issues"][str(TICKET)]["state"] = "open"
+    weltdatei.write_text(json.dumps(welt), encoding="utf-8")
+    lauf = _cli(repo, umgebung, "spec-schliessen", str(SPEC))
+    assert lauf.returncode == 1, lauf.stdout + lauf.stderr
+    assert f"#{TICKET}" in lauf.stdout and "offen" in lauf.stdout
+    assert "geschlossen" not in _welt(weltdatei)
+
+
+def test_hook_sperrt_auch_issue_edit_und_api_state_closed(tmp_path: Path) -> None:
+    repo, _, umgebung = _aufbau(tmp_path)
+
+    def lauf(befehl: str) -> subprocess.CompletedProcess[str]:
+        eingabe = {"tool_name": "Bash", "tool_input": {"command": befehl}, "cwd": str(repo)}
+        return _cli(repo, umgebung, "hook-spec-sperre", eingabe=json.dumps(eingabe))
+
+    for roh in (
+        f"gh issue edit {SPEC} --state closed",
+        f"gh issue edit {SPEC} --title neu --state=closed",
+        f"gh api -X PATCH repos/{SLUG}/issues/{SPEC} -f state=closed",
+        f"gh api repos/{SLUG}/issues/{SPEC} --method PATCH --field 'state=closed'",
+    ):
+        abgelehnt = lauf(roh)
+        assert abgelehnt.returncode == 2, (roh, abgelehnt.stdout, abgelehnt.stderr)
+        assert f"spec-schliessen {SPEC}" in abgelehnt.stderr
+    for frei in (
+        f"gh issue edit {SPEC} --add-label verschoben",
+        f"gh api repos/{SLUG}/issues/{SPEC}",
+        f"gh api repos/{SLUG}/issues/{SPEC}/comments -f body=state=closed",
+        f"gh api -X PATCH repos/{SLUG}/issues/{ANDERES} -f state=closed",
+    ):
+        erlaubt = lauf(frei)
+        assert erlaubt.returncode == 0, (frei, erlaubt.stdout, erlaubt.stderr)
+
+
 if __name__ == "__main__":
     sys.exit(_stub_main(sys.argv[1:]))

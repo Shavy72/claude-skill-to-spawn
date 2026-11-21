@@ -438,20 +438,34 @@ def ist_spec(repo: Path, nummer: int | str) -> bool:
 def spec_offen(repo: Path, spec: int | str, abruf: Abruf | None = None) -> list[str]:
     """Einzige Regel „darf die Spec schließen?“ — leer = ja, sonst je Hindernis eine Zeile.
 
-    Hindernisse: keine Spec (kein Manifest), Manifest kaputt, Folge-Ticket weder gebaut
-    noch geschlossen noch gebündelt (Status nicht in :data:`ERLEDIGT`, auch ``unbekannt``
+    Hindernisse: keine Spec (kein Manifest), Manifest kaputt, reguläres Spec-Ticket oder
+    Folge-Ticket weder gebaut noch geschlossen noch gebündelt (Status nicht in :data:`ERLEDIGT`, auch ``unbekannt``
     — fail-closed).
     """
     if not ist_spec(repo, spec):
         return [f"#{spec} ist keine Spec dieses Repos (kein Manifest spec-{spec}.json)"]
+    holen = abruf or _abruf_github(repo)
     try:
-        folgen = gelbe_folgen(repo, spec, abruf=abruf)
+        folgen = gelbe_folgen(repo, spec, abruf=holen)
     except ManifestKaputt as fehler:
         return [f"Manifest {fehler} — Folge-Tickets unbekannt"]
-    return [
+    stand = [(t, titel, _status(holen(t))) for t, titel in _spec_tickets(repo, spec)]
+    hindernisse = [f"#{t} {s:<10} Spec-Ticket  {titel}" for t, titel, s in stand if s not in ERLEDIGT]
+    return hindernisse + [
         f"#{f.nummer} {f.status:<10} aus #{f.gelb_von}  {f.titel}"
         for f in folgen
         if f.status not in ERLEDIGT
+    ]
+
+
+def _spec_tickets(repo: Path, spec: int | str) -> list[tuple[int, str]]:
+    """Reguläre Spec-Tickets aus dem Manifest (Einträge ohne ``gelb_von``)."""
+    daten, _ = manifest.lies_json(manifest.manifest_pfad(repo, spec))
+    tickets = daten.get("tickets") if isinstance(daten, dict) else None
+    return [
+        (int(n), str(e.get("title", "")))
+        for n, e in sorted((tickets or {}).items(), key=lambda p: manifest.ticket_schluessel(p[0]))
+        if n.isdigit() and isinstance(e, dict) and "gelb_von" not in e
     ]
 
 

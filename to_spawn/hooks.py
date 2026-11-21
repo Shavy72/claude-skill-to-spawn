@@ -541,36 +541,74 @@ _GH_CLOSE = re.compile(r"\bgh\b[^;&|\n]*?\bissue\s+close\b([^;&|\n]*)")
 #: Schalter von ``gh issue close``, die einen Wert nehmen (der Wert ist keine Nummer).
 _MIT_WERT = {"-c", "--comment", "-r", "--reason", "-R", "--repo"}
 _NUMMER = re.compile(r"^#?(\d+)$|/issues/(\d+)/?$")
+#: ``gh … issue edit`` (schließt mit ``--state closed``) und ``gh … api`` (PATCH mit
+#: ``state=closed`` auf ``…/issues/<N>``), je bis zum nächsten Shell-Trenner.
+_GH_EDIT = re.compile(r"\bgh\b[^;&|\n]*?\bissue\s+edit\b([^;&|\n]*)")
+_GH_API = re.compile(r"\bgh\b[^;&|\n]*?\bapi\b([^;&|\n]*)")
+_EDIT_MIT_WERT = _MIT_WERT | {
+    "-t",
+    "--title",
+    "-b",
+    "--body",
+    "-F",
+    "--body-file",
+    "-m",
+    "--milestone",
+    "--state",
+    "--add-label",
+    "--remove-label",
+    "--add-assignee",
+    "--remove-assignee",
+    "--add-project",
+    "--remove-project",
+}
+_STATE_CLOSED = re.compile(r"--state(?:=|\s+)['\"]?closed\b")
+_API_CLOSED = re.compile(r"(?:^|[\s'\"])state=closed\b")
+_API_ISSUE = re.compile(r"(?:^|[\s/'\"])issues/(\d+)/?(?=$|[\s'\"?])")
+
+
+def _erste_nummer(rest: str, mit_wert: set[str]) -> int | None:
+    """Erstes Positions-Argument in ``rest`` als Issue-Nummer (``N``, ``#N``, Issue-URL)."""
+    try:
+        teile = shlex.split(rest)
+    except ValueError:
+        teile = rest.split()
+    ueberspringen = False
+    for teil in teile:
+        if ueberspringen:
+            ueberspringen = False
+            continue
+        if teil in mit_wert:
+            ueberspringen = True
+            continue
+        if teil.startswith("-"):
+            continue
+        zahl = _NUMMER.search(teil)
+        return int(zahl.group(1) or zahl.group(2)) if zahl else None
+    return None
 
 
 def geschlossene_nummern(befehl: str) -> list[int]:
-    """Issue-Nummern, die ``befehl`` per ``gh issue close`` schließen würde.
+    """Issue-Nummern, die ``befehl`` schließen würde.
 
-    Nimmt je ``gh issue close`` das erste Positions-Argument (Nummer, ``#N`` oder
-    Issue-URL); Werte von ``--comment``/``--reason``/``--repo`` zählen nicht.
-    ponytail: erkennt nur den wörtlichen Aufruf — ``gh api … state=closed``, ``eval``
-    oder ein Skript umgehen die Sperre (gleiche Grenze wie ``skill_schutz``).
+    Erkennt ``gh issue close <N>``, ``gh issue edit <N> --state closed`` und
+    ``gh api …/issues/<N> … state=closed``; Werte von Schaltern wie ``--comment``/
+    ``--repo`` zählen nicht als Nummer.
+    ponytail: erkennt nur wörtliche Aufrufe — ``eval``, ``curl`` oder ein Skript umgehen
+    die Sperre (gleiche Grenze wie ``skill_schutz``).
     """
     nummern: list[int] = []
     for treffer in _GH_CLOSE.finditer(befehl):
+        if (n := _erste_nummer(treffer.group(1), _MIT_WERT)) is not None:
+            nummern.append(n)
+    for treffer in _GH_EDIT.finditer(befehl):
         rest = treffer.group(1)
-        try:
-            teile = shlex.split(rest)
-        except ValueError:
-            teile = rest.split()
-        ueberspringen = False
-        for teil in teile:
-            if ueberspringen:
-                ueberspringen = False
-                continue
-            if teil in _MIT_WERT:
-                ueberspringen = True
-                continue
-            if teil.startswith("-"):
-                continue
-            if zahl := _NUMMER.search(teil):
-                nummern.append(int(zahl.group(1) or zahl.group(2)))
-            break
+        if _STATE_CLOSED.search(rest) and (n := _erste_nummer(rest, _EDIT_MIT_WERT)) is not None:
+            nummern.append(n)
+    for treffer in _GH_API.finditer(befehl):
+        rest = treffer.group(1)
+        if _API_CLOSED.search(rest) and (pfad := _API_ISSUE.search(rest)):
+            nummern.append(int(pfad.group(1)))
     return nummern
 
 
@@ -591,7 +629,7 @@ def hook_spec_sperre(strom: TextIO | None = None, fehler: TextIO | None = None) 
         start = daten.get("cwd")
         repo = config.repo_wurzel(Path(start) if isinstance(start, str) and start else None)
         specs = [n for n in geschlossene_nummern(befehl) if befund.ist_spec(repo, n)]
-    except Exception:  # noqa: BLE001 — der Hook darf die Bau-Session nie stören
+    except Exception:  # der Hook darf die Bau-Session nie stören
         log.exception("Spec-Sperre fehlgeschlagen — Befehl wird nicht geprüft.")
         return 0
     if not specs:
