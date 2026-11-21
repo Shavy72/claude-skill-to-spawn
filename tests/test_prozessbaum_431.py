@@ -14,7 +14,7 @@ import subprocess
 import sys
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import pytest
@@ -42,6 +42,57 @@ def _starten(befehl: list[str]) -> subprocess.Popen[bytes]:
     return proz
 
 
+Starter = Callable[[list[str]], "subprocess.Popen[bytes]"]
+
+
+def _abraeumen(wurzel: int, start: int, frist: float = 5.0) -> list[int]:
+    """Beendet ``wurzel`` samt aller Nachfahren hart; Ergebnis: wer nach ``frist`` noch lebt.
+
+    Folgt den Eltern-PIDs aus ``prozessbaum.prozesse`` auch über schon tote Glieder: unter
+    Windows ist Git-Bash-``sh.exe`` nur ein Starter für ``bash.exe``, und MSYS-Forks überleben
+    ihren beendeten Elternteil. ``prozessbaum.baum`` sieht solche Waisen nicht mehr (Elternteil
+    tot), ein ``proz.kill()`` trifft nur den Starter. Wer vor ``start`` (Startzeit der Wurzel)
+    lief, ist ein Fremder mit recycelter Eltern-PID und bleibt verschont.
+    """
+    # ponytail: eine schon tote PID der Familie, die Windows binnen ``frist`` neu vergibt,
+    # träfe einen Fremden; Job-Objekt je Test, falls das je auffällt.
+    familie = [wurzel]
+    ende = time.monotonic() + frist
+    while True:
+        liste = prozessbaum.prozesse()
+        gewachsen = True
+        while gewachsen:
+            gewachsen = False
+            for pid, (eltern, _, beginn) in liste.items():
+                fremd = bool(start and beginn and beginn < start)
+                if pid not in familie and eltern in familie and not fremd:
+                    familie.append(pid)
+                    gewachsen = True
+        lebende = [pid for pid in familie if pid in liste]
+        if not lebende or time.monotonic() > ende:
+            return lebende
+        prozessbaum.senden(lebende, SIGKILL)  # Wurzel zuerst: danach entstehen keine neuen Forks
+        time.sleep(0.05)
+
+
+@pytest.fixture
+def starten() -> Iterator[Starter]:
+    """Startet Prozesse wie ``_starten`` und räumt ihren ganzen Baum danach hart ab — auch,
+    wenn eine Zusicherung im Test fehlschlägt. Bleibt etwas übrig, wird der Test rot."""
+    wurzeln: list[tuple[int, int]] = []
+
+    def _start(befehl: list[str]) -> subprocess.Popen[bytes]:
+        proz = _starten(befehl)
+        wurzeln.append((proz.pid, prozessbaum.prozesse().get(proz.pid, (0, "", 0))[2]))
+        return proz
+
+    try:
+        yield _start
+    finally:
+        reste = [pid for wurzel, start in wurzeln for pid in _abraeumen(wurzel, start)]
+        assert not reste, f"Kindprozesse überlebten das Abräumen: {reste}"
+
+
 def _bereit_warten(marker: Path) -> None:
     """Wartet (max. 5 s), bis die Shell den Bereitschafts-Marker geschrieben hat."""
     ende = time.monotonic() + 5
@@ -51,7 +102,7 @@ def _bereit_warten(marker: Path) -> None:
 
 
 @pytest.fixture
-def eltern_mit_kind() -> Iterator[subprocess.Popen[bytes]]:
+def eltern_mit_kind(starten: Starter) -> Iterator[subprocess.Popen[bytes]]:
     """Ein Elternprozess, der selbst einen schlafenden Prozess als Kind startet und wartet.
 
     Python statt ``sh -c "sleep 30 & wait"``: unter Windows hängen die Kinder einer
@@ -60,19 +111,11 @@ def eltern_mit_kind() -> Iterator[subprocess.Popen[bytes]]:
     """
     kind = "import time; time.sleep(30)"
     eltern = f"import subprocess, sys; subprocess.Popen([sys.executable, '-c', {kind!r}]).wait()"
-    proz = _starten([PYTHON, "-c", eltern])
-    try:
-        ende = time.monotonic() + 5
-        while len(prozessbaum.baum(proz.pid)) < 2 and time.monotonic() < ende:
-            time.sleep(0.05)
-        yield proz
-    finally:
-        for pid in reversed(prozessbaum.baum(proz.pid)):
-            try:
-                os.kill(pid, SIGKILL)
-            except OSError:  # schon beendet (Windows meldet das nicht als ProcessLookupError)
-                pass
-        proz.wait(timeout=5)
+    proz = starten([PYTHON, "-c", eltern])
+    ende = time.monotonic() + 5
+    while len(prozessbaum.baum(proz.pid)) < 2 and time.monotonic() < ende:
+        time.sleep(0.05)
+    yield proz
 
 
 def test_baum_enthaelt_wurzel_und_kind(
@@ -83,8 +126,8 @@ def test_baum_enthaelt_wurzel_und_kind(
     assert len(baum) == 2
 
 
-def test_lebt_echt_und_tot() -> None:
-    proz = subprocess.Popen(["sleep", "30"])
+def test_lebt_echt_und_tot(starten: Starter) -> None:
+    proz = starten(["sleep", "30"])
     assert prozessbaum.lebt(proz.pid)
     proz.kill()
     proz.wait(timeout=5)
@@ -105,10 +148,10 @@ def test_beenden_term_reicht(eltern_mit_kind: subprocess.Popen[bytes]) -> None:
 
 
 @pytest.mark.skipif(WINDOWS, reason="Windows: SIGTERM ist TerminateProcess und lässt sich nicht ignorieren")
-def test_beenden_eskaliert_zu_kill(tmp_path: Path) -> None:
+def test_beenden_eskaliert_zu_kill(tmp_path: Path, starten: Starter) -> None:
     """Ein Prozess, der SIGTERM ignoriert, stirbt erst an der nächsten Stufe."""
     marker = tmp_path / "bereit"
-    proz = _starten(
+    proz = starten(
         [
             "sh",
             "-c",
@@ -129,10 +172,10 @@ def test_beenden_eskaliert_zu_kill(tmp_path: Path) -> None:
         proz.wait(timeout=5)
 
 
-def test_beenden_wartet_nur_auf_ziel(tmp_path: Path) -> None:
+def test_beenden_wartet_nur_auf_ziel(tmp_path: Path, starten: Starter) -> None:
     """``warten_auf=[]``: Signal geht raus, gewartet wird nicht."""
     marker = tmp_path / "bereit"
-    proz = _starten(
+    proz = starten(
         [
             "sh",
             "-c",
@@ -168,10 +211,10 @@ def test_baum_windows_momentaufnahme_fehlt_ist_fehler(monkeypatch: pytest.Monkey
 
 
 @pytest.mark.skipif(not WINDOWS, reason="nur Windows")
-def test_beenden_windows_erste_stufe_beendet_hart(tmp_path: Path) -> None:
+def test_beenden_windows_erste_stufe_beendet_hart(tmp_path: Path, starten: Starter) -> None:
     """Windows: auch eine Shell, die SIGTERM ignorieren will, endet schon in der ersten Stufe."""
     marker = tmp_path / "bereit"
-    proz = _starten(["sh", "-c", f"trap '' TERM; : > {marker.as_posix()}; while :; do sleep 0.1; done"])
+    proz = starten(["sh", "-c", f"trap '' TERM; : > {marker.as_posix()}; while :; do sleep 0.1; done"])
     eskaliert: list[int] = []
     try:
         _bereit_warten(marker)
