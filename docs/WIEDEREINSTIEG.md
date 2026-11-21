@@ -32,6 +32,28 @@ was zum Weiterbauen nötig ist.
 
 ## 3. Stand
 
+- **2026-11-21 22:37 (Server-Uhr):** Gemergt: Pull-Request 152 (Issue 144 zu), 153 (roter Test
+  `test_aufseher_428` auf main behoben), 137 (P7c-a, Windows-Testaufbau; die Sperre für
+  `to_spawn/prozessbaum.py` ist damit aufgehoben). In Fix-Runde nach Prüfer-Urteil: 127 (Issue 100,
+  Runde 4), 142 (94), 146 (88), 148 (136). 3b-0 entschieden: DuoPlus bekommt den schnelleren
+  Voll-Lauf (Issue 102) statt Test-Auswahl (101). Neue Issues: 155 (install.sh scheitert an
+  `repo-scripts/__pycache__`), 156 (Prüf-Test to-tickets, Rest-Befunde aus 144); Kommentar an 96
+  (App-Kopie `scripts/capo.py` trägt im Tick-Namen noch die alte Rollenbezeichnung). Als Nächstes: 135, 129, 145, 102, 101, 104.
+
+- **2026-11-21 22:33 (Server-Uhr):** Gemergt: Pull-Request 126 (Issue 103, 3b-4 Wackler, main 8dfcaa8),
+  143 (Issue 138), 131, 132, 133 (Windows-Pakete P7d, P7c-b, P7e). Offen und in Prüfung: 127 (Issue 100),
+  134 (Issue 93), 137 (P7c-a), 142 (Issue 94, Fix-Runde läuft), 146 (Issue 88), 148 (Issue 136).
+  Als Nächstes: Issues 135, 129, 145, 101, 102, 104. Bekannter roter Test auf main:
+  `tests/test_aufseher_428.py` (Fix läuft als eigener Pull-Request). Folge-Härtung zu 126
+  (Wackler/Voll-Lauf, zählt für M12): Issue 149.
+
+- **2026-11-21 22:27 (Server-Uhr):** Seit dem letzten Eintrag gemergt: Pull-Requests 131, 132, 133
+  (Windows-Reste P7c-b, P7d, P7e), 141 (Issue 87, to-tickets) und 143 (Issue 138, Installer-Randfälle).
+  Offen im Pull-Request: 126 (Issue 103, Fix-Runde 3 im Review), 127 (Issue 100, Fix-Runde 3 im Review),
+  134 (Issue 93, als Letzter der Welle), 137 (P7c-a, Windows grün gemeldet, Linux-Lauf läuft),
+  142 (Issue 94, Fix-Runde 1 nach Review-Befund), 146 (Issue 88, Spec schließen).
+  In Arbeit ohne Pull-Request: Issue 136 (Temp-Ordner aufräumen, L4). Als Nächstes: Issues 135, 129,
+  144, 145. Abnahme: noch keine M-Zeile belegt.
 - **2026-11-21 22:25 (PC-Uhr):** Etappe 0 fertig (sechs Bremsen-Tickets im App-Repo geschlossen).
   Etappe 1 auf dem Bau-Server gebaut und installiert; Windows offen (Issue 68, Pakete P7c–P7f,
   fünf Pull-Requests offen). Etappe 2 in 13 Pakete geschnitten (Issues 85–97), zwei gemergt.

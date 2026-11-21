@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import os
+import re
 import sys
+import tempfile
 from pathlib import Path
 
 from to_spawn.pruef import ausfuehren
@@ -19,6 +21,21 @@ _MERKMALE = (
     "conftest.py",
     "requirements.txt",
 )
+#: Zeile der pytest-Kurzfassung je rotem Test: ``FAILED <knoten-id>[ - <grund>]`` (auch ERROR).
+#: Eine Parameter-Klammer gehört ganz zur Kennung, auch mit „ - “ darin (``test_p[a - b]``).
+_ROT_ZEILE = re.compile(r"^(?:FAILED|ERROR) (.+?(?:\[.*?\])?)(?: - .*)?$", re.MULTILINE)
+#: Fortschritt bei ``console_output_style=count``: Zeile endet auf ``[k/N]``.
+_FORTSCHRITT = re.compile(r"\[\s*(\d+)/(\d+)\]$")
+#: Abschnitts-Kopf (``==== FAILURES ====`` …): ab hier Berichte, kein Fortschritt mehr.
+_ABSCHNITT = re.compile(r"^={3,} .+ ={3,}$")
+#: Schlusszeile ``[===] 1 failed, 2 passed, 1 skipped in 0.1s [===]``; Zeit optional.
+_SCHLUSS = re.compile(
+    r"^=*\s*((?:\d+ (?:passed|failed|skipped|xfailed|xpassed|errors?|warnings?|deselected|rerun)"
+    r"(?:, )?)+)(?: in [\d.]+s.*?)?\s*=*$",
+    re.MULTILINE,
+)
+#: ``-o cache_dir=…`` im Befehl: je Lauf, der unabhängig vom vorigen sein muss, frisch.
+_CACHE_PREFIX = "cache_dir="
 
 
 def _python(repo: Path) -> str:
@@ -50,9 +67,27 @@ class PythonAdapter:
                 fehler=f"pytest fehlt für {python} (pip install pytest)",
             )
         version = probe.ausgabe.strip().split()[-1] if probe.ausgabe.strip() else "?"
+        # Kommandozeile schlägt ``addopts``/``PYTEST_ADDOPTS``:
+        # - ``--maxfail=0`` übersteuert ``-x``/``--maxfail=N``.
+        # - frischer ``cache_dir`` je Prüfung: ``--lf``/``--sw`` aus ``addopts`` wählen nie anhand
+        #   eines alten Laufs Tests ab (sonst Grün trotz rotem Test); die Wiederholung erbt ihn.
+        # - ``console_output_style=count`` belegt ``[k/N]``: Grundlage für ``gelaufen``.
+        # ``--sw`` bricht trotzdem nach dem ersten Rot ab (Exit 2 = rot, nie Wackler).
+        # ponytail: Cache-Ordner bleiben im Temp-Verzeichnis liegen, Aufräumen im Leiter, wenn es stört.
+        cache = tempfile.mkdtemp(prefix="to_spawn_pytest_cache_")
         return Plan(
             werkzeug=f"pytest@{version}",
-            befehl=[python, "-m", "pytest", "-q"],
+            befehl=[
+                python,
+                "-m",
+                "pytest",
+                "-q",
+                "--maxfail=0",
+                "-o",
+                f"cache_dir={cache}",
+                "-o",
+                "console_output_style=count",
+            ],
             fehler="",
         )
 
@@ -64,6 +99,45 @@ class PythonAdapter:
         if code in (1, 2):
             return 1
         return 2
+
+    def nochmal_befehl(self, befehl: list[str], code: int) -> list[str] | None:
+        # Wiederholung nur bei echtem Test-Rot (1); Sammelfehler (2) wackeln nicht.
+        # ``--lf`` ist pytest-eigen (cacheprovider); ``--lfnf none``: ohne Cache läuft nichts
+        # (Exit 5) statt alles, dann bleibt es beim ersten Rot.
+        return [*befehl, "--lf", "--lfnf", "none"] if code == 1 else None
+
+    def voll_nochmal_befehl(self, befehl: list[str]) -> list[str]:
+        # Zweiter voller Lauf mit frischem ``cache_dir``: ``--lf``/``--sw`` aus ``addopts`` sehen
+        # weder den ersten Lauf noch die Wiederholung, also läuft wieder alles.
+        cache = tempfile.mkdtemp(prefix="to_spawn_pytest_cache_")
+        return [
+            f"{_CACHE_PREFIX}{cache}" if teil.startswith(_CACHE_PREFIX) else teil
+            for teil in befehl
+        ]
+
+    def rote(self, ausgabe: str) -> set[str]:
+        return {treffer.strip() for treffer in _ROT_ZEILE.findall(ausgabe)}
+
+    def gelaufen(self, ausgabe: str) -> int | None:
+        # Letzter Fortschritt vor dem ersten Bericht-Abschnitt; nur ``[N/N]`` belegt „alle
+        # ausgewählten liefen“. Fehlt er (``-s``, Abbruch, ``Interrupted``), ist es unbelegt.
+        letzter = None
+        for zeile in ausgabe.splitlines():
+            if _ABSCHNITT.match(zeile) and "test session starts" not in zeile:
+                break
+            letzter = _FORTSCHRITT.search(zeile.rstrip()) or letzter
+        if letzter is None or letzter.group(1) != letzter.group(2):
+            return None
+        return int(letzter.group(2))
+
+    def bestanden(self, ausgabe: str) -> int | None:
+        # Zahl ``passed`` aus der letzten Schlusszeile; skip/xfail/xpass zählen nicht. Fehlt die
+        # Schlusszeile (``-p no:terminal``, Absturz), ist es unbelegt.
+        schluss = _SCHLUSS.findall(ausgabe)
+        if not schluss:
+            return None
+        treffer = re.search(r"(\d+) passed", schluss[-1])
+        return int(treffer.group(1)) if treffer else 0
 
 
 ADAPTER = PythonAdapter()

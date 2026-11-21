@@ -31,11 +31,18 @@ if [ -e "$ZIEL" ] && [ "$(cd "$ZIEL" && pwd -P)" = "$(cd "$HIER" && pwd -P)" ]; 
   exit 2
 fi
 
+# Python vor dem ersten Kopieren prüfen: sonst bliebe ein halber Stand (kein STAND.json, alte Alias-Skills).
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "Abbruch: python3 fehlt — erst Python installieren, dann install.sh erneut starten (nichts kopiert)." >&2
+  exit 127
+fi
+
 ZEIT="$(date +%Y%m%d-%H%M%S)"
 
 # sichere_und_kopiere <name> <quelle>...: alten Ordner <skills>/<name> nach _alt/<name>-<zeit>
 # verschieben (nie löschen), dann jede vorhandene <quelle> hinein kopieren. Dateien, die es nur
-# im alten Stand gibt, werden gemeldet (liegen weiter in der Sicherung).
+# im alten Stand gibt, werden gemeldet (liegen weiter in der Sicherung); STAND.json nicht, den
+# stempelt der Installer danach neu.
 sichere_und_kopiere() {
   local name="$1" ziel="$SKILLS/$1" sicherung="" quelle datei
   shift
@@ -54,7 +61,7 @@ sichere_und_kopiere() {
   if [ -n "$sicherung" ]; then
     (cd "$sicherung" && find . \( -name __pycache__ -o -name .pytest_cache -o -name .ruff_cache \) -prune -o -type f -print) |
       while IFS= read -r datei; do
-        if [ ! -e "$ziel/$datei" ]; then echo "Hinweis: nur im alten Stand (liegt in $sicherung): ${datei#./}"; fi
+        if [ "$datei" != "./STAND.json" ] && [ ! -e "$ziel/$datei" ]; then echo "Hinweis: nur im alten Stand (liegt in $sicherung): ${datei#./}"; fi
       done
   fi
 }
@@ -92,6 +99,7 @@ if [ -n "$REPO" ]; then
   MANIFESTE="$(python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); from pathlib import Path; from to_spawn import config; print(config.pfad(config.lade(Path(sys.argv[2])), "manifeste"))' "$ZIEL" "$REPO")"
   mkdir -p "$REPO/scripts" "$MANIFESTE"
   for datei in "$HIER"/repo-scripts/*; do
+    [ -f "$datei" ] || continue  # nur Dateien: __pycache__ u. a. Ordner nie ins Repo (#155)
     name="$(basename "$datei")"
     if [ "$name" = "_default.json" ]; then
       ziel_datei="$MANIFESTE/_default.json"

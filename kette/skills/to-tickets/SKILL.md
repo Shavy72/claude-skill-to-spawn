@@ -98,7 +98,7 @@ Publish the approved tickets. **How** depends on the tracker `/setup-matt-pocock
 
 Work the **frontier**: any ticket whose blockers are all done. For a purely linear chain that means top to bottom.
 
-Do NOT close or modify any parent issue.
+Do NOT close the parent issue or edit its text — `anhaengen` only links each ticket to it as Unter-Issue.
 
 <local-ticket-template>
 
