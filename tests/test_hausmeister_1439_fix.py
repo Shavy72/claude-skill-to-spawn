@@ -30,6 +30,7 @@ TAG = 24 * 3600.0
 def zw(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> Welt:
     monkeypatch.setenv("TO_SPAWN_HAUSMEISTER_ZWEIG_REPOS", ORIGIN)
     monkeypatch.setenv("TO_SPAWN_HAUSMEISTER_HAUPTREPOS", str(welt.haupt))
+    monkeypatch.setenv("TO_SPAWN_HAUSMEISTER_ZWEIGE_LOESCHEN", "1")  # #1491: Löschen nur mit Schalter
     return welt
 
 

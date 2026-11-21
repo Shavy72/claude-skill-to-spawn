@@ -84,3 +84,20 @@ def test_nest_nachtrag_ersetzt_alte_sessions_funktion_idempotent(tmp_path: Path)
     neu = (tmp_path / ".bashrc").read_text(encoding="utf-8")
     assert neu.count("_klon_fuer_spec() {") == 1
     assert '_klon_fuer_spec "${1:-}"' in neu
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Linux-Zweig (ps)")
+def test_prozesse_linux_volle_kommandozeile_trotz_columns(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``COLUMNS=80`` (z. B. unter pytest-xdist, cron, tmux) darf ``args`` nicht kürzen (#1411)."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "skripte"))
+    import sessions_stand
+
+    monkeypatch.setenv("COLUMNS", "80")
+    ende = "x" * 120 + "/skripte/bau.py 97531"
+    schlaefer = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)", ende])
+    try:
+        zeilen = [p for p in sessions_stand.prozesse_linux() if p.pid == schlaefer.pid]
+        assert zeilen and zeilen[0].cmd.endswith(ende)
+    finally:
+        schlaefer.kill()
+        schlaefer.wait(timeout=10)

@@ -90,9 +90,13 @@ def ps_zeilen_parsen(text: str) -> list[Prozess]:
 
 
 def prozesse_linux() -> list[Prozess]:
-    """Prozessliste über ``ps`` (Startzeit-Format nur mit ``LC_ALL=C`` verlässlich)."""
+    """Prozessliste über ``ps`` (Startzeit-Format nur mit ``LC_ALL=C`` verlässlich).
+
+    ``-ww``: volle Kommandozeile — sonst kürzt ``ps`` bei gesetztem ``COLUMNS`` (z. B. 80)
+    ``args`` ab und ``bau.py <N>`` am Zeilenende fällt weg (#1411).
+    """
     out = subprocess.run(
-        ["ps", "-eo", "pid,ppid,lstart,comm,args", "--no-headers"],
+        ["ps", "-ww", "-eo", "pid,ppid,lstart,comm,args", "--no-headers"],
         capture_output=True,
         text=True,
         errors="replace",

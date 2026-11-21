@@ -103,6 +103,27 @@ def blocked_by(repo_slug: str, ticket: str, cwd: Path | None = None) -> list[dic
     return daten if isinstance(daten, list) else None
 
 
+#: Label der Deploy-Schlange (#1527): Ticket liegt grün auf Staging, wartet nur noch auf den Live-Gang.
+STAGING_FERTIG_LABEL = "staging:fertig"
+
+
+def blocker_erledigt(dep: dict) -> bool:
+    """Die eine Regel (#1527): zählt dieser Blocker für Folge-Tickets als erledigt?
+
+    Erledigt = Issue geschlossen ODER Label ``staging:fertig`` (grün auf Staging; Live
+    kommt gesammelt am Spec-Ende). Kein Ticket wartet darauf, dass ein anderes live ist.
+    """
+    if str(dep.get("state", "")).lower() == "closed":
+        return True
+    namen = {str(x.get("name") if isinstance(x, dict) else x) for x in dep.get("labels") or []}
+    return STAGING_FERTIG_LABEL in namen
+
+
+def offene_blocker(deps: list[dict]) -> list[int]:
+    """Nummern der noch nicht erledigten Blocker (sortiert), Regel: :func:`blocker_erledigt`."""
+    return sorted(int(d["number"]) for d in deps if not blocker_erledigt(d))
+
+
 def ticket_offen(ticket: str, cwd: Path | None = None) -> bool | None:
     """``True`` wenn das Issue offen ist, ``False`` wenn zu, ``None`` bei Fehler."""
     daten = json_lauf(["issue", "view", str(ticket), "--json", "state"], cwd=cwd)

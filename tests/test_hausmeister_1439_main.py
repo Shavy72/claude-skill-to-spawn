@@ -41,6 +41,7 @@ def mw(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> tuple[Welt, Path, Path]:
     git(welt.tmp, "clone", "-q", SKILL_URL, str(haupt))
     monkeypatch.setenv("TO_SPAWN_HAUSMEISTER_ZWEIG_REPOS", SKILL_URL)
     monkeypatch.setenv("TO_SPAWN_HAUSMEISTER_HAUPTREPOS", str(haupt))
+    monkeypatch.setenv("TO_SPAWN_HAUSMEISTER_ZWEIGE_LOESCHEN", "1")  # #1491: Löschen nur mit Schalter
     return welt, bare, haupt
 
 

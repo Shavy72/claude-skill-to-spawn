@@ -12,7 +12,9 @@ import os
 import signal
 import subprocess
 import sys
+import tempfile
 import time
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -120,6 +122,31 @@ def _manifest(repo: Path) -> None:
     (manifeste / "_default.json").write_text(
         (SKILL / "repo-scripts" / "_default.json").read_text(encoding="utf-8"), encoding="utf-8"
     )
+
+
+@pytest.fixture(autouse=True)
+def _ein_umzug_test_zur_zeit() -> Iterator[None]:
+    """Tests dieser Datei laufen rechnerweit nacheinander (Datei-Sperre, auch über xdist-Worker).
+
+    Mehrere Tests starten ``bau.py 9121`` (echt oder als Schläfer), andere prüfen, dass
+    #9121 nicht läuft. ``sessions_stand.fremdes_repo`` zählt einen Prozess, dessen
+    Ordner nicht lesbar ist, bewusst mit (lieber kein Doppelstart) — auch einen, der
+    zwischen ``ps`` und dem Ordner-Blick endet. Parallel sah so ein Test den eben
+    beendeten Prozess eines Nachbartests als „wartet“ (#1411).
+    """
+    # ponytail: Sperre nur mit fcntl (Linux); Windows-Lauf mit xdist ungeprüft — dort bei
+    # Bedarf msvcrt.locking ergänzen.
+    try:
+        import fcntl
+    except ImportError:
+        yield
+        return
+    with open(Path(tempfile.gettempdir()) / "to-spawn-test-umzug-212.lock", "a") as sperre:
+        fcntl.flock(sperre, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(sperre, fcntl.LOCK_UN)
 
 
 @pytest.fixture()
@@ -802,6 +829,7 @@ time.sleep(120)
             "TO_SPAWN_REPO": str(repo),
             "FAKE_UMGEBUNG": str(beweis),
             "TMPDIR": str(temp),
+            "TO_SPAWN_TEST_BIN": str(binaer),  # Start-Tür (#1406): nur diese Attrappe startet (#1411)
         },
         capture_output=True,
         text=True,

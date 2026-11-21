@@ -136,6 +136,10 @@ WURZELN_STANDARD = ("~/wt/*", "~/wt-*", "~/duoplus-[0-9]*", "C:/dev/wt-*")
 MINDEST_ZU_SEKUNDEN = 24 * 3600
 #: Unter diesem Anteil freier Platte gilt Platznot: fertige Ordner gehen vor Ablauf der 24 h.
 PLATZNOT_ANTEIL = 0.15
+#: #1491: Zweige löscht der Hausmeister nur, wenn diese Variable genau „1“ ist (:func:`zweige_loeschen_an`).
+ZWEIGE_SCHALTER = "TO_SPAWN_HAUSMEISTER_ZWEIGE_LOESCHEN"
+#: Grund/Log-Text, wenn der Schalter fehlt (eine Formulierung für Takt, Zweig-Tür und Senke).
+ZWEIGE_AUS = f"Zweig-Löschen aus ({ZWEIGE_SCHALTER}=1 fehlt)"
 #: Unter diesem Anteil freier Platte startet keine neue Session.
 STARTSPERRE_ANTEIL = 0.05
 #: Sperrdatei gegen parallele Aufräum-Läufe, im Ordner des Hausmeister-Logs.
@@ -156,15 +160,35 @@ ERZEUGNISSE = (
     "**/*.log",
     "**/.coverage",
     "**/htmlcov/**",
+    "**/.review/**",  # Belege des Review-Werkzeugs (eigenes .gitignore mit *)
+    "data/.secret_key",  # Flask-Sitzungsschlüssel, legt web/config.py selbst neu an
 )
 
+# #1526: Ticket-Nummer 1–4999 (8080, 20261121, 993675 sind Port/Datum/Hash, keine Tickets).
+# ponytail: feste Obergrenze, anheben, wenn die Tickets an 4000 heranreichen.
+_TICKET_NR = r"([1-9]\d{0,2}|[1-4]\d{3})"
+# Ohne Präfix (nackt, t/a) nur 3–4 Ziffern: 1, 12, a7 sind keine Ticket-Ordner.
+_TICKET_NR_LANG = r"([1-9]\d{2}|[1-4]\d{3})"
+# Jahr-Monat am Namensende (wt-2026-11) ist ein Datum, keine Ticket-Form.
+_KEIN_JAHR_MONAT = r"(?!20\d\d-(?:0?[1-9]|1[0-2])$)"
 _NAME_MUSTER = (
-    re.compile(r"^wt-(\d+)(?:-.*)?$"),
-    re.compile(r"^skill-(\d+)$"),
-    re.compile(r"^duoplus-(\d+)$"),
-    re.compile(r"^t(\d+)$"),
+    # #1526: nur bekannte Formen, Name bis zum Ende verankert — im Zweifel keine Nummer.
+    # wt-1292f, skill-1371-basis, wt-1313-3, wt-1375-7c: Präfix, Zahl, dann Ende, ein
+    # Buchstabe, -<wort> oder kurzes -<1–2 Ziffern>[buchstabe]
+    # (skill-4821f3c ist ein Commit-Hash-Rest, wt-2026-11-21 ein Datum, kein Ticket).
+    re.compile(
+        rf"^(?:wt|skill|duoplus)-{_KEIN_JAHR_MONAT}{_TICKET_NR}(?:[a-z]|-\d{{1,2}}[a-z]?|-[a-z][a-z0-9-]*)?$"
+    ),
+    # t1490a, a1279 (Aufseher): nur t/a als Präfix (x500, v2026-backup sind keine Tickets)
+    re.compile(rf"^[ta]{_TICKET_NR_LANG}[a-z]?$"),
+    # 1489, 1331-linux: nackte Zahl nur allein oder mit einem Wort aus enger Liste
+    # (2026-11-21-sicherung, 8080-notizen, 805_fremd_backup sind keine Tickets).
+    # Hinter einem Wort zählt sie nie: schlange-einspielen-1121 ist ein Datum.
+    re.compile(rf"^{_TICKET_NR_LANG}(?:-(?:linux|lauf|breit|master))?$"),
 )
-_ZWEIG_MUSTER = re.compile(r"^(?:ticket|fix|wip)/(\d+)(?:-.*)?$")
+_ZWEIG_MUSTER = re.compile(
+    r"^(?:(?:ticket|fix|wip|aufseher)/|fix-|abschluss-)(\d+)(?:-.*)?$"
+)
 _GITHUB_SLUG = re.compile(r"github\.com[:/]+([^/\s]+/[^/\s]+?)(?:\.git)?/?$")
 
 
@@ -303,7 +327,6 @@ def _alle_ordner(*, loeschen: bool, jetzt: float | None) -> Rundgang:
             kandidaten.sort(key=lambda k: (zeiten[k] is None, zeiten[k] or 0.0, str(k)))
     except Exception as fehler:  # Vertrag: wirft nie
         log.exception("Hausmeister: Aufräumen gescheitert (Ordnersuche/Reihenfolge)")
-        _sicherungen_im_takt(loeschen, jetzt)
         _zweige_im_takt(loeschen, jetzt)
         return Rundgang(
             False, f"Ordnersuche gescheitert ({type(fehler).__name__}: {fehler})"
@@ -316,21 +339,31 @@ def _alle_ordner(*, loeschen: bool, jetzt: float | None) -> Rundgang:
         ergebnisse.append(erg)
         if erg.art != "bleibt" and not erg.trocken:
             anteil = _frei_anteil()
-    _sicherungen_im_takt(loeschen, jetzt)
     _zweige_im_takt(loeschen, jetzt)
     return Rundgang(True, "", tuple(ergebnisse))
 
 
-def _sicherungen_im_takt(loeschen: bool, jetzt: float | None) -> None:
-    """E41: Sicherungs-Zweige im Takt von :func:`aufraeumen_alles` (Tür begrenzt auf täglich)."""
+def zweige_loeschen_an() -> bool:
+    """#1491: Räumt der Hausmeister Zweige weg? Nur mit ``TO_SPAWN_HAUSMEISTER_ZWEIGE_LOESCHEN=1``.
+
+    Die EINE Stelle der Regel: gilt für ``sicherung/*`` und ``ticket/*`` (GitHub und
+    Tages-Lauf über die Hauptrepos), für jeden Aufrufer gleich (Aufpasser, capo,
+    Start-Check, Handaufruf). Standard aus. Welche Repos, sagen weiter
+    ``…_ZWEIG_REPOS``/``…_HAUPTREPOS``. Unberührt: der lokale ``ticket/*``-Zweig eines
+    entfernten Worktrees (:func:`_loeschen`, vorher gesichert) und der reine Probelauf.
+    """
+    return os.environ.get(ZWEIGE_SCHALTER, "").strip() == "1"
+
+
+def _zweige_im_takt(loeschen: bool, jetzt: float | None) -> None:
+    """E41/#1439: Sicherungs- und Ticket-Zweige im Takt von :func:`aufraeumen_alles` (täglich)."""
+    if not zweige_loeschen_an():
+        log.info("Hausmeister: %s — alle Zweige bleiben", ZWEIGE_AUS)
+        return
     try:
         sicherungen_aufraeumen(loeschen=loeschen, jetzt=jetzt)
     except Exception:  # Vertrag: wirft nie — Ordner-Ergebnisse gehen vor
         log.exception("Hausmeister: Sicherungs-Zweige gescheitert")
-
-
-def _zweige_im_takt(loeschen: bool, jetzt: float | None) -> None:
-    """#1439: Ticket-Zweige im Takt von :func:`aufraeumen_alles` (Tür begrenzt auf täglich)."""
     try:
         zweige_aufraeumen(loeschen=loeschen, jetzt=jetzt)
     except Exception:  # Vertrag: wirft nie — Ordner-Ergebnisse gehen vor
@@ -497,9 +530,12 @@ def sicherungen_aufraeumen(
 ) -> list[ZweigErgebnis]:
     """Löscht ``sicherung/<N>``-Zweige 90 Tage nach dem Anlegen; wirft nie.
 
-    Höchstens einmal täglich je Modus, sonst ``[]``. Junge Zweige stehen nur im
-    Ergebnis (ohne Log-Zeile), Löschungen und Fehler je eine Log-Zeile.
+    Nur mit Schalter (:func:`zweige_loeschen_an`), sonst ``[]``. Höchstens einmal
+    täglich je Modus, sonst ``[]``. Junge Zweige stehen nur im Ergebnis (ohne
+    Log-Zeile), Löschungen und Fehler je eine Log-Zeile.
     """
+    if not zweige_loeschen_an():  # #1491: Schalter aus ⇒ nichts, auch kein Takt verbraucht
+        return []
     jetzt = time.time() if jetzt is None else jetzt
     modus = "loeschen" if loeschen else "trocken"
     if not _sicherung_takt_faellig(modus, jetzt):
@@ -714,7 +750,13 @@ def _sicherung_entscheiden(
 
 
 def _zweig_loeschen(cache: Path, zweig: str, sha: str) -> None:
-    """Löscht ``zweig`` auf dem Remote nur, wenn er noch auf ``sha`` steht (Lease)."""
+    """Löscht ``zweig`` auf dem Remote nur, wenn er noch auf ``sha`` steht (Lease).
+
+    #1491: Die Lösch-Senke für GitHub — ohne Schalter (:func:`zweige_loeschen_an`) wirft sie
+    :class:`_ZweigLoeschenAus`, bevor irgendein Push abgeht. So kommt kein Aufrufer vorbei.
+    """
+    if not zweige_loeschen_an():
+        raise _ZweigLoeschenAus(ZWEIGE_AUS)
     ref = f"refs/heads/{zweig}"
     _git_ohne_frage(
         cache, "push", "-q", f"--force-with-lease={ref}:{sha}", "origin", f":{ref}"
@@ -760,6 +802,10 @@ _PROBELAUF: ContextVar[bool] = ContextVar("hausmeister_probelauf", default=False
 
 class _Nachgeschoben(RuntimeError):
     """Zweig steht beim Löschen nicht mehr auf dem geprüften Stand (Lease hielt)."""
+
+
+class _ZweigLoeschenAus(RuntimeError):
+    """#1491: Lösch-Push auf GitHub verlangt, aber der Schalter fehlt — nichts gelöscht."""
 
 
 @dataclass(frozen=True)
@@ -863,9 +909,12 @@ def _zweig_aufraeumen(
 def zweige_aufraeumen(*, loeschen: bool = False, jetzt: float | None = None) -> list[ZweigErgebnis]:
     """Täglicher Lauf über alle ``ticket/*``-Zweige (Hauptrepos lokal + Remotes); wirft nie.
 
-    Höchstens einmal täglich je Modus, sonst ``[]``. Erreicht der Lauf kein Repo und
-    keinen Remote, bleibt der Tag offen (nächster Takt versucht es wieder).
+    Nur mit Schalter (:func:`zweige_loeschen_an`), sonst ``[]``. Höchstens einmal
+    täglich je Modus, sonst ``[]``. Erreicht der Lauf kein Repo und keinen Remote,
+    bleibt der Tag offen (nächster Takt versucht es wieder).
     """
+    if not zweige_loeschen_an():  # #1491: Schalter aus ⇒ nichts, auch kein Takt verbraucht
+        return []
     jetzt = time.time() if jetzt is None else jetzt
     modus = "zweige-loeschen" if loeschen else "zweige-trocken"
     if not _sicherung_takt_faellig(modus, jetzt):
@@ -913,6 +962,8 @@ def _zweig_entscheiden(
     fertig, fehlende, grund, sha = zweig_fertig(repo, zweig, uebernommen_tip=tip, ort=ort, holen=holen)
     if not fertig or not sha:
         return ergebnis("bleibt", grund, sha)
+    if ort == "remote" and not zweige_loeschen_an():  # #1491: vor Sicherungs-Push und Absicht-Zeile
+        return ergebnis("bleibt", ZWEIGE_AUS, sha, fehler=not trocken)
     art = "gesichert+gelöscht" if fehlende else "gelöscht"
     if fehlende and ort == "lokal":  # Remote-Commits liegen schon auf GitHub, lokale nicht
         leck = aufpasser.git_lauf(
@@ -1472,6 +1523,12 @@ def _hauptrepo(worktree: Path) -> Path:
     return gemeinsam.parent
 
 
+def _neu_erzeugbar(pfad: str) -> bool:
+    """Kompilat unter ``__pycache__`` oder ``data/.secret_key`` (legt die App neu an)."""
+    teile = pfad.split("/")
+    return pfad == "data/.secret_key" or (pfad.endswith(".pyc") and "__pycache__" in teile[:-1])
+
+
 def _glob(muster: tuple[str, ...]) -> list[str]:
     return [f":(glob){m}" for m in muster]
 
@@ -1538,14 +1595,17 @@ def _ungesichertes(
     for _, pfad in alle:
         if pfad.endswith("/"):
             raise _Bleibt(f"eingebettetes Repo {pfad}", fuer_david=True)
+    erzeugnis = {p for xy, p in _status(repo, *_glob(ERZEUGNISSE)) if xy == "!!"}
     geheim = {p for _, p in _status(repo, *_glob(aufpasser.SICHERUNG_AUSSCHLUSS))}
+    # Nur sicher neu Erzeugbares ist nie ein Geheimnis (__pycache__/tempo_zugang.*.pyc).
+    # Ein .env unter .review/, node_modules/, .to-spawn/ bleibt Geheimnis.
+    geheim -= {p for p in erzeugnis if _neu_erzeugbar(p)}
     haupt = _hauptrepo(repo) if ist_worktree else None
     for pfad in sorted(geheim):
         if not _gleiche_kopie(haupt, repo, pfad):
             raise _Bleibt(
                 f"Geheimnis-Datei {pfad} nicht gleich im Hauptrepo", fuer_david=True
             )
-    erzeugnis = {p for xy, p in _status(repo, *_glob(ERZEUGNISSE)) if xy == "!!"}
     for xy, pfad in alle:
         if xy == "!!" and pfad not in geheim and pfad not in erzeugnis:
             raise _Bleibt(f"ignorierte Datei {pfad} ist kein bekanntes Erzeugnis")
