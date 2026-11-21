@@ -164,6 +164,7 @@ def test_spawn_srv_prueft_speicher_und_staffelt() -> None:
     assert "--staffel" in text
 
 
+@pytest.mark.braucht("bash")  # (#68)
 def test_spawn_srv_bash_syntax_ok() -> None:
     ergebnis = subprocess.run(
         ["bash", "-n", str(SKILL / "skripte" / "spawn_srv.sh")],
@@ -192,6 +193,7 @@ def test_bau_ruft_platz_frei() -> None:
 # --- 6. Nest: Swap + tmux-Dienst ------------------------------------------------
 
 
+@pytest.mark.braucht("bash")  # (#68)
 def test_nest_server_bash_syntax_ok() -> None:
     ergebnis = subprocess.run(
         ["bash", "-n", str(SKILL / "nest" / "nest_server.sh")],
@@ -208,6 +210,7 @@ def test_nest_server_nennt_swap_und_dienst() -> None:
         assert stueck in text, stueck
 
 
+@pytest.mark.braucht("bash")  # (#68)
 def test_nest_server_trockener_plan_nennt_swap_und_dienst() -> None:
     """Trockener Plan läuft ohne root/Netz (#211) — nur Text, keine Wirkung."""
     ergebnis = subprocess.run(

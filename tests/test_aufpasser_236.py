@@ -32,6 +32,8 @@ SKRIPTE = SKILL / "skripte"
 sys.path.insert(0, str(SKILL))
 
 from to_spawn import aufpasser
+
+pytestmark = pytest.mark.braucht("tmux")  # (#68)
 from to_spawn.waechter_lauf import transkript_ordner
 
 SOCKET = f"aufpasser-test-{os.getpid()}"

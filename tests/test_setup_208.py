@@ -583,6 +583,7 @@ def test_weg_ohne_terminal_ohne_flags_exit_2(repo: Path) -> None:
     assert not (repo / ".to-spawn").exists()
 
 
+@pytest.mark.braucht("posix")  # (#68)
 def test_speichere_uebernimmt_rechte(repo: Path) -> None:
     datei = _schreibe_konfig(repo, {"terminal": "wt"})
     datei.chmod(0o640)
@@ -590,6 +591,7 @@ def test_speichere_uebernimmt_rechte(repo: Path) -> None:
     assert datei.stat().st_mode & 0o777 == 0o640
 
 
+@pytest.mark.braucht("posix")  # (#68)
 def test_speichere_neue_datei_hat_644(repo: Path) -> None:
     datei = setup.speichere(repo, {"terminal": "tmux"}, plattform="linux")
     assert datei.stat().st_mode & 0o777 == 0o644

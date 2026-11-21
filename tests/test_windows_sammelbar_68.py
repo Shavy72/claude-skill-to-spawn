@@ -43,13 +43,47 @@ NUR_UNIX = frozenset(
 NUR_WINDOWS = frozenset({"msvcrt", "winreg", "_winapi", "winsound", "nt"})
 PLATTFORM_MODULE = NUR_UNIX | NUR_WINDOWS
 
-_SCHUTZ_AUSNAHMEN = frozenset({"ImportError", "ModuleNotFoundError", "Exception", "BaseException"})
-_SCHUTZ_BEDINGUNGEN = ("sys.platform", "os.name", "platform.system", "TYPE_CHECKING")
+#: Nur Importfehler zählen als Schutz; ``except Exception`` fängt zu viel (P7b, #79).
+_SCHUTZ_AUSNAHMEN = frozenset({"ImportError", "ModuleNotFoundError"})
+_PLATTFORM_AUSDRUECKE = frozenset({"sys.platform", "os.name", "platform.system()"})
+_WINDOWS_WERTE = frozenset({"win32", "nt", "Windows"})
+
+
+def _zweig_erlaubt(test: ast.expr) -> tuple[frozenset[str], frozenset[str]] | None:
+    """(im if-Zweig, im else-Zweig) erlaubte Plattform-Module; ``None`` = Bedingung unbekannt.
+
+    Erkennt ``sys.platform``/``os.name``/``platform.system()`` mit ``==``/``!=``,
+    ``sys.platform.startswith("win")``, ``not …`` und ``TYPE_CHECKING`` (Rumpf läuft nie).
+    """
+    if isinstance(test, ast.Name | ast.Attribute) and ast.unparse(test).endswith("TYPE_CHECKING"):
+        return PLATTFORM_MODULE, frozenset()
+    if isinstance(test, ast.UnaryOp) and isinstance(test.op, ast.Not):
+        innen = _zweig_erlaubt(test.operand)
+        return (innen[1], innen[0]) if innen else None
+    windows: bool | None = None
+    if (
+        isinstance(test, ast.Compare)
+        and len(test.ops) == 1
+        and isinstance(test.ops[0], ast.Eq | ast.NotEq)
+        and ast.unparse(test.left) in _PLATTFORM_AUSDRUECKE
+        and isinstance(test.comparators[0], ast.Constant)
+    ):
+        windows = (test.comparators[0].value in _WINDOWS_WERTE) == isinstance(test.ops[0], ast.Eq)
+    elif (
+        isinstance(test, ast.Call)
+        and ast.unparse(test.func) == "sys.platform.startswith"
+        and len(test.args) == 1
+        and isinstance(test.args[0], ast.Constant)
+    ):
+        windows = test.args[0].value == "win"
+    if windows is None:
+        return None
+    return (NUR_WINDOWS, NUR_UNIX) if windows else (NUR_UNIX, NUR_WINDOWS)
 
 
 def _faengt_importfehler(handler: ast.ExceptHandler) -> bool:
     if handler.type is None:
-        return True
+        return False  # nacktes except: so breit wie BaseException (P7b)
     typen = handler.type.elts if isinstance(handler.type, ast.Tuple) else [handler.type]
     return any(ast.unparse(t).rsplit(".", 1)[-1] in _SCHUTZ_AUSNAHMEN for t in typen)
 
@@ -64,22 +98,24 @@ def ungeschuetzte_importe(quelltext: str) -> list[tuple[int, str]]:
     """(Zeile, Modul) je Plattform-Import, der beim Laden des Moduls ungeschützt läuft."""
     treffer: list[tuple[int, str]] = []
 
-    def besuche(saetze: list[ast.stmt], geschuetzt: bool) -> None:
+    # ``erlaubt`` = Plattform-Module, die an dieser Stelle geschützt laden (P7b: je Zweig).
+    def besuche(saetze: list[ast.stmt], erlaubt: frozenset[str]) -> None:
+        geschuetzt = erlaubt
         for satz in saetze:
             if isinstance(satz, ast.Import | ast.ImportFrom):
-                if not geschuetzt:
-                    treffer.extend((satz.lineno, m) for m in _modulnamen(satz) if m in PLATTFORM_MODULE)
+                treffer.extend(
+                    (satz.lineno, m) for m in _modulnamen(satz) if m in PLATTFORM_MODULE and m not in erlaubt
+                )
             elif isinstance(satz, ast.FunctionDef | ast.AsyncFunctionDef):
                 continue  # Rumpf läuft erst beim Aufruf
             elif isinstance(satz, ast.If):
-                bedingung = ast.unparse(satz.test)
-                schutz = geschuetzt or any(b in bedingung for b in _SCHUTZ_BEDINGUNGEN)
-                besuche(satz.body, schutz)
-                besuche(satz.orelse, schutz)
+                zweige = _zweig_erlaubt(satz.test) or (frozenset(), frozenset())
+                besuche(satz.body, erlaubt | zweige[0])
+                besuche(satz.orelse, erlaubt | zweige[1])
             elif isinstance(satz, ast.Try | ast.TryStar):
                 besuche(
                     satz.body,
-                    geschuetzt or any(_faengt_importfehler(h) for h in satz.handlers),
+                    PLATTFORM_MODULE if any(_faengt_importfehler(h) for h in satz.handlers) else erlaubt,
                 )
                 for h in satz.handlers:
                     besuche(h.body, geschuetzt)
@@ -92,7 +128,7 @@ def ungeschuetzte_importe(quelltext: str) -> list[tuple[int, str]]:
                 besuche(satz.body, geschuetzt)
                 besuche(getattr(satz, "orelse", []), geschuetzt)
 
-    besuche(ast.parse(quelltext).body, False)
+    besuche(ast.parse(quelltext).body, frozenset())
     return treffer
 
 
@@ -192,3 +228,24 @@ def test_kein_import_ueber_paketname_tests() -> None:
                 if n == "tests" or n.startswith("tests.")
             )
     assert not funde, "Import über Paketname `tests`:\n" + "\n".join(funde)
+
+
+def test_selbstcheck_schutz_nur_passender_zweig_und_nur_importfehler() -> None:
+    """P7b (#79): ``if sys.platform`` schützt nur den Zweig der passenden Plattform;
+    ``except Exception`` ist kein Import-Schutz (fängt zu viel, versteckt echte Fehler)."""
+    quelle = (
+        "if sys.platform != 'win32':\n    import msvcrt\nelse:\n    import fcntl\n"
+        "if os.name == 'nt':\n    import msvcrt\nelse:\n    import fcntl\n"
+        "if sys.platform.startswith('win'):\n    import winreg\n"
+        "if TYPE_CHECKING:\n    import fcntl\n"
+        "try:\n    import fcntl\nexcept Exception:\n    fcntl = None\n"
+        "if sys.platform == 'win32' and x:\n    import msvcrt\n"
+        "try:\n    import pwd\nexcept:\n    pass\n"
+    )
+    assert ungeschuetzte_importe(quelle) == [
+        (2, "msvcrt"),
+        (4, "fcntl"),
+        (14, "fcntl"),
+        (18, "msvcrt"),
+        (20, "pwd"),
+    ]

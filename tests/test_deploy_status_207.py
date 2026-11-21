@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import json
 import os
-import signal
 import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
@@ -234,7 +233,7 @@ def test_datei_aus_umgebung_und_ohne_ticket_nur_anzeigen(
 def _tote_pid() -> int:
     """PID eines echten, schon beendeten und eingesammelten Prozesses."""
     kind = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
-    kind.send_signal(signal.SIGKILL)
+    kind.kill()  # plattformneutral (#68)
     kind.wait(timeout=10)
     return kind.pid
 

@@ -343,6 +343,7 @@ class _Uhr(respawn.TmuxWerkzeug):
         self.zeit += s
 
 
+@pytest.mark.braucht("posix")  # (#68)
 def test_b11_alte_session_ueberlebt_sigkill_heisst_lebt(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

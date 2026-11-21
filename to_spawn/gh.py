@@ -88,6 +88,7 @@ def repo_aus_origin(cwd: Path | None = None, fallback: str = "") -> str:
         ).stdout.strip()
     except OSError:
         return fallback
+    url = url.replace("\\", "/")  # Windows-Pfad als Origin (C:\…\org\fern.git), #68
     treffer = re.search(r"github\.com[:/]([^/]+/[^/\s]+?)(?:\.git)?$", url)
     if treffer:
         return treffer.group(1)

@@ -140,7 +140,7 @@ def _bashrc_funktionen() -> str:
     return m.group(0)
 
 
-@pytest.mark.skipif(shutil.which("bash") is None, reason="bash fehlt")
+@pytest.mark.braucht("bash")  # (#68)
 def test_nest_bashrc_aufseher_startet_wache_py(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     (repo / "scripts").mkdir(parents=True)
@@ -151,7 +151,12 @@ def test_nest_bashrc_aufseher_startet_wache_py(tmp_path: Path) -> None:
     block.write_text(_bashrc_funktionen(), encoding="utf-8")
     skript = f'export REPO="{repo}"; source "{block}"; type aufseher >/dev/null && aufseher 42 --dry-run; wache 7'
     lauf = subprocess.run(
-        ["bash", "-c", skript], capture_output=True, text=True, check=False, timeout=30
+        ["bash", "-c", skript],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",  # (#68)
+        check=False,
+        timeout=30,
     )
     assert lauf.returncode == 0, lauf.stderr
     assert "WACHE_PY 42 --dry-run" in lauf.stdout
@@ -199,6 +204,7 @@ def test_install_ps1_aufseher_funktion_laeuft_echt(tmp_path: Path) -> None:
         cwd=tmp_path,
         capture_output=True,
         text=True,
+        encoding="utf-8",  # (#68)
         check=False,
         timeout=60,
     )

@@ -30,7 +30,7 @@ def mw(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> tuple[Welt, Path, Path]:
     subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(bare)], check=True)
     gitconfig = welt.tmp / "gitconfig"
     with gitconfig.open("a", encoding="utf-8") as f:
-        f.write(f'[url "{bare}"]\n\tinsteadOf = {SKILL_URL}\n')
+        f.write(f'[url "{bare.as_posix()}"]\n\tinsteadOf = {SKILL_URL}\n')
     saat = welt.tmp / "skill-saat"
     subprocess.run(["git", "init", "-q", "-b", "main", str(saat)], check=True)
     (saat / "README.md").write_text("start\n", encoding="utf-8")

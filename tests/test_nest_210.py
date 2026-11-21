@@ -37,7 +37,8 @@ TOKEN = "dummy-token-nur-test"
 
 def _git(ordner: Path, *args: str) -> str:
     return subprocess.run(
-        ["git", *args], cwd=str(ordner), check=True, capture_output=True, text=True
+        ["git", *args], cwd=str(ordner), check=True, capture_output=True, text=True,
+        encoding="utf-8",  # (#68)
     ).stdout.strip()
 
 
@@ -59,6 +60,8 @@ def _umgebung(heim: Path, **extra: str) -> dict[str, str]:
         if k not in ("BWS_ACCESS_TOKEN", "TO_SPAWN_REPO", "BAU_WT_DIR")
     }
     umgebung["HOME"] = str(heim)
+    umgebung["USERPROFILE"] = str(heim)  # (#68)
+    umgebung["PYTHONUTF8"] = "1"  # (#68)
     context_mode_attrappe.plugin_anlegen(heim)  # Pflicht-Plugin seit #237
     umgebung.update(extra)
     return umgebung
@@ -333,6 +336,7 @@ def bws_welt(tmp_path: Path) -> tuple[Path, dict[str, str]]:
     return heim, umgebung
 
 
+@pytest.mark.braucht("posix")  # (#68)
 def test_secrets_schreibt_env_600_ohne_werte_in_ausgabe(
     tmp_path: Path, bws_welt: tuple[Path, dict[str, str]]
 ) -> None:
@@ -360,6 +364,7 @@ def test_secrets_schreibt_env_600_ohne_werte_in_ausgabe(
     assert "proj-42" in argumente and TOKEN not in argumente
 
 
+@pytest.mark.braucht("posix")  # (#68)
 def test_secrets_token_aus_datei(
     tmp_path: Path, bws_welt: tuple[Path, dict[str, str]]
 ) -> None:
@@ -598,6 +603,7 @@ def test_nest_ordner_ohne_repo_eigene_namen() -> None:
 
 
 @pytest.mark.parametrize("name", ["nest_server.sh", "nest_push.sh", "ssh_durch_sandbox.sh"])
+@pytest.mark.braucht("bash")  # (#68)
 def test_nest_skripte_syntax_sauber(name: str) -> None:
     ergebnis = subprocess.run(
         ["bash", "-n", str(NEST / name)], capture_output=True, text=True, check=False
@@ -605,6 +611,7 @@ def test_nest_skripte_syntax_sauber(name: str) -> None:
     assert ergebnis.returncode == 0, ergebnis.stderr
 
 
+@pytest.mark.braucht("bash")  # (#68)
 def test_nest_server_trocken_zeigt_parameter(tmp_path: Path) -> None:
     ergebnis = subprocess.run(
         ["bash", str(NEST / "nest_server.sh"), "--trocken", "--repo", "probe-org/probe-repo",
@@ -627,6 +634,7 @@ def test_nest_server_trocken_zeigt_parameter(tmp_path: Path) -> None:
         assert erwartet in ausgabe, erwartet
 
 
+@pytest.mark.braucht("bash")  # (#68)
 def test_nest_server_ohne_repo_bricht_ab() -> None:
     ergebnis = subprocess.run(
         ["bash", str(NEST / "nest_server.sh"), "--trocken"],
@@ -636,6 +644,7 @@ def test_nest_server_ohne_repo_bricht_ab() -> None:
     assert "--repo" in ergebnis.stderr
 
 
+@pytest.mark.braucht("bash")  # (#68)
 def test_nest_push_trocken_zeigt_auswahl(tmp_path: Path) -> None:
     repo, claude_home, _home_json = _werkzeug_welt(tmp_path)
     ergebnis = subprocess.run(
@@ -650,6 +659,7 @@ def test_nest_push_trocken_zeigt_auswahl(tmp_path: Path) -> None:
     assert "skill-ab" not in ausgabe
 
 
+@pytest.mark.braucht("bash")  # (#68)
 def test_ssh_durch_sandbox_ohne_proxy_bricht_ab(tmp_path: Path) -> None:
     ergebnis = subprocess.run(
         ["bash", str(NEST / "ssh_durch_sandbox.sh"), "h", "22"],
@@ -695,6 +705,7 @@ def test_einstellungen_rechte_nie_aus_quelle_und_bleiben_am_ziel(tmp_path: Path)
     assert daten["permissions"] == {"allow": ["Bash(git status:*)"]}
 
 
+@pytest.mark.braucht("posix")  # (#68)
 def test_mcp_export_600_ohne_werte_in_ausgabe(tmp_path: Path) -> None:
     heim = tmp_path / "heim"
     heim.mkdir()
@@ -789,6 +800,7 @@ def test_fix_env_wert_einfache_anfuehrung_rundreise(
     assert dotenv.dotenv_values(ziel)["SCHWER"] == schwierig
 
 
+@pytest.mark.braucht("posix")  # (#68)
 def test_fix_mcp_import_merged_atomar_600(tmp_path: Path) -> None:
     claude_json = tmp_path / ".claude.json"
     claude_json.write_text(
@@ -998,6 +1010,7 @@ class _Proxy:
         verbindung.close()
 
 
+@pytest.mark.braucht("bash")  # (#68)
 def test_fix_ssh_helfer_connect_ohne_anmeldung_in_argv(tmp_path: Path) -> None:
     import base64
 

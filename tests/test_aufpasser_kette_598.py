@@ -31,6 +31,8 @@ from test_aufpasser_exit_592 import _lauf, _warte_auf
 
 from to_spawn import aufpasser, prozessbaum
 
+pytestmark = pytest.mark.braucht("tmux")  # (#68)
+
 BAU_ATTRAPPE = """#!/bin/bash
 # Attrappe für ``bau.py <N> <sid>``: startet die Claude-Attrappe mit Gesprächs-ID.
 "{claude}" --session-id "$2" x

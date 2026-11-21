@@ -58,8 +58,9 @@ if ($Tickets.Count -eq 0) {
 }
 
 # Schon laufende Prozesse nie doppelt starten (Duplikat auf demselben Worktree = Gefahr, 17.09.2026 #187).
+# Worktree-Name wt-<N> wie config.worktree_pfad (L1 P7b, #79).
 $laufend = Get-CimInstance Win32_Process -Filter "Name='python.exe' OR Name='claude.exe'" |
-    Where-Object { $_.CommandLine -match 'bau\.py (\d+)|wache\.py (\d+)|duoplus-bau[\\/](\d+)-' } |
+    Where-Object { $_.CommandLine -match 'bau\.py (\d+)|wache\.py (\d+)|[\\/]wt-(\d+)\b' } |
     ForEach-Object { [int]($Matches[1] + $Matches[2] + $Matches[3]) } | Sort-Object -Unique
 # Geschlossene Tickets nicht mehr starten (bau.py würde sofort enden, der Tab bliebe als Leiche).
 $zu = @()
