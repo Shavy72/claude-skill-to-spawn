@@ -3,8 +3,8 @@
 Jede Komponente (Aufseher, Gate, Nest, capo, aufpasser) fragt hier, statt nach
 eigenem Stand zu handeln.
 
-* Sperren sind echte Betriebssystem-Sperren (Linux ``fcntl.flock``, Windows
-  ``msvcrt.locking``) und werden beim Prozess-Tod vom System frei. Lebend-Prüfung
+* Sperren sind echte Betriebssystem-Sperren (:func:`to_spawn.sperre.halte`, #95)
+  und werden beim Prozess-Tod vom System frei. Lebend-Prüfung
   nur über die Sperre selbst — nie ``os.kill(pid, 0)`` (killt auf Windows).
 * Wer wartet, legt einen Wartezettel in ``<name>.warte/`` und hält darauf selbst
   eine Sperre (Lebendzeichen). Reihenfolge = Name des Zettels (Zeit zuerst), FIFO.
@@ -18,7 +18,6 @@ Halter-Einstieg (Tests, Deploy-Dienst): ``python -m to_spawn.leitstand halte <na
 from __future__ import annotations
 
 import argparse
-import errno
 import json
 import logging
 import os
@@ -27,32 +26,20 @@ import sys
 import time
 import uuid
 from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-if sys.platform == "win32":
-    import msvcrt
-else:
-    import fcntl
+from . import sperre as _sperre
 
 log = logging.getLogger("to_spawn.leitstand")
 
 NAME_MUSTER = re.compile(r"[A-Za-z0-9._-]+")
 ZUSTAND_SPERRE = "_zustand"
-# Windows sperrt ein Byte weit hinter dem Inhalt, damit der Inhalt lesbar bleibt.
-_SPERR_OFFSET = 1 << 30
 # Ein frisch angelegter Wartezettel ist kurz leer und noch nicht gesperrt.
 _ZETTEL_ANLAUF_S = 5.0
-_BELEGT_ERRNOS = {
-    errno.EACCES,
-    errno.EAGAIN,
-    errno.EWOULDBLOCK,
-    getattr(errno, "EDEADLK", -1),
-    getattr(errno, "EDEADLOCK", -1),
-}
 
 
 class SperreBelegt(TimeoutError):
@@ -102,33 +89,37 @@ def _jetzt_iso() -> str:
 # --- Betriebssystem-Sperre ----------------------------------------------------
 
 
-def _versuche_os_sperre(fd: int) -> bool:
-    """Nimmt die Sperre auf ``fd`` nicht-blockierend; ``False`` wenn belegt."""
+def _lege_sperrdatei_an(pfad: Path) -> Path:
+    """Legt ``pfad`` mit 0o644 an und prüft Schreibrecht wie vor #95 (sperre.halte öffnet nur lesend)."""
+    os.close(os.open(pfad, os.O_RDWR | os.O_CREAT, 0o644))
+    return pfad
+
+
+def _nimm_os_sperre(pfad: Path) -> ExitStack | None:
+    """Nimmt die Sperre auf ``pfad`` nicht-blockierend; ``None`` wenn belegt, ``.close()`` gibt frei."""
+    _lege_sperrdatei_an(pfad)
+    stapel = ExitStack()
     try:
-        if sys.platform == "win32":
-            os.lseek(fd, _SPERR_OFFSET, os.SEEK_SET)
-            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
-        else:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except OSError as fehler:
-        if fehler.errno in _BELEGT_ERRNOS:
-            return False
+        gehalten = stapel.enter_context(_sperre.halte(pfad))
+    except BaseException:
+        stapel.close()
         raise
-    return True
-
-
-def _loese_os_sperre(fd: int) -> None:
-    if sys.platform == "win32":
-        os.lseek(fd, _SPERR_OFFSET, os.SEEK_SET)
-        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
-    else:
-        fcntl.flock(fd, fcntl.LOCK_UN)
+    if not gehalten:
+        stapel.close()
+        return None
+    return stapel
 
 
 def _probe_frei(pfad: Path) -> bool | None:
     """``True`` = nehmbar (Inhaber tot/keiner), ``False`` = gehalten, ``None`` = Datei weg."""
+    # halte() legt fehlende Dateien an — darum vorher ohne O_CREAT öffnen (prüft zugleich
+    # Schreibrecht, #315). ponytail: wird die Datei genau dazwischen gelöscht, entsteht sie
+    # leer neu (Zettel räumt _lebende_wartende nach der Anlaufzeit weg); Upgrade: Probe ohne
+    # O_CREAT in sperre.halte.
     try:
-        fd = os.open(pfad, os.O_RDWR)
+        os.close(os.open(pfad, os.O_RDWR))
+        with _sperre.halte(pfad) as gehalten:
+            return gehalten
     except FileNotFoundError:
         return None
     except PermissionError:
@@ -136,13 +127,6 @@ def _probe_frei(pfad: Path) -> bool | None:
         if sys.platform == "win32":
             return None
         raise
-    try:
-        if _versuche_os_sperre(fd):
-            _loese_os_sperre(fd)
-            return True
-        return False
-    finally:
-        os.close(fd)
 
 
 def _mit_wiederholung(aktion: Callable[[], None], was: str, anzahl: int = 40) -> None:
@@ -200,18 +184,17 @@ class Halteschein:
 
     name: str
     halter: str
-    _fd: int | None = field(default=None, repr=False)
+    _stapel: ExitStack | None = field(default=None, repr=False)
 
     def freigeben(self) -> None:
-        if self._fd is None:
+        if self._stapel is None:
             return
-        fd, self._fd = self._fd, None
+        stapel, self._stapel = self._stapel, None
         halter_datei = _sperr_ordner() / f"{self.name}.halter.json"
-        _mit_wiederholung(halter_datei.unlink, f"Halter-Datei {self.name} löschen")
         try:
-            _loese_os_sperre(fd)
+            _mit_wiederholung(halter_datei.unlink, f"Halter-Datei {self.name} löschen")
         finally:
-            os.close(fd)
+            stapel.close()
 
     def __enter__(self) -> Halteschein:
         return self
@@ -230,11 +213,10 @@ class SperrStand:
 def _nimm(name: str, halter: str) -> Halteschein | None:
     """Nimmt die Sperre nicht-blockierend (ohne Blick auf die Reihe)."""
     ordner = _sperr_ordner()
-    fd = os.open(ordner / f"{name}.lock", os.O_RDWR | os.O_CREAT, 0o644)
+    stapel = _nimm_os_sperre(ordner / f"{name}.lock")
+    if stapel is None:
+        return None
     try:
-        if not _versuche_os_sperre(fd):
-            os.close(fd)
-            return None
         # Rest eines abgestürzten Halters sofort weg, damit ``stand()`` ihn nie zeigt.
         _mit_wiederholung(
             (ordner / f"{name}.halter.json").unlink, f"alte Halter-Datei {name} löschen"
@@ -244,9 +226,9 @@ def _nimm(name: str, halter: str) -> Halteschein | None:
             {"halter": halter, "pid": os.getpid(), "seit": _jetzt_iso()},
         )
     except BaseException:
-        os.close(fd)
+        stapel.close()
         raise
-    return Halteschein(name=name, halter=halter, _fd=fd)
+    return Halteschein(name=name, halter=halter, _stapel=stapel)
 
 
 def _lebende_wartende(name: str) -> list[tuple[Path, dict]]:
@@ -263,48 +245,51 @@ def _lebende_wartende(name: str) -> list[tuple[Path, dict]]:
         if not frei:
             lebende.append((zettel, inhalt or {"halter": "?"}))
             continue
-        if inhalt is None:
-            try:
-                alter = time.time() - zettel.stat().st_mtime
-            except FileNotFoundError:
-                continue
-            if alter < _ZETTEL_ANLAUF_S:
-                continue  # wird gerade angelegt
+        # Auch mit Inhalt: ein frischer Zettel ist erst beschrieben, dann gesperrt (_lege_zettel).
+        try:
+            alter = time.time() - zettel.stat().st_mtime
+        except FileNotFoundError:
+            continue
+        if alter < _ZETTEL_ANLAUF_S:
+            continue  # wird gerade angelegt
         _mit_wiederholung(
             zettel.unlink, f"toten Wartezettel {zettel.name} wegräumen", anzahl=3
         )
     return lebende
 
 
-def _lege_zettel(name: str, halter: str) -> tuple[Path, int]:
+def _lege_zettel(name: str, halter: str) -> tuple[Path, ExitStack]:
     reihe = _sperr_ordner() / f"{name}.warte"
     reihe.mkdir(parents=True, exist_ok=True)
     zettel = reihe / f"{time.time_ns():020d}-{os.getpid()}-{uuid.uuid4().hex[:8]}.json"
-    fd = os.open(zettel, os.O_RDWR | os.O_CREAT | os.O_EXCL, 0o644)
+    daten = {"halter": halter, "pid": os.getpid(), "seit": _jetzt_iso()}
+    # Erst beschreiben, dann sperren: sperre.halte gibt keinen Schreib-Griff heraus.
+    # ponytail: Windows sperrt Byte 0, der Inhalt eines gehaltenen Zettels ist dort nicht
+    # lesbar (``stand`` zeigt den Wartenden als „?“); Upgrade: Sperr-Versatz in sperre.halte.
+    fd = os.open(zettel, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+    try:
+        os.write(fd, json.dumps(daten, ensure_ascii=False).encode("utf-8"))
+    finally:
+        os.close(fd)
     try:
         # Eine fremde Probe (``_probe_frei``) kann den frischen Zettel für einen
         # Augenblick sperren — kurz wiederholen statt abbrechen.
-        ende = time.monotonic() + _ZETTEL_ANLAUF_S
-        while not _versuche_os_sperre(fd):
-            if time.monotonic() >= ende:
+        stapel = ExitStack()
+        try:
+            if not stapel.enter_context(_sperre.halte(zettel, warten=_ZETTEL_ANLAUF_S)):
                 raise RuntimeError(f"eigener Wartezettel {zettel} nicht sperrbar")
-            time.sleep(0.005)
-        os.lseek(fd, 0, os.SEEK_SET)  # Windows-Sperre hat die Position verschoben
-        daten = {"halter": halter, "pid": os.getpid(), "seit": _jetzt_iso()}
-        os.write(fd, json.dumps(daten, ensure_ascii=False).encode("utf-8"))
+        except BaseException:
+            stapel.close()
+            raise
     except BaseException:
         # Kein halber Zettel darf als Lebender vorne in der Reihe stehen bleiben.
-        os.close(fd)
         _mit_wiederholung(zettel.unlink, f"Wartezettel {zettel.name} verwerfen")
         raise
-    return zettel, fd
+    return zettel, stapel
 
 
-def _entferne_zettel(zettel: Path, fd: int) -> None:
-    try:
-        _loese_os_sperre(fd)
-    finally:
-        os.close(fd)
+def _entferne_zettel(zettel: Path, stapel: ExitStack) -> None:
+    stapel.close()
     _mit_wiederholung(zettel.unlink, f"eigenen Wartezettel {zettel.name} entfernen")
 
 
@@ -315,7 +300,7 @@ def sperre(
     """Blockiert in der Reihe (FIFO), bis die Sperre frei ist; ``warte_s`` → ``SperreBelegt``."""
     _pruefe_name(name)
     ende = None if warte_s is None else time.monotonic() + warte_s
-    zettel, zettel_fd = _lege_zettel(name, halter)
+    zettel, zettel_stapel = _lege_zettel(name, halter)
     schein: Halteschein | None = None
     try:
         while True:
@@ -329,7 +314,7 @@ def sperre(
             time.sleep(takt_s)
     finally:
         try:
-            _entferne_zettel(zettel, zettel_fd)
+            _entferne_zettel(zettel, zettel_stapel)
         except BaseException:
             # Sonst bliebe die schon genommene Sperre bis zum Prozess-Ende belegt.
             if schein is not None:
@@ -378,23 +363,11 @@ def stand(name: str | None = None) -> list[SperrStand]:
 @contextmanager
 def _zustand_sperre(warte_s: float = 60.0) -> Iterator[None]:
     """Interne Sperre ``_zustand`` (ohne Reihe, kurz gehalten)."""
-    fd = os.open(
-        _sperr_ordner() / f"{ZUSTAND_SPERRE}.lock", os.O_RDWR | os.O_CREAT, 0o644
-    )
-    try:
-        ende = time.monotonic() + warte_s
-        while not _versuche_os_sperre(fd):
-            if time.monotonic() >= ende:
-                raise SperreBelegt(
-                    f"interne Sperre {ZUSTAND_SPERRE} nach {warte_s} s nicht frei"
-                )
-            time.sleep(0.005)
-        try:
-            yield
-        finally:
-            _loese_os_sperre(fd)
-    finally:
-        os.close(fd)
+    pfad = _lege_sperrdatei_an(_sperr_ordner() / f"{ZUSTAND_SPERRE}.lock")
+    with _sperre.halte(pfad, warten=warte_s) as gehalten:
+        if not gehalten:
+            raise SperreBelegt(f"interne Sperre {ZUSTAND_SPERRE} nach {warte_s} s nicht frei")
+        yield
 
 
 def _zustand_datei() -> Path:

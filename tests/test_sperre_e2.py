@@ -1,7 +1,7 @@
 """Sperr-Modul (#94, L1 E2-10): eine Tür ``sperre.halte`` für fcntl, msvcrt und O_EXCL.
 
 Prüf-Test: fcntl/msvcrt gibt es im ganzen Repo (außer ``tests/``) nur in
-``to_spawn/sperre.py`` (plus die Ausnahmen aus dem Issue, je voller Pfad). Weg-Test: zwei echte Prozesse auf dieselbe Sperre — je
+``to_spawn/sperre.py`` (voller Pfad, seit #95 keine weiteren Ausnahmen). Weg-Test: zwei echte Prozesse auf dieselbe Sperre — je
 Zweig (Standard, erzwungenes msvcrt, O_EXCL-Rückfall).
 """
 
@@ -18,14 +18,10 @@ import pytest
 WURZEL = Path(__file__).resolve().parents[1]
 PLATTFORM_SPERREN = frozenset({"fcntl", "msvcrt"})
 #: Voller relativer Pfad (nicht der Dateiname: ``kette/sperre.py`` wäre sonst durchgewinkt).
-#: Außer der Tür selbst: eigene Sperren mit eigenem Zuschnitt, Umbau in Teil b (Issue #94).
+#: Nur die Tür selbst; seit #95 (Teil b) keine weiteren Ausnahmen.
 AUSNAHMEN = frozenset(
     {
-        "to_spawn/sperre.py",  # die Tür
-        "to_spawn/capo.py",  # capo.sperre, eigener Zuschnitt (Teil b)
-        "to_spawn/leitstand.py",  # Leitstand-Sperre (Teil b)
-        "to_spawn/vertrauen.py",  # Vertrauens-Datei-Sperre (Teil b)
-        "skripte/leitstand_fenster.py",  # eigenständiges Skript, Leitstand-Fenster (Teil b)
+        "to_spawn/sperre.py",  # die Tür (sonst keine Ausnahme, #95)
     }
 )
 
