@@ -144,6 +144,8 @@ KEIN_START = frozenset(
         ("messung/fehler_reihe.py", "run"),  # Popen pytest/node-Testlauf, RAM-Messung, Ausgabe gelesen
         ("messung/rueckblick_auswahl_duoplus.py", "gate_auswahl"),  # gate_auswahl.py, Ausgabe gelesen
         ("messung/rueckblick_auswahl_duoplus.py", "impacted"),  # impacted-tests, Ausgabe gelesen
+        # to_spawn/pruef/: Prüf-Tür (3b-1a, PR #117) fährt den Testläufer blockierend, keine Session
+        ("to_spawn/pruef/ausfuehren.py", "lauf"),  # subprocess.run pytest/node, wartet, Ausgabe gelesen
     }
 )
 
