@@ -530,7 +530,14 @@ def deploy_art(argv: list[str]) -> DeployArt | None:
         return "pruef" if "--nur-gate" in " ".join(argv).split() else "live"
     if "staging_deploy.sh" in kopf:
         return "live"
-    if "deploy_schlange" in kopf or re.search(GATE_MUSTER, kopf):
+    if "deploy_schlange" in kopf:
+        return "pruef"
+    # pytest zählt nur als Programmname (``pytest``, ``python -m pytest``), nie als
+    # Pfadteil — sonst wäre jeder Prozess unter ``/tmp/pytest-of-<nutzer>/`` ein Gate (#1411).
+    if any(
+        re.fullmatch(GATE_MUSTER, Path(teil).name.removesuffix(".exe"))
+        for teil in kopf.split()
+    ):
         return "pruef"
     return None
 

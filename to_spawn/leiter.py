@@ -77,7 +77,7 @@ NACH_STUPS_MIN = 15
 MIN_RUHE_MIN = 2
 #: Höchste Wartezeit in Stufe 2 auf die Start-Prompt-Datei (wie respawn).
 WARTE_MAX_MIN = int(respawn.WARTE_MAX_VORGABE // 60)
-#: Rückfall der Handoff-Grenze in k-Token — eine Quelle mit dem Wächter-Lauf.
+#: Rückfall der Handoff-Grenze in k-Token — eine Quelle mit ``waechter_lauf``.
 HANDOFF_K_VORGABE = float(waechter_lauf.HANDOFF_K_OPUS)
 SMART_ZONE_DATEI = Path("~/.claude/smart-zone.json")
 
