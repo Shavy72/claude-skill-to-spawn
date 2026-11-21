@@ -27,8 +27,11 @@ ROT_HALT = "Stufe sofort rot (schnell rot)"
 #: Doku = nur diese Endungen (Erlaubnis-Liste: Unbekanntes ist nie Doku). ``.txt`` fehlt bewusst
 #: (``requirements.txt``).
 _DOKU_ENDUNGEN = frozenset({".md", ".markdown", ".rst", ".adoc"})
-#: Test-Dateien, in denen der Name einer Doku-Datei vorkommen kann (Test liest die Doku → kein Doku).
-_TEST_PFADE = (":(glob)**/*test*", ":(glob)**/*test*/**", ":(glob)**/*spec*")
+#: Gesucht wird in allen getrackten Dateien außer Doku (Code, Tests, Konfig, Skripte).
+_NICHT_DOKU_PFADE = (
+    ".",
+    *(f":(exclude,glob)**/*{endung}" for endung in sorted(_DOKU_ENDUNGEN)),
+)
 
 
 @dataclass(frozen=True)
@@ -102,10 +105,16 @@ def geaendert(repo: Path, basis: str) -> list[str] | None:
 def _ist_doku(repo: Path, pfad: str) -> bool:
     if PurePosixPath(pfad).suffix.lower() not in _DOKU_ENDUNGEN:
         return False
-    # git grep: 0 gefunden, 1 nicht gefunden, sonst unklar → lieber kein Doku.
-    # ponytail: Tests, die Doku per Glob statt Namen lesen, fallen durch; Upgrade: Konfig-Schlüssel
-    # pruefen.doku_muster je Repo, wenn ein solcher Fall auftaucht.
-    code, _ = _git(repo, "grep", "-q", "-F", "-e", PurePosixPath(pfad).name, "--", *_TEST_PFADE)
+    # Im Zweifel keine Doku: Kommt in irgendeiner Nicht-Doku-Datei der Dateiname, ein Ordnername
+    # des Pfads (Code liest den Ordner) oder das Endungs-Glob (``*.md``) vor, liest Code sie
+    # womöglich zur Laufzeit. -i: Windows-Dateisystem ignoriert Groß/klein. Teilwort-Treffer
+    # machen nur vorsichtiger. git grep: 0 gefunden, 1 nicht gefunden, sonst unklar → keine Doku.
+    # ponytail: Code, der Doku über berechnete Pfade ohne diese Wörter liest, fällt durch;
+    # Upgrade: Konfig-Schlüssel pruefen.doku_muster je Repo, wenn ein solcher Fall auftaucht.
+    teile = PurePosixPath(pfad)
+    muster = [teile.name, *teile.parts[:-1], f"*{teile.suffix}"]
+    suche = [arg for wort in muster for arg in ("-e", wort)]
+    code, _ = _git(repo, "grep", "-q", "-i", "-F", *suche, "--", *_NICHT_DOKU_PFADE)
     return code == 1
 
 

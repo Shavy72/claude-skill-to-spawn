@@ -39,6 +39,66 @@ def _sha(repo: Path, ref: str) -> str | None:
     return erg.stdout.strip() if erg.returncode == 0 else None
 
 
+#: Ungetrackte Werkzeug-Ordner (Caches, Installationen): ändern den geprüften Code nicht.
+_WERKZEUG_ORDNER = frozenset(
+    {
+        "__pycache__",
+        ".pytest_cache",
+        ".ruff_cache",
+        ".mypy_cache",
+        ".venv",
+        "venv",
+        "node_modules",
+    }
+)
+
+
+def _ungespeichert(repo: Path) -> list[str]:
+    """Pfade, die vom ausgecheckten Commit abweichen; ``["?"]`` = unklar (git scheitert).
+
+    Geprüft wird der Arbeitsbaum, das Urteil gilt aber dem SHA — beides muss gleich sein, sonst
+    gibt es Grün für einen Stand, den keiner committet hat. Ausgenommen: ``.to-spawn/`` (eigenes
+    Protokoll) und ungetrackte Werkzeug-Ordner. ``normal`` fasst neue Ordner zu ``ordner/`` zusammen.
+    """
+    try:
+        erg = subprocess.run(
+            [
+                "git",
+                "status",
+                "--porcelain",
+                "-z",
+                "--untracked-files=normal",
+                "--",
+                ".",
+                ":(exclude).to-spawn",
+            ],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+        )
+    except OSError:
+        return ["?"]
+    if erg.returncode != 0:
+        return ["?"]
+    offen: list[str] = []
+    eintraege = iter(erg.stdout.split("\0"))
+    for eintrag in eintraege:
+        if not eintrag:
+            continue
+        art, pfad = eintrag[:2], eintrag[3:]
+        if art[0] in "RC":
+            next(
+                eintraege, None
+            )  # -z: Quellpfad einer Umbenennung folgt als eigener Eintrag
+        if art == "??" and _WERKZEUG_ORDNER & set(pfad.rstrip("/").split("/")):
+            continue
+        offen.append(pfad)
+    return offen
+
+
 def _gate_fehler(repo: Path, basis: str, ziel: str, grund: str, start: float) -> Urteil:
     zeile = protokoll.zeile(
         basis=basis,
@@ -70,6 +130,15 @@ def pruefen(repo: Path, basis: str, ziel: str) -> Urteil:
             basis_sha,
             ziel_sha,
             f"ziel {ziel} ist nicht ausgecheckt (HEAD {kopf})",
+            start,
+        )
+    offen = _ungespeichert(repo)
+    if offen:
+        return _gate_fehler(
+            repo,
+            basis_sha,
+            ziel_sha,
+            f"Arbeitsbaum nicht gespeichert (erst committen): {', '.join(offen[:5])}",
             start,
         )
     liste = leiter.stufen(repo, _ADAPTER, basis_sha)
