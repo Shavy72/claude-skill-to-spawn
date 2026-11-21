@@ -8,7 +8,7 @@ liest sie über ``SCHLANGE_ENV_DATEI``. Telegram geht über ``WAECHTER_MELDUNG_D
 in eine Datei statt ins Netz.
 
 Die beiden Hook-Dateien unter ``tests/hilfen/push_sperre_1442/`` sind Testdaten:
-Stand ``Shavy72/duoplus-management`` origin/master 6f3f961 (``scripts/hooks/``).
+Stand ``Shavy72/duoplus-management`` origin/master c711a62 (``scripts/hooks/``).
 Der Skill selbst kopiert nichts, er ruft nur den Installer im Klon auf.
 """
 

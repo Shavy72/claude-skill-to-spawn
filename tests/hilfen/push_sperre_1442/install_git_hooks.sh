@@ -2,7 +2,7 @@
 # install_git_hooks.sh — Git-Hooks in diesem Klon anlegen (#219, idempotent).
 #   pre-commit  -> scripts/pruef_belegbilder.py (Belegbilder WebP <= 300 KB)
 #   commit-msg  -> [skip ci] anhaengen + scripts/hooks/test_zaehler_wache.py (B4, #282)
-#   pre-push    -> scripts/hooks/pre-push-master-sperre.sh (master-Sperre im Modus tickets, #1442)
+#   pre-push    -> feste Kopie der master-Sperre in .git/hooks (#1442, #1450)
 # Einzige Stelle mit dem pre-commit-Text: scripts/setup_bau_server.sh ruft dieses Skript.
 # graphify-Hooks legt setup_bau_server.sh selbst an; commit-msg legt dieses Skript an.
 # Aufruf: sh scripts/hooks/install_git_hooks.sh [<repo-pfad>]
@@ -63,17 +63,49 @@ EOF
 chmod +x "$ziel"
 echo "commit-msg angelegt: $ziel"
 
-# pre-push (#1442): im Modus tickets kein direkter Push auf master — in JEDEM
-# Klon, nicht nur im Hauptrepo. Die Regel lebt nur in
-# scripts/hooks/pre-push-master-sperre.sh (Modus aus der .env der Schlange,
-# Ausnahme DEPLOY_SCHLANGE_MERGE=1 für deren Fast-Forward); der Hook ruft sie
-# nur auf. Fehlt das Skript im ausgecheckten Stand, läuft der Push mit Warnung
-# weiter, statt einen erlaubten Push zu blockieren.
-# Eine volle Kopie der Sperre (Hauptrepo, `master_schutz.sh hook-an`) bleibt stehen:
-# master_schutz.sh erkennt seine Sperre nur per cmp, sonst bricht hook-an ab.
+# pre-push (#1442, #1450): im Modus tickets kein direkter Push auf master — in
+# JEDEM Klon. Die Regel lebt nur in scripts/hooks/pre-push-master-sperre.sh.
+# Der Installer kopiert sie FEST ins gemeinsame Git-Verzeichnis
+# (.git/hooks/pre-push-master-sperre.sh); der pre-push ruft nur diese Kopie auf.
+# So entschärft eine Session die Sperre nicht über ihren Arbeitsordner (#1450).
+# Erneuter Lauf ersetzt eine veraltete Kopie (Vergleich per cmp).
+# Quelle (#1450 Fix-Runde 1): immer die Sperre aus origin/<Hauptzweig> des Klons
+# (origin/HEAD, sonst master, sonst main) — wer die Sperre im Arbeitsordner ändert
+# und den Installer startet, entschärft die gemeinsame Kopie nicht. Nur wenn
+# origin den Pfad nicht hat: Rückfall auf die Datei neben diesem Skript, mit
+# Warnung. Ohne jede Quelle bleibt die Kopie, wie sie ist, der pre-push wird
+# trotzdem angelegt (meldet beim Push „fehlt“); Exit bleibt 0 (Session-Start).
+# Eine volle Kopie der Sperre als pre-push (Hauptrepo, `master_schutz.sh hook-an`)
+# bleibt stehen: master_schutz.sh erkennt seine Sperre nur per cmp.
+kopie="$hooks/pre-push-master-sperre.sh"
+neu="$kopie.neu"
+neben="$(cd "$(dirname "$0")" && pwd)/pre-push-master-sperre.sh"
+quelle=""
+for ref in $(git -C "$repo" symbolic-ref --short -q refs/remotes/origin/HEAD 2>/dev/null) origin/master origin/main; do
+  if git -C "$repo" show "$ref:scripts/hooks/pre-push-master-sperre.sh" >"$neu" 2>/dev/null; then
+    quelle=$ref
+    break
+  fi
+done
+if [ -z "$quelle" ] && [ -f "$neben" ]; then
+  cp "$neben" "$neu"
+  quelle=$neben
+  echo "⚠ pre-push: Sperre nicht in origin/<Hauptzweig> — Rückfall auf Arbeitsordner: $neben" >&2
+fi
+if [ -z "$quelle" ]; then
+  rm -f "$neu"
+  echo "⚠ pre-push: Sperre weder in origin/<Hauptzweig> noch neben $0 — Sperr-Kopie unverändert, pre-push wird trotzdem angelegt." >&2
+elif [ -f "$kopie" ] && cmp -s "$kopie" "$neu"; then
+  rm -f "$neu"
+  echo "Sperr-Kopie ist aktuell: $kopie"
+else
+  chmod +x "$neu"
+  mv -f "$neu" "$kopie"
+  echo "Sperr-Kopie angelegt aus $quelle: $kopie"
+fi
+
 ziel="$hooks/pre-push"
-quelle="$(cd "$(dirname "$0")" && pwd)/pre-push-master-sperre.sh"
-if [ -f "$ziel" ] && cmp -s "$ziel" "$quelle"; then
+if [ -f "$ziel" ] && cmp -s "$ziel" "$kopie"; then
   echo "pre-push ist volle Kopie der Sperre (master_schutz.sh), bleibt: $ziel"
   exit 0
 fi
@@ -83,11 +115,11 @@ if [ -f "$ziel" ] && ! grep -q "pre-push-master-sperre.sh" "$ziel"; then
 fi
 cat > "$ziel" <<'EOF'
 #!/bin/sh
-# master-Sperre im Modus tickets (#1442), Regel in scripts/hooks/pre-push-master-sperre.sh.
-root=$(git rev-parse --show-toplevel 2>/dev/null) || root=""
-sperre="$root/scripts/hooks/pre-push-master-sperre.sh"
-if [ -z "$root" ] || [ ! -f "$sperre" ]; then
-  echo "⚠ pre-push: $sperre fehlt — master-Sperre (#1442) NICHT geprüft, Push läuft weiter." >&2
+# master-Sperre im Modus tickets (#1442). Feste Kopie neben diesem Hook (#1450),
+# angelegt von scripts/hooks/install_git_hooks.sh — nie aus dem Arbeitsordner.
+sperre="$(dirname "$0")/pre-push-master-sperre.sh"
+if [ ! -f "$sperre" ]; then
+  echo "⚠ pre-push: $sperre fehlt — master-Sperre (#1442) NICHT geprüft, Push läuft weiter. Neu: sh scripts/hooks/install_git_hooks.sh" >&2
   exit 0
 fi
 if ! command -v bash >/dev/null 2>&1; then

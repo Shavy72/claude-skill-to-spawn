@@ -1,141 +1,111 @@
 #!/usr/bin/env bash
-# pre-push: im Modus SCHLANGE_MODUS=tickets kein direkter Push auf master
-# (Test-Gate Etappe 2). master bewegt nur die Deploy-Schlange. Im Modus master
-# tut der Hook nichts. ticket/*- und alle anderen Branches blockt er nie.
+# pre-push: im Modus tickets kein direkter Push auf master (Test-Gate Etappe 2,
+# #1442, #1445). master bewegt nur die Deploy-Schlange. ticket/*- und alle anderen
+# Branches blockt der Hook nie. Läuft unter Linux und Git-Bash (Windows-PC):
+# nur bash + git, kein Python, kein fester Server-Pfad.
 #
-# Modus: NUR aus der .env der Schlange (SCHLANGE_ENV_DATEI, Standard
-# /home/bau/duoplus-management/.env), direkt per Shell gelesen (kein Python
-# nötig). Eine Umgebungsvariable SCHLANGE_MODUS zählt hier bewusst NICHT —
-# sonst käme `SCHLANGE_MODUS=master git push` an der Sperre vorbei.
-# Schlüssel fehlt/leer = master (Standard der Schlange). .env unlesbar oder
-# Wert unbekannt = Modus UNLESBAR: Push auf master gesperrt.
+# Modus — EINE Quelle, hier und nur hier gelesen (#1445):
+#   eingecheckte Datei scripts/hooks/schlange_modus auf <remote>/master
+#   (Git-Objekt, nicht Arbeitsordner, nicht Umgebung, nicht .env).
+#   Inhalt genau „master“ = Modus master; alles andere, auch Datei fehlt
+#   oder unlesbar = tickets (Sperre greift, nie stiller Rückfall auf master).
+#   Auskunft für Sessions: `bash scripts/hooks/pre-push-master-sperre.sh --modus`
+#   (ruft auch `python scripts/ticket_status.py modus`).
 #
-# Meldungen bei JEDER Sperre eines master-Pushes:
-#   Telegram an David (curl, Token/Chat aus derselben .env, im Hintergrund,
-#     höchstens eine je 15 min und Grund, Stempel bleibt nur nach Erfolg).
-#     Test-Schalter: WAECHTER_MELDUNG_DATEI (sonst SCHLANGE_MELDUNG_DATEI) →
-#     statt curl eine JSON-Zeile {"art":"telegram","text":…} anhängen.
-#   Zusätzlich bei Modus UNLESBAR: E-Mail an David (scripts/to_spawn_mail.py,
-#     nach erfolgreichem Versand höchstens eine je 15 min).
+# Ausnahme Protokoll des Aufsehers: ändert der Push auf master netto nur
+# Protokoll-Dateien (ist_protokoll_pfad unten), geht er durch — Regel nach Pfaden,
+# nie nach Commit-Nachricht.
 #
-# Ausnahmen (ohne Meldung):
+# Weitere Ausnahmen:
 #   DEPLOY_SCHLANGE_MERGE=1  setzt nur deploy_schlange.py beim Fast-Forward auf master.
 #   Notausgang David (ein Befehl, nur mit Begründung):
 #     MASTER_PUSH_ERLAUBT=1 git push origin HEAD:master
-# Einrichten/entfernen: bash scripts/master_schutz.sh hook-an | hook-aus
+# Abgewiesener Push: nur Meldung im Terminal (kein Telegram, keine Mail, #1445).
+# Einrichten: sh scripts/hooks/install_git_hooks.sh
 set -u
+
+MODUS_DATEI=scripts/hooks/schlange_modus
+
+# Modus aus <remote>/master (Standard origin): „master“ oder „tickets“.
+schlange_modus() {
+  local inhalt
+  inhalt=$(git show "refs/remotes/${1:-origin}/master:$MODUS_DATEI" 2>/dev/null |
+    tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
+  if [ "$inhalt" = "master" ]; then echo master; else echo tickets; fi
+}
+
+# Ist der Pfad eine Protokoll-Datei des Aufsehers? (wache.py-Prompt: Handoff,
+# Entscheidungen, Thermo, Rückblick, Manifest-Befund; capo: bau_log; Belege.)
+# Die eine Stelle der Regel: nur Endung .md/.json/.jsonl (Manifeste nur .json,
+# verify-hard zusätzlich Bild-Belege .webp/.png), genau die Tiefe, in der das
+# Protokoll real liegt — flach, nur verify-hard <datei> oder <ticket>/<datei>.
+ist_protokoll_pfad() {
+  local rest
+  case "$1" in
+    docs/agents/manifests/*)
+      rest=${1#docs/agents/manifests/}
+      case "$rest" in */*) return 1 ;; *.json) return 0 ;; *) return 1 ;; esac
+      ;;
+    docs/verify-hard/*)
+      rest=${1#docs/verify-hard/}
+      case "$rest" in */*/*) return 1 ;; *.md | *.json | *.jsonl | *.webp | *.png) return 0 ;; *) return 1 ;; esac
+      ;;
+    docs/agents/bau_log/* | docs/handoffs/*)
+      rest=${1#docs/agents/bau_log/}
+      rest=${rest#docs/handoffs/}
+      ;;
+    docs/agents/entscheidungen_* | docs/agents/thermo_* | docs/agents/rueckblick_* | docs/HANDOFF_*)
+      rest=${1#docs/agents/}
+      rest=${rest#docs/}
+      ;;
+    *) return 1 ;;
+  esac
+  case "$rest" in */*) return 1 ;; *.md | *.json | *.jsonl) return 0 ;; esac
+  return 1
+}
+
+# Ändert alt..neu netto nur Protokoll-Dateien? Nur reguläre Dateien zählen
+# (Modus 100644 vorher/nachher, 000000 = neu/gelöscht) — Symlink 120000,
+# ausführbar 100755 und Submodul 160000 sperren.
+nur_protokoll() {
+  local zeilen modus_alt modus_neu _sha_alt _sha_neu _status pfad
+  zeilen=$(git -c core.quotePath=false diff --raw --no-renames "$1" "$2" 2>/dev/null) || return 1
+  [ -n "$zeilen" ] || return 1
+  while read -r modus_alt modus_neu _sha_alt _sha_neu _status pfad; do
+    case "${modus_alt#:}" in 100644 | 000000) ;; *) return 1 ;; esac
+    case "$modus_neu" in 100644 | 000000) ;; *) return 1 ;; esac
+    ist_protokoll_pfad "$pfad" || return 1
+  done <<EOF
+$zeilen
+EOF
+  return 0
+}
+
+if [ "${1:-}" = "--modus" ]; then
+  schlange_modus origin
+  exit 0
+fi
+
 [ "${MASTER_PUSH_ERLAUBT:-}" = "1" ] && exit 0
 [ "${DEPLOY_SCHLANGE_MERGE:-}" = "1" ] && exit 0
 
-# Refs zuerst lesen: ohne Push auf master ist der Modus egal.
-auf_master=0
-master_quelle=""
-while read -r lokal_ref _lokal_sha fern_ref _fern_sha; do
-  if [ "$fern_ref" = "refs/heads/master" ]; then
-    auf_master=1
-    master_quelle=$lokal_ref
+remote=${1:-origin}
+[ "$(schlange_modus "$remote")" = "master" ] && exit 0
+
+null=0000000000000000000000000000000000000000
+gesperrt=0
+while read -r _lokal_ref lokal_sha fern_ref fern_sha; do
+  [ "$fern_ref" = "refs/heads/master" ] || continue
+  # Neu anlegen oder löschen von master ist nie ein Protokoll-Push.
+  if [ "$lokal_sha" != "$null" ] && [ "$fern_sha" != "$null" ] && nur_protokoll "$fern_sha" "$lokal_sha"; then
+    continue
   fi
+  gesperrt=1
 done
-[ "$auf_master" = "1" ] || exit 0
-# „git push origin HEAD:master“ liefert als lokalen Ref nur „HEAD“ → Branchnamen dazu.
-if [ "$master_quelle" = "HEAD" ]; then
-  master_quelle="$(git symbolic-ref -q --short HEAD 2>/dev/null || echo losgelöst) (HEAD)"
-fi
+[ "$gesperrt" = "1" ] || exit 0
 
-env_datei=${SCHLANGE_ENV_DATEI:-/home/bau/duoplus-management/.env}
-
-# Gleiche Regeln wie env_werte() in deploy_schlange.py: letzte Zeile gewinnt,
-# „export “ erlaubt, Anführungszeichen und Leerraum weg. Werte nie ausgeben.
-env_wert() {
-  sed -n "s/^[[:space:]]*\(export[[:space:]]\+\)\?$1[[:space:]]*=\(.*\)\$/\2/p" "$env_datei" 2>/dev/null |
-    tail -n 1 | sed "s/^[[:space:]]*//; s/[[:space:]]*\$//; s/^[\"']//; s/[\"']\$//"
-}
-
-if [ -r "$env_datei" ]; then
-  modus=$(env_wert SCHLANGE_MODUS)
-  modus=${modus:-master}
-else
-  modus="?"
-fi
-modus=$(printf '%s' "$modus" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')
-[ "$modus" = "master" ] && exit 0
-
-gemeinsam=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || echo /tmp)
-wurzel=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
-
-# Telegram an David: im Hintergrund (Push wartet nicht), Drossel 15 min je Grund.
-# Der Token geht nur über stdin an curl (nicht in ps sichtbar), curl-Fehlertexte
-# werden verworfen, weil sie die URL mit Token enthalten können.
-melde_telegram() {
-  local grund=$1 kennung=$2 stempel text datei token chat
-  stempel="$gemeinsam/master-sperre-telegram-$kennung.stempel"
-  if [ -n "$(find "$stempel" -mmin -15 2>/dev/null)" ]; then
-    return 0
-  fi
-  touch "$stempel" 2>/dev/null
-  text="Wächter: Push auf master gesperrt ($grund) — Repo $wurzel, Branch ${master_quelle:-?}, Rechner $(hostname), Zeit $(date '+%F %T')"
-  datei=${WAECHTER_MELDUNG_DATEI:-${SCHLANGE_MELDUNG_DATEI:-}}
-  if [ -n "$datei" ]; then
-    local json
-    json=$(printf '%s' "$text" | sed 's/\\/\\\\/g; s/"/\\"/g')
-    printf '{"art": "telegram", "text": "%s"}\n' "$json" >>"$datei" 2>/dev/null || rm -f "$stempel"
-    return 0
-  fi
-  token=""
-  chat=""
-  if [ -r "$env_datei" ]; then
-    token=$(env_wert TELEGRAM_BOT_TOKEN)
-    chat=$(env_wert TELEGRAM_CHAT_ID)
-  fi
-  if [ -z "$token" ] || [ -z "$chat" ]; then
-    echo "$(date '+%F %T') Telegram: Token oder Chat-ID fehlt — Meldung nur hier: $text" >>"$gemeinsam/master-sperre-telegram.log"
-    rm -f "$stempel"
-    return 0
-  fi
-  (
-    if ! printf 'url = "https://api.telegram.org/bot%s/sendMessage"\n' "$token" |
-      timeout 30 curl -fsS --config - --data-urlencode "chat_id=$chat" \
-        --data-urlencode "text=$text" -o /dev/null >/dev/null 2>&1; then
-      echo "$(date '+%F %T') Telegram ($kennung) fehlgeschlagen — nächste Sperre versucht neu" >>"$gemeinsam/master-sperre-telegram.log"
-      rm -f "$stempel"
-    fi
-  ) </dev/null >/dev/null 2>&1 &
-}
-
-if [ "$modus" = "tickets" ]; then
-  echo "✋ SCHLANGE_MODUS=tickets: kein direkter Push auf master." >&2
-  echo "   Eigenen Branch pushen: git push origin HEAD:refs/heads/ticket/<nr>-<kurzname>" >&2
-  echo "   Die Deploy-Schlange gatet ihn und legt ihn bei Grün auf master." >&2
-  echo "   Rückmeldung: python scripts/ticket_status.py warte ticket/<nr>-<kurzname>" >&2
-  melde_telegram "Modus tickets" tickets
-  exit 1
-fi
-
-# Modus unlesbar → sperren (Davids Entscheidung 2026-09-25) und Bescheid geben.
-echo "✋ Push auf master gesperrt: SCHLANGE_MODUS nicht lesbar ($env_datei)." >&2
-echo "   Sicherheitshalber gilt die Sperre wie im Modus tickets. Mail an David ist unterwegs." >&2
-echo "   Eigenen Branch pushen geht weiter: git push origin HEAD:refs/heads/ticket/<nr>-<kurzname>" >&2
-melde_telegram "Modus unlesbar" unlesbar
-
-stempel="$gemeinsam/master-sperre-mail.stempel"
-if [ -n "$(find "$stempel" -mmin -15 2>/dev/null)" ]; then
-  exit 1
-fi
-touch "$stempel" 2>/dev/null
-mail_skript="$wurzel/scripts/to_spawn_mail.py"
-[ -f "$mail_skript" ] || mail_skript=/home/bau/duoplus-management/scripts/to_spawn_mail.py
-mail_befehl=${MASTER_SPERRE_MAIL:-python3 $mail_skript}
-text="Ein Push auf master wurde gesperrt, weil SCHLANGE_MODUS nicht lesbar ist.
-Datei: $env_datei
-Rechner: $(hostname) · Ordner: $wurzel · Zeit: $(date '+%F %T')
-Bitte .env prüfen. Notausgang: MASTER_PUSH_ERLAUBT=1 git push origin HEAD:master"
-nutzlast=$(TEXT="$text" python3 -c 'import json, os; print(json.dumps({"art": "master_sperre", "betreff": "Push auf master gesperrt: Modus unlesbar", "text": os.environ["TEXT"], "an": ""}, ensure_ascii=False))' 2>/dev/null)
-# Im Hintergrund: der Push wartet nicht auf ssh/SMTP. Scheitert der Versand,
-# fällt der Stempel weg — die nächste Sperre versucht es erneut.
-(
-  if ! printf '%s' "$nutzlast" | timeout 150 $mail_befehl >>"$gemeinsam/master-sperre-mail.log" 2>&1; then
-    echo "$(date '+%F %T') Mail an David fehlgeschlagen — nächste Sperre versucht neu" >>"$gemeinsam/master-sperre-mail.log"
-    rm -f "$stempel"
-  fi
-) </dev/null >/dev/null 2>&1 &
+echo "✋ Modus tickets: kein direkter Push auf master (Quelle: $MODUS_DATEI auf $remote/master)." >&2
+echo "   Eigenen Branch pushen: git push origin HEAD:refs/heads/ticket/<nr>-<kurzname>" >&2
+echo "   Die Deploy-Schlange gatet ihn und legt ihn bei Grün auf master." >&2
+echo "   Rückmeldung: python scripts/ticket_status.py warte ticket/<nr>-<kurzname>" >&2
 exit 1
