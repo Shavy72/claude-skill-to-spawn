@@ -179,6 +179,11 @@ verhaltensgleich, Staging zuerst, App-Live bleibt Davids Entscheidung.
   (Arbeitsordner und Temp-Kopie eines geschlossenen Tickets, auch auf der RAM-Platte `/tmp`). Der
   Hausmeister räumt beides von selbst, kein Schutz-Hook blockt ihn, und in allen
   Sitzungs-Protokollen und Übergaben des Laufs steht kein einziger Lösch-Auftrag an David.
+- **M15** (L5, A25–A28) Kaltstart-Probe: Eine frische Session ohne Chat und ohne Übergabe-Datei
+  bekommt nur „Lies `docs/WIEDEREINSTIEG.md`“. Sie nennt danach Stand und nächsten Schritt; die
+  Ober-Aufsicht vergleicht beides mit der Wirklichkeit (offene Pull-Requests, Issues, laufende
+  Fenster) — keine Abweichung. Einmal mitten im Bau, einmal vor „fertig“. Zusätzlich: Übergaben
+  und Entscheidungs-Log beider Maschinen liegen höchstens eine Ablösung alt im Notiz-Tresor.
 
 Jede M-Zeile braucht einen Beleg (Befehl + Ausgabe oder Protokoll-Zeile) in
 `docs/ABNAHME_L1.md` im Skill-Repo.
@@ -235,3 +240,8 @@ Jede M-Zeile braucht einen Beleg (Befehl + Ausgabe oder Protokoll-Zeile) in
   Aufräumen landet nie bei David. Abnahme **M14** neu; „fertig“ = M1–M14. Anlass: zwei alte
   Test-Kopien in `/tmp` wurden David als Lösch-Befehl hingelegt (Fehler der Ober-Aufsicht); sie
   sind gelöscht. Wurzel: Skill-Issue 136 (Temp-Ordner auf die Platte, Hausmeister räumt ihn).
+- 2026-11-21 22:25 (PC-Uhr, Ober-Aufsicht Session 1) — **Neuer Lastenheft-Eintrag L5** (David):
+  jederzeit weiterbauen können. Neu: `docs/WIEDEREINSTIEG.md` (ein Einstieg), Abnahme **M15**
+  (Kaltstart-Probe); „fertig“ = M1–M15. Pflege des Abschnitts „Stand“ dort liegt bei der führenden
+  Leit-Session. Übergaben und Entscheidungs-Log werden in den privaten Notiz-Tresor gespiegelt
+  (`projects/bau-system/`); das selbsttätige Spiegeln ist noch zu bauen (Issue folgt).
