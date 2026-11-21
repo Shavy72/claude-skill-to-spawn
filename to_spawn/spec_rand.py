@@ -10,8 +10,11 @@ einer Spec machen — zusammen und wiederholbar (ein zweiter Aufruf ändert nich
    (``offene_tickets``) und startet es; bis dahin steht es fertig verkantet da.
 
 Erst wird alles gelesen und geplant. Verletzt eine Vorbedingung (Spec geschlossen,
-Issue nicht in diesem Repo, Pflichtfeld fehlt, Abnahme-Ticket als Blocker), wird
-nichts geschrieben. Danach läuft die Manifest-Prüfung (:func:`manifest.pruefe`).
+Issue nicht in diesem Repo, Eintrag verletzt Pflichtfeld oder Grenze
+``staffel.grenze_k`` laut :func:`manifest.pruefe_eintrag`, Abnahme-Ticket als
+Blocker), wird nichts geschrieben — ein zu großes Ticket wird so nie startbar.
+Nach dem Schreiben prüft :func:`manifest.pruefe` die ganze Spec; deren Weigerung
+(Exit 3) betrifft dann nur noch andere Tickets oder die GitHub-Kette.
 Das GitHub-Repo kommt aus ``origin`` (:func:`gh.repo_aus_origin`), nie fest.
 Gestartet wird hier nichts — das bleibt beim Aufpasser.
 """
@@ -146,6 +149,8 @@ def _planen(
     neu = _eintrag(
         daten["tickets"].get(n), ticket_daten, n, schaetzung_k, umfang, dateien
     )
+    if fehler_eintrag := manifest.pruefe_eintrag(n, neu, konfig):
+        raise _Abbruch("; ".join(fehler_eintrag))
 
     schritte: list[_Schritt] = []
     native = _kanten(repo, slug, n)

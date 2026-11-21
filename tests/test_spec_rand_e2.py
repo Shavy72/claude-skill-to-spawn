@@ -102,6 +102,14 @@ def _stub_main(args: list[str]) -> int:
         return 2
     if args[1:3] == ["-X", "POST"]:
         ziel, feld = args[3], args[5]
+        # Teil-Abbruch nachstellen: ein POST auf ein Ziel mit diesem Teilstück
+        # scheitert genau einmal (danach heilt die Welt von selbst).
+        if (stelle := welt.get("scheitern_bei")) and stelle in ziel:
+            del welt["scheitern_bei"]
+            welt.setdefault("gescheitert", []).append(" ".join(args[3:]))
+            pfad.write_text(json.dumps(welt), encoding="utf-8")
+            print('{"message":"Server Error","status":"502"}')
+            return 1
         welt["posts"].append(" ".join(args[3:]))
         name, _, wert = feld.partition("=")
         quelle = next(n for n, d in issues.items() if d["id"] == int(wert))
@@ -309,6 +317,78 @@ def test_neuer_eintrag_ohne_schaetzung_bricht_ab(tmp_path: Path) -> None:
     assert lauf.returncode != 0
     assert "--schaetzung" in lauf.stdout
     assert _welt(weltdatei)["posts"] == []
+
+
+def test_zu_grosse_schaetzung_bricht_vor_jedem_schreiben_ab(tmp_path: Path) -> None:
+    """F1: Grenze ``staffel.grenze_k`` prüft vor dem ersten POST — nie startbar."""
+    repo, weltdatei, umgebung = _aufbau(tmp_path)
+    vorher = _manifest(repo).read_bytes()
+    lauf = _anhaengen(
+        repo,
+        umgebung,
+        "--blockiert-von",
+        "901",
+        "--schaetzung",
+        "999",
+        "--umfang",
+        "Zu groß.",
+    )
+    assert lauf.returncode == 1, lauf.stdout + lauf.stderr
+    assert "Grenze" in lauf.stdout, lauf.stdout
+    assert "nichts geschrieben" in lauf.stdout, lauf.stdout
+    assert _welt(weltdatei)["posts"] == []
+    assert _manifest(repo).read_bytes() == vorher
+
+
+def test_teil_abbruch_heilt_beim_zweiten_aufruf(tmp_path: Path) -> None:
+    """F3: Unter-Issue-POST scheitert — Lauf 2 holt nur das Fehlende nach."""
+    welt = _welt_anfang()
+    welt["scheitern_bei"] = "sub_issues"
+    repo, weltdatei, umgebung = _aufbau(tmp_path, welt)
+    erst = _anhaengen(repo, umgebung, *VOLL)
+    assert erst.returncode == 1, erst.stdout + erst.stderr
+    assert "erneut aufrufen" in erst.stdout, erst.stdout
+    assert NEU not in _welt(weltdatei)["unter"][str(SPEC)]
+    zweit = _anhaengen(repo, umgebung, *VOLL)
+    assert zweit.returncode == 0, zweit.stdout + zweit.stderr
+    stand = _welt(weltdatei)
+    assert len(stand["gescheitert"]) == 1
+    ziele = [post.split()[0] for post in stand["posts"]]
+    assert sorted(ziele) == sorted(set(ziele)), ziele  # je Ziel genau ein POST
+    assert len(ziele) == 3, ziele  # Kante, Abnahme-Kante, Unter-Issue
+    assert NEU in stand["unter"][str(SPEC)]
+
+
+def test_weigerung_der_pruefung_gibt_exit_3(tmp_path: Path) -> None:
+    """Fehler an einem anderen Ticket: angehängt, Prüfung weigert sich (Exit 3)."""
+    repo, _, umgebung = _aufbau(tmp_path)
+    daten = json.loads(_manifest(repo).read_text(encoding="utf-8"))
+    del daten["tickets"]["901"]["umfang"]
+    _manifest(repo).write_text(json.dumps(daten, ensure_ascii=False), encoding="utf-8")
+    lauf = _anhaengen(repo, umgebung, *VOLL)
+    assert lauf.returncode == 3, lauf.stdout + lauf.stderr
+    assert "WEIGERUNG" in lauf.stdout, lauf.stdout
+    assert "#901: Feld umfang" in lauf.stdout, lauf.stdout
+
+
+def test_abnahme_ticket_als_blocker_bricht_ohne_schreiben_ab(tmp_path: Path) -> None:
+    """F5: Abnahme-Ticket gehört ans Kettenende, nie als Blocker davor."""
+    repo, weltdatei, umgebung = _aufbau(tmp_path)
+    vorher = _manifest(repo).read_bytes()
+    lauf = _anhaengen(
+        repo,
+        umgebung,
+        "--blockiert-von",
+        str(CHECKPOINT),
+        "--schaetzung",
+        "40",
+        "--umfang",
+        "Rand nachziehen.",
+    )
+    assert lauf.returncode == 1, lauf.stdout + lauf.stderr
+    assert "Abnahme-Ticket" in lauf.stdout, lauf.stdout
+    assert _welt(weltdatei)["posts"] == []
+    assert _manifest(repo).read_bytes() == vorher
 
 
 if __name__ == "__main__":

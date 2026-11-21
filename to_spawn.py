@@ -229,7 +229,7 @@ def _setup(repo: Path, args: argparse.Namespace) -> int:
         )
     print(setup.SCHLUSS_SATZ)
     # Checkpoint-Label im GitHub-Repo anlegen (#257) — Weigerung „Kein Checkpoint-Ticket“ vorbeugen.
-    label = str(config.lade(repo).get("regularien", {}).get("checkpoint_label") or "checkpoint:human")
+    label = manifest.checkpoint_label(config.lade(repo))
     if gh.label_sicherstellen(repo, label):
         print(f"  Label {label} im GitHub-Repo vorhanden.")
     else:
