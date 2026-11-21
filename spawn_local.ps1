@@ -4,12 +4,22 @@
 # (sofern nicht -OhneWache) zuerst einen Tab `wache <S>` und einen Tab `leitstand <S>` (Schalter leitstand.aktiv). Prüft danach per scripts/sessions_stand.py.
 param(
     [Parameter(Mandatory = $true)][int]$Spec,
-    [int[]]$Tickets = @(),
+    [string[]]$Tickets = @(),   # per -File kommt "51,52" als ein String an (#37) — unten selbst getrennt
     [switch]$OhneWache,
     [int]$Window = -1,      # -1 = neues Fenster, sonst wt-Fenster-ID (z. B. 1 = bestehendes erstes Fenster)
     [switch]$DryRun
 )
 $ErrorActionPreference = "Stop"
+
+# Ticket-Liste robust lesen (#37): String "51,52", Array oder beides; Komma/Leerraum trennen.
+$Tickets = @($Tickets | ForEach-Object { "$_" -split '[,\s]+' } | Where-Object { $_ -ne "" })
+foreach ($t in $Tickets) {
+    if ($t -notmatch '^\d+$') {
+        Write-Host "FEHLER: -Tickets erwartet Zahlen, bekam '$t' (Beispiel: -Tickets 51,52)." -ForegroundColor Red
+        exit 2
+    }
+}
+$Tickets = @($Tickets | ForEach-Object { [int]$_ })
 
 # Regularien zuerst (#206): bei Weigerung startet kein einziger Tab. Eine Auswahl
 # (-Tickets) geht mit in die Prüfung — jede Nummer muss im Manifest stehen.
