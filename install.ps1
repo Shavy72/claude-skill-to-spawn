@@ -1,7 +1,7 @@
 # Installer für /to-spawn: Skill nach ~/.claude/skills/to-spawn (inkl. skripte/, to_spawn/, to_spawn.py),
 # Alias-Skills (aliase/* → ~/.claude/skills/<alias>), Profil-Funktionen bau/aufseher/wache/sessions/leitstand,
 # optional die Repo-Weiterleitungen (repo-scripts/ → <Repo>/scripts, nur fehlende) + .to-spawn/config.json.
-# Ein vorhandener Skill-Ordner wird nie gelöscht, sondern nach ~/.claude/skills/_alt/to-spawn-<zeit> verschoben.
+# Jeder vorhandene Skill-Ordner (to-spawn, Alias, Kette) wird nie gelöscht, sondern nach <Skills>\_alt\<name>-<zeit> verschoben.
 # Dazu die Kette: kette/skills/* → <Skills>/<name>, Regel-Blöcke kette/global/*.md → globale CLAUDE.md.
 # Linux/macOS: install.sh.
 # Aufruf: pwsh -File install.ps1 [-Repo <Pfad-zum-Repo>] [-Skills <Ordner>] [-ClaudeMd <Datei>]
@@ -17,11 +17,15 @@ $skills = $Skills
 if ((Test-Path $ziel) -and ((Resolve-Path $ziel).Path -eq (Resolve-Path $hier).Path)) {
     throw "install.ps1 läuft aus dem Zielordner ($ziel) — aus dem Git-Klon starten."
 }
+# Python vor dem ersten Kopieren prüfen: sonst bliebe ein halber Stand (kein STAND.json, alte Alias-Skills).
+if (-not (Get-Command python -ErrorAction SilentlyContinue)) {
+    throw "Abbruch: python fehlt — erst Python installieren, dann install.ps1 erneut starten (nichts kopiert)."
+}
 $zeit = Get-Date -Format "yyyyMMdd-HHmmss"
 $caches = @("__pycache__", ".pytest_cache", ".ruff_cache")
 # Sichere-UndKopiere <name> <quellen>: alten Ordner <Skills>\<name> nach _alt\<name>-<zeit> verschieben
 # (nie löschen), dann jede vorhandene Quelle hinein kopieren. Dateien, die es nur im alten Stand gibt,
-# werden gemeldet (liegen weiter in der Sicherung).
+# werden gemeldet (liegen weiter in der Sicherung); STAND.json nicht, den stempelt der Installer danach neu.
 function Sichere-UndKopiere([string]$name, [string[]]$quellen) {
     $zielOrdner = Join-Path $skills $name
     $sicherung = ""
@@ -44,6 +48,7 @@ function Sichere-UndKopiere([string]$name, [string[]]$quellen) {
         foreach ($datei in Get-ChildItem $sicherung -Recurse -File -Force) {
             $rel = $datei.FullName.Substring($basis.Length).TrimStart('\', '/')
             if ($rel -split '[\\/]' | Where-Object { $_ -in $caches }) { continue }
+            if ($rel -eq "STAND.json") { continue }
             if (-not (Test-Path (Join-Path $zielOrdner $rel))) { Write-Host "Hinweis: nur im alten Stand (liegt in $sicherung): $rel" }
         }
     }
