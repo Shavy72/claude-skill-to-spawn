@@ -161,8 +161,8 @@ def test_baum_proc_unlesbar_ist_fehler(
 
 @pytest.mark.skipif(not WINDOWS, reason="nur Windows")
 def test_baum_windows_momentaufnahme_fehlt_ist_fehler(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Windows: liefert WMI keine Prozessliste, heißt das Fehler, nicht „keine Kinder“."""
-    monkeypatch.setattr(prozessbaum, "_prozesse_windows", dict)
+    """Windows: liefert der Kernel keine Prozessliste, heißt das Fehler, nicht „keine Kinder“."""
+    monkeypatch.setattr(prozessbaum, "_momentaufnahme_windows", dict)
     with pytest.raises(OSError):
         prozessbaum.baum(os.getpid())
 
@@ -186,9 +186,9 @@ def test_beenden_windows_erste_stufe_beendet_hart(tmp_path: Path) -> None:
 
 
 def _liste(monkeypatch: pytest.MonkeyPatch, eltern: dict[int, int], starts: dict[int, int]) -> None:
-    """WMI-Prozessliste als Attrappe: PID → (Eltern-PID, Kommandozeile, Startzeit; 0 = unbekannt)."""
-    liste = {pid: (vater, "", starts.get(pid, 0)) for pid, vater in eltern.items()}
-    monkeypatch.setattr(prozessbaum, "_prozesse_windows", lambda: liste)
+    """Kernel-Prozessliste als Attrappe: PID → (Eltern-PID, Startzeit; 0 = unbekannt) (#154)."""
+    liste = {pid: (vater, starts.get(pid, 0)) for pid, vater in eltern.items()}
+    monkeypatch.setattr(prozessbaum, "_momentaufnahme_windows", lambda: liste)
 
 
 @pytest.mark.skipif(not WINDOWS, reason="nur Windows")
@@ -203,7 +203,7 @@ def test_baum_windows_ohne_fremde_mit_recycelter_eltern_pid(monkeypatch: pytest.
 @pytest.mark.skipif(not WINDOWS, reason="nur Windows")
 def test_baum_windows_unbekannte_startzeit_zaehlt_als_kind(monkeypatch: pytest.MonkeyPatch) -> None:
     """Windows: ohne lesbare Startzeit (kein Zugriff) zählt die Eltern-PID als echt."""
-    starts = {1: 1, 10: 100, 12: 50}  # 11 ohne Startzeit (WMI: 0), 12 älter als „Eltern“ 10
+    starts = {1: 1, 10: 100, 12: 50}  # 11 ohne Startzeit (0), 12 älter als „Eltern“ 10
     _liste(monkeypatch, {1: 1, 10: 1, 11: 10, 12: 10}, starts)
     assert prozessbaum.baum(10) == [10, 11]
 
