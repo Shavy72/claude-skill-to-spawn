@@ -9,8 +9,12 @@ Versteckt wird hier, welches Werkzeug sperrt:
 - Windows: ``msvcrt.locking`` auf 1 Byte ab Anfang von ``datei``.
 - Ohne beide: Rückfall auf eine O_EXCL-Datei ``<datei>.excl`` neben ``datei``.
 
-Fehler, die nicht „belegt“ heißen (Rechte, Ordner statt Datei), fliegen als ``OSError``;
-der Aufrufer entscheidet, ob er dann ohne Sperre weiterläuft.
+Zwei Fehlerarten, getrennt nur hier (#165):
+- Ordner/Sperr-Datei nicht anleg- oder öffenbar (Rechte, Ordner statt Datei) ⇒
+  :class:`SperreNichtOeffenbar` — nie „belegt“, der Aufrufer meldet es laut.
+- Der Sperr-Versuch selbst scheitert anders als „belegt“ (z. B. ENOLCK) ⇒ ``OSError``;
+  der Aufrufer entscheidet, ob er das wie „belegt“ behandelt.
+``SperreNichtOeffenbar`` erbt von ``OSError``: wer nur ``OSError`` fängt, bleibt heil.
 
 Test-Nähte: :data:`_fcntl`, :data:`_msvcrt` (auf ``None`` setzen erzwingt den nächsten Zweig).
 """
@@ -42,6 +46,16 @@ TAKT_S = 0.2
 _BELEGT = {errno.EACCES, getattr(errno, "EDEADLOCK", errno.EDEADLK)}
 
 
+class SperreNichtOeffenbar(OSError):
+    """Ordner oder Sperr-Datei ließ sich nicht anlegen/öffnen — ein Fehler, nicht „belegt“."""
+
+
+def _oeffnen_gescheitert(datei: Path, fehler: OSError) -> SperreNichtOeffenbar:
+    return SperreNichtOeffenbar(
+        fehler.errno, f"Sperr-Datei nicht öffenbar: {fehler.strerror}", str(datei)
+    )
+
+
 def flock_vorhanden() -> bool:
     """``True``, wenn die Sperre mit Shell-``flock`` kompatibel ist (fcntl vorhanden)."""
     return _fcntl is not None
@@ -53,9 +67,13 @@ def halte(datei: Path, warten: float = 0.0, *, msvcrt: Any = None) -> Iterator[b
 
     ``warten``: so lange (Sekunden) erneut versuchen, ``0`` = genau ein Versuch.
     ``msvcrt``: nur Test-Naht — erzwingt den msvcrt-Zweig mit diesem Modul.
+    Wirft :class:`SperreNichtOeffenbar`, wenn Ordner oder Datei nicht anleg-/öffenbar sind.
     """
     datei = Path(datei)
-    datei.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        datei.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as fehler:
+        raise _oeffnen_gescheitert(datei.parent, fehler) from fehler
     fc = None if msvcrt is not None else _fcntl
     ms = msvcrt if msvcrt is not None else _msvcrt
     ende = time.monotonic() + max(warten, 0.0)
@@ -65,7 +83,10 @@ def halte(datei: Path, warten: float = 0.0, *, msvcrt: Any = None) -> Iterator[b
         return
     # Nur lesend öffnen: flock/msvcrt brauchen kein Schreibrecht, so geht auch eine fremd
     # angelegte Sperr-Datei (z. B. von staging_deploy.sh). O_CREAT legt sie bei Bedarf an.
-    fd = os.open(str(datei), os.O_RDONLY | os.O_CREAT, 0o666)
+    try:
+        fd = os.open(str(datei), os.O_RDONLY | os.O_CREAT, 0o666)
+    except OSError as fehler:
+        raise _oeffnen_gescheitert(datei, fehler) from fehler
     try:
         while not _versuch(fd, fc, ms):
             if time.monotonic() >= ende:
@@ -116,10 +137,16 @@ def _excl(datei: Path, ende: float) -> Iterator[bool]:
             os.close(os.open(str(exkl), os.O_CREAT | os.O_EXCL | os.O_WRONLY))
             break
         except FileExistsError:
+            if exkl.is_dir():  # ein Ordner wird nie frei — kein „belegt“
+                raise _oeffnen_gescheitert(
+                    exkl, OSError(errno.EISDIR, os.strerror(errno.EISDIR))
+                ) from None
             if time.monotonic() >= ende:
                 yield False
                 return
             time.sleep(TAKT_S)
+        except OSError as fehler:
+            raise _oeffnen_gescheitert(exkl, fehler) from fehler
     try:
         yield True
     finally:

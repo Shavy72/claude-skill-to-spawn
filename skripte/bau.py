@@ -42,7 +42,24 @@ from typing import Any
 _SKILL = str(Path(__file__).resolve().parent.parent)
 if _SKILL not in sys.path:
     sys.path.insert(0, _SKILL)
-from to_spawn import anleitung, capo, config, context_mode, gh, nest, probesitz, sessions_datei, sitzung_env, speicher, starter, temp_ordner, terminal_maus, umzug, vertrauen  # noqa: E402
+from to_spawn import (
+    anleitung,
+    capo,
+    config,
+    context_mode,
+    gh,
+    nest,
+    probesitz,
+    sessions_datei,
+    sitzung_env,
+    speicher,
+    starter,
+    startstelle,
+    temp_ordner,
+    terminal_maus,
+    umzug,
+    vertrauen,
+)  # noqa: E402
 from to_spawn.manifest import manifest_ordner  # noqa: E402
 from to_spawn.waechter_lauf import transkript_ordner
 
@@ -1017,6 +1034,15 @@ def main() -> int:
             '"<prompt>"' if mit_prompt else "",
         )
         return 0
+    # Die eine Start-Stelle (#97): unter Sperre je Ticket prüfen, ob schon eine Session
+    # läuft und ob das Ticket offen ist; unbekannt → kein Start (fail-closed).
+    # ``--ohne-prompt`` ist der respawn-Start (#431): die alte Session läuft bis Schritt e
+    # weiter und hält die Sperre — also Ablösung (höchstens eine je Ticket).
+    if not args.probesitz:
+        start = startstelle.betreten(ticket, GH_REPO, REPO, abloesung=args.ohne_prompt)
+        if not start.erlaubt:
+            print(start.grund, flush=True)
+            return start.exit_code
     global _ECHTER_LAUF
     _ECHTER_LAUF = True  # ab hier echter Lauf (Ticket-Ende stößt den Hausmeister an)
 
@@ -1075,6 +1101,9 @@ def main() -> int:
         umgebung = staffel_umgebung(ticket, staffel_datei, runde, fingerabdruck)
         umgebung.update(bau_log_umgebung(ticket, runde, float(umgebung["BAU_SESSION_START"]), effort, spec))
         os.environ.update(umgebung)
+        # Ticket während Blocker-Wartezeit oder Vorrunde geschlossen → keine neue Runde (#97).
+        if not args.probesitz and not startstelle.weiter_erlaubt(ticket, REPO):
+            return 0
         (out / f"prompt-runde{runde}.txt").write_text(cmd[-1] if mit_prompt else "", encoding="utf-8")
         code, umzug_daten = starte_session(cmd, umzug_datei)
         if umzug_daten is not None:
@@ -1133,9 +1162,7 @@ def ticket_ende_anstossen() -> None:
 
         hausmeister_aufgabe.ticket_ende_anstossen()
     except Exception as fehler:  # Aufräumen darf den Exit-Code von main() nie ändern
-        log.warning(
-            "Hausmeister am Ticket-Ende nicht angestoßen: %s", fehler, exc_info=True
-        )
+        log.warning("Hausmeister am Ticket-Ende nicht angestoßen: %s", fehler, exc_info=True)
 
 
 if __name__ == "__main__":

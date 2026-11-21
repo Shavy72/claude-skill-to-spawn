@@ -428,6 +428,63 @@ def test_hook_gegenprobe_175_harmlose_befehle_bleiben_frei(tmp_path: Path) -> No
         assert erlaubt.returncode == 0, (frei, erlaubt.stdout, erlaubt.stderr)
 
 
+def test_hook_sperrt_reste_188_pfad_praefix_funktion_und_ersetzung_in_quotes(tmp_path: Path) -> None:
+    """Issue 188 (Reste aus PR 183): Präfix mit Pfad, ``function``/``coproc``/``builtin``,
+    die Präfixe ``timeout``/``stdbuf``/``setsid`` und ``$(…)``/Backticks in doppelten
+    Anführungszeichen kamen durch."""
+    repo, _, umgebung = _aufbau(tmp_path)
+    for roh in (
+        # Befund 1: Präfix mit Pfad
+        f"/usr/bin/env gh issue close {SPEC}",
+        f"/usr/bin/sudo -u bau gh issue close {SPEC}",
+        f"/usr/bin/env /usr/bin/gh issue close {SPEC}",
+        f'/bin/bash -c "gh issue close {SPEC}"',
+        f"/usr/bin/nohup /usr/bin/nice gh issue close {SPEC}",
+        # Befund 2: function, coproc, builtin, fehlende Präfixe
+        f"function f {{ gh issue close {SPEC}; }}; f",
+        f"coproc gh issue close {SPEC}",
+        f"builtin command gh issue close {SPEC}",
+        f"timeout 30 gh issue close {SPEC}",
+        f"timeout -s KILL 5m gh issue close {SPEC}",
+        f"stdbuf -oL gh issue close {SPEC}",
+        f"setsid gh issue close {SPEC}",
+        # Befund 3: Befehlsersetzung in doppelten Anführungszeichen
+        f'echo "$(gh issue close {SPEC})"',
+        f'echo "`gh issue close {SPEC}`"',
+        f'echo "Stand: $(date) $(gh issue close {SPEC})"',
+        f"""x="$(echo 'a)' ; gh issue close {SPEC})\"""",
+    ):
+        abgelehnt = _hook(repo, umgebung, roh)
+        assert abgelehnt.returncode == 2, (roh, abgelehnt.stdout, abgelehnt.stderr)
+        assert f"spec-schliessen {SPEC}" in abgelehnt.stderr
+
+
+def test_hook_gegenprobe_188_harmlose_befehle_bleiben_frei(tmp_path: Path) -> None:
+    """Gegenprobe zu Issue 188 (und den erlaubten Befehlen aus PR 183): Pfade als
+    Argument, ``$(…)`` ohne ``gh``-Schließen und Lese-Befehle bleiben frei."""
+    repo, _, umgebung = _aufbau(tmp_path)
+    for frei in (
+        "echo /usr/bin/env",
+        "ls /usr/bin/gh",
+        f"/usr/bin/env echo gh issue close {SPEC}",
+        f"gh issue view {SPEC}",
+        "gh issue list --state closed",
+        f"gh issue edit {SPEC} --add-label bereit",
+        f"gh api repos/{SLUG}/issues/{SPEC}",
+        "sudo ls",
+        f"bash -lc 'echo gh issue close {SPEC}'",
+        f"nice echo gh issue close {SPEC}",
+        f"timeout 30 echo gh issue close {SPEC}",
+        f'echo "$(gh issue view {SPEC})"',
+        f"echo 'kein $(gh issue close {SPEC}) in einfachen Quotes'",
+        f'echo "\\$(gh issue close {SPEC})"',
+        f'git commit -m "doku: gh issue close {SPEC} verboten"',
+        f"function f {{ echo gh issue close {SPEC}; }}; f",
+    ):
+        erlaubt = _hook(repo, umgebung, frei)
+        assert erlaubt.returncode == 0, (frei, erlaubt.stdout, erlaubt.stderr)
+
+
 def test_hook_laesst_bei_eigenem_fehler_durch(tmp_path: Path) -> None:
     """Fail-open: kaputte Eingabe oder fremder Ordner hält die Bau-Session nie an."""
     repo, _, umgebung = _aufbau(tmp_path)
