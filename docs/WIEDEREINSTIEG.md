@@ -45,6 +45,18 @@ was zum Weiterbauen nötig ist.
 
 ## 3. Stand
 
+- **2026-11-22 00:05 (Server-Uhr, main ffddfd0):** Gemergt: Pull-Request 185 (main aac4c1f, Issue 165 zu:
+  nicht öffenbare Sperr-Datei ist ein Fehler statt „belegt“; Folge-Issue 195), 192 (main cf4baca, Issue 188
+  bleibt offen: `coproc` und Windows-Präfix fehlen noch), 193 (main ffddfd0, Issue 97 zu: eine Start-Stelle
+  mit Sperre, geschlossene Tickets starten nie; Rest in Issue 191).
+  Offen / in Arbeit: Pull-Request 202 (Issue 191 Teil 1), 194 (bash-Tür, Fix-Runde läuft), 187 (Issue 164,
+  Fix-Runde 2), 198 (kleiner Schnitt aus Issue 136), 199 (Issue 149).
+
+- **2026-11-21 23:40 (Server-Uhr, main 96575a8):** Gemergt: Pull-Request 173 (main b2fe884, Issue 102 zu:
+  Prüf-Cache; Folge-Issue 184), 181 (main d8e9b0d, P7f: eine Stelle wählt die bash, Windows-Teil vom PC;
+  Folge-Issue 186), 183 (main 96575a8, Issue 175 zu: Git-Sperre, vier Umgehungen; Folge-Issue 188).
+  Läuft: Pull-Request 185 (Issue 165), 187 (Issue 164), 148 (Issue 136); Bau zu Issues 97, 149, 188.
+
 - **2026-11-21 23:30 (Server-Uhr, main 877bbf2):** Gemergt: Pull-Request 134 (Issue 93 zu: Test-Attrappen
   plattformneutral über `conftest.attrappe`, Prüf-Test `tests/test_attrappen_plattformneutral_93.py`), 180
   (main wieder grün: feste Namen; `OEFFENTLICHE_SLUGS` steht in `to_spawn/vorgaben.py`, Verhalten
