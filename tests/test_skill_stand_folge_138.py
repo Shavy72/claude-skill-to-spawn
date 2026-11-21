@@ -115,6 +115,7 @@ def _pfad_ohne_python(tmp: Path) -> str:
 def test_ohne_python_abbruch_vor_dem_kopieren(art: str, tmp_path: Path) -> None:
     env = _umgebung(tmp_path)
     env["PATH"] = _pfad_ohne_python(tmp_path)
+    env.pop("TO_SPAWN_PY", None)  # auch kein Python des Aufrufers
     skills = tmp_path / "heim" / "skills"
     alt = skills / "to-spawn"
     alt.mkdir(parents=True)
