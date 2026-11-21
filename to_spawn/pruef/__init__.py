@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from to_spawn import config
-from to_spawn.pruef import adapter_node, adapter_py, leiter, protokoll
+from to_spawn.pruef import adapter_node, adapter_py, cache, leiter, protokoll
 
 _ADAPTER: tuple[leiter.Adapter, ...] = (adapter_py.ADAPTER, adapter_node.ADAPTER)
 log = logging.getLogger("to_spawn.pruef")
@@ -40,20 +40,6 @@ def _sha(repo: Path, ref: str) -> str | None:
     except OSError:
         return None
     return erg.stdout.strip() if erg.returncode == 0 else None
-
-
-#: Ungetrackte Caches: ändern den geprüften Code nicht, gelten in jeder Ordnertiefe.
-_CACHE_ORDNER = frozenset({"__pycache__", ".pytest_cache", ".ruff_cache", ".mypy_cache"})
-#: Ungetrackte Installationen: nur ganz oben im Repo (``src/venv/`` kann Code sein → zählt).
-_INSTALL_ORDNER = frozenset({".venv", "venv", "node_modules"})
-
-
-def _ist_werkzeug_ordner(pfad: str) -> bool:
-    """``git status`` (normal) meldet neue Ordner als ``ordner/``; Dateien gleichen Namens zählen."""
-    if not pfad.endswith("/"):
-        return False
-    teile = pfad.rstrip("/").split("/")
-    return teile[-1] in _CACHE_ORDNER or (len(teile) == 1 and teile[0] in _INSTALL_ORDNER)
 
 
 def _git_status(repo: Path, *args: str) -> tuple[str, str]:
@@ -82,6 +68,7 @@ def _ungespeichert(repo: Path) -> list[str]:
     gibt es Grün für einen Stand, den keiner committet hat. Ausgenommen: Laufdateien unter
     ``.to-spawn/`` (Protokoll, Marker, Sitzungen) und ungetrackte Werkzeug-Ordner (nur als
     Ordner-Eintrag: Caches in jeder Tiefe, ``.venv``/``venv``/``node_modules`` nur ganz oben).
+    Per ``.gitignore`` Verstecktes meldet ``git status`` nicht — das deckt ``cache.schluessel`` ab.
     Die Konfig ``.to-spawn/config.json`` zählt immer — auch neu oder per ``.gitignore`` versteckt.
     ``normal`` fasst neue Ordner zu ``ordner/`` zusammen.
     """
@@ -101,7 +88,7 @@ def _ungespeichert(repo: Path) -> list[str]:
         art, pfad = eintrag[:2], eintrag[3:]
         if art[0] in "RC":
             next(eintraege, None)  # -z: Quellpfad einer Umbenennung folgt als eigener Eintrag
-        if art == "??" and _ist_werkzeug_ordner(pfad):
+        if art == "??" and cache.ist_werkzeug_ordner(pfad):
             continue
         offen.append(pfad)
     if konfig_raus.strip("\0"):
@@ -129,9 +116,7 @@ def pruefen(repo: Path, basis: str, ziel: str) -> Urteil:
     basis_sha, ziel_sha, kopf = _sha(repo, basis), _sha(repo, ziel), _sha(repo, "HEAD")
     if basis_sha is None or ziel_sha is None:
         fehlt = basis if basis_sha is None else ziel
-        return _gate_fehler(
-            repo, basis, ziel, f"Stand „{fehlt}“ in {repo} nicht gefunden (git)", start
-        )
+        return _gate_fehler(repo, basis, ziel, f"Stand „{fehlt}“ in {repo} nicht gefunden (git)", start)
     # ponytail: geprüft wird der Arbeitsbaum, darum muss ziel ausgecheckt sein;
     # Upgrade: eigener Worktree je ziel, wenn die Schlange fremde Stände prüft (3b-6).
     if ziel_sha != kopf:
@@ -151,6 +136,29 @@ def pruefen(repo: Path, basis: str, ziel: str) -> Urteil:
             f"Arbeitsbaum nicht gespeichert (erst committen): {', '.join(offen[:5])}",
             start,
         )
+    schluessel = cache.schluessel(repo, basis_sha, ziel_sha)
+    if cache.treffer(schluessel):
+        zeile = protokoll.zeile(
+            basis=basis_sha,
+            ziel=ziel_sha,
+            exit_code=leiter.GRUEN,
+            stufen=[
+                {
+                    "name": "cache",
+                    "adapter": "",
+                    "lief": True,
+                    "grund": "Stand schon grün geprüft (Stufe 0)",
+                    "dauer_s": round(time.monotonic() - start, 2),
+                    "befehl": "",
+                }
+            ],
+            werkzeug=[],
+            fehler_kurz="",
+            gesamt_s=time.monotonic() - start,
+            cache_treffer=True,
+        )
+        protokoll.schreibe(repo, zeile)
+        return Urteil(leiter.GRUEN, zeile)
     liste = leiter.stufen(repo, _ADAPTER, basis_sha)
     if not liste:
         return _gate_fehler(
@@ -182,11 +190,8 @@ def pruefen(repo: Path, basis: str, ziel: str) -> Urteil:
         werkzeug=[stufe.werkzeug for stufe in liste if stufe.werkzeug],
         fehler_kurz=fehler_kurz,
         gesamt_s=time.monotonic() - start,
-        wackler=[
-            {"test": test, "adapter": stufe.adapter}
-            for stufe in liste
-            for test in stufe.wackler
-        ],
+        wackler=[{"test": test, "adapter": stufe.adapter} for stufe in liste for test in stufe.wackler],
     )
     protokoll.schreibe(repo, zeile)
+    cache.merke(schluessel, zeile)
     return Urteil(exit_code, zeile)

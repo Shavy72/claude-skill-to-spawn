@@ -28,8 +28,11 @@ def zeile(
     fehler_kurz: str,
     gesamt_s: float,
     wackler: list[dict[str, str]] | None = None,
+    cache_treffer: bool = False,
 ) -> dict[str, Any]:
-    """Felder nach PRUEFTOR_VERGLEICH 6.2; Auswahl und Cache folgen in 3b-2a/3b-3.
+    """Felder nach PRUEFTOR_VERGLEICH 6.2; Auswahl folgt in 3b-2a.
+
+    ``cache_treffer`` = Stand war schon grün geprüft, Stufe 0 (``cache``) hat nichts laufen lassen.
 
     ``wackler`` = [{test, adapter}]: erst rot, in der Wiederholung grün. Ist sonst alles grün,
     heißt das Urteil ``wackler`` (Exit bleibt 0) — nie still „grün“.
@@ -42,7 +45,7 @@ def zeile(
         "urteil": "wackler" if exit_code == 0 and wackler else URTEIL[exit_code],
         "stufen": stufen,
         "auswahl": None,
-        "cache_treffer": False,
+        "cache_treffer": cache_treffer,
         "fehler_kurz": fehler_kurz,
         "wackler": wackler,
         "gesamt_s": round(gesamt_s, 2),
@@ -66,9 +69,7 @@ def schreibe(repo: Path, daten: dict[str, Any]) -> None:
             datei.write(text(daten) + "\n")
         if daten["wackler"]:
             kopf = {feld: daten[feld] for feld in ("zeit", "basis", "ziel")}
-            with (ordner / WACKLER_DATEI).open(
-                "a", encoding="utf-8", newline="\n"
-            ) as datei:
+            with (ordner / WACKLER_DATEI).open("a", encoding="utf-8", newline="\n") as datei:
                 for eintrag in daten["wackler"]:
                     datei.write(text({**kopf, **eintrag}) + "\n")
     except OSError as fehler:

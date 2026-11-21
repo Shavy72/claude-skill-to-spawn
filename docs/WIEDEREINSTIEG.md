@@ -46,7 +46,7 @@ was zum Weiterbauen nötig ist.
 ## 3. Stand
 
 - **2026-11-21 23:30 (Server-Uhr, main 877bbf2):** Gemergt: Pull-Request 134 (Issue 93 zu: Test-Attrappen
-  plattformneutral über `conftest.attrappe`, Wächter `tests/test_attrappen_plattformneutral_93.py`), 180
+  plattformneutral über `conftest.attrappe`, Prüf-Test `tests/test_attrappen_plattformneutral_93.py`), 180
   (main wieder grün: feste Namen; `OEFFENTLICHE_SLUGS` steht in `to_spawn/vorgaben.py`, Verhalten
   unverändert), 171 (Issue 95: Sperre Teil b, alle Sperren laufen über `to_spawn/sperre.py`, einzige Datei
   mit `fcntl`/`msvcrt`). Offen im Pull-Request: 148 (Issue 136), 173 (Issue 102). Im Bau: Issues 175, 149,
