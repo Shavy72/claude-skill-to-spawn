@@ -54,6 +54,7 @@ from pathlib import Path
 from typing import Any
 
 from . import bau_log, befund, config, gh, melder, mensch_noetig, staging_schalter, starter, vorfall
+from . import sperre as _sperre
 
 log = logging.getLogger("to_spawn.capo")
 
@@ -1732,89 +1733,21 @@ def _zustand_datei(repo: Path, gh_repo: str, spec: int) -> Path:
     return melder.zustand_ordner() / f"{melder.repo_kennung(repo, gh_repo)}_{spec}.json"
 
 
-def _sperr_versuch(fh: Any) -> bool | None:
-    """Nicht blockierend sperren: ``True`` = gesperrt, ``False`` = belegt, ``None`` = kein Werkzeug."""
-    try:
-        import fcntl
-    except ImportError:
-        fcntl = None  # type: ignore[assignment]
-    if fcntl is not None:
-        try:
-            fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-            return True
-        except OSError:
-            return False
-    try:
-        import msvcrt
-    except ImportError:
-        return None
-    try:
-        fh.seek(0)
-        msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)  # type: ignore[attr-defined]
-        return True
-    except OSError:
-        return False
-
-
-def _sperre_frei(fh: Any) -> None:
-    try:
-        import fcntl
-
-        fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
-        return
-    except ImportError:
-        pass
-    except OSError as fehler:
-        log.warning("Sperre nicht gelöst: %s", fehler)
-        return
-    try:
-        import msvcrt
-
-        fh.seek(0)
-        msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)  # type: ignore[attr-defined]
-    except (ImportError, OSError) as fehler:
-        log.warning("Sperre nicht gelöst: %s", fehler)
-
-
 @contextlib.contextmanager
 def sperre(datei: Path, warten_s: float = SPERRE_S) -> Iterator[bool]:
     """Sperre ``<datei>.lock`` für einen Tick; liefert ``False``, wenn ein anderer Lauf sie hält.
 
-    fcntl (Linux/macOS) bzw. msvcrt (Windows); ohne beide eine O_EXCL-Lockdatei.
+    Werkzeug (fcntl/msvcrt/O_EXCL) versteckt :func:`to_spawn.sperre.halte` (#95). Ein
+    Sperrfehler außer „belegt“ (z. B. ENOLCK) gilt wie bisher als belegt: kein Tick.
     """
     pfad = datei.with_name(datei.name + ".lock")
-    pfad.parent.mkdir(parents=True, exist_ok=True)
-    ende = time.monotonic() + max(warten_s, 0.0)
-    with pfad.open("a+b") as fh:
-        while True:
-            ergebnis = _sperr_versuch(fh)
-            if ergebnis is None:
-                break  # kein Sperr-Werkzeug → O_EXCL unten
-            if ergebnis:
-                try:
-                    yield True
-                finally:
-                    _sperre_frei(fh)
-                return
-            if time.monotonic() >= ende:
-                yield False
-                return
-            time.sleep(0.2)
-    exkl = pfad.with_name(pfad.name + ".excl")
-    while True:
+    with contextlib.ExitStack() as stapel:
         try:
-            os.close(os.open(str(exkl), os.O_CREAT | os.O_EXCL | os.O_WRONLY))
-            break
-        except FileExistsError:
-            if time.monotonic() >= ende:
-                yield False
-                return
-            time.sleep(0.2)
-    try:
-        yield True
-    finally:
-        with contextlib.suppress(OSError):
-            exkl.unlink()
+            gehalten = stapel.enter_context(_sperre.halte(pfad, warten=warten_s))
+        except OSError as fehler:
+            log.warning("Sperre %s nicht nehmbar (%s) — gilt als belegt.", pfad, fehler)
+            gehalten = False
+        yield gehalten
 
 
 def karenz_minuten(waechter: dict[str, Any]) -> float:

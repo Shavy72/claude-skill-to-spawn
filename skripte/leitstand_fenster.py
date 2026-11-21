@@ -7,6 +7,7 @@ der importiert von hier und re-exportiert die Namen — dieses Modul importiert 
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import logging
 import os
@@ -15,13 +16,13 @@ import sys
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import IO, Any
+from typing import Any
 
 _SKRIPTE = Path(__file__).resolve().parent
 _SKILL = str(_SKRIPTE.parent)
 if _SKILL not in sys.path:
     sys.path.insert(0, _SKILL)
-from to_spawn import config, melder, sitzung_env, starter, terminal_maus  # noqa: E402
+from to_spawn import config, melder, sitzung_env, sperre, starter, terminal_maus  # noqa: E402
 
 log = logging.getLogger("leitstand_seite")
 
@@ -127,24 +128,20 @@ def speichere_json(pfad: Path, daten: Any) -> None:
     os.replace(neu, pfad)
 
 
-def nimm_sperre(pfad: Path) -> IO[str] | None:
-    """Betriebssystem-Sperre gegen Doppelstart; fällt beim Prozess-Tod von selbst."""
-    pfad.parent.mkdir(parents=True, exist_ok=True)
-    datei = open(pfad, "a+", encoding="utf-8")  # noqa: SIM115 — bleibt bis Prozessende offen
+def nimm_sperre(pfad: Path) -> contextlib.ExitStack | None:
+    """Betriebssystem-Sperre gegen Doppelstart (:func:`to_spawn.sperre.halte`, #95).
+
+    ``None`` = belegt oder nicht sperrbar; sonst ``.close()`` gibt frei. Fällt beim Prozess-Tod von selbst.
+    """
+    stapel = contextlib.ExitStack()
     try:
-        datei.seek(0)
-        if sys.platform == "win32":
-            import msvcrt
-
-            msvcrt.locking(datei.fileno(), msvcrt.LK_NBLCK, 1)
-        else:
-            import fcntl
-
-            fcntl.flock(datei, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        gehalten = stapel.enter_context(sperre.halte(pfad))
     except OSError:
-        datei.close()
+        gehalten = False
+    if not gehalten:
+        stapel.close()
         return None
-    return datei
+    return stapel
 
 
 # ---------------------------------------------------------------- url-Datei
