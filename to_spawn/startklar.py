@@ -47,9 +47,17 @@ from to_spawn.manifest import manifest_im_repo, manifest_pfad
 log = logging.getLogger("to_spawn.startklar")
 
 SKILL = Path(__file__).resolve().parent.parent
-AUFRAEUMEN = (
-    Path.home() / ".claude" / "hooks" / "smart-zone" / "staffel" / "aufraeumen.mjs"
-)
+
+
+def aufraeumen_pfad() -> Path:
+    """Pfad des Staffel-Aufräumers (``~/.claude/hooks/…/aufraeumen.mjs``).
+
+    Erst beim Aufruf aufgelöst (#68): ``Path.home()`` auf Modulebene ließ schon den
+    Import scheitern, wenn kein Heimordner bestimmbar ist (Kindprozess ohne
+    ``HOME``/``USERPROFILE``)."""
+    return Path.home() / ".claude" / "hooks" / "smart-zone" / "staffel" / "aufraeumen.mjs"
+
+
 HOOK_TIMEOUT_S = 20
 WERKZEUG_TIMEOUT_S = 60
 GIT_TIMEOUT_S = 20
