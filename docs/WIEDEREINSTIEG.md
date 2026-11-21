@@ -45,6 +45,11 @@ was zum Weiterbauen nötig ist.
 
 ## 3. Stand
 
+- **2026-11-21 23:40 (Server-Uhr, main 96575a8):** Gemergt: Pull-Request 173 (main b2fe884, Issue 102 zu:
+  Prüf-Cache; Folge-Issue 184), 181 (main d8e9b0d, P7f: eine Stelle wählt die bash, Windows-Teil vom PC;
+  Folge-Issue 186), 183 (main 96575a8, Issue 175 zu: Git-Sperre, vier Umgehungen; Folge-Issue 188).
+  Läuft: Pull-Request 185 (Issue 165), 187 (Issue 164), 148 (Issue 136); Bau zu Issues 97, 149, 188.
+
 - **2026-11-21 23:30 (Server-Uhr, main 877bbf2):** Gemergt: Pull-Request 134 (Issue 93 zu: Test-Attrappen
   plattformneutral über `conftest.attrappe`, Prüf-Test `tests/test_attrappen_plattformneutral_93.py`), 180
   (main wieder grün: feste Namen; `OEFFENTLICHE_SLUGS` steht in `to_spawn/vorgaben.py`, Verhalten
