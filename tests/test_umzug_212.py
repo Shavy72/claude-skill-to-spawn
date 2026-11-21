@@ -26,6 +26,7 @@ SKRIPTE = SKILL / "skripte"
 sys.path.insert(0, str(SKILL))
 
 from to_spawn import config, umzug  # noqa: E402
+from windows_attrappen import windows_starter  # noqa: E402
 
 HEUTE = "2026-09-18"
 TICKET = "9121"
@@ -174,8 +175,9 @@ def welt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path]:
     binaer = tmp_path / "bin"
     binaer.mkdir()
     _ausfuehrbar(binaer / "ssh", SSH_STUB)
-    # Windows übersieht ``ssh`` ohne Endung im PATH und nähme das echte ssh.exe (#1406, B1)
-    (binaer / "ssh.cmd").write_text(f'@"{sys.executable}" "%~dp0ssh" %*\r\n', encoding="utf-8")
+    # Windows übersieht ``ssh`` ohne Endung im PATH und nähme das echte ssh.exe (#1406, B1);
+    # eine ``.cmd``-Hülle verweigert Argumente mit Anführungszeichen (#68) — darum ``ssh.exe``.
+    windows_starter(binaer / "ssh")
     monkeypatch.setenv("PATH", f"{binaer}{os.pathsep}{os.environ['PATH']}")
     monkeypatch.setenv("TO_SPAWN_TEST_BIN", str(binaer))  # Start-Tür: nur diese Attrappe startet
     monkeypatch.setenv("SSH_STUB_LOG", str(tmp_path / "ssh.log"))
