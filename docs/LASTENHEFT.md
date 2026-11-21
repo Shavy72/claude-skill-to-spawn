@@ -116,3 +116,43 @@ Anlass: Die erste Ober-Aufsicht hatte sich selbst durch eine Nachfolge-Session a
   Zusammenfassung. Schärft A12.
 - **A14 Autonomie vererbt sich mit:** Auch jede Nachfolge-Session entscheidet selbst und fragt
   David nicht (A11, N1). Eine Übergabe, die Wortlaut oder Autonomie-Regel nicht enthält, ist ungültig.
+
+---
+
+## L3 — Tempo: schnelles, kluges Prüfen in jedem Repo (David, 2026-11-21)
+
+### Wortlaut (1:1)
+
+> schau das du auch beim Thema speed lösungen entwickelst die schnell und smart sind zb beim testing oder Gate durchläufen das da smarte und schnelle State of the art workflows genutzt werden und getestet werden die nachweislich gut performen und die für agentische KI Arbeit wie wir sie haben ausgelegt sind und mit dem Code shipping tempo mithalten können das ist mir auch sehr wichtig das wir nicht "bastel" oder schlechte Lösungen nutzen sondern nach dem besten ansatz gehen den man machen kann repo unspezifisch Spec unspezifisch soll immer der smaretes Testing und gate ansatz gefahren werden der individuell am besten und am schnellsten wäre am besten wäre eine art schweizer Taschenmesser welches immer ready ist an möglichkeiten Code zu testen und gates laufen zu lassen und die KI sessions in egal welchem Projekt nutzen immer flexibel das was am besten zum auftrag passt und das was mindestens notwendig ist und machen nichts unnötiges sondern immer nur das was mindestens notwendig ist um stabilen guten Code zu gewährleisten aber auch das rojekt bau tempo niht unnötig zu behindern
+>
+> Das ist mir auch noch sehr wichtig generell schreib das mal fest das das berücksichtigt udn getestet wird
+
+Anlass: Zwischenstand der Ober-Aufsicht am 21.11.2026, 20:06. Schärft N6 und die Abnahme-Zeile M9.
+
+### Verdichtung in prüfbare Anforderungen (L3)
+
+- **A15 Prüf-Werkzeugkasten („Schweizer Taschenmesser“):** Der Skill bringt einen fertigen Satz an
+  Prüf- und Gate-Werkzeugen mit. Er ist in jedem Repo und auf jeder Maschine (Windows-PC,
+  Linux-Bau-Server) sofort benutzbar, ohne dass das Repo dafür etwas Eigenes bauen muss.
+- **A16 Kleinste ausreichende Prüfung:** Je Auftrag wird nur das geprüft, was mindestens nötig ist,
+  um stabilen, guten Code zu sichern. Die Auswahl richtet sich nach der Änderung und ihrem Risiko,
+  nicht nach Gewohnheit. Nichts läuft „zur Sicherheit“ doppelt oder ohne Grund.
+- **A17 Die Session wählt flexibel:** KI-Sessions in jedem Projekt nehmen aus dem Werkzeugkasten das,
+  was zum Auftrag passt. Welche Prüfung lief, welche ausgelassen wurde und warum, steht in einem
+  kurzen Prüf-Protokoll je Lauf.
+- **A18 Tempo hält mit dem Bauen mit:** Prüfen und Gate sind nie der Engpass. Viele parallele
+  Tickets laufen ohne Stau durch (N6). Zeiten je Stufe und Wartezeit werden bei jedem Lauf gemessen.
+- **A19 Bester bekannter Ansatz, mit Nachweis:** Gebaut wird nach dem Stand der Technik für
+  KI-gestütztes Bauen mit hohem Tempo. Vor dem Bau werden mindestens zwei grundverschiedene Ansätze
+  verglichen, mit Quellen und eigenen Messwerten. Kein Eigenbau, wo es ein bewährtes Werkzeug gibt.
+- **A20 Unabhängig von Repo und Spec:** Der Werkzeugkasten erkennt selbst, was für ein Projekt vor
+  ihm liegt (Sprache, Test-Werkzeug), und enthält kein Wissen über ein bestimmtes Repo.
+- **A21 Bewiesen, nicht behauptet:** Tempo und Sicherheit werden gemessen und getestet. Tempo über
+  Zeiten vorher/nachher. Sicherheit über absichtlich eingebaute Fehler: Die schnelle Auswahl muss
+  jeden Fehler finden, den der volle Lauf findet.
+
+**Ausdrücklich nicht gewollt (L3)**
+
+- **N7** keine Bastel- oder Behelfslösungen beim Prüfen und im Gate
+- **N8** keine unnötigen Prüfungen, die das Bau-Tempo bremsen
+- **N9** kein Tempo auf Kosten der Stabilität — schneller heißt nie, dass Fehler durchrutschen

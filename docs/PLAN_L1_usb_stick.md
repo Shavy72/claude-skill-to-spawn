@@ -76,6 +76,45 @@ nur, was die Änderung betrifft (das entscheidet `pruefen`), ein RAM-Deckel teil
 Tickets blockieren die Reihe nicht (hinten anstellen, Bau-Session bekommt das Log). System-Repo
 und App-Repos haben je ihr eigenes `pruefen`; ein roter App-master hält keine System-Änderung auf.
 
+**Prüf-Werkzeugkasten im Skill (L3, A15–A21) — schärft das Prüftor:**
+Ein Kasten, eine Tür: `to_spawn.py pruefen <basis> <ziel>`. Der Aufrufer (Bau-Session, Prüftor,
+Aufseher) sagt nur „von wo bis wo“. Der Kasten entscheidet selbst, was läuft, und gibt ein Urteil
+(Exit 0 grün, 1 rot) plus ein Prüf-Protokoll zurück: was lief, was ausgelassen wurde, warum, wie lange.
+
+Versteckt im Kasten (Aufrufer muss nichts davon wissen):
+
+- **Erkennen:** Sprache und Test-Werkzeug des Repos (zuerst Python und Node, erweiterbar je Adapter).
+- **Stufen-Leiter, immer nur so hoch wie nötig:**
+  1. Sofort-Prüfung der geänderten Dateien (Format, Linter, Typen) — Sekunden.
+  2. Betroffene Tests: nur Tests, die vom geänderten Code abhängen.
+  3. Kleiner Rauchsatz: startet die App, die wichtigsten Wege antworten.
+  4. Voller Lauf, parallel verteilt unter dem RAM-Deckel — nur bei Risiko-Auslösern
+     (Abhängigkeiten, Prüf-Konfig, Datenbank-Schema, Auswahl nicht sicher bestimmbar) und am
+     Sammelpunkt vor Staging.
+  5. Weg-Test im Browser gegen Staging — nur wenn ein Nutzer-Ablauf berührt ist.
+- **Nichts doppelt:** Ergebnis je Stand und Eingaben merken; war genau dieser Stand schon grün,
+  läuft er nicht noch einmal.
+- **Sammelpunkt statt Einzel-Stau:** mehrere fertige Tickets gemeinsam prüfen; ist der Stapel rot,
+  durch Halbieren den Schuldigen finden, die anderen laufen weiter.
+- **Wackel-Tests:** erkennen, einmal wiederholen, getrennt führen und melden — nie still übergehen,
+  nie die Reihe blockieren.
+- **Warm starten:** vorbereitete Umgebung je Repo, damit kein Lauf mit Installieren beginnt.
+- **Schnell rot:** zuletzt rote und neueste Tests zuerst.
+
+Kandidaten für die Umsetzung (erst vergleichen und messen, dann wählen — A19): Test-Auswahl über
+Abhängigkeits-Karte (z. B. `pytest-testmon`, `vitest related`, `jest --findRelatedTests`),
+Verteilung nach gemessener Laufzeit (`pytest-xdist` mit Zeit-Aufteilung), Ergebnis-Speicher nach
+Inhalts-Hash (Prinzip Bazel/Turborepo/Nx), Sammel-Prüfung nach Art einer Merge Queue mit Halbieren,
+schnelle Umgebungen (`uv`, fertige Container). Das Ergebnis des Vergleichs steht mit Quellen und
+Messwerten in `docs/PRUEFTOR_VERGLEICH.md`; gewählt wird, was im Probe-Repo und in DuoPlus
+nachweislich am besten läuft. Bewährtes Werkzeug vor Eigenbau.
+
+Im Repo liegt nur, was nur die App wissen kann: Risiko-Pfade, die den vollen Lauf erzwingen, und
+zusätzliche Befehle. `befehle.pruefen` bleibt als Ausnahme für Repos mit eigenem Gate (DuoPlus am
+Anfang); Ziel ist, dass auch DuoPlus den Werkzeugkasten nutzt (Etappe 5).
+
+Bewusst draußen: Live-Prüfungen, Last-Tests, Sicherheits-Scans über das Übliche hinaus.
+
 **Aufräumen (N2):** Hausmeister liest Ticket-Repos und Worktree-Wurzeln aus der Konfig aller
 eingerichteten Repos (Liste auf der Maschine), löscht Fertiges ohne Rückfrage, auf beiden Systemen.
 
@@ -90,6 +129,10 @@ eingerichteten Repos (Liste auf der Maschine), löscht Fertiges ohne Rückfrage,
    Ordner an) und die Grill-Protokoll-Regel ziehen ins Skill-Repo; ein Installer für alle.
 3. **Repo-Vertrag + Prüftor + Einrichtungs-Ticket** im Skill; DuoPlus wird erster Nutzer über zwei
    dünne Befehle auf seine vorhandenen Skripte (Verhalten bleibt gleich).
+   Davor **3a Vergleich** (L3, A19): Recherche mit Quellen + Messung von mindestens zwei
+   grundverschiedenen Ansätzen im Probe-Repo und an DuoPlus → `docs/PRUEFTOR_VERGLEICH.md`.
+   Dann **3b Prüf-Werkzeugkasten** bauen (eine Tür `pruefen`, Stufen-Leiter, Prüf-Protokoll,
+   Zeitmessung je Stufe), auf Linux und Windows.
 4. **Probe-Repo-Abnahme** Linux und Windows (siehe unten). Was dabei bricht, wird als Skill-Issue
    an der Wurzel behoben und die Probe von vorn gefahren.
 5. **Umzug der DuoPlus-Mechanik** in der risikoarmen Reihenfolge: Konfig-Schlüssel →
@@ -118,6 +161,20 @@ verhaltensgleich, Staging zuerst, App-Live bleibt Davids Entscheidung.
   roter App-Zweig hält eine gleichzeitige Skill-Änderung nicht auf.
 - **M9** Prüftor-Zeit: Ticket mit kleiner Änderung im Probe-Repo von Push bis Urteil unter 5 min;
   DuoPlus-Median von Push bis Staging gemessen vorher/nachher, nachher klar kürzer.
+- **M10** (L3, A15/A20) Werkzeugkasten sofort bereit: in zwei frischen Probe-Repos mit
+  verschiedener Sprache (Python und Node), je auf Bau-Server und Windows-PC, liefert `pruefen`
+  ohne repo-eigene Vorarbeit ein Urteil und ein Prüf-Protokoll.
+- **M11** (A16/A17) Kleinste ausreichende Prüfung, drei Fälle im Probe-Repo: nur Doku geändert →
+  kein Test läuft, Urteil in Sekunden · kleine Code-Änderung → nur betroffene Tests · Änderung an
+  Abhängigkeiten oder Prüf-Konfig → voller Lauf. Das Prüf-Protokoll nennt jeweils den Grund.
+- **M12** (A21/N9) Sicherheit trotz Tempo: mindestens 20 absichtlich eingebaute Fehler an
+  verschiedenen Stellen (Probe-Repo und DuoPlus). Die schnelle Auswahl findet jeden Fehler, den
+  der volle Lauf findet — 0 übersehen. Übersieht sie einen, gilt die Auswahl als nicht fertig.
+- **M13** (A18/A19) Tempo gemessen statt geschätzt: `docs/PRUEFTOR_VERGLEICH.md` liegt vor
+  (mindestens zwei Ansätze, Quellen, Messwerte). Kleine Änderung im Probe-Repo: Urteil unter
+  2 min. DuoPlus: Median und langsamstes Zehntel von Push bis Urteil vorher/nachher, nachher
+  mindestens halbiert. Zehn Tickets gleichzeitig laufen durch, ohne dass der RAM-Deckel reißt
+  oder ein Ticket länger als 15 min wartet.
 
 Jede M-Zeile braucht einen Beleg (Befehl + Ausgabe oder Protokoll-Zeile) in
 `docs/ABNAHME_L1.md` im Skill-Repo.
@@ -144,3 +201,7 @@ Jede M-Zeile braucht einen Beleg (Befehl + Ausgabe oder Protokoll-Zeile) in
   2. In einem Repo ohne `scripts\bau.py` (Wegwerf-Klon): `pwsh -File <klon>\spawn_local.ps1 <S> -DryRun` bricht nicht mehr mit „Kein ./scripts/bau.py“ ab.
   3. `install.ps1` nur in einem Wegwerf-Profil prüfen (`$PROFILE` umbiegen), dann `bau --help` ohne `scripts\bau.py` → startet Skill-`bau.py`.
   Hinweis: ps1-Änderungen wirken erst nach Neuinstallation am PC. Fundstelle 18 (Prozess-Regex `spawn_local.ps1`) bewusst nicht gebaut, weil Spec #1330 die Zeile nutzt. `pwsh` gibt es auf dem Bau-Server (`/usr/local/bin/pwsh`), Parser dort 0 Fehler.
+- 2026-11-21 20:20 (PC-Uhr, Ober-Aufsicht Session 1) — **Neuer Lastenheft-Eintrag L3** (David,
+  Wortlaut in `docs/LASTENHEFT.md`): Tempo und kluges Prüfen in jedem Repo. Im Plan ergänzt:
+  Design „Prüf-Werkzeugkasten“, Etappe 3 um 3a Vergleich und 3b Bau, Abnahme M10–M13. Damit gilt
+  „fertig“ erst mit M1–M13. Noch nichts davon gebaut oder gemessen.
