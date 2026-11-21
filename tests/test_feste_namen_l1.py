@@ -27,7 +27,8 @@ MUSTER: dict[str, re.Pattern[str]] = {
 }
 
 #: Ordner (Skill-Wurzel-relativ) und Dateitypen, die zum Skill-Code zählen. ``tests/`` nicht.
-ORDNER = ("to_spawn", "skripte", "scripts", "repo-scripts", "leitstand", "aliase", "nest")
+#: ``messung/`` wird nicht installiert (NICHT_INSTALLIERT in test_installer_vollstaendig.py), aber gescannt.
+ORDNER = ("to_spawn", "skripte", "scripts", "repo-scripts", "leitstand", "aliase", "nest", "messung")
 ENDUNGEN = {".py", ".sh", ".ps1", ".json", ".html", ""}
 
 #: Die eine Vorgabe-Stelle: hier lebt das DuoPlus-Wissen gewollt.
@@ -86,6 +87,9 @@ AUSNAHMEN: dict[tuple[str, str], tuple[int, str]] = {
     ("skripte/rueckblick.py", "bau-log-ordner"): (1, _DOKU),
     ("skripte/rueckblick.py", "duoplus"): (3, _DOKU + " (Klon-Namen des Bau-Servers)"),
     ("skripte/hooks/staffel_stop.py", "repo-skript"): (1, _DOKU),
+    # Mess-Skripte des Prüftor-Vergleichs (#81): Name nur in Docstring und Aufruf-Beispiel
+    ("messung/vorher_zeiten.py", "duoplus"): (1, _DOKU),
+    ("messung/rueckblick_auswahl_duoplus.py", "duoplus"): (2, _DOKU + " (Aufruf-Beispiel mit Dateinamen)"),
 }
 
 
