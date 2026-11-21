@@ -89,9 +89,26 @@ def test_platz_frei_obergrenze_sessions() -> None:
 
 def test_platz_frei_nicht_linux_kein_urteil(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(speicher.sys, "platform", "win32")
+    monkeypatch.delenv("TO_SPAWN_SPEICHER_MEMINFO", raising=False)
+    monkeypatch.delenv("TO_SPAWN_SPEICHER_PROC", raising=False)
     frei, text = speicher.platz_frei(_KONFIG, frei=None, sessions=None)
     assert frei is True
     assert "kein Urteil" in text
+
+
+def test_platz_frei_nicht_linux_vorgegebene_werte_urteil(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Vorgegebene Werte gelten auf jeder Plattform (#68) — Parameter wie Test-Tür."""
+    monkeypatch.setattr(speicher.sys, "platform", "win32")
+    frei, text = speicher.platz_frei(_KONFIG, frei=1200, sessions=2)
+    assert frei is False
+    assert "Speicher knapp" in text
+    meminfo = tmp_path / "meminfo"
+    meminfo.write_text("MemAvailable:    500000 kB\n", encoding="utf-8")
+    monkeypatch.setenv("TO_SPAWN_SPEICHER_MEMINFO", str(meminfo))
+    monkeypatch.setenv("TO_SPAWN_SPEICHER_PROC", str(tmp_path / "gibt-es-nicht"))
+    frei, text = speicher.platz_frei(_KONFIG)
+    assert frei is False
+    assert "Speicher knapp" in text
 
 
 def test_defaults_hat_speicher_block() -> None:
@@ -227,5 +244,5 @@ def test_nest_server_trockener_plan_nennt_swap_und_dienst() -> None:
 def test_nest_server_tmux_dienst_oompolicy_continue() -> None:
     """OOM-Absturz 26.09.: mit OOMPolicy=stop riss ein gekilltes pytest-Kind den ganzen Dienst mit."""
     text = (SKILL / "nest" / "nest_server.sh").read_text(encoding="utf-8")
-    unit = text.split("cat > \"$TMUX_UNIT\" <<UNIT", 1)[1].split("\nUNIT\n", 1)[0]
+    unit = text.split('cat > "$TMUX_UNIT" <<UNIT', 1)[1].split("\nUNIT\n", 1)[0]
     assert "OOMPolicy=continue" in unit
