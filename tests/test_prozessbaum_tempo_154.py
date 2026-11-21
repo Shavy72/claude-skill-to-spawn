@@ -3,8 +3,8 @@
 Vorher startete jeder Aufruf PowerShell und fragte WMI ``Win32_Process`` ab (Median
 1382 ms). Gemessen wird der Median über 20 Aufrufe von ``baum()`` — ein einzelner
 Ausreißer auf einem ausgelasteten PC kippt den Median nicht. Die Schwelle 50 ms liegt
-eine Größenordnung über dem Toolhelp-Weg (wenige ms) und weit unter jedem Prozess-Start
-(PowerShell allein ~700 ms): sie trennt die beiden Wege, ohne bei Last zu wackeln.
+gut viermal über dem Kernel-Weg (~11 ms bei ~770 Prozessen) und weit unter jedem
+Prozess-Start (PowerShell allein ~700 ms): sie trennt die beiden Wege, ohne bei Last zu wackeln.
 """
 
 from __future__ import annotations
