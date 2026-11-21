@@ -183,8 +183,9 @@ ERZEUGNISSE = (
     "**/*.pyc.[0-9]*",  # halb geschriebenes Kompilat (Windows)
     "logs/**",
     "graphify-out/**",
-    "data/content_studio/**",
-    "data/reel_street/**",
+    # Fix-Runde 2: in den Daten-Ordnern nur Vorschaubilder — Uploads/Reels halten den Ordner.
+    "data/content_studio/**/.thumb_*",
+    "data/reel_street/**/.thumb_*",
 )
 #: #1536: Datenbanken, die als Test-Kopie weg dürfen — Pfad relativ zum Arbeitsordner
 #: (samt ``-wal``/``-shm``). So legen App und Tests sie an (``account_db.DB_PATH`` u. a.).

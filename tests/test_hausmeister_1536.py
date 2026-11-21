@@ -1,7 +1,7 @@
 """Hausmeister #1536: Behalten ist die Ausnahme mit echtem Grund.
 
 Neu: Test-Datenbanken (:func:`hausmeister.ist_test_db`), Sperren, Logs, graphify-out,
-Daten-Ordner und ``.pyc.<zahl>`` sind Erzeugnisse; jede andere Datenbank, Ordner ohne
+Vorschaubilder der Daten-Ordner und ``.pyc.<zahl>`` sind Erzeugnisse; jede andere Datenbank, Ordner ohne
 Ticket-Nummer oder ohne Git und ungleiche Geheimnis-Dateien halten den Ordner — auch
 alt (Fix-Runde 1); je Takt eine Kennzahl-Zeile im Log. Dazu je Schutz-Regel ein Test.
 Weg-Tests mit echtem Wegwerf-Git und lokalem bare-„origin“ (Fixture ``welt`` aus #1368);
@@ -80,8 +80,8 @@ def test_soll1_test_db_lock_logs_daten_pyc_zahl_sind_erzeugnisse(welt: Welt) -> 
             "bau.lock",
             "logs/app.txt",
             "graphify-out/graph.json",
-            "data/content_studio/bild.png",
-            "data/reel_street/clip.mp4",
+            "data/content_studio/uploads/_characters/6/.thumb_ab12_480.webp",
+            "data/reel_street/preview/.thumb_cd34_480.webp",
             "scripts/__pycache__/tempo_zugang.cpython-311.pyc.4711",
         ),
     )
@@ -371,6 +371,60 @@ def test_h1_kleine_bekannte_test_dbs_gehen_weg(welt: Welt) -> None:
         welt,
         1625,
         {"accounts.db": 10, "accounts.db-wal": 10, "data/funnel.db": 10, "data/rum.db": 10},
+    )
+    r = welt.aufraeumen(wt, loeschen=True)
+    assert r.art == "gelöscht", r.grund
+    assert not wt.exists()
+
+
+# --- Fix-Runde 2: Geheimnis mit anderem Inhalt (B1), Daten-Ordner nur Vorschaubilder ---
+
+
+def test_b1_env_im_hauptrepo_mit_anderem_inhalt_bleibt(welt: Welt) -> None:
+    wt = welt.worktree(1631)
+    (wt / ".env").write_text(GEHEIM + "\n", encoding="utf-8")
+    (welt.haupt / ".env").write_text("TOKEN=anderer-wert\n", encoding="utf-8")
+    welt.ticket(1631, "CLOSED", 48)
+    r = welt.aufraeumen(wt, loeschen=True)
+    assert r.art == "bleibt" and r.fuer_david and ".env" in r.grund, r.grund
+    assert (wt / ".env").read_text(encoding="utf-8") == GEHEIM + "\n"
+    assert GEHEIM not in _alle_inhalte(welt)
+
+
+def _daten_ordner(welt: Welt, nr: int, dateien: tuple[str, ...]) -> Path:
+    wt = welt.worktree(nr)
+    _commit(wt, ".gitignore", "data/content_studio/\ndata/reel_street/\n", push=True)
+    _ordner(welt, f"wt/{wt.name}", dateien)
+    welt.ticket(nr, "CLOSED", 48)
+    return wt
+
+
+@pytest.mark.parametrize(
+    "datei",
+    [
+        "data/content_studio/uploads/_characters/6/ab12.png",
+        "data/content_studio/results/4/0.mp4",
+        "data/reel_street/preview/job4.mp4",
+    ],
+)
+def test_fix2_echte_datei_im_daten_ordner_haelt_den_ordner(welt: Welt, datei: str) -> None:
+    wt = _daten_ordner(
+        welt, 1632, ("data/content_studio/uploads/_characters/6/.thumb_ab12_480.webp", datei)
+    )
+    r = welt.aufraeumen(wt, loeschen=True)
+    assert r.art == "bleibt" and datei in r.grund, r.grund
+    assert (wt / datei).is_file()
+
+
+def test_fix2_nur_vorschaubilder_halten_den_ordner_nicht(welt: Welt) -> None:
+    wt = _daten_ordner(
+        welt,
+        1633,
+        (
+            "data/content_studio/.thumb_wurzel.webp",
+            "data/content_studio/uploads/_characters/6/.thumb_ab12_480.webp",
+            "data/reel_street/preview/.thumb_cd34_480.webp",
+        ),
     )
     r = welt.aufraeumen(wt, loeschen=True)
     assert r.art == "gelöscht", r.grund
