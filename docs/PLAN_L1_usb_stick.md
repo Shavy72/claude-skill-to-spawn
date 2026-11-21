@@ -205,3 +205,17 @@ Jede M-Zeile braucht einen Beleg (Befehl + Ausgabe oder Protokoll-Zeile) in
   Wortlaut in `docs/LASTENHEFT.md`): Tempo und kluges Prüfen in jedem Repo. Im Plan ergänzt:
   Design „Prüf-Werkzeugkasten“, Etappe 3 um 3a Vergleich und 3b Bau, Abnahme M10–M13. Damit gilt
   „fertig“ erst mit M1–M13. Noch nichts davon gebaut oder gemessen.
+- 2026-11-21 21:05 (Server-Uhr, von `leit 61`) — **Etappe 1 Bau komplett auf main:** zusätzlich
+  P6a (Pull-Request 75, 2c198db, Issue 74), P6b (78, cb094cf), P7a (76, b4ce927), P7b (80, c2f4c07).
+  main c2f4c07 geprüft: 956 passed, 10 skipped, 4 xfailed, EXIT 0 (Auswahl-Lauf `-n 3`, kein
+  Voll-Lauf). Offen für den Abschluss von Etappe 1: Install c2f4c07 läuft gerade; „Fertig“ 2–7 noch
+  zu belegen; `docs/ABNAHME_L1.md` fehlt noch; PC-Lauf der Ober-Aufsicht (Sammel-Issue 68).
+- **Etappe 3a erledigt:** `docs/PRUEFTOR_VERGLEICH.md` (Pull-Request 82, cda7107), unabhängig
+  gegengelesen. Empfehlung Variante 1 (zustandslos: statischer Graph + Regeln) plus Variante 3
+  (Voll-Lauf schneller); testmon (Variante 2) nicht bauen. 3b startet mit der Mess-Vorstufe 3b-0.
+- **Entscheidung der Leit-Session zur Plan-Frage aus dem Vergleich** (Abbruch-Kriterium 3b-0,
+  Abschnitt 6.4): Wird für DuoPlus auf „Voll-Lauf schneller, keine Auswahl“ gewechselt, gilt M12 für
+  DuoPlus als „nicht anwendbar, weil keine Auswahl läuft“ und wird in `docs/ABNAHME_L1.md` genau so
+  benannt (kein Schein-Nachweis). M12 muss dann im Probe-Repo mit zweiter, unbekannter Fehlerreihe
+  (≥ 20 Fehler) voll erfüllt sein. Grund: Davids L3 „nachweislich gut … nur das was mindestens
+  notwendig ist“ (abgeleitet aus Lastenheft L3).
