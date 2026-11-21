@@ -1,6 +1,6 @@
 """L1 Etappe 2 E2-3 (#87): Prüf-Test für den Ketten-Text unter ``kette/``.
 
-Bricht den Build bei jeder Text-Änderung an ``kette/**/*.md``, die
+Bricht den Build bei jeder Text-Änderung an ``kette/**/*.md`` und ``kette/skills/*/agents/openai.yaml``, die
 1. einen ``to_spawn.py <befehl>`` (samt ``--schalter``) nennt, den der Parser nicht kennt,
 2. feste Namen des ersten App-Repos enthält (``Shavy72/``, ``docs/agents/manifests``),
 3. einen Pflicht-Baustein von ``kette/skills/to-tickets/SKILL.md`` verliert.
@@ -22,8 +22,12 @@ KETTE = SKILL / "kette"
 TO_TICKETS = KETTE / "skills" / "to-tickets" / "SKILL.md"
 
 #: ``to_spawn.py <befehl> <rest der Zeile>`` — Befehl = erstes Wort nach dem Skript, auch mit
-#: Anführungszeichen um Pfad oder Befehl und in jeder Groß-/Kleinschreibung (#144).
-BEFEHL = re.compile(r"to_spawn\.py[\"']?\s+[\"']?([A-Za-z][A-Za-z0-9-]*)([^\n`]*)")
+#: Anführungszeichen um Pfad oder Befehl und in jeder Groß-/Kleinschreibung (#144); Variablen wie
+#: ``"$X"`` vor dem Befehl werden übersprungen (#156). Zeilenumbrüche mit ``\`` löst ``_befehle`` auf.
+BEFEHL = re.compile(
+    r"to_spawn\.py[\"']?(?:\s+[\"']?\$[^\s\"'`]*[\"']?)*\s+[\"']?([A-Za-z][A-Za-z0-9-]*)([^\n`]*)"
+)
+UMBRUCH = re.compile(r"\\\r?\n[ \t]*")
 SCHALTER = re.compile(r"(?<![\w-])(--[A-Za-z][A-Za-z0-9-]*)")
 VERBOTEN = ("Shavy72/", "docs/agents/manifests")
 PFLICHT_TO_TICKETS = (
@@ -43,7 +47,23 @@ PFLICHT_TO_TICKETS = (
 
 
 def _texte() -> dict[Path, str]:
-    return {p: p.read_text(encoding="utf-8") for p in sorted(KETTE.rglob("*.md"))}
+    dateien = [*KETTE.rglob("*.md"), *KETTE.glob("skills/*/agents/openai.yaml")]
+    return {p: p.read_text(encoding="utf-8") for p in sorted(dateien)}
+
+
+def _befehle(text: str) -> list[re.Match[str]]:
+    """Alle ``to_spawn.py``-Aufrufe in ``text``; ein mit Backslash umbrochener Aufruf zählt als eine Zeile."""
+    return list(BEFEHL.finditer(UMBRUCH.sub(" ", text)))
+
+
+def _verbotene(text: str) -> list[tuple[int, str]]:
+    """(Zeilennummer, Wort) je fester App-Repo-Name in ``text`` — ohne Rücksicht auf Groß-/Kleinschreibung und Backslash."""
+    return [
+        (nr, wort)
+        for nr, zeile in enumerate(text.splitlines(), 1)
+        for wort in VERBOTEN
+        if wort.lower() in zeile.lower().replace("\\", "/")
+    ]
 
 
 @cache
@@ -63,7 +83,7 @@ def _aufrufe() -> list[tuple[str, str, str]]:
     return [
         (p.relative_to(SKILL).as_posix(), m.group(1), m.group(2))
         for p, text in _texte().items()
-        for m in BEFEHL.finditer(text)
+        for m in _befehle(text)
     ]
 
 
@@ -73,7 +93,9 @@ def test_to_tickets_skill_liegt_in_der_kette() -> None:
 
 def test_jeder_to_spawn_befehl_existiert_im_parser() -> None:
     aufrufe = _aufrufe()
-    assert any(b == "anhaengen" for _, b, _ in aufrufe), "kein to_spawn.py-Aufruf in kette/"
+    assert any(b == "anhaengen" for _, b, _ in aufrufe), (
+        "kein to_spawn.py-Aufruf in kette/"
+    )
     fehler = []
     for datei, befehl, rest in aufrufe:
         code, hilfe = _hilfe(befehl)
@@ -81,7 +103,9 @@ def test_jeder_to_spawn_befehl_existiert_im_parser() -> None:
             fehler.append(f"{datei}: to_spawn.py {befehl} — Befehl unbekannt")
             continue
         fehler += [
-            f"{datei}: to_spawn.py {befehl} {s} — Schalter unbekannt" for s in SCHALTER.findall(rest) if s not in hilfe
+            f"{datei}: to_spawn.py {befehl} {s} — Schalter unbekannt"
+            for s in SCHALTER.findall(rest)
+            if s not in hilfe
         ]
     assert not fehler, "\n".join(fehler)
 
@@ -90,9 +114,7 @@ def test_kein_fester_repo_name_im_ketten_text() -> None:
     fehler = [
         f"{p.relative_to(SKILL).as_posix()}:{nr}: {wort!r}"
         for p, text in _texte().items()
-        for nr, zeile in enumerate(text.splitlines(), 1)
-        for wort in VERBOTEN
-        if wort in zeile
+        for nr, wort in _verbotene(text)
     ]
     assert not fehler, "\n".join(fehler)
 
@@ -107,7 +129,9 @@ def test_to_tickets_kanten_nur_ueber_anhaengen() -> None:
     """Keine handgesetzten Kanten mehr: ``anhaengen`` ist die eine Tür (E2-2)."""
     text = TO_TICKETS.read_text(encoding="utf-8") if TO_TICKETS.is_file() else ""
     assert "dependencies/blocked_by" not in text
-    assert "statt des restlichen Texts" not in text, "alter Projekt-Vorrang (ersetzt) noch drin"
+    assert "statt des restlichen Texts" not in text, (
+        "alter Projekt-Vorrang (ersetzt) noch drin"
+    )
     assert text.index("<!-- pflicht:beschluss-protokoll -->") < text.index("## Process")
 
 
@@ -126,13 +150,41 @@ def test_pruefung_wird_rot_bei_unbekanntem_befehl() -> None:
         ("`python '$SKILL/to_spawn.py' erfunden`", "erfunden"),
         ("`python to_spawn.py Erfunden`", "Erfunden"),
         ('`python "C:\\skills\\to_spawn.py" "Erfunden"`', "Erfunden"),
+        # #156: Umbruch mit ``\``, Variable vor dem Befehl, ``python3 …``, ``${SKILL}``.
+        ("python to_spawn.py \\\nerfunden --x", "erfunden"),
+        ('python3 "${SKILL}/to_spawn.py" \\\n  "$X" \\\n  erfunden', "erfunden"),
+        ('`to_spawn.py "$X" erfunden`', "erfunden"),
+        ("`python3 ${SKILL}/to_spawn.py $SPEC erfunden`", "erfunden"),
+        ('`python3 "${SKILL}/to_spawn.py" erfunden`', "erfunden"),
     ],
 )
 def test_pruefung_erkennt_jede_schreibweise(zeile: str, befehl: str) -> None:
-    """#144: Anführungszeichen um Pfad oder Befehl und Großschreibung entgehen dem Muster nicht."""
-    m = BEFEHL.search(zeile)
-    assert m and m.group(1) == befehl, f"Muster übersieht {zeile!r}"
+    """#144/#156: Anführungszeichen, Großschreibung, Umbruch und Variablen entgehen dem Muster nicht."""
+    treffer = _befehle(zeile)
+    assert treffer and treffer[0].group(1) == befehl, f"Muster übersieht {zeile!r}"
     assert _hilfe(befehl)[0] != 0
+
+
+@pytest.mark.parametrize(
+    "zeile",
+    [
+        "siehe Shavy72/duoplus",
+        "siehe shavy72/duoplus",
+        "SHAVY72/x",
+        "docs\\agents\\manifests\\spec-1.json",
+        "Docs/Agents/Manifests",
+    ],
+)
+def test_pruefung_erkennt_festen_namen_jeder_schreibweise(zeile: str) -> None:
+    """#156: Groß-/Kleinschreibung und Backslash entgehen der Namens-Sperre nicht."""
+    assert _verbotene(zeile), f"Namens-Sperre übersieht {zeile!r}"
+
+
+def test_agents_yaml_wird_geprueft() -> None:
+    """#156: ``kette/skills/*/agents/openai.yaml`` gehört zum geprüften Ketten-Text."""
+    yamls = sorted(KETTE.glob("skills/*/agents/openai.yaml"))
+    assert yamls, "Selbstprobe: keine agents/openai.yaml unter kette/skills/"
+    assert set(yamls) <= set(_texte()), "agents/openai.yaml fehlt in der Prüfung"
 
 
 def test_jeder_schalter_im_to_tickets_text_existiert() -> None:
