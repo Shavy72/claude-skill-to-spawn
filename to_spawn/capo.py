@@ -1646,7 +1646,7 @@ def _checkpoint(
         return [f"#{n} FEHLER: Blocker nicht lesbar — Checkpoint ungeprüft"]
     if not all(isinstance(b, dict) and b.get("state") for b in blocker):
         return [f"#{n} FEHLER: Blocker-Format unbekannt — Checkpoint ungeprüft"]
-    if any(str(b["state"]).lower() != "closed" for b in blocker):
+    if any(not gh.blocker_erledigt(b) for b in blocker):  # zu oder staging:fertig (#1527)
         return []  # #451: noch blockiert — Checkpoint ruht, bis alle Blocker zu sind
     seit = vorschlag.zeit if vorschlag else frage_zeit
     if seit is None:

@@ -85,7 +85,8 @@ def zustand(
         return WARTET, "GitHub nicht lesbar"
     if str(issue.get("state", "")).lower() == "closed":
         return FERTIG, ""
-    if _offene_blocker(issue) > 0:
+    # GitHubs Zähler kennt staging:fertig nicht — liegt die Liste vor, entscheidet sie (#1527).
+    if _offene_blocker(issue) > 0 and (blocker is None or blocker):
         wer = ", ".join(f"#{b}" for b in blocker or [])
         return BLOCKIERT, f"wartet auf {wer}" if wer else f"{_offene_blocker(issue)} offene Vorgänger"
     if CHECKPOINT_LABEL in _labels(issue):
@@ -198,7 +199,7 @@ def echte_quellen(repo: Path, gh_repo: str) -> Quellen:
         daten = gh.blocked_by(gh_repo, str(n))
         if daten is None:
             return None
-        return sorted(int(d["number"]) for d in daten if str(d.get("state")) != "closed")
+        return gh.offene_blocker(daten)  # zu oder staging:fertig (#1527)
 
     return Quellen(stand=aufseher_stand.echte_quellen(repo, gh_repo), issue=issue, blocker=blocker)
 
