@@ -2354,11 +2354,17 @@ class Aufpasser:
 
     def _sperren(self) -> object | None:
         """Lauf-Sperre ``<zustand>/lock`` (:func:`to_spawn.sperre.halte`, nicht
-        blockierend). Belegt ⇒ None."""
+        blockierend). Belegt ⇒ None. Sperr-Fehler (z. B. ENOLCK) gelten wie vor #94
+        als belegt: lieber einen Takt auslassen als ungesperrt doppelt eingreifen."""
         if self.e.trocken:
             return object()
         stapel = ExitStack()
-        if not stapel.enter_context(_sperre.halte(self.e.zustand / "lock")):
+        try:
+            gehalten = stapel.enter_context(_sperre.halte(self.e.zustand / "lock"))
+        except OSError as fehler:
+            log.warning("Lauf-Sperre %s nicht nutzbar (%s) — gilt als belegt", self.e.zustand / "lock", fehler)
+            gehalten = False
+        if not gehalten:
             stapel.close()
             return None
         return stapel

@@ -1,7 +1,7 @@
 """Sperr-Modul (#94, L1 E2-10): eine Tür ``sperre.halte`` für fcntl, msvcrt und O_EXCL.
 
-Prüf-Test: fcntl/msvcrt gibt es im Skill-Code nur in ``to_spawn/sperre.py`` (plus die
-Ausnahmen aus dem Issue). Weg-Test: zwei echte Prozesse auf dieselbe Sperre — je
+Prüf-Test: fcntl/msvcrt gibt es im ganzen Repo (außer ``tests/``) nur in
+``to_spawn/sperre.py`` (plus die Ausnahmen aus dem Issue, je voller Pfad). Weg-Test: zwei echte Prozesse auf dieselbe Sperre — je
 Zweig (Standard, erzwungenes msvcrt, O_EXCL-Rückfall).
 """
 
@@ -17,8 +17,17 @@ import pytest
 
 WURZEL = Path(__file__).resolve().parents[1]
 PLATTFORM_SPERREN = frozenset({"fcntl", "msvcrt"})
-#: Eigene Sperren mit eigenem Zuschnitt, Umbau in Teil b (Issue #94).
-AUSNAHMEN = frozenset({"sperre", "capo", "leitstand", "vertrauen", "leitstand_fenster"})
+#: Voller relativer Pfad (nicht der Dateiname: ``kette/sperre.py`` wäre sonst durchgewinkt).
+#: Außer der Tür selbst: eigene Sperren mit eigenem Zuschnitt, Umbau in Teil b (Issue #94).
+AUSNAHMEN = frozenset(
+    {
+        "to_spawn/sperre.py",  # die Tür
+        "to_spawn/capo.py",  # capo.sperre, eigener Zuschnitt (Teil b)
+        "to_spawn/leitstand.py",  # Leitstand-Sperre (Teil b)
+        "to_spawn/vertrauen.py",  # Vertrauens-Datei-Sperre (Teil b)
+        "skripte/leitstand_fenster.py",  # eigenständiges Skript, Leitstand-Fenster (Teil b)
+    }
+)
 
 
 def _funde(quelle: str) -> list[tuple[int, str]]:
@@ -39,14 +48,59 @@ def test_selbstcheck_findet_import_und_aufruf() -> None:
     assert _funde(quelle) == [(1, "fcntl"), (2, "msvcrt"), (3, ".flock")]
 
 
-def test_fcntl_msvcrt_nur_in_sperre() -> None:
-    funde = [
-        f"{datei.relative_to(WURZEL).as_posix()}:{zeile} {was}"
-        for datei in sorted((WURZEL / "to_spawn").rglob("*.py"))
-        if datei.stem not in AUSNAHMEN
+def _rel(datei: Path, wurzel: Path) -> str:
+    return datei.relative_to(wurzel).as_posix()
+
+
+def _verstoesse(wurzel: Path) -> list[str]:
+    """Alle ``*.py`` des Repos außer ``tests/`` und versteckten Ordnern (``.git``, ``.venv``)."""
+    return [
+        f"{_rel(datei, wurzel)}:{zeile} {was}"
+        for datei in sorted(wurzel.rglob("*.py"))
+        if _rel(datei, wurzel) not in AUSNAHMEN
+        and _rel(datei, wurzel).split("/")[0] != "tests"
+        and not any(teil.startswith(".") for teil in datei.relative_to(wurzel).parts)
         for zeile, was in _funde(datei.read_text(encoding="utf-8"))
     ]
+
+
+def test_selbstcheck_scan_ganzes_repo_ausnahme_nur_voller_pfad(tmp_path: Path) -> None:
+    """Fix-Runde 1: auch skripte/, kette/, Wurzel; gleicher Name an anderem Ort zählt."""
+    for rel in ("to_spawn/sperre.py", "skripte/s.py", "kette/sperre.py", "wurzel.py", "tests/t.py"):
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text("import fcntl\n", encoding="utf-8")
+    assert _verstoesse(tmp_path) == ["kette/sperre.py:1 fcntl", "skripte/s.py:1 fcntl", "wurzel.py:1 fcntl"]
+
+
+def test_fcntl_msvcrt_nur_in_sperre() -> None:
+    funde = _verstoesse(WURZEL)
     assert not funde, "Sperren nur über to_spawn.sperre.halte:\n" + "\n".join(funde)
+
+
+def test_aufpasser_sperrfehler_gilt_als_belegt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fix-Runde 1: flock-Fehler außer „belegt“ (z. B. ENOLCK) — Aufpasser endet still mit 0
+    wie vor #94, statt abzustürzen."""
+    import errno
+    import types
+
+    from to_spawn import aufpasser, sperre
+
+    class _Kaputt:
+        LOCK_EX, LOCK_NB, LOCK_UN = 2, 4, 8
+
+        def flock(self, fd: int, modus: int) -> None:
+            raise OSError(errno.ENOLCK, "No locks available")
+
+    monkeypatch.setattr(sperre, "_fcntl", _Kaputt())
+    a = aufpasser.Aufpasser.__new__(aufpasser.Aufpasser)
+    a.e = types.SimpleNamespace(trocken=False, zustand=tmp_path / "zustand")
+
+    def _nie() -> None:
+        raise AssertionError("Lauf darf ohne Sperre nicht starten")
+
+    a._lauf = _nie  # type: ignore[method-assign]
+    a._stand_schreiben = _nie  # type: ignore[method-assign]
+    assert a.lauf() == 0
 
 
 # --- Zwei Prozesse ---------------------------------------------------------------
