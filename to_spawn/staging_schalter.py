@@ -8,7 +8,8 @@ keinen Parameter dafür (Live-Freigabe gibt nur David).
 Welcher Schalter zur Spec gehört, steht im Spec-Text im Abschnitt
 ``## Hauptschalter``, Zeile „Name des Hauptschalters“ (Vorlage
 ``.claude/skills/to-spec/SKILL.md`` im App-Repo). Geschaltet wird über das
-Schalter-Skript des App-Repos (``scripts/schalter.py``, Ticket #560).
+Schalter-Skript des App-Repos (Konfig ``staging.schalter``, Vorgabe
+``scripts/schalter.py``, Ticket #560).
 
 Schnittstelle für capo: :func:`schalte_an` — liefert Zeilen für die Aufseher-Ausgabe
 und ob der Fall erledigt ist (dann merkt capo sich das und fragt nie wieder).
@@ -25,14 +26,14 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import gh
+from . import config, gh
 
 log = logging.getLogger(__name__)
 
 #: Einziges Ziel dieses Bausteins. Live schaltet nur David von Hand.
 ZIEL = "staging"
-#: Schalter-Skript im App-Repo (Ticket #560).
-SKRIPT = "scripts/schalter.py"
+#: Vorgabe des Schalter-Skripts im App-Repo (Ticket #560); es gilt ``staging.schalter`` (L1 #46).
+SKRIPT: str = config.DEFAULTS["staging"]["schalter"]
 #: Wer im Schalter-Log als Umschalter steht.
 WER = "to-spawn"
 #: Obergrenze für einen Schalt-Aufruf (ssh/docker exec), danach FEHLER.
@@ -95,12 +96,19 @@ def _spec_text(gh_repo: str, spec: int) -> str | None:
     return str(daten.get("body") or "")
 
 
-def befehl(name: str, spec: int) -> list[str]:
+def _skript(repo: Path) -> str:
+    """Schalter-Skript relativ zur Repo-Wurzel: ``staging.schalter``, leer/kein Text = :data:`SKRIPT`."""
+    gruppe = config.lade(repo).get("staging")
+    wert = gruppe.get("schalter") if isinstance(gruppe, dict) else None
+    return wert.strip() if isinstance(wert, str) and wert.strip() else SKRIPT
+
+
+def befehl(name: str, spec: int, skript: str = SKRIPT) -> list[str]:
     """Kommandozeile für das Schalter-Skript — Ziel immer :data:`ZIEL`."""
     grund = f"Spec #{spec} fertig — letztes Ticket grün, Staging automatisch AN (to-spawn #563)"
     return [
         sys.executable,
-        SKRIPT,
+        skript,
         "an",
         name,
         "--grund",
@@ -137,15 +145,16 @@ def schalte_an(repo: Path, gh_repo: str, spec: int, dry_run: bool) -> Ergebnis:
         meldung = f"Staging-Schalter: Spec #{spec} hat kein Hauptschalter-Feld — nichts geschaltet (kein Hauptschalter)."
         log.info("%s", meldung)
         return Ergebnis([meldung], True)
-    if not (repo / SKRIPT).is_file():
-        log.warning("Staging-Schalter: %s fehlt in %s", SKRIPT, repo)
+    skript = _skript(repo)
+    if not (repo / skript).is_file():
+        log.warning("Staging-Schalter: %s fehlt in %s", skript, repo)
         return Ergebnis(
             [
-                f"FEHLER: Staging-Schalter {name} — {SKRIPT} fehlt im Repo (Stand veraltet?), nächster Tick versucht es wieder."
+                f"FEHLER: Staging-Schalter {name} — {skript} fehlt im Repo (Stand veraltet?), nächster Tick versucht es wieder."
             ],
             False,
         )
-    argv = befehl(name, spec)
+    argv = befehl(name, spec, skript)
     if dry_run:
         return Ergebnis(
             [f"[Probe] Staging-Schalter {name} AN: {shlex.join(argv[1:])}"],
