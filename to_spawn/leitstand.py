@@ -18,6 +18,7 @@ Halter-Einstieg (Tests, Deploy-Dienst): ``python -m to_spawn.leitstand halte <na
 from __future__ import annotations
 
 import argparse
+import errno
 import json
 import logging
 import os
@@ -120,11 +121,12 @@ def _probe_frei(pfad: Path) -> bool | None:
         os.close(os.open(pfad, os.O_RDWR))
         with _sperre.halte(pfad) as gehalten:
             return gehalten
-    except FileNotFoundError:
-        return None
-    except PermissionError:
+    except OSError as fehler:
+        # Nach errno, nicht nach Klasse: halte() verpackt Fehler als SperreNichtOeffenbar (#195).
+        if fehler.errno == errno.ENOENT:
+            return None
         # Nur Windows: Datei wird gerade gelöscht. Linux: fehlende Rechte — nie still „frei“.
-        if sys.platform == "win32":
+        if fehler.errno in (errno.EACCES, errno.EPERM) and sys.platform == "win32":
             return None
         raise
 
@@ -366,7 +368,9 @@ def _zustand_sperre(warte_s: float = 60.0) -> Iterator[None]:
     pfad = _lege_sperrdatei_an(_sperr_ordner() / f"{ZUSTAND_SPERRE}.lock")
     with _sperre.halte(pfad, warten=warte_s) as gehalten:
         if not gehalten:
-            raise SperreBelegt(f"interne Sperre {ZUSTAND_SPERRE} nach {warte_s} s nicht frei")
+            raise SperreBelegt(
+                f"interne Sperre {ZUSTAND_SPERRE} nach {warte_s} s nicht frei"
+            )
         yield
 
 

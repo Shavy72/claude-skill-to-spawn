@@ -45,6 +45,18 @@ was zum Weiterbauen nötig ist.
 
 ## 3. Stand
 
+- **Nachtrag (main 989ddbf):** Gemergt: Pull-Request 187 (Issue 164 zu: Erlaubnisliste der Sofort-Stufe in
+  `to_spawn/pruef/sofort.py`; Folge-Issue 204 offen), 198 (kleiner Schnitt aus Issue 136: Temp-Ordner der
+  Testläufe weg von der RAM-Platte; Issue 136 bleibt offen: Hausmeister räumt Temp-Reste geschlossener
+  Tickets), 199 (Teil von Issue 149: Fortsetzen-Nachweis im Aufpasser ohne Wackler unter Last; Issue 149
+  bleibt offen: Befunde 1–4 und `PYTEST_ADDOPTS` in `to_spawn/pruef/`), 202 (Issue 191 Teil 1: Startstelle
+  meldet „Stand unbekannt“ nach 3 Versuchen mit Exit 2, Zeitgrenze für gh, Prüf-Test erkennt den tmux-Weg;
+  Issue 191 bleibt offen: Befunde 4–6), 205 (Issue 195 zu: `_probe_frei` im Leitstand wertet die
+  Fehlernummer statt der Fehlerklasse aus).
+  Offen / in Arbeit: Pull-Request 194 (bash-Tür Windows, Fix-Runde 1 in Prüfung), Issue 101 (nur betroffene
+  Tests plus Rückfall-Regeln R1–R3, im Bau), Pull-Requests 200 und 201 (Windows-Reste, baut der PC).
+  Als Nächstes: 184, `pruefen.doku_pfade`, Rest 149, 204, 104, danach 169, 196, 177.
+
 - **2026-11-22 00:05 (Server-Uhr, main ffddfd0):** Gemergt: Pull-Request 185 (main aac4c1f, Issue 165 zu:
   nicht öffenbare Sperr-Datei ist ein Fehler statt „belegt“; Folge-Issue 195), 192 (main cf4baca, Issue 188
   bleibt offen: `coproc` und Windows-Präfix fehlen noch), 193 (main ffddfd0, Issue 97 zu: eine Start-Stelle
