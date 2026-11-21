@@ -52,7 +52,7 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from . import bau_log, hooks, melder, respawn, respawn_aufseher, sessions_datei, starter
+from . import bau_log, hooks, melder, respawn, respawn_aufseher, sessions_datei, starter, startklar
 
 log = logging.getLogger("to_spawn.waechter_lauf")
 
@@ -96,6 +96,11 @@ def zahl_aus_umgebung(name: str, vorgabe: float) -> float:
     except ValueError:
         log.warning("%s=%r ist keine Zahl — es gilt %s.", name, roh, vorgabe)
         return vorgabe
+
+
+def capo_aufruf(spec: int | str) -> str:
+    """capo-Tick für den Weiter-Text des Aufsehers: Skill-Skript, keine Weiterleitung im Repo nötig."""
+    return f"python {startklar.skill_pfad()}/skripte/capo.py {spec}"
 
 
 def handoff_grenze(modell: str, heim: Path | None = None) -> int:
@@ -1065,7 +1070,7 @@ def fahre(
                 spec,
                 f"Weiter als Bau-Aufseher Spec #{spec}: Das Nutzungs-Limit von {haupt} ist vorbei, "
                 f"Modell-Wechsel {modell} → {haupt}. Nächster Tick wie gehabt "
-                f"(python scripts/capo.py {spec}).",
+                f"({capo_aufruf(spec)}).",
             )
             modell = haupt
             rueckkehr_ab = None
@@ -1112,7 +1117,7 @@ def fahre(
                 spec,
                 f"Weiter als Bau-Aufseher Spec #{spec}: Das Nutzungs-Limit ist seit "
                 f"{ziel.astimezone():%H:%M} wieder offen, die Pause ist vorbei. "
-                f"Nächster Tick wie gehabt (python scripts/capo.py {spec}); "
+                f"Nächster Tick wie gehabt ({capo_aufruf(spec)}); "
                 f"docs/agents/bau_log/{spec}.jsonl beim nächsten Handoff-Commit mitnehmen.",
             )
             continue
@@ -1120,7 +1125,7 @@ def fahre(
         _melde_wechsel(repo, spec, sid, modell, ausweich, grund)
         weiter = (
             f"Weiter als Bau-Aufseher Spec #{spec}: Modell-Wechsel {modell} → {ausweich} wegen Nutzungs-Limit. "
-            f"Nächster Tick wie gehabt (python scripts/capo.py {spec}); "
+            f"Nächster Tick wie gehabt ({capo_aufruf(spec)}); "
             f"docs/agents/bau_log/{spec}.jsonl beim nächsten Handoff-Commit mitnehmen."
         )
         rueckkehr_ab = _rueckkehr_ab(aufsicht.limit_eintrag, puffer)

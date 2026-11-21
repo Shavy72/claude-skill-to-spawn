@@ -3,7 +3,7 @@
 Die Terminal-Arbeit machen die Skripte — hier wird nur delegiert. Windows:
 ``spawn_local.ps1`` (Windows Terminal) und ``spawn_srv.ps1`` (SSH zum Bau-Server).
 Linux/macOS (#257, kein ``pwsh`` nötig): ``skripte/spawn_srv.sh`` (tmux) für ``local``,
-``ssh <ssh_ziel> bash scripts/spawn_srv.sh`` für ``srv``.
+``ssh <ssh_ziel> … spawn_srv.sh`` für ``srv`` (Weiterleitung im Repo, sonst Skill-Skript).
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ import time
 from pathlib import Path
 from typing import Any, Sequence, TextIO
 
-from . import capo, manifest, probesitz, stand, starter
+from . import capo, manifest, probesitz, stand, starter, umzug
 
 log = logging.getLogger("to_spawn.spawn")
 
@@ -98,8 +98,7 @@ def _befehl_unix(
             "(Repo-Ordner auf dem Bau-Server) — oder lokal starten (Ziel 1)."
         )
     ssh_ziel = str(konfig.get("ssh_ziel") or "bau-server")
-    fern = f"cd {fern_ordner(server_repo)} && bash scripts/spawn_srv.sh {shlex.join(argumente)}"
-    return ["ssh", ssh_ziel, fern]
+    return ["ssh", ssh_ziel, umzug.fern_skill_befehl(server_repo, "bash", "spawn_srv.sh", argumente)]
 
 
 def spawn(

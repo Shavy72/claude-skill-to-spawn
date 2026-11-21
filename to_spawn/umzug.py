@@ -130,6 +130,26 @@ def _cd(ordner: str) -> str:
     return f"cd {shlex.quote(ordner)}"
 
 
+#: Skill-Ordner auf dem Bau-Server (wie ``neustart --ziel srv`` in ``spawn.py``).
+FERN_SKILL = "~/.claude/skills/to-spawn"
+
+
+def fern_skill_befehl(ordner: str, aufruf: str, skript: str, argumente: Sequence[str]) -> str:
+    """Fern-Befehl: Skill-Skript ``skripte/<skript>`` für das Server-Repo ``ordner`` (Etappe 1, P4a).
+
+    Hat das Repo die Weiterleitung ``scripts/<skript>`` (DuoPlus), läuft der Befehl unverändert über
+    sie. Sonst ruft er direkt ``~/.claude/skills/to-spawn/skripte/<skript>`` mit ``TO_SPAWN_REPO`` =
+    Repo auf, wie ``skripte/spawn_srv.sh`` die Skill-Skripte startet. ``aufruf`` = ``bash``/``python3``.
+    """
+    ort = _cd(ordner)[3:]
+    weiter = f"scripts/{skript}"
+    args = shlex.join(argumente)
+    return (
+        f"if [ -f {ort}/{weiter} ]; then cd {ort} && {aufruf} {weiter} {args}; "
+        f'else cd {ort} && TO_SPAWN_REPO="$PWD" {aufruf} {FERN_SKILL}/skripte/{skript} {args}; fi'
+    )
+
+
 def _ssh(ziel: str, befehl: str, timeout: float) -> subprocess.CompletedProcess[str] | None:
     """Ein Befehl per SSH; ``None`` bei Zeitüberschreitung oder fehlendem ``ssh``.
 
@@ -163,8 +183,8 @@ def spawn_befehl(
     umzug_ref: str | None = None,
     nur_wache: bool = False,
 ) -> str:
-    """Server-Befehl: ``spawn_srv.sh`` im Server-Repo."""
-    teile = ["bash", "scripts/spawn_srv.sh", spec]
+    """Server-Befehl: ``spawn_srv.sh`` für das Server-Repo (Weiterleitung, sonst Skill-Skript)."""
+    teile = [spec]
     if nur_wache:
         teile += ["--nur-wache", "--ohne-regularien"]
     else:
@@ -173,7 +193,7 @@ def spawn_befehl(
             teile += ["--umzug", umzug_ref]
         else:
             teile.append("--ohne-regularien")
-    return f"{_cd(ordner)} && " + " ".join(shlex.quote(t) for t in teile)
+    return fern_skill_befehl(ordner, "bash", "spawn_srv.sh", teile)
 
 
 def server_starten(
@@ -267,7 +287,7 @@ def server_laeuft(spec: str, ticket: str | None, *, ziel: str, ordner: str) -> b
         return True
     stand = _ssh(
         ziel,
-        f"{_cd(ordner)} && python3 scripts/sessions_stand.py {shlex.quote(spec)}",
+        fern_skill_befehl(ordner, "python3", "sessions_stand.py", [spec]),
         SSH_KURZ_TIMEOUT,
     )
     if stand is None or stand.returncode != 0:
