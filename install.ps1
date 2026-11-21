@@ -43,16 +43,22 @@ $block = @'
 
 # --- to-spawn (github.com/Shavy72/claude-skill-to-spawn): läuft in jedem Repo mit ./scripts/bau.py ---
 function bau {
+    # Rückfall ohne Repo-Weiterleitung: Skill-Skript direkt (L1 P4b).
+    if (-not (Test-Path "./scripts/bau.py") -and (Test-Path "$env:USERPROFILE\.claude\skills\to-spawn\skripte\bau.py")) { python "$env:USERPROFILE\.claude\skills\to-spawn\skripte\bau.py" @args; return }
     if (-not (Test-Path "./scripts/bau.py")) { Write-Error "bau: kein ./scripts/bau.py im aktuellen Ordner"; return }
     if ($args.Count -eq 0) { Write-Host "Usage: bau <TicketNr> [--dry-run] [--model <m>] [--print-prompt] [--sofort] [--takt <s>]"; return }
     python "./scripts/bau.py" @args
 }
 function wache {
+    # Rückfall ohne Repo-Weiterleitung: Skill-Skript direkt (L1 P4b).
+    if (-not (Test-Path "./scripts/wache.py") -and (Test-Path "$env:USERPROFILE\.claude\skills\to-spawn\skripte\wache.py")) { python "$env:USERPROFILE\.claude\skills\to-spawn\skripte\wache.py" @args; return }
     if (-not (Test-Path "./scripts/wache.py")) { Write-Error "wache: kein ./scripts/wache.py im aktuellen Ordner"; return }
     if ($args.Count -eq 0) { Write-Host "Usage: wache <SpecNr> (Alias von aufseher) [--dry-run] [--print-prompt] [--model <m>] [--takt <s>]"; return }
     python "./scripts/wache.py" @args
 }
 function sessions {
+    # Rückfall ohne Repo-Weiterleitung: Skill-Skript direkt (L1 P4b).
+    if (-not (Test-Path "./scripts/sessions_stand.py") -and (Test-Path "$env:USERPROFILE\.claude\skills\to-spawn\skripte\sessions_stand.py")) { $env:PYTHONIOENCODING = "utf-8"; python "$env:USERPROFILE\.claude\skills\to-spawn\skripte\sessions_stand.py" @args; return }
     if (-not (Test-Path "./scripts/sessions_stand.py")) { Write-Error "sessions: kein ./scripts/sessions_stand.py im aktuellen Ordner"; return }
     $env:PYTHONIOENCODING = "utf-8"; python "./scripts/sessions_stand.py" @args
 }
@@ -74,6 +80,8 @@ if ($profil -match "function aufseher\b") {
 
 # --- to-spawn Aufseher: aufseher <S> startet den Aufseher der Spec (wache <S> = alter Alias) ---
 function aufseher {
+    # Rückfall ohne Repo-Weiterleitung: Skill-Skript direkt (L1 P4b).
+    if (-not (Test-Path "./scripts/wache.py") -and (Test-Path "$env:USERPROFILE\.claude\skills\to-spawn\skripte\wache.py")) { python "$env:USERPROFILE\.claude\skills\to-spawn\skripte\wache.py" @args; return }
     if (-not (Test-Path "./scripts/wache.py")) { Write-Error "aufseher: kein ./scripts/wache.py im aktuellen Ordner"; return }
     if ($args.Count -eq 0) { Write-Host "Usage: aufseher <SpecNr> [--dry-run] [--print-prompt] [--model <m>] [--takt <s>]"; return }
     python "./scripts/wache.py" @args
@@ -112,6 +120,10 @@ if ($Repo) {
         Write-Host "kopiert: $zielDatei"
     }
     $man = Join-Path (Resolve-Path $Repo) "docs\agents\manifests"
+    # Manifest-Ordner aus der Repo-Konfig (pfade.manifeste, L1 P4b); scheitert der Aufruf, bleibt der Wert oben.
+    $manPy = 'import sys; sys.path.insert(0, sys.argv[1]); from pathlib import Path; from to_spawn import config; print(config.pfad(config.lade(Path(sys.argv[2])), sys.argv[3]))'
+    $manOrdner = python -c $manPy $ziel (Resolve-Path $Repo).Path manifeste
+    if ($LASTEXITCODE -eq 0 -and $manOrdner) { $man = "$manOrdner".Trim() }
     New-Item -ItemType Directory -Force $man | Out-Null
     $def = Join-Path $man "_default.json"
     if (-not (Test-Path $def)) { Copy-Item (Join-Path $hier "repo-scripts\_default.json") $def; Write-Host "kopiert: $def" }

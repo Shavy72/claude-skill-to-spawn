@@ -58,11 +58,13 @@ done
 # --- 4. Repo-Hälfte (optional): nur fehlende Dateien --------------------------
 if [ -n "$REPO" ]; then
   REPO="$(cd "$REPO" && pwd)"
-  mkdir -p "$REPO/scripts" "$REPO/docs/agents/manifests"
+  # Manifest-Ordner aus der Repo-Konfig (pfade.manifeste, L1 P4b), sonst die Vorgabe aus config.py.
+  MANIFESTE="$(python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); from pathlib import Path; from to_spawn import config; print(config.pfad(config.lade(Path(sys.argv[2])), "manifeste"))' "$ZIEL" "$REPO")"
+  mkdir -p "$REPO/scripts" "$MANIFESTE"
   for datei in "$HIER"/repo-scripts/*; do
     name="$(basename "$datei")"
     if [ "$name" = "_default.json" ]; then
-      ziel_datei="$REPO/docs/agents/manifests/_default.json"
+      ziel_datei="$MANIFESTE/_default.json"
     else
       ziel_datei="$REPO/scripts/$name"
     fi

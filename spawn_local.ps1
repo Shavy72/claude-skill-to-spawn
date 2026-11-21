@@ -41,7 +41,14 @@ if ($rc -ne 0) { Write-Host "Regularien-Prüfer brach ab (Exit $rc) — nichts g
 
 $repo = (Get-Location).Path
 $manifest = Join-Path $repo "docs/agents/manifests/spec-$Spec.json"
-if (-not (Test-Path "./scripts/bau.py")) { throw "Kein ./scripts/bau.py — im Repo-Wurzelordner ausführen." }
+# Manifest-Ordner aus der Repo-Konfig (pfade.manifeste, L1 P4b); scheitert der Aufruf, bleibt der Wert oben.
+$ErrorActionPreference = "Continue"
+$manOrdner = & $py -c 'import sys; sys.path.insert(0, sys.argv[1]); from pathlib import Path; from to_spawn import config; print(config.pfad(config.lade(Path(sys.argv[2])), sys.argv[3]))' $PSScriptRoot $repo manifeste
+$manRc = $LASTEXITCODE
+$ErrorActionPreference = $eapVorher
+if ($manRc -eq 0 -and $manOrdner) { $manifest = Join-Path ("$manOrdner".Trim()) "spec-$Spec.json" }
+# Ohne Repo-Weiterleitung startet bau/wache das Skill-Skript (L1 P4b, Rückfall in den Profil-Funktionen).
+if (-not (Test-Path "./scripts/bau.py") -and -not (Test-Path "$PSScriptRoot/skripte/bau.py")) { throw "Kein ./scripts/bau.py — im Repo-Wurzelordner ausführen." }
 if (-not (Get-Command wt -ErrorAction SilentlyContinue)) { throw "wt (Windows Terminal) nicht gefunden." }
 
 if ($Tickets.Count -eq 0) {
@@ -96,4 +103,5 @@ if ($DryRun) { Write-Host "wt $argLine"; exit 0 }
 Start-Process wt -ArgumentList $argLine
 Start-Sleep -Seconds 10
 $env:PYTHONIOENCODING = "utf-8"
+if (-not (Test-Path "./scripts/sessions_stand.py")) { python "$PSScriptRoot/skripte/sessions_stand.py" $Spec; exit 0 }
 python ./scripts/sessions_stand.py $Spec
