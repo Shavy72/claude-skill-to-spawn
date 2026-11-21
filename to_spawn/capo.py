@@ -971,7 +971,7 @@ def _zeilen_aus(text: str, quelle: str) -> list[dict[str, Any]]:
 
 def log_vom_ref(repo: Path, ref: str, ticket: int) -> list[dict[str, Any]]:
     """Bau-Log-Zeilen eines Tickets, wie sie auf ``ref`` liegen."""
-    pfad = f"{bau_log.LOG_ORDNER.as_posix()}/{ticket}.jsonl"
+    pfad = bau_log.log_im_repo(repo, ticket)
     code, text = _git(repo, "show", f"{ref}:{pfad}")
     if code != 0:
         return []

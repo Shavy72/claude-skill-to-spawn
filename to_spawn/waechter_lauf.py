@@ -1118,7 +1118,7 @@ def fahre(
                 f"Weiter als Bau-Aufseher Spec #{spec}: Das Nutzungs-Limit ist seit "
                 f"{ziel.astimezone():%H:%M} wieder offen, die Pause ist vorbei. "
                 f"Nächster Tick wie gehabt ({capo_aufruf(spec)}); "
-                f"docs/agents/bau_log/{spec}.jsonl beim nächsten Handoff-Commit mitnehmen.",
+                f"{bau_log.log_im_repo(repo, spec)} beim nächsten Handoff-Commit mitnehmen.",
             )
             continue
 
@@ -1126,7 +1126,7 @@ def fahre(
         weiter = (
             f"Weiter als Bau-Aufseher Spec #{spec}: Modell-Wechsel {modell} → {ausweich} wegen Nutzungs-Limit. "
             f"Nächster Tick wie gehabt ({capo_aufruf(spec)}); "
-            f"docs/agents/bau_log/{spec}.jsonl beim nächsten Handoff-Commit mitnehmen."
+            f"{bau_log.log_im_repo(repo, spec)} beim nächsten Handoff-Commit mitnehmen."
         )
         rueckkehr_ab = _rueckkehr_ab(aufsicht.limit_eintrag, puffer)
         modell = ausweich

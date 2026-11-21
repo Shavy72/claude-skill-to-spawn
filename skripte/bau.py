@@ -43,6 +43,7 @@ _SKILL = str(Path(__file__).resolve().parent.parent)
 if _SKILL not in sys.path:
     sys.path.insert(0, _SKILL)
 from to_spawn import anleitung, capo, config, context_mode, gh, nest, probesitz, sessions_datei, sitzung_env, speicher, starter, terminal_maus, umzug, vertrauen  # noqa: E402
+from to_spawn.manifest import manifest_ordner  # noqa: E402
 from to_spawn.waechter_lauf import transkript_ordner
 
 # Windows-Konsole ist cp1252 — Umlaute/Pfeile im Prompt brauchen UTF-8.
@@ -57,8 +58,7 @@ _ECHTER_LAUF = False
 #: Repo, in dem gearbeitet wird: ``TO_SPAWN_REPO`` (setzt die Weiterleitung im Repo), sonst
 #: Git-Wurzel des aktuellen Ordners — nie der Ort dieses Skripts (liegt im Skill, #205).
 REPO = Path(os.environ["TO_SPAWN_REPO"]).resolve() if os.environ.get("TO_SPAWN_REPO") else config.repo_wurzel()
-# ponytail: nach Merge von P3a → manifest.manifest_ordner(REPO)
-MANIFEST_DIR = config.pfad(config.Konfig(config.lade(REPO), REPO / config.KONFIG_PFAD), "manifeste")
+MANIFEST_DIR = manifest_ordner(REPO)
 HOME = Path.home()
 CLAUDE_DIR = HOME / ".claude"
 

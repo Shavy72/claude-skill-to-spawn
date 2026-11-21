@@ -34,6 +34,7 @@ _SKILL = str(Path(__file__).resolve().parent.parent)
 if _SKILL not in sys.path:
     sys.path.insert(0, _SKILL)
 from to_spawn import config, gh  # noqa: E402
+from to_spawn.manifest import manifest_pfad  # noqa: E402
 
 log = logging.getLogger("thermo_lauf")
 
@@ -90,8 +91,9 @@ def befunde_ordner(repo: Path, spec: int) -> Path:
 def repo_ordner(repo: Path, name: str) -> Path:
     """Ordner ``pfade.<name>`` aus der Repo-Konfig, genau unter dem übergebenen ``repo`` (L1 #46).
 
-    ponytail: Umhüllen mit ``Konfig`` hält den Pfad unter ``repo`` (nicht aufgelöst); nach Merge
-    von P3a für ``manifeste``/``bau_log`` → ``manifest.manifest_ordner``/``bau_log.log_ordner``.
+    Für ``manifeste``/``bau_log`` gelten ``manifest.manifest_ordner``/``bau_log.log_ordner``;
+    hier bleibt nur ``agenten``. ponytail: dritte Kopie der Konfig-Hülle, Upgrade: ``config.pfad``
+    mit ``repo``-Parameter, sobald ein weiterer Aufrufer sie braucht.
     """
     return config.pfad(config.Konfig(config.lade(repo), repo / config.KONFIG_PFAD), name)
 
@@ -130,7 +132,7 @@ def ist_code(pfad: str) -> bool:
 
 
 def lade_manifest(repo: Path, spec: int) -> tuple[Path, dict[str, Any]]:
-    pfad = repo_ordner(repo, "manifeste") / f"spec-{spec}.json"
+    pfad = manifest_pfad(repo, spec)
     try:
         tickets = json.loads(pfad.read_text(encoding="utf-8")).get("tickets") or {}
     except (OSError, ValueError, AttributeError) as fehler:
