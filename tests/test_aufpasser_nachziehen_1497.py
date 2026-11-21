@@ -6,9 +6,13 @@ Weg-Test mit echten Git-Repos (bare origin + Klon), ohne Attrappen.
 from __future__ import annotations
 
 import json
+import logging
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
 
 SKILL = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SKILL))
@@ -87,3 +91,102 @@ def test_ohne_schluessel_in_origin_nichts_angefasst(tmp_path: Path) -> None:
 
 def test_kein_git_ordner(tmp_path: Path) -> None:
     assert aufpasser.klon_nachziehen(tmp_path) == "aus"
+
+
+# --- Fix-Runde 1: nur saubere Klone auf dem Hauptzweig anfassen --------------
+
+
+def _fetch_lief(klon: Path) -> bool:
+    return (klon / ".git" / "FETCH_HEAD").exists()
+
+
+def test_getrackte_aenderung_bleibt_kopf_und_datei_unveraendert(tmp_path: Path) -> None:
+    _, klon = _aufbau(tmp_path)
+    datei = klon / ".to-spawn" / "config.json"
+    inhalt = datei.read_text(encoding="utf-8") + "\n"
+    datei.write_text(inhalt, encoding="utf-8")  # versioniert, nicht committet
+    vorher = _git(klon, "rev-parse", "HEAD")
+    assert aufpasser.klon_nachziehen(klon).startswith("übersprungen")
+    assert _git(klon, "rev-parse", "HEAD") == vorher
+    assert datei.read_text(encoding="utf-8") == inhalt
+    assert not (klon / "neu.txt").exists()
+    assert not _fetch_lief(klon)
+
+
+def test_index_lock_kein_git_schreibbefehl(tmp_path: Path) -> None:
+    _, klon = _aufbau(tmp_path)
+    sperre = klon / ".git" / "index.lock"
+    sperre.write_text("", encoding="utf-8")
+    vorher = _git(klon, "rev-parse", "HEAD")
+    assert aufpasser.klon_nachziehen(klon).startswith("übersprungen")
+    assert _git(klon, "rev-parse", "HEAD") == vorher
+    assert sperre.is_file()
+    assert not _fetch_lief(klon)
+
+
+def test_offener_merge_wird_uebersprungen(tmp_path: Path) -> None:
+    _, klon = _aufbau(tmp_path)
+    _git(klon, "checkout", "-q", "-b", "seite")
+    _commit(klon, "seite.txt", "seite")
+    _git(klon, "checkout", "-q", "master")
+    _git(klon, "merge", "-q", "--no-ff", "--no-commit", "seite")
+    vorher = _git(klon, "rev-parse", "HEAD")
+    assert aufpasser.klon_nachziehen(klon).startswith("übersprungen")
+    assert _git(klon, "rev-parse", "HEAD") == vorher
+    assert (klon / ".git" / "MERGE_HEAD").is_file()
+    assert not _fetch_lief(klon)
+
+
+def test_abgehaengter_kopf_wird_uebersprungen(tmp_path: Path) -> None:
+    _, klon = _aufbau(tmp_path)
+    _git(klon, "checkout", "-q", "--detach")
+    vorher = _git(klon, "rev-parse", "HEAD")
+    assert aufpasser.klon_nachziehen(klon).startswith("übersprungen")
+    assert _git(klon, "rev-parse", "HEAD") == vorher
+
+
+def test_uebersprungener_ordner_holt_nicht(tmp_path: Path) -> None:
+    _, klon = _aufbau(tmp_path)
+    _git(klon, "checkout", "-q", "-b", "ticket/1-x")
+    assert aufpasser.klon_nachziehen(klon).startswith("übersprungen")
+    assert not _fetch_lief(klon)
+
+
+def test_sauberer_hauptzweig_vorgespult_danach_gerufen(tmp_path: Path) -> None:
+    _, klon = _aufbau(tmp_path)
+    assert aufpasser.klon_nachziehen(klon) == "nachgezogen"
+    assert _git(klon, "rev-parse", "HEAD") == _git(klon, "rev-parse", "origin/master")
+    assert (klon / "danach.txt").is_file()
+    assert aufpasser.klon_nachziehen(klon) == "aktuell"
+
+
+def _aufpasser_attrappe(pfade: list[Path]) -> SimpleNamespace:
+    """Nur tmux (externer Dienst) ist ersetzt; Stand und git sind echt."""
+    return SimpleNamespace(
+        tmux=lambda *_a: "\n".join(str(p) for p in pfade),
+        e=SimpleNamespace(trocken=False),
+        stand=aufpasser.Stand(),
+        jetzt=1000.0,
+    )
+
+
+def test_takt_je_repo_einmal_und_grund_nur_bei_wechsel(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    _, klon = _aufbau(tmp_path)
+    (klon / "unter").mkdir()
+    datei = klon / ".to-spawn" / "config.json"
+    datei.write_text(datei.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+    selbst = _aufpasser_attrappe([klon, klon / "unter"])
+    with caplog.at_level(logging.INFO, logger="aufpasser"):
+        aufpasser.Aufpasser.klone_nachziehen(selbst)
+        aufpasser.Aufpasser.klone_nachziehen(selbst)
+    zeilen = [
+        r.getMessage() for r in caplog.records if "übersprungen" in r.getMessage()
+    ]
+    assert len(zeilen) == 1, zeilen
+    # Grund weg (sauber) → nachgezogen, Merk-Eintrag gelöscht
+    _git(klon, "checkout", "-q", "--", ".to-spawn/config.json")
+    aufpasser.Aufpasser.klone_nachziehen(selbst)
+    assert (klon / "neu.txt").is_file()
+    assert not any(k.startswith("nachziehen:") for k in selbst.stand.meldungen)

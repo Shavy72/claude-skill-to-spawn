@@ -731,7 +731,9 @@ def session_finden(
     return None
 
 
-def _git(cwd: Path, *args: str, env: dict[str, str] | None = None) -> str:
+def _git(
+    cwd: Path, *args: str, env: dict[str, str] | None = None, zeitgrenze: int = 300
+) -> str:
     try:
         ergebnis = subprocess.run(
             ["git", *args],
@@ -742,10 +744,12 @@ def _git(cwd: Path, *args: str, env: dict[str, str] | None = None) -> str:
             encoding="utf-8",
             errors="replace",
             check=False,
-            timeout=300,
+            timeout=zeitgrenze,
         )
     except subprocess.TimeoutExpired:
-        raise RuntimeError(f"git {' '.join(args[:3])}: Zeitgrenze 300 s") from None
+        raise RuntimeError(
+            f"git {' '.join(args[:3])}: Zeitgrenze {zeitgrenze} s"
+        ) from None
     except FileNotFoundError as fehler:
         raise RuntimeError(f"git {' '.join(args[:3])}: {fehler}") from None
     if ergebnis.returncode != 0:
@@ -753,8 +757,61 @@ def _git(cwd: Path, *args: str, env: dict[str, str] | None = None) -> str:
     return ergebnis.stdout
 
 
-def worktree_schmutzig(worktree: Path) -> bool:
-    return bool(_git(worktree, "status", "--porcelain").strip())
+def worktree_schmutzig(worktree: Path, unversioniert: bool = True) -> bool:
+    """Gibt es Änderungen? ``unversioniert=False`` zählt nur versionierte Dateien.
+
+    ``--no-optional-locks``: der Blick selbst nimmt nie ``index.lock`` (sonst stört
+    schon das Prüfen einen gleichzeitigen git-Befehl der Session).
+    """
+    args = ["--no-optional-locks", "status", "--porcelain"]
+    if not unversioniert:
+        args.append("--untracked-files=no")
+    return bool(_git(worktree, *args).strip())
+
+
+#: Marker offener git-Vorgänge im (Worktree-)git-Ordner.
+_OFFENE_VORGAENGE = (
+    ("MERGE_HEAD", "Merge offen"),
+    ("rebase-merge", "Rebase offen"),
+    ("rebase-apply", "Rebase offen"),
+    ("CHERRY_PICK_HEAD", "Cherry-pick offen"),
+    ("REVERT_HEAD", "Revert offen"),
+)
+
+
+def nachziehen_verboten(wurzel: Path, haupt: str) -> str | None:
+    """Warum der Klon nicht vorgespult werden darf — ``None`` heißt: darf (#1497).
+
+    Einzige Stelle für diese Regel. Darf nur, wenn alles zutrifft: keine
+    ``index.lock``, kein offener Merge/Rebase/Cherry-pick/Revert, ausgecheckt ist
+    der Hauptzweig, keine uncommitteten Änderungen an versionierten Dateien.
+    Liest nur (nimmt selbst keine Sperre).
+    """
+    git_ordner = Path(_git(wurzel, "rev-parse", "--absolute-git-dir").strip())
+    if (git_ordner / "index.lock").exists():
+        return "index.lock vorhanden"
+    for marke, grund in _OFFENE_VORGAENGE:
+        if (git_ordner / marke).exists():
+            return grund
+    try:
+        zweig = _git(wurzel, "symbolic-ref", "-q", "--short", "HEAD").strip()
+    except RuntimeError:
+        return "abgehängter HEAD"
+    if zweig != haupt:
+        return f"Zweig {zweig}, nicht {haupt}"
+    if worktree_schmutzig(wurzel, unversioniert=False):
+        return "uncommittete Änderungen"
+    return None
+
+
+def _nachziehen_einstellung(wurzel: Path, haupt: str) -> dict | None:
+    """``nachziehen`` aus ``origin/<haupt>:.to-spawn/config.json`` (lokaler Ref)."""
+    try:
+        roh = _git(wurzel, "show", f"origin/{haupt}:.to-spawn/config.json")
+        einstellung = json.loads(roh).get("nachziehen")
+    except (RuntimeError, json.JSONDecodeError, AttributeError):
+        return None
+    return einstellung if isinstance(einstellung, dict) else None
 
 
 def klon_nachziehen(ordner: Path) -> str:
@@ -763,42 +820,67 @@ def klon_nachziehen(ordner: Path) -> str:
     Ohne diesen Schritt zieht nur der Spawn einen Klon nach; Hooks und Skripte, die
     aus dem Arbeitsordner laufen, veralten dann still. Eingeschaltet je Repo über
     ``nachziehen`` in ``.to-spawn/config.json`` — gelesen aus ``origin/<Hauptzweig>``,
-    nie aus dem (evtl. alten) Arbeitsordner. Nur auf dem Hauptzweig, nur
-    ``--ff-only``: eigene Commits oder kollidierende Änderungen lassen den Klon
-    unberührt. Danach läuft ``nachziehen.danach`` (argv-Liste, muss idempotent sein,
-    z. B. ein Hook-Installer) — in jedem Lauf, damit auch ein schon aktueller Klon
-    seine Hooks bekommt. Rückgabe: ``aus`` · ``nachgezogen`` · ``aktuell`` ·
-    ``übersprungen: <Grund>``.
+    nie aus dem (evtl. alten) Arbeitsordner. Angefasst wird nur, was
+    :func:`nachziehen_verboten` erlaubt, und nur per ``--ff-only``; erst danach
+    läuft ``fetch`` (60 s). Danach läuft ``nachziehen.danach`` (argv-Liste, muss
+    idempotent sein, z. B. ein Hook-Installer) — auch bei ``aktuell``, damit ein
+    schon aktueller Klon seine Hooks bekommt. Rückgabe: ``aus`` · ``nachgezogen`` ·
+    ``aktuell`` · ``übersprungen: <Grund>``. Loggt nur ``nachgezogen``; Gründe
+    meldet der Aufrufer (nur bei Wechsel).
     """
     try:
         wurzel = Path(_git(ordner, "rev-parse", "--show-toplevel").strip())
         haupt = gh.hauptzweig(wurzel)
-        _git(wurzel, "fetch", "-q", "origin", haupt)
-        roh = _git(wurzel, "show", f"origin/{haupt}:.to-spawn/config.json")
     except RuntimeError:
         return "aus"
-    try:
-        einstellung = json.loads(roh).get("nachziehen")
-    except (json.JSONDecodeError, AttributeError):
+    # ponytail: Schalter aus dem lokalen origin-Ref (ohne fetch) — ein neu
+    # eingeschaltetes Repo zieht erst nach, wenn irgendwer einmal geholt hat
+    # (Spawn, Session); Upgrade: fetch auch für Repos ohne Schalter.
+    if _nachziehen_einstellung(wurzel, haupt) is None:
         return "aus"
-    if not isinstance(einstellung, dict):
-        return "aus"
     try:
-        zweig = _git(wurzel, "rev-parse", "--abbrev-ref", "HEAD").strip()
-        if zweig != haupt:
-            return f"übersprungen: Zweig {zweig}, nicht {haupt}"
+        grund = nachziehen_verboten(wurzel, haupt)
+        if grund:
+            return f"übersprungen: {grund}"
+        try:
+            _git(wurzel, "fetch", "-q", "origin", haupt, zeitgrenze=60)
+        except RuntimeError as fehler:
+            log.warning("%s: fetch gescheitert: %s", wurzel, fehler)
+            return "übersprungen: fetch gescheitert"
+        einstellung = _nachziehen_einstellung(wurzel, haupt)
+        if einstellung is None:
+            return "aus"
+        # Die Session kann während des fetch etwas begonnen haben.
+        grund = nachziehen_verboten(wurzel, haupt)
+        if grund:
+            return f"übersprungen: {grund}"
         vorher = _git(wurzel, "rev-parse", "HEAD").strip()
         _git(wurzel, "merge", "-q", "--ff-only", f"origin/{haupt}")
-        ergebnis = "aktuell" if _git(wurzel, "rev-parse", "HEAD").strip() == vorher else "nachgezogen"
+        ergebnis = (
+            "aktuell"
+            if _git(wurzel, "rev-parse", "HEAD").strip() == vorher
+            else "nachgezogen"
+        )
     except RuntimeError as fehler:
-        log.warning("%s: nicht vorspulbar — unberührt: %s", wurzel, fehler)
         return f"übersprungen: {fehler}"
     danach = einstellung.get("danach")
     if isinstance(danach, list) and danach and all(isinstance(t, str) for t in danach):
         try:
-            lauf = subprocess.run(danach, cwd=str(wurzel), capture_output=True, text=True, timeout=120, check=False)
+            lauf = subprocess.run(
+                danach,
+                cwd=str(wurzel),
+                capture_output=True,
+                text=True,
+                timeout=120,
+                check=False,
+            )
             if lauf.returncode != 0:
-                log.warning("%s: nachziehen.danach Exit %s: %s", wurzel, lauf.returncode, lauf.stderr.strip()[:300])
+                log.warning(
+                    "%s: nachziehen.danach Exit %s: %s",
+                    wurzel,
+                    lauf.returncode,
+                    lauf.stderr.strip()[:300],
+                )
         except (OSError, subprocess.TimeoutExpired) as fehler:
             log.warning("%s: nachziehen.danach scheiterte: %s", wurzel, fehler)
     if ergebnis == "nachgezogen":
@@ -1226,17 +1308,34 @@ class Aufpasser:
         """Jeden Ordner, in dem irgendein tmux-Pane steht (auch Leit-Sessions außerhalb
         ``spec-<S>``), per :func:`klon_nachziehen` vorspulen (#1497)."""
         try:
-            pfade = set(self.tmux("list-panes", "-a", "-F", "#{pane_current_path}").splitlines())
+            pfade = set(
+                self.tmux("list-panes", "-a", "-F", "#{pane_current_path}").splitlines()
+            )
         except RuntimeError as fehler:
             log.warning("Panes nicht lesbar — kein Nachziehen: %s", fehler)
             return
-        for pfad in sorted(p for p in pfade if p.strip()):
+        wurzeln: set[str] = set()
+        for pfad in (p for p in pfade if p.strip()):
+            try:
+                wurzeln.add(_git(Path(pfad), "rev-parse", "--show-toplevel").strip())
+            except RuntimeError:
+                continue  # kein git-Ordner
+        for wurzel in sorted(wurzeln):
             if self.e.trocken:
-                print(f"[trocken] nachziehen: {pfad}")
+                print(f"[trocken] nachziehen: {wurzel}")
                 continue
-            ergebnis = klon_nachziehen(Path(pfad))
-            if ergebnis != "aus":
-                log.info("nachziehen %s: %s", pfad, ergebnis)
+            ergebnis = klon_nachziehen(Path(wurzel))
+            # Grund im Stand merken: eine Log-Zeile je Wechsel, nicht je Takt.
+            praefix = f"nachziehen:{wurzel}:"
+            alt = {k for k in self.stand.meldungen if k.startswith(praefix)}
+            if ergebnis.startswith("übersprungen"):
+                schluessel = praefix + ergebnis
+                if schluessel not in alt:
+                    log.info("nachziehen %s: %s", wurzel, ergebnis)
+                alt.discard(schluessel)
+                self.stand.meldungen[schluessel] = self.jetzt
+            for k in alt:
+                del self.stand.meldungen[k]
 
     def repo_ordner(self, fenster: list[Fenster]) -> Path | None:
         for f in fenster:
