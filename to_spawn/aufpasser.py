@@ -88,6 +88,7 @@ import sys
 import tempfile
 import time
 from collections.abc import Callable, Iterable, Sequence
+from contextlib import ExitStack
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -104,15 +105,11 @@ from to_spawn import (
     starter,
     vorfall,
 )
+from to_spawn import sperre as _sperre
 from to_spawn.waechter_lauf import _LIMIT_TEXT as LIMIT_TEXT
 from to_spawn.waechter_lauf import transkript_ordner
 
 log = logging.getLogger("aufpasser")
-
-try:  # nur Linux/macOS; auf Windows fehlt fcntl (Import darf dort nicht brechen)
-    import fcntl
-except ImportError:  # pragma: no cover - Windows
-    fcntl = None  # type: ignore[assignment]
 
 HANG_MIN = 90
 #: Wakeups wartender Loop-Sessions kommen spätestens alle 60 min — darunter wäre
@@ -2356,20 +2353,21 @@ class Aufpasser:
                 log.error("%s: Fenster „%s“ übersprungen: %s", sitzung, f.name, fehler)
 
     def _sperren(self) -> object | None:
-        """Lauf-Sperre ``<zustand>/lock`` (flock, nicht blockierend). Belegt ⇒ None."""
+        """Lauf-Sperre ``<zustand>/lock`` (:func:`to_spawn.sperre.halte`, nicht
+        blockierend). Belegt ⇒ None. Sperr-Fehler (z. B. ENOLCK) gelten wie vor #94
+        als belegt: lieber einen Takt auslassen als ungesperrt doppelt eingreifen."""
         if self.e.trocken:
             return object()
-        self.e.zustand.mkdir(parents=True, exist_ok=True)
-        datei = open(self.e.zustand / "lock", "w", encoding="utf-8")  # noqa: SIM115
-        if fcntl is None:
-            log.warning("fcntl fehlt (Windows) — Lauf-Sperre %s ohne flock", datei.name)
-            return datei
+        stapel = ExitStack()
         try:
-            fcntl.flock(datei, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except OSError:
-            datei.close()
+            gehalten = stapel.enter_context(_sperre.halte(self.e.zustand / "lock"))
+        except OSError as fehler:
+            log.warning("Lauf-Sperre %s nicht nutzbar (%s) — gilt als belegt", self.e.zustand / "lock", fehler)
+            gehalten = False
+        if not gehalten:
+            stapel.close()
             return None
-        return datei
+        return stapel
 
     def lauf(self) -> int:
         sperre = self._sperren()

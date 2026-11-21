@@ -99,6 +99,7 @@ if [ -n "$REPO" ]; then
   MANIFESTE="$(python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); from pathlib import Path; from to_spawn import config; print(config.pfad(config.lade(Path(sys.argv[2])), "manifeste"))' "$ZIEL" "$REPO")"
   mkdir -p "$REPO/scripts" "$MANIFESTE"
   for datei in "$HIER"/repo-scripts/*; do
+    [ -f "$datei" ] || continue  # nur Dateien: __pycache__ u. a. Ordner nie ins Repo (#155)
     name="$(basename "$datei")"
     if [ "$name" = "_default.json" ]; then
       ziel_datei="$MANIFESTE/_default.json"

@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -111,3 +112,23 @@ def test_ps1_rueckfall_ergaenzt_alter_weg_bleibt() -> None:
     for skript in ("bau.py", "wache.py", "sessions_stand.py"):
         assert f"\\.claude\\skills\\to-spawn\\skripte\\{skript}" in inst
         assert f'Test-Path "./scripts/{skript}"' in inst
+
+
+def test_install_sh_mit_pycache_in_repo_scripts(tmp_path: Path) -> None:
+    """#155: liegt ``repo-scripts/__pycache__`` im Skill, bricht der Installer nicht ab und kopiert keinen Bytecode."""
+    kopie = tmp_path / "skill"
+    shutil.copytree(SKILL, kopie, ignore=shutil.ignore_patterns(".git"))
+    (kopie / "repo-scripts" / "__pycache__").mkdir(exist_ok=True)
+    (kopie / "repo-scripts" / "__pycache__" / "x.pyc").write_bytes(b"\0")
+    repo = _repo(tmp_path)
+    lauf = subprocess.run(
+        ["bash", str(kopie / "install.sh"), "--skills", str(tmp_path / "skills"), "--repo", str(repo)],
+        cwd=tmp_path,
+        env=_env(tmp_path, repo),
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert lauf.returncode == 0, lauf.stderr
+    assert (repo / "scripts" / "bau.py").is_file()
+    assert not (repo / "scripts" / "__pycache__").exists()
