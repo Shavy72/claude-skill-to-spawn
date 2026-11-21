@@ -518,7 +518,7 @@ def umzug_einzel(
         if spec is None:
             raise Abbruch(
                 EXIT_WEIGERUNG,
-                f"Kein Manifest führt Ticket #{ticket} — Abhilfe: docs/agents/manifests/spec-<S>.json prüfen.",
+                f"Kein Manifest führt Ticket #{ticket} — Abhilfe: {manifest.manifest_im_repo(haupt, '<S>')} prüfen.",
             )
         branch, rel, sha = stand_sichern(worktree, handoff, ticket, dry_run=dry_run)
         # Commit-SHA in der Referenz: der Server liest genau diesen Stand des Handoffs,

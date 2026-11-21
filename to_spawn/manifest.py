@@ -53,6 +53,15 @@ def manifest_pfad(repo: Path, spec: int | str) -> Path:
     return manifest_ordner(repo) / f"spec-{spec}.json"
 
 
+def manifest_im_repo(repo: Path, spec: int | str) -> str:
+    """Manifest als Repo-Pfad (``/``-getrennt) für Texte an Mensch und Aufseher; außerhalb absolut."""
+    datei = manifest_pfad(repo, spec)
+    try:
+        return datei.relative_to(repo).as_posix()
+    except ValueError:
+        return datei.as_posix()
+
+
 def alle_manifeste(repo: Path) -> dict[str, Path]:
     """Alle Manifeste ``spec-<Zahl>.json`` des Repos, Spec-Nummer → Pfad."""
     ordner = manifest_ordner(repo)

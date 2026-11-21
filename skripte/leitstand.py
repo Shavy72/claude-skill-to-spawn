@@ -897,7 +897,7 @@ def richte_logging_ein(datei: Path) -> None:
 
 def parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("spec", help="Spec-Nummer (Manifest docs/agents/manifests/spec-<S>.json)")
+    ap.add_argument("spec", help="Spec-Nummer (Manifest spec-<S>.json im Ordner pfade.manifeste)")
     unter = ap.add_subparsers(dest="befehl", required=True)
     s = unter.add_parser("seed", help="meta/stand + tickets/<nr> als writes (nur Ungesendetes)")
     s.add_argument("--ziel", choices=("local", "lokal", "server", "srv", "remote"), help="Vorgabe: Konfig ziel_default")

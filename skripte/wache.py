@@ -40,6 +40,7 @@ from to_spawn import (  # noqa: E402
     config,
     context_mode,
     handoff_blick,
+    manifest,
     nest,
     sitzung_env,
     speicher,
@@ -150,12 +151,14 @@ def volles_fenster(modell: str) -> str:
 
 
 def prompt_bauen(spec: int, repo: str, takt: int, konfig: dict) -> str:
-    """Aufseher-Prompt mit Server-Befehlen aus der Konfig (``ssh_ziel``, ``server_repo``)."""
+    """Aufseher-Prompt mit Server-Befehlen aus der Konfig (``ssh_ziel``, ``server_repo``)
+    und dem Manifest-Pfad aus ``pfade.manifeste``."""
     # aufseher_vorlage (#450 F5): Linux/Bau-Server kennt nur ``python3``.
     vorlage = startklar.aufseher_vorlage(PROMPT)
     text = vorlage.format(
         S=spec, REPO=repo, DATUM=date.today().isoformat(), TAKT=max(600, takt), SKILL=startklar.skill_pfad()
     )
+    text = text.replace("<MANIFEST>", manifest.manifest_im_repo(REPO_ORDNER, spec))
     return text.replace("<SSH>", str(konfig.get("ssh_ziel") or "bau-server")).replace(
         "<SERVER_REPO>", str(konfig.get("server_repo") or "<server_repo fehlt in .to-spawn/config.json>")
     )
@@ -234,7 +237,7 @@ Du bist verantwortlich, dass Spec #{S} vollständig, sauber und autonom fertig g
 Bleibt eine Bau-Session an einem Rückfragen-/Freigabe-Fenster hängen: angefragten Befehl bzw. Skript lesen. Harmlos (lesen, testen, bauen, committen, auf der Staging-App schalten) → selbst bestätigen (Auswahl per `tmux send-keys`, Text und Enter getrennt) und eine Zeile ins Bau-Log (`eintrag --typ entscheidung`). Nie bestätigen bei Löschen (`rm`, auch in `shell -c`), Live-Bezug (Live-URL, `safe_deploy_vps.sh`, Live-API, live schalten) oder irgendetwas in der Live-App — dort Fenster stehen lassen, Stand-Zeile „Rückfrage wartet: <Befehl>“ statt Klick, `eintrag --typ blockiert`.
 
 ## Checkpoints (Teilabnahmen)
-Checkpoints legt David beim Planen fest: im Manifest `docs/agents/manifests/spec-{S}.json` das Feld `teilabnahme_nach` (Ticketnummern, nach denen David einen Teil auf Staging abnimmt) bzw. das Label `checkpoint:human`. Ist so ein Ticket fertig, kommentierst du auf dem Ticket „Aufseher: Teilabnahme bereit: <Staging-Link> + Klickweg“ und wartest ohne Stillstand-Alarm — kein Anstupsen, kein Respawn, keine Mail; die Kette dahinter wartet. Davids Kommentar „passt“ gibt frei (wie bei `checkpoint:human`), dann geht die Kette weiter. Stecken bleiben ist nie erlaubt: alles bis zum Checkpoint baust du durch.
+Checkpoints legt David beim Planen fest: im Manifest `<MANIFEST>` das Feld `teilabnahme_nach` (Ticketnummern, nach denen David einen Teil auf Staging abnimmt) bzw. das Label `checkpoint:human`. Ist so ein Ticket fertig, kommentierst du auf dem Ticket „Aufseher: Teilabnahme bereit: <Staging-Link> + Klickweg“ und wartest ohne Stillstand-Alarm — kein Anstupsen, kein Respawn, keine Mail; die Kette dahinter wartet. Davids Kommentar „passt“ gibt frei (wie bei `checkpoint:human`), dann geht die Kette weiter. Stecken bleiben ist nie erlaubt: alles bis zum Checkpoint baust du durch.
 
 ## Ablösung
 {ABLOESE_SOP}
@@ -245,7 +248,7 @@ Checkpoints legt David beim Planen fest: im Manifest `docs/agents/manifests/spec
 1. `PYTHONIOENCODING=utf-8 python {SKILL}/skripte/capo.py {S} --katalog` (mit Weiterleitung im Repo gleichwertig: `python scripts/capo.py {S} --katalog`) — Stand je Ticket, neue Bau-Log-Zeilen, Verstöße. capo öffnet selbst wieder, kommentiert verwaiste Sessions und mailt Kritisches (nicht doppelt tun); `--katalog` schreibt neue Vorfälle ins Bau-Log und nach docs/agents/FEHLERKATALOG_spawn.md (mit Pathspec mitcommitten).
 2. `{AUFRAEUMEN}` — schließt Fenster übergebener Sessions.
 3. Befehl A (unten) — läuft jedes offene, entblockte Ticket? Je Ticket mit Status `still` → Befehl C (Leiter), `aus`/VERWAIST → Befehl B, `Rückfrage` → Abschnitt „Rückfragen-Fenster“.
-4. Ticket neu zu ohne Verstoß → Belegseite unter docs/verify-hard/ prüfen (Akzeptanz erfüllt? Live-Klick-Weg-Beleg mit Rolle da?); Mangel einstufen: rot (Akzeptanz nicht erfüllt / Beleg fehlt; z. B. Akzeptanz-Häkchen nicht erfüllt oder Live-Beleg fehlt) → `python {SKILL}/to_spawn.py befund --spec {S} --ticket <N> --stufe rot --text "…"` (öffnet wieder); gelb (Verbesserung/Hinweis, Akzeptanz trotzdem erfüllt, Kette darf weiter; z. B. fehlender Zusatz-Test für einen Nebenpfad) → `python {SKILL}/to_spawn.py befund --spec {S} --ticket <N> --stufe gelb --text "…"` (Folge-Ticket + Manifest-Eintrag, Ticket bleibt zu), Manifest docs/agents/manifests/spec-{S}.json mit Pathspec + [skip ci] committen.
+4. Ticket neu zu ohne Verstoß → Belegseite unter docs/verify-hard/ prüfen (Akzeptanz erfüllt? Live-Klick-Weg-Beleg mit Rolle da?); Mangel einstufen: rot (Akzeptanz nicht erfüllt / Beleg fehlt; z. B. Akzeptanz-Häkchen nicht erfüllt oder Live-Beleg fehlt) → `python {SKILL}/to_spawn.py befund --spec {S} --ticket <N> --stufe rot --text "…"` (öffnet wieder); gelb (Verbesserung/Hinweis, Akzeptanz trotzdem erfüllt, Kette darf weiter; z. B. fehlender Zusatz-Test für einen Nebenpfad) → `python {SKILL}/to_spawn.py befund --spec {S} --ticket <N> --stufe gelb --text "…"` (Folge-Ticket + Manifest-Eintrag, Ticket bleibt zu), Manifest <MANIFEST> mit Pathspec + [skip ci] committen.
 5. Stand in `docs/HANDOFF_{DATUM}_waechter_{S}.md` fortschreiben (Stand + Nachträge mit Uhrzeit), Commit mit Pathspec + [skip ci], Rebase nur bei sauberem Baum (`git diff --quiet`), Push.
 6. Takt: ScheduleWakeup {TAKT} s (ca. alle 30 min), immer; warten alle offenen Tickets nur noch auf Davids Abnahme (Checkpoint/Gesamtabnahme), dann ScheduleWakeup {TAKT_ABNAHME} s (ca. alle 60 min). Leer-Tick (nichts geändert): Ticketstand-Tabelle (0b) plus genau eine Kurz-Zeile als Antwort, noop: true, keine Rohausgaben (Pane-Text, Log-Volltexte) lesen.
 
