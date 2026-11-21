@@ -38,12 +38,15 @@ aktuell und räumt hinter sich auf. Prüfen und Gate sind schnell und prüfen nu
 | Prüftor-Vergleich | `docs/PRUEFTOR_VERGLEICH.md` | Messwerte, Quellen, Empfehlung und Bau-Pakete für den Prüf-Werkzeugkasten. |
 | Arbeitspakete | Issues und Pull-Requests dieses Repos | Jede offene Arbeit ist ein Issue oder ein Pull-Request. Sammel-Issues je Etappe: 49–53. |
 | Angefangene Arbeit | Zweige dieses Repos (`l1/…`, `fix/…`) | Wird mindestens bei jeder Ablösung hochgeladen, auch unfertig. |
-| Laufende Übergaben, Entscheidungs-Log | privater Notiz-Tresor, Ordner `projects/bau-system/` | Tagesgenauer Verlauf, Fallen, Entscheidungen mit Grund. Komfort, nicht Voraussetzung. |
+| Laufende Übergaben, Entscheidungs-Log | privater Notiz-Tresor (Obsidian-Vault; auf dem Bau-Server `~/obsidian/`), Ordner `projects/bau-system/` | Tagesgenauer Verlauf, Fallen, Entscheidungen mit Grund. Komfort, nicht Voraussetzung. |
 
 Sind die Übergaben verloren, reicht dieses Repo: Auftrag, Plan, Abnahme und Issues tragen alles,
 was zum Weiterbauen nötig ist.
 
 ## 3. Stand
+
+- **2026-11-21 23:15 (Server-Uhr, main f4de1b7):** Pull-Request 161 (Issue 154, Windows-Prozessabfrage)
+  ist gemergt.
 
 - **2026-11-21 23:06 (Server-Uhr, main 175c8ec):** Gemergt: Pull-Request 170 (Nachbesserung
   Windows-Job-Objekt zu 151; Issue 122 bleibt offen bis zum Lauf am PC), 146 (Issue 88 zu: Folge-Tickets
@@ -96,7 +99,8 @@ was zum Weiterbauen nötig ist.
   Offen neben dem Bau: Arbeitsordner `~/wt` auf dem Bau-Server noch nicht auf „nur offene Tickets“
   geräumt; Temp-Ordner auf der RAM-Platte (Issue 136).
 
-Jüngere Einträge stehen im Plan, Abschnitt „Stand“. Weicht dieser Abschnitt davon ab, gilt der Plan.
+Für den laufenden Stand gilt dieser Abschnitt „3. Stand“; die Leit-Session pflegt ihn zuerst. Für Ziel,
+Etappen und Abnahme gilt der Plan. Der Plan-Abschnitt „Stand“ ist ein älterer Verlauf.
 
 ## 4. So geht es weiter, wenn alles steht
 
@@ -107,23 +111,31 @@ Jüngere Einträge stehen im Plan, Abschnitt „Stand“. Weicht dieser Abschnit
    „Ober-Aufsicht“. Läuft eine Kette, nicht eine zweite starten, sondern dieser zuarbeiten.
 3. **Wirklichkeit gegen Dokumente abgleichen:** `gh pr list --state open`, `gh issue list`,
    `git log origin/main -15`, installierter Skill-Stand auf der Maschine
-   (`python ~/.claude/skills/to-spawn/to_spawn.py einrichten --pruefen`). Abweichungen zuerst im
-   Plan-„Stand“ festhalten.
+   (`python ~/.claude/skills/to-spawn/to_spawn.py einrichten --pruefen`). Meldet das
+   `skill_aktuell: grosse_luecke`, ist der Skill veraltet: `git -C ~/claude-skill-to-spawn pull && bash
+   ~/claude-skill-to-spawn/install.sh`. Abweichungen zuerst im Abschnitt „3. Stand“ festhalten.
 4. **Kette starten, falls keine läuft.** Immer über `~/.claude/bin/claude-frisch.sh` (Linux) bzw.
    `claude-frisch.ps1` (Windows), nie `claude` mit geerbter Umgebung. Der Startauftrag lautet:
    „Lies `docs/WIEDEREINSTIEG.md` im Skill-Repo und verfolge das Ziel 1:1 weiter, bis es erreicht
-   ist.“ Gibt es noch eine Übergabe-Datei, wird sie zusätzlich gelesen. Die genauen Befehle für
+   ist.“ Gibt es noch eine Übergabe-Datei, wird sie zusätzlich gelesen; sie wächst fortlaufend, es genügen
+   die letzten 200 Zeilen (`tail -200`). Die genauen Befehle für
    die zwei Maschinen stehen im Notiz-Tresor (`projects/bau-system/WIEDEREINSTIEG_maschinen.md`).
 5. **Weiterbauen in der Reihenfolge der Etappen.** Offene Pull-Requests zuerst fertig machen
-   (Review, Linux- und Windows-Lauf, Merge), dann die offenen Issues der niedrigsten Etappe, dann
+   (Review, Linux- und Windows-Lauf, Merge nach der Merge-Regel in Abschnitt 5), dann die offenen Issues der niedrigsten Etappe, dann
    die erste M-Zeile ohne Beleg.
 
 ## 5. Regeln, die immer gelten
 
 - Keine Fragen an David. Entscheidung und Grund ins Entscheidungs-Log, weiterbauen (L1, L2).
+  Echte Sperre (kein Zugriff, Secret fehlt): Eintrag im Entscheidungs-Log, Issue anlegen, mit einem
+  anderen Paket weiterbauen.
 - Der Auftrag wird bei jeder Ablösung im Wortlaut weitergegeben, nie als Zusammenfassung (L2).
 - Erst vergleichen und messen, dann bauen; bewährtes Werkzeug vor Eigenbau (L3).
 - Aufräumen, RAM, Platte, Neustarts landen nie bei David (L4).
 - Kein Wissen nur im Chat oder nur auf einer Maschine: Was zählt, steht hier im Repo, als Issue
   oder im Tresor (L5).
+- Merge-Regel: Ein Pull-Request wird nur gemergt, wenn das Prüf-Urteil „Hartes: nein“ lautet. Vorher
+  die letzten Kommentare am Pull-Request lesen; bittet dort jemand um Aufschub, nicht mergen. Vor dem
+  Merge `main` in den Zweig hineinmergen und die Pflicht-Tests des Zweigs laufen lassen. Kein `rebase`,
+  kein `--force`. Befehl: `gh pr merge <N> --merge`.
 - App-Live wird nie angefasst. Eine Leit-Kette je Maschine, eine Ober-Aufsicht am PC.
