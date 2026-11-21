@@ -150,3 +150,41 @@ def test_echte_wt_ordner_mit_kurzem_zusatz_bleiben_lesbar(name: str, nr: int) ->
 )
 def test_grenzfaelle_gelten_nicht_als_neu_erzeugbar(pfad: str) -> None:
     assert not hausmeister._neu_erzeugbar(pfad)
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "1",  # nackt nur 3–4 Ziffern (Fix-Runde 3)
+        "12",
+        "99",
+        "1-linux",
+        "a7",  # t/a nur mit 3–4 Ziffern
+        "wt-2026-11",  # Jahr-Monat
+        "wt-2025-12",
+        "wt-5000",  # über der Obergrenze
+        "wt-0",
+        "wt-01",
+    ],
+)
+def test_keine_nummer_aus_kurzer_zahl_oder_jahr_monat(name: str) -> None:
+    assert hausmeister._nummer(name, hausmeister._NAME_MUSTER) is None
+
+
+@pytest.mark.parametrize(
+    ("name", "nr"),
+    [
+        ("duoplus-39", 39),
+        ("wt-81", 81),
+        ("wt-4999", 4999),
+        ("wt-1313-3", 1313),
+        ("wt-1375-7c", 1375),
+    ],
+)
+def test_kurze_und_grenz_nummern_hinter_praefix_bleiben_lesbar(name: str, nr: int) -> None:
+    assert hausmeister._nummer(name, hausmeister._NAME_MUSTER) == nr
+
+
+@pytest.mark.parametrize("pfad", ["__pycache__/x.pyc", "data/.secret_key"])
+def test_kompilat_und_sitzungsschluessel_gelten_als_neu_erzeugbar(pfad: str) -> None:
+    assert hausmeister._neu_erzeugbar(pfad)

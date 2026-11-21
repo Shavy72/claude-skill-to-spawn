@@ -167,20 +167,24 @@ ERZEUGNISSE = (
 # #1526: Ticket-Nummer 1–4999 (8080, 20261121, 993675 sind Port/Datum/Hash, keine Tickets).
 # ponytail: feste Obergrenze, anheben, wenn die Tickets an 4000 heranreichen.
 _TICKET_NR = r"([1-9]\d{0,2}|[1-4]\d{3})"
+# Ohne Präfix (nackt, t/a) nur 3–4 Ziffern: 1, 12, a7 sind keine Ticket-Ordner.
+_TICKET_NR_LANG = r"([1-9]\d{2}|[1-4]\d{3})"
+# Jahr-Monat am Namensende (wt-2026-11) ist ein Datum, keine Ticket-Form.
+_KEIN_JAHR_MONAT = r"(?!20\d\d-(?:0?[1-9]|1[0-2])$)"
 _NAME_MUSTER = (
     # #1526: nur bekannte Formen, Name bis zum Ende verankert — im Zweifel keine Nummer.
     # wt-1292f, skill-1371-basis, wt-1313-3, wt-1375-7c: Präfix, Zahl, dann Ende, ein
     # Buchstabe, -<wort> oder kurzes -<1–2 Ziffern>[buchstabe]
     # (skill-4821f3c ist ein Commit-Hash-Rest, wt-2026-11-21 ein Datum, kein Ticket).
     re.compile(
-        rf"^(?:wt|skill|duoplus)-{_TICKET_NR}(?:[a-z]|-\d{{1,2}}[a-z]?|-[a-z][a-z0-9-]*)?$"
+        rf"^(?:wt|skill|duoplus)-{_KEIN_JAHR_MONAT}{_TICKET_NR}(?:[a-z]|-\d{{1,2}}[a-z]?|-[a-z][a-z0-9-]*)?$"
     ),
     # t1490a, a1279 (Aufseher): nur t/a als Präfix (x500, v2026-backup sind keine Tickets)
-    re.compile(rf"^[ta]{_TICKET_NR}[a-z]?$"),
+    re.compile(rf"^[ta]{_TICKET_NR_LANG}[a-z]?$"),
     # 1489, 1331-linux: nackte Zahl nur allein oder mit einem Wort aus enger Liste
     # (2026-11-21-sicherung, 8080-notizen, 805_fremd_backup sind keine Tickets).
     # Hinter einem Wort zählt sie nie: schlange-einspielen-1121 ist ein Datum.
-    re.compile(rf"^{_TICKET_NR}(?:-(?:linux|lauf|breit|master))?$"),
+    re.compile(rf"^{_TICKET_NR_LANG}(?:-(?:linux|lauf|breit|master))?$"),
 )
 _ZWEIG_MUSTER = re.compile(
     r"^(?:(?:ticket|fix|wip|aufseher)/|fix-|abschluss-)(\d+)(?:-.*)?$"
