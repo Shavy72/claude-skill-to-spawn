@@ -455,7 +455,9 @@ def maschine_eintragen(repo: Path | None = None) -> dict[str, str]:
     """Trägt das Repo in ``repos[]`` der Maschinen-Liste ein und gibt seinen Eintrag zurück.
 
     Schlüssel ist der Ordner (``pfad``). Neu: ``slug`` aus ``origin``, ``worktree_basis`` aus
-    der Repo-Konfig, ``ticket_repo`` leer (= ableiten). Schon da: nur leere Felder werden
+    der Repo-Konfig, ``ticket_repo`` leer (= ableiten). Zeigt ``origin`` nicht auf ein
+    GitHub-Repo (Wegwerf-Klon mit lokalem Pfad, #112), bleibt die Liste unberührt: Warnung,
+    Rückgabe des Eintrags ohne Schreiben. Schon da: nur leere Felder werden
     ergänzt, Eingetragenes bleibt. Fehlt die Datei, sind die Vorgaben die Basis — die
     Vorgabe-Repos bleiben also erhalten. Geschrieben wird nur bei Änderung, atomar
     (temporäre Datei + ``os.replace``). Eine kaputte Datei wird nie überschrieben: dann
@@ -467,11 +469,17 @@ def maschine_eintragen(repo: Path | None = None) -> dict[str, str]:
     wurzel = repo_wurzel(repo)
     datei = maschine_datei()
     neu = {
-        "slug": gh.repo_aus_origin(wurzel),
+        "slug": gh.github_slug_aus_origin(wurzel),
         "pfad": wurzel.as_posix(),
         "ticket_repo": "",
         "worktree_basis": str(lade(wurzel).get("worktree_basis") or ""),
     }
+    if not neu["slug"]:
+        log.warning(
+            "Maschinen-Liste: %s nicht eingetragen — origin ist kein GitHub-Repo <besitzer>/<name>",
+            wurzel,
+        )
+        return neu
     if datei.is_file() and _lies(datei)[0] is None:
         log.warning("Maschinen-Liste unlesbar (%s) — nicht überschrieben", datei)
         return neu

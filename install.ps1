@@ -2,38 +2,71 @@
 # Alias-Skills (aliase/* → ~/.claude/skills/<alias>), Profil-Funktionen bau/aufseher/wache/sessions/leitstand,
 # optional die Repo-Weiterleitungen (repo-scripts/ → <Repo>/scripts, nur fehlende) + .to-spawn/config.json.
 # Ein vorhandener Skill-Ordner wird nie gelöscht, sondern nach ~/.claude/skills/_alt/to-spawn-<zeit> verschoben.
+# Dazu die Kette: kette/skills/* → <Skills>/<name>, Regel-Blöcke kette/global/*.md → globale CLAUDE.md.
 # Linux/macOS: install.sh.
-# Aufruf: pwsh -File install.ps1 [-Repo <Pfad-zum-Repo>]
-param([string]$Repo = "")
+# Aufruf: pwsh -File install.ps1 [-Repo <Pfad-zum-Repo>] [-Skills <Ordner>] [-ClaudeMd <Datei>]
+#   -Skills    Zielordner der Skills (Vorgabe %USERPROFILE%\.claude\skills)
+#   -ClaudeMd  globale CLAUDE.md für die Regel-Blöcke (Vorgabe %USERPROFILE%\.claude\CLAUDE.md)
+param([string]$Repo = "", [string]$Skills = "", [string]$ClaudeMd = "")
 $ErrorActionPreference = "Stop"
 $hier = Split-Path -Parent $MyInvocation.MyCommand.Path
-$ziel = Join-Path $env:USERPROFILE ".claude\skills\to-spawn"
-$skills = Split-Path $ziel
+if (-not $Skills) { $Skills = Join-Path $env:USERPROFILE ".claude\skills" }
+if (-not $ClaudeMd) { $ClaudeMd = Join-Path $env:USERPROFILE ".claude\CLAUDE.md" }
+$ziel = Join-Path $Skills "to-spawn"
+$skills = $Skills
 if ((Test-Path $ziel) -and ((Resolve-Path $ziel).Path -eq (Resolve-Path $hier).Path)) {
     throw "install.ps1 läuft aus dem Zielordner ($ziel) — aus dem Git-Klon starten."
 }
-if (Test-Path $ziel) {
-    $alt = Join-Path $skills "_alt"
-    New-Item -ItemType Directory -Force $alt | Out-Null
-    $sicherung = Join-Path $alt ("to-spawn-" + (Get-Date -Format "yyyyMMdd-HHmmss"))
-    Move-Item $ziel $sicherung
-    Write-Host "Alter Stand gesichert: $sicherung"
+$zeit = Get-Date -Format "yyyyMMdd-HHmmss"
+$caches = @("__pycache__", ".pytest_cache", ".ruff_cache")
+# Sichere-UndKopiere <name> <quellen>: alten Ordner <Skills>\<name> nach _alt\<name>-<zeit> verschieben
+# (nie löschen), dann jede vorhandene Quelle hinein kopieren. Dateien, die es nur im alten Stand gibt,
+# werden gemeldet (liegen weiter in der Sicherung).
+function Sichere-UndKopiere([string]$name, [string[]]$quellen) {
+    $zielOrdner = Join-Path $skills $name
+    $sicherung = ""
+    if (Test-Path $zielOrdner) {
+        $alt = Join-Path $skills "_alt"
+        New-Item -ItemType Directory -Force $alt | Out-Null
+        $sicherung = Join-Path $alt ($name + "-" + $zeit)
+        while (Test-Path $sicherung) { $sicherung = $sicherung + "-1" }
+        Move-Item $zielOrdner $sicherung
+        Write-Host "Alter Stand gesichert: $sicherung"
+    }
+    New-Item -ItemType Directory -Force $zielOrdner | Out-Null
+    foreach ($quelle in $quellen) {
+        if (Test-Path $quelle) { Copy-Item $quelle $zielOrdner -Recurse -Force }
+    }
+    Get-ChildItem $zielOrdner -Recurse -Directory -Force | Where-Object { $_.Name -in $caches } |
+        Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+    if ($sicherung) {
+        $basis = (Resolve-Path $sicherung).Path
+        foreach ($datei in Get-ChildItem $sicherung -Recurse -File -Force) {
+            $rel = $datei.FullName.Substring($basis.Length).TrimStart('\', '/')
+            if ($rel -split '[\\/]' | Where-Object { $_ -in $caches }) { continue }
+            if (-not (Test-Path (Join-Path $zielOrdner $rel))) { Write-Host "Hinweis: nur im alten Stand (liegt in $sicherung): $rel" }
+        }
+    }
 }
-New-Item -ItemType Directory -Force $ziel | Out-Null
-foreach ($f in @("SKILL.md", "README.md", "LICENSE", "to_spawn.py", "install.sh", "install.ps1", "spawn_local.ps1", "spawn_srv.ps1",
-                 "to_spawn", "skripte", "repo-scripts", "aliase", "tests", "docs", "nest", "leitstand")) {
-    $quelle = Join-Path $hier $f
-    if (Test-Path $quelle) { Copy-Item $quelle (Join-Path $ziel $f) -Recurse -Force }
-}
-Get-ChildItem $ziel -Recurse -Directory -Force | Where-Object { $_.Name -in @("__pycache__", ".pytest_cache", ".ruff_cache") } |
-    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+$quellen = foreach ($f in @("SKILL.md", "README.md", "LICENSE", "to_spawn.py", "install.sh", "install.ps1", "spawn_local.ps1", "spawn_srv.ps1",
+                           "to_spawn", "skripte", "repo-scripts", "aliase", "tests", "docs", "nest", "leitstand", "kette")) { Join-Path $hier $f }
+Sichere-UndKopiere "to-spawn" $quellen
+$env:PYTHONIOENCODING = "utf-8"
+python (Join-Path (Join-Path $ziel "to_spawn") "skill_stand.py") --stempel $ziel --klon $hier
+if ($LASTEXITCODE -ne 0) { throw "Skill-Stand nicht gestempelt: $ziel" }
 Write-Host "Skill installiert: $ziel"
 foreach ($aliasOrdner in Get-ChildItem (Join-Path $hier "aliase") -Directory) {
-    $aliasZiel = Join-Path $skills $aliasOrdner.Name
-    New-Item -ItemType Directory -Force $aliasZiel | Out-Null
-    Copy-Item (Join-Path $aliasOrdner.FullName "SKILL.md") (Join-Path $aliasZiel "SKILL.md") -Force
-    Write-Host "Alias installiert: $aliasZiel"
+    Sichere-UndKopiere $aliasOrdner.Name @(Get-ChildItem $aliasOrdner.FullName -Force | ForEach-Object { $_.FullName })
+    Write-Host "Alias installiert: $(Join-Path $skills $aliasOrdner.Name)"
 }
+# Kette: Skills (grill-with-docs, to-spec, ...) + globale Regel-Blöcke; alter Ordner nach _alt/, nie gelöscht.
+foreach ($ketteOrdner in Get-ChildItem (Join-Path (Join-Path $hier "kette") "skills") -Directory) {
+    Sichere-UndKopiere $ketteOrdner.Name @(Get-ChildItem $ketteOrdner.FullName -Force | ForEach-Object { $_.FullName })
+    Write-Host "Kette-Skill installiert: $(Join-Path $skills $ketteOrdner.Name)"
+}
+$env:PYTHONIOENCODING = "utf-8"
+python (Join-Path (Join-Path $ziel "to_spawn") "globale_regeln.py") --ziel $ClaudeMd
+if ($LASTEXITCODE -ne 0) { throw "Regel-Blöcke nicht geschrieben: $ClaudeMd" }
 
 # PowerShell-Profil: bau / wache / sessions (nur ergänzen, nie überschreiben)
 $profilPfad = $PROFILE.CurrentUserAllHosts
