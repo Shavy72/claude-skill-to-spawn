@@ -13,7 +13,10 @@ Repo-Wurzel mit ``/`` (``fnmatch``, Groß/klein zählt, ``*`` passt auch über `
 ``git ls-files``, ``iterdir``, Symlinks, ``mimetypes``) — nur das Repo weiß es. Abkürzung nur, wenn
 JEDE geänderte Datei (neu, gelöscht, bei Umbenennung alter und neuer Pfad) unter ein Muster fällt,
 keine davon ein Symlink ist und kein getrackter Symlink auf sie zeigt. Fehlt der Schlüssel, ist er
-ungültig oder die Konfig kaputt: nie Abkürzung, die Leiter prüft voll (fail-closed).
+ungültig oder die Konfig kaputt: nie Abkürzung, die Leiter prüft voll (fail-closed). Gleiches gilt,
+wenn ein Muster eine Code-Datei treffen würde (``**``, ``*``, ``**/*``, ``*.*``, ``*.py``, #164): Die
+Basis kann ein Vorgänger-Commit sein, darum prüft die Tür die Weite selbst, statt der Basis-Wahl
+des Aufrufers zu vertrauen.
 
 Kein falsches Grün: fehlt ein Linter oder ist unklar, was geändert ist, wird die Stufe
 ausgelassen (``lief=False`` + Grund) und die Leiter prüft voll weiter.
@@ -145,7 +148,25 @@ def _doku_muster(repo: Path, basis: str, pfade: list[str]) -> tuple[list[str], s
     if not isinstance(muster, list) or not muster or not all(isinstance(m, str) and m for m in muster):
         log.warning("%s: %r", DOKU_PFADE_UNGUELTIG, muster)
         return [], DOKU_PFADE_UNGUELTIG
+    zu_weit = next((m for m in muster if _trifft_code(m)), None)
+    if zu_weit is not None:
+        grund = f"pruefen.doku_pfade zu weit: „{zu_weit}“ trifft Code-Dateien"
+        log.warning("%s (Konfig in %s) — keine Abkürzung, volle Prüfung", grund, basis)
+        return [], grund
     return muster, ""
+
+
+#: Stellvertreter für Code-Dateien (je Linter-Endung, Wurzel und Unterordner): Ein Doku-Muster, das
+#: einen davon trifft (``**``, ``*``, ``**/*``, ``*.*``, ``*.py`` …), ist zu weit — gilt auch, wenn es
+#: aus einem Vorgänger-Commit stammt und die Basis ``HEAD~1`` ist (#164).
+_CODE_STELLVERTRETER = tuple(
+    f"{ordner}x{endung}" for linter in _LINTER for endung in sorted(linter.endungen) for ordner in ("", "a/b/")
+)
+
+
+def _trifft_code(muster: str) -> bool:
+    """True, wenn ``muster`` eine Code-Datei treffen würde — dann taugt die ganze Liste nicht."""
+    return any(fnmatch.fnmatchcase(pfad, muster) for pfad in _CODE_STELLVERTRETER)
 
 
 def _symlinks(repo: Path, basis: str) -> set[str] | None:
