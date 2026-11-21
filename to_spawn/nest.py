@@ -17,7 +17,6 @@ und ``.to-spawn/nest_repo.sh`` des jeweiligen Repos.
 from __future__ import annotations
 
 import argparse
-import importlib.util
 import json
 import logging
 import os
@@ -31,7 +30,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from to_spawn import config, gh, inventur
+from to_spawn import arbeitsordner, config, gh, inventur
 
 log = logging.getLogger("to_spawn.nest")
 
@@ -180,68 +179,6 @@ def _zweig_name(worktree: Path, ticket: str | None) -> str:
     return name
 
 
-ARBEITSORDNER_MODUL = "scripts/arbeitsordner.py"
-
-
-def _arbeitsordner_modul(hauptrepo: Path, basis: str | None) -> Callable[..., None] | None:
-    """``arbeitsordner_anlegen`` des Haupt-Repos (#1505) — oder None = altes ``worktree add``.
-
-    Quelle ist ``<basis>:scripts/arbeitsordner.py`` (frisch geholtes ``origin/<hauptzweig>``),
-    nicht der Arbeitsbaum: der geteilte Hauptbaum kann veraltet oder halb bearbeitet sein, und
-    die Sparse-Regel muss zum Stand passen, auf dem der Ordner beginnt. Das Wissen, was in einen
-    Arbeitsordner gehört, bleibt so allein im Haupt-Repo. Fehlt die Datei dort oder lädt sie
-    nicht (Syntaxfehler, Funktion fehlt), gilt fail-safe das alte Verhalten.
-    """
-    if basis is None:
-        return None
-    quelle = _git(hauptrepo, "show", f"{basis}:{ARBEITSORDNER_MODUL}")
-    if quelle.returncode != 0:
-        return None
-    with tempfile.TemporaryDirectory(prefix="to-spawn-arbeitsordner-") as ordner:
-        datei = Path(ordner) / "arbeitsordner.py"
-        datei.write_text(quelle.stdout, encoding="utf-8")
-        spec = importlib.util.spec_from_file_location("to_spawn_hauptrepo_arbeitsordner", datei)
-        try:
-            if spec is None or spec.loader is None:
-                raise ImportError(f"{datei} nicht ladbar")
-            modul = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(modul)
-            anlegen = modul.arbeitsordner_anlegen
-        except Exception as fehler:  # noqa: BLE001 — fail-safe: fremder Code bricht nie den Bau-Start
-            log.warning("%s aus %s nicht ladbar, volles worktree add: %s", ARBEITSORDNER_MODUL, basis, fehler)
-            return None
-    return anlegen if callable(anlegen) else None
-
-
-def _schlank_anlegen(
-    anlegen: Callable[..., None],
-    worktree: Path,
-    hauptrepo: Path,
-    zweig: str,
-    basis: str | None,
-    ticket: str | None,
-) -> None:
-    """Ruft das Haupt-Repo-Modul; ``basis`` None = vorhandenen Zweig auschecken.
-
-    Scheitert es, wird ein halb angelegter Ordner entfernt — sonst hielte der nächste Start ihn
-    für fertig (``worktree.exists()``) und baute in einem leeren Checkout.
-    """
-    try:
-        if basis is None:
-            anlegen(hauptrepo, worktree, zweig, ticket=ticket)
-        else:
-            anlegen(hauptrepo, worktree, basis, zweig=zweig, ticket=ticket)
-    except Exception as fehler:  # noqa: BLE001 — jeder Fehler des fremden Moduls: aufräumen, NestFehler
-        if worktree.exists():
-            _git(hauptrepo, "worktree", "remove", "--force", str(worktree))
-            shutil.rmtree(worktree, ignore_errors=True)
-            _git(hauptrepo, "worktree", "prune")
-        rest = getattr(fehler, "stderr", None) or str(fehler)
-        if isinstance(rest, bytes):
-            rest = rest.decode("utf-8", "replace")
-        raise NestFehler(f"Arbeitsordner anlegen scheiterte: {rest.strip()[:300]}") from None
-
-
 def worktree_anlegen(worktree: Path, hauptrepo: Path, ticket: str | None) -> None:
     """Legt den Worktree an, wenn er fehlt; ein vorhandener bleibt unberührt.
 
@@ -258,12 +195,10 @@ def worktree_anlegen(worktree: Path, hauptrepo: Path, ticket: str | None) -> Non
     basis = _standard_zweig(hauptrepo)
     if not vorhanden and basis is None:
         raise NestFehler(f"{hauptrepo}: kein origin/{gh.hauptzweig(hauptrepo)} (Hauptzweig laut Konfig/origin)")
-    anlegen = _arbeitsordner_modul(hauptrepo, basis)
-    if anlegen is not None:
-        _schlank_anlegen(anlegen, worktree, hauptrepo, zweig, None if vorhanden else basis, ticket)
-        log.info("Arbeitsordner (schlank) angelegt: %s (Zweig %s)", worktree, zweig)
+    if arbeitsordner.anlegen(hauptrepo, worktree, basis, zweig, neuer_zweig=not vorhanden, ticket=ticket):
         return
-    if vorhanden:
+    # Rückfall: volles ``worktree add``; ein gescheiterter Versuch kann den Zweig schon angelegt haben.
+    if _git(hauptrepo, "rev-parse", "--verify", "--quiet", zweig).returncode == 0:
         ergebnis = _git(hauptrepo, "worktree", "add", str(worktree), zweig)
     else:
         ergebnis = _git(hauptrepo, "worktree", "add", "-b", zweig, str(worktree), str(basis))

@@ -120,14 +120,42 @@ def test_modul_nicht_ladbar_altes_verhalten(tmp_path: Path) -> None:
     assert not (wt / ".marke.json").exists()
 
 
-def test_fehler_im_modul_nestfehler_und_kein_halber_ordner(tmp_path: Path) -> None:
+def _voll_angelegt(haupt: Path, wt: Path) -> None:
+    """Rückfall griff: voller Checkout, Zweig ``ticket-1505``, genau ein Worktree-Eintrag."""
+    assert (wt / "README.md").is_file()
+    assert not (wt / ".marke.json").exists()
+    assert _git(wt, "rev-parse", "--abbrev-ref", "HEAD").strip() == "ticket-1505"
+    sparse = subprocess.run(
+        ["git", "-C", str(wt), "config", "--bool", "core.sparseCheckout"], capture_output=True, text=True, check=False
+    )
+    assert sparse.stdout.strip() != "true"
+    assert _git(haupt, "worktree", "list", "--porcelain").count(f"worktree {wt}") == 1
+
+
+def test_fehler_im_modul_rueckfall_auf_worktree_add(tmp_path: Path) -> None:
+    """Fix-Runde 1: Modul wirft beim Aufruf → halber Ordner weg, dann volles ``worktree add``."""
     haupt = _haupt(tmp_path, STUB_FEHLER)
     wt = tmp_path / "wt-1505"
-    with pytest.raises(nest.NestFehler, match="stub-kaputt"):
+    nest.worktree_anlegen(wt, haupt, "1505")
+    _voll_angelegt(haupt, wt)
+
+
+def test_fehler_nach_zweig_anlage_rueckfall_nutzt_vorhandenen_zweig(tmp_path: Path) -> None:
+    """Modul legte ``-b ticket-1505`` schon an und warf dann → Rückfall checkt den Zweig aus."""
+    haupt = _haupt(tmp_path, STUB_ZWEIG_FEHLER)
+    wt = tmp_path / "wt-1505"
+    nest.worktree_anlegen(wt, haupt, "1505")
+    _voll_angelegt(haupt, wt)
+
+
+def test_fehler_im_modul_und_im_rueckfall_nestfehler(tmp_path: Path) -> None:
+    haupt = _haupt(tmp_path, STUB_FEHLER)
+    _git(haupt, "remote", "set-url", "origin", str(tmp_path / "fehlt.git"))
+    _git(haupt, "update-ref", "-d", "refs/remotes/origin/master")
+    wt = tmp_path / "wt-1505"
+    with pytest.raises(nest.NestFehler):
         nest.worktree_anlegen(wt, haupt, "1505")
-    # Kein halber Ordner: sonst hielte der nächste Start ihn für fertig (``exists`` → return).
     assert not wt.exists()
-    assert str(wt) not in _git(haupt, "worktree", "list")
 
 
 def test_sicherung_im_sparse_ordner_mit_neuer_datei_ausserhalb_der_regel(tmp_path: Path) -> None:
@@ -158,6 +186,16 @@ def test_sicherung_im_sparse_ordner_mit_neuer_datei_ausserhalb_der_regel(tmp_pat
     assert sorted(d for d in dateien if d) == ["a/neu.txt", "a/x.txt", "b/Größe ä.txt", "b/alt.txt", "b/neu.txt"]
 
 
+STUB_ZWEIG_FEHLER = """
+import subprocess
+
+
+def arbeitsordner_anlegen(repo, ziel, start, *, zweig=None, ticket=None, git=None):
+    add = ["git", "worktree", "add", "--no-checkout", "-q", "-b", zweig, str(ziel), start]
+    subprocess.run(add, cwd=repo, check=True)
+    raise subprocess.CalledProcessError(128, ["git", "checkout"], stderr="stub-zweig-kaputt")
+"""
+
 STUB_WIRFT = '''
 import subprocess
 
@@ -169,11 +207,9 @@ def arbeitsordner_anlegen(repo, ziel, start, *, zweig=None, ticket=None, git=Non
 
 
 @pytest.mark.parametrize("ausnahme", ["OSError", "FileNotFoundError", "RuntimeError", "KeyError"])
-def test_jede_ausnahme_im_modul_nestfehler_und_kein_halber_ordner(tmp_path: Path, ausnahme: str) -> None:
-    """Review #1505: auch andere Ausnahmen dürfen keinen halben Ordner hinterlassen."""
+def test_jede_ausnahme_im_modul_rueckfall_ohne_halben_ordner(tmp_path: Path, ausnahme: str) -> None:
+    """Review #1505: jede Ausnahme → halber Ordner weg, Rückfall auf volles ``worktree add``."""
     haupt = _haupt(tmp_path, STUB_WIRFT.format(ausnahme=ausnahme))
     wt = tmp_path / "wt-1505"
-    with pytest.raises(nest.NestFehler, match="stub-wirft"):
-        nest.worktree_anlegen(wt, haupt, "1505")
-    assert not wt.exists()
-    assert str(wt) not in _git(haupt, "worktree", "list")
+    nest.worktree_anlegen(wt, haupt, "1505")
+    _voll_angelegt(haupt, wt)
