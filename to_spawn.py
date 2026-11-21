@@ -4,7 +4,8 @@ Aufruf (im Repo-Wurzelordner):
 
     python ~/.claude/skills/to-spawn/to_spawn.py spawn <S> [--ziel local|srv]
     python ~/.claude/skills/to-spawn/to_spawn.py stand            # Skill-Stand Bau-Server sichern (#325)
-    python ~/.claude/skills/to-spawn/to_spawn.py pruefen <S> [--tickets a,b] [--ohne-github]
+    python ~/.claude/skills/to-spawn/to_spawn.py regularien <S> [--tickets a,b] [--ohne-github]
+    python ~/.claude/skills/to-spawn/to_spawn.py pruefen <basis> <ziel> [--repo <pfad>]  # Exit 0/1/2 + JSON (#99)
     python ~/.claude/skills/to-spawn/to_spawn.py log <S>
     python ~/.claude/skills/to-spawn/to_spawn.py lernstoff [--letzte 30]
     python ~/.claude/skills/to-spawn/to_spawn.py setup [--zeigen|--standard|--terminal …]
@@ -50,6 +51,7 @@ from to_spawn import (  # noqa: E402
     manifest,
     nest,
     probesitz,
+    pruef,
     respawn,
     setup,
     speicher,
@@ -77,6 +79,39 @@ def _spec_tickets(repo: Path, spec: str) -> list[str]:
     except (FileNotFoundError, ValueError):
         return bau_log.alle_tickets(repo)
     return sorted(daten["tickets"], key=manifest.ticket_schluessel)
+
+
+def _regularien_optionen(p: argparse.ArgumentParser) -> None:
+    p.add_argument("--tickets", help="gewählte Tickets (Komma), jedes muss im Manifest stehen")
+    p.add_argument("--dry-run", action="store_true", help="ohne Wirkung, nur Lesen")
+    p.add_argument(
+        "--ohne-github",
+        action="store_true",
+        help="GitHub-Teil auslassen (Kanten, Checkpoint, Belegung, Zustände)",
+    )
+
+
+def _pruefen(ap: argparse.ArgumentParser, args: argparse.Namespace) -> int | None:
+    """``pruefen <basis> <ziel>`` = Tür des Prüf-Werkzeugkastens (#99).
+
+    ``pruefen <S>`` (ein Argument) ist der alte Name von ``regularien``: Warnung auf stderr,
+    ``args`` wird umgeschrieben, Rückgabe ``None`` = weiter wie ``regularien``.
+    """
+    if args.ziel is None:
+        print(
+            f"WARNUNG: „to_spawn.py pruefen {args.basis}“ heißt jetzt "
+            f"„to_spawn.py regularien {args.basis}“ — bitte umstellen; "
+            "„pruefen <basis> <ziel>“ ist der Prüf-Werkzeugkasten.",
+            file=sys.stderr,
+        )
+        args.befehl, args.spec = "regularien", args.basis
+        return None
+    if args.tickets or args.dry_run or args.ohne_github:
+        ap.error("--tickets/--dry-run/--ohne-github gelten nur für „regularien <S>“")
+    repo = config.repo_wurzel(args.repo.expanduser() if args.repo else _repo_aus_umgebung())
+    urteil = pruef.pruefen(repo, args.basis, args.ziel)
+    print(pruef.protokoll.text(urteil.zeile))
+    return urteil.exit
 
 
 def _repo_aus_umgebung() -> Path | None:
@@ -401,19 +436,17 @@ def main(argv: list[str] | None = None) -> int:
         "stand", help="Skill-Stand des Bau-Servers prüfen, bei Abweichung pushen (#325)"
     )
 
-    p_pruefen = unter.add_parser("pruefen", help="Regularien des Manifests prüfen")
-    p_pruefen.add_argument("spec")
-    p_pruefen.add_argument(
-        "--tickets", help="gewählte Tickets (Komma), jedes muss im Manifest stehen"
+    p_regularien = unter.add_parser("regularien", help="Regularien des Manifests prüfen")
+    p_regularien.add_argument("spec")
+    _regularien_optionen(p_regularien)
+    # Prüf-Werkzeugkasten (#99); ``pruefen <S>`` (nur ein Argument) leitet auf ``regularien``.
+    p_pruefen = unter.add_parser(
+        "pruefen", help="Stand prüfen: Exit 0 grün, 1 rot, 2 Gate-Fehler, JSON-Zeile auf stdout"
     )
-    p_pruefen.add_argument(
-        "--dry-run", action="store_true", help="ohne Wirkung, nur Lesen"
-    )
-    p_pruefen.add_argument(
-        "--ohne-github",
-        action="store_true",
-        help="GitHub-Teil auslassen (Kanten, Checkpoint, Belegung, Zustände)",
-    )
+    p_pruefen.add_argument("basis", help="Ausgangsstand (git-Ref)")
+    p_pruefen.add_argument("ziel", nargs="?", help="zu prüfender Stand (git-Ref, ausgecheckt)")
+    p_pruefen.add_argument("--repo", type=Path, help="Repo-Ordner (Vorgabe: aktueller Ordner)")
+    _regularien_optionen(p_pruefen)  # nur für die Weiterleitung ``pruefen <S>``
 
     p_log = unter.add_parser("log", help="Gesamt-Tabelle aus dem Bau-Log")
     p_log.add_argument("spec")
@@ -608,6 +641,10 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     args = ap.parse_args(argv)
+    if args.befehl == "pruefen":
+        code = _pruefen(ap, args)
+        if code is not None:
+            return code
     # Hooks zuerst und ohne Vorarbeit: sie dürfen die Session nie stören (#204).
     if args.befehl == "hook-stop":
         return _hook_stop_mit_umzug()
@@ -696,7 +733,7 @@ def main(argv: list[str] | None = None) -> int:
             eingabe=setup.stdin_eingabe(sys.stdout),
             ausgabe=sys.stdout,
         )
-    if args.befehl == "pruefen" and not args.dry_run:
+    if args.befehl == "regularien" and not args.dry_run:
         config.sicherstellen(repo)
     konfig = config.lade(repo)
 
@@ -733,7 +770,7 @@ def main(argv: list[str] | None = None) -> int:
         )
     if args.befehl == "stand":
         return stand_modul.sichere_stand(repo, konfig)
-    if args.befehl == "pruefen":
+    if args.befehl == "regularien":
         bericht = manifest.pruefe(
             repo,
             args.spec,

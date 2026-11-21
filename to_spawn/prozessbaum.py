@@ -3,7 +3,8 @@
 respawn (alte Session ablösen) und aufpasser (Fenster schließen/fortsetzen) beenden
 beide den ganzen Prozessbaum eines tmux-Panes. Der Staffel-Hook findet die eigene
 Claude-Session in der Vorfahren-Kette und beendet sie: ``session_vorfahr`` und
-``session_beenden`` — die einzigen Teile, die auch unter Windows laufen (#501). Wie der Baum aus ``/proc`` gelesen wird,
+``session_beenden``. Unter Windows laufen außerdem ``lebt``, ``prozesse`` und ``baum``
+(#501, #92): sie wählen selbst zwischen ``/proc`` und der WMI-Prozessliste. Wie der Baum gelesen wird,
 was „lebt“ heißt, wie eine Claude-Session erkannt wird und wie Signale stufenweise
 eskalieren, steht nur hier. Die Aufrufer wählen nur Stufen (Signal + Wartezeit),
 Reihenfolge der PIDs und worauf gewartet wird.
@@ -31,8 +32,16 @@ Stufe = tuple[signal.Signals, float]
 
 
 def _kinder() -> dict[int, list[int]]:
-    """Eltern-PID → Kind-PIDs aus ``/proc/*/stat``; ``/proc`` selbst unlesbar = Fehler."""
+    """Eltern-PID → Kind-PIDs; Linux aus ``/proc/*/stat`` (unlesbar = Fehler), Windows aus WMI."""
     kinder: dict[int, list[int]] = {}
+    if _WINDOWS:
+        liste = _prozesse_windows()
+        for pid, (eltern, _, start) in liste.items():
+            vorfahr = liste.get(eltern)
+            # Recycelte PID: ein „Eltern“-Prozess, der nach dem Kind startete, ist ein Fremder.
+            if pid != eltern and vorfahr is not None and not (vorfahr[2] and start and vorfahr[2] > start):
+                kinder.setdefault(eltern, []).append(pid)
+        return kinder
     for eintrag in _PROC.iterdir():
         if not eintrag.name.isdigit():
             continue
@@ -60,8 +69,36 @@ def baum(pid: int) -> list[int]:
 
 
 def lebt(pid: int) -> bool:
-    """Prozess existiert noch (``/proc/<pid>`` vorhanden, auch Zombies)."""
-    return (_PROC / str(pid)).exists()
+    """Prozess existiert noch (Linux: ``/proc/<pid>`` vorhanden, auch Zombies; Windows: noch aktiv)."""
+    return _lebt_windows(pid) if _WINDOWS else (_PROC / str(pid)).exists()
+
+
+def prozesse() -> dict[int, tuple[int, str, int]]:
+    """PID → (Eltern-PID, Kommandozeile, Startzeit) aller Prozesse; unlesbar = leer.
+
+    Die Startzeit taugt nur zum Vergleich untereinander (Linux: Ticks seit Boot,
+    Windows: FILETIME).
+    """
+    if _WINDOWS:
+        return _prozesse_windows()
+    liste: dict[int, tuple[int, str, int]] = {}
+    try:
+        eintraege = list(_PROC.iterdir())
+    except OSError as fehler:
+        log.warning("%s nicht lesbar: %s", _PROC, fehler)
+        return liste
+    for eintrag in eintraege:
+        if not eintrag.name.isdigit():
+            continue
+        try:
+            stat = (eintrag / "stat").read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        rest = stat[stat.rfind(")") + 2 :].split()  # Felder ab 3 (Zustand); 4 = ppid, 22 = starttime
+        if len(rest) < 20:
+            continue
+        liste[int(eintrag.name)] = (int(rest[1]), _cmdline_linux(int(eintrag.name)).strip(), int(rest[19]))
+    return liste
 
 
 def _proc(pid: int, datei: str) -> bytes:

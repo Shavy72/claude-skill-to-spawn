@@ -505,7 +505,12 @@ def _wache(
         capture_output=True,
         text=True,
         encoding="utf-8",
-        env={**os.environ, "TO_SPAWN_REPO": str(repo), "HOME": str(heim), "USERPROFILE": str(heim)},
+        env={
+            **os.environ,
+            "TO_SPAWN_REPO": str(repo),
+            "HOME": str(heim),
+            "USERPROFILE": str(heim),
+        },
         timeout=180,
         check=False,
     )
@@ -1138,3 +1143,27 @@ def test_r5_manifest_schluessel_falscher_typ_rot_ohne_absturz(
     )
     rot = [b for b in befunde if not b.ok and b.bereich == "schlüssel"]
     assert len(rot) == 1 and "schluessel" in rot[0].text, befunde
+
+
+@pytest.mark.skipif(
+    os.name == "nt", reason="Symlink-Interpreter nur unter Linux (#1502)"
+)
+def test_1502_symlink_python_pfad_bleibt_unveraendert(tmp_path: Path) -> None:
+    """#1502: ``…/bin/python`` als Symlink auf python3 — der Pfad wird nicht zu ``…/python3``."""
+    ordner = tmp_path / "bin"
+    ordner.mkdir()
+    link = ordner / "python"
+    link.symlink_to(Path(sys.executable).resolve())
+    assert not (ordner / "python3").exists()
+    werkzeug = startklar.Werkzeug(
+        "neustart", f"{link.as_posix()} -c pass", link.as_posix()
+    )
+    assert startklar.befehl_text(werkzeug, SPEC, 7) == f"{link.as_posix()} -c pass"
+    # Nacktes Befehlswort wird unter Linux weiter zu python3.
+    assert startklar.aufseher_vorlage("python x.py && `python y.py`") == (
+        "python3 x.py && `python3 y.py`"
+    )
+    befunde = startklar.werkzeug_probe(
+        tmp_path, SPEC, settings_dateien=[], werkzeuge=(werkzeug,)
+    )
+    assert all(b.ok for b in befunde), befunde

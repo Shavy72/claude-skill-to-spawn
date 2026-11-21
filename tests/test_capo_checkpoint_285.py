@@ -1,7 +1,7 @@
 """Tests für #285 — Wächter entscheidet Nacht-Checkpoints nach Doktrin.
 
 Echt laufen: Git-Repo mit Bare-Origin, die CLIs ``skripte/capo.py``,
-``to_spawn.py pruefen`` und ``skripte/bau.py``, echte Bau-Log-Dateien, echte
+``to_spawn.py regularien`` und ``skripte/bau.py``, echte Bau-Log-Dateien, echte
 ``docs/agents/entscheidungen_<S>.md``, echte Zustandsdatei. Gestellt ist nur
 GitHub (``gh``-Ersatz aus #213/#206) und der Mail-Befehl (schreibt in eine Datei).
 """
@@ -169,7 +169,7 @@ def test_pruefen_warnt_bei_checkpoint_in_der_kette(repo: Path, tmp_path: Path, m
     reg._manifest_schreiben(repo, {t: reg._voll() for t in ("901", "902", "903")})
     monkeypatch.setenv("GH_STUB_BLOCKER", "902:901,903:902")
     reg._gh_daten(tmp_path, monkeypatch, {"902": {"labels": [CHECKPOINT]}})
-    ergebnis = reg._cli(repo, "pruefen", str(reg.SPEC))
+    ergebnis = reg._cli(repo, "regularien", str(reg.SPEC))
     # #325: Checkpoint mitten in der Kette ist seitdem eine Weigerung statt einer Warnung.
     assert ergebnis.returncode != 0, reg._ausgabe(ergebnis)
     assert "#902" in ergebnis.stdout and "#903" in ergebnis.stdout

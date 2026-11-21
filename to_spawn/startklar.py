@@ -130,10 +130,15 @@ WERKZEUGE: tuple[Werkzeug, ...] = (
 
 
 def aufseher_vorlage(text: str) -> str:
-    """Prompt-Vorlage fürs Betriebssystem: Linux kennt nur ``python3``."""
+    """Prompt-Vorlage fürs Betriebssystem: Linux kennt nur ``python3``.
+
+    Ersetzt nur das nackte Befehlswort ``python``, nie das Ende eines Pfads
+    (``~/.local/bin/python`` ist ein vorhandener Interpreter, ein daraus
+    gebautes ``…/python3`` gibt es nicht, #1502).
+    """
     if os.name == "nt":
         return text
-    return re.sub(r"\bpython(?= )", "python3", text)
+    return re.sub(r"(?<![\w/\\.~-])python(?= )", _py_name(), text)
 
 
 def skill_pfad() -> str:

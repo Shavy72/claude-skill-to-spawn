@@ -2,20 +2,24 @@
 # Installer für /to-spawn (Linux/macOS): Skill nach ~/.claude/skills/to-spawn, Alias-Skills
 # (meta-exec, to-spawn-local, to-spawn-remote) nach ~/.claude/skills/<alias>, optional die
 # Repo-Weiterleitungen (repo-scripts/ → <Repo>/scripts, nur fehlende Dateien) + .to-spawn/config.json.
+# Dazu die Kette: kette/skills/* → <skills>/<name>, Regel-Blöcke kette/global/*.md → globale CLAUDE.md.
 #
-# Aufruf: bash install.sh [--repo <Pfad-zum-Repo>] [--skills <Ordner>]
-#   --skills  Zielordner der Skills (Vorgabe ~/.claude/skills)
-# Ein vorhandener Skill-Ordner wird nie gelöscht, sondern nach <skills>/_alt/to-spawn-<zeit> verschoben.
+# Aufruf: bash install.sh [--repo <Pfad-zum-Repo>] [--skills <Ordner>] [--claude-md <Datei>]
+#   --skills     Zielordner der Skills (Vorgabe ~/.claude/skills)
+#   --claude-md  globale CLAUDE.md für die Regel-Blöcke (Vorgabe ~/.claude/CLAUDE.md)
+# Ein vorhandener Skill-Ordner wird nie gelöscht, sondern nach <skills>/_alt/<name>-<zeit> verschoben.
 set -euo pipefail
 
 HIER="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILLS="$HOME/.claude/skills"
+CLAUDE_MD="$HOME/.claude/CLAUDE.md"
 REPO=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --repo) REPO="${2:-}"; shift 2 ;;
     --skills) SKILLS="${2:-}"; shift 2 ;;
-    -h|--help) sed -n '2,8p' "${BASH_SOURCE[0]}"; exit 0 ;;
+    --claude-md) CLAUDE_MD="${2:-}"; shift 2 ;;
+    -h|--help) sed -n '2,10p' "${BASH_SOURCE[0]}"; exit 0 ;;
     *) echo "Unbekanntes Argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -27,33 +31,59 @@ if [ -e "$ZIEL" ] && [ "$(cd "$ZIEL" && pwd -P)" = "$(cd "$HIER" && pwd -P)" ]; 
   exit 2
 fi
 
-# --- 1. Alten Stand sichern (verschieben, nie löschen) -----------------------
-if [ -e "$ZIEL" ]; then
-  SICHERUNG="$SKILLS/_alt/to-spawn-$(date +%Y%m%d-%H%M%S)"
-  mkdir -p "$SKILLS/_alt"
-  mv "$ZIEL" "$SICHERUNG"
-  echo "Alter Stand gesichert: $SICHERUNG"
-fi
+ZEIT="$(date +%Y%m%d-%H%M%S)"
 
-# --- 2. Skill kopieren (ohne Git, Caches) ------------------------------------
-mkdir -p "$ZIEL"
-for eintrag in SKILL.md README.md LICENSE to_spawn.py install.sh install.ps1 spawn_local.ps1 spawn_srv.ps1 \
-               to_spawn skripte repo-scripts aliase tests docs nest leitstand; do
-  if [ -e "$HIER/$eintrag" ]; then
-    cp -a "$HIER/$eintrag" "$ZIEL/"
+# sichere_und_kopiere <name> <quelle>...: alten Ordner <skills>/<name> nach _alt/<name>-<zeit>
+# verschieben (nie löschen), dann jede vorhandene <quelle> hinein kopieren. Dateien, die es nur
+# im alten Stand gibt, werden gemeldet (liegen weiter in der Sicherung).
+sichere_und_kopiere() {
+  local name="$1" ziel="$SKILLS/$1" sicherung="" quelle datei
+  shift
+  if [ -e "$ziel" ]; then
+    sicherung="$SKILLS/_alt/$name-$ZEIT"
+    while [ -e "$sicherung" ]; do sicherung="$sicherung-1"; done
+    mkdir -p "$SKILLS/_alt"
+    mv "$ziel" "$sicherung"
+    echo "Alter Stand gesichert: $sicherung"
   fi
+  mkdir -p "$ziel"
+  for quelle in "$@"; do
+    if [ -e "$quelle" ]; then cp -a "$quelle" "$ziel/"; fi
+  done
+  find "$ziel" \( -name __pycache__ -o -name .pytest_cache -o -name .ruff_cache \) -prune -exec rm -rf {} +
+  if [ -n "$sicherung" ]; then
+    (cd "$sicherung" && find . \( -name __pycache__ -o -name .pytest_cache -o -name .ruff_cache \) -prune -o -type f -print) |
+      while IFS= read -r datei; do
+        if [ ! -e "$ziel/$datei" ]; then echo "Hinweis: nur im alten Stand (liegt in $sicherung): ${datei#./}"; fi
+      done
+  fi
+}
+
+# --- 1+2. Alten Stand sichern, Skill kopieren (ohne Git, Caches) -------------
+quellen=()
+for eintrag in SKILL.md README.md LICENSE to_spawn.py install.sh install.ps1 spawn_local.ps1 spawn_srv.ps1 \
+               to_spawn skripte repo-scripts aliase tests docs nest leitstand kette; do
+  quellen+=("$HIER/$eintrag")
 done
-find "$ZIEL" \( -name __pycache__ -o -name .pytest_cache -o -name .ruff_cache \) -prune -exec rm -rf {} +
+sichere_und_kopiere to-spawn "${quellen[@]}"
 chmod +x "$ZIEL/skripte/spawn_srv.sh" "$ZIEL/repo-scripts/spawn_srv.sh" "$ZIEL"/nest/*.sh
+python3 "$ZIEL/to_spawn/skill_stand.py" --stempel "$ZIEL" --klon "$HIER"
 echo "Skill installiert: $ZIEL"
 
 # --- 3. Alias-Skills ----------------------------------------------------------
 for alias_ordner in "$HIER"/aliase/*/; do
   name="$(basename "$alias_ordner")"
-  mkdir -p "$SKILLS/$name"
-  cp "$alias_ordner/SKILL.md" "$SKILLS/$name/SKILL.md"
+  sichere_und_kopiere "$name" "$alias_ordner"/*
   echo "Alias installiert: $SKILLS/$name"
 done
+
+# --- 3b. Kette: Skills (grill-with-docs, to-spec, ...) + globale Regel-Blöcke ----
+for kette_ordner in "$HIER"/kette/skills/*/; do
+  name="$(basename "$kette_ordner")"
+  sichere_und_kopiere "$name" "$kette_ordner"*
+  echo "Kette-Skill installiert: $SKILLS/$name"
+done
+PYTHONPATH="$ZIEL" python3 -m to_spawn.globale_regeln --ziel "$CLAUDE_MD"
 
 # --- 4. Repo-Hälfte (optional): nur fehlende Dateien --------------------------
 if [ -n "$REPO" ]; then

@@ -26,7 +26,7 @@ $Tickets = @($Tickets | ForEach-Object { [int]$_ })  # untypisiert: bleiben Zahl
 # Kein 2>&1: unter PowerShell 5.1 mit ErrorActionPreference Stop bricht eine
 # stderr-Zeile sonst das Skript ab. stderr läuft direkt durch, EAP nur hier locker.
 $py = if (Get-Command python -ErrorAction SilentlyContinue) { "python" } else { "python3" }
-$pruefArgs = @("$PSScriptRoot/to_spawn.py", "pruefen", "$Spec")
+$pruefArgs = @("$PSScriptRoot/to_spawn.py", "regularien", "$Spec")
 if ($Tickets.Count -gt 0) { $pruefArgs += @("--tickets", ($Tickets -join ",")) }
 $eapVorher = $ErrorActionPreference
 $ErrorActionPreference = "Continue"
