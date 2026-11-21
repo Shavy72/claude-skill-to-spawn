@@ -188,6 +188,9 @@ def _hausmeister_nur_im_test(
     # #1372: Docker-Reste nie echt — „true“ statt docker, keine Staging-Sperre.
     monkeypatch.setenv("TO_SPAWN_HAUSMEISTER_DOCKER", shutil.which("true") or "/bin/true")
     monkeypatch.setenv("TO_SPAWN_STAGING_SPERRE", str(ordner / "keine-staging-sperre"))
+    # #136: Temp-Ordner und Temp-Reste nie echt (kein ~/tmp-bau, kein Altbestand in /tmp).
+    monkeypatch.setenv("TO_SPAWN_TEMP_ORDNER", str(ordner / "temp"))
+    monkeypatch.setenv("TO_SPAWN_TEMP_RESTE", "")
 
 
 @pytest.fixture(autouse=True)

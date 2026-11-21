@@ -132,7 +132,7 @@ try:
 except ImportError:  # Windows: Sperre über hausmeister_windows (#1373)
     fcntl = None  # type: ignore[assignment]
 
-from to_spawn import aufpasser, config, docker_reste, gh, hausmeister_windows, hindernis
+from to_spawn import aufpasser, config, docker_reste, gh, hausmeister_windows, hindernis, temp_ordner
 
 log = logging.getLogger("to_spawn.hausmeister")
 
@@ -510,6 +510,7 @@ def _alle_ordner(*, loeschen: bool, jetzt: float | None) -> Rundgang:
         if erg.art != "bleibt" and not erg.trocken:
             anteil = _frei_anteil()
     _kennzahl_schreiben(ergebnisse, trocken=not loeschen)
+    temp_ordner.aufraeumen(loeschen=loeschen, jetzt=jetzt)  # #136: Temp-Reste, wirft nie
     _zweige_im_takt(loeschen, jetzt)
     return Rundgang(True, "", tuple(ergebnisse))
 

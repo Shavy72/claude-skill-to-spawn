@@ -42,7 +42,7 @@ from typing import Any
 _SKILL = str(Path(__file__).resolve().parent.parent)
 if _SKILL not in sys.path:
     sys.path.insert(0, _SKILL)
-from to_spawn import anleitung, capo, config, context_mode, gh, nest, probesitz, sessions_datei, sitzung_env, speicher, starter, terminal_maus, umzug, vertrauen  # noqa: E402
+from to_spawn import anleitung, capo, config, context_mode, gh, nest, probesitz, sessions_datei, sitzung_env, speicher, starter, temp_ordner, terminal_maus, umzug, vertrauen  # noqa: E402
 from to_spawn.manifest import manifest_ordner  # noqa: E402
 from to_spawn.waechter_lauf import transkript_ordner
 
@@ -1045,6 +1045,7 @@ def main() -> int:
     # Eine Session im Worktree darf nicht das Repo des Launchers erben (#205).
     os.environ.pop("TO_SPAWN_REPO", None)
     os.environ["CLAUDE_CODE_FORCE_SESSION_PERSISTENCE"] = "1"
+    os.environ.update(temp_ordner.umgebung())  # #136: Temp auf die Platte, nie die RAM-Platte
     # Klick-Sperre nur für lokal gespawnte Sessions (Windows, Maus-Müll im Eingabefeld).
     terminal_maus.maus_ruhig()
 

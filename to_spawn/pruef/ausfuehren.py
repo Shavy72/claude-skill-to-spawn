@@ -6,10 +6,13 @@ RAM-Deckel, worksteal und Aufteilung nach Laufzeit kommen in 3b-3.
 
 from __future__ import annotations
 
+import os
 import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
+
+from to_spawn import temp_ordner
 
 #: Exit-Code, wenn der Befehl gar nicht startet (wie die Shell bei „nicht gefunden“).
 NICHT_GESTARTET = 127
@@ -30,6 +33,7 @@ def lauf(befehl: list[str], ordner: Path) -> Lauf:
         erg = subprocess.run(
             befehl,
             cwd=ordner,
+            env={**os.environ, **temp_ordner.umgebung()},  # #136: Temp nie auf die RAM-Platte
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
