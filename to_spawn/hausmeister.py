@@ -160,15 +160,35 @@ ERZEUGNISSE = (
     "**/*.log",
     "**/.coverage",
     "**/htmlcov/**",
+    "**/.review/**",  # Belege des Review-Werkzeugs (eigenes .gitignore mit *)
+    "data/.secret_key",  # Flask-Sitzungsschlüssel, legt web/config.py selbst neu an
 )
 
+# #1526: Ticket-Nummer 1–4999 (8080, 20261121, 993675 sind Port/Datum/Hash, keine Tickets).
+# ponytail: feste Obergrenze, anheben, wenn die Tickets an 4000 heranreichen.
+_TICKET_NR = r"([1-9]\d{0,2}|[1-4]\d{3})"
+# Ohne Präfix (nackt, t/a) nur 3–4 Ziffern: 1, 12, a7 sind keine Ticket-Ordner.
+_TICKET_NR_LANG = r"([1-9]\d{2}|[1-4]\d{3})"
+# Jahr-Monat am Namensende (wt-2026-11) ist ein Datum, keine Ticket-Form.
+_KEIN_JAHR_MONAT = r"(?!20\d\d-(?:0?[1-9]|1[0-2])$)"
 _NAME_MUSTER = (
-    re.compile(r"^wt-(\d+)(?:-.*)?$"),
-    re.compile(r"^skill-(\d+)$"),
-    re.compile(r"^duoplus-(\d+)$"),
-    re.compile(r"^t(\d+)$"),
+    # #1526: nur bekannte Formen, Name bis zum Ende verankert — im Zweifel keine Nummer.
+    # wt-1292f, skill-1371-basis, wt-1313-3, wt-1375-7c: Präfix, Zahl, dann Ende, ein
+    # Buchstabe, -<wort> oder kurzes -<1–2 Ziffern>[buchstabe]
+    # (skill-4821f3c ist ein Commit-Hash-Rest, wt-2026-11-21 ein Datum, kein Ticket).
+    re.compile(
+        rf"^(?:wt|skill|duoplus)-{_KEIN_JAHR_MONAT}{_TICKET_NR}(?:[a-z]|-\d{{1,2}}[a-z]?|-[a-z][a-z0-9-]*)?$"
+    ),
+    # t1490a, a1279 (Aufseher): nur t/a als Präfix (x500, v2026-backup sind keine Tickets)
+    re.compile(rf"^[ta]{_TICKET_NR_LANG}[a-z]?$"),
+    # 1489, 1331-linux: nackte Zahl nur allein oder mit einem Wort aus enger Liste
+    # (2026-11-21-sicherung, 8080-notizen, 805_fremd_backup sind keine Tickets).
+    # Hinter einem Wort zählt sie nie: schlange-einspielen-1121 ist ein Datum.
+    re.compile(rf"^{_TICKET_NR_LANG}(?:-(?:linux|lauf|breit|master))?$"),
 )
-_ZWEIG_MUSTER = re.compile(r"^(?:ticket|fix|wip)/(\d+)(?:-.*)?$")
+_ZWEIG_MUSTER = re.compile(
+    r"^(?:(?:ticket|fix|wip|aufseher)/|fix-|abschluss-)(\d+)(?:-.*)?$"
+)
 _GITHUB_SLUG = re.compile(r"github\.com[:/]+([^/\s]+/[^/\s]+?)(?:\.git)?/?$")
 
 
@@ -1503,6 +1523,12 @@ def _hauptrepo(worktree: Path) -> Path:
     return gemeinsam.parent
 
 
+def _neu_erzeugbar(pfad: str) -> bool:
+    """Kompilat unter ``__pycache__`` oder ``data/.secret_key`` (legt die App neu an)."""
+    teile = pfad.split("/")
+    return pfad == "data/.secret_key" or (pfad.endswith(".pyc") and "__pycache__" in teile[:-1])
+
+
 def _glob(muster: tuple[str, ...]) -> list[str]:
     return [f":(glob){m}" for m in muster]
 
@@ -1569,14 +1595,17 @@ def _ungesichertes(
     for _, pfad in alle:
         if pfad.endswith("/"):
             raise _Bleibt(f"eingebettetes Repo {pfad}", fuer_david=True)
+    erzeugnis = {p for xy, p in _status(repo, *_glob(ERZEUGNISSE)) if xy == "!!"}
     geheim = {p for _, p in _status(repo, *_glob(aufpasser.SICHERUNG_AUSSCHLUSS))}
+    # Nur sicher neu Erzeugbares ist nie ein Geheimnis (__pycache__/tempo_zugang.*.pyc).
+    # Ein .env unter .review/, node_modules/, .to-spawn/ bleibt Geheimnis.
+    geheim -= {p for p in erzeugnis if _neu_erzeugbar(p)}
     haupt = _hauptrepo(repo) if ist_worktree else None
     for pfad in sorted(geheim):
         if not _gleiche_kopie(haupt, repo, pfad):
             raise _Bleibt(
                 f"Geheimnis-Datei {pfad} nicht gleich im Hauptrepo", fuer_david=True
             )
-    erzeugnis = {p for xy, p in _status(repo, *_glob(ERZEUGNISSE)) if xy == "!!"}
     for xy, pfad in alle:
         if xy == "!!" and pfad not in geheim and pfad not in erzeugnis:
             raise _Bleibt(f"ignorierte Datei {pfad} ist kein bekanntes Erzeugnis")
