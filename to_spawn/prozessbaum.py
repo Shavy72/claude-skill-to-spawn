@@ -3,11 +3,15 @@
 respawn (alte Session ablösen) und aufpasser (Fenster schließen/fortsetzen) beenden
 beide den ganzen Prozessbaum eines tmux-Panes. Der Staffel-Hook findet die eigene
 Claude-Session in der Vorfahren-Kette und beendet sie: ``session_vorfahr`` und
-``session_beenden``. Unter Windows laufen außerdem ``lebt``, ``prozesse`` und ``baum``
-(#501, #92): sie wählen selbst zwischen ``/proc`` und der WMI-Prozessliste. Wie der Baum gelesen wird,
-was „lebt“ heißt, wie eine Claude-Session erkannt wird und wie Signale stufenweise
-eskalieren, steht nur hier. Die Aufrufer wählen nur Stufen (Signal + Wartezeit),
-Reihenfolge der PIDs und worauf gewartet wird.
+``session_beenden``. Unter Windows laufen außerdem ``lebt``, ``prozesse``, ``baum``,
+``senden`` und ``beenden`` (#501, #92, #68): sie wählen selbst zwischen ``/proc`` und der
+WMI-Prozessliste. Wie der Baum gelesen wird, was „lebt“ heißt, wie eine Claude-Session
+erkannt wird und wie Signale stufenweise eskalieren, steht nur hier. Die Aufrufer wählen
+nur Stufen (Signal + Wartezeit), Reihenfolge der PIDs und worauf gewartet wird.
+
+Windows: jedes Signal wird zu ``TerminateProcess`` (so macht es ``os.kill``) — die erste
+Stufe beendet also schon hart, ``SIGTERM`` lässt sich nicht abfangen. Nur ``ist_claude``
+liest weiter ``/proc`` (unter Windows immer „kein Claude“).
 """
 
 from __future__ import annotations
@@ -32,10 +36,18 @@ Stufe = tuple[signal.Signals, float]
 
 
 def _kinder() -> dict[int, list[int]]:
-    """Eltern-PID → Kind-PIDs; Linux aus ``/proc/*/stat`` (unlesbar = Fehler), Windows aus WMI."""
+    """Eltern-PID → Kind-PIDs; Prozessliste unlesbar = Fehler (``OSError``).
+
+    Linux aus ``/proc/*/stat``, Windows aus der WMI-Prozessliste. Windows trägt die
+    Eltern-PID nur bei der Geburt ein und vergibt PIDs neu: ein Kind, dessen Eltern-PID
+    fehlt (Elternteil tot) oder einem später gestarteten Prozess gehört, hängt an keinem
+    Baum — sonst beendete ``beenden`` Fremde mit. Unbekannte Startzeit (0) zählt als echt.
+    """
     kinder: dict[int, list[int]] = {}
     if _WINDOWS:
         liste = _prozesse_windows()
+        if not liste:  # „keine Prozesse“ gibt es nicht — leer heißt: WMI nicht lesbar
+            raise OSError("Windows-Prozessliste nicht lesbar")
         for pid, (eltern, _, start) in liste.items():
             vorfahr = liste.get(eltern)
             # Recycelte PID: ein „Eltern“-Prozess, der nach dem Kind startete, ist ein Fremder.
@@ -131,12 +143,22 @@ def ist_claude(pid: int) -> bool:
 
 
 def senden(pids: Sequence[int], sig: signal.Signals) -> None:
-    """Schickt ``sig`` an jede PID in Listenfolge; schon beendete zählen nicht als Fehler."""
+    """Schickt ``sig`` an jede PID in Listenfolge; schon beendete zählen nicht als Fehler.
+
+    Windows meldet einen beendeten Prozess nicht als ``ProcessLookupError``, sondern als
+    ``OSError`` (ungültiger Parameter bzw. Zugriff verweigert, solange noch ein Handle offen
+    ist) — dort zählt nur ein Fehler an einem noch lebenden Prozess, und der landet im Log.
+    """
     for pid in pids:
         try:
             os.kill(pid, sig)
         except ProcessLookupError:
             continue
+        except OSError as fehler:
+            if not _WINDOWS:
+                raise
+            if lebt(pid):
+                log.warning("Signal %s an PID %d fehlgeschlagen: %s", sig, pid, fehler)
 
 
 def _warte_tot(
