@@ -190,3 +190,31 @@ blockte. Genau das ist der Fehler, den L1 (N1, N2) abstellen soll.
 **Ausdrücklich nicht gewollt (L4)**
 
 - **N10** kein Handgriff für David beim Aufräumen — kein Befehl zum Abtippen, kein „geparkt für David“
+
+---
+
+## L5 — Jederzeit weiterbauen können (David, 2026-11-21)
+
+### Wortlaut (1:1)
+
+> okay alles soll gu dokumenterit werden das jeder zeit falls der bau abgebrochen werden sollte daran weiter gerabeiet werden kann in richtugn des großen Ziels dahinter
+
+Anlass: Zwischenstand 22:16 — der Bau läuft über viele sich ablösende Sessions auf zwei Maschinen;
+Übergaben lagen bis dahin teils nur als Datei auf einer Maschine.
+
+### Verdichtung in prüfbare Anforderungen (L5)
+
+- **A25 Ein Einstieg:** Es gibt genau ein Dokument, bei dem man anfängt: `docs/WIEDEREINSTIEG.md`.
+  Es nennt Ziel, Fundorte, Stand und die Schritte zum Weiterbauen — verständlich ohne Chat.
+- **A26 Gesichert, nicht nur auf einer Maschine:** Auftrag, Plan, Abnahme und jede offene Arbeit
+  liegen im Repo (Dokumente, Issues, Pull-Requests, hochgeladene Zweige). Übergaben und
+  Entscheidungs-Log beider Maschinen werden von selbst in den privaten Notiz-Tresor gespiegelt.
+- **A27 Immer aktuell:** Der Stand wird nach jedem gemergten Paket und bei jeder Ablösung
+  fortgeschrieben. Angefangene Arbeit wird mindestens bei jeder Ablösung hochgeladen. Ein Abbruch
+  kostet höchstens die Arbeit seit dem letzten Hochladen.
+- **A28 Bewiesen:** Eine frische Session ohne Chat und ohne Übergabe-Datei findet allein über den
+  Einstieg den richtigen Stand und den richtigen nächsten Schritt (Kaltstart-Probe).
+
+**Ausdrücklich nicht gewollt (L5)**
+
+- **N11** kein Wissen, das nur in einem Chat, im Kopf einer Session oder auf einer einzigen Maschine liegt
