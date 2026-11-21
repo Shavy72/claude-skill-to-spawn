@@ -8,6 +8,7 @@ Aufruf (im Repo-Wurzelordner):
     python ~/.claude/skills/to-spawn/to_spawn.py log <S>
     python ~/.claude/skills/to-spawn/to_spawn.py lernstoff [--letzte 30]
     python ~/.claude/skills/to-spawn/to_spawn.py setup [--zeigen|--standard|--terminal …]
+    python ~/.claude/skills/to-spawn/to_spawn.py einrichten [--pruefen]  # Repo einrichten (Exit 0/1, --pruefen 0/3)
     python ~/.claude/skills/to-spawn/to_spawn.py probesitz [--punkt N …] [--zeigen] [--modell M]  # 7-Punkte-Abnahme (#214)
     python ~/.claude/skills/to-spawn/to_spawn.py deploy-status [--datei P] [--ticket N] [--still-min 60]
     python ~/.claude/skills/to-spawn/to_spawn.py hook-stop          # JSON auf stdin
@@ -38,6 +39,7 @@ from to_spawn import (  # noqa: E402
     befund,
     config,
     deploy_status,
+    einrichten,
     gh,
     hausmeister,
     hausmeister_aufgabe,
@@ -419,6 +421,12 @@ def main(argv: list[str] | None = None) -> int:
     p_lern = unter.add_parser("lernstoff", help="Lernstoff-Zeilen für /to-tickets")
     p_lern.add_argument("--letzte", type=int, default=30)
 
+    p_einr = unter.add_parser("einrichten", help="Repo für to-spawn einrichten (Soll-Liste)")
+    p_einr.add_argument(
+        "--pruefen",
+        action="store_true",
+        help="nur prüfen, nichts schreiben (Exit 0 = alles da und aktuell, 3 = Abweichung)",
+    )
     p_setup = unter.add_parser(
         "setup", help="Terminal, Modell und Effort je Rolle wählen"
     )
@@ -668,11 +676,20 @@ def main(argv: list[str] | None = None) -> int:
         )
     if args.befehl == "setup":
         return _setup(repo, args)
+    if args.befehl == "einrichten":
+        return einrichten.einrichten(repo, pruefen=args.pruefen, ausgabe=sys.stdout)
     if args.befehl == "probesitz":
         return probesitz.befehl(
             repo, punkte=args.punkt, nur_zeigen=args.zeigen, modell=args.modell
         )
+    if args.befehl == "spawn" and args.dry_run:
+        # Probelauf (L1): Einrichter nur prüfend, schreibt nichts, Abweichung hält nicht auf.
+        einrichten.einrichten(repo, pruefen=True, ausgabe=sys.stdout)
     if args.befehl == "spawn" and not args.dry_run:
+        # Einrichter vor dem Setup (L1): große Lücken nur gemeldet, nur ein Anleger-Fehler hält auf.
+        code = einrichten.einrichten(repo, ausgabe=sys.stdout)
+        if code != 0:
+            return code
         setup.erster_start(
             repo,
             ist_tty=sys.stdin.isatty(),
