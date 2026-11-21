@@ -41,6 +41,8 @@ _SKILL = Path(__file__).resolve().parent.parent
 _VORLAGEN = _SKILL / "repo-scripts"
 _MANIFEST_VORLAGE = "_default.json"
 _EXCLUDE_KOPF = "# to-spawn Einrichter: lokale Laufdateien (nicht versioniert)"
+#: Zeitlimit je ``gh``-Aufruf (Sekunden): ein hängendes ``gh`` hält den Spawn nicht auf.
+_GH_TIMEOUT = 15.0
 
 #: Ergebnis von ``pruefe``: ``DA`` = in Ordnung, ``FEHLT`` = ``lege_an`` kann es
 #: richten, ``LUECKE`` = nur von Hand zu richten (große Lücke).
@@ -84,11 +86,15 @@ def _git(wurzel: Path, *args: str) -> tuple[int, str]:
 
 
 def _getrackt(wurzel: Path, datei: Path) -> bool:
+    """Fail-closed: nur ``ls-files``-Exit 1 heißt ungetrackt; Git-Fehler gilt als getrackt."""
     try:
         rel = datei.resolve().relative_to(wurzel.resolve()).as_posix()
     except ValueError:
         return False
-    return _git(wurzel, "ls-files", "--error-unmatch", "--", rel)[0] == 0
+    code = _git(wurzel, "ls-files", "--error-unmatch", "--", rel)[0]
+    if code not in (0, 1):
+        log.warning("git ls-files Exit %s für %s — gilt als getrackt", code, rel)
+    return code != 1
 
 
 def _rel(wurzel: Path, datei: Path) -> str | None:
@@ -150,7 +156,8 @@ def _pruefe_worktree_basis(ort: Ort) -> Befund:
         return DA, wert
     vorschlag = config.worktree_basis_vorgabe(ort.wurzel)
     if _getrackt(ort.wurzel, datei):
-        return LUECKE, f"leer, Konfig getrackt — von Hand eintragen: {vorschlag}"
+        # Leer in getrackter Konfig ist gültige Vorgabe (DuoPlus, altes Verhalten).
+        return DA, f"leer (Vorgabe {vorschlag})"
     return FEHLT, f"leer, Vorschlag {vorschlag}"
 
 
@@ -240,16 +247,19 @@ def _label(ort: Ort) -> str:
 def _pruefe_label(ort: Ort) -> Befund:
     label = _label(ort)
     pfad = "repos/{owner}/{repo}/labels/" + urllib.parse.quote(label, safe="")
-    code, _ = gh.lauf(["api", pfad], cwd=ort.wurzel, timeout=15)
+    code, _ = gh.lauf(["api", pfad], cwd=ort.wurzel, timeout=_GH_TIMEOUT)
     if code == 0:
         return DA, label
     if code == 127:
         return LUECKE, f"gh fehlt — von Hand: gh label create {label}"
+    if code == 124:
+        return LUECKE, f"gh Zeitlimit — von Hand: gh label create {label}"
     return FEHLT, f"{label} fehlt im GitHub-Repo"
 
 
 def _lege_label_an(ort: Ort) -> None:
-    gh.label_sicherstellen(ort.wurzel, _label(ort))
+    # Scheitern/Zeitlimit gibt False (Warnung im Log); die Nachprüfung meldet die Lücke.
+    gh.label_sicherstellen(ort.wurzel, _label(ort), timeout=_GH_TIMEOUT)
 
 
 def _maschinen_soll(ort: Ort) -> dict[str, str]:

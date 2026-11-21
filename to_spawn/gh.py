@@ -187,6 +187,7 @@ def label_sicherstellen(
     label: str,
     farbe: str = "d93f0b",
     beschreibung: str = "Ticket wartet auf menschliche Abnahme (to-spawn)",
+    timeout: float | None = None,
 ) -> bool:
     """Sorgt dafür, dass das Label im GitHub-Repo existiert — erst prüfen, dann anlegen (#257).
 
@@ -195,11 +196,14 @@ def label_sicherstellen(
     geschrieben (Farbe/Beschreibung bleiben, wie sie sind). Nur wenn das Label fehlt,
     ``gh label create`` ohne ``--force``.
 
+    ``timeout`` (Sekunden) gilt je ``gh``-Aufruf; überschritten → ``False``.
     ``False`` mit Warnung, wenn ``gh`` fehlt oder das Anlegen scheitert (kein origin,
     nicht eingeloggt) — der Aufrufer läuft weiter, das Label holt man von Hand nach.
     """
     pfad = "repos/{owner}/{repo}/labels/" + urllib.parse.quote(label, safe="")
-    code, _ausgabe = lauf(["api", pfad], cwd=repo_pfad)
+    code, _ausgabe = lauf(["api", pfad], cwd=repo_pfad, timeout=timeout)
+    if code == 124:
+        return False
     if code == 127:
         log.warning("gh fehlt — Label %s nicht angelegt (gh label create %s).", label, label)
         return False
@@ -208,6 +212,7 @@ def label_sicherstellen(
     code, _ausgabe = lauf(
         ["label", "create", label, "--color", farbe, "--description", beschreibung],
         cwd=repo_pfad,
+        timeout=timeout,
     )
     if code == 127:
         log.warning("gh fehlt — Label %s nicht angelegt (gh label create %s).", label, label)

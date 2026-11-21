@@ -682,6 +682,9 @@ def main(argv: list[str] | None = None) -> int:
         return probesitz.befehl(
             repo, punkte=args.punkt, nur_zeigen=args.zeigen, modell=args.modell
         )
+    if args.befehl == "spawn" and args.dry_run:
+        # Probelauf (L1): Einrichter nur prüfend, schreibt nichts, Abweichung hält nicht auf.
+        einrichten.einrichten(repo, pruefen=True, ausgabe=sys.stdout)
     if args.befehl == "spawn" and not args.dry_run:
         # Einrichter vor dem Setup (L1): große Lücken nur gemeldet, nur ein Anleger-Fehler hält auf.
         code = einrichten.einrichten(repo, ausgabe=sys.stdout)

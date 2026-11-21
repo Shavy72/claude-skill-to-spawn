@@ -138,3 +138,115 @@ def test_weiterleitungen_ungetrackt_erneuert_getrackt_nur_gemeldet(repo: Path) -
     assert "weiterleitungen: grosse_luecke" in text
     assert "veraltet" in text and "scripts/bau.py" in text
     assert _lauf(repo, pruefen=True)[0] == 3
+
+
+# --- Fix-Runde 1 (Review P5) ------------------------------------------------
+
+
+def _gh_stub(repo: Path, inhalt: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    stub = repo.parent / "gh_stub_fix1.py"
+    stub.write_text(inhalt, encoding="utf-8")
+    monkeypatch.setenv("TO_SPAWN_GH_STUB", str(stub))
+
+
+def test_git_fehler_gilt_als_getrackt_und_schreibt_nicht(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fail-closed: scheitert ``git ls-files`` (z. B. 128 safe.directory), wird nichts überschrieben."""
+    skripte = repo / "scripts"
+    skripte.mkdir()
+    (skripte / "wache.py").write_text("# alt, ungetrackt\n", encoding="utf-8")
+    echt = einrichten._git
+
+    def git(wurzel: Path, *args: str) -> tuple[int, str]:
+        return (128, "") if args[:1] == ("ls-files",) else echt(wurzel, *args)
+
+    monkeypatch.setattr(einrichten, "_git", git)
+    code, text = _lauf(repo)
+    assert code == 0, text
+    assert (skripte / "wache.py").read_text(encoding="utf-8") == "# alt, ungetrackt\n"
+    assert "weiterleitungen: grosse_luecke" in text
+
+
+def test_haengendes_gh_haelt_spawn_nicht_auf(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import time
+
+    _gh_stub(repo, "import sys, time\ntime.sleep(3)\nsys.exit(1)\n", monkeypatch)
+    monkeypatch.setattr(einrichten, "_GH_TIMEOUT", 0.3, raising=False)
+    start = time.monotonic()
+    code, text = _lauf(repo)
+    dauer = time.monotonic() - start
+    assert code == 0, text
+    assert "checkpoint_label: grosse_luecke" in text
+    assert dauer < 2.5, f"{dauer:.1f} s — gh ohne Zeitlimit"
+
+
+def test_gh_fehler_meldet_und_haelt_nicht_auf(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _gh_stub(repo, "import sys\nsys.exit(1)\n", monkeypatch)
+    code, text = _lauf(repo)
+    assert code == 0, text
+    assert "checkpoint_label: grosse_luecke" in text
+
+
+def test_leere_worktree_basis_in_getrackter_konfig_ist_gueltig(repo: Path) -> None:
+    """DuoPlus: ``worktree_basis`` leer + Konfig getrackt = gültige Vorgabe, Exit 0."""
+    assert _lauf(repo)[0] == 0
+    konfig = repo / config.KONFIG_PFAD
+    roh = json.loads(konfig.read_text(encoding="utf-8"))
+    roh["worktree_basis"] = ""
+    konfig.write_text(json.dumps(roh, indent=2) + "\n", encoding="utf-8")
+    _git(repo, "add", "-f", str(config.KONFIG_PFAD))
+    _git(repo, "commit", "-q", "-m", "Konfig getrackt")
+    code, text = _lauf(repo, pruefen=True)
+    assert code == 0, text
+    assert "worktree_basis: da_aktuell" in text
+
+
+def test_zweiter_lauf_aendert_keine_datei(repo: Path) -> None:
+    """Schnappschuss aller Dateien (Inhalt + mtime) statt nur zweier mtimes."""
+
+    def schnappschuss() -> dict[str, tuple[bytes, int]]:
+        orte = [repo, config.maschine_datei().parent]
+        return {
+            str(p): (p.read_bytes(), p.stat().st_mtime_ns)
+            for ort in orte
+            for p in ort.rglob("*")
+            if p.is_file() and ".git/objects" not in p.as_posix()
+        }
+
+    assert _lauf(repo)[0] == 0
+    vorher = schnappschuss()
+    assert _lauf(repo)[0] == 0
+    assert schnappschuss() == vorher
+
+
+def test_spawn_dry_run_geht_ueber_pruefweg(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import importlib.util
+
+    from to_spawn import spawn as spawn_modul
+
+    cli_spec = importlib.util.spec_from_file_location(
+        "to_spawn_cli_p5_fix1", einrichten._SKILL / "to_spawn.py"
+    )
+    assert cli_spec and cli_spec.loader
+    cli = importlib.util.module_from_spec(cli_spec)
+    cli_spec.loader.exec_module(cli)
+    aufrufe: list[bool] = []
+    echt = einrichten.einrichten
+
+    def aufzeichnen(wurzel: Path, *, pruefen: bool = False, ausgabe=None) -> int:  # type: ignore[no-untyped-def]
+        aufrufe.append(pruefen)
+        return echt(wurzel, pruefen=pruefen, ausgabe=io.StringIO())
+
+    monkeypatch.setattr(einrichten, "einrichten", aufzeichnen)
+    monkeypatch.setattr(spawn_modul, "spawn", lambda *a, **k: 0)
+    monkeypatch.chdir(repo)
+    assert cli.main(["spawn", "999", "--dry-run"]) == 0
+    assert aufrufe == [True]
+    assert not _stand(repo).exists()
