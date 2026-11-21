@@ -38,7 +38,7 @@ was zum Weiterbauen nötig ist.
   Runde 4), 142 (94), 146 (88), 148 (136). 3b-0 entschieden: DuoPlus bekommt den schnelleren
   Voll-Lauf (Issue 102) statt Test-Auswahl (101). Neue Issues: 155 (install.sh scheitert an
   `repo-scripts/__pycache__`), 156 (Prüf-Test to-tickets, Rest-Befunde aus 144); Kommentar an 96
-  (App-Kopie `scripts/capo.py` noch „Wächter-Tick“). Als Nächstes: 135, 129, 145, 102, 101, 104.
+  (App-Kopie `scripts/capo.py` trägt im Tick-Namen noch die alte Rollenbezeichnung). Als Nächstes: 135, 129, 145, 102, 101, 104.
 
 - **2026-11-21 22:33 (Server-Uhr):** Gemergt: Pull-Request 126 (Issue 103, 3b-4 Wackler, main 8dfcaa8),
   143 (Issue 138), 131, 132, 133 (Windows-Pakete P7d, P7c-b, P7e). Offen und in Prüfung: 127 (Issue 100),
