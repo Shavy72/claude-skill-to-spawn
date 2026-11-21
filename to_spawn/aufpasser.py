@@ -535,8 +535,16 @@ def deploy_art(argv: list[str]) -> DeployArt | None:
         return "pruef" if "--nur-gate" in " ".join(argv).split() else "live"
     if "staging_deploy.sh" in kopf:
         return "live"
-    if "deploy_schlange" in kopf or re.search(GATE_MUSTER, kopf):
+    if "deploy_schlange" in kopf:
         return "pruef"
+    # pytest zählt nur als Programmname (``pytest``, ``python -m pytest``), nie als
+    # Pfadteil — sonst wäre jeder Prozess unter ``/tmp/pytest-of-<nutzer>/`` ein Gate (#1411).
+    # Tokens trennen auch an Shell-Zeichen/Anführung (``cd x && pytest;``, ``"pytest"``), der
+    # Programmname ist der letzte Teil nach ``/`` oder ``\`` (Windows-Pfad), ``-mpytest`` zählt mit.
+    for teil in re.split(r"[\s;&|()'\"]+", kopf):
+        name = re.split(r"[/\\]", teil.removeprefix("-m"))[-1]
+        if re.fullmatch(GATE_MUSTER, name.removesuffix(".exe")):
+            return "pruef"
     return None
 
 

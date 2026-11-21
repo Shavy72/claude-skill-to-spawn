@@ -62,6 +62,15 @@ def _geschlossen(welt: Welt) -> list[str]:
         (["bash", "-lc", "bash scripts/safe_deploy_vps.sh --nur-gate"], "pruef"),
         (["python3", "scripts/deploy_schlange.py"], "pruef"),
         (["/usr/bin/python3", "-m", "pytest", "tests", "-q"], "pruef"),
+        (["bash", "-lc", "pytest tests -q"], "pruef"),
+        # #1411: „pytest“ nur als Programm, nie als Teil eines Pfads (pytest-of-<nutzer>).
+        (["/bin/bash", "/tmp/pytest-of-bau/pytest-1/t0/bin/claude", "nur-prompt"], None),
+        # Review #1528: pytest auch angeklebt an Shell-Zeichen, Anführung oder -m.
+        (["python", "-mpytest", "-q"], "pruef"),
+        (["bash", "-c", "cd x && pytest;"], "pruef"),
+        (['"pytest"', "-q"], "pruef"),
+        ([r"C:\Python312\Scripts\pytest.exe", "-q"], "pruef"),
+        (["bash", "-c", "cd /tmp/pytest-of-bau/pytest-1 && ./claude"], None),
         (["bash", "scripts/safe_deploy_vps.sh", "--skip-ci"], "live"),
         (["bash", "scripts/safe_deploy_vps.sh", "--rebuild-runner"], "live"),
         (["bash", "scripts/safe_deploy_vps.sh", "--to", "abc1234"], "live"),
