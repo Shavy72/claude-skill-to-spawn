@@ -25,6 +25,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
+from conftest import attrappe
 
 SKILL = Path(__file__).resolve().parent.parent
 HILFEN = SKILL / "tests" / "hilfen"
@@ -44,8 +45,11 @@ SPEC = "9001"
 SITZUNG = f"spec-{SPEC}"
 UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 
-GH_WRAPPER = """#!/bin/sh
-exec {py} {stub} "$@"
+GH_WRAPPER = """
+import os
+import sys
+
+os.execv("{py}", ["{py}", "{stub}", *sys.argv[1:]])
 """
 
 BAU_PROTOKOLL = """#!/bin/bash
@@ -233,11 +237,7 @@ def welt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Welt]:
     monkeypatch.setenv("HOME", str(heim))
     binaer = tmp_path / "bin"
     binaer.mkdir()
-    (binaer / "gh").write_text(
-        GH_WRAPPER.format(py=sys.executable, stub=HILFEN / "gh_stub.py"),
-        encoding="utf-8",
-    )
-    (binaer / "gh").chmod(0o755)
+    attrappe(binaer, "gh", GH_WRAPPER.format(py=sys.executable, stub=HILFEN / "gh_stub.py"))
     shutil.copy2(HILFEN / "fake_claude_schlaeft.sh", binaer / "claude")
     (binaer / "claude").chmod(0o755)
     protokoll_bau = tmp_path / "bau_argv.txt"
@@ -253,8 +253,7 @@ def welt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Welt]:
     # prüft den aufgelösten Pfad).
     weiter = Path(os.environ["TO_SPAWN_TEST_BIN"]) / "tmux"
     echt = shutil.which("tmux") or "tmux"
-    weiter.write_text(f'#!/bin/sh\nexec {echt} "$@"\n', encoding="utf-8")
-    weiter.chmod(0o755)
+    attrappe(weiter.parent, "tmux", f"import os, sys\nos.execv({echt!r}, [{echt!r}, *sys.argv[1:]])")
     protokoll_gh = tmp_path / "gh_protokoll.txt"
     monkeypatch.setenv("GH_STUB_PROTOKOLL", str(protokoll_gh))
     # Vorgabe: nur 9002 ist Unter-Ticket; Tests mit 9003 setzen es selbst.
@@ -867,11 +866,7 @@ def test_bau_resume_wartet_nicht_auf_blocker(repo_bau: Path, tmp_path: Path) -> 
     binaer.mkdir()
     (binaer / "claude").write_text(FAKE_CLAUDE_ARGV, encoding="utf-8")
     (binaer / "claude").chmod(0o755)
-    (binaer / "gh").write_text(
-        GH_WRAPPER.format(py=sys.executable, stub=HILFEN / "gh_stub.py"),
-        encoding="utf-8",
-    )
-    (binaer / "gh").chmod(0o755)
+    attrappe(binaer, "gh", GH_WRAPPER.format(py=sys.executable, stub=HILFEN / "gh_stub.py"))
     beweis = tmp_path / "argv.json"
     temp = tmp_path / "tmp"
     temp.mkdir()

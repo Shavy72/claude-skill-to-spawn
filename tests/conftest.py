@@ -13,6 +13,7 @@ from __future__ import annotations
 import os
 import shutil
 import sys
+import textwrap
 from pathlib import Path, PureWindowsPath
 
 import pytest
@@ -52,6 +53,26 @@ def braucht_fehlt(name: str, plattform: str = sys.platform, finde=shutil.which) 
         if "system32" in teile or "windowsapps" in teile:
             return f"bash ist nur der WSL-Stub ({pfad})"
     return None
+
+
+def attrappe(ordner: Path, name: str, python_code: str) -> Path:
+    """Ausführbare Programm-Attrappe ``ordner/name`` (z. B. ``gh``, ``ssh``), #93.
+
+    Einzige Stelle des Wissens, wie eine Attrappe je Betriebssystem startbar wird:
+    POSIX ein Python-Skript mit Shebang auf den laufenden Interpreter
+    (``sys.executable``, kein festes ``python3``), Windows zusätzlich ``name.cmd``
+    als Hülle (PATHEXT findet sie). Das Verhalten (Ausgabe, Exit-Code, Protokoll,
+    stdin, Antwort je Argument) steht allein in ``python_code``; er wird
+    ``textwrap.dedent``-bereinigt. ``ordner`` wird bei Bedarf angelegt.
+    Rückgabe: Pfad des Skripts.
+    """
+    ordner.mkdir(parents=True, exist_ok=True)
+    skript = ordner / name
+    skript.write_text(f"#!{sys.executable}\n{textwrap.dedent(python_code)}", encoding="utf-8")
+    skript.chmod(skript.stat().st_mode | 0o111)
+    if os.name == "nt":
+        (ordner / f"{name}.cmd").write_text(f'@"{sys.executable}" "{skript}" %*\r\n', encoding="utf-8")
+    return skript
 
 
 def pytest_configure(config: pytest.Config) -> None:

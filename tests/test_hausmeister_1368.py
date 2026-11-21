@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
+from conftest import attrappe
 
 SKILL = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SKILL))
@@ -26,8 +27,7 @@ from to_spawn import aufpasser, hausmeister
 ORIGIN = "https://github.com/Shavy72/duoplus-management"
 STUNDE = 3600.0
 
-GH_ATTRAPPE = """#!/bin/sh
-exec {py} -c '
+GH_ATTRAPPE = """
 import json, os, sys
 a = sys.argv[1:]
 if a[:2] == ["issue", "view"]:
@@ -38,7 +38,6 @@ if a[:2] == ["issue", "view"]:
     print(json.dumps(e))
     sys.exit(0)
 sys.exit(1)
-' "$@"
 """
 
 
@@ -137,9 +136,7 @@ def welt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Welt:
 
     bin_ = tmp_path / "bin"
     bin_.mkdir()
-    gh = bin_ / "gh"
-    gh.write_text(GH_ATTRAPPE.format(py=sys.executable), encoding="utf-8")
-    gh.chmod(0o755)
+    attrappe(bin_, "gh", GH_ATTRAPPE)
     tickets = tmp_path / "tickets.json"
     tickets.write_text("{}", encoding="utf-8")
     log = tmp_path / "hausmeister.jsonl"
@@ -609,9 +606,7 @@ def test_s10_env_in_ungepushtem_commit_bleibt(welt: Welt) -> None:
 # T1
 def test_t1_sicherung_scheitert_bleibt(welt: Welt) -> None:
     wt = welt.worktree(47, schmutzig=True)
-    haken = welt.bare / "hooks" / "pre-receive"
-    haken.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
-    haken.chmod(0o755)
+    attrappe(welt.bare / "hooks", "pre-receive", "raise SystemExit(1)\n")
     welt.ticket(47, "CLOSED", 48)
     r = welt.aufraeumen(wt, loeschen=True)
     assert r.art == "bleibt" and r.fehler and "Sicherung" in r.grund

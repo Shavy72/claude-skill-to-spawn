@@ -23,6 +23,7 @@ import uuid
 from pathlib import Path
 
 import pytest
+from conftest import attrappe
 from test_aufpasser_236 import (  # noqa: F401 — ``welt`` ist ein Fixture
     CRONTAB_FAKE,
     GH_WRAPPER,
@@ -836,20 +837,21 @@ def test_f13_trocken_lauf_legt_keinen_zustandsordner_an(welt: Welt) -> None:
 def test_f14_schluessel_erst_nach_erfolgreichem_kommentar(
     welt: Welt, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    kaputt = welt.bin / "gh"
-    original = kaputt.read_text(encoding="utf-8")
-    kaputt.write_text(
-        '#!/bin/sh\nif [ "$1" = "issue" ] && [ "$2" = "comment" ]; then echo "gh: kaputt" >&2; exit 1; fi\n'
-        + original.split("\n", 1)[1],
-        encoding="utf-8",
+    original = (welt.bin / "gh").read_text(encoding="utf-8")
+    vorspann = (
+        "import sys\n"
+        'if sys.argv[1:3] == ["issue", "comment"]:\n'
+        '    print("gh: kaputt", file=sys.stderr)\n'
+        "    raise SystemExit(1)\n"
     )
+    attrappe(welt.bin, "gh", vorspann + original.split("\n", 1)[1])
     assert welt.lauf() == 0
     time.sleep(0.5)
     assert "bau 9002" in fenster_namen()
     assert welt.kommentare() == []
     assert welt.stand().get("meldungen", {}) == {}
     assert "Kommentar fehlgeschlagen" in welt.log()
-    kaputt.write_text(original, encoding="utf-8")
+    (welt.bin / "gh").write_text(original, encoding="utf-8")
     tmux("kill-window", "-t", fenster_ziel("bau 9002"))
     assert welt.lauf() == 0
     assert any("#9002 hatte keine Session, gestartet." in k for k in welt.kommentare())

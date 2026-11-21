@@ -22,6 +22,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
+from conftest import attrappe
 
 SKILL = Path(__file__).resolve().parent.parent
 SKRIPTE = SKILL / "skripte"
@@ -386,9 +387,7 @@ def test_ohne_assignee_kein_verwaist(welt: dict[str, Path]) -> None:
 def _ssh_fake(welt: dict[str, Path], sha: str) -> dict[str, str]:
     binaer = welt["tmp"] / "bin"
     binaer.mkdir(exist_ok=True)
-    _ausfuehrbar(binaer / "ssh", f"#!/bin/sh\necho {sha}\n")
-    # Windows: CreateProcess findet die sh-Datei ohne Endung nicht, capo löst ssh über PATHEXT auf.
-    (binaer / "ssh.cmd").write_text(f"@echo {sha}\r\n", encoding="utf-8")
+    attrappe(binaer, "ssh", f"print({sha!r})\n")
     return {"PATH": f"{binaer}{os.pathsep}{os.environ['PATH']}"}
 
 
@@ -1008,8 +1007,11 @@ def _ssh_protokoll_fake(
         f"    print({vps_sha!r})\n",
         encoding="utf-8",
     )
-    _ausfuehrbar(binaer / "ssh", f'#!/bin/sh\nexec "{sys.executable}" "{fake}" "$@"\n')
-    (binaer / "ssh.cmd").write_text(f'@"{sys.executable}" "{fake}" %*\r\n', encoding="utf-8")
+    attrappe(
+        binaer,
+        "ssh",
+        f"import os, sys\nos.execv({sys.executable!r}, [{sys.executable!r}, {str(fake)!r}, *sys.argv[1:]])\n",
+    )
     return {"PATH": f"{binaer}{os.pathsep}{os.environ['PATH']}"}, protokoll
 
 

@@ -18,6 +18,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from conftest import attrappe
 
 SKILL = Path(__file__).resolve().parent.parent
 if str(SKILL) not in sys.path:
@@ -445,10 +446,8 @@ def test_cli_startklar_exit_1_und_0(tmp_path: Path) -> None:
     wt = _schluessel_welt(tmp_path)
     heim = _heim_mit_werkzeugen(tmp_path)
     # Temp-Repo hat kein GitHub: stilles ``gh`` im PATH (leerer Issue-Text, Exit 0).
-    gh = heim / "bin" / "gh"
-    gh.parent.mkdir()
-    gh.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-    gh.chmod(0o755)
+    (heim / "bin").mkdir()
+    gh = attrappe(heim / "bin", "gh", "raise SystemExit(0)\n")
     env = {"PATH": f"{gh.parent}{os.pathsep}{os.environ['PATH']}"}
     rot = _cli(wt, heim, env)
     assert rot.returncode == 1, rot.stdout + rot.stderr
@@ -1062,12 +1061,17 @@ def test_r3_gh_exit1_ist_rot_und_fragt_nur_ein_issue(
 ) -> None:
     wt, bin_ordner = _gh_welt(tmp_path, monkeypatch)
     zaehl = tmp_path / "aufrufe.txt"
-    gh = bin_ordner / "gh"
-    gh.write_text(
-        f'#!/bin/sh\necho "$3" >> {shlex.quote(str(zaehl))}\necho "not logged in" >&2\nexit 1\n',
-        encoding="utf-8",
+    attrappe(
+        bin_ordner,
+        "gh",
+        f"""
+        import sys
+        with open({str(zaehl)!r}, "a", encoding="utf-8") as f:
+            f.write((sys.argv[3] if len(sys.argv) > 3 else "") + "\\n")
+        print("not logged in", file=sys.stderr)
+        sys.exit(1)
+        """,
     )
-    gh.chmod(0o755)
     befunde = startklar.schluessel_pruefen(wt, SPEC, environ={})
     rot = [b for b in befunde if not b.ok]
     assert rot and "unvollständig" in rot[0].text
@@ -1081,12 +1085,15 @@ def test_r3_gh_fehlertext_ist_geschwaerzt(
 ) -> None:
     wt, bin_ordner = _gh_welt(tmp_path, monkeypatch)
     (wt / ".env").write_text("FAL_KEY=geheimer-wert-12345\n", encoding="utf-8")
-    gh = bin_ordner / "gh"
-    gh.write_text(
-        "#!/bin/sh\necho 'token geheimer-wert-12345 abgelehnt' >&2\nexit 1\n",
-        encoding="utf-8",
+    attrappe(
+        bin_ordner,
+        "gh",
+        """
+        import sys
+        print("token geheimer-wert-12345 abgelehnt", file=sys.stderr)
+        sys.exit(1)
+        """,
     )
-    gh.chmod(0o755)
     befunde = startklar.schluessel_pruefen(wt, SPEC, environ={})
     text = " ".join(b.text + b.behebung for b in befunde)
     assert "unvollständig" in text

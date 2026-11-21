@@ -13,6 +13,8 @@ import os
 import subprocess
 from pathlib import Path
 
+from conftest import attrappe
+
 SKILL = Path(__file__).resolve().parents[1]
 VORGABE = "docs/agents/manifests"
 
@@ -31,9 +33,7 @@ def _repo(tmp_path: Path, manifeste: str | None = None) -> Path:
 def _env(tmp_path: Path, repo: Path) -> dict[str, str]:
     stub = tmp_path / "stub"
     stub.mkdir(exist_ok=True)
-    gh = stub / "gh"
-    gh.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
-    gh.chmod(0o755)
+    attrappe(stub, "gh", "raise SystemExit(1)")
     env = dict(os.environ)
     env.update(HOME=str(tmp_path / "home"), TO_SPAWN_REPO=str(repo), PATH=f"{stub}:{env.get('PATH', '')}")
     return env
