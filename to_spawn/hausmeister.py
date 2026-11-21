@@ -155,11 +155,20 @@ def _ticket_repo_aus(repos: list[dict[str, str]]) -> str | None:
     Ticket-Repo eines anderen Eintrags ist (Vorgabe: DuoPlus, Skill-Ordner fragen dort).
     """
     explizit = {t for e in repos if (t := (e.get("ticket_repo") or "").strip())}
-    bekannt = {t.lower() for t in explizit}
-    for e in repos:
-        if not (e.get("ticket_repo") or "").strip() and (e.get("slug") or "").strip().lower() not in bekannt:
-            return None
+    if _ohne_ticket_repo(repos):
+        return None
     return next(iter(explizit)) if len(explizit) == 1 else None
+
+
+def _ohne_ticket_repo(repos: list[dict[str, str]]) -> list[dict[str, str]]:
+    """Einträge ohne brauchbares Ticket-Repo: kein ``ticket_repo`` und der ``slug`` ist nicht
+    das ausdrückliche Ticket-Repo eines Eintrags (z. B. Wegwerf-Klon, #112)."""
+    bekannt = {t.lower() for e in repos if (t := (e.get("ticket_repo") or "").strip())}
+    return [
+        e
+        for e in repos
+        if not (e.get("ticket_repo") or "").strip() and (e.get("slug") or "").strip().lower() not in bekannt
+    ]
 
 
 def _hauptrepo_namen_aus(repos: list[dict[str, str]]) -> tuple[str, ...]:
@@ -197,6 +206,35 @@ def _ticket_repo() -> str | None:
     Ticket-Repo je Ordner (aus dessen ``origin``).
     """
     return _ticket_repo_aus(_maschinen_repos())
+
+
+def _ticket_repo_fuer(slug: str) -> str | None:
+    """Ticket-Repo für einen Ordner mit origin ``slug`` (#112); ``None`` ⇒ Ticket nicht abfragbar.
+
+    Wie :func:`_ticket_repo`, nur zählen fremde Einträge ohne Ticket-Repo nicht mit: ein
+    Wegwerf-Eintrag legt die übrigen nicht still. Ist der eigene Eintrag ohne Ticket-Repo
+    (oder ``slug`` leer), bleibt der Ordner. Jeder solche Eintrag wird einmal gemeldet.
+    """
+    repos = _maschinen_repos()
+    kaputt = _ohne_ticket_repo(repos)
+    for e in kaputt:
+        _kaputten_eintrag_melden(e)
+    if not slug.strip() or slug.strip().lower() in {(e.get("slug") or "").strip().lower() for e in kaputt}:
+        return None
+    return _ticket_repo_aus([e for e in repos if e not in kaputt])
+
+
+def _kaputten_eintrag_melden(eintrag: dict[str, str]) -> None:
+    schluessel = f"ohne-ticket-repo:{eintrag.get('pfad')}:{eintrag.get('slug')}"
+    if schluessel not in _ABGELEHNT_GEMELDET:
+        _ABGELEHNT_GEMELDET.add(schluessel)
+        log.warning(
+            "Hausmeister: Eintrag slug=%r pfad=%r in %s hat kein Ticket-Repo — übersprungen, "
+            "seine Ordner bleiben. Beheben: ticket_repo eintragen oder Eintrag entfernen (Wegwerf-Klon)",
+            eintrag.get("slug"),
+            eintrag.get("pfad"),
+            config.maschine_datei(),
+        )
 
 
 def _eigene_repos() -> frozenset[str]:
@@ -1364,7 +1402,7 @@ def _regeln(
 
     # 5/6 Ticket zu, seit mindestens 24 h; keine laufende Spec-Sitzung
     if ticket is not None:
-        _ticket_lange_zu(ticket, jetzt, platznot)
+        _ticket_lange_zu(ticket, jetzt, platznot, _origin_slug(echt))
         _keine_spec_sitzung(ticket)
 
     # 7 Prozess im Ordner
@@ -1487,8 +1525,10 @@ def _ticket_nummer(ordner: Path, echt: Path) -> int | None:
     return aus_name if aus_name is not None else aus_zweig
 
 
-def _ticket_lange_zu(ticket: int, jetzt: float | None, platznot: bool = False) -> None:
-    daten = _ticket_daten(ticket)
+def _ticket_lange_zu(
+    ticket: int, jetzt: float | None, platznot: bool = False, slug: str | None = None
+) -> None:
+    daten = _ticket_daten(ticket, slug)
     if not isinstance(daten, dict) or "state" not in daten:
         raise _Bleibt(f"Ticket #{ticket} nicht abfragbar", fehler=True)
     if str(daten["state"]).upper() != "CLOSED":
@@ -1530,10 +1570,11 @@ def _kandidaten() -> list[Path]:
 def _schliesszeit(ordner: Path) -> float | None:
     """Schließzeit des Tickets zum Ordner (für die Reihenfolge), ``None`` = offen/unbekannt."""
     try:
-        ticket = _ticket_nummer(ordner, ordner.resolve())
+        echt = ordner.resolve()
+        ticket = _ticket_nummer(ordner, echt)
         if ticket is None:
             return None
-        daten = _ticket_daten(ticket)
+        daten = _ticket_daten(ticket, _origin_slug(echt))
     except (
         _Bleibt,
         OSError,
@@ -1545,11 +1586,22 @@ def _schliesszeit(ordner: Path) -> float | None:
     return _zeitpunkt(daten.get("closedAt"))
 
 
-def _ticket_daten(ticket: int) -> object:
-    """``gh issue view`` (state, closedAt) mit Zeitlimit; ``None`` = nicht abfragbar."""
+def _ticket_daten(ticket: int, slug: str | None = None) -> object:
+    """``gh issue view`` (state, closedAt) mit Zeitlimit; ``None`` = nicht abfragbar.
+
+    ``slug`` = origin des Ordners: Ticket-Repo je Ordner (:func:`_ticket_repo_fuer`, meldet
+    selbst einmal); ohne ``slug`` das eine Ticket-Repo der Maschine (Zweige)."""
+    if slug is not None:
+        return _gh_ticket(ticket, _ticket_repo_fuer(slug))
     repo = _ticket_repo()
     if repo is None:
         log.warning("Hausmeister: kein eindeutiges Ticket-Repo in der Maschinen-Liste — #%s bleibt", ticket)
+        return None
+    return _gh_ticket(ticket, repo)
+
+
+def _gh_ticket(ticket: int, repo: str | None) -> object:
+    if repo is None:
         return None
     return gh.json_lauf(
         ["issue", "view", str(ticket), "-R", repo, "--json", "state,closedAt"],
@@ -1710,11 +1762,13 @@ def _basis_muster(basis: str) -> str | None:
 
 
 def _im_bereich(ordner: Path) -> bool:
+    """Aufgelöster Pfad passt auf eine Wurzel und liegt in keinem versteckten Ordner — der
+    echte Pfad zählt, nicht der Mustertext (``[.]ssh``, Symlink auf ``.ssh``, #112)."""
     try:
         echt = ordner.resolve()
     except OSError:
         return False
-    return any(echt.match(m) for m in _wurzeln())
+    return not _versteckt_unter_home(echt) and any(echt.match(m) for m in _wurzeln())
 
 
 def _nummer(text: str, muster: tuple[re.Pattern[str], ...]) -> int | None:
@@ -1723,6 +1777,11 @@ def _nummer(text: str, muster: tuple[re.Pattern[str], ...]) -> int | None:
         if treffer:
             return int(treffer.group(1))
     return None
+
+
+def _origin_slug(echt: Path) -> str:
+    """GitHub-Slug des ``origin`` von ``echt`` (``""`` = keiner)."""
+    return _slug(_git_oder_none(echt, "config", "--get", "remote.origin.url") or "")
 
 
 def _slug(url: str) -> str:

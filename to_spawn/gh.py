@@ -74,8 +74,8 @@ def json_lauf(
         return None
 
 
-def repo_aus_origin(cwd: Path | None = None, fallback: str = "") -> str:
-    """``owner/name`` aus ``git remote get-url origin`` (https oder ssh)."""
+def _origin_url(cwd: Path | None) -> str | None:
+    """``git remote get-url origin`` mit ``/`` statt ``\\``; ``None`` = git nicht startbar."""
     try:
         url = subprocess.run(
             ["git", "remote", "get-url", "origin"],
@@ -87,11 +87,32 @@ def repo_aus_origin(cwd: Path | None = None, fallback: str = "") -> str:
             check=False,
         ).stdout.strip()
     except OSError:
-        return fallback
-    url = url.replace("\\", "/")  # Windows-Pfad als Origin (C:\…\org\fern.git), #68
+        return None
+    return url.replace("\\", "/")  # Windows-Pfad als Origin (C:\…\org\fern.git), #68
+
+
+def _github_slug(url: str) -> str:
     treffer = re.search(r"github\.com[:/]([^/]+/[^/\s]+?)(?:\.git)?$", url)
-    if treffer:
-        return treffer.group(1)
+    return treffer.group(1) if treffer else ""
+
+
+def github_slug_aus_origin(cwd: Path | None = None) -> str:
+    """``owner/name`` nur, wenn ``origin`` auf github.com zeigt; sonst ``""`` (#112).
+
+    Für alles, was den Slug dauerhaft festhält (Maschinen-Liste): ein lokaler Pfad als
+    origin (Wegwerf-Klon) ergibt nie einen geratenen Slug.
+    """
+    return _github_slug(_origin_url(cwd) or "")
+
+
+def repo_aus_origin(cwd: Path | None = None, fallback: str = "") -> str:
+    """``owner/name`` aus ``git remote get-url origin`` (https oder ssh); bei einem Pfad
+    als origin die letzten zwei Glieder (Test-Bare-Repos, #68)."""
+    url = _origin_url(cwd)
+    if url is None:
+        return fallback
+    if slug := _github_slug(url):
+        return slug
     treffer = re.search(r"([^/\\]+/[^/\\]+?)(?:\.git)?$", url)
     return treffer.group(1) if treffer else fallback
 

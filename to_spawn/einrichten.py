@@ -315,12 +315,18 @@ def _lege_label_an(ort: Ort) -> None:
 
 def _maschinen_soll(ort: Ort) -> dict[str, str]:
     return {
-        "slug": gh.repo_aus_origin(ort.wurzel),
+        "slug": gh.github_slug_aus_origin(ort.wurzel),
         "worktree_basis": str(config.lade(ort.wurzel).get("worktree_basis") or ""),
     }
 
 
 def _pruefe_maschine(ort: Ort) -> Befund:
+    soll = _maschinen_soll(ort)
+    if not soll["slug"]:  # #112: Wegwerf-Klon nie in die maschinenweite Liste
+        return LUECKE, (
+            "origin ist kein GitHub-Repo — nicht in die Maschinen-Liste eingetragen; "
+            "beheben: git remote set-url origin https://github.com/<besitzer>/<name>"
+        )
     datei = config.maschine_datei()
     if not datei.is_file():
         return FEHLT, f"fehlt: {datei}"
@@ -331,7 +337,6 @@ def _pruefe_maschine(ort: Ort) -> Befund:
             LUECKE,
             f"Maschinen-Liste unlesbar ({fehler}) — von Hand reparieren: {datei}",
         )
-    soll = _maschinen_soll(ort)
     for eintrag in config.maschine()["repos"]:
         try:
             gleich = (
