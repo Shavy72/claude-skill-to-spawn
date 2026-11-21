@@ -55,6 +55,17 @@ def _lade(name: str, datei: Path) -> ModuleType:
     return modul
 
 
+def lade_skript(name: str) -> ModuleType:
+    """Lädt ``<Skill>/skripte/<name>.py`` als Modul (ohne Weiterleitung, ohne Umgebung).
+
+    Fehlt der Skill oder das Skript: ``ImportError``.
+    """
+    datei = skill_ordner() / "skripte" / f"{name}.py"
+    if not datei.is_file():
+        raise ImportError(f"Skill to-spawn fehlt ({datei}) — Quelle {QUELLE}")
+    return _lade(name, datei)
+
+
 def weiterleiten(name: str, modulname: str, ziel: dict[str, Any]) -> None:
     """Springt von ``scripts/<name>.py`` in ``<Skill>/skripte/<name>.py``."""
     repo = Path(ziel["__file__"]).resolve().parent.parent

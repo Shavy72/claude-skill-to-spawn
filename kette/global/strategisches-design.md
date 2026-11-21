@@ -1,0 +1,14 @@
+## Strategisches Design (gilt in jedem Projekt · Quelle: Lernbuch „Tiefe Module“ nach Ousterhout, Flowbase `client/public/ebooks/tiefe-module.html`)
+KI programmiert von Natur aus taktisch: Hauptsache, das Ticket läuft. Jede Abkürzung ist billig, ihre Summe macht das System schwer. Deshalb plant jede Session zusätzlich strategisch — der Agent baut das Heute, diese Regel schützt das Morgen.
+- **Design-Schritt in jeder Planung** (Grill, Spec, Feature, Fix, Ticket-Schnitt): ~10–20 % des Aufwands. Im Plan steht ein Abschnitt „Design“: Welche Module/Grenzen? Was versteckt jedes? Wie schmal ist die Schnittstelle? Was bleibt bewusst draußen? Vokabular: Skill `codebase-design`.
+- **Tiefe Module, schmale Schnittstellen:** viel Leistung hinter wenig Oberfläche. Der häufige Fall ist ganz einfach, Sonderfälle an den Rand. Komplexität nach unten ziehen — lieber hat das Modul es schwer als jeder Aufrufer.
+- **Wissen verstecken:** jede Entscheidung (Format, Grenzwert, Regel) lebt in genau einem Modul. Nach Wissen schneiden, nicht nach Arbeitsschritten. Allgemeines und Spezielles trennen.
+- **Zweimal entwerfen:** bei neuer Schnittstelle oder neuem Datenmodell mind. zwei grundverschiedene Varianten skizzieren und vergleichen, bevor gebaut wird. Mit Agenten kostet das fast nichts.
+- **Erst suchen, dann bauen:** vor jeder neuen Hilfsfunktion nach Bestehendem suchen. Keine neuen Parameter, Optionen oder Sonderfälle ohne Begründung — erst prüfen, ob das Modul es selbst lösen kann.
+- **Fehler wegdesignen:** Schnittstellen so bauen, dass Fehlerfälle gar nicht entstehen (wegdefinieren, maskieren, bündeln), statt sie bei jedem Aufrufer zu behandeln.
+- **Rückwirkend investieren, Null-Toleranz:** stolperst du im Arbeitsbereich über einen Design-Fehler, an der Wurzel reparieren statt drumherum flicken. Passt das nicht in den Auftrag/das Ticket → als Befund melden, nie still überbauen.
+- **Drei Symptome aktiv prüfen:** Änderungs-Lawine (eine Änderung, viele Stellen) · Kopf-Last (was muss man sich merken?) · unbekannte Unbekannte (versteckte Verbindung). Ursachen: Abhängigkeiten + Unklarheit → verringern und sichtbar machen.
+- **Offensichtlich + einheitlich:** genaue, einheitliche Namen (kein guter Name = Warnsignal). Schnittstellen-Kommentar vor dem Code, er sagt Was/Warum für den Aufrufer.
+- **Regel → Prüf-Skript:** was maschinell prüfbar ist, bekommt einen Check, der den Build bricht. Ein Agent überliest Text, an einem roten Build kommt er nicht vorbei.
+- **Review-Abschluss (Pflicht vor „fertig“):** Neues Modul tief oder flach? Leckt Wissen in andere Dateien? Gab es das schon? Wie viele Dateien müsste eine Anforderungsänderung anfassen? Sieht der Code aus, als wäre er von Anfang an so entworfen?
+- **An David:** jede Design-Entscheidung in Alltagsworten (Bild: Kästen und Türen), mit Empfehlung + Trade-off.
