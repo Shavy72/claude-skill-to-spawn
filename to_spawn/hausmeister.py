@@ -185,7 +185,7 @@ def _remotes_aus(repos: list[dict[str, str]]) -> tuple[str, ...]:
 
 
 _VORGABE_REPOS: list[dict[str, str]] = config.MASCHINE_DEFAULTS["repos"]
-#: Issues (Tickets) liegen immer hier, auch für Skill-Repo-Ordner (Vorgabe).
+#: Gemeinsames Ticket-Repo aller Vorgabe-Einträge; seit #235 leer (jedes Repo hat eigene Tickets).
 TICKET_REPO = _ticket_repo_aus(_VORGABE_REPOS) or ""
 EIGENE_REPOS = tuple(e["slug"].lower() for e in _VORGABE_REPOS if e.get("slug"))
 #: Namen der Haupt-Arbeitskopien — nie aufräumen.
@@ -267,6 +267,8 @@ def _geschuetzte_ordner() -> tuple[str, ...]:
 
 
 MINDEST_ZU_SEKUNDEN = 24 * 3600
+#: Bleib-Grund (und Lösch-Grund-Anfang) für Ordner ohne Ticket-Nummer (#1536, #235).
+OHNE_NUMMER = "keine Ticket-Nummer"
 #: Unter diesem Anteil freier Platte gilt Platznot: fertige Ordner gehen vor Ablauf der 24 h.
 PLATZNOT_ANTEIL = 0.15
 #: #1491: Zweige löscht der Hausmeister nur, wenn diese Variable genau „1“ ist (:func:`zweige_loeschen_an`).
@@ -371,6 +373,12 @@ def _name_muster() -> tuple[re.Pattern[str], ...]:
 
 
 _ZWEIG_MUSTER = re.compile(r"^(?:(?:ticket|fix|wip|aufseher)/|fix-|abschluss-)(\d+)(?:-.*)?$")
+#: #235: Etappen-Zweig ``l<Etappe>/<N>[buchstabe]-…`` (``l4/176-…``, ``l1/214a-…``); erst ab
+#: 2 Ziffern — ``l3/3b-1b-…`` ist ein Etappen-Schritt, kein Issue, ``l1/p7f-…`` ebenso.
+_ZWEIG_MUSTER_ETAPPE = re.compile(r"^l\d+/([1-9]\d{1,2}|[1-4]\d{3})[a-z]?(?:-.*)?$")
+#: Alle Zweig-Formen mit Ticket-Nummer (eine Stelle für neue Formen); welches Repo die
+#: Nummer meint, sagt allein ``origin`` des Ordners (:func:`_nummer_zaehlt`).
+_ZWEIG_FORMEN = (_ZWEIG_MUSTER, _ZWEIG_MUSTER_ETAPPE)
 _GITHUB_SLUG = re.compile(r"github\.com[:/]+([^/\s]+/[^/\s]+?)(?:\.git)?/?$")
 
 
@@ -1431,9 +1439,10 @@ def _regeln(
     # 7 Prozess im Ordner
     _kein_prozess(echt)
 
-    # 7b #1536: ohne Ticket-Nummer bleibt immer (nach Prozess-Regel: der Grund zeigt den Prozess)
+    # 7b #1536/#235: ohne Ticket-Nummer bleibt, was frisch ist (nach Prozess-Regel: der Grund
+    # zeigt den Prozess); älter darf er nur weg, wenn nichts zu sichern ist (8b unten)
     if ticket is None:
-        raise _Bleibt("keine Ticket-Nummer", fuer_david=True)
+        _ohne_nummer_nicht_frisch(echt, jetzt)
 
     # 7c #135: ein offener Pull-Request zum Zweig hält jeden Ordner
     _kein_offener_pull_request(echt, slug)
@@ -1441,13 +1450,20 @@ def _regeln(
     # 8 Ungesichertes prüfen (auch trocken: fetch, Geheimnisse, Ignoriertes)
     koepfe, zu_sichern, status_vorher = _ungesichertes(echt, ist_worktree)
     art: Art = "gesichert und gelöscht" if (koepfe or zu_sichern) else "gelöscht"
-    if fremd:  # 8b #135: ohne gültiges Ticket nur, was nachweislich fertig ist
+    if ticket is None:  # 8b #235: ohne Nummer keine Sicherung (sicherung/<N>) ⇒ nur Fertiges
+        if koepfe or zu_sichern:
+            raise _Bleibt(
+                f"{OHNE_NUMMER}: Änderungen oder Commits nicht auf origin (ohne Nummer nicht sicherbar)",
+                fuer_david=True,
+            )
+        grund = f"{OHNE_NUMMER}; alles auf origin, Baum sauber, seit 24 h unverändert, kein Pull-Request offen"
+    elif fremd:  # 8b #135: ohne gültiges Ticket nur, was nachweislich fertig ist
         grund = _fremd_fertig(echt, ticket, bool(koepfe or zu_sichern), jetzt)
     else:
         grund = _grund(art, ticket, platznot)
     if trocken:
         return Ergebnis(ordner, art, grund, stand.ticket, trocken=True), None
-    if koepfe or zu_sichern:
+    if ticket is not None and (koepfe or zu_sichern):
         try:
             stand.sicherung = aufpasser.sichern(echt, ticket, jetzt, zusatz_koepfe=koepfe)
         except RuntimeError as fehler:
@@ -1543,7 +1559,7 @@ def _keine_spec_sitzung(ticket: int) -> None:
 def _ticket_nummer(ordner: Path, echt: Path) -> int | None:
     zweig = _git_oder_none(echt, "symbolic-ref", "--short", "-q", "HEAD") or ""
     aus_name = _nummer(ordner.name, _name_muster())
-    aus_zweig = _nummer(zweig, (_ZWEIG_MUSTER,))
+    aus_zweig = _nummer(zweig, _ZWEIG_FORMEN)
     if aus_name is not None and aus_zweig is not None and aus_name != aus_zweig:
         raise _Bleibt(
             f"Ordnername (#{aus_name}) und Zweig {zweig} (#{aus_zweig}) widersprechen sich",
@@ -1598,6 +1614,14 @@ def _fremd_fertig(echt: Path, ticket: int, ungesichert: bool, jetzt: float | Non
     if jetzt_ts - _juengste_aenderung(echt) < MINDEST_ZU_SEKUNDEN:
         raise _Bleibt(f"{vorne}: frisch geändert (vor weniger als 24 h)")
     return f"{vorne}; Kopf in origin/{haupt}, Baum sauber, seit 24 h unverändert, kein Pull-Request offen"
+
+
+def _ohne_nummer_nicht_frisch(echt: Path, jetzt: float | None) -> None:
+    """#235: Ordner ohne Ticket-Nummer, in den vor weniger als 24 h geschrieben wurde, bleibt
+    mit dem Grund ``keine Ticket-Nummer`` (#1536) — er ist vermutlich in Arbeit."""
+    jetzt_ts = jetzt if jetzt is not None else time.time()
+    if jetzt_ts - _juengste_aenderung(echt) < MINDEST_ZU_SEKUNDEN:
+        raise _Bleibt(OHNE_NUMMER, fuer_david=True)
 
 
 def _juengste_aenderung(echt: Path) -> float:
@@ -2319,12 +2343,19 @@ def _kennzahl_schreiben(ergebnisse: list[Ergebnis], *, trocken: bool) -> None:
     und die Bleib-Gründe gezählt (Zahlen im Grund als ``N``, ohne Klammer-Zusatz)."""
     geloescht = sum(1 for e in ergebnisse if e.art != "bleibt")
     gruende: dict[str, int] = {}
+    fehler_je: dict[str, list[str]] = {}
     for e in ergebnisse:
         if e.art == "bleibt":
             schluessel = re.sub(r"\d+", "N", e.grund.split(" (", 1)[0])
             gruende[schluessel] = gruende.get(schluessel, 0) + 1
+            if e.fehler:
+                fehler_je.setdefault(schluessel, []).append(f"{e.ordner}: {e.grund}")
     satz = f"{geloescht} von {len(ergebnisse)} gelöscht, {len(ergebnisse) - geloescht} bleiben"
     log.info("Hausmeister: Kennzahl %s%s", satz, " (trocken)" if trocken else "")
+    # #235: eine Zeile je Bleib-Grund mit Anzahl; Fehler zusätzlich mit Ordner und Text
+    for schluessel, anzahl in sorted(gruende.items(), key=lambda kv: -kv[1]):
+        fehl = fehler_je.get(schluessel)
+        log.info("Hausmeister: bleibt %d× %s%s", anzahl, schluessel, f" — Fehler: {' | '.join(fehl)}" if fehl else "")
     _log_zeile(
         {
             "zeit": datetime.now().astimezone().isoformat(timespec="seconds"),

@@ -17,6 +17,7 @@ from __future__ import annotations
 import logging
 import re
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -162,22 +163,50 @@ def test_d_ohne_nummer_sauber_und_in_main_wird_geraeumt(
     assert not wt.exists()
 
 
-# --- (e) ungesicherte Arbeit ⇒ bleibt immer -----------------------------------------
+# --- (e) ungesicherte Arbeit: eine Regel für alle Repos (E57) ------------------------
+# Teil B (Leit-Beschluss): Issue zu + ungesichert ⇒ erst sichern (sicherung/<N> auf origin),
+# Sicherung prüfen, dann räumen; scheitert das Sichern ⇒ bleibt als Fehler mit Ordner + Text.
 
 
 @pytest.mark.parametrize("art", ["ungepusht", "geaendert"])
-def test_e_ungesichertes_bleibt_auch_wenn_issue_zu(welt: Welt, repos: Repos, art: str) -> None:
+def test_e_ungesichertes_wird_erst_gesichert_dann_geraeumt(welt: Welt, repos: Repos, art: str) -> None:
     _vorgabe(repos)
     wt = _ordner(repos, SKILL, "skill-176", "l4/176-ticket-repo-je-ordner", push=art != "ungepusht")
+    inhalt = "skill-176\n"
     if art == "geaendert":
-        (wt / "arbeit.txt").write_text("ungesichert\n", encoding="utf-8")
+        inhalt = "ungesichert\n"
+        (wt / "arbeit.txt").write_text(inhalt, encoding="utf-8")
     repos.ticket(SKILL, 176, "CLOSED", 24 * 400)
     welt.jetzt += 30 * TAG
 
     r = _lauf(welt)["skill-176"]
 
-    assert r.art == "bleibt", r.grund
+    assert r.art == "gesichert und gelöscht" and not r.fehler, r.grund
+    assert r.sicherung, r
+    bare = welt.tmp / "claude-skill-to-spawn.git"
+    assert git(bare, "show", "sicherung/176:arbeit.txt") == inhalt  # Arbeit liegt auf origin
+    assert not wt.exists()
+
+
+def test_e_sichern_scheitert_ordner_bleibt_mit_fehler_im_log(
+    welt: Welt, repos: Repos, caplog: pytest.LogCaptureFixture
+) -> None:
+    _vorgabe(repos)
+    wt = _ordner(repos, SKILL, "skill-176", "l4/176-ticket-repo-je-ordner", push=False)
+    haken = welt.tmp / "claude-skill-to-spawn.git" / "hooks" / "pre-receive"
+    haken.write_text(f"#!{sys.executable}\nimport sys\nsys.exit('Push abgelehnt')\n", encoding="utf-8")
+    haken.chmod(0o755)
+    repos.ticket(SKILL, 176, "CLOSED", 24 * 400)
+    welt.jetzt += 30 * TAG
+
+    with caplog.at_level(logging.INFO):
+        r = _lauf(welt)["skill-176"]
+
+    assert r.art == "bleibt" and r.fehler, r
+    assert "Sicherung gescheitert" in r.grund, r.grund
     assert wt.is_dir() and (wt / "arbeit.txt").is_file()
+    meldungen = [rec.getMessage() for rec in caplog.records]
+    assert any("skill-176" in m and "Sicherung gescheitert" in m and "Fehler" in m for m in meldungen), meldungen
 
 
 def test_e_ohne_nummer_mit_ungepushtem_commit_bleibt(welt: Welt, repos: Repos) -> None:
