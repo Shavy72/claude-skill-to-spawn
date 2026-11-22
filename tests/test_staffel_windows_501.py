@@ -30,6 +30,9 @@ sys.path.insert(0, str(WURZEL))
 from to_spawn import prozessbaum  # noqa: E402
 
 WINDOWS = sys.platform == "win32"
+# Unter Windows ist ``.venv\Scripts\python.exe`` nur ein Starter, der den echten
+# Interpreter als Kind startet — Popen-PID wäre dann nicht die „Session“.
+PYTHON = getattr(sys, "_base_executable", sys.executable) if WINDOWS else sys.executable
 
 
 def _ohne_fenster() -> dict[str, int]:
@@ -105,7 +108,7 @@ def sitzung(tmp_path: Path) -> Iterator[dict]:
         env = dict(os.environ)
         # Obergrenze wie bei bau.py: nie über den Test-Prozess hinaus suchen/töten.
         env["BAU_LAUNCHER_PID"] = str(os.getpid())
-        proc = subprocess.Popen([sys.executable, str(session)], env=env, **_ohne_fenster())
+        proc = subprocess.Popen([PYTHON, str(session)], env=env, **_ohne_fenster())
         prozesse.append(proc)
         assert _warte(ergebnis.exists, 30), "Hook-Kind hat kein Ergebnis geschrieben"
         time.sleep(0.3)

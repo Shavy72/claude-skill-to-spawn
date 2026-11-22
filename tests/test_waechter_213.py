@@ -997,8 +997,11 @@ def _ssh_protokoll_fake(
     binaer = welt["tmp"] / "bin"
     binaer.mkdir(exist_ok=True)
     protokoll = welt["tmp"] / "ssh_aufrufe.txt"
-    fake = binaer / "ssh_fake.py"
-    fake.write_text(
+    # Direkt als Attrappe, ohne ``os.execv``-Umweg: unter Windows reicht execv Argumente
+    # ungequotet weiter, der ssh-Befehl ``tail -n 200 …`` zerfiele in Einzelwörter.
+    attrappe(
+        binaer,
+        "ssh",
         "import json, sys\n"
         f"open({str(protokoll)!r}, 'a', encoding='utf-8').write(' '.join(sys.argv[1:]) + chr(10))\n"
         "befehl = sys.argv[-1]\n"
@@ -1008,12 +1011,6 @@ def _ssh_protokoll_fake(
         f"    print(json.dumps({{'sha': {staging_sha!r}, 'ergebnis': 'gruen'}}))\n"
         "else:\n"
         f"    print({vps_sha!r})\n",
-        encoding="utf-8",
-    )
-    attrappe(
-        binaer,
-        "ssh",
-        f"import os, sys\nos.execv({sys.executable!r}, [{sys.executable!r}, {str(fake)!r}, *sys.argv[1:]])\n",
     )
     return {"PATH": f"{binaer}{os.pathsep}{os.environ['PATH']}"}, protokoll
 
