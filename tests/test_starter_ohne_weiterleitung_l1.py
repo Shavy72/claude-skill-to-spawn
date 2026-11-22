@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -41,7 +42,13 @@ def welt(tmp_path: Path) -> dict[str, Path]:
 
 
 def _bash(welt: dict[str, Path], befehl: str) -> subprocess.CompletedProcess[str]:
-    umgebung = {k: v for k, v in os.environ.items() if k != "TO_SPAWN_REPO"}
+    """Fern-Befehl in echter ``bash`` mit Wegwerf-``HOME``.
+
+    Ohne ``MSYS_NO_PATHCONV``/``MSYS2_ARG_CONV_EXCL``: Git-Bash muss ``~/…``-Pfade für das native
+    Windows-Python umwandeln (sonst ``/tmp/…`` → ``C:/tmp/…``); Linux kennt beide nicht.
+    """
+    weg = {"TO_SPAWN_REPO", "MSYS_NO_PATHCONV", "MSYS2_ARG_CONV_EXCL"}
+    umgebung = {k: v for k, v in os.environ.items() if k not in weg}
     return subprocess.run(
         ["bash", "-c", befehl],
         env={**umgebung, "HOME": str(welt["home"])},
@@ -52,23 +59,37 @@ def _bash(welt: dict[str, Path], befehl: str) -> subprocess.CompletedProcess[str
     )
 
 
+def _bash_pfad(welt: dict[str, Path], pfad: Path) -> str:
+    """``pfad``, wie die Fern-``bash`` ihn als ``$PWD`` sieht (Linux: unverändert, Git-Bash: ``/tmp/…``)."""
+    lauf = _bash(welt, f"cd {shlex.quote(str(pfad))} && pwd")
+    assert lauf.returncode == 0, lauf.stderr
+    return lauf.stdout.strip()
+
+
+def _server_befehl(monkeypatch: pytest.MonkeyPatch, *args: object) -> list[str]:
+    """``spawn.baue_befehl`` im Server-Zweig (``_befehl_unix``) — der Fern-Befehl läuft auf Linux."""
+    with monkeypatch.context() as m:
+        m.setattr(sys, "platform", "linux")
+        return spawn.baue_befehl(*args)  # type: ignore[arg-type]
+
+
 def _weiterleitung(welt: dict[str, Path], name: str, text: str) -> None:
     (welt["repo"] / "scripts").mkdir(exist_ok=True)
     (welt["repo"] / "scripts" / name).write_text(text, encoding="utf-8")
 
 
-def test_spawn_srv_ohne_weiterleitung_ruft_skill_skript(welt: dict[str, Path]) -> None:
-    befehl = spawn.baue_befehl("srv", 42, ["3"], {"server_repo": "~/r", "ssh_ziel": "x"}, True)
+def test_spawn_srv_ohne_weiterleitung_ruft_skill_skript(welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch) -> None:
+    befehl = _server_befehl(monkeypatch, "srv", 42, ["3"], {"server_repo": "~/r", "ssh_ziel": "x"}, True)
     assert befehl[:2] == ["ssh", "x"]
     assert "~/.claude/skills/to-spawn/skripte/spawn_srv.sh" in befehl[-1]
     lauf = _bash(welt, befehl[-1])
     assert lauf.returncode == 0, lauf.stderr
-    assert lauf.stdout.strip() == f"SKILL repo={welt['repo']} args=42 --tickets 3 --dry-run"
+    assert lauf.stdout.strip() == f"SKILL repo={_bash_pfad(welt, welt['repo'])} args=42 --tickets 3 --dry-run"
 
 
-def test_spawn_srv_mit_weiterleitung_bleibt_wie_bisher(welt: dict[str, Path]) -> None:
+def test_spawn_srv_mit_weiterleitung_bleibt_wie_bisher(welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch) -> None:
     _weiterleitung(welt, "spawn_srv.sh", 'echo "WEITERLEITUNG args=$*"; exit 4\n')
-    befehl = spawn.baue_befehl("srv", 42, None, {"server_repo": "~/r"}, False)
+    befehl = _server_befehl(monkeypatch, "srv", 42, None, {"server_repo": "~/r"}, False)
     assert "cd ~/r && bash scripts/spawn_srv.sh 42" in befehl[-1]
     lauf = _bash(welt, befehl[-1])
     assert (lauf.returncode, lauf.stdout.strip()) == (4, "WEITERLEITUNG args=42")
@@ -78,7 +99,7 @@ def test_umzug_start_ohne_weiterleitung_ruft_skill_skript(welt: dict[str, Path])
     lauf = _bash(welt, umzug.spawn_befehl("9120", "9121", "~/r", umzug_ref="ticket/9121"))
     assert lauf.returncode == 0, lauf.stderr
     assert lauf.stdout.strip() == (
-        f"SKILL repo={welt['repo']} args=9120 --tickets 9121 --ohne-wache --umzug ticket/9121"
+        f"SKILL repo={_bash_pfad(welt, welt['repo'])} args=9120 --tickets 9121 --ohne-wache --umzug ticket/9121"
     )
 
 
