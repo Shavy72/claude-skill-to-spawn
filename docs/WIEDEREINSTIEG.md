@@ -45,6 +45,25 @@ was zum Weiterbauen nötig ist.
 
 ## 3. Stand
 
+- **2026-11-22 01:53 (Server-Uhr, main 0dc03ae):** Seit dem letzten Eintrag gemergt (Pull-Requests 221, 222, 223, 227, 229, 230).
+  Volle Suite zuletzt 2697 passed / 0 failed / 66 skipped auf 8592045 (main grün).
+  - 221 (379f6f2): Die Leitstand-Tests laufen unter Windows grün (P7f).
+  - 222 (1ae01fb): Issue 196 zu. Der Hausmeister erkennt eingetragene Arbeitsordner außerhalb der Wurzeln. Rest → Issue 225.
+  - 223 (e65195e): Issue 184 zu. Cache-Reste des Prüf-Caches (aus 173) behoben. Rest → Issue 219 und 224.
+  - 227 (8592045): Zwei rote main-Tests behoben (feste Namen, Start-Tür).
+  - 229 (328c2b1): Die Starter-Tests laufen unter Windows grün (P7f).
+  - 230 (0dc03ae): Issue 176 zu. Der Hausmeister bestimmt das Ticket-Repo je Ordner.
+  Neu offen: 232 (Start-Tests laufen mit echtem Heimordner), 234 (Hausmeister: Zweig-Pfad prüft die Nummer nicht im
+  eigenen Repo), 235 (Hausmeister räumt Helfer-Ordner des Skill-Repos nicht), dazu 225, 226, 224, 219, 218, 216, 215, 214, 212.
+  **Was als Nächstes kommt (in dieser Reihenfolge):**
+  1. Pull-Request 228 (Teil von Issue 218), in Fix-Runde nach Prüfer-Befund.
+  2. Issue 214 in zwei Teilen: A Umzug `review-hook/` + Installation, B Verhalten.
+  3. Prüf-Reihe: Rest Issue 149, 204, 218 (Punkte 2–5), 224, 104.
+  4. Hausmeister-Reihe: 235 zuerst, dann 234, 177, 215, 225, 163, 129, 179, 178.
+  5. Pull-Request 231 und 233 (Windows), warten auf den Prüf-Kommentar des PC.
+  6. Issue 232 (eine Test-Welt für Start-Tests) nach 214 Teil B.
+  7. Danach 190, 216.
+
 - **2026-11-22 (main bd948ab, Stand bis Pull-Request 213):** Gemergt, je Pull-Request in Alltagsworten:
   - 194: Windows ruft bash nur noch an einer Stelle auf (Reste aus Review 181).
   - 209: Leitstand-Datei einheitlich formatiert, Verhalten unverändert.
