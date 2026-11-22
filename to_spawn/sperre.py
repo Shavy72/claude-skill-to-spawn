@@ -6,7 +6,8 @@ solange dieser Lauf die Sperre hält, ``False``, wenn ein anderer Lauf sie auch 
 
 Versteckt wird hier, welches Werkzeug sperrt:
 - Linux/macOS: ``fcntl.flock`` auf ``datei`` (verträgt sich mit ``flock`` aus der Shell).
-- Windows: ``msvcrt.locking`` auf 1 Byte ab Anfang von ``datei``.
+- Windows: ``msvcrt.locking`` auf 1 Byte weit hinter dem Inhalt von ``datei`` (der
+  Inhalt bleibt für andere Prozesse lesbar, z. B. Wartezettel im Leitstand).
 - Ohne beide: Rückfall auf eine O_EXCL-Datei ``<datei>.excl`` neben ``datei``.
 
 Zwei Fehlerarten, getrennt nur hier (#165):
@@ -44,6 +45,9 @@ _msvcrt: Any = _msvcrt_modul
 TAKT_S = 0.2
 # msvcrt.locking meldet einen fremd gehaltenen Bereich je nach CRT mit EACCES oder EDEADLOCK.
 _BELEGT = {errno.EACCES, getattr(errno, "EDEADLOCK", errno.EDEADLK)}
+# Windows sperrt Bytes verbindlich (auch fürs Lesen); darum hinter jedem echten Inhalt.
+# Sperren jenseits des Dateiendes erlaubt Windows, die Datei wächst dadurch nicht.
+_MSVCRT_VERSATZ = 2**31 - 2
 
 
 class SperreNichtOeffenbar(OSError):
@@ -113,7 +117,7 @@ def _versuch(fd: int, fc: Any, ms: Any) -> bool:
         except BlockingIOError:
             return False
         return True
-    os.lseek(fd, 0, os.SEEK_SET)
+    os.lseek(fd, _MSVCRT_VERSATZ, os.SEEK_SET)
     try:
         ms.locking(fd, ms.LK_NBLCK, 1)
     except OSError as fehler:
