@@ -45,6 +45,16 @@ was zum Weiterbauen nötig ist.
 
 ## 3. Stand
 
+- **22.11.2026 16:10 (Server-Uhr, main 8acfed7):** Seit dem Haltepunkt 760ed4f gemergt: Pull-Request 265
+  (Issue 245, Zeilenenden in den Prüf-Regeln) → 5af043a · Pull-Request 233 (Hausmeister unter Windows,
+  Issue 68 bleibt offen) → f134819 · Pull-Request 268 (Issue 267: Warte-Prüfung der Bau-Session fragt
+  dieselbe Regel wie die Start-Schranke, neuer Befehl `to_spawn.py blocker <N>`) → 8acfed7.
+  Auf dem Bau-Server installiert: 8acfed7, volle Suite 2794 bestanden, 75 übersprungen, 18 xfailed, 0 rot.
+  Offen: Issue 269 (Folge zu 267: Vorfall `blocker_falsch_gewartet`, Wächter-Test schärfen) · Pull-Request 250
+  (Merge-Sperre, Fix-Runde 3) · Pull-Request 255 (Review am PC) · M1 Probe-Spec erst nach ausdrücklichem
+  Wort des Auftraggebers. Nächster Schritt: Beobachtungs-Lauf an einem echten Fall für Issue 267
+  (Abnahme „echter Lauf“ von 267 steht noch aus).
+
 - **Haltepunkt 22.11.2026 04:05 (Server-Uhr, main b4be778):** Der Bau ruht hier, bis der Auftraggeber „weiter“ sagt.
   Seit dem letzten Eintrag gemergt: 237 (Review-Hook im Repo + Installation, Teil A von Issue 214; Issue 214 bleibt für
   Teil B offen) und 264 (Doku).
