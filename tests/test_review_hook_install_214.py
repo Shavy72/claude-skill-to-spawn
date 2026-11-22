@@ -70,6 +70,30 @@ def test_abweichende_datei_wird_gesichert_und_gemeldet(tmp_path: Path) -> None:
     assert any("merker.py" in zeile and str(sicherung) in zeile for zeile in bericht), bericht
 
 
+def test_nach_installation_lokal_geaenderte_datei_wird_gesichert(tmp_path: Path) -> None:
+    """Stand-Datei vorhanden, Datei danach von Hand geändert → nicht still überschreiben."""
+    alte_quelle = tmp_path / "alt"
+    shutil.copytree(QUELLE, alte_quelle)
+    (alte_quelle / "stop.py").write_text("# alter Stand\n", encoding="utf-8")
+    ziel = tmp_path / "hooks" / "review"
+    review_hook.installiere(ziel, quelle=alte_quelle)
+    (ziel / "stop.py").write_text("# von Hand geändert\n", encoding="utf-8")
+    bericht = review_hook.installiere(ziel, zeit="20261122-020000")
+    sicherung = tmp_path / "hooks" / "_alt" / "review-20261122-020000" / "stop.py"
+    assert sicherung.read_text(encoding="utf-8") == "# von Hand geändert\n"
+    assert (ziel / "stop.py").read_bytes() == (QUELLE / "stop.py").read_bytes()
+    assert any("stop.py" in zeile and "gesichert" in zeile for zeile in bericht), bericht
+
+
+def test_kaputte_stand_datei_sichert_abweichende_datei(tmp_path: Path) -> None:
+    ziel = tmp_path / "hooks" / "review"
+    ziel.mkdir(parents=True)
+    (ziel / review_hook.STAND_DATEI).write_text("{kaputt", encoding="utf-8")
+    (ziel / "merker.py").write_text("# fremd\n", encoding="utf-8")
+    review_hook.installiere(ziel, zeit="20261122-030000")
+    assert (tmp_path / "hooks" / "_alt" / "review-20261122-030000" / "merker.py").exists()
+
+
 def test_zuletzt_installierte_datei_wird_ohne_sicherung_ersetzt(tmp_path: Path) -> None:
     """Stand der letzten Installation (Quelle hat sich seither geändert) → still ersetzen."""
     alte_quelle = tmp_path / "alt"
