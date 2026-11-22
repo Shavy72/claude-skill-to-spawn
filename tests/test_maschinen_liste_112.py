@@ -29,9 +29,7 @@ PROBE_SLUG = "bau/duoplus-leit"
 
 def _repo_mit_origin(ordner: Path, url: str) -> Path:
     subprocess.run(["git", "init", "-q", str(ordner)], check=True)
-    subprocess.run(
-        ["git", "-C", str(ordner), "remote", "add", "origin", url], check=True
-    )
+    subprocess.run(["git", "-C", str(ordner), "remote", "add", "origin", url], check=True)
     return ordner.resolve()
 
 
@@ -52,9 +50,7 @@ def _liste_mit_probe(probe_pfad: str) -> None:
 # --- 1 Quelle ------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "url", ["/home/bau/duoplus-leit", r"C:\Users\nutzer\org\fern.git"]
-)
+@pytest.mark.parametrize("url", ["/home/bau/duoplus-leit", r"C:\Users\nutzer\org\fern.git"])
 def test_github_slug_nur_aus_github_origin(tmp_path: Path, url: str) -> None:
     repo = _repo_mit_origin(tmp_path / "klon", url)
     assert gh.github_slug_aus_origin(repo) == ""
@@ -66,11 +62,7 @@ def test_lokaler_origin_kommt_nicht_in_die_maschinen_liste(tmp_path: Path) -> No
     klon = _repo_mit_origin(tmp_path / "probe-klon", "/home/bau/duoplus-leit")
     datei = config.maschine_datei()
     config.maschine_eintragen(klon)
-    eintraege = (
-        json.loads(datei.read_text(encoding="utf-8"))["repos"]
-        if datei.is_file()
-        else []
-    )
+    eintraege = json.loads(datei.read_text(encoding="utf-8"))["repos"] if datei.is_file() else []
     assert all(Path(e["pfad"]).expanduser().resolve() != klon for e in eintraege)
     assert all(e["slug"] != PROBE_SLUG for e in eintraege)
     befund, text = einrichten._pruefe_maschine(einrichten.Ort(klon, None))  # type: ignore[arg-type]
@@ -87,17 +79,12 @@ def test_ticket_repo_je_ordner_mit_probe_eintrag(
 ) -> None:
     _liste_mit_probe(str(tmp_path / "probe-klon"))
     assert hausmeister._ticket_repo() is None  # Vertrag Fix-Runde 1 (#66) bleibt
-    assert (
-        hausmeister._ticket_repo_fuer("Shavy72/duoplus-management")
-        == "Shavy72/duoplus-management"
-    )
+    assert hausmeister._ticket_repo_fuer("Shavy72/duoplus-management") == "Shavy72/duoplus-management"
     assert (
         hausmeister._ticket_repo_fuer("shavy72/claude-skill-to-spawn")
-        == "Shavy72/duoplus-management"
+        == "Shavy72/claude-skill-to-spawn"  # #235: Skill-Repo hat eigene Issues
     )
-    assert (
-        hausmeister._ticket_repo_fuer(PROBE_SLUG) is None
-    )  # eigener Eintrag kaputt ⇒ bleibt
+    assert hausmeister._ticket_repo_fuer(PROBE_SLUG) is None  # eigener Eintrag kaputt ⇒ bleibt
     assert hausmeister._ticket_repo_fuer("") is None
 
 
@@ -126,9 +113,7 @@ def test_probe_eintrag_legt_hausmeister_nicht_still(
     assert schlecht.art == "bleibt" and schlecht.fehler, schlecht.grund
     meldungen = [r.getMessage() for r in caplog.records if PROBE_SLUG in r.getMessage()]
     assert len(meldungen) == 1, meldungen  # einmal, nicht je Ordner
-    assert (
-        "ticket_repo" in meldungen[0] and str(config.maschine_datei()) in meldungen[0]
-    )
+    assert "ticket_repo" in meldungen[0] and str(config.maschine_datei()) in meldungen[0]
 
 
 # --- 3 Trocken = echt ----------------------------------------------------------------------
@@ -139,9 +124,7 @@ def test_trocken_und_echt_melden_dieselben_fehler(welt: Welt) -> None:  # noqa: 
     welt.ticket(11, "OPEN")  # echter Lauf löscht hier nichts
     trocken = [welt.aufraeumen(o) for o in (wt, probe)]
     echt = [welt.aufraeumen(o, loeschen=True) for o in (wt, probe)]
-    assert [(e.art, e.grund, e.fehler) for e in trocken] == [
-        (e.art, e.grund, e.fehler) for e in echt
-    ]
+    assert [(e.art, e.grund, e.fehler) for e in trocken] == [(e.art, e.grund, e.fehler) for e in echt]
     assert sum(e.fehler for e in echt) == 1
     assert wt.is_dir() and probe.is_dir()
 
@@ -149,21 +132,15 @@ def test_trocken_und_echt_melden_dieselben_fehler(welt: Welt) -> None:  # noqa: 
 # --- 4 _im_bereich: aufgelöster Pfad ohne versteckte Ordner --------------------------------
 
 
-def test_im_bereich_glob_klasse_fuer_punkt(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_im_bereich_glob_klasse_fuer_punkt(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     heim = _home(monkeypatch, tmp_path)
     ssh = heim / "x" / "wt-1" / ".ssh"
     ssh.mkdir(parents=True)
-    monkeypatch.setenv(
-        "TO_SPAWN_HAUSMEISTER_WURZELN", os.path.expanduser("~/x/wt-*/[.]ssh")
-    )
+    monkeypatch.setenv("TO_SPAWN_HAUSMEISTER_WURZELN", os.path.expanduser("~/x/wt-*/[.]ssh"))
     assert not hausmeister._im_bereich(ssh)
 
 
-def test_im_bereich_symlink_auf_versteckten_ordner(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_im_bereich_symlink_auf_versteckten_ordner(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     heim = _home(monkeypatch, tmp_path)
     (heim / "x" / ".ssh").mkdir(parents=True)
     link = heim / "x" / "wt-1"

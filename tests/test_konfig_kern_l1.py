@@ -123,7 +123,7 @@ def test_nur_config_importiert_vorgaben() -> None:
 def test_maschine_ohne_datei_gibt_vorgaben(maschine_datei: Path) -> None:
     m = config.maschine()
     assert [r["slug"] for r in m["repos"]] == ["Shavy72/duoplus-management", "Shavy72/claude-skill-to-spawn"]
-    assert m["repos"][1]["ticket_repo"] == "Shavy72/duoplus-management"
+    assert m["repos"][1]["ticket_repo"] == "Shavy72/claude-skill-to-spawn"  # #235: eigene Issues
     assert m["staging_sperren"] == ["/home/bau/staging/.deploy.lock"]
     assert m["hausmeister"]["ordner_praefixe"] == ["wt", "skill", "duoplus"]
     assert m["hausmeister"]["wurzeln"] == vorgaben.HAUSMEISTER_WURZELN
@@ -176,7 +176,6 @@ def test_maschine_eintragen_neu_und_wiederholbar(tmp_path: Path, maschine_datei:
     assert maschine_datei.read_bytes() == vorher
     assert maschine_datei.stat().st_mtime_ns == mtime  # nichts geschrieben
     assert not list(maschine_datei.parent.glob(".maschine-*"))  # keine Temp-Reste
-
 
 
 def test_maschine_eintragen_schreibfehler_raeumt_auf(
