@@ -39,9 +39,7 @@ _msvcrt: Any = None
 class Bleibt(Exception):
     """Der Ordner bleibt (Grund für Menschen); ``fehler`` = unklarer Zustand statt Regel."""
 
-    def __init__(
-        self, grund: str, *, fuer_david: bool = False, fehler: bool = False
-    ) -> None:
+    def __init__(self, grund: str, *, fuer_david: bool = False, fehler: bool = False) -> None:
         super().__init__(grund)
         self.grund = grund
         self.fuer_david = fuer_david
@@ -94,39 +92,40 @@ def kein_prozess(ordner: Path) -> None:
         if pid == os.getpid():
             continue  # dieser Lauf selbst (z. B. Ordner als CLI-Argument)
         exe_n = pfad_norm(exe) if exe else ""
-        if (
-            exe_n == o
-            or exe_n.startswith(o + "/")
-            or (befehl and im_text.search(pfad_norm(befehl)))
-        ):
+        if exe_n == o or exe_n.startswith(o + "/") or (befehl and im_text.search(pfad_norm(befehl))):
             raise Bleibt(f"Prozess {pid} arbeitet im Ordner oder hat Dateien offen")
     if sys.platform == "win32":  # PEB gibt es nur auf echtem Windows (Tests simulieren win32)
         _kein_arbeitsordner_drin(ordner)
 
 
 def _kein_arbeitsordner_drin(ordner: Path) -> None:
-    """:class:`Bleibt`, wenn die cwd eines Prozesses ``ordner`` ist oder darin liegt.
+    """:class:`Bleibt`, wenn ein Prozess in ``ordner`` steht (cwd ist der Ordner oder darin).
 
-    Beide Seiten gehen durch :func:`pfad_echt`: der Prozess setzt seine cwd in beliebiger
-    Form (8.3-Kurzpfad, über Junction/Symlink, ``\\\\?\\``), der Ordner kommt kanonisch.
-    Im Zweifel bleibt der Ordner: cwd eines laufenden, öffnbaren Prozesses unlesbar ⇒ bleibt
-    mit Fehler; cwd lesbar, aber nicht ganz auflösbar ⇒ bleibt mit Fehler, sobald ihre
-    Text-Form oder ihre Teil-Auflösung auf den Ordner (kanonisch oder wie übergeben) zeigt.
-    Nicht auflösbare cwds woanders halten nichts, sonst blockierte jeder Systemprozess mit
-    verschwundener cwd jeden Lauf. Prozesse, die sich nicht öffnen lassen (fremd, erhöht),
-    fehlen schon in :func:`to_spawn.prozessbaum.arbeitsordner_windows`."""
+    Entscheidend ist die Identität des Ordners, in dem der Prozess wirklich steht
+    (:func:`to_spawn.prozessbaum.arbeitsordner_in_windows`, cwd-Griff aus dem PEB): eine danach
+    entfernte oder umgebogene Junction oder eine cwd ``\\\\localhost\\C$\\…`` ändern daran nichts.
+    Nicht feststellbar (Griff nicht zu übernehmen, Kennung unlesbar, cwd unlesbar) ⇒ bleibt
+    mit Fehler. Zusätzlich sperrt der Pfad-Text wie bisher (nie als Freigabe): die cwd geht
+    durch :func:`pfad_echt`; lesbar, aber nicht ganz auflösbar ⇒ bleibt mit Fehler, sobald ihre
+    Text-Form oder Teil-Auflösung auf den Ordner (kanonisch oder wie übergeben) zeigt. Prozesse,
+    die sich nicht öffnen lassen (fremd, erhöht), fehlen schon in der Liste (#243)."""
     try:
-        cwds = prozessbaum.arbeitsordner_windows()
+        befunde = prozessbaum.arbeitsordner_in_windows(ordner)
     except OSError as fehler:
         raise Bleibt(f"Prozessliste nicht lesbar ({fehler})", fehler=True) from None
     o, _ = pfad_echt(ordner)
     ziele = {o, pfad_norm(ordner)}
     echt: dict[str, tuple[str, bool]] = {}  # viele Prozesse teilen dieselbe cwd
-    for pid, cwd in cwds.items():
+    for pid, befund in befunde.items():
         if pid == os.getpid():
             continue  # dieser Lauf selbst
-        if cwd is None:
+        if befund.text is None:
             raise Bleibt(f"Prozess {pid}: Arbeitsordner nicht lesbar", fehler=True)
+        if befund.drin:
+            raise Bleibt(f"Prozess {pid} arbeitet im Ordner oder hat Dateien offen")
+        if befund.drin is None:
+            raise Bleibt(f"Prozess {pid}: Arbeitsordner nicht prüfbar ({befund.grund})", fehler=True)
+        cwd = befund.text
         if cwd not in echt:
             echt[cwd] = pfad_echt(cwd)
         c, ganz = echt[cwd]
@@ -161,9 +160,7 @@ def _prozesse() -> list[tuple[int | None, str | None, str | None]]:
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
     except (OSError, subprocess.SubprocessError) as fehler:
-        raise Bleibt(
-            f"Prozessliste nicht lesbar (PowerShell: {fehler})", fehler=True
-        ) from None
+        raise Bleibt(f"Prozessliste nicht lesbar (PowerShell: {fehler})", fehler=True) from None
     if lauf.returncode != 0:
         raise Bleibt(
             f"Prozessliste nicht lesbar (PowerShell Exit {lauf.returncode})",
@@ -197,9 +194,7 @@ def umbenennen_probe(ordner: Path) -> None:
     try:
         _umbenennen(ordner, probe)
     except PermissionError:
-        raise Bleibt(
-            "Ordner in Benutzung (Windows verweigert das Umbenennen)"
-        ) from None
+        raise Bleibt("Ordner in Benutzung (Windows verweigert das Umbenennen)") from None
     except OSError as fehler:
         raise Bleibt(f"Umbenennungs-Probe gescheitert: {fehler}", fehler=True) from None
     try:
