@@ -185,7 +185,7 @@ def _remotes_aus(repos: list[dict[str, str]]) -> tuple[str, ...]:
 
 
 _VORGABE_REPOS: list[dict[str, str]] = config.MASCHINE_DEFAULTS["repos"]
-#: Issues (Tickets) liegen immer hier, auch für Skill-Repo-Ordner (Vorgabe).
+#: Gemeinsames Ticket-Repo aller Vorgabe-Einträge; seit #235 leer (jedes Repo hat eigene Tickets).
 TICKET_REPO = _ticket_repo_aus(_VORGABE_REPOS) or ""
 EIGENE_REPOS = tuple(e["slug"].lower() for e in _VORGABE_REPOS if e.get("slug"))
 #: Namen der Haupt-Arbeitskopien — nie aufräumen.
@@ -267,6 +267,8 @@ def _geschuetzte_ordner() -> tuple[str, ...]:
 
 
 MINDEST_ZU_SEKUNDEN = 24 * 3600
+#: Bleib-Grund (und Lösch-Grund-Anfang) für Ordner ohne Ticket-Nummer (#1536, #235).
+OHNE_NUMMER = "keine Ticket-Nummer"
 #: Unter diesem Anteil freier Platte gilt Platznot: fertige Ordner gehen vor Ablauf der 24 h.
 PLATZNOT_ANTEIL = 0.15
 #: #1491: Zweige löscht der Hausmeister nur, wenn diese Variable genau „1“ ist (:func:`zweige_loeschen_an`).
@@ -371,7 +373,19 @@ def _name_muster() -> tuple[re.Pattern[str], ...]:
 
 
 _ZWEIG_MUSTER = re.compile(r"^(?:(?:ticket|fix|wip|aufseher)/|fix-|abschluss-)(\d+)(?:-.*)?$")
-_GITHUB_SLUG = re.compile(r"github\.com[:/]+([^/\s]+/[^/\s]+?)(?:\.git)?/?$")
+#: #235: Etappen-Zweig ``l<Etappe>/<N>[buchstabe]-…`` (``l4/176-…``, ``l1/214a-…``); erst ab
+#: 2 Ziffern — ``l3/3b-1b-…`` ist ein Etappen-Schritt, kein Issue, ``l1/p7f-…`` ebenso.
+_ZWEIG_MUSTER_ETAPPE = re.compile(r"^l\d+/([1-9]\d{1,2}|[1-4]\d{3})[a-z]?(?:-.*)?$")
+#: Alle Zweig-Formen mit Ticket-Nummer (eine Stelle für neue Formen); welches Repo die
+#: Nummer meint, sagt allein ``origin`` des Ordners (:func:`_nummer_zaehlt`).
+_ZWEIG_FORMEN = (_ZWEIG_MUSTER, _ZWEIG_MUSTER_ETAPPE)
+#: #235 H1: nur diese drei Anfänge sind GitHub; ein fremder Host (``notgithub.com``) oder
+#: ein lokaler Pfad mit ``github.com/…`` im Namen ist ein fremdes Repo (nur mit ``.match``).
+_GITHUB_SLUG = re.compile(
+    r"(?:https://github\.com/|ssh://git@github\.com/|git@github\.com:)([^/\s]+/[^/\s]+?)(?:\.git)?/?$"
+)
+#: #235 N2: eine Zeile von ``git ls-remote --heads`` (SHA-1 oder SHA-256, Tab, Zweig).
+_LS_REMOTE_ZEILE = re.compile(r"([0-9a-f]{40}(?:[0-9a-f]{24})?)\trefs/heads/\S+$")
 
 
 @dataclass(frozen=True)
@@ -1431,9 +1445,10 @@ def _regeln(
     # 7 Prozess im Ordner
     _kein_prozess(echt)
 
-    # 7b #1536: ohne Ticket-Nummer bleibt immer (nach Prozess-Regel: der Grund zeigt den Prozess)
+    # 7b #1536/#235: ohne Ticket-Nummer bleibt, was frisch ist (nach Prozess-Regel: der Grund
+    # zeigt den Prozess); älter darf er nur weg, wenn nichts zu sichern ist (8b unten)
     if ticket is None:
-        raise _Bleibt("keine Ticket-Nummer", fuer_david=True)
+        _ohne_nummer_nicht_frisch(echt, jetzt)
 
     # 7c #135: ein offener Pull-Request zum Zweig hält jeden Ordner
     _kein_offener_pull_request(echt, slug)
@@ -1441,13 +1456,21 @@ def _regeln(
     # 8 Ungesichertes prüfen (auch trocken: fetch, Geheimnisse, Ignoriertes)
     koepfe, zu_sichern, status_vorher = _ungesichertes(echt, ist_worktree)
     art: Art = "gesichert und gelöscht" if (koepfe or zu_sichern) else "gelöscht"
-    if fremd:  # 8b #135: ohne gültiges Ticket nur, was nachweislich fertig ist
+    if ticket is None:  # 8b #235: ohne Nummer keine Sicherung (sicherung/<N>) ⇒ nur Fertiges
+        if koepfe or zu_sichern:
+            raise _Bleibt(
+                f"{OHNE_NUMMER}: Änderungen oder Commits nicht auf origin (ohne Nummer nicht sicherbar)",
+                fuer_david=True,
+            )
+        _koepfe_auf_server(echt, ist_worktree)
+        grund = f"{OHNE_NUMMER}; alles auf origin, Baum sauber, seit 24 h unverändert, kein Pull-Request offen"
+    elif fremd:  # 8b #135: ohne gültiges Ticket nur, was nachweislich fertig ist
         grund = _fremd_fertig(echt, ticket, bool(koepfe or zu_sichern), jetzt)
     else:
         grund = _grund(art, ticket, platznot)
     if trocken:
         return Ergebnis(ordner, art, grund, stand.ticket, trocken=True), None
-    if koepfe or zu_sichern:
+    if ticket is not None and (koepfe or zu_sichern):
         try:
             stand.sicherung = aufpasser.sichern(echt, ticket, jetzt, zusatz_koepfe=koepfe)
         except RuntimeError as fehler:
@@ -1489,7 +1512,7 @@ def _git_ordner_pruefen(echt: Path) -> bool | None:
         if _hat_verknuepfte_worktrees(echt):
             raise _Bleibt("Hauptrepo mit verknüpften Worktrees")
     url = _git_oder_none(echt, "config", "--get", "remote.origin.url") or ""
-    if _slug(url).lower() not in _eigene_repos():
+    if _origin_slug(echt).lower() not in _eigene_repos():
         raise _Bleibt(f"fremdes Repo ({url or 'ohne origin'})", fuer_david=True)
     return ist_worktree
 
@@ -1543,7 +1566,7 @@ def _keine_spec_sitzung(ticket: int) -> None:
 def _ticket_nummer(ordner: Path, echt: Path) -> int | None:
     zweig = _git_oder_none(echt, "symbolic-ref", "--short", "-q", "HEAD") or ""
     aus_name = _nummer(ordner.name, _name_muster())
-    aus_zweig = _nummer(zweig, (_ZWEIG_MUSTER,))
+    aus_zweig = _nummer(zweig, _ZWEIG_FORMEN)
     if aus_name is not None and aus_zweig is not None and aus_name != aus_zweig:
         raise _Bleibt(
             f"Ordnername (#{aus_name}) und Zweig {zweig} (#{aus_zweig}) widersprechen sich",
@@ -1598,6 +1621,14 @@ def _fremd_fertig(echt: Path, ticket: int, ungesichert: bool, jetzt: float | Non
     if jetzt_ts - _juengste_aenderung(echt) < MINDEST_ZU_SEKUNDEN:
         raise _Bleibt(f"{vorne}: frisch geändert (vor weniger als 24 h)")
     return f"{vorne}; Kopf in origin/{haupt}, Baum sauber, seit 24 h unverändert, kein Pull-Request offen"
+
+
+def _ohne_nummer_nicht_frisch(echt: Path, jetzt: float | None) -> None:
+    """#235: Ordner ohne Ticket-Nummer, in den vor weniger als 24 h geschrieben wurde, bleibt
+    mit dem Grund ``keine Ticket-Nummer`` (#1536) — er ist vermutlich in Arbeit."""
+    jetzt_ts = jetzt if jetzt is not None else time.time()
+    if jetzt_ts - _juengste_aenderung(echt) < MINDEST_ZU_SEKUNDEN:
+        raise _Bleibt(OHNE_NUMMER, fuer_david=True)
 
 
 def _juengste_aenderung(echt: Path) -> float:
@@ -1881,12 +1912,29 @@ def _nummer(text: str, muster: tuple[re.Pattern[str], ...]) -> int | None:
 
 
 def _origin_slug(echt: Path) -> str:
-    """GitHub-Slug des ``origin`` von ``echt`` (``""`` = keiner)."""
-    return _slug(_git_oder_none(echt, "config", "--get", "remote.origin.url") or "")
+    """GitHub-Slug des ``origin`` von ``echt`` (``""`` = keiner ⇒ fremdes Repo).
+
+    #235 M2: weicht das Push-Ziel ab (``pushurl``, ``pushInsteadOf``), landete eine Sicherung
+    woanders als der Slug sagt ⇒ ``""``. #235 N1: ebenso, wenn ``origin`` mehr als eine
+    Adresse hat oder die Repo-eigene Konfiguration (auch per ``include``) Adressen umschreibt
+    (``url.<x>.insteadOf``) — fetch/push gingen dann woanders hin als der Slug sagt. Umleitungen
+    der Maschine (``--global``/``--system``) gelten für jedes Repo gleich und bleiben erlaubt.
+    """
+    roh = (_git_oder_none(echt, "config", "--get-all", "remote.origin.url") or "").splitlines()
+    if len(roh) != 1:
+        return ""
+    umleitungen = _git_oder_none(echt, "config", "--show-scope", "--get-regexp", r"^url\.") or ""
+    if any(zeile.split("\t", 1)[0] in ("local", "worktree") for zeile in umleitungen.splitlines()):
+        return ""
+    lesen = _git_oder_none(echt, "remote", "get-url", "origin")
+    if lesen != _git_oder_none(echt, "remote", "get-url", "--push", "origin"):
+        return ""
+    return _slug(roh[0])
 
 
 def _slug(url: str) -> str:
-    treffer = _GITHUB_SLUG.search(url.strip())
+    """``owner/name`` einer GitHub-URL; alles andere (fremder Host, Pfad, ``http://``) ⇒ ``""``."""
+    treffer = _GITHUB_SLUG.match(url.strip())
     return treffer.group(1) if treffer else ""
 
 
@@ -1984,6 +2032,8 @@ def _ungesichertes(repo: Path, ist_worktree: bool) -> tuple[list[str], bool, lis
         raise _Bleibt(f"git fetch origin gescheitert: {_kurz(fehler)}", fehler=True) from None
     if not ist_worktree and _git_oder_none(repo, "rev-parse", "--verify", "-q", "refs/stash"):
         raise _Bleibt("Stash vorhanden (git stash list)", fuer_david=True)
+    if _nur_im_reflog(repo, ist_worktree):
+        raise _Bleibt("ungesicherte Commits im Verlauf (Reflog, auf keinem Zweig)", fuer_david=True)
     for zeile in aufpasser.git_lauf(repo, "ls-files", "-s").splitlines():
         if zeile.startswith("160000 "):
             raise _Bleibt(f"Submodul {zeile.split(chr(9), 1)[-1]}", fuer_david=True)
@@ -2030,8 +2080,8 @@ def _ungesichertes(repo: Path, ist_worktree: bool) -> tuple[list[str], bool, lis
     return koepfe, zu_sichern, alle
 
 
-def _ungepushte_koepfe(repo: Path, ist_worktree: bool) -> list[str]:
-    """Refs mit Commits nicht auf origin (Klon: alle außer refs/remotes + HEAD; Worktree: HEAD)."""
+def _lokale_koepfe(repo: Path, ist_worktree: bool) -> list[str]:
+    """Refs, deren Commits auf origin liegen müssen (Klon: alle außer refs/remotes + HEAD; Worktree: HEAD)."""
     refs = ["HEAD"]
     if not ist_worktree:
         refs += [
@@ -2039,9 +2089,61 @@ def _ungepushte_koepfe(repo: Path, ist_worktree: bool) -> list[str]:
             for r in aufpasser.git_lauf(repo, "for-each-ref", "--format=%(refname)").split()
             if not r.startswith("refs/remotes/")
         ]
+    return refs
+
+
+#: So viele Reflog-Stände je ``rev-list``-Aufruf (Windows: Kommandozeile höchstens 32 KiB).
+_REFLOG_HAPPEN = 200
+
+
+def _nur_im_reflog(repo: Path, ist_worktree: bool) -> bool:
+    """#235 R1: liegt ein Commit nur im Reflog, der mit dem Ordner verschwindet?
+
+    Verschwinden: beim Klon alle Reflogs, beim Worktree der Reflog seines ``HEAD`` (die
+    Zweig-Reflogs liegen im Hauptklon und bleiben). Kein Verlust ist, was von einem Zweig auf
+    ``origin`` (nach dem ``fetch`` in :func:`_ungesichertes`) oder einem lokalen Ref erreichbar
+    ist — lokale Refs prüfen die übrigen Regeln (Sicherung ``sicherung/<N>`` oder bleibt).
+    Gewöhnliche alte Stände liegen so längst auf dem Server und halten den Ordner nicht.
+    """
+    sicher = ("--not", "--exclude=refs/remotes/*", "--all", "--remotes=origin")
+    if not ist_worktree:
+        return bool(aufpasser.git_lauf(repo, "rev-list", "-n", "1", "--reflog", *sicher).strip())
+    staende = sorted(set(aufpasser.git_lauf(repo, "log", "-g", "--format=%H", "HEAD").split()))
+    for i in range(0, len(staende), _REFLOG_HAPPEN):
+        happen = staende[i : i + _REFLOG_HAPPEN]
+        if aufpasser.git_lauf(repo, "rev-list", "-n", "1", "--ignore-missing", *happen, *sicher).strip():
+            return True
+    return False
+
+
+def _ungepushte_koepfe(repo: Path, ist_worktree: bool) -> list[str]:
+    """Refs mit Commits nicht auf origin (laut lokaler Tracking-Refs)."""
     return [
-        ref for ref in refs if aufpasser.git_lauf(repo, "rev-list", "-n", "1", ref, "--not", "--remotes=origin").strip()
+        ref
+        for ref in _lokale_koepfe(repo, ist_worktree)
+        if aufpasser.git_lauf(repo, "rev-list", "-n", "1", ref, "--not", "--remotes=origin").strip()
     ]
+
+
+def _koepfe_auf_server(repo: Path, ist_worktree: bool) -> None:
+    """#235 M1a: jeder lokale Kopf muss von einem Zweig-Kopf auf dem Server (``ls-remote``)
+    erreichbar sein — lokale Tracking-Refs lassen sich fälschen oder per Refspec verengen.
+    Server-Köpfe, die lokal fehlen, zählen nicht (``--ignore-missing``). Sonst ``_Bleibt``."""
+    try:
+        roh = _git_ohne_frage(repo, "ls-remote", "--heads", "origin")
+    except RuntimeError as fehler:
+        raise _Bleibt(f"{OHNE_NUMMER}: Server nicht erreichbar (ls-remote): {_kurz(fehler)}", fehler=True) from None
+    auf_server: list[str] = []
+    for zeile in roh.splitlines():
+        if not zeile.strip():
+            continue
+        treffer = _LS_REMOTE_ZEILE.match(zeile)
+        if treffer is None:  # #235 N2: nur „<sha>\trefs/heads/…“ ist eine Server-Angabe
+            raise _Bleibt(f"{OHNE_NUMMER}: unlesbare ls-remote-Zeile {_kurz(zeile)!r}", fehler=True)
+        auf_server.append(treffer.group(1))
+    for ref in _lokale_koepfe(repo, ist_worktree):
+        if aufpasser.git_lauf(repo, "rev-list", "--ignore-missing", "-n", "1", ref, "--not", *auf_server).strip():
+            raise _Bleibt(f"{OHNE_NUMMER}: {ref} nicht auf dem Server (ls-remote origin)", fuer_david=True)
 
 
 # --- Prozesse -------------------------------------------------------------------
@@ -2319,12 +2421,19 @@ def _kennzahl_schreiben(ergebnisse: list[Ergebnis], *, trocken: bool) -> None:
     und die Bleib-Gründe gezählt (Zahlen im Grund als ``N``, ohne Klammer-Zusatz)."""
     geloescht = sum(1 for e in ergebnisse if e.art != "bleibt")
     gruende: dict[str, int] = {}
+    fehler_je: dict[str, list[str]] = {}
     for e in ergebnisse:
         if e.art == "bleibt":
             schluessel = re.sub(r"\d+", "N", e.grund.split(" (", 1)[0])
             gruende[schluessel] = gruende.get(schluessel, 0) + 1
+            if e.fehler:
+                fehler_je.setdefault(schluessel, []).append(f"{e.ordner}: {e.grund}")
     satz = f"{geloescht} von {len(ergebnisse)} gelöscht, {len(ergebnisse) - geloescht} bleiben"
     log.info("Hausmeister: Kennzahl %s%s", satz, " (trocken)" if trocken else "")
+    # #235: eine Zeile je Bleib-Grund mit Anzahl; Fehler zusätzlich mit Ordner und Text
+    for schluessel, anzahl in sorted(gruende.items(), key=lambda kv: -kv[1]):
+        fehl = fehler_je.get(schluessel)
+        log.info("Hausmeister: bleibt %d× %s%s", anzahl, schluessel, f" — Fehler: {' | '.join(fehl)}" if fehl else "")
     _log_zeile(
         {
             "zeit": datetime.now().astimezone().isoformat(timespec="seconds"),

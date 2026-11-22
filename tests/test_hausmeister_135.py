@@ -56,6 +56,25 @@ def skill(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> Path:
     prs = welt.tmp / "prs.json"
     prs.write_text("{}", encoding="utf-8")
     monkeypatch.setenv("GH_PRS", str(prs))
+    # #235: die Vorgabe gibt dem Skill-Repo jetzt eigene Tickets; der #135-Fall ist eine
+    # Maschinen-Liste, deren Skill-Eintrag noch auf das App-Repo zeigt (alter Server-Stand).
+    datei = config.maschine_datei()  # conftest: je Test eigene Datei unter tmp_path
+    datei.parent.mkdir(parents=True, exist_ok=True)
+    datei.write_text(
+        json.dumps(
+            {
+                "repos": [
+                    {"slug": "Shavy72/duoplus-management", "pfad": str(welt.haupt), "ticket_repo": ""},
+                    {
+                        "slug": "Shavy72/claude-skill-to-spawn",
+                        "pfad": str(haupt),
+                        "ticket_repo": "Shavy72/duoplus-management",
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
     return haupt
 
 
@@ -184,11 +203,11 @@ def test_prozess_im_git_worktree_haelt_ihn(welt: Welt) -> None:
 
 def test_praefix_kollision_nummer_zaehlt_nur_im_ticket_repo() -> None:
     """Jedes Ordner-Präfix darf beliebige Repos treffen: die Nummer zählt nur, wenn der
-    ``origin`` des Ordners selbst das Ticket-Repo ist (Vorgabe: nur das App-Repo)."""
+    ``origin`` des Ordners selbst das Ticket-Repo ist (Vorgabe seit #235: jedes Repo sein eigenes)."""
     for eintrag in config.MASCHINE_DEFAULTS["repos"]:
         slug = eintrag["slug"]
         ticket_repo = hausmeister._ticket_repo_fuer(slug) or ""
         assert hausmeister._nummer_zaehlt(slug) is (slug.lower() == ticket_repo.lower()), slug
-    assert hausmeister._nummer_zaehlt("Shavy72/claude-skill-to-spawn") is False
+    assert hausmeister._nummer_zaehlt("Shavy72/claude-skill-to-spawn") is True  # #235: Skill-Issues
+    assert hausmeister._nummer_zaehlt("Shavy72/fremd") is False
     assert hausmeister._nummer_zaehlt("") is False
-
