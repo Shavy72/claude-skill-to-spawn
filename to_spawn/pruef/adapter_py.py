@@ -7,6 +7,7 @@ import re
 import sys
 import tempfile
 from pathlib import Path
+from xml.etree import ElementTree
 
 from to_spawn.pruef import ausfuehren
 from to_spawn.pruef.leiter import Plan
@@ -44,6 +45,15 @@ def _schluss(ausgabe: str) -> str | None:
     """
     treffer = _SCHLUSS.findall(ausgabe)
     return treffer[0] if len(treffer) == 1 else None
+
+
+def _junit_kennung(knoten: str) -> tuple[str, str]:
+    """(classname, name) im JUnit-XML von pytest zur Knoten-Kennung (wie ``mangle_test_address``)."""
+    pfad, klammer, parameter = knoten.partition("[")
+    teile = pfad.split("::")
+    teile[0] = re.sub(r"\.py$", "", teile[0].replace("/", "."))
+    teile[-1] += klammer + parameter
+    return ".".join(teile[:-1]), teile[-1]
 
 
 #: ``-o cache_dir=…`` im Befehl: je Lauf, der unabhängig vom vorigen sein muss, frisch.
@@ -226,6 +236,25 @@ class PythonAdapter:
         # weder den ersten Lauf noch die Wiederholung, also läuft wieder alles.
         cache = tempfile.mkdtemp(prefix="to_spawn_pytest_cache_")
         return [f"{_CACHE_PREFIX}{cache}" if teil.startswith(_CACHE_PREFIX) else teil for teil in befehl]
+
+    def mit_beleg(self, befehl: list[str], beleg: Path) -> list[str]:
+        # JUnit-XML ist pytest-eigen; ``junit_prefix`` aus der Repo-Konfig fälschte die Kennungen.
+        return [*befehl, f"--junitxml={beleg}", "-o", "junit_prefix="]
+
+    def alle_bestanden(self, beleg: Path, namen: set[str]) -> bool:
+        # Bestanden = ``testcase`` ohne failure/error/skipped (skip und xfail stehen als skipped).
+        # Ein Name, der auch nur einmal anders als bestanden auftaucht, gilt nicht.
+        try:
+            wurzel = ElementTree.parse(beleg).getroot()
+        except (OSError, ElementTree.ParseError):
+            return False
+        gut: set[tuple[str, str]] = set()
+        schlecht: set[tuple[str, str]] = set()
+        for fall in wurzel.iter("testcase"):
+            kennung = (fall.get("classname", ""), fall.get("name", ""))
+            rot = any(kind.tag in ("failure", "error", "skipped") for kind in fall)
+            (schlecht if rot else gut).add(kennung)
+        return all(_junit_kennung(name) in gut - schlecht for name in namen)
 
     def rote(self, ausgabe: str) -> set[str]:
         return {treffer.strip() for treffer in _ROT_ZEILE.findall(ausgabe)}
