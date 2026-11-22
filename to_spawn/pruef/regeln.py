@@ -161,5 +161,5 @@ def nach_auswahl(n: int | None, pfade: list[str], adapter: str, doku: Collection
 
 def stand() -> str:
     """``regeln@<sha7>``: git-Blob-SHA dieser Datei (gleich ``git hash-object regeln.py``)."""
-    inhalt = Path(__file__).read_bytes()
+    inhalt = Path(__file__).read_bytes().replace(b"\r\n", b"\n")  # CRLF (autocrlf) -> LF wie git
     return "regeln@" + hashlib.sha1(b"blob %d\0" % len(inhalt) + inhalt, usedforsecurity=False).hexdigest()[:7]
