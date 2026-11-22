@@ -266,8 +266,6 @@ def _lege_zettel(name: str, halter: str) -> tuple[Path, ExitStack]:
     zettel = reihe / f"{time.time_ns():020d}-{os.getpid()}-{uuid.uuid4().hex[:8]}.json"
     daten = {"halter": halter, "pid": os.getpid(), "seit": _jetzt_iso()}
     # Erst beschreiben, dann sperren: sperre.halte gibt keinen Schreib-Griff heraus.
-    # ponytail: Windows sperrt Byte 0, der Inhalt eines gehaltenen Zettels ist dort nicht
-    # lesbar (``stand`` zeigt den Wartenden als „?“); Upgrade: Sperr-Versatz in sperre.halte.
     fd = os.open(zettel, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
     try:
         os.write(fd, json.dumps(daten, ensure_ascii=False).encode("utf-8"))
