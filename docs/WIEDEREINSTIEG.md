@@ -45,6 +45,26 @@ was zum Weiterbauen nötig ist.
 
 ## 3. Stand
 
+- **2026-11-22 03:50 (Server-Uhr, main 9dc4f72):** Seit dem letzten Eintrag gemergt (Pull-Requests 239, 240, 244, 249, 256).
+  Auf dem Bau-Server installiert: c454545, volle Suite 2754 bestanden, 0 rot.
+  - 239: Doku-Pull-Request (Stand 85).
+  - 240: PC, Prüftor-Tests laufen unter Windows (P7f).
+  - 244: Issue 235 Teil B. Der Hausmeister räumt Skill-Helfer-Ordner über das richtige Ticket-Repo.
+    Erster Lauf nach der Installation: 4 gelöscht, 173 bleiben, 0 Fehler.
+  - 249: Messung `doku_pfade` fürs Skill-Repo, Ergebnis „keine sichere Abkürzung“.
+  - 256: PC, Windows-Ausgabe-Kodierung und Einzel-Tests (P7f).
+  Offen im Pull-Request (alle vier mergbar):
+  - 237 (Issue 214 Teil A, Review-Hook ins Repo): Merge-Lauf läuft.
+  - 250 (Issue 149 Rest): Fix-Runde 2, Nach-Prüfer läuft.
+  - 233 (Hausmeister unter Windows): Review „Hartes: nein“, wartet auf Linux-Lauf und Merge.
+  - 255 (Deploy-Wache ohne `pgrep`, Issue 251): im Review, noch nicht mergen.
+  Neue Folge-Issues: 252, 253, 254 (Folge aus 235), 257, 258, 259 (Windows), 260 (volle Suite wackelt bei
+  parallelen Läufen), 261 (Maschinen-Liste: gesetztes `ticket_repo` nicht änderbar).
+  Als Nächstes:
+  - Hausmeister-Reihe: 241, 242, 261, 234, 177, 215, 225, 163, 129, 179, 178, 247, 248, 252–254.
+  - Prüf-Reihe nach Merge 250: 204, 218, 238, 246, 224, 104, 245.
+  - Issue 214 Teil B nach Merge 237.
+
 - **2026-11-22 02:09 (Server-Uhr, main 9c7cda9):** Seit dem letzten Eintrag gemergt (Pull-Requests 231, 228, 236).
   Auf dem Bau-Server installiert: 0dc03ae, volle Suite 2704 passed / 0 failed / 66 skipped.
   - 231 (4be7f68): PC, die Windows-Tests laufen. Issue 68 bleibt offen.
