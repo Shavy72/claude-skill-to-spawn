@@ -5,6 +5,7 @@ eine vorhandene Datei wird nur ersetzt, wenn sie dem zuletzt installierten Stand
 (Prüfsummen in ``.installiert.json`` im Ziel) oder ohne CR gleich der neuen ist. Weicht sie
 ab, landet sie vorher unter ``<ziel>/../_alt/<zielname>-<zeit>/`` und der Bericht nennt sie —
 nie still überschreiben, nie nachfragen. Dateien, die nur im Ziel liegen, bleiben unberührt.
+Ziel-Dateien, die Links sind, werden nur gemeldet, nie durchgeschrieben; geschrieben wird atomar.
 
 Tür: :func:`installiere`. Aufruf: ``python -m to_spawn.review_hook [--ziel <ordner>]``.
 """
@@ -15,6 +16,7 @@ import argparse
 import hashlib
 import json
 import logging
+import os
 import shutil
 import sys
 from datetime import datetime
@@ -46,17 +48,23 @@ def installiere(ziel: Path, quelle: Path = QUELL_ORDNER, zeit: str | None = None
     try:
         alt_stand: dict[str, str] = json.loads(stand_pfad.read_text(encoding="utf-8"))
     except (FileNotFoundError, ValueError):
-        # Kein/kaputter Stand: jede abweichende Datei gilt als fremd und wird gesichert.
         alt_stand = {}
+    if not isinstance(alt_stand, dict):
+        alt_stand = {}  # Kein/kaputter Stand (auch null, [], 5): jede abweichende Datei wird gesichert.
     sicherung = ziel.parent / "_alt" / f"{ziel.name}-{zeit or datetime.now().strftime('%Y%m%d-%H%M%S')}"
     while sicherung.exists():
         sicherung = sicherung.with_name(sicherung.name + "-1")
     bericht: list[str] = []
     neu_stand: dict[str, str] = {}
+    ziel_echt = ziel.resolve()
     for rel in _quell_dateien(quelle):
         neu = (quelle / rel).read_bytes()
-        neu_stand[rel] = _pruefsumme(neu)
         datei = ziel / rel
+        if datei.is_symlink() or not datei.resolve().is_relative_to(ziel_echt):
+            # Link (auch tot oder über einen Unter-Ordner): nie durchschreiben, nur melden.
+            bericht.append(f"abweichend, Link nicht angefasst: {rel}")
+            continue
+        neu_stand[rel] = _pruefsumme(neu)
         if datei.exists():
             alt = datei.read_bytes()
             if alt == neu:
@@ -71,10 +79,22 @@ def installiere(ziel: Path, quelle: Path = QUELL_ORDNER, zeit: str | None = None
         else:
             datei.parent.mkdir(parents=True, exist_ok=True)
             bericht.append(f"angelegt: {rel}")
-        datei.write_bytes(neu)
+        _schreibe_atomar(datei, neu)
     if neu_stand != alt_stand:
-        stand_pfad.write_text(json.dumps(neu_stand, indent=1, sort_keys=True) + "\n", encoding="utf-8")
+        _schreibe_atomar(stand_pfad, (json.dumps(neu_stand, indent=1, sort_keys=True) + "\n").encode("utf-8"))
     return bericht
+
+
+def _schreibe_atomar(datei: Path, daten: bytes) -> None:
+    """Erst Temp-Datei im selben Ordner, dann ``os.replace``: der laufende Hook liest nie halbe Dateien."""
+    temp = datei.with_name(f".{datei.name}.neu")
+    try:
+        temp.write_bytes(daten)
+        if datei.exists():
+            shutil.copymode(datei, temp)
+        os.replace(temp, datei)
+    finally:
+        temp.unlink(missing_ok=True)
 
 
 def main(argv: list[str] | None = None) -> int:
