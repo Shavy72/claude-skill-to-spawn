@@ -595,7 +595,8 @@ def test_neuer_symlink_im_erklaerten_pfad_prueft_voll(tmp_path: Path) -> None:
     _erklaere(probe, ["docs/**"])
     (probe / "docs").mkdir()
     try:
-        os.symlink("../rechnen.py", probe / "docs" / "code.md")
+        # Windows löst „/“ im Link-Ziel nicht auf (Errno 22) — Trenner des Systems nehmen.
+        os.symlink(os.path.join("..", "rechnen.py"), probe / "docs" / "code.md")
     except OSError as fehler:
         pytest.skip(f"Symlink nicht anlegbar: {fehler}")
     _git(probe, "add", "-A")

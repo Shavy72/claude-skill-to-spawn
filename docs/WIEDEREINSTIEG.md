@@ -45,6 +45,48 @@ was zum Weiterbauen nötig ist.
 
 ## 3. Stand
 
+- **2026-11-22 02:09 (Server-Uhr, main 9c7cda9):** Seit dem letzten Eintrag gemergt (Pull-Requests 231, 228, 236).
+  Auf dem Bau-Server installiert: 0dc03ae, volle Suite 2704 passed / 0 failed / 66 skipped.
+  - 231 (4be7f68): PC, die Windows-Tests laufen. Issue 68 bleibt offen.
+  - 228 (9c7cda9): Teil von Issue 218. Die Schmutz-Erkennung steht an einer Stelle, die Regel „Werkzeug-Rest“
+    nur in `cache.ist_werkzeug_rest`. Issue 218 bleibt offen.
+  - 236: Doku-Pull-Request (Stand 84).
+  In Arbeit:
+  - Pull-Request 237 (Issue 214 Teil A, Review-Hook ins Repo + Installation): Fix-Runde 1 nach Prüfer-Urteil
+    „Hartes: ja“ (zwei Sammel-Tests rot).
+  - Issue 235 Teil B im Bau: Der Hausmeister räumt Helfer-Ordner des Skill-Repos nicht. Echter Lauf: 0 gelöscht,
+    174 bleiben, 1 Fehler → M14 offen.
+  - Paket `pruefen.doku_pfade` (Zweig `l3/doku-pfade-skill-repo`) im Bau.
+  - Pull-Request 233 (PC) wartet auf Review.
+  Neue Folge-Issues: 238 (Muster dürfen nicht über Ordnergrenzen greifen), 234, 235, 232.
+  **Was als Nächstes kommt (in dieser Reihenfolge):**
+  1. 237: Nach-Prüfer, Merge, dann Issue 214 Teil B.
+  2. 235: Prüfer, Merge, Installation und echter Hausmeister-Lauf.
+  3. Hausmeister-Reihe: Folge-Issues aus 235, 234, 177, 215, 225, 163, 129, 179, 178.
+  4. Prüf-Reihe: doku_pfade, Rest 149, 204, 218 (Punkte 2–5), 238, 224, 104.
+  5. Issue 232.
+  6. Issue 190.
+  7. Issue 216.
+
+- **2026-11-22 01:53 (Server-Uhr, main 0dc03ae):** Seit dem letzten Eintrag gemergt (Pull-Requests 221, 222, 223, 227, 229, 230).
+  Volle Suite zuletzt 2697 passed / 0 failed / 66 skipped auf 8592045 (main grün).
+  - 221 (379f6f2): Die Leitstand-Tests laufen unter Windows grün (P7f).
+  - 222 (1ae01fb): Issue 196 zu. Der Hausmeister erkennt eingetragene Arbeitsordner außerhalb der Wurzeln. Rest → Issue 225.
+  - 223 (e65195e): Issue 184 zu. Cache-Reste des Prüf-Caches (aus 173) behoben. Rest → Issue 219 und 224.
+  - 227 (8592045): Zwei rote main-Tests behoben (feste Namen, Start-Tür).
+  - 229 (328c2b1): Die Starter-Tests laufen unter Windows grün (P7f).
+  - 230 (0dc03ae): Issue 176 zu. Der Hausmeister bestimmt das Ticket-Repo je Ordner.
+  Neu offen: 232 (Start-Tests laufen mit echtem Heimordner), 234 (Hausmeister: Zweig-Pfad prüft die Nummer nicht im
+  eigenen Repo), 235 (Hausmeister räumt Helfer-Ordner des Skill-Repos nicht), dazu 225, 226, 224, 219, 218, 216, 215, 214, 212.
+  **Was als Nächstes kommt (in dieser Reihenfolge):**
+  1. Pull-Request 228 (Teil von Issue 218), in Fix-Runde nach Prüfer-Befund.
+  2. Issue 214 in zwei Teilen: A Umzug `review-hook/` + Installation, B Verhalten.
+  3. Prüf-Reihe: Rest Issue 149, 204, 218 (Punkte 2–5), 224, 104.
+  4. Hausmeister-Reihe: 235 zuerst, dann 234, 177, 215, 225, 163, 129, 179, 178.
+  5. Pull-Request 231 und 233 (Windows), warten auf den Prüf-Kommentar des PC.
+  6. Issue 232 (eine Test-Welt für Start-Tests) nach 214 Teil B.
+  7. Danach 190, 216.
+
 - **2026-11-22 (main bd948ab, Stand bis Pull-Request 213):** Gemergt, je Pull-Request in Alltagsworten:
   - 194: Windows ruft bash nur noch an einer Stelle auf (Reste aus Review 181).
   - 209: Leitstand-Datei einheitlich formatiert, Verhalten unverändert.
