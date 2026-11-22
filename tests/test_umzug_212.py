@@ -754,8 +754,11 @@ def test_lokale_zustaende_aus_sessions_stand(tmp_path: Path) -> None:
         json.dumps({"spec": 97530, "tickets": {"97531": {"title": "a"}, "97532": {"title": "b"}}}),
         encoding="utf-8",
     )
+    # Unter Windows ist der venv-``python.exe`` nur ein Starter mit dem echten Interpreter
+    # als Kind (gleiche Kommandozeile) — Popen-PID wäre dann nicht der gefundene Prozess.
+    python = getattr(sys, "_base_executable", sys.executable) if sys.platform == "win32" else sys.executable
     schlaefer = subprocess.Popen(
-        [sys.executable, "-c", "import time; time.sleep(60)", str(SKRIPTE / "bau.py"), "97531"],
+        [python, "-c", "import time; time.sleep(60)", str(SKRIPTE / "bau.py"), "97531"],
         cwd=str(tmp_path),  # bau.py läuft immer im Repo-Wurzelordner
     )
     try:
@@ -917,7 +920,12 @@ def test_umzug_wache_windows_beendet_ganzen_baum(
     def run(cmd: object, *args: object, **kw: object) -> object:
         if isinstance(cmd, list) and cmd and cmd[0] == "taskkill":
             aufrufe.append([str(c) for c in cmd])
-            os.kill(int(cmd[2]), signal.SIGKILL)
+            if sys.platform == "win32":
+                # Windows kennt kein SIGKILL; echtes taskkill trifft auch den Interpreter
+                # hinter dem venv-Starter, sonst schläft das Kind 60 s weiter.
+                echt(cmd, capture_output=True, check=False)
+            else:
+                os.kill(int(cmd[2]), signal.SIGKILL)
             return subprocess.CompletedProcess(cmd, 0, "ERFOLGREICH", "")
         return echt(cmd, *args, **kw)  # type: ignore[call-overload]
 
