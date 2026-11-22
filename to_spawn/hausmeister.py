@@ -207,26 +207,33 @@ def _maschinen_repos() -> list[dict[str, str]]:
 def _ticket_repo() -> str | None:
     """Repo für ``gh issue view``; ``None`` = keins oder nicht eindeutig (⇒ Ticket nicht abfragbar).
 
-    ponytail: ein Ticket-Repo je Maschine; mehrere Apps mit eigenen Tickets brauchen das
-    Ticket-Repo je Ordner (aus dessen ``origin``).
+    Nur noch Rückfall ohne GitHub-origin; je Ordner/Zweig gilt :func:`_ticket_repo_fuer` (#176).
     """
     return _ticket_repo_aus(_maschinen_repos())
 
 
 def _ticket_repo_fuer(slug: str) -> str | None:
-    """Ticket-Repo für einen Ordner mit origin ``slug`` (#112); ``None`` ⇒ Ticket nicht abfragbar.
+    """Ticket-Repo für einen Ordner mit origin ``slug`` (#112, #176); ``None`` ⇒ nicht bestimmbar.
 
-    Wie :func:`_ticket_repo`, nur zählen fremde Einträge ohne Ticket-Repo nicht mit: ein
-    Wegwerf-Eintrag legt die übrigen nicht still. Ist der eigene Eintrag ohne Ticket-Repo
-    (oder ``slug`` leer), bleibt der Ordner. Jeder solche Eintrag wird einmal gemeldet.
+    Einzige Antwort je Ordner: das ``ticket_repo`` des Eintrags mit diesem ``slug``. Leer gilt
+    nur, wenn ``slug`` selbst das ausdrückliche Ticket-Repo eines Eintrags ist (nie geraten).
+    Kein Eintrag, leerer ``slug`` oder Eintrag ohne Ticket-Repo ⇒ ``None``; mehrere Repos mit
+    eigenen Tickets stören sich nicht. Einträge ohne Ticket-Repo werden einmal gemeldet.
     """
     repos = _maschinen_repos()
-    kaputt = _ohne_ticket_repo(repos)
-    for e in kaputt:
+    for e in _ohne_ticket_repo(repos):
         _kaputten_eintrag_melden(e)
-    if not slug.strip() or slug.strip().lower() in {(e.get("slug") or "").strip().lower() for e in kaputt}:
+    gesucht = slug.strip().lower()
+    if not gesucht:
         return None
-    return _ticket_repo_aus([e for e in repos if e not in kaputt])
+    bekannt = {t.lower(): t for e in repos if (t := (e.get("ticket_repo") or "").strip())}
+    treffer = {
+        (e.get("ticket_repo") or "").strip() or bekannt.get(gesucht)
+        for e in repos
+        if (e.get("slug") or "").strip().lower() == gesucht
+    }
+    # doppelter Eintrag mit verschiedenem Ticket-Repo ⇒ unklar ⇒ bleibt
+    return next(iter(treffer)) if len(treffer) == 1 else None
 
 
 def _kaputten_eintrag_melden(eintrag: dict[str, str]) -> None:
@@ -257,6 +264,8 @@ def _geschuetzte_ordner() -> tuple[str, ...]:
     roh = config.maschine()["hausmeister"].get("geschuetzte_ordner")
     extra = [n.strip() for n in roh if isinstance(n, str) and n.strip()] if isinstance(roh, list) else []
     return tuple(dict.fromkeys((*GESCHUETZTE_ORDNER, *_hauptrepo_namen(), *extra)))
+
+
 MINDEST_ZU_SEKUNDEN = 24 * 3600
 #: Unter diesem Anteil freier Platte gilt Platznot: fertige Ordner gehen vor Ablauf der 24 h.
 PLATZNOT_ANTEIL = 0.15
@@ -327,6 +336,8 @@ _TICKET_NR = r"([1-9]\d{0,2}|[1-4]\d{3})"
 _TICKET_NR_LANG = r"([1-9]\d{2}|[1-4]\d{3})"
 # Jahr-Monat am Namensende (wt-2026-11) ist ein Datum, keine Ticket-Form.
 _KEIN_JAHR_MONAT = r"(?!20\d\d-(?:0?[1-9]|1[0-2])$)"
+
+
 def _name_muster_fuer(praefixe: tuple[str, ...]) -> tuple[re.Pattern[str], ...]:
     """Ticket-Formen im Ordnernamen; ``praefixe`` sind Text (kein Regex), leer = ohne Präfix-Form."""
     muster: list[re.Pattern[str]] = []
@@ -337,9 +348,7 @@ def _name_muster_fuer(praefixe: tuple[str, ...]) -> tuple[re.Pattern[str], ...]:
         # (skill-4821f3c ist ein Commit-Hash-Rest, wt-2026-11-21 ein Datum, kein Ticket).
         wahl = "|".join(map(re.escape, praefixe))
         muster.append(
-            re.compile(
-                rf"^(?:{wahl})-{_KEIN_JAHR_MONAT}{_TICKET_NR}(?:[a-z]|-\d{{1,2}}[a-z]?|-[a-z][a-z0-9-]*)?$"
-            )
+            re.compile(rf"^(?:{wahl})-{_KEIN_JAHR_MONAT}{_TICKET_NR}(?:[a-z]|-\d{{1,2}}[a-z]?|-[a-z][a-z0-9-]*)?$")
         )
     # t1490a, a1279 (Aufseher): nur t/a als Präfix (x500, v2026-backup sind keine Tickets)
     muster.append(re.compile(rf"^[ta]{_TICKET_NR_LANG}[a-z]?$"))
@@ -361,9 +370,7 @@ def _name_muster() -> tuple[re.Pattern[str], ...]:
     return _NAME_MUSTER if praefixe == ORDNER_PRAEFIXE_STANDARD else _name_muster_fuer(praefixe)
 
 
-_ZWEIG_MUSTER = re.compile(
-    r"^(?:(?:ticket|fix|wip|aufseher)/|fix-|abschluss-)(\d+)(?:-.*)?$"
-)
+_ZWEIG_MUSTER = re.compile(r"^(?:(?:ticket|fix|wip|aufseher)/|fix-|abschluss-)(\d+)(?:-.*)?$")
 _GITHUB_SLUG = re.compile(r"github\.com[:/]+([^/\s]+/[^/\s]+?)(?:\.git)?/?$")
 
 
@@ -382,9 +389,7 @@ class Ergebnis:
 class _Bleibt(Exception):
     """Eine Regel (oder ein Fehler) hält den Ordner fest."""
 
-    def __init__(
-        self, grund: str, *, fuer_david: bool = False, fehler: bool = False
-    ) -> None:
+    def __init__(self, grund: str, *, fuer_david: bool = False, fehler: bool = False) -> None:
         super().__init__(grund)
         self.grund = grund
         self.fuer_david = fuer_david
@@ -426,16 +431,12 @@ class _Stand:
     sicherung: str | None = None
 
 
-def aufraeumen(
-    ordner: Path, *, loeschen: bool = False, jetzt: float | None = None
-) -> Ergebnis:
+def aufraeumen(ordner: Path, *, loeschen: bool = False, jetzt: float | None = None) -> Ergebnis:
     """Entscheidet (und löscht mit ``loeschen=True``) einen Arbeitsordner; wirft nie."""
     return _aufraeumen(ordner, loeschen=loeschen, jetzt=jetzt, platznot=False)
 
 
-def aufraeumen_alles(
-    *, loeschen: bool = False, jetzt: float | None = None
-) -> list[Ergebnis]:
+def aufraeumen_alles(*, loeschen: bool = False, jetzt: float | None = None) -> list[Ergebnis]:
     """Alle Ordner unter den Wurzeln nach den Regeln von :func:`aufraeumen`; wirft nie.
 
     Bei Platznot zuerst die Ordner mit der ältesten Ticket-Schließung, ohne 24 h
@@ -445,9 +446,7 @@ def aufraeumen_alles(
     Mit ``loeschen=True`` gibt derselbe Lauf einmal täglich Docker-Reste frei
     (:mod:`to_spawn.docker_reste`, #1372); Probelauf und Start-Check nie.
     """
-    return list(
-        _rundgang_sicher(loeschen=loeschen, jetzt=jetzt, docker=loeschen).ergebnisse
-    )
+    return list(_rundgang_sicher(loeschen=loeschen, jetzt=jetzt, docker=loeschen).ergebnisse)
 
 
 def rundgang(*, loeschen: bool, jetzt: float | None = None) -> Rundgang:
@@ -466,9 +465,7 @@ def _rundgang_sicher(*, loeschen: bool, jetzt: float | None, docker: bool) -> Ru
         return _rundgang(loeschen=loeschen, jetzt=jetzt, docker=docker)
     except Exception as fehler:  # Vertrag: wirft nie
         log.exception("Hausmeister: Rundgang gescheitert")
-        return Rundgang(
-            False, f"unerwarteter Fehler ({type(fehler).__name__}: {fehler})"
-        )
+        return Rundgang(False, f"unerwarteter Fehler ({type(fehler).__name__}: {fehler})")
 
 
 def _rundgang(*, loeschen: bool, jetzt: float | None, docker: bool) -> Rundgang:
@@ -479,9 +476,7 @@ def _rundgang(*, loeschen: bool, jetzt: float | None, docker: bool) -> Rundgang:
         sperre = None
     if sperre is False:
         log.info("Hausmeister: anderer Lauf läuft schon — dieser räumt nicht auf")
-        return Rundgang(
-            False, "ein anderer Lauf räumt gerade auf (Sperre belegt)", wartet=True
-        )
+        return Rundgang(False, "ein anderer Lauf räumt gerade auf (Sperre belegt)", wartet=True)
     try:
         ergebnis = _alle_ordner(loeschen=loeschen, jetzt=jetzt)
         if docker and sperre:  # nur unter gehaltener Sperre: nie zwei Docker-Läufe
@@ -503,14 +498,10 @@ def _alle_ordner(*, loeschen: bool, jetzt: float | None) -> Rundgang:
     except Exception as fehler:  # Vertrag: wirft nie
         log.exception("Hausmeister: Aufräumen gescheitert (Ordnersuche/Reihenfolge)")
         _zweige_im_takt(loeschen, jetzt)
-        return Rundgang(
-            False, f"Ordnersuche gescheitert ({type(fehler).__name__}: {fehler})"
-        )
+        return Rundgang(False, f"Ordnersuche gescheitert ({type(fehler).__name__}: {fehler})")
     ergebnisse: list[Ergebnis] = []
     for ordner in kandidaten:
-        erg = _aufraeumen(
-            ordner, loeschen=loeschen, jetzt=jetzt, platznot=_ist_platznot(anteil)
-        )
+        erg = _aufraeumen(ordner, loeschen=loeschen, jetzt=jetzt, platznot=_ist_platznot(anteil))
         ergebnisse.append(erg)
         if erg.art != "bleibt" and not erg.trocken:
             anteil = _frei_anteil()
@@ -608,9 +599,7 @@ def _sperre_nehmen() -> ExitStack | None | bool:
     return stapel
 
 
-def _aufraeumen(
-    ordner: Path, *, loeschen: bool, jetzt: float | None, platznot: bool
-) -> Ergebnis:
+def _aufraeumen(ordner: Path, *, loeschen: bool, jetzt: float | None, platznot: bool) -> Ergebnis:
     ordner = Path(os.path.abspath(Path(ordner).expanduser()))
     trocken = not loeschen
     stand = _Stand()
@@ -636,9 +625,7 @@ def _aufraeumen(
     try:
         _loeschen(*ziel)
     except (RuntimeError, OSError) as fehler:
-        erg = replace(
-            erg, art="bleibt", grund=f"Löschen gescheitert: {_kurz(fehler)}", fehler=True
-        )
+        erg = replace(erg, art="bleibt", grund=f"Löschen gescheitert: {_kurz(fehler)}", fehler=True)
         _log_schreiben(erg)
     return erg
 
@@ -695,9 +682,7 @@ class ZweigErgebnis:
     fuer_david: bool = False
 
 
-def sicherungen_aufraeumen(
-    *, loeschen: bool = False, jetzt: float | None = None
-) -> list[ZweigErgebnis]:
+def sicherungen_aufraeumen(*, loeschen: bool = False, jetzt: float | None = None) -> list[ZweigErgebnis]:
     """Löscht ``sicherung/<N>``-Zweige 90 Tage nach dem Anlegen; wirft nie.
 
     Nur mit Schalter (:func:`zweige_loeschen_an`), sonst ``[]``. Höchstens einmal
@@ -776,9 +761,7 @@ def _sicherung_takt_merken(modus: str, jetzt: float) -> None:
         datei.parent.mkdir(parents=True, exist_ok=True)
         datei.write_text(json.dumps(stand), encoding="utf-8")
     except OSError as fehler:
-        log.warning(
-            "Hausmeister: Takt der Sicherungs-Zweige nicht schreibbar: %s", fehler
-        )
+        log.warning("Hausmeister: Takt der Sicherungs-Zweige nicht schreibbar: %s", fehler)
 
 
 def _sicherung_cache(remote: str) -> Path:
@@ -801,9 +784,7 @@ def _sicherung_cache(remote: str) -> Path:
     return cache
 
 
-def _sicherungen_eines_remotes(
-    remote: str, loeschen: bool, jetzt: float
-) -> list[ZweigErgebnis]:
+def _sicherungen_eines_remotes(remote: str, loeschen: bool, jetzt: float) -> list[ZweigErgebnis]:
     cache = _sicherung_cache(remote)
     _git_ohne_frage(
         cache,
@@ -814,9 +795,7 @@ def _sicherungen_eines_remotes(
         "origin",
         "+refs/heads/sicherung/*:refs/sicherung/*",
     )
-    roh = aufpasser.git_lauf(
-        cache, "for-each-ref", "--format=%(refname) %(objectname)", "refs/sicherung/"
-    )
+    roh = aufpasser.git_lauf(cache, "for-each-ref", "--format=%(refname) %(objectname)", "refs/sicherung/")
     ergebnisse = []
     for zeile in roh.splitlines():
         ref, _, sha = zeile.partition(" ")
@@ -843,9 +822,7 @@ def _sicherungen_eines_remotes(
     return ergebnisse
 
 
-def _sicherung_entscheiden(
-    cache: Path, remote: str, nr: str, sha: str, loeschen: bool, jetzt: float
-) -> ZweigErgebnis:
+def _sicherung_entscheiden(cache: Path, remote: str, nr: str, sha: str, loeschen: bool, jetzt: float) -> ZweigErgebnis:
     zweig = f"sicherung/{nr}"
     trocken = not loeschen
     zeiten = aufpasser.git_lauf(
@@ -896,8 +873,7 @@ def _sicherung_entscheiden(
         sha,
         angelegt,
         "gelöscht",
-        f"vor {tage:.0f} Tagen angelegt, zuletzt vor {zuletzt:.0f} Tagen gesichert "
-        f"(Grenze {SICHERUNG_TAGE} Tage)",
+        f"vor {tage:.0f} Tagen angelegt, zuletzt vor {zuletzt:.0f} Tagen gesichert (Grenze {SICHERUNG_TAGE} Tage)",
         trocken,
     )
     if not _zweig_log(erg):
@@ -912,9 +888,7 @@ def _sicherung_entscheiden(
     try:
         _zweig_loeschen(cache, zweig, sha)
     except RuntimeError as fehler:
-        erg = replace(
-            erg, art="bleibt", grund=f"Löschen gescheitert: {_kurz(fehler)}", fehler=True
-        )
+        erg = replace(erg, art="bleibt", grund=f"Löschen gescheitert: {_kurz(fehler)}", fehler=True)
         _zweig_log(erg)
     return erg
 
@@ -928,9 +902,7 @@ def _zweig_loeschen(cache: Path, zweig: str, sha: str) -> None:
     if not zweige_loeschen_an():
         raise _ZweigLoeschenAus(ZWEIGE_AUS)
     ref = f"refs/heads/{zweig}"
-    _git_ohne_frage(
-        cache, "push", "-q", f"--force-with-lease={ref}:{sha}", "origin", f":{ref}"
-    )
+    _git_ohne_frage(cache, "push", "-q", f"--force-with-lease={ref}:{sha}", "origin", f":{ref}")
 
 
 def _zweig_log(erg: ZweigErgebnis, *, absicht: bool = False) -> bool:
@@ -1036,7 +1008,9 @@ def zweig_fertig(
     if len(tip) >= 7 and stand.startswith(tip):
         return True, [], f"Schlange hat genau diesen Stand übernommen ({stand[:7]})", stand
     fehlende = _zweig_fehlende(o, stand)
-    daten = _ticket_daten(nr)
+    # #176: Ticket-Repo des Zweig-Repos, nicht das eine der Maschine
+    slug = _origin_slug(o.cwd) if ort == "lokal" else _slug(o.remote)
+    daten = _ticket_daten(nr, slug or None)
     if not isinstance(daten, dict) or "state" not in daten:
         raise RuntimeError(f"Ticket #{nr} nicht abfragbar")
     if str(daten["state"]).upper() != "CLOSED":
@@ -1442,6 +1416,9 @@ def _regeln(
     stand.ticket = ticket = _ticket_nummer(ordner, echt)
     # 4b #135: die Nummer zählt nur im Ticket-Repo selbst (skill-103 ist kein App-Ticket #103)
     slug = _origin_slug(echt)
+    # #176: eigener Ordner ohne bestimmbares Ticket-Repo ⇒ bleibt (nie über „fremd, aber fertig“)
+    if ticket is not None and slug.lower() in _eigene_repos() and _ticket_repo_fuer(slug) is None:
+        raise _Bleibt("Ticket-Repo nicht bestimmbar (Maschinen-Liste)", fuer_david=True, fehler=True)
     fremd = ticket is not None and not _nummer_zaehlt(slug)
     if fremd:
         stand.ticket = None
@@ -1472,9 +1449,7 @@ def _regeln(
         return Ergebnis(ordner, art, grund, stand.ticket, trocken=True), None
     if koepfe or zu_sichern:
         try:
-            stand.sicherung = aufpasser.sichern(
-                echt, ticket, jetzt, zusatz_koepfe=koepfe
-            )
+            stand.sicherung = aufpasser.sichern(echt, ticket, jetzt, zusatz_koepfe=koepfe)
         except RuntimeError as fehler:
             raise _Bleibt(f"Sicherung gescheitert: {_kurz(fehler)}", fehler=True) from None
         if stand.sicherung is None:
@@ -1646,9 +1621,7 @@ def _juengste_aenderung(echt: Path) -> float:
     return neu
 
 
-def _ticket_lange_zu(
-    ticket: int, jetzt: float | None, platznot: bool = False, slug: str | None = None
-) -> None:
+def _ticket_lange_zu(ticket: int, jetzt: float | None, platznot: bool = False, slug: str | None = None) -> None:
     daten = _ticket_daten(ticket, slug)
     if not isinstance(daten, dict) or "state" not in daten:
         raise _Bleibt(f"Ticket #{ticket} nicht abfragbar", fehler=True)
@@ -1716,8 +1689,8 @@ def _schliesszeit(ordner: Path) -> float | None:
 def _ticket_daten(ticket: int, slug: str | None = None) -> object:
     """``gh issue view`` (state, closedAt) mit Zeitlimit; ``None`` = nicht abfragbar.
 
-    ``slug`` = origin des Ordners: Ticket-Repo je Ordner (:func:`_ticket_repo_fuer`, meldet
-    selbst einmal); ohne ``slug`` das eine Ticket-Repo der Maschine (Zweige)."""
+    ``slug`` = origin des Ordners/Zweig-Repos: Ticket-Repo je Repo (:func:`_ticket_repo_fuer`,
+    meldet selbst einmal); ohne ``slug`` (kein GitHub-origin) das eine Ticket-Repo der Maschine."""
     if slug is not None:
         return _gh_ticket(ticket, _ticket_repo_fuer(slug))
     repo = _ticket_repo()
@@ -1749,9 +1722,7 @@ def _frei_anteil() -> float | None:
     if roh:
         anteil = _naht_anteil(roh)
         if anteil is None:
-            log.warning(
-                "Platte nicht messbar: TO_SPAWN_HAUSMEISTER_PLATTE=%r ungültig", roh
-            )
+            log.warning("Platte nicht messbar: TO_SPAWN_HAUSMEISTER_PLATTE=%r ungültig", roh)
         return anteil
     anteile: list[float] = []
     for basis in _platten_basen():
@@ -1791,11 +1762,7 @@ def _naht_anteil(roh: str) -> float | None:
         pass
     datei = Path(roh)
     try:
-        werte = [
-            z.strip()
-            for z in datei.read_text(encoding="utf-8").splitlines()
-            if z.strip()
-        ]
+        werte = [z.strip() for z in datei.read_text(encoding="utf-8").splitlines() if z.strip()]
         if len(werte) > 1:
             datei.write_text("".join(f"{w}\n" for w in werte[1:]), encoding="utf-8")
         return float(werte[0]) if werte else None
@@ -1943,9 +1910,7 @@ def _git_oder_none(cwd: Path, *args: str) -> str | None:
 
 
 def _hat_verknuepfte_worktrees(repo: Path) -> bool:
-    for zeile in aufpasser.git_lauf(
-        repo, "worktree", "list", "--porcelain"
-    ).splitlines():
+    for zeile in aufpasser.git_lauf(repo, "worktree", "list", "--porcelain").splitlines():
         if zeile.startswith("worktree "):
             pfad = Path(zeile[len("worktree ") :])
             if pfad.is_dir() and pfad.resolve() != repo:
@@ -1954,9 +1919,7 @@ def _hat_verknuepfte_worktrees(repo: Path) -> bool:
 
 
 def _hauptrepo(worktree: Path) -> Path:
-    gemeinsam = Path(
-        aufpasser.git_lauf(worktree, "rev-parse", "--git-common-dir").strip()
-    )
+    gemeinsam = Path(aufpasser.git_lauf(worktree, "rev-parse", "--git-common-dir").strip())
     if not gemeinsam.is_absolute():
         gemeinsam = (worktree / gemeinsam).resolve()
     return gemeinsam.parent
@@ -2005,16 +1968,12 @@ def _gleiche_kopie(haupt: Path | None, repo: Path, rel: str) -> bool:
         return False
     hier, dort = repo / rel, haupt / rel
     try:
-        return (
-            hier.is_file() and dort.is_file() and hier.read_bytes() == dort.read_bytes()
-        )
+        return hier.is_file() and dort.is_file() and hier.read_bytes() == dort.read_bytes()
     except OSError:
         return False
 
 
-def _ungesichertes(
-    repo: Path, ist_worktree: bool
-) -> tuple[list[str], bool, list[tuple[str, str]]]:
+def _ungesichertes(repo: Path, ist_worktree: bool) -> tuple[list[str], bool, list[tuple[str, str]]]:
     """Regel 8: (ungepushte Köpfe, zu sichernde Dateien da?, Status-Schnappschuss).
 
     Alles, was die Sicherung nicht retten kann, wirft ``_Bleibt``.
@@ -2023,9 +1982,7 @@ def _ungesichertes(
         aufpasser.git_lauf(repo, "fetch", "--prune", "-q", "origin")
     except RuntimeError as fehler:
         raise _Bleibt(f"git fetch origin gescheitert: {_kurz(fehler)}", fehler=True) from None
-    if not ist_worktree and _git_oder_none(
-        repo, "rev-parse", "--verify", "-q", "refs/stash"
-    ):
+    if not ist_worktree and _git_oder_none(repo, "rev-parse", "--verify", "-q", "refs/stash"):
         raise _Bleibt("Stash vorhanden (git stash list)", fuer_david=True)
     for zeile in aufpasser.git_lauf(repo, "ls-files", "-s").splitlines():
         if zeile.startswith("160000 "):
@@ -2043,16 +2000,12 @@ def _ungesichertes(
     haupt = _hauptrepo(repo) if ist_worktree else None
     ungleich = [p for p in sorted(geheim) if not _gleiche_kopie(haupt, repo, p)]
     if ungleich:
-        raise _Bleibt(
-            f"Geheimnis-Datei {ungleich[0]} nicht gleich im Hauptrepo", fuer_david=True
-        )
+        raise _Bleibt(f"Geheimnis-Datei {ungleich[0]} nicht gleich im Hauptrepo", fuer_david=True)
     # #1536: Datenbanken lädt die Sicherung nie hoch — weg dürfen nur Test-Kopien.
     datenbanken = {p for _, p in _status(repo, *_glob(aufpasser.NIE_HOCHLADEN))}
     fremd = sorted(p for p in datenbanken if not ist_test_db(repo, p))
     if fremd:
-        raise _Bleibt(
-            f"Datenbank {fremd[0]} ist keine Test-Kopie (nicht sicherbar)", fuer_david=True
-        )
+        raise _Bleibt(f"Datenbank {fremd[0]} ist keine Test-Kopie (nicht sicherbar)", fuer_david=True)
     for xy, pfad in alle:
         if xy == "!!" and pfad not in geheim | erzeugnis | datenbanken:
             raise _Bleibt(f"ignorierte Datei {pfad} ist kein bekanntes Erzeugnis")
@@ -2073,9 +2026,7 @@ def _ungesichertes(
             *_glob(aufpasser.SICHERUNG_AUSSCHLUSS),
         ).split()
         if leck:
-            raise _Bleibt(
-                f"Geheimnis-Datei {leck[0]} in ungepushtem Commit", fuer_david=True
-            )
+            raise _Bleibt(f"Geheimnis-Datei {leck[0]} in ungepushtem Commit", fuer_david=True)
     return koepfe, zu_sichern, alle
 
 
@@ -2085,17 +2036,11 @@ def _ungepushte_koepfe(repo: Path, ist_worktree: bool) -> list[str]:
     if not ist_worktree:
         refs += [
             r
-            for r in aufpasser.git_lauf(
-                repo, "for-each-ref", "--format=%(refname)"
-            ).split()
+            for r in aufpasser.git_lauf(repo, "for-each-ref", "--format=%(refname)").split()
             if not r.startswith("refs/remotes/")
         ]
     return [
-        ref
-        for ref in refs
-        if aufpasser.git_lauf(
-            repo, "rev-list", "-n", "1", ref, "--not", "--remotes=origin"
-        ).strip()
+        ref for ref in refs if aufpasser.git_lauf(repo, "rev-list", "-n", "1", ref, "--not", "--remotes=origin").strip()
     ]
 
 
@@ -2321,8 +2266,7 @@ def altbestand_festhalten(ordner: Iterable[Path]) -> Path:
         return pfad
     if daten.get("freigegeben") is True:
         log.warning(
-            "Hausmeister: Altbestand-Liste %s ist schon freigegeben — %d Ordner nicht "
-            "ergänzt",
+            "Hausmeister: Altbestand-Liste %s ist schon freigegeben — %d Ordner nicht ergänzt",
             pfad,
             len(neu),
         )
@@ -2334,9 +2278,7 @@ def altbestand_festhalten(ordner: Iterable[Path]) -> Path:
             liste.append(o)
     pfad.parent.mkdir(parents=True, exist_ok=True)
     zwischen = pfad.with_name(pfad.name + ".neu")
-    zwischen.write_text(
-        json.dumps(daten, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-    )
+    zwischen.write_text(json.dumps(daten, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     os.replace(zwischen, pfad)  # nie eine halb geschriebene Liste
     return pfad
 
@@ -2351,9 +2293,7 @@ def _kein_altbestand(echt: Path) -> None:
         try:
             altbestand_festhalten([*_kandidaten(), echt])
         except OSError as fehler:
-            raise _Bleibt(
-                f"Altbestand-Liste {pfad} nicht anlegbar: {fehler}", fehler=True
-            ) from None
+            raise _Bleibt(f"Altbestand-Liste {pfad} nicht anlegbar: {fehler}", fehler=True) from None
         log.warning(
             "Hausmeister: Altbestand-Liste fehlte — alle Ordner festgehalten in %s",
             pfad,
@@ -2363,9 +2303,7 @@ def _kein_altbestand(echt: Path) -> None:
     except (FileNotFoundError, NotADirectoryError):  # Datei gibt es nicht (Server)
         return
     except (OSError, ValueError) as fehler:
-        raise _Bleibt(
-            f"Altbestand-Liste {pfad} unlesbar: {fehler}", fehler=True
-        ) from None
+        raise _Bleibt(f"Altbestand-Liste {pfad} unlesbar: {fehler}", fehler=True) from None
     liste = daten.get("ordner") if isinstance(daten, dict) else None
     if not isinstance(liste, list) or not all(isinstance(o, str) for o in liste):
         raise _Bleibt(f"Altbestand-Liste {pfad} kaputt", fehler=True)
@@ -2385,10 +2323,7 @@ def _kennzahl_schreiben(ergebnisse: list[Ergebnis], *, trocken: bool) -> None:
         if e.art == "bleibt":
             schluessel = re.sub(r"\d+", "N", e.grund.split(" (", 1)[0])
             gruende[schluessel] = gruende.get(schluessel, 0) + 1
-    satz = (
-        f"{geloescht} von {len(ergebnisse)} gelöscht, "
-        f"{len(ergebnisse) - geloescht} bleiben"
-    )
+    satz = f"{geloescht} von {len(ergebnisse)} gelöscht, {len(ergebnisse) - geloescht} bleiben"
     log.info("Hausmeister: Kennzahl %s%s", satz, " (trocken)" if trocken else "")
     _log_zeile(
         {
@@ -2412,11 +2347,7 @@ def _kennzahl_pfad() -> Path:
 
 def _log_pfad() -> Path:
     roh = os.environ.get("TO_SPAWN_HAUSMEISTER_LOG")
-    return (
-        Path(roh).expanduser()
-        if roh
-        else Path.home() / ".claude" / "to-spawn" / "hausmeister.jsonl"
-    )
+    return Path(roh).expanduser() if roh else Path.home() / ".claude" / "to-spawn" / "hausmeister.jsonl"
 
 
 def _log_schreiben(erg: Ergebnis) -> bool:
