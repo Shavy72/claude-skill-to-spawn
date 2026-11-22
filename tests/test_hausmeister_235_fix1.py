@@ -19,6 +19,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from conftest import attrappe
 from test_hausmeister_1368 import Welt, git, welt  # noqa: F401 — ``welt`` ist ein Fixture
 from test_hausmeister_skill_ordner_235 import _lauf, _ordner, _vorgabe
 from test_hausmeister_ticket_repo_176 import SKILL, TAG, Repos, repos  # noqa: F401
@@ -179,13 +180,20 @@ def test_m1a_ohne_nummer_server_nicht_erreichbar_bleibt(welt: Welt, repos: Repos
     wt = _klon(welt, "skill-doku86", f"https://github.com/{SKILL}")
     # ls-remote läuft über upload-pack wie fetch; der Wrapper lässt den ersten Aufruf (fetch)
     # durch und fällt danach aus
-    wrapper = welt.tmp / "upload-pack-aus-beim-ls-remote.sh"
-    wrapper.write_text(
-        '#!/bin/sh\nif [ -f "$0.zweiter" ]; then echo "Server weg" >&2; exit 1; fi\n'
-        'touch "$0.zweiter"\nexec git-upload-pack "$@"\n',
-        encoding="utf-8",
+    marke = welt.tmp / "upload-pack-aus-beim-ls-remote.zweiter"
+    wrapper = attrappe(
+        welt.tmp,
+        "upload-pack-aus-beim-ls-remote",
+        f"""
+        import os, pathlib, sys
+        marke = pathlib.Path({str(marke)!r})
+        if marke.is_file():
+            print("Server weg", file=sys.stderr)
+            sys.exit(1)
+        marke.touch()
+        os.execvp("git-upload-pack", ["git-upload-pack", *sys.argv[1:]])
+        """,
     )
-    wrapper.chmod(0o755)
     git(wt, "config", "remote.origin.uploadpack", str(wrapper))
     welt.jetzt += 30 * TAG
 
