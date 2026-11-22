@@ -36,7 +36,7 @@ from dataclasses import dataclass, field
 from fnmatch import fnmatch
 from pathlib import Path, PurePosixPath
 
-from . import config
+from . import config, konsole
 
 log = logging.getLogger("to_spawn.uebergabe_sichern")
 
@@ -105,6 +105,7 @@ def _git(cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
         env=env,
         capture_output=True,
         text=True,
+        **konsole.UNTERPROZESS_TEXT,  # git schreibt Pfade in UTF-8, auch unter Windows
         timeout=GIT_MAX_S,
         check=False,
     )

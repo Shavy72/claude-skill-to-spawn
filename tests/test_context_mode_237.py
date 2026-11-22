@@ -27,7 +27,7 @@ SKRIPTE = SKILL / "skripte"
 sys.path.insert(0, str(SKILL))
 
 import context_mode_attrappe  # noqa: E402  (tests/hilfen, Pfad setzt conftest)
-from to_spawn import context_mode, setup  # noqa: E402
+from to_spawn import context_mode, konsole, setup  # noqa: E402
 
 SERVER = "plugin_context-mode_context-mode"
 
@@ -260,6 +260,7 @@ def test_weg_echte_session_hat_start_mjs_und_ruft_ctx_werkzeug(tmp_path: Path) -
             ),
         ],
         cwd=str(tmp_path), env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        **konsole.UNTERPROZESS_TEXT,  # stream-json ist UTF-8; cp1252 bricht im Lese-Thread ab
         start_new_session=True,  # eigene Prozessgruppe: bei Timeout stirbt auch start.mjs
     )
     gesehen: list[int] = []
