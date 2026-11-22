@@ -619,9 +619,11 @@ def test_nachkommen_pgrep_fehler_wirft(
 ) -> None:
     """Befund 5: Baum nicht ermittelbar ist ein Fehler, nicht „keine Kinder“.
 
-    Seit #431 Runde 4 liest ``prozessbaum.baum`` ``/proc`` statt ``pgrep -P``.
+    Seit #431 Runde 4 liest ``prozessbaum.baum`` ``/proc`` statt ``pgrep -P``, unter
+    Windows die Kernel-Prozessliste — beide Quellen werden unlesbar gemacht.
     """
     monkeypatch.setattr(prozessbaum, "_PROC", tmp_path / "fehlt")
+    monkeypatch.setattr(prozessbaum, "_momentaufnahme_windows", dict)
     with pytest.raises(OSError):
         _ProzessWerkzeug().alte_session_beenden(100)
 

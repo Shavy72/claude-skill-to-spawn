@@ -9,7 +9,10 @@
 # ``cwd``, ``status`` (Env ``FAKE_CLAUDE_STATUS``, Standard ``idle``) und ``tmux``
 # (``sitzung:@fenster.%pane`` aus ``$TMUX_PANE``; Socket aus ``FAKE_CLAUDE_TMUX_SOCKET``).
 # Bei Ende wird die Datei gelöscht (trap).
-#   FAKE_CLAUDE_STATUS=exit   → endet sofort (Nachweis-Test F5)
+#   FAKE_CLAUDE_STATUS=exit   → endet sofort, ohne Session-Datei (Nachweis-Test F5:
+#                             die Session kommt nie wieder; schriebe die Attrappe
+#                             die Datei vor dem Ende, sähe der Nachweis unter Last
+#                             sie kurz und das Ergebnis hinge an der Zeitplanung, #149)
 #   FAKE_CLAUDE_OHNE_JSON=1   → schreibt keine Datei (Negativ-Test F1)
 #   FAKE_CLAUDE_SID=<id>      → ID, wenn argv keine trägt (Weg-Test F1, zwei Fenster)
 #   FAKE_CLAUDE_JSON_VERZOEGERUNG_S=<n> → wartet ``n`` Sekunden vor dem Schreiben
@@ -35,6 +38,10 @@ done
 # Ohne ID in argv (wie eine frisch per Prompt gestartete Session): Env ``FAKE_CLAUDE_SID``.
 if [ -z "$sid" ]; then
   sid="${FAKE_CLAUDE_SID:-}"
+fi
+
+if [ "${FAKE_CLAUDE_STATUS:-}" = "exit" ]; then
+  exit 0
 fi
 
 if [ -n "${FAKE_CLAUDE_JSON_VERZOEGERUNG_S:-}" ] && [ "${FAKE_CLAUDE_JSON_VERZOEGERUNG_S}" != "0" ]; then
@@ -67,9 +74,6 @@ elif [ -z "$FAKE_CLAUDE_OHNE_JSON" ]; then
   echo "fake claude: HOME ist das Login-Home — keine Session-Datei geschrieben" >&2
 fi
 
-if [ "${FAKE_CLAUDE_STATUS:-}" = "exit" ]; then
-  exit 0
-fi
 if [ -n "${FAKE_CLAUDE_KIND_PID:-}" ]; then
   ( trap '' HUP; exec sleep 3600 ) </dev/null >/dev/null 2>&1 &
   echo $! > "$FAKE_CLAUDE_KIND_PID"

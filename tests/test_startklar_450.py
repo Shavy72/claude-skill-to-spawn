@@ -290,7 +290,9 @@ def _werkzeuge(tmp_path: Path) -> tuple[startklar.Werkzeug, ...]:
 def _settings(tmp_path: Path, hook_code: str, matcher: str = "Bash") -> Path:
     hook = tmp_path / f"hook_{abs(hash(hook_code))}.py"
     hook.write_text(hook_code, encoding="utf-8")
-    datei = tmp_path / f"settings_{matcher}_{abs(hash(hook_code))}.json"
+    # Matcher steht nur im JSON; im Dateinamen nur sein Hash — „|“ und „*“ sind unter
+    # Windows als Dateiname verboten.
+    datei = tmp_path / f"settings_{abs(hash((matcher, hook_code)))}.json"
     befehl = f"{Path(sys.executable).as_posix()} {hook.as_posix()}"
     datei.write_text(
         json.dumps(
@@ -594,7 +596,10 @@ def test_f3_kaputtes_manifest_ist_rot(tmp_path: Path, inhalt: str) -> None:
 def test_f4_ohne_bash_ist_probe_rot(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(startklar, "_bash_pfad", lambda: None, raising=False)
+    def _fehlt() -> str:
+        raise FileNotFoundError("bash fehlt im PATH (Paket bash installieren)")
+
+    monkeypatch.setattr(startklar.bash_wahl, "bash", _fehlt)
     befunde = _probe(tmp_path, [_settings(tmp_path, _HOOK_HARMLOS)])
     assert befunde and not any(b.ok for b in befunde), befunde
     assert all("bash" in b.text + b.behebung for b in befunde), befunde
