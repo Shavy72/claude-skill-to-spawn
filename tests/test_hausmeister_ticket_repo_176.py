@@ -230,6 +230,13 @@ def test_c_zweig_fragt_ticket_repo_seines_repos(welt: Welt, repos: Repos) -> Non
     assert "#223" in r.grund and "offen" in r.grund, r.grund
 
 
+def test_doppelter_eintrag_mit_verschiedenem_ticket_repo_ist_unklar(welt: Welt, repos: Repos) -> None:
+    repos.repo(SKILL)
+    repos.maschine([(APP, APP), (SKILL, SKILL), (SKILL, APP)])
+    assert hausmeister._ticket_repo_fuer(SKILL) is None
+    assert hausmeister._ticket_repo_fuer(APP) == APP
+
+
 # --- (d) laufender Prozess ⇒ bleibt ------------------------------------------------
 
 
