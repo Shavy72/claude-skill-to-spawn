@@ -13,11 +13,13 @@ import inspect
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
+from conftest import attrappe
 from test_hausmeister_1368 import (  # noqa: F401 — ``welt`` ist ein Fixture
     SKILL,
     Welt,
@@ -25,6 +27,7 @@ from test_hausmeister_1368 import (  # noqa: F401 — ``welt`` ist ein Fixture
 )
 
 from to_spawn import aufpasser, hausmeister, hindernis, speicher
+from windows_attrappen import windows_starter
 
 
 def _platte(welt: Welt, monkeypatch: pytest.MonkeyPatch, *anteile: float) -> Path:
@@ -32,6 +35,14 @@ def _platte(welt: Welt, monkeypatch: pytest.MonkeyPatch, *anteile: float) -> Pat
     datei.write_text("".join(f"{a}\n" for a in anteile), encoding="utf-8")
     monkeypatch.setenv("TO_SPAWN_HAUSMEISTER_PLATTE", str(datei))
     return datei
+
+
+def _pgrep_ohne_treffer(welt: Welt) -> None:
+    """Die Deploy-Wache des Aufpassers fragt ``pgrep`` (fail-closed, wenn es fehlt). Unter
+    Windows gibt es kein ``pgrep``: dann eine Attrappe, die wie das echte ``pgrep`` beim
+    Muster ``…-niemals-…`` antwortet — kein Treffer, Exit 1."""
+    if shutil.which("pgrep") is None:
+        windows_starter(attrappe(welt.tmp / "bin", "pgrep", "import sys\nsys.exit(1)\n"))
 
 
 def _drei_ordner(welt: Welt) -> tuple[Path, Path, Path]:
@@ -142,6 +153,7 @@ def test_aufpasser_lauf_ruft_aufraeumen_alles(
     welt.ticket(31, "CLOSED", 48)
     _platte(welt, monkeypatch, 0.50)
     zustand = welt.tmp / "zustand"
+    _pgrep_ohne_treffer(welt)
     e = aufpasser.Einstellungen(
         zustand=zustand,
         tmux_socket=f"hausmeister1369-{os.getpid()}",
@@ -159,6 +171,7 @@ def test_aufpasser_trocken_loescht_nichts(
     alt = welt.worktree(32)
     welt.ticket(32, "CLOSED", 48)
     _platte(welt, monkeypatch, 0.50)
+    _pgrep_ohne_treffer(welt)
     e = aufpasser.Einstellungen(
         zustand=welt.tmp / "zustand",
         tmux_socket=f"hausmeister1369-{os.getpid()}",
@@ -376,7 +389,8 @@ def test_f5_gh_zeitlimit_ordner_bleibt(
 ) -> None:
     wt = welt.worktree(81)
     welt.ticket(81, "CLOSED", 48)
-    gh = welt.tmp / "bin" / "gh"
+    # Windows nimmt die Attrappe über TO_SPAWN_GH_STUB (siehe Fixture), nicht ``bin/gh``.
+    gh = Path(os.environ.get("TO_SPAWN_GH_STUB") or welt.tmp / "bin" / "gh")
     langsam = gh.read_text(encoding="utf-8").replace("\n", "\nimport time\ntime.sleep(3)\n", 1)
     gh.write_text(langsam, encoding="utf-8")
     monkeypatch.setattr(hausmeister, "GH_ZEITLIMIT_S", 1)
@@ -408,6 +422,7 @@ def test_f_aufpasser_zaehlt_fehler_getrennt(
     welt.worktree(91)  # kein Ticket-Eintrag → gh scheitert → bleibt mit Fehler
     _platte(welt, monkeypatch, 0.50)
     zustand = welt.tmp / "zustand"
+    _pgrep_ohne_treffer(welt)
     e = aufpasser.Einstellungen(
         zustand=zustand,
         tmux_socket=f"hausmeister1369-{os.getpid()}",
