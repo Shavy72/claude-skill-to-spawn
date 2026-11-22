@@ -15,7 +15,9 @@
 # übertragen, NIE ausgegeben oder geloggt.
 set -euo pipefail
 
-SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Windows (Git Bash): ``pwd -W`` liefert ``C:/…`` statt ``/c/…`` — Python versteht nur die
+# Windows-Form, wenn ``MSYS_NO_PATHCONV=1`` vererbt ist (wie skripte/spawn_srv.sh). Linux: ``pwd``.
+SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && { pwd -W 2>/dev/null || pwd; })"
 LOCAL_CLAUDE="$HOME/.claude"
 HOST_ROOT=""
 REPO="."

@@ -24,6 +24,15 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+# nativ <pfad>: unter Windows (Git Bash) C:/…-Form, sonst unverändert. Python versteht /c/… nicht,
+# und mit MSYS_NO_PATHCONV=1 (z. B. in Claude Code) übersetzt Git Bash die Argumente nicht selbst.
+nativ() {
+  if command -v cygpath >/dev/null 2>&1; then cygpath -m "$1"; else printf '%s\n' "$1"; fi
+}
+HIER="$(nativ "$HIER")"
+SKILLS="$(nativ "$SKILLS")"
+CLAUDE_MD="$(nativ "$CLAUDE_MD")"
+
 ZIEL="$SKILLS/to-spawn"
 mkdir -p "$SKILLS"
 if [ -e "$ZIEL" ] && [ "$(cd "$ZIEL" && pwd -P)" = "$(cd "$HIER" && pwd -P)" ]; then
@@ -31,9 +40,18 @@ if [ -e "$ZIEL" ] && [ "$(cd "$ZIEL" && pwd -P)" = "$(cd "$HIER" && pwd -P)" ]; 
   exit 2
 fi
 
-# Python vor dem ersten Kopieren prüfen: sonst bliebe ein halber Stand (kein STAND.json, alte Alias-Skills).
-if ! command -v python3 >/dev/null 2>&1; then
-  echo "Abbruch: python3 fehlt — erst Python installieren, dann install.sh erneut starten (nichts kopiert)." >&2
+# Python vor dem ersten Kopieren wählen: sonst bliebe ein halber Stand (kein STAND.json, alte Alias-Skills).
+# Reihenfolge TO_SPAWN_PY (Python des Aufrufers, #325), python3, python; zählt nur ab 3.11 (datetime.UTC) —
+# unter Windows ist „python3“ in Git Bash oft der alte Store-Stub, das echte Python heißt „python“.
+PY=""
+for kandidat in "${TO_SPAWN_PY:-}" python3 python; do
+  if [ -n "$kandidat" ] && "$kandidat" -c 'import datetime; datetime.UTC' >/dev/null 2>&1; then
+    PY="$kandidat"
+    break
+  fi
+done
+if [ -z "$PY" ]; then
+  echo "Abbruch: python3 (ab 3.11) fehlt — erst Python installieren, dann install.sh erneut starten (nichts kopiert)." >&2
   exit 127
 fi
 
@@ -74,7 +92,7 @@ for eintrag in SKILL.md README.md LICENSE to_spawn.py install.sh install.ps1 spa
 done
 sichere_und_kopiere to-spawn "${quellen[@]}"
 chmod +x "$ZIEL/skripte/spawn_srv.sh" "$ZIEL/repo-scripts/spawn_srv.sh" "$ZIEL"/nest/*.sh
-python3 "$ZIEL/to_spawn/skill_stand.py" --stempel "$ZIEL" --klon "$HIER"
+"$PY" "$ZIEL/to_spawn/skill_stand.py" --stempel "$ZIEL" --klon "$HIER"
 echo "Skill installiert: $ZIEL"
 
 # --- 3. Alias-Skills ----------------------------------------------------------
@@ -90,13 +108,13 @@ for kette_ordner in "$HIER"/kette/skills/*/; do
   sichere_und_kopiere "$name" "$kette_ordner"*
   echo "Kette-Skill installiert: $SKILLS/$name"
 done
-PYTHONPATH="$ZIEL" python3 -m to_spawn.globale_regeln --ziel "$CLAUDE_MD"
+PYTHONPATH="$ZIEL" "$PY" -m to_spawn.globale_regeln --ziel "$CLAUDE_MD"
 
 # --- 4. Repo-Hälfte (optional): nur fehlende Dateien --------------------------
 if [ -n "$REPO" ]; then
-  REPO="$(cd "$REPO" && pwd)"
+  REPO="$(nativ "$(cd "$REPO" && pwd)")"
   # Manifest-Ordner aus der Repo-Konfig (pfade.manifeste, L1 P4b), sonst die Vorgabe aus config.py.
-  MANIFESTE="$(python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); from pathlib import Path; from to_spawn import config; print(config.pfad(config.lade(Path(sys.argv[2])), "manifeste"))' "$ZIEL" "$REPO")"
+  MANIFESTE="$("$PY" -c 'import sys; sys.path.insert(0, sys.argv[1]); from pathlib import Path; from to_spawn import config; print(config.pfad(config.lade(Path(sys.argv[2])), "manifeste"))' "$ZIEL" "$REPO")"
   mkdir -p "$REPO/scripts" "$MANIFESTE"
   for datei in "$HIER"/repo-scripts/*; do
     [ -f "$datei" ] || continue  # nur Dateien: __pycache__ u. a. Ordner nie ins Repo (#155)
@@ -114,7 +132,7 @@ if [ -n "$REPO" ]; then
     fi
   done
   # Konfig anlegen (+ .gitignore-Block) und Checkpoint-Label im GitHub-Repo sicherstellen (#257).
-  python3 - "$ZIEL" "$REPO" <<'PY'
+  "$PY" - "$ZIEL" "$REPO" <<'PY'
 import sys
 from pathlib import Path
 sys.path.insert(0, sys.argv[1])

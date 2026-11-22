@@ -72,6 +72,8 @@ def _umgebung(tmp: Path) -> dict[str, str]:
             "PYTHONIOENCODING": "utf-8",
             "TO_SPAWN_GH_STUB": str(stub),
             "TO_SPAWN_MASCHINE": str(tmp / "maschine.json"),
+            # Installer nimmt das Python dieses Laufs, nie ein anderes aus dem PATH.
+            "TO_SPAWN_PY": sys.executable,
         }
     )
     return env
@@ -166,7 +168,8 @@ def test_installer_stempelt_und_einrichten_vergleicht_mit_main(
     assert str(klon) in zeile, zeile
 
     # 3. origin nicht erreichbar → nur Hinweis, Exit wie bisher (0).
-    shutil.rmtree(bare)
+    # Umbenennen statt rmtree: .git/objects ist unter Windows schreibgeschützt.
+    bare.rename(bare.with_name("weg.git"))
     code, text = _einrichten(ziel, app, env, pruefen=True)
     zeile = _zeile(text, "skill_aktuell")
     assert code == 0, text
