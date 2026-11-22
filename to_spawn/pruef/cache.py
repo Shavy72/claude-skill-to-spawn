@@ -9,15 +9,19 @@ Schlüssel = SHA-256 über: Tree-SHA von ``ziel`` und ``basis`` (Stufe 1 prüft 
 ``basis``), Inhalt der Lock- und Prüf-Konfig-Dateien ganz oben im Repo (auch ungetrackt oder per
 ``.gitignore`` versteckt — getrackte stecken ohnehin im Tree), Name + Inhalt jeder per
 ``.gitignore``/``info/exclude`` versteckten Datei außerhalb der Werkzeug-Ordner und ``.to-spawn/``
-(mehr als ``_VERSTECKT_MAX_DATEIEN`` Dateien oder ``_VERSTECKT_MAX_BYTES`` → kein Schlüssel),
-Quelltext des Prüf-Pakets selbst, die ganze Prozess-Umgebung (alle Variablen mit Wert; nur die
+(mehr als ``_VERSTECKT_MAX_DATEIEN`` Dateien oder ``_VERSTECKT_MAX_BYTES`` → kein Schlüssel;
+versteckter Symlink auf eine Datei zählt mit dem Inhalt des Ziels, auf einen Ordner oder ins Leere
+→ kein Schlüssel; ein tiefer liegendes ``node_modules/`` zählt nur über seine
+``.package-lock.json``), Quelltext des Prüf-Pakets selbst, die ganze Prozess-Umgebung (alle Variablen mit Wert; nur die
 flüchtigen aus ``_FLUECHTIG`` zählen ohne Wert) und der Interpreter samt installierten Paketen
 der Repo-venv bzw. des laufenden Interpreters, ``node_modules/.package-lock.json``.
 
 Nicht abgedeckt (Grenze): Dateien außerhalb des Repos (z. B. ``~/.config``, ein ``.env`` im
-Elternordner), Inhalt der Werkzeug-Ordner (Caches; Installationen nur über die Paketliste),
-Werte der Variablen in ``_FLUECHTIG``, Zeit/Netz/Zufall im Test selbst. Ignorierte Laufausgaben
-anderer Werkzeuge (z. B. ``.review/``) stehen mit im Schlüssel: kosten höchstens einen Lauf.
+Elternordner, das Ziel eines getrackten Symlinks — Git speichert nur den Link-Text), Inhalt der
+Werkzeug-Ordner (Caches; Installationen nur über die Paketliste), Werte der Variablen in
+``_FLUECHTIG``, Zeit/Netz/Zufall im Test selbst. Ignorierte Laufausgaben (z. B. ``.review/``,
+``.coverage``, ``*.log``) stehen mit im Schlüssel: schreibt der Lauf sie mit wechselndem Inhalt
+neu, trifft der Cache in diesem Repo nie (kein falsches Grün, nur kein Gewinn).
 
 Ablage: eine JSON-Datei je Schlüssel im Nutzer-Cache-Ordner (``%LOCALAPPDATA%`` unter Windows,
 sonst ``$XDG_CACHE_HOME`` bzw. ``~/.cache``) unter ``to-spawn/pruef/`` — nie im Arbeitsbaum.
@@ -80,6 +84,9 @@ CACHE_ORDNER = frozenset({"__pycache__", ".pytest_cache", ".ruff_cache", ".mypy_
 INSTALL_ORDNER = frozenset({".venv", "venv", "node_modules"})
 #: Laufdateien von to-spawn (Protokoll, Marker); die Konfig darin steht schon in ``_KONFIG``.
 _LAUF_ORDNER = ".to-spawn/"
+#: Versteckte ``node_modules`` tiefer im Repo: statt aller Dateien zählt nur die Paketliste darin.
+_MODULE = "node_modules"
+_MODULE_LISTE = ".package-lock.json"
 #: Deckel für versteckte Dateien im Schlüssel; darüber kein Schlüssel (voll laufen).
 _VERSTECKT_MAX_DATEIEN = 2000
 _VERSTECKT_MAX_BYTES = 32 * 1024 * 1024
@@ -143,10 +150,19 @@ def _versteckte(repo: Path) -> list[str]:
         if not eintrag.endswith("/"):
             dateien.append(eintrag)
             continue
+        if eintrag.rstrip("/").rsplit("/", 1)[-1] == _MODULE:
+            dateien.append(f"{eintrag}{_MODULE_LISTE}")
+            continue
         for wurzel, unter, namen in os.walk(repo / eintrag):
-            unter[:] = [u for u in unter if u not in CACHE_ORDNER]
             ort = Path(wurzel).relative_to(repo).as_posix()
+            links = [u for u in unter if os.path.islink(os.path.join(wurzel, u))]
+            # Symlink auf Ordner betritt os.walk nicht: als Eintrag aufnehmen, ``_datei`` lehnt ihn ab.
+            dateien += [f"{ort}/{u}" for u in links]
+            dateien += [f"{ort}/{u}/{_MODULE_LISTE}" for u in unter if u == _MODULE and u not in links]
+            unter[:] = [u for u in unter if u not in CACHE_ORDNER and u != _MODULE and u not in links]
             dateien += [f"{ort}/{n}" for n in namen]
+            if len(dateien) > _VERSTECKT_MAX_DATEIEN:
+                return dateien  # Deckel gesprengt: nicht weiter gehen, der Aufrufer gibt keinen Schlüssel
     return sorted(dateien)
 
 
@@ -184,6 +200,9 @@ def _datei(hasher: Any, pfad: Path, name: str) -> None:
     hasher.update(f"\0{name}\0".encode())
     if pfad.is_file():
         hasher.update(pfad.read_bytes())
+    elif pfad.is_symlink() or pfad.exists():
+        # Ordner, Symlink auf Ordner oder ins Leere: Inhalt nicht im Hash → kein Schlüssel statt Grün.
+        raise OSError(f"{name}: keine Datei (Ordner oder Symlink)")
     else:
         hasher.update(b"\0fehlt")
 

@@ -8,4 +8,5 @@
 # TO_SPAWN_SANDBOX=1 setzt der srt-Präfix von bau.py. Das Ziel (host:port) muss in der
 # Sandbox erlaubt sein (.to-spawn/config.json → sandbox.netz_zusatz).
 set -euo pipefail
-exec python3 "$(dirname "${BASH_SOURCE[0]}")/ssh_durch_sandbox.py" "$@"
+# TO_SPAWN_PY: Python des Aufrufers (#325), sonst python3 aus PATH.
+exec "${TO_SPAWN_PY:-python3}" "$(dirname "${BASH_SOURCE[0]}")/ssh_durch_sandbox.py" "$@"

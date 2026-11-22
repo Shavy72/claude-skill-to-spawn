@@ -45,6 +45,37 @@ was zum Weiterbauen nötig ist.
 
 ## 3. Stand
 
+- **2026-11-22 (main bd948ab, Stand bis Pull-Request 213):** Gemergt, je Pull-Request in Alltagsworten:
+  - 194: Windows ruft bash nur noch an einer Stelle auf (Reste aus Review 181).
+  - 209: Leitstand-Datei einheitlich formatiert, Verhalten unverändert.
+  - 200: Tests für den Prozessbaum räumen ihre Kindprozesse hart ab, es bleiben keine Reste zurück.
+  - 201: Die Tests für „startklar“ und „respawn“ laufen unter Windows grün.
+  - 210: Die Konfig-Tests von Hausmeister und Aufpasser laufen unter Windows grün (P7f).
+  - 208: Issue 169 zu. Der Probelauf der Sicherung lädt nichts mehr hoch, Zweige mit Übergaben
+    mit Übergaben werden nicht mehr angefasst (die Sicherung verweigert). Rest → Issue 215.
+  - 207: Issue 101 zu. Die Prüfung läuft nur noch über die betroffenen Tests, mit Rückfall-Regeln
+    R1–R3 auf den vollen Lauf. Rest → Issue 218.
+  - 217: Roter Test auf main behoben (Attrappe in `test_pruef_doku_zu_weit_164` plattformneutral).
+  - 211: nest, vorfall und inventur laufen unter Windows grün (P7f).
+  - 213: Die Installer-Tests laufen unter Windows grün (P7f).
+  Offen, laut `gh issue list`: 219 (Prüf-Cache, Treffer trotz wechselnder Laufausgaben, Rest aus 184),
+  212 (CLI stürzt beim Import ohne Heimat-Ordner ab).
+  **Was als Nächstes kommt (in dieser Reihenfolge):**
+  1. In Arbeit: Issue 196 (Zweig `l4/196-worktrees-ausserhalb`: eingetragene Arbeitsordner außerhalb
+     des konfigurierten Ordners erkennen) und Issue 184 (Zweig `l3/184-cache-reste`).
+  2. Hausmeister-Reihe, nacheinander, weil alle dieselbe Datei `to_spawn/hausmeister.py` ändern:
+     176 (vorgezogen: Hausmeister räumt auf dem Bau-Server nichts, solange das Ticket-Repo nicht
+     bestimmbar ist), 177, 215, 163, 129, 179, 178.
+  3. Prüf-Reihe, nacheinander (`to_spawn/pruef/`): `pruefen.doku_pfade` eintragen und messen, Rest
+     Issue 149, 204, 218, 104.
+  4. Issue 190 ist entschieden: einmal das ganze Repo mit `ruff.toml` (Zeilenlänge 120) formatieren
+     plus Prüf-Test. Erst bauen, wenn kein Bau-Zweig offen ist.
+  5. Neue Issues: 214 (Stop-Hook verlangt nach reinem Merge von main nur die Konflikt-Dateien zum
+     Review) und 216 (`einrichten --pruefen` meldet „nicht eingerichtet“ trotz Soll-Stand).
+  6. Windows-Seite: Issue 68 und 197 (baut der PC).
+  7. Issue 96: Das App-Repo nutzt die Kette aus dem Skill.
+  Issue 186 wird nicht gebaut.
+
 - **Nachtrag (main 989ddbf):** Gemergt: Pull-Request 187 (Issue 164 zu: Erlaubnisliste der Sofort-Stufe in
   `to_spawn/pruef/sofort.py`; Folge-Issue 204 offen), 198 (kleiner Schnitt aus Issue 136: Temp-Ordner der
   Testläufe weg von der RAM-Platte; Issue 136 bleibt offen: Hausmeister räumt Temp-Reste geschlossener

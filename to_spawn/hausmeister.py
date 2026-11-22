@@ -516,7 +516,8 @@ def _alle_ordner(*, loeschen: bool, jetzt: float | None) -> Rundgang:
             anteil = _frei_anteil()
     _kennzahl_schreiben(ergebnisse, trocken=not loeschen)
     _zweige_im_takt(loeschen, jetzt)
-    uebergabe_sichern.sichern()  # L5 #145: Netz für vergessene Ablösungen, wirft nie
+    # L5 #145: Netz für vergessene Ablösungen, wirft nie; Probelauf schreibt/lädt nichts (#169).
+    uebergabe_sichern.sichern(trocken=not loeschen)
     return Rundgang(True, "", tuple(ergebnisse))
 
 
@@ -1141,6 +1142,14 @@ def _zweig_entscheiden(
         ).split()  # fmt: skip
         if leck:
             return ergebnis("bleibt", f"Geheimnis-Datei {leck[0]} in ungesichertem Commit", sha, fuer_david=True)
+        try:  # #169: dieselbe Sperre wie der Zweig-Upload, Übergaben nie auf sicherung/<N>
+            gesperrt = uebergabe_sichern.gesperrte_pfade(o.cwd, sha, "--not", o.haupt_ref, f"--glob={o.sicherungen}")
+        except OSError as fehler:
+            return ergebnis("bleibt", f"Prüfung gesperrter Pfade gescheitert: {_kurz(fehler)}", sha, fehler=True)
+        if gesperrt:
+            log.error("Sicherung von %s verweigert: %s nie öffentlich", zweig, ", ".join(gesperrt))
+            grund = f"Sicherung verweigert: {', '.join(gesperrt)} nie öffentlich"
+            return ergebnis("bleibt", grund, sha, fehler=True, fuer_david=True)
     if trocken:
         return ergebnis(art, grund, sha)
     if fehlende:
@@ -1310,16 +1319,48 @@ def _refs(repo: Path, praefix: str, ab: str) -> list[str]:
     return [r[len(ab) :] for r in roh.split()]
 
 
-def _ausgecheckte(repo: Path) -> dict[str, str]:
-    """Zweig → Arbeitsordner aller in ``repo`` ausgecheckten Zweige (auch das Hauptrepo)."""
-    belegt: dict[str, str] = {}
-    ordner = ""
+def _worktree_eintraege(repo: Path) -> list[tuple[str, str | None]]:
+    """(Arbeitsordner, Zweig oder ``None``) je Eintrag von ``git worktree list --porcelain``;
+    der erste Eintrag ist immer der Haupt-Arbeitsbaum des Repos."""
+    eintraege: list[tuple[str, str | None]] = []
     for zeile in aufpasser.git_lauf(repo, "worktree", "list", "--porcelain").splitlines():
         if zeile.startswith("worktree "):
-            ordner = zeile[len("worktree ") :]
-        elif zeile.startswith("branch refs/heads/"):
-            belegt[zeile[len("branch refs/heads/") :]] = ordner
-    return belegt
+            eintraege.append((zeile[len("worktree ") :], None))
+        elif zeile.startswith("branch refs/heads/") and eintraege:
+            eintraege[-1] = (eintraege[-1][0], zeile[len("branch refs/heads/") :])
+    return eintraege
+
+
+def _ausgecheckte(repo: Path) -> dict[str, str]:
+    """Zweig → Arbeitsordner aller in ``repo`` ausgecheckten Zweige (auch das Hauptrepo)."""
+    return {zweig: ordner for ordner, zweig in _worktree_eintraege(repo) if zweig}
+
+
+def _eingetragene_worktrees() -> list[Path]:
+    """#196: alle laut git eingetragenen Arbeitsordner der Hauptrepos, wo immer sie liegen
+    (auch außerhalb der Wurzeln, z. B. ``C:\\c\\dev\\…`` nach einem Pfad-Fehler) — ohne den
+    Haupt-Arbeitsbaum, nur vorhandene Ordner. Ein kaputtes Repo fällt mit Log-Zeile weg."""
+    gefunden: list[Path] = []
+    for repo in _hauptrepos():
+        try:
+            eintraege = _worktree_eintraege(repo)
+        except (RuntimeError, OSError) as fehler:
+            log.warning("Hausmeister: worktree-Liste von %s unlesbar: %s", repo, _kurz(fehler))
+            continue
+        for ordner, _zweig in eintraege[1:]:
+            pfad = Path(os.path.abspath(ordner))
+            if pfad.is_dir():
+                gefunden.append(pfad)
+    return gefunden
+
+
+def _pfad_schluessel(pfad: Path) -> str:
+    """Vergleichs-Schlüssel eines Ordners: aufgelöst, unter Windows ohne Groß/klein."""
+    try:
+        echt = pfad.resolve()
+    except (OSError, RuntimeError):
+        echt = pfad
+    return os.path.normcase(str(echt))
 
 
 def _ausgecheckt_in(repo: Path, zweig: str) -> str | None:
@@ -1637,13 +1678,19 @@ def _grund(art: Art, ticket: int, platznot: bool = False) -> str:
 
 
 def _kandidaten() -> list[Path]:
-    """Alle Ordner, die auf ein Wurzel-Muster passen (ohne Doppelte), sortiert."""
+    """Alle Ordner, die auf ein Wurzel-Muster passen, sortiert, dahinter die laut git
+    eingetragenen Arbeitsordner außerhalb davon (#196) — ohne Doppelte, nie das Hauptrepo."""
     gefunden: dict[Path, None] = {}
     for muster in _wurzeln():
         for treffer in sorted(glob.glob(muster)):
             pfad = Path(os.path.abspath(treffer))
             if pfad.is_dir():
                 gefunden.setdefault(pfad, None)
+    schon = {_pfad_schluessel(p) for p in gefunden}
+    for pfad in _eingetragene_worktrees():
+        if (schluessel := _pfad_schluessel(pfad)) not in schon:
+            schon.add(schluessel)
+            gefunden.setdefault(pfad, None)
     return list(gefunden)
 
 
@@ -1843,12 +1890,19 @@ def _basis_muster(basis: str) -> str | None:
 
 def _im_bereich(ordner: Path) -> bool:
     """Aufgelöster Pfad passt auf eine Wurzel und liegt in keinem versteckten Ordner — der
-    echte Pfad zählt, nicht der Mustertext (``[.]ssh``, Symlink auf ``.ssh``, #112)."""
+    echte Pfad zählt, nicht der Mustertext (``[.]ssh``, Symlink auf ``.ssh``, #112). Laut git
+    eingetragene Arbeitsordner eines Hauptrepos zählen überall mit (#196, gleiche Quelle wie
+    :func:`_kandidaten`)."""
     try:
         echt = ordner.resolve()
     except OSError:
         return False
-    return not _versteckt_unter_home(echt) and any(echt.match(m) for m in _wurzeln())
+    if _versteckt_unter_home(echt):
+        return False
+    if any(echt.match(m) for m in _wurzeln()):
+        return True
+    schluessel = _pfad_schluessel(echt)
+    return any(_pfad_schluessel(p) == schluessel for p in _eingetragene_worktrees())
 
 
 def _nummer(text: str, muster: tuple[re.Pattern[str], ...]) -> int | None:

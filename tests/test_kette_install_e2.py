@@ -36,7 +36,13 @@ PWSH = shutil.which("pwsh") or shutil.which("powershell")
 def _umgebung(heim: Path) -> dict[str, str]:
     env = dict(os.environ)
     env.update(
-        {"HOME": str(heim), "USERPROFILE": str(heim), "PYTHONIOENCODING": "utf-8"}
+        {
+            "HOME": str(heim),
+            "USERPROFILE": str(heim),
+            "PYTHONIOENCODING": "utf-8",
+            # Installer nimmt das Python dieses Laufs, nie ein anderes aus dem PATH.
+            "TO_SPAWN_PY": sys.executable,
+        }
     )
     return env
 
@@ -94,9 +100,8 @@ def _pruefe_installiert(heim: Path) -> None:
 def test_install_sh_legt_kette_an_und_zweiter_lauf_aendert_nichts(
     tmp_path: Path,
 ) -> None:
-    (tmp_path / "CLAUDE.md").write_text(
-        "# Eigene Regeln\n\nbleibt stehen\n", encoding="utf-8"
-    )
+    # Bytes statt write_text: das übersetzt unter Windows \n in \r\n, geprüft wird mit LF.
+    (tmp_path / "CLAUDE.md").write_bytes(b"# Eigene Regeln\n\nbleibt stehen\n")
     lauf = _install_sh(tmp_path)
     assert lauf.returncode == 0, lauf.stderr
     _pruefe_installiert(tmp_path)
@@ -283,9 +288,8 @@ def test_installer_zweiter_lauf_byte_gleich_fremdes_bleibt(
     art: str, tmp_path: Path
 ) -> None:
     """Befund 6: beide Installer — fremder Inhalt bleibt, zweiter Lauf byte-gleich."""
-    (tmp_path / "CLAUDE.md").write_text(
-        "# Eigene Regeln\n\nbleibt stehen\n", encoding="utf-8"
-    )
+    # Bytes statt write_text: das übersetzt unter Windows \n in \r\n, geprüft wird mit LF.
+    (tmp_path / "CLAUDE.md").write_bytes(b"# Eigene Regeln\n\nbleibt stehen\n")
     lauf = _installiere(art, tmp_path)
     assert lauf.returncode == 0, lauf.stdout + lauf.stderr
     _pruefe_installiert(tmp_path)
