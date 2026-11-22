@@ -314,6 +314,27 @@ def _spec_schliessen(args: argparse.Namespace) -> int:
     return 0 if ergebnis.ok else 1
 
 
+def _blocker(args: argparse.Namespace) -> int:
+    """Unterbefehl ``blocker`` (#267): Warte-Prüfung der Bau-Session, Regel nur in ``gh.blocker_erledigt``.
+
+    Genau eine Zeile: ``FREI`` (Exit 0) oder ``WARTET: <Gründe>`` (Exit 1). Gründe aus
+    ``gh.blocker_gruende`` (erledigt + Commit auf dem Hauptzweig), wie die Start-Schranke
+    ohne ``--sofort``. Scheitert die Abfrage, gilt „wartet“ — nie „frei“.
+    """
+    repo = config.repo_wurzel(_repo_aus_umgebung())
+    gh_repo = args.gh_repo or gh.repo_aus_origin(repo)
+    deps = gh.blocked_by(gh_repo, str(args.ticket)) if gh_repo else None
+    if deps is None:
+        print("WARTET: Blocker-Abfrage fehlgeschlagen")
+        return 1
+    gruende = gh.blocker_gruende(repo, deps)
+    if gruende:
+        print("WARTET: " + "; ".join(gruende))
+        return 1
+    print("FREI")
+    return 0
+
+
 def _anhaengen(args: argparse.Namespace) -> int:
     """Unterbefehl ``anhaengen`` (E2-2): Issue an Spec hängen — Kanten, Manifest, Unter-Issue."""
     repo = config.repo_wurzel(_repo_aus_umgebung())
@@ -582,6 +603,12 @@ def main(argv: list[str] | None = None) -> int:
     unter.add_parser(
         "hauptzweig", help="Name des Hauptzweigs ausgeben (Konfig, origin/HEAD, master/main) (#257)"
     )
+    # Warte-Prüfung der Bau-Session (#267): dieselbe Regel wie die Start-Schranke.
+    p_blocker = unter.add_parser(
+        "blocker", help="Vorgänger erledigt + Commit auf Hauptzweig? Exit 0 = FREI, 1 = WARTET + Gründe (#267)"
+    )
+    p_blocker.add_argument("ticket", type=int)
+    p_blocker.add_argument("--gh-repo", default="", help="owner/name (sonst aus origin)")
     unter.add_parser("hook-stop", help="Stop-Hook (JSON auf stdin)")
     unter.add_parser("hook-subagent-stop", help="SubagentStop-Hook (JSON auf stdin)")
     unter.add_parser(
@@ -761,6 +788,8 @@ def main(argv: list[str] | None = None) -> int:
         # Nur der Name auf stdout — spawn_srv.sh liest ihn ein (#257).
         print(gh.hauptzweig(config.repo_wurzel(_repo_aus_umgebung())))
         return 0
+    if args.befehl == "blocker":
+        return _blocker(args)
     if args.befehl == "startklar":
         ordner = args.ordner.resolve() if args.ordner else config.repo_wurzel(_repo_aus_umgebung())
         code, text = startklar.ausgabe(startklar.pruefe(ordner, args.spec))
