@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from to_spawn import hausmeister
+from to_spawn import hausmeister, konsole
 from to_spawn import uebergabe_sichern as us
 
 WURZEL = Path(__file__).resolve().parent.parent
@@ -170,6 +170,7 @@ def test_cli_sichern_trocken_laedt_nichts_hoch(skill: dict[str, Path]) -> None:
         env=dict(os.environ),
         capture_output=True,
         text=True,
+        **konsole.UNTERPROZESS_TEXT,  # die CLI schreibt UTF-8, auch in Windows-Pipes
         timeout=60,
         check=False,
     )
