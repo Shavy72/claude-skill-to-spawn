@@ -112,7 +112,7 @@ def vorab(
     """Grund für „voll“ vor der Auswahl; ``""`` = Auswahl darf laufen. ``r1=False`` nur im Rot-Beweis.
 
     ``doku`` = erklärte Doku aus ``sofort.erklaerte_doku``; ``offen`` = Änderungen im Arbeitsbaum
-    gegen ``HEAD`` (``sofort.geaendert(repo, "HEAD")``), ``None`` = unklar.
+    gegen ``HEAD`` (``sofort.ungespeichert(repo)``, dieselbe Stelle wie das Gate), ``None`` = unklar.
     """
     if pfade is None:
         return "geänderte Dateien unbekannt (git diff gescheitert)"

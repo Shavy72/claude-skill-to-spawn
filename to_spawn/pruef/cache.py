@@ -8,7 +8,7 @@ Schlüssel, Ablageort und Verfall leben nur hier. Der Aufrufer kennt drei Schrit
 Schlüssel = SHA-256 über: Tree-SHA von ``ziel`` und ``basis`` (Stufe 1 prüft die Änderung gegen
 ``basis``), Inhalt der Lock- und Prüf-Konfig-Dateien ganz oben im Repo (auch ungetrackt oder per
 ``.gitignore`` versteckt — getrackte stecken ohnehin im Tree), Name + Inhalt jeder per
-``.gitignore``/``info/exclude`` versteckten Datei außerhalb der Werkzeug-Ordner und ``.to-spawn/``
+``.gitignore``/``info/exclude`` versteckten Datei, die kein Werkzeug-Rest ist (``ist_werkzeug_rest``)
 (mehr als ``_VERSTECKT_MAX_DATEIEN`` Dateien oder ``_VERSTECKT_MAX_BYTES`` → kein Schlüssel;
 versteckter Symlink auf eine Datei zählt mit dem Inhalt des Ziels, auf einen Ordner oder ins Leere
 → kein Schlüssel; ein tiefer liegendes ``node_modules/`` zählt nur über seine
@@ -31,6 +31,7 @@ gilt ein Eintrag nicht mehr.
 
 from __future__ import annotations
 
+import fnmatch
 import hashlib
 import json
 import logging
@@ -82,8 +83,28 @@ _PAKET = Path(__file__).resolve().parent
 CACHE_ORDNER = frozenset({"__pycache__", ".pytest_cache", ".ruff_cache", ".mypy_cache"})
 #: Ungetrackte Installationen: nur ganz oben im Repo (``src/venv/`` kann Code sein → zählt).
 INSTALL_ORDNER = frozenset({".venv", "venv", "node_modules"})
-#: Laufdateien von to-spawn (Protokoll, Marker); die Konfig darin steht schon in ``_KONFIG``.
-_LAUF_ORDNER = ".to-spawn/"
+#: Laufdateien, die to-spawn selbst unter ``.to-spawn/`` schreibt (Sitzungen, Protokoll, Marker),
+#: als ``fnmatch``-Muster. Alles andere dort (auch die Konfig) zählt: ein Test kann es lesen (#218).
+_LAUF_DATEIEN = tuple(
+    f".to-spawn/{muster}"
+    for muster in (
+        "sessions/*",
+        "pruef/*",
+        "bau_log/*",
+        "rueckblick/*",
+        "leitstand/*",
+        "thermo_*",
+        "stop-*",
+        "umzug-anfrage-*",
+        "folgerunde-*.log",
+        "abschluss_*_paket.json",
+        "stand.json",
+        "werkzeuge.json",
+        "sandbox.json",
+    )
+)
+#: Bytecode: der einzige Inhalt eines ``__pycache__/``, der nicht zählt.
+_BYTECODE = (".pyc", ".pyo")
 #: Versteckte ``node_modules`` tiefer im Repo: statt aller Dateien zählt nur die Paketliste darin.
 _MODULE = "node_modules"
 _MODULE_LISTE = ".package-lock.json"
@@ -121,18 +142,37 @@ _FLUECHTIG = frozenset(
 )
 
 
-def ist_werkzeug_ordner(pfad: str) -> bool:
-    """``git status`` (normal) meldet neue Ordner als ``ordner/``; Dateien gleichen Namens zählen."""
+def ist_werkzeug_rest(repo: Path, pfad: str) -> bool:
+    """Einzige Stelle für „Rest eines Werkzeugs, ändert den geprüften Stand nicht“ (#218).
+
+    ``pfad`` relativ zum Repo mit ``/``; ein Ordner endet auf ``/`` (so melden ``git status``
+    und ``git ls-files --directory`` neue Ordner). Rest sind: Laufdateien aus ``_LAUF_DATEIEN``,
+    Caches in jeder Tiefe, ``.venv``/``venv``/``node_modules`` nur ganz oben. Ein ``__pycache__``
+    ist nur Rest, solange darin ausschließlich ``*.pyc``/``*.pyo`` liegen. Im Zweifel ``False``.
+    """
+    if any(fnmatch.fnmatchcase(pfad, muster) for muster in _LAUF_DATEIEN):
+        return True
+    teile = pfad.rstrip("/").split("/")
+    if "__pycache__" in teile[:-1]:
+        return pfad.endswith(_BYTECODE)
     if not pfad.endswith("/"):
         return False
-    teile = pfad.rstrip("/").split("/")
+    if teile[-1] == "__pycache__":
+        try:
+            return all(n.endswith(_BYTECODE) for _, _, namen in os.walk(repo / pfad, onerror=_wirf) for n in namen)
+        except OSError:
+            return False
     return teile[-1] in CACHE_ORDNER or (len(teile) == 1 and teile[0] in INSTALL_ORDNER)
+
+
+def _wirf(fehler: OSError) -> None:
+    raise fehler
 
 
 def _versteckte(repo: Path) -> list[str]:
     """Per ``.gitignore``/``info/exclude`` versteckte Dateien, sortiert; ``OSError`` = unklar.
 
-    Ohne Werkzeug-Ordner (Caches, Installationen) und ``.to-spawn/``: alles andere kann pytest
+    Ohne Werkzeug-Reste (``ist_werkzeug_rest``): alles andere kann pytest
     einsammeln, importieren oder ein Test lesen (versteckter Test, ``conftest.py``, ``.env``).
     """
     erg = subprocess.run(
@@ -145,7 +185,7 @@ def _versteckte(repo: Path) -> list[str]:
         raise OSError(f"git ls-files: {erg.stderr.decode(errors='replace').strip()}")
     dateien: list[str] = []
     for eintrag in erg.stdout.decode("utf-8", "surrogateescape").split("\0"):
-        if not eintrag or eintrag.startswith(_LAUF_ORDNER) or ist_werkzeug_ordner(eintrag):
+        if not eintrag or ist_werkzeug_rest(repo, eintrag):
             continue
         if not eintrag.endswith("/"):
             dateien.append(eintrag)
@@ -159,8 +199,15 @@ def _versteckte(repo: Path) -> list[str]:
             # Symlink auf Ordner betritt os.walk nicht: als Eintrag aufnehmen, ``_datei`` lehnt ihn ab.
             dateien += [f"{ort}/{u}" for u in links]
             dateien += [f"{ort}/{u}/{_MODULE_LISTE}" for u in unter if u == _MODULE and u not in links]
-            unter[:] = [u for u in unter if u not in CACHE_ORDNER and u != _MODULE and u not in links]
-            dateien += [f"{ort}/{n}" for n in namen]
+            unter[:] = [
+                u
+                for u in unter
+                if u not in CACHE_ORDNER
+                and u != _MODULE
+                and u not in links
+                and not ist_werkzeug_rest(repo, f"{ort}/{u}/")
+            ]
+            dateien += [f"{ort}/{n}" for n in namen if not ist_werkzeug_rest(repo, f"{ort}/{n}")]
             if len(dateien) > _VERSTECKT_MAX_DATEIEN:
                 return dateien  # Deckel gesprengt: nicht weiter gehen, der Aufrufer gibt keinen Schlüssel
     return sorted(dateien)
