@@ -506,11 +506,8 @@ def session_id_aus_argv(argv: list[str]) -> str | None:
 
 
 def _argv(pid: int) -> list[str]:
-    try:
-        roh = Path(f"/proc/{pid}/cmdline").read_bytes()
-    except OSError:
-        return []
-    return [t.decode("utf-8", "replace") for t in roh.split(b"\0") if t]
+    """Argumente eines Prozesses (Linux ``/proc``, Windows zerlegte Kommandozeile), unlesbar = ``[]``."""
+    return prozessbaum.argv(pid)
 
 
 def _prozess_cwd(pid: int) -> Path | None:
@@ -524,21 +521,6 @@ def _prozess_cwd(pid: int) -> Path | None:
 def prozess_argv_text(pid: int) -> str:
     """Argumente eines Prozesses als Text (für Prüfungen)."""
     return " ".join(_argv(pid))
-
-
-def _vorfahren(pid: int) -> set[int]:
-    """``pid`` und seine Eltern bis init — die eigene Aufrufkette ist nie ein Deploy."""
-    kette: set[int] = set()
-    while pid > 1 and pid not in kette:
-        kette.add(pid)
-        try:
-            stat = Path(f"/proc/{pid}/stat").read_text(
-                encoding="utf-8", errors="replace"
-            )
-            pid = int(stat[stat.rfind(")") + 2 :].split()[1])
-        except (OSError, ValueError, IndexError):
-            break
-    return kette
 
 
 # Prozessbaum und „lebt“ kommen aus dem gemeinsamen Modul (auch respawn nutzt es).
@@ -1188,7 +1170,8 @@ class Aufpasser:
     ) -> list[tuple[int, str, DeployArt | None]]:
         """(PID, Kopfzeile, ``deploy_art``) der Prozesse, die auf ``muster_text`` passen.
 
-        ``pgrep -af`` liefert die Kandidaten; gezählt wird nur ein Treffer im Programm,
+        :func:`prozessbaum.passende` liefert die Kandidaten (Linux ``pgrep -af``, Windows
+        Kernel-Prozessliste, eigene Aufrufkette nie dabei); gezählt wird nur ein Treffer im Programm,
         Skript oder ersten Argument (``argv[:3]``; Live-Tür per ssh: ``deploy_art``)
         — der Prompt einer Claude-Session
         nennt ``safe_deploy_vps.sh`` und ``pytest`` als Text, ist aber kein Deploy.
@@ -1196,21 +1179,15 @@ class Aufpasser:
         verwaist („Waise ignoriert“).
         """
         try:
-            raus = self.sh("pgrep", "-af", muster_text, timeout=30)
-        except RuntimeError as fehler:
-            # pgrep: Exit 1 = kein Treffer; alles andere ist eine echte Störung —
-            # dann lieber nichts anfassen (fail-closed) als ein Deploy übersehen.
-            if "Zeitgrenze" in str(fehler) or "No such file" in str(fehler):
-                raise RuntimeError(f"Deploy-Wache: pgrep nicht nutzbar ({fehler})")
-            return []
+            kandidaten = prozessbaum.passende(muster_text, zeitgrenze=30)
+        except prozessbaum.ProzesslisteFehler as fehler:
+            # Abfrage gestört: lieber nichts anfassen (fail-closed) als ein Deploy übersehen.
+            raise RuntimeError(f"Deploy-Wache: {fehler}") from None
         muster = re.compile(muster_text)
-        eigene = _vorfahren(os.getpid())
         treffer = []
-        for zeile in raus.splitlines():
-            pid, _, args = zeile.partition(" ")
-            if not pid.isdigit() or int(pid) in eigene:
-                continue
-            argv = _argv(int(pid))
+        for zahl, args in kandidaten:
+            pid = str(zahl)
+            argv = _argv(zahl)
             kopf = " ".join(argv[:3]) or args
             art = deploy_art(argv, self.skripte)
             if not muster.search(kopf) and art != "live":
@@ -2404,7 +2381,7 @@ class Aufpasser:
         try:
             self._lauf()
         except RuntimeError as fehler:
-            # Werkzeug-Störung (z. B. pgrep der Deploy-Wache): Lauf endet ohne
+            # Werkzeug-Störung (z. B. Prozessliste der Deploy-Wache): Lauf endet ohne
             # Eingriff — lieber einmal nichts tun als blind eingreifen.
             log.error("Lauf abgebrochen, nichts angefasst: %s", fehler)
             code = 1

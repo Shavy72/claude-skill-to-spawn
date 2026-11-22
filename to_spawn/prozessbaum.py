@@ -20,6 +20,7 @@ import ctypes
 import functools
 import logging
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -577,6 +578,154 @@ def _nachlauf(pid: int, aufrufer: int, frist: float = NACHLAUF_SEKUNDEN, protoko
         return 0
     _protokolliere(protokoll, f"OK SIGKILL an Session {pid} nach {frist:.0f} s")
     return 0
+
+
+# --- Prozesse nach Muster suchen (#251) ---------------------------------------------------
+# Eine Tür für „welche laufenden Prozesse passen auf dieses Muster?“. Linux fragt weiter
+# ``pgrep -af`` (Verhalten und Fehlerbilder wie vor #251), Windows liest die Kernel-
+# Prozessliste ohne Prozess-Start (#154) — dort gibt es kein ``pgrep``.
+
+
+class ProzesslisteFehler(RuntimeError):
+    """Die laufenden Prozesse ließen sich nicht abfragen (Werkzeug fehlt, Zeitgrenze, Kernel-Fehler).
+
+    Der Text nennt das Werkzeug („pgrep nicht nutzbar …“, „Windows-Prozessliste nicht
+    nutzbar …“). Aufrufer bleiben fail-closed: kein Treffer heißt nie „Abfrage gescheitert“.
+    """
+
+
+def passende(muster: str, *, zeitgrenze: float = 30) -> list[tuple[int, str]]:
+    """``(PID, Kommandozeile)`` aller laufenden Prozesse, deren Kommandozeile auf ``muster`` passt.
+
+    ``muster`` ist ein Regex, der in Python und als ``pgrep``-ERE gleich gilt; gesucht wird
+    irgendwo in der ganzen Kommandozeile (``re.search``). Nie dabei: der eigene Prozess,
+    seine Vorfahren und die Abfrage selbst. Lässt sich die Liste nicht lesen ⇒
+    :class:`ProzesslisteFehler` statt einer leeren Liste. Ein ungültiges ``muster`` wirft
+    ``re.error`` (Programmierfehler, kein Laufzeitfall).
+
+    Linux: ``pgrep -af`` (Exit 1 = kein Treffer). Windows: Kernel-Prozessliste, je Prozess
+    die Kommandozeile (geschützte Prozesse ohne lesbare Kommandozeile passen nie).
+    """
+    regex = re.compile(muster)
+    if _WINDOWS:
+        return _passende_windows(regex)
+    return _passende_linux(muster, zeitgrenze)
+
+
+def argv(pid: int) -> list[str]:
+    """Argumente von ``pid`` als Liste; nicht lesbar (weg, geschützt) = ``[]``.
+
+    Linux: ``/proc/<pid>/cmdline``. Windows: Kommandozeile nach Windows-Regeln zerlegt
+    (``CommandLineToArgvW``), damit Aufrufer wie unter Linux nur Programm und erste
+    Argumente prüfen können.
+    """
+    if _WINDOWS:
+        try:
+            return _zerlege_windows(_kommandozeile_windows(pid))
+        except OSError:
+            return []
+    try:
+        roh = _proc(pid, "cmdline")
+    except OSError:
+        return []
+    return [teil.decode("utf-8", "replace") for teil in roh.split(b"\0") if teil]
+
+
+def _passende_linux(muster: str, zeitgrenze: float) -> list[tuple[int, str]]:
+    try:
+        fertig = subprocess.run(
+            ["pgrep", "-af", muster],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+            timeout=zeitgrenze,
+        )
+    except subprocess.TimeoutExpired:
+        raise ProzesslisteFehler(f"pgrep nicht nutzbar (Zeitgrenze {zeitgrenze:g} s überschritten)") from None
+    except OSError as fehler:
+        # Fester Kennsatz „No such file“: der Systemtext kann übersetzt sein.
+        raise ProzesslisteFehler(f"pgrep nicht nutzbar (No such file — {fehler})") from None
+    if fertig.returncode != 0:
+        # Exit 1 = kein Treffer; ein „No such file“ im Fehlertext ist eine Störung (Regel vor #251).
+        if "No such file" in fertig.stderr:
+            raise ProzesslisteFehler(f"pgrep nicht nutzbar ({fertig.stderr.strip()[:300]})")
+        return []
+    eigene = {os.getpid()}
+    vorfahr = _ppid_linux(os.getpid())
+    while vorfahr is not None and vorfahr > 0 and vorfahr not in eigene:
+        eigene.add(vorfahr)
+        vorfahr = _ppid_linux(vorfahr)
+    treffer = []
+    for zeile in fertig.stdout.splitlines():
+        pid, _, kommandozeile = zeile.partition(" ")
+        if pid.isdigit() and int(pid) not in eigene:
+            treffer.append((int(pid), kommandozeile))
+    return treffer
+
+
+def _passende_windows(regex: re.Pattern[str]) -> list[tuple[int, str]]:
+    try:
+        liste = _momentaufnahme_windows()
+    except OSError as fehler:
+        raise ProzesslisteFehler(f"Windows-Prozessliste nicht nutzbar ({fehler})") from None
+    eigene = _eigene_kette_windows(liste)
+    treffer = []
+    for pid in liste:
+        if pid <= 4 or pid in eigene:  # 0 = Leerlauf, 4 = System: ohne Kommandozeile
+            continue
+        kommandozeile = _kommandozeile_windows(pid)
+        if kommandozeile and regex.search(kommandozeile):
+            treffer.append((pid, kommandozeile))
+    return treffer
+
+
+def _eigene_kette_windows(liste: dict[int, tuple[int, int]]) -> set[int]:
+    """Eigene PID und Vorfahren aus einer Momentaufnahme.
+
+    Windows vergibt PIDs neu: ein „Eltern“prozess, der jünger ist als das Kind, ist ein
+    Fremder mit wiederverwendeter PID — dort endet die Kette.
+    """
+    pid = os.getpid()
+    kette = {pid}
+    while pid in liste:
+        eltern, start = liste[pid]
+        if eltern <= 4 or eltern in kette or eltern not in liste:
+            break
+        eltern_start = liste[eltern][1]
+        if start and eltern_start and eltern_start > start:
+            break
+        kette.add(eltern)
+        pid = eltern
+    return kette
+
+
+@functools.cache
+def _shell32() -> tuple[Any, Any]:
+    """(shell32, kernel32) mit Signaturen für ``CommandLineToArgvW``/``LocalFree``."""
+    shell = ctypes.WinDLL("shell32")  # type: ignore[attr-defined]
+    kernel = ctypes.WinDLL("kernel32")  # type: ignore[attr-defined]
+    shell.CommandLineToArgvW.argtypes = [ctypes.c_wchar_p, ctypes.POINTER(ctypes.c_int)]
+    shell.CommandLineToArgvW.restype = ctypes.POINTER(ctypes.c_wchar_p)
+    kernel.LocalFree.argtypes = [ctypes.c_void_p]
+    kernel.LocalFree.restype = ctypes.c_void_p
+    return shell, kernel
+
+
+def _zerlege_windows(kommandozeile: str) -> list[str]:
+    """Windows-Kommandozeile → Argumente (Regeln der C-Laufzeit); leer bleibt leer."""
+    if not kommandozeile.strip():
+        return []  # CommandLineToArgvW("") liefert sonst den Pfad des eigenen Programms
+    shell, kernel = _shell32()
+    anzahl = ctypes.c_int(0)
+    feld = shell.CommandLineToArgvW(kommandozeile, ctypes.byref(anzahl))
+    if not feld:
+        return kommandozeile.split()
+    try:
+        return [feld[i] for i in range(anzahl.value)]
+    finally:
+        kernel.LocalFree(ctypes.cast(feld, ctypes.c_void_p))
 
 
 if __name__ == "__main__":
