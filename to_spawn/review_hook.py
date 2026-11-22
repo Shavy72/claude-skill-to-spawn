@@ -19,6 +19,7 @@ import logging
 import os
 import shutil
 import sys
+import tempfile
 from datetime import datetime
 from pathlib import Path
 
@@ -64,6 +65,9 @@ def installiere(ziel: Path, quelle: Path = QUELL_ORDNER, zeit: str | None = None
             # Link (auch tot oder über einen Unter-Ordner): nie durchschreiben, nur melden.
             bericht.append(f"abweichend, Link nicht angefasst: {rel}")
             continue
+        if datei.is_dir():
+            bericht.append(f"abweichend, Ordner nicht angefasst: {rel}")
+            continue
         neu_stand[rel] = _pruefsumme(neu)
         if datei.exists():
             alt = datei.read_bytes()
@@ -86,15 +90,28 @@ def installiere(ziel: Path, quelle: Path = QUELL_ORDNER, zeit: str | None = None
 
 
 def _schreibe_atomar(datei: Path, daten: bytes) -> None:
-    """Erst Temp-Datei im selben Ordner, dann ``os.replace``: der laufende Hook liest nie halbe Dateien."""
-    temp = datei.with_name(f".{datei.name}.neu")
+    """Erst Temp-Datei im selben Ordner, dann ``os.replace``: der laufende Hook liest nie halbe Dateien.
+
+    Die Temp-Datei entsteht neu und exklusiv (``mkstemp``), ein dort liegender Link wird nie durchgeschrieben.
+    """
+    fd, name = tempfile.mkstemp(dir=datei.parent, prefix=f".{datei.name}.", suffix=".neu")
+    temp = Path(name)
     try:
-        temp.write_bytes(daten)
+        with os.fdopen(fd, "wb") as f:
+            f.write(daten)
         if datei.exists():
             shutil.copymode(datei, temp)
+        else:
+            os.chmod(temp, 0o666 & ~_umask())  # mkstemp legt 0600 an; neue Datei wie write_bytes
         os.replace(temp, datei)
     finally:
         temp.unlink(missing_ok=True)
+
+
+def _umask() -> int:
+    alt = os.umask(0)
+    os.umask(alt)
+    return alt
 
 
 def main(argv: list[str] | None = None) -> int:
