@@ -301,7 +301,8 @@ def test_eintrag_cli_schreibt_vorfall_in_die_versionierte_datei(
         capture_output=True,
         text=True,
         encoding="utf-8",
-        env={"TO_SPAWN_REPO": str(repo), "PATH": "/usr/bin:/bin"},
+        # USERPROFILE: Windows-Gegenstück zum pwd-Rückfall von Path.home() unter Linux (#68).
+        env={"TO_SPAWN_REPO": str(repo), "PATH": "/usr/bin:/bin", "USERPROFILE": str(tmp_path / "heim")},
         timeout=60,
         check=False,
     )
@@ -337,7 +338,8 @@ def test_eintrag_cli_verlangt_die_vier_felder(tmp_path: Path) -> None:
         capture_output=True,
         text=True,
         encoding="utf-8",
-        env={"TO_SPAWN_REPO": str(repo), "PATH": "/usr/bin:/bin"},
+        # USERPROFILE: Windows-Gegenstück zum pwd-Rückfall von Path.home() unter Linux (#68).
+        env={"TO_SPAWN_REPO": str(repo), "PATH": "/usr/bin:/bin", "USERPROFILE": str(tmp_path / "heim")},
         timeout=60,
         check=False,
     )
