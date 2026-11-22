@@ -1,6 +1,12 @@
 # Abnahme L1 USB-Stick — Belege
 
-Stand: 21.11.2026 21:25 (Server-Uhr), Skill-main aaaab24 (über c2f4c07: Doku + Mess-Skripte `messung/`), installiert
+Haltepunkt 22.11.2026 04:05 (Server-Uhr): Skill-main b4be778, auf dem Bau-Server installiert b4be778 (Install Exit 0),
+volle Suite unter Linux 2779 passed, 66 skipped, 18 xfailed, 0 rot (`~/systemcheck-1119/main_voll_b4be778.txt`).
+Der Bau ruht; die M-Urteile unten sind nicht neu bewertet, die Belege darunter stammen vom 21.11.
+Offen am Haltepunkt: 250 (Issue 149 Rest, Fix-Runde 3), 233 und 265 (Linux-Lauf + Merge), 255 (im Review),
+Issue 214 Teil B (Review-Hook: Teil A gemergt, #237).
+
+Älterer Stand: 21.11.2026 21:25 (Server-Uhr), Skill-main aaaab24 (über c2f4c07: Doku + Mess-Skripte `messung/`), installiert
 auf dem Bau-Server c2f4c07 (21.11. 21:06). Belegdateien liegen auf dem Bau-Server unter
 `~/systemcheck-1119/` (Abnahme-Läufe in `~/systemcheck-1119/abnahme_l1/`).
 
@@ -47,6 +53,8 @@ Urteile: **belegt** · **teilweise** · **abweichend** (Soll anders erfüllt, mi
 
 ## Offene Punkte
 
+- Haltepunkt 22.11.: Windows-Seite (W2, M15 Windows) hängt an 233 und 265 (Linux-Lauf + Merge); die Prüf-Abnahmen
+  (M9–M13) hängen an 250 (Fix-Runde 3) und der Prüf-Reihe danach; Review-Hook-Rest an Issue 214 Teil B.
 - #113 main rot: `messung/` nicht im Scan der festen Namen → F1.
 - #111 Weiterleitungs-Vorlage hinter App-Fassung → F3.
 - #112 Probe-Eintrag in der Maschinen-Liste legt Hausmeister still, Trockenlauf zeigt es nicht → F7.

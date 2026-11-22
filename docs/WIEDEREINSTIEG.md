@@ -45,6 +45,29 @@ was zum Weiterbauen nötig ist.
 
 ## 3. Stand
 
+- **Haltepunkt 22.11.2026 04:05 (Server-Uhr, main b4be778):** Der Bau ruht hier, bis der Auftraggeber „weiter“ sagt.
+  Seit dem letzten Eintrag gemergt: 237 (Review-Hook im Repo + Installation, Teil A von Issue 214; Issue 214 bleibt für
+  Teil B offen) und 264 (Doku).
+  Auf dem Bau-Server installiert: b4be778, volle Suite 2779 bestanden, 66 übersprungen, 18 xfailed, 0 rot.
+  Review-Hook: ok (Dateien schon aktuell, nichts überschrieben).
+  Offen liegen geblieben, mit Grund:
+  - 250 (Issue 149 Rest, Kopf 2b0377c): unabhängiger Nach-Prüfer meldet „Hartes: JA“. Die Test-Kennung aus dem JUnit-`file`
+    ist die Definitionsdatei; ein Zwilling, der die Testfunktion importiert, plus Füller-Test ergibt „wackler“ mit Exit 0.
+    Merge-Sperre als Kommentar. Nächster Schritt: Fix-Runde 3 — ein zweiter voller Lauf schreibt die genaue
+    pytest-Knoten-Kennung und das Ergebnis über ein eigenes kleines Plugin statt JUnit-Rückrechnung; Mutations-Abdeckung
+    verbreitern; danach neuer Nach-Prüfer.
+  - 233 (Hausmeister unter Windows): Review „Hartes: nein“, es fehlt nur der Linux-Lauf und der Merge.
+  - 265 (Issue 245): Review „Hartes: nein“, es fehlt der Linux-Lauf von `tests/test_pruef_auswahl_3b.py` und der Merge.
+  - 255 (Issue 251, Deploy-Wache ohne `pgrep`): noch im Review, nicht mergen.
+  Neue Issues: 260 (volle Suiten nebeneinander wackeln → Suiten nacheinander fahren), 261 (Maschinen-Liste: gesetztes
+  `ticket_repo` nicht änderbar; Hausmeister: 4 gelöscht, 173 bleiben).
+  Weiterbauen nach dem Haltepunkt, in dieser Reihenfolge:
+  1. 233 und 265 mergen (je Linux-Lauf).
+  2. Fix-Runde 3 für 250.
+  3. Issue 214 Teil B.
+  4. Hausmeister-Reihe: 241, 242, 261, 234, 177, 215, 225, 163, 129, 179, 178, 247, 248, 252–254.
+  5. Prüf-Reihe nach Merge von 250: 204, 218, 238, 246, 224, 104.
+
 - **2026-11-22 03:50 (Server-Uhr, main 9dc4f72):** Seit dem letzten Eintrag gemergt (Pull-Requests 239, 240, 244, 249, 256).
   Auf dem Bau-Server installiert: c454545, volle Suite 2754 bestanden, 0 rot.
   - 239: Doku-Pull-Request (Stand 85).
