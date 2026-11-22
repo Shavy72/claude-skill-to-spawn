@@ -1,0 +1,2 @@
+# Review-Hook (#214): immer LF, auch im Windows-Klon — sonst laufen PC und Server wieder auseinander.
+review-hook/**/*.py text eol=lf

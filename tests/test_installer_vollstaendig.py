@@ -14,7 +14,7 @@ from pathlib import Path
 SKILL = Path(__file__).resolve().parent.parent
 # Bewusst nicht installiert: Git-Steuerdatei, Review-Ablage und ``messung/`` (Entwicklungs-Ordner:
 # Mess-Skripte des Prüftor-Vergleichs #81, nur Linux, kein Laufzeit-Code des Skills).
-NICHT_INSTALLIERT = {".gitignore", ".review", "messung"}
+NICHT_INSTALLIERT = {".gitignore", ".gitattributes", ".review", "messung"}
 
 
 def _wurzel_eintraege() -> set[str]:
