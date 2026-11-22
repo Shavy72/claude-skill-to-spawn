@@ -331,6 +331,7 @@ def test_projekt_merkmale(repo: Path, heim: Path) -> None:
 def _cli(repo: Path, heim: Path, *args: str) -> subprocess.CompletedProcess[str]:
     umgebung = dict(os.environ)
     umgebung["HOME"] = str(heim)
+    umgebung["USERPROFILE"] = str(heim)  # Path.home() unter Windows (#68)
     return subprocess.run(
         [sys.executable, str(CLI), "inventur", *args],
         cwd=str(repo),
@@ -638,7 +639,7 @@ def test_f6_pruefung_injizierbar(repo: Path, heim: Path, tmp_path: Path) -> None
     )
     assert "gh" in {z.name for z in inv.setup_zeilen}
     assert aufrufe and aufrufe[0][-2:] == ["auth", "status"]
-    assert Path(aufrufe[0][0]).name == "gh"
+    assert Path(aufrufe[0][0]).stem == "gh"  # Windows findet die Attrappe als gh.CMD (#68)
     inv = inventur.erstelle(
         repo,
         claude_home=heim / ".claude",
