@@ -1,0 +1,60 @@
+{
+  "version": 1,
+  "modus": "hinweis",
+  "zeit": "2026-11-22T03:30:00+01:00",
+  "befunde": [],
+  "pruefer": [
+    {
+      "name": "general-purpose",
+      "modell": "sonnet",
+      "befunde_roh": 0
+    },
+    {
+      "name": "pr-test-analyzer",
+      "modell": "sonnet",
+      "befunde_roh": 1
+    }
+  ],
+  "fix_runde": 0,
+  "repo": "/home/bau/wt/skill-214a",
+  "moment": "sitzung",
+  "stufe": "gross",
+  "sha": "1a7cb40",
+  "fingerprint": "85921cdefe3c6745",
+  "dateien": [
+    ".gitattributes",
+    "install.ps1",
+    "install.sh",
+    "tests/test_feste_namen_l1.py",
+    "tests/test_installer_vollstaendig.py",
+    "tests/test_review_hook_install_214.py",
+    "to_spawn/review_hook.py"
+  ],
+  "diff_modus": {
+    "staged": false,
+    "base": "8592045d2460fab2184c8c4d4e101a01d4a4375e"
+  },
+  "dauer_s": 60,
+  "token_schaetzung": 103000,
+  "richter": null,
+  "hinweis": "Prüfer liefen auf 40ae858. Einziger Befund (pr-test-analyzer, mittel: Test für 'nach Installation lokal geändert' und kaputte Stand-Datei fehlt) direkt in 1a7cb40 behoben (2 Tests ergänzt, 78 passed), daher kein Richter. /code-review ausgelassen: Subagent ohne Skill-Werkzeug. review-hook/* nicht geprüft: 1:1-Kopie des Server-Stands (diff -r ohne Unterschied).",
+  "datei_hashes": {
+    ".gitattributes": "744bda9c420fab11",
+    "install.ps1": "22418da7b9da9a04",
+    "install.sh": "ba6749821625097d",
+    "tests/test_feste_namen_l1.py": "5cab14e1f90ca07d",
+    "tests/test_installer_vollstaendig.py": "e6f89714e1641d3e",
+    "tests/test_review_hook_install_214.py": "3cada6f19aa8fbe1",
+    "to_spawn/review_hook.py": "57d7719e3b61196c"
+  },
+  "inhalt_hashes": {
+    ".gitattributes": "199de4072c9a1946",
+    "install.ps1": "bd1de5f4445c3185",
+    "install.sh": "2abf06eab88743c8",
+    "tests/test_feste_namen_l1.py": "6c810afed91ae0f4",
+    "tests/test_installer_vollstaendig.py": "d14a77e49fc6859d",
+    "tests/test_review_hook_install_214.py": "a5e71952dbb281c6",
+    "to_spawn/review_hook.py": "4ab46d6feb186f96"
+  },
+  "status": "gruen"
+}

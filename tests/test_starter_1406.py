@@ -103,7 +103,20 @@ def test_tuer_sperrt_anderes_skill_skript_unter_test(tmp_path: Path) -> None:
 
 #: Start-Stellen, die noch NICHT über ``starter.starte`` laufen. Seit Teil 2 von #1406 leer —
 #: neue Einträge nur als Übergang mit Ticket.
-REST_START: frozenset[tuple[str, str]] = frozenset()
+REST_START: frozenset[tuple[str, str]] = frozenset(
+    {
+        # 1:1-Übernahme, Angleichung folgt in #214 Teil B (Review-Hook startet noch roh)
+        ("review-hook/_hookbasis.py", "befehl"),
+        ("review-hook/tests/test_hooks.py", "Umgebung.hook"),
+        ("review-hook/tests/test_hooks.py", "Umgebung.route"),
+        ("review-hook/tests/test_schutz_runde6.py", "_innen_laufen"),
+        ("review-hook/tests/test_stop_runde5.py", "_beleg_echt"),
+        ("review-hook/tests/test_stop_runde5.py", "test_neue_datei_beleg_ueberlebt_commit"),
+        ("review-hook/tests/test_stop_runde5.py", "test_pruefen_cli_findet_beleg_nach_commit"),
+        ("review-hook/tests/test_wochenbericht.py", "_lauf"),
+        ("review-hook/wochenbericht.py", "bericht_erzeugen"),
+    }
+)
 
 #: Treffer der Suche, die nichts Echtes starten: Lese-/Prüfbefehle und Kind-Skripte des Skills
 #: (deren eigene Starts gehen wieder durch die Tür). Neue Einträge nur mit Grund.
