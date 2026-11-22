@@ -18,11 +18,13 @@ import os
 import re
 import stat
 import subprocess
+import sys
 from collections.abc import Callable
 from contextlib import ExitStack
 from pathlib import Path
 from typing import Any
 
+from to_spawn import prozessbaum
 from to_spawn import sperre as _sperre
 
 log = logging.getLogger("to_spawn.hausmeister.windows")
@@ -54,7 +56,9 @@ def pfad_norm(pfad: str | Path) -> str:
 def kein_prozess(ordner: Path) -> None:
     """Prozessliste per CIM: :class:`Bleibt`, wenn ``ExecutablePath`` im Ordner liegt oder
     ``CommandLine`` den Ordnerpfad enthält (Groß/Klein egal, ``/`` = Backslash; ``wt-13``
-    trifft nicht ``wt-130``). Die cwd steht dort nicht — dafür :func:`umbenennen_probe`
+    trifft nicht ``wt-130``). Die cwd steht dort nicht — sie kommt aus dem PEB jedes
+    Prozesses (:func:`_kein_arbeitsordner_drin`, auch trocken; fängt Git-Bash/MSYS, die die
+    Umbenennungs-Probe nicht sperren). Offene Dateien zeigt nur :func:`umbenennen_probe`
     (nur im echten Lauf, sie fasst den Ordner an)."""
     o = pfad_norm(ordner)
     im_text = re.compile(re.escape(o) + r"(?![^/\s\"'])")
@@ -67,6 +71,26 @@ def kein_prozess(ordner: Path) -> None:
             or exe_n.startswith(o + "/")
             or (befehl and im_text.search(pfad_norm(befehl)))
         ):
+            raise Bleibt(f"Prozess {pid} arbeitet im Ordner oder hat Dateien offen")
+    if sys.platform == "win32":  # PEB gibt es nur auf echtem Windows (Tests simulieren win32)
+        _kein_arbeitsordner_drin(o)
+
+
+def _kein_arbeitsordner_drin(o: str) -> None:
+    """:class:`Bleibt`, wenn die cwd eines Prozesses ``o`` (Vergleichsform) ist oder darin
+    liegt; cwd eines laufenden, lesbaren Prozesses unbekannt ⇒ bleibt mit Fehler (wie
+    ``/proc``-Lesefehler unter Linux)."""
+    try:
+        ordner = prozessbaum.arbeitsordner_windows()
+    except OSError as fehler:
+        raise Bleibt(f"Prozessliste nicht lesbar ({fehler})", fehler=True) from None
+    for pid, cwd in ordner.items():
+        if pid == os.getpid():
+            continue  # dieser Lauf selbst
+        if cwd is None:
+            raise Bleibt(f"Prozess {pid}: Arbeitsordner nicht lesbar", fehler=True)
+        c = pfad_norm(cwd)
+        if c == o or c.startswith(o + "/"):
             raise Bleibt(f"Prozess {pid} arbeitet im Ordner oder hat Dateien offen")
 
 

@@ -23,7 +23,7 @@ SKILL = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SKILL))
 
 from conftest import altbestand_wie_eingerichtet
-from to_spawn import aufpasser, hausmeister
+from to_spawn import aufpasser, hausmeister, prozessbaum
 
 ORIGIN = "https://github.com/Shavy72/duoplus-management"
 STUNDE = 3600.0
@@ -546,9 +546,12 @@ def test_s6_offene_datei_im_ordner_bleibt(welt: Welt) -> None:
     welt.ticket(42, "CLOSED", 48)
     with (wt / "arbeit.txt").open("rb") as f:
         proc = subprocess.Popen(["sleep", "60"], stdin=f, cwd=welt.tmp)
+    # Linux nennt den Prozess (/proc/<pid>/fd); Windows kennt offene Griffe nur über die
+    # Umbenennungs-Probe, die keine PID liefert.
+    beleg = "Windows verweigert das Umbenennen" if sys.platform == "win32" else str(proc.pid)
     try:
         r = welt.aufraeumen(wt, loeschen=True)
-        assert r.art == "bleibt" and str(proc.pid) in r.grund
+        assert r.art == "bleibt" and beleg in r.grund, r.grund
         assert wt.is_dir()
     finally:
         proc.kill()
@@ -567,6 +570,15 @@ def test_s6_cwd_unlesbar_bleibt(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> 
         return echt(pfad)
 
     monkeypatch.setattr(hausmeister.os, "readlink", readlink)
+    if sys.platform == "win32":  # Windows liest die cwd aus dem PEB: Lesefehler dort
+        echt_peb = prozessbaum._arbeitsordner_windows
+
+        def peb(pid: int) -> str | None:
+            if pid == proc.pid:
+                raise OSError(299, "ReadProcessMemory gescheitert")
+            return echt_peb(pid)
+
+        monkeypatch.setattr(prozessbaum, "_arbeitsordner_windows", peb)
     try:
         r = welt.aufraeumen(wt, loeschen=True)
         assert r.art == "bleibt" and str(proc.pid) in r.grund
@@ -680,7 +692,9 @@ def test_s9_log_nicht_schreibbar_bleibt(
     (welt.tmp / "keinordner").write_text("", encoding="utf-8")
     monkeypatch.setenv("TO_SPAWN_HAUSMEISTER_LOG", str(welt.tmp / "keinordner" / "x"))
     r = welt.aufraeumen(wt, loeschen=True)
-    assert r.art == "bleibt" and r.fehler and "Log" in r.grund
+    # Windows: die Altbestand-Liste liegt neben dem Log und fällt am selben Ordner zuerst.
+    beleg = "Altbestand-Liste" if sys.platform == "win32" else "Log"
+    assert r.art == "bleibt" and r.fehler and beleg in r.grund, r.grund
     assert wt.is_dir()
 
 

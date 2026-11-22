@@ -433,6 +433,96 @@ def _prozesse_windows() -> dict[int, tuple[int, str, int]]:
     return {pid: (eltern, _kommandozeile_windows(pid), start) for pid, (eltern, start) in liste.items()}
 
 
+# --- Windows-Arbeitsordner (cwd) aus dem PEB ----------------------------------------------
+# Win32_Process kennt keine cwd. Sie steht im Prozess selbst: PEB → ProcessParameters →
+# CurrentDirectory (x64-Versätze aus ``winternl.h``/``RTL_USER_PROCESS_PARAMETERS``). Nötig für
+# Git-Bash-/MSYS-Prozesse: deren cwd-Griff erlaubt Umbenennen und Löschen, die
+# Umbenennungs-Probe sieht sie nicht. MSYS setzt bei ``cd`` die Win32-cwd mit (gemessen).
+_PROCESS_QUERY_INFORMATION = 0x0400
+_PROCESS_VM_READ = 0x0010
+_STILL_ACTIVE = 259
+_FEHLER_ZUGRIFF_VERWEIGERT = 5
+_FEHLER_UNGUELTIGER_PARAMETER = 87  # OpenProcess: PID gibt es nicht (mehr)
+_PEB_PROCESS_PARAMETERS = 0x20
+_PARAMS_CURRENT_DIRECTORY = 0x38
+
+
+@functools.cache
+def _kernel_mit_fehlercode() -> Any:
+    """kernel32 mit ``use_last_error`` (für ``ctypes.get_last_error``) und den cwd-Signaturen."""
+    _win32()  # 64-Bit-Prüfung
+    zeiger, ulong = ctypes.c_void_p, ctypes.c_ulong
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
+    kernel.OpenProcess.argtypes, kernel.OpenProcess.restype = [ulong, ctypes.c_int, ulong], zeiger
+    kernel.CloseHandle.argtypes = [zeiger]
+    kernel.GetExitCodeProcess.argtypes = [zeiger, ctypes.POINTER(ulong)]
+    kernel.ReadProcessMemory.argtypes = [zeiger, zeiger, zeiger, ctypes.c_size_t, ctypes.POINTER(ctypes.c_size_t)]
+    return kernel
+
+
+def _arbeitsordner_windows(pid: int) -> str | None:
+    """Win32-cwd von ``pid``; ``None`` = nicht zu prüfen (weg, beendet, fremd/geschützt —
+    wie ``PermissionError`` unter ``/proc``); ``OSError`` = läuft, ist offen, liefert aber nichts.
+
+    ponytail: 32-Bit-Prozesse (WOW64) führen ihre cwd im 32-Bit-PEB, hier steht die vom
+    Start; Upgrade: ``ProcessWow64Information`` + PEB32 lesen. Die Umbenennungs-Probe
+    deckt native 32-Bit-Prozesse ab.
+    """
+    kernel, nt = _kernel_mit_fehlercode(), _win32()[1]
+    ctypes.set_last_error(0)
+    griff = kernel.OpenProcess(_PROCESS_QUERY_INFORMATION | _PROCESS_VM_READ, False, pid)
+    if not griff:
+        fehler = ctypes.get_last_error()
+        if fehler in (_FEHLER_ZUGRIFF_VERWEIGERT, _FEHLER_UNGUELTIGER_PARAMETER):
+            return None
+        raise OSError(fehler, f"OpenProcess({pid}) gescheitert")
+    try:
+        code = ctypes.c_ulong(0)
+        if kernel.GetExitCodeProcess(griff, ctypes.byref(code)) and code.value != _STILL_ACTIVE:
+            return None  # beendet, nur noch Griffe offen (wie Zombie unter Linux)
+
+        def lesen(adresse: int, anzahl: int) -> bytes:
+            puffer = ctypes.create_string_buffer(anzahl)
+            gelesen = ctypes.c_size_t(0)
+            ok = kernel.ReadProcessMemory(griff, adresse, puffer, anzahl, ctypes.byref(gelesen))
+            if not ok or gelesen.value != anzahl:
+                raise OSError(ctypes.get_last_error(), f"ReadProcessMemory({pid}) gescheitert")
+            return puffer.raw
+
+        basis = (ctypes.c_void_p * 6)()  # PROCESS_BASIC_INFORMATION, [1] = PebBaseAddress
+        laenge = ctypes.c_ulong(0)
+        status = nt.NtQueryInformationProcess(griff, 0, basis, ctypes.sizeof(basis), ctypes.byref(laenge))
+        if status or not basis[1]:
+            raise OSError(f"NtQueryInformationProcess({pid}): Status 0x{status:08X}")
+        parameter = int.from_bytes(lesen(basis[1] + _PEB_PROCESS_PARAMETERS, 8), "little")
+        kopf = lesen(parameter + _PARAMS_CURRENT_DIRECTORY, 16)  # UNICODE_STRING DosPath
+        bytes_lang, puffer_adresse = int.from_bytes(kopf[:2], "little"), int.from_bytes(kopf[8:], "little")
+        if not bytes_lang or not puffer_adresse:
+            raise OSError(f"Prozess {pid}: leere cwd im PEB")
+        return lesen(puffer_adresse, bytes_lang).decode("utf-16-le")
+    finally:
+        kernel.CloseHandle(griff)
+
+
+def arbeitsordner_windows() -> dict[int, str | None]:
+    """PID → Win32-cwd aller prüfbaren Prozesse; ``None`` = läuft, aber cwd unlesbar
+    (Aufrufer entscheidet fail-closed). Nicht prüfbare (siehe :func:`_arbeitsordner_windows`)
+    fehlen. Momentaufnahme unlesbar = ``OSError``."""
+    ergebnis: dict[int, str | None] = {}
+    for pid in _momentaufnahme_windows():
+        if pid in (0, 4):  # Leerlauf- und System-Prozess: kein Benutzer-PEB
+            continue
+        try:
+            cwd = _arbeitsordner_windows(pid)
+        except OSError as fehler:
+            log.debug("cwd von Prozess %s unlesbar: %s", pid, fehler)
+            ergebnis[pid] = None
+            continue
+        if cwd is not None:
+            ergebnis[pid] = cwd
+    return ergebnis
+
+
 def _vorfahren_windows(pid: int) -> Iterator[tuple[int, str]]:
     """Wie ``_vorfahren_linux``, aus einer Momentaufnahme (Kommandozeile nur der Vorfahren).
 
