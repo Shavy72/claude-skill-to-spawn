@@ -14,6 +14,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from conftest import altbestand_wie_eingerichtet
 from test_waechter_213 import (  # noqa: F401  (welt = Fixture)
     SPEC,
     _beleg,
@@ -53,6 +54,7 @@ def hm(welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch) -> Path:  # noqa:
     monkeypatch.setenv("TO_SPAWN_HAUSMEISTER_WURZELN", str(wurzel / "*"))
     monkeypatch.setenv("TO_SPAWN_HAUSMEISTER_LOG", str(log))
     monkeypatch.setenv("TO_SPAWN_ABSCHLUSS_ORDNER", str(welt["tmp"] / "abschluss"))
+    altbestand_wie_eingerichtet()  # Windows: Laptop-Stand nach dem Einrichten (#68)
     return log
 
 

@@ -37,6 +37,15 @@ def test_halte_sperrdatei_ist_ordner_wirft(tmp_path: Path) -> None:
     assert str(datei) in str(info.value)
 
 
+def test_fehlertext_nennt_pfad_ohne_repr() -> None:
+    """Windows-Pfad (Backslashes) steht einfach im Text, nicht als ``repr`` verdoppelt (#68)."""
+    pfad = r"C:\tmp\sperren\lock"
+    fehler = sperre.SperreNichtOeffenbar(13, "Sperr-Datei nicht öffenbar: verweigert", pfad)
+    assert pfad in str(fehler)
+    assert "\\\\" not in str(fehler)
+    assert fehler.filename == pfad and fehler.errno == 13
+
+
 def test_halte_ordner_nicht_anlegbar_wirft(tmp_path: Path) -> None:
     eltern = tmp_path / "eine-datei"
     eltern.write_text("x", encoding="utf-8")
