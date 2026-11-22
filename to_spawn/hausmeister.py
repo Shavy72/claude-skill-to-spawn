@@ -379,7 +379,11 @@ _ZWEIG_MUSTER_ETAPPE = re.compile(r"^l\d+/([1-9]\d{1,2}|[1-4]\d{3})[a-z]?(?:-.*)
 #: Alle Zweig-Formen mit Ticket-Nummer (eine Stelle für neue Formen); welches Repo die
 #: Nummer meint, sagt allein ``origin`` des Ordners (:func:`_nummer_zaehlt`).
 _ZWEIG_FORMEN = (_ZWEIG_MUSTER, _ZWEIG_MUSTER_ETAPPE)
-_GITHUB_SLUG = re.compile(r"github\.com[:/]+([^/\s]+/[^/\s]+?)(?:\.git)?/?$")
+#: #235 H1: nur diese drei Anfänge sind GitHub; ein fremder Host (``notgithub.com``) oder
+#: ein lokaler Pfad mit ``github.com/…`` im Namen ist ein fremdes Repo (nur mit ``.match``).
+_GITHUB_SLUG = re.compile(
+    r"(?:https://github\.com/|ssh://git@github\.com/|git@github\.com:)([^/\s]+/[^/\s]+?)(?:\.git)?/?$"
+)
 
 
 @dataclass(frozen=True)
@@ -1456,6 +1460,7 @@ def _regeln(
                 f"{OHNE_NUMMER}: Änderungen oder Commits nicht auf origin (ohne Nummer nicht sicherbar)",
                 fuer_david=True,
             )
+        _koepfe_auf_server(echt, ist_worktree)
         grund = f"{OHNE_NUMMER}; alles auf origin, Baum sauber, seit 24 h unverändert, kein Pull-Request offen"
     elif fremd:  # 8b #135: ohne gültiges Ticket nur, was nachweislich fertig ist
         grund = _fremd_fertig(echt, ticket, bool(koepfe or zu_sichern), jetzt)
@@ -1505,7 +1510,7 @@ def _git_ordner_pruefen(echt: Path) -> bool | None:
         if _hat_verknuepfte_worktrees(echt):
             raise _Bleibt("Hauptrepo mit verknüpften Worktrees")
     url = _git_oder_none(echt, "config", "--get", "remote.origin.url") or ""
-    if _slug(url).lower() not in _eigene_repos():
+    if _origin_slug(echt).lower() not in _eigene_repos():
         raise _Bleibt(f"fremdes Repo ({url or 'ohne origin'})", fuer_david=True)
     return ist_worktree
 
@@ -1905,12 +1910,20 @@ def _nummer(text: str, muster: tuple[re.Pattern[str], ...]) -> int | None:
 
 
 def _origin_slug(echt: Path) -> str:
-    """GitHub-Slug des ``origin`` von ``echt`` (``""`` = keiner)."""
+    """GitHub-Slug des ``origin`` von ``echt`` (``""`` = keiner ⇒ fremdes Repo).
+
+    #235 M2: weicht das Push-Ziel ab (``pushurl``, ``pushInsteadOf``), landete eine Sicherung
+    woanders als der Slug sagt ⇒ ``""``.
+    """
+    lesen = _git_oder_none(echt, "remote", "get-url", "origin")
+    if lesen != _git_oder_none(echt, "remote", "get-url", "--push", "origin"):
+        return ""
     return _slug(_git_oder_none(echt, "config", "--get", "remote.origin.url") or "")
 
 
 def _slug(url: str) -> str:
-    treffer = _GITHUB_SLUG.search(url.strip())
+    """``owner/name`` einer GitHub-URL; alles andere (fremder Host, Pfad, ``http://``) ⇒ ``""``."""
+    treffer = _GITHUB_SLUG.match(url.strip())
     return treffer.group(1) if treffer else ""
 
 
@@ -2054,8 +2067,8 @@ def _ungesichertes(repo: Path, ist_worktree: bool) -> tuple[list[str], bool, lis
     return koepfe, zu_sichern, alle
 
 
-def _ungepushte_koepfe(repo: Path, ist_worktree: bool) -> list[str]:
-    """Refs mit Commits nicht auf origin (Klon: alle außer refs/remotes + HEAD; Worktree: HEAD)."""
+def _lokale_koepfe(repo: Path, ist_worktree: bool) -> list[str]:
+    """Refs, deren Commits auf origin liegen müssen (Klon: alle außer refs/remotes + HEAD; Worktree: HEAD)."""
     refs = ["HEAD"]
     if not ist_worktree:
         refs += [
@@ -2063,9 +2076,30 @@ def _ungepushte_koepfe(repo: Path, ist_worktree: bool) -> list[str]:
             for r in aufpasser.git_lauf(repo, "for-each-ref", "--format=%(refname)").split()
             if not r.startswith("refs/remotes/")
         ]
+    return refs
+
+
+def _ungepushte_koepfe(repo: Path, ist_worktree: bool) -> list[str]:
+    """Refs mit Commits nicht auf origin (laut lokaler Tracking-Refs)."""
     return [
-        ref for ref in refs if aufpasser.git_lauf(repo, "rev-list", "-n", "1", ref, "--not", "--remotes=origin").strip()
+        ref
+        for ref in _lokale_koepfe(repo, ist_worktree)
+        if aufpasser.git_lauf(repo, "rev-list", "-n", "1", ref, "--not", "--remotes=origin").strip()
     ]
+
+
+def _koepfe_auf_server(repo: Path, ist_worktree: bool) -> None:
+    """#235 M1a: jeder lokale Kopf muss von einem Zweig-Kopf auf dem Server (``ls-remote``)
+    erreichbar sein — lokale Tracking-Refs lassen sich fälschen oder per Refspec verengen.
+    Server-Köpfe, die lokal fehlen, zählen nicht (``--ignore-missing``). Sonst ``_Bleibt``."""
+    try:
+        roh = _git_ohne_frage(repo, "ls-remote", "--heads", "origin")
+    except RuntimeError as fehler:
+        raise _Bleibt(f"{OHNE_NUMMER}: Server nicht erreichbar (ls-remote): {_kurz(fehler)}", fehler=True) from None
+    auf_server = [zeile.split()[0] for zeile in roh.splitlines() if zeile.strip()]
+    for ref in _lokale_koepfe(repo, ist_worktree):
+        if aufpasser.git_lauf(repo, "rev-list", "--ignore-missing", "-n", "1", ref, "--not", *auf_server).strip():
+            raise _Bleibt(f"{OHNE_NUMMER}: {ref} nicht auf dem Server (ls-remote origin)", fuer_david=True)
 
 
 # --- Prozesse -------------------------------------------------------------------
