@@ -156,9 +156,9 @@ def ungespeichert(repo: Path) -> list[str]:
     Einzige Stelle für „was zählt als schmutziger Arbeitsbaum“: das Gate (``pruef.pruefen``)
     und Regel AB (``leiter``) nutzen beide diese Funktion (#218).
     Geprüft wird der Arbeitsbaum, das Urteil gilt aber dem SHA — beides muss gleich sein, sonst
-    gibt es Grün für einen Stand, den keiner committet hat. Ausgenommen: Laufdateien unter
-    ``.to-spawn/`` (Protokoll, Marker, Sitzungen) und ungetrackte Werkzeug-Ordner (nur als
-    Ordner-Eintrag: Caches in jeder Tiefe, ``.venv``/``venv``/``node_modules`` nur ganz oben).
+    gibt es Grün für einen Stand, den keiner committet hat. Ausgenommen sind nur ungetrackte
+    Werkzeug-Reste nach ``cache.ist_werkzeug_rest`` (bekannte Laufdateien unter ``.to-spawn/``,
+    Caches, Installationen); jede andere neue Datei, auch unter ``.to-spawn/``, zählt.
     Per ``.gitignore`` Verstecktes meldet ``git status`` nicht — das deckt ``cache.schluessel`` ab.
     Die Konfig ``.to-spawn/config.json`` zählt immer — auch neu oder per ``.gitignore`` versteckt.
     ``normal`` fasst neue Ordner zu ``ordner/`` zusammen.
@@ -170,25 +170,29 @@ def ungespeichert(repo: Path) -> list[str]:
 def _offen(repo: Path) -> tuple[list[str], str]:
     """Kern von ``ungespeichert``: (schmutzige Pfade, Ursache); Ursache ≠ "" = git gescheitert."""
     konfig = config.KONFIG_PFAD.as_posix()
-    raus, kurz = _git_status(repo, "--untracked-files=normal", "--", ".", ":(exclude).to-spawn")
-    konfig_raus = ""
+    lauf = config.KONFIG_PFAD.parent.as_posix()
+    raus, kurz = _git_status(repo, "--untracked-files=normal", "--", ".", f":(exclude){lauf}")
+    lauf_raus = konfig_raus = ""
+    if not kurz:
+        # Unter ``.to-spawn/`` Datei für Datei, damit nur bekannte Laufdateien herausfallen.
+        lauf_raus, kurz = _git_status(repo, "--untracked-files=all", "--", lauf)
     if not kurz:
         konfig_raus, kurz = _git_status(repo, "--untracked-files=all", "--ignored=matching", "--", konfig)
     if kurz:
         log.warning("git status in %s gescheitert: %s", repo, kurz)
         return [], kurz
     offen: list[str] = []
-    eintraege = iter(raus.split("\0"))
+    eintraege = iter(f"{raus}\0{lauf_raus}".split("\0"))
     for eintrag in eintraege:
         if not eintrag:
             continue
         art, pfad = eintrag[:2], eintrag[3:]
         if art[0] in "RC":
             next(eintraege, None)  # -z: Quellpfad einer Umbenennung folgt als eigener Eintrag
-        if art == "??" and cache.ist_werkzeug_ordner(pfad):
+        if art == "??" and cache.ist_werkzeug_rest(repo, pfad):
             continue
         offen.append(pfad)
-    if konfig_raus.strip("\0"):
+    if konfig_raus.strip("\0") and konfig not in offen:
         offen.append(konfig)
     return offen, ""
 
