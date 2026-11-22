@@ -149,6 +149,40 @@ def offene_blocker(deps: list[dict]) -> list[int]:
     return sorted(int(d["number"]) for d in deps if not blocker_erledigt(d))
 
 
+def blocker_gruende(repo: Path, deps: list[dict], *, mit_commit: bool = True) -> list[str]:
+    """Warum ein Ticket noch nicht starten darf — leer = frei (#267: die eine Stelle).
+
+    Je Blocker: nicht erledigt (:func:`blocker_erledigt`) → ``#N offen``. ``mit_commit``:
+    jeder erledigte Blocker — zu oder ``staging:fertig``, keine Sonderregel — braucht
+    zusätzlich seinen Commit ``(#N)`` auf ``origin/<Hauptzweig>``; sonst baut die Session
+    auf einem Stand ohne die Blocker-Arbeit. git-Fehler zählen als „kein Commit“.
+    Fragen: ``bau.py`` (Start-Schranke) und ``to_spawn.py blocker`` (Warte-Prüfung der Session).
+    """
+    gruende: list[str] = []
+    erledigt: list[object] = []
+    for d in deps:
+        if blocker_erledigt(d):
+            erledigt.append(d.get("number"))
+        else:
+            gruende.append(f"#{d.get('number')} offen")
+    if not mit_commit or not erledigt:
+        return gruende
+    haupt = f"origin/{hauptzweig(repo)}"  # master/main/… je Repo (#257)
+    subprocess.run(["git", "fetch", "-q", "origin"], cwd=repo, check=False, capture_output=True)
+    for nr in erledigt:
+        gefunden = subprocess.run(
+            ["git", "log", haupt, "--oneline", "--fixed-strings", f"--grep=(#{nr})"],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=False,
+        ).stdout.strip()
+        if not gefunden:
+            gruende.append(f"#{nr} zu, aber kein Commit „(#{nr})“ auf {haupt}")
+    return gruende
+
+
 #: Zeitgrenze (s) der Ticket-Stand-Abfrage (#191): hängt gh, wird daraus „unbekannt“.
 TICKET_STAND_TIMEOUT_S = 30.0
 #: Überschreibt :data:`TICKET_STAND_TIMEOUT_S` (Tests kürzen damit).

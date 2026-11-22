@@ -273,13 +273,14 @@ def _gh_json(gh: str, *args: str) -> object | None:
 def blocker_offen(ticket: str, *, nur_offene: bool = False) -> list[str]:
     """Gründe, warum #ticket noch nicht starten darf (leer = frei).
 
-    Zwei Prüfungen wie im Loop-Prompt: jeder Blocker muss CLOSED sein und
-    seinen Commit ``(#<Blocker>)`` auf ``origin/<Hauptzweig>`` haben — sonst baut die
-    Session auf einem Stand ohne die Blocker-Arbeit. Bei gh-/git-Fehlern gilt
-    „offen" (fail-closed), damit kein Loop vorzeitig losläuft.
+    Regel nur in ``gh.blocker_gruende`` (#267; dieselbe fragt die Session per
+    ``to_spawn.py blocker <N>``): jeder Blocker erledigt (zu oder ``staging:fertig``,
+    ``gh.blocker_erledigt``, #1527) und sein Commit ``(#<Blocker>)`` auf
+    ``origin/<Hauptzweig>``. Bei gh-/git-Fehlern gilt „offen" (fail-closed), damit kein
+    Loop vorzeitig losläuft.
 
-    ``nur_offene`` (``--sofort``, #906): nur nicht geschlossene Blocker zählen, die
-    Commit-Prüfung macht die Session selbst. gh fehlt oder Abfrage scheitert →
+    ``nur_offene`` (``--sofort``, #906): nur nicht erledigte Blocker zählen, die
+    Commit-Prüfung macht die Session selbst (über denselben Befehl). gh fehlt oder Abfrage scheitert →
     Warnung und frei (vor #906 prüfte ``--sofort`` gar nicht).
     """
     gh_bin = shutil.which("gh")
@@ -294,27 +295,7 @@ def blocker_offen(ticket: str, *, nur_offene: bool = False) -> list[str]:
             log.warning("Ticket #%s: Blocker-Abfrage fehlgeschlagen — Session startet (--sofort).", ticket)
             return []
         return ["Blocker-Abfrage fehlgeschlagen"]
-    gruende: list[str] = []
-    haupt = f"origin/{gh.hauptzweig(REPO)}"  # master/main/… je Repo (#257)
-    for d in deps:
-        nr = d.get("number")
-        if not gh.blocker_erledigt(d):  # zu oder staging:fertig (#1527)
-            gruende.append(f"#{nr} offen")
-            continue
-        if nur_offene:
-            continue
-        subprocess.run(["git", "fetch", "-q", "origin"], cwd=REPO, check=False)
-        found = subprocess.run(
-            ["git", "log", haupt, "--oneline", "--fixed-strings", f"--grep=(#{nr})"],
-            cwd=REPO,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            check=False,
-        ).stdout.strip()
-        if not found:
-            gruende.append(f"#{nr} zu, aber kein Commit „(#{nr})“ auf {haupt}")
-    return gruende
+    return gh.blocker_gruende(REPO, deps, mit_commit=not nur_offene)  # die eine Stelle (#267)
 
 
 def auf_blocker_warten(ticket: str, takt: int, *, nur_offene: bool = False, schlafen=time.sleep) -> None:
