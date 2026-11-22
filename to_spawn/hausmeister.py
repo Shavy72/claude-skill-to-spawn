@@ -384,6 +384,8 @@ _ZWEIG_FORMEN = (_ZWEIG_MUSTER, _ZWEIG_MUSTER_ETAPPE)
 _GITHUB_SLUG = re.compile(
     r"(?:https://github\.com/|ssh://git@github\.com/|git@github\.com:)([^/\s]+/[^/\s]+?)(?:\.git)?/?$"
 )
+#: #235 N2: eine Zeile von ``git ls-remote --heads`` (SHA-1 oder SHA-256, Tab, Zweig).
+_LS_REMOTE_ZEILE = re.compile(r"([0-9a-f]{40}(?:[0-9a-f]{24})?)\trefs/heads/\S+$")
 
 
 @dataclass(frozen=True)
@@ -1913,12 +1915,21 @@ def _origin_slug(echt: Path) -> str:
     """GitHub-Slug des ``origin`` von ``echt`` (``""`` = keiner ⇒ fremdes Repo).
 
     #235 M2: weicht das Push-Ziel ab (``pushurl``, ``pushInsteadOf``), landete eine Sicherung
-    woanders als der Slug sagt ⇒ ``""``.
+    woanders als der Slug sagt ⇒ ``""``. #235 N1: ebenso, wenn ``origin`` mehr als eine
+    Adresse hat oder die Repo-eigene Konfiguration (auch per ``include``) Adressen umschreibt
+    (``url.<x>.insteadOf``) — fetch/push gingen dann woanders hin als der Slug sagt. Umleitungen
+    der Maschine (``--global``/``--system``) gelten für jedes Repo gleich und bleiben erlaubt.
     """
+    roh = (_git_oder_none(echt, "config", "--get-all", "remote.origin.url") or "").splitlines()
+    if len(roh) != 1:
+        return ""
+    umleitungen = _git_oder_none(echt, "config", "--show-scope", "--get-regexp", r"^url\.") or ""
+    if any(zeile.split("\t", 1)[0] in ("local", "worktree") for zeile in umleitungen.splitlines()):
+        return ""
     lesen = _git_oder_none(echt, "remote", "get-url", "origin")
     if lesen != _git_oder_none(echt, "remote", "get-url", "--push", "origin"):
         return ""
-    return _slug(_git_oder_none(echt, "config", "--get", "remote.origin.url") or "")
+    return _slug(roh[0])
 
 
 def _slug(url: str) -> str:
@@ -2021,6 +2032,8 @@ def _ungesichertes(repo: Path, ist_worktree: bool) -> tuple[list[str], bool, lis
         raise _Bleibt(f"git fetch origin gescheitert: {_kurz(fehler)}", fehler=True) from None
     if not ist_worktree and _git_oder_none(repo, "rev-parse", "--verify", "-q", "refs/stash"):
         raise _Bleibt("Stash vorhanden (git stash list)", fuer_david=True)
+    if _nur_im_reflog(repo, ist_worktree):
+        raise _Bleibt("ungesicherte Commits im Verlauf (Reflog, auf keinem Zweig)", fuer_david=True)
     for zeile in aufpasser.git_lauf(repo, "ls-files", "-s").splitlines():
         if zeile.startswith("160000 "):
             raise _Bleibt(f"Submodul {zeile.split(chr(9), 1)[-1]}", fuer_david=True)
@@ -2079,6 +2092,30 @@ def _lokale_koepfe(repo: Path, ist_worktree: bool) -> list[str]:
     return refs
 
 
+#: So viele Reflog-Stände je ``rev-list``-Aufruf (Windows: Kommandozeile höchstens 32 KiB).
+_REFLOG_HAPPEN = 200
+
+
+def _nur_im_reflog(repo: Path, ist_worktree: bool) -> bool:
+    """#235 R1: liegt ein Commit nur im Reflog, der mit dem Ordner verschwindet?
+
+    Verschwinden: beim Klon alle Reflogs, beim Worktree der Reflog seines ``HEAD`` (die
+    Zweig-Reflogs liegen im Hauptklon und bleiben). Kein Verlust ist, was von einem Zweig auf
+    ``origin`` (nach dem ``fetch`` in :func:`_ungesichertes`) oder einem lokalen Ref erreichbar
+    ist — lokale Refs prüfen die übrigen Regeln (Sicherung ``sicherung/<N>`` oder bleibt).
+    Gewöhnliche alte Stände liegen so längst auf dem Server und halten den Ordner nicht.
+    """
+    sicher = ("--not", "--exclude=refs/remotes/*", "--all", "--remotes=origin")
+    if not ist_worktree:
+        return bool(aufpasser.git_lauf(repo, "rev-list", "-n", "1", "--reflog", *sicher).strip())
+    staende = sorted(set(aufpasser.git_lauf(repo, "log", "-g", "--format=%H", "HEAD").split()))
+    for i in range(0, len(staende), _REFLOG_HAPPEN):
+        happen = staende[i : i + _REFLOG_HAPPEN]
+        if aufpasser.git_lauf(repo, "rev-list", "-n", "1", "--ignore-missing", *happen, *sicher).strip():
+            return True
+    return False
+
+
 def _ungepushte_koepfe(repo: Path, ist_worktree: bool) -> list[str]:
     """Refs mit Commits nicht auf origin (laut lokaler Tracking-Refs)."""
     return [
@@ -2096,7 +2133,14 @@ def _koepfe_auf_server(repo: Path, ist_worktree: bool) -> None:
         roh = _git_ohne_frage(repo, "ls-remote", "--heads", "origin")
     except RuntimeError as fehler:
         raise _Bleibt(f"{OHNE_NUMMER}: Server nicht erreichbar (ls-remote): {_kurz(fehler)}", fehler=True) from None
-    auf_server = [zeile.split()[0] for zeile in roh.splitlines() if zeile.strip()]
+    auf_server: list[str] = []
+    for zeile in roh.splitlines():
+        if not zeile.strip():
+            continue
+        treffer = _LS_REMOTE_ZEILE.match(zeile)
+        if treffer is None:  # #235 N2: nur „<sha>\trefs/heads/…“ ist eine Server-Angabe
+            raise _Bleibt(f"{OHNE_NUMMER}: unlesbare ls-remote-Zeile {_kurz(zeile)!r}", fehler=True)
+        auf_server.append(treffer.group(1))
     for ref in _lokale_koepfe(repo, ist_worktree):
         if aufpasser.git_lauf(repo, "rev-list", "--ignore-missing", "-n", "1", ref, "--not", *auf_server).strip():
             raise _Bleibt(f"{OHNE_NUMMER}: {ref} nicht auf dem Server (ls-remote origin)", fuer_david=True)
