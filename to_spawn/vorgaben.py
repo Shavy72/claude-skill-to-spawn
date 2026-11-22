@@ -37,18 +37,19 @@ BEFEHL_WIRKUNGSKREIS = "scripts/wirkungskreis.py"
 STAGING_LOG = "/home/bau/staging/deploys.jsonl"
 
 #: Maschinen-Liste (Fundstellen #1–#4, #6): die zwei eigenen Repos dieser Maschine.
-#: ``ticket_repo`` "" = Slug von ``slug``; der Skill-Ordner fragt Tickets in DuoPlus ab.
+#: ``ticket_repo`` ausdrücklich je Repo (#235): jedes Repo hat seine eigenen Tickets —
+#: ``skill-176`` ist Skill-Issue #176, ``wt-176`` App-Ticket #176 (kein Rückfall in #135).
 REPOS: list[dict[str, str]] = [
     {
         "slug": "Shavy72/duoplus-management",
         "pfad": "~/duoplus-management",
-        "ticket_repo": "",
+        "ticket_repo": "Shavy72/duoplus-management",
         "worktree_basis": "",
     },
     {
         "slug": "Shavy72/claude-skill-to-spawn",
         "pfad": "~/claude-skill-to-spawn",
-        "ticket_repo": "Shavy72/duoplus-management",
+        "ticket_repo": "Shavy72/claude-skill-to-spawn",
         "worktree_basis": "",
     },
 ]

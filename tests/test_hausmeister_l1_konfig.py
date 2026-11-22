@@ -36,7 +36,9 @@ def ohne_naehte(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _alte_werte_gelten() -> None:
-    assert hausmeister._ticket_repo() == "Shavy72/duoplus-management"
+    # #235: jedes Vorgabe-Repo hat eigene Tickets ⇒ kein gemeinsamer Rückfall (je Ordner gilt origin)
+    assert hausmeister._ticket_repo() is None
+    assert hausmeister._ticket_repo_fuer("Shavy72/claude-skill-to-spawn") == "Shavy72/claude-skill-to-spawn"
     assert hausmeister._eigene_repos() == {
         "shavy72/duoplus-management",
         "shavy72/claude-skill-to-spawn",
@@ -54,7 +56,7 @@ def _alte_werte_gelten() -> None:
 def test_ohne_maschinen_liste_alte_werte(ohne_naehte: None) -> None:
     _alte_werte_gelten()
     # Aliase für Aufrufer/Tests bleiben mit den alten Werten
-    assert hausmeister.TICKET_REPO == "Shavy72/duoplus-management"
+    assert hausmeister.TICKET_REPO == ""  # #235: kein gemeinsames Ticket-Repo mehr
     assert hausmeister.WURZELN_STANDARD == tuple(ALT_WURZELN)
     assert list(hausmeister._SICHERUNG_REMOTES) == ALT_REMOTES
     assert "duoplus-management" in hausmeister.GESCHUETZTE_ORDNER

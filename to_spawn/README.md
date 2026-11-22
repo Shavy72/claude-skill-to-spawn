@@ -208,6 +208,13 @@ Modul liest sie über `config.lade` / `config.pfad` / `config.maschine`. Ein fre
   `hausmeister.{wurzeln,ordner_praefixe}` und `hausmeister.geschuetzte_ordner` — Letzteres
   schützt nur zusätzlich, die eingebaute Liste bleibt immer gültig. Wurzeln mit verstecktem
   Ordner (`~/.ssh/*`) lehnt der Hausmeister ab.
+  `ticket_repo` sagt, in welchem Repo die Nummer eines Helfer-Ordners mit diesem `origin` ein
+  Ticket ist; die Vorgabe gibt jedem Repo seine eigenen Tickets (Skill-Ordner fragen das
+  Skill-Repo, #235). Der Einrichter füllt nur leere Felder — ein altes `ticket_repo` in einer
+  bestehenden Liste bleibt stehen, bis es von Hand angepasst wird. Die Nummer liest der
+  Hausmeister aus Ordnername und Zweig (`ticket/<N>-…`, `l<Etappe>/<N>[a-z]-…`, Formen nur in
+  `hausmeister._ZWEIG_FORMEN`); Ordner ohne Nummer räumt er erst, wenn 24 h nichts geändert
+  wurde und alles auf `origin` liegt.
 
 Der Prüf-Test `tests/test_feste_namen_l1.py` bricht den Build, sobald im Skill-Code ein
 fester Name oder Pfad auftaucht (`duoplus`, `Shavy72/`, `docs/agents/manifests`,
