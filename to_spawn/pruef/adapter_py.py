@@ -47,13 +47,20 @@ def _schluss(ausgabe: str) -> str | None:
     return treffer[0] if len(treffer) == 1 else None
 
 
-def _junit_kennung(knoten: str) -> tuple[str, str]:
-    """(classname, name) im JUnit-XML von pytest zur Knoten-Kennung (wie ``mangle_test_address``)."""
+def _junit_kennung(knoten: str) -> tuple[str, str, str]:
+    """(file, classname, name) im JUnit-XML (``xunit1``) von pytest zur Knoten-Kennung.
+
+    ``classname`` allein ist nicht eindeutig (wie ``mangle_test_address``: ``/`` und ``.`` werden
+    beide ``.``, ``tests/a.b/`` gleich ``tests/a/b/``, #149 Fix 2); erst mit dem Datei-Pfad aus
+    ``file`` ist es eine Kennung je Test. Steht die Testfunktion in einer anderen Datei als ihr
+    Knoten (importiert), passt ``file`` nicht — dann ist sie nicht belegt (fail-closed).
+    """
     pfad, klammer, parameter = knoten.partition("[")
     teile = pfad.split("::")
-    teile[0] = re.sub(r"\.py$", "", teile[0].replace("/", "."))
+    datei = teile[0]
+    teile[0] = re.sub(r"\.py$", "", datei.replace("/", "."))
     teile[-1] += klammer + parameter
-    return ".".join(teile[:-1]), teile[-1]
+    return datei, ".".join(teile[:-1]), teile[-1]
 
 
 #: ``-o cache_dir=…`` im Befehl: je Lauf, der unabhängig vom vorigen sein muss, frisch.
@@ -238,20 +245,26 @@ class PythonAdapter:
         return [f"{_CACHE_PREFIX}{cache}" if teil.startswith(_CACHE_PREFIX) else teil for teil in befehl]
 
     def mit_beleg(self, befehl: list[str], beleg: Path) -> list[str]:
-        # JUnit-XML ist pytest-eigen; ``junit_prefix`` aus der Repo-Konfig fälschte die Kennungen.
-        return [*befehl, f"--junitxml={beleg}", "-o", "junit_prefix="]
+        # JUnit-XML ist pytest-eigen; ``junit_prefix`` aus der Repo-Konfig fälschte die Kennungen,
+        # ``junit_family=xunit1`` schreibt je Test den Datei-Pfad (``file``): eindeutige Kennung.
+        return [*befehl, f"--junitxml={beleg}", "-o", "junit_prefix=", "-o", "junit_family=xunit1"]
 
-    def alle_bestanden(self, beleg: Path, namen: set[str]) -> bool:
+    def alle_bestanden(self, beleg: Path, namen: set[str], gelaufen: int | None = None) -> bool:
         # Bestanden = ``testcase`` ohne failure/error/skipped (skip und xfail stehen als skipped).
-        # Ein Name, der auch nur einmal anders als bestanden auftaucht, gilt nicht.
+        # Ein Name, der auch nur einmal anders als bestanden auftaucht, gilt nicht. Weicht die Zahl
+        # der ``testcase`` von ``gelaufen`` ab, fehlt ein Test oder kam einer dazu: nicht belegt.
         try:
             wurzel = ElementTree.parse(beleg).getroot()
         except (OSError, ElementTree.ParseError):
             return False
-        gut: set[tuple[str, str]] = set()
-        schlecht: set[tuple[str, str]] = set()
-        for fall in wurzel.iter("testcase"):
-            kennung = (fall.get("classname", ""), fall.get("name", ""))
+        faelle = list(wurzel.iter("testcase"))
+        if gelaufen is not None and len(faelle) != gelaufen:
+            return False
+        gut: set[tuple[str, str, str]] = set()
+        schlecht: set[tuple[str, str, str]] = set()
+        for fall in faelle:
+            datei = fall.get("file", "").replace("\\", "/")
+            kennung = (datei, fall.get("classname", ""), fall.get("name", ""))
             rot = any(kind.tag in ("failure", "error", "skipped") for kind in fall)
             (schlecht if rot else gut).add(kennung)
         return all(_junit_kennung(name) in gut - schlecht for name in namen)

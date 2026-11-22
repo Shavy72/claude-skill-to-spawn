@@ -58,9 +58,11 @@ class Namentlich(Protocol):
         """``befehl`` so erweitert, dass der Lauf sein Ergebnis je Test nach ``beleg`` schreibt."""
         ...
 
-    def alle_bestanden(self, beleg: Path, namen: set[str]) -> bool:
+    def alle_bestanden(self, beleg: Path, namen: set[str], gelaufen: int | None = None) -> bool:
         """Steht jeder Test aus ``namen`` (Kennung wie aus ``rote``) im Beleg als bestanden?
 
+        ``gelaufen``: Zahl der Tests im ersten vollen Lauf; stehen im Beleg anders viele, ist
+        nichts belegt (Abwahl, Ausgleich). ``None`` = unbekannt, dann zählen nur die Namen.
         Fehlt der Beleg, ist er unlesbar oder fehlt ein Name darin: ``False`` (fail-closed).
         """
         ...
@@ -120,7 +122,7 @@ def nochmal(adapter: object, repo: Path, befehl: list[str], erst: ausfuehren.Lau
         # (#149 Fix 1). Zahlen ließen sich durch einen anderen Test ausgleichen und hingen an der
         # Schlusszeile des ersten Laufs.
         belegt = voll.code == 0 and (
-            adapter.alle_bestanden(beleg, erst_rot)
+            adapter.alle_bestanden(beleg, erst_rot, adapter.gelaufen(erst.ausgabe) if zaehlt else None)
             if namentlich
             else _voll_belegt(adapter, erst.ausgabe, len(erst_rot), voll.ausgabe)
         )
