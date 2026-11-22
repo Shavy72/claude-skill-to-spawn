@@ -218,3 +218,59 @@ Anlass: Zwischenstand 22:16 — der Bau läuft über viele sich ablösende Sessi
 **Ausdrücklich nicht gewollt (L5)**
 
 - **N11** kein Wissen, das nur in einem Chat, im Kopf einer Session oder auf einer einzigen Maschine liegt
+
+---
+
+## L6 — Zwei Werkzeugkästen statt „Windows reparieren“ (David, 2026-11-22)
+
+### Wortlaut (1:1)
+
+> eine sache noch zum system ausbau, mich stört etwas das das was unter Windows noch ncith sauber funktioniert das dass als reparatur angesehen wird das halte ich vom Wording her falsch, es ist doch klar das wenn man dem Windows das gewand von linux anzieht das da was nicht richtig läuft und reparieren heist für ich das man was an dem schon funktionierenden linux Zeug irgendwas ändert.. es ist doch schlauer wenn man für beides ein Werkzeugkasten jeweils hat den die jewiels dort arbeitende KI nehmen kann je nachdem auf welchem system sie arbietet und es läuft autoatmsich sauber und getrennt be beiden systemen das mit dem reparieren implziert für mich das wir uns ewig im kreis drehen würden weil wir was reaprieren für Windows und damit Linux wieder was kaputt machen oder anders gessgt wir den heiligen Gral dazwischen suchen was unnötig kompliziert ist anstatt einfach auf zwei getrennten äasten zu bauen, wo beide eifach das haben was bei beidem funktioniert und das jeweils nur haben was bei sich funktioniert also wenn linux der Nagel ist dann greift die KI zum Hammer und bleibt beim Hammer und wenn Windows die schraube ist dann greift die KI zum schraubendreher und bleibt dabei und wenn siech was tasucht erkennt das die KI jeweils und nutzt autoamtisch das werkeuzeug für die andere umgebung jeweils das würde ich gern so hand haben so wäre es am schlausten und wir doktorn nicht unnötig rum
+
+Auf die Rückfrage, ob gemeint ist „ein gemeinsamer Kern (Ablauf, Regeln, Blocker-Logik), je System ein
+eigener Werkzeugkasten (Fenster öffnen, Prozesse starten, geplante Aufgaben, Pfade), der Skill erkennt
+das System selbst; ein Windows-Fehler wird im Windows-Kasten gelöst, nie durch Verbiegen des Linux-Wegs“:
+
+> ja genau so linux ist ja schon weit oder? das müsste man ja nicht viel umbauen da das ja an sich schon passt oder?
+
+Anlass: Die Arbeit an der Windows-Seite lief bis dahin unter „fix(windows)“ und änderte dabei teils
+Dateien, die beide Systeme nutzen.
+
+### Verdichtung in prüfbare Anforderungen (L6)
+
+- **A29 Gemeinsamer Kern:** Ablauf, Regeln und Blocker-Logik gibt es genau einmal. Der Kern fragt
+  nie selbst, auf welchem System er läuft.
+- **A30 Je System ein Werkzeugkasten:** Alles, was vom System abhängt (Fenster öffnen, Prozesse
+  starten und finden, geplante Aufgaben, Pfade, Zeilenenden, Ausgabe-Kodierung), liegt in einem
+  Kasten für Linux und einem für Windows hinter derselben schmalen Tür.
+- **A31 Automatische Wahl:** Der Skill erkennt das System selbst und nimmt den passenden Kasten.
+  Wechselt die Umgebung, wechselt das Werkzeug mit – ohne Einstellung von Hand.
+- **A32 Getrennt gebaut:** Arbeit für Windows ändert keine Datei des Linux-Kastens und umgekehrt.
+  Ein Prüf-Skript macht den Bau rot, wenn eine System-Abfrage außerhalb der Kästen steht oder ein
+  Paket beide Kästen zugleich anfasst.
+- **A33 Wording:** Fehlt unter Windows etwas, heißt die Arbeit „Windows-Werkzeug bauen“, nicht
+  „reparieren“ oder „Fix“. „Reparieren“ ist nur, was vorher auf demselben System schon lief.
+- **A34 Erst zählen, dann umbauen:** Vor dem Umbau steht eine Bestandsaufnahme mit Zahlen (unten).
+  Davids Erwartung „Linux muss kaum umgebaut werden“ wird damit belegt oder widerlegt, nicht angenommen.
+
+**Ausdrücklich nicht gewollt (L6)**
+
+- **N12** kein Windows-Paket, das den funktionierenden Linux-Weg verändert („im Kreis reparieren“)
+- **N13** keine Suche nach dem einen Code, der auf beiden Systemen gleich läuft, wo zwei einfache
+  getrennte Wege reichen
+- **N14** keine zwei komplett getrennten Skill-Fassungen – der Kern bleibt einer
+
+### Bestandsaufnahme (Stand main 79d2fad, gezählt 2026-11-22, grob per Textsuche)
+
+- Direkte System-Abfragen (`sys.platform`, `os.name`, `platform.system()`) außerhalb der Tests:
+  **50 Stellen in 25 Dateien**. Die meisten in `to_spawn/hausmeister.py` (6), `startklar.py` (5),
+  `umzug.py` (4), `hausmeister_aufgabe.py` (4), je 3 in `waechter_takt.py`, `starter.py`,
+  `spawn.py`, `config.py`. Die Weichen liegen also heute verstreut, nicht hinter einer Tür.
+- Ansätze für Kästen gibt es schon: `to_spawn/hausmeister_windows.py`, `to_spawn/prozessbaum.py`.
+- Tests: 63 Test-Dateien enthalten eine System-Abfrage oder ein `skipif`.
+- Was die bisherigen Windows-Pakete außerhalb von Tests geändert haben:
+  233 → `hausmeister_windows.py`, `prozessbaum.py` · 240 → nur Tests · 256 → `konsole.py`,
+  `sperre.py`, `uebergabe_sichern.py` (gemeinsam) · 265 → `pruef/regeln.py` (gemeinsam, 1 Zeile) ·
+  255 (offen) → `aufpasser.py` (gemeinsam, läuft auf Linux im Cron) und `prozessbaum.py`.
+- Noch nicht gemessen: wie viele der 50 Stellen den Linux-Weg beim Herausziehen wirklich berühren.
+  Gebaut wird erst nach der Probe und nach Davids Wort.
