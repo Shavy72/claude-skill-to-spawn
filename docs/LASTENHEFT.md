@@ -253,6 +253,18 @@ Dateien, die beide Systeme nutzen.
 - **A34 Erst zählen, dann umbauen:** Vor dem Umbau steht eine Bestandsaufnahme mit Zahlen (unten).
   Davids Erwartung „Linux muss kaum umgebaut werden“ wird damit belegt oder widerlegt, nicht angenommen.
 
+- **A35 Trennungs-Kontrolle (bedingt):** Zum Vorschlag „Prüf-Skript in der Skill-Suite: Wortsuche außerhalb
+  der zwei System-Kästen nach System-Abfragen und nach Werkzeugen, die es nur auf einem System gibt
+  (`tmux`, `crontab`, `powershell`, `schtasks`, `wt.exe` …); Treffer = rot mit Datei und Zeile; kurze
+  Ausnahme-Liste“ sagte David (2026-11-22):
+
+  > okay wenn uns das eher nützt als hindert dann mit rein
+
+  Das ist ein bedingtes Ja. Die Wortliste kommt aus der Bestandsaufnahme; nach dem Bau werden
+  Fehlalarme gezählt. Hindert die Kontrolle mehr als sie nützt (viele Fehlalarme, lange
+  Ausnahme-Liste), wird sie wieder ausgebaut. Sie gilt nur für Arbeit am Skill selbst, nicht für
+  Spec-Bauten, die den Skill nur benutzen.
+
 **Ausdrücklich nicht gewollt (L6)**
 
 - **N12** kein Windows-Paket, das den funktionierenden Linux-Weg verändert („im Kreis reparieren“)
