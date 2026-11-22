@@ -240,3 +240,14 @@ def test_rot_beweis_ohne_r1_wird_bekannter_fall_uebersehen(
     monkeypatch.setattr(regeln, "nach_auswahl", lambda n, pfade, adapter, doku=(): nach(n, pfade, adapter, pfade))
     r1_faelle = [f for f in _alle() if f[1] in {"P09", "P11", "P18", "N05"}]
     assert _uebersehen(probe, r1_faelle) != []
+
+
+def test_regeln_stand_unabhaengig_von_zeilenende(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    lf = tmp_path / "lf.py"
+    crlf = tmp_path / "crlf.py"
+    lf.write_bytes(b"a = 1\nb = 2\n")
+    crlf.write_bytes(b"a = 1\r\nb = 2\r\n")
+    monkeypatch.setattr(regeln, "__file__", str(lf))
+    stand_lf = regeln.stand()
+    monkeypatch.setattr(regeln, "__file__", str(crlf))
+    assert regeln.stand() == stand_lf
