@@ -358,7 +358,8 @@ class _ProzessInfo(ctypes.Structure):
 
 @functools.cache
 def _win32() -> tuple[Any, Any]:
-    """(kernel32, ntdll) mit Signaturen — eigene Instanzen, ``ctypes.windll`` bleibt unberührt.
+    """(kernel32 mit ``use_last_error``, ntdll) mit Signaturen — eigene Instanzen,
+    ``ctypes.windll`` bleibt unberührt.
 
     Nur 64-Bit-Python: ``_ProzessInfo`` und die Zeiger-Felder sind für x64 geprüft; ein
     32-Bit-Python (unter WOW64) bekäme ohne diese Prüfung still falsche Listen.
@@ -368,11 +369,13 @@ def _win32() -> tuple[Any, Any]:
             "Windows-Prozessliste braucht 64-Bit-Python "
             f"(dieses Python hat {ctypes.sizeof(ctypes.c_void_p) * 8}-Bit-Zeiger)"
         )
-    kernel = ctypes.WinDLL("kernel32")  # type: ignore[attr-defined]
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
     nt = ctypes.WinDLL("ntdll")  # type: ignore[attr-defined]
     zeiger, ulong = ctypes.c_void_p, ctypes.c_ulong
     kernel.OpenProcess.argtypes, kernel.OpenProcess.restype = [ulong, ctypes.c_int, ulong], zeiger
     kernel.CloseHandle.argtypes = [zeiger]
+    kernel.GetExitCodeProcess.argtypes = [zeiger, ctypes.POINTER(ulong)]
+    kernel.ReadProcessMemory.argtypes = [zeiger, zeiger, zeiger, ctypes.c_size_t, ctypes.POINTER(ctypes.c_size_t)]
     nt.NtQuerySystemInformation.argtypes = [ulong, zeiger, ulong, ctypes.POINTER(ulong)]
     nt.NtQuerySystemInformation.restype = ulong
     nt.NtQueryInformationProcess.argtypes = [zeiger, ulong, zeiger, ulong, ctypes.POINTER(ulong)]
@@ -447,19 +450,6 @@ _PEB_PROCESS_PARAMETERS = 0x20
 _PARAMS_CURRENT_DIRECTORY = 0x38
 
 
-@functools.cache
-def _kernel_mit_fehlercode() -> Any:
-    """kernel32 mit ``use_last_error`` (für ``ctypes.get_last_error``) und den cwd-Signaturen."""
-    _win32()  # 64-Bit-Prüfung
-    zeiger, ulong = ctypes.c_void_p, ctypes.c_ulong
-    kernel = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
-    kernel.OpenProcess.argtypes, kernel.OpenProcess.restype = [ulong, ctypes.c_int, ulong], zeiger
-    kernel.CloseHandle.argtypes = [zeiger]
-    kernel.GetExitCodeProcess.argtypes = [zeiger, ctypes.POINTER(ulong)]
-    kernel.ReadProcessMemory.argtypes = [zeiger, zeiger, zeiger, ctypes.c_size_t, ctypes.POINTER(ctypes.c_size_t)]
-    return kernel
-
-
 def _arbeitsordner_windows(pid: int) -> str | None:
     """Win32-cwd von ``pid``; ``None`` = nicht zu prüfen (weg, beendet, fremd/geschützt —
     wie ``PermissionError`` unter ``/proc``); ``OSError`` = läuft, ist offen, liefert aber nichts.
@@ -468,7 +458,7 @@ def _arbeitsordner_windows(pid: int) -> str | None:
     Start; Upgrade: ``ProcessWow64Information`` + PEB32 lesen. Die Umbenennungs-Probe
     deckt native 32-Bit-Prozesse ab.
     """
-    kernel, nt = _kernel_mit_fehlercode(), _win32()[1]
+    kernel, nt = _win32()
     ctypes.set_last_error(0)
     griff = kernel.OpenProcess(_PROCESS_QUERY_INFORMATION | _PROCESS_VM_READ, False, pid)
     if not griff:
@@ -499,7 +489,10 @@ def _arbeitsordner_windows(pid: int) -> str | None:
         bytes_lang, puffer_adresse = int.from_bytes(kopf[:2], "little"), int.from_bytes(kopf[8:], "little")
         if not bytes_lang or not puffer_adresse:
             raise OSError(f"Prozess {pid}: leere cwd im PEB")
-        return lesen(puffer_adresse, bytes_lang).decode("utf-16-le")
+        try:
+            return lesen(puffer_adresse, bytes_lang).decode("utf-16-le")
+        except UnicodeDecodeError as fehler:  # kaputte cwd = nicht lesbar, nie Abbruch
+            raise OSError(f"Prozess {pid}: cwd nicht als UTF-16 lesbar ({fehler})") from None
     finally:
         kernel.CloseHandle(griff)
 

@@ -49,8 +49,36 @@ class Bleibt(Exception):
 
 
 def pfad_norm(pfad: str | Path) -> str:
-    """Vergleichsform für Windows-Pfade: ``/`` statt Backslash, klein, ohne Schluss-``/``."""
-    return str(pfad).replace("\\", "/").rstrip("/").lower()
+    """Text-Vergleichsform für Windows-Pfade: ``/`` statt Backslash, klein, ohne
+    ``\\\\?\\``-Vorsatz und Schluss-``/``. Löst nichts auf (siehe :func:`pfad_echt`)."""
+    text = str(pfad).replace("\\", "/")
+    if text.startswith("//?/"):
+        text = text[4:]
+        if text[:4].lower() == "unc/":
+            text = "//" + text[4:]
+    return text.rstrip("/").lower()
+
+
+def pfad_echt(pfad: str | Path) -> tuple[str, bool]:
+    """Kanonische Vergleichsform: ``realpath`` (lange statt 8.3-Namen, Junctions/Symlinks
+    aufgelöst), dann :func:`pfad_norm`. Zweiter Wert ``False`` = nicht ganz auflösbar
+    (Pfad weg, Fehler); dann steht hier die Teil-Auflösung (existierender Anfang aufgelöst)
+    bzw. die Text-Form — der Aufrufer darf daraus nie „frei“ folgern, wenn sie trifft."""
+    try:
+        return pfad_norm(os.path.realpath(pfad, strict=True)), True
+    except (OSError, ValueError):
+        pass
+    try:
+        return pfad_norm(os.path.realpath(pfad)), False
+    except (OSError, ValueError):
+        return pfad_norm(pfad), False
+
+
+def _liegt_in(pfad: str, ordner: str) -> bool:
+    """``pfad`` ist ``ordner`` oder liegt darin (beide :func:`pfad_norm`-Form), Vergleich
+    je Pfad-Teil: ``wt-12`` trifft nicht ``wt-123``."""
+    teile = ordner.split("/")
+    return pfad.split("/")[: len(teile)] == teile
 
 
 def kein_prozess(ordner: Path) -> None:
@@ -73,25 +101,43 @@ def kein_prozess(ordner: Path) -> None:
         ):
             raise Bleibt(f"Prozess {pid} arbeitet im Ordner oder hat Dateien offen")
     if sys.platform == "win32":  # PEB gibt es nur auf echtem Windows (Tests simulieren win32)
-        _kein_arbeitsordner_drin(o)
+        _kein_arbeitsordner_drin(ordner)
 
 
-def _kein_arbeitsordner_drin(o: str) -> None:
-    """:class:`Bleibt`, wenn die cwd eines Prozesses ``o`` (Vergleichsform) ist oder darin
-    liegt; cwd eines laufenden, lesbaren Prozesses unbekannt ⇒ bleibt mit Fehler (wie
-    ``/proc``-Lesefehler unter Linux)."""
+def _kein_arbeitsordner_drin(ordner: Path) -> None:
+    """:class:`Bleibt`, wenn die cwd eines Prozesses ``ordner`` ist oder darin liegt.
+
+    Beide Seiten gehen durch :func:`pfad_echt`: der Prozess setzt seine cwd in beliebiger
+    Form (8.3-Kurzpfad, über Junction/Symlink, ``\\\\?\\``), der Ordner kommt kanonisch.
+    Im Zweifel bleibt der Ordner: cwd eines laufenden, öffnbaren Prozesses unlesbar ⇒ bleibt
+    mit Fehler; cwd lesbar, aber nicht ganz auflösbar ⇒ bleibt mit Fehler, sobald ihre
+    Text-Form oder ihre Teil-Auflösung auf den Ordner (kanonisch oder wie übergeben) zeigt.
+    Nicht auflösbare cwds woanders halten nichts, sonst blockierte jeder Systemprozess mit
+    verschwundener cwd jeden Lauf. Prozesse, die sich nicht öffnen lassen (fremd, erhöht),
+    fehlen schon in :func:`to_spawn.prozessbaum.arbeitsordner_windows`."""
     try:
-        ordner = prozessbaum.arbeitsordner_windows()
+        cwds = prozessbaum.arbeitsordner_windows()
     except OSError as fehler:
         raise Bleibt(f"Prozessliste nicht lesbar ({fehler})", fehler=True) from None
-    for pid, cwd in ordner.items():
+    o, _ = pfad_echt(ordner)
+    ziele = {o, pfad_norm(ordner)}
+    echt: dict[str, tuple[str, bool]] = {}  # viele Prozesse teilen dieselbe cwd
+    for pid, cwd in cwds.items():
         if pid == os.getpid():
             continue  # dieser Lauf selbst
         if cwd is None:
             raise Bleibt(f"Prozess {pid}: Arbeitsordner nicht lesbar", fehler=True)
-        c = pfad_norm(cwd)
-        if c == o or c.startswith(o + "/"):
-            raise Bleibt(f"Prozess {pid} arbeitet im Ordner oder hat Dateien offen")
+        if cwd not in echt:
+            echt[cwd] = pfad_echt(cwd)
+        c, ganz = echt[cwd]
+        if ganz:
+            if _liegt_in(c, o):
+                raise Bleibt(f"Prozess {pid} arbeitet im Ordner oder hat Dateien offen")
+        elif any(_liegt_in(k, z) for k in (c, pfad_norm(cwd)) for z in ziele):
+            raise Bleibt(
+                f"Prozess {pid}: Arbeitsordner nicht auflösbar, zeigt evtl. in den Ordner",
+                fehler=True,
+            )
 
 
 def _prozesse() -> list[tuple[int | None, str | None, str | None]]:
