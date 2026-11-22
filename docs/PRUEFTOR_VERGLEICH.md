@@ -200,6 +200,36 @@ fällt (Quote siehe Abschnitt 5).
 Siehe 3.3; Annahmen des Simulators (Rüstzeit gemessen 73 s, Bremse als Faktor, Vorprüfung 120 s mit
 zufälliger Fangquote) in [SIM] „Annahmen“.
 
+### 4.5 „Nur Doku“ fürs Skill-Repo selbst (`pruefen.doku_pfade`, Stand main `9c7cda9`)
+
+Ergebnis: **keine sichere und zugleich nützliche Doku-Abkürzung** — das Skill-Repo bekommt vorerst
+keinen Eintrag `pruefen.doku_pfade`, es wird weiter voll geprüft.
+
+Messung (M12: die Abkürzung darf nichts übersehen, was der volle Lauf findet):
+
+| Dateigruppe | gelesen von Test | Grund | eintragbar |
+|---|---|---|---|
+| alle `*.md` außerhalb `tests/` (README, SKILL.md, `docs/**`, `kette/**` …) | ja | `test_staging_schalter_563` liest jede `.md` im Repo; `test_aufseher_428` alle Textdateien außer `docs/verify-hard/`, `docs/PLAN_*.md`; Probe: README verfälscht → `test_aufseher_428` rot | nein |
+| `LICENSE` (ohne Endung) | ja | `test_aufseher_428` liest auch Dateien ohne Endung | nein |
+| `docs/verify-hard/**/*.txt` (120 Dateien) | nein | kein Test nennt sie, kein Verzeichnis-Durchlauf erfasst sie; Mutation „Zeile anhängen“ und „leeren“, je alle 120 auf einmal: volle Suite grün (2712 passed, 66 skipped, 18 xfailed) | ja, aber siehe unten |
+| `leitstand/seite.html`, `.gitignore` | — | keine Doku-Endung, wäre nie Abkürzung | nein |
+
+Warum die 120 `.txt`-Belege trotzdem nicht eingetragen sind:
+
+1. **Kein Nutzen mit genauen Pfaden.** Belegdateien entstehen je Ticket neu und werden danach nicht mehr
+   geändert. Eine Liste genauer Pfade trifft nur alte Belege, nie den nächsten neuen — die Abkürzung
+   würde praktisch nie greifen. Ein Muster wie `docs/verify-hard/*.txt` wäre nützlich, aber `*` läuft bei
+   `fnmatch` auch über `/` (gleiches Problem wie Issue #238 bei den Laufdateien); vor einem Stern-Muster
+   gehört #238 gelöst.
+2. **Die Konfig bricht einen Wachtest.** Eine getrackte `.to-spawn/config.json` macht
+   `test_feste_namen_l1::test_jeder_code_ordner_wird_gescannt` rot (`.to-spawn` ist ein Ordner mit
+   `.json`-Datei, der weder gescannt noch ausgenommen ist). Eintragen hieße, einen bestehenden Test zu
+   ändern.
+
+Mechanik geprüft (Wegwerf-Kopie, Basis mit den 120 Pfaden): Commit ändert nur einen Beleg →
+`pruefen` antwortet „grün“, Stufe `doku` „nur Doku“, unter 1 s. Commit ändert die Konfig selbst →
+keine Abkürzung (voller Lauf startet). Zum Vergleich: volle Suite `-n 4` 459 s (Last 7,5).
+
 ## 5. Lücken — was nicht gemessen ist
 
 - **Windows:** keine Messung, nur PyPI-/npm-Metadaten [PROBE]. Offen: Pfadtrenner in R1-Globs, git.exe
