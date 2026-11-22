@@ -222,6 +222,28 @@ WRAPPER_NAMEN = ("sh", "bash", "dash", "zsh", "env")
 #: Kommandozeilen, die nie die Session sind (Launcher, Hook selbst).
 NIE_SESSION = ("bau.py", "staffel_stop.py")
 _WINDOWS = sys.platform == "win32"
+#: Endungen, die unter Windows nicht zum Programmnamen gehören (``ssh.exe``, ``claude.cmd``).
+_WINDOWS_ENDUNGEN = (".exe", ".cmd", ".bat")
+
+
+def programm_name(arg: str, *, windows: bool = _WINDOWS) -> str:
+    """Programmname aus ``argv[0]`` (oder einem Befehlswort) — einzige Stelle dafür.
+
+    Jeder Vergleich gegen einen festen Namen (``ssh``, ``bash``, ``claude``, ``pytest`` …)
+    geht hierüber, damit er unter Windows genauso greift wie unter Linux.
+    Linux: Basisname, sonst nichts (``/usr/bin/ssh`` → ``ssh``; Groß/Klein und Endungen
+    bleiben). Windows: Anführung weg, Basisname nach Windows-Regeln (``\\`` und ``/``),
+    klein geschrieben, ``.exe``/``.cmd``/``.bat`` ab — ``C:\\Windows\\System32\\OpenSSH\\ssh.exe``,
+    ``SSH.EXE`` und ``ssh`` heißen alle ``ssh``. ``windows`` wählt die Form; Standard ist
+    das laufende System.
+    """
+    if not windows:
+        return Path(arg).name
+    name = PureWindowsPath(arg.strip('"')).name.lower()
+    for endung in _WINDOWS_ENDUNGEN:
+        if name.endswith(endung):
+            return name[: -len(endung)]
+    return name
 
 
 def ohne_fenster() -> dict[str, Any]:
@@ -246,7 +268,7 @@ def ist_wrapper_zeile(zeile: str) -> bool:
     teile = zeile.split()
     if teile and teile[0].isdigit():
         teile = teile[1:]
-    return len(teile) >= 2 and Path(teile[0]).name in WRAPPER_NAMEN and teile[1].startswith("-") and "c" in teile[1]
+    return len(teile) >= 2 and programm_name(teile[0]) in WRAPPER_NAMEN and teile[1].startswith("-") and "c" in teile[1]
 
 
 def ist_session_zeile(zeile: str, *, windows: bool = _WINDOWS) -> bool:
@@ -256,7 +278,7 @@ def ist_session_zeile(zeile: str, *, windows: bool = _WINDOWS) -> bool:
     Hooks ist ``/bin/sh -c <hook-befehl>``, und dieser Befehl kann „claude" im
     Pfad tragen (``~/.claude/…``). Getroffen wird nur ein Programm, das
     ``claude`` heißt oder im Paket ``claude-code`` liegt. Unter Windows zählen
-    Anführungszeichen und die Endung ``.exe`` nicht zum Namen. ``windows`` wählt
+    Anführungszeichen und Endungen nicht zum Namen (:func:`programm_name`). ``windows`` wählt
     die Zeilenform; Standard ist das laufende System, Windows-Prozesslisten
     (``_prozesse_windows``) übergeben ``True`` unabhängig davon.
     """
@@ -266,9 +288,7 @@ def ist_session_zeile(zeile: str, *, windows: bool = _WINDOWS) -> bool:
     if any(marke in zeile for marke in NIE_SESSION):
         return False
     pfad_art = PureWindowsPath if windows else Path
-    programm = pfad_art(teile[0]).name
-    if windows and programm.lower().endswith(".exe"):
-        programm = programm[:-4]
+    programm = programm_name(teile[0], windows=windows)
     if programm in WRAPPER_NAMEN and "-c" in teile[1:3]:
         return False
     for teil in teile:

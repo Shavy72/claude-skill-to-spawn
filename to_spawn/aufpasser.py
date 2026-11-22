@@ -492,9 +492,17 @@ def pane_hash(text: str) -> str:
     return hashlib.sha1(ohne_statuszeile(text).encode("utf-8", "replace")).hexdigest()
 
 
+#: Programmname aus ``argv[0]`` bzw. einem Befehlswort, plattformfest
+#: (:func:`prozessbaum.programm_name`: unter Windows ``ssh.exe``/``SSH.EXE`` mit Pfad = ``ssh``).
+#: Alle Namensvergleiche im Aufpasser gehen hierüber: ``session_id_aus_argv`` und
+#: ``session_finden`` (``claude``), ``deploy_art`` (``ssh`` der Live-Tür, ``pytest``),
+#: ``kette_folge`` und ``session_beendet`` (:data:`SHELLS`). Linux unverändert.
+_programm = prozessbaum.programm_name
+
+
 def session_id_aus_argv(argv: list[str]) -> str | None:
     """``--session-id <id>`` oder ``--resume <id>`` aus einem ``claude``-Aufruf."""
-    if not any(Path(a).name == "claude" for a in argv):
+    if not any(_programm(a) == "claude" for a in argv):
         return None
     for i, a in enumerate(argv):
         if a in ("--session-id", "--resume") and i + 1 < len(argv):
@@ -564,7 +572,7 @@ def deploy_art(
     if not argv:
         return None
     liste = VORGABE_SKRIPTE if skripte is None else skripte
-    if Path(argv[0]).name == "ssh":
+    if _programm(argv[0]) == "ssh":
         for s in liste:
             if s["fern"] and s["name"] in argv[-1]:
                 return s["art"]
@@ -582,7 +590,9 @@ def deploy_art(
     # Programmname ist der letzte Teil nach ``/`` oder ``\`` (Windows-Pfad), ``-mpytest`` zählt mit.
     for teil in re.split(r"[\s;&|()'\"]+", kopf):
         name = re.split(r"[/\\]", teil.removeprefix("-m"))[-1]
-        if re.fullmatch(GATE_MUSTER, name.removesuffix(".exe")):
+        # ``_programm``: unter Windows auch ``PYTEST.EXE``/``pytest.cmd``; ``.exe`` ab bleibt
+        # für Windows-Namen in Linux-Befehlszeilen (so schon vor #251).
+        if re.fullmatch(GATE_MUSTER, _programm(name).removesuffix(".exe")):
             return "pruef"
     return None
 
@@ -652,7 +662,7 @@ def kette_folge(pane_pid: int, ticket: int) -> list[int]:
     funde: list[int] = []
     for pid in _baum_lesen(pane_pid):
         argv = _argv(pid)
-        if argv and Path(argv[0]).name.lstrip("-") in SHELLS:
+        if argv and _programm(argv[0]).lstrip("-") in SHELLS:
             funde.extend(int(n) for n in _BAU_AUFRUF.findall(" ".join(argv)))
     funde = list(dict.fromkeys(funde))
     if ticket in funde:
@@ -677,7 +687,7 @@ def session_beendet(pane_pid: int) -> bool:
         argv = _argv(pid)
         if not argv:
             continue
-        if Path(argv[0]).name.lstrip("-") not in SHELLS:
+        if _programm(argv[0]).lstrip("-") not in SHELLS:
             return False
     return True
 
@@ -759,7 +769,7 @@ def session_finden(
     """
     for pid in prozess_baum(pane_pid):
         argv = _argv(pid)
-        if not any(Path(a).name == "claude" for a in argv):
+        if not any(_programm(a) == "claude" for a in argv):
             continue
         argv_sid = session_id_aus_argv(argv)
         info = _session_json_lesen(pid, window_id, pane_id, heim)

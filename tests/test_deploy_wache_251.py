@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import shutil
 import signal
 import subprocess
 import sys
@@ -26,7 +27,7 @@ from pathlib import Path
 import pytest
 
 from to_spawn import prozessbaum
-from to_spawn.aufpasser import Aufpasser, Einstellungen
+from to_spawn.aufpasser import Aufpasser, Einstellungen, deploy_art
 
 REPO = Path(__file__).resolve().parents[1]
 WINDOWS = sys.platform == "win32"
@@ -166,3 +167,111 @@ def test_abfrage_scheitert_lauf_bricht_ab(
     assert _wache(tmp_path, muster, trocken=True).lauf() == 1
     assert "Lauf abgebrochen, nichts angefasst: Deploy-Wache:" in caplog.text
     assert "nicht nutzbar" in caplog.text
+
+
+# --- Fix-Runde 1: Programmname plattformfest (Live-Tür per ``ssh.exe``) ---------------
+
+
+def _ssh_programm() -> Path | None:
+    r"""Das ``ssh`` der Live-Tür: unter Windows das System-OpenSSH (``…\OpenSSH\ssh.exe``,
+    dessen Kinder hängen sauber im Prozessbaum), unter Linux ``ssh`` aus ``PATH``."""
+    if WINDOWS:
+        pfad = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "OpenSSH" / "ssh.exe"
+        return pfad if pfad.is_file() else None
+    gefunden = shutil.which("ssh")
+    return Path(gefunden) if gefunden else None
+
+
+@pytest.fixture
+def live_tuer_prozess(tmp_path: Path) -> Iterator[tuple[subprocess.Popen[bytes], str]]:
+    """Echter ``ssh``-Prozess mit der Befehlszeile der Live-Tür, ganz ohne Netz.
+
+    ``ProxyCommand`` ist ein Python-Skript, das nur schläft: ssh öffnet keinen Socket,
+    löst keinen Namen auf (``beispiel-host`` ist ein Platzhalter) und wartet auf das
+    Begrüßungsbanner, das nie kommt. ``-F none`` hält fremde ssh-Konfig fern.
+    """
+    ssh = _ssh_programm()
+    if ssh is None:
+        pytest.skip("kein ssh-Programm auf diesem Rechner")
+    marke = _marke()
+    schlaf_marke = _marke()  # eigene Marke: das Proxy-Kind darf nie selbst als Treffer zählen
+    schlaf = tmp_path / f"{schlaf_marke}.py"
+    schlaf.write_text("import time\ntime.sleep(120)\n", encoding="utf-8")
+    proxy = f'"{Path(sys.executable).as_posix()}" "{schlaf.as_posix()}"'
+    prozess = subprocess.Popen(
+        [
+            str(ssh), "-F", "none", "-o", "BatchMode=yes", "-o", "ConnectTimeout=20",
+            "-o", f"ProxyCommand={proxy}", "beispiel-host",
+            f"bash /opt/beispiel/scripts/server_tuer.sh live {marke}",
+        ],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        yield prozess, marke
+    finally:
+        _beenden(prozess)
+        for pid, _ in prozessbaum.passende(re.escape(schlaf_marke)):
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except OSError:
+                pass
+
+
+def test_live_tuer_per_echtem_ssh_programm_sperrt(tmp_path: Path, live_tuer_prozess) -> None:
+    r"""Rot auf 2b496da unter Windows: ``…\OpenSSH\ssh.exe`` hieß nicht ``ssh``, die
+    Wache meldete „frei“, obwohl die Live-Tür lief."""
+    prozess, marke = live_tuer_prozess
+    muster = re.escape(marke)
+    treffer = _bis_sichtbar(prozess.pid, muster)
+    assert prozess.pid in dict(treffer), treffer
+    argv = prozessbaum.argv(prozess.pid)
+    if WINDOWS:
+        assert argv[0].lower().endswith("ssh.exe"), argv
+    assert "server_tuer.sh" not in " ".join(argv[:3])  # nur der ssh-Zweig kann ihn finden
+    assert deploy_art(argv) == "live", argv
+    laeuft = _wache(tmp_path, muster).deploy_laeuft(muster)
+    assert any(kopf.startswith(argv[0]) for kopf in laeuft), laeuft
+
+
+@pytest.mark.parametrize(
+    ("roh", "erwartet"),
+    [
+        (r"C:\Windows\System32\OpenSSH\ssh.exe", "ssh"),
+        ("SSH.EXE", "ssh"),
+        (r"C:\Program Files\Git\usr\bin\ssh.EXE", "ssh"),
+        (r'"C:\Program Files\Git\bin\bash.exe"', "bash"),
+        ("C:/tools/Python313/python.exe", "python"),
+        (r"C:\npm\claude.cmd", "claude"),
+        ("Pytest.BAT", "pytest"),
+        ("ssh", "ssh"),
+        ("ssh.exe.bak", "ssh.exe.bak"),
+    ],
+)
+def test_programm_name_unter_windows(roh: str, erwartet: str) -> None:
+    assert prozessbaum.programm_name(roh, windows=True) == erwartet
+
+
+@pytest.mark.parametrize(
+    ("roh", "erwartet"),
+    [
+        ("/usr/bin/ssh", "ssh"),
+        ("ssh", "ssh"),
+        ("-bash", "-bash"),
+        ("SSH", "SSH"),  # Linux bleibt genau: Groß/Klein zählt, Endungen bleiben
+        ("/opt/x/ssh.exe", "ssh.exe"),
+    ],
+)
+def test_programm_name_unter_linux_unveraendert(roh: str, erwartet: str) -> None:
+    assert prozessbaum.programm_name(roh, windows=False) == erwartet
+
+
+@pytest.mark.skipif(not WINDOWS, reason="Windows-Pfade zerlegt nur Windows so; Linux deckt test_programm_name_unter_linux_unveraendert")
+def test_alle_namensvergleiche_im_aufpasser_kennen_windows_namen() -> None:
+    from to_spawn import aufpasser
+
+    tuer = [r"C:\Windows\System32\OpenSSH\SSH.EXE", "-o", "BatchMode=yes", "h", "bash /x/server_tuer.sh live"]
+    assert deploy_art(tuer) == "live"
+    assert deploy_art([r"C:\venv\Scripts\PYTEST.EXE", "-q"]) == "pruef"
+    assert aufpasser.session_id_aus_argv([r"C:\npm\claude.cmd", "--resume", "abc"]) == "abc"
