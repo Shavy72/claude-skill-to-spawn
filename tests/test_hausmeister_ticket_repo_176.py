@@ -215,6 +215,21 @@ def test_c_gleiche_nummer_offen_bleibt_auch_gemergt_und_alt(welt: Welt, repos: R
     assert wt.is_dir()
 
 
+def test_c_zweig_fragt_ticket_repo_seines_repos(welt: Welt, repos: Repos) -> None:
+    """Remote-Zweig: Ticket-Zustand kommt aus dem Ticket-Repo des Zweig-Repos (SKILL offen),
+    nicht aus dem gleichnamigen, uralt geschlossenen App-Ticket."""
+    repos.repo(SKILL)
+    repos.maschine([(APP, APP), (SKILL, SKILL)])
+    repos.worktree(SKILL, 223)
+    repos.ticket(SKILL, 223, "OPEN")
+    repos.ticket(APP, 223, "CLOSED", 24 * 400)
+
+    r = hausmeister.zweig_aufraeumen(f"https://github.com/{SKILL}", "ticket/223-test", loeschen=True)
+
+    assert r.art == "bleibt", r.grund
+    assert "#223" in r.grund and "offen" in r.grund, r.grund
+
+
 # --- (d) laufender Prozess ⇒ bleibt ------------------------------------------------
 
 
