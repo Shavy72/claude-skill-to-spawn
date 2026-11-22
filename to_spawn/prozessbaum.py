@@ -26,7 +26,7 @@ import sys
 import time
 from collections.abc import Callable, Iterator, Sequence
 from pathlib import Path, PureWindowsPath
-from typing import Any
+from typing import Any, NamedTuple
 
 log = logging.getLogger(__name__)
 
@@ -358,7 +358,8 @@ class _ProzessInfo(ctypes.Structure):
 
 @functools.cache
 def _win32() -> tuple[Any, Any]:
-    """(kernel32, ntdll) mit Signaturen — eigene Instanzen, ``ctypes.windll`` bleibt unberührt.
+    """(kernel32 mit ``use_last_error``, ntdll) mit Signaturen — eigene Instanzen,
+    ``ctypes.windll`` bleibt unberührt.
 
     Nur 64-Bit-Python: ``_ProzessInfo`` und die Zeiger-Felder sind für x64 geprüft; ein
     32-Bit-Python (unter WOW64) bekäme ohne diese Prüfung still falsche Listen.
@@ -368,15 +369,26 @@ def _win32() -> tuple[Any, Any]:
             "Windows-Prozessliste braucht 64-Bit-Python "
             f"(dieses Python hat {ctypes.sizeof(ctypes.c_void_p) * 8}-Bit-Zeiger)"
         )
-    kernel = ctypes.WinDLL("kernel32")  # type: ignore[attr-defined]
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
     nt = ctypes.WinDLL("ntdll")  # type: ignore[attr-defined]
     zeiger, ulong = ctypes.c_void_p, ctypes.c_ulong
     kernel.OpenProcess.argtypes, kernel.OpenProcess.restype = [ulong, ctypes.c_int, ulong], zeiger
     kernel.CloseHandle.argtypes = [zeiger]
+    kernel.GetExitCodeProcess.argtypes = [zeiger, ctypes.POINTER(ulong)]
+    kernel.ReadProcessMemory.argtypes = [zeiger, zeiger, zeiger, ctypes.c_size_t, ctypes.POINTER(ctypes.c_size_t)]
     nt.NtQuerySystemInformation.argtypes = [ulong, zeiger, ulong, ctypes.POINTER(ulong)]
     nt.NtQuerySystemInformation.restype = ulong
     nt.NtQueryInformationProcess.argtypes = [zeiger, ulong, zeiger, ulong, ctypes.POINTER(ulong)]
     nt.NtQueryInformationProcess.restype = ulong
+    # Ordner-Kennung (siehe :func:`arbeitsordner_in_windows`)
+    kernel.GetCurrentProcess.argtypes, kernel.GetCurrentProcess.restype = [], zeiger
+    kernel.DuplicateHandle.argtypes = [zeiger, zeiger, zeiger, ctypes.POINTER(zeiger), ulong, ctypes.c_int, ulong]
+    kernel.CreateFileW.argtypes = [ctypes.c_wchar_p, ulong, ulong, zeiger, ulong, ulong, zeiger]
+    kernel.CreateFileW.restype = zeiger
+    kernel.GetFinalPathNameByHandleW.argtypes = [zeiger, ctypes.c_wchar_p, ulong, ulong]
+    kernel.GetFinalPathNameByHandleW.restype = ulong
+    for abfrage in (nt.NtQueryInformationFile, nt.NtQueryVolumeInformationFile):
+        abfrage.argtypes, abfrage.restype = [zeiger, zeiger, zeiger, ulong, ulong], ulong
     return kernel, nt
 
 
@@ -431,6 +443,273 @@ def _prozesse_windows() -> dict[int, tuple[int, str, int]]:
         log.warning("Windows-Prozessliste nicht lesbar: %s", fehler)
         return {}
     return {pid: (eltern, _kommandozeile_windows(pid), start) for pid, (eltern, start) in liste.items()}
+
+
+# --- Windows-Arbeitsordner (cwd) aus dem PEB ----------------------------------------------
+# Win32_Process kennt keine cwd. Sie steht im Prozess selbst: PEB → ProcessParameters →
+# CurrentDirectory (x64-Versätze aus ``winternl.h``/``RTL_USER_PROCESS_PARAMETERS``). Nötig für
+# Git-Bash-/MSYS-Prozesse: deren cwd-Griff erlaubt Umbenennen und Löschen, die
+# Umbenennungs-Probe sieht sie nicht. MSYS setzt bei ``cd`` die Win32-cwd mit (gemessen).
+_PROCESS_QUERY_INFORMATION = 0x0400
+_PROCESS_VM_READ = 0x0010
+_STILL_ACTIVE = 259
+_FEHLER_ZUGRIFF_VERWEIGERT = 5
+_FEHLER_UNGUELTIGER_PARAMETER = 87  # OpenProcess: PID gibt es nicht (mehr)
+_PEB_PROCESS_PARAMETERS = 0x20
+_PARAMS_CURRENT_DIRECTORY = 0x38
+
+
+def _arbeitsordner_windows(pid: int) -> str | None:
+    """Win32-cwd von ``pid``; ``None`` = nicht zu prüfen (weg, beendet, fremd/geschützt —
+    wie ``PermissionError`` unter ``/proc``); ``OSError`` = läuft, ist offen, liefert aber nichts.
+
+    ponytail: 32-Bit-Prozesse (WOW64) führen ihre cwd im 32-Bit-PEB, hier steht die vom
+    Start; Upgrade: ``ProcessWow64Information`` + PEB32 lesen. Die Umbenennungs-Probe
+    deckt native 32-Bit-Prozesse ab.
+    """
+    kernel, _ = _win32()
+    ctypes.set_last_error(0)
+    griff = kernel.OpenProcess(_PROCESS_QUERY_INFORMATION | _PROCESS_VM_READ, False, pid)
+    if not griff:
+        fehler = ctypes.get_last_error()
+        if fehler in (_FEHLER_ZUGRIFF_VERWEIGERT, _FEHLER_UNGUELTIGER_PARAMETER):
+            return None
+        raise OSError(fehler, f"OpenProcess({pid}) gescheitert")
+    try:
+        code = ctypes.c_ulong(0)
+        if kernel.GetExitCodeProcess(griff, ctypes.byref(code)) and code.value != _STILL_ACTIVE:
+            return None  # beendet, nur noch Griffe offen (wie Zombie unter Linux)
+        kopf = _curdir(griff, pid)
+        bytes_lang, puffer_adresse = int.from_bytes(kopf[:2], "little"), int.from_bytes(kopf[8:16], "little")
+        if not bytes_lang or not puffer_adresse:
+            raise OSError(f"Prozess {pid}: leere cwd im PEB")
+        try:
+            return _speicher(griff, pid, puffer_adresse, bytes_lang).decode("utf-16-le")
+        except UnicodeDecodeError as fehler:  # kaputte cwd = nicht lesbar, nie Abbruch
+            raise OSError(f"Prozess {pid}: cwd nicht als UTF-16 lesbar ({fehler})") from None
+    finally:
+        kernel.CloseHandle(griff)
+
+
+def _speicher(prozess: int, pid: int, adresse: int, anzahl: int) -> bytes:
+    """``anzahl`` Bytes ab ``adresse`` aus dem Speicher von ``prozess``; unvollständig = ``OSError``."""
+    kernel, _ = _win32()
+    puffer = ctypes.create_string_buffer(anzahl)
+    gelesen = ctypes.c_size_t(0)
+    ok = kernel.ReadProcessMemory(prozess, adresse, puffer, anzahl, ctypes.byref(gelesen))
+    if not ok or gelesen.value != anzahl:
+        raise OSError(ctypes.get_last_error(), f"ReadProcessMemory({pid}) gescheitert")
+    return puffer.raw
+
+
+def _curdir(prozess: int, pid: int) -> bytes:
+    """``CURDIR`` aus dem PEB (x64): Bytes 0–15 ``UNICODE_STRING DosPath``, 16–23 ``Handle``."""
+    _, nt = _win32()
+    basis = (ctypes.c_void_p * 6)()  # PROCESS_BASIC_INFORMATION, [1] = PebBaseAddress
+    laenge = ctypes.c_ulong(0)
+    status = nt.NtQueryInformationProcess(prozess, 0, basis, ctypes.sizeof(basis), ctypes.byref(laenge))
+    if status or not basis[1]:
+        raise OSError(f"NtQueryInformationProcess({pid}): Status 0x{status:08X}")
+    parameter = int.from_bytes(_speicher(prozess, pid, basis[1] + _PEB_PROCESS_PARAMETERS, 8), "little")
+    return _speicher(prozess, pid, parameter + _PARAMS_CURRENT_DIRECTORY, 24)
+
+
+# --- Ordner-Identität statt Pfad-Text (PR 233, Fix-Runde 2) ---------------------------------
+# Der cwd-TEXT im PEB sagt nur, wie der Prozess seine cwd einmal genannt hat. Wird die Junction,
+# über die er hineinkam, danach entfernt oder umgebogen, oder heißt die cwd ``\\localhost\C$\…``,
+# zeigt der Text woandershin als der Ordner, in dem der Prozess steht. Der Griff daneben im PEB
+# (``CURDIR.Handle``) hält den echten Ordner offen: duplizieren, Kennung (Volume-Seriennummer +
+# Datei-Index) lesen, mit dem Ziel vergleichen. Die Kennung ist über die Loopback-Freigabe
+# dieselbe wie lokal (gemessen). Für „darunter“ liefert der Griff den echten End-Pfad; dessen
+# Eltern werden geöffnet und ebenfalls per Kennung verglichen, nie per Text.
+_PROCESS_DUP_HANDLE = 0x0040
+_DUPLICATE_SAME_ACCESS = 0x2
+_FILE_SHARE_ALLE = 0x7
+_OPEN_EXISTING = 3
+_FILE_FLAG_BACKUP_SEMANTICS = 0x02000000  # nötig, um Ordner zu öffnen
+_UNGUELTIGER_GRIFF = ctypes.c_void_p(-1).value
+_FILE_FS_VOLUME_INFORMATION = 1
+_FILE_STANDARD_INFORMATION = 5
+_FILE_INTERNAL_INFORMATION = 6
+_STATUS_BUFFER_OVERFLOW = 0x80000005  # Volume-Name passt nicht — fester Teil ist gefüllt
+
+
+class ArbeitsordnerBefund(NamedTuple):
+    """Ein Prozess in :func:`arbeitsordner_in_windows`."""
+
+    text: str | None  #: cwd wie im PEB; ``None`` = unlesbar
+    drin: bool | None  #: cwd ist der Ordner oder liegt darin (Identität); ``None`` = nicht feststellbar
+    grund: str = ""  #: bei ``None``: warum
+
+
+def _kennung(griff: int) -> tuple[int, int]:
+    """(Volume-Seriennummer, Datei-Index) eines offenen Ordner-Griffs; kein Ordner, kein
+    Datei-Griff oder Fehler = ``OSError``. Braucht keine Zugriffsrechte am Griff (der
+    cwd-Griff hat nur ``FILE_TRAVERSE``)."""
+    _, nt = _win32()
+    io = (ctypes.c_byte * 16)()  # IO_STATUS_BLOCK
+    puffer = ctypes.create_string_buffer(512)
+    status = nt.NtQueryVolumeInformationFile(griff, io, puffer, 512, _FILE_FS_VOLUME_INFORMATION)
+    if status and status != _STATUS_BUFFER_OVERFLOW:
+        raise OSError(f"NtQueryVolumeInformationFile: Status 0x{status:08X}")
+    serie = int.from_bytes(puffer.raw[8:12], "little")  # nach VolumeCreationTime
+    standard = ctypes.create_string_buffer(24)
+    status = nt.NtQueryInformationFile(griff, io, standard, 24, _FILE_STANDARD_INFORMATION)
+    if status:
+        raise OSError(f"NtQueryInformationFile(Standard): Status 0x{status:08X}")
+    if not standard.raw[21]:  # FILE_STANDARD_INFORMATION.Directory
+        raise OSError("Griff zeigt auf keinen Ordner")
+    index = ctypes.create_string_buffer(8)
+    status = nt.NtQueryInformationFile(griff, io, index, 8, _FILE_INTERNAL_INFORMATION)
+    if status:
+        raise OSError(f"NtQueryInformationFile(Index): Status 0x{status:08X}")
+    return serie, int.from_bytes(index.raw, "little")
+
+
+def _endpfad(griff: int) -> str:
+    r"""Echter End-Pfad des Ordners hinter ``griff`` (``GetFinalPathNameByHandleW``: lange
+    Namen, Junctions aufgelöst, wo der Ordner JETZT liegt), mit ``\\?\``-Vorsatz; ``OSError``."""
+    kernel, _ = _win32()
+    puffer = ctypes.create_unicode_buffer(1024)
+    laenge = kernel.GetFinalPathNameByHandleW(griff, puffer, 1024, 0)
+    if laenge >= 1024:
+        puffer = ctypes.create_unicode_buffer(laenge + 1)
+        laenge = kernel.GetFinalPathNameByHandleW(griff, puffer, laenge + 1, 0)
+    if not laenge or laenge >= len(puffer):
+        raise OSError(ctypes.get_last_error(), "GetFinalPathNameByHandleW gescheitert")
+    return puffer.value
+
+
+def _pfad_teile(endpfad: str) -> tuple[list[str], int]:
+    r"""End-Pfad je Teil und Zahl der Wurzel-Teile: ``\\?\C:\…``/``\\?\Volume{…}\…`` = 4
+    (lokal), ``\\?\UNC\srv\frei\…`` = 6 (Netz); andere Form = ``OSError``."""
+    teile = endpfad.split("\\")
+    if teile and not teile[-1]:
+        teile.pop()  # Wurzel endet auf ``\``
+    if teile[:3] != ["", "", "?"] or len(teile) < 4:
+        raise OSError(f"unbekannte End-Pfad-Form: {endpfad}")
+    wurzel = 6 if teile[3].upper() == "UNC" else 4
+    if len(teile) < wurzel:
+        raise OSError(f"unbekannte End-Pfad-Form: {endpfad}")
+    return teile, wurzel
+
+
+def _ordner_von(pfad: str) -> tuple[tuple[int, int], str]:
+    """(Kennung, End-Pfad) des Ordners hinter ``pfad`` — per Griff, Junctions folgt Windows
+    beim Öffnen; nicht zu öffnen = ``OSError``."""
+    kernel, _ = _win32()
+    griff = kernel.CreateFileW(pfad, 0, _FILE_SHARE_ALLE, None, _OPEN_EXISTING, _FILE_FLAG_BACKUP_SEMANTICS, None)
+    if not griff or griff == _UNGUELTIGER_GRIFF:
+        raise OSError(ctypes.get_last_error(), f"Ordner nicht zu öffnen: {pfad}")
+    try:
+        return _kennung(griff), _endpfad(griff)
+    finally:
+        kernel.CloseHandle(griff)
+
+
+def _liegt_darin(griff: int, ziel: tuple[tuple[int, int], str], kennungen: dict[str, tuple[int, int]]) -> bool:
+    r"""Ist der Ordner hinter ``griff`` das Ziel (Kennung, End-Pfad aus :func:`_ordner_von`) oder
+    liegt er darin? Gleiche Kennung ⇒ ja. Beide End-Pfade lokal ⇒ je Pfad-Teil, Groß/Klein egal
+    (End-Pfade sind kanonisch; so muss kein Eltern-Ordner geöffnet werden — ``WindowsApps``
+    etwa verweigert das). Sonst (Netz-Form, z. B. ``\\localhost\C$``: gleicher Ordner, anderer
+    Text) werden die echten Eltern geöffnet und per Kennung verglichen. ``kennungen`` =
+    Zwischenspeicher Eltern-Pfad → Kennung; Fehler = ``OSError``."""
+    if _kennung(griff) == ziel[0]:
+        return True
+    teile, wurzel = _pfad_teile(_endpfad(griff))
+    ziel_teile, ziel_wurzel = _pfad_teile(ziel[1])
+    if wurzel == ziel_wurzel == 4:
+        return [t.casefold() for t in teile[: len(ziel_teile)]] == [t.casefold() for t in ziel_teile]
+    for n in range(len(teile) - 1, wurzel - 1, -1):
+        pfad = "\\".join(teile[:n]) + ("\\" if n == wurzel else "")  # Wurzel braucht den Schluss-``\``
+        if pfad not in kennungen:
+            kennungen[pfad] = _ordner_von(pfad)[0]
+        if kennungen[pfad] == ziel[0]:
+            return True
+    return False
+
+
+def _arbeitsordner_griff_windows(pid: int) -> int | None:
+    """Eigene Kopie des cwd-Griffs von ``pid`` (Aufrufer schließt); ``None`` = Prozess weg oder
+    beendet; ``OSError`` = läuft, Griff aber nicht zu übernehmen (fehlt, Rechte, cwd wechselte
+    während des Lesens)."""
+    kernel, _ = _win32()
+    ctypes.set_last_error(0)
+    prozess = kernel.OpenProcess(_PROCESS_QUERY_INFORMATION | _PROCESS_VM_READ | _PROCESS_DUP_HANDLE, False, pid)
+    if not prozess:
+        fehler = ctypes.get_last_error()
+        if fehler == _FEHLER_UNGUELTIGER_PARAMETER:
+            return None
+        raise OSError(fehler, f"OpenProcess({pid}) zum Übernehmen des cwd-Griffs gescheitert")
+    try:
+        code = ctypes.c_ulong(0)
+        if kernel.GetExitCodeProcess(prozess, ctypes.byref(code)) and code.value != _STILL_ACTIVE:
+            return None
+
+        vorher = _curdir(prozess, pid)
+        fremd = int.from_bytes(vorher[16:24], "little")
+        if not fremd:
+            raise OSError(f"Prozess {pid}: kein cwd-Griff im PEB")
+        kopie = ctypes.c_void_p()
+        if not kernel.DuplicateHandle(
+            prozess, fremd, kernel.GetCurrentProcess(), ctypes.byref(kopie), 0, False, _DUPLICATE_SAME_ACCESS
+        ):
+            raise OSError(ctypes.get_last_error(), f"DuplicateHandle({pid}) gescheitert")
+        if _curdir(prozess, pid) != vorher:  # cwd wechselte: der Griff-Wert kann schon einem anderen gehören
+            kernel.CloseHandle(kopie)
+            raise OSError(f"Prozess {pid}: cwd wechselte während der Prüfung")
+        return kopie.value
+    finally:
+        kernel.CloseHandle(prozess)
+
+
+def _arbeitsordner_drin(pid: int, ziel: tuple[tuple[int, int], str], kennungen: dict[str, tuple[int, int]]) -> bool | None:
+    """Liegt die echte cwd von ``pid`` im Ziel (siehe :func:`_liegt_darin`)? ``None`` = Prozess
+    weg; ``OSError`` = nicht feststellbar. Der übernommene Griff wird immer geschlossen."""
+    kernel, _ = _win32()
+    griff = _arbeitsordner_griff_windows(pid)
+    if griff is None:
+        return None
+    try:
+        return _liegt_darin(griff, ziel, kennungen)
+    finally:
+        kernel.CloseHandle(griff)
+
+
+def arbeitsordner_in_windows(ordner: str | Path) -> dict[int, ArbeitsordnerBefund]:
+    """Steht ein Prozess in ``ordner``? PID → :class:`ArbeitsordnerBefund` aller prüfbaren
+    Prozesse. ``drin`` kommt aus der Identität des Ordners, in dem der Prozess wirklich steht
+    (cwd-Griff aus dem PEB), nicht aus dem Pfad-Text — Junction danach entfernt oder umgebogen,
+    ``\\\\localhost\\C$\\…``, 8.3, ``subst`` ändern daran nichts. ``text`` bleibt für Aufrufer,
+    die zusätzlich per Text sperren wollen.
+
+    Nicht prüfbar (Prozess fremd/geschützt: ``OpenProcess`` verweigert, siehe
+    :func:`_arbeitsordner_windows`) fehlen wie bisher. Jeder andere Fehler eines laufenden
+    Prozesses ⇒ ``drin=None`` mit Grund (Aufrufer entscheidet fail-closed). ``ordner`` nicht
+    zu öffnen oder Momentaufnahme unlesbar = ``OSError``."""
+    ziel = _ordner_von(str(ordner))
+    kennungen: dict[str, tuple[int, int]] = {}
+    ergebnis: dict[int, ArbeitsordnerBefund] = {}
+    for pid in _momentaufnahme_windows():
+        if pid in (0, 4):  # Leerlauf- und System-Prozess: kein Benutzer-PEB
+            continue
+        try:
+            text = _arbeitsordner_windows(pid)
+        except OSError as fehler:
+            log.debug("cwd von Prozess %s unlesbar: %s", pid, fehler)
+            ergebnis[pid] = ArbeitsordnerBefund(None, None, f"cwd unlesbar: {fehler}")
+            continue
+        if text is None:
+            continue  # nicht prüfbar (Grenze aus #243) oder schon beendet
+        try:
+            drin = _arbeitsordner_drin(pid, ziel, kennungen)
+        except OSError as fehler:
+            log.debug("cwd-Ordner von Prozess %s nicht feststellbar: %s", pid, fehler)
+            ergebnis[pid] = ArbeitsordnerBefund(text, None, f"Ordner-Identität nicht lesbar: {fehler}")
+            continue
+        if drin is not None:
+            ergebnis[pid] = ArbeitsordnerBefund(text, drin)
+    return ergebnis
 
 
 def _vorfahren_windows(pid: int) -> Iterator[tuple[int, str]]:
