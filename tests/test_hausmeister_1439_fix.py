@@ -56,20 +56,16 @@ def test_nachschieben_zwischen_pruefung_und_loeschen_zweig_und_commit_bleiben(
     """Befund 1: ein paralleler Lauf holt den nachgeschobenen Stand in den Zwischenspeicher —
     gelöscht werden darf trotzdem nur der geprüfte Stand."""
     wt = zw.worktree(60)
-    git(
-        wt, "push", "-q", "origin", "HEAD:master"
-    )  # alles auf master ⇒ keine Sicherung nötig
+    git(wt, "push", "-q", "origin", "HEAD:master")  # alles auf master ⇒ keine Sicherung nötig
     zw.ticket(60, "CLOSED", vor_stunden=48)
     echt = hausmeister._ticket_daten
     neu: list[str] = []
 
-    def dazwischen(nr: int) -> object:
-        daten = echt(nr)
+    def dazwischen(nr: int, slug: str | None = None) -> object:
+        daten = echt(nr, slug)
         neu.append(_commit(wt, "nachgeschoben.txt", "neu\n"))
         git(wt, "push", "-q", "origin", "ticket/60-test")
-        hausmeister._zweig_holen(
-            hausmeister._zweig_ort(ORIGIN, "remote")
-        )  # paralleler Lauf
+        hausmeister._zweig_holen(hausmeister._zweig_ort(ORIGIN, "remote"))  # paralleler Lauf
         return daten
 
     monkeypatch.setattr(hausmeister, "_ticket_daten", dazwischen)
@@ -98,9 +94,7 @@ def test_loeschen_scheitert_log_zeigt_absicht_statt_geloescht(zw: Welt) -> None:
     assert hausmeister.liste_fuer_david(zw.log) == []
 
 
-def test_worktree_loeschen_warnt_bei_bleibendem_zweig_fuer_david(
-    zw: Welt, caplog: pytest.LogCaptureFixture
-) -> None:
+def test_worktree_loeschen_warnt_bei_bleibendem_zweig_fuer_david(zw: Welt, caplog: pytest.LogCaptureFixture) -> None:
     """Befund 3: ``_loeschen`` verwirft das Zweig-Ergebnis nicht still."""
     wt = zw.heim / "wt" / "wt-ohne"
     git(zw.haupt, "worktree", "add", "-q", "-b", "ticket/ohne-nummer", str(wt))
@@ -123,9 +117,7 @@ def test_probelauf_schreibt_kein_hausmeister_log(zw: Welt, tmp_path: Path) -> No
     assert hausmeister.liste_fuer_david(zw.log) == []
 
 
-def test_taeglicher_lauf_holt_je_repo_und_remote_einmal(
-    zw: Welt, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_taeglicher_lauf_holt_je_repo_und_remote_einmal(zw: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
     """Befund 5: drei Remote-Zweige, ein Hauptrepo ⇒ genau zwei Fetches (kein N+1)."""
     for nr in (63, 64, 65):
         wt = zw.worktree(nr)
@@ -142,9 +134,7 @@ def test_taeglicher_lauf_holt_je_repo_und_remote_einmal(
     monkeypatch.setattr(hausmeister.aufpasser, "git_lauf", zaehlen)
     erg = hausmeister.zweige_aufraeumen(loeschen=False, jetzt=zw.jetzt)
     geprueft = [e for e in erg if e.zweig.startswith("ticket/6")]
-    assert len(geprueft) == 6 and all(
-        e.art == "bleibt" and not e.fehler for e in geprueft
-    )
+    assert len(geprueft) == 6 and all(e.art == "bleibt" and not e.fehler for e in geprueft)
     assert len(fetches) == 2, fetches
     fetches.clear()
     hausmeister.zweig_aufraeumen(ORIGIN, "ticket/63-test")  # Tür einzeln holt selbst
@@ -160,6 +150,4 @@ def test_liste_fuer_david_zweig_mit_url_unverstuemmelt(zw: Welt) -> None:
     }
     zw.log.parent.mkdir(parents=True, exist_ok=True)
     zw.log.write_text(json.dumps(zeile) + "\n", encoding="utf-8")
-    assert hausmeister.liste_fuer_david(zw.log) == [
-        "https://github.com/x/y ticket/ohne-nummer"
-    ]
+    assert hausmeister.liste_fuer_david(zw.log) == ["https://github.com/x/y ticket/ohne-nummer"]
