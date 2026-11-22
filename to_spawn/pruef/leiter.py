@@ -111,7 +111,7 @@ def _pruefe(repo: Path, adapter: Adapter, basis: str, pfade: list[str] | None) -
         regeln.risiko_pfade(repo),
         protokoll.letztes_urteil(repo),
         doku=doku,
-        offen=sofort.geaendert(repo, "HEAD"),
+        offen=sofort.ungespeichert(repo),
     )
     if grund:
         return _voll(repo, adapter, grund)

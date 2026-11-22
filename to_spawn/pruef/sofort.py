@@ -36,7 +36,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
 from to_spawn import config
-from to_spawn.pruef import ausfuehren, leiter
+from to_spawn.pruef import ausfuehren, cache, leiter
 
 log = logging.getLogger("to_spawn.pruef")
 
@@ -113,14 +113,84 @@ def _git(repo: Path, *args: str) -> tuple[int, str]:
 
 
 def geaendert(repo: Path, basis: str) -> list[str] | None:
-    """Geänderte Pfade (``/``, relativ zum Repo) von ``basis`` bis Arbeitsbaum; ``None`` = unklar."""
+    """Geänderte Pfade (``/``, relativ zum Repo) von ``basis`` bis Arbeitsbaum; ``None`` = unklar.
+
+    Neue (ungetrackte) Dateien zählen nur, wenn ``ungespeichert`` sie als schmutzig meldet —
+    Laufdateien unter ``.to-spawn/`` und Werkzeug-Ordner fallen hier wie dort heraus (#218).
+    """
     code, raus = _git(repo, "diff", "--name-only", "--no-renames", "-z", basis, "--")
     if code != 0:
         return None
     neu_code, neu = _git(repo, "ls-files", "--others", "--exclude-standard", "-z")
     if neu_code != 0:
         return None
-    return sorted({pfad for pfad in (raus + neu).split("\0") if pfad})
+    offen, kurz = _offen(repo)
+    if kurz:
+        return None
+    neue = [p for p in neu.split("\0") if any(p == o or (o.endswith("/") and p.startswith(o)) for o in offen)]
+    return sorted({pfad for pfad in [*raus.split("\0"), *neue] if pfad})
+
+
+def _git_status(repo: Path, *args: str) -> tuple[str, str]:
+    """(Ausgabe, Ursache) von ``git status --porcelain -z <args>``; Ursache ≠ "" = gescheitert."""
+    try:
+        erg = subprocess.run(
+            ["git", "status", "--porcelain", "-z", *args],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+        )
+    except OSError as fehler:
+        return "", str(fehler)
+    if erg.returncode == 0:
+        return erg.stdout, ""
+    return "", (erg.stderr.strip().splitlines() or [f"Exit {erg.returncode}"])[0]
+
+
+def ungespeichert(repo: Path) -> list[str]:
+    """Pfade, die vom ausgecheckten Commit abweichen; ``["? (git status: <Ursache>)"]`` = unklar.
+
+    Einzige Stelle für „was zählt als schmutziger Arbeitsbaum“: das Gate (``pruef.pruefen``)
+    und Regel AB (``leiter``) nutzen beide diese Funktion (#218).
+    Geprüft wird der Arbeitsbaum, das Urteil gilt aber dem SHA — beides muss gleich sein, sonst
+    gibt es Grün für einen Stand, den keiner committet hat. Ausgenommen: Laufdateien unter
+    ``.to-spawn/`` (Protokoll, Marker, Sitzungen) und ungetrackte Werkzeug-Ordner (nur als
+    Ordner-Eintrag: Caches in jeder Tiefe, ``.venv``/``venv``/``node_modules`` nur ganz oben).
+    Per ``.gitignore`` Verstecktes meldet ``git status`` nicht — das deckt ``cache.schluessel`` ab.
+    Die Konfig ``.to-spawn/config.json`` zählt immer — auch neu oder per ``.gitignore`` versteckt.
+    ``normal`` fasst neue Ordner zu ``ordner/`` zusammen.
+    """
+    offen, kurz = _offen(repo)
+    return [f"? (git status: {kurz})"] if kurz else offen
+
+
+def _offen(repo: Path) -> tuple[list[str], str]:
+    """Kern von ``ungespeichert``: (schmutzige Pfade, Ursache); Ursache ≠ "" = git gescheitert."""
+    konfig = config.KONFIG_PFAD.as_posix()
+    raus, kurz = _git_status(repo, "--untracked-files=normal", "--", ".", ":(exclude).to-spawn")
+    konfig_raus = ""
+    if not kurz:
+        konfig_raus, kurz = _git_status(repo, "--untracked-files=all", "--ignored=matching", "--", konfig)
+    if kurz:
+        log.warning("git status in %s gescheitert: %s", repo, kurz)
+        return [], kurz
+    offen: list[str] = []
+    eintraege = iter(raus.split("\0"))
+    for eintrag in eintraege:
+        if not eintrag:
+            continue
+        art, pfad = eintrag[:2], eintrag[3:]
+        if art[0] in "RC":
+            next(eintraege, None)  # -z: Quellpfad einer Umbenennung folgt als eigener Eintrag
+        if art == "??" and cache.ist_werkzeug_ordner(pfad):
+            continue
+        offen.append(pfad)
+    if konfig_raus.strip("\0"):
+        offen.append(konfig)
+    return offen, ""
 
 
 def _doku_muster(repo: Path, basis: str, pfade: list[str]) -> tuple[list[str], str]:
