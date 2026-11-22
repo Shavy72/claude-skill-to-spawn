@@ -30,10 +30,17 @@ def gh_befehl() -> list[str] | None:
     return [pfad] if pfad else None
 
 
-def lauf(args: list[str], cwd: Path | None = None, timeout: float | None = None) -> tuple[int, str]:
+def lauf(
+    args: list[str],
+    cwd: Path | None = None,
+    timeout: float | None = None,
+    *,
+    fehlertext: bool = False,
+) -> tuple[int, str]:
     """``gh <args>`` ausführen; gibt (Exit-Code, stdout) zurück.
 
     ``timeout`` in Sekunden (Standard: keins); überschritten → Exit 124, leeres stdout.
+    ``fehlertext=True``: bei Exit ≠ 0 kommt stderr statt stdout zurück (Fehlermeldung für den Nutzer).
     """
     vorspann = gh_befehl()
     if vorspann is None:
@@ -55,6 +62,8 @@ def lauf(args: list[str], cwd: Path | None = None, timeout: float | None = None)
     except OSError as fehler:
         log.warning("gh-Aufruf fehlgeschlagen: %s", fehler)
         return 127, ""
+    if fehlertext and fertig.returncode != 0:
+        return fertig.returncode, (fertig.stderr or "").strip()
     return fertig.returncode, (fertig.stdout or "").strip()
 
 

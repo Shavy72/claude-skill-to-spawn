@@ -83,7 +83,7 @@ def _paket(repo: Path) -> str:
     """Das eine Anwendungs-Paket oben im Repo (Ordner mit ``__init__.py``); "" = keins oder mehrere.
 
     ponytail: nur ein Paket (pytest-impacted kennt ein Modul); mehrere → voll statt ``--impacted-module=.``,
-    das in DuoPlus > 3 min braucht [DP].
+    das in großen Repos > 3 min braucht [DP].
     """
     treffer = [
         ordner.name
