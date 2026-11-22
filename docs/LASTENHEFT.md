@@ -286,3 +286,65 @@ Dateien, die beide Systeme nutzen.
   255 (offen) → `aufpasser.py` (gemeinsam, läuft auf Linux im Cron) und `prozessbaum.py`.
 - Noch nicht gemessen: wie viele der 50 Stellen den Linux-Weg beim Herausziehen wirklich berühren.
   Gebaut wird erst nach der Probe und nach Davids Wort.
+
+---
+
+## L7 — Ressourcen-Regeln: messen, drosseln, nie stehen bleiben (David, 2026-11-22)
+
+### Wortlaut (1:1)
+
+> … wegen dem Ram warum läuft der den voll was verbraucht den da die mieste perfomrance wir haben schon viel an dem gate rumgebastelt und viel versucht und untersucht das ist auch eins der sachen die auf jedenfall systematisiert werden sollten mit einer sauberen SOP oder einem fleblen werkzeugkasten aus verschenednen SOPS
+
+> ja es soll da gewisse standards geben je nach hardware was verfügabr ist das soll halt berücksichtigt werden und klaren regeln folgen das man immer den sweetspot anpeilt zwischen performance speed und gründlichkeit beim jeweiligen Testgate
+
+> wir brauchen klare regelungen und AUgen auf der Umgebung was die ressourcen angeht und klare regeln ab wann was gilt am besten so das es am mesiten sinn macht
+
+Zum Geräte-Logbuch:
+
+> ja dazu ein md file wo gelogt wird was pro gerät und umgebung gemessen ist etc so kann die KI das auch berücksichtigen und sich automatisch anpassen egal ob man auf größere Server skaliert oder auf ienmal auf einem schlechteren laptop arbeiten muss es wird erkannt auf welhem gerät man sich befindet und für jedes Gerät einzeln gelogt und auf dei Daten bei bedarf durch agents zurück gegriffen das müssen reichhaltige logs sein über die hardware und hardware perfomrance und last in vrerschiedenen fällen die laufen
+
+Zum dynamischen Drosseln („Tankanzeige“):
+
+> okay top genau und daher weis er immmer oder der agnt weis daddurch immer wie viele paralel sessions und kann damit auch umgehen mehr oder weniger gleiczitg laufen zu lassen ohne den bau zu sperren als dynamisch "blocken" und autoamtsich dynamsich "entblocken" laufender tickets in agents aber auch als daten zsuatz wann er welchen Code Test Gate laufen lässt zb wenn schon ein gate läuft und ein anderes Ticket in der schalnge steht schaut er erst recht wie er desen gateway optimeirt laufen lassen kann oder welches vorgefertite Gateway SOP er nutzen kann oder sollte um den Bau bestmöglich vorran zu treiben
+>
+> ich vergelihe es mit der Tank anzeige in einem auto oder reifendruck anzeiger, man drosselt die geschiendigkeit genauso das man weiter fahren kann so das man nciht crasht und stehen bleibt aber trotzdem so schnell es geht das ziel erreicht mit fokus aber das das auto weiter genutzt werden kann weil auto ist immer shneller als "zu Fuss" gehen was das equivalent wäre zu "mensch muss eingreiffen in den spec bau
+
+Anlass: Während der Probe am echten Fall lief der Arbeitsspeicher des Bau-Servers mehrfach hoch, und
+die Prüfung je Ticket dauerte rund 11 bis 21 Minuten.
+
+### Verdichtung in prüfbare Anforderungen (L7)
+
+Die Verdichtung ist eine Auslegung der Sessions. David hat den Wortlaut gesagt, die einzelnen Punkte
+aber nicht einzeln bestätigt.
+
+- **A36 Gerät erkennen und messen:** Der Skill erkennt selbst, auf welchem Gerät er läuft, und misst
+  dort Arbeitsspeicher, Kerne, Platte und die Last typischer Fälle (Prüflauf je Arbeiter-Zahl,
+  mehrere Bau-Sessions, Browser-Tests, mehrere Specs gleichzeitig).
+- **A37 Geräte-Logbuch:** Je Gerät gibt es ein eigenes, lesbares Logbuch mit Datum je Messung.
+  Agenten lesen es bei Bedarf. Ein unbekanntes Gerät wird zuerst gemessen und startet vorsichtig.
+- **A38 Feste Stufen an einem Ort:** Aus Logbuch und aktueller Last folgt nach klaren Schwellen, wie
+  viele Tickets gleichzeitig bauen, wie viele Arbeiter die Prüfung nutzt und welche Prüf-Tiefe
+  läuft. Die Schwellen stehen an genau einer Stelle im Skill, nicht je Repo von Hand.
+- **A39 Drosseln statt stehen bleiben:** Wird es eng, hält der Skill Tickets zurück; wird Luft frei,
+  lässt er sie von selbst wieder los. Der Bau wird dabei nie gesperrt und braucht keinen Menschen.
+- **A40 Prüfung passt sich an:** Läuft schon eine Prüfung und ein weiteres Ticket steht an, wählt
+  der Skill die passende vorgefertigte Prüf-Anleitung (Arbeiter-Zahl, Tiefe, Reihenfolge oder
+  Bündelung). Baut auf L3 auf.
+- **A41 Rangfolge:** Erstens bleibt der Bau nie stehen und stürzt nicht ab. Zweitens ist er
+  innerhalb dessen so schnell wie möglich.
+- **A42 Erst messen:** Vor jedem Regel-Entwurf stehen Zahlen: Speicher- und Zeit-Spitze eines
+  Prüflaufs je Arbeiter-Zahl, Dauer je Ticket gegen Zahl gleichzeitiger Sessions, Speicher je
+  Bau-Session mit und ohne Browser-Helfer.
+
+**Ausdrücklich nicht gewollt (L7)**
+
+- **N15** kein Stillstand und kein Absturz, weil niemand auf die Ressourcen geschaut hat
+- **N16** keine Handregel je Repo oder je Session für Parallel-Zahl und Prüf-Tiefe
+- **N17** keine Geräte-Logbücher im öffentlichen Skill-Repo (sie bleiben lokal oder privat)
+
+**Offen (nicht entschieden)**
+
+- Wie verträgt sich das Zurückhalten bereits laufender Sessions mit ihrem Kontext (anhalten und
+  fortsetzen gegen „nur keine neuen starten“)? Mindestens zwei Varianten vergleichen.
+- Technik des Logbuchs: Roh-Messwerte maschinenlesbar und die lesbare Datei daraus erzeugt?
+- Ob es eine feste Grenze für gleichzeitig bauende Tickets je Spec geben soll, war nur besprochen.
