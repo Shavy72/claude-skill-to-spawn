@@ -655,34 +655,21 @@ def _beispiel_ticket(ordner: Path, spec: int) -> str:
 def _gh_issue_text(ordner: Path, nummer: str) -> str:
     """Issue-Text per ``gh`` (Naht für Tests: ``issue_leser``).
 
-    Den Aufruf-Vorspann liefert die eine ``gh``-Tür (:func:`gh.gh_befehl`) — sie findet
-    unter Windows auch ``gh.cmd``/``gh.bat`` über PATHEXT. ``gh`` fehlt → ``FileNotFoundError``.
+    Läuft über die eine ``gh``-Tür (:func:`gh.lauf`) — sie findet unter Windows auch
+    ``gh.cmd``/``gh.bat`` über PATHEXT. ``gh`` fehlt → ``FileNotFoundError``; Exit ≠ 0 →
+    ``RuntimeError`` mit dem Fehlertext von ``gh``.
     """
-    vorspann = gh.gh_befehl()
-    if vorspann is None:
+    if gh.gh_befehl() is None:
         raise FileNotFoundError("gh")
-    ergebnis = subprocess.run(
-        [
-            *vorspann,
-            "issue",
-            "view",
-            nummer,
-            "--json",
-            "title,body",
-            "-q",
-            '.title + "\\n" + .body',
-        ],
-        cwd=str(ordner),
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
+    code, ausgabe = gh.lauf(
+        ["issue", "view", nummer, "--json", "title,body", "-q", '.title + "\\n" + .body'],
+        cwd=ordner,
         timeout=GH_TIMEOUT_S,
-        check=False,
+        fehlertext=True,
     )
-    if ergebnis.returncode != 0:
-        raise RuntimeError(ergebnis.stderr or f"Exit {ergebnis.returncode}")
-    return ergebnis.stdout
+    if code != 0:
+        raise RuntimeError(ausgabe or f"Exit {code}")
+    return ausgabe
 
 
 @dataclass(frozen=True)
