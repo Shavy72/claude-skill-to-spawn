@@ -122,6 +122,9 @@ KEIN_START = frozenset(
         ("skripte/hooks/staffel_stop.py", "ticket_offen"),  # gh
         ("to_spawn/aufpasser.py", "Aufpasser.sh"),  # Lese-Befehle (tmux list/capture); start=True → Tür
         ("to_spawn/aufseher_stand.py", "_tmux_echt"),  # tmux lesen
+        # bash-Tür (#186): einzige subprocess-Stelle für bash; Aufrufer startklar._standard_laeufer
+        # (Hook-/Trockenlauf-Probe, Ausgabe gelesen) und stand._lauf (Stand-Check/Push), keine Session
+        ("to_spawn/bash_wahl.py", "lauf"),  # bash Probe-/Prüf-/Push-Befehle, wartet, keine Session
         ("to_spawn/capo.py", "vps_kopf"),  # ssh lesen
         ("to_spawn/capo.py", "_staging_zeilen"),  # ssh lesen
         ("to_spawn/capo.py", "tmux_fenster"),  # tmux list-windows
@@ -134,7 +137,6 @@ KEIN_START = frozenset(
         ("to_spawn/probesitz.py", "laeufer_standard"),  # Kind-Prozess ohne Terminal, Ausgabe gelesen
         ("to_spawn/staging_schalter.py", "schalte_an"),  # Repo-Skript
         ("to_spawn/stand.py", "_lauf"),  # Lese-Befehle
-        ("to_spawn/startklar.py", "_standard_laeufer"),  # Prüfbefehle
         ("to_spawn/startklar.py", "_laeuft"),  # Python-Probe
         ("to_spawn/startklar.py", "_ausfuehren"),  # Prüfbefehle
         ("to_spawn/startklar.py", "_fehlende_pakete"),  # Python-Probe

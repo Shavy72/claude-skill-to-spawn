@@ -29,8 +29,11 @@ def zeile(
     gesamt_s: float,
     wackler: list[dict[str, str]] | None = None,
     cache_treffer: bool = False,
+    auswahl: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """Felder nach PRUEFTOR_VERGLEICH 6.2; Auswahl folgt in 3b-2a.
+    """Felder nach PRUEFTOR_VERGLEICH 6.2.
+
+    ``auswahl`` = je Adapter {adapter, n, gesamt, sicher, grund}; ``None`` = keine Test-Stufe lief.
 
     ``cache_treffer`` = Stand war schon grün geprüft, Stufe 0 (``cache``) hat nichts laufen lassen.
 
@@ -44,13 +47,29 @@ def zeile(
         "ziel": ziel,
         "urteil": "wackler" if exit_code == 0 and wackler else URTEIL[exit_code],
         "stufen": stufen,
-        "auswahl": None,
+        "auswahl": auswahl,
         "cache_treffer": cache_treffer,
         "fehler_kurz": fehler_kurz,
         "wackler": wackler,
         "gesamt_s": round(gesamt_s, 2),
         "werkzeug": werkzeug,
     }
+
+
+def letztes_urteil(repo: Path) -> str:
+    """Urteil der letzten Protokoll-Zeile ohne Cache-Treffer; ``""`` = keine oder unlesbar."""
+    try:
+        zeilen = (repo / ORDNER / DATEI).read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return ""
+    for roh in reversed(zeilen):
+        try:
+            daten = json.loads(roh)
+        except ValueError:
+            continue
+        if isinstance(daten, dict) and not daten.get("cache_treffer"):
+            return str(daten.get("urteil", ""))
+    return ""
 
 
 def text(daten: dict[str, Any]) -> str:

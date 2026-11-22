@@ -75,6 +75,27 @@ def _python(repo: Path) -> str:
     return sys.executable
 
 
+#: Ordner, die nie das Anwendungs-Paket sind.
+_KEIN_PAKET = frozenset({"tests", "test", "docs", "build", "dist", "venv", "node_modules"})
+
+
+def _paket(repo: Path) -> str:
+    """Das eine Anwendungs-Paket oben im Repo (Ordner mit ``__init__.py``); "" = keins oder mehrere.
+
+    ponytail: nur ein Paket (pytest-impacted kennt ein Modul); mehrere → voll statt ``--impacted-module=.``,
+    das in DuoPlus > 3 min braucht [DP].
+    """
+    treffer = [
+        ordner.name
+        for ordner in repo.iterdir()
+        if ordner.is_dir()
+        and not ordner.name.startswith(".")
+        and ordner.name not in _KEIN_PAKET
+        and (ordner / "__init__.py").is_file()
+    ]
+    return treffer[0] if len(treffer) == 1 else ""
+
+
 class PythonAdapter:
     name = "py"
 
@@ -109,9 +130,7 @@ class PythonAdapter:
         anzahl = ausfuehren.worker()
         parallel = (
             ["-n", str(anzahl), "--dist", "worksteal"]
-            if anzahl > 1
-            and _will_xdist(repo)
-            and ausfuehren.lauf([python, "-c", "import xdist"], repo).code == 0
+            if anzahl > 1 and _will_xdist(repo) and ausfuehren.lauf([python, "-c", "import xdist"], repo).code == 0
             else []
         )
         return Plan(
@@ -130,6 +149,48 @@ class PythonAdapter:
             ],
             fehler="",
         )
+
+    def auswahl(self, repo: Path, basis: str) -> Plan:
+        # pytest-impacted: git-Diff ``basis``..Stand + statischer Import-Graph (PRUEFTOR_VERGLEICH A).
+        plan = self.voll(repo)
+        if plan.fehler:
+            return plan
+        python = plan.befehl[0]
+        probe = ausfuehren.lauf(
+            [python, "-c", "import importlib.metadata as m; print(m.version('pytest-impacted'))"], repo
+        )
+        if probe.code != 0:
+            return Plan(werkzeug=plan.werkzeug, befehl=[], fehler="pytest-impacted fehlt")
+        paket = _paket(repo)
+        if not paket:
+            return Plan(werkzeug=plan.werkzeug, befehl=[], fehler="kein eindeutiges Paket für den Import-Graph")
+        tests = ["--impacted-tests-dir=tests"] if (repo / "tests").is_dir() else []
+        return Plan(
+            werkzeug=f"{plan.werkzeug}+impacted@{probe.ausgabe.strip() or '?'}",
+            befehl=[
+                *plan.befehl,
+                "--impacted",
+                f"--impacted-module={paket}",
+                "--impacted-git-mode=branch",
+                f"--impacted-base-branch={basis}",
+                "--impacted-no-merge-base",
+                *tests,
+            ],
+            fehler="",
+        )
+
+    def zaehle(self, code: int, ausgabe: str) -> tuple[int | None, int | None]:
+        # Exit 5 = nichts gewählt; sonst ``[N/N]`` plus ``deselected`` aus der Schlusszeile.
+        if code == 5:
+            return 0, None
+        n = self.gelaufen(ausgabe)
+        schluss = _SCHLUSS.findall(ausgabe)
+        abgewaehlt = re.search(r"(\d+) deselected", schluss[-1]) if schluss else None
+        if n is None and abgewaehlt and not re.search(r"passed|failed|error|skipped|xfailed|xpassed", schluss[-1]):
+            n = 0  # alles abgewählt: pytest-impacted endet mit Exit 0 und „N deselected“
+        if n is None:
+            return None, None
+        return n, n + (int(abgewaehlt.group(1)) if abgewaehlt else 0)
 
     def deute(self, code: int) -> int:
         # pytest: 0 grün, 1 Tests rot, 2 abgebrochen/Sammelfehler (Import-Fehler im Code = rot),
@@ -150,10 +211,7 @@ class PythonAdapter:
         # Zweiter voller Lauf mit frischem ``cache_dir``: ``--lf``/``--sw`` aus ``addopts`` sehen
         # weder den ersten Lauf noch die Wiederholung, also läuft wieder alles.
         cache = tempfile.mkdtemp(prefix="to_spawn_pytest_cache_")
-        return [
-            f"{_CACHE_PREFIX}{cache}" if teil.startswith(_CACHE_PREFIX) else teil
-            for teil in befehl
-        ]
+        return [f"{_CACHE_PREFIX}{cache}" if teil.startswith(_CACHE_PREFIX) else teil for teil in befehl]
 
     def rote(self, ausgabe: str) -> set[str]:
         return {treffer.strip() for treffer in _ROT_ZEILE.findall(ausgabe)}

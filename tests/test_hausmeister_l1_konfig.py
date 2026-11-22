@@ -270,7 +270,10 @@ def test_wurzel_aus_liste_nur_unter_home(
             "hausmeister": {"wurzeln": [wurzel.format(tmp=tmp_path), "~/bau/*"]},
         }
     )
-    assert hausmeister._wurzeln() == [str(heim / "bau" / "*")]
+    # gleiche Erwartung wie die übrigen Wurzel-Tests: der Text von ``expanduser``
+    # (unter Windows gemischte Trenner; Glob und ``match`` nehmen beide)
+    assert heim == Path(os.path.expanduser("~"))
+    assert hausmeister._wurzeln() == [os.path.expanduser("~/bau/*")]
 
 
 def test_vorgabe_wurzeln_bleiben_auch_in_der_liste(ohne_naehte: None) -> None:
