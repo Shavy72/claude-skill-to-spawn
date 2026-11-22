@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -29,7 +30,9 @@ def test_versteckter_ordner_nach_glob_abgelehnt(
 ) -> None:
     heim = _home(monkeypatch, tmp_path)
     _maschine({"repos": [], "hausmeister": {"wurzeln": [wurzel, "~/bau/*"]}})
-    assert hausmeister._wurzeln() == [str(heim / "bau" / "*")]
+    # Erwartung wie in test_hausmeister_l1_konfig: Vertrag ist expanduser, nicht Path-Schreibweise.
+    assert hausmeister._wurzeln() == [os.path.expanduser("~/bau/*")]
+    assert os.path.expanduser("~") == str(heim)
 
 
 def test_tausch_in_ausnahme_bei_gleicher_zahl_gemeldet() -> None:
