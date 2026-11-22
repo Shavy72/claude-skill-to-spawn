@@ -34,6 +34,18 @@ _SCHLUSS = re.compile(
     r"(?:, )?)+)(?: in [\d.]+s.*?)?\s*=*$",
     re.MULTILINE,
 )
+
+
+def _schluss(ausgabe: str) -> str | None:
+    """Die eine Schlusszeile von pytest; ``None``, wenn keine oder mehrere da sind.
+
+    Mehrere heißt: eine stammt nicht von pytest (Testausgabe, ``atexit`` nach dem Ende, #149) —
+    welche echt ist, steht nicht fest, also ist die Zählung unbelegt.
+    """
+    treffer = _SCHLUSS.findall(ausgabe)
+    return treffer[0] if len(treffer) == 1 else None
+
+
 #: ``-o cache_dir=…`` im Befehl: je Lauf, der unabhängig vom vorigen sein muss, frisch.
 _CACHE_PREFIX = "cache_dir="
 
@@ -120,6 +132,8 @@ class PythonAdapter:
         # - frischer ``cache_dir`` je Prüfung: ``--lf``/``--sw`` aus ``addopts`` wählen nie anhand
         #   eines alten Laufs Tests ab (sonst Grün trotz rotem Test); die Wiederholung erbt ihn.
         # - ``console_output_style=count`` belegt ``[k/N]``: Grundlage für ``gelaufen``.
+        # - ``--verbosity=-1`` setzt die Stufe fest (statt ``-q``, das sich mit ``-q``/``-v`` aus
+        #   ``addopts`` aufaddiert): ``-qq`` nähme die Schlusszeile weg, ``-v`` änderte den Fortschritt.
         # ``--sw`` bricht trotzdem nach dem ersten Rot ab (Exit 2 = rot, nie Wackler).
         # ponytail: Cache-Ordner bleiben im Temp-Verzeichnis liegen, Aufräumen im Leiter, wenn es stört.
         cache = tempfile.mkdtemp(prefix="to_spawn_pytest_cache_")
@@ -139,7 +153,7 @@ class PythonAdapter:
                 python,
                 "-m",
                 "pytest",
-                "-q",
+                "--verbosity=-1",
                 "--maxfail=0",
                 "-o",
                 f"cache_dir={cache}",
@@ -184,9 +198,9 @@ class PythonAdapter:
         if code == 5:
             return 0, None
         n = self.gelaufen(ausgabe)
-        schluss = _SCHLUSS.findall(ausgabe)
-        abgewaehlt = re.search(r"(\d+) deselected", schluss[-1]) if schluss else None
-        if n is None and abgewaehlt and not re.search(r"passed|failed|error|skipped|xfailed|xpassed", schluss[-1]):
+        schluss = _schluss(ausgabe)
+        abgewaehlt = re.search(r"(\d+) deselected", schluss) if schluss else None
+        if n is None and abgewaehlt and not re.search(r"passed|failed|error|skipped|xfailed|xpassed", schluss or ""):
             n = 0  # alles abgewählt: pytest-impacted endet mit Exit 0 und „N deselected“
         if n is None:
             return None, None
@@ -229,12 +243,12 @@ class PythonAdapter:
         return int(letzter.group(2))
 
     def bestanden(self, ausgabe: str) -> int | None:
-        # Zahl ``passed`` aus der letzten Schlusszeile; skip/xfail/xpass zählen nicht. Fehlt die
-        # Schlusszeile (``-p no:terminal``, Absturz), ist es unbelegt.
-        schluss = _SCHLUSS.findall(ausgabe)
-        if not schluss:
+        # Zahl ``passed`` aus der Schlusszeile; skip/xfail/xpass zählen nicht. Fehlt sie
+        # (``-p no:terminal``, Absturz) oder ist sie nicht eindeutig, ist es unbelegt.
+        schluss = _schluss(ausgabe)
+        if schluss is None:
             return None
-        treffer = re.search(r"(\d+) passed", schluss[-1])
+        treffer = re.search(r"(\d+) passed", schluss)
         return int(treffer.group(1)) if treffer else 0
 
 

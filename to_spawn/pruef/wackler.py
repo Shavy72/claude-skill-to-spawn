@@ -5,7 +5,8 @@ still grün. Zweimal rot bleibt rot. Ablauf im Rot-Fall:
 
 1. Einzel-Wiederholung nur der roten Tests (billig). Grün zählt nur, wenn genau so viele Tests
    bestanden (``passed``) wie vorher rot waren — skip/xfail/abgewählt heißt „nie grün gelaufen“.
-2. Danach ein zweiter voller Lauf. Nur ist auch er grün, gibt es Exit 0 mit Urteil „wackler“.
+2. Danach ein zweiter voller Lauf. Nur ist auch er grün — ausgezählt, nicht nur Exit 0 —, gibt
+   es Exit 0 mit Urteil „wackler“.
    Ist er wieder rot (z. B. reihenfolge-abhängiger Test, allein grün), bleibt es Rot.
 
 Die Kosten fallen nur im seltenen Rot-Fall an und stehen getrennt im Prüf-Protokoll.
@@ -96,6 +97,22 @@ def nochmal(adapter: object, repo: Path, befehl: list[str], erst: ausfuehren.Lau
     # Einzeln grün reicht nicht (reihenfolge-abhängig): erst ein zweiter voller Lauf entscheidet.
     voll = ausfuehren.lauf(adapter.voll_nochmal_befehl(befehl), repo)
     voll_s = round(voll.dauer_s, 2)
-    if voll.code != 0:
+    if voll.code != 0 or not _voll_belegt(adapter, erst.ausgabe, len(erst_rot), voll.ausgabe):
         return Wiederholung(False, (), zweit_befehl, dauer, voll_s)
     return Wiederholung(True, wackler, zweit_befehl, dauer, voll_s)
+
+
+def _voll_belegt(adapter: Zaehlbar, erst: str, rot: int, voll: str) -> bool:
+    """Ist der zweite volle Lauf ausgezählt grün, nicht nur per Exit 0 (#149)?
+
+    Gelaufen == wie im ersten Lauf, bestanden == im ersten Lauf bestanden plus die vorher roten:
+    ein Skip, eine Abwahl oder ein Ausstieg mit Exit 0 ist kein Grün. Ohne ablesbare Zählung des
+    ersten Laufs gilt nur ein Lauf, in dem jeder gelaufene Test bestand.
+    """
+    gelaufen, bestanden = adapter.gelaufen(voll), adapter.bestanden(voll)
+    if gelaufen is None or bestanden is None:
+        return False
+    vorher = adapter.bestanden(erst)
+    if vorher is None:
+        return bestanden == gelaufen
+    return gelaufen == adapter.gelaufen(erst) and bestanden == vorher + rot

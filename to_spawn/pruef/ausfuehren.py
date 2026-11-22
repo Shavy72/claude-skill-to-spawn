@@ -24,6 +24,16 @@ OHNE_RAM_WERT = 2
 #: Exit-Code, wenn der Befehl gar nicht startet (wie die Shell bei „nicht gefunden“).
 NICHT_GESTARTET = 127
 
+#: Steuer-Variablen von pytest (``PYTEST_ADDOPTS``, ``PYTEST_PLUGINS`` …) erbt kein Prüf-Lauf:
+#: geerbt wählen sie Tests ab (``-k``, ``--deselect``), sammeln nur (``--co``) oder beenden pytest
+#: per Plugin mit Exit 0 — Grün, obwohl nichts lief (#149). Was geprüft wird, bestimmt das Repo.
+_NIE_GEERBT = "PYTEST_"
+
+
+def _umgebung() -> dict[str, str]:
+    geerbt = {k: v for k, v in os.environ.items() if not k.upper().startswith(_NIE_GEERBT)}
+    return {**geerbt, **temp_ordner.umgebung()}  # #136: Temp nie auf die RAM-Platte
+
 
 @dataclass(frozen=True)
 class Lauf:
@@ -33,14 +43,17 @@ class Lauf:
 
 
 def lauf(befehl: list[str], ordner: Path) -> Lauf:
-    """Startet ``befehl`` (Liste, keine Shell) in ``ordner``; stdout und stderr zusammen."""
+    """Startet ``befehl`` (Liste, keine Shell) in ``ordner``; stdout und stderr zusammen.
+
+    Umgebung wie der Aufrufer, ohne ``PYTEST_*`` und mit dem Temp-Ordner auf der Platte.
+    """
     # ponytail: keine Zeitgrenze, ein hängender Test hängt die Tür; Upgrade in 3b-3 (Ausführen).
     start = time.monotonic()
     try:
         erg = subprocess.run(
             befehl,
             cwd=ordner,
-            env={**os.environ, **temp_ordner.umgebung()},  # #136: Temp nie auf die RAM-Platte
+            env=_umgebung(),
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
