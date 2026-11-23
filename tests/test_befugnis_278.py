@@ -54,7 +54,8 @@ def test_bau_prompt_traegt_befugnis_abschnitt(bau_prompt: str) -> None:
         "Klasse 3",
         "Sicherung",
         GRENZE,
-        ".to-spawn/entscheidung-7.json",
+        "to_spawn.py frage 7",  # P3b: Weg über den Briefkasten statt Datei-Pfad
+        "to_spawn.py antwort 7 --id <id>",
     ):
         assert teil in bau_prompt, teil
     assert "/implement" in bau_prompt and "eigene Ticket" in bau_prompt
@@ -235,11 +236,15 @@ def test_pushen_nur_auf_eigene_zweige(
 def test_klasse_3_weg_ist_vom_aufseher_gelesen(befugnis: ModuleType) -> None:
     text = befugnis.start_text("7")
     klasse_3 = text[text.index("Klasse 3") :]
-    # Der Aufseher liest heute Bau-Log ``blockiert`` und antwortet per Issue-Kommentar.
-    assert "eintrag --ticket 7 --typ blockiert" in klasse_3
-    assert "gh issue view 7 --comments" in klasse_3
-    assert "in den Briefkasten" not in klasse_3
-    assert "in dieser Datei" not in klasse_3
+    # P3b: Frage in den Briefkasten, der Aufseher antwortet dort; Bau-Log/Issue-Kommentar gelten nicht mehr.
+    assert "to_spawn.py frage 7 --frage" in klasse_3
+    assert "to_spawn.py antwort 7 --id <id>" in klasse_3
+    assert "Der Aufseher liest den Briefkasten und antwortet dort" in klasse_3
+    for code in ("Exit 0", "3 = wartet", "2 = braucht den Nutzer", "4 = Frage unbekannt"):
+        assert code in klasse_3, code
+    assert "Nur die Antwort im Briefkasten gilt" in klasse_3
+    assert "eintrag --ticket 7 --typ blockiert" not in text
+    assert "gh issue view 7 --comments" not in text
 
 
 def test_start_text_nennt_klasse_1_listen_aus_tabelle(befugnis: ModuleType) -> None:

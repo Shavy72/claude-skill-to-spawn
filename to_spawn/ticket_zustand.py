@@ -57,6 +57,8 @@ ANZEIGE: dict[Stufe, str] = {
 
 #: Felder, die :func:`lesen` von ``gh issue view`` braucht.
 _FELDER = "state,labels,stateReason"
+#: Dazu der Claim (``assignees``) für :func:`lesen` mit ``mit_claim=True`` (#282, Wiederanlauf).
+_FELDER_CLAIM = _FELDER + ",assignees"
 
 
 def fertig_gebaut(ticket: Mapping[str, Any] | None) -> bool:
@@ -107,15 +109,15 @@ def wartet_auf_live(ticket: Mapping[str, Any], *, live_freigegeben: bool) -> boo
     return _staging_fertig(ticket) and not live_freigegeben
 
 
-def lesen(ticket: int | str, cwd: Path | None = None) -> dict[str, Any] | None:
-    """Ein Ticket mit allen Feldern holen, die die Fragen brauchen.
+def lesen(ticket: int | str, cwd: Path | None = None, *, mit_claim: bool = False) -> dict[str, Any] | None:
+    """Ein Ticket mit allen Feldern holen, die die Fragen brauchen (``mit_claim``: dazu ``assignees``).
 
     ``None`` bei Fehler oder Zeitüberschreitung — der Aufrufer entscheidet dann
     vorsichtig (nichts starten, nichts wegwerfen).
     """
     from to_spawn import gh  # spät: gh fragt seinerseits diesen Baustein
 
-    daten = gh.json_lauf(["issue", "view", str(ticket), "--json", _FELDER], cwd=cwd, timeout=gh.ticket_stand_timeout())
+    daten = gh.json_lauf(["issue", "view", str(ticket), "--json", _FELDER_CLAIM if mit_claim else _FELDER], cwd=cwd, timeout=gh.ticket_stand_timeout())
     return daten if isinstance(daten, dict) and "state" in daten else None
 
 

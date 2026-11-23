@@ -45,6 +45,19 @@ was zum Weiterbauen nötig ist.
 
 ## 3. Stand
 
+- **2026-11-23 08:43 (Server-Uhr, main d5e3806):** Seit dem Eintrag von 08:27 gemergt und auf dem
+  Bau-Server installiert (Stand d5e3806): Pull-Request 310 (Issue 278 P3b, Aufseher liest und
+  beantwortet den Entscheidungs-Briefkasten). Geschlossen: Issue 278 (Entscheidungs-Befugnis:
+  Befugnis-Klassen + Entscheidungs-Briefkasten, alle Pakete drin) und Issue 279 (Rest = Issue 313,
+  Lauf-Test `spawn_local.ps1` unter Windows). Belege: unabhängiger Prüfer ohne harte Befunde, Review
+  grün, volle Suite 3330 bestanden, 81 übersprungen, 18 xfailed.
+  - Pflicht-Liste vor der Test-Spec: 275 ✅ · 276 ✅ · 277 ✅ · 278 ✅ · 279 ✅ · 281 ✅ · 285 ✅ · 274
+    (mit 273): P1 (Start-Text nur aus dem Skill + Repo-Zusatz) wird gebaut, Merge erst, wenn das
+    Ziel-Repo seine Zusatz-Datei hat · 282 offen · 283 baut eine Windows-Session. Weiche Reste aus
+    278 stehen in Issue 312 und Issue 315.
+  - Nächste Schritte: 274 P1 bauen → 274 P2–P3 → 282.
+  - Unverändert: Abnahme M1/M2 und die Test-Spec starten erst auf ausdrückliches Wort des Nutzers.
+
 - **2026-11-23 08:27 (Server-Uhr, main 2db133a):** Seit dem Eintrag von 07:36 gemergt und auf dem
   Bau-Server installiert (Stand 2db133a): Pull-Request 307 (Issue 279 P6b, Anzeige) und
   Pull-Request 311 (Issue 281: Start-Text wird erst beim Loslassen gebaut; volle Suite 3306 bestanden,

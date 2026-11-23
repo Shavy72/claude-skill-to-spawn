@@ -83,11 +83,19 @@ def _tickets(wert: str | None) -> list[str] | None:
     return [teil.strip() for teil in wert.split(",") if teil.strip()]
 
 
-def _spec_tickets(repo: Path, spec: str) -> list[str]:
+def _spec_tickets(repo: Path, spec: str, *, mit_briefkasten: bool = False) -> list[str]:
+    """Tickets der Spec aus dem Manifest; ohne Manifest alle aus dem Bau-Log.
+
+    ``mit_briefkasten`` (nur die Entscheidungs-Liste): ohne Manifest zählen auch Tickets, die nur im
+    Briefkasten stehen (#278 P3b) — sonst fehlten Aufseher-Antworten ohne Bau-Log-Zeile.
+    """
     try:
         daten = manifest.lade_manifest(repo, spec)
     except (FileNotFoundError, ValueError):
-        return bau_log.alle_tickets(repo)
+        tickets = set(bau_log.alle_tickets(repo))
+        if mit_briefkasten:
+            tickets.update(briefkasten.alle_tickets())
+        return sorted(tickets, key=manifest.ticket_schluessel)
     return sorted(daten["tickets"], key=manifest.ticket_schluessel)
 
 
@@ -356,6 +364,23 @@ def _zu_bauen(args: argparse.Namespace) -> int:
     return code
 
 
+def _ticket_lage(args: argparse.Namespace) -> int:
+    """Unterbefehl ``ticket-lage`` (#282): Lage beim erneuten Start, Regel nur in :mod:`to_spawn.wiederanlauf`.
+
+    Genau eine Zeile: Art (``neu``/``fortsetzen``/``abschluss``/``nichts``), bei ``abschluss``
+    dazu was fehlt — Exit 0. Stand nicht bestimmbar → ``unbekannt: …``, Exit 2 (fail-closed).
+    """
+    from to_spawn import wiederanlauf
+
+    repo = config.repo_wurzel(_repo_aus_umgebung())
+    lage = wiederanlauf.feststellen(args.ticket, repo)
+    if lage is None:
+        print(f"unbekannt: Stand von #{args.ticket} nicht bestimmbar — nichts starten")
+        return 2
+    print(lage.zeile())
+    return 0
+
+
 def _anhaengen(args: argparse.Namespace) -> int:
     """Unterbefehl ``anhaengen`` (E2-2): Issue an Spec hängen — Kanten, Manifest, Unter-Issue."""
     repo = config.repo_wurzel(_repo_aus_umgebung())
@@ -428,7 +453,7 @@ def _eintrag(args: argparse.Namespace) -> int:
 def _entscheidungen(args: argparse.Namespace) -> int:
     """``entscheidungen S``: Liste aller Entscheidungen einer Spec (#278, Tür B)."""
     repo = config.repo_wurzel(_repo_aus_umgebung())
-    for z in briefkasten.liste(_spec_tickets(repo, args.spec), log_repo=repo):
+    for z in briefkasten.liste(_spec_tickets(repo, args.spec, mit_briefkasten=True), log_repo=repo):
         print(f"#{z['ticket']} · {z['wer']} · {z['was']} · {z['warum']} · {z['beleg']}")
     return 0
 
@@ -642,6 +667,10 @@ def main(argv: list[str] | None = None) -> int:
         "zu-bauen", help="Tickets der Spec, die noch nicht fertig gebaut sind (eine Nummer je Zeile, #279)"
     )
     p_zu_bauen.add_argument("spec")
+    p_lage = unter.add_parser(
+        "ticket-lage", help="Lage beim erneuten Start: neu/fortsetzen/abschluss/nichts + fehlt (Exit 0, unbekannt 2, #282)"
+    )
+    p_lage.add_argument("ticket", type=int)
     unter.add_parser("hook-stop", help="Stop-Hook (JSON auf stdin)")
     unter.add_parser("hook-subagent-stop", help="SubagentStop-Hook (JSON auf stdin)")
     unter.add_parser(
@@ -834,6 +863,8 @@ def main(argv: list[str] | None = None) -> int:
         return _blocker(args)
     if args.befehl == "zu-bauen":
         return _zu_bauen(args)
+    if args.befehl == "ticket-lage":
+        return _ticket_lage(args)
     if args.befehl == "startklar":
         ordner = args.ordner.resolve() if args.ordner else config.repo_wurzel(_repo_aus_umgebung())
         code, text = startklar.ausgabe(startklar.pruefe(ordner, args.spec))

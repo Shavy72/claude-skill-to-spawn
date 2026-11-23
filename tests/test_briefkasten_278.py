@@ -373,7 +373,7 @@ def test_antwort_fuer_q1_landet_nicht_an_q2(briefkasten: ModuleType, tmp_path: P
     briefkasten.antworten("7", q2, "b", [], "für Q2", hauptbaum=tmp_path)
     assert briefkasten.lesen("7", q2, hauptbaum=tmp_path).wahl == "b"
     assert briefkasten.lesen("7", q1, hauptbaum=tmp_path).wahl == "a"
-    assert briefkasten.lesen("7", "ffff", hauptbaum=tmp_path) == briefkasten.WARTET
+    assert briefkasten.lesen("7", "ffff", hauptbaum=tmp_path) == briefkasten.UNBEKANNT  # P3b: unbekannte id
 
 
 def test_zwei_schreiber_verlieren_nichts(

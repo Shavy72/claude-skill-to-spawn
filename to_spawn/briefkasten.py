@@ -7,11 +7,12 @@ Einziges Modul, das Ort, Dateimuster, Format und Ablage der Fragen kennt (Hauptb
   ``id``. Die Klasse ordnet der Briefkasten selbst ein (:func:`befugnis.ist_klasse_2`); eine
   genannte Klasse macht nur strenger. Nur das eigene Ticket (``TO_SPAWN_TICKET``).
 - :func:`lesen` — :class:`Antwort` (nur zur passenden ``id``, auch die des Nutzers),
-  :data:`WARTET` oder :data:`NUTZER`.
+  :data:`WARTET`, :data:`NUTZER` oder :data:`UNBEKANNT` (``id`` nicht im Briefkasten → neu fragen).
 - :func:`antworten` — der Aufseher antwortet auf eine offene Frage über ihre ``id``; verweigert
   (:class:`Verweigert`) in einer Bau-Session und solange das Ticket auf den Nutzer wartet.
 - :func:`nutzer_antworten` — Antwort des Nutzers (auch Klasse 2); verweigert in einer Bau-Session.
 - :func:`offene` — alle offenen Fragen (je Ticket, ``id``, Klasse) samt Sperre durch kaputte Datei.
+- :func:`alle_tickets` — alle Tickets mit Briefkasten-Datei (auch nur ``.kaputt-*``).
 - :func:`liste` — die eine Liste für die Gesamtabnahme: Klasse-1-Einträge aus dem Bau-Log plus alle
   Briefkasten-Antworten (wer, was, warum, Beleg); keine eigene Datei.
 - :func:`datei_relativ` — Ort der Datei für Texte (Start-Auftrag), relativ zum Hauptbaum.
@@ -31,7 +32,9 @@ Aufseher (``--von`` kennt nur :data:`AUFSEHER_VON`) haben über diese Schnittste
 ``von`` :data:`NUTZER_VON` zu schreiben; die CLI ``nutzer-antwort`` verlangt zusätzlich ein
 echtes Terminal. Das verhindert versehentliche und über die angebotene Schnittstelle mögliche
 Selbst-Freigabe — nicht eine Session, die mit Absicht die Datei selbst schreibt oder die
-Umgebung umbaut (``env -u``); auf derselben Maschine kann sie das technisch immer.
+Umgebung umbaut (``env -u``); auf derselben Maschine kann sie das technisch immer. Einen Weg
+über Ticket-Kommentare gibt es bewusst nicht: Sessions kommentieren mit dem Konto des Besitzers,
+ein Kommentar ist also nie ein Beleg für die Antwort des Nutzers.
 """
 
 from __future__ import annotations
@@ -54,6 +57,8 @@ log = logging.getLogger("to_spawn.briefkasten")
 
 WARTET = "WARTET"
 NUTZER = "NUTZER"
+#: Die ``id`` steht nicht (mehr) im Briefkasten (Datei gelöscht oder beiseitegelegt) → Frage neu stellen.
+UNBEKANNT = "UNBEKANNT"
 #: ``von`` einer Antwort, die eine Klasse-2-Frage schließt (nie über :func:`antworten` schreibbar).
 NUTZER_VON = "nutzer"
 #: Einziges ``von`` für :func:`antworten` (feste Auswahl, CLI ``--von``).
@@ -278,26 +283,25 @@ def einwerfen(
 
 
 def lesen(n: str | int, frage_id: str | None = None, *, hauptbaum: Path | None = None) -> Antwort | str:
-    """Stand der Frage ``frage_id``: :class:`Antwort`, :data:`WARTET` oder :data:`NUTZER`.
+    """Stand der Frage ``frage_id``: :class:`Antwort`, :data:`WARTET`, :data:`NUTZER` oder :data:`UNBEKANNT`.
 
     :data:`NUTZER`, solange das Ticket durch eine kaputte Datei gesperrt ist (``.kaputt-*`` oder
     vorhandene, aber unlesbare Datei, :func:`_sperrgruende`) oder irgendeine Klasse-2-Frage des
     Tickets ohne Antwort des Nutzers ist (eine Antwort anderer gibt Klasse 2 nie frei). Die
     Antwort des Nutzers kommt als :class:`Antwort` (``von`` :data:`NUTZER_VON`). Ohne passende
-    ``id`` nie eine :class:`Antwort`.
+    ``id`` nie eine :class:`Antwort`: :data:`UNBEKANNT`, wenn eine ``frage_id`` genannt ist, die nicht
+    (mehr) im Briefkasten steht (sonst wartete die Session für immer); ohne ``frage_id`` :data:`WARTET`.
     """
     datei = _datei(n, hauptbaum)
     inhalt = _lies(datei)
     if _sperrgruende(datei, inhalt):
         return NUTZER
-    daten = inhalt.daten
-    if not daten or not daten["fragen"]:
-        return WARTET
-    if _klasse_2_offen(daten["fragen"]):
+    fragen = (inhalt.daten or {}).get("fragen") or []
+    if fragen and _klasse_2_offen(fragen):
         return NUTZER
-    treffer = [f for f in daten["fragen"] if frage_id and f.get("id") == frage_id]
+    treffer = [f for f in fragen if frage_id and f.get("id") == frage_id]
     if not treffer:
-        return WARTET
+        return UNBEKANNT if frage_id else WARTET
     f = treffer[-1]
     if not _gilt(f):
         return WARTET
@@ -416,10 +420,8 @@ def offene(tickets: Iterable[str | int] | None = None, *, hauptbaum: Path | None
     Datei, :func:`_sperrgruende`) erscheint als Klasse-2-Eintrag mit leerer ``id``. Offen ist eine
     Frage, solange ihre Antwort nicht gilt (:func:`_gilt`).
     """
-    ordner = _hauptbaum(hauptbaum) / _ORDNER
     if tickets is None:
-        namen = {d.name.split(".json", 1)[0] for d in ordner.glob(f"{_PRAEFIX}*.json*")}
-        tickets = sorted((t.removeprefix(_PRAEFIX) for t in namen), key=_sortier_nummer)
+        tickets = alle_tickets(hauptbaum=hauptbaum)
     ergebnis: list[dict[str, str]] = []
     for t in tickets:
         try:
@@ -444,6 +446,13 @@ def offene(tickets: Iterable[str | int] | None = None, *, hauptbaum: Path | None
                 }
             )
     return ergebnis
+
+
+def alle_tickets(*, hauptbaum: Path | None = None) -> list[str]:
+    """Alle Tickets mit Briefkasten-Datei (auch nur ``.kaputt-*``), aufsteigend."""
+    ordner = _hauptbaum(hauptbaum) / _ORDNER
+    namen = {d.name.split(".json", 1)[0].removeprefix(_PRAEFIX) for d in ordner.glob(f"{_PRAEFIX}*.json*")}
+    return sorted(namen, key=_sortier_nummer)
 
 
 def _was(frage: Any, wahl: Any) -> str:
