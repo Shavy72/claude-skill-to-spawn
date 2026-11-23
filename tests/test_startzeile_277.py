@@ -95,3 +95,47 @@ def test_gestorbenes_fenster_hinterlaesst_exit_code(tmp_path: Path) -> None:
     log = repo / ".to-spawn" / f"fenster_{TICKET}.log"
     assert log.is_file()
     assert f"bau.py #{TICKET} Exit 2" in log.read_text(encoding="utf-8")
+
+
+def _attrappe_skill(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Skill-Attrappe, deren ``bau.py`` mit Meldung auf stderr scheitert."""
+    skill = tmp_path / "skill"
+    (skill / "skripte").mkdir(parents=True)
+    (skill / "skripte" / "bau.py").write_text(
+        "import sys\nprint('Absicht: Manifest fehlt', file=sys.stderr)\nsys.exit(3)\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(capo, "_SKILL", skill)
+
+
+def test_gestorbenes_fenster_hinterlaesst_fehlermeldung(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Befund PR 293: stderr von ``bau.py`` steht im Fenster-Log, nicht nur der Exit-Code."""
+    _attrappe_skill(tmp_path, monkeypatch)
+    repo = _klon(tmp_path)
+    lauf = _bash(capo.bau_startzeile(repo, TICKET, "", "--ohne-prompt"), repo, tmp_path / "home")
+    assert lauf.returncode == 3
+    text = (repo / ".to-spawn" / f"fenster_{TICKET}.log").read_text(encoding="utf-8")
+    assert "Absicht: Manifest fehlt" in text
+    assert f"bau.py #{TICKET} Exit 3" in text
+    assert "Absicht: Manifest fehlt" in lauf.stderr  # Fenster sieht die Meldung weiter
+
+
+def test_fenster_log_pfad_steht_in_der_startzeile(tmp_path: Path) -> None:
+    log = capo.fenster_log(tmp_path, TICKET)
+    assert log == tmp_path / ".to-spawn" / f"fenster_{TICKET}.log"
+    assert shlex.quote(str(log)) in capo.bau_startzeile(tmp_path, TICKET, "")
+
+
+def test_welche_bau_py_tmux_immer_skill_lokal_weiterleitung(tmp_path: Path) -> None:
+    """Punkt 2: tmux-Zeile nimmt immer ``bau.py`` des Skills, der Weg ohne Vorspann
+    (lokal/Windows) die Weiterleitung ``scripts/bau.py`` des Repos, sonst den Skill."""
+    repo = _klon(tmp_path)
+    skill_bau = capo._SKILL / "skripte" / "bau.py"
+    assert capo._bau_skript(repo) == skill_bau
+    (repo / "scripts").mkdir()
+    (repo / "scripts" / "bau.py").write_text("", encoding="utf-8")
+    assert capo._bau_skript(repo) == repo / "scripts" / "bau.py"
+    assert str(skill_bau) in capo.bau_startzeile(repo, TICKET, "")
+    assert str(repo / "scripts" / "bau.py") not in capo.bau_startzeile(repo, TICKET, "")

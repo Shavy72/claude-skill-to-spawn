@@ -1241,12 +1241,28 @@ def laeuft_noch(
     return ""
 
 
+#: Wurzel des Skills; ``skripte/bau.py`` darin ist der eigentliche Launcher.
+_SKILL = Path(__file__).resolve().parent.parent
+
+
 def _bau_skript(repo: Path) -> Path:
-    """``scripts/bau.py`` des Repos (Weiterleitung), sonst das Skript im Skill."""
+    """Welche ``bau.py`` ein Start OHNE Vorspann ruft (lokal, Windows-Tab): ``scripts/bau.py``
+    des Repos (Weiterleitung, setzt ``TO_SPAWN_REPO``/``TO_SPAWN_HOME``), sonst die des Skills.
+
+    Die tmux-Zeile :func:`bau_startzeile` nimmt dagegen immer die des Skills: sie setzt den
+    Vorspann selbst und darf weder von der Weiterleitung noch von deren ``TO_SPAWN_HOME``-
+    Vorgabe abhängen (#277). Der Unterschied ist Absicht, festgehalten in
+    ``tests/test_startzeile_277.py``.
+    """
     im_repo = repo / "scripts" / "bau.py"
     if im_repo.is_file():
         return im_repo
-    return Path(__file__).resolve().parent.parent / "skripte" / "bau.py"
+    return _SKILL / "skripte" / "bau.py"
+
+
+def fenster_log(repo: Path, ticket: int) -> Path:
+    """Log eines tmux-Bau-Fensters: stderr von ``bau.py`` und Exit-Code bei Fehler (#277)."""
+    return repo / ".to-spawn" / f"fenster_{ticket}.log"
 
 
 def bau_startzeile(repo: Path, ticket: int, auftrag: str = "", *schalter: str) -> str:
@@ -1257,21 +1273,29 @@ def bau_startzeile(repo: Path, ticket: int, auftrag: str = "", *schalter: str) -
     ``bau`` aus ``~/.bashrc`` oder die ``.venv`` des Repos, die ein Spec-Klon nicht hat
     (#277). Vorspann ``REPO``/``TO_SPAWN_HOME``/``TO_SPAWN_REPO`` wie dort (#212). Die
     Konfiguration der Session liefert allein ``bau.py``. ``schalter`` hängt weitere
-    ``bau.py``-Schalter an (respawn #431: ``--ohne-prompt``). Endet ``bau.py`` mit Fehler,
-    schließt sich das Fenster — der Exit-Code bleibt in ``.to-spawn/fenster_<N>.log``.
+    ``bau.py``-Schalter an (respawn #431: ``--ohne-prompt``). stderr von ``bau.py`` geht
+    weiter ins Fenster und zusätzlich in :func:`fenster_log`; endet ``bau.py`` mit Fehler,
+    schließt sich das Fenster — Meldung und Exit-Code bleiben dort lesbar.
     """
-    skill = Path(__file__).resolve().parent.parent
     ort = shlex.quote(str(repo))
-    vorspann = f"REPO={ort} TO_SPAWN_HOME={shlex.quote(str(skill))} TO_SPAWN_REPO={ort}"
+    vorspann = f"REPO={ort} TO_SPAWN_HOME={shlex.quote(str(_SKILL))} TO_SPAWN_REPO={ort}"
     if auftrag.strip():
         vorspann += f" BAU_AUFTRAG={shlex.quote(_kurz(auftrag, AUFTRAG_MAX_ZEICHEN))}"
-    bau = [sys.executable or "python3", str(skill / "skripte" / "bau.py"), str(ticket)]
-    log = shlex.quote(str(repo / ".to-spawn" / f"fenster_{ticket}.log"))
+    bau = [sys.executable or "python3", str(_SKILL / "skripte" / "bau.py"), str(ticket)]
+    log_pfad = fenster_log(repo, ticket)
+    log = shlex.quote(str(log_pfad))
+    # stderr über tee ins Log, Original bleibt auf fd 3 fürs Fenster (Wartezeilen, #431).
+    # Bei Fehler wartet ``wait $!`` auf tee, damit die Meldung vor dem Exit-Code steht.
+    # ponytail: hält ein Rest-Kind von bau.py stderr offen, wartet das Fenster mit;
+    # Upgrade-Pfad ``timeout`` um das tee, falls das je vorkommt.
+    tee = f"exec 3>&2 2> >(tee -a {log} >&3)"
     spur = (
-        f'rc=$?; [ "$rc" -eq 0 ] || {{ mkdir -p "$(dirname {log})"; '
+        f'rc=$?; exec 2>&3 3>&-; [ "$rc" -eq 0 ] || {{ wait $! 2>/dev/null; '
         f'echo "$(date -Is) bau.py #{ticket} Exit $rc" >> {log}; }}; exit "$rc"'
     )
-    return f"export {vorspann}; {shlex.join([*bau, '--sofort', *schalter])}; {spur}"
+    ordner = shlex.quote(str(log_pfad.parent))
+    lauf = shlex.join([*bau, "--sofort", *schalter])
+    return f"export {vorspann}; mkdir -p {ordner}; {tee}; {lauf}; {spur}"
 
 
 def folge_befehl(
