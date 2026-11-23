@@ -208,7 +208,7 @@ def test_loesch_liste_vier_gruppen_loescht_nichts(
     assert hausmeister_aufgabe.loesch_liste(ziel) == ziel
     assert _ordner_stand(welt) == vorher and all(o.is_dir() for o in ordner)
     text = ziel.read_text(encoding="utf-8")
-    assert "Gelöscht wird erst nach Davids Ja" in text
+    assert "Gelöscht wird erst nach dem Ja des Menschen" in text
     teile = {
         k: text.split(f"## {k}")[1].split("\n## ")[0]
         for k in (
@@ -447,7 +447,7 @@ def test_fuer_david_mit_ticket_eigene_gruppe() -> None:
         Path("/x/wt-77"), "bleibt", "Geheimnis", 77, fuer_david=True
     )
     ohne = hausmeister.Ergebnis(Path("/x/wt-ohne"), "bleibt", "keine Nummer", None)
-    assert hausmeister_aufgabe._gruppe(e) == "Für David (selbst prüfen)"
+    assert hausmeister_aufgabe._gruppe(e) == "Für den Menschen (selbst prüfen)"
     assert hausmeister_aufgabe._gruppe(ohne) == "Ohne Ticket-Nummer"
 
 

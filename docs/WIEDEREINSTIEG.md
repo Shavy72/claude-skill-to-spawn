@@ -45,6 +45,13 @@ was zum Weiterbauen nötig ist.
 
 ## 3. Stand
 
+- **2026-11-23 (main 9d0df5f):** Gemergt und auf dem Bau-Server installiert (Stand 9d0df5f):
+  - Pull-Request 333 (Issue 325 Teil 3, Rollenwort statt Personenname, u. a. Hausmeister-Aufgabe
+    und Leitstand-Seite). Volle Suite 3398 bestanden; Prüfer und Review ohne harte Befunde.
+  - Offen: Pull-Request 334 (Issue 329 P1, Review-Quelle als Ordner `review/` im Repo) in Prüfung ·
+    Pull-Request 317 (274 P1) merge-reif, wartet auf ein App-Ticket · in Bau: Issue 315 und
+    Issue 325 Teil 4.
+
 - **2026-11-23 10:29 (Server-Uhr, main 0b3d1db):** Seit dem Eintrag von 09:56 gemergt und auf dem
   Bau-Server installiert (Stand 0b3d1db):
   - Pull-Request 331 (Issue 325 Teil 2, Rollenwort statt festem Personennamen in

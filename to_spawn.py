@@ -784,7 +784,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     p_aufr.add_argument("--trocken", action="store_true", help="mit --aufgabe-einrichten: nur zeigen")
     p_aufr.add_argument(
-        "--altbestand-liste", type=Path, metavar="DATEI.md", help="Lösch-Liste für David schreiben"
+        "--altbestand-liste", type=Path, metavar="DATEI.md", help="Lösch-Liste für den Menschen schreiben"
     )
     # Ticket-Zweige (#1439): ein Zweig (Schlange) bzw. Probelauf-Liste aller Zweige.
     p_aufr.add_argument("--zweig", help="Zweig ticket/<N>-… aufräumen (statt eines Ordners)")
