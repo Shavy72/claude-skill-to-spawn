@@ -333,8 +333,7 @@ def _status(daten: dict[str, Any] | None) -> str:
         return "verworfen"
     if stufe == "zu":
         return "gebaut"
-    namen = {str(e.get("name")) for e in daten.get("labels") or [] if isinstance(e, dict)}
-    return "verschoben" if LABEL_VERSCHOBEN in namen else "offen"
+    return "verschoben" if LABEL_VERSCHOBEN in ticket_zustand.label_namen(daten) else "offen"
 
 
 def _abruf_github(repo: Path) -> Abruf:

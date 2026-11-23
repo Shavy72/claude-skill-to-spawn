@@ -244,7 +244,7 @@ def test_f4_stufe2_wartegrenze(ordner: Path, minuten: int, exit_code: int) -> No
 def test_f5_exit_mindest_ruhe(
     ordner: Path, still: int, getippt: list[tuple[str, str]]
 ) -> None:
-    u = FakeUmwelt(ordner, still_min=still, offen=False)
+    u = FakeUmwelt(ordner, still_min=still, stufe="zu")
     erg = _lauf(u)
     assert erg.exit == 0
     assert u.wz.getippt == getippt
@@ -315,7 +315,7 @@ def test_f8_echte_lage_richtiges_ziel_je_ticket(
     assert lage.ziel == f"=spec-{stand_test.SPEC}:2"
     assert lage.fenster == aufseher_stand.STILL
     assert lage.still_min == 25
-    assert lage.offen is True
+    assert lage.stufe == "offen"
     assert u.lage(stand_test.SPEC, 431, None).ziel == f"=spec-{stand_test.SPEC}:1"
 
 
@@ -362,7 +362,7 @@ def test_f8_ticket_lage_kein_sub_issue(welt: tuple[stand_test.FakeWelt, Path]) -
 
 def test_f9_stufe4_wieder_offen_zurueck(ordner: Path) -> None:
     leitstand.setze_leiter_stufe(TICKET, 4, time.time())
-    u = FakeUmwelt(ordner, still_min=5, offen=True)
+    u = FakeUmwelt(ordner, still_min=5, stufe="offen")
     erg = _lauf(u)
     assert erg.exit == 0
     assert leitstand.leiter_eintrag(TICKET) == (0, None)

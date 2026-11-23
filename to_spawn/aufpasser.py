@@ -1325,24 +1325,13 @@ class Aufpasser:
             raise RuntimeError(f"sub_issues {spec}: unlesbar ({fehler})") from None
 
     def ticket_lesen(self, ticket: int, repo: Path) -> dict:
-        """``state`` und ``labels`` (Namen) eines Tickets."""
-        raus = self.sh(
-            "gh", "issue", "view", str(ticket), "--json", "state,labels,stateReason", cwd=repo
-        )
-        try:
-            roh = json.loads(raus)
-            labels = {
-                str(x.get("name", ""))
-                for x in roh.get("labels") or []
-                if isinstance(x, dict)
-            }
-            return {
-                "state": roh.get("state"),
-                "stateReason": roh.get("stateReason"),
-                "labels": labels,
-            }
-        except (json.JSONDecodeError, AttributeError) as fehler:
-            raise RuntimeError(f"gh issue view {ticket}: unlesbar ({fehler})") from None
+        """Ticket über :func:`ticket_zustand.lesen` — alle Felder des Bausteins, ``labels``
+        als Menge der Namen (für ``& STOPP_LABELS``). ``RuntimeError``, wenn GitHub
+        nichts Lesbares liefert; der Aufrufer entscheidet dann vorsichtig."""
+        daten = ticket_zustand.lesen(ticket, repo)
+        if daten is None:
+            raise RuntimeError(f"#{ticket}: Ticket-Zustand nicht lesbar (gh)")
+        return {**daten, "labels": ticket_zustand.label_namen(daten)}
 
     def zu_bauen(self, offen: dict[int, dict]) -> set[int]:
         """Die offenen Tickets, die noch nicht fertig gebaut sind — nur dort baut noch
