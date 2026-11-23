@@ -115,6 +115,9 @@ OHNE_ANLAUF_FRAGE = wiederanlauf.Wiederanlauf("nichts", (), "")
 #: gemeldet wird statt endlos offen zu bleiben (#282 P2). Länger als Stupser + Nachfrist und die
 #: PC-Ablösung, weil ein Abschluss oft auf Gate/Staging wartet; nie ablösen (#288).
 ABSCHLUSS_MELDE_MIN = 90
+#: Merk-Schlüssel (im Feld :attr:`Gemerkt.frage`) für „stille Abschluss-Session schon gemeldet“:
+#: einmal melden, dann ohne Alarm warten; bewegt sich das Fenster, setzt die Leiter ihn zurück.
+ABSCHLUSS_GEMELDET = "abschluss-gemeldet"
 
 #: ``melden`` = nichts tun, Exit 1: der Aufseher muss prüfen.
 Aktion = Literal[
@@ -169,6 +172,9 @@ class Gemerkt:
 class Schritt:
     aktion: Aktion
     grund: str
+    #: Merk-Schlüssel, den die Tür bei ``melden`` im Feld :attr:`Gemerkt.frage` ablegt (einmal
+    #: melden, #282 P2); ``""`` = nichts merken.
+    merken: str = ""
 
 
 @dataclass(frozen=True)
@@ -257,7 +263,13 @@ def entscheide(lage: Lage, gemerkt: Gemerkt, jetzt: float, handoff_k: float) -> 
                 offen = ", ".join(lage.anlauf.fehlt) or lage.anlauf.art
                 text = f"{wort}, Abschluss offen (fehlt: {offen})"
             if text and still >= ABSCHLUSS_MELDE_MIN:
-                return Schritt("melden", f"{text}, still {still} min ≥ {ABSCHLUSS_MELDE_MIN} min — Aufseher prüfen")
+                if gemerkt.frage == ABSCHLUSS_GEMELDET:
+                    return Schritt("nichts", f"{text}, still {still} min — schon gemeldet, wartet ohne Alarm")
+                return Schritt(
+                    "melden",
+                    f"{text}, still {still} min ≥ {ABSCHLUSS_MELDE_MIN} min — Aufseher prüfen",
+                    merken=ABSCHLUSS_GEMELDET,
+                )
             if text:
                 return Schritt("nichts", f"{text} — nicht beenden")
         if not ruhig:
@@ -461,6 +473,12 @@ def _schritt(u: Umwelt, repo: Path, spec: int, ticket: int) -> Ergebnis:
     gemerkt, lage, schritt, jetzt = _lies(u, spec, ticket)
     log.info("leiter #%s: %s → %s (%s)", ticket, gemerkt, schritt.aktion, schritt.grund)
     if schritt.aktion == "melden":
+        if schritt.merken:
+            # Einmal melden (#282 P2 Fix 2): scheitert das Merken, meldet der nächste Takt erneut.
+            try:
+                leitstand.setze_notiz(_FRAGE_NOTIZ.format(ticket=ticket), schritt.merken)
+            except (OSError, ValueError, leitstand.ZustandKaputt) as fehler:
+                log.warning("leiter #%s: Abschluss-Meldung nicht gemerkt: %s", ticket, fehler)
         text = f"Stufe {gemerkt.stufe} {schritt.grund}"
         return Ergebnis(EXIT_FEHLER, _zeile(ticket, text))
     if schritt.aktion == "respawn":

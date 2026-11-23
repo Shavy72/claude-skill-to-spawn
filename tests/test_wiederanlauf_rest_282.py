@@ -22,6 +22,7 @@ SKILL = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SKILL))
 
 import test_aufseher_stand_430 as stand_test
+import test_leiter_432 as leiter_test
 from test_eigener_handoff_542 import MINUTE, TICKET
 from test_leiter_abschluss_282 import ABSCHLUSS, FERTIG, _echte_lage, _lage, _schritt
 from test_leiter_fix1_432 import _stand_repo
@@ -166,3 +167,53 @@ def test_fertig_gebaut_stilles_fenster_fragt_feststellen_weiter(
     lage, aufrufe = _echte_lage(tmp_path, monkeypatch, FERTIG, ABSCHLUSS)
     assert lage.fenster == aufseher_stand.STILL
     assert len(aufrufe) == 1
+
+
+# --- Fix-Runde 1 (Prüfung zu Pull-Request 392) -------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Live-Beweis entfällt, Klickweg aber nötig\n",
+        "Klickweg entfällt keinesfalls\n",
+        "Klickweg entfällt — nicht! gemacht\n",
+        "Klickweg entfällt nicht\n",
+        "Klickweg nicht entfällt\n",
+        "| Klickweg | entfällt nicht |\n",
+        "Live-Beweis (Staging) entfällt nicht\n",
+    ],
+)
+def test_entfaellt_im_zweifel_nicht(tmp_path: Path, text: str) -> None:
+    (tmp_path / "7.md").write_text(text, encoding="utf-8")
+    assert belege.auswerten(tmp_path, "7").klickweg_entfaellt is False
+
+
+def _abschluss_umwelt(ordner: Path) -> leiter_test.FakeUmwelt:
+    class AbschlussUmwelt(leiter_test.FakeUmwelt):
+        def lage(self, spec: int, ticket: int, seit: float | None) -> leiter.Lage:
+            return dataclasses.replace(super().lage(spec, ticket, seit), anlauf=ABSCHLUSS)
+
+    return AbschlussUmwelt(ordner, still_min=leiter.ABSCHLUSS_MELDE_MIN, stufe="fertig_gebaut")
+
+
+def test_abschluss_meldet_einmal_bis_das_fenster_sich_bewegt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TO_SPAWN_LEITSTAND_ORDNER", str(tmp_path / "leitstand"))
+    wt = tmp_path / "wt"
+    (wt / "docs" / "handoffs").mkdir(parents=True)
+    u = _abschluss_umwelt(wt)
+    erste = leiter_test._lauf(u)
+    assert erste.exit == leiter.EXIT_FEHLER, erste
+    zweite = leiter_test._lauf(u)
+    assert zweite.exit == leiter.EXIT_OK, zweite
+    u.still_min += 60
+    assert leiter_test._lauf(u).exit == leiter.EXIT_OK
+    assert u.wz.getippt == []
+    u.fenster, u.still_min = aufseher_stand.ARBEITET, 0  # Fenster bewegt sich
+    assert leiter_test._lauf(u).exit == leiter.EXIT_OK
+    u.fenster, u.still_min = aufseher_stand.STILL, leiter.ABSCHLUSS_MELDE_MIN - 1
+    assert leiter_test._lauf(u).exit == leiter.EXIT_OK
+    u.still_min = leiter.ABSCHLUSS_MELDE_MIN
+    assert leiter_test._lauf(u).exit == leiter.EXIT_FEHLER
+    assert leiter_test._lauf(u).exit == leiter.EXIT_OK
+    assert u.wz.getippt == []

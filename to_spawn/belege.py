@@ -59,6 +59,17 @@ _ENTFAELLT = re.compile(
     r"|\bkein\w*\s+klick.?weg\s+(?:nötig|erforderlich)",
     re.I,
 )
+#: Im Zweifel nicht entfällt (#282 P2 Fix 1): folgt der Aussage direkt (nur Satzzeichen dazwischen)
+#: eine Verneinung („entfällt keinesfalls“, „entfällt — nicht!“) oder steht dahinter noch ein Einwand
+#: bzw. der Klickweg selbst („…, Klickweg aber nötig“), zählt die Zeile nicht — lieber bleibt eine
+#: Session offen, als dass sie zu früh endet. Ein Klammerzusatz („(…, keine Oberfläche)“) bleibt erlaubt.
+_DAGEGEN = re.compile(r"^[\s,;:.!?|*—–-]*(?:nicht|nie|kein\w*)\b|\b(?:aber|doch|jedoch)\b|klick.?weg", re.I)
+
+
+def _entfaellt(zeile: str) -> bool:
+    """Sagt die Zeile ausdrücklich und ohne Einschränkung, dass der Klickweg entfällt?"""
+    treffer = _ENTFAELLT.search(zeile)
+    return treffer is not None and not _DAGEGEN.search(zeile[treffer.end() :])
 
 
 @dataclass
@@ -209,7 +220,7 @@ def auswerten(verify_hard: Path, nummer: str) -> Belege:
                 if not _VERNEINT.search(zeile):
                     belege.klickweg = True
                     break
-                if _ENTFAELLT.search(zeile):
+                if _entfaellt(zeile):
                     belege.klickweg_entfaellt = True
         if lauf:
             lauf.zeit = zeitpunkt(datei)

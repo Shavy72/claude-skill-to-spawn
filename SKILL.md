@@ -67,6 +67,7 @@ Ablauf für dich (das Modell), wenn die Konfig fehlt oder der Nutzer „setup“
 ## Eingriffs-Leiter `leiter` (#432)
 - Logik `to_spawn/leiter.py`, Aufruf `to_spawn.py leiter <S> <N> [--dry-run]` — nur über einen Ablöse-Subagenten (`model: sonnet`, Antwort = die eine Zeile). stdout genau 1 Zeile `leiter #<N>: Stufe <x> <aktion> — <grund>`.
 - Stufen: still ≥ 20 min → Mindset-Stupser (1) · 15 min später noch still → Handoff anfordern (2), ebenso sofort ab Handoff-Grenze (`haupt.handoff_k` aus `~/.claude/smart-zone.json`) · Start-Prompt-Datei da → Stufe 3 = `respawn` · Ticket zu + still → `/exit` (einmal).
+- Fertig gebaut + Abschluss offen (oder Lage unklar) + 90 min still (`ABSCHLUSS_MELDE_MIN`) → einmal melden (Exit 1), nie ablösen; erneut erst, wenn sich das Fenster bewegt hat und wieder 90 min still ist (#282 P2).
 - Nie tippen, wenn das Fenster arbeitet oder eine Rückfrage zeigt; arbeitet es nach dem Stupser wieder → Stufe 0. Stufe merkt der Leitstand (`leiter_stufe`), kein Doppel-Eingriff.
 - Exit: 0 ok · 1 Fehler (tmux/gh/Leitstand) · bei Stufe 3 der respawn-Exit.
 - Mindest-Ruhe 2 min: Handoff-Grenze und `/exit` greifen erst, wenn das Fenster seit 2 min still ist. Kontext zählt nur die aktuelle Session (nach dem letzten Respawn).
