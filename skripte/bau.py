@@ -851,18 +851,8 @@ def main() -> int:
                 "Folge-Session) kann nicht grün werden.",
                 staffel_hook_pfad(REPO),
             )
-    if not args.dry_run:  # Probelauf ohne Seiteneffekte (#205)
-        config.sicherstellen(REPO)
-    # Fortsetzen nur mit vorhandenem Transkript (#236, F5): ohne die Datei startete
-    # ``claude --resume`` eine frische Session — genau das darf der Aufpasser nie.
-    if args.resume and not args.dry_run:
-        transkript = transkript_ordner(Path.cwd()) / f"{args.resume}.jsonl"
-        if not transkript.is_file():
-            log.error("--resume %s: Transkript %s fehlt — kein Start.", args.resume, transkript)
-            return 2
-
-    # Arbeitsordner-Stand (#283) vor dem ersten Lesen aus REPO (Vorlage, Manifest, Skripte):
-    # hinter origin/<Hauptzweig> → nachziehen (nur fast-forward, sauberer Baum) oder Abbruch
+    # Arbeitsordner-Stand (#283) vor allem, was in REPO schreibt (Konfig, .gitignore) oder daraus
+    # liest (Vorlage, Manifest, Skripte): hinter origin/<Hauptzweig> → nachziehen (nur fast-forward, sauberer Baum) oder Abbruch
     # mit Zeile. Probelauf/--print-prompt prüfen nur und warnen.
     trocken = args.dry_run or args.print_prompt
     stand = arbeitsstand.sicherstellen(REPO, nachziehen=not trocken)
@@ -873,6 +863,16 @@ def main() -> int:
             print(f"Kein Start: {stand.text}", file=sys.stderr, flush=True)
             return 2
         log.warning("%s", stand.text)
+
+    if not args.dry_run:  # Probelauf ohne Seiteneffekte (#205)
+        config.sicherstellen(REPO)
+    # Fortsetzen nur mit vorhandenem Transkript (#236, F5): ohne die Datei startete
+    # ``claude --resume`` eine frische Session — genau das darf der Aufpasser nie.
+    if args.resume and not args.dry_run:
+        transkript = transkript_ordner(Path.cwd()) / f"{args.resume}.jsonl"
+        if not transkript.is_file():
+            log.error("--resume %s: Transkript %s fehlt — kein Start.", args.resume, transkript)
+            return 2
 
     default = load_default(Path(_SKILL) / "repo-scripts" / "_default.json" if args.probesitz else None)
     found = None if args.probesitz else find_manifest(ticket)

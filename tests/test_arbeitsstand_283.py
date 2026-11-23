@@ -193,3 +193,29 @@ def test_zwei_starts_zugleich_scheitern_nicht_an_git_sperre(klon: Path) -> None:
     zustaende = sorted(aus.splitlines()[0] if aus else f"leer: {err}" for aus, err in ergebnisse)
     assert zustaende == [arbeitsstand.AKTUELL, arbeitsstand.NACHGEZOGEN], ergebnisse
     assert _git(klon, "rev-parse", "HEAD") == _git(klon, "rev-parse", "origin/main")
+
+
+def test_bau_start_eigene_gitignore_ergaenzung_blockiert_nachziehen_nicht(klon: Path) -> None:
+    """Getrackte ``.gitignore`` ohne to-spawn-Block, sauber, hinter origin: der Start zieht nach."""
+    quelle = klon.parent / "quelle"
+    (quelle / ".gitignore").write_text("node_modules/\n", encoding="utf-8")
+    _git(quelle, "add", ".")
+    _git(quelle, "commit", "-q", "-m", "gitignore")
+    _git(quelle, "push", "-q", "origin", "HEAD:main")
+    _git(klon, "pull", "-q", "--ff-only", "origin", "main")
+    _commit(quelle, '{"prompt_template": "noch neuer"}')
+    _git(quelle, "push", "-q", "origin", "HEAD:main")
+    env = {**os.environ, "TO_SPAWN_REPO": str(klon), "TO_SPAWN_GH_REPO": "test-org/app"}
+    fertig = subprocess.run(
+        [sys.executable, str(SKILL / "skripte" / "bau.py"), "7"],
+        cwd=klon,
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=120,
+        check=False,
+    )
+    ausgabe = fertig.stdout + fertig.stderr
+    assert "lokal geändert" not in ausgabe and "Kein Start: Arbeitsordner" not in ausgabe, ausgabe
+    assert _git(klon, "rev-parse", "HEAD") == _git(klon, "rev-parse", "origin/main")
