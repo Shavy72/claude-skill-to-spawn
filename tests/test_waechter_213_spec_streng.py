@@ -4,7 +4,8 @@ Lauf 3 hat drei Ausnahmen als Scope-Creep gemeldet. Die Spec (Zeile 13) verlangt
 ohne Ausnahme: „Regelverstöße … werden real erkannt und das betroffene Ticket
 wieder geöffnet“, Zeile 18: „Tests nur ergänzt, keiner ersetzt“. Daraus folgt:
 
-* Jedes erneute Schließen mit demselben Verstoß öffnet wieder — keine Einmal-Sperre.
+* Seit #275 gilt eine Einmal-Regel je Ticket + Regel: erneutes Schließen mit demselben
+  Verstoß öffnet nicht wieder, sondern meldet einmal (früher: keine Einmal-Sperre).
 * Label ``waechter:ok`` verhindert nur das Wieder-Öffnen, nicht das Erkennen:
   der Verstoß steht trotzdem im Tick-Bericht.
 * Der Commit-Trailer ``Test-entfernt:`` entschuldigt keine entfernte Testfunktion.
@@ -31,9 +32,10 @@ from test_waechter_213 import (  # noqa: F401  (welt = Fixture)
 from test_waechter_213_fix import _frisch_zu, _zustand, _zustand_datei
 
 
-def test_zweites_schliessen_mit_demselben_verstoss_oeffnet_wieder(
+def test_zweites_schliessen_mit_demselben_verstoss_oeffnet_nicht_meldet_einmal_275(
     welt: dict[str, Path],
 ) -> None:
+    """Seit #275: Einmal-Regel je Ticket + Regel; ersetzt die strenge Fassung aus #213."""
     _commit(welt["repo"], "feat: ohne Nummer", _beleg())
     _frisch_zu(welt, minuten=40)
     _capo(welt)
@@ -44,11 +46,17 @@ def test_zweites_schliessen_mit_demselben_verstoss_oeffnet_wieder(
     _gh_setzen(welt, "901", state="closed", closed_at=_iso(timedelta(minutes=20)))
     ergebnis = _capo(welt)
     assert ergebnis.returncode == 0, _text(ergebnis)
-    assert _zustand(welt) == "open", _text(ergebnis)
+    assert _zustand(welt) == "closed", _text(ergebnis)
+    kommentare = _kommentare(welt, "901")
+    assert len(kommentare) == 2, kommentare
+    assert all(k.startswith("Aufseher: commit_ohne_nummer") for k in kommentare)
+    assert "nicht wieder geöffnet" in kommentare[-1], kommentare
+
+    # Dritter Lauf aus demselben Grund: still.
+    ergebnis = _capo(welt)
+    assert ergebnis.returncode == 0, _text(ergebnis)
+    assert _zustand(welt) == "closed", _text(ergebnis)
     assert len(_kommentare(welt, "901")) == 2
-    assert all(
-        k.startswith("Aufseher: commit_ohne_nummer") for k in _kommentare(welt, "901")
-    )
 
 
 def test_label_waechter_ok_meldet_den_verstoss_trotzdem(welt: dict[str, Path]) -> None:
@@ -90,7 +98,7 @@ def test_label_waechter_ok_blockiert_spec_fertig_nicht(welt: dict[str, Path]) ->
 
 
 def test_zustand_merkt_sich_keine_wieder_geoeffnet_liste(welt: dict[str, Path]) -> None:
-    """Die Einmal-Sperre ist weg — ihr Zustandsfeld darf nicht weiterwachsen (#213)."""
+    """Das alte Zustandsfeld der Einmal-Sperre (#213) darf nicht weiterwachsen; #275 merkt im Feld ``erledigt``."""
     _commit(welt["repo"], "feat: ohne Nummer", _beleg())
     _frisch_zu(welt, minuten=40)
     _capo(welt)
