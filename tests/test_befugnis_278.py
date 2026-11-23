@@ -267,8 +267,9 @@ def test_abo_zahl_nur_ganzes_wort(befugnis: ModuleType, ziel: str) -> None:
     assert befugnis.einordnen(ziel, "ändern", True) != 2
 
 
-def test_deploy_auf_staging_bleibt(befugnis: ModuleType) -> None:
-    assert befugnis.einordnen("staging", "deploy", True) == 3
+def test_deploy_auf_staging_ist_bau_alltag(befugnis: ModuleType) -> None:
+    """#278 P2: Regel bewusst geändert (Lastenheft A47 „alles auf Staging“) — vorher 3."""
+    assert befugnis.einordnen("staging", "deploy", True) == 1
 
 
 # --- Prüfer-Runde 4 (#278 P1): Push nur auf gültigen eigenen Zweignamen, mehr Klasse-2-Wörter ---
@@ -372,6 +373,8 @@ def test_r5_gegenproben(
 ) -> None:
     monkeypatch.setenv("TO_SPAWN_TICKET", "12")
     assert befugnis.einordnen(ziel, art, True) != 1
+    if (ziel, art) == ("ticket/13-x", "pushen"):
+        assert befugnis.einordnen(ziel, art, True) == 3  # fremder Zweig: Aufseher, nicht Nutzer
     if art != "pushen":
         assert befugnis.einordnen(ziel, art, True) == 2
 
