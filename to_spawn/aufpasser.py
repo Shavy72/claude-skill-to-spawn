@@ -103,6 +103,7 @@ from to_spawn import (
     sessions_datei,
     speicher,
     starter,
+    ticket_zustand,
     vorfall,
 )
 from to_spawn import sperre as _sperre
@@ -1297,22 +1298,36 @@ class Aufpasser:
         roh = os.environ.get("TO_SPAWN_REPO")
         return Path(roh) if roh else None
 
-    def offene_tickets(self, spec: str, repo: Path) -> set[int]:
+    def offene_tickets(self, spec: str, repo: Path) -> dict[int, dict]:
+        """Unter-Tickets, die nicht :func:`ticket_zustand.endgueltig_zu` sind, je Nummer
+        mit ``state``/``labels`` — aus EINEM Listen-Aufruf, kein ``issue view`` je Ticket
+        (#279: ein hängendes ``gh`` hielt sonst den ganzen Takt auf). Unlesbar ⇒
+        ``RuntimeError``."""
         raus = self.sh(
             "gh",
             "api",
             f"repos/{{owner}}/{{repo}}/issues/{spec}/sub_issues",
             "--paginate",
             "--jq",
-            '.[] | select(.state=="open") | .number',
+            ".[] | {number, state, state_reason, labels: [.labels[]?.name]} | tojson",
             cwd=repo,
         )
-        return {int(x) for x in raus.split()}
+        try:
+            tickets = [json.loads(z) for z in raus.splitlines() if z.strip()]
+            if not all(isinstance(t, dict) for t in tickets):
+                raise TypeError("Zeile ist kein JSON-Objekt")
+            return {
+                int(t["number"]): t
+                for t in tickets
+                if not ticket_zustand.endgueltig_zu(t)
+            }
+        except (json.JSONDecodeError, KeyError, TypeError) as fehler:
+            raise RuntimeError(f"sub_issues {spec}: unlesbar ({fehler})") from None
 
     def ticket_lesen(self, ticket: int, repo: Path) -> dict:
         """``state`` und ``labels`` (Namen) eines Tickets."""
         raus = self.sh(
-            "gh", "issue", "view", str(ticket), "--json", "state,labels", cwd=repo
+            "gh", "issue", "view", str(ticket), "--json", "state,labels,stateReason", cwd=repo
         )
         try:
             roh = json.loads(raus)
@@ -1321,12 +1336,18 @@ class Aufpasser:
                 for x in roh.get("labels") or []
                 if isinstance(x, dict)
             }
-            return {"state": roh.get("state"), "labels": labels}
+            return {
+                "state": roh.get("state"),
+                "stateReason": roh.get("stateReason"),
+                "labels": labels,
+            }
         except (json.JSONDecodeError, AttributeError) as fehler:
             raise RuntimeError(f"gh issue view {ticket}: unlesbar ({fehler})") from None
 
-    def ticket_zu(self, ticket: int, repo: Path) -> bool:
-        return self.ticket_lesen(ticket, repo).get("state") == "CLOSED"
+    def zu_bauen(self, offen: dict[int, dict]) -> set[int]:
+        """Die offenen Tickets, die noch nicht fertig gebaut sind — nur dort baut noch
+        jemand (#279, Fall 03:05). Urteil aus den Listen-Daten, kein weiterer Aufruf."""
+        return {n for n, t in offen.items() if not ticket_zustand.fertig_gebaut(t)}
 
     def pane_text(self, ziel: str) -> str:
         return self.tmux("capture-pane", "-p", "-t", ziel)
@@ -1929,13 +1950,14 @@ class Aufpasser:
             platznot = still_min < KARENZ_MIN and self._platznot(repo, info)
             if still_min >= KARENZ_MIN or platznot:
                 try:
-                    zu = self.ticket_zu(ticket, repo)
+                    daten = self.ticket_lesen(ticket, repo)
                 except RuntimeError as fehler:
                     log.error("%s: Ticket-Zustand nicht lesbar: %s", f.name, fehler)
-                    zu = False
-                if zu:
+                    daten = {}  # gilt als offen: nichts schließen
+                if ticket_zustand.fertig_gebaut(daten):
                     self.ticket_zu_schliessen(
-                        f, ticket, repo, schluessel, hash_start, info, platznot
+                        f, ticket, repo, schluessel, hash_start, info, platznot,
+                        grund=ticket_zustand.wortlaut(daten),
                     )
                     return
 
@@ -2047,7 +2069,10 @@ class Aufpasser:
         hash_start: str,
         info: SessionInfo | None,
         platznot: bool = False,
+        *,
+        grund: str,
     ) -> None:
+        """``grund``: :func:`ticket_zustand.wortlaut` für die Meldung (#279)."""
         if platznot and not self.e.trocken:
             log.info(
                 "%s: Ticket zu, Grenze voll — %g s Gegenprobe statt Karenz",
@@ -2105,7 +2130,7 @@ class Aufpasser:
             repo,
             schluessel,
             "geschlossen",
-            f"„{f.name}“ geschlossen (Ticket zu).{zusatz}",
+            f"„{f.name}“ geschlossen ({grund}).{zusatz}",
         )
 
     def sichern_und_fortsetzen(
@@ -2344,7 +2369,10 @@ class Aufpasser:
             ", ".join(sorted(vorhanden)),
             sorted(offen) or "-",
         )
-        fehlend = [t for t in sorted(offen) if f"bau {t}" not in vorhanden]
+        # Bau-Fenster nur für „noch nicht fertig gebaut“ (#279); der Aufseher unten
+        # bleibt, bis alles endgültig zu ist.
+        bauen = self.zu_bauen(offen)
+        fehlend = [t for t in sorted(bauen) if f"bau {t}" not in vorhanden]
         # Läuft das Ticket schon in einer Fenster-Kette (oder folgt dort noch),
         # kein eigenes Fenster — sonst zwei Sessions auf einem Ticket (#598).
         belegt = self.belegte_tickets() if fehlend else set()
@@ -2367,7 +2395,7 @@ class Aufpasser:
             self.fehlendes_fenster(sitzung, spec, repo, None)
         for f in fenster:
             try:
-                self.fenster_pruefen(f, repo, offen)
+                self.fenster_pruefen(f, repo, bauen)
             except RuntimeError as fehler:
                 log.error("%s: Fenster „%s“ übersprungen: %s", sitzung, f.name, fehler)
 
