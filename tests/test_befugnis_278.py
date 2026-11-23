@@ -163,3 +163,80 @@ def test_start_text_nennt_live_synonyme_aus_tabelle(befugnis: ModuleType) -> Non
     text = befugnis.start_text("7")
     for wort in befugnis._KLASSE_2.ziele or ():
         assert wort in text, wort
+
+
+# --- Prüfer-Runde 2 (#278 P1): eine Klasse-2-Wortmenge, Weg für Klasse 3, Push-Ziele ---
+
+
+@pytest.mark.parametrize(
+    ("ziel", "art"),
+    [
+        ("konto", "ändern"),
+        ("konten", "ändern"),
+        ("kosten", "ändern"),
+        ("ändern", "live"),
+        ("instagram-konto", "ändern"),
+        ("arbeitsordner", "konten"),
+        ("prod-db", "ändern"),
+        ("production-db", "ändern"),
+        ("live_app", "ändern"),
+        ("liveapp", "ändern"),
+        ("zweig", "live-schalten"),
+        ("staging", "geld-ausgeben"),
+        ("Ｌive", "ändern"),
+        ("live app", "ändern"),
+        ("vps live", "anlegen"),
+    ],
+)
+def test_klasse_2_teilwort_in_ziel_und_art(
+    befugnis: ModuleType, ziel: str, art: str
+) -> None:
+    assert befugnis.einordnen(ziel, art, True) == 2
+
+
+@pytest.mark.parametrize("ziel", ["arbeitsordner", "zweig", "staging", "testdaten"])
+@pytest.mark.parametrize("art", ["anlegen", "ändern", "testen", "committen"])
+def test_harmlose_faelle_nie_klasse_2(
+    befugnis: ModuleType, ziel: str, art: str
+) -> None:
+    assert befugnis.einordnen(ziel, art, True) != 2
+
+
+@pytest.mark.parametrize(
+    ("ziel", "klasse"),
+    [
+        ("wip-zweig", 1),
+        ("wip/278-sicherung", 1),
+        ("ticket-zweig", 1),
+        ("ticket/7-befugnis", 1),
+        ("ticket/8-fremd", 3),
+        ("zweig", 3),
+        ("hauptzweig", 3),
+        ("master", 3),
+        ("main", 3),
+    ],
+)
+def test_pushen_nur_auf_eigene_zweige(
+    befugnis: ModuleType, monkeypatch: pytest.MonkeyPatch, ziel: str, klasse: int
+) -> None:
+    monkeypatch.setenv("TO_SPAWN_TICKET", "7")
+    assert befugnis.einordnen(ziel, "pushen", False) == klasse
+
+
+def test_klasse_3_weg_ist_vom_aufseher_gelesen(befugnis: ModuleType) -> None:
+    text = befugnis.start_text("7")
+    klasse_3 = text[text.index("Klasse 3") :]
+    # Der Aufseher liest heute Bau-Log ``blockiert`` und antwortet per Issue-Kommentar.
+    assert "eintrag --ticket 7 --typ blockiert" in klasse_3
+    assert "gh issue view 7 --comments" in klasse_3
+    assert "in den Briefkasten" not in klasse_3
+    assert "in dieser Datei" not in klasse_3
+
+
+def test_start_text_nennt_klasse_1_listen_aus_tabelle(befugnis: ModuleType) -> None:
+    text = befugnis.start_text("7")
+    klasse_1 = text[: text.index("Klasse 2")]
+    for regel in befugnis._KLASSE_1:
+        for wort in (regel.ziele or ()) | (regel.arten or ()):
+            assert wort in klasse_1, wort
+    assert "pushen" in klasse_1 and "hauptzweig" not in klasse_1
