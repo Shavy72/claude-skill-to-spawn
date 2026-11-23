@@ -417,3 +417,116 @@ aber nicht einzeln bestätigt.
 - Ort und Form des Entscheidungs-Briefkastens (Datei im Arbeitsordner gegen Ticket-Kommentar):
   zwei Varianten vergleichen, siehe Issue 278.
 - Was der Aufseher tut, wenn die Helfer keine Aussage von David zu dem Fall finden.
+
+---
+
+## L9 — Abnahme auf Staging: Rundschau, KI-Selbstprüfung, Entscheidungs-Liste (David, 2026-11-23)
+
+### Wortlaut (1:1)
+
+Ca. 15:30, in einer [PC-Session] nach der Probe am echten Fall (Spec 1330):
+
+> ja dann gehört das auch mit in den system bau brauche das rundschau artefakt mit der präsentation der neue features damit ich die mir anschauen kann und damit die KI seber nochmal checken kann ob alles passt und dan kommen dann auch die Punkte rein die im Bau für mich entschieden wurden in einer grobe einfachen liste sodass ich da nachfragen kann und wenn dann alles passt gehts live und wenn noch paar sachen nachbearetei werden müssen dann folge tickets eine weitere iteration
+>
+> so muss das ablaufen
+>
+> wir brauchen über dem Aufpasser eine weitere Session die Läuft aber nur bei beadrf einschreitet und maximal token effizient Arbeitet also entweder ohne loop die läuft einfach und wird getriggert wenn sie gebaucht wird oder wwenn sie looped dann sehr token effizient
+>
+> es geht drum das wirklich entschiedungen für much getrofefn werden und geschaut wird in Obsidian oder alten session logs was meine meinung sein wird etc dann enstsciednen wird
+>
+> oder sagst du brauchen wir nicht wir geben das einfach zum start auftrag mit das hat deises mal geholfen oder was sagst du oder sagst du das soll der aufseher auch machen selber einfach was wäre da sinnvoll wie gehen wir da vor
+>
+> Ziel ist ja wirklich das nach plan komplett auf staging gebaut wird und wenn dan die entschidungen angeziegt werden in dem Rundschau dokument oder der seite halt dann sehe ich ja was passier tund entschieden wurde da es ja staging ist ist es ja nicht schlimm und es passiert ja nichts
+
+Anlass: In der Probe am echten Fall (Spec 1330) war die Abschluss-Rundschau zu dünn (7 Seiten,
+keine Bilder, keine Klick-Schritte); eine brauchbare entstand erst auf Davids Nachfrage von Hand.
+Erst eine Lese-Prüfung auf Davids Frage „kann das live?“ fand drei Lücken vor Live (App-Tickets
+1555, 1556, 1557): entschiedenes Verhalten nicht gebaut, keine Sicherung und kein Rückweg für
+Live-Daten, Abnahme-Belege fehlten mangels Beleg-Konto. Die Test-Übersicht im Abschluss-Paket
+nannte veraltet „0 von 40“.
+
+Ersetzt für das öffentliche Repo: der Name der Chat-Sitzung durch [PC-Session].
+
+### Bestätigter Vorschlag (David: „ja klar“, 2026-11-23 ca. 16:00)
+
+Die [PC-Session] hat auf Davids Frage („was wäre da sinnvoll“) diesen Vorschlag gemacht, David hat
+ihn mit „ja klar“ bestätigt:
+
+- Keine eigene Dauer-Session über dem Aufseher. Der Aufseher entscheidet; je offener Frage startet
+  er einen frischen Helfer, der in Obsidian und alten Session-Logs Davids Meinung sucht und
+  Entscheidung + Fundstelle zurückgibt. Ohne Frage kostet das nichts.
+- Jede Entscheidung als eine Zeile in eine Datei je Spec (was · warum · Quelle). Die Rundschau
+  zeigt diese Liste automatisch.
+- Grenze bleibt: Live, Kosten, Konten echter Personen entscheidet David.
+- Ablauf: 1. alles auf Staging bauen · 2. Rundschau automatisch (Bilder, Klick-Schritte,
+  Entscheidungs-Liste) · 3. eine KI klickt die Rundschau selbst gegen Staging durch · 4. David
+  schaut und fragt nach · 5. passt → live, sonst Folge-Tickets und weitere Runde.
+
+### Klarstellung (1:1, ca. 16:20)
+
+> was meinst du wir reden nicht von der gelchen sache ich rede davon das wärend eines spec baus immer wirder tickets stehen bleiben und was von mir wollen obwohl klar ist das es einfach gemacht werden soll ohne mich darum gehts
+
+Einordnung der [PC-Session]: Kern des Entscheider-Wunsches ist nicht die Abnahme, sondern dass
+Bau-Sessions mitten im Spec-Bau stehen bleiben und auf David warten. Was in der Probe half:
+Davids Entscheidungen fest im Start-Auftrag der Bau-Session (6–9 Punkte) – danach kam keine Frage
+mehr an David.
+
+Anlass (Probe Spec 1330, Nacht 22./23.11., App-Tickets): Löschfrage in 1476, 1479 und 1484 warten
+trotz erledigter Blocker, `/implement` startet nicht selbst, 1483 „Nichts zu tun“ nach rotem Gate,
+1484 still nach „Review gelb“, 1485 wartet auf eine Live-Freigabe-Frage.
+
+### Verdichtung in prüfbare Anforderungen (L9)
+
+Die Verdichtung ist eine Auslegung der Sessions. David hat den Wortlaut gesagt und den Vorschlag
+oben bestätigt, die einzelnen Punkte aber nicht einzeln. L9 baut auf L8 (A43–A49) auf.
+
+- **A50 Abnahme-Ablauf in fünf Schritten:** Jede Spec läuft so: ganz auf Staging bauen →
+  Rundschau entsteht von selbst → eine KI prüft die Rundschau gegen Staging → David schaut und
+  fragt nach → passt es, geht die Spec live; sonst Folge-Tickets und eine weitere Runde.
+- **A51 Rundschau zeigt die neuen Funktionen:** Die Rundschau zur Abnahme entsteht ohne Nachfrage
+  und zeigt je neuer Funktion mindestens ein Bild aus Staging und die Klick-Schritte, mit denen
+  David sie selbst findet. Eine Rundschau ohne Bilder oder ohne Klick-Schritte gilt als nicht
+  fertig.
+- **A52 Entscheidungs-Liste in der Rundschau:** Alle im Bau für David getroffenen Entscheidungen
+  stehen je Spec in einer Datei, je Entscheidung eine Zeile (was · warum · Quelle). Die Rundschau
+  zeigt diese Liste von selbst, grob und einfach, sodass David zu jeder Zeile nachfragen kann.
+- **A53 KI-Selbstprüfung:** Bevor David die Rundschau bekommt, klickt eine frische KI die
+  Klick-Schritte der Rundschau selbst gegen Staging durch und hält je Schritt fest: passt / passt
+  nicht, mit Beleg. Was nicht passt, wird vor der Abnahme repariert oder in der Rundschau offen
+  genannt.
+- **A54 Folge-Runde statt Flicken:** Muss nach Davids Durchsicht etwas nachgebessert werden,
+  entstehen Folge-Tickets an derselben Spec. Danach läuft der Ablauf aus A50 noch einmal (neue
+  Rundschau, neue Selbstprüfung).
+- **A55 Kein Dauer-Wächter über dem Aufseher:** Über dem Aufseher läuft keine weitere ständige
+  Session. Der Aufseher startet je offener Frage einen frischen Helfer, der in Davids Notizen
+  (Obsidian) und alten Session-Logs nach seiner Meinung sucht und Entscheidung + Fundstelle
+  zurückgibt. Ohne offene Frage kostet das keine Token.
+- **A56 Grenze (wie A49):** Live-System, Kosten und Konten echter Personen entscheidet David –
+  weder Aufseher noch Helfer.
+- **A57 „Bereit für Live?“ vor der Abnahme:** Bevor eine Spec als „bereit zur Abnahme“ gemeldet
+  wird, prüft das System fest: Ist jedes entschiedene Verhalten gebaut? Gibt es Sicherung und
+  Rückweg für Live-Daten? Liegen die Abnahme-Belege vor? (Aus dem Anlass; als Vorschlag in
+  derselben Notiz festgehalten, nicht als eigener Punkt von David bestätigt.)
+- **A58 Zahlen im Abschluss-Paket sind frisch:** Test-Übersicht und andere Zählungen im
+  Abschluss-Paket zeigen den Stand zum Zeitpunkt der Abnahme, nie einen alten.
+- **A59 Entscheidungen im Start-Auftrag (Klarstellung):** Jede Bau-Session bekommt als Standard
+  einen Auftragstext mit den schon getroffenen Entscheidungen des Auftraggebers zur Spec mit. Eine
+  Bau-Session ohne diesen Teil im Start-Auftrag gilt als falsch gestartet.
+- **A60 Steh-Erkennung löst den Entscheider-Helfer aus (Klarstellung):** Das System erkennt
+  maschinell, dass eine Bau-Session mit einer Frage steht oder still ist, und startet damit den
+  Helfer aus A55 – ohne Dauer-Schleife. Ohne stehende Session läuft kein Helfer.
+- **A61 Entscheidung landet in der Liste (Klarstellung):** Jede so getroffene Entscheidung steht
+  mit Quelle als Zeile in der Entscheidungs-Liste der Spec aus A52 und damit in der Rundschau.
+
+**Ausdrücklich nicht gewollt (L9)**
+
+- **N21** keine eigene Dauer-Session über dem Aufseher, die ohne offene Frage Token verbraucht
+- **N22** keine Rundschau zur Abnahme, die erst auf Davids Nachfrage brauchbar wird
+- **N23** keine Spec live vor Davids Durchsicht auf Staging
+
+**Offen (nicht entschieden)**
+
+- Wie die KI-Selbstprüfung Staging bedient (echter Browser oder Kopflos-Browser) und wo ihr
+  Ergebnis steht.
+- Ob die Entscheidungs-Datei je Spec die bestehende Übersicht `docs/agents/entscheidungen_<S>.md`
+  ist oder aus dem Entscheidungs-Briefkasten (Issue 278) neu erzeugt wird.
