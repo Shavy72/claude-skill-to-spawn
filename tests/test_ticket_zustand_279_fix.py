@@ -87,9 +87,7 @@ def _nichts_angefasst(welt: Welt, vorher: list[str]) -> None:
         '{"number": 9003, "state": "OPEN", "labels": []}\n[1, 2]',  # eine gute, eine kaputte
     ],
 )
-def test_kaputte_liste_kein_start_kein_schliessen(
-    welt: Welt, monkeypatch: pytest.MonkeyPatch, roh: str
-) -> None:
+def test_kaputte_liste_kein_start_kein_schliessen(welt: Welt, monkeypatch: pytest.MonkeyPatch, roh: str) -> None:
     """Unlesbare Listen-Zeile ⇒ Prüfung dieser Sitzung übersprungen, Lauf stürzt nicht ab."""
     monkeypatch.setenv("GH_STUB_UNTER", f"{SPEC}:9002|9003")
     monkeypatch.setenv("GH_STUB_UNTER_ROH", roh)
@@ -104,5 +102,15 @@ def test_leere_liste_kein_start_kein_schliessen(welt: Welt, monkeypatch: pytest.
     """Spec ohne Unter-Tickets ⇒ kein Bau- und kein Aufseher-Start, nichts geschlossen."""
     monkeypatch.setenv("GH_STUB_UNTER_ROH", "")
     vorher = fenster_namen()
+    assert welt.lauf(hang_min=90) == 0
+    _nichts_angefasst(welt, vorher)
+
+
+def test_leere_liste_mit_stillem_fenster_schliesst_nichts(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
+    """#279 P2: leere Unter-Ticket-Liste heißt nicht „alles fertig“ — stilles ``bau 9002`` bleibt."""
+    monkeypatch.setenv("GH_STUB_UNTER_ROH", "")
+    _stilles_fenster_9002(welt)
+    vorher = fenster_namen()
+    assert "bau 9002" in vorher
     assert welt.lauf(hang_min=90) == 0
     _nichts_angefasst(welt, vorher)
