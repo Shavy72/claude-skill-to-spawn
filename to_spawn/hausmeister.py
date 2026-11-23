@@ -2135,8 +2135,8 @@ _REFLOG_HAPPEN = 200
 def _nur_im_reflog(repo: Path, ist_worktree: bool) -> bool:
     """#235 R1: liegt ein Commit nur im Reflog, der mit dem Ordner verschwindet?
 
-    Verschwinden: beim Klon alle Reflogs, beim Worktree der Reflog seines ``HEAD`` (die
-    Zweig-Reflogs liegen im Hauptklon und bleiben). Kein Verlust ist, was von einem Zweig auf
+    Verschwinden: beim Klon alle Reflogs (auch die verknüpfter Worktrees), beim Worktree die
+    seines eigenen Git-Verzeichnisses (die Zweig-Reflogs liegen im Hauptklon und bleiben). Kein Verlust ist, was von einem Zweig auf
     ``origin`` (nach dem ``fetch`` in :func:`_ungesichertes`) oder einem lokalen Ref erreichbar
     ist — lokale Refs prüfen die übrigen Regeln (Sicherung ``sicherung/<N>`` oder bleibt).
     Gewöhnliche alte Stände liegen so längst auf dem Server und halten den Ordner nicht.
@@ -2150,12 +2150,18 @@ def _nur_im_reflog(repo: Path, ist_worktree: bool) -> bool:
         raise _Bleibt("core.logAllRefUpdates=false: Verlauf (Reflog) nicht prüfbar", fuer_david=True)
     if (_git_oder_none(repo, "config", "--get", "extensions.refStorage") or "files").lower() != "files":
         raise _Bleibt("Ref-Speicher ohne Reflog-Dateien: Verlauf nicht prüfbar", fuer_david=True)
-    pfad = Path(aufpasser.git_lauf(repo, "rev-parse", "--git-path", "logs/HEAD" if ist_worktree else "logs").strip())
-    pfad = pfad if pfad.is_absolute() else repo / pfad
-    dateien = [pfad] if pfad.is_file() else [p for p in pfad.rglob("*") if p.is_file()]
+    # Was mit dem Ordner stirbt: beim Worktree sein Git-Verzeichnis (``HEAD``, ``refs/worktree/*``,
+    # ``refs/bisect/*``), beim Klon das ganze ``.git`` samt ``worktrees/*/logs`` verknüpfter Worktrees.
+    git_dir = Path(aufpasser.git_lauf(repo, "rev-parse", "--absolute-git-dir").strip())
+    wurzeln = [git_dir / "logs"] + ([] if ist_worktree else sorted(git_dir.glob("worktrees/*/logs")))
     staende: set[str] = set()
-    for datei in dateien:
-        for zeile in datei.read_bytes().splitlines():
+    try:
+        dateien = [p for w in wurzeln for p in w.rglob("*") if p.is_file()]
+        inhalte = [(d, d.read_bytes()) for d in dateien]
+    except OSError as fehler:
+        raise _Bleibt(f"Reflog nicht lesbar: {fehler}", fehler=True) from None
+    for datei, inhalt in inhalte:
+        for zeile in inhalt.splitlines():
             felder = zeile.split(b" ", 2)
             if len(felder) < 3 or not all(re.fullmatch(rb"[0-9a-f]{40}(?:[0-9a-f]{24})?", f) for f in felder[:2]):
                 raise _Bleibt(f"unlesbare Reflog-Zeile in {datei.name}", fehler=True)
