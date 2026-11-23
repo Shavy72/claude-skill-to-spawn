@@ -45,6 +45,15 @@ was zum Weiterbauen nötig ist.
 
 ## 3. Stand
 
+- **2026-11-23 11:57 (Server-Uhr, main eb42e9e):** Gemergt und auf dem Bau-Server installiert (Stand eb42e9e):
+  - Pull-Request 337 (Issue 315, Bremse für offene Briefkasten-Fragen im Wächter-Takt, eigener
+    Exit-Code bei Aufruf-Fehler; main cb6c1e5).
+  - Pull-Request 334 per Squash (Issue 329 Teil 1, Review-Werkzeug als versionierte Quelle `review/`;
+    main eb42e9e). Issue 329 bleibt offen für Teil 2, erst nach Merge von Pull-Request 317.
+  - Offen: Pull-Request 317 (274 P1) weiter gesperrt, bis im App-Repo `docs/agents/bau_zusatz.md`
+    liegt · in Arbeit: Issue 339 (Reste der Takt-Bremse), danach Prüf-Bündel 238/224/219/204/246.
+  - Als Nächstes: 317 mergen, sobald entsperrt; dann 274 Teil 2, 282 Teil 2, 329 Teil 2.
+
 - **2026-11-23 11:20 (Server-Uhr, main 95d561b):** Gemergt und auf dem Bau-Server installiert (Stand 95d561b):
   - Pull-Request 336 (Issue 325 Teil 4, Rollenwort statt Vorname). Reste Teil 5 stehen als Kommentar
     im Issue 325.

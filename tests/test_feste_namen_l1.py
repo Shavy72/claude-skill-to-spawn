@@ -30,7 +30,7 @@ MUSTER: dict[str, re.Pattern[str]] = {
 
 #: Ordner (Skill-Wurzel-relativ) und Dateitypen, die zum Skill-Code zählen. ``tests/`` nicht.
 #: ``messung/`` wird nicht installiert (NICHT_INSTALLIERT in test_installer_vollstaendig.py), aber gescannt.
-ORDNER = ("to_spawn", "skripte", "scripts", "repo-scripts", "leitstand", "aliase", "nest", "messung", "review-hook")
+ORDNER = ("to_spawn", "skripte", "scripts", "repo-scripts", "leitstand", "aliase", "nest", "messung", "review-hook", "review")
 ENDUNGEN = {".py", ".sh", ".ps1", ".json", ".html", ""}
 
 #: Die eine Vorgabe-Stelle: hier lebt das DuoPlus-Wissen gewollt.

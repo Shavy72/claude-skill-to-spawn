@@ -115,6 +115,12 @@ REST_START: frozenset[tuple[str, str]] = frozenset(
         ("review-hook/tests/test_stop_runde5.py", "test_pruefen_cli_findet_beleg_nach_commit"),
         ("review-hook/tests/test_wochenbericht.py", "_lauf"),
         ("review-hook/wochenbericht.py", "bericht_erzeugen"),
+        # 1:1-Übernahme des Review-Werkzeugs (#329 P1): git/pytest/Skripte mit gefangener Ausgabe
+        ("review/_gemeinsam.py", "_blast_radius"),
+        ("review/rot_probe.py", "pruefen"),
+        ("review/rot_probe.py", "sammeln"),
+        ("review/tests/review_hilfen.py", "lauf"),
+        ("review/tests/test_rot_probe_platte.py", "toter_pid"),
     }
 )
 

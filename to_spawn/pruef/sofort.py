@@ -116,7 +116,7 @@ def geaendert(repo: Path, basis: str) -> list[str] | None:
     """Geänderte Pfade (``/``, relativ zum Repo) von ``basis`` bis Arbeitsbaum; ``None`` = unklar.
 
     Neue (ungetrackte) Dateien zählen nur, wenn ``ungespeichert`` sie als schmutzig meldet —
-    Laufdateien unter ``.to-spawn/`` und Werkzeug-Ordner fallen hier wie dort heraus (#218).
+    Werkzeug-Reste nach ``cache.ist_werkzeug_rest`` fallen hier wie dort heraus (#218).
     """
     code, raus = _git(repo, "diff", "--name-only", "--no-renames", "-z", basis, "--")
     if code != 0:
@@ -242,17 +242,21 @@ _CODE_STELLVERTRETER = tuple(
 #: (``.sh``, ``.json``, ``Makefile``, Shebang-Skripte …). Ohne Endung nie Doku, außer diesen Namen.
 _DOKU_ENDUNGEN = frozenset({".md", ".txt", ".rst", ".adoc", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".pdf"})
 _DOKU_NAMEN = frozenset({"LICENSE", "README", "CHANGELOG"})
+#: Konfig mit Doku-Endung (Abhängigkeiten, Build; Name klein, ``fnmatch``): nie Doku (#204).
+_KONFIG_NAMEN = ("requirements*.txt", "constraints*.txt", "cmakelists.txt")
 _SHEBANG = "#!"
 
 
 def _ist_doku_datei(repo: Path, basis: str, pfad: str) -> bool:
-    """True, wenn ``pfad`` Doku sein kann: Doku-Endung bzw. -Name und kein Shebang in Zeile 1.
+    """True, wenn ``pfad`` Doku sein kann: Doku-Endung bzw. -Name, kein Konfig-Name, kein Shebang in Zeile 1.
 
     Shebang zählt im Arbeitsbaum und im Stand ``basis`` (gelöscht, alter Pfad bei Umbenennung);
     ist der Inhalt an keiner der beiden Stellen lesbar: im Zweifel Code. Muster entscheiden zusätzlich.
     """
     datei = PurePosixPath(pfad)
     if not (datei.suffix.lower() in _DOKU_ENDUNGEN if datei.suffix else datei.name in _DOKU_NAMEN):
+        return False
+    if any(fnmatch.fnmatchcase(datei.name.lower(), muster) for muster in _KONFIG_NAMEN):
         return False
     gelesen = False
     try:
