@@ -10,7 +10,7 @@ Alle Regel-Texte hier sind Kunsttext.
 
 from __future__ import annotations
 
-import shutil
+import re
 from pathlib import Path
 
 import pytest
@@ -93,7 +93,8 @@ def test_neue_zeile_aus_lokaler_vorlage_kommt_weiter(tmp_path: Path) -> None:
     ziel = _nach_erster_uebernahme(tmp_path)
     regeln = ziel / "regeln.md"
     regeln.write_text(
-        "\n".join(z for z in regeln.read_text(encoding="utf-8").splitlines() if z != GNU) + "\n", encoding="utf-8"
+        "\n".join(z for z in regeln.read_text(encoding="utf-8").splitlines() if z != GNU) + "\n",
+        encoding="utf-8",
     )
     _vorlage_mit(ziel, "python.md", QUAGGA)
 
@@ -101,3 +102,21 @@ def test_neue_zeile_aus_lokaler_vorlage_kommt_weiter(tmp_path: Path) -> None:
 
     teil = _abschnitt(regeln.read_text(encoding="utf-8"), "python")
     assert QUAGGA in teil and GNU not in teil
+
+
+def test_lokale_vorlage_zeile_mit_praefix_gilt_als_vorhanden(tmp_path: Path) -> None:
+    ziel = _nach_erster_uebernahme(tmp_path)
+    regeln = ziel / "regeln.md"
+    von_hand = regeln.read_text(encoding="utf-8").replace(GNU, f"Falls Repo kunst-app: {GNU}")
+    regeln.write_text(von_hand, encoding="utf-8")
+    _vorlage_mit(ziel, "python.md", GNU)
+
+    _einspielen(ziel)
+
+    assert regeln.read_text(encoding="utf-8") == von_hand
+
+
+def test_falls_repo_muster_gleich_wie_im_werkzeug() -> None:
+    werkzeug = (QUELLE / "_gemeinsam.py").read_text(encoding="utf-8")
+    treffer = re.search(r'^_FALLS_REPO = re\.compile\(r"(.*)"\)$', werkzeug, re.MULTILINE)
+    assert treffer and treffer.group(1) == review_hook._FALLS_REPO.pattern

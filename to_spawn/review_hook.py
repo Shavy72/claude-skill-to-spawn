@@ -26,6 +26,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -42,6 +43,8 @@ WERKZEUG_QUELLE = Path(__file__).resolve().parents[1] / "review"
 STAND_DATEI = ".installiert.json"
 #: Private Projektregeln im Werkzeug-Ordner; gleicher Name wie ``REGELN_DATEI`` in ``review/_gemeinsam.py``.
 REGELN_DATEI = "regeln.md"
+#: Gleich ``_FALLS_REPO`` in ``review/_gemeinsam.py``; kein Import, ``install.ps1`` startet diese Datei direkt.
+_FALLS_REPO = re.compile(r"^[\s>*-]*Falls Repo\s+([^:]+?)\s*:")
 CONFIG_LOKAL = "config.json"
 CONFIG_STANDARD = "config.standard.json"
 _NIE = {"__pycache__", ".pytest_cache", ".git"}
@@ -173,13 +176,14 @@ def regeln_uebernehmen(ziel: Path, quelle: Path) -> list[str]:
     Abschnitt ``## <name>`` von ``ziel/regeln.md``, bevor :func:`installiere` die Vorlage ersetzt.
 
     Lokal geändert = weder gleich der neuen Vorlage noch dem zuletzt installierten Stand (wie die Sicherungs-Regel).
-    Mitgelesen werden Vorlagen, die frühere Läufe unter ``../_alt/<zielname>-*/auftraege`` gesichert haben.
-    Dubletten zählen je Abschnitt; ein vorhandener Abschnitt wächst an seinem Ende, sonst kommt ein neuer ans
-    Dateiende. Alle übrigen Zeilen der Datei (Handänderungen) bleiben unberührt.
+    Vorlagen, die frühere Läufe unter ``../_alt/<zielname>-*/auftraege`` gesichert haben, zählen nur für einen
+    Abschnitt, den ``regeln.md`` noch nicht hat (erste Übernahme, auch bei fehlender Datei): steht er, hat ein
+    früherer Lauf sie schon übernommen, und Handänderungen dort (gelöscht, mit Präfix versehen) bleiben.
+    Dubletten zählen je Abschnitt, auch als ``Falls Repo <name>: <derselbe Text>``; ein vorhandener Abschnitt
+    wächst an seinem Ende, sonst kommt ein neuer ans Dateiende. Alle übrigen Zeilen der Datei bleiben unberührt.
     Ohne ``.installiert.json`` landen auch Zeilen älterer ausgelieferter Fassungen dort: lieber zu viel als verloren.
 
-    ponytail: Zeilen aus ``_alt``-Sicherungen kommen wieder, wenn man sie in ``regeln.md`` löscht; dann die
-    Sicherung mit löschen.
+    ponytail: wer einen ganzen Abschnitt löscht, bekommt ihn aus ``_alt`` zurück; dann die Sicherung mit löschen.
     """
     alt_stand = _lade_stand(ziel)
     regeln = ziel / REGELN_DATEI
@@ -190,18 +194,19 @@ def regeln_uebernehmen(ziel: Path, quelle: Path) -> list[str]:
     neu_je: dict[str, list[str]] = {}
     for alt, installiert in kandidaten:
         vorlage = quelle / "auftraege" / alt.name
-        if alt.is_symlink() or not vorlage.is_file():
-            continue
+        bereich = _abschnitt_bereich(zeilen, alt.stem)
+        if alt.is_symlink() or not vorlage.is_file() or (bereich and not installiert):
+            continue  # Sicherung, deren Abschnitt schon steht: übernommen, Handänderungen dort gewinnen.
         alt_bytes, neu_bytes = alt.read_bytes(), vorlage.read_bytes()
         bekannt = (_pruefsumme(neu_bytes), alt_stand.get(f"auftraege/{alt.name}") if installiert else None)
         if _pruefsumme(alt_bytes) in bekannt:
             continue
         neu_zeilen = set(neu_bytes.decode("utf-8").splitlines())
-        bereich = _abschnitt_bereich(zeilen, alt.stem)
-        schon_da = set(zeilen[bereich[0] : bereich[1]]) if bereich else set()
+        abschnitt = zeilen[bereich[0] : bereich[1]] if bereich else []
+        schon_da = set(abschnitt) | {z[t.end() :].strip() for z in abschnitt if (t := _FALLS_REPO.match(z))}
         eigene = neu_je.setdefault(alt.stem, [])
         for z in alt_bytes.decode("utf-8").splitlines():
-            if z.strip() and z not in neu_zeilen and z not in schon_da and z not in eigene:
+            if z.strip() and z not in neu_zeilen and not {z, z.strip()} & schon_da and z not in eigene:
                 eigene.append(z)
     neu_je = {name: eigene for name, eigene in neu_je.items() if eigene}
     if not neu_je:
