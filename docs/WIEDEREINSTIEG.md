@@ -1,7 +1,7 @@
 # Wiedereinstieg — hier anfangen, wenn der Bau steht
 
 Dieses Dokument ist der eine Einstieg für jede Session und jeden Menschen, der den Bau des
-Bau-Systems („USB-Stick“, Lastenheft L1–L5) fortsetzen soll — nach einem Abbruch, einem
+Bau-Systems („USB-Stick“, Lastenheft L1–L9) fortsetzen soll — nach einem Abbruch, einem
 Maschinen-Ausfall oder einer langen Pause. Es braucht keinen Chat und keine Übergabe-Datei.
 
 Pflege: Die führende Leit-Session hält den Abschnitt „Stand“ aktuell (nach jedem gemergten
@@ -32,7 +32,7 @@ aktuell und räumt hinter sich auf. Prüfen und Gate sind schnell und prüfen nu
 
 | Was | Ort | Wozu |
 |---|---|---|
-| Auftrag, Wortlaut des Menschen 1:1 | `docs/LASTENHEFT.md` (L1–L5, A1–A28, N1–N11) | Was gewollt ist und was nicht. Bei Zweifel gilt der Wortlaut. |
+| Auftrag, Wortlaut des Menschen 1:1 | `docs/LASTENHEFT.md` (L1–L9, A1–A58, N1–N23) | Was gewollt ist und was nicht. Bei Zweifel gilt der Wortlaut. |
 | Plan, Design, Etappen 0–5, Stand | `docs/PLAN_L1_usb_stick.md` | Wie gebaut wird, in welcher Reihenfolge, was zuletzt geschah (Abschnitt „Stand“). |
 | Abnahme mit Belegen | `docs/ABNAHME_L1.md` | Was bewiesen ist. Tabelle M1–M15: die erste Zeile ohne Beleg ist das nächste Ziel. |
 | Prüftor-Vergleich | `docs/PRUEFTOR_VERGLEICH.md` | Messwerte, Quellen, Empfehlung und Bau-Pakete für den Prüf-Werkzeugkasten. |
