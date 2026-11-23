@@ -83,6 +83,9 @@ def test_linie_nur_an_einer_stelle_gepflegt() -> None:
     assert all(orte == ["to_spawn/anleitung.py"] for orte in fundorte.values()), fundorte
 
 
+#: Punkt 5 hält nur den Schritt an, nie die ganze Arbeit.
+VERBOTEN_PUNKT_5 = ("Dort anhalten", "ganze Arbeit", "keinen Rest", "alles anhalten")
+
 def test_linie_punkt_5_passt_zum_befugnis_text() -> None:
     """Punkt 5 und Klasse 2 im Befugnis-Text nennen denselben Briefkasten-Befehl, keiner hält alles an."""
     from to_spawn import anleitung, befugnis
@@ -91,6 +94,8 @@ def test_linie_punkt_5_passt_zum_befugnis_text() -> None:
     klasse_2 = befugnis.start_text(7).split("Klasse 2")[1].split("Klasse 3")[0]
     assert "to_spawn.py frage <N> --klasse 2 --frage … --vorschlag …" in punkt_5
     assert "to_spawn.py frage 7 --klasse 2 --frage … --vorschlag …" in klasse_2
-    assert "braucht den Nutzer" in punkt_5 and "braucht den Nutzer" in klasse_2
-    assert "Rest weiterbauen" in punkt_5
-    assert "Dort anhalten" not in klasse_2 and "Diesen Schritt anhalten" in klasse_2
+    assert "Diesen Schritt anhalten" in klasse_2
+    for text in (punkt_5, klasse_2):
+        assert "braucht den Nutzer" in text and "den Rest weiterbauen" in text
+        verboten = [w for w in VERBOTEN_PUNKT_5 if w.lower() in text.lower()]
+        assert not verboten, (verboten, text)
