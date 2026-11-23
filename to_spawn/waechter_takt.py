@@ -31,7 +31,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from . import capo, config, gh, leitstand, starter, waechter_lauf
+from . import capo, config, gh, leitstand, starter, ticket_zustand, waechter_lauf
 
 log = logging.getLogger("to_spawn.waechter_takt")
 
@@ -82,13 +82,6 @@ def _schluessel(text: str) -> str:
     return hashlib.sha1(text.encode("utf-8")).hexdigest()[:16]
 
 
-def _ist_zu(issue: dict[str, Any]) -> bool:
-    return str(issue.get("state") or "").lower() == "closed" and issue.get("state_reason") not in (
-        "not_planned",
-        "duplicate",
-    )
-
-
 def _zeilen(repo: Path, ref: str | None, ticket: int, wt_basis: str) -> list[dict[str, Any]]:
     """Bau-Log-Zeilen des Tickets: Hauptzweig + Laufdateien (Worktree, Repo)."""
     zeilen = capo.log_vom_ref(repo, ref, ticket) if ref else []
@@ -133,7 +126,7 @@ def pruefe(
     zu: set[int] = set()
     for issue in sorted(liste, key=lambda i: int(i["number"])):
         nr = int(issue["number"])
-        offen = not _ist_zu(issue)
+        offen = not ticket_zustand.fertig_gebaut(issue)  # fertig gebaut hat keine offene Frage
         for z in _zeilen(repo, ref, nr, wt_basis):
             if z.get("typ") not in RELEVANTE_TYPEN:
                 continue
@@ -147,7 +140,8 @@ def pruefe(
             if erster and not (offen and z.get("typ") in FRAGE_TYPEN):
                 continue
             eintraege.append((capo.verdichte(nr, z), "zeilen", k))
-        if not offen:
+        # Belegseite gilt dem echten Schluss; verworfen hat keine (#279).
+        if ticket_zustand.stufe(issue) == "zu":
             zu.add(nr)
             if not erster and nr not in alt_zu:
                 titel = capo._kurz(issue.get("title"), 80)
