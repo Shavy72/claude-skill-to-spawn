@@ -13,8 +13,14 @@ import sys
 import tokenize
 from pathlib import Path
 
-import pytest
-from test_review_quelle_329 import NAMEN_DATEI, lade_namen, name_muster
+from test_review_quelle_329 import (
+    NAMEN,
+    NAMEN_DATEI,  # noqa: F401 — test_push_sperre_nest_1445 holt den Pfad von hier
+    NAMENS_PRUEFUNG,
+    lade_namen,
+    name_muster,
+    nur_mit_namensliste,
+)
 
 SKILL = Path(__file__).resolve().parents[1]
 
@@ -26,15 +32,14 @@ DATEIEN = (
     "to_spawn/melder.py",
     "SKILL.md",
 )
-#: Namen aus der privaten Liste (#394) — das Repo ist öffentlich und nennt keinen Namen.
-NAMEN = lade_namen(NAMEN_DATEI)
+#: Namen kommen aus der privaten Liste (#394, ``NAMEN``) — das Repo ist öffentlich und nennt keinen Namen.
 #: Wortgrenze nur vorn: trifft auch die Genitiv-Form, aber keine Wörter, die den Namen
 #: nur enthalten (#325).
 NAME = name_muster(NAMEN)
 #: Großgeschrieben (Fließtext der Leitstand-Seite, #325); Bezeichner schreiben den Namen klein.
 NAME_GROSS = name_muster((n.capitalize() for n in NAMEN), flags=0)
-#: Ohne private Liste springen die Namens-Prüfungen sichtbar über; die Mechanik-Tests laufen.
-nur_mit_namensliste = pytest.mark.skipif(not NAMEN, reason=f"private Namensliste fehlt: {NAMEN_DATEI}")
+#: Ohne (oder mit leerer) private Liste springen die Namens-Prüfungen per ``nur_mit_namensliste``
+#: sichtbar über; die Mechanik-Tests laufen.
 #: Ab Python 3.12 zerlegt ``tokenize`` f-Strings; der Text steht dann in FSTRING_MIDDLE.
 FSTRING_MIDDLE = getattr(tokenize, "FSTRING_MIDDLE", tokenize.STRING)
 
@@ -93,7 +98,10 @@ def test_kein_fester_personenname_in_ausgabe_texten() -> None:
 def test_escape_verdeckt_namen_nicht(tmp_path: Path, monkeypatch) -> None:
     """Teil 3 (#325): Name direkt hinter ``\\n``, ``\\t`` oder ``\\r`` wird erkannt."""
     probe = tmp_path / "probe.py"
-    probe.write_text('A = "x\\nKunstwort"\nB = "x\\tKunstwort"\nC = "x\\rKunstwort"\n', encoding="utf-8")
+    probe.write_text(
+        'A = "x\\nKunstwort"\nB = "x\\tKunstwort"\nC = "x\\rKunstwort"\n',
+        encoding="utf-8",
+    )
     monkeypatch.setattr(sys.modules[__name__], "SKILL", tmp_path)
     monkeypatch.setattr(sys.modules[__name__], "NAME", name_muster({"kunstwort"}))
     assert _text_funde("probe.py") == ["probe.py:1", "probe.py:2", "probe.py:3"]
@@ -276,22 +284,50 @@ def test_kein_fester_personenname_in_shell_kommentaren() -> None:
 def test_namensmuster_aus_kunst_liste(tmp_path: Path) -> None:
     """#394: Mechanik mit Kunst-Liste — Genitiv trifft, Wortinneres und Großschreibung wie #325."""
     liste = tmp_path / "namen.txt"
-    liste.write_text("# Kommentar\nKunstwort\n", encoding="utf-8")
+    liste.write_text("# Kommentar\nKunstwort\n  Zweitwort  # Notiz\n\n", encoding="utf-8")
     namen = lade_namen(liste)
+    assert namen == {"kunstwort", "zweitwort"}
     muster = name_muster(namen)
-    assert muster.search("frag Kunstworts Antwort") and muster.search("x\tkunstwort")
+    for zeile in ("frag Kunstworts Antwort", "x\tkunstwort", "an ZWEITWORT"):
+        assert muster.search(zeile), f"Name aus der Liste nicht erkannt: {zeile!r}"
     assert not muster.search("Vorkunstwort bleibt frei")
     gross = name_muster((n.capitalize() for n in namen), flags=0)
-    assert gross.search("an Kunstwort") and not gross.search("z-kunstwort")
+    assert gross.search("an Kunstwort") and gross.search("an Zweitwort")
+    assert not gross.search("z-kunstwort")
     assert not name_muster(frozenset()).search("Kunstwort")
 
 
 @nur_mit_namensliste
+def test_namensmuster_aus_privater_liste() -> None:
+    """#394: Die Namens-Prüfungen nutzen wirklich die private Liste — jeder Eintrag trifft."""
+    fehlt = [
+        f"Eintrag {nr} ({art})"
+        for nr, name in enumerate(sorted(NAMEN), 1)
+        for art, trifft in (
+            ("NAME", NAME.search(f"an {name}")),
+            ("NAME_GROSS", NAME_GROSS.search(f"an {name.capitalize()}")),
+            *((art, m.search(f"an {name}")) for art, m in NAMENS_PRUEFUNG.items()),
+        )
+        if not trifft
+    ]
+    assert fehlt == [], f"Muster trifft Namen der privaten Liste nicht: {fehlt}"
+
+
+#: Die Testdateien, die die Namensliste für #394 lesen; das Repo ist öffentlich.
+TESTS_394 = (
+    "test_rolle_statt_name_323.py",
+    "test_review_quelle_329.py",
+    "test_push_sperre_nest_1445.py",
+)
+
+
+@nur_mit_namensliste
 def test_kein_name_in_diesem_test() -> None:
-    """#394: Das Repo ist öffentlich — der Test selbst nennt keinen Namen der privaten Liste."""
+    """#394: Das Repo ist öffentlich — die #394-Tests nennen keinen Namen der privaten Liste."""
     funde = [
-        f"{Path(__file__).name}:{nr}"
-        for nr, zeile in enumerate(Path(__file__).read_text(encoding="utf-8").splitlines(), 1)
+        f"{datei}:{nr}"
+        for datei in TESTS_394
+        for nr, zeile in enumerate((SKILL / "tests" / datei).read_text(encoding="utf-8").splitlines(), 1)
         if NAME.search(zeile)
     ]
     assert funde == [], f"Name im Test: {funde}"

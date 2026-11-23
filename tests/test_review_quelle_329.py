@@ -82,7 +82,7 @@ NAMEN_DATEI = Path.home() / ".claude" / "review" / "namen_privat.txt"
 
 
 def lade_namen(pfad: Path) -> frozenset[str]:
-    """Namen aus ``pfad``; fehlt die Datei, ist die Liste leer (Mechanik prüft dann ein Kunstwort)."""
+    """Namen aus ``pfad``; fehlt die Datei oder ist sie leer (nur Kommentare), ist die Liste leer."""
     try:
         text = pfad.read_text(encoding="utf-8")
     except FileNotFoundError:
@@ -109,15 +109,21 @@ class _Namenmuster:
         return not self.namen.isdisjoint(re.findall(r"[^\W_]+", zeile.lower()))
 
 
-FREMDNAME = _Namenmuster(lade_namen(NAMEN_DATEI))
+NAMEN = lade_namen(NAMEN_DATEI)
+#: Ohne (oder mit leerer) private Liste springen die Namens-Prüfungen sichtbar über (``pytest -rs``).
+nur_mit_namensliste = pytest.mark.skipif(not NAMEN, reason=f"private Namensliste fehlt oder leer: {NAMEN_DATEI}")
+FREMDNAME = _Namenmuster(NAMEN)
 OEFFENTLICH = {
     **MUSTER,
-    "personenname": name_muster(lade_namen(NAMEN_DATEI)),
     "geheimnis": GEHEIMNIS,
     "projekt-begriff": PROJEKT_BEGRIFF,
     "mail": MAIL,
     "ip-adresse": IP,
     "hostname": HOST,
+}
+#: Getrennt von ``OEFFENTLICH``: ohne Liste trifft keines dieser Muster, der Test wäre still grün.
+NAMENS_PRUEFUNG = {
+    "personenname": name_muster(NAMEN),
     "firmen-oder-personenname": FREMDNAME,
 }
 #: Ausnahmen je Zeile (#329 P2): (Datei, Begriff) → Textstück, das in derselben Zeile stehen muss.
@@ -126,7 +132,10 @@ AUSNAHMEN = {
     ("review/config.standard.json", "account_db"): '"projekt_woerter":',
     ("review/config.standard.json", "postproxy"): '"projekt_woerter":',
     ("review/config.standard.json", "phone_power"): '"projekt_woerter":',
-    ("review/tests/test_router_runde2.py", "account_db"): '["account_db.set_status(x)"]',
+    (
+        "review/tests/test_router_runde2.py",
+        "account_db",
+    ): '["account_db.set_status(x)"]',
 }
 
 
@@ -170,15 +179,28 @@ def test_keine_laufzeit_daten_im_repo() -> None:
     assert funde == [], f"Laufzeit-Daten gehören nicht ins Repo: {funde}"
 
 
-def test_oeffentlich_tauglich() -> None:
-    funde = [
+def _oeffentlich_funde(
+    pruefung: dict[str, re.Pattern[str] | _Namenmuster],
+) -> list[str]:
+    return [
         f"{datei}:{nr} ({art})"
         for datei in _review_dateien()
         for nr, zeile in enumerate((SKILL / datei).read_text(encoding="utf-8").splitlines(), 1)
-        for art, muster in OEFFENTLICH.items()
+        for art, muster in pruefung.items()
         if _verboten(datei, art, muster, zeile)
     ]
+
+
+def test_oeffentlich_tauglich() -> None:
+    funde = _oeffentlich_funde(OEFFENTLICH)
     assert funde == [], f"nicht öffentlich-tauglich: {funde}"
+
+
+@nur_mit_namensliste
+def test_oeffentlich_ohne_namen() -> None:
+    """#394: Namen der privaten Liste stehen in keiner Datei unter ``review/``."""
+    funde = _oeffentlich_funde(NAMENS_PRUEFUNG)
+    assert funde == [], f"Name aus der privaten Liste im Repo: {funde}"
 
 
 def test_review_tests_ohne_fremdes_conftest() -> None:
@@ -271,7 +293,12 @@ def _import_huelle(start: set[str]) -> set[str]:
 def test_quelle_deckt_hook_und_vertrag() -> None:
     """Skriptliste aus Hook + Vertrag abgeleitet statt fest (Befund Review 334)."""
     hook = _hook_verweise()
-    assert {"review_route.py", "review_beleg.py", "review_bericht.py", "_gemeinsam.py"} <= hook
+    assert {
+        "review_route.py",
+        "review_beleg.py",
+        "review_bericht.py",
+        "_gemeinsam.py",
+    } <= hook
     soll = _import_huelle(hook | _vertrag_verweise())
     fehlt = sorted(d for d in soll if not (REVIEW / d).exists())
     assert fehlt == [], f"Hook/Vertrag nennen, fehlt unter review/: {fehlt}"
