@@ -37,7 +37,7 @@ def issue(n: int, *, zu: bool = False, blocker: int = 0, labels: tuple[str, ...]
 
 
 def lage(n: int, fenster: str, still: int | None = None) -> aufseher_stand.TicketLage:
-    return aufseher_stand.TicketLage(n, True, fenster, still)
+    return aufseher_stand.TicketLage(nummer=n, stufe="offen", fenster=fenster, still_min=still)
 
 
 # --- Rechenlogik --------------------------------------------------------------

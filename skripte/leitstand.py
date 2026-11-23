@@ -500,7 +500,9 @@ def berechne(
         if stand in ("läuft", "fertig", "braucht_david") and nr not in start:
             erster = min((z.get("ts") for z in zeilen if z.get("typ") == "session_start"), default=None)
             start[nr] = lokal_iso(erster) or jetzt_iso()
-        if stand == "fertig" and nr not in ende:
+        if not ticket_zustand.endgueltig_zu(issue):  # „fertig gebaut“ ist kein Ende (#279)
+            ende.pop(nr, None)
+        elif nr not in ende:
             ende[nr] = lokal_iso(issue.get("closedAt")) or jetzt_iso()
         eintrag: dict[str, Any] = {"zustand": stand, "ist_k": ist_k}
         if phase:

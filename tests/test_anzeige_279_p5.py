@@ -6,6 +6,8 @@ Quelle der Wahrheit ist ``to_spawn/ticket_zustand.py``; jede Anzeige fragt dort.
 from __future__ import annotations
 
 import importlib.util
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -122,9 +124,59 @@ def test_leitstand_graphql_holt_labels(ls: ModuleType, monkeypatch: pytest.Monke
     assert "labels(" in gesehen[0] and "stateReason" in gesehen[0]
 
 
-def test_leitstand_seite_zeigt_phase_auch_bei_fertig() -> None:
+def test_leitstand_fertig_gebaut_kein_ende(ls: ModuleType) -> None:
+    """Offen + ``staging:fertig``: kein „auf GitHub geschlossen“, kein ``ende`` — auch kein alter Merkwert."""
+    gebaut = {"state": "OPEN", "labels": {"nodes": [{"name": LABEL}]}}
+    zustand = ls.leerer_zustand()
+    zustand["ende"] = {"1": "2026-11-23T10:00:00+01:00"}  # aus der Zeit vor dem Fix
+    live, ereignisse, merk = ls.berechne("9", {"1": "Titel"}, {}, {"1": gebaut}, {}, zustand)
+    assert live["tickets"]["1"]["zustand"] == "fertig"
+    assert "ende" not in live["tickets"]["1"]
+    assert "1" not in merk["ende"]
+    assert "#1 fertig" not in [e.titel for e in ereignisse]
+    zu = {"state": "CLOSED", "closedAt": "2026-11-23T09:00:00Z"}
+    live, ereignisse, merk = ls.berechne("9", {"1": "Titel"}, {}, {"1": zu}, {}, ls.leerer_zustand())
+    assert "ende" in live["tickets"]["1"] and "1" in merk["ende"]
+    assert "#1 fertig" in [e.titel for e in ereignisse]
+
+
+def _seiten_js(name: str) -> str:
     seite = (SKILL / "leitstand" / "seite.html").read_text(encoding="utf-8")
-    assert 'if (t.zustand !== "fertig" && t.phase)' not in seite
+    anfang = seite.index(f"  function {name}(")
+    return seite[anfang : seite.index("\n  }\n", anfang) + 4]
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node fehlt")
+def test_leitstand_seite_alles_fertig_nur_wenn_zu() -> None:
+    """Phasen-Gesamtzeile: „Alles fertig.“ nur, wenn jedes Ticket wirklich zu ist (``ende`` gesetzt)."""
+    js = (
+        "let tickets = [];\nconst model = { tiefe: new Map() };\n"
+        "const phaseKey = (t) => 1, offeneBlocker = () => [], nrListe = (l) => l.join(', ');\n"
+        + _seiten_js("phasenStand")
+        + "\nconst t = (nr, ende) => ({ nr, zustand: 'fertig', blocked_by: [], ende });\n"
+        "tickets = [t(1, '2026-11-23T10:00:00'), t(2, '2026-11-23T10:05:00')];\n"
+        "console.log(phasenStand({ key: 1 }).ueber);\n"
+        "tickets = [t(1, '2026-11-23T10:00:00'), t(2, null)];\n"
+        "console.log(phasenStand({ key: 1 }).ueber);\n"
+    )
+    aus = subprocess.run(["node", "-e", js], capture_output=True, text=True, check=True, encoding="utf-8")
+    assert aus.stdout.splitlines() == ["Alles fertig.", "Fertig gebaut, wartet auf Live."]
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node fehlt")
+def test_leitstand_seite_zeigt_phase_auch_bei_fertig() -> None:
+    """Knoten im Gleisplan: bei „fertig“ steht die Phase ohne „Gerade:“, sonst mit."""
+    js = (
+        "const W = 200, FONT_TITEL = 0, FONT_PHASE = 0, umbrechen = (s) => [s];\n"
+        + _seiten_js("knotenText")
+        + "\nconst ph = (zustand) => knotenText({ titel: 'T', art: 'bau', zustand, phase: 'Ticket fertig gebaut, wartet auf Live' }).ph[0].txt;\n"
+        "console.log(ph('fertig'));\nconsole.log(ph('läuft'));\n"
+    )
+    aus = subprocess.run(["node", "-e", js], capture_output=True, text=True, check=True, encoding="utf-8")
+    assert aus.stdout.splitlines() == [
+        "Ticket fertig gebaut, wartet auf Live",
+        "Gerade: Ticket fertig gebaut, wartet auf Live",
+    ]
 
 
 # --- Spec-Stand ---------------------------------------------------------------
@@ -219,3 +271,10 @@ def test_belege_html_kennt_fertig_gebaut(bu: ModuleType) -> None:
     eintrag = bu.Eintrag("7", "Titel", "fertig gebaut", "ABNAHME ok")
     seite = bu.baue_html(9, [eintrag], "23.11.2026")
     assert "Status: fertig gebaut" in seite
+
+
+def test_belege_fertig_gebaut_nicht_gruen_wie_zu(bu: ModuleType) -> None:
+    gebaut = bu.baue_html(9, [bu.Eintrag("7", "Titel", "fertig gebaut", "ABNAHME ok")], "23.11.2026")
+    zu = bu.baue_html(9, [bu.Eintrag("7", "Titel", "zu", "ABNAHME ok")], "23.11.2026")
+    assert '<span class="marke gruen">Status: zu' in zu
+    assert '<span class="marke gruen">Status: fertig gebaut' not in gebaut

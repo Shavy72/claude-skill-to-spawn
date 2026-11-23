@@ -100,7 +100,7 @@ def eintrag_von(repo: Path, nummer: str, titel: str, ohne_github: bool) -> Eintr
     )
 
 
-_KLASSE = {"zu": "gruen", "fertig gebaut": "gruen", "verworfen": "offen", "offen": "offen", "unbekannt": "offen"}
+_KLASSE = {"zu": "gruen", "fertig gebaut": "gebaut", "verworfen": "offen", "offen": "offen", "unbekannt": "offen"}
 
 
 def _karte_html(e: Eintrag) -> str:
@@ -127,7 +127,7 @@ def baue_html(spec: int, eintraege: list[Eintrag], heute: str) -> str:
     return (
         '<!doctype html><html lang="de"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width,initial-scale=1">'
-        f"<title>Belegseiten Spec {spec}</title><style>{_CSS}ul{{margin:4px 0;padding-left:20px}}</style>"
+        f"<title>Belegseiten Spec {spec}</title><style>{_CSS}ul{{margin:4px 0;padding-left:20px}}.marke.gebaut{{background:var(--grau-bg);color:var(--gruen)}}</style>"
         "</head><body><main>"
         f'<p class="leise">Belegseiten Spec {spec} · Stand {html.escape(heute)}</p>'
         f"<h1>{html.escape(kopf)}</h1>"

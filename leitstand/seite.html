@@ -800,7 +800,8 @@ h1 .specnr{color:var(--muted);font-weight:600}
     const einstieg = liste.filter((t) => !t.blocked_by.some((b) => inPhase.has(b)));
     const offenJe = einstieg.map((t) => offeneBlocker(t).filter((b) => !inPhase.has(b)));
     let ueber = "";
-    if (zst === "fertig") ueber = "Alles fertig.";
+    // ``ende`` setzt der Leitstand nur bei wirklich geschlossenem Ticket (#279).
+    if (zst === "fertig") ueber = liste.every((t) => t.ende) ? "Alles fertig." : "Fertig gebaut, wartet auf Live.";
     else if (zst === "offen") {
       const best = offenJe.length ? offenJe.reduce((a, b) => (b.length < a.length ? b : a)) : [];
       ueber = best.length ? "Startet, sobald " + nrListe(best) + (best.length === 1 ? " fertig ist." : " fertig sind.") : "Kann jetzt starten.";
