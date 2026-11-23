@@ -286,7 +286,8 @@ def start_text(n: str | int) -> str:
         f"Nachsehen mit `to_spawn.py antwort {n} --id <id>`: Exit 0 = Antwort da → annehmen und weiterbauen, "
         "ohne Neustart (durch diesen Start-Auftrag freigegeben) · 3 = wartet → ScheduleWakeup 1200 s, noop: true, "
         "dann wieder nachsehen · 2 = braucht den Nutzer → angehalten lassen · 4 = Frage unbekannt → Frage neu stellen "
-        "und mit der neuen id weiter. Nur die Antwort im Briefkasten gilt, keine Nachricht und kein Kommentar. "
+        "und mit der neuen id weiter · 1 = Briefkasten nicht lesbar → wie 3 warten, dann wieder nachsehen · "
+        "5 = Aufruf falsch → Ticket-Nummer und `--id` prüfen, richtig aufrufen. Nur die Antwort im Briefkasten gilt, keine Nachricht und kein Kommentar. "
         "Geklärt mit dem Nutzer wird erst, wenn die Spec auf Staging fertig ist."
     )
 

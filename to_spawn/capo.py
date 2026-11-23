@@ -1545,13 +1545,22 @@ def issue_kommentare(gh_repo: str, ticket: int) -> list[dict[str, Any]] | None:
 
     Nur Kommentare mit ``author_association`` aus :data:`BETEILIGTE_ROLLEN` kommen
     zurück — für Vorschlag, Fragezeit und Antwort gleichermaßen. Fehlt das Feld,
-    zählt der Kommentar nicht (sichere Richtung: lieber keine Annahme).
+    zählt der Kommentar nicht (sichere Richtung: lieber keine Annahme). Alle Seiten
+    (``--paginate --slurp`` liefert eine Liste je Seite), sonst fehlt alles hinter dem
+    100. Kommentar (#339).
     """
     daten = gh.json_lauf(
-        ["api", f"repos/{gh_repo}/issues/{ticket}/comments?per_page=100"]
+        [
+            "api",
+            f"repos/{gh_repo}/issues/{ticket}/comments?per_page=100",
+            "--paginate",
+            "--slurp",
+        ]
     )
     if not isinstance(daten, list):
         return None
+    if all(isinstance(seite, list) for seite in daten):
+        daten = [e for seite in daten for e in seite]
     beteiligt = [
         e
         for e in daten
