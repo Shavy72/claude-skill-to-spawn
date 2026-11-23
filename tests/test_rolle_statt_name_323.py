@@ -19,7 +19,9 @@ def test_kein_fester_personenname_in_prompt_quellen() -> None:
     funde = [
         f"{datei}:{nr}"
         for datei in DATEIEN
-        for nr, zeile in enumerate((SKILL / datei).read_text(encoding="utf-8").splitlines(), 1)
+        for nr, zeile in enumerate(
+            (SKILL / datei).read_text(encoding="utf-8").splitlines(), 1
+        )
         if NAME.search(zeile)
     ]
     assert funde == [], f"fester Personenname statt Rolle: {funde}"
