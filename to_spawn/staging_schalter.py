@@ -1,9 +1,9 @@
 """Staging-Schalter einer fertigen Spec automatisch AN schalten (#563, Spec #548 E3/E12).
 
-Sobald der Aufseher „SPEC FERTIG“ meldet, soll David morgens die ganze Spec auf
+Sobald der Aufseher „SPEC FERTIG“ meldet, soll der Mensch morgens die ganze Spec auf
 Staging testen können. Dafür schaltet dieser Baustein den Hauptschalter der Spec
 auf Staging AN. Live schaltet er nie: das Ziel ist fest :data:`ZIEL`, es gibt
-keinen Parameter dafür (Live-Freigabe gibt nur David).
+keinen Parameter dafür (Live-Freigabe gibt nur der Mensch).
 
 Welcher Schalter zur Spec gehört, steht im Spec-Text im Abschnitt
 ``## Hauptschalter``, Zeile „Name des Hauptschalters“ (Vorlage
@@ -30,7 +30,7 @@ from . import config, gh
 
 log = logging.getLogger(__name__)
 
-#: Einziges Ziel dieses Bausteins. Live schaltet nur David von Hand.
+#: Einziges Ziel dieses Bausteins. Live schaltet nur der Mensch von Hand.
 ZIEL = "staging"
 #: Vorgabe des Schalter-Skripts im App-Repo (Ticket #560); es gilt ``staging.schalter`` (L1 #46).
 SKRIPT: str = config.DEFAULTS["staging"]["schalter"]

@@ -10,10 +10,10 @@ disable-model-invocation: true
 Dieser Abschnitt geht jedem anderen Text dieses Skills und jedem Projekt-Zusatz (`.to-spawn/kette.md`) vor. Herkunft der Regel: Abschnitt „Beschluss-Protokoll“ in `~/.claude/CLAUDE.md` (Format der Protokoll-Datei steht dort). Hier stehen die verbindlichen Schritte für die Spec — einmal, für alle Projekte.
 
 1. **Protokoll finden.** Pfad aus dem Aufruf (`/to-spec <pfad>`), sonst die jüngste passende `docs/GRILL_*.md`. Der Chat dient nur zum Verstehen, nie als Inhaltsquelle.
-2. **Kein Protokoll?** Erst eins aus dem Chat anlegen (`docs/GRILL_<JJJJ-MM-TT>_<thema>.md`), streng einordnen: ✅ nur mit Davids ausdrücklichem Ja, sonst 💭. David die E-Liste bestätigen lassen, erst dann weiter.
+2. **Kein Protokoll?** Erst eins aus dem Chat anlegen (`docs/GRILL_<JJJJ-MM-TT>_<thema>.md`), streng einordnen: ✅ nur mit ausdrücklichem Ja des Menschen, sonst 💭. Den Menschen die E-Liste bestätigen lassen, erst dann weiter.
 3. **Zuordnung.** User Stories und Implementation Decisions nur aus ✅-Beschlüssen, jede Zeile endet mit `(E<n>)`. Jeden ✅ vollständig abdecken, keine neuen Wünsche erfinden. Out of Scope = alle ❌ mit Grund. Further Notes = nur Herleitung/Befunde aus dem Protokoll.
 4. **Offene Fragen.** Eigener Abschnitt `## Offene Fragen` mit allen 💭 — werden nicht gebaut.
-5. **Neue Klärung während der Spec** (z. B. Test-Seams, Design): erst als neue E-Nummer ins Protokoll, wenn David sie bestätigt hat, dann in die Spec.
+5. **Neue Klärung während der Spec** (z. B. Test-Seams, Design): erst als neue E-Nummer ins Protokoll, wenn der Mensch sie bestätigt hat, dann in die Spec.
 6. **Gegenprüfung vor dem Veröffentlichen.** Frischer Subagent ohne Chat bekommt nur Protokoll + Spec-Entwurf und meldet (a) Spec-Punkte ohne ✅-Quelle, (b) fehlende ✅-Beschlüsse, (c) 💭/❌ als Auftrag. Erst bei 0/0/0 veröffentlichen. Pflicht-Abschnitte der Projekt-Vorlage (z. B. `## Werkzeuge`) sind kein Spec-Punkt und brauchen kein `(E<n>)`.
 7. **Quelle-Zeile.** Die Spec beginnt mit `Quelle: docs/GRILL_<…>.md (Stand <Datum>)`.
 
@@ -97,7 +97,7 @@ Only derivations and findings from the protocol.
 
 </spec-template>
 
-<!-- LOKALER ZUSATZ (Davids Regel, 2026-09-28, nach oben gezogen 2026-10-05) — bei jedem Update/Neu-Import
+<!-- LOKALER ZUSATZ (Regel des Menschen, 2026-09-28, nach oben gezogen 2026-10-05) — bei jedem Update/Neu-Import
      dieses Skills ERHALTEN: Abschnitt „Beschluss-Protokoll“ ganz oben, Projekt-Zusatz nur zusätzlich,
      Template-Zeilen (E<n>) / Quelle / Offene Fragen. Prüf-Skript: tests/test_kette_install_e2.py
      (Skill-Repo). Quelle dieser Datei: kette/skills/to-spec/SKILL.md, verteilt per install.sh/install.ps1. -->

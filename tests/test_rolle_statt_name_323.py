@@ -7,6 +7,7 @@ für die Ticketstand-Ausgabe, die der Aufseher jeden Takt wörtlich vorn zeigt, 
 
 from __future__ import annotations
 
+import ast
 import re
 import sys
 import tokenize
@@ -108,4 +109,108 @@ def test_kein_fester_personenname_in_html_kommentaren() -> None:
                 kommentar = kommentar.replace(schluessel, "")
             if NAME.search(kommentar):
                 funde.append(f"{datei}:{text.count(chr(10), 0, treffer.start()) + 1}")
+    assert funde == [], f"fester Personenname statt Rolle: {funde}"
+
+
+#: Teil 4 (#325): weitere Python-Dateien mit Namen nur in Text-Bausteinen; Bezeichner wie
+#: ``davids_antwort`` bleiben (siehe ``TEXT_DATEIEN``).
+TEXT_DATEIEN_TEIL4 = (
+    "skripte/rueckblick.py",
+    "to_spawn/befund.py",
+    "to_spawn/manifest.py",
+    "to_spawn/staging_schalter.py",
+    "to_spawn/waechter_lauf.py",
+)
+#: Teil 4 (#325): Markdown ohne Bezeichner — jede Zeile wird geprüft.
+MARKDOWN_ORDNER = ("kette",)
+MARKDOWN_DATEIEN = ("to_spawn/README.md",)
+#: Teil 4 (#325): Diese Test-Dateien gehören zu anderen offenen Pull-Requests oder führen
+#: Namen absichtlich (Prüflisten) und sind hier ausgenommen.
+TESTS_AUSGENOMMEN = frozenset(
+    {
+        "tests/test_rolle_statt_name_323.py",
+        "tests/test_installer_vollstaendig.py",
+        "tests/test_starter_1406.py",
+        "tests/test_regel_kopie_274.py",
+        "tests/test_feste_namen_l1.py",
+        "tests/test_einrichten_l1.py",
+        "tests/test_starter_shell_l1.py",
+    }
+)
+
+
+def test_kein_fester_personenname_in_ausgabe_texten_teil4() -> None:
+    funde = [fund for datei in TEXT_DATEIEN_TEIL4 for fund in _text_funde(datei)]
+    assert funde == [], f"fester Personenname statt Rolle: {funde}"
+
+
+def test_kein_fester_personenname_in_markdown() -> None:
+    dateien = [
+        str(p.relative_to(SKILL))
+        for o in MARKDOWN_ORDNER
+        for p in (SKILL / o).rglob("*.md")
+    ]
+    funde = [
+        f"{datei}:{nr}"
+        for datei in sorted(dateien) + list(MARKDOWN_DATEIEN)
+        for nr, zeile in enumerate(
+            (SKILL / datei).read_text(encoding="utf-8").splitlines(), 1
+        )
+        if NAME.search(zeile)
+    ]
+    assert funde == [], f"fester Personenname statt Rolle: {funde}"
+
+
+def _kommentar_und_docstring_funde(datei: str) -> list[str]:
+    """Funde in Kommentaren und Docstrings; Test-Daten (übrige Strings) bleiben außen vor."""
+    pfad = SKILL / datei
+    text = pfad.read_text(encoding="utf-8")
+    funde: list[str] = []
+    with pfad.open(encoding="utf-8") as f:
+        for tok in tokenize.generate_tokens(f.readline):
+            if tok.type == tokenize.COMMENT and NAME.search(tok.string):
+                funde.append(f"{datei}:{tok.start[0]}")
+    for knoten in ast.walk(ast.parse(text)):
+        if not isinstance(
+            knoten, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)
+        ):
+            continue
+        if not (knoten.body and isinstance(knoten.body[0], ast.Expr)):
+            continue
+        wert = knoten.body[0].value
+        if isinstance(wert, ast.Constant) and isinstance(wert.value, str):
+            for versatz, zeile in enumerate(wert.value.splitlines()):
+                if NAME.search(zeile):
+                    funde.append(f"{datei}:{wert.lineno + versatz}")
+    return funde
+
+
+def test_kein_fester_personenname_in_test_kommentaren() -> None:
+    """Teil 4 (#325): Kommentare und Docstrings der Tests nennen die Rolle."""
+    dateien = sorted(
+        rel
+        for p in (SKILL / "tests").rglob("*.py")
+        if (rel := str(p.relative_to(SKILL))) not in TESTS_AUSGENOMMEN
+        and not Path(rel).name.startswith("test_starttext_")
+    )
+    funde = [
+        fund for datei in dateien for fund in _kommentar_und_docstring_funde(datei)
+    ]
+    assert funde == [], f"fester Personenname statt Rolle: {funde}"
+
+
+def test_kein_grossgeschriebener_name_in_html_fliesstext() -> None:
+    """Teil 4 (#325): Fließtext der Leitstand-Seite (HTML-Text, JS-Strings) nennt die Rolle.
+
+    Klassen, IDs, CSS-Variablen und Daten-Schlüssel schreiben den Namen klein
+    (``z-david``, ``braucht_david``); großgeschrieben steht er nur in Wortlaut für Menschen.
+    """
+    funde = [
+        f"{datei}:{nr}"
+        for datei in HTML_DATEIEN
+        for nr, zeile in enumerate(
+            (SKILL / datei).read_text(encoding="utf-8").splitlines(), 1
+        )
+        if re.search(r"\bDavid", zeile)
+    ]
     assert funde == [], f"fester Personenname statt Rolle: {funde}"

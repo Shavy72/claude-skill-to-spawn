@@ -169,7 +169,7 @@ def test_fehlschlag_ist_fehler_und_naechster_tick_versucht_es_wieder(
 
 
 def test_kein_pfad_im_skill_schaltet_live() -> None:
-    """Live schaltet nur David: kein Skill-Code ruft das Schalter-Skript mit Ziel live auf."""
+    """Live schaltet nur der Mensch: kein Skill-Code ruft das Schalter-Skript mit Ziel live auf."""
     from to_spawn import staging_schalter
 
     assert staging_schalter.ZIEL == "staging"

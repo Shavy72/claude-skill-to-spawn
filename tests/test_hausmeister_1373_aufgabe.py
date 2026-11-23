@@ -182,7 +182,7 @@ def _vier_ordner(welt: Welt) -> list[Path]:
     welt.ticket(32, "CLOSED", 48)
     c = welt.worktree(33)  # offen → bleibt
     welt.ticket(33, "OPEN")
-    d = welt.klon("wt-ohne")  # keine Nummer → für David
+    d = welt.klon("wt-ohne")  # keine Nummer → für den Menschen
     return [a, b, c, d]
 
 

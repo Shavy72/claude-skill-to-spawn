@@ -135,7 +135,7 @@ def test_nach_der_pruefung_nachgeschoben_bleibt_dann_naechster_lauf_entscheidet_
 
 
 def test_ohne_ticket_nummer_nie_angefasst_steht_in_liste_fuer_david(zw: Welt) -> None:
-    """``ticket/ohne-nummer``: nie angefasst, fuer_david, in der Liste für David."""
+    """``ticket/ohne-nummer``: nie angefasst, fuer_david, in der Liste für den Menschen."""
     _commit(zw.haupt, "x.txt", "x\n")
     git(zw.haupt, "push", "-q", "origin", "HEAD:refs/heads/ticket/ohne-nummer")
     r = hausmeister.zweig_aufraeumen(ORIGIN, "ticket/ohne-nummer", loeschen=True)
