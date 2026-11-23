@@ -72,6 +72,12 @@ $laufend = Get-CimInstance Win32_Process -Filter "Name='python.exe' OR Name='cla
 $ErrorActionPreference = "Continue"
 $zuBauen = @(& $py "$PSScriptRoot/to_spawn.py" "zu-bauen" "$Spec" | ForEach-Object { [int]$_ })
 $zuBauenRc = $LASTEXITCODE
+if ($zuBauenRc -ne 0) {
+    # GitHub kurz weg: genau ein Wiederholversuch nach 5 s.
+    Start-Sleep -Seconds 5
+    $zuBauen = @(& $py "$PSScriptRoot/to_spawn.py" "zu-bauen" "$Spec" | ForEach-Object { [int]$_ })
+    $zuBauenRc = $LASTEXITCODE
+}
 $ErrorActionPreference = $eapVorher
 if ($zuBauenRc -ne 0) { Write-Host "Ticket-Stand nicht für alle Tickets bestimmbar — diese werden nicht gestartet." -ForegroundColor Yellow }
 $cmds = @()

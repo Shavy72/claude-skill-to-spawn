@@ -83,6 +83,15 @@ def test_keine_folge_session_fuer_fertig_gebautes(repo: Path, tmp_path: Path, mo
     assert sum(1 for z in zeilen if z["typ"] == "session_start") == 1
 
 
+def test_folge_session_laeuft_bei_lese_fehler_weiter(repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:  # noqa: F811
+    """Fail-open: ein Lese-Fehler hält keinen laufenden Bau an (die Start-Tür fängt es danach ab)."""
+    _labels(tmp_path, {}, monkeypatch)
+    monkeypatch.setenv("GH_STUB_KAPUTT", TICKETS[0])
+    assert _staffel_lauf(repo) == 0
+    zeilen = bau_log.lese(repo, TICKETS[0])
+    assert sum(1 for z in zeilen if z["typ"] == "session_start") == 2
+
+
 # --- Stelle 32: Stop-Hook --------------------------------------------------------------
 
 
@@ -131,3 +140,10 @@ def test_spawn_local_fragt_zu_bauen_statt_eigenem_filter() -> None:
     assert '"zu-bauen"' in text
     assert "--state closed" not in text
     assert "$zu -contains" not in text
+
+
+def test_spawn_local_wiederholt_zu_bauen_einmal() -> None:
+    """Windows-Skript: ein Wiederholversuch nach 5 s, danach bisheriges Verhalten (Text-Prüfung)."""
+    text = (SKILL / "spawn_local.ps1").read_text(encoding="utf-8")
+    assert text.count('"zu-bauen"') == 2
+    assert "Start-Sleep -Seconds 5" in text
