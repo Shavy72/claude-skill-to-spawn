@@ -54,7 +54,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from . import bau_log, befund, config, gh, melder, mensch_noetig, staging_schalter, starter, vorfall
+from . import bau_log, befund, config, gh, melder, mensch_noetig, staging_schalter, starter, ticket_zustand, vorfall
 from . import sperre as _sperre
 
 log = logging.getLogger("to_spawn.capo")
@@ -64,8 +64,6 @@ LEISE_TYPEN = frozenset({"session_ende", "subagent_ende"})
 #: Werte von ``status``/``phase``/``ergebnis`` einer ``deploy_phase``, die „Gate rot“ heißen.
 ROT_WERTE = frozenset({"rot", "fail", "failed", "abbruch", "fehler"})
 MAX_DELTA_ZEILEN = 8
-#: ``state_reason`` geschlossener Tickets, für die keine Regel gilt.
-NICHT_GEPLANT = frozenset({"not_planned", "duplicate"})
 #: Label am Ticket: David hat bewusst freigegeben — Regeln überspringen (E2).
 OK_LABEL = "waechter:ok"
 #: Minuten nach ``closed_at``, bevor die Regeln greifen (Vorgabe, ``waechter.karenz_minuten``).
@@ -813,7 +811,7 @@ def regel_vps(
 ) -> Verstoss | None:
     if kopf is None or not eigene:
         return None
-    if issue is not None and gh.wartet_auf_live(issue, live_freigegeben=live_freigabe(vps, ticket)):
+    if issue is not None and ticket_zustand.wartet_auf_live(issue, live_freigegeben=live_freigabe(vps, ticket)):
         return None  # #275: grün auf Staging, Live erst nach Freigabe — kein Verstoß
     staging_stand = staging_stand or StagingStand(vps)
     muster = [str(m) for m in vps.get("deploy_pfade") or []]
@@ -918,6 +916,8 @@ def regel_verwaist(
 ) -> Verstoss | None:
     if not issue.get("assignees"):
         return None
+    if ticket_zustand.fertig_gebaut(issue):
+        return None  # #279: fertig gebaut hat zu Recht keine Spur mehr
     if checkpoint and checkpoint in label_namen(issue):
         return None  # Checkpoint-Ticket wartet absichtlich auf einen Menschen
     datiert = [(t, z) for z in log_zeilen if (t := _zeit(z.get("ts")))]
@@ -1148,10 +1148,20 @@ def uebersicht(repo: Path, ref: str | None, spec: int, tickets: list[int]) -> Pa
 
 
 def kinder(gh_repo: str, spec: int) -> list[dict[str, Any]] | None:
+    """Sub-Issues der Spec; ``None`` bei Fehler oder kaputter Antwort (#279 P3).
+
+    Ein einziger unlesbarer Eintrag macht die ganze Liste unbrauchbar: eine halbe Liste
+    ließe die Spec fertig aussehen. Aufrufer setzen den Takt dann aus.
+    """
     daten = gh.json_lauf(
         ["api", f"repos/{gh_repo}/issues/{spec}/sub_issues?per_page=100"]
     )
-    return daten if isinstance(daten, list) else None
+    if not isinstance(daten, list):
+        return None
+    if not all(isinstance(i, dict) and "state" in i and str(i.get("number", "")).isdigit() for i in daten):
+        log.warning("Sub-Issues von #%s in %s: Antwort ohne Nummer/Zustand — Takt ausgesetzt.", spec, gh_repo)
+        return None
+    return daten
 
 
 # --- Folge-Runde nach dem Wiederöffnen (#284) -----------------------------------
@@ -1690,7 +1700,7 @@ def _checkpoint(
         return [f"#{n} FEHLER: Blocker nicht lesbar — Checkpoint ungeprüft"]
     if not all(isinstance(b, dict) and b.get("state") for b in blocker):
         return [f"#{n} FEHLER: Blocker-Format unbekannt — Checkpoint ungeprüft"]
-    if any(not gh.blocker_erledigt(b) for b in blocker):  # zu oder staging:fertig (#1527)
+    if any(not ticket_zustand.fertig_gebaut(b) for b in blocker):  # #1527, #279
         return []  # #451: noch blockiert — Checkpoint ruht, bis alle Blocker zu sind
     seit = vorschlag.zeit if vorschlag else frage_zeit
     if seit is None:
@@ -1817,7 +1827,7 @@ def karenz_minuten(waechter: dict[str, Any]) -> float:
 
 def schliess_marke(issue: dict[str, Any]) -> str:
     """Kennung eines Schließ-Ereignisses: ``closed_at`` (``?`` ohne Zeit), offen = ``""``."""
-    if str(issue.get("state", "")).lower() != "closed":
+    if not ticket_zustand.endgueltig_zu(issue):
         return ""
     return str(issue.get("closed_at") or "?")
 
@@ -2261,7 +2271,7 @@ def _tick(
     wartet = 0
     for issue in sorted(liste, key=lambda x: int(x["number"])):
         n = int(issue["number"])
-        zu = str(issue.get("state", "")).lower() == "closed"
+        zu = ticket_zustand.endgueltig_zu(issue)
         offen += 0 if zu else 1
         eigene = ticket_commits(commits, n)
         log_zeilen = log_vom_ref(repo, ref, n)
@@ -2350,7 +2360,7 @@ def _tick(
                 n, str(issue.get("closed_at") or ""), erledigt
             ):
                 sichern()
-            if grund in NICHT_GEPLANT:
+            if ticket_zustand.stufe(issue) == "verworfen":
                 aktionen.append(f"#{n} zu als {grund} — keine Regeln")
                 continue
             nur_melden = OK_LABEL in label_namen(issue)
@@ -2426,9 +2436,11 @@ def _tick(
             elif not (dry_run and aktionen[-1].endswith("würde wieder öffnen")):
                 continue
             # #284: wieder offen bringt nichts, wenn niemand weiterbaut.
-            if gh.staging_fertig(issue):
+            # ``issue`` ist der Stand vor dem Wieder-Öffnen; gefragt wird der Stand danach.
+            jetzt_offen = {**issue, "state": "open"}
+            if ticket_zustand.fertig_gebaut(jetzt_offen):
                 # #275: grün auf Staging — ein zweiter Bau-Start wäre Doppelbau.
-                aktionen.append(f"#{n} hat {gh.STAGING_FERTIG_LABEL} — keine Folge-Runde")
+                aktionen.append(f"#{n} {ticket_zustand.wortlaut(jetzt_offen)} — keine Folge-Runde")
                 continue
             aktionen += _folge_runde(
                 repo,
