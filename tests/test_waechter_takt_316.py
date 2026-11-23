@@ -65,6 +65,7 @@ def welt(tmp_path: Path) -> dict[str, Any]:
             "TO_SPAWN_WAECHTER_ORDNER": str(tmp_path / "waechter"),
             "TO_SPAWN_GH_STUB": str(HILFEN / "gh_aufzeichnung_316.py"),
             "GH_AUFZEICHNUNG_ORDNER": str(FIXTURE),
+            "GH_AUFZEICHNUNG_KOMMENTARE": str(tmp_path / "gh_kommentare.jsonl"),
             "CLAUDE_AUFZEICHNUNG": str(tmp_path / "claude_aufruf.jsonl"),
             "CLAUDE_AUFZEICHNUNG_SPEC": "293",
             "PYTHONIOENCODING": "utf-8",
@@ -73,9 +74,7 @@ def welt(tmp_path: Path) -> dict[str, Any]:
     return {"repo": repo, "env": env, "tmp": tmp_path}
 
 
-def _takt(
-    welt: dict[str, Any], *extra: str, timeout: float = 120
-) -> subprocess.CompletedProcess[str]:
+def _takt(welt: dict[str, Any], *extra: str, timeout: float = 120) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [
             PY,
@@ -117,9 +116,7 @@ def _alt_merker(welt: dict[str, Any], merker: dict[str, Any] | None = None) -> N
     """Merker aus einem früheren Takt (vorhanden, Vorgabe leer) in den Leitstand legen."""
     ordner = Path(welt["env"]["TO_SPAWN_LEITSTAND_ORDNER"])
     ordner.mkdir(parents=True, exist_ok=True)
-    (ordner / "zustand.json").write_text(
-        json.dumps({"takt": {"293": merker or {}}}), encoding="utf-8"
-    )
+    (ordner / "zustand.json").write_text(json.dumps({"takt": {"293": merker or {}}}), encoding="utf-8")
 
 
 def _frage(welt: dict[str, Any], ticket: int, *texte: str, typ: str = "frage") -> None:
@@ -159,9 +156,7 @@ def test_b_leerer_takt_startet_kein_claude(welt: dict[str, Any]) -> None:
     zweiter = _takt(welt, "--claude", str(CLAUDE_AUFZ))
     assert zweiter.returncode == 0, zweiter.stdout + zweiter.stderr
     assert "nichts zu entscheiden" in zweiter.stdout
-    assert not Path(welt["env"]["CLAUDE_AUFZEICHNUNG"]).exists(), (
-        "leerer Takt startete Claude"
-    )
+    assert not Path(welt["env"]["CLAUDE_AUFZEICHNUNG"]).exists(), "leerer Takt startete Claude"
 
 
 def test_c_zweiter_takt_steigt_sofort_aus(welt: dict[str, Any]) -> None:
@@ -238,9 +233,7 @@ def test_d_hook_stop_startet_takt(welt: dict[str, Any]) -> None:
         if merker.get("zuletzt") and merker["zuletzt"] != vorher:
             break
         time.sleep(0.2)
-    assert (_merker(welt) or {}).get("zuletzt") != vorher, (
-        "Takt nach Hook-Stop nicht gelaufen"
-    )
+    assert (_merker(welt) or {}).get("zuletzt") != vorher, "Takt nach Hook-Stop nicht gelaufen"
     assert logdatei.exists()
     assert "Takt #293" in logdatei.read_text(encoding="utf-8")
 
@@ -308,9 +301,7 @@ def test_f_takt_einrichten_trocken_idempotent(welt: dict[str, Any]) -> None:
             timeout=60,
         )
         assert lauf.returncode == 0, lauf.stdout + lauf.stderr
-        treffer = [
-            z for z in lauf.stdout.splitlines() if waechter_takt.cron_marke(293) in z
-        ]
+        treffer = [z for z in lauf.stdout.splitlines() if waechter_takt.cron_marke(293) in z]
         assert len(treffer) == 1, lauf.stdout
 
 
@@ -393,9 +384,7 @@ def test_j_prompt_ueber_stdin_mit_sonderzeichen(welt: dict[str, Any]) -> None:
 def test_k_haengender_claude_endet_nach_timeout(welt: dict[str, Any]) -> None:
     """Befund 4: hängender Claude wird beendet, Exit 1, Merker bleibt, Sperre wieder frei."""
     _alt_merker(welt)
-    welt["env"].update(
-        {"CLAUDE_AUFZEICHNUNG_SCHLAF": "60", "TO_SPAWN_TAKT_TIMEOUT_S": "2"}
-    )
+    welt["env"].update({"CLAUDE_AUFZEICHNUNG_SCHLAF": "60", "TO_SPAWN_TAKT_TIMEOUT_S": "2"})
     beginn = time.monotonic()
     lauf = _takt(welt, "--claude", str(CLAUDE_AUFZ), timeout=50)
     assert time.monotonic() - beginn < 40
@@ -438,18 +427,12 @@ def test_l_zwei_stop_hooks_hoechstens_ein_takt(welt: dict[str, Any]) -> None:
     # Erst den ersten Takt enden lassen: parallele Kinder überschreiben sich unter
     # Windows gegenseitig im Log (kein echtes Anhängen) — die Zählung wäre blind.
     ende = time.monotonic() + 60
-    while (
-        "zu entscheiden"
-        not in (log.read_text(encoding="utf-8") if log.exists() else "")
-        and time.monotonic() < ende
-    ):
+    while "zu entscheiden" not in (log.read_text(encoding="utf-8") if log.exists() else "") and time.monotonic() < ende:
         time.sleep(0.2)
     time.sleep(1)
     assert _hook_stop(welt, "sess-a").returncode == 0
     time.sleep(8)
-    assert log.read_text(encoding="utf-8").count("ausgelöst") == 1, log.read_text(
-        encoding="utf-8"
-    )
+    assert log.read_text(encoding="utf-8").count("ausgelöst") == 1, log.read_text(encoding="utf-8")
 
 
 def test_m_claude_nicht_startbar_ist_fehler(welt: dict[str, Any]) -> None:
@@ -467,9 +450,7 @@ def test_n_cron_zeile_mit_claude_pfad_und_quoting() -> None:
     """Befund 8: absoluter Claude-Pfad in der Cron-Zeile, alle Pfade gequotet."""
     from to_spawn import waechter_takt
 
-    zeile = waechter_takt.cron_befehl(
-        293, Path("/srv/mein repo"), "/opt/claude bin/claude", Path("/l s/293.log")
-    )
+    zeile = waechter_takt.cron_befehl(293, Path("/srv/mein repo"), "/opt/claude bin/claude", Path("/l s/293.log"))
     assert "TO_SPAWN_CLAUDE='/opt/claude bin/claude' " in zeile
     assert f"--repo-dir {shlex.quote(str(Path('/srv/mein repo')))} " in zeile
     assert f">> {shlex.quote(str(Path('/l s/293.log')))} 2>&1" in zeile
