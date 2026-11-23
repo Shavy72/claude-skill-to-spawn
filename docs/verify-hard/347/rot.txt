@@ -8,3 +8,9 @@ FAILED tests/test_hausmeister_luecken_347_254.py::test_254_log_all_ref_updates_a
 FAILED tests/test_hausmeister_luecken_347_254.py::test_254_gefaelschter_tracking_ref_haelt_reflog_commit_nicht_fuer_gesichert
 8 failed, 8 passed in 2.12s
 exit 1
+
+--- Review-Nachtrag (Reflogs verknüpfter Worktrees), Stand 50c24e8:
+FAILED tests/test_hausmeister_luecken_347_254.py::test_254_reflog_eines_verwaisten_worktrees_haelt_den_klon
+FAILED tests/test_hausmeister_luecken_347_254.py::test_254_reflog_eines_worktree_eigenen_refs_haelt_den_worktree
+2 failed, 16 deselected in 0.82s
+exit 1

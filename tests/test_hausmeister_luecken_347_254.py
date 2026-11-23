@@ -15,6 +15,7 @@ die Ausgabe von ``git config --show-scope`` wie bei git < 2.26).
 # ruff: noqa: F811 — ``welt``/``repos`` kommen als Fixtures aus den #1368-/#176-Tests.
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 import pytest
@@ -181,3 +182,29 @@ def test_254_gefaelschter_tracking_ref_haelt_reflog_commit_nicht_fuer_gesichert(
 
     assert r.art == "bleibt", r.grund
     assert wt.is_dir()
+
+
+# --- Review zu #254: Reflogs verknüpfter Worktrees -----------------------------------------
+
+
+def test_254_reflog_eines_verwaisten_worktrees_haelt_den_klon(welt: Welt) -> None:
+    """Commit nur im Reflog eines verknüpften Worktrees, dessen Ordner schon weg ist: der
+    Reflog liegt in ``.git/worktrees/<name>/logs`` und stirbt mit dem Klon."""
+    klon = welt.klon("duoplus-verwaist")
+    nebenan = welt.tmp / "nebenan"
+    git(klon, "worktree", "add", "-q", "--detach", str(nebenan), "origin/master")
+    _commit(nebenan, "verloren.txt")
+    git(nebenan, "checkout", "-q", "--detach", "origin/master")
+    shutil.rmtree(nebenan)
+
+    assert hausmeister._nur_im_reflog(klon, False)
+
+
+def test_254_reflog_eines_worktree_eigenen_refs_haelt_den_worktree(welt: Welt) -> None:
+    """Aus dem Worktree: auch Reflogs seiner eigenen Refs (``refs/worktree/*``) sterben mit ihm."""
+    wt = welt.worktree(284)
+    sha = git(wt, "commit-tree", "HEAD^{tree}", "-p", "HEAD", "-m", "nur im ref").strip()
+    git(wt, "update-ref", "--create-reflog", "refs/worktree/merk", sha)
+    git(wt, "update-ref", "refs/worktree/merk", "HEAD")
+
+    assert hausmeister._nur_im_reflog(wt, True)
