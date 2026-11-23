@@ -135,6 +135,7 @@ from to_spawn import (
     gh,
     hausmeister_windows,
     hindernis,
+    ticket_zustand,
     uebergabe_sichern,
 )
 from to_spawn import sperre as _sperre
@@ -1027,7 +1028,7 @@ def zweig_fertig(
     daten = _ticket_daten(nr, slug or None)
     if not isinstance(daten, dict) or "state" not in daten:
         raise RuntimeError(f"Ticket #{nr} nicht abfragbar")
-    if str(daten["state"]).upper() != "CLOSED":
+    if not ticket_zustand.endgueltig_zu(daten):
         anders = f"Stand {stand[:7]} ≠ übernommen {tip[:7]}, " if tip else ""
         return False, fehlende, f"{anders}Ticket #{nr} offen", stand
     if fehlende:
@@ -1656,7 +1657,7 @@ def _ticket_lange_zu(ticket: int, jetzt: float | None, platznot: bool = False, s
     daten = _ticket_daten(ticket, slug)
     if not isinstance(daten, dict) or "state" not in daten:
         raise _Bleibt(f"Ticket #{ticket} nicht abfragbar", fehler=True)
-    if str(daten["state"]).upper() != "CLOSED":
+    if not ticket_zustand.endgueltig_zu(daten):
         raise _Bleibt(f"Ticket #{ticket} offen")
     zu_seit = _zeitpunkt(daten.get("closedAt"))
     if zu_seit is None:
@@ -1712,7 +1713,7 @@ def _schliesszeit(ordner: Path) -> float | None:
         RuntimeError,
     ):  # nur Reihenfolge — die Regeln entscheiden danach selbst
         return None
-    if not isinstance(daten, dict) or str(daten.get("state", "")).upper() != "CLOSED":
+    if not isinstance(daten, dict) or not ticket_zustand.endgueltig_zu(daten):
         return None
     return _zeitpunkt(daten.get("closedAt"))
 

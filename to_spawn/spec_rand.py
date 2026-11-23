@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from . import gh, manifest
+from . import gh, manifest, ticket_zustand
 
 log = logging.getLogger("to_spawn.spec_rand")
 
@@ -270,7 +270,8 @@ def _issue(repo: Path, slug: str, nummer: str) -> dict[str, Any]:
 
 
 def _offen(daten: dict[str, Any]) -> bool:
-    return str(daten.get("state", "")).lower() == "open"
+    """Noch nicht endgültig zu (#279): Staging-Label allein schließt weder Spec noch Abnahme."""
+    return not ticket_zustand.endgueltig_zu(daten)
 
 
 def _labels(daten: dict[str, Any]) -> set[str]:
