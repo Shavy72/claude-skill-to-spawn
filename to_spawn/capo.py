@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import contextlib
 import fnmatch
+import hashlib
 import json
 import logging
 import os
@@ -177,6 +178,9 @@ class Verstoss:
     regel: str
     text: str
     kritisch: bool = False
+    #: Was den Verstoß ausmacht, falls der Text auch Wanderndes nennt (z. B. VPS-HEAD);
+    #: leer = der Text selbst. Grundlage von :func:`verstoss_kennung` (#275).
+    kern: str = ""
 
 
 @dataclass
@@ -805,9 +809,12 @@ def regel_vps(
     kopf: str | None,
     log_zeilen: list[dict],
     staging_stand: StagingStand | None = None,
+    issue: dict[str, Any] | None = None,
 ) -> Verstoss | None:
     if kopf is None or not eigene:
         return None
+    if issue is not None and gh.wartet_auf_live(issue, live_freigegeben=live_freigabe(vps, ticket)):
+        return None  # #275: grün auf Staging, Live erst nach Freigabe — kein Verstoß
     staging_stand = staging_stand or StagingStand(vps)
     muster = [str(m) for m in vps.get("deploy_pfade") or []]
     relevant = [
@@ -840,6 +847,7 @@ def regel_vps(
                 ticket,
                 "vps_ungleich_origin",
                 f"Commit {commit.sha[:7]} fehlt auf dem VPS (HEAD {kopf[:7]})",
+                kern=commit.sha,
             )
         if code != 0:
             log.warning(
@@ -1918,13 +1926,16 @@ def reopen_funde(
     kopf: str | None,
     alle_zeilen: list[dict[str, Any]],
     staging_stand: StagingStand | None = None,
+    issue: dict[str, Any] | None = None,
 ) -> list[Verstoss]:
     """Alle Verstöße, die ein geschlossenes Ticket wieder öffnen (regel_vps nur mit VPS-Konfig)."""
     funde = [
         regel_commit(n, eigene),
         regel_beweis(repo, ref, n, eigene, belege),
         regel_tests(repo, n, eigene),
-        regel_vps(repo, n, eigene, vps, kopf, alle_zeilen, staging_stand) if vps.get("ssh") else None,
+        regel_vps(repo, n, eigene, vps, kopf, alle_zeilen, staging_stand, issue)
+        if vps.get("ssh")
+        else None,
     ]
     return [f for f in funde if f]
 
@@ -1939,6 +1950,47 @@ def _gesehene_schliessungen(n: int, erledigt: set[str]) -> list[datetime]:
             if zeit is not None:
                 zeiten.append(zeit)
     return zeiten
+
+
+def verstoss_kennung(n: int, f: Verstoss) -> str:
+    """Stabile Kennung eines Verstoßes: ``N|Regel|Hash(Kern)`` — einzige Stelle dieser Regel (#275).
+
+    Kern ist :attr:`Verstoss.kern` oder sonst der Text (z. B. fehlender Commit-SHA,
+    entfernte Tests); er ändert sich nur mit neuer Arbeit. Zeitstempel wie ``closed_at``
+    oder der VPS-HEAD gehören nie hinein, sonst öffnet jedes Schließen/Deploy neu.
+    """
+    kern = f.kern or f.text
+    return f"{n}|{f.regel}|{hashlib.sha1(kern.encode('utf-8')).hexdigest()[:12]}"
+
+
+def schon_geoeffnet(n: int, f: Verstoss, erledigt: set[str]) -> bool:
+    """Hat capo #n wegen genau dieses Verstoßes schon einmal wieder geöffnet? (#275)
+
+    Merker ``geoeffnet|<Kennung>`` aus :func:`verstoss_kennung`; Altzustände macht
+    :func:`altmerker_ueberfuehren` vorher daraus.
+    """
+    return f"geoeffnet|{verstoss_kennung(n, f)}" in erledigt
+
+
+def altmerker_ueberfuehren(n: int, funde: list[Verstoss], erledigt: set[str]) -> bool:
+    """Merker von vor der Kennung in Kennungs-Merker für die aktuellen Funde überführen (#275).
+
+    Alt hieß „geöffnet“ ``N|Regel|closed_at`` und „gemeldet“ ``erneut|N|Regel``. Hat
+    Ticket und Regel noch keinen Kennungs-Merker dieser Art, gilt der aktuelle Verstoß
+    als der von damals — nach dem Update lieber einmal nur melden als eine Welle
+    Wiederöffnungen. Danach zählt nur die Kennung: ein späterer neuer Verstoß öffnet
+    einmal. ``True`` = neue Merker, der Aufrufer sichert den Zustand.
+    """
+    neu: set[str] = set()
+    for f in funde:
+        kennung = verstoss_kennung(n, f)
+        alt_geoeffnet = any(s.split("|")[:2] == [str(n), f.regel] for s in erledigt)
+        alt_gemeldet = f"erneut|{n}|{f.regel}" in erledigt
+        for art, alt in (("geoeffnet", alt_geoeffnet), ("erneut", alt_gemeldet)):
+            if alt and not any(s.startswith(f"{art}|{n}|{f.regel}|") for s in erledigt):
+                neu.add(f"{art}|{kennung}")
+    erledigt.update(neu)
+    return bool(neu)
 
 
 def merke_schliessen(n: int, closed_at: str, erledigt: set[str]) -> bool:
@@ -2287,7 +2339,7 @@ def _tick(
                 wartet += 1
                 continue
             funde_ok = reopen_funde(
-                repo, ref, n, eigene, belege, vps, kopf, alle_zeilen, staging_stand
+                repo, ref, n, eigene, belege, vps, kopf, alle_zeilen, staging_stand, issue
             )
             if ausgangsstand:
                 erg.alt += funde_ok
@@ -2306,23 +2358,45 @@ def _tick(
                 continue
             erg.verstoesse += funde_ok
             geschlossen = str(issue.get("closed_at") or "?")
-            neu_funde = [
+            if altmerker_ueberfuehren(n, funde_ok, erledigt):
+                sichern()
+            ungesehen = [
                 f for f in funde_ok if f"{n}|{f.regel}|{geschlossen}" not in erledigt
             ]
+            # #275: je Verstoß höchstens ein Wiederöffnen — danach nur einmal melden.
+            erneut = [f for f in ungesehen if schon_geoeffnet(n, f, erledigt)]
+            neu_funde = [f for f in ungesehen if f not in erneut]
             for f in funde_ok:
-                aktionen.append(
-                    f"#{n} VERSTOSS {f.regel}: {f.text}"
-                    + ("" if f in neu_funde else " (schon gemeldet)")
+                zusatz = (
+                    ""
+                    if f in neu_funde
+                    else " (erneut, nicht wieder geöffnet)"
+                    if f in erneut
+                    else " (schon gemeldet)"
                 )
+                aktionen.append(f"#{n} VERSTOSS {f.regel}: {f.text}{zusatz}")
+            zu_melden = [f for f in erneut if f"erneut|{verstoss_kennung(n, f)}" not in erledigt]
+            if zu_melden:
+                aktionen += befund.erneut_melden(
+                    n, gh_repo, [(f.regel, f.text) for f in zu_melden], dry_run
+                )
+                if aktionen[-1] == f"#{n} erneut gemeldet":
+                    erledigt.update(f"erneut|{verstoss_kennung(n, f)}" for f in zu_melden)
+                    sichern()
             if not neu_funde:
                 continue
             aktionen += _wieder_oeffnen(n, gh_repo, neu_funde, dry_run)
             if aktionen[-1] == f"#{n} wieder geöffnet":
                 erledigt.update(f"{n}|{f.regel}|{geschlossen}" for f in neu_funde)
+                erledigt.update(f"geoeffnet|{verstoss_kennung(n, f)}" for f in neu_funde)
                 sichern()
             elif not (dry_run and aktionen[-1].endswith("würde wieder öffnen")):
                 continue
             # #284: wieder offen bringt nichts, wenn niemand weiterbaut.
+            if gh.staging_fertig(issue):
+                # #275: grün auf Staging — ein zweiter Bau-Start wäre Doppelbau.
+                aktionen.append(f"#{n} hat {gh.STAGING_FERTIG_LABEL} — keine Folge-Runde")
+                continue
             aktionen += _folge_runde(
                 repo,
                 konfig,
@@ -2347,7 +2421,7 @@ def _tick(
                 )
             )
             if kandidat is not None and reopen_funde(
-                repo, ref, n, eigene, belege, vps, kopf, alle_zeilen, staging_stand
+                repo, ref, n, eigene, belege, vps, kopf, alle_zeilen, staging_stand, issue
             ):
                 kandidat = None  # Regeln weiter rot — das Reopen war richtig
             if kandidat is not None:

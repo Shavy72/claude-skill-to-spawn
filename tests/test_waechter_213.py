@@ -486,6 +486,27 @@ def test_vps_fehlt_ohne_staging_log_oeffnet_wieder(welt: dict[str, Path], monkey
     assert any(k.startswith("Aufseher: vps_ungleich_origin") for k in _kommentare(welt, "901"))
 
 
+def test_staging_fertig_ohne_freigabe_fehlt_live_bleibt_zu_275(
+    welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#275: zu + ``staging:fertig`` + keine Live-Freigabe + Commit fehlt live → kein Wiederöffnen."""
+    _vps_staging(welt, monkeypatch, staging_sha=None)
+    _gh_setzen(welt, "901", labels=["staging:fertig"])
+    ergebnis = _capo(welt)
+    assert _kommentare(welt, "901") == [], _text(ergebnis)
+    assert _gh_zustand(welt)["issues"]["901"]["state"] == "closed"
+
+
+def test_staging_fertig_mit_freigabe_fehlt_live_oeffnet_wieder_275(
+    welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#275: echter Verstoß — Live-Freigabe da, Commit fehlt live → weiter gemeldet."""
+    _vps_staging(welt, monkeypatch, staging_sha=None, zettel=True)
+    _gh_setzen(welt, "901", labels=["staging:fertig"])
+    _capo(welt)
+    assert any(k.startswith("Aufseher: vps_ungleich_origin") for k in _kommentare(welt, "901"))
+
+
 def test_ohne_vps_konfig_keine_vps_regel(welt: dict[str, Path]) -> None:
     _commit(welt["repo"], "feat: Seite (#901)", {"web/seite.py": "x = 1\n", **_beleg()})
     ergebnis = _capo(welt)

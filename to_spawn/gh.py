@@ -140,8 +140,22 @@ def blocker_erledigt(dep: dict) -> bool:
     """
     if str(dep.get("state", "")).lower() == "closed":
         return True
-    namen = {str(x.get("name") if isinstance(x, dict) else x) for x in dep.get("labels") or []}
+    return staging_fertig(dep)
+
+
+def staging_fertig(issue: dict) -> bool:
+    """Trägt das Issue das Label ``staging:fertig`` (grün auf Staging)?"""
+    namen = {str(x.get("name") if isinstance(x, dict) else x) for x in issue.get("labels") or []}
     return STAGING_FERTIG_LABEL in namen
+
+
+def wartet_auf_live(issue: dict, *, live_freigegeben: bool) -> bool:
+    """Fertig, Live steht bewusst noch aus: ``staging:fertig`` ohne Live-Freigabe (#275).
+
+    Für Prüfer, die „Commit liegt live“ verlangen (Aufseher-Regel ``vps_ungleich_origin``):
+    so ein Ticket ist kein Verstoß. Mit Freigabe gilt wieder „muss live sein“.
+    """
+    return staging_fertig(issue) and not live_freigegeben
 
 
 def offene_blocker(deps: list[dict]) -> list[int]:
