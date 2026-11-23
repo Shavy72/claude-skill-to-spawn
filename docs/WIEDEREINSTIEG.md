@@ -45,6 +45,26 @@ was zum Weiterbauen nötig ist.
 
 ## 3. Stand
 
+- **2026-11-23 09:44 (Server-Uhr, main 599782c):** Seit dem Eintrag von 09:14 gemergt und auf dem
+  Bau-Server installiert (Stand 599782c):
+  - Pull-Request 321 (Issue 282 P3, Abschluss-Session wird nicht mehr abgewürgt, Wiederanlauf-Frage in
+    der Lage; main e95b154). Unabhängige Prüfung ohne harten Befund, Review grün, volle Suite 3384
+    bestanden, 81 übersprungen, 18 xfailed. Weiche Punkte als Kommentar in Issue 282, Pflicht für 282 P2.
+    Teil C (Tab unter Windows schließt bei Exit 0) nicht gebaut, nur unter Windows prüfbar.
+  - Pull-Request 322 (Issue 320, eine Commit-Suche `gh.letzter_commit`, Git-Zeitgrenzen nur in `gh.py`,
+    Ersatz für gh nur im Test; main 4da3992). Volle Suite 3394 bestanden, 81 übersprungen, 18 xfailed.
+    Issue 320 geschlossen.
+  - Pull-Request 324 (Issue 323, Rollenwort statt festem Personennamen in `waechter_takt.PROMPT`,
+    `skripte/wache.py`, `anleitung.MINDSET`; main 599782c). Volle Suite 3395 bestanden, 81 übersprungen,
+    18 xfailed. Issue 323 geschlossen, Rest-Stellen in Issue 325.
+  - Offen: Pull-Request 317 (274 P1) fertig geprüft (Prüfer, Review, Suite grün auf a930ac3), wartet auf
+    die Zusatz-Datei im nutzenden Repo (`docs/agents/bau_zusatz.md`); vor dem Merge main neu einmergen
+    und Suite wiederholen. Issue 273 ist durch 317 erledigt (nach Merge kommentieren + schließen).
+  - Neue Issues: 325 (Namens-Reste), 326 (rot_probe des Review-Dirigenten meldet falsch „Test kann nicht
+    rot werden“).
+  - Nächste Schritte: 317 mergen → 282 P2 (Startstelle fragt den Baustein) → 274 P2.
+  - Unverändert: Abnahme M1/M2 und die Test-Spec starten erst auf ausdrückliches Wort des Nutzers.
+
 - **2026-11-23 09:14 (Server-Uhr, main aa123a0):** Seit dem Eintrag von 08:43 gemergt und auf dem
   Bau-Server installiert (Stand aa123a0): Pull-Request 318 (Issue 282 P1, neuer Baustein Wiederanlauf:
   `to_spawn/wiederanlauf.py`, `to_spawn/belege.py`, Tür `to_spawn.py ticket-lage <N>` meldet
