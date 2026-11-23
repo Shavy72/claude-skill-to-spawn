@@ -126,6 +126,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
+from types import EllipsisType
 from typing import Literal
 
 from to_spawn import (
@@ -382,7 +383,7 @@ _ZWEIG_MUSTER = re.compile(rf"^(?:(?:ticket|fix|wip|aufseher)/|fix-|abschluss-){
 _ZWEIG_MUSTER_ETAPPE = re.compile(rf"^l\d+/{_KEIN_DATUM}([1-9]\d{{1,2}}|[1-4]\d{{3}})[a-z]?(?:-.*)?$")
 #: Alle Zweig-Formen mit Ticket-Nummer — die einzige Stelle „Zweigname → Nummer“ (#248, auch
 #: für das Zweig-Aufräumen, :func:`_zweig_ticket`); welches Repo die Nummer meint, sagt allein
-#: ``origin`` (:func:`_nummer_zaehlt`, im Ordner- wie im Zweig-Pfad, #234).
+#: ``origin`` — Zweig + origin → Repo + Nummer nur über :func:`zweig_zu_ticket` (#234, #357).
 _ZWEIG_FORMEN = (_ZWEIG_MUSTER, _ZWEIG_MUSTER_ETAPPE)
 #: #235 H1: nur diese drei Anfänge sind GitHub; ein fremder Host (``notgithub.com``) oder
 #: ein lokaler Pfad mit ``github.com/…`` im Namen ist ein fremdes Repo (nur mit ``.match``).
@@ -1029,8 +1030,9 @@ def zweig_fertig(
     fehlende = _zweig_fehlende(o, stand)
     # #176: Ticket-Repo des Zweig-Repos, nicht das eine der Maschine (ohne GitHub-origin: keins)
     slug = _origin_slug(o.cwd) if ort == "lokal" else _slug(o.remote)
-    daten = _ticket_daten(nr, slug)
-    if daten is None and not _nummer_zaehlt(slug):  # #234: Grund statt „nicht abfragbar“
+    ziel = zweig_zu_ticket(zweig, slug)  # #357: Repo + Nummer nur von dort
+    daten = _ticket_daten(nr, ziel)
+    if daten is None and ziel is None:  # #234: Grund statt „nicht abfragbar“
         return False, fehlende, f"#{nr} zählt nicht im Ticket-Repo von {slug or 'origin'} (Maschinen-Liste)", stand
     if not isinstance(daten, dict) or "state" not in daten:
         raise RuntimeError(f"Ticket #{nr} nicht abfragbar")
@@ -1440,13 +1442,14 @@ def _regeln(
     # #176: eigener Ordner ohne bestimmbares Ticket-Repo ⇒ bleibt (nie über „fremd, aber fertig“)
     if ticket is not None and slug.lower() in _eigene_repos() and _ticket_repo_fuer(slug) is None:
         raise _Bleibt("Ticket-Repo nicht bestimmbar (Maschinen-Liste)", fuer_david=True, fehler=True)
-    fremd = ticket is not None and not _nummer_zaehlt(slug)
+    ziel = _ticket_ziel(ticket, slug) if ticket is not None else None
+    fremd = ticket is not None and ziel is None
     if fremd:
         stand.ticket = None
 
     # 5/6 Ticket zu, seit mindestens 24 h; keine laufende Spec-Sitzung
     if ticket is not None and not fremd:
-        _ticket_lange_zu(ticket, jetzt, platznot, _origin_slug(echt))
+        _ticket_lange_zu(ticket, jetzt, platznot, ziel)
         _keine_spec_sitzung(ticket)
 
     # 7 Prozess im Ordner
@@ -1594,6 +1597,28 @@ def _nummer_zaehlt(slug: str) -> bool:
     return ticket_repo is not None and ticket_repo.strip().lower() == slug.strip().lower()
 
 
+def zweig_zu_ticket(zweig: str, slug: str) -> tuple[str, int] | None:
+    """Zweigname + ``origin`` (``slug``) → (Ticket-Repo, Nummer); ``None`` = kein abfragbares Ticket.
+
+    Einzige Stelle für diese Zuordnung (#357): versteckt die Zweig-Formen samt Datums-Sperre
+    (``_ZWEIG_FORMEN``) und die Regel „origin entscheidet“ (:func:`_nummer_zaehlt`). Wer ein
+    Ticket zu einem Zweig abfragt, reicht das Ergebnis unverändert an :func:`_ticket_daten`
+    weiter — so kann kein Aufrufer Nummer und Repo falsch verbinden. Eine App-Nummer in einem
+    Skill-Zweig meint bewusst das Skill-Repo (vor dem Löschen wird ohnehin gesichert).
+    """
+    nr = _nummer(zweig, _ZWEIG_FORMEN)
+    return None if nr is None else _ticket_ziel(nr, slug)
+
+
+def _ticket_ziel(nr: int, slug: str) -> tuple[str, int] | None:
+    """Nummer ``nr`` (aus Zweig oder Ordnername) + ``origin`` → (Ticket-Repo, Nummer) oder ``None``.
+
+    Der Ordner-Pfad nutzt das direkt (seine Nummer kann aus dem Ordnernamen kommen);
+    für Zweige gilt :func:`zweig_zu_ticket`."""
+    repo = _ticket_repo_fuer(slug) if _nummer_zaehlt(slug) else None
+    return None if repo is None else (repo, nr)
+
+
 def _kein_offener_pull_request(echt: Path, slug: str) -> None:
     """#135: offener Pull-Request zum ausgecheckten Zweig ⇒ ``_Bleibt``; nicht abfragbar ⇒ ``_Bleibt``.
 
@@ -1660,8 +1685,11 @@ def _juengste_aenderung(echt: Path) -> float:
     return neu
 
 
-def _ticket_lange_zu(ticket: int, jetzt: float | None, platznot: bool = False, slug: str | None = None) -> None:
-    daten = _ticket_daten(ticket, slug)
+def _ticket_lange_zu(
+    ticket: int, jetzt: float | None, platznot: bool = False, ziel: tuple[str, int] | None | EllipsisType = ...
+) -> None:
+    """``ziel`` wie bei :func:`_ticket_daten` (Ergebnis von :func:`_ticket_ziel`)."""
+    daten = _ticket_daten(ticket, ziel)
     if not isinstance(daten, dict) or "state" not in daten:
         raise _Bleibt(f"Ticket #{ticket} nicht abfragbar", fehler=True)
     if not ticket_zustand.endgueltig_zu(daten):
@@ -1713,7 +1741,7 @@ def _schliesszeit(ordner: Path) -> float | None:
         ticket = _ticket_nummer(ordner, echt)
         if ticket is None:
             return None
-        daten = _ticket_daten(ticket, _origin_slug(echt))
+        daten = _ticket_daten(ticket, _ticket_ziel(ticket, _origin_slug(echt)))
     except (
         _Bleibt,
         OSError,
@@ -1725,15 +1753,17 @@ def _schliesszeit(ordner: Path) -> float | None:
     return _zeitpunkt(daten.get("closedAt"))
 
 
-def _ticket_daten(ticket: int, slug: str | None = None) -> object:
+def _ticket_daten(ticket: int, ziel: tuple[str, int] | None | EllipsisType = ...) -> object:
     """``gh issue view`` (state, closedAt) mit Zeitlimit; ``None`` = nicht abfragbar.
 
-    ``slug`` = origin des Ordners/Zweig-Repos: Ticket-Repo je Repo (:func:`_ticket_repo_fuer`,
-    meldet selbst einmal); ohne ``slug`` (kein GitHub-origin) das eine Ticket-Repo der Maschine."""
-    if slug is not None:
-        # #234: eine Nummer zählt nur im Repo, das selbst ihr Ticket-Repo ist — im Ordner- wie
-        # im Zweig-Pfad dieselbe Regel (:func:`_nummer_zaehlt`); sonst nicht abfragbar
-        return _gh_ticket(ticket, _ticket_repo_fuer(slug)) if _nummer_zaehlt(slug) else None
+    ``ziel`` = Ergebnis von :func:`zweig_zu_ticket` bzw. :func:`_ticket_ziel`, unverändert: gefragt
+    wird genau dieses Repo mit dieser Nummer, ``None`` = nicht abfragbar (#234, #357). Ohne
+    ``ziel`` (kein GitHub-origin) das eine Ticket-Repo der Maschine für ``ticket``."""
+    if ziel is None:
+        return None
+    if not isinstance(ziel, EllipsisType):
+        repo, nr = ziel
+        return _gh_ticket(nr, repo)
     repo = _ticket_repo()
     if repo is None:
         log.warning("Hausmeister: kein eindeutiges Ticket-Repo in der Maschinen-Liste — #%s bleibt", ticket)
