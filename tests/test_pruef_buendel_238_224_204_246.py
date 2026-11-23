@@ -15,11 +15,11 @@ import sys
 from pathlib import Path
 
 import pytest
+import test_pruef_sofort_3b as sofort_test
 from test_pruef_cache_reste_184 import _ausschliessen
 from test_pruef_schmutz_218 import _code_commit, _pruef_stufe, repo  # noqa: F401 — ``repo`` ist ein Fixture
 from test_pruef_tuer_3b import _probe_py
 
-import test_pruef_sofort_3b as sofort_test
 from to_spawn.pruef import cache, sofort
 
 
@@ -184,7 +184,8 @@ def test_requirements_unter_doku_muster_prueft_voll(tmp_path: Path) -> None:
     )
     sofort_test._erklaere(probe, ["docs/**", "*.txt"])
     sofort_test._commit(probe, "requirements.txt", "kaputt\n")
-    sofort_test._voll_rot(probe, sofort.NICHT_NUR_DOKU)
+    # ``*.txt`` trifft jetzt eine Konfig-Datei → die ganze Doku-Liste gilt nicht, voller Lauf, rot.
+    sofort_test._voll_rot(probe, "pruefen.doku_pfade zu weit: „*.txt“ trifft Code-Dateien")
 
 
 def _liest(ziel: str) -> str:
