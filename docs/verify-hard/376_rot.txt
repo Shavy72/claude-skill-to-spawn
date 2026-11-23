@@ -1,0 +1,8 @@
+E        +  where False = all(<generator object test_linie_nur_an_einer_stelle_gepflegt.<locals>.<genexpr> at 0x7f21ef872670>)
+
+tests/test_entscheidungs_linie_376.py:84: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_entscheidungs_linie_376.py::test_start_text_traegt_linie_ohne_zusatz_auftrag
+FAILED tests/test_entscheidungs_linie_376.py::test_aufseher_auftrag_traegt_linie_als_massstab
+FAILED tests/test_entscheidungs_linie_376.py::test_linie_nur_an_einer_stelle_gepflegt
+3 failed in 0.37s

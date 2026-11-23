@@ -314,5 +314,13 @@ def aufseher_text(befehl: str) -> str:
         "Übergang (alter Start-Auftrag: Rückfrage nur im Bau-Log als blockiert/frage, ohne Briefkasten-Frage): "
         "gleiche Klassen; Klasse 3 per Issue-Kommentar (max. 2 Zeilen) + "
         f"`{b} eintrag --ticket <N> --typ entscheidung --frage … --wahl … --grund …`; "
-        f"Klasse 2 {KLASSE_2_WEITERGABE}: Kommentar im Ticket „Aufseher: braucht den Nutzer: <Frage>“."
+        f"Klasse 2 {KLASSE_2_WEITERGABE}: Kommentar im Ticket „Aufseher: braucht den Nutzer: <Frage>“. "
+        f"Maßstab für deine Antworten auf Fragen der Bau-Sessions: {_linie()}"
     )
+
+
+def _linie() -> str:
+    """Entscheidungs-Linie aus ihrer einzigen Quelle (#376); spät importiert, ``anleitung`` liest ``KOPF``."""
+    from .anleitung import entscheidungs_linie
+
+    return entscheidungs_linie()
