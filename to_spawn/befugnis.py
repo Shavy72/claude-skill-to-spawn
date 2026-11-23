@@ -57,9 +57,6 @@ _KLASSE_2_WOERTER = frozenset(
     }
 )
 
-#: Ganze Eingaben, die trotz Teilwort nicht Klasse 2 sind (Kosten sparen gibt kein Geld aus).
-_KEIN_KLASSE_2 = frozenset({"kosten-sparen"})
-
 _KLASSE_2 = _Regel(
     2,
     "Live, Kosten, Konten echter Personen",
@@ -130,7 +127,7 @@ def _zweig_ziel(ziel: str) -> str:
 
 
 def _ist_klasse_2(wert: str) -> bool:
-    return wert not in _KEIN_KLASSE_2 and any(w in wert for w in _KLASSE_2_WOERTER)
+    return any(w in wert for w in _KLASSE_2_WOERTER)
 
 
 def einordnen(ziel: str, art: str, gesichert: bool = False) -> int:

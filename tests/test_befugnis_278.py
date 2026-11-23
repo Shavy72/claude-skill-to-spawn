@@ -127,12 +127,17 @@ def test_live_synonyme_sind_klasse_2(befugnis: ModuleType, ziel: str) -> None:
     assert befugnis.einordnen(ziel, "ändern", True) == 2
 
 
-@pytest.mark.parametrize("art", ["deploy", "irgendwas", "kosten_sparen"])
+@pytest.mark.parametrize("art", ["deploy", "irgendwas", "umbenennen_irgendwas"])
 @pytest.mark.parametrize("ziel", ["arbeitsordner", "zweig"])
 def test_arbeitsordner_unbekannte_art_ist_klasse_3(
     befugnis: ModuleType, ziel: str, art: str
 ) -> None:
     assert befugnis.einordnen(ziel, art, True) == 3
+
+
+def test_kosten_sparen_ist_klasse_2(befugnis: ModuleType) -> None:
+    """Sichere Richtung: Teilwort „kosten“ gilt, keine Ausnahme-Liste."""
+    assert befugnis.einordnen("arbeitsordner", "kosten_sparen", True) == 2
 
 
 @pytest.mark.parametrize("art", ["entfernen", "lösen", "löschen"])
