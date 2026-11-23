@@ -19,7 +19,7 @@ SKILL = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SKILL))
 sys.path.insert(0, str(SKILL / "tests"))
 
-from test_waechter_takt_316 import CLAUDE_AUFZ, PY, _aufrufe, _merker, _takt, welt  # noqa: E402,F401
+from test_waechter_takt_316 import CLAUDE_AUFZ, PY, _aufrufe, _merker, _takt, welt  # noqa: F401
 
 
 def _kommentare(welt: dict[str, Any], ticket: str) -> list[str]:

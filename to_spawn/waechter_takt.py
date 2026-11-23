@@ -8,7 +8,9 @@ fertig. Leer ⇒ kein Claude-Prozess. Sonst startet eine frische Claude-Session
 (``-p``, endet selbst) mit Entscheidungsliste und Notizzettel
 ``waechter-<S>`` aus dem Leitstand. Der Merker liegt im Leitstand-Zustand unter
 ``takt.<S>`` und wird erst fortgeschrieben, wenn Claude mit 0 endet — und nur
-für die Einträge, die Claude wirklich gezeigt bekam. Ohne Merker (erster Takt)
+für die Einträge, die Claude wirklich gezeigt bekam. Endet Claude mit Fehler oder
+an der Zeitgrenze, kommt alles Gezeigte wieder; waren Briefkasten-Fragen dabei,
+läuft nur ihr Zeige-Zähler der Bremse weiter (#339). Ohne Merker (erster Takt)
 ist alles Ausgangsstand außer ``blockiert``/``frage`` offener Tickets.
 
 Bremse (#315): eine offene Briefkasten-Frage, die immer wieder kommt, geht nach dem
@@ -173,7 +175,7 @@ def _belegte(gh_repo: str, offen: list[tuple[Eintrag, bool]], gesehen: set[str],
 
     Beleg = Kommentar eines Repo-Beteiligten mit :data:`befugnis.KLASSE_2_KOMMENTAR` und der Kennung
     (id bzw. Hash). GitHub wird nur für schon Gezeigtes, noch nicht Belegtes gefragt; stumm ⇒ nicht belegt
-    (die Frage kommt wieder). ponytail: nur die ersten 100 Kommentare je Ticket (``issue_kommentare``).
+    (die Frage kommt wieder).
     """
     belegt: set[str] = set()
     texte: dict[str, list[str]] = {}
@@ -253,7 +255,12 @@ def pruefe(
     offen_schluessel = {e[2] for e, _wieder in offen_fragen}
     belegt = _belegte(gh_repo, offen_fragen, set(alt.get("fragen") or []), set(alt.get("belegt") or []))
     gezeigt_alt = alt.get("gezeigt") if isinstance(alt.get("gezeigt"), dict) else {}
-    gezeigt = {k: v for k, v in gezeigt_alt.items() if k in offen_schluessel}  # beantwortete fallen raus
+    # Beantwortete fallen raus; kaputter Zähler (kein dict, ``n`` keine Zahl) zählt wie „fehlt“ (#339).
+    gezeigt = {
+        k: v
+        for k, v in gezeigt_alt.items()
+        if k in offen_schluessel and isinstance(v, dict) and type(v.get("n")) is int
+    }
     eintraege += _zu_zeigen(offen_fragen, belegt, gezeigt)
     verstoesse: set[str] = set()
     for v in tick.verstoesse:
@@ -297,12 +304,17 @@ def zaehle_gezeigte(neu: dict[str, Any], gezeigt: list[Eintrag]) -> None:
             stand["zuletzt"] = jetzt
 
 
+def _bremse_kopf(kennung: str) -> str:
+    """Anfang der Bremse-Meldung — woran :func:`melde_gebremste` eine schon gepostete Meldung erkennt."""
+    return f"{befugnis.KLASSE_2_KOMMENTAR}: Briefkasten-Frage `{kennung}` ist seit"
+
+
 def bremse_text(schluessel: str, n: int) -> str:
     """Kommentar an den Nutzer, wenn die Bremse greift — trägt den Beleg-Anfang und die Kennung."""
     ticket, _, kennung = schluessel.partition(":")
     befehl = f"python {SKILL.as_posix()}/to_spawn.py"
     return (
-        f"{befugnis.KLASSE_2_KOMMENTAR}: Briefkasten-Frage `{kennung}` ist seit {n} Takten offen, der Aufseher "
+        f"{_bremse_kopf(kennung)} {n} Takten offen, der Aufseher "
         f"hat nicht entschieden — der Takt zeigt sie ab jetzt nur noch alle {BREMSE_ABSTAND_S // 60} min.\n"
         f"Ansehen: `{befehl} offene {ticket}` · Antwort nur im eigenen Terminal: "
         f"`{befehl} nutzer-antwort {ticket} --id <id> --wahl <Wahl> --grund <Grund>`"
@@ -310,10 +322,22 @@ def bremse_text(schluessel: str, n: int) -> str:
 
 
 def melde_gebremste(gh_repo: str, neu: dict[str, Any]) -> None:
-    """Jede gebremste Frage einmal per Ticket-Kommentar an den Nutzer; gescheitert ⇒ nächster Takt erneut."""
+    """Jede gebremste Frage einmal per Ticket-Kommentar an den Nutzer; gescheitert ⇒ nächster Takt erneut.
+
+    Vor dem Kommentar zählt das Ticket selbst: steht die Meldung schon dort (Merker nach dem Kommentar
+    verloren), gilt sie als gemeldet (#339). Kommentare nicht lesbar ⇒ nächster Takt erneut.
+    """
     for k, stand in neu["gezeigt"].items():
-        if stand["n"] >= BREMSE_AB and not stand.get("gemeldet"):
-            stand["gemeldet"] = befund.kommentiere(k.partition(":")[0], gh_repo, bremse_text(k, stand["n"]))
+        if stand["n"] < BREMSE_AB or stand.get("gemeldet"):
+            continue
+        ticket, _, kennung = k.partition(":")
+        kommentare = capo.issue_kommentare(gh_repo, int(ticket))
+        if kommentare is None:
+            continue
+        if any(_bremse_kopf(kennung) in str(c.get("body") or "") for c in kommentare):
+            stand["gemeldet"] = True
+        else:
+            stand["gemeldet"] = befund.kommentiere(ticket, gh_repo, bremse_text(k, stand["n"]))
 
 
 def baue_prompt(spec: int, repo: Path, eintraege: list[str], notiz: str | None) -> str:
@@ -438,6 +462,7 @@ def takt(
             for text, _feld, _k in eintraege:
                 print(f"- {text}")
             return 0
+        gescheitert = ""
         if eintraege:
             notiz_name = f"waechter-{spec}"
             notiz_vorher = leitstand.notiz(notiz_name)
@@ -451,17 +476,20 @@ def takt(
             except OSError as fehler:
                 return _fehler(spec, f"Claude nicht startbar ({cmd[0]}): {fehler}")
             except subprocess.TimeoutExpired:
-                return _fehler(
-                    spec,
-                    f"Claude über Zeitlimit {_timeout_s():.0f} s — beendet, Merker bleibt.",
-                )
-            if code != 0:
-                return _fehler(spec, f"Claude Exit {code} — Merker bleibt.")
-            if leitstand.notiz(notiz_name) == notiz_vorher:
-                meldung = f"Takt #{spec}: Claude endete mit 0, Notizzettel nicht fortgeschrieben."
-                log.warning("%s", meldung)
-                print(f"WARNUNG: {meldung}")
-            neu = ohne_ungezeigte(neu, eintraege[MAX_EINTRAEGE:])
+                gescheitert = f"Claude über Zeitlimit {_timeout_s():.0f} s — beendet"
+            else:
+                gescheitert = f"Claude Exit {code}" if code != 0 else ""
+            if gescheitert:
+                if not any(feld == "fragen" for _t, feld, _k in eintraege[:MAX_EINTRAEGE]):
+                    return _fehler(spec, f"{gescheitert} — Merker bleibt.")
+                # Nichts gilt als erledigt, aber gezeigt ist gezeigt: die Bremse zählt weiter (#339).
+                neu = ohne_ungezeigte(neu, eintraege)
+            else:
+                if leitstand.notiz(notiz_name) == notiz_vorher:
+                    meldung = f"Takt #{spec}: Claude endete mit 0, Notizzettel nicht fortgeschrieben."
+                    log.warning("%s", meldung)
+                    print(f"WARNUNG: {meldung}")
+                neu = ohne_ungezeigte(neu, eintraege[MAX_EINTRAEGE:])
             zaehle_gezeigte(neu, eintraege[:MAX_EINTRAEGE])
         else:
             print(f"Takt #{spec}: nichts zu entscheiden")
@@ -471,6 +499,8 @@ def takt(
             zustand.setdefault("takt", {})[str(spec)] = neu
 
         leitstand.aendere_zustand(merke)
+        if gescheitert:
+            return _fehler(spec, f"{gescheitert} — Gezeigtes kommt wieder, nur die Bremse zählt.")
     return 0
 
 
