@@ -4,7 +4,9 @@ Schreibt eine Bau-Session an ihrer Grenze selbst einen Handoff, committet ihn un
 bleibt dann still stehen, startet die Folge-Session automatisch — ohne dass der
 Aufseher Befehl D von Hand tippt. Dieses Modul ist die EINZIGE Stelle der Regel;
 Leiter (:mod:`to_spawn.leiter`) und Aufpasser (:mod:`to_spawn.aufpasser`) fragen nur
-:func:`pruefe` / :func:`finde` und rufen :func:`folge_starten`.
+:func:`pruefe` / :func:`finde` und rufen :func:`folge_starten`. Zuerst greift der
+Staffel-Hook der Session selbst (#276, :func:`der_session`): er läuft in jeder
+``bau.py``-Session mit und braucht keine Aufsicht; Leiter und Aufpasser bleiben das Netz.
 
 Regel: Ein eigener Handoff zählt, wenn
 
@@ -127,8 +129,6 @@ def aktuell(repo: Path, ticket: int) -> Treffer | None:
     einen Handoff schon vor :attr:`Treffer.faellig_ab` zeigen wollen; wer neu starten
     will, fragt :func:`pruefe`.
     """
-    if leitstand.leiter_stufe(ticket) not in STUFEN:
-        return None
     wt = Path(config.worktree_pfad(ticket, repo)).expanduser()
     try:
         ort = bau_log.log_ort(ticket, wt, repo)
@@ -142,7 +142,25 @@ def aktuell(repo: Path, ticket: int) -> Treffer | None:
             "#%s: Bau-Log unlesbar — kein Neustart ab Handoff (%s)", ticket, fehler
         )
         return None
-    return finde(wt, ticket, grenze(start, ticket))
+    return der_session(wt, ticket, start)
+
+
+def der_session(wt: Path, ticket: int, session_start: float | None) -> Treffer | None:
+    """Gültiger eigener Handoff der Session, die um ``session_start`` begann — ohne Fälligkeit.
+
+    Kern der Regel (Leiter-Stufe, committet, sauber, jünger als :func:`grenze`).
+    :func:`aktuell` liest den Start aus dem Bau-Log; der Staffel-Hook (#276) bringt ihn
+    aus seiner Umgebung mit und löst damit auch ohne Aufseher/Aufpasser ab.
+    """
+    if leitstand.leiter_stufe(ticket) not in STUFEN:
+        return None
+    return finde(wt, ticket, grenze(session_start, ticket))
+
+
+def merke_abloesung(ticket: int) -> None:
+    """Ablösung ab eigenem Handoff ist erfolgt: Stufe 0 + Zeit in einem Schreibvorgang —
+    derselbe Handoff zählt danach für niemanden mehr (Leiter, Aufpasser, Staffel-Hook)."""
+    leitstand.schliesse_leiter_respawn(ticket, time.time())
 
 
 def pruefe(repo: Path, ticket: int, jetzt: float) -> Treffer | None:
@@ -195,6 +213,5 @@ def _folge_starten(repo: Path, spec: int, ticket: int, treffer: Treffer) -> int:
         else:
             os.environ["TO_SPAWN_REPO"] = vorher
     if code == 0:
-        # Stufe 0 + Neustart-Zeit in einem Schreibvorgang: derselbe Handoff zählt nie zweimal.
-        leitstand.schliesse_leiter_respawn(ticket, time.time())
+        merke_abloesung(ticket)
     return code

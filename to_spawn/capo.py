@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import contextlib
 import fnmatch
+import hashlib
 import json
 import logging
 import os
@@ -177,6 +178,9 @@ class Verstoss:
     regel: str
     text: str
     kritisch: bool = False
+    #: Was den Verstoß ausmacht, falls der Text auch Wanderndes nennt (z. B. VPS-HEAD);
+    #: leer = der Text selbst. Grundlage von :func:`verstoss_kennung` (#275).
+    kern: str = ""
 
 
 @dataclass
@@ -805,9 +809,12 @@ def regel_vps(
     kopf: str | None,
     log_zeilen: list[dict],
     staging_stand: StagingStand | None = None,
+    issue: dict[str, Any] | None = None,
 ) -> Verstoss | None:
     if kopf is None or not eigene:
         return None
+    if issue is not None and gh.wartet_auf_live(issue, live_freigegeben=live_freigabe(vps, ticket)):
+        return None  # #275: grün auf Staging, Live erst nach Freigabe — kein Verstoß
     staging_stand = staging_stand or StagingStand(vps)
     muster = [str(m) for m in vps.get("deploy_pfade") or []]
     relevant = [
@@ -840,6 +847,7 @@ def regel_vps(
                 ticket,
                 "vps_ungleich_origin",
                 f"Commit {commit.sha[:7]} fehlt auf dem VPS (HEAD {kopf[:7]})",
+                kern=commit.sha,
             )
         if code != 0:
             log.warning(
@@ -1241,29 +1249,62 @@ def laeuft_noch(
     return ""
 
 
+#: Wurzel des Skills; ``skripte/bau.py`` darin ist der eigentliche Launcher.
+_SKILL = Path(__file__).resolve().parent.parent
+
+
 def _bau_skript(repo: Path) -> Path:
-    """``scripts/bau.py`` des Repos (Weiterleitung), sonst das Skript im Skill."""
+    """Welche ``bau.py`` ein Start OHNE Vorspann ruft (lokal, Windows-Tab): ``scripts/bau.py``
+    des Repos (Weiterleitung, setzt ``TO_SPAWN_REPO``/``TO_SPAWN_HOME``), sonst die des Skills.
+
+    Die tmux-Zeile :func:`bau_startzeile` nimmt dagegen immer die des Skills: sie setzt den
+    Vorspann selbst und darf weder von der Weiterleitung noch von deren ``TO_SPAWN_HOME``-
+    Vorgabe abhängen (#277). Der Unterschied ist Absicht, festgehalten in
+    ``tests/test_startzeile_277.py``.
+    """
     im_repo = repo / "scripts" / "bau.py"
     if im_repo.is_file():
         return im_repo
-    return Path(__file__).resolve().parent.parent / "skripte" / "bau.py"
+    return _SKILL / "skripte" / "bau.py"
+
+
+def fenster_log(repo: Path, ticket: int) -> Path:
+    """Log eines tmux-Bau-Fensters: stderr von ``bau.py`` und Exit-Code bei Fehler (#277)."""
+    return repo / ".to-spawn" / f"fenster_{ticket}.log"
 
 
 def bau_startzeile(repo: Path, ticket: int, auftrag: str = "", *schalter: str) -> str:
     """Shell-Zeile, mit der ein tmux-Fenster eine Bau-Session startet (``bash -lc``).
 
-    Einziger Ort für den Vorspann (``REPO``/``TO_SPAWN_HOME`` wie ``skripte/spawn_srv.sh``,
-    sonst startet ``bau`` in einem anderen Repo, #212). Die Konfiguration der Session
-    (Settings, MCP, Session-ID, Staffel-Umgebung) liefert allein ``bau.py``. ``schalter``
-    hängt weitere ``bau``-Schalter an (respawn #431: ``--ohne-prompt``).
+    Einziger Ort für Ablösung (respawn) und Folge-Runde. Ruft ``bau.py`` des Skills direkt
+    mit diesem Python auf, wie ``skripte/spawn_srv.sh`` (#257) — nie die Shell-Funktion
+    ``bau`` aus ``~/.bashrc`` oder die ``.venv`` des Repos, die ein Spec-Klon nicht hat
+    (#277). Vorspann ``REPO``/``TO_SPAWN_HOME``/``TO_SPAWN_REPO`` wie dort (#212). Die
+    Konfiguration der Session liefert allein ``bau.py``. ``schalter`` hängt weitere
+    ``bau.py``-Schalter an (respawn #431: ``--ohne-prompt``). stderr von ``bau.py`` geht
+    weiter ins Fenster und zusätzlich in :func:`fenster_log`; endet ``bau.py`` mit Fehler,
+    schließt sich das Fenster — Meldung und Exit-Code bleiben dort lesbar.
     """
-    skill = Path(__file__).resolve().parent.parent
-    vorspann = f"REPO={shlex.quote(str(repo))} TO_SPAWN_HOME={shlex.quote(str(skill))}"
+    ort = shlex.quote(str(repo))
+    vorspann = f"REPO={ort} TO_SPAWN_HOME={shlex.quote(str(_SKILL))} TO_SPAWN_REPO={ort}"
     if auftrag.strip():
         vorspann += f" BAU_AUFTRAG={shlex.quote(_kurz(auftrag, AUFTRAG_MAX_ZEICHEN))}"
-    return (
-        f"export {vorspann}; {shlex.join(['bau', str(ticket), '--sofort', *schalter])}"
+    bau = [sys.executable or "python3", str(_SKILL / "skripte" / "bau.py"), str(ticket)]
+    log_pfad = fenster_log(repo, ticket)
+    log = shlex.quote(str(log_pfad))
+    # stderr über tee ins Log, Original bleibt auf fd 3 fürs Fenster (Wartezeilen, #431).
+    # Bei Fehler wartet das Fenster höchstens 3 s auf tee, damit die Meldung von bau.py
+    # vor dem Exit-Code steht. Hält ein Rest-Kind von bau.py stderr offen, endet das
+    # Fenster trotzdem; dessen späte Ausgabe landet dann hinter der Exit-Zeile (PR 293).
+    tee = f"exec 3>&2 2> >(tee -a {log} >&3); tee_pid=$!"
+    spur = (
+        f'rc=$?; exec 2>&3 3>&-; [ "$rc" -eq 0 ] || {{ '
+        f'timeout 3 tail -s 0.1 --pid="$tee_pid" -f /dev/null 2>/dev/null; '
+        f'echo "$(date -Is) bau.py #{ticket} Exit $rc" >> {log}; }}; exit "$rc"'
     )
+    ordner = shlex.quote(str(log_pfad.parent))
+    lauf = shlex.join([*bau, "--sofort", *schalter])
+    return f"export {vorspann}; mkdir -p {ordner}; {tee}; {lauf}; {spur}"
 
 
 def folge_befehl(
@@ -1918,13 +1959,16 @@ def reopen_funde(
     kopf: str | None,
     alle_zeilen: list[dict[str, Any]],
     staging_stand: StagingStand | None = None,
+    issue: dict[str, Any] | None = None,
 ) -> list[Verstoss]:
     """Alle Verstöße, die ein geschlossenes Ticket wieder öffnen (regel_vps nur mit VPS-Konfig)."""
     funde = [
         regel_commit(n, eigene),
         regel_beweis(repo, ref, n, eigene, belege),
         regel_tests(repo, n, eigene),
-        regel_vps(repo, n, eigene, vps, kopf, alle_zeilen, staging_stand) if vps.get("ssh") else None,
+        regel_vps(repo, n, eigene, vps, kopf, alle_zeilen, staging_stand, issue)
+        if vps.get("ssh")
+        else None,
     ]
     return [f for f in funde if f]
 
@@ -1939,6 +1983,47 @@ def _gesehene_schliessungen(n: int, erledigt: set[str]) -> list[datetime]:
             if zeit is not None:
                 zeiten.append(zeit)
     return zeiten
+
+
+def verstoss_kennung(n: int, f: Verstoss) -> str:
+    """Stabile Kennung eines Verstoßes: ``N|Regel|Hash(Kern)`` — einzige Stelle dieser Regel (#275).
+
+    Kern ist :attr:`Verstoss.kern` oder sonst der Text (z. B. fehlender Commit-SHA,
+    entfernte Tests); er ändert sich nur mit neuer Arbeit. Zeitstempel wie ``closed_at``
+    oder der VPS-HEAD gehören nie hinein, sonst öffnet jedes Schließen/Deploy neu.
+    """
+    kern = f.kern or f.text
+    return f"{n}|{f.regel}|{hashlib.sha1(kern.encode('utf-8')).hexdigest()[:12]}"
+
+
+def schon_geoeffnet(n: int, f: Verstoss, erledigt: set[str]) -> bool:
+    """Hat capo #n wegen genau dieses Verstoßes schon einmal wieder geöffnet? (#275)
+
+    Merker ``geoeffnet|<Kennung>`` aus :func:`verstoss_kennung`; Altzustände macht
+    :func:`altmerker_ueberfuehren` vorher daraus.
+    """
+    return f"geoeffnet|{verstoss_kennung(n, f)}" in erledigt
+
+
+def altmerker_ueberfuehren(n: int, funde: list[Verstoss], erledigt: set[str]) -> bool:
+    """Merker von vor der Kennung in Kennungs-Merker für die aktuellen Funde überführen (#275).
+
+    Alt hieß „geöffnet“ ``N|Regel|closed_at`` und „gemeldet“ ``erneut|N|Regel``. Hat
+    Ticket und Regel noch keinen Kennungs-Merker dieser Art, gilt der aktuelle Verstoß
+    als der von damals — nach dem Update lieber einmal nur melden als eine Welle
+    Wiederöffnungen. Danach zählt nur die Kennung: ein späterer neuer Verstoß öffnet
+    einmal. ``True`` = neue Merker, der Aufrufer sichert den Zustand.
+    """
+    neu: set[str] = set()
+    for f in funde:
+        kennung = verstoss_kennung(n, f)
+        alt_geoeffnet = any(s.split("|")[:2] == [str(n), f.regel] for s in erledigt)
+        alt_gemeldet = f"erneut|{n}|{f.regel}" in erledigt
+        for art, alt in (("geoeffnet", alt_geoeffnet), ("erneut", alt_gemeldet)):
+            if alt and not any(s.startswith(f"{art}|{n}|{f.regel}|") for s in erledigt):
+                neu.add(f"{art}|{kennung}")
+    erledigt.update(neu)
+    return bool(neu)
 
 
 def merke_schliessen(n: int, closed_at: str, erledigt: set[str]) -> bool:
@@ -2287,7 +2372,7 @@ def _tick(
                 wartet += 1
                 continue
             funde_ok = reopen_funde(
-                repo, ref, n, eigene, belege, vps, kopf, alle_zeilen, staging_stand
+                repo, ref, n, eigene, belege, vps, kopf, alle_zeilen, staging_stand, issue
             )
             if ausgangsstand:
                 erg.alt += funde_ok
@@ -2306,23 +2391,45 @@ def _tick(
                 continue
             erg.verstoesse += funde_ok
             geschlossen = str(issue.get("closed_at") or "?")
-            neu_funde = [
+            if altmerker_ueberfuehren(n, funde_ok, erledigt):
+                sichern()
+            ungesehen = [
                 f for f in funde_ok if f"{n}|{f.regel}|{geschlossen}" not in erledigt
             ]
+            # #275: je Verstoß höchstens ein Wiederöffnen — danach nur einmal melden.
+            erneut = [f for f in ungesehen if schon_geoeffnet(n, f, erledigt)]
+            neu_funde = [f for f in ungesehen if f not in erneut]
             for f in funde_ok:
-                aktionen.append(
-                    f"#{n} VERSTOSS {f.regel}: {f.text}"
-                    + ("" if f in neu_funde else " (schon gemeldet)")
+                zusatz = (
+                    ""
+                    if f in neu_funde
+                    else " (erneut, nicht wieder geöffnet)"
+                    if f in erneut
+                    else " (schon gemeldet)"
                 )
+                aktionen.append(f"#{n} VERSTOSS {f.regel}: {f.text}{zusatz}")
+            zu_melden = [f for f in erneut if f"erneut|{verstoss_kennung(n, f)}" not in erledigt]
+            if zu_melden:
+                aktionen += befund.erneut_melden(
+                    n, gh_repo, [(f.regel, f.text) for f in zu_melden], dry_run
+                )
+                if aktionen[-1] == f"#{n} erneut gemeldet":
+                    erledigt.update(f"erneut|{verstoss_kennung(n, f)}" for f in zu_melden)
+                    sichern()
             if not neu_funde:
                 continue
             aktionen += _wieder_oeffnen(n, gh_repo, neu_funde, dry_run)
             if aktionen[-1] == f"#{n} wieder geöffnet":
                 erledigt.update(f"{n}|{f.regel}|{geschlossen}" for f in neu_funde)
+                erledigt.update(f"geoeffnet|{verstoss_kennung(n, f)}" for f in neu_funde)
                 sichern()
             elif not (dry_run and aktionen[-1].endswith("würde wieder öffnen")):
                 continue
             # #284: wieder offen bringt nichts, wenn niemand weiterbaut.
+            if gh.staging_fertig(issue):
+                # #275: grün auf Staging — ein zweiter Bau-Start wäre Doppelbau.
+                aktionen.append(f"#{n} hat {gh.STAGING_FERTIG_LABEL} — keine Folge-Runde")
+                continue
             aktionen += _folge_runde(
                 repo,
                 konfig,
@@ -2347,7 +2454,7 @@ def _tick(
                 )
             )
             if kandidat is not None and reopen_funde(
-                repo, ref, n, eigene, belege, vps, kopf, alle_zeilen, staging_stand
+                repo, ref, n, eigene, belege, vps, kopf, alle_zeilen, staging_stand, issue
             ):
                 kandidat = None  # Regeln weiter rot — das Reopen war richtig
             if kandidat is not None:

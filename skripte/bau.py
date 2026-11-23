@@ -558,9 +558,15 @@ def bau_log_umgebung(
     return umgebung
 
 
-def staffel_umgebung(ticket: str, staffel_datei: Path, runde: int, fingerabdruck: str = "") -> dict[str, str]:
+def staffel_umgebung(
+    ticket: str, staffel_datei: Path, runde: int, fingerabdruck: str = "", staffel_max: int = STAFFEL_MAX_DEFAULT
+) -> dict[str, str]:
+    """Umgebung des Staffel-Hooks; ``BAU_WORKTREE`` + ``BAU_STAFFEL_MAX`` für die Ablösung
+    ab eigenem Handoff ohne Aufsicht (#276)."""
     return {
         "BAU_TICKET": ticket,
+        "BAU_WORKTREE": str(Path(worktree_pfad(ticket)).expanduser()),
+        "BAU_STAFFEL_MAX": str(max(1, staffel_max)),
         "BAU_STAFFEL_DATEI": str(staffel_datei),
         "BAU_SESSION_START": str(time.time()),
         "BAU_HANDOFF_DIRS": os.pathsep.join(handoff_dirs(ticket)),
@@ -1079,7 +1085,7 @@ def main() -> int:
     fingerabdruck = ""
     session_id_setzen(cmd, out, ticket=ticket, runde=runde)
     while True:
-        umgebung = staffel_umgebung(ticket, staffel_datei, runde, fingerabdruck)
+        umgebung = staffel_umgebung(ticket, staffel_datei, runde, fingerabdruck, args.staffel_max)
         umgebung.update(bau_log_umgebung(ticket, runde, float(umgebung["BAU_SESSION_START"]), effort, spec))
         os.environ.update(umgebung)
         # Ticket während Blocker-Wartezeit oder Vorrunde geschlossen → keine neue Runde (#97);
