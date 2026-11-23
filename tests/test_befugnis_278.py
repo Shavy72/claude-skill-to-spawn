@@ -117,3 +117,49 @@ def test_abloese_sop_uebernimmt_befugnis_in_startprompt(befugnis: ModuleType) ->
 
     assert befugnis.KOPF in anleitung.ABLOESE_SOP
     assert befugnis.start_text("7").startswith(befugnis.KOPF)
+
+
+@pytest.mark.parametrize(
+    "ziel",
+    ["produktion", "prod", "production", "vps-live", "vps", "live-app", "Produktion "],
+)
+def test_live_synonyme_sind_klasse_2(befugnis: ModuleType, ziel: str) -> None:
+    assert befugnis.einordnen(ziel, "ändern", True) == 2
+
+
+@pytest.mark.parametrize("art", ["deploy", "irgendwas", "kosten_sparen"])
+@pytest.mark.parametrize("ziel", ["arbeitsordner", "zweig"])
+def test_arbeitsordner_unbekannte_art_ist_klasse_3(
+    befugnis: ModuleType, ziel: str, art: str
+) -> None:
+    assert befugnis.einordnen(ziel, art, True) == 3
+
+
+@pytest.mark.parametrize("art", ["entfernen", "lösen", "löschen"])
+def test_live_loeschen_ist_klasse_2(befugnis: ModuleType, art: str) -> None:
+    assert befugnis.einordnen("live", art, False) == 2
+
+
+@pytest.mark.parametrize("ziel", ["LIVE", " live ", "\tLive\n", "Live"])
+def test_live_schreibweisen_sind_klasse_2(befugnis: ModuleType, ziel: str) -> None:
+    assert befugnis.einordnen(ziel, "ändern", False) == 2
+
+
+def test_live_mit_sicherung_bleibt_klasse_2(befugnis: ModuleType) -> None:
+    assert befugnis.einordnen("live", "anlegen", gesichert=True) == 2
+
+
+@pytest.mark.parametrize(
+    ("ziel", "art"),
+    [(None, None), (None, "ändern"), ("arbeitsordner", None), (1, 2), (0, "ändern")],
+)
+def test_nicht_string_eingaben_nie_klasse_1(
+    befugnis: ModuleType, ziel: object, art: object
+) -> None:
+    assert befugnis.einordnen(ziel, art, True) in (2, 3)  # type: ignore[arg-type]
+
+
+def test_start_text_nennt_live_synonyme_aus_tabelle(befugnis: ModuleType) -> None:
+    text = befugnis.start_text("7")
+    for wort in befugnis._KLASSE_2.ziele or ():
+        assert wort in text, wort
