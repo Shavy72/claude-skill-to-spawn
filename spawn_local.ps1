@@ -37,6 +37,7 @@ $standArgs = @("$PSScriptRoot/to_spawn.py", "arbeitsstand")
 if ($DryRun) { $standArgs += "--pruefen" }
 $eapVorher = $ErrorActionPreference
 $ErrorActionPreference = "Continue"
+$rc = 1   # bleibt gesetzt, falls der Aufruf scheitert (sonst exit $null = 0)
 try {
     & $py @standArgs
     $rc = $LASTEXITCODE
