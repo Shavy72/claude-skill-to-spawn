@@ -82,7 +82,7 @@ class FakeUmwelt:
 
     def frage_einwerfen(self, spec: int, ticket: int, frage: str) -> str:
         self.eingeworfen.append(frage)
-        return leiter.frage_einwerfen(self.hauptbaum, ticket, frage)
+        return leiter.frage_einwerfen(self.hauptbaum, spec, ticket, frage)
 
 
 @pytest.fixture
@@ -209,3 +209,104 @@ def test_frage_im_text_rueckfrage_dialog() -> None:
     text = "● Bash(rm -rf archive/alt)\n\nDo you want to proceed?\n❯ 1. Yes\n  2. No\n\nEsc to cancel"
     frage = aufseher_stand.frage_im_text(text)
     assert "Do you want to proceed?" in frage and "rm -rf archive/alt" in frage
+
+
+# --- Fix-Runde: Kürzung darf Klasse 2 nie verlieren (Review PR 374) ----------------------
+
+
+BERICHT = "● " + " ".join(
+    f"Zeile {i}: Tests laufen grün, Diff geprüft, Belege abgelegt und Worktree aufgeräumt." for i in range(7)
+)
+LANG_LIVE = f"{BERICHT} Soll ich das jetzt live deployen?"
+
+
+def test_langer_absatz_mit_live_frage_am_ende_ist_klasse_2() -> None:
+    zeilen = "\n".join(f"Zeile {i}: Tests laufen grün, Diff geprüft, Belege abgelegt und Worktree aufgeräumt." for i in range(7))
+    text = f"● Start.\n\n{zeilen}\nSoll ich das jetzt live deployen?\n\n{EINGABE}\n❯ \n{EINGABE}\n  Kontext 80k"
+    frage = aufseher_stand.frage_im_text(text)
+    assert frage.endswith("Soll ich das jetzt live deployen?")
+    schritt = leiter.entscheide(_lage(aufseher_stand.STILL, frage, 25), leiter.Gemerkt(0, None), time.time(), 250.0)
+    assert schritt.aktion == "mensch"
+
+
+def test_langer_absatz_live_geht_nicht_an_den_entscheider(baum: Path) -> None:
+    u = FakeUmwelt(baum, frage=LANG_LIVE)
+    erg = _lauf(u)
+    assert "braucht den Menschen" in erg.zeile
+    offen = briefkasten.offene([TICKET], hauptbaum=baum)
+    assert [f["klasse"] for f in offen] == ["2"]
+    assert offen[0]["frage"].endswith("Soll ich das jetzt live deployen?")
+    assert len(offen[0]["frage"]) <= aufseher_stand.FRAGE_MAX
+
+
+def test_klasse_2_wort_vorn_bleibt_nach_kuerzen_klasse_2(baum: Path) -> None:
+    frage = "Ich würde den Stand live deployen. " + BERICHT + " Passt das so?"
+    assert len(frage) > aufseher_stand.FRAGE_MAX
+    erg = _lauf(FakeUmwelt(baum, frage=frage))
+    assert "braucht den Menschen" in erg.zeile
+    offen = briefkasten.offene([TICKET], hauptbaum=baum)
+    assert [f["klasse"] for f in offen] == ["2"]
+    assert offen[0]["frage"].startswith("…") and offen[0]["frage"].endswith("Passt das so?")
+
+
+def test_frage_kurz_behaelt_ende() -> None:
+    assert aufseher_stand.frage_kurz("kurz?") == "kurz?"
+    lang = aufseher_stand.frage_kurz("a " * 400 + "Ende?")
+    assert len(lang) == aufseher_stand.FRAGE_MAX and lang.endswith("Ende?") and lang.startswith("…")
+
+
+# --- Fix-Runde: kein Doppel-Einwurf, Merken scheitert ------------------------------------
+
+
+def test_frage_einwerfen_kein_doppel(baum: Path) -> None:
+    erst = leiter.frage_einwerfen(baum, SPEC, TICKET, FRAGE)
+    zweit = leiter.frage_einwerfen(baum, SPEC, TICKET, FRAGE)
+    assert erst == zweit
+    assert len(briefkasten.offene([TICKET], hauptbaum=baum)) == 1
+    anders = leiter.frage_einwerfen(baum, SPEC, TICKET, "Welchen Namen soll die Datei haben?")
+    assert anders != erst
+    assert len(briefkasten.offene([TICKET], hauptbaum=baum)) == 2
+
+
+def test_frage_einwerfen_nennt_spec(baum: Path) -> None:
+    leiter.frage_einwerfen(baum, SPEC, TICKET, FRAGE)
+    daten = briefkasten._lies(briefkasten._datei(TICKET, baum)).daten
+    assert f"Spec {SPEC}" in daten["fragen"][0]["belege"][0]
+
+
+def test_merken_scheitert_dauerhaft_kein_doppel_einwurf(baum: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def kaputt(name: str, wert: str) -> None:
+        raise OSError("Platte voll")
+
+    monkeypatch.setattr(leiter.leitstand, "setze_notiz", kaputt)
+    u = FakeUmwelt(baum)
+    for _ in range(3):
+        erg = _lauf(u)
+        assert erg.exit == leiter.EXIT_FEHLER
+        assert "nicht gemerkt" in erg.zeile
+    offen = briefkasten.offene([TICKET], hauptbaum=baum)
+    assert len(offen) == 1 and offen[0]["frage"] == FRAGE
+    assert offen[0]["id"] in erg.zeile
+
+
+# --- Grenzen des Still-Frage-Zweigs (leiter.py, ruhig + Stufe 0/1) -------------------------
+
+
+def test_still_frage_unter_mindest_ruhe_loest_nicht_aus() -> None:
+    zu_frueh = leiter.MIN_RUHE_MIN - 1
+    schritt = leiter.entscheide(
+        _lage(aufseher_stand.STILL, FRAGE, zu_frueh), leiter.Gemerkt(0, None), time.time(), 250.0
+    )
+    assert schritt.aktion not in ("entscheider", "mensch")
+    genau = leiter.entscheide(
+        _lage(aufseher_stand.STILL, FRAGE, leiter.MIN_RUHE_MIN), leiter.Gemerkt(0, None), time.time(), 250.0
+    )
+    assert genau.aktion == "entscheider"
+
+
+@pytest.mark.parametrize("stufe, erwartet", [(0, True), (1, True), (2, False), (3, False)])
+def test_still_frage_nur_ab_stufe_0_und_1(stufe: int, erwartet: bool) -> None:
+    schritt = leiter.entscheide(
+        _lage(aufseher_stand.STILL, FRAGE, 25), leiter.Gemerkt(stufe, time.time() - 60), time.time(), 250.0
+    )
+    assert (schritt.aktion == "entscheider") is erwartet

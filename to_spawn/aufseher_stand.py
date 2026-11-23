@@ -448,17 +448,20 @@ def sammeln(spec: int, q: Quellen, vorher: _Vorher) -> _Ergebnis:
     return _Ergebnis(lagen, kommentare, merker)
 
 
-#: Höchstens so viele Zeilen/Zeichen trägt eine Fenster-Frage (Briefkasten-Text, Merk-Schlüssel).
+#: Rückfrage-Dialog: so viele letzte Zeilen (Frage samt Befehl darüber) bilden die Frage.
 FRAGE_ZEILEN = 8
+#: Höchstens so viele Zeichen trägt eine Fenster-Frage im Briefkasten (:func:`frage_kurz`).
 FRAGE_MAX = 600
 
 
 def frage_im_text(text: str) -> str:
-    """Frage an den Menschen am Ende des Pane-Texts (#372), ``""`` = keine.
+    """Frage an den Menschen am Ende des Pane-Texts (#372), ``""`` = keine; ungekürzt.
 
     Rückfrage-Dialog (:func:`aufpasser.rueckfrage`): die letzten Zeilen samt Befehl darüber.
-    Sonst zählt nur der letzte Absatz über dem Eingabefeld, und nur wenn er mit ``?`` endet —
-    eine stille Session ohne solche Frage hängt (Stupser/Handoff wie bisher).
+    Sonst zählt der ganze letzte Absatz über dem Eingabefeld, und nur wenn er mit ``?`` endet —
+    eine stille Session ohne solche Frage hängt (Stupser/Handoff wie bisher). Ungekürzt, weil
+    die Klasse (:func:`befugnis.ist_klasse_2`) am vollen Absatz gilt; kürzen nur
+    :func:`frage_kurz`.
     """
     zeilen = aufpasser.ohne_statuszeile(text).splitlines()
     linien = [i for i, z in enumerate(zeilen) if aufpasser.EINGABEFELD_LINIE.fullmatch(z)]
@@ -475,8 +478,17 @@ def frage_im_text(text: str) -> str:
                     break
                 continue
             absatz.insert(0, z.strip())
-        teile = absatz[-FRAGE_ZEILEN:] if absatz and absatz[-1].endswith("?") else []
-    return " ".join(" ".join(teile).split())[:FRAGE_MAX]
+        teile = absatz if absatz and absatz[-1].endswith("?") else []
+    return " ".join(" ".join(teile).split())
+
+
+def frage_kurz(frage: str, grenze: int = FRAGE_MAX) -> str:
+    """``frage`` auf ``grenze`` Zeichen, vorn gekürzt (``…``): das Ende mit der Frage bleibt.
+
+    Nur zum Anzeigen/Ablegen — die Klasse nie am gekürzten Text bestimmen (Review PR 374).
+    """
+    frage = " ".join(frage.split())
+    return frage if len(frage) <= grenze else "…" + frage[len(frage) - grenze + 1 :]
 
 
 def fenster_frage(ziel: str | None, q: Quellen) -> str:

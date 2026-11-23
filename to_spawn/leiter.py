@@ -307,7 +307,7 @@ def frage_schluessel(frage: str) -> str:
 
 def _frage_schritt(frage: str, gemerkt: Gemerkt) -> Schritt:
     """Frage im Fenster: einmal Entscheider-Auftrag bzw. Klasse 2 an den Menschen (#372)."""
-    kurz = " ".join(frage.split())[:120]
+    kurz = aufseher_stand.frage_kurz(frage, 120)
     if gemerkt.frage == frage_schluessel(frage):
         return Schritt("nichts", f"Frage schon weitergegeben — {kurz}")
     if befugnis.ist_klasse_2(frage):
@@ -388,18 +388,26 @@ def gemerkte_frage(ticket: int) -> str | None:
     return leitstand.notiz(_FRAGE_NOTIZ.format(ticket=ticket)) or None
 
 
-def frage_einwerfen(hauptbaum: Path, ticket: int, frage: str) -> str:
-    """Fenster-Frage über die Briefkasten-Tür einwerfen (Klasse ordnet der Briefkasten); ``id``.
+def frage_einwerfen(hauptbaum: Path, spec: int, ticket: int, frage: str) -> str:
+    """Ungekürzte Fenster-Frage über die Briefkasten-Tür einwerfen; ``id``.
 
+    Abgelegt wird :func:`aufseher_stand.frage_kurz` (Ende bleibt); Klasse 2 wird am ungekürzten
+    Text bestimmt und mitgegeben, damit der Briefkasten sie am gekürzten nie verliert. Liegt
+    dieselbe Frage des Tickets noch offen, kommt deren ``id`` statt eines zweiten Einwurfs —
+    auch wenn das Merken (:func:`_frage_weitergeben`) dauerhaft scheitert.
     Andockstelle für den Entscheider-Helfer (#365): er findet die Frage in ``briefkasten offene``
     und antwortet mit ``briefkasten antworten`` — derselbe Weg wie für Fragen der Session.
     """
+    text = aufseher_stand.frage_kurz(frage)
+    for offen in briefkasten.offene([ticket], hauptbaum=hauptbaum):
+        if offen["id"] and offen["frage"] == text:
+            return offen["id"]
     return briefkasten.einwerfen(
         ticket,
-        frage,
+        text,
         "",
-        None,
-        [f"Fenster bau {ticket} (Leiter, #372)"],
+        2 if befugnis.ist_klasse_2(frage) else None,
+        [f"Fenster bau {ticket}, Spec {spec} (Leiter, #372)"],
         art="fenster-frage",
         hauptbaum=hauptbaum,
     )
@@ -474,7 +482,8 @@ def _frage_weitergeben(
 ) -> Ergebnis:
     """Frage einwerfen, dann merken: lieber eine doppelte Frage als eine verlorene (#372).
 
-    Kein Tippen ins Fenster. Scheitert das Merken, wirft der nächste Takt erneut ein (Exit 1).
+    Kein Tippen ins Fenster. Scheitert das Merken (Exit 1), gibt der nächste Takt dieselbe Frage
+    erneut weiter; einen zweiten Einwurf verhindert :func:`frage_einwerfen`.
     """
     frage_id = u.frage_einwerfen(spec, ticket, lage.frage)
     try:
@@ -626,7 +635,7 @@ class _EchteUmwelt:
         return eigener_handoff.folge_starten(self.repo, spec, ticket, treffer, sperren=False)
 
     def frage_einwerfen(self, spec: int, ticket: int, frage: str) -> str:
-        return frage_einwerfen(self.repo, ticket, frage)
+        return frage_einwerfen(self.repo, spec, ticket, frage)
 
     def _letzter_start(self, ticket: int, wt: Path) -> tuple[float | None, bool]:
         """Jüngster ``session_start`` im Bau-Log und ob das Lesen scheiterte (Warnung)."""
