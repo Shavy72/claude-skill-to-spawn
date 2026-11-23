@@ -27,8 +27,12 @@ def kurzzeile(route: dict[str, Any]) -> str:
     ]
     liste = ", ".join(namen) if namen else "–"
     zeile = f"Review {route['stufe']}: {liste} ({route['diff_zeilen']} Zeilen, {len(route['dateien'])} Dateien)"
-    regeln = route.get("projektregeln")
-    return f"{zeile} · Projektregeln fehlen ({regeln['datei']})" if regeln and not regeln["vorhanden"] else zeile
+    regeln, woerter = route.get("projektregeln"), route.get("projekt_woerter")
+    if regeln and not regeln["vorhanden"]:
+        zeile += f" · Projektregeln fehlen ({regeln['datei']})"
+    if woerter and not woerter["vorhanden"]:
+        zeile += f" · Projektwörter fehlen ({woerter['datei']})"
+    return zeile
 
 
 def ausloeser_loggen(route: dict[str, Any]) -> None:

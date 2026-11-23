@@ -67,6 +67,21 @@ def projektregeln() -> dict[str, Any]:
     return {"datei": pfad.as_posix(), "vorhanden": vorhanden}
 
 
+def projekt_woerter_info() -> dict[str, Any]:
+    """Ob die private Config ``projekt_woerter`` setzt (#395); fehlt der Schlüssel, warnt das laut.
+
+    Der Router läuft dann nur mit den allgemeinen Wörtern weiter. Ein leeres ``{}`` zählt als bewusst gesetzt.
+    """
+    pfad = config_pfad()
+    try:
+        vorhanden = "projekt_woerter" in json.loads(pfad.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        vorhanden = False
+    if not vorhanden:
+        LOG.warning('Projektwörter fehlen: %s ohne "projekt_woerter" — Router nur mit allgemeinen Wörtern', pfad)
+    return {"datei": pfad.as_posix(), "vorhanden": vorhanden}
+
+
 _FALLS_REPO = re.compile(r"(?i)^[\s>*-]*Falls Repo\s+`?([^:`]+?)`?\s*:")
 
 
@@ -862,6 +877,7 @@ def berechne_route(
         datei_groesse=datei_groesse(repo, relevant, base, staged, cfg),
         pruefer=pruefer,
         projektregeln=regeln_info,
+        projekt_woerter=projekt_woerter_info() if stufe != "keine" else None,
         builtin=builtin,
         richter=stufe in ("mittel", "gross"),
         beleg=beleg.as_posix() if beleg.is_file() else None,
