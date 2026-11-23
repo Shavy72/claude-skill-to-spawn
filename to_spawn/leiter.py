@@ -270,6 +270,10 @@ def entscheide(lage: Lage, gemerkt: Gemerkt, jetzt: float, handoff_k: float) -> 
                     f"{text}, still {still} min ≥ {ABSCHLUSS_MELDE_MIN} min — Aufseher prüfen",
                     merken=ABSCHLUSS_GEMELDET,
                 )
+            if text and gemerkt.frage == ABSCHLUSS_GEMELDET:
+                # Kürzer still als die Melde-Grenze: die Session hat zwischen zwei Takten gearbeitet,
+                # auch wenn kein Takt sie dabei sah — Merker löschen, die nächste Stille meldet neu.
+                return Schritt("zuruecksetzen", f"{text}, still {still} min — Meldung zurückgesetzt")
             if text:
                 return Schritt("nichts", f"{text} — nicht beenden")
         if not ruhig:

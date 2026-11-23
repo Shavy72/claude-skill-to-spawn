@@ -217,3 +217,50 @@ def test_abschluss_meldet_einmal_bis_das_fenster_sich_bewegt(tmp_path: Path, mon
     assert leiter_test._lauf(u).exit == leiter.EXIT_FEHLER
     assert leiter_test._lauf(u).exit == leiter.EXIT_OK
     assert u.wz.getippt == []
+
+
+# --- Fix-Runde 2 (Prüfung zu Pull-Request 392) -------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("text", "entfaellt"),
+    [
+        ("Klickweg entfällt\n", True),
+        ("Klickweg entfällt.\n", True),
+        ("Klickweg entfällt (reine Rechenlogik)\n", True),
+        ("Klickweg entfällt, keine Oberfläche\n", True),
+        ("Klickweg entfällt, kein UI\n", True),
+        ("Klickweg entfällt: nur Doku\n", True),
+        ("Klickweg entfällt? Nein.\n", False),
+        ("Klickweg entfällt (nicht!)\n", False),
+        ("Klickweg entfällt — trotzdem nötig\n", False),
+        ("Klickweg entfällt — falsch, UI betroffen\n", False),
+        ("Klickweg entfällt, Live-Beweis nötig\n", False),
+        ("Klickweg entfällt nur auf Staging, live Pflicht\n", False),
+        ("Klickweg entfällt erst nach Deploy\n", False),
+        ("~~Klickweg entfällt~~\n", False),
+        ("Behauptung „Klickweg entfällt“ ist falsch\n", False),
+        ('Behauptung "Klickweg entfällt" ist falsch\n', False),
+    ],
+)
+def test_entfaellt_nur_mit_erlaubter_fortsetzung(
+    tmp_path: Path, text: str, entfaellt: bool
+) -> None:
+    (tmp_path / "7.md").write_text(text, encoding="utf-8")
+    assert belege.auswerten(tmp_path, "7").klickweg_entfaellt is entfaellt
+
+
+def test_abschluss_meldet_wieder_nach_kurzer_arbeit_zwischen_zwei_takten(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("TO_SPAWN_LEITSTAND_ORDNER", str(tmp_path / "leitstand"))
+    wt = tmp_path / "wt"
+    (wt / "docs" / "handoffs").mkdir(parents=True)
+    u = _abschluss_umwelt(wt)
+    assert leiter_test._lauf(u).exit == leiter.EXIT_FEHLER  # gemeldet
+    u.still_min = 20  # kurz gearbeitet, kein Takt sah „arbeitet“
+    assert leiter_test._lauf(u).exit == leiter.EXIT_OK
+    u.still_min = leiter.ABSCHLUSS_MELDE_MIN + 5
+    assert leiter_test._lauf(u).exit == leiter.EXIT_FEHLER  # genau eine neue Meldung
+    assert leiter_test._lauf(u).exit == leiter.EXIT_OK
+    assert u.wz.getippt == []

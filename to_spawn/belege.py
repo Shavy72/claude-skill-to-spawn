@@ -59,17 +59,31 @@ _ENTFAELLT = re.compile(
     r"|\bkein\w*\s+klick.?weg\s+(?:nötig|erforderlich)",
     re.I,
 )
-#: Im Zweifel nicht entfällt (#282 P2 Fix 1): folgt der Aussage direkt (nur Satzzeichen dazwischen)
-#: eine Verneinung („entfällt keinesfalls“, „entfällt — nicht!“) oder steht dahinter noch ein Einwand
-#: bzw. der Klickweg selbst („…, Klickweg aber nötig“), zählt die Zeile nicht — lieber bleibt eine
-#: Session offen, als dass sie zu früh endet. Ein Klammerzusatz („(…, keine Oberfläche)“) bleibt erlaubt.
-_DAGEGEN = re.compile(r"^[\s,;:.!?|*—–-]*(?:nicht|nie|kein\w*)\b|\b(?:aber|doch|jedoch)\b|klick.?weg", re.I)
+#: Im Zweifel nicht entfällt (#282 P2): hinter der Aussage zählt nur eine erlaubte Fortsetzung,
+#: alles andere heißt „zählt nicht“ — lieber bleibt eine Session offen, als dass sie zu früh endet.
+#: Erlaubt (bis zum nächsten Tabellen-Trenner „|“): Zeilenende, ggf. mit Punkt; ein Klammerzusatz;
+#: „:“ / „—“ / „-“ / „,“ mit kurzem Grund („, keine Oberfläche“, „: nur Doku“). Fragezeichen,
+#: schließende Anführungszeichen („Behauptung „Klickweg entfällt“ ist falsch“), Durchgestrichenes
+#: („~~…~~“) oder Text ohne Trennzeichen („entfällt nur auf Staging“) zählen nicht.
+_FORTSETZUNG = re.compile(
+    r"[*_]*[ \t]*(?:\([^()\n]*\))?[ \t]*(?:[:—–,-][ \t]*[^\n]{1,80}?)?[ \t]*\.?[ \t]*"
+)
+#: Klammerzusatz und Grund dürfen nichts verneinen oder einfordern; „kein UI / keine Oberfläche“
+#: ist ein Grund, keine Verneinung. „nur“ allein ist erlaubt („nur Doku“).
+_DAGEGEN = re.compile(
+    r"\b(?:nicht|nie|nein|kein\w*(?!\s+(?:Oberfläche|UI|Frontend)\b)|nötig|erforderlich|pflicht\w*"
+    r"|trotzdem|aber|doch|jedoch|falsch|erst)\b|klick.?weg",
+    re.I,
+)
 
 
 def _entfaellt(zeile: str) -> bool:
     """Sagt die Zeile ausdrücklich und ohne Einschränkung, dass der Klickweg entfällt?"""
     treffer = _ENTFAELLT.search(zeile)
-    return treffer is not None and not _DAGEGEN.search(zeile[treffer.end() :])
+    if treffer is None:
+        return False
+    rest = zeile[treffer.end() :].split("|", 1)[0].rstrip("\r\n")
+    return _FORTSETZUNG.fullmatch(rest) is not None and not _DAGEGEN.search(rest)
 
 
 @dataclass
