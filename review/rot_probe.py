@@ -223,6 +223,29 @@ def aendert_ausfuehrbar(repo: Path, base: str, pfad: str) -> bool:
         return True
 
 
+def prueft_nichts(datei: Path, namen: list[str]) -> bool:
+    """True, wenn jeder genannte Test nur aus Docstring/`pass`/`assert <Konstante>` besteht.
+
+    Solche Tests werden unabhängig vom Code nie rot. Nicht lesbar → True (Befund bleibt scharf).
+    """
+    gesucht = {n.split("[")[0].split("::")[-1] for n in namen}
+    try:
+        baum = ast.parse(datei.read_text(encoding="utf-8"))
+    except (SyntaxError, ValueError, OSError) as fehler:
+        LOG.info("Test %s nicht lesbar (%s), Befund bleibt", datei, fehler)
+        return True
+    for knoten in ast.walk(baum):
+        if isinstance(knoten, (ast.FunctionDef, ast.AsyncFunctionDef)) and knoten.name in gesucht:
+            for zeile in knoten.body:
+                leer = isinstance(zeile, ast.Pass) or (
+                    isinstance(zeile, (ast.Expr, ast.Assert))
+                    and isinstance(zeile.value if isinstance(zeile, ast.Expr) else zeile.test, ast.Constant)
+                )
+                if not leer:
+                    return False
+    return True
+
+
 def pruefen(repo: Path, base: str, dateien: list[str], timeout: float) -> tuple[list[dict[str, Any]], list[str]]:
     hinweise: list[str] = []
     fremd = [d for d in dateien if not d.endswith(".py")]
@@ -237,7 +260,7 @@ def pruefen(repo: Path, base: str, dateien: list[str], timeout: float) -> tuple[
     if not laeufe:
         return [befund(d, 1, "mittel", "Code geändert ohne Test") for d in code], hinweise
     # #326: nur Kommentare/Docstrings im Code → alter Stand = neuer Stand, jeder Test bliebe grün.
-    # ponytail: nur reine Test-Diffs (ohne Code-Datei) laufen weiter scharf, gewollt seit #1533.
+    # Reine Test-Diffs laufen weiter (Platz/Timeout/Umgebung bleiben sichtbar); #401 lässt erst beim Befund aus.
     if code and not any(aendert_ausfuehrbar(repo, base, d) for d in code):
         hinweise.append("nicht beurteilbar: Diff ändert den geprüften Code nicht (" + ", ".join(code) + ")")
         return [], hinweise
@@ -307,6 +330,7 @@ def pruefen(repo: Path, base: str, dateien: list[str], timeout: float) -> tuple[
         befunde: list[dict[str, Any]] = []
         knoten = gruene_knoten(ausgabe)
         ohne_neue: list[str] = []
+        ausgelassen: list[str] = []
         for d in laeufe:
             # ponytail: nur neue Knoten zählen; geänderte Bodies alter Tests bleiben ungeprüft.
             neu = {k.split("::", 1)[1] for k in neu_knoten if k.startswith(f"{d}::")}
@@ -317,6 +341,11 @@ def pruefen(repo: Path, base: str, dateien: list[str], timeout: float) -> tuple[
                 continue
             namen = [n for n in knoten.get(d, []) if n in neu]
             if set(namen) != neu:
+                continue
+            # #401: ohne Code und ohne Hilfsdatei ist alter Stand = neuer Stand → keine Aussage.
+            # #1533: geänderte Hilfsdateien bleiben scharf; Tests ohne jede Prüfung auch.
+            if not code and not hilfen and not prueft_nichts(ziel / d, namen):
+                ausgelassen.append(d)
                 continue
             zeile = zeile_von(ziel / d, namen[0]) if namen else 1
             liste = f" ({', '.join(namen)})" if namen else ""
@@ -333,6 +362,8 @@ def pruefen(repo: Path, base: str, dateien: list[str], timeout: float) -> tuple[
                 "ohne neue Testknoten, nicht geprüft (geänderte Bodies alter Tests zählen nicht): "
                 + ", ".join(ohne_neue)
             )
+        if ausgelassen:
+            hinweise.append("ausgelassen: nur Tests geändert, keine Aussage (" + ", ".join(ausgelassen) + ")")
         return befunde, hinweise
     finally:
         entfernt = git(repo, "worktree", "remove", "--force", str(ziel))
