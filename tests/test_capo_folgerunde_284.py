@@ -99,7 +99,7 @@ def test_folge_runde_startet_mit_richtigem_befehl(
     assert "-n" in argv and argv[argv.index("-n") + 1] == "bau 901"
     assert "-c" in argv and argv[argv.index("-c") + 1] == str(welt["repo"])
     assert argv[-3:-1] == ["bash", "-lc"]
-    assert argv[-1].endswith("bau 901 --sofort")
+    assert "/skripte/bau.py 901 --sofort; " in argv[-1]  # #277: bau.py direkt, nicht ~/.bashrc-bau
     assert "TO_SPAWN_HOME=" in argv[-1] and "REPO=" in argv[-1]
     assert _folgerunden(welt) == {"901": 1}
 

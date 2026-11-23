@@ -60,12 +60,18 @@ def _respawn_befehl(umgebung: tuple[Path, Path]) -> tuple[str, str]:
 
 
 def _bau_schalter(befehl: str, ticket: int) -> list[str]:
-    """Schalter hinter ``bau <N>`` aus dem tmux-Befehl ``bash -lc '…; bau <N> …'``."""
+    """Schalter hinter ``bau.py <N>`` aus dem tmux-Befehl ``bash -lc '…; <py> …/bau.py <N> …; …'``.
+
+    #277: das Fenster ruft ``bau.py`` des Skills direkt (nicht ``bau`` aus ~/.bashrc).
+    """
     teile = shlex.split(befehl)
     assert teile[:2] == ["bash", "-lc"], befehl
-    letzte = shlex.split(teile[2].rsplit("; ", 1)[-1])
-    assert letzte[:2] == ["bau", str(ticket)], befehl
-    return letzte[2:]
+    for stueck in teile[2].split("; "):
+        woerter = shlex.split(stueck)
+        if len(woerter) > 2 and woerter[1].endswith("/skripte/bau.py"):
+            assert woerter[2] == str(ticket), befehl
+            return woerter[3:]
+    raise AssertionError(f"kein bau.py-Aufruf: {befehl}")
 
 
 def test_respawn_startet_ueber_bau_wie_capo(umgebung: tuple[Path, Path]) -> None:
@@ -76,7 +82,8 @@ def test_respawn_startet_ueber_bau_wie_capo(umgebung: tuple[Path, Path]) -> None
     assert " claude " not in befehl and "--model" not in befehl
     # Derselbe Vorspann wie die Folge-Runde von capo (REPO/TO_SPAWN_HOME), nur ohne Prompt.
     capo_innen = capo.folge_befehl(repo, 399, TICKET, ["wache 399"])[-1]
-    assert shlex.split(befehl)[2] == f"{capo_innen} --ohne-prompt"
+    assert capo_innen == capo.bau_startzeile(repo, TICKET, "")
+    assert shlex.split(befehl)[2] == capo.bau_startzeile(repo, TICKET, "", "--ohne-prompt")
     assert _bau_schalter(befehl, TICKET) == ["--sofort", "--ohne-prompt"]
     assert cwd == str(repo)
 

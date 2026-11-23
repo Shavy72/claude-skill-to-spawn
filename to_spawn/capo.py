@@ -1252,18 +1252,26 @@ def _bau_skript(repo: Path) -> Path:
 def bau_startzeile(repo: Path, ticket: int, auftrag: str = "", *schalter: str) -> str:
     """Shell-Zeile, mit der ein tmux-Fenster eine Bau-Session startet (``bash -lc``).
 
-    Einziger Ort für den Vorspann (``REPO``/``TO_SPAWN_HOME`` wie ``skripte/spawn_srv.sh``,
-    sonst startet ``bau`` in einem anderen Repo, #212). Die Konfiguration der Session
-    (Settings, MCP, Session-ID, Staffel-Umgebung) liefert allein ``bau.py``. ``schalter``
-    hängt weitere ``bau``-Schalter an (respawn #431: ``--ohne-prompt``).
+    Einziger Ort für Ablösung (respawn) und Folge-Runde. Ruft ``bau.py`` des Skills direkt
+    mit diesem Python auf, wie ``skripte/spawn_srv.sh`` (#257) — nie die Shell-Funktion
+    ``bau`` aus ``~/.bashrc`` oder die ``.venv`` des Repos, die ein Spec-Klon nicht hat
+    (#277). Vorspann ``REPO``/``TO_SPAWN_HOME``/``TO_SPAWN_REPO`` wie dort (#212). Die
+    Konfiguration der Session liefert allein ``bau.py``. ``schalter`` hängt weitere
+    ``bau.py``-Schalter an (respawn #431: ``--ohne-prompt``). Endet ``bau.py`` mit Fehler,
+    schließt sich das Fenster — der Exit-Code bleibt in ``.to-spawn/fenster_<N>.log``.
     """
     skill = Path(__file__).resolve().parent.parent
-    vorspann = f"REPO={shlex.quote(str(repo))} TO_SPAWN_HOME={shlex.quote(str(skill))}"
+    ort = shlex.quote(str(repo))
+    vorspann = f"REPO={ort} TO_SPAWN_HOME={shlex.quote(str(skill))} TO_SPAWN_REPO={ort}"
     if auftrag.strip():
         vorspann += f" BAU_AUFTRAG={shlex.quote(_kurz(auftrag, AUFTRAG_MAX_ZEICHEN))}"
-    return (
-        f"export {vorspann}; {shlex.join(['bau', str(ticket), '--sofort', *schalter])}"
+    bau = [sys.executable or "python3", str(skill / "skripte" / "bau.py"), str(ticket)]
+    log = shlex.quote(str(repo / ".to-spawn" / f"fenster_{ticket}.log"))
+    spur = (
+        f'rc=$?; [ "$rc" -eq 0 ] || {{ mkdir -p "$(dirname {log})"; '
+        f'echo "$(date -Is) bau.py #{ticket} Exit $rc" >> {log}; }}; exit "$rc"'
     )
+    return f"export {vorspann}; {shlex.join([*bau, '--sofort', *schalter])}; {spur}"
 
 
 def folge_befehl(

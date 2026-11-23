@@ -281,7 +281,8 @@ def test_startbefehl_ohne_prompt_ueber_bau(
     befehl = next(a for a in fake.aufrufe if a[0] == "fenster_starten")[4]
     assert START_TEXT not in befehl
     assert befehl.startswith("bash -lc ")
-    assert befehl.endswith(f"bau {TICKET} --sofort --ohne-prompt'")
+    # #277: bau.py des Skills direkt, nicht die Shell-Funktion ``bau`` aus ~/.bashrc.
+    assert f"/skripte/bau.py {TICKET} --sofort --ohne-prompt; " in befehl
     assert f"REPO={repo}" in befehl
 
 
