@@ -45,6 +45,15 @@ was zum Weiterbauen nötig ist.
 
 ## 3. Stand
 
+- **2026-11-23 09:14 (Server-Uhr, main aa123a0):** Seit dem Eintrag von 08:43 gemergt und auf dem
+  Bau-Server installiert (Stand aa123a0): Pull-Request 318 (Issue 282 P1, neuer Baustein Wiederanlauf:
+  `to_spawn/wiederanlauf.py`, `to_spawn/belege.py`, Tür `to_spawn.py ticket-lage <N>` meldet
+  neu/fortsetzen/abschluss/nichts, bei Unklarheit fail-closed). Beleg: volle Suite 3358 bestanden.
+  - In Arbeit: 282 P3 (Leiter beendet keine Session, der nur ein Abschluss-Schritt fehlt) · Pull-Request
+    317 (274 P1) fertig geprüft bis auf Review + Suite, Merge wartet auf die Zusatz-Datei im nutzenden Repo.
+  - Nächste Schritte: 282 P2 (Startstelle fragt den Baustein) → 274 P2.
+  - Unverändert: Abnahme M1/M2 und die Test-Spec starten erst auf ausdrückliches Wort des Nutzers.
+
 - **2026-11-23 08:43 (Server-Uhr, main d5e3806):** Seit dem Eintrag von 08:27 gemergt und auf dem
   Bau-Server installiert (Stand d5e3806): Pull-Request 310 (Issue 278 P3b, Aufseher liest und
   beantwortet den Entscheidungs-Briefkasten). Geschlossen: Issue 278 (Entscheidungs-Befugnis:
