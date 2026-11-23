@@ -42,9 +42,9 @@ from to_spawn import (  # noqa: E402
     aufpasser,
     aufseher_stand,
     bau_log,
-    befugnis,
     befund,
     briefkasten,
+    briefkasten_cli,
     config,
     deploy_status,
     einrichten,
@@ -425,44 +425,12 @@ def _eintrag(args: argparse.Namespace) -> int:
     return 0
 
 
-def _briefkasten(args: argparse.Namespace) -> int:
-    """Tür B (#278): ``befugnis``/``frage``/``antwort``/``antworten``/``entscheidungen``.
-
-    Exit-Codes: ``befugnis`` 0 = Klasse 1, 2 = Klasse 2, 3 = Klasse 3 · ``antwort`` 0 = Antwort da,
-    2 = braucht den Nutzer, 3 = WARTET · ``antworten`` 2 = verweigert (Klasse 2), 1 = keine Frage.
-    """
-    if args.befehl == "befugnis":
-        klasse = befugnis.einordnen(args.ziel, args.art, args.gesichert)
-        print(f"#{args.ticket}: Klasse {klasse}")
-        return 0 if klasse == 1 else klasse
-    if args.befehl == "entscheidungen":
-        repo = config.repo_wurzel(_repo_aus_umgebung())
-        for z in briefkasten.liste(_spec_tickets(repo, args.spec), log_repo=repo):
-            print(f"#{z['ticket']} · {z['wer']} · {z['was']} · {z['warum']} · {z['beleg']}")
-        return 0
-    try:
-        if args.befehl == "frage":
-            datei = briefkasten.einwerfen(
-                args.ticket, args.frage, args.vorschlag, args.klasse, args.beleg
-            )
-            print(f"#{args.ticket}: Frage eingeworfen → {datei}")
-            return 0
-        if args.befehl == "antworten":
-            briefkasten.antworten(args.ticket, args.wahl, args.beleg, args.grund, args.von)
-            print(f"#{args.ticket}: Antwort geschrieben")
-            return 0
-        stand = briefkasten.lesen(args.ticket)
-    except PermissionError as fehler:
-        log.error("%s", fehler)
-        return 2
-    except (ValueError, OSError) as fehler:
-        log.error("%s", fehler)
-        return 1
-    if isinstance(stand, briefkasten.Antwort):
-        print(f"#{args.ticket}: Antwort von {stand.von}: {stand.wahl} (Grund: {stand.grund})")
-        return 0
-    print(f"#{args.ticket}: {stand}")
-    return 2 if stand == briefkasten.NUTZER else 3
+def _entscheidungen(args: argparse.Namespace) -> int:
+    """``entscheidungen S``: Liste aller Entscheidungen einer Spec (#278, Tür B)."""
+    repo = config.repo_wurzel(_repo_aus_umgebung())
+    for z in briefkasten.liste(_spec_tickets(repo, args.spec), log_repo=repo):
+        print(f"#{z['ticket']} · {z['wer']} · {z['was']} · {z['warum']} · {z['beleg']}")
+    return 0
 
 
 def _umrechnen(args: argparse.Namespace) -> int:
@@ -724,25 +692,7 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     # Tür B (#278 P2): Befugnis prüfen, Frage einwerfen, Antwort lesen/schreiben, Liste je Spec.
-    p_bef = unter.add_parser("befugnis", help="Klasse einer Handlung (Exit 0 = 1, 2, 3)")
-    p_bef.add_argument("ticket")
-    p_bef.add_argument("--ziel", required=True)
-    p_bef.add_argument("--art", required=True)
-    p_bef.add_argument("--gesichert", action="store_true", help="Sicherung liegt vorher vor")
-    p_frage = unter.add_parser("frage", help="Frage in den Briefkasten des Tickets")
-    p_frage.add_argument("ticket")
-    p_frage.add_argument("--frage", required=True)
-    p_frage.add_argument("--vorschlag", required=True)
-    p_frage.add_argument("--klasse", type=int, choices=[2, 3], default=3)
-    p_frage.add_argument("--beleg", action="append", default=[])
-    p_antwort = unter.add_parser("antwort", help="Antwort lesen (Exit 0 da, 2 Nutzer, 3 WARTET)")
-    p_antwort.add_argument("ticket")
-    p_antw = unter.add_parser("antworten", help="Aufseher: Antwort in den Briefkasten")
-    p_antw.add_argument("ticket")
-    p_antw.add_argument("--wahl", required=True)
-    p_antw.add_argument("--grund", required=True)
-    p_antw.add_argument("--beleg", action="append", default=[])
-    p_antw.add_argument("--von", default="aufseher")
+    briefkasten_cli.richte_parser_ein(unter)
     p_ents = unter.add_parser("entscheidungen", help="Liste aller Entscheidungen einer Spec")
     p_ents.add_argument("spec")
 
@@ -843,8 +793,10 @@ def main(argv: list[str] | None = None) -> int:
         return _anhaengen(args)
     if args.befehl == "umrechnen":
         return _umrechnen(args)
-    if args.befehl in ("befugnis", "frage", "antwort", "antworten", "entscheidungen"):
-        return _briefkasten(args)
+    if args.befehl in briefkasten_cli.BEFEHLE:
+        return briefkasten_cli.lauf(args)
+    if args.befehl == "entscheidungen":
+        return _entscheidungen(args)
     if args.befehl == "nest":
         return nest.lauf(args)
     if args.befehl == "leitstand":
