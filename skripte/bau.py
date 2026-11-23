@@ -82,12 +82,6 @@ HOME = Path.home()
 CLAUDE_DIR = HOME / ".claude"
 
 
-def repo_stand_neu_lesen() -> None:
-    """Was beim Import aus REPO gelesen wurde, nach dem Nachziehen (#283) neu bestimmen."""
-    global MANIFEST_DIR
-    MANIFEST_DIR = manifest_ordner(REPO)
-
-
 # Pflicht-Skills: der globale Review-Stop-Hook (``~/.claude/hooks/review/stop.py``) fordert
 # „Skill review-dirigent ausführen“, der Dirigent ruft diese Skills per Skill-Werkzeug. Stehen
 # sie auf ``off``, scheitert der Aufruf und jedes Ticket endet mit „Mensch nötig“
@@ -858,19 +852,10 @@ def main() -> int:
                 "Folge-Session) kann nicht grün werden.",
                 staffel_hook_pfad(REPO),
             )
-    # Arbeitsordner-Stand (#283) vor allem, was in REPO schreibt (Konfig, .gitignore) oder daraus
-    # liest (Vorlage, Manifest, Skripte): hinter origin/<Hauptzweig> → nachziehen (nur fast-forward) oder Abbruch
-    # mit Zeile. Probelauf/--print-prompt prüfen nur und warnen.
-    trocken = args.dry_run or args.print_prompt
-    stand = arbeitsstand.sicherstellen(REPO, nachziehen=not trocken)
-    if stand.zustand == arbeitsstand.NACHGEZOGEN:
-        log.info("%s", stand.text)
-        repo_stand_neu_lesen()
-    elif not stand.ok:
-        if not trocken:
-            print(f"Kein Start: {stand.text}", file=sys.stderr, flush=True)
-            return 2
-        log.warning("%s", stand.text)
+    # Arbeitsordner-Stand (#283): hier nur eine Hinweis-Zeile — nie Abbruch, nie Nachziehen
+    # (auch nicht bei --resume). Nachziehen/Abbruch macht allein der Erst-Start (to_spawn.py arbeitsstand).
+    if (stand_hinweis := arbeitsstand.hinweis(REPO)) is not None:
+        log.warning("%s", stand_hinweis)
 
     if not args.dry_run:  # Probelauf ohne Seiteneffekte (#205)
         config.sicherstellen(REPO)

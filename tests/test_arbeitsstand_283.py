@@ -105,13 +105,24 @@ def test_aktuell_ist_still_ok(klon: Path) -> None:
 def test_fetch_fehler_gilt_nie_als_aktuell(klon: Path, tmp_path: Path) -> None:
     _git(klon, "remote", "set-url", "origin", str(tmp_path / "gibt-es-nicht.git"))
     stand = arbeitsstand.sicherstellen(klon)
-    assert stand.zustand == arbeitsstand.ABBRUCH and "nicht prüfbar" in stand.text
+    # Nachprüfung #283: nie still „aktuell“, aber Warnung statt Abbruch.
+    assert stand.zustand == arbeitsstand.HINWEIS and "nicht prüfbar" in stand.text
 
 
 def test_nur_pruefen_zieht_nicht_nach(klon: Path) -> None:
     stand = arbeitsstand.sicherstellen(klon, nachziehen=False)
     assert stand.zustand == arbeitsstand.VERALTET and not stand.ok
     assert _git(klon, "rev-list", "--count", "HEAD..origin/main") == str(N)
+
+
+def test_nur_pruefen_hinter_und_voraus_ohne_ff_rat(klon: Path) -> None:
+    """Hinter und eigene Commits voraus: kein ``pull --ff-only``-Rat (der würde scheitern)."""
+    _git(klon, "commit", "-q", "--allow-empty", "-m", "eigen")
+    stand = arbeitsstand.sicherstellen(klon, nachziehen=False)
+    assert stand.zustand == arbeitsstand.VERALTET and "voraus: 1" in stand.text, (
+        stand.text
+    )
+    assert "pull --ff-only" not in stand.text
 
 
 def test_einrichten_pruefen_meldet_veralteten_arbeitsordner(klon: Path) -> None:
@@ -123,8 +134,13 @@ def test_einrichten_pruefen_meldet_veralteten_arbeitsordner(klon: Path) -> None:
     assert f"{N} Commits hinter origin/main" in zeile, text
 
 
-def test_bau_start_bricht_bei_veraltetem_ordner_mit_zeile_ab(klon: Path) -> None:
-    """Echter Start-Weg ``skripte/bau.py <N>``: nicht nachziehbar → Exit 2 + Zeile, kein Start."""
+def test_bau_start_bei_veraltetem_ordner_nur_hinweis_zeile(klon: Path) -> None:
+    """Echter Start-Weg ``skripte/bau.py <N>``: nicht nachziehbar → nur Hinweis-Zeile, Start läuft weiter.
+
+    Nachprüfung #283: ``bau.py`` bricht wegen des Stands nie ab und zieht nie nach. Beleg für
+    „läuft weiter“ ist die Folge-Meldung der nächsten Stelle (kein Manifest für Ticket #7).
+    """
+    vorher = _git(klon, "rev-parse", "HEAD")
     (klon / VORLAGE).write_text('{"prompt_template": "von Hand"}', encoding="utf-8")
     env = {**os.environ, "TO_SPAWN_REPO": str(klon), "TO_SPAWN_GH_REPO": "test-org/app"}
     fertig = subprocess.run(
@@ -138,20 +154,29 @@ def test_bau_start_bricht_bei_veraltetem_ordner_mit_zeile_ab(klon: Path) -> None
         check=False,
     )
     ausgabe = fertig.stdout + fertig.stderr
-    assert fertig.returncode == 2, ausgabe
-    assert f"{N} Commits hinter origin/main" in ausgabe and "Tun:" in ausgabe
+    hinweise = [
+        z for z in ausgabe.splitlines() if f"{N} Commits hinter origin/main" in z
+    ]
+    assert len(hinweise) == 1 and "Tun:" in hinweise[0], ausgabe
+    assert (
+        "Kein Start:" not in ausgabe and "Kein Manifest führt Ticket #7" in ausgabe
+    ), ausgabe
+    assert _git(klon, "rev-parse", "HEAD") == vorher
 
 
 @pytest.mark.parametrize("weg", ["anderer_zweig", "losgeloest"])
 def test_nicht_auf_hauptzweig_und_hinter_bricht_ab(klon: Path, weg: str) -> None:
-    """Kante (a): anderer Zweig bzw. losgelöster HEAD und hinter → Abbruch mit Zahl, nichts bewegt."""
+    """Kante (a): anderer Zweig bzw. losgelöster HEAD und hinter → Hinweis mit Zahl, nichts bewegt.
+
+    Nachprüfung #283: früher Abbruch — ein Bau-Klon steht regelmäßig auf einem Ticket-Zweig.
+    """
     if weg == "anderer_zweig":
         _git(klon, "switch", "-q", "-c", "fix/irgendwas")
     else:
         _git(klon, "switch", "-q", "--detach")
     vorher = _git(klon, "rev-parse", "HEAD")
     stand = arbeitsstand.sicherstellen(klon)
-    assert stand.zustand == arbeitsstand.ABBRUCH and not stand.ok
+    assert stand.zustand == arbeitsstand.HINWEIS and stand.ok
     assert (
         f"{N} Commits hinter origin/main" in stand.text and "switch main" in stand.text
     )
@@ -207,7 +232,10 @@ def test_zwei_starts_zugleich_scheitern_nicht_an_git_sperre(klon: Path) -> None:
 def test_bau_start_eigene_gitignore_ergaenzung_blockiert_nachziehen_nicht(
     klon: Path,
 ) -> None:
-    """Getrackte ``.gitignore`` ohne to-spawn-Block, sauber, hinter origin: der Start zieht nach."""
+    """Getrackte ``.gitignore`` ohne to-spawn-Block, sauber, hinter origin: kein Abbruch.
+
+    Nachprüfung #283: ``bau.py`` zieht nie nach (früher: HEAD == origin/main), nur Hinweis.
+    """
     quelle = klon.parent / "quelle"
     (quelle / ".gitignore").write_text("node_modules/\n", encoding="utf-8")
     _git(quelle, "add", ".")
@@ -231,7 +259,8 @@ def test_bau_start_eigene_gitignore_ergaenzung_blockiert_nachziehen_nicht(
     assert (
         "lokal geändert" not in ausgabe and "Kein Start: Arbeitsordner" not in ausgabe
     ), ausgabe
-    assert _git(klon, "rev-parse", "HEAD") == _git(klon, "rev-parse", "origin/main")
+    assert _git(klon, "rev-parse", "HEAD") != _git(klon, "rev-parse", "origin/main")
+    assert "Commits hinter origin/main" in ausgabe, ausgabe
 
 
 # --- Nach der Prüfung (PR 385): Nachzieh-Regel „git entscheidet“, Meldungen, Start-Wege -------
@@ -385,13 +414,13 @@ def test_pruefen_wartet_nur_kurz_auf_die_sperre(klon: Path) -> None:
     assert f"{arbeitsstand.SPERRE_WARTEN_PRUEFEN_S:.0f} s" in fertig.stdout
 
 
-def test_bau_nach_nachziehen_liest_manifest_ordner_neu(klon: Path) -> None:
-    """Befund 3: origin verlegt ``pfade.manifeste`` — der Start nutzt nach dem Nachziehen den neuen Ort.
+def test_bau_zieht_verlegten_manifest_ordner_nicht_nach(klon: Path) -> None:
+    """Befund 3, Nachprüfung #283: origin verlegt ``pfade.manifeste`` — ``bau.py`` zieht nicht nach.
 
-    Die neue Vorlage ist absichtlich ohne ``prompt_template``: ``load_default`` bricht dann mit
-    ihrem Pfad ab (Exit 2), bevor irgendetwas gestartet wird. Mit dem alten Ordner liefe der
-    Start weiter (alte Vorlage ist gültig).
+    Früher zog der Start nach und las den neuen Ort (kaputte Vorlage → Exit 2). Jetzt bleibt
+    HEAD stehen, die alte gültige Vorlage gilt, nur eine Hinweis-Zeile nennt den Rückstand.
     """
+    vorher = _git(klon, "rev-parse", "HEAD")
     _quelle_schiebt(klon, "neu/manifeste/_default.json", '{"kaputt": 1}')
     _quelle_schiebt(
         klon, ".to-spawn/config.json", '{"pfade": {"manifeste": "neu/manifeste"}}'
@@ -403,11 +432,10 @@ def test_bau_nach_nachziehen_liest_manifest_ordner_neu(klon: Path) -> None:
         TO_SPAWN_GH_REPO="test-org/app",
     )
     ausgabe = fertig.stdout + fertig.stderr
-    assert "nachgezogen" in ausgabe, ausgabe
-    assert fertig.returncode == 2 and "neu" in ausgabe and "manifeste" in ausgabe, (
-        ausgabe
-    )
-    assert "Default-Manifest ohne prompt_template" in ausgabe, ausgabe
+    assert "nachgezogen" not in ausgabe, ausgabe
+    assert "Default-Manifest ohne prompt_template" not in ausgabe, ausgabe
+    assert f"{N + 2} Commits hinter origin/main" in ausgabe, ausgabe
+    assert _git(klon, "rev-parse", "HEAD") == vorher
 
 
 def test_bau_probelauf_im_veralteten_ordner_warnt_nur(klon: Path) -> None:

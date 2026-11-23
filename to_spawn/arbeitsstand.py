@@ -5,16 +5,25 @@ Hilfs-Skripte aus dem Arbeitsordner des Repos. Liegt der hinter ``origin/<Hauptz
 liefe die Session still mit altem Stand (Fall PC: 5839 Commits zurück). Dieses Modul
 stellt den Stand sicher, bevor irgendetwas davon gelesen wird.
 
-Eine Tür: :func:`sicherstellen` (``nachziehen=False`` = nur prüfen, z. B. Probelauf und
-``einrichten --pruefen``). Ergebnis :class:`Stand` mit ``zustand``:
+Zwei Türen:
+
+- :func:`hinweis` — Start und ``--resume`` jeder Bau-Session (``skripte/bau.py``): nur prüfen,
+  liefert höchstens eine Hinweis-Zeile oder ``None``, wirft nie, bewegt nie HEAD/Arbeitsbaum.
+  Eine laufende Bau-Session bleibt an dieser Prüfung nie stehen.
+- :func:`sicherstellen` — nur der Erst-Start (``to_spawn.py arbeitsstand`` aus
+  ``spawn_srv.sh``/``spawn_local.ps1``) zieht nach oder bricht ab; ``nachziehen=False`` = nur
+  prüfen (Probelauf, ``einrichten --pruefen``). Ergebnis :class:`Stand` mit ``zustand``:
 
 - ``aktuell``     — nicht hinter ``origin/<Hauptzweig>`` (eigene Commits voraus sind ok).
 - ``nachgezogen`` — war N Commits zurück, per fast-forward nachgezogen.
+- ``hinweis``     — Start geht weiter, ``text`` warnt: Stand nicht prüfbar (fetch/Netz/kein
+  ``origin``) oder N Commits zurück auf anderem Zweig bzw. losgelöstem HEAD (ein Bau-Klon
+  steht regelmäßig auf einem Ticket-Zweig) — dann wird nichts nachgezogen.
 - ``veraltet``    — N Commits zurück, nur geprüft (``nachziehen=False``).
-- ``abbruch``     — N Commits zurück und nicht nachziehbar (anderer Zweig, eigene Commits
-  voraus, git würde eine lokal geänderte oder unversionierte Datei überschreiben) oder
-  Stand nicht prüfbar (fetch/Netz/git/Sperre) — nie still „aktuell“. ``text`` nennt Zahl,
-  Grund und was zu tun ist (Befehle mit Pfad in doppelten Anführungszeichen).
+- ``abbruch``     — N Commits zurück auf dem Hauptzweig und nicht nachziehbar (eigene Commits
+  voraus, git würde eine lokal geänderte oder unversionierte Datei überschreiben), kein
+  git-Arbeitsordner oder Sperre belegt. ``text`` nennt Zahl, Grund und was zu tun ist
+  (Befehle mit Pfad in doppelten Anführungszeichen).
 
 Nachzieh-Regel: ``git merge --ff-only origin/<Hauptzweig>``, keine eigene Sauberkeits-Prüfung
 davor. Lokale Änderungen an Dateien, die die neuen Commits nicht berühren (z. B. ein früher
@@ -49,15 +58,18 @@ from to_spawn import gh, sperre, starter
 
 log = logging.getLogger("to_spawn.arbeitsstand")
 
-AKTUELL, NACHGEZOGEN, VERALTET, ABBRUCH = (
+AKTUELL, NACHGEZOGEN, HINWEIS, VERALTET, ABBRUCH = (
     "aktuell",
     "nachgezogen",
+    "hinweis",
     "veraltet",
     "abbruch",
 )
 TEST_OK_ENV = "TO_SPAWN_TEST_ARBEITSSTAND_OK"
 #: Zeitlimits (Sekunden): fetch braucht Netz, lokale git-Aufrufe nicht.
 FETCH_TIMEOUT_S = 120.0
+#: Nur prüfen (Bau-Session, Probelauf): fetch darf den Start nicht lange aufhalten.
+FETCH_TIMEOUT_PRUEFEN_S = 20.0
 GIT_TIMEOUT_S = 30.0
 #: So lange wartet ein paralleler Start auf die Sperre, bevor er abbricht.
 SPERRE_WARTEN_S = 300.0
@@ -73,8 +85,8 @@ class Stand:
 
     @property
     def ok(self) -> bool:
-        """Darf gestartet werden? Nur bei ``aktuell``/``nachgezogen``."""
-        return self.zustand in (AKTUELL, NACHGEZOGEN)
+        """Darf gestartet werden? Bei ``aktuell``/``nachgezogen``/``hinweis``."""
+        return self.zustand in (AKTUELL, NACHGEZOGEN, HINWEIS)
 
 
 def _git(repo: Path, *args: str, timeout: float = GIT_TIMEOUT_S) -> tuple[int, str]:
@@ -114,6 +126,18 @@ def _sperr_datei(repo: Path) -> Path | None:
     ) / "to-spawn-arbeitsstand.sperre"
 
 
+def hinweis(repo: Path) -> str | None:
+    """Nur prüfen (Start/``--resume`` einer Bau-Session): Hinweis-Text oder ``None`` bei aktuell.
+
+    Bewegt nie HEAD oder Arbeitsbaum (nur ``git fetch``, ändert Remote-Refs), wirft nie.
+    """
+    try:
+        stand = sicherstellen(repo, nachziehen=False)
+    except Exception as fehler:  # noqa: BLE001 — die Prüfung darf keine Bau-Session anhalten
+        return f"Stand nicht prüfbar: {fehler}"
+    return None if stand.zustand == AKTUELL else stand.text
+
+
 def sicherstellen(repo: Path, *, nachziehen: bool = True) -> Stand:
     """Stellt sicher, dass ``repo`` nicht hinter ``origin/<Hauptzweig>`` liegt (siehe Modul-Text)."""
     if os.environ.get(TEST_OK_ENV) == "1" and starter.unter_test():
@@ -142,17 +166,19 @@ def sicherstellen(repo: Path, *, nachziehen: bool = True) -> Stand:
 def _pruefen_und_nachziehen(repo: Path, nachziehen: bool) -> Stand:
     haupt = gh.hauptzweig(repo)
     ziel = f"origin/{haupt}"
-    code, aus = _git(repo, "fetch", "--quiet", "origin", timeout=FETCH_TIMEOUT_S)
+    frist = FETCH_TIMEOUT_S if nachziehen else FETCH_TIMEOUT_PRUEFEN_S
+    code, aus = _git(repo, "fetch", "--quiet", "origin", timeout=frist)
     if code != 0:
         return Stand(
-            ABBRUCH,
+            HINWEIS,
             f"Stand nicht prüfbar: git fetch origin scheiterte in {repo} ({_kurz(aus)}) — "
-            "Netz/Zugang prüfen, dann erneut starten. Kein Start mit womöglich altem Stand.",
+            "Start mit vorhandenem Stand; Netz/Zugang prüfen.",
         )
     code, aus = _git(repo, "rev-list", "--count", f"HEAD..{ziel}")
     if code != 0 or not aus.isdigit():
         return Stand(
-            ABBRUCH, f"Stand nicht prüfbar: {ziel} fehlt in {repo} ({_kurz(aus)})."
+            HINWEIS,
+            f"Stand nicht prüfbar: {ziel} fehlt in {repo} ({_kurz(aus)}) — Start mit vorhandenem Stand.",
         )
     hinter = int(aus)
     if hinter == 0:
@@ -163,23 +189,31 @@ def _pruefen_und_nachziehen(repo: Path, nachziehen: bool) -> Stand:
     if code != 0 or zweig != haupt:
         auf = zweig if code == 0 else "keinem Zweig (losgelöster HEAD)"
         return Stand(
-            ABBRUCH,
-            f'{vorn} und steht auf {auf} statt {haupt}. Tun: git -C "{repo}" switch {haupt}, '
-            f"dann {nachzieh_befehl}, dann erneut starten.",
+            HINWEIS,
+            f"{vorn} und steht auf {auf} statt {haupt} — nicht nachgezogen. Falls nötig: "
+            f'git -C "{repo}" switch {haupt}, dann {nachzieh_befehl}.',
             hinter,
         )
     if not nachziehen:
+        code, voraus = _git(repo, "rev-list", "--count", f"{ziel}..HEAD")
+        if code == 0 and voraus.isdigit() and int(voraus) > 0:  # ff-Rat würde scheitern
+            tun = f"eigene Commits voraus: {voraus} — nicht vorspulbar, Historie von Hand klären"
+            return Stand(VERALTET, f"{vorn}, {tun}.", hinter)
         return Stand(VERALTET, f"{vorn}. Tun: {nachzieh_befehl}", hinter)
     code, aus = _git(repo, "merge", "--ff-only", "--no-autostash", "--quiet", ziel)
     if code != 0:
-        return Stand(ABBRUCH, _merge_abbruch(repo, ziel, vorn, nachzieh_befehl, aus), hinter)
+        return Stand(
+            ABBRUCH, _merge_abbruch(repo, ziel, vorn, nachzieh_befehl, aus), hinter
+        )
     log.info("%s — %d Commits nachgezogen.", vorn, hinter)
     return Stand(
         NACHGEZOGEN, f"Arbeitsordner {hinter} Commits auf {ziel} nachgezogen", hinter
     )
 
 
-def _merge_abbruch(repo: Path, ziel: str, vorn: str, nachzieh_befehl: str, meldung: str) -> str:
+def _merge_abbruch(
+    repo: Path, ziel: str, vorn: str, nachzieh_befehl: str, meldung: str
+) -> str:
     """Abbruch-Text nach gescheitertem ``merge --ff-only``: Grund aus Historie bzw. git-Meldung."""
     code, voraus = _git(repo, "rev-list", "--count", f"{ziel}..HEAD")
     if code == 0 and voraus.isdigit() and int(voraus) > 0:
@@ -188,9 +222,13 @@ def _merge_abbruch(repo: Path, ziel: str, vorn: str, nachzieh_befehl: str, meldu
             "klären (nicht rebasen/stashen im geteilten Ordner), dann erneut starten."
         )
     # git listet betroffene Dateien eingerückt (Tab) — unabhängig von der Sprache der Meldung.
-    dateien = [z.strip() for z in meldung.splitlines() if z.startswith("	") and z.strip()]
+    dateien = [
+        z.strip() for z in meldung.splitlines() if z.startswith("	") and z.strip()
+    ]
     if dateien:
-        liste = ", ".join(dateien[:5]) + (f" (+{len(dateien) - 5} weitere)" if len(dateien) > 5 else "")
+        liste = ", ".join(dateien[:5]) + (
+            f" (+{len(dateien) - 5} weitere)" if len(dateien) > 5 else ""
+        )
         return (
             f"{vorn} — nicht vorspulbar: Nachziehen würde lokal geänderte oder unversionierte "
             f"Dateien überschreiben: {liste}. Tun: diese Dateien sichern (committen oder "
