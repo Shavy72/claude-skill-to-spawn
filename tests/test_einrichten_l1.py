@@ -61,7 +61,8 @@ def test_frisch_einrichten_dann_pruefen_exit_0_und_git_status_leer(repo: Path) -
     assert set(stand) == {"skill_stand", "bausteine"}
     assert set(stand["bausteine"]) == {b.name for b in einrichten._BAUSTEINE}
     assert (repo / config.KONFIG_PFAD).is_file()
-    assert (repo / "docs" / "agents" / "manifests" / "_default.json").is_file()
+    # #274 P1: die Regel-Kopie wird nicht mehr angelegt (bau.py liest nur die Skill-Vorlage).
+    assert not (repo / "docs" / "agents" / "manifests" / "_default.json").exists()
     code, text = _lauf(repo, pruefen=True)
     assert code == 0, text
     assert "alles da und aktuell" in text

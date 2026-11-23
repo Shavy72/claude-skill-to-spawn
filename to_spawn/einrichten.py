@@ -39,7 +39,8 @@ log = logging.getLogger("to_spawn.einrichten")
 EXIT_ABWEICHUNG = 3
 STAND_PFAD = Path(".to-spawn") / "stand.json"
 _SKILL = Path(__file__).resolve().parent.parent
-#: Vorlagen der Weiterleitungen und des Manifest-Musters im Skill.
+#: Vorlagen der Weiterleitungen im Skill. ``_default.json`` daneben ist die Start-Text-Vorlage:
+#: sie bleibt im Skill und wird nie ins Repo kopiert (#274 P1).
 _VORLAGEN = _SKILL / "repo-scripts"
 _MANIFEST_VORLAGE = "_default.json"
 _EXCLUDE_KOPF = "# to-spawn Einrichter: lokale Laufdateien (nicht versioniert)"
@@ -139,13 +140,6 @@ def _schreib_schutz(wurzel: Path, datei: Path, *, grenze: Path | None = None) ->
         raise SchreibVerbot(f"Ziel außerhalb {basis}, nicht geschrieben: {pfad}")
 
 
-def _rel(wurzel: Path, datei: Path) -> str | None:
-    try:
-        return datei.resolve().relative_to(wurzel.resolve()).as_posix()
-    except ValueError:
-        return None
-
-
 # --- Bausteine --------------------------------------------------------------
 
 
@@ -218,32 +212,27 @@ def _lege_worktree_basis_an(ort: Ort) -> None:
     setup._schreibe_atomar(datei, roh)
 
 
-def _manifest_datei(ort: Ort) -> Path:
-    return config.pfad(config.lade(ort.wurzel), "manifeste") / _MANIFEST_VORLAGE
+def _manifest_ordner(ort: Ort) -> Path:
+    return config.pfad(config.lade(ort.wurzel), "manifeste")
 
 
 def _pruefe_manifest(ort: Ort) -> Befund:
-    datei = _manifest_datei(ort)
-    return (DA, str(datei)) if datei.is_file() else (FEHLT, f"fehlt: {datei}")
+    """Nur der Manifest-Ordner — keine Regel-Kopie ``_default.json`` mehr (#274 P1)."""
+    ordner = _manifest_ordner(ort)
+    return (DA, str(ordner)) if ordner.is_dir() else (FEHLT, f"fehlt: {ordner}")
 
 
 def _lege_manifest_an(ort: Ort) -> None:
-    datei = _manifest_datei(ort)
-    if datei.exists():
+    ordner = _manifest_ordner(ort)
+    if ordner.exists():
         return
-    _schreib_schutz(ort.wurzel, datei)
-    datei.parent.mkdir(parents=True, exist_ok=True)
-    datei.write_bytes((_VORLAGEN / _MANIFEST_VORLAGE).read_bytes())
+    _schreib_schutz(ort.wurzel, ordner)
+    ordner.mkdir(parents=True, exist_ok=True)
 
 
 def _zu_ignorieren(ort: Ort) -> dict[str, str]:
     """Pfad (relativ) → Exclude-Zeile für alles, was der Einrichter ungetrackt anlegt."""
-    ziele = {STAND_PFAD.as_posix(): ".to-spawn/*"}
-    manifest = _manifest_datei(ort)
-    rel = _rel(ort.wurzel, manifest)
-    if rel is not None and not _getrackt(ort.wurzel, manifest):
-        ziele[rel] = f"/{rel}"
-    return ziele
+    return {STAND_PFAD.as_posix(): ".to-spawn/*"}
 
 
 def _nicht_ignoriert(ort: Ort) -> dict[str, str]:

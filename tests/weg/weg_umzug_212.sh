@@ -30,6 +30,12 @@ pid_mit_cwd() {  # $1 = Muster in der Kommandozeile, $2 = Ordner → PIDs dort
 }
 
 rm -rf "$WEG"; mkdir -p "$WEG"
+# Wegwerf-Start-Text: bau.py liest nur die Skill-Vorlage repo-scripts/_default.json (#274 P1),
+# eine Repo-Kopie gilt nicht mehr. Darum den Skill-Stand unter Test kopieren und dort die
+# Vorlage ersetzen; alles Weitere (Weiterleitung, spawn_srv.sh) zeigt auf diese Kopie.
+mkdir -p "$WEG/skill"
+tar -C "$SKILL" --exclude=.git -cf - . | tar -C "$WEG/skill" -xf -
+SKILL="$WEG/skill"
 tmux kill-session -t "=weg212-lokal" 2>/dev/null; tmux kill-session -t "=spec-$S" 2>/dev/null
 
 # --- 1. Wegwerf-Repo: bare origin, Klon „lokal“ (Branch ticket-9901), Klon „server“ ---
@@ -43,7 +49,7 @@ grep -q "$SKILL" "$L/scripts/_to_spawn_weiterleitung.py" || { echo "Weiterleitun
 sed -i "s|^SKILL=\"\${TO_SPAWN_HOME:-\$HOME/.claude/skills/to-spawn}\"|SKILL=\"\${TO_SPAWN_HOME:-$SKILL}\"|" "$L/scripts/spawn_srv.sh"
 grep -q "$SKILL" "$L/scripts/spawn_srv.sh" || { echo "spawn_srv.sh-Weiterleitung nicht festgenagelt"; exit 2; }
 cp "$HOME/duoplus-management/scripts/hooks/staffel_stop.py" "$L/scripts/hooks/"
-cat > "$L/docs/agents/manifests/_default.json" <<'JSON'
+cat > "$SKILL/repo-scripts/_default.json" <<'JSON'
 {
   "core_skills": ["loop", "to-spawn-of"],
   "core_mcp": [],
