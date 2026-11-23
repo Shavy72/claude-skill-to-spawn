@@ -214,3 +214,58 @@ def test_kein_grossgeschriebener_name_in_html_fliesstext() -> None:
         if re.search(r"\bDavid", zeile)
     ]
     assert funde == [], f"fester Personenname statt Rolle: {funde}"
+
+
+#: Teil 5 (#325): Doku ohne Bezeichner — jede Zeile wird geprüft. Lastenheft und Plan-Log
+#: zitieren den Wortlaut des Menschen bzw. führen ein laufendes Entscheidungs-Log und bleiben außen vor.
+DOKU_DATEIEN_TEIL5 = (
+    "docs/ABNAHME_L1.md",
+    "docs/PLAN_438_gelb_liste.md",
+    "docs/PLAN_257_fremdrepo.md",
+    "docs/WIEDEREINSTIEG.md",
+)
+
+
+def test_kein_fester_personenname_in_doku_teil5() -> None:
+    funde = [
+        f"{datei}:{nr}"
+        for datei in DOKU_DATEIEN_TEIL5
+        for nr, zeile in enumerate(
+            (SKILL / datei).read_text(encoding="utf-8").splitlines(), 1
+        )
+        if NAME.search(zeile)
+    ]
+    assert funde == [], f"fester Personenname statt Rolle: {funde}"
+
+
+def test_kein_fester_personenname_in_test_gruenden() -> None:
+    """Teil 5 (#325): ``reason=`` von xfail/skip ist Wortlaut für Menschen, keine Test-Daten."""
+    funde: list[str] = []
+    for p in sorted((SKILL / "tests").rglob("*.py")):
+        rel = str(p.relative_to(SKILL))
+        if rel in TESTS_AUSGENOMMEN:
+            continue
+        for knoten in ast.walk(ast.parse(p.read_text(encoding="utf-8"))):
+            if not isinstance(knoten, ast.Call):
+                continue
+            for kw in knoten.keywords:
+                if (
+                    kw.arg == "reason"
+                    and isinstance(kw.value, ast.Constant)
+                    and isinstance(kw.value.value, str)
+                    and NAME.search(kw.value.value)
+                ):
+                    funde.append(f"{rel}:{kw.value.lineno}")
+    assert funde == [], f"fester Personenname statt Rolle: {funde}"
+
+
+def test_kein_fester_personenname_in_shell_kommentaren() -> None:
+    """Teil 5 (#325): Kommentarzeilen aller Shell-Skripte im Skill nennen die Rolle."""
+    funde = [
+        f"{p.relative_to(SKILL)}:{nr}"
+        for p in sorted(SKILL.rglob("*.sh"))
+        if ".git" not in p.parts
+        for nr, zeile in enumerate(p.read_text(encoding="utf-8").splitlines(), 1)
+        if zeile.lstrip().startswith("#") and NAME.search(zeile)
+    ]
+    assert funde == [], f"fester Personenname statt Rolle: {funde}"
