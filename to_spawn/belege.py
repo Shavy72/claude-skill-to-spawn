@@ -49,8 +49,13 @@ _VERNEINT = re.compile(r"\b(?:kein|keine|keiner|nicht|entfällt|n/a)\b", re.I)
 #: Ausdrücklich „Klickweg entfällt / nicht nötig“ (reines Backend) — eigenes Merkmal, kein Klickweg-Beleg.
 #: Die Aussage muss direkt am Wort „Klickweg“ hängen (nicht irgendwo in der Zeile) und darf nicht
 #: verneint sein: „Klickweg nicht entfällt“, „Klickweg entfällt nicht“ zählen nicht (#282 P3).
+#: Zwischen Wort und Aussage erlaubt: Gedankenstrich, Tabellen-Trenner, ein Klammerzusatz
+#: („Klickweg (Nutzer-Ablauf) entfällt“, „| Klickweg | entfällt |“). „Live-Beweis“ nur mit
+#: „entfällt“ („Live-Beweis nicht nötig für Rot-Test“ meint nicht den Klickweg, #282 P2).
+_ZWISCHEN = r"(?:[\s:*_|—–-]|\([^)\n]*\))*"
 _ENTFAELLT = re.compile(
-    r"klick.?weg[\s:*_]*(?:entfällt(?!\s+nicht)|nicht\s+(?:nötig|erforderlich)|n/a\b)"
+    rf"klick.?weg{_ZWISCHEN}(?:entfällt(?!\s+nicht)|nicht\s+(?:nötig|erforderlich)|n/a\b)"
+    rf"|live-beweis{_ZWISCHEN}entfällt(?!\s+nicht)"
     r"|\bkein\w*\s+klick.?weg\s+(?:nötig|erforderlich)",
     re.I,
 )
