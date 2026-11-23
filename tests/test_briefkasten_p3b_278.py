@@ -127,7 +127,9 @@ def test_takt_eintraege_aus_briefkasten(briefkasten: ModuleType, tmp_path: Path)
     (kaputt,) = [t for k, t in texte.items() if k.startswith("299:")]
     assert "wartet auf den Nutzer" in kaputt
     gesehen = set(texte)
-    assert waechter_takt.briefkasten_eintraege(tmp_path, [297, 298, 299], gesehen) == []
+    # Klasse 3 wartet auf den Aufseher: kommt wieder, bis sie beantwortet ist; der Rest nur einmal.
+    nochmal = waechter_takt.briefkasten_eintraege(tmp_path, [297, 298, 299], gesehen)
+    assert [k for _t, _f, k in nochmal] == [f"297:{k3}"]
 
 
 # --- 7: unbekannte id --------------------------------------------------------------
@@ -206,3 +208,43 @@ def test_pflicht_saetze_nur_in_befugnis(befugnis: ModuleType, literal: str) -> N
     for datei in (SKILL / "skripte" / "wache.py", SKILL / "to_spawn" / "waechter_takt.py"):
         assert literal not in datei.read_text(encoding="utf-8"), f"{literal!r} als Kopie in {datei.name}"
     assert literal in befugnis.aufseher_text("python X/to_spawn.py")
+
+
+# --- Runde 2 (#278 P3b): antwort ohne --id, offene über die CLI, Übergangsregel --------------
+
+
+def test_cli_antwort_ohne_id_eigener_exit(tmp_path: Path) -> None:
+    lauf = _cli(tmp_path, "antwort", "7")
+    assert lauf.returncode == 5, lauf.stdout + lauf.stderr  # nicht argparse-2 (= „braucht den Nutzer“)
+    assert "--id" in lauf.stderr and "offene" in lauf.stderr
+
+
+def test_cli_offene_zeigt_frage(briefkasten: ModuleType, tmp_path: Path) -> None:
+    fid = briefkasten.einwerfen("7", "Ordner neu?", "neu", 3, [], hauptbaum=tmp_path)
+    lauf = _cli(tmp_path, "offene", "7")
+    assert lauf.returncode == 0, lauf.stdout + lauf.stderr
+    assert f"#7 · id {fid} · Klasse 3 · Ordner neu? · Vorschlag: neu" in lauf.stdout
+    leer = _cli(tmp_path, "offene", "8")
+    assert leer.returncode == 0 and leer.stdout == ""
+
+
+def test_uebergangsregel_klasse_2_aus_einer_quelle(befugnis: ModuleType, briefkasten: ModuleType, tmp_path: Path) -> None:
+    import importlib.util
+
+    from to_spawn import waechter_takt
+
+    wendung = befugnis.KLASSE_2_WEITERGABE
+    text = befugnis.aufseher_text("python X/to_spawn.py")
+    uebergang = text[text.index("Übergang") :]
+    assert wendung in uebergang  # alter Start-Auftrag: Klasse 2 geht an den Nutzer
+    assert wendung in waechter_takt.baue_prompt(293, Path("/r"), ["- x"], None)
+    spec = importlib.util.spec_from_file_location("wache_p3b_278_uebergang", SKILL / "skripte" / "wache.py")
+    assert spec and spec.loader
+    wache = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(wache)
+    assert wendung in wache.prompt_bauen(293, "/r", 1800, {})
+    k2 = briefkasten.einwerfen("298", "Live schalten?", "nein", 2, [], hauptbaum=tmp_path)
+    (eintrag,) = waechter_takt.briefkasten_eintraege(tmp_path, [298], set())
+    assert eintrag[2] == f"298:{k2}" and wendung in eintrag[0]
+    for datei in (SKILL / "skripte" / "wache.py", SKILL / "to_spawn" / "waechter_takt.py"):
+        assert "alter Start-Auftrag" not in datei.read_text(encoding="utf-8"), f"Übergangsregel kopiert in {datei.name}"
