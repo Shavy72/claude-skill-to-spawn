@@ -54,7 +54,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from . import bau_log, befund, config, gh, melder, mensch_noetig, staging_schalter, starter, ticket_zustand, vorfall
+from . import bau_log, befund, briefkasten, config, gh, melder, mensch_noetig, staging_schalter, starter, ticket_zustand, vorfall
 from . import sperre as _sperre
 
 log = logging.getLogger("to_spawn.capo")
@@ -1062,12 +1062,17 @@ def ist_gate_rot(z: dict[str, Any]) -> bool:
 
 
 def _zelle(text: str) -> str:
-    return text.replace("|", "/").replace("\n", " ")
+    """Tabellenzelle: eine Zeile, kurz, ``|`` entschärft."""
+    return _kurz(text).replace("|", "/")
 
 
 def entscheidungs_datei(repo: Path, spec: int) -> Path:
     """``<pfade.agenten>/entscheidungen_<S>.md`` (Vorgabe ``docs/agents``, L1 #46)."""
     return config.pfad(config.lade(repo), "agenten") / f"entscheidungen_{spec}.md"
+
+
+#: Spaltenkopf der Entscheidungs-Tabelle (#364); :func:`_entscheidungs_zeile` passt dazu.
+_SPALTEN = "| Ticket | Was | Warum | Quelle |"
 
 
 def _tabellen_kopf(spec: int, quelle: str) -> list[str]:
@@ -1076,9 +1081,14 @@ def _tabellen_kopf(spec: int, quelle: str) -> list[str]:
         "",
         f"Stand {datetime.now().astimezone():%d.%m.%Y %H:%M} · Quelle: {quelle} (to-spawn capo).",
         "",
-        "| Ticket | Zeit | Frage | Wahl | Grund |",
-        "|---|---|---|---|---|",
+        _SPALTEN,
+        "|---|---|---|---|",
     ]
+
+
+def _entscheidungs_zeile(e: dict[str, str]) -> str:
+    """Eine Tabellenzeile aus einem Eintrag von ``briefkasten.liste`` — das eine Zeilenformat."""
+    return f"| #{e['ticket']} | {_zelle(e['was'])} | {_zelle(e['warum'])} | {_zelle(e['beleg'])} |"
 
 
 def entscheidung_anhaengen(
@@ -1092,16 +1102,19 @@ def entscheidung_anhaengen(
 ) -> Path:
     """Eine einzelne Entscheidung an ``entscheidungen_<S>.md`` anhängen (#285).
 
-    ponytail: die Zeile steht nur hier und in der unversionierten Laufdatei; beim
-    Spec-Abschluss schreibt :func:`uebersicht` die Tabelle aus den versionierten
-    Bau-Logs neu. Dauerhaft wäre sie erst, wenn die Session sie mit ``eintrag``
-    in ihr Bau-Log übernimmt.
+    Gleiches Zeilenformat wie :func:`uebersicht` (#364). Die Zeile steht auch in der
+    Laufdatei des Bau-Logs (Aufrufer schreibt sie); :func:`uebersicht` liest die Laufdatei
+    über ``briefkasten.liste`` mit, die Annahme bleibt beim Abschluss also erhalten.
     """
     datei = entscheidungs_datei(repo, spec)
-    zeile = f"| #{ticket} | {wann.astimezone():%d.%m. %H:%M} | {_zelle(frage)} | {_zelle(wahl)} | {_zelle(grund)} |"
+    eintrag = briefkasten.eintrag_aus_bau_log(
+        ticket,
+        {"frage": frage, "wahl": wahl, "grund": grund, "ts": wann.astimezone().isoformat(timespec="seconds")},
+    )
+    zeile = _entscheidungs_zeile(eintrag)
     datei.parent.mkdir(parents=True, exist_ok=True)
     alt = datei.read_text(encoding="utf-8") if datei.is_file() else ""
-    if "| Ticket | Zeit |" in alt:
+    if _SPALTEN in alt:
         with datei.open("a", encoding="utf-8", newline="\n") as fh:
             fh.write(zeile + "\n")
     else:
@@ -1113,29 +1126,16 @@ def entscheidung_anhaengen(
 
 
 def uebersicht(repo: Path, ref: str | None, spec: int, tickets: list[int]) -> Path:
-    """Schreibt :func:`entscheidungs_datei` (alle Entscheidungen der Spec)."""
-    zeilen = [
-        f"# Entscheidungen Spec #{spec}",
-        "",
-        f"Stand {datetime.now().astimezone():%d.%m.%Y %H:%M} · Quelle: Bau-Logs auf {ref or '-'} (to-spawn capo).",
-        "",
-        "| Ticket | Zeit | Frage | Wahl | Grund |",
-        "|---|---|---|---|---|",
-    ]
-    anzahl = 0
-    for ticket in sorted(tickets):
-        for z in log_vom_ref(repo, ref, ticket) if ref else []:
-            if z.get("typ") != "entscheidung":
-                continue
-            zeit = _zeit(z.get("ts"))
-            wann = zeit.astimezone().strftime("%d.%m. %H:%M") if zeit else "-"
-            frage, wahl, grund = entscheidung_teile(z)
-            zeilen.append(
-                f"| #{ticket} | {wann} | {_zelle(frage)} | {_zelle(wahl)} | {_zelle(grund)} |"
-            )
-            anzahl += 1
-    if not anzahl:
-        zeilen += ["", "_Keine Entscheidungen im Bau-Log._"]
+    """Schreibt :func:`entscheidungs_datei` neu: alle Entscheidungen der Spec (#364).
+
+    Woher sie kommen (Bau-Log auf ``ref`` + Hauptbaum, Briefkasten-Antworten), weiß nur
+    ``briefkasten.liste``; hier steht nur die Darstellung (eine Tabellenzeile je Eintrag).
+    """
+    eintraege = briefkasten.liste(sorted(tickets), log_repo=repo, hauptbaum=repo, ref=ref)
+    zeilen = _tabellen_kopf(spec, f"Bau-Logs auf {ref or '-'} + Briefkasten")
+    zeilen += [_entscheidungs_zeile(e) for e in eintraege]
+    if not eintraege:
+        zeilen += ["", "_Keine Entscheidungen im Bau-Log oder Briefkasten._"]
     datei = entscheidungs_datei(repo, spec)
     datei.parent.mkdir(parents=True, exist_ok=True)
     datei.write_text("\n".join(zeilen) + "\n", encoding="utf-8")

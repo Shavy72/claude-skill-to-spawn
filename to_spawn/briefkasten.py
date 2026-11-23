@@ -455,8 +455,42 @@ def alle_tickets(*, hauptbaum: Path | None = None) -> list[str]:
     return sorted(namen, key=_sortier_nummer)
 
 
+#: Sichtbarer Platzhalter, wenn eine Entscheidung keine Fundstelle hat (#364): nie still leer.
+KEINE_QUELLE = "keine Quelle"
+
+
 def _was(frage: Any, wahl: Any) -> str:
     return " → ".join(str(t) for t in (frage, wahl) if t)
+
+
+def eintrag_aus_bau_log(ticket: str | int, z: dict[str, Any]) -> dict[str, str]:
+    """Ein Listen-Eintrag (Schlüssel wie :func:`liste`) aus einer Bau-Log-Zeile ``entscheidung``.
+
+    Alte Felder (``text``/``entscheidungen``) gelten als Rückfall für Frage/Wahl. Auch der
+    Zwischenstand des Aufsehers (``capo.entscheidung_anhaengen``) baut seine Zeile hierüber,
+    damit Zwischen- und Abschluss-Datei dieselben Spalten zeigen.
+    """
+    nummer = str(ticket).strip()
+    return {
+        "ticket": nummer,
+        "ts": str(z.get("ts", "")),
+        "wer": "Bau-Session",
+        "was": _was(z.get("frage") or z.get("text"), z.get("wahl") or z.get("entscheidungen")),
+        "warum": str(z.get("grund") or ""),
+        "beleg": f"Bau-Log #{nummer} {z.get('ts', '')}".rstrip(),
+    }
+
+
+def _log_entscheidungen(repo: Path, nummer: str, basis: Path, ref: str | None) -> list[dict[str, Any]]:
+    """``entscheidung``-Zeilen: Arbeitsbaum + Laufdateien, mit ``ref`` dazu der Stand dort (ohne Doppel)."""
+    zeilen = bau_log.lese(repo, nummer, hauptbaum=basis)
+    if ref and nummer.isdigit():
+        # spät importiert: capo nutzt die Liste für die Übersicht (Kreis-Import sonst).
+        from to_spawn import capo
+
+        gesehen = {json.dumps(z, sort_keys=True) for z in zeilen}
+        zeilen += [z for z in capo.log_vom_ref(repo, ref, int(nummer)) if json.dumps(z, sort_keys=True) not in gesehen]
+    return sorted((z for z in zeilen if z.get("typ") == "entscheidung"), key=lambda z: str(z.get("ts", "")))
 
 
 def liste(
@@ -464,26 +498,25 @@ def liste(
     *,
     log_repo: Path | None = None,
     hauptbaum: Path | None = None,
+    ref: str | None = None,
 ) -> list[dict[str, str]]:
-    """Alle Entscheidungen je Ticket: Bau-Log ``entscheidung`` (Klasse 1) + Briefkasten-Antworten."""
+    """Alle Entscheidungen je Ticket — der eine Sammler (#278, #364).
+
+    Quellen: Bau-Log-Zeilen ``entscheidung`` (Klasse 1, auch Annahmen des Aufsehers) und die
+    geltenden Briefkasten-Antworten (Aufseher oder Nutzer). Wer die Entscheidungen zeigt
+    (``capo.uebersicht``, CLI ``entscheidungen``), fragt nur hier und kennt die Quellen nicht.
+    ``ref`` (z. B. ``origin/main``) nimmt das versionierte Bau-Log zusätzlich so, wie es dort
+    liegt — der Hauptbaum kann hinter dem Hauptzweig stehen.
+
+    Je Eintrag feste Schlüssel ``ticket``, ``ts``, ``wer``, ``was``, ``warum``, ``beleg``;
+    ``beleg`` ist nie leer (sonst :data:`KEINE_QUELLE`).
+    """
     basis = _hauptbaum(hauptbaum)
     repo = log_repo or basis
     zeilen: list[dict[str, str]] = []
     for t in tickets:
         nummer = str(t).strip()
-        for z in bau_log.lese(repo, nummer, hauptbaum=basis):
-            if z.get("typ") != "entscheidung":
-                continue
-            zeilen.append(
-                {
-                    "ticket": nummer,
-                    "ts": str(z.get("ts", "")),
-                    "wer": "Bau-Session",
-                    "was": _was(z.get("frage"), z.get("wahl")) or str(z.get("entscheidungen") or z.get("text") or ""),
-                    "warum": str(z.get("grund") or ""),
-                    "beleg": f"Bau-Log #{nummer} {z.get('ts', '')}",
-                }
-            )
+        zeilen += [eintrag_aus_bau_log(nummer, z) for z in _log_entscheidungen(repo, nummer, basis, ref)]
         try:
             daten = _lade(_datei(nummer, basis))
         except ValueError:
@@ -499,7 +532,7 @@ def liste(
                     "wer": str(antwort.get("von", "")),
                     "was": _was(f.get("frage"), antwort.get("wahl")),
                     "warum": str(antwort.get("grund", "")),
-                    "beleg": ", ".join(str(b) for b in antwort.get("belege") or []),
+                    "beleg": ", ".join(str(b) for b in antwort.get("belege") or []) or KEINE_QUELLE,
                 }
             )
     return zeilen
