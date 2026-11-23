@@ -210,7 +210,7 @@ def test_harmlose_faelle_nie_klasse_2(
 @pytest.mark.parametrize(
     ("ziel", "klasse"),
     [
-        ("wip-zweig", 1),
+        ("wip-zweig", 3),  # Runde 5: symbolisch wie ticket-zweig
         ("wip/7-sicherung", 1),
         ("wip/278-sicherung", 3),  # Runde 4: wip nur mit eigener Nummer
         ("ticket-zweig", 3),
@@ -247,6 +247,7 @@ def test_start_text_nennt_klasse_1_listen_aus_tabelle(befugnis: ModuleType) -> N
     klasse_1 = text[: text.index("Klasse 2")]
     for regel in befugnis._KLASSE_1:
         for wort in (regel.ziele or ()) | (regel.arten or ()):
+            wort = befugnis._ziel_text(wort, "7")  # Runde 5: Marke → lesbare Regel
             assert wort in klasse_1, wort
     assert "pushen" in klasse_1 and "hauptzweig" not in klasse_1
 
@@ -342,4 +343,68 @@ def test_start_text_trennt_wortteil_und_ganzes_wort(befugnis: ModuleType) -> Non
 
 def test_start_text_zeigt_eigene_nummer(befugnis: ModuleType) -> None:
     klasse_1 = befugnis.start_text("7").split("Klasse 2")[0]
-    assert "`ticket/7-…`" in klasse_1 and "`wip/7-…`" in klasse_1
+    assert "`ticket/7-<kurzname>`" in klasse_1 and "`wip/7-<kurzname>`" in klasse_1
+
+
+# --- Runde 5 -----------------------------------------------------------------------------
+@pytest.mark.parametrize(
+    "ziel",
+    ["ticket/12-login-seite", "ticket/12-account-status", "ticket/12-live-ampel",
+     "ticket/12-produkt-bild", "ticket/12-deliver", "ticket/12-olive",
+     "ticket/12-kosten-anzeige", "wip/12-verkauf", "ticket/12-vpsfix",
+     "ticket/12-zugangs-check", "ticket/12-secrets-scan", "ticket/12-pay",
+     "ticket/12-a.b_c-1", "ticket/12-x"],
+)
+def test_r5_eigener_zweig_mit_woertern_im_kurznamen_ist_1(
+    befugnis: ModuleType, monkeypatch: pytest.MonkeyPatch, ziel: str
+) -> None:
+    monkeypatch.setenv("TO_SPAWN_TICKET", "12")
+    assert befugnis.einordnen(ziel, "pushen", True) == 1
+
+
+@pytest.mark.parametrize(
+    ("ziel", "art"),
+    [("ticket/13-login-seite", "pushen"), ("ticket/13-x", "pushen"),
+     ("ticket/12-x", "live schalten"), ("ticket/12-x", "kosten")],
+)
+def test_r5_gegenproben(
+    befugnis: ModuleType, monkeypatch: pytest.MonkeyPatch, ziel: str, art: str
+) -> None:
+    monkeypatch.setenv("TO_SPAWN_TICKET", "12")
+    assert befugnis.einordnen(ziel, art, True) != 1
+    if art != "pushen":
+        assert befugnis.einordnen(ziel, art, True) == 2
+
+
+def test_r5_fremde_nummer_mit_klasse_2_wort_ist_2(
+    befugnis: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("TO_SPAWN_TICKET", "12")
+    assert befugnis.einordnen("ticket/13-login-seite", "pushen", True) == 2
+
+
+@pytest.mark.parametrize("ziel", ["wip-zweig", "WIP zweig", "wip_zweig"])
+def test_r5_symbolisches_wip_ziel_ist_3(
+    befugnis: ModuleType, monkeypatch: pytest.MonkeyPatch, ziel: str
+) -> None:
+    monkeypatch.setenv("TO_SPAWN_TICKET", "12")
+    assert befugnis.einordnen(ziel, "pushen", True) == 3
+    monkeypatch.delenv("TO_SPAWN_TICKET")
+    assert befugnis.einordnen(ziel, "pushen", True) == 3
+
+
+@pytest.mark.parametrize(
+    "ziel", ["ticket/12--force", "ticket/12-x.lock", "ticket/12-x.", "ticket/12-."]
+)
+def test_r5_zweigname_endet_auf_buchstabe_oder_ziffer(
+    befugnis: ModuleType, monkeypatch: pytest.MonkeyPatch, ziel: str
+) -> None:
+    monkeypatch.setenv("TO_SPAWN_TICKET", "12")
+    assert befugnis.einordnen(ziel, "pushen", True) == 3
+
+
+def test_r5_start_text_nennt_regel_statt_marke(befugnis: ModuleType) -> None:
+    text = befugnis.start_text("12")
+    assert "ticket/12-<kurzname>" in text and "ticket/<n>-…" not in text
+    assert "Kleinbuchstaben, Ziffern" in text
+    assert "ticket/<eigene Nummer>-<kurzname>" in befugnis.start_text("")

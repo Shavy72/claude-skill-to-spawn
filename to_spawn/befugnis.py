@@ -104,6 +104,7 @@ _KLASSE_2 = _Regel(
 #: Interne Marke für „eigener Ticket-Zweig“; als Eingabe nie gültig: ``_norm`` macht aus „…“ per
 #: NFKC „...“, die Marke entsteht also nur in :func:`_zweig_ziel`.
 _EIGENER_TICKET_ZWEIG = "ticket/<n>-…"
+_EIGENER_WIP_ZWEIG = "wip/<n>-…"  # wie oben: nur über :func:`_zweig_ziel`, nie als Eingabe
 
 _ARBEIT = frozenset({"anlegen", "ändern", "lösen", "entfernen", "testen", "committen"})
 
@@ -125,8 +126,8 @@ _KLASSE_1: tuple[_Regel, ...] = (
     ),
     _Regel(
         1,
-        "eigener Sicherungs-Zweig `wip/<N>-…` und eigener Ticket-Zweig `ticket/<N>-…`",
-        frozenset({"wip-zweig", _EIGENER_TICKET_ZWEIG}),
+        "eigener Sicherungs-Zweig `wip/<N>-<kurzname>` und eigener Ticket-Zweig `ticket/<N>-<kurzname>`",
+        frozenset({_EIGENER_WIP_ZWEIG, _EIGENER_TICKET_ZWEIG}),
         _ARBEIT | {"pushen"},
     ),
     _Regel(
@@ -147,7 +148,8 @@ _KLASSE_1: tuple[_Regel, ...] = (
 #: ``[a-z0-9._-]`` — kein ``:`` (Refspec), ``+``, Leerraum, ``;``, ``~``, ``@{``, ``/``. Geprüft auf der
 #: ROHEN Eingabe, weil ``_norm`` Leerraum zu „-“ macht. wip-Zweige heißen ``wip/<N>-<kurzname>``
 #: (to_spawn/anleitung.py), darum auch dort nur die eigene Nummer.
-_EIGENER_ZWEIG = re.compile(r"(ticket|wip)/(\d+)-[a-z0-9._-]+")
+# Kurzname beginnt und endet auf Buchstabe/Ziffer (kein ``--force``, ``.lock``, ``x.``).
+_EIGENER_ZWEIG = re.compile(r"(ticket|wip)/(\d+)-[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?")
 
 
 def _norm(wert: object) -> str:
@@ -160,18 +162,18 @@ def _norm(wert: object) -> str:
 
 
 def _zweig_ziel(roh: object, ziel: str) -> str:
-    """Eigener ``wip/<N>-…`` → ``wip-zweig``, eigener ``ticket/<N>-…`` → Marke; sonst ``ziel``.
+    """Eigener ``wip/<N>-…`` → Marke, eigener ``ticket/<N>-…`` → Marke; sonst ``ziel``.
 
     ``roh`` = Eingabe vor :func:`_norm`; nur ein gültiger einfacher Zweigname zählt (``fullmatch``).
     """
-    if not isinstance(roh, str) or ".." in roh:
+    if not isinstance(roh, str) or ".." in roh or roh.endswith(".lock"):
         return ziel  # nie Klasse 1 (Pfad-Tricks wie ``wip/../master``)
     treffer = _EIGENER_ZWEIG.fullmatch(roh)
     # ponytail: eigenes Ticket aus TO_SPAWN_TICKET (setzt bau.py); fehlt es → fremd (3).
     eigen = os.environ.get("TO_SPAWN_TICKET", "").strip()
     if not treffer or not eigen or treffer.group(2) != eigen:
         return ziel
-    return "wip-zweig" if treffer.group(1) == "wip" else _EIGENER_TICKET_ZWEIG
+    return _EIGENER_WIP_ZWEIG if treffer.group(1) == "wip" else _EIGENER_TICKET_ZWEIG
 
 
 def _ist_klasse_2(wert: str) -> bool:
@@ -184,16 +186,21 @@ def _ist_klasse_2(wert: str) -> bool:
 def einordnen(ziel: str, art: str, gesichert: bool = False) -> int:
     """Klasse 1, 2 oder 3 für eine geplante Handlung; Unbekanntes und Zweifel ergeben 3.
 
-    ``ziel`` z. B. ``live``/``staging``/``testdaten``/``arbeitsordner``/``zweig``/``wip-zweig``/
+    ``ziel`` z. B. ``live``/``staging``/``testdaten``/``arbeitsordner``/``zweig``/
     ``wip/<N>-…``, ``ticket/<N>-…`` (nur eigene Nummer)/``engpass``/``ticket``, ``art`` z. B.
     ``ändern``/``pushen``/``warten``/``implement``/``kosten``/``konto``; ``gesichert`` = Sicherung
     liegt vorher vor (Beleg ins Bau-Log). Klasse 2 schlägt immer 1 und 3.
     """
     roh = ziel
     ziel, art = _norm(ziel), _norm(art)
-    if _ist_klasse_2(ziel) or _ist_klasse_2(art):
+    ziel_neu = _zweig_ziel(roh, ziel)
+    # Ziel = eigener gültiger Zweig: Wörter im Kurznamen zählen nicht; die Art bleibt geprüft.
+    if (
+        (ziel_neu == ziel and _ist_klasse_2(ziel))
+        or _ist_klasse_2(art)
+    ):
         return 2
-    ziel = _zweig_ziel(roh, ziel)
+    ziel = ziel_neu
     for regel in _KLASSE_1:
         # Klasse 1 nur bei ausdrücklich gelistetem Ziel UND Art; ``None`` ergibt hier nie 1.
         if (
@@ -212,10 +219,20 @@ def briefkasten_datei(n: str | int) -> str:
     return f".to-spawn/entscheidung-{n}.json"
 
 
+def _ziel_text(ziel: str, n: str | int) -> str:
+    """Marke → lesbare Regel; ohne bekannte eigene Nummer Klartext statt ``<n>``."""
+    if ziel not in (_EIGENER_TICKET_ZWEIG, _EIGENER_WIP_ZWEIG):
+        return ziel
+    art = ziel.split("/")[0]
+    if str(n).strip().isdigit():
+        return f"{art}/{str(n).strip()}-<kurzname>"
+    return f"eigener {'Ticket' if art == 'ticket' else 'Sicherungs'}-Zweig {art}/<eigene Nummer>-<kurzname>"
+
+
 def start_text(n: str | int) -> str:
     """Befugnis-Abschnitt für den Start-Auftrag von Ticket ``n`` — der Text steht nur hier."""
     klasse_1 = "; ".join(
-        f"{regel.text.replace('<N>', str(n))} (Ziel: {', '.join(sorted(regel.ziele or ()))} · "
+        f"{regel.text.replace('<N>', str(n))} (Ziel: {', '.join(sorted(_ziel_text(z, n) for z in regel.ziele or ()))} · "
         f"Art: {', '.join(sorted(regel.arten or ()))})"
         for regel in _KLASSE_1
     )
@@ -223,7 +240,8 @@ def start_text(n: str | int) -> str:
     ganzwort = ", ".join(sorted(_KLASSE_2_GANZWORT))
     return (
         f"{KOPF} "
-        f"Klasse 1 – selbst entscheiden, nicht fragen: {klasse_1}. Jede solche Entscheidung festhalten "
+        f"Klasse 1 – selbst entscheiden, nicht fragen: {klasse_1}. Kurzname nur Kleinbuchstaben, Ziffern, `.`, `_`, `-` und endet auf Buchstabe/Ziffer. "
+        "Jede solche Entscheidung festhalten "
         "(`to_spawn.py eintrag --typ entscheidung`: „Klasse 1“, Grund und bei Daten der Sicherungs-Beleg). "
         f"Klasse 2 – nie ohne den Nutzer: {_KLASSE_2.text} (erkannt an: {teilwort}, auch als Wortteil; "
         f"{ganzwort} nur als ganzes Wort). "
