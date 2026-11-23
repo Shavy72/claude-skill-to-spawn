@@ -212,7 +212,10 @@ def test_harmlose_faelle_nie_klasse_2(
     [
         ("wip-zweig", 1),
         ("wip/278-sicherung", 1),
-        ("ticket-zweig", 1),
+        ("ticket-zweig", 3),
+        ("ticket/<n>-…", 3),
+        ("wip/../master", 3),
+        ("ticket/7-../master", 3),
         ("ticket/7-befugnis", 1),
         ("ticket/8-fremd", 3),
         ("zweig", 3),
@@ -245,3 +248,22 @@ def test_start_text_nennt_klasse_1_listen_aus_tabelle(befugnis: ModuleType) -> N
         for wort in (regel.ziele or ()) | (regel.arten or ()):
             assert wort in klasse_1, wort
     assert "pushen" in klasse_1 and "hauptzweig" not in klasse_1
+
+
+@pytest.mark.parametrize(
+    "wort",
+    ["zahlung", "zahlen", "auszahlung", "zahl", "abbuchung", "rechnung", "kredit",
+     "payment", "billing", "passwort", "password", "login", "abo", "abo-kuendigen"],
+)
+def test_neue_klasse_2_woerter(befugnis: ModuleType, wort: str) -> None:
+    assert befugnis.einordnen(wort, "ändern", True) == 2
+    assert befugnis.einordnen("staging", wort, True) == 2
+
+
+@pytest.mark.parametrize("ziel", ["labor", "anzahl", "staging"])
+def test_abo_zahl_nur_ganzes_wort(befugnis: ModuleType, ziel: str) -> None:
+    assert befugnis.einordnen(ziel, "ändern", True) != 2
+
+
+def test_deploy_auf_staging_bleibt(befugnis: ModuleType) -> None:
+    assert befugnis.einordnen("staging", "deploy", True) == 3

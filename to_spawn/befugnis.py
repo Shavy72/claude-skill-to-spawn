@@ -54,8 +54,22 @@ _KLASSE_2_WOERTER = frozenset(
         "konto",
         "konten",
         "account",
+        "zahlung",
+        "zahlen",
+        "abbuch",
+        "rechnung",
+        "kredit",
+        "payment",
+        "billing",
+        "passwort",
+        "password",
+        "login",
     }
 )
+
+#: Kurze Wörter nur als ganzes Wort (zwischen „-“ „/“ „.“): „abo“ ≠ „labor“, „zahl“ ≠ „anzahl“.
+#: Zahlungs-Wörter mit Endung stehen oben als Teilwort (z. B. „auszahlung“).
+_KLASSE_2_GANZWORT = frozenset({"abo", "zahl"})
 
 _KLASSE_2 = _Regel(
     2,
@@ -63,6 +77,9 @@ _KLASSE_2 = _Regel(
     _KLASSE_2_WOERTER,
     _KLASSE_2_WOERTER,
 )
+
+#: Interne Marke für „eigener Ticket-Zweig“; als Eingabe nie gültig (``einordnen`` leert sie).
+_EIGENER_TICKET_ZWEIG = "ticket/<n>-…"
 
 _ARBEIT = frozenset({"anlegen", "ändern", "lösen", "entfernen", "testen", "committen"})
 
@@ -85,7 +102,7 @@ _KLASSE_1: tuple[_Regel, ...] = (
     _Regel(
         1,
         "eigener Sicherungs-Zweig `wip/…` und eigener Ticket-Zweig `ticket/<N>-…`",
-        frozenset({"wip-zweig", "ticket-zweig"}),
+        frozenset({"wip-zweig", _EIGENER_TICKET_ZWEIG}),
         _ARBEIT | {"pushen"},
     ),
     _Regel(
@@ -115,30 +132,36 @@ def _norm(wert: object) -> str:
 
 
 def _zweig_ziel(ziel: str) -> str:
-    """``wip/…`` → ``wip-zweig``; ``ticket/<N>-…`` → ``ticket-zweig`` nur für das eigene Ticket."""
+    """``wip/…`` → ``wip-zweig``; ``ticket/<N>-…`` → Marke nur für das eigene Ticket."""
+    if ".." in ziel:
+        return ziel  # nie Klasse 1 (Pfad-Tricks wie ``wip/../master``)
     if ziel.startswith("wip/") and len(ziel) > 4:
         return "wip-zweig"
     treffer = _TICKET_ZWEIG.fullmatch(ziel)
     if treffer:
         # ponytail: eigenes Ticket aus TO_SPAWN_TICKET (setzt bau.py); fehlt es → fremd (3).
         eigen = os.environ.get("TO_SPAWN_TICKET", "").strip()
-        return "ticket-zweig" if treffer.group(1) == eigen else ziel
+        return _EIGENER_TICKET_ZWEIG if treffer.group(1) == eigen else ziel
     return ziel
 
 
 def _ist_klasse_2(wert: str) -> bool:
-    return any(w in wert for w in _KLASSE_2_WOERTER)
+    teile = re.split(r"[-/.]+", wert)
+    return any(w in wert for w in _KLASSE_2_WOERTER) or any(
+        w in teile for w in _KLASSE_2_GANZWORT
+    )
 
 
 def einordnen(ziel: str, art: str, gesichert: bool = False) -> int:
     """Klasse 1, 2 oder 3 für eine geplante Handlung; Unbekanntes und Zweifel ergeben 3.
 
     ``ziel`` z. B. ``live``/``staging``/``testdaten``/``arbeitsordner``/``zweig``/``wip-zweig``/
-    ``ticket-zweig`` (auch ``wip/…``, ``ticket/<N>-…``)/``engpass``/``ticket``, ``art`` z. B.
+    ``wip/…``, ``ticket/<N>-…`` (nur eigene Nummer)/``engpass``/``ticket``, ``art`` z. B.
     ``ändern``/``pushen``/``warten``/``implement``/``kosten``/``konto``; ``gesichert`` = Sicherung
     liegt vorher vor (Beleg ins Bau-Log). Klasse 2 schlägt immer 1 und 3.
     """
     ziel, art = _norm(ziel), _norm(art)
+    ziel = "" if ziel == _EIGENER_TICKET_ZWEIG else ziel
     if _ist_klasse_2(ziel) or _ist_klasse_2(art):
         return 2
     ziel = _zweig_ziel(ziel)
@@ -167,7 +190,7 @@ def start_text(n: str | int) -> str:
         f"Art: {', '.join(sorted(regel.arten or ()))})"
         for regel in _KLASSE_1
     )
-    woerter = ", ".join(sorted(_KLASSE_2.ziele or ()))
+    woerter = ", ".join(sorted((_KLASSE_2.ziele or frozenset()) | _KLASSE_2_GANZWORT))
     return (
         f"{KOPF} "
         f"Klasse 1 – selbst entscheiden, nicht fragen: {klasse_1}. Jede solche Entscheidung festhalten "
