@@ -29,14 +29,20 @@ DEP = "bash scripts/safe_deploy_vps.sh"
 
 #: Gegenprobe (Beleg PR 374) und Nach-Review 10: Block je Fall.
 GEGENPROBE: dict[str, dict[str, Any]] = {
-    "r10 node-heredoc deploy": _bash(f"node <<'JS'\nrequire('child_process').execSync('{DEP}')\nJS"),
+    "r10 node-heredoc deploy": _bash(
+        f"node <<'JS'\nrequire('child_process').execSync('{DEP}')\nJS"
+    ),
     "r10 here-string python": _bash(f"python3 <<< \"import os; os.system('{DEP}')\""),
     "r10 feld input": _werkzeug("mcp__x__run", input=DEP),
     "r10 feld commands-liste": _werkzeug("mcp__x__run", commands=[DEP]),
     "r10 feld code": _werkzeug("mcp__x__exec", code="deploy()"),
     "r10 feld argv": _werkzeug("mcp__x__exec", argv=["ssh", "clawy-vps", "reboot"]),
-    "r10 powershell -File ps1": _werkzeug("PowerShell", command="powershell -File scripts/safe_deploy_vps.ps1"),
-    "r10 backslash-pfad": _werkzeug("PowerShell", command="& .\\scripts\\safe_deploy_vps.ps1"),
+    "r10 powershell -File ps1": _werkzeug(
+        "PowerShell", command="powershell -File scripts/safe_deploy_vps.ps1"
+    ),
+    "r10 backslash-pfad": _werkzeug(
+        "PowerShell", command="& .\\scripts\\safe_deploy_vps.ps1"
+    ),
     "r10 bash $(ls deploy)": _bash("bash $(ls scripts/*deploy*)"),
     "r10 go_prod.sh": _bash("./scripts/go_prod.sh"),
     "r10 hochladen.py": _bash("python hochladen.py --ziel vps"),
@@ -61,7 +67,9 @@ GEGENPROBE: dict[str, dict[str, Any]] = {
     "k commit heredoc harmlos": _bash(
         "git add a.py && git commit -m \"$(cat <<'EOF'\nfix: x (#3)\n\nDeploy auf VPS live schalten\nEOF\n)\""
     ),
-    "k cat-heredoc datei harmlos": _bash(f"cat > /tmp/x.md <<'EOF'\nssh clawy-vps reboot\n{DEP}\nEOF"),
+    "k cat-heredoc datei harmlos": _bash(
+        f"cat > /tmp/x.md <<'EOF'\nssh clawy-vps reboot\n{DEP}\nEOF"
+    ),
     "k grep | ssh": _bash("grep x a | ssh h sh"),
     "k echo $(ssh)": _bash('echo "$(ssh clawy-vps uptime)"'),
     "k backtick": _bash(f"echo `{DEP}`"),
@@ -92,7 +100,9 @@ GEGENPROBE: dict[str, dict[str, Any]] = {
     "k npm run deploy": _bash("npm run deploy"),
     "k python -m deploy": _bash("python -m to_spawn.deploy"),
     "k ssh-heredoc": _bash("ssh h <<'EOF'\nuptime\nEOF"),
-    "k harmlos pytest kette": _bash("cd /home/bau/wt/x && python -m pytest tests -q 2>&1 | tail -5"),
+    "k harmlos pytest kette": _bash(
+        "cd /home/bau/wt/x && python -m pytest tests -q 2>&1 | tail -5"
+    ),
     "k push ticket": _bash("git push -u origin ticket/12-kurz"),
     "k push +ticket": _bash("git push origin +ticket/12-kurz"),
     "k push :ticket": _bash("git push origin :ticket/12-kurz"),
@@ -178,7 +188,9 @@ def _soll(name: str) -> int:
     [
         pytest.param(
             n,
-            marks=pytest.mark.xfail(strict=True, reason="offen, Variante E / Folge-Issue"),
+            marks=pytest.mark.xfail(
+                strict=True, reason="offen, Variante E / Folge-Issue"
+            ),
         )
         if n in OFFEN
         else n
@@ -190,6 +202,13 @@ def test_nachstellung_u(name: str) -> None:
     assert (2 if grund else 3) == _soll(name), f"{name}: Grund {grund!r}"
 
 
-def test_u_faelle_vollzaehlig() -> None:
-    assert len(BLOECKE) == len(R10) + len(GEGENPROBE)
+def test_u_faelle_fest_je_gruppe() -> None:
+    """Feste Zahlen je Gruppe: Löschen, Umhängen oder doppelter Name (Dict überschreibt still)
+    eines Falls ändert eine Zahl und wird rot. Neuer Fall = Zahl hier bewusst mitziehen."""
+    assert (len(R10), len(GEGENPROBE)) == (55, 71)
+    assert len(BLOECKE) == len(R10) + len(GEGENPROBE), (
+        "Fall-Name doppelt in R10 und GEGENPROBE"
+    )
     assert SOLL_3 <= set(BLOECKE) and OFFEN <= set(BLOECKE) and not SOLL_3 & OFFEN
+    soll_2 = set(BLOECKE) - SOLL_3 - OFFEN
+    assert (len(soll_2), len(SOLL_3), len(OFFEN)) == (86, 13, 27)

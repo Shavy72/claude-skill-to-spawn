@@ -818,8 +818,8 @@ def test_r8_kein_fehlalarm_durch_wortteil_oder_datei_inhalt(
         _a(LIVE_SATZ, isSidechain=True),
     ],
     # Runde 9 (V-a), absichtlich umgestellt: „Die Produktion läuft wieder.“ und „Das Passwort
-    # liegt in Bitwarden.“ sind Zustände ohne Handlung → Klasse 3, siehe
-    # test_r9_zustand_ohne_handlung_ist_klasse_3.
+    # liegt in Bitwarden.“ sind Zustände ohne Handlung; seit U (#372) Klasse 2 durch breite
+    # Erkennung, siehe test_r9_zustand_mit_klasse_2_wort_ist_klasse_2.
     ids=["bash-befehl", "bindestrich", "sidechain"],
 )
 def test_r8_live_wort_am_wortanfang_und_im_befehl_zaehlt(
@@ -844,7 +844,7 @@ def test_r8_ganzwort_suche_ist_eigene_funktion_andere_nutzer_bleiben_streng() ->
     [_a("Die Produktion läuft wieder."), _a("Das Passwort liegt in Bitwarden.")],
     ids=["wortanfang-stamm", "umlaut-satz"],
 )
-def test_r9_zustand_ohne_handlung_ist_klasse_3(
+def test_r9_zustand_mit_klasse_2_wort_ist_klasse_2(
     welt: Welt, eintrag: dict[str, Any]
 ) -> None:
     welt.fenster = FRAGE_FENSTER
@@ -896,13 +896,20 @@ def test_r9_handlung_im_verlauf_ist_klasse_2(
         _a(_bash("pytest tests/test_deploy_x.py")),
         _a(_bash("git push -f origin HEAD:refs/heads/wip/12-x")),
         _a(_bash("bash scripts/staging/staging_deploy.sh")),
-        _a({"type": "tool_use", "name": "Read", "input": {"file_path": "/wt/live/x.py"}}),
+        _a(
+            {
+                "type": "tool_use",
+                "name": "Read",
+                "input": {"file_path": "/wt/live/x.py"},
+            }
+        ),
     ],
     ids=["commit", "heredoc", "pytest", "wip-force", "staging", "read-pfad"],
 )
-def test_r9_ohne_handlung_ist_klasse_3(
+def test_r9_ohne_handlung_klasse_2_nur_mit_klasse_2_wort(
     welt: Welt, eintrag: dict[str, Any], request: pytest.FixtureRequest
 ) -> None:
+    """Ohne Handlung entscheidet die breite Erkennung: Klasse-2-Wort im Text → 2, sonst 3."""
     welt.fenster = FRAGE_FENSTER
     welt.schreibe([_u("los"), eintrag, _a("Passt das so?")])
     # U: breite Erkennung gilt wieder, Sicherheit vor Quote (#372):
@@ -913,7 +920,15 @@ def test_r9_ohne_handlung_ist_klasse_3(
 
 @pytest.mark.parametrize(
     "wort",
-    ["goLive", "neuerVps", "deployProd", "Kundenkonto", "Bankkonto", "Mehrkosten", "Monatsrechnung"],
+    [
+        "goLive",
+        "neuerVps",
+        "deployProd",
+        "Kundenkonto",
+        "Bankkonto",
+        "Mehrkosten",
+        "Monatsrechnung",
+    ],
 )
 def test_r9_frage_mit_wortteil_ist_klasse_2(welt: Welt, wort: str) -> None:
     welt.fenster = f"❯ los\n\n● Soll ich {wort} angehen?" + FUSS
@@ -951,6 +966,11 @@ def test_r10_t7d_ohne_stelle_harmlose_vorgaengerin_bleibt_klasse_3(welt: Welt) -
 def test_r10_read_pfad_mit_env_zaehlt(welt: Welt) -> None:
     """Regel „Read-Pfad“: ohne sie rutscht das Lesen der .env durch."""
     welt.fenster = FRAGE_FENSTER
-    lesen = {"type": "tool_use", "id": "t", "name": "Read", "input": {"file_path": "/opt/app/.env"}}
+    lesen = {
+        "type": "tool_use",
+        "id": "t",
+        "name": "Read",
+        "input": {"file_path": "/opt/app/.env"},
+    }
     welt.schreibe([_u("los"), _a(lesen), _a("Passt das so?")])
     assert _k2(welt.blick()[0])

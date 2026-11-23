@@ -19,7 +19,6 @@ sys.path.insert(0, str(SKILL))
 from to_spawn import befugnis
 
 
-
 def h(**teile: object) -> str | None:
     return befugnis.handlung_klasse_2(**teile)  # type: ignore[arg-type]
 
@@ -132,13 +131,21 @@ def test_grund_ist_erste_treffer_zeile_zusammengezogen() -> None:
 
 @pytest.mark.parametrize(
     "frage",
-    ["goLive", "neuerVps", "deployProd", "Kundenkonto", "Bankkonto", "Mehrkosten", "Monatsrechnung"],
+    [
+        "goLive",
+        "neuerVps",
+        "deployProd",
+        "Kundenkonto",
+        "Bankkonto",
+        "Mehrkosten",
+        "Monatsrechnung",
+    ],
 )
 def test_frage_bleibt_breit_keine_durchrutscher(frage: str) -> None:
     """Frage und Rückfall prüfen mit der breiten Liste: Wortteile zählen (Runde 9)."""
     assert befugnis.ist_klasse_2(f"Soll ich {frage} angehen?")
 
 
-def test_wortanfang_suche_entfaellt() -> None:
+def test_wortanfang_suche_ist_wieder_da() -> None:
     # U: breite Erkennung gilt wieder, Sicherheit vor Quote (#372): die Wortanfang-Suche ist wieder da (Verlauf).
     assert hasattr(befugnis, "ist_klasse_2_am_wortanfang")
