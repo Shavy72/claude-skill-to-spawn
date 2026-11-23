@@ -671,7 +671,8 @@ def test_uebersicht_zaehlt_neuesten_lauf_nicht_groessten(tmp_path: Path) -> None
     ergebnis = _lauf("test_uebersicht.py", r, "--aus", str(ziel))
     assert ergebnis.returncode == 0, ergebnis.stdout + ergebnis.stderr
     seite = ziel.read_text(encoding="utf-8")
-    assert 'class="karte gruen"><h2>Ticket #901' in seite
+    # #366 W1: der neuere grüne Teil-Lauf deckt den älteren breiten roten Lauf nicht ab → offen.
+    assert 'class="karte offen"><h2>Ticket #901' in seite
     assert "(12 von 12 Tests grün)" in seite and "38 von 40" not in seite
     assert "docs/verify-hard/901_gruen.txt</code> · Stand 2026-11-02" in seite
     assert "(71 von 71 Tests grün)" in seite
@@ -690,3 +691,71 @@ def test_uebersicht_ohne_jeden_lauf_keine_zahl(repo: Path, tmp_path: Path) -> No
     assert _lauf("test_uebersicht.py", repo, "--aus", str(ziel)).returncode == 0
     kopf = ziel.read_text(encoding="utf-8").split("<h1>", 1)[1].split("</h1>", 1)[0]
     assert kopf == "⚠️ offen – kein Testlauf gefunden — 4 ohne Beleg"
+
+
+def _belege_mod():  # noqa: ANN202 - Modul aus dem Skill
+    sys.path.insert(0, str(SKILL))
+    from to_spawn import belege
+
+    return belege
+
+
+def test_uebersicht_neuer_teil_lauf_verdeckt_roten_lauf_nicht(tmp_path: Path) -> None:
+    """Neuer grüner Teil-Lauf, älterer breiter Lauf rot → offen, Karte nennt beide Dateien (#366 W1).
+
+    Umgekehrt (neuer Lauf rot) bleibt rot.
+    """
+    r = tmp_path / "projekt"
+    (r / "docs" / "agents" / "manifests").mkdir(parents=True)
+    tickets = {"901": {"title": "Teil-Lauf"}, "902": {"title": "Neu rot"}}
+    (r / "docs" / "agents" / "manifests" / f"spec-{SPEC}.json").write_text(
+        json.dumps({"spec": SPEC, "tickets": tickets}), encoding="utf-8"
+    )
+    vh = r / "docs" / "verify-hard"
+    vh.mkdir(parents=True)
+    subprocess.run(["git", "init", "-q"], cwd=r, check=True, capture_output=True)
+    (vh / "901_breit.txt").write_text("3 failed, 37 passed in 9s\n", encoding="utf-8")
+    (vh / "902_breit.txt").write_text("40 passed in 9s\n", encoding="utf-8")
+    _commit_am(r, "2026-11-01T10:00:00+01:00")
+    (vh / "901_teil.txt").write_text("5 passed in 1s\n", encoding="utf-8")
+    (vh / "902_teil.txt").write_text("1 failed, 4 passed in 1s\n", encoding="utf-8")
+    _commit_am(r, "2026-11-02T11:30:00+01:00")
+    ziel = tmp_path / "u.html"
+    assert _lauf("test_uebersicht.py", r, "--aus", str(ziel)).returncode == 0
+    seite = ziel.read_text(encoding="utf-8")
+    karte_901 = seite.split("Ticket #901", 1)[1].split("</section>", 1)[0]
+    assert seite.count('class="karte offen"><h2>Ticket #901') == 1
+    assert "901_teil.txt" in karte_901 and "901_breit.txt" in karte_901
+    assert "deckt" in karte_901 and "kein Beleg gefunden" not in karte_901
+    assert 'class="karte rot"><h2>Ticket #902' in seite
+    b = _belege_mod().auswerten(vh, "901")
+    assert b.status == "offen" and b.verdeckt is not None and b.verdeckt.datei == "901_breit.txt"
+
+
+def test_belege_ohne_git_zaehlt_aenderungszeit(tmp_path: Path) -> None:
+    """Außerhalb eines Git-Ordners entscheidet die Änderungszeit, welcher Lauf der neueste ist (#366)."""
+    vh = tmp_path / "verify-hard"
+    vh.mkdir()
+    (vh / "905_a.txt").write_text("40 passed in 9s\n", encoding="utf-8")
+    (vh / "905_b.txt").write_text("1 failed, 4 passed in 1s\n", encoding="utf-8")
+    os.utime(vh / "905_a.txt", (1_700_000_000, 1_700_000_000))
+    os.utime(vh / "905_b.txt", (1_700_000_500, 1_700_000_500))
+    b = _belege_mod().auswerten(vh, "905")
+    assert b.lauf is not None and b.lauf.datei == "905_b.txt" and b.lauf.zeit == 1_700_000_500
+    assert b.status == "rot"
+
+
+def test_uebersicht_nur_abnahme_eindeutig(repo: Path, tmp_path: Path) -> None:
+    """Grün nur über die ABNAHME-Zeile: keine Marke „grün“ plus „offen“, Herkunft = Abnahme-Zeile (#366)."""
+    vh = repo / "docs" / "verify-hard"
+    for datei in [*vh.rglob("*")]:
+        if datei.is_file():
+            datei.unlink()
+    (vh / "903.md").write_text("# Belegseite #903\n**ABNAHME: ABGENOMMEN (Live)**\n", encoding="utf-8")
+    ziel = tmp_path / "u.html"
+    assert _lauf("test_uebersicht.py", repo, "--aus", str(ziel)).returncode == 0
+    seite = ziel.read_text(encoding="utf-8")
+    karte_903 = seite.split("Ticket #903", 1)[1].split("</section>", 1)[0]
+    assert 'karte gruen"><h2>Ticket #903' in seite
+    assert "offen" not in karte_903
+    assert "Abnahme-Zeile in <code>docs/verify-hard/903.md</code>" in karte_903

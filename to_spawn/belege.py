@@ -8,7 +8,8 @@ Ticket, was darin steht:
   sie zählt nie als Testlauf.
 - **Testlauf** — der neueste Lauf (Entstehungszeit der Datei, :func:`zeitpunkt`) aus den
   übrigen Dateien; bei gleicher Zeit der größte. Fallback: saubere Markdown-Zeilen bzw.
-  ``X/Y``-Zählung.
+  ``X/Y``-Zählung. Ist der neueste Lauf grün, aber ein älterer, größerer Lauf rot, deckt der
+  Teil-Lauf den roten nicht ab: Status ``offen``, der rote Lauf steht in ``verdeckt``.
 - **Klickweg** — eine Markdown-Zeile mit „Klickweg“/„Live-Klick“/„Live-Beweis“, die nicht
   verneint ist („kein Klickweg“, „entfällt“ zählen nicht).
 - **Status** ``gruen``/``rot``/``offen`` aus Testlauf und ``ABNAHME:``-Zeile.
@@ -78,6 +79,10 @@ class Belege:
     #: (Anzeige „kein Klickweg“ unverändert), der Wiederanlauf zählt es als erfüllt (#282).
     klickweg_entfaellt: bool = False
     rot_beweis: bool = False
+    #: Älterer, größerer roter Lauf, den der neueste grüne Lauf nicht abdeckt (Status ``offen``).
+    verdeckt: Lauf | None = None
+    #: Belegdatei, aus der die ``ABNAHME:``-Zeile stammt.
+    abnahme_datei: str = ""
     dateien: list[str] = field(default_factory=list)
 
 
@@ -110,8 +115,8 @@ def zeitpunkt(datei: Path) -> float:
 
     Die Änderungszeit allein taugt nicht: ein Checkout setzt sie für alle Dateien gleich.
     """
-    # ponytail: lokal geänderte, schon versionierte Datei zählt mit ihrer Commit-Zeit; Upgrade
-    # über ``git status --porcelain`` je Datei, falls Belege nachträglich überschrieben werden.
+    # Bekannte Grenze: Eine schon committete Belegdatei, die danach lokal überschrieben und
+    # noch nicht neu committet wurde, zählt mit ihrer alten Commit-Zeit, nicht mit „jetzt“.
     try:
         aus = subprocess.run(
             ["git", "log", "-1", "--format=%ct", "--", datei.name],
@@ -179,6 +184,7 @@ def auswerten(verify_hard: Path, nummer: str) -> Belege:
             lauf = None
             if not belege.abnahme and (m := _ABNAHME.search(text)):
                 belege.abnahme = m.group(1).strip()
+                belege.abnahme_datei = rel
             for zeile in text.splitlines():
                 if not _KLICKWEG.search(zeile):
                     continue
@@ -204,10 +210,16 @@ def auswerten(verify_hard: Path, nummer: str) -> Belege:
                     laeufe.append(lauf)
     if laeufe:  # Stand zum Zeitpunkt des Aufrufs: der neueste Lauf zählt, nicht der größte (#366)
         belege.lauf = max(laeufe, key=lambda l: (l.zeit, l.passed + l.failed, l.datei))
+        if belege.lauf.failed == 0:  # im Zweifel offen statt grün (#366 W1)
+            groesse = belege.lauf.passed
+            rote = [l for l in laeufe if l.failed > 0 and l.passed + l.failed > groesse]
+            belege.verdeckt = max(rote, key=lambda l: (l.passed + l.failed, l.zeit), default=None)
     abnahme_schlecht = bool(belege.abnahme) and bool(_ABNAHME_SCHLECHT.search(_OFFEN_VERNEINT.sub("", belege.abnahme)))
     abnahme_gut = bool(belege.abnahme) and bool(_ABNAHME_GUT.search(belege.abnahme))
     if (belege.lauf and belege.lauf.failed > 0) or abnahme_schlecht:
         belege.status = "rot"
+    elif belege.verdeckt:
+        belege.status = "offen"
     elif belege.lauf or abnahme_gut:
         belege.status = "gruen"
     return belege

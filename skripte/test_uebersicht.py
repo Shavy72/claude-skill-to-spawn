@@ -47,6 +47,8 @@ class Karte:
     klickweg: bool = False
     rot_beweis: bool = False
     dateien: list[str] = field(default_factory=list)
+    verdeckt: Lauf | None = None
+    abnahme_datei: str = ""
 
 
 def werte_ticket(verify_hard: Path, nummer: str, titel: str) -> Karte:
@@ -61,6 +63,8 @@ def werte_ticket(verify_hard: Path, nummer: str, titel: str) -> Karte:
         klickweg=b.klickweg,
         rot_beweis=b.rot_beweis,
         dateien=list(b.dateien),
+        verdeckt=b.verdeckt,
+        abnahme_datei=b.abnahme_datei,
     )
 
 
@@ -78,16 +82,21 @@ def kopfzeile(karten: list[Karte]) -> str:
     passed = sum(k.lauf.passed for k in karten if k.lauf)
     gesamt = passed + sum(k.lauf.failed for k in karten if k.lauf)
     rot = sum(k.status == "rot" for k in karten)
-    offen = sum(k.status == "offen" for k in karten)
-    zeichen = "❌" if rot else ("⚠️" if offen else "✅")
+    ungeklaert = sum(k.status == "offen" and k.verdeckt is not None for k in karten)
+    offen = sum(k.status == "offen" and k.verdeckt is None for k in karten)
+    zeichen = "❌" if rot else ("⚠️" if offen or ungeklaert else "✅")
     if gesamt:
         text = f"{zeichen} {passed} von {gesamt} Tests grün"
+    elif not rot and not offen:  # alle grün nur über ABNAHME-Zeilen
+        text = f"✅ {len(karten)} von {len(karten)} Tickets per Abnahme grün (kein Testlauf)"
     else:  # keine Zahl vortäuschen, wenn kein Lauf gezählt wurde (#366)
         text = f"{'❌' if rot else '⚠️'} {KEIN_LAUF}"
     if rot:
         text += f" — {rot} Ticket{'s' if rot > 1 else ''} rot"
     if offen:
         text += f" — {offen} ohne Beleg"
+    if ungeklaert:
+        text += f" — {ungeklaert} ungeklärt (neuer Teil-Lauf deckt alten roten Lauf nicht ab)"
     return text
 
 
@@ -119,18 +128,36 @@ _STATUS_TEXT = {
 }
 
 
+def _stand(lauf: Lauf) -> str:
+    return datetime.fromtimestamp(lauf.zeit).strftime("%Y-%m-%d %H:%M") if lauf.zeit else "unbekannt"
+
+
 def _karte_html(k: Karte) -> str:
     e = html.escape
+    marke, titel_quelle = _STATUS_TEXT[k.status], "Zahl stammt aus"
     if k.lauf:
         befehl = k.lauf.befehl or f"Befehl nicht mitgeschrieben — Ausgabe aus docs/verify-hard/{k.lauf.datei}"
         beleg = f"<code>{e(befehl)}</code><br><code>{e(k.lauf.zeile)}</code>"
         zahl = f" ({k.lauf.passed} von {k.lauf.passed + k.lauf.failed} Tests grün)"
-        stand = datetime.fromtimestamp(k.lauf.zeit).strftime("%Y-%m-%d %H:%M") if k.lauf.zeit else "unbekannt"
-        quelle = f"<code>docs/verify-hard/{e(k.lauf.datei)}</code> · Stand {stand}"
+        quelle = f"<code>docs/verify-hard/{e(k.lauf.datei)}</code> · Stand {_stand(k.lauf)}"
+        if k.verdeckt:
+            v = k.verdeckt
+            marke = "⚠️ offen — neuer Teil-Lauf deckt älteren roten Lauf nicht ab"
+            beleg += (
+                f"<br>Der neueste Lauf war grün, hat aber nur {k.lauf.passed} Tests geprüft. Ein älterer Lauf "
+                f"mit {v.passed + v.failed} Tests hatte {v.failed} Fehler "
+                f"(<code>docs/verify-hard/{e(v.datei)}</code> · Stand {_stand(v)}). Ob die behoben sind, "
+                "zeigt erst ein neuer Lauf mit allen diesen Tests."
+            )
     else:
         zahl, quelle = f" ({KEIN_LAUF})", "—"
         if k.abnahme:
             beleg = f"<code>ABNAHME: {e(k.abnahme)}</code>"
+            titel_quelle = "Aussage stammt aus"
+            quelle = f"Abnahme-Zeile in <code>docs/verify-hard/{e(k.abnahme_datei)}</code>"
+            if k.status != "offen":  # grün/rot steht in der Marke, ein „offen“ daneben widerspräche
+                zahl = ""
+                marke = "✅ grün — laut Abnahme-Zeile" if k.status == "gruen" else "❌ rot — laut Abnahme-Zeile"
         elif k.dateien:
             beleg = "Belegseite ohne Testzahl: " + ", ".join(f"<code>{e(d)}</code>" for d in k.dateien)
         else:
@@ -143,10 +170,10 @@ def _karte_html(k: Karte) -> str:
     )
     return (
         f'<section class="karte {k.status}"><h2>Ticket #{e(k.nummer)}</h2>'
-        f'<span class="marke {k.status}">{_STATUS_TEXT[k.status]}</span>{e(zahl)}'
+        f'<span class="marke {k.status}">{marke}</span>{e(zahl)}'
         f"<dl><dt>Was wurde geprüft?</dt><dd>{e(k.titel or 'ohne Titel')}.{e(rot)}</dd>"
         f"<dt>Beleg</dt><dd>{beleg}</dd>"
-        f"<dt>Zahl stammt aus</dt><dd>{quelle}</dd>"
+        f"<dt>{titel_quelle}</dt><dd>{quelle}</dd>"
         f"<dt>Live-Klickweg</dt><dd>{klick}</dd></dl></section>"
     )
 
