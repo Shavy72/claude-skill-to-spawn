@@ -40,6 +40,8 @@ TYPEN = (
     "staffel_limit",
     # Aufseher (#213): Live-Beweis blockiert (Feld ``grund``) und Modell-Wechsel beim Limit.
     "blockiert",
+    # Bau-Session (#278): Frage an den Aufseher (``waechter_takt.FRAGE_TYPEN``).
+    "frage",
     "waechter_modell",
     # Aufseher (#254): Pause bis zum Limit-Reset und der Neustart danach.
     "waechter_pause",

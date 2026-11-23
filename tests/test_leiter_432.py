@@ -22,7 +22,7 @@ import pytest
 SKILL = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SKILL))
 
-from to_spawn import aufseher_stand, leiter, leitstand, respawn
+from to_spawn import aufseher_stand, leiter, leitstand, respawn, ticket_zustand
 
 SPEC = 9399
 TICKET = 9432
@@ -52,7 +52,7 @@ class FakeUmwelt:
         *,
         fenster: str = aufseher_stand.STILL,
         still_min: int | None = 0,
-        offen: bool | None = True,
+        stufe: ticket_zustand.Stufe | None = "offen",
         kontext_k: float | None = None,
         handoff_k: float = 250.0,
         werkzeug: FakeWerkzeug | None = None,
@@ -60,7 +60,7 @@ class FakeUmwelt:
         self.wt = wt
         self.fenster = fenster
         self.still_min = still_min
-        self.offen = offen
+        self.stufe = stufe
         self.kontext_k = kontext_k
         self.grenze = handoff_k
         self.uhr = time.time()
@@ -72,7 +72,7 @@ class FakeUmwelt:
     def lage(self, spec: int, ticket: int, seit: float | None) -> leiter.Lage:
         prompt = seit is not None and respawn.start_prompt_da(self.wt, ticket, seit)
         return leiter.Lage(
-            offen=self.offen,
+            stufe=self.stufe,
             fenster=self.fenster,
             still_min=self.still_min,
             kontext_k=self.kontext_k,
@@ -298,7 +298,7 @@ def test_leiter_hat_keinen_eigenen_startweg() -> None:
 
 
 def test_ticket_zu_exit_einmal(ordner: Path) -> None:
-    u = FakeUmwelt(ordner, still_min=3, offen=False)
+    u = FakeUmwelt(ordner, still_min=3, stufe="zu")
     erg = _lauf(u)
     assert erg.exit == 0
     assert u.wz.getippt == [(ZIEL, "/exit")]
@@ -316,7 +316,7 @@ def test_ticket_zu_exit_einmal(ordner: Path) -> None:
     [
         {"still_min": 90},
         {"still_min": None, "kontext_k": 280.0},
-        {"still_min": 30, "offen": False},
+        {"still_min": 30, "stufe": "zu"},
     ],
 )
 def test_arbeitende_session_nie_angestupst(
@@ -341,7 +341,7 @@ def test_rueckfrage_nie_getippt(ordner: Path) -> None:
     "fenster", [aufseher_stand.KEIN_FENSTER, aufseher_stand.FENSTER_UNBEKANNT]
 )
 def test_kein_fenster_nichts(ordner: Path, fenster: str) -> None:
-    u = FakeUmwelt(ordner, fenster=fenster, still_min=60, offen=False)
+    u = FakeUmwelt(ordner, fenster=fenster, still_min=60, stufe="zu")
     _lauf(u)
     assert u.wz.getippt == []
 
@@ -366,11 +366,11 @@ def test_stufe2_arbeitet_bleibt(ordner: Path) -> None:
 
 
 def test_entscheide_rein() -> None:
-    lage = leiter.Lage(True, aufseher_stand.STILL, 20, None, False)
+    lage = leiter.Lage("offen", aufseher_stand.STILL, 20, None, False)
     assert (
         leiter.entscheide(lage, leiter.Gemerkt(0, None), 0.0, 250).aktion == "anstupsen"
     )
-    lage19 = leiter.Lage(True, aufseher_stand.STILL, 19, None, False)
+    lage19 = leiter.Lage("offen", aufseher_stand.STILL, 19, None, False)
     assert (
         leiter.entscheide(lage19, leiter.Gemerkt(0, None), 0.0, 250).aktion == "nichts"
     )

@@ -13,7 +13,9 @@ startet).
 1. Läuft für das Ticket schon eine Session auf dieser Maschine? → kein Start (Exit 0,
    eine Zeile, kein Fehler-Lärm). Die Sperre hält der laufende ``bau.py`` bis zu seinem
    Ende; stirbt er, gibt das Betriebssystem sie frei (tote Sperre = keine Sperre).
-2. Ticket geschlossen? → kein Start (Exit 0, eine Zeile).
+2. Ticket fertig gebaut (:func:`ticket_zustand.fertig_gebaut`: geschlossen oder grün auf
+   Staging)? → kein Start (Exit 0, eine Zeile). Nachbesserung an einem fertig gebauten
+   Ticket: vorher das Staging-Label entfernen (#279).
 3. Ticket-Stand nicht bestimmbar (gh fehlt, Netz weg, kaputte Antwort) → fail-closed:
    kein Start, laute Meldung, Exit 2.
 
@@ -21,7 +23,7 @@ Ablösung (respawn startet ``bau.py <N> --sofort --ohne-prompt``): die neue Sess
 aber nur eine Ablösung je Ticket gleichzeitig. Sie übernimmt die Ticket-Sperre, sobald
 die alte Session endet — danach ist sie wieder „die eine“ Session.
 
-:func:`weiter_entscheidung` prüft vor jeder Staffel-Runde erneut, ob das Ticket noch offen
+:func:`weiter_entscheidung` prüft vor jeder Staffel-Runde erneut, ob das Ticket noch zu bauen
 ist; ein unbekannter Stand wird kurz wiederholt und endet sonst laut mit Exit 2 (#191).
 Die gh-Abfrage hat eine Zeitgrenze (``gh.TICKET_STAND_TIMEOUT_S``), bau.py hängt nie stumm.
 
@@ -41,7 +43,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from to_spawn import gh, sperre, starter
+from to_spawn import sperre, starter, ticket_zustand
 
 log = logging.getLogger(__name__)
 
@@ -57,7 +59,7 @@ STAND_VERSUCHE = 3
 STAND_ABSTAND_S = 5.0
 STAND_ABSTAND_ENV = "TO_SPAWN_STAND_ABSTAND"
 
-#: Liefert ``True`` (offen), ``False`` (zu) oder ``None`` (unbekannt).
+#: Liefert ``True`` (noch zu bauen), ``False`` (fertig gebaut) oder ``None`` (unbekannt).
 TicketPruefer = Callable[[str, "Path | None"], "bool | None"]
 
 # Gehaltene Sperren bis Prozess-Ende (sonst schlösse der Müllsammler sie).
@@ -85,7 +87,8 @@ def _zustand(ticket: str, cwd: Path | None, pruefer: TicketPruefer | None) -> bo
         return pruefer(ticket, cwd)
     if os.environ.get(TEST_OFFEN_ENV) == "1" and starter.unter_test():
         return True
-    return gh.ticket_offen(ticket, cwd=cwd)
+    daten = ticket_zustand.lesen(ticket, cwd)
+    return None if daten is None else not ticket_zustand.fertig_gebaut(daten)
 
 
 def _pruefen(ticket: str, cwd: Path | None, pruefer: TicketPruefer | None) -> Entscheidung:
@@ -98,7 +101,11 @@ def _pruefen(ticket: str, cwd: Path | None, pruefer: TicketPruefer | None) -> En
         log.error("%s", grund)
         return Entscheidung(False, grund, EXIT_UNKLAR)
     if not offen:
-        grund = f"bau {ticket}: Ticket ist geschlossen — kein Start."
+        grund = (
+            f"bau {ticket}: Ticket ist geschlossen oder fertig gebaut (grün auf Staging) — kein Start. "
+            f"Nachbesserung an einem fertig gebauten Ticket: vorher Label „{ticket_zustand.STAGING_FERTIG_LABEL}“ "
+            "entfernen, dann neu starten."
+        )
         log.info("%s", grund)
         return Entscheidung(False, grund)
     return Entscheidung(True, f"bau {ticket}: offen, Sperre gehalten — Start.")
@@ -116,7 +123,7 @@ def betreten(
 
     ``abloesung``: respawn — Start neben der laufenden Session erlaubt (höchstens eine
     Ablösung gleichzeitig), die Ticket-Sperre geht nach deren Ende auf diesen Prozess über.
-    ``pruefer``: Test-Naht statt ``gh.ticket_offen``.
+    ``pruefer``: Test-Naht statt :func:`ticket_zustand.lesen`.
     """
     ticket = str(ticket)
     haupt = sperr_datei(ticket, gh_repo)
@@ -172,9 +179,9 @@ def weiter_entscheidung(
     pruefer: TicketPruefer | None = None,
     abstand: float | None = None,
 ) -> Entscheidung:
-    """Vor jeder Staffel-Runde: Ticket noch offen? (#191)
+    """Vor jeder Staffel-Runde: Ticket noch zu bauen? (#191, #279)
 
-    Offen → weiter; geschlossen → Ende mit Exit 0. Unbekannt (gh-Aussetzer) wird bis zu
+    Noch zu bauen → weiter; fertig gebaut → Ende mit Exit 0. Unbekannt (gh-Aussetzer) wird bis zu
     :data:`STAND_VERSUCHE`-mal mit ``abstand`` Sekunden Pause neu gefragt (Standard aus
     :data:`STAND_ABSTAND_ENV`, sonst :data:`STAND_ABSTAND_S`); bleibt es unbekannt →
     laut, Exit :data:`EXIT_UNKLAR` — nie still wie „geschlossen“.

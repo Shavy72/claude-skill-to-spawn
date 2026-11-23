@@ -21,6 +21,8 @@ Stufen (feste Schwellen :data:`STUPS_MIN`, :data:`NACH_STUPS_MIN`,
    nie erneut abgelöst: Fenster arbeitet UND neue Session belegt (``session_start``
    im Bau-Log jünger als die Stufe-3-Zeit) → Abschluss nachholen, sonst Exit 1.
 4. Ticket zu und Fenster still (ab Mindest-Ruhe) → ``/exit`` tippen, genau einmal.
+   Fertig gebaut nur, wenn :func:`wiederanlauf.feststellen` Art ``nichts`` sagt; fehlt noch
+   ein Abschluss-Schritt oder ist die Lage unklar, wird nicht beendet (#282 P3).
 5. respawn gescheitert — nichts mehr tippen/starten, jede Ausführung Exit 1, bis das
    Fenster wieder arbeitet oder das Ticket neu beginnt (``session_start`` im Bau-Log
    jünger als die Stufe-5-Zeit; die wird erst nach dem Ende von ``abloesen`` gesetzt).
@@ -64,7 +66,9 @@ from to_spawn import (
     leitstand,
     pc_fenster,
     respawn,
+    ticket_zustand,
     waechter_lauf,
+    wiederanlauf,
 )
 
 log = logging.getLogger(__name__)
@@ -87,6 +91,9 @@ EXIT_FEHLER = 1
 #: Stufe 1 (E11 Richtung 2): Mindset-Stoß, Text aus der Aufseher-Anleitung (#500).
 MINDSET_TEXT = anleitung.anstupser("Aufseher")
 EXIT_TEXT = "/exit"
+#: Vorgabe für :attr:`Lage.anlauf`, wenn die Wiederanlauf-Art nicht erfragt wurde (Stufe nicht
+#: ``fertig_gebaut`` oder Quelle ohne diese Frage): die Stufe allein entscheidet wie vor #282 P3.
+OHNE_ANLAUF_FRAGE = wiederanlauf.Wiederanlauf("nichts", (), "")
 
 #: ``melden`` = nichts tun, Exit 1: der Aufseher muss prüfen.
 Aktion = Literal[
@@ -106,7 +113,7 @@ Aktion = Literal[
 class Lage:
     """Was die Leiter über ein Ticket weiß (``None`` = unbekannt)."""
 
-    offen: bool | None  # False = Ticket zu
+    stufe: ticket_zustand.Stufe | None  # None = GitHub-Zustand unbekannt
     fenster: str  # aufseher_stand.ARBEITET | STILL | RUECKFRAGE | KEIN_FENSTER | ...
     still_min: int | None
     kontext_k: float | None  # Spitzen-Kontext aus dem Bau-Log
@@ -116,6 +123,9 @@ class Lage:
     log_unlesbar: bool = False  # Bau-Log da, aber Lesen scheiterte (≠ „kein Start“)
     #: Committeter eigener Handoff der aktuellen Session (#542), ``None`` = keiner.
     eigener_handoff: eigener_handoff.Treffer | None = None
+    #: Wiederanlauf-Lage (#282 P3), nur bei Stufe ``fertig_gebaut`` erfragt; ``None`` = unklar.
+    #: ``/exit`` nur bei Art ``nichts``.
+    anlauf: wiederanlauf.Wiederanlauf | None = OHNE_ANLAUF_FRAGE
 
 
 @dataclass(frozen=True)
@@ -195,12 +205,22 @@ def entscheide(lage: Lage, gemerkt: Gemerkt, jetzt: float, handoff_k: float) -> 
         return Schritt("nichts", f"Fenster: {lage.fenster}")
     still = lage.still_min or 0
     ruhig = still >= MIN_RUHE_MIN
-    if lage.offen is False:
+    if lage.stufe is not None and lage.stufe != "offen":
+        # Fertig gebaut (wartet auf Live), zu oder verworfen: nichts mehr zu bauen —
+        # beenden, nie ablösen (#288).
+        wort = f"Ticket {ticket_zustand.ANZEIGE[lage.stufe]}"
         if stufe == 4:
-            return Schritt("nichts", "Ticket zu, /exit schon getippt")
+            return Schritt("nichts", f"{wort}, /exit schon getippt")
+        if lage.stufe == "fertig_gebaut":
+            # Fehlt noch ein Abschluss-Schritt, arbeitet die Session daran — nie abwürgen (#282 P3).
+            if lage.anlauf is None:
+                return Schritt("nichts", f"{wort}, Lage unklar — nicht beenden")
+            if lage.anlauf.art != "nichts":
+                offen = ", ".join(lage.anlauf.fehlt) or lage.anlauf.art
+                return Schritt("nichts", f"{wort}, Abschluss offen (fehlt: {offen}) — nicht beenden")
         if not ruhig:
-            return Schritt("nichts", f"Ticket zu, still {still} min < {MIN_RUHE_MIN}")
-        return Schritt("exit", f"Ticket zu, still {still} min")
+            return Schritt("nichts", f"{wort}, still {still} min < {MIN_RUHE_MIN}")
+        return Schritt("exit", f"{wort}, still {still} min")
     if stufe == 4:
         return Schritt("zuruecksetzen", "Ticket wieder offen")
     treffer = lage.eigener_handoff
@@ -481,8 +501,12 @@ class _EchteUmwelt:
         prompt = seit is not None and respawn.start_prompt_da(wt, ticket, seit)
         start, unlesbar = self._letzter_start(ticket, wt)
         treffer = eigener_handoff.finde(wt, ticket, eigener_handoff.grenze(start, ticket))
+        anlauf: wiederanlauf.Wiederanlauf | None = OHNE_ANLAUF_FRAGE
+        if blick.lage.stufe == "fertig_gebaut" and self.q.anlauf is not None:
+            # Einzige Füllstelle der Art; Belege liegen im Arbeitsbaum der Session.
+            anlauf = self.q.anlauf(ticket, wt if wt.is_dir() else self.repo)
         return Lage(
-            offen=blick.lage.offen,
+            stufe=blick.lage.stufe,
             fenster=blick.lage.fenster,
             still_min=blick.lage.still_min,
             kontext_k=self._kontext_k(ticket, wt),
@@ -491,6 +515,7 @@ class _EchteUmwelt:
             letzter_start=start,
             log_unlesbar=unlesbar,
             eigener_handoff=treffer,
+            anlauf=anlauf,
         )
 
     def folge_ab_handoff(self, spec: int, ticket: int, treffer: eigener_handoff.Treffer) -> int:

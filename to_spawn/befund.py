@@ -34,14 +34,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, TypeAlias
 
-from . import config, gh, manifest, spec_rand
+from . import config, gh, manifest, spec_rand, ticket_zustand
 
 log = logging.getLogger("to_spawn.befund")
 
 #: Kopf jedes Aufseher-Kommentars auf GitHub.
 KOPF = "Aufseher:"
 STUFEN = ("gelb", "rot")
-#: Label, mit dem David ein gelbes Folge-Ticket bewusst auf später schiebt.
+#: Label, mit dem der Mensch ein gelbes Folge-Ticket bewusst auf später schiebt.
 LABEL_VERSCHOBEN = "verschoben"
 #: Vorgabe-Schätzung (Tausend Token) für ein gelbes Folge-Ticket — klein, ein Hinweis.
 SCHAETZUNG_GELB_K = 30
@@ -141,15 +141,28 @@ def kommentiere(n: int | str, gh_repo: str, text: str, befehl: str = "comment") 
     return code == 0
 
 
-def wieder_oeffnen(
-    n: int, gh_repo: str, gruende: Sequence[tuple[str, str]], dry_run: bool
-) -> list[str]:
+def wieder_oeffnen(n: int, gh_repo: str, gruende: Sequence[tuple[str, str]], dry_run: bool) -> list[str]:
     """Ticket einmal wieder öffnen; letzte Zeile ``#N wieder geöffnet`` = geklappt.
 
     ``gruende`` sind Paare (Regel, Text); Kommentar-Form siehe :func:`_gruende_text`. Zeilen-API
     für capo (prüft den Zeilentext); :func:`melde` nutzt dieselbe Regel mit ok-Flag.
     """
     return _oeffne(n, gh_repo, gruende, dry_run).zeilen
+
+
+def erneut_melden(n: int, gh_repo: str, gruende: Sequence[tuple[str, str]], dry_run: bool) -> list[str]:
+    """Gleicher Grund wie bei einem früheren Wiederöffnen: nur kommentieren, nicht öffnen (#275).
+
+    Wiederöffnen ist die härteste Reaktion und gilt je Verstoß (Ticket, Regel, Inhalt)
+    einmal; danach muss ein Mensch ran. Letzte Zeile ``#N erneut gemeldet`` = geklappt.
+    """
+    if dry_run:
+        return [f"#{n} [Probe] würde erneut melden (nicht wieder öffnen)"]
+    vermerk = " (erneut — nicht wieder geöffnet, ein Mensch muss prüfen)"
+    kommentar = _gruende_text([(regel, f"{text}{vermerk}") for regel, text in gruende])
+    if kommentiere(n, gh_repo, kommentar):
+        return [f"#{n} erneut gemeldet"]
+    return [f"#{n} FEHLER: erneut melden gescheitert"]
 
 
 def _gruende_text(gruende: Sequence[tuple[str, str]]) -> str:
@@ -167,9 +180,7 @@ def _gruende_text(gruende: Sequence[tuple[str, str]]) -> str:
     return f"{KOPF} {len(paare)} Verstöße: {regeln}\n{KOPF} {texte}"
 
 
-def _oeffne(
-    n: int, gh_repo: str, gruende: Sequence[tuple[str, str]], dry_run: bool
-) -> Ergebnis:
+def _oeffne(n: int, gh_repo: str, gruende: Sequence[tuple[str, str]], dry_run: bool) -> Ergebnis:
     if dry_run:
         return Ergebnis(ok=True, zeilen=[f"#{n} [Probe] würde wieder öffnen"])
     kommentar = _gruende_text(gruende)
@@ -220,9 +231,7 @@ def _schon_gemeldet(tickets: dict[str, Any], ticket: int, umfang: str) -> str | 
     return None
 
 
-def _folge_ticket(
-    repo: Path, gh_repo: str, spec: int, ticket: int, text: str, dry_run: bool
-) -> Ergebnis:
+def _folge_ticket(repo: Path, gh_repo: str, spec: int, ticket: int, text: str, dry_run: bool) -> Ergebnis:
     titel = _titel(ticket, text)
     umfang = text.strip()
     datei = manifest.manifest_pfad(repo, spec)
@@ -231,16 +240,12 @@ def _folge_ticket(
     except (OSError, ValueError) as fehler:
         return Ergebnis(
             ok=False,
-            zeilen=[
-                f"#{ticket} FEHLER: Manifest {datei.name} nicht lesbar ({fehler}) — kein Folge-Ticket"
-            ],
+            zeilen=[f"#{ticket} FEHLER: Manifest {datei.name} nicht lesbar ({fehler}) — kein Folge-Ticket"],
         )
     if not isinstance(daten, dict) or not isinstance(daten.get("tickets"), dict):
         return Ergebnis(
             ok=False,
-            zeilen=[
-                f"#{ticket} FEHLER: Manifest {datei.name} ohne Ticket-Tabelle — kein Folge-Ticket"
-            ],
+            zeilen=[f"#{ticket} FEHLER: Manifest {datei.name} ohne Ticket-Tabelle — kein Folge-Ticket"],
         )
     vorhanden = _schon_gemeldet(daten["tickets"], ticket, umfang)
     if vorhanden is not None:
@@ -261,19 +266,13 @@ def _folge_ticket(
         f"Steht im Manifest spec-{spec}.json mit `gelb_von: {ticket}`; "
         f"Label `{LABEL_VERSCHOBEN}` = bewusst auf später geschoben."
     )
-    code, ausgabe = gh.lauf(
-        ["issue", "create", "--repo", gh_repo, "--title", titel, "--body", body]
-    )
+    code, ausgabe = gh.lauf(["issue", "create", "--repo", gh_repo, "--title", titel, "--body", body])
     treffer = _ISSUE_URL.search(ausgabe or "")
     if code != 0 or not treffer:
-        log.warning(
-            "gh issue create gescheitert (Code %s): %s", code, (ausgabe or "")[:200]
-        )
+        log.warning("gh issue create gescheitert (Code %s): %s", code, (ausgabe or "")[:200])
         return Ergebnis(
             ok=False,
-            zeilen=[
-                f"#{ticket} FEHLER: gelbes Folge-Ticket nicht angelegt (gh issue create)"
-            ],
+            zeilen=[f"#{ticket} FEHLER: gelbes Folge-Ticket nicht angelegt (gh issue create)"],
         )
     neu = treffer.group(1)
     daten["tickets"][neu] = {
@@ -285,9 +284,7 @@ def _folge_ticket(
     try:
         manifest.schreibe_atomar(datei, daten)
     except OSError as fehler:
-        log.error(
-            "Manifest %s nicht geschrieben (Folge-Ticket #%s): %s", datei, neu, fehler
-        )
+        log.error("Manifest %s nicht geschrieben (Folge-Ticket #%s): %s", datei, neu, fehler)
         return Ergebnis(
             ok=False,
             zeilen=[
@@ -301,9 +298,7 @@ def _folge_ticket(
     return _an_spec_haengen(repo, gh_repo, spec, int(neu), zeilen)
 
 
-def _an_spec_haengen(
-    repo: Path, gh_repo: str, spec: int, neu: int, zeilen: list[str]
-) -> Ergebnis:
+def _an_spec_haengen(repo: Path, gh_repo: str, spec: int, neu: int, zeilen: list[str]) -> Ergebnis:
     """Folge-Ticket über :func:`spec_rand.anhaengen` an die Spec hängen (Kanten, Unter-Issue).
 
     Der Manifest-Eintrag steht schon (mit ``gelb_von``) — damit zählt das Ticket für
@@ -313,9 +308,7 @@ def _an_spec_haengen(
     Fehler des Folge-Tickets.
     """
     if gh.repo_aus_origin(repo) != gh_repo:
-        log.warning(
-            "origin von %s ist nicht %s — Folge-Ticket #%s nur im Manifest", repo, gh_repo, neu
-        )
+        log.warning("origin von %s ist nicht %s — Folge-Ticket #%s nur im Manifest", repo, gh_repo, neu)
         return Ergebnis(ok=True, zeilen=zeilen)
     lauf = spec_rand.anhaengen(repo, spec, neu, config.lade(repo))
     if lauf.exit == spec_rand.EXIT_FEHLER:
@@ -335,13 +328,12 @@ def _an_spec_haengen(
 def _status(daten: dict[str, Any] | None) -> str:
     if not isinstance(daten, dict):
         return "unbekannt"
-    if str(daten.get("state", "")).lower() == "closed":
-        grund = str(daten.get("state_reason") or "").lower()
-        return "verworfen" if grund == "not_planned" else "gebaut"
-    namen = {
-        str(e.get("name")) for e in daten.get("labels") or [] if isinstance(e, dict)
-    }
-    return "verschoben" if LABEL_VERSCHOBEN in namen else "offen"
+    stufe = ticket_zustand.stufe(daten)  # Spec-Schluss zählt nur echten Schluss (#279)
+    if stufe == "verworfen":
+        return "verworfen"
+    if stufe == "zu":
+        return "gebaut"
+    return "verschoben" if LABEL_VERSCHOBEN in ticket_zustand.label_namen(daten) else "offen"
 
 
 def _abruf_github(repo: Path) -> Abruf:
@@ -350,9 +342,7 @@ def _abruf_github(repo: Path) -> Abruf:
     def abruf(n: int) -> dict[str, Any] | None:
         if not slug:
             return None
-        daten = gh.json_lauf(
-            ["api", f"repos/{slug}/issues/{n}"], cwd=repo, timeout=GH_ZEITLIMIT_S
-        )
+        daten = gh.json_lauf(["api", f"repos/{slug}/issues/{n}"], cwd=repo, timeout=GH_ZEITLIMIT_S)
         return daten if isinstance(daten, dict) else None
 
     return abruf
@@ -362,9 +352,7 @@ class ManifestKaputt(ValueError):
     """Manifest der Spec ist da, aber nicht lesbar (kaputtes JSON, keine Ticket-Tabelle)."""
 
 
-def gelbe_folgen(
-    repo: Path, spec: int | str, abruf: Abruf | None = None
-) -> list[GelbeFolge]:
+def gelbe_folgen(repo: Path, spec: int | str, abruf: Abruf | None = None) -> list[GelbeFolge]:
     """Gelbe Folge-Tickets der Spec mit Status; leer ohne Manifest.
 
     ``abruf`` holt je Nummer die GitHub-Daten (Vorgabe: ``gh api issues/<n>``).
@@ -424,16 +412,14 @@ def abschnitt(repo: Path, spec: int | str, abruf: Abruf | None = None) -> list[s
         return [UEBERSCHRIFT, f"FEHLER: Manifest {fehler} — gelbe Folgen unbekannt"]
     if not folgen:
         return []
-    return [UEBERSCHRIFT] + [
-        f"#{f.nummer} {f.status:<10} aus #{f.gelb_von}  {f.titel}" for f in folgen
-    ]
+    return [UEBERSCHRIFT] + [f"#{f.nummer} {f.status:<10} aus #{f.gelb_von}  {f.titel}" for f in folgen]
 
 
 #: Status, mit dem ein Folge-Ticket das Schließen der Spec nicht aufhält: gebaut,
 #: geschlossen (verworfen) oder gebündelt — Label ``verschoben`` = in ein Sammel-Issue
 #: gelegt bzw. bewusst auf später geschoben (E25). ``offen``/``unbekannt`` halten auf.
 #: ponytail: Bündel = nur das Label, kein Verweis aufs Sammel-Issue; Feld ``sammel`` im
-#: Manifest, wenn David das Sammel-Issue nachverfolgen will.
+#: Manifest, wenn der Mensch das Sammel-Issue nachverfolgen will.
 ERLEDIGT = frozenset({"gebaut", "verworfen", "verschoben"})
 
 
@@ -459,9 +445,7 @@ def spec_offen(repo: Path, spec: int | str, abruf: Abruf | None = None) -> list[
     stand = [(t, titel, _status(holen(t))) for t, titel in _spec_tickets(repo, spec)]
     hindernisse = [f"#{t} {s:<10} Spec-Ticket  {titel}" for t, titel, s in stand if s not in ERLEDIGT]
     return hindernisse + [
-        f"#{f.nummer} {f.status:<10} aus #{f.gelb_von}  {f.titel}"
-        for f in folgen
-        if f.status not in ERLEDIGT
+        f"#{f.nummer} {f.status:<10} aus #{f.gelb_von}  {f.titel}" for f in folgen if f.status not in ERLEDIGT
     ]
 
 
@@ -476,9 +460,7 @@ def _spec_tickets(repo: Path, spec: int | str) -> list[tuple[int, str]]:
     ]
 
 
-def spec_schliessen(
-    repo: Path, gh_repo: str, spec: int, abruf: Abruf | None = None
-) -> Ergebnis:
+def spec_schliessen(repo: Path, gh_repo: str, spec: int, abruf: Abruf | None = None) -> Ergebnis:
     """Spec-Issue schließen, wenn :func:`spec_offen` nichts meldet; sonst Abbruch mit Liste."""
     hindernisse = spec_offen(repo, spec, abruf=abruf)
     if hindernisse:

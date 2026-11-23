@@ -78,7 +78,7 @@ def test_c1_entscheide_stufe3_arbeitet_ohne_start_kein_abschluss() -> None:
     jetzt = 1_800_000_000.0
     gemerkt = leiter.Gemerkt(3, jetzt - 5 * MINUTE)
     lage = leiter.Lage(
-        offen=True,
+        stufe="offen",
         fenster=aufseher_stand.ARBEITET,
         still_min=None,
         kontext_k=None,

@@ -11,7 +11,7 @@ hinein (E25); Bau-Log und Stand-Datei bleiben echt.
 
 Kurz-Zeile (≤ 200 Zeichen)::
 
-    #<N> offen|zu|— · arbeitet|still <M> min|Rückfrage <M> min|kein Fenster
+    #<N> offen|fertig gebaut|zu|verworfen|— · arbeitet|still <M> min|Rückfrage <M> min|kein Fenster
          · Kontext <112,5k|—> · Phase <…|—> · „<letzte Aussage, ≤ 70 Zeichen>“
          · <k|—> neue Kommentare
 
@@ -59,7 +59,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, NamedTuple
 
-from to_spawn import aufpasser, bau_log, capo, config, gh, pc_fenster
+from to_spawn import (
+    aufpasser,
+    bau_log,
+    capo,
+    config,
+    gh,
+    pc_fenster,
+    ticket_zustand,
+    wiederanlauf,
+)
 
 log = logging.getLogger("to_spawn.aufseher_stand")
 
@@ -113,6 +122,10 @@ class Quellen:
     #: Am PC (kein tmux, #501): Ticket → Sekunden seit dem letzten Transkript-Eintrag
     #: (``None`` = keine Session). Gesetzt = PC-Weg, tmux wird nicht gefragt.
     pc_still: Callable[[int], float | None] | None = None
+    #: Wiederanlauf-Art eines fertig gebauten Tickets (#282 P3): ``(ticket, arbeitsbaum)`` →
+    #: :func:`wiederanlauf.feststellen`. :func:`echte_quellen` setzt es immer; ``None`` nur in
+    #: Test-Fakes ohne diese Frage (die Leiter entscheidet dann allein nach der Stufe).
+    anlauf: Callable[[int, Path], wiederanlauf.Wiederanlauf | None] | None = None
 
 
 def _tmux_echt(args: list[str]) -> str | None:
@@ -141,7 +154,11 @@ def echte_quellen(repo: Path, gh_repo: str) -> Quellen:
         def pc_still(n: int) -> float | None:
             return pc_fenster.still_s(repo, n, time.time())
     return Quellen(
-        repo=repo, kinder=lambda s: capo.kinder(gh_repo, s), tmux=_tmux_echt, pc_still=pc_still
+        repo=repo,
+        kinder=lambda s: capo.kinder(gh_repo, s),
+        tmux=_tmux_echt,
+        pc_still=pc_still,
+        anlauf=wiederanlauf.feststellen,
     )
 
 
@@ -163,13 +180,18 @@ class TicketLage:
     """Alles, was die Kurz-Zeile eines Tickets braucht (``None`` = unbekannt)."""
 
     nummer: int
-    offen: bool | None
+    stufe: ticket_zustand.Stufe | None  # None = GitHub-Zustand unbekannt
     fenster: str  # ARBEITET | STILL | RUECKFRAGE | KEIN_FENSTER | FENSTER_UNBEKANNT
     still_min: int | None = None
     kontext: str = STRICH
     phase: str = STRICH
     aussage: str = STRICH
     neue_kommentare: int | None = None
+
+    @property
+    def endgueltig_zu(self) -> bool:
+        """Wie ``ticket_zustand.endgueltig_zu`` (zu oder verworfen); unbekannt gilt als nicht zu."""
+        return self.stufe in ticket_zustand.ENDGUELTIG_ZU_STUFEN
 
 
 def _kuerzen(text: str, laenge: int) -> str:
@@ -179,7 +201,7 @@ def _kuerzen(text: str, laenge: int) -> str:
 
 def kurz_zeile(lage: TicketLage) -> str:
     """Eine Zeile ≤ :data:`ZEILE_MAX` Zeichen, nie Pane-Text."""
-    zustand = {True: "offen", False: "zu", None: STRICH}[lage.offen]
+    zustand = STRICH if lage.stufe is None else ticket_zustand.ANZEIGE[lage.stufe]
     fenster = lage.fenster
     if fenster in (STILL, RUECKFRAGE) and lage.still_min is not None:
         fenster = f"{fenster} {lage.still_min} min"
@@ -353,9 +375,11 @@ def _log_lage(n: int, repo: Path) -> tuple[str, str, str] | None:
     return kontext, phase, aussage
 
 
-def _offen(kind: dict[str, Any]) -> bool | None:
-    state = str(kind.get("state") or "").lower()
-    return {"open": True, "closed": False}.get(state)
+def _stufe(kind: dict[str, Any]) -> ticket_zustand.Stufe | None:
+    """Stufe aus ``ticket_zustand`` (#279); ``None``, wenn GitHub keinen Zustand geliefert hat."""
+    if str(kind.get("state") or "").strip().lower() not in ("open", "closed"):
+        return None
+    return ticket_zustand.stufe(kind)
 
 
 @dataclass
@@ -415,7 +439,7 @@ def sammeln(spec: int, q: Quellen, vorher: _Vorher) -> _Ergebnis:
         kontext, phase, aussage = log_lage
         lagen.append(
             TicketLage(
-                n, _offen(kind), zustand, still_min, kontext, phase, aussage, neue
+                n, _stufe(kind), zustand, still_min, kontext, phase, aussage, neue
             )
         )
     if ohne_log:
@@ -454,7 +478,11 @@ def kopf_zeile(spec: int, lagen: list[TicketLage], jetzt: float, noop: bool) -> 
     uhr = datetime.fromtimestamp(jetzt, tz=timezone.utc).astimezone().strftime("%H:%M")
     teile = [
         f"Aufseher-Stand Spec #{spec} · {uhr}",
-        f"{zahl(lambda x: x.offen is True)} offen, {zahl(lambda x: x.offen is False)} zu",
+        (
+            f"{zahl(lambda x: x.stufe == 'offen')} offen, "
+            f"{zahl(lambda x: x.stufe == 'fertig_gebaut')} fertig gebaut, "
+            f"{zahl(lambda x: x.endgueltig_zu)} zu"
+        ),
         (
             f"{zahl(lambda x: x.fenster == ARBEITET)} arbeitet, "
             f"{zahl(lambda x: x.fenster == STILL)} still, "
@@ -501,7 +529,7 @@ def stand(
     sichtbar = [
         z
         for x, z in zip(erg.lagen, zeilen)
-        if alle or x.offen is not False or x.fenster != KEIN_FENSTER
+        if alle or not x.endgueltig_zu or x.fenster != KEIN_FENSTER
     ]
     return "\n".join([kopf_zeile(spec, erg.lagen, jetzt, noop), *sichtbar])
 

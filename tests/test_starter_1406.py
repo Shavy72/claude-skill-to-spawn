@@ -115,6 +115,12 @@ REST_START: frozenset[tuple[str, str]] = frozenset(
         ("review-hook/tests/test_stop_runde5.py", "test_pruefen_cli_findet_beleg_nach_commit"),
         ("review-hook/tests/test_wochenbericht.py", "_lauf"),
         ("review-hook/wochenbericht.py", "bericht_erzeugen"),
+        # 1:1-Übernahme des Review-Werkzeugs (#329 P1): git/pytest/Skripte mit gefangener Ausgabe
+        ("review/_gemeinsam.py", "_blast_radius"),
+        ("review/rot_probe.py", "pruefen"),
+        ("review/rot_probe.py", "sammeln"),
+        ("review/tests/review_hilfen.py", "lauf"),
+        ("review/tests/test_rot_probe_platte.py", "toter_pid"),
     }
 )
 
@@ -132,7 +138,6 @@ KEIN_START = frozenset(
         ("skripte/bau.py", "_gh_json"),  # gh
         ("skripte/leitstand.py", "starte"),  # Kind-Prozess mit gefangener Ausgabe
         ("skripte/spec_stand.py", "sh"),  # Lese-Befehle
-        ("skripte/hooks/staffel_stop.py", "ticket_offen"),  # gh
         ("to_spawn/aufpasser.py", "Aufpasser.sh"),  # Lese-Befehle (tmux list/capture); start=True → Tür
         ("to_spawn/aufseher_stand.py", "_tmux_echt"),  # tmux lesen
         # bash-Tür (#186): einzige subprocess-Stelle für bash; Aufrufer startklar._standard_laeufer

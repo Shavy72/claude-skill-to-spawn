@@ -135,3 +135,61 @@ def test_bau_start_bricht_bei_veraltetem_ordner_mit_zeile_ab(klon: Path) -> None
     ausgabe = fertig.stdout + fertig.stderr
     assert fertig.returncode == 2, ausgabe
     assert f"{N} Commits hinter origin/main" in ausgabe and "Tun:" in ausgabe
+
+
+@pytest.mark.parametrize("weg", ["anderer_zweig", "losgeloest"])
+def test_nicht_auf_hauptzweig_und_hinter_bricht_ab(klon: Path, weg: str) -> None:
+    """Kante (a): anderer Zweig bzw. losgelöster HEAD und hinter → Abbruch mit Zahl, nichts bewegt."""
+    if weg == "anderer_zweig":
+        _git(klon, "switch", "-q", "-c", "fix/irgendwas")
+    else:
+        _git(klon, "switch", "-q", "--detach")
+    vorher = _git(klon, "rev-parse", "HEAD")
+    stand = arbeitsstand.sicherstellen(klon)
+    assert stand.zustand == arbeitsstand.ABBRUCH and not stand.ok
+    assert f"{N} Commits hinter origin/main" in stand.text and "switch main" in stand.text
+    assert _git(klon, "rev-parse", "HEAD") == vorher
+
+
+def test_unversionierte_dateien_hindern_nachziehen_nicht(klon: Path) -> None:
+    """Kante (e): unversionierte Datei bleibt liegen, Nachziehen klappt trotzdem."""
+    notiz = klon / "notiz-unversioniert.txt"
+    notiz.write_text("bleibt", encoding="utf-8")
+    stand = arbeitsstand.sicherstellen(klon)
+    assert stand.zustand == arbeitsstand.NACHGEZOGEN, stand.text
+    assert notiz.read_text(encoding="utf-8") == "bleibt"
+    assert _git(klon, "rev-parse", "HEAD") == _git(klon, "rev-parse", "origin/main")
+
+
+def test_aktueller_klon_ohne_zweig_und_sauberkeits_zwang(klon: Path) -> None:
+    """Bau-Server-Fall: hinter == 0 → aktuell, auch auf anderem Zweig mit lokaler Änderung."""
+    _git(klon, "pull", "-q", "--ff-only")
+    _git(klon, "switch", "-q", "-c", "arbeit")
+    (klon / VORLAGE).write_text('{"prompt_template": "von Hand"}', encoding="utf-8")
+    stand = arbeitsstand.sicherstellen(klon)
+    assert stand.zustand == arbeitsstand.AKTUELL and stand.ok, stand.text
+
+
+def test_zwei_starts_zugleich_scheitern_nicht_an_git_sperre(klon: Path) -> None:
+    """Kante (f): zwei Prozesse rufen die Tür gleichzeitig im selben Ordner — beide ok, einer zieht nach."""
+    code = (
+        "import sys; from pathlib import Path; sys.path.insert(0, sys.argv[1]);"
+        "from to_spawn import arbeitsstand as a;"
+        "s = a.sicherstellen(Path(sys.argv[2])); print(s.zustand); print(s.text)"
+    )
+    env = {k: v for k, v in os.environ.items() if k != arbeitsstand.TEST_OK_ENV}
+    starts = [
+        subprocess.Popen(
+            [sys.executable, "-c", code, str(SKILL), str(klon)],
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+        )
+        for _ in range(2)
+    ]
+    ergebnisse = [p.communicate(timeout=120) for p in starts]
+    zustaende = sorted(aus.splitlines()[0] if aus else f"leer: {err}" for aus, err in ergebnisse)
+    assert zustaende == [arbeitsstand.AKTUELL, arbeitsstand.NACHGEZOGEN], ergebnisse
+    assert _git(klon, "rev-parse", "HEAD") == _git(klon, "rev-parse", "origin/main")

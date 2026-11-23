@@ -1,4 +1,4 @@
-"""Frage-Sperre (#321): Bau-Sessions fragen David nie — Hooks und Rechte in ``bau.py`` und im Bau-Server-Template."""
+"""Frage-Sperre (#321): Bau-Sessions fragen den Menschen nie — Hooks und Rechte in ``bau.py`` und im Bau-Server-Template."""
 
 from __future__ import annotations
 

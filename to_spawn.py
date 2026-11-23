@@ -44,6 +44,8 @@ from to_spawn import (  # noqa: E402
     aufseher_stand,
     bau_log,
     befund,
+    briefkasten,
+    briefkasten_cli,
     config,
     deploy_status,
     einrichten,
@@ -63,6 +65,7 @@ from to_spawn import (  # noqa: E402
     spec_rand,
     speicher,
     startklar,
+    ticket_zustand,
     ticketstand,
     uebergabe_sichern,
     umzug,
@@ -81,11 +84,19 @@ def _tickets(wert: str | None) -> list[str] | None:
     return [teil.strip() for teil in wert.split(",") if teil.strip()]
 
 
-def _spec_tickets(repo: Path, spec: str) -> list[str]:
+def _spec_tickets(repo: Path, spec: str, *, mit_briefkasten: bool = False) -> list[str]:
+    """Tickets der Spec aus dem Manifest; ohne Manifest alle aus dem Bau-Log.
+
+    ``mit_briefkasten`` (nur die Entscheidungs-Liste): ohne Manifest zählen auch Tickets, die nur im
+    Briefkasten stehen (#278 P3b) — sonst fehlten Aufseher-Antworten ohne Bau-Log-Zeile.
+    """
     try:
         daten = manifest.lade_manifest(repo, spec)
     except (FileNotFoundError, ValueError):
-        return bau_log.alle_tickets(repo)
+        tickets = set(bau_log.alle_tickets(repo))
+        if mit_briefkasten:
+            tickets.update(briefkasten.alle_tickets())
+        return sorted(tickets, key=manifest.ticket_schluessel)
     return sorted(daten["tickets"], key=manifest.ticket_schluessel)
 
 
@@ -336,6 +347,41 @@ def _blocker(args: argparse.Namespace) -> int:
     return 0
 
 
+def _zu_bauen(args: argparse.Namespace) -> int:
+    """Unterbefehl ``zu-bauen`` (#279): Tickets der Spec, an denen noch jemand bauen muss.
+
+    Eine Nummer je Zeile, Regel nur in :func:`ticket_zustand.fertig_gebaut`. Unbekannter
+    Stand (gh-Fehler) → Nummer fehlt, Zeile auf stderr, Exit 1 — fail-closed, nie „zu bauen“.
+    """
+    repo = config.repo_wurzel(_repo_aus_umgebung())
+    code = 0
+    for ticket in _spec_tickets(repo, args.spec):
+        daten = ticket_zustand.lesen(ticket, repo)
+        if daten is None:
+            print(f"#{ticket}: Ticket-Stand nicht bestimmbar — nicht gestartet", file=sys.stderr)
+            code = 1
+        elif not ticket_zustand.fertig_gebaut(daten):
+            print(ticket)
+    return code
+
+
+def _ticket_lage(args: argparse.Namespace) -> int:
+    """Unterbefehl ``ticket-lage`` (#282): Lage beim erneuten Start, Regel nur in :mod:`to_spawn.wiederanlauf`.
+
+    Genau eine Zeile: Art (``neu``/``fortsetzen``/``abschluss``/``nichts``), bei ``abschluss``
+    dazu was fehlt — Exit 0. Stand nicht bestimmbar → ``unbekannt: …``, Exit 2 (fail-closed).
+    """
+    from to_spawn import wiederanlauf
+
+    repo = config.repo_wurzel(_repo_aus_umgebung())
+    lage = wiederanlauf.feststellen(args.ticket, repo)
+    if lage is None:
+        print(f"unbekannt: Stand von #{args.ticket} nicht bestimmbar — nichts starten")
+        return 2
+    print(lage.zeile())
+    return 0
+
+
 def _anhaengen(args: argparse.Namespace) -> int:
     """Unterbefehl ``anhaengen`` (E2-2): Issue an Spec hängen — Kanten, Manifest, Unter-Issue."""
     repo = config.repo_wurzel(_repo_aus_umgebung())
@@ -402,6 +448,14 @@ def _eintrag(args: argparse.Namespace) -> int:
         # Damit der Aufseher den Vorfall schon vor Commit + Push sieht (#286).
         bau_log.spiegel_in_laufdatei(repo, zeile["ticket"], zeile)
     print(f"Bau-Log #{zeile['ticket']}: {args.typ} → {bau_log.log_pfad(repo, zeile['ticket'])}")
+    return 0
+
+
+def _entscheidungen(args: argparse.Namespace) -> int:
+    """``entscheidungen S``: Liste aller Entscheidungen einer Spec (#278, Tür B)."""
+    repo = config.repo_wurzel(_repo_aus_umgebung())
+    for z in briefkasten.liste(_spec_tickets(repo, args.spec, mit_briefkasten=True), log_repo=repo):
+        print(f"#{z['ticket']} · {z['wer']} · {z['was']} · {z['warum']} · {z['beleg']}")
     return 0
 
 
@@ -615,6 +669,14 @@ def main(argv: list[str] | None = None) -> int:
     )
     p_blocker.add_argument("ticket", type=int)
     p_blocker.add_argument("--gh-repo", default="", help="owner/name (sonst aus origin)")
+    p_zu_bauen = unter.add_parser(
+        "zu-bauen", help="Tickets der Spec, die noch nicht fertig gebaut sind (eine Nummer je Zeile, #279)"
+    )
+    p_zu_bauen.add_argument("spec")
+    p_lage = unter.add_parser(
+        "ticket-lage", help="Lage beim erneuten Start: neu/fortsetzen/abschluss/nichts + fehlt (Exit 0, unbekannt 2, #282)"
+    )
+    p_lage.add_argument("ticket", type=int)
     unter.add_parser("hook-stop", help="Stop-Hook (JSON auf stdin)")
     unter.add_parser("hook-subagent-stop", help="SubagentStop-Hook (JSON auf stdin)")
     unter.add_parser(
@@ -641,7 +703,7 @@ def main(argv: list[str] | None = None) -> int:
     p_eintrag.add_argument(
         "--typ",
         required=True,
-        choices=["zusammenfassung", "entscheidung", "blockiert", "vorfall"],
+        choices=["zusammenfassung", "entscheidung", "blockiert", "frage", "vorfall"],
     )
     p_eintrag.add_argument("--umfang", help="was gebaut wurde")
     p_eintrag.add_argument("--schwierigkeiten", help="was schwer war")
@@ -663,6 +725,11 @@ def main(argv: list[str] | None = None) -> int:
     p_eintrag.add_argument(
         "--repo", help="Ordner mit dem Bau-Log (sonst TO_SPAWN_LOG_REPO bzw. Git-Wurzel)"
     )
+
+    # Tür B (#278 P2): Befugnis prüfen, Frage einwerfen, Antwort lesen/schreiben, Liste je Spec.
+    briefkasten_cli.richte_parser_ein(unter)
+    p_ents = unter.add_parser("entscheidungen", help="Liste aller Entscheidungen einer Spec")
+    p_ents.add_argument("spec")
 
     p_um = unter.add_parser(
         "umrechnen", help="alte Bau-Log-Zeilen: Spitzen-Kontext aus dem Transkript nachtragen"
@@ -723,7 +790,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     p_aufr.add_argument("--trocken", action="store_true", help="mit --aufgabe-einrichten: nur zeigen")
     p_aufr.add_argument(
-        "--altbestand-liste", type=Path, metavar="DATEI.md", help="Lösch-Liste für David schreiben"
+        "--altbestand-liste", type=Path, metavar="DATEI.md", help="Lösch-Liste für den Menschen schreiben"
     )
     # Ticket-Zweige (#1439): ein Zweig (Schlange) bzw. Probelauf-Liste aller Zweige.
     p_aufr.add_argument("--zweig", help="Zweig ticket/<N>-… aufräumen (statt eines Ordners)")
@@ -761,6 +828,10 @@ def main(argv: list[str] | None = None) -> int:
         return _anhaengen(args)
     if args.befehl == "umrechnen":
         return _umrechnen(args)
+    if args.befehl in briefkasten_cli.BEFEHLE:
+        return briefkasten_cli.lauf(args)
+    if args.befehl == "entscheidungen":
+        return _entscheidungen(args)
     if args.befehl == "nest":
         return nest.lauf(args)
     if args.befehl == "leitstand":
@@ -801,6 +872,10 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.befehl == "blocker":
         return _blocker(args)
+    if args.befehl == "zu-bauen":
+        return _zu_bauen(args)
+    if args.befehl == "ticket-lage":
+        return _ticket_lage(args)
     if args.befehl == "startklar":
         ordner = args.ordner.resolve() if args.ordner else config.repo_wurzel(_repo_aus_umgebung())
         code, text = startklar.ausgabe(startklar.pruefe(ordner, args.spec))

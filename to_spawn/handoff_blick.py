@@ -125,7 +125,7 @@ class Blick:
         lage = self.naht.lage(self.spec, ticket)
         if (
             lage is None
-            or lage.offen is not True
+            or lage.stufe != "offen"
             or lage.fenster != aufseher_stand.STILL
         ):
             log.debug(
@@ -133,7 +133,7 @@ class Blick:
                 ticket,
                 "kein Sub-Issue"
                 if lage is None
-                else f"offen={lage.offen}, Fenster {lage.fenster}",
+                else f"stufe={lage.stufe}, Fenster {lage.fenster}",
             )
             return False
         return True

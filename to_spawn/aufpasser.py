@@ -16,7 +16,7 @@ Läuft per Cron alle 15 Minuten (0 Token, reines Skript) und sieht je tmux-Sitzu
    erst, wenn Fenster und Prozess 5 s lang bleiben (R6). Nie bei Label
    ``ready-for-human``/``needs-info``/``wontfix``; verschwindet das Fenster nach
    dem Start gleich wieder, gibt es höchstens 2 Starts in 6 h, dann einmal
-   „braucht David“.
+   „braucht den Menschen“.
 2. **Ticket zu:** ``bau <N>`` mit geschlossenem Ticket, Pane-Text seit ≥ 15 min
    unverändert und keine laufende Arbeit → Worktree sichern (falls schmutzig),
    Session beenden. Ist die Grenze voll (Speicher/Session-Zahl) und meldet die
@@ -33,15 +33,15 @@ Läuft per Cron alle 15 Minuten (0 Token, reines Skript) und sieht je tmux-Sitzu
      ``--resume <id>`` neu starten (Fenster, Index und Sitzung bleiben — die Sitzung
      stirbt nie, auch als letztes Fenster). Danach bis 120 s nachweisen, dass die
      Session mit derselben ID wieder läuft. Scheitert Sicherung oder Nachweis,
-     bleibt alles stehen und David wird gerufen.
-   - Stufe 2 → nichts mehr ändern, einmal „braucht David“ melden (Stufe 3).
+     bleibt alles stehen und der Mensch wird gerufen.
+   - Stufe 2 → nichts mehr ändern, einmal „braucht den Menschen“ melden (Stufe 3).
    Die Stufe steigt nur bei einem Eingriff. Ändert sich der Pane-Text danach, hat
    der Eingriff gewirkt: Stufe 0, Uhr neu. Kill/Resume gibt es also nur, wenn nach
    dem Anstupsen ``hang_min`` lang GAR NICHTS passiert ist; Stufe 3 bleibt, bis der
    Text sich ändert — kein Zeit-Reset. Direkt vor jedem Eingriff wird der Pane-Text
    neu gelesen: anders als zu Laufbeginn, arbeitend oder Deploy/Gate inzwischen
    gestartet ⇒ Kette abbrechen (R4). Mehr als 3 Anstupser je Fenster in 24 h ⇒
-   Stufe 3, einmal „braucht David“ (R5). Das Aufseher-Fenster geht denselben Weg,
+   Stufe 3, einmal „braucht den Menschen“ (R5). Das Aufseher-Fenster geht denselben Weg,
    nur ohne Sicherung (kein Worktree): ``wache.py --resume <id>`` (R1).
    Lebt im Pane nur noch die Shell (Session beendet), wird nie angestupst — der
    Text liefe als Befehl —, sondern nach ``hang_min`` Stille gleich bei Stufe 1
@@ -103,6 +103,7 @@ from to_spawn import (
     sessions_datei,
     speicher,
     starter,
+    ticket_zustand,
     vorfall,
 )
 from to_spawn import sperre as _sperre
@@ -128,7 +129,7 @@ START_MAX = 2
 START_FENSTER_S = 6 * 3600
 #: Nach einem Fenster-Start so lange prüfen, dass Fenster und Prozess bleiben (R6).
 START_NACHWEIS_S = 5.0
-#: Mehr als so viele Anstupser je Fenster im Zeitfenster ⇒ „braucht David“ (R5).
+#: Mehr als so viele Anstupser je Fenster im Zeitfenster ⇒ „braucht den Menschen“ (R5).
 STUPSER_MAX = 3
 STUPSER_FENSTER_S = 24 * 3600
 #: Meldungen ohne Eingriff kommen je Fenster/Ereignis nur einmal am Tag ins Issue;
@@ -183,7 +184,7 @@ EREIGNIS_VORFALL: dict[str, tuple[str, str, str, str]] = {
     ),
     "braucht_david": (
         "mensch",
-        "Bau-Kette wartet auf Davids Entscheidung",
+        "Bau-Kette wartet auf die Entscheidung des Menschen",
         "Die Frage wurde nicht vor dem Spawn im Grill entschieden",
         "Entscheidung in den Grill vorziehen; sonst greift die 60-min-Annahme (#285)",
     ),
@@ -1297,36 +1298,45 @@ class Aufpasser:
         roh = os.environ.get("TO_SPAWN_REPO")
         return Path(roh) if roh else None
 
-    def offene_tickets(self, spec: str, repo: Path) -> set[int]:
+    def offene_tickets(self, spec: str, repo: Path) -> dict[int, dict]:
+        """Unter-Tickets, die nicht :func:`ticket_zustand.endgueltig_zu` sind, je Nummer
+        mit ``state``/``labels`` — aus EINEM Listen-Aufruf, kein ``issue view`` je Ticket
+        (#279: ein hängendes ``gh`` hielt sonst den ganzen Takt auf). Unlesbar ⇒
+        ``RuntimeError``."""
         raus = self.sh(
             "gh",
             "api",
             f"repos/{{owner}}/{{repo}}/issues/{spec}/sub_issues",
             "--paginate",
             "--jq",
-            '.[] | select(.state=="open") | .number',
+            ".[] | {number, state, state_reason, labels: [.labels[]?.name]} | tojson",
             cwd=repo,
         )
-        return {int(x) for x in raus.split()}
+        try:
+            tickets = [json.loads(z) for z in raus.splitlines() if z.strip()]
+            if not all(isinstance(t, dict) for t in tickets):
+                raise TypeError("Zeile ist kein JSON-Objekt")
+            return {
+                int(t["number"]): t
+                for t in tickets
+                if not ticket_zustand.endgueltig_zu(t)
+            }
+        except (json.JSONDecodeError, KeyError, TypeError) as fehler:
+            raise RuntimeError(f"sub_issues {spec}: unlesbar ({fehler})") from None
 
     def ticket_lesen(self, ticket: int, repo: Path) -> dict:
-        """``state`` und ``labels`` (Namen) eines Tickets."""
-        raus = self.sh(
-            "gh", "issue", "view", str(ticket), "--json", "state,labels", cwd=repo
-        )
-        try:
-            roh = json.loads(raus)
-            labels = {
-                str(x.get("name", ""))
-                for x in roh.get("labels") or []
-                if isinstance(x, dict)
-            }
-            return {"state": roh.get("state"), "labels": labels}
-        except (json.JSONDecodeError, AttributeError) as fehler:
-            raise RuntimeError(f"gh issue view {ticket}: unlesbar ({fehler})") from None
+        """Ticket über :func:`ticket_zustand.lesen` — alle Felder des Bausteins, ``labels``
+        als Menge der Namen (für ``& STOPP_LABELS``). ``RuntimeError``, wenn GitHub
+        nichts Lesbares liefert; der Aufrufer entscheidet dann vorsichtig."""
+        daten = ticket_zustand.lesen(ticket, repo)
+        if daten is None:
+            raise RuntimeError(f"#{ticket}: Ticket-Zustand nicht lesbar (gh)")
+        return {**daten, "labels": ticket_zustand.label_namen(daten)}
 
-    def ticket_zu(self, ticket: int, repo: Path) -> bool:
-        return self.ticket_lesen(ticket, repo).get("state") == "CLOSED"
+    def zu_bauen(self, offen: dict[int, dict]) -> set[int]:
+        """Die offenen Tickets, die noch nicht fertig gebaut sind — nur dort baut noch
+        jemand (#279, Fall 03:05). Urteil aus den Listen-Daten, kein weiterer Aufruf."""
+        return {n for n, t in offen.items() if not ticket_zustand.fertig_gebaut(t)}
 
     def pane_text(self, ziel: str) -> str:
         return self.tmux("capture-pane", "-p", "-t", ziel)
@@ -1929,13 +1939,14 @@ class Aufpasser:
             platznot = still_min < KARENZ_MIN and self._platznot(repo, info)
             if still_min >= KARENZ_MIN or platznot:
                 try:
-                    zu = self.ticket_zu(ticket, repo)
+                    daten = self.ticket_lesen(ticket, repo)
                 except RuntimeError as fehler:
                     log.error("%s: Ticket-Zustand nicht lesbar: %s", f.name, fehler)
-                    zu = False
-                if zu:
+                    daten = {}  # gilt als offen: nichts schließen
+                if ticket_zustand.fertig_gebaut(daten):
                     self.ticket_zu_schliessen(
-                        f, ticket, repo, schluessel, hash_start, info, platznot
+                        f, ticket, repo, schluessel, hash_start, info, platznot,
+                        grund=ticket_zustand.wortlaut(daten),
                     )
                     return
 
@@ -1946,7 +1957,7 @@ class Aufpasser:
                     repo,
                     schluessel,
                     "rueckfrage",
-                    f"„{f.name}“ wartet seit {int(still_min)} min auf eine Ja/Nein-Bestätigung — braucht David.",
+                    f"„{f.name}“ wartet seit {int(still_min)} min auf eine Ja/Nein-Bestätigung — braucht den Menschen.",
                 )
             return
         if (
@@ -1973,7 +1984,7 @@ class Aufpasser:
                     repo,
                     schluessel,
                     "session_beendet",
-                    f"„{f.name}“: Session beendet, keine Gesprächs-ID — braucht David.",
+                    f"„{f.name}“: Session beendet, keine Gesprächs-ID — braucht den Menschen.",
                 )
                 return
             sid, cwd = gemerkt
@@ -1995,7 +2006,7 @@ class Aufpasser:
                     repo,
                     schluessel,
                     "stupser_erschoepft",
-                    f"„{f.name}“ wurde {STUPSER_MAX}× angestupst und wird immer wieder still — braucht David.",
+                    f"„{f.name}“ wurde {STUPSER_MAX}× angestupst und wird immer wieder still — braucht den Menschen.",
                 )
                 return
             if not self.vor_eingriff(f, hash_start, repo):
@@ -2024,7 +2035,7 @@ class Aufpasser:
                 repo,
                 schluessel,
                 "braucht_david",
-                f"„{f.name}“ reagiert nach Anstupsen und Fortsetzen nicht — braucht David.",
+                f"„{f.name}“ reagiert nach Anstupsen und Fortsetzen nicht — braucht den Menschen.",
             )
 
     def _platznot(self, repo: Path, info: SessionInfo | None) -> bool:
@@ -2047,7 +2058,10 @@ class Aufpasser:
         hash_start: str,
         info: SessionInfo | None,
         platznot: bool = False,
+        *,
+        grund: str,
     ) -> None:
+        """``grund``: :func:`ticket_zustand.wortlaut` für die Meldung (#279)."""
         if platznot and not self.e.trocken:
             log.info(
                 "%s: Ticket zu, Grenze voll — %g s Gegenprobe statt Karenz",
@@ -2066,7 +2080,7 @@ class Aufpasser:
                 repo,
                 schluessel,
                 "sicherung_fehlgeschlagen",
-                f"„{f.name}“: Ticket zu, aber Sicherung fehlgeschlagen — braucht David.",
+                f"„{f.name}“: Ticket zu, aber Sicherung fehlgeschlagen — braucht den Menschen.",
             )
             return
         if not self.vor_eingriff(f, hash_start, repo):
@@ -2105,7 +2119,7 @@ class Aufpasser:
             repo,
             schluessel,
             "geschlossen",
-            f"„{f.name}“ geschlossen (Ticket zu).{zusatz}",
+            f"„{f.name}“ geschlossen ({grund}).{zusatz}",
         )
 
     def sichern_und_fortsetzen(
@@ -2127,7 +2141,7 @@ class Aufpasser:
                 repo,
                 schluessel,
                 "braucht_david",
-                f"„{f.name}“ weiter still, aber keine Gesprächs-ID gefunden — braucht David.",
+                f"„{f.name}“ weiter still, aber keine Gesprächs-ID gefunden — braucht den Menschen.",
             )
             return
         sid = info.session_id
@@ -2145,7 +2159,7 @@ class Aufpasser:
                     repo,
                     schluessel,
                     "sicherung_fehlgeschlagen",
-                    f"„{f.name}“ weiter still — Sicherung fehlgeschlagen — braucht David.",
+                    f"„{f.name}“ weiter still — Sicherung fehlgeschlagen — braucht den Menschen.",
                 )
                 return
         if not self.vor_eingriff(f, hash_start, repo):
@@ -2169,7 +2183,7 @@ class Aufpasser:
                 )
         except RuntimeError as fehler:
             # Prozess ist womöglich schon beendet, das Fenster aber leer: nicht
-            # noch einmal versuchen, sondern David rufen (Stufe 3).
+            # noch einmal versuchen, sondern den Menschen rufen (Stufe 3).
             log.error("Fenster %s fortsetzen fehlgeschlagen: %s", f.ziel, fehler)
             self._braucht_david(
                 e,
@@ -2177,7 +2191,7 @@ class Aufpasser:
                 repo,
                 schluessel,
                 "fortsetzen_fehlgeschlagen",
-                f"„{f.name}“: Fortsetzen fehlgeschlagen (tmux: {fehler}) — braucht David.",
+                f"„{f.name}“: Fortsetzen fehlgeschlagen (tmux: {fehler}) — braucht den Menschen.",
             )
             return
         if ticket is None:
@@ -2209,7 +2223,7 @@ class Aufpasser:
                 schluessel,
                 "fortsetzen_fehlgeschlagen",
                 f"„{neu.name}“: {gesichert}, aber Fortsetzen fehlgeschlagen "
-                f"(Session {sid[:8]} nicht wieder da) — braucht David.",
+                f"(Session {sid[:8]} nicht wieder da) — braucht den Menschen.",
             )
             return
         if not self.e.trocken:
@@ -2254,7 +2268,7 @@ class Aufpasser:
                 repo,
                 f"spec-{spec}/{name}",
                 "startet_nicht",
-                f"{wer} startet nicht (Fenster verschwindet wieder) — braucht David.",
+                f"{wer} startet nicht (Fenster verschwindet wieder) — braucht den Menschen.",
             )
             return False
         return True
@@ -2344,7 +2358,10 @@ class Aufpasser:
             ", ".join(sorted(vorhanden)),
             sorted(offen) or "-",
         )
-        fehlend = [t for t in sorted(offen) if f"bau {t}" not in vorhanden]
+        # Bau-Fenster nur für „noch nicht fertig gebaut“ (#279); der Aufseher unten
+        # bleibt, bis alles endgültig zu ist.
+        bauen = self.zu_bauen(offen)
+        fehlend = [t for t in sorted(bauen) if f"bau {t}" not in vorhanden]
         # Läuft das Ticket schon in einer Fenster-Kette (oder folgt dort noch),
         # kein eigenes Fenster — sonst zwei Sessions auf einem Ticket (#598).
         belegt = self.belegte_tickets() if fehlend else set()
@@ -2367,7 +2384,7 @@ class Aufpasser:
             self.fehlendes_fenster(sitzung, spec, repo, None)
         for f in fenster:
             try:
-                self.fenster_pruefen(f, repo, offen)
+                self.fenster_pruefen(f, repo, bauen)
             except RuntimeError as fehler:
                 log.error("%s: Fenster „%s“ übersprungen: %s", sitzung, f.name, fehler)
 

@@ -388,7 +388,7 @@ class Aufsicht(threading.Thread):
             self.halt.wait(self.takt)
 
 
-#: Denkstufe der Aufseher-Session, wenn die Konfig ``effort.waechter`` nichts sagt (David 28.09.2026).
+#: Denkstufe der Aufseher-Session, wenn die Konfig ``effort.waechter`` nichts sagt (Vorgabe des Menschen, 28.09.2026).
 EFFORT = "medium"
 
 

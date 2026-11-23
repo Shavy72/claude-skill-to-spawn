@@ -122,7 +122,7 @@ def test_d1_stufe5_und_stufe3_nicht_merkbar_exit1_keine_ausnahme(
 
 def _lage(**kw: Any) -> leiter.Lage:
     basis: dict[str, Any] = {
-        "offen": True,
+        "stufe": "offen",
         "fenster": aufseher_stand.ARBEITET,
         "still_min": None,
         "kontext_k": None,

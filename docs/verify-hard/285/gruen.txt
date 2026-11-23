@@ -1,0 +1,6 @@
+# Neue Tests (#285)
+86 passed in 144.45s (0:02:24)
+
+# Volle Suite (-n 8), PC Windows
+15 failed, 2656 passed, 147 skipped, 18 xfailed in 1622.01s (0:27:02)
+Rot davon: nur test_hausmeister_*, test_eigener_handoff_542, test_pruef_ausfuehren_3b — laufen auch auf origin/main rot (Gegenprobe: test_hausmeister_1368 dort 28 failed), wechselnd je Lauf (Windows/Worktree-Umgebung).

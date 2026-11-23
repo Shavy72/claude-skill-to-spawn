@@ -1,0 +1,597 @@
+F.F..FFFFFFFFFFFFFFFFFFF.F                                               [100%]
+=================================== FAILURES ===================================
+_________ test_node_modules_ohne_paketliste_meldet_info_statt_warnung __________
+
+tmp_path = PosixPath('<tmp>/pytest-3034/test_node_modules_ohne_paketli0')
+caplog = <_pytest.logging.LogCaptureFixture object at 0x7ff9695cb230>
+
+    def test_node_modules_ohne_paketliste_meldet_info_statt_warnung(
+        tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        probe = _probe_py(tmp_path / "py")
+        _ausschliessen(probe, "node_modules/")
+        _schreibe(probe, "node_modules/.modules.yaml", "layoutVersion: 5\n")
+        _schreibe(probe, "node_modules/paket/index.js", "1")
+        with caplog.at_level(logging.INFO, logger="to_spawn.pruef"):
+            assert cache.schluessel(probe, "base", "HEAD") is None  # weiter fail-closed: kein Schlüssel
+        eigene = [r for r in caplog.records if r.name == "to_spawn.pruef"]
+>       assert not [r for r in eigene if r.levelno >= logging.WARNING], [r.getMessage() for r in eigene]
+E       AssertionError: ['Prüf-Cache: Schlüssel nicht bestimmbar (node_modules/ ohne .package-lock.json)']
+E       assert not [<LogRecord: to_spawn.pruef, 30, <repo>/to_spawn/pruef/cache.py, 322, "Prüf-Cache: Schlüssel nicht bestimmbar (%s)">]
+
+tests/test_pruef_reste_343_218.py:39: AssertionError
+------------------------------ Captured log call -------------------------------
+WARNING  to_spawn.pruef:cache.py:322 Prüf-Cache: Schlüssel nicht bestimmbar (node_modules/ ohne .package-lock.json)
+________________ test_unchecked_hash_pyc_ist_kein_werkzeug_rest ________________
+
+tmp_path = PosixPath('<tmp>/pytest-3034/test_unchecked_hash_pyc_ist_ke0')
+
+    def test_unchecked_hash_pyc_ist_kein_werkzeug_rest(tmp_path: Path) -> None:
+        pfad = _pyc(tmp_path, py_compile.PycInvalidationMode.UNCHECKED_HASH)
+>       assert not cache.ist_werkzeug_rest(tmp_path, pfad)
+E       AssertionError: assert not True
+E        +  where True = <function ist_werkzeug_rest at 0x7ff969085760>(PosixPath('<tmp>/pytest-3034/test_unchecked_hash_pyc_ist_ke0'), 'app/__pycache__/werk.cpython-3.pyc')
+E        +    where <function ist_werkzeug_rest at 0x7ff969085760> = cache.ist_werkzeug_rest
+
+tests/test_pruef_reste_343_218.py:66: AssertionError
+_____________ test_unchecked_hash_pyc_im_baum_erzwingt_voll_mit_ab _____________
+
+repo = PosixPath('<tmp>/pytest-3034/test_unchecked_hash_pyc_im_bau0')
+
+    def test_unchecked_hash_pyc_im_baum_erzwingt_voll_mit_ab(repo: Path) -> None:  # noqa: F811
+        basis = _code_commit(repo)
+        _pyc(repo, py_compile.PycInvalidationMode.UNCHECKED_HASH)
+        _schreibe(repo, "app/werk.py", "def eins() -> int:\n    return 1  # neu\n")  # Quelle wie im Commit
+>       assert sofort.ungespeichert(repo) == ["app/__pycache__/"]
+E       AssertionError: assert [] == ['app/__pycache__/']
+E         
+E         Right contains one more item: 'app/__pycache__/'
+E         Use -v to get more diff
+
+tests/test_pruef_reste_343_218.py:83: AssertionError
+________ test_setup_und_requirements_ordner_sind_r3[py-vitest.setup.ts] ________
+
+pfad = 'vitest.setup.ts', adapter = 'py'
+
+    @pytest.mark.parametrize(
+        "pfad",
+        [
+            "vitest.setup.ts",
+            "web/vitest.setup.js",
+            "src/setupTests.ts",
+            "setupTests.js",
+            "jest.setup.js",
+            "requirements/dev.txt",
+            "requirements.in",
+            "requirements/base.in",
+            "web/requirements/test.txt",
+        ],
+    )
+    @pytest.mark.parametrize("adapter", ["py", "node"])
+    def test_setup_und_requirements_ordner_sind_r3(pfad: str, adapter: str) -> None:
+        grund = regeln.vorab([pfad], adapter, [])
+>       assert grund.startswith("R3"), grund
+E       AssertionError: R1: Nicht-Code-Datei geändert (vitest.setup.ts)
+E       assert False
+E        +  where False = <built-in method startswith of str object at 0x7ff969433a60>('R3')
+E        +    where <built-in method startswith of str object at 0x7ff969433a60> = 'R1: Nicht-Code-Datei geändert (vitest.setup.ts)'.startswith
+
+tests/test_pruef_reste_343_218.py:108: AssertionError
+______ test_setup_und_requirements_ordner_sind_r3[py-web/vitest.setup.js] ______
+
+pfad = 'web/vitest.setup.js', adapter = 'py'
+
+    @pytest.mark.parametrize(
+        "pfad",
+        [
+            "vitest.setup.ts",
+            "web/vitest.setup.js",
+            "src/setupTests.ts",
+            "setupTests.js",
+            "jest.setup.js",
+            "requirements/dev.txt",
+            "requirements.in",
+            "requirements/base.in",
+            "web/requirements/test.txt",
+        ],
+    )
+    @pytest.mark.parametrize("adapter", ["py", "node"])
+    def test_setup_und_requirements_ordner_sind_r3(pfad: str, adapter: str) -> None:
+        grund = regeln.vorab([pfad], adapter, [])
+>       assert grund.startswith("R3"), grund
+E       AssertionError: R1: Nicht-Code-Datei geändert (web/vitest.setup.js)
+E       assert False
+E        +  where False = <built-in method startswith of str object at 0x7ff9694336e0>('R3')
+E        +    where <built-in method startswith of str object at 0x7ff9694336e0> = 'R1: Nicht-Code-Datei geändert (web/vitest.setup.js)'.startswith
+
+tests/test_pruef_reste_343_218.py:108: AssertionError
+_______ test_setup_und_requirements_ordner_sind_r3[py-src/setupTests.ts] _______
+
+pfad = 'src/setupTests.ts', adapter = 'py'
+
+    @pytest.mark.parametrize(
+        "pfad",
+        [
+            "vitest.setup.ts",
+            "web/vitest.setup.js",
+            "src/setupTests.ts",
+            "setupTests.js",
+            "jest.setup.js",
+            "requirements/dev.txt",
+            "requirements.in",
+            "requirements/base.in",
+            "web/requirements/test.txt",
+        ],
+    )
+    @pytest.mark.parametrize("adapter", ["py", "node"])
+    def test_setup_und_requirements_ordner_sind_r3(pfad: str, adapter: str) -> None:
+        grund = regeln.vorab([pfad], adapter, [])
+>       assert grund.startswith("R3"), grund
+E       AssertionError: R1: Nicht-Code-Datei geändert (src/setupTests.ts)
+E       assert False
+E        +  where False = <built-in method startswith of str object at 0x7ff9694334b0>('R3')
+E        +    where <built-in method startswith of str object at 0x7ff9694334b0> = 'R1: Nicht-Code-Datei geändert (src/setupTests.ts)'.startswith
+
+tests/test_pruef_reste_343_218.py:108: AssertionError
+_________ test_setup_und_requirements_ordner_sind_r3[py-setupTests.js] _________
+
+pfad = 'setupTests.js', adapter = 'py'
+
+    @pytest.mark.parametrize(
+        "pfad",
+        [
+            "vitest.setup.ts",
+            "web/vitest.setup.js",
+            "src/setupTests.ts",
+            "setupTests.js",
+            "jest.setup.js",
+            "requirements/dev.txt",
+            "requirements.in",
+            "requirements/base.in",
+            "web/requirements/test.txt",
+        ],
+    )
+    @pytest.mark.parametrize("adapter", ["py", "node"])
+    def test_setup_und_requirements_ordner_sind_r3(pfad: str, adapter: str) -> None:
+        grund = regeln.vorab([pfad], adapter, [])
+>       assert grund.startswith("R3"), grund
+E       AssertionError: R1: Nicht-Code-Datei geändert (setupTests.js)
+E       assert False
+E        +  where False = <built-in method startswith of str object at 0x7ff969433c90>('R3')
+E        +    where <built-in method startswith of str object at 0x7ff969433c90> = 'R1: Nicht-Code-Datei geändert (setupTests.js)'.startswith
+
+tests/test_pruef_reste_343_218.py:108: AssertionError
+_________ test_setup_und_requirements_ordner_sind_r3[py-jest.setup.js] _________
+
+pfad = 'jest.setup.js', adapter = 'py'
+
+    @pytest.mark.parametrize(
+        "pfad",
+        [
+            "vitest.setup.ts",
+            "web/vitest.setup.js",
+            "src/setupTests.ts",
+            "setupTests.js",
+            "jest.setup.js",
+            "requirements/dev.txt",
+            "requirements.in",
+            "requirements/base.in",
+            "web/requirements/test.txt",
+        ],
+    )
+    @pytest.mark.parametrize("adapter", ["py", "node"])
+    def test_setup_und_requirements_ordner_sind_r3(pfad: str, adapter: str) -> None:
+        grund = regeln.vorab([pfad], adapter, [])
+>       assert grund.startswith("R3"), grund
+E       AssertionError: R1: Nicht-Code-Datei geändert (jest.setup.js)
+E       assert False
+E        +  where False = <built-in method startswith of str object at 0x7ff9694333d0>('R3')
+E        +    where <built-in method startswith of str object at 0x7ff9694333d0> = 'R1: Nicht-Code-Datei geändert (jest.setup.js)'.startswith
+
+tests/test_pruef_reste_343_218.py:108: AssertionError
+_____ test_setup_und_requirements_ordner_sind_r3[py-requirements/dev.txt] ______
+
+pfad = 'requirements/dev.txt', adapter = 'py'
+
+    @pytest.mark.parametrize(
+        "pfad",
+        [
+            "vitest.setup.ts",
+            "web/vitest.setup.js",
+            "src/setupTests.ts",
+            "setupTests.js",
+            "jest.setup.js",
+            "requirements/dev.txt",
+            "requirements.in",
+            "requirements/base.in",
+            "web/requirements/test.txt",
+        ],
+    )
+    @pytest.mark.parametrize("adapter", ["py", "node"])
+    def test_setup_und_requirements_ordner_sind_r3(pfad: str, adapter: str) -> None:
+        grund = regeln.vorab([pfad], adapter, [])
+>       assert grund.startswith("R3"), grund
+E       AssertionError: R1: Nicht-Code-Datei geändert (requirements/dev.txt)
+E       assert False
+E        +  where False = <built-in method startswith of str object at 0x7ff969433ad0>('R3')
+E        +    where <built-in method startswith of str object at 0x7ff969433ad0> = 'R1: Nicht-Code-Datei geändert (requirements/dev.txt)'.startswith
+
+tests/test_pruef_reste_343_218.py:108: AssertionError
+________ test_setup_und_requirements_ordner_sind_r3[py-requirements.in] ________
+
+pfad = 'requirements.in', adapter = 'py'
+
+    @pytest.mark.parametrize(
+        "pfad",
+        [
+            "vitest.setup.ts",
+            "web/vitest.setup.js",
+            "src/setupTests.ts",
+            "setupTests.js",
+            "jest.setup.js",
+            "requirements/dev.txt",
+            "requirements.in",
+            "requirements/base.in",
+            "web/requirements/test.txt",
+        ],
+    )
+    @pytest.mark.parametrize("adapter", ["py", "node"])
+    def test_setup_und_requirements_ordner_sind_r3(pfad: str, adapter: str) -> None:
+        grund = regeln.vorab([pfad], adapter, [])
+>       assert grund.startswith("R3"), grund
+E       AssertionError: R1: Nicht-Code-Datei geändert (requirements.in)
+E       assert False
+E        +  where False = <built-in method startswith of str object at 0x7ff9694339f0>('R3')
+E        +    where <built-in method startswith of str object at 0x7ff9694339f0> = 'R1: Nicht-Code-Datei geändert (requirements.in)'.startswith
+
+tests/test_pruef_reste_343_218.py:108: AssertionError
+_____ test_setup_und_requirements_ordner_sind_r3[py-requirements/base.in] ______
+
+pfad = 'requirements/base.in', adapter = 'py'
+
+    @pytest.mark.parametrize(
+        "pfad",
+        [
+            "vitest.setup.ts",
+            "web/vitest.setup.js",
+            "src/setupTests.ts",
+            "setupTests.js",
+            "jest.setup.js",
+            "requirements/dev.txt",
+            "requirements.in",
+            "requirements/base.in",
+            "web/requirements/test.txt",
+        ],
+    )
+    @pytest.mark.parametrize("adapter", ["py", "node"])
+    def test_setup_und_requirements_ordner_sind_r3(pfad: str, adapter: str) -> None:
+        grund = regeln.vorab([pfad], adapter, [])
+>       assert grund.startswith("R3"), grund
+E       AssertionError: R1: Nicht-Code-Datei geändert (requirements/base.in)
+E       assert False
+E        +  where False = <built-in method startswith of str object at 0x7ff969433ad0>('R3')
+E        +    where <built-in method startswith of str object at 0x7ff969433ad0> = 'R1: Nicht-Code-Datei geändert (requirements/base.in)'.startswith
+
+tests/test_pruef_reste_343_218.py:108: AssertionError
+___ test_setup_und_requirements_ordner_sind_r3[py-web/requirements/test.txt] ___
+
+pfad = 'web/requirements/test.txt', adapter = 'py'
+
+    @pytest.mark.parametrize(
+        "pfad",
+        [
+            "vitest.setup.ts",
+            "web/vitest.setup.js",
+            "src/setupTests.ts",
+            "setupTests.js",
+            "jest.setup.js",
+            "requirements/dev.txt",
+            "requirements.in",
+            "requirements/base.in",
+            "web/requirements/test.txt",
+        ],
+    )
+    @pytest.mark.parametrize("adapter", ["py", "node"])
+    def test_setup_und_requirements_ordner_sind_r3(pfad: str, adapter: str) -> None:
+        grund = regeln.vorab([pfad], adapter, [])
+>       assert grund.startswith("R3"), grund
+E       AssertionError: R1: Nicht-Code-Datei geändert (web/requirements/test.txt)
+E       assert False
+E        +  where False = <built-in method startswith of str object at 0x7ff96942b6b0>('R3')
+E        +    where <built-in method startswith of str object at 0x7ff96942b6b0> = 'R1: Nicht-Code-Datei geändert (web/requirements/test.txt)'.startswith
+
+tests/test_pruef_reste_343_218.py:108: AssertionError
+_______ test_setup_und_requirements_ordner_sind_r3[node-vitest.setup.ts] _______
+
+pfad = 'vitest.setup.ts', adapter = 'node'
+
+    @pytest.mark.parametrize(
+        "pfad",
+        [
+            "vitest.setup.ts",
+            "web/vitest.setup.js",
+            "src/setupTests.ts",
+            "setupTests.js",
+            "jest.setup.js",
+            "requirements/dev.txt",
+            "requirements.in",
+            "requirements/base.in",
+            "web/requirements/test.txt",
+        ],
+    )
+    @pytest.mark.parametrize("adapter", ["py", "node"])
+    def test_setup_und_requirements_ordner_sind_r3(pfad: str, adapter: str) -> None:
+        grund = regeln.vorab([pfad], adapter, [])
+>       assert grund.startswith("R3"), grund
+E       AssertionError: 
+E       assert False
+E        +  where False = <built-in method startswith of str object at 0xa47de8>('R3')
+E        +    where <built-in method startswith of str object at 0xa47de8> = ''.startswith
+
+tests/test_pruef_reste_343_218.py:108: AssertionError
+_____ test_setup_und_requirements_ordner_sind_r3[node-web/vitest.setup.js] _____
+
+pfad = 'web/vitest.setup.js', adapter = 'node'
+
+    @pytest.mark.parametrize(
+        "pfad",
+        [
+            "vitest.setup.ts",
+            "web/vitest.setup.js",
+            "src/setupTests.ts",
+            "setupTests.js",
+            "jest.setup.js",
+            "requirements/dev.txt",
+            "requirements.in",
+            "requirements/base.in",
+            "web/requirements/test.txt",
+        ],
+    )
+    @pytest.mark.parametrize("adapter", ["py", "node"])
+    def test_setup_und_requirements_ordner_sind_r3(pfad: str, adapter: str) -> None:
+        grund = regeln.vorab([pfad], adapter, [])
+>       assert grund.startswith("R3"), grund
+E       AssertionError: 
+E       assert False
+E        +  where False = <built-in method startswith of str object at 0xa47de8>('R3')
+E        +    where <built-in method startswith of str object at 0xa47de8> = ''.startswith
+
+tests/test_pruef_reste_343_218.py:108: AssertionError
+______ test_setup_und_requirements_ordner_sind_r3[node-src/setupTests.ts] ______
+
+pfad = 'src/setupTests.ts', adapter = 'node'
+
+    @pytest.mark.parametrize(
+        "pfad",
+        [
+            "vitest.setup.ts",
+            "web/vitest.setup.js",
+            "src/setupTests.ts",
+            "setupTests.js",
+            "jest.setup.js",
+            "requirements/dev.txt",
+            "requirements.in",
+            "requirements/base.in",
+            "web/requirements/test.txt",
+        ],
+    )
+    @pytest.mark.parametrize("adapter", ["py", "node"])
+    def test_setup_und_requirements_ordner_sind_r3(pfad: str, adapter: str) -> None:
+        grund = regeln.vorab([pfad], adapter, [])
+>       assert grund.startswith("R3"), grund
+E       AssertionError: 
+E       assert False
+E        +  where False = <built-in method startswith of str object at 0xa47de8>('R3')
+E        +    where <built-in method startswith of str object at 0xa47de8> = ''.startswith
+
+tests/test_pruef_reste_343_218.py:108: AssertionError
+________ test_setup_und_requirements_ordner_sind_r3[node-setupTests.js] ________
+
+pfad = 'setupTests.js', adapter = 'node'
+
+    @pytest.mark.parametrize(
+        "pfad",
+        [
+            "vitest.setup.ts",
+            "web/vitest.setup.js",
+            "src/setupTests.ts",
+            "setupTests.js",
+            "jest.setup.js",
+            "requirements/dev.txt",
+            "requirements.in",
+            "requirements/base.in",
+            "web/requirements/test.txt",
+        ],
+    )
+    @pytest.mark.parametrize("adapter", ["py", "node"])
+    def test_setup_und_requirements_ordner_sind_r3(pfad: str, adapter: str) -> None:
+        grund = regeln.vorab([pfad], adapter, [])
+>       assert grund.startswith("R3"), grund
+E       AssertionError: 
+E       assert False
+E        +  where False = <built-in method startswith of str object at 0xa47de8>('R3')
+E        +    where <built-in method startswith of str object at 0xa47de8> = ''.startswith
+
+tests/test_pruef_reste_343_218.py:108: AssertionError
+________ test_setup_und_requirements_ordner_sind_r3[node-jest.setup.js] ________
+
+pfad = 'jest.setup.js', adapter = 'node'
+
+    @pytest.mark.parametrize(
+        "pfad",
+        [
+            "vitest.setup.ts",
+            "web/vitest.setup.js",
+            "src/setupTests.ts",
+            "setupTests.js",
+            "jest.setup.js",
+            "requirements/dev.txt",
+            "requirements.in",
+            "requirements/base.in",
+            "web/requirements/test.txt",
+        ],
+    )
+    @pytest.mark.parametrize("adapter", ["py", "node"])
+    def test_setup_und_requirements_ordner_sind_r3(pfad: str, adapter: str) -> None:
+        grund = regeln.vorab([pfad], adapter, [])
+>       assert grund.startswith("R3"), grund
+E       AssertionError: 
+E       assert False
+E        +  where False = <built-in method startswith of str object at 0xa47de8>('R3')
+E        +    where <built-in method startswith of str object at 0xa47de8> = ''.startswith
+
+tests/test_pruef_reste_343_218.py:108: AssertionError
+____ test_setup_und_requirements_ordner_sind_r3[node-requirements/dev.txt] _____
+
+pfad = 'requirements/dev.txt', adapter = 'node'
+
+    @pytest.mark.parametrize(
+        "pfad",
+        [
+            "vitest.setup.ts",
+            "web/vitest.setup.js",
+            "src/setupTests.ts",
+            "setupTests.js",
+            "jest.setup.js",
+            "requirements/dev.txt",
+            "requirements.in",
+            "requirements/base.in",
+            "web/requirements/test.txt",
+        ],
+    )
+    @pytest.mark.parametrize("adapter", ["py", "node"])
+    def test_setup_und_requirements_ordner_sind_r3(pfad: str, adapter: str) -> None:
+        grund = regeln.vorab([pfad], adapter, [])
+>       assert grund.startswith("R3"), grund
+E       AssertionError: R1: Nicht-Code-Datei geändert (requirements/dev.txt)
+E       assert False
+E        +  where False = <built-in method startswith of str object at 0x7ff969433910>('R3')
+E        +    where <built-in method startswith of str object at 0x7ff969433910> = 'R1: Nicht-Code-Datei geändert (requirements/dev.txt)'.startswith
+
+tests/test_pruef_reste_343_218.py:108: AssertionError
+_______ test_setup_und_requirements_ordner_sind_r3[node-requirements.in] _______
+
+pfad = 'requirements.in', adapter = 'node'
+
+    @pytest.mark.parametrize(
+        "pfad",
+        [
+            "vitest.setup.ts",
+            "web/vitest.setup.js",
+            "src/setupTests.ts",
+            "setupTests.js",
+            "jest.setup.js",
+            "requirements/dev.txt",
+            "requirements.in",
+            "requirements/base.in",
+            "web/requirements/test.txt",
+        ],
+    )
+    @pytest.mark.parametrize("adapter", ["py", "node"])
+    def test_setup_und_requirements_ordner_sind_r3(pfad: str, adapter: str) -> None:
+        grund = regeln.vorab([pfad], adapter, [])
+>       assert grund.startswith("R3"), grund
+E       AssertionError: R1: Nicht-Code-Datei geändert (requirements.in)
+E       assert False
+E        +  where False = <built-in method startswith of str object at 0x7ff969433c20>('R3')
+E        +    where <built-in method startswith of str object at 0x7ff969433c20> = 'R1: Nicht-Code-Datei geändert (requirements.in)'.startswith
+
+tests/test_pruef_reste_343_218.py:108: AssertionError
+____ test_setup_und_requirements_ordner_sind_r3[node-requirements/base.in] _____
+
+pfad = 'requirements/base.in', adapter = 'node'
+
+    @pytest.mark.parametrize(
+        "pfad",
+        [
+            "vitest.setup.ts",
+            "web/vitest.setup.js",
+            "src/setupTests.ts",
+            "setupTests.js",
+            "jest.setup.js",
+            "requirements/dev.txt",
+            "requirements.in",
+            "requirements/base.in",
+            "web/requirements/test.txt",
+        ],
+    )
+    @pytest.mark.parametrize("adapter", ["py", "node"])
+    def test_setup_und_requirements_ordner_sind_r3(pfad: str, adapter: str) -> None:
+        grund = regeln.vorab([pfad], adapter, [])
+>       assert grund.startswith("R3"), grund
+E       AssertionError: R1: Nicht-Code-Datei geändert (requirements/base.in)
+E       assert False
+E        +  where False = <built-in method startswith of str object at 0x7ff969433f30>('R3')
+E        +    where <built-in method startswith of str object at 0x7ff969433f30> = 'R1: Nicht-Code-Datei geändert (requirements/base.in)'.startswith
+
+tests/test_pruef_reste_343_218.py:108: AssertionError
+__ test_setup_und_requirements_ordner_sind_r3[node-web/requirements/test.txt] __
+
+pfad = 'web/requirements/test.txt', adapter = 'node'
+
+    @pytest.mark.parametrize(
+        "pfad",
+        [
+            "vitest.setup.ts",
+            "web/vitest.setup.js",
+            "src/setupTests.ts",
+            "setupTests.js",
+            "jest.setup.js",
+            "requirements/dev.txt",
+            "requirements.in",
+            "requirements/base.in",
+            "web/requirements/test.txt",
+        ],
+    )
+    @pytest.mark.parametrize("adapter", ["py", "node"])
+    def test_setup_und_requirements_ordner_sind_r3(pfad: str, adapter: str) -> None:
+        grund = regeln.vorab([pfad], adapter, [])
+>       assert grund.startswith("R3"), grund
+E       AssertionError: R1: Nicht-Code-Datei geändert (web/requirements/test.txt)
+E       assert False
+E        +  where False = <built-in method startswith of str object at 0x7ff9695aff30>('R3')
+E        +    where <built-in method startswith of str object at 0x7ff9695aff30> = 'R1: Nicht-Code-Datei geändert (web/requirements/test.txt)'.startswith
+
+tests/test_pruef_reste_343_218.py:108: AssertionError
+_____________ test_nach_gate_fehler_prueft_der_naechste_lauf_voll ______________
+
+repo = PosixPath('<tmp>/pytest-3034/test_nach_gate_fehler_prueft_d0')
+
+    def test_nach_gate_fehler_prueft_der_naechste_lauf_voll(repo: Path) -> None:  # noqa: F811
+        basis = _code_commit(repo)
+        urteil = pruef.pruefen(repo, basis, "gibt-es-nicht")
+        assert urteil.zeile["urteil"] == "gate-fehler"
+        stufe = _pruef_stufe(repo, basis)
+>       assert stufe.name == "voll" and stufe.grund.startswith("LF"), stufe.grund
+E       AssertionError: 1 betroffene Tests
+E       assert ('auswahl' == 'voll'
+E         
+E         - voll
+E         + auswahl)
+
+tests/test_pruef_reste_343_218.py:123: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_pruef_reste_343_218.py::test_node_modules_ohne_paketliste_meldet_info_statt_warnung
+FAILED tests/test_pruef_reste_343_218.py::test_unchecked_hash_pyc_ist_kein_werkzeug_rest
+FAILED tests/test_pruef_reste_343_218.py::test_unchecked_hash_pyc_im_baum_erzwingt_voll_mit_ab
+FAILED tests/test_pruef_reste_343_218.py::test_setup_und_requirements_ordner_sind_r3[py-vitest.setup.ts]
+FAILED tests/test_pruef_reste_343_218.py::test_setup_und_requirements_ordner_sind_r3[py-web/vitest.setup.js]
+FAILED tests/test_pruef_reste_343_218.py::test_setup_und_requirements_ordner_sind_r3[py-src/setupTests.ts]
+FAILED tests/test_pruef_reste_343_218.py::test_setup_und_requirements_ordner_sind_r3[py-setupTests.js]
+FAILED tests/test_pruef_reste_343_218.py::test_setup_und_requirements_ordner_sind_r3[py-jest.setup.js]
+FAILED tests/test_pruef_reste_343_218.py::test_setup_und_requirements_ordner_sind_r3[py-requirements/dev.txt]
+FAILED tests/test_pruef_reste_343_218.py::test_setup_und_requirements_ordner_sind_r3[py-requirements.in]
+FAILED tests/test_pruef_reste_343_218.py::test_setup_und_requirements_ordner_sind_r3[py-requirements/base.in]
+FAILED tests/test_pruef_reste_343_218.py::test_setup_und_requirements_ordner_sind_r3[py-web/requirements/test.txt]
+FAILED tests/test_pruef_reste_343_218.py::test_setup_und_requirements_ordner_sind_r3[node-vitest.setup.ts]
+FAILED tests/test_pruef_reste_343_218.py::test_setup_und_requirements_ordner_sind_r3[node-web/vitest.setup.js]
+FAILED tests/test_pruef_reste_343_218.py::test_setup_und_requirements_ordner_sind_r3[node-src/setupTests.ts]
+FAILED tests/test_pruef_reste_343_218.py::test_setup_und_requirements_ordner_sind_r3[node-setupTests.js]
+FAILED tests/test_pruef_reste_343_218.py::test_setup_und_requirements_ordner_sind_r3[node-jest.setup.js]
+FAILED tests/test_pruef_reste_343_218.py::test_setup_und_requirements_ordner_sind_r3[node-requirements/dev.txt]
+FAILED tests/test_pruef_reste_343_218.py::test_setup_und_requirements_ordner_sind_r3[node-requirements.in]
+FAILED tests/test_pruef_reste_343_218.py::test_setup_und_requirements_ordner_sind_r3[node-requirements/base.in]
+FAILED tests/test_pruef_reste_343_218.py::test_setup_und_requirements_ordner_sind_r3[node-web/requirements/test.txt]
+FAILED tests/test_pruef_reste_343_218.py::test_nach_gate_fehler_prueft_der_naechste_lauf_voll
+22 failed, 4 passed in 0.79s
+exit 1

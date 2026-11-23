@@ -20,7 +20,7 @@ Ausnahme; je Schließen bleibt es bei einer Wieder-Öffnung). Keine Regeln für 
 der Verstoß wird trotzdem erkannt und im Tick-Bericht genannt, zählt aber wie der
 Ausgangsstand als „alt“ und hält „Spec fertig“ nicht auf. Nach dem Wieder-Öffnen
 startet capo die Folge-Runde (#284); ein Nacht-Checkpoint gilt nach der Frist mit
-dem Vorschlag der Session als angenommen, David kann kippen (#285). Zeitgrenzen:
+dem Vorschlag der Session als angenommen, der Mensch kann kippen (#285). Zeitgrenzen:
 beim ersten Tick einer Spec sind alle geschlossenen Tickets Ausgangsstand (nur
 melden; maßgeblich ist, ob das Ticket beim ersten Tick schon zu war — kein
 Vergleich der GitHub-Uhr mit der lokalen Uhr), danach wird ein Schließen erst
@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import contextlib
 import fnmatch
+import hashlib
 import json
 import logging
 import os
@@ -53,7 +54,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from . import bau_log, befund, config, gh, melder, mensch_noetig, staging_schalter, starter, vorfall
+from . import bau_log, befund, briefkasten, config, gh, melder, mensch_noetig, staging_schalter, starter, ticket_zustand, vorfall
 from . import sperre as _sperre
 
 log = logging.getLogger("to_spawn.capo")
@@ -63,9 +64,7 @@ LEISE_TYPEN = frozenset({"session_ende", "subagent_ende"})
 #: Werte von ``status``/``phase``/``ergebnis`` einer ``deploy_phase``, die „Gate rot“ heißen.
 ROT_WERTE = frozenset({"rot", "fail", "failed", "abbruch", "fehler"})
 MAX_DELTA_ZEILEN = 8
-#: ``state_reason`` geschlossener Tickets, für die keine Regel gilt.
-NICHT_GEPLANT = frozenset({"not_planned", "duplicate"})
-#: Label am Ticket: David hat bewusst freigegeben — Regeln überspringen (E2).
+#: Label am Ticket: der Mensch hat bewusst freigegeben — Regeln überspringen (E2).
 OK_LABEL = "waechter:ok"
 #: Minuten nach ``closed_at``, bevor die Regeln greifen (Vorgabe, ``waechter.karenz_minuten``).
 KARENZ_MIN = 15.0
@@ -75,8 +74,6 @@ MAIL_AUS = (
 )
 #: Sekunden, die ein Tick auf die Sperre eines anderen Laufs wartet.
 SPERRE_S = 30.0
-GIT_ZEIT_S = 30
-FETCH_ZEIT_S = 60
 
 _TEST_DATEI = re.compile(
     r"(^|/)(tests?/|test_[^/]*\.py$|[^/]*_test\.py$|[^/]*\.(test|spec)\.[cm]?[jt]sx?$)"
@@ -158,7 +155,7 @@ REGEL_VORFALL: dict[str, tuple[str, str, str, str]] = {
         "mensch",
         "Ja/Nein-Frage mitten in der Kette, nachts antwortet niemand",
         "Checkpoint ohne Antwort über die Frist (#285)",
-        "Aufseher nimmt den Vorschlag der Session nach Doktrin an; David kann kippen",
+        "Aufseher nimmt den Vorschlag der Session nach Doktrin an; der Mensch kann kippen",
     ),
 }
 
@@ -177,6 +174,9 @@ class Verstoss:
     regel: str
     text: str
     kritisch: bool = False
+    #: Was den Verstoß ausmacht, falls der Text auch Wanderndes nennt (z. B. VPS-HEAD);
+    #: leer = der Text selbst. Grundlage von :func:`verstoss_kennung` (#275).
+    kern: str = ""
 
 
 @dataclass
@@ -200,8 +200,8 @@ class TickErgebnis:
 
 
 def _git(repo: Path, *args: str) -> tuple[int, str]:
-    """``git <args>`` mit Zeitgrenze (fetch 60 s, sonst 30 s); Zeitablauf = Fehler."""
-    grenze = FETCH_ZEIT_S if args[:1] == ("fetch",) else GIT_ZEIT_S
+    """``git <args>`` mit Zeitgrenze (Grenzen: gh.FETCH_ZEIT_S bzw. gh.GIT_ZEIT_S); Zeitablauf = Fehler."""
+    grenze = gh.FETCH_ZEIT_S if args[:1] == ("fetch",) else gh.GIT_ZEIT_S  # eine Stelle: gh (#320)
     try:
         fertig = subprocess.run(
             ["git", *args],
@@ -787,7 +787,7 @@ class StagingStand:
 
 
 def live_freigabe(vps: dict[str, Any], ticket: int) -> bool:
-    """True, wenn Davids Live-Zettel ``<ordner>/<ticket>`` existiert und jünger als 24 h ist."""
+    """True, wenn der Live-Zettel des Menschen ``<ordner>/<ticket>`` existiert und jünger als 24 h ist."""
     zettel = Path(
         str(vps.get("freigabe_ordner") or FREIGABE_STANDARD)
     ).expanduser() / str(ticket)
@@ -805,9 +805,12 @@ def regel_vps(
     kopf: str | None,
     log_zeilen: list[dict],
     staging_stand: StagingStand | None = None,
+    issue: dict[str, Any] | None = None,
 ) -> Verstoss | None:
     if kopf is None or not eigene:
         return None
+    if issue is not None and ticket_zustand.wartet_auf_live(issue, live_freigegeben=live_freigabe(vps, ticket)):
+        return None  # #275: grün auf Staging, Live erst nach Freigabe — kein Verstoß
     staging_stand = staging_stand or StagingStand(vps)
     muster = [str(m) for m in vps.get("deploy_pfade") or []]
     relevant = [
@@ -840,6 +843,7 @@ def regel_vps(
                 ticket,
                 "vps_ungleich_origin",
                 f"Commit {commit.sha[:7]} fehlt auf dem VPS (HEAD {kopf[:7]})",
+                kern=commit.sha,
             )
         if code != 0:
             log.warning(
@@ -910,6 +914,8 @@ def regel_verwaist(
 ) -> Verstoss | None:
     if not issue.get("assignees"):
         return None
+    if ticket_zustand.fertig_gebaut(issue):
+        return None  # #279: fertig gebaut hat zu Recht keine Spur mehr
     if checkpoint and checkpoint in label_namen(issue):
         return None  # Checkpoint-Ticket wartet absichtlich auf einen Menschen
     datiert = [(t, z) for z in log_zeilen if (t := _zeit(z.get("ts")))]
@@ -1055,13 +1061,19 @@ def ist_gate_rot(z: dict[str, Any]) -> bool:
 # --- Übersicht ------------------------------------------------------------------
 
 
-def _zelle(text: str) -> str:
-    return text.replace("|", "/").replace("\n", " ")
+def _zelle(text: str, grenze: int | None = 140) -> str:
+    """Tabellenzelle: eine Zeile, ``|`` entschärft, ab ``grenze`` gekürzt (``None`` = nie)."""
+    wert = _kurz(text, grenze) if grenze else " ".join(str(text or "").split())
+    return wert.replace("|", "/")
 
 
 def entscheidungs_datei(repo: Path, spec: int) -> Path:
     """``<pfade.agenten>/entscheidungen_<S>.md`` (Vorgabe ``docs/agents``, L1 #46)."""
     return config.pfad(config.lade(repo), "agenten") / f"entscheidungen_{spec}.md"
+
+
+#: Spaltenkopf der Entscheidungs-Tabelle (#364); :func:`_entscheidungs_zeile` passt dazu.
+_SPALTEN = "| Ticket | Was | Warum | Quelle |"
 
 
 def _tabellen_kopf(spec: int, quelle: str) -> list[str]:
@@ -1070,9 +1082,17 @@ def _tabellen_kopf(spec: int, quelle: str) -> list[str]:
         "",
         f"Stand {datetime.now().astimezone():%d.%m.%Y %H:%M} · Quelle: {quelle} (to-spawn capo).",
         "",
-        "| Ticket | Zeit | Frage | Wahl | Grund |",
-        "|---|---|---|---|---|",
+        _SPALTEN,
+        "|---|---|---|---|",
     ]
+
+
+def _entscheidungs_zeile(e: dict[str, str]) -> str:
+    """Eine Tabellenzeile aus einem Eintrag von ``briefkasten.liste`` — das eine Zeilenformat.
+
+    ``was`` bleibt ungekürzt: die Frage ist dort schon gekürzt, die Wahl muss ganz bleiben.
+    """
+    return f"| #{e['ticket']} | {_zelle(e['was'], None)} | {_zelle(e['warum'])} | {_zelle(e['beleg'])} |"
 
 
 def entscheidung_anhaengen(
@@ -1086,16 +1106,19 @@ def entscheidung_anhaengen(
 ) -> Path:
     """Eine einzelne Entscheidung an ``entscheidungen_<S>.md`` anhängen (#285).
 
-    ponytail: die Zeile steht nur hier und in der unversionierten Laufdatei; beim
-    Spec-Abschluss schreibt :func:`uebersicht` die Tabelle aus den versionierten
-    Bau-Logs neu. Dauerhaft wäre sie erst, wenn die Session sie mit ``eintrag``
-    in ihr Bau-Log übernimmt.
+    Gleiches Zeilenformat wie :func:`uebersicht` (#364). Die Zeile steht auch in der
+    Laufdatei des Bau-Logs (Aufrufer schreibt sie); :func:`uebersicht` liest die Laufdatei
+    über ``briefkasten.liste`` mit, die Annahme bleibt beim Abschluss also erhalten.
     """
     datei = entscheidungs_datei(repo, spec)
-    zeile = f"| #{ticket} | {wann.astimezone():%d.%m. %H:%M} | {_zelle(frage)} | {_zelle(wahl)} | {_zelle(grund)} |"
+    eintrag = briefkasten.eintrag_aus_bau_log(
+        ticket,
+        {"frage": frage, "wahl": wahl, "grund": grund, "ts": wann.astimezone().isoformat(timespec="seconds")},
+    )
+    zeile = _entscheidungs_zeile(eintrag)
     datei.parent.mkdir(parents=True, exist_ok=True)
     alt = datei.read_text(encoding="utf-8") if datei.is_file() else ""
-    if "| Ticket | Zeit |" in alt:
+    if _SPALTEN in alt:
         with datei.open("a", encoding="utf-8", newline="\n") as fh:
             fh.write(zeile + "\n")
     else:
@@ -1106,30 +1129,19 @@ def entscheidung_anhaengen(
     return datei
 
 
-def uebersicht(repo: Path, ref: str | None, spec: int, tickets: list[int]) -> Path:
-    """Schreibt :func:`entscheidungs_datei` (alle Entscheidungen der Spec)."""
-    zeilen = [
-        f"# Entscheidungen Spec #{spec}",
-        "",
-        f"Stand {datetime.now().astimezone():%d.%m.%Y %H:%M} · Quelle: Bau-Logs auf {ref or '-'} (to-spawn capo).",
-        "",
-        "| Ticket | Zeit | Frage | Wahl | Grund |",
-        "|---|---|---|---|---|",
-    ]
-    anzahl = 0
-    for ticket in sorted(tickets):
-        for z in log_vom_ref(repo, ref, ticket) if ref else []:
-            if z.get("typ") != "entscheidung":
-                continue
-            zeit = _zeit(z.get("ts"))
-            wann = zeit.astimezone().strftime("%d.%m. %H:%M") if zeit else "-"
-            frage, wahl, grund = entscheidung_teile(z)
-            zeilen.append(
-                f"| #{ticket} | {wann} | {_zelle(frage)} | {_zelle(wahl)} | {_zelle(grund)} |"
-            )
-            anzahl += 1
-    if not anzahl:
-        zeilen += ["", "_Keine Entscheidungen im Bau-Log._"]
+def uebersicht(repo: Path, spec: int, tickets: list[int]) -> Path:
+    """Schreibt :func:`entscheidungs_datei` neu: alle Entscheidungen der Spec (#364).
+
+    Woher sie kommen (Bau-Log im Hauptbaum und auf ``origin/<Hauptzweig>``, Briefkasten-
+    Antworten), weiß nur ``briefkasten.liste``; hier steht nur die Darstellung (eine
+    Tabellenzeile je Eintrag). Die Kopfzeile nennt ``haupt_ref`` — den Stand, den
+    ``briefkasten.liste`` liest.
+    """
+    eintraege = briefkasten.liste(sorted(tickets), log_repo=repo, hauptbaum=repo)
+    zeilen = _tabellen_kopf(spec, f"Bau-Logs auf {haupt_ref(repo) or '-'} + Briefkasten")
+    zeilen += [_entscheidungs_zeile(e) for e in eintraege]
+    if not eintraege:
+        zeilen += ["", "_Keine Entscheidungen im Bau-Log oder Briefkasten._"]
     datei = entscheidungs_datei(repo, spec)
     datei.parent.mkdir(parents=True, exist_ok=True)
     datei.write_text("\n".join(zeilen) + "\n", encoding="utf-8")
@@ -1140,10 +1152,30 @@ def uebersicht(repo: Path, ref: str | None, spec: int, tickets: list[int]) -> Pa
 
 
 def kinder(gh_repo: str, spec: int) -> list[dict[str, Any]] | None:
+    """Sub-Issues der Spec; ``None`` bei Fehler oder kaputter Antwort (#279 P3).
+
+    Ein einziger unlesbarer Eintrag macht die ganze Liste unbrauchbar: eine halbe Liste
+    ließe die Spec fertig aussehen. Aufrufer setzen den Takt dann aus.
+    """
     daten = gh.json_lauf(
         ["api", f"repos/{gh_repo}/issues/{spec}/sub_issues?per_page=100"]
     )
-    return daten if isinstance(daten, list) else None
+    if not isinstance(daten, list):
+        return None
+    kaputt = [
+        f"Eintrag {stelle}"
+        for stelle, i in enumerate(daten, start=1)
+        if not (isinstance(i, dict) and "state" in i and str(i.get("number", "")).isdigit())
+    ]
+    if kaputt:
+        log.warning(
+            "Sub-Issues von #%s in %s: %s ohne Nummer/Zustand — Takt ausgesetzt.",
+            spec,
+            gh_repo,
+            ", ".join(kaputt),
+        )
+        return None
+    return daten
 
 
 # --- Folge-Runde nach dem Wiederöffnen (#284) -----------------------------------
@@ -1241,29 +1273,62 @@ def laeuft_noch(
     return ""
 
 
+#: Wurzel des Skills; ``skripte/bau.py`` darin ist der eigentliche Launcher.
+_SKILL = Path(__file__).resolve().parent.parent
+
+
 def _bau_skript(repo: Path) -> Path:
-    """``scripts/bau.py`` des Repos (Weiterleitung), sonst das Skript im Skill."""
+    """Welche ``bau.py`` ein Start OHNE Vorspann ruft (lokal, Windows-Tab): ``scripts/bau.py``
+    des Repos (Weiterleitung, setzt ``TO_SPAWN_REPO``/``TO_SPAWN_HOME``), sonst die des Skills.
+
+    Die tmux-Zeile :func:`bau_startzeile` nimmt dagegen immer die des Skills: sie setzt den
+    Vorspann selbst und darf weder von der Weiterleitung noch von deren ``TO_SPAWN_HOME``-
+    Vorgabe abhängen (#277). Der Unterschied ist Absicht, festgehalten in
+    ``tests/test_startzeile_277.py``.
+    """
     im_repo = repo / "scripts" / "bau.py"
     if im_repo.is_file():
         return im_repo
-    return Path(__file__).resolve().parent.parent / "skripte" / "bau.py"
+    return _SKILL / "skripte" / "bau.py"
+
+
+def fenster_log(repo: Path, ticket: int) -> Path:
+    """Log eines tmux-Bau-Fensters: stderr von ``bau.py`` und Exit-Code bei Fehler (#277)."""
+    return repo / ".to-spawn" / f"fenster_{ticket}.log"
 
 
 def bau_startzeile(repo: Path, ticket: int, auftrag: str = "", *schalter: str) -> str:
     """Shell-Zeile, mit der ein tmux-Fenster eine Bau-Session startet (``bash -lc``).
 
-    Einziger Ort für den Vorspann (``REPO``/``TO_SPAWN_HOME`` wie ``skripte/spawn_srv.sh``,
-    sonst startet ``bau`` in einem anderen Repo, #212). Die Konfiguration der Session
-    (Settings, MCP, Session-ID, Staffel-Umgebung) liefert allein ``bau.py``. ``schalter``
-    hängt weitere ``bau``-Schalter an (respawn #431: ``--ohne-prompt``).
+    Einziger Ort für Ablösung (respawn) und Folge-Runde. Ruft ``bau.py`` des Skills direkt
+    mit diesem Python auf, wie ``skripte/spawn_srv.sh`` (#257) — nie die Shell-Funktion
+    ``bau`` aus ``~/.bashrc`` oder die ``.venv`` des Repos, die ein Spec-Klon nicht hat
+    (#277). Vorspann ``REPO``/``TO_SPAWN_HOME``/``TO_SPAWN_REPO`` wie dort (#212). Die
+    Konfiguration der Session liefert allein ``bau.py``. ``schalter`` hängt weitere
+    ``bau.py``-Schalter an (respawn #431: ``--ohne-prompt``). stderr von ``bau.py`` geht
+    weiter ins Fenster und zusätzlich in :func:`fenster_log`; endet ``bau.py`` mit Fehler,
+    schließt sich das Fenster — Meldung und Exit-Code bleiben dort lesbar.
     """
-    skill = Path(__file__).resolve().parent.parent
-    vorspann = f"REPO={shlex.quote(str(repo))} TO_SPAWN_HOME={shlex.quote(str(skill))}"
+    ort = shlex.quote(str(repo))
+    vorspann = f"REPO={ort} TO_SPAWN_HOME={shlex.quote(str(_SKILL))} TO_SPAWN_REPO={ort}"
     if auftrag.strip():
         vorspann += f" BAU_AUFTRAG={shlex.quote(_kurz(auftrag, AUFTRAG_MAX_ZEICHEN))}"
-    return (
-        f"export {vorspann}; {shlex.join(['bau', str(ticket), '--sofort', *schalter])}"
+    bau = [sys.executable or "python3", str(_SKILL / "skripte" / "bau.py"), str(ticket)]
+    log_pfad = fenster_log(repo, ticket)
+    log = shlex.quote(str(log_pfad))
+    # stderr über tee ins Log, Original bleibt auf fd 3 fürs Fenster (Wartezeilen, #431).
+    # Bei Fehler wartet das Fenster höchstens 3 s auf tee, damit die Meldung von bau.py
+    # vor dem Exit-Code steht. Hält ein Rest-Kind von bau.py stderr offen, endet das
+    # Fenster trotzdem; dessen späte Ausgabe landet dann hinter der Exit-Zeile (PR 293).
+    tee = f"exec 3>&2 2> >(tee -a {log} >&3); tee_pid=$!"
+    spur = (
+        f'rc=$?; exec 2>&3 3>&-; [ "$rc" -eq 0 ] || {{ '
+        f'timeout 3 tail -s 0.1 --pid="$tee_pid" -f /dev/null 2>/dev/null; '
+        f'echo "$(date -Is) bau.py #{ticket} Exit $rc" >> {log}; }}; exit "$rc"'
     )
+    ordner = shlex.quote(str(log_pfad.parent))
+    lauf = shlex.join([*bau, "--sofort", *schalter])
+    return f"export {vorspann}; mkdir -p {ordner}; {tee}; {lauf}; {spur}"
 
 
 def folge_befehl(
@@ -1426,11 +1491,11 @@ def _folge_runde(
 
 # --- Checkpoint-Annahme nach Doktrin (#285) -------------------------------------
 
-#: Minuten ohne Davids Antwort, nach denen der Vorschlag der Session gilt.
+#: Minuten ohne Antwort des Menschen, nach denen der Vorschlag der Session gilt.
 CHECKPOINT_FRIST_MIN = 60.0
 #: „Vorschlag: …“ in einem Issue-Kommentar — alles danach ist die vorgeschlagene Wahl.
 _VORSCHLAG = re.compile(r"Vorschlag\s*:\s*(.+)", re.IGNORECASE | re.DOTALL)
-#: Anfang jedes Aufseher-Kommentars — eigene Kommentare sind nie „Davids Antwort“.
+#: Anfang jedes Aufseher-Kommentars — eigene Kommentare sind nie „Antwort des Menschen“.
 WAECHTER_KOPF = befund.KOPF
 #: Frühere Marke vor der Umbenennung (#428) — alte Issue-Kommentare bleiben eigene Kommentare.
 ALTE_AUFSEHER_KOEPFE: tuple[str, ...] = ("Wächter:",)  # #428-alt
@@ -1438,12 +1503,12 @@ ALTE_AUFSEHER_KOEPFE: tuple[str, ...] = ("Wächter:",)  # #428-alt
 AUFSEHER_KOEPFE: tuple[str, ...] = (WAECHTER_KOPF, *ALTE_AUFSEHER_KOEPFE)
 #: Anfang der Issue-Kommentare des Aufpassers (to_spawn/aufpasser.py), gleiches gh-Konto.
 AUFPASSER_KOPF = "Aufpasser:"
-#: Anfang jedes Issue-Kommentars einer Bau-Session (#402). Session, Aufseher und David
+#: Anfang jedes Issue-Kommentars einer Bau-Session (#402). Session, Aufseher und der Mensch
 #: kommentieren mit demselben gh-Konto — der Login trennt sie nicht, nur diese Marke.
 #: Der Bau-Prompt bekommt sie über den Platzhalter ``{SESSION_KOPF}`` (skripte/bau.py).
 SESSION_KOPF = "Bau-Session:"
 #: Marken aller eigenen Kommentare ohne Bau-Session (die prüft ``_ist_session_kommentar``):
-#: so beginnende Kommentare sind nie „Davids Antwort“.
+#: so beginnende Kommentare sind nie „Antwort des Menschen“.
 EIGENE_KOEPFE: tuple[str, ...] = (*AUFSEHER_KOEPFE, AUFPASSER_KOPF)
 
 
@@ -1477,7 +1542,7 @@ def checkpoint_frist(waechter: dict[str, Any]) -> float:
 
 #: ``author_association``-Werte, deren Kommentare der Checkpoint überhaupt liest (#402).
 #: Ein Dritter im öffentlichen Repo könnte sonst mit der Marke :data:`SESSION_KOPF`
-#: einen Vorschlag setzen oder ``seit`` hinter Davids Antwort schieben.
+#: einen Vorschlag setzen oder ``seit`` hinter die Antwort des Menschen schieben.
 BETEILIGTE_ROLLEN = frozenset({"OWNER", "MEMBER", "COLLABORATOR"})
 
 
@@ -1486,13 +1551,22 @@ def issue_kommentare(gh_repo: str, ticket: int) -> list[dict[str, Any]] | None:
 
     Nur Kommentare mit ``author_association`` aus :data:`BETEILIGTE_ROLLEN` kommen
     zurück — für Vorschlag, Fragezeit und Antwort gleichermaßen. Fehlt das Feld,
-    zählt der Kommentar nicht (sichere Richtung: lieber keine Annahme).
+    zählt der Kommentar nicht (sichere Richtung: lieber keine Annahme). Alle Seiten
+    (``--paginate --slurp`` liefert eine Liste je Seite), sonst fehlt alles hinter dem
+    100. Kommentar (#339).
     """
     daten = gh.json_lauf(
-        ["api", f"repos/{gh_repo}/issues/{ticket}/comments?per_page=100"]
+        [
+            "api",
+            f"repos/{gh_repo}/issues/{ticket}/comments?per_page=100",
+            "--paginate",
+            "--slurp",
+        ]
     )
     if not isinstance(daten, list):
         return None
+    if all(isinstance(seite, list) for seite in daten):
+        daten = [e for seite in daten for e in seite]
     beteiligt = [
         e
         for e in daten
@@ -1526,7 +1600,7 @@ def checkpoint_vorschlag(
 
     Zählt eine Bau-Log-Zeile ``entscheidung`` mit Wahl und ein Issue-Kommentar, der
     mit :data:`SESSION_KOPF` beginnt und „Vorschlag:“ enthält. Der Login zählt nicht:
-    Session und David schreiben mit demselben gh-Konto (#402). Kommentare ohne Marke
+    Session und der Mensch schreiben mit demselben gh-Konto (#402). Kommentare ohne Marke
     (auch Aufseher-Kommentare) sind nie ein Session-Vorschlag.
     """
     kandidaten: list[Vorschlag] = []
@@ -1561,7 +1635,7 @@ def checkpoint_frage_zeit(
     """Wann hat die Session zuletzt etwas gefragt/gemeldet? ``None`` = keine Spur.
 
     Spuren der Session sind nur Bau-Log-Zeilen ``blockiert``/``entscheidung`` und
-    Kommentare mit :data:`SESSION_KOPF`. Davids Hinweise und Aufseher-Kommentare sind
+    Kommentare mit :data:`SESSION_KOPF`. Hinweise des Menschen und Aufseher-Kommentare sind
     keine Frage (#451) — sonst meldet capo „Checkpoint wartet“ für ein Ticket, an dem
     nie eine Session gebaut hat. Ohne Spur wartet niemand, das Label allein löst nichts aus.
     """
@@ -1626,7 +1700,7 @@ def _checkpoint(
 ) -> list[str]:
     """Nacht-Checkpoint: nach der Frist gilt der Vorschlag der Session (#285).
 
-    David kann jede Annahme kippen — der Aufseher kommentiert sie am Ticket, schreibt
+    Der Mensch kann jede Annahme kippen — der Aufseher kommentiert sie am Ticket, schreibt
     sie ins Bau-Log und in ``entscheidungen_<S>.md`` und schickt eine Mail. Ohne
     erkennbaren eigenen Vorschlag der Session wird nichts angenommen, nur gemeldet.
     Solange ein Blocker offen ist, ruht der Checkpoint (keine Zeile); ist der
@@ -1649,7 +1723,7 @@ def _checkpoint(
         return [f"#{n} FEHLER: Blocker nicht lesbar — Checkpoint ungeprüft"]
     if not all(isinstance(b, dict) and b.get("state") for b in blocker):
         return [f"#{n} FEHLER: Blocker-Format unbekannt — Checkpoint ungeprüft"]
-    if any(not gh.blocker_erledigt(b) for b in blocker):  # zu oder staging:fertig (#1527)
+    if any(not ticket_zustand.fertig_gebaut(b) for b in blocker):  # #1527, #279
         return []  # #451: noch blockiert — Checkpoint ruht, bis alle Blocker zu sind
     seit = vorschlag.zeit if vorschlag else frage_zeit
     if seit is None:
@@ -1659,7 +1733,7 @@ def _checkpoint(
         return [f"#{n} Checkpoint wartet ({wartet:.0f} von {frist:.0f} min)"]
     antwort = davids_antwort(kommentare, seit)
     if antwort:
-        # Ohne Marke heißt nur: nicht von einer Session mit neuem Prompt — kann David
+        # Ohne Marke heißt nur: nicht von einer Session mit neuem Prompt — kann der Mensch
         # sein oder eine Session mit altem Prompt („Probesitz beendet:“). Sichere Richtung.
         return [
             f"#{n} Checkpoint: Kommentar ohne Session-Marke von {antwort} — als Antwort gewertet "
@@ -1677,7 +1751,7 @@ def _checkpoint(
             dry_run,
             "checkpoint_offen",
             f"Checkpoint ohne Vorschlag #{n}",
-            f"Ticket #{n} wartet seit {wartet:.0f} min auf Davids Antwort, aber die "
+            f"Ticket #{n} wartet seit {wartet:.0f} min auf die Antwort des Menschen, aber die "
             "Session hat keinen eigenen Vorschlag hinterlassen — der Aufseher rät nicht.",
             f"checkpoint_offen|{n}|{seit.isoformat()}",
         )
@@ -1689,12 +1763,12 @@ def _checkpoint(
         return [f"#{n} Checkpoint schon angenommen — nichts zu tun"]
     if dry_run:
         return [f"#{n} [Probe] würde Vorschlag annehmen: {_kurz(vorschlag.wahl)}"]
-    text = f"{WAECHTER_KOPF} Annahme nach {frist:.0f} min nach Doktrin — David kann kippen. Vorschlag: {vorschlag.wahl}"
+    text = f"{WAECHTER_KOPF} Annahme nach {frist:.0f} min nach Doktrin — der Mensch kann kippen. Vorschlag: {vorschlag.wahl}"
     if not befund.kommentiere(n, gh_repo, text):
         return [f"#{n} FEHLER: Checkpoint-Annahme nicht kommentiert"]
     erledigt.add(schluessel)
     grund = (
-        f"Aufseher-Annahme nach {frist:.0f} min ohne Davids Antwort (Doktrin, kippbar)"
+        f"Aufseher-Annahme nach {frist:.0f} min ohne Antwort des Menschen (Doktrin, kippbar)"
         + (f" · {vorschlag.grund}" if vorschlag.grund else "")
     )
     frage = vorschlag.frage or f"Checkpoint #{n}"
@@ -1713,7 +1787,7 @@ def _checkpoint(
         "checkpoint_annahme",
         f"Checkpoint angenommen #{n}",
         f"Ticket #{n}: {frage}\nAngenommen nach {frist:.0f} min ohne Antwort: "
-        f"{vorschlag.wahl}\nDavid kann die Entscheidung jederzeit kippen.",
+        f"{vorschlag.wahl}\nDer Mensch kann die Entscheidung jederzeit kippen.",
         schluessel,
     )
     gelernt.append(ereignis_vorfall("checkpoint_annahme", n, jetzt))
@@ -1776,7 +1850,7 @@ def karenz_minuten(waechter: dict[str, Any]) -> float:
 
 def schliess_marke(issue: dict[str, Any]) -> str:
     """Kennung eines Schließ-Ereignisses: ``closed_at`` (``?`` ohne Zeit), offen = ``""``."""
-    if str(issue.get("state", "")).lower() != "closed":
+    if not ticket_zustand.endgueltig_zu(issue):
         return ""
     return str(issue.get("closed_at") or "?")
 
@@ -1918,13 +1992,16 @@ def reopen_funde(
     kopf: str | None,
     alle_zeilen: list[dict[str, Any]],
     staging_stand: StagingStand | None = None,
+    issue: dict[str, Any] | None = None,
 ) -> list[Verstoss]:
     """Alle Verstöße, die ein geschlossenes Ticket wieder öffnen (regel_vps nur mit VPS-Konfig)."""
     funde = [
         regel_commit(n, eigene),
         regel_beweis(repo, ref, n, eigene, belege),
         regel_tests(repo, n, eigene),
-        regel_vps(repo, n, eigene, vps, kopf, alle_zeilen, staging_stand) if vps.get("ssh") else None,
+        regel_vps(repo, n, eigene, vps, kopf, alle_zeilen, staging_stand, issue)
+        if vps.get("ssh")
+        else None,
     ]
     return [f for f in funde if f]
 
@@ -1939,6 +2016,47 @@ def _gesehene_schliessungen(n: int, erledigt: set[str]) -> list[datetime]:
             if zeit is not None:
                 zeiten.append(zeit)
     return zeiten
+
+
+def verstoss_kennung(n: int, f: Verstoss) -> str:
+    """Stabile Kennung eines Verstoßes: ``N|Regel|Hash(Kern)`` — einzige Stelle dieser Regel (#275).
+
+    Kern ist :attr:`Verstoss.kern` oder sonst der Text (z. B. fehlender Commit-SHA,
+    entfernte Tests); er ändert sich nur mit neuer Arbeit. Zeitstempel wie ``closed_at``
+    oder der VPS-HEAD gehören nie hinein, sonst öffnet jedes Schließen/Deploy neu.
+    """
+    kern = f.kern or f.text
+    return f"{n}|{f.regel}|{hashlib.sha1(kern.encode('utf-8')).hexdigest()[:12]}"
+
+
+def schon_geoeffnet(n: int, f: Verstoss, erledigt: set[str]) -> bool:
+    """Hat capo #n wegen genau dieses Verstoßes schon einmal wieder geöffnet? (#275)
+
+    Merker ``geoeffnet|<Kennung>`` aus :func:`verstoss_kennung`; Altzustände macht
+    :func:`altmerker_ueberfuehren` vorher daraus.
+    """
+    return f"geoeffnet|{verstoss_kennung(n, f)}" in erledigt
+
+
+def altmerker_ueberfuehren(n: int, funde: list[Verstoss], erledigt: set[str]) -> bool:
+    """Merker von vor der Kennung in Kennungs-Merker für die aktuellen Funde überführen (#275).
+
+    Alt hieß „geöffnet“ ``N|Regel|closed_at`` und „gemeldet“ ``erneut|N|Regel``. Hat
+    Ticket und Regel noch keinen Kennungs-Merker dieser Art, gilt der aktuelle Verstoß
+    als der von damals — nach dem Update lieber einmal nur melden als eine Welle
+    Wiederöffnungen. Danach zählt nur die Kennung: ein späterer neuer Verstoß öffnet
+    einmal. ``True`` = neue Merker, der Aufrufer sichert den Zustand.
+    """
+    neu: set[str] = set()
+    for f in funde:
+        kennung = verstoss_kennung(n, f)
+        alt_geoeffnet = any(s.split("|")[:2] == [str(n), f.regel] for s in erledigt)
+        alt_gemeldet = f"erneut|{n}|{f.regel}" in erledigt
+        for art, alt in (("geoeffnet", alt_geoeffnet), ("erneut", alt_gemeldet)):
+            if alt and not any(s.startswith(f"{art}|{n}|{f.regel}|") for s in erledigt):
+                neu.add(f"{art}|{kennung}")
+    erledigt.update(neu)
+    return bool(neu)
 
 
 def merke_schliessen(n: int, closed_at: str, erledigt: set[str]) -> bool:
@@ -2176,7 +2294,7 @@ def _tick(
     wartet = 0
     for issue in sorted(liste, key=lambda x: int(x["number"])):
         n = int(issue["number"])
-        zu = str(issue.get("state", "")).lower() == "closed"
+        zu = ticket_zustand.endgueltig_zu(issue)
         offen += 0 if zu else 1
         eigene = ticket_commits(commits, n)
         log_zeilen = log_vom_ref(repo, ref, n)
@@ -2259,13 +2377,13 @@ def _tick(
 
         # A: Regeln
         if zu:
-            grund = str(issue.get("state_reason") or "").lower()
+            grund = ticket_zustand.schliessgrund(issue)
             geschlossen_zeit = _zeit(issue.get("closed_at"))
             if not dry_run and merke_schliessen(
                 n, str(issue.get("closed_at") or ""), erledigt
             ):
                 sichern()
-            if grund in NICHT_GEPLANT:
+            if ticket_zustand.stufe(issue) == "verworfen":
                 aktionen.append(f"#{n} zu als {grund} — keine Regeln")
                 continue
             nur_melden = OK_LABEL in label_namen(issue)
@@ -2287,7 +2405,7 @@ def _tick(
                 wartet += 1
                 continue
             funde_ok = reopen_funde(
-                repo, ref, n, eigene, belege, vps, kopf, alle_zeilen, staging_stand
+                repo, ref, n, eigene, belege, vps, kopf, alle_zeilen, staging_stand, issue
             )
             if ausgangsstand:
                 erg.alt += funde_ok
@@ -2306,23 +2424,47 @@ def _tick(
                 continue
             erg.verstoesse += funde_ok
             geschlossen = str(issue.get("closed_at") or "?")
-            neu_funde = [
+            if altmerker_ueberfuehren(n, funde_ok, erledigt):
+                sichern()
+            ungesehen = [
                 f for f in funde_ok if f"{n}|{f.regel}|{geschlossen}" not in erledigt
             ]
+            # #275: je Verstoß höchstens ein Wiederöffnen — danach nur einmal melden.
+            erneut = [f for f in ungesehen if schon_geoeffnet(n, f, erledigt)]
+            neu_funde = [f for f in ungesehen if f not in erneut]
             for f in funde_ok:
-                aktionen.append(
-                    f"#{n} VERSTOSS {f.regel}: {f.text}"
-                    + ("" if f in neu_funde else " (schon gemeldet)")
+                zusatz = (
+                    ""
+                    if f in neu_funde
+                    else " (erneut, nicht wieder geöffnet)"
+                    if f in erneut
+                    else " (schon gemeldet)"
                 )
+                aktionen.append(f"#{n} VERSTOSS {f.regel}: {f.text}{zusatz}")
+            zu_melden = [f for f in erneut if f"erneut|{verstoss_kennung(n, f)}" not in erledigt]
+            if zu_melden:
+                aktionen += befund.erneut_melden(
+                    n, gh_repo, [(f.regel, f.text) for f in zu_melden], dry_run
+                )
+                if aktionen[-1] == f"#{n} erneut gemeldet":
+                    erledigt.update(f"erneut|{verstoss_kennung(n, f)}" for f in zu_melden)
+                    sichern()
             if not neu_funde:
                 continue
             aktionen += _wieder_oeffnen(n, gh_repo, neu_funde, dry_run)
             if aktionen[-1] == f"#{n} wieder geöffnet":
                 erledigt.update(f"{n}|{f.regel}|{geschlossen}" for f in neu_funde)
+                erledigt.update(f"geoeffnet|{verstoss_kennung(n, f)}" for f in neu_funde)
                 sichern()
             elif not (dry_run and aktionen[-1].endswith("würde wieder öffnen")):
                 continue
             # #284: wieder offen bringt nichts, wenn niemand weiterbaut.
+            # ``issue`` ist der Stand vor dem Wieder-Öffnen; gefragt wird der Stand danach.
+            jetzt_offen = {**issue, "state": "open"}
+            if ticket_zustand.fertig_gebaut(jetzt_offen):
+                # #275: grün auf Staging — ein zweiter Bau-Start wäre Doppelbau.
+                aktionen.append(f"#{n} {ticket_zustand.wortlaut(jetzt_offen)} — keine Folge-Runde")
+                continue
             aktionen += _folge_runde(
                 repo,
                 konfig,
@@ -2347,7 +2489,7 @@ def _tick(
                 )
             )
             if kandidat is not None and reopen_funde(
-                repo, ref, n, eigene, belege, vps, kopf, alle_zeilen, staging_stand
+                repo, ref, n, eigene, belege, vps, kopf, alle_zeilen, staging_stand, issue
             ):
                 kandidat = None  # Regeln weiter rot — das Reopen war richtig
             if kandidat is not None:
@@ -2470,7 +2612,7 @@ def _tick(
         fp = str(eintrag.get("fingerprint") or "")[:8]
         was = mensch_noetig_was(eintrag)
         aktionen.append(
-            f"MENSCH NÖTIG: #{ziel} {was} (fp {fp}) — Kette läuft weiter, David prüft."
+            f"MENSCH NÖTIG: #{ziel} {was} (fp {fp}) — Kette läuft weiter, der Mensch prüft."
         )
         if dry_run or regeln_aus:
             continue
@@ -2531,7 +2673,7 @@ def _tick(
                 f"SPEC FERTIG — alle {len(liste)} Tickets zu, keine Verstöße{alt_hinweis}. [Probe]"
             )
         else:
-            pfad = uebersicht(repo, ref, spec, [int(i["number"]) for i in liste])
+            pfad = uebersicht(repo, spec, [int(i["number"]) for i in liste])
             erg.zeilen.append(
                 f"SPEC FERTIG — alle {len(liste)} Tickets zu, keine Verstöße{alt_hinweis}. Übersicht: {pfad}"
             )

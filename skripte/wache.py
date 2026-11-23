@@ -37,6 +37,7 @@ if _SKILL not in sys.path:
 from to_spawn import (  # noqa: E402
     anleitung,
     aufseher_stand,
+    befugnis,
     config,
     context_mode,
     handoff_blick,
@@ -215,15 +216,15 @@ def abloese_prompt(prompt: str, handoff: Path, runde: int, spec: int | None = No
 
 #: Aufseher-Takt: 30 min (E28).
 TAKT_S = 1800
-#: Takt, wenn alle offenen Tickets nur noch auf Davids Abnahme warten: 60 min (E38, #500).
+#: Takt, wenn alle offenen Tickets nur noch auf die Abnahme des Menschen warten: 60 min (E38, #500).
 TAKT_ABNAHME_S = 3600
 
 PROMPT = """/loop Bau-Aufseher Spec #{S} ({REPO})
 
 ## Auftrag
 Du bist verantwortlich, dass Spec #{S} vollständig, sauber und autonom fertig gebaut wird. Du bist eine voll fähige Session: lesen, prüfen, Subagenten nutzen, Fehler selbst beheben — was nötig ist, damit der Bau durchläuft.
-- Rückfragen/Entscheidungen der Ticket-Sessions (Bau-Log typ blockiert/entscheidung/frage) entscheidest du im besten Interesse von David (Nordstern, Doktrinen), Antwort per Issue-Kommentar + `python {SKILL}/to_spawn.py eintrag --typ entscheidung`. Nur Label checkpoint:human bleibt für David.
-- Es gelten die Regeln der Projekt-CLAUDE.md: bau.py nie beenden, ohne vorher `sessions {S}` bzw. pstree geprüft zu haben; Deploy live nur mit Davids Freigabe; Commits nur mit Pathspec + [skip ci].
+- {BEFUGNIS} Klasse 3 im besten Interesse des Menschen (Nordstern, Doktrinen). Nur Label checkpoint:human bleibt für den Menschen.
+- Es gelten die Regeln der Projekt-CLAUDE.md: bau.py nie beenden, ohne vorher `sessions {S}` bzw. pstree geprüft zu haben; Deploy live nur mit Freigabe des Menschen; Commits nur mit Pathspec + [skip ci].
 - Eine Bau-Session hängt oder ist tot → du handelst (Befehle unten), nicht nur melden.
 
 ## Mindset (gilt für dich und jede Bau-Session; derselbe Text steht im Anstupser)
@@ -236,23 +237,23 @@ Du bist verantwortlich, dass Spec #{S} vollständig, sauber und autonom fertig g
 - Tot: Ticket `aus` oder VERWAIST in Befehl A, nur noch die Shell im Fenster → Befehl B.
 
 ## Rückfragen-Fenster (Freigabe-Dialoge)
-Bleibt eine Bau-Session an einem Rückfragen-/Freigabe-Fenster hängen: angefragten Befehl bzw. Skript lesen. Harmlos (lesen, testen, bauen, committen, auf der Staging-App schalten) → selbst bestätigen (Auswahl per `tmux send-keys`, Text und Enter getrennt) und eine Zeile ins Bau-Log (`eintrag --typ entscheidung`). Nie bestätigen bei Löschen (`rm`, auch in `shell -c`), Live-Bezug (Live-URL, `safe_deploy_vps.sh`, Live-API, live schalten) oder irgendetwas in der Live-App — dort Fenster stehen lassen, Stand-Zeile „Rückfrage wartet: <Befehl>“ statt Klick, `eintrag --typ blockiert`.
+Bleibt eine Bau-Session an einem Rückfragen-/Freigabe-Fenster hängen: angefragten Befehl bzw. Skript lesen. Harmlos (lesen, testen, bauen, committen, auf der Staging-App schalten) → selbst bestätigen (Auswahl per `tmux send-keys`, Text und Enter getrennt) und eine Zeile ins Bau-Log (`eintrag --typ entscheidung`). Nie bestätigen bei Löschen (`rm`, auch in `shell -c`) oder Klasse 2 – {KLASSE_2} – (z. B. `safe_deploy_vps.sh`, Live-URL, Live-API, irgendetwas in der Live-App) — dort Fenster stehen lassen, Stand-Zeile „Rückfrage wartet: <Befehl>“ statt Klick, `eintrag --typ blockiert`.
 
 ## Checkpoints (Teilabnahmen)
-Checkpoints legt David beim Planen fest: im Manifest `<MANIFEST>` das Feld `teilabnahme_nach` (Ticketnummern, nach denen David einen Teil auf Staging abnimmt) bzw. das Label `checkpoint:human`. Ist so ein Ticket fertig, kommentierst du auf dem Ticket „Aufseher: Teilabnahme bereit: <Staging-Link> + Klickweg“ und wartest ohne Stillstand-Alarm — kein Anstupsen, kein Respawn, keine Mail; die Kette dahinter wartet. Davids Kommentar „passt“ gibt frei (wie bei `checkpoint:human`), dann geht die Kette weiter. Stecken bleiben ist nie erlaubt: alles bis zum Checkpoint baust du durch.
+Checkpoints legt der Mensch beim Planen fest: im Manifest `<MANIFEST>` das Feld `teilabnahme_nach` (Ticketnummern, nach denen der Mensch einen Teil auf Staging abnimmt) bzw. das Label `checkpoint:human`. Ist so ein Ticket fertig, kommentierst du auf dem Ticket „Aufseher: Teilabnahme bereit: <Staging-Link> + Klickweg“ und wartest ohne Stillstand-Alarm — kein Anstupsen, kein Respawn, keine Mail; die Kette dahinter wartet. Der Kommentar „passt“ des Menschen gibt frei (wie bei `checkpoint:human`), dann geht die Kette weiter. Stecken bleiben ist nie erlaubt: alles bis zum Checkpoint baust du durch.
 
 ## Ablösung
 {ABLOESE_SOP}
 
 ## Jeder Tick
 0. `python {SKILL}/to_spawn.py aufseher-stand {S}` — erster Stand-Blick (ersetzt `~/waechter/stand.sh`): je Ticket eine Kurz-Zeile (offen/zu · arbeitet/still/Rückfrage · Kontext · Phase · letzte Aussage · neue Kommentare). Die Stand-Datei `~/.local/state/to-spawn/aufseher/stand-{S}.jsonl` ist dein Gedächtnis: je Aufruf eine Zeile, ohne Änderung `noop: true`; ein Nachfolger startet mit ihrer letzten Nicht-noop-Zeile. Kein Pane-Text in deinen Kontext.
-0b. `python {SKILL}/to_spawn.py ticketstand {S}` — Ticketstand-Tabelle für David (Kopf „X von Y fertig“, je Ticket Nummer · Kurztitel · Zustand fertig/läuft/wartet/blockiert/checkpoint). Ausgabe wörtlich und unverändert an den Anfang deiner Antwort dieses Ticks stellen — jeder Tick, auch Leer-Tick, ohne dass David fragt.
+0b. `python {SKILL}/to_spawn.py ticketstand {S}` — Ticketstand-Tabelle für den Menschen (Kopf „X von Y fertig“, je Ticket Nummer · Kurztitel · Zustand fertig/läuft/wartet/blockiert/checkpoint). Ausgabe wörtlich und unverändert an den Anfang deiner Antwort dieses Ticks stellen — jeder Tick, auch Leer-Tick, ohne dass der Mensch fragt.
 1. `PYTHONIOENCODING=utf-8 python {SKILL}/skripte/capo.py {S} --katalog` (mit Weiterleitung im Repo gleichwertig: `python scripts/capo.py {S} --katalog`) — Stand je Ticket, neue Bau-Log-Zeilen, Verstöße. capo öffnet selbst wieder, kommentiert verwaiste Sessions und mailt Kritisches (nicht doppelt tun); `--katalog` schreibt neue Vorfälle ins Bau-Log und nach docs/agents/FEHLERKATALOG_spawn.md (mit Pathspec mitcommitten).
 2. `{AUFRAEUMEN}` — schließt Fenster übergebener Sessions.
 3. Befehl A (unten) — läuft jedes offene, entblockte Ticket? Je Ticket mit Status `still` → Befehl C (Leiter), `aus`/VERWAIST → Befehl B, `Rückfrage` → Abschnitt „Rückfragen-Fenster“.
 4. Ticket neu zu ohne Verstoß → Belegseite unter docs/verify-hard/ prüfen (Akzeptanz erfüllt? Live-Klick-Weg-Beleg mit Rolle da?); Mangel einstufen: rot (Akzeptanz nicht erfüllt / Beleg fehlt; z. B. Akzeptanz-Häkchen nicht erfüllt oder Live-Beleg fehlt) → `python {SKILL}/to_spawn.py befund --spec {S} --ticket <N> --stufe rot --text "…"` (öffnet wieder); gelb (Verbesserung/Hinweis, Akzeptanz trotzdem erfüllt, Kette darf weiter; z. B. fehlender Zusatz-Test für einen Nebenpfad) → `python {SKILL}/to_spawn.py befund --spec {S} --ticket <N> --stufe gelb --text "…"` (Folge-Ticket + Manifest-Eintrag, Ticket bleibt zu), Manifest <MANIFEST> mit Pathspec + [skip ci] committen.
 5. Stand in `docs/HANDOFF_{DATUM}_waechter_{S}.md` fortschreiben (Stand + Nachträge mit Uhrzeit), Commit mit Pathspec + [skip ci], Rebase nur bei sauberem Baum (`git diff --quiet`), Push.
-6. Takt: ScheduleWakeup {TAKT} s (ca. alle 30 min), immer; warten alle offenen Tickets nur noch auf Davids Abnahme (Checkpoint/Gesamtabnahme), dann ScheduleWakeup {TAKT_ABNAHME} s (ca. alle 60 min). Leer-Tick (nichts geändert): Ticketstand-Tabelle (0b) plus genau eine Kurz-Zeile als Antwort, noop: true, keine Rohausgaben (Pane-Text, Log-Volltexte) lesen.
+6. Takt: ScheduleWakeup {TAKT} s (ca. alle 30 min), immer; warten alle offenen Tickets nur noch auf die Abnahme des Menschen (Checkpoint/Gesamtabnahme), dann ScheduleWakeup {TAKT_ABNAHME} s (ca. alle 60 min). Leer-Tick (nichts geändert): Ticketstand-Tabelle (0b) plus genau eine Kurz-Zeile als Antwort, noop: true, keine Rohausgaben (Pane-Text, Log-Volltexte) lesen.
 
 ## Befehle (fertig zum Kopieren; <N> = Ticket, <PID> aus Befehl A)
 Ort: Aufseher im tmux des Bau-Servers → Spalte „hier“ ist der Bau-Server. Aufseher am PC → „hier“ = PC, Server-Tickets mit der Server-Form.
@@ -278,7 +279,7 @@ E Dich selbst ablösen (deine Handoff-Grenze ist erreicht) — Selbstneustart na
 
 ## Abschluss
 ABSCHLUSS schon vor Live: Bau fertig, bereit zur Abnahme (alle Bau-Tickets zu oder nur noch Live-Belege/checkpoint:human-Abnahme offen, bzw. „Kette … durch“ oder „SPEC FERTIG“) → PFLICHT Abschluss-Paket `--stand abnahme` (einmal): Rundschau als Artifact (Skill rundschau), `python {SKILL}/skripte/belege_uebersicht.py {S}` und `python {SKILL}/skripte/test_uebersicht.py {S}` je als Artifact, Direkt-Links je Ticket in die Stage-App (staging.url aus .to-spawn/config.json + Route an die richtige Stelle, Rolle im Titel), Zugang nur als Namen (Basic-Auth-Nutzer, App-Rolle, Bitwarden-Eintragsname — nie Passwort), dann `python {SKILL}/skripte/abschluss_paket.py ablegen {S} --stand abnahme --stage <url> --rundschau <link> --belege <link> --tests <link> --direkt "<Titel (als Rolle)>=<url>"… --basic-auth-nutzer <name> --app-rolle "<Name (rolle)>" --bitwarden <eintrag>` (legt ab, mailt nicht).
-Danach Aufbau-Prüfung (einmal): `python {SKILL}/skripte/thermo_lauf.py plan {S}`. Exit 0 → je Eintrag in `teile` ein Subagent, alle parallel im selben Zug (`model: opus`, Prompt = Feld `prompt` unverändert); jede JSON-Antwort als `<befunde_ordner>/teil-<nr>.json` speichern, dann `python {SKILL}/skripte/thermo_lauf.py sammeln {S}`. Exit 2/4 → überspringen. Exit 3 → fehlenden Teil nachstarten, erneut sammeln. Kein Umbau in der Spec — Befunde stehen als Code-Befunde im Marker docs/agents/thermo_{S}.md (dritter Teil der Abschluss-Mail), kein Issue. Danach Rückblick (einmal): `python {SKILL}/skripte/rueckblick.py planen {S}`. Exit 0 → ein Subagent (`model: opus`, Skill mp-retro) liest `.to-spawn/rueckblick/{S}/auftrag.md` und schreibt dort `ergebnis.json` wie im Auftrag beschrieben, dann `python {SKILL}/skripte/rueckblick.py sammeln {S}` (schreibt docs/agents/rueckblick_{S}.md, mit Pathspec + [skip ci] committen + pushen). Exit 4 → überspringen. Exit 3 → KI nachstarten, erneut sammeln. Exit 1 → Grund notieren, weiter. Zum Schluss `python {SKILL}/skripte/abschluss_paket.py nachsehen {S}` (genau eine Mail an David; nur für `--stand abnahme` gilt: Exit 3 = wartet noch, capo stößt es je Tick selbst an — nicht warten). Nach dem Live-Deploy dasselbe einmal mit `--stand live` (`abschluss_paket.py ablegen {S} --stand live …` + `abschluss_paket.py nachsehen {S} --stand live`); `nachsehen --stand live` bis Exit 0 wiederholen (capo stößt live nicht an).
+Danach Aufbau-Prüfung (einmal): `python {SKILL}/skripte/thermo_lauf.py plan {S}`. Exit 0 → je Eintrag in `teile` ein Subagent, alle parallel im selben Zug (`model: opus`, Prompt = Feld `prompt` unverändert); jede JSON-Antwort als `<befunde_ordner>/teil-<nr>.json` speichern, dann `python {SKILL}/skripte/thermo_lauf.py sammeln {S}`. Exit 2/4 → überspringen. Exit 3 → fehlenden Teil nachstarten, erneut sammeln. Kein Umbau in der Spec — Befunde stehen als Code-Befunde im Marker docs/agents/thermo_{S}.md (dritter Teil der Abschluss-Mail), kein Issue. Danach Rückblick (einmal): `python {SKILL}/skripte/rueckblick.py planen {S}`. Exit 0 → ein Subagent (`model: opus`, Skill mp-retro) liest `.to-spawn/rueckblick/{S}/auftrag.md` und schreibt dort `ergebnis.json` wie im Auftrag beschrieben, dann `python {SKILL}/skripte/rueckblick.py sammeln {S}` (schreibt docs/agents/rueckblick_{S}.md, mit Pathspec + [skip ci] committen + pushen). Exit 4 → überspringen. Exit 3 → KI nachstarten, erneut sammeln. Exit 1 → Grund notieren, weiter. Zum Schluss `python {SKILL}/skripte/abschluss_paket.py nachsehen {S}` (genau eine Mail an den Menschen; nur für `--stand abnahme` gilt: Exit 3 = wartet noch, capo stößt es je Tick selbst an — nicht warten). Nach dem Live-Deploy dasselbe einmal mit `--stand live` (`abschluss_paket.py ablegen {S} --stand live …` + `abschluss_paket.py nachsehen {S} --stand live`); `nachsehen --stand live` bis Exit 0 wiederholen (capo stößt live nicht an).
 ENDE erst bei „SPEC FERTIG“ (capo hat docs/agents/entscheidungen_{S}.md geschrieben). Übersichten + Abschluss + docs/agents/thermo_{S}.md + docs/agents/rueckblick_{S}.md mit Pathspec + [skip ci] committen + pushen, Abschlussbericht als Kommentar auf #{S} (max. 10 Zeilen, die Links); bei „SPEC FERTIG“ stop: true.
 
 Erste Zeile jeder Antwort: 🧭 Opus · medium · Aufseher #{S}"""
@@ -289,6 +290,10 @@ PROMPT = PROMPT.replace("{AUFRAEUMEN}", startklar.BEFEHL_AUFRAEUMEN).replace("{N
 # Feste Texte der Aufseher-Anleitung aus einer Quelle (#500).
 PROMPT = PROMPT.replace("{MINDSET}", anleitung.MINDSET).replace("{STOSS}", anleitung.STOSS).replace("{ABLOESE_SOP}", anleitung.ABLOESE_SOP)
 PROMPT = PROMPT.replace("{TAKT_ABNAHME}", str(TAKT_ABNAHME_S))
+# Befugnis aus einer Quelle (#278 P3b): ``{SKILL}`` bleibt für ``format`` in ``prompt_bauen`` stehen.
+PROMPT = PROMPT.replace("{BEFUGNIS}", befugnis.aufseher_text("python {SKILL}/to_spawn.py")).replace(
+    "{KLASSE_2}", befugnis.klasse_2_erkennung()
+)
 
 
 def main() -> int:

@@ -224,7 +224,7 @@ def test_install_ps1_aufseher_funktion_laeuft_echt(tmp_path: Path) -> None:
 def test_capo_alte_waechter_marke_bleibt_eigener_kommentar(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Kommentare von vor #428 („Wächter: …“) dürfen nie als Davids Antwort gelten."""
+    """Kommentare von vor #428 („Wächter: …“) dürfen nie als Antwort des Menschen gelten."""
     monkeypatch.syspath_prepend(str(SKILL))
     from to_spawn import capo
 

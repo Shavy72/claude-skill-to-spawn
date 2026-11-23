@@ -20,7 +20,7 @@ Variante B (verworfen): Stufe als Feld in `capo.Verstoss` + gelb-Zweig in capo. 
 
 ## Entscheidungen
 - Folge-Ticket wird kein Sub-Issue der Spec (sonst blockiert ein verschobenes Ticket „Spec fertig“); Verbindung über Manifest `gelb_von` + Body „Teil von Spec #S, gelber Befund aus #N“.
-- Status: Issue zu = gebaut · offen + Label `verschoben` = verschoben (David) · sonst offen.
+- Status: Issue zu = gebaut · offen + Label `verschoben` = verschoben (vom Menschen) · sonst offen.
 - Manifest-Eintrag erfüllt die Pflichtfelder (`schaetzung_k` 30, `umfang` = Befundtext).
 
 ## Akzeptanz

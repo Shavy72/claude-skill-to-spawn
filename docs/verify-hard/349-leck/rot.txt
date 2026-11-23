@@ -1,0 +1,13 @@
+$ python -m pytest tests/test_bau_ohne_prompt_431.py tests/test_eigener_basetemp_349.py::test_eigener_ordner_ist_kurz_und_nach_gruenem_lauf_weg -p no:randomly -p no:cacheprovider -p no:xdist -q
+E       AssertionError: PosixPath('/tmp/pt-a_djxmzt/hausmeister2/temp/pt-vvcsporo')
+E       assert PosixPath('/tmp/pt-a_djxmzt/hausmeister2/temp') == PosixPath('/tmp')
+E        +  where PosixPath('/tmp/pt-a_djxmzt/hausmeister2/temp') = PosixPath('/tmp/pt-a_djxmzt/hausmeister2/temp/pt-vvcsporo').parent
+tests/test_eigener_basetemp_349.py:151: AssertionError
+1 failed, 3 passed in 0.88s
+EXIT=1
+
+Ursache: skripte/bau.py:1082 (und skripte/wache.py:386) setzen TMPDIR/TEMP/TMP per
+os.environ.update(temp_ordner.umgebung()) auf TO_SPAWN_TEMP_ORDNER (tests/conftest.py, ".../hausmeisterN/temp").
+Tests wie test_bau_ohne_prompt_431 stellen per monkeypatch nur TMPDIR zurück; TEMP/TMP bleiben im
+Prozess stehen. Test 349 reicht os.environ ohne TMPDIR an den Unterprozess, dessen tempfile nimmt TEMP.
+Fix: tests/conftest.py, Fixture _hausmeister_nur_im_test meldet alle drei Variablen bei monkeypatch an.

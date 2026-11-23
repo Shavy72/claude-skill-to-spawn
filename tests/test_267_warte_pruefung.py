@@ -26,6 +26,7 @@ from types import ModuleType
 from typing import Any
 
 import pytest
+
 from conftest import attrappe
 
 SKILL = Path(__file__).resolve().parent.parent
@@ -152,14 +153,31 @@ def _lade_bau(repo: Path, monkeypatch: pytest.MonkeyPatch) -> ModuleType:
     return bau
 
 
+#: Commit-Suche nach Ticketnummer in beiden Schreibweisen: ``"--grep=(#…)"`` und
+#: getrennt ``"--grep", f"(#…)"`` (#320: so stand sie in ``skripte/spec_stand.py``).
+COMMIT_SUCHE = re.compile(r"""--grep(?:=|["']\s*,\s*f?["'])\(#""")
+
+
 def test_commit_pruefung_nur_in_gh() -> None:
     """Die Commit-Suche ``--grep=(#<Blocker>)`` steht nur in gh.py (keine zweite Wahrheit)."""
     treffer = [
         p.relative_to(SKILL).as_posix()
         for p in [*SKILL.glob("to_spawn/*.py"), *SKILL.glob("skripte/*.py"), SKILL / "to_spawn.py"]
-        if "--grep=(#" in p.read_text(encoding="utf-8")
+        if COMMIT_SUCHE.search(p.read_text(encoding="utf-8"))
     ]
     assert treffer == ["to_spawn/gh.py"]
+
+
+@pytest.mark.parametrize(
+    "zeile",
+    [
+        '["log", "--format=%s", "--fixed-strings", f"--grep=(#{nummer})"]',
+        'sh("git", "log", haupt, "--oneline", "-1", "--fixed-strings", "--grep", f"(#{n})")',
+        "['--grep', '(#5)']",
+    ],
+)
+def test_commit_suche_muster_findet_beide_schreibweisen(zeile: str) -> None:
+    assert COMMIT_SUCHE.search(zeile)
 
 
 # --- Weg über respawn/--sofort (#267-Nachtrag): Start-Schranke → Session-Prüfung ----

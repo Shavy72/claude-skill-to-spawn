@@ -218,3 +218,349 @@ Anlass: Zwischenstand 22:16 — der Bau läuft über viele sich ablösende Sessi
 **Ausdrücklich nicht gewollt (L5)**
 
 - **N11** kein Wissen, das nur in einem Chat, im Kopf einer Session oder auf einer einzigen Maschine liegt
+
+---
+
+## L6 — Zwei Werkzeugkästen statt „Windows reparieren“ (David, 2026-11-22)
+
+### Wortlaut (1:1)
+
+> eine sache noch zum system ausbau, mich stört etwas das das was unter Windows noch ncith sauber funktioniert das dass als reparatur angesehen wird das halte ich vom Wording her falsch, es ist doch klar das wenn man dem Windows das gewand von linux anzieht das da was nicht richtig läuft und reparieren heist für ich das man was an dem schon funktionierenden linux Zeug irgendwas ändert.. es ist doch schlauer wenn man für beides ein Werkzeugkasten jeweils hat den die jewiels dort arbeitende KI nehmen kann je nachdem auf welchem system sie arbietet und es läuft autoatmsich sauber und getrennt be beiden systemen das mit dem reparieren implziert für mich das wir uns ewig im kreis drehen würden weil wir was reaprieren für Windows und damit Linux wieder was kaputt machen oder anders gessgt wir den heiligen Gral dazwischen suchen was unnötig kompliziert ist anstatt einfach auf zwei getrennten äasten zu bauen, wo beide eifach das haben was bei beidem funktioniert und das jeweils nur haben was bei sich funktioniert also wenn linux der Nagel ist dann greift die KI zum Hammer und bleibt beim Hammer und wenn Windows die schraube ist dann greift die KI zum schraubendreher und bleibt dabei und wenn siech was tasucht erkennt das die KI jeweils und nutzt autoamtisch das werkeuzeug für die andere umgebung jeweils das würde ich gern so hand haben so wäre es am schlausten und wir doktorn nicht unnötig rum
+
+Auf die Rückfrage, ob gemeint ist „ein gemeinsamer Kern (Ablauf, Regeln, Blocker-Logik), je System ein
+eigener Werkzeugkasten (Fenster öffnen, Prozesse starten, geplante Aufgaben, Pfade), der Skill erkennt
+das System selbst; ein Windows-Fehler wird im Windows-Kasten gelöst, nie durch Verbiegen des Linux-Wegs“:
+
+> ja genau so linux ist ja schon weit oder? das müsste man ja nicht viel umbauen da das ja an sich schon passt oder?
+
+Zusatz ca. 16:35, zur Auslegung „je System ein tiefes Modul, der Kern ruft nur eine schmale, für
+beide Systeme gleiche Schnittstelle auf“:
+
+> genau windows und linux sind eigene module mit schmalen interfaces und tiefer funktionalität darum gehts
+
+Zusatz ca. 21:25, zur Einordnung von Befunden (Grundlage der Labels `system:windows`,
+`system:linux`, `system:kern`):
+
+> okay genrell bei der issue ereknnung müssen wir immer identifizeren auch ist das ein windows problem oder einn linux problem oder ein gemeinsmes problem und dann je nachdem das issue anlegen zum fixen sonst drehen wir uns im kreis das passt auch zu dem was ich vorhin gesagt hatte mit den beiden getrennten werkzeug kisten je beetriebssystem
+
+Anlass: Die Arbeit an der Windows-Seite lief bis dahin unter „fix(windows)“ und änderte dabei teils
+Dateien, die beide Systeme nutzen.
+
+### Verdichtung in prüfbare Anforderungen (L6)
+
+- **A29 Gemeinsamer Kern:** Ablauf, Regeln und Blocker-Logik gibt es genau einmal. Der Kern fragt
+  nie selbst, auf welchem System er läuft.
+- **A30 Je System ein Werkzeugkasten:** Alles, was vom System abhängt (Fenster öffnen, Prozesse
+  starten und finden, geplante Aufgaben, Pfade, Zeilenenden, Ausgabe-Kodierung), liegt in einem
+  Kasten für Linux und einem für Windows hinter derselben schmalen Tür.
+- **A31 Automatische Wahl:** Der Skill erkennt das System selbst und nimmt den passenden Kasten.
+  Wechselt die Umgebung, wechselt das Werkzeug mit – ohne Einstellung von Hand.
+- **A32 Getrennt gebaut:** Arbeit für Windows ändert keine Datei des Linux-Kastens und umgekehrt.
+  Ein Prüf-Skript macht den Bau rot, wenn eine System-Abfrage außerhalb der Kästen steht oder ein
+  Paket beide Kästen zugleich anfasst.
+- **A33 Wording:** Fehlt unter Windows etwas, heißt die Arbeit „Windows-Werkzeug bauen“, nicht
+  „reparieren“ oder „Fix“. „Reparieren“ ist nur, was vorher auf demselben System schon lief.
+- **A34 Erst zählen, dann umbauen:** Vor dem Umbau steht eine Bestandsaufnahme mit Zahlen (unten).
+  Davids Erwartung „Linux muss kaum umgebaut werden“ wird damit belegt oder widerlegt, nicht angenommen.
+
+- **A35 Trennungs-Kontrolle (bedingt):** Zum Vorschlag „Prüf-Skript in der Skill-Suite: Wortsuche außerhalb
+  der zwei System-Kästen nach System-Abfragen und nach Werkzeugen, die es nur auf einem System gibt
+  (`tmux`, `crontab`, `powershell`, `schtasks`, `wt.exe` …); Treffer = rot mit Datei und Zeile; kurze
+  Ausnahme-Liste“ sagte David (2026-11-22):
+
+  > okay wenn uns das eher nützt als hindert dann mit rein
+
+  Das ist ein bedingtes Ja. Die Wortliste kommt aus der Bestandsaufnahme; nach dem Bau werden
+  Fehlalarme gezählt. Hindert die Kontrolle mehr als sie nützt (viele Fehlalarme, lange
+  Ausnahme-Liste), wird sie wieder ausgebaut. Sie gilt nur für Arbeit am Skill selbst, nicht für
+  Spec-Bauten, die den Skill nur benutzen.
+
+**Ausdrücklich nicht gewollt (L6)**
+
+- **N12** kein Windows-Paket, das den funktionierenden Linux-Weg verändert („im Kreis reparieren“)
+- **N13** keine Suche nach dem einen Code, der auf beiden Systemen gleich läuft, wo zwei einfache
+  getrennte Wege reichen
+- **N14** keine zwei komplett getrennten Skill-Fassungen – der Kern bleibt einer
+
+### Bestandsaufnahme (Stand main 79d2fad, gezählt 2026-11-22, grob per Textsuche)
+
+- Direkte System-Abfragen (`sys.platform`, `os.name`, `platform.system()`) außerhalb der Tests:
+  **50 Stellen in 25 Dateien**. Die meisten in `to_spawn/hausmeister.py` (6), `startklar.py` (5),
+  `umzug.py` (4), `hausmeister_aufgabe.py` (4), je 3 in `waechter_takt.py`, `starter.py`,
+  `spawn.py`, `config.py`. Die Weichen liegen also heute verstreut, nicht hinter einer Tür.
+- Ansätze für Kästen gibt es schon: `to_spawn/hausmeister_windows.py`, `to_spawn/prozessbaum.py`.
+- Tests: 63 Test-Dateien enthalten eine System-Abfrage oder ein `skipif`.
+- Was die bisherigen Windows-Pakete außerhalb von Tests geändert haben:
+  233 → `hausmeister_windows.py`, `prozessbaum.py` · 240 → nur Tests · 256 → `konsole.py`,
+  `sperre.py`, `uebergabe_sichern.py` (gemeinsam) · 265 → `pruef/regeln.py` (gemeinsam, 1 Zeile) ·
+  255 (offen) → `aufpasser.py` (gemeinsam, läuft auf Linux im Cron) und `prozessbaum.py`.
+- Noch nicht gemessen: wie viele der 50 Stellen den Linux-Weg beim Herausziehen wirklich berühren.
+  Gebaut wird erst nach der Probe und nach Davids Wort.
+
+---
+
+## L7 — Ressourcen-Regeln: messen, drosseln, nie stehen bleiben (David, 2026-11-22)
+
+### Wortlaut (1:1)
+
+> … wegen dem Ram warum läuft der den voll was verbraucht den da die mieste perfomrance wir haben schon viel an dem gate rumgebastelt und viel versucht und untersucht das ist auch eins der sachen die auf jedenfall systematisiert werden sollten mit einer sauberen SOP oder einem fleblen werkzeugkasten aus verschenednen SOPS
+
+> ja es soll da gewisse standards geben je nach hardware was verfügabr ist das soll halt berücksichtigt werden und klaren regeln folgen das man immer den sweetspot anpeilt zwischen performance speed und gründlichkeit beim jeweiligen Testgate
+
+> wir brauchen klare regelungen und AUgen auf der Umgebung was die ressourcen angeht und klare regeln ab wann was gilt am besten so das es am mesiten sinn macht
+
+Zum Geräte-Logbuch:
+
+> ja dazu ein md file wo gelogt wird was pro gerät und umgebung gemessen ist etc so kann die KI das auch berücksichtigen und sich automatisch anpassen egal ob man auf größere Server skaliert oder auf ienmal auf einem schlechteren laptop arbeiten muss es wird erkannt auf welhem gerät man sich befindet und für jedes Gerät einzeln gelogt und auf dei Daten bei bedarf durch agents zurück gegriffen das müssen reichhaltige logs sein über die hardware und hardware perfomrance und last in vrerschiedenen fällen die laufen
+
+Zum dynamischen Drosseln („Tankanzeige“):
+
+> okay top genau und daher weis er immmer oder der agnt weis daddurch immer wie viele paralel sessions und kann damit auch umgehen mehr oder weniger gleiczitg laufen zu lassen ohne den bau zu sperren als dynamisch "blocken" und autoamtsich dynamsich "entblocken" laufender tickets in agents aber auch als daten zsuatz wann er welchen Code Test Gate laufen lässt zb wenn schon ein gate läuft und ein anderes Ticket in der schalnge steht schaut er erst recht wie er desen gateway optimeirt laufen lassen kann oder welches vorgefertite Gateway SOP er nutzen kann oder sollte um den Bau bestmöglich vorran zu treiben
+>
+> ich vergelihe es mit der Tank anzeige in einem auto oder reifendruck anzeiger, man drosselt die geschiendigkeit genauso das man weiter fahren kann so das man nciht crasht und stehen bleibt aber trotzdem so schnell es geht das ziel erreicht mit fokus aber das das auto weiter genutzt werden kann weil auto ist immer shneller als "zu Fuss" gehen was das equivalent wäre zu "mensch muss eingreiffen in den spec bau
+
+Anlass: Während der Probe am echten Fall lief der Arbeitsspeicher des Bau-Servers mehrfach hoch, und
+die Prüfung je Ticket dauerte rund 11 bis 21 Minuten.
+
+### Verdichtung in prüfbare Anforderungen (L7)
+
+Die Verdichtung ist eine Auslegung der Sessions. David hat den Wortlaut gesagt, die einzelnen Punkte
+aber nicht einzeln bestätigt.
+
+- **A36 Gerät erkennen und messen:** Der Skill erkennt selbst, auf welchem Gerät er läuft, und misst
+  dort Arbeitsspeicher, Kerne, Platte und die Last typischer Fälle (Prüflauf je Arbeiter-Zahl,
+  mehrere Bau-Sessions, Browser-Tests, mehrere Specs gleichzeitig).
+- **A37 Geräte-Logbuch:** Je Gerät gibt es ein eigenes, lesbares Logbuch mit Datum je Messung.
+  Agenten lesen es bei Bedarf. Ein unbekanntes Gerät wird zuerst gemessen und startet vorsichtig.
+- **A38 Feste Stufen an einem Ort:** Aus Logbuch und aktueller Last folgt nach klaren Schwellen, wie
+  viele Tickets gleichzeitig bauen, wie viele Arbeiter die Prüfung nutzt und welche Prüf-Tiefe
+  läuft. Die Schwellen stehen an genau einer Stelle im Skill, nicht je Repo von Hand.
+- **A39 Drosseln statt stehen bleiben:** Wird es eng, hält der Skill Tickets zurück; wird Luft frei,
+  lässt er sie von selbst wieder los. Der Bau wird dabei nie gesperrt und braucht keinen Menschen.
+- **A40 Prüfung passt sich an:** Läuft schon eine Prüfung und ein weiteres Ticket steht an, wählt
+  der Skill die passende vorgefertigte Prüf-Anleitung (Arbeiter-Zahl, Tiefe, Reihenfolge oder
+  Bündelung). Baut auf L3 auf.
+- **A41 Rangfolge:** Erstens bleibt der Bau nie stehen und stürzt nicht ab. Zweitens ist er
+  innerhalb dessen so schnell wie möglich.
+- **A42 Erst messen:** Vor jedem Regel-Entwurf stehen Zahlen: Speicher- und Zeit-Spitze eines
+  Prüflaufs je Arbeiter-Zahl, Dauer je Ticket gegen Zahl gleichzeitiger Sessions, Speicher je
+  Bau-Session mit und ohne Browser-Helfer.
+
+**Ausdrücklich nicht gewollt (L7)**
+
+- **N15** kein Stillstand und kein Absturz, weil niemand auf die Ressourcen geschaut hat
+- **N16** keine Handregel je Repo oder je Session für Parallel-Zahl und Prüf-Tiefe
+- **N17** keine Geräte-Logbücher im öffentlichen Skill-Repo (sie bleiben lokal oder privat)
+
+**Offen (nicht entschieden)**
+
+- Wie verträgt sich das Zurückhalten bereits laufender Sessions mit ihrem Kontext (anhalten und
+  fortsetzen gegen „nur keine neuen starten“)? Mindestens zwei Varianten vergleichen.
+- Technik des Logbuchs: Roh-Messwerte maschinenlesbar und die lesbare Datei daraus erzeugt?
+- Ob es eine feste Grenze für gleichzeitig bauende Tickets je Spec geben soll, war nur besprochen.
+
+---
+
+## L8 — Bau-Blocker entscheidet der Aufseher, nicht David (David, 2026-11-23)
+
+### Wortlaut (1:1)
+
+Ca. 01:15, als eine Bau-Session ihm eine Ja/Nein-Frage zu Test-Daten auf Staging stellte:
+
+> ist doch auch gegen meinen wunsch das erstmal alles gebaut wird und selbst entschieden wird und erst dann geklärt wird wenn der spec auf staging fertig ist
+
+Ca. 01:50, nachdem die Session ein weitergereichtes „Ja“ abgelehnt hatte:
+
+> okay aber das nervt doch genau das sind doch bau blocker eigetnlcih ist das der job des aufsehers für mich bei sowas zu entscheiden auf grundlage von meinen aussagen was mir wichtig ist aus den gnazen chat protokollen da soll er ein team lossenden die suchen anch meiner meinung in sonem fall und dann entscheiden für mich
+
+Ca. 02:40, nachdem die Session auch die Entscheidung des Aufsehers nicht angenommen hatte:
+
+> was ist das mit meinem Ja das darf nicht sein das ist ausdrücklich von mir autorisiert und in zukunft darf sowas auch nicht sein
+
+Anlass: In der Probe am echten Fall (22./23.11.2026) fragte eine Bau-Session David, ob sie auf
+Staging Test-Zuordnungen lösen darf (mit Sicherung, eigener Vorschlag „Ja“). Ein „Ja“ per Nachricht
+vom Beobachter und danach vom Aufseher nahm sie nicht an, weil Nachrichten anderer Sessions für sie
+nicht als Freigabe des Nutzers gelten. Zwei Tickets standen darüber mehrere Stunden. Erst ein
+Neustart mit der Freigabe im Start-Auftrag wirkte. Umsetzung: Issue 278.
+
+### Verdichtung in prüfbare Anforderungen (L8)
+
+Die Verdichtung ist eine Auslegung der Sessions. David hat den Wortlaut gesagt, die einzelnen Punkte
+aber nicht einzeln bestätigt.
+
+- **A43 Erst bauen, dann klären:** Eine Bau-Session entscheidet während des Baus selbst und
+  sammelt offene Punkte. Geklärt wird mit David erst, wenn die Spec auf Staging fertig ist.
+- **A44 Rückfrage ist ein Bau-Blocker:** Kann eine Bau-Session etwas nicht selbst entscheiden, geht
+  die Frage an den Aufseher, nie an David.
+- **A45 Aufseher sucht Davids Haltung:** Der Aufseher schickt Helfer los, die Davids Aussagen dazu
+  suchen (Gedächtnis, Übergaben, Lastenheft, Chat-Protokolle). Er entscheidet auf dieser Grundlage
+  und schreibt Entscheidung und Belege ins Ticket.
+- **A46 Die Entscheidung kommt an:** Die Bau-Session nimmt die Entscheidung des Aufsehers an und
+  arbeitet weiter – ohne Neustart und ohne dass ein Mensch etwas eintippt. Die Befugnis dafür steht
+  schon im Start-Auftrag der Session, denn nur der gilt für sie als Wort des Nutzers.
+- **A47 Was autorisiert ist, wird nicht gefragt:** Alles auf Staging und an Test-Daten (mit
+  Sicherung), im eigenen Arbeitsordner und auf eigenen Zweigen entscheidet die Bau-Session selbst
+  und hält es fest.
+- **A48 Liste für die Gesamtabnahme:** Alle so getroffenen Entscheidungen stehen je Spec in einer
+  Liste (wer, was, warum, Beleg), die David bei der Abnahme auf Staging sieht.
+- **A49 Grenze:** Live-System, Kosten und Konten echter Personen bleiben bei David. Dort hält die
+  Session an, und auch der Aufseher entscheidet nicht.
+
+**Ausdrücklich nicht gewollt (L8)**
+
+- **N18** keine Rückfrage an David zu etwas, das er schon autorisiert hat
+- **N19** kein Stillstand eines Tickets, weil eine Entscheidung die Bau-Session nicht erreicht
+- **N20** keine Entscheidung des Aufsehers ohne Belege aus Davids eigenen Aussagen
+
+**Offen (nicht entschieden)**
+
+- Ort und Form des Entscheidungs-Briefkastens (Datei im Arbeitsordner gegen Ticket-Kommentar):
+  zwei Varianten vergleichen, siehe Issue 278.
+- Was der Aufseher tut, wenn die Helfer keine Aussage von David zu dem Fall finden.
+
+---
+
+## L9 — Abnahme auf Staging: Rundschau, KI-Selbstprüfung, Entscheidungs-Liste (David, 2026-11-23)
+
+### Wortlaut (1:1)
+
+Ca. 15:30, in einer [PC-Session] nach der Probe am echten Fall (Spec 1330):
+
+> ja dann gehört das auch mit in den system bau brauche das rundschau artefakt mit der präsentation der neue features damit ich die mir anschauen kann und damit die KI seber nochmal checken kann ob alles passt und dan kommen dann auch die Punkte rein die im Bau für mich entschieden wurden in einer grobe einfachen liste sodass ich da nachfragen kann und wenn dann alles passt gehts live und wenn noch paar sachen nachbearetei werden müssen dann folge tickets eine weitere iteration
+>
+> so muss das ablaufen
+>
+> wir brauchen über dem Aufpasser eine weitere Session die Läuft aber nur bei beadrf einschreitet und maximal token effizient Arbeitet also entweder ohne loop die läuft einfach und wird getriggert wenn sie gebaucht wird oder wwenn sie looped dann sehr token effizient
+>
+> es geht drum das wirklich entschiedungen für much getrofefn werden und geschaut wird in Obsidian oder alten session logs was meine meinung sein wird etc dann enstsciednen wird
+>
+> oder sagst du brauchen wir nicht wir geben das einfach zum start auftrag mit das hat deises mal geholfen oder was sagst du oder sagst du das soll der aufseher auch machen selber einfach was wäre da sinnvoll wie gehen wir da vor
+>
+> Ziel ist ja wirklich das nach plan komplett auf staging gebaut wird und wenn dan die entschidungen angeziegt werden in dem Rundschau dokument oder der seite halt dann sehe ich ja was passier tund entschieden wurde da es ja staging ist ist es ja nicht schlimm und es passiert ja nichts
+
+Anlass: In der Probe am echten Fall (Spec 1330) war die Abschluss-Rundschau zu dünn (7 Seiten,
+keine Bilder, keine Klick-Schritte); eine brauchbare entstand erst auf Davids Nachfrage von Hand.
+Erst eine Lese-Prüfung auf Davids Frage „kann das live?“ fand drei Lücken vor Live (App-Tickets
+1555, 1556, 1557): entschiedenes Verhalten nicht gebaut, keine Sicherung und kein Rückweg für
+Live-Daten, Abnahme-Belege fehlten mangels Beleg-Konto. Die Test-Übersicht im Abschluss-Paket
+nannte veraltet „0 von 40“.
+
+Ersetzt für das öffentliche Repo: der Name der Chat-Sitzung durch [PC-Session].
+
+### Bestätigter Vorschlag (David: „ja klar“, 2026-11-23 ca. 16:00)
+
+Die [PC-Session] hat auf Davids Frage („was wäre da sinnvoll“) diesen Vorschlag gemacht, David hat
+ihn mit „ja klar“ bestätigt:
+
+- Keine eigene Dauer-Session über dem Aufseher. Der Aufseher entscheidet; je offener Frage startet
+  er einen frischen Helfer, der in Obsidian und alten Session-Logs Davids Meinung sucht und
+  Entscheidung + Fundstelle zurückgibt. Ohne Frage kostet das nichts.
+- Jede Entscheidung als eine Zeile in eine Datei je Spec (was · warum · Quelle). Die Rundschau
+  zeigt diese Liste automatisch.
+- Grenze bleibt: Live, Kosten, Konten echter Personen entscheidet David.
+- Ablauf: 1. alles auf Staging bauen · 2. Rundschau automatisch (Bilder, Klick-Schritte,
+  Entscheidungs-Liste) · 3. eine KI klickt die Rundschau selbst gegen Staging durch · 4. David
+  schaut und fragt nach · 5. passt → live, sonst Folge-Tickets und weitere Runde.
+
+### Klarstellung (1:1, ca. 16:20)
+
+> was meinst du wir reden nicht von der gelchen sache ich rede davon das wärend eines spec baus immer wirder tickets stehen bleiben und was von mir wollen obwohl klar ist das es einfach gemacht werden soll ohne mich darum gehts
+
+Einordnung der [PC-Session]: Kern des Entscheider-Wunsches ist nicht die Abnahme, sondern dass
+Bau-Sessions mitten im Spec-Bau stehen bleiben und auf David warten. Was in der Probe half:
+Davids Entscheidungen fest im Start-Auftrag der Bau-Session (6–9 Punkte) – danach kam keine Frage
+mehr an David.
+
+Anlass (Probe Spec 1330, Nacht 22./23.11., App-Tickets): Löschfrage in 1476, 1479 und 1484 warten
+trotz erledigter Blocker, `/implement` startet nicht selbst, 1483 „Nichts zu tun“ nach rotem Gate,
+1484 still nach „Review gelb“, 1485 wartet auf eine Live-Freigabe-Frage.
+
+### Entscheidung (1:1, ca. 16:35)
+
+> ja dann ist das erstmal die lösung das man des fest in den ticket start uaftrag mit giebt wie auch fest in den aufseher integriert
+>
+> okay dann haben wir doch ertsmal genug stoff gesammelt sodass wir dann asap den test spec mal laufen lassen können ist das alles schon itegriert?
+
+Einordnung der [PC-Session]: Die Entscheidungs-Linie gehört fest in den Start-Auftrag jeder
+Bau-Session und in den Aufseher-Auftrag, nicht mehr von Hand per BAU_AUFTRAG. Außerdem soll die
+Test-Spec so bald wie möglich laufen. Der Start der Test-Spec bleibt an Davids ausdrückliches Wort
+gebunden.
+
+Die Linie (Kurzfassung, sinngemäß):
+
+1. Blocker erledigt = geschlossen ODER `staging:fertig` + Commit auf dem Hauptzweig.
+2. Dann selbst claimen und `implement` starten.
+3. Keine Fragen an David, Vorschlag nehmen, ins Bau-Log, weiterbauen; sonst entscheidet der Aufseher.
+4. Staging und Test-Daten frei, auch Löschen, mit Sicherung + Beleg.
+5. Nie ohne David: Live, Live-Daten, Live-Freigabe, Kosten, Konten echter Personen – Schritt
+   auslassen, Kommentar, Rest weiterbauen.
+6. Fertig = grüne Schlange + echter Klickweg auf Staging + Beleg.
+7. Vor jedem Push Vor-Prüfungen lokal grün.
+8. Jede Entscheidung für David als eine Zeile (was · warum · Quelle).
+
+### Verdichtung in prüfbare Anforderungen (L9)
+
+Die Verdichtung ist eine Auslegung der Sessions. David hat den Wortlaut gesagt und den Vorschlag
+oben bestätigt, die einzelnen Punkte aber nicht einzeln. L9 baut auf L8 (A43–A49) auf.
+
+- **A50 Abnahme-Ablauf in fünf Schritten:** Jede Spec läuft so: ganz auf Staging bauen →
+  Rundschau entsteht von selbst → eine KI prüft die Rundschau gegen Staging → David schaut und
+  fragt nach → passt es, geht die Spec live; sonst Folge-Tickets und eine weitere Runde.
+- **A51 Rundschau zeigt die neuen Funktionen:** Die Rundschau zur Abnahme entsteht ohne Nachfrage
+  und zeigt je neuer Funktion mindestens ein Bild aus Staging und die Klick-Schritte, mit denen
+  David sie selbst findet. Eine Rundschau ohne Bilder oder ohne Klick-Schritte gilt als nicht
+  fertig.
+- **A52 Entscheidungs-Liste in der Rundschau:** Alle im Bau für David getroffenen Entscheidungen
+  stehen je Spec in einer Datei, je Entscheidung eine Zeile (was · warum · Quelle). Die Rundschau
+  zeigt diese Liste von selbst, grob und einfach, sodass David zu jeder Zeile nachfragen kann.
+- **A53 KI-Selbstprüfung:** Bevor David die Rundschau bekommt, klickt eine frische KI die
+  Klick-Schritte der Rundschau selbst gegen Staging durch und hält je Schritt fest: passt / passt
+  nicht, mit Beleg. Was nicht passt, wird vor der Abnahme repariert oder in der Rundschau offen
+  genannt.
+- **A54 Folge-Runde statt Flicken:** Muss nach Davids Durchsicht etwas nachgebessert werden,
+  entstehen Folge-Tickets an derselben Spec. Danach läuft der Ablauf aus A50 noch einmal (neue
+  Rundschau, neue Selbstprüfung).
+- **A55 Keine Dauer-Session über dem Aufseher:** Über dem Aufseher läuft keine weitere ständige
+  Session. Der Aufseher startet je offener Frage einen frischen Helfer, der in Davids Notizen
+  (Obsidian) und alten Session-Logs nach seiner Meinung sucht und Entscheidung + Fundstelle
+  zurückgibt. Ohne offene Frage kostet das keine Token.
+- **A56 Grenze (wie A49):** Live-System, Kosten und Konten echter Personen entscheidet David –
+  weder Aufseher noch Helfer.
+- **A57 „Bereit für Live?“ vor der Abnahme:** Bevor eine Spec als „bereit zur Abnahme“ gemeldet
+  wird, prüft das System fest: Ist jedes entschiedene Verhalten gebaut? Gibt es Sicherung und
+  Rückweg für Live-Daten? Liegen die Abnahme-Belege vor? (Aus dem Anlass; als Vorschlag in
+  derselben Notiz festgehalten, nicht als eigener Punkt von David bestätigt.)
+- **A58 Zahlen im Abschluss-Paket sind frisch:** Test-Übersicht und andere Zählungen im
+  Abschluss-Paket zeigen den Stand zum Zeitpunkt der Abnahme, nie einen alten.
+- **A59 Entscheidungen im Start-Auftrag (Klarstellung):** Jede Bau-Session bekommt als Standard
+  einen Auftragstext mit den schon getroffenen Entscheidungen des Auftraggebers zur Spec mit. Eine
+  Bau-Session ohne diesen Teil im Start-Auftrag gilt als falsch gestartet.
+- **A60 Steh-Erkennung löst den Entscheider-Helfer aus (Klarstellung):** Das System erkennt
+  maschinell, dass eine Bau-Session mit einer Frage steht oder still ist, und startet damit den
+  Helfer aus A55 – ohne Dauer-Schleife. Ohne stehende Session läuft kein Helfer.
+- **A61 Entscheidung landet in der Liste (Klarstellung):** Jede so getroffene Entscheidung steht
+  mit Quelle als Zeile in der Entscheidungs-Liste der Spec aus A52 und damit in der Rundschau.
+
+Aus der Entscheidung 16:35 (Auslegung der Sessions, Wortlaut oben):
+
+- **A62 Entscheidungs-Linie fest im Start-Auftrag:** Die acht Punkte der Linie (siehe Entscheidung
+  16:35) stehen fest im Start-Auftrag jeder Bau-Session, nicht mehr von Hand per BAU_AUFTRAG.
+- **A63 Entscheidungs-Linie fest im Aufseher-Auftrag:** Dieselben acht Punkte stehen fest im
+  Aufseher-Auftrag. Start-Auftrag (A62) und Aufseher-Auftrag (A63) beziehen die Linie aus einer
+  gemeinsamen Quelle (Skill-Issue 376).
+- **A64 Test-Spec so bald wie möglich:** Pflicht davor sind die Skill-Issues 273, 274, 282, 283,
+  376, 364 und 372. Danach, nicht blockierend: 365–370. Start der Test-Spec weiter nur auf Davids
+  ausdrückliches Wort.
+
+**Ausdrücklich nicht gewollt (L9)**
+
+- **N21** keine eigene Dauer-Session über dem Aufseher, die ohne offene Frage Token verbraucht
+- **N22** keine Rundschau zur Abnahme, die erst auf Davids Nachfrage brauchbar wird
+- **N23** keine Spec live vor Davids Durchsicht auf Staging
+
+**Offen (nicht entschieden)**
+
+- Wie die KI-Selbstprüfung Staging bedient (echter Browser oder Kopflos-Browser) und wo ihr
+  Ergebnis steht.
+- Ob die Entscheidungs-Datei je Spec die bestehende Übersicht `docs/agents/entscheidungen_<S>.md`
+  ist oder aus dem Entscheidungs-Briefkasten (Issue 278) neu erzeugt wird.

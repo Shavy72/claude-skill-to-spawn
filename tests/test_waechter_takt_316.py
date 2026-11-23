@@ -65,6 +65,7 @@ def welt(tmp_path: Path) -> dict[str, Any]:
             "TO_SPAWN_WAECHTER_ORDNER": str(tmp_path / "waechter"),
             "TO_SPAWN_GH_STUB": str(HILFEN / "gh_aufzeichnung_316.py"),
             "GH_AUFZEICHNUNG_ORDNER": str(FIXTURE),
+            "GH_AUFZEICHNUNG_KOMMENTARE": str(tmp_path / "gh_kommentare.jsonl"),
             "CLAUDE_AUFZEICHNUNG": str(tmp_path / "claude_aufruf.jsonl"),
             "CLAUDE_AUFZEICHNUNG_SPEC": "293",
             "PYTHONIOENCODING": "utf-8",

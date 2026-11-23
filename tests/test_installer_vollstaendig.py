@@ -15,7 +15,8 @@ SKILL = Path(__file__).resolve().parent.parent
 # Bewusst nicht installiert: Git-Steuerdatei, Review-Ablage und ``messung/`` (Entwicklungs-Ordner:
 # Mess-Skripte des Prüftor-Vergleichs #81, nur Linux, kein Laufzeit-Code des Skills).
 # ``conftest.py``: nur Testsammlung, #214 Teil A; Teil B entfernt die Datei wieder.
-NICHT_INSTALLIERT = {".gitignore", ".gitattributes", ".review", "messung", "conftest.py"}
+# ``review`` (#329): Quelle des Review-Werkzeugs, eingespielt erst ab P2 (Installer + review_hook).
+NICHT_INSTALLIERT = {".gitignore", ".gitattributes", ".review", "messung", "conftest.py", "review"}
 
 
 def _wurzel_eintraege() -> set[str]:

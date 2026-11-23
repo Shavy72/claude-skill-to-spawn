@@ -11,4 +11,4 @@ KI programmiert von Natur aus taktisch: Hauptsache, das Ticket läuft. Jede Abk�
 - **Offensichtlich + einheitlich:** genaue, einheitliche Namen (kein guter Name = Warnsignal). Schnittstellen-Kommentar vor dem Code, er sagt Was/Warum für den Aufrufer.
 - **Regel → Prüf-Skript:** was maschinell prüfbar ist, bekommt einen Check, der den Build bricht. Ein Agent überliest Text, an einem roten Build kommt er nicht vorbei.
 - **Review-Abschluss (Pflicht vor „fertig“):** Neues Modul tief oder flach? Leckt Wissen in andere Dateien? Gab es das schon? Wie viele Dateien müsste eine Anforderungsänderung anfassen? Sieht der Code aus, als wäre er von Anfang an so entworfen?
-- **An David:** jede Design-Entscheidung in Alltagsworten (Bild: Kästen und Türen), mit Empfehlung + Trade-off.
+- **An den Menschen:** jede Design-Entscheidung in Alltagsworten (Bild: Kästen und Türen), mit Empfehlung + Trade-off.
