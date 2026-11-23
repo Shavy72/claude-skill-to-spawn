@@ -24,6 +24,7 @@ from pathlib import Path
 import pytest
 from test_bau_ohne_prompt_431 import _lade_bau
 from test_nest_210 import _cli, _git, _neues_repo, _umgebung
+from test_rolle_statt_name_323 import NAME
 
 from to_spawn import nest
 
@@ -229,6 +230,19 @@ def test_testdaten_gleich_projekt_origin(name: str) -> None:
     )
     if original.returncode != 0:
         pytest.skip(f"origin/master im Projekt-Klon hat scripts/hooks/{name} nicht")
-    assert (HILFEN / name).read_bytes() == original.stdout, (
-        f"tests/hilfen/push_sperre_1442/{name} weicht vom Projekt ab — neu kopieren"
-    )
+    kopie = (HILFEN / name).read_bytes()
+    if kopie == original.stdout:
+        return
+    # #325: Kommentarzeilen mit festem Personennamen stehen in der Kopie mit Rollenwort
+    # (öffentliches Repo). Nur genau diese Zeilen dürfen abweichen — und müssen dann namensfrei sein.
+    soll = original.stdout.decode("utf-8").splitlines(keepends=True)
+    ist = kopie.decode("utf-8").splitlines(keepends=True)
+    assert len(ist) == len(soll), f"tests/hilfen/push_sperre_1442/{name} weicht vom Projekt ab — neu kopieren"
+    for nr, (s, i) in enumerate(zip(soll, ist, strict=True), 1):
+        if s == i:
+            continue
+        anonym = s.lstrip().startswith("#") and NAME.search(s) and i.lstrip().startswith("#") and not NAME.search(i)
+        assert anonym, (
+            f"tests/hilfen/push_sperre_1442/{name}:{nr} weicht vom Projekt ab — neu kopieren "
+            "(nur Kommentarzeilen mit Personennamen dürfen per Rollenwort abweichen)"
+        )
