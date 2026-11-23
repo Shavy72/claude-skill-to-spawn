@@ -48,7 +48,7 @@ Urteile: **belegt** · **teilweise** · **abweichend** (Soll anders erfüllt, mi
 | M11 | Kleinste Prüfung, drei Fälle | – | noch nicht geprüft |
 | M12 | ≥ 20 absichtliche Fehler, 0 übersehen (DuoPlus ggf. „nicht anwendbar, weil keine Auswahl läuft“, siehe Plan-Stand) | – | noch nicht geprüft |
 | M13 | `PRUEFTOR_VERGLEICH.md`, Tempo gemessen | – | noch nicht geprüft |
-| M14 | Aufräumen ohne David (L4): Reste im Probe-Lauf, Hausmeister räumt, kein Lösch-Auftrag an David | – | offen |
+| M14 | Aufräumen ohne den Menschen (L4): Reste im Probe-Lauf, Hausmeister räumt, kein Lösch-Auftrag an den Menschen | – | offen |
 | M15 | Kaltstart-Probe (L5) | Kaltstart-Probe 21.11.2026 auf dem Bau-Server: frische Sonnet-Session nur mit `docs/WIEDEREINSTIEG.md`, Urteil BESTANDEN, 0 verhindernde Lücken; Windows-Seite offen | belegt (Bau-Server), Windows offen |
 
 ## Offene Punkte

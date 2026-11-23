@@ -23,7 +23,7 @@ Die Aufseher-Ablösung und jeder Hausmeister-Rundgang rufen dieselbe Sicherung v
 ## 1. Das Ziel in vier Sätzen
 
 In jedem Repo, auf jeder Maschine (Windows-PC und Linux-Bau-Server) läuft die Kette
-`grill-with-docs → /to-spec → /to-tickets → /to-spawn` ohne einen Handgriff von David bis
+`grill-with-docs → /to-spec → /to-tickets → /to-spawn` ohne einen Handgriff vom Menschen bis
 „alle Tickets auf Staging“. Der Skill bringt alles mit, richtet fremde Repos selbst ein, hält sie
 aktuell und räumt hinter sich auf. Prüfen und Gate sind schnell und prüfen nur das Nötige.
 „Fertig“ ist es erst, wenn jede Zeile M1–M15 in `docs/ABNAHME_L1.md` einen Beleg hat.
@@ -32,7 +32,7 @@ aktuell und räumt hinter sich auf. Prüfen und Gate sind schnell und prüfen nu
 
 | Was | Ort | Wozu |
 |---|---|---|
-| Auftrag, Davids Wortlaut 1:1 | `docs/LASTENHEFT.md` (L1–L5, A1–A28, N1–N11) | Was gewollt ist und was nicht. Bei Zweifel gilt der Wortlaut. |
+| Auftrag, Wortlaut des Menschen 1:1 | `docs/LASTENHEFT.md` (L1–L5, A1–A28, N1–N11) | Was gewollt ist und was nicht. Bei Zweifel gilt der Wortlaut. |
 | Plan, Design, Etappen 0–5, Stand | `docs/PLAN_L1_usb_stick.md` | Wie gebaut wird, in welcher Reihenfolge, was zuletzt geschah (Abschnitt „Stand“). |
 | Abnahme mit Belegen | `docs/ABNAHME_L1.md` | Was bewiesen ist. Tabelle M1–M15: die erste Zeile ohne Beleg ist das nächste Ziel. |
 | Prüftor-Vergleich | `docs/PRUEFTOR_VERGLEICH.md` | Messwerte, Quellen, Empfehlung und Bau-Pakete für den Prüf-Werkzeugkasten. |
@@ -407,12 +407,12 @@ Etappen und Abnahme gilt der Plan. Der Plan-Abschnitt „Stand“ ist ein älter
 
 ## 5. Regeln, die immer gelten
 
-- Keine Fragen an David. Entscheidung und Grund ins Entscheidungs-Log, weiterbauen (L1, L2).
+- Keine Fragen an den Menschen. Entscheidung und Grund ins Entscheidungs-Log, weiterbauen (L1, L2).
   Echte Sperre (kein Zugriff, Secret fehlt): Eintrag im Entscheidungs-Log, Issue anlegen, mit einem
   anderen Paket weiterbauen.
 - Der Auftrag wird bei jeder Ablösung im Wortlaut weitergegeben, nie als Zusammenfassung (L2).
 - Erst vergleichen und messen, dann bauen; bewährtes Werkzeug vor Eigenbau (L3).
-- Aufräumen, RAM, Platte, Neustarts landen nie bei David (L4).
+- Aufräumen, RAM, Platte, Neustarts landen nie beim Menschen (L4).
 - Kein Wissen nur im Chat oder nur auf einer Maschine: Was zählt, steht hier im Repo, als Issue
   oder im Tresor (L5).
 - Merge-Regel: Ein Pull-Request wird nur gemergt, wenn das Prüf-Urteil „Hartes: nein“ lautet. Vorher
