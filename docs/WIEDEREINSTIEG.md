@@ -45,6 +45,22 @@ was zum Weiterbauen nötig ist.
 
 ## 3. Stand
 
+- **2026-11-23 15:15 (Server-Uhr, main 5c9144b):** Gemergt und auf dem Bau-Server installiert (Stand 5c9144b):
+  - Pull-Request 348 (Takt-Bremse: Test-Lücken und Merker-Randfall, Issue 346).
+  - Pull-Request 350 (Rollenwort statt festem Personennamen, Namens-Reste Teil 5, Issue 325).
+  - Pull-Request 351 (eigener kurzer pytest-Temp-Ordner je Lauf, Issue 349).
+  - Pull-Request 352 (Hausmeister: Test-Lücken, Datums-Sperre, `ext::`-Umleitung, Reflog-Prüfung,
+    Issues 347 und 254; main 5c9144b).
+  - Offen: Pull-Request 354 (alte `pt-*`-Temp-Reste räumen, Refs Issue 177, Fix-Runde läuft) ·
+    Issues 343 und 218 auf Kopf `0854e0a` doppelt geprüft (Review: 0 harte Befunde, unabhängige
+    Prüfung „Hartes: nein“), es fehlt nur eine gültige volle Suite · Pull-Request 317 (274 P1)
+    merge-reif, gesperrt, bis im App-Repo `docs/agents/bau_zusatz.md` liegt.
+  - Vorfall 23.11. ca. 15:08: `/tmp` meldete „No space left“, Ursache war der Datei-Zähler (Inodes)
+    bei 99 % und nur 41 % belegtem Platz; die laufende volle Suite wurde dadurch ungültig.
+    Merksatz: bei „No space left“ zuerst `df -i /tmp` lesen. Folge-Issues: 353 (volle Suite von
+    rund 24 auf rund 5 Minuten) und 355 (Erzeuger von Temp-Ordnern räumen selbst, Hausmeister
+    prüft den Datei-Zähler).
+
 - **2026-11-23 11:57 (Server-Uhr, main eb42e9e):** Gemergt und auf dem Bau-Server installiert (Stand eb42e9e):
   - Pull-Request 337 (Issue 315, Bremse für offene Briefkasten-Fragen im Aufseher-Takt, eigener
     Exit-Code bei Aufruf-Fehler; main cb6c1e5).
