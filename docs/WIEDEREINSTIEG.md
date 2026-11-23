@@ -50,7 +50,7 @@ was zum Weiterbauen nötig ist.
   Issue 68 bleibt offen) → f134819 · Pull-Request 268 (Issue 267: Warte-Prüfung der Bau-Session fragt
   dieselbe Regel wie die Start-Schranke, neuer Befehl `to_spawn.py blocker <N>`) → 8acfed7.
   Auf dem Bau-Server installiert: 8acfed7, volle Suite 2794 bestanden, 75 übersprungen, 18 xfailed, 0 rot.
-  Offen: Issue 269 (Folge zu 267: Vorfall `blocker_falsch_gewartet`, Wächter-Test schärfen) · Pull-Request 250
+  Offen: Issue 269 (Folge zu 267: Vorfall `blocker_falsch_gewartet`, Aufseher-Test schärfen) · Pull-Request 250
   (Merge-Sperre, Fix-Runde 3) · Pull-Request 255 (Review am PC) · M1 Probe-Spec erst nach ausdrücklichem
   Wort des Auftraggebers. Nächster Schritt: Beobachtungs-Lauf an einem echten Fall für Issue 267
   (Abnahme „echter Lauf“ von 267 steht noch aus).
