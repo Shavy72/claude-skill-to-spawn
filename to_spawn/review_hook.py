@@ -13,7 +13,7 @@ Skill-Ordner) alle außer den in ``<quelle>/.gitignore`` genannten. Darum geben 
 
 Beim Werkzeug kommt vorher (:func:`installiere_werkzeug`): Zeilen, die nur in lokal geänderten
 Auftrags-Vorlagen stehen (bisher fest eingebaute Projektregeln), wandern in die private ``regeln.md``
-(VERTRAG.md §2a), und eine lokale ``config.json`` verliert, was nur einen ausgelieferten Stand wiederholt.
+(VERTRAG.md §2a); danach verliert eine lokale ``config.json``, was nur einen ausgelieferten Stand wiederholt.
 
 Türen: :func:`installiere`, :func:`installiere_werkzeug`.
 Aufruf: ``python -m to_spawn.review_hook [--ziel <ordner>] [--klon <skill-klon>]``.
@@ -151,43 +151,78 @@ def installiere(ziel: Path, quelle: Path = QUELL_ORDNER, zeit: str | None = None
 
 
 def installiere_werkzeug(ziel: Path, quelle: Path = WERKZEUG_QUELLE, zeit: str | None = None) -> list[str]:
-    """Wie :func:`installiere`, vorher Projektregeln übernehmen und lokale Config entschlacken."""
-    return regeln_uebernehmen(ziel, quelle) + config_entschlacken(ziel, quelle, zeit) + installiere(ziel, quelle, zeit)
+    """Wie :func:`installiere`, vorher Projektregeln übernehmen, danach lokale Config entschlacken.
+
+    Entschlackt wird erst nach dem Einspielen: bricht es ab, bleibt die lokale Config unberührt.
+    """
+    bericht = regeln_uebernehmen(ziel, quelle) + installiere(ziel, quelle, zeit)
+    return bericht + config_entschlacken(ziel, quelle, zeit)
+
+
+def _abschnitt_bereich(zeilen: list[str], name: str) -> tuple[int, int] | None:
+    """``(kopf, ende)`` des ersten Abschnitts ``## <name>``; ``ende`` = nächste ``## ``-Zeile oder Dateiende."""
+    kopf = next((i for i, z in enumerate(zeilen) if z.strip() == f"## {name}"), None)
+    if kopf is None:
+        return None
+    ende = next((i for i in range(kopf + 1, len(zeilen)) if zeilen[i].startswith("## ")), len(zeilen))
+    return kopf, ende
 
 
 def regeln_uebernehmen(ziel: Path, quelle: Path) -> list[str]:
     """Zeilen, die nur in einer lokal geänderten Vorlage ``ziel/auftraege/<name>.md`` stehen, kommen in den
-    Abschnitt ``## <name>`` von ``ziel/regeln.md`` (nie doppelt), bevor :func:`installiere` die Vorlage ersetzt.
+    Abschnitt ``## <name>`` von ``ziel/regeln.md``, bevor :func:`installiere` die Vorlage ersetzt.
 
     Lokal geändert = weder gleich der neuen Vorlage noch dem zuletzt installierten Stand (wie die Sicherungs-Regel).
+    Mitgelesen werden Vorlagen, die frühere Läufe unter ``../_alt/<zielname>-*/auftraege`` gesichert haben.
+    Dubletten zählen je Abschnitt; ein vorhandener Abschnitt wächst an seinem Ende, sonst kommt ein neuer ans
+    Dateiende. Alle übrigen Zeilen der Datei (Handänderungen) bleiben unberührt.
     Ohne ``.installiert.json`` landen auch Zeilen älterer ausgelieferter Fassungen dort: lieber zu viel als verloren.
+
+    ponytail: Zeilen aus ``_alt``-Sicherungen kommen wieder, wenn man sie in ``regeln.md`` löscht; dann die
+    Sicherung mit löschen.
     """
     alt_stand = _lade_stand(ziel)
     regeln = ziel / REGELN_DATEI
     bestand = regeln.read_text(encoding="utf-8") if regeln.is_file() else ""
-    schon_da = set(bestand.splitlines())
-    teile: list[str] = []
-    anzahl = 0
-    for alt in sorted((ziel / "auftraege").glob("*.md")):
+    zeilen = bestand.splitlines()
+    kandidaten = [(alt, True) for alt in sorted((ziel / "auftraege").glob("*.md"))]
+    kandidaten += [(alt, False) for alt in sorted(ziel.parent.glob(f"_alt/{ziel.name}-*/auftraege/*.md"))]
+    neu_je: dict[str, list[str]] = {}
+    for alt, installiert in kandidaten:
         vorlage = quelle / "auftraege" / alt.name
         if alt.is_symlink() or not vorlage.is_file():
             continue
         alt_bytes, neu_bytes = alt.read_bytes(), vorlage.read_bytes()
-        if _pruefsumme(alt_bytes) in (_pruefsumme(neu_bytes), alt_stand.get(f"auftraege/{alt.name}")):
+        bekannt = (_pruefsumme(neu_bytes), alt_stand.get(f"auftraege/{alt.name}") if installiert else None)
+        if _pruefsumme(alt_bytes) in bekannt:
             continue
         neu_zeilen = set(neu_bytes.decode("utf-8").splitlines())
-        eigene = [z for z in alt_bytes.decode("utf-8").splitlines() if z.strip() and z not in neu_zeilen | schon_da]
-        if eigene:
-            teile.append(f"\n## {alt.stem}\n\n" + "\n".join(eigene) + "\n")
-            schon_da.update(eigene)
-            anzahl += len(eigene)
-    if not teile:
+        bereich = _abschnitt_bereich(zeilen, alt.stem)
+        schon_da = set(zeilen[bereich[0] : bereich[1]]) if bereich else set()
+        eigene = neu_je.setdefault(alt.stem, [])
+        for z in alt_bytes.decode("utf-8").splitlines():
+            if z.strip() and z not in neu_zeilen and z not in schon_da and z not in eigene:
+                eigene.append(z)
+    neu_je = {name: eigene for name, eigene in neu_je.items() if eigene}
+    if not neu_je:
         return []
-    kopf = bestand or (
-        "# Projektregeln (privat, nie im öffentlichen Repo; VERTRAG.md §2a)\n\n"
-        "Je Abschnitt `## <auftrag>`; eine Zeile `Falls Repo <name>: …` gilt nur in diesem Repo.\n"
-    )
-    _schreibe_atomar(regeln, (kopf + "".join(teile)).encode("utf-8"))
+    if not zeilen:
+        zeilen = [
+            "# Projektregeln (privat, nie im öffentlichen Repo; VERTRAG.md §2a)",
+            "",
+            "Je Abschnitt `## <auftrag>`; eine Zeile `Falls Repo <name>: …` gilt nur in diesem Repo.",
+        ]
+    for name, eigene in neu_je.items():
+        bereich = _abschnitt_bereich(zeilen, name)
+        if bereich is None:
+            zeilen += ["", f"## {name}", "", *eigene]
+            continue
+        kopf, ende = bereich
+        while ende > kopf + 1 and not zeilen[ende - 1].strip():
+            ende -= 1  # vor die Leerzeilen, die den Abschnitt vom nächsten trennen
+        zeilen[ende:ende] = eigene
+    _schreibe_atomar(regeln, ("\n".join(zeilen) + "\n").encode("utf-8"))
+    anzahl = sum(len(e) for e in neu_je.values())
     return [f"Projektregeln übernommen: {anzahl} Zeile(n) aus lokal geänderten Vorlagen → {regeln}"]
 
 

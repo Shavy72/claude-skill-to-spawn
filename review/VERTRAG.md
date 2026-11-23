@@ -55,9 +55,9 @@ Ausgeliefert wird nur `config.standard.json`; der Installer aktualisiert sie. Lo
 
 ## 2a. Projektregeln (`~/.claude/review/regeln.md`, privat)
 
-Projekt-eigene Regeln (SSOT-Module, Status-Wege, Deploy-Wege …) stehen nie im öffentlichen Werkzeug, sondern in `~/.claude/review/regeln.md`: Markdown, je Abschnitt `## <auftrag>` (z. B. `## python`), eine Zeile `Falls Repo <name>: …` gilt nur in diesem Repo. Jede Vorlage in `auftraege/` nennt ihren Abschnitt; der Prüfer liest ihn selbst. Nie ausgeliefert, nie versioniert (`review/.gitignore`), der Installer überschreibt sie nie.
+Projekt-eigene Regeln (SSOT-Module, Status-Wege, Deploy-Wege …) stehen nie im öffentlichen Werkzeug, sondern in `~/.claude/review/regeln.md`: Markdown, je Abschnitt `## <auftrag>` (z. B. `## python`), eine Zeile `Falls Repo <name>: …` gilt nur in diesem Repo. Die Route gibt je Prüfer die geltenden Zeilen seiner Abschnitte (`basis` + `auftraege[]`) als `pruefer[].regeln` mit; `Falls Repo <name>` gilt, wenn `<name>` der Ordner- oder `origin`-Name des Repos ist. Der Dirigent reicht `regeln` wörtlich in den Prüfer-Auftrag weiter; die Vorlagen nennen den Abschnitt nur noch zur Orientierung. Nie ausgeliefert, nie versioniert (`review/.gitignore`), der Installer überschreibt sie nie.
 
-Übernahme: Vor dem Ersetzen einer lokal geänderten Vorlage (weder neue noch zuletzt installierte Fassung) schreibt der Installer deren eigene Zeilen in den passenden Abschnitt (nie doppelt; `to_spawn/review_hook.py`). Fehlt die Datei, trägt die Route `"projektregeln": {"datei": …, "vorhanden": false}`, die Kurzzeile endet mit `· Projektregeln fehlen (…)` und es gibt eine Warnung; bei Stufe `keine` ist das Feld `null`.
+Übernahme: Vor dem Ersetzen einer lokal geänderten Vorlage (weder neue noch zuletzt installierte Fassung) schreibt der Installer deren eigene Zeilen in den passenden Abschnitt, ebenso aus früher gesicherten Vorlagen unter `_alt/review-*/auftraege` (Dubletten je Abschnitt; ein vorhandener Abschnitt wächst, Handänderungen bleiben; `to_spawn/review_hook.py`). Die lokale Config wird erst nach dem Einspielen entschlackt. Fehlt die Datei, trägt die Route `"projektregeln": {"datei": …, "vorhanden": false}`, die Kurzzeile endet mit `· Projektregeln fehlen (…)` und es gibt eine Warnung; bei Stufe `keine` ist das Feld `null`.
 
 ## 3. Stufen und Signale
 
@@ -125,7 +125,8 @@ Ausgabe (stdout, JSON, UTF-8):
   "datei_groesse": [{"datei": "web/services/x.py", "vorher": 990, "nachher": 1010, "art": "ueber_1000"}],
   "pruefer": [
     {"name": "python-reviewer", "typ": "agent", "modell": "sonnet",
-     "dateien": ["web/services/x.py"], "auftraege": ["basis", "python"]}
+     "dateien": ["web/services/x.py"], "auftraege": ["basis", "python"],
+     "regeln": ["Zeilen aus regeln.md, Abschnitte basis + python, für dieses Repo"]}
   ],
   "projektregeln": {"datei": "~/.claude/review/regeln.md", "vorhanden": true},
   "builtin": [{"befehl": "/code-review", "stufe": "high"}],

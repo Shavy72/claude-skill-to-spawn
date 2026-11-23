@@ -67,6 +67,47 @@ def projektregeln() -> dict[str, Any]:
     return {"datei": pfad.as_posix(), "vorhanden": vorhanden}
 
 
+_FALLS_REPO = re.compile(r"^[\s>*-]*Falls Repo\s+([^:]+?)\s*:")
+
+
+def _repo_namen(repo: Path) -> set[str]:
+    """Ordnername und Name aus ``origin`` (Worktrees heißen oft anders als das Repo)."""
+    namen = {repo.name}
+    origin = git(repo, "remote", "get-url", "origin", check=False).strip().rstrip("/")
+    if origin:
+        namen.add(re.split(r"[/:]", origin)[-1].removesuffix(".git"))
+    return namen
+
+
+def regeln_je_auftrag(repo: Path) -> dict[str, list[str]]:
+    """Zeilen der ``regeln.md`` je Abschnitt ``## <auftrag>``, die in ``repo`` gelten (VERTRAG.md §2a).
+
+    Die Route gibt sie je Prüfer mit (``pruefer[].regeln``), damit der Text sicher im Auftrag landet.
+    ``Falls Repo <name>: …`` gilt nur, wenn ``<name>`` der Ordner- oder origin-Name ist; Kopf vor dem ersten
+    Abschnitt und Leerzeilen zählen nicht. Fehlt oder klemmt die Datei: leer (die Warnung kommt aus
+    :func:`projektregeln`).
+    """
+    try:
+        text = (HIER / REGELN_DATEI).read_text(encoding="utf-8")
+    except (OSError, ValueError) as fehler:
+        LOG.warning("Projektregeln nicht lesbar: %s", fehler)
+        return {}
+    namen = _repo_namen(repo)
+    abschnitte: dict[str, list[str]] = {}
+    aktuell: str | None = None
+    for zeile in text.splitlines():
+        if zeile.startswith("## "):
+            aktuell = zeile[3:].strip()
+            abschnitte.setdefault(aktuell, [])
+        elif zeile.startswith("# "):
+            aktuell = None
+        elif aktuell and zeile.strip():
+            treffer = _FALLS_REPO.match(zeile)
+            if not treffer or treffer.group(1) in namen:
+                abschnitte[aktuell].append(zeile)
+    return abschnitte
+
+
 def log_pfad() -> Path:
     return Path(os.environ.get("REVIEW_LOG") or HIER / "ausloeser.jsonl")
 
@@ -803,6 +844,11 @@ def berechne_route(
         treffer = beleg_nach_inhalt(repo, moment, relevant, inhalt_hashes)
         if treffer is not None:
             beleg, gueltig = treffer[0], True  # fix_runde bleibt: kein Reset des Eskalationszählers
+    regeln_info = projektregeln() if stufe != "keine" else None
+    abschnitte = regeln_je_auftrag(repo) if regeln_info and regeln_info["vorhanden"] else {}
+    pruefer = _pruefer_liste(stufe, signale, relevant, cfg)
+    for eintrag in pruefer:
+        eintrag["regeln"] = list(dict.fromkeys(z for a in eintrag["auftraege"] for z in abschnitte.get(a, [])))
     ergebnis.update(
         stufe=stufe,
         sha=sha,
@@ -813,8 +859,8 @@ def berechne_route(
         dateien=relevant,
         signale=signale,
         datei_groesse=datei_groesse(repo, relevant, base, staged, cfg),
-        pruefer=_pruefer_liste(stufe, signale, relevant, cfg),
-        projektregeln=projektregeln() if stufe != "keine" else None,
+        pruefer=pruefer,
+        projektregeln=regeln_info,
         builtin=builtin,
         richter=stufe in ("mittel", "gross"),
         beleg=beleg.as_posix() if beleg.is_file() else None,
