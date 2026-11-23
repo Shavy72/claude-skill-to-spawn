@@ -338,6 +338,11 @@ def test_fehlendes_fenster_wird_gestartet(
     welt: Welt, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("GH_STUB_UNTER", f"{SPEC}:9002|9003")
+    # Staffel-Pause zwischen den zwei Starts über die echte Stellschraube auf 0
+    # (Vorgabe 20 s, #353) — der Staffel-Zweig läuft trotzdem.
+    (welt.repo / ".to-spawn" / "config.json").write_text(
+        '{"speicher": {"staffel_s": 0}}', encoding="utf-8"
+    )
     assert fenster_namen() == [f"wache {SPEC}"]
     assert welt.lauf(hang_min=90) == 0
     time.sleep(1)
