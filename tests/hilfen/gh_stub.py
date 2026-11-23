@@ -4,8 +4,9 @@ Beantwortet nur, was der Kern fragt:
   ``issue view <N> --json state``                → ``{"state": "OPEN"|"CLOSED"}``
   ``api repos/<slug>/issues/<N>/dependencies/blocked_by`` → Liste
   ``api repos/<slug>/issues/<S>/sub_issues [--jq …]``    → Unter-Tickets (#236);
-    mit ``--jq`` nur die Nummern der offenen, eine je Zeile (einziger jq-Filter,
-    den der Aufpasser nutzt)
+    mit ``--jq`` nur die Nummern der offenen, eine je Zeile; enthält der Filter
+    ``labels``, je Ticket eine JSON-Zeile ``{number, state, labels}`` (#279, Labels
+    aus ``GH_STUB_DATEN``)
   ``issue comment <N> --body …``                  → protokolliert, Exit 0 (#236)
 
 Umgebung: ``GH_STUB_ZU`` (Komma-Liste geschlossener Tickets),
@@ -94,7 +95,12 @@ def main() -> int:
         unter = re.search(r"issues/(\d+)/sub_issues", args[1])
         if unter:
             liste = _unter(unter.group(1))
-            if "--jq" in args:
+            filter_ = args[args.index("--jq") + 1] if "--jq" in args else ""
+            if "labels" in filter_:
+                for e in liste:
+                    namen = [x["name"] for x in _zusatz(str(e["number"])).get("labels", [])]
+                    print(json.dumps({**e, "labels": namen}))
+            elif "--jq" in args:
                 print("\n".join(str(e["number"]) for e in liste if e["state"] == "open"))
             else:
                 print(json.dumps(liste))

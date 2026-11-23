@@ -30,6 +30,14 @@ Stufe = Literal["offen", "fertig_gebaut", "zu", "verworfen"]
 #: Alle Anzeige-Stufen; ``verworfen`` = geschlossen als „nicht geplant“ (nie gebaut).
 STUFEN: tuple[Stufe, ...] = ("offen", "fertig_gebaut", "zu", "verworfen")
 
+#: Wortlaut je Stufe für Meldungen, z. B. „„bau 12“ geschlossen (Ticket zu).“
+_WORTLAUT: dict[Stufe, str] = {
+    "offen": "Ticket offen",
+    "fertig_gebaut": "Ticket fertig gebaut, wartet auf Live",
+    "zu": "Ticket zu",
+    "verworfen": "Ticket verworfen",
+}
+
 #: Felder, die :func:`lesen` von ``gh issue view`` braucht.
 _FELDER = "state,labels,stateReason"
 
@@ -50,6 +58,11 @@ def stufe(ticket: Mapping[str, Any]) -> Stufe:
         grund = ticket.get("state_reason") or ticket.get("stateReason") or ""
         return "verworfen" if str(grund).lower() == "not_planned" else "zu"
     return "fertig_gebaut" if _staging_fertig(ticket) else "offen"
+
+
+def wortlaut(ticket: Mapping[str, Any]) -> str:
+    """Kurzer Text zur Stufe für Meldungen — „fertig gebaut“ ist nicht „zu“."""
+    return _WORTLAUT[stufe(ticket)]
 
 
 def wartet_auf_live(ticket: Mapping[str, Any], *, live_freigegeben: bool) -> bool:

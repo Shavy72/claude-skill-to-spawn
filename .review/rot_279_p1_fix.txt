@@ -1,0 +1,143 @@
+FFFFFF                                                                   [100%]
+=================================== FAILURES ===================================
+_________________ test_takt_ohne_issue_view_je_offenem_ticket __________________
+
+welt = Welt(tmp=PosixPath('/tmp/pytest-of-bau/pytest-2155/test_takt_ohne_issue_view_je_o0'), heim=PosixPath('/tmp/pytest-of-b...rotokoll.txt'), protokoll_bau=PosixPath('/tmp/pytest-of-bau/pytest-2155/test_takt_ohne_issue_view_je_o0/bau_argv.txt'))
+monkeypatch = <conftest._HeimMonkeyPatch object at 0x7f3050901400>
+
+    def test_takt_ohne_issue_view_je_offenem_ticket(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Befund 1: Start-Entscheidung aus der Liste — kein ``issue view`` je offenem Ticket."""
+        monkeypatch.setenv("GH_STUB_UNTER", f"{SPEC}:9002|9003")
+        _labels(welt, monkeypatch, {"9002": ["staging:fertig"]})
+        assert welt.lauf(hang_min=90) == 0
+        time.sleep(1)
+        assert sorted(fenster_namen()) == ["bau 9003", f"wache {SPEC}"]
+        aufrufe = welt.protokoll_gh.read_text(encoding="utf-8").splitlines()
+        # Einzig übrig: die Stopp-Label-Probe in ``start_erlaubt`` direkt vor dem einen Start.
+        ansichten = [z.split()[2] for z in aufrufe if z.startswith("issue view")]
+>       assert ansichten == ["9003"], aufrufe
+E       AssertionError: ['api repos/{owner}/{repo}/issues/9001/sub_issues --paginate --jq .[] | select(.state=="open") | .number', 'issue view...', 'issue view 9003 --json state,labels', 'issue comment 9001 --body Aufpasser: #9003 hatte keine Session, gestartet.']
+E       assert ['9002', '9003', '9003'] == ['9003']
+E         
+E         At index 0 diff: '9002' != '9003'
+E         Left contains 2 more items, first extra item: '9003'
+E         Use -v to get more diff
+
+tests/test_ticket_zustand_279_fix.py:38: AssertionError
+------------------------------ Captured log call -------------------------------
+INFO     aufpasser:aufpasser.py:2446 Hausmeister: 0 gelöscht, 0 bleibt, 0 Fehler
+INFO     aufpasser:aufpasser.py:2355 spec-9001: 1 Fenster (wache 9001), offene Tickets [9002, 9003]
+INFO     aufpasser:aufpasser.py:1497 spec-9001: Fenster „bau 9003“ starten: /tmp/pytest-of-bau/pytest-2155/test_takt_ohne_issue_view_je_o0/bin/bau_protokoll.sh 9003
+INFO     aufpasser:aufpasser.py:1363 spec 9001: #9003 hatte keine Session, gestartet.
+________________ test_schliessen_meldet_fertig_gebaut_statt_zu _________________
+
+welt = Welt(tmp=PosixPath('/tmp/pytest-of-bau/pytest-2155/test_schliessen_meldet_fertig_0'), heim=PosixPath('/tmp/pytest-of-b...rotokoll.txt'), protokoll_bau=PosixPath('/tmp/pytest-of-bau/pytest-2155/test_schliessen_meldet_fertig_0/bau_argv.txt'))
+monkeypatch = <conftest._HeimMonkeyPatch object at 0x7f30504d9310>
+
+    def test_schliessen_meldet_fertig_gebaut_statt_zu(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Befund 2: offen + ``staging:fertig`` → Meldung „fertig gebaut“, nicht „Ticket zu“."""
+        monkeypatch.setenv("GH_STUB_UNTER", f"{SPEC}:9002")
+        _labels(welt, monkeypatch, {"9002": ["staging:fertig"]})
+        welt.fenster_still(9002, "sleep 3600")
+        welt.stand_setzen("bau 9002", seit=time.time() - 20 * 60, hash=welt.hash_von("bau 9002"))
+        assert welt.lauf(hang_min=90) == 0
+        time.sleep(0.5)
+        kommentare = welt.kommentare()
+>       assert any("„bau 9002“ geschlossen (Ticket fertig gebaut" in k for k in kommentare), kommentare
+E       AssertionError: ['issue comment 9001 --body Aufpasser: „bau 9002“ geschlossen (Ticket zu).']
+E       assert False
+E        +  where False = any(<generator object test_schliessen_meldet_fertig_gebaut_statt_zu.<locals>.<genexpr> at 0x7f30504a5700>)
+
+tests/test_ticket_zustand_279_fix.py:50: AssertionError
+------------------------------ Captured log call -------------------------------
+INFO     aufpasser:aufpasser.py:2446 Hausmeister: 0 gelöscht, 0 bleibt, 0 Fehler
+INFO     aufpasser:aufpasser.py:2355 spec-9001: 2 Fenster (bau 9002, wache 9001), offene Tickets [9002]
+INFO     aufpasser:aufpasser.py:1764 #9002: kein Worktree im Repo /tmp/pytest-of-bau/pytest-2155/test_schliessen_meldet_fertig_0/repo — nichts zu sichern
+INFO     aufpasser:aufpasser.py:1564 Fenster @1 schließen (Ticket #9002 zu, Sicherung None)
+INFO     aufpasser:aufpasser.py:1363 spec 9001: „bau 9002“ geschlossen (Ticket zu).
+____ test_wortlaut_je_stufe[ticket0-Ticket fertig gebaut, wartet auf Live] _____
+
+ticket = {'state': 'OPEN', 'labels': ['staging:fertig']}
+erwartet = 'Ticket fertig gebaut, wartet auf Live'
+
+    @pytest.mark.parametrize(
+        ("ticket", "erwartet"),
+        [
+            ({"state": "OPEN", "labels": ["staging:fertig"]}, "Ticket fertig gebaut, wartet auf Live"),
+            ({"state": "CLOSED"}, "Ticket zu"),
+            ({"state": "closed", "state_reason": "not_planned"}, "Ticket verworfen"),
+            ({"state": "OPEN"}, "Ticket offen"),
+        ],
+    )
+    def test_wortlaut_je_stufe(ticket: dict[str, Any], erwartet: str) -> None:
+>       assert ticket_zustand.wortlaut(ticket) == erwartet
+               ^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: module 'to_spawn.ticket_zustand' has no attribute 'wortlaut'
+
+tests/test_ticket_zustand_279_fix.py:64: AttributeError
+__________________ test_wortlaut_je_stufe[ticket1-Ticket zu] ___________________
+
+ticket = {'state': 'CLOSED'}, erwartet = 'Ticket zu'
+
+    @pytest.mark.parametrize(
+        ("ticket", "erwartet"),
+        [
+            ({"state": "OPEN", "labels": ["staging:fertig"]}, "Ticket fertig gebaut, wartet auf Live"),
+            ({"state": "CLOSED"}, "Ticket zu"),
+            ({"state": "closed", "state_reason": "not_planned"}, "Ticket verworfen"),
+            ({"state": "OPEN"}, "Ticket offen"),
+        ],
+    )
+    def test_wortlaut_je_stufe(ticket: dict[str, Any], erwartet: str) -> None:
+>       assert ticket_zustand.wortlaut(ticket) == erwartet
+               ^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: module 'to_spawn.ticket_zustand' has no attribute 'wortlaut'
+
+tests/test_ticket_zustand_279_fix.py:64: AttributeError
+_______________ test_wortlaut_je_stufe[ticket2-Ticket verworfen] _______________
+
+ticket = {'state': 'closed', 'state_reason': 'not_planned'}
+erwartet = 'Ticket verworfen'
+
+    @pytest.mark.parametrize(
+        ("ticket", "erwartet"),
+        [
+            ({"state": "OPEN", "labels": ["staging:fertig"]}, "Ticket fertig gebaut, wartet auf Live"),
+            ({"state": "CLOSED"}, "Ticket zu"),
+            ({"state": "closed", "state_reason": "not_planned"}, "Ticket verworfen"),
+            ({"state": "OPEN"}, "Ticket offen"),
+        ],
+    )
+    def test_wortlaut_je_stufe(ticket: dict[str, Any], erwartet: str) -> None:
+>       assert ticket_zustand.wortlaut(ticket) == erwartet
+               ^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: module 'to_spawn.ticket_zustand' has no attribute 'wortlaut'
+
+tests/test_ticket_zustand_279_fix.py:64: AttributeError
+_________________ test_wortlaut_je_stufe[ticket3-Ticket offen] _________________
+
+ticket = {'state': 'OPEN'}, erwartet = 'Ticket offen'
+
+    @pytest.mark.parametrize(
+        ("ticket", "erwartet"),
+        [
+            ({"state": "OPEN", "labels": ["staging:fertig"]}, "Ticket fertig gebaut, wartet auf Live"),
+            ({"state": "CLOSED"}, "Ticket zu"),
+            ({"state": "closed", "state_reason": "not_planned"}, "Ticket verworfen"),
+            ({"state": "OPEN"}, "Ticket offen"),
+        ],
+    )
+    def test_wortlaut_je_stufe(ticket: dict[str, Any], erwartet: str) -> None:
+>       assert ticket_zustand.wortlaut(ticket) == erwartet
+               ^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: module 'to_spawn.ticket_zustand' has no attribute 'wortlaut'
+
+tests/test_ticket_zustand_279_fix.py:64: AttributeError
+=========================== short test summary info ============================
+FAILED tests/test_ticket_zustand_279_fix.py::test_takt_ohne_issue_view_je_offenem_ticket
+FAILED tests/test_ticket_zustand_279_fix.py::test_schliessen_meldet_fertig_gebaut_statt_zu
+FAILED tests/test_ticket_zustand_279_fix.py::test_wortlaut_je_stufe[ticket0-Ticket fertig gebaut, wartet auf Live]
+FAILED tests/test_ticket_zustand_279_fix.py::test_wortlaut_je_stufe[ticket1-Ticket zu]
+FAILED tests/test_ticket_zustand_279_fix.py::test_wortlaut_je_stufe[ticket2-Ticket verworfen]
+FAILED tests/test_ticket_zustand_279_fix.py::test_wortlaut_je_stufe[ticket3-Ticket offen]
+6 failed in 9.36s
