@@ -20,7 +20,7 @@ from test_pruef_buendel_238_224_204_246 import _ausschliessen, _schreibe
 from test_pruef_schmutz_218 import _code_commit, _pruef_stufe, repo  # noqa: F401 — ``repo`` ist ein Fixture
 from test_pruef_tuer_3b import _probe_py
 
-import to_spawn.pruef as pruef
+from to_spawn import pruef
 from to_spawn.pruef import cache, regeln, sofort
 
 # --- #343 Punkt 1: ohne Paketliste nur ``info`` --------------------------------------------------
@@ -68,7 +68,11 @@ def test_unchecked_hash_pyc_ist_kein_werkzeug_rest(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
-    "modus", [py_compile.PycInvalidationMode.TIMESTAMP, py_compile.PycInvalidationMode.CHECKED_HASH]
+    "modus",
+    [
+        py_compile.PycInvalidationMode.TIMESTAMP,
+        py_compile.PycInvalidationMode.CHECKED_HASH,
+    ],
 )
 def test_gepruefter_pyc_bleibt_werkzeug_rest(tmp_path: Path, modus: py_compile.PycInvalidationMode) -> None:
     pfad = _pyc(tmp_path, modus)
