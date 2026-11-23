@@ -20,7 +20,7 @@ Ausnahme; je Schließen bleibt es bei einer Wieder-Öffnung). Keine Regeln für 
 der Verstoß wird trotzdem erkannt und im Tick-Bericht genannt, zählt aber wie der
 Ausgangsstand als „alt“ und hält „Spec fertig“ nicht auf. Nach dem Wieder-Öffnen
 startet capo die Folge-Runde (#284); ein Nacht-Checkpoint gilt nach der Frist mit
-dem Vorschlag der Session als angenommen, David kann kippen (#285). Zeitgrenzen:
+dem Vorschlag der Session als angenommen, der Mensch kann kippen (#285). Zeitgrenzen:
 beim ersten Tick einer Spec sind alle geschlossenen Tickets Ausgangsstand (nur
 melden; maßgeblich ist, ob das Ticket beim ersten Tick schon zu war — kein
 Vergleich der GitHub-Uhr mit der lokalen Uhr), danach wird ein Schließen erst
@@ -54,7 +54,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from . import bau_log, befund, config, gh, melder, mensch_noetig, staging_schalter, starter, ticket_zustand, vorfall
+from . import bau_log, befund, briefkasten, config, gh, melder, mensch_noetig, staging_schalter, starter, ticket_zustand, vorfall
 from . import sperre as _sperre
 
 log = logging.getLogger("to_spawn.capo")
@@ -64,7 +64,7 @@ LEISE_TYPEN = frozenset({"session_ende", "subagent_ende"})
 #: Werte von ``status``/``phase``/``ergebnis`` einer ``deploy_phase``, die „Gate rot“ heißen.
 ROT_WERTE = frozenset({"rot", "fail", "failed", "abbruch", "fehler"})
 MAX_DELTA_ZEILEN = 8
-#: Label am Ticket: David hat bewusst freigegeben — Regeln überspringen (E2).
+#: Label am Ticket: der Mensch hat bewusst freigegeben — Regeln überspringen (E2).
 OK_LABEL = "waechter:ok"
 #: Minuten nach ``closed_at``, bevor die Regeln greifen (Vorgabe, ``waechter.karenz_minuten``).
 KARENZ_MIN = 15.0
@@ -74,8 +74,6 @@ MAIL_AUS = (
 )
 #: Sekunden, die ein Tick auf die Sperre eines anderen Laufs wartet.
 SPERRE_S = 30.0
-GIT_ZEIT_S = 30
-FETCH_ZEIT_S = 60
 
 _TEST_DATEI = re.compile(
     r"(^|/)(tests?/|test_[^/]*\.py$|[^/]*_test\.py$|[^/]*\.(test|spec)\.[cm]?[jt]sx?$)"
@@ -157,7 +155,7 @@ REGEL_VORFALL: dict[str, tuple[str, str, str, str]] = {
         "mensch",
         "Ja/Nein-Frage mitten in der Kette, nachts antwortet niemand",
         "Checkpoint ohne Antwort über die Frist (#285)",
-        "Aufseher nimmt den Vorschlag der Session nach Doktrin an; David kann kippen",
+        "Aufseher nimmt den Vorschlag der Session nach Doktrin an; der Mensch kann kippen",
     ),
 }
 
@@ -202,8 +200,8 @@ class TickErgebnis:
 
 
 def _git(repo: Path, *args: str) -> tuple[int, str]:
-    """``git <args>`` mit Zeitgrenze (fetch 60 s, sonst 30 s); Zeitablauf = Fehler."""
-    grenze = FETCH_ZEIT_S if args[:1] == ("fetch",) else GIT_ZEIT_S
+    """``git <args>`` mit Zeitgrenze (Grenzen: gh.FETCH_ZEIT_S bzw. gh.GIT_ZEIT_S); Zeitablauf = Fehler."""
+    grenze = gh.FETCH_ZEIT_S if args[:1] == ("fetch",) else gh.GIT_ZEIT_S  # eine Stelle: gh (#320)
     try:
         fertig = subprocess.run(
             ["git", *args],
@@ -789,7 +787,7 @@ class StagingStand:
 
 
 def live_freigabe(vps: dict[str, Any], ticket: int) -> bool:
-    """True, wenn Davids Live-Zettel ``<ordner>/<ticket>`` existiert und jünger als 24 h ist."""
+    """True, wenn der Live-Zettel des Menschen ``<ordner>/<ticket>`` existiert und jünger als 24 h ist."""
     zettel = Path(
         str(vps.get("freigabe_ordner") or FREIGABE_STANDARD)
     ).expanduser() / str(ticket)
@@ -1063,13 +1061,19 @@ def ist_gate_rot(z: dict[str, Any]) -> bool:
 # --- Übersicht ------------------------------------------------------------------
 
 
-def _zelle(text: str) -> str:
-    return text.replace("|", "/").replace("\n", " ")
+def _zelle(text: str, grenze: int | None = 140) -> str:
+    """Tabellenzelle: eine Zeile, ``|`` entschärft, ab ``grenze`` gekürzt (``None`` = nie)."""
+    wert = _kurz(text, grenze) if grenze else " ".join(str(text or "").split())
+    return wert.replace("|", "/")
 
 
 def entscheidungs_datei(repo: Path, spec: int) -> Path:
     """``<pfade.agenten>/entscheidungen_<S>.md`` (Vorgabe ``docs/agents``, L1 #46)."""
     return config.pfad(config.lade(repo), "agenten") / f"entscheidungen_{spec}.md"
+
+
+#: Spaltenkopf der Entscheidungs-Tabelle (#364); :func:`_entscheidungs_zeile` passt dazu.
+_SPALTEN = "| Ticket | Was | Warum | Quelle |"
 
 
 def _tabellen_kopf(spec: int, quelle: str) -> list[str]:
@@ -1078,9 +1082,17 @@ def _tabellen_kopf(spec: int, quelle: str) -> list[str]:
         "",
         f"Stand {datetime.now().astimezone():%d.%m.%Y %H:%M} · Quelle: {quelle} (to-spawn capo).",
         "",
-        "| Ticket | Zeit | Frage | Wahl | Grund |",
-        "|---|---|---|---|---|",
+        _SPALTEN,
+        "|---|---|---|---|",
     ]
+
+
+def _entscheidungs_zeile(e: dict[str, str]) -> str:
+    """Eine Tabellenzeile aus einem Eintrag von ``briefkasten.liste`` — das eine Zeilenformat.
+
+    ``was`` bleibt ungekürzt: die Frage ist dort schon gekürzt, die Wahl muss ganz bleiben.
+    """
+    return f"| #{e['ticket']} | {_zelle(e['was'], None)} | {_zelle(e['warum'])} | {_zelle(e['beleg'])} |"
 
 
 def entscheidung_anhaengen(
@@ -1094,16 +1106,19 @@ def entscheidung_anhaengen(
 ) -> Path:
     """Eine einzelne Entscheidung an ``entscheidungen_<S>.md`` anhängen (#285).
 
-    ponytail: die Zeile steht nur hier und in der unversionierten Laufdatei; beim
-    Spec-Abschluss schreibt :func:`uebersicht` die Tabelle aus den versionierten
-    Bau-Logs neu. Dauerhaft wäre sie erst, wenn die Session sie mit ``eintrag``
-    in ihr Bau-Log übernimmt.
+    Gleiches Zeilenformat wie :func:`uebersicht` (#364). Die Zeile steht auch in der
+    Laufdatei des Bau-Logs (Aufrufer schreibt sie); :func:`uebersicht` liest die Laufdatei
+    über ``briefkasten.liste`` mit, die Annahme bleibt beim Abschluss also erhalten.
     """
     datei = entscheidungs_datei(repo, spec)
-    zeile = f"| #{ticket} | {wann.astimezone():%d.%m. %H:%M} | {_zelle(frage)} | {_zelle(wahl)} | {_zelle(grund)} |"
+    eintrag = briefkasten.eintrag_aus_bau_log(
+        ticket,
+        {"frage": frage, "wahl": wahl, "grund": grund, "ts": wann.astimezone().isoformat(timespec="seconds")},
+    )
+    zeile = _entscheidungs_zeile(eintrag)
     datei.parent.mkdir(parents=True, exist_ok=True)
     alt = datei.read_text(encoding="utf-8") if datei.is_file() else ""
-    if "| Ticket | Zeit |" in alt:
+    if _SPALTEN in alt:
         with datei.open("a", encoding="utf-8", newline="\n") as fh:
             fh.write(zeile + "\n")
     else:
@@ -1114,30 +1129,19 @@ def entscheidung_anhaengen(
     return datei
 
 
-def uebersicht(repo: Path, ref: str | None, spec: int, tickets: list[int]) -> Path:
-    """Schreibt :func:`entscheidungs_datei` (alle Entscheidungen der Spec)."""
-    zeilen = [
-        f"# Entscheidungen Spec #{spec}",
-        "",
-        f"Stand {datetime.now().astimezone():%d.%m.%Y %H:%M} · Quelle: Bau-Logs auf {ref or '-'} (to-spawn capo).",
-        "",
-        "| Ticket | Zeit | Frage | Wahl | Grund |",
-        "|---|---|---|---|---|",
-    ]
-    anzahl = 0
-    for ticket in sorted(tickets):
-        for z in log_vom_ref(repo, ref, ticket) if ref else []:
-            if z.get("typ") != "entscheidung":
-                continue
-            zeit = _zeit(z.get("ts"))
-            wann = zeit.astimezone().strftime("%d.%m. %H:%M") if zeit else "-"
-            frage, wahl, grund = entscheidung_teile(z)
-            zeilen.append(
-                f"| #{ticket} | {wann} | {_zelle(frage)} | {_zelle(wahl)} | {_zelle(grund)} |"
-            )
-            anzahl += 1
-    if not anzahl:
-        zeilen += ["", "_Keine Entscheidungen im Bau-Log._"]
+def uebersicht(repo: Path, spec: int, tickets: list[int]) -> Path:
+    """Schreibt :func:`entscheidungs_datei` neu: alle Entscheidungen der Spec (#364).
+
+    Woher sie kommen (Bau-Log im Hauptbaum und auf ``origin/<Hauptzweig>``, Briefkasten-
+    Antworten), weiß nur ``briefkasten.liste``; hier steht nur die Darstellung (eine
+    Tabellenzeile je Eintrag). Die Kopfzeile nennt ``haupt_ref`` — den Stand, den
+    ``briefkasten.liste`` liest.
+    """
+    eintraege = briefkasten.liste(sorted(tickets), log_repo=repo, hauptbaum=repo)
+    zeilen = _tabellen_kopf(spec, f"Bau-Logs auf {haupt_ref(repo) or '-'} + Briefkasten")
+    zeilen += [_entscheidungs_zeile(e) for e in eintraege]
+    if not eintraege:
+        zeilen += ["", "_Keine Entscheidungen im Bau-Log oder Briefkasten._"]
     datei = entscheidungs_datei(repo, spec)
     datei.parent.mkdir(parents=True, exist_ok=True)
     datei.write_text("\n".join(zeilen) + "\n", encoding="utf-8")
@@ -1487,11 +1491,11 @@ def _folge_runde(
 
 # --- Checkpoint-Annahme nach Doktrin (#285) -------------------------------------
 
-#: Minuten ohne Davids Antwort, nach denen der Vorschlag der Session gilt.
+#: Minuten ohne Antwort des Menschen, nach denen der Vorschlag der Session gilt.
 CHECKPOINT_FRIST_MIN = 60.0
 #: „Vorschlag: …“ in einem Issue-Kommentar — alles danach ist die vorgeschlagene Wahl.
 _VORSCHLAG = re.compile(r"Vorschlag\s*:\s*(.+)", re.IGNORECASE | re.DOTALL)
-#: Anfang jedes Aufseher-Kommentars — eigene Kommentare sind nie „Davids Antwort“.
+#: Anfang jedes Aufseher-Kommentars — eigene Kommentare sind nie „Antwort des Menschen“.
 WAECHTER_KOPF = befund.KOPF
 #: Frühere Marke vor der Umbenennung (#428) — alte Issue-Kommentare bleiben eigene Kommentare.
 ALTE_AUFSEHER_KOEPFE: tuple[str, ...] = ("Wächter:",)  # #428-alt
@@ -1499,12 +1503,12 @@ ALTE_AUFSEHER_KOEPFE: tuple[str, ...] = ("Wächter:",)  # #428-alt
 AUFSEHER_KOEPFE: tuple[str, ...] = (WAECHTER_KOPF, *ALTE_AUFSEHER_KOEPFE)
 #: Anfang der Issue-Kommentare des Aufpassers (to_spawn/aufpasser.py), gleiches gh-Konto.
 AUFPASSER_KOPF = "Aufpasser:"
-#: Anfang jedes Issue-Kommentars einer Bau-Session (#402). Session, Aufseher und David
+#: Anfang jedes Issue-Kommentars einer Bau-Session (#402). Session, Aufseher und der Mensch
 #: kommentieren mit demselben gh-Konto — der Login trennt sie nicht, nur diese Marke.
 #: Der Bau-Prompt bekommt sie über den Platzhalter ``{SESSION_KOPF}`` (skripte/bau.py).
 SESSION_KOPF = "Bau-Session:"
 #: Marken aller eigenen Kommentare ohne Bau-Session (die prüft ``_ist_session_kommentar``):
-#: so beginnende Kommentare sind nie „Davids Antwort“.
+#: so beginnende Kommentare sind nie „Antwort des Menschen“.
 EIGENE_KOEPFE: tuple[str, ...] = (*AUFSEHER_KOEPFE, AUFPASSER_KOPF)
 
 
@@ -1538,7 +1542,7 @@ def checkpoint_frist(waechter: dict[str, Any]) -> float:
 
 #: ``author_association``-Werte, deren Kommentare der Checkpoint überhaupt liest (#402).
 #: Ein Dritter im öffentlichen Repo könnte sonst mit der Marke :data:`SESSION_KOPF`
-#: einen Vorschlag setzen oder ``seit`` hinter Davids Antwort schieben.
+#: einen Vorschlag setzen oder ``seit`` hinter die Antwort des Menschen schieben.
 BETEILIGTE_ROLLEN = frozenset({"OWNER", "MEMBER", "COLLABORATOR"})
 
 
@@ -1547,13 +1551,22 @@ def issue_kommentare(gh_repo: str, ticket: int) -> list[dict[str, Any]] | None:
 
     Nur Kommentare mit ``author_association`` aus :data:`BETEILIGTE_ROLLEN` kommen
     zurück — für Vorschlag, Fragezeit und Antwort gleichermaßen. Fehlt das Feld,
-    zählt der Kommentar nicht (sichere Richtung: lieber keine Annahme).
+    zählt der Kommentar nicht (sichere Richtung: lieber keine Annahme). Alle Seiten
+    (``--paginate --slurp`` liefert eine Liste je Seite), sonst fehlt alles hinter dem
+    100. Kommentar (#339).
     """
     daten = gh.json_lauf(
-        ["api", f"repos/{gh_repo}/issues/{ticket}/comments?per_page=100"]
+        [
+            "api",
+            f"repos/{gh_repo}/issues/{ticket}/comments?per_page=100",
+            "--paginate",
+            "--slurp",
+        ]
     )
     if not isinstance(daten, list):
         return None
+    if all(isinstance(seite, list) for seite in daten):
+        daten = [e for seite in daten for e in seite]
     beteiligt = [
         e
         for e in daten
@@ -1587,7 +1600,7 @@ def checkpoint_vorschlag(
 
     Zählt eine Bau-Log-Zeile ``entscheidung`` mit Wahl und ein Issue-Kommentar, der
     mit :data:`SESSION_KOPF` beginnt und „Vorschlag:“ enthält. Der Login zählt nicht:
-    Session und David schreiben mit demselben gh-Konto (#402). Kommentare ohne Marke
+    Session und der Mensch schreiben mit demselben gh-Konto (#402). Kommentare ohne Marke
     (auch Aufseher-Kommentare) sind nie ein Session-Vorschlag.
     """
     kandidaten: list[Vorschlag] = []
@@ -1622,7 +1635,7 @@ def checkpoint_frage_zeit(
     """Wann hat die Session zuletzt etwas gefragt/gemeldet? ``None`` = keine Spur.
 
     Spuren der Session sind nur Bau-Log-Zeilen ``blockiert``/``entscheidung`` und
-    Kommentare mit :data:`SESSION_KOPF`. Davids Hinweise und Aufseher-Kommentare sind
+    Kommentare mit :data:`SESSION_KOPF`. Hinweise des Menschen und Aufseher-Kommentare sind
     keine Frage (#451) — sonst meldet capo „Checkpoint wartet“ für ein Ticket, an dem
     nie eine Session gebaut hat. Ohne Spur wartet niemand, das Label allein löst nichts aus.
     """
@@ -1687,7 +1700,7 @@ def _checkpoint(
 ) -> list[str]:
     """Nacht-Checkpoint: nach der Frist gilt der Vorschlag der Session (#285).
 
-    David kann jede Annahme kippen — der Aufseher kommentiert sie am Ticket, schreibt
+    Der Mensch kann jede Annahme kippen — der Aufseher kommentiert sie am Ticket, schreibt
     sie ins Bau-Log und in ``entscheidungen_<S>.md`` und schickt eine Mail. Ohne
     erkennbaren eigenen Vorschlag der Session wird nichts angenommen, nur gemeldet.
     Solange ein Blocker offen ist, ruht der Checkpoint (keine Zeile); ist der
@@ -1720,7 +1733,7 @@ def _checkpoint(
         return [f"#{n} Checkpoint wartet ({wartet:.0f} von {frist:.0f} min)"]
     antwort = davids_antwort(kommentare, seit)
     if antwort:
-        # Ohne Marke heißt nur: nicht von einer Session mit neuem Prompt — kann David
+        # Ohne Marke heißt nur: nicht von einer Session mit neuem Prompt — kann der Mensch
         # sein oder eine Session mit altem Prompt („Probesitz beendet:“). Sichere Richtung.
         return [
             f"#{n} Checkpoint: Kommentar ohne Session-Marke von {antwort} — als Antwort gewertet "
@@ -1738,7 +1751,7 @@ def _checkpoint(
             dry_run,
             "checkpoint_offen",
             f"Checkpoint ohne Vorschlag #{n}",
-            f"Ticket #{n} wartet seit {wartet:.0f} min auf Davids Antwort, aber die "
+            f"Ticket #{n} wartet seit {wartet:.0f} min auf die Antwort des Menschen, aber die "
             "Session hat keinen eigenen Vorschlag hinterlassen — der Aufseher rät nicht.",
             f"checkpoint_offen|{n}|{seit.isoformat()}",
         )
@@ -1750,12 +1763,12 @@ def _checkpoint(
         return [f"#{n} Checkpoint schon angenommen — nichts zu tun"]
     if dry_run:
         return [f"#{n} [Probe] würde Vorschlag annehmen: {_kurz(vorschlag.wahl)}"]
-    text = f"{WAECHTER_KOPF} Annahme nach {frist:.0f} min nach Doktrin — David kann kippen. Vorschlag: {vorschlag.wahl}"
+    text = f"{WAECHTER_KOPF} Annahme nach {frist:.0f} min nach Doktrin — der Mensch kann kippen. Vorschlag: {vorschlag.wahl}"
     if not befund.kommentiere(n, gh_repo, text):
         return [f"#{n} FEHLER: Checkpoint-Annahme nicht kommentiert"]
     erledigt.add(schluessel)
     grund = (
-        f"Aufseher-Annahme nach {frist:.0f} min ohne Davids Antwort (Doktrin, kippbar)"
+        f"Aufseher-Annahme nach {frist:.0f} min ohne Antwort des Menschen (Doktrin, kippbar)"
         + (f" · {vorschlag.grund}" if vorschlag.grund else "")
     )
     frage = vorschlag.frage or f"Checkpoint #{n}"
@@ -1774,7 +1787,7 @@ def _checkpoint(
         "checkpoint_annahme",
         f"Checkpoint angenommen #{n}",
         f"Ticket #{n}: {frage}\nAngenommen nach {frist:.0f} min ohne Antwort: "
-        f"{vorschlag.wahl}\nDavid kann die Entscheidung jederzeit kippen.",
+        f"{vorschlag.wahl}\nDer Mensch kann die Entscheidung jederzeit kippen.",
         schluessel,
     )
     gelernt.append(ereignis_vorfall("checkpoint_annahme", n, jetzt))
@@ -2599,7 +2612,7 @@ def _tick(
         fp = str(eintrag.get("fingerprint") or "")[:8]
         was = mensch_noetig_was(eintrag)
         aktionen.append(
-            f"MENSCH NÖTIG: #{ziel} {was} (fp {fp}) — Kette läuft weiter, David prüft."
+            f"MENSCH NÖTIG: #{ziel} {was} (fp {fp}) — Kette läuft weiter, der Mensch prüft."
         )
         if dry_run or regeln_aus:
             continue
@@ -2660,7 +2673,7 @@ def _tick(
                 f"SPEC FERTIG — alle {len(liste)} Tickets zu, keine Verstöße{alt_hinweis}. [Probe]"
             )
         else:
-            pfad = uebersicht(repo, ref, spec, [int(i["number"]) for i in liste])
+            pfad = uebersicht(repo, spec, [int(i["number"]) for i in liste])
             erg.zeilen.append(
                 f"SPEC FERTIG — alle {len(liste)} Tickets zu, keine Verstöße{alt_hinweis}. Übersicht: {pfad}"
             )

@@ -6,8 +6,12 @@ Ticket, was darin steht:
 
 - **Rot-Beweis** — eine Datei, deren Name ``rot`` enthält (gewolltes Scheitern vor dem Fix);
   sie zählt nie als Testlauf.
-- **Testlauf** — größte ``N passed``/``N failed``-Zählung aus den übrigen Dateien
-  (Fallback: saubere Markdown-Zeilen bzw. ``X/Y``-Zählung).
+- **Testlauf** — der neueste Lauf (Entstehungszeit der Datei, :func:`zeitpunkt`) aus den
+  übrigen Dateien; bei gleicher Zeit der größte. Fallback: saubere Markdown-Zeilen bzw.
+  ``X/Y``-Zählung. Ist der neueste Lauf grün, aber ein älterer, größerer Lauf rot, deckt der
+  Teil-Lauf den roten nicht ab: Status ``offen``, der rote Lauf steht in ``verdeckt`` — außer
+  ein späterer grüner Lauf mit mindestens so vielen Tests hat ihn schon abgelöst. Im Zweifel
+  offen: wurde ein Test bewusst entfernt (alt 37+3, neu 39 grün), bleibt das Ticket ``offen``.
 - **Klickweg** — eine Markdown-Zeile mit „Klickweg“/„Live-Klick“/„Live-Beweis“, die nicht
   verneint ist („kein Klickweg“, „entfällt“ zählen nicht).
 - **Status** ``gruen``/``rot``/``offen`` aus Testlauf und ``ABNAHME:``-Zeile.
@@ -20,6 +24,7 @@ from __future__ import annotations
 
 import logging
 import re
+import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -42,8 +47,11 @@ _XY = re.compile(r"\b(\d+)\s*/\s*(\d+)\s+(?:Tests?|grün|bestanden|belegt|Kriter
 _KLICKWEG = re.compile(r"klick.?weg|live-klick|live-beweis", re.I)
 _VERNEINT = re.compile(r"\b(?:kein|keine|keiner|nicht|entfällt|n/a)\b", re.I)
 #: Ausdrücklich „Klickweg entfällt / nicht nötig“ (reines Backend) — eigenes Merkmal, kein Klickweg-Beleg.
+#: Die Aussage muss direkt am Wort „Klickweg“ hängen (nicht irgendwo in der Zeile) und darf nicht
+#: verneint sein: „Klickweg nicht entfällt“, „Klickweg entfällt nicht“ zählen nicht (#282 P3).
 _ENTFAELLT = re.compile(
-    r"entfällt(?!\s+nicht)|nicht\s+(?:nötig|erforderlich)|kein\w*\s+klick.?weg\s+(?:nötig|erforderlich)|\bn/a\b",
+    r"klick.?weg[\s:*_]*(?:entfällt(?!\s+nicht)|nicht\s+(?:nötig|erforderlich)|n/a\b)"
+    r"|\bkein\w*\s+klick.?weg\s+(?:nötig|erforderlich)",
     re.I,
 )
 
@@ -57,6 +65,8 @@ class Lauf:
     zeile: str
     befehl: str
     datei: str
+    #: Wann der Beleg entstand (Unix-Zeit, :func:`zeitpunkt`); 0 = unbekannt.
+    zeit: float = 0.0
 
 
 @dataclass
@@ -71,7 +81,22 @@ class Belege:
     #: (Anzeige „kein Klickweg“ unverändert), der Wiederanlauf zählt es als erfüllt (#282).
     klickweg_entfaellt: bool = False
     rot_beweis: bool = False
+    #: Älterer, größerer roter Lauf, den der neueste grüne Lauf nicht abdeckt (Status ``offen``).
+    verdeckt: Lauf | None = None
+    #: Belegdatei, aus der die ``ABNAHME:``-Zeile stammt.
+    abnahme_datei: str = ""
     dateien: list[str] = field(default_factory=list)
+
+    @property
+    def hinweis(self) -> str:
+        """Was im Fall ``offen`` wegen ``verdeckt`` fehlt, in Alltagsworten; sonst leer.
+
+        Die eine Textquelle für Übersicht und Wiederanlauf.
+        """
+        if self.status != "offen" or self.verdeckt is None:
+            return ""
+        v = self.verdeckt
+        return f"grüner Testlauf mit mindestens {v.passed + v.failed} Tests (so viele wie der rote Lauf {v.datei})"
 
 
 def _lies(datei: Path) -> str:
@@ -98,8 +123,37 @@ def finde_dateien(verify_hard: Path, nummer: str) -> list[Path]:
     return treffer
 
 
+def zeitpunkt(datei: Path) -> float:
+    """Wann eine Belegdatei entstand: letzte Commit-Zeit, unversioniert die Änderungszeit.
+
+    Die Änderungszeit allein taugt nicht: ein Checkout setzt sie für alle Dateien gleich.
+    """
+    # Bekannte Grenze: Eine schon committete Belegdatei, die danach lokal überschrieben und
+    # noch nicht neu committet wurde, zählt mit ihrer alten Commit-Zeit, nicht mit „jetzt“.
+    try:
+        aus = subprocess.run(
+            ["git", "log", "-1", "--format=%ct", "--", datei.name],
+            cwd=datei.parent,
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+        )
+        if aus.returncode == 0 and aus.stdout.strip():
+            return float(aus.stdout.strip())
+    except (OSError, subprocess.SubprocessError, ValueError) as fehler:
+        log.debug("Commit-Zeit nicht lesbar %s: %s", datei, fehler)
+    try:
+        return datei.stat().st_mtime
+    except OSError:
+        return 0.0
+
+
 def lauf_aus_text(text: str, datei: str, nur_saubere_zeilen: bool = False) -> Lauf | None:
     """Letzte Zusammenfassungs-Zeile (``N passed``/``N failed``) eines Textes als Lauf.
+
+    Stehen in einer Zeile mehrere ``N passed`` („54 passed vor Fix, danach 71 passed“), zählt
+    die letzte.
 
     ``nur_saubere_zeilen`` (Markdown): nur Zeilen ohne ``failed``/``rot``/``→`` — dort stehen
     oft Vorher-Nachher-Übergänge, die nichts über den Endstand sagen; dann zählt der größte Lauf.
@@ -108,14 +162,14 @@ def lauf_aus_text(text: str, datei: str, nur_saubere_zeilen: bool = False) -> La
     befehl = befehl_m.group(0).strip()[:200] if befehl_m else ""
     beste: Lauf | None = None
     for zeile in text.splitlines():
-        p = _PASSED.search(zeile)
+        p = _PASSED.findall(zeile)
         f = _FAILED.search(zeile)
         if not p and not f:
             continue
         if nur_saubere_zeilen and (f or "→" in zeile or re.search(r"\brot\b", zeile, re.I)):
             continue
         lauf = Lauf(
-            passed=int(p.group(1)) if p else 0,
+            passed=int(p[-1]) if p else 0,
             failed=sum(int(x) for x in _FAILED.findall(zeile)),
             zeile=zeile.strip(" =|\t")[:200],
             befehl=befehl,
@@ -143,6 +197,7 @@ def auswerten(verify_hard: Path, nummer: str) -> Belege:
             lauf = None
             if not belege.abnahme and (m := _ABNAHME.search(text)):
                 belege.abnahme = m.group(1).strip()
+                belege.abnahme_datei = rel
             for zeile in text.splitlines():
                 if not _KLICKWEG.search(zeile):
                     continue
@@ -152,6 +207,7 @@ def auswerten(verify_hard: Path, nummer: str) -> Belege:
                 if _ENTFAELLT.search(zeile):
                     belege.klickweg_entfaellt = True
         if lauf:
+            lauf.zeit = zeitpunkt(datei)
             laeufe.append(lauf)
     if not laeufe:  # Fallback: Zählung aus den Markdown-Belegseiten
         for rel in belege.dateien:
@@ -163,13 +219,27 @@ def auswerten(verify_hard: Path, nummer: str) -> Belege:
                     if 0 < y and x <= y:
                         lauf = Lauf(x, y - x, xy.group(0), "", rel)
                 if lauf:
+                    lauf.zeit = zeitpunkt(verify_hard / rel)
                     laeufe.append(lauf)
-    if laeufe:
-        belege.lauf = max(laeufe, key=lambda l: (l.passed + l.failed, l.datei))
+    if laeufe:  # Stand zum Zeitpunkt des Aufrufs: der neueste Lauf zählt, nicht der größte (#366)
+        belege.lauf = max(laeufe, key=lambda l: (l.zeit, l.passed + l.failed, l.datei))
+        if belege.lauf.failed == 0:  # im Zweifel offen statt grün (#366 W1)
+            groesse = belege.lauf.passed
+            # Ein roter Lauf zählt nur, solange ihn kein späterer, mindestens gleich großer grüner Lauf ablöst (#366 P1).
+            rote = [
+                l
+                for l in laeufe
+                if l.failed > 0
+                and l.passed + l.failed > groesse
+                and not any(g.failed == 0 and g.zeit > l.zeit and g.passed >= l.passed + l.failed for g in laeufe)
+            ]
+            belege.verdeckt = max(rote, key=lambda l: (l.passed + l.failed, l.zeit), default=None)
     abnahme_schlecht = bool(belege.abnahme) and bool(_ABNAHME_SCHLECHT.search(_OFFEN_VERNEINT.sub("", belege.abnahme)))
     abnahme_gut = bool(belege.abnahme) and bool(_ABNAHME_GUT.search(belege.abnahme))
     if (belege.lauf and belege.lauf.failed > 0) or abnahme_schlecht:
         belege.status = "rot"
+    elif belege.verdeckt:
+        belege.status = "offen"
     elif belege.lauf or abnahme_gut:
         belege.status = "gruen"
     return belege

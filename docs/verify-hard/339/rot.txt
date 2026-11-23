@@ -1,0 +1,12 @@
+# #339 Rot-Beweis vor dem Fix (Stand cb6c1e5)
+$ python -m pytest -q -rf tests/test_takt_bremse_339.py
+FAILED tests/test_takt_bremse_339.py::test_gescheiterter_lauf_zaehlt_fuer_bremse[exit]
+FAILED tests/test_takt_bremse_339.py::test_gescheiterter_lauf_zaehlt_fuer_bremse[zeitgrenze]
+FAILED tests/test_takt_bremse_339.py::test_bremse_meldung_nicht_doppelt_wenn_merker_verloren
+FAILED tests/test_takt_bremse_339.py::test_issue_kommentare_blaettert_alle_seiten
+FAILED tests/test_takt_bremse_339.py::test_start_text_nennt_alle_codes_von_antwort
+FAILED tests/test_takt_bremse_339.py::test_kaputter_gezeigt_eintrag_wie_fehlt[drei]
+FAILED tests/test_takt_bremse_339.py::test_kaputter_gezeigt_eintrag_wie_fehlt[kaputt1]
+FAILED tests/test_takt_bremse_339.py::test_kaputter_gezeigt_eintrag_wie_fehlt[kaputt2]
+FAILED tests/test_takt_bremse_339.py::test_kaputter_gezeigt_eintrag_wie_fehlt[None]
+9 failed, 1 passed in 12.53s

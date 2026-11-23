@@ -15,8 +15,8 @@ Abgleich zu ``/`` (Windows).
   Auswahl sieht nur ``basis..HEAD``, der Lauf aber den Arbeitsbaum.
 - **R3** Prüf-Konfig, Abhängigkeiten, ``conftest.py``, Test-Setup oder ``pruefen.risiko_pfade`` aus
   ``.to-spawn/config.json`` geändert → voll.
-- **LF** Der letzte Lauf im Protokoll war rot → voll; so laufen die zuletzt roten Tests sicher mit
-  (``--lf`` als Obermenge, für Python und Node gleich).
+- **LF** Der letzte Lauf im Protokoll war rot oder ein Gate-Fehler → voll; so laufen die zuletzt roten
+  Tests sicher mit (``--lf`` als Obermenge, für Python und Node gleich).
 
 Eingefroren mit #101: Stand dieser Datei steht als ``regeln@<sha7>`` (git-Blob-SHA, prüfbar mit
 ``git hash-object``) in jeder Protokoll-Zeile unter ``werkzeug``. Änderung nur mit neuer Messreihe
@@ -45,7 +45,9 @@ _R3_NAMEN = (
     "setup.py",
     "tox.ini",
     "requirements*.txt",
+    "requirements*.in",
     "constraints*.txt",
+    "constraints*.in",
     "uv.lock",
     "poetry.lock",
     "pipfile",
@@ -62,10 +64,15 @@ _R3_NAMEN = (
     "tsconfig*.json",
     "setup.js",
     "setup.ts",
+    "vitest.setup.*",
+    "jest.setup.*",
+    "setuptests.*",
 )
+#: R3: Ordner, deren Dateien Abhängigkeiten sind (``requirements/dev.txt``, ``requirements/base.in``).
+_R3_ORDNER = frozenset({"requirements"})
 _KONFIG = PurePosixPath(".to-spawn") / "config.json"
-#: Urteil der letzten Protokoll-Zeile, das LF auslöst.
-_ROT = "rot"
+#: Urteile der letzten Protokoll-Zeile, die LF auslösen (ein Gate-Fehler hat nichts geprüft, #218).
+_LF_URTEILE = frozenset({"rot", "gate-fehler"})
 
 
 def normal(pfad: str) -> str:
@@ -75,9 +82,11 @@ def normal(pfad: str) -> str:
 
 
 def _ist_r3(pfad: str, risiko: list[str]) -> bool:
-    name = PurePosixPath(pfad).name.lower()
-    return any(fnmatch.fnmatchcase(name, muster) for muster in _R3_NAMEN) or any(
-        fnmatch.fnmatchcase(pfad, normal(muster)) for muster in risiko
+    *ordner, name = PurePosixPath(pfad.lower()).parts or ("",)
+    return (
+        any(teil in _R3_ORDNER for teil in ordner)
+        or any(fnmatch.fnmatchcase(name, muster) for muster in _R3_NAMEN)
+        or any(fnmatch.fnmatchcase(pfad, normal(muster)) for muster in risiko)
     )
 
 
@@ -120,8 +129,8 @@ def vorab(
         return "nichts geändert (nie Grün ohne Lauf)"
     if risiko is None:
         return "R3: pruefen.risiko_pfade unlesbar"
-    if letztes_urteil == _ROT:
-        return "LF: letzter Lauf rot, zuletzt rote Tests laufen mit"
+    if letztes_urteil in _LF_URTEILE:
+        return f"LF: letzter Lauf {letztes_urteil}, zuletzt rote Tests laufen mit"
     if offen is None:
         return "AB: Arbeitsbaum unklar (git gescheitert)"
     if offen:

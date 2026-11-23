@@ -1,6 +1,6 @@
 """Tests für duoplus-management#451 — capo wertet nur echte Session-Fragen am Checkpoint.
 
-Befund (Spec #399, 03.10.): Davids Akzeptanz-Hinweis am noch blockierten Checkpoint-
+Befund (Spec #399, 03.10.): Der Akzeptanz-Hinweis des Menschen am noch blockierten Checkpoint-
 Ticket #441 zählte als „Frage“; nach 60 min kam die Mail „Checkpoint ohne Vorschlag“,
 obwohl nie eine Session für das Ticket lief.
 
@@ -49,7 +49,7 @@ def _checkpoint_zeilen(ausgabe: str) -> list[str]:
     return [z for z in ausgabe.splitlines() if "#902" in z and "Checkpoint" in z]
 
 
-# --- a) Davids Kommentar ohne Session-Spur ist keine Frage ---------------------
+# --- a) Kommentar des Menschen ohne Session-Spur ist keine Frage ---------------------
 
 
 def test_david_kommentar_ohne_session_spur_keine_zeile_keine_mail(welt: dict[str, Path]) -> None:

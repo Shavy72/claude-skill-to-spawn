@@ -50,6 +50,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import subprocess
 import sys
 import time
@@ -59,7 +60,18 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, NamedTuple
 
-from to_spawn import aufpasser, bau_log, capo, config, gh, pc_fenster, ticket_zustand
+from to_spawn import (
+    aufpasser,
+    bau_log,
+    befugnis,
+    capo,
+    config,
+    gh,
+    pc_fenster,
+    ticket_zustand,
+    verlauf_pruefung,
+    wiederanlauf,
+)
 
 log = logging.getLogger("to_spawn.aufseher_stand")
 
@@ -113,6 +125,10 @@ class Quellen:
     #: Am PC (kein tmux, #501): Ticket → Sekunden seit dem letzten Transkript-Eintrag
     #: (``None`` = keine Session). Gesetzt = PC-Weg, tmux wird nicht gefragt.
     pc_still: Callable[[int], float | None] | None = None
+    #: Wiederanlauf-Art eines fertig gebauten Tickets (#282 P3): ``(ticket, arbeitsbaum)`` →
+    #: :func:`wiederanlauf.feststellen`. :func:`echte_quellen` setzt es immer; ``None`` nur in
+    #: Test-Fakes ohne diese Frage (die Leiter entscheidet dann allein nach der Stufe).
+    anlauf: Callable[[int, Path], wiederanlauf.Wiederanlauf | None] | None = None
 
 
 def _tmux_echt(args: list[str]) -> str | None:
@@ -141,7 +157,11 @@ def echte_quellen(repo: Path, gh_repo: str) -> Quellen:
         def pc_still(n: int) -> float | None:
             return pc_fenster.still_s(repo, n, time.time())
     return Quellen(
-        repo=repo, kinder=lambda s: capo.kinder(gh_repo, s), tmux=_tmux_echt, pc_still=pc_still
+        repo=repo,
+        kinder=lambda s: capo.kinder(gh_repo, s),
+        tmux=_tmux_echt,
+        pc_still=pc_still,
+        anlauf=wiederanlauf.feststellen,
     )
 
 
@@ -429,6 +449,117 @@ def sammeln(spec: int, q: Quellen, vorher: _Vorher) -> _Ergebnis:
         # Eine Zeile statt einer je Ticket: der Aufseher liest die Ausgabe in seinen Kontext.
         log.warning("Kein Bau-Log (Kontext/Phase/Aussage „—“): %s", ", ".join(ohne_log))
     return _Ergebnis(lagen, kommentare, merker)
+
+
+#: Rückfrage-Dialog: so viele letzte Zeilen (Frage samt Befehl darüber) bilden die Frage.
+FRAGE_ZEILEN = 8
+#: Höchstens so viele Zeichen trägt eine Fenster-Frage im Briefkasten (:func:`frage_kurz`).
+FRAGE_MAX = 600
+#: Eingabezeile des Menschen im Verlauf (``> …``/``❯ …``) — nur ganz links, mit Text, nie eine
+#: Auswahlzeile (``❯ 1. Yes``).
+EINGABE_ZEILE = re.compile(r"^[>❯]\s+(?!\d+\.)\S")
+
+
+def unbeaufsichtigt(text: str) -> list[str]:
+    """Zeilen des Pane-Texts seit der letzten Eingabezeile, ohne Eingabefeld (#372).
+
+    Nur für die Frage, die angezeigt wird (:func:`frage_im_text`) — die Klasse kommt aus dem
+    Transkript (:mod:`verlauf_pruefung`), wer getippt hat, spielt dafür keine Rolle. Ohne
+    erkennbare Eingabezeile alles. Als Eingabezeile zählt nur eine Zeile, die ganz links mit
+    ``>``/``❯`` beginnt — Claude Code rückt Antwort-Text samt Markdown-Zitat ein.
+    """
+    zeilen = aufpasser.ohne_statuszeile(text).splitlines()
+    linien = [i for i, z in enumerate(zeilen) if aufpasser.EINGABEFELD_LINIE.fullmatch(z)]
+    if linien:
+        zeilen = zeilen[: linien[-1]]  # Eingabefeld (``❯ …``) gehört nicht zur Ausgabe
+    eingaben = [i for i, z in enumerate(zeilen) if EINGABE_ZEILE.match(z)]
+    return zeilen[eingaben[-1] + 1 :] if eingaben else zeilen
+
+
+def _grund_kurz(zeile: str, grenze: int) -> str:
+    """Klasse-2-Zeile auf höchstens ``grenze`` Zeichen um das Klasse-2-Wort herum."""
+    if len(zeile) <= grenze:
+        return zeile
+    w = zeile.split()
+    a, b = 0, len(w)
+    while b - a > 1 and befugnis.ist_klasse_2(" ".join(w[a + 1 : b])):
+        a += 1
+    while b - a > 1 and befugnis.ist_klasse_2(" ".join(w[a : b - 1])):
+        b -= 1
+    # Kern (kleinstes Wortfenster mit Klasse-2-Wort) abwechselnd um Nachbarwörter erweitern.
+    while True:
+        weiter = False
+        if a > 0 and len(" ".join(w[a - 1 : b])) + 2 <= grenze:
+            a, weiter = a - 1, True
+        if b < len(w) and len(" ".join(w[a : b + 1])) + 2 <= grenze:
+            b, weiter = b + 1, True
+        if not weiter:
+            break
+    # ponytail: Kern allein über ``grenze`` bleibt ungekürzt, frage_kurz kann ihn dann anschneiden.
+    return ("…" if a else "") + " ".join(w[a:b]) + ("…" if b < len(w) else "")
+
+
+def frage_im_text(text: str) -> str:
+    """Frage an den Menschen am Ende des Pane-Texts (#372), ``""`` = keine; ungekürzt.
+
+    Betrachtet wird nur, was seit der letzten Eingabezeile kam (:func:`unbeaufsichtigt`).
+    Rückfrage-Dialog (:func:`aufpasser.rueckfrage`): die letzten Zeilen samt Befehl
+    darüber. Sonst der letzte Absatz, nur wenn er mit ``?`` endet — eine stille Session ohne
+    solche Frage hängt (Stupser/Handoff wie bisher). Nur der Text der Frage; die Klasse
+    bestimmt :func:`fenster_blick`.
+    """
+    zeilen = unbeaufsichtigt(text)
+    if aufpasser.rueckfrage(text):
+        teile = [z.strip() for z in zeilen if z.strip()][-FRAGE_ZEILEN:]
+    else:
+        absatz: list[str] = []
+        for z in reversed(zeilen):
+            if not z.strip():
+                if absatz:
+                    break
+                continue
+            absatz.insert(0, z.strip())
+        teile = absatz if absatz and absatz[-1].endswith("?") else []
+    return " ".join(" ".join(teile).split())
+
+
+def mit_grund(frage: str, grund: str | None) -> str:
+    """``frage`` mit der auslösenden Klasse-2-Zeile davor, wenn die Frage selbst keine trägt.
+
+    Sonst schnitte :func:`frage_kurz` den Grund weg und der Briefkasten sähe Klasse 3.
+    """
+    if not frage or not grund or befugnis.ist_klasse_2(frage):
+        return frage
+    grund = _grund_kurz(grund, FRAGE_MAX // 2)
+    rest = frage_kurz(frage, max(FRAGE_MAX - len(grund) - 3, FRAGE_MAX // 2))
+    return " ".join(f"{grund} … {rest.lstrip('…')}".split())
+
+
+def frage_kurz(frage: str, grenze: int = FRAGE_MAX) -> str:
+    """``frage`` auf ``grenze`` Zeichen, vorn gekürzt (``…``): das Ende mit der Frage bleibt.
+
+    Nur zum Anzeigen/Ablegen — die Klasse nie am gekürzten Text bestimmen (Review PR 374).
+    """
+    frage = " ".join(frage.split())
+    return frage if len(frage) <= grenze else "…" + frage[len(frage) - grenze + 1 :]
+
+
+def fenster_blick(ziel: str | None, q: Quellen, stelle: str | None) -> tuple[str, str]:
+    """(Frage, bis) im Fenster ``ziel`` (#372); ohne Ziel/lesbares Pane/Frage ``("", "")``.
+
+    Die Frage kommt aus dem sichtbaren Fenster (:func:`frage_im_text`), die Klasse aus dem
+    Transkript seit ``stelle`` (:func:`verlauf_pruefung.pruefen`): trägt die Session dort ein
+    Klasse-2-Wort, steht die Zeile vor der Frage (:func:`mit_grund`). ``bis`` ist die Stelle,
+    die der Aufrufer merkt, sobald er die Frage weitergegeben hat.
+    """
+    if not ziel:
+        return "", ""
+    text = q.tmux(["capture-pane", "-p", "-t", ziel])
+    frage = frage_im_text(text) if text else ""
+    if not frage:
+        return "", ""
+    pruefung = verlauf_pruefung.pruefen(ziel, q, stelle)
+    return mit_grund(frage, pruefung.grund), pruefung.bis
 
 
 class TicketBlick(NamedTuple):

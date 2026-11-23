@@ -120,9 +120,9 @@ def test_checkpoint_vorschlag_filtert_fremde_autoren() -> None:
     assert (vorschlag.wahl, vorschlag.autor) == ("eigener", "bau-bot")
 
 
-# --- Befund 8, Nachschau R1/R2: gleiches gh-Konto für Session und David ----------
-# Session und David kommentieren mit demselben Login (nest_push.sh kopiert Davids
-# gh-Token). Nur die Marke capo.SESSION_KOPF trennt Session-Kommentare von David.
+# --- Befund 8, Nachschau R1/R2: gleiches gh-Konto für Session und Menschen ----------
+# Session und Mensch kommentieren mit demselben Login (nest_push.sh kopiert das
+# gh-Token des Menschen). Nur die Marke capo.SESSION_KOPF trennt Session-Kommentare vom Menschen.
 
 KONTO = "Shavy72"
 MARKE = "Bau-Session:"
@@ -212,7 +212,7 @@ def test_mensch_noetig_mit_fix_runde_und_review_offen() -> None:
 
 # --- Fix-Runde 2, S1: nur Kommentare von Repo-Beteiligten zählen ----------------
 # Ein Dritter (öffentliches Repo) darf mit der Marke weder einen Vorschlag setzen
-# noch ``seit`` hinter Davids Antwort schieben. GitHub liefert ``author_association``
+# noch ``seit`` hinter die Antwort des Menschen schieben. GitHub liefert ``author_association``
 # an jedem Kommentar; hier läuft der echte ``issue_kommentare`` über gestelltes gh.
 
 

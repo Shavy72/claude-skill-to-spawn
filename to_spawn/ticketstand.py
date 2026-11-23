@@ -1,6 +1,6 @@
 """Ticketstand: kurze Tabelle aller Tickets einer Spec für jeden Aufseher-Tick.
 
-David will bei jedem Tick ohne Nachfragen sehen, wie weit die Spec ist. Dieses Modul
+Der Mensch will bei jedem Tick ohne Nachfragen sehen, wie weit die Spec ist. Dieses Modul
 führt drei vorhandene Quellen zusammen und erzeugt daraus eine Tabelle — es baut
 keine eigene Session- oder GitHub-Logik nach:
 
@@ -14,7 +14,7 @@ keine eigene Session- oder GitHub-Logik nach:
 Zustände (eine Regel, oben gewinnt):
 
 ``fertig`` Issue geschlossen · ``blockiert`` offene Blocker · ``checkpoint`` Label
-``checkpoint:human`` (wartet auf David) · ``läuft`` Session-Fenster da · ``wartet``
+``checkpoint:human`` (wartet auf den Menschen) · ``läuft`` Session-Fenster da · ``wartet``
 sonst (noch kein Fenster).
 
 Nur lesen: schreibt weder Stand-Datei noch Bau-Log.
@@ -97,7 +97,7 @@ def zustand(
         wer = ", ".join(f"#{b}" for b in blocker or [])
         return BLOCKIERT, f"wartet auf {wer}" if wer else f"{_offene_blocker(issue)} offene Vorgänger"
     if CHECKPOINT_LABEL in _labels(issue):
-        return CHECKPOINT, "wartet auf Davids Abnahme"
+        return CHECKPOINT, "wartet auf Abnahme des Menschen"
     fenster = lage.fenster if lage else aufseher_stand.FENSTER_UNBEKANNT
     minuten = f" {lage.still_min} min" if lage and lage.still_min is not None else ""
     if fenster == aufseher_stand.ARBEITET:

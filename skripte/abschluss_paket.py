@@ -1,4 +1,4 @@
-"""Abschluss-Paket einer Spec: alles zum Durchschauen an David (vor und nach dem Live-Deploy).
+"""Abschluss-Paket einer Spec: alles zum Durchschauen an den Menschen (vor und nach dem Live-Deploy).
 
 Aufruf: ``python abschluss_paket.py <S> --stage <url> --rundschau <link> --tests <link>
 [--belege <link>] [--direkt "<Titel>=<url>"]… [--basic-auth-nutzer <name>]
@@ -212,7 +212,7 @@ def _direkt(roh: list[str], ap: argparse.ArgumentParser) -> list[tuple[str, str]
 
 
 def _parser() -> argparse.ArgumentParser:
-    ap = argparse.ArgumentParser(description="Abschluss-Paket einer Spec (alles zum Durchschauen an David).")
+    ap = argparse.ArgumentParser(description="Abschluss-Paket einer Spec (alles zum Durchschauen an den Menschen).")
     ap.add_argument("spec", type=int)
     ap.add_argument("--stage", required=True, help="Stage-App-Link (staging.url)")
     ap.add_argument("--rundschau", required=True, help="Link der veröffentlichten Rundschau")

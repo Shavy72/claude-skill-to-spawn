@@ -5,6 +5,8 @@ Aufseher-Prompt (``skripte/wache.py``), Anstupser der Eingriffs-Leiter
 (``leiter.MINDSET_TEXT``) und des Aufpassers (``aufpasser.ANSTUPS_TEXT``) und die
 Bau-Prompt-Vorlage (Platzhalter ``{MINDSET}`` und ``{ABLOESE_SOP}``, gefüllt in
 ``skripte/bau.py``); den Befugnis-Abschnitt hält ``befugnis`` (#278). Nur Text, keine Logik — wer einen Satz ändern will, ändert ihn hier.
+
+Dazu die festen Texte, die ``respawn``, Aufseher-Ablösung und Aufpasser in ein Fenster tippen.
 """
 
 from __future__ import annotations
@@ -17,8 +19,8 @@ MINDSET = (
     "Mindset: Alles geht erst auf Staging — dort kann nichts live schaden. Entscheide "
     "offene Punkte nach bestem Wissen selbst, statt zu fragen. Notiere jede Entscheidung "
     "mit Optionen und Gründen (`to_spawn.py eintrag --typ entscheidung`) und gib sie in "
-    "Befund, Zusammenfassungsseite bzw. Mail an David mit („ist schon auf Staging, kannst "
-    "testen“), damit David direkt live schalten kann. Nichts wartet auf David außer der "
+    "Befund, Zusammenfassungsseite bzw. Mail an den Menschen mit („ist schon auf Staging, kannst "
+    "testen“), damit der Mensch direkt live schalten kann. Nichts wartet auf den Menschen außer der "
     "fertigen Gesamtabnahme; Mail nur für Unverzichtbares (Spec fertig zur Abnahme, echter "
     "roter Stopp)."
 )
@@ -51,3 +53,37 @@ ABLOESE_SOP = (
 5) Die neue Session schließt die alte — erst wenn sie übernommen hat (Startprompt angenommen, erste Antwortzeile da); vorher bleibt die alte stehen.
 Werkzeug: Bau-Session (PC und Bau-Server) → zuerst ihr eigener Launcher: der Staffel-Hook von `bau.py` erkennt den committeten Handoff am Ende des Zugs und startet die Folgesession im selben Fenster — ohne Aufseher (#276); Aufseher und Aufpasser sind nur das Netz, falls das nicht greift (letzte Staffel-Runde, Sperre belegt). Daneben ruft der Aufseher auf dem Bau-Server die Eingriffs-Leiter (`to_spawn.py leiter <S> <N>`), deren Stufe 2/3 (Skill `respawn`) macht Schritt 1–5. Am PC ebenso über die Leiter; sie löst dort erst an der Kontext-Grenze oder nach langer echter Stille ab (kein Anstupsen). Aufseher selbst → Selbstneustart nach derselben SOP: Schritt 1–2 schreibt er selbst, Schritt 3–5 übernimmt die Aufsicht `wache.py` (Nachfolger im selben Fenster `wache <S>`, Remote Control „Aufseher #<S>“ automatisch, alter Aufseher endet erst nach Übernahme) — auslösen mit `wache.py <S> --abloesen <handoff>` oder automatisch an der Handoff-Grenze (#436)."""
 )
+
+
+#: Ablösung (respawn) nach Schritt a abgebrochen: wird der alten Bau-Session getippt.
+WEITER_AUFTRAG = (
+    "Ablösung abgebrochen (respawn). Die neue Session startet nicht — arbeite normal "
+    "am Ticket weiter. Handoff-Datei und Start-Prompt dürfen liegen bleiben."
+)
+
+#: Ablösung des Aufsehers nach Schritt a abgebrochen: wird dem Aufseher getippt.
+WEITER_AUFTRAG_AUFSEHER = (
+    "Ablösung abgebrochen (respawn). Der Nachfolge-Aufseher startet nicht — arbeite als "
+    "Bau-Aufseher normal weiter (nächster Tick wie gehabt). Handoff-Datei und Start-Prompt "
+    "dürfen liegen bleiben."
+)
+
+#: Schaltet Remote Control in der neuen Session ein (respawn Schritt d).
+REMOTE_CONTROL = "/remote-control"
+
+#: Beendet eine Session (Aufpasser, Leiter Stufe 4).
+EXIT = "/exit"
+
+
+def handoff_auftrag(handoff: str, start: str) -> str:
+    """Handoff-Auftrag (respawn Schritt a) für Bau-Session und Aufseher."""
+    return (
+        "Ablösung dieser Session (respawn, Skill handoff, Bau-Variante): Schreib jetzt den "
+        f"Handoff nach {handoff} und den Start-Prompt für die neue Session nach {start} "
+        "(nur Text, die neue Session liest ihn als ersten Auftrag). Gibt es die Dateien schon, "
+        "sind sie aus einer früheren Runde veraltet: komplett mit dem jetzigen Stand "
+        "überschreiben, auch wenn sich wenig geändert hat. Beide Dateien committen. "
+        "Keine Zeile „Staffel: weiter“ ausgeben — die neue Session übernimmt, eine "
+        "Folge-Runde in diesem Fenster wäre eine zweite Session. Danach nichts mehr tun."
+    )
+

@@ -14,7 +14,7 @@ Echt sind Konfig-Datei, ``config.lade``, ``speicher.platz_frei`` und die
 Warteschleife (auch über ``bau.py``). Ersetzt werden nur ``/proc`` und
 ``/proc/meminfo`` (13 Claude-Prozesse, 8 GB frei) über die Test-Türen des Moduls,
 die Plattform (``linux``) und das Schlafen — das Schlafen ist der Moment, in dem
-David die Datei ändert.
+der Mensch die Datei ändert.
 """
 
 from __future__ import annotations
@@ -153,7 +153,7 @@ def test_bau_py_wartet_nicht_mehr_auf_alte_grenze(
         sys.modules.pop(modulname, None)
 
     konfig = bau.config.lade(bau.REPO)  # wie main() beim Start
-    _schreibe_grenze(repo, 20)  # David ändert die Grenze, während bau.py noch auf Blocker wartet
+    _schreibe_grenze(repo, 20)  # der Mensch ändert die Grenze, während bau.py noch auf Blocker wartet
     schlafen, aufrufe = _schlaf_mit_aenderungen([])
 
     zyklen = bau.auf_speicher_warten(konfig, wer="bau 999", schlafen=schlafen)
