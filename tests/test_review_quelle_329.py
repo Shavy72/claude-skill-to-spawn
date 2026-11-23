@@ -89,7 +89,9 @@ def test_oeffentlich_tauglich() -> None:
     funde = [
         f"{datei}:{nr} ({art})"
         for datei in _review_dateien()
-        for nr, zeile in enumerate((SKILL / datei).read_text(encoding="utf-8").splitlines(), 1)
+        for nr, zeile in enumerate(
+            (SKILL / datei).read_text(encoding="utf-8").splitlines(), 1
+        )
         for art, muster in OEFFENTLICH.items()
         if muster.search(zeile)
     ]

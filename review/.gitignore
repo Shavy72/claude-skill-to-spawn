@@ -1,0 +1,5 @@
+# #329: Laufzeit-Daten des Review-Werkzeugs nie versionieren.
+sitzungen/
+*.jsonl
+*.log
+__pycache__/
