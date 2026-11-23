@@ -2,9 +2,10 @@
 ``offene``.
 
 Exit-Codes: ``befugnis`` 0 = Klasse 1, 2 = Klasse 2, 3 = Klasse 3 · ``frage`` 0 = eingeworfen (gibt
-die ``id`` aus), 2 = verweigert · ``antwort`` 0 = Antwort da, 2 = braucht den Nutzer, 3 = WARTET,
-4 = Frage unbekannt (neu stellen), 5 = ohne ``--id`` aufgerufen (nicht argparse-2, das hieße „braucht den
-Nutzer“) · ``antworten``/``nutzer-antwort``
+die ``id`` aus), 2 = verweigert · ``antwort`` 0 = Antwort da, 1 = Briefkasten nicht lesbar (Fehler),
+2 = braucht den Nutzer, 3 = WARTET, 4 = Frage unbekannt (neu stellen), 5 = Aufruf-Fehler (ohne Ticket oder
+``--id``, Ticket keine Zahl, unbekanntes Argument — nie argparse-2, das hieße „braucht den Nutzer“, #315)
+· ``antworten``/``nutzer-antwort``
 0 = geschrieben, 2 = verweigert, 1 = keine passende offene Frage/Fehler · ``offene`` 0 (eine Zeile
 je offener Frage).
 
@@ -17,13 +18,35 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
-from typing import Any
+from typing import Any, NoReturn
 
 from to_spawn import befugnis, briefkasten
 
 log = logging.getLogger("to_spawn")
 
 BEFEHLE = ("befugnis", "frage", "antwort", "antworten", "nutzer-antwort", "offene")
+#: Exit-Code von ``antwort`` bei falschem Aufruf — eigener Code, weil 2 „braucht den Nutzer“ heißt (#315).
+AUFRUF_FEHLER = 5
+
+
+def _aufruf_fehler_mit_eigenem_code(parser: argparse.ArgumentParser) -> None:
+    """Jeder Aufruf-Fehler von ``parser`` endet mit :data:`AUFRUF_FEHLER` statt argparse-2.
+
+    Auch unbekannte Argumente: argparse reicht sie sonst an den Haupt-Parser weiter, der mit 2 endet.
+    """
+    locker = parser.parse_known_args
+
+    def fehler(nachricht: str) -> NoReturn:
+        parser.exit(AUFRUF_FEHLER, f"{parser.format_usage()}{parser.prog}: Aufruf-Fehler: {nachricht}\n")
+
+    def streng(args: Any = None, namespace: Any = None) -> tuple[argparse.Namespace, list[str]]:
+        ergebnis, rest = locker(args, namespace)
+        if rest:
+            fehler(f"unbekannte Argumente: {' '.join(rest)}")
+        return ergebnis, rest
+
+    parser.error = fehler  # type: ignore[method-assign]
+    parser.parse_known_args = streng  # type: ignore[method-assign]
 
 
 def richte_parser_ein(unter: Any) -> None:
@@ -41,7 +64,8 @@ def richte_parser_ein(unter: Any) -> None:
     p_frage.add_argument("--art", default="")
     p_frage.add_argument("--klasse", type=int, choices=[2, 3], help="nur strenger als die Einordnung")
     p_frage.add_argument("--beleg", action="append", default=[])
-    p_antwort = unter.add_parser("antwort", help="Antwort lesen (Exit 0 da, 2 Nutzer, 3 WARTET)")
+    p_antwort = unter.add_parser("antwort", help="Antwort lesen (Exit 0 da, 2 Nutzer, 3 WARTET, 5 Aufruf-Fehler)")
+    _aufruf_fehler_mit_eigenem_code(p_antwort)
     p_antwort.add_argument("ticket")
     p_antwort.add_argument("--id", dest="frage_id", help="id, die `frage` ausgab (Pflicht; fehlt sie: Exit 5)")
     p_antw = unter.add_parser("antworten", help="Aufseher: Antwort in den Briefkasten")
@@ -98,12 +122,15 @@ def lauf(args: argparse.Namespace) -> int:
                 args.ticket,
                 args.ticket,
             )
-            return 5
+            return AUFRUF_FEHLER
         stand = briefkasten.lesen(args.ticket, args.frage_id)
     except briefkasten.Verweigert as fehler:
         log.error("%s", fehler)
         return 2
-    except (ValueError, OSError) as fehler:
+    except ValueError as fehler:
+        log.error("%s", fehler)
+        return AUFRUF_FEHLER if args.befehl == "antwort" else 1  # bei antwort nur: Ticket keine Zahl
+    except OSError as fehler:
         log.error("%s", fehler)
         return 1
     if isinstance(stand, briefkasten.Antwort):

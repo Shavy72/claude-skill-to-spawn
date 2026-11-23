@@ -11,7 +11,7 @@ import json
 import re
 import subprocess
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -38,7 +38,7 @@ def _merker_zuruecksetzen(welt: dict[str, Any], schluessel: str, minuten: int) -
     """``zuletzt`` des Zeige-Zählers in die Vergangenheit legen (wie nach ``minuten`` ohne Takt)."""
     datei = Path(welt["env"]["TO_SPAWN_LEITSTAND_ORDNER"]) / "zustand.json"
     zustand = json.loads(datei.read_text(encoding="utf-8"))
-    alt = datetime.now(timezone.utc) - timedelta(minutes=minuten)
+    alt = datetime.now().astimezone() - timedelta(minutes=minuten)
     zustand["takt"]["293"]["gezeigt"][schluessel]["zuletzt"] = alt.isoformat(timespec="seconds")
     datei.write_text(json.dumps(zustand), encoding="utf-8")
 
@@ -73,7 +73,15 @@ def test_klasse_2_kommt_wieder_bis_kommentar_belegt(welt: dict[str, Any], monkey
     # Kommentar des Aufsehers wie im Befugnis-Text (über dieselbe gh-Tür wie die Session).
     text = f"Aufseher: braucht den Nutzer: Live schalten? — bitte: `to_spawn.py nutzer-antwort 297 --id {fid} …`"
     gh = subprocess.run(
-        [PY, welt["env"]["TO_SPAWN_GH_STUB"], "issue", "comment", "297", "--body", text],
+        [
+            PY,
+            welt["env"]["TO_SPAWN_GH_STUB"],
+            "issue",
+            "comment",
+            "297",
+            "--body",
+            text,
+        ],
         env=welt["env"],
         check=False,
     )
@@ -86,7 +94,14 @@ def test_klasse_2_kommt_wieder_bis_kommentar_belegt(welt: dict[str, Any], monkey
 def test_unbekannte_klasse_kommt_nicht_jeden_takt_wieder(monkeypatch: Any, tmp_path: Path) -> None:
     from to_spawn import briefkasten, waechter_takt
 
-    frage = {"ticket": "7", "id": "ab12", "klasse": "9", "frage": "Was?", "vorschlag": "x", "ts": ""}
+    frage = {
+        "ticket": "7",
+        "id": "ab12",
+        "klasse": "9",
+        "frage": "Was?",
+        "vorschlag": "x",
+        "ts": "",
+    }
     monkeypatch.setattr(briefkasten, "offene", lambda *_a, **_k: [frage])
     ((text, _feld, schluessel), kommt_wieder) = waechter_takt._briefkasten_offen(tmp_path, [7])[0]
     assert schluessel == "7:ab12" and kommt_wieder is False
@@ -108,16 +123,26 @@ def test_antwort_aufruf_fehler_eigener_code() -> None:
     from to_spawn import briefkasten_cli
 
     assert briefkasten_cli.AUFRUF_FEHLER not in (0, 2, 3, 4)
-    for args in ((), ("7", "--id"), ("7", "--id", "ab", "--quatsch"), ("sieben", "--id", "ab"), ("7",)):
+    for args in (
+        (),
+        ("7", "--id"),
+        ("7", "--id", "ab", "--quatsch"),
+        ("sieben", "--id", "ab"),
+        ("7",),
+    ):
         lauf = _antwort(*args)
-        assert lauf.returncode == briefkasten_cli.AUFRUF_FEHLER, (args, lauf.returncode, lauf.stderr)
+        assert lauf.returncode == briefkasten_cli.AUFRUF_FEHLER, (
+            args,
+            lauf.returncode,
+            lauf.stderr,
+        )
 
 
 def test_kopf_text_nennt_alle_codes_von_antwort() -> None:
     from to_spawn import briefkasten_cli
 
     kopf = briefkasten_cli.__doc__ or ""
-    abschnitt = re.search(r"``antwort`` (.*?) · ``antworten``", kopf, re.S)
+    abschnitt = re.search(r"``antwort`` (.*?)\s·\s``antworten``", kopf, re.DOTALL)
     assert abschnitt, kopf
     codes = set(re.findall(r"\b(\d) = ", abschnitt.group(1)))
     assert codes == {"0", "1", "2", "3", "4", str(briefkasten_cli.AUFRUF_FEHLER)}, codes
