@@ -475,6 +475,29 @@ Anlass (Probe Spec 1330, Nacht 22./23.11., App-Tickets): Löschfrage in 1476, 14
 trotz erledigter Blocker, `/implement` startet nicht selbst, 1483 „Nichts zu tun“ nach rotem Gate,
 1484 still nach „Review gelb“, 1485 wartet auf eine Live-Freigabe-Frage.
 
+### Entscheidung (1:1, ca. 16:35)
+
+> ja dann ist das erstmal die lösung das man des fest in den ticket start uaftrag mit giebt wie auch fest in den aufseher integriert
+>
+> okay dann haben wir doch ertsmal genug stoff gesammelt sodass wir dann asap den test spec mal laufen lassen können ist das alles schon itegriert?
+
+Einordnung der [PC-Session]: Die Entscheidungs-Linie gehört fest in den Start-Auftrag jeder
+Bau-Session und in den Aufseher-Auftrag, nicht mehr von Hand per BAU_AUFTRAG. Außerdem soll die
+Test-Spec so bald wie möglich laufen. Der Start der Test-Spec bleibt an Davids ausdrückliches Wort
+gebunden.
+
+Die Linie (Kurzfassung, sinngemäß):
+
+1. Blocker erledigt = geschlossen ODER `staging:fertig` + Commit auf dem Hauptzweig.
+2. Dann selbst claimen und `implement` starten.
+3. Keine Fragen an David, Vorschlag nehmen, ins Bau-Log, weiterbauen; sonst entscheidet der Aufseher.
+4. Staging und Test-Daten frei, auch Löschen, mit Sicherung + Beleg.
+5. Nie ohne David: Live, Live-Daten, Live-Freigabe, Kosten, Konten echter Personen – Schritt
+   auslassen, Kommentar, Rest weiterbauen.
+6. Fertig = grüne Schlange + echter Klickweg auf Staging + Beleg.
+7. Vor jedem Push Vor-Prüfungen lokal grün.
+8. Jede Entscheidung für David als eine Zeile (was · warum · Quelle).
+
 ### Verdichtung in prüfbare Anforderungen (L9)
 
 Die Verdichtung ist eine Auslegung der Sessions. David hat den Wortlaut gesagt und den Vorschlag
@@ -517,6 +540,17 @@ oben bestätigt, die einzelnen Punkte aber nicht einzeln. L9 baut auf L8 (A43–
   Helfer aus A55 – ohne Dauer-Schleife. Ohne stehende Session läuft kein Helfer.
 - **A61 Entscheidung landet in der Liste (Klarstellung):** Jede so getroffene Entscheidung steht
   mit Quelle als Zeile in der Entscheidungs-Liste der Spec aus A52 und damit in der Rundschau.
+
+Aus der Entscheidung 16:35 (Auslegung der Sessions, Wortlaut oben):
+
+- **A62 Entscheidungs-Linie fest im Start-Auftrag:** Die acht Punkte der Linie (siehe Entscheidung
+  16:35) stehen fest im Start-Auftrag jeder Bau-Session, nicht mehr von Hand per BAU_AUFTRAG.
+- **A63 Entscheidungs-Linie fest im Aufseher-Auftrag:** Dieselben acht Punkte stehen fest im
+  Aufseher-Auftrag. Start-Auftrag (A62) und Aufseher-Auftrag (A63) beziehen die Linie aus einer
+  gemeinsamen Quelle (Skill-Issue 376).
+- **A64 Test-Spec so bald wie möglich:** Pflicht davor sind die Skill-Issues 273, 274, 282, 283,
+  376, 364 und 372. Danach, nicht blockierend: 365–370. Start der Test-Spec weiter nur auf Davids
+  ausdrückliches Wort.
 
 **Ausdrücklich nicht gewollt (L9)**
 
