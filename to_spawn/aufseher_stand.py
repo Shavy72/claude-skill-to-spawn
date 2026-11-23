@@ -61,6 +61,7 @@ from pathlib import Path
 from typing import Any, NamedTuple
 
 from to_spawn import (
+    anleitung,
     aufpasser,
     bau_log,
     befugnis,
@@ -467,13 +468,29 @@ def unbeaufsichtigt(text: str) -> list[str]:
     Eingabezeile alles (im Zweifel zum Menschen). Als Grenze zählt nur eine Zeile, die ganz links
     mit ``>``/``❯`` beginnt — Claude Code rückt Antwort-Text samt Markdown-Zitat ein; ein
     eingerücktes ``> …`` ist daher nie Grenze, damit kein Live-Wort vor einem Zitat verloren geht.
+
+    Vom System getippte Texte (:func:`anleitung.ist_system_eingabe`: Anstupser, Mindset-Stoß,
+    ``/exit`` …) sind keine Grenze — sie hat kein Mensch abgeschickt; ihr Echo (erste Zeile samt
+    eingerückter Umbruch-Zeilen bis zur Leerzeile) fällt weg, sonst machte ihr eigenes Wort
+    „live“ jede Folgefrage zu Klasse 2. Die Antwort des Entscheider-Helfers bleibt Grenze: er
+    antwortet nur auf eine Frage, die schon Klasse 3 war, ein Live-Text davor hätte sie zu Klasse 2
+    gemacht.
     """
     zeilen = aufpasser.ohne_statuszeile(text).splitlines()
     linien = [i for i, z in enumerate(zeilen) if aufpasser.EINGABEFELD_LINIE.fullmatch(z)]
     if linien:
         zeilen = zeilen[: linien[-1]]  # Eingabefeld (``❯ …``) gehört nicht zur Ausgabe
-    eingaben = [i for i, z in enumerate(zeilen) if EINGABE_ZEILE.match(z)]
-    return zeilen[eingaben[-1] + 1 :] if eingaben else zeilen
+    ohne_echo: list[str] = []
+    im_echo = False
+    for z in zeilen:
+        if EINGABE_ZEILE.match(z) and anleitung.ist_system_eingabe(z[1:]):
+            im_echo = True
+            continue
+        im_echo = im_echo and z[:1].isspace() and bool(z.strip())
+        if not im_echo:
+            ohne_echo.append(z)
+    eingaben = [i for i, z in enumerate(ohne_echo) if EINGABE_ZEILE.match(z)]
+    return ohne_echo[eingaben[-1] + 1 :] if eingaben else ohne_echo
 
 
 def _grund_kurz(zeile: str, grenze: int) -> str:

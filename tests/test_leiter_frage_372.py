@@ -9,7 +9,9 @@ Briefkasten laufen echt im tmp-Ordner.
 
 from __future__ import annotations
 
+import re
 import sys
+import textwrap
 import time
 from pathlib import Path
 from typing import Any
@@ -19,7 +21,17 @@ import pytest
 SKILL = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SKILL))
 
-from to_spawn import aufseher_stand, befugnis, briefkasten, leiter, ticket_zustand
+from to_spawn import (
+    anleitung,
+    aufpasser,
+    aufseher_stand,
+    befugnis,
+    briefkasten,
+    leiter,
+    respawn,
+    respawn_aufseher,
+    ticket_zustand,
+)
 
 SPEC = 9399
 TICKET = 9372
@@ -505,3 +517,93 @@ def test_lange_live_zeile_behaelt_live_wort_im_gespeicherten_text(baum: Path) ->
     assert [f["klasse"] for f in offen] == ["2"]
     assert "deploye ich live" in offen[0]["frage"]
     assert len(offen[0]["frage"]) <= aufseher_stand.FRAGE_MAX
+
+
+# --- Fix-Runde 6: vom System getippte Zeilen sind keine Grenze (Review PR 374 Runde 5) --------
+
+LIVE_TEXT = "● Ich deploye den Stand jetzt live auf die Hauptapp (safe_deploy_vps.sh).\n\n"
+#: Platzhalter so, wie die Tipp-Stellen sie einsetzen.
+WERTE = {
+    "min": 12,
+    "handoff": "docs/handoffs/HANDOFF_2026-11-23_9372.md",
+    "start": "docs/handoffs/START_2026-11-23_9372.txt",
+}
+
+
+def _echo(text: str, breite: int = 76) -> str:
+    """Getippter Text, wie Claude Code ihn im Verlauf zeigt: ``❯`` ganz links, Umbruch eingerückt."""
+    return "\n".join(textwrap.wrap(text, breite, initial_indent="❯ ", subsequent_indent="  "))
+
+
+SYSTEM_FAELLE = [t.format(**WERTE) for t in anleitung.SYSTEM_EINGABEN]
+
+
+# 2000: ganzer Text in einer Zeile — ohne Umbruch-Zeile trägt nur der Live-Text das Wort.
+@pytest.mark.parametrize("breite", [76, 200, 2000])
+@pytest.mark.parametrize("getippt", SYSTEM_FAELLE, ids=lambda t: t[:20])
+def test_live_text_dann_system_eingabe_dann_frage_ist_klasse_2(getippt: str, breite: int) -> None:
+    text = "❯ mach weiter\n\n" + LIVE_TEXT + _echo(getippt, breite) + "\n\n● Passt das so?" + FUSS
+    assert _klasse_2(text)
+
+
+@pytest.mark.parametrize("getippt", SYSTEM_FAELLE, ids=lambda t: t[:20])
+def test_system_eingabe_macht_harmlose_frage_nicht_zu_klasse_2(getippt: str) -> None:
+    # Der Anstupser trägt selbst „live“ — sein Echo darf die Folgefrage nicht zum Menschen schicken.
+    text = (
+        LIVE_TEXT + "❯ ja, aber nur Staging\n\n● Erledigt.\n\n" + _echo(getippt)
+        + "\n\n● Soll ich mit Ticket 13 weitermachen?" + FUSS
+    )
+    frage = aufseher_stand.frage_im_text(text)
+    assert frage == "● Soll ich mit Ticket 13 weitermachen?"
+    assert not befugnis.ist_klasse_2(frage)
+
+
+def test_anstupser_mindset_stoss_und_exit_sind_registriert() -> None:
+    getippt = {
+        aufpasser.ANSTUPS_TEXT, leiter.MINDSET_TEXT, leiter.EXIT_TEXT, respawn.REMOTE_CONTROL,
+        respawn.WEITER_AUFTRAG, respawn_aufseher.WEITER_AUFTRAG_AUFSEHER,
+        respawn._handoff_auftrag("{handoff}", "{start}"),
+    }
+    assert getippt <= set(anleitung.SYSTEM_EINGABEN)
+    assert anleitung.ist_system_eingabe(" /exit")
+
+
+def test_echte_eingabe_des_menschen_bleibt_grenze() -> None:
+    for eingabe in ("ja, aber nur Staging", "mach weiter", "Aufseher bitte", "/loop 3m weiter"):
+        assert not anleitung.ist_system_eingabe(eingabe), eingabe
+
+
+def test_entscheider_antwort_bleibt_grenze_seine_frage_war_schon_klasse_2() -> None:
+    # Vor der Antwort: dieselbe Frage mit Live-Text davor geht zum Menschen, der Helfer antwortet nie.
+    vorher = "❯ mach weiter\n\n" + LIVE_TEXT + "● Soll ich vorher noch die Tests laufen lassen?" + FUSS
+    assert _klasse_2(vorher)
+    nachher = (
+        "❯ mach weiter\n\n● Tests grün. Soll ich vorher noch aufräumen?\n\n"
+        "❯ Ja, erst aufräumen, dann weiter.\n\n● Aufgeräumt. Passt das so?" + FUSS
+    )
+    assert aufseher_stand.frage_im_text(nachher) == "● Aufgeräumt. Passt das so?"
+
+
+#: Tipp-Stellen (``.tippen(``, ``_eingeben(``, tmux ``send-keys``/``paste-buffer``) je Datei.
+#: Neue Stelle → ihren Text in ``anleitung.SYSTEM_EINGABEN`` eintragen, dann die Zahl hier.
+#: ``skripte/wache.py``: Prompt-Satz, der Aufseher bestätigt Auswahl-Dialoge per ``send-keys``.
+TIPP_STELLEN = {
+    "skripte/wache.py": 1,
+    "to_spawn/aufpasser.py": 6,
+    "to_spawn/leiter.py": 1,
+    "to_spawn/respawn.py": 8,
+    "to_spawn/respawn_aufseher.py": 2,
+    "to_spawn/waechter_lauf.py": 1,
+}
+
+
+def test_jede_tipp_stelle_ist_registriert() -> None:
+    muster = re.compile(r"\.tippen\(|_eingeben\(|\bsend-keys\b|\bsend_keys\b|\bpaste-buffer\b")
+    dateien = [*(SKILL / "to_spawn").rglob("*.py"), *(SKILL / "skripte").rglob("*.py"),
+               *(SKILL / "skripte").rglob("*.sh")]
+    gezaehlt = {
+        p.relative_to(SKILL).as_posix(): n
+        for p in dateien
+        if (n := len(muster.findall(p.read_text(encoding="utf-8"))))
+    }
+    assert gezaehlt == TIPP_STELLEN

@@ -102,7 +102,7 @@ EXIT_FEHLER = 1
 
 #: Stufe 1 (E11 Richtung 2): Mindset-Stoß, Text aus der Aufseher-Anleitung (#500).
 MINDSET_TEXT = anleitung.anstupser("Aufseher")
-EXIT_TEXT = "/exit"
+EXIT_TEXT = anleitung.EXIT
 #: Vorgabe für :attr:`Lage.anlauf`, wenn die Wiederanlauf-Art nicht erfragt wurde (Stufe nicht
 #: ``fertig_gebaut`` oder Quelle ohne diese Frage): die Stufe allein entscheidet wie vor #282 P3.
 OHNE_ANLAUF_FRAGE = wiederanlauf.Wiederanlauf("nichts", (), "")

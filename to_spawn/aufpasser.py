@@ -1596,7 +1596,7 @@ class Aufpasser:
         teilbaum = list(dict.fromkeys(p for c in claude for p in prozess_baum(c)))
         # Halber Text im Eingabefeld machte aus /exit eine Nachricht.
         self.tmux("send-keys", "-t", ziel, "C-u")
-        self._eingeben(ziel, "/exit")
+        self._eingeben(ziel, anleitung.EXIT)
         frist = time.monotonic() + self.e.exit_warten_s
         while any(_prozess_lebt(pid) for pid in claude) and time.monotonic() < frist:
             time.sleep(0.2)
