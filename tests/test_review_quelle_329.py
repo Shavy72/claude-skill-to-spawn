@@ -52,7 +52,42 @@ GEHEIMNIS = re.compile(
     r"sk-[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{30,}|github_pat_|AKIA[0-9A-Z]{16}"
     r"|-----BEGIN [A-Z ]*PRIVATE KEY"
 )
-OEFFENTLICH = {**MUSTER, "personenname": NAME, "geheimnis": GEHEIMNIS}
+#: Begriffe aus App-Projekten (Plattform-Abläufe, Modul-Namen) — gehören in deren ``.review/regeln.md``.
+PROJEKT_BEGRIFF = re.compile(
+    r"\b(rpa|instagram|reels?|follows?|postproxy|phone_power|account_db|duoplus)\b",
+    re.IGNORECASE,
+)
+#: Mail-Adressen; reservierte Beispiel-Domains (RFC 2606) und ``\n@`` in Strings bleiben erlaubt.
+MAIL = re.compile(
+    r"(?<![\\\w.+-])[\w.+-]+@(?!example\.(?:invalid|com|org|net)\b)[\w-]+(?:\.[\w-]+)*\.[a-z]{2,}\b",
+    re.IGNORECASE,
+)
+OEFFENTLICH = {
+    **MUSTER,
+    "personenname": NAME,
+    "geheimnis": GEHEIMNIS,
+    "projekt-begriff": PROJEKT_BEGRIFF,
+    "mail": MAIL,
+}
+#: Eng benannte Ausnahmen (Datei, Begriff): Router-Auslöser der laufenden Fassung, die in P1
+#: byte-gleich bleibt. Wird in P2 nach config.json gezogen.
+AUSNAHMEN = {
+    ("review/_gemeinsam.py", "account_db"),
+    ("review/_gemeinsam.py", "postproxy"),
+    ("review/_gemeinsam.py", "phone_power"),
+    ("review/VERTRAG.md", "account_db"),
+    ("review/VERTRAG.md", "postproxy"),
+    ("review/VERTRAG.md", "phone_power"),
+    ("review/tests/test_router_runde2.py", "account_db"),
+}
+
+
+def _verboten(datei: str, art: str, muster: re.Pattern[str], zeile: str) -> bool:
+    if art != "projekt-begriff":
+        return bool(muster.search(zeile))
+    return any(
+        (datei, m.group(0).lower()) not in AUSNAHMEN for m in muster.finditer(zeile)
+    )
 
 
 def _review_dateien() -> list[str]:
@@ -93,7 +128,7 @@ def test_oeffentlich_tauglich() -> None:
             (SKILL / datei).read_text(encoding="utf-8").splitlines(), 1
         )
         for art, muster in OEFFENTLICH.items()
-        if muster.search(zeile)
+        if _verboten(datei, art, muster, zeile)
     ]
     assert funde == [], f"nicht öffentlich-tauglich: {funde}"
 
