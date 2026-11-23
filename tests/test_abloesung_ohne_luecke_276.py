@@ -166,3 +166,36 @@ def test_vorlage_haelt_weckruf_bis_abloesung() -> None:
     assert "ScheduleWakeup 600 s" in vorlage and "ab Ziel-Wert" in vorlage
     assert "Staffel-Hook von `bau.py`" in anleitung.ABLOESE_SOP
     assert "ScheduleWakeup 600 s" in anleitung.ABLOESE_SOP
+
+
+def test_letzte_runde_ohne_dauer_weckruf(welt: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fix-Runde #276: Greift die Ablösung endgültig nicht (letzte Staffel-Runde, anderer
+    Arbeitsordner), endet die Session wie vor #276 mit ``stop: true`` — kein Weckruf alle
+    600 s ohne Ende, der jedes Mal den vollen Kontext liest."""
+    monkeypatch.setenv("BAU_STAFFEL_RUNDE", "8")
+    _uebergabe(welt["wt"])
+    assert _hook(monkeypatch) == 0
+    # Kein Nachfolger → niemand merkt eine Ablösung; Leiter/Aufpasser bleiben das Netz.
+    assert welt["beendet"] == [] and leitstand.leiter_respawn(TICKET) is None
+    assert eigener_handoff.der_session(welt["wt"], TICKET, JETZT - 1800) is not None
+    vorlage = json.loads((SKILL / "repo-scripts" / "_default.json").read_text(encoding="utf-8"))[
+        "prompt_template"
+    ]
+    assert "höchstens einmal" in vorlage and "dann Loop mit stop: true beenden" in vorlage
+
+
+def test_staffel_umgebung_je_runde(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """``bau.py`` gibt dem Hook Worktree und Staffel-Grenze je Runde mit (#276)."""
+    sys.path.insert(0, str(SKILL / "skripte"))
+    import bau
+
+    monkeypatch.setattr(bau, "worktree_pfad", lambda ticket: f"~/wt-test-{ticket}")
+    datei = tmp_path / "staffel.json"
+    erste = bau.staffel_umgebung("92761", datei, 1)
+    assert erste["BAU_WORKTREE"] == str(Path("~/wt-test-92761").expanduser())
+    assert erste["BAU_STAFFEL_MAX"] == str(bau.STAFFEL_MAX_DEFAULT)
+    assert erste["BAU_STAFFEL_RUNDE"] == "1"
+    dritte = bau.staffel_umgebung("92761", datei, 3, "abc", 3)
+    assert (dritte["BAU_STAFFEL_RUNDE"], dritte["BAU_STAFFEL_MAX"]) == ("3", "3")
+    assert dritte["BAU_STAFFEL_FINGERABDRUCK"] == "abc"
+    assert bau.staffel_umgebung("92761", datei, 1, staffel_max=0)["BAU_STAFFEL_MAX"] == "1"
