@@ -1285,12 +1285,13 @@ def bau_startzeile(repo: Path, ticket: int, auftrag: str = "", *schalter: str) -
     log_pfad = fenster_log(repo, ticket)
     log = shlex.quote(str(log_pfad))
     # stderr über tee ins Log, Original bleibt auf fd 3 fürs Fenster (Wartezeilen, #431).
-    # Bei Fehler wartet ``wait $!`` auf tee, damit die Meldung vor dem Exit-Code steht.
-    # ponytail: hält ein Rest-Kind von bau.py stderr offen, wartet das Fenster mit;
-    # Upgrade-Pfad ``timeout`` um das tee, falls das je vorkommt.
-    tee = f"exec 3>&2 2> >(tee -a {log} >&3)"
+    # Bei Fehler wartet das Fenster höchstens 3 s auf tee, damit die Meldung von bau.py
+    # vor dem Exit-Code steht. Hält ein Rest-Kind von bau.py stderr offen, endet das
+    # Fenster trotzdem; dessen späte Ausgabe landet dann hinter der Exit-Zeile (PR 293).
+    tee = f"exec 3>&2 2> >(tee -a {log} >&3); tee_pid=$!"
     spur = (
-        f'rc=$?; exec 2>&3 3>&-; [ "$rc" -eq 0 ] || {{ wait $! 2>/dev/null; '
+        f'rc=$?; exec 2>&3 3>&-; [ "$rc" -eq 0 ] || {{ '
+        f'timeout 3 tail -s 0.1 --pid="$tee_pid" -f /dev/null 2>/dev/null; '
         f'echo "$(date -Is) bau.py #{ticket} Exit $rc" >> {log}; }}; exit "$rc"'
     )
     ordner = shlex.quote(str(log_pfad.parent))

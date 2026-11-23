@@ -12,8 +12,10 @@ from __future__ import annotations
 import os
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -97,14 +99,16 @@ def test_gestorbenes_fenster_hinterlaesst_exit_code(tmp_path: Path) -> None:
     assert f"bau.py #{TICKET} Exit 2" in log.read_text(encoding="utf-8")
 
 
-def _attrappe_skill(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Skill-Attrappe, deren ``bau.py`` mit Meldung auf stderr scheitert."""
+_SCHEITERT = "import sys\nprint('Absicht: Manifest fehlt', file=sys.stderr)\nsys.exit(3)\n"
+
+
+def _attrappe_skill(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, code: str = _SCHEITERT
+) -> None:
+    """Skill-Attrappe, deren ``bau.py`` (Standard: mit Meldung auf stderr) scheitert."""
     skill = tmp_path / "skill"
     (skill / "skripte").mkdir(parents=True)
-    (skill / "skripte" / "bau.py").write_text(
-        "import sys\nprint('Absicht: Manifest fehlt', file=sys.stderr)\nsys.exit(3)\n",
-        encoding="utf-8",
-    )
+    (skill / "skripte" / "bau.py").write_text(code, encoding="utf-8")
     monkeypatch.setattr(capo, "_SKILL", skill)
 
 
@@ -119,7 +123,57 @@ def test_gestorbenes_fenster_hinterlaesst_fehlermeldung(
     text = (repo / ".to-spawn" / f"fenster_{TICKET}.log").read_text(encoding="utf-8")
     assert "Absicht: Manifest fehlt" in text
     assert f"bau.py #{TICKET} Exit 3" in text
+    assert text.index("Absicht: Manifest fehlt") < text.index(f"bau.py #{TICKET} Exit 3")
     assert "Absicht: Manifest fehlt" in lauf.stderr  # Fenster sieht die Meldung weiter
+
+
+#: ``bau.py``-Attrappe: hinterlässt ein Rest-Kind, das die Fehlerausgabe erbt und offen hält.
+_REST_KIND = (
+    "import subprocess, sys\n"
+    "kind = subprocess.Popen(['sleep', '60'], stdout=subprocess.DEVNULL)\n"
+    "open('rest_kind.pid', 'w').write(str(kind.pid))\n"
+    "print('Absicht: Rest-Kind bleibt', file=sys.stderr)\n"
+    "sys.exit(4)\n"
+)
+
+
+def test_rest_kind_haelt_fenster_nicht_offen(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review PR 293: hält ein Rest-Kind von ``bau.py`` stderr offen, endet das Fenster
+    trotzdem binnen weniger Sekunden, und die Exit-Zeile steht im Log."""
+    _attrappe_skill(tmp_path, monkeypatch, _REST_KIND)
+    repo = _klon(tmp_path)
+    (tmp_path / "home").mkdir()
+    env = {"HOME": str(tmp_path / "home"), "PATH": os.environ.get("PATH", "/usr/bin:/bin")}
+    zeile = capo.bau_startzeile(repo, TICKET, "", "--ohne-prompt")
+    # stderr in eine Datei, nicht in eine Pipe: tee lebt mit dem Rest-Kind weiter.
+    with (tmp_path / "fenster.txt").open("w", encoding="utf-8") as fenster:
+        lauf = subprocess.Popen(
+            ["bash", "-lc", zeile],
+            cwd=repo,
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=fenster,
+        )
+        beginn = time.monotonic()
+        try:
+            code = lauf.wait(timeout=15)
+            dauer = time.monotonic() - beginn
+        finally:
+            lauf.kill()
+            pid_datei = repo / "rest_kind.pid"
+            if pid_datei.is_file():
+                try:
+                    os.kill(int(pid_datei.read_text(encoding="utf-8")), signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+    assert code == 4
+    assert dauer < 8, f"Fenster stand {dauer:.1f} s"
+    text = (repo / ".to-spawn" / f"fenster_{TICKET}.log").read_text(encoding="utf-8")
+    assert f"bau.py #{TICKET} Exit 4" in text
+    assert text.index("Absicht: Rest-Kind bleibt") < text.index(f"bau.py #{TICKET} Exit 4")
 
 
 def test_fenster_log_pfad_steht_in_der_startzeile(tmp_path: Path) -> None:
