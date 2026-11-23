@@ -107,9 +107,10 @@ def test_w3_gegenprobe_jahreszahl_ohne_ziffer_dahinter_bleibt_nummer(zweig: str,
 
 def test_w4_umleitung_der_maschine_auf_ext_ist_kein_github(welt: Welt) -> None:
     klon = welt.klon("duoplus-ext")
+    git(klon, "config", "remote.origin.url", ORIGIN + ".git")
     assert hausmeister._origin_slug(klon) == APP  # Gegenprobe: Spiegel-Pfad außerhalb gilt
-    with (welt.tmp / "gitconfig").open("a", encoding="utf-8") as f:
-        f.write(f'[url "ext::git %s {welt.bare.as_posix()}"]\n\tinsteadOf = {ORIGIN}\n')
+    with (welt.tmp / "gitconfig").open("a", encoding="utf-8") as f:  # längere Umleitung gewinnt
+        f.write(f'[url "ext::git %s {welt.bare.as_posix()}"]\n\tinsteadOf = {ORIGIN}.git\n')
 
     assert hausmeister._origin_slug(klon) == ""
 
