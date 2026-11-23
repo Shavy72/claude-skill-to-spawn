@@ -1,0 +1,5 @@
+$ python -m pytest tests/test_review_quelle_329.py -q
+E       AssertionError: nicht öffentlich-tauglich: [review/auftraege/spec.md:24 (projekt-begriff)]
+FAILED tests/test_review_quelle_329.py::test_oeffentlich_tauglich - Assertion...
+1 failed, 3 passed in 0.11s
+exit=1
