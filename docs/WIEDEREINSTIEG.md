@@ -45,6 +45,15 @@ was zum Weiterbauen nötig ist.
 
 ## 3. Stand
 
+- **2026-11-23 22:16 (Server-Uhr, main fff86c1):** Gemergt und am 23.11. 22:11 auf dem Bau-Server installiert
+  (Install-Pfad `~/wt/skill-install-101`; `~/claude-skill-to-spawn` steht auf altem `7dc3ae8`, nicht benutzen):
+  - Pull-Request 317 und 378 gemergt. Issues 273, 274, 376, 364, 366 geschlossen.
+  - Offen: Issue 372 (Code installiert, echter Durchlauf folgt mit der Test-Spec) · Issue 283 (Server-Teil
+    fertig, wartet auf Windows-Gegenprobe).
+  - Issue 282 ist kein Pflicht-Punkt mehr vor der Test-Spec (Entscheidung des Eigentümers 23.11. ca. 21:25),
+    wird als nächstes Paket gebaut. Issues 271 und 288 sind nicht Teil der Probe.
+  - Die Test-Spec startet nur auf ausdrückliches Wort des Eigentümers.
+
 - **2026-11-23 15:15 (Server-Uhr, main 5c9144b):** Gemergt und auf dem Bau-Server installiert (Stand 5c9144b):
   - Pull-Request 348 (Takt-Bremse: Test-Lücken und Merker-Randfall, Issue 346).
   - Pull-Request 350 (Rollenwort statt festem Personennamen, Namens-Reste Teil 5, Issue 325).
