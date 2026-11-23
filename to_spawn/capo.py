@@ -1772,7 +1772,7 @@ def _checkpoint(
         "checkpoint_annahme",
         f"Checkpoint angenommen #{n}",
         f"Ticket #{n}: {frage}\nAngenommen nach {frist:.0f} min ohne Antwort: "
-        f"{vorschlag.wahl}\nDavid kann die Entscheidung jederzeit kippen.",
+        f"{vorschlag.wahl}\nDer Mensch kann die Entscheidung jederzeit kippen.",
         schluessel,
     )
     gelernt.append(ereignis_vorfall("checkpoint_annahme", n, jetzt))

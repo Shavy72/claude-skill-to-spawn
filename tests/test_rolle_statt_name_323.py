@@ -64,7 +64,8 @@ def _text_funde(datei: str) -> list[str]:
             if tok.string in DATEN_SCHLUESSEL:
                 continue
             for versatz, zeile in enumerate(tok.string.splitlines()):
-                if NAME.search(zeile):
+                # Escape „\n“ steht roh im Token und verdeckt sonst die Wortgrenze.
+                if NAME.search(zeile.replace("\\n", " ")):
                     funde.append(f"{datei}:{tok.start[0] + versatz}")
     return funde
 
