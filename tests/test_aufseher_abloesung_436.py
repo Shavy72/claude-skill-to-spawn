@@ -10,6 +10,7 @@ Fake-Werkzeug mit virtueller Uhr hinein — wie ``test_respawn_431*.py``.
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 import time
@@ -135,6 +136,43 @@ zeile = {
 }
 with (ordner / f"{sid}.jsonl").open("a", encoding="utf-8") as fh:
     fh.write(json.dumps(zeile) + "\n")
+# Optional (#353): statt fest FAKE_SCHLAF zu schlafen, nur so lange laufen, bis das
+# gestellte tmux FAKE_ENDE_NACH_GETIPPT Eingaben hat (Obergrenze FAKE_SCHLAF), dann
+# FAKE_NACHLAUF_S nachlaufen und regulär enden — mit Marke „.ende“. Wird sie von außen
+# beendet (SIGTERM), schreibt sie stattdessen „.beendet“; der Nachlauf deckt ein spätes
+# Beenden nach der Ablösung ab und lässt der Aufsicht Zeit, „blockiert“ zu loggen.
+# FAKE_ENDE_NACH_LOG (Pfade, os.pathsep-getrennt): zusätzlich warten, bis dort eine
+# Bau-Log-Zeile „blockiert“ steht — der Nachlauf zählt dann ab diesem Ereignis.
+ziel = int(os.environ.get("FAKE_ENDE_NACH_GETIPPT", "0"))
+if ziel:
+    import signal
+    def _beendet(signum, frame):
+        Path(os.environ["FAKE_PROTOKOLL"]).with_suffix(".beendet").write_text(str(signum))
+        sys.exit(143)
+    signal.signal(signal.SIGTERM, _beendet)
+    getippt = Path(os.environ["FAKE_TMUX_ORDNER"]) / "getippt.jsonl"
+    ende = time.monotonic() + float(os.environ.get("FAKE_SCHLAF", "100"))
+    while time.monotonic() < ende:
+        if getippt.is_file() and len(getippt.read_text(encoding="utf-8").splitlines()) >= ziel:
+            break
+        time.sleep(0.1)
+    def _blockiert():
+        for pfad in filter(None, os.environ.get("FAKE_ENDE_NACH_LOG", "").split(os.pathsep)):
+            datei = Path(pfad)
+            if not datei.is_file():
+                continue
+            for z in datei.read_text(encoding="utf-8").splitlines():
+                try:
+                    if json.loads(z).get("typ") == "blockiert":
+                        return True
+                except ValueError:  # halb geschriebene Zeile
+                    continue
+        return False
+    while os.environ.get("FAKE_ENDE_NACH_LOG") and time.monotonic() < ende and not _blockiert():
+        time.sleep(0.1)
+    time.sleep(float(os.environ.get("FAKE_NACHLAUF_S", "5")))
+    Path(os.environ["FAKE_PROTOKOLL"]).with_suffix(".ende").write_text("regulär")
+    sys.exit(0)
 time.sleep(float(os.environ.get("FAKE_SCHLAF", "100")))
 """
 
@@ -556,20 +594,31 @@ def test_exit_2_ueber_echte_aufsicht_kein_nachfolger(
     welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Befund 4: Aufseher schreibt nichts (Exit 2) → kein Nachfolger, alter läuft weiter, sichtbar."""
+    from to_spawn import bau_log
+
     env = _abloese_welt(welt, monkeypatch)
     env.update(
         {
             "FAKE_TMUX_SCHREIBT": "0",
             "FAKE_SCHLAF": "30",
+            # #353: alter Aufseher endet regulär 2 Haupt-Takte (TAKT_S = 5 s) nach der
+            # Bau-Log-Zeile „blockiert“, statt fest 30 s zu schlafen; wird er bis dahin
+            # von außen beendet, steht die Marke „.beendet“ (PR 379: Lücke 4–10 s zu;
+            # FAKE_NACHLAUF_S = 20 s hält die Attrappe mit Puffer über die 2 Takte hinaus).
+            "FAKE_ENDE_NACH_GETIPPT": "4",
+            "FAKE_ENDE_NACH_LOG": os.pathsep.join(
+                str(pfad(welt["repo"], SPEC)) for pfad in (bau_log.log_pfad, bau_log.lauf_pfad)
+            ),
+            "FAKE_NACHLAUF_S": "20",
             "TO_SPAWN_ABLOESE_WARTE_S": "1",
             "TO_SPAWN_ABLOESE_ABSTAND_S": "1",
             "TO_SPAWN_ABLOESE_VERSUCHE": "2",
         }
     )
-    beginn = time.monotonic()
     ergebnis = _wache(welt["repo"], env=env, timeout=150)
+    assert not (welt["tmp"] / "claude_aufrufe.beendet").exists(), "alter Aufseher wurde beendet"
     assert ergebnis.returncode == 0, _text(ergebnis)
-    assert time.monotonic() - beginn >= 25, "alter Aufseher wurde beendet"
+    assert (welt["tmp"] / "claude_aufrufe.ende").is_file(), "alter Aufseher wurde beendet"
     assert len(_aufrufe(welt)) == 1, "Nachfolger gestartet"
     getippt = _getippt(welt)
     assert [g["ziel"] for g in getippt] == ["%77"] * 4, getippt

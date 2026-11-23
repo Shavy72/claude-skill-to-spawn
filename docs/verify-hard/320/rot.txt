@@ -1,0 +1,26 @@
+$ python -m pytest tests/test_320_kleines_paket.py tests/test_267_warte_pruefung.py -q -k "nur_in_gh or muster or fetch or stub"  (Stand origin/main 3864bb7 + Rot-Tests)
+>       assert treffer == ["to_spawn/gh.py"]
+E       AssertionError: assert ['to_spawn/ca..._spawn/gh.py'] == ['to_spawn/gh.py']
+E         
+E         At index 0 diff: 'to_spawn/capo.py' != 'to_spawn/gh.py'
+E         Left contains one more item: 'to_spawn/gh.py'
+E         Use -v to get more diff
+>       assert len(gruende) == 1
+E       assert 0 == 1
+E        +  where 0 = len([])
+        assert erg.returncode == 0, erg.stderr
+>       assert erg.stdout.strip() == "None"
+E       assert "['.../gh_stub.py']" == 'None'
+E         
+E         - None
+E         + ['python', '<tmp>/gh_stub.py']
+>       assert treffer == ["to_spawn/gh.py"]
+E       AssertionError: assert ['to_spawn/gh...pec_stand.py'] == ['to_spawn/gh.py']
+E         
+E         Left contains one more item: 'skripte/spec_stand.py'
+E         Use -v to get more diff
+FAILED tests/test_320_kleines_paket.py::test_git_zeitgrenzen_nur_in_gh - Asse...
+FAILED tests/test_320_kleines_paket.py::test_blocker_gruende_fetch_zeitablauf_wartet
+FAILED tests/test_320_kleines_paket.py::test_gh_stub_ausserhalb_test_ignoriert_und_gemeldet
+FAILED tests/test_267_warte_pruefung.py::test_commit_pruefung_nur_in_gh - Ass...
+4 failed, 4 passed, 13 deselected in 3.61s

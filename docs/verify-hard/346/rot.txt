@@ -1,0 +1,6 @@
+# #346 Rot-Beweis vor dem Fix (main b91b93a + neue Tests)
+E       AssertionError: gezeigte Frage fehlt im Merker
+E       assert '297:58c3a0f1' in []
+tests/test_takt_bremse_346.py:114: AssertionError
+FAILED tests/test_takt_bremse_346.py::test_klasse_2_beleg_nach_fehler_lauf_gefunden
+1 failed, 3 passed in 0.55s

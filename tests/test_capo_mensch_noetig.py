@@ -68,7 +68,7 @@ def test_neuer_eintrag_zeile_und_ein_kommentar(welt: dict[str, Path], datei: Pat
     erste = _capo(welt)
     assert (
         "MENSCH NÖTIG: #902 Review-Beleg nach 3 Fixrunden noch rot (fp abcdef01) — "
-        "Kette läuft weiter, David prüft." in _text(erste)
+        "Kette läuft weiter, der Mensch prüft." in _text(erste)
     )
     kommentare = _mensch_kommentare(welt, "902")
     assert len(kommentare) == 1

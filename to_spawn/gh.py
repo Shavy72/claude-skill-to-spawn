@@ -18,16 +18,29 @@ import urllib.parse
 from pathlib import Path
 from typing import Any
 
-from to_spawn import ticket_zustand
+from to_spawn import starter, ticket_zustand
 
 log = logging.getLogger("to_spawn.gh")
 
+#: Test-Tür: Pfad eines Ersatz-Skripts für ``gh``; wirkt nur unter Test (:func:`starter.unter_test`).
+GH_STUB_ENV = "TO_SPAWN_GH_STUB"
+_stub_gemeldet = False
+
 
 def gh_befehl() -> list[str] | None:
-    """Aufruf-Vorspann für ``gh`` (oder das Stub-Skript); ``None`` wenn nichts da."""
-    stub = os.environ.get("TO_SPAWN_GH_STUB")
-    if stub:
+    """Aufruf-Vorspann für ``gh`` (oder das Stub-Skript); ``None`` wenn nichts da.
+
+    ``TO_SPAWN_GH_STUB`` gilt nur unter Test (#320) — derselbe Merker wie die Start-Tür
+    (:func:`starter.unter_test`, setzt ``tests/conftest.py``, erbt sich in Kind-Prozesse).
+    Im Betrieb wird die Variable ignoriert und einmal je Prozess gemeldet.
+    """
+    global _stub_gemeldet
+    stub = os.environ.get(GH_STUB_ENV)
+    if stub and starter.unter_test():
         return [sys.executable, stub] if stub.endswith(".py") else [stub]
+    if stub and not _stub_gemeldet:
+        _stub_gemeldet = True
+        log.warning("%s ist gesetzt, gilt aber nur im Test — ignoriert, echtes gh wird benutzt", GH_STUB_ENV)
     pfad = shutil.which("gh")
     return [pfad] if pfad else None
 
@@ -162,7 +175,9 @@ def blocker_gruende(repo: Path, deps: list[dict], *, mit_commit: bool = True) ->
     if not mit_commit or not erledigt:
         return gruende
     haupt = f"origin/{hauptzweig(repo)}"  # master/main/… je Repo (#257)
-    subprocess.run(["git", "fetch", "-q", "origin"], cwd=repo, check=False, capture_output=True)
+    code, _ = _git_ausgabe(["fetch", "-q", "origin"], repo, timeout=FETCH_ZEIT_S)
+    if code == 124:  # Zeitablauf: Stand von origin unbekannt → fail-closed (#320)
+        return [*gruende, *(f"#{nr} zu, aber git fetch nach {FETCH_ZEIT_S:g} s abgebrochen" for nr in erledigt)]
     for nr in erledigt:
         if not commit_betreffe(repo, str(nr), haupt):  # None (git-Fehler) zählt als „kein Commit“
             gruende.append(f"#{nr} zu, aber kein Commit „(#{nr})“ auf {haupt}")
@@ -192,8 +207,11 @@ def ticket_daten(ticket: str, cwd: Path | None = None) -> dict[str, Any] | None:
     return daten
 
 
-#: Zeitgrenze (s) der git-Abfragen in :func:`commit_betreffe`/:func:`origin_zweige` (ls-remote geht übers Netz).
-GIT_ZEIT_S = 60.0
+#: Zeitgrenzen (s) aller git-Aufrufe des Skills — die eine Stelle (#320), ``capo`` liest sie hier.
+#: Lokale Abfragen (log, rev-parse …):
+GIT_ZEIT_S = 30.0
+#: Abfragen übers Netz (fetch, ls-remote):
+FETCH_ZEIT_S = 60.0
 
 
 def _git_ausgabe(args: list[str], cwd: Path, timeout: float | None = None) -> tuple[int, str]:
@@ -226,8 +244,22 @@ def commit_betreffe(repo: Path, nummer: int | str, *refs: str) -> list[str] | No
     der Aufrufer (z. B. :func:`capo.betreff_hat_nummer`). ``None`` = git gescheitert; was das
     heißt („kein Commit“ oder „unbekannt“), entscheidet ebenfalls der Aufrufer.
     """
+    return _commit_suche(repo, nummer, "%s", *refs)
+
+
+def letzter_commit(repo: Path, nummer: int | str, ref: str) -> str | None:
+    """Kurz-Hash des jüngsten Commits auf ``ref`` mit ``(#<nummer>)``; ``None`` = keiner oder git gescheitert.
+
+    Für Anzeigen (``skripte/spec_stand.py``) — gleiche Suche wie :func:`commit_betreffe`.
+    """
+    zeilen = _commit_suche(repo, nummer, "%h", "-1", ref)
+    return zeilen[0] if zeilen else None
+
+
+def _commit_suche(repo: Path, nummer: int | str, format_: str, *refs: str) -> list[str] | None:
+    """Die eine ``git log --grep=(#<nummer>)``-Suche; je Treffer eine Zeile im ``format_``."""
     code, text = _git_ausgabe(
-        ["log", *refs, "--format=%s", "--fixed-strings", f"--grep=(#{nummer})"], repo, timeout=GIT_ZEIT_S
+        ["log", *refs, f"--format={format_}", "--fixed-strings", f"--grep=(#{nummer})"], repo, timeout=GIT_ZEIT_S
     )
     if code != 0:
         log.warning("Commit-Suche (#%s) gescheitert (git Exit %s)", nummer, code)
@@ -241,7 +273,7 @@ def origin_zweige(repo: Path, muster: str) -> list[str] | None:
     Namen ohne ``refs/heads/``. ``None`` = kein origin, origin unerreichbar oder Zeitablauf —
     der Aufrufer darf das nicht als „kein Zweig“ lesen.
     """
-    code, text = _git_ausgabe(["ls-remote", "--heads", "origin", muster], repo, timeout=GIT_ZEIT_S)
+    code, text = _git_ausgabe(["ls-remote", "--heads", "origin", muster], repo, timeout=FETCH_ZEIT_S)
     if code != 0:
         log.warning("git ls-remote origin %s gescheitert (Exit %s)", muster, code)
         return None

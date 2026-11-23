@@ -44,6 +44,7 @@ if _SKILL not in sys.path:
     sys.path.insert(0, _SKILL)
 from to_spawn import (
     anleitung,
+    arbeitsstand,
     bau_log,
     befugnis,
     capo,
@@ -80,6 +81,7 @@ REPO = Path(os.environ["TO_SPAWN_REPO"]).resolve() if os.environ.get("TO_SPAWN_R
 MANIFEST_DIR = manifest_ordner(REPO)
 HOME = Path.home()
 CLAUDE_DIR = HOME / ".claude"
+
 
 # Pflicht-Skills: der globale Review-Stop-Hook (``~/.claude/hooks/review/stop.py``) fordert
 # „Skill review-dirigent ausführen“, der Dirigent ruft diese Skills per Skill-Werkzeug. Stehen
@@ -924,6 +926,11 @@ def main() -> int:
                 "Folge-Session) kann nicht grün werden.",
                 staffel_hook_pfad(REPO),
             )
+    # Arbeitsordner-Stand (#283): hier nur eine Hinweis-Zeile — nie Abbruch, nie Nachziehen
+    # (auch nicht bei --resume). Nachziehen/Abbruch macht allein der Erst-Start (to_spawn.py arbeitsstand).
+    if (stand_hinweis := arbeitsstand.hinweis(REPO)) is not None:
+        log.warning("%s", stand_hinweis)
+
     if not args.dry_run:  # Probelauf ohne Seiteneffekte (#205)
         config.sicherstellen(REPO)
     # Fortsetzen nur mit vorhandenem Transkript (#236, F5): ohne die Datei startete

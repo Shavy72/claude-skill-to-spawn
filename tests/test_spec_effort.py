@@ -1,4 +1,4 @@
-"""Optionales Spec-Feld ``effort`` im Manifest → ``claude --effort <stufe>`` (David 2026-10-11).
+"""Optionales Spec-Feld ``effort`` im Manifest → ``claude --effort <stufe>`` (Vorgabe des Menschen, 2026-10-11).
 
 Ohne Feld bleibt der claude-Befehl wie bisher (kein ``--effort``); ein ungültiger
 Wert lässt ``pruefen`` verweigern. ``bau.py`` läuft echt als Prozess (``--dry-run``).
@@ -71,7 +71,7 @@ def test_ohne_feld_kein_effort_im_befehl(tmp_path: Path) -> None:
 
 
 def test_ohne_feld_effort_aus_konfig_oder_low(tmp_path: Path) -> None:
-    """Ohne Spec-Feld nie den globalen Standard erben (David 2026-10-28)."""
+    """Ohne Spec-Feld nie den globalen Standard erben (Vorgabe des Menschen, 2026-10-28)."""
     befehl = _befehl(tmp_path, None)
     assert "--effort" in befehl
     assert not any(f"--effort {s}" in befehl for s in ("high", "xhigh", "max"))

@@ -1,0 +1,27 @@
+== Rot vor Fix (Stand 1822674) ==
+        assert erg.returncode == (0 if ausgang == "erfolg" else 1), erg.stderr
+        if ausgang == "fehler":
+            assert "Lauf scheitert" in erg.stderr
+>       assert not list(temp.glob("to_spawn_pytest_cache_*"))
+E       AssertionError: assert not [PosixPath('/tmp/pt-aidmrco_/test_pytest_cache_ordner_sind_1/temp/to_spawn_pytest_cache_8xngh1zc'), PosixPath('/tmp/pt-aidmrco_/test_pytest_cache_ordner_sind_1/temp/to_spawn_pytest_cache_dsgnbkkr')]
+E        +  where [PosixPath('/tmp/pt-aidmrco_/test_pytest_cache_ordner_sind_1/temp/to_spawn_pytest_cache_8xngh1zc'), PosixPath('/tmp/pt-aidmrco_/test_pytest_cache_ordner_sind_1/temp/to_spawn_pytest_cache_dsgnbkkr')] = list(<map object at 0x7febd2f7f160>)
+E        +    where <map object at 0x7febd2f7f160> = glob('to_spawn_pytest_cache_*')
+E        +      where glob = PosixPath('/tmp/pt-aidmrco_/test_pytest_cache_ordner_sind_1/temp').glob
+
+tests/test_pruef_folge_355_343.py:118: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_pruef_folge_355_343.py::test_fifo_als_pyc_haengt_nicht_und_zaehlt_als_code
+FAILED tests/test_pruef_folge_355_343.py::test_pytest_cache_ordner_sind_nach_dem_lauf_weg[erfolg]
+FAILED tests/test_pruef_folge_355_343.py::test_pytest_cache_ordner_sind_nach_dem_lauf_weg[fehler]
+3 failed, 4 passed in 21.00s
+exit=1
+
+== Mutation cache.py:168 all -> any ==
+tests/test_pruef_folge_355_343.py:69: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_pruef_folge_355_343.py::test_gemischter_pycache_ist_kein_rest
+1 failed, 3 passed, 3 deselected in 0.17s
+== Mutation cache.py:192 Längen-Prüfung des Kopfs entfernt ==
+=========================== short test summary info ============================
+FAILED tests/test_pruef_folge_355_343.py::test_abgeschnittener_pyc_kopf_stuerzt_nicht_ab[7]
+1 failed, 2 passed, 4 deselected in 0.16s

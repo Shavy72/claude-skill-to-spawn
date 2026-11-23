@@ -293,3 +293,22 @@ def test_attrappe_liefert_nur_angefragte_felder(welt: dict[str, Path]) -> None:
         check=True,
     ).stdout
     assert json.loads(roh) == {"state": "OPEN", "labels": [{"name": "x"}]}
+
+
+def test_neuer_teil_lauf_verdeckt_aelteren_roten_lauf_nicht(wa: ModuleType, welt: dict[str, Path]) -> None:
+    """Älterer breiter Lauf rot, neuerer schmaler Lauf grün → kein „alle Belege da“ (#366 W1)."""
+    klon = welt["klon"]
+    _arbeit(klon)
+    _beleg(klon, MIT_KLICKWEG.replace("12 passed in 0.4s", "kein Testlauf hier"))
+    ordner = klon / "docs" / "verify-hard"
+    (ordner / "7_breit.txt").write_text("3 failed, 37 passed in 9s\n", encoding="utf-8")
+    alt = {"GIT_AUTHOR_DATE": "2026-11-01T10:00:00+01:00", "GIT_COMMITTER_DATE": "2026-11-01T10:00:00+01:00"}
+    subprocess.run(["git", "add", "-A"], cwd=klon, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-qm", "breit"], cwd=klon, check=True, capture_output=True, env={**os.environ, **alt})
+    (ordner / "7_gruen.txt").write_text("5 passed in 1s\n", encoding="utf-8")
+    _git(klon, "add", "-A")
+    _git(klon, "commit", "-q", "-m", "gruen")
+    _issue(welt, labels=["staging:fertig"])
+    lage = wa.feststellen(7, klon)
+    assert lage is not None and lage.art == "abschluss"
+    assert lage.fehlt == ("grüner Testlauf mit mindestens 40 Tests (so viele wie der rote Lauf 7_breit.txt)",)

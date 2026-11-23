@@ -236,7 +236,7 @@ h1 .specnr{color:var(--muted);font-weight:600}
 .jetzt{position:absolute;top:0;bottom:0;width:0;border-left:2px solid var(--err);pointer-events:none;z-index:2}
 .jetzt::before{content:"jetzt";position:absolute;bottom:-17px;left:3px;font-family:var(--f-mono);font-size:10px;color:var(--err);background:var(--panel);padding:0 2px}
 
-/* Meldungsleiste (offene Punkte für David) */
+/* Meldungsleiste (offene Punkte für den Menschen) */
 .meldung{display:flex;align-items:center;gap:8px 14px;flex-wrap:wrap;margin:0;font-size:14px;color:var(--ink);background:var(--david-soft);border:1px solid color-mix(in srgb,var(--david) 35%,var(--line));border-radius:6px;padding:8px 12px}
 .meldung[hidden]{display:none}
 .meldung .m-punkt{width:8px;height:8px;border-radius:50%;background:var(--david);flex:none}
@@ -566,7 +566,7 @@ h1 .specnr{color:var(--muted);font-weight:600}
           { liefert: "Neue Ansicht im Dashboard", beweis: "Screenshot der Ansicht" }),
         t(385, "Gesamt-Klickweg live", "Der ganze Ablauf einmal echt durchgeklickt.", [380, 382, 383, 384], "wartet", 20, 30, 9, 3,
           { liefert: "Beleg für den ganzen Ablauf", beweis: "Video oder Screenshots vom Live-System" }),
-        t(386, "Abnahme durch David", "Du schaust es dir an und gibst frei.", [385], "wartet", 5, 15, 10, null,
+        t(386, "Abnahme durch den Menschen", "Du schaust es dir an und gibst frei.", [385], "wartet", 5, 15, 10, null,
           { art: "checkpoint", liefert: "Deine Freigabe", beweis: "Dein Kommentar im Ticket" })
       ],
       // Ein Dokument aus Collection "live": nur die sich schnell ändernden Felder je Ticket
@@ -1407,7 +1407,7 @@ h1 .specnr{color:var(--muted);font-weight:600}
     if (alt.hidden === istAlt) alt.hidden = !istAlt;
   }
 
-  // Wer braucht David? Tickets mit braucht_david + offene Log-Einträge art "david", je Ticket nur einmal.
+  // Wer braucht den Menschen? Tickets mit braucht_david + offene Log-Einträge art "david", je Ticket nur einmal.
   // Rückgabe: Ticketnummern (number) bzw. "log:<i>" für Einträge ohne Ticket.
   function davidListe() {
     const s = new Set();
@@ -1456,7 +1456,7 @@ h1 .specnr{color:var(--muted);font-weight:600}
   const logArt = (e) => (e && LOGART[e.art] ? e.art : "info");
   const logSchluessel = (e, i) => String(e && e.id != null ? e.id : "i" + i);
 
-  // Offene Punkte für die Meldungsleiste: problem/david, nicht erledigt, höchstens 24 h alt
+  // Offene Punkte für die Meldungsleiste: art "problem"/"david", nicht erledigt, höchstens 24 h alt
   function offeneMeldungen(now) {
     return logEintraege.map((e, i) => ({ e, i })).filter(({ e }) => {
       if (!e || (e.art !== "problem" && e.art !== "david") || e.erledigt === true) return false;

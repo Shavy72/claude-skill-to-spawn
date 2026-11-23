@@ -265,7 +265,7 @@ def test_r2_pane_nur_shell_ohne_id_datei_braucht_david(welt: Welt) -> None:
     treffer = [
         k
         for k in welt.kommentare()
-        if "Session beendet, keine Gesprächs-ID — braucht David" in k
+        if "Session beendet, keine Gesprächs-ID — braucht den Menschen" in k
     ]
     assert len(treffer) == 1, welt.kommentare()
 
@@ -397,7 +397,7 @@ def test_r5_drei_stupser_in_24h_dann_braucht_david(welt: Welt) -> None:
     assert pane_text("bau 9002") == text_vorher, "kein vierter Anstupser"
     assert welt.eintrag("bau 9002")["stufe"] == 3
     erwartet = (
-        "„bau 9002“ wurde 3× angestupst und wird immer wieder still — braucht David."
+        "„bau 9002“ wurde 3× angestupst und wird immer wieder still — braucht den Menschen."
     )
     assert [k for k in welt.kommentare() if erwartet in k], welt.kommentare()
     assert welt.lauf() == 0
@@ -498,7 +498,7 @@ def test_d2_shell_pane_kein_fortsetzen_wenn_gespraech_woanders_lebt(
     """Wie ``test_r2_pane_nur_shell_kein_send_keys_sondern_fortsetzen`` (Pane nur
     noch Shell, Ticket offen, still), aber das Gespräch lebt laut
     ``~/.claude/sessions/`` schon anderswo: kein Respawn (Fenster/Pane-ID und der
-    alte Pane-Prozess bleiben), stattdessen dieselbe „braucht David“-Meldung wie
+    alte Pane-Prozess bleiben), stattdessen dieselbe „braucht den Menschen“-Meldung wie
     ohne Gesprächs-ID, Stufe 3."""
     welt.worktree(9002, schmutzig=True)
     sid = str(uuid.uuid4())
@@ -523,7 +523,7 @@ def test_d2_shell_pane_kein_fortsetzen_wenn_gespraech_woanders_lebt(
     treffer = [
         k
         for k in welt.kommentare()
-        if "Session beendet, keine Gesprächs-ID — braucht David" in k
+        if "Session beendet, keine Gesprächs-ID — braucht den Menschen" in k
     ]
     assert len(treffer) == 1, welt.kommentare()
 

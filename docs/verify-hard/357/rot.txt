@@ -1,0 +1,16 @@
+
+tests/test_hausmeister_zweig_ticket_357.py:56: AttributeError
+=========================== short test summary info ============================
+FAILED tests/test_hausmeister_zweig_ticket_357.py::test_zweig_zu_ticket_je_form[ticket/1525-x-Shavy72/duoplus-management-ziel0]
+FAILED tests/test_hausmeister_zweig_ticket_357.py::test_zweig_zu_ticket_je_form[l4/176-x-Shavy72/duoplus-management-ziel1]
+FAILED tests/test_hausmeister_zweig_ticket_357.py::test_zweig_zu_ticket_je_form[l4/176-x-Shavy72/claude-skill-to-spawn-ziel2]
+FAILED tests/test_hausmeister_zweig_ticket_357.py::test_zweig_zu_ticket_je_form[skill-103-Shavy72/duoplus-management-None]
+FAILED tests/test_hausmeister_zweig_ticket_357.py::test_zweig_zu_ticket_je_form[l1/2026-11-21-stand-Shavy72/claude-skill-to-spawn-None]
+FAILED tests/test_hausmeister_zweig_ticket_357.py::test_zweig_zu_ticket_je_form[ticket/2026-13-x-Shavy72/duoplus-management-None]
+FAILED tests/test_hausmeister_zweig_ticket_357.py::test_zweig_zu_ticket_je_form[wip/993675-Shavy72/duoplus-management-None]
+FAILED tests/test_hausmeister_zweig_ticket_357.py::test_zweig_zu_ticket_je_form[ticket/1525-x--None]
+FAILED tests/test_hausmeister_zweig_ticket_357.py::test_zweig_zu_ticket_je_form[fix/1406-Shavy72/claude-skill-to-spawn-ziel8]
+FAILED tests/test_hausmeister_zweig_ticket_357.py::test_zweig_zu_ticket_je_form[ticket/1525-x-Shavy72/fremd-None]
+FAILED tests/test_hausmeister_zweig_ticket_357.py::test_app_nummer_im_skill_repo_meint_das_skill_repo
+FAILED tests/test_hausmeister_zweig_ticket_357.py::test_ticket_daten_fragt_nur_das_gelieferte_repo
+12 failed, 2 passed in 0.15s

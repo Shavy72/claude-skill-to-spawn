@@ -210,6 +210,8 @@ def _pid_lesen(pidfile: Path) -> int:
 
 def test_f2_ausnahme_im_beobachter_beendet_kind(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(probesitz, "BEOBACHTUNGS_TAKT_S", 0.2)
+    # Kind ignoriert SIGTERM: kurze Frist bis SIGKILL wie in f3/f9 (sonst 30 s, #353).
+    monkeypatch.setattr(probesitz, "BEENDEN_FRIST_S", 1.0)
     pidfile = tmp_path / "pid"
 
     def beobachter(_ticket: str) -> str | None:

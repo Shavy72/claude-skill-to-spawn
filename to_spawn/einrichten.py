@@ -10,7 +10,8 @@ Harte Regeln:
 
 * Getrackte Dateien im App-Repo werden nie geschrieben — auch nicht die
   ``.gitignore``; Ignore-Zeilen gehen nach ``.git/info/exclude`` (lokal).
-* ``pruefen=True`` schreibt nichts: Exit 0 = alles da und aktuell, 3 = Abweichung.
+* ``pruefen=True`` schreibt nichts: Exit 0 = alles da und aktuell, 3 = Abweichung
+  (auch: Arbeitsordner hinter ``origin/<Hauptzweig>`` oder Stand nicht prüfbar, #283).
 * Kaputte oder fehlende ``stand.json`` = neu einrichten, nie Abbruch.
 * Eine große Lücke wird gemeldet und hält nicht auf; nur ein Anleger-Fehler
   (Ausnahme) gibt Exit 1.
@@ -31,7 +32,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TextIO
 
-from . import config, gh, setup, skill_stand, umzug
+from . import arbeitsstand, config, gh, setup, skill_stand, umzug
 
 log = logging.getLogger("to_spawn.einrichten")
 
@@ -518,6 +519,11 @@ def einrichten(
             neu[baustein.name] = baustein.version
         ausgabe.write(f"  {baustein.name}: {zustand} — {text}\n")
     if pruefen:
+        # Zustand statt Baustein (#283): kein Versions-Stand, nichts anzulegen — nur melden.
+        stand_ordner = arbeitsstand.sicherstellen(ort.wurzel, nachziehen=False)
+        ausgabe.write(f"  arbeitsstand: {stand_ordner.zustand} — {stand_ordner.text}\n")
+        if not stand_ordner.ok:
+            abweichungen.append("arbeitsstand")
         if abweichungen:
             ausgabe.write(f"Abweichung: {', '.join(abweichungen)}\n")
             return EXIT_ABWEICHUNG

@@ -10,12 +10,15 @@ Dateien. Die Zeitgrenzen selbst prüft ``test_waechter_213_fix.py`` ohne Schalte
 
 from __future__ import annotations
 
+import logging
 import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import textwrap
-from collections.abc import Iterator
+import time
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -31,7 +34,7 @@ if _HILFEN not in sys.path:
 
 from git_bash import git_bash  # noqa: E402 — liegt in ``tests/hilfen`` (Pfad oben)
 
-from to_spawn import bash_wahl  # noqa: E402 — Pfad setzt ``git_bash``
+from to_spawn import bash_wahl, prozessbaum  # noqa: E402 — Pfad setzt ``git_bash``
 
 _WINDOWS = sys.platform == "win32"
 
@@ -87,11 +90,155 @@ def attrappe(ordner: Path, name: str, python_code: str) -> Path:
     return skript
 
 
+#: Eigener Temp-Ordner dieses Laufs (#349), nur gesetzt, wenn ``pytest_configure`` ihn anlegte.
+_EIGENER_BASETEMP = pytest.StashKey[Path]()
+
+#: Marker-Datei im eigenen Temp-Ordner (#177): PID des Leit-Prozesses. Nur Ordner mit
+#: diesem Marker räumt :func:`_reste_raeumen` — nie nach Namen raten (#136).
+_MARKER = ".pt-lauf"
+
+#: Schonfrist für Reste toter Läufe (#177): so lange bleibt ein roter Lauf zum Nachsehen.
+_LOG = logging.getLogger(__name__)
+
+#: ponytail: feste Frist, Einstellung über ``temp_ordner``/Maschinen-Liste, wenn eine Maschine anders braucht.
+_RESTE_ALTER_S = 3600
+
+#: Ab diesem Inode-Anteil der Temp-Wurzel gilt nur noch :data:`_RESTE_ALTER_KNAPP_S` (#355):
+#: eine volle Suite hinterlässt rot ~220k Einträge, ``/tmp`` als tmpfs hat oft nur 1 Mio.
+_INODE_GRENZE = 0.70
+
+#: Mindestalter toter Reste bei Inode-Knappheit (#355) — nie ein gerade startender Lauf.
+_RESTE_ALTER_KNAPP_S = 600
+
+
+@pytest.hookimpl(tryfirst=True)  # vor ``_pytest.tmpdir``, das ``--basetemp`` in seinem configure liest
 def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line(
         "markers",
         'braucht(*namen): Test braucht Programm im PATH (z. B. "tmux", "bash") oder "posix"; fehlt es → skip (#68)',
     )
+    _eigener_basetemp(config)
+
+
+def _eigener_basetemp(config: pytest.Config) -> None:
+    """Jeder Lauf ohne ``--basetemp`` bekommt einen eigenen, kurzen Temp-Ordner (#349).
+
+    pytest legt sonst alle Läufe des Nutzers unter ``<temp>/pytest-of-<nutzer>`` ab; parallele
+    Läufe nahmen sich dort gegenseitig den Ordner weg (``could not create numbered dir``).
+    Hier: ``mkdtemp`` direkt unter dem System-Temp (``tempfile.gettempdir()``, folgt ``TMPDIR``,
+    also #136), Name ``pt-`` + 8 Zeichen — kurz für tmux-/Unix-Sockets darunter. Ein
+    ausdrückliches ``--basetemp`` gewinnt. Nur der Leit-Prozess: xdist-Worker bekommen
+    ``<basetemp>/popen-gwN`` vom Leit-Prozess (``workerinput``).
+    """
+    if getattr(config.option, "basetemp", None) or hasattr(config, "workerinput"):
+        return
+    _reste_raeumen(Path(tempfile.gettempdir()))
+    ordner = Path(tempfile.mkdtemp(prefix="pt-"))
+    config.option.basetemp = str(ordner)
+    config.stash[_EIGENER_BASETEMP] = ordner
+
+
+def _inode_anteil(temp: Path) -> float | None:
+    """Belegter Inode-Anteil (0..1) des Laufwerks unter ``temp`` (#355); ``None`` = unbekannt.
+
+    Unbekannt heißt: kein ``os.statvfs`` (Windows), Fehler, oder das Dateisystem meldet keine
+    feste Inode-Zahl (``f_files == 0``, z. B. btrfs). Dann gilt die normale Schonfrist.
+    """
+    statvfs = getattr(os, "statvfs", None)
+    if statvfs is None:
+        return None
+    try:
+        werte = statvfs(temp)
+    except OSError:
+        return None
+    if werte.f_files <= 0:
+        return None
+    return 1 - werte.f_ffree / werte.f_files
+
+
+def _reste_raeumen(temp: Path, inode_anteil: Callable[[Path], float | None] = _inode_anteil) -> None:
+    """Alte Reste eigener Läufe unter ``temp`` löschen (#177).
+
+    Nur ``pt-*``-Ordner mit Marker, deren Leit-Prozess nicht mehr lebt und deren Marker älter
+    als :data:`_RESTE_ALTER_S` ist — bei Inode-Knappheit (``inode_anteil`` ≥ :data:`_INODE_GRENZE`)
+    nur älter als :data:`_RESTE_ALTER_KNAPP_S` (#355). Ohne Marker, unlesbar, PID außerhalb
+    ``0 < pid < 2**31`` oder lebende PID: bleibt liegen. Eine wiederverwendete PID lässt einen
+    Rest nur länger liegen, nie einen Lauf verlieren. Jeder Fehler beim Räumen wird geloggt,
+    nie ein roter Lauf.
+    """
+    try:
+        _reste_raeumen_roh(temp, inode_anteil)
+    except Exception as fehler:  # noqa: BLE001 — Räumen ist Komfort, darf nie einen Lauf kippen
+        _LOG.warning("pt-Räumer abgebrochen unter %s: %r", temp, fehler)
+
+
+def _reste_raeumen_roh(temp: Path, inode_anteil: Callable[[Path], float | None]) -> None:
+    anteil = inode_anteil(temp)
+    knapp = anteil is not None and anteil >= _INODE_GRENZE
+    grenze = time.time() - (_RESTE_ALTER_KNAPP_S if knapp else _RESTE_ALTER_S)
+    try:
+        kandidaten = [p for p in temp.iterdir() if p.name.startswith("pt-")]
+    except OSError as fehler:
+        _LOG.warning("pt-Räumer: %s nicht lesbar: %s", temp, fehler)
+        return
+    for ordner in kandidaten:
+        marker = ordner / _MARKER
+        try:
+            if ordner.is_symlink() or marker.stat().st_mtime > grenze:
+                continue
+            pid = int(marker.read_text(encoding="utf-8").strip())
+        except (OSError, ValueError):
+            continue  # ohne Marker/unlesbar: nicht von uns, kein Log-Rauschen
+        if not 0 < pid < 2**31:  # 0/negativ gilt unter Linux als „tot“, riesig läuft unter Windows über
+            continue
+        if prozessbaum.lebt(pid):
+            continue
+        try:
+            shutil.rmtree(ordner)
+        except OSError as fehler:
+            _LOG.warning("pt-Räumer: Rest %s nicht löschbar: %s", ordner, fehler)
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_sessionstart(session: pytest.Session) -> None:
+    """Eigenen Temp-Ordner markieren (#177): PID des Leit-Prozesses in :data:`_MARKER`.
+
+    Erst hier, weil pytest einen gegebenen ``--basetemp`` beim ersten Zugriff leert
+    (``getbasetemp``); der Aufruf hier legt ihn endgültig an, der Marker überlebt.
+    """
+    ordner = session.config.stash.get(_EIGENER_BASETEMP, None)
+    if ordner is None:
+        return
+    fabrik = getattr(session.config, "_tmp_path_factory", None)  # privat; fehlt z. B. bei ``-p no:tmpdir``
+    if fabrik is None:
+        return
+    try:
+        fabrik.getbasetemp()  # leert + legt an, einmal je Lauf
+        (ordner / _MARKER).write_text(f"{os.getpid()}\n", encoding="utf-8")
+    except (AttributeError, OSError) as fehler:
+        _LOG.warning("pt-Marker in %s nicht geschrieben, Lauf geht ohne weiter: %s", ordner, fehler)
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
+    """Grüner Lauf: den selbst angelegten Temp-Ordner löschen (#349); rot bleibt er zum Nachsehen.
+
+    Nur der in ``_eigener_basetemp`` angelegte Pfad, nie ein Muster und nie ein fremdes
+    ``--basetemp``. Reste roter Läufe räumt der Temp-Räumer (#177).
+    """
+    ordner = session.config.stash.get(_EIGENER_BASETEMP, None)
+    if ordner is not None and exitstatus == 0:
+        shutil.rmtree(ordner, ignore_errors=True)
+
+
+def pytest_unconfigure(config: pytest.Config) -> None:
+    """Leeren eigenen Temp-Ordner löschen (#177): ``--help``/``--markers`` starten keine Session."""
+    ordner = config.stash.get(_EIGENER_BASETEMP, None)
+    if ordner is not None:
+        try:
+            ordner.rmdir()  # nur leer; ein markierter Ordner bleibt für den Räumer
+        except OSError:
+            pass
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
@@ -304,6 +451,16 @@ def _start_stelle_im_test(
 
 
 @pytest.fixture(autouse=True)
+def _arbeitsstand_im_test(monkeypatch: pytest.MonkeyPatch, _keine_to_spawn_umgebung: None) -> None:
+    """Arbeitsordner-Stand (#283) gilt in Tests als aktuell — Wegwerf-Repos haben kein echtes origin.
+
+    Erbt sich in Kind-Prozesse (``bau.py``). ``tests/test_arbeitsstand_283.py`` löscht die
+    Variable und prüft mit echtem git.
+    """
+    monkeypatch.setenv("TO_SPAWN_TEST_ARBEITSSTAND_OK", "1")
+
+
+@pytest.fixture(autouse=True)
 def _hausmeister_nur_im_test(
     tmp_path_factory: pytest.TempPathFactory,
     monkeypatch: pytest.MonkeyPatch,
@@ -331,6 +488,17 @@ def _hausmeister_nur_im_test(
     monkeypatch.setenv("TO_SPAWN_STAGING_SPERRE", str(ordner / "keine-staging-sperre"))
     # #136: Temp-Ordner nie echt (kein ~/tmp-bau).
     monkeypatch.setenv("TO_SPAWN_TEMP_ORDNER", str(ordner / "temp"))
+    # #349: ``bau.main``/``wache.main`` setzen TMPDIR/TEMP/TMP per ``os.environ.update`` auf
+    # diesen Ordner. Ein Test stellt per ``monkeypatch`` oft nur TMPDIR zurück — TEMP/TMP
+    # blieben stehen und erbten an spätere Unterprozesse. ``bau.main`` setzt zudem
+    # CLAUDE_CODE_FORCE_SESSION_PERSISTENCE (bau.py:1081). Hier merkt sich monkeypatch alle vier
+    # (setenv auf den Ist-Wert bzw. setenv+delenv), damit sie nach jedem Test zurückgestellt sind.
+    for name in ("TMPDIR", "TEMP", "TMP", "CLAUDE_CODE_FORCE_SESSION_PERSISTENCE"):
+        if name in os.environ:
+            monkeypatch.setenv(name, os.environ[name])
+        else:
+            monkeypatch.setenv(name, "")
+            monkeypatch.delenv(name)
     # #145: Sicherung (Rundgang, Aufseher-Ablösung) schreibt nur in tmp, lädt keine echten Zweige hoch.
     monkeypatch.setenv("TO_SPAWN_SICHERUNG_ZIEL", str(ordner / "sicherung"))
     monkeypatch.setenv("TO_SPAWN_SICHERUNG_ZWEIG_REPOS", "")
