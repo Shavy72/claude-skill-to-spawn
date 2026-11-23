@@ -6,18 +6,32 @@ Einziges Modul, das Ort, Dateimuster, Format und Ablage der Fragen kennt (Hauptb
 - :func:`einwerfen` — die Session wirft eine Frage mit eigenem Vorschlag ein und bekommt deren
   ``id``. Die Klasse ordnet der Briefkasten selbst ein (:func:`befugnis.ist_klasse_2`); eine
   genannte Klasse macht nur strenger. Nur das eigene Ticket (``TO_SPAWN_TICKET``).
-- :func:`lesen` — :class:`Antwort` (nur zur passenden ``id``), :data:`WARTET` oder :data:`NUTZER`.
-- :func:`antworten` — der Aufseher antwortet auf die jüngste offene Frage mit passender ``id``;
-  verweigert (:class:`Verweigert`) in einer Bau-Session und solange eine Klasse-2-Frage offen ist.
-- :func:`offene` — Tickets mit unbeantworteter Frage.
+- :func:`lesen` — :class:`Antwort` (nur zur passenden ``id``, auch die des Nutzers),
+  :data:`WARTET` oder :data:`NUTZER`.
+- :func:`antworten` — der Aufseher antwortet auf eine offene Frage über ihre ``id``; verweigert
+  (:class:`Verweigert`) in einer Bau-Session und solange das Ticket auf den Nutzer wartet.
+- :func:`nutzer_antworten` — Antwort des Nutzers (auch Klasse 2); verweigert in einer Bau-Session.
+- :func:`offene` — alle offenen Fragen (je Ticket, ``id``, Klasse) samt Sperre durch kaputte Datei.
 - :func:`liste` — die eine Liste für die Gesamtabnahme: Klasse-1-Einträge aus dem Bau-Log plus alle
   Briefkasten-Antworten (wer, was, warum, Beleg); keine eigene Datei.
 - :func:`datei_relativ` — Ort der Datei für Texte (Start-Auftrag), relativ zum Hauptbaum.
 
-Eine Datei je Ticket hält alle Fragen in Reihenfolge. Klasse 2 gibt der Briefkasten nie frei; eine
-offene Klasse-2-Frage (ohne Antwort ``von`` :data:`NUTZER_VON`) sperrt das ganze Ticket. Eine halbe
-oder kaputte Datei zählt als :data:`WARTET` (sichere Richtung). Jedes Lesen-Ändern-Schreiben läuft
-unter :func:`sperre.halte` auf ``entscheidung-<N>.lock``.
+Eine Datei je Ticket hält alle Fragen in Reihenfolge. Klasse 2 gibt nur der Nutzer frei; eine
+offene Klasse-2-Frage (ohne Antwort ``von`` :data:`NUTZER_VON`) sperrt das ganze Ticket. Eine
+vorhandene, aber nicht nutzbare Datei (halb, ungültig, falsche Form, Lesefehler) sperrt sofort
+genauso: :data:`NUTZER`, sichtbar in :func:`offene` (sie könnte eine offene Klasse-2-Frage
+enthalten; Entscheidung an einer Stelle, :func:`_sperrgruende`). Ungültigen Inhalt legt
+:func:`einwerfen` als ``entscheidung-<N>.json.kaputt-<stempel>`` beiseite, die sperrt weiter;
+geklärt ist es, wenn der Nutzer sie geprüft und gelöscht hat. Ein Lesefehler (``OSError``)
+verschiebt nichts — die Datei kann gültig sein. Jedes Lesen-Ändern-Schreiben läuft unter :func:`sperre.halte` auf
+``entscheidung-<N>.lock``.
+
+Schutz des Nutzer-Wegs, ehrlich: Bau-Session (``TO_SPAWN_TICKET`` gesetzt, auch leer) und
+Aufseher (``--von`` kennt nur :data:`AUFSEHER_VON`) haben über diese Schnittstelle keinen Weg,
+``von`` :data:`NUTZER_VON` zu schreiben; die CLI ``nutzer-antwort`` verlangt zusätzlich ein
+echtes Terminal. Das verhindert versehentliche und über die angebotene Schnittstelle mögliche
+Selbst-Freigabe — nicht eine Session, die mit Absicht die Datei selbst schreibt oder die
+Umgebung umbaut (``env -u``); auf derselben Maschine kann sie das technisch immer.
 """
 
 from __future__ import annotations
@@ -42,6 +56,8 @@ WARTET = "WARTET"
 NUTZER = "NUTZER"
 #: ``von`` einer Antwort, die eine Klasse-2-Frage schließt (nie über :func:`antworten` schreibbar).
 NUTZER_VON = "nutzer"
+#: Einziges ``von`` für :func:`antworten` (feste Auswahl, CLI ``--von``).
+AUFSEHER_VON = ("aufseher",)
 _KLASSEN = (2, 3)  # Klasse 1 braucht keine Frage
 _NUMMER = re.compile(r"[0-9]+")  # nur ASCII-Ziffern (int() nähme auch „٧“)
 _ORDNER = ".to-spawn"
@@ -79,14 +95,18 @@ def _nummer(n: str | int) -> int:
 
 
 def _eigenes_ticket() -> int | None:
-    """Nummer aus ``TO_SPAWN_TICKET`` (setzt ``bau.py`` = Bau-Session) oder ``None``."""
-    wert = os.environ.get("TO_SPAWN_TICKET", "").strip()
-    if not wert:
+    """Nummer aus ``TO_SPAWN_TICKET`` (setzt ``bau.py`` = Bau-Session) oder ``None`` (fehlt ganz).
+
+    Gesetzt, aber leer oder unlesbar (``TO_SPAWN_TICKET=``) gilt als Bau-Session und passt zu
+    keinem Ticket (-1). Der Aufseher-Takt entfernt die Variable ganz (``waechter_takt._kind_env``).
+    """
+    wert = os.environ.get("TO_SPAWN_TICKET")
+    if wert is None:
         return None
     try:
         return _nummer(wert)
     except ValueError:
-        return -1  # gesetzt, aber unlesbar: gilt als Bau-Session, passt zu keinem Ticket
+        return -1
 
 
 def _hauptbaum(hauptbaum: Path | None) -> Path:
@@ -107,20 +127,55 @@ def _gesperrt(datei: Path) -> Iterator[None]:
         yield
 
 
-def _lade(datei: Path) -> dict[str, Any] | None:
-    """Inhalt oder ``None`` (fehlt, halb, kaputt, falsche Form)."""
+@dataclass(frozen=True)
+class _Inhalt:
+    """Ergebnis von :func:`_lies`: ``daten`` nur bei gültigem Inhalt, sonst ``None``.
+
+    ``stoerung`` (leer = keine) nennt, warum eine vorhandene Datei nicht nutzbar ist — sie sperrt
+    das Ticket (:func:`_sperrgruende`). ``beiseitelegen`` nur bei ungültigem Inhalt, nie bei einem
+    Lesefehler (die Datei selbst kann gültig sein).
+    """
+
+    daten: dict[str, Any] | None
+    stoerung: str = ""
+    beiseitelegen: bool = False
+
+
+def _lies(datei: Path) -> _Inhalt:
+    """Datei lesen; unterscheidet fehlt (kein Sperrgrund), ungültig (auch ungültige Bytes) und
+    Lesefehler (``OSError``)."""
+    kaputt = _Inhalt(None, f"Briefkasten-Datei kaputt: {datei.name} — prüfen, reparieren oder löschen", True)
     try:
-        daten = json.loads(datei.read_text(encoding="utf-8"))
+        text = datei.read_text(encoding="utf-8")
     except FileNotFoundError:
-        return None
-    except (OSError, ValueError) as fehler:
-        log.warning("Briefkasten %s nicht lesbar (%s) — gilt als WARTET.", datei, fehler)
-        return None
+        return _Inhalt(None)
+    except OSError as fehler:
+        log.warning("Briefkasten %s nicht lesbar (%s) — wartet auf den Nutzer.", datei, fehler)
+        return _Inhalt(None, f"Briefkasten-Datei {datei.name} nicht lesbar ({fehler}) — Zugriff prüfen")
+    except UnicodeDecodeError as fehler:
+        log.warning("Briefkasten %s mit ungültigen Bytes (%s) — wartet auf den Nutzer.", datei, fehler)
+        return kaputt
+    try:
+        daten = json.loads(text)
+    except ValueError as fehler:
+        log.warning("Briefkasten %s ungültig (%s) — wartet auf den Nutzer.", datei, fehler)
+        return kaputt
     if not isinstance(daten, dict) or not isinstance(daten.get("fragen"), list):
-        return None
+        return kaputt
     if not all(isinstance(f, dict) for f in daten["fragen"]):
-        return None
-    return daten
+        return kaputt
+    return _Inhalt(daten)
+
+
+def _lade(datei: Path) -> dict[str, Any] | None:
+    """Gültiger Inhalt oder ``None`` (fehlt, halb, kaputt, falsche Form, Lesefehler).
+
+    Eine vorhandene, aber nicht nutzbare Datei wird nicht still übersprungen: ``log.warning``.
+    """
+    inhalt = _lies(datei)
+    if inhalt.stoerung:
+        log.warning("Briefkasten %s übersprungen: %s", datei.name, inhalt.stoerung)
+    return inhalt.daten
 
 
 def _jetzt() -> str:
@@ -139,9 +194,32 @@ def _hat_antwort(f: dict[str, Any]) -> bool:
     return isinstance(antwort, dict) and bool(str(antwort.get("wahl") or "").strip())
 
 
+def _gilt(f: dict[str, Any]) -> bool:
+    """Hat ``f`` eine gültige Antwort? Klasse 2 nur ``von`` :data:`NUTZER_VON`."""
+    return _hat_antwort(f) and (f["antwort"].get("von") == NUTZER_VON or not _ist_klasse_2(f))
+
+
 def _klasse_2_offen(fragen: list[dict[str, Any]]) -> bool:
     """Irgendeine Klasse-2-Frage ohne Antwort des Nutzers? Dann ist das Ticket gesperrt."""
-    return any(_ist_klasse_2(f) and not (_hat_antwort(f) and f["antwort"].get("von") == NUTZER_VON) for f in fragen)
+    return any(_ist_klasse_2(f) and not _gilt(f) for f in fragen)
+
+
+def _kaputte(datei: Path) -> list[Path]:
+    """Beiseitegelegte unlesbare Fassungen (``.kaputt-*``) — jede sperrt das Ticket."""
+    return sorted(datei.parent.glob(f"{datei.name}.kaputt-*"))
+
+
+def _sperrgruende(datei: Path, inhalt: _Inhalt) -> list[str]:
+    """Die eine Stelle für „Ticket durch kaputte Datei gesperrt?“ — Gründe, leer = nicht gesperrt.
+
+    Jede ``.kaputt-*``-Datei und eine vorhandene, aber nicht nutzbare Hauptdatei (ungültig oder
+    Lesefehler) sperren sofort, ohne dass erst ein Einwurf kommen muss: Klasse 2, wartet auf den
+    Nutzer (sie könnte eine offene Klasse-2-Frage enthalten).
+    """
+    gruende = [f"Briefkasten-Datei kaputt: {k.name} — prüfen und löschen" for k in _kaputte(datei)]
+    if inhalt.stoerung:
+        gruende.append(inhalt.stoerung)
+    return gruende
 
 
 def einwerfen(
@@ -171,8 +249,12 @@ def einwerfen(
     frage_id = secrets.token_hex(4)
     datei = _datei(nummer, hauptbaum)
     with _gesperrt(datei):
-        daten = _lade(datei)
-        if daten is None and datei.exists():
+        inhalt = _lies(datei)
+        daten = inhalt.daten
+        if inhalt.stoerung and not inhalt.beiseitelegen:
+            # Lesefehler: die Datei kann gültig sein — nie verschieben, nie überschreiben.
+            raise OSError(f"Ticket {nummer}: {inhalt.stoerung}")
+        if inhalt.beiseitelegen:
             # Nie überschreiben, was nicht lesbar ist (Datenverlust): beiseitelegen.
             stempel = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
             datei.replace(datei.with_name(f"{datei.name}.kaputt-{stempel}"))
@@ -198,11 +280,17 @@ def einwerfen(
 def lesen(n: str | int, frage_id: str | None = None, *, hauptbaum: Path | None = None) -> Antwort | str:
     """Stand der Frage ``frage_id``: :class:`Antwort`, :data:`WARTET` oder :data:`NUTZER`.
 
-    :data:`NUTZER`, solange irgendeine Klasse-2-Frage des Tickets offen ist oder ``frage_id``
-    Klasse 2 ist (auch eine eingetragene Antwort gibt Klasse 2 nie frei). Ohne passende ``id``
-    nie eine :class:`Antwort`.
+    :data:`NUTZER`, solange das Ticket durch eine kaputte Datei gesperrt ist (``.kaputt-*`` oder
+    vorhandene, aber unlesbare Datei, :func:`_sperrgruende`) oder irgendeine Klasse-2-Frage des
+    Tickets ohne Antwort des Nutzers ist (eine Antwort anderer gibt Klasse 2 nie frei). Die
+    Antwort des Nutzers kommt als :class:`Antwort` (``von`` :data:`NUTZER_VON`). Ohne passende
+    ``id`` nie eine :class:`Antwort`.
     """
-    daten = _lade(_datei(n, hauptbaum))
+    datei = _datei(n, hauptbaum)
+    inhalt = _lies(datei)
+    if _sperrgruende(datei, inhalt):
+        return NUTZER
+    daten = inhalt.daten
     if not daten or not daten["fragen"]:
         return WARTET
     if _klasse_2_offen(daten["fragen"]):
@@ -211,9 +299,7 @@ def lesen(n: str | int, frage_id: str | None = None, *, hauptbaum: Path | None =
     if not treffer:
         return WARTET
     f = treffer[-1]
-    if _ist_klasse_2(f):
-        return NUTZER
-    if not _hat_antwort(f):
+    if not _gilt(f):
         return WARTET
     antwort = f["antwort"]
     belege = antwort.get("belege")
@@ -232,14 +318,57 @@ def antworten(
     wahl: str,
     belege: Iterable[str],
     grund: str,
-    von: str = "aufseher",
+    von: str = AUFSEHER_VON[0],
     *,
     hauptbaum: Path | None = None,
 ) -> Path:
-    """Antwort auf die jüngste offene Frage schreiben, nur wenn sie ``frage_id`` trägt.
+    """Antwort des Aufsehers auf die offene Frage ``frage_id`` schreiben.
 
-    ``ValueError`` bei leerer ``wahl``, ohne offene Frage oder fremder ``id``; ``Verweigert`` in
-    einer Bau-Session (``TO_SPAWN_TICKET`` gesetzt) und solange eine Klasse-2-Frage offen ist.
+    ``von`` nur aus :data:`AUFSEHER_VON` (``ValueError`` sonst; der Nutzer antwortet über
+    :func:`nutzer_antworten`). ``ValueError`` bei leerer ``wahl`` oder ohne offene Frage mit dieser
+    ``id``; ``Verweigert`` in einer Bau-Session und solange das Ticket auf den Nutzer wartet
+    (offene Klasse-2-Frage, ``.kaputt-*``-Datei oder unlesbare/kaputte Hauptdatei).
+    """
+    if von not in AUFSEHER_VON:
+        raise ValueError(f"von {von!r}: der Aufseher schreibt nur als {', '.join(AUFSEHER_VON)}.")
+    return _schreibe_antwort(n, frage_id, wahl, belege, grund, von, hauptbaum)
+
+
+def nutzer_antworten(
+    n: str | int,
+    frage_id: str,
+    wahl: str,
+    belege: Iterable[str],
+    grund: str,
+    *,
+    hauptbaum: Path | None = None,
+) -> Path:
+    """Antwort des Nutzers (Mensch) auf die offene Frage ``frage_id``, auch Klasse 2.
+
+    Einziger Weg zu ``von`` :data:`NUTZER_VON`. ``Verweigert`` in einer Bau-Session; eine
+    ``.kaputt-*``-Datei sperrt weiter, bis der Nutzer sie gelöscht hat, eine unlesbare/kaputte
+    Hauptdatei, bis sie geklärt ist. Grenzen des Schutzes:
+    Modul-Docstring.
+    """
+    return _schreibe_antwort(n, frage_id, wahl, belege, grund, NUTZER_VON, hauptbaum)
+
+
+def _schreibe_antwort(
+    n: str | int,
+    frage_id: str,
+    wahl: str,
+    belege: Iterable[str],
+    grund: str,
+    von: str,
+    hauptbaum: Path | None,
+) -> Path:
+    """Antwort schreiben (gemeinsamer Weg von :func:`antworten` und :func:`nutzer_antworten`).
+
+    Offen ist eine Frage, solange ihre Antwort nicht gilt (:func:`_gilt`). Steht dort eine
+    ungültige Antwort (z. B. von Hand eingetragene Aufseher-Antwort an einer Klasse-2-Frage), blockt
+    sie die gültige nicht: die neue Antwort ersetzt sie, die alte bleibt in der Liste
+    ``verworfen`` der Frage nachvollziehbar erhalten. ``Verweigert`` bei unlesbarer Hauptdatei
+    (auch für den Nutzer: erst die Datei klären) und für den Aufseher bei jeder Sperre.
     """
     if _eigenes_ticket() is not None:
         raise Verweigert("Eine Bau-Session beantwortet keine Briefkasten-Fragen (TO_SPAWN_TICKET gesetzt).")
@@ -247,15 +376,21 @@ def antworten(
         raise ValueError("Leere Wahl: die Antwort braucht eine Entscheidung.")
     datei = _datei(n, hauptbaum)
     with _gesperrt(datei):
-        daten = _lade(datei)
-        letzte = daten["fragen"][-1] if daten and daten["fragen"] else None
-        if letzte is None or letzte.get("antwort"):
-            raise ValueError(f"Ticket {n}: keine offene Frage im Briefkasten.")
-        if _klasse_2_offen(daten["fragen"]):
-            raise Verweigert(f"Ticket {n}: eine Klasse-2-Frage ist offen, das entscheidet nur der Nutzer.")
-        if letzte.get("id") != frage_id:
-            raise ValueError(f"Ticket {n}: Frage {frage_id!r} ist nicht die jüngste offene Frage.")
-        letzte["antwort"] = {
+        inhalt = _lies(datei)
+        gruende = _sperrgruende(datei, inhalt)
+        if inhalt.stoerung:
+            raise Verweigert(f"Ticket {n}: wartet auf den Nutzer ({inhalt.stoerung}).")
+        daten = inhalt.daten
+        treffer = [f for f in (daten or {}).get("fragen", []) if f.get("id") == frage_id]
+        if not daten or not treffer or _gilt(treffer[-1]):
+            raise ValueError(f"Ticket {n}: keine offene Frage {frage_id!r} im Briefkasten.")
+        if von != NUTZER_VON and (gruende or _klasse_2_offen(daten["fragen"])):
+            raise Verweigert(f"Ticket {n}: wartet auf den Nutzer (Klasse 2 oder kaputte Datei).")
+        frage = treffer[-1]
+        if frage.get("antwort") is not None:
+            alt = frage.get("verworfen")
+            frage["verworfen"] = [*(alt if isinstance(alt, list) else []), frage["antwort"]]
+        frage["antwort"] = {
             "ts": _jetzt(),
             "wahl": wahl,
             "grund": grund,
@@ -273,22 +408,41 @@ def _sortier_nummer(t: str) -> int:
         return -1
 
 
-def offene(tickets: Iterable[str | int] | None = None, *, hauptbaum: Path | None = None) -> list[str]:
-    """Tickets, deren jüngste Frage noch unbeantwortet ist (``tickets`` None = alle)."""
+def offene(tickets: Iterable[str | int] | None = None, *, hauptbaum: Path | None = None) -> list[dict[str, str]]:
+    """Alle offenen Fragen (``tickets`` None = alle), älteste zuerst je Ticket.
+
+    Je Frage ``ticket``, ``id``, ``klasse`` (``"2"`` = nur der Nutzer), ``frage``, ``vorschlag``,
+    ``ts``. Jeder Sperrgrund durch kaputte Datei (``.kaputt-*`` oder vorhandene, aber unlesbare
+    Datei, :func:`_sperrgruende`) erscheint als Klasse-2-Eintrag mit leerer ``id``. Offen ist eine
+    Frage, solange ihre Antwort nicht gilt (:func:`_gilt`).
+    """
     ordner = _hauptbaum(hauptbaum) / _ORDNER
     if tickets is None:
-        tickets = sorted(
-            (d.stem.removeprefix(_PRAEFIX) for d in ordner.glob(f"{_PRAEFIX}*.json")),
-            key=_sortier_nummer,
-        )
-    ergebnis = []
+        namen = {d.name.split(".json", 1)[0] for d in ordner.glob(f"{_PRAEFIX}*.json*")}
+        tickets = sorted((t.removeprefix(_PRAEFIX) for t in namen), key=_sortier_nummer)
+    ergebnis: list[dict[str, str]] = []
     for t in tickets:
         try:
-            daten = _lade(_datei(t, hauptbaum))
+            datei = _datei(t, hauptbaum)
         except ValueError:
             continue
-        if daten and daten["fragen"] and not daten["fragen"][-1].get("antwort"):
-            ergebnis.append(str(_nummer(t)))
+        nummer = str(_nummer(t))
+        inhalt = _lies(datei)
+        for grund in _sperrgruende(datei, inhalt):
+            ergebnis.append({"ticket": nummer, "id": "", "klasse": "2", "frage": grund, "vorschlag": "", "ts": ""})
+        for f in (inhalt.daten or {}).get("fragen", []):
+            if _gilt(f):
+                continue
+            ergebnis.append(
+                {
+                    "ticket": nummer,
+                    "id": str(f.get("id", "")),
+                    "klasse": "2" if _ist_klasse_2(f) else "3",
+                    "frage": str(f.get("frage", "")),
+                    "vorschlag": str(f.get("vorschlag", "")),
+                    "ts": str(f.get("ts", "")),
+                }
+            )
     return ergebnis
 
 
@@ -326,8 +480,8 @@ def liste(
         except ValueError:
             continue
         for f in (daten or {}).get("fragen", []):
-            if _ist_klasse_2(f) or not _hat_antwort(f):
-                continue  # Klasse 2 hat keine gültige Aufseher-Antwort
+            if not _gilt(f):
+                continue  # Klasse 2 gilt nur mit Antwort des Nutzers
             antwort = f["antwort"]
             zeilen.append(
                 {
