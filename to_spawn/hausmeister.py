@@ -34,7 +34,7 @@ Dateien, die die Sicherung NICHT mitnimmt, gehen beim Löschen verloren — daru
 - Geheimnisse (``SICHERUNG_AUSSCHLUSS``, z. B. ``.env*``, ``*.key``), geändert, neu
   oder ignoriert: dürfen nur weg, wenn das Hauptrepo des Worktrees dieselbe Datei mit
   gleichem Inhalt hat; sonst (und beim Klon immer) bleibt, ``fuer_david=True``.
-  Geheimnisse in ungepushten Commits würde die Sicherung hochladen ⇒ bleibt, für den Menschen.
+  Geheimnisse in ungepushten Commits würde die Sicherung mit hochladen ⇒ bleibt, ``fuer_david=True``.
 - Ignorierte Dateien: nur bekannte Erzeugnisse (:data:`ERZEUGNISSE`) dürfen weg,
   jede andere ignorierte Datei ⇒ bleibt.
 - Datenbanken (``aufpasser.NIE_HOCHLADEN``) lädt die Sicherung nie hoch: weg dürfen nur
