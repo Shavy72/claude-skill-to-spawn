@@ -11,8 +11,8 @@ Ablauf: Spec + Kind + Sub-Issue-Kante → Wegwerf-Repo mit Konfig und passender
 Belegseite ``docs/verify-hard/<Kind>_beleg.md`` (damit nur ``commit_ohne_nummer``
 greift) → erster Tick (Kind offen) → Kind schließen + Commit ohne Nummer → zweiter
 Tick → Kind wieder OPEN, Kommentar nennt ``commit_ohne_nummer``, nicht
-``beweis_fehlt`` → noch einmal schließen → dritter Tick → Kind wieder OPEN, zweiter
-Kommentar (Entscheidung 21.09.: keine Einmal-Sperre). Zum Schluss werden beide
+``beweis_fehlt`` → noch einmal schließen → dritter Tick → Kind bleibt CLOSED, ein
+zweiter Kommentar meldet den Verstoß einmal (seit #275: Einmal-Regel je Ticket + Regel). Zum Schluss werden beide
 Issues geschlossen.
 """
 
@@ -209,8 +209,8 @@ def test_capo_echt_ohne_sofort_schalter(
         assert "commit_ohne_nummer" in waechter[0]
         assert "beweis_fehlt" not in waechter[0]
 
-        # Entscheidung 21.09. (#213): zweites Schließen mit demselben Verstoß
-        # öffnet wieder — früher gab es dafür nur einen Kommentar.
+        # Seit #275: zweites Schließen mit demselben Verstoß öffnet nicht wieder,
+        # sondern meldet einmal (ersetzt die strenge Fassung aus #213).
         _gh(
             "issue",
             "close",
@@ -239,7 +239,7 @@ def test_capo_echt_ohne_sofort_schalter(
             c["body"] for c in daten["comments"] if c["body"].startswith(capo.WAECHTER_KOPF)
         ]
         print(f"Wächter-Kommentare: {len(waechter)}")
-        assert daten["state"] == "OPEN"
+        assert daten["state"] == "CLOSED"
         assert len(waechter) == 2
         assert all("commit_ohne_nummer" in k for k in waechter)
     finally:
