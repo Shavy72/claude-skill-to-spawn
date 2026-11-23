@@ -30,6 +30,8 @@ KOPF = "Befugnis (wer entscheidet, gilt als Wort des Nutzers aus diesem Start-Au
 
 #: Was der Aufseher mit Klasse 2 tut — die eine Wendung für jeden Aufseher-Text und jeden Takt-Eintrag.
 KLASSE_2_WEITERGABE = "nie selbst freigeben, geht an den Nutzer"
+#: Anfang des Ticket-Kommentars an den Nutzer — der Takt erkennt daran (mit der id) den Beleg (#315).
+KLASSE_2_KOMMENTAR = "Aufseher: braucht den Nutzer"
 
 
 @dataclass(frozen=True)
@@ -303,8 +305,8 @@ def aufseher_text(befehl: str) -> str:
         f"Chat-Protokolle), dann `{b} antworten <N> --id <id> --wahl … --grund … --beleg …` (Antwort gilt nur "
         "im Briefkasten) plus Spiegel-Kommentar im Ticket „Aufseher: Entscheidung <id>: <Wahl> — Belege: …“ "
         "(max. 2 Zeilen); kein zusätzlicher Bau-Log-Eintrag dafür (die Entscheidungs-Liste liest den Briefkasten). "
-        "Klasse 2 oder gesperrt (leere id = kaputte Datei) → nicht antworten, nie selbst freigeben; dem Nutzer "
-        "melden, mit fertigem Befehl für sein eigenes Terminal: Kommentar im Ticket „Aufseher: braucht den Nutzer: "
+        f"Klasse 2 oder gesperrt (leere id = kaputte Datei) → nicht antworten, {KLASSE_2_WEITERGABE}: dem Nutzer "
+        f"melden, mit fertigem Befehl für sein eigenes Terminal: Kommentar im Ticket „{KLASSE_2_KOMMENTAR}: "
         f"<Frage> — bitte im eigenen Terminal ausführen: `{b} nutzer-antwort <N> --id <id> --wahl <Wahl> "
         "--grund <Grund>`“ (N und id eingesetzt). Nur diese Antwort im Briefkasten gibt frei, nie ein "
         "Kommentar im Ticket; eine kaputte Datei prüft und löscht nur der Nutzer. "
@@ -314,5 +316,5 @@ def aufseher_text(befehl: str) -> str:
         "Übergang (alter Start-Auftrag: Rückfrage nur im Bau-Log als blockiert/frage, ohne Briefkasten-Frage): "
         "gleiche Klassen; Klasse 3 per Issue-Kommentar (max. 2 Zeilen) + "
         f"`{b} eintrag --ticket <N> --typ entscheidung --frage … --wahl … --grund …`; "
-        f"Klasse 2 {KLASSE_2_WEITERGABE}: Kommentar im Ticket „Aufseher: braucht den Nutzer: <Frage>“."
+        f"Klasse 2 {KLASSE_2_WEITERGABE}: Kommentar im Ticket „{KLASSE_2_KOMMENTAR}: <Frage>“."
     )

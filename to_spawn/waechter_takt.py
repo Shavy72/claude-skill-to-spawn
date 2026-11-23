@@ -11,6 +11,10 @@ fertig. Leer ⇒ kein Claude-Prozess. Sonst startet eine frische Claude-Session
 für die Einträge, die Claude wirklich gezeigt bekam. Ohne Merker (erster Takt)
 ist alles Ausgangsstand außer ``blockiert``/``frage`` offener Tickets.
 
+Bremse (#315): eine offene Briefkasten-Frage, die immer wieder kommt, geht nach dem
+:data:`BREMSE_AB`-ten Zeigen nur noch alle :data:`BREMSE_ABSTAND_S` an Claude, und der Takt
+meldet sie einmal selbst per Ticket-Kommentar an den Nutzer (keine Mail).
+
 Auslöser: Cron alle 5 min (:func:`cron_einrichten`) und der Stop-Hook bei
 ``session_ende`` (:func:`starte_abgeloest`, höchstens ein Start je Minute und Spec).
 """
@@ -31,7 +35,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from . import befugnis, briefkasten, capo, config, gh, leitstand, starter, ticket_zustand, waechter_lauf
+from . import befugnis, befund, briefkasten, capo, config, gh, leitstand, starter, ticket_zustand, waechter_lauf
 
 log = logging.getLogger("to_spawn.waechter_takt")
 
@@ -43,6 +47,9 @@ CRON_TAKT = "*/5 * * * *"
 FRAGE_TYPEN = frozenset({"blockiert", "frage"})
 #: Kontext sparen: je Takt höchstens so viele Einträge, der Rest kommt im nächsten Takt.
 MAX_EINTRAEGE = 30
+#: Bremse (#315): ab so vielen Zeigen kommt eine offene Briefkasten-Frage nur noch im großen Abstand.
+BREMSE_AB = 3
+BREMSE_ABSTAND_S = 30 * 60
 MAX_NOTIZ = 2000
 #: Ein hängender Claude darf die Sperre ``takt-<S>`` nicht ewig halten.
 CLAUDE_TIMEOUT_S = 45 * 60
@@ -97,9 +104,9 @@ def _briefkasten_offen(repo: Path, nummern: list[int]) -> list[tuple[Eintrag, bo
     """Alle offenen Briefkasten-Fragen der Tickets als (Eintrag, kommt_wieder).
 
     Eintrag: Feld ``fragen``, Schlüssel ``<ticket>:<id>``; leere id (kaputte Datei) → Schlüssel aus dem
-    Hash des Sperrgrunds. Klasse 3 trägt den fertigen Antwort-Befehl und kommt in jedem Takt wieder,
-    bis sie beantwortet ist (sie wartet auf den Aufseher); Klasse 2 und kaputte Dateien warten auf den
-    Nutzer und gehen nur einmal an den Aufseher.
+    Hash des Sperrgrunds. Nur Klasse 3 trägt den fertigen Antwort-Befehl und kommt wieder, bis sie
+    beantwortet ist (sie wartet auf den Aufseher); alles andere (Klasse 2, kaputte Datei, unbekannte
+    Klasse) wartet auf den Nutzer und kommt wieder, bis der Kommentar an ihn belegt ist (:func:`_belegte`).
     """
     befehl = f"python {SKILL.as_posix()}/to_spawn.py"
     eintraege: list[tuple[Eintrag, bool]] = []
@@ -111,29 +118,77 @@ def _briefkasten_offen(repo: Path, nummern: list[int]) -> list[tuple[Eintrag, bo
                 f"#{t} Briefkasten gesperrt (kaputte Datei) — wartet auf den Nutzer: {befugnis.KLASSE_2_WEITERGABE}, "
                 f"prüft/löscht nur der Nutzer: {frage}"
             )
-        elif f["klasse"] == "2":
-            text = (
-                f"#{t} Briefkasten-Frage {fid} (Klasse 2) — wartet auf den Nutzer: {befugnis.KLASSE_2_WEITERGABE}: "
-                f"{frage} · Vorschlag: {vorschlag}"
-            )
-        else:
+        elif f["klasse"] == "3":
             text = (
                 f"#{t} Briefkasten-Frage {fid} (Klasse 3, du entscheidest): {frage} · Vorschlag: {vorschlag} → "
                 f"`{befehl} antworten {t} --id {fid} --wahl … --grund … --beleg …`"
             )
-        kommt_wieder = bool(fid) and f["klasse"] != "2"
-        eintraege.append(((text, "fragen", f"{t}:{fid or _schluessel(f['frage'])}"), kommt_wieder))
+        else:
+            text = (
+                f"#{t} Briefkasten-Frage {fid} (Klasse 2) — wartet auf den Nutzer: {befugnis.KLASSE_2_WEITERGABE}: "
+                f"{frage} · Vorschlag: {vorschlag}"
+            )
+        kennung = fid or _schluessel(f["frage"])
+        kommt_wieder = bool(fid) and f["klasse"] == "3"
+        if not kommt_wieder:
+            text += f" · Kommentar an den Nutzer mit `{kennung}` (sonst kommt die Frage wieder)"
+        eintraege.append(((text, "fragen", f"{t}:{kennung}"), kommt_wieder))
     return eintraege
 
 
-def _zu_zeigen(offen: list[tuple[Eintrag, bool]], gesehen: set[str]) -> list[Eintrag]:
-    return [e for e, kommt_wieder in offen if kommt_wieder or e[2] not in gesehen]
+def _gebremst(stand: Any, jetzt: datetime) -> bool:
+    """Zeige-Zähler ``{"n", "zuletzt"}`` einer Frage: ab :data:`BREMSE_AB` Zeigen erst nach dem Abstand wieder.
+
+    Unlesbarer Stand bremst nie (sichere Richtung: lieber zeigen als verschlucken).
+    """
+    if not isinstance(stand, dict) or not isinstance(stand.get("n"), int) or stand["n"] < BREMSE_AB:
+        return False
+    try:
+        zuletzt = datetime.fromisoformat(str(stand.get("zuletzt")))
+        return (jetzt - zuletzt).total_seconds() < BREMSE_ABSTAND_S
+    except (TypeError, ValueError):  # TypeError: Zeit ohne Zeitzone
+        return False
 
 
-def briefkasten_eintraege(repo: Path, nummern: list[int], gesehen: set[str]) -> list[Eintrag]:
-    """Offene Briefkasten-Fragen für den Takt (``gesehen`` = Merker-Feld ``fragen``): Klasse 3 immer, bis
-    beantwortet; Klasse 2/kaputt nur, wenn noch nicht gezeigt."""
-    return _zu_zeigen(_briefkasten_offen(repo, nummern), gesehen)
+def _zu_zeigen(
+    offen: list[tuple[Eintrag, bool]], erledigt: set[str], gezeigt: dict[str, Any] | None = None
+) -> list[Eintrag]:
+    jetzt = datetime.now().astimezone()
+    gezeigt = gezeigt or {}
+    return [
+        e
+        for e, kommt_wieder in offen
+        if (kommt_wieder or e[2] not in erledigt) and not _gebremst(gezeigt.get(e[2]), jetzt)
+    ]
+
+
+def briefkasten_eintraege(repo: Path, nummern: list[int], erledigt: set[str]) -> list[Eintrag]:
+    """Offene Briefkasten-Fragen für den Takt: Klasse 3, bis beantwortet; Klasse 2/kaputt, bis sie in
+    ``erledigt`` stehen (Merker-Feld ``belegt``: Kommentar an den Nutzer belegt)."""
+    return _zu_zeigen(_briefkasten_offen(repo, nummern), erledigt)
+
+
+def _belegte(gh_repo: str, offen: list[tuple[Eintrag, bool]], gesehen: set[str], vorher: set[str]) -> set[str]:
+    """Schlüssel der offenen Klasse-2/kaputt-Fragen, deren Kommentar an den Nutzer im Ticket steht (#315).
+
+    Beleg = Kommentar eines Repo-Beteiligten mit :data:`befugnis.KLASSE_2_KOMMENTAR` und der Kennung
+    (id bzw. Hash). GitHub wird nur für schon Gezeigtes, noch nicht Belegtes gefragt; stumm ⇒ nicht belegt
+    (die Frage kommt wieder). ponytail: nur die ersten 100 Kommentare je Ticket (``issue_kommentare``).
+    """
+    belegt: set[str] = set()
+    texte: dict[str, list[str]] = {}
+    for (_text, _feld, k), kommt_wieder in offen:
+        if kommt_wieder or k not in gesehen:
+            continue
+        if k in vorher:
+            belegt.add(k)
+            continue
+        ticket, _, kennung = k.partition(":")
+        if ticket not in texte:
+            texte[ticket] = [str(c.get("body") or "") for c in capo.issue_kommentare(gh_repo, int(ticket)) or []]
+        if any(befugnis.KLASSE_2_KOMMENTAR in t and kennung in t for t in texte[ticket]):
+            belegt.add(k)
+    return belegt
 
 
 def pruefe(
@@ -195,7 +250,11 @@ def pruefe(
                 eintraege.append((text, "zu", nr))
     # Briefkasten-Fragen auch im ersten Takt: eine offene Frage wartet immer auf Antwort (#278 P3b).
     offen_fragen = _briefkasten_offen(repo, [int(i["number"]) for i in liste])
-    eintraege += _zu_zeigen(offen_fragen, set(alt.get("fragen") or []))
+    offen_schluessel = {e[2] for e, _wieder in offen_fragen}
+    belegt = _belegte(gh_repo, offen_fragen, set(alt.get("fragen") or []), set(alt.get("belegt") or []))
+    gezeigt_alt = alt.get("gezeigt") if isinstance(alt.get("gezeigt"), dict) else {}
+    gezeigt = {k: v for k, v in gezeigt_alt.items() if k in offen_schluessel}  # beantwortete fallen raus
+    eintraege += _zu_zeigen(offen_fragen, belegt, gezeigt)
     verstoesse: set[str] = set()
     for v in tick.verstoesse:
         k = f"{v.ticket}:{v.regel}"
@@ -209,7 +268,9 @@ def pruefe(
         "zeilen": sorted(zeilen),
         "zu": sorted(zu),
         "verstoesse": sorted(verstoesse),
-        "fragen": sorted(e[2] for e, _wieder in offen_fragen),  # nur noch offene; beantwortete fallen raus
+        "fragen": sorted(offen_schluessel),  # nur noch offene; beantwortete fallen raus
+        "belegt": sorted(belegt),
+        "gezeigt": gezeigt,
         "fertig": bool(tick.fertig),
         "zuletzt": _jetzt_iso(),
     }
@@ -224,6 +285,35 @@ def ohne_ungezeigte(neu: dict[str, Any], ungezeigt: list[Eintrag]) -> dict[str, 
         else:
             neu[feld] = [x for x in neu[feld] if x != k]
     return neu
+
+
+def zaehle_gezeigte(neu: dict[str, Any], gezeigt: list[Eintrag]) -> None:
+    """Zeige-Zähler der Briefkasten-Fragen, die Claude wirklich bekam, um eins weiter (Bremse, #315)."""
+    jetzt = _jetzt_iso()
+    for _text, feld, k in gezeigt:
+        if feld == "fragen":
+            stand = neu["gezeigt"].setdefault(k, {"n": 0, "gemeldet": False})
+            stand["n"] += 1
+            stand["zuletzt"] = jetzt
+
+
+def bremse_text(schluessel: str, n: int) -> str:
+    """Kommentar an den Nutzer, wenn die Bremse greift — trägt den Beleg-Anfang und die Kennung."""
+    ticket, _, kennung = schluessel.partition(":")
+    befehl = f"python {SKILL.as_posix()}/to_spawn.py"
+    return (
+        f"{befugnis.KLASSE_2_KOMMENTAR}: Briefkasten-Frage `{kennung}` ist seit {n} Takten offen, der Aufseher "
+        f"hat nicht entschieden — der Takt zeigt sie ab jetzt nur noch alle {BREMSE_ABSTAND_S // 60} min.\n"
+        f"Ansehen: `{befehl} offene {ticket}` · Antwort nur im eigenen Terminal: "
+        f"`{befehl} nutzer-antwort {ticket} --id <id> --wahl <Wahl> --grund <Grund>`"
+    )
+
+
+def melde_gebremste(gh_repo: str, neu: dict[str, Any]) -> None:
+    """Jede gebremste Frage einmal per Ticket-Kommentar an den Nutzer; gescheitert ⇒ nächster Takt erneut."""
+    for k, stand in neu["gezeigt"].items():
+        if stand["n"] >= BREMSE_AB and not stand.get("gemeldet"):
+            stand["gemeldet"] = befund.kommentiere(k.partition(":")[0], gh_repo, bremse_text(k, stand["n"]))
 
 
 def baue_prompt(spec: int, repo: Path, eintraege: list[str], notiz: str | None) -> str:
@@ -372,8 +462,10 @@ def takt(
                 log.warning("%s", meldung)
                 print(f"WARNUNG: {meldung}")
             neu = ohne_ungezeigte(neu, eintraege[MAX_EINTRAEGE:])
+            zaehle_gezeigte(neu, eintraege[:MAX_EINTRAEGE])
         else:
             print(f"Takt #{spec}: nichts zu entscheiden")
+        melde_gebremste(gh_repo, neu)
 
         def merke(zustand: dict[str, Any]) -> None:
             zustand.setdefault("takt", {})[str(spec)] = neu
