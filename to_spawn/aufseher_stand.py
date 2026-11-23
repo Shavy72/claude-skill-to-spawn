@@ -448,6 +448,45 @@ def sammeln(spec: int, q: Quellen, vorher: _Vorher) -> _Ergebnis:
     return _Ergebnis(lagen, kommentare, merker)
 
 
+#: Höchstens so viele Zeilen/Zeichen trägt eine Fenster-Frage (Briefkasten-Text, Merk-Schlüssel).
+FRAGE_ZEILEN = 8
+FRAGE_MAX = 600
+
+
+def frage_im_text(text: str) -> str:
+    """Frage an den Menschen am Ende des Pane-Texts (#372), ``""`` = keine.
+
+    Rückfrage-Dialog (:func:`aufpasser.rueckfrage`): die letzten Zeilen samt Befehl darüber.
+    Sonst zählt nur der letzte Absatz über dem Eingabefeld, und nur wenn er mit ``?`` endet —
+    eine stille Session ohne solche Frage hängt (Stupser/Handoff wie bisher).
+    """
+    zeilen = aufpasser.ohne_statuszeile(text).splitlines()
+    linien = [i for i, z in enumerate(zeilen) if aufpasser.EINGABEFELD_LINIE.fullmatch(z)]
+    if linien:
+        zeilen = zeilen[: linien[-1]]  # Eingabefeld (``❯ …``) gehört nicht zur Ausgabe
+    voll = [z.strip() for z in zeilen if z.strip()]
+    if aufpasser.rueckfrage(text):
+        teile = voll[-FRAGE_ZEILEN:]
+    else:
+        absatz: list[str] = []
+        for z in reversed(zeilen):
+            if not z.strip():
+                if absatz:
+                    break
+                continue
+            absatz.insert(0, z.strip())
+        teile = absatz[-FRAGE_ZEILEN:] if absatz and absatz[-1].endswith("?") else []
+    return " ".join(" ".join(teile).split())[:FRAGE_MAX]
+
+
+def fenster_frage(ziel: str | None, q: Quellen) -> str:
+    """Frage im Fenster ``ziel`` (:func:`frage_im_text`); ohne Ziel/lesbares Pane ``""``."""
+    if not ziel:
+        return ""
+    text = q.tmux(["capture-pane", "-p", "-t", ziel])
+    return frage_im_text(text) if text else ""
+
+
 class TicketBlick(NamedTuple):
     """Ein Ticket aus Sicht des Aufseher-Stands (``None`` = unbekannt)."""
 
