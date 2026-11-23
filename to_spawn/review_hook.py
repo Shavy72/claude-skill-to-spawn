@@ -44,7 +44,7 @@ STAND_DATEI = ".installiert.json"
 #: Private Projektregeln im Werkzeug-Ordner; gleicher Name wie ``REGELN_DATEI`` in ``review/_gemeinsam.py``.
 REGELN_DATEI = "regeln.md"
 #: Gleich ``_FALLS_REPO`` in ``review/_gemeinsam.py``; kein Import, ``install.ps1`` startet diese Datei direkt.
-_FALLS_REPO = re.compile(r"^[\s>*-]*Falls Repo\s+([^:]+?)\s*:")
+_FALLS_REPO = re.compile(r"(?i)^[\s>*-]*Falls Repo\s+`?([^:`]+?)`?\s*:")
 CONFIG_LOKAL = "config.json"
 CONFIG_STANDARD = "config.standard.json"
 _NIE = {"__pycache__", ".pytest_cache", ".git"}
@@ -163,11 +163,16 @@ def installiere_werkzeug(ziel: Path, quelle: Path = WERKZEUG_QUELLE, zeit: str |
 
 
 def _abschnitt_bereich(zeilen: list[str], name: str) -> tuple[int, int] | None:
-    """``(kopf, ende)`` des ersten Abschnitts ``## <name>``; ``ende`` = nächste ``## ``-Zeile oder Dateiende."""
-    kopf = next((i for i, z in enumerate(zeilen) if z.strip() == f"## {name}"), None)
+    """``(kopf, ende)`` des ersten Abschnitts ``## <name>``; ``ende`` = nächste ``# ``/``## ``-Zeile oder Dateiende.
+
+    Gleich gelesen wie ``regeln_je_auftrag`` in ``review/_gemeinsam.py`` (Name ohne Groß/Klein), sonst entstünde
+    ein zweiter Abschnitt oder die Route verwürfe die Zeile.
+    """
+    name = name.lower()
+    kopf = next((i for i, z in enumerate(zeilen) if z.startswith("## ") and z[3:].strip().lower() == name), None)
     if kopf is None:
         return None
-    ende = next((i for i in range(kopf + 1, len(zeilen)) if zeilen[i].startswith("## ")), len(zeilen))
+    ende = next((i for i in range(kopf + 1, len(zeilen)) if zeilen[i].startswith(("# ", "## "))), len(zeilen))
     return kopf, ende
 
 
@@ -181,13 +186,15 @@ def regeln_uebernehmen(ziel: Path, quelle: Path) -> list[str]:
     früherer Lauf sie schon übernommen, und Handänderungen dort (gelöscht, mit Präfix versehen) bleiben.
     Dubletten zählen je Abschnitt, auch als ``Falls Repo <name>: <derselbe Text>``; ein vorhandener Abschnitt
     wächst an seinem Ende, sonst kommt ein neuer ans Dateiende. Alle übrigen Zeilen der Datei bleiben unberührt.
-    Ohne ``.installiert.json`` landen auch Zeilen älterer ausgelieferter Fassungen dort: lieber zu viel als verloren.
+    Zeilen, die je in einer ausgelieferten Fassung der Vorlage standen (git-Verlauf der Quelle), sind keine Regel.
+    Zeilenende (CRLF/LF) der Datei bleibt.
 
     ponytail: wer einen ganzen Abschnitt löscht, bekommt ihn aus ``_alt`` zurück; dann die Sicherung mit löschen.
     """
     alt_stand = _lade_stand(ziel)
     regeln = ziel / REGELN_DATEI
-    bestand = regeln.read_text(encoding="utf-8") if regeln.is_file() else ""
+    bestand = regeln.read_bytes().decode("utf-8") if regeln.is_file() else ""
+    umbruch = "\r\n" if "\r\n" in bestand else "\n"
     zeilen = bestand.splitlines()
     kandidaten = [(alt, True) for alt in sorted((ziel / "auftraege").glob("*.md"))]
     kandidaten += [(alt, False) for alt in sorted(ziel.parent.glob(f"_alt/{ziel.name}-*/auftraege/*.md"))]
@@ -201,7 +208,7 @@ def regeln_uebernehmen(ziel: Path, quelle: Path) -> list[str]:
         bekannt = (_pruefsumme(neu_bytes), alt_stand.get(f"auftraege/{alt.name}") if installiert else None)
         if _pruefsumme(alt_bytes) in bekannt:
             continue
-        neu_zeilen = set(neu_bytes.decode("utf-8").splitlines())
+        neu_zeilen = {z for t in _ausgelieferte_texte(quelle, f"auftraege/{alt.name}") for z in t.splitlines()}
         abschnitt = zeilen[bereich[0] : bereich[1]] if bereich else []
         schon_da = set(abschnitt) | {z[t.end() :].strip() for z in abschnitt if (t := _FALLS_REPO.match(z))}
         eigene = neu_je.setdefault(alt.stem, [])
@@ -226,18 +233,24 @@ def regeln_uebernehmen(ziel: Path, quelle: Path) -> list[str]:
         while ende > kopf + 1 and not zeilen[ende - 1].strip():
             ende -= 1  # vor die Leerzeilen, die den Abschnitt vom nächsten trennen
         zeilen[ende:ende] = eigene
-    _schreibe_atomar(regeln, ("\n".join(zeilen) + "\n").encode("utf-8"))
+    _schreibe_atomar(regeln, (umbruch.join(zeilen) + umbruch).encode("utf-8"))
     anzahl = sum(len(e) for e in neu_je.values())
     return [f"Projektregeln übernommen: {anzahl} Zeile(n) aus lokal geänderten Vorlagen → {regeln}"]
 
 
+def _ausgelieferte_texte(quelle: Path, aktuell: str, *frueher: str) -> list[str]:
+    """Alle je ausgelieferten Fassungen: ``quelle/aktuell`` plus der git-Verlauf von ``aktuell`` und ``frueher``."""
+    namen = (aktuell, *frueher)
+    texte = [(quelle / aktuell).read_text(encoding="utf-8")]
+    for sha in (_git(quelle, "log", "--format=%H", "--", *namen) or "").split():
+        texte += [t for name in namen if (t := _git(quelle, "show", f"{sha}:./{name}"))]
+    return texte
+
+
 def _ausgelieferte_configs(quelle: Path) -> list[dict]:
     """Alle je ausgelieferten Config-Stände: der aktuelle Standard plus der git-Verlauf beider Dateinamen."""
-    texte = [(quelle / CONFIG_STANDARD).read_text(encoding="utf-8")]
-    for sha in (_git(quelle, "log", "--format=%H", "--", CONFIG_LOKAL, CONFIG_STANDARD) or "").split():
-        texte += [t for name in (CONFIG_LOKAL, CONFIG_STANDARD) if (t := _git(quelle, "show", f"{sha}:./{name}"))]
     stande = []
-    for text in texte:
+    for text in _ausgelieferte_texte(quelle, CONFIG_STANDARD, CONFIG_LOKAL):
         try:
             stande.append(json.loads(text))
         except ValueError:

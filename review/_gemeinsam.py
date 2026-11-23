@@ -67,7 +67,7 @@ def projektregeln() -> dict[str, Any]:
     return {"datei": pfad.as_posix(), "vorhanden": vorhanden}
 
 
-_FALLS_REPO = re.compile(r"^[\s>*-]*Falls Repo\s+([^:]+?)\s*:")
+_FALLS_REPO = re.compile(r"(?i)^[\s>*-]*Falls Repo\s+`?([^:`]+?)`?\s*:")
 
 
 def _repo_namen(repo: Path) -> set[str]:
@@ -83,7 +83,8 @@ def regeln_je_auftrag(repo: Path) -> dict[str, list[str]]:
     """Zeilen der ``regeln.md`` je Abschnitt ``## <auftrag>``, die in ``repo`` gelten (VERTRAG.md §2a).
 
     Die Route gibt sie je Prüfer mit (``pruefer[].regeln``), damit der Text sicher im Auftrag landet.
-    ``Falls Repo <name>: …`` gilt nur, wenn ``<name>`` der Ordner- oder origin-Name ist; Kopf vor dem ersten
+    Abschnittsnamen ohne Groß/Klein; ``# `` beendet einen Abschnitt. ``Falls Repo <name>: …`` (auch ``repo``,
+    Name in Backticks) gilt nur, wenn ``<name>`` der Ordner- oder origin-Name ist; Kopf vor dem ersten
     Abschnitt und Leerzeilen zählen nicht. Fehlt oder klemmt die Datei: leer (die Warnung kommt aus
     :func:`projektregeln`).
     """
@@ -97,7 +98,7 @@ def regeln_je_auftrag(repo: Path) -> dict[str, list[str]]:
     aktuell: str | None = None
     for zeile in text.splitlines():
         if zeile.startswith("## "):
-            aktuell = zeile[3:].strip()
+            aktuell = zeile[3:].strip().lower()  # wie ``_abschnitt_bereich`` in ``to_spawn/review_hook.py``
             abschnitte.setdefault(aktuell, [])
         elif zeile.startswith("# "):
             aktuell = None
