@@ -49,11 +49,41 @@ _VERNEINT = re.compile(r"\b(?:kein|keine|keiner|nicht|entfällt|n/a)\b", re.I)
 #: Ausdrücklich „Klickweg entfällt / nicht nötig“ (reines Backend) — eigenes Merkmal, kein Klickweg-Beleg.
 #: Die Aussage muss direkt am Wort „Klickweg“ hängen (nicht irgendwo in der Zeile) und darf nicht
 #: verneint sein: „Klickweg nicht entfällt“, „Klickweg entfällt nicht“ zählen nicht (#282 P3).
+#: Zwischen Wort und Aussage erlaubt: Gedankenstrich, Tabellen-Trenner, ein Klammerzusatz
+#: („Klickweg (Nutzer-Ablauf) entfällt“, „| Klickweg | entfällt |“). „Live-Beweis“ nur mit
+#: „entfällt“ („Live-Beweis nicht nötig für Rot-Test“ meint nicht den Klickweg, #282 P2).
+_ZWISCHEN = r"(?:[\s:*_|—–-]|\([^)\n]*\))*"
 _ENTFAELLT = re.compile(
-    r"klick.?weg[\s:*_]*(?:entfällt(?!\s+nicht)|nicht\s+(?:nötig|erforderlich)|n/a\b)"
+    rf"klick.?weg{_ZWISCHEN}(?:entfällt(?!\s+nicht)|nicht\s+(?:nötig|erforderlich)|n/a\b)"
+    rf"|live-beweis{_ZWISCHEN}entfällt(?!\s+nicht)"
     r"|\bkein\w*\s+klick.?weg\s+(?:nötig|erforderlich)",
     re.I,
 )
+#: Im Zweifel nicht entfällt (#282 P2): hinter der Aussage zählt nur eine erlaubte Fortsetzung,
+#: alles andere heißt „zählt nicht“ — lieber bleibt eine Session offen, als dass sie zu früh endet.
+#: Erlaubt (bis zum nächsten Tabellen-Trenner „|“): Zeilenende, ggf. mit Punkt; ein Klammerzusatz;
+#: „:“ / „—“ / „-“ / „,“ mit kurzem Grund („, keine Oberfläche“, „: nur Doku“). Fragezeichen,
+#: schließende Anführungszeichen („Behauptung „Klickweg entfällt“ ist falsch“), Durchgestrichenes
+#: („~~…~~“) oder Text ohne Trennzeichen („entfällt nur auf Staging“) zählen nicht.
+_FORTSETZUNG = re.compile(
+    r"[*_]*[ \t]*(?:\([^()\n]*\))?[ \t]*(?:[:—–,-][ \t]*[^\n]{1,80}?)?[ \t]*\.?[ \t]*"
+)
+#: Klammerzusatz und Grund dürfen nichts verneinen oder einfordern; „kein UI / keine Oberfläche“
+#: ist ein Grund, keine Verneinung. „nur“ allein ist erlaubt („nur Doku“).
+_DAGEGEN = re.compile(
+    r"\b(?:nicht|nie|nein|kein\w*(?!\s+(?:Oberfläche|UI|Frontend)\b)|nötig|erforderlich|pflicht\w*"
+    r"|trotzdem|aber|doch|jedoch|falsch|erst)\b|klick.?weg",
+    re.I,
+)
+
+
+def _entfaellt(zeile: str) -> bool:
+    """Sagt die Zeile ausdrücklich und ohne Einschränkung, dass der Klickweg entfällt?"""
+    treffer = _ENTFAELLT.search(zeile)
+    if treffer is None:
+        return False
+    rest = zeile[treffer.end() :].split("|", 1)[0].rstrip("\r\n")
+    return _FORTSETZUNG.fullmatch(rest) is not None and not _DAGEGEN.search(rest)
 
 
 @dataclass
@@ -204,7 +234,7 @@ def auswerten(verify_hard: Path, nummer: str) -> Belege:
                 if not _VERNEINT.search(zeile):
                     belege.klickweg = True
                     break
-                if _ENTFAELLT.search(zeile):
+                if _entfaellt(zeile):
                     belege.klickweg_entfaellt = True
         if lauf:
             lauf.zeit = zeitpunkt(datei)

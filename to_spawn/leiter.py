@@ -23,6 +23,7 @@ Stufen (feste Schwellen :data:`STUPS_MIN`, :data:`NACH_STUPS_MIN`,
 4. Ticket zu und Fenster still (ab Mindest-Ruhe) → ``/exit`` tippen, genau einmal.
    Fertig gebaut nur, wenn :func:`wiederanlauf.feststellen` Art ``nichts`` sagt; fehlt noch
    ein Abschluss-Schritt oder ist die Lage unklar, wird nicht beendet (#282 P3).
+   Bleibt sie dabei :data:`ABSCHLUSS_MELDE_MIN` still → melden, nie ablösen (#282 P2).
 5. respawn gescheitert — nichts mehr tippen/starten, jede Ausführung Exit 1, bis das
    Fenster wieder arbeitet oder das Ticket neu beginnt (``session_start`` im Bau-Log
    jünger als die Stufe-5-Zeit; die wird erst nach dem Ende von ``abloesen`` gesetzt).
@@ -110,6 +111,13 @@ EXIT_TEXT = anleitung.EXIT
 #: Vorgabe für :attr:`Lage.anlauf`, wenn die Wiederanlauf-Art nicht erfragt wurde (Stufe nicht
 #: ``fertig_gebaut`` oder Quelle ohne diese Frage): die Stufe allein entscheidet wie vor #282 P3.
 OHNE_ANLAUF_FRAGE = wiederanlauf.Wiederanlauf("nichts", (), "")
+#: Minuten still, ab denen eine fertig gebaute Session mit offenem Abschluss (oder unklarer Lage)
+#: gemeldet wird statt endlos offen zu bleiben (#282 P2). Länger als Stupser + Nachfrist und die
+#: PC-Ablösung, weil ein Abschluss oft auf Gate/Staging wartet; nie ablösen (#288).
+ABSCHLUSS_MELDE_MIN = 90
+#: Merk-Schlüssel (im Feld :attr:`Gemerkt.frage`) für „stille Abschluss-Session schon gemeldet“:
+#: einmal melden, dann ohne Alarm warten; bewegt sich das Fenster, setzt die Leiter ihn zurück.
+ABSCHLUSS_GEMELDET = "abschluss-gemeldet"
 
 #: ``melden`` = nichts tun, Exit 1: der Aufseher muss prüfen.
 Aktion = Literal[
@@ -164,6 +172,9 @@ class Gemerkt:
 class Schritt:
     aktion: Aktion
     grund: str
+    #: Merk-Schlüssel, den die Tür bei ``melden`` im Feld :attr:`Gemerkt.frage` ablegt (einmal
+    #: melden, #282 P2); ``""`` = nichts merken.
+    merken: str = ""
 
 
 @dataclass(frozen=True)
@@ -244,11 +255,27 @@ def entscheide(lage: Lage, gemerkt: Gemerkt, jetzt: float, handoff_k: float) -> 
             return Schritt("nichts", f"{wort}, /exit schon getippt")
         if lage.stufe == "fertig_gebaut":
             # Fehlt noch ein Abschluss-Schritt, arbeitet die Session daran — nie abwürgen (#282 P3).
+            # Bleibt sie zu lange still, meldet die Leiter, statt endlos zu warten (#282 P2).
+            text = ""
             if lage.anlauf is None:
-                return Schritt("nichts", f"{wort}, Lage unklar — nicht beenden")
-            if lage.anlauf.art != "nichts":
+                text = f"{wort}, Lage unklar"
+            elif lage.anlauf.art != "nichts":
                 offen = ", ".join(lage.anlauf.fehlt) or lage.anlauf.art
-                return Schritt("nichts", f"{wort}, Abschluss offen (fehlt: {offen}) — nicht beenden")
+                text = f"{wort}, Abschluss offen (fehlt: {offen})"
+            if text and still >= ABSCHLUSS_MELDE_MIN:
+                if gemerkt.frage == ABSCHLUSS_GEMELDET:
+                    return Schritt("nichts", f"{text}, still {still} min — schon gemeldet, wartet ohne Alarm")
+                return Schritt(
+                    "melden",
+                    f"{text}, still {still} min ≥ {ABSCHLUSS_MELDE_MIN} min — Aufseher prüfen",
+                    merken=ABSCHLUSS_GEMELDET,
+                )
+            if text and gemerkt.frage == ABSCHLUSS_GEMELDET:
+                # Kürzer still als die Melde-Grenze: die Session hat zwischen zwei Takten gearbeitet,
+                # auch wenn kein Takt sie dabei sah — Merker löschen, die nächste Stille meldet neu.
+                return Schritt("zuruecksetzen", f"{text}, still {still} min — Meldung zurückgesetzt")
+            if text:
+                return Schritt("nichts", f"{text} — nicht beenden")
         if not ruhig:
             return Schritt("nichts", f"{wort}, still {still} min < {MIN_RUHE_MIN}")
         return Schritt("exit", f"{wort}, still {still} min")
@@ -450,6 +477,12 @@ def _schritt(u: Umwelt, repo: Path, spec: int, ticket: int) -> Ergebnis:
     gemerkt, lage, schritt, jetzt = _lies(u, spec, ticket)
     log.info("leiter #%s: %s → %s (%s)", ticket, gemerkt, schritt.aktion, schritt.grund)
     if schritt.aktion == "melden":
+        if schritt.merken:
+            # Einmal melden (#282 P2 Fix 2): scheitert das Merken, meldet der nächste Takt erneut.
+            try:
+                leitstand.setze_notiz(_FRAGE_NOTIZ.format(ticket=ticket), schritt.merken)
+            except (OSError, ValueError, leitstand.ZustandKaputt) as fehler:
+                log.warning("leiter #%s: Abschluss-Meldung nicht gemerkt: %s", ticket, fehler)
         text = f"Stufe {gemerkt.stufe} {schritt.grund}"
         return Ergebnis(EXIT_FEHLER, _zeile(ticket, text))
     if schritt.aktion == "respawn":
@@ -632,8 +665,13 @@ class _EchteUmwelt:
         start, unlesbar = self._letzter_start(ticket, wt)
         treffer = eigener_handoff.finde(wt, ticket, eigener_handoff.grenze(start, ticket))
         anlauf: wiederanlauf.Wiederanlauf | None = OHNE_ANLAUF_FRAGE
-        if blick.lage.stufe == "fertig_gebaut" and self.q.anlauf is not None:
-            # Einzige Füllstelle der Art; Belege liegen im Arbeitsbaum der Session.
+        if (
+            blick.lage.stufe == "fertig_gebaut"
+            and blick.lage.fenster == aufseher_stand.STILL
+            and self.q.anlauf is not None
+        ):
+            # Einzige Füllstelle der Art; Belege liegen im Arbeitsbaum der Session. Nur bei stillem
+            # Fenster gefragt: sonst wertet :func:`entscheide` die Art nicht aus (#282 P2, Last).
             anlauf = self.q.anlauf(ticket, wt if wt.is_dir() else self.repo)
         frage, frage_bis = (
             fenster_frage(ticket, blick.ziel, self.q)
