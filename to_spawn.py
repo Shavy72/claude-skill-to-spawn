@@ -62,6 +62,7 @@ from to_spawn import (  # noqa: E402
     spec_rand,
     speicher,
     startklar,
+    ticket_zustand,
     ticketstand,
     uebergabe_sichern,
     umzug,
@@ -333,6 +334,24 @@ def _blocker(args: argparse.Namespace) -> int:
         return 1
     print("FREI")
     return 0
+
+
+def _zu_bauen(args: argparse.Namespace) -> int:
+    """Unterbefehl ``zu-bauen`` (#279): Tickets der Spec, an denen noch jemand bauen muss.
+
+    Eine Nummer je Zeile, Regel nur in :func:`ticket_zustand.fertig_gebaut`. Unbekannter
+    Stand (gh-Fehler) → Nummer fehlt, Zeile auf stderr, Exit 1 — fail-closed, nie „zu bauen“.
+    """
+    repo = config.repo_wurzel(_repo_aus_umgebung())
+    code = 0
+    for ticket in _spec_tickets(repo, args.spec):
+        daten = ticket_zustand.lesen(ticket, repo)
+        if daten is None:
+            print(f"#{ticket}: Ticket-Stand nicht bestimmbar — nicht gestartet", file=sys.stderr)
+            code = 1
+        elif not ticket_zustand.fertig_gebaut(daten):
+            print(ticket)
+    return code
 
 
 def _anhaengen(args: argparse.Namespace) -> int:
@@ -609,6 +628,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     p_blocker.add_argument("ticket", type=int)
     p_blocker.add_argument("--gh-repo", default="", help="owner/name (sonst aus origin)")
+    p_zu_bauen = unter.add_parser(
+        "zu-bauen", help="Tickets der Spec, die noch nicht fertig gebaut sind (eine Nummer je Zeile, #279)"
+    )
+    p_zu_bauen.add_argument("spec")
     unter.add_parser("hook-stop", help="Stop-Hook (JSON auf stdin)")
     unter.add_parser("hook-subagent-stop", help="SubagentStop-Hook (JSON auf stdin)")
     unter.add_parser(
@@ -790,6 +813,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.befehl == "blocker":
         return _blocker(args)
+    if args.befehl == "zu-bauen":
+        return _zu_bauen(args)
     if args.befehl == "startklar":
         ordner = args.ordner.resolve() if args.ordner else config.repo_wurzel(_repo_aus_umgebung())
         code, text = startklar.ausgabe(startklar.pruefe(ordner, args.spec))

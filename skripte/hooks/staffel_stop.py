@@ -37,8 +37,6 @@ import json
 import logging
 import os
 import re
-import shutil
-import subprocess
 import sys
 import time
 from pathlib import Path
@@ -55,7 +53,7 @@ def _skill_wurzel() -> Path:
 
 
 sys.path.insert(0, str(_skill_wurzel()))
-from to_spawn import eigener_handoff, leitstand, prozessbaum  # noqa: E402
+from to_spawn import eigener_handoff, leitstand, prozessbaum, ticket_zustand  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s staffel_stop: %(message)s")
 log = logging.getLogger("staffel_stop")
@@ -159,27 +157,16 @@ def beenden_ab_eigenem(ziel: int, ticket: str, seit: float, handoff: Path) -> bo
 
 
 def ticket_offen(ticket: str) -> bool:
-    """``True`` nur bei belegt offenem Issue — jeder Fehler gilt als „nicht offen"."""
-    gh = shutil.which("gh")
-    if gh is None:
-        log.warning("gh fehlt — Ticket-Zustand unbekannt, keine Staffel")
+    """``True`` nur, wenn belegt noch jemand bauen muss (#279: Regel ``ticket_zustand.fertig_gebaut``).
+
+    Jeder Lese-Fehler (gh fehlt, Exit ≠ 0, Zeitüberschreitung, kaputte Antwort) gilt als
+    „nicht offen“ — keine Staffel.
+    """
+    daten = ticket_zustand.lesen(ticket)
+    if daten is None:
+        log.warning("Ticket #%s: Zustand unbekannt — keine Staffel", ticket)
         return False
-    proc = subprocess.run(
-        [gh, "issue", "view", ticket, "--json", "state"],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        check=False,
-    )
-    if proc.returncode != 0:
-        log.warning("gh issue view %s: %s", ticket, proc.stderr.strip()[:200])
-        return False
-    try:
-        zustand = (json.loads(proc.stdout or "{}") or {}).get("state")
-    except json.JSONDecodeError:
-        log.warning("gh-Antwort unlesbar — keine Staffel")
-        return False
-    return str(zustand).upper() == "OPEN"
+    return not ticket_zustand.fertig_gebaut(daten)
 
 
 def ist_session_zeile(zeile: str) -> bool:

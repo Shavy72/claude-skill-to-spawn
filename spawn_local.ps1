@@ -67,11 +67,19 @@ if ($Tickets.Count -eq 0) {
 $laufend = Get-CimInstance Win32_Process -Filter "Name='python.exe' OR Name='claude.exe'" |
     Where-Object { $_.CommandLine -match 'bau\.py (\d+)|wache\.py (\d+)|[\\/]wt-(\d+)\b' } |
     ForEach-Object { [int]($Matches[1] + $Matches[2] + $Matches[3]) } | Sort-Object -Unique
-# Geschlossene Tickets nicht mehr starten (bau.py würde sofort enden, der Tab bliebe als Leiche).
-$zu = @()
-if (Get-Command gh -ErrorAction SilentlyContinue) {
-    $zu = @(gh issue list --state closed --limit 200 --search "Spec #$Spec in:body" --json number --jq '.[].number' 2>$null | ForEach-Object { [int]$_ })
+# Fertig gebaute Tickets nicht mehr starten (bau.py würde sofort enden, der Tab bliebe als Leiche).
+# Regel nur in to_spawn/ticket_zustand.py (#279): `zu-bauen` nennt, was noch zu bauen ist; unbekannter Stand fehlt dort.
+$ErrorActionPreference = "Continue"
+$zuBauen = @(& $py "$PSScriptRoot/to_spawn.py" "zu-bauen" "$Spec" | ForEach-Object { [int]$_ })
+$zuBauenRc = $LASTEXITCODE
+if ($zuBauenRc -ne 0) {
+    # GitHub kurz weg: genau ein Wiederholversuch nach 5 s.
+    Start-Sleep -Seconds 5
+    $zuBauen = @(& $py "$PSScriptRoot/to_spawn.py" "zu-bauen" "$Spec" | ForEach-Object { [int]$_ })
+    $zuBauenRc = $LASTEXITCODE
 }
+$ErrorActionPreference = $eapVorher
+if ($zuBauenRc -ne 0) { Write-Host "Ticket-Stand nicht für alle Tickets bestimmbar — diese werden nicht gestartet." -ForegroundColor Yellow }
 $cmds = @()
 if (-not $OhneWache -and ($laufend -notcontains $Spec)) { $cmds += "wache $Spec" }
 # Bau-Leitstand (Live-Seite): Tab `leitstand <S>` (Profil-Funktion → skripte/leitstand.py <S> sitzung),
@@ -87,7 +95,7 @@ if (-not $OhneWache) {
     elseif ($lsLaeuft) { Write-Host "leitstand $Spec läuft schon — übersprungen" -ForegroundColor Yellow }
 }
 foreach ($n in $Tickets) {
-    if ($zu -contains $n) { Write-Host "#$n ist geschlossen — übersprungen" -ForegroundColor DarkGray; continue }
+    if ($zuBauen -notcontains $n) { Write-Host "#$n fertig gebaut oder Stand unbekannt — übersprungen" -ForegroundColor DarkGray; continue }
     if ($laufend -contains $n) { Write-Host "#$n läuft schon — übersprungen" -ForegroundColor Yellow; continue }
     $cmds += "bau $n"
 }

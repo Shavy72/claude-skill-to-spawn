@@ -132,7 +132,6 @@ KEIN_START = frozenset(
         ("skripte/bau.py", "_gh_json"),  # gh
         ("skripte/leitstand.py", "starte"),  # Kind-Prozess mit gefangener Ausgabe
         ("skripte/spec_stand.py", "sh"),  # Lese-Befehle
-        ("skripte/hooks/staffel_stop.py", "ticket_offen"),  # gh
         ("to_spawn/aufpasser.py", "Aufpasser.sh"),  # Lese-Befehle (tmux list/capture); start=True → Tür
         ("to_spawn/aufseher_stand.py", "_tmux_echt"),  # tmux lesen
         # bash-Tür (#186): einzige subprocess-Stelle für bash; Aufrufer startklar._standard_laeufer
