@@ -30,6 +30,12 @@ def test_takt_zeigt_briefkasten_frage_einmal(welt: dict[str, Any], monkeypatch: 
     assert erster.returncode == 0, erster.stdout + erster.stderr
     assert any(f"Briefkasten-Frage {fid}" in str(a) for a in _aufrufe(welt))
     assert f"297:{fid}" in (_merker(welt) or {}).get("fragen", [])
+    # #315: „einmal“ gilt erst mit belegtem Kommentar an den Nutzer (hier über dieselbe gh-Tür).
+    from to_spawn import befund
+
+    for name in ("TO_SPAWN_GH_STUB", "GH_AUFZEICHNUNG_ORDNER", "GH_AUFZEICHNUNG_KOMMENTARE"):
+        monkeypatch.setenv(name, welt["env"][name])
+    assert befund.kommentiere(297, "o/r", f"Aufseher: braucht den Nutzer: Live schalten? — `nutzer-antwort 297 --id {fid}`")
     zweiter = _takt(welt, "--dry-run")
     assert f"Briefkasten-Frage {fid}" not in zweiter.stdout
 
