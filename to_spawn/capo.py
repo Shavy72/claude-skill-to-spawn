@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import contextlib
 import fnmatch
+import hashlib
 import json
 import logging
 import os
@@ -1947,9 +1948,31 @@ def _gesehene_schliessungen(n: int, erledigt: set[str]) -> list[datetime]:
     return zeiten
 
 
-def schon_geoeffnet(n: int, regel: str, erledigt: set[str]) -> bool:
-    """Hat capo #n wegen ``regel`` schon einmal wieder geöffnet (Schlüssel ``N|Regel|closed_at``)? (#275)"""
-    return any(s.split("|")[:2] == [str(n), regel] for s in erledigt)
+def verstoss_kennung(n: int, f: Verstoss) -> str:
+    """Stabile Kennung eines Verstoßes: ``N|Regel|Hash(Text)`` — einzige Stelle dieser Regel (#275).
+
+    Der Text trägt den Inhalt (z. B. fehlender Commit-SHA, entfernte Tests) und ändert
+    sich nur mit neuer Arbeit; Zeitstempel wie ``closed_at`` gehören nie hinein, sonst
+    öffnet jedes Schließen neu. ponytail: Regel ``vps_ungleich_origin`` nennt auch den
+    VPS-HEAD — ein neuer Deploy ohne den Commit zählt als neuer Verstoß; Upgrade-Pfad:
+    eigene Kennung je Regel im :class:`Verstoss`.
+    """
+    return f"{n}|{f.regel}|{hashlib.sha1(f.text.encode('utf-8')).hexdigest()[:12]}"
+
+
+def schon_geoeffnet(n: int, f: Verstoss, erledigt: set[str]) -> bool:
+    """Hat capo #n wegen genau dieses Verstoßes schon einmal wieder geöffnet? (#275)
+
+    Merker ``geoeffnet|<Kennung>`` aus :func:`verstoss_kennung`. Alte Zustände kennen
+    nur ``N|Regel|closed_at``: gibt es für Ticket und Regel noch keinen Kennungs-Merker,
+    gilt jedes alte Wiederöffnen als „dieser Verstoß schon geöffnet“ — nach dem Update
+    lieber einmal nur melden als eine Welle Wiederöffnungen alter Tickets auslösen.
+    """
+    if f"geoeffnet|{verstoss_kennung(n, f)}" in erledigt:
+        return True
+    if any(s.startswith(f"geoeffnet|{n}|{f.regel}|") for s in erledigt):
+        return False
+    return any(s.split("|")[:2] == [str(n), f.regel] for s in erledigt)
 
 
 def merke_schliessen(n: int, closed_at: str, erledigt: set[str]) -> bool:
@@ -2320,8 +2343,8 @@ def _tick(
             ungesehen = [
                 f for f in funde_ok if f"{n}|{f.regel}|{geschlossen}" not in erledigt
             ]
-            # #275: je Ticket und Regel höchstens ein Wiederöffnen — danach nur einmal melden.
-            erneut = [f for f in ungesehen if schon_geoeffnet(n, f.regel, erledigt)]
+            # #275: je Verstoß höchstens ein Wiederöffnen — danach nur einmal melden.
+            erneut = [f for f in ungesehen if schon_geoeffnet(n, f, erledigt)]
             neu_funde = [f for f in ungesehen if f not in erneut]
             for f in funde_ok:
                 zusatz = (
@@ -2332,19 +2355,20 @@ def _tick(
                     else " (schon gemeldet)"
                 )
                 aktionen.append(f"#{n} VERSTOSS {f.regel}: {f.text}{zusatz}")
-            zu_melden = [f for f in erneut if f"erneut|{n}|{f.regel}" not in erledigt]
+            zu_melden = [f for f in erneut if f"erneut|{verstoss_kennung(n, f)}" not in erledigt]
             if zu_melden:
                 aktionen += befund.erneut_melden(
                     n, gh_repo, [(f.regel, f.text) for f in zu_melden], dry_run
                 )
                 if aktionen[-1] == f"#{n} erneut gemeldet":
-                    erledigt.update(f"erneut|{n}|{f.regel}" for f in zu_melden)
+                    erledigt.update(f"erneut|{verstoss_kennung(n, f)}" for f in zu_melden)
                     sichern()
             if not neu_funde:
                 continue
             aktionen += _wieder_oeffnen(n, gh_repo, neu_funde, dry_run)
             if aktionen[-1] == f"#{n} wieder geöffnet":
                 erledigt.update(f"{n}|{f.regel}|{geschlossen}" for f in neu_funde)
+                erledigt.update(f"geoeffnet|{verstoss_kennung(n, f)}" for f in neu_funde)
                 sichern()
             elif not (dry_run and aktionen[-1].endswith("würde wieder öffnen")):
                 continue
