@@ -223,27 +223,30 @@ def aendert_ausfuehrbar(repo: Path, base: str, pfad: str) -> bool:
         return True
 
 
-def prueft_nichts(datei: Path, namen: list[str]) -> bool:
-    """True, wenn jeder genannte Test nur aus Docstring/`pass`/`assert <Konstante>` besteht.
+def prueft_nichts(datei: Path, name: str) -> bool:
+    """True, wenn der Test (`TestA::test_x[1]`) nur Docstring/`pass`/`assert <Konstante>` enthält.
 
-    Solche Tests werden unabhängig vom Code nie rot. Nicht lesbar → True (Befund bleibt scharf).
+    Solche Tests werden unabhängig vom Code nie rot. Nicht lesbar/nicht gefunden → True (Befund bleibt scharf).
+    ponytail: `assert 1 == 1` u. ä. zählt als Prüfung; nur wörtliche Konstanten gelten als leer.
     """
-    gesucht = {n.split("[")[0].split("::")[-1] for n in namen}
     try:
-        baum = ast.parse(datei.read_text(encoding="utf-8"))
+        rumpf: list[ast.stmt] = ast.parse(datei.read_text(encoding="utf-8")).body
     except (SyntaxError, ValueError, OSError) as fehler:
         LOG.info("Test %s nicht lesbar (%s), Befund bleibt", datei, fehler)
         return True
-    for knoten in ast.walk(baum):
-        if isinstance(knoten, (ast.FunctionDef, ast.AsyncFunctionDef)) and knoten.name in gesucht:
-            for zeile in knoten.body:
-                leer = isinstance(zeile, ast.Pass) or (
-                    isinstance(zeile, (ast.Expr, ast.Assert))
-                    and isinstance(zeile.value if isinstance(zeile, ast.Expr) else zeile.test, ast.Constant)
-                )
-                if not leer:
-                    return False
-    return True
+    for teil in name.split("[")[0].split("::"):
+        treffer = [
+            k for k in rumpf if isinstance(k, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)) and k.name == teil
+        ]
+        if not treffer:
+            return True
+        rumpf = treffer[-1].body
+    return all(
+        isinstance(z, ast.Pass)
+        or (isinstance(z, ast.Expr) and isinstance(z.value, ast.Constant))
+        or (isinstance(z, ast.Assert) and isinstance(z.test, ast.Constant))
+        for z in rumpf
+    )
 
 
 def pruefen(repo: Path, base: str, dateien: list[str], timeout: float) -> tuple[list[dict[str, Any]], list[str]]:
@@ -342,11 +345,14 @@ def pruefen(repo: Path, base: str, dateien: list[str], timeout: float) -> tuple[
             namen = [n for n in knoten.get(d, []) if n in neu]
             if set(namen) != neu:
                 continue
-            # #401: ohne Code und ohne Hilfsdatei ist alter Stand = neuer Stand → keine Aussage.
-            # #1533: geänderte Hilfsdateien bleiben scharf; Tests ohne jede Prüfung auch.
-            if not code and not hilfen and not prueft_nichts(ziel / d, namen):
-                ausgelassen.append(d)
-                continue
+            # #401: Diff nur aus Testdateien (keine Code-, Hilfs- oder Nicht-Python-Datei) → alter Stand =
+            # neuer Stand, keine Aussage. Gemeldet werden dann nur Tests ohne jede Prüfung.
+            # #1533: geänderte Hilfsdateien bleiben scharf.
+            if not code and not hilfen and not fremd:
+                namen = [n for n in namen if prueft_nichts(ziel / d, n)]
+                if not namen:
+                    ausgelassen.append(d)
+                    continue
             zeile = zeile_von(ziel / d, namen[0]) if namen else 1
             liste = f" ({', '.join(namen)})" if namen else ""
             text = f"Test kann nicht rot werden: prüft die Änderung nicht{liste}"
