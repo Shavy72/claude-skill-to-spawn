@@ -83,7 +83,7 @@ Ablauf für dich (das Modell), wenn die Konfig fehlt oder der Nutzer „setup“
 
 ## Ablauf `local` (deterministisch, Skript statt Prosa)
 
-1. Im Repo-Wurzelordner: `pwsh -File ~/.claude/skills/to-spawn/spawn_local.ps1 -Spec <S> [-Tickets a,b,c] [-OhneWache] [-Window 1] [-DryRun]`
+1. Im Repo-Wurzelordner: `pwsh -File ~/.claude/skills/to-spawn/spawn_local.ps1 -Spec <S> [-Tickets "a,b,c"] [-OhneWache] [-Window 1] [-DryRun]`
    - liest die Ticket-Nummern aus dem Manifest,
    - überspringt Tickets, für die schon ein `bau`/`claude`-Prozess läuft (nie Duplikate),
    - öffnet **ein** Windows-Terminal-Fenster: zuerst `wache <S>` (der Aufseher), dann `bau <N>` in Nummernfolge (Tab-Titel = Befehl),
