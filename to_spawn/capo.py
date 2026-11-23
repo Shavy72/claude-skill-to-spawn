@@ -178,6 +178,9 @@ class Verstoss:
     regel: str
     text: str
     kritisch: bool = False
+    #: Was den Verstoß ausmacht, falls der Text auch Wanderndes nennt (z. B. VPS-HEAD);
+    #: leer = der Text selbst. Grundlage von :func:`verstoss_kennung` (#275).
+    kern: str = ""
 
 
 @dataclass
@@ -844,6 +847,7 @@ def regel_vps(
                 ticket,
                 "vps_ungleich_origin",
                 f"Commit {commit.sha[:7]} fehlt auf dem VPS (HEAD {kopf[:7]})",
+                kern=commit.sha,
             )
         if code != 0:
             log.warning(
@@ -1949,30 +1953,44 @@ def _gesehene_schliessungen(n: int, erledigt: set[str]) -> list[datetime]:
 
 
 def verstoss_kennung(n: int, f: Verstoss) -> str:
-    """Stabile Kennung eines Verstoßes: ``N|Regel|Hash(Text)`` — einzige Stelle dieser Regel (#275).
+    """Stabile Kennung eines Verstoßes: ``N|Regel|Hash(Kern)`` — einzige Stelle dieser Regel (#275).
 
-    Der Text trägt den Inhalt (z. B. fehlender Commit-SHA, entfernte Tests) und ändert
-    sich nur mit neuer Arbeit; Zeitstempel wie ``closed_at`` gehören nie hinein, sonst
-    öffnet jedes Schließen neu. ponytail: Regel ``vps_ungleich_origin`` nennt auch den
-    VPS-HEAD — ein neuer Deploy ohne den Commit zählt als neuer Verstoß; Upgrade-Pfad:
-    eigene Kennung je Regel im :class:`Verstoss`.
+    Kern ist :attr:`Verstoss.kern` oder sonst der Text (z. B. fehlender Commit-SHA,
+    entfernte Tests); er ändert sich nur mit neuer Arbeit. Zeitstempel wie ``closed_at``
+    oder der VPS-HEAD gehören nie hinein, sonst öffnet jedes Schließen/Deploy neu.
     """
-    return f"{n}|{f.regel}|{hashlib.sha1(f.text.encode('utf-8')).hexdigest()[:12]}"
+    kern = f.kern or f.text
+    return f"{n}|{f.regel}|{hashlib.sha1(kern.encode('utf-8')).hexdigest()[:12]}"
 
 
 def schon_geoeffnet(n: int, f: Verstoss, erledigt: set[str]) -> bool:
     """Hat capo #n wegen genau dieses Verstoßes schon einmal wieder geöffnet? (#275)
 
-    Merker ``geoeffnet|<Kennung>`` aus :func:`verstoss_kennung`. Alte Zustände kennen
-    nur ``N|Regel|closed_at``: gibt es für Ticket und Regel noch keinen Kennungs-Merker,
-    gilt jedes alte Wiederöffnen als „dieser Verstoß schon geöffnet“ — nach dem Update
-    lieber einmal nur melden als eine Welle Wiederöffnungen alter Tickets auslösen.
+    Merker ``geoeffnet|<Kennung>`` aus :func:`verstoss_kennung`; Altzustände macht
+    :func:`altmerker_ueberfuehren` vorher daraus.
     """
-    if f"geoeffnet|{verstoss_kennung(n, f)}" in erledigt:
-        return True
-    if any(s.startswith(f"geoeffnet|{n}|{f.regel}|") for s in erledigt):
-        return False
-    return any(s.split("|")[:2] == [str(n), f.regel] for s in erledigt)
+    return f"geoeffnet|{verstoss_kennung(n, f)}" in erledigt
+
+
+def altmerker_ueberfuehren(n: int, funde: list[Verstoss], erledigt: set[str]) -> bool:
+    """Merker von vor der Kennung in Kennungs-Merker für die aktuellen Funde überführen (#275).
+
+    Alt hieß „geöffnet“ ``N|Regel|closed_at`` und „gemeldet“ ``erneut|N|Regel``. Hat
+    Ticket und Regel noch keinen Kennungs-Merker dieser Art, gilt der aktuelle Verstoß
+    als der von damals — nach dem Update lieber einmal nur melden als eine Welle
+    Wiederöffnungen. Danach zählt nur die Kennung: ein späterer neuer Verstoß öffnet
+    einmal. ``True`` = neue Merker, der Aufrufer sichert den Zustand.
+    """
+    neu: set[str] = set()
+    for f in funde:
+        kennung = verstoss_kennung(n, f)
+        alt_geoeffnet = any(s.split("|")[:2] == [str(n), f.regel] for s in erledigt)
+        alt_gemeldet = f"erneut|{n}|{f.regel}" in erledigt
+        for art, alt in (("geoeffnet", alt_geoeffnet), ("erneut", alt_gemeldet)):
+            if alt and not any(s.startswith(f"{art}|{n}|{f.regel}|") for s in erledigt):
+                neu.add(f"{art}|{kennung}")
+    erledigt.update(neu)
+    return bool(neu)
 
 
 def merke_schliessen(n: int, closed_at: str, erledigt: set[str]) -> bool:
@@ -2340,6 +2358,8 @@ def _tick(
                 continue
             erg.verstoesse += funde_ok
             geschlossen = str(issue.get("closed_at") or "?")
+            if altmerker_ueberfuehren(n, funde_ok, erledigt):
+                sichern()
             ungesehen = [
                 f for f in funde_ok if f"{n}|{f.regel}|{geschlossen}" not in erledigt
             ]
