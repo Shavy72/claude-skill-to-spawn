@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -91,3 +92,80 @@ def test_hausmeister_zu_mit_staging_label_darf_weg(monkeypatch: pytest.MonkeyPat
 def test_spec_rand_staging_fertig_bleibt_offen() -> None:
     assert spec_rand._offen({"state": "open", "labels": STAGING}) is True
     assert spec_rand._offen({"state": "closed", "state_reason": "completed"}) is False
+
+
+# (4) Checkpoint-Frage = echter Schluss (Prüfer-Befund PR 304) ------------
+
+
+def _checkpoint_lauf(checkpoint: dict[str, Any]) -> manifest.Bericht:
+    bericht = manifest.Bericht(spec="900", tickets=["901", "902"])
+    github: dict[str, dict[str, Any] | None] = {
+        "901": {"state": "OPEN", "labels": [], "_kanten": [{"number": 902}]},
+        "902": {**checkpoint, "_kanten": [{"number": 901}]},
+    }
+    manifest._pruefe_checkpoint(bericht, github, ["902"])
+    return bericht
+
+
+def test_manifest_checkpoint_mit_staging_label_ist_nicht_schon_zu() -> None:
+    bericht = _checkpoint_lauf({"state": "OPEN", "labels": STAGING + [{"name": "checkpoint"}]})
+    assert not any("schon zu" in f for f in bericht.fehler)
+
+
+def test_manifest_checkpoint_geschlossen_bleibt_fehler() -> None:
+    bericht = _checkpoint_lauf({"state": "CLOSED", "stateReason": "COMPLETED", "labels": []})
+    assert any("schon zu" in f for f in bericht.fehler)
+
+
+def test_manifest_und_spec_rand_einig_fuer_checkpoint_mit_staging_label() -> None:
+    checkpoint = {"state": "OPEN", "labels": STAGING + [{"name": "checkpoint"}]}
+    manifest_sagt_offen = not any("schon zu" in f for f in _checkpoint_lauf(checkpoint).fehler)
+    assert manifest_sagt_offen is spec_rand._offen(checkpoint) is True
+
+
+# (5) Abdeckung Hausmeister: zweig_fertig + _schliesszeit -------------------
+
+
+def _zweig_attrappe(monkeypatch: pytest.MonkeyPatch, daten: dict[str, Any]) -> None:
+    ort = SimpleNamespace(remote="https://github.com/o/r", cwd=Path("."), haupt="origin/HEAD")
+    monkeypatch.setattr(hausmeister, "_zweig_ort", lambda repo, o: ort)
+    monkeypatch.setattr(hausmeister, "_zweig_stand", lambda o, z: "a" * 40)
+    monkeypatch.setattr(hausmeister, "_zweig_fehlende", lambda o, s: [])
+    monkeypatch.setattr(hausmeister, "_slug", lambda r: "o/r")
+    monkeypatch.setattr(hausmeister, "_ticket_daten", lambda nr, slug=None: daten)
+
+
+def test_hausmeister_zweig_mit_staging_label_ist_nicht_fertig(monkeypatch: pytest.MonkeyPatch) -> None:
+    _zweig_attrappe(monkeypatch, {"state": "OPEN", "labels": STAGING})
+    fertig, _, grund, _ = hausmeister.zweig_fertig(".", "ticket/5-x", holen=False)
+    assert fertig is False and "offen" in grund
+
+
+def test_hausmeister_zweig_mit_geschlossenem_ticket_ist_fertig(monkeypatch: pytest.MonkeyPatch) -> None:
+    _zweig_attrappe(monkeypatch, {"state": "CLOSED", "labels": STAGING})
+    assert hausmeister.zweig_fertig(".", "ticket/5-x", holen=False)[0] is True
+
+
+@pytest.mark.parametrize(
+    ("daten", "hat_zeit"),
+    [
+        ({"state": "OPEN", "labels": STAGING, "closedAt": None}, False),
+        ({"state": "CLOSED", "labels": STAGING, "closedAt": ALT_ZU}, True),
+    ],
+)
+def test_hausmeister_schliesszeit_nur_bei_echtem_schluss(
+    monkeypatch: pytest.MonkeyPatch, daten: dict[str, Any], hat_zeit: bool
+) -> None:
+    monkeypatch.setattr(hausmeister, "_ticket_nummer", lambda ordner, echt: 5)
+    monkeypatch.setattr(hausmeister, "_origin_slug", lambda echt: "o/r")
+    monkeypatch.setattr(hausmeister, "_ticket_daten", lambda nr, slug=None: daten)
+    assert (hausmeister._schliesszeit(Path(".")) is not None) is hat_zeit
+
+
+# (6) Unbekannter/leerer state gilt als offen -------------------------------
+
+
+@pytest.mark.parametrize("daten", [{}, {"state": ""}, {"state": "merged"}])
+def test_unbekannter_state_gilt_als_offen(daten: dict[str, Any]) -> None:
+    assert spec_rand._offen(daten) is True
+    assert manifest._fertig_gebaut(daten) is False

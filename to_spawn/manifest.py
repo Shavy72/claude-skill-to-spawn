@@ -454,7 +454,8 @@ def _pruefe_checkpoint(
     ]
     if not offene_andere:
         return
-    offene_cp = [n for n in checkpoints if not _fertig_gebaut(github[n])]
+    # Checkpoint verwendbar = nicht endgültig zu (wie spec_rand._offen), Staging-Label zählt nicht
+    offene_cp = [n for n in checkpoints if not ticket_zustand.endgueltig_zu(github[n] or {})]
     if not offene_cp:
         zu = ", ".join(f"#{n}" for n in checkpoints)
         andere = ", ".join(f"#{n}" for n in offene_andere)
