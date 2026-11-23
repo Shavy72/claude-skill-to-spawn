@@ -7,14 +7,14 @@ Schlüssel, Ablageort und Verfall leben nur hier. Der Aufrufer kennt drei Schrit
 
 Schlüssel = SHA-256 über: Tree-SHA von ``ziel`` und ``basis`` (Stufe 1 prüft die Änderung gegen
 ``basis``), Inhalt der Lock- und Prüf-Konfig-Dateien ganz oben im Repo (auch ungetrackt oder per
-``.gitignore`` versteckt — getrackte stecken ohnehin im Tree), Name + Inhalt jeder per
+``.gitignore`` versteckt — getrackte stecken ohnehin im Tree), Name + Ausführbar-Bit + Inhalt jeder per
 ``.gitignore``/``info/exclude`` versteckten Datei, die kein Werkzeug-Rest ist (``ist_werkzeug_rest``)
 (mehr als ``_VERSTECKT_MAX_DATEIEN`` Dateien oder ``_VERSTECKT_MAX_BYTES`` → kein Schlüssel;
 versteckter Symlink auf eine Datei zählt mit dem Inhalt des Ziels, auf einen Ordner oder ins Leere
-→ kein Schlüssel; ein tiefer liegendes ``node_modules/`` zählt nur über seine
-``.package-lock.json``), Quelltext des Prüf-Pakets selbst, die ganze Prozess-Umgebung (alle Variablen mit Wert; nur die
+→ kein Schlüssel), jedes ``node_modules/`` (oben wie tief) nur über seine ``.package-lock.json``
+(fehlt sie → kein Schlüssel, ``_paketliste``), Quelltext des Prüf-Pakets selbst, die ganze Prozess-Umgebung (alle Variablen mit Wert; nur die
 flüchtigen aus ``_FLUECHTIG`` zählen ohne Wert) und der Interpreter samt installierten Paketen
-der Repo-venv bzw. des laufenden Interpreters, ``node_modules/.package-lock.json``.
+der Repo-venv bzw. des laufenden Interpreters.
 
 Nicht abgedeckt (Grenze): Dateien außerhalb des Repos (z. B. ``~/.config``, ein ``.env`` im
 Elternordner, das Ziel eines getrackten Symlinks — Git speichert nur den Link-Text), Inhalt der
@@ -36,6 +36,7 @@ import hashlib
 import json
 import logging
 import os
+import stat
 import subprocess
 import sys
 import tempfile
@@ -47,7 +48,7 @@ from typing import Any
 log = logging.getLogger("to_spawn.pruef")
 
 #: Neue Zahl, wenn sich Schlüssel- oder Dateiformat ändert: alte Einträge treffen dann nie.
-FORMAT = "1"
+FORMAT = "2"
 #: So lange gilt ein grüner Eintrag (Sekunden).
 VERFALL_S = 14 * 24 * 3600
 #: Lock-Dateien ganz oben im Repo (Abhängigkeiten).
@@ -77,7 +78,7 @@ _KONFIG = (
     ".ruff.toml",
 )
 #: Umgebungs-Merkmale, die ein Paket-Install verändert.
-_UMGEBUNG = (".venv/pyvenv.cfg", "venv/pyvenv.cfg", "node_modules/.package-lock.json")
+_UMGEBUNG = (".venv/pyvenv.cfg", "venv/pyvenv.cfg")
 _PAKET = Path(__file__).resolve().parent
 #: Ungetrackte Caches: ändern den geprüften Code nicht, gelten in jeder Ordnertiefe.
 CACHE_ORDNER = frozenset({"__pycache__", ".pytest_cache", ".ruff_cache", ".mypy_cache"})
@@ -104,7 +105,7 @@ _LAUF_DATEIEN = tuple(
 )
 #: Bytecode: der einzige Inhalt eines ``__pycache__/``, der nicht zählt.
 _BYTECODE = (".pyc", ".pyo")
-#: Versteckte ``node_modules`` tiefer im Repo: statt aller Dateien zählt nur die Paketliste darin.
+#: ``node_modules`` (oben wie tief): statt aller Dateien zählt nur die Paketliste darin.
 _MODULE = "node_modules"
 _MODULE_LISTE = ".package-lock.json"
 #: Deckel für versteckte Dateien im Schlüssel; darüber kein Schlüssel (voll laufen).
@@ -206,14 +207,14 @@ def _versteckte(repo: Path) -> list[str]:
             dateien.append(eintrag)
             continue
         if eintrag.rstrip("/").rsplit("/", 1)[-1] == _MODULE:
-            dateien.append(f"{eintrag}{_MODULE_LISTE}")
+            dateien.append(_paketliste(repo, eintrag))
             continue
         for wurzel, unter, namen in os.walk(repo / eintrag):
             ort = Path(wurzel).relative_to(repo).as_posix()
             links = [u for u in unter if os.path.islink(os.path.join(wurzel, u))]
             # Symlink auf Ordner betritt os.walk nicht: als Eintrag aufnehmen, ``_datei`` lehnt ihn ab.
             dateien += [f"{ort}/{u}" for u in links]
-            dateien += [f"{ort}/{u}/{_MODULE_LISTE}" for u in unter if u == _MODULE and u not in links]
+            dateien += [_paketliste(repo, f"{ort}/{u}") for u in unter if u == _MODULE and u not in links]
             unter[:] = [
                 u
                 for u in unter
@@ -225,6 +226,18 @@ def _versteckte(repo: Path) -> list[str]:
             if len(dateien) > _VERSTECKT_MAX_DATEIEN:
                 return dateien  # Deckel gesprengt: nicht weiter gehen, der Aufrufer gibt keinen Schlüssel
     return sorted(dateien)
+
+
+def _paketliste(repo: Path, ordner: str) -> str:
+    """Einzige Regel für ``node_modules/`` (oben wie tief, #224): es zählt nur seine Paketliste.
+
+    Fehlt die Liste (pnpm/yarn/bun, ``npm link``, Ordner mit Testdaten), ist der Inhalt unklar:
+    ``OSError`` → kein Schlüssel statt eines Schlüssels, der Änderungen darin nicht sieht.
+    """
+    liste = f"{ordner.rstrip('/')}/{_MODULE_LISTE}"
+    if not (repo / liste).is_file():
+        raise OSError(f"{ordner.rstrip('/')}/ ohne {_MODULE_LISTE}")
+    return liste
 
 
 def _umwelt() -> str:
@@ -257,10 +270,11 @@ def _tree(repo: Path, ref: str) -> str | None:
 
 
 def _datei(hasher: Any, pfad: Path, name: str) -> None:
-    """Name + Inhalt (oder „fehlt“) in den Hash; unlesbar → ``OSError`` an den Aufrufer."""
+    """Name + Inhalt + Ausführbar-Bit (oder „fehlt“) in den Hash; unlesbar → ``OSError`` an den Aufrufer."""
     hasher.update(f"\0{name}\0".encode())
     if pfad.is_file():
         hasher.update(pfad.read_bytes())
+        hasher.update(b"\0x" if pfad.stat().st_mode & stat.S_IXUSR else b"\0-")
     elif pfad.is_symlink() or pfad.exists():
         # Ordner, Symlink auf Ordner oder ins Leere: Inhalt nicht im Hash → kein Schlüssel statt Grün.
         raise OSError(f"{name}: keine Datei (Ordner oder Symlink)")
@@ -291,6 +305,9 @@ def schluessel(repo: Path, basis: str, ziel: str) -> str | None:
     try:
         for name in (*_LOCK, *_KONFIG, *_UMGEBUNG):
             _datei(hasher, repo / name, name)
+        if (repo / _MODULE).is_dir():  # oben: Install-Ordner, kein Werkzeug-Rest-Durchlauf
+            liste = _paketliste(repo, _MODULE)
+            _datei(hasher, repo / liste, liste)
         for quelle in sorted(_PAKET.glob("*.py")):
             _datei(hasher, quelle, f"pruef/{quelle.name}")
         versteckt = _versteckte(repo)
