@@ -172,9 +172,9 @@ class TicketLage:
     neue_kommentare: int | None = None
 
     @property
-    def offen(self) -> bool | None:
-        """Alt-Frage für Entscheider (Leiter, Handoff-Blick): ``True`` bis endgültig zu, ``None`` = unbekannt."""
-        return None if self.stufe is None else self.stufe in ("offen", "fertig_gebaut")
+    def endgueltig_zu(self) -> bool:
+        """Wie ``ticket_zustand.endgueltig_zu`` (zu oder verworfen); unbekannt gilt als nicht zu."""
+        return self.stufe in ticket_zustand.ENDGUELTIG_ZU_STUFEN
 
 
 def _kuerzen(text: str, laenge: int) -> str:
@@ -360,7 +360,7 @@ def _log_lage(n: int, repo: Path) -> tuple[str, str, str] | None:
 
 def _stufe(kind: dict[str, Any]) -> ticket_zustand.Stufe | None:
     """Stufe aus ``ticket_zustand`` (#279); ``None``, wenn GitHub keinen Zustand geliefert hat."""
-    if str(kind.get("state") or "").lower() not in ("open", "closed"):
+    if str(kind.get("state") or "").strip().lower() not in ("open", "closed"):
         return None
     return ticket_zustand.stufe(kind)
 
@@ -464,7 +464,7 @@ def kopf_zeile(spec: int, lagen: list[TicketLage], jetzt: float, noop: bool) -> 
         (
             f"{zahl(lambda x: x.stufe == 'offen')} offen, "
             f"{zahl(lambda x: x.stufe == 'fertig_gebaut')} fertig gebaut, "
-            f"{zahl(lambda x: x.stufe in ('zu', 'verworfen'))} zu"
+            f"{zahl(lambda x: x.endgueltig_zu)} zu"
         ),
         (
             f"{zahl(lambda x: x.fenster == ARBEITET)} arbeitet, "
@@ -512,7 +512,7 @@ def stand(
     sichtbar = [
         z
         for x, z in zip(erg.lagen, zeilen)
-        if alle or x.stufe not in ('zu', 'verworfen') or x.fenster != KEIN_FENSTER
+        if alle or not x.endgueltig_zu or x.fenster != KEIN_FENSTER
     ]
     return "\n".join([kopf_zeile(spec, erg.lagen, jetzt, noop), *sichtbar])
 

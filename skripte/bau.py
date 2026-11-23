@@ -882,19 +882,30 @@ def main() -> int:
             return 2
         spec = spec_gh
 
-    prompt = (
-        probesitz.WEGWERF_PROMPT.format(ticket=ticket)
-        if args.probesitz
-        else build_prompt(default["prompt_template"], ticket, spec, title, build_kontext(entry), config.lade(REPO))
-    )
     auftrag = args.auftrag or os.environ.get("BAU_AUFTRAG", "")
-    if auftrag.strip():
-        # Vor dem Prompt, damit auch jede Staffel-Runde den Auftrag dieser Runde sieht (#285).
-        prompt = auftrag_prompt(prompt, auftrag)
-    erster_prompt = prompt
-    if args.umzug:
-        branch, _pfad, handoff_text = umzug_handoff_lesen(args.umzug)
-        erster_prompt = umzug_prompt(prompt, handoff_text, branch, ticket)
+    umzug_teile = umzug_handoff_lesen(args.umzug) if args.umzug else None
+
+    def start_texte() -> tuple[str, str]:
+        """Die eine Stelle für den Start-Text (#281): ``(Grund-Prompt, erster Prompt)`` aus der
+        Vorlage, wie sie JETZT auf der Platte liegt. ``main`` ruft sie beim Start (Vorlage kaputt
+        → sofort Exit 2, ``--print-prompt``) und erneut im Moment des Loslassens — ein Fenster,
+        das stundenlang auf Blocker wartet, startet so mit der Regel von jetzt."""
+        grund = (
+            probesitz.WEGWERF_PROMPT.format(ticket=ticket)
+            if args.probesitz
+            else build_prompt(
+                load_default()["prompt_template"], ticket, spec, title, build_kontext(entry), config.lade(REPO)
+            )
+        )
+        if auftrag.strip():
+            # Vor dem Prompt, damit auch jede Staffel-Runde den Auftrag dieser Runde sieht (#285).
+            grund = auftrag_prompt(grund, auftrag)
+        if umzug_teile is not None:
+            branch, _pfad, handoff_text = umzug_teile
+            return grund, umzug_prompt(grund, handoff_text, branch, ticket)
+        return grund, grund
+
+    prompt, erster_prompt = start_texte()
     if args.print_prompt:
         print(erster_prompt)
         return 0
@@ -952,7 +963,6 @@ def main() -> int:
         json.dumps({"mcpServers": mcp_servers}, ensure_ascii=False, indent=1),
         encoding="utf-8",
     )
-    (out / "prompt.txt").write_text(prompt, encoding="utf-8")
 
     # Vorrang: --model > Repo-Konfig ``modelle.ticket`` (#205) > _default.json.
     konfig = config.lade(REPO)
@@ -990,13 +1000,10 @@ def main() -> int:
     # die Session nach einer Sicherung mit ``--resume`` fort.
     if args.resume:
         cmd += ["--resume", args.resume]
-        erster_prompt = resume_prompt(ticket)
     else:
         cmd += ["--session-id", str(uuid.uuid4())]
     # ``mit_prompt``: trägt ``cmd`` als letztes Argument einen Prompt? (nicht bei --ohne-prompt)
     mit_prompt = not args.ohne_prompt
-    if mit_prompt:
-        cmd.append(erster_prompt)
 
     off_count = sum(1 for v in overrides.values() if v == "off")
     log.info("Ticket #%s · Spec #%s · %s", ticket, spec, title)
@@ -1018,9 +1025,8 @@ def main() -> int:
             return 2
         cmd = praefix + cmd
         print("\nBefehl:")
-        sichtbar = cmd[:-1] if mit_prompt else cmd
         print(
-            " ".join(f'"{c}"' if " " in c or "\n" in c else c for c in sichtbar),
+            " ".join(f'"{c}"' if " " in c or "\n" in c else c for c in cmd),
             '"<prompt>"' if mit_prompt else "",
         )
         return 0
@@ -1043,6 +1049,14 @@ def main() -> int:
     # Platte (#1369): Start-Check des Hausmeisters, bei voller Platte warten (Takt ~15 min).
     speicher.auf_platte_warten(wer=f"bau {ticket}")
     auf_speicher_warten(konfig, wer=f"bau {ticket}")
+    # Start-Text erst jetzt, im Moment des Loslassens (#281): in der Wartezeit kann sich die
+    # Vorlage geändert haben — der Text vom eigenen Start wäre veraltet.
+    prompt, erster_prompt = start_texte()
+    if args.resume:
+        erster_prompt = resume_prompt(ticket)
+    (out / "prompt.txt").write_text(prompt, encoding="utf-8")
+    if mit_prompt:
+        cmd.append(erster_prompt)
     # Push-Sperre (#1445): Git-Hooks vor JEDEM Start (Erststart, --resume, --umzug),
     # unabhängig vom Sandbox-Modus; Quelle origin, nie der Arbeitsordner.
     nest.git_hooks_einrichten(REPO)

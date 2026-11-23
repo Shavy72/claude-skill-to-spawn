@@ -148,19 +148,31 @@ def _seiten_js(name: str) -> str:
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node fehlt")
 def test_leitstand_seite_alles_fertig_nur_wenn_zu() -> None:
-    """Phasen-Gesamtzeile: „Alles fertig.“ nur, wenn jedes Ticket wirklich zu ist (``ende`` gesetzt)."""
+    """Phasen-Gesamtzeile: „Alles fertig.“ nur, wenn jedes Ticket wirklich zu ist (Stufe ``zu``, seit P6b statt ``ende``)."""
     js = (
         "let tickets = [];\nconst model = { tiefe: new Map() };\n"
         "const phaseKey = (t) => 1, offeneBlocker = () => [], nrListe = (l) => l.join(', ');\n"
+        + _seiten_js("istZu")
         + _seiten_js("phasenStand")
-        + "\nconst t = (nr, ende) => ({ nr, zustand: 'fertig', blocked_by: [], ende });\n"
-        "tickets = [t(1, '2026-11-23T10:00:00'), t(2, '2026-11-23T10:05:00')];\n"
+        + "\nconst t = (nr, stufe) => ({ nr, zustand: 'fertig', blocked_by: [], stufe });\n"
+        "tickets = [t(1, 'zu'), t(2, 'zu')];\n"
         "console.log(phasenStand({ key: 1 }).ueber);\n"
-        "tickets = [t(1, '2026-11-23T10:00:00'), t(2, null)];\n"
+        "tickets = [t(1, 'zu'), t(2, 'fertig_gebaut')];\n"
         "console.log(phasenStand({ key: 1 }).ueber);\n"
     )
+    # Altes Dokument ohne ``stufe``: ``ende`` gesetzt heißt zu, fehlendes ``ende`` nicht.
+    js += (
+        "const zahl = (v, d) => (typeof v === 'number' && Number.isFinite(v) ? v : d);\n"
+        "const STUFEN = ['offen', 'fertig_gebaut', 'zu', 'verworfen'];\n"
+        + _seiten_js("normTicket")
+        + "\nconst alt = (nr, ende) => normTicket({ nr, zustand: 'fertig', blocked_by: [], ende }, nr);\n"
+        "tickets = [alt(1, '2026-11-23T10:00:00'), alt(2, '2026-11-23T10:05:00')];\n"
+        "console.log(phasenStand({ key: 1 }).ueber);\n"
+        "tickets = [alt(1, '2026-11-23T10:00:00'), alt(2, null)];\n"
+        "console.log(phasenStand({ key: 1 }).ueber === 'Alles fertig.');\n"
+    )
     aus = subprocess.run(["node", "-e", js], capture_output=True, text=True, check=True, encoding="utf-8")
-    assert aus.stdout.splitlines() == ["Alles fertig.", "Fertig gebaut, wartet auf Live."]
+    assert aus.stdout.splitlines() == ["Alles fertig.", "Fertig gebaut, wartet auf Live.", "Alles fertig.", "false"]
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node fehlt")
@@ -278,3 +290,4 @@ def test_belege_fertig_gebaut_nicht_gruen_wie_zu(bu: ModuleType) -> None:
     zu = bu.baue_html(9, [bu.Eintrag("7", "Titel", "zu", "ABNAHME ok")], "23.11.2026")
     assert '<span class="marke gruen">Status: zu' in zu
     assert '<span class="marke gruen">Status: fertig gebaut' not in gebaut
+    assert '<span class="marke gebaut">Status: fertig gebaut' in gebaut

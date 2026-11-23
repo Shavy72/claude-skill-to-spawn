@@ -56,6 +56,8 @@ def _issue(nummer: str, daten: dict) -> dict:
         "assignees": [{"login": name} for name in eintrag.get("assignees", [])],
         "labels": [{"name": name} for name in eintrag.get("labels", [])],
         "state_reason": eintrag.get("state_reason"),
+        # CLI-Form (``gh issue view --json stateReason``) nur, wenn ein Test sie setzt (#279 P6b).
+        **({"stateReason": eintrag["stateReason"]} if "stateReason" in eintrag else {}),
     }
 
 
