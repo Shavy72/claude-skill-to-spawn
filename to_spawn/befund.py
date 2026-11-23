@@ -152,6 +152,23 @@ def wieder_oeffnen(
     return _oeffne(n, gh_repo, gruende, dry_run).zeilen
 
 
+def erneut_melden(
+    n: int, gh_repo: str, gruende: Sequence[tuple[str, str]], dry_run: bool
+) -> list[str]:
+    """Gleicher Grund wie bei einem früheren Wiederöffnen: nur kommentieren, nicht öffnen (#275).
+
+    Wiederöffnen ist die härteste Reaktion und gilt je Ticket und Regel einmal; danach
+    muss ein Mensch ran. Letzte Zeile ``#N erneut gemeldet`` = geklappt.
+    """
+    if dry_run:
+        return [f"#{n} [Probe] würde erneut melden (nicht wieder öffnen)"]
+    vermerk = " (erneut — nicht wieder geöffnet, ein Mensch muss prüfen)"
+    kommentar = _gruende_text([(regel, f"{text}{vermerk}") for regel, text in gruende])
+    if kommentiere(n, gh_repo, kommentar):
+        return [f"#{n} erneut gemeldet"]
+    return [f"#{n} FEHLER: erneut melden gescheitert"]
+
+
 def _gruende_text(gruende: Sequence[tuple[str, str]]) -> str:
     """Reopen-Kommentar, der in :data:`KOMMENTAR_MAX_ZEILEN` passt, ohne eine Regel zu verlieren.
 

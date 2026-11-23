@@ -1947,6 +1947,11 @@ def _gesehene_schliessungen(n: int, erledigt: set[str]) -> list[datetime]:
     return zeiten
 
 
+def schon_geoeffnet(n: int, regel: str, erledigt: set[str]) -> bool:
+    """Hat capo #n wegen ``regel`` schon einmal wieder geöffnet (Schlüssel ``N|Regel|closed_at``)? (#275)"""
+    return any(s.split("|")[:2] == [str(n), regel] for s in erledigt)
+
+
 def merke_schliessen(n: int, closed_at: str, erledigt: set[str]) -> bool:
     """Gesehenes Schließen von #n festhalten, sobald capo #n schon einmal geöffnet hat (#448).
 
@@ -2312,14 +2317,29 @@ def _tick(
                 continue
             erg.verstoesse += funde_ok
             geschlossen = str(issue.get("closed_at") or "?")
-            neu_funde = [
+            ungesehen = [
                 f for f in funde_ok if f"{n}|{f.regel}|{geschlossen}" not in erledigt
             ]
+            # #275: je Ticket und Regel höchstens ein Wiederöffnen — danach nur einmal melden.
+            erneut = [f for f in ungesehen if schon_geoeffnet(n, f.regel, erledigt)]
+            neu_funde = [f for f in ungesehen if f not in erneut]
             for f in funde_ok:
-                aktionen.append(
-                    f"#{n} VERSTOSS {f.regel}: {f.text}"
-                    + ("" if f in neu_funde else " (schon gemeldet)")
+                zusatz = (
+                    ""
+                    if f in neu_funde
+                    else " (erneut, nicht wieder geöffnet)"
+                    if f in erneut
+                    else " (schon gemeldet)"
                 )
+                aktionen.append(f"#{n} VERSTOSS {f.regel}: {f.text}{zusatz}")
+            zu_melden = [f for f in erneut if f"erneut|{n}|{f.regel}" not in erledigt]
+            if zu_melden:
+                aktionen += befund.erneut_melden(
+                    n, gh_repo, [(f.regel, f.text) for f in zu_melden], dry_run
+                )
+                if aktionen[-1] == f"#{n} erneut gemeldet":
+                    erledigt.update(f"erneut|{n}|{f.regel}" for f in zu_melden)
+                    sichern()
             if not neu_funde:
                 continue
             aktionen += _wieder_oeffnen(n, gh_repo, neu_funde, dry_run)
@@ -2329,6 +2349,10 @@ def _tick(
             elif not (dry_run and aktionen[-1].endswith("würde wieder öffnen")):
                 continue
             # #284: wieder offen bringt nichts, wenn niemand weiterbaut.
+            if gh.staging_fertig(issue):
+                # #275: grün auf Staging — ein zweiter Bau-Start wäre Doppelbau.
+                aktionen.append(f"#{n} hat {gh.STAGING_FERTIG_LABEL} — keine Folge-Runde")
+                continue
             aktionen += _folge_runde(
                 repo,
                 konfig,
