@@ -135,6 +135,20 @@ zeile = {
 }
 with (ordner / f"{sid}.jsonl").open("a", encoding="utf-8") as fh:
     fh.write(json.dumps(zeile) + "\n")
+# Optional (#353): statt fest FAKE_SCHLAF zu schlafen, nur so lange laufen, bis das
+# gestellte tmux FAKE_ENDE_NACH_GETIPPT Eingaben hat (Obergrenze FAKE_SCHLAF), dann
+# kurz nachlaufen und regulär enden — mit Marke, die zeigt: nicht von außen beendet.
+ziel = int(os.environ.get("FAKE_ENDE_NACH_GETIPPT", "0"))
+if ziel:
+    getippt = Path(os.environ["FAKE_TMUX_ORDNER"]) / "getippt.jsonl"
+    ende = time.monotonic() + float(os.environ.get("FAKE_SCHLAF", "100"))
+    while time.monotonic() < ende:
+        if getippt.is_file() and len(getippt.read_text(encoding="utf-8").splitlines()) >= ziel:
+            break
+        time.sleep(0.1)
+    time.sleep(1.0)
+    Path(os.environ["FAKE_PROTOKOLL"]).with_suffix(".ende").write_text("regulär")
+    sys.exit(0)
 time.sleep(float(os.environ.get("FAKE_SCHLAF", "100")))
 """
 
@@ -561,15 +575,17 @@ def test_exit_2_ueber_echte_aufsicht_kein_nachfolger(
         {
             "FAKE_TMUX_SCHREIBT": "0",
             "FAKE_SCHLAF": "30",
+            # #353: alter Aufseher endet regulär, sobald alle 4 Eingaben da sind,
+            # statt fest 30 s zu schlafen (Obergrenze bleibt FAKE_SCHLAF).
+            "FAKE_ENDE_NACH_GETIPPT": "4",
             "TO_SPAWN_ABLOESE_WARTE_S": "1",
             "TO_SPAWN_ABLOESE_ABSTAND_S": "1",
             "TO_SPAWN_ABLOESE_VERSUCHE": "2",
         }
     )
-    beginn = time.monotonic()
     ergebnis = _wache(welt["repo"], env=env, timeout=150)
     assert ergebnis.returncode == 0, _text(ergebnis)
-    assert time.monotonic() - beginn >= 25, "alter Aufseher wurde beendet"
+    assert (welt["tmp"] / "claude_aufrufe.ende").is_file(), "alter Aufseher wurde beendet"
     assert len(_aufrufe(welt)) == 1, "Nachfolger gestartet"
     getippt = _getippt(welt)
     assert [g["ziel"] for g in getippt] == ["%77"] * 4, getippt
