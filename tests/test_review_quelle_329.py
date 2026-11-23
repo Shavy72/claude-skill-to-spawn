@@ -11,11 +11,11 @@ from __future__ import annotations
 
 import re
 import subprocess
+from collections.abc import Iterable
 from pathlib import Path
 
 import pytest
 from test_feste_namen_l1 import MUSTER
-from test_rolle_statt_name_323 import NAME
 
 SKILL = Path(__file__).resolve().parents[1]
 REVIEW = SKILL / "review"
@@ -90,6 +90,15 @@ def lade_namen(pfad: Path) -> frozenset[str]:
     return frozenset(z.split("#", 1)[0].strip().lower() for z in text.splitlines()) - {""}
 
 
+def name_muster(woerter: Iterable[str], flags: int = re.IGNORECASE) -> re.Pattern[str]:
+    """Trifft jedes Wort aus ``woerter`` mit Wortgrenze nur vorn (auch Genitiv-Formen, #325).
+
+    Leere Liste → Muster, das nie trifft; Namens-Prüfungen springen dann per ``skipif`` über.
+    """
+    teile = sorted({re.escape(w) for w in woerter}, key=len, reverse=True)
+    return re.compile(r"\b(?:" + "|".join(teile) + ")", flags) if teile else re.compile(r"(?!)")
+
+
 class _Namenmuster:
     """Wie ``re.Pattern.search``: trifft, wenn ein Wort der Zeile in der Namensliste steht."""
 
@@ -103,7 +112,7 @@ class _Namenmuster:
 FREMDNAME = _Namenmuster(lade_namen(NAMEN_DATEI))
 OEFFENTLICH = {
     **MUSTER,
-    "personenname": NAME,
+    "personenname": name_muster(lade_namen(NAMEN_DATEI)),
     "geheimnis": GEHEIMNIS,
     "projekt-begriff": PROJEKT_BEGRIFF,
     "mail": MAIL,

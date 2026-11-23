@@ -24,7 +24,7 @@ from pathlib import Path
 import pytest
 from test_bau_ohne_prompt_431 import _lade_bau
 from test_nest_210 import _cli, _git, _neues_repo, _umgebung
-from test_rolle_statt_name_323 import NAME
+from test_rolle_statt_name_323 import NAME, NAMEN, NAMEN_DATEI
 
 from to_spawn import nest
 
@@ -233,6 +233,8 @@ def test_testdaten_gleich_projekt_origin(name: str) -> None:
     kopie = (HILFEN / name).read_bytes()
     if kopie == original.stdout:
         return
+    if not NAMEN:
+        pytest.skip(f"Kopie weicht ab, Rollenwort-Prüfung braucht die private Namensliste: {NAMEN_DATEI}")
     # #325: Kommentarzeilen mit festem Personennamen stehen in der Kopie mit Rollenwort
     # (öffentliches Repo). Nur genau diese Zeilen dürfen abweichen — und müssen dann namensfrei sein.
     soll = original.stdout.decode("utf-8").splitlines(keepends=True)

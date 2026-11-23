@@ -13,6 +13,9 @@ import sys
 import tokenize
 from pathlib import Path
 
+import pytest
+from test_review_quelle_329 import NAMEN_DATEI, lade_namen, name_muster
+
 SKILL = Path(__file__).resolve().parents[1]
 
 DATEIEN = (
@@ -23,27 +26,32 @@ DATEIEN = (
     "to_spawn/melder.py",
     "SKILL.md",
 )
+#: Namen aus der privaten Liste (#394) — das Repo ist öffentlich und nennt keinen Namen.
+NAMEN = lade_namen(NAMEN_DATEI)
 #: Wortgrenze nur vorn: trifft auch die Genitiv-Form, aber keine Wörter, die den Namen
 #: nur enthalten (#325).
-NAME = re.compile(r"\bdavid", re.IGNORECASE)
+NAME = name_muster(NAMEN)
+#: Großgeschrieben (Fließtext der Leitstand-Seite, #325); Bezeichner schreiben den Namen klein.
+NAME_GROSS = name_muster((n.capitalize() for n in NAMEN), flags=0)
+#: Ohne private Liste springen die Namens-Prüfungen sichtbar über; die Mechanik-Tests laufen.
+nur_mit_namensliste = pytest.mark.skipif(not NAMEN, reason=f"private Namensliste fehlt: {NAMEN_DATEI}")
 #: Ab Python 3.12 zerlegt ``tokenize`` f-Strings; der Text steht dann in FSTRING_MIDDLE.
 FSTRING_MIDDLE = getattr(tokenize, "FSTRING_MIDDLE", tokenize.STRING)
 
 
+@nur_mit_namensliste
 def test_kein_fester_personenname_in_prompt_quellen() -> None:
     funde = [
         f"{datei}:{nr}"
         for datei in DATEIEN
-        for nr, zeile in enumerate(
-            (SKILL / datei).read_text(encoding="utf-8").splitlines(), 1
-        )
+        for nr, zeile in enumerate((SKILL / datei).read_text(encoding="utf-8").splitlines(), 1)
         if NAME.search(zeile)
     ]
     assert funde == [], f"fester Personenname statt Rolle: {funde}"
 
 
 #: Teil 2 (#325): Diese Dateien führen den Namen noch in Code-Bezeichnern und Daten-Schlüsseln
-#: (z. B. ``davids_antwort``, ``braucht_david``, ``art == "david"``), deren Umbenennung
+#: (z. B. ``<name>s_antwort``, ``braucht_<name>``, ``art == "<name>"``), deren Umbenennung
 #: gespeicherte Stände brechen würde. Geprüft werden darum nur Text-Bausteine (Strings,
 #: Docstrings, Kommentare) per ``tokenize``; Bezeichner sind NAME-Tokens und fallen heraus.
 TEXT_DATEIEN = (
@@ -56,7 +64,7 @@ TEXT_DATEIEN = (
     "to_spawn.py",
 )
 #: Einziger erlaubter Text-Baustein: der Daten-Schlüssel der Ereignis-Art im Leitstand.
-DATEN_SCHLUESSEL = frozenset({'"david"'})
+DATEN_SCHLUESSEL = frozenset(f'"{n}"' for n in NAMEN)
 ESCAPE = re.compile(r"\\[ntr]")
 
 
@@ -76,6 +84,7 @@ def _text_funde(datei: str) -> list[str]:
     return funde
 
 
+@nur_mit_namensliste
 def test_kein_fester_personenname_in_ausgabe_texten() -> None:
     funde = [fund for datei in TEXT_DATEIEN for fund in _text_funde(datei)]
     assert funde == [], f"fester Personenname statt Rolle: {funde}"
@@ -84,21 +93,21 @@ def test_kein_fester_personenname_in_ausgabe_texten() -> None:
 def test_escape_verdeckt_namen_nicht(tmp_path: Path, monkeypatch) -> None:
     """Teil 3 (#325): Name direkt hinter ``\\n``, ``\\t`` oder ``\\r`` wird erkannt."""
     probe = tmp_path / "probe.py"
-    probe.write_text(
-        'A = "x\\nDavid"\nB = "x\\tDavid"\nC = "x\\rDavid"\n', encoding="utf-8"
-    )
+    probe.write_text('A = "x\\nKunstwort"\nB = "x\\tKunstwort"\nC = "x\\rKunstwort"\n', encoding="utf-8")
     monkeypatch.setattr(sys.modules[__name__], "SKILL", tmp_path)
+    monkeypatch.setattr(sys.modules[__name__], "NAME", name_muster({"kunstwort"}))
     assert _text_funde("probe.py") == ["probe.py:1", "probe.py:2", "probe.py:3"]
 
 
 #: Teil 3 (#325): Die Leitstand-Seite führt den Namen in CSS-Variablen, Klassen, IDs und
-#: JS-Schlüsseln (``--david``, ``z-david``, ``braucht_david``). Geprüft werden darum nur
+#: JS-Schlüsseln (``--<name>``, ``z-<name>``, ``braucht_<name>``). Geprüft werden darum nur
 #: Kommentare (HTML, CSS, JS) — dort steht Wortlaut für Menschen; der Daten-Schlüssel
-#: ``"david"`` darf darin genannt werden.
+#: ``"<name>"`` darf darin genannt werden.
 HTML_DATEIEN = ("leitstand/seite.html",)
 KOMMENTAR = re.compile(r"<!--.*?-->|/\*.*?\*/|(?<![:\\])//[^\n]*", re.DOTALL)
 
 
+@nur_mit_namensliste
 def test_kein_fester_personenname_in_html_kommentaren() -> None:
     funde = []
     for datei in HTML_DATEIEN:
@@ -113,7 +122,7 @@ def test_kein_fester_personenname_in_html_kommentaren() -> None:
 
 
 #: Teil 4 (#325): weitere Python-Dateien mit Namen nur in Text-Bausteinen; Bezeichner wie
-#: ``davids_antwort`` bleiben (siehe ``TEXT_DATEIEN``).
+#: ``<name>s_antwort`` bleiben (siehe ``TEXT_DATEIEN``).
 TEXT_DATEIEN_TEIL4 = (
     "skripte/rueckblick.py",
     "to_spawn/befund.py",
@@ -139,23 +148,19 @@ TESTS_AUSGENOMMEN = frozenset(
 )
 
 
+@nur_mit_namensliste
 def test_kein_fester_personenname_in_ausgabe_texten_teil4() -> None:
     funde = [fund for datei in TEXT_DATEIEN_TEIL4 for fund in _text_funde(datei)]
     assert funde == [], f"fester Personenname statt Rolle: {funde}"
 
 
+@nur_mit_namensliste
 def test_kein_fester_personenname_in_markdown() -> None:
-    dateien = [
-        str(p.relative_to(SKILL))
-        for o in MARKDOWN_ORDNER
-        for p in (SKILL / o).rglob("*.md")
-    ]
+    dateien = [str(p.relative_to(SKILL)) for o in MARKDOWN_ORDNER for p in (SKILL / o).rglob("*.md")]
     funde = [
         f"{datei}:{nr}"
         for datei in sorted(dateien) + list(MARKDOWN_DATEIEN)
-        for nr, zeile in enumerate(
-            (SKILL / datei).read_text(encoding="utf-8").splitlines(), 1
-        )
+        for nr, zeile in enumerate((SKILL / datei).read_text(encoding="utf-8").splitlines(), 1)
         if NAME.search(zeile)
     ]
     assert funde == [], f"fester Personenname statt Rolle: {funde}"
@@ -171,9 +176,7 @@ def _kommentar_und_docstring_funde(datei: str) -> list[str]:
             if tok.type == tokenize.COMMENT and NAME.search(tok.string):
                 funde.append(f"{datei}:{tok.start[0]}")
     for knoten in ast.walk(ast.parse(text)):
-        if not isinstance(
-            knoten, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)
-        ):
+        if not isinstance(knoten, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
         if not (knoten.body and isinstance(knoten.body[0], ast.Expr)):
             continue
@@ -185,6 +188,7 @@ def _kommentar_und_docstring_funde(datei: str) -> list[str]:
     return funde
 
 
+@nur_mit_namensliste
 def test_kein_fester_personenname_in_test_kommentaren() -> None:
     """Teil 4 (#325): Kommentare und Docstrings der Tests nennen die Rolle."""
     dateien = sorted(
@@ -193,25 +197,22 @@ def test_kein_fester_personenname_in_test_kommentaren() -> None:
         if (rel := str(p.relative_to(SKILL))) not in TESTS_AUSGENOMMEN
         and not Path(rel).name.startswith("test_starttext_")
     )
-    funde = [
-        fund for datei in dateien for fund in _kommentar_und_docstring_funde(datei)
-    ]
+    funde = [fund for datei in dateien for fund in _kommentar_und_docstring_funde(datei)]
     assert funde == [], f"fester Personenname statt Rolle: {funde}"
 
 
+@nur_mit_namensliste
 def test_kein_grossgeschriebener_name_in_html_fliesstext() -> None:
     """Teil 4 (#325): Fließtext der Leitstand-Seite (HTML-Text, JS-Strings) nennt die Rolle.
 
     Klassen, IDs, CSS-Variablen und Daten-Schlüssel schreiben den Namen klein
-    (``z-david``, ``braucht_david``); großgeschrieben steht er nur in Wortlaut für Menschen.
+    (``z-<name>``, ``braucht_<name>``); großgeschrieben steht er nur in Wortlaut für Menschen.
     """
     funde = [
         f"{datei}:{nr}"
         for datei in HTML_DATEIEN
-        for nr, zeile in enumerate(
-            (SKILL / datei).read_text(encoding="utf-8").splitlines(), 1
-        )
-        if re.search(r"\bDavid", zeile)
+        for nr, zeile in enumerate((SKILL / datei).read_text(encoding="utf-8").splitlines(), 1)
+        if NAME_GROSS.search(zeile)
     ]
     assert funde == [], f"fester Personenname statt Rolle: {funde}"
 
@@ -226,18 +227,18 @@ DOKU_DATEIEN_TEIL5 = (
 )
 
 
+@nur_mit_namensliste
 def test_kein_fester_personenname_in_doku_teil5() -> None:
     funde = [
         f"{datei}:{nr}"
         for datei in DOKU_DATEIEN_TEIL5
-        for nr, zeile in enumerate(
-            (SKILL / datei).read_text(encoding="utf-8").splitlines(), 1
-        )
+        for nr, zeile in enumerate((SKILL / datei).read_text(encoding="utf-8").splitlines(), 1)
         if NAME.search(zeile)
     ]
     assert funde == [], f"fester Personenname statt Rolle: {funde}"
 
 
+@nur_mit_namensliste
 def test_kein_fester_personenname_in_test_gruenden() -> None:
     """Teil 5 (#325): ``reason=`` von xfail/skip ist Wortlaut für Menschen, keine Test-Daten."""
     funde: list[str] = []
@@ -259,6 +260,7 @@ def test_kein_fester_personenname_in_test_gruenden() -> None:
     assert funde == [], f"fester Personenname statt Rolle: {funde}"
 
 
+@nur_mit_namensliste
 def test_kein_fester_personenname_in_shell_kommentaren() -> None:
     """Teil 5 (#325): Kommentarzeilen aller Shell-Skripte im Skill nennen die Rolle."""
     funde = [
@@ -269,3 +271,27 @@ def test_kein_fester_personenname_in_shell_kommentaren() -> None:
         if zeile.lstrip().startswith("#") and NAME.search(zeile)
     ]
     assert funde == [], f"fester Personenname statt Rolle: {funde}"
+
+
+def test_namensmuster_aus_kunst_liste(tmp_path: Path) -> None:
+    """#394: Mechanik mit Kunst-Liste — Genitiv trifft, Wortinneres und Großschreibung wie #325."""
+    liste = tmp_path / "namen.txt"
+    liste.write_text("# Kommentar\nKunstwort\n", encoding="utf-8")
+    namen = lade_namen(liste)
+    muster = name_muster(namen)
+    assert muster.search("frag Kunstworts Antwort") and muster.search("x\tkunstwort")
+    assert not muster.search("Vorkunstwort bleibt frei")
+    gross = name_muster((n.capitalize() for n in namen), flags=0)
+    assert gross.search("an Kunstwort") and not gross.search("z-kunstwort")
+    assert not name_muster(frozenset()).search("Kunstwort")
+
+
+@nur_mit_namensliste
+def test_kein_name_in_diesem_test() -> None:
+    """#394: Das Repo ist öffentlich — der Test selbst nennt keinen Namen der privaten Liste."""
+    funde = [
+        f"{Path(__file__).name}:{nr}"
+        for nr, zeile in enumerate(Path(__file__).read_text(encoding="utf-8").splitlines(), 1)
+        if NAME.search(zeile)
+    ]
+    assert funde == [], f"Name im Test: {funde}"
