@@ -14,6 +14,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import textwrap
 from collections.abc import Iterator
 from pathlib import Path
@@ -87,11 +88,46 @@ def attrappe(ordner: Path, name: str, python_code: str) -> Path:
     return skript
 
 
+#: Eigener Temp-Ordner dieses Laufs (#349), nur gesetzt, wenn ``pytest_configure`` ihn anlegte.
+_EIGENER_BASETEMP = pytest.StashKey[Path]()
+
+
+@pytest.hookimpl(tryfirst=True)  # vor ``_pytest.tmpdir``, das ``--basetemp`` in seinem configure liest
 def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line(
         "markers",
         'braucht(*namen): Test braucht Programm im PATH (z. B. "tmux", "bash") oder "posix"; fehlt es → skip (#68)',
     )
+    _eigener_basetemp(config)
+
+
+def _eigener_basetemp(config: pytest.Config) -> None:
+    """Jeder Lauf ohne ``--basetemp`` bekommt einen eigenen, kurzen Temp-Ordner (#349).
+
+    pytest legt sonst alle Läufe des Nutzers unter ``<temp>/pytest-of-<nutzer>`` ab; parallele
+    Läufe nahmen sich dort gegenseitig den Ordner weg (``could not create numbered dir``).
+    Hier: ``mkdtemp`` direkt unter dem System-Temp (``tempfile.gettempdir()``, folgt ``TMPDIR``,
+    also #136), Name ``pt-`` + 8 Zeichen — kurz für tmux-/Unix-Sockets darunter. Ein
+    ausdrückliches ``--basetemp`` gewinnt. Nur der Leit-Prozess: xdist-Worker bekommen
+    ``<basetemp>/popen-gwN`` vom Leit-Prozess (``workerinput``).
+    """
+    if config.option.basetemp or hasattr(config, "workerinput"):
+        return
+    ordner = Path(tempfile.mkdtemp(prefix="pt-"))
+    config.option.basetemp = str(ordner)
+    config.stash[_EIGENER_BASETEMP] = ordner
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
+    """Grüner Lauf: den selbst angelegten Temp-Ordner löschen (#349); rot bleibt er zum Nachsehen.
+
+    Nur der in ``_eigener_basetemp`` angelegte Pfad, nie ein Muster und nie ein fremdes
+    ``--basetemp``. Reste roter Läufe räumt der Temp-Räumer (#177).
+    """
+    ordner = session.config.stash.get(_EIGENER_BASETEMP, None)
+    if ordner is not None and exitstatus == 0:
+        shutil.rmtree(ordner, ignore_errors=True)
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
