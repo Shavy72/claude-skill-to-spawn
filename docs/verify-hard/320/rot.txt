@@ -10,10 +10,10 @@ E       assert 0 == 1
 E        +  where 0 = len([])
         assert erg.returncode == 0, erg.stderr
 >       assert erg.stdout.strip() == "None"
-E       assert "['/home/bau/.../gh_stub.py']" == 'None'
+E       assert "['.../gh_stub.py']" == 'None'
 E         
 E         - None
-E         + ['/home/bau/.local/bin/python', '/tmp/pytest-of-bau/pytest-2591/test_gh_stub_ausserhalb_test_i0/gh_stub.py']
+E         + ['python', '<tmp>/gh_stub.py']
 >       assert treffer == ["to_spawn/gh.py"]
 E       AssertionError: assert ['to_spawn/gh...pec_stand.py'] == ['to_spawn/gh.py']
 E         

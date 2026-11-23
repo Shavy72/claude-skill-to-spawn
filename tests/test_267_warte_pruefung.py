@@ -26,6 +26,7 @@ from types import ModuleType
 from typing import Any
 
 import pytest
+
 from conftest import attrappe
 
 SKILL = Path(__file__).resolve().parent.parent
