@@ -16,7 +16,6 @@ Echte Git-Repos wie in den #176-/#235-Tests; gestellt ist nur ``gh``.
 from __future__ import annotations
 
 import os
-import stat
 import subprocess
 from pathlib import Path
 
@@ -25,6 +24,7 @@ from test_hausmeister_1368 import Welt, git, welt  # noqa: F401 — ``welt`` ist
 from test_hausmeister_skill_ordner_235 import _lauf, _vorgabe
 from test_hausmeister_ticket_repo_176 import APP, SKILL, TAG, Repos, repos  # noqa: F401
 
+from conftest import attrappe
 from to_spawn import hausmeister
 
 ECHT = f"https://github.com/{SKILL}"
@@ -151,15 +151,19 @@ def test_234_gegenprobe_eigenes_ticket_repo_zu_ist_fertig(welt: Welt, repos: Rep
 
 def _server_loescht_sicherungen(bare: Path) -> None:
     """Server nimmt ``sicherung/*`` an und entfernt den Zweig gleich wieder."""
-    haken = bare / "hooks" / "post-receive"
-    haken.write_text(
-        "#!/bin/sh\n"
-        "while read alt neu ref; do\n"
-        '  case "$ref" in refs/heads/sicherung/*) git update-ref -d "$ref" ;; esac\n'
-        "done\n",
-        encoding="utf-8",
+    attrappe(
+        bare / "hooks",
+        "post-receive",
+        """
+        import subprocess
+        import sys
+
+        for zeile in sys.stdin:
+            ref = zeile.split()[2]
+            if ref.startswith("refs/heads/sicherung/"):
+                subprocess.run(["git", "update-ref", "-d", ref], check=True)
+        """,
     )
-    haken.chmod(haken.stat().st_mode | stat.S_IXUSR)
 
 
 @pytest.mark.skipif(os.name == "nt", reason="post-receive-Haken als sh-Skript")
