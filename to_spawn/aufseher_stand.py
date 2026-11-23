@@ -50,6 +50,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import subprocess
 import sys
 import time
@@ -453,22 +454,28 @@ def sammeln(spec: int, q: Quellen, vorher: _Vorher) -> _Ergebnis:
 FRAGE_ZEILEN = 8
 #: Höchstens so viele Zeichen trägt eine Fenster-Frage im Briefkasten (:func:`frage_kurz`).
 FRAGE_MAX = 600
+#: Erste Zeile einer Antwort-/Werkzeug-Ausgabe der Session (``● …``, ältere Versionen ``⏺ …``).
+ANTWORT_START = re.compile(r"^\s*[●⏺]")
 
 
 def frage_im_text(text: str) -> str:
     """Frage an den Menschen am Ende des Pane-Texts (#372), ``""`` = keine; ungekürzt.
 
-    Rückfrage-Dialog (:func:`aufpasser.rueckfrage`): die letzten Zeilen samt Befehl darüber.
-    Sonst zählt der ganze letzte Absatz über dem Eingabefeld, und nur wenn er mit ``?`` endet —
-    eine stille Session ohne solche Frage hängt (Stupser/Handoff wie bisher). Trägt erst der
-    Text weiter oben ein Klasse-2-Wort, sind alle Zeilen über dem Eingabefeld die Frage. Ungekürzt, weil
-    die Klasse (:func:`befugnis.ist_klasse_2`) am vollen Absatz gilt; kürzen nur
-    :func:`frage_kurz`.
+    Betrachtet wird nur die aktuelle Antwort: ab der letzten Antwort-Startzeile
+    (:data:`ANTWORT_START`) bis über das Eingabefeld; fehlt sie im Bild, alles (im Zweifel zum
+    Menschen). Rückfrage-Dialog (:func:`aufpasser.rueckfrage`): die letzten Zeilen samt Befehl
+    darüber. Sonst der letzte Absatz, nur wenn er mit ``?`` endet — eine stille Session ohne
+    solche Frage hängt (Stupser/Handoff wie bisher). Trägt nur Text weiter oben in der Antwort
+    ein Klasse-2-Wort (:func:`befugnis.ist_klasse_2`), steht diese Zeile vor der Frage, damit
+    Klasse und Grund auch nach :func:`frage_kurz` sichtbar bleiben.
     """
     zeilen = aufpasser.ohne_statuszeile(text).splitlines()
     linien = [i for i, z in enumerate(zeilen) if aufpasser.EINGABEFELD_LINIE.fullmatch(z)]
     if linien:
         zeilen = zeilen[: linien[-1]]  # Eingabefeld (``❯ …``) gehört nicht zur Ausgabe
+    starts = [i for i, z in enumerate(zeilen) if ANTWORT_START.match(z)]
+    if starts:
+        zeilen = zeilen[starts[-1] :]  # ältere Ausgabe davor zählt nicht (Review PR 374)
     voll = [z.strip() for z in zeilen if z.strip()]
     if aufpasser.rueckfrage(text):
         teile = voll[-FRAGE_ZEILEN:]
@@ -486,10 +493,14 @@ def frage_im_text(text: str) -> str:
         and not befugnis.ist_klasse_2(" ".join(teile))
         and befugnis.ist_klasse_2(" ".join(voll))
     ):
-        # Live-Wort irgendwo über dem Eingabefeld (Befehl über den Auswahlzeilen, Absatz vor
-        # „Passt das so?“): im Zweifel zum Menschen, darum alle Zeilen als Frage — die Klasse
-        # gilt am Ganzen, gekürzt wird nur zum Anzeigen (:func:`frage_kurz`, Review PR 374).
-        teile = voll
+        # Live-Wort weiter oben in der Antwort (Befehl über den Auswahlzeilen, Absatz vor
+        # „Passt das so?“): im Zweifel zum Menschen. Die auslösende Zeile kommt vor die Frage,
+        # sonst schneidet :func:`frage_kurz` den Grund weg; steht das Wort über zwei Zeilen
+        # verteilt, alle Zeilen (Review PR 374).
+        grund = next((z for z in voll if befugnis.ist_klasse_2(z)), None)
+        # ponytail: Grund-Zeile über FRAGE_MAX/2 Zeichen kann frage_kurz trotzdem anschneiden.
+        rest = frage_kurz(" ".join(teile), max(FRAGE_MAX - len(grund or "") - 3, FRAGE_MAX // 2))
+        teile = [grund, "…", rest.lstrip("…")] if grund else voll
     return " ".join(" ".join(teile).split())
 
 

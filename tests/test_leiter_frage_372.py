@@ -375,3 +375,43 @@ def test_still_live_wort_weit_ueber_frage_ist_klasse_2() -> None:
     assert frage.endswith("Passt das so?")
     schritt = leiter.entscheide(_lage(aufseher_stand.STILL, frage, 25), leiter.Gemerkt(0, None), time.time(), 250.0)
     assert schritt.aktion == "mensch"
+
+
+# --- Fix-Runde 4: Klasse nur an der aktuellen Antwort (letzte ●-Zeile, Review PR 374) ------
+
+
+def test_alte_ausgabe_mit_live_wort_vor_letzter_antwort_darf_der_entscheider() -> None:
+    text = (
+        f"● Live-Deploy von gestern ist durch.\n{BERICHT_ZEILEN}\n\n"
+        f"● Tests grün.\n\nSoll ich mit Ticket 12 weitermachen?\n\n"
+        f"{EINGABE}\n❯ \n{EINGABE}\n  Kontext 80k"
+    )
+    frage = aufseher_stand.frage_im_text(text)
+    assert frage == "Soll ich mit Ticket 12 weitermachen?"
+    schritt = leiter.entscheide(_lage(aufseher_stand.STILL, frage, 25), leiter.Gemerkt(0, None), time.time(), 250.0)
+    assert schritt.aktion == "entscheider"
+
+
+def test_ohne_antwort_zeile_zaehlt_alles_und_bleibt_klasse_2() -> None:
+    text = (
+        f"Live-Deploy von gestern ist durch.\n{BERICHT_ZEILEN}\n\nSoll ich mit Ticket 12 weitermachen?\n\n"
+        f"{EINGABE}\n❯ \n{EINGABE}\n  Kontext 80k"
+    )
+    frage = aufseher_stand.frage_im_text(text)
+    assert frage.endswith("Soll ich mit Ticket 12 weitermachen?")
+    schritt = leiter.entscheide(_lage(aufseher_stand.STILL, frage, 25), leiter.Gemerkt(0, None), time.time(), 250.0)
+    assert schritt.aktion == "mensch"
+
+
+def test_live_zeile_steht_im_gekuerzten_fragetext(baum: Path) -> None:
+    text = (
+        f"● Ich würde den Stand jetzt live deployen.\n{BERICHT_ZEILEN}\n{BERICHT_ZEILEN}\n"
+        f"{BERICHT_ZEILEN}\n\n{BERICHT[2:]}\nPasst das so?\n\n{EINGABE}\n❯ \n{EINGABE}\n  Kontext 80k"
+    )
+    frage = aufseher_stand.frage_im_text(text)
+    assert frage.endswith("Passt das so?")
+    erg = _lauf(FakeUmwelt(baum, frage=frage))
+    assert "braucht den Menschen" in erg.zeile
+    offen = briefkasten.offene([TICKET], hauptbaum=baum)
+    assert [f["klasse"] for f in offen] == ["2"]
+    assert "live deployen" in offen[0]["frage"]
