@@ -847,6 +847,40 @@ def test_eintrag_schreibt_blockiert_und_entscheidung(tmp_path: Path) -> None:
     )
 
 
+def test_eintrag_blockiert_mit_frage_wahl_grund(tmp_path: Path) -> None:
+    """Start-Text-Befehl: ``eintrag --typ blockiert --frage … --wahl … --grund …`` (#278)."""
+    ziel = tmp_path / "log_repo"
+    ziel.mkdir()
+    fertig = subprocess.run(
+        [
+            sys.executable,
+            str(SKILL / "to_spawn.py"),
+            "eintrag",
+            "--repo",
+            str(ziel),
+            "--ticket",
+            "903",
+            "--typ",
+            "blockiert",
+            "--frage",
+            "Darf ich löschen",
+            "--wahl",
+            "warte",
+            "--grund",
+            "Klasse 3",
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    assert fertig.returncode == 0, fertig.stdout + fertig.stderr
+    datei = ziel / "docs" / "agents" / "bau_log" / "903.jsonl"
+    zeile = json.loads(datei.read_text(encoding="utf-8").splitlines()[0])
+    assert (zeile["typ"], zeile["ticket"]) == ("blockiert", "903")
+    assert (zeile["frage"], zeile["wahl"], zeile["grund"]) == ("Darf ich löschen", "warte", "Klasse 3")
+
+
 def test_beleg_ordner_mit_nummer_zaehlt(welt: dict[str, Path]) -> None:
     """Echte Belegseiten liegen als Ordner ``docs/verify-hard/<datum>_<N>_<name>/`` (#203, #206)."""
     _commit(
