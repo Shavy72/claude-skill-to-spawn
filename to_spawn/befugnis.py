@@ -7,6 +7,8 @@ Einzige Stelle der Klassen-Tabelle. Aufrufer fragen nur:
   der Folgesession übernehmen (Kopf :data:`KOPF`).
 - :func:`einordnen` — festes Raster ``(ziel, art, gesichert) -> 1|2|3``.
 - :func:`ist_klasse_2` — schlägt ein freier Text (Frage, Vorschlag, Ziel, Art) an Klasse 2 an?
+- :func:`handlung_klasse_2` — steht in einem Verlauf (Texte, Befehle, Werkzeuge, Pfade) eine
+  Klasse-2-Handlung? (Muster-Katalog nur hier, PR 374 Runde 9)
 - :func:`aufseher_text` — Befugnis-Abschnitt beider Aufseher-Texte (Takt + Dauer-Aufseher):
   Klasse-2-Pflicht, Briefkasten-Weg, Umgehungs-Verbot.
 - :func:`klasse_2_erkennung` — Klasse 2 samt Erkennungs-Wörtern als ein Text (für jede Liste
@@ -23,6 +25,7 @@ from __future__ import annotations
 import os
 import re
 import unicodedata
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 
 #: Kopf des Abschnitts — an ihm erkennt die Ablöse-SOP, was wörtlich mitwandert.
@@ -209,6 +212,18 @@ def _ist_klasse_2(wert: str) -> bool:
     return any(w in wert for w in _KLASSE_2_WOERTER) or any(w in teile for w in _KLASSE_2_GANZWORT)
 
 
+#: Dieselben Wörter, aber nur an einer Wortgrenze vorn (Stämme wie „bezahl“ dürfen weitergehen,
+#: Ganzwörter auch hinten begrenzt). Nach :func:`_norm` trennen „-“ „_“ „/“ „.“ Leerraum: „Live-Deploy“,
+#: „deploy_vps“ treffen, „deliver“, „reproduziert“ nicht; ``\w`` ist Unicode-bewusst (Umlaute).
+_KLASSE_2_AM_WORTANFANG = re.compile(
+    r"(?<!\w)(?:"
+    + "|".join(map(re.escape, sorted(_KLASSE_2_WOERTER, key=len, reverse=True)))
+    + r")|(?<!\w)(?:"
+    + "|".join(map(re.escape, sorted(_KLASSE_2_GANZWORT)))
+    + r")(?!\w)"
+)
+
+
 def einordnen(ziel: str, art: str, gesichert: bool = False) -> int:
     """Klasse 1, 2 oder 3 für eine geplante Handlung; Unbekanntes und Zweifel ergeben 3.
 
@@ -244,6 +259,280 @@ def ist_klasse_2(*texte: object) -> bool:
     zählen nicht. Kein eigener-Zweig-Ausnahme: hier gilt jedes Wort.
     """
     return any(_ist_klasse_2(_norm(t)) for t in texte if _norm(t))
+
+
+def ist_klasse_2_am_wortanfang(*texte: object) -> bool:
+    """Wie :func:`ist_klasse_2`, aber ein Wort zählt nur am Wortanfang (nicht als Wortteil).
+
+    Breite Verlauf-Erkennung (Stand ``cb5e5f5``, :mod:`to_spawn.verlauf_pruefung`): dort machen
+    Wortteile („deliver“ → live, „reproduziert“ → prod) aus fast jedem Abschnitt einen Treffer.
+    Zusammensetzungen ohne Trenner („Kundenkonto“) treffen hier nicht; freie Fragen und Vorschläge
+    bleiben darum bei der strengeren :func:`ist_klasse_2`.
+    """
+    return any(_KLASSE_2_AM_WORTANFANG.search(_norm(t)) for t in texte if _norm(t))
+
+
+#: Steht vor jedem Handlungs-Grund ohne eigenes Klasse-2-Wort (``gh pr merge 374``): der Grund
+#: wandert vor die Frage, und Briefkasten/Leiter ordnen die Frage mit :func:`ist_klasse_2` ein.
+HANDLUNG_KOPF = "Live-/Kosten-/Konto-Handlung:"
+
+
+def handlung_klasse_2(
+    *,
+    texte: Iterable[str] = (),
+    befehle: Iterable[str] = (),
+    werkzeuge: Iterable[str] = (),
+    pfade: Iterable[str] = (),
+) -> str | None:
+    """Erste Zeile mit einer Klasse-2-HANDLUNG (Live, Kosten, Konto, Zugang, Löschen) oder ``None``.
+
+    Für lange Verläufe (Transkript einer Session, :mod:`to_spawn.verlauf_pruefung`, PR 374
+    Runde 9): dort stehen Projekt-Wörter (live, vps, Kosten …) fast überall, gezählt wird darum nur
+    eine Handlung. ``texte`` = eigene Texte und Unter-Agent-Aufträge (Verb + Ziel in einem Satz),
+    ``befehle`` = Shell-Befehle (ohne Inhalte von Anführungszeichen und Heredocs, außer hinter
+    ``bash -c``/``eval``/``ssh <host>`` …), ``werkzeuge`` = Werkzeug-Namen, ``pfade`` =
+    Datei-Pfade (Inhalte nie). Rückgabe: die Zeile, zusammengezogen; trägt sie selbst kein
+    Klasse-2-Wort, steht :data:`HANDLUNG_KOPF` davor. Freie Fragen und Vorschläge bleiben bei der
+    breiten :func:`ist_klasse_2` (Wortteile zählen dort).
+
+    Bekannte Rest-Risiken: ein Deploy-Weg ohne Muster rutscht durch (Skript ohne Deploy-Wort im
+    Namen und ohne ``--prod``, Befehl in einer Datei); Kosten durch Lese-Aufrufe bezahlter
+    APIs werden nicht erkannt (wie vorher); unverändert offen: T1, T10, T11 und Schreib-Verzug.
+    """
+    zeile = (
+        _erste(texte, _text_zeile)
+        or _erste(befehle, _befehl_zeile)
+        or _erste(werkzeuge, lambda w: w if _WERKZEUG.search(w.lower()) else None)
+        or _erste(pfade, lambda p: p if _PFAD.search(p.lower()) else None)
+    )
+    if zeile is None:
+        return None
+    zeile = " ".join(zeile.split())
+    return zeile if ist_klasse_2(zeile) else f"{HANDLUNG_KOPF} {zeile}"
+
+
+def _erste(werte: Iterable[str], finde: Callable[[str], str | None]) -> str | None:
+    for wert in werte:
+        if isinstance(wert, str) and wert.strip():
+            if (treffer := finde(unicodedata.normalize("NFKC", wert))) is not None:
+                return treffer
+    return None
+
+
+# --- Befehle ---------------------------------------------------------------------------------
+
+#: Heredoc-Inhalt bleibt immer im Befehl: jeder Interpreter (bash, python, psql, node …) führt ihn
+#: aus. ponytail: ``cat > datei <<EOF`` mit Live-Wörtern wird Fehlalarm, sichere Richtung (PR 374 R10).
+_ZITAT = re.compile(r"'[^']*'|\"(?:\\.|[^\"\\])*\"")
+#: Inhalt in Anführungszeichen direkt dahinter wird ausgeführt, bleibt also drin.
+_DURCHREICHEN = re.compile(
+    r"(?:\b(?:bash|sh|zsh|su)\s+(?:-\S+\s+)*-\w*c|\beval|\bssh\b[^;&|\n]*|\bxargs(?:\s+-\S+)*"
+    r"|\btimeout\s+(?:-\S+\s+)*\S+|\bwatch(?:\s+-\S+)*)\s*$"
+)
+_ENV = r"\.env(?!\.(?:example|sample|template|dist))(?!\w)"
+#: Anfang eines Befehlsteils samt Vorsätzen, die den Befehl nur weiterreichen.
+_START = (
+    r"(?:^|[;&|(`\n]|\$\()\s*(?:(?:sudo|exec|nohup|env|time|command)\s+(?:-\S+\s+)*)*(?:\w+=\S*\s+)*"
+    r"(?:(?:timeout\s+(?:-\S+\s+)*\S+|xargs(?:\s+-\S+)*|watch(?:\s+-\S+)*)\s+)?"
+)
+_DEPLOY_AUFRUF = re.compile(
+    _START + r"(?:(?:bash|sh|zsh|source|\.|python3?|uv\s+run(?:\s+python3?)?|make|node|npx)\s+(?:-\S+\s+)*)?"
+    r"(?P<skript>[^\s;&|()`]*(?:deploy|rollout|release|publish|live|ship)[^\s;&|()`]*)"
+)
+#: Deploy-Skript-Name irgendwo im Befehl, auch in Anführungszeichen, Variable oder Schleife.
+#: Nur als Wert (``S=…``, ``for s in …``, ``['…']``), nicht als bloßes Argument (``git add …``).
+_DEPLOY_SKRIPT = re.compile(
+    r"(?:=|\bin\s+|['\"(\[,]\s*)[\w./~-]*(?:deploy|rollout|release|publish)[\w.-]*\.(?:sh|ps1)(?![\w.])"
+)
+#: Heredoc-Inhalt; dort zählt auch Zitiertes (``subprocess.run(['ssh', …])``).
+_HEREDOC = re.compile(r"<<-?[ \t]*(['\"]?)(\w+)\1[^\n]*\n(.*?)(?=\n[ \t]*\2[ \t]*(?:\n|$)|\Z)", re.S)
+_GIT = r"\bgit(?:\s+(?:-c\s+\S+|--[\w-]+=\S+))*"  # „git -C <pfad> push“ (Text ist klein geschrieben)
+_BEFEHL = re.compile(
+    "|".join(
+        (
+            # Fernzugriff
+            r"(?<![\w.-])(?:ssh|scp|sftp)(?![\w-])",
+            r"\brsync\b[^;&|\n]*\s[\w.@-]+:",
+            # weitere Deploy-Befehle
+            r"\b(?:npm|pnpm|yarn)\s+(?:run\s+)?(?:deploy|release|publish)\b",
+            r"\b(?:vercel|netlify|fly|flyctl)\s+deploy\b|\s--prod(?:uction)?(?![\w-])",
+            r"\bkubectl\s+(?:apply|delete|rollout)\b|\bterraform\s+(?:apply|destroy)\b",
+            r"\bgh\s+workflow\s+run\b|\bdocker\s+push\b|\bgh\s+release\s+create\b",
+            r"\bsystemctl\s+(?:restart|stop|disable)\b|\bcrontab\s+-r\b",
+            # Merge
+            r"\bgh\s+pr\s+merge\b|\bgh\s+api\b[^;&|\n]*/merge\b",
+            _GIT + r"\s+push\b[^;&|\n]*(?:\s|:|refs/heads/)(?:main|master)(?=$|[\s;&|)])",
+            _GIT + r"\s+push\b[^;&|\n]*\s--(?:mirror|all)\b",
+            # HTTP mit Schreib-Methode
+            r"\bcurl\b[^;&|\n]*?(?:\s-[a-z]*x\s*(?:post|put|delete|patch)\b|--request[\s=]+(?:post|put|delete|patch)\b"
+            r"|\s-d(?![\w-])|\s--data[\w-]*|\s--form\b)",
+            r"\bwget\b[^;&|\n]*--post",
+            # Zugang
+            r"(?<![\w.-])bw\s+[a-z]",
+            r"\bgh\s+(?:auth|secret)\b|\bop\s+(?:read|item|signin|inject)\b",
+            r"\b(?:cat|source|less|more|head|tail|bat)\b[^;&|\n]*" + _ENV,
+            r"(?:^|[;&|(\s])\.\s+\S*" + _ENV + r"|>>?\s*\S*" + _ENV,
+            # Löschen
+            r"\bgh\s+(?:repo|release)\s+delete\b",
+            r"\bdocker\s+volume\s+(?:rm|prune)\b|\bdocker\s+system\s+prune\b",
+            r"\bdocker[\s-]compose\b[^;&|\n]*\sdown\b[^;&|\n]*\s-v\b",
+            # Geld
+            r"(?<![\w.-])(?:stripe|paypal)(?![\w-])",
+        )
+    )
+)
+#: Auch in Anführungszeichen gesucht (dort stehen Pfade und SQL meist).
+_SQL = re.compile(r"\b(?:drop\s+(?:table|database|schema)|delete\s+from|truncate\s+table)\b")
+_RM = re.compile(r"(?:^|[;&|(`\s])rm\s+([^;&|\n`)]*)")
+_RM_ERLAUBT = re.compile(r"(?:/tmp/|/var/tmp/|(?:~|\$\{?home\}?|/home/[^/\s]+|/root)/wt/)")
+_PUSH = re.compile(_GIT + r"\s+push\b([^;&|\n]*)")
+_EIGENER_ZIEL = re.compile(r"(?:refs/heads/)?(?:wip|ticket)/\S")
+
+
+def _nur_umbrueche(text: str) -> str:
+    return "\n" * text.count("\n")
+
+
+def _ohne_zitate(b: str) -> str:
+    """Inhalte von ``'…'``/``"…"`` weg (Umbrüche bleiben), außer sie werden ausgeführt."""
+    teile: list[str] = []
+    pos = 0
+    for m in _ZITAT.finditer(b):
+        innen = m.group(0)[1:-1]
+        teile.append(b[pos : m.start()])
+        if _DURCHREICHEN.search(b[max(0, m.start() - 200) : m.start()]) or (m.group(0)[0] == '"' and "$(" in innen):
+            teile.append(f";{_ohne_zitate(innen)};")  # „;“: Inhalt ist ein eigener Befehlsteil
+        else:
+            teile.append(" " + _nur_umbrueche(innen) + " ")
+        pos = m.end()
+    teile.append(b[pos:])
+    return "".join(teile)
+
+
+def _rm_treffer(b: str) -> re.Match[str] | None:
+    for m in _RM.finditer(b):
+        teile = m.group(1).split()
+        if not any(re.fullmatch(r"-[a-z]*r[a-z]*|--recursive", t) for t in teile):
+            continue
+        for t in teile:
+            if t[:1] in "/~$" and not t.startswith("-") and not _RM_ERLAUBT.match(t):
+                return m
+    return None
+
+
+def _force_push_treffer(b: str) -> re.Match[str] | None:
+    for m in _PUSH.finditer(b):
+        teile = re.split(r"\s+\d*[<>]", m.group(1))[0].split()  # Umleitung „2>…“ gehört nicht dazu
+        flags = [t for t in teile if t.startswith("-")]
+        rest = [t for t in teile if not t.startswith("-")]
+        force = any(re.fullmatch(r"-[a-z]*f[a-z]*|--force(?:-with-lease|-if-includes)?(?:=\S*)?", t) for t in flags)
+        if not force and not any(t.startswith("+") for t in rest):
+            continue
+        ziele = [t.lstrip("+").rpartition(":")[2] for t in rest[1:]]
+        if not ziele or not all(_EIGENER_ZIEL.match(z) for z in ziele):
+            return m
+    return None
+
+
+def _befehl_zeile(befehl: str) -> str | None:
+    """Zeile von ``befehl`` mit Klasse-2-Handlung (siehe :func:`handlung_klasse_2`)."""
+    roh = befehl.lower()
+    ohne = _ohne_zitate(roh)
+    offen = re.sub(r"['\"]", " ", roh)  # Inhalte bleiben, nur die Zeichen fallen
+    # Beide Sichten behalten die Zeilen-Umbrüche: Zeilen-Nummer = Umbrüche vor dem Treffer.
+    nr: list[int] = []
+    if m := _BEFEHL.search(ohne):
+        nr.append(ohne.count("\n", 0, m.end()))
+    for m in _DEPLOY_AUFRUF.finditer(ohne):
+        skript = m.group("skript")
+        if "staging" not in skript and "tests/" not in skript and "=" not in skript:
+            nr.append(ohne.count("\n", 0, m.start("skript")))
+            break
+    if m := _force_push_treffer(ohne):
+        nr.append(ohne.count("\n", 0, m.end()))
+    for m in _DEPLOY_SKRIPT.finditer(roh):
+        if "staging" not in m.group(0) and "tests/" not in m.group(0):
+            nr.append(roh.count("\n", 0, m.end()))
+            break
+    for h in _HEREDOC.finditer(roh):
+        if m := _BEFEHL.search(re.sub(r"['\"]", " ", h.group(3))):
+            nr.append(roh.count("\n", 0, h.start(3) + m.end()))
+            break
+    if m := _rm_treffer(offen) or _SQL.search(offen):
+        nr.append(offen.count("\n", 0, m.end()))
+    if not nr:
+        return None
+    zeilen = befehl.splitlines() or [befehl]
+    return zeilen[min(min(nr), len(zeilen) - 1)]
+
+
+# --- Texte -----------------------------------------------------------------------------------
+
+#: Ziel einer Live-Handlung; als Wortteil erlaubt („neuerVps“, „deployProd“), aber nicht vor einem
+#: weiteren Buchstaben („deliver“, „reproduziert“, „Produkt“).
+_LIVE_ZIEL = re.compile(r"(?:live|prod|produktion|production|vps|hauptapp)(?![a-zäöüß])", re.I)
+_LIVE_VERB = re.compile(
+    # Trennbare Verben („spiele … ein“, „rolle … aus“, „starte … neu“): Stamm allein zählt.
+    r"(?<!\w)(?:(?:ein|aus|neu)?(?:ge)?(?:deploy|schalt|roll|spiel|start|restart)|aus(?:ge)?liefer"
+    r"|veröffentlich|hoch(?:ge)?lad)\w*",
+    re.I,
+)
+_TEXT_FEST = re.compile(
+    r"go[-_ ]?live(?![a-zäöüß])"
+    r"|(?<!\w)(?:geht|ging|gehen|gegangen)\s+(?:(?:jetzt|direkt|sofort|gleich)\s+)?live(?!\w)"
+    r"|(?<!\w)(?:live|prod)[-_ ]?(?:deploy\w*|stand|server|system|db|datenbank|daten|umgebung|app|instanz"
+    r"|container|api)(?!\w)",
+    re.I,
+)
+#: (Verb, Objekt) je Satz, höchstens :data:`_ABSTAND` Zeichen auseinander, beliebige Reihenfolge;
+#: Konto-Objekte dürfen Wortteil sein („Kundenkonto“).
+_TEXT_PAARE = tuple(
+    (re.compile(v, re.I), re.compile(o, re.I))
+    for v, o in (
+        (  # Kosten
+            r"(?<!\w)(?:kauf|bestell|bezahl|abonnier|kündig|überweis|gekauf|gekündig|buch(?:e|en|t|te|ten|ung))\w*",
+            r"(?<!\w)abo|(?<!\w)plan(?!\w)|tarif|lizenz|paket|euro(?!pa)|€|guthaben|credit|phone|gerät|vertrag",
+        ),
+        (  # Löschen
+            r"(?<!\w)(?:lösch|gelösch|delete|wipe|drop)\w*",
+            r"(?<!\w)(?:live(?!\w)|prod|datenbank|db(?!\w)|kunden|backup|repo)|konto|konten|account",
+        ),
+        (  # Konten und Zugang
+            r"(?<!\w)(?:anleg|erstell|registrier|einlogg|anmeld|eintrag|rotier|leg|(?:ge)?logg|(?:ge)?setz|(?:ge)?änder)\w*",
+            r"konto|konten|account|passw|api-?key|secret|zugang|2fa",
+        ),
+    )
+)
+#: Satz-Ende; „;“ und „|“ trennen im Text nicht (Tabellenzeile „| Kauf | Abo |“, PR 374 R10).
+_SATZ = re.compile(r"(?<=[.!?·])\s+")
+_ABSTAND = 120
+
+
+def _paar(verb: re.Pattern[str], ziel: re.Pattern[str], satz: str) -> bool:
+    verben = [m.span() for m in verb.finditer(satz)]
+    return any(max(0, z.start() - e, a - z.end()) <= _ABSTAND for z in ziel.finditer(satz) for a, e in verben)
+
+
+def _text_zeile(text: str) -> str | None:
+    """Zeile von ``text`` mit Klasse-2-Handlung (alles innerhalb eines Satzes)."""
+    for zeile in text.splitlines():
+        for satz in _SATZ.split(zeile):
+            if (
+                _TEXT_FEST.search(satz)
+                or _paar(_LIVE_VERB, _LIVE_ZIEL, satz)
+                or any(_paar(v, o, satz) for v, o in _TEXT_PAARE)
+            ):
+                return zeile
+    return None
+
+
+# --- Werkzeuge und Pfade ---------------------------------------------------------------------
+
+_WERKZEUG = re.compile(
+    r"^mcp__.*(?:purchase|buy|order|renew|pay|billing|delete|remove|destroy|deploy|create_?phone|send"
+    r"|ssh|remote)"
+)
+_PFAD = re.compile(_ENV + r"|secret|credential")
 
 
 def _ziel_text(ziel: str, n: str | int) -> str:

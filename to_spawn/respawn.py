@@ -41,7 +41,16 @@ from pathlib import Path
 from types import FrameType
 from typing import Literal, Protocol
 
-from to_spawn import capo, config, pc_fenster, prozessbaum, sessions_datei, speicher, tmux_aufruf
+from to_spawn import (
+    anleitung,
+    capo,
+    config,
+    pc_fenster,
+    prozessbaum,
+    sessions_datei,
+    speicher,
+    tmux_aufruf,
+)
 from to_spawn.tmux_aufruf import FensterWeg, TmuxFehler
 
 log = logging.getLogger(__name__)
@@ -75,7 +84,7 @@ BEENDEN_TAKT_S = 1.0
 #: So lange darf die alte Session nach Schritt e noch arbeiten (Commit), bevor sie endet.
 ALT_RUHE_MAX_S = 120.0
 WARTE_MAX_VORGABE = 1800.0
-REMOTE_CONTROL = "/remote-control"
+REMOTE_CONTROL = anleitung.REMOTE_CONTROL
 HANDOFF_ORDNER = "docs/handoffs"
 
 EXIT_OK = 0
@@ -90,10 +99,7 @@ SCHON_WEG: Beendet = "schon_weg"
 LEBT: Beendet = "lebt"
 
 #: Wird der alten Session getippt, wenn die Ablösung nach Schritt a abbricht.
-WEITER_AUFTRAG = (
-    "Ablösung abgebrochen (respawn). Die neue Session startet nicht — arbeite normal "
-    "am Ticket weiter. Handoff-Datei und Start-Prompt dürfen liegen bleiben."
-)
+WEITER_AUFTRAG = anleitung.WEITER_AUFTRAG
 
 
 @dataclass(frozen=True)
@@ -388,16 +394,7 @@ def _groesse(pfad: Path | None) -> int:
         return -1
 
 
-def _handoff_auftrag(handoff: str, start: str) -> str:
-    return (
-        "Ablösung dieser Session (respawn, Skill handoff, Bau-Variante): Schreib jetzt den "
-        f"Handoff nach {handoff} und den Start-Prompt für die neue Session nach {start} "
-        "(nur Text, die neue Session liest ihn als ersten Auftrag). Gibt es die Dateien schon, "
-        "sind sie aus einer früheren Runde veraltet: komplett mit dem jetzigen Stand "
-        "überschreiben, auch wenn sich wenig geändert hat. Beide Dateien committen. "
-        "Keine Zeile „Staffel: weiter“ ausgeben — die neue Session übernimmt, eine "
-        "Folge-Runde in diesem Fenster wäre eine zweite Session. Danach nichts mehr tun."
-    )
+_handoff_auftrag = anleitung.handoff_auftrag
 
 
 def handoff_auftrag_fuer(wt: Path, ticket: int, jetzt: float) -> str:

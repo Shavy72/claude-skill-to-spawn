@@ -32,6 +32,19 @@ arbeitet seit :data:`eigener_handoff.STILL_MIN` Minuten nicht, startet die Leite
 Folge-Session ab diesem Handoff neu (Aktion ``folge_handoff``) — Regel und Start in
 :mod:`to_spawn.eigener_handoff`.
 
+Frage im Fenster (#372, Lastenheft L9 A60): Zeigt das Fenster eine Rückfrage — oder ist es
+still (ab Mindest-Ruhe, Stufe 0/1, Ticket offen) und endet mit einer Frage an den Menschen
+(:func:`aufseher_stand.frage_im_text`) —, entsteht genau ein Auftrag: die Frage geht in den
+Briefkasten (:func:`frage_einwerfen`) und die Zeile sagt dem Aufseher „Frage von Ticket N per
+Entscheider-Helfer beantworten“ (Aktion ``entscheider``). Klasse 2 (:func:`befugnis.ist_klasse_2`,
+dieselbe Stelle wie im Briefkasten) wird nie selbst entschieden: Aktion ``mensch``, die Zeile sagt
+„braucht den Menschen“. Klasse 2 ist die Frage auch, wenn die Session seit der zuletzt
+weitergegebenen Stelle ein Klasse-2-Wort geschrieben hat (:func:`aufseher_stand.fenster_blick`,
+Quelle Transkript, :mod:`verlauf_pruefung`); wer ins Fenster getippt hat, spielt keine Rolle.
+Gemerkt wird der Frage-Schlüssel (:func:`frage_schluessel`) je Ticket, nach geglückter Weitergabe
+auch die neue Stelle (Notiz ``leiter-grenze-<N>``); dieselbe Frage löst nie erneut aus, eine neue
+schon; arbeitet das Fenster wieder, wird die Frage vergessen, die Stelle bleibt.
+
 Am PC (Windows, #501) ist nichts tippbar: :func:`fuer_rechner` macht aus Stufe 1/2
 direkt Stufe 3 (Zeile „PC: Stufe 1 übersprungen“), aus ``/exit`` eine Meldung.
 
@@ -49,6 +62,7 @@ Exit-Code von ``respawn``.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -60,6 +74,8 @@ from to_spawn import (
     anleitung,
     aufseher_stand,
     bau_log,
+    befugnis,
+    briefkasten,
     config,
     eigener_handoff,
     gh,
@@ -90,7 +106,7 @@ EXIT_FEHLER = 1
 
 #: Stufe 1 (E11 Richtung 2): Mindset-Stoß, Text aus der Aufseher-Anleitung (#500).
 MINDSET_TEXT = anleitung.anstupser("Aufseher")
-EXIT_TEXT = "/exit"
+EXIT_TEXT = anleitung.EXIT
 #: Vorgabe für :attr:`Lage.anlauf`, wenn die Wiederanlauf-Art nicht erfragt wurde (Stufe nicht
 #: ``fertig_gebaut`` oder Quelle ohne diese Frage): die Stufe allein entscheidet wie vor #282 P3.
 OHNE_ANLAUF_FRAGE = wiederanlauf.Wiederanlauf("nichts", (), "")
@@ -106,6 +122,8 @@ Aktion = Literal[
     "zuruecksetzen",
     "melden",
     "folge_handoff",
+    "entscheider",
+    "mensch",
 ]
 
 
@@ -126,6 +144,10 @@ class Lage:
     #: Wiederanlauf-Lage (#282 P3), nur bei Stufe ``fertig_gebaut`` erfragt; ``None`` = unklar.
     #: ``/exit`` nur bei Art ``nichts``.
     anlauf: wiederanlauf.Wiederanlauf | None = OHNE_ANLAUF_FRAGE
+    #: Frage an den Menschen im Fenster (#372, :func:`aufseher_stand.fenster_blick`), ``""`` = keine.
+    frage: str = ""
+    #: Stelle im Transkript, bis zu der ``frage`` geprüft ist (#372); nach der Weitergabe gemerkt.
+    frage_bis: str = ""
 
 
 @dataclass(frozen=True)
@@ -134,6 +156,8 @@ class Gemerkt:
 
     stufe: int
     seit: float | None
+    #: Schlüssel der zuletzt weitergegebenen Fenster-Frage (#372), ``None`` = keine.
+    frage: str | None = None
 
 
 @dataclass(frozen=True)
@@ -162,6 +186,9 @@ class Umwelt(Protocol):
         ...
     def folge_ab_handoff(self, spec: int, ticket: int, treffer: eigener_handoff.Treffer) -> int:
         """Folge-Session ab eigenem Handoff starten (#542); Exit-Code des Neustarts."""
+        ...
+    def frage_einwerfen(self, spec: int, ticket: int, frage: str) -> str:
+        """Fenster-Frage in den Briefkasten (#372); gibt deren ``id``."""
         ...
 
 
@@ -195,11 +222,15 @@ def entscheide(lage: Lage, gemerkt: Gemerkt, jetzt: float, handoff_k: float) -> 
             return Schritt(
                 "zuruecksetzen", "arbeitet wieder nach gescheitertem respawn"
             )
+        if gemerkt.frage is not None:
+            return Schritt("zuruecksetzen", "arbeitet wieder nach Frage")
         return Schritt("nichts", "arbeitet")
     if stufe == 5:
         vor = _minuten(jetzt, gemerkt.seit)
         return Schritt("melden", f"respawn gescheitert vor {vor} min — Aufseher prüfen")
     if lage.fenster == aufseher_stand.RUECKFRAGE:
+        if lage.frage:
+            return _frage_schritt(lage.frage, gemerkt)
         return Schritt("nichts", "Rückfrage offen — Aufseher antwortet")
     if lage.fenster != aufseher_stand.STILL:
         return Schritt("nichts", f"Fenster: {lage.fenster}")
@@ -223,6 +254,9 @@ def entscheide(lage: Lage, gemerkt: Gemerkt, jetzt: float, handoff_k: float) -> 
         return Schritt("exit", f"{wort}, still {still} min")
     if stufe == 4:
         return Schritt("zuruecksetzen", "Ticket wieder offen")
+    if ruhig and lage.frage and stufe in (0, 1):
+        # Wartet auf eine Entscheidung statt zu hängen: Entscheider statt Stupser (#372).
+        return _frage_schritt(lage.frage, gemerkt)
     treffer = lage.eigener_handoff
     if stufe in eigener_handoff.STUFEN and treffer is not None:
         seit = treffer.still_min(jetzt)
@@ -272,6 +306,21 @@ def fuer_rechner(schritt: Schritt, kann_tippen: bool, still_min: int | None = No
     return schritt
 
 
+def frage_schluessel(frage: str) -> str:
+    """Merk-Schlüssel einer Fenster-Frage (Text ohne Leerraum-Unterschiede, #372)."""
+    return hashlib.sha256(" ".join(frage.split()).encode("utf-8")).hexdigest()[:16]
+
+
+def _frage_schritt(frage: str, gemerkt: Gemerkt) -> Schritt:
+    """Frage im Fenster: einmal Entscheider-Auftrag bzw. Klasse 2 an den Menschen (#372)."""
+    kurz = aufseher_stand.frage_kurz(frage, 120)
+    if gemerkt.frage == frage_schluessel(frage):
+        return Schritt("nichts", f"Frage schon weitergegeben — {kurz}")
+    if befugnis.ist_klasse_2(frage):
+        return Schritt("mensch", f"Klasse 2, nicht selbst entscheiden — {kurz}")
+    return Schritt("entscheider", kurz)
+
+
 def _neu_gestartet(lage: Lage, gemerkt: Gemerkt) -> bool:
     """``session_start`` jünger als der gemerkte Eingriff = das Ticket beginnt neu."""
     return (
@@ -298,6 +347,8 @@ _WORT: dict[str, str] = {
     "zuruecksetzen": "zurückgesetzt",
     "melden": "",
     "folge_handoff": "neu gestartet ab eigenem Handoff",
+    "entscheider": "Entscheider-Auftrag",
+    "mensch": "braucht den Menschen",
 }
 
 
@@ -334,9 +385,55 @@ def eingreifen(
         )
 
 
+#: Leitstand-Notiz je Ticket mit dem Schlüssel der weitergegebenen Fenster-Frage (#372).
+_FRAGE_NOTIZ = "leiter-frage-{ticket}"
+
+
+#: Leitstand-Notiz je Ticket: Stelle im Transkript, bis zu der weitergegebene Fragen geprüft sind.
+_GRENZE_NOTIZ = "leiter-grenze-{ticket}"
+
+
+def fenster_frage(ticket: int, ziel: str | None, q: aufseher_stand.Quellen) -> tuple[str, str]:
+    """(Frage, bis) im Fenster von ``ticket`` ab der gemerkten Stelle (#372)."""
+    stelle = leitstand.notiz(_GRENZE_NOTIZ.format(ticket=ticket)) or None
+    return aufseher_stand.fenster_blick(ziel, q, stelle)
+
+
+def gemerkte_frage(ticket: int) -> str | None:
+    """Schlüssel der zuletzt weitergegebenen Fenster-Frage von ``ticket``, ``None`` = keine."""
+    return leitstand.notiz(_FRAGE_NOTIZ.format(ticket=ticket)) or None
+
+
+def frage_einwerfen(hauptbaum: Path, spec: int, ticket: int, frage: str) -> str:
+    """Ungekürzte Fenster-Frage über die Briefkasten-Tür einwerfen; ``id``.
+
+    Abgelegt wird :func:`aufseher_stand.frage_kurz` (Ende bleibt); Klasse 2 wird am ungekürzten
+    Text bestimmt und mitgegeben, damit der Briefkasten sie am gekürzten nie verliert. Liegt
+    dieselbe Frage des Tickets noch offen, kommt deren ``id`` statt eines zweiten Einwurfs —
+    auch wenn das Merken (:func:`_frage_weitergeben`) dauerhaft scheitert.
+    Andockstelle für den Entscheider-Helfer (#365): er findet die Frage in ``briefkasten offene``
+    und antwortet mit ``briefkasten antworten`` — derselbe Weg wie für Fragen der Session.
+    """
+    text = aufseher_stand.frage_kurz(frage)
+    k2 = befugnis.ist_klasse_2(frage)  # ungekürzt: das Live-Wort kann im abgeschnittenen Anfang stehen
+    for offen in briefkasten.offene([ticket], hauptbaum=hauptbaum):
+        # Gleicher Kurztext reicht nicht: eine Klasse-3-Frage verdeckt nie eine neue Klasse-2-Frage.
+        if offen["id"] and offen["frage"] == text and (offen["klasse"] == "2" or not k2):
+            return offen["id"]
+    return briefkasten.einwerfen(
+        ticket,
+        text,
+        "",
+        2 if k2 else None,
+        [f"Fenster bau {ticket}, Spec {spec} (Leiter, #372)"],
+        art="fenster-frage",
+        hauptbaum=hauptbaum,
+    )
+
+
 def _lies(u: Umwelt, spec: int, ticket: int) -> tuple[Gemerkt, Lage, Schritt, float]:
     stufe, seit = leitstand.leiter_eintrag(ticket)
-    gemerkt = Gemerkt(stufe, seit)
+    gemerkt = Gemerkt(stufe, seit, gemerkte_frage(ticket))
     jetzt = u.jetzt()
     lage = u.lage(spec, ticket, seit if stufe == 2 else None)
     schritt = entscheide(lage, gemerkt, jetzt, u.handoff_k())
@@ -364,6 +461,8 @@ def _schritt(u: Umwelt, repo: Path, spec: int, ticket: int) -> Ergebnis:
         if code != 0:
             return Ergebnis(EXIT_FEHLER, _zeile(ticket, f"Neustart ab Handoff gescheitert (Exit {code}) — {schritt.grund}"))
         return Ergebnis(EXIT_OK, _zeile(ticket, f"Stufe 0 {_WORT[schritt.aktion]} — {schritt.grund}"))
+    if schritt.aktion in ("entscheider", "mensch"):
+        return _frage_weitergeben(u, spec, ticket, gemerkt, lage, schritt)
     stufe = gemerkt.stufe
     if schritt.aktion in ("anstupsen", "handoff", "exit"):
         if not lage.ziel:
@@ -387,10 +486,41 @@ def _schritt(u: Umwelt, repo: Path, spec: int, ticket: int) -> Ergebnis:
     elif schritt.aktion == "zuruecksetzen":
         stufe = 0
         leitstand.setze_leiter_stufe(ticket, 0, None)
+        if gemerkt.frage is not None:
+            leitstand.setze_notiz(_FRAGE_NOTIZ.format(ticket=ticket), "")
     elif schritt.aktion == "abschliessen":
         stufe = 0
         leitstand.schliesse_leiter_respawn(ticket, gemerkt.seit or jetzt)
     text = f"Stufe {stufe} {_WORT[schritt.aktion]} — {schritt.grund}"
+    return Ergebnis(EXIT_OK, _zeile(ticket, text))
+
+
+def _frage_weitergeben(
+    u: Umwelt, spec: int, ticket: int, gemerkt: Gemerkt, lage: Lage, schritt: Schritt
+) -> Ergebnis:
+    """Frage einwerfen, dann merken: lieber eine doppelte Frage als eine verlorene (#372).
+
+    Kein Tippen ins Fenster. Scheitert das Merken (Exit 1), gibt der nächste Takt dieselbe Frage
+    erneut weiter; einen zweiten Einwurf verhindert :func:`frage_einwerfen`. Die Stelle
+    ``lage.frage_bis`` rückt nur nach Einwurf und Merken weiter.
+    """
+    frage_id = u.frage_einwerfen(spec, ticket, lage.frage)
+    try:
+        leitstand.setze_notiz(_FRAGE_NOTIZ.format(ticket=ticket), frage_schluessel(lage.frage))
+        # Erst nach Einwurf + Merken: scheitert etwas davor, bleibt die alte Stelle (mehr geprüft).
+        leitstand.setze_notiz(_GRENZE_NOTIZ.format(ticket=ticket), lage.frage_bis)
+    except (OSError, ValueError, leitstand.ZustandKaputt) as fehler:
+        log.warning("leiter #%s: Frage %s nicht gemerkt: %s", ticket, frage_id, fehler)
+        text = f"Frage eingeworfen (id {frage_id}), nicht gemerkt — {fehler}"
+        return Ergebnis(EXIT_FEHLER, _zeile(ticket, text))
+    if schritt.aktion == "mensch":
+        auftrag = f"Klasse 2 dem Nutzer melden (Briefkasten-id {frage_id})"
+    else:
+        auftrag = (
+            f"Frage von Ticket {ticket} per Entscheider-Helfer beantworten "
+            f"(Briefkasten-id {frage_id}), Antwort ins Fenster bau {ticket} geben"
+        )
+    text = f"Stufe {gemerkt.stufe} {_WORT[schritt.aktion]} — {auftrag}: {schritt.grund}"
     return Ergebnis(EXIT_OK, _zeile(ticket, text))
 
 
@@ -505,6 +635,11 @@ class _EchteUmwelt:
         if blick.lage.stufe == "fertig_gebaut" and self.q.anlauf is not None:
             # Einzige Füllstelle der Art; Belege liegen im Arbeitsbaum der Session.
             anlauf = self.q.anlauf(ticket, wt if wt.is_dir() else self.repo)
+        frage, frage_bis = (
+            fenster_frage(ticket, blick.ziel, self.q)
+            if blick.lage.fenster in (aufseher_stand.RUECKFRAGE, aufseher_stand.STILL)
+            else ("", "")
+        )
         return Lage(
             stufe=blick.lage.stufe,
             fenster=blick.lage.fenster,
@@ -516,11 +651,16 @@ class _EchteUmwelt:
             log_unlesbar=unlesbar,
             eigener_handoff=treffer,
             anlauf=anlauf,
+            frage=frage,
+            frage_bis=frage_bis,
         )
 
     def folge_ab_handoff(self, spec: int, ticket: int, treffer: eigener_handoff.Treffer) -> int:
         # Die Leiter hält ihre Sperre ``leiter-<N>`` schon selbst.
         return eigener_handoff.folge_starten(self.repo, spec, ticket, treffer, sperren=False)
+
+    def frage_einwerfen(self, spec: int, ticket: int, frage: str) -> str:
+        return frage_einwerfen(self.repo, spec, ticket, frage)
 
     def _letzter_start(self, ticket: int, wt: Path) -> tuple[float | None, bool]:
         """Jüngster ``session_start`` im Bau-Log und ob das Lesen scheiterte (Warnung)."""
