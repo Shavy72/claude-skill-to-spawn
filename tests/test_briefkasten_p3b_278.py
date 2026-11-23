@@ -253,3 +253,31 @@ def test_uebertragen_nie_aus_bau_session(
     monkeypatch.setenv("TO_SPAWN_TICKET", "278")
     with pytest.raises(briefkasten.Verweigert):
         briefkasten.nutzer_antwort_uebertragen("278", fid, url, hauptbaum=tmp_path)
+
+
+# --- 3/4: Aufseher-Texte aus einer Quelle (Grep-Test) ----------------------------
+
+
+def test_wache_traegt_aufseher_text_wortgleich(befugnis: ModuleType) -> None:
+    import importlib.util
+
+    from to_spawn import startklar
+
+    spec = importlib.util.spec_from_file_location("wache_p3b_278_wortgleich", SKILL / "skripte" / "wache.py")
+    assert spec and spec.loader
+    wache = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(wache)
+    text = wache.prompt_bauen(293, "/r", 1800, {})
+    erwartet = startklar.aufseher_vorlage(befugnis.aufseher_text(f"python {startklar.skill_pfad()}/to_spawn.py"))
+    assert erwartet in text
+    assert "{" not in text.split("## Auftrag", 1)[1].split("## Mindset", 1)[0]  # kein offener Platzhalter
+
+
+@pytest.mark.parametrize(
+    "literal",
+    ["nie selbst freigeben, geht an den Nutzer", "Live, Kosten, Konten echter Personen", "VERBOTEN: die Sperre", "script -qc"],
+)
+def test_pflicht_saetze_nur_in_befugnis(befugnis: ModuleType, literal: str) -> None:
+    for datei in (SKILL / "skripte" / "wache.py", SKILL / "to_spawn" / "waechter_takt.py"):
+        assert literal not in datei.read_text(encoding="utf-8"), f"{literal!r} als Kopie in {datei.name}"
+    assert literal in befugnis.aufseher_text("python X/to_spawn.py")
