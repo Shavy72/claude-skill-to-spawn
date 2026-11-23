@@ -1,0 +1,43 @@
+F..F..                                                                   [100%]
+=================================== FAILURES ===================================
+____________ test_eigener_handoff_ohne_aufsicht_startet_folge_runde ____________
+
+welt = {'wt': PosixPath('/tmp/pytest-of-bau/pytest-2061/test_eigener_handoff_ohne_aufs0/wt-92761'), 'staffel': PosixPath('/tmp/pytest-of-bau/pytest-2061/test_eigener_handoff_ohne_aufs0/out/staffel.json'), 'beendet': []}
+monkeypatch = <conftest._HeimMonkeyPatch object at 0x7f8a65fc92b0>
+
+    def test_eigener_handoff_ohne_aufsicht_startet_folge_runde(
+        welt: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Rot-Beweis #276: Übergabe geschrieben, Ticket offen, kein Aufseher → Folge-Runde."""
+        _uebergabe(welt["wt"])
+        assert _hook(monkeypatch) == 0
+>       assert welt["beendet"] == [4242], "Session wurde nicht abgelöst — Fenster stünde still"
+E       AssertionError: Session wurde nicht abgelöst — Fenster stünde still
+E       assert [] == [4242]
+E         
+E         Right contains one more item: 4242
+E         Use -v to get more diff
+
+tests/test_abloesung_ohne_luecke_276.py:106: AssertionError
+____________________ test_belegte_leiter_sperre_kein_doppel ____________________
+
+welt = {'wt': PosixPath('/tmp/pytest-of-bau/pytest-2061/test_belegte_leiter_sperre_kei0/wt-92761'), 'staffel': PosixPath('/tmp/pytest-of-bau/pytest-2061/test_belegte_leiter_sperre_kei0/out/staffel.json'), 'beendet': []}
+monkeypatch = <conftest._HeimMonkeyPatch object at 0x7f8a65f93100>
+
+    def test_belegte_leiter_sperre_kein_doppel(welt: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
+        _uebergabe(welt["wt"])
+        halter = leitstand.versuche(f"leiter-{TICKET}", "test-aufpasser")
+        assert halter is not None
+        with halter:
+            assert _hook(monkeypatch) == 0
+        assert welt["beendet"] == [] and not welt["staffel"].exists()
+        # Handoff bleibt gültig: Leiter/Aufpasser lösen im nächsten Takt ab.
+>       assert eigener_handoff.der_session(welt["wt"], TICKET, JETZT - 1800) is not None
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: module 'to_spawn.eigener_handoff' has no attribute 'der_session'
+
+tests/test_abloesung_ohne_luecke_276.py:136: AttributeError
+=========================== short test summary info ============================
+FAILED tests/test_abloesung_ohne_luecke_276.py::test_eigener_handoff_ohne_aufsicht_startet_folge_runde
+FAILED tests/test_abloesung_ohne_luecke_276.py::test_belegte_leiter_sperre_kein_doppel
+2 failed, 4 passed in 0.63s
