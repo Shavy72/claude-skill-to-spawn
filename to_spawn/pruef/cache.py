@@ -105,6 +105,9 @@ _LAUF_DATEIEN = tuple(
 )
 #: Bytecode: der einzige Inhalt eines ``__pycache__/``, der nicht zählt.
 _BYTECODE = (".pyc", ".pyo")
+#: Kopf eines ``.pyc`` (PEP 552): Bytes 4–8 = Flags; Bit 0 Hash statt Stempel, Bit 1 Hash prüfen.
+_PYC_FLAGS = slice(4, 8)
+_PYC_UNGEPRUEFT = 0b01
 #: ``node_modules`` (oben wie tief): statt aller Dateien zählt nur die Paketliste darin.
 _MODULE = "node_modules"
 _MODULE_LISTE = ".package-lock.json"
@@ -148,23 +151,45 @@ def ist_werkzeug_rest(repo: Path, pfad: str) -> bool:
     ``pfad`` relativ zum Repo mit ``/``; ein Ordner endet auf ``/`` (so melden ``git status``
     und ``git ls-files --directory`` neue Ordner). Rest sind: Laufdateien (``_ist_laufdatei``),
     Caches in jeder Tiefe, ``.venv``/``venv``/``node_modules`` nur ganz oben. Ein ``__pycache__``
-    ist nur Rest, solange darin ausschließlich ``*.pyc``/``*.pyo`` liegen; deren Inhalt prüft
-    niemand (Grenze, #238: Python lädt ein ``.pyc`` aus ``__pycache__`` nur, wenn sein Stempel zur
-    Quelle passt — nur ein gezielt gefälschter Stempel ginge durch). Im Zweifel ``False``.
+    ist nur Rest, solange darin ausschließlich geprüfter Bytecode liegt (``_geprueft_bytecode``);
+    dessen Inhalt prüft niemand (Grenze, #238: Python lädt ein ``.pyc`` aus ``__pycache__`` nur,
+    wenn Stempel oder Hash zur Quelle passt — nur ein gezielt gefälschter Kopf ginge durch).
+    Im Zweifel ``False``.
     """
     if _ist_laufdatei(pfad):
         return True
     teile = pfad.rstrip("/").split("/")
     if "__pycache__" in teile[:-1]:
-        return pfad.endswith(_BYTECODE)
+        return _geprueft_bytecode(repo / pfad)
     if not pfad.endswith("/"):
         return False
     if teile[-1] == "__pycache__":
         try:
-            return all(n.endswith(_BYTECODE) for _, _, namen in os.walk(repo / pfad, onerror=_wirf) for n in namen)
+            return all(
+                _geprueft_bytecode(Path(wurzel) / n)
+                for wurzel, _, namen in os.walk(repo / pfad, onerror=_wirf)
+                for n in namen
+            )
         except OSError:
             return False
     return teile[-1] in CACHE_ORDNER or (len(teile) == 1 and teile[0] in INSTALL_ORDNER)
+
+
+def _geprueft_bytecode(datei: Path) -> bool:
+    """``*.pyc``/``*.pyo``, den Python nie ungeprüft statt der Quelle lädt; sonst ``False``.
+
+    ``--invalidation-mode unchecked-hash`` (#343) lädt Python ohne Abgleich mit der Quelle:
+    veralteter Bytecode liefe statt des Codes, darum zählt er wie Code. Unlesbar oder ohne
+    vollständigen Kopf lädt Python ihn nie (übersetzt die Quelle neu) → bleibt Rest.
+    """
+    if not datei.name.endswith(_BYTECODE):
+        return False
+    try:
+        with datei.open("rb") as roh:
+            kopf = roh.read(_PYC_FLAGS.stop)
+    except OSError:
+        return True
+    return len(kopf) < _PYC_FLAGS.stop or int.from_bytes(kopf[_PYC_FLAGS], "little") & 0b11 != _PYC_UNGEPRUEFT
 
 
 def _ist_laufdatei(pfad: str) -> bool:
@@ -228,15 +253,19 @@ def _versteckte(repo: Path) -> list[str]:
     return sorted(dateien)
 
 
+class _OhnePaketliste(OSError):
+    """Dauerzustand des Repos (pnpm/yarn/bun), kein Fehler: nur ``info``, nicht je Lauf ``warning`` (#343)."""
+
+
 def _paketliste(repo: Path, ordner: str) -> str:
     """Einzige Regel für ``node_modules/`` (oben wie tief, #224): es zählt nur seine Paketliste.
 
     Fehlt die Liste (pnpm/yarn/bun, ``npm link``, Ordner mit Testdaten), ist der Inhalt unklar:
-    ``OSError`` → kein Schlüssel statt eines Schlüssels, der Änderungen darin nicht sieht.
+    ``_OhnePaketliste`` → kein Schlüssel statt eines Schlüssels, der Änderungen darin nicht sieht.
     """
     liste = f"{ordner.rstrip('/')}/{_MODULE_LISTE}"
     if not (repo / liste).is_file():
-        raise OSError(f"{ordner.rstrip('/')}/ ohne {_MODULE_LISTE}")
+        raise _OhnePaketliste(f"{ordner.rstrip('/')}/ ohne {_MODULE_LISTE}")
     return liste
 
 
@@ -318,6 +347,9 @@ def schluessel(repo: Path, basis: str, ziel: str) -> str | None:
         for name in versteckt:
             _datei(hasher, repo / name, f"versteckt/{name}")
         pakete = _pakete(repo)
+    except _OhnePaketliste as fehler:
+        log.info("Prüf-Cache: kein Cache, Paketliste fehlt (%s)", fehler)
+        return None
     except (OSError, ValueError) as fehler:
         log.warning("Prüf-Cache: Schlüssel nicht bestimmbar (%s)", fehler)
         return None
