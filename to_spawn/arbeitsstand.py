@@ -20,7 +20,8 @@ Nachzieh-Regel: ``git merge --ff-only origin/<Hauptzweig>``, keine eigene Sauber
 davor. Lokale Änderungen an Dateien, die die neuen Commits nicht berühren (z. B. ein früher
 an die getrackte ``.gitignore`` gehängter Block), bleiben unangetastet und hindern nicht;
 würde eine lokal geänderte oder unversionierte Datei überschrieben, verweigert git selbst
-und nichts bewegt sich. Nie reset/stash/rebase/checkout.
+und nichts bewegt sich. Nie reset/stash/rebase/checkout; autostash aus (``--no-autostash``),
+kein Login-Prompt (``GIT_TERMINAL_PROMPT=0``).
 
 Auch „nur prüfen“ führt ``git fetch origin`` aus (ändert nur Remote-Refs, ohne ihn wäre die
 Zahl falsch) und wartet nur kurz (:data:`SPERRE_WARTEN_PRUEFEN_S`) auf die Sperre.
@@ -82,6 +83,7 @@ def _git(repo: Path, *args: str, timeout: float = GIT_TIMEOUT_S) -> tuple[int, s
         fertig = subprocess.run(
             ["git", *args],
             cwd=str(repo),
+            env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -168,7 +170,7 @@ def _pruefen_und_nachziehen(repo: Path, nachziehen: bool) -> Stand:
         )
     if not nachziehen:
         return Stand(VERALTET, f"{vorn}. Tun: {nachzieh_befehl}", hinter)
-    code, aus = _git(repo, "merge", "--ff-only", "--quiet", ziel)
+    code, aus = _git(repo, "merge", "--ff-only", "--no-autostash", "--quiet", ziel)
     if code != 0:
         return Stand(ABBRUCH, _merge_abbruch(repo, ziel, vorn, nachzieh_befehl, aus), hinter)
     log.info("%s — %d Commits nachgezogen.", vorn, hinter)
