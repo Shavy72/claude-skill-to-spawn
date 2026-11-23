@@ -122,11 +122,9 @@ if [ -n "$REPO" ]; then
   for datei in "$HIER"/repo-scripts/*; do
     [ -f "$datei" ] || continue  # nur Dateien: __pycache__ u. a. Ordner nie ins Repo (#155)
     name="$(basename "$datei")"
-    if [ "$name" = "_default.json" ]; then
-      ziel_datei="$MANIFESTE/_default.json"
-    else
-      ziel_datei="$REPO/scripts/$name"
-    fi
+    # Start-Text kommt aus der Skill-Vorlage; Repo-Regeln über start_text.zusatz_datei (#274 P1).
+    [ "$name" = "_default.json" ] && continue
+    ziel_datei="$REPO/scripts/$name"
     if [ -e "$ziel_datei" ]; then
       echo "übersprungen (existiert): $ziel_datei"
     else

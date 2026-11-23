@@ -49,6 +49,8 @@ TYPEN = (
     "zusammenfassung",
     # Lernschleife (#286): erkannter Stillstand mit Klasse/Symptom/Ursache/Lösung.
     "vorfall",
+    # bau.py (#274 P1): Warnung beim Start (Regel-Kopie ignoriert, Repo-Zusatz unbrauchbar), Feld ``text``.
+    "start_warnung",
     # Aufseher (#448): eigenes Fehl-Reopen zurückgenommen (Feld ``text``).
     "ruecknahme",
     # Aufsicht (#436): Kontext an der Handoff-Grenze → Aufseher-Ablösung über respawn

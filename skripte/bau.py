@@ -44,6 +44,7 @@ if _SKILL not in sys.path:
     sys.path.insert(0, _SKILL)
 from to_spawn import (
     anleitung,
+    bau_log,
     befugnis,
     capo,
     config,
@@ -173,6 +174,24 @@ def load_default() -> dict:
     return default
 
 
+#: Bau-Log-Ticket für :func:`start_warnung`; ``main`` setzt es nur außerhalb von ``--dry-run``
+#: (Probelauf ohne Seiteneffekte, #205). ``None`` → Warnung nur auf stderr.
+START_WARNUNG_TICKET: str | None = None
+
+
+def start_warnung(text: str) -> None:
+    """Warnung beim Start: stderr und Bau-Log-Laufdatei (Typ ``start_warnung``, #274 P1).
+
+    Das Fenster übermalt stderr, sobald Claude startet — im Bau-Log bleibt die Zeile lesbar."""
+    log.warning("%s", text)
+    if START_WARNUNG_TICKET is None:
+        return
+    try:
+        bau_log.schreibe(REPO, START_WARNUNG_TICKET, "start_warnung", text=text)
+    except OSError as exc:
+        log.warning("Bau-Log nicht beschreibbar (%s) — Warnung nur im Fenster.", exc)
+
+
 def regel_kopie_warnen() -> None:
     """Liegt noch eine Repo-Kopie ``_default.json``, laut melden: sie wird nicht mehr gelesen (#274 P1)."""
     kopie = MANIFEST_DIR / "_default.json"
@@ -181,9 +200,9 @@ def regel_kopie_warnen() -> None:
             anzeige = kopie.relative_to(REPO)
         except ValueError:
             anzeige = kopie
-        log.warning(
-            "Regel-Kopie %s wird ignoriert; Repo-Teile nach start_text.zusatz_datei umziehen, dann Datei löschen.",
-            anzeige,
+        start_warnung(
+            f"Regel-Kopie {anzeige} wird ignoriert; Repo-Teile nach start_text.zusatz_datei umziehen, "
+            "dann Datei löschen."
         )
 
 
@@ -452,16 +471,27 @@ def worktree_pfad(ticket: str) -> str:
 def repo_zusatz(konfig: dict) -> str:
     """Text der Repo-Zusatz-Datei (``start_text.zusatz_datei``, relativ zum Repo), sonst ``""``.
 
-    Nicht konfiguriert → still ``""``; konfiguriert, aber nicht lesbar → Warnung, Start ohne Zusatz."""
+    Die eine Stelle für alle Fehlerfälle (#274 P1): nicht konfiguriert → still ``""``;
+    Pfad führt aus dem Repo heraus (``../``, absolut, Symlink nach außen) oder Datei fehlt/
+    ist kein UTF-8 → :func:`start_warnung`, Start ohne Zusatz — nie ein Abbruch."""
     rel = str((konfig.get("start_text") or {}).get("zusatz_datei") or "").strip()
     if not rel:
         return ""
-    pfad = REPO / rel
+    wurzel = REPO.resolve()
+    pfad = (wurzel / rel).resolve()
+    if not pfad.is_relative_to(wurzel):
+        start_warnung(f"Repo-Zusatz {rel} liegt außerhalb des Repos — Start ohne Zusatz.")
+        return ""
     try:
         return pfad.read_text(encoding="utf-8").strip()
-    except OSError as exc:
-        log.warning("Repo-Zusatz %s nicht lesbar (%s) — Start ohne Zusatz.", rel, exc)
+    except (OSError, UnicodeDecodeError) as exc:
+        start_warnung(f"Repo-Zusatz {rel} nicht lesbar ({exc}) — Start ohne Zusatz.")
         return ""
+
+
+#: Platzhalter, die ein Repo-Zusatz nutzen darf (#274 P1). Alles andere (``{KONTEXT}``,
+#: JSON-Klammern …) bleibt im Zusatz wörtlich stehen — nichts wird zweimal eingesetzt.
+ZUSATZ_PLATZHALTER = ("{N}", "{S}", "{REPO}", "{WT}", "{HAUPTZWEIG}")
 
 
 def build_prompt(
@@ -477,29 +507,32 @@ def build_prompt(
     ``{SESSION_KOPF}`` = Marke jedes Session-Kommentars aus ``capo.SESSION_KOPF`` (#402),
     ``{MINDSET}``/``{ABLOESE_SOP}`` = feste Texte aus ``anleitung`` (#500),
     ``{BEFUGNIS}`` = Befugnis-Abschnitt aus ``befugnis.start_text`` (#278),
-    ``{REPO_ZUSATZ}`` = Inhalt von ``start_text.zusatz_datei`` (#274 P1) — zuerst eingesetzt, damit
-    der Zusatz dieselben Platzhalter nutzen kann; leer → Platzhalter samt Überschrift darüber entfällt."""
+    ``{REPO_ZUSATZ}`` = Inhalt von ``start_text.zusatz_datei`` (#274 P1) — zuletzt eingesetzt, darin
+    nur :data:`ZUSATZ_PLATZHALTER` ersetzt; leer → Platzhalter samt Überschrift darüber entfällt."""
     konfig = konfig if konfig is not None else config.lade(REPO)
     label = str((konfig.get("regularien") or {}).get("checkpoint_label") or "checkpoint:human")
+    werte = {
+        "{WT}": worktree_pfad(ticket),
+        "{N}": ticket,
+        "{S}": spec,
+        "{TITLE}": title,
+        "{KONTEXT}": kontext,
+        "{REPO}": GH_REPO,
+        "{HAUPTZWEIG}": gh.hauptzweig(REPO),
+        "{CHECKPOINT_LABEL}": label,
+        "{SESSION_KOPF}": capo.SESSION_KOPF,
+        "{MINDSET}": anleitung.MINDSET,
+        "{ABLOESE_SOP}": anleitung.ABLOESE_SOP,
+        "{BEFUGNIS}": befugnis.start_text(ticket),
+    }
     zusatz = repo_zusatz(konfig)
-    if zusatz:
-        template = template.replace("{REPO_ZUSATZ}", zusatz)
-    else:
+    if not zusatz:
         template = re.sub(r"(?:#[^\n]*\n)?\{REPO_ZUSATZ\}\n*", "", template)
-    return (
-        template.replace("{WT}", worktree_pfad(ticket))
-        .replace("{N}", ticket)
-        .replace("{S}", spec)
-        .replace("{TITLE}", title)
-        .replace("{KONTEXT}", kontext)
-        .replace("{REPO}", GH_REPO)
-        .replace("{HAUPTZWEIG}", gh.hauptzweig(REPO))
-        .replace("{CHECKPOINT_LABEL}", label)
-        .replace("{SESSION_KOPF}", capo.SESSION_KOPF)
-        .replace("{MINDSET}", anleitung.MINDSET)
-        .replace("{ABLOESE_SOP}", anleitung.ABLOESE_SOP)
-        .replace("{BEFUGNIS}", befugnis.start_text(ticket))
-    )
+    for platzhalter, wert in werte.items():
+        template = template.replace(platzhalter, wert)
+    for platzhalter in ZUSATZ_PLATZHALTER:
+        zusatz = zusatz.replace(platzhalter, werte[platzhalter])
+    return template.replace("{REPO_ZUSATZ}", zusatz) if zusatz else template
 
 
 # --- Staffel ----------------------------------------------------------------
@@ -878,7 +911,7 @@ def main() -> int:
     args = parser.parse_args()
     ticket = str(args.ticket)
     # GitHub-Slug verbindlich (#257 F5): kein GitHub-Origin → Exit 2 mit Grund, kein Rückfall.
-    global GH_REPO
+    global GH_REPO, START_WARNUNG_TICKET
     GH_REPO = gh_repo_ermitteln(REPO)
     if args.probesitz:
         args.sofort = True
@@ -898,6 +931,8 @@ def main() -> int:
             log.error("--resume %s: Transkript %s fehlt — kein Start.", args.resume, transkript)
             return 2
 
+    if not args.dry_run:  # Probelauf schreibt kein Bau-Log (#205)
+        START_WARNUNG_TICKET = ticket
     regel_kopie_warnen()
     default = load_default()
     found = None if args.probesitz else find_manifest(ticket)

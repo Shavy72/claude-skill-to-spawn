@@ -79,7 +79,9 @@ def test_install_sh_manifest_aus_konfig(tmp_path: Path) -> None:
     repo = _repo(tmp_path, "eigen/manifeste")
     lauf = _install(tmp_path, repo)
     assert lauf.returncode == 0, lauf.stderr
-    assert (repo / "eigen" / "manifeste" / "_default.json").is_file()
+    # #274 P1: Manifest-Ordner aus der Konfig ja, Regel-Kopie _default.json nein.
+    assert (repo / "eigen" / "manifeste").is_dir()
+    assert not (repo / "eigen" / "manifeste" / "_default.json").exists()
     assert not (repo / VORGABE).exists()
 
 
@@ -87,7 +89,8 @@ def test_install_sh_heutiger_aufruf_gleich(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
     assert _install(tmp_path, repo).returncode == 0
     ziel = tmp_path / "skills" / "to-spawn"
-    assert (repo / VORGABE / "_default.json").is_file()
+    assert (repo / VORGABE).is_dir()
+    assert not (repo / VORGABE / "_default.json").exists()  # #274 P1: keine Regel-Kopie
     assert (repo / "scripts" / "bau.py").is_file()
     assert (ziel / "skripte" / "spawn_srv.sh").is_file()
     skills = tmp_path / "skills"

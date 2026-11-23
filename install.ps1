@@ -168,8 +168,7 @@ if ($Repo) {
     $manOrdner = python -c $manPy $ziel (Resolve-Path $Repo).Path manifeste
     if ($LASTEXITCODE -eq 0 -and $manOrdner) { $man = "$manOrdner".Trim() }
     New-Item -ItemType Directory -Force $man | Out-Null
-    $def = Join-Path $man "_default.json"
-    if (-not (Test-Path $def)) { Copy-Item (Join-Path $hier "repo-scripts\_default.json") $def; Write-Host "kopiert: $def" }
+    # Keine Regel-Kopie _default.json: Start-Text kommt aus der Skill-Vorlage; Repo-Regeln über start_text.zusatz_datei (#274 P1).
     # Ohne doppelte Anführungszeichen im -c-Text: Windows PowerShell 5.1 würde sie beim Aufruf verschlucken.
     # Konfig anlegen (+ .gitignore-Block) und Checkpoint-Label im GitHub-Repo sicherstellen (#257).
     $py = 'import sys; sys.path.insert(0, sys.argv[1]); from pathlib import Path; from to_spawn import config, gh; r = Path(sys.argv[2]); print(config.sicherstellen(r)); l = str(config.lade(r).get("regularien", {}).get("checkpoint_label") or "checkpoint:human"); print("Label " + l + (": vorhanden" if gh.label_sicherstellen(r, l) else ": nicht angelegt - von Hand: gh label create " + l))'
