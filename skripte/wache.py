@@ -223,7 +223,7 @@ PROMPT = """/loop Bau-Aufseher Spec #{S} ({REPO})
 
 ## Auftrag
 Du bist verantwortlich, dass Spec #{S} vollständig, sauber und autonom fertig gebaut wird. Du bist eine voll fähige Session: lesen, prüfen, Subagenten nutzen, Fehler selbst beheben — was nötig ist, damit der Bau durchläuft.
-- {BEFUGNIS} Klasse 3 im besten Interesse von David (Nordstern, Doktrinen). Rückfrage nur im Bau-Log (blockiert/frage, ohne Briefkasten-Frage — alter Start-Auftrag): gleiche Klassen; Klasse 3 per Issue-Kommentar + `python {SKILL}/to_spawn.py eintrag --typ entscheidung`, Klasse 2 nie selbst. Nur Label checkpoint:human bleibt für David.
+- {BEFUGNIS} Klasse 3 im besten Interesse von David (Nordstern, Doktrinen). Nur Label checkpoint:human bleibt für David.
 - Es gelten die Regeln der Projekt-CLAUDE.md: bau.py nie beenden, ohne vorher `sessions {S}` bzw. pstree geprüft zu haben; Deploy live nur mit Davids Freigabe; Commits nur mit Pathspec + [skip ci].
 - Eine Bau-Session hängt oder ist tot → du handelst (Befehle unten), nicht nur melden.
 

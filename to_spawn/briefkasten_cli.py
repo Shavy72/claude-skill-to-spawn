@@ -3,7 +3,8 @@
 
 Exit-Codes: ``befugnis`` 0 = Klasse 1, 2 = Klasse 2, 3 = Klasse 3 · ``frage`` 0 = eingeworfen (gibt
 die ``id`` aus), 2 = verweigert · ``antwort`` 0 = Antwort da, 2 = braucht den Nutzer, 3 = WARTET,
-4 = Frage unbekannt (neu stellen) · ``antworten``/``nutzer-antwort``
+4 = Frage unbekannt (neu stellen), 5 = ohne ``--id`` aufgerufen (nicht argparse-2, das hieße „braucht den
+Nutzer“) · ``antworten``/``nutzer-antwort``
 0 = geschrieben, 2 = verweigert, 1 = keine passende offene Frage/Fehler · ``offene`` 0 (eine Zeile
 je offener Frage).
 
@@ -42,7 +43,7 @@ def richte_parser_ein(unter: Any) -> None:
     p_frage.add_argument("--beleg", action="append", default=[])
     p_antwort = unter.add_parser("antwort", help="Antwort lesen (Exit 0 da, 2 Nutzer, 3 WARTET)")
     p_antwort.add_argument("ticket")
-    p_antwort.add_argument("--id", required=True, dest="frage_id")
+    p_antwort.add_argument("--id", dest="frage_id", help="id, die `frage` ausgab (Pflicht; fehlt sie: Exit 5)")
     p_antw = unter.add_parser("antworten", help="Aufseher: Antwort in den Briefkasten")
     p_antw.add_argument("ticket")
     p_antw.add_argument("--id", required=True, dest="frage_id")
@@ -90,6 +91,14 @@ def lauf(args: argparse.Namespace) -> int:
                 if not o["id"]:  # Sperre durch kaputte Datei: nur der Nutzer löst sie
                     print(f"Hinweis: {o['frage']} (Ordner {datei.parent}) — bis dahin bleibt #{args.ticket} gesperrt.")
             return 0
+        if not args.frage_id:
+            log.error(
+                "antwort ohne --id: `antwort %s --id <id>` mit der id, die `frage` ausgab "
+                "(offene Fragen samt id: `offene %s`).",
+                args.ticket,
+                args.ticket,
+            )
+            return 5
         stand = briefkasten.lesen(args.ticket, args.frage_id)
     except briefkasten.Verweigert as fehler:
         log.error("%s", fehler)

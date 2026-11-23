@@ -28,6 +28,9 @@ from dataclasses import dataclass
 #: Kopf des Abschnitts — an ihm erkennt die Ablöse-SOP, was wörtlich mitwandert.
 KOPF = "Befugnis (wer entscheidet, gilt als Wort des Nutzers aus diesem Start-Auftrag):"
 
+#: Was der Aufseher mit Klasse 2 tut — die eine Wendung für jeden Aufseher-Text und jeden Takt-Eintrag.
+KLASSE_2_WEITERGABE = "nie selbst freigeben, geht an den Nutzer"
+
 
 @dataclass(frozen=True)
 class _Regel:
@@ -293,8 +296,8 @@ def aufseher_text(befehl: str) -> str:
     """
     b = befehl
     return (
-        f"Befugnis und Briefkasten (Tür B): PFLICHT: Klasse 2 – {klasse_2_erkennung()} – nie selbst "
-        "freigeben, geht an den Nutzer; die Handlung auch nach deiner Antwort nie selbst ausführen. "
+        f"Befugnis und Briefkasten (Tür B): PFLICHT: Klasse 2 – {klasse_2_erkennung()} – "
+        f"{KLASSE_2_WEITERGABE}; die Handlung auch nach deiner Antwort nie selbst ausführen. "
         f"Offene Briefkasten-Fragen: `{b} offene` (je Ticket id, Klasse, Frage, Vorschlag). "
         "Klasse 3 entscheidest du: Helfer suchen die Haltung des Nutzers (Gedächtnis, Übergaben, Lastenheft, "
         f"Chat-Protokolle), dann `{b} antworten <N> --id <id> --wahl … --grund … --beleg …` (Antwort gilt nur "
@@ -307,5 +310,9 @@ def aufseher_text(befehl: str) -> str:
         "Kommentar im Ticket; eine kaputte Datei prüft und löscht nur der Nutzer. "
         "VERBOTEN: die Sperre von `nutzer-antwort` umgehen (Schein-Terminal wie `script -qc`, direkter "
         "Python-Aufruf von `nutzer_antworten`, Hand-Eintrag in die Briefkasten-Datei) und `nutzer-antwort` "
-        "selbst ausführen oder von einer Session ausführen lassen."
+        "selbst ausführen oder von einer Session ausführen lassen. "
+        "Übergang (alter Start-Auftrag: Rückfrage nur im Bau-Log als blockiert/frage, ohne Briefkasten-Frage): "
+        "gleiche Klassen; Klasse 3 per Issue-Kommentar (max. 2 Zeilen) + "
+        f"`{b} eintrag --ticket <N> --typ entscheidung --frage … --wahl … --grund …`; "
+        f"Klasse 2 {KLASSE_2_WEITERGABE}: Kommentar im Ticket „Aufseher: braucht den Nutzer: <Frage>“."
     )
