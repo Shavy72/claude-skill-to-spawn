@@ -195,17 +195,25 @@ def _pruefen_und_nachziehen(repo: Path, nachziehen: bool) -> Stand:
             hinter,
         )
     if not nachziehen:
+        code, voraus = _git(repo, "rev-list", "--count", f"{ziel}..HEAD")
+        if code == 0 and voraus.isdigit() and int(voraus) > 0:  # ff-Rat würde scheitern
+            tun = f"eigene Commits voraus: {voraus} — nicht vorspulbar, Historie von Hand klären"
+            return Stand(VERALTET, f"{vorn}, {tun}.", hinter)
         return Stand(VERALTET, f"{vorn}. Tun: {nachzieh_befehl}", hinter)
     code, aus = _git(repo, "merge", "--ff-only", "--no-autostash", "--quiet", ziel)
     if code != 0:
-        return Stand(ABBRUCH, _merge_abbruch(repo, ziel, vorn, nachzieh_befehl, aus), hinter)
+        return Stand(
+            ABBRUCH, _merge_abbruch(repo, ziel, vorn, nachzieh_befehl, aus), hinter
+        )
     log.info("%s — %d Commits nachgezogen.", vorn, hinter)
     return Stand(
         NACHGEZOGEN, f"Arbeitsordner {hinter} Commits auf {ziel} nachgezogen", hinter
     )
 
 
-def _merge_abbruch(repo: Path, ziel: str, vorn: str, nachzieh_befehl: str, meldung: str) -> str:
+def _merge_abbruch(
+    repo: Path, ziel: str, vorn: str, nachzieh_befehl: str, meldung: str
+) -> str:
     """Abbruch-Text nach gescheitertem ``merge --ff-only``: Grund aus Historie bzw. git-Meldung."""
     code, voraus = _git(repo, "rev-list", "--count", f"{ziel}..HEAD")
     if code == 0 and voraus.isdigit() and int(voraus) > 0:
@@ -214,9 +222,13 @@ def _merge_abbruch(repo: Path, ziel: str, vorn: str, nachzieh_befehl: str, meldu
             "klären (nicht rebasen/stashen im geteilten Ordner), dann erneut starten."
         )
     # git listet betroffene Dateien eingerückt (Tab) — unabhängig von der Sprache der Meldung.
-    dateien = [z.strip() for z in meldung.splitlines() if z.startswith("	") and z.strip()]
+    dateien = [
+        z.strip() for z in meldung.splitlines() if z.startswith("	") and z.strip()
+    ]
     if dateien:
-        liste = ", ".join(dateien[:5]) + (f" (+{len(dateien) - 5} weitere)" if len(dateien) > 5 else "")
+        liste = ", ".join(dateien[:5]) + (
+            f" (+{len(dateien) - 5} weitere)" if len(dateien) > 5 else ""
+        )
         return (
             f"{vorn} — nicht vorspulbar: Nachziehen würde lokal geänderte oder unversionierte "
             f"Dateien überschreiben: {liste}. Tun: diese Dateien sichern (committen oder "

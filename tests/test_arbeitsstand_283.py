@@ -115,6 +115,16 @@ def test_nur_pruefen_zieht_nicht_nach(klon: Path) -> None:
     assert _git(klon, "rev-list", "--count", "HEAD..origin/main") == str(N)
 
 
+def test_nur_pruefen_hinter_und_voraus_ohne_ff_rat(klon: Path) -> None:
+    """Hinter und eigene Commits voraus: kein ``pull --ff-only``-Rat (der würde scheitern)."""
+    _git(klon, "commit", "-q", "--allow-empty", "-m", "eigen")
+    stand = arbeitsstand.sicherstellen(klon, nachziehen=False)
+    assert stand.zustand == arbeitsstand.VERALTET and "voraus: 1" in stand.text, (
+        stand.text
+    )
+    assert "pull --ff-only" not in stand.text
+
+
 def test_einrichten_pruefen_meldet_veralteten_arbeitsordner(klon: Path) -> None:
     ausgabe = io.StringIO()
     code = einrichten.einrichten(klon, pruefen=True, ausgabe=ausgabe)
@@ -124,8 +134,13 @@ def test_einrichten_pruefen_meldet_veralteten_arbeitsordner(klon: Path) -> None:
     assert f"{N} Commits hinter origin/main" in zeile, text
 
 
-def test_bau_start_bricht_bei_veraltetem_ordner_mit_zeile_ab(klon: Path) -> None:
-    """Echter Start-Weg ``skripte/bau.py <N>``: nicht nachziehbar → Exit 2 + Zeile, kein Start."""
+def test_bau_start_bei_veraltetem_ordner_nur_hinweis_zeile(klon: Path) -> None:
+    """Echter Start-Weg ``skripte/bau.py <N>``: nicht nachziehbar → nur Hinweis-Zeile, Start läuft weiter.
+
+    Nachprüfung #283: ``bau.py`` bricht wegen des Stands nie ab und zieht nie nach. Beleg für
+    „läuft weiter“ ist die Folge-Meldung der nächsten Stelle (kein Manifest für Ticket #7).
+    """
+    vorher = _git(klon, "rev-parse", "HEAD")
     (klon / VORLAGE).write_text('{"prompt_template": "von Hand"}', encoding="utf-8")
     env = {**os.environ, "TO_SPAWN_REPO": str(klon), "TO_SPAWN_GH_REPO": "test-org/app"}
     fertig = subprocess.run(
@@ -139,8 +154,14 @@ def test_bau_start_bricht_bei_veraltetem_ordner_mit_zeile_ab(klon: Path) -> None
         check=False,
     )
     ausgabe = fertig.stdout + fertig.stderr
-    assert fertig.returncode == 2, ausgabe
-    assert f"{N} Commits hinter origin/main" in ausgabe and "Tun:" in ausgabe
+    hinweise = [
+        z for z in ausgabe.splitlines() if f"{N} Commits hinter origin/main" in z
+    ]
+    assert len(hinweise) == 1 and "Tun:" in hinweise[0], ausgabe
+    assert (
+        "Kein Start:" not in ausgabe and "Kein Manifest führt Ticket #7" in ausgabe
+    ), ausgabe
+    assert _git(klon, "rev-parse", "HEAD") == vorher
 
 
 @pytest.mark.parametrize("weg", ["anderer_zweig", "losgeloest"])
