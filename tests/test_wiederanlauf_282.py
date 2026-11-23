@@ -52,6 +52,7 @@ def welt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path]:
     daten.write_text("{}", encoding="utf-8")
     monkeypatch.setenv("TO_SPAWN_GH_STUB", str(STUB))
     monkeypatch.setenv("GH_STUB_DATEN", str(daten))
+    monkeypatch.setenv("GH_STUB_NUR_FELDER", "1")  # wie echtes gh: nur angefragte Felder (Fix-Runde)
     for name in ("GH_STUB_ZU", "GH_STUB_KAPUTT"):
         monkeypatch.delenv(name, raising=False)
     return {"klon": klon, "daten": daten}
@@ -208,3 +209,87 @@ def test_tuer_unbekannt_exit_2(wa: ModuleType, welt: dict[str, Path], monkeypatc
     ergebnis = _tuer(welt["klon"])
     assert ergebnis.returncode == 2
     assert len(ergebnis.stdout.strip().splitlines()) == 1
+
+
+# --- Fix-Runde (282 P1): fail-closed ohne/unerreichbares origin, Belegfälle, Attrappe ------
+
+KLICKWEG_ENTFAELLT = "# Beleg #7\n\nKlickweg: entfällt (reines Backend, keine Oberfläche).\n\n12 passed in 0.4s\n"
+KLICKWEG_VERNEINT = "# Beleg #7\n\nkein Klickweg gemacht.\n\n12 passed in 0.4s\n"
+KLICKWEG_OHNE_LAUF = "# Beleg #7\n\nKlickweg live: Seite geöffnet, Knopf gedrückt, Ergebnis sichtbar.\n"
+
+
+def test_ohne_origin_fail_closed(wa: ModuleType, welt: dict[str, Path]) -> None:
+    _git(welt["klon"], "remote", "remove", "origin")
+    assert wa.feststellen(7, welt["klon"]) is None
+    ergebnis = _tuer(welt["klon"])
+    assert ergebnis.returncode == 2
+    assert not ergebnis.stdout.startswith("neu")
+
+
+def test_origin_unerreichbar_fail_closed(wa: ModuleType, welt: dict[str, Path], tmp_path: Path) -> None:
+    _git(welt["klon"], "remote", "set-url", "origin", str(tmp_path / "gibt-es-nicht.git"))
+    assert wa.feststellen(7, welt["klon"]) is None
+    ergebnis = _tuer(welt["klon"])
+    assert ergebnis.returncode == 2
+    assert not ergebnis.stdout.startswith("neu")
+
+
+def test_abschluss_klickweg_da_lauf_fehlt(wa: ModuleType, welt: dict[str, Path]) -> None:
+    _arbeit(welt["klon"])
+    _beleg(welt["klon"], KLICKWEG_OHNE_LAUF)
+    _issue(welt, labels=["staging:fertig"])
+    lage = wa.feststellen(7, welt["klon"])
+    assert lage is not None and lage.art == "abschluss"
+    assert lage.fehlt == ("grüner Testlauf",)
+
+
+def test_verneinter_klickweg_ist_kein_beleg(wa: ModuleType, welt: dict[str, Path]) -> None:
+    _arbeit(welt["klon"])
+    _beleg(welt["klon"], KLICKWEG_VERNEINT)
+    _issue(welt, labels=["staging:fertig"])
+    lage = wa.feststellen(7, welt["klon"])
+    assert lage is not None and lage.art == "abschluss"
+    assert lage.fehlt == ("Klickweg-Beleg",)
+
+
+def test_klickweg_entfaellt_gilt_als_erfuellt(wa: ModuleType, welt: dict[str, Path]) -> None:
+    _arbeit(welt["klon"])
+    _beleg(welt["klon"], KLICKWEG_ENTFAELLT)
+    _issue(welt, labels=["staging:fertig"])
+    lage = wa.feststellen(7, welt["klon"])
+    assert lage is not None and lage.art == "nichts" and lage.fehlt == ()
+
+
+@pytest.mark.parametrize(
+    ("text", "klickweg", "entfaellt"),
+    [
+        (MIT_KLICKWEG, True, False),
+        (KLICKWEG_ENTFAELLT, False, True),
+        ("Klickweg nicht nötig (nur Skript).\n", False, True),
+        (KLICKWEG_VERNEINT, False, False),
+        (OHNE_KLICKWEG, False, False),
+    ],
+    ids=["klickweg", "entfaellt", "nicht-noetig", "verneint", "ohne"],
+)
+def test_belege_klickweg_entfaellt_merkmal(tmp_path: Path, text: str, klickweg: bool, entfaellt: bool) -> None:
+    """Anzeige-Merkmal ``klickweg`` bleibt wie bisher; „entfällt“ ist ein eigenes Merkmal."""
+    if str(SKILL) not in sys.path:
+        sys.path.insert(0, str(SKILL))
+    belege = importlib.import_module("to_spawn.belege")
+    (tmp_path / "7.md").write_text(text, encoding="utf-8")
+    beleg = belege.auswerten(tmp_path, "7")
+    assert beleg.klickweg is klickweg
+    assert getattr(beleg, "klickweg_entfaellt", None) is entfaellt
+
+
+def test_attrappe_liefert_nur_angefragte_felder(welt: dict[str, Path]) -> None:
+    """Ohne ``assignees`` in ``--json`` kommt kein Claim zurück — wie bei echtem gh."""
+    _issue(welt, assignees=["bot-a"], labels=["x"])
+    roh = subprocess.run(
+        [sys.executable, str(STUB), "issue", "view", "7", "--json", "state,labels"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=True,
+    ).stdout
+    assert json.loads(roh) == {"state": "OPEN", "labels": [{"name": "x"}]}

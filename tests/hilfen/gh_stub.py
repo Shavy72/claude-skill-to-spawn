@@ -19,7 +19,9 @@ ohne die Variable bleibt die Antwort wie bisher nur ``state``),
 Nummer wie bisher über ``GH_STUB_ZU``),
 ``GH_STUB_PROTOKOLL`` (Pfad: jeder Aufruf wird als Zeile angehängt),
 ``GH_STUB_UNTER_ROH`` (gesetzt ⇒ ``sub_issues`` mit ``labels``-Filter gibt genau diesen
-Text aus — für kaputte Listen-Zeilen, #279).
+Text aus — für kaputte Listen-Zeilen, #279),
+``GH_STUB_NUR_FELDER`` (gesetzt ⇒ ``issue view`` liefert wie echtes ``gh`` nur die per
+``--json`` angefragten Felder — fällt auf, wenn ein Aufrufer ein Feld nicht anfragt, #282).
 """
 
 from __future__ import annotations
@@ -88,6 +90,9 @@ def main() -> int:
             return 1
         antwort = {"state": "CLOSED" if nummer in _zu() else "OPEN"}
         antwort.update(_zusatz(nummer))
+        if "GH_STUB_NUR_FELDER" in os.environ and "--json" in args:
+            felder = set(args[args.index("--json") + 1].split(","))
+            antwort = {k: v for k, v in antwort.items() if k in felder}
         print(json.dumps(antwort))
         return 0
     if args[:2] == ["issue", "comment"]:
