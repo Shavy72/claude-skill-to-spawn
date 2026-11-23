@@ -805,9 +805,12 @@ def regel_vps(
     kopf: str | None,
     log_zeilen: list[dict],
     staging_stand: StagingStand | None = None,
+    issue: dict[str, Any] | None = None,
 ) -> Verstoss | None:
     if kopf is None or not eigene:
         return None
+    if issue is not None and gh.wartet_auf_live(issue, live_freigegeben=live_freigabe(vps, ticket)):
+        return None  # #275: grün auf Staging, Live erst nach Freigabe — kein Verstoß
     staging_stand = staging_stand or StagingStand(vps)
     muster = [str(m) for m in vps.get("deploy_pfade") or []]
     relevant = [
@@ -1918,13 +1921,16 @@ def reopen_funde(
     kopf: str | None,
     alle_zeilen: list[dict[str, Any]],
     staging_stand: StagingStand | None = None,
+    issue: dict[str, Any] | None = None,
 ) -> list[Verstoss]:
     """Alle Verstöße, die ein geschlossenes Ticket wieder öffnen (regel_vps nur mit VPS-Konfig)."""
     funde = [
         regel_commit(n, eigene),
         regel_beweis(repo, ref, n, eigene, belege),
         regel_tests(repo, n, eigene),
-        regel_vps(repo, n, eigene, vps, kopf, alle_zeilen, staging_stand) if vps.get("ssh") else None,
+        regel_vps(repo, n, eigene, vps, kopf, alle_zeilen, staging_stand, issue)
+        if vps.get("ssh")
+        else None,
     ]
     return [f for f in funde if f]
 
@@ -2287,7 +2293,7 @@ def _tick(
                 wartet += 1
                 continue
             funde_ok = reopen_funde(
-                repo, ref, n, eigene, belege, vps, kopf, alle_zeilen, staging_stand
+                repo, ref, n, eigene, belege, vps, kopf, alle_zeilen, staging_stand, issue
             )
             if ausgangsstand:
                 erg.alt += funde_ok
@@ -2347,7 +2353,7 @@ def _tick(
                 )
             )
             if kandidat is not None and reopen_funde(
-                repo, ref, n, eigene, belege, vps, kopf, alle_zeilen, staging_stand
+                repo, ref, n, eigene, belege, vps, kopf, alle_zeilen, staging_stand, issue
             ):
                 kandidat = None  # Regeln weiter rot — das Reopen war richtig
             if kandidat is not None:
