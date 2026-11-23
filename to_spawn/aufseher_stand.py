@@ -62,6 +62,7 @@ from typing import Any, NamedTuple
 from to_spawn import (
     aufpasser,
     bau_log,
+    befugnis,
     capo,
     config,
     gh,
@@ -479,6 +480,16 @@ def frage_im_text(text: str) -> str:
                 continue
             absatz.insert(0, z.strip())
         teile = absatz if absatz and absatz[-1].endswith("?") else []
+        weit = voll[-FRAGE_ZEILEN:]
+        if (
+            teile
+            and len(weit) > len(teile)
+            and befugnis.ist_klasse_2(" ".join(weit))
+            and not befugnis.ist_klasse_2(" ".join(teile))
+        ):
+            # Live-Wort im Absatz davor („… live deployen.“ + „Passt das so?“): im Zweifel zum
+            # Menschen, darum die letzten FRAGE_ZEILEN Zeilen als Frage mitgeben (Review PR 374).
+            teile = weit
     return " ".join(" ".join(teile).split())
 
 

@@ -310,3 +310,36 @@ def test_still_frage_nur_ab_stufe_0_und_1(stufe: int, erwartet: bool) -> None:
         _lage(aufseher_stand.STILL, FRAGE, 25), leiter.Gemerkt(stufe, time.time() - 60), time.time(), 250.0
     )
     assert (schritt.aktion == "entscheider") is erwartet
+
+
+# --- Fix-Runde 2: Doppel-Schutz und Absatz-Grenze dürfen Klasse 2 nicht verlieren ----------
+
+
+def test_doppel_schutz_verschluckt_live_wort_im_abgeschnittenen_anfang_nicht(
+    baum: Path,
+) -> None:
+    ende = f"{BERICHT} {BERICHT} Passt das so?"
+    harmlos = "Ich würde den Stand prüfen. " + ende
+    live = "Ich würde den Stand live deployen. " + ende
+    assert aufseher_stand.frage_kurz(harmlos) == aufseher_stand.frage_kurz(live)
+    erst = leiter.frage_einwerfen(baum, SPEC, TICKET, harmlos)
+    zweit = leiter.frage_einwerfen(baum, SPEC, TICKET, live)
+    assert zweit != erst
+    offen = briefkasten.offene([TICKET], hauptbaum=baum)
+    assert sorted(f["klasse"] for f in offen) == ["2", "3"]
+    assert (
+        leiter.frage_einwerfen(baum, SPEC, TICKET, live) == zweit
+    )  # Klasse-2-Doppel bleibt einer
+
+
+def test_live_wort_im_absatz_davor_braucht_den_menschen() -> None:
+    text = f"● Ich würde den Stand jetzt live deployen.\n\nPasst das so?\n\n{EINGABE}\n❯ \n{EINGABE}\n  Kontext 80k"
+    frage = aufseher_stand.frage_im_text(text)
+    assert frage.endswith("Passt das so?")
+    schritt = leiter.entscheide(
+        _lage(aufseher_stand.STILL, frage, 25),
+        leiter.Gemerkt(0, None),
+        time.time(),
+        250.0,
+    )
+    assert schritt.aktion == "mensch"

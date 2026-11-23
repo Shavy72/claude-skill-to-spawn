@@ -399,14 +399,16 @@ def frage_einwerfen(hauptbaum: Path, spec: int, ticket: int, frage: str) -> str:
     und antwortet mit ``briefkasten antworten`` — derselbe Weg wie für Fragen der Session.
     """
     text = aufseher_stand.frage_kurz(frage)
+    k2 = befugnis.ist_klasse_2(frage)  # ungekürzt: das Live-Wort kann im abgeschnittenen Anfang stehen
     for offen in briefkasten.offene([ticket], hauptbaum=hauptbaum):
-        if offen["id"] and offen["frage"] == text:
+        # Gleicher Kurztext reicht nicht: eine Klasse-3-Frage verdeckt nie eine neue Klasse-2-Frage.
+        if offen["id"] and offen["frage"] == text and (offen["klasse"] == "2" or not k2):
             return offen["id"]
     return briefkasten.einwerfen(
         ticket,
         text,
         "",
-        2 if befugnis.ist_klasse_2(frage) else None,
+        2 if k2 else None,
         [f"Fenster bau {ticket}, Spec {spec} (Leiter, #372)"],
         art="fenster-frage",
         hauptbaum=hauptbaum,
