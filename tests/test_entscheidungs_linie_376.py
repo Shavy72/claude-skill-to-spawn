@@ -71,14 +71,26 @@ def test_linie_nur_an_einer_stelle_gepflegt() -> None:
     fundorte: dict[str, list[str]] = {m: [] for m in MERKMALE}
     for datei in SKILL.rglob("*"):
         teile = datei.relative_to(SKILL).parts
-        if (
-            not datei.is_file()
-            or teile[0] in {".git", "tests", "docs"}
-            or datei.suffix not in {".py", ".json", ".md", ".txt", ".sh", ".ps1"}
-        ):
+        if not datei.is_file() or teile[0] in {".git", ".review", "tests", "docs"}:
             continue
-        inhalt = datei.read_text(encoding="utf-8", errors="replace")
+        try:
+            inhalt = datei.read_text(encoding="utf-8")
+        except UnicodeDecodeError:  # Binärdatei: keine Kopie möglich
+            continue
         for m in MERKMALE:
             if m in inhalt:
                 fundorte[m].append(datei.relative_to(SKILL).as_posix())
     assert all(orte == ["to_spawn/anleitung.py"] for orte in fundorte.values()), fundorte
+
+
+def test_linie_punkt_5_passt_zum_befugnis_text() -> None:
+    """Punkt 5 und Klasse 2 im Befugnis-Text nennen denselben Briefkasten-Befehl, keiner hält alles an."""
+    from to_spawn import anleitung, befugnis
+
+    punkt_5 = next(z for z in anleitung.entscheidungs_linie().splitlines() if z.startswith("5)"))
+    klasse_2 = befugnis.start_text(7).split("Klasse 2")[1].split("Klasse 3")[0]
+    assert "to_spawn.py frage <N> --klasse 2 --frage … --vorschlag …" in punkt_5
+    assert "to_spawn.py frage 7 --klasse 2 --frage … --vorschlag …" in klasse_2
+    assert "braucht den Nutzer" in punkt_5 and "braucht den Nutzer" in klasse_2
+    assert "Rest weiterbauen" in punkt_5
+    assert "Dort anhalten" not in klasse_2 and "Diesen Schritt anhalten" in klasse_2

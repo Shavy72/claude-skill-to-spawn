@@ -274,7 +274,7 @@ def start_text(n: str | int) -> str:
         "Jede solche Entscheidung festhalten "
         "(`to_spawn.py eintrag --typ entscheidung`: „Klasse 1“, Grund und bei Daten der Sicherungs-Beleg). "
         f"Klasse 2 – nie ohne den Nutzer: {klasse_2_erkennung()}. "
-        f"Dort anhalten, die Frage in den Briefkasten werfen (`to_spawn.py frage {n} --klasse 2 --frage … --vorschlag …`; "
+        f"Diesen Schritt anhalten, die Frage in den Briefkasten werfen (`to_spawn.py frage {n} --klasse 2 --frage … --vorschlag …`; "
         "der Aufseher bringt sie zum Nutzer), Bau-Log-Eintrag und Issue-Kommentar „braucht den Nutzer“; "
         "auch eine Antwort des Aufsehers gibt das nicht frei, nur die des Nutzers im Briefkasten. "
         "Klasse 3 – alles andere, jeder Zweifel zwischen Klasse 1 und 2 und jeder Push oder Merge auf "
