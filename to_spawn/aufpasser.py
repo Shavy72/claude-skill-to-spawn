@@ -103,6 +103,7 @@ from to_spawn import (
     sessions_datei,
     speicher,
     starter,
+    ticket_zustand,
     vorfall,
 )
 from to_spawn import sperre as _sperre
@@ -1298,6 +1299,7 @@ class Aufpasser:
         return Path(roh) if roh else None
 
     def offene_tickets(self, spec: str, repo: Path) -> set[int]:
+        """Unter-Tickets, die nicht :func:`ticket_zustand.endgueltig_zu` sind (#279)."""
         raus = self.sh(
             "gh",
             "api",
@@ -1325,8 +1327,21 @@ class Aufpasser:
         except (json.JSONDecodeError, AttributeError) as fehler:
             raise RuntimeError(f"gh issue view {ticket}: unlesbar ({fehler})") from None
 
-    def ticket_zu(self, ticket: int, repo: Path) -> bool:
-        return self.ticket_lesen(ticket, repo).get("state") == "CLOSED"
+    def ticket_fertig_gebaut(self, ticket: int, repo: Path) -> bool:
+        """:func:`ticket_zustand.fertig_gebaut`; nicht lesbar ⇒ ``RuntimeError``."""
+        return ticket_zustand.fertig_gebaut(self.ticket_lesen(ticket, repo))
+
+    def zu_bauen(self, offen: set[int], repo: Path) -> set[int]:
+        """Die offenen Tickets, die noch nicht fertig gebaut sind — nur dort baut noch
+        jemand (#279, Fall 03:05). Nicht lesbar ⇒ diesen Takt nicht dabei (kein Start)."""
+        bleibt: set[int] = set()
+        for ticket in offen:
+            try:
+                if not self.ticket_fertig_gebaut(ticket, repo):
+                    bleibt.add(ticket)
+            except RuntimeError as fehler:
+                log.error("#%s: Ticket-Zustand nicht lesbar, kein Start: %s", ticket, fehler)
+        return bleibt
 
     def pane_text(self, ziel: str) -> str:
         return self.tmux("capture-pane", "-p", "-t", ziel)
@@ -1929,7 +1944,7 @@ class Aufpasser:
             platznot = still_min < KARENZ_MIN and self._platznot(repo, info)
             if still_min >= KARENZ_MIN or platznot:
                 try:
-                    zu = self.ticket_zu(ticket, repo)
+                    zu = self.ticket_fertig_gebaut(ticket, repo)
                 except RuntimeError as fehler:
                     log.error("%s: Ticket-Zustand nicht lesbar: %s", f.name, fehler)
                     zu = False
@@ -2344,7 +2359,10 @@ class Aufpasser:
             ", ".join(sorted(vorhanden)),
             sorted(offen) or "-",
         )
-        fehlend = [t for t in sorted(offen) if f"bau {t}" not in vorhanden]
+        # Bau-Fenster nur für „noch nicht fertig gebaut“ (#279); der Aufseher unten
+        # bleibt, bis alles endgültig zu ist.
+        bauen = self.zu_bauen(offen, repo)
+        fehlend = [t for t in sorted(bauen) if f"bau {t}" not in vorhanden]
         # Läuft das Ticket schon in einer Fenster-Kette (oder folgt dort noch),
         # kein eigenes Fenster — sonst zwei Sessions auf einem Ticket (#598).
         belegt = self.belegte_tickets() if fehlend else set()
@@ -2367,7 +2385,7 @@ class Aufpasser:
             self.fehlendes_fenster(sitzung, spec, repo, None)
         for f in fenster:
             try:
-                self.fenster_pruefen(f, repo, offen)
+                self.fenster_pruefen(f, repo, bauen)
             except RuntimeError as fehler:
                 log.error("%s: Fenster „%s“ übersprungen: %s", sitzung, f.name, fehler)
 
