@@ -194,7 +194,9 @@ def _zweig_ziel(roh: object, ziel: str) -> str:
 
 
 def _ist_klasse_2(wert: str) -> bool:
-    teile = re.split(r"[-/.]+", wert)
+    # Ganzwörter an jedem Nicht-Wortzeichen trennen (Satzzeichen, Klammern, Anführungszeichen);
+    # ``\W`` ist Unicode-bewusst, Umlaute bleiben Wortzeichen.
+    teile = re.split(r"\W+", wert)
     return any(w in wert for w in _KLASSE_2_WOERTER) or any(w in teile for w in _KLASSE_2_GANZWORT)
 
 

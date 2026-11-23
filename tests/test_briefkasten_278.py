@@ -62,7 +62,7 @@ def test_ohne_frage_wartet(briefkasten: ModuleType, tmp_path: Path) -> None:
 def test_einwurf_dann_antwort(briefkasten: ModuleType, tmp_path: Path) -> None:
     fid = briefkasten.einwerfen("7", "Blocker erledigt?", "weiterbauen", 3, ["#5 zu"], hauptbaum=tmp_path)
     assert briefkasten.lesen("7", fid, hauptbaum=tmp_path) == briefkasten.WARTET
-    assert briefkasten.offene(hauptbaum=tmp_path) == ["7"]
+    assert [(o["ticket"], o["id"]) for o in briefkasten.offene(hauptbaum=tmp_path)] == [("7", fid)]
     briefkasten.antworten("7", fid, "weiterbauen", ["Lastenheft A46"], "Blocker sind zu", hauptbaum=tmp_path)
     antwort = briefkasten.lesen("7", fid, hauptbaum=tmp_path)
     assert antwort.wahl == "weiterbauen" and antwort.von == "aufseher"
@@ -367,12 +367,11 @@ def test_antwort_fuer_q1_landet_nicht_an_q2(briefkasten: ModuleType, tmp_path: P
     q1 = briefkasten.einwerfen("7", "Q1?", "a", 3, [], hauptbaum=tmp_path)
     q2 = briefkasten.einwerfen("7", "Q2?", "b", 3, [], hauptbaum=tmp_path)
     assert q1 != q2
-    with pytest.raises(ValueError):
-        briefkasten.antworten("7", q1, "a", [], "für Q1", hauptbaum=tmp_path)
+    briefkasten.antworten("7", q1, "a", [], "für Q1", hauptbaum=tmp_path)  # P3a: jede offene per id
     assert briefkasten.lesen("7", q2, hauptbaum=tmp_path) == briefkasten.WARTET
     briefkasten.antworten("7", q2, "b", [], "für Q2", hauptbaum=tmp_path)
     assert briefkasten.lesen("7", q2, hauptbaum=tmp_path).wahl == "b"
-    assert briefkasten.lesen("7", q1, hauptbaum=tmp_path) == briefkasten.WARTET
+    assert briefkasten.lesen("7", q1, hauptbaum=tmp_path).wahl == "a"
     assert briefkasten.lesen("7", "ffff", hauptbaum=tmp_path) == briefkasten.WARTET
 
 
@@ -422,7 +421,7 @@ def test_klasse_2_nach_nutzer_antwort_gibt_klasse_3_frei(briefkasten: ModuleType
     daten = json.loads(datei.read_text(encoding="utf-8"))
     daten["fragen"][-1]["antwort"] = {"wahl": "nein", "von": "nutzer"}
     datei.write_text(json.dumps(daten), encoding="utf-8")
-    assert briefkasten.lesen("7", q2, hauptbaum=tmp_path) == briefkasten.NUTZER  # nie als Antwort
+    assert briefkasten.lesen("7", q2, hauptbaum=tmp_path).von == "nutzer"  # P3a: Session sieht sie
     q3 = briefkasten.einwerfen("7", "Ordner?", "neu", 3, [], hauptbaum=tmp_path)
     briefkasten.antworten("7", q3, "neu", [], "passt", hauptbaum=tmp_path)
     assert briefkasten.lesen("7", q3, hauptbaum=tmp_path).wahl == "neu"

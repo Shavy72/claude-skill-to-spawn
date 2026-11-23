@@ -6,18 +6,30 @@ Einziges Modul, das Ort, Dateimuster, Format und Ablage der Fragen kennt (Hauptb
 - :func:`einwerfen` — die Session wirft eine Frage mit eigenem Vorschlag ein und bekommt deren
   ``id``. Die Klasse ordnet der Briefkasten selbst ein (:func:`befugnis.ist_klasse_2`); eine
   genannte Klasse macht nur strenger. Nur das eigene Ticket (``TO_SPAWN_TICKET``).
-- :func:`lesen` — :class:`Antwort` (nur zur passenden ``id``), :data:`WARTET` oder :data:`NUTZER`.
-- :func:`antworten` — der Aufseher antwortet auf die jüngste offene Frage mit passender ``id``;
-  verweigert (:class:`Verweigert`) in einer Bau-Session und solange eine Klasse-2-Frage offen ist.
-- :func:`offene` — Tickets mit unbeantworteter Frage.
+- :func:`lesen` — :class:`Antwort` (nur zur passenden ``id``, auch die des Nutzers),
+  :data:`WARTET` oder :data:`NUTZER`.
+- :func:`antworten` — der Aufseher antwortet auf eine offene Frage über ihre ``id``; verweigert
+  (:class:`Verweigert`) in einer Bau-Session und solange das Ticket auf den Nutzer wartet.
+- :func:`nutzer_antworten` — Antwort des Nutzers (auch Klasse 2); verweigert in einer Bau-Session.
+- :func:`offene` — alle offenen Fragen (je Ticket, ``id``, Klasse) samt Sperre durch kaputte Datei.
 - :func:`liste` — die eine Liste für die Gesamtabnahme: Klasse-1-Einträge aus dem Bau-Log plus alle
   Briefkasten-Antworten (wer, was, warum, Beleg); keine eigene Datei.
 - :func:`datei_relativ` — Ort der Datei für Texte (Start-Auftrag), relativ zum Hauptbaum.
 
-Eine Datei je Ticket hält alle Fragen in Reihenfolge. Klasse 2 gibt der Briefkasten nie frei; eine
+Eine Datei je Ticket hält alle Fragen in Reihenfolge. Klasse 2 gibt nur der Nutzer frei; eine
 offene Klasse-2-Frage (ohne Antwort ``von`` :data:`NUTZER_VON`) sperrt das ganze Ticket. Eine halbe
-oder kaputte Datei zählt als :data:`WARTET` (sichere Richtung). Jedes Lesen-Ändern-Schreiben läuft
-unter :func:`sperre.halte` auf ``entscheidung-<N>.lock``.
+Datei zählt als :data:`WARTET` (sichere Richtung). Eine unlesbare Datei legt :func:`einwerfen` als
+``entscheidung-<N>.json.kaputt-<stempel>`` beiseite; solange eine solche liegt, wartet das Ticket
+auf den Nutzer (sie könnte eine offene Klasse-2-Frage enthalten). Geklärt ist es, wenn der Nutzer
+sie geprüft und gelöscht hat. Jedes Lesen-Ändern-Schreiben läuft unter :func:`sperre.halte` auf
+``entscheidung-<N>.lock``.
+
+Schutz des Nutzer-Wegs, ehrlich: Bau-Session (``TO_SPAWN_TICKET`` gesetzt, auch leer) und
+Aufseher (``--von`` kennt nur :data:`AUFSEHER_VON`) haben über diese Schnittstelle keinen Weg,
+``von`` :data:`NUTZER_VON` zu schreiben; die CLI ``nutzer-antwort`` verlangt zusätzlich ein
+echtes Terminal. Das verhindert versehentliche und über die angebotene Schnittstelle mögliche
+Selbst-Freigabe — nicht eine Session, die mit Absicht die Datei selbst schreibt oder die
+Umgebung umbaut (``env -u``); auf derselben Maschine kann sie das technisch immer.
 """
 
 from __future__ import annotations
@@ -42,6 +54,8 @@ WARTET = "WARTET"
 NUTZER = "NUTZER"
 #: ``von`` einer Antwort, die eine Klasse-2-Frage schließt (nie über :func:`antworten` schreibbar).
 NUTZER_VON = "nutzer"
+#: Einziges ``von`` für :func:`antworten` (feste Auswahl, CLI ``--von``).
+AUFSEHER_VON = ("aufseher",)
 _KLASSEN = (2, 3)  # Klasse 1 braucht keine Frage
 _NUMMER = re.compile(r"[0-9]+")  # nur ASCII-Ziffern (int() nähme auch „٧“)
 _ORDNER = ".to-spawn"
@@ -79,14 +93,18 @@ def _nummer(n: str | int) -> int:
 
 
 def _eigenes_ticket() -> int | None:
-    """Nummer aus ``TO_SPAWN_TICKET`` (setzt ``bau.py`` = Bau-Session) oder ``None``."""
-    wert = os.environ.get("TO_SPAWN_TICKET", "").strip()
-    if not wert:
+    """Nummer aus ``TO_SPAWN_TICKET`` (setzt ``bau.py`` = Bau-Session) oder ``None`` (fehlt ganz).
+
+    Gesetzt, aber leer oder unlesbar (``TO_SPAWN_TICKET=``) gilt als Bau-Session und passt zu
+    keinem Ticket (-1). Der Aufseher-Takt entfernt die Variable ganz (``waechter_takt._kind_env``).
+    """
+    wert = os.environ.get("TO_SPAWN_TICKET")
+    if wert is None:
         return None
     try:
         return _nummer(wert)
     except ValueError:
-        return -1  # gesetzt, aber unlesbar: gilt als Bau-Session, passt zu keinem Ticket
+        return -1
 
 
 def _hauptbaum(hauptbaum: Path | None) -> Path:
@@ -139,9 +157,19 @@ def _hat_antwort(f: dict[str, Any]) -> bool:
     return isinstance(antwort, dict) and bool(str(antwort.get("wahl") or "").strip())
 
 
+def _gilt(f: dict[str, Any]) -> bool:
+    """Hat ``f`` eine gültige Antwort? Klasse 2 nur ``von`` :data:`NUTZER_VON`."""
+    return _hat_antwort(f) and (f["antwort"].get("von") == NUTZER_VON or not _ist_klasse_2(f))
+
+
 def _klasse_2_offen(fragen: list[dict[str, Any]]) -> bool:
     """Irgendeine Klasse-2-Frage ohne Antwort des Nutzers? Dann ist das Ticket gesperrt."""
-    return any(_ist_klasse_2(f) and not (_hat_antwort(f) and f["antwort"].get("von") == NUTZER_VON) for f in fragen)
+    return any(_ist_klasse_2(f) and not _gilt(f) for f in fragen)
+
+
+def _kaputte(datei: Path) -> list[Path]:
+    """Beiseitegelegte unlesbare Fassungen (``.kaputt-*``) — jede sperrt das Ticket."""
+    return sorted(datei.parent.glob(f"{datei.name}.kaputt-*"))
 
 
 def einwerfen(
@@ -198,11 +226,15 @@ def einwerfen(
 def lesen(n: str | int, frage_id: str | None = None, *, hauptbaum: Path | None = None) -> Antwort | str:
     """Stand der Frage ``frage_id``: :class:`Antwort`, :data:`WARTET` oder :data:`NUTZER`.
 
-    :data:`NUTZER`, solange irgendeine Klasse-2-Frage des Tickets offen ist oder ``frage_id``
-    Klasse 2 ist (auch eine eingetragene Antwort gibt Klasse 2 nie frei). Ohne passende ``id``
-    nie eine :class:`Antwort`.
+    :data:`NUTZER`, solange eine ``.kaputt-*``-Datei liegt oder irgendeine Klasse-2-Frage des
+    Tickets ohne Antwort des Nutzers ist (eine Antwort anderer gibt Klasse 2 nie frei). Die
+    Antwort des Nutzers kommt als :class:`Antwort` (``von`` :data:`NUTZER_VON`). Ohne passende
+    ``id`` nie eine :class:`Antwort`.
     """
-    daten = _lade(_datei(n, hauptbaum))
+    datei = _datei(n, hauptbaum)
+    if _kaputte(datei):
+        return NUTZER
+    daten = _lade(datei)
     if not daten or not daten["fragen"]:
         return WARTET
     if _klasse_2_offen(daten["fragen"]):
@@ -211,9 +243,7 @@ def lesen(n: str | int, frage_id: str | None = None, *, hauptbaum: Path | None =
     if not treffer:
         return WARTET
     f = treffer[-1]
-    if _ist_klasse_2(f):
-        return NUTZER
-    if not _hat_antwort(f):
+    if not _gilt(f):
         return WARTET
     antwort = f["antwort"]
     belege = antwort.get("belege")
@@ -232,15 +262,49 @@ def antworten(
     wahl: str,
     belege: Iterable[str],
     grund: str,
-    von: str = "aufseher",
+    von: str = AUFSEHER_VON[0],
     *,
     hauptbaum: Path | None = None,
 ) -> Path:
-    """Antwort auf die jüngste offene Frage schreiben, nur wenn sie ``frage_id`` trägt.
+    """Antwort des Aufsehers auf die offene Frage ``frage_id`` schreiben.
 
-    ``ValueError`` bei leerer ``wahl``, ohne offene Frage oder fremder ``id``; ``Verweigert`` in
-    einer Bau-Session (``TO_SPAWN_TICKET`` gesetzt) und solange eine Klasse-2-Frage offen ist.
+    ``von`` nur aus :data:`AUFSEHER_VON` (``ValueError`` sonst; der Nutzer antwortet über
+    :func:`nutzer_antworten`). ``ValueError`` bei leerer ``wahl`` oder ohne offene Frage mit dieser
+    ``id``; ``Verweigert`` in einer Bau-Session und solange das Ticket auf den Nutzer wartet
+    (offene Klasse-2-Frage oder ``.kaputt-*``-Datei).
     """
+    if von not in AUFSEHER_VON:
+        raise ValueError(f"von {von!r}: der Aufseher schreibt nur als {', '.join(AUFSEHER_VON)}.")
+    return _schreibe_antwort(n, frage_id, wahl, belege, grund, von, hauptbaum)
+
+
+def nutzer_antworten(
+    n: str | int,
+    frage_id: str,
+    wahl: str,
+    belege: Iterable[str],
+    grund: str,
+    *,
+    hauptbaum: Path | None = None,
+) -> Path:
+    """Antwort des Nutzers (Mensch) auf die offene Frage ``frage_id``, auch Klasse 2.
+
+    Einziger Weg zu ``von`` :data:`NUTZER_VON`. ``Verweigert`` in einer Bau-Session; eine
+    ``.kaputt-*``-Datei sperrt weiter, bis der Nutzer sie gelöscht hat. Grenzen des Schutzes:
+    Modul-Docstring.
+    """
+    return _schreibe_antwort(n, frage_id, wahl, belege, grund, NUTZER_VON, hauptbaum)
+
+
+def _schreibe_antwort(
+    n: str | int,
+    frage_id: str,
+    wahl: str,
+    belege: Iterable[str],
+    grund: str,
+    von: str,
+    hauptbaum: Path | None,
+) -> Path:
     if _eigenes_ticket() is not None:
         raise Verweigert("Eine Bau-Session beantwortet keine Briefkasten-Fragen (TO_SPAWN_TICKET gesetzt).")
     if not wahl.strip():
@@ -248,14 +312,12 @@ def antworten(
     datei = _datei(n, hauptbaum)
     with _gesperrt(datei):
         daten = _lade(datei)
-        letzte = daten["fragen"][-1] if daten and daten["fragen"] else None
-        if letzte is None or letzte.get("antwort"):
-            raise ValueError(f"Ticket {n}: keine offene Frage im Briefkasten.")
-        if _klasse_2_offen(daten["fragen"]):
-            raise Verweigert(f"Ticket {n}: eine Klasse-2-Frage ist offen, das entscheidet nur der Nutzer.")
-        if letzte.get("id") != frage_id:
-            raise ValueError(f"Ticket {n}: Frage {frage_id!r} ist nicht die jüngste offene Frage.")
-        letzte["antwort"] = {
+        treffer = [f for f in (daten or {}).get("fragen", []) if f.get("id") == frage_id]
+        if not daten or not treffer or treffer[-1].get("antwort"):
+            raise ValueError(f"Ticket {n}: keine offene Frage {frage_id!r} im Briefkasten.")
+        if von != NUTZER_VON and (_kaputte(datei) or _klasse_2_offen(daten["fragen"])):
+            raise Verweigert(f"Ticket {n}: wartet auf den Nutzer (Klasse 2 oder kaputte Datei).")
+        treffer[-1]["antwort"] = {
             "ts": _jetzt(),
             "wahl": wahl,
             "grund": grund,
@@ -273,22 +335,47 @@ def _sortier_nummer(t: str) -> int:
         return -1
 
 
-def offene(tickets: Iterable[str | int] | None = None, *, hauptbaum: Path | None = None) -> list[str]:
-    """Tickets, deren jüngste Frage noch unbeantwortet ist (``tickets`` None = alle)."""
+def offene(tickets: Iterable[str | int] | None = None, *, hauptbaum: Path | None = None) -> list[dict[str, str]]:
+    """Alle offenen Fragen (``tickets`` None = alle), älteste zuerst je Ticket.
+
+    Je Frage ``ticket``, ``id``, ``klasse`` (``"2"`` = nur der Nutzer), ``frage``, ``vorschlag``,
+    ``ts``. Jede ``.kaputt-*``-Datei erscheint als Klasse-2-Eintrag mit leerer ``id``.
+    """
     ordner = _hauptbaum(hauptbaum) / _ORDNER
     if tickets is None:
-        tickets = sorted(
-            (d.stem.removeprefix(_PRAEFIX) for d in ordner.glob(f"{_PRAEFIX}*.json")),
-            key=_sortier_nummer,
-        )
-    ergebnis = []
+        namen = {d.name.split(".json", 1)[0] for d in ordner.glob(f"{_PRAEFIX}*.json*")}
+        tickets = sorted((t.removeprefix(_PRAEFIX) for t in namen), key=_sortier_nummer)
+    ergebnis: list[dict[str, str]] = []
     for t in tickets:
         try:
-            daten = _lade(_datei(t, hauptbaum))
+            datei = _datei(t, hauptbaum)
         except ValueError:
             continue
-        if daten and daten["fragen"] and not daten["fragen"][-1].get("antwort"):
-            ergebnis.append(str(_nummer(t)))
+        nummer = str(_nummer(t))
+        for kaputt in _kaputte(datei):
+            ergebnis.append(
+                {
+                    "ticket": nummer,
+                    "id": "",
+                    "klasse": "2",
+                    "frage": f"Briefkasten-Datei kaputt: {kaputt.name} — prüfen und löschen",
+                    "vorschlag": "",
+                    "ts": "",
+                }
+            )
+        for f in (_lade(datei) or {}).get("fragen", []):
+            if f.get("antwort"):
+                continue
+            ergebnis.append(
+                {
+                    "ticket": nummer,
+                    "id": str(f.get("id", "")),
+                    "klasse": "2" if _ist_klasse_2(f) else "3",
+                    "frage": str(f.get("frage", "")),
+                    "vorschlag": str(f.get("vorschlag", "")),
+                    "ts": str(f.get("ts", "")),
+                }
+            )
     return ergebnis
 
 
@@ -326,8 +413,8 @@ def liste(
         except ValueError:
             continue
         for f in (daten or {}).get("fragen", []):
-            if _ist_klasse_2(f) or not _hat_antwort(f):
-                continue  # Klasse 2 hat keine gültige Aufseher-Antwort
+            if not _gilt(f):
+                continue  # Klasse 2 gilt nur mit Antwort des Nutzers
             antwort = f["antwort"]
             zeilen.append(
                 {
