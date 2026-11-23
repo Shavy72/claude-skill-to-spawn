@@ -1,0 +1,15 @@
+            ordner_a = basis_a.parent if basis_a.name.startswith("popen-gw") else basis_a
+>           assert (ordner_a / MARKER).is_file(), ordner_a
+E           AssertionError: PosixPath('/tmp/pt-k0npmsvi/test_laufender_zweiter_lauf_be1/t/pt-efsuwp65')
+E           assert False
+E            +  where False = is_file()
+E            +    where is_file = (PosixPath('/tmp/pt-k0npmsvi/test_laufender_zweiter_lauf_be1/t/pt-efsuwp65') / '.pt-lauf').is_file
+
+tests/test_pt_reste_177.py:209: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_pt_reste_177.py::test_naechster_lauf_raeumt_nur_alte_eigene_reste_toter_laeufe
+FAILED tests/test_pt_reste_177.py::test_help_und_markers_hinterlassen_keinen_ordner
+FAILED tests/test_pt_reste_177.py::test_roter_lauf_bleibt_mit_marker_auch_nach_naechstem_lauf
+FAILED tests/test_pt_reste_177.py::test_laufender_zweiter_lauf_behaelt_seinen_ordner[ein-prozess]
+FAILED tests/test_pt_reste_177.py::test_laufender_zweiter_lauf_behaelt_seinen_ordner[xdist-n2]
+5 failed in 6.80s
