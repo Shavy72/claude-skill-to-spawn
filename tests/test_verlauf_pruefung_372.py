@@ -815,11 +815,12 @@ def test_r8_kein_fehlalarm_durch_wortteil_oder_datei_inhalt(
     [
         _a(_bash("bash scripts/safe_deploy_vps.sh --skip-ci")),
         _a("Jetzt der Live-Deploy."),
-        _a("Die Produktion läuft wieder."),
-        _a("Das Passwort liegt in Bitwarden."),
         _a(LIVE_SATZ, isSidechain=True),
     ],
-    ids=["bash-befehl", "bindestrich", "wortanfang-stamm", "umlaut-satz", "sidechain"],
+    # Runde 9 (V-a), absichtlich umgestellt: „Die Produktion läuft wieder.“ und „Das Passwort
+    # liegt in Bitwarden.“ sind Zustände ohne Handlung → Klasse 3, siehe
+    # test_r9_zustand_ohne_handlung_ist_klasse_3.
+    ids=["bash-befehl", "bindestrich", "sidechain"],
 )
 def test_r8_live_wort_am_wortanfang_und_im_befehl_zaehlt(
     welt: Welt, eintrag: dict[str, Any]
@@ -830,8 +831,91 @@ def test_r8_live_wort_am_wortanfang_und_im_befehl_zaehlt(
 
 
 def test_r8_ganzwort_suche_ist_eigene_funktion_andere_nutzer_bleiben_streng() -> None:
-    suche = befugnis.ist_klasse_2_am_wortanfang
-    assert befugnis.ist_klasse_2("deliver") and befugnis.ist_klasse_2("Kundenkonto")
-    assert not suche("deliver", "reproduziert", "Anzahl", "Labor", "foo.envy")
-    assert suche("deploy_vps") and suche("Gebühren") and suche("ssh host")
-    assert suche("/app/.env") and suche("Überweisung") and not suche("sshd")
+    # Runde 9, absichtlich umgestellt: die Wortanfang-Suche entfällt (V-a prüft den Verlauf nach
+    # Handlungen, befugnis.handlung_klasse_2). Geblieben ist: Frage und andere Nutzer streng.
+    assert not hasattr(befugnis, "ist_klasse_2_am_wortanfang")
+    assert befugnis.ist_klasse_2("goLive") and befugnis.ist_klasse_2("Kundenkonto")
+    assert befugnis.ist_klasse_2("deliver")
+
+
+@pytest.mark.parametrize(
+    "eintrag",
+    [_a("Die Produktion läuft wieder."), _a("Das Passwort liegt in Bitwarden.")],
+    ids=["wortanfang-stamm", "umlaut-satz"],
+)
+def test_r9_zustand_ohne_handlung_ist_klasse_3(
+    welt: Welt, eintrag: dict[str, Any]
+) -> None:
+    welt.fenster = FRAGE_FENSTER
+    welt.schreibe([_u("los"), eintrag, _a("Passt das so?")])
+    assert not _k2(welt.blick()[0])
+
+
+@pytest.mark.parametrize(
+    "eintrag",
+    [
+        _a(_bash("gh pr merge 374")),
+        _a(_bash("rm -rf /opt/app")),
+        _a(_bash('bash -c "ssh clawy-vps uptime"')),
+        _a("Das goLive mache ich jetzt"),
+        _a("Ich lege ein Kundenkonto an"),
+        _a(
+            {
+                "type": "tool_use",
+                "name": "Write",
+                "input": {"file_path": "/opt/app/.env", "content": "A=1"},
+            }
+        ),
+        _a({"type": "tool_use", "name": "mcp__x__purchase_phone", "input": {}}),
+        _a(
+            {
+                "type": "tool_use",
+                "name": "Task",
+                "input": {"description": "x", "prompt": "Deploy auf vps prüfen"},
+            }
+        ),
+    ],
+    ids=["merge", "rm", "bash-c-ssh", "golive", "kundenkonto", "env", "mcp", "task"],
+)
+def test_r9_handlung_im_verlauf_ist_klasse_2(
+    welt: Welt, eintrag: dict[str, Any]
+) -> None:
+    """Der Grund trägt selbst ein Klasse-2-Wort und steht vor der harmlosen Frage."""
+    welt.fenster = FRAGE_FENSTER
+    welt.schreibe([_u("los"), eintrag, _a("Passt das so?")])
+    assert _k2(welt.blick()[0])
+
+
+@pytest.mark.parametrize(
+    "eintrag",
+    [
+        _a(_bash('git commit -m "fix live"')),
+        _a(_bash("git commit -F - <<'EOF'\nfix: vps\nEOF")),
+        _a(_bash("pytest tests/test_deploy_x.py")),
+        _a(_bash("git push -f origin HEAD:refs/heads/wip/12-x")),
+        _a(_bash("bash scripts/staging/staging_deploy.sh")),
+        _a({"type": "tool_use", "name": "Read", "input": {"file_path": "/wt/live/x.py"}}),
+    ],
+    ids=["commit", "heredoc", "pytest", "wip-force", "staging", "read-pfad"],
+)
+def test_r9_ohne_handlung_ist_klasse_3(welt: Welt, eintrag: dict[str, Any]) -> None:
+    welt.fenster = FRAGE_FENSTER
+    welt.schreibe([_u("los"), eintrag, _a("Passt das so?")])
+    assert not _k2(welt.blick()[0])
+
+
+@pytest.mark.parametrize(
+    "wort",
+    ["goLive", "neuerVps", "deployProd", "Kundenkonto", "Bankkonto", "Mehrkosten", "Monatsrechnung"],
+)
+def test_r9_frage_mit_wortteil_ist_klasse_2(welt: Welt, wort: str) -> None:
+    welt.fenster = f"❯ los\n\n● Soll ich {wort} angehen?" + FUSS
+    welt.schreibe([_u("los"), _a(f"Soll ich {wort} angehen?")])
+    assert _k2(welt.blick()[0])
+
+
+def test_r9_rueckfall_prueft_breit_kundenkonto(welt: Welt) -> None:
+    welt.session = None
+    welt.fenster = "● " + HARMLOS + FUSS
+    welt.verlauf = "● Ich prüfe das Kundenkonto.\n\n" + welt.fenster
+    assert _k2(welt.blick()[0])

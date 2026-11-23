@@ -1,23 +1,26 @@
-"""Was hat seit der letzten weitergegebenen Frage kein Mensch geprüft? (#372, PR 374 Runde 7)
+"""Was hat seit der letzten weitergegebenen Frage kein Mensch geprüft? (#372, PR 374 Runde 9)
 
 Eine Fenster-Frage ist Klasse 2, wenn sie selbst ein Klasse-2-Wort trägt
-(:func:`befugnis.ist_klasse_2`) oder die Session seit der Stelle, die der Leiter zuletzt
-weitergegeben hat, eines geschrieben hat. Quelle ist das Transkript der Session, nicht der
+(:func:`befugnis.ist_klasse_2`, breit: Wortteile zählen) oder die Session seit der Stelle, die
+der Leiter zuletzt weitergegeben hat, eine Klasse-2-HANDLUNG begangen oder angekündigt hat
+(:func:`befugnis.handlung_klasse_2`; Projekt-Wörter allein zählen im Verlauf nicht mehr). Quelle ist das Transkript der Session, nicht der
 Fenster-Text: wer etwas ins Fenster getippt hat (Mensch, Aufpasser, Aufseher, Entscheider),
 spielt keine Rolle — Eingaben sind nie eine Grenze und werden nicht durchsucht.
 
 Durchsucht werden Einträge ``type=assistant`` ohne ``isApiErrorMessage`` (auch Unter-Agenten:
-``isSidechain`` und ``<sessionId>/subagents/*.jsonl`` ab dem Zeitpunkt der Stelle), je Block
-``text`` und die Eingaben von ``tool_use`` außer :data:`DATEI_WERKZEUGE` (Datei-Inhalte sind keine
-Handlung an Live); nie ``user`` (Eingaben, Anstupser, ``tool_result``) und nie ``thinking``.
-Gesucht wird mit :func:`befugnis.ist_klasse_2_am_wortanfang` (Wortteile zählen nicht).
+``isSidechain`` und ``<sessionId>/subagents/*.jsonl`` ab dem Zeitpunkt der Stelle); nie ``user``
+(Eingaben, Anstupser, ``tool_result``) und nie ``thinking``. Je Block: ``text`` und
+Task/Agent-``prompt`` als Text, Bash-``command`` als Befehl, ``mcp__*``-Namen als Werkzeug und
+``file_path`` von :data:`DATEI_WERKZEUGE` und Read als Pfad (Datei-Inhalte nie). Die Muster
+selbst kennt nur :mod:`befugnis`.
 Die Stelle (``<sessionId>:<uuid>``) gehört dem Leiter; unbekannte uuid ⇒ ab Dateianfang. Fremde
 sessionId (Ablösung, ``/clear``) ⇒ neue Datei ab Anfang UND Rest der alten Datei ab der Stelle;
 fehlt die alte Datei ⇒ Klasse 2. Eine kaputte Zeile mitten im Transkript nach der Stelle ⇒ Klasse 2.
 
 Rückfall, wenn das Transkript nicht lesbar ist (keine Gesprächs-ID, Datei fehlt, keine Zeile
 lesbar, letzte Zeile halb geschrieben): Fenster mit Verlauf (``capture-pane -J -S -2000``),
-jede Klasse-2-Zeile darin zählt, ohne Grenze. Im Zweifel geht die Frage zum Menschen.
+jede Zeile mit Klasse-2-Wort (:func:`befugnis.ist_klasse_2`, breit) zählt, ohne Grenze. Im
+Zweifel geht die Frage zum Menschen.
 """
 
 from __future__ import annotations
@@ -45,8 +48,10 @@ VERLAUF_ZEILEN = 2000
 UNGEPRUEFT = "Verlauf nicht lesbar — Live-Bezug ungeprüft"
 #: Grund für eine unlesbare Zeile mitten im Transkript (nicht: halbe letzte Zeile = Schreib-Verzug).
 KAPUTT = "Transkript-Zeile kaputt — Live-Bezug ungeprüft"
-#: Werkzeuge, deren Eingabe Datei-Inhalt ist: werden nicht durchsucht (Dauer-Fehlalarm, PR 374 R8).
+#: Werkzeuge, deren Eingabe Datei-Inhalt ist: nur ``file_path`` zählt (Dauer-Fehlalarm, PR 374 R8).
 DATEI_WERKZEUGE = frozenset({"Write", "Edit", "MultiEdit", "NotebookEdit"})
+#: Werkzeuge, deren ``prompt`` ein Auftrag an einen Unter-Agenten ist (zählt wie eigener Text).
+AUFTRAG_WERKZEUGE = frozenset({"Task", "Agent"})
 #: Platzhalter für eine kaputte Zeile in der Eintrags-Liste (Position zählt, siehe :func:`_lies`).
 _KAPUTTE_ZEILE: dict[str, Any] = {"type": "kaputt"}
 
@@ -117,24 +122,38 @@ def _session_grund(
 
 
 def _grund(e: dict[str, Any]) -> str | None:
-    """Klasse-2-Zeile eines Eintrags (Text + Werkzeug-Eingaben ohne Datei-Inhalte) oder ``None``."""
+    """Klasse-2-Handlung eines Eintrags (siehe Modul-Doc) oder ``None``."""
     if e is _KAPUTTE_ZEILE:
         return KAPUTT
     if e.get("type") != "assistant" or e.get("isApiErrorMessage"):
         return None
     inhalt = (e.get("message") or {}).get("content")
-    if isinstance(inhalt, list):
-        inhalt = [
-            b
-            for b in inhalt
-            if not (
-                isinstance(b, dict)
-                and b.get("type") == "tool_use"
-                and b.get("name") in DATEI_WERKZEUGE
-            )
-        ]
-    return _erste_zeile(
-        waechter_lauf._texte({"message": {"content": inhalt}}, werkzeug=True)
+    if isinstance(inhalt, str):
+        inhalt = [{"type": "text", "text": inhalt}]
+    texte: list[str] = []
+    befehle: list[str] = []
+    werkzeuge: list[str] = []
+    pfade: list[str] = []
+    for b in inhalt if isinstance(inhalt, list) else ():
+        if not isinstance(b, dict):
+            continue
+        if b.get("type") == "text":
+            texte.append(str(b.get("text") or ""))
+            continue
+        if b.get("type") != "tool_use":
+            continue
+        name = str(b.get("name") or "")
+        eingabe = b.get("input") if isinstance(b.get("input"), dict) else {}
+        if name.startswith("mcp__"):
+            werkzeuge.append(name)
+        if name == "Bash":
+            befehle.append(str(eingabe.get("command") or ""))
+        elif name in AUFTRAG_WERKZEUGE:
+            texte.append(str(eingabe.get("prompt") or ""))
+        elif name in DATEI_WERKZEUGE or name == "Read":
+            pfade.append(str(eingabe.get("file_path") or eingabe.get("notebook_path") or ""))
+    return befugnis.handlung_klasse_2(
+        texte=texte, befehle=befehle, werkzeuge=werkzeuge, pfade=pfade
     )
 
 
@@ -198,12 +217,11 @@ def _eigene_antwort(e: dict[str, Any]) -> bool:
 
 
 def _erste_zeile(text: str) -> str | None:
-    """Erste Klasse-2-Zeile; steht das Wort über Zeilen verteilt, der ganze Text."""
-    if not befugnis.ist_klasse_2_am_wortanfang(text):
+    """Erste Klasse-2-Zeile (Rückfall, breite Liste); steht das Wort über Zeilen verteilt, der
+    ganze Text."""
+    if not befugnis.ist_klasse_2(text):
         return None
-    zeile = next(
-        (z for z in text.splitlines() if befugnis.ist_klasse_2_am_wortanfang(z)), text
-    )
+    zeile = next((z for z in text.splitlines() if befugnis.ist_klasse_2(z)), text)
     return " ".join(zeile.split())
 
 
