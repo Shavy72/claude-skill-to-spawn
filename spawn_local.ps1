@@ -1,25 +1,30 @@
 # /to-spawn local — alle Ticket-Sessions einer Spec auf einmal starten (Windows Terminal, ein Fenster).
-# Aufruf (Repo-Wurzel):  pwsh -File ~/.claude/skills/to-spawn/spawn_local.ps1 -Spec 182 [-Tickets 188,189,190] [-OhneWache] [-Window 1] [-DryRun]
+# Aufruf (Repo-Wurzel):  pwsh -File ~/.claude/skills/to-spawn/spawn_local.ps1 -Spec 182 [-Tickets "188,189,190"] [-OhneWache] [-Window 1] [-DryRun]
 # Liest docs/agents/manifests/spec-<S>.json (Ticket-Nummern), öffnet je Ticket einen Tab `bau <N>` und
 # (sofern nicht -OhneWache) zuerst einen Tab `wache <S>` und einen Tab `leitstand <S>` (Schalter leitstand.aktiv). Prüft danach per scripts/sessions_stand.py.
 param(
-    [Parameter(Mandatory = $true)][int]$Spec,
-    $Tickets = @(),   # bewusst ohne Typ (#37): per -File kommt "51,52" als ein String an (#37) — unten selbst getrennt
+    [Parameter(Mandatory = $true, Position = 0)][int]$Spec,   # nur Spec ist positional (#285), sonst landet die zweite Zahl einer Leerzeichen-Liste in $Window
+    $Tickets = @(),   # bewusst ohne Typ (#37/#285): nie als Zahlenliste lesen lassen — unten an einer Stelle selbst zerlegt
     [switch]$OhneWache,
     [int]$Window = -1,      # -1 = neues Fenster, sonst wt-Fenster-ID (z. B. 1 = bestehendes erstes Fenster)
-    [switch]$DryRun
+    [switch]$DryRun,
+    [switch]$NurListe,   # #285: erkannte Ticket-Nummern ausgeben und enden (startet nichts)
+    [Parameter(ValueFromRemainingArguments = $true)]$Rest = @()   # weitere Zahlen nach -Tickets (Leerzeichen-Schreibweise)
 )
 $ErrorActionPreference = "Stop"
 
-# Ticket-Liste robust lesen (#37): String "51,52", Array oder beides; Komma/Leerraum trennen.
-$Tickets = @($Tickets | ForEach-Object { "$_" -split '[,\s]+' } | Where-Object { $_ -ne "" })
+# Ticket-Liste (#37, #285): die eine Stelle, die den Text in Zahlen zerlegt. Als Zahlenliste getippt
+# läse die Landeseinstellung (de-DE) "1476,1477" als Tausenderzahl 14761477 (Git Bash, -File).
+# Trenner: Komma, Leerraum, Semikolon; alles andere ist ein Fehler.
+$Tickets = @(@($Tickets) + @($Rest) | ForEach-Object { "$_" -split '[,;\s]+' } | Where-Object { $_ -ne "" })
 foreach ($t in $Tickets) {
     if ($t -notmatch '^\d+$') {
-        Write-Host "FEHLER: -Tickets erwartet Zahlen, bekam '$t' (Beispiel: -Tickets 51,52)." -ForegroundColor Red
+        Write-Host "FEHLER: -Tickets erwartet Zahlen, bekam '$t' (richtig: -Tickets ""51,52"")." -ForegroundColor Red
         exit 2
     }
 }
 $Tickets = @($Tickets | ForEach-Object { [int]$_ })  # untypisiert: bleiben Zahlen
+if ($NurListe) { Write-Host ("Tickets: " + ($Tickets -join ",")); exit 0 }
 
 # Regularien zuerst (#206): bei Weigerung startet kein einziger Tab. Eine Auswahl
 # (-Tickets) geht mit in die Prüfung — jede Nummer muss im Manifest stehen.

@@ -218,3 +218,202 @@ Anlass: Zwischenstand 22:16 — der Bau läuft über viele sich ablösende Sessi
 **Ausdrücklich nicht gewollt (L5)**
 
 - **N11** kein Wissen, das nur in einem Chat, im Kopf einer Session oder auf einer einzigen Maschine liegt
+
+---
+
+## L6 — Zwei Werkzeugkästen statt „Windows reparieren“ (David, 2026-11-22)
+
+### Wortlaut (1:1)
+
+> eine sache noch zum system ausbau, mich stört etwas das das was unter Windows noch ncith sauber funktioniert das dass als reparatur angesehen wird das halte ich vom Wording her falsch, es ist doch klar das wenn man dem Windows das gewand von linux anzieht das da was nicht richtig läuft und reparieren heist für ich das man was an dem schon funktionierenden linux Zeug irgendwas ändert.. es ist doch schlauer wenn man für beides ein Werkzeugkasten jeweils hat den die jewiels dort arbeitende KI nehmen kann je nachdem auf welchem system sie arbietet und es läuft autoatmsich sauber und getrennt be beiden systemen das mit dem reparieren implziert für mich das wir uns ewig im kreis drehen würden weil wir was reaprieren für Windows und damit Linux wieder was kaputt machen oder anders gessgt wir den heiligen Gral dazwischen suchen was unnötig kompliziert ist anstatt einfach auf zwei getrennten äasten zu bauen, wo beide eifach das haben was bei beidem funktioniert und das jeweils nur haben was bei sich funktioniert also wenn linux der Nagel ist dann greift die KI zum Hammer und bleibt beim Hammer und wenn Windows die schraube ist dann greift die KI zum schraubendreher und bleibt dabei und wenn siech was tasucht erkennt das die KI jeweils und nutzt autoamtisch das werkeuzeug für die andere umgebung jeweils das würde ich gern so hand haben so wäre es am schlausten und wir doktorn nicht unnötig rum
+
+Auf die Rückfrage, ob gemeint ist „ein gemeinsamer Kern (Ablauf, Regeln, Blocker-Logik), je System ein
+eigener Werkzeugkasten (Fenster öffnen, Prozesse starten, geplante Aufgaben, Pfade), der Skill erkennt
+das System selbst; ein Windows-Fehler wird im Windows-Kasten gelöst, nie durch Verbiegen des Linux-Wegs“:
+
+> ja genau so linux ist ja schon weit oder? das müsste man ja nicht viel umbauen da das ja an sich schon passt oder?
+
+Zusatz ca. 16:35, zur Auslegung „je System ein tiefes Modul, der Kern ruft nur eine schmale, für
+beide Systeme gleiche Schnittstelle auf“:
+
+> genau windows und linux sind eigene module mit schmalen interfaces und tiefer funktionalität darum gehts
+
+Zusatz ca. 21:25, zur Einordnung von Befunden (Grundlage der Labels `system:windows`,
+`system:linux`, `system:kern`):
+
+> okay genrell bei der issue ereknnung müssen wir immer identifizeren auch ist das ein windows problem oder einn linux problem oder ein gemeinsmes problem und dann je nachdem das issue anlegen zum fixen sonst drehen wir uns im kreis das passt auch zu dem was ich vorhin gesagt hatte mit den beiden getrennten werkzeug kisten je beetriebssystem
+
+Anlass: Die Arbeit an der Windows-Seite lief bis dahin unter „fix(windows)“ und änderte dabei teils
+Dateien, die beide Systeme nutzen.
+
+### Verdichtung in prüfbare Anforderungen (L6)
+
+- **A29 Gemeinsamer Kern:** Ablauf, Regeln und Blocker-Logik gibt es genau einmal. Der Kern fragt
+  nie selbst, auf welchem System er läuft.
+- **A30 Je System ein Werkzeugkasten:** Alles, was vom System abhängt (Fenster öffnen, Prozesse
+  starten und finden, geplante Aufgaben, Pfade, Zeilenenden, Ausgabe-Kodierung), liegt in einem
+  Kasten für Linux und einem für Windows hinter derselben schmalen Tür.
+- **A31 Automatische Wahl:** Der Skill erkennt das System selbst und nimmt den passenden Kasten.
+  Wechselt die Umgebung, wechselt das Werkzeug mit – ohne Einstellung von Hand.
+- **A32 Getrennt gebaut:** Arbeit für Windows ändert keine Datei des Linux-Kastens und umgekehrt.
+  Ein Prüf-Skript macht den Bau rot, wenn eine System-Abfrage außerhalb der Kästen steht oder ein
+  Paket beide Kästen zugleich anfasst.
+- **A33 Wording:** Fehlt unter Windows etwas, heißt die Arbeit „Windows-Werkzeug bauen“, nicht
+  „reparieren“ oder „Fix“. „Reparieren“ ist nur, was vorher auf demselben System schon lief.
+- **A34 Erst zählen, dann umbauen:** Vor dem Umbau steht eine Bestandsaufnahme mit Zahlen (unten).
+  Davids Erwartung „Linux muss kaum umgebaut werden“ wird damit belegt oder widerlegt, nicht angenommen.
+
+- **A35 Trennungs-Kontrolle (bedingt):** Zum Vorschlag „Prüf-Skript in der Skill-Suite: Wortsuche außerhalb
+  der zwei System-Kästen nach System-Abfragen und nach Werkzeugen, die es nur auf einem System gibt
+  (`tmux`, `crontab`, `powershell`, `schtasks`, `wt.exe` …); Treffer = rot mit Datei und Zeile; kurze
+  Ausnahme-Liste“ sagte David (2026-11-22):
+
+  > okay wenn uns das eher nützt als hindert dann mit rein
+
+  Das ist ein bedingtes Ja. Die Wortliste kommt aus der Bestandsaufnahme; nach dem Bau werden
+  Fehlalarme gezählt. Hindert die Kontrolle mehr als sie nützt (viele Fehlalarme, lange
+  Ausnahme-Liste), wird sie wieder ausgebaut. Sie gilt nur für Arbeit am Skill selbst, nicht für
+  Spec-Bauten, die den Skill nur benutzen.
+
+**Ausdrücklich nicht gewollt (L6)**
+
+- **N12** kein Windows-Paket, das den funktionierenden Linux-Weg verändert („im Kreis reparieren“)
+- **N13** keine Suche nach dem einen Code, der auf beiden Systemen gleich läuft, wo zwei einfache
+  getrennte Wege reichen
+- **N14** keine zwei komplett getrennten Skill-Fassungen – der Kern bleibt einer
+
+### Bestandsaufnahme (Stand main 79d2fad, gezählt 2026-11-22, grob per Textsuche)
+
+- Direkte System-Abfragen (`sys.platform`, `os.name`, `platform.system()`) außerhalb der Tests:
+  **50 Stellen in 25 Dateien**. Die meisten in `to_spawn/hausmeister.py` (6), `startklar.py` (5),
+  `umzug.py` (4), `hausmeister_aufgabe.py` (4), je 3 in `waechter_takt.py`, `starter.py`,
+  `spawn.py`, `config.py`. Die Weichen liegen also heute verstreut, nicht hinter einer Tür.
+- Ansätze für Kästen gibt es schon: `to_spawn/hausmeister_windows.py`, `to_spawn/prozessbaum.py`.
+- Tests: 63 Test-Dateien enthalten eine System-Abfrage oder ein `skipif`.
+- Was die bisherigen Windows-Pakete außerhalb von Tests geändert haben:
+  233 → `hausmeister_windows.py`, `prozessbaum.py` · 240 → nur Tests · 256 → `konsole.py`,
+  `sperre.py`, `uebergabe_sichern.py` (gemeinsam) · 265 → `pruef/regeln.py` (gemeinsam, 1 Zeile) ·
+  255 (offen) → `aufpasser.py` (gemeinsam, läuft auf Linux im Cron) und `prozessbaum.py`.
+- Noch nicht gemessen: wie viele der 50 Stellen den Linux-Weg beim Herausziehen wirklich berühren.
+  Gebaut wird erst nach der Probe und nach Davids Wort.
+
+---
+
+## L7 — Ressourcen-Regeln: messen, drosseln, nie stehen bleiben (David, 2026-11-22)
+
+### Wortlaut (1:1)
+
+> … wegen dem Ram warum läuft der den voll was verbraucht den da die mieste perfomrance wir haben schon viel an dem gate rumgebastelt und viel versucht und untersucht das ist auch eins der sachen die auf jedenfall systematisiert werden sollten mit einer sauberen SOP oder einem fleblen werkzeugkasten aus verschenednen SOPS
+
+> ja es soll da gewisse standards geben je nach hardware was verfügabr ist das soll halt berücksichtigt werden und klaren regeln folgen das man immer den sweetspot anpeilt zwischen performance speed und gründlichkeit beim jeweiligen Testgate
+
+> wir brauchen klare regelungen und AUgen auf der Umgebung was die ressourcen angeht und klare regeln ab wann was gilt am besten so das es am mesiten sinn macht
+
+Zum Geräte-Logbuch:
+
+> ja dazu ein md file wo gelogt wird was pro gerät und umgebung gemessen ist etc so kann die KI das auch berücksichtigen und sich automatisch anpassen egal ob man auf größere Server skaliert oder auf ienmal auf einem schlechteren laptop arbeiten muss es wird erkannt auf welhem gerät man sich befindet und für jedes Gerät einzeln gelogt und auf dei Daten bei bedarf durch agents zurück gegriffen das müssen reichhaltige logs sein über die hardware und hardware perfomrance und last in vrerschiedenen fällen die laufen
+
+Zum dynamischen Drosseln („Tankanzeige“):
+
+> okay top genau und daher weis er immmer oder der agnt weis daddurch immer wie viele paralel sessions und kann damit auch umgehen mehr oder weniger gleiczitg laufen zu lassen ohne den bau zu sperren als dynamisch "blocken" und autoamtsich dynamsich "entblocken" laufender tickets in agents aber auch als daten zsuatz wann er welchen Code Test Gate laufen lässt zb wenn schon ein gate läuft und ein anderes Ticket in der schalnge steht schaut er erst recht wie er desen gateway optimeirt laufen lassen kann oder welches vorgefertite Gateway SOP er nutzen kann oder sollte um den Bau bestmöglich vorran zu treiben
+>
+> ich vergelihe es mit der Tank anzeige in einem auto oder reifendruck anzeiger, man drosselt die geschiendigkeit genauso das man weiter fahren kann so das man nciht crasht und stehen bleibt aber trotzdem so schnell es geht das ziel erreicht mit fokus aber das das auto weiter genutzt werden kann weil auto ist immer shneller als "zu Fuss" gehen was das equivalent wäre zu "mensch muss eingreiffen in den spec bau
+
+Anlass: Während der Probe am echten Fall lief der Arbeitsspeicher des Bau-Servers mehrfach hoch, und
+die Prüfung je Ticket dauerte rund 11 bis 21 Minuten.
+
+### Verdichtung in prüfbare Anforderungen (L7)
+
+Die Verdichtung ist eine Auslegung der Sessions. David hat den Wortlaut gesagt, die einzelnen Punkte
+aber nicht einzeln bestätigt.
+
+- **A36 Gerät erkennen und messen:** Der Skill erkennt selbst, auf welchem Gerät er läuft, und misst
+  dort Arbeitsspeicher, Kerne, Platte und die Last typischer Fälle (Prüflauf je Arbeiter-Zahl,
+  mehrere Bau-Sessions, Browser-Tests, mehrere Specs gleichzeitig).
+- **A37 Geräte-Logbuch:** Je Gerät gibt es ein eigenes, lesbares Logbuch mit Datum je Messung.
+  Agenten lesen es bei Bedarf. Ein unbekanntes Gerät wird zuerst gemessen und startet vorsichtig.
+- **A38 Feste Stufen an einem Ort:** Aus Logbuch und aktueller Last folgt nach klaren Schwellen, wie
+  viele Tickets gleichzeitig bauen, wie viele Arbeiter die Prüfung nutzt und welche Prüf-Tiefe
+  läuft. Die Schwellen stehen an genau einer Stelle im Skill, nicht je Repo von Hand.
+- **A39 Drosseln statt stehen bleiben:** Wird es eng, hält der Skill Tickets zurück; wird Luft frei,
+  lässt er sie von selbst wieder los. Der Bau wird dabei nie gesperrt und braucht keinen Menschen.
+- **A40 Prüfung passt sich an:** Läuft schon eine Prüfung und ein weiteres Ticket steht an, wählt
+  der Skill die passende vorgefertigte Prüf-Anleitung (Arbeiter-Zahl, Tiefe, Reihenfolge oder
+  Bündelung). Baut auf L3 auf.
+- **A41 Rangfolge:** Erstens bleibt der Bau nie stehen und stürzt nicht ab. Zweitens ist er
+  innerhalb dessen so schnell wie möglich.
+- **A42 Erst messen:** Vor jedem Regel-Entwurf stehen Zahlen: Speicher- und Zeit-Spitze eines
+  Prüflaufs je Arbeiter-Zahl, Dauer je Ticket gegen Zahl gleichzeitiger Sessions, Speicher je
+  Bau-Session mit und ohne Browser-Helfer.
+
+**Ausdrücklich nicht gewollt (L7)**
+
+- **N15** kein Stillstand und kein Absturz, weil niemand auf die Ressourcen geschaut hat
+- **N16** keine Handregel je Repo oder je Session für Parallel-Zahl und Prüf-Tiefe
+- **N17** keine Geräte-Logbücher im öffentlichen Skill-Repo (sie bleiben lokal oder privat)
+
+**Offen (nicht entschieden)**
+
+- Wie verträgt sich das Zurückhalten bereits laufender Sessions mit ihrem Kontext (anhalten und
+  fortsetzen gegen „nur keine neuen starten“)? Mindestens zwei Varianten vergleichen.
+- Technik des Logbuchs: Roh-Messwerte maschinenlesbar und die lesbare Datei daraus erzeugt?
+- Ob es eine feste Grenze für gleichzeitig bauende Tickets je Spec geben soll, war nur besprochen.
+
+---
+
+## L8 — Bau-Blocker entscheidet der Aufseher, nicht David (David, 2026-11-23)
+
+### Wortlaut (1:1)
+
+Ca. 01:15, als eine Bau-Session ihm eine Ja/Nein-Frage zu Test-Daten auf Staging stellte:
+
+> ist doch auch gegen meinen wunsch das erstmal alles gebaut wird und selbst entschieden wird und erst dann geklärt wird wenn der spec auf staging fertig ist
+
+Ca. 01:50, nachdem die Session ein weitergereichtes „Ja“ abgelehnt hatte:
+
+> okay aber das nervt doch genau das sind doch bau blocker eigetnlcih ist das der job des aufsehers für mich bei sowas zu entscheiden auf grundlage von meinen aussagen was mir wichtig ist aus den gnazen chat protokollen da soll er ein team lossenden die suchen anch meiner meinung in sonem fall und dann entscheiden für mich
+
+Ca. 02:40, nachdem die Session auch die Entscheidung des Aufsehers nicht angenommen hatte:
+
+> was ist das mit meinem Ja das darf nicht sein das ist ausdrücklich von mir autorisiert und in zukunft darf sowas auch nicht sein
+
+Anlass: In der Probe am echten Fall (22./23.11.2026) fragte eine Bau-Session David, ob sie auf
+Staging Test-Zuordnungen lösen darf (mit Sicherung, eigener Vorschlag „Ja“). Ein „Ja“ per Nachricht
+vom Beobachter und danach vom Aufseher nahm sie nicht an, weil Nachrichten anderer Sessions für sie
+nicht als Freigabe des Nutzers gelten. Zwei Tickets standen darüber mehrere Stunden. Erst ein
+Neustart mit der Freigabe im Start-Auftrag wirkte. Umsetzung: Issue 278.
+
+### Verdichtung in prüfbare Anforderungen (L8)
+
+Die Verdichtung ist eine Auslegung der Sessions. David hat den Wortlaut gesagt, die einzelnen Punkte
+aber nicht einzeln bestätigt.
+
+- **A43 Erst bauen, dann klären:** Eine Bau-Session entscheidet während des Baus selbst und
+  sammelt offene Punkte. Geklärt wird mit David erst, wenn die Spec auf Staging fertig ist.
+- **A44 Rückfrage ist ein Bau-Blocker:** Kann eine Bau-Session etwas nicht selbst entscheiden, geht
+  die Frage an den Aufseher, nie an David.
+- **A45 Aufseher sucht Davids Haltung:** Der Aufseher schickt Helfer los, die Davids Aussagen dazu
+  suchen (Gedächtnis, Übergaben, Lastenheft, Chat-Protokolle). Er entscheidet auf dieser Grundlage
+  und schreibt Entscheidung und Belege ins Ticket.
+- **A46 Die Entscheidung kommt an:** Die Bau-Session nimmt die Entscheidung des Aufsehers an und
+  arbeitet weiter – ohne Neustart und ohne dass ein Mensch etwas eintippt. Die Befugnis dafür steht
+  schon im Start-Auftrag der Session, denn nur der gilt für sie als Wort des Nutzers.
+- **A47 Was autorisiert ist, wird nicht gefragt:** Alles auf Staging und an Test-Daten (mit
+  Sicherung), im eigenen Arbeitsordner und auf eigenen Zweigen entscheidet die Bau-Session selbst
+  und hält es fest.
+- **A48 Liste für die Gesamtabnahme:** Alle so getroffenen Entscheidungen stehen je Spec in einer
+  Liste (wer, was, warum, Beleg), die David bei der Abnahme auf Staging sieht.
+- **A49 Grenze:** Live-System, Kosten und Konten echter Personen bleiben bei David. Dort hält die
+  Session an, und auch der Aufseher entscheidet nicht.
+
+**Ausdrücklich nicht gewollt (L8)**
+
+- **N18** keine Rückfrage an David zu etwas, das er schon autorisiert hat
+- **N19** kein Stillstand eines Tickets, weil eine Entscheidung die Bau-Session nicht erreicht
+- **N20** keine Entscheidung des Aufsehers ohne Belege aus Davids eigenen Aussagen
+
+**Offen (nicht entschieden)**
+
+- Ort und Form des Entscheidungs-Briefkastens (Datei im Arbeitsordner gegen Ticket-Kommentar):
+  zwei Varianten vergleichen, siehe Issue 278.
+- Was der Aufseher tut, wenn die Helfer keine Aussage von David zu dem Fall finden.

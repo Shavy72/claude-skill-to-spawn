@@ -205,7 +205,9 @@ def pruefe(
         if nummer and nummer not in tickets:
             bericht.fehler.append(
                 f"#{nummer} steht nicht im Manifest spec-{spec}.json — erst /to-tickets "
-                "(Eintrag mit schaetzung_k + umfang)."
+                "(Eintrag mit schaetzung_k + umfang). "
+                f'Liste als eine Zahl gelesen? Richtiger Aufruf: -Tickets "{",".join(bericht.tickets[:2])}" '
+                "(Komma-Liste in Anführungszeichen)."
             )
 
     for nummer in sorted(set(doppelt), key=ticket_schluessel):
