@@ -12,7 +12,14 @@ REVIEW = Path(__file__).resolve().parent.parent
 if str(REVIEW) not in sys.path:
     sys.path.insert(0, str(REVIEW))
 
-from _gemeinsam import DateiDiff, EingabeFehler, signal_trifft, signale_fuer  # noqa: E402
+import _gemeinsam  # noqa: E402
+from _gemeinsam import DateiDiff, EingabeFehler, signal_trifft  # noqa: E402
+
+
+def signale_fuer(cfg: dict) -> tuple:
+    """Tür erst beim Aufruf holen: fehlt sie (Rot-Probe gegen alten Code), wird der Test per Assertion rot."""
+    assert hasattr(_gemeinsam, "signale_fuer"), "_gemeinsam.signale_fuer fehlt"
+    return _gemeinsam.signale_fuer(cfg)
 
 
 def _ids(cfg: dict, pfad: str, hinzu: list[str], tmp_path: Path) -> set[str]:
@@ -39,3 +46,9 @@ def test_wort_nur_mit_config(tmp_path: Path) -> None:
 def test_kaputte_config_ist_eingabefehler(kaputt: object) -> None:
     with pytest.raises(EingabeFehler):
         signale_fuer({"projekt_woerter": kaputt})
+
+
+def test_unbekannte_signal_id_ist_eingabefehler() -> None:
+    """Vertippte Signal-ID verpufft nicht still, sondern nennt die ID."""
+    with pytest.raises(EingabeFehler, match="kostne"):
+        signale_fuer({"projekt_woerter": {"kostne": ["lagerhalle_api"]}})
