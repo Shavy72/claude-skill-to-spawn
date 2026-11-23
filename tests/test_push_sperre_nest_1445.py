@@ -241,7 +241,15 @@ def test_testdaten_gleich_projekt_origin(name: str) -> None:
     for nr, (s, i) in enumerate(zip(soll, ist, strict=True), 1):
         if s == i:
             continue
-        anonym = s.lstrip().startswith("#") and NAME.search(s) and i.lstrip().startswith("#") and not NAME.search(i)
+        # Eng: Text vor und nach dem Namen der Vorlagenzeile muss in der Kopie stehen; nur der Name wird ersetzt.
+        treffer = NAME.search(s)
+        anonym = bool(
+            treffer
+            and s.lstrip().startswith("#")
+            and not NAME.search(i)
+            and i.startswith(s[: treffer.start()])
+            and i.endswith(s[treffer.end() :])
+        )
         assert anonym, (
             f"tests/hilfen/push_sperre_1442/{name}:{nr} weicht vom Projekt ab — neu kopieren "
             "(nur Kommentarzeilen mit Personennamen dürfen per Rollenwort abweichen)"

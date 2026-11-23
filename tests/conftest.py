@@ -451,9 +451,10 @@ def _hausmeister_nur_im_test(
     monkeypatch.setenv("TO_SPAWN_TEMP_ORDNER", str(ordner / "temp"))
     # #349: ``bau.main``/``wache.main`` setzen TMPDIR/TEMP/TMP per ``os.environ.update`` auf
     # diesen Ordner. Ein Test stellt per ``monkeypatch`` oft nur TMPDIR zurück — TEMP/TMP
-    # blieben stehen und erbten an spätere Unterprozesse. Hier merkt sich monkeypatch alle drei
+    # blieben stehen und erbten an spätere Unterprozesse. ``bau.main`` setzt zudem
+    # CLAUDE_CODE_FORCE_SESSION_PERSISTENCE (bau.py:1081). Hier merkt sich monkeypatch alle vier
     # (setenv auf den Ist-Wert bzw. setenv+delenv), damit sie nach jedem Test zurückgestellt sind.
-    for name in ("TMPDIR", "TEMP", "TMP"):
+    for name in ("TMPDIR", "TEMP", "TMP", "CLAUDE_CODE_FORCE_SESSION_PERSISTENCE"):
         if name in os.environ:
             monkeypatch.setenv(name, os.environ[name])
         else:
