@@ -15,7 +15,7 @@ Grundregel: Ein Sicherheitsbefund braucht einen belegten Datenfluss **Quelle →
 9. Abhängigkeiten: neue Pakete ohne Pin, bekannte verwundbare Versionen, Lockfile fehlt.
 10. Transport/Krypto: `verify=False`, HTTP statt HTTPS für Secrets, eigene Krypto, `random` für Tokens.
 
-Projekt-eigene Regeln: Liegt im geprüften Repo `.review/regeln.md`, gelten dessen Regeln zu Secrets, Rollen und Token zusätzlich (z. B. woher Secrets kommen, welche Rolle was sehen darf, Token nur serverseitig).
+Projekt-eigene Regeln: Abschnitt `## sicherheit` der privaten `~/.claude/review/regeln.md` (VERTRAG.md §2a) gilt zu Secrets, Rollen und Token zusätzlich, Zeilen `Falls Repo <name>: …` nur in diesem Repo (z. B. woher Secrets kommen, welche Rolle was sehen darf, Token nur serverseitig).
 
 ## Ignoriere
 

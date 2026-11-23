@@ -14,7 +14,7 @@
 - Iteration: Liste ändern während Iteration, Integer-Division/Rundung bei Geldbeträgen.
 - Importzeit-Seiteneffekte (Netzwerk, DB, Dateischreiben beim Import).
 
-Projekt-eigene Regeln: Liegt im geprüften Repo `.review/regeln.md`, gelten dessen Regeln zu Python-Code zusätzlich (z. B. SSOT-Module nicht kopieren oder umgehen, Status-Wechsel nur über eine Funktion, Aufräumen in `finally`).
+Projekt-eigene Regeln: Abschnitt `## python` der privaten `~/.claude/review/regeln.md` (VERTRAG.md §2a) gilt zu Python-Code zusätzlich, Zeilen `Falls Repo <name>: …` nur in diesem Repo (z. B. SSOT-Module nicht kopieren oder umgehen, Status-Wechsel nur über eine Funktion, Aufräumen in `finally`).
 
 ## Ignoriere
 

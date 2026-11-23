@@ -50,6 +50,23 @@ def config_pfad() -> Path:
     return Path(os.environ.get("REVIEW_CONFIG") or HIER / "config.json")
 
 
+#: Private Projektregeln (VERTRAG.md §2a): nie ausgeliefert, nie im öffentlichen Repo; die Vorlagen nennen sie.
+REGELN_DATEI = "regeln.md"
+
+
+def projektregeln() -> dict[str, Any]:
+    """Wo die Projektregeln liegen und ob es sie gibt; fehlen sie, warnt das laut (Prüfer prüfen dann ohne).
+
+    ponytail: eine private Datei je Rechner für alle Projekte (Zeilen ``Falls Repo <name>: …``);
+    versionierte Datei im Projekt erst, wenn Rechner auseinanderlaufen.
+    """
+    pfad = HIER / REGELN_DATEI
+    vorhanden = pfad.is_file()
+    if not vorhanden:
+        LOG.warning("Projektregeln fehlen: %s — Prüfer prüfen nur allgemeine Regeln (VERTRAG.md §2a)", pfad)
+    return {"datei": pfad.as_posix(), "vorhanden": vorhanden}
+
+
 def log_pfad() -> Path:
     return Path(os.environ.get("REVIEW_LOG") or HIER / "ausloeser.jsonl")
 
@@ -710,6 +727,7 @@ def berechne_route(
         "signale": [],
         "datei_groesse": [],
         "pruefer": [],
+        "projektregeln": None,
         "builtin": [],
         "richter": False,
         "beleg": None,
@@ -796,6 +814,7 @@ def berechne_route(
         signale=signale,
         datei_groesse=datei_groesse(repo, relevant, base, staged, cfg),
         pruefer=_pruefer_liste(stufe, signale, relevant, cfg),
+        projektregeln=projektregeln() if stufe != "keine" else None,
         builtin=builtin,
         richter=stufe in ("mittel", "gross"),
         beleg=beleg.as_posix() if beleg.is_file() else None,

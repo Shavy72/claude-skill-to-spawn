@@ -53,7 +53,7 @@ GEHEIMNIS = re.compile(
     r"sk-[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{30,}|github_pat_|AKIA[0-9A-Z]{16}"
     r"|-----BEGIN [A-Z ]*PRIVATE KEY"
 )
-#: Begriffe aus App-Projekten (Plattform-Abläufe, Modul-Namen) — gehören in deren ``.review/regeln.md``.
+#: Begriffe aus App-Projekten (Plattform-Abläufe, Modul-Namen) — gehören in die private ``~/.claude/review/regeln.md`` (VERTRAG.md §2a).
 #: ``reels?``/``follows?`` fielen weg (#329 P2): normales Englisch („follows the rule“).
 PROJEKT_BEGRIFF = re.compile(
     r"\b(rpa|instagram|postproxy|phone_power|account_db|duoplus)\b",

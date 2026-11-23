@@ -111,7 +111,7 @@ done
 PYTHONPATH="$ZIEL" "$PY" -m to_spawn.globale_regeln --ziel "$CLAUDE_MD"
 
 # --- 3c. Review-Hook (review-hook/ → ~/.claude/hooks/review, #214) + Werkzeug (review/ → ~/.claude/review, #329); Regel in to_spawn/review_hook.py
-PYTHONPATH="$ZIEL" "$PY" -m to_spawn.review_hook
+PYTHONPATH="$ZIEL" "$PY" -m to_spawn.review_hook --klon "$HIER"  # Klon: nur versionierte Dateien
 
 # --- 4. Repo-Hälfte (optional): nur fehlende Dateien --------------------------
 if [ -n "$REPO" ]; then

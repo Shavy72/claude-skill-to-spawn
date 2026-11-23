@@ -22,13 +22,13 @@ Wer diesen Vertrag ändert, passt alle Bausteine an.
 <repo>/.review/          Belege je Repo (nie committen; globales gitignore)
 ```
 
-Optional und privat, nie im Repo: `~/.claude/review/namen_privat.txt` — Namensliste für die Öffentlich-Prüfung des Skill-Repos (Ort definiert in `tests/test_review_quelle_329.py`).
+Optional und privat, nie im Repo: `~/.claude/review/regeln.md` — Projektregeln (§2a). `~/.claude/review/namen_privat.txt` — Namensliste für die Öffentlich-Prüfung des Skill-Repos (Ort definiert in `tests/test_review_quelle_329.py`).
 
 Nur Python-Standardbibliothek. Python 3.11+. Type Hints, `logging`, kein `print` außer für die JSON-/Tabellen-Ausgabe auf stdout, kein bare except. Windows (Git Bash) UND Linux (Bau-Server) müssen laufen: Pfade mit `pathlib`, `git` per `subprocess` mit Liste.
 
 ## 2. Config (config.standard.json + lokale config.json)
 
-Ausgeliefert wird nur `config.standard.json`; der Installer aktualisiert sie. Lokale Einstellungen stehen in `~/.claude/review/config.json` (optional, nie ausgeliefert, der Installer fasst sie nie an; Pfad überschreibbar per `REVIEW_CONFIG`). Beim Lesen gewinnt jeder lokale Schlüssel, fehlende kommen aus dem Standard (Mischung nur auf oberster Ebene).
+Ausgeliefert wird nur `config.standard.json`; der Installer aktualisiert sie. Lokale Einstellungen stehen in `~/.claude/review/config.json` (optional, nie ausgeliefert; Pfad überschreibbar per `REVIEW_CONFIG`). Der Installer entschlackt sie, damit sie künftige Standard-Änderungen nicht still verdeckt: gleicht sie einem je ausgelieferten Stand (aktueller Standard + git-Verlauf), kommt sie nach `_alt/`; sonst fallen nur Schlüssel weg, deren Wert dem aktuellen Standard gleicht (Original vorher in `_alt/`). Beim Lesen gewinnt jeder lokale Schlüssel, fehlende kommen aus dem Standard (Mischung nur auf oberster Ebene).
 
 ```json
 {
@@ -52,6 +52,12 @@ Ausgeliefert wird nur `config.standard.json`; der Installer aktualisiert sie. Lo
 `modus`: `hinweis` = nichts blockiert, alles protokolliert. `scharf` = Gates blockieren bei ROT oder fehlendem Beleg.
 
 `projekt_woerter` (optional): je Signal-ID zusätzliche Pfad-/Zeilen-Wörter eines Projekts (Modul- und Dienstnamen). Einzige Stelle dafür — der Code kennt nur allgemeine Wörter (#329 P2). Unbekannte Signal-ID → Eingabefehler.
+
+## 2a. Projektregeln (`~/.claude/review/regeln.md`, privat)
+
+Projekt-eigene Regeln (SSOT-Module, Status-Wege, Deploy-Wege …) stehen nie im öffentlichen Werkzeug, sondern in `~/.claude/review/regeln.md`: Markdown, je Abschnitt `## <auftrag>` (z. B. `## python`), eine Zeile `Falls Repo <name>: …` gilt nur in diesem Repo. Jede Vorlage in `auftraege/` nennt ihren Abschnitt; der Prüfer liest ihn selbst. Nie ausgeliefert, nie versioniert (`review/.gitignore`), der Installer überschreibt sie nie.
+
+Übernahme: Vor dem Ersetzen einer lokal geänderten Vorlage (weder neue noch zuletzt installierte Fassung) schreibt der Installer deren eigene Zeilen in den passenden Abschnitt (nie doppelt; `to_spawn/review_hook.py`). Fehlt die Datei, trägt die Route `"projektregeln": {"datei": …, "vorhanden": false}`, die Kurzzeile endet mit `· Projektregeln fehlen (…)` und es gibt eine Warnung; bei Stufe `keine` ist das Feld `null`.
 
 ## 3. Stufen und Signale
 
@@ -121,6 +127,7 @@ Ausgabe (stdout, JSON, UTF-8):
     {"name": "python-reviewer", "typ": "agent", "modell": "sonnet",
      "dateien": ["web/services/x.py"], "auftraege": ["basis", "python"]}
   ],
+  "projektregeln": {"datei": "~/.claude/review/regeln.md", "vorhanden": true},
   "builtin": [{"befehl": "/code-review", "stufe": "high"}],
   "richter": true,
   "beleg": "C:/…/.review/beleg-97634cf-commit.json oder null",

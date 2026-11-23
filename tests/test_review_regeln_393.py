@@ -79,7 +79,7 @@ def test_alt_regeln_bleiben_erreichbar_und_landen_im_auftrag(tmp_path: Path) -> 
         assert "~/.claude/review/regeln.md" in vorlage and f"## {name}" in vorlage
     # Das eingespielte Werkzeug findet die Datei selbst.
     werkzeug = _modul(ziel / "_gemeinsam.py", "_gemeinsam_regeln_test")
-    regeln_info = getattr(werkzeug, "projektregeln", lambda: {})()
+    regeln_info = getattr(werkzeug, "projektregeln", dict)()
     assert regeln_info == {"datei": regeln.as_posix(), "vorhanden": True}
     # Zweiter Install: nichts doppelt, nichts verloren.
     _einspielen(ziel)
@@ -94,7 +94,7 @@ def test_ohne_regeln_meldet_route_laut(
     assert not (ziel / "regeln.md").exists()
     werkzeug = _modul(ziel / "_gemeinsam.py", "_gemeinsam_ohne_regeln_test")
     with caplog.at_level(logging.WARNING):
-        regeln_info = getattr(werkzeug, "projektregeln", lambda: {})()
+        regeln_info = getattr(werkzeug, "projektregeln", dict)()
     assert regeln_info.get("vorhanden") is False
     assert "Projektregeln fehlen" in caplog.text
 
@@ -133,7 +133,7 @@ def _quelle_mit_verlauf(tmp_path: Path) -> tuple[Path, dict, dict]:
 
 
 def test_config_gleich_altem_standard_kommt_weg(tmp_path: Path) -> None:
-    quelle, v1, v2 = _quelle_mit_verlauf(tmp_path)
+    quelle, v1, _v2 = _quelle_mit_verlauf(tmp_path)
     ziel = tmp_path / "review"
     ziel.mkdir()
     (ziel / "config.json").write_text(json.dumps(v1, indent=4), encoding="utf-8")

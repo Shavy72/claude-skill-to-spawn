@@ -15,7 +15,7 @@
 - Idempotenz: zweiter Lauf zerstört Zustand (z. B. doppeltes Anhängen, Überschreiben von Backups).
 - Rollback-Pfad fehlt oder wird bei Fehler nicht erreicht.
 
-Projekt-eigene Regeln: Liegt im geprüften Repo `.review/regeln.md`, gelten dessen Regeln zu Shell und Deploy zusätzlich (z. B. Deploy nur über das Projekt-Skript, kein Force-Push, Parallelität nicht still senken).
+Projekt-eigene Regeln: Abschnitt `## shell` der privaten `~/.claude/review/regeln.md` (VERTRAG.md §2a) gilt zu Shell und Deploy zusätzlich, Zeilen `Falls Repo <name>: …` nur in diesem Repo (z. B. Deploy nur über das Projekt-Skript, kein Force-Push, Parallelität nicht still senken).
 
 ## Ignoriere
 

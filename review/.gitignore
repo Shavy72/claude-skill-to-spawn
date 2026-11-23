@@ -5,3 +5,5 @@ sitzungen/
 __pycache__/
 # Lokale Einstellungen; ausgeliefert wird nur config.standard.json.
 config.json
+# Private Projektregeln (VERTRAG.md §2a), nie versionieren.
+regeln.md

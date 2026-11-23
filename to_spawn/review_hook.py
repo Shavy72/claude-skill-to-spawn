@@ -8,7 +8,15 @@ ab, landet sie vorher unter ``<ziel>/../_alt/<zielname>-<zeit>/`` und der Berich
 nie still überschreiben, nie nachfragen. Dateien, die nur im Ziel liegen, bleiben unberührt.
 Ziel-Dateien, die Links sind, werden nur gemeldet, nie durchgeschrieben; geschrieben wird atomar.
 
-Tür: :func:`installiere`. Aufruf: ``python -m to_spawn.review_hook [--ziel <ordner>]``.
+Eingespielt werden nur versionierte Dateien der Quelle (``git ls-files``); ohne git (eingespielter
+Skill-Ordner) alle außer den in ``<quelle>/.gitignore`` genannten. Darum geben die Installer den Klon mit.
+
+Beim Werkzeug kommt vorher (:func:`installiere_werkzeug`): Zeilen, die nur in lokal geänderten
+Auftrags-Vorlagen stehen (bisher fest eingebaute Projektregeln), wandern in die private ``regeln.md``
+(VERTRAG.md §2a), und eine lokale ``config.json`` verliert, was nur einen ausgelieferten Stand wiederholt.
+
+Türen: :func:`installiere`, :func:`installiere_werkzeug`.
+Aufruf: ``python -m to_spawn.review_hook [--ziel <ordner>] [--klon <skill-klon>]``.
 """
 
 from __future__ import annotations
@@ -19,9 +27,11 @@ import json
 import logging
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 from datetime import datetime
+from fnmatch import fnmatch
 from pathlib import Path
 
 log = logging.getLogger(__name__)
@@ -30,7 +40,11 @@ QUELL_ORDNER = Path(__file__).resolve().parents[1] / "review-hook"
 #: Review-Werkzeug (#329 P2): gleiche Regel, Ziel ``~/.claude/review``; Laufzeit-Daten dort bleiben.
 WERKZEUG_QUELLE = Path(__file__).resolve().parents[1] / "review"
 STAND_DATEI = ".installiert.json"
-_NIE = {"__pycache__", ".pytest_cache"}
+#: Private Projektregeln im Werkzeug-Ordner; gleicher Name wie ``REGELN_DATEI`` in ``review/_gemeinsam.py``.
+REGELN_DATEI = "regeln.md"
+CONFIG_LOKAL = "config.json"
+CONFIG_STANDARD = "config.standard.json"
+_NIE = {"__pycache__", ".pytest_cache", ".git"}
 
 
 def _pruefsumme(daten: bytes) -> str:
@@ -38,26 +52,70 @@ def _pruefsumme(daten: bytes) -> str:
     return hashlib.sha256(daten.replace(b"\r", b"")).hexdigest()
 
 
+def _git(quelle: Path, *args: str) -> str | None:
+    """``git -C quelle …``; ``None``, wenn git fehlt oder ``quelle`` in keinem Repo liegt."""
+    try:
+        return subprocess.run(
+            ["git", "-C", str(quelle), *args], capture_output=True, check=True, text=True, encoding="utf-8"
+        ).stdout
+    except (OSError, subprocess.CalledProcessError):
+        return None
+
+
+def _ignoriert(rel: str, muster: list[str]) -> bool:
+    """Einfache ``.gitignore``-Muster: ``name/`` = Ordner auf jeder Ebene, sonst Name oder Pfad per fnmatch.
+
+    ponytail: keine Negation (``!``) und kein ``**``; reicht für ``review/.gitignore``, sonst echtes git nutzen.
+    """
+    teile = rel.split("/")
+    for m in muster:
+        if m.endswith("/"):
+            if m.rstrip("/") in teile[:-1]:
+                return True
+        elif fnmatch(teile[-1], m) or fnmatch(rel, m.lstrip("/")):
+            return True
+    return False
+
+
 def _quell_dateien(quelle: Path) -> list[str]:
-    return sorted(
-        p.relative_to(quelle).as_posix()
-        for p in quelle.rglob("*")
-        if p.is_file() and not _NIE.intersection(p.relative_to(quelle).parts)
-    )
+    """Nur versionierte Dateien; ohne git alle außer den in ``quelle/.gitignore`` genannten."""
+    versioniert = _git(quelle, "ls-files", "-z", "--", ".")
+    if versioniert:
+        kandidaten = [r for r in versioniert.split("\0") if r and (quelle / r).is_file()]
+    else:  # Kein Repo (eingespielter Skill-Ordner) oder dort nichts versioniert.
+        try:
+            zeilen = (quelle / ".gitignore").read_text(encoding="utf-8").splitlines()
+        except FileNotFoundError:
+            zeilen = []
+        muster = [z.strip() for z in zeilen if z.strip() and not z.lstrip().startswith("#")]
+        kandidaten = [
+            p.relative_to(quelle).as_posix()
+            for p in quelle.rglob("*")
+            if p.is_file() and not _ignoriert(p.relative_to(quelle).as_posix(), muster)
+        ]
+    return sorted(r for r in kandidaten if not _NIE.intersection(r.split("/")))
+
+
+def _lade_stand(ziel: Path) -> dict[str, str]:
+    try:
+        stand = json.loads((ziel / STAND_DATEI).read_text(encoding="utf-8"))
+    except (FileNotFoundError, ValueError):
+        return {}
+    return stand if isinstance(stand, dict) else {}  # Kaputter Stand: jede abweichende Datei wird gesichert.
+
+
+def _sicherungs_ordner(ziel: Path, zeit: str | None) -> Path:
+    sicherung = ziel.parent / "_alt" / f"{ziel.name}-{zeit or datetime.now().strftime('%Y%m%d-%H%M%S')}"
+    while sicherung.exists():
+        sicherung = sicherung.with_name(sicherung.name + "-1")
+    return sicherung
 
 
 def installiere(ziel: Path, quelle: Path = QUELL_ORDNER, zeit: str | None = None) -> list[str]:
     """Bringt ``ziel`` auf den Stand von ``quelle``; gibt die Berichtszeilen zurück."""
     stand_pfad = ziel / STAND_DATEI
-    try:
-        alt_stand: dict[str, str] = json.loads(stand_pfad.read_text(encoding="utf-8"))
-    except (FileNotFoundError, ValueError):
-        alt_stand = {}
-    if not isinstance(alt_stand, dict):
-        alt_stand = {}  # Kein/kaputter Stand (auch null, [], 5): jede abweichende Datei wird gesichert.
-    sicherung = ziel.parent / "_alt" / f"{ziel.name}-{zeit or datetime.now().strftime('%Y%m%d-%H%M%S')}"
-    while sicherung.exists():
-        sicherung = sicherung.with_name(sicherung.name + "-1")
+    alt_stand = _lade_stand(ziel)
+    sicherung = _sicherungs_ordner(ziel, zeit)
     bericht: list[str] = []
     neu_stand: dict[str, str] = {}
     ziel_echt = ziel.resolve()
@@ -92,6 +150,90 @@ def installiere(ziel: Path, quelle: Path = QUELL_ORDNER, zeit: str | None = None
     return bericht
 
 
+def installiere_werkzeug(ziel: Path, quelle: Path = WERKZEUG_QUELLE, zeit: str | None = None) -> list[str]:
+    """Wie :func:`installiere`, vorher Projektregeln übernehmen und lokale Config entschlacken."""
+    return regeln_uebernehmen(ziel, quelle) + config_entschlacken(ziel, quelle, zeit) + installiere(ziel, quelle, zeit)
+
+
+def regeln_uebernehmen(ziel: Path, quelle: Path) -> list[str]:
+    """Zeilen, die nur in einer lokal geänderten Vorlage ``ziel/auftraege/<name>.md`` stehen, kommen in den
+    Abschnitt ``## <name>`` von ``ziel/regeln.md`` (nie doppelt), bevor :func:`installiere` die Vorlage ersetzt.
+
+    Lokal geändert = weder gleich der neuen Vorlage noch dem zuletzt installierten Stand (wie die Sicherungs-Regel).
+    Ohne ``.installiert.json`` landen auch Zeilen älterer ausgelieferter Fassungen dort: lieber zu viel als verloren.
+    """
+    alt_stand = _lade_stand(ziel)
+    regeln = ziel / REGELN_DATEI
+    bestand = regeln.read_text(encoding="utf-8") if regeln.is_file() else ""
+    schon_da = set(bestand.splitlines())
+    teile: list[str] = []
+    anzahl = 0
+    for alt in sorted((ziel / "auftraege").glob("*.md")):
+        vorlage = quelle / "auftraege" / alt.name
+        if alt.is_symlink() or not vorlage.is_file():
+            continue
+        alt_bytes, neu_bytes = alt.read_bytes(), vorlage.read_bytes()
+        if _pruefsumme(alt_bytes) in (_pruefsumme(neu_bytes), alt_stand.get(f"auftraege/{alt.name}")):
+            continue
+        neu_zeilen = set(neu_bytes.decode("utf-8").splitlines())
+        eigene = [z for z in alt_bytes.decode("utf-8").splitlines() if z.strip() and z not in neu_zeilen | schon_da]
+        if eigene:
+            teile.append(f"\n## {alt.stem}\n\n" + "\n".join(eigene) + "\n")
+            schon_da.update(eigene)
+            anzahl += len(eigene)
+    if not teile:
+        return []
+    kopf = bestand or (
+        "# Projektregeln (privat, nie im öffentlichen Repo; VERTRAG.md §2a)\n\n"
+        "Je Abschnitt `## <auftrag>`; eine Zeile `Falls Repo <name>: …` gilt nur in diesem Repo.\n"
+    )
+    _schreibe_atomar(regeln, (kopf + "".join(teile)).encode("utf-8"))
+    return [f"Projektregeln übernommen: {anzahl} Zeile(n) aus lokal geänderten Vorlagen → {regeln}"]
+
+
+def _ausgelieferte_configs(quelle: Path) -> list[dict]:
+    """Alle je ausgelieferten Config-Stände: der aktuelle Standard plus der git-Verlauf beider Dateinamen."""
+    texte = [(quelle / CONFIG_STANDARD).read_text(encoding="utf-8")]
+    for sha in (_git(quelle, "log", "--format=%H", "--", CONFIG_LOKAL, CONFIG_STANDARD) or "").split():
+        texte += [t for name in (CONFIG_LOKAL, CONFIG_STANDARD) if (t := _git(quelle, "show", f"{sha}:./{name}"))]
+    stande = []
+    for text in texte:
+        try:
+            stande.append(json.loads(text))
+        except ValueError:
+            continue  # Kaputter Alt-Stand im Verlauf vergleicht sich mit nichts.
+    return stande
+
+
+def config_entschlacken(ziel: Path, quelle: Path, zeit: str | None = None) -> list[str]:
+    """Lokale ``config.json`` verdeckt sonst künftige Standard-Änderungen still (Mischung oberste Ebene).
+
+    Gleicht sie einem ausgelieferten Stand → nach ``_alt/``. Sonst fallen Schlüssel weg, deren Wert dem
+    aktuellen Standard gleicht; echte Abweichungen bleiben. Das Original liegt immer vorher in ``_alt/``.
+    """
+    lokal_pfad = ziel / CONFIG_LOKAL
+    if lokal_pfad.is_symlink() or not lokal_pfad.is_file() or not (quelle / CONFIG_STANDARD).is_file():
+        return []
+    try:
+        lokal = json.loads(lokal_pfad.read_text(encoding="utf-8"))
+    except ValueError as fehler:
+        return [f"lokale Config unlesbar, nicht angefasst: {lokal_pfad} ({fehler})"]
+    stande = _ausgelieferte_configs(quelle)
+    if not isinstance(lokal, dict) or not stande or not isinstance(stande[0], dict):
+        return []
+    rest = {k: v for k, v in lokal.items() if k not in stande[0] or stande[0][k] != v}
+    if rest == lokal and lokal not in stande:
+        return []
+    sicherung = _sicherungs_ordner(ziel, zeit)
+    sicherung.mkdir(parents=True)
+    shutil.copy2(lokal_pfad, sicherung / CONFIG_LOKAL)
+    if lokal in stande or not rest:
+        lokal_pfad.unlink()
+        return [f"lokale Config glich ausgeliefertem Stand, entfernt: {CONFIG_LOKAL} → {sicherung / CONFIG_LOKAL}"]
+    _schreibe_atomar(lokal_pfad, (json.dumps(rest, indent=2, ensure_ascii=False) + "\n").encode("utf-8"))
+    return [f"lokale Config entschlackt auf {sorted(rest)}: {CONFIG_LOKAL} (Original {sicherung / CONFIG_LOKAL})"]
+
+
 def _schreibe_atomar(datei: Path, daten: bytes) -> None:
     """Erst Temp-Datei im selben Ordner, dann ``os.replace``: der laufende Hook liest nie halbe Dateien.
 
@@ -121,13 +263,15 @@ def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     parser = argparse.ArgumentParser(description="Review-Hook nach ~/.claude/hooks/review installieren")
     parser.add_argument("--ziel", type=Path, default=Path.home() / ".claude" / "hooks" / "review")
+    parser.add_argument("--klon", type=Path, help="Skill-Klon (git): Dateiliste nur aus versionierten Dateien")
     args = parser.parse_args(argv)
-    for name, ziel, quelle in (
-        ("Review-Hook", args.ziel, QUELL_ORDNER),
-        ("Review-Werkzeug", Path.home() / ".claude" / "review", WERKZEUG_QUELLE),
+    basis = args.klon or QUELL_ORDNER.parent
+    for name, ziel, quelle, einspielen in (
+        ("Review-Hook", args.ziel, basis / QUELL_ORDNER.name, installiere),
+        ("Review-Werkzeug", Path.home() / ".claude" / "review", basis / WERKZEUG_QUELLE.name, installiere_werkzeug),
     ):
         try:
-            bericht = installiere(ziel, quelle)
+            bericht = einspielen(ziel, quelle)
         except (OSError, ValueError) as fehler:
             log.error("[!!] %s nicht installiert (%s): %s", name, ziel, fehler)
             return 2

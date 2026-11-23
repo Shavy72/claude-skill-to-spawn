@@ -13,7 +13,7 @@ Frage: Würden diese Tests rot werden, wenn der geänderte Code kaputt wäre?
 - Testdaten auf Produktivsystemen oder echten Konten.
 - KI prüft sich nicht selbst: Ein Test zählt nur, wenn er rot werden kann. Tests, die nur Attrappen prüfen oder deren Assert immer wahr ist (z. B. `assert True`, Assert auf die Attrappe selbst statt echtes Ergebnis) → Befund.
 
-Projekt-eigene Regeln: Liegt im geprüften Repo `.review/regeln.md`, gelten dessen Regeln zu Tests zusätzlich (z. B. Tests nur addieren, Nutzer-Ablauf ohne Attrappen, parallele Läufe und gemeinsame Ressourcen).
+Projekt-eigene Regeln: Abschnitt `## tests` der privaten `~/.claude/review/regeln.md` (VERTRAG.md §2a) gilt zu Tests zusätzlich, Zeilen `Falls Repo <name>: …` nur in diesem Repo (z. B. Tests nur addieren, Nutzer-Ablauf ohne Attrappen, parallele Läufe und gemeinsame Ressourcen).
 
 ## Ignoriere
 

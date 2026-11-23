@@ -75,7 +75,7 @@ $env:PYTHONIOENCODING = "utf-8"
 python (Join-Path (Join-Path $ziel "to_spawn") "globale_regeln.py") --ziel $ClaudeMd
 if ($LASTEXITCODE -ne 0) { throw "Regel-Blöcke nicht geschrieben: $ClaudeMd" }
 # Review-Hook (review-hook/ → ~/.claude/hooks/review, #214) + Review-Werkzeug (review/ → ~/.claude/review, #329); Überschreib-Regel in to_spawn/review_hook.py.
-python (Join-Path (Join-Path $ziel "to_spawn") "review_hook.py")
+python (Join-Path (Join-Path $ziel "to_spawn") "review_hook.py") --klon $hier  # Klon: nur versionierte Dateien
 if ($LASTEXITCODE -ne 0) { throw "Review-Hook nicht installiert" }
 
 # PowerShell-Profil: bau / wache / sessions (nur ergänzen, nie überschreiben)
