@@ -45,6 +45,15 @@ was zum Weiterbauen nötig ist.
 
 ## 3. Stand
 
+- **2026-11-23 10:29 (Server-Uhr, main 0b3d1db):** Seit dem Eintrag von 09:56 gemergt und auf dem
+  Bau-Server installiert (Stand 0b3d1db):
+  - Pull-Request 331 (Issue 325 Teil 2, Rollenwort statt festem Personennamen in
+    `to_spawn/aufpasser.py`, `capo.py`, `hausmeister.py`, `skripte/leitstand.py`,
+    `skripte/abschluss_paket.py`, `SKILL.md`; main 0b3d1db). Volle Suite 3396 bestanden, 81
+    übersprungen, 18 xfailed. Issue 325 bleibt offen (Teil 3, Reste im Issue-Kommentar).
+  - Als Nächstes: Issue 329 (Review-Werkzeug bekommt versionierte Quelle) · Issue 325 Teil 3 ·
+    Pull-Request 317 (274 P1) wartet weiter auf das App-Ticket A1, danach 273 schließen, 274 P2, 282 P2.
+
 - **2026-11-23 09:56 (Server-Uhr, main d23c7c0):** Seit dem Eintrag von 09:44 gemergt und auf dem
   Bau-Server installiert (Stand d23c7c0):
   - Pull-Request 328 (Issue 325 Teil 1, Rollenwort statt festem Personennamen in
