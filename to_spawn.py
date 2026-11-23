@@ -43,6 +43,8 @@ from to_spawn import (  # noqa: E402
     aufseher_stand,
     bau_log,
     befund,
+    briefkasten,
+    briefkasten_cli,
     config,
     deploy_status,
     einrichten,
@@ -423,6 +425,14 @@ def _eintrag(args: argparse.Namespace) -> int:
     return 0
 
 
+def _entscheidungen(args: argparse.Namespace) -> int:
+    """``entscheidungen S``: Liste aller Entscheidungen einer Spec (#278, Tür B)."""
+    repo = config.repo_wurzel(_repo_aus_umgebung())
+    for z in briefkasten.liste(_spec_tickets(repo, args.spec), log_repo=repo):
+        print(f"#{z['ticket']} · {z['wer']} · {z['was']} · {z['warum']} · {z['beleg']}")
+    return 0
+
+
 def _umrechnen(args: argparse.Namespace) -> int:
     """``umrechnen``: alten Bau-Log-Zeilen den Spitzen-Kontext nachtragen (#238)."""
     repo = Path(args.repo).expanduser() if args.repo else bau_log.log_repo()
@@ -658,7 +668,7 @@ def main(argv: list[str] | None = None) -> int:
     p_eintrag.add_argument(
         "--typ",
         required=True,
-        choices=["zusammenfassung", "entscheidung", "blockiert", "vorfall"],
+        choices=["zusammenfassung", "entscheidung", "blockiert", "frage", "vorfall"],
     )
     p_eintrag.add_argument("--umfang", help="was gebaut wurde")
     p_eintrag.add_argument("--schwierigkeiten", help="was schwer war")
@@ -680,6 +690,11 @@ def main(argv: list[str] | None = None) -> int:
     p_eintrag.add_argument(
         "--repo", help="Ordner mit dem Bau-Log (sonst TO_SPAWN_LOG_REPO bzw. Git-Wurzel)"
     )
+
+    # Tür B (#278 P2): Befugnis prüfen, Frage einwerfen, Antwort lesen/schreiben, Liste je Spec.
+    briefkasten_cli.richte_parser_ein(unter)
+    p_ents = unter.add_parser("entscheidungen", help="Liste aller Entscheidungen einer Spec")
+    p_ents.add_argument("spec")
 
     p_um = unter.add_parser(
         "umrechnen", help="alte Bau-Log-Zeilen: Spitzen-Kontext aus dem Transkript nachtragen"
@@ -778,6 +793,10 @@ def main(argv: list[str] | None = None) -> int:
         return _anhaengen(args)
     if args.befehl == "umrechnen":
         return _umrechnen(args)
+    if args.befehl in briefkasten_cli.BEFEHLE:
+        return briefkasten_cli.lauf(args)
+    if args.befehl == "entscheidungen":
+        return _entscheidungen(args)
     if args.befehl == "nest":
         return nest.lauf(args)
     if args.befehl == "leitstand":

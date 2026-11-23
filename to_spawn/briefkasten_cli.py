@@ -1,0 +1,76 @@
+"""CLI für Tür B (#278): ``befugnis``/``frage``/``antwort``/``antworten`` (aus ``to_spawn.py`` gezogen).
+
+Exit-Codes: ``befugnis`` 0 = Klasse 1, 2 = Klasse 2, 3 = Klasse 3 · ``frage`` 0 = eingeworfen (gibt
+die ``id`` aus), 2 = verweigert · ``antwort`` 0 = Antwort da, 2 = braucht den Nutzer, 3 = WARTET ·
+``antworten`` 0 = geschrieben, 2 = verweigert, 1 = keine passende offene Frage/Fehler.
+"""
+
+from __future__ import annotations
+
+import argparse
+import logging
+from typing import Any
+
+from to_spawn import befugnis, briefkasten
+
+log = logging.getLogger("to_spawn")
+
+BEFEHLE = ("befugnis", "frage", "antwort", "antworten")
+
+
+def richte_parser_ein(unter: Any) -> None:
+    """Unterbefehle an ``unter`` (``add_subparsers``-Objekt) hängen."""
+    p_bef = unter.add_parser("befugnis", help="Klasse einer Handlung (Exit 0 = 1, 2, 3)")
+    p_bef.add_argument("ticket")
+    p_bef.add_argument("--ziel", required=True)
+    p_bef.add_argument("--art", required=True)
+    p_bef.add_argument("--gesichert", action="store_true", help="Sicherung liegt vorher vor")
+    p_frage = unter.add_parser("frage", help="Frage in den Briefkasten des Tickets (gibt die id aus)")
+    p_frage.add_argument("ticket")
+    p_frage.add_argument("--frage", required=True)
+    p_frage.add_argument("--vorschlag", required=True)
+    p_frage.add_argument("--ziel", default="")
+    p_frage.add_argument("--art", default="")
+    p_frage.add_argument("--klasse", type=int, choices=[2, 3], help="nur strenger als die Einordnung")
+    p_frage.add_argument("--beleg", action="append", default=[])
+    p_antwort = unter.add_parser("antwort", help="Antwort lesen (Exit 0 da, 2 Nutzer, 3 WARTET)")
+    p_antwort.add_argument("ticket")
+    p_antwort.add_argument("--id", required=True, dest="frage_id")
+    p_antw = unter.add_parser("antworten", help="Aufseher: Antwort in den Briefkasten")
+    p_antw.add_argument("ticket")
+    p_antw.add_argument("--id", required=True, dest="frage_id")
+    p_antw.add_argument("--wahl", required=True)
+    p_antw.add_argument("--grund", required=True)
+    p_antw.add_argument("--beleg", action="append", default=[])
+    p_antw.add_argument("--von", default="aufseher")
+
+
+def lauf(args: argparse.Namespace) -> int:
+    """Einen der :data:`BEFEHLE` ausführen."""
+    if args.befehl == "befugnis":
+        klasse = befugnis.einordnen(args.ziel, args.art, args.gesichert)
+        print(f"#{args.ticket}: Klasse {klasse}")
+        return 0 if klasse == 1 else klasse
+    try:
+        if args.befehl == "frage":
+            frage_id = briefkasten.einwerfen(
+                args.ticket, args.frage, args.vorschlag, args.klasse, args.beleg, ziel=args.ziel, art=args.art
+            )
+            print(f"#{args.ticket}: Frage eingeworfen, id {frage_id}")
+            return 0
+        if args.befehl == "antworten":
+            briefkasten.antworten(args.ticket, args.frage_id, args.wahl, args.beleg, args.grund, args.von)
+            print(f"#{args.ticket}: Antwort geschrieben")
+            return 0
+        stand = briefkasten.lesen(args.ticket, args.frage_id)
+    except briefkasten.Verweigert as fehler:
+        log.error("%s", fehler)
+        return 2
+    except (ValueError, OSError) as fehler:
+        log.error("%s", fehler)
+        return 1
+    if isinstance(stand, briefkasten.Antwort):
+        print(f"#{args.ticket}: Antwort von {stand.von}: {stand.wahl} (Grund: {stand.grund})")
+        return 0
+    print(f"#{args.ticket}: {stand}")
+    return 2 if stand == briefkasten.NUTZER else 3

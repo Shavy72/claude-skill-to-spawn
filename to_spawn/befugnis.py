@@ -6,8 +6,8 @@ Einzige Stelle der Klassen-Tabelle. Aufrufer fragen nur:
   (gefüllt in ``skripte/bau.py``); die Ablöse-SOP lässt ihn wörtlich in den Startprompt
   der Folgesession übernehmen (Kopf :data:`KOPF`).
 - :func:`einordnen` — festes Raster ``(ziel, art, gesichert) -> 1|2|3``.
-- :func:`briefkasten_datei` — Ort der Klasse-3-Frage (relativ zum Hauptbaum); Format
-  und Lesen/Schreiben gehören in ``to_spawn/briefkasten.py`` (#278 P2).
+- :func:`ist_klasse_2` — schlägt ein freier Text (Frage, Vorschlag, Ziel, Art) an Klasse 2 an?
+  Ort, Format und Lesen/Schreiben des Briefkastens gehören allein in ``to_spawn/briefkasten.py``.
 
 Klasse 1 = die Session entscheidet selbst und hält es fest · Klasse 2 = nie ohne den
 Nutzer, auch der Aufseher entscheidet nicht · Klasse 3 = alles andere und jeder Zweifel
@@ -38,7 +38,7 @@ class _Regel:
 
 #: EINE Wortmenge für Klasse 2 (Grenze L8 A49): trifft als Teilwort in Ziel ODER Art nach
 #: :func:`_norm`. ``prod`` deckt produktion/production, ``vps`` deckt vps-live. Fehl-Treffer
-#: (z. B. „deliver“) fallen in die sichere Richtung 2. Bewusst NICHT drin: ``deploy`` (Deploy auf
+#: (z. B. „deliver“, „europa“) fallen in die sichere Richtung 2. Bewusst NICHT drin: ``deploy`` (Deploy auf
 #: Staging ist normaler Bau-Weg; Live fängt das Ziel-Wort „live“) und das nackte ``token`` (meint
 #: im Bau-Alltag Kontext-Token und würde jede zweite Handlung stoppen; ``api-token`` u. a. stehen drin).
 _KLASSE_2_WOERTER = frozenset(
@@ -52,6 +52,14 @@ _KLASSE_2_WOERTER = frozenset(
         "geld",
         "bezahl",
         "kauf",
+        "gebühr",
+        "gebuehr",
+        "euro",
+        "preis",
+        "tarif",
+        "lizenz",
+        "bestellung",
+        "vertrag",
         # Konten echter Personen
         "konto",
         "konten",
@@ -74,6 +82,11 @@ _KLASSE_2_WOERTER = frozenset(
         "apikey",
         "api-token",
         "access-token",
+        "bitwarden",
+        ".env",
+        "oauth",
+        "2fa",
+        "dns",
         # Abos/Zahlungen
         "abonnement",
         "abos",
@@ -120,6 +133,12 @@ _KLASSE_1: tuple[_Regel, ...] = (
     ),
     _Regel(
         1,
+        "Deploy auf Staging (Bau-Alltag, fasst keine Daten an, darum ohne Sicherung; L8 A47)",
+        frozenset({"staging"}),
+        frozenset({"deploy", "deployen"}),
+    ),
+    _Regel(
+        1,
         "eigener Arbeitsordner und eigene Zweige",
         frozenset({"arbeitsordner", "zweig"}),
         _ARBEIT,
@@ -149,16 +168,14 @@ _KLASSE_1: tuple[_Regel, ...] = (
 #: ROHEN Eingabe, weil ``_norm`` Leerraum zu „-“ macht. wip-Zweige heißen ``wip/<N>-<kurzname>``
 #: (to_spawn/anleitung.py), darum auch dort nur die eigene Nummer.
 # Kurzname beginnt und endet auf Buchstabe/Ziffer (kein ``--force``, ``.lock``, ``x.``).
-_EIGENER_ZWEIG = re.compile(r"(ticket|wip)/(\d+)-[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?")
+_EIGENER_ZWEIG = re.compile(r"(ticket|wip)/([0-9]+)-[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?")
 
 
 def _norm(wert: object) -> str:
     """NFKC, klein, Leerraum/„_“ zu „-“; Nicht-Strings werden leer (→ nie Klasse 1)."""
     if not isinstance(wert, str):
         return ""
-    return "-".join(
-        unicodedata.normalize("NFKC", wert).lower().replace("_", " ").split()
-    )
+    return "-".join(unicodedata.normalize("NFKC", wert).lower().replace("_", " ").split())
 
 
 def _zweig_ziel(roh: object, ziel: str) -> str:
@@ -178,9 +195,7 @@ def _zweig_ziel(roh: object, ziel: str) -> str:
 
 def _ist_klasse_2(wert: str) -> bool:
     teile = re.split(r"[-/.]+", wert)
-    return any(w in wert for w in _KLASSE_2_WOERTER) or any(
-        w in teile for w in _KLASSE_2_GANZWORT
-    )
+    return any(w in wert for w in _KLASSE_2_WOERTER) or any(w in teile for w in _KLASSE_2_GANZWORT)
 
 
 def einordnen(ziel: str, art: str, gesichert: bool = False) -> int:
@@ -195,10 +210,7 @@ def einordnen(ziel: str, art: str, gesichert: bool = False) -> int:
     ziel, art = _norm(ziel), _norm(art)
     ziel_neu = _zweig_ziel(roh, ziel)
     # Ziel = eigener gültiger Zweig: Wörter im Kurznamen zählen nicht; die Art bleibt geprüft.
-    if (
-        (ziel_neu == ziel and _ist_klasse_2(ziel))
-        or _ist_klasse_2(art)
-    ):
+    if (ziel_neu == ziel and _ist_klasse_2(ziel)) or _ist_klasse_2(art):
         return 2
     ziel = ziel_neu
     for regel in _KLASSE_1:
@@ -214,9 +226,13 @@ def einordnen(ziel: str, art: str, gesichert: bool = False) -> int:
     return 3
 
 
-def briefkasten_datei(n: str | int) -> str:
-    """Ort der Entscheidungs-Datei für Ticket ``n``, relativ zum Hauptbaum (gitignored ``.to-spawn/``)."""
-    return f".to-spawn/entscheidung-{n}.json"
+def ist_klasse_2(*texte: object) -> bool:
+    """``True``, sobald einer der Texte ein Klasse-2-Wort trägt (gleiches Raster wie :func:`einordnen`).
+
+    Für freie Texte ohne Ziel/Art-Raster (z. B. Frage und Vorschlag im Briefkasten); Nicht-Strings
+    zählen nicht. Kein eigener-Zweig-Ausnahme: hier gilt jedes Wort.
+    """
+    return any(_ist_klasse_2(_norm(t)) for t in texte if _norm(t))
 
 
 def _ziel_text(ziel: str, n: str | int) -> str:
@@ -231,6 +247,8 @@ def _ziel_text(ziel: str, n: str | int) -> str:
 
 def start_text(n: str | int) -> str:
     """Befugnis-Abschnitt für den Start-Auftrag von Ticket ``n`` — der Text steht nur hier."""
+    from to_spawn import briefkasten  # spät: briefkasten importiert dieses Modul
+
     klasse_1 = "; ".join(
         f"{regel.text.replace('<N>', str(n))} (Ziel: {', '.join(sorted(_ziel_text(z, n) for z in regel.ziele or ()))} · "
         f"Art: {', '.join(sorted(regel.arten or ()))})"
@@ -253,6 +271,6 @@ def start_text(n: str | int) -> str:
         "nie eine Frage an den Nutzer. Der Aufseher liest das und antwortet per Issue-Kommentar; bis "
         f"dahin warten und nachsehen (`gh issue view {n} --comments`, ScheduleWakeup 1200 s, noop: true). "
         "Die Antwort des Aufsehers ist durch diesen Start-Auftrag freigegeben: annehmen und weiterbauen, "
-        f"ohne Neustart. Die Datei `{briefkasten_datei(n)}` hat noch keinen Leser – nicht dort warten. "
+        f"ohne Neustart. Die Datei `{briefkasten.datei_relativ(n)}` hat noch keinen Leser – nicht dort warten. "
         "Geklärt mit dem Nutzer wird erst, wenn die Spec auf Staging fertig ist."
     )
