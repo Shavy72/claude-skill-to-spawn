@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from . import config, gh
+from . import config, gh, ticket_zustand
 
 log = logging.getLogger("to_spawn.manifest")
 
@@ -270,8 +270,26 @@ def pruefe_eintrag(nummer: str, roh: Any, konfig: dict[str, Any]) -> list[str]:
     return fehler
 
 
-def _ist_zu(daten: dict[str, Any] | None) -> bool:
-    return isinstance(daten, dict) and str(daten.get("state", "")).upper() != "OPEN"
+def _fertig_gebaut(daten: dict[str, Any] | None) -> bool:
+    """Hier baut niemand mehr (zu oder grün auf Staging, #279); ohne Daten: noch zu bauen."""
+    return isinstance(daten, dict) and ticket_zustand.fertig_gebaut(daten)
+
+
+def _offen_frage(
+    repo: Path, github: dict[str, dict[str, Any] | None]
+) -> Callable[[str], bool | None]:
+    """Frage „wird #N noch gebaut?“ (``None`` = Abfrage gescheitert) — je Prüflauf nur einmal je Nummer."""
+    zustaende: dict[str, bool | None] = {
+        n: not _fertig_gebaut(d) for n, d in github.items() if isinstance(d, dict)
+    }
+
+    def offen(verweis: str) -> bool | None:
+        if verweis not in zustaende:
+            daten = ticket_zustand.lesen(verweis, cwd=repo)
+            zustaende[verweis] = None if daten is None else not ticket_zustand.fertig_gebaut(daten)
+        return zustaende[verweis]
+
+    return offen
 
 
 def _pruefe_andere_manifeste(
@@ -299,7 +317,7 @@ def _pruefe_andere_manifeste(
         if not isinstance(fremde, dict):
             continue
         for nummer in sorted(eigene & set(fremde), key=ticket_schluessel):
-            if _ist_zu(github.get(nummer)):
+            if _fertig_gebaut(github.get(nummer)):
                 continue
             unbekannt = " (Zustand ohne GitHub unbekannt)" if not github else ""
             bericht.fehler.append(
@@ -377,15 +395,7 @@ def _pruefe_github(
     mit_kante = 0
     labels_gesehen = False
     checkpoints: list[str] = []
-    # Zustand je Nummer (True = offen, None = Abfrage gescheitert) — je Prüflauf nur einmal.
-    zustaende: dict[str, bool | None] = {
-        n: not _ist_zu(d) for n, d in github.items() if isinstance(d, dict)
-    }
-
-    def offen(verweis: str) -> bool | None:
-        if verweis not in zustaende:
-            zustaende[verweis] = gh.ticket_offen(verweis, cwd=repo)
-        return zustaende[verweis]
+    offen = _offen_frage(repo, github)
 
     for nummer in bericht.tickets:
         daten = github.get(nummer)
@@ -401,7 +411,7 @@ def _pruefe_github(
             }
             if label in namen:
                 checkpoints.append(nummer)
-        if _ist_zu(daten):
+        if _fertig_gebaut(daten):
             continue
         _pruefe_verweise(bericht, nummer, daten, kanten, eigene, offen)
         belegt = [
@@ -440,11 +450,11 @@ def _pruefe_checkpoint(
     offene_andere = [
         n
         for n in bericht.tickets
-        if isinstance(github.get(n), dict) and not _ist_zu(github[n]) and n not in checkpoints
+        if isinstance(github.get(n), dict) and not _fertig_gebaut(github[n]) and n not in checkpoints
     ]
     if not offene_andere:
         return
-    offene_cp = [n for n in checkpoints if not _ist_zu(github[n])]
+    offene_cp = [n for n in checkpoints if not _fertig_gebaut(github[n])]
     if not offene_cp:
         zu = ", ".join(f"#{n}" for n in checkpoints)
         andere = ", ".join(f"#{n}" for n in offene_andere)
