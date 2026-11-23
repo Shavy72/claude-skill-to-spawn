@@ -32,7 +32,7 @@ aktuell und räumt hinter sich auf. Prüfen und Gate sind schnell und prüfen nu
 
 | Was | Ort | Wozu |
 |---|---|---|
-| Auftrag, Wortlaut des Menschen 1:1 | `docs/LASTENHEFT.md` (L1–L9, A1–A58, N1–N23) | Was gewollt ist und was nicht. Bei Zweifel gilt der Wortlaut. |
+| Auftrag, Wortlaut des Menschen 1:1 | `docs/LASTENHEFT.md` (L1–L9, A1–A61, N1–N23) | Was gewollt ist und was nicht. Bei Zweifel gilt der Wortlaut. |
 | Plan, Design, Etappen 0–5, Stand | `docs/PLAN_L1_usb_stick.md` | Wie gebaut wird, in welcher Reihenfolge, was zuletzt geschah (Abschnitt „Stand“). |
 | Abnahme mit Belegen | `docs/ABNAHME_L1.md` | Was bewiesen ist. Tabelle M1–M15: die erste Zeile ohne Beleg ist das nächste Ziel. |
 | Prüftor-Vergleich | `docs/PRUEFTOR_VERGLEICH.md` | Messwerte, Quellen, Empfehlung und Bau-Pakete für den Prüf-Werkzeugkasten. |

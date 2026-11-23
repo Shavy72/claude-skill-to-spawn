@@ -462,6 +462,19 @@ ihn mit „ja klar“ bestätigt:
   Entscheidungs-Liste) · 3. eine KI klickt die Rundschau selbst gegen Staging durch · 4. David
   schaut und fragt nach · 5. passt → live, sonst Folge-Tickets und weitere Runde.
 
+### Klarstellung (1:1, ca. 16:20)
+
+> was meinst du wir reden nicht von der gelchen sache ich rede davon das wärend eines spec baus immer wirder tickets stehen bleiben und was von mir wollen obwohl klar ist das es einfach gemacht werden soll ohne mich darum gehts
+
+Einordnung der [PC-Session]: Kern des Entscheider-Wunsches ist nicht die Abnahme, sondern dass
+Bau-Sessions mitten im Spec-Bau stehen bleiben und auf David warten. Was in der Probe half:
+Davids Entscheidungen fest im Start-Auftrag der Bau-Session (6–9 Punkte) – danach kam keine Frage
+mehr an David.
+
+Anlass (Probe Spec 1330, Nacht 22./23.11., App-Tickets): Löschfrage in 1476, 1479 und 1484 warten
+trotz erledigter Blocker, `/implement` startet nicht selbst, 1483 „Nichts zu tun“ nach rotem Gate,
+1484 still nach „Review gelb“, 1485 wartet auf eine Live-Freigabe-Frage.
+
 ### Verdichtung in prüfbare Anforderungen (L9)
 
 Die Verdichtung ist eine Auslegung der Sessions. David hat den Wortlaut gesagt und den Vorschlag
@@ -496,6 +509,14 @@ oben bestätigt, die einzelnen Punkte aber nicht einzeln. L9 baut auf L8 (A43–
   derselben Notiz festgehalten, nicht als eigener Punkt von David bestätigt.)
 - **A58 Zahlen im Abschluss-Paket sind frisch:** Test-Übersicht und andere Zählungen im
   Abschluss-Paket zeigen den Stand zum Zeitpunkt der Abnahme, nie einen alten.
+- **A59 Entscheidungen im Start-Auftrag (Klarstellung):** Jede Bau-Session bekommt als Standard
+  einen Auftragstext mit den schon getroffenen Entscheidungen des Auftraggebers zur Spec mit. Eine
+  Bau-Session ohne diesen Teil im Start-Auftrag gilt als falsch gestartet.
+- **A60 Steh-Erkennung löst den Entscheider-Helfer aus (Klarstellung):** Das System erkennt
+  maschinell, dass eine Bau-Session mit einer Frage steht oder still ist, und startet damit den
+  Helfer aus A55 – ohne Dauer-Schleife. Ohne stehende Session läuft kein Helfer.
+- **A61 Entscheidung landet in der Liste (Klarstellung):** Jede so getroffene Entscheidung steht
+  mit Quelle als Zeile in der Entscheidungs-Liste der Spec aus A52 und damit in der Rundschau.
 
 **Ausdrücklich nicht gewollt (L9)**
 
