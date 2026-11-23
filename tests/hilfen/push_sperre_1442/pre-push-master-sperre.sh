@@ -18,7 +18,7 @@
 #
 # Weitere Ausnahmen:
 #   DEPLOY_SCHLANGE_MERGE=1  setzt nur deploy_schlange.py beim Fast-Forward auf master.
-#   Notausgang David (ein Befehl, nur mit Begründung):
+#   Notausgang für den Menschen (ein Befehl, nur mit Begründung):
 #     MASTER_PUSH_ERLAUBT=1 git push origin HEAD:master
 # Abgewiesener Push: nur Meldung im Terminal (kein Telegram, keine Mail, #1445).
 # Einrichten: sh scripts/hooks/install_git_hooks.sh

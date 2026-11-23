@@ -480,7 +480,7 @@ def _pruefe_checkpoint(
 def _pruefe_checkpoint_am_ende(
     bericht: Bericht, github: dict[str, dict[str, Any] | None], checkpoint: str
 ) -> None:
-    """Fehler, wenn die Frage des Menschen andere Tickets blockiert (#285, verschärft #325).
+    """Fehler, wenn die Frage an den Menschen andere Tickets blockiert (#285, verschärft #325).
 
     Blockiert, weil es hinten dran hängt, ist gewollt (Abnahme-Ticket). Steht der
     Checkpoint dagegen VOR anderen Tickets, wartet nachts die ganze Kette auf eine

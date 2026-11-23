@@ -23,7 +23,7 @@ Die Aufseher-Ablösung und jeder Hausmeister-Rundgang rufen dieselbe Sicherung v
 ## 1. Das Ziel in vier Sätzen
 
 In jedem Repo, auf jeder Maschine (Windows-PC und Linux-Bau-Server) läuft die Kette
-`grill-with-docs → /to-spec → /to-tickets → /to-spawn` ohne einen Handgriff von David bis
+`grill-with-docs → /to-spec → /to-tickets → /to-spawn` ohne einen Handgriff vom Menschen bis
 „alle Tickets auf Staging“. Der Skill bringt alles mit, richtet fremde Repos selbst ein, hält sie
 aktuell und räumt hinter sich auf. Prüfen und Gate sind schnell und prüfen nur das Nötige.
 „Fertig“ ist es erst, wenn jede Zeile M1–M15 in `docs/ABNAHME_L1.md` einen Beleg hat.
@@ -32,7 +32,7 @@ aktuell und räumt hinter sich auf. Prüfen und Gate sind schnell und prüfen nu
 
 | Was | Ort | Wozu |
 |---|---|---|
-| Auftrag, Davids Wortlaut 1:1 | `docs/LASTENHEFT.md` (L1–L5, A1–A28, N1–N11) | Was gewollt ist und was nicht. Bei Zweifel gilt der Wortlaut. |
+| Auftrag, Wortlaut des Menschen 1:1 | `docs/LASTENHEFT.md` (L1–L5, A1–A28, N1–N11) | Was gewollt ist und was nicht. Bei Zweifel gilt der Wortlaut. |
 | Plan, Design, Etappen 0–5, Stand | `docs/PLAN_L1_usb_stick.md` | Wie gebaut wird, in welcher Reihenfolge, was zuletzt geschah (Abschnitt „Stand“). |
 | Abnahme mit Belegen | `docs/ABNAHME_L1.md` | Was bewiesen ist. Tabelle M1–M15: die erste Zeile ohne Beleg ist das nächste Ziel. |
 | Prüftor-Vergleich | `docs/PRUEFTOR_VERGLEICH.md` | Messwerte, Quellen, Empfehlung und Bau-Pakete für den Prüf-Werkzeugkasten. |
@@ -44,6 +44,22 @@ Sind die Übergaben verloren, reicht dieses Repo: Auftrag, Plan, Abnahme und Iss
 was zum Weiterbauen nötig ist.
 
 ## 3. Stand
+
+- **2026-11-23 15:15 (Server-Uhr, main 5c9144b):** Gemergt und auf dem Bau-Server installiert (Stand 5c9144b):
+  - Pull-Request 348 (Takt-Bremse: Test-Lücken und Merker-Randfall, Issue 346).
+  - Pull-Request 350 (Rollenwort statt festem Personennamen, Namens-Reste Teil 5, Issue 325).
+  - Pull-Request 351 (eigener kurzer pytest-Temp-Ordner je Lauf, Issue 349).
+  - Pull-Request 352 (Hausmeister: Test-Lücken, Datums-Sperre, `ext::`-Umleitung, Reflog-Prüfung,
+    Issues 347 und 254; main 5c9144b).
+  - Offen: Pull-Request 354 (alte `pt-*`-Temp-Reste räumen, Refs Issue 177, Fix-Runde läuft) ·
+    Issues 343 und 218 auf Kopf `0854e0a` doppelt geprüft (Review: 0 harte Befunde, unabhängige
+    Prüfung „Hartes: nein“), es fehlt nur eine gültige volle Suite · Pull-Request 317 (274 P1)
+    merge-reif, gesperrt, bis im App-Repo `docs/agents/bau_zusatz.md` liegt.
+  - Vorfall 23.11. ca. 15:08: `/tmp` meldete „No space left“, Ursache war der Datei-Zähler (Inodes)
+    bei 99 % und nur 41 % belegtem Platz; die laufende volle Suite wurde dadurch ungültig.
+    Merksatz: bei „No space left“ zuerst `df -i /tmp` lesen. Folge-Issues: 353 (volle Suite von
+    rund 24 auf rund 5 Minuten) und 355 (Erzeuger von Temp-Ordnern räumen selbst, Hausmeister
+    prüft den Datei-Zähler).
 
 - **2026-11-23 11:57 (Server-Uhr, main eb42e9e):** Gemergt und auf dem Bau-Server installiert (Stand eb42e9e):
   - Pull-Request 337 (Issue 315, Bremse für offene Briefkasten-Fragen im Aufseher-Takt, eigener
@@ -407,12 +423,12 @@ Etappen und Abnahme gilt der Plan. Der Plan-Abschnitt „Stand“ ist ein älter
 
 ## 5. Regeln, die immer gelten
 
-- Keine Fragen an David. Entscheidung und Grund ins Entscheidungs-Log, weiterbauen (L1, L2).
+- Keine Fragen an den Menschen. Entscheidung und Grund ins Entscheidungs-Log, weiterbauen (L1, L2).
   Echte Sperre (kein Zugriff, Secret fehlt): Eintrag im Entscheidungs-Log, Issue anlegen, mit einem
   anderen Paket weiterbauen.
 - Der Auftrag wird bei jeder Ablösung im Wortlaut weitergegeben, nie als Zusammenfassung (L2).
 - Erst vergleichen und messen, dann bauen; bewährtes Werkzeug vor Eigenbau (L3).
-- Aufräumen, RAM, Platte, Neustarts landen nie bei David (L4).
+- Aufräumen, RAM, Platte, Neustarts landen nie beim Menschen (L4).
 - Kein Wissen nur im Chat oder nur auf einer Maschine: Was zählt, steht hier im Repo, als Issue
   oder im Tresor (L5).
 - Merge-Regel: Ein Pull-Request wird nur gemergt, wenn das Prüf-Urteil „Hartes: nein“ lautet. Vorher

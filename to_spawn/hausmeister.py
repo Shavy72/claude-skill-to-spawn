@@ -373,9 +373,9 @@ def _name_muster() -> tuple[re.Pattern[str], ...]:
     return _NAME_MUSTER if praefixe == ORDNER_PRAEFIXE_STANDARD else _name_muster_fuer(praefixe)
 
 
-#: #248: Jahr-Monat(-Tag) direkt nach dem Präfix ist ein Datum, keine Ticket-Nummer
-#: (``l1/2026-11-21-stand``, ``fix/2026-11``).
-_KEIN_DATUM = r"(?!20\d\d-(?:0?[1-9]|1[0-2])(?:-|$))"
+#: #248/#347 W3: ``20JJ-<Ziffer>`` direkt nach dem Präfix ist datumsartig, nie eine Ticket-Nummer
+#: (``l1/2026-11-21-stand``, ``fix/2026-11``, auch ``ticket/2026-13-x``) — ohne Nummer bleibt der Zweig.
+_KEIN_DATUM = r"(?!20\d\d-\d)"
 _ZWEIG_MUSTER = re.compile(rf"^(?:(?:ticket|fix|wip|aufseher)/|fix-|abschluss-){_KEIN_DATUM}{_TICKET_NR}(?:-.*)?$")
 #: #235: Etappen-Zweig ``l<Etappe>/<N>[buchstabe]-…`` (``l4/176-…``, ``l1/214a-…``); erst ab
 #: 2 Ziffern — ``l3/3b-1b-…`` ist ein Etappen-Schritt, kein Issue, ``l1/p7f-…`` ebenso.
@@ -1928,16 +1928,25 @@ def _origin_slug(echt: Path) -> str:
     woanders als der Slug sagt ⇒ ``""``. #235 N1: ebenso, wenn ``origin`` mehr als eine
     Adresse hat oder die Repo-eigene Konfiguration (auch per ``include``) Adressen umschreibt
     (``url.<x>.insteadOf``) — fetch/push gingen dann woanders hin als der Slug sagt. Umleitungen
-    der Maschine (``--global``/``--system``) gelten für jedes Repo gleich und bleiben erlaubt.
+    der Maschine (``--global``/``--system``) gelten für jedes Repo gleich und bleiben erlaubt
+    (#347 W4: auch auf einen Spiegel-Pfad außerhalb des Ordners), außer auf einen Transport-Helfer
+    (``ext::…``, ``fd::…``): dort führt ein Befehl statt eines Servers die Sicherung aus.
+    #254: Konfiguration nicht lesbar (z. B. git < 2.26 ohne ``--show-scope``) ⇒ ``""``.
     """
     roh = (_git_oder_none(echt, "config", "--get-all", "remote.origin.url") or "").splitlines()
     if len(roh) != 1:
         return ""
-    umleitungen = _git_oder_none(echt, "config", "--show-scope", "--get-regexp", r"^url\.") or ""
-    if any(zeile.split("\t", 1)[0] in ("local", "worktree") for zeile in umleitungen.splitlines()):
+    konfig = _git_oder_none(echt, "config", "--show-scope", "--list")
+    if konfig is None:
         return ""
+    for zeile in konfig.splitlines():
+        ort, _, eintrag = zeile.partition("\t")
+        if ort in ("local", "worktree") and eintrag.startswith("url."):
+            return ""
     lesen = _git_oder_none(echt, "remote", "get-url", "origin")
     if lesen is None or lesen != _git_oder_none(echt, "remote", "get-url", "--push", "origin"):
+        return ""
+    if re.match(r"^[A-Za-z][A-Za-z0-9+.-]*::", lesen):
         return ""
     # #252: wirksame Adresse nach allen Umleitungen (auch Maschine, includeIf, Umgebung)
     if _ziel_im_ordner(echt, lesen):
@@ -2126,18 +2135,45 @@ _REFLOG_HAPPEN = 200
 def _nur_im_reflog(repo: Path, ist_worktree: bool) -> bool:
     """#235 R1: liegt ein Commit nur im Reflog, der mit dem Ordner verschwindet?
 
-    Verschwinden: beim Klon alle Reflogs, beim Worktree der Reflog seines ``HEAD`` (die
-    Zweig-Reflogs liegen im Hauptklon und bleiben). Kein Verlust ist, was von einem Zweig auf
+    Verschwinden: beim Klon alle Reflogs (auch die verknüpfter Worktrees), beim Worktree die
+    seines eigenen Git-Verzeichnisses (die Zweig-Reflogs liegen im Hauptklon und bleiben). Kein Verlust ist, was von einem Zweig auf
     ``origin`` (nach dem ``fetch`` in :func:`_ungesichertes`) oder einem lokalen Ref erreichbar
     ist — lokale Refs prüfen die übrigen Regeln (Sicherung ``sicherung/<N>`` oder bleibt).
     Gewöhnliche alte Stände liegen so längst auf dem Server und halten den Ordner nicht.
+
+    #254: „auf dem Server“ heißt ``ls-remote`` (nicht fälschbare Tracking-Refs). Die Stände
+    kommen roh aus den Reflog-Dateien (``git log -g`` überspringt fehlende Objekte still);
+    ein fehlendes Objekt, ``core.logAllRefUpdates=false`` (Verlauf fehlt) oder ein anderer
+    Ref-Speicher als ``files`` (keine Reflog-Dateien) ⇒ ``_Bleibt``.
     """
-    sicher = ("--not", "--exclude=refs/remotes/*", "--all", "--remotes=origin")
-    if not ist_worktree:
-        return bool(aufpasser.git_lauf(repo, "rev-list", "-n", "1", "--reflog", *sicher).strip())
-    staende = sorted(set(aufpasser.git_lauf(repo, "log", "-g", "--format=%H", "HEAD").split()))
-    for i in range(0, len(staende), _REFLOG_HAPPEN):
-        happen = staende[i : i + _REFLOG_HAPPEN]
+    if _git_oder_none(repo, "config", "--bool", "--get", "core.logAllRefUpdates") == "false":
+        raise _Bleibt("core.logAllRefUpdates=false: Verlauf (Reflog) nicht prüfbar", fuer_david=True)
+    if (_git_oder_none(repo, "config", "--get", "extensions.refStorage") or "files").lower() != "files":
+        raise _Bleibt("Ref-Speicher ohne Reflog-Dateien: Verlauf nicht prüfbar", fuer_david=True)
+    # Was mit dem Ordner stirbt: beim Worktree sein Git-Verzeichnis (``HEAD``, ``refs/worktree/*``,
+    # ``refs/bisect/*``), beim Klon das ganze ``.git`` samt ``worktrees/*/logs`` verknüpfter Worktrees.
+    git_dir = Path(aufpasser.git_lauf(repo, "rev-parse", "--absolute-git-dir").strip())
+    wurzeln = [git_dir / "logs"] + ([] if ist_worktree else sorted(git_dir.glob("worktrees/*/logs")))
+    staende: set[str] = set()
+    try:
+        dateien = [p for w in wurzeln for p in w.rglob("*") if p.is_file()]
+        inhalte = [(d, d.read_bytes()) for d in dateien]
+    except OSError as fehler:
+        raise _Bleibt(f"Reflog nicht lesbar: {fehler}", fehler=True) from None
+    for datei, inhalt in inhalte:
+        for zeile in inhalt.splitlines():
+            felder = zeile.split(b" ", 2)
+            if len(felder) < 3 or not all(re.fullmatch(rb"[0-9a-f]{40}(?:[0-9a-f]{24})?", f) for f in felder[:2]):
+                raise _Bleibt(f"unlesbare Reflog-Zeile in {datei.name}", fehler=True)
+            staende |= {f.decode() for f in felder[:2] if f.strip(b"0")}
+    sicher = ("--not", "--exclude=refs/remotes/*", "--all", *_server_koepfe(repo))
+    liste = sorted(staende)
+    for i in range(0, len(liste), _REFLOG_HAPPEN):
+        happen = liste[i : i + _REFLOG_HAPPEN]
+        try:  # ohne --ignore-missing: ein fehlendes Objekt ist ein Fehler
+            aufpasser.git_lauf(repo, "rev-list", "--no-walk", *happen)
+        except RuntimeError as fehler:
+            raise _Bleibt(f"Reflog verweist auf fehlendes Objekt: {_kurz(fehler)}", fuer_david=True) from None
         if aufpasser.git_lauf(repo, "rev-list", "-n", "1", "--ignore-missing", *happen, *sicher).strip():
             return True
     return False
@@ -2156,21 +2192,31 @@ def _koepfe_auf_server(repo: Path, ist_worktree: bool) -> None:
     """#235 M1a: jeder lokale Kopf muss von einem Zweig-Kopf auf dem Server (``ls-remote``)
     erreichbar sein — lokale Tracking-Refs lassen sich fälschen oder per Refspec verengen.
     Server-Köpfe, die lokal fehlen, zählen nicht (``--ignore-missing``). Sonst ``_Bleibt``."""
+    auf_server = _server_koepfe(repo)
+    for ref in _lokale_koepfe(repo, ist_worktree):
+        if aufpasser.git_lauf(repo, "rev-list", "--ignore-missing", "-n", "1", ref, "--not", *auf_server).strip():
+            raise _Bleibt(f"{OHNE_NUMMER}: {ref} nicht auf dem Server (ls-remote origin)", fuer_david=True)
+
+
+def _server_koepfe(repo: Path) -> list[str]:
+    """SHAs aller Zweig-Köpfe von ``origin`` laut Server (``ls-remote --heads``); nicht
+    erreichbar oder unlesbare Zeile ⇒ ``_Bleibt``.
+
+    ponytail: ein ls-remote je Aufrufer (ohne Nummer zwei je Ordner), alle Köpfe auf einer
+    Kommandozeile; zwischenspeichern bzw. in Happen, wenn Zweig-Zahl oder Laufzeit stört."""
     try:
         roh = _git_ohne_frage(repo, "ls-remote", "--heads", "origin")
     except RuntimeError as fehler:
-        raise _Bleibt(f"{OHNE_NUMMER}: Server nicht erreichbar (ls-remote): {_kurz(fehler)}", fehler=True) from None
+        raise _Bleibt(f"Server nicht erreichbar (ls-remote): {_kurz(fehler)}", fehler=True) from None
     auf_server: list[str] = []
     for zeile in roh.splitlines():
         if not zeile.strip():
             continue
         treffer = _LS_REMOTE_ZEILE.match(zeile)
         if treffer is None:  # #235 N2: nur „<sha>\trefs/heads/…“ ist eine Server-Angabe
-            raise _Bleibt(f"{OHNE_NUMMER}: unlesbare ls-remote-Zeile {_kurz(zeile)!r}", fehler=True)
+            raise _Bleibt(f"unlesbare ls-remote-Zeile {_kurz(zeile)!r}", fehler=True)
         auf_server.append(treffer.group(1))
-    for ref in _lokale_koepfe(repo, ist_worktree):
-        if aufpasser.git_lauf(repo, "rev-list", "--ignore-missing", "-n", "1", ref, "--not", *auf_server).strip():
-            raise _Bleibt(f"{OHNE_NUMMER}: {ref} nicht auf dem Server (ls-remote origin)", fuer_david=True)
+    return auf_server
 
 
 def _sicherung_auf_server(repo: Path, ticket: int, sha: str) -> None:

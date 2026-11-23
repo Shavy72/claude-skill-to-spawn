@@ -10,12 +10,20 @@ fertig. Leer ⇒ kein Claude-Prozess. Sonst startet eine frische Claude-Session
 ``takt.<S>`` und wird erst fortgeschrieben, wenn Claude mit 0 endet — und nur
 für die Einträge, die Claude wirklich gezeigt bekam. Endet Claude mit Fehler oder
 an der Zeitgrenze, kommt alles Gezeigte wieder; waren Briefkasten-Fragen dabei,
-läuft nur ihr Zeige-Zähler der Bremse weiter (#339). Ohne Merker (erster Takt)
+läuft nur ihr Zeige-Zähler der Bremse weiter (#339), und sie bleiben im Merker-Feld
+``fragen`` (gezeigt), damit der nächste Takt den Kommentar an den Nutzer sucht (#346). Ohne Merker (erster Takt)
 ist alles Ausgangsstand außer ``blockiert``/``frage`` offener Tickets.
 
 Bremse (#315): eine offene Briefkasten-Frage, die immer wieder kommt, geht nach dem
 :data:`BREMSE_AB`-ten Zeigen nur noch alle :data:`BREMSE_ABSTAND_S` an Claude, und der Takt
 meldet sie einmal selbst per Ticket-Kommentar an den Nutzer (keine Mail).
+
+Bewusste Grenze (#346): eine kaputte Briefkasten-Datei hat keine id, ihre Kennung ist der Hash des
+Sperrgrunds. Kommt derselbe Sperrgrund später wieder (gleicher Text, z. B. dieselbe Störung der
+Hauptdatei), findet die Kennung einen alten Kommentar an den Nutzer bzw. eine alte Bremse-Meldung im
+Ticket und gilt als belegt bzw. gemeldet. Hingenommen, weil das Ticket gesperrt bleibt, bis der Nutzer
+die Datei prüft (der Sperrgrund steht weiter in ``offene``), und eine eindeutige Kennung je Vorfall
+erst der Briefkasten liefern müsste (Upgrade: id/Zeitstempel für Sperrgründe in ``briefkasten.offene``).
 
 Auslöser: Cron alle 5 min (:func:`cron_einrichten`) und der Stop-Hook bei
 ``session_ende`` (:func:`starte_abgeloest`, höchstens ein Start je Minute und Spec).
@@ -482,8 +490,11 @@ def takt(
             if gescheitert:
                 if not any(feld == "fragen" for _t, feld, _k in eintraege[:MAX_EINTRAEGE]):
                     return _fehler(spec, f"{gescheitert} — Merker bleibt.")
-                # Nichts gilt als erledigt, aber gezeigt ist gezeigt: die Bremse zählt weiter (#339).
-                neu = ohne_ungezeigte(neu, eintraege)
+                # Nichts gilt als erledigt, aber gezeigt ist gezeigt: die Bremse zählt weiter (#339), und
+                # gezeigte Fragen bleiben in ``fragen``, damit der nächste Takt ihren Beleg sucht (#346).
+                neu = ohne_ungezeigte(
+                    neu, [e for i, e in enumerate(eintraege) if e[1] != "fragen" or i >= MAX_EINTRAEGE]
+                )
             else:
                 if leitstand.notiz(notiz_name) == notiz_vorher:
                     meldung = f"Takt #{spec}: Claude endete mit 0, Notizzettel nicht fortgeschrieben."
