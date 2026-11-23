@@ -44,6 +44,7 @@ if _SKILL not in sys.path:
     sys.path.insert(0, _SKILL)
 from to_spawn import (
     anleitung,
+    arbeitsstand,
     capo,
     config,
     context_mode,
@@ -850,6 +851,19 @@ def main() -> int:
         if not transkript.is_file():
             log.error("--resume %s: Transkript %s fehlt — kein Start.", args.resume, transkript)
             return 2
+
+    # Arbeitsordner-Stand (#283) vor dem ersten Lesen aus REPO (Vorlage, Manifest, Skripte):
+    # hinter origin/<Hauptzweig> → nachziehen (nur fast-forward, sauberer Baum) oder Abbruch
+    # mit Zeile. Probelauf/--print-prompt prüfen nur und warnen.
+    trocken = args.dry_run or args.print_prompt
+    stand = arbeitsstand.sicherstellen(REPO, nachziehen=not trocken)
+    if stand.zustand == arbeitsstand.NACHGEZOGEN:
+        log.info("%s", stand.text)
+    elif not stand.ok:
+        if not trocken:
+            print(f"Kein Start: {stand.text}", file=sys.stderr, flush=True)
+            return 2
+        log.warning("%s", stand.text)
 
     default = load_default(Path(_SKILL) / "repo-scripts" / "_default.json" if args.probesitz else None)
     found = None if args.probesitz else find_manifest(ticket)

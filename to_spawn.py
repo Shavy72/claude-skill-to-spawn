@@ -39,6 +39,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from to_spawn import (  # noqa: E402
+    arbeitsstand,
     aufpasser,
     aufseher_stand,
     bau_log,
@@ -603,6 +604,11 @@ def main(argv: list[str] | None = None) -> int:
     unter.add_parser(
         "hauptzweig", help="Name des Hauptzweigs ausgeben (Konfig, origin/HEAD, master/main) (#257)"
     )
+    p_arbeit = unter.add_parser(
+        "arbeitsstand",
+        help="Arbeitsordner auf origin/<Hauptzweig> nachziehen (nur fast-forward) oder Abbruch (#283)",
+    )
+    p_arbeit.add_argument("--pruefen", action="store_true", help="nur prüfen, nichts nachziehen")
     # Warte-Prüfung der Bau-Session (#267): dieselbe Regel wie die Start-Schranke.
     p_blocker = unter.add_parser(
         "blocker", help="Vorgänger erledigt + Commit auf Hauptzweig? Exit 0 = FREI, 1 = WARTET + Gründe (#267)"
@@ -784,6 +790,11 @@ def main(argv: list[str] | None = None) -> int:
         )
         sys.stdout.write(erg.zeile + "\n")
         return erg.exit
+    if args.befehl == "arbeitsstand":
+        # Exit 0 = aktuell/nachgezogen, 1 = veraltet/Abbruch (Zeile nennt Zahl und was zu tun ist).
+        erg = arbeitsstand.sicherstellen(config.repo_wurzel(_repo_aus_umgebung()), nachziehen=not args.pruefen)
+        print(f"Arbeitsstand: {erg.zustand} — {erg.text}", file=sys.stdout if erg.ok else sys.stderr)
+        return 0 if erg.ok else 1
     if args.befehl == "hauptzweig":
         # Nur der Name auf stdout — spawn_srv.sh liest ihn ein (#257).
         print(gh.hauptzweig(config.repo_wurzel(_repo_aus_umgebung())))

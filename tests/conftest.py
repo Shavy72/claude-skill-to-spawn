@@ -304,6 +304,16 @@ def _start_stelle_im_test(
 
 
 @pytest.fixture(autouse=True)
+def _arbeitsstand_im_test(monkeypatch: pytest.MonkeyPatch, _keine_to_spawn_umgebung: None) -> None:
+    """Arbeitsordner-Stand (#283) gilt in Tests als aktuell — Wegwerf-Repos haben kein echtes origin.
+
+    Erbt sich in Kind-Prozesse (``bau.py``). ``tests/test_arbeitsstand_283.py`` löscht die
+    Variable und prüft mit echtem git.
+    """
+    monkeypatch.setenv("TO_SPAWN_TEST_ARBEITSSTAND_OK", "1")
+
+
+@pytest.fixture(autouse=True)
 def _hausmeister_nur_im_test(
     tmp_path_factory: pytest.TempPathFactory,
     monkeypatch: pytest.MonkeyPatch,
