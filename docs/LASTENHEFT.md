@@ -233,6 +233,16 @@ das System selbst; ein Windows-Fehler wird im Windows-Kasten gelöst, nie durch 
 
 > ja genau so linux ist ja schon weit oder? das müsste man ja nicht viel umbauen da das ja an sich schon passt oder?
 
+Zusatz ca. 16:35, zur Auslegung „je System ein tiefes Modul, der Kern ruft nur eine schmale, für
+beide Systeme gleiche Schnittstelle auf“:
+
+> genau windows und linux sind eigene module mit schmalen interfaces und tiefer funktionalität darum gehts
+
+Zusatz ca. 21:25, zur Einordnung von Befunden (Grundlage der Labels `system:windows`,
+`system:linux`, `system:kern`):
+
+> okay genrell bei der issue ereknnung müssen wir immer identifizeren auch ist das ein windows problem oder einn linux problem oder ein gemeinsmes problem und dann je nachdem das issue anlegen zum fixen sonst drehen wir uns im kreis das passt auch zu dem was ich vorhin gesagt hatte mit den beiden getrennten werkzeug kisten je beetriebssystem
+
 Anlass: Die Arbeit an der Windows-Seite lief bis dahin unter „fix(windows)“ und änderte dabei teils
 Dateien, die beide Systeme nutzen.
 
@@ -348,3 +358,62 @@ aber nicht einzeln bestätigt.
   fortsetzen gegen „nur keine neuen starten“)? Mindestens zwei Varianten vergleichen.
 - Technik des Logbuchs: Roh-Messwerte maschinenlesbar und die lesbare Datei daraus erzeugt?
 - Ob es eine feste Grenze für gleichzeitig bauende Tickets je Spec geben soll, war nur besprochen.
+
+---
+
+## L8 — Bau-Blocker entscheidet der Aufseher, nicht David (David, 2026-11-23)
+
+### Wortlaut (1:1)
+
+Ca. 01:15, als eine Bau-Session ihm eine Ja/Nein-Frage zu Test-Daten auf Staging stellte:
+
+> ist doch auch gegen meinen wunsch das erstmal alles gebaut wird und selbst entschieden wird und erst dann geklärt wird wenn der spec auf staging fertig ist
+
+Ca. 01:50, nachdem die Session ein weitergereichtes „Ja“ abgelehnt hatte:
+
+> okay aber das nervt doch genau das sind doch bau blocker eigetnlcih ist das der job des aufsehers für mich bei sowas zu entscheiden auf grundlage von meinen aussagen was mir wichtig ist aus den gnazen chat protokollen da soll er ein team lossenden die suchen anch meiner meinung in sonem fall und dann entscheiden für mich
+
+Ca. 02:40, nachdem die Session auch die Entscheidung des Aufsehers nicht angenommen hatte:
+
+> was ist das mit meinem Ja das darf nicht sein das ist ausdrücklich von mir autorisiert und in zukunft darf sowas auch nicht sein
+
+Anlass: In der Probe am echten Fall (22./23.11.2026) fragte eine Bau-Session David, ob sie auf
+Staging Test-Zuordnungen lösen darf (mit Sicherung, eigener Vorschlag „Ja“). Ein „Ja“ per Nachricht
+vom Beobachter und danach vom Aufseher nahm sie nicht an, weil Nachrichten anderer Sessions für sie
+nicht als Freigabe des Nutzers gelten. Zwei Tickets standen darüber mehrere Stunden. Erst ein
+Neustart mit der Freigabe im Start-Auftrag wirkte. Umsetzung: Issue 278.
+
+### Verdichtung in prüfbare Anforderungen (L8)
+
+Die Verdichtung ist eine Auslegung der Sessions. David hat den Wortlaut gesagt, die einzelnen Punkte
+aber nicht einzeln bestätigt.
+
+- **A43 Erst bauen, dann klären:** Eine Bau-Session entscheidet während des Baus selbst und
+  sammelt offene Punkte. Geklärt wird mit David erst, wenn die Spec auf Staging fertig ist.
+- **A44 Rückfrage ist ein Bau-Blocker:** Kann eine Bau-Session etwas nicht selbst entscheiden, geht
+  die Frage an den Aufseher, nie an David.
+- **A45 Aufseher sucht Davids Haltung:** Der Aufseher schickt Helfer los, die Davids Aussagen dazu
+  suchen (Gedächtnis, Übergaben, Lastenheft, Chat-Protokolle). Er entscheidet auf dieser Grundlage
+  und schreibt Entscheidung und Belege ins Ticket.
+- **A46 Die Entscheidung kommt an:** Die Bau-Session nimmt die Entscheidung des Aufsehers an und
+  arbeitet weiter – ohne Neustart und ohne dass ein Mensch etwas eintippt. Die Befugnis dafür steht
+  schon im Start-Auftrag der Session, denn nur der gilt für sie als Wort des Nutzers.
+- **A47 Was autorisiert ist, wird nicht gefragt:** Alles auf Staging und an Test-Daten (mit
+  Sicherung), im eigenen Arbeitsordner und auf eigenen Zweigen entscheidet die Bau-Session selbst
+  und hält es fest.
+- **A48 Liste für die Gesamtabnahme:** Alle so getroffenen Entscheidungen stehen je Spec in einer
+  Liste (wer, was, warum, Beleg), die David bei der Abnahme auf Staging sieht.
+- **A49 Grenze:** Live-System, Kosten und Konten echter Personen bleiben bei David. Dort hält die
+  Session an, und auch der Aufseher entscheidet nicht.
+
+**Ausdrücklich nicht gewollt (L8)**
+
+- **N18** keine Rückfrage an David zu etwas, das er schon autorisiert hat
+- **N19** kein Stillstand eines Tickets, weil eine Entscheidung die Bau-Session nicht erreicht
+- **N20** keine Entscheidung des Aufsehers ohne Belege aus Davids eigenen Aussagen
+
+**Offen (nicht entschieden)**
+
+- Ort und Form des Entscheidungs-Briefkastens (Datei im Arbeitsordner gegen Ticket-Kommentar):
+  zwei Varianten vergleichen, siehe Issue 278.
+- Was der Aufseher tut, wenn die Helfer keine Aussage von David zu dem Fall finden.
