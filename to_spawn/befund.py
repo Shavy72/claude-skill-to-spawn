@@ -41,7 +41,7 @@ log = logging.getLogger("to_spawn.befund")
 #: Kopf jedes Aufseher-Kommentars auf GitHub.
 KOPF = "Aufseher:"
 STUFEN = ("gelb", "rot")
-#: Label, mit dem David ein gelbes Folge-Ticket bewusst auf später schiebt.
+#: Label, mit dem der Mensch ein gelbes Folge-Ticket bewusst auf später schiebt.
 LABEL_VERSCHOBEN = "verschoben"
 #: Vorgabe-Schätzung (Tausend Token) für ein gelbes Folge-Ticket — klein, ein Hinweis.
 SCHAETZUNG_GELB_K = 30
@@ -419,7 +419,7 @@ def abschnitt(repo: Path, spec: int | str, abruf: Abruf | None = None) -> list[s
 #: geschlossen (verworfen) oder gebündelt — Label ``verschoben`` = in ein Sammel-Issue
 #: gelegt bzw. bewusst auf später geschoben (E25). ``offen``/``unbekannt`` halten auf.
 #: ponytail: Bündel = nur das Label, kein Verweis aufs Sammel-Issue; Feld ``sammel`` im
-#: Manifest, wenn David das Sammel-Issue nachverfolgen will.
+#: Manifest, wenn der Mensch das Sammel-Issue nachverfolgen will.
 ERLEDIGT = frozenset({"gebaut", "verworfen", "verschoben"})
 
 
