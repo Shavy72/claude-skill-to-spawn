@@ -491,3 +491,39 @@ def test_kaputt_datei_mit_zeitstempel(briefkasten: ModuleType, tmp_path: Path) -
         (ordner / "entscheidung-7.json").write_text(inhalt, encoding="utf-8")
         briefkasten.einwerfen("7", "A?", "a", 3, [], hauptbaum=tmp_path)
     assert len(list(ordner.glob("entscheidung-7.json.kaputt-*"))) == 4
+
+
+_UNGUELTIGE_BYTES = b"\xff\xfe\x00kaputt"
+
+
+def test_ungueltige_bytes_sperren_statt_abzustuerzen(briefkasten: ModuleType, tmp_path: Path) -> None:
+    ordner = tmp_path / ".to-spawn"
+    ordner.mkdir()
+    (ordner / "entscheidung-7.json").write_bytes(_UNGUELTIGE_BYTES)
+    assert briefkasten.lesen("7", "ab", hauptbaum=tmp_path) == briefkasten.NUTZER
+    (eintrag,) = briefkasten.offene(["7"], hauptbaum=tmp_path)
+    assert eintrag["klasse"] == "2" and eintrag["id"] == ""
+    with pytest.raises(briefkasten.Verweigert):
+        briefkasten.antworten("7", "ab", "a", [], "passt", hauptbaum=tmp_path)
+    assert (ordner / "entscheidung-7.json").read_bytes() == _UNGUELTIGE_BYTES
+
+
+def test_ungueltige_bytes_beim_einwurf_beiseitegelegt(briefkasten: ModuleType, tmp_path: Path) -> None:
+    ordner = tmp_path / ".to-spawn"
+    ordner.mkdir()
+    (ordner / "entscheidung-7.json").write_bytes(_UNGUELTIGE_BYTES)
+    briefkasten.einwerfen("7", "A?", "a", 3, [], hauptbaum=tmp_path)
+    (kaputt,) = ordner.glob("entscheidung-7.json.kaputt-*")
+    assert kaputt.read_bytes() == _UNGUELTIGE_BYTES
+    assert briefkasten.lesen("7", "ab", hauptbaum=tmp_path) == briefkasten.NUTZER
+
+
+def test_liste_meldet_kaputte_datei(
+    briefkasten: ModuleType, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    ordner = tmp_path / ".to-spawn"
+    ordner.mkdir()
+    (ordner / "entscheidung-7.json").write_text("[]", encoding="utf-8")
+    with caplog.at_level("WARNING", logger="to_spawn.briefkasten"):
+        assert briefkasten.liste(["7"], hauptbaum=tmp_path) == []
+    assert any("entscheidung-7.json" in r.getMessage() for r in caplog.records)

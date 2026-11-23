@@ -142,7 +142,9 @@ class _Inhalt:
 
 
 def _lies(datei: Path) -> _Inhalt:
-    """Datei lesen; unterscheidet fehlt (kein Sperrgrund), ungültig und Lesefehler (``OSError``)."""
+    """Datei lesen; unterscheidet fehlt (kein Sperrgrund), ungültig (auch ungültige Bytes) und
+    Lesefehler (``OSError``)."""
+    kaputt = _Inhalt(None, f"Briefkasten-Datei kaputt: {datei.name} — prüfen, reparieren oder löschen", True)
     try:
         text = datei.read_text(encoding="utf-8")
     except FileNotFoundError:
@@ -150,7 +152,9 @@ def _lies(datei: Path) -> _Inhalt:
     except OSError as fehler:
         log.warning("Briefkasten %s nicht lesbar (%s) — wartet auf den Nutzer.", datei, fehler)
         return _Inhalt(None, f"Briefkasten-Datei {datei.name} nicht lesbar ({fehler}) — Zugriff prüfen")
-    kaputt = _Inhalt(None, f"Briefkasten-Datei kaputt: {datei.name} — prüfen, reparieren oder löschen", True)
+    except UnicodeDecodeError as fehler:
+        log.warning("Briefkasten %s mit ungültigen Bytes (%s) — wartet auf den Nutzer.", datei, fehler)
+        return kaputt
     try:
         daten = json.loads(text)
     except ValueError as fehler:
@@ -164,8 +168,14 @@ def _lies(datei: Path) -> _Inhalt:
 
 
 def _lade(datei: Path) -> dict[str, Any] | None:
-    """Gültiger Inhalt oder ``None`` (fehlt, halb, kaputt, falsche Form, Lesefehler)."""
-    return _lies(datei).daten
+    """Gültiger Inhalt oder ``None`` (fehlt, halb, kaputt, falsche Form, Lesefehler).
+
+    Eine vorhandene, aber nicht nutzbare Datei wird nicht still übersprungen: ``log.warning``.
+    """
+    inhalt = _lies(datei)
+    if inhalt.stoerung:
+        log.warning("Briefkasten %s übersprungen: %s", datei.name, inhalt.stoerung)
+    return inhalt.daten
 
 
 def _jetzt() -> str:
@@ -317,7 +327,7 @@ def antworten(
     ``von`` nur aus :data:`AUFSEHER_VON` (``ValueError`` sonst; der Nutzer antwortet über
     :func:`nutzer_antworten`). ``ValueError`` bei leerer ``wahl`` oder ohne offene Frage mit dieser
     ``id``; ``Verweigert`` in einer Bau-Session und solange das Ticket auf den Nutzer wartet
-    (offene Klasse-2-Frage oder ``.kaputt-*``-Datei).
+    (offene Klasse-2-Frage, ``.kaputt-*``-Datei oder unlesbare/kaputte Hauptdatei).
     """
     if von not in AUFSEHER_VON:
         raise ValueError(f"von {von!r}: der Aufseher schreibt nur als {', '.join(AUFSEHER_VON)}.")
@@ -336,7 +346,8 @@ def nutzer_antworten(
     """Antwort des Nutzers (Mensch) auf die offene Frage ``frage_id``, auch Klasse 2.
 
     Einziger Weg zu ``von`` :data:`NUTZER_VON`. ``Verweigert`` in einer Bau-Session; eine
-    ``.kaputt-*``-Datei sperrt weiter, bis der Nutzer sie gelöscht hat. Grenzen des Schutzes:
+    ``.kaputt-*``-Datei sperrt weiter, bis der Nutzer sie gelöscht hat, eine unlesbare/kaputte
+    Hauptdatei, bis sie geklärt ist. Grenzen des Schutzes:
     Modul-Docstring.
     """
     return _schreibe_antwort(n, frage_id, wahl, belege, grund, NUTZER_VON, hauptbaum)
@@ -351,10 +362,6 @@ def _schreibe_antwort(
     von: str,
     hauptbaum: Path | None,
 ) -> Path:
-    if _eigenes_ticket() is not None:
-        raise Verweigert("Eine Bau-Session beantwortet keine Briefkasten-Fragen (TO_SPAWN_TICKET gesetzt).")
-    if not wahl.strip():
-        raise ValueError("Leere Wahl: die Antwort braucht eine Entscheidung.")
     """Antwort schreiben (gemeinsamer Weg von :func:`antworten` und :func:`nutzer_antworten`).
 
     Offen ist eine Frage, solange ihre Antwort nicht gilt (:func:`_gilt`). Steht dort eine
@@ -363,6 +370,10 @@ def _schreibe_antwort(
     ``verworfen`` der Frage nachvollziehbar erhalten. ``Verweigert`` bei unlesbarer Hauptdatei
     (auch für den Nutzer: erst die Datei klären) und für den Aufseher bei jeder Sperre.
     """
+    if _eigenes_ticket() is not None:
+        raise Verweigert("Eine Bau-Session beantwortet keine Briefkasten-Fragen (TO_SPAWN_TICKET gesetzt).")
+    if not wahl.strip():
+        raise ValueError("Leere Wahl: die Antwort braucht eine Entscheidung.")
     datei = _datei(n, hauptbaum)
     with _gesperrt(datei):
         inhalt = _lies(datei)
