@@ -8,7 +8,7 @@ Lange Chats vermischen Besprochenes und Beschlossenes (Lost in the Middle, Auto-
   `### E<n> — <Titel> ✅` · **Beschluss:** konkret, prüfbar · **Herleitung:** warum, welche Befunde/Fakten (mit Quelle), welche Alternative verworfen · **Wort des Menschen:** kurzes Zitat (Runde n).
 - **Weitere Abschnitte:** `## Ziel` (Worte des Menschen, verdichtet) · `## Befunde` (Fakten aus Code/Recherche mit Quelle) · `## Verworfen ❌` (V<n>, je ein Satz Grund) · `## Offen 💭` (O<n>: besprochen, nicht entschieden — auch Gedankenspiele „wäre cool, wenn …“).
 - **Änderung:** Kippt der Mensch einen Beschluss, alten Eintrag nicht löschen, sondern `~~E3~~ überholt durch E9` — die Datei ist die Wahrheit, nicht der Chat.
-- **Abschluss:** erst wenn der Mensch die E-Liste gesehen und bestätigt hat → Kopfzeile `Status: abgeschlossen (Mensch bestätigt <Datum>)`. ADRs/Glossar (`domain-modeling`) bleiben zusätzlich für große, schwer umkehrbare Entscheidungen.
+- **Abschluss:** erst wenn der Mensch die E-Liste gesehen und bestätigt hat → Kopfzeile `Status: abgeschlossen (der Mensch bestätigt <Datum>)`. ADRs/Glossar (`domain-modeling`) bleiben zusätzlich für große, schwer umkehrbare Entscheidungen.
 
 **Spec — nur aus dem Protokoll**
 - **Quelle:** nur das Protokoll (Pfad aus Chat/Aufruf, sonst jüngste passende `docs/GRILL_*.md`). Der Chat dient nur zum Verstehen, nie als Inhaltsquelle. Tipp: nach dem Grillen `/clear`, dann `/to-spec <pfad>` in frischer Session.
