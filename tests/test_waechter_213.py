@@ -581,8 +581,9 @@ def test_uebersicht_schreibt_tabelle(welt: dict[str, Path]) -> None:
     assert ergebnis.returncode == 0, _text(ergebnis)
     assert str(datei) in ergebnis.stdout
     text = datei.read_text(encoding="utf-8")
-    assert "| Ticket | Zeit | Frage | Wahl | Grund |" in text
-    assert re.search(r"\| #902 \| [^|]+ \| Welche Tabelle \| SQLite \| schon da \|", text)
+    # Spaltenformat seit #364: Ticket · Was · Warum · Quelle (eine Liste aus briefkasten.liste).
+    assert "| Ticket | Was | Warum | Quelle |" in text
+    assert re.search(r"\| #902 \| Welche Tabelle → SQLite \| schon da \| Bau-Log #902 [^|]+ \|", text)
 
 
 @pytest.mark.xfail(strict=True, reason="überholt durch #588: keine capo-Kurzmail mehr (E16)")

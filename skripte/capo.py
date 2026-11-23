@@ -90,14 +90,13 @@ def main() -> int:
     )
 
     if a.uebersicht:
-        ref = capo.haupt_ref(repo)
         liste = capo.kinder(gh_repo, a.spec)
         if liste is not None:
             tickets = [int(i["number"]) for i in liste]
         else:
             log.warning("Sub-Issues nicht lesbar — nehme alle Bau-Logs des Repos.")
             tickets = [int(t) for t in bau_log.alle_tickets(repo)]
-        print(capo.uebersicht(repo, ref, a.spec, tickets))
+        print(capo.uebersicht(repo, a.spec, tickets))
         return 0
 
     ergebnis = capo.tick(

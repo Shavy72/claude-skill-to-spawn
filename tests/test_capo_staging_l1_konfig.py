@@ -57,7 +57,7 @@ def test_staging_log_aus_konfig(tmp_path: Path) -> None:
 def test_entscheidungen_ohne_schluessel_alter_pfad(tmp_path: Path) -> None:
     erwartet = tmp_path.resolve() / "docs" / "agents" / "entscheidungen_7.md"
     assert capo.entscheidungs_datei(tmp_path, 7) == erwartet
-    assert capo.uebersicht(tmp_path, None, 7, [1]) == erwartet
+    assert capo.uebersicht(tmp_path, 7, [1]) == erwartet
     assert erwartet.is_file()
 
 
@@ -65,7 +65,7 @@ def test_entscheidungen_aus_konfig(tmp_path: Path) -> None:
     _konfig(tmp_path, {"pfade": {"agenten": "berichte/agenten"}})
     erwartet = tmp_path.resolve() / "berichte" / "agenten" / "entscheidungen_7.md"
     assert capo.entscheidungs_datei(tmp_path, 7) == erwartet
-    assert capo.uebersicht(tmp_path, None, 7, [1]) == erwartet
+    assert capo.uebersicht(tmp_path, 7, [1]) == erwartet
     assert erwartet.is_file()
     assert not (tmp_path / "docs").exists()
 
