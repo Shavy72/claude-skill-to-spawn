@@ -137,16 +137,23 @@ with (ordner / f"{sid}.jsonl").open("a", encoding="utf-8") as fh:
     fh.write(json.dumps(zeile) + "\n")
 # Optional (#353): statt fest FAKE_SCHLAF zu schlafen, nur so lange laufen, bis das
 # gestellte tmux FAKE_ENDE_NACH_GETIPPT Eingaben hat (Obergrenze FAKE_SCHLAF), dann
-# kurz nachlaufen und regulär enden — mit Marke, die zeigt: nicht von außen beendet.
+# FAKE_NACHLAUF_S nachlaufen und regulär enden — mit Marke „.ende“. Wird sie von außen
+# beendet (SIGTERM), schreibt sie stattdessen „.beendet“; der Nachlauf deckt ein spätes
+# Beenden nach der Ablösung ab und lässt der Aufsicht Zeit, „blockiert“ zu loggen.
 ziel = int(os.environ.get("FAKE_ENDE_NACH_GETIPPT", "0"))
 if ziel:
+    import signal
+    def _beendet(signum, frame):
+        Path(os.environ["FAKE_PROTOKOLL"]).with_suffix(".beendet").write_text(str(signum))
+        sys.exit(143)
+    signal.signal(signal.SIGTERM, _beendet)
     getippt = Path(os.environ["FAKE_TMUX_ORDNER"]) / "getippt.jsonl"
     ende = time.monotonic() + float(os.environ.get("FAKE_SCHLAF", "100"))
     while time.monotonic() < ende:
         if getippt.is_file() and len(getippt.read_text(encoding="utf-8").splitlines()) >= ziel:
             break
         time.sleep(0.1)
-    time.sleep(1.0)
+    time.sleep(float(os.environ.get("FAKE_NACHLAUF_S", "5")))
     Path(os.environ["FAKE_PROTOKOLL"]).with_suffix(".ende").write_text("regulär")
     sys.exit(0)
 time.sleep(float(os.environ.get("FAKE_SCHLAF", "100")))
@@ -575,8 +582,8 @@ def test_exit_2_ueber_echte_aufsicht_kein_nachfolger(
         {
             "FAKE_TMUX_SCHREIBT": "0",
             "FAKE_SCHLAF": "30",
-            # #353: alter Aufseher endet regulär, sobald alle 4 Eingaben da sind,
-            # statt fest 30 s zu schlafen (Obergrenze bleibt FAKE_SCHLAF).
+            # #353: alter Aufseher endet regulär 5 s nach der 4. Eingabe, statt fest
+            # 30 s zu schlafen; wird er von außen beendet, steht die Marke „.beendet“.
             "FAKE_ENDE_NACH_GETIPPT": "4",
             "TO_SPAWN_ABLOESE_WARTE_S": "1",
             "TO_SPAWN_ABLOESE_ABSTAND_S": "1",
@@ -584,6 +591,7 @@ def test_exit_2_ueber_echte_aufsicht_kein_nachfolger(
         }
     )
     ergebnis = _wache(welt["repo"], env=env, timeout=150)
+    assert not (welt["tmp"] / "claude_aufrufe.beendet").exists(), "alter Aufseher wurde beendet"
     assert ergebnis.returncode == 0, _text(ergebnis)
     assert (welt["tmp"] / "claude_aufrufe.ende").is_file(), "alter Aufseher wurde beendet"
     assert len(_aufrufe(welt)) == 1, "Nachfolger gestartet"
