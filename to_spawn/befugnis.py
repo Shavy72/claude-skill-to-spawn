@@ -291,10 +291,7 @@ def aufseher_text(befehl: str) -> str:
 
     Ohne geschweifte Klammern (die Aufseher-Vorlagen laufen danach durch ``str.format``).
     """
-    from to_spawn import briefkasten  # spät: briefkasten importiert dieses Modul
-
     b = befehl
-    kommentar = briefkasten.NUTZER_KOMMENTAR
     return (
         f"Befugnis und Briefkasten (Tür B): PFLICHT: Klasse 2 – {klasse_2_erkennung()} – nie selbst "
         "freigeben, geht an den Nutzer; die Handlung auch nach deiner Antwort nie selbst ausführen. "
@@ -303,13 +300,12 @@ def aufseher_text(befehl: str) -> str:
         f"Chat-Protokolle), dann `{b} antworten <N> --id <id> --wahl … --grund … --beleg …` (Antwort gilt nur "
         "im Briefkasten) plus Spiegel-Kommentar im Ticket „Aufseher: Entscheidung <id>: <Wahl> — Belege: …“ "
         "(max. 2 Zeilen); kein zusätzlicher Bau-Log-Eintrag dafür (die Entscheidungs-Liste liest den Briefkasten). "
-        "Klasse 2 oder gesperrt (leere id = kaputte Datei) → nicht antworten, Kommentar im Ticket „Aufseher: "
-        f"braucht den Nutzer: <Frage> — antworte hier mit einem eigenen Kommentar `{kommentar}` oder im "
-        f"Terminal `{b} nutzer-antwort <N> --id <id> --wahl … --grund …`“; eine kaputte Datei prüft und löscht "
-        "nur der Nutzer. Hat der Nutzer im Ticket so geantwortet → "
-        f"`{b} nutzer-uebertragen <N> --id <id> --kommentar <Link zum Kommentar>` (prüft Repo-Besitzer, Ticket "
-        "und id, übernimmt seine Wahl wörtlich; Verweigert = nicht übertragen, dem Nutzer melden). "
+        "Klasse 2 oder gesperrt (leere id = kaputte Datei) → nicht antworten, nie selbst freigeben; dem Nutzer "
+        "melden, mit fertigem Befehl für sein eigenes Terminal: Kommentar im Ticket „Aufseher: braucht den Nutzer: "
+        f"<Frage> — bitte im eigenen Terminal ausführen: `{b} nutzer-antwort <N> --id <id> --wahl <Wahl> "
+        "--grund <Grund>`“ (N und id eingesetzt). Nur diese Antwort im Briefkasten gibt frei, nie ein "
+        "Kommentar im Ticket; eine kaputte Datei prüft und löscht nur der Nutzer. "
         "VERBOTEN: die Sperre von `nutzer-antwort` umgehen (Schein-Terminal wie `script -qc`, direkter "
-        "Python-Aufruf von `nutzer_antworten`, Hand-Eintrag in die Briefkasten-Datei) und einen Kommentar "
-        f"`{kommentar}` selbst schreiben oder schreiben lassen."
+        "Python-Aufruf von `nutzer_antworten`, Hand-Eintrag in die Briefkasten-Datei) und `nutzer-antwort` "
+        "selbst ausführen oder von einer Session ausführen lassen."
     )

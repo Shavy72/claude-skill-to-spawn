@@ -4,15 +4,12 @@ Prüft ohne Claude-Session (tmp_path): Start-Text zeigt auf ``frage``/``antwort`
 Bau-Log; Aufseher-Texte (Takt + Dauer-Aufseher) tragen die Klasse-2-Regel aus EINER Quelle in
 ``befugnis``, den Briefkasten-Weg und das Umgehungs-Verbot; unbekannte Frage-``id`` ergibt
 „Frage neu stellen“; ``nutzer-antwort`` weist auf liegende ``.kaputt-*`` hin; die
-Entscheidungs-Liste ohne Manifest kennt Tickets, die nur im Briefkasten stehen; die Antwort des
-Nutzers per Ticket-Kommentar wird nur mit prüfbarem Kommentar des Repo-Besitzers übertragen
-(gh = externer Dienst: Form aus einer echten Aufzeichnung, ``tests/hilfen/gh_kommentar_278.json``).
+Entscheidungs-Liste ohne Manifest kennt Tickets, die nur im Briefkasten stehen.
 """
 
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import subprocess
 import sys
@@ -22,7 +19,6 @@ from types import ModuleType
 import pytest
 
 SKILL = Path(__file__).resolve().parent.parent
-HILFEN = SKILL / "tests" / "hilfen"
 sys.path.insert(0, str(SKILL))
 
 
@@ -182,77 +178,6 @@ def test_entscheidungen_ohne_manifest_zeigt_briefkasten_tickets(briefkasten: Mod
     lauf = _cli(tmp_path, "entscheidungen", "999")
     assert lauf.returncode == 0, lauf.stderr
     assert "#41 · aufseher · Ordner? → neu" in lauf.stdout
-
-
-# --- 6: Antwort des Nutzers per Ticket-Kommentar -------------------------------------
-
-REPO_URL = "https://github.com/Shavy72/claude-skill-to-spawn"
-
-
-def _welt_kommentar(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, **aenderung: object) -> str:
-    """Git-Repo mit GitHub-origin + gh-Ersatz, der die aufgezeichnete Kommentar-Form liefert."""
-    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
-    subprocess.run(["git", "remote", "add", "origin", f"{REPO_URL}.git"], cwd=tmp_path, check=True)
-    kommentar = json.loads((HILFEN / "gh_kommentar_278.json").read_text(encoding="utf-8"))
-    kommentar.update(aenderung)
-    datei = tmp_path / "kommentar.json"
-    datei.write_text(json.dumps(kommentar), encoding="utf-8")
-    monkeypatch.setenv("TO_SPAWN_GH_STUB", str(HILFEN / "gh_kommentar_278.py"))
-    monkeypatch.setenv("GH_KOMMENTAR_DATEI", str(datei))
-    return str(kommentar["html_url"])
-
-
-def test_uebertragen_nimmt_wahl_aus_besitzer_kommentar(
-    briefkasten: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    fid = briefkasten.einwerfen("278", "Live schalten?", "nein", 2, [], hauptbaum=tmp_path)
-    url = _welt_kommentar(tmp_path, monkeypatch, body=f"Antwort {fid}: ja, aber erst Montag")
-    briefkasten.nutzer_antwort_uebertragen("278", fid, url, hauptbaum=tmp_path)
-    antwort = briefkasten.lesen("278", fid, hauptbaum=tmp_path)
-    assert isinstance(antwort, briefkasten.Antwort)
-    assert (antwort.von, antwort.wahl, antwort.belege) == ("nutzer", "ja, aber erst Montag", [url])
-
-
-@pytest.mark.parametrize(
-    "aenderung",
-    [
-        {"user": {"login": "fremd"}},
-        {"author_association": "CONTRIBUTOR"},
-        {"issue_url": "https://api.github.com/repos/Shavy72/claude-skill-to-spawn/issues/1"},
-        {"body": "Antwort ffffffff: ja"},
-        {"body": "ja"},
-    ],
-)
-def test_uebertragen_ohne_pruefbaren_kommentar_verweigert(
-    briefkasten: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, aenderung: dict[str, object]
-) -> None:
-    fid = briefkasten.einwerfen("278", "Live schalten?", "nein", 2, [], hauptbaum=tmp_path)
-    aenderung.setdefault("body", f"Antwort {fid}: ja")
-    url = _welt_kommentar(tmp_path, monkeypatch, **aenderung)
-    with pytest.raises(briefkasten.Verweigert):
-        briefkasten.nutzer_antwort_uebertragen("278", fid, url, hauptbaum=tmp_path)
-    assert briefkasten.lesen("278", fid, hauptbaum=tmp_path) == briefkasten.NUTZER
-
-
-def test_uebertragen_fremdes_repo_oder_kaputte_url_verweigert(
-    briefkasten: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    fid = briefkasten.einwerfen("278", "Live schalten?", "nein", 2, [], hauptbaum=tmp_path)
-    url = _welt_kommentar(tmp_path, monkeypatch, body=f"Antwort {fid}: ja")
-    for falsch in (url.replace("claude-skill-to-spawn", "anderes"), url.replace("/278#", "/277#"), "kein-link"):
-        with pytest.raises((briefkasten.Verweigert, ValueError)):
-            briefkasten.nutzer_antwort_uebertragen("278", fid, falsch, hauptbaum=tmp_path)
-    assert briefkasten.lesen("278", fid, hauptbaum=tmp_path) == briefkasten.NUTZER
-
-
-def test_uebertragen_nie_aus_bau_session(
-    briefkasten: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    fid = briefkasten.einwerfen("278", "Live schalten?", "nein", 2, [], hauptbaum=tmp_path)
-    url = _welt_kommentar(tmp_path, monkeypatch, body=f"Antwort {fid}: ja")
-    monkeypatch.setenv("TO_SPAWN_TICKET", "278")
-    with pytest.raises(briefkasten.Verweigert):
-        briefkasten.nutzer_antwort_uebertragen("278", fid, url, hauptbaum=tmp_path)
 
 
 # --- 3/4: Aufseher-Texte aus einer Quelle (Grep-Test) ----------------------------

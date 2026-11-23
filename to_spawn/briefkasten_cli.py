@@ -1,9 +1,9 @@
 """CLI für Tür B (#278): ``befugnis``/``frage``/``antwort``/``antworten``/``nutzer-antwort``/
-``nutzer-uebertragen``/``offene``.
+``offene``.
 
 Exit-Codes: ``befugnis`` 0 = Klasse 1, 2 = Klasse 2, 3 = Klasse 3 · ``frage`` 0 = eingeworfen (gibt
 die ``id`` aus), 2 = verweigert · ``antwort`` 0 = Antwort da, 2 = braucht den Nutzer, 3 = WARTET,
-4 = Frage unbekannt (neu stellen) · ``antworten``/``nutzer-antwort``/``nutzer-uebertragen``
+4 = Frage unbekannt (neu stellen) · ``antworten``/``nutzer-antwort``
 0 = geschrieben, 2 = verweigert, 1 = keine passende offene Frage/Fehler · ``offene`` 0 (eine Zeile
 je offener Frage).
 
@@ -22,7 +22,7 @@ from to_spawn import befugnis, briefkasten
 
 log = logging.getLogger("to_spawn")
 
-BEFEHLE = ("befugnis", "frage", "antwort", "antworten", "nutzer-antwort", "nutzer-uebertragen", "offene")
+BEFEHLE = ("befugnis", "frage", "antwort", "antworten", "nutzer-antwort", "offene")
 
 
 def richte_parser_ein(unter: Any) -> None:
@@ -56,10 +56,6 @@ def richte_parser_ein(unter: Any) -> None:
     p_nutzer.add_argument("--wahl", required=True)
     p_nutzer.add_argument("--grund", required=True)
     p_nutzer.add_argument("--beleg", action="append", default=[])
-    p_ueber = unter.add_parser("nutzer-uebertragen", help="Aufseher: Antwort des Nutzers aus seinem Ticket-Kommentar")
-    p_ueber.add_argument("ticket")
-    p_ueber.add_argument("--id", required=True, dest="frage_id")
-    p_ueber.add_argument("--kommentar", required=True, help="Link auf den Kommentar (…#issuecomment-…)")
     p_offen = unter.add_parser("offene", help="Offene Briefkasten-Fragen (alle oder die genannten Tickets)")
     p_offen.add_argument("tickets", nargs="*")
 
@@ -93,10 +89,6 @@ def lauf(args: argparse.Namespace) -> int:
             for o in briefkasten.offene([args.ticket]):
                 if not o["id"]:  # Sperre durch kaputte Datei: nur der Nutzer löst sie
                     print(f"Hinweis: {o['frage']} (Ordner {datei.parent}) — bis dahin bleibt #{args.ticket} gesperrt.")
-            return 0
-        if args.befehl == "nutzer-uebertragen":
-            briefkasten.nutzer_antwort_uebertragen(args.ticket, args.frage_id, args.kommentar)
-            print(f"#{args.ticket}: Antwort des Nutzers aus {args.kommentar} übertragen")
             return 0
         stand = briefkasten.lesen(args.ticket, args.frage_id)
     except briefkasten.Verweigert as fehler:
