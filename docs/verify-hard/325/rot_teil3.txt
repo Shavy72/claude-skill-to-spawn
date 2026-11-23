@@ -1,0 +1,10 @@
+E       AssertionError: fester Personenname statt Rolle: ['to_spawn/hausmeister_aufgabe.py:10', 'to_spawn/hausmeister_aufgabe.py:13', 'to_spawn/hausmeister_aufgabe.py:48', 'to_spawn/hausmeister_aufgabe.py:172', 'to_spawn/hausmeister_aufgabe.py:175', 'to_spawn/hausmeister_aufgabe.py:214', 'to_spawn.py:787']
+tests/test_rolle_statt_name_323.py:80: AssertionError
+E       AssertionError: assert ['probe.py:1'] == ['probe.py:1'... 'probe.py:3']
+tests/test_rolle_statt_name_323.py:90: AssertionError
+E       AssertionError: fester Personenname statt Rolle: ['leitstand/seite.html:239', 'leitstand/seite.html:1410', 'leitstand/seite.html:1459']
+tests/test_rolle_statt_name_323.py:111: AssertionError
+FAILED tests/test_rolle_statt_name_323.py::test_kein_fester_personenname_in_ausgabe_texten
+FAILED tests/test_rolle_statt_name_323.py::test_escape_verdeckt_namen_nicht
+FAILED tests/test_rolle_statt_name_323.py::test_kein_fester_personenname_in_html_kommentaren
+3 failed, 1 passed in 0.14s
