@@ -49,6 +49,7 @@ class Karte:
     dateien: list[str] = field(default_factory=list)
     verdeckt: Lauf | None = None
     abnahme_datei: str = ""
+    hinweis: str = ""  # was fehlt (Text aus belege.Belege.hinweis)
 
 
 def werte_ticket(verify_hard: Path, nummer: str, titel: str) -> Karte:
@@ -65,6 +66,7 @@ def werte_ticket(verify_hard: Path, nummer: str, titel: str) -> Karte:
         dateien=list(b.dateien),
         verdeckt=b.verdeckt,
         abnahme_datei=b.abnahme_datei,
+        hinweis=b.hinweis,
     )
 
 
@@ -140,14 +142,14 @@ def _karte_html(k: Karte) -> str:
         beleg = f"<code>{e(befehl)}</code><br><code>{e(k.lauf.zeile)}</code>"
         zahl = f" ({k.lauf.passed} von {k.lauf.passed + k.lauf.failed} Tests grün)"
         quelle = f"<code>docs/verify-hard/{e(k.lauf.datei)}</code> · Stand {_stand(k.lauf)}"
-        if k.verdeckt:
+        if k.verdeckt and k.status == "offen":
             v = k.verdeckt
             marke = "⚠️ offen — neuer Teil-Lauf deckt älteren roten Lauf nicht ab"
             beleg += (
                 f"<br>Der neueste Lauf war grün, hat aber nur {k.lauf.passed} Tests geprüft. Ein älterer Lauf "
                 f"mit {v.passed + v.failed} Tests hatte {v.failed} Fehler "
-                f"(<code>docs/verify-hard/{e(v.datei)}</code> · Stand {_stand(v)}). Ob die behoben sind, "
-                "zeigt erst ein neuer Lauf mit allen diesen Tests."
+                f"(<code>docs/verify-hard/{e(v.datei)}</code> · Stand {_stand(v)}). Es fehlt: "
+                f"{e(k.hinweis)}."
             )
     else:
         zahl, quelle = f" ({KEIN_LAUF})", "—"

@@ -745,6 +745,82 @@ def test_belege_ohne_git_zaehlt_aenderungszeit(tmp_path: Path) -> None:
     assert b.status == "rot"
 
 
+def test_belege_behobener_roter_lauf_blockiert_nicht(tmp_path: Path) -> None:
+    """Breit rot → breit grün → klein grün: der rote Lauf ist schon abgelöst → grün (#366 P1).
+
+    Breit rot → klein grün bleibt offen, der Hinweis nennt die nötige Testzahl.
+    """
+    vh = tmp_path / "verify-hard"
+    vh.mkdir()
+    laeufe = {
+        "906_a.txt": "3 failed, 37 passed in 9s\n",
+        "906_b.txt": "40 passed in 9s\n",
+        "906_c.txt": "5 passed in 1s\n",
+        "907_a.txt": "3 failed, 37 passed in 9s\n",
+        "907_c.txt": "5 passed in 1s\n",
+    }
+    for i, (name, text) in enumerate(laeufe.items()):
+        (vh / name).write_text(text, encoding="utf-8")
+        zeit = 1_700_000_000 + 100 * i
+        os.utime(vh / name, (zeit, zeit))
+    b = _belege_mod().auswerten(vh, "906")
+    assert b.lauf is not None and b.lauf.datei == "906_c.txt"
+    assert b.status == "gruen" and b.verdeckt is None and b.hinweis == ""
+    b = _belege_mod().auswerten(vh, "907")
+    assert b.status == "offen" and b.verdeckt is not None and b.verdeckt.datei == "907_a.txt"
+    assert b.hinweis == "grüner Testlauf mit mindestens 40 Tests (so viele wie der rote Lauf 907_a.txt)"
+
+
+def test_uebersicht_abnahme_rot_und_kopfzeile_ungeklaert(tmp_path: Path) -> None:
+    """Karte rot durch Abnahme-Zeile zeigt „rot“, nicht „offen“; Kopfzeile nennt „ungeklärt“ (#366 N1/N4)."""
+    r = tmp_path / "projekt"
+    (r / "docs" / "agents" / "manifests").mkdir(parents=True)
+    tickets = {"911": {"title": "Abnahme rot"}, "912": {"title": "Ungeklärt"}}
+    (r / "docs" / "agents" / "manifests" / f"spec-{SPEC}.json").write_text(
+        json.dumps({"spec": SPEC, "tickets": tickets}), encoding="utf-8"
+    )
+    vh = r / "docs" / "verify-hard"
+    vh.mkdir(parents=True)
+    subprocess.run(["git", "init", "-q"], cwd=r, check=True, capture_output=True)
+    for n in ("911", "912"):
+        (vh / f"{n}_breit.txt").write_text("3 failed, 37 passed in 9s\n", encoding="utf-8")
+    _commit_am(r, "2026-11-01T10:00:00+01:00")
+    for n in ("911", "912"):
+        (vh / f"{n}_teil.txt").write_text("5 passed in 1s\n", encoding="utf-8")
+    (vh / "911.md").write_text("# Belegseite #911\n**ABNAHME: ROT (Knopf fehlt)**\n", encoding="utf-8")
+    _commit_am(r, "2026-11-02T11:30:00+01:00")
+    ziel = tmp_path / "u.html"
+    assert _lauf("test_uebersicht.py", r, "--aus", str(ziel)).returncode == 0
+    seite = ziel.read_text(encoding="utf-8")
+    karte_911 = seite.split("Ticket #911", 1)[1].split("</section>", 1)[0]
+    assert 'class="karte rot"><h2>Ticket #911' in seite
+    assert "❌ rot" in karte_911 and "⚠️ offen" not in karte_911
+    karte_912 = seite.split("Ticket #912", 1)[1].split("</section>", 1)[0]
+    assert "mindestens 40 Tests (so viele wie der rote Lauf 912_breit.txt)" in karte_912
+    kopf = seite.split("<h1>", 1)[1].split("</h1>", 1)[0]
+    assert kopf == (
+        "❌ 10 von 10 Tests grün — 1 Ticket rot — 1 ungeklärt (neuer Teil-Lauf deckt alten roten Lauf nicht ab)"
+    )
+
+
+def test_uebersicht_kopfzeile_nur_per_abnahme_gruen(tmp_path: Path) -> None:
+    """Alle Tickets nur über die ABNAHME-Zeile grün → Kopfzeile sagt das, keine Testzahl (#366 N4)."""
+    r = tmp_path / "projekt"
+    (r / "docs" / "agents" / "manifests").mkdir(parents=True)
+    tickets = {"921": {"title": "A"}, "922": {"title": "B"}}
+    (r / "docs" / "agents" / "manifests" / f"spec-{SPEC}.json").write_text(
+        json.dumps({"spec": SPEC, "tickets": tickets}), encoding="utf-8"
+    )
+    vh = r / "docs" / "verify-hard"
+    vh.mkdir(parents=True)
+    for n in tickets:
+        (vh / f"{n}.md").write_text(f"# Belegseite #{n}\n**ABNAHME: ABGENOMMEN (Live)**\n", encoding="utf-8")
+    ziel = tmp_path / "u.html"
+    assert _lauf("test_uebersicht.py", r, "--aus", str(ziel)).returncode == 0
+    kopf = ziel.read_text(encoding="utf-8").split("<h1>", 1)[1].split("</h1>", 1)[0]
+    assert kopf == "✅ 2 von 2 Tickets per Abnahme grün (kein Testlauf)"
+
+
 def test_uebersicht_nur_abnahme_eindeutig(repo: Path, tmp_path: Path) -> None:
     """Grün nur über die ABNAHME-Zeile: keine Marke „grün“ plus „offen“, Herkunft = Abnahme-Zeile (#366)."""
     vh = repo / "docs" / "verify-hard"

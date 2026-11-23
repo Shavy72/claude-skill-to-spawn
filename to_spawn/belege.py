@@ -9,7 +9,9 @@ Ticket, was darin steht:
 - **Testlauf** — der neueste Lauf (Entstehungszeit der Datei, :func:`zeitpunkt`) aus den
   übrigen Dateien; bei gleicher Zeit der größte. Fallback: saubere Markdown-Zeilen bzw.
   ``X/Y``-Zählung. Ist der neueste Lauf grün, aber ein älterer, größerer Lauf rot, deckt der
-  Teil-Lauf den roten nicht ab: Status ``offen``, der rote Lauf steht in ``verdeckt``.
+  Teil-Lauf den roten nicht ab: Status ``offen``, der rote Lauf steht in ``verdeckt`` — außer
+  ein späterer grüner Lauf mit mindestens so vielen Tests hat ihn schon abgelöst. Im Zweifel
+  offen: wurde ein Test bewusst entfernt (alt 37+3, neu 39 grün), bleibt das Ticket ``offen``.
 - **Klickweg** — eine Markdown-Zeile mit „Klickweg“/„Live-Klick“/„Live-Beweis“, die nicht
   verneint ist („kein Klickweg“, „entfällt“ zählen nicht).
 - **Status** ``gruen``/``rot``/``offen`` aus Testlauf und ``ABNAHME:``-Zeile.
@@ -84,6 +86,17 @@ class Belege:
     #: Belegdatei, aus der die ``ABNAHME:``-Zeile stammt.
     abnahme_datei: str = ""
     dateien: list[str] = field(default_factory=list)
+
+    @property
+    def hinweis(self) -> str:
+        """Was im Fall ``offen`` wegen ``verdeckt`` fehlt, in Alltagsworten; sonst leer.
+
+        Die eine Textquelle für Übersicht und Wiederanlauf.
+        """
+        if self.status != "offen" or self.verdeckt is None:
+            return ""
+        v = self.verdeckt
+        return f"grüner Testlauf mit mindestens {v.passed + v.failed} Tests (so viele wie der rote Lauf {v.datei})"
 
 
 def _lies(datei: Path) -> str:
@@ -212,7 +225,14 @@ def auswerten(verify_hard: Path, nummer: str) -> Belege:
         belege.lauf = max(laeufe, key=lambda l: (l.zeit, l.passed + l.failed, l.datei))
         if belege.lauf.failed == 0:  # im Zweifel offen statt grün (#366 W1)
             groesse = belege.lauf.passed
-            rote = [l for l in laeufe if l.failed > 0 and l.passed + l.failed > groesse]
+            # Ein roter Lauf zählt nur, solange ihn kein späterer, mindestens gleich großer grüner Lauf ablöst (#366 P1).
+            rote = [
+                l
+                for l in laeufe
+                if l.failed > 0
+                and l.passed + l.failed > groesse
+                and not any(g.failed == 0 and g.zeit > l.zeit and g.passed >= l.passed + l.failed for g in laeufe)
+            ]
             belege.verdeckt = max(rote, key=lambda l: (l.passed + l.failed, l.zeit), default=None)
     abnahme_schlecht = bool(belege.abnahme) and bool(_ABNAHME_SCHLECHT.search(_OFFEN_VERNEINT.sub("", belege.abnahme)))
     abnahme_gut = bool(belege.abnahme) and bool(_ABNAHME_GUT.search(belege.abnahme))

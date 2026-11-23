@@ -311,4 +311,4 @@ def test_neuer_teil_lauf_verdeckt_aelteren_roten_lauf_nicht(wa: ModuleType, welt
     _issue(welt, labels=["staging:fertig"])
     lage = wa.feststellen(7, klon)
     assert lage is not None and lage.art == "abschluss"
-    assert lage.fehlt == ("grüner Testlauf",)
+    assert lage.fehlt == ("grüner Testlauf mit mindestens 40 Tests (so viele wie der rote Lauf 7_breit.txt)",)

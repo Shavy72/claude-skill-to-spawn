@@ -108,7 +108,7 @@ def feststellen(ticket: int, repo: Path) -> Wiederanlauf | None:
         name
         for name, da in (
             (KLICKWEG_BELEG, beleg.klickweg or beleg.klickweg_entfaellt),
-            (GRUENER_LAUF, beleg.status == "gruen"),
+            (beleg.hinweis or GRUENER_LAUF, beleg.status == "gruen"),
         )
         if not da
     )
