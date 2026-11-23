@@ -373,12 +373,16 @@ def _name_muster() -> tuple[re.Pattern[str], ...]:
     return _NAME_MUSTER if praefixe == ORDNER_PRAEFIXE_STANDARD else _name_muster_fuer(praefixe)
 
 
-_ZWEIG_MUSTER = re.compile(r"^(?:(?:ticket|fix|wip|aufseher)/|fix-|abschluss-)(\d+)(?:-.*)?$")
+#: #248: Jahr-Monat(-Tag) direkt nach dem Präfix ist ein Datum, keine Ticket-Nummer
+#: (``l1/2026-11-21-stand``, ``fix/2026-11``).
+_KEIN_DATUM = r"(?!20\d\d-(?:0?[1-9]|1[0-2])(?:-|$))"
+_ZWEIG_MUSTER = re.compile(rf"^(?:(?:ticket|fix|wip|aufseher)/|fix-|abschluss-){_KEIN_DATUM}{_TICKET_NR}(?:-.*)?$")
 #: #235: Etappen-Zweig ``l<Etappe>/<N>[buchstabe]-…`` (``l4/176-…``, ``l1/214a-…``); erst ab
 #: 2 Ziffern — ``l3/3b-1b-…`` ist ein Etappen-Schritt, kein Issue, ``l1/p7f-…`` ebenso.
-_ZWEIG_MUSTER_ETAPPE = re.compile(r"^l\d+/([1-9]\d{1,2}|[1-4]\d{3})[a-z]?(?:-.*)?$")
-#: Alle Zweig-Formen mit Ticket-Nummer (eine Stelle für neue Formen); welches Repo die
-#: Nummer meint, sagt allein ``origin`` des Ordners (:func:`_nummer_zaehlt`).
+_ZWEIG_MUSTER_ETAPPE = re.compile(rf"^l\d+/{_KEIN_DATUM}([1-9]\d{{1,2}}|[1-4]\d{{3}})[a-z]?(?:-.*)?$")
+#: Alle Zweig-Formen mit Ticket-Nummer — die einzige Stelle „Zweigname → Nummer“ (#248, auch
+#: für das Zweig-Aufräumen, :func:`_zweig_ticket`); welches Repo die Nummer meint, sagt allein
+#: ``origin`` (:func:`_nummer_zaehlt`, im Ordner- wie im Zweig-Pfad, #234).
 _ZWEIG_FORMEN = (_ZWEIG_MUSTER, _ZWEIG_MUSTER_ETAPPE)
 #: #235 H1: nur diese drei Anfänge sind GitHub; ein fremder Host (``notgithub.com``) oder
 #: ein lokaler Pfad mit ``github.com/…`` im Namen ist ein fremdes Repo (nur mit ``.match``).
@@ -1023,9 +1027,11 @@ def zweig_fertig(
     if len(tip) >= 7 and stand.startswith(tip):
         return True, [], f"Schlange hat genau diesen Stand übernommen ({stand[:7]})", stand
     fehlende = _zweig_fehlende(o, stand)
-    # #176: Ticket-Repo des Zweig-Repos, nicht das eine der Maschine
+    # #176: Ticket-Repo des Zweig-Repos, nicht das eine der Maschine (ohne GitHub-origin: keins)
     slug = _origin_slug(o.cwd) if ort == "lokal" else _slug(o.remote)
-    daten = _ticket_daten(nr, slug or None)
+    daten = _ticket_daten(nr, slug)
+    if daten is None and not _nummer_zaehlt(slug):  # #234: Grund statt „nicht abfragbar“
+        return False, fehlende, f"#{nr} zählt nicht im Ticket-Repo von {slug or 'origin'} (Maschinen-Liste)", stand
     if not isinstance(daten, dict) or "state" not in daten:
         raise RuntimeError(f"Ticket #{nr} nicht abfragbar")
     if not ticket_zustand.endgueltig_zu(daten):
@@ -1211,8 +1217,8 @@ def _hauptrepos() -> list[Path]:
 
 
 def _zweig_ticket(zweig: str) -> int | None:
-    treffer = _ZWEIG_MUSTER.match(zweig)
-    return int(treffer.group(1)) if treffer and zweig.startswith("ticket/") else None
+    """Nummer eines ``ticket/<N>-…``-Zweigs (nur diese räumt der Zweig-Pfad), aus ``_ZWEIG_FORMEN``."""
+    return _nummer(zweig, _ZWEIG_FORMEN) if zweig.startswith("ticket/") else None
 
 
 def _zweig_ort(repo: Path | str, ort: Ort) -> _ZweigOrt:
@@ -1481,6 +1487,7 @@ def _regeln(
                 "Sicherung lieferte nichts, obwohl Ungesichertes erkannt wurde",
                 fehler=True,
             )
+        _sicherung_auf_server(echt, ticket, stand.sicherung)
 
     # Gegenprobe direkt vor dem Löschen: nichts Neues, alles auf origin, kein Prozess
     _kein_prozess(echt, probe=True)
@@ -1724,7 +1731,9 @@ def _ticket_daten(ticket: int, slug: str | None = None) -> object:
     ``slug`` = origin des Ordners/Zweig-Repos: Ticket-Repo je Repo (:func:`_ticket_repo_fuer`,
     meldet selbst einmal); ohne ``slug`` (kein GitHub-origin) das eine Ticket-Repo der Maschine."""
     if slug is not None:
-        return _gh_ticket(ticket, _ticket_repo_fuer(slug))
+        # #234: eine Nummer zählt nur im Repo, das selbst ihr Ticket-Repo ist — im Ordner- wie
+        # im Zweig-Pfad dieselbe Regel (:func:`_nummer_zaehlt`); sonst nicht abfragbar
+        return _gh_ticket(ticket, _ticket_repo_fuer(slug)) if _nummer_zaehlt(slug) else None
     repo = _ticket_repo()
     if repo is None:
         log.warning("Hausmeister: kein eindeutiges Ticket-Repo in der Maschinen-Liste — #%s bleibt", ticket)
@@ -1928,9 +1937,26 @@ def _origin_slug(echt: Path) -> str:
     if any(zeile.split("\t", 1)[0] in ("local", "worktree") for zeile in umleitungen.splitlines()):
         return ""
     lesen = _git_oder_none(echt, "remote", "get-url", "origin")
-    if lesen != _git_oder_none(echt, "remote", "get-url", "--push", "origin"):
+    if lesen is None or lesen != _git_oder_none(echt, "remote", "get-url", "--push", "origin"):
+        return ""
+    # #252: wirksame Adresse nach allen Umleitungen (auch Maschine, includeIf, Umgebung)
+    if _ziel_im_ordner(echt, lesen):
         return ""
     return _slug(roh[0])
+
+
+def _ziel_im_ordner(echt: Path, url: str) -> bool:
+    """#252: zeigt ``url`` (Pfad, relativ zu ``echt``, oder ``file://``) auf ``echt`` selbst oder
+    darunter? Eine Sicherung dorthin ginge mit dem Ordner verloren. Netz-Adressen ⇒ ``False``."""
+    pfad = url.strip().removeprefix("file://")
+    if "://" in pfad:
+        return False
+    if re.match(r"^[^/\\]+:", pfad) and not re.match(r"^[A-Za-z]:[/\\]", pfad):
+        return False  # scp-Form host:pfad
+    ziel = Path(pfad)
+    ordner = echt.resolve()
+    ziel = (ziel if ziel.is_absolute() else ordner / ziel).resolve()
+    return ziel == ordner or ordner in ziel.parents
 
 
 def _slug(url: str) -> str:
@@ -2145,6 +2171,20 @@ def _koepfe_auf_server(repo: Path, ist_worktree: bool) -> None:
     for ref in _lokale_koepfe(repo, ist_worktree):
         if aufpasser.git_lauf(repo, "rev-list", "--ignore-missing", "-n", "1", ref, "--not", *auf_server).strip():
             raise _Bleibt(f"{OHNE_NUMMER}: {ref} nicht auf dem Server (ls-remote origin)", fuer_david=True)
+
+
+def _sicherung_auf_server(repo: Path, ticket: int, sha: str) -> None:
+    """#247: steht ``sicherung/<ticket>`` am Server (``ls-remote``) genau auf ``sha``? Sonst
+    ``_Bleibt`` — der Push kann gelungen sein und der Server den Zweig gleich wieder entfernt haben."""
+    ref = f"refs/heads/sicherung/{ticket}"
+    try:
+        roh = _git_ohne_frage(repo, "ls-remote", "origin", ref).strip()
+    except RuntimeError as fehler:
+        raise _Bleibt(f"sicherung/{ticket} nicht gegenprüfbar (ls-remote): {_kurz(fehler)}", fehler=True) from None
+    treffer = _LS_REMOTE_ZEILE.fullmatch(roh)
+    if treffer is None or not roh.endswith(f"\t{ref}") or treffer.group(1) != sha:
+        stand = treffer.group(1)[:7] if treffer else "fehlt"
+        raise _Bleibt(f"sicherung/{ticket} am Server {stand} ≠ gesichert {sha[:7]}", fehler=True)
 
 
 # --- Prozesse -------------------------------------------------------------------
