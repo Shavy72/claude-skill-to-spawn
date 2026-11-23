@@ -242,17 +242,21 @@ _CODE_STELLVERTRETER = tuple(
 #: (``.sh``, ``.json``, ``Makefile``, Shebang-Skripte …). Ohne Endung nie Doku, außer diesen Namen.
 _DOKU_ENDUNGEN = frozenset({".md", ".txt", ".rst", ".adoc", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".pdf"})
 _DOKU_NAMEN = frozenset({"LICENSE", "README", "CHANGELOG"})
+#: Konfig mit Doku-Endung (Abhängigkeiten, Build; Name klein, ``fnmatch``): nie Doku (#204).
+_KONFIG_NAMEN = ("requirements*.txt", "constraints*.txt", "cmakelists.txt")
 _SHEBANG = "#!"
 
 
 def _ist_doku_datei(repo: Path, basis: str, pfad: str) -> bool:
-    """True, wenn ``pfad`` Doku sein kann: Doku-Endung bzw. -Name und kein Shebang in Zeile 1.
+    """True, wenn ``pfad`` Doku sein kann: Doku-Endung bzw. -Name, kein Konfig-Name, kein Shebang in Zeile 1.
 
     Shebang zählt im Arbeitsbaum und im Stand ``basis`` (gelöscht, alter Pfad bei Umbenennung);
     ist der Inhalt an keiner der beiden Stellen lesbar: im Zweifel Code. Muster entscheiden zusätzlich.
     """
     datei = PurePosixPath(pfad)
     if not (datei.suffix.lower() in _DOKU_ENDUNGEN if datei.suffix else datei.name in _DOKU_NAMEN):
+        return False
+    if any(fnmatch.fnmatchcase(datei.name.lower(), muster) for muster in _KONFIG_NAMEN):
         return False
     gelesen = False
     try:
