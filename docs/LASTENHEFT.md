@@ -520,7 +520,7 @@ oben bestätigt, die einzelnen Punkte aber nicht einzeln. L9 baut auf L8 (A43–
 - **A54 Folge-Runde statt Flicken:** Muss nach Davids Durchsicht etwas nachgebessert werden,
   entstehen Folge-Tickets an derselben Spec. Danach läuft der Ablauf aus A50 noch einmal (neue
   Rundschau, neue Selbstprüfung).
-- **A55 Kein Dauer-Wächter über dem Aufseher:** Über dem Aufseher läuft keine weitere ständige
+- **A55 Keine Dauer-Session über dem Aufseher:** Über dem Aufseher läuft keine weitere ständige
   Session. Der Aufseher startet je offener Frage einen frischen Helfer, der in Davids Notizen
   (Obsidian) und alten Session-Logs nach seiner Meinung sucht und Entscheidung + Fundstelle
   zurückgibt. Ohne offene Frage kostet das keine Token.
