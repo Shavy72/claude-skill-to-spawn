@@ -41,7 +41,12 @@ class EingabeFehler(Exception):
     """Kaputte Eingabe → Exit 2."""
 
 
+#: Ausgelieferte Standardwerte; der Installer aktualisiert nur diese Datei.
+STANDARD_CONFIG = HIER / "config.standard.json"
+
+
 def config_pfad() -> Path:
+    """Lokale Einstellungen (optional, nie ausgeliefert): der Installer fasst sie nie an."""
     return Path(os.environ.get("REVIEW_CONFIG") or HIER / "config.json")
 
 
@@ -50,11 +55,23 @@ def log_pfad() -> Path:
 
 
 def lade_config() -> dict[str, Any]:
-    pfad = config_pfad()
-    try:
-        return json.loads(pfad.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as fehler:
-        raise EingabeFehler(f"Config {pfad} unlesbar: {fehler}") from fehler
+    """Standard plus lokale Config; lokale Schlüssel gewinnen, fehlende kommen aus dem Standard.
+
+    ponytail: Mischung nur auf oberster Ebene (lokales ``stufen`` ersetzt das ganze ``stufen``),
+    tief mischen erst, wenn Teil-Überschreibungen gebraucht werden.
+    """
+    cfg: dict[str, Any] = {}
+    for pfad in (STANDARD_CONFIG, config_pfad()):
+        try:
+            teil = json.loads(pfad.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            continue  # Lokale Config ist optional; fehlt auch der Standard, prüfen die Aufrufer ihre Schlüssel.
+        except (OSError, json.JSONDecodeError) as fehler:
+            raise EingabeFehler(f"Config {pfad} unlesbar: {fehler}") from fehler
+        if not isinstance(teil, dict):
+            raise EingabeFehler(f"Config {pfad} muss ein JSON-Objekt sein")
+        cfg.update(teil)
+    return cfg
 
 
 def jetzt() -> str:
@@ -264,7 +281,7 @@ class Signal:
 _SICHERHEIT = (
     "auth", "login", "token", "bearer", "secret", "password", ".env", "permission", "rolle", "role",
 )  # fmt: skip
-# Projekt-eigene Wörter (Modul-/Dienstnamen) nur in config.json → "projekt_woerter" (#329 P2).
+# Projekt-eigene Wörter (Modul-/Dienstnamen) nur in der Config → "projekt_woerter" (#329 P2).
 _DATENBANK = ("migration", "set_status", "alter table", "create table")
 _KOSTEN = ("shutdown", "boot", "proxy", "power_off")
 _INFRA = (
@@ -347,6 +364,9 @@ def signale_fuer(cfg: dict[str, Any]) -> tuple[Signal, ...]:
         isinstance(w, list) and all(isinstance(x, str) for x in w) for w in extra.values()
     ):
         raise EingabeFehler('Config "projekt_woerter" muss {Signal-ID: [Wort, …]} sein')
+    unbekannt = sorted(set(extra) - {s.id for s in SIGNALE})
+    if unbekannt:
+        raise EingabeFehler(f'Config "projekt_woerter": unbekannte Signal-ID {", ".join(unbekannt)}')
     return tuple(
         replace(
             s,

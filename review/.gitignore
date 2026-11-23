@@ -3,3 +3,5 @@ sitzungen/
 *.jsonl
 *.log
 __pycache__/
+# Lokale Einstellungen; ausgeliefert wird nur config.standard.json.
+config.json

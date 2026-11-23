@@ -1,4 +1,4 @@
-"""#329 P2: Projekt-Wörter des Routers kommen aus ``config.json`` → ``projekt_woerter``."""
+"""#329 P2: Projekt-Wörter des Routers kommen aus der Config → ``projekt_woerter``."""
 
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ def _ids(cfg: dict, pfad: str, hinzu: list[str], tmp_path: Path) -> set[str]:
 
 def test_mitgelieferte_config_behaelt_bisherige_ausloeser(tmp_path: Path) -> None:
     """Die ausgelieferte Config trägt die früher fest verdrahteten Wörter weiter (gleiches Verhalten)."""
-    cfg = json.loads((REVIEW / "config.json").read_text(encoding="utf-8"))
+    cfg = json.loads((REVIEW / "config.standard.json").read_text(encoding="utf-8"))
     for signal_id, woerter in cfg["projekt_woerter"].items():
         for wort in woerter:
             assert signal_id in _ids(cfg, "app.py", [f"x = {wort}.run()"], tmp_path), wort

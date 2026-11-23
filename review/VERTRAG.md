@@ -9,7 +9,7 @@ Wer diesen Vertrag ändert, passt alle Bausteine an.
 ```
 ~/.claude/review/
   VERTRAG.md            dieses Dokument
-  config.json           Schalter + Schwellen (einzige Quelle für Zahlen)
+  config.standard.json  Schalter + Schwellen (einzige Quelle für Zahlen), ausgeliefert
   review_route.py       Diff → Stufe, Signale, Prüfer-Liste (JSON auf stdout)
   review_beleg.py       Beleg schreiben / prüfen (Gate-Baustein)
   review_bericht.py     Zählbericht Soll vs. Ist
@@ -22,9 +22,13 @@ Wer diesen Vertrag ändert, passt alle Bausteine an.
 <repo>/.review/          Belege je Repo (nie committen; globales gitignore)
 ```
 
+Optional und privat, nie im Repo: `~/.claude/review/namen_privat.txt` — Namensliste für die Öffentlich-Prüfung des Skill-Repos (Ort definiert in `tests/test_review_quelle_329.py`).
+
 Nur Python-Standardbibliothek. Python 3.11+. Type Hints, `logging`, kein `print` außer für die JSON-/Tabellen-Ausgabe auf stdout, kein bare except. Windows (Git Bash) UND Linux (Bau-Server) müssen laufen: Pfade mit `pathlib`, `git` per `subprocess` mit Liste.
 
-## 2. config.json
+## 2. Config (config.standard.json + lokale config.json)
+
+Ausgeliefert wird nur `config.standard.json`; der Installer aktualisiert sie. Lokale Einstellungen stehen in `~/.claude/review/config.json` (optional, nie ausgeliefert, der Installer fasst sie nie an; Pfad überschreibbar per `REVIEW_CONFIG`). Beim Lesen gewinnt jeder lokale Schlüssel, fehlende kommen aus dem Standard (Mischung nur auf oberster Ebene).
 
 ```json
 {
@@ -47,7 +51,7 @@ Nur Python-Standardbibliothek. Python 3.11+. Type Hints, `logging`, kein `print`
 
 `modus`: `hinweis` = nichts blockiert, alles protokolliert. `scharf` = Gates blockieren bei ROT oder fehlendem Beleg.
 
-`projekt_woerter` (optional): je Signal-ID zusätzliche Pfad-/Zeilen-Wörter eines Projekts (Modul- und Dienstnamen). Einzige Stelle dafür — der Code kennt nur allgemeine Wörter (#329 P2).
+`projekt_woerter` (optional): je Signal-ID zusätzliche Pfad-/Zeilen-Wörter eines Projekts (Modul- und Dienstnamen). Einzige Stelle dafür — der Code kennt nur allgemeine Wörter (#329 P2). Unbekannte Signal-ID → Eingabefehler.
 
 ## 3. Stufen und Signale
 

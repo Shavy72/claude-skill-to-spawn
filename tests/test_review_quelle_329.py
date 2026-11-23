@@ -9,7 +9,6 @@ Die Muster für (c) stammen aus den bestehenden Namens-Prüfungen (#323, L1).
 
 from __future__ import annotations
 
-import hashlib
 import re
 import subprocess
 from pathlib import Path
@@ -28,7 +27,7 @@ SKRIPTE = (
     "review_bericht.py",
     "rot_probe.py",
 )
-DOKU = ("VERTRAG.md", "config.json", ".gitignore")
+DOKU = ("VERTRAG.md", "config.standard.json", ".gitignore")
 AUFTRAEGE = (
     "basis.md",
     "datenbank.md",
@@ -77,32 +76,31 @@ HOST = re.compile(
     r"[a-z0-9][a-z0-9-]*(?:\.[a-z0-9-]+)*\.(?:de|com|net|org|io|app|dev|cloud|eu|ai)\b",
     re.IGNORECASE,
 )
-#: Firmen-, Host- und Personennamen nur als Prüfsumme (sha256, erste 16 Zeichen) — Repo ist öffentlich.
-FREMDNAME_SUMMEN = frozenset(
-    {
-        "9211b694dd14994b",
-        "9c84bbf718181399",
-        "c0fe38be5cc21192",
-        "b9b35dc9c9e4a072",
-        "9b29d4791aab15a6",
-        "eb0c729750f27b00",
-        "cca457407f24b80c",
-        "3f42eb7b8a3549ef",
-    }
-)
+#: Private Namensliste (Firmen-, Host-, Personennamen) — liegt nie im Repo, das Repo ist öffentlich.
+#: Format: UTF-8, ein Name je Zeile, ``#`` leitet Kommentare ein; Vergleich ganzer Wörter ohne Groß/klein.
+NAMEN_DATEI = Path.home() / ".claude" / "review" / "namen_privat.txt"
 
 
-class _Summenmuster:
-    """Wie ``re.Pattern.search``, vergleicht aber jedes Wort der Zeile über seine Prüfsumme."""
+def lade_namen(pfad: Path) -> frozenset[str]:
+    """Namen aus ``pfad``; fehlt die Datei, ist die Liste leer (Mechanik prüft dann ein Kunstwort)."""
+    try:
+        text = pfad.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return frozenset()
+    return frozenset(z.split("#", 1)[0].strip().lower() for z in text.splitlines()) - {""}
+
+
+class _Namenmuster:
+    """Wie ``re.Pattern.search``: trifft, wenn ein Wort der Zeile in der Namensliste steht."""
+
+    def __init__(self, namen: frozenset[str]) -> None:
+        self.namen = namen
 
     def search(self, zeile: str) -> bool:
-        return any(
-            hashlib.sha256(w.encode()).hexdigest()[:16] in FREMDNAME_SUMMEN
-            for w in re.findall(r"[a-z0-9]+", zeile.lower())
-        )
+        return not self.namen.isdisjoint(re.findall(r"[^\W_]+", zeile.lower()))
 
 
-FREMDNAME = _Summenmuster()
+FREMDNAME = _Namenmuster(lade_namen(NAMEN_DATEI))
 OEFFENTLICH = {
     **MUSTER,
     "personenname": NAME,
@@ -114,16 +112,16 @@ OEFFENTLICH = {
     "firmen-oder-personenname": FREMDNAME,
 }
 #: Ausnahmen je Zeile (#329 P2): (Datei, Begriff) → Textstück, das in derselben Zeile stehen muss.
-#: Projekt-Wörter des Routers leben nur in ``config.json`` → ``projekt_woerter``.
+#: Projekt-Wörter des Routers leben nur in ``config.standard.json`` → ``projekt_woerter``.
 AUSNAHMEN = {
-    ("review/config.json", "account_db"): '"projekt_woerter":',
-    ("review/config.json", "postproxy"): '"projekt_woerter":',
-    ("review/config.json", "phone_power"): '"projekt_woerter":',
+    ("review/config.standard.json", "account_db"): '"projekt_woerter":',
+    ("review/config.standard.json", "postproxy"): '"projekt_woerter":',
+    ("review/config.standard.json", "phone_power"): '"projekt_woerter":',
     ("review/tests/test_router_runde2.py", "account_db"): '["account_db.set_status(x)"]',
 }
 
 
-def _verboten(datei: str, art: str, muster: re.Pattern[str] | _Summenmuster, zeile: str) -> bool:
+def _verboten(datei: str, art: str, muster: re.Pattern[str] | _Namenmuster, zeile: str) -> bool:
     if not isinstance(muster, re.Pattern) or art != "projekt-begriff":
         return bool(muster.search(zeile))
     for m in muster.finditer(zeile):
@@ -205,15 +203,23 @@ def test_oeffentlich_muster_beispiele(art: str, zeile: str, treffer: bool) -> No
     assert _verboten("probe.md", art, OEFFENTLICH[art], zeile) is treffer
 
 
-def test_fremdname_nur_als_pruefsumme() -> None:
-    probe = "".join(chr(c) for c in (109, 97, 110, 117, 101, 108))  # kein Klartext im Repo
-    assert FREMDNAME.search(f"Frage an {probe.title()}")
-    assert not FREMDNAME.search("Frage an die Rolle")
+def test_fremdname_mechanik_mit_kunstwort() -> None:
+    """Ohne private Liste prüft der Test die Mechanik an erfundenen Wörtern."""
+    muster = _Namenmuster(frozenset({"beispielname"}))
+    assert muster.search("Frage an Beispielname, bitte")
+    assert not muster.search("Frage an die Rolle, beispielnamen bleiben frei")
+
+
+def test_namensliste_format(tmp_path: Path) -> None:
+    datei = tmp_path / "namen.txt"
+    datei.write_text("# Kommentar\nBeispielname\n  Musterfirma  # Firma\n\n", encoding="utf-8")
+    assert lade_namen(datei) == {"beispielname", "musterfirma"}
+    assert lade_namen(tmp_path / "fehlt.txt") == frozenset()
 
 
 def test_ausnahme_gilt_nur_fuer_ihre_zeile() -> None:
     """Eine Ausnahme gibt den Begriff nicht für die ganze Datei frei (Befund Review 334)."""
-    datei = "review/config.json"
+    datei = "review/config.standard.json"
     erlaubt = '  "projekt_woerter": {"datenbank": ["account_db"]},'
     assert not _verboten(datei, "projekt-begriff", PROJEKT_BEGRIFF, erlaubt)
     assert _verboten(datei, "projekt-begriff", PROJEKT_BEGRIFF, '  "x": "account_db",')
