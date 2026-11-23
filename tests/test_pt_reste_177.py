@@ -219,3 +219,74 @@ def test_laufender_zweiter_lauf_behaelt_seinen_ordner(tmp_path: Path, args: tupl
             a.kill()
             a.communicate()
     assert code_a == 0, ausgabe_a
+
+
+_KIND_OHNE_TMP = """
+def test_ohne_tmp():
+    assert True
+"""
+
+_STOERER = """
+import pytest
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_sessionstart(session):
+    basis = session.config._tmp_path_factory.getbasetemp()  # legt an, pytest merkt ihn sich
+    (basis / ".pt-lauf").mkdir()  # Marker-Pfad belegt -> Schreiben scheitert echt (OSError)
+"""
+
+
+def test_ohne_tmpdir_plugin_kein_internalerror(tmp_path: Path) -> None:
+    """``-p no:tmpdir``: kein ``--basetemp``, kein ``_tmp_path_factory`` — Lauf bleibt grün."""
+    temp = tmp_path / "t"
+    temp.mkdir()
+    welt = _welt(tmp_path / "welt")
+    (welt / "test_kind.py").write_text(_KIND_OHNE_TMP, encoding="utf-8")
+    code, ausgabe = _warten(_start(welt, _env(temp, tmp_path / "a.txt"), "-p", "no:tmpdir"))
+    assert "INTERNALERROR" not in ausgabe, ausgabe
+    assert code == 0, ausgabe
+    assert _pt_ordner(temp) == [], _pt_ordner(temp)
+
+
+def test_marker_schreiben_scheitert_lauf_bleibt_gruen(tmp_path: Path) -> None:
+    temp = tmp_path / "t"
+    temp.mkdir()
+    welt = _welt(tmp_path / "welt")
+    (welt / "stoerer_177.py").write_text(_STOERER, encoding="utf-8")
+    code, ausgabe = _warten(_start(welt, _env(temp, tmp_path / "a.txt"), "-p", "stoerer_177"))
+    assert "INTERNALERROR" not in ausgabe, ausgabe
+    assert code == 0, ausgabe
+
+
+@pytest.mark.parametrize("pid", ["0", "-5", str(2**31), str(2**64), "abc", ""])
+def test_marker_mit_unsinniger_pid_bleibt_liegen(tmp_path: Path, pid: str) -> None:
+    """Nur ``0 < pid < 2**31`` zählt; sonst nie anfassen (Linux: ``/proc/0`` fehlt = „tot“)."""
+    temp = tmp_path / "t"
+    temp.mkdir()
+    rest = _rest(temp, "pt-unsinn1", None, alt=True)
+    (rest / MARKER).write_text(f"{pid}\n", encoding="utf-8")
+    _altern(rest / MARKER)
+    welt = _welt(tmp_path / "welt")
+    code, ausgabe = _warten(_start(welt, _env(temp, tmp_path / "a.txt")))
+    assert code == 0, ausgabe
+    assert rest.is_dir(), f"Ordner mit PID {pid!r} wurde gelöscht"
+
+
+@pytest.mark.braucht("posix")
+def test_raeumen_scheitert_an_rechten_lauf_bleibt_gruen_und_loggt(tmp_path: Path) -> None:
+    if os.geteuid() == 0:
+        pytest.skip("root löscht trotz fehlender Rechte")
+    temp = tmp_path / "t"
+    temp.mkdir()
+    rest = _rest(temp, "pt-gesperrt", _tote_pid(), alt=True)
+    gesperrt = rest / "test_x0"
+    gesperrt.chmod(0o500)  # Datei darin nicht löschbar
+    welt = _welt(tmp_path / "welt")
+    try:
+        code, ausgabe = _warten(_start(welt, _env(temp, tmp_path / "a.txt")))
+    finally:
+        gesperrt.chmod(0o700)
+    assert "INTERNALERROR" not in ausgabe, ausgabe
+    assert code == 0, ausgabe
+    assert "pt-gesperrt" in ausgabe, f"Räum-Fehler nicht geloggt:\n{ausgabe}"

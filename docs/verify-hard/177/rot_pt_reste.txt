@@ -13,3 +13,15 @@ FAILED tests/test_pt_reste_177.py::test_roter_lauf_bleibt_mit_marker_auch_nach_n
 FAILED tests/test_pt_reste_177.py::test_laufender_zweiter_lauf_behaelt_seinen_ordner[ein-prozess]
 FAILED tests/test_pt_reste_177.py::test_laufender_zweiter_lauf_behaelt_seinen_ordner[xdist-n2]
 5 failed in 6.80s
+
+## Fix-Runde 1 (PR 354) — Rot 2026-11-23 15:11, Kopf e418dbd + neue Tests
+$ python -m pytest tests/test_pt_reste_177.py -q
+FAILED tests/test_pt_reste_177.py::test_ohne_tmpdir_plugin_kein_internalerror
+FAILED tests/test_pt_reste_177.py::test_marker_schreiben_scheitert_lauf_bleibt_gruen
+FAILED tests/test_pt_reste_177.py::test_marker_mit_unsinniger_pid_bleibt_liegen[0]
+FAILED tests/test_pt_reste_177.py::test_marker_mit_unsinniger_pid_bleibt_liegen[-5]
+FAILED tests/test_pt_reste_177.py::test_marker_mit_unsinniger_pid_bleibt_liegen[2147483648]
+FAILED tests/test_pt_reste_177.py::test_marker_mit_unsinniger_pid_bleibt_liegen[18446744073709551616]
+FAILED tests/test_pt_reste_177.py::test_raeumen_scheitert_an_rechten_lauf_bleibt_gruen_und_loggt
+7 failed, 7 passed in 5.68s
+Exit: 1
