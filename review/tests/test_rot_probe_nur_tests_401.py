@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from review_hilfen import lauf
+from review_hilfen import git, lauf
 
 HINWEIS = "ausgelassen: nur Tests geändert, keine Aussage"
 TEST_ECHT = "from rechnen import eins\n\n\ndef test_eins():\n    assert eins() == 1\n"
@@ -74,6 +74,9 @@ def test_gegenprobe_reiner_test_diff_ohne_pruefung_bleibt_befund(repo: Path) -> 
 def test_gegenprobe_test_mit_geaenderter_datendatei_bleibt_befund(repo: Path) -> None:
     """Review F1: Test + geänderte Nicht-Python-Datei ist kein reiner Test-Diff → Befund bleibt."""
     (repo / "daten.json").write_text('{"wert": 1}\n', encoding="utf-8")
+    git(repo, "add", "-A")
+    git(repo, "commit", "-q", "-m", "daten")
+    (repo / "daten.json").write_text('{"wert": 1, "neu": 2}\n', encoding="utf-8")
     (repo / "test_daten_401.py").write_text(
         "import json\nfrom pathlib import Path\n\n\ndef test_wert():\n"
         "    assert json.loads((Path(__file__).parent / 'daten.json').read_text())['wert'] == 1\n",
