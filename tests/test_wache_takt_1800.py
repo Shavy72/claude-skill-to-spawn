@@ -84,7 +84,7 @@ def test_takt_vorgabe_im_echten_aufruf(tmp_path: Path) -> None:
 
 
 def test_wache_modell_opus(wache: ModuleType) -> None:
-    """David 22.09. bestätigt 24.09.: Wächter läuft mit Opus, nicht Fable (#213-Nachtrag)."""
+    """Vorgabe des Menschen 22.09., bestätigt 24.09.: Wächter läuft mit Opus, nicht Fable (#213-Nachtrag)."""
     assert wache.MODELL == "claude-opus-5-5"
     assert "🧭 Opus" in wache.PROMPT
     assert "Fable" not in wache.PROMPT

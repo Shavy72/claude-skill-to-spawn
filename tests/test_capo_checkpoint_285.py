@@ -36,7 +36,7 @@ from test_waechter_213 import (  # noqa: F401  (welt = Fixture)
 SKILL = Path(__file__).resolve().parent.parent
 CHECKPOINT = "checkpoint:human"
 # Session-Kommentare tragen seit #402 (Nachschau R1) die Marke capo.SESSION_KOPF —
-# gh-Login trennt Session und David nicht (gleiches Konto).
+# gh-Login trennt Session und Menschen nicht (gleiches Konto).
 FRAGE = "Bau-Session: Frage: Soll der Abschalter sofort greifen?"
 VORSCHLAG = "Vorschlag: sofort aus, weil die Doktrin Kosten vor Komfort stellt."
 
@@ -124,7 +124,7 @@ def test_vor_der_frist_passiert_nichts(welt: dict[str, Path]) -> None:
     assert _mails(welt) == []
 
 
-# --- c) David hat geantwortet → nichts ---------------------------------------
+# --- c) Der Mensch hat geantwortet → nichts ---------------------------------------
 
 
 def test_antwort_von_david_verhindert_annahme(welt: dict[str, Path]) -> None:

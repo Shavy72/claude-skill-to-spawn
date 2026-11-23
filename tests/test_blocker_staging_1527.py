@@ -1,6 +1,6 @@
 """Blocker gilt als erledigt bei grünem Staging (#1527).
 
-David (21.11.2026): „Kein Ticket darf darauf warten, dass ein anderes live ist.“
+Vorgabe des Menschen (21.11.2026): „Kein Ticket darf darauf warten, dass ein anderes live ist.“
 Ein Ticket mit Nutzer-Ablauf bleibt bis zum Live-Klickweg offen. Die Deploy-Schlange
 setzt nach grünem Staging-Deploy das Label ``staging:fertig``; ab dann zählt es für
 Folge-Tickets wie ein geschlossener Blocker. Die Regel lebt nur in
