@@ -10,6 +10,7 @@ Fake-Werkzeug mit virtueller Uhr hinein — wie ``test_respawn_431*.py``.
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 import time
@@ -140,6 +141,8 @@ with (ordner / f"{sid}.jsonl").open("a", encoding="utf-8") as fh:
 # FAKE_NACHLAUF_S nachlaufen und regulär enden — mit Marke „.ende“. Wird sie von außen
 # beendet (SIGTERM), schreibt sie stattdessen „.beendet“; der Nachlauf deckt ein spätes
 # Beenden nach der Ablösung ab und lässt der Aufsicht Zeit, „blockiert“ zu loggen.
+# FAKE_ENDE_NACH_LOG (Pfade, os.pathsep-getrennt): zusätzlich warten, bis dort eine
+# Bau-Log-Zeile „blockiert“ steht — der Nachlauf zählt dann ab diesem Ereignis.
 ziel = int(os.environ.get("FAKE_ENDE_NACH_GETIPPT", "0"))
 if ziel:
     import signal
@@ -152,6 +155,17 @@ if ziel:
     while time.monotonic() < ende:
         if getippt.is_file() and len(getippt.read_text(encoding="utf-8").splitlines()) >= ziel:
             break
+        time.sleep(0.1)
+    def _blockiert():
+        for pfad in filter(None, os.environ.get("FAKE_ENDE_NACH_LOG", "").split(os.pathsep)):
+            datei = Path(pfad)
+            if datei.is_file() and any(
+                json.loads(z).get("typ") == "blockiert"
+                for z in datei.read_text(encoding="utf-8").splitlines() if z.strip()
+            ):
+                return True
+        return False
+    while os.environ.get("FAKE_ENDE_NACH_LOG") and time.monotonic() < ende and not _blockiert():
         time.sleep(0.1)
     time.sleep(float(os.environ.get("FAKE_NACHLAUF_S", "5")))
     Path(os.environ["FAKE_PROTOKOLL"]).with_suffix(".ende").write_text("regulär")
@@ -577,14 +591,21 @@ def test_exit_2_ueber_echte_aufsicht_kein_nachfolger(
     welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Befund 4: Aufseher schreibt nichts (Exit 2) → kein Nachfolger, alter läuft weiter, sichtbar."""
+    from to_spawn import bau_log
+
     env = _abloese_welt(welt, monkeypatch)
     env.update(
         {
             "FAKE_TMUX_SCHREIBT": "0",
             "FAKE_SCHLAF": "30",
-            # #353: alter Aufseher endet regulär 5 s nach der 4. Eingabe, statt fest
-            # 30 s zu schlafen; wird er von außen beendet, steht die Marke „.beendet“.
+            # #353: alter Aufseher endet regulär 2 Haupt-Takte (TAKT_S = 5 s) nach der
+            # Bau-Log-Zeile „blockiert“, statt fest 30 s zu schlafen; wird er bis dahin
+            # von außen beendet, steht die Marke „.beendet“ (PR 379: Lücke 4–10 s zu).
             "FAKE_ENDE_NACH_GETIPPT": "4",
+            "FAKE_ENDE_NACH_LOG": os.pathsep.join(
+                str(pfad(welt["repo"], SPEC)) for pfad in (bau_log.log_pfad, bau_log.lauf_pfad)
+            ),
+            "FAKE_NACHLAUF_S": "10",
             "TO_SPAWN_ABLOESE_WARTE_S": "1",
             "TO_SPAWN_ABLOESE_ABSTAND_S": "1",
             "TO_SPAWN_ABLOESE_VERSUCHE": "2",
