@@ -18,7 +18,7 @@ import sys
 import tempfile
 import textwrap
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -103,6 +103,13 @@ _LOG = logging.getLogger(__name__)
 #: ponytail: feste Frist, Einstellung über ``temp_ordner``/Maschinen-Liste, wenn eine Maschine anders braucht.
 _RESTE_ALTER_S = 3600
 
+#: Ab diesem Inode-Anteil der Temp-Wurzel gilt nur noch :data:`_RESTE_ALTER_KNAPP_S` (#355):
+#: eine volle Suite hinterlässt rot ~220k Einträge, ``/tmp`` als tmpfs hat oft nur 1 Mio.
+_INODE_GRENZE = 0.70
+
+#: Mindestalter toter Reste bei Inode-Knappheit (#355) — nie ein gerade startender Lauf.
+_RESTE_ALTER_KNAPP_S = 600
+
 
 @pytest.hookimpl(tryfirst=True)  # vor ``_pytest.tmpdir``, das ``--basetemp`` in seinem configure liest
 def pytest_configure(config: pytest.Config) -> None:
@@ -131,22 +138,44 @@ def _eigener_basetemp(config: pytest.Config) -> None:
     config.stash[_EIGENER_BASETEMP] = ordner
 
 
-def _reste_raeumen(temp: Path) -> None:
+def _inode_anteil(temp: Path) -> float | None:
+    """Belegter Inode-Anteil (0..1) des Laufwerks unter ``temp`` (#355); ``None`` = unbekannt.
+
+    Unbekannt heißt: kein ``os.statvfs`` (Windows), Fehler, oder das Dateisystem meldet keine
+    feste Inode-Zahl (``f_files == 0``, z. B. btrfs). Dann gilt die normale Schonfrist.
+    """
+    statvfs = getattr(os, "statvfs", None)
+    if statvfs is None:
+        return None
+    try:
+        werte = statvfs(temp)
+    except OSError:
+        return None
+    if werte.f_files <= 0:
+        return None
+    return 1 - werte.f_ffree / werte.f_files
+
+
+def _reste_raeumen(temp: Path, inode_anteil: Callable[[Path], float | None] = _inode_anteil) -> None:
     """Alte Reste eigener Läufe unter ``temp`` löschen (#177).
 
     Nur ``pt-*``-Ordner mit Marker, deren Leit-Prozess nicht mehr lebt und deren Marker älter
-    als :data:`_RESTE_ALTER_S` ist. Ohne Marker, unlesbar, PID außerhalb ``0 < pid < 2**31``
-    oder lebende PID: bleibt liegen. Eine wiederverwendete PID lässt einen Rest nur länger
-    liegen, nie einen Lauf verlieren. Jeder Fehler beim Räumen wird geloggt, nie ein roter Lauf.
+    als :data:`_RESTE_ALTER_S` ist — bei Inode-Knappheit (``inode_anteil`` ≥ :data:`_INODE_GRENZE`)
+    nur älter als :data:`_RESTE_ALTER_KNAPP_S` (#355). Ohne Marker, unlesbar, PID außerhalb
+    ``0 < pid < 2**31`` oder lebende PID: bleibt liegen. Eine wiederverwendete PID lässt einen
+    Rest nur länger liegen, nie einen Lauf verlieren. Jeder Fehler beim Räumen wird geloggt,
+    nie ein roter Lauf.
     """
     try:
-        _reste_raeumen_roh(temp)
+        _reste_raeumen_roh(temp, inode_anteil)
     except Exception as fehler:  # noqa: BLE001 — Räumen ist Komfort, darf nie einen Lauf kippen
         _LOG.warning("pt-Räumer abgebrochen unter %s: %r", temp, fehler)
 
 
-def _reste_raeumen_roh(temp: Path) -> None:
-    grenze = time.time() - _RESTE_ALTER_S
+def _reste_raeumen_roh(temp: Path, inode_anteil: Callable[[Path], float | None]) -> None:
+    anteil = inode_anteil(temp)
+    knapp = anteil is not None and anteil >= _INODE_GRENZE
+    grenze = time.time() - (_RESTE_ALTER_KNAPP_S if knapp else _RESTE_ALTER_S)
     try:
         kandidaten = [p for p in temp.iterdir() if p.name.startswith("pt-")]
     except OSError as fehler:
