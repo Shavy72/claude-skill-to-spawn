@@ -434,3 +434,22 @@ def test_offen_b_handoff_auftrag_verbietet_staffel_marker() -> None:
     text = respawn._handoff_auftrag("docs/handoffs/H.md", "docs/handoffs/S.txt")
     assert "Staffel: weiter" in text
     assert "Keine Zeile" in text
+
+
+def test_b4_abbruch_nennt_fenster_log(
+    umgebung: tuple[Path, Path],  # noqa: F811
+) -> None:
+    """Befund PR 293 (#277): Abbruch-Meldung nennt das Fenster-Log mit dem Grund."""
+    repo, wt = umgebung
+    fake = FakeWerkzeug(wt)
+    original = fake.bildschirm
+
+    def bildschirm(ziel: str) -> str:
+        if ziel == NEU_ZIEL:
+            raise respawn.FensterWeg("capture-pane", "can't find window: @9")
+        return original(ziel)
+
+    fake.bildschirm = bildschirm  # type: ignore[method-assign]
+    erg = _lauf(repo, fake)
+    assert erg.exit == 1, erg.zeile
+    assert f"fenster_{TICKET}.log" in erg.zeile

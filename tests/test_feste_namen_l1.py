@@ -119,7 +119,7 @@ AUSNAHMEN: dict[tuple[str, str], tuple[tuple[str, ...], str]] = {
     ("to_spawn/aufpasser.py", "duoplus"): (("Beispiele unten sind die DuoPlus-Vorgabe. Erster Treffer",), _DOKU),
     ("to_spawn/capo.py", "repo-skript"): (
         (
-            "\"\"\"``scripts/bau.py`` des Repos (Weiterleitu",
+            "ein Start OHNE Vorspann ruft (lokal, Windows-Tab): ``scripts/bau.py``",
         ),
         _WEITERLEITUNG + " (Docstring)",
     ),

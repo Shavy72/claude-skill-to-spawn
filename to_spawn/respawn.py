@@ -662,7 +662,9 @@ def _ablauf(a: Auftrag, w: Werkzeug, stand: _Stand) -> Ergebnis:
         _start_prompt(w, stand.neu, prompt)  # e)
     except FensterWeg as fehler:
         raise _Abbruch(
-            EXIT_NICHT_BEWIESEN, f"neue Session beendet sich selbst ({fehler})"
+            EXIT_NICHT_BEWIESEN,
+            f"neue Session beendet sich selbst ({fehler}) — Grund in "
+            f"{capo.fenster_log(a.repo, a.ticket)}",
         ) from fehler
     return _alte_abloesen(a, w, stand, alt, stand.neu, wt, gefunden_h, gefunden_s)
 
