@@ -237,3 +237,86 @@ def test_cli_leeres_ticket_antwortet_nicht(tmp_path: Path) -> None:
 
 def _id(ausgabe: str) -> str:
     return ausgabe.strip().rsplit(" ", 1)[-1]
+
+
+# --- 7: Fix-Runde PR 306 — unlesbare Datei, ungültige Antwort, Lesefehler -----
+
+
+def _datei_7(tmp_path: Path, inhalt: str) -> Path:
+    ordner = tmp_path / ".to-spawn"
+    ordner.mkdir(exist_ok=True)
+    datei = ordner / "entscheidung-7.json"
+    datei.write_text(inhalt, encoding="utf-8")
+    return datei
+
+
+@pytest.mark.parametrize("inhalt", ['{"fragen": [{"klasse": 2', "[]", '{"fragen": "x"}'])
+def test_unlesbare_datei_sperrt_ohne_einwurf(briefkasten: ModuleType, tmp_path: Path, inhalt: str) -> None:
+    datei = _datei_7(tmp_path, inhalt)
+    assert briefkasten.lesen("7", "ab", hauptbaum=tmp_path) == briefkasten.NUTZER
+    (offen,) = briefkasten.offene(hauptbaum=tmp_path)
+    assert (offen["ticket"], offen["id"], offen["klasse"]) == ("7", "", "2")
+    assert "kaputt" in offen["frage"]
+    assert briefkasten.offene(["7"], hauptbaum=tmp_path) == [offen]
+    with pytest.raises(briefkasten.Verweigert):
+        briefkasten.antworten("7", "ab", "a", [], "passt", hauptbaum=tmp_path)
+    with pytest.raises(briefkasten.Verweigert):
+        briefkasten.nutzer_antworten("7", "ab", "a", [], "passt", hauptbaum=tmp_path)
+    assert datei.read_text(encoding="utf-8") == inhalt
+    assert not list(datei.parent.glob("entscheidung-7.json.kaputt-*"))
+
+
+def _klasse_2_mit_aufseher_von_hand(briefkasten: ModuleType, tmp_path: Path) -> tuple[str, Path]:
+    fid = briefkasten.einwerfen("7", "Live schalten?", "nein", 2, [], hauptbaum=tmp_path)
+    datei = tmp_path / ".to-spawn" / "entscheidung-7.json"
+    daten = json.loads(datei.read_text(encoding="utf-8"))
+    daten["fragen"][-1]["antwort"] = {"wahl": "ja", "von": "aufseher"}
+    datei.write_text(json.dumps(daten), encoding="utf-8")
+    return fid, datei
+
+
+def test_offene_zeigt_frage_mit_ungueltiger_antwort(briefkasten: ModuleType, tmp_path: Path) -> None:
+    fid, _ = _klasse_2_mit_aufseher_von_hand(briefkasten, tmp_path)
+    (offen,) = briefkasten.offene(hauptbaum=tmp_path)
+    assert (offen["id"], offen["klasse"]) == (fid, "2")
+
+
+def test_nutzer_gibt_frei_trotz_ungueltiger_antwort(briefkasten: ModuleType, tmp_path: Path) -> None:
+    fid, datei = _klasse_2_mit_aufseher_von_hand(briefkasten, tmp_path)
+    with pytest.raises(briefkasten.Verweigert):
+        briefkasten.antworten("7", fid, "ja", [], "selbst", hauptbaum=tmp_path)
+    briefkasten.nutzer_antworten("7", fid, "nein", [], "noch nicht", hauptbaum=tmp_path)
+    antwort = briefkasten.lesen("7", fid, hauptbaum=tmp_path)
+    assert isinstance(antwort, briefkasten.Antwort)
+    assert (antwort.wahl, antwort.von) == ("nein", briefkasten.NUTZER_VON)
+    assert briefkasten.offene(hauptbaum=tmp_path) == []
+    frage = json.loads(datei.read_text(encoding="utf-8"))["fragen"][-1]
+    assert frage["verworfen"] == [{"wahl": "ja", "von": "aufseher"}]  # nachvollziehbar erhalten
+    with pytest.raises(ValueError):
+        briefkasten.nutzer_antworten("7", fid, "ja", [], "zweimal", hauptbaum=tmp_path)
+
+
+def test_lesefehler_sperrt_ohne_beiseitelegen(
+    briefkasten: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    briefkasten.einwerfen("7", "Ordner?", "neu", 3, [], hauptbaum=tmp_path)
+    datei = tmp_path / ".to-spawn" / "entscheidung-7.json"
+    inhalt = datei.read_text(encoding="utf-8")
+    echt = Path.read_text
+
+    def lesefehler(self: Path, *args: object, **kwargs: object) -> str:
+        if self == datei:
+            raise PermissionError(13, "Zugriff verweigert")
+        return echt(self, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(Path, "read_text", lesefehler)
+    assert briefkasten.lesen("7", "ab", hauptbaum=tmp_path) == briefkasten.NUTZER
+    (offen,) = briefkasten.offene(hauptbaum=tmp_path)
+    assert (offen["id"], offen["klasse"]) == ("", "2")
+    with pytest.raises(OSError):
+        briefkasten.einwerfen("7", "Noch was?", "x", 3, [], hauptbaum=tmp_path)
+    with pytest.raises(briefkasten.Verweigert):
+        briefkasten.antworten("7", "ab", "a", [], "x", hauptbaum=tmp_path)
+    monkeypatch.undo()
+    assert not list(datei.parent.glob("entscheidung-7.json.kaputt-*"))
+    assert datei.read_text(encoding="utf-8") == inhalt

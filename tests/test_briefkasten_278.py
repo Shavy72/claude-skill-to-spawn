@@ -3,7 +3,7 @@
 Prüft ohne gh und ohne Claude-Session (tmp_path): nach dem Einwurf meldet ``antwort N``
 Exit 3 „WARTET“, nach ``antworten`` Exit 0 mit der Wahl (Abnahme 3, 4, 5); Klasse 2 wird
 nie beantwortet, auch eine von Hand eingetragene Antwort ergibt Exit 2 (Abnahme 2); eine halbe
-Datei zählt als WARTET; ``entscheidungen S`` listet Klasse-1-Einträge und Briefkasten-Antworten
+Datei sperrt (NUTZER); ``entscheidungen S`` listet Klasse-1-Einträge und Briefkasten-Antworten
 (wer, was, warum, Beleg; Abnahme 8). Dazu die Regel-Änderungen an ``befugnis.einordnen``.
 """
 
@@ -95,13 +95,14 @@ def test_klasse_2_von_hand_beantwortet_bleibt_nutzer(briefkasten: ModuleType, tm
     assert briefkasten.lesen("7", hauptbaum=tmp_path) == briefkasten.NUTZER
 
 
-def test_halbe_datei_wartet(briefkasten: ModuleType, tmp_path: Path) -> None:
+def test_halbe_datei_sperrt(briefkasten: ModuleType, tmp_path: Path) -> None:
+    # Seit PR 306 strenger: halbe Datei = NUTZER (fail-closed, sichtbar), nicht mehr WARTET.
     fid = briefkasten.einwerfen("7", "A?", "a", 3, [], hauptbaum=tmp_path)
     briefkasten.antworten("7", fid, "a", [], "passt", hauptbaum=tmp_path)
     datei = tmp_path / ".to-spawn" / "entscheidung-7.json"
     inhalt = datei.read_text(encoding="utf-8")
     datei.write_text(inhalt[: len(inhalt) // 2], encoding="utf-8")
-    assert briefkasten.lesen("7", fid, hauptbaum=tmp_path) == briefkasten.WARTET
+    assert briefkasten.lesen("7", fid, hauptbaum=tmp_path) == briefkasten.NUTZER
 
 
 def test_kaputte_datei_wird_beim_einwurf_nicht_ueberschrieben(briefkasten: ModuleType, tmp_path: Path) -> None:
@@ -458,7 +459,7 @@ def test_antworten_bei_kaputter_datei(briefkasten: ModuleType, tmp_path: Path) -
     ordner = tmp_path / ".to-spawn"
     ordner.mkdir()
     (ordner / "entscheidung-7.json").write_text('{"fragen": [', encoding="utf-8")
-    with pytest.raises(ValueError):
+    with pytest.raises(briefkasten.Verweigert):  # seit PR 306: unlesbar sperrt (vorher ValueError)
         briefkasten.antworten("7", "abcd", "a", [], "passt", hauptbaum=tmp_path)
     assert (ordner / "entscheidung-7.json").read_text(encoding="utf-8") == '{"fragen": ['
 

@@ -17,11 +17,13 @@ Einziges Modul, das Ort, Dateimuster, Format und Ablage der Fragen kennt (Hauptb
 - :func:`datei_relativ` — Ort der Datei für Texte (Start-Auftrag), relativ zum Hauptbaum.
 
 Eine Datei je Ticket hält alle Fragen in Reihenfolge. Klasse 2 gibt nur der Nutzer frei; eine
-offene Klasse-2-Frage (ohne Antwort ``von`` :data:`NUTZER_VON`) sperrt das ganze Ticket. Eine halbe
-Datei zählt als :data:`WARTET` (sichere Richtung). Eine unlesbare Datei legt :func:`einwerfen` als
-``entscheidung-<N>.json.kaputt-<stempel>`` beiseite; solange eine solche liegt, wartet das Ticket
-auf den Nutzer (sie könnte eine offene Klasse-2-Frage enthalten). Geklärt ist es, wenn der Nutzer
-sie geprüft und gelöscht hat. Jedes Lesen-Ändern-Schreiben läuft unter :func:`sperre.halte` auf
+offene Klasse-2-Frage (ohne Antwort ``von`` :data:`NUTZER_VON`) sperrt das ganze Ticket. Eine
+vorhandene, aber nicht nutzbare Datei (halb, ungültig, falsche Form, Lesefehler) sperrt sofort
+genauso: :data:`NUTZER`, sichtbar in :func:`offene` (sie könnte eine offene Klasse-2-Frage
+enthalten; Entscheidung an einer Stelle, :func:`_sperrgruende`). Ungültigen Inhalt legt
+:func:`einwerfen` als ``entscheidung-<N>.json.kaputt-<stempel>`` beiseite, die sperrt weiter;
+geklärt ist es, wenn der Nutzer sie geprüft und gelöscht hat. Ein Lesefehler (``OSError``)
+verschiebt nichts — die Datei kann gültig sein. Jedes Lesen-Ändern-Schreiben läuft unter :func:`sperre.halte` auf
 ``entscheidung-<N>.lock``.
 
 Schutz des Nutzer-Wegs, ehrlich: Bau-Session (``TO_SPAWN_TICKET`` gesetzt, auch leer) und
@@ -125,20 +127,45 @@ def _gesperrt(datei: Path) -> Iterator[None]:
         yield
 
 
-def _lade(datei: Path) -> dict[str, Any] | None:
-    """Inhalt oder ``None`` (fehlt, halb, kaputt, falsche Form)."""
+@dataclass(frozen=True)
+class _Inhalt:
+    """Ergebnis von :func:`_lies`: ``daten`` nur bei gültigem Inhalt, sonst ``None``.
+
+    ``stoerung`` (leer = keine) nennt, warum eine vorhandene Datei nicht nutzbar ist — sie sperrt
+    das Ticket (:func:`_sperrgruende`). ``beiseitelegen`` nur bei ungültigem Inhalt, nie bei einem
+    Lesefehler (die Datei selbst kann gültig sein).
+    """
+
+    daten: dict[str, Any] | None
+    stoerung: str = ""
+    beiseitelegen: bool = False
+
+
+def _lies(datei: Path) -> _Inhalt:
+    """Datei lesen; unterscheidet fehlt (kein Sperrgrund), ungültig und Lesefehler (``OSError``)."""
     try:
-        daten = json.loads(datei.read_text(encoding="utf-8"))
+        text = datei.read_text(encoding="utf-8")
     except FileNotFoundError:
-        return None
-    except (OSError, ValueError) as fehler:
-        log.warning("Briefkasten %s nicht lesbar (%s) — gilt als WARTET.", datei, fehler)
-        return None
+        return _Inhalt(None)
+    except OSError as fehler:
+        log.warning("Briefkasten %s nicht lesbar (%s) — wartet auf den Nutzer.", datei, fehler)
+        return _Inhalt(None, f"Briefkasten-Datei {datei.name} nicht lesbar ({fehler}) — Zugriff prüfen")
+    kaputt = _Inhalt(None, f"Briefkasten-Datei kaputt: {datei.name} — prüfen, reparieren oder löschen", True)
+    try:
+        daten = json.loads(text)
+    except ValueError as fehler:
+        log.warning("Briefkasten %s ungültig (%s) — wartet auf den Nutzer.", datei, fehler)
+        return kaputt
     if not isinstance(daten, dict) or not isinstance(daten.get("fragen"), list):
-        return None
+        return kaputt
     if not all(isinstance(f, dict) for f in daten["fragen"]):
-        return None
-    return daten
+        return kaputt
+    return _Inhalt(daten)
+
+
+def _lade(datei: Path) -> dict[str, Any] | None:
+    """Gültiger Inhalt oder ``None`` (fehlt, halb, kaputt, falsche Form, Lesefehler)."""
+    return _lies(datei).daten
 
 
 def _jetzt() -> str:
@@ -172,6 +199,19 @@ def _kaputte(datei: Path) -> list[Path]:
     return sorted(datei.parent.glob(f"{datei.name}.kaputt-*"))
 
 
+def _sperrgruende(datei: Path, inhalt: _Inhalt) -> list[str]:
+    """Die eine Stelle für „Ticket durch kaputte Datei gesperrt?“ — Gründe, leer = nicht gesperrt.
+
+    Jede ``.kaputt-*``-Datei und eine vorhandene, aber nicht nutzbare Hauptdatei (ungültig oder
+    Lesefehler) sperren sofort, ohne dass erst ein Einwurf kommen muss: Klasse 2, wartet auf den
+    Nutzer (sie könnte eine offene Klasse-2-Frage enthalten).
+    """
+    gruende = [f"Briefkasten-Datei kaputt: {k.name} — prüfen und löschen" for k in _kaputte(datei)]
+    if inhalt.stoerung:
+        gruende.append(inhalt.stoerung)
+    return gruende
+
+
 def einwerfen(
     n: str | int,
     frage: str,
@@ -199,8 +239,12 @@ def einwerfen(
     frage_id = secrets.token_hex(4)
     datei = _datei(nummer, hauptbaum)
     with _gesperrt(datei):
-        daten = _lade(datei)
-        if daten is None and datei.exists():
+        inhalt = _lies(datei)
+        daten = inhalt.daten
+        if inhalt.stoerung and not inhalt.beiseitelegen:
+            # Lesefehler: die Datei kann gültig sein — nie verschieben, nie überschreiben.
+            raise OSError(f"Ticket {nummer}: {inhalt.stoerung}")
+        if inhalt.beiseitelegen:
             # Nie überschreiben, was nicht lesbar ist (Datenverlust): beiseitelegen.
             stempel = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
             datei.replace(datei.with_name(f"{datei.name}.kaputt-{stempel}"))
@@ -226,15 +270,17 @@ def einwerfen(
 def lesen(n: str | int, frage_id: str | None = None, *, hauptbaum: Path | None = None) -> Antwort | str:
     """Stand der Frage ``frage_id``: :class:`Antwort`, :data:`WARTET` oder :data:`NUTZER`.
 
-    :data:`NUTZER`, solange eine ``.kaputt-*``-Datei liegt oder irgendeine Klasse-2-Frage des
+    :data:`NUTZER`, solange das Ticket durch eine kaputte Datei gesperrt ist (``.kaputt-*`` oder
+    vorhandene, aber unlesbare Datei, :func:`_sperrgruende`) oder irgendeine Klasse-2-Frage des
     Tickets ohne Antwort des Nutzers ist (eine Antwort anderer gibt Klasse 2 nie frei). Die
     Antwort des Nutzers kommt als :class:`Antwort` (``von`` :data:`NUTZER_VON`). Ohne passende
     ``id`` nie eine :class:`Antwort`.
     """
     datei = _datei(n, hauptbaum)
-    if _kaputte(datei):
+    inhalt = _lies(datei)
+    if _sperrgruende(datei, inhalt):
         return NUTZER
-    daten = _lade(datei)
+    daten = inhalt.daten
     if not daten or not daten["fragen"]:
         return WARTET
     if _klasse_2_offen(daten["fragen"]):
@@ -309,15 +355,31 @@ def _schreibe_antwort(
         raise Verweigert("Eine Bau-Session beantwortet keine Briefkasten-Fragen (TO_SPAWN_TICKET gesetzt).")
     if not wahl.strip():
         raise ValueError("Leere Wahl: die Antwort braucht eine Entscheidung.")
+    """Antwort schreiben (gemeinsamer Weg von :func:`antworten` und :func:`nutzer_antworten`).
+
+    Offen ist eine Frage, solange ihre Antwort nicht gilt (:func:`_gilt`). Steht dort eine
+    ungültige Antwort (z. B. von Hand eingetragene Aufseher-Antwort an einer Klasse-2-Frage), blockt
+    sie die gültige nicht: die neue Antwort ersetzt sie, die alte bleibt in der Liste
+    ``verworfen`` der Frage nachvollziehbar erhalten. ``Verweigert`` bei unlesbarer Hauptdatei
+    (auch für den Nutzer: erst die Datei klären) und für den Aufseher bei jeder Sperre.
+    """
     datei = _datei(n, hauptbaum)
     with _gesperrt(datei):
-        daten = _lade(datei)
+        inhalt = _lies(datei)
+        gruende = _sperrgruende(datei, inhalt)
+        if inhalt.stoerung:
+            raise Verweigert(f"Ticket {n}: wartet auf den Nutzer ({inhalt.stoerung}).")
+        daten = inhalt.daten
         treffer = [f for f in (daten or {}).get("fragen", []) if f.get("id") == frage_id]
-        if not daten or not treffer or treffer[-1].get("antwort"):
+        if not daten or not treffer or _gilt(treffer[-1]):
             raise ValueError(f"Ticket {n}: keine offene Frage {frage_id!r} im Briefkasten.")
-        if von != NUTZER_VON and (_kaputte(datei) or _klasse_2_offen(daten["fragen"])):
+        if von != NUTZER_VON and (gruende or _klasse_2_offen(daten["fragen"])):
             raise Verweigert(f"Ticket {n}: wartet auf den Nutzer (Klasse 2 oder kaputte Datei).")
-        treffer[-1]["antwort"] = {
+        frage = treffer[-1]
+        if frage.get("antwort") is not None:
+            alt = frage.get("verworfen")
+            frage["verworfen"] = [*(alt if isinstance(alt, list) else []), frage["antwort"]]
+        frage["antwort"] = {
             "ts": _jetzt(),
             "wahl": wahl,
             "grund": grund,
@@ -339,7 +401,9 @@ def offene(tickets: Iterable[str | int] | None = None, *, hauptbaum: Path | None
     """Alle offenen Fragen (``tickets`` None = alle), älteste zuerst je Ticket.
 
     Je Frage ``ticket``, ``id``, ``klasse`` (``"2"`` = nur der Nutzer), ``frage``, ``vorschlag``,
-    ``ts``. Jede ``.kaputt-*``-Datei erscheint als Klasse-2-Eintrag mit leerer ``id``.
+    ``ts``. Jeder Sperrgrund durch kaputte Datei (``.kaputt-*`` oder vorhandene, aber unlesbare
+    Datei, :func:`_sperrgruende`) erscheint als Klasse-2-Eintrag mit leerer ``id``. Offen ist eine
+    Frage, solange ihre Antwort nicht gilt (:func:`_gilt`).
     """
     ordner = _hauptbaum(hauptbaum) / _ORDNER
     if tickets is None:
@@ -352,19 +416,11 @@ def offene(tickets: Iterable[str | int] | None = None, *, hauptbaum: Path | None
         except ValueError:
             continue
         nummer = str(_nummer(t))
-        for kaputt in _kaputte(datei):
-            ergebnis.append(
-                {
-                    "ticket": nummer,
-                    "id": "",
-                    "klasse": "2",
-                    "frage": f"Briefkasten-Datei kaputt: {kaputt.name} — prüfen und löschen",
-                    "vorschlag": "",
-                    "ts": "",
-                }
-            )
-        for f in (_lade(datei) or {}).get("fragen", []):
-            if f.get("antwort"):
+        inhalt = _lies(datei)
+        for grund in _sperrgruende(datei, inhalt):
+            ergebnis.append({"ticket": nummer, "id": "", "klasse": "2", "frage": grund, "vorschlag": "", "ts": ""})
+        for f in (inhalt.daten or {}).get("fragen", []):
+            if _gilt(f):
                 continue
             ergebnis.append(
                 {
