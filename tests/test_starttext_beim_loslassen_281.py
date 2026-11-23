@@ -37,7 +37,9 @@ def _lade_bau(monkeypatch: pytest.MonkeyPatch, repo: Path, name: str) -> types.M
 
 
 def _vorlage_schreiben(bau: types.ModuleType, text: str) -> Path:
-    pfad = Path(bau.MANIFEST_DIR) / "_default.json"
+    # Seit #274 P1 gilt nur die Skill-Vorlage (``bau.VORLAGE``); der Test lenkt sie auf eine Temp-Datei.
+    pfad = Path(bau.REPO) / "vorlage_281.json"
+    bau.VORLAGE = pfad
     pfad.parent.mkdir(parents=True, exist_ok=True)
     pfad.write_text(json.dumps({"prompt_template": text}, ensure_ascii=False), encoding="utf-8")
     return pfad

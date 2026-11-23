@@ -213,10 +213,7 @@ AUSNAHMEN: dict[tuple[str, str], tuple[tuple[str, ...], str]] = {
         "Aufruf-Docstring der Weiterleitung",
     ),
     ("skripte/bau.py", "manifest-ordner"): (
-        (
-            "Ticket-Manifest unter ``docs/agents/manifests/*.json`` (SSOT-Schema si",
-            "\"\"\"``docs/agents/manifests/_default.json`` des Repo",
-        ),
+        ("Ticket-Manifest unter ``docs/agents/manifests/*.json`` (SSOT-Schema si",),
         _DOKU,
     ),
     ("skripte/belege_uebersicht.py", "manifest-ordner"): (

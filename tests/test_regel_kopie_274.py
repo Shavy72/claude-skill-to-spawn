@@ -62,6 +62,7 @@ def _lauf(repo: Path, tmp_path: Path) -> subprocess.CompletedProcess[str]:
         env=env,
         cwd=repo,
         timeout=120,
+        check=False,
     )
 
 

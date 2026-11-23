@@ -150,6 +150,11 @@ DEFAULTS: dict[str, Any] = {
     "startklar": {
         "schluessel": [],
     },
+    #: Start-Text (#274 P1): ``zusatz_datei`` = Repo-Datei (relativ zur Wurzel), deren Text als
+    #: Abschnitt „Regeln dieses Repos“ in den Skill-Start-Text kommt. Leer = kein Zusatz.
+    "start_text": {
+        "zusatz_datei": "",
+    },
     "speicher": {
         "min_frei_mib": 2048,
         "max_sessions": 6,

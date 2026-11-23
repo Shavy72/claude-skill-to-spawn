@@ -155,12 +155,14 @@ def read_json(path: Path, default: dict | None = None) -> dict:
 # --- Manifest ---------------------------------------------------------------
 
 
-def load_default(ersatz: Path | None = None) -> dict:
-    """``docs/agents/manifests/_default.json`` des Repos; fehlt sie, ``ersatz`` (Probesitz, #214)."""
-    path = MANIFEST_DIR / "_default.json"
-    if not path.is_file() and ersatz is not None and ersatz.is_file():
-        log.warning("Default-Manifest fehlt im Repo — nehme %s.", ersatz)
-        path = ersatz
+#: Die eine Vorlage des Start-Texts (#274 P1): nur im Skill, nie im Ziel-Repo. Repo-Eigenes
+#: kommt über ``start_text.zusatz_datei`` als ``{REPO_ZUSATZ}`` dazu (:func:`repo_zusatz`).
+VORLAGE = Path(_SKILL) / "repo-scripts" / "_default.json"
+
+
+def load_default() -> dict:
+    """Skill-Vorlage ``repo-scripts/_default.json`` — eine Repo-Kopie gilt nicht (#274 P1)."""
+    path = VORLAGE
     if not path.is_file():
         log.error("Default-Manifest fehlt: %s", path)
         sys.exit(2)
@@ -169,6 +171,20 @@ def load_default(ersatz: Path | None = None) -> dict:
         log.error("Default-Manifest ohne prompt_template (JSON kaputt?): %s", path)
         sys.exit(2)
     return default
+
+
+def regel_kopie_warnen() -> None:
+    """Liegt noch eine Repo-Kopie ``_default.json``, laut melden: sie wird nicht mehr gelesen (#274 P1)."""
+    kopie = MANIFEST_DIR / "_default.json"
+    if kopie.is_file():
+        try:
+            anzeige = kopie.relative_to(REPO)
+        except ValueError:
+            anzeige = kopie
+        log.warning(
+            "Regel-Kopie %s wird ignoriert; Repo-Teile nach start_text.zusatz_datei umziehen, dann Datei löschen.",
+            anzeige,
+        )
 
 
 def find_manifest(ticket: str) -> tuple[dict, dict] | None:
@@ -433,6 +449,21 @@ def worktree_pfad(ticket: str) -> str:
     return config.worktree_pfad(ticket, REPO)
 
 
+def repo_zusatz(konfig: dict) -> str:
+    """Text der Repo-Zusatz-Datei (``start_text.zusatz_datei``, relativ zum Repo), sonst ``""``.
+
+    Nicht konfiguriert → still ``""``; konfiguriert, aber nicht lesbar → Warnung, Start ohne Zusatz."""
+    rel = str((konfig.get("start_text") or {}).get("zusatz_datei") or "").strip()
+    if not rel:
+        return ""
+    pfad = REPO / rel
+    try:
+        return pfad.read_text(encoding="utf-8").strip()
+    except OSError as exc:
+        log.warning("Repo-Zusatz %s nicht lesbar (%s) — Start ohne Zusatz.", rel, exc)
+        return ""
+
+
 def build_prompt(
     template: str,
     ticket: str,
@@ -445,9 +476,16 @@ def build_prompt(
     ``{REPO}`` = owner/name, ``{HAUPTZWEIG}``, ``{CHECKPOINT_LABEL}`` aus der Konfig,
     ``{SESSION_KOPF}`` = Marke jedes Session-Kommentars aus ``capo.SESSION_KOPF`` (#402),
     ``{MINDSET}``/``{ABLOESE_SOP}`` = feste Texte aus ``anleitung`` (#500),
-    ``{BEFUGNIS}`` = Befugnis-Abschnitt aus ``befugnis.start_text`` (#278)."""
+    ``{BEFUGNIS}`` = Befugnis-Abschnitt aus ``befugnis.start_text`` (#278),
+    ``{REPO_ZUSATZ}`` = Inhalt von ``start_text.zusatz_datei`` (#274 P1) — zuerst eingesetzt, damit
+    der Zusatz dieselben Platzhalter nutzen kann; leer → Platzhalter samt Überschrift darüber entfällt."""
     konfig = konfig if konfig is not None else config.lade(REPO)
     label = str((konfig.get("regularien") or {}).get("checkpoint_label") or "checkpoint:human")
+    zusatz = repo_zusatz(konfig)
+    if zusatz:
+        template = template.replace("{REPO_ZUSATZ}", zusatz)
+    else:
+        template = re.sub(r"(?:#[^\n]*\n)?\{REPO_ZUSATZ\}\n*", "", template)
     return (
         template.replace("{WT}", worktree_pfad(ticket))
         .replace("{N}", ticket)
@@ -860,7 +898,8 @@ def main() -> int:
             log.error("--resume %s: Transkript %s fehlt — kein Start.", args.resume, transkript)
             return 2
 
-    default = load_default(Path(_SKILL) / "repo-scripts" / "_default.json" if args.probesitz else None)
+    regel_kopie_warnen()
+    default = load_default()
     found = None if args.probesitz else find_manifest(ticket)
     # Optionales Spec-Feld ``effort`` (low…max): gewinnt vor der Konfig; ``--effort`` wird immer gesetzt.
     spec_effort: str | None = None
