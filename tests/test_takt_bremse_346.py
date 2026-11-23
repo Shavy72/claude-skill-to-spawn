@@ -120,3 +120,23 @@ def test_klasse_2_beleg_nach_fehler_lauf_gefunden(welt: dict[str, Any], monkeypa
     assert _takt(welt, "--claude", str(CLAUDE_AUFZ)).returncode == 0
     assert _zeige_aufrufe(welt, fid) == 1, "belegte Klasse-2-Frage nach Fehler-Lauf erneut gezeigt"
     assert f"297:{fid}" in (_merker(welt) or {}).get("belegt", [])
+
+
+def test_fehler_lauf_ungezeigte_frage_nicht_in_fragen(welt: dict[str, Any], monkeypatch: Any) -> None:
+    """Randfall-Grenze: über :data:`MAX_EINTRAEGE` hinaus nie gezeigte Fragen stehen nach dem Fehler-Lauf
+    nicht in ``fragen`` — sonst sucht der nächste Takt einen Beleg für eine Frage, die nie gezeigt wurde."""
+    from to_spawn import leitstand, waechter_takt
+
+    for name, wert in welt["env"].items():
+        monkeypatch.setenv(name, wert)
+    monkeypatch.delenv("TO_SPAWN_TICKET", raising=False)
+    monkeypatch.setenv("CLAUDE_AUFZEICHNUNG_EXIT", "1")
+    schluessel = [f"297:q{i}" for i in range(waechter_takt.MAX_EINTRAEGE + 1)]
+    eintraege = [(f"#297 Briefkasten-Frage {k}", "fragen", k) for k in schluessel]
+    neu = {"zeilen": [], "zu": [], "verstoesse": [], "fragen": list(schluessel), "belegt": [], "gezeigt": {}}
+    neu.update(fertig=False, zuletzt="")
+    monkeypatch.setattr(waechter_takt, "pruefe", lambda *_a, **_kw: (list(eintraege), json.loads(json.dumps(neu))))
+    assert waechter_takt.takt(welt["repo"], 293, "o/r", claude=str(CLAUDE_AUFZ)) == 1
+    merker = leitstand.lese_zustand()["takt"]["293"]
+    assert set(merker["fragen"]) == set(schluessel[:-1]), "nie gezeigte Frage steht in fragen"
+    assert schluessel[-1] not in merker["gezeigt"]
