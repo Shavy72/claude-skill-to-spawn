@@ -31,6 +31,20 @@ if ($NurListe) { Write-Host ("Tickets: " + ($Tickets -join ",")); exit 0 }
 # Kein 2>&1: unter PowerShell 5.1 mit ErrorActionPreference Stop bricht eine
 # stderr-Zeile sonst das Skript ab. stderr läuft direkt durch, EAP nur hier locker.
 $py = if (Get-Command python -ErrorAction SilentlyContinue) { "python" } else { "python3" }
+# Arbeitsordner-Stand zuerst (#283): Manifest, Vorlage und Skripte kommen aus diesem Ordner.
+# Hinter origin/<Hauptzweig> → nachziehen (nur fast-forward) oder Abbruch mit Zeile; -DryRun prüft nur.
+$standArgs = @("$PSScriptRoot/to_spawn.py", "arbeitsstand")
+if ($DryRun) { $standArgs += "--pruefen" }
+$eapVorher = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+$rc = 1   # bleibt gesetzt, falls der Aufruf scheitert (sonst exit $null = 0)
+try {
+    & $py @standArgs
+    $rc = $LASTEXITCODE
+} finally {
+    $ErrorActionPreference = $eapVorher
+}
+if ($rc -ne 0 -and -not $DryRun) { Write-Host "Arbeitsordner nicht auf Hauptzweig-Stand — nichts gestartet." -ForegroundColor Red; exit $rc }
 $pruefArgs = @("$PSScriptRoot/to_spawn.py", "regularien", "$Spec")
 if ($Tickets.Count -gt 0) { $pruefArgs += @("--tickets", ($Tickets -join ",")) }
 $eapVorher = $ErrorActionPreference

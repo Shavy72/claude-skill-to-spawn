@@ -74,6 +74,8 @@ def _umgebung(tmp: Path) -> dict[str, str]:
             "TO_SPAWN_MASCHINE": str(tmp / "maschine.json"),
             # Installer nimmt das Python dieses Laufs, nie ein anderes aus dem PATH.
             "TO_SPAWN_PY": sys.executable,
+            # Wegwerf-Repo ohne echtes origin: Arbeitsordner-Stand (#283) hier nicht Thema.
+            "TO_SPAWN_TEST_ARBEITSSTAND_OK": "1",
         }
     )
     return env
