@@ -27,8 +27,11 @@ from typing import Any, Literal
 STAGING_FERTIG_LABEL = "staging:fertig"
 
 Stufe = Literal["offen", "fertig_gebaut", "zu", "verworfen"]
-#: Alle Anzeige-Stufen; ``verworfen`` = geschlossen als „nicht geplant“ (nie gebaut).
+#: Alle Anzeige-Stufen; ``verworfen`` = geschlossen als „nicht geplant“ oder Duplikat (nie gebaut).
 STUFEN: tuple[Stufe, ...] = ("offen", "fertig_gebaut", "zu", "verworfen")
+
+#: GitHub-Schließgründe (klein geschrieben), die „verworfen“ bedeuten.
+_VERWORFEN_GRUENDE = frozenset({"not_planned", "duplicate"})
 
 #: Wortlaut je Stufe für Meldungen, z. B. „„bau 12“ geschlossen (Ticket zu).“
 _WORTLAUT: dict[Stufe, str] = {
@@ -56,7 +59,7 @@ def stufe(ticket: Mapping[str, Any]) -> Stufe:
     """Anzeige-Stufe; fehlende Felder gelten als offen."""
     if str(ticket.get("state", "")).lower() == "closed":
         grund = ticket.get("state_reason") or ticket.get("stateReason") or ""
-        return "verworfen" if str(grund).lower() == "not_planned" else "zu"
+        return "verworfen" if str(grund).lower() in _VERWORFEN_GRUENDE else "zu"
     return "fertig_gebaut" if _staging_fertig(ticket) else "offen"
 
 

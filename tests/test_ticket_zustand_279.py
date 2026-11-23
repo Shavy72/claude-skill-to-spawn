@@ -40,6 +40,8 @@ FAELLE: list[tuple[str, dict[str, Any], str]] = [
     ("rest_verworfen", {"state": "closed", "state_reason": "not_planned"}, "verworfen"),
     ("cli_verworfen", {"state": "CLOSED", "stateReason": "NOT_PLANNED"}, "verworfen"),
     ("cli_erledigt", {"state": "CLOSED", "stateReason": "COMPLETED"}, "zu"),
+    ("rest_duplikat", {"state": "closed", "state_reason": "duplicate"}, "verworfen"),
+    ("cli_duplikat", {"state": "CLOSED", "stateReason": "DUPLICATE"}, "verworfen"),
     ("ohne_felder", {}, "offen"),
 ]
 
