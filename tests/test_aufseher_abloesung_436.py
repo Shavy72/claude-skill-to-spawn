@@ -159,11 +159,14 @@ if ziel:
     def _blockiert():
         for pfad in filter(None, os.environ.get("FAKE_ENDE_NACH_LOG", "").split(os.pathsep)):
             datei = Path(pfad)
-            if datei.is_file() and any(
-                json.loads(z).get("typ") == "blockiert"
-                for z in datei.read_text(encoding="utf-8").splitlines() if z.strip()
-            ):
-                return True
+            if not datei.is_file():
+                continue
+            for z in datei.read_text(encoding="utf-8").splitlines():
+                try:
+                    if json.loads(z).get("typ") == "blockiert":
+                        return True
+                except ValueError:  # halb geschriebene Zeile
+                    continue
         return False
     while os.environ.get("FAKE_ENDE_NACH_LOG") and time.monotonic() < ende and not _blockiert():
         time.sleep(0.1)
@@ -605,7 +608,7 @@ def test_exit_2_ueber_echte_aufsicht_kein_nachfolger(
             "FAKE_ENDE_NACH_LOG": os.pathsep.join(
                 str(pfad(welt["repo"], SPEC)) for pfad in (bau_log.log_pfad, bau_log.lauf_pfad)
             ),
-            "FAKE_NACHLAUF_S": "10",
+            "FAKE_NACHLAUF_S": "20",
             "TO_SPAWN_ABLOESE_WARTE_S": "1",
             "TO_SPAWN_ABLOESE_ABSTAND_S": "1",
             "TO_SPAWN_ABLOESE_VERSUCHE": "2",
