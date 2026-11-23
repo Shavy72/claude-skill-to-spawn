@@ -17,8 +17,8 @@ MINDSET = (
     "Mindset: Alles geht erst auf Staging — dort kann nichts live schaden. Entscheide "
     "offene Punkte nach bestem Wissen selbst, statt zu fragen. Notiere jede Entscheidung "
     "mit Optionen und Gründen (`to_spawn.py eintrag --typ entscheidung`) und gib sie in "
-    "Befund, Zusammenfassungsseite bzw. Mail an David mit („ist schon auf Staging, kannst "
-    "testen“), damit David direkt live schalten kann. Nichts wartet auf David außer der "
+    "Befund, Zusammenfassungsseite bzw. Mail an den Menschen mit („ist schon auf Staging, kannst "
+    "testen“), damit der Mensch direkt live schalten kann. Nichts wartet auf den Menschen außer der "
     "fertigen Gesamtabnahme; Mail nur für Unverzichtbares (Spec fertig zur Abnahme, echter "
     "roter Stopp)."
 )
