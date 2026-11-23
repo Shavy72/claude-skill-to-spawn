@@ -37,6 +37,7 @@ if _SKILL not in sys.path:
 from to_spawn import (  # noqa: E402
     anleitung,
     aufseher_stand,
+    befugnis,
     config,
     context_mode,
     handoff_blick,
@@ -222,7 +223,7 @@ PROMPT = """/loop Bau-Aufseher Spec #{S} ({REPO})
 
 ## Auftrag
 Du bist verantwortlich, dass Spec #{S} vollständig, sauber und autonom fertig gebaut wird. Du bist eine voll fähige Session: lesen, prüfen, Subagenten nutzen, Fehler selbst beheben — was nötig ist, damit der Bau durchläuft.
-- Rückfragen/Entscheidungen der Ticket-Sessions (Bau-Log typ blockiert/entscheidung/frage) entscheidest du im besten Interesse von David (Nordstern, Doktrinen), Antwort per Issue-Kommentar + `python {SKILL}/to_spawn.py eintrag --typ entscheidung`. Nur Label checkpoint:human bleibt für David.
+- {BEFUGNIS} Klasse 3 im besten Interesse von David (Nordstern, Doktrinen). Nur Label checkpoint:human bleibt für David.
 - Es gelten die Regeln der Projekt-CLAUDE.md: bau.py nie beenden, ohne vorher `sessions {S}` bzw. pstree geprüft zu haben; Deploy live nur mit Davids Freigabe; Commits nur mit Pathspec + [skip ci].
 - Eine Bau-Session hängt oder ist tot → du handelst (Befehle unten), nicht nur melden.
 
@@ -236,7 +237,7 @@ Du bist verantwortlich, dass Spec #{S} vollständig, sauber und autonom fertig g
 - Tot: Ticket `aus` oder VERWAIST in Befehl A, nur noch die Shell im Fenster → Befehl B.
 
 ## Rückfragen-Fenster (Freigabe-Dialoge)
-Bleibt eine Bau-Session an einem Rückfragen-/Freigabe-Fenster hängen: angefragten Befehl bzw. Skript lesen. Harmlos (lesen, testen, bauen, committen, auf der Staging-App schalten) → selbst bestätigen (Auswahl per `tmux send-keys`, Text und Enter getrennt) und eine Zeile ins Bau-Log (`eintrag --typ entscheidung`). Nie bestätigen bei Löschen (`rm`, auch in `shell -c`), Live-Bezug (Live-URL, `safe_deploy_vps.sh`, Live-API, live schalten) oder irgendetwas in der Live-App — dort Fenster stehen lassen, Stand-Zeile „Rückfrage wartet: <Befehl>“ statt Klick, `eintrag --typ blockiert`.
+Bleibt eine Bau-Session an einem Rückfragen-/Freigabe-Fenster hängen: angefragten Befehl bzw. Skript lesen. Harmlos (lesen, testen, bauen, committen, auf der Staging-App schalten) → selbst bestätigen (Auswahl per `tmux send-keys`, Text und Enter getrennt) und eine Zeile ins Bau-Log (`eintrag --typ entscheidung`). Nie bestätigen bei Löschen (`rm`, auch in `shell -c`) oder Klasse 2 – {KLASSE_2} – (z. B. `safe_deploy_vps.sh`, Live-URL, Live-API, irgendetwas in der Live-App) — dort Fenster stehen lassen, Stand-Zeile „Rückfrage wartet: <Befehl>“ statt Klick, `eintrag --typ blockiert`.
 
 ## Checkpoints (Teilabnahmen)
 Checkpoints legt David beim Planen fest: im Manifest `<MANIFEST>` das Feld `teilabnahme_nach` (Ticketnummern, nach denen David einen Teil auf Staging abnimmt) bzw. das Label `checkpoint:human`. Ist so ein Ticket fertig, kommentierst du auf dem Ticket „Aufseher: Teilabnahme bereit: <Staging-Link> + Klickweg“ und wartest ohne Stillstand-Alarm — kein Anstupsen, kein Respawn, keine Mail; die Kette dahinter wartet. Davids Kommentar „passt“ gibt frei (wie bei `checkpoint:human`), dann geht die Kette weiter. Stecken bleiben ist nie erlaubt: alles bis zum Checkpoint baust du durch.
@@ -289,6 +290,10 @@ PROMPT = PROMPT.replace("{AUFRAEUMEN}", startklar.BEFEHL_AUFRAEUMEN).replace("{N
 # Feste Texte der Aufseher-Anleitung aus einer Quelle (#500).
 PROMPT = PROMPT.replace("{MINDSET}", anleitung.MINDSET).replace("{STOSS}", anleitung.STOSS).replace("{ABLOESE_SOP}", anleitung.ABLOESE_SOP)
 PROMPT = PROMPT.replace("{TAKT_ABNAHME}", str(TAKT_ABNAHME_S))
+# Befugnis aus einer Quelle (#278 P3b): ``{SKILL}`` bleibt für ``format`` in ``prompt_bauen`` stehen.
+PROMPT = PROMPT.replace("{BEFUGNIS}", befugnis.aufseher_text("python {SKILL}/to_spawn.py")).replace(
+    "{KLASSE_2}", befugnis.klasse_2_erkennung()
+)
 
 
 def main() -> int:

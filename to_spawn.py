@@ -83,11 +83,19 @@ def _tickets(wert: str | None) -> list[str] | None:
     return [teil.strip() for teil in wert.split(",") if teil.strip()]
 
 
-def _spec_tickets(repo: Path, spec: str) -> list[str]:
+def _spec_tickets(repo: Path, spec: str, *, mit_briefkasten: bool = False) -> list[str]:
+    """Tickets der Spec aus dem Manifest; ohne Manifest alle aus dem Bau-Log.
+
+    ``mit_briefkasten`` (nur die Entscheidungs-Liste): ohne Manifest zählen auch Tickets, die nur im
+    Briefkasten stehen (#278 P3b) — sonst fehlten Aufseher-Antworten ohne Bau-Log-Zeile.
+    """
     try:
         daten = manifest.lade_manifest(repo, spec)
     except (FileNotFoundError, ValueError):
-        return bau_log.alle_tickets(repo)
+        tickets = set(bau_log.alle_tickets(repo))
+        if mit_briefkasten:
+            tickets.update(briefkasten.alle_tickets())
+        return sorted(tickets, key=manifest.ticket_schluessel)
     return sorted(daten["tickets"], key=manifest.ticket_schluessel)
 
 
@@ -428,7 +436,7 @@ def _eintrag(args: argparse.Namespace) -> int:
 def _entscheidungen(args: argparse.Namespace) -> int:
     """``entscheidungen S``: Liste aller Entscheidungen einer Spec (#278, Tür B)."""
     repo = config.repo_wurzel(_repo_aus_umgebung())
-    for z in briefkasten.liste(_spec_tickets(repo, args.spec), log_repo=repo):
+    for z in briefkasten.liste(_spec_tickets(repo, args.spec, mit_briefkasten=True), log_repo=repo):
         print(f"#{z['ticket']} · {z['wer']} · {z['was']} · {z['warum']} · {z['beleg']}")
     return 0
 
