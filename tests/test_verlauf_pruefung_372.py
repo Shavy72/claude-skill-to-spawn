@@ -478,7 +478,7 @@ FAELLE: dict[str, tuple[str, list[dict[str, Any]], str | None, bool]] = {
             _a("Fertig. Soll ich weitermachen?"),
         ],
         None,
-        False,
+        True,  # Runde 8: Unter-Agenten werden mitgelesen (vorher False, Durchrutscher T9c)
     ),
 }
 
@@ -667,3 +667,171 @@ def test_einwerfen_scheitert_stelle_bleibt_zweiter_takt_sieht_live_noch(
     assert [f["klasse"] for f in briefkasten.offene([TICKET], hauptbaum=welt.heim)] == [
         "2"
     ]
+
+
+# --- Runde 8: Ablösung, Unter-Agenten, kaputte Zeile, Reichweite und Wortgrenzen --------------
+
+ALT = "99999999-2222-3333-4444-555555555555"
+FRAGE_FENSTER = "❯ los\n\n● Passt das so?" + FUSS
+
+
+def _zeit(sekunde: int) -> str:
+    return f"2026-11-23T10:00:{sekunde:02d}.000Z"
+
+
+def _unter_agent(welt: Welt, eintraege: list[dict[str, Any]], sid: str = SID) -> None:
+    ordner = welt.datei(sid).parent / sid / "subagents"
+    ordner.mkdir(parents=True, exist_ok=True)
+    (ordner / "agent-a1.jsonl").write_text(
+        "".join(json.dumps(e, ensure_ascii=False) + "\n" for e in eintraege),
+        encoding="utf-8",
+    )
+
+
+def _harmlose_neue_session(welt: Welt) -> None:
+    welt.fenster = FRAGE_FENSTER
+    welt.schreibe([_u("Handoff lesen und weiter"), _a("Passt das so?", uuid="n1")])
+
+
+def test_r8_abloesung_liest_rest_der_alten_datei_ab_der_stelle(welt: Welt) -> None:
+    welt.datei(ALT).write_text(
+        "".join(
+            json.dumps(e, ensure_ascii=False) + "\n"
+            for e in [_u("los"), _a("Frage?", uuid="alt1"), _a(LIVE_SATZ)]
+        ),
+        encoding="utf-8",
+    )
+    _harmlose_neue_session(welt)
+    frage, bis = welt.blick(f"{ALT}:alt1")
+    assert _k2(frage) and bis == f"{SID}:n1"
+
+
+def test_r8_abloesung_live_vor_der_alten_stelle_bleibt_klasse_3(welt: Welt) -> None:
+    welt.datei(ALT).write_text(
+        "".join(
+            json.dumps(e, ensure_ascii=False) + "\n"
+            for e in [_a(LIVE_SATZ), _a("Frage?", uuid="alt1"), _a("Tests grün.")]
+        ),
+        encoding="utf-8",
+    )
+    _harmlose_neue_session(welt)
+    assert not _k2(welt.blick(f"{ALT}:alt1")[0])
+
+
+def test_r8_abloesung_alte_datei_fehlt_geht_zum_menschen(welt: Welt) -> None:
+    _harmlose_neue_session(welt)
+    assert _k2(welt.blick(f"{ALT}:alt1")[0])
+
+
+def test_r8_unter_agent_nach_der_stelle_zaehlt(welt: Welt) -> None:
+    welt.fenster = FRAGE_FENSTER
+    welt.schreibe(
+        [_u("los"), _a("Frage?", uuid="s1", timestamp=_zeit(10)), _a("Passt das so?")]
+    )
+    _unter_agent(
+        welt,
+        [_a(_bash("ssh clawy-vps 'docker ps'"), isSidechain=True, timestamp=_zeit(20))],
+    )
+    assert _k2(welt.blick(f"{SID}:s1")[0])
+
+
+def test_r8_unter_agent_vor_der_stelle_zaehlt_nicht(welt: Welt) -> None:
+    welt.fenster = FRAGE_FENSTER
+    welt.schreibe(
+        [_u("los"), _a("Frage?", uuid="s1", timestamp=_zeit(30)), _a("Passt das so?")]
+    )
+    _unter_agent(
+        welt,
+        [_a(_bash("ssh clawy-vps 'docker ps'"), isSidechain=True, timestamp=_zeit(20))],
+    )
+    assert not _k2(welt.blick(f"{SID}:s1")[0])
+
+
+def test_r8_unter_agent_der_alten_session_zaehlt_nach_abloesung(welt: Welt) -> None:
+    welt.datei(ALT).write_text(
+        json.dumps(_a("Frage?", uuid="alt1", timestamp=_zeit(10))) + "\n",
+        encoding="utf-8",
+    )
+    _unter_agent(welt, [_a(LIVE_SATZ, isSidechain=True, timestamp=_zeit(20))], sid=ALT)
+    _harmlose_neue_session(welt)
+    assert _k2(welt.blick(f"{ALT}:alt1")[0])
+
+
+def test_r8_kaputte_zeile_mitten_nach_der_stelle_geht_zum_menschen(welt: Welt) -> None:
+    welt.fenster = FRAGE_FENSTER
+    welt.schreibe([_u("los"), _a("Frage?", uuid="s1")])
+    with welt.datei().open("a", encoding="utf-8") as f:
+        f.write(json.dumps(_a(LIVE_SATZ), ensure_ascii=False)[:-25] + "\n")
+    welt.anhaengen([_a("Ich teste."), _a("Passt das so?", uuid="z")])
+    frage, bis = welt.blick(f"{SID}:s1")
+    assert _k2(frage) and bis == f"{SID}:z"
+
+
+def test_r8_kaputte_zeile_vor_der_stelle_bleibt_klasse_3(welt: Welt) -> None:
+    welt.fenster = FRAGE_FENSTER
+    welt.schreibe([_u("los")])
+    with welt.datei().open("a", encoding="utf-8") as f:
+        f.write("{kaputt\n")
+    welt.anhaengen([_a("Frage?", uuid="s1"), _a("Passt das so?")])
+    assert not _k2(welt.blick(f"{SID}:s1")[0])
+
+
+@pytest.mark.parametrize(
+    "eintrag",
+    [
+        _a("Ich deliver die Änderung jetzt."),
+        _a("Fehler reproduziert, Rot-Beweis steht."),
+        _a(
+            {
+                "type": "tool_use",
+                "name": "Edit",
+                "input": {
+                    "file_path": "/wt/scripts/safe_deploy_vps.sh",
+                    "old_string": "live",
+                    "new_string": "vps live",
+                },
+            }
+        ),
+        _a(
+            {
+                "type": "tool_use",
+                "name": "Write",
+                "input": {"file_path": "/wt/deploy_vps.py", "content": "LIVE = True"},
+            }
+        ),
+    ],
+    ids=["deliver", "reproduziert", "edit-inhalt", "write-inhalt"],
+)
+def test_r8_kein_fehlalarm_durch_wortteil_oder_datei_inhalt(
+    welt: Welt, eintrag: dict[str, Any]
+) -> None:
+    welt.fenster = FRAGE_FENSTER
+    welt.schreibe([_u("los"), eintrag, _a("Passt das so?")])
+    assert not _k2(welt.blick()[0])
+
+
+@pytest.mark.parametrize(
+    "eintrag",
+    [
+        _a(_bash("bash scripts/safe_deploy_vps.sh --skip-ci")),
+        _a("Jetzt der Live-Deploy."),
+        _a("Die Produktion läuft wieder."),
+        _a("Das Passwort liegt in Bitwarden."),
+        _a(LIVE_SATZ, isSidechain=True),
+    ],
+    ids=["bash-befehl", "bindestrich", "wortanfang-stamm", "umlaut-satz", "sidechain"],
+)
+def test_r8_live_wort_am_wortanfang_und_im_befehl_zaehlt(
+    welt: Welt, eintrag: dict[str, Any]
+) -> None:
+    welt.fenster = FRAGE_FENSTER
+    welt.schreibe([_u("los"), eintrag, _a("Passt das so?")])
+    assert _k2(welt.blick()[0])
+
+
+def test_r8_ganzwort_suche_ist_eigene_funktion_andere_nutzer_bleiben_streng() -> None:
+    suche = befugnis.ist_klasse_2_am_wortanfang
+    assert befugnis.ist_klasse_2("deliver") and befugnis.ist_klasse_2("Kundenkonto")
+    assert not suche("deliver", "reproduziert", "Anzahl", "Labor", "foo.envy")
+    assert suche("deploy_vps") and suche("Gebühren") and suche("ssh host")
+    assert suche("/app/.env") and suche("Überweisung") and not suche("sshd")

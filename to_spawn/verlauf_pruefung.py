@@ -6,10 +6,14 @@ weitergegeben hat, eines geschrieben hat. Quelle ist das Transkript der Session,
 Fenster-Text: wer etwas ins Fenster getippt hat (Mensch, Aufpasser, Aufseher, Entscheider),
 spielt keine Rolle — Eingaben sind nie eine Grenze und werden nicht durchsucht.
 
-Durchsucht werden nur Einträge ``type=assistant`` ohne ``isSidechain``/``isApiErrorMessage``,
-je Block ``text`` und die Eingaben von ``tool_use``; nie ``user`` (Eingaben, Anstupser,
-``tool_result``) und nie ``thinking``. Die Stelle (``<sessionId>:<uuid>``) gehört dem Leiter;
-fremde sessionId (Respawn, ``/clear``) oder unbekannte uuid ⇒ ab Dateianfang (sichere Richtung).
+Durchsucht werden Einträge ``type=assistant`` ohne ``isApiErrorMessage`` (auch Unter-Agenten:
+``isSidechain`` und ``<sessionId>/subagents/*.jsonl`` ab dem Zeitpunkt der Stelle), je Block
+``text`` und die Eingaben von ``tool_use`` außer :data:`DATEI_WERKZEUGE` (Datei-Inhalte sind keine
+Handlung an Live); nie ``user`` (Eingaben, Anstupser, ``tool_result``) und nie ``thinking``.
+Gesucht wird mit :func:`befugnis.ist_klasse_2_am_wortanfang` (Wortteile zählen nicht).
+Die Stelle (``<sessionId>:<uuid>``) gehört dem Leiter; unbekannte uuid ⇒ ab Dateianfang. Fremde
+sessionId (Ablösung, ``/clear``) ⇒ neue Datei ab Anfang UND Rest der alten Datei ab der Stelle;
+fehlt die alte Datei ⇒ Klasse 2. Eine kaputte Zeile mitten im Transkript nach der Stelle ⇒ Klasse 2.
 
 Rückfall, wenn das Transkript nicht lesbar ist (keine Gesprächs-ID, Datei fehlt, keine Zeile
 lesbar, letzte Zeile halb geschrieben): Fenster mit Verlauf (``capture-pane -J -S -2000``),
@@ -20,7 +24,9 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -37,6 +43,12 @@ RUECKFALL = "fenster"
 VERLAUF_ZEILEN = 2000
 #: Grund, wenn weder Transkript noch Verlauf lesbar sind — trägt selbst ein Klasse-2-Wort.
 UNGEPRUEFT = "Verlauf nicht lesbar — Live-Bezug ungeprüft"
+#: Grund für eine unlesbare Zeile mitten im Transkript (nicht: halbe letzte Zeile = Schreib-Verzug).
+KAPUTT = "Transkript-Zeile kaputt — Live-Bezug ungeprüft"
+#: Werkzeuge, deren Eingabe Datei-Inhalt ist: werden nicht durchsucht (Dauer-Fehlalarm, PR 374 R8).
+DATEI_WERKZEUGE = frozenset({"Write", "Edit", "MultiEdit", "NotebookEdit"})
+#: Platzhalter für eine kaputte Zeile in der Eintrags-Liste (Position zählt, siehe :func:`_lies`).
+_KAPUTTE_ZEILE: dict[str, Any] = {"type": "kaputt"}
 
 
 @dataclass(frozen=True)
@@ -51,23 +63,86 @@ def pruefen(ziel: str, q: Quellen, stelle: str | None) -> Pruefung:
     """Klasse-2-Grund der Session im Fenster ``ziel`` seit ``stelle`` (siehe Modul-Doc)."""
     gefunden = _transkript(ziel, q)
     eintraege = _lies(gefunden[1]) if gefunden else None
-    if gefunden is None or eintraege is None:
+    if gefunden is None or not eintraege:
         return _rueckfall(ziel, q)
-    sid = gefunden[0]
-    sid_alt, _, uuid_alt = (stelle or "").partition(":")
-    start = 0
-    if sid_alt == sid and uuid_alt:
-        start = next(
-            (i + 1 for i, e in enumerate(eintraege) if e.get("uuid") == uuid_alt), 0
-        )
+    sid, datei = gefunden
     eigene = [e for e in eintraege if _eigene_antwort(e)]
     bis = f"{sid}:{eigene[-1].get('uuid') or ''}" if eigene else f"{sid}:"
+    sid_alt, trenner, uuid_alt = (stelle or "").partition(":")
+    grund = None
+    if trenner and sid_alt != sid:  # Ablösung oder /clear: Rest der Vorgängerin prüfen
+        grund = _alte_session(datei.parent, sid_alt, uuid_alt)
+    if grund is None:
+        ab = uuid_alt if sid_alt == sid else ""
+        grund = _session_grund(datei.parent, sid, eintraege, ab)
+    return Pruefung(grund, bis)
+
+
+def _alte_session(ordner: Path, sid: str, uuid_ab: str) -> str | None:
+    """Grund in der abgelösten Session ``sid`` ab ``uuid_ab``; fehlt ihre Datei: :data:`UNGEPRUEFT`."""
+    if not re.fullmatch(r"[0-9A-Za-z-]+", sid):  # Stelle ist kein Pfad
+        return UNGEPRUEFT
+    eintraege = _lies(ordner / f"{sid}.jsonl")
+    if eintraege is None:
+        return UNGEPRUEFT
+    return _session_grund(ordner, sid, eintraege, uuid_ab)
+
+
+def _session_grund(
+    ordner: Path, sid: str, eintraege: list[dict[str, Any]], uuid_ab: str
+) -> str | None:
+    """Erster Grund nach ``uuid_ab`` (leer/unbekannt = ab Anfang), Unter-Agenten der Session
+    ab dem Zeitpunkt dieser Stelle; eine unlesbare Unter-Agent-Datei ist :data:`UNGEPRUEFT`."""
+    start = next(
+        (
+            i + 1
+            for i, e in enumerate(eintraege)
+            if uuid_ab and e.get("uuid") == uuid_ab
+        ),
+        0,
+    )
     for e in eintraege[start:]:
-        if _eigene_antwort(e) and (
-            grund := _erste_zeile(waechter_lauf._texte(e, werkzeug=True))
-        ):
-            return Pruefung(grund, bis)
-    return Pruefung(None, bis)
+        if grund := _grund(e):
+            return grund
+    ab = _zeit(eintraege[start - 1]) if start else None
+    for datei in sorted((ordner / sid / "subagents").glob("*.jsonl")):
+        unter = _lies(datei)
+        if unter is None:
+            return UNGEPRUEFT
+        for e in unter:
+            zeit = _zeit(e)
+            if (ab is None or zeit is None or zeit >= ab) and (grund := _grund(e)):
+                return grund
+    return None
+
+
+def _grund(e: dict[str, Any]) -> str | None:
+    """Klasse-2-Zeile eines Eintrags (Text + Werkzeug-Eingaben ohne Datei-Inhalte) oder ``None``."""
+    if e is _KAPUTTE_ZEILE:
+        return KAPUTT
+    if e.get("type") != "assistant" or e.get("isApiErrorMessage"):
+        return None
+    inhalt = (e.get("message") or {}).get("content")
+    if isinstance(inhalt, list):
+        inhalt = [
+            b
+            for b in inhalt
+            if not (
+                isinstance(b, dict)
+                and b.get("type") == "tool_use"
+                and b.get("name") in DATEI_WERKZEUGE
+            )
+        ]
+    return _erste_zeile(
+        waechter_lauf._texte({"message": {"content": inhalt}}, werkzeug=True)
+    )
+
+
+def _zeit(e: dict[str, Any]) -> datetime | None:
+    try:
+        return datetime.fromisoformat(str(e["timestamp"]))
+    except (KeyError, ValueError):
+        return None
 
 
 def _transkript(ziel: str, q: Quellen) -> tuple[str, Path] | None:
@@ -91,8 +166,9 @@ def _transkript(ziel: str, q: Quellen) -> tuple[str, Path] | None:
 
 
 def _lies(datei: Path) -> list[dict[str, Any]] | None:
-    """Einträge der JSONL; kaputte Zeilen fallen weg. ``None``: Datei fehlt, keine Zeile lesbar
-    oder die letzte Zeile ist halb geschrieben (dann könnte gerade ihr Text fehlen)."""
+    """Einträge der JSONL; eine kaputte Zeile mitten drin steht als :data:`_KAPUTTE_ZEILE` an ihrer
+    Stelle. ``None``: Datei fehlt oder die letzte Zeile ist halb geschrieben (Schreib-Verzug:
+    gerade ihr Text könnte fehlen)."""
     try:
         roh = datei.read_text(encoding="utf-8", errors="replace")
     except OSError:
@@ -105,13 +181,15 @@ def _lies(datei: Path) -> list[dict[str, Any]] | None:
         except json.JSONDecodeError:
             if nr == len(zeilen) - 1:
                 return None
+            eintraege.append(_KAPUTTE_ZEILE)
             continue
         if isinstance(e, dict):
             eintraege.append(e)
-    return eintraege or None
+    return eintraege
 
 
 def _eigene_antwort(e: dict[str, Any]) -> bool:
+    """Eigener Eintrag der Haupt-Session: nur er setzt die Stelle ``bis``."""
     return (
         e.get("type") == "assistant"
         and not e.get("isSidechain")
@@ -121,9 +199,11 @@ def _eigene_antwort(e: dict[str, Any]) -> bool:
 
 def _erste_zeile(text: str) -> str | None:
     """Erste Klasse-2-Zeile; steht das Wort über Zeilen verteilt, der ganze Text."""
-    if not befugnis.ist_klasse_2(text):
+    if not befugnis.ist_klasse_2_am_wortanfang(text):
         return None
-    zeile = next((z for z in text.splitlines() if befugnis.ist_klasse_2(z)), text)
+    zeile = next(
+        (z for z in text.splitlines() if befugnis.ist_klasse_2_am_wortanfang(z)), text
+    )
     return " ".join(zeile.split())
 
 
@@ -138,3 +218,4 @@ def _rueckfall(ziel: str, q: Quellen) -> Pruefung:
 
 
 assert befugnis.ist_klasse_2(UNGEPRUEFT), "UNGEPRUEFT muss Klasse 2 tragen"
+assert befugnis.ist_klasse_2(KAPUTT), "KAPUTT muss Klasse 2 tragen"
