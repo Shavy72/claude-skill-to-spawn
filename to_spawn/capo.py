@@ -1158,8 +1158,18 @@ def kinder(gh_repo: str, spec: int) -> list[dict[str, Any]] | None:
     )
     if not isinstance(daten, list):
         return None
-    if not all(isinstance(i, dict) and "state" in i and str(i.get("number", "")).isdigit() for i in daten):
-        log.warning("Sub-Issues von #%s in %s: Antwort ohne Nummer/Zustand — Takt ausgesetzt.", spec, gh_repo)
+    kaputt = [
+        f"Eintrag {stelle}"
+        for stelle, i in enumerate(daten, start=1)
+        if not (isinstance(i, dict) and "state" in i and str(i.get("number", "")).isdigit())
+    ]
+    if kaputt:
+        log.warning(
+            "Sub-Issues von #%s in %s: %s ohne Nummer/Zustand — Takt ausgesetzt.",
+            spec,
+            gh_repo,
+            ", ".join(kaputt),
+        )
         return None
     return daten
 
@@ -2354,7 +2364,7 @@ def _tick(
 
         # A: Regeln
         if zu:
-            grund = str(issue.get("state_reason") or "").lower()
+            grund = ticket_zustand.schliessgrund(issue)
             geschlossen_zeit = _zeit(issue.get("closed_at"))
             if not dry_run and merke_schliessen(
                 n, str(issue.get("closed_at") or ""), erledigt

@@ -21,7 +21,7 @@ import pytest
 SKILL = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SKILL))
 
-from to_spawn import befund, hausmeister, manifest, spec_rand, ticket_zustand  # noqa: E402
+from to_spawn import befund, hausmeister, manifest, spec_rand, ticket_zustand
 
 STAGING = [{"name": ticket_zustand.STAGING_FERTIG_LABEL}]
 ALT_ZU = "2020-01-01T00:00:00Z"
@@ -100,7 +100,8 @@ def test_spec_rand_staging_fertig_bleibt_offen() -> None:
 def _checkpoint_lauf(checkpoint: dict[str, Any]) -> manifest.Bericht:
     bericht = manifest.Bericht(spec="900", tickets=["901", "902"])
     github: dict[str, dict[str, Any] | None] = {
-        "901": {"state": "OPEN", "labels": [], "_kanten": [{"number": 902}]},
+        # Checkpoint am Kettenende: 902 wartet auf 901, 901 auf niemanden.
+        "901": {"state": "OPEN", "labels": []},
         "902": {**checkpoint, "_kanten": [{"number": 901}]},
     }
     manifest._pruefe_checkpoint(bericht, github, ["902"])
@@ -109,7 +110,7 @@ def _checkpoint_lauf(checkpoint: dict[str, Any]) -> manifest.Bericht:
 
 def test_manifest_checkpoint_mit_staging_label_ist_nicht_schon_zu() -> None:
     bericht = _checkpoint_lauf({"state": "OPEN", "labels": STAGING + [{"name": "checkpoint"}]})
-    assert not any("schon zu" in f for f in bericht.fehler)
+    assert bericht.fehler == []
 
 
 def test_manifest_checkpoint_geschlossen_bleibt_fehler() -> None:
@@ -119,7 +120,7 @@ def test_manifest_checkpoint_geschlossen_bleibt_fehler() -> None:
 
 def test_manifest_und_spec_rand_einig_fuer_checkpoint_mit_staging_label() -> None:
     checkpoint = {"state": "OPEN", "labels": STAGING + [{"name": "checkpoint"}]}
-    manifest_sagt_offen = not any("schon zu" in f for f in _checkpoint_lauf(checkpoint).fehler)
+    manifest_sagt_offen = _checkpoint_lauf(checkpoint).fehler == []
     assert manifest_sagt_offen is spec_rand._offen(checkpoint) is True
 
 

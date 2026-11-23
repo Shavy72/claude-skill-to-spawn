@@ -64,6 +64,7 @@ from to_spawn import (
     leitstand,
     pc_fenster,
     respawn,
+    ticket_zustand,
     waechter_lauf,
 )
 
@@ -106,7 +107,7 @@ Aktion = Literal[
 class Lage:
     """Was die Leiter über ein Ticket weiß (``None`` = unbekannt)."""
 
-    offen: bool | None  # False = Ticket zu
+    stufe: ticket_zustand.Stufe | None  # None = GitHub-Zustand unbekannt
     fenster: str  # aufseher_stand.ARBEITET | STILL | RUECKFRAGE | KEIN_FENSTER | ...
     still_min: int | None
     kontext_k: float | None  # Spitzen-Kontext aus dem Bau-Log
@@ -195,12 +196,15 @@ def entscheide(lage: Lage, gemerkt: Gemerkt, jetzt: float, handoff_k: float) -> 
         return Schritt("nichts", f"Fenster: {lage.fenster}")
     still = lage.still_min or 0
     ruhig = still >= MIN_RUHE_MIN
-    if lage.offen is False:
+    if lage.stufe is not None and lage.stufe != "offen":
+        # Fertig gebaut (wartet auf Live), zu oder verworfen: nichts mehr zu bauen —
+        # beenden, nie ablösen (#288).
+        wort = f"Ticket {ticket_zustand.ANZEIGE[lage.stufe]}"
         if stufe == 4:
-            return Schritt("nichts", "Ticket zu, /exit schon getippt")
+            return Schritt("nichts", f"{wort}, /exit schon getippt")
         if not ruhig:
-            return Schritt("nichts", f"Ticket zu, still {still} min < {MIN_RUHE_MIN}")
-        return Schritt("exit", f"Ticket zu, still {still} min")
+            return Schritt("nichts", f"{wort}, still {still} min < {MIN_RUHE_MIN}")
+        return Schritt("exit", f"{wort}, still {still} min")
     if stufe == 4:
         return Schritt("zuruecksetzen", "Ticket wieder offen")
     treffer = lage.eigener_handoff
@@ -482,7 +486,7 @@ class _EchteUmwelt:
         start, unlesbar = self._letzter_start(ticket, wt)
         treffer = eigener_handoff.finde(wt, ticket, eigener_handoff.grenze(start, ticket))
         return Lage(
-            offen=blick.lage.offen,
+            stufe=blick.lage.stufe,
             fenster=blick.lage.fenster,
             still_min=blick.lage.still_min,
             kontext_k=self._kontext_k(ticket, wt),
