@@ -31,7 +31,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from . import capo, config, gh, leitstand, starter, ticket_zustand, waechter_lauf
+from . import befugnis, briefkasten, capo, config, gh, leitstand, starter, ticket_zustand, waechter_lauf
 
 log = logging.getLogger("to_spawn.waechter_takt")
 
@@ -60,7 +60,7 @@ CAPO_ABBRUCH = (
 #: (Text, Merker-Feld, Schlüssel) — Feld/Schlüssel sagen, was „gesehen“ bedeutet.
 Eintrag = tuple[str, str, Any]
 
-PROMPT = """Aufseher-Takt Spec #{S} ({REPO}). Einmaliger Lauf: kein Handoff, kein /loop, kein ScheduleWakeup — nach dieser Liste endest du. Ziel: Spec {S} vollständig, sauber, autonom fertig. Jede Rückfrage (Bau-Log blockiert/entscheidung/frage) entscheidest DU selbst im besten Interesse von David (Nordstern, Doktrinen) und antwortest per Issue-Kommentar (max. 2 Zeilen) + `python {SKILL}/to_spawn.py eintrag --ticket <N> --typ entscheidung --frage … --wahl … --grund …`. Nur Label checkpoint:human bleibt für David. Du baust nichts und sprichst keine Bau-Session an. Ticket neu zu → Belegseite unter docs/verify-hard/ per Grep prüfen (Akzeptanz erfüllt? Live-Klick-Weg-Beleg mit Rolle da?), bei Mangel 2-Zeilen-Kommentar „Aufseher: … fehlt“ + `gh issue reopen`. capo-Verstoß: capo hat schon geöffnet/kommentiert — nicht doppelt tun. Bau fertig, bereit zur Abnahme (alle Bau-Tickets zu oder nur noch Live-Belege/checkpoint:human-Abnahme offen, bzw. „Kette … durch“ oder „SPEC FERTIG“) → Abschluss-Paket `--stand abnahme` (einmal): Rundschau als Artifact (Skill rundschau), `python {SKILL}/skripte/belege_uebersicht.py {S}` und `python {SKILL}/skripte/test_uebersicht.py {S}` je als Artifact, Direkt-Links je Ticket in die Stage-App (staging.url aus .to-spawn/config.json + Route an die richtige Stelle, Rolle im Titel), Zugang nur als Namen (Basic-Auth-Nutzer, App-Rolle, Bitwarden-Eintragsname — nie Passwort), dann `python {SKILL}/skripte/abschluss_paket.py ablegen {S} --stand abnahme --stage <url> --rundschau <link> --belege <link> --tests <link> --direkt "<Titel (als Rolle)>=<url>"… --basic-auth-nutzer <name> --app-rolle "<Name (rolle)>" --bitwarden <eintrag>` (legt ab, mailt nicht), Abschlussbericht als Kommentar auf #{S} (max. 10 Zeilen). Danach Aufbau-Prüfung (einmal): `python {SKILL}/skripte/thermo_lauf.py plan {S}`. Exit 0 → je Eintrag in `teile` ein Subagent, alle parallel im selben Zug (`model: opus`, Prompt = Feld `prompt` unverändert); jede JSON-Antwort als `<befunde_ordner>/teil-<nr>.json` speichern, dann `python {SKILL}/skripte/thermo_lauf.py sammeln {S}` (schreibt docs/agents/thermo_{S}.md, mit Pathspec + [skip ci] committen + pushen). Exit 2/4 → überspringen. Exit 3 → fehlenden Teil nachstarten, erneut sammeln. Kein Umbau in der Spec — Befunde stehen als Code-Befunde im Marker docs/agents/thermo_{S}.md (dritter Teil der Abschluss-Mail), kein Issue. Danach Rückblick (einmal): `python {SKILL}/skripte/rueckblick.py planen {S}`. Exit 0 → ein Subagent (`model: opus`, Skill mp-retro) liest `.to-spawn/rueckblick/{S}/auftrag.md` und schreibt dort `ergebnis.json` wie im Auftrag beschrieben, dann `python {SKILL}/skripte/rueckblick.py sammeln {S}` (schreibt docs/agents/rueckblick_{S}.md, mit Pathspec + [skip ci] committen + pushen). Exit 4 → überspringen. Exit 3 → KI nachstarten, erneut sammeln. Exit 1 → Grund notieren, weiter. Zum Schluss `python {SKILL}/skripte/abschluss_paket.py nachsehen {S}` (genau eine Mail an David; nur für `--stand abnahme` gilt: Exit 3 = wartet noch, capo stößt es je Tick selbst an — nicht warten). Nach dem Live-Deploy dasselbe einmal mit `--stand live` (`abschluss_paket.py ablegen {S} --stand live …` + `abschluss_paket.py nachsehen {S} --stand live`); `nachsehen --stand live` bis Exit 0 wiederholen (capo stößt live nicht an). Kontext sparen: Tickets nie voll laden, Belegseiten per Grep/limit.
+PROMPT = """Aufseher-Takt Spec #{S} ({REPO}). Einmaliger Lauf: kein Handoff, kein /loop, kein ScheduleWakeup — nach dieser Liste endest du. Ziel: Spec {S} vollständig, sauber, autonom fertig. {BEFUGNIS} Rückfrage nur im Bau-Log (blockiert/frage, ohne Briefkasten-Frage — alter Start-Auftrag): gleiche Klassen; Klasse 3 im besten Interesse von David (Nordstern, Doktrinen) per Issue-Kommentar (max. 2 Zeilen) + `python {SKILL}/to_spawn.py eintrag --ticket <N> --typ entscheidung --frage … --wahl … --grund …`, Klasse 2 nie selbst. Nur Label checkpoint:human bleibt für David. Du baust nichts und sprichst keine Bau-Session an. Ticket neu zu → Belegseite unter docs/verify-hard/ per Grep prüfen (Akzeptanz erfüllt? Live-Klick-Weg-Beleg mit Rolle da?), bei Mangel 2-Zeilen-Kommentar „Aufseher: … fehlt“ + `gh issue reopen`. capo-Verstoß: capo hat schon geöffnet/kommentiert — nicht doppelt tun. Bau fertig, bereit zur Abnahme (alle Bau-Tickets zu oder nur noch Live-Belege/checkpoint:human-Abnahme offen, bzw. „Kette … durch“ oder „SPEC FERTIG“) → Abschluss-Paket `--stand abnahme` (einmal): Rundschau als Artifact (Skill rundschau), `python {SKILL}/skripte/belege_uebersicht.py {S}` und `python {SKILL}/skripte/test_uebersicht.py {S}` je als Artifact, Direkt-Links je Ticket in die Stage-App (staging.url aus .to-spawn/config.json + Route an die richtige Stelle, Rolle im Titel), Zugang nur als Namen (Basic-Auth-Nutzer, App-Rolle, Bitwarden-Eintragsname — nie Passwort), dann `python {SKILL}/skripte/abschluss_paket.py ablegen {S} --stand abnahme --stage <url> --rundschau <link> --belege <link> --tests <link> --direkt "<Titel (als Rolle)>=<url>"… --basic-auth-nutzer <name> --app-rolle "<Name (rolle)>" --bitwarden <eintrag>` (legt ab, mailt nicht), Abschlussbericht als Kommentar auf #{S} (max. 10 Zeilen). Danach Aufbau-Prüfung (einmal): `python {SKILL}/skripte/thermo_lauf.py plan {S}`. Exit 0 → je Eintrag in `teile` ein Subagent, alle parallel im selben Zug (`model: opus`, Prompt = Feld `prompt` unverändert); jede JSON-Antwort als `<befunde_ordner>/teil-<nr>.json` speichern, dann `python {SKILL}/skripte/thermo_lauf.py sammeln {S}` (schreibt docs/agents/thermo_{S}.md, mit Pathspec + [skip ci] committen + pushen). Exit 2/4 → überspringen. Exit 3 → fehlenden Teil nachstarten, erneut sammeln. Kein Umbau in der Spec — Befunde stehen als Code-Befunde im Marker docs/agents/thermo_{S}.md (dritter Teil der Abschluss-Mail), kein Issue. Danach Rückblick (einmal): `python {SKILL}/skripte/rueckblick.py planen {S}`. Exit 0 → ein Subagent (`model: opus`, Skill mp-retro) liest `.to-spawn/rueckblick/{S}/auftrag.md` und schreibt dort `ergebnis.json` wie im Auftrag beschrieben, dann `python {SKILL}/skripte/rueckblick.py sammeln {S}` (schreibt docs/agents/rueckblick_{S}.md, mit Pathspec + [skip ci] committen + pushen). Exit 4 → überspringen. Exit 3 → KI nachstarten, erneut sammeln. Exit 1 → Grund notieren, weiter. Zum Schluss `python {SKILL}/skripte/abschluss_paket.py nachsehen {S}` (genau eine Mail an David; nur für `--stand abnahme` gilt: Exit 3 = wartet noch, capo stößt es je Tick selbst an — nicht warten). Nach dem Live-Deploy dasselbe einmal mit `--stand live` (`abschluss_paket.py ablegen {S} --stand live …` + `abschluss_paket.py nachsehen {S} --stand live`); `nachsehen --stand live` bis Exit 0 wiederholen (capo stößt live nicht an). Kontext sparen: Tickets nie voll laden, Belegseiten per Grep/limit.
 
 Zu entscheiden:
 {LISTE}
@@ -88,6 +88,41 @@ def _zeilen(repo: Path, ref: str | None, ticket: int, wt_basis: str) -> list[dic
     for _quelle, pfad in capo.laufdateien(repo, capo.worktree_ordner(ticket, wt_basis), ticket):
         zeilen += capo.lauf_zeilen(pfad) or []
     return zeilen
+
+
+def _briefkasten_offen(repo: Path, nummern: list[int]) -> list[Eintrag]:
+    """Alle offenen Briefkasten-Fragen der Tickets als Einträge (Feld ``fragen``, Schlüssel ``<ticket>:<id>``).
+
+    Leere id (kaputte Datei) → Schlüssel aus dem Hash des Sperrgrunds. Klasse 3 trägt den fertigen
+    Antwort-Befehl; Klasse 2 und kaputte Dateien sagen nur „wartet auf den Nutzer“.
+    """
+    befehl = f"python {SKILL.as_posix()}/to_spawn.py"
+    eintraege: list[Eintrag] = []
+    for f in briefkasten.offene(nummern, hauptbaum=repo):
+        t, fid = f["ticket"], f["id"]
+        frage, vorschlag = capo._kurz(f["frage"], 60), capo._kurz(f["vorschlag"], 40)
+        if not fid:
+            text = (
+                f"#{t} Briefkasten gesperrt (kaputte Datei) — wartet auf den Nutzer, nie selbst freigeben, "
+                f"prüft/löscht nur der Nutzer: {frage}"
+            )
+        elif f["klasse"] == "2":
+            text = (
+                f"#{t} Briefkasten-Frage {fid} (Klasse 2) — wartet auf den Nutzer, nie selbst freigeben: "
+                f"{frage} · Vorschlag: {vorschlag}"
+            )
+        else:
+            text = (
+                f"#{t} Briefkasten-Frage {fid} (Klasse 3, du entscheidest): {frage} · Vorschlag: {vorschlag} → "
+                f"`{befehl} antworten {t} --id {fid} --wahl … --grund … --beleg …`"
+            )
+        eintraege.append((text, "fragen", f"{t}:{fid or _schluessel(f['frage'])}"))
+    return eintraege
+
+
+def briefkasten_eintraege(repo: Path, nummern: list[int], gesehen: set[str]) -> list[Eintrag]:
+    """Offene Briefkasten-Fragen, die noch nicht gezeigt wurden (``gesehen`` = Merker-Feld ``fragen``)."""
+    return [e for e in _briefkasten_offen(repo, nummern) if e[2] not in gesehen]
 
 
 def pruefe(
@@ -147,6 +182,10 @@ def pruefe(
                 titel = capo._kurz(issue.get("title"), 80)
                 text = f"#{nr} neu geschlossen — Belegseite prüfen: {titel}"
                 eintraege.append((text, "zu", nr))
+    # Briefkasten-Fragen auch im ersten Takt: eine offene Frage wartet immer auf Antwort (#278 P3b).
+    offen_fragen = _briefkasten_offen(repo, [int(i["number"]) for i in liste])
+    alt_fragen = set(alt.get("fragen") or [])
+    eintraege += [e for e in offen_fragen if e[2] not in alt_fragen]
     verstoesse: set[str] = set()
     for v in tick.verstoesse:
         k = f"{v.ticket}:{v.regel}"
@@ -160,6 +199,7 @@ def pruefe(
         "zeilen": sorted(zeilen),
         "zu": sorted(zu),
         "verstoesse": sorted(verstoesse),
+        "fragen": sorted(k for _t, _f, k in offen_fragen),  # nur noch offene; beantwortete fallen raus
         "fertig": bool(tick.fertig),
         "zuletzt": _jetzt_iso(),
     }
@@ -188,6 +228,7 @@ def baue_prompt(spec: int, repo: Path, eintraege: list[str], notiz: str | None) 
         SKILL=SKILL.as_posix(),
         LISTE="\n".join(liste),
         NOTIZ=notiz_text,
+        BEFUGNIS=befugnis.aufseher_text(f"python {SKILL.as_posix()}/to_spawn.py"),
     )
 
 
