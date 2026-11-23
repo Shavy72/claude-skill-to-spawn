@@ -21,7 +21,7 @@ Spec-Quelle steht im Prompt (Ticket/Issue, Handoff, Auftrag, Commit-Nachrichten)
 
 Projekt-eigene Regeln: Liegt im geprüften Repo `.review/regeln.md`, gelten dessen Regeln zu SSOT-Modulen und Texten zusätzlich (z. B. nie kopierte SSOT-Module, Sprache und Schreibweise der Texte).
 
-RPA-Doktrin §15: Follows nur über Creator-Suche, Likes nur im Reels-Tab, Kommentare verboten. Code, der das verletzt (z. B. Follows aus Hashtag-/Explore-Suche, Likes außerhalb Reels-Tab, Kommentar-Aktionen) → Befund.
+Fachliche Ablauf-Regeln des geprüften Projekts (z. B. erlaubte Aktionen automatisierter Abläufe) stehen in dessen `.review/regeln.md` und gelten zusätzlich.
 
 ## Ignoriere
 
