@@ -833,7 +833,8 @@ def test_r8_live_wort_am_wortanfang_und_im_befehl_zaehlt(
 def test_r8_ganzwort_suche_ist_eigene_funktion_andere_nutzer_bleiben_streng() -> None:
     # Runde 9, absichtlich umgestellt: die Wortanfang-Suche entfällt (V-a prüft den Verlauf nach
     # Handlungen, befugnis.handlung_klasse_2). Geblieben ist: Frage und andere Nutzer streng.
-    assert not hasattr(befugnis, "ist_klasse_2_am_wortanfang")
+    # U: breite Erkennung gilt wieder, Sicherheit vor Quote (#372): die Wortanfang-Suche ist wieder da (Verlauf).
+    assert hasattr(befugnis, "ist_klasse_2_am_wortanfang")
     assert befugnis.ist_klasse_2("goLive") and befugnis.ist_klasse_2("Kundenkonto")
     assert befugnis.ist_klasse_2("deliver")
 
@@ -848,7 +849,8 @@ def test_r9_zustand_ohne_handlung_ist_klasse_3(
 ) -> None:
     welt.fenster = FRAGE_FENSTER
     welt.schreibe([_u("los"), eintrag, _a("Passt das so?")])
-    assert not _k2(welt.blick()[0])
+    # U: breite Erkennung gilt wieder, Sicherheit vor Quote (#372): „Produktion“/„Passwort“ am Wortanfang → Klasse 2.
+    assert _k2(welt.blick()[0])
 
 
 @pytest.mark.parametrize(
@@ -898,10 +900,15 @@ def test_r9_handlung_im_verlauf_ist_klasse_2(
     ],
     ids=["commit", "heredoc", "pytest", "wip-force", "staging", "read-pfad"],
 )
-def test_r9_ohne_handlung_ist_klasse_3(welt: Welt, eintrag: dict[str, Any]) -> None:
+def test_r9_ohne_handlung_ist_klasse_3(
+    welt: Welt, eintrag: dict[str, Any], request: pytest.FixtureRequest
+) -> None:
     welt.fenster = FRAGE_FENSTER
     welt.schreibe([_u("los"), eintrag, _a("Passt das so?")])
-    assert not _k2(welt.blick()[0])
+    # U: breite Erkennung gilt wieder, Sicherheit vor Quote (#372):
+    # „live“/„vps“ in Commit-Text, Heredoc und Read-Pfad → Klasse 2.
+    soll_2 = request.node.callspec.id in {"commit", "heredoc", "read-pfad"}
+    assert _k2(welt.blick()[0]) is soll_2
 
 
 @pytest.mark.parametrize(

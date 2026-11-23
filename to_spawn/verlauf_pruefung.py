@@ -3,7 +3,9 @@
 Eine Fenster-Frage ist Klasse 2, wenn sie selbst ein Klasse-2-Wort trägt
 (:func:`befugnis.ist_klasse_2`, breit: Wortteile zählen) oder die Session seit der Stelle, die
 der Leiter zuletzt weitergegeben hat, eine Klasse-2-HANDLUNG begangen oder angekündigt hat
-(:func:`befugnis.handlung_klasse_2`; Projekt-Wörter allein zählen im Verlauf nicht mehr). Quelle ist das Transkript der Session, nicht der
+(:func:`befugnis.handlung_klasse_2`) ODER die breite Erkennung von ``cb5e5f5`` anschlägt
+(:func:`befugnis.ist_klasse_2_am_wortanfang` über Text und Werkzeug-Eingaben außer Datei-Inhalten;
+Variante U, Sicherheit vor Quote). Quelle ist das Transkript der Session, nicht der
 Fenster-Text: wer etwas ins Fenster getippt hat (Mensch, Aufpasser, Aufseher, Entscheider),
 spielt keine Rolle — Eingaben sind nie eine Grenze und werden nicht durchsucht.
 
@@ -29,6 +31,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -178,7 +181,18 @@ def _grund(e: dict[str, Any]) -> str | None:
             befehle.extend(str(eingabe[f]) for f in BEFEHL_FELDER if eingabe.get(f))
             if name == "Skill":  # „/deploy live“: Name + args sind auch Text
                 texte.append(f"{eingabe.get('skill') or ''} {eingabe.get('args') or ''}")
-    return befugnis.handlung_klasse_2(texte=texte, befehle=befehle, werkzeuge=werkzeuge, pfade=pfade)
+    # Variante U (#372): breite Erkennung von cb5e5f5 ODER Handlungs-Muster. Sicherheit vor Quote:
+    # die engen Muster allein waren in zwei Review-Runden nie dicht (neue Formulierungen rutschten
+    # durch); die Quote (~88 % Fehlalarm) löst eine Erlaubt-Liste im Folge-Issue, nicht ein Weglassen.
+    breit = [
+        b
+        for b in (inhalt if isinstance(inhalt, list) else ())
+        if not (isinstance(b, dict) and b.get("type") == "tool_use" and b.get("name") in DATEI_WERKZEUGE)
+    ]
+    return befugnis.handlung_klasse_2(texte=texte, befehle=befehle, werkzeuge=werkzeuge, pfade=pfade) or _erste_zeile(
+        waechter_lauf._texte({"message": {"content": breit}}, werkzeug=True),
+        befugnis.ist_klasse_2_am_wortanfang,
+    )
 
 
 def _zeit(e: dict[str, Any]) -> datetime | None:
@@ -232,12 +246,12 @@ def _eigene_antwort(e: dict[str, Any]) -> bool:
     return e.get("type") == "assistant" and not e.get("isSidechain") and not e.get("isApiErrorMessage")
 
 
-def _erste_zeile(text: str) -> str | None:
-    """Erste Klasse-2-Zeile (Rückfall, breite Liste); steht das Wort über Zeilen verteilt, der
-    ganze Text."""
-    if not befugnis.ist_klasse_2(text):
+def _erste_zeile(text: str, finde: Callable[..., bool] = befugnis.ist_klasse_2) -> str | None:
+    """Erste Zeile, in der ``finde`` anschlägt (Rückfall: breite Liste; Verlauf: am Wortanfang);
+    steht das Wort über Zeilen verteilt, der ganze Text."""
+    if not finde(text):
         return None
-    zeile = next((z for z in text.splitlines() if befugnis.ist_klasse_2(z)), text)
+    zeile = next((z for z in text.splitlines() if finde(z)), text)
     return " ".join(zeile.split())
 
 

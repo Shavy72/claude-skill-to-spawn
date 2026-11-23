@@ -212,6 +212,18 @@ def _ist_klasse_2(wert: str) -> bool:
     return any(w in wert for w in _KLASSE_2_WOERTER) or any(w in teile for w in _KLASSE_2_GANZWORT)
 
 
+#: Dieselben Wörter, aber nur an einer Wortgrenze vorn (Stämme wie „bezahl“ dürfen weitergehen,
+#: Ganzwörter auch hinten begrenzt). Nach :func:`_norm` trennen „-“ „_“ „/“ „.“ Leerraum: „Live-Deploy“,
+#: „deploy_vps“ treffen, „deliver“, „reproduziert“ nicht; ``\w`` ist Unicode-bewusst (Umlaute).
+_KLASSE_2_AM_WORTANFANG = re.compile(
+    r"(?<!\w)(?:"
+    + "|".join(map(re.escape, sorted(_KLASSE_2_WOERTER, key=len, reverse=True)))
+    + r")|(?<!\w)(?:"
+    + "|".join(map(re.escape, sorted(_KLASSE_2_GANZWORT)))
+    + r")(?!\w)"
+)
+
+
 def einordnen(ziel: str, art: str, gesichert: bool = False) -> int:
     """Klasse 1, 2 oder 3 für eine geplante Handlung; Unbekanntes und Zweifel ergeben 3.
 
@@ -247,6 +259,17 @@ def ist_klasse_2(*texte: object) -> bool:
     zählen nicht. Kein eigener-Zweig-Ausnahme: hier gilt jedes Wort.
     """
     return any(_ist_klasse_2(_norm(t)) for t in texte if _norm(t))
+
+
+def ist_klasse_2_am_wortanfang(*texte: object) -> bool:
+    """Wie :func:`ist_klasse_2`, aber ein Wort zählt nur am Wortanfang (nicht als Wortteil).
+
+    Breite Verlauf-Erkennung (Stand ``cb5e5f5``, :mod:`to_spawn.verlauf_pruefung`): dort machen
+    Wortteile („deliver“ → live, „reproduziert“ → prod) aus fast jedem Abschnitt einen Treffer.
+    Zusammensetzungen ohne Trenner („Kundenkonto“) treffen hier nicht; freie Fragen und Vorschläge
+    bleiben darum bei der strengeren :func:`ist_klasse_2`.
+    """
+    return any(_KLASSE_2_AM_WORTANFANG.search(_norm(t)) for t in texte if _norm(t))
 
 
 #: Steht vor jedem Handlungs-Grund ohne eigenes Klasse-2-Wort (``gh pr merge 374``): der Grund

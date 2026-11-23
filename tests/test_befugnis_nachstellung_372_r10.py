@@ -62,7 +62,8 @@ FAELLE: dict[str, tuple[dict[str, Any], int]] = {
     "3d spiele auf prod": (_text("Ich spiele den Stand auf Prod."), 2),
     "3e logge mich ein": (_text("Ich logge mich mit dem Passwort aus dem Tresor in das Konto ein."), 2),
     "3f setze passwort": (_text("Ich setze das neue Passwort für den Login."), 2),
-    "3g zustand ohne handlung": (_text("Produktion läuft wieder."), 3),
+    # U: breite Erkennung gilt wieder, Sicherheit vor Quote (#372)
+    "3g zustand ohne handlung": (_text("Produktion läuft wieder."), 2),
     # 4 Abstand zwischen Verb und Objekt
     "4a kaufe langer satz": (
         _text(
@@ -75,11 +76,13 @@ FAELLE: dict[str, tuple[dict[str, Any], int]] = {
         _text("Als Nächstes kaufe ich – wie gestern im Team besprochen und abgestimmt – das Abo."),
         2,
     ),
-    "4c sehr weit auseinander": (_text(_LANG), 3),  # Regel: _ABSTAND
+    # U: breite Erkennung gilt wieder, Sicherheit vor Quote (#372)
+    "4c sehr weit auseinander": (_text(_LANG), 2),  # Regel: _ABSTAND
     # 5 Satz-Enden (| und ; trennen im Text nicht mehr)
     "5a tabellenzeile kauf": (_text("| Kauf | Jahres-Abo | 499 € |"), 2),
     "5b kaufe semikolon": (_text("Ich kaufe; Abo Pro kommt danach."), 2),
-    "5c punkt trennt": (_text("Ich kaufe Brötchen. Das Abo läuft weiter wie bisher."), 3),  # Regel: Satz-Enden
+    # U: breite Erkennung gilt wieder, Sicherheit vor Quote (#372)
+    "5c punkt trennt": (_text("Ich kaufe Brötchen. Das Abo läuft weiter wie bisher."), 2),  # Regel: Satz-Enden
     # 6 Skript in Variable, Deploy-Skript ohne „deploy“ im Namen
     "6a skript in variable": (_bash("S=scripts/safe_deploy_vps.sh; bash $S --skip-ci"), 2),
     "6b skript in for-schleife": (_bash('for s in scripts/safe_deploy_vps.sh; do bash "$s"; done'), 2),

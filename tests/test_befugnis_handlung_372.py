@@ -140,4 +140,5 @@ def test_frage_bleibt_breit_keine_durchrutscher(frage: str) -> None:
 
 
 def test_wortanfang_suche_entfaellt() -> None:
-    assert not hasattr(befugnis, "ist_klasse_2_am_wortanfang")
+    # U: breite Erkennung gilt wieder, Sicherheit vor Quote (#372): die Wortanfang-Suche ist wieder da (Verlauf).
+    assert hasattr(befugnis, "ist_klasse_2_am_wortanfang")
