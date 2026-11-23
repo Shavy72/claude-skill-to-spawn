@@ -151,17 +151,31 @@ def transkript_ordner(cwd: Path, heim: Path | None = None) -> Path:
     )
 
 
-def _texte(eintrag: dict[str, Any]) -> str:
+def _texte(eintrag: dict[str, Any], werkzeug: bool = False) -> str:
+    """Text-Blöcke eines Transkript-Eintrags; ``werkzeug`` nimmt die Eingaben von ``tool_use``
+    (z. B. ``command``) mit, jeder Text-Wert eine Zeile (#372)."""
     inhalt = (eintrag.get("message") or {}).get("content")
     if isinstance(inhalt, str):
         return inhalt
-    if isinstance(inhalt, list):
-        return " ".join(
-            str(b.get("text") or "")
-            for b in inhalt
-            if isinstance(b, dict) and b.get("type") == "text"
-        )
-    return ""
+    if not isinstance(inhalt, list):
+        return ""
+    teile: list[str] = []
+    for b in inhalt:
+        if not isinstance(b, dict):
+            continue
+        if b.get("type") == "text":
+            teile.append(str(b.get("text") or ""))
+        elif werkzeug and b.get("type") == "tool_use":
+            offen: list[Any] = [b.get("input")]
+            while offen:  # alle Text-Werte, auch verschachtelt (MultiEdit, TodoWrite)
+                wert = offen.pop(0)
+                if isinstance(wert, str):
+                    teile.append(wert)
+                elif isinstance(wert, dict):
+                    offen.extend(wert.values())
+                elif isinstance(wert, list):
+                    offen.extend(wert)
+    return ("\n" if werkzeug else " ").join(teile)
 
 
 def ist_limit_zeile(eintrag: dict[str, Any]) -> bool:

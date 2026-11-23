@@ -61,7 +61,6 @@ from pathlib import Path
 from typing import Any, NamedTuple
 
 from to_spawn import (
-    anleitung,
     aufpasser,
     bau_log,
     befugnis,
@@ -70,6 +69,7 @@ from to_spawn import (
     gh,
     pc_fenster,
     ticket_zustand,
+    verlauf_pruefung,
     wiederanlauf,
 )
 
@@ -461,36 +461,19 @@ EINGABE_ZEILE = re.compile(r"^[>❯]\s+(?!\d+\.)\S")
 
 
 def unbeaufsichtigt(text: str) -> list[str]:
-    """Zeilen des Pane-Texts seit der letzten Eingabe des Menschen, ohne Eingabefeld (#372).
+    """Zeilen des Pane-Texts seit der letzten Eingabezeile, ohne Eingabefeld (#372).
 
-    Alles danach hat die Session allein geschrieben (Antworten, Werkzeug-Aufrufe, Rückfrage-
-    Dialog) und zählt für Frage und Klasse; davor hat der Mensch schon gesehen. Ohne erkennbare
-    Eingabezeile alles (im Zweifel zum Menschen). Als Grenze zählt nur eine Zeile, die ganz links
-    mit ``>``/``❯`` beginnt — Claude Code rückt Antwort-Text samt Markdown-Zitat ein; ein
-    eingerücktes ``> …`` ist daher nie Grenze, damit kein Live-Wort vor einem Zitat verloren geht.
-
-    Vom System getippte Texte (:func:`anleitung.ist_system_eingabe`: Anstupser, Mindset-Stoß,
-    ``/exit`` …) sind keine Grenze — sie hat kein Mensch abgeschickt; ihr Echo (erste Zeile samt
-    eingerückter Umbruch-Zeilen bis zur Leerzeile) fällt weg, sonst machte ihr eigenes Wort
-    „live“ jede Folgefrage zu Klasse 2. Die Antwort des Entscheider-Helfers bleibt Grenze: er
-    antwortet nur auf eine Frage, die schon Klasse 3 war, ein Live-Text davor hätte sie zu Klasse 2
-    gemacht.
+    Nur für die Frage, die angezeigt wird (:func:`frage_im_text`) — die Klasse kommt aus dem
+    Transkript (:mod:`verlauf_pruefung`), wer getippt hat, spielt dafür keine Rolle. Ohne
+    erkennbare Eingabezeile alles. Als Eingabezeile zählt nur eine Zeile, die ganz links mit
+    ``>``/``❯`` beginnt — Claude Code rückt Antwort-Text samt Markdown-Zitat ein.
     """
     zeilen = aufpasser.ohne_statuszeile(text).splitlines()
     linien = [i for i, z in enumerate(zeilen) if aufpasser.EINGABEFELD_LINIE.fullmatch(z)]
     if linien:
         zeilen = zeilen[: linien[-1]]  # Eingabefeld (``❯ …``) gehört nicht zur Ausgabe
-    ohne_echo: list[str] = []
-    im_echo = False
-    for z in zeilen:
-        if EINGABE_ZEILE.match(z) and anleitung.ist_system_eingabe(z[1:]):
-            im_echo = True
-            continue
-        im_echo = im_echo and z[:1].isspace() and bool(z.strip())
-        if not im_echo:
-            ohne_echo.append(z)
-    eingaben = [i for i, z in enumerate(ohne_echo) if EINGABE_ZEILE.match(z)]
-    return ohne_echo[eingaben[-1] + 1 :] if eingaben else ohne_echo
+    eingaben = [i for i, z in enumerate(zeilen) if EINGABE_ZEILE.match(z)]
+    return zeilen[eingaben[-1] + 1 :] if eingaben else zeilen
 
 
 def _grund_kurz(zeile: str, grenze: int) -> str:
@@ -519,17 +502,15 @@ def _grund_kurz(zeile: str, grenze: int) -> str:
 def frage_im_text(text: str) -> str:
     """Frage an den Menschen am Ende des Pane-Texts (#372), ``""`` = keine; ungekürzt.
 
-    Betrachtet wird nur, was seit der letzten Eingabe des Menschen kam (:func:`unbeaufsichtigt`).
+    Betrachtet wird nur, was seit der letzten Eingabezeile kam (:func:`unbeaufsichtigt`).
     Rückfrage-Dialog (:func:`aufpasser.rueckfrage`): die letzten Zeilen samt Befehl
     darüber. Sonst der letzte Absatz, nur wenn er mit ``?`` endet — eine stille Session ohne
-    solche Frage hängt (Stupser/Handoff wie bisher). Trägt nur Text weiter oben in der Antwort
-    ein Klasse-2-Wort (:func:`befugnis.ist_klasse_2`), steht diese Zeile vor der Frage, damit
-    Klasse und Grund auch nach :func:`frage_kurz` sichtbar bleiben.
+    solche Frage hängt (Stupser/Handoff wie bisher). Nur der Text der Frage; die Klasse
+    bestimmt :func:`fenster_blick`.
     """
     zeilen = unbeaufsichtigt(text)
-    voll = [z.strip() for z in zeilen if z.strip()]
     if aufpasser.rueckfrage(text):
-        teile = voll[-FRAGE_ZEILEN:]
+        teile = [z.strip() for z in zeilen if z.strip()][-FRAGE_ZEILEN:]
     else:
         absatz: list[str] = []
         for z in reversed(zeilen):
@@ -539,20 +520,19 @@ def frage_im_text(text: str) -> str:
                 continue
             absatz.insert(0, z.strip())
         teile = absatz if absatz and absatz[-1].endswith("?") else []
-    if (
-        teile
-        and not befugnis.ist_klasse_2(" ".join(teile))
-        and befugnis.ist_klasse_2(" ".join(voll))
-    ):
-        # Live-Wort weiter oben in der Antwort (Befehl über den Auswahlzeilen, Absatz vor
-        # „Passt das so?“): im Zweifel zum Menschen. Die auslösende Zeile kommt vor die Frage,
-        # sonst schneidet :func:`frage_kurz` den Grund weg; steht das Wort über zwei Zeilen
-        # verteilt, alle Zeilen (Review PR 374).
-        grund = next((z for z in voll if befugnis.ist_klasse_2(z)), None)
-        grund = _grund_kurz(grund, FRAGE_MAX // 2) if grund else None
-        rest = frage_kurz(" ".join(teile), max(FRAGE_MAX - len(grund or "") - 3, FRAGE_MAX // 2))
-        teile = [grund, "…", rest.lstrip("…")] if grund else voll
     return " ".join(" ".join(teile).split())
+
+
+def mit_grund(frage: str, grund: str | None) -> str:
+    """``frage`` mit der auslösenden Klasse-2-Zeile davor, wenn die Frage selbst keine trägt.
+
+    Sonst schnitte :func:`frage_kurz` den Grund weg und der Briefkasten sähe Klasse 3.
+    """
+    if not frage or not grund or befugnis.ist_klasse_2(frage):
+        return frage
+    grund = _grund_kurz(grund, FRAGE_MAX // 2)
+    rest = frage_kurz(frage, max(FRAGE_MAX - len(grund) - 3, FRAGE_MAX // 2))
+    return " ".join(f"{grund} … {rest.lstrip('…')}".split())
 
 
 def frage_kurz(frage: str, grenze: int = FRAGE_MAX) -> str:
@@ -564,12 +544,22 @@ def frage_kurz(frage: str, grenze: int = FRAGE_MAX) -> str:
     return frage if len(frage) <= grenze else "…" + frage[len(frage) - grenze + 1 :]
 
 
-def fenster_frage(ziel: str | None, q: Quellen) -> str:
-    """Frage im Fenster ``ziel`` (:func:`frage_im_text`); ohne Ziel/lesbares Pane ``""``."""
+def fenster_blick(ziel: str | None, q: Quellen, stelle: str | None) -> tuple[str, str]:
+    """(Frage, bis) im Fenster ``ziel`` (#372); ohne Ziel/lesbares Pane/Frage ``("", "")``.
+
+    Die Frage kommt aus dem sichtbaren Fenster (:func:`frage_im_text`), die Klasse aus dem
+    Transkript seit ``stelle`` (:func:`verlauf_pruefung.pruefen`): trägt die Session dort ein
+    Klasse-2-Wort, steht die Zeile vor der Frage (:func:`mit_grund`). ``bis`` ist die Stelle,
+    die der Aufrufer merkt, sobald er die Frage weitergegeben hat.
+    """
     if not ziel:
-        return ""
+        return "", ""
     text = q.tmux(["capture-pane", "-p", "-t", ziel])
-    return frage_im_text(text) if text else ""
+    frage = frage_im_text(text) if text else ""
+    if not frage:
+        return "", ""
+    pruefung = verlauf_pruefung.pruefen(ziel, q, stelle)
+    return mit_grund(frage, pruefung.grund), pruefung.bis
 
 
 class TicketBlick(NamedTuple):

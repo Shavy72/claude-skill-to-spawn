@@ -6,8 +6,7 @@ Aufseher-Prompt (``skripte/wache.py``), Anstupser der Eingriffs-Leiter
 Bau-Prompt-Vorlage (Platzhalter ``{MINDSET}`` und ``{ABLOESE_SOP}``, gefüllt in
 ``skripte/bau.py``); den Befugnis-Abschnitt hält ``befugnis`` (#278). Nur Text, keine Logik — wer einen Satz ändern will, ändert ihn hier.
 
-Dazu alle Texte, die ``to_spawn`` selbst in ein Bau- oder Aufseher-Fenster tippt
-(:data:`SYSTEM_EINGABEN`, #372) — einzige Ausnahme ist die Logik :func:`ist_system_eingabe`.
+Dazu die festen Texte, die ``respawn``, Aufseher-Ablösung und Aufpasser in ein Fenster tippen.
 """
 
 from __future__ import annotations
@@ -88,42 +87,3 @@ def handoff_auftrag(handoff: str, start: str) -> str:
         "Folge-Runde in diesem Fenster wäre eine zweite Session. Danach nichts mehr tun."
     )
 
-
-#: Alle Texte, die ``to_spawn``/``skripte`` per tmux in ein Fenster tippen, als Vorlage:
-#: ``{…}`` = eingesetzter Wert. Wer eine neue Tipp-Stelle baut, trägt ihren Text hier ein
-#: (``tests/test_leiter_frage_372.py`` zählt die Tipp-Stellen und bricht sonst den Build).
-#: Bewusst nicht drin: der Start-Prompt einer neuen Session (``respawn._start_prompt``) — freier
-#: Text aus der Handoff-Datei, erste Eingabe im frischen Fenster, davor steht nichts.
-SYSTEM_EINGABEN: tuple[str, ...] = (
-    anstupser("Aufseher"),
-    anstupser("Aufpasser"),
-    handoff_auftrag("{handoff}", "{start}"),
-    WEITER_AUFTRAG,
-    WEITER_AUFTRAG_AUFSEHER,
-    REMOTE_CONTROL,
-    EXIT,
-)
-#: Claude Code zeigt eine lange Einfügung (``respawn.tippen`` fügt als Bracketed Paste ein)
-#: im Verlauf eingeklappt; den Inhalt sieht man dann nicht.
-_EINGEKLAPPT = "[Pasted text #"
-#: Kürzer abgeschnittene Zeilen zählen nicht als Anfang eines System-Texts.
-_MIN_ANFANG = 12
-
-
-def ist_system_eingabe(eingabe: str) -> bool:
-    """``True``, wenn ``eingabe`` (Text hinter ``❯``, nur die erste Fensterzeile) ein Text aus
-    :data:`SYSTEM_EINGABEN` sein kann, also vom System getippt, nicht vom Menschen (#372).
-
-    Der Aufseher wertet so eine Zeile nie als „der Mensch hat bis hier gesehen“. Verglichen wird
-    der Anfang bis zum ersten Platzhalter; eine umbrochene Zeile reicht, wenn sie ein Anfang davon
-    ist. Im Zweifel ``True`` (auch für eingeklappte Einfügungen): dann zählt mehr Text vor der
-    Frage, die geht eher zum Menschen.
-    """
-    e = eingabe.strip()
-    if e.startswith(_EINGEKLAPPT):
-        return True
-    for text in SYSTEM_EINGABEN:
-        kopf = text.split("{", 1)[0]
-        if e.startswith(kopf) or (len(e) >= _MIN_ANFANG and kopf.startswith(e)):
-            return True
-    return False

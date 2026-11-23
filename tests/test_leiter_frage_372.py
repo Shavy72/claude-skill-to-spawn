@@ -9,7 +9,6 @@ Briefkasten laufen echt im tmp-Ordner.
 
 from __future__ import annotations
 
-import re
 import sys
 import textwrap
 import time
@@ -23,13 +22,10 @@ sys.path.insert(0, str(SKILL))
 
 from to_spawn import (
     anleitung,
-    aufpasser,
     aufseher_stand,
     befugnis,
     briefkasten,
     leiter,
-    respawn,
-    respawn_aufseher,
     ticket_zustand,
 )
 
@@ -108,6 +104,24 @@ def _lauf(u: FakeUmwelt) -> leiter.Ergebnis:
     return leiter.eingreifen(SKILL, SPEC, TICKET, umwelt=u)
 
 
+def _rueckfall_frage(text: str) -> str:
+    """Frage über :func:`aufseher_stand.fenster_blick` im Rückfall ohne Transkript.
+
+    ``display-message`` liefert ``None`` (kein Transkript lesbar), also liest die Prüfung den
+    ganzen Verlauf per ``capture-pane`` und stellt jede Klasse-2-Zeile vor die Frage.
+    """
+
+    def fake(args: list[str]) -> str | None:
+        if "display-message" in args:
+            return None
+        if "capture-pane" in args:
+            return text
+        return None
+
+    quellen = aufseher_stand.Quellen(repo=SKILL, kinder=lambda n: [], tmux=fake)
+    return aufseher_stand.fenster_blick(ZIEL, quellen, None)[0]
+
+
 # --- reine Logik -------------------------------------------------------------------------
 
 
@@ -140,7 +154,10 @@ def test_rueckfrage_ohne_lesbaren_text_bleibt_nichts() -> None:
 
 def test_klasse_2_wird_durchgereicht() -> None:
     schritt = leiter.entscheide(
-        _lage(aufseher_stand.RUECKFRAGE, FRAGE_LIVE), leiter.Gemerkt(0, None), time.time(), 250.0
+        _lage(aufseher_stand.RUECKFRAGE, FRAGE_LIVE),
+        leiter.Gemerkt(0, None),
+        time.time(),
+        250.0,
     )
     assert schritt.aktion == "mensch"
 
@@ -150,7 +167,10 @@ def test_gemerkte_frage_loest_nicht_erneut_aus() -> None:
     schritt = leiter.entscheide(_lage(aufseher_stand.RUECKFRAGE, FRAGE), gemerkt, time.time(), 250.0)
     assert schritt.aktion == "nichts"
     neu = leiter.entscheide(
-        _lage(aufseher_stand.RUECKFRAGE, "Welchen Namen soll die Datei haben?"), gemerkt, time.time(), 250.0
+        _lage(aufseher_stand.RUECKFRAGE, "Welchen Namen soll die Datei haben?"),
+        gemerkt,
+        time.time(),
+        250.0,
     )
     assert neu.aktion == "entscheider"
 
@@ -266,7 +286,11 @@ def test_klasse_2_wort_vorn_bleibt_nach_kuerzen_klasse_2(baum: Path) -> None:
 def test_frage_kurz_behaelt_ende() -> None:
     assert aufseher_stand.frage_kurz("kurz?") == "kurz?"
     lang = aufseher_stand.frage_kurz("a " * 400 + "Ende?")
-    assert len(lang) == aufseher_stand.FRAGE_MAX and lang.endswith("Ende?") and lang.startswith("…")
+    assert (
+        len(lang) == aufseher_stand.FRAGE_MAX
+        and lang.endswith("Ende?")
+        and lang.startswith("…")
+    )
 
 
 # --- Fix-Runde: kein Doppel-Einwurf, Merken scheitert ------------------------------------
@@ -309,11 +333,17 @@ def test_merken_scheitert_dauerhaft_kein_doppel_einwurf(baum: Path, monkeypatch:
 def test_still_frage_unter_mindest_ruhe_loest_nicht_aus() -> None:
     zu_frueh = leiter.MIN_RUHE_MIN - 1
     schritt = leiter.entscheide(
-        _lage(aufseher_stand.STILL, FRAGE, zu_frueh), leiter.Gemerkt(0, None), time.time(), 250.0
+        _lage(aufseher_stand.STILL, FRAGE, zu_frueh),
+        leiter.Gemerkt(0, None),
+        time.time(),
+        250.0,
     )
     assert schritt.aktion not in ("entscheider", "mensch")
     genau = leiter.entscheide(
-        _lage(aufseher_stand.STILL, FRAGE, leiter.MIN_RUHE_MIN), leiter.Gemerkt(0, None), time.time(), 250.0
+        _lage(aufseher_stand.STILL, FRAGE, leiter.MIN_RUHE_MIN),
+        leiter.Gemerkt(0, None),
+        time.time(),
+        250.0,
     )
     assert genau.aktion == "entscheider"
 
@@ -321,7 +351,10 @@ def test_still_frage_unter_mindest_ruhe_loest_nicht_aus() -> None:
 @pytest.mark.parametrize("stufe, erwartet", [(0, True), (1, True), (2, False), (3, False)])
 def test_still_frage_nur_ab_stufe_0_und_1(stufe: int, erwartet: bool) -> None:
     schritt = leiter.entscheide(
-        _lage(aufseher_stand.STILL, FRAGE, 25), leiter.Gemerkt(stufe, time.time() - 60), time.time(), 250.0
+        _lage(aufseher_stand.STILL, FRAGE, 25),
+        leiter.Gemerkt(stufe, time.time() - 60),
+        time.time(),
+        250.0,
     )
     assert (schritt.aktion == "entscheider") is erwartet
 
@@ -341,12 +374,14 @@ def test_doppel_schutz_verschluckt_live_wort_im_abgeschnittenen_anfang_nicht(
     assert zweit != erst
     offen = briefkasten.offene([TICKET], hauptbaum=baum)
     assert sorted(f["klasse"] for f in offen) == ["2", "3"]
-    assert leiter.frage_einwerfen(baum, SPEC, TICKET, live) == zweit  # Klasse-2-Doppel bleibt einer
+    assert (
+        leiter.frage_einwerfen(baum, SPEC, TICKET, live) == zweit
+    )  # Klasse-2-Doppel bleibt einer
 
 
 def test_live_wort_im_absatz_davor_braucht_den_menschen() -> None:
     text = f"● Ich würde den Stand jetzt live deployen.\n\nPasst das so?\n\n{EINGABE}\n❯ \n{EINGABE}\n  Kontext 80k"
-    frage = aufseher_stand.frage_im_text(text)
+    frage = _rueckfall_frage(text)
     assert frage.endswith("Passt das so?")
     schritt = leiter.entscheide(
         _lage(aufseher_stand.STILL, frage, 25),
@@ -372,7 +407,7 @@ def test_rueckfrage_live_wort_weit_ueber_auswahl_ist_klasse_2() -> None:
         "  3. No, and tell Claude what to do differently\n\n"
         "Esc to cancel · Tab to amend · ctrl+e to explain"
     )
-    frage = aufseher_stand.frage_im_text(text)
+    frage = _rueckfall_frage(text)
     assert "Do you want to proceed?" in frage
     schritt = leiter.entscheide(_lage(aufseher_stand.RUECKFRAGE, frage), leiter.Gemerkt(0, None), time.time(), 250.0)
     assert schritt.aktion == "mensch"
@@ -383,7 +418,7 @@ def test_still_live_wort_weit_ueber_frage_ist_klasse_2() -> None:
         f"● Ich würde den Stand jetzt live deployen.\n{BERICHT_ZEILEN}\n\nPasst das so?\n\n"
         f"{EINGABE}\n❯ \n{EINGABE}\n  Kontext 80k"
     )
-    frage = aufseher_stand.frage_im_text(text)
+    frage = _rueckfall_frage(text)
     assert frage.endswith("Passt das so?")
     schritt = leiter.entscheide(_lage(aufseher_stand.STILL, frage, 25), leiter.Gemerkt(0, None), time.time(), 250.0)
     assert schritt.aktion == "mensch"
@@ -409,7 +444,7 @@ def test_ohne_antwort_zeile_zaehlt_alles_und_bleibt_klasse_2() -> None:
         f"Live-Deploy von gestern ist durch.\n{BERICHT_ZEILEN}\n\nSoll ich mit Ticket 12 weitermachen?\n\n"
         f"{EINGABE}\n❯ \n{EINGABE}\n  Kontext 80k"
     )
-    frage = aufseher_stand.frage_im_text(text)
+    frage = _rueckfall_frage(text)
     assert frage.endswith("Soll ich mit Ticket 12 weitermachen?")
     schritt = leiter.entscheide(_lage(aufseher_stand.STILL, frage, 25), leiter.Gemerkt(0, None), time.time(), 250.0)
     assert schritt.aktion == "mensch"
@@ -420,7 +455,7 @@ def test_live_zeile_steht_im_gekuerzten_fragetext(baum: Path) -> None:
         f"● Ich würde den Stand jetzt live deployen.\n{BERICHT_ZEILEN}\n{BERICHT_ZEILEN}\n"
         f"{BERICHT_ZEILEN}\n\n{BERICHT[2:]}\nPasst das so?\n\n{EINGABE}\n❯ \n{EINGABE}\n  Kontext 80k"
     )
-    frage = aufseher_stand.frage_im_text(text)
+    frage = _rueckfall_frage(text)
     assert frage.endswith("Passt das so?")
     erg = _lauf(FakeUmwelt(baum, frage=frage))
     assert "braucht den Menschen" in erg.zeile
@@ -435,7 +470,7 @@ FUSS = f"\n\n{EINGABE}\n❯ \n{EINGABE}\n  Kontext 80k"
 
 
 def _klasse_2(text: str) -> bool:
-    frage = aufseher_stand.frage_im_text(text)
+    frage = _rueckfall_frage(text)
     assert frage, "Frage erwartet"
     return befugnis.ist_klasse_2(frage)
 
@@ -509,7 +544,7 @@ def test_lange_live_zeile_behaelt_live_wort_im_gespeicherten_text(baum: Path) ->
         f"> los\n\n● {fuell} dann deploye ich live {fuell}\n\n"
         f"{BERICHT_ZEILEN}\n\nPasst das so?" + FUSS
     )
-    frage = aufseher_stand.frage_im_text(text)
+    frage = _rueckfall_frage(text)
     assert frage.endswith("Passt das so?")
     erg = _lauf(FakeUmwelt(baum, frage=frage))
     assert "braucht den Menschen" in erg.zeile
@@ -521,7 +556,9 @@ def test_lange_live_zeile_behaelt_live_wort_im_gespeicherten_text(baum: Path) ->
 
 # --- Fix-Runde 6: vom System getippte Zeilen sind keine Grenze (Review PR 374 Runde 5) --------
 
-LIVE_TEXT = "● Ich deploye den Stand jetzt live auf die Hauptapp (safe_deploy_vps.sh).\n\n"
+LIVE_TEXT = (
+    "● Ich deploye den Stand jetzt live auf die Hauptapp (safe_deploy_vps.sh).\n\n"
+)
 #: Platzhalter so, wie die Tipp-Stellen sie einsetzen.
 WERTE = {
     "min": 12,
@@ -535,14 +572,32 @@ def _echo(text: str, breite: int = 76) -> str:
     return "\n".join(textwrap.wrap(text, breite, initial_indent="❯ ", subsequent_indent="  "))
 
 
-SYSTEM_FAELLE = [t.format(**WERTE) for t in anleitung.SYSTEM_EINGABEN]
+#: Texte, die das System selbst ins Fenster tippt (Anstupser, Handoff, Weiter, Remote, Exit).
+SYSTEM_TEXTE = [
+    anleitung.anstupser("Aufseher"),
+    anleitung.anstupser("Aufpasser"),
+    anleitung.handoff_auftrag("{handoff}", "{start}"),
+    anleitung.WEITER_AUFTRAG,
+    anleitung.WEITER_AUFTRAG_AUFSEHER,
+    anleitung.REMOTE_CONTROL,
+    anleitung.EXIT,
+]
+SYSTEM_FAELLE = [t.format(**WERTE) for t in SYSTEM_TEXTE]
 
 
 # 2000: ganzer Text in einer Zeile — ohne Umbruch-Zeile trägt nur der Live-Text das Wort.
 @pytest.mark.parametrize("breite", [76, 200, 2000])
 @pytest.mark.parametrize("getippt", SYSTEM_FAELLE, ids=lambda t: t[:20])
-def test_live_text_dann_system_eingabe_dann_frage_ist_klasse_2(getippt: str, breite: int) -> None:
-    text = "❯ mach weiter\n\n" + LIVE_TEXT + _echo(getippt, breite) + "\n\n● Passt das so?" + FUSS
+def test_live_text_dann_system_eingabe_dann_frage_ist_klasse_2(
+    getippt: str, breite: int
+) -> None:
+    text = (
+        "❯ mach weiter\n\n"
+        + LIVE_TEXT
+        + _echo(getippt, breite)
+        + "\n\n● Passt das so?"
+        + FUSS
+    )
     assert _klasse_2(text)
 
 
@@ -558,52 +613,17 @@ def test_system_eingabe_macht_harmlose_frage_nicht_zu_klasse_2(getippt: str) -> 
     assert not befugnis.ist_klasse_2(frage)
 
 
-def test_anstupser_mindset_stoss_und_exit_sind_registriert() -> None:
-    getippt = {
-        aufpasser.ANSTUPS_TEXT, leiter.MINDSET_TEXT, leiter.EXIT_TEXT, respawn.REMOTE_CONTROL,
-        respawn.WEITER_AUFTRAG, respawn_aufseher.WEITER_AUFTRAG_AUFSEHER,
-        respawn._handoff_auftrag("{handoff}", "{start}"),
-    }
-    assert getippt <= set(anleitung.SYSTEM_EINGABEN)
-    assert anleitung.ist_system_eingabe(" /exit")
-
-
-def test_echte_eingabe_des_menschen_bleibt_grenze() -> None:
-    for eingabe in ("ja, aber nur Staging", "mach weiter", "Aufseher bitte", "/loop 3m weiter"):
-        assert not anleitung.ist_system_eingabe(eingabe), eingabe
-
-
 def test_entscheider_antwort_bleibt_grenze_seine_frage_war_schon_klasse_2() -> None:
     # Vor der Antwort: dieselbe Frage mit Live-Text davor geht zum Menschen, der Helfer antwortet nie.
-    vorher = "❯ mach weiter\n\n" + LIVE_TEXT + "● Soll ich vorher noch die Tests laufen lassen?" + FUSS
+    vorher = (
+        "❯ mach weiter\n\n"
+        + LIVE_TEXT
+        + "● Soll ich vorher noch die Tests laufen lassen?"
+        + FUSS
+    )
     assert _klasse_2(vorher)
     nachher = (
         "❯ mach weiter\n\n● Tests grün. Soll ich vorher noch aufräumen?\n\n"
         "❯ Ja, erst aufräumen, dann weiter.\n\n● Aufgeräumt. Passt das so?" + FUSS
     )
     assert aufseher_stand.frage_im_text(nachher) == "● Aufgeräumt. Passt das so?"
-
-
-#: Tipp-Stellen (``.tippen(``, ``_eingeben(``, tmux ``send-keys``/``paste-buffer``) je Datei.
-#: Neue Stelle → ihren Text in ``anleitung.SYSTEM_EINGABEN`` eintragen, dann die Zahl hier.
-#: ``skripte/wache.py``: Prompt-Satz, der Aufseher bestätigt Auswahl-Dialoge per ``send-keys``.
-TIPP_STELLEN = {
-    "skripte/wache.py": 1,
-    "to_spawn/aufpasser.py": 6,
-    "to_spawn/leiter.py": 1,
-    "to_spawn/respawn.py": 8,
-    "to_spawn/respawn_aufseher.py": 2,
-    "to_spawn/waechter_lauf.py": 1,
-}
-
-
-def test_jede_tipp_stelle_ist_registriert() -> None:
-    muster = re.compile(r"\.tippen\(|_eingeben\(|\bsend-keys\b|\bsend_keys\b|\bpaste-buffer\b")
-    dateien = [*(SKILL / "to_spawn").rglob("*.py"), *(SKILL / "skripte").rglob("*.py"),
-               *(SKILL / "skripte").rglob("*.sh")]
-    gezaehlt = {
-        p.relative_to(SKILL).as_posix(): n
-        for p in dateien
-        if (n := len(muster.findall(p.read_text(encoding="utf-8"))))
-    }
-    assert gezaehlt == TIPP_STELLEN
