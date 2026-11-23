@@ -44,6 +44,7 @@ if _SKILL not in sys.path:
     sys.path.insert(0, _SKILL)
 from to_spawn import (
     anleitung,
+    befugnis,
     capo,
     config,
     context_mode,
@@ -443,7 +444,8 @@ def build_prompt(
     """Platzhalter der Vorlage füllen — auch die repo-neutralen (#257):
     ``{REPO}`` = owner/name, ``{HAUPTZWEIG}``, ``{CHECKPOINT_LABEL}`` aus der Konfig,
     ``{SESSION_KOPF}`` = Marke jedes Session-Kommentars aus ``capo.SESSION_KOPF`` (#402),
-    ``{MINDSET}``/``{ABLOESE_SOP}`` = feste Texte aus ``anleitung`` (#500)."""
+    ``{MINDSET}``/``{ABLOESE_SOP}`` = feste Texte aus ``anleitung`` (#500),
+    ``{BEFUGNIS}`` = Befugnis-Abschnitt aus ``befugnis.start_text`` (#278)."""
     konfig = konfig if konfig is not None else config.lade(REPO)
     label = str((konfig.get("regularien") or {}).get("checkpoint_label") or "checkpoint:human")
     return (
@@ -458,6 +460,7 @@ def build_prompt(
         .replace("{SESSION_KOPF}", capo.SESSION_KOPF)
         .replace("{MINDSET}", anleitung.MINDSET)
         .replace("{ABLOESE_SOP}", anleitung.ABLOESE_SOP)
+        .replace("{BEFUGNIS}", befugnis.start_text(ticket))
     )
 
 
