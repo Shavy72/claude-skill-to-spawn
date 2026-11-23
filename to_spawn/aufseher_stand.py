@@ -460,7 +460,8 @@ def frage_im_text(text: str) -> str:
 
     Rückfrage-Dialog (:func:`aufpasser.rueckfrage`): die letzten Zeilen samt Befehl darüber.
     Sonst zählt der ganze letzte Absatz über dem Eingabefeld, und nur wenn er mit ``?`` endet —
-    eine stille Session ohne solche Frage hängt (Stupser/Handoff wie bisher). Ungekürzt, weil
+    eine stille Session ohne solche Frage hängt (Stupser/Handoff wie bisher). Trägt erst der
+    Text weiter oben ein Klasse-2-Wort, sind alle Zeilen über dem Eingabefeld die Frage. Ungekürzt, weil
     die Klasse (:func:`befugnis.ist_klasse_2`) am vollen Absatz gilt; kürzen nur
     :func:`frage_kurz`.
     """
@@ -480,16 +481,15 @@ def frage_im_text(text: str) -> str:
                 continue
             absatz.insert(0, z.strip())
         teile = absatz if absatz and absatz[-1].endswith("?") else []
-        weit = voll[-FRAGE_ZEILEN:]
-        if (
-            teile
-            and len(weit) > len(teile)
-            and befugnis.ist_klasse_2(" ".join(weit))
-            and not befugnis.ist_klasse_2(" ".join(teile))
-        ):
-            # Live-Wort im Absatz davor („… live deployen.“ + „Passt das so?“): im Zweifel zum
-            # Menschen, darum die letzten FRAGE_ZEILEN Zeilen als Frage mitgeben (Review PR 374).
-            teile = weit
+    if (
+        teile
+        and not befugnis.ist_klasse_2(" ".join(teile))
+        and befugnis.ist_klasse_2(" ".join(voll))
+    ):
+        # Live-Wort irgendwo über dem Eingabefeld (Befehl über den Auswahlzeilen, Absatz vor
+        # „Passt das so?“): im Zweifel zum Menschen, darum alle Zeilen als Frage — die Klasse
+        # gilt am Ganzen, gekürzt wird nur zum Anzeigen (:func:`frage_kurz`, Review PR 374).
+        teile = voll
     return " ".join(" ".join(teile).split())
 
 

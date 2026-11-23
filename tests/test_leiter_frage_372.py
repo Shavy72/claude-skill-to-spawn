@@ -343,3 +343,35 @@ def test_live_wort_im_absatz_davor_braucht_den_menschen() -> None:
         250.0,
     )
     assert schritt.aktion == "mensch"
+
+
+# --- Fix-Runde 3: Klasse an allen Zeilen über dem Eingabefeld (Review PR 374) -----------
+
+BERICHT_ZEILEN = "\n".join(f"Zeile {i}: Tests grün, Diff geprüft, Belege abgelegt." for i in range(9))
+
+
+def test_rueckfrage_live_wort_weit_ueber_auswahl_ist_klasse_2() -> None:
+    text = (
+        "● Bash(bash scripts/deploy.sh --live)\n"
+        f"{BERICHT_ZEILEN}\n\n"
+        "Do you want to proceed?\n"
+        "❯ 1. Yes\n"
+        "  2. Yes, and don't ask again for this command\n"
+        "  3. No, and tell Claude what to do differently\n\n"
+        "Esc to cancel · Tab to amend · ctrl+e to explain"
+    )
+    frage = aufseher_stand.frage_im_text(text)
+    assert "Do you want to proceed?" in frage
+    schritt = leiter.entscheide(_lage(aufseher_stand.RUECKFRAGE, frage), leiter.Gemerkt(0, None), time.time(), 250.0)
+    assert schritt.aktion == "mensch"
+
+
+def test_still_live_wort_weit_ueber_frage_ist_klasse_2() -> None:
+    text = (
+        f"● Ich würde den Stand jetzt live deployen.\n{BERICHT_ZEILEN}\n\nPasst das so?\n\n"
+        f"{EINGABE}\n❯ \n{EINGABE}\n  Kontext 80k"
+    )
+    frage = aufseher_stand.frage_im_text(text)
+    assert frage.endswith("Passt das so?")
+    schritt = leiter.entscheide(_lage(aufseher_stand.STILL, frage, 25), leiter.Gemerkt(0, None), time.time(), 250.0)
+    assert schritt.aktion == "mensch"
