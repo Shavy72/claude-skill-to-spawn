@@ -70,7 +70,7 @@ def _text_funde(datei: str) -> list[str]:
             for versatz, zeile in enumerate(tok.string.splitlines()):
                 # Escapes „\n“, „\t“, „\r“ stehen roh im Token und verdecken sonst die
                 # Wortgrenze.
-                if NAME.search(zeile.replace("\\n", " ")):
+                if NAME.search(ESCAPE.sub(" ", zeile)):
                     funde.append(f"{datei}:{tok.start[0] + versatz}")
     return funde
 
