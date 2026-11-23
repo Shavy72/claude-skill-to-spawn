@@ -74,8 +74,6 @@ MAIL_AUS = (
 )
 #: Sekunden, die ein Tick auf die Sperre eines anderen Laufs wartet.
 SPERRE_S = 30.0
-GIT_ZEIT_S = 30
-FETCH_ZEIT_S = 60
 
 _TEST_DATEI = re.compile(
     r"(^|/)(tests?/|test_[^/]*\.py$|[^/]*_test\.py$|[^/]*\.(test|spec)\.[cm]?[jt]sx?$)"
@@ -202,8 +200,8 @@ class TickErgebnis:
 
 
 def _git(repo: Path, *args: str) -> tuple[int, str]:
-    """``git <args>`` mit Zeitgrenze (fetch 60 s, sonst 30 s); Zeitablauf = Fehler."""
-    grenze = FETCH_ZEIT_S if args[:1] == ("fetch",) else GIT_ZEIT_S
+    """``git <args>`` mit Zeitgrenze (Grenzen: gh.FETCH_ZEIT_S bzw. gh.GIT_ZEIT_S); Zeitablauf = Fehler."""
+    grenze = gh.FETCH_ZEIT_S if args[:1] == ("fetch",) else gh.GIT_ZEIT_S  # eine Stelle: gh (#320)
     try:
         fertig = subprocess.run(
             ["git", *args],

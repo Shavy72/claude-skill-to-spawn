@@ -116,8 +116,7 @@ def main() -> int:
         deps = gh_json(f"repos/{REPO}/issues/{n}/dependencies/blocked_by")
         assert isinstance(deps, list)
         blocker_offen = gh.offene_blocker(deps)  # zu oder staging:fertig (#1527)
-        commit = sh("git", "log", haupt, "--oneline", "-1", "--fixed-strings", "--grep", f"(#{n})", cwd=repo)
-        commit = commit[:7] if commit else "-"
+        commit = (gh.letzter_commit(repo, n, haupt) or "-")[:7]
         kommentare = gh_json(f"repos/{REPO}/issues/{n}/comments?per_page=1&direction=desc")
         assert isinstance(kommentare, list)
         letzter = kommentare[0] if kommentare else None
