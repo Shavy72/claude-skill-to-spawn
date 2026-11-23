@@ -45,6 +45,18 @@ was zum Weiterbauen nötig ist.
 
 ## 3. Stand
 
+- **2026-11-23 09:56 (Server-Uhr, main d23c7c0):** Seit dem Eintrag von 09:44 gemergt und auf dem
+  Bau-Server installiert (Stand d23c7c0):
+  - Pull-Request 328 (Issue 325 Teil 1, Rollenwort statt festem Personennamen in
+    `to_spawn/ticketstand.py`, `to_spawn/melder.py`, `SKILL.md`; main d23c7c0). Volle Suite 3395
+    bestanden, 81 übersprungen, 18 xfailed. Issue 325 bleibt offen (Teil 2 in Arbeit: `aufpasser.py`,
+    `capo.py`, `hausmeister.py`, `leitstand.py`, `abschluss_paket.py`).
+  - Issue 326 geschlossen: Rot-Probe des Review-Werkzeugs meldet bei reinem Kommentar-/Test-Diff
+    „nicht beurteilbar“ statt eines harten Befunds (Fix liegt im Review-Ordner des Benutzers, nicht in
+    diesem Repo).
+  - Neues Issue 329: Review-Werkzeug hat keine versionierte Quelle.
+  - Unverändert offen: Pull-Request 317 (274 P1) wartet auf die Zusatz-Datei im App-Repo.
+
 - **2026-11-23 09:44 (Server-Uhr, main 599782c):** Seit dem Eintrag von 09:14 gemergt und auf dem
   Bau-Server installiert (Stand 599782c):
   - Pull-Request 321 (Issue 282 P3, Abschluss-Session wird nicht mehr abgewürgt, Wiederanlauf-Frage in
