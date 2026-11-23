@@ -12,6 +12,10 @@ Dazu die festen Texte, die ``respawn``, Aufseher-Ablösung und Aufpasser in ein 
 from __future__ import annotations
 
 from .befugnis import KOPF as _BEFUGNIS_KOPF
+from .ticket_zustand import STAGING_FERTIG_LABEL
+
+#: Überschrift der Entscheidungs-Linie (#376).
+LINIE_KOPF = "Entscheidungs-Linie"
 
 #: Mindset (E10, E41, E40, E42): steht wortgleich im Aufseher-Prompt, in jedem
 #: Anstupser und in der Bau-Prompt-Vorlage.
@@ -34,6 +38,27 @@ STOSS_SCHLUSS = (
     "Ablöse-SOP (Handoff + Startprompt schreiben, dann nichts mehr tun). Sonst setz deinen "
     "Loop genau dort fort, wo du warst."
 )
+
+
+def entscheidungs_linie(hauptzweig: str = "") -> str:
+    """Entscheidungs-Linie (#376, Lastenheft L9): acht feste Punkte, einzige Quelle.
+
+    Steht im Start-Text jeder Bau-Session (``{ENTSCHEIDUNGS_LINIE}`` in ``skripte/bau.py``)
+    und als Maßstab im Aufseher-Auftrag (``befugnis.aufseher_text``) — ohne Zusatz-Auftrag.
+    ``hauptzweig`` = Hauptzweig laut Repo-Konfig (``gh.hauptzweig``); leer → „dem Hauptzweig“.
+    Das Staging-Label ist dasselbe, an dem ``to_spawn.py blocker`` einen erledigten Blocker
+    erkennt. Ohne geschweifte Klammern (Aufseher-Vorlagen laufen durch ``str.format``).
+    """
+    zweig = f"`origin/{hauptzweig}`" if hauptzweig else "dem Hauptzweig"
+    return f"""{LINIE_KOPF} (gilt ohne Zusatz-Auftrag):
+1) Blocker erledigt = geschlossen ODER Label „{STAGING_FERTIG_LABEL}“ + Commit auf {zweig} (genau das prüft `to_spawn.py blocker`).
+2) Dann selbst claimen und den Skill `implement` starten.
+3) Keine Fragen an den Nutzer: eigenen Vorschlag nehmen, ins Bau-Log schreiben (`to_spawn.py eintrag --typ entscheidung`), weiterbauen; geht das nicht, entscheidet der Aufseher (Briefkasten-Frage mit Vorschlag).
+4) Staging- und Test-Daten sind frei, auch Löschen — vorher Sicherung, danach Beleg.
+5) Nie ohne den Nutzer: Live, Live-Daten, Live-Freigabe, Kosten, Konten echter Personen — diesen Schritt auslassen, Klasse-2-Frage in den Briefkasten (`to_spawn.py frage <N> --klasse 2 --frage … --vorschlag …`) + Issue-Kommentar „braucht den Nutzer“, den Rest weiterbauen.
+6) Fertig = grüne Schlange + echter Klickweg auf Staging + Beleg.
+7) Vor jedem Push die Vor-Prüfungen lokal grün.
+8) Jede für den Nutzer getroffene Entscheidung als eine Zeile (was · warum · Quelle) in die Entscheidungs-Liste der Spec: `to_spawn.py eintrag --typ entscheidung --frage <was> --wahl <Wahl> --grund "<warum> · Quelle: <Fundstelle>"`."""
 
 
 def anstupser(wer: str) -> str:

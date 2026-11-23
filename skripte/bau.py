@@ -509,10 +509,12 @@ def build_prompt(
     ``{SESSION_KOPF}`` = Marke jedes Session-Kommentars aus ``capo.SESSION_KOPF`` (#402),
     ``{MINDSET}``/``{ABLOESE_SOP}`` = feste Texte aus ``anleitung`` (#500),
     ``{BEFUGNIS}`` = Befugnis-Abschnitt aus ``befugnis.start_text`` (#278),
+    ``{ENTSCHEIDUNGS_LINIE}`` = ``anleitung.entscheidungs_linie`` mit dem Hauptzweig (#376),
     ``{REPO_ZUSATZ}`` = Inhalt von ``start_text.zusatz_datei`` (#274 P1) — zuletzt eingesetzt, darin
     nur :data:`ZUSATZ_PLATZHALTER` ersetzt; leer → Platzhalter samt Überschrift darüber entfällt."""
     konfig = konfig if konfig is not None else config.lade(REPO)
     label = str((konfig.get("regularien") or {}).get("checkpoint_label") or "checkpoint:human")
+    haupt = gh.hauptzweig(REPO)
     werte = {
         "{WT}": worktree_pfad(ticket),
         "{N}": ticket,
@@ -520,12 +522,13 @@ def build_prompt(
         "{TITLE}": title,
         "{KONTEXT}": kontext,
         "{REPO}": GH_REPO,
-        "{HAUPTZWEIG}": gh.hauptzweig(REPO),
+        "{HAUPTZWEIG}": haupt,
         "{CHECKPOINT_LABEL}": label,
         "{SESSION_KOPF}": capo.SESSION_KOPF,
         "{MINDSET}": anleitung.MINDSET,
         "{ABLOESE_SOP}": anleitung.ABLOESE_SOP,
         "{BEFUGNIS}": befugnis.start_text(ticket),
+        "{ENTSCHEIDUNGS_LINIE}": anleitung.entscheidungs_linie(haupt),
     }
     zusatz = repo_zusatz(konfig)
     if not zusatz:

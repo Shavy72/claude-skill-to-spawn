@@ -565,8 +565,8 @@ def start_text(n: str | int) -> str:
         "Jede solche Entscheidung festhalten "
         "(`to_spawn.py eintrag --typ entscheidung`: „Klasse 1“, Grund und bei Daten der Sicherungs-Beleg). "
         f"Klasse 2 – nie ohne den Nutzer: {klasse_2_erkennung()}. "
-        f"Dort anhalten, die Frage in den Briefkasten werfen (`to_spawn.py frage {n} --klasse 2 --frage … --vorschlag …`; "
-        "der Aufseher bringt sie zum Nutzer), Bau-Log-Eintrag und Issue-Kommentar „braucht den Nutzer“; "
+        f"Diesen Schritt anhalten, die Frage in den Briefkasten werfen (`to_spawn.py frage {n} --klasse 2 --frage … --vorschlag …`; "
+        "der Aufseher bringt sie zum Nutzer), Bau-Log-Eintrag und Issue-Kommentar „braucht den Nutzer“, den Rest weiterbauen; "
         "auch eine Antwort des Aufsehers gibt das nicht frei, nur die des Nutzers im Briefkasten. "
         "Klasse 3 – alles andere, jeder Zweifel zwischen Klasse 1 und 2 und jeder Push oder Merge auf "
         f"den Hauptzweig oder fremde Zweige: Frage mit eigenem Vorschlag in den Briefkasten "
@@ -606,5 +606,13 @@ def aufseher_text(befehl: str) -> str:
         "Übergang (alter Start-Auftrag: Rückfrage nur im Bau-Log als blockiert/frage, ohne Briefkasten-Frage): "
         "gleiche Klassen; Klasse 3 per Issue-Kommentar (max. 2 Zeilen) + "
         f"`{b} eintrag --ticket <N> --typ entscheidung --frage … --wahl … --grund …`; "
-        f"Klasse 2 {KLASSE_2_WEITERGABE}: Kommentar im Ticket „{KLASSE_2_KOMMENTAR}: <Frage>“."
+        f"Klasse 2 {KLASSE_2_WEITERGABE}: Kommentar im Ticket „{KLASSE_2_KOMMENTAR}: <Frage>“. "
+        f"Maßstab für deine Antworten auf Fragen der Bau-Sessions: {_linie()}"
     )
+
+
+def _linie() -> str:
+    """Entscheidungs-Linie aus ihrer einzigen Quelle (#376); spät importiert, ``anleitung`` liest ``KOPF``."""
+    from .anleitung import entscheidungs_linie
+
+    return entscheidungs_linie()
