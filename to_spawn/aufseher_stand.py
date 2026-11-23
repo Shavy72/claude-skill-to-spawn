@@ -454,28 +454,62 @@ def sammeln(spec: int, q: Quellen, vorher: _Vorher) -> _Ergebnis:
 FRAGE_ZEILEN = 8
 #: Höchstens so viele Zeichen trägt eine Fenster-Frage im Briefkasten (:func:`frage_kurz`).
 FRAGE_MAX = 600
-#: Erste Zeile einer Antwort-/Werkzeug-Ausgabe der Session (``● …``, ältere Versionen ``⏺ …``).
-ANTWORT_START = re.compile(r"^\s*[●⏺]")
+#: Eingabezeile des Menschen im Verlauf (``> …``/``❯ …``) — nur ganz links, mit Text, nie eine
+#: Auswahlzeile (``❯ 1. Yes``).
+EINGABE_ZEILE = re.compile(r"^[>❯]\s+(?!\d+\.)\S")
 
 
-def frage_im_text(text: str) -> str:
-    """Frage an den Menschen am Ende des Pane-Texts (#372), ``""`` = keine; ungekürzt.
+def unbeaufsichtigt(text: str) -> list[str]:
+    """Zeilen des Pane-Texts seit der letzten Eingabe des Menschen, ohne Eingabefeld (#372).
 
-    Betrachtet wird nur die aktuelle Antwort: ab der letzten Antwort-Startzeile
-    (:data:`ANTWORT_START`) bis über das Eingabefeld; fehlt sie im Bild, alles (im Zweifel zum
-    Menschen). Rückfrage-Dialog (:func:`aufpasser.rueckfrage`): die letzten Zeilen samt Befehl
-    darüber. Sonst der letzte Absatz, nur wenn er mit ``?`` endet — eine stille Session ohne
-    solche Frage hängt (Stupser/Handoff wie bisher). Trägt nur Text weiter oben in der Antwort
-    ein Klasse-2-Wort (:func:`befugnis.ist_klasse_2`), steht diese Zeile vor der Frage, damit
-    Klasse und Grund auch nach :func:`frage_kurz` sichtbar bleiben.
+    Alles danach hat die Session allein geschrieben (Antworten, Werkzeug-Aufrufe, Rückfrage-
+    Dialog) und zählt für Frage und Klasse; davor hat der Mensch schon gesehen. Ohne erkennbare
+    Eingabezeile alles (im Zweifel zum Menschen). Als Grenze zählt nur eine Zeile, die ganz links
+    mit ``>``/``❯`` beginnt — Claude Code rückt Antwort-Text samt Markdown-Zitat ein; ein
+    eingerücktes ``> …`` ist daher nie Grenze, damit kein Live-Wort vor einem Zitat verloren geht.
     """
     zeilen = aufpasser.ohne_statuszeile(text).splitlines()
     linien = [i for i, z in enumerate(zeilen) if aufpasser.EINGABEFELD_LINIE.fullmatch(z)]
     if linien:
         zeilen = zeilen[: linien[-1]]  # Eingabefeld (``❯ …``) gehört nicht zur Ausgabe
-    starts = [i for i, z in enumerate(zeilen) if ANTWORT_START.match(z)]
-    if starts:
-        zeilen = zeilen[starts[-1] :]  # ältere Ausgabe davor zählt nicht (Review PR 374)
+    eingaben = [i for i, z in enumerate(zeilen) if EINGABE_ZEILE.match(z)]
+    return zeilen[eingaben[-1] + 1 :] if eingaben else zeilen
+
+
+def _grund_kurz(zeile: str, grenze: int) -> str:
+    """Klasse-2-Zeile auf höchstens ``grenze`` Zeichen um das Klasse-2-Wort herum."""
+    if len(zeile) <= grenze:
+        return zeile
+    w = zeile.split()
+    a, b = 0, len(w)
+    while b - a > 1 and befugnis.ist_klasse_2(" ".join(w[a + 1 : b])):
+        a += 1
+    while b - a > 1 and befugnis.ist_klasse_2(" ".join(w[a : b - 1])):
+        b -= 1
+    # Kern (kleinstes Wortfenster mit Klasse-2-Wort) abwechselnd um Nachbarwörter erweitern.
+    while True:
+        weiter = False
+        if a > 0 and len(" ".join(w[a - 1 : b])) + 2 <= grenze:
+            a, weiter = a - 1, True
+        if b < len(w) and len(" ".join(w[a : b + 1])) + 2 <= grenze:
+            b, weiter = b + 1, True
+        if not weiter:
+            break
+    # ponytail: Kern allein über ``grenze`` bleibt ungekürzt, frage_kurz kann ihn dann anschneiden.
+    return ("…" if a else "") + " ".join(w[a:b]) + ("…" if b < len(w) else "")
+
+
+def frage_im_text(text: str) -> str:
+    """Frage an den Menschen am Ende des Pane-Texts (#372), ``""`` = keine; ungekürzt.
+
+    Betrachtet wird nur, was seit der letzten Eingabe des Menschen kam (:func:`unbeaufsichtigt`).
+    Rückfrage-Dialog (:func:`aufpasser.rueckfrage`): die letzten Zeilen samt Befehl
+    darüber. Sonst der letzte Absatz, nur wenn er mit ``?`` endet — eine stille Session ohne
+    solche Frage hängt (Stupser/Handoff wie bisher). Trägt nur Text weiter oben in der Antwort
+    ein Klasse-2-Wort (:func:`befugnis.ist_klasse_2`), steht diese Zeile vor der Frage, damit
+    Klasse und Grund auch nach :func:`frage_kurz` sichtbar bleiben.
+    """
+    zeilen = unbeaufsichtigt(text)
     voll = [z.strip() for z in zeilen if z.strip()]
     if aufpasser.rueckfrage(text):
         teile = voll[-FRAGE_ZEILEN:]
@@ -498,7 +532,7 @@ def frage_im_text(text: str) -> str:
         # sonst schneidet :func:`frage_kurz` den Grund weg; steht das Wort über zwei Zeilen
         # verteilt, alle Zeilen (Review PR 374).
         grund = next((z for z in voll if befugnis.ist_klasse_2(z)), None)
-        # ponytail: Grund-Zeile über FRAGE_MAX/2 Zeichen kann frage_kurz trotzdem anschneiden.
+        grund = _grund_kurz(grund, FRAGE_MAX // 2) if grund else None
         rest = frage_kurz(" ".join(teile), max(FRAGE_MAX - len(grund or "") - 3, FRAGE_MAX // 2))
         teile = [grund, "…", rest.lstrip("…")] if grund else voll
     return " ".join(" ".join(teile).split())

@@ -19,7 +19,7 @@ import pytest
 SKILL = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SKILL))
 
-from to_spawn import aufseher_stand, briefkasten, leiter, ticket_zustand
+from to_spawn import aufseher_stand, befugnis, briefkasten, leiter, ticket_zustand
 
 SPEC = 9399
 TICKET = 9372
@@ -221,7 +221,9 @@ LANG_LIVE = f"{BERICHT} Soll ich das jetzt live deployen?"
 
 
 def test_langer_absatz_mit_live_frage_am_ende_ist_klasse_2() -> None:
-    zeilen = "\n".join(f"Zeile {i}: Tests laufen grün, Diff geprüft, Belege abgelegt und Worktree aufgeräumt." for i in range(7))
+    zeilen = "\n".join(
+        f"Zeile {i}: Tests laufen grün, Diff geprüft, Belege abgelegt und Worktree aufgeräumt." for i in range(7)
+    )
     text = f"● Start.\n\n{zeilen}\nSoll ich das jetzt live deployen?\n\n{EINGABE}\n❯ \n{EINGABE}\n  Kontext 80k"
     frage = aufseher_stand.frage_im_text(text)
     assert frage.endswith("Soll ich das jetzt live deployen?")
@@ -327,9 +329,7 @@ def test_doppel_schutz_verschluckt_live_wort_im_abgeschnittenen_anfang_nicht(
     assert zweit != erst
     offen = briefkasten.offene([TICKET], hauptbaum=baum)
     assert sorted(f["klasse"] for f in offen) == ["2", "3"]
-    assert (
-        leiter.frage_einwerfen(baum, SPEC, TICKET, live) == zweit
-    )  # Klasse-2-Doppel bleibt einer
+    assert leiter.frage_einwerfen(baum, SPEC, TICKET, live) == zweit  # Klasse-2-Doppel bleibt einer
 
 
 def test_live_wort_im_absatz_davor_braucht_den_menschen() -> None:
@@ -383,7 +383,7 @@ def test_still_live_wort_weit_ueber_frage_ist_klasse_2() -> None:
 def test_alte_ausgabe_mit_live_wort_vor_letzter_antwort_darf_der_entscheider() -> None:
     text = (
         f"● Live-Deploy von gestern ist durch.\n{BERICHT_ZEILEN}\n\n"
-        f"● Tests grün.\n\nSoll ich mit Ticket 12 weitermachen?\n\n"
+        f"> jetzt Ticket 12\n\n● Tests grün.\n\nSoll ich mit Ticket 12 weitermachen?\n\n"
         f"{EINGABE}\n❯ \n{EINGABE}\n  Kontext 80k"
     )
     frage = aufseher_stand.frage_im_text(text)
@@ -415,3 +415,93 @@ def test_live_zeile_steht_im_gekuerzten_fragetext(baum: Path) -> None:
     offen = briefkasten.offene([TICKET], hauptbaum=baum)
     assert [f["klasse"] for f in offen] == ["2"]
     assert "live deployen" in offen[0]["frage"]
+
+
+# --- Fix-Runde 5: Grenze = letzte Eingabezeile des Menschen, nicht ●-Zeile (Review PR 374) --
+
+FUSS = f"\n\n{EINGABE}\n❯ \n{EINGABE}\n  Kontext 80k"
+
+
+def _klasse_2(text: str) -> bool:
+    frage = aufseher_stand.frage_im_text(text)
+    assert frage, "Frage erwartet"
+    return befugnis.ist_klasse_2(frage)
+
+
+def test_live_text_dann_werkzeug_dann_frage_ist_klasse_2() -> None:
+    text = (
+        "> mach weiter mit Ticket 12\n\n"
+        "● Ich deploye den Stand gleich live auf die Hauptapp.\n\n"
+        "● Bash(git status --short)\n  ⎿  (No content)\n\n"
+        "● Passt das so?" + FUSS
+    )
+    assert _klasse_2(text)
+
+
+def test_live_werkzeug_dann_frage_ist_klasse_2() -> None:
+    text = (
+        "> los\n\n"
+        "● Bash(bash scripts/safe_deploy_vps.sh --skip-ci)\n  ⎿  Deploy ok\n\n"
+        "● Fertig. Soll ich weitermachen?" + FUSS
+    )
+    assert _klasse_2(text)
+
+
+def test_rueckfrage_harmloser_befehl_nach_live_text_ist_klasse_2() -> None:
+    text = (
+        "> los\n\n"
+        "● Ich schalte jetzt live, erst noch ein Check.\n\n"
+        "● Bash(git log -1)\n\n"
+        "╭────────╮\n│ Bash command\n│   git log -1\n│ Do you want to proceed?\n"
+        "│ ❯ 1. Yes\n│   2. No\n╰────────╯\n Esc to cancel"
+    )
+    assert _klasse_2(text)
+
+
+def test_zitat_in_der_antwort_verliert_live_wort_davor_nicht() -> None:
+    text = (
+        "> los\n\n"
+        "● Ich schalte den Stand gleich live.\n"
+        "  > Zitat aus dem Ticket: bitte sauber abschließen\n"
+        "  Passt das so?" + FUSS
+    )
+    assert _klasse_2(text)
+
+
+def test_zitat_in_der_antwort_live_wort_danach_ist_klasse_2() -> None:
+    text = (
+        "> los\n\n"
+        "● Bericht steht.\n"
+        "  > Zitat aus dem Ticket: bitte sauber abschließen\n"
+        "  Danach deploye ich live.\n\n"
+        "  Passt das so?" + FUSS
+    )
+    assert _klasse_2(text)
+
+
+@pytest.mark.parametrize("zeichen", [">", "❯"])
+def test_live_wort_vor_letzter_eingabe_bleibt_klasse_3(zeichen: str) -> None:
+    text = (
+        f"{zeichen} deploy live\n\n● Live-Deploy ist durch.\n\n"
+        f"{zeichen} jetzt Ticket 12\n\n● Tests grün.\n\nSoll ich mit Ticket 13 weitermachen?" + FUSS
+    )
+    frage = aufseher_stand.frage_im_text(text)
+    assert frage == "Soll ich mit Ticket 13 weitermachen?"
+    schritt = leiter.entscheide(_lage(aufseher_stand.STILL, frage, 25), leiter.Gemerkt(0, None), time.time(), 250.0)
+    assert schritt.aktion == "entscheider"
+
+
+def test_lange_live_zeile_behaelt_live_wort_im_gespeicherten_text(baum: Path) -> None:
+    fuell = " ".join(f"Wort{i} ohne Befund" for i in range(40))
+    text = (
+        f"> los\n\n● {fuell} dann deploye ich live {fuell}\n\n"
+        f"{BERICHT_ZEILEN}\n\nPasst das so?" + FUSS
+    )
+    frage = aufseher_stand.frage_im_text(text)
+    assert frage.endswith("Passt das so?")
+    erg = _lauf(FakeUmwelt(baum, frage=frage))
+    assert "braucht den Menschen" in erg.zeile
+    offen = briefkasten.offene([TICKET], hauptbaum=baum)
+    assert [f["klasse"] for f in offen] == ["2"]
+    assert "deploye ich live" in offen[0]["frage"]
+    assert len(offen[0]["frage"]) <= aufseher_stand.FRAGE_MAX
