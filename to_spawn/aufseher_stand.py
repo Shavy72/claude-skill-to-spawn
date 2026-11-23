@@ -59,7 +59,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, NamedTuple
 
-from to_spawn import aufpasser, bau_log, capo, config, gh, pc_fenster, ticket_zustand
+from to_spawn import (
+    aufpasser,
+    bau_log,
+    capo,
+    config,
+    gh,
+    pc_fenster,
+    ticket_zustand,
+    wiederanlauf,
+)
 
 log = logging.getLogger("to_spawn.aufseher_stand")
 
@@ -113,6 +122,10 @@ class Quellen:
     #: Am PC (kein tmux, #501): Ticket → Sekunden seit dem letzten Transkript-Eintrag
     #: (``None`` = keine Session). Gesetzt = PC-Weg, tmux wird nicht gefragt.
     pc_still: Callable[[int], float | None] | None = None
+    #: Wiederanlauf-Art eines fertig gebauten Tickets (#282 P3): ``(ticket, arbeitsbaum)`` →
+    #: :func:`wiederanlauf.feststellen`. :func:`echte_quellen` setzt es immer; ``None`` nur in
+    #: Test-Fakes ohne diese Frage (die Leiter entscheidet dann allein nach der Stufe).
+    anlauf: Callable[[int, Path], wiederanlauf.Wiederanlauf | None] | None = None
 
 
 def _tmux_echt(args: list[str]) -> str | None:
@@ -141,7 +154,11 @@ def echte_quellen(repo: Path, gh_repo: str) -> Quellen:
         def pc_still(n: int) -> float | None:
             return pc_fenster.still_s(repo, n, time.time())
     return Quellen(
-        repo=repo, kinder=lambda s: capo.kinder(gh_repo, s), tmux=_tmux_echt, pc_still=pc_still
+        repo=repo,
+        kinder=lambda s: capo.kinder(gh_repo, s),
+        tmux=_tmux_echt,
+        pc_still=pc_still,
+        anlauf=wiederanlauf.feststellen,
     )
 
 
