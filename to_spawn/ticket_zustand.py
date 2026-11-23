@@ -15,6 +15,10 @@ Ein Ticket ist ein ``dict`` in jeder Form, die bei uns vorkommt: REST (``state: 
 ``state_reason``, Labels als Objekte), ``gh``-CLI (``state: OPEN``, ``stateReason``)
 GraphQL (``labels: {nodes: [...]}``) oder schon aufbereitet (Labels als Namen, auch als Menge).
 Welches Label und welcher GitHub-Zustand was bedeutet, steht nur hier.
+
+``None`` statt Ticket heißt „nichts bekannt“ und gilt wie ein Ticket ohne Felder als
+``offen``: keine Frage wirft, nichts wird auf Verdacht geschlossen oder weggeworfen.
+Wer *starten* will, prüft das ``None`` aus :func:`lesen` selbst (nichts starten).
 """
 
 from __future__ import annotations
@@ -53,25 +57,41 @@ ANZEIGE: dict[Stufe, str] = {
 _FELDER = "state,labels,stateReason"
 
 
-def fertig_gebaut(ticket: Mapping[str, Any]) -> bool:
+def fertig_gebaut(ticket: Mapping[str, Any] | None) -> bool:
     """Zu ODER grün auf Staging: hier baut niemand mehr."""
     return stufe(ticket) != "offen"
 
 
-def endgueltig_zu(ticket: Mapping[str, Any]) -> bool:
+def endgueltig_zu(ticket: Mapping[str, Any] | None) -> bool:
     """Issue geschlossen (auch „verworfen“): echter Schluss."""
     return stufe(ticket) in ("zu", "verworfen")
 
 
-def stufe(ticket: Mapping[str, Any]) -> Stufe:
-    """Anzeige-Stufe; fehlende Felder gelten als offen."""
-    if str(ticket.get("state", "")).lower() == "closed":
-        grund = ticket.get("state_reason") or ticket.get("stateReason") or ""
-        return "verworfen" if str(grund).lower() in _VERWORFEN_GRUENDE else "zu"
+def stufe(ticket: Mapping[str, Any] | None) -> Stufe:
+    """Anzeige-Stufe; fehlende Felder und ``None`` gelten als ``offen`` (fail-closed, s. Modul)."""
+    if ticket is None:
+        return "offen"
+    if str(ticket.get("state", "")).strip().lower() == "closed":
+        return "verworfen" if schliessgrund(ticket) in _VERWORFEN_GRUENDE else "zu"
     return "fertig_gebaut" if _staging_fertig(ticket) else "offen"
 
 
-def wortlaut(ticket: Mapping[str, Any]) -> str:
+def schliessgrund(ticket: Mapping[str, Any] | None) -> str:
+    """GitHub-Schließgrund klein und ohne Leerzeichen (REST ``state_reason``, CLI ``stateReason``); sonst ``""``."""
+    if ticket is None:
+        return ""
+    return str(ticket.get("state_reason") or ticket.get("stateReason") or "").strip().lower()
+
+
+def label_namen(ticket: Mapping[str, Any] | None) -> set[str]:
+    """Label-Namen in jeder Form: Objekte, reine Namen (auch als Menge), GraphQL ``{nodes: [...]}``."""
+    labels = (ticket or {}).get("labels") or ()
+    if isinstance(labels, Mapping):  # GraphQL: ``labels { nodes { name } }``
+        labels = labels.get("nodes") or ()
+    return {str(x.get("name") if isinstance(x, Mapping) else x) for x in labels}
+
+
+def wortlaut(ticket: Mapping[str, Any] | None) -> str:
     """Kurzer Text zur Stufe für Meldungen — „fertig gebaut“ ist nicht „zu“."""
     return _WORTLAUT[stufe(ticket)]
 
@@ -98,8 +118,4 @@ def lesen(ticket: int | str, cwd: Path | None = None) -> dict[str, Any] | None:
 
 
 def _staging_fertig(ticket: Mapping[str, Any]) -> bool:
-    labels = ticket.get("labels") or ()
-    if isinstance(labels, Mapping):  # GraphQL: ``labels { nodes { name } }``
-        labels = labels.get("nodes") or ()
-    namen = {str(x.get("name") if isinstance(x, Mapping) else x) for x in labels}
-    return STAGING_FERTIG_LABEL in namen
+    return STAGING_FERTIG_LABEL in label_namen(ticket)

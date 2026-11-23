@@ -2,7 +2,7 @@
 
 1. ``weiter_entscheidung``: unbekannt → begrenzt erneut fragen, dann laut Exit 2 (nie
    still Exit 0 wie „geschlossen“).
-2. ``gh.ticket_offen`` hat eine Zeitgrenze; hängt gh, endet ``bau.py`` laut statt stumm.
+2. ``ticket_zustand.lesen`` (``gh.ticket_stand_timeout``) hat eine Zeitgrenze; hängt gh, endet ``bau.py`` laut statt stumm.
 3. Prüf-Test „nur eine Start-Stelle“ erkennt auch ``tmux new-window … claude``.
 """
 

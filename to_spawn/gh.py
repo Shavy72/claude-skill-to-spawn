@@ -130,21 +130,6 @@ def blocked_by(repo_slug: str, ticket: str, cwd: Path | None = None) -> list[dic
     return daten if isinstance(daten, list) else None
 
 
-#: Weitergereicht aus :mod:`to_spawn.ticket_zustand` (dort lebt das Wissen, #279).
-# ponytail: Alt-Namen für capo.py (P3 von #279), danach fragen die Aufrufer das Modul direkt.
-STAGING_FERTIG_LABEL = ticket_zustand.STAGING_FERTIG_LABEL
-wartet_auf_live = ticket_zustand.wartet_auf_live
-
-
-def staging_fertig(issue: dict) -> bool:
-    """Alt-Name (capo.py): nur „grün auf Staging“, GitHub-Zustand egal.
-
-    Nicht :func:`ticket_zustand.fertig_gebaut`: capo fragt mit dem Stand *vor* dem
-    Wieder-Öffnen (noch zu) — dort zählt allein das Staging-Label.
-    """
-    return ticket_zustand.wartet_auf_live(issue, live_freigegeben=False)
-
-
 def blocker_erledigt(dep: dict) -> bool:
     """Zählt dieser Blocker für Folge-Tickets als erledigt? Frage ``fertig_gebaut`` (#1527, #279).
 
@@ -199,23 +184,12 @@ TICKET_STAND_TIMEOUT_ENV = "TO_SPAWN_GH_TIMEOUT"
 
 
 def ticket_stand_timeout() -> float:
-    """Zeitgrenze für :func:`ticket_offen`; ungültiger Env-Wert → Standard."""
+    """Zeitgrenze für :func:`ticket_zustand.lesen`; ungültiger Env-Wert → Standard."""
     try:
         wert = float(os.environ.get(TICKET_STAND_TIMEOUT_ENV) or TICKET_STAND_TIMEOUT_S)
     except ValueError:
         return TICKET_STAND_TIMEOUT_S
     return wert if wert > 0 else TICKET_STAND_TIMEOUT_S
-
-
-def ticket_offen(ticket: str, cwd: Path | None = None) -> bool | None:
-    """``True`` solange nicht :func:`ticket_zustand.endgueltig_zu`, ``None`` bei Fehler/Zeitüberschreitung.
-
-    Roh-Abfrage für Alt-Aufrufer; neue Stellen nehmen :func:`ticket_zustand.lesen` und wählen die Frage (#279).
-    """
-    daten = json_lauf(["issue", "view", str(ticket), "--json", "state"], cwd=cwd, timeout=ticket_stand_timeout())
-    if not isinstance(daten, dict) or "state" not in daten:
-        return None
-    return not ticket_zustand.endgueltig_zu(daten)
 
 
 def ticket_daten(ticket: str, cwd: Path | None = None) -> dict[str, Any] | None:
