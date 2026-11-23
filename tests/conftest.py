@@ -449,6 +449,16 @@ def _hausmeister_nur_im_test(
     monkeypatch.setenv("TO_SPAWN_STAGING_SPERRE", str(ordner / "keine-staging-sperre"))
     # #136: Temp-Ordner nie echt (kein ~/tmp-bau).
     monkeypatch.setenv("TO_SPAWN_TEMP_ORDNER", str(ordner / "temp"))
+    # #349: ``bau.main``/``wache.main`` setzen TMPDIR/TEMP/TMP per ``os.environ.update`` auf
+    # diesen Ordner. Ein Test stellt per ``monkeypatch`` oft nur TMPDIR zurück — TEMP/TMP
+    # blieben stehen und erbten an spätere Unterprozesse. Hier merkt sich monkeypatch alle drei
+    # (setenv auf den Ist-Wert bzw. setenv+delenv), damit sie nach jedem Test zurückgestellt sind.
+    for name in ("TMPDIR", "TEMP", "TMP"):
+        if name in os.environ:
+            monkeypatch.setenv(name, os.environ[name])
+        else:
+            monkeypatch.setenv(name, "")
+            monkeypatch.delenv(name)
     # #145: Sicherung (Rundgang, Aufseher-Ablösung) schreibt nur in tmp, lädt keine echten Zweige hoch.
     monkeypatch.setenv("TO_SPAWN_SICHERUNG_ZIEL", str(ordner / "sicherung"))
     monkeypatch.setenv("TO_SPAWN_SICHERUNG_ZWEIG_REPOS", "")
