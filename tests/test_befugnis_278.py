@@ -211,7 +211,8 @@ def test_harmlose_faelle_nie_klasse_2(
     ("ziel", "klasse"),
     [
         ("wip-zweig", 1),
-        ("wip/278-sicherung", 1),
+        ("wip/7-sicherung", 1),
+        ("wip/278-sicherung", 3),  # Runde 4: wip nur mit eigener Nummer
         ("ticket-zweig", 3),
         ("ticket/<n>-…", 3),
         ("wip/../master", 3),
@@ -267,3 +268,78 @@ def test_abo_zahl_nur_ganzes_wort(befugnis: ModuleType, ziel: str) -> None:
 
 def test_deploy_auf_staging_bleibt(befugnis: ModuleType) -> None:
     assert befugnis.einordnen("staging", "deploy", True) == 3
+
+
+# --- Prüfer-Runde 4 (#278 P1): Push nur auf gültigen eigenen Zweignamen, mehr Klasse-2-Wörter ---
+
+
+@pytest.mark.parametrize(
+    "ziel",
+    [
+        "ticket/12-x:master",
+        "ticket/12-x:refs/heads/master",
+        "wip/x:master",
+        "ticket/12-x master",
+        "ticket/12-x;git push origin master",
+        "ticket/12-+master",
+        "ticket/12-x~1",
+        "ticket/12-x@{0}",
+        "ticket/12-x\tmaster",
+        "ticket/12-x\nmaster",
+        "wip/12-x:master",
+        "wip/12-a..b",
+        "wip/x",
+        "wip/13-fremd",
+        "ticket/13-fremd",
+    ],
+)
+def test_push_fremdes_ziel_ist_klasse_3(
+    befugnis: ModuleType, monkeypatch: pytest.MonkeyPatch, ziel: str
+) -> None:
+    monkeypatch.setenv("TO_SPAWN_TICKET", "12")
+    assert befugnis.einordnen(ziel, "pushen", False) == 3
+
+
+@pytest.mark.parametrize("ziel", ["ticket/12-x", "ticket/12-befugnis.p1_neu", "wip/12-sicherung"])
+def test_push_gueltiger_eigener_zweig_bleibt_klasse_1(
+    befugnis: ModuleType, monkeypatch: pytest.MonkeyPatch, ziel: str
+) -> None:
+    monkeypatch.setenv("TO_SPAWN_TICKET", "12")
+    assert befugnis.einordnen(ziel, "pushen", False) == 1
+
+
+@pytest.mark.parametrize(
+    "wort",
+    ["zugang", "secret", "credential", "api-key", "API_KEY", "apikey", "api-token",
+     "access-token", "abonnement", "abos", "subscription", "Überweisung",
+     "Überweisung", "ueberweisen", "invoice", "paypal", "stripe", "purchase",
+     "kündigen", "kuendigen", "bezahlt", "pay", "buy", "cost", "charge", "ssh",
+     "ssh-key", "server ssh"],
+)
+def test_runde_4_klasse_2_woerter(befugnis: ModuleType, wort: str) -> None:
+    assert befugnis.einordnen(wort, "ändern", True) == 2
+    assert befugnis.einordnen("staging", wort, True) == 2
+
+
+@pytest.mark.parametrize(
+    ("ziel", "art"),
+    [("staging", "deploy"), ("token-zaehler", "ändern"), ("arbeitsordner", "token"),
+     ("display", "ändern"), ("discharge", "ändern"), ("costume", "ändern")],
+)
+def test_runde_4_bewusst_nicht_klasse_2(befugnis: ModuleType, ziel: str, art: str) -> None:
+    assert befugnis.einordnen(ziel, art, True) != 2
+
+
+def test_start_text_trennt_wortteil_und_ganzes_wort(befugnis: ModuleType) -> None:
+    text = befugnis.start_text("7")
+    klasse_2 = text[text.index("Klasse 2") : text.index("Klasse 3")]
+    teil, rest = klasse_2.split("auch als Wortteil;")
+    ganz = rest.split("nur als ganzes Wort")[0]
+    for wort in befugnis._KLASSE_2_WOERTER:
+        assert wort in teil, wort
+    assert sorted(w.strip() for w in ganz.split(",")) == sorted(befugnis._KLASSE_2_GANZWORT)
+
+
+def test_start_text_zeigt_eigene_nummer(befugnis: ModuleType) -> None:
+    klasse_1 = befugnis.start_text("7").split("Klasse 2")[0]
+    assert "`ticket/7-…`" in klasse_1 and "`wip/7-…`" in klasse_1

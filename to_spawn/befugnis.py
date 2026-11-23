@@ -38,7 +38,9 @@ class _Regel:
 
 #: EINE Wortmenge für Klasse 2 (Grenze L8 A49): trifft als Teilwort in Ziel ODER Art nach
 #: :func:`_norm`. ``prod`` deckt produktion/production, ``vps`` deckt vps-live. Fehl-Treffer
-#: (z. B. „deliver“) fallen in die sichere Richtung 2.
+#: (z. B. „deliver“) fallen in die sichere Richtung 2. Bewusst NICHT drin: ``deploy`` (Deploy auf
+#: Staging ist normaler Bau-Weg; Live fängt das Ziel-Wort „live“) und das nackte ``token`` (meint
+#: im Bau-Alltag Kontext-Token und würde jede zweite Handlung stoppen; ``api-token`` u. a. stehen drin).
 _KLASSE_2_WOERTER = frozenset(
     {
         # Live
@@ -64,12 +66,33 @@ _KLASSE_2_WOERTER = frozenset(
         "passwort",
         "password",
         "login",
+        # Zugang
+        "zugang",
+        "secret",
+        "credential",
+        "api-key",
+        "apikey",
+        "api-token",
+        "access-token",
+        # Abos/Zahlungen
+        "abonnement",
+        "abos",
+        "subscription",
+        "überweis",
+        "ueberweis",
+        "invoice",
+        "paypal",
+        "stripe",
+        "purchase",
+        "kündig",
+        "kuendig",
+        "zahlt",
     }
 )
 
 #: Kurze Wörter nur als ganzes Wort (zwischen „-“ „/“ „.“): „abo“ ≠ „labor“, „zahl“ ≠ „anzahl“.
 #: Zahlungs-Wörter mit Endung stehen oben als Teilwort (z. B. „auszahlung“).
-_KLASSE_2_GANZWORT = frozenset({"abo", "zahl"})
+_KLASSE_2_GANZWORT = frozenset({"abo", "zahl", "pay", "buy", "cost", "charge", "ssh"})
 
 _KLASSE_2 = _Regel(
     2,
@@ -78,7 +101,8 @@ _KLASSE_2 = _Regel(
     _KLASSE_2_WOERTER,
 )
 
-#: Interne Marke für „eigener Ticket-Zweig“; als Eingabe nie gültig (``einordnen`` leert sie).
+#: Interne Marke für „eigener Ticket-Zweig“; als Eingabe nie gültig: ``_norm`` macht aus „…“ per
+#: NFKC „...“, die Marke entsteht also nur in :func:`_zweig_ziel`.
 _EIGENER_TICKET_ZWEIG = "ticket/<n>-…"
 
 _ARBEIT = frozenset({"anlegen", "ändern", "lösen", "entfernen", "testen", "committen"})
@@ -101,7 +125,7 @@ _KLASSE_1: tuple[_Regel, ...] = (
     ),
     _Regel(
         1,
-        "eigener Sicherungs-Zweig `wip/…` und eigener Ticket-Zweig `ticket/<N>-…`",
+        "eigener Sicherungs-Zweig `wip/<N>-…` und eigener Ticket-Zweig `ticket/<N>-…`",
         frozenset({"wip-zweig", _EIGENER_TICKET_ZWEIG}),
         _ARBEIT | {"pushen"},
     ),
@@ -119,7 +143,11 @@ _KLASSE_1: tuple[_Regel, ...] = (
     ),
 )
 
-_TICKET_ZWEIG = re.compile(r"ticket/(\d+)-.+")
+#: Gültiger einfacher Zweigname, positiv definiert: nach ``ticket/<N>-`` bzw. ``wip/<N>-`` nur
+#: ``[a-z0-9._-]`` — kein ``:`` (Refspec), ``+``, Leerraum, ``;``, ``~``, ``@{``, ``/``. Geprüft auf der
+#: ROHEN Eingabe, weil ``_norm`` Leerraum zu „-“ macht. wip-Zweige heißen ``wip/<N>-<kurzname>``
+#: (to_spawn/anleitung.py), darum auch dort nur die eigene Nummer.
+_EIGENER_ZWEIG = re.compile(r"(ticket|wip)/(\d+)-[a-z0-9._-]+")
 
 
 def _norm(wert: object) -> str:
@@ -131,18 +159,19 @@ def _norm(wert: object) -> str:
     )
 
 
-def _zweig_ziel(ziel: str) -> str:
-    """``wip/…`` → ``wip-zweig``; ``ticket/<N>-…`` → Marke nur für das eigene Ticket."""
-    if ".." in ziel:
+def _zweig_ziel(roh: object, ziel: str) -> str:
+    """Eigener ``wip/<N>-…`` → ``wip-zweig``, eigener ``ticket/<N>-…`` → Marke; sonst ``ziel``.
+
+    ``roh`` = Eingabe vor :func:`_norm`; nur ein gültiger einfacher Zweigname zählt (``fullmatch``).
+    """
+    if not isinstance(roh, str) or ".." in roh:
         return ziel  # nie Klasse 1 (Pfad-Tricks wie ``wip/../master``)
-    if ziel.startswith("wip/") and len(ziel) > 4:
-        return "wip-zweig"
-    treffer = _TICKET_ZWEIG.fullmatch(ziel)
-    if treffer:
-        # ponytail: eigenes Ticket aus TO_SPAWN_TICKET (setzt bau.py); fehlt es → fremd (3).
-        eigen = os.environ.get("TO_SPAWN_TICKET", "").strip()
-        return _EIGENER_TICKET_ZWEIG if treffer.group(1) == eigen else ziel
-    return ziel
+    treffer = _EIGENER_ZWEIG.fullmatch(roh)
+    # ponytail: eigenes Ticket aus TO_SPAWN_TICKET (setzt bau.py); fehlt es → fremd (3).
+    eigen = os.environ.get("TO_SPAWN_TICKET", "").strip()
+    if not treffer or not eigen or treffer.group(2) != eigen:
+        return ziel
+    return "wip-zweig" if treffer.group(1) == "wip" else _EIGENER_TICKET_ZWEIG
 
 
 def _ist_klasse_2(wert: str) -> bool:
@@ -156,15 +185,15 @@ def einordnen(ziel: str, art: str, gesichert: bool = False) -> int:
     """Klasse 1, 2 oder 3 für eine geplante Handlung; Unbekanntes und Zweifel ergeben 3.
 
     ``ziel`` z. B. ``live``/``staging``/``testdaten``/``arbeitsordner``/``zweig``/``wip-zweig``/
-    ``wip/…``, ``ticket/<N>-…`` (nur eigene Nummer)/``engpass``/``ticket``, ``art`` z. B.
+    ``wip/<N>-…``, ``ticket/<N>-…`` (nur eigene Nummer)/``engpass``/``ticket``, ``art`` z. B.
     ``ändern``/``pushen``/``warten``/``implement``/``kosten``/``konto``; ``gesichert`` = Sicherung
     liegt vorher vor (Beleg ins Bau-Log). Klasse 2 schlägt immer 1 und 3.
     """
+    roh = ziel
     ziel, art = _norm(ziel), _norm(art)
-    ziel = "" if ziel == _EIGENER_TICKET_ZWEIG else ziel
     if _ist_klasse_2(ziel) or _ist_klasse_2(art):
         return 2
-    ziel = _zweig_ziel(ziel)
+    ziel = _zweig_ziel(roh, ziel)
     for regel in _KLASSE_1:
         # Klasse 1 nur bei ausdrücklich gelistetem Ziel UND Art; ``None`` ergibt hier nie 1.
         if (
@@ -186,16 +215,18 @@ def briefkasten_datei(n: str | int) -> str:
 def start_text(n: str | int) -> str:
     """Befugnis-Abschnitt für den Start-Auftrag von Ticket ``n`` — der Text steht nur hier."""
     klasse_1 = "; ".join(
-        f"{regel.text} (Ziel: {', '.join(sorted(regel.ziele or ()))} · "
+        f"{regel.text.replace('<N>', str(n))} (Ziel: {', '.join(sorted(regel.ziele or ()))} · "
         f"Art: {', '.join(sorted(regel.arten or ()))})"
         for regel in _KLASSE_1
     )
-    woerter = ", ".join(sorted((_KLASSE_2.ziele or frozenset()) | _KLASSE_2_GANZWORT))
+    teilwort = ", ".join(sorted(_KLASSE_2_WOERTER))
+    ganzwort = ", ".join(sorted(_KLASSE_2_GANZWORT))
     return (
         f"{KOPF} "
         f"Klasse 1 – selbst entscheiden, nicht fragen: {klasse_1}. Jede solche Entscheidung festhalten "
         "(`to_spawn.py eintrag --typ entscheidung`: „Klasse 1“, Grund und bei Daten der Sicherungs-Beleg). "
-        f"Klasse 2 – nie ohne den Nutzer: {_KLASSE_2.text} (erkannt an: {woerter}, auch als Wortteil). "
+        f"Klasse 2 – nie ohne den Nutzer: {_KLASSE_2.text} (erkannt an: {teilwort}, auch als Wortteil; "
+        f"{ganzwort} nur als ganzes Wort). "
         "Dort anhalten, Bau-Log-Eintrag und Issue-Kommentar „braucht den Nutzer“; auch eine Antwort "
         "des Aufsehers gibt das nicht frei. "
         "Klasse 3 – alles andere, jeder Zweifel zwischen Klasse 1 und 2 und jeder Push oder Merge auf "
