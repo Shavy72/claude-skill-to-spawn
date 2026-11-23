@@ -34,7 +34,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, TypeAlias
 
-from . import config, gh, manifest, spec_rand
+from . import config, gh, manifest, spec_rand, ticket_zustand
 
 log = logging.getLogger("to_spawn.befund")
 
@@ -328,9 +328,11 @@ def _an_spec_haengen(repo: Path, gh_repo: str, spec: int, neu: int, zeilen: list
 def _status(daten: dict[str, Any] | None) -> str:
     if not isinstance(daten, dict):
         return "unbekannt"
-    if str(daten.get("state", "")).lower() == "closed":
-        grund = str(daten.get("state_reason") or "").lower()
-        return "verworfen" if grund == "not_planned" else "gebaut"
+    stufe = ticket_zustand.stufe(daten)  # Spec-Schluss zählt nur echten Schluss (#279)
+    if stufe == "verworfen":
+        return "verworfen"
+    if stufe == "zu":
+        return "gebaut"
     namen = {str(e.get("name")) for e in daten.get("labels") or [] if isinstance(e, dict)}
     return "verschoben" if LABEL_VERSCHOBEN in namen else "offen"
 
