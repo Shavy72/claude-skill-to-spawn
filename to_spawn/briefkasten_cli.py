@@ -1,21 +1,26 @@
-"""CLI für Tür B (#278): ``befugnis``/``frage``/``antwort``/``antworten`` (aus ``to_spawn.py`` gezogen).
+"""CLI für Tür B (#278): ``befugnis``/``frage``/``antwort``/``antworten``/``nutzer-antwort``.
 
 Exit-Codes: ``befugnis`` 0 = Klasse 1, 2 = Klasse 2, 3 = Klasse 3 · ``frage`` 0 = eingeworfen (gibt
 die ``id`` aus), 2 = verweigert · ``antwort`` 0 = Antwort da, 2 = braucht den Nutzer, 3 = WARTET ·
-``antworten`` 0 = geschrieben, 2 = verweigert, 1 = keine passende offene Frage/Fehler.
+``antworten``/``nutzer-antwort`` 0 = geschrieben, 2 = verweigert, 1 = keine passende offene
+Frage/Fehler.
+
+``nutzer-antwort`` ist der Weg des Menschen (auch Klasse 2): verweigert in einer Bau-Session und
+ohne echtes Terminal (Sessions laufen ohne). Grenzen des Schutzes: ``briefkasten``-Docstring.
 """
 
 from __future__ import annotations
 
 import argparse
 import logging
+import sys
 from typing import Any
 
 from to_spawn import befugnis, briefkasten
 
 log = logging.getLogger("to_spawn")
 
-BEFEHLE = ("befugnis", "frage", "antwort", "antworten")
+BEFEHLE = ("befugnis", "frage", "antwort", "antworten", "nutzer-antwort")
 
 
 def richte_parser_ein(unter: Any) -> None:
@@ -42,7 +47,13 @@ def richte_parser_ein(unter: Any) -> None:
     p_antw.add_argument("--wahl", required=True)
     p_antw.add_argument("--grund", required=True)
     p_antw.add_argument("--beleg", action="append", default=[])
-    p_antw.add_argument("--von", default="aufseher")
+    p_antw.add_argument("--von", choices=briefkasten.AUFSEHER_VON, default=briefkasten.AUFSEHER_VON[0])
+    p_nutzer = unter.add_parser("nutzer-antwort", help="Nur der Mensch im Terminal: Antwort des Nutzers")
+    p_nutzer.add_argument("ticket")
+    p_nutzer.add_argument("--id", required=True, dest="frage_id")
+    p_nutzer.add_argument("--wahl", required=True)
+    p_nutzer.add_argument("--grund", required=True)
+    p_nutzer.add_argument("--beleg", action="append", default=[])
 
 
 def lauf(args: argparse.Namespace) -> int:
@@ -61,6 +72,12 @@ def lauf(args: argparse.Namespace) -> int:
         if args.befehl == "antworten":
             briefkasten.antworten(args.ticket, args.frage_id, args.wahl, args.beleg, args.grund, args.von)
             print(f"#{args.ticket}: Antwort geschrieben")
+            return 0
+        if args.befehl == "nutzer-antwort":
+            if not sys.stdin.isatty():
+                raise briefkasten.Verweigert("nutzer-antwort nur im Terminal des Nutzers (stdin ist kein Terminal).")
+            briefkasten.nutzer_antworten(args.ticket, args.frage_id, args.wahl, args.beleg, args.grund)
+            print(f"#{args.ticket}: Antwort des Nutzers geschrieben")
             return 0
         stand = briefkasten.lesen(args.ticket, args.frage_id)
     except briefkasten.Verweigert as fehler:

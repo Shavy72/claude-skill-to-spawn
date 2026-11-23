@@ -3,7 +3,7 @@
 Prüft ohne gh und ohne Claude-Session (tmp_path): nach dem Einwurf meldet ``antwort N``
 Exit 3 „WARTET“, nach ``antworten`` Exit 0 mit der Wahl (Abnahme 3, 4, 5); Klasse 2 wird
 nie beantwortet, auch eine von Hand eingetragene Antwort ergibt Exit 2 (Abnahme 2); eine halbe
-Datei zählt als WARTET; ``entscheidungen S`` listet Klasse-1-Einträge und Briefkasten-Antworten
+Datei sperrt (NUTZER); ``entscheidungen S`` listet Klasse-1-Einträge und Briefkasten-Antworten
 (wer, was, warum, Beleg; Abnahme 8). Dazu die Regel-Änderungen an ``befugnis.einordnen``.
 """
 
@@ -62,7 +62,7 @@ def test_ohne_frage_wartet(briefkasten: ModuleType, tmp_path: Path) -> None:
 def test_einwurf_dann_antwort(briefkasten: ModuleType, tmp_path: Path) -> None:
     fid = briefkasten.einwerfen("7", "Blocker erledigt?", "weiterbauen", 3, ["#5 zu"], hauptbaum=tmp_path)
     assert briefkasten.lesen("7", fid, hauptbaum=tmp_path) == briefkasten.WARTET
-    assert briefkasten.offene(hauptbaum=tmp_path) == ["7"]
+    assert [(o["ticket"], o["id"]) for o in briefkasten.offene(hauptbaum=tmp_path)] == [("7", fid)]
     briefkasten.antworten("7", fid, "weiterbauen", ["Lastenheft A46"], "Blocker sind zu", hauptbaum=tmp_path)
     antwort = briefkasten.lesen("7", fid, hauptbaum=tmp_path)
     assert antwort.wahl == "weiterbauen" and antwort.von == "aufseher"
@@ -95,13 +95,14 @@ def test_klasse_2_von_hand_beantwortet_bleibt_nutzer(briefkasten: ModuleType, tm
     assert briefkasten.lesen("7", hauptbaum=tmp_path) == briefkasten.NUTZER
 
 
-def test_halbe_datei_wartet(briefkasten: ModuleType, tmp_path: Path) -> None:
+def test_halbe_datei_sperrt(briefkasten: ModuleType, tmp_path: Path) -> None:
+    # Seit PR 306 strenger: halbe Datei = NUTZER (fail-closed, sichtbar), nicht mehr WARTET.
     fid = briefkasten.einwerfen("7", "A?", "a", 3, [], hauptbaum=tmp_path)
     briefkasten.antworten("7", fid, "a", [], "passt", hauptbaum=tmp_path)
     datei = tmp_path / ".to-spawn" / "entscheidung-7.json"
     inhalt = datei.read_text(encoding="utf-8")
     datei.write_text(inhalt[: len(inhalt) // 2], encoding="utf-8")
-    assert briefkasten.lesen("7", fid, hauptbaum=tmp_path) == briefkasten.WARTET
+    assert briefkasten.lesen("7", fid, hauptbaum=tmp_path) == briefkasten.NUTZER
 
 
 def test_kaputte_datei_wird_beim_einwurf_nicht_ueberschrieben(briefkasten: ModuleType, tmp_path: Path) -> None:
@@ -367,12 +368,11 @@ def test_antwort_fuer_q1_landet_nicht_an_q2(briefkasten: ModuleType, tmp_path: P
     q1 = briefkasten.einwerfen("7", "Q1?", "a", 3, [], hauptbaum=tmp_path)
     q2 = briefkasten.einwerfen("7", "Q2?", "b", 3, [], hauptbaum=tmp_path)
     assert q1 != q2
-    with pytest.raises(ValueError):
-        briefkasten.antworten("7", q1, "a", [], "für Q1", hauptbaum=tmp_path)
+    briefkasten.antworten("7", q1, "a", [], "für Q1", hauptbaum=tmp_path)  # P3a: jede offene per id
     assert briefkasten.lesen("7", q2, hauptbaum=tmp_path) == briefkasten.WARTET
     briefkasten.antworten("7", q2, "b", [], "für Q2", hauptbaum=tmp_path)
     assert briefkasten.lesen("7", q2, hauptbaum=tmp_path).wahl == "b"
-    assert briefkasten.lesen("7", q1, hauptbaum=tmp_path) == briefkasten.WARTET
+    assert briefkasten.lesen("7", q1, hauptbaum=tmp_path).wahl == "a"
     assert briefkasten.lesen("7", "ffff", hauptbaum=tmp_path) == briefkasten.WARTET
 
 
@@ -422,7 +422,7 @@ def test_klasse_2_nach_nutzer_antwort_gibt_klasse_3_frei(briefkasten: ModuleType
     daten = json.loads(datei.read_text(encoding="utf-8"))
     daten["fragen"][-1]["antwort"] = {"wahl": "nein", "von": "nutzer"}
     datei.write_text(json.dumps(daten), encoding="utf-8")
-    assert briefkasten.lesen("7", q2, hauptbaum=tmp_path) == briefkasten.NUTZER  # nie als Antwort
+    assert briefkasten.lesen("7", q2, hauptbaum=tmp_path).von == "nutzer"  # P3a: Session sieht sie
     q3 = briefkasten.einwerfen("7", "Ordner?", "neu", 3, [], hauptbaum=tmp_path)
     briefkasten.antworten("7", q3, "neu", [], "passt", hauptbaum=tmp_path)
     assert briefkasten.lesen("7", q3, hauptbaum=tmp_path).wahl == "neu"
@@ -459,7 +459,7 @@ def test_antworten_bei_kaputter_datei(briefkasten: ModuleType, tmp_path: Path) -
     ordner = tmp_path / ".to-spawn"
     ordner.mkdir()
     (ordner / "entscheidung-7.json").write_text('{"fragen": [', encoding="utf-8")
-    with pytest.raises(ValueError):
+    with pytest.raises(briefkasten.Verweigert):  # seit PR 306: unlesbar sperrt (vorher ValueError)
         briefkasten.antworten("7", "abcd", "a", [], "passt", hauptbaum=tmp_path)
     assert (ordner / "entscheidung-7.json").read_text(encoding="utf-8") == '{"fragen": ['
 
@@ -491,3 +491,39 @@ def test_kaputt_datei_mit_zeitstempel(briefkasten: ModuleType, tmp_path: Path) -
         (ordner / "entscheidung-7.json").write_text(inhalt, encoding="utf-8")
         briefkasten.einwerfen("7", "A?", "a", 3, [], hauptbaum=tmp_path)
     assert len(list(ordner.glob("entscheidung-7.json.kaputt-*"))) == 4
+
+
+_UNGUELTIGE_BYTES = b"\xff\xfe\x00kaputt"
+
+
+def test_ungueltige_bytes_sperren_statt_abzustuerzen(briefkasten: ModuleType, tmp_path: Path) -> None:
+    ordner = tmp_path / ".to-spawn"
+    ordner.mkdir()
+    (ordner / "entscheidung-7.json").write_bytes(_UNGUELTIGE_BYTES)
+    assert briefkasten.lesen("7", "ab", hauptbaum=tmp_path) == briefkasten.NUTZER
+    (eintrag,) = briefkasten.offene(["7"], hauptbaum=tmp_path)
+    assert eintrag["klasse"] == "2" and eintrag["id"] == ""
+    with pytest.raises(briefkasten.Verweigert):
+        briefkasten.antworten("7", "ab", "a", [], "passt", hauptbaum=tmp_path)
+    assert (ordner / "entscheidung-7.json").read_bytes() == _UNGUELTIGE_BYTES
+
+
+def test_ungueltige_bytes_beim_einwurf_beiseitegelegt(briefkasten: ModuleType, tmp_path: Path) -> None:
+    ordner = tmp_path / ".to-spawn"
+    ordner.mkdir()
+    (ordner / "entscheidung-7.json").write_bytes(_UNGUELTIGE_BYTES)
+    briefkasten.einwerfen("7", "A?", "a", 3, [], hauptbaum=tmp_path)
+    (kaputt,) = ordner.glob("entscheidung-7.json.kaputt-*")
+    assert kaputt.read_bytes() == _UNGUELTIGE_BYTES
+    assert briefkasten.lesen("7", "ab", hauptbaum=tmp_path) == briefkasten.NUTZER
+
+
+def test_liste_meldet_kaputte_datei(
+    briefkasten: ModuleType, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    ordner = tmp_path / ".to-spawn"
+    ordner.mkdir()
+    (ordner / "entscheidung-7.json").write_text("[]", encoding="utf-8")
+    with caplog.at_level("WARNING", logger="to_spawn.briefkasten"):
+        assert briefkasten.liste(["7"], hauptbaum=tmp_path) == []
+    assert any("entscheidung-7.json" in r.getMessage() for r in caplog.records)
