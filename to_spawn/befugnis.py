@@ -38,7 +38,7 @@ class _Regel:
 
 #: EINE Wortmenge für Klasse 2 (Grenze L8 A49): trifft als Teilwort in Ziel ODER Art nach
 #: :func:`_norm`. ``prod`` deckt produktion/production, ``vps`` deckt vps-live. Fehl-Treffer
-#: (z. B. „deliver“) fallen in die sichere Richtung 2. Bewusst NICHT drin: ``deploy`` (Deploy auf
+#: (z. B. „deliver“, „europa“) fallen in die sichere Richtung 2. Bewusst NICHT drin: ``deploy`` (Deploy auf
 #: Staging ist normaler Bau-Weg; Live fängt das Ziel-Wort „live“) und das nackte ``token`` (meint
 #: im Bau-Alltag Kontext-Token und würde jede zweite Handlung stoppen; ``api-token`` u. a. stehen drin).
 _KLASSE_2_WOERTER = frozenset(
@@ -52,6 +52,14 @@ _KLASSE_2_WOERTER = frozenset(
         "geld",
         "bezahl",
         "kauf",
+        "gebühr",
+        "gebuehr",
+        "euro",
+        "preis",
+        "tarif",
+        "lizenz",
+        "bestellung",
+        "vertrag",
         # Konten echter Personen
         "konto",
         "konten",
@@ -74,6 +82,11 @@ _KLASSE_2_WOERTER = frozenset(
         "apikey",
         "api-token",
         "access-token",
+        "bitwarden",
+        ".env",
+        "oauth",
+        "2fa",
+        "dns",
         # Abos/Zahlungen
         "abonnement",
         "abos",
@@ -120,6 +133,12 @@ _KLASSE_1: tuple[_Regel, ...] = (
     ),
     _Regel(
         1,
+        "Deploy auf Staging (Bau-Alltag, fasst keine Daten an, darum ohne Sicherung; L8 A47)",
+        frozenset({"staging"}),
+        frozenset({"deploy", "deployen"}),
+    ),
+    _Regel(
+        1,
         "eigener Arbeitsordner und eigene Zweige",
         frozenset({"arbeitsordner", "zweig"}),
         _ARBEIT,
@@ -149,7 +168,7 @@ _KLASSE_1: tuple[_Regel, ...] = (
 #: ROHEN Eingabe, weil ``_norm`` Leerraum zu „-“ macht. wip-Zweige heißen ``wip/<N>-<kurzname>``
 #: (to_spawn/anleitung.py), darum auch dort nur die eigene Nummer.
 # Kurzname beginnt und endet auf Buchstabe/Ziffer (kein ``--force``, ``.lock``, ``x.``).
-_EIGENER_ZWEIG = re.compile(r"(ticket|wip)/(\d+)-[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?")
+_EIGENER_ZWEIG = re.compile(r"(ticket|wip)/([0-9]+)-[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?")
 
 
 def _norm(wert: object) -> str:
