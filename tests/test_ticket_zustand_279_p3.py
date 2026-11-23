@@ -217,3 +217,78 @@ def test_capo_kaputte_zustands_abfrage_kein_absturz(tmp_path: Path) -> None:
         check=False,
     )
     assert lauf.stdout.strip() == "ok", lauf.stdout + lauf.stderr
+
+
+# --- (4) Fix-Runde PR 302: duplicate gilt als verworfen, eine Regel im Baustein ---------------
+
+
+def _schliessen_297(takt_welt: dict[str, Any], grund: str) -> None:
+    datei: Path = takt_welt["aufz"]
+    daten = json.loads(datei.read_text(encoding="utf-8"))
+    for issue in daten:
+        if issue["number"] == 297:
+            issue["state"] = "closed"
+            issue["state_reason"] = grund
+    datei.write_text(json.dumps(daten), encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    ("grund", "meldet"),
+    [("duplicate", False), ("not_planned", False), ("completed", True)],
+)
+def test_takt_neu_geschlossen_nur_bei_echtem_schluss(
+    takt_welt: dict[str, Any], grund: str, meldet: bool
+) -> None:
+    """Verworfen (nicht geplant, Duplikat) hat keine Belegseite — keine Meldung."""
+    _schliessen_297(takt_welt, grund)
+    alt = {"zeilen": [], "zu": [296, 298, 299, 300], "verstoesse": [], "fertig": False}
+    _merker_setzen(takt_welt, alt)
+    lauf = _takt(takt_welt, "--claude", str(CLAUDE_AUFZ))
+    assert lauf.returncode == 0, lauf.stdout + lauf.stderr
+    prompts = " ".join(a["stdin"] for a in _aufrufe(takt_welt))
+    assert ("#297 neu geschlossen" in prompts + lauf.stdout) is meldet, lauf.stdout
+    assert (297 in ((_merker(takt_welt) or {}).get("zu") or [])) is meldet
+
+
+def test_capo_checkpoint_blocker_fertig_gebaut_gibt_frei(
+    welt: dict[str, Path],  # noqa: F811
+) -> None:
+    """Blocker offen, aber grün auf Staging: Checkpoint läuft wie bei geschlossenem Blocker."""
+    from test_capo_checkpoint_285 import (
+        FRAGE,
+        VORSCHLAG,
+        _checkpoint_stellen,
+        _kommentar,
+    )
+    from test_waechter_213 import _gh_zustand
+
+    _checkpoint_stellen(welt)
+    daten = _gh_zustand(welt)
+    daten.setdefault("blocker", {})["902"] = [
+        {"number": 428, "state": "closed"},
+        {"number": 429, "state": "open", "labels": [{"name": FERTIG}]},
+    ]
+    welt["gh"].write_text(json.dumps(daten, ensure_ascii=False), encoding="utf-8")
+    _kommentar(welt, "902", "bau-bot", f"{FRAGE}\n\n{VORSCHLAG}", 61)
+    ergebnis = _capo(welt)
+    assert ergebnis.returncode == 0, _text(ergebnis)
+    assert "#902 Checkpoint-Annahme" in ergebnis.stdout, _text(ergebnis)
+
+
+def test_capo_kinder_ohne_liste_ist_none(tmp_path: Path) -> None:
+    """Zweiter Fall: GitHub-Fehlerobjekt statt Liste → ``None``, kein Absturz."""
+    stub = tmp_path / "gh_fehler.py"
+    stub.write_text("print('{\"message\": \"Not Found\"}')\n", encoding="utf-8")
+    env = {**os.environ, "TO_SPAWN_GH_STUB": str(stub)}
+    code = "from to_spawn import capo\nassert capo.kinder('o/r', 1) is None\nprint('ok')\n"
+    lauf = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=str(Path(__file__).resolve().parent.parent),
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=60,
+        check=False,
+    )
+    assert lauf.stdout.strip() == "ok", lauf.stdout + lauf.stderr

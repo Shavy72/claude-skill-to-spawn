@@ -64,8 +64,6 @@ LEISE_TYPEN = frozenset({"session_ende", "subagent_ende"})
 #: Werte von ``status``/``phase``/``ergebnis`` einer ``deploy_phase``, die „Gate rot“ heißen.
 ROT_WERTE = frozenset({"rot", "fail", "failed", "abbruch", "fehler"})
 MAX_DELTA_ZEILEN = 8
-#: ``state_reason`` geschlossener Tickets, für die keine Regel gilt.
-NICHT_GEPLANT = frozenset({"not_planned", "duplicate"})
 #: Label am Ticket: David hat bewusst freigegeben — Regeln überspringen (E2).
 OK_LABEL = "waechter:ok"
 #: Minuten nach ``closed_at``, bevor die Regeln greifen (Vorgabe, ``waechter.karenz_minuten``).
@@ -2362,7 +2360,7 @@ def _tick(
                 n, str(issue.get("closed_at") or ""), erledigt
             ):
                 sichern()
-            if grund in NICHT_GEPLANT:
+            if ticket_zustand.stufe(issue) == "verworfen":
                 aktionen.append(f"#{n} zu als {grund} — keine Regeln")
                 continue
             nur_melden = OK_LABEL in label_namen(issue)
