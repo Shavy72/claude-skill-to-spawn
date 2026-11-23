@@ -361,7 +361,7 @@ def aus_bau_log(ticket: str, zeilen: list[dict[str, Any]]) -> list[Ereignis]:
                     quelle,
                     zeit,
                     "david",
-                    f"#{nr} braucht David",
+                    f"#{nr} braucht den Menschen",
                     "Die Bau-Session kommt ohne dich nicht weiter. Bitte ins Fenster schauen.",
                     nr,
                 )
@@ -434,7 +434,7 @@ def ticket_stand(
     david_zeiten: list[datetime],
     zustand: dict[str, Any],
 ) -> tuple[str, str | None]:
-    """(zustand, phase) — Reihenfolge: fertig > verwaist > Gate rot > David > läuft > wartet.
+    """(zustand, phase) — Reihenfolge: fertig > verwaist > Gate rot > Mensch > läuft > wartet.
 
     „fertig“ = hier baut niemand mehr; die Phase trennt „fertig gebaut, wartet auf Live“
     und „verworfen“ vom geschlossenen Ticket (Phase ``None``) — Stufe aus ``ticket_zustand`` (#279).
@@ -453,7 +453,7 @@ def ticket_stand(
         return "fehler", kurz(f"Deploy rot: {felder_text(letzte, ('phase', 'grund'))}", 40)
     aktiv = [t for t in (als_zeit(z.get("ts")) for z in zeilen if z.get("typ") in AKTIVITAET) if t]
     if david_zeiten and (not aktiv or max(david_zeiten) > max(aktiv)):
-        return "braucht_david", "Wartet auf David"
+        return "braucht_david", "Wartet auf den Menschen"
     phase = None
     if letzte is not None:
         typ = letzte.get("typ")

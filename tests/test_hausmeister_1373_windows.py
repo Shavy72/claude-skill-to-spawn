@@ -356,7 +356,7 @@ def test_altbestand_gelistet_bleibt(win: Welt) -> None:
     liste = hausmeister.altbestand_festhalten([wt])
     r = win.aufraeumen(wt, loeschen=True)
     assert r.art == "bleibt" and not r.fehler
-    assert r.grund == f"Altbestand, wartet auf Davids Ja (Liste {liste})"
+    assert r.grund == f"Altbestand, wartet auf das Ja des Menschen (Liste {liste})"
     assert wt.is_dir()
 
 

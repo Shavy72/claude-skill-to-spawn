@@ -96,7 +96,7 @@ def test_annahme_nach_frist_mit_vorschlag(welt: dict[str, Path]) -> None:
 
     annahme = [t for t in _texte(welt, "902") if t.startswith("Aufseher: Annahme nach")]
     assert len(annahme) == 1, _texte(welt, "902")
-    assert "nach Doktrin — David kann kippen" in annahme[0]
+    assert "nach Doktrin — der Mensch kann kippen" in annahme[0]
     assert "sofort aus, weil die Doktrin" in annahme[0]
 
     zeilen = [z for z in _bau_log(welt, "902") if z.get("typ") == "entscheidung"]

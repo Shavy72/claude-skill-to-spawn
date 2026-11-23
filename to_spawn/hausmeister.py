@@ -34,7 +34,7 @@ Dateien, die die Sicherung NICHT mitnimmt, gehen beim Löschen verloren — daru
 - Geheimnisse (``SICHERUNG_AUSSCHLUSS``, z. B. ``.env*``, ``*.key``), geändert, neu
   oder ignoriert: dürfen nur weg, wenn das Hauptrepo des Worktrees dieselbe Datei mit
   gleichem Inhalt hat; sonst (und beim Klon immer) bleibt, ``fuer_david=True``.
-  Geheimnisse in ungepushten Commits würde die Sicherung hochladen ⇒ bleibt, David.
+  Geheimnisse in ungepushten Commits würde die Sicherung hochladen ⇒ bleibt, für den Menschen.
 - Ignorierte Dateien: nur bekannte Erzeugnisse (:data:`ERZEUGNISSE`) dürfen weg,
   jede andere ignorierte Datei ⇒ bleibt.
 - Datenbanken (``aufpasser.NIE_HOCHLADEN``) lädt die Sicherung nie hoch: weg dürfen nur
@@ -45,14 +45,14 @@ Prozesse kommen aus ``/proc``; unter Windows (Laptop, ``C:/dev/wt-*``, #1373) au
 ``Get-CimInstance Win32_Process`` plus einer Umbenennungs-Probe nur im echten Lauf
 (Windows-Wissen in :mod:`to_spawn.hausmeister_windows`, Tür bleibt hier). Plattenplatz
 misst die Platte der Wurzeln, nicht Home. Altbestand (#1373, E16): Ordner in
-:func:`altbestand_pfad` bleiben im echten Lauf, bis David die Liste freigibt; der
+:func:`altbestand_pfad` bleiben im echten Lauf, bis der Mensch die Liste freigibt; der
 Trockenlauf zeigt die echte Regel. Fehlt die Liste unter Windows, hält der erste echte
 Lauf zuerst alle vorhandenen Ordner fest (am Server: keine Wirkung).
 
 Jede Entscheidung schreibt eine JSON-Zeile nach ``TO_SPAWN_HAUSMEISTER_LOG``
 (Standard ``~/.claude/to-spawn/hausmeister.jsonl``), beim Löschen VOR dem Löschen;
 Log nicht schreibbar ⇒ bleibt. Scheitert danach das Löschen, folgt eine zweite Zeile
-„bleibt“. :func:`liste_fuer_david` liest daraus die Ordner, über die David selbst
+„bleibt“. :func:`liste_fuer_david` liest daraus die Ordner, über die der Mensch selbst
 entscheiden muss.
 
 Zweite Tür (#1369): :func:`aufraeumen_alles` wendet dieselben Regeln auf alle Ordner
@@ -99,7 +99,7 @@ läuft im Takt von :func:`aufraeumen_alles` höchstens täglich je Modus: je Hau
 ``fetch --prune`` + ``worktree prune`` (nur echt), lokale ``ticket/*`` ohne Arbeitsordner,
 dann alle ``ticket/*`` der Sicherungs-Remotes. Test-Naht ``TO_SPAWN_HAUSMEISTER_HAUPTREPOS``
 (Pfade, Leerzeichen-getrennt, leer = keine). :func:`zweige_probelauf` schreibt die Liste
-für David, ohne etwas zu ändern.
+für den Menschen, ohne etwas zu ändern.
 
 Fünfte Tür (#1374): :func:`halb_angelegt_entfernen` entfernt für den Anleger
 (``nest.worktree_anlegen``) einen eben angelegten Worktree, dessen Füllen scheiterte —
@@ -1111,7 +1111,7 @@ def _zweig_entscheiden(
     quelle = str(repo)
     nr = _zweig_ticket(zweig)
     if nr is None:
-        return ergebnis("bleibt", "keine Ticket-Nummer im Zweig — David entscheidet", fuer_david=True)
+        return ergebnis("bleibt", "keine Ticket-Nummer im Zweig — der Mensch entscheidet", fuer_david=True)
     o = _zweig_ort(repo, ort)
     quelle = o.remote
     if ort == "lokal" and (wo := _ausgecheckt_in(o.cwd, zweig)):
@@ -1419,7 +1419,7 @@ def _regeln(
     echt = ordner.resolve()
     if {ordner.name, echt.name} & set(_geschuetzte_ordner()):
         raise _Bleibt("geschützter Ordner")
-    if not trocken:  # Trockenlauf zeigt die echte Regel (Altbestand-Liste für David)
+    if not trocken:  # Trockenlauf zeigt die echte Regel (Altbestand-Liste für den Menschen)
         _kein_altbestand(echt)
 
     # 2/3 Git-Ordner? Hauptrepo? Eigenes Repo? (None = gar kein Git, #1536)
@@ -2343,7 +2343,7 @@ def altbestand_pfad() -> Path:
 
 
 def altbestand_festhalten(ordner: Iterable[Path]) -> Path:
-    """Hält Ordner als Altbestand fest: sie bleiben im echten Lauf, bis David die Liste
+    """Hält Ordner als Altbestand fest: sie bleiben im echten Lauf, bis der Mensch die Liste
     freigibt (``"freigegeben": true`` in der Datei). Schreibt
     ``{"freigegeben": false, "erstellt": <iso>, "ordner": [<posix, aufgelöst>]}``.
     Gibt es die Datei schon, kommen neue Ordner dazu, keiner geht weg. Ist sie schon
@@ -2390,7 +2390,7 @@ def _kein_altbestand(echt: Path) -> None:
     """Altbestand-Regel (nur echter Lauf): gelistet und nicht freigegeben ⇒ bleibt;
     Datei kaputt/unlesbar ⇒ jeder Ordner bleibt mit Fehler. Datei fehlt: am Server keine
     Wirkung; unter Windows hält der Lauf zuerst alle vorhandenen Ordner fest — der
-    erste Lauf am Laptop löscht nie ohne Davids Ja."""
+    erste Lauf am Laptop löscht nie ohne das Ja des Menschen."""
     pfad = altbestand_pfad()
     if _ist_windows() and not os.path.lexists(pfad):
         try:
@@ -2414,7 +2414,7 @@ def _kein_altbestand(echt: Path) -> None:
         return
     schluessel = os.path.normcase(str(echt))
     if any(os.path.normcase(str(Path(o))) == schluessel for o in liste):
-        raise _Bleibt(f"Altbestand, wartet auf Davids Ja (Liste {pfad})")
+        raise _Bleibt(f"Altbestand, wartet auf das Ja des Menschen (Liste {pfad})")
 
 
 def _kennzahl_schreiben(ergebnisse: list[Ergebnis], *, trocken: bool) -> None:

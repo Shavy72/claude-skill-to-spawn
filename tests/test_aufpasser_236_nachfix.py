@@ -64,7 +64,7 @@ def test_n1_pgrep_nicht_nutzbar_lauf_bricht_fail_closed_ab(welt: Welt, monkeypat
 def test_n2_fortsetzen_fehlschlag_stufe_3_kein_zweiter_versuch(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
     """Schlägt ``_fenster_fortsetzen`` fehl — hier bewusst simuliert per
     Monkeypatch, die echte tmux-Seite steckt nicht im Test —, wird „Fortsetzen
-    fehlgeschlagen (tmux: …) — braucht David“ gemeldet und die Stufe auf 3
+    fehlgeschlagen (tmux: …) — braucht den Menschen“ gemeldet und die Stufe auf 3
     gesetzt. Ein zweiter Lauf versucht es nicht noch einmal: kein zweiter
     Aufruf, kein zweiter Kommentar."""
     rufe: list[int] = []
@@ -83,7 +83,7 @@ def test_n2_fortsetzen_fehlschlag_stufe_3_kein_zweiter_versuch(welt: Welt, monke
     assert welt.lauf() == 0
     assert len(rufe) == 1
     assert welt.eintrag("bau 9002")["stufe"] == 3
-    erwartet = "Fortsetzen fehlgeschlagen (tmux: tmux kaputt) — braucht David"
+    erwartet = "Fortsetzen fehlgeschlagen (tmux: tmux kaputt) — braucht den Menschen"
     treffer = [k for k in welt.kommentare() if erwartet in k]
     assert len(treffer) == 1, welt.kommentare()
 

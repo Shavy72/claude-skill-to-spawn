@@ -148,7 +148,7 @@ def test_ticket_stand_reihenfolge(ls: ModuleType) -> None:
     david = [ls.als_zeit(_zeile("x", 5)["ts"])]
     assert ls.ticket_stand("1", "läuft", {}, [_zeile("session_start", 0)], david, leer) == (
         "braucht_david",
-        "Wartet auf David",
+        "Wartet auf den Menschen",
     )
     assert ls.ticket_stand("1", "läuft", {}, [_zeile("handoff", 2)], [], leer) == (
         "läuft",

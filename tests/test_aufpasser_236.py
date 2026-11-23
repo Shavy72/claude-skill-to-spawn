@@ -586,7 +586,7 @@ def test_zweimal_erfolglos_nichts_mehr_aendern(welt: Welt) -> None:
     assert pane_text("bau 9002") == vorher
     assert not welt.protokoll_bau.exists()
     assert not _origin_hat_branch(welt, 9002)
-    treffer = [k for k in welt.kommentare() if "braucht David" in k and "bau 9002" in k]
+    treffer = [k for k in welt.kommentare() if "braucht den Menschen" in k and "bau 9002" in k]
     assert len(treffer) == 1, welt.kommentare()
     assert "„bau 9002“ reagiert nach Anstupsen und Fortsetzen nicht" in treffer[0]
     assert welt.eintrag("bau 9002")["stufe"] == 3
@@ -643,7 +643,7 @@ def test_push_scheitert_kein_kill(welt: Welt) -> None:
     assert fenster_namen().count("bau 9002") == 1
     assert not welt.protokoll_bau.exists()
     treffer = [
-        k for k in welt.kommentare() if "Sicherung fehlgeschlagen — braucht David" in k
+        k for k in welt.kommentare() if "Sicherung fehlgeschlagen — braucht den Menschen" in k
     ]
     assert len(treffer) == 1, welt.kommentare()
     assert welt.eintrag("bau 9002")["stufe"] == 3

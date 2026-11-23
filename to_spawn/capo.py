@@ -20,7 +20,7 @@ Ausnahme; je Schließen bleibt es bei einer Wieder-Öffnung). Keine Regeln für 
 der Verstoß wird trotzdem erkannt und im Tick-Bericht genannt, zählt aber wie der
 Ausgangsstand als „alt“ und hält „Spec fertig“ nicht auf. Nach dem Wieder-Öffnen
 startet capo die Folge-Runde (#284); ein Nacht-Checkpoint gilt nach der Frist mit
-dem Vorschlag der Session als angenommen, David kann kippen (#285). Zeitgrenzen:
+dem Vorschlag der Session als angenommen, der Mensch kann kippen (#285). Zeitgrenzen:
 beim ersten Tick einer Spec sind alle geschlossenen Tickets Ausgangsstand (nur
 melden; maßgeblich ist, ob das Ticket beim ersten Tick schon zu war — kein
 Vergleich der GitHub-Uhr mit der lokalen Uhr), danach wird ein Schließen erst
@@ -64,7 +64,7 @@ LEISE_TYPEN = frozenset({"session_ende", "subagent_ende"})
 #: Werte von ``status``/``phase``/``ergebnis`` einer ``deploy_phase``, die „Gate rot“ heißen.
 ROT_WERTE = frozenset({"rot", "fail", "failed", "abbruch", "fehler"})
 MAX_DELTA_ZEILEN = 8
-#: Label am Ticket: David hat bewusst freigegeben — Regeln überspringen (E2).
+#: Label am Ticket: der Mensch hat bewusst freigegeben — Regeln überspringen (E2).
 OK_LABEL = "waechter:ok"
 #: Minuten nach ``closed_at``, bevor die Regeln greifen (Vorgabe, ``waechter.karenz_minuten``).
 KARENZ_MIN = 15.0
@@ -155,7 +155,7 @@ REGEL_VORFALL: dict[str, tuple[str, str, str, str]] = {
         "mensch",
         "Ja/Nein-Frage mitten in der Kette, nachts antwortet niemand",
         "Checkpoint ohne Antwort über die Frist (#285)",
-        "Aufseher nimmt den Vorschlag der Session nach Doktrin an; David kann kippen",
+        "Aufseher nimmt den Vorschlag der Session nach Doktrin an; der Mensch kann kippen",
     ),
 }
 
@@ -787,7 +787,7 @@ class StagingStand:
 
 
 def live_freigabe(vps: dict[str, Any], ticket: int) -> bool:
-    """True, wenn Davids Live-Zettel ``<ordner>/<ticket>`` existiert und jünger als 24 h ist."""
+    """True, wenn der Live-Zettel des Menschen ``<ordner>/<ticket>`` existiert und jünger als 24 h ist."""
     zettel = Path(
         str(vps.get("freigabe_ordner") or FREIGABE_STANDARD)
     ).expanduser() / str(ticket)
@@ -1485,11 +1485,11 @@ def _folge_runde(
 
 # --- Checkpoint-Annahme nach Doktrin (#285) -------------------------------------
 
-#: Minuten ohne Davids Antwort, nach denen der Vorschlag der Session gilt.
+#: Minuten ohne Antwort des Menschen, nach denen der Vorschlag der Session gilt.
 CHECKPOINT_FRIST_MIN = 60.0
 #: „Vorschlag: …“ in einem Issue-Kommentar — alles danach ist die vorgeschlagene Wahl.
 _VORSCHLAG = re.compile(r"Vorschlag\s*:\s*(.+)", re.IGNORECASE | re.DOTALL)
-#: Anfang jedes Aufseher-Kommentars — eigene Kommentare sind nie „Davids Antwort“.
+#: Anfang jedes Aufseher-Kommentars — eigene Kommentare sind nie „Antwort des Menschen“.
 WAECHTER_KOPF = befund.KOPF
 #: Frühere Marke vor der Umbenennung (#428) — alte Issue-Kommentare bleiben eigene Kommentare.
 ALTE_AUFSEHER_KOEPFE: tuple[str, ...] = ("Wächter:",)  # #428-alt
@@ -1497,12 +1497,12 @@ ALTE_AUFSEHER_KOEPFE: tuple[str, ...] = ("Wächter:",)  # #428-alt
 AUFSEHER_KOEPFE: tuple[str, ...] = (WAECHTER_KOPF, *ALTE_AUFSEHER_KOEPFE)
 #: Anfang der Issue-Kommentare des Aufpassers (to_spawn/aufpasser.py), gleiches gh-Konto.
 AUFPASSER_KOPF = "Aufpasser:"
-#: Anfang jedes Issue-Kommentars einer Bau-Session (#402). Session, Aufseher und David
+#: Anfang jedes Issue-Kommentars einer Bau-Session (#402). Session, Aufseher und der Mensch
 #: kommentieren mit demselben gh-Konto — der Login trennt sie nicht, nur diese Marke.
 #: Der Bau-Prompt bekommt sie über den Platzhalter ``{SESSION_KOPF}`` (skripte/bau.py).
 SESSION_KOPF = "Bau-Session:"
 #: Marken aller eigenen Kommentare ohne Bau-Session (die prüft ``_ist_session_kommentar``):
-#: so beginnende Kommentare sind nie „Davids Antwort“.
+#: so beginnende Kommentare sind nie „Antwort des Menschen“.
 EIGENE_KOEPFE: tuple[str, ...] = (*AUFSEHER_KOEPFE, AUFPASSER_KOPF)
 
 
@@ -1536,7 +1536,7 @@ def checkpoint_frist(waechter: dict[str, Any]) -> float:
 
 #: ``author_association``-Werte, deren Kommentare der Checkpoint überhaupt liest (#402).
 #: Ein Dritter im öffentlichen Repo könnte sonst mit der Marke :data:`SESSION_KOPF`
-#: einen Vorschlag setzen oder ``seit`` hinter Davids Antwort schieben.
+#: einen Vorschlag setzen oder ``seit`` hinter die Antwort des Menschen schieben.
 BETEILIGTE_ROLLEN = frozenset({"OWNER", "MEMBER", "COLLABORATOR"})
 
 
@@ -1585,7 +1585,7 @@ def checkpoint_vorschlag(
 
     Zählt eine Bau-Log-Zeile ``entscheidung`` mit Wahl und ein Issue-Kommentar, der
     mit :data:`SESSION_KOPF` beginnt und „Vorschlag:“ enthält. Der Login zählt nicht:
-    Session und David schreiben mit demselben gh-Konto (#402). Kommentare ohne Marke
+    Session und der Mensch schreiben mit demselben gh-Konto (#402). Kommentare ohne Marke
     (auch Aufseher-Kommentare) sind nie ein Session-Vorschlag.
     """
     kandidaten: list[Vorschlag] = []
@@ -1620,7 +1620,7 @@ def checkpoint_frage_zeit(
     """Wann hat die Session zuletzt etwas gefragt/gemeldet? ``None`` = keine Spur.
 
     Spuren der Session sind nur Bau-Log-Zeilen ``blockiert``/``entscheidung`` und
-    Kommentare mit :data:`SESSION_KOPF`. Davids Hinweise und Aufseher-Kommentare sind
+    Kommentare mit :data:`SESSION_KOPF`. Hinweise des Menschen und Aufseher-Kommentare sind
     keine Frage (#451) — sonst meldet capo „Checkpoint wartet“ für ein Ticket, an dem
     nie eine Session gebaut hat. Ohne Spur wartet niemand, das Label allein löst nichts aus.
     """
@@ -1685,7 +1685,7 @@ def _checkpoint(
 ) -> list[str]:
     """Nacht-Checkpoint: nach der Frist gilt der Vorschlag der Session (#285).
 
-    David kann jede Annahme kippen — der Aufseher kommentiert sie am Ticket, schreibt
+    Der Mensch kann jede Annahme kippen — der Aufseher kommentiert sie am Ticket, schreibt
     sie ins Bau-Log und in ``entscheidungen_<S>.md`` und schickt eine Mail. Ohne
     erkennbaren eigenen Vorschlag der Session wird nichts angenommen, nur gemeldet.
     Solange ein Blocker offen ist, ruht der Checkpoint (keine Zeile); ist der
@@ -1718,7 +1718,7 @@ def _checkpoint(
         return [f"#{n} Checkpoint wartet ({wartet:.0f} von {frist:.0f} min)"]
     antwort = davids_antwort(kommentare, seit)
     if antwort:
-        # Ohne Marke heißt nur: nicht von einer Session mit neuem Prompt — kann David
+        # Ohne Marke heißt nur: nicht von einer Session mit neuem Prompt — kann der Mensch
         # sein oder eine Session mit altem Prompt („Probesitz beendet:“). Sichere Richtung.
         return [
             f"#{n} Checkpoint: Kommentar ohne Session-Marke von {antwort} — als Antwort gewertet "
@@ -1736,7 +1736,7 @@ def _checkpoint(
             dry_run,
             "checkpoint_offen",
             f"Checkpoint ohne Vorschlag #{n}",
-            f"Ticket #{n} wartet seit {wartet:.0f} min auf Davids Antwort, aber die "
+            f"Ticket #{n} wartet seit {wartet:.0f} min auf die Antwort des Menschen, aber die "
             "Session hat keinen eigenen Vorschlag hinterlassen — der Aufseher rät nicht.",
             f"checkpoint_offen|{n}|{seit.isoformat()}",
         )
@@ -1748,12 +1748,12 @@ def _checkpoint(
         return [f"#{n} Checkpoint schon angenommen — nichts zu tun"]
     if dry_run:
         return [f"#{n} [Probe] würde Vorschlag annehmen: {_kurz(vorschlag.wahl)}"]
-    text = f"{WAECHTER_KOPF} Annahme nach {frist:.0f} min nach Doktrin — David kann kippen. Vorschlag: {vorschlag.wahl}"
+    text = f"{WAECHTER_KOPF} Annahme nach {frist:.0f} min nach Doktrin — der Mensch kann kippen. Vorschlag: {vorschlag.wahl}"
     if not befund.kommentiere(n, gh_repo, text):
         return [f"#{n} FEHLER: Checkpoint-Annahme nicht kommentiert"]
     erledigt.add(schluessel)
     grund = (
-        f"Aufseher-Annahme nach {frist:.0f} min ohne Davids Antwort (Doktrin, kippbar)"
+        f"Aufseher-Annahme nach {frist:.0f} min ohne Antwort des Menschen (Doktrin, kippbar)"
         + (f" · {vorschlag.grund}" if vorschlag.grund else "")
     )
     frage = vorschlag.frage or f"Checkpoint #{n}"
@@ -1772,7 +1772,7 @@ def _checkpoint(
         "checkpoint_annahme",
         f"Checkpoint angenommen #{n}",
         f"Ticket #{n}: {frage}\nAngenommen nach {frist:.0f} min ohne Antwort: "
-        f"{vorschlag.wahl}\nDavid kann die Entscheidung jederzeit kippen.",
+        f"{vorschlag.wahl}\nDer Mensch kann die Entscheidung jederzeit kippen.",
         schluessel,
     )
     gelernt.append(ereignis_vorfall("checkpoint_annahme", n, jetzt))
@@ -2597,7 +2597,7 @@ def _tick(
         fp = str(eintrag.get("fingerprint") or "")[:8]
         was = mensch_noetig_was(eintrag)
         aktionen.append(
-            f"MENSCH NÖTIG: #{ziel} {was} (fp {fp}) — Kette läuft weiter, David prüft."
+            f"MENSCH NÖTIG: #{ziel} {was} (fp {fp}) — Kette läuft weiter, der Mensch prüft."
         )
         if dry_run or regeln_aus:
             continue
