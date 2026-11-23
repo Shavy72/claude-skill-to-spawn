@@ -628,6 +628,7 @@ h1 .specnr{color:var(--muted);font-weight:600}
   };
   const kommaZahl = (n) => String(n).replace(".", ",");
   const nrListe = (arr) => "#" + arr.join(", #");
+  const STUFEN = ["offen", "fertig_gebaut", "zu", "verworfen"];
   const ZWORT = { wartet: "wartet", blockiert: "blockiert", bereit: "bereit", "läuft": "läuft", fertig: "fertig", braucht_david: "braucht dich", fehler: "Fehler" };
   const ZFARBE = { wartet: "var(--wait)", blockiert: "var(--wait)", bereit: "var(--wait)", "läuft": "var(--run)", fertig: "var(--done)", braucht_david: "var(--david)", fehler: "var(--err)" };
   const ZKLASSE = { "läuft": "z-laeuft", fertig: "z-fertig", braucht_david: "z-david", fehler: "z-fehler" };
@@ -642,7 +643,8 @@ h1 .specnr{color:var(--muted);font-weight:600}
       blocked_by: Array.isArray(r.blocked_by) ? r.blocked_by.map(Number).filter(Number.isFinite) : [],
       zustand: ["wartet", "läuft", "fertig", "braucht_david", "fehler"].includes(r.zustand) ? r.zustand : "wartet",
       schaetzung_k: zahl(r.schaetzung_k, 0), ist_k: zahl(r.ist_k, null), erwartet_min: zahl(r.erwartet_min, 30),
-      start: r.start || null, ende: r.ende || null, liefert: String(r.liefert || ""), beweis: String(r.beweis || ""),
+      stufe: STUFEN.includes(r.stufe) ? r.stufe : r.ende ? "zu" : r.zustand === "fertig" ? "fertig_gebaut" : "offen",
+      start: r.start || null, ende: r.ende || null, gebaut: r.gebaut || null, liefert: String(r.liefert || ""), beweis: String(r.beweis || ""),
       reihe: zahl(r.reihe, nr), fortschritt: zahl(r.fortschritt, null), phase: r.phase ? String(r.phase) : "",
       naht: naht != null && naht >= 1 ? Math.round(naht) : null
     };
@@ -693,6 +695,25 @@ h1 .specnr{color:var(--muted);font-weight:600}
     return { map, tiefe, blockiert, reihenfolge, phasen, phasenMap };
   }
 
+  // Stufe kommt vom Leitstand (``ticket_zustand.stufe``, #279); „zu“ heißt geschlossen, auch verworfen.
+  function istZu(t) {
+    return t.stufe === "zu" || t.stufe === "verworfen";
+  }
+  // Ende der Bauzeit: geschlossen (``ende``) oder fertig gebaut (``gebaut``) — Dauer, Plan, Zeitbalken.
+  function fertigUm(t) {
+    return ts(t.ende) ?? ts(t.gebaut);
+  }
+  // Kopfzeile: geschlossene und fertig gebaute Tickets getrennt (Wörter wie ``ticket_zustand.ANZEIGE``).
+  function kopfFertigText(liste) {
+    const zu = liste.filter(istZu).length;
+    const gebaut = liste.filter((t) => t.stufe === "fertig_gebaut").length;
+    return zu + " von " + liste.length + " Tickets zu" + (gebaut ? " · " + gebaut + " fertig gebaut" : "");
+  }
+  // Phase in der mobilen Gleisliste — wie ``knotenText``: bei „fertig“ ohne „Gerade:“.
+  function glPhase(t) {
+    return t.phase ? '<span class="gl-phase">' + (t.zustand === "fertig" ? "" : "Gerade: ") + esc(t.phase) + "</span>" : "";
+  }
+
   function anzeigeZustand(t) {
     if (t.zustand !== "wartet") return t.zustand;
     return offeneBlocker(t).length ? "blockiert" : "bereit";
@@ -730,7 +751,7 @@ h1 .specnr{color:var(--muted);font-weight:600}
       t.blocked_by.forEach((b) => { const p = plan.get(b); if (p) frei = Math.max(frei, p.pe); });
       const erw = t.erwartet_min * MIN;
       let ps, pe;
-      const s = ts(t.start), e = ts(t.ende);
+      const s = ts(t.start), e = fertigUm(t);
       if (t.zustand === "fertig") { ps = s ?? frei; pe = e ?? ps + erw; }
       else if (t.zustand === "wartet") { ps = Math.max(frei, now); pe = ps + erw; }
       else { ps = s ?? frei; pe = Math.max(ps + erw, now + (t.zustand === "läuft" ? 60000 : 0)); }
@@ -800,8 +821,8 @@ h1 .specnr{color:var(--muted);font-weight:600}
     const einstieg = liste.filter((t) => !t.blocked_by.some((b) => inPhase.has(b)));
     const offenJe = einstieg.map((t) => offeneBlocker(t).filter((b) => !inPhase.has(b)));
     let ueber = "";
-    // ``ende`` setzt der Leitstand nur bei wirklich geschlossenem Ticket (#279).
-    if (zst === "fertig") ueber = liste.every((t) => t.ende) ? "Alles fertig." : "Fertig gebaut, wartet auf Live.";
+    // „Alles fertig.“ nur, wenn jedes Ticket wirklich geschlossen ist (Stufe, #279).
+    if (zst === "fertig") ueber = liste.every(istZu) ? "Alles fertig." : "Fertig gebaut, wartet auf Live.";
     else if (zst === "offen") {
       const best = offenJe.length ? offenJe.reduce((a, b) => (b.length < a.length ? b : a)) : [];
       ueber = best.length ? "Startet, sobald " + nrListe(best) + (best.length === 1 ? " fertig ist." : " fertig sind.") : "Kann jetzt starten.";
@@ -1077,7 +1098,7 @@ h1 .specnr{color:var(--muted);font-weight:600}
     const p = Math.round(fortschritt(t, now));
     if (z === "blockiert") return "wartet auf " + nrListe(offeneBlocker(t));
     if (z === "bereit") return "bereit · wartet auf Platz";
-    if (z === "fertig") { const a = ts(t.start), e = ts(t.ende); return "fertig" + (a != null && e != null ? " · " + dauer(e - a) : ""); }
+    if (z === "fertig") { const a = ts(t.start), e = fertigUm(t); return "fertig" + (a != null && e != null ? " · " + dauer(e - a) : ""); }
     if (z === "braucht_david") return "Du bist dran";
     if (z === "fehler") return "Fehler · " + p + " %";
     if (z === "läuft") return p + " % · " + restText(t, now);
@@ -1100,7 +1121,7 @@ h1 .specnr{color:var(--muted);font-weight:600}
         '<span class="gl-lampe" aria-hidden="true"></span>' +
         '<span class="gl-inhalt"><span class="gl-titel"><b class="num">#' + t.nr + "</b> " + esc(t.titel) + "</span>" +
         (cp ? '<span class="gl-cp">Hier brauchen wir dich</span>' : "") +
-        (t.zustand !== "fertig" && t.phase ? '<span class="gl-phase">Gerade: ' + esc(t.phase) + "</span>" : "") +
+        glPhase(t) +
         '<span class="gl-status num" id="gls-' + t.nr + '">' + esc(listenStatus(t, now)) + "</span>" +
         '<span class="gl-balken" aria-hidden="true"><i id="glb-' + t.nr + '" style="width:' + fortschritt(t, now) + '%"></i></span></span>' +
         '<svg class="gl-pfeil" width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><path d="M6 3.5 10.5 8 6 12.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>' +
@@ -1129,7 +1150,7 @@ h1 .specnr{color:var(--muted);font-weight:600}
     }
     if (z === "bereit") return breiteVon("bereit · wartet auf Platz", FONT_STATUS) > W - 20 ? "bereit" : "bereit · wartet auf Platz";
     if (z === "fertig") {
-      const a = ts(t.start), e = ts(t.ende);
+      const a = ts(t.start), e = fertigUm(t);
       s = "fertig" + (a != null && e != null ? " · " + dauer(e - a) : "");
       return breiteVon(s, FONT_STATUS) > W - 20 ? "fertig" : s;
     }
@@ -1147,7 +1168,7 @@ h1 .specnr{color:var(--muted);font-weight:600}
     const t = model.map.get(gewaehlt);
     const z = anzeigeZustand(t);
     const p = phaseVon(t);
-    const s = ts(t.start), e = ts(t.ende);
+    const s = ts(t.start), e = fertigUm(t);
     const f = zahl(meta && meta.faktor, 1) || 1;
     const nachfolger = model.blockiert.get(t.nr) || [];
     const chips = (list) => list.length ? list.map((n) => {
@@ -1230,7 +1251,7 @@ h1 .specnr{color:var(--muted);font-weight:600}
     for (const t of model.reihenfolge) {
       const pl = pg.plan.get(t.nr);
       const ph = phaseVon(t);
-      const s = ts(t.start), e = ts(t.ende);
+      const s = ts(t.start), e = fertigUm(t);
       const z = anzeigeZustand(t);
       const sollStart = pl.ps, sollEnde = pl.ps + t.erwartet_min * MIN;
       const fkl = filterKlasse(t);
@@ -1276,15 +1297,13 @@ h1 .specnr{color:var(--muted);font-weight:600}
     if ($("h-ort").innerHTML !== ortHtml) $("h-ort").innerHTML = ortHtml;
     $("h-gestartet").dataset.rel = String(ts(meta && meta.gestartet) ?? "");
 
-    const n = tickets.length;
-    const fertig = tickets.filter((t) => t.zustand === "fertig").length;
     const summe = tickets.reduce((a, t) => a + t.erwartet_min, 0) || 1;
     const gew = tickets.reduce((a, t) => a + t.erwartet_min * fortschritt(t, now), 0) / summe;
     const nurFertig = tickets.filter((t) => t.zustand === "fertig").reduce((a, t) => a + t.erwartet_min, 0) / summe * 100;
     $("t-prozent").textContent = (gew < 10 ? gew.toFixed(1).replace(".", ",") : Math.round(gew)) + " %";
     $("t-schiene").style.width = nurFertig + "%";
     $("t-schiene-lauf").style.width = gew + "%";
-    $("t-fertig").textContent = fertig + " von " + n + " Tickets fertig";
+    $("t-fertig").textContent = kopfFertigText(tickets);
 
     $("t-ende").textContent = hhmm(pg.ende);
     $("t-ende-unter").textContent = pg.ende - now > 0 ? "noch ca. " + dauer(pg.ende - now) : "gleich";
@@ -1345,7 +1364,7 @@ h1 .specnr{color:var(--muted);font-weight:600}
   }
 
   /* ---------- Live-Mischung, Frische, „Brauchst du mich?“ ---------- */
-  const LIVE_FELDER = ["zustand", "ist_k", "phase", "fortschritt", "start", "ende"];
+  const LIVE_FELDER = ["zustand", "stufe", "ist_k", "phase", "fortschritt", "start", "ende", "gebaut"];
   const STAND_ALT_MS = 10 * MIN;
 
   // Legt die Felder des neuesten live-Dokuments einzeln (nur vorhandene) über die statischen Tickets.
@@ -1555,7 +1574,7 @@ h1 .specnr{color:var(--muted);font-weight:600}
       const r = $("d-rest"); if (r) r.textContent = restText(t, now);
       const s = ts(t.start);
       const zb = $("d-zeitbar");
-      if (zb && s != null && ts(t.ende) == null) {
+      if (zb && s != null && fertigUm(t) == null) {
         const tats = now - s; zb.style.width = (tats / Math.max(t.erwartet_min * MIN, tats, 1)) * 100 + "%";
       }
     }

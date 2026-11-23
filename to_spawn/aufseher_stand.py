@@ -158,6 +158,11 @@ def _pc_lage(still_s: float | None) -> tuple[str, int | None]:
     return STILL, int(still_s // 60)
 
 
+#: Stufen, bei denen ``ticket_zustand.endgueltig_zu`` wahr ist. Steht hier, weil ``ticket_zustand``
+#: (noch) keine Frage je Stufe hat — eine Lage kennt nur die Stufe, nicht das Ticket (#279 P6b).
+_ENDGUELTIG_ZU: frozenset[ticket_zustand.Stufe] = frozenset({"zu", "verworfen"})
+
+
 @dataclass(frozen=True)
 class TicketLage:
     """Alles, was die Kurz-Zeile eines Tickets braucht (``None`` = unbekannt)."""
@@ -170,6 +175,11 @@ class TicketLage:
     phase: str = STRICH
     aussage: str = STRICH
     neue_kommentare: int | None = None
+
+    @property
+    def endgueltig_zu(self) -> bool:
+        """Wie ``ticket_zustand.endgueltig_zu`` (zu oder verworfen); unbekannt gilt als nicht zu."""
+        return self.stufe in _ENDGUELTIG_ZU
 
     @property
     def offen(self) -> bool | None:
@@ -464,7 +474,7 @@ def kopf_zeile(spec: int, lagen: list[TicketLage], jetzt: float, noop: bool) -> 
         (
             f"{zahl(lambda x: x.stufe == 'offen')} offen, "
             f"{zahl(lambda x: x.stufe == 'fertig_gebaut')} fertig gebaut, "
-            f"{zahl(lambda x: x.stufe in ('zu', 'verworfen'))} zu"
+            f"{zahl(lambda x: x.endgueltig_zu)} zu"
         ),
         (
             f"{zahl(lambda x: x.fenster == ARBEITET)} arbeitet, "
@@ -512,7 +522,7 @@ def stand(
     sichtbar = [
         z
         for x, z in zip(erg.lagen, zeilen)
-        if alle or x.stufe not in ('zu', 'verworfen') or x.fenster != KEIN_FENSTER
+        if alle or not x.endgueltig_zu or x.fenster != KEIN_FENSTER
     ]
     return "\n".join([kopf_zeile(spec, erg.lagen, jetzt, noop), *sichtbar])
 

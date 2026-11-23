@@ -249,13 +249,14 @@ def repo_slug(repo: Path) -> str:
 
 
 def gh_issues(repo: Path, nummern: list[str]) -> dict[str, dict[str, Any]]:
-    """Zustand, Schließgrund, closedAt, Labels und Kommentare aller Issues in EINEM GraphQL-Aufruf."""
+    """Zustand, Schließgrund, closedAt, Labels, Label-Ereignisse und Kommentare aller Issues in EINEM GraphQL-Aufruf."""
     slug = repo_slug(repo)
     if "/" not in slug:
         raise RuntimeError("origin nicht lesbar — kein owner/name")
     besitzer, name = slug.split("/", 1)
     teile = " ".join(
         f"i{n}: issue(number: {n}) {{ state stateReason closedAt labels(first: 50) {{ nodes {{ name }} }} "
+        "timelineItems(itemTypes: [LABELED_EVENT], last: 20) { nodes { ... on LabeledEvent { createdAt label { name } } } } "
         "comments(last: 100) { nodes { id createdAt body } } }"
         for n in nummern
     )
@@ -473,6 +474,22 @@ def ticket_stand(
     return "wartet", kurz(phase, 40) if phase else None
 
 
+def gebaut_um(issue: dict[str, Any], zeilen: list[dict[str, Any]]) -> str | None:
+    """Wann das Ticket fertig gebaut wurde: Zeit des Labels ``staging:fertig`` (letztes Setzen).
+
+    Ohne lesbares Label-Ereignis die letzte Aktivität im Bau-Log; ``None``, wenn beides fehlt.
+    """
+    knoten = (issue.get("timelineItems") or {}).get("nodes") or []
+    gesetzt = [
+        als_zeit(k.get("createdAt"))
+        for k in knoten
+        if isinstance(k, dict) and (k.get("label") or {}).get("name") == ticket_zustand.STAGING_FERTIG_LABEL
+    ]
+    aktiv = [als_zeit(z.get("ts")) for z in zeilen if z.get("typ") in AKTIVITAET]
+    zeiten = [t for t in gesetzt if t] or [t for t in aktiv if t]
+    return max(zeiten).astimezone().isoformat(timespec="seconds") if zeiten else None
+
+
 # ---------------------------------------------------------------- vorbereiten (live + log)
 
 
@@ -500,11 +517,16 @@ def berechne(
         if stand in ("läuft", "fertig", "braucht_david") and nr not in start:
             erster = min((z.get("ts") for z in zeilen if z.get("typ") == "session_start"), default=None)
             start[nr] = lokal_iso(erster) or jetzt_iso()
-        if not ticket_zustand.endgueltig_zu(issue):  # „fertig gebaut“ ist kein Ende (#279)
+        gelesen = "state" in issue  # Lesefehler: letzten bekannten Wert behalten, nichts raten
+        if gelesen and not ticket_zustand.endgueltig_zu(issue):  # „fertig gebaut“ ist kein Ende (#279)
             ende.pop(nr, None)
-        elif nr not in ende:
+        elif gelesen and nr not in ende:
             ende[nr] = lokal_iso(issue.get("closedAt")) or jetzt_iso()
         eintrag: dict[str, Any] = {"zustand": stand, "ist_k": ist_k}
+        if gelesen:
+            eintrag["stufe"] = ticket_zustand.stufe(issue)
+            if eintrag["stufe"] == "fertig_gebaut" and (gebaut := gebaut_um(issue, zeilen)):
+                eintrag["gebaut"] = gebaut
         if phase:
             eintrag["phase"] = phase
         if nr in start:
