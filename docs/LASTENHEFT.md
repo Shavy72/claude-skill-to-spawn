@@ -477,9 +477,9 @@ trotz erledigter Blocker, `/implement` startet nicht selbst, 1483 „Nichts zu t
 
 ### Entscheidung (1:1, ca. 16:35)
 
-> ja dann ist das erstmal die lösung das man des fest in den ticket start uaftrag mit giebt wie auch fest in den aufseher integrier
+> ja dann ist das erstmal die lösung das man des fest in den ticket start uaftrag mit giebt wie auch fest in den aufseher integriert
 >
-> kay dann haben wir doch ertsmal genug stoff gesammelt sodass wir dann asap den test spec mal laufen lassen können ist das alles schon itegriert?
+> okay dann haben wir doch ertsmal genug stoff gesammelt sodass wir dann asap den test spec mal laufen lassen können ist das alles schon itegriert?
 
 Einordnung der [PC-Session]: Die Entscheidungs-Linie gehört fest in den Start-Auftrag jeder
 Bau-Session und in den Aufseher-Auftrag, nicht mehr von Hand per BAU_AUFTRAG. Außerdem soll die
