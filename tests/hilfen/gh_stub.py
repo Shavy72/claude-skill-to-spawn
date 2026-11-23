@@ -17,7 +17,9 @@ ohne die Variable bleibt die Antwort wie bisher nur ``state``),
 ``GH_STUB_KAPUTT`` (Komma-Liste: ``issue view`` dieser Nummern scheitert mit Exit 1),
 ``GH_STUB_UNTER`` (``<S>:<n1>|<n2>,<S2>:<n3>`` — Unter-Tickets je Spec; Zustand je
 Nummer wie bisher über ``GH_STUB_ZU``),
-``GH_STUB_PROTOKOLL`` (Pfad: jeder Aufruf wird als Zeile angehängt).
+``GH_STUB_PROTOKOLL`` (Pfad: jeder Aufruf wird als Zeile angehängt),
+``GH_STUB_UNTER_ROH`` (gesetzt ⇒ ``sub_issues`` mit ``labels``-Filter gibt genau diesen
+Text aus — für kaputte Listen-Zeilen, #279).
 """
 
 from __future__ import annotations
@@ -96,7 +98,9 @@ def main() -> int:
         if unter:
             liste = _unter(unter.group(1))
             filter_ = args[args.index("--jq") + 1] if "--jq" in args else ""
-            if "labels" in filter_:
+            if "labels" in filter_ and "GH_STUB_UNTER_ROH" in os.environ:
+                print(os.environ["GH_STUB_UNTER_ROH"])
+            elif "labels" in filter_:
                 for e in liste:
                     namen = [x["name"] for x in _zusatz(str(e["number"])).get("labels", [])]
                     print(json.dumps({**e, "labels": namen}))

@@ -62,3 +62,47 @@ def test_schliessen_meldet_fertig_gebaut_statt_zu(welt: Welt, monkeypatch: pytes
 )
 def test_wortlaut_je_stufe(ticket: dict[str, Any], erwartet: str) -> None:
     assert ticket_zustand.wortlaut(ticket) == erwartet
+
+
+def _stilles_fenster_9002(welt: Welt) -> None:
+    """Ein 20 min stilles ``bau 9002`` — würde geschlossen, gälte 9002 als fertig/zu."""
+    welt.fenster_still(9002, "sleep 3600")
+    welt.stand_setzen("bau 9002", seit=time.time() - 20 * 60, hash=welt.hash_von("bau 9002"))
+
+
+def _nichts_angefasst(welt: Welt, vorher: list[str]) -> None:
+    assert sorted(fenster_namen()) == sorted(vorher)
+    assert not welt.protokoll_bau.is_file() or not welt.protokoll_bau.read_text(encoding="utf-8").strip()
+    assert not any("geschlossen" in k for k in welt.kommentare()), welt.kommentare()
+
+
+@pytest.mark.parametrize(
+    "roh",
+    [
+        "kein json",
+        '{"state": "OPEN", "labels": []}',  # ohne ``number``
+        "[1, 2]",
+        "null",
+        "42",
+        '{"number": 9003, "state": "OPEN", "labels": []}\n[1, 2]',  # eine gute, eine kaputte
+    ],
+)
+def test_kaputte_liste_kein_start_kein_schliessen(
+    welt: Welt, monkeypatch: pytest.MonkeyPatch, roh: str
+) -> None:
+    """Unlesbare Listen-Zeile ⇒ Prüfung dieser Sitzung übersprungen, Lauf stürzt nicht ab."""
+    monkeypatch.setenv("GH_STUB_UNTER", f"{SPEC}:9002|9003")
+    monkeypatch.setenv("GH_STUB_UNTER_ROH", roh)
+    _stilles_fenster_9002(welt)
+    vorher = fenster_namen()
+    assert "bau 9002" in vorher
+    assert welt.lauf(hang_min=90) == 0
+    _nichts_angefasst(welt, vorher)
+
+
+def test_leere_liste_kein_start_kein_schliessen(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Spec ohne Unter-Tickets ⇒ kein Bau- und kein Aufseher-Start, nichts geschlossen."""
+    monkeypatch.setenv("GH_STUB_UNTER_ROH", "")
+    vorher = fenster_namen()
+    assert welt.lauf(hang_min=90) == 0
+    _nichts_angefasst(welt, vorher)

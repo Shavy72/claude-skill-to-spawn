@@ -1314,6 +1314,8 @@ class Aufpasser:
         )
         try:
             tickets = [json.loads(z) for z in raus.splitlines() if z.strip()]
+            if not all(isinstance(t, dict) for t in tickets):
+                raise TypeError("Zeile ist kein JSON-Objekt")
             return {
                 int(t["number"]): t
                 for t in tickets
