@@ -171,7 +171,7 @@ def test_berechne_und_dedupe(ls: ModuleType) -> None:
     live, ereignisse, merk = ls.berechne("376", titel, {"377": "läuft"}, issues, zeilen, zustand)
     assert live["tickets"]["377"]["zustand"] == "läuft"
     assert live["tickets"]["377"]["phase"].startswith("Blockiert: Test-Handy")
-    assert live["tickets"]["378"] == {"zustand": "wartet", "ist_k": None}
+    assert live["tickets"]["378"] == {"zustand": "wartet", "ist_k": None, "stufe": "offen"}
     assert "377" in merk["start"] and "378" not in merk["start"]
     arten = sorted(e.art for e in ereignisse)
     assert arten == ["info", "problem"]
