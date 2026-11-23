@@ -660,7 +660,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     p_arbeit = unter.add_parser(
         "arbeitsstand",
-        help="Arbeitsordner auf origin/<Hauptzweig> nachziehen (nur fast-forward) oder Abbruch (#283)",
+        help="Erst-Start: Arbeitsordner auf origin/<Hauptzweig> nachziehen (nur fast-forward) oder Abbruch; "
+        "fetch-Fehler/anderer Zweig nur Hinweis (#283)",
     )
     p_arbeit.add_argument("--pruefen", action="store_true", help="nur prüfen, nichts nachziehen")
     # Warte-Prüfung der Bau-Session (#267): dieselbe Regel wie die Start-Schranke.
@@ -862,7 +863,7 @@ def main(argv: list[str] | None = None) -> int:
         sys.stdout.write(erg.zeile + "\n")
         return erg.exit
     if args.befehl == "arbeitsstand":
-        # Exit 0 = aktuell/nachgezogen, 1 = veraltet/Abbruch (Zeile nennt Zahl und was zu tun ist).
+        # Exit 0 = aktuell/nachgezogen/hinweis, 1 = veraltet/Abbruch (Zeile nennt Zahl und was zu tun ist).
         erg = arbeitsstand.sicherstellen(config.repo_wurzel(_repo_aus_umgebung()), nachziehen=not args.pruefen)
         print(f"Arbeitsstand: {erg.zustand} — {erg.text}", file=sys.stdout if erg.ok else sys.stderr)
         return 0 if erg.ok else 1

@@ -84,11 +84,14 @@ if [ "$rc" -ne 0 ] || [ -z "$HAUPT" ]; then
   exit 6
 fi
 echo "== Stand (origin/$HAUPT) =="
-git fetch origin --quiet
-if [ "$DRY_RUN" -eq 1 ]; then
-  echo "Probelauf — kein merge. HEAD $(git rev-parse --short HEAD), origin/$HAUPT $(git rev-parse --short "origin/$HAUPT" 2>/dev/null || echo '?')."
-elif ! git merge --ff-only "origin/$HAUPT"; then
-  echo "Abbruch: Repo lässt sich nicht vorspulen (eigene Commits oder dreckiger Baum). Von Hand klären, nicht rebasen/stashen." >&2
+# Erst-Start (#283): nachziehen (nur fast-forward) oder Abbruch mit Zeile — Regel allein in
+# to_spawn/arbeitsstand.py. fetch-Fehler/Ticket-Zweig = Hinweis, weiter. Probelauf prüft nur.
+STAND_ARGS=(arbeitsstand)
+if [ "$DRY_RUN" -eq 1 ]; then STAND_ARGS+=(--pruefen); fi
+rc=0
+TO_SPAWN_REPO="$REPO" "$PY" "$SKILL_HOME/to_spawn.py" "${STAND_ARGS[@]}" || rc=$?
+if [ "$rc" -ne 0 ] && [ "$DRY_RUN" -ne 1 ]; then
+  echo "Arbeitsordner nicht auf Hauptzweig-Stand — nichts gestartet." >&2
   exit 1
 fi
 

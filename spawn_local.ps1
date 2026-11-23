@@ -32,7 +32,8 @@ if ($NurListe) { Write-Host ("Tickets: " + ($Tickets -join ",")); exit 0 }
 # stderr-Zeile sonst das Skript ab. stderr läuft direkt durch, EAP nur hier locker.
 $py = if (Get-Command python -ErrorAction SilentlyContinue) { "python" } else { "python3" }
 # Arbeitsordner-Stand zuerst (#283): Manifest, Vorlage und Skripte kommen aus diesem Ordner.
-# Hinter origin/<Hauptzweig> → nachziehen (nur fast-forward) oder Abbruch mit Zeile; -DryRun prüft nur.
+# Hinter origin/<Hauptzweig> → nachziehen (nur fast-forward) oder Abbruch mit Zeile; fetch-Fehler und
+# Ticket-Zweig melden nur (Exit 0, Regel in to_spawn/arbeitsstand.py); -DryRun prüft nur.
 $standArgs = @("$PSScriptRoot/to_spawn.py", "arbeitsstand")
 if ($DryRun) { $standArgs += "--pruefen" }
 $eapVorher = $ErrorActionPreference
