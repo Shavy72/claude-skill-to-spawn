@@ -10,12 +10,13 @@ spielt keine Rolle — Eingaben sind nie eine Grenze und werden nicht durchsucht
 Durchsucht werden Einträge ``type=assistant`` ohne ``isApiErrorMessage`` (auch Unter-Agenten:
 ``isSidechain`` und ``<sessionId>/subagents/*.jsonl`` ab dem Zeitpunkt der Stelle); nie ``user``
 (Eingaben, Anstupser, ``tool_result``) und nie ``thinking``. Je Block: ``text`` und
-Task/Agent-``prompt`` als Text, Bash-``command`` als Befehl, ``mcp__*``-Namen als Werkzeug und
+Task/Agent-``prompt`` als Text, bei allen übrigen Werkzeugen :data:`BEFEHL_FELDER` als Befehl, ``mcp__*``-Namen als Werkzeug und
 ``file_path`` von :data:`DATEI_WERKZEUGE` und Read als Pfad (Datei-Inhalte nie). Die Muster
 selbst kennt nur :mod:`befugnis`.
 Die Stelle (``<sessionId>:<uuid>``) gehört dem Leiter; unbekannte uuid ⇒ ab Dateianfang. Fremde
 sessionId (Ablösung, ``/clear``) ⇒ neue Datei ab Anfang UND Rest der alten Datei ab der Stelle;
-fehlt die alte Datei ⇒ Klasse 2. Eine kaputte Zeile mitten im Transkript nach der Stelle ⇒ Klasse 2.
+fehlt die alte Datei ⇒ Klasse 2. Keine Stelle ⇒ zusätzlich die übrigen Session-Dateien des
+Ordners, die kurz vor dem Start oder danach geschrieben wurden (T7d, :func:`_vorgaengerinnen`). Eine kaputte Zeile mitten im Transkript nach der Stelle ⇒ Klasse 2.
 
 Rückfall, wenn das Transkript nicht lesbar ist (keine Gesprächs-ID, Datei fehlt, keine Zeile
 lesbar, letzte Zeile halb geschrieben): Fenster mit Verlauf (``capture-pane -J -S -2000``),
@@ -52,6 +53,12 @@ KAPUTT = "Transkript-Zeile kaputt — Live-Bezug ungeprüft"
 DATEI_WERKZEUGE = frozenset({"Write", "Edit", "MultiEdit", "NotebookEdit"})
 #: Werkzeuge, deren ``prompt`` ein Auftrag an einen Unter-Agenten ist (zählt wie eigener Text).
 AUFTRAG_WERKZEUGE = frozenset({"Task", "Agent"})
+#: Felder, die bei jedem anderen Werkzeug ein Befehl sind (Bash/PowerShell ``command``,
+#: ``mcp__*``-Fernaufrufe ``command``/``cmd``/``script``, Skill ``args``) — Windows-PC nicht blind.
+BEFEHL_FELDER = ("command", "cmd", "script", "args")
+#: So lange vor dem Start der Session darf eine Vorgängerin ohne Stelle zuletzt geschrieben haben.
+#: ponytail: festes Fenster statt Ticket-Start, Ticket-Start übergeben wenn Fehlalarm stört.
+VORGAENGER_FENSTER_S = 3600
 #: Platzhalter für eine kaputte Zeile in der Eintrags-Liste (Position zählt, siehe :func:`_lies`).
 _KAPUTTE_ZEILE: dict[str, Any] = {"type": "kaputt"}
 
@@ -77,6 +84,8 @@ def pruefen(ziel: str, q: Quellen, stelle: str | None) -> Pruefung:
     grund = None
     if trenner and sid_alt != sid:  # Ablösung oder /clear: Rest der Vorgängerin prüfen
         grund = _alte_session(datei.parent, sid_alt, uuid_alt)
+    elif not trenner:  # keine Stelle: eine abgelöste Vorgängerin hat vielleicht nie gefragt (T7d)
+        grund = _vorgaengerinnen(datei, eintraege)
     if grund is None:
         ab = uuid_alt if sid_alt == sid else ""
         grund = _session_grund(datei.parent, sid, eintraege, ab)
@@ -93,17 +102,32 @@ def _alte_session(ordner: Path, sid: str, uuid_ab: str) -> str | None:
     return _session_grund(ordner, sid, eintraege, uuid_ab)
 
 
-def _session_grund(
-    ordner: Path, sid: str, eintraege: list[dict[str, Any]], uuid_ab: str
-) -> str | None:
+def _vorgaengerinnen(datei: Path, eintraege: list[dict[str, Any]]) -> str | None:
+    """Grund in den übrigen Session-Dateien des Ordners, die seit
+    :data:`VORGAENGER_FENSTER_S` vor dem Start dieser Session geschrieben wurden (ganz, samt
+    Unter-Agenten); eine unlesbare ist :data:`UNGEPRUEFT`."""
+    start = next((z for e in eintraege if (z := _zeit(e)) is not None), None)
+    try:
+        ab = (start.timestamp() if start else datei.stat().st_mtime) - VORGAENGER_FENSTER_S
+        andere = [(p, p.stat().st_mtime) for p in datei.parent.glob("*.jsonl") if p != datei]
+    except OSError:
+        return UNGEPRUEFT
+    for p, mtime in sorted(andere, key=lambda x: -x[1]):
+        if mtime < ab:
+            continue
+        unter = _lies(p)
+        if unter is None:
+            return UNGEPRUEFT
+        if grund := _session_grund(datei.parent, p.stem, unter, ""):
+            return grund
+    return None
+
+
+def _session_grund(ordner: Path, sid: str, eintraege: list[dict[str, Any]], uuid_ab: str) -> str | None:
     """Erster Grund nach ``uuid_ab`` (leer/unbekannt = ab Anfang), Unter-Agenten der Session
     ab dem Zeitpunkt dieser Stelle; eine unlesbare Unter-Agent-Datei ist :data:`UNGEPRUEFT`."""
     start = next(
-        (
-            i + 1
-            for i, e in enumerate(eintraege)
-            if uuid_ab and e.get("uuid") == uuid_ab
-        ),
+        (i + 1 for i, e in enumerate(eintraege) if uuid_ab and e.get("uuid") == uuid_ab),
         0,
     )
     for e in eintraege[start:]:
@@ -146,15 +170,15 @@ def _grund(e: dict[str, Any]) -> str | None:
         eingabe = b.get("input") if isinstance(b.get("input"), dict) else {}
         if name.startswith("mcp__"):
             werkzeuge.append(name)
-        if name == "Bash":
-            befehle.append(str(eingabe.get("command") or ""))
-        elif name in AUFTRAG_WERKZEUGE:
+        if name in AUFTRAG_WERKZEUGE:
             texte.append(str(eingabe.get("prompt") or ""))
         elif name in DATEI_WERKZEUGE or name == "Read":
             pfade.append(str(eingabe.get("file_path") or eingabe.get("notebook_path") or ""))
-    return befugnis.handlung_klasse_2(
-        texte=texte, befehle=befehle, werkzeuge=werkzeuge, pfade=pfade
-    )
+        else:
+            befehle.extend(str(eingabe[f]) for f in BEFEHL_FELDER if eingabe.get(f))
+            if name == "Skill":  # „/deploy live“: Name + args sind auch Text
+                texte.append(f"{eingabe.get('skill') or ''} {eingabe.get('args') or ''}")
+    return befugnis.handlung_klasse_2(texte=texte, befehle=befehle, werkzeuge=werkzeuge, pfade=pfade)
 
 
 def _zeit(e: dict[str, Any]) -> datetime | None:
@@ -166,9 +190,7 @@ def _zeit(e: dict[str, Any]) -> datetime | None:
 
 def _transkript(ziel: str, q: Quellen) -> tuple[str, Path] | None:
     """(sessionId, Transkript-Datei) der Session im Pane ``ziel``; ``None`` = nicht zu finden."""
-    raus = q.tmux(
-        ["display-message", "-p", "-t", ziel, "#{pane_pid} #{window_id} #{pane_id}"]
-    )
+    raus = q.tmux(["display-message", "-p", "-t", ziel, "#{pane_pid} #{window_id} #{pane_id}"])
     teile = (raus or "").split()
     if len(teile) != 3 or not teile[0].isdigit():
         return None
@@ -179,9 +201,7 @@ def _transkript(ziel: str, q: Quellen) -> tuple[str, Path] | None:
         return None
     if info is None or info.cwd is None:
         return None
-    return info.session_id, waechter_lauf.transkript_ordner(
-        info.cwd
-    ) / f"{info.session_id}.jsonl"
+    return info.session_id, waechter_lauf.transkript_ordner(info.cwd) / f"{info.session_id}.jsonl"
 
 
 def _lies(datei: Path) -> list[dict[str, Any]] | None:
@@ -209,11 +229,7 @@ def _lies(datei: Path) -> list[dict[str, Any]] | None:
 
 def _eigene_antwort(e: dict[str, Any]) -> bool:
     """Eigener Eintrag der Haupt-Session: nur er setzt die Stelle ``bis``."""
-    return (
-        e.get("type") == "assistant"
-        and not e.get("isSidechain")
-        and not e.get("isApiErrorMessage")
-    )
+    return e.get("type") == "assistant" and not e.get("isSidechain") and not e.get("isApiErrorMessage")
 
 
 def _erste_zeile(text: str) -> str | None:
@@ -226,9 +242,7 @@ def _erste_zeile(text: str) -> str | None:
 
 
 def _rueckfall(ziel: str, q: Quellen) -> Pruefung:
-    log.warning(
-        "Transkript von %s nicht lesbar — prüfe den ganzen Fenster-Verlauf", ziel
-    )
+    log.warning("Transkript von %s nicht lesbar — prüfe den ganzen Fenster-Verlauf", ziel)
     text = q.tmux(["capture-pane", "-p", "-J", "-S", f"-{VERLAUF_ZEILEN}", "-t", ziel])
     if text is None:
         return Pruefung(UNGEPRUEFT, RUECKFALL)

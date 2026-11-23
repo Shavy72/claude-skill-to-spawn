@@ -272,8 +272,8 @@ def handlung_klasse_2(
     Klasse-2-Wort, steht :data:`HANDLUNG_KOPF` davor. Freie Fragen und Vorschläge bleiben bei der
     breiten :func:`ist_klasse_2` (Wortteile zählen dort).
 
-    Bekannte Rest-Risiken: ein Deploy-Weg ohne Muster rutscht durch (Skript ohne „deploy“ im
-    Namen, Pfad in einer Variable, Befehl in einer Datei); Kosten durch Lese-Aufrufe bezahlter
+    Bekannte Rest-Risiken: ein Deploy-Weg ohne Muster rutscht durch (Skript ohne Deploy-Wort im
+    Namen und ohne ``--prod``, Befehl in einer Datei); Kosten durch Lese-Aufrufe bezahlter
     APIs werden nicht erkannt (wie vorher); unverändert offen: T1, T10, T11 und Schreib-Verzug.
     """
     zeile = (
@@ -298,9 +298,8 @@ def _erste(werte: Iterable[str], finde: Callable[[str], str | None]) -> str | No
 
 # --- Befehle ---------------------------------------------------------------------------------
 
-_HEREDOC = re.compile(r"<<-?[ \t]*(['\"]?)(\w+)\1[^\n]*\n(.*?)(?=\n[ \t]*\2[ \t]*(?:\n|$)|\Z)", re.S)
-#: Heredoc-Inhalt bleibt, wenn eine Shell ihn ausführt (``bash <<EOF``, ``ssh host <<EOF``).
-_HEREDOC_SHELL = re.compile(r"(?:^|[;&|(])\s*(?:sudo\s+)?(?:bash|sh|zsh|ssh\b[^;&|]*?)\s*(?:-\S+\s*)*$")
+#: Heredoc-Inhalt bleibt immer im Befehl: jeder Interpreter (bash, python, psql, node …) führt ihn
+#: aus. ponytail: ``cat > datei <<EOF`` mit Live-Wörtern wird Fehlalarm, sichere Richtung (PR 374 R10).
 _ZITAT = re.compile(r"'[^']*'|\"(?:\\.|[^\"\\])*\"")
 #: Inhalt in Anführungszeichen direkt dahinter wird ausgeführt, bleibt also drin.
 _DURCHREICHEN = re.compile(
@@ -315,8 +314,16 @@ _START = (
 )
 _DEPLOY_AUFRUF = re.compile(
     _START + r"(?:(?:bash|sh|zsh|source|\.|python3?|uv\s+run(?:\s+python3?)?|make|node|npx)\s+(?:-\S+\s+)*)?"
-    r"(?P<skript>[^\s;&|()`]*(?:deploy|rollout|release|publish)[^\s;&|()`]*)"
+    r"(?P<skript>[^\s;&|()`]*(?:deploy|rollout|release|publish|live|ship)[^\s;&|()`]*)"
 )
+#: Deploy-Skript-Name irgendwo im Befehl, auch in Anführungszeichen, Variable oder Schleife.
+#: Nur als Wert (``S=…``, ``for s in …``, ``['…']``), nicht als bloßes Argument (``git add …``).
+_DEPLOY_SKRIPT = re.compile(
+    r"(?:=|\bin\s+|['\"(\[,]\s*)[\w./~-]*(?:deploy|rollout|release|publish)[\w.-]*\.(?:sh|ps1)(?![\w.])"
+)
+#: Heredoc-Inhalt; dort zählt auch Zitiertes (``subprocess.run(['ssh', …])``).
+_HEREDOC = re.compile(r"<<-?[ \t]*(['\"]?)(\w+)\1[^\n]*\n(.*?)(?=\n[ \t]*\2[ \t]*(?:\n|$)|\Z)", re.S)
+_GIT = r"\bgit(?:\s+(?:-c\s+\S+|--[\w-]+=\S+))*"  # „git -C <pfad> push“ (Text ist klein geschrieben)
 _BEFEHL = re.compile(
     "|".join(
         (
@@ -325,14 +332,16 @@ _BEFEHL = re.compile(
             r"\brsync\b[^;&|\n]*\s[\w.@-]+:",
             # weitere Deploy-Befehle
             r"\b(?:npm|pnpm|yarn)\s+(?:run\s+)?(?:deploy|release|publish)\b",
-            r"\b(?:vercel|netlify|fly|flyctl)\s+deploy\b|\bvercel\b[^;&|\n]*--prod\b",
+            r"\b(?:vercel|netlify|fly|flyctl)\s+deploy\b|\s--prod(?:uction)?(?![\w-])",
             r"\bkubectl\s+(?:apply|delete|rollout)\b|\bterraform\s+(?:apply|destroy)\b",
-            r"\bgh\s+workflow\s+run\b|\bdocker\s+push\b",
+            r"\bgh\s+workflow\s+run\b|\bdocker\s+push\b|\bgh\s+release\s+create\b",
+            r"\bsystemctl\s+(?:restart|stop|disable)\b|\bcrontab\s+-r\b",
             # Merge
-            r"\bgh\s+pr\s+merge\b",
-            r"\bgit\s+push\b[^;&|\n]*(?:\s|:|refs/heads/)(?:main|master)(?=$|[\s;&|)])",
+            r"\bgh\s+pr\s+merge\b|\bgh\s+api\b[^;&|\n]*/merge\b",
+            _GIT + r"\s+push\b[^;&|\n]*(?:\s|:|refs/heads/)(?:main|master)(?=$|[\s;&|)])",
+            _GIT + r"\s+push\b[^;&|\n]*\s--(?:mirror|all)\b",
             # HTTP mit Schreib-Methode
-            r"\bcurl\b[^;&|\n]*?(?:\s-x\s*(?:post|put|delete|patch)\b|--request[\s=]+(?:post|put|delete|patch)\b"
+            r"\bcurl\b[^;&|\n]*?(?:\s-[a-z]*x\s*(?:post|put|delete|patch)\b|--request[\s=]+(?:post|put|delete|patch)\b"
             r"|\s-d(?![\w-])|\s--data[\w-]*|\s--form\b)",
             r"\bwget\b[^;&|\n]*--post",
             # Zugang
@@ -343,6 +352,7 @@ _BEFEHL = re.compile(
             # Löschen
             r"\bgh\s+(?:repo|release)\s+delete\b",
             r"\bdocker\s+volume\s+(?:rm|prune)\b|\bdocker\s+system\s+prune\b",
+            r"\bdocker[\s-]compose\b[^;&|\n]*\sdown\b[^;&|\n]*\s-v\b",
             # Geld
             r"(?<![\w.-])(?:stripe|paypal)(?![\w-])",
         )
@@ -352,23 +362,12 @@ _BEFEHL = re.compile(
 _SQL = re.compile(r"\b(?:drop\s+(?:table|database|schema)|delete\s+from|truncate\s+table)\b")
 _RM = re.compile(r"(?:^|[;&|(`\s])rm\s+([^;&|\n`)]*)")
 _RM_ERLAUBT = re.compile(r"(?:/tmp/|/var/tmp/|(?:~|\$\{?home\}?|/home/[^/\s]+|/root)/wt/)")
-_PUSH = re.compile(r"\bgit\s+push\b([^;&|\n]*)")
+_PUSH = re.compile(_GIT + r"\s+push\b([^;&|\n]*)")
 _EIGENER_ZIEL = re.compile(r"(?:refs/heads/)?(?:wip|ticket)/\S")
 
 
 def _nur_umbrueche(text: str) -> str:
     return "\n" * text.count("\n")
-
-
-def _ohne_heredoc(b: str) -> str:
-    def weg(m: re.Match[str]) -> str:
-        kopf = b[b.rfind("\n", 0, m.start()) + 1 : m.start()]
-        if _HEREDOC_SHELL.search(kopf):
-            return m.group(0)
-        a, e = m.start(3) - m.start(), m.end(3) - m.start()
-        return m.group(0)[:a] + _nur_umbrueche(m.group(3)) + m.group(0)[e:]
-
-    return _HEREDOC.sub(weg, b)
 
 
 def _ohne_zitate(b: str) -> str:
@@ -378,9 +377,7 @@ def _ohne_zitate(b: str) -> str:
     for m in _ZITAT.finditer(b):
         innen = m.group(0)[1:-1]
         teile.append(b[pos : m.start()])
-        if _DURCHREICHEN.search(b[max(0, m.start() - 200) : m.start()]) or (
-            m.group(0)[0] == '"' and "$(" in innen
-        ):
+        if _DURCHREICHEN.search(b[max(0, m.start() - 200) : m.start()]) or (m.group(0)[0] == '"' and "$(" in innen):
             teile.append(f";{_ohne_zitate(innen)};")  # „;“: Inhalt ist ein eigener Befehlsteil
         else:
             teile.append(" " + _nur_umbrueche(innen) + " ")
@@ -416,7 +413,7 @@ def _force_push_treffer(b: str) -> re.Match[str] | None:
 
 def _befehl_zeile(befehl: str) -> str | None:
     """Zeile von ``befehl`` mit Klasse-2-Handlung (siehe :func:`handlung_klasse_2`)."""
-    roh = _ohne_heredoc(befehl.lower())
+    roh = befehl.lower()
     ohne = _ohne_zitate(roh)
     offen = re.sub(r"['\"]", " ", roh)  # Inhalte bleiben, nur die Zeichen fallen
     # Beide Sichten behalten die Zeilen-Umbrüche: Zeilen-Nummer = Umbrüche vor dem Treffer.
@@ -430,6 +427,14 @@ def _befehl_zeile(befehl: str) -> str | None:
             break
     if m := _force_push_treffer(ohne):
         nr.append(ohne.count("\n", 0, m.end()))
+    for m in _DEPLOY_SKRIPT.finditer(roh):
+        if "staging" not in m.group(0) and "tests/" not in m.group(0):
+            nr.append(roh.count("\n", 0, m.end()))
+            break
+    for h in _HEREDOC.finditer(roh):
+        if m := _BEFEHL.search(re.sub(r"['\"]", " ", h.group(3))):
+            nr.append(roh.count("\n", 0, h.start(3) + m.end()))
+            break
     if m := _rm_treffer(offen) or _SQL.search(offen):
         nr.append(offen.count("\n", 0, m.end()))
     if not nr:
@@ -444,7 +449,9 @@ def _befehl_zeile(befehl: str) -> str | None:
 #: weiteren Buchstaben („deliver“, „reproduziert“, „Produkt“).
 _LIVE_ZIEL = re.compile(r"(?:live|prod|produktion|production|vps|hauptapp)(?![a-zäöüß])", re.I)
 _LIVE_VERB = re.compile(
-    r"(?<!\w)(?:deploy|schalt|ausroll|rollout|ausliefer|veröffentlich|einspiel|neustart|restart|hochlad)\w*",
+    # Trennbare Verben („spiele … ein“, „rolle … aus“, „starte … neu“): Stamm allein zählt.
+    r"(?<!\w)(?:(?:ein|aus|neu)?(?:ge)?(?:deploy|schalt|roll|spiel|start|restart)|aus(?:ge)?liefer"
+    r"|veröffentlich|hoch(?:ge)?lad)\w*",
     re.I,
 )
 _TEXT_FEST = re.compile(
@@ -468,13 +475,14 @@ _TEXT_PAARE = tuple(
             r"(?<!\w)(?:live(?!\w)|prod|datenbank|db(?!\w)|kunden|backup|repo)|konto|konten|account",
         ),
         (  # Konten und Zugang
-            r"(?<!\w)(?:anleg|erstell|registrier|einlogg|anmeld|eintrag|rotier|leg)\w*",
+            r"(?<!\w)(?:anleg|erstell|registrier|einlogg|anmeld|eintrag|rotier|leg|(?:ge)?logg|(?:ge)?setz|(?:ge)?änder)\w*",
             r"konto|konten|account|passw|api-?key|secret|zugang|2fa",
         ),
     )
 )
-_SATZ = re.compile(r"(?<=[.!?;·|])\s+")
-_ABSTAND = 60
+#: Satz-Ende; „;“ und „|“ trennen im Text nicht (Tabellenzeile „| Kauf | Abo |“, PR 374 R10).
+_SATZ = re.compile(r"(?<=[.!?·])\s+")
+_ABSTAND = 120
 
 
 def _paar(verb: re.Pattern[str], ziel: re.Pattern[str], satz: str) -> bool:
@@ -498,7 +506,8 @@ def _text_zeile(text: str) -> str | None:
 # --- Werkzeuge und Pfade ---------------------------------------------------------------------
 
 _WERKZEUG = re.compile(
-    r"^mcp__.*(?:purchase|buy|order|renew|pay|billing|delete|remove|destroy|deploy|create_?phone|send)"
+    r"^mcp__.*(?:purchase|buy|order|renew|pay|billing|delete|remove|destroy|deploy|create_?phone|send"
+    r"|ssh|remote)"
 )
 _PFAD = re.compile(_ENV + r"|secret|credential")
 

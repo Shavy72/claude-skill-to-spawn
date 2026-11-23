@@ -919,3 +919,31 @@ def test_r9_rueckfall_prueft_breit_kundenkonto(welt: Welt) -> None:
     welt.fenster = "● " + HARMLOS + FUSS
     welt.verlauf = "● Ich prüfe das Kundenkonto.\n\n" + welt.fenster
     assert _k2(welt.blick()[0])
+
+
+# --- PR 374 Runde 10 -------------------------------------------------------------------------
+
+
+def test_r10_t7d_ohne_stelle_prueft_die_vorgaengerin_mit(welt: Welt) -> None:
+    """T7d: Vorgängerin hat nie gefragt (keine Stelle), Live-Arbeit nur in ihrer Datei."""
+    welt.datei(ALT).write_text(
+        json.dumps(_a(LIVE_SATZ, uuid="alt1")) + "\n", encoding="utf-8"
+    )
+    _harmlose_neue_session(welt)
+    assert _k2(welt.blick(None)[0])
+
+
+def test_r10_t7d_ohne_stelle_harmlose_vorgaengerin_bleibt_klasse_3(welt: Welt) -> None:
+    welt.datei(ALT).write_text(
+        json.dumps(_a("Tests grün.", uuid="alt1")) + "\n", encoding="utf-8"
+    )
+    _harmlose_neue_session(welt)
+    assert not _k2(welt.blick(None)[0])
+
+
+def test_r10_read_pfad_mit_env_zaehlt(welt: Welt) -> None:
+    """Regel „Read-Pfad“: ohne sie rutscht das Lesen der .env durch."""
+    welt.fenster = FRAGE_FENSTER
+    lesen = {"type": "tool_use", "id": "t", "name": "Read", "input": {"file_path": "/opt/app/.env"}}
+    welt.schreibe([_u("los"), _a(lesen), _a("Passt das so?")])
+    assert _k2(welt.blick()[0])
