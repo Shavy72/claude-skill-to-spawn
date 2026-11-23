@@ -45,6 +45,16 @@ was zum Weiterbauen nötig ist.
 
 ## 3. Stand
 
+- **2026-11-23 04:49 (Server-Uhr, main d8df77a):** Pull-Request 294 (Issue 275) gemergt und auf dem
+  Bau-Server installiert: Der Aufseher-Check kennt `staging:fertig`, öffnet je Ticket und Verstoß nur
+  einmal wieder, und `staging:fertig` startet keinen Bau.
+  - Offen, kurz vor Merge: Pull-Request 295 (Issue 276, Bau-Session löst sich ab eigenem Handoff selbst
+    ab) und 293 (Issue 277, Startzeile ohne .bashrc/.venv).
+  - In Arbeit: Issue 279 (Baustein Ticket-Zustand je Stelle, Paket P1), danach Issue 278
+    (Entscheidungs-Befugnis im Start-Auftrag), 274 (mit 273 + 281), 282. Windows-Tickets 283 + 285
+    baut eine PC-Session.
+  - Test-Durchlauf im Probe-Repo startet nur auf ausdrückliches Wort des Nutzers.
+
 - **22.11.2026 16:10 (Server-Uhr, main 8acfed7):** Seit dem Haltepunkt 760ed4f gemergt: Pull-Request 265
   (Issue 245, Zeilenenden in den Prüf-Regeln) → 5af043a · Pull-Request 233 (Hausmeister unter Windows,
   Issue 68 bleibt offen) → f134819 · Pull-Request 268 (Issue 267: Warte-Prüfung der Bau-Session fragt
