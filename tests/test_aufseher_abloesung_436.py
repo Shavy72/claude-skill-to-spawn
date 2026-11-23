@@ -603,7 +603,8 @@ def test_exit_2_ueber_echte_aufsicht_kein_nachfolger(
             "FAKE_SCHLAF": "30",
             # #353: alter Aufseher endet regulär 2 Haupt-Takte (TAKT_S = 5 s) nach der
             # Bau-Log-Zeile „blockiert“, statt fest 30 s zu schlafen; wird er bis dahin
-            # von außen beendet, steht die Marke „.beendet“ (PR 379: Lücke 4–10 s zu).
+            # von außen beendet, steht die Marke „.beendet“ (PR 379: Lücke 4–10 s zu;
+            # FAKE_NACHLAUF_S = 20 s hält die Attrappe mit Puffer über die 2 Takte hinaus).
             "FAKE_ENDE_NACH_GETIPPT": "4",
             "FAKE_ENDE_NACH_LOG": os.pathsep.join(
                 str(pfad(welt["repo"], SPEC)) for pfad in (bau_log.log_pfad, bau_log.lauf_pfad)

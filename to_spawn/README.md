@@ -238,9 +238,9 @@ oder `/proc` unlesbar = kein Urteil = frei. Test-Tür: `TO_SPAWN_SPEICHER_MEMINF
 
 ## Test
 
-Volle Suite: im Klon des Skill-Repos `bash scripts/suite.sh` (einziger Standard-Aufruf,
-Exit-Code von pytest; weitere Argumente gehen an pytest). `install.sh`/`install.ps1`
-kopieren `scripts/` nicht mit — im installierten Skill gibt es `suite.sh` nicht. Weg-Test gegen ein Wegwerf-Repo mit Bare-Remote. Gestellt sind nur zwei Programme:
+Volle Suite: `bash skripte/suite.sh` (einziger Standard-Aufruf, Exit-Code von pytest;
+weitere Argumente gehen an pytest). Im Klon sammelt sie `tests/` und `review/`, im
+installierten Skill nur `tests/` (`review/` wird nicht installiert). Weg-Test gegen ein Wegwerf-Repo mit Bare-Remote. Gestellt sind nur zwei Programme:
 
 1. `claude` (`tests/hilfen/fake_claude.py`) — die Session selbst.
 2. `gh` (`tests/hilfen/gh_stub.py`, über `TO_SPAWN_GH_STUB`) — GitHub ist ein
