@@ -69,3 +69,27 @@ def test_gegenprobe_reiner_test_diff_ohne_pruefung_bleibt_befund(repo: Path) -> 
     )
     daten = probe(repo, "test_leer_401.py")
     assert befunde(daten) == [("test_leer_401.py", "hoch")], daten
+
+
+def test_gegenprobe_test_mit_geaenderter_datendatei_bleibt_befund(repo: Path) -> None:
+    """Review F1: Test + geänderte Nicht-Python-Datei ist kein reiner Test-Diff → Befund bleibt."""
+    (repo / "daten.json").write_text('{"wert": 1}\n', encoding="utf-8")
+    (repo / "test_daten_401.py").write_text(
+        "import json\nfrom pathlib import Path\n\n\ndef test_wert():\n"
+        "    assert json.loads((Path(__file__).parent / 'daten.json').read_text())['wert'] == 1\n",
+        encoding="utf-8",
+    )
+    daten = probe(repo, "daten.json", "test_daten_401.py")
+    assert befunde(daten) == [("test_daten_401.py", "hoch")], daten
+    assert HINWEIS not in daten["hinweis"], daten
+
+
+def test_gegenprobe_leere_methode_neben_gleichnamiger_pruefender_bleibt_befund(repo: Path) -> None:
+    """Review F3: gleichnamige Methode in anderer Klasse darf den Leer-Test nicht verdecken."""
+    (repo / "test_klassen_401.py").write_text(
+        "from rechnen import eins\n\n\nclass TestA:\n    def test_x(self):\n        assert eins() == 1\n\n\n"
+        "class TestB:\n    def test_x(self):\n        assert True\n",
+        encoding="utf-8",
+    )
+    daten = probe(repo, "test_klassen_401.py")
+    assert befunde(daten) == [("test_klassen_401.py", "hoch")], daten
