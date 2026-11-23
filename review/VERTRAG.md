@@ -9,10 +9,11 @@ Wer diesen Vertrag ändert, passt alle Bausteine an.
 ```
 ~/.claude/review/
   VERTRAG.md            dieses Dokument
-  config.json           Schalter + Schwellen (einzige Quelle für Zahlen)
+  config.standard.json  Schalter + Schwellen (einzige Quelle für Zahlen), ausgeliefert
   review_route.py       Diff → Stufe, Signale, Prüfer-Liste (JSON auf stdout)
   review_beleg.py       Beleg schreiben / prüfen (Gate-Baustein)
   review_bericht.py     Zählbericht Soll vs. Ist
+  rot_probe.py          Rot-Probe: neue Tests gegen den alten Code (rot?)
   auftraege/            Auftragsvorlagen je Prüfer + richter.md (Markdown)
   tests/                pytest, Fixtures mit Beispiel-Diffs
   ausloeser.jsonl       Auslöser-Log (Soll), eine Zeile je Auslösung
@@ -21,9 +22,13 @@ Wer diesen Vertrag ändert, passt alle Bausteine an.
 <repo>/.review/          Belege je Repo (nie committen; globales gitignore)
 ```
 
+Optional und privat, nie im Repo: `~/.claude/review/regeln.md` — Projektregeln (§2a). `~/.claude/review/namen_privat.txt` — Namensliste für die Öffentlich-Prüfung des Skill-Repos (Ort definiert in `tests/test_review_quelle_329.py`).
+
 Nur Python-Standardbibliothek. Python 3.11+. Type Hints, `logging`, kein `print` außer für die JSON-/Tabellen-Ausgabe auf stdout, kein bare except. Windows (Git Bash) UND Linux (Bau-Server) müssen laufen: Pfade mit `pathlib`, `git` per `subprocess` mit Liste.
 
-## 2. config.json
+## 2. Config (config.standard.json + lokale config.json)
+
+Ausgeliefert wird nur `config.standard.json`; der Installer aktualisiert sie. Lokale Einstellungen stehen in `~/.claude/review/config.json` (optional, nie ausgeliefert; Pfad überschreibbar per `REVIEW_CONFIG`). Der Installer entschlackt sie, damit sie künftige Standard-Änderungen nicht still verdeckt: gleicht sie einem je ausgelieferten Stand (aktueller Standard + git-Verlauf), kommt sie nach `_alt/`; sonst fallen nur Schlüssel weg, deren Wert dem aktuellen Standard gleicht (Original vorher in `_alt/`). Beim Lesen gewinnt jeder lokale Schlüssel, fehlende kommen aus dem Standard (Mischung nur auf oberster Ebene).
 
 ```json
 {
@@ -39,11 +44,20 @@ Nur Python-Standardbibliothek. Python 3.11+. Type Hints, `logging`, kein `print`
   "modelle": {"pruefer": "sonnet", "richter": "opus"},
   "code_review_stufe": {"klein": "low", "mittel": "high", "gross": "xhigh"},
   "datei_groesse": {"grenze": 1000, "zuwachs": 150},
+  "projekt_woerter": {"datenbank": ["<modul>"], "kosten": ["<dienst>"]},
   "ignorieren": ["*.md", "*.txt", "docs/**", ".review/**", "graphify-out/**", "archive/**", "*.lock"]
 }
 ```
 
 `modus`: `hinweis` = nichts blockiert, alles protokolliert. `scharf` = Gates blockieren bei ROT oder fehlendem Beleg.
+
+`projekt_woerter` (optional): je Signal-ID zusätzliche Pfad-/Zeilen-Wörter eines Projekts (Modul- und Dienstnamen). Einzige Stelle dafür — der Code kennt nur allgemeine Wörter (#329 P2). Unbekannte Signal-ID → Eingabefehler.
+
+## 2a. Projektregeln (`~/.claude/review/regeln.md`, privat)
+
+Projekt-eigene Regeln (SSOT-Module, Status-Wege, Deploy-Wege …) stehen nie im öffentlichen Werkzeug, sondern in `~/.claude/review/regeln.md`: Markdown, je Abschnitt `## <auftrag>` (z. B. `## python`), eine Zeile `Falls Repo <name>: …` gilt nur in diesem Repo. Die Route gibt je Prüfer die geltenden Zeilen seiner Abschnitte (`basis` + `auftraege[]`) als `pruefer[].regeln` mit; `Falls Repo <name>` gilt, wenn `<name>` der Ordner- oder `origin`-Name des Repos ist. Der Dirigent reicht `regeln` wörtlich in den Prüfer-Auftrag weiter; die Vorlagen nennen den Abschnitt nur noch zur Orientierung. Nie ausgeliefert, nie versioniert (`review/.gitignore`), der Installer überschreibt sie nie.
+
+Übernahme: Vor dem Ersetzen einer lokal geänderten Vorlage (weder neue noch zuletzt installierte Fassung) schreibt der Installer deren eigene Zeilen in den passenden Abschnitt, ebenso aus früher gesicherten Vorlagen unter `_alt/review-*/auftraege` (Dubletten je Abschnitt; ein vorhandener Abschnitt wächst, Handänderungen bleiben; `to_spawn/review_hook.py`). Die lokale Config wird erst nach dem Einspielen entschlackt. Fehlt die Datei, trägt die Route `"projektregeln": {"datei": …, "vorhanden": false}`, die Kurzzeile endet mit `· Projektregeln fehlen (…)` und es gibt eine Warnung; bei Stufe `keine` ist das Feld `null`.
 
 ## 3. Stufen und Signale
 
@@ -65,8 +79,8 @@ Signal-IDs (Klasse normal/hart) → zusätzliche Prüfer:
 | n8n | normal | `*.json` mit `"nodes"` und `"connections"` | code-reviewer (Auftrag n8n) |
 | fehlerpfad | normal | hinzugefügt: `except`, `catch`, `\|\| `, `?? `, `.get(`, `or ""`, `default=` | silent-failure-hunter |
 | sicherheit | hart | Pfad/Zeile: `auth`, `login`, `token`, `bearer`, `secret`, `password`, `.env`, `permission`, `rolle`, `role` (case-insensitiv) | security-reviewer + builtin `/security-review` |
-| datenbank | hart | `migration`, `*.sql`, `account_db`, `set_status`, `ALTER TABLE`, `CREATE TABLE` | database-reviewer + silent-failure-hunter |
-| kosten | hart | `shutdown`, `boot`, `proxy`, `postproxy`, `power_off`, `phone_power` | silent-failure-hunter (Auftrag kosten) |
+| datenbank | hart | `migration`, `*.sql`, `set_status`, `ALTER TABLE`, `CREATE TABLE`, `projekt_woerter.datenbank` | database-reviewer + silent-failure-hunter |
+| kosten | hart | `shutdown`, `boot`, `proxy`, `power_off`, `projekt_woerter.kosten` | silent-failure-hunter (Auftrag kosten) |
 | oberflaeche | normal | `web/static/**`, `*.html`, `*.css`, `*.tsx`, `*.jsx`, `*.vue` | oberflaeche (Skill-Linsen impeccable-audit, web-design-guidelines, accessibility) |
 | infra | hart | `Dockerfile*`, `requirements*.txt`, `*compose*.y*ml`, `pyproject.toml`, `package.json` | code-reviewer (Auftrag infra) |
 | tests | normal | `test_*.py`, `*_test.py`, `*.test.*`, `*.spec.*` | pr-test-analyzer |
@@ -111,8 +125,10 @@ Ausgabe (stdout, JSON, UTF-8):
   "datei_groesse": [{"datei": "web/services/x.py", "vorher": 990, "nachher": 1010, "art": "ueber_1000"}],
   "pruefer": [
     {"name": "python-reviewer", "typ": "agent", "modell": "sonnet",
-     "dateien": ["web/services/x.py"], "auftraege": ["basis", "python"]}
+     "dateien": ["web/services/x.py"], "auftraege": ["basis", "python"],
+     "regeln": ["Zeilen aus regeln.md, Abschnitte basis + python, für dieses Repo"]}
   ],
+  "projektregeln": {"datei": "~/.claude/review/regeln.md", "vorhanden": true},
   "builtin": [{"befehl": "/code-review", "stufe": "high"}],
   "richter": true,
   "beleg": "C:/…/.review/beleg-97634cf-commit.json oder null",

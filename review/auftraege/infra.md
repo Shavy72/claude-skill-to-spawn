@@ -9,7 +9,7 @@
 - Build bricht auf Zielplattform (Linux-Server) wegen Windows-Pfaden, CRLF oder fehlender Systembibliothek.
 - Änderung braucht Neuaufbau (Rebuild) — ist das im Ablauf vermerkt?
 
-Projekt-eigene Regeln: Liegt im geprüften Repo `.review/regeln.md`, gelten dessen Regeln zu Infrastruktur zusätzlich (z. B. welche Änderung welchen Deploy-Schalter braucht; ohne Hinweis im Commit/Ticket als `mittel` melden).
+Projekt-eigene Regeln: Abschnitt `## infra` der privaten `~/.claude/review/regeln.md` (VERTRAG.md §2a) gilt zu Infrastruktur zusätzlich, Zeilen `Falls Repo <name>: …` nur in diesem Repo (z. B. welche Änderung welchen Deploy-Schalter braucht; ohne Hinweis im Commit/Ticket als `mittel` melden).
 
 ## Ignoriere
 

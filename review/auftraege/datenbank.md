@@ -11,7 +11,7 @@
 - SQLite-spezifisch: `ALTER TABLE`-Grenzen, fehlendes `PRAGMA foreign_keys=ON`, Schreibsperren bei parallelen Prozessen.
 - Status-Felder: direkte `UPDATE`s am Status vorbei an der zentralen Funktion.
 
-Projekt-eigene Regeln: Liegt im geprüften Repo `.review/regeln.md`, gelten dessen Regeln zu Daten und Status zusätzlich (z. B. Status-Wechsel nur über eine Funktion, erlaubte Reihenfolge der Status).
+Projekt-eigene Regeln: Abschnitt `## datenbank` der privaten `~/.claude/review/regeln.md` (VERTRAG.md §2a) gilt zu Daten und Status zusätzlich, Zeilen `Falls Repo <name>: …` nur in diesem Repo (z. B. Status-Wechsel nur über eine Funktion, erlaubte Reihenfolge der Status).
 
 ## Ignoriere
 

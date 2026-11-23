@@ -14,7 +14,7 @@ import shutil
 import subprocess
 import sys
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -41,8 +41,71 @@ class EingabeFehler(Exception):
     """Kaputte Eingabe → Exit 2."""
 
 
+#: Ausgelieferte Standardwerte; der Installer aktualisiert nur diese Datei.
+STANDARD_CONFIG = HIER / "config.standard.json"
+
+
 def config_pfad() -> Path:
+    """Lokale Einstellungen (optional, nie ausgeliefert): der Installer fasst sie nie an."""
     return Path(os.environ.get("REVIEW_CONFIG") or HIER / "config.json")
+
+
+#: Private Projektregeln (VERTRAG.md §2a): nie ausgeliefert, nie im öffentlichen Repo; die Vorlagen nennen sie.
+REGELN_DATEI = "regeln.md"
+
+
+def projektregeln() -> dict[str, Any]:
+    """Wo die Projektregeln liegen und ob es sie gibt; fehlen sie, warnt das laut (Prüfer prüfen dann ohne).
+
+    ponytail: eine private Datei je Rechner für alle Projekte (Zeilen ``Falls Repo <name>: …``);
+    versionierte Datei im Projekt erst, wenn Rechner auseinanderlaufen.
+    """
+    pfad = HIER / REGELN_DATEI
+    vorhanden = pfad.is_file()
+    if not vorhanden:
+        LOG.warning("Projektregeln fehlen: %s — Prüfer prüfen nur allgemeine Regeln (VERTRAG.md §2a)", pfad)
+    return {"datei": pfad.as_posix(), "vorhanden": vorhanden}
+
+
+_FALLS_REPO = re.compile(r"^[\s>*-]*Falls Repo\s+([^:]+?)\s*:")
+
+
+def _repo_namen(repo: Path) -> set[str]:
+    """Ordnername und Name aus ``origin`` (Worktrees heißen oft anders als das Repo)."""
+    namen = {repo.name}
+    origin = git(repo, "remote", "get-url", "origin", check=False).strip().rstrip("/")
+    if origin:
+        namen.add(re.split(r"[/:]", origin)[-1].removesuffix(".git"))
+    return namen
+
+
+def regeln_je_auftrag(repo: Path) -> dict[str, list[str]]:
+    """Zeilen der ``regeln.md`` je Abschnitt ``## <auftrag>``, die in ``repo`` gelten (VERTRAG.md §2a).
+
+    Die Route gibt sie je Prüfer mit (``pruefer[].regeln``), damit der Text sicher im Auftrag landet.
+    ``Falls Repo <name>: …`` gilt nur, wenn ``<name>`` der Ordner- oder origin-Name ist; Kopf vor dem ersten
+    Abschnitt und Leerzeilen zählen nicht. Fehlt oder klemmt die Datei: leer (die Warnung kommt aus
+    :func:`projektregeln`).
+    """
+    try:
+        text = (HIER / REGELN_DATEI).read_text(encoding="utf-8")
+    except (OSError, ValueError) as fehler:
+        LOG.warning("Projektregeln nicht lesbar: %s", fehler)
+        return {}
+    namen = _repo_namen(repo)
+    abschnitte: dict[str, list[str]] = {}
+    aktuell: str | None = None
+    for zeile in text.splitlines():
+        if zeile.startswith("## "):
+            aktuell = zeile[3:].strip()
+            abschnitte.setdefault(aktuell, [])
+        elif zeile.startswith("# "):
+            aktuell = None
+        elif aktuell and zeile.strip():
+            treffer = _FALLS_REPO.match(zeile)
+            if not treffer or treffer.group(1) in namen:
+                abschnitte[aktuell].append(zeile)
+    return abschnitte
 
 
 def log_pfad() -> Path:
@@ -50,11 +113,23 @@ def log_pfad() -> Path:
 
 
 def lade_config() -> dict[str, Any]:
-    pfad = config_pfad()
-    try:
-        return json.loads(pfad.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as fehler:
-        raise EingabeFehler(f"Config {pfad} unlesbar: {fehler}") from fehler
+    """Standard plus lokale Config; lokale Schlüssel gewinnen, fehlende kommen aus dem Standard.
+
+    ponytail: Mischung nur auf oberster Ebene (lokales ``stufen`` ersetzt das ganze ``stufen``),
+    tief mischen erst, wenn Teil-Überschreibungen gebraucht werden.
+    """
+    cfg: dict[str, Any] = {}
+    for pfad in (STANDARD_CONFIG, config_pfad()):
+        try:
+            teil = json.loads(pfad.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            continue  # Lokale Config ist optional; fehlt auch der Standard, prüfen die Aufrufer ihre Schlüssel.
+        except (OSError, json.JSONDecodeError) as fehler:
+            raise EingabeFehler(f"Config {pfad} unlesbar: {fehler}") from fehler
+        if not isinstance(teil, dict):
+            raise EingabeFehler(f"Config {pfad} muss ein JSON-Objekt sein")
+        cfg.update(teil)
+    return cfg
 
 
 def jetzt() -> str:
@@ -264,8 +339,9 @@ class Signal:
 _SICHERHEIT = (
     "auth", "login", "token", "bearer", "secret", "password", ".env", "permission", "rolle", "role",
 )  # fmt: skip
-_DATENBANK = ("migration", "account_db", "set_status", "alter table", "create table")
-_KOSTEN = ("shutdown", "boot", "proxy", "postproxy", "power_off", "phone_power")
+# Projekt-eigene Wörter (Modul-/Dienstnamen) nur in der Config → "projekt_woerter" (#329 P2).
+_DATENBANK = ("migration", "set_status", "alter table", "create table")
+_KOSTEN = ("shutdown", "boot", "proxy", "power_off")
 _INFRA = (
     "Dockerfile*",
     "requirements*.txt",
@@ -334,6 +410,33 @@ SIGNALE: tuple[Signal, ...] = (
         pruefer=(("pr-test-analyzer", "agent"),),
     ),
 )
+
+
+def signale_fuer(cfg: dict[str, Any]) -> tuple[Signal, ...]:
+    """SIGNALE plus ``cfg["projekt_woerter"]`` ({Signal-ID: [Wort, …]}): gelten für Pfad und Zeilen.
+
+    So bleibt der Code projekt-neutral; Modul- und Dienstnamen eines Projekts stehen nur in der Config.
+    """
+    extra = cfg.get("projekt_woerter") or {}
+    if not isinstance(extra, dict) or not all(
+        isinstance(w, list) and all(isinstance(x, str) for x in w) for w in extra.values()
+    ):
+        raise EingabeFehler('Config "projekt_woerter" muss {Signal-ID: [Wort, …]} sein')
+    unbekannt = sorted(set(extra) - {s.id for s in SIGNALE})
+    if unbekannt:
+        raise EingabeFehler(f'Config "projekt_woerter": unbekannte Signal-ID {", ".join(unbekannt)}')
+    return tuple(
+        replace(
+            s,
+            pfad_woerter=s.pfad_woerter + tuple(extra[s.id]),
+            zeilen_woerter=s.zeilen_woerter + tuple(extra[s.id]),
+        )
+        if extra.get(s.id)
+        else s
+        for s in SIGNALE
+    )
+
+
 LINSEN_OBERFLAECHE = ["impeccable-audit", "web-design-guidelines", "accessibility"]
 _REACT_IMPORT = re.compile(r"""(from\s+['"]react['"]|require\(\s*['"]react['"]\s*\))""")
 
@@ -372,7 +475,7 @@ def _tokenisiert(text: str) -> str:
 
 def _zeilenwort_trifft(wort: str, tokens: str, roh_klein: str) -> bool:
     """Reine Bezeichner-Wörter (z.B. "token") nur an Wortgrenzen; Symbol-/Mehrwort-
-    Muster (z.B. ".get(", "account_db") bleiben Teilstring-Treffer wie bisher."""
+    Muster (z.B. ".get(", "set_status") bleiben Teilstring-Treffer wie bisher."""
     if wort == ".env":
         return bool(_ENV_LITERAL.search(roh_klein))
     kern = _NICHT_ALNUM.sub(" ", wort).strip().lower()
@@ -665,6 +768,7 @@ def berechne_route(
         "signale": [],
         "datei_groesse": [],
         "pruefer": [],
+        "projektregeln": None,
         "builtin": [],
         "richter": False,
         "beleg": None,
@@ -680,7 +784,7 @@ def berechne_route(
     zeilen = sum(diffs[p].zeilen for p in relevant)
 
     signale: list[dict[str, Any]] = []
-    for sig in SIGNALE:
+    for sig in signale_fuer(cfg):
         treffer = [p for p in relevant if signal_trifft(sig, repo, diffs[p])]
         if treffer:
             signale.append({"id": sig.id, "klasse": sig.klasse, "dateien": treffer})
@@ -740,6 +844,11 @@ def berechne_route(
         treffer = beleg_nach_inhalt(repo, moment, relevant, inhalt_hashes)
         if treffer is not None:
             beleg, gueltig = treffer[0], True  # fix_runde bleibt: kein Reset des Eskalationszählers
+    regeln_info = projektregeln() if stufe != "keine" else None
+    abschnitte = regeln_je_auftrag(repo) if regeln_info and regeln_info["vorhanden"] else {}
+    pruefer = _pruefer_liste(stufe, signale, relevant, cfg)
+    for eintrag in pruefer:
+        eintrag["regeln"] = list(dict.fromkeys(z for a in eintrag["auftraege"] for z in abschnitte.get(a, [])))
     ergebnis.update(
         stufe=stufe,
         sha=sha,
@@ -750,7 +859,8 @@ def berechne_route(
         dateien=relevant,
         signale=signale,
         datei_groesse=datei_groesse(repo, relevant, base, staged, cfg),
-        pruefer=_pruefer_liste(stufe, signale, relevant, cfg),
+        pruefer=pruefer,
+        projektregeln=regeln_info,
         builtin=builtin,
         richter=stufe in ("mittel", "gross"),
         beleg=beleg.as_posix() if beleg.is_file() else None,

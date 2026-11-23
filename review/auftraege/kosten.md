@@ -14,7 +14,7 @@ Frage je Pfad: Kann dieser Code Geld verbrennen, wenn er abbricht, hängt oder d
 - Timeouts fehlen an Stellen, die eine bezahlte Ressource offen halten.
 - Kostenpflichtige Modell-/Bild-Aufrufe in Schleifen ohne Cache oder Deckel.
 
-Projekt-eigene Regeln: Liegt im geprüften Repo `.review/regeln.md`, gelten dessen Regeln zu Kosten zusätzlich (z. B. teure Ressourcen in `finally` freigeben, Abschalten nur über das Projekt-Modul, erlaubte Ausgabe-Wege).
+Projekt-eigene Regeln: Abschnitt `## kosten` der privaten `~/.claude/review/regeln.md` (VERTRAG.md §2a) gilt zu Kosten zusätzlich, Zeilen `Falls Repo <name>: …` nur in diesem Repo (z. B. teure Ressourcen in `finally` freigeben, Abschalten nur über das Projekt-Modul, erlaubte Ausgabe-Wege).
 
 ## Ignoriere
 

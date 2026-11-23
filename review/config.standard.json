@@ -12,5 +12,6 @@
   "modelle": {"pruefer": "sonnet", "richter": "opus"},
   "code_review_stufe": {"klein": "low", "mittel": "high", "gross": "xhigh"},
   "datei_groesse": {"grenze": 1000, "zuwachs": 150},
+  "projekt_woerter": {"datenbank": ["account_db"], "kosten": ["postproxy", "phone_power"]},
   "ignorieren": ["*.md", "*.txt", "docs/**", ".review/**", "graphify-out/**", "archive/**", "*.lock"]
 }

@@ -14,7 +14,7 @@ import pytest
 
 HOOKS = Path(__file__).resolve().parent.parent
 REVIEW = HOOKS.parent.parent / "review"
-BASIS_CONFIG = json.loads((REVIEW / "config.json").read_text(encoding="utf-8"))
+BASIS_CONFIG = json.loads((REVIEW / "config.standard.json").read_text(encoding="utf-8"))
 
 
 def git(repo: Path, *args: str) -> str:

@@ -19,9 +19,9 @@ Spec-Quelle steht im Prompt (Ticket/Issue, Handoff, Auftrag, Commit-Nachrichten)
   unklarer Name · doppelter Code im Diff · Feature-Neid · Datenklumpen · Primitiv-Besessenheit · wiederholte Switches · Schrotflinten-Änderung · divergierende Änderung · spekulative Allgemeinheit · Nachrichtenketten · Mittelsmann · abgelehnte Erbschaft.
 - SSOT-Module umgangen oder kopiert statt genutzt.
 
-Projekt-eigene Regeln: Liegt im geprüften Repo `.review/regeln.md`, gelten dessen Regeln zu SSOT-Modulen und Texten zusätzlich (z. B. nie kopierte SSOT-Module, Sprache und Schreibweise der Texte).
+Projekt-eigene Regeln: Abschnitt `## spec` der privaten `~/.claude/review/regeln.md` (VERTRAG.md §2a) gilt zu SSOT-Modulen und Texten zusätzlich, Zeilen `Falls Repo <name>: …` nur in diesem Repo (z. B. nie kopierte SSOT-Module, Sprache und Schreibweise der Texte).
 
-Fachliche Ablauf-Regeln des geprüften Projekts (z. B. erlaubte Aktionen automatisierter Abläufe) stehen in dessen `.review/regeln.md` und gelten zusätzlich.
+Fachliche Ablauf-Regeln des geprüften Projekts (z. B. erlaubte Aktionen automatisierter Abläufe) stehen im Abschnitt `## spec` der privaten `~/.claude/review/regeln.md` und gelten zusätzlich.
 
 ## Ignoriere
 

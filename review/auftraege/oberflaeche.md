@@ -17,7 +17,7 @@ Der Dirigent startet je Linse einen eigenen Prüfer. Dein Prompt nennt deine Lin
 - Formulare: Label, Fehlermeldung am Feld, kein Datenverlust bei Fehler.
 - Falls Screenshot-Pfad im Prompt: Befunde am Bild belegen; sonst am Markup/CSS.
 
-Projekt-eigene Regeln: Liegt im geprüften Repo `.review/regeln.md`, gelten dessen Regeln zu Oberfläche zusätzlich (z. B. Design-Doktrin vorher lesen, einfache Wörter, Namen der Knöpfe wie auf dem Bildschirm).
+Projekt-eigene Regeln: Abschnitt `## oberflaeche` der privaten `~/.claude/review/regeln.md` (VERTRAG.md §2a) gilt zu Oberfläche zusätzlich, Zeilen `Falls Repo <name>: …` nur in diesem Repo (z. B. Design-Doktrin vorher lesen, einfache Wörter, Namen der Knöpfe wie auf dem Bildschirm).
 
 ## Ignoriere
 
