@@ -45,6 +45,19 @@ was zum Weiterbauen nötig ist.
 
 ## 3. Stand
 
+- **2026-11-23 07:36 (Server-Uhr, main 056fac1):** Seit dem Eintrag von 04:49 gemergt und auf dem
+  Bau-Server installiert (Stand 056fac1): Issue 276 (Bau-Session löst sich ab eigenem Handoff selbst
+  ab), Issue 277 (Startzeile ohne .bashrc/.venv), Issue 279 Pakete P1–P5 und P6a (ein Baustein
+  `ticket_zustand` sagt für jede Stelle, wie weit ein Ticket ist; fertig gebautes Ticket mit stillem
+  Fenster wird beendet statt neu gestartet), Issue 278 Pakete P1, P2 und P3a (Befugnis-Klassen im
+  Start-Auftrag, Entscheidungs-Briefkasten, kaputte Briefkasten-Datei sperrt sichtbar statt still).
+  Letzte Merges: Pull-Request 306 → 03adf48, Pull-Request 308 → 056fac1; volle Suite auf dem Stand vor
+  dem Merge 308: 3276 bestanden, 81 übersprungen, 18 xfailed, 0 rot.
+  - In Arbeit: Pull-Request 307 (Issue 279 P6b, Anzeige im Leitstand; Fix-Runde nach Prüfer-Befund)
+    und Issue 278 P3b (Aufseher liest und beantwortet den Briefkasten).
+  - Danach: Issue 274 (mit 273 + 281), 282. Windows-Tickets 283 + 285 baut eine PC-Session.
+  - Test-Durchlauf im Probe-Repo startet nur auf ausdrückliches Wort des Nutzers.
+
 - **2026-11-23 04:49 (Server-Uhr, main d8df77a):** Pull-Request 294 (Issue 275) gemergt und auf dem
   Bau-Server installiert: Der Aufseher-Check kennt `staging:fertig`, öffnet je Ticket und Verstoß nur
   einmal wieder, und `staging:fertig` startet keinen Bau.
