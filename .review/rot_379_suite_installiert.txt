@@ -1,0 +1,36 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+___________ test_suite_sh_bricht_ohne_wurzel_conftest_ab_ohne_pytest ___________
+
+tmp_path = PosixPath('/tmp/pt-c8a3phkd/test_suite_sh_bricht_ohne_wurz0')
+
+    def test_suite_sh_bricht_ohne_wurzel_conftest_ab_ohne_pytest(tmp_path: Path) -> None:
+        (tmp_path / "skripte").mkdir()
+        shutil.copy(SKILL / "skripte" / "suite.sh", tmp_path / "skripte" / "suite.sh")
+        # Attrappe für ``python``: hinterlässt eine Spur, falls pytest doch gestartet wird.
+        attrappen = tmp_path / "bin"
+        attrappen.mkdir()
+        spur = tmp_path / "python_gestartet"
+        fake = attrappen / "python"
+        fake.write_text(f'#!/bin/sh\ntouch "{spur}"\nexit 0\n', encoding="utf-8")
+        fake.chmod(0o755)
+        env = {**os.environ, "PATH": f"{attrappen}{os.pathsep}{os.environ['PATH']}"}
+    
+        lauf = subprocess.run(
+            ["bash", str(tmp_path / "skripte" / "suite.sh")],
+            capture_output=True,
+            text=True,
+            env=env,
+            check=False,
+        )
+    
+>       assert not spur.exists(), "pytest wurde trotz fehlender Wurzel-conftest.py gestartet"
+E       AssertionError: pytest wurde trotz fehlender Wurzel-conftest.py gestartet
+E       assert not True
+E        +  where True = exists()
+E        +    where exists = PosixPath('/tmp/pt-c8a3phkd/test_suite_sh_bricht_ohne_wurz0/python_gestartet').exists
+
+tests/test_suite_installiert_379.py:39: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_suite_installiert_379.py::test_suite_sh_bricht_ohne_wurzel_conftest_ab_ohne_pytest
+1 failed in 0.05s
