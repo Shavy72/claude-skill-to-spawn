@@ -157,7 +157,17 @@ with datei.open("a", encoding="utf-8") as fh:
     fh.flush()
     time.sleep(0.3)
     fh.write(json.dumps(zeile, ensure_ascii=False) + "\n")
-time.sleep(float(os.environ.get("FAKE_SCHLAF", "30")))
+# Optional (#353): statt fest FAKE_SCHLAF zu schlafen, enden, sobald im Postfach eine
+# Mail der Art FAKE_ENDE_BEI_MAIL liegt (Obergrenze bleibt FAKE_SCHLAF).
+art = os.environ.get("FAKE_ENDE_BEI_MAIL")
+ende = time.monotonic() + float(os.environ.get("FAKE_SCHLAF", "30"))
+while time.monotonic() < ende:
+    if art:
+        postfach = Path(os.environ["FAKE_POSTFACH"])
+        zeilen = postfach.read_text(encoding="utf-8").splitlines() if postfach.is_file() else []
+        if any(json.loads(z).get("art") == art for z in zeilen if z.strip()):
+            break
+    time.sleep(0.1)
 """
 
 
@@ -169,6 +179,9 @@ def test_wache_steht_nach_mehreren_pausen_still(welt: dict[str, Path]) -> None:
         "FAKE_LIMIT": ECHT.read_text(encoding="utf-8").strip(),
         "FAKE_RESET_IN": "1",
         "FAKE_SCHLAF": "20",
+        # #353: letzte Session endet, sobald session_tot gemeldet ist, statt 20 s zu schlafen.
+        "FAKE_ENDE_BEI_MAIL": "session_tot",
+        "FAKE_POSTFACH": str(welt["mails"]),
         "TO_SPAWN_RESET_PUFFER_S": "0",
     }
     beginn = time.monotonic()
