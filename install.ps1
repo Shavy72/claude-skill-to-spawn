@@ -56,7 +56,7 @@ function Sichere-UndKopiere([string]$name, [string[]]$quellen) {
     }
 }
 $quellen = foreach ($f in @("SKILL.md", "README.md", "LICENSE", "to_spawn.py", "install.sh", "install.ps1", "spawn_local.ps1", "spawn_srv.ps1",
-                           "to_spawn", "skripte", "repo-scripts", "aliase", "tests", "docs", "nest", "leitstand", "kette", "review-hook")) { Join-Path $hier $f }
+                           "to_spawn", "skripte", "repo-scripts", "aliase", "tests", "docs", "nest", "leitstand", "kette", "review-hook", "review")) { Join-Path $hier $f }
 Sichere-UndKopiere "to-spawn" $quellen
 $env:PYTHONIOENCODING = "utf-8"
 python (Join-Path (Join-Path $ziel "to_spawn") "skill_stand.py") --stempel $ziel --klon $hier
@@ -74,7 +74,7 @@ foreach ($ketteOrdner in Get-ChildItem (Join-Path (Join-Path $hier "kette") "ski
 $env:PYTHONIOENCODING = "utf-8"
 python (Join-Path (Join-Path $ziel "to_spawn") "globale_regeln.py") --ziel $ClaudeMd
 if ($LASTEXITCODE -ne 0) { throw "Regel-Blöcke nicht geschrieben: $ClaudeMd" }
-# Review-Hook (review-hook/ → ~/.claude/hooks/review, #214); Überschreib-Regel in to_spawn/review_hook.py.
+# Review-Hook (review-hook/ → ~/.claude/hooks/review, #214) + Review-Werkzeug (review/ → ~/.claude/review, #329); Überschreib-Regel in to_spawn/review_hook.py.
 python (Join-Path (Join-Path $ziel "to_spawn") "review_hook.py")
 if ($LASTEXITCODE -ne 0) { throw "Review-Hook nicht installiert" }
 

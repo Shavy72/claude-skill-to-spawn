@@ -14,7 +14,7 @@ import shutil
 import subprocess
 import sys
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -264,8 +264,9 @@ class Signal:
 _SICHERHEIT = (
     "auth", "login", "token", "bearer", "secret", "password", ".env", "permission", "rolle", "role",
 )  # fmt: skip
-_DATENBANK = ("migration", "account_db", "set_status", "alter table", "create table")
-_KOSTEN = ("shutdown", "boot", "proxy", "postproxy", "power_off", "phone_power")
+# Projekt-eigene Wörter (Modul-/Dienstnamen) nur in config.json → "projekt_woerter" (#329 P2).
+_DATENBANK = ("migration", "set_status", "alter table", "create table")
+_KOSTEN = ("shutdown", "boot", "proxy", "power_off")
 _INFRA = (
     "Dockerfile*",
     "requirements*.txt",
@@ -334,6 +335,30 @@ SIGNALE: tuple[Signal, ...] = (
         pruefer=(("pr-test-analyzer", "agent"),),
     ),
 )
+
+
+def signale_fuer(cfg: dict[str, Any]) -> tuple[Signal, ...]:
+    """SIGNALE plus ``cfg["projekt_woerter"]`` ({Signal-ID: [Wort, …]}): gelten für Pfad und Zeilen.
+
+    So bleibt der Code projekt-neutral; Modul- und Dienstnamen eines Projekts stehen nur in der Config.
+    """
+    extra = cfg.get("projekt_woerter") or {}
+    if not isinstance(extra, dict) or not all(
+        isinstance(w, list) and all(isinstance(x, str) for x in w) for w in extra.values()
+    ):
+        raise EingabeFehler('Config "projekt_woerter" muss {Signal-ID: [Wort, …]} sein')
+    return tuple(
+        replace(
+            s,
+            pfad_woerter=s.pfad_woerter + tuple(extra[s.id]),
+            zeilen_woerter=s.zeilen_woerter + tuple(extra[s.id]),
+        )
+        if extra.get(s.id)
+        else s
+        for s in SIGNALE
+    )
+
+
 LINSEN_OBERFLAECHE = ["impeccable-audit", "web-design-guidelines", "accessibility"]
 _REACT_IMPORT = re.compile(r"""(from\s+['"]react['"]|require\(\s*['"]react['"]\s*\))""")
 
@@ -372,7 +397,7 @@ def _tokenisiert(text: str) -> str:
 
 def _zeilenwort_trifft(wort: str, tokens: str, roh_klein: str) -> bool:
     """Reine Bezeichner-Wörter (z.B. "token") nur an Wortgrenzen; Symbol-/Mehrwort-
-    Muster (z.B. ".get(", "account_db") bleiben Teilstring-Treffer wie bisher."""
+    Muster (z.B. ".get(", "set_status") bleiben Teilstring-Treffer wie bisher."""
     if wort == ".env":
         return bool(_ENV_LITERAL.search(roh_klein))
     kern = _NICHT_ALNUM.sub(" ", wort).strip().lower()
@@ -680,7 +705,7 @@ def berechne_route(
     zeilen = sum(diffs[p].zeilen for p in relevant)
 
     signale: list[dict[str, Any]] = []
-    for sig in SIGNALE:
+    for sig in signale_fuer(cfg):
         treffer = [p for p in relevant if signal_trifft(sig, repo, diffs[p])]
         if treffer:
             signale.append({"id": sig.id, "klasse": sig.klasse, "dateien": treffer})

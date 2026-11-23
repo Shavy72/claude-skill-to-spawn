@@ -13,6 +13,7 @@ Wer diesen Vertrag ändert, passt alle Bausteine an.
   review_route.py       Diff → Stufe, Signale, Prüfer-Liste (JSON auf stdout)
   review_beleg.py       Beleg schreiben / prüfen (Gate-Baustein)
   review_bericht.py     Zählbericht Soll vs. Ist
+  rot_probe.py          Rot-Probe: neue Tests gegen den alten Code (rot?)
   auftraege/            Auftragsvorlagen je Prüfer + richter.md (Markdown)
   tests/                pytest, Fixtures mit Beispiel-Diffs
   ausloeser.jsonl       Auslöser-Log (Soll), eine Zeile je Auslösung
@@ -39,11 +40,14 @@ Nur Python-Standardbibliothek. Python 3.11+. Type Hints, `logging`, kein `print`
   "modelle": {"pruefer": "sonnet", "richter": "opus"},
   "code_review_stufe": {"klein": "low", "mittel": "high", "gross": "xhigh"},
   "datei_groesse": {"grenze": 1000, "zuwachs": 150},
+  "projekt_woerter": {"datenbank": ["<modul>"], "kosten": ["<dienst>"]},
   "ignorieren": ["*.md", "*.txt", "docs/**", ".review/**", "graphify-out/**", "archive/**", "*.lock"]
 }
 ```
 
 `modus`: `hinweis` = nichts blockiert, alles protokolliert. `scharf` = Gates blockieren bei ROT oder fehlendem Beleg.
+
+`projekt_woerter` (optional): je Signal-ID zusätzliche Pfad-/Zeilen-Wörter eines Projekts (Modul- und Dienstnamen). Einzige Stelle dafür — der Code kennt nur allgemeine Wörter (#329 P2).
 
 ## 3. Stufen und Signale
 
@@ -65,8 +69,8 @@ Signal-IDs (Klasse normal/hart) → zusätzliche Prüfer:
 | n8n | normal | `*.json` mit `"nodes"` und `"connections"` | code-reviewer (Auftrag n8n) |
 | fehlerpfad | normal | hinzugefügt: `except`, `catch`, `\|\| `, `?? `, `.get(`, `or ""`, `default=` | silent-failure-hunter |
 | sicherheit | hart | Pfad/Zeile: `auth`, `login`, `token`, `bearer`, `secret`, `password`, `.env`, `permission`, `rolle`, `role` (case-insensitiv) | security-reviewer + builtin `/security-review` |
-| datenbank | hart | `migration`, `*.sql`, `account_db`, `set_status`, `ALTER TABLE`, `CREATE TABLE` | database-reviewer + silent-failure-hunter |
-| kosten | hart | `shutdown`, `boot`, `proxy`, `postproxy`, `power_off`, `phone_power` | silent-failure-hunter (Auftrag kosten) |
+| datenbank | hart | `migration`, `*.sql`, `set_status`, `ALTER TABLE`, `CREATE TABLE`, `projekt_woerter.datenbank` | database-reviewer + silent-failure-hunter |
+| kosten | hart | `shutdown`, `boot`, `proxy`, `power_off`, `projekt_woerter.kosten` | silent-failure-hunter (Auftrag kosten) |
 | oberflaeche | normal | `web/static/**`, `*.html`, `*.css`, `*.tsx`, `*.jsx`, `*.vue` | oberflaeche (Skill-Linsen impeccable-audit, web-design-guidelines, accessibility) |
 | infra | hart | `Dockerfile*`, `requirements*.txt`, `*compose*.y*ml`, `pyproject.toml`, `package.json` | code-reviewer (Auftrag infra) |
 | tests | normal | `test_*.py`, `*_test.py`, `*.test.*`, `*.spec.*` | pr-test-analyzer |

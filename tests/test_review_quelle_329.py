@@ -15,7 +15,6 @@ import subprocess
 from pathlib import Path
 
 import pytest
-
 from test_feste_namen_l1 import MUSTER
 from test_rolle_statt_name_323 import NAME
 
@@ -228,7 +227,7 @@ def _hook_verweise() -> set[str]:
     for p in hook.glob("*.py"):
         text = p.read_text(encoding="utf-8")
         namen |= set(re.findall(r'REVIEW\s*/\s*"([\w.]+)"', text))
-        namen |= {f"{m}.py" for m in re.findall(r"^\s*from (\w+) import", text, re.M) if m not in eigene}
+        namen |= {f"{m}.py" for m in re.findall(r"^\s*from (\w+) import", text, re.MULTILINE) if m not in eigene}
     return {n for n in namen if (REVIEW / n).exists() or n.startswith(("_", "review_", "rot_"))} - {"__future__.py"}
 
 
@@ -247,7 +246,7 @@ def _import_huelle(start: set[str]) -> set[str]:
         pfad = REVIEW / offen.pop()
         if not pfad.is_file():
             continue
-        for m in re.findall(r"^\s*from (\w+) import", pfad.read_text(encoding="utf-8"), re.M):
+        for m in re.findall(r"^\s*from (\w+) import", pfad.read_text(encoding="utf-8"), re.MULTILINE):
             if (REVIEW / f"{m}.py").is_file() and f"{m}.py" not in huelle:
                 huelle.add(f"{m}.py")
                 offen.append(f"{m}.py")

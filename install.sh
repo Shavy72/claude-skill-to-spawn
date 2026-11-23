@@ -87,7 +87,7 @@ sichere_und_kopiere() {
 # --- 1+2. Alten Stand sichern, Skill kopieren (ohne Git, Caches) -------------
 quellen=()
 for eintrag in SKILL.md README.md LICENSE to_spawn.py install.sh install.ps1 spawn_local.ps1 spawn_srv.ps1 \
-               to_spawn skripte repo-scripts aliase tests docs nest leitstand kette review-hook; do
+               to_spawn skripte repo-scripts aliase tests docs nest leitstand kette review-hook review; do
   quellen+=("$HIER/$eintrag")
 done
 sichere_und_kopiere to-spawn "${quellen[@]}"
@@ -110,7 +110,7 @@ for kette_ordner in "$HIER"/kette/skills/*/; do
 done
 PYTHONPATH="$ZIEL" "$PY" -m to_spawn.globale_regeln --ziel "$CLAUDE_MD"
 
-# --- 3c. Review-Hook (review-hook/ → ~/.claude/hooks/review, #214); Regel in to_spawn/review_hook.py
+# --- 3c. Review-Hook (review-hook/ → ~/.claude/hooks/review, #214) + Werkzeug (review/ → ~/.claude/review, #329); Regel in to_spawn/review_hook.py
 PYTHONPATH="$ZIEL" "$PY" -m to_spawn.review_hook
 
 # --- 4. Repo-Hälfte (optional): nur fehlende Dateien --------------------------

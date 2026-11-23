@@ -1,4 +1,5 @@
-"""Review-Hook (``review-hook/`` im Skill) nach ``~/.claude/hooks/review`` installieren (#214).
+"""Review-Hook (``review-hook/`` im Skill) nach ``~/.claude/hooks/review`` installieren (#214),
+dazu das Review-Werkzeug (``review/``) nach ``~/.claude/review`` (#329 P2).
 
 Die eine Stelle für die Überschreib-Regel, gilt für ``install.sh`` und ``install.ps1``:
 eine vorhandene Datei wird nur ersetzt, wenn sie dem zuletzt installierten Stand entspricht
@@ -26,6 +27,8 @@ from pathlib import Path
 log = logging.getLogger(__name__)
 
 QUELL_ORDNER = Path(__file__).resolve().parents[1] / "review-hook"
+#: Review-Werkzeug (#329 P2): gleiche Regel, Ziel ``~/.claude/review``; Laufzeit-Daten dort bleiben.
+WERKZEUG_QUELLE = Path(__file__).resolve().parents[1] / "review"
 STAND_DATEI = ".installiert.json"
 _NIE = {"__pycache__", ".pytest_cache"}
 
@@ -119,16 +122,18 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Review-Hook nach ~/.claude/hooks/review installieren")
     parser.add_argument("--ziel", type=Path, default=Path.home() / ".claude" / "hooks" / "review")
     args = parser.parse_args(argv)
-    try:
-        bericht = installiere(args.ziel)
-    except (OSError, ValueError) as fehler:
-        log.error("[!!] Review-Hook nicht installiert (%s): %s", args.ziel, fehler)
-        return 2
-    for zeile in bericht:
-        log.info("Review-Hook %s", zeile)
-    log.info(
-        "Review-Hook installiert: %s (%s)", args.ziel, f"{len(bericht)} Änderung(en)" if bericht else "schon aktuell"
-    )
+    for name, ziel, quelle in (
+        ("Review-Hook", args.ziel, QUELL_ORDNER),
+        ("Review-Werkzeug", Path.home() / ".claude" / "review", WERKZEUG_QUELLE),
+    ):
+        try:
+            bericht = installiere(ziel, quelle)
+        except (OSError, ValueError) as fehler:
+            log.error("[!!] %s nicht installiert (%s): %s", name, ziel, fehler)
+            return 2
+        for zeile in bericht:
+            log.info("%s %s", name, zeile)
+        log.info("%s installiert: %s (%s)", name, ziel, f"{len(bericht)} Änderung(en)" if bericht else "schon aktuell")
     return 0
 
 
