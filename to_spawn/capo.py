@@ -1061,9 +1061,10 @@ def ist_gate_rot(z: dict[str, Any]) -> bool:
 # --- Übersicht ------------------------------------------------------------------
 
 
-def _zelle(text: str) -> str:
-    """Tabellenzelle: eine Zeile, kurz, ``|`` entschärft."""
-    return _kurz(text).replace("|", "/")
+def _zelle(text: str, grenze: int | None = 140) -> str:
+    """Tabellenzelle: eine Zeile, ``|`` entschärft, ab ``grenze`` gekürzt (``None`` = nie)."""
+    wert = _kurz(text, grenze) if grenze else " ".join(str(text or "").split())
+    return wert.replace("|", "/")
 
 
 def entscheidungs_datei(repo: Path, spec: int) -> Path:
@@ -1087,8 +1088,11 @@ def _tabellen_kopf(spec: int, quelle: str) -> list[str]:
 
 
 def _entscheidungs_zeile(e: dict[str, str]) -> str:
-    """Eine Tabellenzeile aus einem Eintrag von ``briefkasten.liste`` — das eine Zeilenformat."""
-    return f"| #{e['ticket']} | {_zelle(e['was'])} | {_zelle(e['warum'])} | {_zelle(e['beleg'])} |"
+    """Eine Tabellenzeile aus einem Eintrag von ``briefkasten.liste`` — das eine Zeilenformat.
+
+    ``was`` bleibt ungekürzt: die Frage ist dort schon gekürzt, die Wahl muss ganz bleiben.
+    """
+    return f"| #{e['ticket']} | {_zelle(e['was'], None)} | {_zelle(e['warum'])} | {_zelle(e['beleg'])} |"
 
 
 def entscheidung_anhaengen(
@@ -1128,10 +1132,11 @@ def entscheidung_anhaengen(
 def uebersicht(repo: Path, ref: str | None, spec: int, tickets: list[int]) -> Path:
     """Schreibt :func:`entscheidungs_datei` neu: alle Entscheidungen der Spec (#364).
 
-    Woher sie kommen (Bau-Log auf ``ref`` + Hauptbaum, Briefkasten-Antworten), weiß nur
-    ``briefkasten.liste``; hier steht nur die Darstellung (eine Tabellenzeile je Eintrag).
+    Woher sie kommen (Bau-Log im Hauptbaum und auf ``origin/<Hauptzweig>``, Briefkasten-
+    Antworten), weiß nur ``briefkasten.liste``; hier steht nur die Darstellung (eine
+    Tabellenzeile je Eintrag). ``ref`` dient nur noch der Kopfzeile.
     """
-    eintraege = briefkasten.liste(sorted(tickets), log_repo=repo, hauptbaum=repo, ref=ref)
+    eintraege = briefkasten.liste(sorted(tickets), log_repo=repo, hauptbaum=repo)
     zeilen = _tabellen_kopf(spec, f"Bau-Logs auf {ref or '-'} + Briefkasten")
     zeilen += [_entscheidungs_zeile(e) for e in eintraege]
     if not eintraege:

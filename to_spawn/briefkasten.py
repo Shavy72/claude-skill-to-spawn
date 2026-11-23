@@ -459,8 +459,16 @@ def alle_tickets(*, hauptbaum: Path | None = None) -> list[str]:
 KEINE_QUELLE = "keine Quelle"
 
 
+#: Höchstlänge der Frage in ``was``; die Wahl wird nie gekürzt (sie ist die Entscheidung).
+_FRAGE_MAX = 120
+
+
 def _was(frage: Any, wahl: Any) -> str:
-    return " → ".join(str(t) for t in (frage, wahl) if t)
+    """``Frage → Wahl`` in einer Zeile; nur die Frage wird gekürzt."""
+    kurz = " ".join(str(frage or "").split())
+    if len(kurz) > _FRAGE_MAX:
+        kurz = kurz[: _FRAGE_MAX - 1] + "…"
+    return " → ".join(t for t in (kurz, " ".join(str(wahl or "").split())) if t)
 
 
 def eintrag_aus_bau_log(ticket: str | int, z: dict[str, Any]) -> dict[str, str]:
@@ -485,8 +493,9 @@ def _log_entscheidungen(repo: Path, nummer: str, basis: Path, ref: str | None) -
     """``entscheidung``-Zeilen: Arbeitsbaum + Laufdateien, mit ``ref`` dazu der Stand dort (ohne Doppel)."""
     zeilen = bau_log.lese(repo, nummer, hauptbaum=basis)
     if ref and nummer.isdigit():
-        # spät importiert: capo nutzt die Liste für die Übersicht (Kreis-Import sonst).
-        from to_spawn import capo
+        from to_spawn import (
+            capo,  # spät: capo importiert briefkasten (Kreis-Import sonst)
+        )
 
         gesehen = {json.dumps(z, sort_keys=True) for z in zeilen}
         zeilen += [z for z in capo.log_vom_ref(repo, ref, int(nummer)) if json.dumps(z, sort_keys=True) not in gesehen]
@@ -498,21 +507,23 @@ def liste(
     *,
     log_repo: Path | None = None,
     hauptbaum: Path | None = None,
-    ref: str | None = None,
 ) -> list[dict[str, str]]:
     """Alle Entscheidungen je Ticket — der eine Sammler (#278, #364).
 
     Quellen: Bau-Log-Zeilen ``entscheidung`` (Klasse 1, auch Annahmen des Aufsehers) und die
     geltenden Briefkasten-Antworten (Aufseher oder Nutzer). Wer die Entscheidungen zeigt
     (``capo.uebersicht``, CLI ``entscheidungen``), fragt nur hier und kennt die Quellen nicht.
-    ``ref`` (z. B. ``origin/main``) nimmt das versionierte Bau-Log zusätzlich so, wie es dort
-    liegt — der Hauptbaum kann hinter dem Hauptzweig stehen.
+    Das versionierte Bau-Log zählt zusätzlich so, wie es auf ``origin/<Hauptzweig>`` liegt
+    (``capo.haupt_ref``) — der Hauptbaum kann dahinter stehen. Nur hier wird der Stand gewählt.
 
     Je Eintrag feste Schlüssel ``ticket``, ``ts``, ``wer``, ``was``, ``warum``, ``beleg``;
     ``beleg`` ist nie leer (sonst :data:`KEINE_QUELLE`).
     """
+    from to_spawn import capo  # spät: capo importiert briefkasten (Kreis-Import sonst)
+
     basis = _hauptbaum(hauptbaum)
     repo = log_repo or basis
+    ref = capo.haupt_ref(repo)
     zeilen: list[dict[str, str]] = []
     for t in tickets:
         nummer = str(t).strip()

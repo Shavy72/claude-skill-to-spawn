@@ -8,6 +8,8 @@ Ohne gh, ohne git-Ref (tmp_path).
 
 from __future__ import annotations
 
+import json
+import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -67,3 +69,34 @@ def test_anhaengen_und_abschluss_gleiches_format(tmp_path: Path) -> None:
     abschluss = capo.uebersicht(tmp_path, None, 3, [7])
     (spalten,) = {z.count("|") for z in _zeilen(abschluss) + zwei}
     assert spalten == KOPF.count("|")
+
+
+def test_lange_frage_behaelt_die_wahl(tmp_path: Path) -> None:
+    frage = "Welche Tabelle nehmen wir " + "sehr " * 40 + "lange?"
+    bau_log.schreibe(tmp_path, 7, "entscheidung", frage=frage, wahl="SQLite", grund="schon da")
+    (zeile,) = _zeilen(capo.uebersicht(tmp_path, None, 3, [7]))
+    was = zeile.split(" | ")[1]
+    assert was.endswith("… → SQLite"), was
+
+
+def _git(repo: Path, *args: str) -> None:
+    subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *args], cwd=repo, check=True, capture_output=True)
+
+
+def test_liste_liest_auch_den_hauptzweig_auf_origin(tmp_path: Path) -> None:
+    """Hauptbaum hinter ``origin/main``: die Entscheidung von dort fehlt nicht (#364)."""
+    _git(tmp_path, "init", "-q", "-b", "main")
+    log_datei = tmp_path / bau_log.log_im_repo(tmp_path, 7)
+    log_datei.parent.mkdir(parents=True, exist_ok=True)
+    zeile = {"typ": "entscheidung", "ts": "2026-11-23T10:00:00+00:00", "frage": "Ordner?", "wahl": "neu", "grund": "frei"}
+    log_datei.write_text(json.dumps(zeile, ensure_ascii=False) + "\n", encoding="utf-8")
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-q", "-m", "log")
+    _git(tmp_path, "update-ref", "refs/remotes/origin/main", "HEAD")
+    _git(tmp_path, "rm", "-q", str(log_datei))
+    _git(tmp_path, "commit", "-q", "-m", "Hauptbaum ohne Log")
+
+    erwartet = ["Ordner? → neu"]
+    assert [e["was"] for e in briefkasten.liste(["7"], hauptbaum=tmp_path)] == erwartet
+    (zeile_md,) = _zeilen(capo.uebersicht(tmp_path, None, 3, [7]))
+    assert zeile_md.startswith("| #7 | Ordner? → neu | frei | Bau-Log #7 ")
