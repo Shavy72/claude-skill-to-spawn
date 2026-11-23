@@ -10,12 +10,14 @@ Dateien. Die Zeitgrenzen selbst prüft ``test_waechter_213_fix.py`` ohne Schalte
 
 from __future__ import annotations
 
+import logging
 import os
 import shutil
 import subprocess
 import sys
 import tempfile
 import textwrap
+import time
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -32,7 +34,7 @@ if _HILFEN not in sys.path:
 
 from git_bash import git_bash  # noqa: E402 — liegt in ``tests/hilfen`` (Pfad oben)
 
-from to_spawn import bash_wahl  # noqa: E402 — Pfad setzt ``git_bash``
+from to_spawn import bash_wahl, prozessbaum  # noqa: E402 — Pfad setzt ``git_bash``
 
 _WINDOWS = sys.platform == "win32"
 
@@ -91,6 +93,16 @@ def attrappe(ordner: Path, name: str, python_code: str) -> Path:
 #: Eigener Temp-Ordner dieses Laufs (#349), nur gesetzt, wenn ``pytest_configure`` ihn anlegte.
 _EIGENER_BASETEMP = pytest.StashKey[Path]()
 
+#: Marker-Datei im eigenen Temp-Ordner (#177): PID des Leit-Prozesses. Nur Ordner mit
+#: diesem Marker räumt :func:`_reste_raeumen` — nie nach Namen raten (#136).
+_MARKER = ".pt-lauf"
+
+#: Schonfrist für Reste toter Läufe (#177): so lange bleibt ein roter Lauf zum Nachsehen.
+_LOG = logging.getLogger(__name__)
+
+#: ponytail: feste Frist, Einstellung über ``temp_ordner``/Maschinen-Liste, wenn eine Maschine anders braucht.
+_RESTE_ALTER_S = 3600
+
 
 @pytest.hookimpl(tryfirst=True)  # vor ``_pytest.tmpdir``, das ``--basetemp`` in seinem configure liest
 def pytest_configure(config: pytest.Config) -> None:
@@ -111,11 +123,71 @@ def _eigener_basetemp(config: pytest.Config) -> None:
     ausdrückliches ``--basetemp`` gewinnt. Nur der Leit-Prozess: xdist-Worker bekommen
     ``<basetemp>/popen-gwN`` vom Leit-Prozess (``workerinput``).
     """
-    if config.option.basetemp or hasattr(config, "workerinput"):
+    if getattr(config.option, "basetemp", None) or hasattr(config, "workerinput"):
         return
+    _reste_raeumen(Path(tempfile.gettempdir()))
     ordner = Path(tempfile.mkdtemp(prefix="pt-"))
     config.option.basetemp = str(ordner)
     config.stash[_EIGENER_BASETEMP] = ordner
+
+
+def _reste_raeumen(temp: Path) -> None:
+    """Alte Reste eigener Läufe unter ``temp`` löschen (#177).
+
+    Nur ``pt-*``-Ordner mit Marker, deren Leit-Prozess nicht mehr lebt und deren Marker älter
+    als :data:`_RESTE_ALTER_S` ist. Ohne Marker, unlesbar, PID außerhalb ``0 < pid < 2**31``
+    oder lebende PID: bleibt liegen. Eine wiederverwendete PID lässt einen Rest nur länger
+    liegen, nie einen Lauf verlieren. Jeder Fehler beim Räumen wird geloggt, nie ein roter Lauf.
+    """
+    try:
+        _reste_raeumen_roh(temp)
+    except Exception as fehler:  # noqa: BLE001 — Räumen ist Komfort, darf nie einen Lauf kippen
+        _LOG.warning("pt-Räumer abgebrochen unter %s: %r", temp, fehler)
+
+
+def _reste_raeumen_roh(temp: Path) -> None:
+    grenze = time.time() - _RESTE_ALTER_S
+    try:
+        kandidaten = [p for p in temp.iterdir() if p.name.startswith("pt-")]
+    except OSError as fehler:
+        _LOG.warning("pt-Räumer: %s nicht lesbar: %s", temp, fehler)
+        return
+    for ordner in kandidaten:
+        marker = ordner / _MARKER
+        try:
+            if ordner.is_symlink() or marker.stat().st_mtime > grenze:
+                continue
+            pid = int(marker.read_text(encoding="utf-8").strip())
+        except (OSError, ValueError):
+            continue  # ohne Marker/unlesbar: nicht von uns, kein Log-Rauschen
+        if not 0 < pid < 2**31:  # 0/negativ gilt unter Linux als „tot“, riesig läuft unter Windows über
+            continue
+        if prozessbaum.lebt(pid):
+            continue
+        try:
+            shutil.rmtree(ordner)
+        except OSError as fehler:
+            _LOG.warning("pt-Räumer: Rest %s nicht löschbar: %s", ordner, fehler)
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_sessionstart(session: pytest.Session) -> None:
+    """Eigenen Temp-Ordner markieren (#177): PID des Leit-Prozesses in :data:`_MARKER`.
+
+    Erst hier, weil pytest einen gegebenen ``--basetemp`` beim ersten Zugriff leert
+    (``getbasetemp``); der Aufruf hier legt ihn endgültig an, der Marker überlebt.
+    """
+    ordner = session.config.stash.get(_EIGENER_BASETEMP, None)
+    if ordner is None:
+        return
+    fabrik = getattr(session.config, "_tmp_path_factory", None)  # privat; fehlt z. B. bei ``-p no:tmpdir``
+    if fabrik is None:
+        return
+    try:
+        fabrik.getbasetemp()  # leert + legt an, einmal je Lauf
+        (ordner / _MARKER).write_text(f"{os.getpid()}\n", encoding="utf-8")
+    except (AttributeError, OSError) as fehler:
+        _LOG.warning("pt-Marker in %s nicht geschrieben, Lauf geht ohne weiter: %s", ordner, fehler)
 
 
 @pytest.hookimpl(trylast=True)
@@ -128,6 +200,16 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
     ordner = session.config.stash.get(_EIGENER_BASETEMP, None)
     if ordner is not None and exitstatus == 0:
         shutil.rmtree(ordner, ignore_errors=True)
+
+
+def pytest_unconfigure(config: pytest.Config) -> None:
+    """Leeren eigenen Temp-Ordner löschen (#177): ``--help``/``--markers`` starten keine Session."""
+    ordner = config.stash.get(_EIGENER_BASETEMP, None)
+    if ordner is not None:
+        try:
+            ordner.rmdir()  # nur leer; ein markierter Ordner bleibt für den Räumer
+        except OSError:
+            pass
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
