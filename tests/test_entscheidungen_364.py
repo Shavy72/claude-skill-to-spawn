@@ -29,13 +29,13 @@ def _antwort(repo: Path, belege: list[str], grund: str = "Blocker sind zu") -> N
 
 def test_briefkasten_antwort_steht_in_der_datei(tmp_path: Path) -> None:
     _antwort(tmp_path, ["Lastenheft A46"])
-    datei = capo.uebersicht(tmp_path, None, 3, [7])
+    datei = capo.uebersicht(tmp_path, 3, [7])
     assert _zeilen(datei) == ["| #7 | Blocker erledigt? → weiterbauen | Blocker sind zu | Lastenheft A46 |"]
 
 
 def test_spalten_und_bau_log_quelle(tmp_path: Path) -> None:
     bau_log.schreibe(tmp_path, 7, "entscheidung", frage="Welche Tabelle", wahl="SQLite", grund="schon da")
-    text = capo.uebersicht(tmp_path, None, 3, [7]).read_text(encoding="utf-8")
+    text = capo.uebersicht(tmp_path, 3, [7]).read_text(encoding="utf-8")
     assert KOPF in text
     (zeile,) = [z for z in text.splitlines() if z.startswith("| #7")]
     assert zeile.startswith("| #7 | Welche Tabelle → SQLite | schon da | Bau-Log #7 ")
@@ -43,13 +43,13 @@ def test_spalten_und_bau_log_quelle(tmp_path: Path) -> None:
 
 def test_leere_quelle_sichtbar(tmp_path: Path) -> None:
     _antwort(tmp_path, [])
-    (zeile,) = _zeilen(capo.uebersicht(tmp_path, None, 3, [7]))
+    (zeile,) = _zeilen(capo.uebersicht(tmp_path, 3, [7]))
     assert zeile.endswith("| keine Quelle |")
 
 
 def test_umbruch_und_strich_entschaerft(tmp_path: Path) -> None:
     _antwort(tmp_path, ["a|b"], grund="Zeile 1\nZeile 2 | Rest")
-    (zeile,) = _zeilen(capo.uebersicht(tmp_path, None, 3, [7]))
+    (zeile,) = _zeilen(capo.uebersicht(tmp_path, 3, [7]))
     assert zeile == "| #7 | Blocker erledigt? → weiterbauen | Zeile 1 Zeile 2 / Rest | a/b |"
 
 
@@ -66,7 +66,7 @@ def test_anhaengen_und_abschluss_gleiches_format(tmp_path: Path) -> None:
     zwei = _zeilen(lauf)
     assert len(zwei) == 2 and zwei[1].startswith("| #7 | Zweite? → nein | ")
 
-    abschluss = capo.uebersicht(tmp_path, None, 3, [7])
+    abschluss = capo.uebersicht(tmp_path, 3, [7])
     (spalten,) = {z.count("|") for z in _zeilen(abschluss) + zwei}
     assert spalten == KOPF.count("|")
 
@@ -74,7 +74,7 @@ def test_anhaengen_und_abschluss_gleiches_format(tmp_path: Path) -> None:
 def test_lange_frage_behaelt_die_wahl(tmp_path: Path) -> None:
     frage = "Welche Tabelle nehmen wir " + "sehr " * 40 + "lange?"
     bau_log.schreibe(tmp_path, 7, "entscheidung", frage=frage, wahl="SQLite", grund="schon da")
-    (zeile,) = _zeilen(capo.uebersicht(tmp_path, None, 3, [7]))
+    (zeile,) = _zeilen(capo.uebersicht(tmp_path, 3, [7]))
     was = zeile.split(" | ")[1]
     assert was.endswith("… → SQLite"), was
 
@@ -98,5 +98,16 @@ def test_liste_liest_auch_den_hauptzweig_auf_origin(tmp_path: Path) -> None:
 
     erwartet = ["Ordner? → neu"]
     assert [e["was"] for e in briefkasten.liste(["7"], hauptbaum=tmp_path)] == erwartet
-    (zeile_md,) = _zeilen(capo.uebersicht(tmp_path, None, 3, [7]))
+    (zeile_md,) = _zeilen(capo.uebersicht(tmp_path, 3, [7]))
     assert zeile_md.startswith("| #7 | Ordner? → neu | frei | Bau-Log #7 ")
+
+
+def test_kopfzeile_nennt_den_gelesenen_stand(tmp_path: Path) -> None:
+    def git(*a: str) -> None:
+        subprocess.run(["git", "-C", str(tmp_path), *a], check=True, capture_output=True)
+
+    git("init", "-q")
+    git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "x")
+    git("update-ref", "refs/remotes/origin/master", "HEAD")
+    text = capo.uebersicht(tmp_path, 3, [7]).read_text(encoding="utf-8")
+    assert "Bau-Logs auf origin/master + Briefkasten" in text

@@ -1129,15 +1129,16 @@ def entscheidung_anhaengen(
     return datei
 
 
-def uebersicht(repo: Path, ref: str | None, spec: int, tickets: list[int]) -> Path:
+def uebersicht(repo: Path, spec: int, tickets: list[int]) -> Path:
     """Schreibt :func:`entscheidungs_datei` neu: alle Entscheidungen der Spec (#364).
 
     Woher sie kommen (Bau-Log im Hauptbaum und auf ``origin/<Hauptzweig>``, Briefkasten-
     Antworten), weiß nur ``briefkasten.liste``; hier steht nur die Darstellung (eine
-    Tabellenzeile je Eintrag). ``ref`` dient nur noch der Kopfzeile.
+    Tabellenzeile je Eintrag). Die Kopfzeile nennt ``haupt_ref`` — den Stand, den
+    ``briefkasten.liste`` liest.
     """
     eintraege = briefkasten.liste(sorted(tickets), log_repo=repo, hauptbaum=repo)
-    zeilen = _tabellen_kopf(spec, f"Bau-Logs auf {ref or '-'} + Briefkasten")
+    zeilen = _tabellen_kopf(spec, f"Bau-Logs auf {haupt_ref(repo) or '-'} + Briefkasten")
     zeilen += [_entscheidungs_zeile(e) for e in eintraege]
     if not eintraege:
         zeilen += ["", "_Keine Entscheidungen im Bau-Log oder Briefkasten._"]
@@ -2672,7 +2673,7 @@ def _tick(
                 f"SPEC FERTIG — alle {len(liste)} Tickets zu, keine Verstöße{alt_hinweis}. [Probe]"
             )
         else:
-            pfad = uebersicht(repo, ref, spec, [int(i["number"]) for i in liste])
+            pfad = uebersicht(repo, spec, [int(i["number"]) for i in liste])
             erg.zeilen.append(
                 f"SPEC FERTIG — alle {len(liste)} Tickets zu, keine Verstöße{alt_hinweis}. Übersicht: {pfad}"
             )
