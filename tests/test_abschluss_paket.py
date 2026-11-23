@@ -616,3 +616,77 @@ def test_nachsehen_wirkungskreis_leer(repo: Path, tmp_path: Path) -> None:
     _wirkungskreis(repo, 0, "")
     text = _unter("nachsehen", repo, "--jetzt", "2026-10-06T10:05:00+02:00", "--dry-run", env=_env(tmp_path)).stdout
     assert "Wirkungskreis nicht ermittelt: keine Ausgabe" in text
+
+
+# --- #366 Teil 2: Test-Übersicht zählt den aktuellen Stand, zeigt Herkunft je Karte ---------------
+
+
+def _commit_am(repo: Path, datum: str) -> None:
+    """Alles committen mit fester Commit-Zeit (der Beleg entstand an ``datum``)."""
+    zeit = {"GIT_AUTHOR_DATE": datum, "GIT_COMMITTER_DATE": datum}
+    for befehl in (
+        ["add", "-A"],
+        ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", datum],
+    ):
+        subprocess.run(
+            ["git", *befehl],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+            env={**os.environ, **zeit},
+        )
+
+
+def test_uebersicht_zaehlt_neuesten_lauf_nicht_groessten(tmp_path: Path) -> None:
+    """Älterer, breiterer Lauf (rot) darf den neueren grünen Lauf nicht verdecken (#366).
+
+    Nach einem Checkout tragen alle Belegdateien dieselbe Änderungszeit; was zählt, ist,
+    wann der Beleg entstand (Commit-Zeit).
+    """
+    r = tmp_path / "projekt"
+    (r / "docs" / "agents" / "manifests").mkdir(parents=True)
+    tickets = {
+        "901": {"title": "Alt gegen neu"},
+        "902": {"title": "Zwei Zahlen in einer Zeile"},
+        "903": {"title": "Nur Text"},
+    }
+    (r / "docs" / "agents" / "manifests" / f"spec-{SPEC}.json").write_text(
+        json.dumps({"spec": SPEC, "tickets": tickets}), encoding="utf-8"
+    )
+    vh = r / "docs" / "verify-hard"
+    vh.mkdir(parents=True)
+    subprocess.run(["git", "init", "-q"], cwd=r, check=True, capture_output=True)
+    (vh / "901_breit_vorher.txt").write_text("pytest tests/\n2 failed, 38 passed in 9s\n", encoding="utf-8")
+    _commit_am(r, "2026-11-01T10:00:00+01:00")
+    (vh / "901_gruen.txt").write_text("pytest tests/test_knopf.py\n12 passed in 2s\n", encoding="utf-8")
+    (vh / "902.md").write_text(
+        "# Belegseite #902\nErgebnis: 54 passed (vor Fix). Nach Fix: 71 passed in 4s\n",
+        encoding="utf-8",
+    )
+    (vh / "903.md").write_text("# Belegseite #903\nNoch nichts gelaufen.\n", encoding="utf-8")
+    _commit_am(r, "2026-11-02T11:30:00+01:00")
+    for datei in vh.iterdir():  # Checkout: alle Dateien gleich alt
+        os.utime(datei, (1_700_000_000, 1_700_000_000))
+    ziel = tmp_path / "u.html"
+    ergebnis = _lauf("test_uebersicht.py", r, "--aus", str(ziel))
+    assert ergebnis.returncode == 0, ergebnis.stdout + ergebnis.stderr
+    seite = ziel.read_text(encoding="utf-8")
+    assert 'class="karte gruen"><h2>Ticket #901' in seite
+    assert "(12 von 12 Tests grün)" in seite and "38 von 40" not in seite
+    assert "docs/verify-hard/901_gruen.txt</code> · Stand 2026-11-02" in seite
+    assert "(71 von 71 Tests grün)" in seite
+    karte_903 = seite.split("Ticket #903", 1)[1].split("</section>", 1)[0]
+    assert "offen – kein Testlauf gefunden" in karte_903
+    assert "83 von 83 Tests grün" in seite
+
+
+def test_uebersicht_ohne_jeden_lauf_keine_zahl(repo: Path, tmp_path: Path) -> None:
+    """Kein einziger auswertbarer Lauf → keine Zahl wie „0 von 4“, sondern „offen“ (#366)."""
+    vh = repo / "docs" / "verify-hard"
+    for datei in [*vh.rglob("*")]:
+        if datei.is_file():
+            datei.unlink()
+    ziel = tmp_path / "u.html"
+    assert _lauf("test_uebersicht.py", repo, "--aus", str(ziel)).returncode == 0
+    kopf = ziel.read_text(encoding="utf-8").split("<h1>", 1)[1].split("</h1>", 1)[0]
+    assert kopf == "⚠️ offen – kein Testlauf gefunden — 4 ohne Beleg"

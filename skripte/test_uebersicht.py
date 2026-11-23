@@ -4,9 +4,11 @@ Aufruf: ``python test_uebersicht.py <S> [--repo <pfad>] [--aus <datei.html>]``
 
 Liest die Tickets aus ``docs/agents/manifests/spec-<S>.json`` und deren Belegseiten
 unter ``docs/verify-hard/`` (``<N>.md``, ``<N>_*.txt|md``, Ordner ``<N>/`` bzw.
-``<datum>_<N>/``). Je Ticket zählt der größte Testlauf aus Dateien, die kein
-Rot-Beweis sind (Rot-Beweise = gewolltes Scheitern vor dem Fix, Name enthält ``rot``).
-Fallback ohne Testlauf: ``ABNAHME: …``-Zeile bzw. ``X/Y``-Zählung der Belegseite.
+``<datum>_<N>/``). Je Ticket zählt der neueste Testlauf (Commit-Zeit der Belegdatei)
+aus Dateien, die kein Rot-Beweis sind (Rot-Beweise = gewolltes Scheitern vor dem Fix, Name enthält ``rot``).
+Fallback ohne Testlauf: ``ABNAHME: …``-Zeile bzw. ``X/Y``-Zählung der Belegseite. Jede Karte
+nennt Belegdatei und Stand der Zahl; ohne auswertbaren Lauf steht „offen – kein Testlauf
+gefunden“ statt einer Zahl.
 Ausgabe: ``docs/test-uebersicht/<datum>_spec<S>.html``; der Pfad geht auf stdout.
 """
 
@@ -19,7 +21,7 @@ import logging
 import os
 import sys
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import datetime
 from pathlib import Path
 
 _SKILL = str(Path(__file__).resolve().parent.parent)
@@ -29,6 +31,9 @@ from to_spawn import belege, config, manifest  # noqa: E402
 from to_spawn.belege import Lauf  # noqa: E402
 
 log = logging.getLogger("test_uebersicht")
+
+KEIN_LAUF = "offen – kein Testlauf gefunden"
+
 
 @dataclass
 class Karte:
@@ -77,8 +82,8 @@ def kopfzeile(karten: list[Karte]) -> str:
     zeichen = "❌" if rot else ("⚠️" if offen else "✅")
     if gesamt:
         text = f"{zeichen} {passed} von {gesamt} Tests grün"
-    else:
-        text = f"{zeichen} {len(karten) - rot - offen} von {len(karten)} Tickets grün"
+    else:  # keine Zahl vortäuschen, wenn kein Lauf gezählt wurde (#366)
+        text = f"{'❌' if rot else '⚠️'} {KEIN_LAUF}"
     if rot:
         text += f" — {rot} Ticket{'s' if rot > 1 else ''} rot"
     if offen:
@@ -120,10 +125,16 @@ def _karte_html(k: Karte) -> str:
         befehl = k.lauf.befehl or f"Befehl nicht mitgeschrieben — Ausgabe aus docs/verify-hard/{k.lauf.datei}"
         beleg = f"<code>{e(befehl)}</code><br><code>{e(k.lauf.zeile)}</code>"
         zahl = f" ({k.lauf.passed} von {k.lauf.passed + k.lauf.failed} Tests grün)"
-    elif k.abnahme:
-        beleg, zahl = f"<code>ABNAHME: {e(k.abnahme)}</code>", ""
+        stand = datetime.fromtimestamp(k.lauf.zeit).strftime("%Y-%m-%d %H:%M") if k.lauf.zeit else "unbekannt"
+        quelle = f"<code>docs/verify-hard/{e(k.lauf.datei)}</code> · Stand {stand}"
     else:
-        beleg, zahl = "Keine Belegseite unter docs/verify-hard/ gefunden.", ""
+        zahl, quelle = f" ({KEIN_LAUF})", "—"
+        if k.abnahme:
+            beleg = f"<code>ABNAHME: {e(k.abnahme)}</code>"
+        elif k.dateien:
+            beleg = "Belegseite ohne Testzahl: " + ", ".join(f"<code>{e(d)}</code>" for d in k.dateien)
+        else:
+            beleg = "Keine Belegseite unter docs/verify-hard/ gefunden."
     klick = "ja — jemand hat es am echten System durchgeklickt" if k.klickweg else "nein"
     rot = (
         " Vorher gab es einen Rot-Beweis (der Test ist vor der Reparatur absichtlich gescheitert)."
@@ -135,6 +146,7 @@ def _karte_html(k: Karte) -> str:
         f'<span class="marke {k.status}">{_STATUS_TEXT[k.status]}</span>{e(zahl)}'
         f"<dl><dt>Was wurde geprüft?</dt><dd>{e(k.titel or 'ohne Titel')}.{e(rot)}</dd>"
         f"<dt>Beleg</dt><dd>{beleg}</dd>"
+        f"<dt>Zahl stammt aus</dt><dd>{quelle}</dd>"
         f"<dt>Live-Klickweg</dt><dd>{klick}</dd></dl></section>"
     )
 
@@ -177,10 +189,10 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     verify_hard = repo / "docs" / "verify-hard"
     karten = [werte_ticket(verify_hard, nr, titel) for nr, titel in tickets]
-    heute = date.today().isoformat()
-    ziel = a.aus or repo / "docs" / "test-uebersicht" / f"{heute}_spec{a.spec}.html"
+    jetzt = datetime.now()
+    ziel = a.aus or repo / "docs" / "test-uebersicht" / f"{jetzt.date().isoformat()}_spec{a.spec}.html"
     ziel.parent.mkdir(parents=True, exist_ok=True)
-    ziel.write_text(baue_html(a.spec, karten, heute), encoding="utf-8")
+    ziel.write_text(baue_html(a.spec, karten, jetzt.strftime("%Y-%m-%d %H:%M")), encoding="utf-8")
     log.info("%s", kopfzeile(karten))
     sys.stdout.write(f"{ziel}\n")
     return 0

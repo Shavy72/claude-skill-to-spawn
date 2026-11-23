@@ -6,8 +6,9 @@ Ticket, was darin steht:
 
 - **Rot-Beweis** — eine Datei, deren Name ``rot`` enthält (gewolltes Scheitern vor dem Fix);
   sie zählt nie als Testlauf.
-- **Testlauf** — größte ``N passed``/``N failed``-Zählung aus den übrigen Dateien
-  (Fallback: saubere Markdown-Zeilen bzw. ``X/Y``-Zählung).
+- **Testlauf** — der neueste Lauf (Entstehungszeit der Datei, :func:`zeitpunkt`) aus den
+  übrigen Dateien; bei gleicher Zeit der größte. Fallback: saubere Markdown-Zeilen bzw.
+  ``X/Y``-Zählung.
 - **Klickweg** — eine Markdown-Zeile mit „Klickweg“/„Live-Klick“/„Live-Beweis“, die nicht
   verneint ist („kein Klickweg“, „entfällt“ zählen nicht).
 - **Status** ``gruen``/``rot``/``offen`` aus Testlauf und ``ABNAHME:``-Zeile.
@@ -20,6 +21,7 @@ from __future__ import annotations
 
 import logging
 import re
+import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -60,6 +62,8 @@ class Lauf:
     zeile: str
     befehl: str
     datei: str
+    #: Wann der Beleg entstand (Unix-Zeit, :func:`zeitpunkt`); 0 = unbekannt.
+    zeit: float = 0.0
 
 
 @dataclass
@@ -101,8 +105,37 @@ def finde_dateien(verify_hard: Path, nummer: str) -> list[Path]:
     return treffer
 
 
+def zeitpunkt(datei: Path) -> float:
+    """Wann eine Belegdatei entstand: letzte Commit-Zeit, unversioniert die Änderungszeit.
+
+    Die Änderungszeit allein taugt nicht: ein Checkout setzt sie für alle Dateien gleich.
+    """
+    # ponytail: lokal geänderte, schon versionierte Datei zählt mit ihrer Commit-Zeit; Upgrade
+    # über ``git status --porcelain`` je Datei, falls Belege nachträglich überschrieben werden.
+    try:
+        aus = subprocess.run(
+            ["git", "log", "-1", "--format=%ct", "--", datei.name],
+            cwd=datei.parent,
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+        )
+        if aus.returncode == 0 and aus.stdout.strip():
+            return float(aus.stdout.strip())
+    except (OSError, subprocess.SubprocessError, ValueError) as fehler:
+        log.debug("Commit-Zeit nicht lesbar %s: %s", datei, fehler)
+    try:
+        return datei.stat().st_mtime
+    except OSError:
+        return 0.0
+
+
 def lauf_aus_text(text: str, datei: str, nur_saubere_zeilen: bool = False) -> Lauf | None:
     """Letzte Zusammenfassungs-Zeile (``N passed``/``N failed``) eines Textes als Lauf.
+
+    Stehen in einer Zeile mehrere ``N passed`` („54 passed vor Fix, danach 71 passed“), zählt
+    die letzte.
 
     ``nur_saubere_zeilen`` (Markdown): nur Zeilen ohne ``failed``/``rot``/``→`` — dort stehen
     oft Vorher-Nachher-Übergänge, die nichts über den Endstand sagen; dann zählt der größte Lauf.
@@ -111,14 +144,14 @@ def lauf_aus_text(text: str, datei: str, nur_saubere_zeilen: bool = False) -> La
     befehl = befehl_m.group(0).strip()[:200] if befehl_m else ""
     beste: Lauf | None = None
     for zeile in text.splitlines():
-        p = _PASSED.search(zeile)
+        p = _PASSED.findall(zeile)
         f = _FAILED.search(zeile)
         if not p and not f:
             continue
         if nur_saubere_zeilen and (f or "→" in zeile or re.search(r"\brot\b", zeile, re.I)):
             continue
         lauf = Lauf(
-            passed=int(p.group(1)) if p else 0,
+            passed=int(p[-1]) if p else 0,
             failed=sum(int(x) for x in _FAILED.findall(zeile)),
             zeile=zeile.strip(" =|\t")[:200],
             befehl=befehl,
@@ -155,6 +188,7 @@ def auswerten(verify_hard: Path, nummer: str) -> Belege:
                 if _ENTFAELLT.search(zeile):
                     belege.klickweg_entfaellt = True
         if lauf:
+            lauf.zeit = zeitpunkt(datei)
             laeufe.append(lauf)
     if not laeufe:  # Fallback: Zählung aus den Markdown-Belegseiten
         for rel in belege.dateien:
@@ -166,9 +200,10 @@ def auswerten(verify_hard: Path, nummer: str) -> Belege:
                     if 0 < y and x <= y:
                         lauf = Lauf(x, y - x, xy.group(0), "", rel)
                 if lauf:
+                    lauf.zeit = zeitpunkt(verify_hard / rel)
                     laeufe.append(lauf)
-    if laeufe:
-        belege.lauf = max(laeufe, key=lambda l: (l.passed + l.failed, l.datei))
+    if laeufe:  # Stand zum Zeitpunkt des Aufrufs: der neueste Lauf zählt, nicht der größte (#366)
+        belege.lauf = max(laeufe, key=lambda l: (l.zeit, l.passed + l.failed, l.datei))
     abnahme_schlecht = bool(belege.abnahme) and bool(_ABNAHME_SCHLECHT.search(_OFFEN_VERNEINT.sub("", belege.abnahme)))
     abnahme_gut = bool(belege.abnahme) and bool(_ABNAHME_GUT.search(belege.abnahme))
     if (belege.lauf and belege.lauf.failed > 0) or abnahme_schlecht:
