@@ -5,8 +5,8 @@ Aufruf: ``python belege_uebersicht.py <S> [--repo <pfad>] [--aus <datei.html>] [
 Je Ticket aus ``docs/agents/manifests/spec-<S>.json``: Titel, Status (offen/fertig gebaut/zu/verworfen über
 ``ticket_zustand.lesen``; mit ``--ohne-github`` oder ohne ``gh`` „unbekannt“),
 Beleg-Zeile (erste Zeile mit „ABNAHME“, sonst mit „Beleg“ aus ``docs/verify-hard/<N>.md`` bzw.
-``<N>/*.md``) und die Liste der Belegdateien. Die Dateisuche kommt aus ``test_uebersicht.py``
-(gleiche Nummern-Logik: ``9010`` zählt nicht für ``901``).
+``<N>/*.md``) und die Liste der Belegdateien. Die Dateisuche kommt aus ``to_spawn.belege``
+(gleiche Nummern-Logik wie ``test_uebersicht.py``: ``9010`` zählt nicht für ``901``).
 Ausgabe: ``docs/belege-uebersicht/<datum>_spec<S>.html``; der Pfad geht auf stdout.
 """
 
@@ -28,9 +28,10 @@ if _SKILL not in sys.path:
 _SKRIPTE = str(Path(__file__).resolve().parent)
 if _SKRIPTE not in sys.path:
     sys.path.insert(0, _SKRIPTE)
-from test_uebersicht import _CSS, _lies, finde_dateien, lade_tickets  # noqa: E402
+from test_uebersicht import _CSS, lade_tickets  # noqa: E402
 
 from to_spawn import config, ticket_zustand  # noqa: E402
+from to_spawn.belege import _lies, finde_dateien  # noqa: E402
 
 log = logging.getLogger("belege_uebersicht")
 

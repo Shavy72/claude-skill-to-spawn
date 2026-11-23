@@ -164,15 +164,7 @@ def blocker_gruende(repo: Path, deps: list[dict], *, mit_commit: bool = True) ->
     haupt = f"origin/{hauptzweig(repo)}"  # master/main/… je Repo (#257)
     subprocess.run(["git", "fetch", "-q", "origin"], cwd=repo, check=False, capture_output=True)
     for nr in erledigt:
-        gefunden = subprocess.run(
-            ["git", "log", haupt, "--oneline", "--fixed-strings", f"--grep=(#{nr})"],
-            cwd=repo,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            check=False,
-        ).stdout.strip()
-        if not gefunden:
+        if not commit_betreffe(repo, str(nr), haupt):  # None (git-Fehler) zählt als „kein Commit“
             gruende.append(f"#{nr} zu, aber kein Commit „(#{nr})“ auf {haupt}")
     return gruende
 
@@ -200,8 +192,12 @@ def ticket_daten(ticket: str, cwd: Path | None = None) -> dict[str, Any] | None:
     return daten
 
 
-def _git_ausgabe(args: list[str], cwd: Path) -> tuple[int, str]:
-    """``git <args>`` im Ordner ``cwd``; (Exit-Code, stdout) — 127 wenn git fehlt."""
+#: Zeitgrenze (s) der git-Abfragen in :func:`commit_betreffe`/:func:`origin_zweige` (ls-remote geht übers Netz).
+GIT_ZEIT_S = 60.0
+
+
+def _git_ausgabe(args: list[str], cwd: Path, timeout: float | None = None) -> tuple[int, str]:
+    """``git <args>`` im Ordner ``cwd``; (Exit-Code, stdout) — 127 wenn git fehlt, 124 bei Zeitablauf."""
     try:
         fertig = subprocess.run(
             ["git", *args],
@@ -210,12 +206,48 @@ def _git_ausgabe(args: list[str], cwd: Path) -> tuple[int, str]:
             text=True,
             encoding="utf-8",
             errors="replace",
+            timeout=timeout,
             check=False,
         )
+    except subprocess.TimeoutExpired:
+        log.warning("git %s: Zeitgrenze %s s überschritten", args[:1], timeout)
+        return 124, ""
     except OSError as fehler:
         log.warning("git-Aufruf fehlgeschlagen: %s", fehler)
         return 127, ""
     return fertig.returncode, (fertig.stdout or "").strip()
+
+
+def commit_betreffe(repo: Path, nummer: int | str, *refs: str) -> list[str] | None:
+    """Betreffe der Commits auf ``refs`` (z. B. ``origin/main`` oder ``--all``), deren Text ``(#<nummer>)`` enthält.
+
+    Die eine Commit-Suche nach Ticketnummer (#267, #282): Blocker-Prüfung und Wiederanlauf
+    fragen beide hier. Grobfilter — ob der Betreff wirklich das Ticket meint, entscheidet
+    der Aufrufer (z. B. :func:`capo.betreff_hat_nummer`). ``None`` = git gescheitert; was das
+    heißt („kein Commit“ oder „unbekannt“), entscheidet ebenfalls der Aufrufer.
+    """
+    code, text = _git_ausgabe(
+        ["log", *refs, "--format=%s", "--fixed-strings", f"--grep=(#{nummer})"], repo, timeout=GIT_ZEIT_S
+    )
+    if code != 0:
+        log.warning("Commit-Suche (#%s) gescheitert (git Exit %s)", nummer, code)
+        return None
+    return text.splitlines()
+
+
+def origin_zweige(repo: Path, muster: str) -> list[str] | None:
+    """Zweige auf origin, die das git-Muster ``muster`` treffen (z. B. ``ticket/7-*``), live per ``ls-remote``.
+
+    Namen ohne ``refs/heads/``. ``None`` = kein origin, origin unerreichbar oder Zeitablauf —
+    der Aufrufer darf das nicht als „kein Zweig“ lesen.
+    """
+    code, text = _git_ausgabe(["ls-remote", "--heads", "origin", muster], repo, timeout=GIT_ZEIT_S)
+    if code != 0:
+        log.warning("git ls-remote origin %s gescheitert (Exit %s)", muster, code)
+        return None
+    praefix = "refs/heads/"
+    refs = (zeile.split("\t")[-1].strip() for zeile in text.splitlines())
+    return [ref[len(praefix) :] for ref in refs if ref.startswith(praefix)]
 
 
 def hauptzweig(repo: Path | None = None) -> str:
