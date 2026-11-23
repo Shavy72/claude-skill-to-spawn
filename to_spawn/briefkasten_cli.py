@@ -1,9 +1,11 @@
-"""CLI für Tür B (#278): ``befugnis``/``frage``/``antwort``/``antworten``/``nutzer-antwort``.
+"""CLI für Tür B (#278): ``befugnis``/``frage``/``antwort``/``antworten``/``nutzer-antwort``/
+``nutzer-uebertragen``/``offene``.
 
 Exit-Codes: ``befugnis`` 0 = Klasse 1, 2 = Klasse 2, 3 = Klasse 3 · ``frage`` 0 = eingeworfen (gibt
-die ``id`` aus), 2 = verweigert · ``antwort`` 0 = Antwort da, 2 = braucht den Nutzer, 3 = WARTET ·
-``antworten``/``nutzer-antwort`` 0 = geschrieben, 2 = verweigert, 1 = keine passende offene
-Frage/Fehler.
+die ``id`` aus), 2 = verweigert · ``antwort`` 0 = Antwort da, 2 = braucht den Nutzer, 3 = WARTET,
+4 = Frage unbekannt (neu stellen) · ``antworten``/``nutzer-antwort``/``nutzer-uebertragen``
+0 = geschrieben, 2 = verweigert, 1 = keine passende offene Frage/Fehler · ``offene`` 0 (eine Zeile
+je offener Frage).
 
 ``nutzer-antwort`` ist der Weg des Menschen (auch Klasse 2): verweigert in einer Bau-Session und
 ohne echtes Terminal (Sessions laufen ohne). Grenzen des Schutzes: ``briefkasten``-Docstring.
@@ -20,7 +22,7 @@ from to_spawn import befugnis, briefkasten
 
 log = logging.getLogger("to_spawn")
 
-BEFEHLE = ("befugnis", "frage", "antwort", "antworten", "nutzer-antwort")
+BEFEHLE = ("befugnis", "frage", "antwort", "antworten", "nutzer-antwort", "nutzer-uebertragen", "offene")
 
 
 def richte_parser_ein(unter: Any) -> None:
@@ -54,6 +56,12 @@ def richte_parser_ein(unter: Any) -> None:
     p_nutzer.add_argument("--wahl", required=True)
     p_nutzer.add_argument("--grund", required=True)
     p_nutzer.add_argument("--beleg", action="append", default=[])
+    p_ueber = unter.add_parser("nutzer-uebertragen", help="Aufseher: Antwort des Nutzers aus seinem Ticket-Kommentar")
+    p_ueber.add_argument("ticket")
+    p_ueber.add_argument("--id", required=True, dest="frage_id")
+    p_ueber.add_argument("--kommentar", required=True, help="Link auf den Kommentar (…#issuecomment-…)")
+    p_offen = unter.add_parser("offene", help="Offene Briefkasten-Fragen (alle oder die genannten Tickets)")
+    p_offen.add_argument("tickets", nargs="*")
 
 
 def lauf(args: argparse.Namespace) -> int:
@@ -62,6 +70,10 @@ def lauf(args: argparse.Namespace) -> int:
         klasse = befugnis.einordnen(args.ziel, args.art, args.gesichert)
         print(f"#{args.ticket}: Klasse {klasse}")
         return 0 if klasse == 1 else klasse
+    if args.befehl == "offene":
+        for o in briefkasten.offene(args.tickets or None):
+            print(f"#{o['ticket']} · id {o['id'] or '–'} · Klasse {o['klasse']} · {o['frage']} · Vorschlag: {o['vorschlag']}")
+        return 0
     try:
         if args.befehl == "frage":
             frage_id = briefkasten.einwerfen(
@@ -76,8 +88,15 @@ def lauf(args: argparse.Namespace) -> int:
         if args.befehl == "nutzer-antwort":
             if not sys.stdin.isatty():
                 raise briefkasten.Verweigert("nutzer-antwort nur im Terminal des Nutzers (stdin ist kein Terminal).")
-            briefkasten.nutzer_antworten(args.ticket, args.frage_id, args.wahl, args.beleg, args.grund)
+            datei = briefkasten.nutzer_antworten(args.ticket, args.frage_id, args.wahl, args.beleg, args.grund)
             print(f"#{args.ticket}: Antwort des Nutzers geschrieben")
+            for o in briefkasten.offene([args.ticket]):
+                if not o["id"]:  # Sperre durch kaputte Datei: nur der Nutzer löst sie
+                    print(f"Hinweis: {o['frage']} (Ordner {datei.parent}) — bis dahin bleibt #{args.ticket} gesperrt.")
+            return 0
+        if args.befehl == "nutzer-uebertragen":
+            briefkasten.nutzer_antwort_uebertragen(args.ticket, args.frage_id, args.kommentar)
+            print(f"#{args.ticket}: Antwort des Nutzers aus {args.kommentar} übertragen")
             return 0
         stand = briefkasten.lesen(args.ticket, args.frage_id)
     except briefkasten.Verweigert as fehler:
@@ -89,5 +108,8 @@ def lauf(args: argparse.Namespace) -> int:
     if isinstance(stand, briefkasten.Antwort):
         print(f"#{args.ticket}: Antwort von {stand.von}: {stand.wahl} (Grund: {stand.grund})")
         return 0
+    if stand == briefkasten.UNBEKANNT:
+        print(f"#{args.ticket}: Frage {args.frage_id} unbekannt — Frage neu stellen (`frage`), mit der neuen id weiter")
+        return 4
     print(f"#{args.ticket}: {stand}")
     return 2 if stand == briefkasten.NUTZER else 3

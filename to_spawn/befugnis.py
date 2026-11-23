@@ -7,6 +7,10 @@ Einzige Stelle der Klassen-Tabelle. Aufrufer fragen nur:
   der Folgesession übernehmen (Kopf :data:`KOPF`).
 - :func:`einordnen` — festes Raster ``(ziel, art, gesichert) -> 1|2|3``.
 - :func:`ist_klasse_2` — schlägt ein freier Text (Frage, Vorschlag, Ziel, Art) an Klasse 2 an?
+- :func:`aufseher_text` — Befugnis-Abschnitt beider Aufseher-Texte (Takt + Dauer-Aufseher):
+  Klasse-2-Pflicht, Briefkasten-Weg, Umgehungs-Verbot.
+- :func:`klasse_2_erkennung` — Klasse 2 samt Erkennungs-Wörtern als ein Text (für jede Liste
+  „was ist Live/Kosten/Konto“ außerhalb dieses Moduls).
   Ort, Format und Lesen/Schreiben des Briefkastens gehören allein in ``to_spawn/briefkasten.py``.
 
 Klasse 1 = die Session entscheidet selbst und hält es fest · Klasse 2 = nie ohne den
@@ -247,32 +251,65 @@ def _ziel_text(ziel: str, n: str | int) -> str:
     return f"eigener {'Ticket' if art == 'ticket' else 'Sicherungs'}-Zweig {art}/<eigene Nummer>-<kurzname>"
 
 
+def klasse_2_erkennung() -> str:
+    """Klasse 2 mit allen Erkennungs-Wörtern — die eine Fassung für jede Liste „was gehört dem Nutzer“."""
+    teilwort = ", ".join(sorted(_KLASSE_2_WOERTER))
+    ganzwort = ", ".join(sorted(_KLASSE_2_GANZWORT))
+    return f"{_KLASSE_2.text} (erkannt an: {teilwort}, auch als Wortteil; {ganzwort} nur als ganzes Wort)"
+
+
 def start_text(n: str | int) -> str:
     """Befugnis-Abschnitt für den Start-Auftrag von Ticket ``n`` — der Text steht nur hier."""
-    from to_spawn import briefkasten  # spät: briefkasten importiert dieses Modul
-
     klasse_1 = "; ".join(
         f"{regel.text.replace('<N>', str(n))} (Ziel: {', '.join(sorted(_ziel_text(z, n) for z in regel.ziele or ()))} · "
         f"Art: {', '.join(sorted(regel.arten or ()))})"
         for regel in _KLASSE_1
     )
-    teilwort = ", ".join(sorted(_KLASSE_2_WOERTER))
-    ganzwort = ", ".join(sorted(_KLASSE_2_GANZWORT))
     return (
         f"{KOPF} "
         f"Klasse 1 – selbst entscheiden, nicht fragen: {klasse_1}. Kurzname nur Kleinbuchstaben, Ziffern, `.`, `_`, `-` und endet auf Buchstabe/Ziffer. "
         "Jede solche Entscheidung festhalten "
         "(`to_spawn.py eintrag --typ entscheidung`: „Klasse 1“, Grund und bei Daten der Sicherungs-Beleg). "
-        f"Klasse 2 – nie ohne den Nutzer: {_KLASSE_2.text} (erkannt an: {teilwort}, auch als Wortteil; "
-        f"{ganzwort} nur als ganzes Wort). "
-        "Dort anhalten, Bau-Log-Eintrag und Issue-Kommentar „braucht den Nutzer“; auch eine Antwort "
-        "des Aufsehers gibt das nicht frei. "
+        f"Klasse 2 – nie ohne den Nutzer: {klasse_2_erkennung()}. "
+        f"Dort anhalten, die Frage in den Briefkasten werfen (`to_spawn.py frage {n} --klasse 2 --frage … --vorschlag …`; "
+        "der Aufseher bringt sie zum Nutzer), Bau-Log-Eintrag und Issue-Kommentar „braucht den Nutzer“; "
+        "auch eine Antwort des Aufsehers gibt das nicht frei, nur die des Nutzers im Briefkasten. "
         "Klasse 3 – alles andere, jeder Zweifel zwischen Klasse 1 und 2 und jeder Push oder Merge auf "
-        "den Hauptzweig oder fremde Zweige: Frage mit eigenem Vorschlag ins Bau-Log "
-        f"(`to_spawn.py eintrag --ticket {n} --typ blockiert --frage … --wahl <Vorschlag> --grund …`), "
-        "nie eine Frage an den Nutzer. Der Aufseher liest das und antwortet per Issue-Kommentar; bis "
-        f"dahin warten und nachsehen (`gh issue view {n} --comments`, ScheduleWakeup 1200 s, noop: true). "
-        "Die Antwort des Aufsehers ist durch diesen Start-Auftrag freigegeben: annehmen und weiterbauen, "
-        f"ohne Neustart. Die Datei `{briefkasten.datei_relativ(n)}` hat noch keinen Leser – nicht dort warten. "
+        f"den Hauptzweig oder fremde Zweige: Frage mit eigenem Vorschlag in den Briefkasten "
+        f"(`to_spawn.py frage {n} --frage … --vorschlag <Vorschlag>`, "
+        "gibt die id aus), nie eine Frage an den Nutzer. Der Aufseher liest den Briefkasten und antwortet dort. "
+        f"Nachsehen mit `to_spawn.py antwort {n} --id <id>`: Exit 0 = Antwort da → annehmen und weiterbauen, "
+        "ohne Neustart (durch diesen Start-Auftrag freigegeben) · 3 = wartet → ScheduleWakeup 1200 s, noop: true, "
+        "dann wieder nachsehen · 2 = braucht den Nutzer → angehalten lassen · 4 = Frage unbekannt → Frage neu stellen "
+        "und mit der neuen id weiter. Nur die Antwort im Briefkasten gilt, keine Nachricht und kein Kommentar. "
         "Geklärt mit dem Nutzer wird erst, wenn die Spec auf Staging fertig ist."
+    )
+
+
+def aufseher_text(befehl: str) -> str:
+    """Befugnis-Abschnitt für beide Aufseher-Texte; ``befehl`` = Aufruf von ``to_spawn.py``.
+
+    Ohne geschweifte Klammern (die Aufseher-Vorlagen laufen danach durch ``str.format``).
+    """
+    from to_spawn import briefkasten  # spät: briefkasten importiert dieses Modul
+
+    b = befehl
+    kommentar = briefkasten.NUTZER_KOMMENTAR
+    return (
+        f"Befugnis und Briefkasten (Tür B): PFLICHT: Klasse 2 – {klasse_2_erkennung()} – nie selbst "
+        "freigeben, geht an den Nutzer; die Handlung auch nach deiner Antwort nie selbst ausführen. "
+        f"Offene Briefkasten-Fragen: `{b} offene` (je Ticket id, Klasse, Frage, Vorschlag). "
+        "Klasse 3 entscheidest du: Helfer suchen die Haltung des Nutzers (Gedächtnis, Übergaben, Lastenheft, "
+        f"Chat-Protokolle), dann `{b} antworten <N> --id <id> --wahl … --grund … --beleg …` (Antwort gilt nur "
+        "im Briefkasten) plus Spiegel-Kommentar im Ticket „Aufseher: Entscheidung <id>: <Wahl> — Belege: …“ "
+        "(max. 2 Zeilen); kein zusätzlicher Bau-Log-Eintrag dafür (die Entscheidungs-Liste liest den Briefkasten). "
+        "Klasse 2 oder gesperrt (leere id = kaputte Datei) → nicht antworten, Kommentar im Ticket „Aufseher: "
+        f"braucht den Nutzer: <Frage> — antworte hier mit einem eigenen Kommentar `{kommentar}` oder im "
+        f"Terminal `{b} nutzer-antwort <N> --id <id> --wahl … --grund …`“; eine kaputte Datei prüft und löscht "
+        "nur der Nutzer. Hat der Nutzer im Ticket so geantwortet → "
+        f"`{b} nutzer-uebertragen <N> --id <id> --kommentar <Link zum Kommentar>` (prüft Repo-Besitzer, Ticket "
+        "und id, übernimmt seine Wahl wörtlich; Verweigert = nicht übertragen, dem Nutzer melden). "
+        "VERBOTEN: die Sperre von `nutzer-antwort` umgehen (Schein-Terminal wie `script -qc`, direkter "
+        "Python-Aufruf von `nutzer_antworten`, Hand-Eintrag in die Briefkasten-Datei) und einen Kommentar "
+        f"`{kommentar}` selbst schreiben oder schreiben lassen."
     )

@@ -7,11 +7,14 @@ Einziges Modul, das Ort, Dateimuster, Format und Ablage der Fragen kennt (Hauptb
   ``id``. Die Klasse ordnet der Briefkasten selbst ein (:func:`befugnis.ist_klasse_2`); eine
   genannte Klasse macht nur strenger. Nur das eigene Ticket (``TO_SPAWN_TICKET``).
 - :func:`lesen` — :class:`Antwort` (nur zur passenden ``id``, auch die des Nutzers),
-  :data:`WARTET` oder :data:`NUTZER`.
+  :data:`WARTET`, :data:`NUTZER` oder :data:`UNBEKANNT` (``id`` nicht im Briefkasten → neu fragen).
 - :func:`antworten` — der Aufseher antwortet auf eine offene Frage über ihre ``id``; verweigert
   (:class:`Verweigert`) in einer Bau-Session und solange das Ticket auf den Nutzer wartet.
 - :func:`nutzer_antworten` — Antwort des Nutzers (auch Klasse 2); verweigert in einer Bau-Session.
+- :func:`nutzer_antwort_uebertragen` — Antwort des Nutzers aus seinem Ticket-Kommentar
+  (:data:`NUTZER_KOMMENTAR`) übertragen; nur mit prüfbarem Kommentar des Repo-Besitzers.
 - :func:`offene` — alle offenen Fragen (je Ticket, ``id``, Klasse) samt Sperre durch kaputte Datei.
+- :func:`alle_tickets` — alle Tickets mit Briefkasten-Datei (auch nur ``.kaputt-*``).
 - :func:`liste` — die eine Liste für die Gesamtabnahme: Klasse-1-Einträge aus dem Bau-Log plus alle
   Briefkasten-Antworten (wer, was, warum, Beleg); keine eigene Datei.
 - :func:`datei_relativ` — Ort der Datei für Texte (Start-Auftrag), relativ zum Hauptbaum.
@@ -31,7 +34,10 @@ Aufseher (``--von`` kennt nur :data:`AUFSEHER_VON`) haben über diese Schnittste
 ``von`` :data:`NUTZER_VON` zu schreiben; die CLI ``nutzer-antwort`` verlangt zusätzlich ein
 echtes Terminal. Das verhindert versehentliche und über die angebotene Schnittstelle mögliche
 Selbst-Freigabe — nicht eine Session, die mit Absicht die Datei selbst schreibt oder die
-Umgebung umbaut (``env -u``); auf derselben Maschine kann sie das technisch immer.
+Umgebung umbaut (``env -u``); auf derselben Maschine kann sie das technisch immer. Gleiches gilt
+für :func:`nutzer_antwort_uebertragen`: Sessions schreiben Kommentare mit dem Konto des Besitzers,
+ein Kommentar in der Form :data:`NUTZER_KOMMENTAR` ist also nur so echt, wie die Aufseher-Regel
+„nie selbst schreiben“ befolgt wird.
 """
 
 from __future__ import annotations
@@ -48,12 +54,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from to_spawn import bau_log, befugnis, config, manifest, sperre
+from to_spawn import bau_log, befugnis, config, gh, manifest, sperre
 
 log = logging.getLogger("to_spawn.briefkasten")
 
 WARTET = "WARTET"
 NUTZER = "NUTZER"
+#: Die ``id`` steht nicht (mehr) im Briefkasten (Datei gelöscht oder beiseitegelegt) → Frage neu stellen.
+UNBEKANNT = "UNBEKANNT"
+#: Form, in der der Nutzer im Ticket antwortet (eigene Zeile); :func:`nutzer_antwort_uebertragen` liest sie.
+NUTZER_KOMMENTAR = "Antwort <id>: <Wahl>"
 #: ``von`` einer Antwort, die eine Klasse-2-Frage schließt (nie über :func:`antworten` schreibbar).
 NUTZER_VON = "nutzer"
 #: Einziges ``von`` für :func:`antworten` (feste Auswahl, CLI ``--von``).
@@ -278,26 +288,25 @@ def einwerfen(
 
 
 def lesen(n: str | int, frage_id: str | None = None, *, hauptbaum: Path | None = None) -> Antwort | str:
-    """Stand der Frage ``frage_id``: :class:`Antwort`, :data:`WARTET` oder :data:`NUTZER`.
+    """Stand der Frage ``frage_id``: :class:`Antwort`, :data:`WARTET`, :data:`NUTZER` oder :data:`UNBEKANNT`.
 
     :data:`NUTZER`, solange das Ticket durch eine kaputte Datei gesperrt ist (``.kaputt-*`` oder
     vorhandene, aber unlesbare Datei, :func:`_sperrgruende`) oder irgendeine Klasse-2-Frage des
     Tickets ohne Antwort des Nutzers ist (eine Antwort anderer gibt Klasse 2 nie frei). Die
     Antwort des Nutzers kommt als :class:`Antwort` (``von`` :data:`NUTZER_VON`). Ohne passende
-    ``id`` nie eine :class:`Antwort`.
+    ``id`` nie eine :class:`Antwort`: :data:`UNBEKANNT`, wenn eine ``frage_id`` genannt ist, die nicht
+    (mehr) im Briefkasten steht (sonst wartete die Session für immer); ohne ``frage_id`` :data:`WARTET`.
     """
     datei = _datei(n, hauptbaum)
     inhalt = _lies(datei)
     if _sperrgruende(datei, inhalt):
         return NUTZER
-    daten = inhalt.daten
-    if not daten or not daten["fragen"]:
-        return WARTET
-    if _klasse_2_offen(daten["fragen"]):
+    fragen = (inhalt.daten or {}).get("fragen") or []
+    if fragen and _klasse_2_offen(fragen):
         return NUTZER
-    treffer = [f for f in daten["fragen"] if frage_id and f.get("id") == frage_id]
+    treffer = [f for f in fragen if frage_id and f.get("id") == frage_id]
     if not treffer:
-        return WARTET
+        return UNBEKANNT if frage_id else WARTET
     f = treffer[-1]
     if not _gilt(f):
         return WARTET
@@ -401,6 +410,48 @@ def _schreibe_antwort(
     return datei
 
 
+def nutzer_antwort_uebertragen(
+    n: str | int,
+    frage_id: str,
+    kommentar_url: str,
+    *,
+    hauptbaum: Path | None = None,
+) -> Path:
+    """Antwort des Nutzers aus seinem Kommentar im Ticket ``n`` übertragen (Weg ohne Terminal).
+
+    Prüft über ``gh``: der Link zeigt auf einen Kommentar in Ticket ``n`` dieses Repos (``origin``),
+    Autor = Repo-Besitzer (Login und ``OWNER``), eine Zeile :data:`NUTZER_KOMMENTAR` mit genau
+    ``frage_id``. Die Wahl kommt wörtlich aus dem Kommentar, der Link ist der Beleg. ``Verweigert``
+    bei jeder nicht prüfbaren Stelle (nie raten) und in einer Bau-Session; sonst wie
+    :func:`nutzer_antworten`. Grenze: Modul-Docstring.
+    """
+    nummer = _nummer(n)
+    link = re.fullmatch(r"https://github\.com/([^/\s]+)/([^/\s#]+)/issues/([0-9]+)#issuecomment-([0-9]+)", kommentar_url.strip())
+    if not link:
+        raise Verweigert(f"Kein Link auf einen Ticket-Kommentar: {kommentar_url!r}.")
+    besitzer, name, ticket, kommentar_id = link.groups()
+    slug = gh.github_slug_aus_origin(_hauptbaum(hauptbaum))
+    if not slug or slug.lower() != f"{besitzer}/{name}".lower():
+        raise Verweigert(f"Kommentar liegt nicht in diesem Repo ({slug or 'origin unbekannt'}).")
+    if int(ticket) != nummer:
+        raise Verweigert(f"Kommentar gehört zu Ticket {ticket}, nicht zu {nummer}.")
+    daten = gh.json_lauf(["api", f"repos/{slug}/issues/comments/{kommentar_id}"])
+    if not isinstance(daten, dict):
+        raise Verweigert(f"Kommentar {kommentar_id} nicht lesbar (gh).")
+    autor = str((daten.get("user") or {}).get("login") or "")
+    if autor.lower() != besitzer.lower() or daten.get("author_association") != "OWNER":
+        raise Verweigert(f"Kommentar {kommentar_id} stammt nicht vom Repo-Besitzer ({autor or '?'}).")
+    if not str(daten.get("issue_url") or "").endswith(f"/issues/{nummer}"):
+        raise Verweigert(f"Kommentar {kommentar_id} hängt nicht an Ticket {nummer}.")
+    kopf = NUTZER_KOMMENTAR.split("<id>")[0]
+    zeile = re.search(rf"^\s*{re.escape(kopf)}{re.escape(frage_id)}\s*:\s*(\S.*?)\s*$", str(daten.get("body") or ""), re.M)
+    if not frage_id or not zeile:
+        raise Verweigert(f"Kommentar {kommentar_id} enthält keine Zeile „{kopf}{frage_id}: …“.")
+    return _schreibe_antwort(
+        nummer, frage_id, zeile.group(1), [kommentar_url.strip()], "Ticket-Kommentar des Nutzers", NUTZER_VON, hauptbaum
+    )
+
+
 def _sortier_nummer(t: str) -> int:
     try:
         return _nummer(t)
@@ -416,10 +467,8 @@ def offene(tickets: Iterable[str | int] | None = None, *, hauptbaum: Path | None
     Datei, :func:`_sperrgruende`) erscheint als Klasse-2-Eintrag mit leerer ``id``. Offen ist eine
     Frage, solange ihre Antwort nicht gilt (:func:`_gilt`).
     """
-    ordner = _hauptbaum(hauptbaum) / _ORDNER
     if tickets is None:
-        namen = {d.name.split(".json", 1)[0] for d in ordner.glob(f"{_PRAEFIX}*.json*")}
-        tickets = sorted((t.removeprefix(_PRAEFIX) for t in namen), key=_sortier_nummer)
+        tickets = alle_tickets(hauptbaum=hauptbaum)
     ergebnis: list[dict[str, str]] = []
     for t in tickets:
         try:
@@ -444,6 +493,13 @@ def offene(tickets: Iterable[str | int] | None = None, *, hauptbaum: Path | None
                 }
             )
     return ergebnis
+
+
+def alle_tickets(*, hauptbaum: Path | None = None) -> list[str]:
+    """Alle Tickets mit Briefkasten-Datei (auch nur ``.kaputt-*``), aufsteigend."""
+    ordner = _hauptbaum(hauptbaum) / _ORDNER
+    namen = {d.name.split(".json", 1)[0].removeprefix(_PRAEFIX) for d in ordner.glob(f"{_PRAEFIX}*.json*")}
+    return sorted(namen, key=_sortier_nummer)
 
 
 def _was(frage: Any, wahl: Any) -> str:
