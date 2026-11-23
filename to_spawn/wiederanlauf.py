@@ -13,20 +13,20 @@ gebaut → ``fortsetzen``, wenn ein Zweig ``ticket/<N>-*`` auf origin oder ein C
 ``(#<N>)`` existiert, sonst ``neu``. „Fertig gebaut?“ beantwortet nur
 :func:`ticket_zustand.fertig_gebaut`, „zu?“ nur :func:`ticket_zustand.endgueltig_zu`.
 
-Was fehlt, sagen die Belegseiten (:mod:`to_spawn.belege`): kein Klickweg → „Klickweg-Beleg“,
-kein grüner Lauf → „grüner Testlauf“. Gelesen wird der Beleg-Ordner im Arbeitsbaum ``repo``.
+Was fehlt, sagen die Belegseiten (:mod:`to_spawn.belege`): kein Klickweg → „Klickweg-Beleg“
+(ausdrücklich „Klickweg: entfällt“ zählt als erfüllt), kein grüner Lauf → „grüner Testlauf“.
+Gelesen wird der Beleg-Ordner im Arbeitsbaum ``repo``. Zweige und Commits liefert :mod:`to_spawn.gh`.
 """
 
 from __future__ import annotations
 
 import logging
-import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
-from . import belege, capo, config, ticket_zustand
+from . import belege, capo, config, gh, ticket_zustand
 
 log = logging.getLogger("wiederanlauf")
 
@@ -105,27 +105,28 @@ def feststellen(ticket: int, repo: Path) -> Wiederanlauf | None:
     verify_hard = repo / capo.belege_ordner(config.lade(repo))
     beleg = belege.auswerten(verify_hard, str(ticket))
     fehlt = tuple(
-        name for name, da in ((KLICKWEG_BELEG, beleg.klickweg), (GRUENER_LAUF, beleg.status == "gruen")) if not da
+        name
+        for name, da in (
+            (KLICKWEG_BELEG, beleg.klickweg or beleg.klickweg_entfaellt),
+            (GRUENER_LAUF, beleg.status == "gruen"),
+        )
+        if not da
     )
     assignees = tuple(str(a.get("login", "")) for a in daten.get("assignees") or () if isinstance(a, Mapping))
     return entscheide(Signale(ticket, daten, zweige, commits, tuple(a for a in assignees if a), fehlt))
 
 
 def _zweige(repo: Path, ticket: int) -> tuple[str, ...] | None:
-    """Zweige ``ticket/<N>-*`` auf origin (``git ls-remote``); ``None`` = git gescheitert."""
-    code, text = capo._git(repo, "ls-remote", "--heads", "origin", f"ticket/{ticket}-*")
-    if code != 0:
-        log.warning("Ticket #%s: git ls-remote gescheitert: %s", ticket, text[:200])
+    """Zweige ``ticket/<N>-*`` auf origin; ``None`` = origin fehlt oder unerreichbar."""
+    namen = gh.origin_zweige(repo, f"ticket/{ticket}-*")
+    if namen is None:
         return None
-    muster = re.compile(rf"^refs/heads/(ticket/{ticket}-\S*)$")
-    namen = (m.group(1) for zeile in text.splitlines() if (m := muster.match(zeile.split("\t")[-1].strip())))
-    return tuple(sorted(namen))
+    return tuple(sorted(n for n in namen if n.startswith(f"ticket/{ticket}-")))
 
 
 def _commits(repo: Path, ticket: int) -> int | None:
     """Commits aller lokalen und Remote-Zweige, deren Betreff die Nummer trägt; ``None`` = git gescheitert."""
-    code, text = capo._git(repo, "log", "--all", "--format=%s", f"--grep=(#{ticket})")
-    if code != 0:
-        log.warning("Ticket #%s: git log gescheitert: %s", ticket, text[:200])
+    betreffe = gh.commit_betreffe(repo, ticket, "--all")
+    if betreffe is None:
         return None
-    return sum(1 for betreff in text.splitlines() if capo.betreff_hat_nummer(betreff, ticket))
+    return sum(1 for betreff in betreffe if capo.betreff_hat_nummer(betreff, ticket))

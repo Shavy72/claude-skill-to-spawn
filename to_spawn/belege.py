@@ -41,6 +41,11 @@ _OFFEN_VERNEINT = re.compile(r"\b(?:0|null|nichts(?: mehr)?|keine(?: \w+)?|nix)\
 _XY = re.compile(r"\b(\d+)\s*/\s*(\d+)\s+(?:Tests?|grün|bestanden|belegt|Kriterien|Abnahme)", re.I)
 _KLICKWEG = re.compile(r"klick.?weg|live-klick|live-beweis", re.I)
 _VERNEINT = re.compile(r"\b(?:kein|keine|keiner|nicht|entfällt|n/a)\b", re.I)
+#: Ausdrücklich „Klickweg entfällt / nicht nötig“ (reines Backend) — eigenes Merkmal, kein Klickweg-Beleg.
+_ENTFAELLT = re.compile(
+    r"entfällt(?!\s+nicht)|nicht\s+(?:nötig|erforderlich)|kein\w*\s+klick.?weg\s+(?:nötig|erforderlich)|\bn/a\b",
+    re.I,
+)
 
 
 @dataclass
@@ -62,6 +67,9 @@ class Belege:
     lauf: Lauf | None = None
     abnahme: str = ""
     klickweg: bool = False
+    #: Beleg sagt ausdrücklich, dass der Klickweg entfällt; ``klickweg`` bleibt dann ``False``
+    #: (Anzeige „kein Klickweg“ unverändert), der Wiederanlauf zählt es als erfüllt (#282).
+    klickweg_entfaellt: bool = False
     rot_beweis: bool = False
     dateien: list[str] = field(default_factory=list)
 
@@ -136,9 +144,13 @@ def auswerten(verify_hard: Path, nummer: str) -> Belege:
             if not belege.abnahme and (m := _ABNAHME.search(text)):
                 belege.abnahme = m.group(1).strip()
             for zeile in text.splitlines():
-                if _KLICKWEG.search(zeile) and not _VERNEINT.search(zeile):
+                if not _KLICKWEG.search(zeile):
+                    continue
+                if not _VERNEINT.search(zeile):
                     belege.klickweg = True
                     break
+                if _ENTFAELLT.search(zeile):
+                    belege.klickweg_entfaellt = True
         if lauf:
             laeufe.append(lauf)
     if not laeufe:  # Fallback: Zählung aus den Markdown-Belegseiten

@@ -26,7 +26,7 @@ _SKILL = str(Path(__file__).resolve().parent.parent)
 if _SKILL not in sys.path:
     sys.path.insert(0, _SKILL)
 from to_spawn import belege, config, manifest  # noqa: E402
-from to_spawn.belege import Lauf, _lies, finde_dateien  # noqa: E402,F401  (Weiterreichung an belege_uebersicht)
+from to_spawn.belege import Lauf  # noqa: E402
 
 log = logging.getLogger("test_uebersicht")
 
