@@ -182,7 +182,7 @@ def test_f1_zwei_fenster_gleicher_cwd_richtige_id(
 
 def test_f1_ohne_json_ohne_argv_keine_id_braucht_david(welt: Welt) -> None:
     """Kein Transkript-Fallback mehr: selbst ein frisches ``.jsonl`` im Projekt-Ordner
-    liefert keine ID. Ergebnis: nichts anfassen, Meldung „braucht David“, Stufe 3."""
+    liefert keine ID. Ergebnis: nichts anfassen, Meldung „braucht den Menschen“, Stufe 3."""
     welt.worktree(9002, schmutzig=True)
     _fenster(
         welt, "bau 9002", f"{welt.bin}/claude nur-prompt", FAKE_CLAUDE_OHNE_JSON="1"
@@ -202,7 +202,7 @@ def test_f1_ohne_json_ohne_argv_keine_id_braucht_david(welt: Welt) -> None:
     treffer = [
         k
         for k in welt.kommentare()
-        if "keine Gesprächs-ID gefunden — braucht David" in k
+        if "keine Gesprächs-ID gefunden — braucht den Menschen" in k
     ]
     assert len(treffer) == 1, welt.kommentare()
     assert welt.eintrag("bau 9002")["stufe"] == 3
@@ -336,7 +336,7 @@ def test_f2_rueckfrage_nie_send_keys_einmal_meldung(welt: Welt) -> None:
     assert welt.lauf() == 0
     time.sleep(0.5)
     assert pane_text("bau 9002") == vorher
-    treffer = [k for k in welt.kommentare() if "braucht David" in k and "bau 9002" in k]
+    treffer = [k for k in welt.kommentare() if "braucht den Menschen" in k and "bau 9002" in k]
     assert len(treffer) == 1, welt.kommentare()
     assert welt.eintrag("bau 9002").get("stufe", 0) == 0
 
@@ -440,7 +440,7 @@ def test_f5_nachweis_fehlt_meldung_stufe_3(
     treffer = [
         k
         for k in welt.kommentare()
-        if f"Fortsetzen fehlgeschlagen (Session {sid[:8]} nicht wieder da) — braucht David"
+        if f"Fortsetzen fehlgeschlagen (Session {sid[:8]} nicht wieder da) — braucht den Menschen"
         in k
     ]
     assert len(treffer) == 1, welt.kommentare()
@@ -469,7 +469,7 @@ def test_f5_fenster_weg_nach_nachweis_meldung_statt_absturz(
     treffer = [
         k
         for k in welt.kommentare()
-        if f"Fortsetzen fehlgeschlagen (Session {sid[:8]} nicht wieder da) — braucht David"
+        if f"Fortsetzen fehlgeschlagen (Session {sid[:8]} nicht wieder da) — braucht den Menschen"
         in k
     ]
     assert len(treffer) == 1, welt.kommentare()
@@ -689,7 +689,7 @@ def test_f10_start_gedaechtnis_zwei_starts_dann_meldung(welt: Welt) -> None:
     treffer = [
         k
         for k in welt.kommentare()
-        if "#9002 startet nicht (Fenster verschwindet wieder) — braucht David" in k
+        if "#9002 startet nicht (Fenster verschwindet wieder) — braucht den Menschen" in k
     ]
     assert len(treffer) == 1, welt.kommentare()
     assert len(welt.stand()["starts"]["9002"]) == 2

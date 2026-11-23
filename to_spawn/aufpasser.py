@@ -16,7 +16,7 @@ Läuft per Cron alle 15 Minuten (0 Token, reines Skript) und sieht je tmux-Sitzu
    erst, wenn Fenster und Prozess 5 s lang bleiben (R6). Nie bei Label
    ``ready-for-human``/``needs-info``/``wontfix``; verschwindet das Fenster nach
    dem Start gleich wieder, gibt es höchstens 2 Starts in 6 h, dann einmal
-   „braucht David“.
+   „braucht den Menschen“.
 2. **Ticket zu:** ``bau <N>`` mit geschlossenem Ticket, Pane-Text seit ≥ 15 min
    unverändert und keine laufende Arbeit → Worktree sichern (falls schmutzig),
    Session beenden. Ist die Grenze voll (Speicher/Session-Zahl) und meldet die
@@ -33,15 +33,15 @@ Läuft per Cron alle 15 Minuten (0 Token, reines Skript) und sieht je tmux-Sitzu
      ``--resume <id>`` neu starten (Fenster, Index und Sitzung bleiben — die Sitzung
      stirbt nie, auch als letztes Fenster). Danach bis 120 s nachweisen, dass die
      Session mit derselben ID wieder läuft. Scheitert Sicherung oder Nachweis,
-     bleibt alles stehen und David wird gerufen.
-   - Stufe 2 → nichts mehr ändern, einmal „braucht David“ melden (Stufe 3).
+     bleibt alles stehen und der Mensch wird gerufen.
+   - Stufe 2 → nichts mehr ändern, einmal „braucht den Menschen“ melden (Stufe 3).
    Die Stufe steigt nur bei einem Eingriff. Ändert sich der Pane-Text danach, hat
    der Eingriff gewirkt: Stufe 0, Uhr neu. Kill/Resume gibt es also nur, wenn nach
    dem Anstupsen ``hang_min`` lang GAR NICHTS passiert ist; Stufe 3 bleibt, bis der
    Text sich ändert — kein Zeit-Reset. Direkt vor jedem Eingriff wird der Pane-Text
    neu gelesen: anders als zu Laufbeginn, arbeitend oder Deploy/Gate inzwischen
    gestartet ⇒ Kette abbrechen (R4). Mehr als 3 Anstupser je Fenster in 24 h ⇒
-   Stufe 3, einmal „braucht David“ (R5). Das Aufseher-Fenster geht denselben Weg,
+   Stufe 3, einmal „braucht den Menschen“ (R5). Das Aufseher-Fenster geht denselben Weg,
    nur ohne Sicherung (kein Worktree): ``wache.py --resume <id>`` (R1).
    Lebt im Pane nur noch die Shell (Session beendet), wird nie angestupst — der
    Text liefe als Befehl —, sondern nach ``hang_min`` Stille gleich bei Stufe 1
@@ -129,7 +129,7 @@ START_MAX = 2
 START_FENSTER_S = 6 * 3600
 #: Nach einem Fenster-Start so lange prüfen, dass Fenster und Prozess bleiben (R6).
 START_NACHWEIS_S = 5.0
-#: Mehr als so viele Anstupser je Fenster im Zeitfenster ⇒ „braucht David“ (R5).
+#: Mehr als so viele Anstupser je Fenster im Zeitfenster ⇒ „braucht den Menschen“ (R5).
 STUPSER_MAX = 3
 STUPSER_FENSTER_S = 24 * 3600
 #: Meldungen ohne Eingriff kommen je Fenster/Ereignis nur einmal am Tag ins Issue;
@@ -184,7 +184,7 @@ EREIGNIS_VORFALL: dict[str, tuple[str, str, str, str]] = {
     ),
     "braucht_david": (
         "mensch",
-        "Bau-Kette wartet auf Davids Entscheidung",
+        "Bau-Kette wartet auf die Entscheidung des Menschen",
         "Die Frage wurde nicht vor dem Spawn im Grill entschieden",
         "Entscheidung in den Grill vorziehen; sonst greift die 60-min-Annahme (#285)",
     ),
@@ -1957,7 +1957,7 @@ class Aufpasser:
                     repo,
                     schluessel,
                     "rueckfrage",
-                    f"„{f.name}“ wartet seit {int(still_min)} min auf eine Ja/Nein-Bestätigung — braucht David.",
+                    f"„{f.name}“ wartet seit {int(still_min)} min auf eine Ja/Nein-Bestätigung — braucht den Menschen.",
                 )
             return
         if (
@@ -1984,7 +1984,7 @@ class Aufpasser:
                     repo,
                     schluessel,
                     "session_beendet",
-                    f"„{f.name}“: Session beendet, keine Gesprächs-ID — braucht David.",
+                    f"„{f.name}“: Session beendet, keine Gesprächs-ID — braucht den Menschen.",
                 )
                 return
             sid, cwd = gemerkt
@@ -2006,7 +2006,7 @@ class Aufpasser:
                     repo,
                     schluessel,
                     "stupser_erschoepft",
-                    f"„{f.name}“ wurde {STUPSER_MAX}× angestupst und wird immer wieder still — braucht David.",
+                    f"„{f.name}“ wurde {STUPSER_MAX}× angestupst und wird immer wieder still — braucht den Menschen.",
                 )
                 return
             if not self.vor_eingriff(f, hash_start, repo):
@@ -2035,7 +2035,7 @@ class Aufpasser:
                 repo,
                 schluessel,
                 "braucht_david",
-                f"„{f.name}“ reagiert nach Anstupsen und Fortsetzen nicht — braucht David.",
+                f"„{f.name}“ reagiert nach Anstupsen und Fortsetzen nicht — braucht den Menschen.",
             )
 
     def _platznot(self, repo: Path, info: SessionInfo | None) -> bool:
@@ -2080,7 +2080,7 @@ class Aufpasser:
                 repo,
                 schluessel,
                 "sicherung_fehlgeschlagen",
-                f"„{f.name}“: Ticket zu, aber Sicherung fehlgeschlagen — braucht David.",
+                f"„{f.name}“: Ticket zu, aber Sicherung fehlgeschlagen — braucht den Menschen.",
             )
             return
         if not self.vor_eingriff(f, hash_start, repo):
@@ -2141,7 +2141,7 @@ class Aufpasser:
                 repo,
                 schluessel,
                 "braucht_david",
-                f"„{f.name}“ weiter still, aber keine Gesprächs-ID gefunden — braucht David.",
+                f"„{f.name}“ weiter still, aber keine Gesprächs-ID gefunden — braucht den Menschen.",
             )
             return
         sid = info.session_id
@@ -2159,7 +2159,7 @@ class Aufpasser:
                     repo,
                     schluessel,
                     "sicherung_fehlgeschlagen",
-                    f"„{f.name}“ weiter still — Sicherung fehlgeschlagen — braucht David.",
+                    f"„{f.name}“ weiter still — Sicherung fehlgeschlagen — braucht den Menschen.",
                 )
                 return
         if not self.vor_eingriff(f, hash_start, repo):
@@ -2183,7 +2183,7 @@ class Aufpasser:
                 )
         except RuntimeError as fehler:
             # Prozess ist womöglich schon beendet, das Fenster aber leer: nicht
-            # noch einmal versuchen, sondern David rufen (Stufe 3).
+            # noch einmal versuchen, sondern den Menschen rufen (Stufe 3).
             log.error("Fenster %s fortsetzen fehlgeschlagen: %s", f.ziel, fehler)
             self._braucht_david(
                 e,
@@ -2191,7 +2191,7 @@ class Aufpasser:
                 repo,
                 schluessel,
                 "fortsetzen_fehlgeschlagen",
-                f"„{f.name}“: Fortsetzen fehlgeschlagen (tmux: {fehler}) — braucht David.",
+                f"„{f.name}“: Fortsetzen fehlgeschlagen (tmux: {fehler}) — braucht den Menschen.",
             )
             return
         if ticket is None:
@@ -2223,7 +2223,7 @@ class Aufpasser:
                 schluessel,
                 "fortsetzen_fehlgeschlagen",
                 f"„{neu.name}“: {gesichert}, aber Fortsetzen fehlgeschlagen "
-                f"(Session {sid[:8]} nicht wieder da) — braucht David.",
+                f"(Session {sid[:8]} nicht wieder da) — braucht den Menschen.",
             )
             return
         if not self.e.trocken:
@@ -2268,7 +2268,7 @@ class Aufpasser:
                 repo,
                 f"spec-{spec}/{name}",
                 "startet_nicht",
-                f"{wer} startet nicht (Fenster verschwindet wieder) — braucht David.",
+                f"{wer} startet nicht (Fenster verschwindet wieder) — braucht den Menschen.",
             )
             return False
         return True
