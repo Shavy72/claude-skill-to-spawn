@@ -34,9 +34,7 @@ def test_issue_kommentare_fragt_mit_slurp(monkeypatch: Any) -> None:
         return [[{"body": "k", "author_association": "OWNER"}]]
 
     monkeypatch.setattr(gh, "json_lauf", json_lauf)
-    assert capo.issue_kommentare("o/r", 7) == [
-        {"body": "k", "author_association": "OWNER"}
-    ]
+    assert capo.issue_kommentare("o/r", 7) == [{"body": "k", "author_association": "OWNER"}]
     assert "--paginate" in aufrufe[0] and "--slurp" in aufrufe[0]
 
 
@@ -47,12 +45,8 @@ def test_melde_gebremste_kommentare_unlesbar_naechster_takt(monkeypatch: Any) ->
     antwort: list[Any] = [None]
     gepostet: list[str] = []
     monkeypatch.setattr(capo, "issue_kommentare", lambda _repo, _n: antwort[0])
-    monkeypatch.setattr(
-        befund, "kommentiere", lambda _t, _r, text: gepostet.append(text) or True
-    )
-    neu: dict[str, Any] = {
-        "gezeigt": {"297:abc": {"n": waechter_takt.BREMSE_AB, "gemeldet": False}}
-    }
+    monkeypatch.setattr(befund, "kommentiere", lambda _t, _r, text: gepostet.append(text) or True)
+    neu: dict[str, Any] = {"gezeigt": {"297:abc": {"n": waechter_takt.BREMSE_AB, "gemeldet": False}}}
     waechter_takt.melde_gebremste("o/r", neu)
     assert gepostet == [] and neu["gezeigt"]["297:abc"]["gemeldet"] is False
     antwort[0] = []
@@ -60,9 +54,7 @@ def test_melde_gebremste_kommentare_unlesbar_naechster_takt(monkeypatch: Any) ->
     assert len(gepostet) == 1 and neu["gezeigt"]["297:abc"]["gemeldet"] is True
 
 
-def test_fehler_lauf_laesst_alle_felder_wiederkommen(
-    welt: dict[str, Any], monkeypatch: Any
-) -> None:
+def test_fehler_lauf_laesst_alle_felder_wiederkommen(welt: dict[str, Any], monkeypatch: Any) -> None:
     """Lücke 3: nach einem Fehler-Lauf fehlen Zeilen, „zu“, Verstöße und „SPEC FERTIG“ im Merker."""
     from to_spawn import leitstand, waechter_takt
 
@@ -99,21 +91,15 @@ def test_fehler_lauf_laesst_alle_felder_wiederkommen(
     assert merker["gezeigt"]["297:abc"]["n"] == 1
 
 
-def test_klasse_2_beleg_nach_fehler_lauf_gefunden(
-    welt: dict[str, Any], monkeypatch: Any
-) -> None:
+def test_klasse_2_beleg_nach_fehler_lauf_gefunden(welt: dict[str, Any], monkeypatch: Any) -> None:
     """Randfall: gezeigt ist gezeigt — nach einem Fehler-Lauf sucht der nächste Takt den Beleg."""
     from to_spawn import briefkasten
 
     monkeypatch.delenv("TO_SPAWN_TICKET", raising=False)
-    fid = briefkasten.einwerfen(
-        "297", "Live schalten?", "nein", 2, [], hauptbaum=welt["repo"]
-    )
+    fid = briefkasten.einwerfen("297", "Live schalten?", "nein", 2, [], hauptbaum=welt["repo"])
     welt["env"]["CLAUDE_AUFZEICHNUNG_EXIT"] = "1"
     assert _takt(welt, "--claude", str(CLAUDE_AUFZ)).returncode == 1
-    assert f"297:{fid}" in (_merker(welt) or {}).get("fragen", []), (
-        "gezeigte Frage fehlt im Merker"
-    )
+    assert f"297:{fid}" in (_merker(welt) or {}).get("fragen", []), "gezeigte Frage fehlt im Merker"
     # Die gescheiterte Session hatte den Kommentar an den Nutzer noch geschrieben.
     text = f"Aufseher: braucht den Nutzer: Live schalten? — bitte: `to_spawn.py nutzer-antwort 297 --id {fid} …`"
     gh = subprocess.run(
@@ -132,7 +118,5 @@ def test_klasse_2_beleg_nach_fehler_lauf_gefunden(
     assert gh.returncode == 0
     welt["env"]["CLAUDE_AUFZEICHNUNG_EXIT"] = "0"
     assert _takt(welt, "--claude", str(CLAUDE_AUFZ)).returncode == 0
-    assert _zeige_aufrufe(welt, fid) == 1, (
-        "belegte Klasse-2-Frage nach Fehler-Lauf erneut gezeigt"
-    )
+    assert _zeige_aufrufe(welt, fid) == 1, "belegte Klasse-2-Frage nach Fehler-Lauf erneut gezeigt"
     assert f"297:{fid}" in (_merker(welt) or {}).get("belegt", [])
