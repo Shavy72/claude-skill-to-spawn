@@ -33,6 +33,8 @@ STAGING_FERTIG_LABEL = "staging:fertig"
 Stufe = Literal["offen", "fertig_gebaut", "zu", "verworfen"]
 #: Alle Anzeige-Stufen; ``verworfen`` = geschlossen als „nicht geplant“ oder Duplikat (nie gebaut).
 STUFEN: tuple[Stufe, ...] = ("offen", "fertig_gebaut", "zu", "verworfen")
+#: Stufen, bei denen :func:`endgueltig_zu` wahr ist — für Aufrufer, die nur die Stufe kennen.
+ENDGUELTIG_ZU_STUFEN: frozenset[Stufe] = frozenset({"zu", "verworfen"})
 
 #: GitHub-Schließgründe (klein geschrieben), die „verworfen“ bedeuten.
 _VERWORFEN_GRUENDE = frozenset({"not_planned", "duplicate"})
@@ -64,7 +66,7 @@ def fertig_gebaut(ticket: Mapping[str, Any] | None) -> bool:
 
 def endgueltig_zu(ticket: Mapping[str, Any] | None) -> bool:
     """Issue geschlossen (auch „verworfen“): echter Schluss."""
-    return stufe(ticket) in ("zu", "verworfen")
+    return stufe(ticket) in ENDGUELTIG_ZU_STUFEN
 
 
 def stufe(ticket: Mapping[str, Any] | None) -> Stufe:
