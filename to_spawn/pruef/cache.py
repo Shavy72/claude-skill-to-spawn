@@ -83,17 +83,16 @@ _PAKET = Path(__file__).resolve().parent
 CACHE_ORDNER = frozenset({"__pycache__", ".pytest_cache", ".ruff_cache", ".mypy_cache"})
 #: Ungetrackte Installationen: nur ganz oben im Repo (``src/venv/`` kann Code sein → zählt).
 INSTALL_ORDNER = frozenset({".venv", "venv", "node_modules"})
-#: Laufdateien, die to-spawn selbst unter ``.to-spawn/`` schreibt (Sitzungen, Protokoll, Marker),
-#: als ``fnmatch``-Muster. Alles andere dort (auch die Konfig) zählt: ein Test kann es lesen (#218).
+#: Laufdateien, die to-spawn selbst unter ``.to-spawn/`` schreibt (Sitzungen, Protokoll, Marker).
+#: Alles andere dort (auch die Konfig) zählt: ein Test kann es lesen (#218).
+_LAUF_WURZEL = ".to-spawn"
+#: Ordner, deren ganzer Unterbaum Laufdaten ist.
+_LAUF_ORDNER = frozenset({"sessions", "pruef", "bau_log", "rueckblick", "leitstand"})
+#: Einzelne Dateien als ``fnmatch``-Muster, je Pfadteil geprüft: ``*`` greift nie über ``/`` (#238).
 _LAUF_DATEIEN = tuple(
-    f".to-spawn/{muster}"
+    tuple(muster.split("/"))
     for muster in (
-        "sessions/*",
-        "pruef/*",
-        "bau_log/*",
-        "rueckblick/*",
-        "leitstand/*",
-        "thermo_*",
+        "thermo_*/*",
         "stop-*",
         "umzug-anfrage-*",
         "folgerunde-*.log",
@@ -146,11 +145,13 @@ def ist_werkzeug_rest(repo: Path, pfad: str) -> bool:
     """Einzige Stelle für „Rest eines Werkzeugs, ändert den geprüften Stand nicht“ (#218).
 
     ``pfad`` relativ zum Repo mit ``/``; ein Ordner endet auf ``/`` (so melden ``git status``
-    und ``git ls-files --directory`` neue Ordner). Rest sind: Laufdateien aus ``_LAUF_DATEIEN``,
+    und ``git ls-files --directory`` neue Ordner). Rest sind: Laufdateien (``_ist_laufdatei``),
     Caches in jeder Tiefe, ``.venv``/``venv``/``node_modules`` nur ganz oben. Ein ``__pycache__``
-    ist nur Rest, solange darin ausschließlich ``*.pyc``/``*.pyo`` liegen. Im Zweifel ``False``.
+    ist nur Rest, solange darin ausschließlich ``*.pyc``/``*.pyo`` liegen; deren Inhalt prüft
+    niemand (Grenze, #238: Python lädt ein ``.pyc`` aus ``__pycache__`` nur, wenn sein Stempel zur
+    Quelle passt — nur ein gezielt gefälschter Stempel ginge durch). Im Zweifel ``False``.
     """
-    if any(fnmatch.fnmatchcase(pfad, muster) for muster in _LAUF_DATEIEN):
+    if _ist_laufdatei(pfad):
         return True
     teile = pfad.rstrip("/").split("/")
     if "__pycache__" in teile[:-1]:
@@ -163,6 +164,20 @@ def ist_werkzeug_rest(repo: Path, pfad: str) -> bool:
         except OSError:
             return False
     return teile[-1] in CACHE_ORDNER or (len(teile) == 1 and teile[0] in INSTALL_ORDNER)
+
+
+def _ist_laufdatei(pfad: str) -> bool:
+    """Laufdatei von to-spawn: Unterbaum eines ``_LAUF_ORDNER`` oder Datei nach ``_LAUF_DATEIEN``."""
+    wurzel, _, rest = pfad.partition("/")
+    if wurzel != _LAUF_WURZEL or not rest:
+        return False
+    teile = rest.split("/")
+    if len(teile) > 1 and teile[0] in _LAUF_ORDNER:
+        return True
+    # Ordner-Einträge (``…/``) treffen nie ein Datei-Muster: ihr Inhalt wird einzeln geprüft.
+    return not pfad.endswith("/") and any(
+        len(muster) == len(teile) and all(map(fnmatch.fnmatchcase, teile, muster)) for muster in _LAUF_DATEIEN
+    )
 
 
 def _wirf(fehler: OSError) -> None:
@@ -202,8 +217,7 @@ def _versteckte(repo: Path) -> list[str]:
             unter[:] = [
                 u
                 for u in unter
-                if u not in CACHE_ORDNER
-                and u != _MODULE
+                if u != _MODULE
                 and u not in links
                 and not ist_werkzeug_rest(repo, f"{ort}/{u}/")
             ]

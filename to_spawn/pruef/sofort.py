@@ -116,7 +116,7 @@ def geaendert(repo: Path, basis: str) -> list[str] | None:
     """Geänderte Pfade (``/``, relativ zum Repo) von ``basis`` bis Arbeitsbaum; ``None`` = unklar.
 
     Neue (ungetrackte) Dateien zählen nur, wenn ``ungespeichert`` sie als schmutzig meldet —
-    Laufdateien unter ``.to-spawn/`` und Werkzeug-Ordner fallen hier wie dort heraus (#218).
+    Werkzeug-Reste nach ``cache.ist_werkzeug_rest`` fallen hier wie dort heraus (#218).
     """
     code, raus = _git(repo, "diff", "--name-only", "--no-renames", "-z", basis, "--")
     if code != 0:
