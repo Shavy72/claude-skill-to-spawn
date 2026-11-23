@@ -188,7 +188,7 @@ def test_folge_runde_bekommt_auftrag_mit(welt: dict[str, Path], tmux: dict[str, 
     innen = starts[0][-1]
     assert "BAU_AUFTRAG=" in innen, innen
     assert "beweis_fehlt" in innen and "commit_ohne_nummer" in innen, innen
-    assert innen.endswith("bau 901 --sofort"), innen
+    assert "/skripte/bau.py 901 --sofort; " in innen, innen  # #277: bau.py direkt
 
 
 # --- f) bau --auftrag landet im Prompt ---------------------------------------
