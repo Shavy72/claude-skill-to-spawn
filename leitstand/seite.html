@@ -703,6 +703,10 @@ h1 .specnr{color:var(--muted);font-weight:600}
   function fertigUm(t) {
     return ts(t.ende) ?? ts(t.gebaut);
   }
+  // Bauzeit läuft noch: kein Ende und Stufe „offen“ — fertig gebaut ohne ``gebaut`` wächst nicht weiter.
+  function laeuftNoch(t) {
+    return fertigUm(t) == null && t.stufe === "offen";
+  }
   // Kopfzeile: geschlossene und fertig gebaute Tickets getrennt (Wörter wie ``ticket_zustand.ANZEIGE``).
   function kopfFertigText(liste) {
     const zu = liste.filter(istZu).length;
@@ -1176,11 +1180,11 @@ h1 .specnr{color:var(--muted);font-weight:600}
       return '<button type="button" class="nrchip' + (x && x.zustand === "fertig" ? " ok" : "") + '" data-springe="' + n + '">#' + n + (x && x.zustand === "fertig" ? " fertig" : "") + "</button>";
     }).join("") : '<span style="color:var(--muted)">keins</span>';
     const tokMax = Math.max(t.schaetzung_k * f, t.ist_k || 0, 1);
-    const tatsMs = s != null ? (e ?? now) - s : null;
+    const tatsMs = s != null && (e != null || laeuftNoch(t)) ? (e ?? now) - s : null;
     const zeitMax = Math.max(t.erwartet_min * MIN, tatsMs || 0, 1);
     const ueberT = t.ist_k != null && t.ist_k > t.schaetzung_k * f;
     const ueberZ = tatsMs != null && tatsMs > t.erwartet_min * MIN;
-    const dauerIst = s == null ? "noch nicht gestartet" : e != null ? dauer(e - s) : '<span class="num" data-clock="' + s + '">' + uhr(now - s) + "</span> (läuft)";
+    const dauerIst = s == null ? "noch nicht gestartet" : e != null ? dauer(e - s) : !laeuftNoch(t) ? "–" : '<span class="num" data-clock="' + s + '">' + uhr(now - s) + "</span> (läuft)";
     const pct = Math.round(fortschritt(t, now));
 
     box.style.setProperty("--nc", p.farbe);
@@ -1374,6 +1378,9 @@ h1 .specnr{color:var(--muted);font-weight:600}
       const l = lt[String(t.nr)];
       if (!l || typeof l !== "object") return t;
       const roh = Object.assign({}, t);
+      // Ohne ``stufe`` im Live-Dokument (alt oder Lesefehler) leitet normTicket sie aus den
+      // gemischten Feldern ab — nie die geerbte Vorgabe „offen“ des statischen Tickets (#279 P6b).
+      if (!Object.prototype.hasOwnProperty.call(l, "stufe")) delete roh.stufe;
       for (const f of LIVE_FELDER) if (Object.prototype.hasOwnProperty.call(l, f) && l[f] !== undefined) roh[f] = l[f];
       return normTicket(roh, t.nr);
     });
@@ -1574,7 +1581,7 @@ h1 .specnr{color:var(--muted);font-weight:600}
       const r = $("d-rest"); if (r) r.textContent = restText(t, now);
       const s = ts(t.start);
       const zb = $("d-zeitbar");
-      if (zb && s != null && fertigUm(t) == null) {
+      if (zb && s != null && laeuftNoch(t)) {
         const tats = now - s; zb.style.width = (tats / Math.max(t.erwartet_min * MIN, tats, 1)) * 100 + "%";
       }
     }

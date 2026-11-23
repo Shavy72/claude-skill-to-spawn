@@ -158,11 +158,6 @@ def _pc_lage(still_s: float | None) -> tuple[str, int | None]:
     return STILL, int(still_s // 60)
 
 
-#: Stufen, bei denen ``ticket_zustand.endgueltig_zu`` wahr ist. Steht hier, weil ``ticket_zustand``
-#: (noch) keine Frage je Stufe hat — eine Lage kennt nur die Stufe, nicht das Ticket (#279 P6b).
-_ENDGUELTIG_ZU: frozenset[ticket_zustand.Stufe] = frozenset({"zu", "verworfen"})
-
-
 @dataclass(frozen=True)
 class TicketLage:
     """Alles, was die Kurz-Zeile eines Tickets braucht (``None`` = unbekannt)."""
@@ -179,12 +174,7 @@ class TicketLage:
     @property
     def endgueltig_zu(self) -> bool:
         """Wie ``ticket_zustand.endgueltig_zu`` (zu oder verworfen); unbekannt gilt als nicht zu."""
-        return self.stufe in _ENDGUELTIG_ZU
-
-    @property
-    def offen(self) -> bool | None:
-        """Alt-Frage für Entscheider (Leiter, Handoff-Blick): ``True`` bis endgültig zu, ``None`` = unbekannt."""
-        return None if self.stufe is None else self.stufe in ("offen", "fertig_gebaut")
+        return self.stufe in ticket_zustand.ENDGUELTIG_ZU_STUFEN
 
 
 def _kuerzen(text: str, laenge: int) -> str:
@@ -370,7 +360,7 @@ def _log_lage(n: int, repo: Path) -> tuple[str, str, str] | None:
 
 def _stufe(kind: dict[str, Any]) -> ticket_zustand.Stufe | None:
     """Stufe aus ``ticket_zustand`` (#279); ``None``, wenn GitHub keinen Zustand geliefert hat."""
-    if str(kind.get("state") or "").lower() not in ("open", "closed"):
+    if str(kind.get("state") or "").strip().lower() not in ("open", "closed"):
         return None
     return ticket_zustand.stufe(kind)
 

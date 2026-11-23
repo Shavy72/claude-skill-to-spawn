@@ -486,7 +486,9 @@ def gebaut_um(issue: dict[str, Any], zeilen: list[dict[str, Any]]) -> str | None
         if isinstance(k, dict) and (k.get("label") or {}).get("name") == ticket_zustand.STAGING_FERTIG_LABEL
     ]
     aktiv = [als_zeit(z.get("ts")) for z in zeilen if z.get("typ") in AKTIVITAET]
-    zeiten = [t for t in gesetzt if t] or [t for t in aktiv if t]
+    if not (zeiten := [t for t in gesetzt if t]):
+        zeiten = [t for t in aktiv if t]
+        log.info("gebaut um: kein Label-Ereignis, %s", "Ersatz aus Bau-Log" if zeiten else "unbekannt (auch kein Bau-Log)")
     return max(zeiten).astimezone().isoformat(timespec="seconds") if zeiten else None
 
 

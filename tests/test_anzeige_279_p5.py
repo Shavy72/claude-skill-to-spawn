@@ -160,8 +160,19 @@ def test_leitstand_seite_alles_fertig_nur_wenn_zu() -> None:
         "tickets = [t(1, 'zu'), t(2, 'fertig_gebaut')];\n"
         "console.log(phasenStand({ key: 1 }).ueber);\n"
     )
+    # Altes Dokument ohne ``stufe``: ``ende`` gesetzt heißt zu, fehlendes ``ende`` nicht.
+    js += (
+        "const zahl = (v, d) => (typeof v === 'number' && Number.isFinite(v) ? v : d);\n"
+        "const STUFEN = ['offen', 'fertig_gebaut', 'zu', 'verworfen'];\n"
+        + _seiten_js("normTicket")
+        + "\nconst alt = (nr, ende) => normTicket({ nr, zustand: 'fertig', blocked_by: [], ende }, nr);\n"
+        "tickets = [alt(1, '2026-11-23T10:00:00'), alt(2, '2026-11-23T10:05:00')];\n"
+        "console.log(phasenStand({ key: 1 }).ueber);\n"
+        "tickets = [alt(1, '2026-11-23T10:00:00'), alt(2, null)];\n"
+        "console.log(phasenStand({ key: 1 }).ueber === 'Alles fertig.');\n"
+    )
     aus = subprocess.run(["node", "-e", js], capture_output=True, text=True, check=True, encoding="utf-8")
-    assert aus.stdout.splitlines() == ["Alles fertig.", "Fertig gebaut, wartet auf Live."]
+    assert aus.stdout.splitlines() == ["Alles fertig.", "Fertig gebaut, wartet auf Live.", "Alles fertig.", "false"]
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node fehlt")
