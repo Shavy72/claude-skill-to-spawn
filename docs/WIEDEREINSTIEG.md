@@ -45,12 +45,22 @@ was zum Weiterbauen nötig ist.
 
 ## 3. Stand
 
+- **2026-11-23 04:49 (Server-Uhr, main d8df77a):** Pull-Request 294 (Issue 275) gemergt und auf dem
+  Bau-Server installiert: Der Aufseher-Check kennt `staging:fertig`, öffnet je Ticket und Verstoß nur
+  einmal wieder, und `staging:fertig` startet keinen Bau.
+  - Offen, kurz vor Merge: Pull-Request 295 (Issue 276, Bau-Session löst sich ab eigenem Handoff selbst
+    ab) und 293 (Issue 277, Startzeile ohne .bashrc/.venv).
+  - In Arbeit: Issue 279 (Baustein Ticket-Zustand je Stelle, Paket P1), danach Issue 278
+    (Entscheidungs-Befugnis im Start-Auftrag), 274 (mit 273 + 281), 282. Windows-Tickets 283 + 285
+    baut eine PC-Session.
+  - Test-Durchlauf im Probe-Repo startet nur auf ausdrückliches Wort des Nutzers.
+
 - **22.11.2026 16:10 (Server-Uhr, main 8acfed7):** Seit dem Haltepunkt 760ed4f gemergt: Pull-Request 265
   (Issue 245, Zeilenenden in den Prüf-Regeln) → 5af043a · Pull-Request 233 (Hausmeister unter Windows,
   Issue 68 bleibt offen) → f134819 · Pull-Request 268 (Issue 267: Warte-Prüfung der Bau-Session fragt
   dieselbe Regel wie die Start-Schranke, neuer Befehl `to_spawn.py blocker <N>`) → 8acfed7.
   Auf dem Bau-Server installiert: 8acfed7, volle Suite 2794 bestanden, 75 übersprungen, 18 xfailed, 0 rot.
-  Offen: Issue 269 (Folge zu 267: Vorfall `blocker_falsch_gewartet`, Wächter-Test schärfen) · Pull-Request 250
+  Offen: Issue 269 (Folge zu 267: Vorfall `blocker_falsch_gewartet`, Aufseher-Test schärfen) · Pull-Request 250
   (Merge-Sperre, Fix-Runde 3) · Pull-Request 255 (Review am PC) · M1 Probe-Spec erst nach ausdrücklichem
   Wort des Auftraggebers. Nächster Schritt: Beobachtungs-Lauf an einem echten Fall für Issue 267
   (Abnahme „echter Lauf“ von 267 steht noch aus).
