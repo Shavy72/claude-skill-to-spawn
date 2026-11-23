@@ -180,11 +180,14 @@ def _geprueft_bytecode(datei: Path) -> bool:
 
     ``--invalidation-mode unchecked-hash`` (#343) lädt Python ohne Abgleich mit der Quelle:
     veralteter Bytecode liefe statt des Codes, darum zählt er wie Code. Unlesbar oder ohne
-    vollständigen Kopf lädt Python ihn nie (übersetzt die Quelle neu) → bleibt Rest.
+    vollständigen Kopf lädt Python ihn nie (übersetzt die Quelle neu) → bleibt Rest. Keine normale
+    Datei (FIFO, Gerät, Socket, Symlink): ``open`` könnte ewig blockieren, zählt darum wie Code.
     """
     if not datei.name.endswith(_BYTECODE):
         return False
     try:
+        if not stat.S_ISREG(datei.lstat().st_mode):
+            return False
         with datei.open("rb") as roh:
             kopf = roh.read(_PYC_FLAGS.stop)
     except OSError:

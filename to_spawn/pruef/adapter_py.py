@@ -96,6 +96,24 @@ def _paket(repo: Path) -> str:
     return treffer[0] if len(treffer) == 1 else ""
 
 
+_cache_wurzel: tempfile.TemporaryDirectory[str] | None = None
+
+
+def _frischer_cache() -> str:
+    """Neuer, leerer pytest-``cache_dir`` je Plan; der Adapter räumt ihn selbst (#355).
+
+    Alle liegen in einem Ordner ``to_spawn_pytest_cache_*`` je Prozess, den ``TemporaryDirectory``
+    beim Prozessende löscht — nach Erfolg, Ausnahme oder Zeitgrenze im Lauf. Eine Prüfung = ein
+    Prozess (``to_spawn.py pruefen``), Wiederholung und zweiter voller Lauf leben darin.
+    ponytail: bleibt bei SIGKILL liegen; je Prüfung räumen (Kontext in ``leiter.stufen``), wenn ein
+    Dauer-Prozess viele Prüfungen fährt.
+    """
+    global _cache_wurzel
+    if _cache_wurzel is None or not Path(_cache_wurzel.name).is_dir():
+        _cache_wurzel = tempfile.TemporaryDirectory(prefix="to_spawn_pytest_cache_", ignore_cleanup_errors=True)
+    return tempfile.mkdtemp(dir=_cache_wurzel.name)
+
+
 class PythonAdapter:
     name = "py"
 
@@ -121,8 +139,7 @@ class PythonAdapter:
         #   eines alten Laufs Tests ab (sonst Grün trotz rotem Test); die Wiederholung erbt ihn.
         # - ``console_output_style=count`` belegt ``[k/N]``: Grundlage für ``gelaufen``.
         # ``--sw`` bricht trotzdem nach dem ersten Rot ab (Exit 2 = rot, nie Wackler).
-        # ponytail: Cache-Ordner bleiben im Temp-Verzeichnis liegen, Aufräumen im Leiter, wenn es stört.
-        cache = tempfile.mkdtemp(prefix="to_spawn_pytest_cache_")
+        cache = _frischer_cache()
         # Parallel nur, wenn das Repo pytest-xdist selbst nennt, es im Repo-Interpreter da ist und
         # > 1 Worker passt: ``worksteal`` gibt freien Workern Tests der langsamen ab (statt
         # ``loadfile``: eine Datei hält einen Worker fest).
@@ -210,7 +227,7 @@ class PythonAdapter:
     def voll_nochmal_befehl(self, befehl: list[str]) -> list[str]:
         # Zweiter voller Lauf mit frischem ``cache_dir``: ``--lf``/``--sw`` aus ``addopts`` sehen
         # weder den ersten Lauf noch die Wiederholung, also läuft wieder alles.
-        cache = tempfile.mkdtemp(prefix="to_spawn_pytest_cache_")
+        cache = _frischer_cache()
         return [f"{_CACHE_PREFIX}{cache}" if teil.startswith(_CACHE_PREFIX) else teil for teil in befehl]
 
     def rote(self, ausgabe: str) -> set[str]:
