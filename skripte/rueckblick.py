@@ -20,7 +20,7 @@ hier nicht — fehlende Logs sind eine Datenlage, kein Abbruch.)
 ``docs/agents/rueckblick_<S>.md``: Datenlage oben, darunter die Vorschläge nummeriert in der Reihenfolge
 der KI (teuerster zuerst) mit Maßnahmen-Weg, oder „Rückblick: keine Vorschläge“. Der Marker ist der
 Abschnitt, den die Abschluss-Mail unverändert übernimmt. Kein GitHub-Issue, keine Kästchen, keine
-andere Datei — David hakt per Chat ab. Exit-Codes: 0 = Marker geschrieben, 4 = schon erledigt oder
+andere Datei — der Mensch hakt per Chat ab. Exit-Codes: 0 = Marker geschrieben, 4 = schon erledigt oder
 ``planen`` läuft noch, 3 = ``ergebnis.json`` fehlt, 1 = Ergebnis kaputt oder ``planen`` nicht gelaufen.
 Bei 0, 1 und 3 ist die Sperre danach frei, damit ein neuer Versuch nicht 120 min wartet; bei „``planen``
 läuft noch“ bleibt sie stehen. ``planen`` löscht ein altes ``ergebnis.json`` vor dem neuen Auftrag.
@@ -516,7 +516,7 @@ def _text(kandidat: dict[str, Any], feld: str, nr: int, pflicht: bool = True) ->
 def _pruefe_kandidat(kandidat: object, nr: int) -> dict[str, Any]:
     """Ein Kandidat aus ``ergebnis.json`` → bereinigte Felder; jede Abweichung ist ein ``Fehler`` mit Grund.
 
-    Streng statt nachsichtig: ein still übersprungener Kandidat wäre ein Vorschlag, den David nie sieht.
+    Streng statt nachsichtig: ein still übersprungener Kandidat wäre ein Vorschlag, den der Mensch nie sieht.
     """
     if not isinstance(kandidat, dict):
         raise Fehler(f"Kandidat {nr}: kein Objekt, sondern {type(kandidat).__name__}")

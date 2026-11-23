@@ -1,4 +1,4 @@
-"""Wache als voll fähige Session (David 28.09.2026): Effort, [1m], Prompt, Neustart, Ablösung."""
+"""Wache als voll fähige Session (Vorgabe des Menschen, 28.09.2026): Effort, [1m], Prompt, Neustart, Ablösung."""
 
 from __future__ import annotations
 
