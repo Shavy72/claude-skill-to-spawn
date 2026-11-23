@@ -213,7 +213,8 @@ Modul liest sie über `config.lade` / `config.pfad` / `config.maschine`. Ein fre
   Skill-Repo, #235). Der Einrichter füllt nur leere Felder — ein altes `ticket_repo` in einer
   bestehenden Liste bleibt stehen, bis es von Hand angepasst wird. Die Nummer liest der
   Hausmeister aus Ordnername und Zweig (`ticket/<N>-…`, `l<Etappe>/<N>[a-z]-…`, Formen nur in
-  `hausmeister._ZWEIG_FORMEN`); Ordner ohne Nummer räumt er erst, wenn 24 h nichts geändert
+  `hausmeister._ZWEIG_FORMEN`; Zweig + origin → Ticket-Repo + Nummer nur über
+  `hausmeister.zweig_zu_ticket`); Ordner ohne Nummer räumt er erst, wenn 24 h nichts geändert
   wurde und alles auf `origin` liegt.
 
 Der Prüf-Test `tests/test_feste_namen_l1.py` bricht den Build, sobald im Skill-Code ein
