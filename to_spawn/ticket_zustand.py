@@ -13,8 +13,8 @@ vergleichen nur auf Gleichheit, nie auf Reihenfolge.
 
 Ein Ticket ist ein ``dict`` in jeder Form, die bei uns vorkommt: REST (``state: open``,
 ``state_reason``, Labels als Objekte), ``gh``-CLI (``state: OPEN``, ``stateReason``)
-oder schon aufbereitet (Labels als Namen, auch als Menge). Welches Label und welcher
-GitHub-Zustand was bedeutet, steht nur hier.
+GraphQL (``labels: {nodes: [...]}``) oder schon aufbereitet (Labels als Namen, auch als Menge).
+Welches Label und welcher GitHub-Zustand was bedeutet, steht nur hier.
 """
 
 from __future__ import annotations
@@ -39,6 +39,14 @@ _WORTLAUT: dict[Stufe, str] = {
     "fertig_gebaut": "Ticket fertig gebaut, wartet auf Live",
     "zu": "Ticket zu",
     "verworfen": "Ticket verworfen",
+}
+
+#: Kurzes Anzeige-Wort je Stufe für Listen und Tabellen (Leitstand, Spec-Stand, Belege).
+ANZEIGE: dict[Stufe, str] = {
+    "offen": "offen",
+    "fertig_gebaut": "fertig gebaut",
+    "zu": "zu",
+    "verworfen": "verworfen",
 }
 
 #: Felder, die :func:`lesen` von ``gh issue view`` braucht.
@@ -90,5 +98,8 @@ def lesen(ticket: int | str, cwd: Path | None = None) -> dict[str, Any] | None:
 
 
 def _staging_fertig(ticket: Mapping[str, Any]) -> bool:
-    namen = {str(x.get("name") if isinstance(x, Mapping) else x) for x in ticket.get("labels") or ()}
+    labels = ticket.get("labels") or ()
+    if isinstance(labels, Mapping):  # GraphQL: ``labels { nodes { name } }``
+        labels = labels.get("nodes") or ()
+    namen = {str(x.get("name") if isinstance(x, Mapping) else x) for x in labels}
     return STAGING_FERTIG_LABEL in namen

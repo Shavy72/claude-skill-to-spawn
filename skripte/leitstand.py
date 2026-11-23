@@ -56,7 +56,7 @@ _SKRIPTE = Path(__file__).resolve().parent
 _SKILL = str(_SKRIPTE.parent)
 if _SKILL not in sys.path:
     sys.path.insert(0, _SKILL)
-from to_spawn import bau_log, config  # noqa: E402
+from to_spawn import bau_log, config, ticket_zustand  # noqa: E402
 from to_spawn import gh as gh_modul  # noqa: E402
 from to_spawn import manifest as manifest_modul  # noqa: E402
 from to_spawn.capo import AUFSEHER_KOEPFE  # noqa: E402
@@ -249,13 +249,14 @@ def repo_slug(repo: Path) -> str:
 
 
 def gh_issues(repo: Path, nummern: list[str]) -> dict[str, dict[str, Any]]:
-    """Zustand, closedAt und Kommentare aller Issues in EINEM GraphQL-Aufruf."""
+    """Zustand, Schließgrund, closedAt, Labels und Kommentare aller Issues in EINEM GraphQL-Aufruf."""
     slug = repo_slug(repo)
     if "/" not in slug:
         raise RuntimeError("origin nicht lesbar — kein owner/name")
     besitzer, name = slug.split("/", 1)
     teile = " ".join(
-        f"i{n}: issue(number: {n}) {{ state closedAt comments(last: 100) {{ nodes {{ id createdAt body }} }} }}"
+        f"i{n}: issue(number: {n}) {{ state stateReason closedAt labels(first: 50) {{ nodes {{ name }} }} "
+        "comments(last: 100) { nodes { id createdAt body } } }"
         for n in nummern
     )
     abfrage = f'query {{ repository(owner: "{besitzer}", name: "{name}") {{ {teile} }} }}'
@@ -432,9 +433,13 @@ def ticket_stand(
     david_zeiten: list[datetime],
     zustand: dict[str, Any],
 ) -> tuple[str, str | None]:
-    """(zustand, phase) — Reihenfolge: fertig > verwaist > Gate rot > David > läuft > wartet."""
-    if issue.get("state") == "CLOSED":
-        return "fertig", None
+    """(zustand, phase) — Reihenfolge: fertig > verwaist > Gate rot > David > läuft > wartet.
+
+    „fertig“ = hier baut niemand mehr; die Phase trennt „fertig gebaut, wartet auf Live“
+    und „verworfen“ vom geschlossenen Ticket (Phase ``None``) — Stufe aus ``ticket_zustand`` (#279).
+    """
+    if ticket_zustand.fertig_gebaut(issue):
+        return "fertig", None if ticket_zustand.stufe(issue) == "zu" else ticket_zustand.wortlaut(issue)
     if "VERWAIST" in prozess:
         return "fehler", "Session verwaist"
     wichtig = [

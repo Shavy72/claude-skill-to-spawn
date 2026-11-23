@@ -2,8 +2,8 @@
 
 Aufruf: ``python belege_uebersicht.py <S> [--repo <pfad>] [--aus <datei.html>] [--ohne-github]``
 
-Je Ticket aus ``docs/agents/manifests/spec-<S>.json``: Titel, Status (offen/zu über
-``gh issue view <N> --json state``; mit ``--ohne-github`` oder ohne ``gh`` „unbekannt“),
+Je Ticket aus ``docs/agents/manifests/spec-<S>.json``: Titel, Status (offen/fertig gebaut/zu/verworfen über
+``ticket_zustand.lesen``; mit ``--ohne-github`` oder ohne ``gh`` „unbekannt“),
 Beleg-Zeile (erste Zeile mit „ABNAHME“, sonst mit „Beleg“ aus ``docs/verify-hard/<N>.md`` bzw.
 ``<N>/*.md``) und die Liste der Belegdateien. Die Dateisuche kommt aus ``test_uebersicht.py``
 (gleiche Nummern-Logik: ``9010`` zählt nicht für ``901``).
@@ -30,7 +30,7 @@ if _SKRIPTE not in sys.path:
     sys.path.insert(0, _SKRIPTE)
 from test_uebersicht import _CSS, _lies, finde_dateien, lade_tickets  # noqa: E402
 
-from to_spawn import config, gh  # noqa: E402
+from to_spawn import config, ticket_zustand  # noqa: E402
 
 log = logging.getLogger("belege_uebersicht")
 
@@ -44,19 +44,17 @@ class Eintrag:
 
     nummer: str
     titel: str
-    status: str  # "offen" | "zu" | "unbekannt"
+    status: str  # "offen" | "fertig gebaut" | "zu" | "verworfen" | "unbekannt"
     zeile: str
     dateien: list[str] = field(default_factory=list)
 
 
 def status_von(nummer: str, repo: Path, ohne_github: bool) -> str:
-    """offen/zu aus GitHub; ``unbekannt`` ohne GitHub oder wenn ``gh`` nichts liefert."""
+    """offen / fertig gebaut / zu / verworfen aus GitHub (#279); ``unbekannt`` ohne GitHub oder ohne Antwort."""
     if ohne_github:
         return "unbekannt"
-    offen = gh.ticket_offen(nummer, cwd=repo)
-    if offen is None:
-        return "unbekannt"
-    return "offen" if offen else "zu"
+    daten = ticket_zustand.lesen(nummer, cwd=repo)
+    return "unbekannt" if daten is None else ticket_zustand.ANZEIGE[ticket_zustand.stufe(daten)]
 
 
 _TRENNER = re.compile(r"^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*$")
@@ -102,7 +100,7 @@ def eintrag_von(repo: Path, nummer: str, titel: str, ohne_github: bool) -> Eintr
     )
 
 
-_KLASSE = {"zu": "gruen", "offen": "offen", "unbekannt": "offen"}
+_KLASSE = {"zu": "gruen", "fertig gebaut": "gruen", "verworfen": "offen", "offen": "offen", "unbekannt": "offen"}
 
 
 def _karte_html(e: Eintrag) -> str:
