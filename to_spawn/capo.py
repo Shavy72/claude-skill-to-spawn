@@ -2648,7 +2648,14 @@ def _tick(
                 aktionen.append(f"#{fund.ticket} Vorfall schon bekannt ({fund.regel})")
     # „Mensch nötig“ aus dem Review-Stop-Hook: je Eintrag einmal melden, Kette läuft weiter.
     mn_gesehen: list[str] = list(zustand.get("mensch_noetig_gesehen") or [])
-    eigene = mensch_noetig.eintraege_fuer_lauf(spec, set(mn_gesehen), repo, lambda n: worktree_ordner(n, wt_basis))
+    mn_fremd = set(zustand.get("mensch_noetig_fremd") or [])
+    mn_fremd_alt = set(mn_fremd)
+    eigene = mensch_noetig.eintraege_fuer_lauf(
+        spec, set(mn_gesehen), repo, lambda n: worktree_ordner(n, wt_basis), fremd=mn_fremd
+    )
+    if mn_fremd != mn_fremd_alt and not dry_run:
+        zustand["mensch_noetig_fremd"] = sorted(mn_fremd)
+        sichern()
     for eintrag in eigene:  # #465/#498: fremde Repos filtert und loggt mensch_noetig
         ziel = str(eintrag.get("ticket") or spec)
         fp = str(eintrag.get("fingerprint") or "")[:8]

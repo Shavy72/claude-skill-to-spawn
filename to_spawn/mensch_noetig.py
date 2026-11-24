@@ -70,29 +70,30 @@ def _norm(ort: str | Path) -> str:
 
 
 def eintraege_fuer_lauf(
-    spec: int, gesehen: set[str], repo: Path, worktree: Callable[[int], Path]
+    spec: int,
+    gesehen: set[str],
+    repo: Path,
+    worktree: Callable[[int], Path],
+    fremd: set[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Wie :func:`eintraege_fuer_spec`, aber nur Einträge aus diesem Lauf (#465, #498).
 
     Eigen ist ein Eintrag, dessen ``repo`` der Hauptbaum ``repo`` oder der Worktree
     ``worktree(<Ticket>)`` ist (ohne ``ticket`` gilt die Spec-Nummer). Die Datei teilen alle
     Repos der Maschine; Spec- und Ticketnummer allein sind nicht eindeutig. Ohne ``repo``
-    gilt der Eintrag als fremd. Jeder verworfene Eintrag hinterlässt eine Log-Zeile.
+    gilt der Eintrag als fremd. Jeder verworfene Eintrag wird
+    einmal geloggt und in ``fremd`` (vom Aufrufer über Läufe gehalten) vermerkt.
     ponytail: ohne ``--wt-basis`` teilen Repos ``~/wt/wt-N`` — dann hilft nur Git-Common-Dir.
     """
     eigene: list[dict[str, Any]] = []
-    for eintrag in eintraege_fuer_spec(spec, gesehen):
+    fremd = fremd if fremd is not None else set()
+    for eintrag in eintraege_fuer_spec(spec, gesehen | fremd):
         ort = str(eintrag.get("repo") or "")
         nummer = str(eintrag.get("ticket") or spec)
         orte = [repo] + ([worktree(int(nummer))] if nummer.isdigit() else [])
         if ort and _norm(ort) in {_norm(o) for o in orte}:
             eigene.append(eintrag)
             continue
-        log.warning(
-            "Mensch nötig: Eintrag #%s (Spec %s) verworfen — %s, nicht aus diesem Lauf (%s).",
-            nummer,
-            spec,
-            f"Repo {ort}" if ort else "ohne repo",
-            repo,
-        )
+        fremd.add(schluessel(eintrag))
+        log.warning("mensch_noetig: fremder Eintrag #%s ignoriert (anderes Repo/Worktree: %s)", nummer, ort or "ohne repo")
     return eigene

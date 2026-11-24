@@ -60,7 +60,7 @@ def test_ohne_repo_verworfen_mit_log(ort: dict[str, Path], caplog: pytest.LogCap
     _schreibe(ort["datei"], _zeile(None, ticket="7"))
     with caplog.at_level(logging.INFO, logger="to_spawn.mensch_noetig"):
         assert _eigene(ort) == []
-    zeilen = [r.getMessage() for r in caplog.records if "verworfen" in r.getMessage()]
+    zeilen = [r.getMessage() for r in caplog.records if "ignoriert" in r.getMessage()]
     assert len(zeilen) == 1, caplog.text
     assert "#7" in zeilen[0] and "ohne repo" in zeilen[0]
 
@@ -100,7 +100,7 @@ def test_fremder_eintrag_log_zeile_mit_repo_und_ticket(ort: dict[str, Path], cap
     _schreibe(ort["datei"], _zeile(fremd.as_posix(), fp="e1"), _zeile(fremd.as_posix(), ticket="8", fp="e2"))
     with caplog.at_level(logging.INFO, logger="to_spawn.mensch_noetig"):
         assert _eigene(ort) == []
-    zeilen = [r.getMessage() for r in caplog.records if "verworfen" in r.getMessage()]
+    zeilen = [r.getMessage() for r in caplog.records if "ignoriert" in r.getMessage()]
     assert len(zeilen) == 2, caplog.text
     assert "#7" in zeilen[0] and fremd.as_posix() in zeilen[0]
     assert "#8" in zeilen[1]
@@ -120,7 +120,7 @@ def test_capo_verworfener_eintrag_hinterlaesst_log(
     ergebnis = _capo(welt)
     text = _text(ergebnis)
     assert "MENSCH NÖTIG" not in text
-    assert "verworfen" in ergebnis.stderr and "#902" in ergebnis.stderr and fremd in ergebnis.stderr, text
+    assert "ignoriert" in ergebnis.stderr and "#902" in ergebnis.stderr and fremd in ergebnis.stderr, text
 
 
 def test_fremder_eintrag_wird_ueber_laeufe_nur_einmal_gemeldet(
