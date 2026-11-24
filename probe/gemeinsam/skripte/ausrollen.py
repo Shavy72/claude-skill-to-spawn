@@ -149,7 +149,9 @@ def _startzeit_windows(pid: int) -> float | None:
         return None
     try:
         zeiten = [wintypes.FILETIME() for _ in range(4)]
-        kernel.GetProcessTimes.argtypes = [wintypes.HANDLE] + [ctypes.POINTER(wintypes.FILETIME)] * 4
+        kernel.GetProcessTimes.argtypes = [wintypes.HANDLE] + [
+            ctypes.POINTER(wintypes.FILETIME)
+        ] * 4
         if not kernel.GetProcessTimes(griff, *(ctypes.byref(z) for z in zeiten)):
             return None
         roh = (zeiten[0].dwHighDateTime << 32) | zeiten[0].dwLowDateTime
@@ -207,11 +209,18 @@ def _beende(ordner: Path, port: int, pruefen: bool) -> bool:
             log.info("PID-Datei %s unlesbar (%s) — Prozess bleibt", pid_datei, fehler)
             return False
         if pid <= 0:
-            log.warning("PID %s in %s ist kein Prozessbeleg — nichts beendet, Ordner bleibt", pid, pid_datei)
+            log.warning(
+                "PID %s in %s ist kein Prozessbeleg — nichts beendet, Ordner bleibt", pid, pid_datei
+            )
             return False
-        if _lebt(pid) and os.name == "nt" and not pruefen and not _prozess_im_ordner(pid, ordner):
-            # Eigener Ordner, alte server.pid, PID neu vergeben (#556): Prozess nicht unser, Ordner weg.
-            log.warning("Prozess %s gehört nicht zu %s (PID neu vergeben) — bleibt, Ordner wird abgebaut", pid, ordner)
+        if _lebt(pid) and not pruefen and not _prozess_im_ordner(pid, ordner):
+            # Eigener Ordner, alte server.pid, PID neu vergeben (#556 Windows, #600 Linux): Prozess
+            # nicht nachweislich unser (oder nicht feststellbar) — bleibt leben, Ordner weg.
+            log.warning(
+                "Prozess %s gehört nicht zu %s (PID neu vergeben) — bleibt, Ordner wird abgebaut",
+                pid,
+                ordner,
+            )
         elif _lebt(pid):
             if pruefen and not _prozess_im_ordner(pid, ordner):
                 log.warning("Prozess %s gehört nicht nachweislich zu %s — bleibt", pid, ordner)
