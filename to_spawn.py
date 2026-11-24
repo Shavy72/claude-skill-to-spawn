@@ -37,7 +37,9 @@ import io
 import logging
 import os
 import sys
+from collections.abc import Sequence
 from pathlib import Path
+from typing import NoReturn
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -528,12 +530,40 @@ def _hook_stop_mit_umzug() -> int:
     return code
 
 
+#: Schlüssel für ``set_defaults``: Exit-Code bei falschen Argumenten dieses Unterbefehls (#505).
+ARGUMENTFEHLER_EXIT = "argumentfehler_exit"
+
+
+class _Parser(argparse.ArgumentParser):
+    """argparse, dessen Exit-Code bei falschen Argumenten der Unterbefehl festlegt (#505).
+
+    Standard bleibt argparse-üblich 2. Ein Unterbefehl, dessen Exit 2 schon etwas anderes heißt
+    (``einreichen``: „Stand unbekannt – erneut rufen“), setzt ``set_defaults(argumentfehler_exit=N)``;
+    das gilt für fehlende und überzählige Argumente gleichermaßen.
+    """
+
+    def error(self, message: str) -> NoReturn:
+        self._abbruch(self._defaults.get(ARGUMENTFEHLER_EXIT, 2), message)
+
+    def parse_args(  # type: ignore[override]
+        self, args: Sequence[str] | None = None, namespace: argparse.Namespace | None = None
+    ) -> argparse.Namespace:
+        ergebnis, rest = self.parse_known_args(args, namespace)
+        if rest:
+            self._abbruch(getattr(ergebnis, ARGUMENTFEHLER_EXIT, 2), f"unrecognized arguments: {' '.join(rest)}")
+        return ergebnis
+
+    def _abbruch(self, code: int, message: str) -> NoReturn:
+        self.print_usage(sys.stderr)
+        self.exit(code, f"{self.prog}: error: {message}\n")
+
+
 def main(argv: list[str] | None = None) -> int:
     # Windows-Konsole ist cp1252: Umlaute und Pfeile sonst UnicodeEncodeError.
     for strom in (sys.stdout, sys.stderr):
         if hasattr(strom, "reconfigure"):
             strom.reconfigure(encoding="utf-8", errors="replace")
-    ap = argparse.ArgumentParser(
+    ap = _Parser(
         prog="to_spawn", description="Bau-Sessions einer Spec steuern."
     )
     unter = ap.add_subparsers(dest="befehl", required=True)
@@ -699,8 +729,10 @@ def main(argv: list[str] | None = None) -> int:
     # Fertig einreichen (#411): der eine Weg auf den Hauptzweig, ohne Frage und ohne Takt.
     p_einreichen = unter.add_parser(
         "einreichen",
-        help="fertigen, geprüften Stand auf den Hauptzweig bringen (im eigenen Worktree; Exit 0/1/5)",
+        help="fertigen, geprüften Stand auf den Hauptzweig bringen (im eigenen Worktree; Exit 0/1/2/5)",
     )
+    # #505: Exit 2 heißt hier „Stand unbekannt – erneut rufen“; Tippfehler im Befehl → Aufruf falsch.
+    p_einreichen.set_defaults(**{ARGUMENTFEHLER_EXIT: einreichen_modul.AUFRUF})
     p_einreichen.add_argument("nummer", help="Ticket-Nummer (Bau-Session) bzw. Spec-Nummer (Aufseher)")
     p_zu_bauen = unter.add_parser(
         "zu-bauen", help="Tickets der Spec, die noch nicht fertig gebaut sind (eine Nummer je Zeile, #279)"
