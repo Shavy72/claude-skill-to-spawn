@@ -770,6 +770,9 @@ def main(argv: list[str] | None = None) -> int:
     p_speicher.add_argument(
         "--trocken", action="store_true", help="nur messen, nie aufräumen (Probelauf, Status)"
     )
+    p_speicher.add_argument(
+        "--sitzung", default=None, help="Obergrenze nur für diese tmux-Sitzung zählen, z. B. spec-12 (#409)"
+    )
 
     # Startklar-Prüfung (#450): venv, Schlüssel, Aufseher-Werkzeuge — Exit 0 ok / 1 rot.
     p_startklar = unter.add_parser("startklar", help="Aufseher-Ordner vor dem Spec-Start prüfen (Exit 0/1)")
@@ -901,7 +904,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.befehl == "speicher":
         # Nur lesen: legt keine Konfig an (kein config.sicherstellen).
         return speicher.cli(
-            config.lade(_repo_aus_umgebung()), nur_staffel=args.staffel, trocken=args.trocken
+            config.lade(_repo_aus_umgebung()), nur_staffel=args.staffel, trocken=args.trocken, sitzung=args.sitzung
         )
 
     repo = config.repo_wurzel()
