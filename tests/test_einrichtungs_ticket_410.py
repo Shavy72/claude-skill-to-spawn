@@ -43,6 +43,12 @@ def _stub_main(args: list[str]) -> int:
         ]
         print(json.dumps(treffer))
         return 0
+    if args[:1] == ["api"] and (stelle := welt.get("api_scheitert_einmal")) and args[1].endswith(stelle):
+        # Lesefehler nachstellen (gh api scheitert genau einmal, dann heilt die Welt).
+        del welt["api_scheitert_einmal"]
+        pfad.write_text(json.dumps(welt), encoding="utf-8")
+        print("HTTP 502: Server Error", file=sys.stderr)
+        return 1
     if args[:2] != ["issue", "create"]:
         return e2._stub_main(args)
     if welt.get("create_scheitert"):
@@ -68,19 +74,13 @@ def _aufbau(
     umgebung["TO_SPAWN_GH_STUB"] = str(Path(__file__).resolve())
     if konfig is not None:
         (repo / ".to-spawn").mkdir()
-        (repo / ".to-spawn" / "config.json").write_text(
-            json.dumps(konfig), encoding="utf-8"
-        )
+        (repo / ".to-spawn" / "config.json").write_text(json.dumps(konfig), encoding="utf-8")
     if python:
-        (repo / "pyproject.toml").write_text(
-            "[project]\nname = 'x'\n", encoding="utf-8"
-        )
+        (repo / "pyproject.toml").write_text("[project]\nname = 'x'\n", encoding="utf-8")
     return repo, weltdatei, umgebung
 
 
-def _cli(
-    repo: Path, umgebung: dict[str, str], *args: str
-) -> subprocess.CompletedProcess[str]:
+def _cli(repo: Path, umgebung: dict[str, str], *args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, str(e2.CLI), *args],
         check=False,
@@ -139,9 +139,7 @@ def test_volle_einrichtung_bleibt_still(tmp_path: Path) -> None:
 
 
 def test_bewusst_ohne_staging_kein_staging_zwang(tmp_path: Path) -> None:
-    repo, weltdatei, umgebung = _aufbau(
-        tmp_path, konfig={"staging": {"ohne": True}}, python=True
-    )
+    repo, weltdatei, umgebung = _aufbau(tmp_path, konfig={"staging": {"ohne": True}}, python=True)
     lauf = _cli(repo, umgebung, "regularien", str(e2.SPEC))
     assert "angelegt" not in e2._welt(weltdatei), lauf.stdout
     assert lauf.returncode == 0, lauf.stdout + lauf.stderr
@@ -208,10 +206,7 @@ def test_probelauf_legt_nie_ein_issue_an(tmp_path: Path) -> None:
 def test_starter_reichen_probelauf_und_nur_wache_als_dry_run_weiter() -> None:
     wurzel = e2.CLI.parent
     srv = (wurzel / "skripte" / "spawn_srv.sh").read_text(encoding="utf-8")
-    assert (
-        'if [ "$DRY_RUN" -eq 1 ] || [ "$NUR_WACHE" -eq 1 ]; then PRUEF_ARGS+=(--dry-run); fi'
-        in srv
-    )
+    assert 'if [ "$DRY_RUN" -eq 1 ] || [ "$NUR_WACHE" -eq 1 ]; then PRUEF_ARGS+=(--dry-run); fi' in srv
     lokal = (wurzel / "spawn_local.ps1").read_text(encoding="utf-8")
     assert 'if ($DryRun) { $pruefArgs += "--dry-run" }' in lokal
 
@@ -309,6 +304,125 @@ def test_hat_staging_ist_die_eine_stelle() -> None:
     assert not config.hat_staging({"staging": {"ohne": True, "url": "https://s"}})
     assert config.staging_bewusst_ohne({"staging": {"ohne": True}})
     assert not config.staging_bewusst_ohne({"staging": "kaputt"})
+
+
+# --- Fix-Runde 2 (Review PR #433) -------------------------------------------
+
+
+def test_bau_log_nur_im_worktree_legt_nichts_an(tmp_path: Path) -> None:
+    # Die Hooks schreiben das Bau-Log zuerst in den Ticket-Worktree (bau_log.log_ort).
+    from to_spawn import bau_log
+
+    wt_basis = tmp_path / "wt"
+    repo, weltdatei, umgebung = _aufbau(tmp_path, konfig={"worktree_basis": wt_basis.as_posix()})
+    log = bau_log.lauf_pfad(wt_basis / "wt-901", 901)
+    log.parent.mkdir(parents=True)
+    log.write_text("{}\n", encoding="utf-8")
+    vorher = e2._manifest(repo).read_bytes()
+    lauf = _cli(repo, umgebung, "regularien", str(e2.SPEC))
+    ausgabe = lauf.stdout + lauf.stderr
+    assert lauf.returncode == 0, ausgabe
+    _nichts_angelegt(repo, weltdatei, vorher)
+    assert "läuft schon" in lauf.stdout and "#901 hat Bau-Log" in lauf.stdout, ausgabe
+
+
+def test_ohne_einrichtung_nur_hinweis_aber_konfig_angelegt(tmp_path: Path) -> None:
+    # --nur-wache (kein Ticket-Fenster): nur Hinweis wie --tickets, aber kein Probelauf —
+    # config.sicherstellen legt auf frischem Repo Konfig + .gitignore-Block an.
+    repo, weltdatei, umgebung = _aufbau(tmp_path)
+    vorher = e2._manifest(repo).read_bytes()
+    lauf = _cli(repo, umgebung, "regularien", str(e2.SPEC), "--ohne-einrichtung")
+    ausgabe = lauf.stdout + lauf.stderr
+    assert lauf.returncode == 0, ausgabe
+    _nichts_angelegt(repo, weltdatei, vorher)
+    assert "nicht angelegt" in lauf.stdout and "[trocken]" not in lauf.stdout, ausgabe
+    assert (repo / ".to-spawn" / "config.json").is_file()
+    assert ".to-spawn" in (repo / ".gitignore").read_text(encoding="utf-8")
+
+
+def test_t0_nicht_lesbar_meldet_warnung(tmp_path: Path) -> None:
+    repo, weltdatei, umgebung = _aufbau(tmp_path)
+    _cli(repo, umgebung, "regularien", str(e2.SPEC))
+    _welt_setzen(weltdatei, api_scheitert_einmal=f"issues/{T0}")
+    lauf = _cli(repo, umgebung, "regularien", str(e2.SPEC))
+    ausgabe = lauf.stdout + lauf.stderr
+    assert lauf.returncode == 0, ausgabe
+    assert f"Einrichtungs-Ticket #{T0} nicht lesbar" in ausgabe, ausgabe
+
+
+def _fake_tmux(ordner: Path) -> Path:
+    """Attrappe für tmux im PATH: zeichnet auf, startet nichts (keine Session da)."""
+    ordner.mkdir(parents=True, exist_ok=True)
+    aufrufe = ordner / "tmux_aufrufe.txt"
+    tmux = ordner / "tmux"
+    tmux.write_text(
+        "#!/usr/bin/env bash\n"
+        f'printf "%s\\n" "$*" >> {str(aufrufe)!r}\n'
+        'case "$1" in has-session|list-windows) exit 1 ;; esac\n'
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    tmux.chmod(0o755)
+    return aufrufe
+
+
+def _spawn_srv_weg(tmp_path: Path, *args: str) -> tuple[subprocess.CompletedProcess[str], Path, Path, bytes, Path]:
+    from to_spawn import bash_wahl
+
+    repo, weltdatei, umgebung = _aufbau(
+        tmp_path,
+        konfig={"hauptzweig": "main", "worktree_basis": (tmp_path / "wt").as_posix()},
+    )
+    aufrufe = _fake_tmux(tmp_path / "bin")
+    umgebung.update(
+        {
+            "PATH": f"{tmp_path / 'bin'}{os.pathsep}{umgebung['PATH']}",
+            "TO_SPAWN_REPO": str(repo),
+            "TO_SPAWN_TEST_BIN": str(tmp_path / "bin"),
+            # git fetch auf die Attrappen-URL bleibt lokal: nur file-Protokoll erlaubt.
+            "GIT_ALLOW_PROTOCOL": "file",
+            "GIT_TERMINAL_PROMPT": "0",
+        }
+    )
+    vorher = e2._manifest(repo).read_bytes()
+    lauf = bash_wahl.lauf(
+        [str(e2.CLI.parent / "skripte" / "spawn_srv.sh"), str(e2.SPEC), *args],
+        cwd=str(repo),
+        env=umgebung,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=180,
+    )
+    return lauf, repo, weltdatei, vorher, aufrufe
+
+
+def test_weg_spawn_srv_nur_wache_tickets_probelauf_legen_kein_t0_an(
+    tmp_path: Path,
+) -> None:
+    for i, args in enumerate((("--nur-wache",), ("--tickets", "901"), ("--dry-run",))):
+        (tmp_path / str(i)).mkdir()
+        lauf, repo, weltdatei, vorher, aufrufe = _spawn_srv_weg(tmp_path / str(i), *args)
+        ausgabe = lauf.stdout + lauf.stderr
+        assert "== Regularien ==" in ausgabe, ausgabe
+        assert f"Regularien Spec #{e2.SPEC}" in ausgabe, ausgabe
+        assert "Einrichtung fehlt: pruefung, staging" in ausgabe, ausgabe
+        _nichts_angelegt(repo, weltdatei, vorher)
+        assert lauf.returncode == 0, (args, ausgabe)
+        gestartet = aufrufe.read_text(encoding="utf-8") if aufrufe.exists() else ""
+        if args == ("--nur-wache",):
+            assert "[trocken]" not in ausgabe, ausgabe
+            assert "bau 901" not in gestartet, gestartet
+        if args == ("--dry-run",):
+            assert "new-session" not in gestartet and "new-window" not in gestartet
+
+
+def test_weg_spawn_srv_ganze_spec_legt_t0_an(tmp_path: Path) -> None:
+    # Gegenprobe: derselbe Weg ohne Schalter legt das Einrichtungs-Ticket an.
+    lauf, _repo, weltdatei, _vorher, _aufrufe = _spawn_srv_weg(tmp_path)
+    ausgabe = lauf.stdout + lauf.stderr
+    assert len(e2._welt(weltdatei).get("angelegt", [])) == 1, ausgabe
 
 
 if __name__ == "__main__":
