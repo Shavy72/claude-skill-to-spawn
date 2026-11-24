@@ -148,23 +148,57 @@ def test_belegter_platz_verfaellt_von_selbst(tmp_path: Path, monkeypatch: pytest
 # --- 3. K2: spawn_srv.sh mit laufendem Aufseher ---------------------------------
 
 
-def _tmux_attrappe(ordner: Path, proc: Path) -> Path:
-    """tmux im PATH: merkt sich Fenster, legt je Fenster einen arbeitenden Claude-Prozess an."""
+#: Aufseher-Attrappe: ein Python-Prozess ``…/skripte/wache.py <S>`` (so erkennt ihn
+#: ``sessions_stand``), lebt, solange ``spawn_srv.sh`` (argv[2]) läuft, höchstens 60 s.
+_WACHE_ATTRAPPE = """
+import os, sys, time
+ende = time.time() + 60
+while time.time() < ende:
+    try:
+        os.kill(int(sys.argv[2]), 0)
+    except OSError:
+        break
+    time.sleep(0.2)
+"""
+
+
+def _tmux_attrappe(ordner: Path, proc: Path, *, wache_prozess: bool = True) -> Path:
+    """tmux im PATH: merkt sich Fenster, legt je Fenster einen arbeitenden Claude-Prozess an.
+
+    ``wache_prozess``: ein Fenster ``wache <S>`` startet zusätzlich die Aufseher-Attrappe
+    (echter Prozess im Arbeitsordner ``-c``). ``list-sessions`` liest ``sitzungen.txt``.
+    """
     ordner.mkdir(parents=True, exist_ok=True)
     aufrufe = ordner / "tmux_aufrufe.txt"
     fenster = ordner / "fenster.txt"
+    sitzungen = ordner / "sitzungen.txt"
+    wache_py = ordner / "attrappe" / "skripte" / "wache.py"
+    wache_py.parent.mkdir(parents=True, exist_ok=True)
+    wache_py.write_text(_WACHE_ATTRAPPE, encoding="utf-8")
+    wache_start = (
+        '    case "$name" in "wache "*)\n'
+        f'      ( cd "$ort" && exec {sys.executable!r} {str(wache_py)!r} "${{name#wache }}" "$PPID" )'
+        " </dev/null >/dev/null 2>&1 & ;;\n"
+        "    esac\n"
+        if wache_prozess
+        else ""
+    )
     tmux = ordner / "tmux"
     tmux.write_text(
         "#!/usr/bin/env bash\n"
         f'printf "%s\\n" "$*" >> {str(aufrufe)!r}\n'
-        'name=""; prev=""; for a in "$@"; do [ "$prev" = "-n" ] && name="$a"; prev="$a"; done\n'
+        'name=""; ort="$PWD"; prev=""\n'
+        'for a in "$@"; do [ "$prev" = "-n" ] && name="$a"; [ "$prev" = "-c" ] && ort="$a"; prev="$a"; done\n'
         'case "$1" in\n'
         f"  has-session) [ -s {str(fenster)!r} ] ;;\n"
         f"  list-windows) [ -s {str(fenster)!r} ] && cat {str(fenster)!r} ;;\n"
+        f"  list-sessions) [ -s {str(sitzungen)!r} ] && cat {str(sitzungen)!r} ;;\n"
         "  new-session|new-window)\n"
         f'    printf "%s\\n" "$name" >> {str(fenster)!r}\n'
         f"    d={str(proc)!r}/$((1000 + $(wc -l < {str(fenster)!r})))\n"
-        '    mkdir -p "$d"; printf "/usr/bin/claude\\0" > "$d/cmdline"; printf "PATH=/usr/bin\\0" > "$d/environ" ;;\n'
+        '    mkdir -p "$d"; printf "/usr/bin/claude\\0" > "$d/cmdline"; printf "PATH=/usr/bin\\0" > "$d/environ"\n'
+        f"{wache_start}"
+        "    ;;\n"
         "esac\n"
         "exit 0\n",
         encoding="utf-8",
