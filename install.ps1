@@ -74,6 +74,10 @@ foreach ($ketteOrdner in Get-ChildItem (Join-Path (Join-Path $hier "kette") "ski
 $env:PYTHONIOENCODING = "utf-8"
 python (Join-Path (Join-Path $ziel "to_spawn") "globale_regeln.py") --ziel $ClaudeMd
 if ($LASTEXITCODE -ne 0) { throw "Regel-Blöcke nicht geschrieben: $ClaudeMd" }
+# Ja-Sperre (PreToolUse-Hook in settings.json neben der CLAUDE.md) + Befehl `ja` nach bin/ daneben (#531)
+$env:PYTHONPATH = $ziel
+python -m to_spawn.ja_einrichten --claude-dir (Split-Path -Parent $ClaudeMd) --python (Get-Command python).Source
+if ($LASTEXITCODE -ne 0) { throw "Ja-Sperre nicht eingetragen" }
 # Review-Hook (review-hook/ → ~/.claude/hooks/review, #214) + Review-Werkzeug (review/ → ~/.claude/review, #329); Überschreib-Regel in to_spawn/review_hook.py.
 python (Join-Path (Join-Path $ziel "to_spawn") "review_hook.py") --klon $hier  # Klon: nur versionierte Dateien
 if ($LASTEXITCODE -ne 0) { throw "Review-Hook nicht installiert" }

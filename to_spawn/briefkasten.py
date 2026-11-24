@@ -44,6 +44,7 @@ import logging
 import os
 import re
 import secrets
+import shlex
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -355,6 +356,86 @@ def nutzer_antworten(
     Modul-Docstring.
     """
     return _schreibe_antwort(n, frage_id, wahl, belege, grund, NUTZER_VON, hauptbaum)
+
+
+#: Name des PreToolUse-Hooks (``to_spawn.py hook-ja-sperre``), der Ja-Befehle aus Werkzeug-Aufrufen ablehnt (#531).
+JA_SPERRE_HOOK = "hook-ja-sperre"
+#: Der eine Befehl für das Live-Ja, auf jeder Maschine gleich (``install.sh`` legt ihn dorthin, #531).
+JA_BEFEHL = "~/.claude/bin/ja"
+
+
+def ja_aufforderung(n: str | int = "<N>") -> str:
+    """Der eine Text, mit dem der Nutzer zum Live-Ja aufgefordert wird: ``! ~/.claude/bin/ja 5`` (#531)."""
+    return f"`! {JA_BEFEHL} {n}`"
+
+
+def sperre_eingetragen() -> bool:
+    """Steht der Hook :data:`JA_SPERRE_HOOK` (PreToolUse, Matcher mit Bash) in ``~/.claude/settings.json``?"""
+    try:
+        einstellungen = json.loads((Path.home() / ".claude" / "settings.json").read_text(encoding="utf-8"))
+        return sperre_eingetragen_in(einstellungen)
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return False
+
+
+def sperre_eingetragen_in(einstellungen: dict[str, Any]) -> bool:
+    """Wie :func:`sperre_eingetragen`, für schon gelesene Einstellungen (``KeyError`` o. ä. = nicht da)."""
+    try:
+        blocks = einstellungen["hooks"]["PreToolUse"]
+        return any(
+            "Bash" in b.get("matcher", "").split("|") and _ruft_sperre_auf(h.get("command", ""))
+            for b in blocks
+            for h in b.get("hooks", [])
+        )
+    except (KeyError, TypeError, AttributeError):
+        return False
+
+
+def _ruft_sperre_auf(befehl: str) -> bool:
+    """Ruft ``befehl`` eine vorhandene ``to_spawn.py`` mit dem Unterbefehl :data:`JA_SPERRE_HOOK` auf?
+
+    ``echo hook-ja-sperre`` o. ä. zählt nicht: nur ``<…>/to_spawn.py hook-ja-sperre`` mit existierender Datei.
+    """
+    try:
+        woerter = shlex.split(befehl)
+    except ValueError:
+        return False
+    erstes = next((w for w in woerter if "=" not in w), "").replace("\\", "/").rsplit("/", 1)[-1]
+    if erstes != "to_spawn.py" and not re.fullmatch(r"python[\d.]*(\.exe)?", erstes):
+        return False  # Befehlswort muss Python oder die to_spawn.py selbst sein (nicht ``echo …``)
+    return any(
+        w.replace("\\", "/").rsplit("/", 1)[-1] == "to_spawn.py"
+        and Path(w).is_file()
+        and woerter[i + 1 : i + 2] == [JA_SPERRE_HOOK]
+        for i, w in enumerate(woerter)
+    )
+
+
+def menschen_nachweis(ist_tty: bool) -> None:
+    """Wer darf das Ja schreiben? Mit Terminal: ja. Ohne (``!``-Eingabefeld): nur wenn die Sperre eingetragen ist.
+
+    Fail-closed (#531): ohne eingetragene Sperre wäre ein Bash-Werkzeug-Aufruf einer Session
+    nicht vom Eingabefeld zu unterscheiden — also ``Verweigert``. Die Regel steht nur hier.
+    """
+    if not ist_tty and not sperre_eingetragen():
+        raise Verweigert(
+            "Ja ohne Terminal nur mit eingetragener Sperre: Skill installieren (install.sh) "
+            "oder in einem echten Terminal ausführen."
+        )
+
+
+def ja(n: str | int, *, hauptbaum: Path | None = None) -> Path:
+    """Kurzform des Nutzer-Ja: die einzige offene Frage des Tickets mit Wahl „ja“ beantworten (#531).
+
+    ``ValueError`` bei 0 oder mehreren offenen Fragen (Text sagt, wie viele); sonst wie
+    :func:`nutzer_antworten`. Wer das darf, entscheidet der Aufrufer über :func:`menschen_nachweis`.
+    """
+    offen = offene([n], hauptbaum=hauptbaum)
+    if len(offen) != 1:
+        raise ValueError(f"Ticket {n}: {len(offen)} offene Fragen (nötig: genau 1) — `offene {n}` zeigt sie.")
+    if not offen[0]["id"]:
+        raise Verweigert(f"Ticket {n}: {offen[0]['frage']} — nur der Nutzer löst die Sperre.")
+    return nutzer_antworten(n, offen[0]["id"], "ja", [], "Live-Ja des Nutzers (ja)", hauptbaum=hauptbaum)
 
 
 def _schreibe_antwort(

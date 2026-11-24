@@ -37,10 +37,8 @@ def test_regel_nennt_liste_live_grenze_und_den_befehl() -> None:
     assert "deckt nur die Entscheidungs-Liste" in text
     assert "nie den Live-Schritt" in text
     assert "eigenes Ja des Menschen" in text
-    assert (
-        "`to_spawn.py nutzer-antwort 15 --id <id> --wahl <Wahl> --grund <Grund>`"
-        in text
-    )
+    # #531: der eine kurze Befehl statt des langen (alter Weg läuft weiter, wird aber nicht mehr genannt)
+    assert "`! ~/.claude/bin/ja 15`" in text
 
 
 def test_annahme_kommentar_traegt_die_regel(welt: dict[str, Path]) -> None:  # noqa: F811
