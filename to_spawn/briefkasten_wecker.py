@@ -7,8 +7,9 @@ in den Briefkasten der Spec (nur Dateien, kein GitHub):
 
 * neue offene Frage (mit id) → ein Weckruf ins eigene Pane des Aufsehers (``TMUX_PANE``);
 * Antwort auf eine gesehene Frage liegt → ein Weckruf ins Fenster ``bau <N>`` der Spec-Sitzung;
-* Ticket der Spec geschlossen → Aufseher-Pane, Aufseher-Kommentar an offenem Ticket → ``bau <N>``
-  (#554, :func:`ereignisse`; eine GraphQL-Abfrage je Durchgang für alle Tickets der Spec).
+* Ticket der Spec geschlossen oder Live gelaufen (Merker :func:`capo.live_gelaufen`) → Aufseher-Pane,
+  Aufseher-Kommentar an offenem Ticket → ``bau <N>`` (#554, :func:`ereignisse`; eine GraphQL-Abfrage
+  je Durchgang für alle Tickets der Spec).
 
 Jede Frage weckt je Richtung höchstens einmal. Getippt wird nur, wenn :meth:`Wecker._darf_tippen`
 es erlaubt (die eine Stelle der Regel): im Pane läuft Claude, das Bild zeigt ein leeres
@@ -72,6 +73,12 @@ ZU_TEXT = (
     "Ticket #{ticket} ist geschlossen — jetzt den Stand der Spec ansehen und den nächsten Schritt "
     "(nächstes Ticket, Rundschau, Abschluss) anstoßen. Deinen Takt (ScheduleWakeup) nicht ändern."
 )
+LIVE_TEXT = (
+    "Spec #{spec}: Live ist gelaufen — jetzt Aufräumen und Schließen der Spec anstoßen. "
+    "Deinen Takt (ScheduleWakeup) nicht ändern."
+)
+#: Schlüssel in der Lage (:func:`ereignisse`) für „Live gelaufen“: Spec-Nummer oder ``None``.
+LIVE = "live"
 AUFSEHER_KOMMENTAR_TEXT = (
     "Ticket #{ticket}: neuer Kommentar des Aufsehers — jetzt `gh issue view {ticket} --comments` lesen und umsetzen."
 )
@@ -92,11 +99,12 @@ class Ereignis(NamedTuple):
 def ereignisse(lage: dict[str, Any]) -> list[Ereignis]:
     """Die eine Ereignis-Quelle (#554): GitHub-Lage der Spec-Tickets → wen mit welchem Text wecken.
 
-    ``lage`` = Ticket → ``{"state", "comments": {"nodes": [...]}}`` (Form von :meth:`Wecker._lage`).
+    ``lage`` = Ticket → ``{"state", "comments": {"nodes": [...]}}`` (Form von :meth:`Wecker._lage`),
+    dazu :data:`LIVE` → Spec-Nummer, wenn der Live-Schritt gelaufen ist (sonst fehlt er oder ``None``).
     Ein weiteres Ereignis ist ein weiterer Zweig hier; Gedächtnis und Wecken bleiben unberührt.
     """
     aus: list[Ereignis] = []
-    for t in sorted(lage, key=int):
+    for t in sorted((k for k in lage if k != LIVE), key=int):
         issue = lage[t]
         if not isinstance(issue, dict):
             continue
@@ -110,6 +118,8 @@ def ereignisse(lage: dict[str, Any]) -> list[Ereignis]:
                 and str(k.get("body") or "").lstrip().startswith(capo.AUFSEHER_KOEPFE)
             ):
                 aus.append(Ereignis(f"kommentar:{k['databaseId']}", t, AUFSEHER_KOMMENTAR_TEXT.format(ticket=t)))
+    if lage.get(LIVE) is not None:
+        aus.append(Ereignis(f"live:{lage[LIVE]}", None, LIVE_TEXT.format(spec=lage[LIVE])))
     return aus
 
 
@@ -198,14 +208,25 @@ class Wecker:
                 self._fuer_bau.discard((t, fid))
 
     def _lage(self, tickets: dict[str, Any]) -> dict[str, Any] | None:
-        """Zustand + jüngste Kommentare aller Tickets in EINER GraphQL-Abfrage; ``None`` = Fehler."""
+        """Zustand + jüngste Kommentare aller Tickets in EINER GraphQL-Abfrage; ``None`` = Fehler.
+
+        Eine Nummer, die kein Issue ist (Pull-Request, gelöscht, Unsinn im Manifest), kostet nur sich
+        selbst: GitHub liefert dann ``null`` für ihr Feld, ``errors`` und Exit 1 — die übrigen Felder
+        gelten trotzdem, der Grund steht einmal im Log.
+        """
+        nummern = [str(t) for t in tickets if str(t).isdigit()]
+        for t in tickets:
+            if not str(t).isdigit():
+                self._melde(f"Briefkasten-Wecker Spec #{self.spec}: Manifest-Eintrag {t!r} ist keine Issue-Nummer")
         besitzer, _, name = self.gh_repo.partition("/")
         felder = " ".join(
-            f"t{int(t)}: issue(number: {int(t)}) {{ state comments(last: {KOMMENTARE_JE_TICKET}) "
+            f"t{t}: issue(number: {t}) {{ state comments(last: {KOMMENTARE_JE_TICKET}) "
             "{ nodes { databaseId body authorAssociation } } }"
-            for t in tickets
+            for t in nummern
         )
-        daten = gh.json_lauf(
+        if not felder:
+            return {}
+        _code, ausgabe = gh.lauf(
             [
                 "api",
                 "graphql",
@@ -217,10 +238,17 @@ class Wecker:
                 f"query=query($owner: String!, $name: String!) {{ repository(owner: $owner, name: $name) {{ {felder} }} }}",
             ]
         )
-        repo = ((daten or {}).get("data") or {}).get("repository") if isinstance(daten, dict) else None
+        try:
+            daten = json.loads(ausgabe) if ausgabe else None
+        except ValueError:
+            daten = None
+        repo = (daten.get("data") or {}).get("repository") if isinstance(daten, dict) else None
         if not isinstance(repo, dict):
             return None
-        return {str(t): repo.get(f"t{int(t)}") for t in tickets}
+        for fehler in daten.get("errors") or []:
+            meldung = fehler.get("message") if isinstance(fehler, dict) else fehler
+            self._melde(f"Briefkasten-Wecker Spec #{self.spec}: GitHub-Abfrage: {meldung}")
+        return {t: repo.get(f"t{t}") for t in nummern}
 
     def _lies_gedaechtnis(self) -> set[str] | None:
         """``None`` = keine (lesbare) Datei: dann wird der Bestand nur gemerkt, nicht geweckt."""
@@ -248,6 +276,7 @@ class Wecker:
                 f"Briefkasten-Wecker Spec #{self.spec}: GitHub-Abfrage der Tickets gescheitert — Takt übernimmt"
             )
             return
+        lage[LIVE] = self.spec if capo.live_gelaufen(self.repo, self.spec, self.gh_repo) else None
         jetzt = ereignisse(lage)
         if self._geweckt is None:
             self._geweckt = self._lies_gedaechtnis()
