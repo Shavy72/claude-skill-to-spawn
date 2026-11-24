@@ -119,6 +119,8 @@ HANG_MIN = 90
 HANG_MIN_UNTERGRENZE = 61
 #: Offene Ja/Nein-Rückfrage: nach so vielen Minuten einmal melden.
 RUECKFRAGE_MIN = 15
+#: Ja/Nein-Frage im Text am Prompt (nicht Dialog): nach so vielen Minuten anstupsen (#485).
+FRAGE_PROMPT_MIN = 5
 #: „Ticket zu“: Fenster erst schließen, wenn der Text so lange unverändert ist.
 KARENZ_MIN = 15
 #: Nach dem Fortsetzen so lange auf die Session mit derselben ID warten.
@@ -464,6 +466,29 @@ def arbeitet(text: str, status: str | None = None) -> bool:
 
 def rueckfrage(text: str) -> bool:
     return any(m in text for m in RUECKFRAGE_MARKER)
+
+
+# Ein Fehl-Treffer ist harmlos: er löst nur Stufe 0 aus (ein Anstupser, begrenzt durch STUPSER_MAX).
+FRAGE_JA_NEIN = re.compile(
+    r"\bja\s*/\s*nein\b|\byes\s*/\s*no\b|\bja oder nein\b|\byes or no\b"
+    r"|[(\[]\s*(?:j/n|y/n)\s*[)\]]",
+    re.IGNORECASE,
+)
+
+
+def frage_am_prompt(text: str) -> bool:
+    """Steht in den letzten Zeilen über dem Eingabefeld eine Ja/Nein-Frage (#485)?
+
+    Eine Bau-Session fragt nie (sie nimmt den Vorschlag); bleibt sie an so einer
+    Frage stehen, wartet sie sonst bis ``hang_min`` auf den ersten Anstupser.
+    """
+    zeilen = [z for z in ohne_statuszeile(text).splitlines() if z.strip()]
+    zeilen = [z for z in zeilen if not EINGABEFELD_LINIE.fullmatch(z) and not z.lstrip().startswith("❯")]
+    if any(briefkasten.JA_BEFEHL in z for z in zeilen[-3:]):
+        return False  # Live-Ja-Aufforderung (#531): Session wartet zu Recht auf den Menschen
+    return any(FRAGE_JA_NEIN.search(z) for z in zeilen[-3:]) or (
+        bool(zeilen) and zeilen[-1].rstrip().endswith("?")
+    )
 
 
 #: Rahmenlinie des Claude-Code-Eingabefelds: Zeile nur aus ``─`` (mind. 20).
@@ -2037,7 +2062,10 @@ class Aufpasser:
             and self.folge_ab_handoff(f, ticket, repo, schluessel, hash_start)
         ):
             return
-        if arbeitend or still_min < self.e.hang_min:
+        # Kurze Schwelle nur fürs erste Anstupsen; Fortsetzen (Kill) bleibt bei hang_min ≥ 61.
+        kurz = int(e.get("stufe", 0)) == 0 and frage_am_prompt(text)
+        schwelle = FRAGE_PROMPT_MIN if kurz else self.e.hang_min
+        if arbeitend or still_min < schwelle:
             return
         if ticket is None and not f.ist_wache:
             return
