@@ -611,6 +611,18 @@ def hook_befehl(*teile: Path | str) -> str:
     return " ".join(shlex.quote(t.as_posix() if isinstance(t, Path) else t) for t in teile)
 
 
+def frage_sperre_befehl() -> str:
+    """Frage-Sperre-Befehl; Linux/macOS ``~`` (wortgleich mit Server-Template), Windows absolut.
+
+    Unter Windows vererbt Claude Code ``MSYS_NO_PATHCONV=1``: Git-Bash löst ``~`` zu ``/c/Users/…``
+    auf; ``node`` liest daraus einen Pfad unter ``C:/c/`` (#565). Daher dort der absolute Pfad mit ``/``.
+    """
+    if sys.platform != "win32":
+        return FRAGE_SPERRE_BEFEHL
+    ziel = Path.home() / FRAGE_SPERRE_BEFEHL.split(" ~/", 1)[1]
+    return hook_befehl("node", ziel)
+
+
 def staffel_aktiv(konfig: dict) -> bool:
     """Staffel-Neustart an der Smart-Zone-Grenze erlaubt? ``staffel.aktiv`` in der Repo-Konfig.
 
@@ -633,7 +645,7 @@ def staffel_hooks(mit_staffel: bool = True) -> dict:
     ``PreToolUse``: ``AskUserQuestion`` → Frage-Sperre lehnt ab (#321); ``Bash`` → Spec-Sperre
     lehnt rohes ``gh issue close <Spec>`` ab und nennt ``to_spawn.py spec-schliessen`` (E2-4).
     """
-    frage_sperre = FRAGE_SPERRE_BEFEHL
+    frage_sperre = frage_sperre_befehl()
     staffel = hook_befehl(Path(sys.executable), staffel_hook_pfad(REPO))
     bau_log_stop = hook_befehl(Path(sys.executable), TO_SPAWN_CLI, "hook-stop")
     bau_log_sub = hook_befehl(Path(sys.executable), TO_SPAWN_CLI, "hook-subagent-stop")
