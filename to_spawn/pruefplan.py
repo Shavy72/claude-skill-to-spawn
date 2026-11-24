@@ -63,6 +63,24 @@ class SpecStand:
         object.__setattr__(self, "komplett_lief", bool(self.komplett_lief))
 
 
+#: Übergangsregel (#425): Warn-Zeile für Log und Protokoll, wenn :func:`eingerichtet` nein sagt.
+NICHT_EINGERICHTET = (
+    "Prüfung nicht eingerichtet (pruefung.schnell fehlt): alter Ablauf, voller Lauf möglich – "
+    "Einrichtungs-Ticket fordert den Schlüssel nach"
+)
+
+
+def eingerichtet(konfig: dict[str, Any]) -> bool:
+    """Übergangsregel (#425): Hat das Repo die Gruppe ``pruefung`` eingerichtet?
+
+    Ja, sobald ``pruefung.schnell`` oder ``pruefung.komplett`` nicht leer ist. Nein → der Aufrufer
+    prüft wie vor #425 Teil B (Leiter ohne ``art``, voller Lauf möglich) und warnt mit
+    :data:`NICHT_EINGERICHTET`; so brechen laufende Specs in noch nicht eingerichteten Repos nicht
+    am strengen Weg (schnell: Code-Änderung ohne gelaufenen Test = Gate-Fehler).
+    """
+    return bool(config.pruef_befehl(konfig, "schnell") or config.pruef_befehl(konfig, "komplett"))
+
+
 def welche(konfig: dict[str, Any], spec_stand: SpecStand) -> Art:
     """Welche Prüfung jetzt dran ist: ``schnell``, ``komplett`` oder ``keine``."""
     if spec_stand.moment is Moment.TICKET:

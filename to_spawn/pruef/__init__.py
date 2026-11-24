@@ -63,15 +63,22 @@ def _sha(repo: Path, ref: str) -> str | None:
 _ungespeichert = sofort.ungespeichert  # eine Stelle für „schmutzig“ (#218), Name für Alt-Tests
 
 
-def _schreibe(repo: Path, zeile: dict[str, Any], art: str | None) -> None:
-    """Protokoll-Zeile anhängen; mit ``art`` samt Feld ``art`` und Messwert „Dauer“ im Log."""
+def _schreibe(repo: Path, zeile: dict[str, Any], art: str | None, warnung: str = "") -> None:
+    """Protokoll-Zeile anhängen; mit ``art`` samt Feld ``art`` und Messwert „Dauer“ im Log.
+
+    ``warnung`` ≠ "" steht als Feld ``warnung`` in der Zeile (Log schreibt der Aufrufer, einmal).
+    """
+    if warnung:
+        zeile["warnung"] = warnung
     if art is not None:
         zeile["art"] = art
         log.info("Dauer der %s Prüfung: %.2f s (Urteil %s)", _DAUER_NAME[art], zeile["gesamt_s"], zeile["urteil"])
     protokoll.schreibe(repo, zeile)
 
 
-def _gate_fehler(repo: Path, basis: str, ziel: str, grund: str, start: float, art: str | None = None) -> Urteil:
+def _gate_fehler(
+    repo: Path, basis: str, ziel: str, grund: str, start: float, art: str | None = None, warnung: str = ""
+) -> Urteil:
     zeile = protokoll.zeile(
         basis=basis,
         ziel=ziel,
@@ -81,7 +88,7 @@ def _gate_fehler(repo: Path, basis: str, ziel: str, grund: str, start: float, ar
         fehler_kurz=grund,
         gesamt_s=time.monotonic() - start,
     )
-    _schreibe(repo, zeile, art)
+    _schreibe(repo, zeile, art, warnung)
     return Urteil(leiter.GATE_FEHLER, zeile)
 
 
@@ -94,11 +101,12 @@ def hat_werkzeug(repo: Path) -> bool:
     return any(adapter.erkennt(repo) for adapter in _ADAPTER)
 
 
-def pruefen(repo: Path, basis: str, ziel: str, art: pruefplan.Art | None = None) -> Urteil:
+def pruefen(repo: Path, basis: str, ziel: str, art: pruefplan.Art | None = None, warnung: str = "") -> Urteil:
     """Prüft den Stand ``ziel`` gegen ``basis`` und protokolliert das Urteil.
 
     ``art`` = Antwort von ``pruefplan.welche`` (``schnell``/``komplett``); ``None`` = Leiter wie
     vor #425. ``keine`` ist kein Prüf-Auftrag (``ValueError``) — der Aufrufer ruft dann nicht.
+    ``warnung`` (z. B. ``pruefplan.NICHT_EINGERICHTET``) steht unverändert in der Protokoll-Zeile.
     """
     if art is not None and art not in _ARTEN:
         raise ValueError(f"pruefen: art={art!r} ist keine Prüfung (erlaubt: {', '.join(_ARTEN)})")
@@ -106,7 +114,7 @@ def pruefen(repo: Path, basis: str, ziel: str, art: pruefplan.Art | None = None)
     basis_sha, ziel_sha, kopf = _sha(repo, basis), _sha(repo, ziel), _sha(repo, "HEAD")
     if basis_sha is None or ziel_sha is None:
         fehlt = basis if basis_sha is None else ziel
-        return _gate_fehler(repo, basis, ziel, f"Stand „{fehlt}“ in {repo} nicht gefunden (git)", start, art)
+        return _gate_fehler(repo, basis, ziel, f"Stand „{fehlt}“ in {repo} nicht gefunden (git)", start, art, warnung)
     # ponytail: geprüft wird der Arbeitsbaum, darum muss ziel ausgecheckt sein;
     # Upgrade: eigener Worktree je ziel, wenn die Schlange fremde Stände prüft (3b-6).
     if ziel_sha != kopf:
@@ -117,6 +125,7 @@ def pruefen(repo: Path, basis: str, ziel: str, art: pruefplan.Art | None = None)
             f"ziel {ziel} ist nicht ausgecheckt (HEAD {kopf})",
             start,
             art,
+            warnung,
         )
     offen = _ungespeichert(repo)
     if offen:
@@ -127,6 +136,7 @@ def pruefen(repo: Path, basis: str, ziel: str, art: pruefplan.Art | None = None)
             f"Arbeitsbaum nicht gespeichert (erst committen): {', '.join(offen[:5])}",
             start,
             art,
+            warnung,
         )
     schluessel = cache.schluessel(repo, basis_sha, ziel_sha)
     if schluessel is not None and art is not None:
@@ -151,7 +161,7 @@ def pruefen(repo: Path, basis: str, ziel: str, art: pruefplan.Art | None = None)
             gesamt_s=time.monotonic() - start,
             cache_treffer=True,
         )
-        _schreibe(repo, zeile, art)
+        _schreibe(repo, zeile, art, warnung)
         return Urteil(leiter.GRUEN, zeile)
     eigen = pruefplan.befehl(config.lade(repo), art) if art is not None else None
     if eigen:
@@ -166,6 +176,7 @@ def pruefen(repo: Path, basis: str, ziel: str, art: pruefplan.Art | None = None)
             "keine Sprache erkannt (weder Python noch Node)",
             start,
             art,
+            warnung,
         )
     exit_code, fehler_kurz = leiter.ergebnis(liste)
     zeile = protokoll.zeile(
@@ -192,6 +203,6 @@ def pruefen(repo: Path, basis: str, ziel: str, art: pruefplan.Art | None = None)
         auswahl=[stufe.auswahl for stufe in liste if stufe.auswahl] or None,
         wackler=[{"test": test, "adapter": stufe.adapter} for stufe in liste for test in stufe.wackler],
     )
-    _schreibe(repo, zeile, art)
+    _schreibe(repo, zeile, art, warnung)
     cache.merke(schluessel, zeile)
     return Urteil(exit_code, zeile)
