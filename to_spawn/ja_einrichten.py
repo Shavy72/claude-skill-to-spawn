@@ -98,15 +98,17 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--claude-dir", type=Path, default=Path.home() / ".claude")
     parser.add_argument("--python", default=sys.executable)
+    # Installer geben den installierten Skill an: ``python -m`` aus dem Klon-Ordner lädt sonst das Klon-Modul (#566).
+    parser.add_argument("--cli", type=Path, default=CLI)
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     try:
-        neu = sperre_eintragen(args.claude_dir, args.python)
+        neu = sperre_eintragen(args.claude_dir, args.python, args.cli)
     except (OSError, ValueError) as fehler:
         log.error("Ja-Sperre nicht eingetragen: %s", fehler)
         return 1
     log.info("Ja-Sperre: %s", "eingetragen" if neu else "stand schon drin")
-    for pfad in befehl_anlegen(args.claude_dir, args.python):
+    for pfad in befehl_anlegen(args.claude_dir, args.python, args.cli):
         log.info("Befehl: %s", pfad)
     return 0
 
