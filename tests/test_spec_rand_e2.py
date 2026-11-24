@@ -183,7 +183,10 @@ def _aufbau(
     weltdatei = tmp_path / "welt.json"
     weltdatei.write_text(json.dumps(welt or _welt_anfang()), encoding="utf-8")
     umgebung = {
-        k: v for k, v in os.environ.items() if not k.startswith(("GH_STUB", "TO_SPAWN"))
+        k: v
+        for k, v in os.environ.items()
+        # #461: Speicher-Attrappe (conftest) bleibt, sonst zählt der Kindprozess echte Sessions.
+        if k.startswith("TO_SPAWN_SPEICHER_") or not k.startswith(("GH_STUB", "TO_SPAWN"))
     }
     umgebung.update(
         {
