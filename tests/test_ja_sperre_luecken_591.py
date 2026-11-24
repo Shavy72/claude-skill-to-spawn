@@ -518,3 +518,24 @@ ALLTAG_RUNDE5 = [
 @pytest.mark.parametrize("befehl", ALLTAG_RUNDE5)
 def test_runde5_alltag_bleibt_frei(befehl: str) -> None:
     assert not _sperrt(befehl), repr(befehl)
+
+
+#: Runde 6 — ``cmd`` liest das Wort auch direkt an ``/c``/``//c``/``/k`` geklebt (am PC belegt).
+CMD_GEKLEBT_RUNDE6 = [
+    "cmd //cja 5",
+    'cmd //c"ja 5"',
+    "MSYS_NO_PATHCONV=1 cmd /cja 5",
+    "cmd.exe /cja.cmd 5",
+    "cmd /Q /cja 5",
+    "cmd /Cja 5",
+    "CMD /cja 5",
+    "CMD.EXE /Cja 5",
+    "cmd /kja 5",
+    'cmd /c "ja 5"',
+    "cmd /cj^a 5",
+]
+
+
+@pytest.mark.parametrize("befehl", CMD_GEKLEBT_RUNDE6)
+def test_runde6_cmd_geklebt_wird_gesperrt(befehl: str) -> None:
+    assert _sperrt(befehl), repr(befehl)

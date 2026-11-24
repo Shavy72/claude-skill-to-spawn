@@ -1275,7 +1275,9 @@ def _ja_wort_in(wort: str) -> bool:
 
 def _ja_im_einfachen(woerter: list[str], befehl: str) -> bool:
     """Ein einfacher Befehl ab dem Befehlsnamen; ``befehl`` = ganzer Text für Interpreter-Fälle."""
-    name = _name(woerter[0]).lower().removesuffix(".cmd")
+    name = _name(woerter[0].lower()).removesuffix(".cmd")
+    if name == "cmd" and _JA_CMD.search(re.sub(r"['\"^]", "", befehl)):
+        return True
     if name == "eval" and ja_aufrufe(" ".join(woerter[1:])):
         return True
     if name in _SHELLS and (text := _shell_text(woerter[1:])) is not None and ja_aufrufe(text):
@@ -1382,6 +1384,9 @@ _JA_INTERPRETER = {
 }
 #: ``ja``/``ja.cmd`` als eigenes Wort (auch in ``X=ja``, ``a,ja``, ``{ja,}``), Groß/klein egal.
 _JA_WORT = re.compile(r"(?<![\w.-])ja(?:\.cmd)?(?![\w.-])", re.IGNORECASE)
+#: Unter ``cmd`` zählt das Wort auch an einen Schalter geklebt (``/cja``, ``//c"ja 5"``, ``/Kja``):
+#: cmd trennt ``/c`` nicht per Leerzeichen ab. Geprüft auf dem Text ohne Quotes und ``^``.
+_JA_CMD = re.compile(r"(?:^|[^\w.-]|/[a-z]+)ja(?:\.cmd)?(?![\w.-])", re.IGNORECASE)
 #: Befehlsname, den erst die Shell festlegt (Variable, Ersetzung, Glob, Klammern).
 _JA_DYNAMISCH = re.compile(r"[$`*?\[{]")
 #: ANSI-C-Quote ``$'…'``: bash löst ``\\x6a``, ``\\152`` … auf, shlex nicht.
