@@ -75,7 +75,12 @@ else
 fi
 if [ -n "$github" ]; then
   # #467: privates Repo anlegen und den Start-Commit pushen (sonst hat der erste PR kein Ziel).
-  gh repo create "$github" --private --source . --remote origin
+  gh repo create "$github" --private --source . --remote origin || {
+    echo "Fehler: gh repo create fehlgeschlagen; lokaler Ordner bleibt stehen: $(pwd) (wiederverwenden oder löschen)" >&2
+    exit 1
+  }
+  # Über Variable: frisches leeres Probe-Repo, der erste Push von main ist dort der gewollte
+  # Start-Commit; kein Weg für echte Repos.
   git push -u origin "$variante_zweig"
 fi
 echo "Lauf-Repo angelegt: $(pwd) ($variante; lokal $app_port, Staging $staging_text, Übungs-Live $live_port)"

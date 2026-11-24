@@ -53,8 +53,9 @@ Windows-PC (#426 Reihenfolge). Voraussetzung: Teile A–D gebaut und installiert
 
 1. **Lauf-Repo anlegen** (je Variante, `<n>` = Laufnummer):
    ```
-   bash probe/anlegen.sh ~/to-spawn-probe-<n>-mit mit-staging
-   bash probe/anlegen.sh ~/to-spawn-probe-<n>-ohne ohne-staging --app-port 18511 --live-port 18513
+   bash probe/anlegen.sh ~/to-spawn-probe-<n>-mit mit-staging --github Shavy72/to-spawn-probe-<n>-mit
+   bash probe/anlegen.sh ~/to-spawn-probe-<n>-ohne ohne-staging --app-port 18511 --live-port 18513 \
+        --github Shavy72/to-spawn-probe-<n>-ohne
    ```
    Danach je Repo ein privates GitHub-Repo mit `probe` im Namen anlegen und pushen
    (`gh repo create Shavy72/to-spawn-probe-<n>-mit --private --source . --push`), damit Tickets
