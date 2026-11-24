@@ -75,9 +75,15 @@ def _voll_lief(zeile: dict) -> bool:
     return any(stufe["name"] == "voll" and stufe["lief"] for stufe in zeile["stufen"])
 
 
+#: Eingerichtetes Repo ohne eigenen Schnell-Befehl: Ticket-Prüfung geht durch die Leiter.
+_NUR_KOMPLETT = {"pruefung": {"schnell": "", "komplett": "true"}}
+
+
 def test_ticket_pruefung_startet_nie_den_vollen_lauf(tmp_path: Path) -> None:
-    repo = _probe(tmp_path / "p")
-    assert einreichen._pruefung(repo, "base") == ""
+    repo = _probe(tmp_path / "p", _NUR_KOMPLETT)
+    # Fix-Runde 1: Code geändert, kein Test lief → Gate-Fehler statt still Grün (siehe unten).
+    with pytest.raises(einreichen._Rot):
+        einreichen._pruefung(repo, "base")
     zeile = _letzte_zeile(repo)
     assert not _voll_lief(zeile), f"Ticket-Prüfung lief voll: {zeile['stufen']}"
     assert zeile.get("art") == "schnell"
@@ -135,7 +141,7 @@ def test_schnell_mit_code_ohne_gelaufenen_test_ist_gate_fehler(tmp_path: Path) -
 
 
 def test_einreichen_nennt_den_grund_in_ergebnis_und_protokoll(tmp_path: Path) -> None:
-    repo = _probe(tmp_path / "p")
+    repo = _probe(tmp_path / "p", _NUR_KOMPLETT)
     with pytest.raises(einreichen._Rot) as rot:
         einreichen._pruefung(repo, "base")
     assert _KEINE_AUSWAHL in rot.value.text

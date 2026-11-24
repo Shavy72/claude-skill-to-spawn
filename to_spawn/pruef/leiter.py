@@ -111,8 +111,16 @@ def _voll(repo: Path, adapter: Adapter, grund: str) -> Stufe:
     )
 
 
-def _ohne_voll(adapter: Adapter, grund: str) -> Stufe:
-    """Schnelle Prüfung: statt Stufe 4 eine ausgelassene Stufe, die sagt, warum nichts lief."""
+def _ohne_voll(adapter: Adapter, grund: str, pfade: list[str]) -> Stufe:
+    """Schnelle Prüfung: statt Stufe 4 eine Stufe, die sagt, warum nichts lief.
+
+    Mit geänderter Code-Datei ein Gate-Fehler (``regeln.schnell_ohne_test``, nie still Grün), sonst
+    ausgelassen.
+    """
+    fehler = regeln.schnell_ohne_test(pfade, adapter.name, grund)
+    if fehler:
+        wahl = _wahl(adapter, grund)
+        return Stufe("voll", adapter.name, False, fehler, 0.0, "", "", GATE_FEHLER, fehler, auswahl=wahl)
     text = f"schnell: kein voller Lauf je Ticket, Komplett-Prüfung einmal je Spec — {grund}"
     return Stufe("voll", adapter.name, False, text, 0.0, "", "", AUSGELASSEN, "", auswahl=_wahl(adapter, grund))
 
@@ -120,11 +128,15 @@ def _ohne_voll(adapter: Adapter, grund: str) -> Stufe:
 def _pruefe(repo: Path, adapter: Adapter, basis: str, pfade: list[str] | None, art: str | None) -> Stufe:
     """Stufe 3 (Auswahl), wenn ``regeln`` sie erlaubt und sie ≥ 1 Test wählt, sonst Stufe 4 (voll).
 
-    ``art="schnell"``: nie Stufe 4 (:func:`_ohne_voll`); ``art="komplett"``: gleich Stufe 4.
+    ``art="schnell"``: nie Stufe 4 (:func:`_ohne_voll`, mit Code-Datei Gate-Fehler); ``art="komplett"``:
+    gleich Stufe 4.
     """
     if art == "komplett":
         return _voll(repo, adapter, "komplett: voller Lauf")
-    rueckfall = _ohne_voll if art == "schnell" else (lambda a, grund: _voll(repo, a, grund))
+
+    def rueckfall(a: Adapter, grund: str) -> Stufe:
+        return _ohne_voll(a, grund, pfade or []) if art == "schnell" else _voll(repo, a, grund)
+
     doku = sofort.erklaerte_doku(repo, basis, pfade or [])
     grund = regeln.vorab(
         pfade,
@@ -142,9 +154,8 @@ def _pruefe(repo: Path, adapter: Adapter, basis: str, pfade: list[str] | None, a
     erg = ausfuehren.lauf(plan.befehl, repo)
     n, gesamt = adapter.zaehle(erg.code, erg.ausgabe)
     grund = regeln.nach_auswahl(n, pfade or [], adapter.name, doku)
-    if grund and not (art == "schnell" and n):
+    if grund:
         return rueckfall(adapter, grund)
-    # Schnell mit ≥ 1 gewähltem Test: deren Ergebnis zählt, auch wenn R2 sonst voll verlangte.
     wahl = _wahl(adapter, grund, n, gesamt)
     if n == 0:
         # Kein Test betroffen (nur erklärte Doku, regeln.nach_auswahl): pytest meldet Exit 5, das ist
