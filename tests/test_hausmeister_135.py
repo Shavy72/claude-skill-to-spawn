@@ -31,12 +31,6 @@ SKILL_ORIGIN = "https://github.com/Shavy72/claude-skill-to-spawn"
 TAG = 24 * 3600.0
 
 
-@pytest.fixture(autouse=True)
-def eigenes_tmux(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("TMUX", raising=False)
-    monkeypatch.setenv("TMUX_TMPDIR", str(tmp_path))
-
-
 @pytest.fixture
 def skill(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Zweites echtes Repo (Skill-Repo, Hauptzweig ``main``) neben dem App-Repo der Welt."""

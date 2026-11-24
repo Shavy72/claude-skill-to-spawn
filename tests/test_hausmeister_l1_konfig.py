@@ -288,10 +288,8 @@ def test_vorgabe_wurzeln_bleiben_auch_in_der_liste(ohne_naehte: None) -> None:
 
 
 @pytest.fixture
-def welt_liste(welt, monkeypatch: pytest.MonkeyPatch, tmp_path: Path):  # noqa: F811
-    """Welt aus #1368, aber Wurzeln aus der Maschinen-Liste statt Env-Naht; eigener tmux-Server."""
-    monkeypatch.delenv("TMUX", raising=False)
-    monkeypatch.setenv("TMUX_TMPDIR", str(tmp_path))
+def welt_liste(welt, monkeypatch: pytest.MonkeyPatch):  # noqa: F811
+    """Welt aus #1368, aber Wurzeln aus der Maschinen-Liste statt Env-Naht."""
     for name in ("WURZELN", "ZWEIG_REPOS", "HAUPTREPOS"):
         monkeypatch.delenv(f"TO_SPAWN_HAUSMEISTER_{name}", raising=False)
     return welt
