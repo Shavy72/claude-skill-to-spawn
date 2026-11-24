@@ -389,7 +389,8 @@ def auf_speicher_warten(
 
 
 def known_skill_names() -> set[str]:
-    names: set[str] = set(BUILTIN_SKILLS)
+    # Pflicht-Skills werden ohnehin erzwungen, auch ohne Datei auf dem Rechner (#478).
+    names: set[str] = set(BUILTIN_SKILLS) | set(PFLICHT_SKILLS)
 
     registry = read_json(CLAUDE_DIR / "toolbox" / "registry.json", {})
     for entry in registry.get("entries") or []:
