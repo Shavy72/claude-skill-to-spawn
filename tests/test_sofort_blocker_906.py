@@ -179,8 +179,8 @@ def test_warte_modus(
 @pytest.mark.parametrize(
     ("kw", "erwartet"),
     [
-        ({}, [("906", 60, False)]),
-        ({"sofort": True}, [("906", 60, True)]),
+        ({}, [("906", 30, False)]),
+        ({"sofort": True}, [("906", 30, True)]),
         ({"sofort": True, "umzug": "b@s:p"}, []),
         ({"resume": "abc"}, []),
     ],

@@ -62,8 +62,8 @@ from to_spawn import (
     terminal_maus,
     umzug,
     vertrauen,
-)  # noqa: E402
-from to_spawn.manifest import manifest_ordner  # noqa: E402
+)
+from to_spawn.manifest import manifest_ordner
 from to_spawn.waechter_lauf import transkript_ordner
 
 # Windows-Konsole ist cp1252 — Umlaute/Pfeile im Prompt brauchen UTF-8.
@@ -308,6 +308,11 @@ def _gh_json(gh: str, *args: str) -> object | None:
         return None
 
 
+#: Sekunden zwischen zwei Blocker-Prüfungen (#432): die eine Stelle; ``--takt`` überschreibt, Untergrenze 5 s.
+TAKT_STANDARD_S = 30
+TAKT_MIN_S = 5
+
+
 def blocker_offen(ticket: str, *, nur_offene: bool = False) -> list[str]:
     """Gründe, warum #ticket noch nicht starten darf (leer = frei).
 
@@ -336,9 +341,28 @@ def blocker_offen(ticket: str, *, nur_offene: bool = False) -> list[str]:
     return gh.blocker_gruende(REPO, deps, mit_commit=not nur_offene)  # die eine Stelle (#267)
 
 
-def auf_blocker_warten(ticket: str, takt: int, *, nur_offene: bool = False, schlafen=time.sleep) -> None:
-    """Pollt alle ``takt`` Sekunden, bis #ticket frei ist. Kostet keine Token."""
+#: Mindestabstand (s) zwischen zwei Warte-Zeilen bei gleichen Gründen (#432, Herzschlag).
+WARTE_HERZSCHLAG_S = 600
+#: Obergrenze (s) des Abstands nach wiederholt fehlgeschlagener Abfrage (#432, Rate-Limit).
+TAKT_FEHLER_MAX_S = 300
+#: Gründe aus :func:`blocker_offen`, wenn die Abfrage selbst scheitert (Ticket bleibt blockiert).
+ABFRAGE_FEHLER = ("Blocker-Abfrage fehlgeschlagen", "gh fehlt")
+#: Die eine Warte-Zeile; ``to_spawn/aufpasser.py`` ``BLOCKER_WARTEN`` erkennt sie, Test prüft beides (#432).
+WARTE_ZEILE = "Ticket #%s wartet (%s) — nächste Prüfung in %d s, Meldung höchstens alle %d min [%s]"
+
+
+def auf_blocker_warten(
+    ticket: str, takt: int, *, nur_offene: bool = False, schlafen=time.sleep, uhr=time.monotonic
+) -> None:
+    """Pollt alle ``takt`` Sekunden, bis #ticket frei ist. Kostet keine Token.
+
+    Loggt nur bei geänderten Gründen oder nach ``WARTE_HERZSCHLAG_S`` (Aufpasser sieht die Zeile).
+    Scheitert die Abfrage, wächst der Abstand (takt, 2·takt, … höchstens ``TAKT_FEHLER_MAX_S``).
+    """
     runde = 0
+    fehler = 0
+    letzte: list[str] | None = None
+    letzte_zeit = 0.0
     while True:
         gruende = blocker_offen(ticket, nur_offene=nur_offene)
         if not gruende:
@@ -346,14 +370,19 @@ def auf_blocker_warten(ticket: str, takt: int, *, nur_offene: bool = False, schl
                 log.info("Ticket #%s ist frei — Session startet.", ticket)
             return
         runde += 1
-        log.info(
-            "Ticket #%s wartet (%s) — nächste Prüfung in %d min [%s]",
-            ticket,
-            "; ".join(gruende),
-            takt // 60,
-            datetime.now().strftime("%H:%M"),
-        )
-        schlafen(takt)
+        fehler = fehler + 1 if tuple(gruende) in {(g,) for g in ABFRAGE_FEHLER} else 0
+        abstand = min(max(takt, TAKT_FEHLER_MAX_S), takt * 2 ** (fehler - 1)) if fehler else takt
+        if gruende != letzte or uhr() - letzte_zeit >= WARTE_HERZSCHLAG_S:
+            log.info(
+                WARTE_ZEILE,
+                ticket,
+                "; ".join(gruende),
+                abstand,
+                WARTE_HERZSCHLAG_S // 60,
+                datetime.now().strftime("%H:%M"),
+            )
+            letzte, letzte_zeit = gruende, uhr()
+        schlafen(abstand)
 
 
 def warte_modus(args: argparse.Namespace) -> str | None:
@@ -370,7 +399,7 @@ def blocker_schranke(ticket: str, args: argparse.Namespace) -> None:
     """Die eine Stelle in main (#906): je nach ``warte_modus`` auf Blocker warten oder nicht."""
     modus = warte_modus(args)
     if modus is not None:
-        auf_blocker_warten(ticket, max(60, args.takt), nur_offene=modus == "nur_offen")
+        auf_blocker_warten(ticket, max(TAKT_MIN_S, args.takt), nur_offene=modus == "nur_offen")
 
 
 def auf_speicher_warten(
@@ -892,7 +921,12 @@ def main() -> int:
         action="store_true",
         help="nur auf offene Blocker warten, Commit-Prüfung macht die Session (#906)",
     )
-    parser.add_argument("--takt", type=int, default=600, help="Sekunden zwischen zwei Blocker-Prüfungen (600)")
+    parser.add_argument(
+        "--takt",
+        type=int,
+        default=TAKT_STANDARD_S,
+        help=f"Sekunden zwischen zwei Blocker-Prüfungen ({TAKT_STANDARD_S}, mindestens {TAKT_MIN_S})",
+    )
     parser.add_argument(
         "--staffel-max",
         type=int,
