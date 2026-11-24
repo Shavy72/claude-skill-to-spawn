@@ -9,7 +9,9 @@ in den Briefkasten der Spec (nur Dateien, kein GitHub):
 * Antwort auf eine gesehene Frage liegt → ein Weckruf ins Fenster ``bau <N>`` der Spec-Sitzung;
 * Ticket der Spec geschlossen oder Live gelaufen (Merker :func:`capo.live_gelaufen`) → Aufseher-Pane,
   Aufseher-Kommentar an offenem Ticket → ``bau <N>`` (#554, :func:`ereignisse`; eine GraphQL-Abfrage
-  je Durchgang für alle Tickets der Spec).
+  je Durchgang für alle Tickets der Spec);
+* Bau-Session wartet laut ``WARTET``-Zeile auf Blocker, die schon erledigt sind → ``bau <N>``
+  (#596, :meth:`Wecker._blocker_blick`; GitHub nur für Fenster, die ``WARTET`` zeigen).
 
 Jede Frage weckt je Richtung höchstens einmal. Getippt wird nur, wenn :meth:`Wecker._darf_tippen`
 es erlaubt (die eine Stelle der Regel): im Pane läuft Claude, das Bild zeigt ein leeres
@@ -32,6 +34,7 @@ import json
 import logging
 import os
 import threading
+import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -156,6 +159,7 @@ class Wecker:
         self._ruhe: dict[str, tuple[str, float]] = {}  # Ziel → (Bild-Hash, gleich seit)
         self._geweckt: set[str] | None = None  # #554: Schlüssel schon geweckter Ereignisse
         self._geschrieben: set[str] | None = None  # Stand der Gedächtnis-Datei
+        self._blocker_geweckt: dict[int, str] = {}  # #596: Ticket → WARTET-Gründe, zu denen schon angestoßen
         try:
             self._bekannt = self._offen()
         except Exception as fehler:  # noqa: BLE001 — ohne Ausgangsstand weckt der nächste Durchgang alles
@@ -186,6 +190,10 @@ class Wecker:
             self._tickets_blick()
         except Exception as fehler:  # noqa: BLE001 — GitHub-Ausfall darf den Briefkasten nicht aufhalten
             self._melde(f"Briefkasten-Wecker Spec #{self.spec}: Tickets: {fehler!r}")
+        try:
+            self._blocker_blick()
+        except Exception as fehler:  # noqa: BLE001 — GitHub-/tmux-Ausfall darf den Briefkasten nicht aufhalten
+            self._melde(f"Briefkasten-Wecker Spec #{self.spec}: Blocker: {fehler!r}")
         offen = self._offen()
         neu = offen - self._bekannt
         self._bekannt |= neu
@@ -294,6 +302,34 @@ class Wecker:
             datei.parent.mkdir(parents=True, exist_ok=True)
             manifest.schreibe_atomar(datei, {"geweckt": sorted(self._geweckt)})
             self._geschrieben = set(self._geweckt)
+
+    def _blocker_blick(self) -> None:
+        """Falsches Warten auf fertige Blocker in Sekunden beenden (#596, Rest aus #269).
+
+        Dieselbe Regel wie der Aufpasser (:func:`aufpasser.erledigt_gewartet`), nur im Wecker-Takt
+        statt alle 15 min. Je gemeldeter ``WARTET``-Zeile ein Anstoß; erst nach erfolgreichem Tippen
+        der Vorfall über die eine Stelle :func:`aufpasser.notiere_blocker_falsch` (Doppelte aus
+        Aufpasser und Wecker hält :func:`vorfall.schreibe` fern). Abfrage gescheitert: kein Anstoß.
+        """
+        if not self.gh_repo:
+            return
+        for t, ziel in sorted((aufseher_stand.bau_fenster(self.spec) or {}).items()):
+            try:
+                bild = self.werkzeug.bildschirm(ziel) or ""
+            except (FensterWeg, TmuxFehler):
+                continue
+            gemeldet = aufpasser.gemeldete_blocker(bild)
+            if gemeldet is None:
+                self._blocker_geweckt.pop(t, None)
+                continue
+            if self._blocker_geweckt.get(t) == gemeldet or aufpasser.arbeitet(bild):
+                continue
+            blocker = aufpasser.erledigt_gewartet(bild, t, self.repo, self.gh_repo)
+            if blocker is None:
+                continue
+            if self._tippe(ziel, aufpasser.BLOCKER_FREI_TEXT.format(blocker=blocker, ticket=t)):
+                self._blocker_geweckt[t] = gemeldet
+                aufpasser.notiere_blocker_falsch(self.repo, t, blocker, time.strftime("%Y-%m-%d"))
 
     def _abnahme_tickets(self) -> set[str] | None:
         """Tickets der Spec mit Checkpoint-Label (einmal gelesen); ``None`` = GitHub nicht lesbar."""

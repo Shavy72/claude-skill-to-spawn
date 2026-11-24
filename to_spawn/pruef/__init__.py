@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from to_spawn import config, pruefplan
+from to_spawn import config, konsole, pruefplan
 from to_spawn.pruef import (
     adapter_node,
     adapter_py,
@@ -49,14 +49,14 @@ class Urteil:
 
 def _sha(repo: Path, ref: str) -> str | None:
     try:
-        erg = subprocess.run(
+        erg = konsole.lauf_daten(
             ["git", "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"],
             cwd=repo,
-            capture_output=True,
-            text=True,
             check=False,
         )
     except OSError:
+        return None
+    if erg is None:
         return None
     return erg.stdout.strip() if erg.returncode == 0 else None
 

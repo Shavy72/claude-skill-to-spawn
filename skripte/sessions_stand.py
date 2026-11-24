@@ -58,6 +58,9 @@ class Prozess:
     name: str
     cmd: str
     start: datetime | None
+    #: Arbeitsordner, gelesen beim Erstellen der echten Liste (``prozesse_linux``, #588);
+    #: ``None`` = unbekannt (Windows, aufgezeichnete Liste, unlesbar) → zählt als eigenes Repo.
+    ordner: Path | None = None
 
 
 @dataclass
@@ -106,11 +109,16 @@ def prozesse_linux() -> list[Prozess]:
     if not out.strip():
         log.error("Prozessliste leer — ist ``ps`` (procps) installiert?")
         return []
-    # Seit ``ps`` beendete Prozesse fallen hier raus, nicht in ``zuordnen`` (#494, #564): das
-    # urteilt nur aus der übergebenen Liste, auch über aufgezeichnete mit erfundenen Nummern.
-    # ponytail: Fenster zwischen diesem Blick und ``fremdes_repo`` bleibt (µs), Upgrade-Pfad:
-    # Arbeitsordner hier mitlesen und am ``Prozess`` mitgeben.
-    return [p for p in ps_zeilen_parsen(out) if not beendet(p.pid)]
+    # Lebens-Prüfung (#494) und Arbeitsordner (#212) gehören zum Lesen der echten Liste, nicht
+    # in ``zuordnen`` (#564, #588): das urteilt nur aus der übergebenen Liste, auch über
+    # aufgezeichnete mit erfundenen Nummern. Ordner zuerst, dann Lebens-Prüfung: stirbt ein
+    # Prozess dazwischen, fällt er raus, statt mit unlesbarem Ordner als eigener zu zählen.
+    lebende: list[Prozess] = []
+    for p in ps_zeilen_parsen(out):
+        p.ordner = arbeitsordner(p.pid)
+        if not beendet(p.pid):
+            lebende.append(p)
+    return lebende
 
 
 def prozesse_lesen() -> list[Prozess]:
@@ -199,17 +207,22 @@ def manifeste_lesen(spec: str | None) -> dict[str, Eintrag]:
     return eintraege
 
 
-def fremdes_repo(pid: int) -> bool:
-    """Läuft dieser ``bau.py``/``wache.py`` in einem anderen Repo als ``REPO``? (#212)
-
-    Linux: Arbeitsordner aus ``/proc/<pid>/cwd`` — außerhalb von ``REPO`` zählt der
-    Prozess nicht (zwei Repos mit derselben Ticket-Nummer auf einem Rechner, oder
-    „lokal“ und „Server“ auf demselben Rechner). Ohne ``/proc`` (Windows) oder bei
-    unlesbarem Ordner zählt er wie bisher.
-    """
+def arbeitsordner(pid: int) -> Path | None:
+    """Arbeitsordner aus ``/proc/<pid>/cwd``; ``None`` ohne ``/proc`` (Windows) oder unlesbar."""
     try:
-        ordner = Path(os.readlink(f"/proc/{pid}/cwd")).resolve()
+        return Path(os.readlink(f"/proc/{pid}/cwd")).resolve()
     except OSError:
+        return None
+
+
+def ordner_fremd(ordner: Path | None) -> bool:
+    """Liegt ``ordner`` außerhalb von ``REPO``? (#212)
+
+    Außerhalb zählt der Prozess nicht (zwei Repos mit derselben Ticket-Nummer auf einem
+    Rechner, oder „lokal“ und „Server“ auf demselben Rechner). Unbekannter Ordner
+    (``None``) zählt wie bisher als eigener.
+    """
+    if ordner is None:
         return False
     wurzel = REPO.resolve()
     return ordner != wurzel and wurzel not in ordner.parents
@@ -220,7 +233,7 @@ def beendet(pid: int) -> bool:
 
     Nur beim Lesen der echten Liste (``prozesse_linux``) gefragt, nie in ``zuordnen`` (#564).
 
-    Ein beendeter Prozess läuft nicht mehr, auch wenn ``fremdes_repo`` ihn mangels lesbarem
+    Ein beendeter Prozess läuft nicht mehr, auch wenn ``ordner_fremd`` ihn mangels lesbarem
     Ordner mitzählt (#494): sonst gälte etwa die eben beendete Aufseher-Attrappe eines
     Nachbar-Tests als lebender Aufseher, und ``spawn_srv.sh`` meldete bei vollem Rechner
     „Aufseher startet nach“ (Exit 0), obwohl niemand nachstartet.
@@ -245,7 +258,7 @@ def zuordnen(eintraege: dict[str, Eintrag], alle: list[Prozess]) -> None:
         m = MUSTER.search(p.cmd)
         if not m:
             continue
-        if fremdes_repo(p.pid):
+        if ordner_fremd(p.ordner):
             continue
         art, nummer = m.group(1), m.group(2)
         e = eintraege.get(nummer)
@@ -270,7 +283,7 @@ def zuordnen(eintraege: dict[str, Eintrag], alle: list[Prozess]) -> None:
     for p in alle:
         if p.name.lower() not in VERWAIST_NAMEN or p.pid in bekannte:
             continue
-        if fremdes_repo(p.pid):  # Claude-Session eines anderen Repos ist hier keine Waise (#212)
+        if ordner_fremd(p.ordner):  # Claude-Session eines anderen Repos ist hier keine Waise (#212)
             continue
         m = VERWAIST.search(p.cmd)
         if not m:

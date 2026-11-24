@@ -166,10 +166,11 @@ def blocker_gruende(repo: Path, deps: list[dict], *, mit_commit: bool = True) ->
     Fragen: ``bau.py`` (Start-Schranke) und ``to_spawn.py blocker`` (Warte-Prüfung der Session).
     """
     gruende: list[str] = []
-    erledigt: list[object] = []
+    erledigt: list[tuple[object, str]] = []  # (Nummer, Zustandswort für die Meldung, #269)
     for d in deps:
         if blocker_erledigt(d):
-            erledigt.append(d.get("number"))
+            wort = ticket_zustand.ANZEIGE[ticket_zustand.stufe(d)]  # „zu“ / „fertig gebaut“
+            erledigt.append((d.get("number"), wort))
         else:
             gruende.append(f"#{d.get('number')} offen")
     if not mit_commit or not erledigt or gruende:  # fetch erst, wenn alle Blocker zu sind (#432)
@@ -177,10 +178,10 @@ def blocker_gruende(repo: Path, deps: list[dict], *, mit_commit: bool = True) ->
     haupt = f"origin/{hauptzweig(repo)}"  # master/main/… je Repo (#257)
     code, _ = _git_ausgabe(["fetch", "-q", "origin"], repo, timeout=FETCH_ZEIT_S)
     if code == 124:  # Zeitablauf: Stand von origin unbekannt → fail-closed (#320)
-        return [*gruende, *(f"#{nr} zu, aber git fetch nach {FETCH_ZEIT_S:g} s abgebrochen" for nr in erledigt)]
-    for nr in erledigt:
+        return [*gruende, *(f"#{nr} {w}, aber git fetch nach {FETCH_ZEIT_S:g} s abgebrochen" for nr, w in erledigt)]
+    for nr, wort in erledigt:
         if not commit_betreffe(repo, str(nr), haupt):  # None (git-Fehler) zählt als „kein Commit“
-            gruende.append(f"#{nr} zu, aber kein Commit „(#{nr})“ auf {haupt}")
+            gruende.append(f"#{nr} {wort}, aber kein Commit „(#{nr})“ auf {haupt}")
     return gruende
 
 

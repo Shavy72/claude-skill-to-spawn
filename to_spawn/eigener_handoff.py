@@ -33,7 +33,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from to_spawn import bau_log, config, leitstand
+from to_spawn import bau_log, config, konsole, leitstand
 
 log = logging.getLogger(__name__)
 
@@ -80,7 +80,10 @@ class Treffer:
 
 def _git(wt: Path, *args: str) -> str:
     return subprocess.run(
-        ["git", "-C", str(wt), *args], capture_output=True, text=True, check=True
+        ["git", "-C", str(wt), *args],
+        capture_output=True,
+        **konsole.UNTERPROZESS_PFADE,
+        check=True,
     ).stdout
 
 

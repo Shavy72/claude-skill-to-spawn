@@ -1,4 +1,4 @@
-# Installer für /to-spawn: Skill nach ~/.claude/skills/to-spawn (inkl. skripte/, to_spawn/, to_spawn.py),
+﻿# Installer für /to-spawn: Skill nach ~/.claude/skills/to-spawn (inkl. skripte/, to_spawn/, to_spawn.py),
 # Alias-Skills (aliase/* → ~/.claude/skills/<alias>), Profil-Funktionen bau/aufseher/wache/sessions/leitstand,
 # optional die Repo-Weiterleitungen (repo-scripts/ → <Repo>/scripts, nur fehlende) + .to-spawn/config.json.
 # Jeder vorhandene Skill-Ordner (to-spawn, Alias, Kette) wird nie gelöscht, sondern nach <Skills>\_alt\<name>-<zeit> verschoben.
@@ -76,7 +76,7 @@ python (Join-Path (Join-Path $ziel "to_spawn") "globale_regeln.py") --ziel $Clau
 if ($LASTEXITCODE -ne 0) { throw "Regel-Blöcke nicht geschrieben: $ClaudeMd" }
 # Ja-Sperre (PreToolUse-Hook in settings.json neben der CLAUDE.md) + Befehl `ja` nach bin/ daneben (#531)
 $env:PYTHONPATH = $ziel
-python -m to_spawn.ja_einrichten --claude-dir (Split-Path -Parent $ClaudeMd) --python (Get-Command python).Source
+python -m to_spawn.ja_einrichten --claude-dir (Split-Path -Parent $ClaudeMd) --python (Get-Command python).Source --cli (Join-Path $ziel "to_spawn.py")
 if ($LASTEXITCODE -ne 0) { throw "Ja-Sperre nicht eingetragen" }
 # Review-Hook (review-hook/ → ~/.claude/hooks/review, #214) + Review-Werkzeug (review/ → ~/.claude/review, #329); Überschreib-Regel in to_spawn/review_hook.py.
 python (Join-Path (Join-Path $ziel "to_spawn") "review_hook.py") --klon $hier  # Klon: nur versionierte Dateien

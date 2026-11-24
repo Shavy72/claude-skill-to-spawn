@@ -14,6 +14,7 @@ Verarbeitung der Runde. Deshalb legt der Hook zusätzlich eine Marker-Datei
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import os
@@ -789,7 +790,10 @@ def ja_aufrufe(befehl: str) -> bool:
     """True, wenn ``befehl`` das Ja des Nutzers schreiben würde — die eine Stelle des Musters (#531).
 
     Erkannt: ``ja``/``ja.cmd`` als Befehl, ``nutzer-antwort`` als Wort, ``to_spawn.py ja`` (auch mit
-    ``python`` davor); ``eval …`` und ``bash -c "…"`` werden ausgepackt.
+    ``python`` davor); ``eval …``, ``bash -c "…"``, ``powershell``/``pwsh``/``cmd`` (auch
+    ``-EncodedCommand``) werden ausgepackt.
+    Bewusst breit und ohne Ausnahmen; die zwei Positivlisten für das Bash-Werkzeug (#567) prüft
+    :func:`hook_ja_sperre` vorher (:func:`_bash_text_ohne_aufruf`).
     ponytail: nur wörtliche Aufrufe — Variablen, ein Skript, ``python -c`` oder ein direkter
     Schreibzugriff auf die Briefkasten-Datei umgehen die Sperre (gleiche Grenze wie ``hook_spec_sperre``);
     Upgrade-Pfad: Prüfung im Briefkasten selbst über einen Nachweis, den nur der Nutzer-Weg trägt.
@@ -804,6 +808,11 @@ def ja_aufrufe(befehl: str) -> bool:
         elif name in _SHELLS and (text := _shell_text(woerter[1:])) is not None:
             if ja_aufrufe(text):
                 return True
+        elif name.lower().removesuffix(".exe") in _JA_WIN_SHELLS:
+            if _ja_in_win_shell(woerter[1:]):
+                return True
+        elif name == "rg" and _rg_vorfilter_ja(woerter):
+            return True
         elif (
             name == "ja"
             or "nutzer-antwort" in woerter
@@ -853,6 +862,102 @@ def _ja_als_argument(woerter: list[str]) -> bool:
     return False
 
 
+# --- Ausnahmen und Windows-Shells der Ja-Sperre (#567) ---------------------------------------------
+
+#: Kopfzeile der einzigen erlaubten heredoc-Form: ``cat > datei <<'WORT'`` (auch ``>>``, auch Ziel
+#: hinten), nur ASCII-Leerzeichen; Ziel und WORT aus festem ASCII-Vorrat (kein ``$``, Glob, ``~``, Quote).
+_DATEI_HEREDOC_KOPF = re.compile(
+    r"cat ?(?:>>? ?[A-Za-z0-9_./:-]+ ?<<'([A-Za-z0-9_]+)'|<<'([A-Za-z0-9_]+)' ?>>? ?[A-Za-z0-9_./:-]+)",
+    re.ASCII,
+)
+#: Steuerzeichen außer Zeilenumbruch und Tab (CR, NUL, Formfeed …) — dann gilt keine Ausnahme.
+_STEUERZEICHEN = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
+
+
+def _nur_datei_heredoc(befehl: str) -> bool:
+    """True, wenn der GANZE Bash-Befehl genau ``cat > datei <<'WORT'`` + Rumpf + Endzeile ist.
+
+    Positivliste statt Verbotsliste (#567): Was hier nicht genau passt, wird normal geprüft —
+    eine vergessene Sonderform kann so nur einen Fehlalarm machen, nie einen Aufruf durchlassen.
+    Begrenzer in einfachen Anführungszeichen (die Shell ersetzt im Rumpf nichts), kein ``tee``,
+    kein ``<<-``, kein CR/NUL/Steuerzeichen im Befehl. Der Rumpf ist frei; die erste Zeile gleich
+    ``WORT`` muss die letzte sein, sonst endet der heredoc früher und der Rest liefe als Befehl.
+    """
+    if _STEUERZEICHEN.search(befehl):
+        return False
+    zeilen = befehl.removesuffix("\n").split("\n")
+    kopf = _DATEI_HEREDOC_KOPF.fullmatch(zeilen[0])
+    if not kopf or len(zeilen) < 2:
+        return False
+    wort = kopf.group(1) or kopf.group(2)
+    return wort in zeilen[1:] and zeilen.index(wort, 1) == len(zeilen) - 1
+
+
+#: Ein Wort der erlaubten Such-Form: feste Option, nacktes Wort oder ASCII-Text in Quotes — je GANZ,
+#: nie geklebt. Nackt und in Quotes nie mit ``-`` oder Leerzeichen vorn, nie leer: bash entfernt die
+#: Quotes, ``'--pre=x'`` wäre sonst eine echte Option.
+_SUCH_WORT = (
+    r"(?:-[rnilcowEFHhsvLx]+|-[ABCm][0-9]*|-e"
+    r"|--(?:include|exclude|glob|type)=[A-Za-z0-9_.,/-]+"
+    r"|[A-Za-z0-9_./:=,@%+][A-Za-z0-9_./:=,@%+-]*"
+    r"|'[A-Za-z0-9_./:=,@%+][A-Za-z0-9 _./:=,@%+-]*'|\"[A-Za-z0-9_./:=,@%+][A-Za-z0-9 _./:=,@%+-]*\")"
+)
+#: Der ganze Befehl: ``grep``/``rg`` wortgleich vorn, danach Wörter mit je genau einem Leerzeichen.
+_NUR_SUCHE = re.compile(rf"(?:grep|rg)(?: {_SUCH_WORT})+", re.ASCII)
+
+
+def _nur_suche(befehl: str) -> bool:
+    """True, wenn der GANZE Bash-Befehl eine ``grep``/``rg``-Suche in der engen Form ist.
+
+    Positivliste statt Verbotsliste (#567): ein verankertes Muster aus erlaubten Zeichen und Wörtern
+    (:data:`_SUCH_WORT`), kein Zerleger als Entscheidung. Erlaubt sind nur Such-Optionen ohne
+    Programmstart (also kein ``--pre``, ``--hostname-bin``, ``-f``, keine Präfix-Abkürzung), nackte
+    Wörter und Text in ASCII-Quotes ohne Shell-Sonderzeichen. Grep und rg führen solche Argumente
+    nie aus — dann darf das Suchmuster den Aufruftext tragen. Alles andere: ``False``.
+    """
+    return bool(_NUR_SUCHE.fullmatch(befehl))
+
+
+
+def _rg_vorfilter_ja(woerter: list[str]) -> bool:
+    """True, wenn ``rg --pre``/``--hostname-bin <programm>`` ein Ja startet (Wörter schon ohne Quotes)."""
+    for k, wort in enumerate(woerter):
+        if (wort.startswith("--pre") and not wort.startswith("--pre-")) or wort.startswith("--hostname-bin"):
+            wert = wort.split("=", 1)[1] if "=" in wort else (woerter[k + 1] if k + 1 < len(woerter) else "")
+            if ja_aufrufe(wert) or _ja_basis(wert) in ("ja", "ja.cmd"):
+                return True
+    return False
+
+
+#: Windows-Shells, deren Argumente selbst ein Befehl sind (``powershell -Command …``, ``cmd /c …``).
+_JA_WIN_SHELLS = {"powershell", "pwsh", "cmd"}
+
+
+def _ja_in_win_shell(args: list[str]) -> bool:
+    """True, wenn irgendein Argument-Ende ab einem Wort ein Ja-Aufruf ist, oder ein
+    ``-EncodedCommand`` ein Ja enthält bzw. sich nicht lesen lässt.
+
+    Alle Wort-Enden statt Schalter-Zerlegung: ein unbekannter Schalter mit Wert kann so nie den
+    Befehlsanfang verdecken (fail-closed; ``-Command Write-Host ja`` ohne Quotes sperrt mit).
+    """
+    for k, arg in enumerate(args):
+        schalter = arg.lstrip("-/").lower()
+        if arg[:1] in ("-", "/") and schalter and (schalter == "ec" or "encodedcommand".startswith(schalter)):
+            try:
+                text = base64.b64decode(args[k + 1], validate=True).decode("utf-16-le")
+            except (IndexError, ValueError):
+                return True
+            if ja_aufrufe(text):
+                return True
+    return any(ja_aufrufe(" ".join(args[k:])) for k in range(len(args)))
+
+
+def _bash_text_ohne_aufruf(befehl: str) -> bool:
+    """True, wenn der Bash-Befehl eine der zwei Positivlisten ist (#567) — dann ist der Aufruftext
+    nur Text. Nur für das Bash-Werkzeug: PowerShell & Co. liest Quotes anders (typografische)."""
+    return _nur_datei_heredoc(befehl) or _nur_suche(befehl)
+
+
 def hook_ja_sperre(strom: TextIO | None = None, fehler: TextIO | None = None) -> int:
     """PreToolUse-Hook (Bash) in ``~/.claude/settings.json``: Ja-Befehle aus Werkzeug-Aufrufen ablehnen.
 
@@ -868,7 +973,12 @@ def hook_ja_sperre(strom: TextIO | None = None, fehler: TextIO | None = None) ->
         daten = json.loads(text)
         roh = daten.get("tool_input") if isinstance(daten, dict) else None
         befehl = roh.get("command") if isinstance(roh, dict) else None
-        treffer = isinstance(befehl, str) and ja_aufrufe(befehl)
+        werkzeug = daten.get("tool_name") if isinstance(daten, dict) else None
+        treffer = (
+            isinstance(befehl, str)
+            and not (werkzeug == "Bash" and _bash_text_ohne_aufruf(befehl))
+            and ja_aufrufe(befehl)
+        )
     except Exception:  # der Hook darf die Session bei fremden Befehlen nie stören
         log.exception("Ja-Sperre: Prüfung fehlgeschlagen — grobe Prüfung auf Roh-Eingabe.")
         treffer = bool(_JA_GROB.search(text))

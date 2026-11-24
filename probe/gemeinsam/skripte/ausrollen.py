@@ -69,11 +69,105 @@ def _fremde_staging_ordner() -> list[Path]:
 
 
 def _prozess_im_ordner(pid: int, ordner: Path) -> bool:
-    """Positiver Beleg: Arbeitsordner des Prozesses ist genau ``ordner`` (nur Linux, sonst nein)."""
+    """Positiver Beleg: ``pid`` gehört zu ``ordner``.
+
+    Linux: Arbeitsordner des Prozesses ist genau ``ordner``. Windows: Der Prozess wurde
+    kurz vor ``server.pid`` gestartet (Startzeit, siehe ``_startzeit_passt``). Sonst nein.
+    """
+    if os.name == "nt":
+        return _startzeit_passt(pid, ordner / "server.pid")
     try:
         return Path(f"/proc/{pid}/cwd").resolve() == ordner.resolve()
     except OSError:
         return False
+
+
+# --- Windows ohne ``/proc`` (#556) --------------------------------------------------------
+# Absichtlich doppelt: Die Probe-Vorlage bleibt eigenständig (nur Standardbibliothek) und
+# kann ``to_spawn/prozessbaum.py`` nicht importieren. Vorbild dort: ``_lebt_windows``.
+
+#: ``ausrollen`` schreibt ``server.pid`` unmittelbar nach dem Start des Servers. Die Startzeit
+#: des echten Servers liegt daher knapp VOR der Änderungszeit der Datei. Später gestartet =
+#: PID wiederverwendet = fremd; viel früher gestartet = ebenfalls nicht der Schreiber.
+PID_FENSTER_S = 60.0
+#: Uhren-Rundung zwischen Dateisystem- und Prozesszeit.
+PID_SCHLUPF_S = 2.0
+_SYNCHRONIZE = 0x00100000
+_QUERY_LIMITED = 0x1000
+_WAIT_TIMEOUT = 0x102
+_FEHLER_ZUGRIFF = 5
+_EPOCHE_DIFF_S = 11644473600  # 1601 (FILETIME) → 1970 (Unix)
+
+
+def _oeffne_windows(pid: int, recht: int):  # type: ignore[no-untyped-def]
+    """``(kernel32, Griff)``; Griff ``None`` = Prozess weg. ``OSError(5)`` = Zugriff verweigert."""
+    import ctypes
+    from ctypes import wintypes
+
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.OpenProcess.restype = wintypes.HANDLE
+    kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    griff = kernel.OpenProcess(recht, False, pid)
+    if griff:
+        return kernel, griff
+    fehler = ctypes.get_last_error()
+    if fehler == _FEHLER_ZUGRIFF:
+        raise OSError(fehler, "Zugriff verweigert")
+    return kernel, None
+
+
+def _lebt_windows(pid: int) -> bool:
+    """Prozess läuft noch; Zugriff verweigert oder Fehler: vorsichtig ``True``."""
+    import ctypes
+    from ctypes import wintypes
+
+    try:
+        kernel, griff = _oeffne_windows(pid, _SYNCHRONIZE | _QUERY_LIMITED)
+    except OSError:
+        return True
+    if griff is None:
+        return False
+    try:
+        kernel.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+        kernel.WaitForSingleObject.restype = wintypes.DWORD
+        return kernel.WaitForSingleObject(griff, 0) == _WAIT_TIMEOUT
+    finally:
+        kernel.CloseHandle(griff)
+
+
+def _startzeit_windows(pid: int) -> float | None:
+    """Startzeit (Unix-Sekunden); nicht feststellbar (weg, kein Zugriff) = ``None``."""
+    import ctypes
+    from ctypes import wintypes
+
+    try:
+        kernel, griff = _oeffne_windows(pid, _QUERY_LIMITED)
+    except OSError:
+        return None
+    if griff is None:
+        return None
+    try:
+        zeiten = [wintypes.FILETIME() for _ in range(4)]
+        kernel.GetProcessTimes.argtypes = [wintypes.HANDLE] + [
+            ctypes.POINTER(wintypes.FILETIME)
+        ] * 4
+        if not kernel.GetProcessTimes(griff, *(ctypes.byref(z) for z in zeiten)):
+            return None
+        roh = (zeiten[0].dwHighDateTime << 32) | zeiten[0].dwLowDateTime
+        return roh / 1e7 - _EPOCHE_DIFF_S
+    finally:
+        kernel.CloseHandle(griff)
+
+
+def _startzeit_passt(pid: int, pid_datei: Path) -> bool:
+    """Ist ``pid`` der Prozess, der ``pid_datei`` geschrieben hat? Nicht feststellbar = ``False``."""
+    start = _startzeit_windows(pid)
+    try:
+        geschrieben = pid_datei.stat().st_mtime
+    except OSError:
+        return False
+    return start is not None and -PID_SCHLUPF_S <= geschrieben - start <= PID_FENSTER_S
 
 
 #: Wartezeit (Sekunden), bis ein beendeter Prozess nachweislich weg ist.
@@ -81,7 +175,9 @@ WARTE_S = 5.0
 
 
 def _lebt(pid: int) -> bool:
-    """Prozess läuft (Zombie zählt als weg). Ohne ``/proc`` (nicht Linux): vorsichtig ``True``."""
+    """Prozess läuft (Zombie zählt als weg). Ohne ``/proc`` (nicht Linux/Windows): vorsichtig ``True``."""
+    if os.name == "nt":
+        return _lebt_windows(pid)
     try:
         stat = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
     except FileNotFoundError:
@@ -113,9 +209,19 @@ def _beende(ordner: Path, port: int, pruefen: bool) -> bool:
             log.info("PID-Datei %s unlesbar (%s) — Prozess bleibt", pid_datei, fehler)
             return False
         if pid <= 0:
-            log.warning("PID %s in %s ist kein Prozessbeleg — nichts beendet, Ordner bleibt", pid, pid_datei)
+            log.warning(
+                "PID %s in %s ist kein Prozessbeleg — nichts beendet, Ordner bleibt", pid, pid_datei
+            )
             return False
-        if _lebt(pid):
+        if _lebt(pid) and not pruefen and not _prozess_im_ordner(pid, ordner):
+            # Eigener Ordner, alte server.pid, PID neu vergeben (#556 Windows, #600 Linux): Prozess
+            # nicht nachweislich unser (oder nicht feststellbar) — bleibt leben, Ordner weg.
+            log.warning(
+                "Prozess %s gehört nicht zu %s (PID neu vergeben) — bleibt, Ordner wird abgebaut",
+                pid,
+                ordner,
+            )
+        elif _lebt(pid):
             if pruefen and not _prozess_im_ordner(pid, ordner):
                 log.warning("Prozess %s gehört nicht nachweislich zu %s — bleibt", pid, ordner)
                 return False
@@ -131,6 +237,9 @@ def _beende(ordner: Path, port: int, pruefen: bool) -> bool:
             log.info("Prozess %s aus %s ist schon weg — Ordner wird abgebaut", pid, pid_datei)
     if ordner.exists():
         shutil.rmtree(ordner, ignore_errors=True)
+        if ordner.exists():  # etwas hält Dateien offen (z. B. der echte Server): nicht „aufgeräumt“
+            log.error("%s blieb stehen (Prozess aus %s, Ordner nicht löschbar)", ordner, pid_datei)
+            return False
     return True
 
 
