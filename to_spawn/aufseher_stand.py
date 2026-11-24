@@ -154,8 +154,10 @@ def echte_quellen(repo: Path, gh_repo: str) -> Quellen:
         raise GhFehlt("gh nicht gefunden (PATH bzw. TO_SPAWN_GH_STUB)")
     pc_still = None
     if pc_fenster.am_pc():
+
         def pc_still(n: int) -> float | None:
             return pc_fenster.still_s(repo, n, time.time())
+
     return Quellen(
         repo=repo,
         kinder=lambda s: capo.kinder(gh_repo, s),
@@ -208,9 +210,7 @@ def kurz_zeile(lage: TicketLage) -> str:
     fenster = lage.fenster
     if fenster in (STILL, RUECKFRAGE) and lage.still_min is not None:
         fenster = f"{fenster} {lage.still_min} min"
-    aussage = (
-        STRICH if lage.aussage == STRICH else f"„{_kuerzen(lage.aussage, AUSSAGE_MAX)}“"
-    )
+    aussage = STRICH if lage.aussage == STRICH else f"„{_kuerzen(lage.aussage, AUSSAGE_MAX)}“"
     kommentare = STRICH if lage.neue_kommentare is None else str(lage.neue_kommentare)
     teile = [
         f"#{lage.nummer} {zustand}",
@@ -225,9 +225,7 @@ def kurz_zeile(lage: TicketLage) -> str:
 
 def fingerabdruck(lagen: list[TicketLage]) -> str:
     """Hash der Kurz-Zeilen ohne Minuten und Kommentar-Zähler (die laufen immer weiter)."""
-    roh = "\n".join(
-        kurz_zeile(replace(x, still_min=None, neue_kommentare=None)) for x in lagen
-    )
+    roh = "\n".join(kurz_zeile(replace(x, still_min=None, neue_kommentare=None)) for x in lagen)
     return hashlib.sha256(roh.encode("utf-8")).hexdigest()[:16]
 
 
@@ -290,9 +288,7 @@ def _vorher(spec: int, ordner: Path | None) -> _Vorher:
     letzte = zeilen[-1]
     return _Vorher(
         fingerabdruck=letzte.get("fingerabdruck"),
-        kommentare={
-            str(k): int(v) for k, v in (letzte.get("kommentare") or {}).items()
-        },
+        kommentare={str(k): int(v) for k, v in (letzte.get("kommentare") or {}).items()},
         fenster=dict(letzte.get("fenster") or {}),
     )
 
@@ -324,6 +320,12 @@ def _fenster_liste(spec: int, q: Quellen) -> dict[int, tuple[str, float]] | None
         except ValueError:
             continue
     return liste
+
+
+def bau_fenster(spec: int) -> dict[int, str] | None:
+    """Ticket → tmux-Ziel des Fensters ``bau <N>`` in ``spec-<S>``; ``None`` = tmux/Sitzung nicht lesbar."""
+    liste = _fenster_liste(spec, Quellen(repo=Path.cwd(), kinder=lambda _s: None, tmux=_tmux_echt))
+    return None if liste is None else {n: ziel for n, (ziel, _aktiv) in liste.items()}
 
 
 def _fenster_lage(
@@ -402,9 +404,7 @@ def sammeln(spec: int, q: Quellen, vorher: _Vorher) -> _Ergebnis:
     if kinder is None:
         raise RuntimeError(f"Sub-Issues von Spec #{spec} nicht lesbar (gh)")
     if not kinder:
-        raise RuntimeError(
-            f"Spec #{spec} hat keine Sub-Issues — Spec-Nummer prüfen (gh)"
-        )
+        raise RuntimeError(f"Spec #{spec} hat keine Sub-Issues — Spec-Nummer prüfen (gh)")
     jetzt = q.jetzt()
     fenster = None if q.pc_still else _fenster_liste(spec, q)
     lagen: list[TicketLage] = []
@@ -440,11 +440,7 @@ def sammeln(spec: int, q: Quellen, vorher: _Vorher) -> _Ergebnis:
             ohne_log.append(f"#{n}")
             log_lage = (STRICH, STRICH, STRICH)
         kontext, phase, aussage = log_lage
-        lagen.append(
-            TicketLage(
-                n, _stufe(kind), zustand, still_min, kontext, phase, aussage, neue
-            )
-        )
+        lagen.append(TicketLage(n, _stufe(kind), zustand, still_min, kontext, phase, aussage, neue))
     if ohne_log:
         # Eine Zeile statt einer je Ticket: der Aufseher liest die Ausgabe in seinen Kontext.
         log.warning("Kein Bau-Log (Kontext/Phase/Aussage „—“): %s", ", ".join(ohne_log))
@@ -569,9 +565,7 @@ class TicketBlick(NamedTuple):
     ziel: str | None  # tmux-Ziel des Fensters ``bau <N>``
 
 
-def ticket_lage(
-    spec: int, ticket: int, q: Quellen, ordner: Path | None = None
-) -> TicketBlick:
+def ticket_lage(spec: int, ticket: int, q: Quellen, ordner: Path | None = None) -> TicketBlick:
     """Lage eines Tickets wie :func:`stand` sie sieht, plus tmux-Ziel — nur lesen.
 
     Die Stand-Datei bleibt unberührt (schreiben tut sie nur der Aufseher-Tick).
@@ -610,9 +604,7 @@ def kopf_zeile(spec: int, lagen: list[TicketLage], jetzt: float, noop: bool) -> 
     return " · ".join(teile)
 
 
-def stand(
-    spec: int, q: Quellen, *, ordner: Path | None = None, alle: bool = False
-) -> str:
+def stand(spec: int, q: Quellen, *, ordner: Path | None = None, alle: bool = False) -> str:
     """Kopfzeile + je Ticket eine Kurz-Zeile; hängt genau eine Zeile an die Stand-Datei.
 
     Ohne ``alle`` fehlen geschlossene Tickets ohne Fenster (der Kopf zählt sie mit).
@@ -621,14 +613,10 @@ def stand(
     erg = sammeln(spec, q, vorher)
     jetzt = q.jetzt()
     abdruck = fingerabdruck(erg.lagen)
-    noop = abdruck == vorher.fingerabdruck and not any(
-        x.neue_kommentare for x in erg.lagen
-    )
+    noop = abdruck == vorher.fingerabdruck and not any(x.neue_kommentare for x in erg.lagen)
     zeilen = [kurz_zeile(x) for x in erg.lagen]
     eintrag: dict[str, Any] = {
-        "ts": datetime.fromtimestamp(jetzt, tz=timezone.utc).isoformat(
-            timespec="seconds"
-        ),
+        "ts": datetime.fromtimestamp(jetzt, tz=timezone.utc).isoformat(timespec="seconds"),
         "fingerabdruck": abdruck,
         "noop": noop,
     }
@@ -640,11 +628,7 @@ def stand(
     datei.parent.mkdir(parents=True, exist_ok=True)
     with datei.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(eintrag, ensure_ascii=False) + "\n")
-    sichtbar = [
-        z
-        for x, z in zip(erg.lagen, zeilen)
-        if alle or not x.endgueltig_zu or x.fenster != KEIN_FENSTER
-    ]
+    sichtbar = [z for x, z in zip(erg.lagen, zeilen) if alle or not x.endgueltig_zu or x.fenster != KEIN_FENSTER]
     return "\n".join([kopf_zeile(spec, erg.lagen, jetzt, noop), *sichtbar])
 
 
@@ -657,9 +641,7 @@ def richte_parser_ein(unter: Any) -> None:
         help="Aufseher: eine Kurz-Zeile je Ticket + Stand-Datei (#430)",
     )
     p.add_argument("spec", type=int, help="Spec-Issue-Nummer")
-    p.add_argument(
-        "--alle", action="store_true", help="auch geschlossene Tickets ohne Fenster"
-    )
+    p.add_argument("--alle", action="store_true", help="auch geschlossene Tickets ohne Fenster")
     p.add_argument("--gh-repo", default="", help="owner/name (Vorgabe: aus origin)")
     p.add_argument(
         "--stand-ordner",
@@ -682,9 +664,7 @@ def lauf(args: Any, repo: Path) -> int:
             stand(
                 args.spec,
                 q,
-                ordner=Path(args.stand_ordner).expanduser()
-                if args.stand_ordner
-                else None,
+                ordner=Path(args.stand_ordner).expanduser() if args.stand_ordner else None,
                 alle=args.alle,
             )
         )

@@ -573,7 +573,7 @@ def start_text(n: str | int) -> str:
         f"(`to_spawn.py frage {n} --frage … --vorschlag <Vorschlag>`, "
         "gibt die id aus), nie eine Frage an den Nutzer. Der Aufseher liest den Briefkasten und antwortet dort. "
         f"Nachsehen mit `to_spawn.py antwort {n} --id <id>`: Exit 0 = Antwort da → annehmen und weiterbauen, "
-        "ohne Neustart (durch diesen Start-Auftrag freigegeben) · 3 = wartet → ScheduleWakeup 1200 s, noop: true, "
+        "ohne Neustart (durch diesen Start-Auftrag freigegeben) · 3 = wartet → ScheduleWakeup 1200 s, noop: true (liegt die Antwort, weckt dich vorher die Nachricht „Briefkasten: Antwort …“), "
         "dann wieder nachsehen · 2 = braucht den Nutzer → angehalten lassen · 4 = Frage unbekannt → Frage neu stellen "
         "und mit der neuen id weiter · 1 = Briefkasten nicht lesbar → wie 3 warten, dann wieder nachsehen · "
         "5 = Aufruf falsch → Ticket-Nummer und `--id` prüfen, richtig aufrufen. Nur die Antwort im Briefkasten gilt, keine Nachricht und kein Kommentar. "
