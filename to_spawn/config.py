@@ -33,6 +33,8 @@ import copy
 import json
 import logging
 import os
+import re
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -239,6 +241,72 @@ def worktree_pfad(ticket: str | int, repo: Path | None = None) -> str:
     # sähen sonst C:/dev statt des vorgegebenen Ordners); ohne es die Plattform-Vorgabe.
     basis = os.environ.get("BAU_WT_DIR") or ("C:/dev" if sys.platform == "win32" else "~/wt")
     return f"{Path(basis).expanduser().as_posix().rstrip('/')}/wt-{ticket}"
+
+
+def _adresse_normal(url: str) -> str:
+    """``host/pfad`` in Kleinbuchstaben: ssh-/https-Schreibweise, ``.git``, End-Schrägstrich egal (#499)."""
+    url = url.strip().replace("\\", "/")
+    if "://" in url:
+        url = url.split("://", 1)[1]
+    elif re.match(r"^[^/@]*@?[^/:]+:(?!/)", url):  # scp-Form ``git@host:pfad``
+        url = url.replace(":", "/", 1)
+    url = url.split("@", 1)[-1] if "@" in url.split("/", 1)[0] else url
+    return url.rstrip("/").removesuffix(".git").rstrip("/").lower()
+
+
+def _repo_kennung(ordner: Path) -> str | None:
+    """Wem gehört ``ordner``? ``origin``-Adresse (ohne ``.git``), ohne ``origin`` der echte
+    gemeinsame Git-Ordner; ``None`` = kein Git-Ordner. Ein anderer Klon desselben Repos hat
+    dieselbe Kennung (dieselben Tickets) — gleiche Regel wie ``spawn_srv.sh`` für ``spec-<S>`` (#457).
+    """
+
+    def git(*args: str) -> str | None:
+        try:
+            lauf = subprocess.run(
+                ["git", "-C", str(ordner), *args],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                check=False,
+            )
+        except OSError as fehler:
+            log.warning("git in %s nicht startbar: %s", ordner, fehler)
+            return None
+        return lauf.stdout.strip() if lauf.returncode == 0 else None
+
+    url = git("remote", "get-url", "origin")
+    if url:
+        return _adresse_normal(url)
+    gemeinsam = git("rev-parse", "--path-format=absolute", "--git-common-dir")
+    return os.path.normcase(os.path.realpath(gemeinsam)) if gemeinsam else None
+
+
+def worktree_fremd(ticket: str | int, repo: Path | None = None) -> str | None:
+    """Gehört der Ordner aus :func:`worktree_pfad` schon einem anderen Repo? (#499)
+
+    Ohne ``worktree_basis`` teilen sich zwei Repos ``~/wt/wt-<N>``, und jedes frische Repo
+    beginnt bei Ticket #1. Rückgabe: eine Zeile Grund, wenn der Ordner ein Git-Worktree
+    eines anderen Repos ist; sonst ``None`` (Ordner fehlt, eigenes Repo, anderer Klon
+    desselben Repos, oder kein Git-Ordner — dann entscheidet der Start wie bisher).
+    Laufende ``wt-<N>`` des eigenen Repos werden so weiter gefunden (kein neuer Pfad).
+    ponytail: verweigert nur, weicht nicht aus; Ausweg ``worktree_basis`` je Repo (Einrichter).
+    """
+    if repo is None and os.environ.get("TO_SPAWN_REPO"):
+        repo = Path(os.environ["TO_SPAWN_REPO"]).expanduser()
+    wt = Path(worktree_pfad(ticket, repo)).expanduser()
+    if not wt.is_dir():
+        return None
+    besitzer = _repo_kennung(wt)
+    eigen = _repo_kennung(repo or Path.cwd())
+    if besitzer is None or eigen is None or besitzer == eigen:
+        return None
+    return (
+        f"Ordner {wt} ist schon Worktree eines anderen Repos ({besitzer}), nicht {eigen} — "
+        "gleiche Ticket-Nummer, gleicher Ordner. Erst das andere Ticket beenden oder in "
+        "der Repo-Konfig .to-spawn/config.json ``worktree_basis`` setzen (z. B. "
+        f"{worktree_basis_vorgabe(repo or Path.cwd())})."
+    )
 
 
 def worktree_basis_vorgabe(repo: Path) -> str:
