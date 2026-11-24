@@ -167,3 +167,30 @@ def test_schnell_ohne_code_datei_bleibt_gruen(tmp_path: Path) -> None:
     urteil = pruef.pruefen(repo, "base", "HEAD", art="schnell")
     assert urteil.exit == 0, urteil.zeile
     assert not _voll_lief(urteil.zeile)
+
+
+# Übergangsregel (#425, Zusatz Leit-Session): Repo ohne eingerichtete Gruppe ``pruefung`` läuft wie
+# vor Teil B; laufende Specs in solchen Repos brechen nicht am neuen Gate-Fehler.
+_NICHT_EINGERICHTET = "Prüfung nicht eingerichtet (pruefung.schnell fehlt)"
+
+
+def test_ohne_gruppe_pruefung_alter_ablauf_mit_warnung(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    repo = _probe(tmp_path / "p")
+    with caplog.at_level(logging.WARNING):
+        assert einreichen._pruefung(repo, "base") == ""
+    zeile = _letzte_zeile(repo)
+    assert zeile["urteil"] == "grün", zeile
+    assert "art" not in zeile, "nicht eingerichtet: Leiter ohne art wie vor Teil B"
+    assert _NICHT_EINGERICHTET in zeile.get("warnung", ""), zeile
+    treffer = [r for r in caplog.records if _NICHT_EINGERICHTET in r.getMessage()]
+    assert len(treffer) == 1, [r.getMessage() for r in caplog.records]
+
+
+def test_nur_komplett_ohne_auswahl_mit_code_ist_gate_fehler(tmp_path: Path) -> None:
+    repo = _probe(tmp_path / "p", _NUR_KOMPLETT)
+    with pytest.raises(einreichen._Rot) as rot:
+        einreichen._pruefung(repo, "base")
+    assert "Exit 2" in rot.value.text and _KEINE_AUSWAHL in rot.value.text
+    zeile = _letzte_zeile(repo)
+    assert zeile["art"] == "schnell" and "warnung" not in zeile
+    assert not _voll_lief(zeile)
