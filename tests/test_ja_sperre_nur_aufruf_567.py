@@ -1,7 +1,7 @@
 """#567: Die Ja-Sperre sperrt echte Aufrufe, nicht das Wort als Text.
 
-Erlaubt sind genau zwei Fälle: der Rumpf eines heredocs, der per ``cat``/``tee`` in eine Datei
-geht, und das Suchmuster von ``grep``/``rg``. Jeder Umgehungsweg bleibt gesperrt.
+Erlaubt sind genau zwei Fälle, nur im Bash-Werkzeug: ``cat > datei <<'WORT'`` + Rumpf und eine
+einzelne ``grep``/``rg``-Suche in der engen Form. Jeder Umgehungsweg bleibt gesperrt.
 """
 
 from __future__ import annotations
@@ -17,6 +17,12 @@ from to_spawn import hooks
 
 def _enc(text: str) -> str:
     return base64.b64encode(text.encode("utf-16-le")).decode()
+
+
+def _sperrt(befehl: str, werkzeug: str = "Bash") -> bool:
+    """Ganzer Hook-Weg mit Werkzeug-Namen: True bei Exit 2."""
+    roh = json.dumps({"tool_name": werkzeug, "tool_input": {"command": befehl}})
+    return hooks.hook_ja_sperre(io.StringIO(roh), io.StringIO()) == 2
 
 
 @pytest.mark.parametrize(
@@ -54,7 +60,7 @@ def _enc(text: str) -> str:
     ],
 )
 def test_umgehung_bleibt_gesperrt(befehl: str) -> None:
-    assert hooks.ja_aufrufe(befehl), befehl
+    assert _sperrt(befehl), befehl
 
 
 @pytest.mark.parametrize(
@@ -74,7 +80,7 @@ def test_umgehung_bleibt_gesperrt(befehl: str) -> None:
     ],
 )
 def test_heredoc_in_shell_bleibt_gesperrt(befehl: str) -> None:
-    assert hooks.ja_aufrufe(befehl), befehl
+    assert _sperrt(befehl), befehl
 
 
 @pytest.mark.parametrize(
@@ -88,7 +94,7 @@ def test_heredoc_in_shell_bleibt_gesperrt(befehl: str) -> None:
     ],
 )
 def test_suche_mit_aufruf_bleibt_gesperrt(befehl: str) -> None:
-    assert hooks.ja_aufrufe(befehl), befehl
+    assert _sperrt(befehl), befehl
 
 
 @pytest.mark.parametrize(
@@ -100,7 +106,7 @@ def test_suche_mit_aufruf_bleibt_gesperrt(befehl: str) -> None:
     ],
 )
 def test_heredoc_in_datei_erlaubt(befehl: str) -> None:
-    assert not hooks.ja_aufrufe(befehl), befehl
+    assert not _sperrt(befehl), befehl
 
 
 @pytest.mark.parametrize(
@@ -108,14 +114,16 @@ def test_heredoc_in_datei_erlaubt(befehl: str) -> None:
     [
         "grep -rn nutzer-antwort .",
         "grep -n 'to_spawn.py ja' docs/x.md",
-        'rg -n "~/.claude/bin/ja" .',
+        'rg -n "/.claude/bin/ja" .',
         "grep -e nutzer-antwort -e ja to_spawn.py",
         "rg ja to_spawn.py",
-        "grep -A 3 -E 'nutzer-antwort|ja' to_spawn/hooks.py",
+        "grep -A 3 -E 'nutzer-antwort' to_spawn/hooks.py",
+        "grep -rn ja docs",
+        "rg -n 'to_spawn.py ja' .",
     ],
 )
 def test_suchmuster_erlaubt(befehl: str) -> None:
-    assert not hooks.ja_aufrufe(befehl), befehl
+    assert not _sperrt(befehl), befehl
 
 
 @pytest.mark.parametrize(
@@ -153,9 +161,68 @@ def test_suchmuster_erlaubt(befehl: str) -> None:
     ],
 )
 def test_enge_form_verlassen_bleibt_gesperrt(befehl: str) -> None:
-    assert hooks.ja_aufrufe(befehl), befehl
+    assert _sperrt(befehl), befehl
 
 
 def test_hook_laesst_heredoc_in_datei_durch() -> None:
     roh = json.dumps({"tool_name": "Bash", "tool_input": {"command": "cat > n.md <<'EOF'\nja 5\nEOF"}})
     assert hooks.hook_ja_sperre(io.StringIO(roh), io.StringIO()) == 0
+
+
+@pytest.mark.parametrize(
+    "befehl",
+    [
+        # Runde 3, Fund 1: shlex-Kommentar mitten im Wort, bash kennt ihn dort nicht
+        "grep a#; ja 5",
+        "grep a#;ja 5 f",
+        "rg x#&& ja 5 .",
+        # Fund 2: typografische Anführungszeichen (PowerShell nimmt sie als echte)
+        "grep 'x\u2019;ja 5;\u2019'",
+        'grep "x\u201d;ja 5;\u201c"',
+        # Fund 3: rg startet ein Programm
+        "rg --hostname-bin=ja --hyperlink-format=file://{host}{path} x .",
+        "rg --hostname-bin ja x .",
+        # Positivliste: alles außerhalb sperrt
+        "grep --unbekannt nutzer-antwort .",
+        "rg --pr ja x .",
+        "grep nutzer-antwort f & ja 5",
+        "grep nutzer-antwort f || ja 5",
+        "grep nutzer-antwort f |& ja 5",
+        "grep nutzer-antwort f\r\nja 5",
+        "grep nutzer-antwort\x0cf",
+        "grep nutzer-antwort {a,b}",
+        "grep $'nutzer-antwort' f",
+        "grep\u00a0nutzer-antwort f",
+        "grep nutzer-antwort\u00a0f",
+        "grep  nutzer-antwort f",
+        "grep 'nutzer-antwort*' f",
+        'grep "nutzer-antwort!" f',
+        # heredoc: Begrenzer/Ziel außerhalb des Zeichenvorrats, CR, NUL
+        "cat > n.md <<'EOF'\r\nja 5\r\nEOF",
+        "cat > n.md <<'EOF'\nja 5\nEOF\x00\nja 5\nEOF",
+        "cat > n\u00e4.md <<'EOF'\nja 5\nEOF",
+        "cat > n.md <<'E\u00d6F'\nja 5\nE\u00d6F",
+        "cat\u00a0> n.md <<'EOF'\nja 5\nEOF",
+    ],
+)
+def test_runde3_keine_ausnahme(befehl: str) -> None:
+    """Außerhalb der Positivliste: keine Ausnahme, der Hook urteilt wie die allgemeine Prüfung."""
+    assert not hooks._bash_text_ohne_aufruf(befehl), repr(befehl)
+    assert _sperrt(befehl) == hooks.ja_aufrufe(befehl), repr(befehl)
+
+
+@pytest.mark.parametrize("befehl", ["grep a#; ja 5", "grep a#;ja 5 f", "rg x#&& ja 5 ."])
+def test_runde3_kommentarzeichen_bleibt_gesperrt(befehl: str) -> None:
+    assert _sperrt(befehl), befehl
+
+
+@pytest.mark.parametrize(
+    "befehl",
+    [
+        "cat > n.md <<'EOF'\nja 5\nEOF",
+        "grep -rn nutzer-antwort .",
+        "rg ja to_spawn.py",
+    ],
+)
+def test_powershell_werkzeug_bekommt_keine_ausnahme(befehl: str) -> None:
+    assert _sperrt(befehl, "PowerShell"), befehl
