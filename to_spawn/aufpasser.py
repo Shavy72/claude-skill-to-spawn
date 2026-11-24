@@ -564,23 +564,18 @@ def frage_am_prompt(text: str) -> bool:
 #: „Wartet auf Nachfolger“ (#381): Session hält das Ticket für übergeben, obwohl keiner kommt.
 NACHFOLGER_WARTEN = re.compile(
     r"\bwarte\w*\b[^.\n]{0,60}?\bauf\b[^.\n]{0,40}?"
-    r"(?:\b(?:neue|nächste|andere)\w*\s+Session|Folge-?\s?session|Nachfolger|Übergabe|Ablösung)",
+    r"(?:\b(?:neue|nächste)\w*\s+Session|Folge-?\s?session|Nachfolger)",
     re.IGNORECASE,
 )
-#: Echte Ablösung nennt ihren committeten Handoff — die startet der Launcher (#542), kein Anstoß.
-ECHTE_ABLOESUNG = re.compile(r"HANDOFF_\S+\.md")
 
 
 def wartet_auf_nachfolger(text: str) -> bool:
     """Sagt die Session am Prompt, sie warte auf eine neue Session/einen Nachfolger (#381)?
 
-    Einen Nachfolger startet nur die eigene Ablösung (Handoff-Commit); ohne genannten
-    Handoff wartet sie umsonst und bekommt den frühen Anstupser wie eine Frage (#485).
+    Nur der Wortlaut; ob eine echte Ablösung aussteht, weiß allein
+    :func:`eigener_handoff.aktuell` (siehe :meth:`Aufpasser.wartet_umsonst`).
     """
-    zeilen = _zeilen_am_prompt(text)[-3:]
-    if any(ECHTE_ABLOESUNG.search(z) for z in zeilen):
-        return False
-    return any(NACHFOLGER_WARTEN.search(z) for z in zeilen)
+    return any(NACHFOLGER_WARTEN.search(z) for z in _zeilen_am_prompt(text)[-3:])
 
 
 def _zeilen_am_prompt(text: str) -> list[str]:
@@ -2138,7 +2133,7 @@ class Aufpasser:
         ):
             return
         # Kurze Schwelle nur fürs erste Anstupsen; Fortsetzen (Kill) bleibt bei hang_min ≥ 61.
-        kurz = int(e.get("stufe", 0)) == 0 and (frage_am_prompt(text) or wartet_auf_nachfolger(text))
+        kurz = int(e.get("stufe", 0)) == 0 and (frage_am_prompt(text) or self.wartet_umsonst(text, ticket, repo))
         schwelle = FRAGE_PROMPT_MIN if kurz else self.e.hang_min
         if arbeitend or still_min < schwelle:
             return
@@ -2236,6 +2231,16 @@ class Aufpasser:
         e["stupser"].append(self.jetzt)
         e.update(hash=pane_hash(self.pane_text(f.ziel)), seit=self.jetzt)
         return True
+
+    def wartet_umsonst(self, text: str, ticket: int | None, repo: Path) -> bool:
+        """Session wartet laut Text auf einen Nachfolger, ohne eigenen Handoff im Repo (#381).
+
+        Liegt ein gültiger eigener Handoff (fällig oder nicht), ist die Ablösung echt und
+        :meth:`folge_ab_handoff` startet den Nachfolger — dann kein früher Anstupser.
+        """
+        if ticket is None or not wartet_auf_nachfolger(text):
+            return False
+        return eigener_handoff.aktuell(repo, ticket) is None
 
     def _frage_haelt(self, f: Fenster, ticket: int, repo: Path, daten: dict) -> bool:
         """Offene Frage des Tickets im Briefkasten hält das Fenster, auch bei Platznot (#416).

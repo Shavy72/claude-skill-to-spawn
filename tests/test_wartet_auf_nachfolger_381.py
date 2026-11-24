@@ -18,7 +18,7 @@ from pathlib import Path
 import pytest
 from test_aufpasser_236 import SITZUNG, SOCKET, Welt, pane_text, tmux, welt  # noqa: F401 — Fixture
 
-from to_spawn import aufpasser
+from to_spawn import aufpasser, eigener_handoff
 
 SKILL = Path(__file__).resolve().parent.parent
 FELD = "─" * 30 + "\n❯ \n" + "─" * 30 + "\n  Statuszeile\n"
@@ -47,9 +47,45 @@ def test_wartet_auf_nachfolger_erkannt(text: str) -> None:
     assert aufpasser.wartet_auf_nachfolger(text + "\n\n" + FELD), text
 
 
-@pytest.mark.parametrize("text", [*ARBEITET, ECHTE_ABLOESUNG])
-def test_arbeit_und_echte_abloesung_nicht_erkannt(text: str) -> None:
+#: Zulässiges Warten (Fix-Runde 1): Ablösung, Mensch, Prüfer, andere Session.
+ZULAESSIG = [
+    "Handoff committet. Ich warte auf die Ablösung durch den Launcher.",
+    "Ich warte auf die Übergabe des Menschen.",
+    "Ich warte auf die andere Session (Review).",
+    "Ablösung ausstehend, nichts tun.",
+    "Wartet auf den Prüfer.",
+    "Wartet auf den Menschen.",
+]
+
+
+@pytest.mark.parametrize("text", [*ARBEITET, *ZULAESSIG])
+def test_arbeit_und_zulaessiges_warten_nicht_erkannt(text: str) -> None:
     assert not aufpasser.wartet_auf_nachfolger(text + "\n\n" + FELD), text
+
+
+def _aufpasser(tmp_path: Path) -> aufpasser.Aufpasser:
+    return aufpasser.Aufpasser(aufpasser.Einstellungen(zustand=tmp_path / "stand.json", trocken=True))
+
+
+def test_wartet_umsonst_ohne_handoff_im_repo(tmp_path: Path) -> None:
+    """Kein eigener Handoff im Repo (echte Abfrage) ⇒ Warten ist umsonst ⇒ Anstoß-Fall."""
+    a = _aufpasser(tmp_path)
+    assert a.wartet_umsonst(WARTET[1] + "\n\n" + FELD, 7, tmp_path)
+    assert not a.wartet_umsonst(ZULAESSIG[0] + "\n\n" + FELD, 7, tmp_path)
+    assert not a.wartet_umsonst(WARTET[1] + "\n\n" + FELD, None, tmp_path)
+
+
+def test_echte_abloesung_am_repo_erkannt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Eigener Handoff liegt (Regel aus ``eigener_handoff``) ⇒ kein Anstoß, auch ohne Dateinamen im Text."""
+    gesehen: list[int] = []
+
+    def aktuell(repo: Path, ticket: int) -> eigener_handoff.Treffer:
+        gesehen.append(ticket)
+        return eigener_handoff.Treffer("docs/handoffs/HANDOFF_2026-11-24_7.md", time.time())
+
+    monkeypatch.setattr(eigener_handoff, "aktuell", aktuell)
+    assert not _aufpasser(tmp_path).wartet_umsonst(ECHTE_ABLOESUNG + "\n\n" + FELD, 7, tmp_path)
+    assert gesehen == [7]
 
 
 def test_weit_oben_im_verlauf_zaehlt_nicht() -> None:
@@ -97,8 +133,10 @@ def test_wartende_session_nach_gruener_schlange_angestupst(welt: Welt) -> None:
 
 
 @pytest.mark.braucht("tmux")
-def test_echte_abloesung_nicht_angestupst(welt: Welt) -> None:
-    _fenster(welt, "bau 9002", "HANDOFF_2026-11-24_9002.md committet, warte auf die Folgesession.")
+def test_echte_abloesung_nicht_angestupst(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
+    treffer = eigener_handoff.Treffer("docs/handoffs/HANDOFF_2026-11-24_9002.md", time.time())
+    monkeypatch.setattr(eigener_handoff, "aktuell", lambda repo, ticket: treffer)
+    _fenster(welt, "bau 9002", "Ablösung ausstehend, warte auf die Folgesession.")
     _still_seit(welt, "bau 9002", 6)
     assert welt.lauf() == 0
     time.sleep(0.5)
