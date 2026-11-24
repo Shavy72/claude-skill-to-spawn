@@ -187,6 +187,8 @@ def _nur_aufseher_dateien(ordner: Path, haupt: str) -> None:
 
 def _volle_sha(ordner: Path, sha: str) -> str:
     """Volle SHA (40 Hex) für ``--match-head-commit``; kurze wird aufgeweitet, Unauflösbares → ``_Rot`` (#464)."""
+    if len(sha) == 40 and all(z in "0123456789abcdef" for z in sha):
+        return sha
     try:
         voll = _git(ordner, "rev-parse", "--verify", "--quiet", f"{sha}^{{commit}}")
     except _Rot:
