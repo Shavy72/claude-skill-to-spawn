@@ -6,10 +6,11 @@
 #
 # Kopiert probe/gemeinsam/ und darüber probe/<variante>/ nach <ziel-ordner>, setzt die Ports ein
 # (Vorgabe 18501 lokal, 18502 Staging, 18503 Übungs-Live), macht `git init` und einen ersten
-# Commit. Mit --github: privates Repo anlegen und main pushen, sonst kein GitHub-Zugriff. Der Ziel-Ordner muss fehlen oder leer sein.
+# Commit. Das Beschluss-Protokoll der Probe-Spec liegt danach als docs/GRILL_<heute>_probe.md
+# im Repo (Quelle probe/gemeinsam/docs/GRILL_probe.md). Mit --github: privates Repo anlegen und main pushen, sonst kein GitHub-Zugriff. Der Ziel-Ordner muss fehlen oder leer sein.
 set -euo pipefail
 
-hilfe() { sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'; }
+hilfe() { sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'; }
 fehler() { echo "anlegen.sh: $*" >&2; exit 2; }
 
 [ $# -ge 2 ] || { hilfe >&2; exit 2; }
@@ -63,6 +64,8 @@ find "$ziel" -type f -exec sed -i \
   -e "s/@@LIVE_PORT@@/$live_port/g" \
   -e "s/@@VARIANTE@@/$variante/g" \
   -e "s/@@STAGING_TEXT@@/$staging_text/g" {} +
+# Beschluss-Protokoll der Probe-Spec mit Tagesdatum (Format docs/GRILL_<datum>_<thema>.md).
+mv "$ziel/docs/GRILL_probe.md" "$ziel/docs/GRILL_$(date +%F)_probe.md"
 
 cd "$ziel"
 variante_zweig=main
