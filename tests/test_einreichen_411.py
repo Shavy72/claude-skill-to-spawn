@@ -147,7 +147,10 @@ def test_aufseher_und_abloese_sop_reichen_ein() -> None:
     import wache  # noqa: PLC0415
 
     assert "to_spawn.py einreichen" in anleitung.ABLOESE_SOP
-    assert wache.PROMPT.count("einreichen {S}") >= 2
+    assert wache.PROMPT.count("einreichen {S}") >= 4
+    assert "committen + pushen" not in wache.PROMPT
+    assert "[skip ci], Push." not in wache.PROMPT
+    assert "`git diff --quiet`), Push." not in wache.PROMPT
 
 
 @pytest.mark.parametrize("art", ["pushen", "mergen", "merge", "push"])
@@ -229,7 +232,7 @@ def test_fremder_zweig_ist_aufruf_falsch(welt: dict[str, Path]) -> None:
 
 def test_projekt_mit_eigenem_einreich_dienst_nur_ticket_zweig(welt: dict[str, Path]) -> None:
     klon = welt["klon"]
-    _commit(klon, "scripts/hooks/install_git_hooks.sh", "#!/bin/sh\n", "chore: eigene Sperre")
+    _commit(klon, "scripts/hooks/install_git_hooks.sh", "# eigene Sperre\n", "chore: eigene Sperre")
     _git(klon, "push", "-q", "origin", "main")
     vorher = _remote_main(welt)
     wt = _ticket_wt(welt)
