@@ -46,6 +46,14 @@ elif args[:2] == ["pr", "merge"]:
     git("checkout", "-q", "-B", stand["haupt"], "origin/" + stand["haupt"], cwd=tmp)
     git("merge", "-q", "--no-ff", "-m", "Merge pull request #41", head, cwd=tmp)
     git("push", "-q", "origin", stand["haupt"], cwd=tmp)
+    log.with_suffix(".merged").write_text(head, encoding="utf-8")
+    if os.environ.get("EINREICHEN_SPERRE_NACH_MERGE"):  # #476: paralleles Ticket hält origin/<haupt>
+        common = Path(git("rev-parse", "--path-format=absolute", "--git-common-dir"))
+        sperre = common / "refs" / "remotes" / "origin" / (stand["haupt"] + ".lock")
+        sperre.parent.mkdir(parents=True, exist_ok=True)
+        sperre.write_text("", encoding="utf-8")
+elif args[:2] == ["pr", "view"]:
+    print("MERGED" if log.with_suffix(".merged").exists() else "OPEN")
 else:
     sys.exit(9)
 """
@@ -294,3 +302,50 @@ def test_werkzeug_bricht_ab_meldet_rot_statt_traceback(
     erg = einreichen.einreichen(ordner, "1" if stelle == "cat-file" else "7")
     assert erg.exit == 1
     assert erg.text
+
+
+# --- Parallele Tickets im selben Klon (#476, F15) --------------------------------------------
+
+
+def test_sperre_auf_origin_nach_merge_meldet_eingereicht(
+    welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Hält ein paralleles Ticket ``origin/main`` gesperrt, zählt der echte Pull-Request-Stand.
+
+    Die gh-Attrappe legt nach dem Merge die Ref-Sperre im gemeinsamen Git-Ordner an — genau
+    wie ein gleichzeitiges ``git fetch`` eines anderen Tickets im selben Klon.
+    """
+    monkeypatch.setenv("EINREICHEN_SPERRE_NACH_MERGE", "1")
+    wt = _ticket_wt(welt)
+    sha = _commit(wt, "README.md", "plus rechnet\n", "docs: plus erklärt (#7)")
+    erg = _einreichen(wt, "7")
+    assert erg.returncode == 0, erg.stdout + erg.stderr
+    assert erg.stdout.startswith("EINGEREICHT"), erg.stdout
+    assert "#41" in erg.stdout
+    assert _ist_vorfahr(welt["remote"], sha, _remote_main(welt))
+
+
+def test_sperre_beim_fetch_wird_kurz_wiederholt(welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch) -> None:
+    """Vorübergehende Ref-Sperre beim ersten ``fetch``: kurz warten, erneut versuchen (#476)."""
+    from to_spawn import einreichen
+
+    wt = _ticket_wt(welt)
+    sha = _commit(wt, "README.md", "x\n", "docs: x (#7)")
+    echt = subprocess.run
+    fehlschlaege = {"fetch": 0}
+
+    def lauf(befehl: list[str], *a: object, **k: object) -> object:
+        if "fetch" in befehl and fehlschlaege["fetch"] == 0:
+            fehlschlaege["fetch"] += 1
+            return subprocess.CompletedProcess(
+                befehl, 1, "", "error: cannot lock ref 'refs/remotes/origin/main': Unable to create "
+                "'.git/refs/remotes/origin/main.lock': File exists."
+            )  # fmt: skip
+        return echt(befehl, *a, **k)
+
+    monkeypatch.setattr(einreichen.subprocess, "run", lauf)
+    monkeypatch.setattr(einreichen, "SPERRE_PAUSE_S", 0.0, raising=False)
+    erg = einreichen.einreichen(wt, "7")
+    assert erg.exit == 0, erg.text
+    assert fehlschlaege["fetch"] == 1
+    assert _ist_vorfahr(welt["remote"], sha, _remote_main(welt))
