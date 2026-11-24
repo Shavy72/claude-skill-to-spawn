@@ -62,8 +62,12 @@ def anhaengen(
     umfang: str | None = None,
     dateien: Sequence[str] = (),
     trocken: bool = False,
+    pruefen: bool = True,
 ) -> Ergebnis:
     """Issue ``ticket`` an Spec ``spec`` hängen (Kanten, Manifest, Unter-Issue).
+
+    ``pruefen=False`` lässt die Manifest-Prüfung am Ende aus — für Aufrufer, die sie
+    selbst einmal für die ganze Spec machen (``einrichtungs_ticket``, sonst N× ``gh``).
 
     ``schaetzung_k``/``umfang`` sind Pflicht, solange das Ticket nicht im Manifest
     steht; sonst überschreiben sie nur, was angegeben ist. ``trocken`` zeigt die
@@ -101,6 +105,8 @@ def anhaengen(
                 )
                 return Ergebnis(EXIT_FEHLER, zeilen)
             zeilen.append(f"ok  {schritt.text}")
+    if not pruefen:
+        return Ergebnis(0, zeilen)
     bericht = manifest.pruefe(repo, s, konfig)
     zeilen.extend(bericht.text().splitlines())
     return Ergebnis(0 if bericht.sauber else manifest.EXIT_WEIGERUNG, zeilen)
@@ -162,6 +168,19 @@ def _planen(
             )
         if b not in native:
             schritte.append(_kante(repo, slug, n, b, b_daten["id"]))
+
+    # Offenes Einrichtungs-Ticket der Spec (#410): jedes andere offene Ticket wartet darauf.
+    t0 = manifest.einrichtungs_ticket(daten)
+    if (
+        t0
+        and t0 != n
+        and t0 not in blocker
+        and t0 not in native
+        and _offen(ticket_daten)
+    ):
+        t0_daten = _issue(repo, slug, t0)
+        if _offen(t0_daten):
+            schritte.append(_kante(repo, slug, n, t0, t0_daten["id"]))
 
     if label not in _labels(ticket_daten):
         for t in sorted(daten["tickets"], key=manifest.ticket_schluessel):

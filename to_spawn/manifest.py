@@ -120,6 +120,15 @@ def checkpoint_label(konfig: dict[str, Any]) -> str:
     return str(konfig.get("regularien", {}).get("checkpoint_label") or "checkpoint:human")
 
 
+def einrichtungs_ticket(daten: dict[str, Any]) -> str | None:
+    """Nummer des Einrichtungs-Tickets (Eintrag mit ``einrichtung: true``, #410); ``None`` = keins."""
+    tickets = daten.get("tickets") if isinstance(daten.get("tickets"), dict) else {}
+    return next(
+        (n for n, e in tickets.items() if isinstance(e, dict) and e.get("einrichtung") is True),
+        None,
+    )
+
+
 def lade_manifest_mit_doppelten(repo: Path, spec: int | str) -> tuple[dict[str, Any], list[str]]:
     """Wie :func:`lade_manifest`, zusätzlich die doppelt belegten Ticket-Nummern."""
     datei = manifest_pfad(repo, spec)
