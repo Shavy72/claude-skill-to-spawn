@@ -43,7 +43,8 @@ jobs:
         run: sudo apt-get update -q && sudo apt-get install -y -q tmux
 
       - name: Test-Abhängigkeiten
-        run: python -m pip install -r tests/requirements.txt
+        # ruff: test_pruef_sofort_3b verlangt es, sobald CI gesetzt ist.
+        run: python -m pip install -r tests/requirements.txt ruff
 
       - name: git-Identität für Tests
         run: |
@@ -55,7 +56,40 @@ jobs:
         run: |
           start=$(date +%s)
           set +e
-          python -m pytest tests -q -n auto -p no:cacheprovider --junitxml=junit.xml
+          # Ausgelassen (#537): Tests, die private Teile des Entwickler-Rechners voraussetzen —
+          # Plugin context-mode unter ~/.claude/plugins, Hooks unter ~/.claude/hooks/smart-zone,
+          # claude-CLI im PATH. Auf dem Runner fehlt all das bewusst (#232).
+          aus=(
+            # Plugin context-mode fehlt
+            "tests/test_aufpasser_236.py::test_bau_dry_run_zeigt_session_id"
+            "tests/test_aufpasser_236.py::test_bau_dry_run_resume_ohne_session_id"
+            "tests/test_aufpasser_236.py::test_bau_resume_wartet_nicht_auf_blocker"
+            "tests/test_aufpasser_236.py::test_bau_neue_session_schreibt_id"
+            "tests/test_aufpasser_236_review.py::test_r1_wache_resume_ohne_transkript_bricht_ab"
+            "tests/test_aufpasser_236_review.py::test_r2_bau_schreibt_sessions_datei"
+            "tests/test_respawn_431_konfig.py::test_bau_mit_respawn_schaltern_gibt_volle_konfiguration"
+            "tests/test_review_pflicht_skills.py::test_review_skills_in_bau_session_an[vorlage]"
+            "tests/test_review_pflicht_skills.py::test_manifest_kann_review_skills_nicht_abwaehlen"
+            "tests/test_review_pflicht_skills.py::test_temp_ordner_je_start_eindeutig_und_erkannt"
+            "tests/test_umzug_205.py::test_kind_session_erbt_kein_to_spawn_repo[bau-901]"
+            "tests/test_umzug_205.py::test_modell_kommt_aus_der_repo_konfig[bau-901-claude-probe-ticket]"
+            "tests/test_umzug_205.py::test_modell_kommt_aus_der_repo_konfig[wache-900-claude-probe-waechter]"
+            "tests/test_umzug_205.py::test_probelauf_legt_keine_konfig_an[bau-901]"
+            "tests/test_umzug_205.py::test_probelauf_legt_keine_konfig_an[wache-900]"
+            "tests/test_umzug_212.py::test_bau_beendet_session_nach_umzug_ohne_staffel"
+            "tests/test_umzug_212.py::test_bau_loescht_alte_anfragen"
+            "tests/test_umzug_212.py::test_bau_umzug_startet_mit_handoff_vom_branch"
+            "tests/test_umzug_212.py::test_bau_umzug_sha_liest_genau_diesen_stand"
+            "tests/test_waechter_213.py::test_wache_dry_run_zeigt_remote_control_und_ausweich"
+            # Hook smart-zone/staffel/aufraeumen.mjs fehlt (Startklar-Prüfung)
+            "tests/test_umzug_205.py::test_kind_session_erbt_kein_to_spawn_repo[wache-900]"
+            "tests/test_umzug_212.py::test_wache_setzt_umzug_umgebung"
+            # claude-CLI nicht im PATH
+            "tests/test_waechter_takt_316.py::test_f_takt_einrichten_trocken_idempotent"
+          )
+          args=()
+          for t in "${aus[@]}"; do args+=(--deselect "$t"); done
+          python -m pytest tests -q -n auto -p no:cacheprovider --junitxml=junit.xml "${args[@]}"
           code=$?
           echo "LAUFZEIT_S=$(( $(date +%s) - start ))" >> "$GITHUB_ENV"
           exit $code

@@ -18,7 +18,9 @@ SKILL = Path(__file__).resolve().parent.parent
 # ``review`` (#329 P2): wird mitkopiert und von ``to_spawn/review_hook.py`` nach ~/.claude/review eingespielt.
 # ``probe`` ist nicht mehr ausgenommen (#466): wird mitinstalliert, damit ``probe/anlegen.sh`` auch
 # aus der installierten Kopie läuft.
+# ``.github`` (#537): GitHub-Actions-Workflow, nur für die Prüfung im Repo.
 NICHT_INSTALLIERT = {
+    ".github",
     ".gitignore",
     ".gitattributes",
     ".review",
