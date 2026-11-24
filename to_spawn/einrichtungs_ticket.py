@@ -84,7 +84,8 @@ def sicherstellen(
 
     ``trocken`` = Probelauf, ``auswahl`` = Teil-Start (nur gewählte Tickets per
     ``--tickets`` oder kein Ticket-Fenster per ``--nur-wache``): dann nur Hinweis. ``ok`` falsch nur, wenn es angelegt bzw.
-    angehängt werden sollte und das scheiterte (letzte Zeile ``EINRICHTUNG FEHLT``).
+    angehängt werden sollte und das scheiterte oder der Ticket-Stand unklar ist
+    (letzte Zeile ``EINRICHTUNG FEHLT``).
     """
     fehlt = luecken(repo, konfig)
     if not fehlt:
@@ -127,12 +128,24 @@ def sicherstellen(
         )
         return Ergebnis(True, [f"{kopf} — {grund}: {wie}. {auftrag}"])
     if vorhanden is None:
-        if laeuft := _laeuft_schon(repo, slug, daten):
+        laeuft, unklar = _laeuft_schon(repo, slug, daten)
+        if unklar:
+            # Nicht still weiter: sonst startet der Bau ohne T0, danach gilt „hat Bau-Log“.
+            return Ergebnis(
+                False,
+                [
+                    (
+                        f"EINRICHTUNG FEHLT ({', '.join(fehlt)}): {unklar} — "
+                        "Einrichtungs-Ticket nicht angelegt, erneut aufrufen"
+                    )
+                ],
+            )
+        if laeuft:
             return Ergebnis(
                 True,
                 [
                     (
-                        f"{kopf} — Spec #{s} läuft schon oder Stand unklar ({laeuft}): "
+                        f"{kopf} — Spec #{s} läuft schon ({laeuft}): "
                         f"Einrichtungs-Ticket nicht angelegt, nichts umgehängt. Lücke von Hand schließen: {auftrag}"
                     )
                 ],
@@ -188,24 +201,25 @@ def _titel_fuer(s: str) -> str:
     return f"Einrichtung für Spec #{s}:"
 
 
-def _laeuft_schon(repo: Path, slug: str, daten: dict[str, Any]) -> str:
-    """Grund, nichts anzulegen (``#N hat Bau-Log`` / ``#N ist zu`` / Stand unklar); leer = frei.
+def _laeuft_schon(repo: Path, slug: str, daten: dict[str, Any]) -> tuple[str, str]:
+    """``(läuft, unklar)``: Grund, nichts anzulegen; beide leer = frei.
 
-    Scheitert ``gh api`` für ein Ticket, ist der Stand unklar: im Zweifel nicht anlegen.
+    ``läuft`` = sicher erkannt (``#N hat Bau-Log`` / ``#N ist zu``), nur Hinweis.
+    ``unklar`` = ``gh api`` scheitert für ein Ticket: nichts anlegen, aber weigern (Exit 3).
     """
     tickets = sorted(daten["tickets"], key=manifest.ticket_schluessel)
     for t in tickets:
         # Wo das Log liegt, weiß nur bau_log.log_ort (zuerst Worktree, dann Hauptbaum).
         wt = Path(config.worktree_pfad(t, repo)).expanduser()
         if bau_log.log_ort(t, wt, repo) is not None:
-            return f"#{t} hat Bau-Log"
+            return f"#{t} hat Bau-Log", ""
     for t in tickets:
         stand = gh.json_lauf(["api", f"repos/{slug}/issues/{t}"], cwd=repo)
         if not isinstance(stand, dict):
-            return f"Stand unklar: #{t} nicht lesbar (gh api)"
+            return "", f"Stand unklar: #{t} nicht lesbar (gh api)"
         if ticket_zustand.endgueltig_zu(stand):
-            return f"#{t} ist zu"
-    return ""
+            return f"#{t} ist zu", ""
+    return "", ""
 
 
 def _einrichtungs_ticket_holen(

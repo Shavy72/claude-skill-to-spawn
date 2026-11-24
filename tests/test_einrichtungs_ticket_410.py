@@ -251,13 +251,13 @@ def test_spec_mit_geschlossenem_ticket_legt_nichts_an(tmp_path: Path) -> None:
 
 
 def test_ticket_stand_unklar_legt_nichts_an(tmp_path: Path) -> None:
-    """``gh api`` scheitert beim Ticket-Stand: im Zweifel nichts anlegen, nur Hinweis."""
+    """``gh api`` scheitert beim Ticket-Stand: nichts anlegen (seit Review F1 zu 433: Exit 3)."""
     repo, weltdatei, umgebung = _aufbau(tmp_path)
     _welt_setzen(weltdatei, api_scheitert_einmal="issues/901")
     vorher = e2._manifest(repo).read_bytes()
     lauf = _cli(repo, umgebung, "regularien", str(e2.SPEC))
     ausgabe = lauf.stdout + lauf.stderr
-    assert lauf.returncode == 0, ausgabe
+    assert lauf.returncode == 3, ausgabe
     _nichts_angelegt(repo, weltdatei, vorher)
     assert "Stand unklar" in lauf.stdout and "#901" in lauf.stdout, ausgabe
 
