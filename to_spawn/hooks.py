@@ -15,9 +15,11 @@ Verarbeitung der Runde. Deshalb legt der Hook zusätzlich eine Marker-Datei
 from __future__ import annotations
 
 import base64
+import fnmatch
 import json
 import logging
 import os
+import posixpath
 import re
 import shlex
 import sys
@@ -568,8 +570,8 @@ _API_CLOSED = re.compile(r"state=closed")
 _API_FELD = {"-f", "-F", "--field", "--raw-field"}
 
 
-def _einfache_befehle(befehl: str) -> Iterator[list[str]]:
-    """Einfache Befehle in ``befehl`` als Wortlisten, ohne Zuweisungen/Präfixe davor.
+def _roh_befehle(befehl: str) -> Iterator[list[str]]:
+    """Einfache Befehle in ``befehl`` als Wortlisten, Zuweisungen/Präfixe noch davor.
 
     Geteilt wird nur an Trennern außerhalb von Anführungszeichen (``-c "a; b"`` bleibt
     ein Wort); ``\\``+Zeilenumbruch fügt Zeilen wie die Shell zusammen. Ein ``gh`` in
@@ -610,10 +612,16 @@ def _einfache_befehle(befehl: str) -> Iterator[list[str]]:
     teile.append(befehl[start:])
     for teil in teile:
         try:
-            woerter = shlex.split(teil)
+            yield shlex.split(teil)
         except ValueError:
-            woerter = teil.split()
-        woerter = _befehlskern(woerter)
+            yield teil.split()
+
+
+def _einfache_befehle(befehl: str) -> Iterator[list[str]]:
+    """Einfache Befehle in ``befehl`` als Wortlisten, ohne Zuweisungen/Präfixe davor
+    (Zerlegung siehe :func:`_roh_befehle`, Kern siehe :func:`_befehlskern`)."""
+    for roh in _roh_befehle(befehl):
+        woerter = _befehlskern(roh)
         if woerter:
             yield woerter
 
@@ -792,32 +800,627 @@ def ja_aufrufe(befehl: str) -> bool:
     Erkannt: ``ja``/``ja.cmd`` als Befehl, ``nutzer-antwort`` als Wort, ``to_spawn.py ja`` (auch mit
     ``python`` davor); ``eval …``, ``bash -c "…"``, ``powershell``/``pwsh``/``cmd`` (auch
     ``-EncodedCommand``) werden ausgepackt.
+    Positivliste (#591, #538): Nur Befehle aus :data:`_JA_NUR_TEXT` (``echo``, ``grep`` …) dürfen
+    ``ja`` als Wort tragen; jeder andere Befehl mit dem Wort (auch in Zuweisung, Schalter-Wert oder
+    Text wie ``watch 'ja 5'``) sperrt — so braucht kein Starter (``ionice``, ``flock``, ``ksh`` …) eine
+    eigene Liste. Interpreter (:data:`_JA_INTERPRETER`) und dynamische Befehlsnamen (``$(…)``,
+    ``$X``) lesen ihr Programm aus Text, den die Prüfung nicht sieht: dort sperrt das Wort irgendwo im
+    ganzen Befehl. Groß/klein zählt nicht (Windows), ``$'…'`` wird wie von bash aufgelöst, Klammern
+    und Glob im Befehlsnamen werden gegen ``ja`` geprüft.
+    Fluss-Regel (PR 610): was ein Teil mit dem Wort ausgibt, gilt beim Empfänger selbst als das Wort —
+    jede folgende Pipe-Stufe, ``xargs``-Ziel, ``$(…)``/Backtick/``<(…)``-Ersetzung und ein gequoteter
+    Here-Doc-Rumpf geben es an genau den Befehl weiter, der sie liest; der muss dann ein Text-Befehl
+    sein. Here-Doc-Rümpfe und ``#``-Kommentare sind nie Befehle. Zerlegung unsicher (offene Quote,
+    offener Here-Doc, zu tief verschachtelt) → das Wort irgendwo im Text sperrt.
     Bewusst breit und ohne Ausnahmen; die zwei Positivlisten für das Bash-Werkzeug (#567) prüft
     :func:`hook_ja_sperre` vorher (:func:`_bash_text_ohne_aufruf`).
-    ponytail: nur wörtliche Aufrufe — Variablen, ein Skript, ``python -c`` oder ein direkter
-    Schreibzugriff auf die Briefkasten-Datei umgehen die Sperre (gleiche Grenze wie ``hook_spec_sperre``);
-    Upgrade-Pfad: Prüfung im Briefkasten selbst über einen Nachweis, den nur der Nutzer-Weg trägt.
+    ponytail: nur wörtliche Aufrufe — Variablen, ein Skript, kodierter Text (``printf '\\x6a…' | sh``)
+    oder ein direkter Schreibzugriff auf die Briefkasten-Datei umgehen die Sperre (gleiche Grenze wie
+    ``hook_spec_sperre``); Upgrade-Pfad: Prüfung im Briefkasten selbst über einen Nachweis, den nur der
+    Nutzer-Weg trägt.
     """
+    befehl = _JA_ANSI_C.sub(_ansi_c_aufloesen, befehl).replace('$"', '"')
     if _JA_WIN_PFAD.search(befehl):  # Windows-Pfad: shlex verschluckt die Backslashes
         return True
-    for woerter in _einfache_befehle(befehl):
-        name = _name(woerter[0]).removesuffix(".cmd")
-        if name == "eval":
-            if ja_aufrufe(" ".join(woerter[1:])):
-                return True
-        elif name in _SHELLS and (text := _shell_text(woerter[1:])) is not None:
-            if ja_aufrufe(text):
-                return True
-        elif name.lower().removesuffix(".exe") in _JA_WIN_SHELLS:
-            if _ja_in_win_shell(woerter[1:]):
-                return True
-        elif name == "rg" and _rg_vorfilter_ja(woerter):
+    # Textsuche (Interpreter, unsichere Zerlegung) sieht beide Formen: ``\``+Zeilenumbruch ist in
+    # Python-/Shell-Text eine Fortsetzung, ``\\``+Zeilenumbruch nicht (PR 610, Runde 4).
+    suchtext = befehl + "\n" + befehl.replace("\\\n", "")
+    try:
+        alle: list[_JaTeil] = []
+        teile, _ = _ja_zerlegen(befehl, alle=alle)
+        return (
+            not _ja_rumpf_ok(teile, ersetzung=False)
+            or _ja_teile_sperren(teile, suchtext)
+            or _ja_traeger_sperren(alle + teile)
+        )
+    except _JaTreffer:
+        return True
+    except _JaUnsicher as grund:
+        log.info("Ja-Sperre: Zerlegung unsicher (%s) — Wort im Text entscheidet.", grund)
+        return _ja_traegt(suchtext)
+
+
+class _JaUnsicher(Exception):
+    """Die Zerlegung ist nicht sicher (offene Quote, offener Here-Doc, zu tief verschachtelt)."""
+
+
+class _JaTreffer(Exception):
+    """Ein innerer Teil (Befehls-Ersetzung, Here-Doc ohne gequoteten Begrenzer) schreibt das Ja."""
+
+
+class _JaTeil:
+    """Ein einfacher Befehl: Trenner davor, Text (Ersetzungen schon durch Platzhalter ersetzt) und ob
+    seine Eingabe (Here-Doc-Rumpf) das Wort trägt."""
+
+    __slots__ = ("eingabe", "text", "trenner")
+
+    def __init__(self, trenner: str, text: str) -> None:
+        self.trenner, self.text, self.eingabe = trenner, text, False
+
+
+#: Grenze für verschachtelte Ersetzungen (``$($($(…)))``) — darüber gilt die Zerlegung als unsicher.
+_JA_MAX_TIEFE = 20
+#: Zeichen, nach denen ein ``#`` einen Kommentar beginnt (Wortanfang).
+_JA_WORTANFANG = frozenset(" \t\n;&|()<>")
+
+
+def _ja_traegt(text: str) -> bool:
+    """Text trägt das Wort (``ja``, ``nutzer-antwort`` oder ein Windows-Pfad auf ``ja``)."""
+    return _ja_im_text(text) or "nutzer-antwort" in text.lower() or bool(_JA_WIN_PFAD.search(text))
+
+
+def _ja_zerlegen(
+    text: str, i: int = 0, ende: str = "", tiefe: int = 0, alle: list[_JaTeil] | None = None
+) -> tuple[list[_JaTeil], int]:
+    """``text`` ab ``i`` in einfache Befehle, bis ``ende`` (``)``/Backtick) oder Textende.
+
+    Wie die Shell: Trenner nur außerhalb von Quotes; ``$(…)``, Backticks und ``<(…)``/``>(…)``
+    werden ausgewertet (:func:`_ja_teile_sperren` auf den Inhalt, Treffer → :class:`_JaTreffer`) und durch
+    den Platzhalter ``$ja`` (Inhalt trägt das Wort) bzw. ``$x`` ersetzt — so sieht der Empfänger ihre
+    Ausgabe an genau der Stelle, an der sie landet. ``#`` am Wortanfang bis Zeilenende ist Kommentar.
+    Here-Doc-Rümpfe sind nie Befehle: gequoteter Begrenzer → Eingabe des Befehls mit ``<<``,
+    ungequotet (die Shell ersetzt im Rumpf) und das Wort darin → :class:`_JaTreffer`.
+    Liefert die Teile und den Index hinter ``ende``.
+    """
+    if tiefe > _JA_MAX_TIEFE:
+        raise _JaUnsicher("zu tief verschachtelt")
+    teile: list[_JaTeil] = []
+    offen: list[tuple[int, str, bool, bool]] = []  # Here-Docs: (Teil, Begrenzer, gequotet, <<-)
+    puffer: list[str] = []
+    trenner, quote, klammern = "", "", 0
+
+    def abschliessen(neu: str) -> None:
+        nonlocal trenner
+        teile.append(_JaTeil(trenner, "".join(puffer)))
+        puffer.clear()
+        trenner = neu
+
+    while i < len(text):
+        zeichen = text[i]
+        if quote == "'":
+            quote = "" if zeichen == "'" else quote
+            puffer.append(zeichen)
+            i += 1
+            continue
+        if zeichen == "\\":
+            if text.startswith("\\\n", i):  # Zeilenfortsetzung; ``\\`` ist schon als Paar verbraucht
+                i += 2
+                continue
+            puffer.append(text[i : i + 2])
+            i += 2
+            continue
+        if not quote and ende and zeichen == ende and not (ende == ")" and klammern):
+            if offen:
+                raise _JaUnsicher("Here-Doc ohne Endzeile vor Ersetzungsende")
+            abschliessen("")
+            return teile, i + 1
+        if zeichen == "`" or text.startswith("$(", i) or (not quote and text.startswith(("<(", ">("), i)):
+            innen = i + (1 if zeichen == "`" else 2)
+            innere, weiter = _ja_zerlegen(text, innen, "`" if zeichen == "`" else ")", tiefe + 1, alle)
+            inhalt = text[innen : weiter - 1]
+            if not _ja_rumpf_ok(innere, ersetzung=True) or _ja_teile_sperren(innere, inhalt):
+                raise _JaTreffer
+            if alle is not None and not any(teil.eingabe for teil in innere):
+                alle.extend(innere)  # reines ``$(cat <<'WORT' …)``: Wert, der Empfänger entscheidet
+            platzhalter = "$ja" if _ja_traegt(inhalt) else "$x"
+            puffer.append(f" {platzhalter} " if zeichen in "<>" else platzhalter)
+            i = weiter
+            continue
+        if quote == '"':
+            quote = "" if zeichen == '"' else quote
+        elif zeichen in "'\"":
+            quote = zeichen
+        elif zeichen == "#" and (i == 0 or text[i - 1] in _JA_WORTANFANG):
+            while i < len(text) and text[i] != "\n":
+                i += 1
+            continue
+        elif text.startswith("<<<", i):
+            puffer.append("<<<")
+            i += 3
+            continue
+        elif text.startswith("<<", i):
+            i = _ja_heredoc_kopf(text, i + 2, offen, len(teile))
+            puffer.append(" ")
+            continue
+        elif zeichen == "&" and puffer and puffer[-1] in ("<", ">"):
+            puffer.append(zeichen)  # ``2>&1``, ``>&2``, ``<&3``: Deskriptor-Kopie, kein Trenner (Runde 5)
+            i += 1
+            continue
+        elif zeichen in _TRENNER:
+            if zeichen == "(" or (zeichen == ")" and klammern):
+                klammern += 1 if zeichen == "(" else -1
+            schritt = 2 if zeichen in "|&" and text.startswith(zeichen * 2, i) else 1
+            abschliessen(text[i : i + schritt])
+            i += schritt
+            if zeichen == "\n" and offen:
+                i = _ja_heredoc_rumpf(text, i, offen, teile, ersetzung=bool(ende))
+            continue
+        puffer.append(zeichen)
+        i += 1
+    if quote or ende or offen:
+        raise _JaUnsicher("offene Quote, Ersetzung oder Here-Doc")
+    abschliessen("")
+    return teile, i
+
+
+def _ja_heredoc_kopf(text: str, i: int, offen: list[tuple[int, str, bool, bool]], teil: int) -> int:
+    """Begrenzer hinter ``<<`` lesen (``-``, Quotes, Backslash = gequotet) und vormerken."""
+    tabs = text.startswith("-", i)
+    i += tabs
+    while i < len(text) and text[i] in " \t":
+        i += 1
+    wort, gequotet = [], False
+    while i < len(text) and text[i] not in _JA_WORTANFANG:
+        if text[i] in "'\"":
+            schluss = text.find(text[i], i + 1)
+            if schluss < 0:
+                raise _JaUnsicher("Here-Doc-Begrenzer mit offener Quote")
+            wort.append(text[i + 1 : schluss])
+            gequotet, i = True, schluss + 1
+        elif text[i] == "\\":
+            wort.append(text[i + 1 : i + 2])
+            gequotet, i = True, i + 2
+        else:
+            wort.append(text[i])
+            i += 1
+    if not "".join(wort):
+        raise _JaUnsicher("Here-Doc ohne Begrenzer")
+    offen.append((teil, "".join(wort), gequotet, tabs))
+    return i
+
+
+def _ja_heredoc_rumpf(
+    text: str, i: int, offen: list[tuple[int, str, bool, bool]], teile: list[_JaTeil], *, ersetzung: bool = False
+) -> int:
+    """Rümpfe der vorgemerkten Here-Docs ab ``i`` überspringen; Wort im Rumpf → Eingabe trägt es.
+
+    In einer Ersetzung beendet bash den Rumpf auch an ``WORT)`` (PR 610, Runde 3) — beginnt dort eine
+    Rumpf-Zeile mit dem Begrenzer, ohne ihm genau zu gleichen, ist das Ende nicht eindeutig → unsicher.
+    Backslash+Zeilenumbruch (Runde 4): nur bei ungequotetem Begrenzer zieht bash die Zeilen zusammen; in
+    einer Ersetzung gilt eine Rumpf-Zeile mit Backslash am Ende als unsicher."""
+
+    def naechste(i: int) -> tuple[str, int]:
+        umbruch = text.find("\n", i)
+        return (text[i:], len(text)) if umbruch < 0 else (text[i:umbruch], umbruch + 1)
+
+    for teil, wort, gequotet, tabs in offen:
+        zeilen: list[str] = []
+        while True:
+            if i >= len(text):
+                raise _JaUnsicher("Here-Doc ohne Endzeile")
+            zeile, i = naechste(i)
+            while not gequotet and (len(zeile) - len(zeile.rstrip("\\"))) % 2 and i < len(text):
+                folge, i = naechste(i)
+                zeile = zeile[:-1] + folge
+            if ersetzung and zeile.endswith("\\"):
+                raise _JaUnsicher("Here-Doc-Zeile mit Backslash am Ende in Ersetzung")
+            vergleich = zeile.lstrip("\t") if tabs else zeile
+            if vergleich == wort:
+                break
+            if ersetzung and vergleich.startswith(wort):
+                raise _JaUnsicher("Here-Doc-Ende in Ersetzung nicht eindeutig")
+            zeilen.append(zeile)
+        if _ja_traegt("\n".join(zeilen)):
+            if not gequotet:
+                raise _JaTreffer  # die Shell ersetzt im Rumpf — nie nur Text
+            teile[teil].eingabe = True
+    offen.clear()
+    return i
+
+
+def _ja_rumpf_ok(teile: list[_JaTeil], *, ersetzung: bool) -> bool:
+    """Darf ein Here-Doc-Rumpf mit dem Wort hier stehen? Ohne solchen Rumpf immer ja.
+
+    Direkt im Befehl (``ersetzung=False``) nie: die einzige freie Form ``cat > datei <<'WORT'`` als
+    ganzer Befehl prüft schon die Positivliste (:func:`_nur_datei_heredoc`), alles andere drumherum
+    (``cd d && …``, ``tee``, ``<<-``, ``> $HOME/…``) bleibt gesperrt (#567). In einer Ersetzung
+    (``$(cat <<'EOF' …)``) nur, wenn sie genau aus dem einen Befehl ``cat`` besteht — dann ist ihre
+    Ausgabe der Rumpf, und die Fluss-Regel prüft den Empfänger (Text-Wert von ``git commit -m`` …).
+    """
+    if not any(teil.eingabe for teil in teile):
+        return True
+    if not ersetzung:
+        return False
+    try:
+        befehle = [woerter for teil in teile if (woerter := shlex.split(teil.text))]
+    except ValueError as fehler:
+        raise _JaUnsicher("shlex") from fehler
+    return befehle == [["cat"]]
+
+
+def _ja_teile_sperren(teile: list[_JaTeil], befehl: str) -> bool:
+    """Fluss-Regel über die Teile: trägt ein Teil das Wort (in seinen Wörtern oder seiner Eingabe),
+    bekommt die nächste Stufe hinter ``|``/``|&`` das Wort als zusätzliches Argument und wird damit
+    wie jeder Befehl mit dem Wort geprüft. Teile ohne Befehl (``}``, ``)``) unterbrechen den Fluss nicht."""
+    fluss, trenner = False, []
+    for teil in teile:
+        trenner.append(teil.trenner)
+        try:
+            roh = shlex.split(teil.text)
+        except ValueError as fehler:
+            raise _JaUnsicher("shlex") from fehler
+        woerter = _befehlskern(roh)
+        if any(_ja_wort_in(w) for w in roh[: len(roh) - len(woerter)]):
+            return True  # ``command -p ja``, ``env X=ja …``: Wort im Präfix-Teil
+        if not woerter:  # ``|&``, ``}``, ``)``: kein Befehl, der Fluss läuft weiter
+            fluss = fluss or teil.eingabe
+            continue
+        zufluss = teil.eingabe or (fluss and "|" in trenner)
+        if _ja_im_einfachen(woerter + (["ja"] if zufluss else []), befehl):
             return True
+        fluss, trenner = zufluss or any(_ja_wort_in(w) for w in roh), []
+    return False
+
+
+def _ja_traeger_sperren(alle: list[_JaTeil]) -> bool:
+    """Träger-Regel (PR 610, Runde 2): Gibt ein Teil das Wort aus oder schreibt es (:func:`_ja_traeger`),
+    muss JEDER Teil des ganzen Befehls frei sein (:func:`_ja_teil_frei`) — gleich, wie er verbunden ist
+    (Pipe, ``;``, ``&&``, ``&``, Gruppe, Schleife, Subshell, Prozess-Ersetzung). So braucht kein Weg der
+    Ausgabe zu einem ausführenden Programm (Umleitung in eine Datei, Deskriptor, FIFO, Gruppe) eine eigene
+    Erkennung. ``alle`` = alle einfachen Befehle, auch die aus Ersetzungen; ein reines
+    ``$(cat <<'WORT' …)`` fehlt darin — seine Ausgabe prüft der Empfänger über den Platzhalter.
+
+    Wert-Teil (Runde 3): steht das Wort nur in Text-Werten (``git commit -m``), ist der Teil selbst frei,
+    aber jeder andere Teil muss es auch sein — sonst liest ihn ``git log … | awk`` zurück und führt ihn aus."""
+    zerlegt: list[tuple[_JaTeil, list[str]]] = []
+    for teil in alle:
+        try:
+            roh = shlex.split(teil.text)
+        except ValueError as fehler:
+            raise _JaUnsicher("shlex") from fehler
+        if roh or teil.eingabe:
+            zerlegt.append((teil, roh))
+    strikt = any(_ja_traeger(roh, teil.eingabe) for teil, roh in zerlegt)
+    if not strikt and not any(_ja_wort_in(w) for _, roh in zerlegt for w in roh):
+        return False
+    # Runde 4: schreibt ein Teil in eine Datei, kann sie Konfiguration für git/gh sein (``b/config``).
+    # Runde 5: auch ohne Träger — ``git log --format=%b > b/config`` liest das Wort aus dem Wert-Teil zurück.
+    schreibt = any(_ja_schreibt(roh) for _, roh in zerlegt)
+    return not all(_ja_teil_frei(roh, schreibt=schreibt) or (not strikt and _ja_wert_teil(roh)) for _, roh in zerlegt)
+
+
+def _ja_wert_teil(roh: list[str]) -> bool:
+    """``git``/``gh``-Unterbefehl aus :data:`_JA_TEXT_WERTE`, wörtlich ohne Präfix davor."""
+    name = roh[0] if roh else ""
+    return name in ("git", "gh") and _befehlskern(roh) == roh and _ja_unterbefehl(roh, name)[0] in _JA_TEXT_WERTE
+
+
+def _ja_traeger(roh: list[str], eingabe: bool) -> bool:
+    """Der Teil kann das Wort ausgeben oder schreiben: es steht in seinen Wörtern oder seiner Eingabe.
+    Ausnahme Wert-Teil: bei ``git commit -m``, ``gh pr create --body`` … (:data:`_JA_TEXT_WERTE`)
+    zählt das Wort nur außerhalb der Text-Werte."""
+    if eingabe:
+        return True
+    kern = _befehlskern(roh)
+    name = _name(kern[0]).lower() if kern else ""
+    if name in ("git", "gh") and _ja_unterbefehl(kern, name)[0] in _JA_TEXT_WERTE:
+        roh = roh[: len(roh) - len(kern)] + _ja_ohne_text(kern, name)
+    return any(_ja_wort_in(w) for w in roh)
+
+
+#: Befehle, die in einem Befehl mit Träger frei sind, obwohl sie kein Text-Befehl sind: sie führen nichts aus.
+_JA_HARMLOS = {"cd", "pwd", "true", "false", ":", "mkdir", "test", "["}
+#: Shell-Schlüsselwörter, die nur Gruppen/Bedingungen öffnen oder schließen — der Befehl dahinter zählt.
+#: ``for``, ``case``, ``select``, ``function``, ``exec``, ``coproc`` fehlen bewusst: dort sperrt der Teil.
+_JA_KLAMMERWORTE = {"{", "}", "!", "do", "done", "then", "else", "elif", "fi", "if", "while", "until", "time"}
+#: Umleitungs-Wort (``>``, ``>>f``, ``2>``, ``&>``, ``<<<`` …); Gruppe 1 = angeklebtes Ziel.
+_JA_UMLEITUNG = re.compile(r"(?:\d+|&)?(?:>>|>\||>&|<&|<<<|<>|>|<)(.*)", re.S)
+#: Umleitung auf einen eigenen Deskriptor (``3>``, ``>&4``) — Weg zu ``exec``/``coproc``-Empfängern.
+_JA_DESKRIPTOR = re.compile(r"(?:^|\W)(?:[3-9]|[1-9]\d+)[<>]|[<>]&-?(?:[3-9]|[1-9]\d+)")
+#: Dateien, die später von selbst laufen (Shell-Start, Git-Hooks, PowerShell-Profil).
+_JA_STARTDATEIEN = {
+    *(".bashrc", ".bash_profile", ".bash_login", ".bash_logout", ".profile"),
+    *(".zshrc", ".zshenv", ".zprofile", ".zlogin"),
+}
+#: xargs-Schalter ohne Wert, mit Wert als nächstes Wort oder angeklebt, lang mit ``=Wert``.
+_JA_XARGS_OHNE_WERT = {"-0", "-r", "-t", "-x", "--null", "--no-run-if-empty", "--verbose", "--exit"}
+_JA_XARGS_MIT_WERT = {"-I", "-n", "-L", "-P", "-s", "-d", "-E", "-a"}
+_JA_XARGS_LANG = {"--max-args", "--max-lines", "--max-procs", "--max-chars", "--delimiter", "--arg-file", "--replace"}
+_JA_FIND_SCHREIBT = ("-fprint", "-fls")
+#: Git-Konfiguration: ``textconv``, ``core.pager``, Attribute starten Programme beim nächsten git-Befehl.
+_JA_GIT_DATEIEN = {".gitconfig", ".gitattributes"}
+#: Schreib-Ziel, das erst die Shell festlegt (Glob, Klammer, Variable, Ersetzung, ``~user``/``~+``).
+_JA_ZIEL_ERWEITERUNG = re.compile(r"[*?\[{$`]|^~(?!/|$)")
+#: git-Unterbefehle ohne Programmstart, frei neben einem Wert-Teil (Runde 3).
+_JA_GIT_FREI = {("git", "add"), ("git", "push"), ("git", "status"), ("git", "fetch")}
+#: Lange Schalter, die ein Programm starten — auch abgekürzt (``--up=sh``), git nimmt eindeutige Präfixe.
+_JA_GIT_STARTER = ("--upload-pack", "--receive-pack", "--exec")
+
+
+def _ja_startdatei(pfad: str) -> bool:
+    """``pfad`` (schon ohne Quotes) ist eine Datei, die später von selbst läuft oder git steuert;
+    normalisiert (``.git//hooks``, ``a/../.bashrc``)."""
+    pfad = posixpath.normpath(pfad.replace("\\", "/")).lower()
+    basis = _ja_basis(pfad)
+    return (
+        basis in _JA_STARTDATEIEN
+        or basis in _JA_GIT_DATEIEN
+        or pfad.endswith("profile.ps1")
+        or "/.git/" in f"/{pfad}/"
+        or "/.config/git/" in f"/{pfad}/"
+    )
+
+
+def _ja_git_frei(woerter: list[str]) -> bool:
+    """``git add|push|status|fetch`` ohne das Wort und ohne Programm-Schalter (:data:`_JA_GIT_STARTER`)."""
+    for wort in woerter:
+        lang = wort.split("=", 1)[0]
+        if _ja_wort_in(wort) or (len(lang) > 2 and any(s.startswith(lang) for s in _JA_GIT_STARTER)):
+            return False
+    return True
+
+
+def _ja_umleitungen(roh: list[str]) -> tuple[list[str], list[str], list[str]]:
+    """Wörter ohne Umleitungen und Klammerworte, alle Umleitungs-Ziele, Schreib-Ziele (auch ``tee``)."""
+    woerter, ziele, schreib_ziele, k = [], [], [], 0
+    while k < len(roh):
+        wort = roh[k]
+        if ">" in wort:
+            rest = wort.rsplit(">", 1)[1].lstrip("|")
+            ziele.append(rest or (roh[k + 1] if k + 1 < len(roh) else ""))
+        if umleitung := _JA_UMLEITUNG.fullmatch(wort):
+            if ">" in wort:
+                schreib_ziele.append(ziele[-1])
+            k += 1 if umleitung.group(1) else 2
+            continue
+        woerter.append(wort)
+        k += 1
+    while woerter and woerter[0] in _JA_KLAMMERWORTE:
+        woerter = woerter[1:]
+    if woerter and woerter[0] == "tee":
+        schreib_ziele += [w for w in woerter[1:] if not w.startswith("-")]
+    return woerter, ziele, schreib_ziele
+
+
+#: Schreib-Ziel ohne Datei: Deskriptor-Kopie (``2>&1``, ``>&-``) oder ``/dev/null``.
+_JA_KEINE_DATEI = re.compile(r"&(?:\d+|-)|/dev/null")
+
+
+def _ja_schreibt(roh: list[str]) -> bool:
+    """Der Teil schreibt in eine Datei (Umleitung oder ``tee``) — ohne Deskriptor-Kopien und ``/dev/null``."""
+    return any(not _JA_KEINE_DATEI.fullmatch(z) for z in _ja_umleitungen(roh)[2])
+
+
+def _ja_gh_web(woerter: list[str]) -> bool:
+    """``gh … --web``/``-w`` (auch in einem Bündel kurzer Schalter): startet den Browser aus der Konfiguration."""
+    return any(w == "--web" or w.startswith("--web=") or re.fullmatch(r"-[A-Za-z]*w[A-Za-z]*", w) for w in woerter)
+
+
+def _ja_teil_frei(roh: list[str], *, schreibt: bool = False) -> bool:
+    """Positivliste für jeden Teil eines Befehls mit Träger: Text-Befehl (:data:`_JA_NUR_TEXT`, ``find``
+    ohne Start/Schreib-Schalter, ``git log``/``git grep``/``gh … view|list`` ohne Ausgabe-Weg, ``xargs``
+    mit lauter bekannten Schaltern und freiem Ziel) oder :data:`_JA_HARMLOS`. Befehlsname wörtlich
+    (kein Pfad, keine Zuweisung davor). Nie frei: Deskriptor-Umleitung, Schreib-Ziel Startdatei oder
+    mit Shell-Erweiterung (:data:`_JA_ZIEL_ERWEITERUNG`), ``printf -v``, ``uniq`` mit Ausgabe-Datei,
+    ``gh … --web``. ``schreibt`` (ein Teil des Befehls schreibt in eine Datei): ``git``/``gh`` lesen
+    Konfiguration aus Dateien und sind dann nie frei (Runde 4)."""
+    if any(_JA_DESKRIPTOR.search(w) for w in roh):
+        return False
+    woerter, ziele, schreib_ziele = _ja_umleitungen(roh)
+    if any(_ja_startdatei(z) for z in ziele + schreib_ziele) or any(
+        _JA_ZIEL_ERWEITERUNG.search(z) for z in schreib_ziele
+    ):
+        return False
+    if not woerter:
+        return True
+    name = woerter[0]
+    if name == "printf" and len(woerter) > 1 and woerter[1][:1] in "-$`*?[{":
+        return False  # ``printf -v 'x[$(…)]'``: bash wertet den Array-Index aus
+    if name == "uniq" and len([w for w in woerter[1:] if not w.startswith("-")]) > 1:
+        return False  # zweites Datei-Argument ist die Ausgabe-Datei
+    if name == "rg":
+        return not any(
+            (w.startswith("--pre") and not w.startswith("--pre-")) or w.startswith("--hostname-bin") for w in woerter
+        )
+    if name in _JA_NUR_TEXT or name in _JA_HARMLOS:
+        return True
+    if name == "find":
+        return not any(w in _JA_FIND_START or w.startswith(_JA_FIND_SCHREIBT) for w in woerter)
+    if name == "xargs":
+        return _ja_xargs_frei(woerter)
+    if name in ("git", "gh"):
+        if schreibt or (name == "gh" and _ja_gh_web(woerter)):
+            return False
+        unter, ab = _ja_unterbefehl(woerter, name)
+        if unter in _JA_GIT_FREI:
+            return _ja_git_frei(woerter)
+        return unter in _JA_TEXT_UNTERBEFEHLE and not _ja_git_ausgabe_weg(unter, woerter[ab:])
+    return False
+
+
+def _ja_xargs_frei(woerter: list[str]) -> bool:
+    """``xargs`` nur mit bekannten Schaltern; das Ziel (ohne Ziel: ``echo``) muss selbst frei sein.
+    Ein unbekannter Schalter sperrt — sein Wert könnte sonst für das Ziel gehalten werden.
+    Ziel ``tee`` sperrt (Runde 5): es schreibt in Dateien, die die Schreib-Prüfung hier nicht sieht."""
+    i = 1
+    while i < len(woerter) and woerter[i].startswith("-"):
+        wort = woerter[i]
+        if wort in _JA_XARGS_MIT_WERT:
+            i += 2
         elif (
-            name == "ja"
-            or "nutzer-antwort" in woerter
-            or (any(_name(w) == "to_spawn.py" for w in woerter[:3]) and JA_UNTERBEFEHLE & set(woerter))
-            or _ja_als_argument(woerter)
+            wort in _JA_XARGS_OHNE_WERT
+            or wort[:2] in _JA_XARGS_MIT_WERT
+            or ("=" in wort and wort.split("=", 1)[0] in _JA_XARGS_LANG)
+        ):
+            i += 1
+        else:
+            return False
+    return i >= len(woerter) or (woerter[i] != "tee" and _ja_teil_frei(woerter[i:]))
+
+
+def _ja_wort_in(wort: str) -> bool:
+    """Das Wort in ``wort``, auch an eine Kurz-Schalter-Gruppe geklebt (``-x'ja 5'``)."""
+    return bool(_JA_WORT.search(wort) or _JA_GEKLEBT.match(wort))
+
+
+def _ja_im_einfachen(woerter: list[str], befehl: str) -> bool:
+    """Ein einfacher Befehl ab dem Befehlsnamen; ``befehl`` = ganzer Text für Interpreter-Fälle."""
+    name = _name(woerter[0].lower()).removesuffix(".cmd")
+    if name == "cmd" and _JA_CMD.search(re.sub(r"['\"^]", "", befehl)):
+        return True
+    if name == "eval" and ja_aufrufe(" ".join(woerter[1:])):
+        return True
+    if name in _SHELLS and (text := _shell_text(woerter[1:])) is not None and ja_aufrufe(text):
+        return True
+    if name in _JA_WIN_SHELLS and _ja_in_win_shell(woerter[1:]):
+        return True
+    if name == "rg" and _rg_vorfilter_ja(woerter):
+        return True
+    if (
+        _ist_ja_name(woerter[0])
+        or "nutzer-antwort" in woerter
+        or (any(_name(w) == "to_spawn.py" for w in woerter[:3]) and JA_UNTERBEFEHLE & set(woerter))
+        or _ja_als_argument(woerter)
+    ):
+        return True
+    if (name in _JA_INTERPRETER or _JA_DYNAMISCH.search(woerter[0])) and _ja_im_text(befehl):
+        return True
+    if name == "xargs":
+        i = 1
+        while i < len(woerter) and woerter[i].startswith("-"):
+            i += 2 if woerter[i] in _JA_SCHALTER_MIT_WERT else 1
+        return i < len(woerter) and _ja_im_einfachen(woerter[i:], befehl)
+    if name in _JA_NUR_TEXT or (name == "find" and not _JA_FIND_START.intersection(woerter)):
+        return False
+    if name in ("git", "gh"):
+        woerter = _ja_ohne_text(woerter, name)
+    return any(_ja_wort_in(w) for w in woerter)
+
+
+def _ja_ohne_text(woerter: list[str], name: str) -> list[str]:
+    """``git``/``gh``-Wörter ohne reinen Text — nur für benannte Unterbefehle ohne Programmstart.
+
+    :data:`_JA_TEXT_UNTERBEFEHLE`: alle Argumente sind Text (``git log --grep=…``, ``gh … view --jq``;
+    ``git grep`` nur ohne ``-O``/``--o…``). :data:`_JA_TEXT_WERTE`: nur die Werte der Text-Schalter
+    (``-m``, ``--body`` …, auch ``--body=…``, ``-mText``, ``-am``). Jeder andere Unterbefehl oder ein
+    globaler Schalter davor (``git -c …``) wird ganz geprüft. Vor dem git-Unterbefehl zählen nur
+    ``-C <ordner>`` und ``--no-pager``.
+    """
+    unter, ab = _ja_unterbefehl(woerter, name)
+    rest = woerter[ab:]
+    if unter in _JA_TEXT_UNTERBEFEHLE:
+        return woerter if _ja_git_ausgabe_weg(unter, rest) else woerter[:ab]
+    schalter = _JA_TEXT_WERTE.get(unter)
+    if schalter is None:
+        return woerter
+    kurz = "".join(s[1] for s in schalter if not s.startswith("--"))
+    uebrig, k = [], 0
+    while k < len(rest):
+        wort = rest[k]
+        k += 1
+        if wort in schalter or re.fullmatch(rf"-[A-Za-z]*[{kurz}]", wort):
+            k += 1  # Wert ist das nächste Wort
+        elif not (wort.split("=", 1)[0] in schalter or re.fullmatch(rf"-[A-Za-z]*[{kurz}].+", wort, re.S)):
+            uebrig.append(wort)
+    return woerter[:ab] + uebrig
+
+
+def _ja_unterbefehl(woerter: list[str], name: str) -> tuple[tuple[str, ...], int]:
+    """``git``/``gh``-Unterbefehl (``("git", "commit")``, ``("gh", "pr", "create")``) und der Index
+    des ersten Worts dahinter. Vor dem git-Unterbefehl zählen nur ``-C <ordner>`` und ``--no-pager``."""
+    i = 1
+    while name == "git" and i < len(woerter) and woerter[i] in ("-C", "--no-pager"):
+        i += 2 if woerter[i] == "-C" else 1
+    unter = (name, *woerter[i : i + (1 if name == "git" else 2)])
+    return unter, i + len(unter) - 1
+
+
+def _ja_git_ausgabe_weg(unter: tuple[str, ...], rest: list[str]) -> bool:
+    """Ein Text-Unterbefehl gibt seine Ausgabe an ein Programm oder eine Datei (``git grep -O``/
+    ``--open-files-in-pager``, ``git log --output``, auch abgekürzt) — dann ist er kein Text-Befehl."""
+    if unter == ("git", "grep"):
+        return any(w.startswith("--o") or re.match(r"-[^-]*O", w) for w in rest)
+    return unter[0] == "git" and any(w.startswith("--ou") for w in rest)
+
+
+#: Befehle, deren Argumente nie ein Programm starten — nur dort darf ``ja`` als Wort stehen (#591).
+#: ``rg --pre``/``--hostname-bin`` prüft :func:`_rg_vorfilter_ja` vorher; ``find`` gilt nur ohne
+#: :data:`_JA_FIND_START`.
+_JA_NUR_TEXT = {"echo", "printf", "grep", "rg", "cat", "ls", "tee", "head", "tail", "wc", "cut", "tr", "uniq"}
+_JA_FIND_START = {"-exec", "-execdir", "-ok", "-okdir"}
+#: Unterbefehle, deren Argumente alle Text sind (kein Schalter startet ein Programm).
+_JA_TEXT_UNTERBEFEHLE = {
+    ("git", "log"),
+    ("git", "grep"),
+    *((("gh", art, unter) for art in ("issue", "pr") for unter in ("view", "list"))),
+}
+#: Unterbefehle, bei denen nur die Werte dieser Schalter Text sind (Nachricht, Titel, Body).
+_JA_TEXT_WERTE: dict[tuple[str, ...], frozenset[str]] = {
+    ("git", "commit"): frozenset({"-m", "--message"}),
+    ("git", "tag"): frozenset({"-m", "--message"}),
+    **{
+        ("gh", art, unter): frozenset({"-b", "--body", "-t", "--title"})
+        for art in ("issue", "pr")
+        for unter in ("create", "comment", "edit")
+    },
+}
+#: Das Wort an eine Kurz-Schalter-Gruppe geklebt (``-x'ja 5'`` → ``-xja 5``).
+_JA_GEKLEBT = re.compile(r"-[A-Za-z0-9]+?ja(?:\.cmd)?(?![\w.-])", re.IGNORECASE)
+#: Programme, die Befehle aus Text, Datei oder Eingabe lesen (``echo 'ja 5' | sh``, ``bash <(…)``).
+_JA_INTERPRETER = {
+    *_SHELLS,
+    *("ksh", "ash", "fish", "busybox", "source", ".", "eval", "wsl"),
+    *("python", "python3", "py", "node", "perl", "ruby", "php", "powershell", "pwsh", "cmd"),
+}
+#: ``ja``/``ja.cmd`` als eigenes Wort (auch in ``X=ja``, ``a,ja``, ``{ja,}``), Groß/klein egal.
+_JA_WORT = re.compile(r"(?<![\w.-])ja(?:\.cmd)?(?![\w.-])", re.IGNORECASE)
+#: Unter ``cmd`` zählt das Wort auch an einen Schalter geklebt (``/cja``, ``//c"ja 5"``, ``/Kja``):
+#: cmd trennt ``/c`` nicht per Leerzeichen ab. Geprüft auf dem Text ohne Quotes und ``^``.
+_JA_CMD = re.compile(r"(?:^|[^\w.-]|/[a-z]+)ja(?:\.cmd)?(?![\w.-])", re.IGNORECASE)
+#: Befehlsname, den erst die Shell festlegt (Variable, Ersetzung, Glob, Klammern).
+_JA_DYNAMISCH = re.compile(r"[$`*?\[{]")
+#: ANSI-C-Quote ``$'…'``: bash löst ``\\x6a``, ``\\152`` … auf, shlex nicht.
+_JA_ANSI_C = re.compile(r"\$'((?:[^'\\]|\\.)*)'")
+
+
+def _ansi_c_aufloesen(treffer: re.Match[str]) -> str:
+    try:
+        text = treffer.group(1).encode("latin-1", "backslashreplace").decode("unicode_escape")
+    except UnicodeDecodeError:
+        text = treffer.group(1).replace("\\", "")
+    return shlex.quote(text)
+
+
+def _ja_im_text(befehl: str) -> bool:
+    """``ja`` als Wort irgendwo im Text, Quotes und Backslashes entfernt (``j''a``, ``j\\a``)."""
+    return bool(_JA_WORT.search(re.sub(r"[\\'\"]", "", befehl)))
+
+
+def _klammer_varianten(wort: str, tiefe: int = 0) -> list[str]:
+    """Wörter nach bash-Klammer-Erweiterung (``{ja,}`` → ``ja``, ``{j,x}a`` → ``ja``, ``xa``)."""
+    treffer = re.search(r"\{([^{}]*,[^{}]*)\}", wort)
+    if not treffer or tiefe > 4:
+        return [wort]
+    kopf, rest = wort[: treffer.start()], wort[treffer.end() :]
+    return [v for teil in treffer.group(1).split(",") for v in _klammer_varianten(kopf + teil + rest, tiefe + 1)]
+
+
+def _ist_ja_name(wort: str) -> bool:
+    """Befehlsname ist ``ja``/``ja.cmd`` — Groß/klein egal, auch über Klammern oder Glob (``j?``)."""
+    for variante in _klammer_varianten(wort):
+        basis = _ja_basis(variante).lower().removesuffix(".exe")
+        if basis in ("ja", "ja.cmd") or (
+            re.search(r"[*?\[]", basis) and any(fnmatch.fnmatchcase(z, basis) for z in ("ja", "ja.cmd"))
         ):
             return True
     return False
@@ -831,7 +1434,7 @@ _JA_GROB = re.compile(r"[/\\]ja(\.cmd)?(?![\w.-])|nutzer-antwort|to_spawn\.py\s+
 
 #: Schalter von xargs/python/env …, deren nächstes Wort sein Wert ist (``xargs -n 1 ja``, ``python -X utf8 …``).
 _JA_SCHALTER_MIT_WERT = {"-I", "-n", "-L", "-P", "-s", "-d", "-E", "-X", "-W", "-u", "-C"}
-_JA_WIN_PFAD = re.compile(r"\\ja(\.cmd)?(?![\w.-])")
+_JA_WIN_PFAD = re.compile(r"\\ja(\.cmd)?(?![\w.-])", re.IGNORECASE)
 
 
 def _ja_basis(wort: str) -> str:
@@ -855,7 +1458,9 @@ def _ja_als_argument(woerter: list[str]) -> bool:
     for i, wort in enumerate(woerter):
         if i and _ja_basis(wort) in ("ja", "ja.cmd") and ("/" in wort or "\\" in wort):
             return True
-        if _name(wort) in _JA_STARTER and _ja_basis(ziel(i + 1)) in ("ja", "ja.cmd"):
+        # ``.``/``source`` sind nur als Befehlsname Starter — als Argument (``find . -name …``) ein Ordner.
+        starter = _name(wort) in _JA_STARTER and (i == 0 or wort not in (".", "source"))
+        if starter and _ja_basis(ziel(i + 1)) in ("ja", "ja.cmd"):
             return True
         if _ja_basis(wort) == "to_spawn.py" and ziel(i + 1) in JA_UNTERBEFEHLE:
             return True
@@ -889,6 +1494,9 @@ def _nur_datei_heredoc(befehl: str) -> bool:
     kopf = _DATEI_HEREDOC_KOPF.fullmatch(zeilen[0])
     if not kopf or len(zeilen) < 2:
         return False
+    ziel = re.search(r">>? ?([A-Za-z0-9_./:-]+)", zeilen[0])
+    if ziel and _ja_startdatei(ziel.group(1)):  # Start-/Hook-Datei: läuft später von selbst (PR 610)
+        return False
     wort = kopf.group(1) or kopf.group(2)
     return wort in zeilen[1:] and zeilen.index(wort, 1) == len(zeilen) - 1
 
@@ -916,7 +1524,6 @@ def _nur_suche(befehl: str) -> bool:
     nie aus — dann darf das Suchmuster den Aufruftext tragen. Alles andere: ``False``.
     """
     return bool(_NUR_SUCHE.fullmatch(befehl))
-
 
 
 def _rg_vorfilter_ja(woerter: list[str]) -> bool:
@@ -962,26 +1569,30 @@ def hook_ja_sperre(strom: TextIO | None = None, fehler: TextIO | None = None) ->
     """PreToolUse-Hook (Bash) in ``~/.claude/settings.json``: Ja-Befehle aus Werkzeug-Aufrufen ablehnen.
 
     Der ``!``-Befehl des Nutzers läuft nicht durch PreToolUse-Hooks, ein Bash-Werkzeug-Aufruf einer
-    Session schon — das ist der Menschen-Nachweis ohne Terminal (#531). Exit 2 bei Treffer, sonst 0;
-    fällt die Prüfung aus (kaputte Eingabe, Ausnahme), entscheidet eine grobe Suche auf der Roh-Eingabe
-    (``…/ja``, ``nutzer-antwort``, ``to_spawn.py ja`` → Exit 2), fremde Befehle laufen durch (wie #204).
+    Session schon — das ist der Menschen-Nachweis ohne Terminal (#531). Exit 2 bei Treffer, sonst 0.
+    Fail-closed: fällt die Prüfung aus (kaputte Eingabe, jede Ausnahme, Rekursionstiefe), sperrt das
+    Wort irgendwo im Befehl bzw. in der Roh-Eingabe; Befehle ohne das Wort laufen durch (wie #204).
+    Nur das Bash-Werkzeug wird zerlegt: jedes andere (PowerShell) liest Quotes, ``iex``, ``& (…)``
+    und Backtick-Escapes anders — dort sperrt jedes Vorkommen des Worts (keine eigene Positivliste).
     Der Befehl steht bei Bash und PowerShell in ``tool_input.command``.
     """
-    text = ""
+    text, befehl = "", None
     try:
         text = (strom or sys.stdin).read()
         daten = json.loads(text)
         roh = daten.get("tool_input") if isinstance(daten, dict) else None
         befehl = roh.get("command") if isinstance(roh, dict) else None
         werkzeug = daten.get("tool_name") if isinstance(daten, dict) else None
-        treffer = (
-            isinstance(befehl, str)
-            and not (werkzeug == "Bash" and _bash_text_ohne_aufruf(befehl))
-            and ja_aufrufe(befehl)
-        )
-    except Exception:  # der Hook darf die Session bei fremden Befehlen nie stören
-        log.exception("Ja-Sperre: Prüfung fehlgeschlagen — grobe Prüfung auf Roh-Eingabe.")
-        treffer = bool(_JA_GROB.search(text))
+        if not isinstance(befehl, str):
+            treffer = False
+        elif werkzeug != "Bash":
+            treffer = ja_aufrufe(befehl) or _ja_traegt(re.sub(r"[`‘’‚“”„]", "", befehl))
+        else:
+            treffer = not _bash_text_ohne_aufruf(befehl) and ja_aufrufe(befehl)
+    except Exception:  # fail-closed: jede Ausnahme (auch RecursionError) sperrt beim Wort
+        log.exception("Ja-Sperre: Prüfung fehlgeschlagen — Wort im Text entscheidet.")
+        quelle = befehl if isinstance(befehl, str) else re.sub(r"\\[nrt]", " ", text)
+        treffer = _ja_traegt(quelle) or bool(_JA_GROB.search(text))
     if treffer:
         (fehler or sys.stderr).write(
             "Gesperrt: das Live-Ja gibt nur der Nutzer selbst (`! ja <N>` im Eingabefeld). "
