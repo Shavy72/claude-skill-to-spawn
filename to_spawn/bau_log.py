@@ -28,6 +28,9 @@ from . import config
 
 log = logging.getLogger("to_spawn.bau_log")
 
+#: Typ der Zeile einer abgelehnten Komplett-Prüfung (#496); Zähler: ``komplett_lauf.ablehnungen``.
+KOMPLETT_ABGELEHNT = "komplett_abgelehnt"
+
 #: Erlaubte Zeilen-Typen (``staffel_limit`` meldet das Ende der Staffel-Kette).
 TYPEN = (
     "auftrag",
@@ -56,6 +59,8 @@ TYPEN = (
     # Aufsicht (#436): Kontext an der Handoff-Grenze → Aufseher-Ablösung über respawn
     # (Felder ``kontext``, ``grenze``, ``exit``, ``zeile``; ``exit`` null = nicht versucht).
     "aufseher_abloesung",
+    # komplett_lauf (#496): Komplett-Prüfung aus einem Bau-Ticket abgelehnt (Felder ``spec``, ``weg``).
+    KOMPLETT_ABGELEHNT,
 )
 
 #: Felder, deren ``None`` als ``null`` stehen bleibt, weil es etwas bedeutet (sonst
