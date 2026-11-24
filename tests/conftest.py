@@ -10,6 +10,7 @@ Dateien. Die Zeitgrenzen selbst prüft ``test_waechter_213_fix.py`` ohne Schalte
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import shutil
@@ -551,3 +552,51 @@ def _pruef_cache_im_test(
     ablage = str(tmp_path / "nutzer-cache")
     monkeypatch.setenv("XDG_CACHE_HOME", ablage)
     monkeypatch.setenv("LOCALAPPDATA", ablage)
+
+
+def _git(ordner: Path, *args: str) -> None:
+    subprocess.run(
+        ["git", "-c", "user.name=t", "-c", "user.email=t@t", *args],
+        cwd=ordner,
+        check=True,
+        capture_output=True,
+    )
+
+
+@pytest.fixture
+def app_repo_komplett() -> Callable[..., Path]:
+    """Fabrik ``(tmp_path, zaehl, mit_staging=False)``: App-Repo mit eigenem Komplett-Skript (#496/#504).
+
+    Das Skript kennt keine Sperre und schreibt jede Ausführung in ``zaehl``.
+    """
+
+    def bauen(tmp_path: Path, zaehl: Path, mit_staging: bool = False) -> Path:
+        repo = tmp_path / "app"
+        (repo / "skripte").mkdir(parents=True)
+        (repo / "skripte" / "alles_pruefen.sh").write_text(
+            f"#!/usr/bin/env bash\necho lauf >> '{zaehl.as_posix()}'\n", encoding="utf-8"
+        )
+        (repo / ".to-spawn").mkdir()
+        konfig: dict[str, Any] = {
+            "staging": {"url": "https://staging.example.test"} if mit_staging else {"ohne": True},
+            "pruefung": {"schnell": "true", "komplett": "bash skripte/alles_pruefen.sh"},
+        }
+        (repo / ".to-spawn" / "config.json").write_text(json.dumps(konfig), encoding="utf-8")
+        (repo / ".gitignore").write_text(".to-spawn/pruef/\n", encoding="utf-8")
+        _git(repo, "init", "-q")
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-qm", "base")
+        _git(repo, "tag", "base")
+        return repo
+
+    return bauen
+
+
+@pytest.fixture
+def komplett_laeufe() -> Callable[[Path], int]:
+    """``(zaehl) -> Anzahl``: wie oft das Komplett-Skript aus :func:`app_repo_komplett` lief."""
+
+    def zaehlen(zaehl: Path) -> int:
+        return len(zaehl.read_text(encoding="utf-8").splitlines()) if zaehl.exists() else 0
+
+    return zaehlen
