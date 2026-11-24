@@ -66,3 +66,13 @@ def test_anlegen_github_pusht_main_mit_startcommit(tmp_path: Path) -> None:
     n = subprocess.run([str(GIT), "-C", str(fern), "rev-list", "--count", "main"],
                        capture_output=True, text=True, check=True).stdout.strip()
     assert int(n) >= 1
+
+
+def test_463_keine_skill_md_nennt_alten_unterbefehl_pruefen() -> None:
+    treffer = [
+        f"{p.relative_to(SKILL)}:{n}"
+        for p in SKILL.rglob("SKILL.md")
+        for n, zeile in enumerate(p.read_text(encoding="utf-8").splitlines(), 1)
+        if "to_spawn.py pruefen <S>" in zeile
+    ]
+    assert treffer == []
