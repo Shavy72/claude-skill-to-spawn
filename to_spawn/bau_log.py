@@ -56,6 +56,8 @@ TYPEN = (
     # Aufsicht (#436): Kontext an der Handoff-Grenze → Aufseher-Ablösung über respawn
     # (Felder ``kontext``, ``grenze``, ``exit``, ``zeile``; ``exit`` null = nicht versucht).
     "aufseher_abloesung",
+    # komplett_lauf (#496): Komplett-Prüfung aus einem Bau-Ticket abgelehnt (Felder ``spec``, ``weg``).
+    "komplett_abgelehnt",
 )
 
 #: Felder, deren ``None`` als ``null`` stehen bleibt, weil es etwas bedeutet (sonst

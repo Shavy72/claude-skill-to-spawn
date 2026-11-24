@@ -30,6 +30,8 @@ steht zusätzlich als Zeile mit ``art: "komplett"`` im Prüf-Protokoll.
 Bau-Ticket (#474): mit ``TO_SPAWN_TICKET`` in der Umgebung lehnt jede Tür ab (``ok=False``, kein Lauf,
 kein Merker) — je Ticket nur die schnelle Prüfung. Die Regel lebt allein in :func:`bau_ticket_ablehnung`
 (#496); auch ``pruef.pruefen(art="komplett")`` fragt dort, so greift sie für jedes Repo-Skript.
+Jede Ablehnung steht als Bau-Log-Zeile ``komplett_abgelehnt`` des Tickets; der Aufseher-Stand zählt
+sie nur über :func:`ablehnungen`.
 Übergangsregel: Repo ohne Gruppe ``pruefung`` (:func:`pruefplan.eingerichtet`) → nichts ausführen,
 ``ok=True`` (alter Ablauf).
 
@@ -59,7 +61,15 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from to_spawn import arbeitsstand, config, manifest, prozessbaum, pruefplan, starter
+from to_spawn import (
+    arbeitsstand,
+    bau_log,
+    config,
+    manifest,
+    prozessbaum,
+    pruefplan,
+    starter,
+)
 from to_spawn import sperre as _sperre
 from to_spawn.pruef import leiter, protokoll, sofort
 from to_spawn.pruefplan import Moment, SpecStand
@@ -133,6 +143,7 @@ def bau_ticket_ablehnung(spec: int | None, weg: str) -> str | None:
     if BAU_TICKET_VARIABLE not in os.environ:
         return None
     log.warning("komplett_lauf: Komplett-Prüfung (Spec %s, %s) aus Bau-Ticket abgelehnt", spec, weg)
+    _ablehnung_ablegen(spec, weg)
     nummer = "<S>" if spec is None else str(int(spec))
     return (
         "Komplett-Prüfung nicht aus einem Bau-Ticket (TO_SPAWN_TICKET gesetzt). Handlung: je Ticket "
@@ -140,6 +151,35 @@ def bau_ticket_ablehnung(spec: int | None, weg: str) -> str | None:
         f"über `to_spawn.py komplett {nummer} --moment vor-live` (Aufseher) bzw. im capo-Takt, sobald "
         "alle Tickets auf Staging sind."
     )
+
+
+#: Bau-Log-Typ einer Ablehnung (#496); Format nur hier, Lesen nur über :func:`ablehnungen`.
+ABLEHNUNG_TYP = "komplett_abgelehnt"
+
+
+def _ablehnung_ablegen(spec: int | None, weg: str) -> None:
+    """Ablehnung als Zeile in die Bau-Log-Laufdatei des Tickets, die der Aufseher-Stand liest.
+
+    Nur mit ``TO_SPAWN_LOG_REPO`` (setzt ``bau.py``): ohne Ziel bliebe nur der Rückfall auf das
+    aktuelle Repo — ein Aufruf von Hand schriebe so ins falsche Repo. Fehler nur loggen, die
+    Ablehnung selbst gilt immer.
+    """
+    ticket = bau_log.ticket_aus_umgebung()
+    if ticket is None or not os.environ.get("TO_SPAWN_LOG_REPO", "").strip():
+        log.info("komplett_lauf: Ablehnung ohne Ticket/Bau-Log-Ziel, nur im Log")
+        return
+    repo = bau_log.log_repo()
+    if repo is None:
+        return
+    try:
+        bau_log.schreibe(repo, ticket, ABLEHNUNG_TYP, spec=spec, weg=weg)
+    except OSError as fehler:
+        log.warning("komplett_lauf: Ablehnung nicht ins Bau-Log #%s: %s", ticket, fehler)
+
+
+def ablehnungen(zeilen: list[dict[str, Any]]) -> int:
+    """Wie oft die Komplett-Sperre in diesen Bau-Log-Zeilen eines Tickets abgelehnt hat (#496)."""
+    return sum(1 for z in zeilen if z.get("typ") == ABLEHNUNG_TYP)
 
 
 def _datei(klon: Path, spec: int) -> Path:
