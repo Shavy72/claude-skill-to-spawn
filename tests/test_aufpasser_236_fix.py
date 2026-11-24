@@ -341,6 +341,81 @@ def test_f2_rueckfrage_nie_send_keys_einmal_meldung(welt: Welt) -> None:
     assert welt.eintrag("bau 9002").get("stufe", 0) == 0
 
 
+def test_frage_am_prompt_erkennung() -> None:
+    frage = "Vorschlag: /code-review ultra starten? Ja/Nein.\n\n"
+    feld = "─" * 30 + "\n❯ \n" + "─" * 30 + "\n  Statuszeile\n"
+    assert aufpasser.frage_am_prompt(frage + feld)
+    assert aufpasser.frage_am_prompt("Weiter? yes/no\n" + feld)
+    assert not aufpasser.frage_am_prompt("Ich habe fertig gebaut.\n" + feld)
+    # Ja/Nein weit oben im Verlauf (nicht am Prompt) zählt nicht.
+    assert not aufpasser.frage_am_prompt(frage + "x\n" * 10 + feld)
+
+
+def test_frage_am_prompt_live_ja_aufforderung_wartet_zu_recht() -> None:
+    """Live-Ja-Aufforderung sichtbar: Session wartet auf den Menschen, kein Anstupser (#485)."""
+    from to_spawn import briefkasten
+
+    feld = "─" * 30 + "\n❯ \n" + "─" * 30 + "\n  Statuszeile\n"
+    ohne = "Soll das live gehen? Ja/Nein\n"
+    mit = ohne + f"Bitte tippe {briefkasten.ja_aufforderung(5)}\n"
+    assert aufpasser.frage_am_prompt(ohne + feld)
+    assert not aufpasser.frage_am_prompt(mit + feld)
+
+
+def test_frage_am_prompt_stupst_frueh_an(welt: Welt) -> None:
+    _fenster(welt, "bau 9002", "printf 'Vorschlag: Review starten? Ja/Nein.\\n'; sleep 3600")
+    _still_seit(welt, "bau 9002", 10, stufe=0)
+    assert welt.lauf() == 0
+    time.sleep(1)
+    assert "Aufpasser: Du stehst seit 10 min still" in pane_text("bau 9002")
+    assert welt.eintrag("bau 9002")["stufe"] == 1
+
+
+def test_frage_am_prompt_frisch_wartet(welt: Welt) -> None:
+    _fenster(welt, "bau 9002", "printf 'Vorschlag: Review starten? Ja/Nein.\\n'; sleep 3600")
+    _still_seit(welt, "bau 9002", 1, stufe=0)
+    assert welt.lauf() == 0
+    assert welt.eintrag("bau 9002").get("stufe", 0) == 0
+
+
+@pytest.mark.parametrize(
+    "zeile",
+    [
+        "Starten? (j/n)",
+        "Weiter (y/n)",
+        "Überschreiben [y/N]",
+        "Überschreiben [J/n]",
+        "Soll ich das tun, Ja oder Nein",
+        "start it, yes or no",
+        "Soll ich weitermachen?",
+    ],
+)
+def test_frage_am_prompt_formen(zeile: str) -> None:
+    feld = "─" * 30 + "\n❯ \n" + "─" * 30 + "\n  Statuszeile\n"
+    assert aufpasser.frage_am_prompt(zeile + "\n\n" + feld), zeile
+    assert not aufpasser.frage_am_prompt(zeile + "\n" + "x\n" * 4 + feld), zeile
+
+
+def test_frage_am_prompt_arbeitende_session_nicht_angestupst(welt: Welt) -> None:
+    _fenster(welt, "bau 9002", "printf 'Review starten? Ja/Nein.\\nesc to interrupt\\n'; sleep 3600")
+    _still_seit(welt, "bau 9002", 10, stufe=0)
+    assert welt.lauf() == 0
+    time.sleep(0.5)
+    assert "Aufpasser: Du stehst" not in pane_text("bau 9002")
+    assert welt.eintrag("bau 9002").get("stufe", 0) == 0
+
+
+def test_frage_am_prompt_kurze_schwelle_nur_stufe_0(welt: Welt) -> None:
+    welt.worktree(9002, schmutzig=True)
+    _fenster(welt, "bau 9002", "printf 'Review starten? Ja/Nein.\\n'; sleep 3600")
+    t0 = time.time()
+    _still_seit(welt, "bau 9002", 10, stufe=1, eingriff=t0 - 600)
+    assert _lauf_direkt(welt, jetzt=t0) == 0
+    assert welt.eintrag("bau 9002")["stufe"] == 1
+    assert not welt.protokoll_bau.exists()
+    assert not git(welt.origin, "branch", "--list", "sicherung/*").strip()
+
+
 # --- F3: Stufen-Logik — Text geändert nach Eingriff = Erfolg ----------------
 
 
