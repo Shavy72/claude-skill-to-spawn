@@ -1,8 +1,10 @@
+# ruff: noqa: F811
 """#543: Nach SPEC FERTIG schließt capo das Spec-Issue über den vorhandenen Weg ``befund.spec_schliessen``."""
 
 from __future__ import annotations
 
 import inspect
+import json
 import logging
 from datetime import datetime
 from pathlib import Path
@@ -85,7 +87,10 @@ from test_aufraeumen_schluss_1370 import (  # noqa: F401
 )
 
 
-def _tick(welt, monkeypatch: pytest.MonkeyPatch, staging: bool) -> list[int]:  # noqa: F811
+def _tick(
+    welt, monkeypatch: pytest.MonkeyPatch, konfig_zusatz: dict | str
+) -> list[int]:
+    """Tick mit echter ``config.lade`` über die geschriebene ``.to-spawn/config.json``."""
     aufrufe: list[int] = []
 
     def attrappe(repo: Path, gh_repo: str, spec: int, abruf=None):
@@ -95,20 +100,38 @@ def _tick(welt, monkeypatch: pytest.MonkeyPatch, staging: bool) -> list[int]:  #
     monkeypatch.setattr(befund, "spec_schliessen", attrappe)
     monkeypatch.setenv("TO_SPAWN_REPO", str(welt["repo"]))
     monkeypatch.chdir(welt["repo"])
+    datei = welt["repo"] / config.KONFIG_PFAD
+    if isinstance(konfig_zusatz, str):
+        datei.write_text(konfig_zusatz, encoding="utf-8")
+    else:
+        alt = json.loads(datei.read_text(encoding="utf-8")) if datei.is_file() else {}
+        for gruppe, werte in konfig_zusatz.items():
+            alt.setdefault(gruppe, {}).update(werte)
+        datei.write_text(json.dumps(alt), encoding="utf-8")
     konfig = config.lade(welt["repo"])
-    if staging:
-        konfig["staging"] = {"url": "https://staging.example.test"}
     capo.tick(welt["repo"], int(SPEC), "test/wegwerf", konfig, wt_basis=str(welt["wt"]))
     return aufrufe
 
 
-def test_tick_ohne_staging_schliesst_nach_aufraeumen(welt, hm, monkeypatch) -> None:  # noqa: F811
+def test_tick_bewusst_ohne_staging_schliesst_nach_aufraeumen(
+    welt, hm, monkeypatch
+) -> None:
     _spec_fertig(welt)
-    assert _tick(welt, monkeypatch, staging=False) == [int(SPEC)]
+    assert _tick(welt, monkeypatch, {"staging": {"ohne": True}}) == [int(SPEC)]
     assert _zustand(welt).get("spec_geschlossen")
 
 
-def test_tick_mit_staging_schliesst_nie(welt, hm, monkeypatch) -> None:  # noqa: F811
+@pytest.mark.parametrize(
+    "zusatz",
+    [
+        {"staging": {"url": "https://staging.example.test"}},
+        {"vps": {"staging_ssh": "staging-vps"}},
+        "{kaputtes json",
+        {},
+    ],
+    ids=["url", "nur_vps_staging_ssh", "kaputte_datei", "ohne_eintrag"],
+)
+def test_tick_ohne_positiven_beleg_schliesst_nie(welt, hm, monkeypatch, zusatz) -> None:
     _spec_fertig(welt)
-    assert _tick(welt, monkeypatch, staging=True) == []
+    assert _tick(welt, monkeypatch, zusatz) == []
     assert not _zustand(welt).get("spec_geschlossen")
