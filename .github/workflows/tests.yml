@@ -56,23 +56,24 @@ jobs:
         run: |
           set +e
           # Auslassungen nur aus auslassungen.txt; veraltete IDs machen den Schritt rot.
-          python -m pytest tests --collect-only -q -p no:cacheprovider > gesammelt.txt
-          python .github/workflows/auslassungen.py .github/workflows/auslassungen.txt gesammelt.txt > deselect.txt || exit 1
-          mapfile -t args < deselect.txt
+          # Hilfsdateien in RUNNER_TEMP: Tests durchsuchen den Arbeitsbaum (z. B. test_aufseher_428).
+          python -m pytest tests --collect-only -q -p no:cacheprovider > "$RUNNER_TEMP/gesammelt.txt"
+          python .github/workflows/auslassungen.py .github/workflows/auslassungen.txt "$RUNNER_TEMP/gesammelt.txt" > "$RUNNER_TEMP/deselect.txt" || exit 1
+          mapfile -t args < "$RUNNER_TEMP/deselect.txt"
           start=$(date +%s)
-          python -m pytest tests -q -n auto -p no:cacheprovider --junitxml=junit.xml "${args[@]}"
+          python -m pytest tests -q -n auto -p no:cacheprovider --junitxml="$RUNNER_TEMP/junit.xml" "${args[@]}"
           code=$?
           echo "LAUFZEIT_S=$(( $(date +%s) - start ))" >> "$GITHUB_ENV"
           exit $code
 
       - name: Zusammenfassung
         if: always()
-        run: python .github/workflows/junit_zusammenfassung.py junit.xml .github/workflows/auslassungen.txt >> "$GITHUB_STEP_SUMMARY"
+        run: python .github/workflows/junit_zusammenfassung.py "$RUNNER_TEMP/junit.xml" .github/workflows/auslassungen.txt >> "$GITHUB_STEP_SUMMARY"
 
       - name: JUnit-Artefakt
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: junit-${{ matrix.os }}
-          path: junit.xml
+          path: ${{ runner.temp }}/junit.xml
           if-no-files-found: warn
