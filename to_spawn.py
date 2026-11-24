@@ -369,7 +369,7 @@ def _blocker(args: argparse.Namespace) -> int:
 def _einreichen(args: argparse.Namespace) -> int:
     """Unterbefehl ``einreichen`` (#411): fertigen Stand auf den Hauptzweig, Regel nur in ``einreichen``."""
     erg = einreichen_modul.einreichen(Path.cwd(), str(args.nummer))
-    print(("EINGEREICHT: " if erg.exit == 0 else "NICHT EINGEREICHT: ") + erg.text)
+    print(erg.zeile)
     return erg.exit
 
 
