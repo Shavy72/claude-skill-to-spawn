@@ -57,9 +57,9 @@ Windows-PC (#426 Reihenfolge). Voraussetzung: Teile A–D gebaut und installiert
    bash probe/anlegen.sh ~/to-spawn-probe-<n>-ohne ohne-staging --app-port 18511 --live-port 18513 \
         --github Shavy72/to-spawn-probe-<n>-ohne
    ```
-   Danach je Repo ein privates GitHub-Repo mit `probe` im Namen anlegen und pushen
-   (`gh repo create Shavy72/to-spawn-probe-<n>-mit --private --source . --push`), damit Tickets
-   als Issues entstehen können. Startzeit in die Messtabelle.
+   `--github` legt das private GitHub-Repo (mit `probe` im Namen) an und pusht den Start-Commit
+   auf `main`, damit Tickets als Issues entstehen können und der erste Pull-Request ein Ziel hat
+   (#467). Kein zweiter Schritt von Hand. Startzeit in die Messtabelle.
 2. **Spec + Tickets:** Beschluss-Protokoll `docs/GRILL_<datum>_probe.md` aus Abschnitt 3 anlegen
    (Beschlüsse übernehmen, nicht neu grillen), dann `/to-spec`, `/to-tickets`.
 3. **Start:** `/to-spawn <S>` (Bau-Server) bzw. `/to-spawn-local <S>` (PC). Ab hier kein Eingriff.
