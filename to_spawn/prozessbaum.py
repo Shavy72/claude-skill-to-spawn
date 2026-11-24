@@ -389,7 +389,21 @@ def _win32() -> tuple[Any, Any]:
     kernel.GetFinalPathNameByHandleW.restype = ulong
     for abfrage in (nt.NtQueryInformationFile, nt.NtQueryVolumeInformationFile):
         abfrage.argtypes, abfrage.restype = [zeiger, zeiger, zeiger, ulong, ulong], ulong
+    # Besitzer eines Prozesses (siehe :func:`_ist_fremd_windows`)
+    kernel.ProcessIdToSessionId.argtypes = [ulong, ctypes.POINTER(ulong)]
     return kernel, nt
+
+
+@functools.cache
+def _advapi32() -> Any:
+    """advapi32 mit Signaturen für den Token-Besitzer (eigene Instanz)."""
+    advapi = ctypes.WinDLL("advapi32", use_last_error=True)  # type: ignore[attr-defined]
+    zeiger, ulong = ctypes.c_void_p, ctypes.c_ulong
+    advapi.OpenProcessToken.argtypes = [zeiger, ulong, ctypes.POINTER(zeiger)]
+    advapi.GetTokenInformation.argtypes = [zeiger, ctypes.c_int, zeiger, ulong, ctypes.POINTER(ulong)]
+    advapi.IsValidSid.argtypes = [zeiger]
+    advapi.GetLengthSid.argtypes, advapi.GetLengthSid.restype = [zeiger], ulong
+    return advapi
 
 
 def _momentaufnahme_windows() -> dict[int, tuple[int, int]]:
@@ -459,6 +473,10 @@ _PEB_PROCESS_PARAMETERS = 0x20
 _PARAMS_CURRENT_DIRECTORY = 0x38
 
 
+class _LeereCwd(OSError):
+    """PEB lesbar, cwd darin (noch) leer — Startphase: sperrt immer, auch bei fremden Prozessen."""
+
+
 def _arbeitsordner_windows(pid: int) -> str | None:
     """Win32-cwd von ``pid``; ``None`` = nicht zu prüfen (weg, beendet, fremd/geschützt —
     wie ``PermissionError`` unter ``/proc``); ``OSError`` = läuft, ist offen, liefert aber nichts.
@@ -482,13 +500,61 @@ def _arbeitsordner_windows(pid: int) -> str | None:
         kopf = _curdir(griff, pid)
         bytes_lang, puffer_adresse = int.from_bytes(kopf[:2], "little"), int.from_bytes(kopf[8:16], "little")
         if not bytes_lang or not puffer_adresse:
-            raise OSError(f"Prozess {pid}: leere cwd im PEB")
+            raise _LeereCwd(f"Prozess {pid}: leere cwd im PEB")
         try:
             return _speicher(griff, pid, puffer_adresse, bytes_lang).decode("utf-16-le")
         except UnicodeDecodeError as fehler:  # kaputte cwd = nicht lesbar, nie Abbruch
             raise OSError(f"Prozess {pid}: cwd nicht als UTF-16 lesbar ({fehler})") from None
     finally:
         kernel.CloseHandle(griff)
+
+
+_TOKEN_QUERY = 0x0008
+_TOKEN_USER = 1
+
+
+def _sitzung_windows(pid: int) -> int | None:
+    """Windows-Sitzung von ``pid`` (0 = Dienste); nicht feststellbar = ``None``."""
+    kernel, _ = _win32()
+    sitzung = ctypes.c_ulong(0)
+    return sitzung.value if kernel.ProcessIdToSessionId(pid, ctypes.byref(sitzung)) else None
+
+
+def _benutzer_windows(pid: int) -> bytes | None:
+    """SID des Benutzers, dem ``pid`` gehört (aus dem Prozess-Token); nicht lesbar = ``None``."""
+    kernel, _ = _win32()
+    advapi = _advapi32()
+    prozess = kernel.OpenProcess(_PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    if not prozess:
+        return None
+    try:
+        marke = ctypes.c_void_p()
+        if not advapi.OpenProcessToken(prozess, _TOKEN_QUERY, ctypes.byref(marke)):
+            return None
+        try:
+            puffer = ctypes.create_string_buffer(256)  # TOKEN_USER: Zeiger + Attribute + SID (≤ 68 Bytes)
+            laenge = ctypes.c_ulong(0)
+            if not advapi.GetTokenInformation(marke, _TOKEN_USER, puffer, 256, ctypes.byref(laenge)):
+                return None
+            sid = ctypes.c_void_p.from_buffer(puffer).value
+            if not sid or not advapi.IsValidSid(sid):
+                return None
+            return ctypes.string_at(sid, advapi.GetLengthSid(sid))
+        finally:
+            kernel.CloseHandle(marke)
+    finally:
+        kernel.CloseHandle(prozess)
+
+
+def _ist_fremd_windows(pid: int) -> bool:
+    """Gehört ``pid`` nachweislich einer anderen Sitzung oder einem anderen Benutzer als dieser
+    Lauf? Nicht feststellbar (eigener oder fremder Wert fehlt) = ``False`` — im Zweifel eigen."""
+    eigen = os.getpid()
+    for wert in (_sitzung_windows, _benutzer_windows):
+        fremd, selbst = wert(pid), wert(eigen)
+        if fremd is not None and selbst is not None and fremd != selbst:
+            return True
+    return False
 
 
 def _speicher(prozess: int, pid: int, adresse: int, anzahl: int) -> bytes:
@@ -663,7 +729,9 @@ def _arbeitsordner_griff_windows(pid: int) -> int | None:
         kernel.CloseHandle(prozess)
 
 
-def _arbeitsordner_drin(pid: int, ziel: tuple[tuple[int, int], str], kennungen: dict[str, tuple[int, int]]) -> bool | None:
+def _arbeitsordner_drin(
+    pid: int, ziel: tuple[tuple[int, int], str], kennungen: dict[str, tuple[int, int]]
+) -> bool | None:
     """Liegt die echte cwd von ``pid`` im Ziel (siehe :func:`_liegt_darin`)? ``None`` = Prozess
     weg; ``OSError`` = nicht feststellbar. Der übernommene Griff wird immer geschlossen."""
     kernel, _ = _win32()
@@ -684,9 +752,14 @@ def arbeitsordner_in_windows(ordner: str | Path) -> dict[int, ArbeitsordnerBefun
     die zusätzlich per Text sperren wollen.
 
     Nicht prüfbar (Prozess fremd/geschützt: ``OpenProcess`` verweigert, siehe
-    :func:`_arbeitsordner_windows`) fehlen wie bisher. Jeder andere Fehler eines laufenden
-    Prozesses ⇒ ``drin=None`` mit Grund (Aufrufer entscheidet fail-closed). ``ordner`` nicht
-    zu öffnen oder Momentaufnahme unlesbar = ``OSError``."""
+    :func:`_arbeitsordner_windows`) fehlen wie bisher, ebenso offene Prozesse mit unlesbarer
+    cwd, die nachweislich einer anderen Sitzung oder einem anderen Benutzer gehören
+    (:func:`_ist_fremd_windows`, #552 — ein geschützter Dienst sperrte sonst jedes Aufräumen).
+    Jeder andere Fehler eines laufenden Prozesses ⇒ ``drin=None`` mit Grund (Aufrufer
+    entscheidet fail-closed). ``ordner`` nicht zu öffnen oder Momentaufnahme unlesbar = ``OSError``.
+
+    ponytail: unlesbarer Prozess eines fremden Benutzers mit cwd im Ordner bleibt unentdeckt
+    (wie bei #243); offene Dateien fängt im echten Lauf die Umbenennungs-Probe."""
     ziel = _ordner_von(str(ordner))
     kennungen: dict[str, tuple[int, int]] = {}
     ergebnis: dict[int, ArbeitsordnerBefund] = {}
@@ -697,6 +770,8 @@ def arbeitsordner_in_windows(ordner: str | Path) -> dict[int, ArbeitsordnerBefun
             text = _arbeitsordner_windows(pid)
         except OSError as fehler:
             log.debug("cwd von Prozess %s unlesbar: %s", pid, fehler)
+            if not isinstance(fehler, _LeereCwd) and _ist_fremd_windows(pid):
+                continue  # fremde Sitzung/fremder Benutzer: wie nicht zu öffnen (#243, #552)
             ergebnis[pid] = ArbeitsordnerBefund(None, None, f"cwd unlesbar: {fehler}")
             continue
         if text is None:

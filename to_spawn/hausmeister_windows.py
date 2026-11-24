@@ -108,7 +108,8 @@ def _kein_arbeitsordner_drin(ordner: Path) -> None:
     mit Fehler. Zusätzlich sperrt der Pfad-Text wie bisher (nie als Freigabe): die cwd geht
     durch :func:`pfad_echt`; lesbar, aber nicht ganz auflösbar ⇒ bleibt mit Fehler, sobald ihre
     Text-Form oder Teil-Auflösung auf den Ordner (kanonisch oder wie übergeben) zeigt. Prozesse,
-    die sich nicht öffnen lassen (fremd, erhöht), fehlen schon in der Liste (#243)."""
+    die sich nicht öffnen lassen (fremd, erhöht), fehlen schon in der Liste (#243), ebenso
+    unlesbare Prozesse fremder Sitzung oder fremden Benutzers (#552)."""
     try:
         befunde = prozessbaum.arbeitsordner_in_windows(ordner)
     except OSError as fehler:
