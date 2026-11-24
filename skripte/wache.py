@@ -298,6 +298,20 @@ PROMPT = PROMPT.replace("{BEFUGNIS}", befugnis.aufseher_text("python {SKILL}/to_
 )
 
 
+def logging_einrichten(repo_ordner: Path, spec: int, auf_terminal: bool) -> Path | None:
+    """Root-Logging des Aufsehers (#541): Datei ``.to-spawn/wache_<S>.log``, nie aufs Terminal,
+    in dem Claude sein Eingabefeld zeichnet. Nur Probeläufe ohne Claude (``auf_terminal``) loggen auf stderr."""
+    fmt = "%(asctime)s %(levelname)s %(message)s"
+    if auf_terminal:
+        logging.basicConfig(level=logging.INFO, format=fmt)
+        return None
+    datei = repo_ordner / ".to-spawn" / f"wache_{spec}.log"
+    datei.parent.mkdir(parents=True, exist_ok=True)
+    handler = logging.FileHandler(datei, encoding="utf-8")
+    logging.basicConfig(level=logging.INFO, format=fmt, handlers=[handler], force=True)
+    return datei
+
+
 def main() -> int:
     konsole.utf8_ausgabe()  # Prompt enthält „→“, Windows-Konsole ist cp1252 (#68)
     ap = argparse.ArgumentParser(description="Bau-Aufseher-Session für eine Spec.")
@@ -323,7 +337,7 @@ def main() -> int:
     a = ap.parse_args()
     if a.abloesen:
         return abloesung_anlegen(a.abloesen)
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+    logging_einrichten(REPO_ORDNER, a.spec, a.dry_run or a.print_prompt)
     # GitHub-Slug verbindlich (#257 F5): kein GitHub-Origin → Exit 2 mit Grund, kein Rückfall.
     global REPO
     REPO = repo_slug_oder_abbruch()
