@@ -479,13 +479,81 @@ def ohne_statuszeile(text: str) -> str:
     (Shell, Dialog mit nur einer Linie, fremdes Programm) bleibt der Text ganz.
     """
     zeilen = text.splitlines()
+    feld = _eingabefeld(zeilen)
+    return text if feld is None else "\n".join(zeilen[: feld[1]])
+
+
+def _eingabefeld(zeilen: list[str]) -> tuple[int, int] | None:
+    """Zeilen-Index der oberen und unteren Rahmenlinie des Claude-Eingabefelds (``❯`` dazwischen)."""
     linien = [i for i, z in enumerate(zeilen) if EINGABEFELD_LINIE.fullmatch(z)]
     if len(linien) < 2:
-        return text
+        return None
     oben, unten = linien[-2], linien[-1]
     if not any(z.lstrip().startswith("❯") for z in zeilen[oben + 1 : unten]):
-        return text
-    return "\n".join(zeilen[:unten])
+        return None
+    return oben, unten
+
+
+#: Steuerfolgen im Bild aus ``capture-pane -e``: CSI-Folgen (SGR-Farben, Cursor) mit Parametern
+#: in Gruppe 1 und Endzeichen in Gruppe 2, dazu OSC-Folgen (z. B. OSC 8 Links), die mit BEL
+#: oder ``ESC \`` enden — bei OSC sind beide Gruppen ``None``.
+_STEUERFOLGE = re.compile(r"\x1b\[([0-9;:?]*)([@-~])|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)")
+
+
+def ohne_farben(text: str) -> str:
+    """Bild aus ``capture-pane -e`` ohne Steuerfolgen — so, wie ``capture-pane`` ohne ``-e`` es liefert."""
+    return _STEUERFOLGE.sub("", text)
+
+
+def _ohne_gedimmtes(zeile: str) -> str:
+    """Zeile ohne gedimmten Text (SGR 2) und ohne Steuerfolgen.
+
+    Claude Code zeigt Platzhalter und Prompt-Vorschläge gedimmt; getippter Text ist es nie.
+    ``38;2;r;g;b``/``48;5;n`` sind Farbwerte, ihre Zahlen zählen nicht als „gedimmt“. Parameter
+    werden nur an ``;`` geteilt; Unterparameter hinter ``:`` (``4:2``, ``38:2::r:g:b``) gehören
+    zu ihrem Code und zählen nie als eigener Wert.
+    """
+    raus: list[str] = []
+    gedimmt = False
+    pos = 0
+    for treffer in _STEUERFOLGE.finditer(zeile):
+        if not gedimmt:
+            raus.append(zeile[pos : treffer.start()])
+        pos = treffer.end()
+        if treffer.group(2) != "m":
+            continue
+        werte = treffer.group(1).split(";")
+        i = 0
+        while i < len(werte):
+            wert, _, unterwerte = werte[i].partition(":")
+            if unterwerte:
+                pass  # Code mit eigenen Unterparametern (4:2, 38:2:…): nie Dim, nichts überspringen
+            elif wert in ("", "0", "22"):
+                gedimmt = False
+            elif wert == "2":
+                gedimmt = True
+            elif wert in ("38", "48", "58") and i + 1 < len(werte):
+                i += 4 if werte[i + 1] == "2" else 2  # Farbmodus + Werte überspringen
+            i += 1
+    if not gedimmt:
+        raus.append(zeile[pos:])
+    return "".join(raus)
+
+
+def eingabe_leer(text: str) -> bool:
+    """Das Bild zeigt das Claude-Eingabefeld, und hinter ``❯`` steht nichts (#414).
+
+    ``text`` darf Farbcodes tragen (``capture-pane -e``): gedimmter Text hinter ``❯`` ist ein
+    Platzhalter oder Prompt-Vorschlag von Claude Code und zählt als leer. Normal gezeigter Text
+    (halber Text eines Menschen, auch gemischt mit gedimmtem) zählt als belegt; ohne Farbcodes
+    ist jeder Text belegt. Kein Eingabefeld (Shell, Dialog, fremdes Programm) zählt nie als leer.
+    """
+    zeilen = text.splitlines()
+    feld = _eingabefeld([ohne_farben(z) for z in zeilen])
+    if feld is None:
+        return False
+    inhalt = "".join(_ohne_gedimmtes(z) for z in zeilen[feld[0] + 1 : feld[1]]).strip()
+    return inhalt.removeprefix("❯").strip() == ""
 
 
 def pane_hash(text: str) -> str:
