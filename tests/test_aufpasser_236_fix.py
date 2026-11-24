@@ -341,6 +341,32 @@ def test_f2_rueckfrage_nie_send_keys_einmal_meldung(welt: Welt) -> None:
     assert welt.eintrag("bau 9002").get("stufe", 0) == 0
 
 
+def test_frage_am_prompt_erkennung() -> None:
+    frage = "Vorschlag: /code-review ultra starten? Ja/Nein.\n\n"
+    feld = "─" * 30 + "\n❯ \n" + "─" * 30 + "\n  Statuszeile\n"
+    assert aufpasser.frage_am_prompt(frage + feld)
+    assert aufpasser.frage_am_prompt("Weiter? yes/no\n" + feld)
+    assert not aufpasser.frage_am_prompt("Ich habe fertig gebaut.\n" + feld)
+    # Ja/Nein weit oben im Verlauf (nicht am Prompt) zählt nicht.
+    assert not aufpasser.frage_am_prompt(frage + "x\n" * 10 + feld)
+
+
+def test_frage_am_prompt_stupst_frueh_an(welt: Welt) -> None:
+    _fenster(welt, "bau 9002", "printf 'Vorschlag: Review starten? Ja/Nein.\\n'; sleep 3600")
+    _still_seit(welt, "bau 9002", 10, stufe=0)
+    assert welt.lauf() == 0
+    time.sleep(1)
+    assert "Aufpasser: Du stehst seit 10 min still" in pane_text("bau 9002")
+    assert welt.eintrag("bau 9002")["stufe"] == 1
+
+
+def test_frage_am_prompt_frisch_wartet(welt: Welt) -> None:
+    _fenster(welt, "bau 9002", "printf 'Vorschlag: Review starten? Ja/Nein.\\n'; sleep 3600")
+    _still_seit(welt, "bau 9002", 1, stufe=0)
+    assert welt.lauf() == 0
+    assert welt.eintrag("bau 9002").get("stufe", 0) == 0
+
+
 # --- F3: Stufen-Logik — Text geändert nach Eingriff = Erfolg ----------------
 
 

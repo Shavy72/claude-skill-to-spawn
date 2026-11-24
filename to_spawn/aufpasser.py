@@ -119,6 +119,8 @@ HANG_MIN = 90
 HANG_MIN_UNTERGRENZE = 61
 #: Offene Ja/Nein-Rückfrage: nach so vielen Minuten einmal melden.
 RUECKFRAGE_MIN = 15
+#: Ja/Nein-Frage im Text am Prompt (nicht Dialog): nach so vielen Minuten anstupsen (#485).
+FRAGE_PROMPT_MIN = 5
 #: „Ticket zu“: Fenster erst schließen, wenn der Text so lange unverändert ist.
 KARENZ_MIN = 15
 #: Nach dem Fortsetzen so lange auf die Session mit derselben ID warten.
@@ -464,6 +466,20 @@ def arbeitet(text: str, status: str | None = None) -> bool:
 
 def rueckfrage(text: str) -> bool:
     return any(m in text for m in RUECKFRAGE_MARKER)
+
+
+FRAGE_JA_NEIN = re.compile(r"\bja\s*/\s*nein\b|\byes\s*/\s*no\b", re.IGNORECASE)
+
+
+def frage_am_prompt(text: str) -> bool:
+    """Steht in den letzten Zeilen über dem Eingabefeld eine Ja/Nein-Frage (#485)?
+
+    Eine Bau-Session fragt nie (sie nimmt den Vorschlag); bleibt sie an so einer
+    Frage stehen, wartet sie sonst bis ``hang_min`` auf den ersten Anstupser.
+    """
+    zeilen = [z for z in ohne_statuszeile(text).splitlines() if z.strip()]
+    zeilen = [z for z in zeilen if not EINGABEFELD_LINIE.fullmatch(z) and not z.lstrip().startswith("❯")]
+    return any(FRAGE_JA_NEIN.search(z) for z in zeilen[-3:])
 
 
 #: Rahmenlinie des Claude-Code-Eingabefelds: Zeile nur aus ``─`` (mind. 20).
@@ -2037,7 +2053,8 @@ class Aufpasser:
             and self.folge_ab_handoff(f, ticket, repo, schluessel, hash_start)
         ):
             return
-        if arbeitend or still_min < self.e.hang_min:
+        schwelle = FRAGE_PROMPT_MIN if frage_am_prompt(text) else self.e.hang_min
+        if arbeitend or still_min < schwelle:
             return
         if ticket is None and not f.ist_wache:
             return
