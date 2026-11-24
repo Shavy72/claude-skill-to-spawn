@@ -578,6 +578,18 @@ def wartet_auf_nachfolger(text: str) -> bool:
     return any(NACHFOLGER_WARTEN.search(z) for z in _zeilen_am_prompt(text)[-3:])
 
 
+def wartet_umsonst(text: str, ticket: int | None, repo: Path) -> bool:
+    """Die eine Regel „wartet umsonst auf Nachfolger“ (#381, #613): Wortlaut ohne eigenen Handoff.
+
+    Liegt ein gültiger eigener Handoff (fällig oder nicht), ist die Ablösung echt und
+    :meth:`Aufpasser.folge_ab_handoff` startet den Nachfolger — dann kein Anstoß.
+    Fragen: Aufpasser (Takt, kurze Schwelle) und Briefkasten-Wecker (60 s).
+    """
+    if ticket is None or not wartet_auf_nachfolger(text):
+        return False
+    return eigener_handoff.aktuell(repo, ticket) is None
+
+
 def _zeilen_am_prompt(text: str) -> list[str]:
     """Nicht-leere Text-Zeilen über dem Eingabefeld (ohne Rahmen, ``❯`` und Statuszeile)."""
     zeilen = [z for z in ohne_statuszeile(text).splitlines() if z.strip()]
@@ -2233,14 +2245,8 @@ class Aufpasser:
         return True
 
     def wartet_umsonst(self, text: str, ticket: int | None, repo: Path) -> bool:
-        """Session wartet laut Text auf einen Nachfolger, ohne eigenen Handoff im Repo (#381).
-
-        Liegt ein gültiger eigener Handoff (fällig oder nicht), ist die Ablösung echt und
-        :meth:`folge_ab_handoff` startet den Nachfolger — dann kein früher Anstupser.
-        """
-        if ticket is None or not wartet_auf_nachfolger(text):
-            return False
-        return eigener_handoff.aktuell(repo, ticket) is None
+        """Siehe :func:`wartet_umsonst` (Modul-Funktion, auch vom Wecker gefragt)."""
+        return wartet_umsonst(text, ticket, repo)
 
     def _frage_haelt(self, f: Fenster, ticket: int, repo: Path, daten: dict) -> bool:
         """Offene Frage des Tickets im Briefkasten hält das Fenster, auch bei Platznot (#416).
