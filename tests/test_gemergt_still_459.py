@@ -78,3 +78,49 @@ def test_ticket_stand_unlesbar_kein_anstoss(welt: dict[str, Any], gemergt: dict[
     _bild(welt, _sagt(AUSSAGE))
     _wecker(welt).einmal()
     assert _getippt(welt) == []
+
+
+def _zaehle(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    aufrufe: list[int] = []
+    monkeypatch.setattr(ticket_zustand, "lesen", lambda *a, **k: aufrufe.append(1) or {"state": "OPEN", "labels": []})
+    return aufrufe
+
+
+def test_nach_stupser_max_kein_github_aufruf_mehr(
+    welt: dict[str, Any], gemergt: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    aufrufe = _zaehle(monkeypatch)
+    w = _wecker(welt)
+    w._prompt_stupser[TICKET] = aufpasser.STUPSER_MAX
+    _bild(welt, _sagt(AUSSAGE))
+    w.einmal()
+    w.einmal()
+    assert aufrufe == [] and _getippt(welt) == []
+
+
+def test_offene_briefkasten_frage_kein_github_aufruf(
+    welt: dict[str, Any], gemergt: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    aufrufe = _zaehle(monkeypatch)
+    briefkasten.einwerfen(TICKET, "Zweig A oder B?", "A", None, ["Lastenheft"], hauptbaum=welt["haupt"])
+    _bild(welt, _sagt(AUSSAGE))
+    _wecker(welt).einmal()
+    assert aufrufe == []
+
+
+def test_commit_nummer_1_trifft_ticket_12_nicht(
+    welt: dict[str, Any], gemergt: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(aufpasser.gh, "commit_betreffe", lambda *a, **k: [f"feat: Probe (#{TICKET // 10})"])
+    _bild(welt, _sagt(AUSSAGE))
+    _wecker(welt).einmal()
+    assert _getippt(welt) == []
+
+
+def test_commit_suche_gescheitert_kein_anstoss_kein_absturz(
+    welt: dict[str, Any], gemergt: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(aufpasser.gh, "commit_betreffe", lambda *a, **k: None)
+    _bild(welt, _sagt(AUSSAGE))
+    _wecker(welt).einmal()
+    assert _getippt(welt) == []

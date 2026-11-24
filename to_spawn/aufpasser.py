@@ -628,16 +628,16 @@ def gemergt_und_offen(text: str, ticket: int | None, repo: Path) -> bool:
     betreffe = gh.commit_betreffe(repo, ticket, f"origin/{gh.hauptzweig(repo)}")
     if not any(capo.betreff_hat_nummer(b, ticket) for b in betreffe or ()):
         return False
-    daten = ticket_zustand.lesen(ticket, repo)
-    if daten is None or ticket_zustand.stufe(daten) != "offen":
-        return False
-    if manifest.checkpoint_label(config.lade(repo)) in ticket_zustand.label_namen(daten):
-        return False
     try:
-        return not briefkasten.offene([ticket], hauptbaum=repo)
+        if briefkasten.offene([ticket], hauptbaum=repo):
+            return False
     except (OSError, ValueError, RuntimeError) as fehler:
         log.warning("#%s: Briefkasten nicht lesbar (%s) — kein Anstoß", ticket, fehler)
         return False
+    daten = ticket_zustand.lesen(ticket, repo)  # GitHub zuletzt
+    if daten is None or ticket_zustand.stufe(daten) != "offen":
+        return False
+    return manifest.checkpoint_label(config.lade(repo)) not in ticket_zustand.label_namen(daten)
 
 
 def _zeilen_am_prompt(text: str) -> list[str]:
