@@ -121,3 +121,27 @@ def test_capo_verworfener_eintrag_hinterlaesst_log(
     text = _text(ergebnis)
     assert "MENSCH NÖTIG" not in text
     assert "verworfen" in ergebnis.stderr and "#902" in ergebnis.stderr and fremd in ergebnis.stderr, text
+
+
+def test_fremder_eintrag_wird_ueber_laeufe_nur_einmal_gemeldet(
+    ort: dict[str, Path], caplog: pytest.LogCaptureFixture
+) -> None:
+    """Zustand zwischen Läufen bleibt erhalten: derselbe fremde Eintrag einmal, ein neuer danach noch einmal."""
+    fremd = (ort["tmp"] / "anderes" / "wt-7").as_posix()
+    _schreibe(ort["datei"], _zeile(fremd, fp="f1"))
+    zustand: set[str] = set()
+
+    def lauf() -> list[str]:
+        caplog.clear()
+        with caplog.at_level(logging.INFO, logger="to_spawn.mensch_noetig"):
+            mensch_noetig.eintraege_fuer_lauf(
+                3, set(), ort["repo"], lambda n: ort["wt"] / f"wt-{n}", fremd=zustand
+            )
+        return [r.getMessage() for r in caplog.records]
+
+    erster, zweiter = lauf(), lauf()
+    assert len(erster) == 1 and not zweiter, (erster, zweiter)
+    assert not erster[0].startswith("Mensch nötig"), erster[0]
+    _schreibe(ort["datei"], _zeile(fremd, fp="f1"), _zeile(fremd, fp="f2"))
+    dritter = lauf()
+    assert len(dritter) == 1, dritter
