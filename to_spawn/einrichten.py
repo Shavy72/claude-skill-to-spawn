@@ -340,8 +340,31 @@ def _pruefe_maschine(ort: Ort) -> Befund:
     return FEHLT, f"Repo nicht eingetragen: {datei}"
 
 
+def _belegtes_ticket_repo(wurzel: Path) -> str:
+    """``nameWithOwner`` des origin-Repos, nur wenn gh es kennt und Issues an sind; sonst ``""``."""
+    slug = gh.github_slug_aus_origin(wurzel)
+    if not slug:
+        return ""
+    antwort = gh.json_lauf(
+        ["repo", "view", slug, "--json", "hasIssuesEnabled,nameWithOwner"],
+        cwd=wurzel,
+        timeout=_GH_TIMEOUT,
+    )
+    if isinstance(antwort, dict) and antwort.get("hasIssuesEnabled") is True:
+        return str(antwort.get("nameWithOwner") or "")
+    return ""
+
+
 def _lege_maschine_an(ort: Ort) -> None:
-    config.maschine_eintragen(ort.wurzel)
+    eintrag = config.maschine_eintragen(ort.wurzel)
+    if eintrag["slug"] and not eintrag["ticket_repo"]:  # #542: nur mit Beleg, nie geraten (#66)
+        beleg = _belegtes_ticket_repo(ort.wurzel)
+        eintrag = config.maschine_eintragen(ort.wurzel, ticket_repo=beleg) if beleg else eintrag
+        if not eintrag["ticket_repo"] and ort.ausgabe is not None:
+            ort.ausgabe.write(
+                "  Hinweis: ticket_repo fehlt – Aufräumen nach Live läuft für dieses Repo nicht; "
+                f"eintragen in {config.maschine_datei()} (Feld ticket_repo = <besitzer>/<name>)\n"
+            )
 
 
 def _weiterleitungen(ort: Ort) -> list[tuple[Path, Path]]:

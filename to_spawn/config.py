@@ -636,8 +636,11 @@ def _gleicher_ort(a: str, b: Path) -> bool:
         return False
 
 
-def maschine_eintragen(repo: Path | None = None) -> dict[str, str]:
+def maschine_eintragen(repo: Path | None = None, ticket_repo: str = "") -> dict[str, str]:
     """Trägt das Repo in ``repos[]`` der Maschinen-Liste ein und gibt seinen Eintrag zurück.
+
+    ``ticket_repo`` (Standard ``""``) setzt nur den Wert eines neuen bzw. noch leeren Eintrags;
+    ein vorhandener Wert wird nie überschrieben. Der Einrichter übergibt ihn nur mit Beleg (#542).
 
     Schlüssel ist der Ordner (``pfad``). Neu: ``slug`` aus ``origin``, ``worktree_basis`` aus
     der Repo-Konfig, ``ticket_repo`` leer (= ableiten). Zeigt ``origin`` nicht auf ein
@@ -656,7 +659,7 @@ def maschine_eintragen(repo: Path | None = None) -> dict[str, str]:
     neu = {
         "slug": gh.github_slug_aus_origin(wurzel),
         "pfad": wurzel.as_posix(),
-        "ticket_repo": "",
+        "ticket_repo": ticket_repo,  # nur mit Beleg (Einrichter, #542); Standard bleibt leer
         "worktree_basis": str(lade(wurzel).get("worktree_basis") or ""),
     }
     if not neu["slug"]:
