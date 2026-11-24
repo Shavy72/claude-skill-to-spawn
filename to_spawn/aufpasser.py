@@ -494,8 +494,10 @@ def _eingabefeld(zeilen: list[str]) -> tuple[int, int] | None:
     return oben, unten
 
 
-#: Steuerfolgen im Bild aus ``capture-pane -e`` (SGR-Farben und sonstige CSI-Folgen).
-_STEUERFOLGE = re.compile(r"\x1b\[([0-9;:?]*)([@-~])")
+#: Steuerfolgen im Bild aus ``capture-pane -e``: CSI-Folgen (SGR-Farben, Cursor) mit Parametern
+#: in Gruppe 1 und Endzeichen in Gruppe 2, dazu OSC-Folgen (z. B. OSC 8 Links), die mit BEL
+#: oder ``ESC \`` enden — bei OSC sind beide Gruppen ``None``.
+_STEUERFOLGE = re.compile(r"\x1b\[([0-9;:?]*)([@-~])|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)")
 
 
 def ohne_farben(text: str) -> str:
@@ -507,7 +509,9 @@ def _ohne_gedimmtes(zeile: str) -> str:
     """Zeile ohne gedimmten Text (SGR 2) und ohne Steuerfolgen.
 
     Claude Code zeigt Platzhalter und Prompt-Vorschläge gedimmt; getippter Text ist es nie.
-    ``38;2;r;g;b``/``48;5;n`` sind Farbwerte, ihre Zahlen zählen nicht als „gedimmt“.
+    ``38;2;r;g;b``/``48;5;n`` sind Farbwerte, ihre Zahlen zählen nicht als „gedimmt“. Parameter
+    werden nur an ``;`` geteilt; Unterparameter hinter ``:`` (``4:2``, ``38:2::r:g:b``) gehören
+    zu ihrem Code und zählen nie als eigener Wert.
     """
     raus: list[str] = []
     gedimmt = False
@@ -518,11 +522,13 @@ def _ohne_gedimmtes(zeile: str) -> str:
         pos = treffer.end()
         if treffer.group(2) != "m":
             continue
-        werte = re.split(r"[;:]", treffer.group(1))
+        werte = treffer.group(1).split(";")
         i = 0
         while i < len(werte):
-            wert = werte[i]
-            if wert in ("", "0", "22"):
+            wert, _, unterwerte = werte[i].partition(":")
+            if unterwerte:
+                pass  # Code mit eigenen Unterparametern (4:2, 38:2:…): nie Dim, nichts überspringen
+            elif wert in ("", "0", "22"):
                 gedimmt = False
             elif wert == "2":
                 gedimmt = True
