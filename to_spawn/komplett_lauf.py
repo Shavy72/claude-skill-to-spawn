@@ -1,7 +1,8 @@
 """Komplett-Prüfung genau einmal je Spec (#425 Teil C, #455). Einzige Stelle des Merkers.
 
 Für Aufrufer (Abschluss-Paket, Aufseher): an jedem Spec-Moment nur :func:`komplett_einmal` rufen und
-bei ``ok=False`` mit ``grund`` anhalten. Ob die Prüfung dran ist, sagt :mod:`to_spawn.pruefplan`;
+bei ``ok=False`` mit ``grund`` anhalten. Vor Live nur :func:`darf_live` fragen (Live-Tür
+``to_spawn.py live``, #456); der Probelauf fragt nur :func:`nur_lesen` (startet nichts). Ob die Prüfung dran ist, sagt :mod:`to_spawn.pruefplan`;
 dieses Modul führt den Merker „Komplett-Prüfung lief“ und lässt den Befehl höchstens einmal je
 Spec und Kopf-Stand laufen.
 
@@ -86,6 +87,11 @@ class Ergebnis:
     dauer_s: float | None
     kopf: str
     laeuft: bool = False
+
+    @property
+    def frei(self) -> bool:
+        """Aufrufer darf jetzt weiter (Fertig, Live): ``ok`` und kein Lauf mehr offen (#456)."""
+        return self.ok and not self.laeuft
 
 
 @dataclass(frozen=True)
@@ -221,6 +227,75 @@ def komplett_einmal(
     )
 
 
+def darf_live(klon: Path, spec: int, konfig: dict[str, Any]) -> Ergebnis:
+    """Tür vor dem Live-Schritt (#456): ``.frei`` = der Live-Befehl darf jetzt starten.
+
+    Einzige Stelle der Regel „Live nur nach grüner Komplett-Prüfung“. Läuft im Aufruf wie von
+    Hand (Rot wird erneut geprüft); mit Staging gilt der grüne Takt-Lauf, ohne Merker läuft sie
+    hier (Sicherheitsnetz). Rot, Werkzeug-Fehler, Stand-Fehler oder ein noch laufender anderer
+    Lauf → ``frei`` ist ``False``, ``grund`` nennt die Handlung.
+    """
+    return komplett_einmal(klon, spec, Moment.VOR_LIVE, konfig)
+
+
+def nur_lesen(
+    klon: Path, spec: int, moment: Moment, konfig: dict[str, Any]
+) -> Ergebnis:
+    """Probelauf (#456): was der Takt jetzt sähe — liest nur Kopf und Merker, startet nichts.
+
+    Kein Nachziehen, keine Sperre, kein Lauf, kein Merker. Regel wie im Takt (rot je Kopf gilt
+    als geprüft). Fehlt ein gültiger Merker für den Kopf (oder liegt der Klon hinter ``@{u}``),
+    ist ``ok=False`` mit „würde jetzt prüfen“ — der Probelauf zeigt dann kein Fertig.
+    """
+    if not pruefplan.eingerichtet(konfig):
+        return Ergebnis(
+            False, True, "Prüfung nicht eingerichtet, alter Ablauf", None, ""
+        )
+    kopf = _kopf(klon)
+    if kopf is None:
+        return Ergebnis(
+            False,
+            False,
+            f"Kopf-SHA in {klon} nicht lesbar (git). Handlung: Klon prüfen, dann erneut rufen.",
+            None,
+            "",
+        )
+    gemerkt = None if _hinten(klon) else _gemerkt(lies_merker(klon, spec), kopf, True)
+    antwort = _ohne_lauf(konfig, Moment(moment), spec, kopf, gemerkt)
+    if antwort is not None:
+        return antwort
+    return Ergebnis(
+        False,
+        False,
+        f"Komplett-Prüfung für Stand {kopf[:7]} fehlt noch — der Takt würde sie jetzt starten "
+        "(Probelauf startet nichts).",
+        None,
+        kopf,
+    )
+
+
+def _ohne_lauf(
+    konfig: dict[str, Any],
+    moment: Moment,
+    spec: int,
+    kopf: str,
+    gemerkt: Merker | None,
+) -> Ergebnis | None:
+    """Antwort ohne Lauf (nicht dran, schon grün, je Kopf schon rot); ``None`` = Lauf stünde an."""
+    lief = gemerkt is not None and gemerkt.gruen
+    art = pruefplan.welche(konfig, SpecStand(moment, komplett_lief=lief))
+    if art != "komplett":
+        grund = (
+            f"Komplett-Prüfung für Stand {kopf[:7]} schon grün gelaufen"
+            if lief
+            else f"Komplett-Prüfung bei Moment {moment.value} nicht dran"
+        )
+        return Ergebnis(False, True, grund, None, kopf)
+    if gemerkt is not None:
+        return _aus_merker(gemerkt, spec, gelaufen=False)
+    return None
+
+
 def takt_kind(
     klon: Path, spec: int, moment: Moment, konfig: dict[str, Any]
 ) -> Ergebnis:
@@ -290,17 +365,9 @@ def _pruefen(
                     None,
                     "",
                 )
-            lief = gemerkt is not None and gemerkt.gruen
-            art = pruefplan.welche(konfig, SpecStand(moment, komplett_lief=lief))
-            if art != "komplett":
-                grund = (
-                    f"Komplett-Prüfung für Stand {kopf[:7]} schon grün gelaufen"
-                    if lief
-                    else f"Komplett-Prüfung bei Moment {moment.value} nicht dran"
-                )
-                return Ergebnis(False, True, grund, None, kopf)
-            if gemerkt is not None:
-                return _aus_merker(gemerkt, spec, gelaufen=False)
+            antwort = _ohne_lauf(konfig, moment, spec, kopf, gemerkt)
+            if antwort is not None:
+                return antwort
             befehl = pruefplan.befehl(konfig, "komplett")
             if not befehl:
                 return Ergebnis(
