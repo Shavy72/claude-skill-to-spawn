@@ -2787,6 +2787,16 @@ def _tick(
         and not zustand.get("aufraeumen_erledigt")
     ):
         erg.zeilen += _hausmeister_schluss(spec, zustand, jetzt, dry_run)
+    # Letzter Schritt der Kette (#543): Spec-Issue schließen, dort hängt das Aufseher-Fenster.
+    # Nur bei positivem Beleg ``staging.ohne: true`` (Vorgabe False, kaputte Datei → False): bei
+    # Staging gibt es keinen „Live ist gelaufen“-Merker (Folge-Issue), ein Repo ganz ohne
+    # Staging-Eintrag wird bewusst nicht von selbst geschlossen.
+    if (
+        zustand.get("aufraeumen_erledigt")
+        and not zustand.get("spec_geschlossen")
+        and config.staging_bewusst_ohne(konfig)
+    ):
+        erg.zeilen += _spec_schliessen_schritt(repo, spec, gh_repo, zustand, jetzt, dry_run)
 
     if MAIL_AUS in erg.zeilen:  # je Tick nur einmal, nicht je Meldung
         erste = erg.zeilen.index(MAIL_AUS)
@@ -2827,6 +2837,28 @@ def _komplett_alle_auf_staging(
     elif erg.gelaufen or erg.laeuft:
         zeilen.append(erg.grund)
     return not erg.frei
+
+
+def _spec_schliessen_schritt(
+    repo: Path, spec: int, gh_repo: str, zustand: dict[str, Any], jetzt: datetime, dry_run: bool
+) -> list[str]:
+    """Spec nach SPEC FERTIG über den vorhandenen Weg schließen (#543, ``befund.spec_schliessen``).
+
+    Die Regel „darf zu?“ (alle Folge-/Spec-Tickets erledigt) steht allein dort; Der Tick ruft nur bei
+    ``staging.ohne: true`` auf, weil ``spec_offen`` Live nicht kennt. Abbruch dort ist kein Fehler: Grund ins Log, der nächste Takt versucht es erneut.
+    """
+    if dry_run:
+        return [f"[Probe] Spec #{spec} schließen: spec-schliessen {spec}"]
+    try:
+        ergebnis = befund.spec_schliessen(repo, gh_repo, spec)
+    except Exception:  # der Tick (sichern) bricht nie ab
+        log.exception("Spec #%s schließen: unerwarteter Fehler", spec)
+        return []
+    if not ergebnis.ok:
+        log.warning("Spec #%s bleibt offen: %s", spec, " | ".join(ergebnis.zeilen))
+        return []
+    zustand["spec_geschlossen"] = jetzt.isoformat(timespec="seconds")
+    return ergebnis.zeilen
 
 
 def _hausmeister_schluss(spec: int, zustand: dict[str, Any], jetzt: datetime, dry_run: bool) -> list[str]:
