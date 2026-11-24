@@ -2013,13 +2013,16 @@ class Aufpasser:
                     log.error("%s: Ticket-Zustand nicht lesbar: %s", f.name, fehler)
                     daten = {}  # gilt als offen: nichts schließen
                 if ticket_zustand.fertig_gebaut(daten):
-                    if self._frage_haelt(f, ticket, repo, daten):
+                    if not self._frage_haelt(f, ticket, repo, daten):
+                        self.ticket_zu_schliessen(
+                            f, ticket, repo, schluessel, hash_start, info, platznot,
+                            grund=ticket_zustand.wortlaut(daten),
+                        )
                         return
-                    self.ticket_zu_schliessen(
-                        f, ticket, repo, schluessel, hash_start, info, platznot,
-                        grund=ticket_zustand.wortlaut(daten),
-                    )
-                    return
+                    # Frage hält nur das Schließen: lebt Claude, bleibt das Fenster
+                    # unberührt; beendete Session läuft in die Stufenkette unten (#416).
+                    if info is not None or not session_beendet(f.pane_pid):
+                        return
 
         if rueckfrage(text):
             if still_min >= RUECKFRAGE_MIN:
