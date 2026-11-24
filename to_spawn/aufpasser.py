@@ -587,9 +587,17 @@ def pane_hash(text: str) -> str:
     return hashlib.sha1(ohne_statuszeile(text).encode("utf-8", "replace")).hexdigest()
 
 
+#: Programmname aus ``argv[0]`` bzw. einem Befehlswort, plattformfest
+#: (:func:`prozessbaum.programm_name`: unter Windows ``ssh.exe``/``SSH.EXE`` mit Pfad = ``ssh``).
+#: Alle Namensvergleiche im Aufpasser gehen hierüber: ``session_id_aus_argv`` und
+#: ``session_finden`` (``claude``), ``deploy_art`` (``ssh`` der Live-Tür, ``pytest``),
+#: ``kette_folge`` und ``session_beendet`` (:data:`SHELLS`). Linux unverändert.
+_programm = prozessbaum.programm_name
+
+
 def session_id_aus_argv(argv: list[str]) -> str | None:
     """``--session-id <id>`` oder ``--resume <id>`` aus einem ``claude``-Aufruf."""
-    if not any(Path(a).name == "claude" for a in argv):
+    if not any(_programm(a) == "claude" for a in argv):
         return None
     for i, a in enumerate(argv):
         if a in ("--session-id", "--resume") and i + 1 < len(argv):
@@ -601,11 +609,8 @@ def session_id_aus_argv(argv: list[str]) -> str | None:
 
 
 def _argv(pid: int) -> list[str]:
-    try:
-        roh = Path(f"/proc/{pid}/cmdline").read_bytes()
-    except OSError:
-        return []
-    return [t.decode("utf-8", "replace") for t in roh.split(b"\0") if t]
+    """Argumente eines Prozesses (Linux ``/proc``, Windows zerlegte Kommandozeile), unlesbar = ``[]``."""
+    return prozessbaum.argv(pid)
 
 
 def _prozess_cwd(pid: int) -> Path | None:
@@ -619,21 +624,6 @@ def _prozess_cwd(pid: int) -> Path | None:
 def prozess_argv_text(pid: int) -> str:
     """Argumente eines Prozesses als Text (für Prüfungen)."""
     return " ".join(_argv(pid))
-
-
-def _vorfahren(pid: int) -> set[int]:
-    """``pid`` und seine Eltern bis init — die eigene Aufrufkette ist nie ein Deploy."""
-    kette: set[int] = set()
-    while pid > 1 and pid not in kette:
-        kette.add(pid)
-        try:
-            stat = Path(f"/proc/{pid}/stat").read_text(
-                encoding="utf-8", errors="replace"
-            )
-            pid = int(stat[stat.rfind(")") + 2 :].split()[1])
-        except (OSError, ValueError, IndexError):
-            break
-    return kette
 
 
 # Prozessbaum und „lebt“ kommen aus dem gemeinsamen Modul (auch respawn nutzt es).
@@ -677,7 +667,7 @@ def deploy_art(
     if not argv:
         return None
     liste = VORGABE_SKRIPTE if skripte is None else skripte
-    if Path(argv[0]).name == "ssh":
+    if _programm(argv[0]) == "ssh":
         for s in liste:
             if s["fern"] and s["name"] in argv[-1]:
                 return s["art"]
@@ -695,7 +685,9 @@ def deploy_art(
     # Programmname ist der letzte Teil nach ``/`` oder ``\`` (Windows-Pfad), ``-mpytest`` zählt mit.
     for teil in re.split(r"[\s;&|()'\"]+", kopf):
         name = re.split(r"[/\\]", teil.removeprefix("-m"))[-1]
-        if re.fullmatch(GATE_MUSTER, name.removesuffix(".exe")):
+        # ``_programm``: unter Windows auch ``PYTEST.EXE``/``pytest.cmd``; ``.exe`` ab bleibt
+        # für Windows-Namen in Linux-Befehlszeilen (so schon vor #251).
+        if re.fullmatch(GATE_MUSTER, _programm(name).removesuffix(".exe")):
             return "pruef"
     return None
 
@@ -765,7 +757,7 @@ def kette_folge(pane_pid: int, ticket: int) -> list[int]:
     funde: list[int] = []
     for pid in _baum_lesen(pane_pid):
         argv = _argv(pid)
-        if argv and Path(argv[0]).name.lstrip("-") in SHELLS:
+        if argv and _programm(argv[0]).lstrip("-") in SHELLS:
             funde.extend(int(n) for n in _BAU_AUFRUF.findall(" ".join(argv)))
     funde = list(dict.fromkeys(funde))
     if ticket in funde:
@@ -790,7 +782,7 @@ def session_beendet(pane_pid: int) -> bool:
         argv = _argv(pid)
         if not argv:
             continue
-        if Path(argv[0]).name.lstrip("-") not in SHELLS:
+        if _programm(argv[0]).lstrip("-") not in SHELLS:
             return False
     return True
 
@@ -868,7 +860,7 @@ def session_finden(
     """
     for pid in prozess_baum(pane_pid):
         argv = _argv(pid)
-        if not any(Path(a).name == "claude" for a in argv):
+        if not any(_programm(a) == "claude" for a in argv):
             continue
         argv_sid = session_id_aus_argv(argv)
         info = _session_json_lesen(pid, window_id, pane_id, heim)
@@ -1279,7 +1271,8 @@ class Aufpasser:
     ) -> list[tuple[int, str, DeployArt | None]]:
         """(PID, Kopfzeile, ``deploy_art``) der Prozesse, die auf ``muster_text`` passen.
 
-        ``pgrep -af`` liefert die Kandidaten; gezählt wird nur ein Treffer im Programm,
+        :func:`prozessbaum.passende` liefert die Kandidaten (Linux ``pgrep -af``, Windows
+        Kernel-Prozessliste, eigene Aufrufkette nie dabei); gezählt wird nur ein Treffer im Programm,
         Skript oder ersten Argument (``argv[:3]``; Live-Tür per ssh: ``deploy_art``)
         — der Prompt einer Claude-Session
         nennt ``safe_deploy_vps.sh`` und ``pytest`` als Text, ist aber kein Deploy.
@@ -1287,21 +1280,15 @@ class Aufpasser:
         verwaist („Waise ignoriert“).
         """
         try:
-            raus = self.sh("pgrep", "-af", muster_text, timeout=30)
-        except RuntimeError as fehler:
-            # pgrep: Exit 1 = kein Treffer; alles andere ist eine echte Störung —
-            # dann lieber nichts anfassen (fail-closed) als ein Deploy übersehen.
-            if "Zeitgrenze" in str(fehler) or "No such file" in str(fehler):
-                raise RuntimeError(f"Deploy-Wache: pgrep nicht nutzbar ({fehler})")
-            return []
+            kandidaten = prozessbaum.passende(muster_text, zeitgrenze=30)
+        except prozessbaum.ProzesslisteFehler as fehler:
+            # Abfrage gestört: lieber nichts anfassen (fail-closed) als ein Deploy übersehen.
+            raise RuntimeError(f"Deploy-Wache: {fehler}") from None
         muster = re.compile(muster_text)
-        eigene = _vorfahren(os.getpid())
         treffer = []
-        for zeile in raus.splitlines():
-            pid, _, args = zeile.partition(" ")
-            if not pid.isdigit() or int(pid) in eigene:
-                continue
-            argv = _argv(int(pid))
+        for zahl, args in kandidaten:
+            pid = str(zahl)
+            argv = _argv(zahl)
             kopf = " ".join(argv[:3]) or args
             art = deploy_art(argv, self.skripte)
             if not muster.search(kopf) and art != "live":
@@ -2541,7 +2528,7 @@ class Aufpasser:
         try:
             self._lauf()
         except RuntimeError as fehler:
-            # Werkzeug-Störung (z. B. pgrep der Deploy-Wache): Lauf endet ohne
+            # Werkzeug-Störung (z. B. Prozessliste der Deploy-Wache): Lauf endet ohne
             # Eingriff — lieber einmal nichts tun als blind eingreifen.
             log.error("Lauf abgebrochen, nichts angefasst: %s", fehler)
             code = 1
