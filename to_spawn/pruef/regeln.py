@@ -17,6 +17,9 @@ Abgleich zu ``/`` (Windows).
   ``.to-spawn/config.json`` geändert → voll.
 - **LF** Der letzte Lauf im Protokoll war rot oder ein Gate-Fehler → voll; so laufen die zuletzt roten
   Tests sicher mit (``--lf`` als Obermenge, für Python und Node gleich).
+- **S0** Art ``schnell`` (#425) prüft nie voll: Wo ein Grund oben „voll“ verlangt, läuft kein Test.
+  Ist dabei eine Code-Datei geändert (:func:`code_datei`), ist das ein Gate-Fehler, nie Grün;
+  ohne Code-Datei bleibt es eine ausgelassene Stufe. ≥ 1 gewählter Test ist auch hier sicher (R2).
 
 Eingefroren mit #101: Stand dieser Datei steht als ``regeln@<sha7>`` (git-Blob-SHA, prüfbar mit
 ``git hash-object``) in jeder Protokoll-Zeile unter ``werkzeug``. Änderung nur mit neuer Messreihe
@@ -150,16 +153,38 @@ def vorab(
     return ""
 
 
+def code_datei(pfade: Sequence[str], adapter: str) -> str | None:
+    """Erste geänderte Code-Datei für ``adapter`` (Endungen aus ``CODE_ENDUNGEN``); ``None`` = keine."""
+    code = CODE_ENDUNGEN.get(adapter, frozenset())
+    return next((normal(pfad) for pfad in pfade if PurePosixPath(normal(pfad)).suffix.lower() in code), None)
+
+
+def schnell_ohne_test(pfade: Sequence[str] | None, adapter: str, grund: str) -> str:
+    """S0: Gate-Fehler-Grund, wenn ``schnell`` wegen ``grund`` keinen Test laufen lässt; ``""`` = keiner.
+
+    Nur eine geänderte Code-Datei macht „0 Tests“ zum Gate-Fehler; reine Doku/Text bleibt ausgelassen.
+    ``pfade is None`` (geänderte Dateien unbekannt) zählt wie eine Code-Änderung.
+    """
+    datei = "Änderung unbekannt" if pfade is None else code_datei(pfade, adapter)
+    if datei is None:
+        return ""
+    return (
+        f"schnell: keine Test-Auswahl möglich ({grund}; pruefung.schnell nicht eingerichtet), "
+        f"Code geändert ({datei}), 0 Tests gelaufen "
+        "→ Schlüssel pruefung.schnell in .to-spawn/config.json eintragen"
+    )
+
+
 def nach_auswahl(n: int | None, pfade: list[str], adapter: str, doku: Collection[str] = frozenset()) -> str:
     """Grund für „voll“ nach der Auswahl (R2); ``""`` = Auswahl ist sicher.
 
     0 Tests ist nur sicher, wenn alle ``pfade`` erklärte Doku (``doku``) sind; sonst voll —
     Sicherheitsnetz, auch wenn R1 nicht gegriffen hat.
+    ≥ 1 gewählter Test ist immer sicher, auch für Art ``schnell`` (#425): Deren Ergebnis zählt.
     """
     if n is None:
         return "R2: Auswahl nicht zählbar"
-    code = CODE_ENDUNGEN.get(adapter, frozenset())
-    if n == 0 and any(PurePosixPath(normal(pfad)).suffix.lower() in code for pfad in pfade):
+    if n == 0 and code_datei(pfade, adapter) is not None:
         return "R2: Code geändert, Auswahl wählt 0 Tests (nicht bestimmbar)"
     erklaert = {normal(pfad) for pfad in doku}
     fremd = next((normal(pfad) for pfad in pfade if normal(pfad) not in erklaert), None) if n == 0 else None

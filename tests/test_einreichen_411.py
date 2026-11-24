@@ -204,6 +204,10 @@ def test_aufseher_darf_vom_hauptzweig_keinen_code_einreichen(welt: dict[str, Pat
 def test_rote_pruefung_pusht_nichts(welt: dict[str, Path]) -> None:
     wt = _ticket_wt(welt)
     vorher = _remote_main(welt)
+    # #425: je Ticket läuft nur die schnelle Prüfung, nie der volle Lauf. Ohne Test-Auswahl
+    # (pytest-impacted fehlt) prüft darum der eingerichtete Befehl pruefung.schnell die Tests.
+    schnell = f"{Path(sys.executable).as_posix()} -m pytest -q"
+    _commit(wt, ".to-spawn/config.json", json.dumps({"pruefung": {"schnell": schnell}}), "chore: Prüfung (#7)")
     _commit(wt, "rechnen.py", "def plus(a, b):\n    return a - b\n", "fix: kaputt (#7)")
     erg = _einreichen(wt, "7")
     assert erg.returncode == 1

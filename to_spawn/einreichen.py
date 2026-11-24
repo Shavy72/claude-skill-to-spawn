@@ -29,7 +29,7 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import gh, nest, pruef, uebergabe_sichern
+from . import config, gh, nest, pruef, pruefplan, uebergabe_sichern
 
 log = logging.getLogger("to_spawn.einreichen")
 
@@ -140,10 +140,24 @@ def _pruefung(ordner: Path, basis: str) -> str:
 
     Repo ohne Python/Node (reine Doku, Shell, Konfig): es gibt nichts zu testen, also ist das
     kein Werkzeug-Fehler — der Stand geht ohne Tests durch und die Meldung sagt das.
+
+    Welche Prüfung je Ticket dran ist, sagt allein ``pruefplan.welche`` (#425: die schnelle).
+    Übergangsregel: Repo nicht eingerichtet (``pruefplan.eingerichtet``) → Leiter wie vor Teil B
+    ohne ``art`` plus Warn-Zeile in Log und Protokoll.
     """
-    if not pruef.hat_werkzeug(ordner):
+    konfig = config.lade(ordner)
+    art = pruefplan.welche(konfig, pruefplan.SpecStand(pruefplan.Moment.TICKET))
+    if art == "keine":
+        return " (keine Prüfung dran)"
+    if not pruef.hat_werkzeug(ordner) and not pruefplan.befehl(konfig, art):
         return " (ohne Tests: weder Python noch Node im Repo)"
-    urteil = pruef.pruefen(ordner, basis, "HEAD")
+    if pruefplan.eingerichtet(konfig):
+        urteil = pruef.pruefen(ordner, basis, "HEAD", art=art)
+    else:
+        log.warning("einreichen: %s", pruefplan.NICHT_EINGERICHTET)
+        urteil = pruef.pruefen(ordner, basis, "HEAD", warnung=pruefplan.NICHT_EINGERICHTET)
+    gelaufen = urteil.zeile.get("art", "alter Ablauf")
+    log.info("einreichen: Prüfung %s %.2f s (Exit %s)", gelaufen, urteil.zeile.get("gesamt_s", 0.0), urteil.exit)
     if urteil.exit != 0:
         kurz = urteil.zeile.get("fehler_kurz") or "Prüfung nicht grün"
         raise _Rot(ROT, f"Prüfung rot (Exit {urteil.exit}): {kurz}")
