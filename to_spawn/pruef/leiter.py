@@ -23,6 +23,8 @@ from to_spawn import bash_wahl, temp_ordner
 from to_spawn.pruef import ausfuehren, protokoll, regeln, sofort, wackler
 
 GRUEN, ROT, GATE_FEHLER = 0, 1, 2
+#: Anfang von ``Stufe.grund``, wenn :func:`eigener_befehl` an der Zeitgrenze abbrach (#455).
+ZEITGRENZE = "Zeitgrenze"
 #: Stufe lief nicht (``lief=False`` + Grund) — zählt nie als Grün, ändert das Urteil nicht.
 AUSGELASSEN = -1
 #: Höchstens so viele Zeilen gehen als ``fehler_kurz`` ins Protokoll.
@@ -221,15 +223,18 @@ def stufen(repo: Path, adapter_liste: tuple[Adapter, ...], basis: str, art: str 
     return vorn + [_pruefe(repo, adapter, basis, pfade, art) for adapter in erkannt]
 
 
-def eigener_befehl(repo: Path, befehl: str, art: str) -> Stufe:
+def eigener_befehl(repo: Path, befehl: str, art: str, zeitgrenze_s: float | None = None) -> Stufe:
     """Eingerichteten Prüf-Befehl ``pruefung.<art>`` in bash laufen lassen: Exit 0 grün, sonst rot.
 
-    Fehlt bash, ist das ein Gate-Fehler (Werkzeug), kein roter Code.
+    Fehlt bash, ist das ein Gate-Fehler (Werkzeug), kein roter Code. ``zeitgrenze_s`` (#455):
+    danach endet der Befehl samt Unterprozessen; das Ergebnis ist rot, ``grund`` und ``ausgabe``
+    nennen „Zeitgrenze“.
     """
     start = time.monotonic()
     try:
         erg = bash_wahl.lauf(
             ["-c", befehl],
+            zeitgrenze_s=zeitgrenze_s,
             cwd=repo,
             env={**os.environ, **temp_ordner.umgebung()},
             stdin=subprocess.DEVNULL,
@@ -242,6 +247,12 @@ def eigener_befehl(repo: Path, befehl: str, art: str) -> Stufe:
     except OSError as fehler:
         text = f"bash für pruefung.{art} fehlt: {fehler}"
         return Stufe(art, "", False, text, 0.0, befehl, "bash", GATE_FEHLER, text)
+    except subprocess.TimeoutExpired as abbruch:
+        text = f"{ZEITGRENZE} {zeitgrenze_s:.0f} s überschritten — pruefung.{art} samt Unterprozessen beendet"
+        bisher = abbruch.output if isinstance(abbruch.output, str) else ""
+        return Stufe(
+            art, "", True, text, round(time.monotonic() - start, 2), befehl, "bash", ROT, f"{bisher}\n{text}".lstrip()
+        )
     ergebnis = GRUEN if erg.returncode == 0 else ROT
     return Stufe(
         art,

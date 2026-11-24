@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 import os
 import shutil
+import signal
 import subprocess
 import sys
 from collections.abc import Mapping, Sequence
@@ -70,7 +71,11 @@ def bash() -> str:
 
 
 def lauf(
-    argumente: Sequence[str], *, env: Mapping[str, str] | None = None, **optionen: Any
+    argumente: Sequence[str],
+    *,
+    env: Mapping[str, str] | None = None,
+    zeitgrenze_s: float | None = None,
+    **optionen: Any,
 ) -> subprocess.CompletedProcess[Any]:
     """``bash <argumente>`` über ``subprocess.run`` starten, Umgebung für Git-Bash bereinigt.
 
@@ -78,6 +83,11 @@ def lauf(
     ``MSYS2_ARG_CONV_EXCL`` heraus, sonst geht die Umgebung unverändert durch. ``optionen``
     gehen an ``subprocess.run`` (``check`` Vorgabe ``False``). Fehlt bash →
     ``FileNotFoundError`` aus ``bash()``.
+
+    ``zeitgrenze_s`` (#455): bash läuft in eigener Prozessgruppe; nach Ablauf endet die ganze
+    Gruppe samt Unterprozessen (die sonst die Ausgabe offen halten) und es kommt
+    ``subprocess.TimeoutExpired`` mit der Ausgabe bis dahin. ``subprocess.run(timeout=…)``
+    beendete nur bash selbst und wartete dann auf die Enkel.
     """
     basis = os.environ if env is None else env
     if sys.platform == "win32":
@@ -85,4 +95,54 @@ def lauf(
     else:
         umgebung = dict(basis)
     optionen.setdefault("check", False)
-    return subprocess.run([bash(), *argumente], env=umgebung, **optionen)  # noqa: S603
+    if zeitgrenze_s is None:
+        return subprocess.run([bash(), *argumente], env=umgebung, **optionen)  # noqa: S603
+    pruefen, eingabe = optionen.pop("check"), optionen.pop("input", None)
+    if sys.platform == "win32":
+        optionen["creationflags"] = (
+            optionen.get("creationflags", 0) | subprocess.CREATE_NEW_PROCESS_GROUP
+        )
+    else:
+        optionen["start_new_session"] = True
+    with subprocess.Popen([bash(), *argumente], env=umgebung, **optionen) as prozess:
+        try:
+            aus, fehler = prozess.communicate(eingabe, timeout=zeitgrenze_s)
+        except subprocess.TimeoutExpired:
+            _gruppe_beenden(prozess)
+            aus, fehler = prozess.communicate()
+            raise subprocess.TimeoutExpired(
+                prozess.args, zeitgrenze_s, output=aus, stderr=fehler
+            ) from None
+    if pruefen and prozess.returncode:
+        raise subprocess.CalledProcessError(
+            prozess.returncode, prozess.args, aus, fehler
+        )
+    return subprocess.CompletedProcess(prozess.args, prozess.returncode, aus, fehler)
+
+
+def _gruppe_beenden(prozess: subprocess.Popen[Any]) -> None:
+    """bash aus :func:`lauf` samt allen Unterprozessen hart beenden.
+
+    Linux/macOS: ``SIGKILL`` an die eigene Prozessgruppe. Windows: ganzer Prozessbaum über
+    :mod:`to_spawn.prozessbaum` (dort ist jedes Signal ``TerminateProcess``).
+    ponytail: ein Enkel, der selbst ``setsid`` ruft, verlässt die Gruppe — dann wartet
+    ``communicate`` auf ihn; Upgrade-Pfad: Ausgabe in Datei statt Pipe.
+    """
+    if sys.platform == "win32":
+        from to_spawn import prozessbaum  # spät: nur Windows braucht die Prozessliste
+
+        try:
+            prozessbaum.senden(prozessbaum.baum(prozess.pid), signal.SIGTERM)
+        except OSError as fehler:
+            log.warning("Prozessbaum von PID %d nicht beendet: %s", prozess.pid, fehler)
+        prozess.kill()
+        return
+    try:
+        os.killpg(prozess.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    except OSError as fehler:
+        log.warning(
+            "Prozessgruppe %d nicht beendet: %s — nur bash selbst", prozess.pid, fehler
+        )
+        prozess.kill()

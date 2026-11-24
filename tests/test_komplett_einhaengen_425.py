@@ -82,6 +82,13 @@ def test_takt_rot_haelt_spec_fertig_zurueck(welt: dict[str, Path]) -> None:
     assert "SPEC FERTIG" not in rot.stdout, _text(rot)
     assert rot.returncode == 1, _text(rot)
     zaehl.with_name("exit.txt").unlink()
+    # #455: rot je Kopf läuft im Takt nicht neu — nach dem Fix von Hand anstoßen.
+    gemerkt = _capo(welt)
+    assert "schon rot" in gemerkt.stdout and "SPEC FERTIG" not in gemerkt.stdout, _text(
+        gemerkt
+    )
+    assert _laeufe(zaehl) == 1
+    assert _tuer(welt["repo"], "--moment", "alle-auf-staging").returncode == 0
     gruen = _capo(welt)
     assert "SPEC FERTIG" in gruen.stdout, _text(gruen)
     assert _laeufe(zaehl) == 2

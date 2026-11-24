@@ -108,8 +108,9 @@ def _innen(pfad: Path, ordner: Path) -> bool:
 
 #: Skill-Skripte, die unter Test als Kind starten dürfen (Skript → Pflicht-Unterbefehl oder ``None``).
 #: Beide starten selbst nur durch diese Tür. Neue Einträge nur mit Grund.
-_SKILL_KINDER: dict[Path, str | None] = {
-    _SKILL / "to_spawn.py": "takt",  # waechter_takt.starte_abgeloest
+_SKILL_KINDER: dict[Path, tuple[str, ...] | None] = {
+    # takt: waechter_takt.starte_abgeloest; komplett: komplett_lauf._im_hintergrund (#455)
+    _SKILL / "to_spawn.py": ("takt", "komplett"),
     _SKILL / "skripte" / "bau.py": None,  # capo._starte_folge_runde, probesitz (Bau-Lauf)
 }
 
@@ -130,7 +131,7 @@ def _skill_python(argv: list[str], ordner: Path | None, env: Mapping[str, str] |
         return True
     for kind, befehl in _SKILL_KINDER.items():
         if skript.is_absolute() and skript.resolve() == kind.resolve():
-            return befehl is None or (len(argv) > 2 and argv[2] == befehl)
+            return befehl is None or (len(argv) > 2 and argv[2] in befehl)
     return False
 
 

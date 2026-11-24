@@ -2729,11 +2729,12 @@ def _tick(
 def _komplett_alle_auf_staging(repo: Path, spec: int, konfig: dict[str, Any], zeilen: list[str]) -> bool:
     """Komplett-Prüfung „alle Tickets auf Staging“ (#425 C2); ``True`` = Spec in diesem Takt nicht fertig.
 
-    Einmal-Regel, Sperre und „nicht eingerichtet“ versteckt :mod:`to_spawn.komplett_lauf`. Eine Zeile
+    Einmal-Regel (rot je Kopf), Hintergrund-Lauf, Sperre und „nicht eingerichtet“ versteckt
+    :mod:`to_spawn.komplett_lauf` (#455: der Takt wartet nicht auf lange Prüfungen). Eine Zeile
     nur, wenn etwas passiert ist (Lauf, Fehler, läuft schon) — sonst bleibt der Takt wie vor #425.
     """
     try:
-        erg = komplett_lauf.komplett_einmal(repo, spec, Moment.ALLE_AUF_STAGING, konfig)
+        erg = komplett_lauf.komplett_einmal(repo, spec, Moment.ALLE_AUF_STAGING, konfig, takt=True)
     except Exception as fehler:  # ein Ausreißer darf den Tick (sichern) nicht abbrechen
         log.exception("Komplett-Prüfung Spec #%s: unerwarteter Fehler", spec)
         zeilen.append(f"FEHLER: Komplett-Prüfung — unerwarteter Fehler ({type(fehler).__name__}: {fehler}).")
