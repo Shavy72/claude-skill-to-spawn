@@ -46,6 +46,15 @@ elif args[:2] == ["pr", "merge"]:
     git("checkout", "-q", "-B", stand["haupt"], "origin/" + stand["haupt"], cwd=tmp)
     git("merge", "-q", "--no-ff", "-m", "Merge pull request #41", head, cwd=tmp)
     git("push", "-q", "origin", stand["haupt"], cwd=tmp)
+    log.with_suffix(".merged").write_text(head, encoding="utf-8")
+    if os.environ.get("EINREICHEN_SPERRE_NACH_MERGE"):  # #476: paralleles Ticket hält origin/<haupt>
+        common = Path(git("rev-parse", "--path-format=absolute", "--git-common-dir"))
+        sperre = common / "refs" / "remotes" / "origin" / (stand["haupt"] + ".lock")
+        sperre.parent.mkdir(parents=True, exist_ok=True)
+        sperre.write_text("", encoding="utf-8")
+elif args[:2] == ["pr", "view"]:
+    offen = os.environ.get("EINREICHEN_PR_OFFEN")  # #476: Merge kam bei GitHub nicht an
+    print("MERGED" if log.with_suffix(".merged").exists() and not offen else "OPEN")
 else:
     sys.exit(9)
 """
@@ -294,3 +303,165 @@ def test_werkzeug_bricht_ab_meldet_rot_statt_traceback(
     erg = einreichen.einreichen(ordner, "1" if stelle == "cat-file" else "7")
     assert erg.exit == 1
     assert erg.text
+
+
+# --- Parallele Tickets im selben Klon (#476, F15) --------------------------------------------
+
+
+def test_sperre_auf_origin_nach_merge_meldet_eingereicht(
+    welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Hält ein paralleles Ticket ``origin/main`` gesperrt, zählt der echte Pull-Request-Stand.
+
+    Die gh-Attrappe legt nach dem Merge die Ref-Sperre im gemeinsamen Git-Ordner an — genau
+    wie ein gleichzeitiges ``git fetch`` eines anderen Tickets im selben Klon.
+    """
+    monkeypatch.setenv("EINREICHEN_SPERRE_NACH_MERGE", "1")
+    wt = _ticket_wt(welt)
+    sha = _commit(wt, "README.md", "plus rechnet\n", "docs: plus erklärt (#7)")
+    erg = _einreichen(wt, "7")
+    assert erg.returncode == 0, erg.stdout + erg.stderr
+    assert erg.stdout.startswith("EINGEREICHT"), erg.stdout
+    assert "#41" in erg.stdout
+    assert _ist_vorfahr(welt["remote"], sha, _remote_main(welt))
+
+
+def test_sperre_beim_fetch_wird_kurz_wiederholt(welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch) -> None:
+    """Vorübergehende Ref-Sperre beim ersten ``fetch``: kurz warten, erneut versuchen (#476)."""
+    from to_spawn import einreichen
+
+    wt = _ticket_wt(welt)
+    sha = _commit(wt, "README.md", "x\n", "docs: x (#7)")
+    echt = subprocess.run
+    fehlschlaege = {"fetch": 0}
+
+    def lauf(befehl: list[str], *a: object, **k: object) -> object:
+        if "fetch" in befehl and fehlschlaege["fetch"] == 0:
+            fehlschlaege["fetch"] += 1
+            return subprocess.CompletedProcess(
+                befehl, 1, "", "error: cannot lock ref 'refs/remotes/origin/main': Unable to create "
+                "'.git/refs/remotes/origin/main.lock': File exists."
+            )  # fmt: skip
+        return echt(befehl, *a, **k)
+
+    monkeypatch.setattr(einreichen.subprocess, "run", lauf)
+    monkeypatch.setattr(einreichen, "SPERRE_PAUSE_S", 0.0)
+    erg = einreichen.einreichen(wt, "7")
+    assert erg.exit == 0, erg.text
+    assert fehlschlaege["fetch"] == 1
+    assert _ist_vorfahr(welt["remote"], sha, _remote_main(welt))
+
+
+def test_aufseher_heilt_verpasstes_nachziehen_beim_naechsten_einreichen(
+    welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Nachziehen nach dem Merge verpasst (Sperre): das nächste Einreichen vom Hauptzweig wird nicht rot (#476)."""
+    klon = welt["klon"]
+    monkeypatch.setenv("EINREICHEN_SPERRE_NACH_MERGE", "1")
+    _commit(klon, "docs/HANDOFF_1.md", "Stand 1\n", "docs(aufseher): Handoff 1 [skip ci]")
+    erst = _einreichen(klon, "1")
+    assert erst.returncode == 0, erst.stdout + erst.stderr
+    assert _git(klon, "rev-parse", "main") != _remote_main(welt), "Lauf 1 muss das Nachziehen verpasst haben"
+    monkeypatch.delenv("EINREICHEN_SPERRE_NACH_MERGE")
+    sperre = Path(_git(klon, "rev-parse", "--path-format=absolute", "--git-common-dir")) / "refs/remotes/origin/main.lock"
+    sperre.unlink()
+    sha = _commit(klon, "docs/HANDOFF_2.md", "Stand 2\n", "docs(aufseher): Handoff 2 [skip ci]")
+    zweit = _einreichen(klon, "1")
+    assert zweit.returncode == 0, zweit.stdout + zweit.stderr
+    assert _ist_vorfahr(welt["remote"], sha, _remote_main(welt))
+    _git(klon, "fetch", "-q", "origin")
+    assert _git(klon, "rev-parse", "main") == _git(klon, "rev-parse", "origin/main") == _remote_main(welt)
+
+
+def test_sperre_nach_merge_aber_pull_request_offen_bleibt_rot(
+    welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Sperre beim Nachziehen und Pull-Request NICHT gemergt → kein falsches EINGEREICHT (#476)."""
+    monkeypatch.setenv("EINREICHEN_SPERRE_NACH_MERGE", "1")
+    monkeypatch.setenv("EINREICHEN_PR_OFFEN", "1")
+    wt = _ticket_wt(welt)
+    _commit(wt, "README.md", "x\n", "docs: x (#7)")
+    erg = _einreichen(wt, "7")
+    assert erg.returncode == 1, erg.stdout + erg.stderr
+    assert erg.stdout.startswith("NICHT EINGEREICHT"), erg.stdout
+    assert ["pr", "view", "41", "--json", "state", "--jq", ".state"] in _gh_aufrufe(welt)
+
+
+def _git_mit_fehler(monkeypatch: pytest.MonkeyPatch, stderr: str) -> list[list[str]]:
+    from to_spawn import einreichen  # noqa: PLC0415
+
+    aufrufe: list[list[str]] = []
+
+    def lauf(befehl: list[str], *_a: object, **_k: object) -> subprocess.CompletedProcess[str]:
+        aufrufe.append(befehl)
+        return subprocess.CompletedProcess(befehl, 1, "", stderr)
+
+    monkeypatch.setattr(einreichen.subprocess, "run", lauf)
+    monkeypatch.setattr(einreichen, "SPERRE_PAUSE_S", 0.0)
+    return aufrufe
+
+
+def test_anhaltende_sperre_kommt_nach_allen_versuchen_unveraendert_durch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from to_spawn import einreichen  # noqa: PLC0415
+
+    sperre = "error: cannot lock ref 'refs/remotes/origin/main': File exists."
+    aufrufe = _git_mit_fehler(monkeypatch, sperre)
+    with pytest.raises(einreichen._Rot) as rot:
+        einreichen._git(tmp_path, "fetch", "origin", "main")
+    assert len(aufrufe) == einreichen.SPERRE_VERSUCHE
+    assert rot.value.code == einreichen.ROT
+    assert sperre in rot.value.text
+
+
+def test_fehler_ohne_sperre_wird_nicht_wiederholt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from to_spawn import einreichen  # noqa: PLC0415
+
+    aufrufe = _git_mit_fehler(monkeypatch, "fatal: couldn't find remote ref main")
+    with pytest.raises(einreichen._Rot) as rot:
+        einreichen._git(tmp_path, "fetch", "origin", "main")
+    assert len(aufrufe) == 1
+    assert "couldn't find remote ref" in rot.value.text
+
+
+def _zweit_klon(welt: dict[str, Path]) -> Path:
+    zweit = welt["tmp"] / "zweit"
+    subprocess.run(["git", "clone", "-q", str(welt["remote"]), str(zweit)], check=True, capture_output=True)
+    _git(zweit, "config", "user.email", "f@test")
+    _git(zweit, "config", "user.name", "f")
+    return zweit
+
+
+def test_aufseher_vom_hauptzweig_bleibt_rot_wenn_origin_fremde_commits_hat(welt: dict[str, Path]) -> None:
+    """Heilen (#476) gilt nur für verpasste Merge-Commits: liegt ein fremder Commit auf origin, bleibt es rot."""
+    klon, zweit = welt["klon"], _zweit_klon(welt)
+    _commit(zweit, "docs/fremd.md", "fremd\n", "docs: fremder Commit")
+    _git(zweit, "push", "-q", "origin", "main")
+    fremd = _remote_main(welt)
+    sha = _commit(klon, "docs/HANDOFF_1.md", "Stand 1\n", "docs(aufseher): Handoff 1 [skip ci]")
+    erg = _einreichen(klon, "1")
+    assert erg.returncode != 0, erg.stdout + erg.stderr
+    assert "ist weiter" in erg.stdout + erg.stderr
+    assert _git(klon, "rev-parse", "HEAD") == sha, "kein stiller Merge fremder Commits"
+    assert _remote_main(welt) == fremd
+
+
+def test_aufseher_heil_merge_mit_konflikt_hinterlaesst_keinen_halben_merge(welt: dict[str, Path]) -> None:
+    """Scheitert der Heil-Merge (#476) an einem Konflikt, bleibt kein MERGE_HEAD im geteilten Klon liegen."""
+    klon, zweit = welt["klon"], _zweit_klon(welt)
+    _commit(klon, "docs/HANDOFF_1.md", "Stand 1\n", "docs(aufseher): Handoff 1 [skip ci]")
+    _git(klon, "push", "-q", "origin", "HEAD:refs/heads/einreich-1")
+    _git(zweit, "fetch", "-q", "origin")
+    _git(zweit, "merge", "--no-ff", "--no-commit", "origin/einreich-1")
+    (zweit / "docs/HANDOFF_1.md").write_text("Stand vom Merge\n", encoding="utf-8")
+    _git(zweit, "add", "docs/HANDOFF_1.md")
+    _git(zweit, "commit", "-q", "-m", "Merge einreich-1")
+    _git(zweit, "push", "-q", "origin", "main")
+    sha = _commit(klon, "docs/HANDOFF_1.md", "Stand 2\n", "docs(aufseher): Handoff 2 [skip ci]")
+    erg = _einreichen(klon, "1")
+    assert erg.returncode != 0, erg.stdout + erg.stderr
+    git_ordner = Path(_git(klon, "rev-parse", "--path-format=absolute", "--git-dir"))
+    assert not (git_ordner / "MERGE_HEAD").exists(), "halber Merge blieb liegen"
+    assert _git(klon, "rev-parse", "HEAD") == sha
+    assert _git(klon, "status", "--porcelain") == ""
