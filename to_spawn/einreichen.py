@@ -29,7 +29,7 @@ lokal nur Merge-Commits (keine fremden Commits), führt es ``origin/<hauptzweig>
 
 Exit-Codes: 0 angekommen bzw. übergeben · 1 rot (Grund in der Meldung, nichts gemergt) ·
 2 Stand unbekannt (gemergt oder nicht — denselben Befehl erneut rufen) · 5 Aufruf falsch
-(falscher Zweig/Ordner). Die Meldungs-Zeile samt Kopf liefert :attr:`Ergebnis.zeile`.
+(falscher Zweig/Ordner, falsche Argumente #505 — nicht wiederholen, Befehl prüfen). Die Meldungs-Zeile samt Kopf liefert :attr:`Ergebnis.zeile`.
 """
 
 from __future__ import annotations
