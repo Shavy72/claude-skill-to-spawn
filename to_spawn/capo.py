@@ -1533,6 +1533,10 @@ EIGENE_KOEPFE: tuple[str, ...] = (*AUFSEHER_KOEPFE, AUFPASSER_KOPF)
 #: Anfang des Annahme-Kommentars nach der Marke — schreibt :func:`_checkpoint`, liest
 #: :func:`annahme_schon_gesetzt` (#507).
 ANNAHME_ANFANG = "Annahme nach"
+#: Anfang von ``grund`` der Bau-Log-Zeile ``entscheidung``, die die Annahme selbst schreibt
+#: (:func:`_checkpoint`). Diese Zeile ist keine Spur der Session (#511), siehe
+#: :func:`_ist_session_zeile`.
+ANNAHME_GRUND = "Aufseher-Annahme nach"
 
 
 @dataclass
@@ -1616,6 +1620,18 @@ def _ist_session_kommentar(text: str) -> bool:
     return text.lstrip().startswith(SESSION_KOPF)
 
 
+def _ist_session_zeile(z: dict[str, Any], typen: tuple[str, ...]) -> bool:
+    """Bau-Log-Zeile eines der ``typen``, die von der Session stammt (#511).
+
+    Die eigene ``entscheidung``-Zeile der Annahme (``grund`` beginnt mit
+    :data:`ANNAHME_GRUND`) zählt nie — sonst gilt sie nach der Frist als neuer Vorschlag
+    mit neuer Frist (Probe-Lauf 2, #15). Erkannt am Text, damit auch Zeilen von vor #511
+    nicht zählen.
+    """
+    eigene_annahme = str(z.get("grund") or "").startswith(ANNAHME_GRUND)
+    return z.get("typ") in typen and not eigene_annahme
+
+
 def checkpoint_vorschlag(
     zeilen: list[dict[str, Any]], kommentare: list[dict[str, Any]]
 ) -> Vorschlag | None:
@@ -1628,7 +1644,7 @@ def checkpoint_vorschlag(
     """
     kandidaten: list[Vorschlag] = []
     for z in zeilen:
-        if z.get("typ") != "entscheidung":
+        if not _ist_session_zeile(z, ("entscheidung",)):
             continue
         frage, wahl, grund = entscheidung_teile(z)
         zeit = _zeit(z.get("ts"))
@@ -1665,7 +1681,7 @@ def checkpoint_frage_zeit(
     zeiten = [
         _zeit(z.get("ts"))
         for z in zeilen
-        if z.get("typ") in ("blockiert", "entscheidung")
+        if _ist_session_zeile(z, ("blockiert", "entscheidung"))
     ]
     for eintrag in kommentare:
         _, text, zeit = _kommentar_teile(eintrag)
@@ -1702,8 +1718,13 @@ def annahme_schon_gesetzt(kommentare: list[dict[str, Any]]) -> bool:
     Die eine Stelle der Regel „höchstens einmal je Ticket, nie nach eigener Rücknahme“:
     eine Rücknahme setzt eine frühere Annahme voraus, also reicht die Annahme selbst als
     Merkmal. Gelesen wird das Ticket, nicht der Zustand des Aufsehers — der geht bei einem
-    Neustart verloren, und die eigene Bau-Log-Zeile der Annahme gilt sonst nach der Frist
-    als neuer Vorschlag (Probe-Lauf 2, #15: 11:34 Annahme, 12:08 Rücknahme, 12:51 erneut).
+    Neustart verloren (Probe-Lauf 2, #15: 11:34 Annahme, 12:08 Rücknahme, 12:51 erneut).
+    Nur Kommentare, die mit einer Aufseher-Marke beginnen — ein Zitat (``> Aufseher: …``)
+    stammt vom Menschen.
+
+    ponytail: liest nur Kommentare aus :func:`issue_kommentare`; schreibt der Aufseher unter
+    einem Konto, das nicht in :data:`BETEILIGTE_ROLLEN` fällt, sieht er seine Annahme nicht
+    (heute geteiltes Konto) — dann eigenes Konto als beteiligt zulassen (#511).
     """
     for eintrag in kommentare:
         text = _kommentar_teile(eintrag)[1].lstrip()
@@ -1758,7 +1779,12 @@ def _checkpoint(
     if vorschlag is None and frage_zeit is None:
         return []  # Label gesetzt, aber noch keine Frage gestellt
     if annahme_schon_gesetzt(kommentare):
-        return [f"#{n} Checkpoint: Annahme steht schon am Ticket — keine zweite, der Mensch antwortet selbst"]
+        gemeldet = f"{n}|annahme_steht"  # #511: Meldezeile einmal, nicht bei jedem Lauf
+        if gemeldet in erledigt:
+            return []
+        erledigt.add(gemeldet)
+        steht = "Annahme steht schon am Ticket — keine zweite, der Mensch antwortet selbst"
+        return [f"#{n} Checkpoint: {steht}"]
     # Erst nach der Spur fragen: spart den gh-Aufruf und macht capo ohne Frage nie rot.
     blocker = gh.blocked_by(gh_repo, str(n))
     if blocker is None:
@@ -1815,7 +1841,7 @@ def _checkpoint(
         return [f"#{n} FEHLER: Checkpoint-Annahme nicht kommentiert"]
     erledigt.add(schluessel)
     grund = (
-        f"Aufseher-Annahme nach {frist:.0f} min ohne Antwort des Menschen (Doktrin, kippbar)"
+        f"{ANNAHME_GRUND} {frist:.0f} min ohne Antwort des Menschen (Doktrin, kippbar)"
         + (f" · {vorschlag.grund}" if vorschlag.grund else "")
     )
     frage = vorschlag.frage or f"Checkpoint #{n}"
