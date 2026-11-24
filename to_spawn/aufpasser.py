@@ -488,6 +488,53 @@ def gemeldete_blocker(text: str) -> str | None:
     return treffer[-1].removeprefix("WARTET: ").strip()
 
 
+def erledigt_gewartet(text: str, ticket: int, repo: Path, gh_repo: str) -> str | None:
+    """Die eine Regel „wartet auf Erledigtes“ (#269, #596): Blocker-Nummern (``#5, #6``) oder ``None``.
+
+    Die Session wartet laut letzter ``WARTET``-Zeile im Pane, ``gh.blocker_gruende`` sieht aber
+    alles erledigt. GitHub wird nur gefragt, wenn das Pane wirklich ``WARTET`` meldet (Rate-Limit);
+    scheitert die Abfrage, ``None`` (fail-closed). Fragen: Aufpasser (Takt) und Briefkasten-Wecker (60 s).
+    """
+    gemeldet = gemeldete_blocker(text)
+    if gemeldet is None or not gh_repo:
+        return None
+    deps = gh.blocked_by(gh_repo, str(ticket), cwd=repo)
+    if deps is None or gh.blocker_gruende(repo, deps) != []:
+        return None
+    return ", ".join(f"#{n}" for n in re.findall(r"#(\d+)", gemeldet)) or gemeldet
+
+
+def notiere_vorfall(repo: Path, ticket: str, ereignis: str, beispiel: str) -> None:
+    """Vorfall-Zeile ``ereignis`` (:data:`EREIGNIS_VORFALL`) ins Bau-Log von ``ticket`` (#286).
+
+    Ziel wie :meth:`Aufpasser.log_ordner`; dieselbe Zeile steht höchstens einmal drin
+    (:func:`vorfall.schreibe`). Ein Fehler beim Schreiben kippt den Aufrufer nie.
+    """
+    worte = EREIGNIS_VORFALL.get(ereignis)
+    if worte is None:
+        return
+    klasse, symptom, ursache, loesung = worte
+    try:
+        vorfall.schreibe(
+            Aufpasser.log_ordner(repo, ticket),
+            ticket,
+            klasse=klasse,
+            symptom=symptom,
+            ursache=ursache,
+            loesung=loesung,
+            beispiel=beispiel,
+            regel=ereignis,
+            quelle="aufpasser",
+        )
+    except (OSError, ValueError) as fehler:
+        log.warning("Vorfall zu %s nicht notiert: %s", ereignis, fehler)
+
+
+def notiere_blocker_falsch(repo: Path, ticket: int, blocker: str, datum: str) -> None:
+    """Vorfall ``blocker_falsch_gewartet`` — die eine Stelle für Aufpasser und Wecker (#596)."""
+    notiere_vorfall(repo, str(ticket), "blocker_falsch_gewartet", f"#{ticket} wartete auf {blocker} {datum}")
+
+
 def rueckfrage(text: str) -> bool:
     return any(m in text for m in RUECKFRAGE_MARKER)
 
@@ -1476,7 +1523,8 @@ class Aufpasser:
             return
         self.stand.meldungen[schluessel] = self.jetzt
 
-    def log_ordner(self, repo: Path, ticket: str) -> Path:
+    @staticmethod
+    def log_ordner(repo: Path, ticket: str) -> Path:
         """Wohin die Vorfall-Zeile gehört: Worktree des Tickets, sonst Hauptbaum.
 
         capo liest Laufdateien nur im Repo selbst und in ``wt-<Ticket>``. Ein
@@ -1498,30 +1546,12 @@ class Aufpasser:
         --katalog`` hängt die Zeile später an den Fehlerkatalog. Ein Fehler beim
         Schreiben darf den Aufpasser-Lauf nie kippen.
         """
-        worte = EREIGNIS_VORFALL.get(ereignis)
-        if worte is None:
-            return
         treffer = _FENSTER_TICKET.search(fenster)
         ticket = treffer.group(1) if treffer else spec
         # Aufseher-Fenster arbeiten in einem Worktree; dessen ``.to-spawn`` liest
         # niemand für ein fremdes Ticket. Darum in den Hauptbaum schreiben, wenn
-        # das Fenster nicht der Worktree dieses Tickets ist (#286).
-        ziel = self.log_ordner(repo, ticket)
-        klasse, symptom, ursache, loesung = worte
-        try:
-            vorfall.schreibe(
-                ziel,
-                ticket,
-                klasse=klasse,
-                symptom=symptom,
-                ursache=ursache,
-                loesung=loesung,
-                beispiel=beispiel or f"#{ticket} {self.datum}",
-                regel=ereignis,
-                quelle="aufpasser",
-            )
-        except (OSError, ValueError) as fehler:
-            log.warning("Vorfall zu %s nicht notiert: %s", ereignis, fehler)
+        # das Fenster nicht der Worktree dieses Tickets ist (#286, :meth:`log_ordner`).
+        notiere_vorfall(repo, ticket, ereignis, beispiel or f"#{ticket} {self.datum}")
 
     # -- Eingreifen --------------------------------------------------------------
 
@@ -2163,22 +2193,16 @@ class Aufpasser:
         Fenster (zählt als Anstupser, Grenze R5). Wartet sie zu Recht oder ist die Lage
         unbekannt (Abfrage scheitert), passiert nichts. True = Fenster fertig geprüft.
         """
-        gemeldet = gemeldete_blocker(text)
-        if gemeldet is None:
+        if gemeldete_blocker(text) is None:  # ohne WARTET-Zeile kein origin-Lesen
             return False
-        gh_repo = gh.repo_aus_origin(repo)
-        deps = gh.blocked_by(gh_repo, str(ticket), cwd=repo) if gh_repo else None
-        if deps is None or gh.blocker_gruende(repo, deps) != []:
+        blocker = erledigt_gewartet(text, ticket, repo, gh.repo_aus_origin(repo))
+        if blocker is None:
             return False
-        blocker = ", ".join(f"#{n}" for n in re.findall(r"#(\d+)", gemeldet)) or gemeldet
         log.info("%s: wartet auf %s, laut GitHub erledigt — Anstoß", f.name, blocker)
         if self.e.trocken:
             print(f"[trocken] {f.ziel}: Blocker {blocker} erledigt, anstoßen")
             return True
-        self.vorfall_notieren(
-            f.spec, repo, schluessel, "blocker_falsch_gewartet", gemeldet,
-            beispiel=f"#{ticket} wartete auf {blocker} {self.datum}",
-        )
+        notiere_blocker_falsch(repo, ticket, blocker, self.datum)
         if len(self._stupser_zaehlen(e)) >= STUPSER_MAX or not self.vor_eingriff(f, hash_start, repo):
             return False  # Kette unten entscheidet (braucht den Menschen / nächster Lauf)
         self._eingeben(f.ziel, BLOCKER_FREI_TEXT.format(blocker=blocker, ticket=ticket))
