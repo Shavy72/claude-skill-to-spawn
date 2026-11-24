@@ -194,6 +194,9 @@ Fehlt die Datei, gelten die Vorgaben aus `to_spawn/config.py`:
 }
 ```
 
+`staffel.grenze_k` ist nur der Ticket-Schnitt (Planungs-Grenze je Ticket), keine Ablöse-Grenze:
+die Ablösung einer laufenden Session hängt allein an `~/.claude/smart-zone.json` (#417).
+
 ### Fremdes Repo: diese Schlüssel setzen (L1 Etappe 1)
 
 Die heutigen Werte des ersten App-Repos stehen nur in `to_spawn/vorgaben.py`; jedes andere

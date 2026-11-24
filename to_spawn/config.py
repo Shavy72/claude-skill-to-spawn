@@ -74,6 +74,9 @@ DEFAULTS: dict[str, Any] = {
     },
     "staffel": {
         "modus": "eltern",
+        #: Nur der Ticket-Schnitt (#417): Planungs-Grenze je Ticket in Tausend Token, gelesen von
+        #: ``manifest.pruefe_eintrag`` und ``bau_log.lernstoff``. Keine Ablöse-Grenze: die Ablösung
+        #: einer laufenden Session hängt allein an ``~/.claude/smart-zone.json`` (Test #417).
         "grenze_k": 240,
         "max_staffeln": 3,
     },
