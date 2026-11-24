@@ -209,3 +209,11 @@ def test_fremd_liste_gekappt_aelteste_zuerst_raus(ort: dict[str, Path]) -> None:
     mensch_noetig.eintraege_mit_zustand(3, zustand, lambda: None, ort["repo"], lambda n: ort["wt"] / f"wt-{n}")
     liste = zustand["mensch_noetig_fremd"]
     assert len(liste) == grenze and liste[-1] == "s1|neu" and "alt|0" not in liste
+
+
+def test_fehlender_schluessel_ohne_fremde_kein_sichern(ort: dict[str, Path]) -> None:
+    _schreibe(ort["datei"], _zeile(ort["repo"].as_posix(), fp="a1"))
+    gesichert: list[int] = []
+    zustand: dict[str, object] = {}
+    mensch_noetig.eintraege_mit_zustand(3, zustand, lambda: gesichert.append(1), ort["repo"], lambda n: ort["wt"] / f"wt-{n}")
+    assert gesichert == [] and zustand == {}

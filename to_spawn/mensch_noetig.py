@@ -123,7 +123,7 @@ def eintraege_mit_zustand(
     fremd = set(alt)
     eigene = eintraege_fuer_lauf(spec, set(zustand.get("mensch_noetig_gesehen") or []), repo, worktree, fremd=fremd)
     neu = alt + sorted(fremd - set(alt))
-    if sichern is not None and (neu != alt or roh != alt):
+    if sichern is not None and (neu != alt or (roh is not None and roh != alt)):
         zustand["mensch_noetig_fremd"] = neu[-FREMD_MAX:]
         sichern()
     return eigene

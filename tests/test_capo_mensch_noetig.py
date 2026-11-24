@@ -167,3 +167,18 @@ def test_eigener_worktree_wird_gemeldet_465(welt: dict[str, Path], datei: Path) 
     _schreibe(datei, _eintrag(repo=(welt["wt"] / "wt-902").as_posix()))
     assert "MENSCH NÖTIG: #902 " in _text(_capo(welt))
     assert len(_mensch_kommentare(welt, "902")) == 1
+
+
+def test_fremder_eintrag_zustand_ueber_zwei_capo_laeufe_515(welt: dict[str, Path], datei: Path) -> None:
+    """#515: fremder Eintrag wird im ersten Lauf geloggt und in der Zustandsdatei gemerkt,
+    der zweite Lauf (neuer Prozess) loggt ihn nicht mehr; ``--dry-run`` schreibt nichts."""
+    fremd = welt["tmp"] / "anderes-repo" / "wt-902"
+    _schreibe(datei, _eintrag(repo=fremd.as_posix()))
+    trocken = _capo(welt, "--dry-run")
+    assert "fremder Eintrag" in _text(trocken)
+    assert "mensch_noetig_fremd" not in _zustand(welt)
+    erste = _capo(welt)
+    assert "fremder Eintrag" in _text(erste)
+    assert len(_zustand(welt)["mensch_noetig_fremd"]) == 1
+    zweite = _capo(welt)
+    assert "fremder Eintrag" not in _text(zweite)
