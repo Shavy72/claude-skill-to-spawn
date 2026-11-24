@@ -130,6 +130,8 @@ def test_dauer_der_schnellen_pruefung_steht_in_protokoll_und_log(
 
 # Fix-Runde 1 (#425): „schnell“ mit geänderter Code-Datei und 0 gelaufenen Tests ist nie Grün.
 _KEINE_AUSWAHL = "schnell: keine Test-Auswahl möglich"
+#: Fix-Runde 2: Der Gate-Fehler nennt die Handlung, die ihn behebt.
+_HANDLUNG = "→ Schlüssel pruefung.schnell in .to-spawn/config.json eintragen"
 
 
 def test_schnell_mit_code_ohne_gelaufenen_test_ist_gate_fehler(tmp_path: Path) -> None:
@@ -137,6 +139,7 @@ def test_schnell_mit_code_ohne_gelaufenen_test_ist_gate_fehler(tmp_path: Path) -
     urteil = pruef.pruefen(repo, "base", "HEAD", art="schnell")
     assert urteil.exit == 2, urteil.zeile
     assert _KEINE_AUSWAHL in urteil.zeile["fehler_kurz"], urteil.zeile
+    assert _HANDLUNG in urteil.zeile["fehler_kurz"], urteil.zeile
     assert not _voll_lief(urteil.zeile), f"Rückfall auf den vollen Lauf: {urteil.zeile['stufen']}"
 
 
@@ -194,3 +197,24 @@ def test_nur_komplett_ohne_auswahl_mit_code_ist_gate_fehler(tmp_path: Path) -> N
     zeile = _letzte_zeile(repo)
     assert zeile["art"] == "schnell" and "warnung" not in zeile
     assert not _voll_lief(zeile)
+
+
+# Fix-Runde 2 (#425): Unbekannte Änderung (git diff gescheitert, ``pfade is None``) zählt wie eine
+# Code-Änderung — nie still Grün ohne gelaufenen Test.
+def test_regel_unbekannte_aenderung_ist_gate_fehler() -> None:
+    from to_spawn.pruef import regeln
+
+    grund = regeln.schnell_ohne_test(None, "python", "R0: Änderung unklar")
+    assert _KEINE_AUSWAHL in grund and _HANDLUNG in grund, grund
+
+
+def test_schnell_mit_unbekannter_aenderung_ist_gate_fehler(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from to_spawn.pruef import sofort
+
+    repo = _probe(tmp_path / "p", datei="README.md")
+    # Rand-Attrappe nur für den git-Fehlschlag: geänderte Dateien unbekannt.
+    monkeypatch.setattr(sofort, "geaendert", lambda _repo, _basis: None)
+    urteil = pruef.pruefen(repo, "base", "HEAD", art="schnell")
+    assert urteil.exit == 2, urteil.zeile
+    assert _KEINE_AUSWAHL in urteil.zeile["fehler_kurz"], urteil.zeile
+    assert not _voll_lief(urteil.zeile), f"Rückfall auf den vollen Lauf: {urteil.zeile['stufen']}"
