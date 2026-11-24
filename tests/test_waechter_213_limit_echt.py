@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from test_waechter_213 import (  # noqa: F401  (welt = Fixture)
+    SPEC,
     _aufrufe,
     _text,
     _wache,
@@ -127,4 +128,5 @@ def test_wache_wechselt_bei_echter_limit_zeile(welt: dict[str, Path]) -> None:
     erster, zweiter = aufrufe
     sid = erster[erster.index("--session-id") + 1]
     assert zweiter[zweiter.index("--resume") + 1] == sid
-    assert "Nutzungs-Limit erkannt" in ergebnis.stderr
+    log = (welt["repo"] / ".to-spawn" / f"wache_{SPEC}.log").read_text(encoding="utf-8")
+    assert "Nutzungs-Limit erkannt" in log

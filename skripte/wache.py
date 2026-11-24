@@ -298,6 +298,30 @@ PROMPT = PROMPT.replace("{BEFUGNIS}", befugnis.aufseher_text("python {SKILL}/to_
 )
 
 
+def logging_einrichten(repo_ordner: Path, spec: int, auf_terminal: bool) -> Path | None:
+    """Root-Logging des Aufsehers (#541): Datei ``.to-spawn/wache_<S>.log`` plus stderr, damit
+    Startfehler im Fenster sichtbar bleiben. Vor dem Start von Claude ``terminal_log_abschalten()``
+    rufen: danach zeichnet Claude dort sein Eingabefeld. Probeläufe ohne Claude (``auf_terminal``)
+    loggen nur auf stderr."""
+    fmt = "%(asctime)s %(levelname)s %(message)s"
+    handlers: list[logging.Handler] = [logging.StreamHandler(sys.stderr)]
+    datei = None
+    if not auf_terminal:
+        datei = repo_ordner / ".to-spawn" / f"wache_{spec}.log"
+        datei.parent.mkdir(parents=True, exist_ok=True)
+        handlers.append(logging.FileHandler(datei, encoding="utf-8"))
+    logging.basicConfig(level=logging.INFO, format=fmt, handlers=handlers, force=True)
+    return datei
+
+
+def terminal_log_abschalten() -> None:
+    """Entfernt die Terminal-Handler des Root-Loggers (Datei-Handler bleiben), vor Claude + Fäden (#541)."""
+    root = logging.getLogger()
+    for h in root.handlers[:]:
+        if isinstance(h, logging.StreamHandler) and not isinstance(h, logging.FileHandler):
+            root.removeHandler(h)
+
+
 def main() -> int:
     konsole.utf8_ausgabe()  # Prompt enthält „→“, Windows-Konsole ist cp1252 (#68)
     ap = argparse.ArgumentParser(description="Bau-Aufseher-Session für eine Spec.")
@@ -323,7 +347,7 @@ def main() -> int:
     a = ap.parse_args()
     if a.abloesen:
         return abloesung_anlegen(a.abloesen)
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+    logging_einrichten(REPO_ORDNER, a.spec, a.dry_run or a.print_prompt)
     # GitHub-Slug verbindlich (#257 F5): kein GitHub-Origin → Exit 2 mit Grund, kein Rückfall.
     global REPO
     REPO = repo_slug_oder_abbruch()
@@ -399,6 +423,7 @@ def main() -> int:
     umzug_datei.unlink(missing_ok=True)
     session_id = a.resume
     start_prompt = prompt
+    terminal_log_abschalten()  # #541: ab hier gehört das Terminal Claude, Fäden loggen nur in die Datei
     # Handoff-Blick (#542): eigener Faden prüft alle ≤ 2,5 min fällige Handoffs und
     # startet die Leiter — nicht erst beim nächsten Aufseher-Tick (bis 30 min).
     # Briefkasten-Wecker (#414): neue Frage weckt diese Session, Antwort die Bau-Session (≤ 1 min).
