@@ -132,8 +132,8 @@ def sicherstellen(
                 True,
                 [
                     (
-                        f"{kopf} — Spec #{s} läuft schon ({laeuft}): Einrichtungs-Ticket "
-                        f"nicht angelegt, nichts umgehängt. Lücke von Hand schließen: {auftrag}"
+                        f"{kopf} — Spec #{s} läuft schon oder Stand unklar ({laeuft}): "
+                        f"Einrichtungs-Ticket nicht angelegt, nichts umgehängt. Lücke von Hand schließen: {auftrag}"
                     )
                 ],
             )
@@ -189,7 +189,10 @@ def _titel_fuer(s: str) -> str:
 
 
 def _laeuft_schon(repo: Path, slug: str, daten: dict[str, Any]) -> str:
-    """Grund, warum die Spec schon läuft (``#N hat Bau-Log`` / ``#N ist zu``); leer = nicht."""
+    """Grund, nichts anzulegen (``#N hat Bau-Log`` / ``#N ist zu`` / Stand unklar); leer = frei.
+
+    Scheitert ``gh api`` für ein Ticket, ist der Stand unklar: im Zweifel nicht anlegen.
+    """
     tickets = sorted(daten["tickets"], key=manifest.ticket_schluessel)
     for t in tickets:
         # Wo das Log liegt, weiß nur bau_log.log_ort (zuerst Worktree, dann Hauptbaum).
@@ -198,7 +201,9 @@ def _laeuft_schon(repo: Path, slug: str, daten: dict[str, Any]) -> str:
             return f"#{t} hat Bau-Log"
     for t in tickets:
         stand = gh.json_lauf(["api", f"repos/{slug}/issues/{t}"], cwd=repo)
-        if isinstance(stand, dict) and ticket_zustand.endgueltig_zu(stand):
+        if not isinstance(stand, dict):
+            return f"Stand unklar: #{t} nicht lesbar (gh api)"
+        if ticket_zustand.endgueltig_zu(stand):
             return f"#{t} ist zu"
     return ""
 

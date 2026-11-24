@@ -4,7 +4,10 @@ Aufruf (im Repo-Wurzelordner):
 
     python ~/.claude/skills/to-spawn/to_spawn.py spawn <S> [--ziel local|srv]
     python ~/.claude/skills/to-spawn/to_spawn.py stand            # Skill-Stand Bau-Server sichern (#325)
-    python ~/.claude/skills/to-spawn/to_spawn.py regularien <S> [--tickets a,b] [--ohne-github]
+    python ~/.claude/skills/to-spawn/to_spawn.py regularien <S> [--tickets a,b] [--dry-run] \
+        [--ohne-einrichtung] [--ohne-github]  # vorher Einrichtungs-Ticket (#410): Anlegen
+        # scheitert = Exit 3 + Schlusszeile „EINRICHTUNG FEHLT“; --tickets, --dry-run,
+        # --ohne-einrichtung (= --nur-wache), Spec läuft schon / Stand unklar: nur Hinweis
     python ~/.claude/skills/to-spawn/to_spawn.py pruefen <basis> <ziel> [--repo <pfad>]  # Exit 0/1/2 + JSON (#99)
     python ~/.claude/skills/to-spawn/to_spawn.py anhaengen <S> <N> [--blockiert-von B,…] \
         [--schaetzung K] [--umfang TEXT] [--datei PFAD:a-b …] [--trocken]  # Ticket nachtragen (E2-2)
@@ -988,8 +991,8 @@ def main(argv: list[str] | None = None) -> int:
         return stand_modul.sichere_stand(repo, konfig)
     if args.befehl == "regularien":
         # Einrichtungs-Ticket (#410) vor der Prüfung: es soll in ihr schon mitzählen.
-        # Große Lücke wie im Einrichter: nur gemeldet, hält nicht auf (Plan L1, Tür 1).
-        # Probelauf (--dry-run), --tickets und --nur-wache (--ohne-einrichtung): nur Hinweis.
+        # Probelauf (--dry-run), --tickets, --nur-wache (--ohne-einrichtung) und
+        # „Spec läuft schon / Stand unklar“: nur Hinweis. Anlegen scheitert: Exit 3 (unten).
         einrichtung = einrichtungs_ticket.sicherstellen(
             repo,
             args.spec,
