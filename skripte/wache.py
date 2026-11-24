@@ -40,6 +40,7 @@ from to_spawn import (  # noqa: E402
     befugnis,
     config,
     context_mode,
+    briefkasten_wecker,
     handoff_blick,
     konsole,
     manifest,
@@ -253,7 +254,7 @@ Checkpoints legt der Mensch beim Planen fest: im Manifest `<MANIFEST>` das Feld 
 3. Befehl A (unten) — läuft jedes offene, entblockte Ticket? Je Ticket mit Status `still` → Befehl C (Leiter), `aus`/VERWAIST → Befehl B, `Rückfrage` → Abschnitt „Rückfragen-Fenster“.
 4. Ticket neu zu ohne Verstoß → Belegseite unter docs/verify-hard/ prüfen (Akzeptanz erfüllt? Live-Klick-Weg-Beleg mit Rolle da?); Mangel einstufen: rot (Akzeptanz nicht erfüllt / Beleg fehlt; z. B. Akzeptanz-Häkchen nicht erfüllt oder Live-Beleg fehlt) → `python {SKILL}/to_spawn.py befund --spec {S} --ticket <N> --stufe rot --text "…"` (öffnet wieder); gelb (Verbesserung/Hinweis, Akzeptanz trotzdem erfüllt, Kette darf weiter; z. B. fehlender Zusatz-Test für einen Nebenpfad) → `python {SKILL}/to_spawn.py befund --spec {S} --ticket <N> --stufe gelb --text "…"` (Folge-Ticket + Manifest-Eintrag, Ticket bleibt zu), Manifest <MANIFEST> mit Pathspec + [skip ci] committen.
 5. Stand in `docs/HANDOFF_{DATUM}_waechter_{S}.md` fortschreiben (Stand + Nachträge mit Uhrzeit), Commit mit Pathspec + [skip ci], Rebase nur bei sauberem Baum (`git diff --quiet`), dann `python {SKILL}/to_spawn.py einreichen {S}` (bringt die Übergabe ohne Rückfrage auf den Hauptzweig; nie selbst auf den Hauptzweig pushen; Exit 1 → Grund lesen, beheben, erneut).
-6. Takt: ScheduleWakeup {TAKT} s (ca. alle 30 min), immer; warten alle offenen Tickets nur noch auf die Abnahme des Menschen (Checkpoint/Gesamtabnahme), dann ScheduleWakeup {TAKT_ABNAHME} s (ca. alle 60 min). Leer-Tick (nichts geändert): Ticketstand-Tabelle (0b) plus genau eine Kurz-Zeile als Antwort, noop: true, keine Rohausgaben (Pane-Text, Log-Volltexte) lesen.
+6. Takt: ScheduleWakeup {TAKT} s (ca. alle 30 min), immer (eine neue Briefkasten-Frage weckt dich vorher mit „Briefkasten: neue Frage …“ — dann nur die Fragen bearbeiten, Takt unverändert); warten alle offenen Tickets nur noch auf die Abnahme des Menschen (Checkpoint/Gesamtabnahme), dann ScheduleWakeup {TAKT_ABNAHME} s (ca. alle 60 min). Leer-Tick (nichts geändert): Ticketstand-Tabelle (0b) plus genau eine Kurz-Zeile als Antwort, noop: true, keine Rohausgaben (Pane-Text, Log-Volltexte) lesen.
 
 ## Befehle (fertig zum Kopieren; <N> = Ticket, <PID> aus Befehl A)
 Ort: Aufseher im tmux des Bau-Servers → Spalte „hier“ ist der Bau-Server. Aufseher am PC → „hier“ = PC, Server-Tickets mit der Server-Form.
@@ -399,9 +400,10 @@ def main() -> int:
     start_prompt = prompt
     # Handoff-Blick (#542): eigener Faden prüft alle ≤ 2,5 min fällige Handoffs und
     # startet die Leiter — nicht erst beim nächsten Aufseher-Tick (bis 30 min).
+    # Briefkasten-Wecker (#414): neue Frage weckt diese Session, Antwort die Bau-Session (≤ 1 min).
     with handoff_blick.laeuft(
         a.spec, handoff_blick.EchteNaht(REPO_ORDNER, ordner, REPO)
-    ):
+    ), briefkasten_wecker.laeuft(a.spec, REPO_ORDNER):
         for runde in range(1, MAX_ABLOESUNGEN + 2):
             # Aufsicht (#213): Limit im Transkript → Ausweich-Modell; Umzug-/Ablöse-Datei → Ende.
             code = waechter_lauf.fahre(
