@@ -223,6 +223,32 @@ def aendert_ausfuehrbar(repo: Path, base: str, pfad: str) -> bool:
         return True
 
 
+def prueft_nichts(datei: Path, name: str) -> bool:
+    """True, wenn der Test (`TestA::test_x[1]`) nur Docstring/`pass`/`assert <Konstante>` enthält.
+
+    Solche Tests werden unabhängig vom Code nie rot. Nicht lesbar/nicht gefunden → True (Befund bleibt scharf).
+    ponytail: `assert 1 == 1` u. ä. zählt als Prüfung; nur wörtliche Konstanten gelten als leer.
+    """
+    try:
+        rumpf: list[ast.stmt] = ast.parse(datei.read_text(encoding="utf-8")).body
+    except (SyntaxError, ValueError, OSError) as fehler:
+        LOG.info("Test %s nicht lesbar (%s), Befund bleibt", datei, fehler)
+        return True
+    for teil in name.split("[")[0].split("::"):
+        treffer = [
+            k for k in rumpf if isinstance(k, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)) and k.name == teil
+        ]
+        if not treffer:
+            return True
+        rumpf = treffer[-1].body
+    return all(
+        isinstance(z, ast.Pass)
+        or (isinstance(z, ast.Expr) and isinstance(z.value, ast.Constant))
+        or (isinstance(z, ast.Assert) and isinstance(z.test, ast.Constant))
+        for z in rumpf
+    )
+
+
 def pruefen(repo: Path, base: str, dateien: list[str], timeout: float) -> tuple[list[dict[str, Any]], list[str]]:
     hinweise: list[str] = []
     fremd = [d for d in dateien if not d.endswith(".py")]
@@ -237,7 +263,7 @@ def pruefen(repo: Path, base: str, dateien: list[str], timeout: float) -> tuple[
     if not laeufe:
         return [befund(d, 1, "mittel", "Code geändert ohne Test") for d in code], hinweise
     # #326: nur Kommentare/Docstrings im Code → alter Stand = neuer Stand, jeder Test bliebe grün.
-    # ponytail: nur reine Test-Diffs (ohne Code-Datei) laufen weiter scharf, gewollt seit #1533.
+    # Reine Test-Diffs laufen weiter (Platz/Timeout/Umgebung bleiben sichtbar); #401 lässt erst beim Befund aus.
     if code and not any(aendert_ausfuehrbar(repo, base, d) for d in code):
         hinweise.append("nicht beurteilbar: Diff ändert den geprüften Code nicht (" + ", ".join(code) + ")")
         return [], hinweise
@@ -307,6 +333,7 @@ def pruefen(repo: Path, base: str, dateien: list[str], timeout: float) -> tuple[
         befunde: list[dict[str, Any]] = []
         knoten = gruene_knoten(ausgabe)
         ohne_neue: list[str] = []
+        ausgelassen: list[str] = []
         for d in laeufe:
             # ponytail: nur neue Knoten zählen; geänderte Bodies alter Tests bleiben ungeprüft.
             neu = {k.split("::", 1)[1] for k in neu_knoten if k.startswith(f"{d}::")}
@@ -318,6 +345,14 @@ def pruefen(repo: Path, base: str, dateien: list[str], timeout: float) -> tuple[
             namen = [n for n in knoten.get(d, []) if n in neu]
             if set(namen) != neu:
                 continue
+            # #401: Diff nur aus Testdateien (keine Code-, Hilfs- oder Nicht-Python-Datei) → alter Stand =
+            # neuer Stand, keine Aussage. Gemeldet werden dann nur Tests ohne jede Prüfung.
+            # #1533: geänderte Hilfsdateien bleiben scharf.
+            if not code and not hilfen and not fremd:
+                namen = [n for n in namen if prueft_nichts(ziel / d, n)]
+                if not namen:
+                    ausgelassen.append(d)
+                    continue
             zeile = zeile_von(ziel / d, namen[0]) if namen else 1
             liste = f" ({', '.join(namen)})" if namen else ""
             text = f"Test kann nicht rot werden: prüft die Änderung nicht{liste}"
@@ -333,6 +368,8 @@ def pruefen(repo: Path, base: str, dateien: list[str], timeout: float) -> tuple[
                 "ohne neue Testknoten, nicht geprüft (geänderte Bodies alter Tests zählen nicht): "
                 + ", ".join(ohne_neue)
             )
+        if ausgelassen:
+            hinweise.append("ausgelassen: nur Tests geändert, keine Aussage (" + ", ".join(ausgelassen) + ")")
         return befunde, hinweise
     finally:
         entfernt = git(repo, "worktree", "remove", "--force", str(ziel))
