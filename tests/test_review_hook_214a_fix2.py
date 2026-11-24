@@ -34,7 +34,7 @@ def _wurzel_conftest() -> dict[str, object]:
 
 def test_ausnahme_trifft_genau_review_hook() -> None:
     namen = _wurzel_conftest()
-    assert namen.get("collect_ignore") == ["review-hook"]
+    assert namen.get("collect_ignore") == ["review-hook", "probe"]  # probe: #426
     assert "collect_ignore_glob" not in namen  # kein Muster, das andere Ordner miterfasst
 
 
