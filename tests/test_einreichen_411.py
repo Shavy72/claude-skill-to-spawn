@@ -305,6 +305,23 @@ def test_werkzeug_bricht_ab_meldet_rot_statt_traceback(
     assert erg.text
 
 
+def test_merge_bekommt_volle_sha_auch_wenn_kurze_ankommt(welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch) -> None:
+    """#464: kommt eine kurze SHA an die Merge-Stelle, sieht ``gh pr merge`` trotzdem 40 Hex-Zeichen."""
+    from to_spawn import einreichen
+
+    wt = _ticket_wt(welt)
+    voll = _commit(wt, "README.md", "x\n", "docs: x (#7)")
+    echt = einreichen._git
+
+    def kurz(ordner: Path, *args: str) -> str:
+        return voll[:7] if args == ("rev-parse", "HEAD") else echt(ordner, *args)
+
+    monkeypatch.setattr(einreichen, "_git", kurz)
+    assert einreichen.einreichen(wt, "7").exit == 0
+    merge = next(a for a in _gh_aufrufe(welt) if a[:2] == ["pr", "merge"])
+    assert merge[merge.index("--match-head-commit") + 1] == voll
+
+
 # --- Parallele Tickets im selben Klon (#476, F15) --------------------------------------------
 
 

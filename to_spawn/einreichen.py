@@ -185,6 +185,19 @@ def _nur_aufseher_dateien(ordner: Path, haupt: str) -> None:
         )
 
 
+def _volle_sha(ordner: Path, sha: str) -> str:
+    """Volle SHA (40 Hex) für ``--match-head-commit``; kurze wird aufgeweitet, Unauflösbares → ``_Rot`` (#464)."""
+    if len(sha) == 40 and all(z in "0123456789abcdef" for z in sha):
+        return sha
+    try:
+        voll = _git(ordner, "rev-parse", "--verify", "--quiet", f"{sha}^{{commit}}")
+    except _Rot:
+        voll = ""
+    if len(voll) != 40 or any(z not in "0123456789abcdef" for z in voll):
+        raise _Rot(AUFRUF, f"SHA „{sha}“ nicht eindeutig auflösbar — für den Merge die volle SHA (40 Zeichen) angeben")
+    return voll
+
+
 def _pull_request(ordner: Path, zweig: str, haupt: str, sha: str) -> str:
     """Offenen Pull-Request für ``zweig`` finden oder anlegen; gibt die Nummer zurück."""
     vorhanden = _gh(ordner, "pr", "list", "--head", zweig, "--base", haupt, "--state", "open",
@@ -278,7 +291,7 @@ def _einreichen(ordner: Path, nummer: str) -> Ergebnis:
     if _projekt_weg(ordner, haupt):
         return Ergebnis(OK, f"{zweig} ({sha[:7]}) gepusht{hinweis} — der Einreich-Dienst des Projekts übernimmt")
     nr = _pull_request(ordner, zweig, haupt, sha)
-    _gh(ordner, "pr", "merge", nr, "--merge", "--match-head-commit", sha)
+    _gh(ordner, "pr", "merge", nr, "--merge", "--match-head-commit", _volle_sha(ordner, sha))
     try:
         _git(ordner, "fetch", "--quiet", "origin", haupt)
     except _Rot as rot:  # #476: Nachziehen scheitert (Sperre) — der Pull-Request-Stand entscheidet
