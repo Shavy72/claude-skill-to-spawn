@@ -119,5 +119,24 @@ def test_probesitz_verweigert_fremden_ordner_und_loescht_ihn_nicht(welt: dict[st
         worktree_anlegen=lambda *_a: pytest.fail("darf im fremden Ordner nicht anlegen"),
         session_starter=lambda *_a, **_k: pytest.fail("darf nicht starten"),
     )
-    assert not ergebnisse[2].ok and "repo-a" in ergebnisse[2].grund
+    assert not ergebnisse[2].ok and "anderen Repos" in ergebnisse[2].grund
     assert (welt["wt"] / "arbeit.txt").read_text(encoding="utf-8") == "fremd"
+
+
+@pytest.mark.parametrize(
+    "adresse",
+    [
+        "git@github.com:Wer/Repo.git",
+        "https://github.com/wer/repo/",
+        "https://user@github.com/Wer/Repo.git",
+        "ssh://git@github.com/wer/repo",
+        "https://github.com/wer/repo",
+    ],
+)
+def test_adresse_normal_gleiche_kennung_je_schreibweise(adresse: str) -> None:
+    assert config._adresse_normal(adresse) == "github.com/wer/repo"
+
+
+def test_adresse_normal_verschiedene_repos_bleiben_verschieden() -> None:
+    assert config._adresse_normal("git@github.com:wer/repo-a.git") != config._adresse_normal("git@github.com:wer/repo-b.git")
+    assert config._adresse_normal("https://github.com/a/repo") != config._adresse_normal("https://github.com/b/repo")

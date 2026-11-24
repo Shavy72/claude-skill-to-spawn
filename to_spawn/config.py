@@ -33,6 +33,7 @@ import copy
 import json
 import logging
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -242,6 +243,17 @@ def worktree_pfad(ticket: str | int, repo: Path | None = None) -> str:
     return f"{Path(basis).expanduser().as_posix().rstrip('/')}/wt-{ticket}"
 
 
+def _adresse_normal(url: str) -> str:
+    """``host/pfad`` in Kleinbuchstaben: ssh-/https-Schreibweise, ``.git``, End-Schrägstrich egal (#499)."""
+    url = url.strip().replace("\\", "/")
+    if "://" in url:
+        url = url.split("://", 1)[1]
+    elif re.match(r"^[^/@]*@?[^/:]+:(?!/)", url):  # scp-Form ``git@host:pfad``
+        url = url.replace(":", "/", 1)
+    url = url.split("@", 1)[-1] if "@" in url.split("/", 1)[0] else url
+    return url.rstrip("/").removesuffix(".git").rstrip("/").lower()
+
+
 def _repo_kennung(ordner: Path) -> str | None:
     """Wem gehört ``ordner``? ``origin``-Adresse (ohne ``.git``), ohne ``origin`` der echte
     gemeinsame Git-Ordner; ``None`` = kein Git-Ordner. Ein anderer Klon desselben Repos hat
@@ -265,7 +277,7 @@ def _repo_kennung(ordner: Path) -> str | None:
 
     url = git("remote", "get-url", "origin")
     if url:
-        return url.replace("\\", "/").removesuffix(".git")
+        return _adresse_normal(url)
     gemeinsam = git("rev-parse", "--path-format=absolute", "--git-common-dir")
     return os.path.normcase(os.path.realpath(gemeinsam)) if gemeinsam else None
 
