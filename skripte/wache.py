@@ -404,7 +404,7 @@ def main() -> int:
     # Briefkasten-Wecker (#414): neue Frage weckt diese Session, Antwort die Bau-Session (≤ 1 min).
     with handoff_blick.laeuft(
         a.spec, handoff_blick.EchteNaht(REPO_ORDNER, ordner, REPO)
-    ), briefkasten_wecker.laeuft(a.spec, REPO_ORDNER):
+    ), briefkasten_wecker.laeuft(a.spec, REPO_ORDNER, gh_repo=REPO):
         for runde in range(1, MAX_ABLOESUNGEN + 2):
             # Aufsicht (#213): Limit im Transkript → Ausweich-Modell; Umzug-/Ablöse-Datei → Ende.
             code = waechter_lauf.fahre(
