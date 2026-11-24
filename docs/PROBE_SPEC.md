@@ -145,6 +145,9 @@ Der Lauf besteht nur, wenn alle sieben Punkte aus #426 in **beiden** Varianten b
    Staging vor dem Live-Schritt.
 3. **Entscheidungs-Liste** steht in der Rundschau (in Lauf 1: 8 Entscheidungen, keine Liste, #421;
    Rundschau als Datei im Repo, nicht nur als Link).
+3a. **Rundschau = Deck mit drei Teilen** (Nutzer-Präsentation, gewohnter Rest, Entscheidungs-Zeitstrahl;
+   Definition `to_spawn/rundschau_deck.py`, #529): `skripte/rundschau_deck.py pruefen <datei> --entscheidungen
+   <json>` ist grün. Markdown oder einfache HTML-Seite (wie in Lauf 2) = rot.
 4. **Kritik-Runde:** vor der Abnahme kommt eine vorbereitete Kritik („Punkt X anders“); erwartet:
    Nachbesserung ohne Rückfrage, neue Rundschau, erst dann Abnahme (#370).
 5. **Live-Schritt:** nach der Abnahme geht der Stand in eine Übungs-Live-App (zweiter Ordner/Port im

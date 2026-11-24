@@ -486,6 +486,7 @@ def eintrag_aus_bau_log(ticket: str | int, z: dict[str, Any]) -> dict[str, str]:
         "was": _was(z.get("frage") or z.get("text"), z.get("wahl") or z.get("entscheidungen")),
         "warum": str(z.get("grund") or ""),
         "beleg": f"Bau-Log #{nummer} {z.get('ts', '')}".rstrip(),
+        "ueberholt_durch": str(z.get("ueberholt_durch") or ""),  # #529: Rundschau-Grafik
     }
 
 
