@@ -571,6 +571,9 @@ def staffel_aktiv(konfig: dict) -> bool:
     Aus (David, 24.09.2026): Neustarts mitten im Deploy-Gate brachen Tests ab und verloren
     Kontext. Die Smart Zone regelt dann allein der Ticket-Schnitt vorab; die Session baut
     ihr Ticket bis zum Ende durch.
+
+    Die Ablöse-Grenze kommt nie aus dieser Konfig: ``staffel.grenze_k`` ist nur der
+    Ticket-Schnitt (Beschreibung ``config.DEFAULTS["staffel"]``, #417).
     """
     return bool((konfig.get("staffel") or {}).get("aktiv", True))
 
