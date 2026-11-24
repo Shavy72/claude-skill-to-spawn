@@ -124,3 +124,42 @@ def test_annahme_grenze_greift_ohne_tmux(
     assert len(annahme) == 1, cp._texte(welt, "902")
     befehl = f"python {(SKILL / 'to_spawn.py').as_posix()}"
     assert capo.annahme_grenze(902, befehl) in annahme[0], annahme[0]
+
+
+def test_start_mit_platzhalter_rest_endet_mit_exit_2(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Vorlage mit unbekanntem {FOO_BAR}: Exit 2 und Grund auf stderr, kein Traceback."""
+    bau = _bau()
+    monkeypatch.setattr(
+        bau, "load_default", lambda: {"prompt_template": "Ticket {N}: {FOO_BAR}"}
+    )
+    monkeypatch.setattr(bau, "find_manifest", lambda _t: ({"spec": "1"}, {}))
+    monkeypatch.setattr(
+        sys, "argv", ["bau.py", "900", "--dry-run", "--print-prompt"]
+    )
+    with pytest.raises(SystemExit) as ende:
+        bau.main()
+    assert ende.value.code == 2
+    assert "{FOO_BAR}" in capsys.readouterr().err
+
+
+def test_zwei_offene_klasse_2_fragen_keine_kennung_im_kommentar(
+    welt: dict[str, Path],  # noqa: F811
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("TO_SPAWN_TICKET", raising=False)
+    ids = [
+        briefkasten.einwerfen(902, f"Frage {i}?", "ja", 2, [], hauptbaum=welt["repo"])
+        for i in (1, 2)
+    ]
+    cp._checkpoint_stellen(welt)
+    cp._kommentar(welt, "902", "bau-bot", f"{cp.FRAGE}\n\n{cp.VORSCHLAG}", 61)
+    ergebnis = _capo(welt)
+    assert ergebnis.returncode == 0, _text(ergebnis)
+    annahme = [
+        t for t in cp._texte(welt, "902") if t.startswith("Aufseher: Annahme nach")
+    ]
+    assert len(annahme) == 1, cp._texte(welt, "902")
+    assert all(i not in annahme[0] for i in ids), annahme[0]
+    assert "<id>" in annahme[0], annahme[0]
