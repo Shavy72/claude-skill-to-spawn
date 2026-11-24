@@ -125,3 +125,49 @@ def test_path_replace_im_python_code_bleibt_verweigert(home: Path) -> None:
     befehl = "python3 -c \"__import__('pathlib').Path('a').replace('/root/.claude/skills/b')\""
     ergebnis = _hook(home, _json("Bash", home, command=befehl))
     assert ergebnis.returncode == 2, ergebnis.stderr
+
+# --- #470: Text ist kein Befehl (Heredoc-Rumpf, mehrzeilige Zeichenkette) ---
+
+
+def _bash(home: Path, befehl: str) -> int:
+    return _hook(home, _json("Bash", home, command=befehl)).returncode
+
+
+@pytest.mark.parametrize("kopf", ["<<EOF", "<<'EOF'", "<<-EOF", '<<"EOF"'])
+def test_heredoc_rumpf_mit_skill_pfad_ist_text(home: Path, kopf: str) -> None:
+    befehl = f"cat >> protokoll.md {kopf}\nrm ~/.claude/skills/x\necho > ~/.claude/skills/y\nEOF"
+    assert _bash(home, befehl) == 0
+
+
+def test_mehrzeiliges_argument_mit_skill_pfad_ist_text(home: Path) -> None:
+    befehl = 'gh issue create --title t --body "Beispiel:\ncat > ~/.claude/skills/x <<EOF\nrm ~/.claude/skills/x"'
+    assert _bash(home, befehl) == 0
+
+
+def test_heredoc_kopfzeile_ziel_in_skills_bleibt_verweigert(home: Path) -> None:
+    befehl = "cat > ~/.claude/skills/x <<'EOF'\ntext\nEOF"
+    assert _bash(home, befehl) == 2
+
+
+def test_heredoc_als_code_fuer_shell_bleibt_verweigert(home: Path) -> None:
+    befehl = "bash <<'EOF'\nrm ~/.claude/skills/x\nEOF"
+    assert _bash(home, befehl) == 2
+
+
+def test_zeichenkette_als_code_fuer_shell_bleibt_verweigert(home: Path) -> None:
+    befehl = 'sh -c "echo hi\nrm ~/.claude/skills/x"'
+    assert _bash(home, befehl) == 2
+@pytest.mark.parametrize(
+    "befehl",
+    [
+        "# cat <<EOF\nrm ~/.claude/skills/x\nEOF",
+        'echo "<<EOF"\nrm ~/.claude/skills/x\nEOF',
+        "cat <<<EOF\nrm ~/.claude/skills/x\nEOF",
+        "x=$((1<<N))\nrm ~/.claude/skills/x\nN",
+        "echo \\<<EOF\nrm ~/.claude/skills/x\nEOF",
+        "# it's\nrm ~/.claude/skills/x\n# don't",
+    ],
+    ids=["kommentar", "in_anfuehrung", "here_string", "rechenausdruck", "escape", "kommentar_apostroph"],
+)
+def test_scheinbarer_text_ist_befehl_bleibt_verweigert(home: Path, befehl: str) -> None:
+    assert _bash(home, befehl) == 2
