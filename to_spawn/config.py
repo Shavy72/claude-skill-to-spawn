@@ -244,14 +244,17 @@ def worktree_pfad(ticket: str | int, repo: Path | None = None) -> str:
 
 
 def _adresse_normal(url: str) -> str:
-    """``host/pfad`` in Kleinbuchstaben: ssh-/https-Schreibweise, ``.git``, End-Schrägstrich egal (#499)."""
+    """``host/pfad``: Host immer klein, Pfad nur bei ``github.com`` klein (dort ohne Groß-/Kleinschreibung);
+    ssh-/https-Schreibweise, ``.git``, End-Schrägstrich egal (#499, #508)."""
     url = url.strip().replace("\\", "/")
     if "://" in url:
         url = url.split("://", 1)[1]
     elif re.match(r"^[^/@]*@?[^/:]+:(?!/)", url):  # scp-Form ``git@host:pfad``
         url = url.replace(":", "/", 1)
     url = url.split("@", 1)[-1] if "@" in url.split("/", 1)[0] else url
-    return url.rstrip("/").removesuffix(".git").rstrip("/").lower()
+    host, _, pfad = url.rstrip("/").removesuffix(".git").rstrip("/").partition("/")
+    host = host.lower()
+    return f"{host}/{pfad.lower() if host == 'github.com' else pfad}"
 
 
 def _repo_kennung(ordner: Path) -> str | None:
