@@ -56,7 +56,7 @@ function Sichere-UndKopiere([string]$name, [string[]]$quellen) {
     }
 }
 $quellen = foreach ($f in @("SKILL.md", "README.md", "LICENSE", "to_spawn.py", "install.sh", "install.ps1", "spawn_local.ps1", "spawn_srv.ps1",
-                           "to_spawn", "skripte", "repo-scripts", "aliase", "tests", "docs", "nest", "leitstand", "kette", "review-hook", "review")) { Join-Path $hier $f }
+                           "to_spawn", "skripte", "repo-scripts", "aliase", "tests", "docs", "nest", "leitstand", "kette", "review-hook", "review", "probe")) { Join-Path $hier $f }
 Sichere-UndKopiere "to-spawn" $quellen
 $env:PYTHONIOENCODING = "utf-8"
 python (Join-Path (Join-Path $ziel "to_spawn") "skill_stand.py") --stempel $ziel --klon $hier
