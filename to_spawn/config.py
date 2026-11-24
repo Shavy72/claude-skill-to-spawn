@@ -639,6 +639,9 @@ def _gleicher_ort(a: str, b: Path) -> bool:
 def maschine_eintragen(repo: Path | None = None, ticket_repo: str = "") -> dict[str, str]:
     """Trägt das Repo in ``repos[]`` der Maschinen-Liste ein und gibt seinen Eintrag zurück.
 
+    ``ticket_repo`` (Standard ``""``) setzt nur den Wert eines neuen bzw. noch leeren Eintrags;
+    ein vorhandener Wert wird nie überschrieben. Der Einrichter übergibt ihn nur mit Beleg (#542).
+
     Schlüssel ist der Ordner (``pfad``). Neu: ``slug`` aus ``origin``, ``worktree_basis`` aus
     der Repo-Konfig, ``ticket_repo`` leer (= ableiten). Zeigt ``origin`` nicht auf ein
     GitHub-Repo (Wegwerf-Klon mit lokalem Pfad, #112), bleibt die Liste unberührt: Warnung,

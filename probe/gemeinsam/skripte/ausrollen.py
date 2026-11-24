@@ -76,33 +76,69 @@ def _prozess_im_ordner(pid: int, ordner: Path) -> bool:
         return False
 
 
-def _beende(ordner: Path, port: int, pruefen: bool) -> None:
+#: Wartezeit (Sekunden), bis ein beendeter Prozess nachweislich weg ist.
+WARTE_S = 5.0
+
+
+def _lebt(pid: int) -> bool:
+    """Prozess läuft (Zombie zählt als weg). Ohne ``/proc`` (nicht Linux): vorsichtig ``True``."""
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return Path("/proc/self").exists() is False
+    except OSError:
+        return True
+    return stat.rsplit(")", 1)[-1].split()[0] != "Z"
+
+
+def _warte_weg(pid: int) -> bool:
+    ende = time.monotonic() + WARTE_S
+    while _lebt(pid):
+        if time.monotonic() > ende:
+            return False
+        time.sleep(0.1)
+    return True
+
+
+def _beende(ordner: Path, port: int, pruefen: bool) -> bool:
+    """Instanz in ``ordner`` abbauen; ``False`` = etwas blieb stehen (Prozess oder Ordner)."""
+    if ordner.is_symlink():
+        log.warning("%s ist ein Symlink — nichts beendet, nichts gelöscht", ordner)
+        return False
     pid_datei = ordner / "server.pid"
     if pid_datei.is_file():
         try:
             pid = int(pid_datei.read_text(encoding="utf-8").strip())
         except (OSError, ValueError) as fehler:
             log.info("PID-Datei %s unlesbar (%s) — Prozess bleibt", pid_datei, fehler)
-            pid = 0
-        if pid > 0 and (not pruefen or _prozess_im_ordner(pid, ordner)):
+            return False
+        if _lebt(pid):
+            if pruefen and not _prozess_im_ordner(pid, ordner):
+                log.warning("Prozess %s gehört nicht nachweislich zu %s — bleibt", pid, ordner)
+                return False
             try:
                 os.kill(pid, signal.SIGTERM)
             except OSError as fehler:
                 log.info("Prozess %s schon weg (%s)", pid, fehler)
+            if not _warte_weg(pid):
+                log.error("Prozess %s läuft trotz Signal weiter — %s bleibt", pid, ordner)
+                return False
             _warte(f"http://127.0.0.1:{port}/", erreichbar=False)
-        elif pid > 0:
-            log.warning("Prozess %s gehört nicht nachweislich zu %s — bleibt", pid, ordner)
-            return
+        else:
+            log.info("Prozess %s aus %s ist schon weg — Ordner wird abgebaut", pid, pid_datei)
     if ordner.exists():
         shutil.rmtree(ordner, ignore_errors=True)
+    return True
 
 
-def aufraeumen(umgebung: str, port: int) -> None:
-    _beende(REPO / umgebung, port, pruefen=False)
+def aufraeumen(umgebung: str, port: int) -> bool:
+    """``True`` = alles abgebaut; ``False`` = mindestens eine Instanz blieb stehen (Log sagt welche)."""
+    ok = _beende(REPO / umgebung, port, pruefen=False)
     if umgebung == "staging":  # #542: auch verwaiste Instanzen anderer Worktrees dieses Repos
         for ordner in _fremde_staging_ordner():
-            _beende(ordner, port, pruefen=True)
-    log.info("%s aufgeräumt", umgebung)
+            ok = _beende(ordner, port, pruefen=True) and ok
+    log.info("%s aufgeräumt" if ok else "%s NICHT vollständig aufgeräumt", umgebung)
+    return ok
 
 
 def ausrollen(umgebung: str, port: int) -> int:
@@ -149,8 +185,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 2
     if args.aufraeumen:
-        aufraeumen(args.umgebung, port)
-        return 0
+        return 0 if aufraeumen(args.umgebung, port) else 1
     return ausrollen(args.umgebung, port)
 
 
