@@ -4,6 +4,12 @@ Der Aufrufer sagt nur „von wo bis wo“ und liest ``Urteil.exit`` (0 grün · 
 also Werkzeug kaputt, nicht der Code) plus ``Urteil.zeile["fehler_kurz"]``. Sprache, Test-Werkzeug,
 Stufen und Protokoll-Format bleiben im Paket. Jeder Lauf hängt ``Urteil.zeile`` an
 ``<repo>/.to-spawn/pruef/protokoll.jsonl`` an. Ohne ``.to-spawn/config.json`` lauffähig.
+
+``art`` (#425) sagt, welche Prüfung dran ist — die Regel dafür lebt nur in ``to_spawn.pruefplan``,
+der Aufrufer reicht deren Antwort durch. ``schnell``: eingerichteter Befehl ``pruefung.schnell``,
+sonst Sofort-Stufen + betroffene Tests, nie der volle Lauf. ``komplett``: ``pruefung.komplett``,
+sonst voller Lauf. Ohne ``art`` läuft die Leiter wie vor #425 (Auswahl, sonst voll). Mit ``art``
+steht sie in der Protokoll-Zeile (``art``) und die Dauer im Log.
 """
 
 from __future__ import annotations
@@ -15,6 +21,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from to_spawn import config, pruefplan
 from to_spawn.pruef import (
     adapter_node,
     adapter_py,
@@ -27,6 +34,10 @@ from to_spawn.pruef import (
 
 _ADAPTER: tuple[leiter.Adapter, ...] = (adapter_py.ADAPTER, adapter_node.ADAPTER)
 log = logging.getLogger("to_spawn.pruef")
+
+#: Prüf-Arten, die ``pruefen`` ausführt (``keine`` aus ``pruefplan.welche`` heißt: nicht aufrufen).
+_ARTEN = ("schnell", "komplett")
+_DAUER_NAME = {"schnell": "schnellen", "komplett": "Komplett-"}
 
 
 @dataclass(frozen=True)
@@ -52,7 +63,15 @@ def _sha(repo: Path, ref: str) -> str | None:
 _ungespeichert = sofort.ungespeichert  # eine Stelle für „schmutzig“ (#218), Name für Alt-Tests
 
 
-def _gate_fehler(repo: Path, basis: str, ziel: str, grund: str, start: float) -> Urteil:
+def _schreibe(repo: Path, zeile: dict[str, Any], art: str | None) -> None:
+    """Protokoll-Zeile anhängen; mit ``art`` samt Feld ``art`` und Messwert „Dauer“ im Log."""
+    if art is not None:
+        zeile["art"] = art
+        log.info("Dauer der %s Prüfung: %.2f s (Urteil %s)", _DAUER_NAME[art], zeile["gesamt_s"], zeile["urteil"])
+    protokoll.schreibe(repo, zeile)
+
+
+def _gate_fehler(repo: Path, basis: str, ziel: str, grund: str, start: float, art: str | None = None) -> Urteil:
     zeile = protokoll.zeile(
         basis=basis,
         ziel=ziel,
@@ -62,7 +81,7 @@ def _gate_fehler(repo: Path, basis: str, ziel: str, grund: str, start: float) ->
         fehler_kurz=grund,
         gesamt_s=time.monotonic() - start,
     )
-    protokoll.schreibe(repo, zeile)
+    _schreibe(repo, zeile, art)
     return Urteil(leiter.GATE_FEHLER, zeile)
 
 
@@ -75,13 +94,19 @@ def hat_werkzeug(repo: Path) -> bool:
     return any(adapter.erkennt(repo) for adapter in _ADAPTER)
 
 
-def pruefen(repo: Path, basis: str, ziel: str) -> Urteil:
-    """Prüft den Stand ``ziel`` gegen ``basis`` und protokolliert das Urteil."""
+def pruefen(repo: Path, basis: str, ziel: str, art: pruefplan.Art | None = None) -> Urteil:
+    """Prüft den Stand ``ziel`` gegen ``basis`` und protokolliert das Urteil.
+
+    ``art`` = Antwort von ``pruefplan.welche`` (``schnell``/``komplett``); ``None`` = Leiter wie
+    vor #425. ``keine`` ist kein Prüf-Auftrag (``ValueError``) — der Aufrufer ruft dann nicht.
+    """
+    if art is not None and art not in _ARTEN:
+        raise ValueError(f"pruefen: art={art!r} ist keine Prüfung (erlaubt: {', '.join(_ARTEN)})")
     start = time.monotonic()
     basis_sha, ziel_sha, kopf = _sha(repo, basis), _sha(repo, ziel), _sha(repo, "HEAD")
     if basis_sha is None or ziel_sha is None:
         fehlt = basis if basis_sha is None else ziel
-        return _gate_fehler(repo, basis, ziel, f"Stand „{fehlt}“ in {repo} nicht gefunden (git)", start)
+        return _gate_fehler(repo, basis, ziel, f"Stand „{fehlt}“ in {repo} nicht gefunden (git)", start, art)
     # ponytail: geprüft wird der Arbeitsbaum, darum muss ziel ausgecheckt sein;
     # Upgrade: eigener Worktree je ziel, wenn die Schlange fremde Stände prüft (3b-6).
     if ziel_sha != kopf:
@@ -91,6 +116,7 @@ def pruefen(repo: Path, basis: str, ziel: str) -> Urteil:
             ziel_sha,
             f"ziel {ziel} ist nicht ausgecheckt (HEAD {kopf})",
             start,
+            art,
         )
     offen = _ungespeichert(repo)
     if offen:
@@ -100,8 +126,11 @@ def pruefen(repo: Path, basis: str, ziel: str) -> Urteil:
             ziel_sha,
             f"Arbeitsbaum nicht gespeichert (erst committen): {', '.join(offen[:5])}",
             start,
+            art,
         )
     schluessel = cache.schluessel(repo, basis_sha, ziel_sha)
+    if schluessel is not None and art is not None:
+        schluessel = f"{schluessel}-{art}"  # grün „schnell“ ersetzt nie „komplett“
     if cache.treffer(schluessel):
         zeile = protokoll.zeile(
             basis=basis_sha,
@@ -122,9 +151,13 @@ def pruefen(repo: Path, basis: str, ziel: str) -> Urteil:
             gesamt_s=time.monotonic() - start,
             cache_treffer=True,
         )
-        protokoll.schreibe(repo, zeile)
+        _schreibe(repo, zeile, art)
         return Urteil(leiter.GRUEN, zeile)
-    liste = leiter.stufen(repo, _ADAPTER, basis_sha)
+    eigen = pruefplan.befehl(config.lade(repo), art) if art is not None else None
+    if eigen:
+        liste = [leiter.eigener_befehl(repo, eigen, art)]
+    else:
+        liste = leiter.stufen(repo, _ADAPTER, basis_sha, art)
     if not liste:
         return _gate_fehler(
             repo,
@@ -132,6 +165,7 @@ def pruefen(repo: Path, basis: str, ziel: str) -> Urteil:
             ziel_sha,
             "keine Sprache erkannt (weder Python noch Node)",
             start,
+            art,
         )
     exit_code, fehler_kurz = leiter.ergebnis(liste)
     zeile = protokoll.zeile(
@@ -158,6 +192,6 @@ def pruefen(repo: Path, basis: str, ziel: str) -> Urteil:
         auswahl=[stufe.auswahl for stufe in liste if stufe.auswahl] or None,
         wackler=[{"test": test, "adapter": stufe.adapter} for stufe in liste for test in stufe.wackler],
     )
-    protokoll.schreibe(repo, zeile)
+    _schreibe(repo, zeile, art)
     cache.merke(schluessel, zeile)
     return Urteil(exit_code, zeile)
