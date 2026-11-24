@@ -107,9 +107,28 @@ def pruefen(repo: Path, basis: str, ziel: str, art: pruefplan.Art | None = None,
     ``art`` = Antwort von ``pruefplan.welche`` (``schnell``/``komplett``); ``None`` = Leiter wie
     vor #425. ``keine`` ist kein Prüf-Auftrag (``ValueError``) — der Aufrufer ruft dann nicht.
     ``warnung`` (z. B. ``pruefplan.NICHT_EINGERICHTET``) steht unverändert in der Protokoll-Zeile.
+    ``komplett`` aus einem Bau-Ticket: Gate-Fehler mit Handlung, nichts läuft (#496).
     """
     if art is not None and art not in _ARTEN:
         raise ValueError(f"pruefen: art={art!r} ist keine Prüfung (erlaubt: {', '.join(_ARTEN)})")
+    if art == "komplett":
+        # #496: Bau-Ticket-Sperre an der einen Stelle im Skill, auch für eigene Repo-Skripte. Wie dort:
+        # kein Lauf, keine Protokoll-Zeile. Import hier, weil komplett_lauf selbst pruef importiert.
+        from to_spawn import komplett_lauf
+
+        abgelehnt = komplett_lauf.bau_ticket_ablehnung(None, "pruef.pruefen")
+        if abgelehnt is not None:
+            zeile = protokoll.zeile(
+                basis=basis,
+                ziel=ziel,
+                exit_code=leiter.GATE_FEHLER,
+                stufen=[],
+                werkzeug=[],
+                fehler_kurz=abgelehnt,
+                gesamt_s=0.0,
+            )
+            zeile["art"] = art
+            return Urteil(leiter.GATE_FEHLER, zeile)
     start = time.monotonic()
     basis_sha, ziel_sha, kopf = _sha(repo, basis), _sha(repo, ziel), _sha(repo, "HEAD")
     if basis_sha is None or ziel_sha is None:

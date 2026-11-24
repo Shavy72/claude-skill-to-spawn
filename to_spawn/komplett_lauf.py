@@ -28,7 +28,8 @@ nach fetch) → kein Lauf, kein Merker, ``ok=False`` mit Handlung. Zeitgrenze au
 :func:`to_spawn.config.komplett_zeitgrenze_s`; Ablauf = rot mit Grund „Zeitgrenze“. Jeder Lauf
 steht zusätzlich als Zeile mit ``art: "komplett"`` im Prüf-Protokoll.
 Bau-Ticket (#474): mit ``TO_SPAWN_TICKET`` in der Umgebung lehnt jede Tür ab (``ok=False``, kein Lauf,
-kein Merker) — je Ticket nur die schnelle Prüfung.
+kein Merker) — je Ticket nur die schnelle Prüfung. Die Regel lebt allein in :func:`bau_ticket_ablehnung`
+(#496); auch ``pruef.pruefen(art="komplett")`` fragt dort, so greift sie für jedes Repo-Skript.
 Übergangsregel: Repo ohne Gruppe ``pruefung`` (:func:`pruefplan.eingerichtet`) → nichts ausführen,
 ``ok=True`` (alter Ablauf).
 
@@ -120,12 +121,23 @@ class Merker:
 BAU_TICKET_VARIABLE = "TO_SPAWN_TICKET"
 
 
-def _bau_ticket_grund(spec: int) -> str:
-    """Ablehnung mit Handlung: je Ticket schnelle Prüfung, Komplett genau einmal je Spec."""
+def bau_ticket_ablehnung(spec: int | None, weg: str) -> str | None:
+    """Die eine Stelle (#474/#496), an der jede Komplett-Prüfung aus einem Bau-Ticket abgelehnt wird.
+
+    Jeder Skill-Weg, der den Komplett-Befehl (``pruefung.komplett``, auch ein eigenes Skript des
+    Repos) ausführen würde, fragt vorher hier: :func:`_pruefen` und ``pruef.pruefen(art="komplett")``.
+    Das Repo-Skript muss dafür nichts wissen. ``None`` = keine Bau-Session, weiter; sonst der Grund
+    mit Handlung — der Aufrufer führt dann nichts aus. ``spec`` = ``None``, wo der Weg die Spec nicht
+    kennt; ``weg`` nennt den Aufrufer im Log.
+    """
+    if BAU_TICKET_VARIABLE not in os.environ:
+        return None
+    log.warning("komplett_lauf: Komplett-Prüfung (Spec %s, %s) aus Bau-Ticket abgelehnt", spec, weg)
+    nummer = "<S>" if spec is None else str(int(spec))
     return (
         "Komplett-Prüfung nicht aus einem Bau-Ticket (TO_SPAWN_TICKET gesetzt). Handlung: je Ticket "
         "nur die schnelle Prüfung (pruefung.schnell); die Komplett-Prüfung läuft genau einmal je Spec "
-        f"über `to_spawn.py komplett {int(spec)} --moment vor-live` (Aufseher) bzw. im capo-Takt, sobald "
+        f"über `to_spawn.py komplett {nummer} --moment vor-live` (Aufseher) bzw. im capo-Takt, sobald "
         "alle Tickets auf Staging sind."
     )
 
@@ -335,10 +347,10 @@ def _pruefen(
     rot_zaehlt: bool,
     hintergrund: bool,
 ) -> Ergebnis:
-    if BAU_TICKET_VARIABLE in os.environ:
+    abgelehnt = bau_ticket_ablehnung(spec, "komplett_lauf")
+    if abgelehnt is not None:
         # #474: eine Bau-Session (bau.py setzt die Variable, auch leer) ist nie ein Spec-Moment.
-        log.warning("komplett_lauf: Spec %s aus Bau-Ticket abgelehnt", spec)
-        return Ergebnis(False, False, _bau_ticket_grund(spec), None, "")
+        return Ergebnis(False, False, abgelehnt, None, "")
     if not pruefplan.eingerichtet(konfig):
         # Zuerst und ohne git: nicht eingerichtete Repos (laufende Specs) merken nichts davon.
         log.info("komplett_lauf: Spec %s %s", spec, pruefplan.NICHT_EINGERICHTET)
