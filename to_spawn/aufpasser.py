@@ -97,6 +97,7 @@ from typing import Any, Literal
 from to_spawn import (
     anleitung,
     bau_log,
+    briefkasten,
     config,
     eigener_handoff,
     prozessbaum,
@@ -2012,6 +2013,8 @@ class Aufpasser:
                     log.error("%s: Ticket-Zustand nicht lesbar: %s", f.name, fehler)
                     daten = {}  # gilt als offen: nichts schließen
                 if ticket_zustand.fertig_gebaut(daten):
+                    if self._frage_haelt(f, ticket, repo, daten):
+                        return
                     self.ticket_zu_schliessen(
                         f, ticket, repo, schluessel, hash_start, info, platznot,
                         grund=ticket_zustand.wortlaut(daten),
@@ -2105,6 +2108,28 @@ class Aufpasser:
                 "braucht_david",
                 f"„{f.name}“ reagiert nach Anstupsen und Fortsetzen nicht — braucht den Menschen.",
             )
+
+    def _frage_haelt(self, f: Fenster, ticket: int, repo: Path, daten: dict) -> bool:
+        """Offene Frage des Tickets im Briefkasten hält das Fenster, auch bei Platznot (#416).
+
+        Die Bau-Session wartet auf die Antwort und schließt danach selbst das Ticket — ohne
+        sie bliebe es ohne Schließer. Ist das Issue schon zu, braucht es keinen mehr: eine
+        alte, nie beantwortete Frage hält dann nicht. Briefkasten nicht lesbar ⇒ hält.
+        """
+        if ticket_zustand.endgueltig_zu(daten):
+            return False
+        try:
+            fragen = briefkasten.offene([ticket], hauptbaum=repo)
+        except (OSError, ValueError, RuntimeError) as fehler:
+            log.warning("%s: Briefkasten nicht lesbar (%s) — Fenster bleibt", f.name, fehler)
+            return True
+        if fragen:
+            log.info(
+                "%s: offene Frage im Briefkasten (%s) — Fenster bleibt, Ticket braucht die Session",
+                f.name,
+                ", ".join(q["id"] or q["frage"] for q in fragen),
+            )
+        return bool(fragen)
 
     def _platznot(self, repo: Path, info: SessionInfo | None, sitzung: str) -> bool:
         """Grenze voll (Speicher/Session-Zahl der tmux-Sitzung) und die Session meldet selbst ``idle``."""

@@ -43,7 +43,9 @@ FENSTER = f"bau {TICKET}"
 def staging_9003(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> Iterator[Welt]:
     """Ticket 9003 OPEN mit ``staging:fertig``, volle Grenze, idle Fake-Claude im Fenster."""
     daten = welt.tmp / "gh_daten.json"
-    daten.write_text(json.dumps({str(TICKET): {"labels": ["staging:fertig"]}}), encoding="utf-8")
+    daten.write_text(
+        json.dumps({str(TICKET): {"labels": ["staging:fertig"]}}), encoding="utf-8"
+    )
     monkeypatch.setenv("GH_STUB_DATEN", str(daten))
     monkeypatch.setenv("GH_STUB_UNTER", f"{SPEC}:{TICKET}")
     monkeypatch.delenv("GH_STUB_ZU", raising=False)
@@ -91,7 +93,9 @@ def test_ohne_offene_frage_schliesst_wie_bisher(staging_9003: Welt) -> None:
 def test_beantwortete_frage_haelt_nicht(staging_9003: Welt) -> None:
     welt = staging_9003
     fid = _frage_einwerfen(welt)
-    briefkasten.antworten(TICKET, fid, "ja", ["Test"], "Zweig ist grün", hauptbaum=welt.repo)
+    briefkasten.antworten(
+        TICKET, fid, "ja", ["Test"], "Zweig ist grün", hauptbaum=welt.repo
+    )
     welt.fenster_fake_claude(TICKET, str(uuid.uuid4()))
     assert _lauf_kurze_karenz(welt) == 0
     time.sleep(0.5)
@@ -99,7 +103,9 @@ def test_beantwortete_frage_haelt_nicht(staging_9003: Welt) -> None:
     assert _geschlossen(welt), welt.log()
 
 
-def test_issue_zu_alte_frage_darf_schliessen(staging_9003: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_issue_zu_alte_frage_darf_schliessen(
+    staging_9003: Welt, monkeypatch: pytest.MonkeyPatch
+) -> None:
     welt = staging_9003
     monkeypatch.setenv("GH_STUB_ZU", str(TICKET))
     _frage_einwerfen(welt)
@@ -110,7 +116,9 @@ def test_issue_zu_alte_frage_darf_schliessen(staging_9003: Welt, monkeypatch: py
     assert any(f"„{FENSTER}“ geschlossen (Ticket zu)." in k for k in welt.kommentare())
 
 
-def test_briefkasten_wirft_fenster_bleibt(staging_9003: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_briefkasten_wirft_fenster_bleibt(
+    staging_9003: Welt, monkeypatch: pytest.MonkeyPatch
+) -> None:
     welt = staging_9003
 
     def wirft(*_a: object, **_k: object) -> list[dict[str, str]]:
