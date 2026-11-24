@@ -83,7 +83,8 @@ def attrappe(ordner: Path, name: str, python_code: str) -> Path:
     Rückgabe: Pfad des Skripts.
     """
     ordner.mkdir(parents=True, exist_ok=True)
-    skript = ordner / name
+    # Windows: ``name.py`` — so führt auch Produktcode die Attrappe aus (``TO_SPAWN_GH_STUB`` → Interpreter + ``.py``, #553)
+    skript = ordner / (f"{name}.py" if os.name == "nt" else name)
     skript.write_text(f"#!{sys.executable}\n{textwrap.dedent(python_code)}", encoding="utf-8")
     skript.chmod(skript.stat().st_mode | 0o111)
     if os.name == "nt":
@@ -311,6 +312,32 @@ def _bash_aufloesen(args: Any) -> Any:
     return type(args)([bash, *args[1:]])
 
 
+def _shebang_aufloesen(args: Any) -> Any:
+    """Windows führt kein Shebang-Skript aus (``WinError 193``), Attrappen aber sind genau das (#553).
+
+    Liste/Tupel, deren erstes Element eine vorhandene Datei ohne Endung (oder ``.py``) mit ``#!``-Zeile ist
+    (so legt :func:`attrappe` sie an), startet über den Interpreter der Shebang-Zeile; alles
+    andere geht unverändert durch. Einzige Stelle: wirkt für jeden Test, der eine Attrappe
+    per Pfad startet (``Popen``, ``run``, ``check_output``).
+    """
+    if not isinstance(args, (list, tuple)) or not args or not isinstance(args[0], (str, os.PathLike)):
+        return args
+    pfad = Path(args[0])
+    if pfad.suffix not in {"", ".py"} or not pfad.is_file():
+        return args
+    try:
+        with pfad.open("rb") as fh:
+            kopf = fh.readline(512)
+    except OSError:
+        return args
+    if not kopf.startswith(b"#!"):
+        return args
+    interpreter = kopf[2:].decode("utf-8", "replace").strip()
+    if not interpreter:
+        return args
+    return type(args)([interpreter, *args])
+
+
 @pytest.fixture(autouse=True)
 def _git_bash_statt_wsl_stub(monkeypatch: pytest.MonkeyPatch) -> None:
     """Unter Windows startet ein blankes ``bash`` aus Tests Git-Bash, nie den WSL-Stub (#68).
@@ -326,7 +353,7 @@ def _git_bash_statt_wsl_stub(monkeypatch: pytest.MonkeyPatch) -> None:
 
     def _init(self: subprocess.Popen, args: Any, *rest: Any, **kw: Any) -> None:
         if kw.get("executable") is None:
-            args = _bash_aufloesen(args)
+            args = _shebang_aufloesen(_bash_aufloesen(args))
         original(self, args, *rest, **kw)
 
     monkeypatch.setattr(subprocess.Popen, "__init__", _init)
