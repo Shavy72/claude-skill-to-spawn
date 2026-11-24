@@ -98,6 +98,9 @@ BUILTIN_SKILLS = [
     "super-token-saver:setup-git-lite",
     "super-token-saver:setup-statusline",
     "super-token-saver:usage-view",
+    # Pflicht-Skills ohne Datei (#478): security-review ist Builtin, sentry-security-review Plugin-Skill
+    "security-review",
+    "sentry-security-review",
     "loop",
     "run",
     "simplify",
