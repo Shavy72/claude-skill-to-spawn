@@ -79,10 +79,13 @@ def test_jede_mitgelieferte_vorlage_fuellt_sich_ohne_rest(
     assert PLATZHALTER.findall(text) == [], name
 
 
-def test_vorlage_ohne_annahme_platzhalter_bekommt_die_regel() -> None:
-    text = _bau().build_prompt("Ticket {N} bauen.", "7", "9", "T", "- k", konfig={})
-    assert text.startswith("Ticket 7 bauen.")
-    assert capo.annahme_grenze("7") in text
+def test_vorlage_ohne_annahme_platzhalter_wird_gemeldet(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level("WARNING"):
+        text = _bau().build_prompt("Ticket {N} bauen.", "7", "9", "T", "- k", konfig={})
+    assert text == "Ticket 7 bauen."
+    assert "ohne {ANNAHME_GRENZE}" in caplog.text, caplog.text
 
 
 def test_annahme_kommentar_nennt_echte_kennung(
