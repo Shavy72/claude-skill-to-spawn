@@ -800,6 +800,8 @@ def main(argv: list[str] | None = None) -> int:
     p_komplett = unter.add_parser("komplett", help="Komplett-Prüfung der Spec, höchstens einmal (Exit 0/1)")
     p_komplett.add_argument("spec", type=int)
     p_komplett.add_argument("--moment", choices=sorted(_KOMPLETT_MOMENTE), default="vor-live")
+    # Nur für den Hintergrund-Lauf aus dem capo-Takt (#455): Rot je Kopf gilt dort als geprüft.
+    p_komplett.add_argument("--aus-takt", action="store_true", help=argparse.SUPPRESS)
 
     nest.richte_parser_ein(unter)
     leitstand.richte_parser_ein(unter)
@@ -920,7 +922,8 @@ def main(argv: list[str] | None = None) -> int:
         return _ticket_lage(args)
     if args.befehl == "komplett":
         repo = config.repo_wurzel(_repo_aus_umgebung())
-        erg = komplett_lauf.komplett_einmal(repo, args.spec, _KOMPLETT_MOMENTE[args.moment], config.lade(repo))
+        tuer = komplett_lauf.takt_kind if args.aus_takt else komplett_lauf.komplett_einmal
+        erg = tuer(repo, args.spec, _KOMPLETT_MOMENTE[args.moment], config.lade(repo))
         # „läuft schon“ ist kein grüner Stand: vor Live erst weiter, wenn der andere Lauf grün ist.
         frei = erg.ok and not erg.laeuft
         print(erg.grund)

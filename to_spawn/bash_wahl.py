@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 import os
 import shutil
+import signal
 import subprocess
 import sys
 from collections.abc import Mapping, Sequence
@@ -28,6 +29,8 @@ log = logging.getLogger("to_spawn.bash_wahl")
 _GIT_BASH_STANDARD = "C:/Program Files/Git/bin/bash.exe"
 #: Schalter, mit denen MSYS die Pfad-Umsetzung für Windows-Programme abschaltet.
 _PFAD_SPERREN = ("MSYS_NO_PATHCONV", "MSYS2_ARG_CONV_EXCL")
+#: Sekunden, die :func:`lauf` nach dem Gruppen-Abbruch noch auf die Pipes wartet (#455).
+NACHLAUF_S = 5.0
 #: Ordner, in denen unter Windows nur der WSL-Stub als ``bash.exe`` liegt.
 _STUB_ORDNER = frozenset({"system32", "windowsapps"})
 
@@ -70,7 +73,11 @@ def bash() -> str:
 
 
 def lauf(
-    argumente: Sequence[str], *, env: Mapping[str, str] | None = None, **optionen: Any
+    argumente: Sequence[str],
+    *,
+    env: Mapping[str, str] | None = None,
+    zeitgrenze_s: float | None = None,
+    **optionen: Any,
 ) -> subprocess.CompletedProcess[Any]:
     """``bash <argumente>`` über ``subprocess.run`` starten, Umgebung für Git-Bash bereinigt.
 
@@ -78,6 +85,11 @@ def lauf(
     ``MSYS2_ARG_CONV_EXCL`` heraus, sonst geht die Umgebung unverändert durch. ``optionen``
     gehen an ``subprocess.run`` (``check`` Vorgabe ``False``). Fehlt bash →
     ``FileNotFoundError`` aus ``bash()``.
+
+    ``zeitgrenze_s`` (#455): bash läuft in eigener Prozessgruppe; nach Ablauf endet die ganze
+    Gruppe samt Unterprozessen (die sonst die Ausgabe offen halten) und es kommt
+    ``subprocess.TimeoutExpired`` mit der Ausgabe bis dahin. ``subprocess.run(timeout=…)``
+    beendete nur bash selbst und wartete dann auf die Enkel.
     """
     basis = os.environ if env is None else env
     if sys.platform == "win32":
@@ -85,4 +97,74 @@ def lauf(
     else:
         umgebung = dict(basis)
     optionen.setdefault("check", False)
-    return subprocess.run([bash(), *argumente], env=umgebung, **optionen)  # noqa: S603
+    if zeitgrenze_s is None:
+        return subprocess.run([bash(), *argumente], env=umgebung, **optionen)  # noqa: S603
+    pruefen, eingabe = optionen.pop("check"), optionen.pop("input", None)
+    if sys.platform == "win32":
+        optionen["creationflags"] = (
+            optionen.get("creationflags", 0) | subprocess.CREATE_NEW_PROCESS_GROUP
+        )
+    else:
+        optionen["start_new_session"] = True
+    with subprocess.Popen([bash(), *argumente], env=umgebung, **optionen) as prozess:
+        try:
+            aus, fehler = prozess.communicate(eingabe, timeout=zeitgrenze_s)
+        except subprocess.TimeoutExpired:
+            _gruppe_beenden(prozess)
+            try:
+                aus, fehler = prozess.communicate(timeout=NACHLAUF_S)
+            except subprocess.TimeoutExpired as rest:
+                # Enkel mit eigenem setsid hält die Pipe: Teilausgabe nehmen, Pipes zu, weiter.
+                log.warning(
+                    "bash PID %d: Pipe nach Zeitgrenze noch offen (Enkel außerhalb der Gruppe)",
+                    prozess.pid,
+                )
+                aus, fehler = _text(rest.output, optionen), _text(rest.stderr, optionen)
+                for rohr in (prozess.stdout, prozess.stderr):
+                    if rohr is not None:
+                        rohr.close()
+            raise subprocess.TimeoutExpired(
+                prozess.args, zeitgrenze_s, output=aus, stderr=fehler
+            ) from None
+    if pruefen and prozess.returncode:
+        raise subprocess.CalledProcessError(
+            prozess.returncode, prozess.args, aus, fehler
+        )
+    return subprocess.CompletedProcess(prozess.args, prozess.returncode, aus, fehler)
+
+
+def _text(roh: Any, optionen: Mapping[str, Any]) -> Any:
+    """Teilausgabe aus ``TimeoutExpired`` (immer Bytes) im Modus des Aufrufers (``text=True`` → str)."""
+    if isinstance(roh, bytes) and (
+        optionen.get("text") or optionen.get("universal_newlines") or optionen.get("encoding")
+    ):
+        return roh.decode(optionen.get("encoding") or "utf-8", errors="replace")
+    return roh
+
+
+def _gruppe_beenden(prozess: subprocess.Popen[Any]) -> None:
+    """bash aus :func:`lauf` samt allen Unterprozessen hart beenden.
+
+    Linux/macOS: ``SIGKILL`` an die eigene Prozessgruppe. Windows: ganzer Prozessbaum über
+    :mod:`to_spawn.prozessbaum` (dort ist jedes Signal ``TerminateProcess``).
+    ponytail: ein Enkel, der selbst ``setsid`` ruft, verlässt die Gruppe und lebt weiter;
+    :func:`lauf` wartet dann nur :data:`NACHLAUF_S` auf die Pipe. Upgrade-Pfad: Ausgabe in Datei.
+    """
+    if sys.platform == "win32":
+        from to_spawn import prozessbaum  # spät: nur Windows braucht die Prozessliste
+
+        try:
+            prozessbaum.senden(prozessbaum.baum(prozess.pid), signal.SIGTERM)
+        except OSError as fehler:
+            log.warning("Prozessbaum von PID %d nicht beendet: %s", prozess.pid, fehler)
+        prozess.kill()
+        return
+    try:
+        os.killpg(prozess.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    except OSError as fehler:
+        log.warning(
+            "Prozessgruppe %d nicht beendet: %s — nur bash selbst", prozess.pid, fehler
+        )
+        prozess.kill()

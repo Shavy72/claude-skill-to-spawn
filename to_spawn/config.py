@@ -410,6 +410,29 @@ def pruef_befehl(konfig: dict[str, Any], art: str) -> str:
     return _text(_gruppe(konfig, "pruefung"), art)
 
 
+#: Vorgabe für ``pruefung.komplett_zeitgrenze_min`` (#455): so lange darf die Komplett-Prüfung
+#: höchstens laufen, dann bricht der Skill sie samt Unterprozessen ab (rot, Grund „Zeitgrenze“).
+#: Bewusst nicht in ``DEFAULTS["pruefung"]`` — dort stehen nur die Befehle, die eine Einrichtung ausmachen.
+KOMPLETT_ZEITGRENZE_MIN = 60
+
+
+def komplett_zeitgrenze_s(konfig: dict[str, Any]) -> float:
+    """Zeitgrenze der Komplett-Prüfung in Sekunden aus ``pruefung.komplett_zeitgrenze_min`` (#455).
+
+    Fehlt der Wert oder ist er keine positive Zahl, gilt :data:`KOMPLETT_ZEITGRENZE_MIN`.
+    """
+    wert = _gruppe(konfig, "pruefung").get("komplett_zeitgrenze_min")
+    if isinstance(wert, (int, float)) and not isinstance(wert, bool) and wert > 0:
+        return float(wert) * 60
+    if wert is not None:
+        log.warning(
+            "Konfig-Wert pruefung.komplett_zeitgrenze_min=%r ungültig — Vorgabe %s min",
+            wert,
+            KOMPLETT_ZEITGRENZE_MIN,
+        )
+    return float(KOMPLETT_ZEITGRENZE_MIN * 60)
+
+
 def live_schritt(konfig: dict[str, Any]) -> dict[str, str]:
     """Gruppe ``live`` (#425) mit allen Schlüsseln aus ``DEFAULTS``; ``""`` = nicht eingerichtet."""
     gruppe = _gruppe(konfig, "live")
