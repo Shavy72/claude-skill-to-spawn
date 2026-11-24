@@ -71,6 +71,15 @@ def braucht_fehlt(name: str, plattform: str = sys.platform, finde=None) -> str |
     return None
 
 
+#: Von :func:`attrappe` angelegte Dateien (normalisierte Pfade): nur diese löst :func:`_shebang_aufloesen` auf.
+_ATTRAPPEN: set[str] = set()
+
+
+def stub_pfad(skript: Path) -> Path:
+    """Pfad für ``TO_SPAWN_GH_STUB``-artige Env-Variablen: Windows ``name.py`` (Produktcode startet es über den Interpreter), sonst ``skript``."""
+    return skript.with_name(skript.name + ".py") if os.name == "nt" else skript
+
+
 def attrappe(ordner: Path, name: str, python_code: str) -> Path:
     """Ausführbare Programm-Attrappe ``ordner/name`` (z. B. ``gh``, ``ssh``), #93.
 
@@ -83,11 +92,14 @@ def attrappe(ordner: Path, name: str, python_code: str) -> Path:
     Rückgabe: Pfad des Skripts.
     """
     ordner.mkdir(parents=True, exist_ok=True)
-    # Windows: ``name.py`` — so führt auch Produktcode die Attrappe aus (``TO_SPAWN_GH_STUB`` → Interpreter + ``.py``, #553)
-    skript = ordner / (f"{name}.py" if os.name == "nt" else name)
-    skript.write_text(f"#!{sys.executable}\n{textwrap.dedent(python_code)}", encoding="utf-8")
+    skript = ordner / name
+    text = f"#!{sys.executable}\n{textwrap.dedent(python_code)}"
+    skript.write_text(text, encoding="utf-8")
     skript.chmod(skript.stat().st_mode | 0o111)
+    _ATTRAPPEN.add(os.path.normcase(str(skript)))
     if os.name == "nt":
+        # ``name.py`` für Produktcode, der einen Stub nur mit ``.py`` über den Interpreter startet (:func:`stub_pfad`, #553)
+        skript.with_name(f"{name}.py").write_text(text, encoding="utf-8")
         (ordner / f"{name}.cmd").write_text(f'@"{sys.executable}" "{skript}" %*\r\n', encoding="utf-8")
     return skript
 
@@ -315,26 +327,16 @@ def _bash_aufloesen(args: Any) -> Any:
 def _shebang_aufloesen(args: Any) -> Any:
     """Windows führt kein Shebang-Skript aus (``WinError 193``), Attrappen aber sind genau das (#553).
 
-    Liste/Tupel, deren erstes Element eine vorhandene Datei ohne Endung (oder ``.py``) mit ``#!``-Zeile ist
-    (so legt :func:`attrappe` sie an), startet über den Interpreter der Shebang-Zeile; alles
+    Liste/Tupel, deren erstes Element eine von :func:`attrappe` angelegte Datei ist,
+    startet über ``sys.executable`` (Shebang-Interpreter der Attrappe); alles
     andere geht unverändert durch. Einzige Stelle: wirkt für jeden Test, der eine Attrappe
     per Pfad startet (``Popen``, ``run``, ``check_output``).
     """
     if not isinstance(args, (list, tuple)) or not args or not isinstance(args[0], (str, os.PathLike)):
         return args
-    pfad = Path(args[0])
-    if pfad.suffix not in {"", ".py"} or not pfad.is_file():
+    if os.path.normcase(str(args[0])) not in _ATTRAPPEN:
         return args
-    try:
-        with pfad.open("rb") as fh:
-            kopf = fh.readline(512)
-    except OSError:
-        return args
-    if not kopf.startswith(b"#!"):
-        return args
-    interpreter = kopf[2:].decode("utf-8", "replace").strip()
-    if not interpreter:
-        return args
+    interpreter = sys.executable  # so schreibt :func:`attrappe` die Shebang-Zeile
     return type(args)([interpreter, *args])
 
 
