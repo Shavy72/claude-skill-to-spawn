@@ -106,7 +106,11 @@ def prozesse_linux() -> list[Prozess]:
     if not out.strip():
         log.error("Prozessliste leer — ist ``ps`` (procps) installiert?")
         return []
-    return ps_zeilen_parsen(out)
+    # Seit ``ps`` beendete Prozesse fallen hier raus, nicht in ``zuordnen`` (#494, #564): das
+    # urteilt nur aus der übergebenen Liste, auch über aufgezeichnete mit erfundenen Nummern.
+    # ponytail: Fenster zwischen diesem Blick und ``fremdes_repo`` bleibt (µs), Upgrade-Pfad:
+    # Arbeitsordner hier mitlesen und am ``Prozess`` mitgeben.
+    return [p for p in ps_zeilen_parsen(out) if not beendet(p.pid)]
 
 
 def prozesse_lesen() -> list[Prozess]:
@@ -214,6 +218,8 @@ def fremdes_repo(pid: int) -> bool:
 def beendet(pid: int) -> bool:
     """Ist der Prozess seit ``ps`` beendet (``/proc/<pid>`` weg)? Ohne ``/proc`` (Windows): nein.
 
+    Nur beim Lesen der echten Liste (``prozesse_linux``) gefragt, nie in ``zuordnen`` (#564).
+
     Ein beendeter Prozess läuft nicht mehr, auch wenn ``fremdes_repo`` ihn mangels lesbarem
     Ordner mitzählt (#494): sonst gälte etwa die eben beendete Aufseher-Attrappe eines
     Nachbar-Tests als lebender Aufseher, und ``spawn_srv.sh`` meldete bei vollem Rechner
@@ -239,7 +245,7 @@ def zuordnen(eintraege: dict[str, Eintrag], alle: list[Prozess]) -> None:
         m = MUSTER.search(p.cmd)
         if not m:
             continue
-        if fremdes_repo(p.pid) or beendet(p.pid):
+        if fremdes_repo(p.pid):
             continue
         art, nummer = m.group(1), m.group(2)
         e = eintraege.get(nummer)
@@ -264,7 +270,7 @@ def zuordnen(eintraege: dict[str, Eintrag], alle: list[Prozess]) -> None:
     for p in alle:
         if p.name.lower() not in VERWAIST_NAMEN or p.pid in bekannte:
             continue
-        if fremdes_repo(p.pid) or beendet(p.pid):  # fremdes Repo (#212) / schon weg (#494): keine Waise
+        if fremdes_repo(p.pid):  # Claude-Session eines anderen Repos ist hier keine Waise (#212)
             continue
         m = VERWAIST.search(p.cmd)
         if not m:
