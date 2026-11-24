@@ -27,6 +27,7 @@ Außenwelt (tmux, Prozesse, Uhr) nur über das Protokoll :class:`Werkzeug`; echt
 
 from __future__ import annotations
 
+import itertools
 import logging
 import os
 import re
@@ -41,7 +42,16 @@ from pathlib import Path
 from types import FrameType
 from typing import Literal, Protocol
 
-from to_spawn import capo, config, pc_fenster, prozessbaum, sessions_datei, speicher, tmux_aufruf
+from to_spawn import (
+    anleitung,
+    capo,
+    config,
+    pc_fenster,
+    prozessbaum,
+    sessions_datei,
+    speicher,
+    tmux_aufruf,
+)
 from to_spawn.tmux_aufruf import FensterWeg, TmuxFehler
 
 log = logging.getLogger(__name__)
@@ -75,7 +85,7 @@ BEENDEN_TAKT_S = 1.0
 #: So lange darf die alte Session nach Schritt e noch arbeiten (Commit), bevor sie endet.
 ALT_RUHE_MAX_S = 120.0
 WARTE_MAX_VORGABE = 1800.0
-REMOTE_CONTROL = "/remote-control"
+REMOTE_CONTROL = anleitung.REMOTE_CONTROL
 HANDOFF_ORDNER = "docs/handoffs"
 
 EXIT_OK = 0
@@ -90,10 +100,7 @@ SCHON_WEG: Beendet = "schon_weg"
 LEBT: Beendet = "lebt"
 
 #: Wird der alten Session getippt, wenn die Ablösung nach Schritt a abbricht.
-WEITER_AUFTRAG = (
-    "Ablösung abgebrochen (respawn). Die neue Session startet nicht — arbeite normal "
-    "am Ticket weiter. Handoff-Datei und Start-Prompt dürfen liegen bleiben."
-)
+WEITER_AUFTRAG = anleitung.WEITER_AUFTRAG
 
 
 @dataclass(frozen=True)
@@ -155,8 +162,8 @@ class Werkzeug(Protocol):
     ) -> str: ...
     def tippen(self, ziel: str, text: str) -> None: ...
     def taste(self, ziel: str, taste: str) -> None: ...
-    def bildschirm(self, ziel: str) -> str | None:
-        """Sichtbarer Text des Panes; ``None`` = nicht lesbar (tmux-Fehler)."""
+    def bildschirm(self, ziel: str, *, farben: bool = False) -> str | None:
+        """Sichtbarer Text (``farben``: mit Steuerfolgen); ``None`` = nicht lesbar."""
         ...
 
     def fenster_umbenennen(self, ziel: str, name: str) -> None: ...
@@ -169,6 +176,11 @@ class Werkzeug(Protocol):
     def claude_laeuft(self, pane_pid: int) -> bool: ...
     def jetzt(self) -> float: ...
     def schlafen(self, s: float) -> None: ...
+
+
+#: Laufende Nummer für Puffernamen und die Tipp-Sperre aller Fäden (#414).
+_PUFFER_NR = itertools.count(1)
+_TIPP_SPERRE = threading.Lock()
 
 
 class TmuxWerkzeug:
@@ -240,26 +252,58 @@ class TmuxWerkzeug:
     def tippen(self, ziel: str, text: str) -> None:
         # Text als Bracketed Paste (ein Block, Zeilenumbrüche schicken nichts ab),
         # dann Enter getrennt — sonst schluckt die TUI das Enter im Einfügen.
-        puffer = f"respawn-{os.getpid()}"
-        self._tmux("load-buffer", "-b", puffer, "-", eingabe=text)
-        self._tmux("paste-buffer", "-p", "-d", "-b", puffer, "-t", ziel)
-        self.schlafen(TIPP_PAUSE_S)
-        try:
-            self._tmux("send-keys", "-t", ziel, "Enter")
-        except TmuxFehler:
-            # Kein halber Auftrag im Eingabefeld: Zeile leeren, Fehler weitergeben.
+        # Puffer je Aufruf eindeutig und eine Sperre je Prozess: Briefkasten-Wecker und
+        # Ablösung tippen in eigenen Fäden desselben Prozesses (#414).
+        puffer = f"respawn-{os.getpid()}-{next(_PUFFER_NR)}"
+        with _TIPP_SPERRE:
             try:
-                self._tmux("send-keys", "-t", ziel, "C-u")
-            except TmuxFehler as leeren:
-                log.warning("Eingabe in %s nicht geleert: %s", ziel, leeren)
-            raise
+                self._tmux("load-buffer", "-b", puffer, "-", eingabe=text)
+                self._tmux("paste-buffer", "-p", "-d", "-b", puffer, "-t", ziel)
+            except TmuxFehler:
+                # ``-d`` greift nur nach gelungenem Einfügen: Puffer nicht liegen lassen.
+                try:
+                    self._tmux("delete-buffer", "-b", puffer)
+                except TmuxFehler as rest:
+                    log.warning("tmux-Puffer %s nicht gelöscht: %s", puffer, rest)
+                raise
+            self.schlafen(TIPP_PAUSE_S)
+            try:
+                self._tmux("send-keys", "-t", ziel, "Enter")
+            except TmuxFehler:
+                # Kein halber Auftrag im Eingabefeld: Zeile leeren, Fehler weitergeben.
+                try:
+                    self._tmux("send-keys", "-t", ziel, "C-u")
+                except TmuxFehler as leeren:
+                    log.warning("Eingabe in %s nicht geleert: %s", ziel, leeren)
+                raise
 
     def taste(self, ziel: str, taste: str) -> None:
         self._tmux("send-keys", "-t", ziel, taste)
 
-    def bildschirm(self, ziel: str) -> str | None:
-        """Sichtbarer Text; :class:`FensterWeg` wenn das Fenster fehlt, ``None`` bei Fehlern."""
+    def pane_lage(self, ziel: str) -> tuple[int | None, float | None]:
+        """PID des Pane-Prozesses und ``window_activity`` (Epoche, s); ``None`` = nicht lesbar.
+
+        :class:`FensterWeg`/:class:`TmuxFehler` fliegen weiter.
+        """
+        roh = self._tmux(
+            "display-message", "-p", "-t", ziel, "#{pane_pid}\t#{window_activity}"
+        )
+        pid, _, aktiv = roh.strip().partition("\t")
         try:
+            aktiv_s: float | None = float(aktiv)
+        except ValueError:
+            aktiv_s = None
+        return (int(pid) if pid.isdigit() else None), aktiv_s
+
+    def bildschirm(self, ziel: str, *, farben: bool = False) -> str | None:
+        """Sichtbarer Text; :class:`FensterWeg` wenn das Fenster fehlt, ``None`` bei Fehlern.
+
+        ``farben=True`` liest mit ``-e`` (Farbcodes bleiben drin) — nur für
+        :func:`aufpasser.eingabe_leer`, das gedimmte Platzhalter erkennen muss (#414).
+        """
+        try:
+            if farben:
+                return self._tmux("capture-pane", "-e", "-p", "-t", ziel)
             return self._tmux("capture-pane", "-p", "-t", ziel)
         except FensterWeg:
             raise
@@ -388,16 +432,7 @@ def _groesse(pfad: Path | None) -> int:
         return -1
 
 
-def _handoff_auftrag(handoff: str, start: str) -> str:
-    return (
-        "Ablösung dieser Session (respawn, Skill handoff, Bau-Variante): Schreib jetzt den "
-        f"Handoff nach {handoff} und den Start-Prompt für die neue Session nach {start} "
-        "(nur Text, die neue Session liest ihn als ersten Auftrag). Gibt es die Dateien schon, "
-        "sind sie aus einer früheren Runde veraltet: komplett mit dem jetzigen Stand "
-        "überschreiben, auch wenn sich wenig geändert hat. Beide Dateien committen. "
-        "Keine Zeile „Staffel: weiter“ ausgeben — die neue Session übernimmt, eine "
-        "Folge-Runde in diesem Fenster wäre eine zweite Session. Danach nichts mehr tun."
-    )
+_handoff_auftrag = anleitung.handoff_auftrag
 
 
 def handoff_auftrag_fuer(wt: Path, ticket: int, jetzt: float) -> str:
@@ -662,7 +697,9 @@ def _ablauf(a: Auftrag, w: Werkzeug, stand: _Stand) -> Ergebnis:
         _start_prompt(w, stand.neu, prompt)  # e)
     except FensterWeg as fehler:
         raise _Abbruch(
-            EXIT_NICHT_BEWIESEN, f"neue Session beendet sich selbst ({fehler})"
+            EXIT_NICHT_BEWIESEN,
+            f"neue Session beendet sich selbst ({fehler}) — Grund in "
+            f"{capo.fenster_log(a.repo, a.ticket)}",
         ) from fehler
     return _alte_abloesen(a, w, stand, alt, stand.neu, wt, gefunden_h, gefunden_s)
 

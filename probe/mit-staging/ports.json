@@ -1,0 +1,1 @@
+{"app": @@APP_PORT@@, "staging": @@STAGING_PORT@@, "live": @@LIVE_PORT@@}

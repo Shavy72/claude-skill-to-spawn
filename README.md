@@ -28,7 +28,7 @@ Why it is fast: tickets are cut fine (each fits one fresh context window), every
 | `aliase/` | Alias skills: `/to-spawn-local <S>` (`--ziel local`), `/to-spawn-remote <S>` (`--ziel srv`), `/meta-exec` (old name of `/to-spawn`). |
 | `docs/kontext-manifest.md` | The `/to-tickets` add-on this chain needs: manifest schema, **native GitHub `blocked_by` edges** (the launcher waits on them), per-ticket context package, supervisor (Aufseher). Copy into your repo's `docs/agents/`. |
 | `skripte/` | The logic: `bau.py` (one ticket session, waits for blockers outside Claude), `wache.py` (supervisor session, "Aufseher"), `sessions_stand.py` (which sessions are on: off / waiting / running since / ORPHANED), `spec_stand.py` (one line per ticket for the supervisor), `spawn_srv.sh` (tmux launcher on the build server). Repo = `TO_SPAWN_REPO`, else the git root of the current directory. |
-| `repo-scripts/` | The per-repo half: thin forwarders with the same names (+ `_to_spawn_weiterleitung.py`) that jump into `skripte/`, plus `_default.json`. Per-repo settings live in `.to-spawn/config.json`. |
+| `repo-scripts/` | The per-repo half: thin forwarders with the same names (+ `_to_spawn_weiterleitung.py`) that jump into `skripte/`, plus `_default.json` (the start-text template; it stays in the skill and is never copied into a repo). Per-repo settings live in `.to-spawn/config.json`. |
 
 ## Install
 
@@ -38,7 +38,7 @@ pwsh -File "$env:TEMP\claude-skill-to-spawn\install.ps1"            # skill + pr
 pwsh -File "$env:TEMP\claude-skill-to-spawn\install.ps1" -Repo .     # additionally copy repo-scripts/ into ./scripts of the current repo
 ```
 
-Requirements: Windows Terminal (`wt`), PowerShell 7, Python 3.12+, `gh` (logged in), Claude Code. The repo needs the manifest convention `docs/agents/manifests/spec-<S>.json` and `docs/agents/manifests/_default.json` (created by `/to-tickets`; a minimal `_default.json` is included).
+Requirements: Windows Terminal (`wt`), PowerShell 7, Python 3.12+, `gh` (logged in), Claude Code. The repo needs the manifest convention `docs/agents/manifests/spec-<S>.json` (created by `/to-tickets`). The start text comes from the skill template; repo rules go in via `start_text.zusatz_datei`.
 
 ## The chain, end to end
 

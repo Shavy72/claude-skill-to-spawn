@@ -18,11 +18,13 @@ import os
 import re
 import stat
 import subprocess
+import sys
 from collections.abc import Callable
 from contextlib import ExitStack
 from pathlib import Path
 from typing import Any
 
+from to_spawn import prozessbaum
 from to_spawn import sperre as _sperre
 
 log = logging.getLogger("to_spawn.hausmeister.windows")
@@ -37,9 +39,7 @@ _msvcrt: Any = None
 class Bleibt(Exception):
     """Der Ordner bleibt (Grund für Menschen); ``fehler`` = unklarer Zustand statt Regel."""
 
-    def __init__(
-        self, grund: str, *, fuer_david: bool = False, fehler: bool = False
-    ) -> None:
+    def __init__(self, grund: str, *, fuer_david: bool = False, fehler: bool = False) -> None:
         super().__init__(grund)
         self.grund = grund
         self.fuer_david = fuer_david
@@ -47,14 +47,44 @@ class Bleibt(Exception):
 
 
 def pfad_norm(pfad: str | Path) -> str:
-    """Vergleichsform für Windows-Pfade: ``/`` statt Backslash, klein, ohne Schluss-``/``."""
-    return str(pfad).replace("\\", "/").rstrip("/").lower()
+    """Text-Vergleichsform für Windows-Pfade: ``/`` statt Backslash, klein, ohne
+    ``\\\\?\\``-Vorsatz und Schluss-``/``. Löst nichts auf (siehe :func:`pfad_echt`)."""
+    text = str(pfad).replace("\\", "/")
+    if text.startswith("//?/"):
+        text = text[4:]
+        if text[:4].lower() == "unc/":
+            text = "//" + text[4:]
+    return text.rstrip("/").lower()
+
+
+def pfad_echt(pfad: str | Path) -> tuple[str, bool]:
+    """Kanonische Vergleichsform: ``realpath`` (lange statt 8.3-Namen, Junctions/Symlinks
+    aufgelöst), dann :func:`pfad_norm`. Zweiter Wert ``False`` = nicht ganz auflösbar
+    (Pfad weg, Fehler); dann steht hier die Teil-Auflösung (existierender Anfang aufgelöst)
+    bzw. die Text-Form — der Aufrufer darf daraus nie „frei“ folgern, wenn sie trifft."""
+    try:
+        return pfad_norm(os.path.realpath(pfad, strict=True)), True
+    except (OSError, ValueError):
+        pass
+    try:
+        return pfad_norm(os.path.realpath(pfad)), False
+    except (OSError, ValueError):
+        return pfad_norm(pfad), False
+
+
+def _liegt_in(pfad: str, ordner: str) -> bool:
+    """``pfad`` ist ``ordner`` oder liegt darin (beide :func:`pfad_norm`-Form), Vergleich
+    je Pfad-Teil: ``wt-12`` trifft nicht ``wt-123``."""
+    teile = ordner.split("/")
+    return pfad.split("/")[: len(teile)] == teile
 
 
 def kein_prozess(ordner: Path) -> None:
     """Prozessliste per CIM: :class:`Bleibt`, wenn ``ExecutablePath`` im Ordner liegt oder
     ``CommandLine`` den Ordnerpfad enthält (Groß/Klein egal, ``/`` = Backslash; ``wt-13``
-    trifft nicht ``wt-130``). Die cwd steht dort nicht — dafür :func:`umbenennen_probe`
+    trifft nicht ``wt-130``). Die cwd steht dort nicht — sie kommt aus dem PEB jedes
+    Prozesses (:func:`_kein_arbeitsordner_drin`, auch trocken; fängt Git-Bash/MSYS, die die
+    Umbenennungs-Probe nicht sperren). Offene Dateien zeigt nur :func:`umbenennen_probe`
     (nur im echten Lauf, sie fasst den Ordner an)."""
     o = pfad_norm(ordner)
     im_text = re.compile(re.escape(o) + r"(?![^/\s\"'])")
@@ -62,12 +92,51 @@ def kein_prozess(ordner: Path) -> None:
         if pid == os.getpid():
             continue  # dieser Lauf selbst (z. B. Ordner als CLI-Argument)
         exe_n = pfad_norm(exe) if exe else ""
-        if (
-            exe_n == o
-            or exe_n.startswith(o + "/")
-            or (befehl and im_text.search(pfad_norm(befehl)))
-        ):
+        if exe_n == o or exe_n.startswith(o + "/") or (befehl and im_text.search(pfad_norm(befehl))):
             raise Bleibt(f"Prozess {pid} arbeitet im Ordner oder hat Dateien offen")
+    if sys.platform == "win32":  # PEB gibt es nur auf echtem Windows (Tests simulieren win32)
+        _kein_arbeitsordner_drin(ordner)
+
+
+def _kein_arbeitsordner_drin(ordner: Path) -> None:
+    """:class:`Bleibt`, wenn ein Prozess in ``ordner`` steht (cwd ist der Ordner oder darin).
+
+    Entscheidend ist die Identität des Ordners, in dem der Prozess wirklich steht
+    (:func:`to_spawn.prozessbaum.arbeitsordner_in_windows`, cwd-Griff aus dem PEB): eine danach
+    entfernte oder umgebogene Junction oder eine cwd ``\\\\localhost\\C$\\…`` ändern daran nichts.
+    Nicht feststellbar (Griff nicht zu übernehmen, Kennung unlesbar, cwd unlesbar) ⇒ bleibt
+    mit Fehler. Zusätzlich sperrt der Pfad-Text wie bisher (nie als Freigabe): die cwd geht
+    durch :func:`pfad_echt`; lesbar, aber nicht ganz auflösbar ⇒ bleibt mit Fehler, sobald ihre
+    Text-Form oder Teil-Auflösung auf den Ordner (kanonisch oder wie übergeben) zeigt. Prozesse,
+    die sich nicht öffnen lassen (fremd, erhöht), fehlen schon in der Liste (#243)."""
+    try:
+        befunde = prozessbaum.arbeitsordner_in_windows(ordner)
+    except OSError as fehler:
+        raise Bleibt(f"Prozessliste nicht lesbar ({fehler})", fehler=True) from None
+    o, _ = pfad_echt(ordner)
+    ziele = {o, pfad_norm(ordner)}
+    echt: dict[str, tuple[str, bool]] = {}  # viele Prozesse teilen dieselbe cwd
+    for pid, befund in befunde.items():
+        if pid == os.getpid():
+            continue  # dieser Lauf selbst
+        if befund.text is None:
+            raise Bleibt(f"Prozess {pid}: Arbeitsordner nicht lesbar", fehler=True)
+        if befund.drin:
+            raise Bleibt(f"Prozess {pid} arbeitet im Ordner oder hat Dateien offen")
+        if befund.drin is None:
+            raise Bleibt(f"Prozess {pid}: Arbeitsordner nicht prüfbar ({befund.grund})", fehler=True)
+        cwd = befund.text
+        if cwd not in echt:
+            echt[cwd] = pfad_echt(cwd)
+        c, ganz = echt[cwd]
+        if ganz:
+            if _liegt_in(c, o):
+                raise Bleibt(f"Prozess {pid} arbeitet im Ordner oder hat Dateien offen")
+        elif any(_liegt_in(k, z) for k in (c, pfad_norm(cwd)) for z in ziele):
+            raise Bleibt(
+                f"Prozess {pid}: Arbeitsordner nicht auflösbar, zeigt evtl. in den Ordner",
+                fehler=True,
+            )
 
 
 def _prozesse() -> list[tuple[int | None, str | None, str | None]]:
@@ -91,9 +160,7 @@ def _prozesse() -> list[tuple[int | None, str | None, str | None]]:
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
     except (OSError, subprocess.SubprocessError) as fehler:
-        raise Bleibt(
-            f"Prozessliste nicht lesbar (PowerShell: {fehler})", fehler=True
-        ) from None
+        raise Bleibt(f"Prozessliste nicht lesbar (PowerShell: {fehler})", fehler=True) from None
     if lauf.returncode != 0:
         raise Bleibt(
             f"Prozessliste nicht lesbar (PowerShell Exit {lauf.returncode})",
@@ -127,9 +194,7 @@ def umbenennen_probe(ordner: Path) -> None:
     try:
         _umbenennen(ordner, probe)
     except PermissionError:
-        raise Bleibt(
-            "Ordner in Benutzung (Windows verweigert das Umbenennen)"
-        ) from None
+        raise Bleibt("Ordner in Benutzung (Windows verweigert das Umbenennen)") from None
     except OSError as fehler:
         raise Bleibt(f"Umbenennungs-Probe gescheitert: {fehler}", fehler=True) from None
     try:

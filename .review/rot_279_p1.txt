@@ -1,0 +1,89 @@
+..............FFFF                                                       [100%]
+=================================== FAILURES ===================================
+______________________ test_label_wissen_nur_im_baustein _______________________
+
+    def test_label_wissen_nur_im_baustein() -> None:
+        """``staging:fertig`` und die Zustands-Werte stehen als Text nur im Baustein."""
+        quelle = (SKILL / "to_spawn" / "gh.py").read_text(encoding="utf-8")
+>       assert '"staging:fertig"' not in quelle
+E       assert '"staging:fertig"' not in '"""Schmale ...eturn True\n'
+E         
+E         '"staging:fertig"' is contained here:
+E           G_LABEL = "staging:fertig"
+E           
+E           
+E           def blocker_erledigt(dep: dict) -> bool:
+E               """Die eine Regel (#1527): zählt dieser Blocker für Folge-Tickets als erledigt?...
+E         
+E         ...Full output truncated (173 lines hidden), use '-vv' to show
+
+tests/test_ticket_zustand_279.py:91: AssertionError
+_____________ test_fall_0305_fertig_gebautes_ticket_startet_nicht ______________
+
+welt = Welt(tmp=PosixPath('$TMPDIR/pytest-of-USER/pytest-3/test_fall_0305_fertig_gebautes0'), heim=PosixPath('/home...t'), protokoll_bau=PosixPath('$TMPDIR/pytest-of-USER/pytest-3/test_fall_0305_fertig_gebautes0/bau_argv.txt'))
+monkeypatch = <conftest._HeimMonkeyPatch object at 0x7fdc18ed9850>
+
+    def test_fall_0305_fertig_gebautes_ticket_startet_nicht(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Abnahme 3 / Stelle 4: offen + ``staging:fertig`` ohne Fenster → kein Start;
+        offenes Ticket ohne Label wird weiter gestartet."""
+        monkeypatch.setenv("GH_STUB_UNTER", f"{SPEC}:9002|9003")
+        _labels(welt, monkeypatch, {"9002": ["staging:fertig"]})
+        assert welt.lauf(hang_min=90) == 0
+        time.sleep(1)
+>       assert sorted(fenster_namen()) == ["bau 9003", f"wache {SPEC}"]
+E       AssertionError: assert ['bau 9002', ... 'wache 9001'] == ['bau 9003', 'wache 9001']
+E         
+E         At index 0 diff: 'bau 9002' != 'bau 9003'
+E         Left contains one more item: 'wache 9001'
+E         Use -v to get more diff
+
+tests/test_ticket_zustand_279.py:113: AssertionError
+------------------------------ Captured log call -------------------------------
+________ test_stilles_fenster_fertig_gebaut_wird_gesichert_geschlossen _________
+
+welt = Welt(tmp=PosixPath('$TMPDIR/pytest-of-USER/pytest-3/test_stilles_fenster_fertig_ge0'), heim=PosixPath('/home...t'), protokoll_bau=PosixPath('$TMPDIR/pytest-of-USER/pytest-3/test_stilles_fenster_fertig_ge0/bau_argv.txt'))
+monkeypatch = <conftest._HeimMonkeyPatch object at 0x7fdc18ed9b50>
+
+    def test_stilles_fenster_fertig_gebaut_wird_gesichert_geschlossen(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Stelle 5: stilles Fenster eines fertig gebauten Tickets geht zu, Sicherung vorher."""
+        monkeypatch.setenv("GH_STUB_UNTER", f"{SPEC}:9002")
+        _labels(welt, monkeypatch, {"9002": ["staging:fertig"]})
+        welt.worktree(9002, schmutzig=True)
+        welt.fenster_still(9002, "sleep 3600")
+        welt.stand_setzen("bau 9002", seit=time.time() - 20 * 60, hash=welt.hash_von("bau 9002"))
+        assert welt.lauf(hang_min=90) == 0
+        time.sleep(0.5)
+>       assert fenster_namen() == [f"wache {SPEC}"]
+E       AssertionError: assert ['wache 9001', 'bau 9002'] == ['wache 9001']
+E         
+E         Left contains one more item: 'bau 9002'
+E         Use -v to get more diff
+
+tests/test_ticket_zustand_279.py:126: AssertionError
+------------------------------ Captured log call -------------------------------
+____________ test_aufseher_startet_nach_solange_nicht_endgueltig_zu ____________
+
+welt = Welt(tmp=PosixPath('$TMPDIR/pytest-of-USER/pytest-3/test_aufseher_startet_nach_sol0'), heim=PosixPath('/home...t'), protokoll_bau=PosixPath('$TMPDIR/pytest-of-USER/pytest-3/test_aufseher_startet_nach_sol0/bau_argv.txt'))
+monkeypatch = <conftest._HeimMonkeyPatch object at 0x7fdc18d209f0>
+
+    def test_aufseher_startet_nach_solange_nicht_endgueltig_zu(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Stelle 6: alle Tickets nur fertig gebaut (offen) → Aufseher wird weiter gebraucht."""
+        monkeypatch.setenv("GH_STUB_UNTER", f"{SPEC}:9002")
+        _labels(welt, monkeypatch, {"9002": ["staging:fertig"]})
+        tmux("new-window", "-d", "-t", f"={SITZUNG}", "-n", "platzhalter", "-c", str(welt.repo), "sleep 3600")
+        tmux("kill-window", "-t", f"={SITZUNG}:wache {SPEC}")
+        assert welt.lauf("--wache-vorlage", f"{welt.bin}/bau_protokoll.sh {{s}}{{resume}}") == 0
+        time.sleep(1)
+        assert f"wache {SPEC}" in fenster_namen()
+>       assert "bau 9002" not in fenster_namen()
+E       AssertionError: assert 'bau 9002' not in ['bau 9002', 'platzhalter', 'wache 9001']
+E        +  where ['bau 9002', 'platzhalter', 'wache 9001'] = fenster_namen()
+
+tests/test_ticket_zustand_279.py:139: AssertionError
+------------------------------ Captured log call -------------------------------
+=========================== short test summary info ============================
+FAILED tests/test_ticket_zustand_279.py::test_label_wissen_nur_im_baustein - ...
+FAILED tests/test_ticket_zustand_279.py::test_fall_0305_fertig_gebautes_ticket_startet_nicht
+FAILED tests/test_ticket_zustand_279.py::test_stilles_fenster_fertig_gebaut_wird_gesichert_geschlossen
+FAILED tests/test_ticket_zustand_279.py::test_aufseher_startet_nach_solange_nicht_endgueltig_zu
+4 failed, 14 passed in 65.70s (0:01:05)

@@ -84,13 +84,13 @@ def test_takt_vorgabe_im_echten_aufruf(tmp_path: Path) -> None:
 
 
 def test_wache_modell_opus(wache: ModuleType) -> None:
-    """David 22.09. bestätigt 24.09.: Wächter läuft mit Opus, nicht Fable (#213-Nachtrag)."""
+    """Vorgabe des Menschen 22.09., bestätigt 24.09.: Wächter läuft mit Opus, nicht Fable (#213-Nachtrag)."""
     assert wache.MODELL == "claude-opus-5-5"
     assert "🧭 Opus" in wache.PROMPT
     assert "Fable" not in wache.PROMPT
 
 
-@pytest.mark.xfail(strict=True, reason="überholt durch E38 (#500): 60 min, wenn nur noch Davids Abnahme offen ist")
+@pytest.mark.xfail(strict=True, reason="überholt durch E38 (#500): 60 min, wenn nur noch die Abnahme des Menschen offen ist")
 def test_alt_keine_3600_ausnahme(wache: ModuleType) -> None:
     """Alter Ist-Stand (2026-09-24): Prompt kannte keine 3600-s-Ausnahme."""
     assert "3600" not in wache.PROMPT

@@ -663,8 +663,10 @@ def _wegwerf_ticket(repo: Path, laeufer: Laeufer, which: Which) -> tuple[str | N
     return treffer.group(1), ""
 
 
-def _aufraeumen(repo: Path, ticket: str, worktree: Path, zweig: str, laeufer: Laeufer, which: Which, fazit: str) -> list[str]:
+def _aufraeumen(repo: Path, ticket: str, worktree: Path, zweig: str, laeufer: Laeufer, which: Which, fazit: str, *, worktree_loeschen: bool = True) -> list[str]:
     """Immer: Ticket schließen, Fern-Zweig, Worktree und lokale Zweige weg.
+
+    ``worktree_loeschen=False``: Ordner gehört einem anderen Repo (#499) — nie anfassen.
 
     Rückgabe: Fehlschläge als Text (landen im Beleg von Punkt 2 und in der Ausgabe) —
     ein offenes Ticket oder ein liegengebliebener Zweig darf nicht unsichtbar bleiben.
@@ -687,9 +689,10 @@ def _aufraeumen(repo: Path, ticket: str, worktree: Path, zweig: str, laeufer: La
     else:
         fehler.append(f"gh fehlt — Ticket #{ticket} bleibt offen")
     schritt(["git", "-C", str(repo), "push", "origin", "--delete", zweig])
-    schritt(["git", "-C", str(repo), "worktree", "remove", "--force", str(worktree)])
-    if worktree.exists():
-        shutil.rmtree(worktree, ignore_errors=True)
+    if worktree_loeschen:
+        schritt(["git", "-C", str(repo), "worktree", "remove", "--force", str(worktree)])
+        if worktree.exists():
+            shutil.rmtree(worktree, ignore_errors=True)
     zweige = ["git", "-C", str(repo), "branch", "-D", f"ticket-{ticket}", zweig]
     if not schritt(zweige):
         # Registrierung eines weggezogenen Worktrees blockiert branch -D — erst prune, dann erneut.
@@ -734,11 +737,14 @@ def wegwerf_lauf(
     worktree = Path(config.worktree_pfad(ticket, repo)).expanduser()
     zweig = f"probesitz-{ticket}"
     fazit = "abgebrochen"
+    fremd = config.worktree_fremd(ticket, repo)  # #499: nie in fremdem wt-<N> arbeiten oder löschen
     ergebnisse: dict[int, Ergebnis] = {}
     if ausgabe:
         ausgabe.write(f"    Wegwerf-Ticket #{ticket}, Worktree {worktree}\n")
         ausgabe.flush()
     try:
+        if fremd:
+            raise RuntimeError(fremd)
         worktree_anlegen(worktree, repo, ticket)
         argv = [sys.executable, str(skill / "skripte" / "bau.py"), ticket, "--probesitz", "--sofort", "--staffel-max", "2", "--model", modell or MODELL_VORGABE]
         env = sitzung_env.ohne_sitzung()  # sonst Child Session: kein Transkript/Resume
@@ -771,7 +777,7 @@ def wegwerf_lauf(
         ergebnisse = {2: _rot(2, grund, "Fehler beheben, Probesitz erneut"), 5: _rot(5, "hängt an Punkt 2"), 6: _rot(6, "hängt an Punkt 2")}
         fazit = f"abgebrochen ({grund})"
     finally:
-        reste = _aufraeumen(repo, ticket, worktree, zweig, laeufer, which, fazit)
+        reste = _aufraeumen(repo, ticket, worktree, zweig, laeufer, which, fazit, worktree_loeschen=not fremd)
         if reste and 2 in ergebnisse:
             text = "Aufräumen unvollständig: " + " · ".join(reste)
             ergebnisse[2].beleg = (ergebnisse[2].beleg + "\n" if ergebnisse[2].beleg else "") + text

@@ -23,7 +23,7 @@ from pathlib import Path
 _SKILL = str(Path(__file__).resolve().parent.parent)
 if _SKILL not in sys.path:
     sys.path.insert(0, _SKILL)
-from to_spawn import befund, config, gh  # noqa: E402
+from to_spawn import befund, config, gh, ticket_zustand  # noqa: E402
 
 log = logging.getLogger("spec_stand")
 #: Repo, in dem gearbeitet wird: ``TO_SPAWN_REPO`` (setzt die Weiterleitung im Repo), sonst
@@ -69,6 +69,11 @@ def alter(iso: str | None) -> str:
     return f"{m}m" if m < 120 else f"{m // 60}h"
 
 
+def zustand_text(kind: dict[str, object]) -> str:
+    """offen / fertig gebaut / zu / verworfen, gleich breit für die Spalte (#279)."""
+    return f"{ticket_zustand.ANZEIGE[ticket_zustand.stufe(kind)]:<13}"
+
+
 def gelb_zeilen(repo: Path, spec: int, abruf: befund.Abruf | None = None) -> list[str]:
     """Abschnitt „Gelbe Folge-Tickets (Gesamtabnahme)“ (#438); leer ohne gelbe Folgen, FEHLER-Zeile bei kaputtem Manifest."""
     return befund.abschnitt(repo, spec, abruf=abruf)
@@ -104,15 +109,14 @@ def main() -> int:
     offen_gesamt = 0
     for k in sorted(kinder, key=lambda x: x["number"]):
         n = k["number"]
-        state = "zu " if k["state"] == "closed" else "OFF"
-        if k["state"] != "closed":
+        state = zustand_text(k)
+        if ticket_zustand.stufe(k) == "offen":
             offen_gesamt += 1
         wer = ",".join(u["login"] for u in k.get("assignees") or []) or "-"
         deps = gh_json(f"repos/{REPO}/issues/{n}/dependencies/blocked_by")
         assert isinstance(deps, list)
         blocker_offen = gh.offene_blocker(deps)  # zu oder staging:fertig (#1527)
-        commit = sh("git", "log", haupt, "--oneline", "-1", "--fixed-strings", "--grep", f"(#{n})", cwd=repo)
-        commit = commit[:7] if commit else "-"
+        commit = (gh.letzter_commit(repo, n, haupt) or "-")[:7]
         kommentare = gh_json(f"repos/{REPO}/issues/{n}/comments?per_page=1&direction=desc")
         assert isinstance(kommentare, list)
         letzter = kommentare[0] if kommentare else None

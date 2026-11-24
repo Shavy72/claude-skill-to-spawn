@@ -221,7 +221,7 @@ class EchteHandoffUmwelt:
 
         start = bau_log.letzter_session_start(self.wt, ticket)
         return leiter.Lage(
-            offen=True,
+            stufe="offen",
             fenster=aufseher_stand.STILL,
             still_min=0,
             kontext_k=None,
@@ -303,7 +303,7 @@ def test_entscheide_folge_nur_stufe_0_und_1() -> None:
 
     treffer = eigener_handoff.Treffer(HANDOFF, JETZT - 5 * MINUTE)
     lage = leiter.Lage(
-        True, aufseher_stand.STILL, 0, None, False, eigener_handoff=treffer
+        "offen", aufseher_stand.STILL, 0, None, False, eigener_handoff=treffer
     )
     for stufe in (0, 1):
         assert (
@@ -315,14 +315,14 @@ def test_entscheide_folge_nur_stufe_0_und_1() -> None:
         != "folge_handoff"
     )
     arbeitet = leiter.Lage(
-        True, aufseher_stand.ARBEITET, None, None, False, eigener_handoff=treffer
+        "offen", aufseher_stand.ARBEITET, None, None, False, eigener_handoff=treffer
     )
     assert (
         leiter.entscheide(arbeitet, leiter.Gemerkt(0, None), JETZT, 250.0).aktion
         == "nichts"
     )
     jung = leiter.Lage(
-        True,
+        "offen",
         aufseher_stand.STILL,
         0,
         None,

@@ -33,6 +33,8 @@ import copy
 import json
 import logging
 import os
+import re
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -74,6 +76,9 @@ DEFAULTS: dict[str, Any] = {
     },
     "staffel": {
         "modus": "eltern",
+        #: Nur der Ticket-Schnitt (#417): Planungs-Grenze je Ticket in Tausend Token, gelesen von
+        #: ``manifest.pruefe_eintrag`` und ``bau_log.lernstoff``. Keine Ablöse-Grenze: die Ablösung
+        #: einer laufenden Session hängt allein an ``~/.claude/smart-zone.json`` (Test #417).
         "grenze_k": 240,
         "max_staffeln": 3,
     },
@@ -106,11 +111,26 @@ DEFAULTS: dict[str, Any] = {
     "staging_start": "",
     #: Deploy-Befehl des Repos (leer = Repo deployt nicht über den Skill).
     "deploy_befehl": "",
+    #: Prüf-Befehle des Repos (#425), relativ zur Repo-Wurzel; leer = nicht eingerichtet.
+    #: ``schnell`` = je Ticket (Stil, betroffene Tests, Rauchtest, 1–3 min); ``komplett`` = genau
+    #: einmal je Spec. Welcher wann dran ist, entscheidet nur ``to_spawn.pruefplan``.
+    "pruefung": {
+        "schnell": "",
+        "komplett": "",
+    },
+    #: Live-Schritt des Repos (#425); leer = nicht eingerichtet. Lesen über :func:`live_schritt`.
+    "live": {
+        "befehl": "",
+        "url": "",
+        "aufraeumen": "",
+    },
     #: Staging-Nest (#211) für den Probesitz (#214): ``url`` = Adresse, ``zugang_datei`` = Datei mit
     #: ``nutzer=…``/``passwort=…`` (oder ``user:pass``); leer = Punkt 3 bleibt rot mit „fehlt noch“.
     "staging": {
         "url": "",
         "zugang_datei": "",
+        #: ``True`` = Repo arbeitet bewusst ohne Staging: kein Einrichtungs-Ticket dafür (#410).
+        "ohne": False,
         #: Schalter-Skript im App-Repo, relativ zur Repo-Wurzel (L1 #46).
         "schalter": vorgaben.STAGING_SCHALTER,
     },
@@ -149,6 +169,11 @@ DEFAULTS: dict[str, Any] = {
     #: (zusätzlich zu Manifest-Feld ``schluessel`` und Treffern aus ``.env.example``).
     "startklar": {
         "schluessel": [],
+    },
+    #: Start-Text (#274 P1): ``zusatz_datei`` = Repo-Datei (relativ zur Wurzel), deren Text als
+    #: Abschnitt „Regeln dieses Repos“ in den Skill-Start-Text kommt. Leer = kein Zusatz.
+    "start_text": {
+        "zusatz_datei": "",
     },
     "speicher": {
         "min_frei_mib": 2048,
@@ -216,6 +241,78 @@ def worktree_pfad(ticket: str | int, repo: Path | None = None) -> str:
     # sähen sonst C:/dev statt des vorgegebenen Ordners); ohne es die Plattform-Vorgabe.
     basis = os.environ.get("BAU_WT_DIR") or ("C:/dev" if sys.platform == "win32" else "~/wt")
     return f"{Path(basis).expanduser().as_posix().rstrip('/')}/wt-{ticket}"
+
+
+def _adresse_normal(url: str) -> str:
+    """``host/pfad``: Host immer klein, Pfad nur bei ``github.com`` klein (dort ohne Groß-/Kleinschreibung);
+    ssh-/https-Schreibweise, ``.git``, End-Schrägstrich egal. Lokaler Pfad (``C:/…``, ``/…``, UNC) wird
+    wie das Betriebssystem vergleicht (``os.path.normcase``: unter Windows klein), Trenner ``/`` (#499, #508)."""
+    url = url.strip().replace("\\", "/")
+    if re.match(r"^([A-Za-z]:)?/", url):  # lokaler Pfad, kein ``://``/scp
+        return os.path.normcase(url.rstrip("/").removesuffix(".git").rstrip("/")).replace("\\", "/")
+    if "://" in url:
+        url = url.split("://", 1)[1]
+    elif re.match(r"^[^/@]*@?[^/:]+:(?!/)", url):  # scp-Form ``git@host:pfad``
+        url = url.replace(":", "/", 1)
+    url = url.split("@", 1)[-1] if "@" in url.split("/", 1)[0] else url
+    host, _, pfad = url.rstrip("/").removesuffix(".git").rstrip("/").partition("/")
+    host = host.lower()
+    return f"{host}/{pfad.lower() if host == 'github.com' else pfad}"
+
+
+def _repo_kennung(ordner: Path) -> str | None:
+    """Wem gehört ``ordner``? ``origin``-Adresse (ohne ``.git``), ohne ``origin`` der echte
+    gemeinsame Git-Ordner; ``None`` = kein Git-Ordner. Ein anderer Klon desselben Repos hat
+    dieselbe Kennung (dieselben Tickets) — gleiche Regel wie ``spawn_srv.sh`` für ``spec-<S>`` (#457).
+    """
+
+    def git(*args: str) -> str | None:
+        try:
+            lauf = subprocess.run(
+                ["git", "-C", str(ordner), *args],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                check=False,
+            )
+        except OSError as fehler:
+            log.warning("git in %s nicht startbar: %s", ordner, fehler)
+            return None
+        return lauf.stdout.strip() if lauf.returncode == 0 else None
+
+    url = git("remote", "get-url", "origin")
+    if url:
+        return _adresse_normal(url)
+    gemeinsam = git("rev-parse", "--path-format=absolute", "--git-common-dir")
+    return os.path.normcase(os.path.realpath(gemeinsam)) if gemeinsam else None
+
+
+def worktree_fremd(ticket: str | int, repo: Path | None = None) -> str | None:
+    """Gehört der Ordner aus :func:`worktree_pfad` schon einem anderen Repo? (#499)
+
+    Ohne ``worktree_basis`` teilen sich zwei Repos ``~/wt/wt-<N>``, und jedes frische Repo
+    beginnt bei Ticket #1. Rückgabe: eine Zeile Grund, wenn der Ordner ein Git-Worktree
+    eines anderen Repos ist; sonst ``None`` (Ordner fehlt, eigenes Repo, anderer Klon
+    desselben Repos, oder kein Git-Ordner — dann entscheidet der Start wie bisher).
+    Laufende ``wt-<N>`` des eigenen Repos werden so weiter gefunden (kein neuer Pfad).
+    ponytail: verweigert nur, weicht nicht aus; Ausweg ``worktree_basis`` je Repo (Einrichter).
+    """
+    if repo is None and os.environ.get("TO_SPAWN_REPO"):
+        repo = Path(os.environ["TO_SPAWN_REPO"]).expanduser()
+    wt = Path(worktree_pfad(ticket, repo)).expanduser()
+    if not wt.is_dir():
+        return None
+    besitzer = _repo_kennung(wt)
+    eigen = _repo_kennung(repo or Path.cwd())
+    if besitzer is None or eigen is None or besitzer == eigen:
+        return None
+    return (
+        f"Ordner {wt} ist schon Worktree eines anderen Repos ({besitzer}), nicht {eigen} — "
+        "gleiche Ticket-Nummer, gleicher Ordner. Erst das andere Ticket beenden oder in "
+        "der Repo-Konfig .to-spawn/config.json ``worktree_basis`` setzen (z. B. "
+        f"{worktree_basis_vorgabe(repo or Path.cwd())})."
+    )
 
 
 def worktree_basis_vorgabe(repo: Path) -> str:
@@ -347,6 +444,90 @@ def sicherstellen(repo: Path | None = None) -> Path:
         return datei
     log.info("Konfig angelegt: %s (Vorgaben, bitte anpassen)", datei)
     return datei
+
+
+def _gruppe(konfig: dict[str, Any], name: str) -> dict[str, Any]:
+    """Verschachtelte Gruppe ``name`` der Konfig; fehlt sie oder ist kaputt → ``{}``."""
+    gruppe = konfig.get(name)
+    return gruppe if isinstance(gruppe, dict) else {}
+
+
+def _text(gruppe: dict[str, Any], schluessel: str) -> str:
+    """Textwert ohne Rand-Leerzeichen; ``""`` = nicht eingerichtet.
+
+    Nur echter Text zählt (#448): fehlt der Wert, ist er ``None`` oder kein Text (Liste,
+    Zahl, Wahrheitswert), gilt er als nicht eingerichtet und erscheint so als Lücke im
+    Einrichtungs-Ticket — statt still als ``"['pytest', '-q']"`` durchzugehen.
+    """
+    wert = gruppe.get(schluessel)
+    if wert is None:
+        return ""
+    if not isinstance(wert, str):
+        log.warning(
+            "Konfig-Wert %r ist kein Text (%s) — gilt als nicht eingerichtet",
+            schluessel,
+            type(wert).__name__,
+        )
+        return ""
+    return wert.strip()
+
+
+def _staging_gruppe(konfig: dict[str, Any]) -> dict[str, Any]:
+    return _gruppe(konfig, "staging")
+
+
+def pruef_befehl(konfig: dict[str, Any], art: str) -> str:
+    """Befehl ``pruefung.<art>`` (``schnell``/``komplett``, #425); ``""`` = nicht eingerichtet.
+
+    Nur für :mod:`to_spawn.pruefplan` — Aufrufer fragen dort (``pruefplan.befehl``).
+    """
+    return _text(_gruppe(konfig, "pruefung"), art)
+
+
+#: Vorgabe für ``pruefung.komplett_zeitgrenze_min`` (#455): so lange darf die Komplett-Prüfung
+#: höchstens laufen, dann bricht der Skill sie samt Unterprozessen ab (rot, Grund „Zeitgrenze“).
+#: Bewusst nicht in ``DEFAULTS["pruefung"]`` — dort stehen nur die Befehle, die eine Einrichtung ausmachen.
+KOMPLETT_ZEITGRENZE_MIN = 60
+
+
+def komplett_zeitgrenze_s(konfig: dict[str, Any]) -> float:
+    """Zeitgrenze der Komplett-Prüfung in Sekunden aus ``pruefung.komplett_zeitgrenze_min`` (#455).
+
+    Fehlt der Wert oder ist er keine positive Zahl, gilt :data:`KOMPLETT_ZEITGRENZE_MIN`.
+    """
+    wert = _gruppe(konfig, "pruefung").get("komplett_zeitgrenze_min")
+    if isinstance(wert, (int, float)) and not isinstance(wert, bool) and wert > 0:
+        return float(wert) * 60
+    if wert is not None:
+        log.warning(
+            "Konfig-Wert pruefung.komplett_zeitgrenze_min=%r ungültig — Vorgabe %s min",
+            wert,
+            KOMPLETT_ZEITGRENZE_MIN,
+        )
+    return float(KOMPLETT_ZEITGRENZE_MIN * 60)
+
+
+def live_schritt(konfig: dict[str, Any]) -> dict[str, str]:
+    """Gruppe ``live`` (#425) mit allen Schlüsseln aus ``DEFAULTS``; ``""`` = nicht eingerichtet."""
+    gruppe = _gruppe(konfig, "live")
+    return {schluessel: _text(gruppe, schluessel) for schluessel in DEFAULTS["live"]}
+
+
+def staging_bewusst_ohne(konfig: dict[str, Any]) -> bool:
+    """``staging.ohne: true`` — das Repo arbeitet bewusst ohne Staging-App (#410)."""
+    return _staging_gruppe(konfig).get("ohne") is True
+
+
+def hat_staging(konfig: dict[str, Any]) -> bool:
+    """Hat dieses Repo eine Staging-App? Einzige Stelle dieser Regel (#410, #425).
+
+    Ja = ``staging.url`` oder ``staging_start`` ist gesetzt und das Repo arbeitet nicht
+    bewusst ohne Staging (:func:`staging_bewusst_ohne` gewinnt).
+    """
+    if staging_bewusst_ohne(konfig):
+        return False
+    url = str(_staging_gruppe(konfig).get("url") or "").strip()
+    return bool(url or str(konfig.get("staging_start") or "").strip())
 
 
 def staffel_modus(konfig: dict[str, Any]) -> str:

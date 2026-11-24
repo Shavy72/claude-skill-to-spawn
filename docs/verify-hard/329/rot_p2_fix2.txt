@@ -1,0 +1,9 @@
+FAILED tests/test_review_regeln_393.py::test_alt_regeln_bleiben_erreichbar_und_landen_im_auftrag
+FAILED tests/test_review_regeln_393.py::test_ohne_regeln_meldet_route_laut - ...
+FAILED tests/test_review_regeln_393.py::test_config_gleich_altem_standard_kommt_weg
+FAILED tests/test_review_regeln_393.py::test_config_mit_abweichung_wird_entschlackt
+FAILED tests/test_review_regeln_393.py::test_nur_versionierte_dateien - Asser...
+FAILED tests/test_review_regeln_393.py::test_ohne_git_gilt_gitignore_der_quelle
+FAILED tests/test_review_regeln_393.py::test_installer_geben_klon_mit[install.sh]
+FAILED tests/test_review_regeln_393.py::test_installer_geben_klon_mit[install.ps1]
+8 failed, 1 passed in 0.20s

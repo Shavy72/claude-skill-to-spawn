@@ -1,0 +1,18 @@
+E       AssertionError: nach dem dritten Zeigen keine Session je Takt mehr
+tests/test_takt_bremse_315.py:54: AssertionError
+E       AssertionError: assert 1 == 2
+tests/test_takt_bremse_315.py:72: AssertionError
+E       AssertionError: assert ('7:ab12' == '7:ab12'
+tests/test_takt_bremse_315.py:92: AssertionError
+E       AttributeError: module 'to_spawn.briefkasten_cli' has no attribute 'AUFRUF_FEHLER'
+tests/test_takt_bremse_315.py:110: AttributeError
+E       AttributeError: module 'to_spawn.briefkasten_cli' has no attribute 'AUFRUF_FEHLER'
+tests/test_takt_bremse_315.py:123: AttributeError
+tests/test_takt_bremse_315.py:131: AssertionError
+FAILED tests/test_takt_bremse_315.py::test_offene_klasse_3_frage_gebremst_und_einmal_gemeldet
+FAILED tests/test_takt_bremse_315.py::test_klasse_2_kommt_wieder_bis_kommentar_belegt
+FAILED tests/test_takt_bremse_315.py::test_unbekannte_klasse_kommt_nicht_jeden_takt_wieder
+FAILED tests/test_takt_bremse_315.py::test_antwort_aufruf_fehler_eigener_code
+FAILED tests/test_takt_bremse_315.py::test_kopf_text_nennt_alle_codes_von_antwort
+FAILED tests/test_takt_bremse_315.py::test_klasse_2_weitergabe_eine_quelle - ...
+6 failed in 3.07s

@@ -1,6 +1,6 @@
 """Ticketstand: kurze Tabelle aller Tickets einer Spec für jeden Aufseher-Tick.
 
-David will bei jedem Tick ohne Nachfragen sehen, wie weit die Spec ist. Dieses Modul
+Der Mensch will bei jedem Tick ohne Nachfragen sehen, wie weit die Spec ist. Dieses Modul
 führt drei vorhandene Quellen zusammen und erzeugt daraus eine Tabelle — es baut
 keine eigene Session- oder GitHub-Logik nach:
 
@@ -14,7 +14,7 @@ keine eigene Session- oder GitHub-Logik nach:
 Zustände (eine Regel, oben gewinnt):
 
 ``fertig`` Issue geschlossen · ``blockiert`` offene Blocker · ``checkpoint`` Label
-``checkpoint:human`` (wartet auf David) · ``läuft`` Session-Fenster da · ``wartet``
+``checkpoint:human`` (wartet auf den Menschen) · ``läuft`` Session-Fenster da · ``wartet``
 sonst (noch kein Fenster).
 
 Nur lesen: schreibt weder Stand-Datei noch Bau-Log.
@@ -33,11 +33,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from to_spawn import aufseher_stand, gh, manifest
+from to_spawn import aufseher_stand, gh, manifest, ticket_zustand
 
 log = logging.getLogger("ticketstand")
 
 FERTIG = "fertig"
+#: Grün auf Staging, Ticket noch offen — wartet nur auf Live (#279).
+FERTIG_GEBAUT = "fertig gebaut"
 LAEUFT = "läuft"
 WARTET = "wartet"
 BLOCKIERT = "blockiert"
@@ -83,14 +85,19 @@ def zustand(
     """(Zustand, Hinweis) eines Tickets — reine Rechenlogik."""
     if issue is None:
         return WARTET, "GitHub nicht lesbar"
-    if str(issue.get("state", "")).lower() == "closed":
+    stufe = ticket_zustand.stufe(issue)
+    if stufe == "zu":
         return FERTIG, ""
+    if stufe == "verworfen":
+        return FERTIG, "verworfen"
+    if stufe == "fertig_gebaut":
+        return FERTIG_GEBAUT, "wartet auf Live"
     # GitHubs Zähler kennt staging:fertig nicht — liegt die Liste vor, entscheidet sie (#1527).
     if _offene_blocker(issue) > 0 and (blocker is None or blocker):
         wer = ", ".join(f"#{b}" for b in blocker or [])
         return BLOCKIERT, f"wartet auf {wer}" if wer else f"{_offene_blocker(issue)} offene Vorgänger"
     if CHECKPOINT_LABEL in _labels(issue):
-        return CHECKPOINT, "wartet auf Davids Abnahme"
+        return CHECKPOINT, "wartet auf Abnahme des Menschen"
     fenster = lage.fenster if lage else aufseher_stand.FENSTER_UNBEKANNT
     minuten = f" {lage.still_min} min" if lage and lage.still_min is not None else ""
     if fenster == aufseher_stand.ARBEITET:
@@ -110,7 +117,7 @@ def tabelle(spec: int, zeilen: list[Zeile], uhr: str) -> str:
     zaehler: dict[str, int] = {}
     for z in zeilen:
         zaehler[z.zustand] = zaehler.get(z.zustand, 0) + 1
-    rest = " · ".join(f"{zaehler[k]} {k}" for k in (LAEUFT, WARTET, BLOCKIERT, CHECKPOINT) if zaehler.get(k))
+    rest = " · ".join(f"{zaehler[k]} {k}" for k in (FERTIG_GEBAUT, LAEUFT, WARTET, BLOCKIERT, CHECKPOINT) if zaehler.get(k))
     kopf = (
         f"**Ticketstand Spec #{spec}: {fertig} von {len(zeilen)} fertig**"
         + (f" · {rest}" if rest else "")

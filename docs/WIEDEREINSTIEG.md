@@ -1,7 +1,7 @@
 # Wiedereinstieg — hier anfangen, wenn der Bau steht
 
 Dieses Dokument ist der eine Einstieg für jede Session und jeden Menschen, der den Bau des
-Bau-Systems („USB-Stick“, Lastenheft L1–L5) fortsetzen soll — nach einem Abbruch, einem
+Bau-Systems („USB-Stick“, Lastenheft L1–L9) fortsetzen soll — nach einem Abbruch, einem
 Maschinen-Ausfall oder einer langen Pause. Es braucht keinen Chat und keine Übergabe-Datei.
 
 Pflege: Die führende Leit-Session hält den Abschnitt „Stand“ aktuell (nach jedem gemergten
@@ -23,7 +23,7 @@ Die Aufseher-Ablösung und jeder Hausmeister-Rundgang rufen dieselbe Sicherung v
 ## 1. Das Ziel in vier Sätzen
 
 In jedem Repo, auf jeder Maschine (Windows-PC und Linux-Bau-Server) läuft die Kette
-`grill-with-docs → /to-spec → /to-tickets → /to-spawn` ohne einen Handgriff von David bis
+`grill-with-docs → /to-spec → /to-tickets → /to-spawn` ohne einen Handgriff vom Menschen bis
 „alle Tickets auf Staging“. Der Skill bringt alles mit, richtet fremde Repos selbst ein, hält sie
 aktuell und räumt hinter sich auf. Prüfen und Gate sind schnell und prüfen nur das Nötige.
 „Fertig“ ist es erst, wenn jede Zeile M1–M15 in `docs/ABNAHME_L1.md` einen Beleg hat.
@@ -32,7 +32,7 @@ aktuell und räumt hinter sich auf. Prüfen und Gate sind schnell und prüfen nu
 
 | Was | Ort | Wozu |
 |---|---|---|
-| Auftrag, Davids Wortlaut 1:1 | `docs/LASTENHEFT.md` (L1–L5, A1–A28, N1–N11) | Was gewollt ist und was nicht. Bei Zweifel gilt der Wortlaut. |
+| Auftrag, Wortlaut des Menschen 1:1 | `docs/LASTENHEFT.md` (L1–L9, A1–A64, N1–N23) | Was gewollt ist und was nicht. Bei Zweifel gilt der Wortlaut. |
 | Plan, Design, Etappen 0–5, Stand | `docs/PLAN_L1_usb_stick.md` | Wie gebaut wird, in welcher Reihenfolge, was zuletzt geschah (Abschnitt „Stand“). |
 | Abnahme mit Belegen | `docs/ABNAHME_L1.md` | Was bewiesen ist. Tabelle M1–M15: die erste Zeile ohne Beleg ist das nächste Ziel. |
 | Prüftor-Vergleich | `docs/PRUEFTOR_VERGLEICH.md` | Messwerte, Quellen, Empfehlung und Bau-Pakete für den Prüf-Werkzeugkasten. |
@@ -44,6 +44,208 @@ Sind die Übergaben verloren, reicht dieses Repo: Auftrag, Plan, Abnahme und Iss
 was zum Weiterbauen nötig ist.
 
 ## 3. Stand
+
+- **2026-11-23 22:16 (Server-Uhr, main fff86c1):** Gemergt und am 23.11. 22:11 auf dem Bau-Server installiert
+  (Install-Pfad `~/wt/skill-install-101`; `~/claude-skill-to-spawn` steht auf altem `7dc3ae8`, nicht benutzen):
+  - Pull-Request 317 und 378 gemergt. Issues 273, 274, 376, 364, 366 geschlossen.
+  - Offen: Issue 372 (Code installiert, echter Durchlauf folgt mit der Test-Spec) · Issue 283 (Server-Teil
+    fertig, wartet auf Windows-Gegenprobe).
+  - Issue 282 ist kein Pflicht-Punkt mehr vor der Test-Spec (Entscheidung des Eigentümers 23.11. ca. 21:25),
+    wird als nächstes Paket gebaut. Issues 271 und 288 sind nicht Teil der Probe.
+  - Die Test-Spec startet nur auf ausdrückliches Wort des Eigentümers.
+
+- **2026-11-23 15:15 (Server-Uhr, main 5c9144b):** Gemergt und auf dem Bau-Server installiert (Stand 5c9144b):
+  - Pull-Request 348 (Takt-Bremse: Test-Lücken und Merker-Randfall, Issue 346).
+  - Pull-Request 350 (Rollenwort statt festem Personennamen, Namens-Reste Teil 5, Issue 325).
+  - Pull-Request 351 (eigener kurzer pytest-Temp-Ordner je Lauf, Issue 349).
+  - Pull-Request 352 (Hausmeister: Test-Lücken, Datums-Sperre, `ext::`-Umleitung, Reflog-Prüfung,
+    Issues 347 und 254; main 5c9144b).
+  - Offen: Pull-Request 354 (alte `pt-*`-Temp-Reste räumen, Refs Issue 177, Fix-Runde läuft) ·
+    Issues 343 und 218 auf Kopf `0854e0a` doppelt geprüft (Review: 0 harte Befunde, unabhängige
+    Prüfung „Hartes: nein“), es fehlt nur eine gültige volle Suite · Pull-Request 317 (274 P1)
+    merge-reif, gesperrt, bis im App-Repo `docs/agents/bau_zusatz.md` liegt.
+  - Vorfall 23.11. ca. 15:08: `/tmp` meldete „No space left“, Ursache war der Datei-Zähler (Inodes)
+    bei 99 % und nur 41 % belegtem Platz; die laufende volle Suite wurde dadurch ungültig.
+    Merksatz: bei „No space left“ zuerst `df -i /tmp` lesen. Folge-Issues: 353 (volle Suite von
+    rund 24 auf rund 5 Minuten) und 355 (Erzeuger von Temp-Ordnern räumen selbst, Hausmeister
+    prüft den Datei-Zähler).
+
+- **2026-11-23 11:57 (Server-Uhr, main eb42e9e):** Gemergt und auf dem Bau-Server installiert (Stand eb42e9e):
+  - Pull-Request 337 (Issue 315, Bremse für offene Briefkasten-Fragen im Aufseher-Takt, eigener
+    Exit-Code bei Aufruf-Fehler; main cb6c1e5).
+  - Pull-Request 334 per Squash (Issue 329 Teil 1, Review-Werkzeug als versionierte Quelle `review/`;
+    main eb42e9e). Issue 329 bleibt offen für Teil 2, erst nach Merge von Pull-Request 317.
+  - Offen: Pull-Request 317 (274 P1) weiter gesperrt, bis im App-Repo `docs/agents/bau_zusatz.md`
+    liegt · in Arbeit: Issue 339 (Reste der Takt-Bremse), danach Prüf-Bündel 238/224/219/204/246.
+  - Als Nächstes: 317 mergen, sobald entsperrt; dann 274 Teil 2, 282 Teil 2, 329 Teil 2.
+
+- **2026-11-23 11:20 (Server-Uhr, main 95d561b):** Gemergt und auf dem Bau-Server installiert (Stand 95d561b):
+  - Pull-Request 336 (Issue 325 Teil 4, Rollenwort statt Vorname). Reste Teil 5 stehen als Kommentar
+    im Issue 325.
+  - Issue 135 geschlossen (belegt durch Pull-Request 244). Issue 136 und 288 bleiben offen, Reste je
+    als Kommentar im Issue.
+  - Offen: Pull-Request 337 (Issue 315, Aufseher-Takt Bremse/Exit-Codes) in Prüfung ·
+    Pull-Request 334 (329 P1, Review-Werkzeug als Quelle) in Fix-Runde (roter Ordner-Test), Merge nur
+    als Squash · Pull-Request 317 (274 P1) merge-reif geprüft, wartet auf die Datei
+    `docs/agents/bau_zusatz.md` im App-Repo.
+
+- **2026-11-23 (main 9d0df5f):** Gemergt und auf dem Bau-Server installiert (Stand 9d0df5f):
+  - Pull-Request 333 (Issue 325 Teil 3, Rollenwort statt Personenname, u. a. Hausmeister-Aufgabe
+    und Leitstand-Seite). Volle Suite 3398 bestanden; Prüfer und Review ohne harte Befunde.
+  - Offen: Pull-Request 334 (Issue 329 P1, Review-Quelle als Ordner `review/` im Repo) in Prüfung ·
+    Pull-Request 317 (274 P1) merge-reif, wartet auf ein App-Ticket · in Bau: Issue 315 und
+    Issue 325 Teil 4.
+
+- **2026-11-23 10:29 (Server-Uhr, main 0b3d1db):** Seit dem Eintrag von 09:56 gemergt und auf dem
+  Bau-Server installiert (Stand 0b3d1db):
+  - Pull-Request 331 (Issue 325 Teil 2, Rollenwort statt festem Personennamen in
+    `to_spawn/aufpasser.py`, `capo.py`, `hausmeister.py`, `skripte/leitstand.py`,
+    `skripte/abschluss_paket.py`, `SKILL.md`; main 0b3d1db). Volle Suite 3396 bestanden, 81
+    übersprungen, 18 xfailed. Issue 325 bleibt offen (Teil 3, Reste im Issue-Kommentar).
+  - Als Nächstes: Issue 329 (Review-Werkzeug bekommt versionierte Quelle) · Issue 325 Teil 3 ·
+    Pull-Request 317 (274 P1) wartet weiter auf das App-Ticket A1, danach 273 schließen, 274 P2, 282 P2.
+
+- **2026-11-23 09:56 (Server-Uhr, main d23c7c0):** Seit dem Eintrag von 09:44 gemergt und auf dem
+  Bau-Server installiert (Stand d23c7c0):
+  - Pull-Request 328 (Issue 325 Teil 1, Rollenwort statt festem Personennamen in
+    `to_spawn/ticketstand.py`, `to_spawn/melder.py`, `SKILL.md`; main d23c7c0). Volle Suite 3395
+    bestanden, 81 übersprungen, 18 xfailed. Issue 325 bleibt offen (Teil 2 in Arbeit: `aufpasser.py`,
+    `capo.py`, `hausmeister.py`, `leitstand.py`, `abschluss_paket.py`).
+  - Issue 326 geschlossen: Rot-Probe des Review-Werkzeugs meldet bei reinem Kommentar-/Test-Diff
+    „nicht beurteilbar“ statt eines harten Befunds (Fix liegt im Review-Ordner des Benutzers, nicht in
+    diesem Repo).
+  - Neues Issue 329: Review-Werkzeug hat keine versionierte Quelle.
+  - Unverändert offen: Pull-Request 317 (274 P1) wartet auf die Zusatz-Datei im App-Repo.
+
+- **2026-11-23 09:44 (Server-Uhr, main 599782c):** Seit dem Eintrag von 09:14 gemergt und auf dem
+  Bau-Server installiert (Stand 599782c):
+  - Pull-Request 321 (Issue 282 P3, Abschluss-Session wird nicht mehr abgewürgt, Wiederanlauf-Frage in
+    der Lage; main e95b154). Unabhängige Prüfung ohne harten Befund, Review grün, volle Suite 3384
+    bestanden, 81 übersprungen, 18 xfailed. Weiche Punkte als Kommentar in Issue 282, Pflicht für 282 P2.
+    Teil C (Tab unter Windows schließt bei Exit 0) nicht gebaut, nur unter Windows prüfbar.
+  - Pull-Request 322 (Issue 320, eine Commit-Suche `gh.letzter_commit`, Git-Zeitgrenzen nur in `gh.py`,
+    Ersatz für gh nur im Test; main 4da3992). Volle Suite 3394 bestanden, 81 übersprungen, 18 xfailed.
+    Issue 320 geschlossen.
+  - Pull-Request 324 (Issue 323, Rollenwort statt festem Personennamen in `waechter_takt.PROMPT`,
+    `skripte/wache.py`, `anleitung.MINDSET`; main 599782c). Volle Suite 3395 bestanden, 81 übersprungen,
+    18 xfailed. Issue 323 geschlossen, Rest-Stellen in Issue 325.
+  - Offen: Pull-Request 317 (274 P1) fertig geprüft (Prüfer, Review, Suite grün auf a930ac3), wartet auf
+    die Zusatz-Datei im nutzenden Repo (`docs/agents/bau_zusatz.md`); vor dem Merge main neu einmergen
+    und Suite wiederholen. Issue 273 ist durch 317 erledigt (nach Merge kommentieren + schließen).
+  - Neue Issues: 325 (Namens-Reste), 326 (rot_probe des Review-Dirigenten meldet falsch „Test kann nicht
+    rot werden“).
+  - Nächste Schritte: 317 mergen → 282 P2 (Startstelle fragt den Baustein) → 274 P2.
+  - Unverändert: Abnahme M1/M2 und die Test-Spec starten erst auf ausdrückliches Wort des Nutzers.
+
+- **2026-11-23 09:14 (Server-Uhr, main aa123a0):** Seit dem Eintrag von 08:43 gemergt und auf dem
+  Bau-Server installiert (Stand aa123a0): Pull-Request 318 (Issue 282 P1, neuer Baustein Wiederanlauf:
+  `to_spawn/wiederanlauf.py`, `to_spawn/belege.py`, Tür `to_spawn.py ticket-lage <N>` meldet
+  neu/fortsetzen/abschluss/nichts, bei Unklarheit fail-closed). Beleg: volle Suite 3358 bestanden.
+  - In Arbeit: 282 P3 (Leiter beendet keine Session, der nur ein Abschluss-Schritt fehlt) · Pull-Request
+    317 (274 P1) fertig geprüft bis auf Review + Suite, Merge wartet auf die Zusatz-Datei im nutzenden Repo.
+  - Nächste Schritte: 282 P2 (Startstelle fragt den Baustein) → 274 P2.
+  - Unverändert: Abnahme M1/M2 und die Test-Spec starten erst auf ausdrückliches Wort des Nutzers.
+
+- **2026-11-23 08:43 (Server-Uhr, main d5e3806):** Seit dem Eintrag von 08:27 gemergt und auf dem
+  Bau-Server installiert (Stand d5e3806): Pull-Request 310 (Issue 278 P3b, Aufseher liest und
+  beantwortet den Entscheidungs-Briefkasten). Geschlossen: Issue 278 (Entscheidungs-Befugnis:
+  Befugnis-Klassen + Entscheidungs-Briefkasten, alle Pakete drin) und Issue 279 (Rest = Issue 313,
+  Lauf-Test `spawn_local.ps1` unter Windows). Belege: unabhängiger Prüfer ohne harte Befunde, Review
+  grün, volle Suite 3330 bestanden, 81 übersprungen, 18 xfailed.
+  - Pflicht-Liste vor der Test-Spec: 275 ✅ · 276 ✅ · 277 ✅ · 278 ✅ · 279 ✅ · 281 ✅ · 285 ✅ · 274
+    (mit 273): P1 (Start-Text nur aus dem Skill + Repo-Zusatz) wird gebaut, Merge erst, wenn das
+    Ziel-Repo seine Zusatz-Datei hat · 282 offen · 283 baut eine Windows-Session. Weiche Reste aus
+    278 stehen in Issue 312 und Issue 315.
+  - Nächste Schritte: 274 P1 bauen → 274 P2–P3 → 282.
+  - Unverändert: Abnahme M1/M2 und die Test-Spec starten erst auf ausdrückliches Wort des Nutzers.
+
+- **2026-11-23 08:27 (Server-Uhr, main 2db133a):** Seit dem Eintrag von 07:36 gemergt und auf dem
+  Bau-Server installiert (Stand 2db133a): Pull-Request 307 (Issue 279 P6b, Anzeige) und
+  Pull-Request 311 (Issue 281: Start-Text wird erst beim Loslassen gebaut; volle Suite 3306 bestanden,
+  Rot-Probe belegt). Geschlossen: Issue 279 (alle Pakete P1–P6b drin, Abschluss-Prüfung im Issue; Rest
+  = Issue 313, Lauf-Test `spawn_local.ps1` unter Windows) und Issue 281.
+  - Pflicht-Liste vor der Test-Spec: 275 ✅ · 276 ✅ · 277 ✅ · 279 ✅ · 281 ✅ · 285 ✅ · 278: Pakete
+    P1, P2, P3a gemergt, P3b = Pull-Request 310 in zweiter Fix-Runde (1 Test rot, 6 Punkte) · 274
+    (mit 273): Bestandsaufnahme fertig, Pakete P1–P3 geschnitten, noch nichts gebaut, P1 als Nächstes,
+    weiche Punkte aus 281 stehen als Kommentar in Issue 274 · 282 offen · 283 baut eine Windows-Session.
+  - Nächste Schritte: 310 fertig prüfen und mergen → Issue 278 schließen → 274 P1–P3 → 282.
+  - Unverändert: Abnahme M1/M2 und die Test-Spec starten erst auf ausdrückliches Wort des Nutzers.
+
+- **2026-11-23 07:36 (Server-Uhr, main 056fac1):** Seit dem Eintrag von 04:49 gemergt und auf dem
+  Bau-Server installiert (Stand 056fac1): Issue 276 (Bau-Session löst sich ab eigenem Handoff selbst
+  ab), Issue 277 (Startzeile ohne .bashrc/.venv), Issue 279 Pakete P1–P5 und P6a (ein Baustein
+  `ticket_zustand` sagt für jede Stelle, wie weit ein Ticket ist; fertig gebautes Ticket mit stillem
+  Fenster wird beendet statt neu gestartet), Issue 278 Pakete P1, P2 und P3a (Befugnis-Klassen im
+  Start-Auftrag, Entscheidungs-Briefkasten, kaputte Briefkasten-Datei sperrt sichtbar statt still).
+  Letzte Merges: Pull-Request 306 → 03adf48, Pull-Request 308 → 056fac1; volle Suite auf dem Stand vor
+  dem Merge 308: 3276 bestanden, 81 übersprungen, 18 xfailed, 0 rot.
+  - In Arbeit: Pull-Request 307 (Issue 279 P6b, Anzeige im Leitstand; Fix-Runde nach Prüfer-Befund)
+    und Issue 278 P3b (Aufseher liest und beantwortet den Briefkasten).
+  - Danach: Issue 274 (mit 273 + 281), 282. Windows-Tickets 283 + 285 baut eine PC-Session.
+  - Test-Durchlauf im Probe-Repo startet nur auf ausdrückliches Wort des Nutzers.
+
+- **2026-11-23 04:49 (Server-Uhr, main d8df77a):** Pull-Request 294 (Issue 275) gemergt und auf dem
+  Bau-Server installiert: Der Aufseher-Check kennt `staging:fertig`, öffnet je Ticket und Verstoß nur
+  einmal wieder, und `staging:fertig` startet keinen Bau.
+  - Offen, kurz vor Merge: Pull-Request 295 (Issue 276, Bau-Session löst sich ab eigenem Handoff selbst
+    ab) und 293 (Issue 277, Startzeile ohne .bashrc/.venv).
+  - In Arbeit: Issue 279 (Baustein Ticket-Zustand je Stelle, Paket P1), danach Issue 278
+    (Entscheidungs-Befugnis im Start-Auftrag), 274 (mit 273 + 281), 282. Windows-Tickets 283 + 285
+    baut eine PC-Session.
+  - Test-Durchlauf im Probe-Repo startet nur auf ausdrückliches Wort des Nutzers.
+
+- **22.11.2026 16:10 (Server-Uhr, main 8acfed7):** Seit dem Haltepunkt 760ed4f gemergt: Pull-Request 265
+  (Issue 245, Zeilenenden in den Prüf-Regeln) → 5af043a · Pull-Request 233 (Hausmeister unter Windows,
+  Issue 68 bleibt offen) → f134819 · Pull-Request 268 (Issue 267: Warte-Prüfung der Bau-Session fragt
+  dieselbe Regel wie die Start-Schranke, neuer Befehl `to_spawn.py blocker <N>`) → 8acfed7.
+  Auf dem Bau-Server installiert: 8acfed7, volle Suite 2794 bestanden, 75 übersprungen, 18 xfailed, 0 rot.
+  Offen: Issue 269 (Folge zu 267: Vorfall `blocker_falsch_gewartet`, Aufseher-Test schärfen) · Pull-Request 250
+  (Merge-Sperre, Fix-Runde 3) · Pull-Request 255 (Review am PC) · M1 Probe-Spec erst nach ausdrücklichem
+  Wort des Auftraggebers. Nächster Schritt: Beobachtungs-Lauf an einem echten Fall für Issue 267
+  (Abnahme „echter Lauf“ von 267 steht noch aus).
+
+- **Haltepunkt 22.11.2026 04:05 (Server-Uhr, main b4be778):** Der Bau ruht hier, bis der Auftraggeber „weiter“ sagt.
+  Seit dem letzten Eintrag gemergt: 237 (Review-Hook im Repo + Installation, Teil A von Issue 214; Issue 214 bleibt für
+  Teil B offen) und 264 (Doku).
+  Auf dem Bau-Server installiert: b4be778, volle Suite 2779 bestanden, 66 übersprungen, 18 xfailed, 0 rot.
+  Review-Hook: ok (Dateien schon aktuell, nichts überschrieben).
+  Offen liegen geblieben, mit Grund:
+  - 250 (Issue 149 Rest, Kopf 2b0377c): unabhängiger Nach-Prüfer meldet „Hartes: JA“. Die Test-Kennung aus dem JUnit-`file`
+    ist die Definitionsdatei; ein Zwilling, der die Testfunktion importiert, plus Füller-Test ergibt „wackler“ mit Exit 0.
+    Merge-Sperre als Kommentar. Nächster Schritt: Fix-Runde 3 — ein zweiter voller Lauf schreibt die genaue
+    pytest-Knoten-Kennung und das Ergebnis über ein eigenes kleines Plugin statt JUnit-Rückrechnung; Mutations-Abdeckung
+    verbreitern; danach neuer Nach-Prüfer.
+  - 233 (Hausmeister unter Windows): Review „Hartes: nein“, es fehlt nur der Linux-Lauf und der Merge.
+  - 265 (Issue 245): Review „Hartes: nein“, es fehlt der Linux-Lauf von `tests/test_pruef_auswahl_3b.py` und der Merge.
+  - 255 (Issue 251, Deploy-Wache ohne `pgrep`): noch im Review, nicht mergen.
+  Neue Issues: 260 (volle Suiten nebeneinander wackeln → Suiten nacheinander fahren), 261 (Maschinen-Liste: gesetztes
+  `ticket_repo` nicht änderbar; Hausmeister: 4 gelöscht, 173 bleiben).
+  Weiterbauen nach dem Haltepunkt, in dieser Reihenfolge:
+  1. 233 und 265 mergen (je Linux-Lauf).
+  2. Fix-Runde 3 für 250.
+  3. Issue 214 Teil B.
+  4. Hausmeister-Reihe: 241, 242, 261, 234, 177, 215, 225, 163, 129, 179, 178, 247, 248, 252–254.
+  5. Prüf-Reihe nach Merge von 250: 204, 218, 238, 246, 224, 104.
+
+- **2026-11-22 03:50 (Server-Uhr, main 9dc4f72):** Seit dem letzten Eintrag gemergt (Pull-Requests 239, 240, 244, 249, 256).
+  Auf dem Bau-Server installiert: c454545, volle Suite 2754 bestanden, 0 rot.
+  - 239: Doku-Pull-Request (Stand 85).
+  - 240: PC, Prüftor-Tests laufen unter Windows (P7f).
+  - 244: Issue 235 Teil B. Der Hausmeister räumt Skill-Helfer-Ordner über das richtige Ticket-Repo.
+    Erster Lauf nach der Installation: 4 gelöscht, 173 bleiben, 0 Fehler.
+  - 249: Messung `doku_pfade` fürs Skill-Repo, Ergebnis „keine sichere Abkürzung“.
+  - 256: PC, Windows-Ausgabe-Kodierung und Einzel-Tests (P7f).
+  Offen im Pull-Request (alle vier mergbar):
+  - 237 (Issue 214 Teil A, Review-Hook ins Repo): Merge-Lauf läuft.
+  - 250 (Issue 149 Rest): Fix-Runde 2, Nach-Prüfer läuft.
+  - 233 (Hausmeister unter Windows): Review „Hartes: nein“, wartet auf Linux-Lauf und Merge.
+  - 255 (Deploy-Wache ohne `pgrep`, Issue 251): im Review, noch nicht mergen.
+  Neue Folge-Issues: 252, 253, 254 (Folge aus 235), 257, 258, 259 (Windows), 260 (volle Suite wackelt bei
+  parallelen Läufen), 261 (Maschinen-Liste: gesetztes `ticket_repo` nicht änderbar).
+  Als Nächstes:
+  - Hausmeister-Reihe: 241, 242, 261, 234, 177, 215, 225, 163, 129, 179, 178, 247, 248, 252–254.
+  - Prüf-Reihe nach Merge 250: 204, 218, 238, 246, 224, 104, 245.
+  - Issue 214 Teil B nach Merge 237.
 
 - **2026-11-22 02:09 (Server-Uhr, main 9c7cda9):** Seit dem letzten Eintrag gemergt (Pull-Requests 231, 228, 236).
   Auf dem Bau-Server installiert: 0dc03ae, volle Suite 2704 passed / 0 failed / 66 skipped.
@@ -230,12 +432,12 @@ Etappen und Abnahme gilt der Plan. Der Plan-Abschnitt „Stand“ ist ein älter
 
 ## 5. Regeln, die immer gelten
 
-- Keine Fragen an David. Entscheidung und Grund ins Entscheidungs-Log, weiterbauen (L1, L2).
+- Keine Fragen an den Menschen. Entscheidung und Grund ins Entscheidungs-Log, weiterbauen (L1, L2).
   Echte Sperre (kein Zugriff, Secret fehlt): Eintrag im Entscheidungs-Log, Issue anlegen, mit einem
   anderen Paket weiterbauen.
 - Der Auftrag wird bei jeder Ablösung im Wortlaut weitergegeben, nie als Zusammenfassung (L2).
 - Erst vergleichen und messen, dann bauen; bewährtes Werkzeug vor Eigenbau (L3).
-- Aufräumen, RAM, Platte, Neustarts landen nie bei David (L4).
+- Aufräumen, RAM, Platte, Neustarts landen nie beim Menschen (L4).
 - Kein Wissen nur im Chat oder nur auf einer Maschine: Was zählt, steht hier im Repo, als Issue
   oder im Tresor (L5).
 - Merge-Regel: Ein Pull-Request wird nur gemergt, wenn das Prüf-Urteil „Hartes: nein“ lautet. Vorher

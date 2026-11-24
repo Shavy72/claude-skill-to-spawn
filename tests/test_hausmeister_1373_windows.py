@@ -337,6 +337,7 @@ def test_platte_ohne_existierende_wurzel_misst_home(
 
 def test_altbestand_festhalten_schreibt_einmal(welt: Welt) -> None:
     a, b = welt.worktree(51), welt.worktree(52)
+    hausmeister.altbestand_pfad().unlink(missing_ok=True)  # Windows-Welt legt sie an (#68)
     pfad = hausmeister.altbestand_festhalten([a])
     assert pfad == hausmeister.altbestand_pfad() == welt.log.parent / "altbestand.json"
     daten = json.loads(pfad.read_text(encoding="utf-8"))
@@ -355,7 +356,7 @@ def test_altbestand_gelistet_bleibt(win: Welt) -> None:
     liste = hausmeister.altbestand_festhalten([wt])
     r = win.aufraeumen(wt, loeschen=True)
     assert r.art == "bleibt" and not r.fehler
-    assert r.grund == f"Altbestand, wartet auf Davids Ja (Liste {liste})"
+    assert r.grund == f"Altbestand, wartet auf das Ja des Menschen (Liste {liste})"
     assert wt.is_dir()
 
 
@@ -390,9 +391,26 @@ def test_altbestand_kaputt_alles_bleibt(win: Welt, inhalt: str) -> None:
     assert wt.is_dir()
 
 
-def test_altbestand_fehlt_keine_wirkung_auf_server(welt: Welt) -> None:
+def test_altbestand_fehlt_keine_wirkung_auf_server(
+    welt: Welt, monkeypatch: pytest.MonkeyPatch
+) -> None:
     wt = welt.worktree(59)
     welt.ticket(59, "CLOSED", 48)
+    hausmeister.altbestand_pfad().unlink(missing_ok=True)  # Windows-Welt legt sie an (#68)
+    if hausmeister._ist_windows():
+        # Server nachstellen: Linux-Regeln, die Prozess-Prüfung aber mit dem, was dieser
+        # Rechner hat (kein /proc unter Windows).
+        windows_pruefung = hausmeister._kein_prozess
+
+        def pruefen(ordner: Path, *, probe: bool = False) -> None:
+            hausmeister._PLATTFORM = "win32"
+            try:
+                windows_pruefung(ordner, probe=probe)
+            finally:
+                hausmeister._PLATTFORM = "linux"
+
+        monkeypatch.setattr(hausmeister, "_PLATTFORM", "linux")
+        monkeypatch.setattr(hausmeister, "_kein_prozess", pruefen)
     assert not hausmeister.altbestand_pfad().exists()
     assert welt.aufraeumen(wt, loeschen=True).art == "gelöscht"
 

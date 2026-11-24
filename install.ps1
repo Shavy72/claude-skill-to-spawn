@@ -56,7 +56,7 @@ function Sichere-UndKopiere([string]$name, [string[]]$quellen) {
     }
 }
 $quellen = foreach ($f in @("SKILL.md", "README.md", "LICENSE", "to_spawn.py", "install.sh", "install.ps1", "spawn_local.ps1", "spawn_srv.ps1",
-                           "to_spawn", "skripte", "repo-scripts", "aliase", "tests", "docs", "nest", "leitstand", "kette")) { Join-Path $hier $f }
+                           "to_spawn", "skripte", "repo-scripts", "aliase", "tests", "docs", "nest", "leitstand", "kette", "review-hook", "review", "probe")) { Join-Path $hier $f }
 Sichere-UndKopiere "to-spawn" $quellen
 $env:PYTHONIOENCODING = "utf-8"
 python (Join-Path (Join-Path $ziel "to_spawn") "skill_stand.py") --stempel $ziel --klon $hier
@@ -74,6 +74,13 @@ foreach ($ketteOrdner in Get-ChildItem (Join-Path (Join-Path $hier "kette") "ski
 $env:PYTHONIOENCODING = "utf-8"
 python (Join-Path (Join-Path $ziel "to_spawn") "globale_regeln.py") --ziel $ClaudeMd
 if ($LASTEXITCODE -ne 0) { throw "Regel-Blöcke nicht geschrieben: $ClaudeMd" }
+# Ja-Sperre (PreToolUse-Hook in settings.json neben der CLAUDE.md) + Befehl `ja` nach bin/ daneben (#531)
+$env:PYTHONPATH = $ziel
+python -m to_spawn.ja_einrichten --claude-dir (Split-Path -Parent $ClaudeMd) --python (Get-Command python).Source
+if ($LASTEXITCODE -ne 0) { throw "Ja-Sperre nicht eingetragen" }
+# Review-Hook (review-hook/ → ~/.claude/hooks/review, #214) + Review-Werkzeug (review/ → ~/.claude/review, #329); Überschreib-Regel in to_spawn/review_hook.py.
+python (Join-Path (Join-Path $ziel "to_spawn") "review_hook.py") --klon $hier  # Klon: nur versionierte Dateien
+if ($LASTEXITCODE -ne 0) { throw "Review-Hook nicht installiert" }
 
 # PowerShell-Profil: bau / wache / sessions (nur ergänzen, nie überschreiben)
 $profilPfad = $PROFILE.CurrentUserAllHosts
@@ -165,8 +172,7 @@ if ($Repo) {
     $manOrdner = python -c $manPy $ziel (Resolve-Path $Repo).Path manifeste
     if ($LASTEXITCODE -eq 0 -and $manOrdner) { $man = "$manOrdner".Trim() }
     New-Item -ItemType Directory -Force $man | Out-Null
-    $def = Join-Path $man "_default.json"
-    if (-not (Test-Path $def)) { Copy-Item (Join-Path $hier "repo-scripts\_default.json") $def; Write-Host "kopiert: $def" }
+    # Keine Regel-Kopie _default.json: Start-Text kommt aus der Skill-Vorlage; Repo-Regeln über start_text.zusatz_datei (#274 P1).
     # Ohne doppelte Anführungszeichen im -c-Text: Windows PowerShell 5.1 würde sie beim Aufruf verschlucken.
     # Konfig anlegen (+ .gitignore-Block) und Checkpoint-Label im GitHub-Repo sicherstellen (#257).
     $py = 'import sys; sys.path.insert(0, sys.argv[1]); from pathlib import Path; from to_spawn import config, gh; r = Path(sys.argv[2]); print(config.sicherstellen(r)); l = str(config.lade(r).get("regularien", {}).get("checkpoint_label") or "checkpoint:human"); print("Label " + l + (": vorhanden" if gh.label_sicherstellen(r, l) else ": nicht angelegt - von Hand: gh label create " + l))'

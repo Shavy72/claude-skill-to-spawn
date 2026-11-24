@@ -17,7 +17,7 @@ from pathlib import Path
 import pytest
 from git_bash import git_bash
 
-from to_spawn import bau_loop, gh, pc_fenster, prozessbaum, umzug
+from to_spawn import bau_loop, pc_fenster, prozessbaum, ticket_zustand, umzug
 
 HILFE = Path(__file__).resolve().parent / "hilfen" / "session_git_bash_kind_122.py"
 
@@ -29,7 +29,7 @@ def test_git_bash_kind_stirbt_mit_session(tmp_path: Path, monkeypatch: pytest.Mo
         pytest.skip("Git Bash fehlt")
     (tmp_path / ".git").mkdir()
     datei = tmp_path / "pids.txt"
-    monkeypatch.setattr(gh, "ticket_offen", lambda *a, **k: None)
+    monkeypatch.setattr(ticket_zustand, "lesen", lambda *a, **k: None)  # #279: Leseweg von bau_loop
     gefunden: dict[str, int] = {}
 
     def beende_wie_stop_hook() -> None:

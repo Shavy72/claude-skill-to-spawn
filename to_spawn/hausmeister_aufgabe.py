@@ -7,10 +7,10 @@ allein ``hausmeister``:
 
 - :func:`aufgabe_einrichten` legt die tägliche Aufgabe in der Windows-Aufgabenplanung
   an (idempotent, ``pythonw.exe`` ohne Fenster). Vorher hält sie den Altbestand fest,
-  damit der erste Lauf keine alten Ordner ohne Davids Ja löscht.
+  damit der erste Lauf keine alten Ordner ohne das Ja des Menschen löscht.
 - :func:`ticket_ende_anstossen` startet nach einer lokalen Bau-Session einen Lauf im
   Hintergrund (nur Windows; auf dem Server läuft der Aufpasser).
-- :func:`loesch_liste` schreibt die Altbestand-Liste für David (Trockenlauf, löscht
+- :func:`loesch_liste` schreibt die Altbestand-Liste für den Menschen (Trockenlauf, löscht
   nichts) und hält genau diese Ordner fest.
 
 Kein Mail-Versand, nur Log.
@@ -45,7 +45,7 @@ _GRUPPEN = (
     "Sichern + löschen",
     "Bleibt (mit Grund)",
     "Ohne Ticket-Nummer",
-    "Für David (selbst prüfen)",
+    "Für den Menschen (selbst prüfen)",
 )
 
 
@@ -169,10 +169,10 @@ def ticket_ende_anstossen() -> None:
 
 
 def loesch_liste(ziel: Path) -> Path:
-    """Altbestand-Liste für David schreiben (Trockenlauf, löscht nichts); gibt ``ziel``.
+    """Altbestand-Liste für den Menschen schreiben (Trockenlauf, löscht nichts); gibt ``ziel``.
 
     Danach sind alle gelisteten Ordner festgehalten — der Hausmeister lässt sie
-    stehen, bis David sie freigibt. ``RuntimeError``, wenn der Lauf scheitert oder
+    stehen, bis der Mensch sie freigibt. ``RuntimeError``, wenn der Lauf scheitert oder
     ein anderer Lauf die Sperre hält.
     """
     ergebnisse = hausmeister.aufraeumen_alles(loeschen=False)
@@ -211,7 +211,7 @@ def _markdown(gruppen: dict[str, list[hausmeister.Ergebnis]], altbestand: Path) 
         f"Stand: {stand}",
         "",
         (
-            "**Gelöscht wird erst nach Davids Ja.** Bis dahin bleiben alle Ordner stehen "
+            "**Gelöscht wird erst nach dem Ja des Menschen.** Bis dahin bleiben alle Ordner stehen "
             f'(Freigabe: `"freigegeben": true` in `{altbestand}`).'
         ),
         "",

@@ -4,8 +4,9 @@ Beantwortet nur, was der Kern fragt:
   ``issue view <N> --json state``                → ``{"state": "OPEN"|"CLOSED"}``
   ``api repos/<slug>/issues/<N>/dependencies/blocked_by`` → Liste
   ``api repos/<slug>/issues/<S>/sub_issues [--jq …]``    → Unter-Tickets (#236);
-    mit ``--jq`` nur die Nummern der offenen, eine je Zeile (einziger jq-Filter,
-    den der Aufpasser nutzt)
+    mit ``--jq`` nur die Nummern der offenen, eine je Zeile; enthält der Filter
+    ``labels``, je Ticket eine JSON-Zeile ``{number, state, labels}`` (#279, Labels
+    aus ``GH_STUB_DATEN``)
   ``issue comment <N> --body …``                  → protokolliert, Exit 0 (#236)
 
 Umgebung: ``GH_STUB_ZU`` (Komma-Liste geschlossener Tickets),
@@ -16,7 +17,12 @@ ohne die Variable bleibt die Antwort wie bisher nur ``state``),
 ``GH_STUB_KAPUTT`` (Komma-Liste: ``issue view`` dieser Nummern scheitert mit Exit 1),
 ``GH_STUB_UNTER`` (``<S>:<n1>|<n2>,<S2>:<n3>`` — Unter-Tickets je Spec; Zustand je
 Nummer wie bisher über ``GH_STUB_ZU``),
-``GH_STUB_PROTOKOLL`` (Pfad: jeder Aufruf wird als Zeile angehängt).
+``GH_STUB_PROTOKOLL`` (Pfad: jeder Aufruf wird als Zeile angehängt),
+``GH_STUB_UNTER_ROH`` (gesetzt ⇒ ``sub_issues`` mit ``labels``-Filter gibt genau diesen
+Text aus — für kaputte Listen-Zeilen, #279),
+``GH_STUB_NEU`` (Nummer, die ``issue create`` vergibt, Vorgabe 990, #410),
+``GH_STUB_NUR_FELDER`` (gesetzt ⇒ ``issue view`` liefert wie echtes ``gh`` nur die per
+``--json`` angefragten Felder — fällt auf, wenn ein Aufrufer ein Feld nicht anfragt, #282).
 """
 
 from __future__ import annotations
@@ -85,16 +91,54 @@ def main() -> int:
             return 1
         antwort = {"state": "CLOSED" if nummer in _zu() else "OPEN"}
         antwort.update(_zusatz(nummer))
+        if "GH_STUB_NUR_FELDER" in os.environ and "--json" in args:
+            felder = set(args[args.index("--json") + 1].split(","))
+            antwort = {k: v for k, v in antwort.items() if k in felder}
         print(json.dumps(antwort))
         return 0
     if args[:2] == ["issue", "comment"]:
         print(f"https://github.com/stub/issues/{args[2]}#issuecomment-stub")
         return 0
+    if args[:2] == ["issue", "list"]:
+        # Offene Einrichtungs-Tickets (#410): keins, solange keins angelegt ist.
+        print(json.dumps([]))
+        return 0
+    if args[:2] == ["issue", "create"]:
+        # #410: Einrichtungs-Ticket anlegen — Antwort wie echtes ``gh`` (Issue-URL).
+        print(f"https://github.com/stub/repo/issues/{os.environ.get('GH_STUB_NEU', '990')}")
+        return 0
+    if args[:2] == ["label", "create"]:
+        return 0
+    if args[:1] == ["api"] and (einzeln := re.fullmatch(r"repos/([^/]+/[^/]+)/issues/(\d+)", args[1])):
+        # Einzel-Issue wie ``GET repos/<slug>/issues/<N>`` (für ``anhaengen``, #410).
+        nummer = einzeln.group(2)
+        zusatz = _zusatz(nummer)
+        print(
+            json.dumps(
+                {
+                    "id": 3_000_000_000 + int(nummer),
+                    "number": int(nummer),
+                    "title": zusatz.get("title", f"Ticket {nummer}"),
+                    "state": "closed" if nummer in _zu() else "open",
+                    "labels": zusatz.get("labels", []),
+                    "body": zusatz.get("body", ""),
+                    "repository_url": f"https://api.github.com/repos/{einzeln.group(1)}",
+                }
+            )
+        )
+        return 0
     if args[:1] == ["api"]:
         unter = re.search(r"issues/(\d+)/sub_issues", args[1])
         if unter:
             liste = _unter(unter.group(1))
-            if "--jq" in args:
+            filter_ = args[args.index("--jq") + 1] if "--jq" in args else ""
+            if "labels" in filter_ and "GH_STUB_UNTER_ROH" in os.environ:
+                print(os.environ["GH_STUB_UNTER_ROH"])
+            elif "labels" in filter_:
+                for e in liste:
+                    namen = [x["name"] for x in _zusatz(str(e["number"])).get("labels", [])]
+                    print(json.dumps({**e, "labels": namen}))
+            elif "--jq" in args:
                 print("\n".join(str(e["number"]) for e in liste if e["state"] == "open"))
             else:
                 print(json.dumps(liste))

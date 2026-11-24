@@ -22,7 +22,15 @@ _SKRIPTE = Path(__file__).resolve().parent
 _SKILL = str(_SKRIPTE.parent)
 if _SKILL not in sys.path:
     sys.path.insert(0, _SKILL)
-from to_spawn import config, melder, sitzung_env, sperre, starter, terminal_maus  # noqa: E402
+from to_spawn import (  # noqa: E402
+    config,
+    melder,
+    sitzung_env,
+    speicher,
+    sperre,
+    starter,
+    terminal_maus,
+)
 
 log = logging.getLogger("leitstand_seite")
 
@@ -347,6 +355,7 @@ def sitzung(ablage: Ablage, *, probe: bool = False) -> int:
     env = {**sitzung_env.ohne_sitzung(), "TO_SPAWN_REPO": str(ablage.repo), "PYTHONIOENCODING": "utf-8"}
     # ohne_sitzung: Sitzungs-Variablen = Child Session, kein Transkript/Resume (wie bau.py)
     env["CLAUDE_CODE_FORCE_SESSION_PERSISTENCE"] = "1"
+    env[speicher.ANZEIGE_VARIABLE] = "1"  # Anzeige-Fenster belegt nie einen Platz (#460)
     terminal_maus.maus_ruhig(env)  # Klick-Sperre nur hier, nicht global (Windows)
     try:
         # Vordergrund im eigenen Fenster (braucht die Konsole) — kein Hintergrundstart.

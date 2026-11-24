@@ -14,7 +14,19 @@ from pathlib import Path
 SKILL = Path(__file__).resolve().parent.parent
 # Bewusst nicht installiert: Git-Steuerdatei, Review-Ablage und ``messung/`` (Entwicklungs-Ordner:
 # Mess-Skripte des Prüftor-Vergleichs #81, nur Linux, kein Laufzeit-Code des Skills).
-NICHT_INSTALLIERT = {".gitignore", ".review", "messung"}
+# ``conftest.py``: nur Testsammlung, #214 Teil A; Teil B entfernt die Datei wieder.
+# ``review`` (#329 P2): wird mitkopiert und von ``to_spawn/review_hook.py`` nach ~/.claude/review eingespielt.
+# ``probe`` ist nicht mehr ausgenommen (#466): wird mitinstalliert, damit ``probe/anlegen.sh`` auch
+# aus der installierten Kopie läuft.
+# ``.github`` (#537): GitHub-Actions-Workflow, nur für die Prüfung im Repo.
+NICHT_INSTALLIERT = {
+    ".github",
+    ".gitignore",
+    ".gitattributes",
+    ".review",
+    "messung",
+    "conftest.py",
+}
 
 
 def _wurzel_eintraege() -> set[str]:

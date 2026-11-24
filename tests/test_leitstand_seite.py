@@ -148,7 +148,7 @@ def test_ticket_stand_reihenfolge(ls: ModuleType) -> None:
     david = [ls.als_zeit(_zeile("x", 5)["ts"])]
     assert ls.ticket_stand("1", "läuft", {}, [_zeile("session_start", 0)], david, leer) == (
         "braucht_david",
-        "Wartet auf David",
+        "Wartet auf den Menschen",
     )
     assert ls.ticket_stand("1", "läuft", {}, [_zeile("handoff", 2)], [], leer) == (
         "läuft",
@@ -171,7 +171,7 @@ def test_berechne_und_dedupe(ls: ModuleType) -> None:
     live, ereignisse, merk = ls.berechne("376", titel, {"377": "läuft"}, issues, zeilen, zustand)
     assert live["tickets"]["377"]["zustand"] == "läuft"
     assert live["tickets"]["377"]["phase"].startswith("Blockiert: Test-Handy")
-    assert live["tickets"]["378"] == {"zustand": "wartet", "ist_k": None}
+    assert live["tickets"]["378"] == {"zustand": "wartet", "ist_k": None, "stufe": "offen"}
     assert "377" in merk["start"] and "378" not in merk["start"]
     arten = sorted(e.art for e in ereignisse)
     assert arten == ["info", "problem"]

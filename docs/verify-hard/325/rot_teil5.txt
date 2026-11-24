@@ -1,0 +1,10 @@
+E       AssertionError: fester Personenname statt Rolle: ['docs/ABNAHME_L1.md:51', 'docs/PLAN_438_gelb_liste.md:23', 'docs/PLAN_257_fremdrepo.md:11', 'docs/PLAN_257_fremdrepo.md:23', 'docs/PLAN_257_fremdrepo.md:34', 'docs/PLAN_257_fremdrepo.md:45', 'docs/WIEDEREINSTIEG.md:26', 'docs/WIEDEREINSTIEG.md:35', 'docs/WIEDEREINSTIEG.md:410', 'docs/WIEDEREINSTIEG.md:415']
+tests/test_rolle_statt_name_323.py:238: AssertionError
+E       AssertionError: fester Personenname statt Rolle: ['tests/test_wache_takt_1800.py:93']
+tests/test_rolle_statt_name_323.py:259: AssertionError
+E       AssertionError: fester Personenname statt Rolle: ['tests/hilfen/push_sperre_1442/pre-push-master-sperre.sh:21']
+tests/test_rolle_statt_name_323.py:271: AssertionError
+FAILED tests/test_rolle_statt_name_323.py::test_kein_fester_personenname_in_doku_teil5
+FAILED tests/test_rolle_statt_name_323.py::test_kein_fester_personenname_in_test_gruenden
+FAILED tests/test_rolle_statt_name_323.py::test_kein_fester_personenname_in_shell_kommentaren
+3 failed, 8 passed in 1.58s

@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from . import config, gh
+from . import config, gh, ticket_zustand
 
 log = logging.getLogger("to_spawn.manifest")
 
@@ -120,6 +120,15 @@ def checkpoint_label(konfig: dict[str, Any]) -> str:
     return str(konfig.get("regularien", {}).get("checkpoint_label") or "checkpoint:human")
 
 
+def einrichtungs_ticket(daten: dict[str, Any]) -> str | None:
+    """Nummer des Einrichtungs-Tickets (Eintrag mit ``einrichtung: true``, #410); ``None`` = keins."""
+    tickets = daten.get("tickets") if isinstance(daten.get("tickets"), dict) else {}
+    return next(
+        (n for n, e in tickets.items() if isinstance(e, dict) and e.get("einrichtung") is True),
+        None,
+    )
+
+
 def lade_manifest_mit_doppelten(repo: Path, spec: int | str) -> tuple[dict[str, Any], list[str]]:
     """Wie :func:`lade_manifest`, zusätzlich die doppelt belegten Ticket-Nummern."""
     datei = manifest_pfad(repo, spec)
@@ -205,7 +214,9 @@ def pruefe(
         if nummer and nummer not in tickets:
             bericht.fehler.append(
                 f"#{nummer} steht nicht im Manifest spec-{spec}.json — erst /to-tickets "
-                "(Eintrag mit schaetzung_k + umfang)."
+                "(Eintrag mit schaetzung_k + umfang). "
+                f'Liste als eine Zahl gelesen? Richtiger Aufruf: -Tickets "{",".join(bericht.tickets[:2])}" '
+                "(Komma-Liste in Anführungszeichen)."
             )
 
     for nummer in sorted(set(doppelt), key=ticket_schluessel):
@@ -268,8 +279,26 @@ def pruefe_eintrag(nummer: str, roh: Any, konfig: dict[str, Any]) -> list[str]:
     return fehler
 
 
-def _ist_zu(daten: dict[str, Any] | None) -> bool:
-    return isinstance(daten, dict) and str(daten.get("state", "")).upper() != "OPEN"
+def _fertig_gebaut(daten: dict[str, Any] | None) -> bool:
+    """Hier baut niemand mehr (zu oder grün auf Staging, #279); ohne Daten: noch zu bauen."""
+    return isinstance(daten, dict) and ticket_zustand.fertig_gebaut(daten)
+
+
+def _offen_frage(
+    repo: Path, github: dict[str, dict[str, Any] | None]
+) -> Callable[[str], bool | None]:
+    """Frage „wird #N noch gebaut?“ (``None`` = Abfrage gescheitert) — je Prüflauf nur einmal je Nummer."""
+    zustaende: dict[str, bool | None] = {
+        n: not _fertig_gebaut(d) for n, d in github.items() if isinstance(d, dict)
+    }
+
+    def offen(verweis: str) -> bool | None:
+        if verweis not in zustaende:
+            daten = ticket_zustand.lesen(verweis, cwd=repo)
+            zustaende[verweis] = None if daten is None else not ticket_zustand.fertig_gebaut(daten)
+        return zustaende[verweis]
+
+    return offen
 
 
 def _pruefe_andere_manifeste(
@@ -297,7 +326,7 @@ def _pruefe_andere_manifeste(
         if not isinstance(fremde, dict):
             continue
         for nummer in sorted(eigene & set(fremde), key=ticket_schluessel):
-            if _ist_zu(github.get(nummer)):
+            if _fertig_gebaut(github.get(nummer)):
                 continue
             unbekannt = " (Zustand ohne GitHub unbekannt)" if not github else ""
             bericht.fehler.append(
@@ -375,15 +404,7 @@ def _pruefe_github(
     mit_kante = 0
     labels_gesehen = False
     checkpoints: list[str] = []
-    # Zustand je Nummer (True = offen, None = Abfrage gescheitert) — je Prüflauf nur einmal.
-    zustaende: dict[str, bool | None] = {
-        n: not _ist_zu(d) for n, d in github.items() if isinstance(d, dict)
-    }
-
-    def offen(verweis: str) -> bool | None:
-        if verweis not in zustaende:
-            zustaende[verweis] = gh.ticket_offen(verweis, cwd=repo)
-        return zustaende[verweis]
+    offen = _offen_frage(repo, github)
 
     for nummer in bericht.tickets:
         daten = github.get(nummer)
@@ -399,7 +420,7 @@ def _pruefe_github(
             }
             if label in namen:
                 checkpoints.append(nummer)
-        if _ist_zu(daten):
+        if _fertig_gebaut(daten):
             continue
         _pruefe_verweise(bericht, nummer, daten, kanten, eigene, offen)
         belegt = [
@@ -438,11 +459,12 @@ def _pruefe_checkpoint(
     offene_andere = [
         n
         for n in bericht.tickets
-        if isinstance(github.get(n), dict) and not _ist_zu(github[n]) and n not in checkpoints
+        if isinstance(github.get(n), dict) and not _fertig_gebaut(github[n]) and n not in checkpoints
     ]
     if not offene_andere:
         return
-    offene_cp = [n for n in checkpoints if not _ist_zu(github[n])]
+    # Checkpoint verwendbar = nicht endgültig zu (wie spec_rand._offen), Staging-Label zählt nicht
+    offene_cp = [n for n in checkpoints if not ticket_zustand.endgueltig_zu(github[n] or {})]
     if not offene_cp:
         zu = ", ".join(f"#{n}" for n in checkpoints)
         andere = ", ".join(f"#{n}" for n in offene_andere)
@@ -467,7 +489,7 @@ def _pruefe_checkpoint(
 def _pruefe_checkpoint_am_ende(
     bericht: Bericht, github: dict[str, dict[str, Any] | None], checkpoint: str
 ) -> None:
-    """Fehler, wenn Davids Frage andere Tickets blockiert (#285, verschärft #325).
+    """Fehler, wenn die Frage an den Menschen andere Tickets blockiert (#285, verschärft #325).
 
     Blockiert, weil es hinten dran hängt, ist gewollt (Abnahme-Ticket). Steht der
     Checkpoint dagegen VOR anderen Tickets, wartet nachts die ganze Kette auf eine

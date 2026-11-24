@@ -36,7 +36,9 @@ def ohne_naehte(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _alte_werte_gelten() -> None:
-    assert hausmeister._ticket_repo() == "Shavy72/duoplus-management"
+    # #235: jedes Vorgabe-Repo hat eigene Tickets ⇒ kein gemeinsamer Rückfall (je Ordner gilt origin)
+    assert hausmeister._ticket_repo() is None
+    assert hausmeister._ticket_repo_fuer("Shavy72/claude-skill-to-spawn") == "Shavy72/claude-skill-to-spawn"
     assert hausmeister._eigene_repos() == {
         "shavy72/duoplus-management",
         "shavy72/claude-skill-to-spawn",
@@ -54,7 +56,7 @@ def _alte_werte_gelten() -> None:
 def test_ohne_maschinen_liste_alte_werte(ohne_naehte: None) -> None:
     _alte_werte_gelten()
     # Aliase für Aufrufer/Tests bleiben mit den alten Werten
-    assert hausmeister.TICKET_REPO == "Shavy72/duoplus-management"
+    assert hausmeister.TICKET_REPO == ""  # #235: kein gemeinsames Ticket-Repo mehr
     assert hausmeister.WURZELN_STANDARD == tuple(ALT_WURZELN)
     assert list(hausmeister._SICHERUNG_REMOTES) == ALT_REMOTES
     assert "duoplus-management" in hausmeister.GESCHUETZTE_ORDNER
@@ -286,10 +288,8 @@ def test_vorgabe_wurzeln_bleiben_auch_in_der_liste(ohne_naehte: None) -> None:
 
 
 @pytest.fixture
-def welt_liste(welt, monkeypatch: pytest.MonkeyPatch, tmp_path: Path):  # noqa: F811
-    """Welt aus #1368, aber Wurzeln aus der Maschinen-Liste statt Env-Naht; eigener tmux-Server."""
-    monkeypatch.delenv("TMUX", raising=False)
-    monkeypatch.setenv("TMUX_TMPDIR", str(tmp_path))
+def welt_liste(welt, monkeypatch: pytest.MonkeyPatch):  # noqa: F811
+    """Welt aus #1368, aber Wurzeln aus der Maschinen-Liste statt Env-Naht."""
     for name in ("WURZELN", "ZWEIG_REPOS", "HAUPTREPOS"):
         monkeypatch.delenv(f"TO_SPAWN_HAUSMEISTER_{name}", raising=False)
     return welt

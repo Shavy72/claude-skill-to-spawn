@@ -1,33 +1,55 @@
 # /to-spawn local — alle Ticket-Sessions einer Spec auf einmal starten (Windows Terminal, ein Fenster).
-# Aufruf (Repo-Wurzel):  pwsh -File ~/.claude/skills/to-spawn/spawn_local.ps1 -Spec 182 [-Tickets 188,189,190] [-OhneWache] [-Window 1] [-DryRun]
+# Aufruf (Repo-Wurzel):  pwsh -File ~/.claude/skills/to-spawn/spawn_local.ps1 -Spec 182 [-Tickets "188,189,190"] [-OhneWache] [-Window 1] [-DryRun]
 # Liest docs/agents/manifests/spec-<S>.json (Ticket-Nummern), öffnet je Ticket einen Tab `bau <N>` und
 # (sofern nicht -OhneWache) zuerst einen Tab `wache <S>` und einen Tab `leitstand <S>` (Schalter leitstand.aktiv). Prüft danach per scripts/sessions_stand.py.
 param(
-    [Parameter(Mandatory = $true)][int]$Spec,
-    $Tickets = @(),   # bewusst ohne Typ (#37): per -File kommt "51,52" als ein String an (#37) — unten selbst getrennt
+    [Parameter(Mandatory = $true, Position = 0)][int]$Spec,   # nur Spec ist positional (#285), sonst landet die zweite Zahl einer Leerzeichen-Liste in $Window
+    $Tickets = @(),   # bewusst ohne Typ (#37/#285): nie als Zahlenliste lesen lassen — unten an einer Stelle selbst zerlegt
     [switch]$OhneWache,
     [int]$Window = -1,      # -1 = neues Fenster, sonst wt-Fenster-ID (z. B. 1 = bestehendes erstes Fenster)
-    [switch]$DryRun
+    [switch]$DryRun,
+    [switch]$NurListe,   # #285: erkannte Ticket-Nummern ausgeben und enden (startet nichts)
+    [Parameter(ValueFromRemainingArguments = $true)]$Rest = @()   # weitere Zahlen nach -Tickets (Leerzeichen-Schreibweise)
 )
 $ErrorActionPreference = "Stop"
 
-# Ticket-Liste robust lesen (#37): String "51,52", Array oder beides; Komma/Leerraum trennen.
-$Tickets = @($Tickets | ForEach-Object { "$_" -split '[,\s]+' } | Where-Object { $_ -ne "" })
+# Ticket-Liste (#37, #285): die eine Stelle, die den Text in Zahlen zerlegt. Als Zahlenliste getippt
+# läse die Landeseinstellung (de-DE) "1476,1477" als Tausenderzahl 14761477 (Git Bash, -File).
+# Trenner: Komma, Leerraum, Semikolon; alles andere ist ein Fehler.
+$Tickets = @(@($Tickets) + @($Rest) | ForEach-Object { "$_" -split '[,;\s]+' } | Where-Object { $_ -ne "" })
 foreach ($t in $Tickets) {
     if ($t -notmatch '^\d+$') {
-        Write-Host "FEHLER: -Tickets erwartet Zahlen, bekam '$t' (Beispiel: -Tickets 51,52)." -ForegroundColor Red
+        Write-Host "FEHLER: -Tickets erwartet Zahlen, bekam '$t' (richtig: -Tickets ""51,52"")." -ForegroundColor Red
         exit 2
     }
 }
 $Tickets = @($Tickets | ForEach-Object { [int]$_ })  # untypisiert: bleiben Zahlen
+if ($NurListe) { Write-Host ("Tickets: " + ($Tickets -join ",")); exit 0 }
 
 # Regularien zuerst (#206): bei Weigerung startet kein einziger Tab. Eine Auswahl
 # (-Tickets) geht mit in die Prüfung — jede Nummer muss im Manifest stehen.
 # Kein 2>&1: unter PowerShell 5.1 mit ErrorActionPreference Stop bricht eine
 # stderr-Zeile sonst das Skript ab. stderr läuft direkt durch, EAP nur hier locker.
 $py = if (Get-Command python -ErrorAction SilentlyContinue) { "python" } else { "python3" }
+# Arbeitsordner-Stand zuerst (#283): Manifest, Vorlage und Skripte kommen aus diesem Ordner.
+# Hinter origin/<Hauptzweig> → nachziehen (nur fast-forward) oder Abbruch mit Zeile; fetch-Fehler und
+# Ticket-Zweig melden nur (Exit 0, Regel in to_spawn/arbeitsstand.py); -DryRun prüft nur.
+$standArgs = @("$PSScriptRoot/to_spawn.py", "arbeitsstand")
+if ($DryRun) { $standArgs += "--pruefen" }
+$eapVorher = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+$rc = 1   # bleibt gesetzt, falls der Aufruf scheitert (sonst exit $null = 0)
+try {
+    & $py @standArgs
+    $rc = $LASTEXITCODE
+} finally {
+    $ErrorActionPreference = $eapVorher
+}
+if ($rc -ne 0 -and -not $DryRun) { Write-Host "Arbeitsordner nicht auf Hauptzweig-Stand — nichts gestartet." -ForegroundColor Red; exit $rc }
 $pruefArgs = @("$PSScriptRoot/to_spawn.py", "regularien", "$Spec")
 if ($Tickets.Count -gt 0) { $pruefArgs += @("--tickets", ($Tickets -join ",")) }
+# Probelauf legt kein Einrichtungs-Ticket an (#410).
+if ($DryRun) { $pruefArgs += "--dry-run" }
 $eapVorher = $ErrorActionPreference
 $ErrorActionPreference = "Continue"
 try {
@@ -62,11 +84,19 @@ if ($Tickets.Count -eq 0) {
 $laufend = Get-CimInstance Win32_Process -Filter "Name='python.exe' OR Name='claude.exe'" |
     Where-Object { $_.CommandLine -match 'bau\.py (\d+)|wache\.py (\d+)|[\\/]wt-(\d+)\b' } |
     ForEach-Object { [int]($Matches[1] + $Matches[2] + $Matches[3]) } | Sort-Object -Unique
-# Geschlossene Tickets nicht mehr starten (bau.py würde sofort enden, der Tab bliebe als Leiche).
-$zu = @()
-if (Get-Command gh -ErrorAction SilentlyContinue) {
-    $zu = @(gh issue list --state closed --limit 200 --search "Spec #$Spec in:body" --json number --jq '.[].number' 2>$null | ForEach-Object { [int]$_ })
+# Fertig gebaute Tickets nicht mehr starten (bau.py würde sofort enden, der Tab bliebe als Leiche).
+# Regel nur in to_spawn/ticket_zustand.py (#279): `zu-bauen` nennt, was noch zu bauen ist; unbekannter Stand fehlt dort.
+$ErrorActionPreference = "Continue"
+$zuBauen = @(& $py "$PSScriptRoot/to_spawn.py" "zu-bauen" "$Spec" | ForEach-Object { [int]$_ })
+$zuBauenRc = $LASTEXITCODE
+if ($zuBauenRc -ne 0) {
+    # GitHub kurz weg: genau ein Wiederholversuch nach 5 s.
+    Start-Sleep -Seconds 5
+    $zuBauen = @(& $py "$PSScriptRoot/to_spawn.py" "zu-bauen" "$Spec" | ForEach-Object { [int]$_ })
+    $zuBauenRc = $LASTEXITCODE
 }
+$ErrorActionPreference = $eapVorher
+if ($zuBauenRc -ne 0) { Write-Host "Ticket-Stand nicht für alle Tickets bestimmbar — diese werden nicht gestartet." -ForegroundColor Yellow }
 $cmds = @()
 if (-not $OhneWache -and ($laufend -notcontains $Spec)) { $cmds += "wache $Spec" }
 # Bau-Leitstand (Live-Seite): Tab `leitstand <S>` (Profil-Funktion → skripte/leitstand.py <S> sitzung),
@@ -82,7 +112,7 @@ if (-not $OhneWache) {
     elseif ($lsLaeuft) { Write-Host "leitstand $Spec läuft schon — übersprungen" -ForegroundColor Yellow }
 }
 foreach ($n in $Tickets) {
-    if ($zu -contains $n) { Write-Host "#$n ist geschlossen — übersprungen" -ForegroundColor DarkGray; continue }
+    if ($zuBauen -notcontains $n) { Write-Host "#$n fertig gebaut oder Stand unbekannt — übersprungen" -ForegroundColor DarkGray; continue }
     if ($laufend -contains $n) { Write-Host "#$n läuft schon — übersprungen" -ForegroundColor Yellow; continue }
     $cmds += "bau $n"
 }

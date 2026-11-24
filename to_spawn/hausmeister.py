@@ -34,7 +34,7 @@ Dateien, die die Sicherung NICHT mitnimmt, gehen beim Löschen verloren — daru
 - Geheimnisse (``SICHERUNG_AUSSCHLUSS``, z. B. ``.env*``, ``*.key``), geändert, neu
   oder ignoriert: dürfen nur weg, wenn das Hauptrepo des Worktrees dieselbe Datei mit
   gleichem Inhalt hat; sonst (und beim Klon immer) bleibt, ``fuer_david=True``.
-  Geheimnisse in ungepushten Commits würde die Sicherung hochladen ⇒ bleibt, David.
+  Geheimnisse in ungepushten Commits würde die Sicherung mit hochladen ⇒ bleibt, ``fuer_david=True``.
 - Ignorierte Dateien: nur bekannte Erzeugnisse (:data:`ERZEUGNISSE`) dürfen weg,
   jede andere ignorierte Datei ⇒ bleibt.
 - Datenbanken (``aufpasser.NIE_HOCHLADEN``) lädt die Sicherung nie hoch: weg dürfen nur
@@ -45,14 +45,14 @@ Prozesse kommen aus ``/proc``; unter Windows (Laptop, ``C:/dev/wt-*``, #1373) au
 ``Get-CimInstance Win32_Process`` plus einer Umbenennungs-Probe nur im echten Lauf
 (Windows-Wissen in :mod:`to_spawn.hausmeister_windows`, Tür bleibt hier). Plattenplatz
 misst die Platte der Wurzeln, nicht Home. Altbestand (#1373, E16): Ordner in
-:func:`altbestand_pfad` bleiben im echten Lauf, bis David die Liste freigibt; der
+:func:`altbestand_pfad` bleiben im echten Lauf, bis der Mensch die Liste freigibt; der
 Trockenlauf zeigt die echte Regel. Fehlt die Liste unter Windows, hält der erste echte
 Lauf zuerst alle vorhandenen Ordner fest (am Server: keine Wirkung).
 
 Jede Entscheidung schreibt eine JSON-Zeile nach ``TO_SPAWN_HAUSMEISTER_LOG``
 (Standard ``~/.claude/to-spawn/hausmeister.jsonl``), beim Löschen VOR dem Löschen;
 Log nicht schreibbar ⇒ bleibt. Scheitert danach das Löschen, folgt eine zweite Zeile
-„bleibt“. :func:`liste_fuer_david` liest daraus die Ordner, über die David selbst
+„bleibt“. :func:`liste_fuer_david` liest daraus die Ordner, über die der Mensch selbst
 entscheiden muss.
 
 Zweite Tür (#1369): :func:`aufraeumen_alles` wendet dieselben Regeln auf alle Ordner
@@ -99,7 +99,7 @@ läuft im Takt von :func:`aufraeumen_alles` höchstens täglich je Modus: je Hau
 ``fetch --prune`` + ``worktree prune`` (nur echt), lokale ``ticket/*`` ohne Arbeitsordner,
 dann alle ``ticket/*`` der Sicherungs-Remotes. Test-Naht ``TO_SPAWN_HAUSMEISTER_HAUPTREPOS``
 (Pfade, Leerzeichen-getrennt, leer = keine). :func:`zweige_probelauf` schreibt die Liste
-für David, ohne etwas zu ändern.
+für den Menschen, ohne etwas zu ändern.
 
 Fünfte Tür (#1374): :func:`halb_angelegt_entfernen` entfernt für den Anleger
 (``nest.worktree_anlegen``) einen eben angelegten Worktree, dessen Füllen scheiterte —
@@ -126,6 +126,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
+from types import EllipsisType
 from typing import Literal
 
 from to_spawn import (
@@ -135,6 +136,7 @@ from to_spawn import (
     gh,
     hausmeister_windows,
     hindernis,
+    ticket_zustand,
     uebergabe_sichern,
 )
 from to_spawn import sperre as _sperre
@@ -185,7 +187,7 @@ def _remotes_aus(repos: list[dict[str, str]]) -> tuple[str, ...]:
 
 
 _VORGABE_REPOS: list[dict[str, str]] = config.MASCHINE_DEFAULTS["repos"]
-#: Issues (Tickets) liegen immer hier, auch für Skill-Repo-Ordner (Vorgabe).
+#: Gemeinsames Ticket-Repo aller Vorgabe-Einträge; seit #235 leer (jedes Repo hat eigene Tickets).
 TICKET_REPO = _ticket_repo_aus(_VORGABE_REPOS) or ""
 EIGENE_REPOS = tuple(e["slug"].lower() for e in _VORGABE_REPOS if e.get("slug"))
 #: Namen der Haupt-Arbeitskopien — nie aufräumen.
@@ -267,6 +269,8 @@ def _geschuetzte_ordner() -> tuple[str, ...]:
 
 
 MINDEST_ZU_SEKUNDEN = 24 * 3600
+#: Bleib-Grund (und Lösch-Grund-Anfang) für Ordner ohne Ticket-Nummer (#1536, #235).
+OHNE_NUMMER = "keine Ticket-Nummer"
 #: Unter diesem Anteil freier Platte gilt Platznot: fertige Ordner gehen vor Ablauf der 24 h.
 PLATZNOT_ANTEIL = 0.15
 #: #1491: Zweige löscht der Hausmeister nur, wenn diese Variable genau „1“ ist (:func:`zweige_loeschen_an`).
@@ -370,8 +374,24 @@ def _name_muster() -> tuple[re.Pattern[str], ...]:
     return _NAME_MUSTER if praefixe == ORDNER_PRAEFIXE_STANDARD else _name_muster_fuer(praefixe)
 
 
-_ZWEIG_MUSTER = re.compile(r"^(?:(?:ticket|fix|wip|aufseher)/|fix-|abschluss-)(\d+)(?:-.*)?$")
-_GITHUB_SLUG = re.compile(r"github\.com[:/]+([^/\s]+/[^/\s]+?)(?:\.git)?/?$")
+#: #248/#347 W3: ``20JJ-<Ziffer>`` direkt nach dem Präfix ist datumsartig, nie eine Ticket-Nummer
+#: (``l1/2026-11-21-stand``, ``fix/2026-11``, auch ``ticket/2026-13-x``) — ohne Nummer bleibt der Zweig.
+_KEIN_DATUM = r"(?!20\d\d-\d)"
+_ZWEIG_MUSTER = re.compile(rf"^(?:(?:ticket|fix|wip|aufseher)/|fix-|abschluss-){_KEIN_DATUM}{_TICKET_NR}(?:-.*)?$")
+#: #235: Etappen-Zweig ``l<Etappe>/<N>[buchstabe]-…`` (``l4/176-…``, ``l1/214a-…``); erst ab
+#: 2 Ziffern — ``l3/3b-1b-…`` ist ein Etappen-Schritt, kein Issue, ``l1/p7f-…`` ebenso.
+_ZWEIG_MUSTER_ETAPPE = re.compile(rf"^l\d+/{_KEIN_DATUM}([1-9]\d{{1,2}}|[1-4]\d{{3}})[a-z]?(?:-.*)?$")
+#: Alle Zweig-Formen mit Ticket-Nummer — die einzige Stelle „Zweigname → Nummer“ (#248, auch
+#: für das Zweig-Aufräumen, :func:`_zweig_ticket`); welches Repo die Nummer meint, sagt allein
+#: ``origin`` — Zweig + origin → Repo + Nummer nur über :func:`zweig_zu_ticket` (#234, #357).
+_ZWEIG_FORMEN = (_ZWEIG_MUSTER, _ZWEIG_MUSTER_ETAPPE)
+#: #235 H1: nur diese drei Anfänge sind GitHub; ein fremder Host (``notgithub.com``) oder
+#: ein lokaler Pfad mit ``github.com/…`` im Namen ist ein fremdes Repo (nur mit ``.match``).
+_GITHUB_SLUG = re.compile(
+    r"(?:https://github\.com/|ssh://git@github\.com/|git@github\.com:)([^/\s]+/[^/\s]+?)(?:\.git)?/?$"
+)
+#: #235 N2: eine Zeile von ``git ls-remote --heads`` (SHA-1 oder SHA-256, Tab, Zweig).
+_LS_REMOTE_ZEILE = re.compile(r"([0-9a-f]{40}(?:[0-9a-f]{24})?)\trefs/heads/\S+$")
 
 
 @dataclass(frozen=True)
@@ -1008,12 +1028,15 @@ def zweig_fertig(
     if len(tip) >= 7 and stand.startswith(tip):
         return True, [], f"Schlange hat genau diesen Stand übernommen ({stand[:7]})", stand
     fehlende = _zweig_fehlende(o, stand)
-    # #176: Ticket-Repo des Zweig-Repos, nicht das eine der Maschine
+    # #176: Ticket-Repo des Zweig-Repos, nicht das eine der Maschine (ohne GitHub-origin: keins)
     slug = _origin_slug(o.cwd) if ort == "lokal" else _slug(o.remote)
-    daten = _ticket_daten(nr, slug or None)
+    ziel = zweig_zu_ticket(zweig, slug)  # #357: Repo + Nummer nur von dort
+    daten = _ticket_daten(nr, ziel)
+    if daten is None and ziel is None:  # #234: Grund statt „nicht abfragbar“
+        return False, fehlende, f"#{nr} zählt nicht im Ticket-Repo von {slug or 'origin'} (Maschinen-Liste)", stand
     if not isinstance(daten, dict) or "state" not in daten:
         raise RuntimeError(f"Ticket #{nr} nicht abfragbar")
-    if str(daten["state"]).upper() != "CLOSED":
+    if not ticket_zustand.endgueltig_zu(daten):
         anders = f"Stand {stand[:7]} ≠ übernommen {tip[:7]}, " if tip else ""
         return False, fehlende, f"{anders}Ticket #{nr} offen", stand
     if fehlende:
@@ -1096,7 +1119,7 @@ def _zweig_entscheiden(
     quelle = str(repo)
     nr = _zweig_ticket(zweig)
     if nr is None:
-        return ergebnis("bleibt", "keine Ticket-Nummer im Zweig — David entscheidet", fuer_david=True)
+        return ergebnis("bleibt", "keine Ticket-Nummer im Zweig — der Mensch entscheidet", fuer_david=True)
     o = _zweig_ort(repo, ort)
     quelle = o.remote
     if ort == "lokal" and (wo := _ausgecheckt_in(o.cwd, zweig)):
@@ -1196,8 +1219,8 @@ def _hauptrepos() -> list[Path]:
 
 
 def _zweig_ticket(zweig: str) -> int | None:
-    treffer = _ZWEIG_MUSTER.match(zweig)
-    return int(treffer.group(1)) if treffer and zweig.startswith("ticket/") else None
+    """Nummer eines ``ticket/<N>-…``-Zweigs (nur diese räumt der Zweig-Pfad), aus ``_ZWEIG_FORMEN``."""
+    return _nummer(zweig, _ZWEIG_FORMEN) if zweig.startswith("ticket/") else None
 
 
 def _zweig_ort(repo: Path | str, ort: Ort) -> _ZweigOrt:
@@ -1404,7 +1427,7 @@ def _regeln(
     echt = ordner.resolve()
     if {ordner.name, echt.name} & set(_geschuetzte_ordner()):
         raise _Bleibt("geschützter Ordner")
-    if not trocken:  # Trockenlauf zeigt die echte Regel (Altbestand-Liste für David)
+    if not trocken:  # Trockenlauf zeigt die echte Regel (Altbestand-Liste für den Menschen)
         _kein_altbestand(echt)
 
     # 2/3 Git-Ordner? Hauptrepo? Eigenes Repo? (None = gar kein Git, #1536)
@@ -1419,21 +1442,23 @@ def _regeln(
     # #176: eigener Ordner ohne bestimmbares Ticket-Repo ⇒ bleibt (nie über „fremd, aber fertig“)
     if ticket is not None and slug.lower() in _eigene_repos() and _ticket_repo_fuer(slug) is None:
         raise _Bleibt("Ticket-Repo nicht bestimmbar (Maschinen-Liste)", fuer_david=True, fehler=True)
-    fremd = ticket is not None and not _nummer_zaehlt(slug)
+    ziel = _ticket_ziel(ticket, slug) if ticket is not None else None
+    fremd = ticket is not None and ziel is None
     if fremd:
         stand.ticket = None
 
     # 5/6 Ticket zu, seit mindestens 24 h; keine laufende Spec-Sitzung
     if ticket is not None and not fremd:
-        _ticket_lange_zu(ticket, jetzt, platznot, _origin_slug(echt))
+        _ticket_lange_zu(ticket, jetzt, platznot, ziel)
         _keine_spec_sitzung(ticket)
 
     # 7 Prozess im Ordner
     _kein_prozess(echt)
 
-    # 7b #1536: ohne Ticket-Nummer bleibt immer (nach Prozess-Regel: der Grund zeigt den Prozess)
+    # 7b #1536/#235: ohne Ticket-Nummer bleibt, was frisch ist (nach Prozess-Regel: der Grund
+    # zeigt den Prozess); älter darf er nur weg, wenn nichts zu sichern ist (8b unten)
     if ticket is None:
-        raise _Bleibt("keine Ticket-Nummer", fuer_david=True)
+        _ohne_nummer_nicht_frisch(echt, jetzt)
 
     # 7c #135: ein offener Pull-Request zum Zweig hält jeden Ordner
     _kein_offener_pull_request(echt, slug)
@@ -1441,13 +1466,21 @@ def _regeln(
     # 8 Ungesichertes prüfen (auch trocken: fetch, Geheimnisse, Ignoriertes)
     koepfe, zu_sichern, status_vorher = _ungesichertes(echt, ist_worktree)
     art: Art = "gesichert und gelöscht" if (koepfe or zu_sichern) else "gelöscht"
-    if fremd:  # 8b #135: ohne gültiges Ticket nur, was nachweislich fertig ist
+    if ticket is None:  # 8b #235: ohne Nummer keine Sicherung (sicherung/<N>) ⇒ nur Fertiges
+        if koepfe or zu_sichern:
+            raise _Bleibt(
+                f"{OHNE_NUMMER}: Änderungen oder Commits nicht auf origin (ohne Nummer nicht sicherbar)",
+                fuer_david=True,
+            )
+        _koepfe_auf_server(echt, ist_worktree)
+        grund = f"{OHNE_NUMMER}; alles auf origin, Baum sauber, seit 24 h unverändert, kein Pull-Request offen"
+    elif fremd:  # 8b #135: ohne gültiges Ticket nur, was nachweislich fertig ist
         grund = _fremd_fertig(echt, ticket, bool(koepfe or zu_sichern), jetzt)
     else:
         grund = _grund(art, ticket, platznot)
     if trocken:
         return Ergebnis(ordner, art, grund, stand.ticket, trocken=True), None
-    if koepfe or zu_sichern:
+    if ticket is not None and (koepfe or zu_sichern):
         try:
             stand.sicherung = aufpasser.sichern(echt, ticket, jetzt, zusatz_koepfe=koepfe)
         except RuntimeError as fehler:
@@ -1457,6 +1490,7 @@ def _regeln(
                 "Sicherung lieferte nichts, obwohl Ungesichertes erkannt wurde",
                 fehler=True,
             )
+        _sicherung_auf_server(echt, ticket, stand.sicherung)
 
     # Gegenprobe direkt vor dem Löschen: nichts Neues, alles auf origin, kein Prozess
     _kein_prozess(echt, probe=True)
@@ -1489,7 +1523,7 @@ def _git_ordner_pruefen(echt: Path) -> bool | None:
         if _hat_verknuepfte_worktrees(echt):
             raise _Bleibt("Hauptrepo mit verknüpften Worktrees")
     url = _git_oder_none(echt, "config", "--get", "remote.origin.url") or ""
-    if _slug(url).lower() not in _eigene_repos():
+    if _origin_slug(echt).lower() not in _eigene_repos():
         raise _Bleibt(f"fremdes Repo ({url or 'ohne origin'})", fuer_david=True)
     return ist_worktree
 
@@ -1543,7 +1577,7 @@ def _keine_spec_sitzung(ticket: int) -> None:
 def _ticket_nummer(ordner: Path, echt: Path) -> int | None:
     zweig = _git_oder_none(echt, "symbolic-ref", "--short", "-q", "HEAD") or ""
     aus_name = _nummer(ordner.name, _name_muster())
-    aus_zweig = _nummer(zweig, (_ZWEIG_MUSTER,))
+    aus_zweig = _nummer(zweig, _ZWEIG_FORMEN)
     if aus_name is not None and aus_zweig is not None and aus_name != aus_zweig:
         raise _Bleibt(
             f"Ordnername (#{aus_name}) und Zweig {zweig} (#{aus_zweig}) widersprechen sich",
@@ -1561,6 +1595,28 @@ def _nummer_zaehlt(slug: str) -> bool:
     """
     ticket_repo = _ticket_repo_fuer(slug) if slug.strip() else None
     return ticket_repo is not None and ticket_repo.strip().lower() == slug.strip().lower()
+
+
+def zweig_zu_ticket(zweig: str, slug: str) -> tuple[str, int] | None:
+    """Zweigname + ``origin`` (``slug``) → (Ticket-Repo, Nummer); ``None`` = kein abfragbares Ticket.
+
+    Einzige Stelle für diese Zuordnung (#357): versteckt die Zweig-Formen samt Datums-Sperre
+    (``_ZWEIG_FORMEN``) und die Regel „origin entscheidet“ (:func:`_nummer_zaehlt`). Wer ein
+    Ticket zu einem Zweig abfragt, reicht das Ergebnis unverändert an :func:`_ticket_daten`
+    weiter — so kann kein Aufrufer Nummer und Repo falsch verbinden. Eine App-Nummer in einem
+    Skill-Zweig meint bewusst das Skill-Repo (vor dem Löschen wird ohnehin gesichert).
+    """
+    nr = _nummer(zweig, _ZWEIG_FORMEN)
+    return None if nr is None else _ticket_ziel(nr, slug)
+
+
+def _ticket_ziel(nr: int, slug: str) -> tuple[str, int] | None:
+    """Nummer ``nr`` (aus Zweig oder Ordnername) + ``origin`` → (Ticket-Repo, Nummer) oder ``None``.
+
+    Der Ordner-Pfad nutzt das direkt (seine Nummer kann aus dem Ordnernamen kommen);
+    für Zweige gilt :func:`zweig_zu_ticket`."""
+    repo = _ticket_repo_fuer(slug) if _nummer_zaehlt(slug) else None
+    return None if repo is None else (repo, nr)
 
 
 def _kein_offener_pull_request(echt: Path, slug: str) -> None:
@@ -1600,6 +1656,14 @@ def _fremd_fertig(echt: Path, ticket: int, ungesichert: bool, jetzt: float | Non
     return f"{vorne}; Kopf in origin/{haupt}, Baum sauber, seit 24 h unverändert, kein Pull-Request offen"
 
 
+def _ohne_nummer_nicht_frisch(echt: Path, jetzt: float | None) -> None:
+    """#235: Ordner ohne Ticket-Nummer, in den vor weniger als 24 h geschrieben wurde, bleibt
+    mit dem Grund ``keine Ticket-Nummer`` (#1536) — er ist vermutlich in Arbeit."""
+    jetzt_ts = jetzt if jetzt is not None else time.time()
+    if jetzt_ts - _juengste_aenderung(echt) < MINDEST_ZU_SEKUNDEN:
+        raise _Bleibt(OHNE_NUMMER, fuer_david=True)
+
+
 def _juengste_aenderung(echt: Path) -> float:
     """Jüngste Änderungszeit im Ordner (ohne ``.git``-Inhalt) und in Index/HEAD seines Git-Ordners.
 
@@ -1621,11 +1685,14 @@ def _juengste_aenderung(echt: Path) -> float:
     return neu
 
 
-def _ticket_lange_zu(ticket: int, jetzt: float | None, platznot: bool = False, slug: str | None = None) -> None:
-    daten = _ticket_daten(ticket, slug)
+def _ticket_lange_zu(
+    ticket: int, jetzt: float | None, platznot: bool = False, ziel: tuple[str, int] | None | EllipsisType = ...
+) -> None:
+    """``ziel`` wie bei :func:`_ticket_daten` (Ergebnis von :func:`_ticket_ziel`)."""
+    daten = _ticket_daten(ticket, ziel)
     if not isinstance(daten, dict) or "state" not in daten:
         raise _Bleibt(f"Ticket #{ticket} nicht abfragbar", fehler=True)
-    if str(daten["state"]).upper() != "CLOSED":
+    if not ticket_zustand.endgueltig_zu(daten):
         raise _Bleibt(f"Ticket #{ticket} offen")
     zu_seit = _zeitpunkt(daten.get("closedAt"))
     if zu_seit is None:
@@ -1674,25 +1741,29 @@ def _schliesszeit(ordner: Path) -> float | None:
         ticket = _ticket_nummer(ordner, echt)
         if ticket is None:
             return None
-        daten = _ticket_daten(ticket, _origin_slug(echt))
+        daten = _ticket_daten(ticket, _ticket_ziel(ticket, _origin_slug(echt)))
     except (
         _Bleibt,
         OSError,
         RuntimeError,
     ):  # nur Reihenfolge — die Regeln entscheiden danach selbst
         return None
-    if not isinstance(daten, dict) or str(daten.get("state", "")).upper() != "CLOSED":
+    if not isinstance(daten, dict) or not ticket_zustand.endgueltig_zu(daten):
         return None
     return _zeitpunkt(daten.get("closedAt"))
 
 
-def _ticket_daten(ticket: int, slug: str | None = None) -> object:
+def _ticket_daten(ticket: int, ziel: tuple[str, int] | None | EllipsisType = ...) -> object:
     """``gh issue view`` (state, closedAt) mit Zeitlimit; ``None`` = nicht abfragbar.
 
-    ``slug`` = origin des Ordners/Zweig-Repos: Ticket-Repo je Repo (:func:`_ticket_repo_fuer`,
-    meldet selbst einmal); ohne ``slug`` (kein GitHub-origin) das eine Ticket-Repo der Maschine."""
-    if slug is not None:
-        return _gh_ticket(ticket, _ticket_repo_fuer(slug))
+    ``ziel`` = Ergebnis von :func:`zweig_zu_ticket` bzw. :func:`_ticket_ziel`, unverändert: gefragt
+    wird genau dieses Repo mit dieser Nummer, ``None`` = nicht abfragbar (#234, #357). Ohne
+    ``ziel`` (kein GitHub-origin) das eine Ticket-Repo der Maschine für ``ticket``."""
+    if ziel is None:
+        return None
+    if not isinstance(ziel, EllipsisType):
+        repo, nr = ziel
+        return _gh_ticket(nr, repo)
     repo = _ticket_repo()
     if repo is None:
         log.warning("Hausmeister: kein eindeutiges Ticket-Repo in der Maschinen-Liste — #%s bleibt", ticket)
@@ -1881,12 +1952,55 @@ def _nummer(text: str, muster: tuple[re.Pattern[str], ...]) -> int | None:
 
 
 def _origin_slug(echt: Path) -> str:
-    """GitHub-Slug des ``origin`` von ``echt`` (``""`` = keiner)."""
-    return _slug(_git_oder_none(echt, "config", "--get", "remote.origin.url") or "")
+    """GitHub-Slug des ``origin`` von ``echt`` (``""`` = keiner ⇒ fremdes Repo).
+
+    #235 M2: weicht das Push-Ziel ab (``pushurl``, ``pushInsteadOf``), landete eine Sicherung
+    woanders als der Slug sagt ⇒ ``""``. #235 N1: ebenso, wenn ``origin`` mehr als eine
+    Adresse hat oder die Repo-eigene Konfiguration (auch per ``include``) Adressen umschreibt
+    (``url.<x>.insteadOf``) — fetch/push gingen dann woanders hin als der Slug sagt. Umleitungen
+    der Maschine (``--global``/``--system``) gelten für jedes Repo gleich und bleiben erlaubt
+    (#347 W4: auch auf einen Spiegel-Pfad außerhalb des Ordners), außer auf einen Transport-Helfer
+    (``ext::…``, ``fd::…``): dort führt ein Befehl statt eines Servers die Sicherung aus.
+    #254: Konfiguration nicht lesbar (z. B. git < 2.26 ohne ``--show-scope``) ⇒ ``""``.
+    """
+    roh = (_git_oder_none(echt, "config", "--get-all", "remote.origin.url") or "").splitlines()
+    if len(roh) != 1:
+        return ""
+    konfig = _git_oder_none(echt, "config", "--show-scope", "--list")
+    if konfig is None:
+        return ""
+    for zeile in konfig.splitlines():
+        ort, _, eintrag = zeile.partition("\t")
+        if ort in ("local", "worktree") and eintrag.startswith("url."):
+            return ""
+    lesen = _git_oder_none(echt, "remote", "get-url", "origin")
+    if lesen is None or lesen != _git_oder_none(echt, "remote", "get-url", "--push", "origin"):
+        return ""
+    if re.match(r"^[A-Za-z][A-Za-z0-9+.-]*::", lesen):
+        return ""
+    # #252: wirksame Adresse nach allen Umleitungen (auch Maschine, includeIf, Umgebung)
+    if _ziel_im_ordner(echt, lesen):
+        return ""
+    return _slug(roh[0])
+
+
+def _ziel_im_ordner(echt: Path, url: str) -> bool:
+    """#252: zeigt ``url`` (Pfad, relativ zu ``echt``, oder ``file://``) auf ``echt`` selbst oder
+    darunter? Eine Sicherung dorthin ginge mit dem Ordner verloren. Netz-Adressen ⇒ ``False``."""
+    pfad = url.strip().removeprefix("file://")
+    if "://" in pfad:
+        return False
+    if re.match(r"^[^/\\]+:", pfad) and not re.match(r"^[A-Za-z]:[/\\]", pfad):
+        return False  # scp-Form host:pfad
+    ziel = Path(pfad)
+    ordner = echt.resolve()
+    ziel = (ziel if ziel.is_absolute() else ordner / ziel).resolve()
+    return ziel == ordner or ordner in ziel.parents
 
 
 def _slug(url: str) -> str:
-    treffer = _GITHUB_SLUG.search(url.strip())
+    """``owner/name`` einer GitHub-URL; alles andere (fremder Host, Pfad, ``http://``) ⇒ ``""``."""
+    treffer = _GITHUB_SLUG.match(url.strip())
     return treffer.group(1) if treffer else ""
 
 
@@ -1984,6 +2098,8 @@ def _ungesichertes(repo: Path, ist_worktree: bool) -> tuple[list[str], bool, lis
         raise _Bleibt(f"git fetch origin gescheitert: {_kurz(fehler)}", fehler=True) from None
     if not ist_worktree and _git_oder_none(repo, "rev-parse", "--verify", "-q", "refs/stash"):
         raise _Bleibt("Stash vorhanden (git stash list)", fuer_david=True)
+    if _nur_im_reflog(repo, ist_worktree):
+        raise _Bleibt("ungesicherte Commits im Verlauf (Reflog, auf keinem Zweig)", fuer_david=True)
     for zeile in aufpasser.git_lauf(repo, "ls-files", "-s").splitlines():
         if zeile.startswith("160000 "):
             raise _Bleibt(f"Submodul {zeile.split(chr(9), 1)[-1]}", fuer_david=True)
@@ -2030,8 +2146,8 @@ def _ungesichertes(repo: Path, ist_worktree: bool) -> tuple[list[str], bool, lis
     return koepfe, zu_sichern, alle
 
 
-def _ungepushte_koepfe(repo: Path, ist_worktree: bool) -> list[str]:
-    """Refs mit Commits nicht auf origin (Klon: alle außer refs/remotes + HEAD; Worktree: HEAD)."""
+def _lokale_koepfe(repo: Path, ist_worktree: bool) -> list[str]:
+    """Refs, deren Commits auf origin liegen müssen (Klon: alle außer refs/remotes + HEAD; Worktree: HEAD)."""
     refs = ["HEAD"]
     if not ist_worktree:
         refs += [
@@ -2039,9 +2155,112 @@ def _ungepushte_koepfe(repo: Path, ist_worktree: bool) -> list[str]:
             for r in aufpasser.git_lauf(repo, "for-each-ref", "--format=%(refname)").split()
             if not r.startswith("refs/remotes/")
         ]
+    return refs
+
+
+#: So viele Reflog-Stände je ``rev-list``-Aufruf (Windows: Kommandozeile höchstens 32 KiB).
+_REFLOG_HAPPEN = 200
+
+
+def _nur_im_reflog(repo: Path, ist_worktree: bool) -> bool:
+    """#235 R1: liegt ein Commit nur im Reflog, der mit dem Ordner verschwindet?
+
+    Verschwinden: beim Klon alle Reflogs (auch die verknüpfter Worktrees), beim Worktree die
+    seines eigenen Git-Verzeichnisses (die Zweig-Reflogs liegen im Hauptklon und bleiben). Kein Verlust ist, was von einem Zweig auf
+    ``origin`` (nach dem ``fetch`` in :func:`_ungesichertes`) oder einem lokalen Ref erreichbar
+    ist — lokale Refs prüfen die übrigen Regeln (Sicherung ``sicherung/<N>`` oder bleibt).
+    Gewöhnliche alte Stände liegen so längst auf dem Server und halten den Ordner nicht.
+
+    #254: „auf dem Server“ heißt ``ls-remote`` (nicht fälschbare Tracking-Refs). Die Stände
+    kommen roh aus den Reflog-Dateien (``git log -g`` überspringt fehlende Objekte still);
+    ein fehlendes Objekt, ``core.logAllRefUpdates=false`` (Verlauf fehlt) oder ein anderer
+    Ref-Speicher als ``files`` (keine Reflog-Dateien) ⇒ ``_Bleibt``.
+    """
+    if _git_oder_none(repo, "config", "--bool", "--get", "core.logAllRefUpdates") == "false":
+        raise _Bleibt("core.logAllRefUpdates=false: Verlauf (Reflog) nicht prüfbar", fuer_david=True)
+    if (_git_oder_none(repo, "config", "--get", "extensions.refStorage") or "files").lower() != "files":
+        raise _Bleibt("Ref-Speicher ohne Reflog-Dateien: Verlauf nicht prüfbar", fuer_david=True)
+    # Was mit dem Ordner stirbt: beim Worktree sein Git-Verzeichnis (``HEAD``, ``refs/worktree/*``,
+    # ``refs/bisect/*``), beim Klon das ganze ``.git`` samt ``worktrees/*/logs`` verknüpfter Worktrees.
+    git_dir = Path(aufpasser.git_lauf(repo, "rev-parse", "--absolute-git-dir").strip())
+    wurzeln = [git_dir / "logs"] + ([] if ist_worktree else sorted(git_dir.glob("worktrees/*/logs")))
+    staende: set[str] = set()
+    try:
+        dateien = [p for w in wurzeln for p in w.rglob("*") if p.is_file()]
+        inhalte = [(d, d.read_bytes()) for d in dateien]
+    except OSError as fehler:
+        raise _Bleibt(f"Reflog nicht lesbar: {fehler}", fehler=True) from None
+    for datei, inhalt in inhalte:
+        for zeile in inhalt.splitlines():
+            felder = zeile.split(b" ", 2)
+            if len(felder) < 3 or not all(re.fullmatch(rb"[0-9a-f]{40}(?:[0-9a-f]{24})?", f) for f in felder[:2]):
+                raise _Bleibt(f"unlesbare Reflog-Zeile in {datei.name}", fehler=True)
+            staende |= {f.decode() for f in felder[:2] if f.strip(b"0")}
+    sicher = ("--not", "--exclude=refs/remotes/*", "--all", *_server_koepfe(repo))
+    liste = sorted(staende)
+    for i in range(0, len(liste), _REFLOG_HAPPEN):
+        happen = liste[i : i + _REFLOG_HAPPEN]
+        try:  # ohne --ignore-missing: ein fehlendes Objekt ist ein Fehler
+            aufpasser.git_lauf(repo, "rev-list", "--no-walk", *happen)
+        except RuntimeError as fehler:
+            raise _Bleibt(f"Reflog verweist auf fehlendes Objekt: {_kurz(fehler)}", fuer_david=True) from None
+        if aufpasser.git_lauf(repo, "rev-list", "-n", "1", "--ignore-missing", *happen, *sicher).strip():
+            return True
+    return False
+
+
+def _ungepushte_koepfe(repo: Path, ist_worktree: bool) -> list[str]:
+    """Refs mit Commits nicht auf origin (laut lokaler Tracking-Refs)."""
     return [
-        ref for ref in refs if aufpasser.git_lauf(repo, "rev-list", "-n", "1", ref, "--not", "--remotes=origin").strip()
+        ref
+        for ref in _lokale_koepfe(repo, ist_worktree)
+        if aufpasser.git_lauf(repo, "rev-list", "-n", "1", ref, "--not", "--remotes=origin").strip()
     ]
+
+
+def _koepfe_auf_server(repo: Path, ist_worktree: bool) -> None:
+    """#235 M1a: jeder lokale Kopf muss von einem Zweig-Kopf auf dem Server (``ls-remote``)
+    erreichbar sein — lokale Tracking-Refs lassen sich fälschen oder per Refspec verengen.
+    Server-Köpfe, die lokal fehlen, zählen nicht (``--ignore-missing``). Sonst ``_Bleibt``."""
+    auf_server = _server_koepfe(repo)
+    for ref in _lokale_koepfe(repo, ist_worktree):
+        if aufpasser.git_lauf(repo, "rev-list", "--ignore-missing", "-n", "1", ref, "--not", *auf_server).strip():
+            raise _Bleibt(f"{OHNE_NUMMER}: {ref} nicht auf dem Server (ls-remote origin)", fuer_david=True)
+
+
+def _server_koepfe(repo: Path) -> list[str]:
+    """SHAs aller Zweig-Köpfe von ``origin`` laut Server (``ls-remote --heads``); nicht
+    erreichbar oder unlesbare Zeile ⇒ ``_Bleibt``.
+
+    ponytail: ein ls-remote je Aufrufer (ohne Nummer zwei je Ordner), alle Köpfe auf einer
+    Kommandozeile; zwischenspeichern bzw. in Happen, wenn Zweig-Zahl oder Laufzeit stört."""
+    try:
+        roh = _git_ohne_frage(repo, "ls-remote", "--heads", "origin")
+    except RuntimeError as fehler:
+        raise _Bleibt(f"Server nicht erreichbar (ls-remote): {_kurz(fehler)}", fehler=True) from None
+    auf_server: list[str] = []
+    for zeile in roh.splitlines():
+        if not zeile.strip():
+            continue
+        treffer = _LS_REMOTE_ZEILE.match(zeile)
+        if treffer is None:  # #235 N2: nur „<sha>\trefs/heads/…“ ist eine Server-Angabe
+            raise _Bleibt(f"unlesbare ls-remote-Zeile {_kurz(zeile)!r}", fehler=True)
+        auf_server.append(treffer.group(1))
+    return auf_server
+
+
+def _sicherung_auf_server(repo: Path, ticket: int, sha: str) -> None:
+    """#247: steht ``sicherung/<ticket>`` am Server (``ls-remote``) genau auf ``sha``? Sonst
+    ``_Bleibt`` — der Push kann gelungen sein und der Server den Zweig gleich wieder entfernt haben."""
+    ref = f"refs/heads/sicherung/{ticket}"
+    try:
+        roh = _git_ohne_frage(repo, "ls-remote", "origin", ref).strip()
+    except RuntimeError as fehler:
+        raise _Bleibt(f"sicherung/{ticket} nicht gegenprüfbar (ls-remote): {_kurz(fehler)}", fehler=True) from None
+    treffer = _LS_REMOTE_ZEILE.fullmatch(roh)
+    if treffer is None or not roh.endswith(f"\t{ref}") or treffer.group(1) != sha:
+        stand = treffer.group(1)[:7] if treffer else "fehlt"
+        raise _Bleibt(f"sicherung/{ticket} am Server {stand} ≠ gesichert {sha[:7]}", fehler=True)
 
 
 # --- Prozesse -------------------------------------------------------------------
@@ -2240,7 +2459,7 @@ def altbestand_pfad() -> Path:
 
 
 def altbestand_festhalten(ordner: Iterable[Path]) -> Path:
-    """Hält Ordner als Altbestand fest: sie bleiben im echten Lauf, bis David die Liste
+    """Hält Ordner als Altbestand fest: sie bleiben im echten Lauf, bis der Mensch die Liste
     freigibt (``"freigegeben": true`` in der Datei). Schreibt
     ``{"freigegeben": false, "erstellt": <iso>, "ordner": [<posix, aufgelöst>]}``.
     Gibt es die Datei schon, kommen neue Ordner dazu, keiner geht weg. Ist sie schon
@@ -2287,7 +2506,7 @@ def _kein_altbestand(echt: Path) -> None:
     """Altbestand-Regel (nur echter Lauf): gelistet und nicht freigegeben ⇒ bleibt;
     Datei kaputt/unlesbar ⇒ jeder Ordner bleibt mit Fehler. Datei fehlt: am Server keine
     Wirkung; unter Windows hält der Lauf zuerst alle vorhandenen Ordner fest — der
-    erste Lauf am Laptop löscht nie ohne Davids Ja."""
+    erste Lauf am Laptop löscht nie ohne das Ja des Menschen."""
     pfad = altbestand_pfad()
     if _ist_windows() and not os.path.lexists(pfad):
         try:
@@ -2311,7 +2530,7 @@ def _kein_altbestand(echt: Path) -> None:
         return
     schluessel = os.path.normcase(str(echt))
     if any(os.path.normcase(str(Path(o))) == schluessel for o in liste):
-        raise _Bleibt(f"Altbestand, wartet auf Davids Ja (Liste {pfad})")
+        raise _Bleibt(f"Altbestand, wartet auf das Ja des Menschen (Liste {pfad})")
 
 
 def _kennzahl_schreiben(ergebnisse: list[Ergebnis], *, trocken: bool) -> None:
@@ -2319,12 +2538,19 @@ def _kennzahl_schreiben(ergebnisse: list[Ergebnis], *, trocken: bool) -> None:
     und die Bleib-Gründe gezählt (Zahlen im Grund als ``N``, ohne Klammer-Zusatz)."""
     geloescht = sum(1 for e in ergebnisse if e.art != "bleibt")
     gruende: dict[str, int] = {}
+    fehler_je: dict[str, list[str]] = {}
     for e in ergebnisse:
         if e.art == "bleibt":
             schluessel = re.sub(r"\d+", "N", e.grund.split(" (", 1)[0])
             gruende[schluessel] = gruende.get(schluessel, 0) + 1
+            if e.fehler:
+                fehler_je.setdefault(schluessel, []).append(f"{e.ordner}: {e.grund}")
     satz = f"{geloescht} von {len(ergebnisse)} gelöscht, {len(ergebnisse) - geloescht} bleiben"
     log.info("Hausmeister: Kennzahl %s%s", satz, " (trocken)" if trocken else "")
+    # #235: eine Zeile je Bleib-Grund mit Anzahl; Fehler zusätzlich mit Ordner und Text
+    for schluessel, anzahl in sorted(gruende.items(), key=lambda kv: -kv[1]):
+        fehl = fehler_je.get(schluessel)
+        log.info("Hausmeister: bleibt %d× %s%s", anzahl, schluessel, f" — Fehler: {' | '.join(fehl)}" if fehl else "")
     _log_zeile(
         {
             "zeit": datetime.now().astimezone().isoformat(timespec="seconds"),

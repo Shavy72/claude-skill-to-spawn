@@ -6,7 +6,7 @@ disable-model-invocation: true
 
 Call the Skill tool twice, for "grilling" and "domain-modeling".
 
-<!-- LOKALER ZUSATZ (Davids Regel, 2026-10-07) — bei jedem Update/Neu-Import dieses Skills ERHALTEN. -->
+<!-- LOKALER ZUSATZ (Regel des Menschen, 2026-10-07) — bei jedem Update/Neu-Import dieses Skills ERHALTEN. -->
 ## Zusatz: UX-Runde und Architektur-Runde (ergänzt den Ablauf, ändert ihn nicht)
 
 - **UX-Runde:** Hat der Auftrag sichtbare, hörbare oder fühlbare Teile (UI, Töne, Animation, Haptik, Benachrichtigungen), gibt es eigene Grill-Fragen dazu, nicht erst am Ende: Aussehen, Klang, Gefühl, Zustände (leer, lädt, Fehler, fertig), Geräte und Browser, gewünschte Qualitätsstufe. Braucht die Absprache etwas zum Ansehen oder Anhören, schlägt das Grillen einen Prototyp vor (HTML-Werkbank oder Artifact mit Varianten) und klärt damit. Rein technischer Auftrag ohne UX-Anteil: Runde entfällt.

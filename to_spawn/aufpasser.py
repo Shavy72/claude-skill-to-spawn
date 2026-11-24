@@ -16,7 +16,7 @@ Läuft per Cron alle 15 Minuten (0 Token, reines Skript) und sieht je tmux-Sitzu
    erst, wenn Fenster und Prozess 5 s lang bleiben (R6). Nie bei Label
    ``ready-for-human``/``needs-info``/``wontfix``; verschwindet das Fenster nach
    dem Start gleich wieder, gibt es höchstens 2 Starts in 6 h, dann einmal
-   „braucht David“.
+   „braucht den Menschen“.
 2. **Ticket zu:** ``bau <N>`` mit geschlossenem Ticket, Pane-Text seit ≥ 15 min
    unverändert und keine laufende Arbeit → Worktree sichern (falls schmutzig),
    Session beenden. Ist die Grenze voll (Speicher/Session-Zahl) und meldet die
@@ -33,15 +33,15 @@ Läuft per Cron alle 15 Minuten (0 Token, reines Skript) und sieht je tmux-Sitzu
      ``--resume <id>`` neu starten (Fenster, Index und Sitzung bleiben — die Sitzung
      stirbt nie, auch als letztes Fenster). Danach bis 120 s nachweisen, dass die
      Session mit derselben ID wieder läuft. Scheitert Sicherung oder Nachweis,
-     bleibt alles stehen und David wird gerufen.
-   - Stufe 2 → nichts mehr ändern, einmal „braucht David“ melden (Stufe 3).
+     bleibt alles stehen und der Mensch wird gerufen.
+   - Stufe 2 → nichts mehr ändern, einmal „braucht den Menschen“ melden (Stufe 3).
    Die Stufe steigt nur bei einem Eingriff. Ändert sich der Pane-Text danach, hat
    der Eingriff gewirkt: Stufe 0, Uhr neu. Kill/Resume gibt es also nur, wenn nach
    dem Anstupsen ``hang_min`` lang GAR NICHTS passiert ist; Stufe 3 bleibt, bis der
    Text sich ändert — kein Zeit-Reset. Direkt vor jedem Eingriff wird der Pane-Text
    neu gelesen: anders als zu Laufbeginn, arbeitend oder Deploy/Gate inzwischen
    gestartet ⇒ Kette abbrechen (R4). Mehr als 3 Anstupser je Fenster in 24 h ⇒
-   Stufe 3, einmal „braucht David“ (R5). Das Aufseher-Fenster geht denselben Weg,
+   Stufe 3, einmal „braucht den Menschen“ (R5). Das Aufseher-Fenster geht denselben Weg,
    nur ohne Sicherung (kein Worktree): ``wache.py --resume <id>`` (R1).
    Lebt im Pane nur noch die Shell (Session beendet), wird nie angestupst — der
    Text liefe als Befehl —, sondern nach ``hang_min`` Stille gleich bei Stufe 1
@@ -97,12 +97,14 @@ from typing import Any, Literal
 from to_spawn import (
     anleitung,
     bau_log,
+    briefkasten,
     config,
     eigener_handoff,
     prozessbaum,
     sessions_datei,
     speicher,
     starter,
+    ticket_zustand,
     vorfall,
 )
 from to_spawn import sperre as _sperre
@@ -117,6 +119,8 @@ HANG_MIN = 90
 HANG_MIN_UNTERGRENZE = 61
 #: Offene Ja/Nein-Rückfrage: nach so vielen Minuten einmal melden.
 RUECKFRAGE_MIN = 15
+#: Ja/Nein-Frage im Text am Prompt (nicht Dialog): nach so vielen Minuten anstupsen (#485).
+FRAGE_PROMPT_MIN = 5
 #: „Ticket zu“: Fenster erst schließen, wenn der Text so lange unverändert ist.
 KARENZ_MIN = 15
 #: Nach dem Fortsetzen so lange auf die Session mit derselben ID warten.
@@ -128,7 +132,7 @@ START_MAX = 2
 START_FENSTER_S = 6 * 3600
 #: Nach einem Fenster-Start so lange prüfen, dass Fenster und Prozess bleiben (R6).
 START_NACHWEIS_S = 5.0
-#: Mehr als so viele Anstupser je Fenster im Zeitfenster ⇒ „braucht David“ (R5).
+#: Mehr als so viele Anstupser je Fenster im Zeitfenster ⇒ „braucht den Menschen“ (R5).
 STUPSER_MAX = 3
 STUPSER_FENSTER_S = 24 * 3600
 #: Meldungen ohne Eingriff kommen je Fenster/Ereignis nur einmal am Tag ins Issue;
@@ -183,7 +187,7 @@ EREIGNIS_VORFALL: dict[str, tuple[str, str, str, str]] = {
     ),
     "braucht_david": (
         "mensch",
-        "Bau-Kette wartet auf Davids Entscheidung",
+        "Bau-Kette wartet auf die Entscheidung des Menschen",
         "Die Frage wurde nicht vor dem Spawn im Grill entschieden",
         "Entscheidung in den Grill vorziehen; sonst greift die 60-min-Annahme (#285)",
     ),
@@ -464,6 +468,29 @@ def rueckfrage(text: str) -> bool:
     return any(m in text for m in RUECKFRAGE_MARKER)
 
 
+# Ein Fehl-Treffer ist harmlos: er löst nur Stufe 0 aus (ein Anstupser, begrenzt durch STUPSER_MAX).
+FRAGE_JA_NEIN = re.compile(
+    r"\bja\s*/\s*nein\b|\byes\s*/\s*no\b|\bja oder nein\b|\byes or no\b"
+    r"|[(\[]\s*(?:j/n|y/n)\s*[)\]]",
+    re.IGNORECASE,
+)
+
+
+def frage_am_prompt(text: str) -> bool:
+    """Steht in den letzten Zeilen über dem Eingabefeld eine Ja/Nein-Frage (#485)?
+
+    Eine Bau-Session fragt nie (sie nimmt den Vorschlag); bleibt sie an so einer
+    Frage stehen, wartet sie sonst bis ``hang_min`` auf den ersten Anstupser.
+    """
+    zeilen = [z for z in ohne_statuszeile(text).splitlines() if z.strip()]
+    zeilen = [z for z in zeilen if not EINGABEFELD_LINIE.fullmatch(z) and not z.lstrip().startswith("❯")]
+    if any(briefkasten.JA_BEFEHL in z for z in zeilen[-3:]):
+        return False  # Live-Ja-Aufforderung (#531): Session wartet zu Recht auf den Menschen
+    return any(FRAGE_JA_NEIN.search(z) for z in zeilen[-3:]) or (
+        bool(zeilen) and zeilen[-1].rstrip().endswith("?")
+    )
+
+
 #: Rahmenlinie des Claude-Code-Eingabefelds: Zeile nur aus ``─`` (mind. 20).
 EINGABEFELD_LINIE = re.compile(r"\s*─{20,}\s*")
 
@@ -478,13 +505,81 @@ def ohne_statuszeile(text: str) -> str:
     (Shell, Dialog mit nur einer Linie, fremdes Programm) bleibt der Text ganz.
     """
     zeilen = text.splitlines()
+    feld = _eingabefeld(zeilen)
+    return text if feld is None else "\n".join(zeilen[: feld[1]])
+
+
+def _eingabefeld(zeilen: list[str]) -> tuple[int, int] | None:
+    """Zeilen-Index der oberen und unteren Rahmenlinie des Claude-Eingabefelds (``❯`` dazwischen)."""
     linien = [i for i, z in enumerate(zeilen) if EINGABEFELD_LINIE.fullmatch(z)]
     if len(linien) < 2:
-        return text
+        return None
     oben, unten = linien[-2], linien[-1]
     if not any(z.lstrip().startswith("❯") for z in zeilen[oben + 1 : unten]):
-        return text
-    return "\n".join(zeilen[:unten])
+        return None
+    return oben, unten
+
+
+#: Steuerfolgen im Bild aus ``capture-pane -e``: CSI-Folgen (SGR-Farben, Cursor) mit Parametern
+#: in Gruppe 1 und Endzeichen in Gruppe 2, dazu OSC-Folgen (z. B. OSC 8 Links), die mit BEL
+#: oder ``ESC \`` enden — bei OSC sind beide Gruppen ``None``.
+_STEUERFOLGE = re.compile(r"\x1b\[([0-9;:?]*)([@-~])|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)")
+
+
+def ohne_farben(text: str) -> str:
+    """Bild aus ``capture-pane -e`` ohne Steuerfolgen — so, wie ``capture-pane`` ohne ``-e`` es liefert."""
+    return _STEUERFOLGE.sub("", text)
+
+
+def _ohne_gedimmtes(zeile: str) -> str:
+    """Zeile ohne gedimmten Text (SGR 2) und ohne Steuerfolgen.
+
+    Claude Code zeigt Platzhalter und Prompt-Vorschläge gedimmt; getippter Text ist es nie.
+    ``38;2;r;g;b``/``48;5;n`` sind Farbwerte, ihre Zahlen zählen nicht als „gedimmt“. Parameter
+    werden nur an ``;`` geteilt; Unterparameter hinter ``:`` (``4:2``, ``38:2::r:g:b``) gehören
+    zu ihrem Code und zählen nie als eigener Wert.
+    """
+    raus: list[str] = []
+    gedimmt = False
+    pos = 0
+    for treffer in _STEUERFOLGE.finditer(zeile):
+        if not gedimmt:
+            raus.append(zeile[pos : treffer.start()])
+        pos = treffer.end()
+        if treffer.group(2) != "m":
+            continue
+        werte = treffer.group(1).split(";")
+        i = 0
+        while i < len(werte):
+            wert, _, unterwerte = werte[i].partition(":")
+            if unterwerte:
+                pass  # Code mit eigenen Unterparametern (4:2, 38:2:…): nie Dim, nichts überspringen
+            elif wert in ("", "0", "22"):
+                gedimmt = False
+            elif wert == "2":
+                gedimmt = True
+            elif wert in ("38", "48", "58") and i + 1 < len(werte):
+                i += 4 if werte[i + 1] == "2" else 2  # Farbmodus + Werte überspringen
+            i += 1
+    if not gedimmt:
+        raus.append(zeile[pos:])
+    return "".join(raus)
+
+
+def eingabe_leer(text: str) -> bool:
+    """Das Bild zeigt das Claude-Eingabefeld, und hinter ``❯`` steht nichts (#414).
+
+    ``text`` darf Farbcodes tragen (``capture-pane -e``): gedimmter Text hinter ``❯`` ist ein
+    Platzhalter oder Prompt-Vorschlag von Claude Code und zählt als leer. Normal gezeigter Text
+    (halber Text eines Menschen, auch gemischt mit gedimmtem) zählt als belegt; ohne Farbcodes
+    ist jeder Text belegt. Kein Eingabefeld (Shell, Dialog, fremdes Programm) zählt nie als leer.
+    """
+    zeilen = text.splitlines()
+    feld = _eingabefeld([ohne_farben(z) for z in zeilen])
+    if feld is None:
+        return False
+    inhalt = "".join(_ohne_gedimmtes(z) for z in zeilen[feld[0] + 1 : feld[1]]).strip()
+    return inhalt.removeprefix("❯").strip() == ""
 
 
 def pane_hash(text: str) -> str:
@@ -721,15 +816,11 @@ def _session_json_lesen(
     pid: int, window_id: str, pane_id: str, heim: Path | None = None
 ) -> SessionInfo | None:
     """``<heim>/.claude/sessions/<pid>.json`` lesen — nur gültig, wenn der Prozess lebt
-    und das ``tmux``-Feld (``sitzung:@fenster.%pane``) zu diesem Pane passt oder fehlt."""
+    und das ``tmux``-Feld (``sitzung:@fenster.%pane``) zu diesem Pane passt oder fehlt.
+    PID- und ``procStart``-Abgleich: :func:`speicher.session_json_lesen` (eine Quelle, #460)."""
     datei = (heim or Path.home()) / ".claude" / "sessions" / f"{pid}.json"
-    try:
-        roh = json.loads(datei.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-    if not isinstance(roh, dict) or not _prozess_lebt(pid):
-        return None
-    if int(roh.get("pid") or pid) != pid:
+    roh = speicher.session_json_lesen(pid, datei.parent, Path("/proc"))  # echte Prozesse, nie die Test-Tür
+    if roh is None or not _prozess_lebt(pid):
         return None
     sid = roh.get("sessionId")
     if not isinstance(sid, str) or not sid:
@@ -1284,36 +1375,45 @@ class Aufpasser:
         roh = os.environ.get("TO_SPAWN_REPO")
         return Path(roh) if roh else None
 
-    def offene_tickets(self, spec: str, repo: Path) -> set[int]:
+    def offene_tickets(self, spec: str, repo: Path) -> dict[int, dict]:
+        """Unter-Tickets, die nicht :func:`ticket_zustand.endgueltig_zu` sind, je Nummer
+        mit ``state``/``labels`` — aus EINEM Listen-Aufruf, kein ``issue view`` je Ticket
+        (#279: ein hängendes ``gh`` hielt sonst den ganzen Takt auf). Unlesbar ⇒
+        ``RuntimeError``."""
         raus = self.sh(
             "gh",
             "api",
             f"repos/{{owner}}/{{repo}}/issues/{spec}/sub_issues",
             "--paginate",
             "--jq",
-            '.[] | select(.state=="open") | .number',
+            ".[] | {number, state, state_reason, labels: [.labels[]?.name]} | tojson",
             cwd=repo,
         )
-        return {int(x) for x in raus.split()}
+        try:
+            tickets = [json.loads(z) for z in raus.splitlines() if z.strip()]
+            if not all(isinstance(t, dict) for t in tickets):
+                raise TypeError("Zeile ist kein JSON-Objekt")
+            return {
+                int(t["number"]): t
+                for t in tickets
+                if not ticket_zustand.endgueltig_zu(t)
+            }
+        except (json.JSONDecodeError, KeyError, TypeError) as fehler:
+            raise RuntimeError(f"sub_issues {spec}: unlesbar ({fehler})") from None
 
     def ticket_lesen(self, ticket: int, repo: Path) -> dict:
-        """``state`` und ``labels`` (Namen) eines Tickets."""
-        raus = self.sh(
-            "gh", "issue", "view", str(ticket), "--json", "state,labels", cwd=repo
-        )
-        try:
-            roh = json.loads(raus)
-            labels = {
-                str(x.get("name", ""))
-                for x in roh.get("labels") or []
-                if isinstance(x, dict)
-            }
-            return {"state": roh.get("state"), "labels": labels}
-        except (json.JSONDecodeError, AttributeError) as fehler:
-            raise RuntimeError(f"gh issue view {ticket}: unlesbar ({fehler})") from None
+        """Ticket über :func:`ticket_zustand.lesen` — alle Felder des Bausteins, ``labels``
+        als Menge der Namen (für ``& STOPP_LABELS``). ``RuntimeError``, wenn GitHub
+        nichts Lesbares liefert; der Aufrufer entscheidet dann vorsichtig."""
+        daten = ticket_zustand.lesen(ticket, repo)
+        if daten is None:
+            raise RuntimeError(f"#{ticket}: Ticket-Zustand nicht lesbar (gh)")
+        return {**daten, "labels": ticket_zustand.label_namen(daten)}
 
-    def ticket_zu(self, ticket: int, repo: Path) -> bool:
-        return self.ticket_lesen(ticket, repo).get("state") == "CLOSED"
+    def zu_bauen(self, offen: dict[int, dict]) -> set[int]:
+        """Die offenen Tickets, die noch nicht fertig gebaut sind — nur dort baut noch
+        jemand (#279, Fall 03:05). Urteil aus den Listen-Daten, kein weiterer Aufruf."""
+        return {n for n, t in offen.items() if not ticket_zustand.fertig_gebaut(t)}
 
     def pane_text(self, ziel: str) -> str:
         return self.tmux("capture-pane", "-p", "-t", ziel)
@@ -1573,7 +1673,7 @@ class Aufpasser:
         teilbaum = list(dict.fromkeys(p for c in claude for p in prozess_baum(c)))
         # Halber Text im Eingabefeld machte aus /exit eine Nachricht.
         self.tmux("send-keys", "-t", ziel, "C-u")
-        self._eingeben(ziel, "/exit")
+        self._eingeben(ziel, anleitung.EXIT)
         frist = time.monotonic() + self.e.exit_warten_s
         while any(_prozess_lebt(pid) for pid in claude) and time.monotonic() < frist:
             time.sleep(0.2)
@@ -1913,18 +2013,24 @@ class Aufpasser:
         if ticket is not None and ticket not in offen and not arbeitend:
             # Volle Grenze + idle Session: nicht 15 min Karenz absitzen, sondern kurz
             # warten und Text vergleichen — der Platz wird gebraucht (#592).
-            platznot = still_min < KARENZ_MIN and self._platznot(repo, info)
+            platznot = still_min < KARENZ_MIN and self._platznot(repo, info, f.sitzung)
             if still_min >= KARENZ_MIN or platznot:
                 try:
-                    zu = self.ticket_zu(ticket, repo)
+                    daten = self.ticket_lesen(ticket, repo)
                 except RuntimeError as fehler:
                     log.error("%s: Ticket-Zustand nicht lesbar: %s", f.name, fehler)
-                    zu = False
-                if zu:
-                    self.ticket_zu_schliessen(
-                        f, ticket, repo, schluessel, hash_start, info, platznot
-                    )
-                    return
+                    daten = {}  # gilt als offen: nichts schließen
+                if ticket_zustand.fertig_gebaut(daten):
+                    if not self._frage_haelt(f, ticket, repo, daten):
+                        self.ticket_zu_schliessen(
+                            f, ticket, repo, schluessel, hash_start, info, platznot,
+                            grund=ticket_zustand.wortlaut(daten),
+                        )
+                        return
+                    # Frage hält nur das Schließen: lebt Claude, bleibt das Fenster
+                    # unberührt; beendete Session läuft in die Stufenkette unten (#416).
+                    if info is not None or not session_beendet(f.pane_pid):
+                        return
 
         if rueckfrage(text):
             if still_min >= RUECKFRAGE_MIN:
@@ -1933,7 +2039,7 @@ class Aufpasser:
                     repo,
                     schluessel,
                     "rueckfrage",
-                    f"„{f.name}“ wartet seit {int(still_min)} min auf eine Ja/Nein-Bestätigung — braucht David.",
+                    f"„{f.name}“ wartet seit {int(still_min)} min auf eine Ja/Nein-Bestätigung — braucht den Menschen.",
                 )
             return
         if (
@@ -1943,7 +2049,10 @@ class Aufpasser:
             and self.folge_ab_handoff(f, ticket, repo, schluessel, hash_start)
         ):
             return
-        if arbeitend or still_min < self.e.hang_min:
+        # Kurze Schwelle nur fürs erste Anstupsen; Fortsetzen (Kill) bleibt bei hang_min ≥ 61.
+        kurz = int(e.get("stufe", 0)) == 0 and frage_am_prompt(text)
+        schwelle = FRAGE_PROMPT_MIN if kurz else self.e.hang_min
+        if arbeitend or still_min < schwelle:
             return
         if ticket is None and not f.ist_wache:
             return
@@ -1960,7 +2069,7 @@ class Aufpasser:
                     repo,
                     schluessel,
                     "session_beendet",
-                    f"„{f.name}“: Session beendet, keine Gesprächs-ID — braucht David.",
+                    f"„{f.name}“: Session beendet, keine Gesprächs-ID — braucht den Menschen.",
                 )
                 return
             sid, cwd = gemerkt
@@ -1982,7 +2091,7 @@ class Aufpasser:
                     repo,
                     schluessel,
                     "stupser_erschoepft",
-                    f"„{f.name}“ wurde {STUPSER_MAX}× angestupst und wird immer wieder still — braucht David.",
+                    f"„{f.name}“ wurde {STUPSER_MAX}× angestupst und wird immer wieder still — braucht den Menschen.",
                 )
                 return
             if not self.vor_eingriff(f, hash_start, repo):
@@ -2011,11 +2120,33 @@ class Aufpasser:
                 repo,
                 schluessel,
                 "braucht_david",
-                f"„{f.name}“ reagiert nach Anstupsen und Fortsetzen nicht — braucht David.",
+                f"„{f.name}“ reagiert nach Anstupsen und Fortsetzen nicht — braucht den Menschen.",
             )
 
-    def _platznot(self, repo: Path, info: SessionInfo | None) -> bool:
-        """Grenze voll (Speicher/Session-Zahl) und die Session meldet selbst ``idle``."""
+    def _frage_haelt(self, f: Fenster, ticket: int, repo: Path, daten: dict) -> bool:
+        """Offene Frage des Tickets im Briefkasten hält das Fenster, auch bei Platznot (#416).
+
+        Die Bau-Session wartet auf die Antwort und schließt danach selbst das Ticket — ohne
+        sie bliebe es ohne Schließer. Ist das Issue schon zu, braucht es keinen mehr: eine
+        alte, nie beantwortete Frage hält dann nicht. Briefkasten nicht lesbar ⇒ hält.
+        """
+        if ticket_zustand.endgueltig_zu(daten):
+            return False
+        try:
+            fragen = briefkasten.offene([ticket], hauptbaum=repo)
+        except (OSError, ValueError, RuntimeError) as fehler:
+            log.warning("%s: Briefkasten nicht lesbar (%s) — Fenster bleibt", f.name, fehler)
+            return True
+        if fragen:
+            log.info(
+                "%s: offene Frage im Briefkasten (%s) — Fenster bleibt, Ticket braucht die Session",
+                f.name,
+                ", ".join(q["id"] or q["frage"] for q in fragen),
+            )
+        return bool(fragen)
+
+    def _platznot(self, repo: Path, info: SessionInfo | None, sitzung: str) -> bool:
+        """Grenze voll (Speicher/Session-Zahl der tmux-Sitzung) und die Session meldet selbst ``idle``."""
         if info is None or not info.aus_json or info.status != "idle":
             return False
         try:
@@ -2023,7 +2154,7 @@ class Aufpasser:
         except (OSError, ValueError) as fehler:
             log.warning("%s: Konfig nicht lesbar: %s", repo, fehler)
             return False
-        return not speicher.platz_frei(konfig)[0]
+        return not speicher.platz_frei(konfig, sitzung=sitzung, tmux_socket=self.e.tmux_socket)[0]
 
     def ticket_zu_schliessen(
         self,
@@ -2034,7 +2165,10 @@ class Aufpasser:
         hash_start: str,
         info: SessionInfo | None,
         platznot: bool = False,
+        *,
+        grund: str,
     ) -> None:
+        """``grund``: :func:`ticket_zustand.wortlaut` für die Meldung (#279)."""
         if platznot and not self.e.trocken:
             log.info(
                 "%s: Ticket zu, Grenze voll — %g s Gegenprobe statt Karenz",
@@ -2053,7 +2187,7 @@ class Aufpasser:
                 repo,
                 schluessel,
                 "sicherung_fehlgeschlagen",
-                f"„{f.name}“: Ticket zu, aber Sicherung fehlgeschlagen — braucht David.",
+                f"„{f.name}“: Ticket zu, aber Sicherung fehlgeschlagen — braucht den Menschen.",
             )
             return
         if not self.vor_eingriff(f, hash_start, repo):
@@ -2092,7 +2226,7 @@ class Aufpasser:
             repo,
             schluessel,
             "geschlossen",
-            f"„{f.name}“ geschlossen (Ticket zu).{zusatz}",
+            f"„{f.name}“ geschlossen ({grund}).{zusatz}",
         )
 
     def sichern_und_fortsetzen(
@@ -2114,7 +2248,7 @@ class Aufpasser:
                 repo,
                 schluessel,
                 "braucht_david",
-                f"„{f.name}“ weiter still, aber keine Gesprächs-ID gefunden — braucht David.",
+                f"„{f.name}“ weiter still, aber keine Gesprächs-ID gefunden — braucht den Menschen.",
             )
             return
         sid = info.session_id
@@ -2132,7 +2266,7 @@ class Aufpasser:
                     repo,
                     schluessel,
                     "sicherung_fehlgeschlagen",
-                    f"„{f.name}“ weiter still — Sicherung fehlgeschlagen — braucht David.",
+                    f"„{f.name}“ weiter still — Sicherung fehlgeschlagen — braucht den Menschen.",
                 )
                 return
         if not self.vor_eingriff(f, hash_start, repo):
@@ -2156,7 +2290,7 @@ class Aufpasser:
                 )
         except RuntimeError as fehler:
             # Prozess ist womöglich schon beendet, das Fenster aber leer: nicht
-            # noch einmal versuchen, sondern David rufen (Stufe 3).
+            # noch einmal versuchen, sondern den Menschen rufen (Stufe 3).
             log.error("Fenster %s fortsetzen fehlgeschlagen: %s", f.ziel, fehler)
             self._braucht_david(
                 e,
@@ -2164,7 +2298,7 @@ class Aufpasser:
                 repo,
                 schluessel,
                 "fortsetzen_fehlgeschlagen",
-                f"„{f.name}“: Fortsetzen fehlgeschlagen (tmux: {fehler}) — braucht David.",
+                f"„{f.name}“: Fortsetzen fehlgeschlagen (tmux: {fehler}) — braucht den Menschen.",
             )
             return
         if ticket is None:
@@ -2196,7 +2330,7 @@ class Aufpasser:
                 schluessel,
                 "fortsetzen_fehlgeschlagen",
                 f"„{neu.name}“: {gesichert}, aber Fortsetzen fehlgeschlagen "
-                f"(Session {sid[:8]} nicht wieder da) — braucht David.",
+                f"(Session {sid[:8]} nicht wieder da) — braucht den Menschen.",
             )
             return
         if not self.e.trocken:
@@ -2241,7 +2375,7 @@ class Aufpasser:
                 repo,
                 f"spec-{spec}/{name}",
                 "startet_nicht",
-                f"{wer} startet nicht (Fenster verschwindet wieder) — braucht David.",
+                f"{wer} startet nicht (Fenster verschwindet wieder) — braucht den Menschen.",
             )
             return False
         return True
@@ -2275,10 +2409,10 @@ class Aufpasser:
         else:
             befehl = self.wache_befehl(repo, spec, resume=sid)
         # Speicher-Schutz (#257 Paket B): kein Start, wenn RAM knapp oder die Obergrenze
-        # an Claude-Sessions erreicht ist — der nächste Tick prüft neu. Zwischen zwei
+        # an Claude-Sessions dieser tmux-Sitzung erreicht ist (#409) — der nächste Tick prüft neu. Zwischen zwei
         # echten Starts in einem Tick liegt die Staffel-Pause (nicht im Trockenlauf).
         konfig = config.lade(repo)
-        frei, grund = speicher.platz_frei(konfig)
+        frei, grund = speicher.platz_frei(konfig, sitzung=sitzung, tmux_socket=self.e.tmux_socket)
         if not frei:
             log.warning("%s: Fenster „%s“ nicht gestartet — %s", sitzung, name, grund)
             if self.e.trocken:
@@ -2331,7 +2465,10 @@ class Aufpasser:
             ", ".join(sorted(vorhanden)),
             sorted(offen) or "-",
         )
-        fehlend = [t for t in sorted(offen) if f"bau {t}" not in vorhanden]
+        # Bau-Fenster nur für „noch nicht fertig gebaut“ (#279); der Aufseher unten
+        # bleibt, bis alles endgültig zu ist.
+        bauen = self.zu_bauen(offen)
+        fehlend = [t for t in sorted(bauen) if f"bau {t}" not in vorhanden]
         # Läuft das Ticket schon in einer Fenster-Kette (oder folgt dort noch),
         # kein eigenes Fenster — sonst zwei Sessions auf einem Ticket (#598).
         belegt = self.belegte_tickets() if fehlend else set()
@@ -2354,7 +2491,7 @@ class Aufpasser:
             self.fehlendes_fenster(sitzung, spec, repo, None)
         for f in fenster:
             try:
-                self.fenster_pruefen(f, repo, offen)
+                self.fenster_pruefen(f, repo, bauen)
             except RuntimeError as fehler:
                 log.error("%s: Fenster „%s“ übersprungen: %s", sitzung, f.name, fehler)
 

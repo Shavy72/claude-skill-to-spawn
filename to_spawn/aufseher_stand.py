@@ -11,7 +11,7 @@ hinein (E25); Bau-Log und Stand-Datei bleiben echt.
 
 Kurz-Zeile (≤ 200 Zeichen)::
 
-    #<N> offen|zu|— · arbeitet|still <M> min|Rückfrage <M> min|kein Fenster
+    #<N> offen|fertig gebaut|zu|verworfen|— · arbeitet|still <M> min|Rückfrage <M> min|kein Fenster
          · Kontext <112,5k|—> · Phase <…|—> · „<letzte Aussage, ≤ 70 Zeichen>“
          · <k|—> neue Kommentare
 
@@ -32,6 +32,8 @@ Quellen:
 - Phase: Typ der jüngsten Bau-Log-Zeile mit bekanntem Typ (:data:`PHASEN`);
   ``deploy_phase`` zeigt zusätzlich ``phase``/``status`` der Zeile.
 - Letzte Aussage: Feld ``text`` der jüngsten Bau-Log-Zeile, die eins hat.
+- Abgelehnte Komplett-Prüfungen (#496): Zahl aus :func:`komplett_lauf.ablehnungen`; nur ab 1
+  hängt ``<k>× Komplett abgelehnt`` an die Kurz-Zeile.
 
 Fehlt eine Quelle für ein Ticket, steht ``—`` und es gibt eine Warnung; fehlt gh
 ganz oder liefert die Sub-Issue-Liste nichts (Fehler oder leer), bricht :func:`lauf`
@@ -50,6 +52,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import subprocess
 import sys
 import time
@@ -59,7 +62,19 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, NamedTuple
 
-from to_spawn import aufpasser, bau_log, capo, config, gh, pc_fenster
+from to_spawn import (
+    aufpasser,
+    bau_log,
+    befugnis,
+    capo,
+    config,
+    gh,
+    komplett_lauf,
+    pc_fenster,
+    ticket_zustand,
+    verlauf_pruefung,
+    wiederanlauf,
+)
 
 log = logging.getLogger("to_spawn.aufseher_stand")
 
@@ -113,6 +128,10 @@ class Quellen:
     #: Am PC (kein tmux, #501): Ticket → Sekunden seit dem letzten Transkript-Eintrag
     #: (``None`` = keine Session). Gesetzt = PC-Weg, tmux wird nicht gefragt.
     pc_still: Callable[[int], float | None] | None = None
+    #: Wiederanlauf-Art eines fertig gebauten Tickets (#282 P3): ``(ticket, arbeitsbaum)`` →
+    #: :func:`wiederanlauf.feststellen`. :func:`echte_quellen` setzt es immer; ``None`` nur in
+    #: Test-Fakes ohne diese Frage (die Leiter entscheidet dann allein nach der Stufe).
+    anlauf: Callable[[int, Path], wiederanlauf.Wiederanlauf | None] | None = None
 
 
 def _tmux_echt(args: list[str]) -> str | None:
@@ -138,10 +157,16 @@ def echte_quellen(repo: Path, gh_repo: str) -> Quellen:
         raise GhFehlt("gh nicht gefunden (PATH bzw. TO_SPAWN_GH_STUB)")
     pc_still = None
     if pc_fenster.am_pc():
+
         def pc_still(n: int) -> float | None:
             return pc_fenster.still_s(repo, n, time.time())
+
     return Quellen(
-        repo=repo, kinder=lambda s: capo.kinder(gh_repo, s), tmux=_tmux_echt, pc_still=pc_still
+        repo=repo,
+        kinder=lambda s: capo.kinder(gh_repo, s),
+        tmux=_tmux_echt,
+        pc_still=pc_still,
+        anlauf=wiederanlauf.feststellen,
     )
 
 
@@ -163,13 +188,19 @@ class TicketLage:
     """Alles, was die Kurz-Zeile eines Tickets braucht (``None`` = unbekannt)."""
 
     nummer: int
-    offen: bool | None
+    stufe: ticket_zustand.Stufe | None  # None = GitHub-Zustand unbekannt
     fenster: str  # ARBEITET | STILL | RUECKFRAGE | KEIN_FENSTER | FENSTER_UNBEKANNT
     still_min: int | None = None
     kontext: str = STRICH
     phase: str = STRICH
     aussage: str = STRICH
     neue_kommentare: int | None = None
+    abgelehnt: int = 0  # #496: Komplett-Prüfungen, die die Bau-Ticket-Sperre abgelehnt hat
+
+    @property
+    def endgueltig_zu(self) -> bool:
+        """Wie ``ticket_zustand.endgueltig_zu`` (zu oder verworfen); unbekannt gilt als nicht zu."""
+        return self.stufe in ticket_zustand.ENDGUELTIG_ZU_STUFEN
 
 
 def _kuerzen(text: str, laenge: int) -> str:
@@ -179,13 +210,11 @@ def _kuerzen(text: str, laenge: int) -> str:
 
 def kurz_zeile(lage: TicketLage) -> str:
     """Eine Zeile ≤ :data:`ZEILE_MAX` Zeichen, nie Pane-Text."""
-    zustand = {True: "offen", False: "zu", None: STRICH}[lage.offen]
+    zustand = STRICH if lage.stufe is None else ticket_zustand.ANZEIGE[lage.stufe]
     fenster = lage.fenster
     if fenster in (STILL, RUECKFRAGE) and lage.still_min is not None:
         fenster = f"{fenster} {lage.still_min} min"
-    aussage = (
-        STRICH if lage.aussage == STRICH else f"„{_kuerzen(lage.aussage, AUSSAGE_MAX)}“"
-    )
+    aussage = STRICH if lage.aussage == STRICH else f"„{_kuerzen(lage.aussage, AUSSAGE_MAX)}“"
     kommentare = STRICH if lage.neue_kommentare is None else str(lage.neue_kommentare)
     teile = [
         f"#{lage.nummer} {zustand}",
@@ -195,14 +224,14 @@ def kurz_zeile(lage: TicketLage) -> str:
         aussage,
         f"{kommentare} neue Kommentare",
     ]
+    if lage.abgelehnt:
+        teile.append(f"{lage.abgelehnt}× Komplett abgelehnt")
     return _kuerzen(" · ".join(teile), ZEILE_MAX)
 
 
 def fingerabdruck(lagen: list[TicketLage]) -> str:
     """Hash der Kurz-Zeilen ohne Minuten und Kommentar-Zähler (die laufen immer weiter)."""
-    roh = "\n".join(
-        kurz_zeile(replace(x, still_min=None, neue_kommentare=None)) for x in lagen
-    )
+    roh = "\n".join(kurz_zeile(replace(x, still_min=None, neue_kommentare=None)) for x in lagen)
     return hashlib.sha256(roh.encode("utf-8")).hexdigest()[:16]
 
 
@@ -265,22 +294,22 @@ def _vorher(spec: int, ordner: Path | None) -> _Vorher:
     letzte = zeilen[-1]
     return _Vorher(
         fingerabdruck=letzte.get("fingerabdruck"),
-        kommentare={
-            str(k): int(v) for k, v in (letzte.get("kommentare") or {}).items()
-        },
+        kommentare={str(k): int(v) for k, v in (letzte.get("kommentare") or {}).items()},
         fenster=dict(letzte.get("fenster") or {}),
     )
 
 
-def _fenster_liste(spec: int, q: Quellen) -> dict[int, tuple[str, float]] | None:
-    """Ticket → (tmux-Ziel, window_activity); ``None`` = tmux/Sitzung nicht lesbar."""
-    raus = q.tmux(
+def _fenster_liste(
+    spec: int, tmux: Callable[[list[str]], str | None]
+) -> dict[int, tuple[str, float]] | None:
+    """Ticket → (tmux-Ziel per ``window_id``, window_activity); ``None`` = tmux/Sitzung nicht lesbar."""
+    raus = tmux(
         [
             "list-windows",
             "-t",
             f"=spec-{spec}",
             "-F",
-            "#{window_index}\t#{window_name}\t#{window_activity}",
+            "#{window_id}\t#{window_name}\t#{window_activity}",
         ]
     )
     if raus is None:
@@ -299,6 +328,12 @@ def _fenster_liste(spec: int, q: Quellen) -> dict[int, tuple[str, float]] | None
         except ValueError:
             continue
     return liste
+
+
+def bau_fenster(spec: int) -> dict[int, str] | None:
+    """Ticket → tmux-Ziel des Fensters ``bau <N>`` in ``spec-<S>``; ``None`` = tmux/Sitzung nicht lesbar."""
+    liste = _fenster_liste(spec, _tmux_echt)
+    return None if liste is None else {n: ziel for n, (ziel, _aktiv) in liste.items()}
 
 
 def _fenster_lage(
@@ -322,8 +357,8 @@ def _fenster_lage(
     return STILL, minuten, merker
 
 
-def _log_lage(n: int, repo: Path) -> tuple[str, str, str] | None:
-    """(Kontext, Phase, letzte Aussage) aus dem Bau-Log; ``—`` je fehlendem Teil.
+def _log_lage(n: int, repo: Path) -> tuple[str, str, str, int] | None:
+    """(Kontext, Phase, letzte Aussage, Komplett-Ablehnungen) aus dem Bau-Log; ``—`` je fehlendem Teil.
 
     ``None`` = kein Bau-Log (Ticket noch nicht gestartet) — der Aufrufer warnt gesammelt.
     """
@@ -335,7 +370,7 @@ def _log_lage(n: int, repo: Path) -> tuple[str, str, str] | None:
         spitze_k = bau_log.zusammenfassung(ort, n, hauptbaum=repo)["spitze_k"]
     except (OSError, ValueError, KeyError) as fehler:
         log.warning("Bau-Log #%s unlesbar: %s", n, fehler)
-        return STRICH, STRICH, STRICH
+        return STRICH, STRICH, STRICH, 0
     kontext = bau_log.kontext_text(spitze_k)
     phase = STRICH
     for z in reversed(zeilen):
@@ -350,12 +385,14 @@ def _log_lage(n: int, repo: Path) -> tuple[str, str, str] | None:
         (str(z["text"]) for z in reversed(zeilen) if str(z.get("text") or "").strip()),
         STRICH,
     )
-    return kontext, phase, aussage
+    return kontext, phase, aussage, komplett_lauf.ablehnungen(zeilen)
 
 
-def _offen(kind: dict[str, Any]) -> bool | None:
-    state = str(kind.get("state") or "").lower()
-    return {"open": True, "closed": False}.get(state)
+def _stufe(kind: dict[str, Any]) -> ticket_zustand.Stufe | None:
+    """Stufe aus ``ticket_zustand`` (#279); ``None``, wenn GitHub keinen Zustand geliefert hat."""
+    if str(kind.get("state") or "").strip().lower() not in ("open", "closed"):
+        return None
+    return ticket_zustand.stufe(kind)
 
 
 @dataclass
@@ -375,11 +412,9 @@ def sammeln(spec: int, q: Quellen, vorher: _Vorher) -> _Ergebnis:
     if kinder is None:
         raise RuntimeError(f"Sub-Issues von Spec #{spec} nicht lesbar (gh)")
     if not kinder:
-        raise RuntimeError(
-            f"Spec #{spec} hat keine Sub-Issues — Spec-Nummer prüfen (gh)"
-        )
+        raise RuntimeError(f"Spec #{spec} hat keine Sub-Issues — Spec-Nummer prüfen (gh)")
     jetzt = q.jetzt()
-    fenster = None if q.pc_still else _fenster_liste(spec, q)
+    fenster = None if q.pc_still else _fenster_liste(spec, q.tmux)
     lagen: list[TicketLage] = []
     kommentare: dict[str, int] = {}
     merker: dict[str, dict[str, Any]] = {}
@@ -411,17 +446,126 @@ def sammeln(spec: int, q: Quellen, vorher: _Vorher) -> _Ergebnis:
         log_lage = _log_lage(n, q.repo)
         if log_lage is None:
             ohne_log.append(f"#{n}")
-            log_lage = (STRICH, STRICH, STRICH)
-        kontext, phase, aussage = log_lage
+            log_lage = (STRICH, STRICH, STRICH, 0)
+        kontext, phase, aussage, abgelehnt = log_lage
         lagen.append(
-            TicketLage(
-                n, _offen(kind), zustand, still_min, kontext, phase, aussage, neue
-            )
+            TicketLage(n, _stufe(kind), zustand, still_min, kontext, phase, aussage, neue, abgelehnt)
         )
     if ohne_log:
         # Eine Zeile statt einer je Ticket: der Aufseher liest die Ausgabe in seinen Kontext.
         log.warning("Kein Bau-Log (Kontext/Phase/Aussage „—“): %s", ", ".join(ohne_log))
     return _Ergebnis(lagen, kommentare, merker)
+
+
+#: Rückfrage-Dialog: so viele letzte Zeilen (Frage samt Befehl darüber) bilden die Frage.
+FRAGE_ZEILEN = 8
+#: Höchstens so viele Zeichen trägt eine Fenster-Frage im Briefkasten (:func:`frage_kurz`).
+FRAGE_MAX = 600
+#: Eingabezeile des Menschen im Verlauf (``> …``/``❯ …``) — nur ganz links, mit Text, nie eine
+#: Auswahlzeile (``❯ 1. Yes``).
+EINGABE_ZEILE = re.compile(r"^[>❯]\s+(?!\d+\.)\S")
+
+
+def unbeaufsichtigt(text: str) -> list[str]:
+    """Zeilen des Pane-Texts seit der letzten Eingabezeile, ohne Eingabefeld (#372).
+
+    Nur für die Frage, die angezeigt wird (:func:`frage_im_text`) — die Klasse kommt aus dem
+    Transkript (:mod:`verlauf_pruefung`), wer getippt hat, spielt dafür keine Rolle. Ohne
+    erkennbare Eingabezeile alles. Als Eingabezeile zählt nur eine Zeile, die ganz links mit
+    ``>``/``❯`` beginnt — Claude Code rückt Antwort-Text samt Markdown-Zitat ein.
+    """
+    zeilen = aufpasser.ohne_statuszeile(text).splitlines()
+    linien = [i for i, z in enumerate(zeilen) if aufpasser.EINGABEFELD_LINIE.fullmatch(z)]
+    if linien:
+        zeilen = zeilen[: linien[-1]]  # Eingabefeld (``❯ …``) gehört nicht zur Ausgabe
+    eingaben = [i for i, z in enumerate(zeilen) if EINGABE_ZEILE.match(z)]
+    return zeilen[eingaben[-1] + 1 :] if eingaben else zeilen
+
+
+def _grund_kurz(zeile: str, grenze: int) -> str:
+    """Klasse-2-Zeile auf höchstens ``grenze`` Zeichen um das Klasse-2-Wort herum."""
+    if len(zeile) <= grenze:
+        return zeile
+    w = zeile.split()
+    a, b = 0, len(w)
+    while b - a > 1 and befugnis.ist_klasse_2(" ".join(w[a + 1 : b])):
+        a += 1
+    while b - a > 1 and befugnis.ist_klasse_2(" ".join(w[a : b - 1])):
+        b -= 1
+    # Kern (kleinstes Wortfenster mit Klasse-2-Wort) abwechselnd um Nachbarwörter erweitern.
+    while True:
+        weiter = False
+        if a > 0 and len(" ".join(w[a - 1 : b])) + 2 <= grenze:
+            a, weiter = a - 1, True
+        if b < len(w) and len(" ".join(w[a : b + 1])) + 2 <= grenze:
+            b, weiter = b + 1, True
+        if not weiter:
+            break
+    # ponytail: Kern allein über ``grenze`` bleibt ungekürzt, frage_kurz kann ihn dann anschneiden.
+    return ("…" if a else "") + " ".join(w[a:b]) + ("…" if b < len(w) else "")
+
+
+def frage_im_text(text: str) -> str:
+    """Frage an den Menschen am Ende des Pane-Texts (#372), ``""`` = keine; ungekürzt.
+
+    Betrachtet wird nur, was seit der letzten Eingabezeile kam (:func:`unbeaufsichtigt`).
+    Rückfrage-Dialog (:func:`aufpasser.rueckfrage`): die letzten Zeilen samt Befehl
+    darüber. Sonst der letzte Absatz, nur wenn er mit ``?`` endet — eine stille Session ohne
+    solche Frage hängt (Stupser/Handoff wie bisher). Nur der Text der Frage; die Klasse
+    bestimmt :func:`fenster_blick`.
+    """
+    zeilen = unbeaufsichtigt(text)
+    if aufpasser.rueckfrage(text):
+        teile = [z.strip() for z in zeilen if z.strip()][-FRAGE_ZEILEN:]
+    else:
+        absatz: list[str] = []
+        for z in reversed(zeilen):
+            if not z.strip():
+                if absatz:
+                    break
+                continue
+            absatz.insert(0, z.strip())
+        teile = absatz if absatz and absatz[-1].endswith("?") else []
+    return " ".join(" ".join(teile).split())
+
+
+def mit_grund(frage: str, grund: str | None) -> str:
+    """``frage`` mit der auslösenden Klasse-2-Zeile davor, wenn die Frage selbst keine trägt.
+
+    Sonst schnitte :func:`frage_kurz` den Grund weg und der Briefkasten sähe Klasse 3.
+    """
+    if not frage or not grund or befugnis.ist_klasse_2(frage):
+        return frage
+    grund = _grund_kurz(grund, FRAGE_MAX // 2)
+    rest = frage_kurz(frage, max(FRAGE_MAX - len(grund) - 3, FRAGE_MAX // 2))
+    return " ".join(f"{grund} … {rest.lstrip('…')}".split())
+
+
+def frage_kurz(frage: str, grenze: int = FRAGE_MAX) -> str:
+    """``frage`` auf ``grenze`` Zeichen, vorn gekürzt (``…``): das Ende mit der Frage bleibt.
+
+    Nur zum Anzeigen/Ablegen — die Klasse nie am gekürzten Text bestimmen (Review PR 374).
+    """
+    frage = " ".join(frage.split())
+    return frage if len(frage) <= grenze else "…" + frage[len(frage) - grenze + 1 :]
+
+
+def fenster_blick(ziel: str | None, q: Quellen, stelle: str | None) -> tuple[str, str]:
+    """(Frage, bis) im Fenster ``ziel`` (#372); ohne Ziel/lesbares Pane/Frage ``("", "")``.
+
+    Die Frage kommt aus dem sichtbaren Fenster (:func:`frage_im_text`), die Klasse aus dem
+    Transkript seit ``stelle`` (:func:`verlauf_pruefung.pruefen`): trägt die Session dort ein
+    Klasse-2-Wort, steht die Zeile vor der Frage (:func:`mit_grund`). ``bis`` ist die Stelle,
+    die der Aufrufer merkt, sobald er die Frage weitergegeben hat.
+    """
+    if not ziel:
+        return "", ""
+    text = q.tmux(["capture-pane", "-p", "-t", ziel])
+    frage = frage_im_text(text) if text else ""
+    if not frage:
+        return "", ""
+    pruefung = verlauf_pruefung.pruefen(ziel, q, stelle)
+    return mit_grund(frage, pruefung.grund), pruefung.bis
 
 
 class TicketBlick(NamedTuple):
@@ -431,9 +575,7 @@ class TicketBlick(NamedTuple):
     ziel: str | None  # tmux-Ziel des Fensters ``bau <N>``
 
 
-def ticket_lage(
-    spec: int, ticket: int, q: Quellen, ordner: Path | None = None
-) -> TicketBlick:
+def ticket_lage(spec: int, ticket: int, q: Quellen, ordner: Path | None = None) -> TicketBlick:
     """Lage eines Tickets wie :func:`stand` sie sieht, plus tmux-Ziel — nur lesen.
 
     Die Stand-Datei bleibt unberührt (schreiben tut sie nur der Aufseher-Tick).
@@ -442,7 +584,7 @@ def ticket_lage(
     """
     erg = sammeln(spec, q, _vorher(spec, ordner))
     lage = next((t for t in erg.lagen if t.nummer == ticket), None)
-    fenster = {} if q.pc_still else (_fenster_liste(spec, q) or {})
+    fenster = {} if q.pc_still else (_fenster_liste(spec, q.tmux) or {})
     eintrag = fenster.get(ticket)  # (tmux-Ziel, window_activity); am PC kein Ziel
     return TicketBlick(lage, eintrag[0] if eintrag else None)
 
@@ -454,7 +596,11 @@ def kopf_zeile(spec: int, lagen: list[TicketLage], jetzt: float, noop: bool) -> 
     uhr = datetime.fromtimestamp(jetzt, tz=timezone.utc).astimezone().strftime("%H:%M")
     teile = [
         f"Aufseher-Stand Spec #{spec} · {uhr}",
-        f"{zahl(lambda x: x.offen is True)} offen, {zahl(lambda x: x.offen is False)} zu",
+        (
+            f"{zahl(lambda x: x.stufe == 'offen')} offen, "
+            f"{zahl(lambda x: x.stufe == 'fertig_gebaut')} fertig gebaut, "
+            f"{zahl(lambda x: x.endgueltig_zu)} zu"
+        ),
         (
             f"{zahl(lambda x: x.fenster == ARBEITET)} arbeitet, "
             f"{zahl(lambda x: x.fenster == STILL)} still, "
@@ -468,9 +614,7 @@ def kopf_zeile(spec: int, lagen: list[TicketLage], jetzt: float, noop: bool) -> 
     return " · ".join(teile)
 
 
-def stand(
-    spec: int, q: Quellen, *, ordner: Path | None = None, alle: bool = False
-) -> str:
+def stand(spec: int, q: Quellen, *, ordner: Path | None = None, alle: bool = False) -> str:
     """Kopfzeile + je Ticket eine Kurz-Zeile; hängt genau eine Zeile an die Stand-Datei.
 
     Ohne ``alle`` fehlen geschlossene Tickets ohne Fenster (der Kopf zählt sie mit).
@@ -479,14 +623,10 @@ def stand(
     erg = sammeln(spec, q, vorher)
     jetzt = q.jetzt()
     abdruck = fingerabdruck(erg.lagen)
-    noop = abdruck == vorher.fingerabdruck and not any(
-        x.neue_kommentare for x in erg.lagen
-    )
+    noop = abdruck == vorher.fingerabdruck and not any(x.neue_kommentare for x in erg.lagen)
     zeilen = [kurz_zeile(x) for x in erg.lagen]
     eintrag: dict[str, Any] = {
-        "ts": datetime.fromtimestamp(jetzt, tz=timezone.utc).isoformat(
-            timespec="seconds"
-        ),
+        "ts": datetime.fromtimestamp(jetzt, tz=timezone.utc).isoformat(timespec="seconds"),
         "fingerabdruck": abdruck,
         "noop": noop,
     }
@@ -498,11 +638,7 @@ def stand(
     datei.parent.mkdir(parents=True, exist_ok=True)
     with datei.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(eintrag, ensure_ascii=False) + "\n")
-    sichtbar = [
-        z
-        for x, z in zip(erg.lagen, zeilen)
-        if alle or x.offen is not False or x.fenster != KEIN_FENSTER
-    ]
+    sichtbar = [z for x, z in zip(erg.lagen, zeilen) if alle or not x.endgueltig_zu or x.fenster != KEIN_FENSTER]
     return "\n".join([kopf_zeile(spec, erg.lagen, jetzt, noop), *sichtbar])
 
 
@@ -515,9 +651,7 @@ def richte_parser_ein(unter: Any) -> None:
         help="Aufseher: eine Kurz-Zeile je Ticket + Stand-Datei (#430)",
     )
     p.add_argument("spec", type=int, help="Spec-Issue-Nummer")
-    p.add_argument(
-        "--alle", action="store_true", help="auch geschlossene Tickets ohne Fenster"
-    )
+    p.add_argument("--alle", action="store_true", help="auch geschlossene Tickets ohne Fenster")
     p.add_argument("--gh-repo", default="", help="owner/name (Vorgabe: aus origin)")
     p.add_argument(
         "--stand-ordner",
@@ -540,9 +674,7 @@ def lauf(args: Any, repo: Path) -> int:
             stand(
                 args.spec,
                 q,
-                ordner=Path(args.stand_ordner).expanduser()
-                if args.stand_ordner
-                else None,
+                ordner=Path(args.stand_ordner).expanduser() if args.stand_ordner else None,
                 alle=args.alle,
             )
         )

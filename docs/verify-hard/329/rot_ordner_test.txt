@@ -1,0 +1,17 @@
+Beleg PR 334 — tests/test_feste_namen_l1.py auf drei Ständen
+Befehl je Stand (eigener Wegwerf-Worktree): python -m pytest tests/test_feste_namen_l1.py -q 2>&1 | tail -5
+
+(a) c39a29471cfb2be9e0b516e751d8e172aa57cdce (Stand der ersten Meldung „3511 passed, 0 failed“)
+    FAILED tests/test_feste_namen_l1.py::test_jeder_code_ordner_wird_gescannt - A...
+    1 failed, 3 passed
+
+(b) c4a65f6c7eaa38d29e2e662cf1b88da14be2d285 (PR-Kopf nach Merge von main)
+    FAILED tests/test_feste_namen_l1.py::test_jeder_code_ordner_wird_gescannt - A...
+    1 failed, 3 passed
+
+(c) 0397de9c2b78008f1d211e14aba7aa192125aa27 (main, ohne Ordner review/)
+    4 passed
+
+Ursache: Der Test war schon auf c39a294 rot, weil dieser Commit den Ordner review/ anlegt, ihn aber weder in ORDNER noch in NICHT_GESCANNT einträgt; der Merge von main hat daran nichts geändert — die erste Meldung „0 failed“ war falsch.
+
+Fix: review in ORDNER aufgenommen (eine Zeile). Namens-Scan über review/ ist grün; einzige Fundstelle beim ersten Lauf war ein ignorierter, lokaler ruff-Cache (review/tests/.ruff_cache/, nicht im Repo), kein Skript unter review/.

@@ -103,7 +103,26 @@ def test_tuer_sperrt_anderes_skill_skript_unter_test(tmp_path: Path) -> None:
 
 #: Start-Stellen, die noch NICHT über ``starter.starte`` laufen. Seit Teil 2 von #1406 leer —
 #: neue Einträge nur als Übergang mit Ticket.
-REST_START: frozenset[tuple[str, str]] = frozenset()
+REST_START: frozenset[tuple[str, str]] = frozenset(
+    {
+        # 1:1-Übernahme, Angleichung folgt in #214 Teil B (Review-Hook startet noch roh)
+        ("review-hook/_hookbasis.py", "befehl"),
+        ("review-hook/tests/test_hooks.py", "Umgebung.hook"),
+        ("review-hook/tests/test_hooks.py", "Umgebung.route"),
+        ("review-hook/tests/test_schutz_runde6.py", "_innen_laufen"),
+        ("review-hook/tests/test_stop_runde5.py", "_beleg_echt"),
+        ("review-hook/tests/test_stop_runde5.py", "test_neue_datei_beleg_ueberlebt_commit"),
+        ("review-hook/tests/test_stop_runde5.py", "test_pruefen_cli_findet_beleg_nach_commit"),
+        ("review-hook/tests/test_wochenbericht.py", "_lauf"),
+        ("review-hook/wochenbericht.py", "bericht_erzeugen"),
+        # 1:1-Übernahme des Review-Werkzeugs (#329 P1): git/pytest/Skripte mit gefangener Ausgabe
+        ("review/_gemeinsam.py", "_blast_radius"),
+        ("review/rot_probe.py", "pruefen"),
+        ("review/rot_probe.py", "sammeln"),
+        ("review/tests/review_hilfen.py", "lauf"),
+        ("review/tests/test_rot_probe_platte.py", "toter_pid"),
+    }
+)
 
 #: Treffer der Suche, die nichts Echtes starten: Lese-/Prüfbefehle und Kind-Skripte des Skills
 #: (deren eigene Starts gehen wieder durch die Tür). Neue Einträge nur mit Grund.
@@ -119,7 +138,6 @@ KEIN_START = frozenset(
         ("skripte/bau.py", "_gh_json"),  # gh
         ("skripte/leitstand.py", "starte"),  # Kind-Prozess mit gefangener Ausgabe
         ("skripte/spec_stand.py", "sh"),  # Lese-Befehle
-        ("skripte/hooks/staffel_stop.py", "ticket_offen"),  # gh
         ("to_spawn/aufpasser.py", "Aufpasser.sh"),  # Lese-Befehle (tmux list/capture); start=True → Tür
         ("to_spawn/aufseher_stand.py", "_tmux_echt"),  # tmux lesen
         # bash-Tür (#186): einzige subprocess-Stelle für bash; Aufrufer startklar._standard_laeufer
@@ -272,7 +290,9 @@ def _funde_in(quelle: str, rel: str) -> set[tuple[str, str]]:
 
 
 #: Werkzeug-Ordner überall ausgenommen; Tests nur im obersten ``tests/``.
-_AUSSER = {".git", ".review", ".ruff_cache", "__pycache__", ".venv", "node_modules"}
+# ``probe``: Vorlagen-App für Probe-Läufe (#426 Teil F), läuft im Lauf-Repo ohne Skill und kann
+# die Tür ``to_spawn.starter`` dort nicht importieren.
+_AUSSER = {".git", ".review", ".ruff_cache", "__pycache__", ".venv", "node_modules", "probe"}
 
 
 def _start_stellen(wurzel: Path = SKILL) -> set[tuple[str, str]]:

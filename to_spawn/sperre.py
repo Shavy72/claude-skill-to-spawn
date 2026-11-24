@@ -51,7 +51,14 @@ _MSVCRT_VERSATZ = 2**31 - 2
 
 
 class SperreNichtOeffenbar(OSError):
-    """Ordner oder Sperr-Datei ließ sich nicht anlegen/öffnen — ein Fehler, nicht „belegt“."""
+    """Ordner oder Sperr-Datei ließ sich nicht anlegen/öffnen — ein Fehler, nicht „belegt“.
+
+    ``str()`` nennt den Pfad so, wie ein Mensch ihn eintippt. ``OSError`` selbst zeigt
+    ``repr(filename)`` — unter Windows mit verdoppelten Backslashes, nicht suchbar (#68).
+    """
+
+    def __str__(self) -> str:
+        return f"[Errno {self.errno}] {self.strerror}: {self.filename}"
 
 
 def _oeffnen_gescheitert(datei: Path, fehler: OSError) -> SperreNichtOeffenbar:

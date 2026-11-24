@@ -486,6 +486,27 @@ def test_vps_fehlt_ohne_staging_log_oeffnet_wieder(welt: dict[str, Path], monkey
     assert any(k.startswith("Aufseher: vps_ungleich_origin") for k in _kommentare(welt, "901"))
 
 
+def test_staging_fertig_ohne_freigabe_fehlt_live_bleibt_zu_275(
+    welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#275: zu + ``staging:fertig`` + keine Live-Freigabe + Commit fehlt live → kein Wiederöffnen."""
+    _vps_staging(welt, monkeypatch, staging_sha=None)
+    _gh_setzen(welt, "901", labels=["staging:fertig"])
+    ergebnis = _capo(welt)
+    assert _kommentare(welt, "901") == [], _text(ergebnis)
+    assert _gh_zustand(welt)["issues"]["901"]["state"] == "closed"
+
+
+def test_staging_fertig_mit_freigabe_fehlt_live_oeffnet_wieder_275(
+    welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#275: echter Verstoß — Live-Freigabe da, Commit fehlt live → weiter gemeldet."""
+    _vps_staging(welt, monkeypatch, staging_sha=None, zettel=True)
+    _gh_setzen(welt, "901", labels=["staging:fertig"])
+    _capo(welt)
+    assert any(k.startswith("Aufseher: vps_ungleich_origin") for k in _kommentare(welt, "901"))
+
+
 def test_ohne_vps_konfig_keine_vps_regel(welt: dict[str, Path]) -> None:
     _commit(welt["repo"], "feat: Seite (#901)", {"web/seite.py": "x = 1\n", **_beleg()})
     ergebnis = _capo(welt)
@@ -560,8 +581,9 @@ def test_uebersicht_schreibt_tabelle(welt: dict[str, Path]) -> None:
     assert ergebnis.returncode == 0, _text(ergebnis)
     assert str(datei) in ergebnis.stdout
     text = datei.read_text(encoding="utf-8")
-    assert "| Ticket | Zeit | Frage | Wahl | Grund |" in text
-    assert re.search(r"\| #902 \| [^|]+ \| Welche Tabelle \| SQLite \| schon da \|", text)
+    # Spaltenformat seit #364: Ticket · Was · Warum · Quelle (eine Liste aus briefkasten.liste).
+    assert "| Ticket | Was | Warum | Quelle |" in text
+    assert re.search(r"\| #902 \| Welche Tabelle → SQLite \| schon da \| Bau-Log #902 [^|]+ \|", text)
 
 
 @pytest.mark.xfail(strict=True, reason="überholt durch #588: keine capo-Kurzmail mehr (E16)")
@@ -824,6 +846,40 @@ def test_eintrag_schreibt_blockiert_und_entscheidung(tmp_path: Path) -> None:
         "SQLite",
         "schon da",
     )
+
+
+def test_eintrag_blockiert_mit_frage_wahl_grund(tmp_path: Path) -> None:
+    """Start-Text-Befehl: ``eintrag --typ blockiert --frage … --wahl … --grund …`` (#278)."""
+    ziel = tmp_path / "log_repo"
+    ziel.mkdir()
+    fertig = subprocess.run(
+        [
+            sys.executable,
+            str(SKILL / "to_spawn.py"),
+            "eintrag",
+            "--repo",
+            str(ziel),
+            "--ticket",
+            "903",
+            "--typ",
+            "blockiert",
+            "--frage",
+            "Darf ich löschen",
+            "--wahl",
+            "warte",
+            "--grund",
+            "Klasse 3",
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    assert fertig.returncode == 0, fertig.stdout + fertig.stderr
+    datei = ziel / "docs" / "agents" / "bau_log" / "903.jsonl"
+    zeile = json.loads(datei.read_text(encoding="utf-8").splitlines()[0])
+    assert (zeile["typ"], zeile["ticket"]) == ("blockiert", "903")
+    assert (zeile["frage"], zeile["wahl"], zeile["grund"]) == ("Darf ich löschen", "warte", "Klasse 3")
 
 
 def test_beleg_ordner_mit_nummer_zaehlt(welt: dict[str, Path]) -> None:

@@ -1,4 +1,4 @@
-"""Staffel-Schalter (David, 24.09.2026): ``staffel.aktiv: false`` → kein Staffel-Hook in der Bau-Session."""
+"""Staffel-Schalter (Vorgabe des Menschen, 24.09.2026): ``staffel.aktiv: false`` → kein Staffel-Hook in der Bau-Session."""
 
 from __future__ import annotations
 

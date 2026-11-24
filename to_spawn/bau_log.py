@@ -28,6 +28,9 @@ from . import config
 
 log = logging.getLogger("to_spawn.bau_log")
 
+#: Typ der Zeile einer abgelehnten Komplett-Prüfung (#496); Zähler: ``komplett_lauf.ablehnungen``.
+KOMPLETT_ABGELEHNT = "komplett_abgelehnt"
+
 #: Erlaubte Zeilen-Typen (``staffel_limit`` meldet das Ende der Staffel-Kette).
 TYPEN = (
     "auftrag",
@@ -40,6 +43,8 @@ TYPEN = (
     "staffel_limit",
     # Aufseher (#213): Live-Beweis blockiert (Feld ``grund``) und Modell-Wechsel beim Limit.
     "blockiert",
+    # Bau-Session (#278): Frage an den Aufseher (``waechter_takt.FRAGE_TYPEN``).
+    "frage",
     "waechter_modell",
     # Aufseher (#254): Pause bis zum Limit-Reset und der Neustart danach.
     "waechter_pause",
@@ -47,11 +52,15 @@ TYPEN = (
     "zusammenfassung",
     # Lernschleife (#286): erkannter Stillstand mit Klasse/Symptom/Ursache/Lösung.
     "vorfall",
+    # bau.py (#274 P1): Warnung beim Start (Regel-Kopie ignoriert, Repo-Zusatz unbrauchbar), Feld ``text``.
+    "start_warnung",
     # Aufseher (#448): eigenes Fehl-Reopen zurückgenommen (Feld ``text``).
     "ruecknahme",
     # Aufsicht (#436): Kontext an der Handoff-Grenze → Aufseher-Ablösung über respawn
     # (Felder ``kontext``, ``grenze``, ``exit``, ``zeile``; ``exit`` null = nicht versucht).
     "aufseher_abloesung",
+    # komplett_lauf (#496): Komplett-Prüfung aus einem Bau-Ticket abgelehnt (Felder ``spec``, ``weg``).
+    KOMPLETT_ABGELEHNT,
 )
 
 #: Felder, deren ``None`` als ``null`` stehen bleibt, weil es etwas bedeutet (sonst

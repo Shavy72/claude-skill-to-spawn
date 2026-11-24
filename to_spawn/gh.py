@@ -18,14 +18,29 @@ import urllib.parse
 from pathlib import Path
 from typing import Any
 
+from to_spawn import starter, ticket_zustand
+
 log = logging.getLogger("to_spawn.gh")
+
+#: Test-Tür: Pfad eines Ersatz-Skripts für ``gh``; wirkt nur unter Test (:func:`starter.unter_test`).
+GH_STUB_ENV = "TO_SPAWN_GH_STUB"
+_stub_gemeldet = False
 
 
 def gh_befehl() -> list[str] | None:
-    """Aufruf-Vorspann für ``gh`` (oder das Stub-Skript); ``None`` wenn nichts da."""
-    stub = os.environ.get("TO_SPAWN_GH_STUB")
-    if stub:
+    """Aufruf-Vorspann für ``gh`` (oder das Stub-Skript); ``None`` wenn nichts da.
+
+    ``TO_SPAWN_GH_STUB`` gilt nur unter Test (#320) — derselbe Merker wie die Start-Tür
+    (:func:`starter.unter_test`, setzt ``tests/conftest.py``, erbt sich in Kind-Prozesse).
+    Im Betrieb wird die Variable ignoriert und einmal je Prozess gemeldet.
+    """
+    global _stub_gemeldet
+    stub = os.environ.get(GH_STUB_ENV)
+    if stub and starter.unter_test():
         return [sys.executable, stub] if stub.endswith(".py") else [stub]
+    if stub and not _stub_gemeldet:
+        _stub_gemeldet = True
+        log.warning("%s ist gesetzt, gilt aber nur im Test — ignoriert, echtes gh wird benutzt", GH_STUB_ENV)
     pfad = shutil.which("gh")
     return [pfad] if pfad else None
 
@@ -128,25 +143,45 @@ def blocked_by(repo_slug: str, ticket: str, cwd: Path | None = None) -> list[dic
     return daten if isinstance(daten, list) else None
 
 
-#: Label der Deploy-Schlange (#1527): Ticket liegt grün auf Staging, wartet nur noch auf den Live-Gang.
-STAGING_FERTIG_LABEL = "staging:fertig"
-
-
 def blocker_erledigt(dep: dict) -> bool:
-    """Die eine Regel (#1527): zählt dieser Blocker für Folge-Tickets als erledigt?
+    """Zählt dieser Blocker für Folge-Tickets als erledigt? Frage ``fertig_gebaut`` (#1527, #279).
 
-    Erledigt = Issue geschlossen ODER Label ``staging:fertig`` (grün auf Staging; Live
-    kommt gesammelt am Spec-Ende). Kein Ticket wartet darauf, dass ein anderes live ist.
+    Kein Ticket wartet darauf, dass ein anderes live ist.
     """
-    if str(dep.get("state", "")).lower() == "closed":
-        return True
-    namen = {str(x.get("name") if isinstance(x, dict) else x) for x in dep.get("labels") or []}
-    return STAGING_FERTIG_LABEL in namen
+    return ticket_zustand.fertig_gebaut(dep)
 
 
 def offene_blocker(deps: list[dict]) -> list[int]:
     """Nummern der noch nicht erledigten Blocker (sortiert), Regel: :func:`blocker_erledigt`."""
     return sorted(int(d["number"]) for d in deps if not blocker_erledigt(d))
+
+
+def blocker_gruende(repo: Path, deps: list[dict], *, mit_commit: bool = True) -> list[str]:
+    """Warum ein Ticket noch nicht starten darf — leer = frei (#267: die eine Stelle).
+
+    Je Blocker: nicht erledigt (:func:`blocker_erledigt`) → ``#N offen``. ``mit_commit``:
+    jeder erledigte Blocker — zu oder ``staging:fertig``, keine Sonderregel — braucht
+    zusätzlich seinen Commit ``(#N)`` auf ``origin/<Hauptzweig>``; sonst baut die Session
+    auf einem Stand ohne die Blocker-Arbeit. git-Fehler zählen als „kein Commit“.
+    Fragen: ``bau.py`` (Start-Schranke) und ``to_spawn.py blocker`` (Warte-Prüfung der Session).
+    """
+    gruende: list[str] = []
+    erledigt: list[object] = []
+    for d in deps:
+        if blocker_erledigt(d):
+            erledigt.append(d.get("number"))
+        else:
+            gruende.append(f"#{d.get('number')} offen")
+    if not mit_commit or not erledigt:
+        return gruende
+    haupt = f"origin/{hauptzweig(repo)}"  # master/main/… je Repo (#257)
+    code, _ = _git_ausgabe(["fetch", "-q", "origin"], repo, timeout=FETCH_ZEIT_S)
+    if code == 124:  # Zeitablauf: Stand von origin unbekannt → fail-closed (#320)
+        return [*gruende, *(f"#{nr} zu, aber git fetch nach {FETCH_ZEIT_S:g} s abgebrochen" for nr in erledigt)]
+    for nr in erledigt:
+        if not commit_betreffe(repo, str(nr), haupt):  # None (git-Fehler) zählt als „kein Commit“
+            gruende.append(f"#{nr} zu, aber kein Commit „(#{nr})“ auf {haupt}")
+    return gruende
 
 
 #: Zeitgrenze (s) der Ticket-Stand-Abfrage (#191): hängt gh, wird daraus „unbekannt“.
@@ -156,20 +191,12 @@ TICKET_STAND_TIMEOUT_ENV = "TO_SPAWN_GH_TIMEOUT"
 
 
 def ticket_stand_timeout() -> float:
-    """Zeitgrenze für :func:`ticket_offen`; ungültiger Env-Wert → Standard."""
+    """Zeitgrenze für :func:`ticket_zustand.lesen`; ungültiger Env-Wert → Standard."""
     try:
         wert = float(os.environ.get(TICKET_STAND_TIMEOUT_ENV) or TICKET_STAND_TIMEOUT_S)
     except ValueError:
         return TICKET_STAND_TIMEOUT_S
     return wert if wert > 0 else TICKET_STAND_TIMEOUT_S
-
-
-def ticket_offen(ticket: str, cwd: Path | None = None) -> bool | None:
-    """``True`` wenn das Issue offen ist, ``False`` wenn zu, ``None`` bei Fehler/Zeitüberschreitung."""
-    daten = json_lauf(["issue", "view", str(ticket), "--json", "state"], cwd=cwd, timeout=ticket_stand_timeout())
-    if not isinstance(daten, dict) or "state" not in daten:
-        return None
-    return str(daten["state"]).upper() == "OPEN"
 
 
 def ticket_daten(ticket: str, cwd: Path | None = None) -> dict[str, Any] | None:
@@ -180,8 +207,15 @@ def ticket_daten(ticket: str, cwd: Path | None = None) -> dict[str, Any] | None:
     return daten
 
 
-def _git_ausgabe(args: list[str], cwd: Path) -> tuple[int, str]:
-    """``git <args>`` im Ordner ``cwd``; (Exit-Code, stdout) — 127 wenn git fehlt."""
+#: Zeitgrenzen (s) aller git-Aufrufe des Skills — die eine Stelle (#320), ``capo`` liest sie hier.
+#: Lokale Abfragen (log, rev-parse …):
+GIT_ZEIT_S = 30.0
+#: Abfragen übers Netz (fetch, ls-remote):
+FETCH_ZEIT_S = 60.0
+
+
+def _git_ausgabe(args: list[str], cwd: Path, timeout: float | None = None) -> tuple[int, str]:
+    """``git <args>`` im Ordner ``cwd``; (Exit-Code, stdout) — 127 wenn git fehlt, 124 bei Zeitablauf."""
     try:
         fertig = subprocess.run(
             ["git", *args],
@@ -190,12 +224,62 @@ def _git_ausgabe(args: list[str], cwd: Path) -> tuple[int, str]:
             text=True,
             encoding="utf-8",
             errors="replace",
+            timeout=timeout,
             check=False,
         )
+    except subprocess.TimeoutExpired:
+        log.warning("git %s: Zeitgrenze %s s überschritten", args[:1], timeout)
+        return 124, ""
     except OSError as fehler:
         log.warning("git-Aufruf fehlgeschlagen: %s", fehler)
         return 127, ""
     return fertig.returncode, (fertig.stdout or "").strip()
+
+
+def commit_betreffe(repo: Path, nummer: int | str, *refs: str) -> list[str] | None:
+    """Betreffe der Commits auf ``refs`` (z. B. ``origin/main`` oder ``--all``), deren Text ``(#<nummer>)`` enthält.
+
+    Die eine Commit-Suche nach Ticketnummer (#267, #282): Blocker-Prüfung und Wiederanlauf
+    fragen beide hier. Grobfilter — ob der Betreff wirklich das Ticket meint, entscheidet
+    der Aufrufer (z. B. :func:`capo.betreff_hat_nummer`). ``None`` = git gescheitert; was das
+    heißt („kein Commit“ oder „unbekannt“), entscheidet ebenfalls der Aufrufer.
+    """
+    return _commit_suche(repo, nummer, "%s", *refs)
+
+
+def letzter_commit(repo: Path, nummer: int | str, ref: str) -> str | None:
+    """Kurz-Hash des jüngsten Commits auf ``ref`` mit ``(#<nummer>)``; ``None`` = keiner oder git gescheitert.
+
+    Für Anzeigen (``skripte/spec_stand.py``) — gleiche Suche wie :func:`commit_betreffe`.
+    """
+    zeilen = _commit_suche(repo, nummer, "%h", "-1", ref)
+    return zeilen[0] if zeilen else None
+
+
+def _commit_suche(repo: Path, nummer: int | str, format_: str, *refs: str) -> list[str] | None:
+    """Die eine ``git log --grep=(#<nummer>)``-Suche; je Treffer eine Zeile im ``format_``."""
+    code, text = _git_ausgabe(
+        ["log", *refs, f"--format={format_}", "--fixed-strings", f"--grep=(#{nummer})"], repo, timeout=GIT_ZEIT_S
+    )
+    if code != 0:
+        log.warning("Commit-Suche (#%s) gescheitert (git Exit %s)", nummer, code)
+        return None
+    return text.splitlines()
+
+
+def origin_zweige(repo: Path, muster: str) -> list[str] | None:
+    """Zweige auf origin, die das git-Muster ``muster`` treffen (z. B. ``ticket/7-*``), live per ``ls-remote``.
+
+    Namen ohne ``refs/heads/``. ``None`` = kein origin, origin unerreichbar oder Zeitablauf —
+    der Aufrufer darf das nicht als „kein Zweig“ lesen.
+    """
+    code, text = _git_ausgabe(["ls-remote", "--heads", "origin", muster], repo, timeout=FETCH_ZEIT_S)
+    if code != 0:
+        log.warning("git ls-remote origin %s gescheitert (Exit %s)", muster, code)
+        return None
+    praefix = "refs/heads/"
+    refs = (zeile.split("\t")[-1].strip() for zeile in text.splitlines())
+    return [ref[len(praefix) :] for ref in refs if ref.startswith(praefix)]
 
 
 def hauptzweig(repo: Path | None = None) -> str:

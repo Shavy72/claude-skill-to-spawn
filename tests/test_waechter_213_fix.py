@@ -145,8 +145,8 @@ def test_code_ticket_ohne_beleg_bleibt_verstoss(welt: dict[str, Path]) -> None:
 # Entscheidung 21.09. (#213, verify-hard Lauf 3): Die Einmal-Sperre je Ticket+Regel ist
 # weg, Spec Zeile 13 kennt keine Ausnahme. Der alte Fall
 # test_zweites_schliessen_nach_reopen_oeffnet_nicht_nochmal prüfte die Sperre und gilt
-# nicht mehr; das neue Soll (zweites Schließen öffnet wieder) steht in
-# tests/test_waechter_213_spec_streng.py. Hier bleibt der Teil, der weiter gilt:
+# nicht mehr; seit #275 gilt wieder eine Einmal-Regel (zweites Schließen meldet einmal,
+# öffnet nicht), Test in tests/test_waechter_213_spec_streng.py. Hier bleibt der Teil, der weiter gilt:
 # derselbe geschlossene Stand wird nur einmal wieder geöffnet, auch über mehrere Ticks.
 
 
@@ -564,4 +564,5 @@ def test_wechsel_scheitert_nie_am_log(welt: dict[str, Path]) -> None:
     assert ergebnis.returncode == 0, _text(ergebnis)
     assert len(_aufrufe(welt)) == 2
     assert [m["art"] for m in _mails(welt)] == ["waechter_ausweich"]
-    assert "Bau-Log" in ergebnis.stderr
+    log = (welt["repo"] / ".to-spawn" / f"wache_{SPEC}.log").read_text(encoding="utf-8")
+    assert "Bau-Log" in log

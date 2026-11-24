@@ -10,8 +10,10 @@
 # ohne SHA geht weiter) und prüft keine Regularien. Läuft das Ticket hier schon:
 # Exit 4, nichts gestartet. --nur-wache startet nur Aufseher + Leitstand (fehlende).
 # Exit 5: Speicher voll (to_spawn.py speicher) — begonnene Fenster laufen, der Rest nicht.
+#   Läuft der Aufseher (``wache <S>``) schon, Exit 0 mit „wartet auf Platz“: er startet nach (#460).
 # Exit 7: Platte voll (Start-Check des Hausmeisters, #1369) — wie Exit 5.
 # Exit 6: Speicherprüfung kaputt oder Hauptzweig nicht ermittelbar — nichts weiter gestartet.
+# Exit 9: Session ``spec-<S>`` gehört einem anderen Repo (gleiche Spec-Nummer, #457) — nichts gestartet.
 # Eine tmux-Session je Spec (``spec-<S>``), darin ``wache <S>``, ``leitstand <S>`` und
 # je Ticket ein Fenster ``bau <N>``. Gewartet wird in bau.py (0 Token).
 # Kontrolle: ``sessions <S>`` · ``tmux attach -t spec-<S>`` (raus: Strg+B d).
@@ -40,7 +42,7 @@ while [ $# -gt 0 ]; do
     --umzug) UMZUG_REF="${2:-}"; OHNE_REGULARIEN=1; shift 2 ;;
     --ohne-regularien) OHNE_REGULARIEN=1; shift ;;
     --nur-wache) NUR_WACHE=1; shift ;;
-    -h|--help) sed -n '2,17p' "${BASH_SOURCE[0]}"; exit 0 ;;
+    -h|--help) sed -n '2,18p' "${BASH_SOURCE[0]}"; exit 0 ;;
     *)
       if [ -z "$SPEC" ]; then SPEC="$1"; shift; else echo "Unbekanntes Argument: $1" >&2; exit 2; fi ;;
   esac
@@ -74,6 +76,26 @@ MANIFEST="$MANIFESTE/spec-$SPEC.json"
 [ -f "$MANIFEST" ] || { echo "Manifest fehlt: $MANIFEST" >&2; exit 2; }
 command -v tmux >/dev/null || { echo "tmux ist nicht installiert." >&2; exit 2; }
 
+# --- Session je Repo (#457) --------------------------------------------------
+# Der Name ``spec-<S>`` enthält das Repo nicht; jedes frische Repo beginnt bei Spec #1. Gehört
+# eine vorhandene Session ``spec-<S>`` einem anderen Repo, legt dieser Start nichts hinein
+# (Exit 9). Besitzer = Arbeitsordner der Session (``-c`` beim Anlegen, hier und in capo.py),
+# Repo-Kennung = ``origin``-Adresse (ein anderer Klon desselben Repos ist dieselbe Spec), ohne
+# ``origin`` der echte Pfad.
+SESSION="spec-$SPEC"
+repo_kennung() {
+  local url
+  url="$(git -C "$1" remote get-url origin 2>/dev/null || true)"
+  if [ -n "$url" ]; then echo "${url%.git}"; else (cd "$1" 2>/dev/null && pwd -P) || echo "$1"; fi
+}
+if tmux has-session -t "=$SESSION" 2>/dev/null; then
+  SESSION_ORDNER="$(tmux display-message -p -t "=$SESSION:" '#{session_path}' 2>/dev/null || true)"
+  if [ -n "$SESSION_ORDNER" ] && [ "$(repo_kennung "$SESSION_ORDNER")" != "$(repo_kennung "$REPO")" ]; then
+    echo "WEIGERUNG (#457): tmux-Session $SESSION gehört einem anderen Repo ($(repo_kennung "$SESSION_ORDNER"), Ordner $SESSION_ORDNER), nicht $(repo_kennung "$REPO") — nichts gestartet. Erst die andere Spec #$SPEC beenden (Session $SESSION schließen), dann erneut." >&2
+    exit 9
+  fi
+fi
+
 # --- 1. Stand holen (nie rebase/stash im geteilten Baum) --------------------
 # Hauptzweig je Repo (master/main/…, #257): Konfig, origin/HEAD, main, master. Leer oder
 # Fehler → Abbruch Exit 6, kein stiller Rückfall (F4).
@@ -84,11 +106,14 @@ if [ "$rc" -ne 0 ] || [ -z "$HAUPT" ]; then
   exit 6
 fi
 echo "== Stand (origin/$HAUPT) =="
-git fetch origin --quiet
-if [ "$DRY_RUN" -eq 1 ]; then
-  echo "Probelauf — kein merge. HEAD $(git rev-parse --short HEAD), origin/$HAUPT $(git rev-parse --short "origin/$HAUPT" 2>/dev/null || echo '?')."
-elif ! git merge --ff-only "origin/$HAUPT"; then
-  echo "Abbruch: Repo lässt sich nicht vorspulen (eigene Commits oder dreckiger Baum). Von Hand klären, nicht rebasen/stashen." >&2
+# Erst-Start (#283): nachziehen (nur fast-forward) oder Abbruch mit Zeile — Regel allein in
+# to_spawn/arbeitsstand.py. fetch-Fehler/Ticket-Zweig = Hinweis, weiter. Probelauf prüft nur.
+STAND_ARGS=(arbeitsstand)
+if [ "$DRY_RUN" -eq 1 ]; then STAND_ARGS+=(--pruefen); fi
+rc=0
+TO_SPAWN_REPO="$REPO" "$PY" "$SKILL_HOME/to_spawn.py" "${STAND_ARGS[@]}" || rc=$?
+if [ "$rc" -ne 0 ] && [ "$DRY_RUN" -ne 1 ]; then
+  echo "Arbeitsordner nicht auf Hauptzweig-Stand — nichts gestartet." >&2
   exit 1
 fi
 
@@ -104,6 +129,10 @@ elif [ ! -f "$SKILL_HOME/to_spawn.py" ]; then
 else
   PRUEF_ARGS=(pruefen "$SPEC")
   if [ -n "$TICKETS_ARG" ]; then PRUEF_ARGS+=(--tickets "$TICKETS_ARG"); fi
+  # Probelauf und --nur-wache (startet kein Ticket-Fenster) legen kein Einrichtungs-Ticket an (#410);
+  # --nur-wache ist kein Probelauf: Konfig-Einrichtung (config.sicherstellen) läuft.
+  if [ "$DRY_RUN" -eq 1 ]; then PRUEF_ARGS+=(--dry-run); fi
+  if [ "$NUR_WACHE" -eq 1 ]; then PRUEF_ARGS+=(--ohne-einrichtung); fi
   rc=0
   "$PY" "$SKILL_HOME/to_spawn.py" "${PRUEF_ARGS[@]}" || rc=$?
   if [ "$rc" -eq 3 ]; then
@@ -128,8 +157,15 @@ fi
 # --- 3. Was läuft schon? (nie Duplikate) ------------------------------------
 STAND="$(TO_SPAWN_REPO="$REPO" "$PY" "$SKILL_HOME/skripte/sessions_stand.py" "$SPEC" --alle 2>/dev/null || true)"
 zustand_von() { echo "$STAND" | awk -v n="#$1" '$1==n {print $2; exit} ($1=="Spec" && $2==n) {print $3; exit}'; }
+# Lebt jetzt ein Aufseher-Prozess (``wache.py <S>`` in diesem Repo)? Frisch aus der Prozessliste,
+# gleiche Erkennung wie oben — ein Fenster ``wache <S>`` ohne Prozess startet niemanden nach (#460).
+aufseher_laeuft() {
+  local STAND z
+  STAND="$(TO_SPAWN_REPO="$REPO" "$PY" "$SKILL_HOME/skripte/sessions_stand.py" "$SPEC" --alle 2>/dev/null || true)"
+  z="$(zustand_von "$SPEC")"
+  [ -n "$z" ] && [ "$z" != "aus" ]
+}
 
-SESSION="spec-$SPEC"
 # Fenster laufen im Repo und mit dem Skill dieses Aufrufs — nicht mit den Vorgaben aus
 # ~/.bashrc (``REPO``), sonst startet ``bau`` in einem anderen Repo (#212). Seit #257 rufen
 # die Fenster die Skill-Skripte direkt auf (``bau.py``/``wache.py``), nicht die Shell-
@@ -196,12 +232,16 @@ case "$STAFFEL" in ''|*[!0-9]*) STAFFEL=20 ;; esac
 # speicher_pruefen <Kurzname>: 0 = frei, 5 = voll (Meldung), 7 = Platte voll (Meldung, #1369),
 # 6 = Prüfung kaputt (Meldung).
 # Zweites Argument --trocken (Probelauf): nur messen, der Hausmeister löscht nie.
+# TO_SPAWN_TMUX leer: die Sitzungs-Suche fragt dasselbe blanke ``tmux`` wie die Fenster unten
+# (#409) — sonst zählte sie auf einem anderen tmux-Server als dem, in dem $SESSION entsteht.
+# 8 = voll, aber der Aufseher-Prozess lebt (#460): keine Meldung hier, der Aufrufer meldet „wartet auf Platz“.
 speicher_pruefen() {
   local rc=0 stand
-  stand="$(TO_SPAWN_REPO="$REPO" "$PY" "$SKILL_HOME/to_spawn.py" speicher ${2:+"$2"} 2>&1)" || rc=$?
+  stand="$(TO_SPAWN_TMUX= TO_SPAWN_REPO="$REPO" "$PY" "$SKILL_HOME/to_spawn.py" speicher --sitzung "$SESSION" ${2:+"$2"} 2>&1)" || rc=$?
   case "$rc" in
     0) return 0 ;;
-    5) echo "nicht gestartet: $1 — $stand" >&2; return 5 ;;
+    5) if [ -z "${2:-}" ] && aufseher_laeuft; then return 8; fi
+       echo "nicht gestartet: $1 — $stand" >&2; return 5 ;;
     7) echo "nicht gestartet: $1 — $stand" >&2; return 7 ;;
     *) echo "Speicherprüfung kaputt (to_spawn.py speicher Exit $rc): $stand" >&2; return 6 ;;
   esac
@@ -226,6 +266,12 @@ for i in "${!GEPLANT[@]}"; do
   fi
   rc=0
   speicher_pruefen "${KURZ[$i]}" || rc=$?
+  # Kein Platz, aber der Aufseher läuft (#460): er startet die fehlenden Fenster selbst nach,
+  # sobald Platz frei ist — das ist der vorgesehene Weg, kein Fehler.
+  if [ "$rc" -eq 8 ]; then
+    echo "wartet auf Platz: ${KURZ[*]:$i} — Aufseher startet nach, sobald Platz frei ist."
+    exit 0
+  fi
   if [ "$rc" -ne 0 ]; then
     echo "Rest bleibt aus; später erneut: bash scripts/spawn_srv.sh $SPEC" >&2
     exit "$rc"

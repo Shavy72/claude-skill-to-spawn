@@ -4,7 +4,10 @@ Aufruf (im Repo-Wurzelordner):
 
     python ~/.claude/skills/to-spawn/to_spawn.py spawn <S> [--ziel local|srv]
     python ~/.claude/skills/to-spawn/to_spawn.py stand            # Skill-Stand Bau-Server sichern (#325)
-    python ~/.claude/skills/to-spawn/to_spawn.py regularien <S> [--tickets a,b] [--ohne-github]
+    python ~/.claude/skills/to-spawn/to_spawn.py regularien <S> [--tickets a,b] [--dry-run] \
+        [--ohne-einrichtung] [--ohne-github]  # vorher Einrichtungs-Ticket (#410): Anlegen
+        # scheitert oder Stand unklar (gh api) = Exit 3 + Schlusszeile „EINRICHTUNG FEHLT“;
+        # --tickets, --dry-run, --ohne-einrichtung (= --nur-wache), Spec läuft schon: nur Hinweis
     python ~/.claude/skills/to-spawn/to_spawn.py pruefen <basis> <ziel> [--repo <pfad>]  # Exit 0/1/2 + JSON (#99)
     python ~/.claude/skills/to-spawn/to_spawn.py anhaengen <S> <N> [--blockiert-von B,…] \
         [--schaetzung K] [--umfang TEXT] [--datei PFAD:a-b …] [--trocken]  # Ticket nachtragen (E2-2)
@@ -34,23 +37,31 @@ import io
 import logging
 import os
 import sys
+from collections.abc import Sequence
 from pathlib import Path
+from typing import NoReturn
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from to_spawn import (  # noqa: E402
+    arbeitsstand,
     aufpasser,
     aufseher_stand,
     bau_log,
     befund,
+    briefkasten,
+    briefkasten_cli,
     config,
     deploy_status,
     einrichten,
+    einrichtungs_ticket,
     gh,
     hausmeister,
     hausmeister_aufgabe,
     hooks,
     inventur,
+    komplett_lauf,
+    live_tuer,
     leiter,
     leitstand,
     manifest,
@@ -62,16 +73,23 @@ from to_spawn import (  # noqa: E402
     spec_rand,
     speicher,
     startklar,
+    ticket_zustand,
     ticketstand,
     uebergabe_sichern,
     umzug,
     vorfall,
     waechter_takt,
 )
+from to_spawn import einreichen as einreichen_modul  # noqa: E402
 from to_spawn import spawn as spawn_modul  # noqa: E402
 from to_spawn import stand as stand_modul  # noqa: E402
+from to_spawn.pruefplan import Moment
 
 log = logging.getLogger("to_spawn")
+
+
+#: Unterbefehl ``komplett --moment``: Text der Kommandozeile → Moment (anderes lehnt argparse mit Exit 2 ab).
+_KOMPLETT_MOMENTE = {"vor-live": Moment.VOR_LIVE, "alle-auf-staging": Moment.ALLE_AUF_STAGING}
 
 
 def _tickets(wert: str | None) -> list[str] | None:
@@ -80,17 +98,30 @@ def _tickets(wert: str | None) -> list[str] | None:
     return [teil.strip() for teil in wert.split(",") if teil.strip()]
 
 
-def _spec_tickets(repo: Path, spec: str) -> list[str]:
+def _spec_tickets(repo: Path, spec: str, *, mit_briefkasten: bool = False) -> list[str]:
+    """Tickets der Spec aus dem Manifest; ohne Manifest alle aus dem Bau-Log.
+
+    ``mit_briefkasten`` (nur die Entscheidungs-Liste): ohne Manifest zählen auch Tickets, die nur im
+    Briefkasten stehen (#278 P3b) — sonst fehlten Aufseher-Antworten ohne Bau-Log-Zeile.
+    """
     try:
         daten = manifest.lade_manifest(repo, spec)
     except (FileNotFoundError, ValueError):
-        return bau_log.alle_tickets(repo)
+        tickets = set(bau_log.alle_tickets(repo))
+        if mit_briefkasten:
+            tickets.update(briefkasten.alle_tickets())
+        return sorted(tickets, key=manifest.ticket_schluessel)
     return sorted(daten["tickets"], key=manifest.ticket_schluessel)
 
 
 def _regularien_optionen(p: argparse.ArgumentParser) -> None:
     p.add_argument("--tickets", help="gewählte Tickets (Komma), jedes muss im Manifest stehen")
     p.add_argument("--dry-run", action="store_true", help="ohne Wirkung, nur Lesen")
+    p.add_argument(
+        "--ohne-einrichtung",
+        action="store_true",
+        help="Teil-Start ohne Ticket-Fenster (--nur-wache): Einrichtungs-Ticket nur melden",
+    )
     p.add_argument(
         "--ohne-github",
         action="store_true",
@@ -113,8 +144,10 @@ def _pruefen(ap: argparse.ArgumentParser, args: argparse.Namespace) -> int | Non
         )
         args.befehl, args.spec = "regularien", args.basis
         return None
-    if args.tickets or args.dry_run or args.ohne_github:
-        ap.error("--tickets/--dry-run/--ohne-github gelten nur für „regularien <S>“")
+    if args.tickets or args.dry_run or args.ohne_github or args.ohne_einrichtung:
+        ap.error(
+            "--tickets/--dry-run/--ohne-einrichtung/--ohne-github gelten nur für „regularien <S>“"
+        )
     repo = config.repo_wurzel(args.repo.expanduser() if args.repo else _repo_aus_umgebung())
     urteil = pruef.pruefen(repo, args.basis, args.ziel)
     print(pruef.protokoll.text(urteil.zeile))
@@ -314,6 +347,69 @@ def _spec_schliessen(args: argparse.Namespace) -> int:
     return 0 if ergebnis.ok else 1
 
 
+def _blocker(args: argparse.Namespace) -> int:
+    """Unterbefehl ``blocker`` (#267): Warte-Prüfung der Bau-Session, Regel nur in ``gh.blocker_erledigt``.
+
+    Genau eine Zeile: ``FREI`` (Exit 0) oder ``WARTET: <Gründe>`` (Exit 1). Gründe aus
+    ``gh.blocker_gruende`` (erledigt + Commit auf dem Hauptzweig), wie die Start-Schranke
+    ohne ``--sofort``. Scheitert die Abfrage, gilt „wartet“ — nie „frei“.
+    """
+    repo = config.repo_wurzel(_repo_aus_umgebung())
+    gh_repo = args.gh_repo or gh.repo_aus_origin(repo)
+    deps = gh.blocked_by(gh_repo, str(args.ticket)) if gh_repo else None
+    if deps is None:
+        print("WARTET: Blocker-Abfrage fehlgeschlagen")
+        return 1
+    gruende = gh.blocker_gruende(repo, deps)
+    if gruende:
+        print("WARTET: " + "; ".join(gruende))
+        return 1
+    print("FREI")
+    return 0
+
+
+def _einreichen(args: argparse.Namespace) -> int:
+    """Unterbefehl ``einreichen`` (#411): fertigen Stand auf den Hauptzweig, Regel nur in ``einreichen``."""
+    erg = einreichen_modul.einreichen(Path.cwd(), str(args.nummer))
+    print(erg.zeile)
+    return erg.exit
+
+
+def _zu_bauen(args: argparse.Namespace) -> int:
+    """Unterbefehl ``zu-bauen`` (#279): Tickets der Spec, an denen noch jemand bauen muss.
+
+    Eine Nummer je Zeile, Regel nur in :func:`ticket_zustand.fertig_gebaut`. Unbekannter
+    Stand (gh-Fehler) → Nummer fehlt, Zeile auf stderr, Exit 1 — fail-closed, nie „zu bauen“.
+    """
+    repo = config.repo_wurzel(_repo_aus_umgebung())
+    code = 0
+    for ticket in _spec_tickets(repo, args.spec):
+        daten = ticket_zustand.lesen(ticket, repo)
+        if daten is None:
+            print(f"#{ticket}: Ticket-Stand nicht bestimmbar — nicht gestartet", file=sys.stderr)
+            code = 1
+        elif not ticket_zustand.fertig_gebaut(daten):
+            print(ticket)
+    return code
+
+
+def _ticket_lage(args: argparse.Namespace) -> int:
+    """Unterbefehl ``ticket-lage`` (#282): Lage beim erneuten Start, Regel nur in :mod:`to_spawn.wiederanlauf`.
+
+    Genau eine Zeile: Art (``neu``/``fortsetzen``/``abschluss``/``nichts``), bei ``abschluss``
+    dazu was fehlt — Exit 0. Stand nicht bestimmbar → ``unbekannt: …``, Exit 2 (fail-closed).
+    """
+    from to_spawn import wiederanlauf
+
+    repo = config.repo_wurzel(_repo_aus_umgebung())
+    lage = wiederanlauf.feststellen(args.ticket, repo)
+    if lage is None:
+        print(f"unbekannt: Stand von #{args.ticket} nicht bestimmbar — nichts starten")
+        return 2
+    print(lage.zeile())
+    return 0
+
+
 def _anhaengen(args: argparse.Namespace) -> int:
     """Unterbefehl ``anhaengen`` (E2-2): Issue an Spec hängen — Kanten, Manifest, Unter-Issue."""
     repo = config.repo_wurzel(_repo_aus_umgebung())
@@ -383,6 +479,14 @@ def _eintrag(args: argparse.Namespace) -> int:
     return 0
 
 
+def _entscheidungen(args: argparse.Namespace) -> int:
+    """``entscheidungen S``: Liste aller Entscheidungen einer Spec (#278, Tür B)."""
+    repo = config.repo_wurzel(_repo_aus_umgebung())
+    for z in briefkasten.liste(_spec_tickets(repo, args.spec, mit_briefkasten=True), log_repo=repo):
+        print(f"#{z['ticket']} · {z['wer']} · {z['was']} · {z['warum']} · {z['beleg']}")
+    return 0
+
+
 def _umrechnen(args: argparse.Namespace) -> int:
     """``umrechnen``: alten Bau-Log-Zeilen den Spitzen-Kontext nachtragen (#238)."""
     repo = Path(args.repo).expanduser() if args.repo else bau_log.log_repo()
@@ -426,12 +530,40 @@ def _hook_stop_mit_umzug() -> int:
     return code
 
 
+#: Schlüssel für ``set_defaults``: Exit-Code bei falschen Argumenten dieses Unterbefehls (#505).
+ARGUMENTFEHLER_EXIT = "argumentfehler_exit"
+
+
+class _Parser(argparse.ArgumentParser):
+    """argparse, dessen Exit-Code bei falschen Argumenten der Unterbefehl festlegt (#505).
+
+    Standard bleibt argparse-üblich 2. Ein Unterbefehl, dessen Exit 2 schon etwas anderes heißt
+    (``einreichen``: „Stand unbekannt – erneut rufen“), setzt ``set_defaults(argumentfehler_exit=N)``;
+    das gilt für fehlende und überzählige Argumente gleichermaßen.
+    """
+
+    def error(self, message: str) -> NoReturn:
+        self._abbruch(self._defaults.get(ARGUMENTFEHLER_EXIT, 2), message)
+
+    def parse_args(  # type: ignore[override]
+        self, args: Sequence[str] | None = None, namespace: argparse.Namespace | None = None
+    ) -> argparse.Namespace:
+        ergebnis, rest = self.parse_known_args(args, namespace)
+        if rest:
+            self._abbruch(getattr(ergebnis, ARGUMENTFEHLER_EXIT, 2), f"unrecognized arguments: {' '.join(rest)}")
+        return ergebnis
+
+    def _abbruch(self, code: int, message: str) -> NoReturn:
+        self.print_usage(sys.stderr)
+        self.exit(code, f"{self.prog}: error: {message}\n")
+
+
 def main(argv: list[str] | None = None) -> int:
     # Windows-Konsole ist cp1252: Umlaute und Pfeile sonst UnicodeEncodeError.
     for strom in (sys.stdout, sys.stderr):
         if hasattr(strom, "reconfigure"):
             strom.reconfigure(encoding="utf-8", errors="replace")
-    ap = argparse.ArgumentParser(
+    ap = _Parser(
         prog="to_spawn", description="Bau-Sessions einer Spec steuern."
     )
     unter = ap.add_subparsers(dest="befehl", required=True)
@@ -582,11 +714,40 @@ def main(argv: list[str] | None = None) -> int:
     unter.add_parser(
         "hauptzweig", help="Name des Hauptzweigs ausgeben (Konfig, origin/HEAD, master/main) (#257)"
     )
+    p_arbeit = unter.add_parser(
+        "arbeitsstand",
+        help="Erst-Start: Arbeitsordner auf origin/<Hauptzweig> nachziehen (nur fast-forward) oder Abbruch; "
+        "fetch-Fehler/anderer Zweig nur Hinweis (#283)",
+    )
+    p_arbeit.add_argument("--pruefen", action="store_true", help="nur prüfen, nichts nachziehen")
+    # Warte-Prüfung der Bau-Session (#267): dieselbe Regel wie die Start-Schranke.
+    p_blocker = unter.add_parser(
+        "blocker", help="Vorgänger erledigt + Commit auf Hauptzweig? Exit 0 = FREI, 1 = WARTET + Gründe (#267)"
+    )
+    p_blocker.add_argument("ticket", type=int)
+    p_blocker.add_argument("--gh-repo", default="", help="owner/name (sonst aus origin)")
+    # Fertig einreichen (#411): der eine Weg auf den Hauptzweig, ohne Frage und ohne Takt.
+    p_einreichen = unter.add_parser(
+        "einreichen",
+        help="fertigen, geprüften Stand auf den Hauptzweig bringen (im eigenen Worktree; Exit 0/1/2/5)",
+    )
+    # #505: Exit 2 heißt hier „Stand unbekannt – erneut rufen“; Tippfehler im Befehl → Aufruf falsch.
+    p_einreichen.set_defaults(**{ARGUMENTFEHLER_EXIT: einreichen_modul.AUFRUF})
+    p_einreichen.add_argument("nummer", help="Ticket-Nummer (Bau-Session) bzw. Spec-Nummer (Aufseher)")
+    p_zu_bauen = unter.add_parser(
+        "zu-bauen", help="Tickets der Spec, die noch nicht fertig gebaut sind (eine Nummer je Zeile, #279)"
+    )
+    p_zu_bauen.add_argument("spec")
+    p_lage = unter.add_parser(
+        "ticket-lage", help="Lage beim erneuten Start: neu/fortsetzen/abschluss/nichts + fehlt (Exit 0, unbekannt 2, #282)"
+    )
+    p_lage.add_argument("ticket", type=int)
     unter.add_parser("hook-stop", help="Stop-Hook (JSON auf stdin)")
     unter.add_parser("hook-subagent-stop", help="SubagentStop-Hook (JSON auf stdin)")
     unter.add_parser(
         "hook-spec-sperre", help="PreToolUse-Hook: rohes `gh issue close <Spec>` sperren (E2-4)"
     )
+    unter.add_parser("hook-ja-sperre", help="PreToolUse-Hook: Ja-Befehle aus Werkzeug-Aufrufen sperren (#531)")
     p_schliessen = unter.add_parser(
         "spec-schliessen", help="Spec schließen, nur wenn alle Folge-Tickets erledigt sind (E2-4)"
     )
@@ -608,7 +769,7 @@ def main(argv: list[str] | None = None) -> int:
     p_eintrag.add_argument(
         "--typ",
         required=True,
-        choices=["zusammenfassung", "entscheidung", "blockiert", "vorfall"],
+        choices=["zusammenfassung", "entscheidung", "blockiert", "frage", "vorfall"],
     )
     p_eintrag.add_argument("--umfang", help="was gebaut wurde")
     p_eintrag.add_argument("--schwierigkeiten", help="was schwer war")
@@ -630,6 +791,11 @@ def main(argv: list[str] | None = None) -> int:
     p_eintrag.add_argument(
         "--repo", help="Ordner mit dem Bau-Log (sonst TO_SPAWN_LOG_REPO bzw. Git-Wurzel)"
     )
+
+    # Tür B (#278 P2): Befugnis prüfen, Frage einwerfen, Antwort lesen/schreiben, Liste je Spec.
+    briefkasten_cli.richte_parser_ein(unter)
+    p_ents = unter.add_parser("entscheidungen", help="Liste aller Entscheidungen einer Spec")
+    p_ents.add_argument("spec")
 
     p_um = unter.add_parser(
         "umrechnen", help="alte Bau-Log-Zeilen: Spitzen-Kontext aus dem Transkript nachtragen"
@@ -655,11 +821,24 @@ def main(argv: list[str] | None = None) -> int:
     p_speicher.add_argument(
         "--trocken", action="store_true", help="nur messen, nie aufräumen (Probelauf, Status)"
     )
+    p_speicher.add_argument(
+        "--sitzung", default=None, help="Obergrenze nur für diese tmux-Sitzung zählen, z. B. spec-12 (#409)"
+    )
 
     # Startklar-Prüfung (#450): venv, Schlüssel, Aufseher-Werkzeuge — Exit 0 ok / 1 rot.
     p_startklar = unter.add_parser("startklar", help="Aufseher-Ordner vor dem Spec-Start prüfen (Exit 0/1)")
     p_startklar.add_argument("spec", type=int)
     p_startklar.add_argument("--ordner", type=Path, default=None, help="Aufseher-Ordner (Vorgabe: Repo-Wurzel)")
+
+    # Komplett-Prüfung einmal je Spec (#425 C2): einzige Tür vor dem Live-Schritt — Exit 0 grün/nicht nötig, 1 sonst.
+    p_komplett = unter.add_parser("komplett", help="Komplett-Prüfung der Spec, höchstens einmal (Exit 0/1)")
+    p_komplett.add_argument("spec", type=int)
+    p_komplett.add_argument("--moment", choices=sorted(_KOMPLETT_MOMENTE), default="vor-live")
+    # Nur für den Hintergrund-Lauf aus dem capo-Takt (#455): Rot je Kopf gilt dort als geprüft.
+    p_komplett.add_argument("--aus-takt", action="store_true", help=argparse.SUPPRESS)
+    # Live-Tür (#456): live.befehl startet nur nach grüner Komplett-Prüfung — Exit 0/1, 2 = live.befehl fehlt.
+    p_live = unter.add_parser("live", help="Live-Schritt der Spec, nur nach grüner Komplett-Prüfung (Exit 0/1/2)")
+    p_live.add_argument("spec", type=int)
 
     nest.richte_parser_ein(unter)
     leitstand.richte_parser_ein(unter)
@@ -690,7 +869,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     p_aufr.add_argument("--trocken", action="store_true", help="mit --aufgabe-einrichten: nur zeigen")
     p_aufr.add_argument(
-        "--altbestand-liste", type=Path, metavar="DATEI.md", help="Lösch-Liste für David schreiben"
+        "--altbestand-liste", type=Path, metavar="DATEI.md", help="Lösch-Liste für den Menschen schreiben"
     )
     # Ticket-Zweige (#1439): ein Zweig (Schlange) bzw. Probelauf-Liste aller Zweige.
     p_aufr.add_argument("--zweig", help="Zweig ticket/<N>-… aufräumen (statt eines Ordners)")
@@ -717,6 +896,8 @@ def main(argv: list[str] | None = None) -> int:
         return hooks.hook_subagent_stop()
     if args.befehl == "hook-spec-sperre":
         return hooks.hook_spec_sperre()
+    if args.befehl == "hook-ja-sperre":
+        return hooks.hook_ja_sperre()
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     if args.befehl == "eintrag":
         return _eintrag(args)
@@ -728,6 +909,10 @@ def main(argv: list[str] | None = None) -> int:
         return _anhaengen(args)
     if args.befehl == "umrechnen":
         return _umrechnen(args)
+    if args.befehl in briefkasten_cli.BEFEHLE:
+        return briefkasten_cli.lauf(args)
+    if args.befehl == "entscheidungen":
+        return _entscheidungen(args)
     if args.befehl == "nest":
         return nest.lauf(args)
     if args.befehl == "leitstand":
@@ -757,10 +942,35 @@ def main(argv: list[str] | None = None) -> int:
         )
         sys.stdout.write(erg.zeile + "\n")
         return erg.exit
+    if args.befehl == "arbeitsstand":
+        # Exit 0 = aktuell/nachgezogen/hinweis, 1 = veraltet/Abbruch (Zeile nennt Zahl und was zu tun ist).
+        erg = arbeitsstand.sicherstellen(config.repo_wurzel(_repo_aus_umgebung()), nachziehen=not args.pruefen)
+        print(f"Arbeitsstand: {erg.zustand} — {erg.text}", file=sys.stdout if erg.ok else sys.stderr)
+        return 0 if erg.ok else 1
     if args.befehl == "hauptzweig":
         # Nur der Name auf stdout — spawn_srv.sh liest ihn ein (#257).
         print(gh.hauptzweig(config.repo_wurzel(_repo_aus_umgebung())))
         return 0
+    if args.befehl == "blocker":
+        return _blocker(args)
+    if args.befehl == "einreichen":
+        return _einreichen(args)
+    if args.befehl == "zu-bauen":
+        return _zu_bauen(args)
+    if args.befehl == "ticket-lage":
+        return _ticket_lage(args)
+    if args.befehl == "komplett":
+        repo = config.repo_wurzel(_repo_aus_umgebung())
+        tuer = komplett_lauf.takt_kind if args.aus_takt else komplett_lauf.komplett_einmal
+        erg = tuer(repo, args.spec, _KOMPLETT_MOMENTE[args.moment], config.lade(repo))
+        # „läuft schon“ ist kein grüner Stand: vor Live erst weiter, wenn der andere Lauf grün ist.
+        print(erg.grund)
+        return 0 if erg.frei else 1
+    if args.befehl == "live":
+        repo = config.repo_wurzel(_repo_aus_umgebung())
+        code, zeilen = live_tuer.starte(repo, args.spec, config.lade(repo))
+        print("\n".join(zeilen))
+        return code
     if args.befehl == "startklar":
         ordner = args.ordner.resolve() if args.ordner else config.repo_wurzel(_repo_aus_umgebung())
         code, text = startklar.ausgabe(startklar.pruefe(ordner, args.spec))
@@ -769,7 +979,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.befehl == "speicher":
         # Nur lesen: legt keine Konfig an (kein config.sicherstellen).
         return speicher.cli(
-            config.lade(_repo_aus_umgebung()), nur_staffel=args.staffel, trocken=args.trocken
+            config.lade(_repo_aus_umgebung()), nur_staffel=args.staffel, trocken=args.trocken, sitzung=args.sitzung
         )
 
     repo = config.repo_wurzel()
@@ -844,6 +1054,19 @@ def main(argv: list[str] | None = None) -> int:
     if args.befehl == "stand":
         return stand_modul.sichere_stand(repo, konfig)
     if args.befehl == "regularien":
+        # Einrichtungs-Ticket (#410) vor der Prüfung: es soll in ihr schon mitzählen.
+        # Probelauf (--dry-run), --tickets, --nur-wache (--ohne-einrichtung) und
+        # „Spec läuft schon“: nur Hinweis. Anlegen scheitert oder Stand unklar: Exit 3 (unten).
+        einrichtung = einrichtungs_ticket.sicherstellen(
+            repo,
+            args.spec,
+            konfig,
+            mit_github=not args.ohne_github,
+            trocken=args.dry_run,
+            auswahl=bool(_tickets(args.tickets)) or args.ohne_einrichtung,
+        )
+        for zeile in einrichtung.zeilen:
+            print(zeile)
         bericht = manifest.pruefe(
             repo,
             args.spec,
@@ -852,6 +1075,11 @@ def main(argv: list[str] | None = None) -> int:
             auswahl=_tickets(args.tickets),
         )
         print(bericht.text())
+        if not einrichtung.ok:
+            # Ohne Einrichtungs-Ticket bauten die Tickets ohne Prüfung/Staging los (#410):
+            # Weigerung, Schlusszeile wiederholt den Grund.
+            print(einrichtung.zeilen[-1])
+            return manifest.EXIT_WEIGERUNG
         return 0 if bericht.sauber else manifest.EXIT_WEIGERUNG
     if args.befehl == "log":
         print(bau_log.tabelle(repo, _spec_tickets(repo, args.spec)))

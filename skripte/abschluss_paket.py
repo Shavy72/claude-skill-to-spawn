@@ -1,4 +1,4 @@
-"""Abschluss-Paket einer Spec: alles zum Durchschauen an David (vor und nach dem Live-Deploy).
+"""Abschluss-Paket einer Spec: alles zum Durchschauen an den Menschen (vor und nach dem Live-Deploy).
 
 Aufruf: ``python abschluss_paket.py <S> --stage <url> --rundschau <link> --tests <link>
 [--belege <link>] [--direkt "<Titel>=<url>"]… [--basic-auth-nutzer <name>]
@@ -41,7 +41,7 @@ import os
 import re
 import subprocess
 import sys
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -56,7 +56,7 @@ from test_uebersicht import lade_tickets  # noqa: E402
 from thermo_lauf import SPERRE_MIN, repo_ordner  # noqa: E402
 from thermo_lauf import marker_pfad as thermo_marker_pfad  # noqa: E402
 
-from to_spawn import bau_log, capo, config, melder  # noqa: E402
+from to_spawn import bau_log, briefkasten, capo, config, melder, rundschau_deck  # noqa: E402
 
 log = logging.getLogger("abschluss_paket")
 
@@ -212,7 +212,7 @@ def _direkt(roh: list[str], ap: argparse.ArgumentParser) -> list[tuple[str, str]
 
 
 def _parser() -> argparse.ArgumentParser:
-    ap = argparse.ArgumentParser(description="Abschluss-Paket einer Spec (alles zum Durchschauen an David).")
+    ap = argparse.ArgumentParser(description="Abschluss-Paket einer Spec (alles zum Durchschauen an den Menschen).")
     ap.add_argument("spec", type=int)
     ap.add_argument("--stage", required=True, help="Stage-App-Link (staging.url)")
     ap.add_argument("--rundschau", required=True, help="Link der veröffentlichten Rundschau")
@@ -224,6 +224,17 @@ def _parser() -> argparse.ArgumentParser:
     ap.add_argument("--bitwarden", default="", help="Name des Bitwarden-Eintrags mit dem Passwort")
     ap.add_argument("--neu", action="append", default=[], help="Satz „was ist neu“ (bis 3×)")
     ap.add_argument("--tun", action="append", default=[], help="Satz „was du tun musst“ (bis 3×)")
+    ap.add_argument(
+        "--ohne-rundschau",
+        action="store_true",
+        help="nur Notfall-Ablage des capo (--rundschau nennt dann den Grund): Deck-Pflicht entfällt",
+    )
+    ap.add_argument(
+        "--rundschau-datei",
+        type=Path,
+        default=None,
+        help="Rundschau-Deck als Datei (Pflicht bei --stand abnahme); Prüfung gegen to_spawn/rundschau_deck.py (#529), rot = Exit 4",
+    )
     ap.add_argument("--stand", choices=("abnahme", "live"), default="abnahme")
     ap.add_argument("--repo", type=Path, default=None)
     ap.add_argument("--dry-run", action="store_true", help="nichts schreiben, nichts mailen")
@@ -379,6 +390,19 @@ def ablegen(argv: list[str]) -> int:
     a = ap.parse_args(argv)
     repo = _repo(a.repo)
     p, neue_form = _paket(a, ap, repo)
+    if a.dry_run:
+        maengel = []
+    elif a.rundschau_datei is None and p.stand == "abnahme" and not a.ohne_rundschau:
+        maengel = ["`--rundschau-datei <html>` fehlt: ohne Rundschau-Deck (drei Teile, #529) keine Abnahme."]
+    elif a.rundschau_datei is not None:
+        maengel = _rundschau_maengel(repo, p.spec, a.rundschau_datei)
+    else:
+        maengel = []
+    if maengel:
+        sys.stdout.write("Rundschau nicht bereit zur Abnahme:\n" + "\n".join(f"- {m}" for m in maengel) + "\n")
+        return 4
+    if a.ohne_rundschau and a.rundschau_datei is None and p.stand == "abnahme":
+        p = replace(p, rundschau=f"nicht abnahmebereit (ohne Rundschau-Deck) — {p.rundschau}")
     datei = ablage_pfad(repo, p.spec, p.stand)
     fertig = _zeit(a.spec_fertig, ap, "--spec-fertig").isoformat(timespec="seconds")
     alt = melder.lade_json(datei)
@@ -389,8 +413,50 @@ def ablegen(argv: list[str]) -> int:
         sys.stdout.write(f"[Probe] {datei}\n{json.dumps(daten, ensure_ascii=False, indent=2)}\n")
         return 0
     melder.speichere_json(datei, daten)
-    log.info("Abschluss-Paket abgelegt: %s (SPEC FERTIG %s)", datei, fertig)
+    # #421: Das Paket liegt schon vor „SPEC FERTIG“ (Abnahme offen) — die Entscheidungs-Liste
+    # entsteht darum hier mit; capo schreibt sie bei „SPEC FERTIG“ nur noch einmal neu.
+    liste = capo.uebersicht(repo, p.spec, ticket_nummern(repo, p.spec))
+    log.info("Abschluss-Paket abgelegt: %s (SPEC FERTIG %s) · %s", datei, fertig, liste)
     return 0
+
+
+def entscheidungs_daten(repo: Path, spec: int) -> list[dict[str, str]]:
+    """Entscheidungen der Spec für Rundschau-Grafik und -Prüfung (``briefkasten.liste``)."""
+    return briefkasten.liste(sorted(ticket_nummern(repo, spec)), log_repo=repo, hauptbaum=repo)
+
+
+def _rundschau_maengel(repo: Path, spec: int, datei: Path) -> list[str]:
+    """Prüft die Rundschau-Datei (``rundschau_deck.pruefe``) gegen die Entscheidungen der Spec."""
+    try:
+        text = datei.read_text(encoding="utf-8")
+    except OSError as exc:
+        return [f"Rundschau-Datei nicht lesbar: {exc}"]
+    return rundschau_deck.pruefe(text, entscheidungs_daten(repo, spec))
+
+
+def ticket_nummern(repo: Path, spec: int) -> list[int]:
+    """Ticket-Nummern der Spec aus dem Manifest; ohne Manifest alle Bau-Logs des Repos."""
+    nummern = [int(nr) for nr, _titel in _tickets(repo, spec) if nr.isdigit()]
+    return nummern or [int(t) for t in bau_log.alle_tickets(repo) if t.isdigit()]
+
+
+def entscheidungen_link(repo: Path, spec: int) -> str:
+    """Pfad der Entscheidungs-Liste (``capo.entscheidungs_datei``), relativ zum Repo wo möglich."""
+    datei = capo.entscheidungs_datei(repo, spec)
+    try:
+        return datei.relative_to(repo).as_posix()
+    except ValueError:
+        return str(datei)
+
+
+def entscheidungs_zeilen(repo: Path, spec: int) -> list[str]:
+    """Alle Tabellenzeilen der Entscheidungs-Liste (``capo.entscheidungs_datei``); ohne Datei leer."""
+    datei = capo.entscheidungs_datei(repo, spec)
+    try:
+        text = datei.read_text(encoding="utf-8")
+    except OSError:
+        return []
+    return [z for z in text.splitlines() if z.startswith("| #")]
 
 
 def _ticket_zeilen(repo: Path, spec: int, konfig: dict[str, Any]) -> list[str]:
@@ -442,6 +508,7 @@ def wirkungskreis(repo: Path, spec: int) -> str:
 def mail_text(repo: Path, p: Paket, neue_form: bool, konfig: dict[str, Any], system: str, befunde: str) -> str:
     """Die eine Mail: Spec-Teil → System-Teil (Rückblick) → Code-Befunde (Thermo)."""
     heute = markdown_voll(p) if neue_form else markdown(p.spec, p.stage, p.rundschau, p.tests, p.saetze)
+    eintraege = entscheidungs_zeilen(repo, p.spec)
     return "\n".join(
         [
             "## Spec-Teil",
@@ -454,6 +521,12 @@ def mail_text(repo: Path, p: Paket, neue_form: bool, konfig: dict[str, Any], sys
             "### Wirkungskreis",
             "",
             wirkungskreis(repo, p.spec),
+            "",
+            f"### Für dich entschieden · Entscheidungen ({len(eintraege)})",
+            "",
+            f"Alle Entscheidungen der Spec (Bau-Log + Briefkasten): {entscheidungen_link(repo, p.spec)}",
+            "",
+            *eintraege,
             "",
             "## System-Teil",
             "",

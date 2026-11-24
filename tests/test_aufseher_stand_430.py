@@ -20,7 +20,7 @@ import pytest
 SKILL = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SKILL))
 
-from to_spawn import aufpasser, aufseher_stand
+from to_spawn import aufpasser, aufseher_stand, pc_fenster
 
 SPEC = 77
 JETZT = 1_800_000_000.0
@@ -194,6 +194,19 @@ def test_ticket_zu_und_kein_fenster(repo: Path, ordner: Path) -> None:
     assert "1 zu" in kurz.splitlines()[0]
 
 
+def test_ticket_verworfen_ohne_fenster_faellt_weg(repo: Path, ordner: Path) -> None:
+    w = FakeWelt()
+    w.ticket(434, zu=True)
+    w.tickets[434]["state_reason"] = "not_planned"
+    w.ticket(435)
+    text = aufseher_stand.stand(SPEC, w.quellen(repo), ordner=ordner, alle=True)
+    assert zeile_fuer(text, 434).startswith("#434 verworfen · kein Fenster · ")
+    # Ohne --alle fällt ein verworfenes Ticket ohne Fenster weg wie ein geschlossenes.
+    kurz = aufseher_stand.stand(SPEC, w.quellen(repo), ordner=ordner)
+    assert "#434 " not in kurz
+    assert "#435 " in kurz
+
+
 def test_zehn_tickets_hoechstens_elf_zeilen(repo: Path, ordner: Path) -> None:
     w = FakeWelt()
     roh = []
@@ -297,6 +310,7 @@ def test_stand_ordner_per_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -
 TMUX_STUB = textwrap.dedent(
     """
     import json, os, sys
+    sys.stdout.reconfigure(encoding="utf-8")  # wie echtes tmux; Windows-Pipe wäre cp1252 (#68)
     welt = json.loads(open(os.environ["FAKE_WELT"], encoding="utf-8").read())
     args = sys.argv[1:]
     if args[0] == "list-windows":
@@ -339,6 +353,9 @@ def _cli_welt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         "TO_SPAWN_TMUX", json.dumps([sys.executable, str(tmp_path / "tmux_stub.py")])
     )
     monkeypatch.setenv("TO_SPAWN_GH_STUB", str(tmp_path / "gh_stub.py"))
+    # Bau-Server-Weg (tmux-Fenster) auf jeder Plattform; am PC (Windows) fragte die Weiche
+    # sonst Transkripte statt tmux und meldete „kein Fenster“ (#68). PC-Weg: test_pc_fenster_501.
+    monkeypatch.setattr(pc_fenster, "am_pc", lambda: False)
     return tmp_path / "stand"
 
 
