@@ -8,9 +8,13 @@ Start-Tür :mod:`to_spawn.starter` (#1406).
 
 from __future__ import annotations
 
+import logging
 import subprocess
+from pathlib import Path
 
 from to_spawn import capo, starter
+
+log = logging.getLogger(__name__)
 
 
 class TmuxFehler(RuntimeError):
@@ -53,3 +57,29 @@ def aufrufen(*argumente: str, eingabe: str | None = None, start: bool = False) -
             unterbefehl, f"keine Antwort nach {fehler.timeout} s"
         ) from fehler
     return fertig.stdout
+
+
+def spec_session_schliessen(repo: Path, spec: int) -> None:
+    """tmux-Session ``spec-<S>`` schließen, aber nur wenn sie nachweislich zu ``repo`` gehört (#546).
+
+    Der Name trägt keinen Repo-Anteil (Skill-Issue 457): erst die Startpfade der Fenster
+    abfragen, mindestens einer muss im Repo-Ordner liegen. Nicht belegbar (Abfrage scheitert,
+    kein Pfad im Repo) → nichts schließen, eine Log-Zeile. Fehlt die Session, ist das kein Fehler.
+    Windows-Terminal: kein Weg vorhanden, ohne tmux scheitert die Abfrage → nichts geschlossen.
+    """
+    ziel = f"=spec-{spec}"
+    try:
+        roh = aufrufen("list-panes", "-s", "-t", ziel, "-F", "#{pane_start_path}")
+    except TmuxFehler as fehler:
+        if "can't find session" not in fehler.stderr and "no server running" not in fehler.stderr:
+            log.warning("Session spec-%s nicht geschlossen: Pfade nicht abfragbar (%s)", spec, fehler)
+        return
+    wurzel = repo.resolve()
+    pfade = [Path(z).resolve() for z in roh.splitlines() if z.strip()]
+    if not any(p == wurzel or wurzel in p.parents for p in pfade):
+        log.warning("Session spec-%s nicht geschlossen: kein Fenster startet in %s", spec, wurzel)
+        return
+    try:
+        aufrufen("kill-session", "-t", ziel)
+    except FensterWeg:
+        return

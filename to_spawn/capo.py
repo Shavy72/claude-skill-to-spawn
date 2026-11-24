@@ -2788,13 +2788,14 @@ def _tick(
     ):
         erg.zeilen += _hausmeister_schluss(spec, zustand, jetzt, dry_run)
     # Letzter Schritt der Kette (#543): Spec-Issue schließen, dort hängt das Aufseher-Fenster.
-    # Nur bei positivem Beleg ``staging.ohne: true`` (Vorgabe False, kaputte Datei → False): bei
-    # Staging gibt es keinen „Live ist gelaufen“-Merker (Folge-Issue), ein Repo ganz ohne
+    # Nur bei positivem Beleg: ``staging.ohne: true`` (Vorgabe False, kaputte Datei → False) oder
+    # Staging-Repo mit Merker „Live ist gelaufen“ (#546, :func:`live_gelaufen`). Ein Repo ganz ohne
     # Staging-Eintrag wird bewusst nicht von selbst geschlossen.
+    war_zu = bool(zustand.get("spec_geschlossen"))
     if (
         zustand.get("aufraeumen_erledigt")
-        and not zustand.get("spec_geschlossen")
-        and config.staging_bewusst_ohne(konfig)
+        and not war_zu
+        and (config.staging_bewusst_ohne(konfig) or (config.hat_staging(konfig) and live_gelaufen(repo, spec, gh_repo)))
     ):
         erg.zeilen += _spec_schliessen_schritt(repo, spec, gh_repo, zustand, jetzt, dry_run)
 
@@ -2806,7 +2807,58 @@ def _tick(
     sichern()
     if any("FEHLER" in z for z in erg.zeilen):
         erg.exit_code = 1
+    # Allerletzter Schritt (#546): erst nach ``sichern()``, denn der Takt kann im Fenster laufen,
+    # das hier endet. Nur im Takt, der ``spec_geschlossen`` gerade gesetzt hat → nie wiederholt.
+    if not war_zu and zustand.get("spec_geschlossen") and not dry_run:
+        _spec_fenster_wegraeumen(repo, spec)
     return erg
+
+
+def _live_merker_datei(repo: Path, spec: int, gh_repo: str = "") -> Path:
+    """Eigene Merker-Datei neben dem Zustand der Spec; ohne Takt-Sperre beschreibbar (#546)."""
+    datei = _zustand_datei(repo, gh_repo or gh.repo_aus_origin(repo), spec)
+    return datei.with_name(f"{datei.stem}.live")
+
+
+def live_gelaufen(repo: Path, spec: int, gh_repo: str = "") -> bool:
+    """Hat der Live-Schritt dieser Spec erfolgreich gelaufen? Einzige Lese-Stelle des Merkers (#546).
+
+    Nur ein gültiger Zeitstempel in der Merker-Datei zählt; fehlt sie, ist sie leer oder
+    unlesbar, gilt „nicht gelaufen“.
+    """
+    try:
+        text = _live_merker_datei(repo, spec, gh_repo).read_text(encoding="utf-8").strip()
+        datetime.fromisoformat(text)
+    except (OSError, ValueError):
+        return False
+    return True
+
+
+def live_merken(repo: Path, spec: int, gh_repo: str = "") -> bool:
+    """Merker „Live ist gelaufen“ atomar schreiben (Live-Schritt, nur nach Erfolg); ``True`` = gesetzt.
+
+    Bewusst ohne Takt-Sperre: ein langer Takt darf den Merker nicht verhindern.
+    """
+    datei = _live_merker_datei(repo, spec, gh_repo)
+    zwischen = datei.with_name(datei.name + ".neu")
+    try:
+        datei.parent.mkdir(parents=True, exist_ok=True)
+        zwischen.write_text(datetime.now().isoformat(timespec="seconds"), encoding="utf-8")
+        os.replace(zwischen, datei)
+    except OSError as fehler:
+        log.error("Live-Merker Spec #%s nicht gesetzt: %s", spec, fehler)
+        return False
+    return True
+
+
+def _spec_fenster_wegraeumen(repo: Path, spec: int) -> None:
+    """Fenster der geschlossenen Spec wegräumen; Fehler nur loggen (Takt bleibt grün)."""
+    from to_spawn import tmux_aufruf  # spät: tmux_aufruf importiert capo
+
+    try:
+        tmux_aufruf.spec_session_schliessen(repo, spec)
+    except Exception:  # der Takt endet nie rot am Aufräumen
+        log.exception("Fenster der Spec #%s nicht geschlossen", spec)
 
 
 def _komplett_alle_auf_staging(
