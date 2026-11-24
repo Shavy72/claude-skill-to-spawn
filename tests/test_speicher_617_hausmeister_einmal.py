@@ -42,3 +42,25 @@ def test_voll_raeumt_erneut(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> 
     assert speicher.cli(None, sitzung="spec-9") == speicher.EXIT_PLATTE
     assert speicher.cli(None, sitzung="spec-9") == speicher.EXIT_PLATTE
     assert laeufe == [True, True]
+
+
+def test_stempel_aus_der_zukunft_gilt_nicht_als_frisch(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    import os
+    import time
+
+    laeufe = _welt(monkeypatch, tmp_path, 0.10)
+    speicher.cli(None, sitzung="spec-9")
+    zukunft = time.time() + 3600  # Uhr-Sprung
+    os.utime(speicher._stempel("spec-9"), (zukunft, zukunft))
+    speicher.cli(None, sitzung="spec-9")
+    assert laeufe == [True, True]
+
+
+def test_stempel_unlesbar_raeumt(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    laeufe = _welt(monkeypatch, tmp_path, 0.10)
+    datei = tmp_path / "datei"
+    datei.write_text("x", encoding="utf-8")  # Ordner des Stempels ist eine Datei ⇒ stat/touch scheitern
+    monkeypatch.setenv("TO_SPAWN_HAUSMEISTER_LOG", str(datei / "hausmeister.jsonl"))
+    for _ in range(2):
+        assert speicher.cli(None, sitzung="spec-9") == 0
+    assert laeufe == [True, True]

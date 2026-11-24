@@ -654,7 +654,7 @@ def _platte_je_start(sitzung: str | None) -> tuple[bool, str]:
     if sitzung:
         try:
             stempel = _stempel(sitzung)
-            if time.time() - stempel.stat().st_mtime < AUFRAEUM_ABSTAND_S:
+            if 0 <= time.time() - stempel.stat().st_mtime < AUFRAEUM_ABSTAND_S:  # Zukunft = Uhr-Sprung
                 ok, grund = _platte_pruefen(nur_messen=True)
                 if ok:
                     return ok, grund
