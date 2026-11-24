@@ -9,6 +9,8 @@ from __future__ import annotations
 import json
 import logging
 import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -145,3 +147,65 @@ def test_fremder_eintrag_wird_ueber_laeufe_nur_einmal_gemeldet(
     _schreibe(ort["datei"], _zeile(fremd, fp="f1"), _zeile(fremd, fp="f2"))
     dritter = lauf()
     assert len(dritter) == 1, dritter
+
+
+# --- #515: Zustand (Laden/Erkennen/Sichern) liegt in mensch_noetig, echte Zustandsdatei ---
+
+_LAUF = """
+import json, sys
+from pathlib import Path
+from to_spawn import mensch_noetig
+datei = Path(sys.argv[1]); repo = Path(sys.argv[2]); wt = Path(sys.argv[3])
+zustand = json.loads(datei.read_text()) if datei.exists() else {}
+def sichern():
+    datei.write_text(json.dumps(zustand))
+eigene = mensch_noetig.eintraege_mit_zustand(
+    3, zustand, sichern, repo, lambda n: wt / f"wt-{n}"
+)
+print(json.dumps([e["fingerprint"] for e in eigene]))
+"""
+
+
+def _prozess(ort: dict[str, Path], datei: Path) -> subprocess.CompletedProcess[str]:
+    skript = ort["tmp"] / "lauf.py"
+    skript.write_text(_LAUF, encoding="utf-8")
+    wurzel = Path(__file__).resolve().parent.parent
+    env = {**os.environ, "PYTHONPATH": str(wurzel), "REVIEW_MENSCH_NOETIG": str(ort["datei"])}
+    return subprocess.run(
+        [sys.executable, str(skript), str(datei), str(ort["repo"]), str(ort["wt"])],
+        capture_output=True, text=True, env=env, check=True,
+    )
+
+
+def test_zustand_ueber_zwei_prozesse(ort: dict[str, Path]) -> None:
+    fremd = ort["tmp"] / "anderes" / "wt-7"
+    _schreibe(ort["datei"], _zeile(ort["repo"].as_posix(), fp="a1"), _zeile(fremd.as_posix(), fp="a3"))
+    zdatei = ort["tmp"] / "zustand.json"
+    assert json.loads(_prozess(ort, zdatei).stdout) == ["a1"]
+    assert json.loads(zdatei.read_text())["mensch_noetig_fremd"] == ["s1|a3"]
+    assert json.loads(_prozess(ort, zdatei).stdout) == ["a1"]  # eigener Eintrag bleibt (nichts gesehen)
+
+
+def test_dry_run_schreibt_nichts(ort: dict[str, Path]) -> None:
+    _schreibe(ort["datei"], _zeile((ort["tmp"] / "x").as_posix(), fp="a3"))
+    zustand: dict[str, object] = {}
+    mensch_noetig.eintraege_mit_zustand(3, zustand, None, ort["repo"], lambda n: ort["wt"] / f"wt-{n}")
+    assert zustand == {}
+
+
+@pytest.mark.parametrize("kaputt", ["abc", 5, {"a": 1}, [1, None, "ok"]])
+def test_kaputter_zustand_kein_absturz(ort: dict[str, Path], kaputt: object) -> None:
+    _schreibe(ort["datei"], _zeile(ort["repo"].as_posix(), fp="a1"))
+    zustand: dict[str, object] = {"mensch_noetig_fremd": kaputt}
+    eigene = mensch_noetig.eintraege_mit_zustand(3, zustand, lambda: None, ort["repo"], lambda n: ort["wt"] / f"wt-{n}")
+    assert [e["fingerprint"] for e in eigene] == ["a1"]
+
+
+def test_fremd_liste_gekappt_aelteste_zuerst_raus(ort: dict[str, Path]) -> None:
+    grenze = mensch_noetig.FREMD_MAX
+    alt = [f"alt|{i}" for i in range(grenze)]
+    _schreibe(ort["datei"], _zeile((ort["tmp"] / "x").as_posix(), fp="neu"))
+    zustand: dict[str, object] = {"mensch_noetig_fremd": alt}
+    mensch_noetig.eintraege_mit_zustand(3, zustand, lambda: None, ort["repo"], lambda n: ort["wt"] / f"wt-{n}")
+    liste = zustand["mensch_noetig_fremd"]
+    assert len(liste) == grenze and liste[-1] == "s1|neu" and "alt|0" not in liste
