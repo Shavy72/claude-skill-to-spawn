@@ -668,7 +668,7 @@ def vps_kopf(vps: dict[str, Any]) -> str | None:
     ]
     try:
         fertig = subprocess.run(
-            befehl, capture_output=True, **konsole.UNTERPROZESS_TEXT, timeout=60, check=False
+            befehl, capture_output=True, **konsole.UNTERPROZESS_DATEN, timeout=60, check=False
         )
     except (OSError, subprocess.TimeoutExpired) as fehler:
         log.warning("VPS-HEAD nicht lesbar: %s", fehler)

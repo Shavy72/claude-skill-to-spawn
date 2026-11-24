@@ -295,7 +295,7 @@ def _tree(repo: Path, ref: str) -> str | None:
             ["git", "rev-parse", "--verify", "--quiet", f"{ref}^{{tree}}"],
             cwd=repo,
             capture_output=True,
-            **konsole.UNTERPROZESS_TEXT,
+            **konsole.UNTERPROZESS_DATEN,
             check=False,
         )
     except OSError:

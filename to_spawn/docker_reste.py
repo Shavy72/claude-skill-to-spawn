@@ -126,7 +126,7 @@ def _docker(befehl: tuple[str, ...]) -> tuple[bool, str]:
         lauf = subprocess.run(
             [programm, *befehl],
             capture_output=True,
-            **konsole.UNTERPROZESS_TEXT,
+            **konsole.UNTERPROZESS_DATEN,
             timeout=ZEITLIMIT_S,
             check=False,
         )

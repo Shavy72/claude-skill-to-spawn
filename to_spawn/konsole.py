@@ -15,7 +15,13 @@ class _TextLesart(TypedDict):
 #: dekodiert ``subprocess`` mit der Locale — unter Windows cp1252, das macht aus „ü“ „Ã¼“
 #: oder bricht im Lese-Thread ab (``stdout`` bleibt ``None``). Einsatz: ``**UNTERPROZESS_TEXT``
 #: statt ``text=True`` allein.
-UNTERPROZESS_TEXT: _TextLesart = {"encoding": "utf-8", "errors": "replace"}
+UNTERPROZESS_ANZEIGE: _TextLesart = {"encoding": "utf-8", "errors": "replace"}
+UNTERPROZESS_TEXT = UNTERPROZESS_ANZEIGE  # bisheriger Name = Anzeige-Variante
+
+#: „Daten“: Ausgabe, die verglichen oder weiterverwendet wird (SHA, Pfade, Zahlen). Ungültige Bytes
+#: sollen laut auffallen, nicht still zu U+FFFD werden. Für Dateinamen, die zurück an git/Dateisystem
+#: gehen: ``{**UNTERPROZESS_DATEN, "errors": "surrogateescape"}``. Im Zweifel diese Variante.
+UNTERPROZESS_DATEN: _TextLesart = {"encoding": "utf-8", "errors": "strict"}
 
 
 def utf8_ausgabe() -> None:
