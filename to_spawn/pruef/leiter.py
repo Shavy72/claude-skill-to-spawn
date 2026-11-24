@@ -111,11 +111,11 @@ def _voll(repo: Path, adapter: Adapter, grund: str) -> Stufe:
     )
 
 
-def _ohne_voll(adapter: Adapter, grund: str, pfade: list[str]) -> Stufe:
+def _ohne_voll(adapter: Adapter, grund: str, pfade: list[str] | None) -> Stufe:
     """Schnelle Prüfung: statt Stufe 4 eine Stufe, die sagt, warum nichts lief.
 
-    Mit geänderter Code-Datei ein Gate-Fehler (``regeln.schnell_ohne_test``, nie still Grün), sonst
-    ausgelassen.
+    Mit geänderter Code-Datei oder unbekannter Änderung (``pfade is None``) ein Gate-Fehler
+    (``regeln.schnell_ohne_test`` entscheidet, nie still Grün), sonst ausgelassen.
     """
     fehler = regeln.schnell_ohne_test(pfade, adapter.name, grund)
     if fehler:
@@ -135,7 +135,7 @@ def _pruefe(repo: Path, adapter: Adapter, basis: str, pfade: list[str] | None, a
         return _voll(repo, adapter, "komplett: voller Lauf")
 
     def rueckfall(a: Adapter, grund: str) -> Stufe:
-        return _ohne_voll(a, grund, pfade or []) if art == "schnell" else _voll(repo, a, grund)
+        return _ohne_voll(a, grund, pfade) if art == "schnell" else _voll(repo, a, grund)
 
     doku = sofort.erklaerte_doku(repo, basis, pfade or [])
     grund = regeln.vorab(

@@ -159,17 +159,19 @@ def code_datei(pfade: Sequence[str], adapter: str) -> str | None:
     return next((normal(pfad) for pfad in pfade if PurePosixPath(normal(pfad)).suffix.lower() in code), None)
 
 
-def schnell_ohne_test(pfade: Sequence[str], adapter: str, grund: str) -> str:
+def schnell_ohne_test(pfade: Sequence[str] | None, adapter: str, grund: str) -> str:
     """S0: Gate-Fehler-Grund, wenn ``schnell`` wegen ``grund`` keinen Test laufen lässt; ``""`` = keiner.
 
     Nur eine geänderte Code-Datei macht „0 Tests“ zum Gate-Fehler; reine Doku/Text bleibt ausgelassen.
+    ``pfade is None`` (geänderte Dateien unbekannt) zählt wie eine Code-Änderung.
     """
-    datei = code_datei(pfade, adapter)
+    datei = "Änderung unbekannt" if pfade is None else code_datei(pfade, adapter)
     if datei is None:
         return ""
     return (
         f"schnell: keine Test-Auswahl möglich ({grund}; pruefung.schnell nicht eingerichtet), "
-        f"Code geändert ({datei}), 0 Tests gelaufen"
+        f"Code geändert ({datei}), 0 Tests gelaufen "
+        "→ Schlüssel pruefung.schnell in .to-spawn/config.json eintragen"
     )
 
 
