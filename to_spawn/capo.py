@@ -2638,8 +2638,8 @@ def _tick(
         aktionen += katalog_pflegen(repo, konfig, gelernt)
 
     komplett_haelt = False
-    if liste and not dry_run and all(ticket_zustand.fertig_gebaut(i) for i in liste):
-        komplett_haelt = _komplett_alle_auf_staging(repo, spec, konfig, aktionen)
+    if liste and all(ticket_zustand.fertig_gebaut(i) for i in liste):
+        komplett_haelt = _komplett_alle_auf_staging(repo, spec, konfig, aktionen, dry_run)
 
     # #1407: unlesbares Staging ist kein „fehlt“, aber auch kein Beleg „liegt drauf“ — Abschluss zurückhalten.
     unlesbar_takte = int(zustand.get("staging_unlesbar_takte") or 0) + 1 if staging_stand.unlesbar else 0
@@ -2726,24 +2726,34 @@ def _tick(
     return erg
 
 
-def _komplett_alle_auf_staging(repo: Path, spec: int, konfig: dict[str, Any], zeilen: list[str]) -> bool:
+def _komplett_alle_auf_staging(
+    repo: Path, spec: int, konfig: dict[str, Any], zeilen: list[str], dry_run: bool = False
+) -> bool:
     """Komplett-Prüfung „alle Tickets auf Staging“ (#425 C2); ``True`` = Spec in diesem Takt nicht fertig.
 
     Einmal-Regel (rot je Kopf), Hintergrund-Lauf, Sperre und „nicht eingerichtet“ versteckt
     :mod:`to_spawn.komplett_lauf` (#455: der Takt wartet nicht auf lange Prüfungen). Eine Zeile
     nur, wenn etwas passiert ist (Lauf, Fehler, läuft schon) — sonst bleibt der Takt wie vor #425.
+    Probelauf (#456): nur den Merker lesen (:func:`komplett_lauf.nur_lesen`), nichts starten;
+    rot oder fehlend hält „SPEC FERTIG“ auch dort zurück (Zeile mit ``[Probe]``, kein FEHLER).
     """
     try:
-        erg = komplett_lauf.komplett_einmal(repo, spec, Moment.ALLE_AUF_STAGING, konfig, takt=True)
+        if dry_run:
+            erg = komplett_lauf.nur_lesen(repo, spec, Moment.ALLE_AUF_STAGING, konfig)
+        else:
+            erg = komplett_lauf.komplett_einmal(repo, spec, Moment.ALLE_AUF_STAGING, konfig, takt=True)
     except Exception as fehler:  # ein Ausreißer darf den Tick (sichern) nicht abbrechen
         log.exception("Komplett-Prüfung Spec #%s: unerwarteter Fehler", spec)
         zeilen.append(f"FEHLER: Komplett-Prüfung — unerwarteter Fehler ({type(fehler).__name__}: {fehler}).")
         return True
-    if not erg.ok:
+    if dry_run:
+        if not erg.frei:
+            zeilen.append(f"[Probe] {erg.grund}")
+    elif not erg.ok:
         zeilen.append(f"FEHLER: {erg.grund} Spec bleibt bis grün offen.")
     elif erg.gelaufen or erg.laeuft:
         zeilen.append(erg.grund)
-    return not erg.ok or erg.laeuft
+    return not erg.frei
 
 
 def _hausmeister_schluss(spec: int, zustand: dict[str, Any], jetzt: datetime, dry_run: bool) -> list[str]:
