@@ -52,14 +52,18 @@ def lauf(
     *,
     fehlertext: bool = False,
 ) -> tuple[int, str]:
-    """``gh <args>`` ausführen; gibt (Exit-Code, stdout) zurück.
+    """``gh <args>`` ausführen; gibt (Exit-Code, stdout) zurück — die eine Stelle, die ``gh`` startet.
 
-    ``timeout`` in Sekunden (Standard: keins); überschritten → Exit 124, leeres stdout.
+    ``timeout`` in Sekunden; ohne Angabe gilt :func:`standard_zeit` (#601: hängt GitHub, hängt
+    kein Aufrufer mit). Überschritten → Kind wird beendet, Exit 124, leeres stdout — derselbe
+    Fehlerweg wie ein ``gh``-Fehler, Aufrufer brauchen keinen eigenen Code.
     ``fehlertext=True``: bei Exit ≠ 0 kommt stderr statt stdout zurück (Fehlermeldung für den Nutzer).
     """
     vorspann = gh_befehl()
     if vorspann is None:
         return 127, ""
+    if timeout is None:
+        timeout = standard_zeit()
     try:
         fertig = subprocess.run(
             [*vorspann, *args],
@@ -80,6 +84,22 @@ def lauf(
     if fehlertext and fertig.returncode != 0:
         return fertig.returncode, (fertig.stderr or "").strip()
     return fertig.returncode, (fertig.stdout or "").strip()
+
+
+#: Standard-Zeitgrenze (s) je ``gh``-Aufruf ohne eigene Grenze (#601). 120 s = größte schon
+#: ausdrücklich gesetzte Grenze im Skill (``einreichen.GH_MAX_S``); deckt ``--paginate``-Abfragen.
+GH_ZEIT_S = 120.0
+#: Überschreibt :data:`GH_ZEIT_S` (Tests kürzen damit) — dieselbe Variable wie die Ticket-Stand-Grenze.
+GH_ZEIT_ENV = "TO_SPAWN_GH_TIMEOUT"
+
+
+def standard_zeit() -> float:
+    """Zeitgrenze für :func:`lauf` ohne eigene Angabe; ungültiger Env-Wert → :data:`GH_ZEIT_S`."""
+    try:
+        wert = float(os.environ.get(GH_ZEIT_ENV) or GH_ZEIT_S)
+    except ValueError:
+        return GH_ZEIT_S
+    return wert if wert > 0 else GH_ZEIT_S
 
 
 def json_lauf(args: list[str], cwd: Path | None = None, timeout: float | None = None) -> Any:
@@ -188,7 +208,7 @@ def blocker_gruende(repo: Path, deps: list[dict], *, mit_commit: bool = True) ->
 #: Zeitgrenze (s) der Ticket-Stand-Abfrage (#191): hängt gh, wird daraus „unbekannt“.
 TICKET_STAND_TIMEOUT_S = 30.0
 #: Überschreibt :data:`TICKET_STAND_TIMEOUT_S` (Tests kürzen damit).
-TICKET_STAND_TIMEOUT_ENV = "TO_SPAWN_GH_TIMEOUT"
+TICKET_STAND_TIMEOUT_ENV = GH_ZEIT_ENV
 
 
 def ticket_stand_timeout() -> float:
