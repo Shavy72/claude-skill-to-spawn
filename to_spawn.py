@@ -72,6 +72,7 @@ from to_spawn import (  # noqa: E402
     vorfall,
     waechter_takt,
 )
+from to_spawn import einreichen as einreichen_modul  # noqa: E402
 from to_spawn import spawn as spawn_modul  # noqa: E402
 from to_spawn import stand as stand_modul  # noqa: E402
 
@@ -345,6 +346,13 @@ def _blocker(args: argparse.Namespace) -> int:
         return 1
     print("FREI")
     return 0
+
+
+def _einreichen(args: argparse.Namespace) -> int:
+    """Unterbefehl ``einreichen`` (#411): fertigen Stand auf den Hauptzweig, Regel nur in ``einreichen``."""
+    erg = einreichen_modul.einreichen(Path.cwd(), str(args.nummer))
+    print(("EINGEREICHT: " if erg.exit == 0 else "NICHT EINGEREICHT: ") + erg.text)
+    return erg.exit
 
 
 def _zu_bauen(args: argparse.Namespace) -> int:
@@ -670,6 +678,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     p_blocker.add_argument("ticket", type=int)
     p_blocker.add_argument("--gh-repo", default="", help="owner/name (sonst aus origin)")
+    # Fertig einreichen (#411): der eine Weg auf den Hauptzweig, ohne Frage und ohne Takt.
+    p_einreichen = unter.add_parser(
+        "einreichen",
+        help="fertigen, geprüften Stand auf den Hauptzweig bringen (im eigenen Worktree; Exit 0/1/5)",
+    )
+    p_einreichen.add_argument("nummer", help="Ticket-Nummer (Bau-Session) bzw. Spec-Nummer (Aufseher)")
     p_zu_bauen = unter.add_parser(
         "zu-bauen", help="Tickets der Spec, die noch nicht fertig gebaut sind (eine Nummer je Zeile, #279)"
     )
@@ -873,6 +887,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.befehl == "blocker":
         return _blocker(args)
+    if args.befehl == "einreichen":
+        return _einreichen(args)
     if args.befehl == "zu-bauen":
         return _zu_bauen(args)
     if args.befehl == "ticket-lage":
