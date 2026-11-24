@@ -564,3 +564,46 @@ Aus der Entscheidung 16:35 (Auslegung der Sessions, Wortlaut oben):
   Ergebnis steht.
 - Ob die Entscheidungs-Datei je Spec die bestehende Übersicht `docs/agents/entscheidungen_<S>.md`
   ist oder aus dem Entscheidungs-Briefkasten (Issue 278) neu erzeugt wird.
+
+---
+
+## L10 — Leitziel „Schweizer Uhrwerk“: nur Ticket-Abhängigkeiten dürfen bremsen (David, 2026-11-24)
+
+### Wortlaut (1:1)
+
+Ca. 17:55, weitergegeben von der PC-Session an die Leit-Session (Quelle: Arbeitsunterlage
+`fuer_server.md`, Abschnitt 17:55; dort als „Zitat wörtlich verdichtet“ gekennzeichnet):
+
+> Mein Ziel: das Einzige, was unsere Geschwindigkeit bremst, sind später nur noch die Warte-Abhängigkeiten zwischen den Tickets selber, also wenn ein Ticket ein anderes fertig braucht. Sonst halten uns keine Fehler oder Anomalien des Systems selbst auf, alles läuft wie ein Schweizer Uhrwerk ineinander und miteinander. Darauf arbeiten wir erstmal hin.
+
+Nachtrag ca. 18:00 (wörtlich):
+
+> auch falsches Warten auf ein Ticket, was eigentlich schon fertig ist, ist auch ein Fehler, das sind die Anomalien, die ich meinte
+
+Vorrang laut David (von der PC-Session wiedergegeben, nicht wörtlich): erst die Blocker der
+Bau-Phase und der Phase nach dem Bau (Rundschau, Abnahme, Kritik, Live, Aufräumen) auf beiden
+Betriebssystemen beheben. Testing (Inventur, Aufräumen der Suiten, Standard-Test-Betrieb) ist eine
+eigene Kategorie und kommt danach.
+
+### Verdichtung in prüfbare Anforderungen (L10)
+
+Die Verdichtung ist eine Auslegung der Sessions. David hat den Wortlaut gesagt, die einzelnen Punkte
+aber nicht einzeln bestätigt.
+
+- **A65 Nur Ticket-Abhängigkeiten bremsen:** Die einzige zulässige Wartezeit in einem Spec-Lauf
+  ist „Ticket B braucht Ticket A fertig“. Jede andere Wartezeit ist eine System-Anomalie.
+- **A66 Falsches Warten ist eine Anomalie:** Wartet ein Ticket auf einen Vorgänger, der schon
+  fertig ist, zählt das als Fehler des Systems, nicht als Abhängigkeit.
+- **A67 Sekunden statt Takt-Minuten:** Gemessen wird je Lauf die Zeit zwischen „Vorgänger fertig“
+  und „Nachfolger arbeitet“ sowie zwischen „Urteil oder Kommentar da“ und „Session reagiert“.
+  Ziel sind Sekunden, nicht die Länge eines Takts.
+- **A68 Messlatte für den Probe-Lauf:** Jeder Aufhänger wird eingeordnet als Ticket-Abhängigkeit
+  (zulässig) oder System-Anomalie (bekommt ein Ticket). Bestanden heißt: null System-Anomalien.
+- **A69 Reihenfolge:** Erst Bau-Phase und die Phase nach dem Bau (Rundschau, Abnahme, Kritik, Live,
+  Aufräumen) auf Linux und Windows. Testing ist eine eigene Kategorie und kommt danach.
+
+**Ausdrücklich nicht gewollt (L10)**
+
+- **N24** kein Leerlauf, weil ein Takt noch nicht wieder dran ist, obwohl die Voraussetzung schon
+  erfüllt ist
+- **N25** kein Probe-Lauf gilt als bestanden, solange eine System-Anomalie darin vorkam
