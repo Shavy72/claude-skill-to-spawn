@@ -24,3 +24,4 @@ tests/test_waechter_213.py::test_wache_dry_run_zeigt_remote_control_und_ausweich
 tests/test_umzug_205.py::test_kind_session_erbt_kein_to_spawn_repo[wache-900]  # Hook ~/.claude/hooks/smart-zone/staffel/aufraeumen.mjs fehlt (Startklar-Prüfung)
 tests/test_umzug_212.py::test_wache_setzt_umzug_umgebung  # Hook ~/.claude/hooks/smart-zone/staffel/aufraeumen.mjs fehlt (Startklar-Prüfung)
 tests/test_waechter_takt_316.py::test_f_takt_einrichten_trocken_idempotent  # claude-CLI nicht im PATH
+tests/test_frage_sperre_321.py::test_frage_sperre_hook_datei_existiert  # Hook ~/.claude/hooks/smart-zone/staffel/frage-sperre.mjs fehlt; Skip greift nur ohne ~/.claude, das andere Tests im Lauf anlegen (#232)
