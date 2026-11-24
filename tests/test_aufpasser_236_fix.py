@@ -351,6 +351,17 @@ def test_frage_am_prompt_erkennung() -> None:
     assert not aufpasser.frage_am_prompt(frage + "x\n" * 10 + feld)
 
 
+def test_frage_am_prompt_live_ja_aufforderung_wartet_zu_recht() -> None:
+    """Live-Ja-Aufforderung sichtbar: Session wartet auf den Menschen, kein Anstupser (#485)."""
+    from to_spawn import briefkasten
+
+    feld = "─" * 30 + "\n❯ \n" + "─" * 30 + "\n  Statuszeile\n"
+    ohne = "Soll das live gehen? Ja/Nein\n"
+    mit = ohne + f"Bitte tippe {briefkasten.ja_aufforderung(5)}\n"
+    assert aufpasser.frage_am_prompt(ohne + feld)
+    assert not aufpasser.frage_am_prompt(mit + feld)
+
+
 def test_frage_am_prompt_stupst_frueh_an(welt: Welt) -> None:
     _fenster(welt, "bau 9002", "printf 'Vorschlag: Review starten? Ja/Nein.\\n'; sleep 3600")
     _still_seit(welt, "bau 9002", 10, stufe=0)

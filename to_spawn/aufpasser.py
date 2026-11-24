@@ -484,6 +484,8 @@ def frage_am_prompt(text: str) -> bool:
     """
     zeilen = [z for z in ohne_statuszeile(text).splitlines() if z.strip()]
     zeilen = [z for z in zeilen if not EINGABEFELD_LINIE.fullmatch(z) and not z.lstrip().startswith("❯")]
+    if any(briefkasten.JA_BEFEHL in z for z in zeilen[-3:]):
+        return False  # Live-Ja-Aufforderung (#531): Session wartet zu Recht auf den Menschen
     return any(FRAGE_JA_NEIN.search(z) for z in zeilen[-3:]) or (
         bool(zeilen) and zeilen[-1].rstrip().endswith("?")
     )
