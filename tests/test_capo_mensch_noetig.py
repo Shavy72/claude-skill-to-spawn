@@ -9,6 +9,7 @@ Gestellt ist nur ``gh`` (Ersatz aus #213).
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -28,7 +29,12 @@ def datei(welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch) -> Path:
     pfad.parent.mkdir()
     monkeypatch.setenv("REVIEW_MENSCH_NOETIG", str(pfad))
     monkeypatch.delenv("GH_STUB_FEHLER", raising=False)
+    # #465: Einträge zählen nur aus dem eigenen Lauf (Hauptbaum oder eigener Worktree).
+    monkeypatch.setattr(sys.modules[__name__], "_REPO", str(welt["repo"]))
     return pfad
+
+
+_REPO = "C:/x"
 
 
 def _eintrag(
@@ -36,12 +42,13 @@ def _eintrag(
     ticket: str | None = "902",
     fp: str = "abcdef0123456789",
     zeit: str = "2026-09-24T22:00:00+0200",
+    repo: str | None = None,
 ) -> str:
     return json.dumps(
         {
             "zeit": zeit,
             "session_id": "sitzung-1",
-            "repo": "C:/x",
+            "repo": repo or _REPO,
             "fingerprint": fp,
             "fix_runde": 3,
             "spec": spec,
@@ -138,4 +145,25 @@ def test_gleicher_stand_mehrere_zeilen_ein_kommentar(welt: dict[str, Path], date
     _schreibe(datei, _eintrag(zeit="2026-09-24T22:00:00+0200"), _eintrag(zeit="2026-09-24T22:05:00+0200"),
               _eintrag(zeit="2026-09-24T22:10:00+0200"))
     _capo(welt)
+    assert len(_mensch_kommentare(welt, "902")) == 1
+
+
+def test_fremdes_repo_gleiche_spec_kein_kommentar_465(
+    welt: dict[str, Path], datei: Path
+) -> None:
+    """#465: Probe-Lauf 2 bekam am blockierten #5 den Eintrag eines anderen Repos (gleiche
+    Spec 1, gleiches Ticket 5, Worktree ``to-spawn-probe-srv-1/wt-5``) — fremd, nie melden."""
+    fremd = welt["tmp"] / "anderes-repo" / "wt-902"
+    zeile = json.loads(_eintrag(repo=fremd.as_posix()))
+    zeile["grund"] = "review_offen"
+    _schreibe(datei, json.dumps(zeile))
+    ergebnis = _capo(welt)
+    assert "MENSCH NÖTIG" not in _text(ergebnis)
+    assert _mensch_kommentare(welt, "902") == []
+
+
+def test_eigener_worktree_wird_gemeldet_465(welt: dict[str, Path], datei: Path) -> None:
+    """Gegenprobe: Eintrag aus dem eigenen Worktree ``<wt-basis>/wt-902`` zählt."""
+    _schreibe(datei, _eintrag(repo=(welt["wt"] / "wt-902").as_posix()))
+    assert "MENSCH NÖTIG: #902 " in _text(_capo(welt))
     assert len(_mensch_kommentare(welt, "902")) == 1
