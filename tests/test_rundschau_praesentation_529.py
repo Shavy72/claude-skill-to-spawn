@@ -435,3 +435,94 @@ def test_ueberholt_nur_bei_gleicher_frage() -> None:
         _eintrag("3", "2026-11-24T11:00:00+01:00", "Farbe → Grün"),
     ]
     assert rd.ueberholt_map(e) == {0: "3"}
+
+
+def test_svg_text_in_tspan_zaehlt_bei_wortgrenze(bild: Path) -> None:
+    text = " ".join(["wort"] * (rd.MAX_WOERTER_TEIL1 + 5))
+    deck = _ohne_bild(
+        _deck(bild),
+        "Schneller",
+        f'<svg class="viz"><rect width="9" height="9"/><text><tspan>{text}</tspan></text></svg>',
+    )
+    assert any("Wörter" in m for m in rd.pruefe(deck, EINTRAEGE))
+
+
+@pytest.mark.parametrize(
+    "form",
+    [
+        '<rect width="0" height="0"/>',
+        '<rect width="9" height="0"/>',
+        '<circle r="0"/>',
+        '<line x1="1" y1="1" x2="1" y2="1"/>',
+        '<path d=""/>',
+    ],
+)
+def test_svg_viz_ohne_sichtbare_ausdehnung_gilt_nicht(bild: Path, form: str) -> None:
+    deck = _ohne_bild(_deck(bild), "Früher / Jetzt", f'<svg class="viz">{form}</svg>')
+    assert any("Bild" in m for m in rd.pruefe(deck, EINTRAEGE))
+
+
+@pytest.mark.parametrize(
+    ("alt", "neu"),
+    [
+        ('data-teil="1" data-label', 'data-teil="1" style="display:none" data-label'),
+        (
+            'data-teil="1" data-label',
+            'data-teil="1" style="visibility: hidden" data-label',
+        ),
+        (
+            'data-teil="1" data-label',
+            'data-teil="1" style="color:transparent" data-label',
+        ),
+        ('data-teil="1" data-label', 'data-teil="1" hidden data-label'),
+    ],
+)
+def test_versteckte_teil1_folie_zaehlt_nicht(bild: Path, alt: str, neu: str) -> None:
+    deck = _deck(bild)
+    assert alt in deck
+    maengel = rd.pruefe(deck.replace(alt, neu), EINTRAEGE)
+    assert any("versteckt" in m or "nur die Titel" in m for m in maengel), maengel
+
+
+def test_versteckte_teil1_folie_per_klasse_zaehlt_nicht(bild: Path) -> None:
+    deck = _deck(bild).replace("</style>", ".weg{color:transparent}</style>", 1)
+    deck = deck.replace(
+        'class="folie" data-teil="1"', 'class="folie weg" data-teil="1"'
+    )
+    assert 'class="folie weg"' in deck
+    assert any(
+        "versteckt" in m or "nur die Titel" in m for m in rd.pruefe(deck, EINTRAEGE)
+    )
+
+
+def test_notweg_ohne_rundschau_traegt_vermerk(tmp_path: Path) -> None:
+    lauf = subprocess.run(
+        [
+            sys.executable,
+            str(SKILL / "skripte" / "abschluss_paket.py"),
+            "ablegen",
+            "5",
+            "--repo",
+            str(tmp_path),
+            "--stage",
+            "https://s.example",
+            "--rundschau",
+            "fehlt",
+            "--tests",
+            "fehlt",
+            "--ohne-rundschau",
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        env={
+            **os.environ,
+            "PYTHONIOENCODING": "utf-8",
+            "TO_SPAWN_ABSCHLUSS_ORDNER": str(tmp_path / "a"),
+        },
+        timeout=60,
+        check=False,
+    )
+    assert lauf.returncode == 0, lauf.stdout + lauf.stderr
+    paket = tmp_path / ".to-spawn" / "abschluss_5_paket.json"
+    assert "nicht abnahmebereit" in paket.read_text(encoding="utf-8")

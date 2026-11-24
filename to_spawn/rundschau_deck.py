@@ -61,6 +61,8 @@ _FORMEN = {
     "text",
     "image",
 }
+_VERSTECKT = ("display:none", "visibility:hidden", "color:transparent")
+_CSS_REGEL = re.compile(r"([^{}]+)\{([^}]*)\}")
 _VOID = {"meta", "img", "br", "hr", "input", "link"}
 
 
@@ -289,7 +291,7 @@ body{margin:0;background:var(--bg);color:var(--fg);font:17px/1.55 system-ui,-app
 .fortschritt{position:fixed;top:0;left:0;right:0;height:4px;z-index:3;background:var(--ak-hell)}
 .fortschritt i{display:block;height:100%;background:var(--ak);transition:width .3s}
 main{display:flex;overflow-x:auto;scroll-snap-type:x mandatory;height:100vh;height:100dvh;scrollbar-width:none}
-.folie{flex:0 0 100%;scroll-snap-align:start;display:flex;flex-direction:column;align-items:center;text-align:center;padding:72px 8vw 104px;overflow-y:auto}
+.folie{flex:0 0 100%;scroll-snap-align:start;display:flex;flex-direction:column;align-items:center;text-align:center;padding:72px 8vw calc(104px + env(safe-area-inset-bottom));overflow-y:auto}
 .folie>:first-child{margin-top:auto}.folie>:last-child{margin-bottom:auto}
 .rubrik{display:inline-block;background:var(--ak-hell);color:var(--ak);font-weight:600;font-size:.85rem;letter-spacing:.08em;text-transform:uppercase;padding:.3em .9em;border-radius:99px}
 .folie h2{font-size:clamp(1.9rem,5.5vw,3.4rem);line-height:1.12;margin:.5em 0 .3em;letter-spacing:-.025em}
@@ -308,7 +310,7 @@ img{display:block;max-width:100%;max-height:44vh;border-radius:14px}
 .leer{opacity:.7}
 .bedienung{position:fixed;bottom:18px;left:0;right:0;z-index:2;display:flex;justify-content:center;gap:16px}
 .bedienung button{min-width:56px;min-height:48px;border:0;border-radius:99px;background:var(--ak);color:#fff;font-size:1.6rem;cursor:pointer;box-shadow:var(--schatten)}
-@media(max-width:600px){.folie{padding:64px 20px 100px}.kern{font-size:1.1rem}.bedienung button{min-width:64px;min-height:52px}}
+@media(max-width:600px){.folie{padding:64px 20px calc(100px + env(safe-area-inset-bottom))}.kern{font-size:1.1rem}.bedienung button{min-width:64px;min-height:52px}}
 """
 
 _JS = (
@@ -363,6 +365,32 @@ def erzeuge(texte: dict[str, Any], eintraege: list[dict[str, str]]) -> str:
 # --- Prüfer -----------------------------------------------------------------
 
 
+def _zahl(wert: str | None) -> float:
+    m = re.match(r"\s*(-?\d*\.?\d+)", wert or "")
+    return float(m.group(1)) if m else 0.0
+
+
+def _sichtbare_form(tag: str, a: dict[str, str]) -> bool:
+    """Form mit Ausdehnung: Breite und Höhe > 0, Radius > 0, Linie/Pfad mit Länge. `text` zählt über seinen Inhalt."""
+    if tag == "text":
+        return False
+    if tag in ("rect", "image"):
+        return _zahl(a.get("width")) > 0 and _zahl(a.get("height")) > 0
+    if tag == "circle":
+        return _zahl(a.get("r")) > 0
+    if tag == "ellipse":
+        return _zahl(a.get("rx")) > 0 and _zahl(a.get("ry")) > 0
+    if tag == "line":
+        return (a.get("x1"), a.get("y1")) != (a.get("x2"), a.get("y2"))
+    if tag == "path":
+        return len(re.findall(r"\d", a.get("d", ""))) >= 2
+    return len(re.findall(r"\d", a.get("points", ""))) >= 4  # polygon/polyline
+
+
+def _versteckt(stil: str) -> bool:
+    return any(v in stil.replace(" ", "").lower() for v in _VERSTECKT)
+
+
 class _Leser(HTMLParser):
     def __init__(self) -> None:
         super().__init__()
@@ -374,6 +402,18 @@ class _Leser(HTMLParser):
         self._zs = False
         self._viz: dict[str, int] | None = None
         self._stapel: list[tuple[str, bool]] = []
+        self._in_style = False
+        self._stil: list[str] = []
+        self._versteckte_klassen: set[str] = set()
+
+    def _merke_versteckte_klassen(self, css: str) -> None:
+        for sel, regel in _CSS_REGEL.findall(css):
+            if _versteckt(regel):
+                self._versteckte_klassen |= {
+                    k.strip()[1:]
+                    for k in sel.split(",")
+                    if re.fullmatch(r"\s*\.[\w-]+\s*", k)
+                }
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         a = {k: v or "" for k, v in attrs}
@@ -381,10 +421,12 @@ class _Leser(HTMLParser):
             self.deck = True
         if tag in ("script", "style"):
             self._aus += 1
+            self._in_style = tag == "style"
         if tag not in _VOID:
             versteckt = (
                 "hidden" in a
-                or "display:none" in a.get("style", "").replace(" ", "").lower()
+                or _versteckt(a.get("style", ""))
+                or bool(self._versteckte_klassen & set(a.get("class", "").split()))
             )
             self._stapel.append((tag, versteckt))
         if tag == "section" and "folie" in a.get("class", "").split():
@@ -396,6 +438,7 @@ class _Leser(HTMLParser):
                     "bilder": [],
                     "viz": [],
                     "kern": 0,
+                    "versteckt": any(h for _, h in self._stapel),
                     "h2": 0,
                     "gruppen": [],
                 }
@@ -417,7 +460,7 @@ class _Leser(HTMLParser):
             if "viz" in klassen:
                 self._viz = {"formen": 0}
                 f["viz"].append(self._viz)
-        elif self._viz is not None and tag in _FORMEN:
+        elif self._viz is not None and tag in _FORMEN and _sichtbare_form(tag, a):
             self._viz["formen"] += 1
         if (
             tag == "g"
@@ -435,6 +478,10 @@ class _Leser(HTMLParser):
     def handle_endtag(self, tag: str) -> None:
         if tag in ("script", "style"):
             self._aus -= 1
+            if self._in_style:
+                self._merke_versteckte_klassen("".join(self._stil))
+                self._stil = []
+            self._in_style = False
         if tag in _VOID:
             return
         for k in range(len(self._stapel) - 1, -1, -1):
@@ -450,6 +497,8 @@ class _Leser(HTMLParser):
             self._grp = None
 
     def handle_data(self, data: str) -> None:
+        if self._in_style:
+            self._stil.append(data)
         if self._aus or not self.folien:
             return
         if self._grp is not None:
@@ -481,7 +530,7 @@ def pruefe(text: str, eintraege: list[dict[str, str]]) -> list[str]:
             "Reihenfolge falsch: erwartet Teil 1, dann Teil 2, am Schluss Teil 3 (Entscheidungen)."
         )
     if "1" in teile and all(
-        f["art"] == "titel" for f in leser.folien if f["teil"] == "1"
+        f["art"] == "titel" or f["versteckt"] for f in leser.folien if f["teil"] == "1"
     ):
         maengel.append(
             "Teil 1 hat nur die Titel-Folie: mindestens eine Neu-Folie fehlt."
@@ -505,6 +554,11 @@ def pruefe(text: str, eintraege: list[dict[str, str]]) -> list[str]:
                     f"Folie „{name}“ (Teil {f['teil']}): Bild fehlt, ist leer oder kleiner als "
                     f"{MIN_BILD_BREITE}×{MIN_BILD_HOEHE} px (oder svg.viz ohne Formen/Text)."
                 )
+        if f["teil"] == "1" and f["versteckt"]:
+            maengel.append(
+                f"Folie „{name}“ (Teil 1) ist versteckt (hidden, display:none, visibility:hidden oder color:transparent) und zählt nicht."
+            )
+            continue
         if f["teil"] == "1" and f["art"] != "titel":
             woerter = len(" ".join(f["text"]).split())
             if woerter > MAX_WOERTER_TEIL1 or f["kern"] != 1:

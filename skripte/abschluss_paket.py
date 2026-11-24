@@ -41,7 +41,7 @@ import os
 import re
 import subprocess
 import sys
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -401,6 +401,8 @@ def ablegen(argv: list[str]) -> int:
     if maengel:
         sys.stdout.write("Rundschau nicht bereit zur Abnahme:\n" + "\n".join(f"- {m}" for m in maengel) + "\n")
         return 4
+    if a.ohne_rundschau and a.rundschau_datei is None and p.stand == "abnahme":
+        p = replace(p, rundschau=f"nicht abnahmebereit (ohne Rundschau-Deck) — {p.rundschau}")
     datei = ablage_pfad(repo, p.spec, p.stand)
     fertig = _zeit(a.spec_fertig, ap, "--spec-fertig").isoformat(timespec="seconds")
     alt = melder.lade_json(datei)
