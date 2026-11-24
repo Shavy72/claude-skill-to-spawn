@@ -27,6 +27,7 @@ from test_obergrenze_eigene_sitzung_409 import (  # noqa: F401 — ``welt`` ist 
     welt,
 )
 
+from conftest import attrappe
 from to_spawn import aufpasser, speicher
 
 pytestmark = pytest.mark.braucht("tmux")
@@ -88,9 +89,9 @@ def test_tmux_fehlt_zaehlt_rechnerweit(welt: Welt, monkeypatch: pytest.MonkeyPat
 
 
 def test_tmux_fehler_zaehlt_rechnerweit(welt: Welt, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    kaputt = tmp_path / "tmux-kaputt"
-    kaputt.write_text("#!/bin/sh\necho 'protocol version mismatch' >&2\nexit 1\n", encoding="utf-8")
-    kaputt.chmod(0o755)
+    kaputt = attrappe(
+        tmp_path, "tmux-kaputt", "import sys\nsys.stderr.write('protocol version mismatch\\n')\nsys.exit(1)\n"
+    )
     monkeypatch.setenv("TO_SPAWN_TMUX", str(kaputt))
     _vier_fremde_zwei_eigene(welt)
     assert speicher.sitzung_nach_name(EIGEN, SOCKET) is None

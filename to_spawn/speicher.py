@@ -31,7 +31,6 @@ from __future__ import annotations
 
 import logging
 import os
-import subprocess
 import sys
 import time
 from collections.abc import Callable
@@ -152,22 +151,18 @@ def sitzung_nach_name(name: str, tmux_socket: str | None = None) -> Sitzung | No
     Zeitüberschreitung, anderer Fehler), kommt ``None`` — dann zählt der ganze Rechner,
     statt die Grenze still abzuschalten. tmux-Befehl wie überall aus ``TO_SPAWN_TMUX``.
     """
-    from to_spawn import capo  # spät: capo zieht viele Module
+    from to_spawn import tmux_aufruf  # spät: zieht capo und damit viele Module
 
-    befehl = [*capo._tmux_befehl(), *(["-L", tmux_socket] if tmux_socket else [])]
-    befehl += ["list-sessions", "-F", "#{session_name}\t#{socket_path}\t#{session_id}"]
+    argumente = [*(["-L", tmux_socket] if tmux_socket else [])]
+    argumente += ["list-sessions", "-F", "#{session_name}\t#{socket_path}\t#{session_id}"]
     try:
-        lauf = subprocess.run(befehl, capture_output=True, text=True, timeout=10, check=False)
-    except (OSError, subprocess.TimeoutExpired) as fehler:
+        ausgabe = tmux_aufruf.aufrufen(*argumente)
+    except tmux_aufruf.TmuxFehler as fehler:
+        if "no server running" in fehler.stderr or "error connecting to" in fehler.stderr:
+            return KEINE_SITZUNG  # kein tmux-Server = auch keine Sitzung
         log.warning("tmux-Sitzung %s nicht ermittelbar (%s) — zähle den ganzen Rechner", name, fehler)
         return None
-    if lauf.returncode != 0:
-        meldung = lauf.stderr.strip()
-        if "no server running" in meldung or "error connecting to" in meldung:
-            return KEINE_SITZUNG  # kein tmux-Server = auch keine Sitzung
-        log.warning("tmux-Sitzung %s nicht ermittelbar (%s) — zähle den ganzen Rechner", name, meldung)
-        return None
-    for zeile in lauf.stdout.splitlines():
+    for zeile in ausgabe.splitlines():
         teile = zeile.split("\t")
         if len(teile) == 3 and teile[0] == name:
             return teile[1], teile[2].lstrip("$")
