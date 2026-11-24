@@ -4,7 +4,10 @@ Aufruf (im Repo-Wurzelordner):
 
     python ~/.claude/skills/to-spawn/to_spawn.py spawn <S> [--ziel local|srv]
     python ~/.claude/skills/to-spawn/to_spawn.py stand            # Skill-Stand Bau-Server sichern (#325)
-    python ~/.claude/skills/to-spawn/to_spawn.py regularien <S> [--tickets a,b] [--ohne-github]
+    python ~/.claude/skills/to-spawn/to_spawn.py regularien <S> [--tickets a,b] [--dry-run] \
+        [--ohne-einrichtung] [--ohne-github]  # vorher Einrichtungs-Ticket (#410): Anlegen
+        # scheitert oder Stand unklar (gh api) = Exit 3 + Schlusszeile „EINRICHTUNG FEHLT“;
+        # --tickets, --dry-run, --ohne-einrichtung (= --nur-wache), Spec läuft schon: nur Hinweis
     python ~/.claude/skills/to-spawn/to_spawn.py pruefen <basis> <ziel> [--repo <pfad>]  # Exit 0/1/2 + JSON (#99)
     python ~/.claude/skills/to-spawn/to_spawn.py anhaengen <S> <N> [--blockiert-von B,…] \
         [--schaetzung K] [--umfang TEXT] [--datei PFAD:a-b …] [--trocken]  # Ticket nachtragen (E2-2)
@@ -49,6 +52,7 @@ from to_spawn import (  # noqa: E402
     config,
     deploy_status,
     einrichten,
+    einrichtungs_ticket,
     gh,
     hausmeister,
     hausmeister_aufgabe,
@@ -105,6 +109,11 @@ def _regularien_optionen(p: argparse.ArgumentParser) -> None:
     p.add_argument("--tickets", help="gewählte Tickets (Komma), jedes muss im Manifest stehen")
     p.add_argument("--dry-run", action="store_true", help="ohne Wirkung, nur Lesen")
     p.add_argument(
+        "--ohne-einrichtung",
+        action="store_true",
+        help="Teil-Start ohne Ticket-Fenster (--nur-wache): Einrichtungs-Ticket nur melden",
+    )
+    p.add_argument(
         "--ohne-github",
         action="store_true",
         help="GitHub-Teil auslassen (Kanten, Checkpoint, Belegung, Zustände)",
@@ -126,8 +135,10 @@ def _pruefen(ap: argparse.ArgumentParser, args: argparse.Namespace) -> int | Non
         )
         args.befehl, args.spec = "regularien", args.basis
         return None
-    if args.tickets or args.dry_run or args.ohne_github:
-        ap.error("--tickets/--dry-run/--ohne-github gelten nur für „regularien <S>“")
+    if args.tickets or args.dry_run or args.ohne_github or args.ohne_einrichtung:
+        ap.error(
+            "--tickets/--dry-run/--ohne-einrichtung/--ohne-github gelten nur für „regularien <S>“"
+        )
     repo = config.repo_wurzel(args.repo.expanduser() if args.repo else _repo_aus_umgebung())
     urteil = pruef.pruefen(repo, args.basis, args.ziel)
     print(pruef.protokoll.text(urteil.zeile))
@@ -979,6 +990,19 @@ def main(argv: list[str] | None = None) -> int:
     if args.befehl == "stand":
         return stand_modul.sichere_stand(repo, konfig)
     if args.befehl == "regularien":
+        # Einrichtungs-Ticket (#410) vor der Prüfung: es soll in ihr schon mitzählen.
+        # Probelauf (--dry-run), --tickets, --nur-wache (--ohne-einrichtung) und
+        # „Spec läuft schon“: nur Hinweis. Anlegen scheitert oder Stand unklar: Exit 3 (unten).
+        einrichtung = einrichtungs_ticket.sicherstellen(
+            repo,
+            args.spec,
+            konfig,
+            mit_github=not args.ohne_github,
+            trocken=args.dry_run,
+            auswahl=bool(_tickets(args.tickets)) or args.ohne_einrichtung,
+        )
+        for zeile in einrichtung.zeilen:
+            print(zeile)
         bericht = manifest.pruefe(
             repo,
             args.spec,
@@ -987,6 +1011,11 @@ def main(argv: list[str] | None = None) -> int:
             auswahl=_tickets(args.tickets),
         )
         print(bericht.text())
+        if not einrichtung.ok:
+            # Ohne Einrichtungs-Ticket bauten die Tickets ohne Prüfung/Staging los (#410):
+            # Weigerung, Schlusszeile wiederholt den Grund.
+            print(einrichtung.zeilen[-1])
+            return manifest.EXIT_WEIGERUNG
         return 0 if bericht.sauber else manifest.EXIT_WEIGERUNG
     if args.befehl == "log":
         print(bau_log.tabelle(repo, _spec_tickets(repo, args.spec)))

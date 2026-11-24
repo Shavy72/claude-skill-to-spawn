@@ -48,6 +48,8 @@ try {
 if ($rc -ne 0 -and -not $DryRun) { Write-Host "Arbeitsordner nicht auf Hauptzweig-Stand — nichts gestartet." -ForegroundColor Red; exit $rc }
 $pruefArgs = @("$PSScriptRoot/to_spawn.py", "regularien", "$Spec")
 if ($Tickets.Count -gt 0) { $pruefArgs += @("--tickets", ($Tickets -join ",")) }
+# Probelauf legt kein Einrichtungs-Ticket an (#410).
+if ($DryRun) { $pruefArgs += "--dry-run" }
 $eapVorher = $ErrorActionPreference
 $ErrorActionPreference = "Continue"
 try {
