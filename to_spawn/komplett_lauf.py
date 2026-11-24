@@ -34,6 +34,7 @@ from pathlib import Path
 from typing import Any
 
 from to_spawn import manifest, pruefplan
+from to_spawn import sperre as _sperre
 from to_spawn.pruef import leiter, protokoll
 from to_spawn.pruefplan import Moment, SpecStand
 
@@ -47,6 +48,8 @@ class Ergebnis:
     ``gelaufen`` = der Befehl lief bei diesem Aufruf; ``ok`` = Aufrufer darf weiter (grün, schon
     grün gelaufen, nicht dran oder nicht eingerichtet); ``grund`` = ein Satz, bei ``ok=False`` mit
     Handlung; ``dauer_s`` nur, wenn gelaufen; ``kopf`` = geprüfter bzw. aktueller Kopf-SHA.
+    ``laeuft`` = ein anderer Aufruf prüft gerade (Sperre belegt, ``ok=True``): kein Fehler, aber noch
+    kein grüner Stand — Aufrufer gehen in diesem Durchgang nicht weiter (kein Fertig, kein Live).
     """
 
     gelaufen: bool
@@ -54,6 +57,7 @@ class Ergebnis:
     grund: str
     dauer_s: float | None
     kopf: str
+    laeuft: bool = False
 
 
 @dataclass(frozen=True)
@@ -97,13 +101,22 @@ def lies_merker(klon: Path, spec: int) -> Merker | None:
     except FileNotFoundError:
         return None
     except (OSError, ValueError, KeyError, TypeError) as fehler:
-        log.warning("komplett_lauf: Merker %s unlesbar, gilt als nicht gelaufen: %s", datei, fehler)
+        log.warning(
+            "komplett_lauf: Merker %s unlesbar, gilt als nicht gelaufen: %s",
+            datei,
+            fehler,
+        )
         return None
 
 
 def _kopf(klon: Path) -> str | None:
     try:
-        erg = subprocess.run(["git", "-C", str(klon), "rev-parse", "HEAD"], capture_output=True, text=True, check=False)
+        erg = subprocess.run(
+            ["git", "-C", str(klon), "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
     except OSError as fehler:
         log.warning("komplett_lauf: git fehlt: %s", fehler)
         return None
@@ -114,7 +127,9 @@ def _jetzt() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
 
 
-def komplett_einmal(klon: Path, spec: int, moment: Moment, konfig: dict[str, Any]) -> Ergebnis:
+def komplett_einmal(
+    klon: Path, spec: int, moment: Moment, konfig: dict[str, Any]
+) -> Ergebnis:
     """Komplett-Prüfung der Spec ``spec`` im Klon laufen lassen, wenn sie jetzt dran ist — höchstens einmal.
 
     ``moment`` = wo die Spec steht (``Moment.ALLE_AUF_STAGING`` oder ``Moment.VOR_LIVE``; ``TICKET``
@@ -122,13 +137,20 @@ def komplett_einmal(klon: Path, spec: int, moment: Moment, konfig: dict[str, Any
     git-Fehler; die stehen als ``ok=False`` mit Handlung in ``grund``.
     """
     moment = Moment(moment)
-    kopf = _kopf(klon)
     if not pruefplan.eingerichtet(konfig):
+        # Zuerst und ohne git: nicht eingerichtete Repos (laufende Specs) merken nichts davon.
         log.info("komplett_lauf: Spec %s %s", spec, pruefplan.NICHT_EINGERICHTET)
-        return Ergebnis(False, True, "Prüfung nicht eingerichtet, alter Ablauf", None, kopf or "")
+        return Ergebnis(
+            False, True, "Prüfung nicht eingerichtet, alter Ablauf", None, ""
+        )
+    kopf = _kopf(klon)
     if kopf is None:
         return Ergebnis(
-            False, False, f"Kopf-SHA in {klon} nicht lesbar (git). Handlung: Klon prüfen, dann erneut rufen.", None, ""
+            False,
+            False,
+            f"Kopf-SHA in {klon} nicht lesbar (git). Handlung: Klon prüfen, dann erneut rufen.",
+            None,
+            "",
         )
     merker = lies_merker(klon, spec)
     lief = merker is not None and merker.gruen and merker.kopf == kopf
@@ -149,6 +171,38 @@ def komplett_einmal(klon: Path, spec: int, moment: Moment, konfig: dict[str, Any
             None,
             kopf,
         )
+    # Sperre gegen Doppellauf (capo-Takt + Tür vor Live): flock fällt mit dem Prozess, ein
+    # abgestürzter Lauf sperrt also nie dauerhaft.
+    sperr_datei = _datei(klon, spec).with_suffix(".lock")
+    try:
+        with _sperre.halte(sperr_datei) as frei:
+            if not frei:
+                grund = f"Komplett-Prüfung läuft schon (Sperre {sperr_datei.name}). Handlung: später erneut rufen."
+                return Ergebnis(False, True, grund, None, kopf, laeuft=True)
+            merker = lies_merker(
+                klon, spec
+            )  # der andere Lauf kann eben grün geworden sein
+            if merker is not None and merker.gruen and merker.kopf == kopf:
+                return Ergebnis(
+                    False,
+                    True,
+                    f"Komplett-Prüfung für Stand {kopf[:7]} schon grün gelaufen",
+                    None,
+                    kopf,
+                )
+            return _lauf(klon, spec, moment, befehl, kopf)
+    except _sperre.SperreNichtOeffenbar as fehler:
+        return Ergebnis(
+            False,
+            False,
+            f"Sperre nicht öffenbar ({fehler}). Handlung: Ordner-Rechte prüfen, dann erneut rufen.",
+            None,
+            kopf,
+        )
+
+
+def _lauf(klon: Path, spec: int, moment: Moment, befehl: str, kopf: str) -> Ergebnis:
+    """Befehl ausführen und Merker schreiben; nur unter der Sperre aus :func:`komplett_einmal`."""
     start_zeit, start = _jetzt(), time.monotonic()
     stufe = leiter.eigener_befehl(klon, befehl, "komplett")
     dauer = round(time.monotonic() - start, 2)
@@ -175,18 +229,34 @@ def komplett_einmal(klon: Path, spec: int, moment: Moment, konfig: dict[str, Any
             dauer,
             kopf,
         )
-    log.info("komplett_lauf: Spec %s Kopf %s Exit %s in %.2f s", spec, kopf[:7], exit_code, dauer)
+    log.info(
+        "komplett_lauf: Spec %s Kopf %s Exit %s in %.2f s",
+        spec,
+        kopf[:7],
+        exit_code,
+        dauer,
+    )
     if exit_code == leiter.GRUEN:
-        return Ergebnis(True, True, f"Komplett-Prüfung grün ({dauer:.1f} s, Stand {kopf[:7]})", dauer, kopf)
+        return Ergebnis(
+            True,
+            True,
+            f"Komplett-Prüfung grün ({dauer:.1f} s, Stand {kopf[:7]})",
+            dauer,
+            kopf,
+        )
     if exit_code == leiter.ROT:
         handlung = "Handlung: roten Test im Klon beheben, committen, dann erneut rufen (läuft dann neu)."
     else:
-        handlung = f"Handlung: Werkzeug-Fehler beheben ({stufe.grund}), dann erneut rufen."
+        handlung = (
+            f"Handlung: Werkzeug-Fehler beheben ({stufe.grund}), dann erneut rufen."
+        )
     kurz = (stufe.ausgabe or "").strip().splitlines()[-1:] or [""]
     return Ergebnis(
         True,
         False,
-        f"Komplett-Prüfung rot (Exit {exit_code}) für Stand {kopf[:7]}: {kurz[0][:200]} {handlung}".replace("  ", " "),
+        f"Komplett-Prüfung rot (Exit {exit_code}) für Stand {kopf[:7]}: {kurz[0][:200]} {handlung}".replace(
+            "  ", " "
+        ),
         dauer,
         kopf,
     )

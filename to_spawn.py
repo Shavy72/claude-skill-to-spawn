@@ -58,6 +58,7 @@ from to_spawn import (  # noqa: E402
     hausmeister_aufgabe,
     hooks,
     inventur,
+    komplett_lauf,
     leiter,
     leitstand,
     manifest,
@@ -79,8 +80,13 @@ from to_spawn import (  # noqa: E402
 from to_spawn import einreichen as einreichen_modul  # noqa: E402
 from to_spawn import spawn as spawn_modul  # noqa: E402
 from to_spawn import stand as stand_modul  # noqa: E402
+from to_spawn.pruefplan import Moment
 
 log = logging.getLogger("to_spawn")
+
+
+#: Unterbefehl ``komplett --moment``: Text der Kommandozeile → Moment (anderes lehnt argparse mit Exit 2 ab).
+_KOMPLETT_MOMENTE = {"vor-live": Moment.VOR_LIVE, "alle-auf-staging": Moment.ALLE_AUF_STAGING}
 
 
 def _tickets(wert: str | None) -> list[str] | None:
@@ -790,6 +796,11 @@ def main(argv: list[str] | None = None) -> int:
     p_startklar.add_argument("spec", type=int)
     p_startklar.add_argument("--ordner", type=Path, default=None, help="Aufseher-Ordner (Vorgabe: Repo-Wurzel)")
 
+    # Komplett-Prüfung einmal je Spec (#425 C2): einzige Tür vor dem Live-Schritt — Exit 0 grün/nicht nötig, 1 sonst.
+    p_komplett = unter.add_parser("komplett", help="Komplett-Prüfung der Spec, höchstens einmal (Exit 0/1)")
+    p_komplett.add_argument("spec", type=int)
+    p_komplett.add_argument("--moment", choices=sorted(_KOMPLETT_MOMENTE), default="vor-live")
+
     nest.richte_parser_ein(unter)
     leitstand.richte_parser_ein(unter)
     waechter_takt.richte_parser_ein(unter)
@@ -907,6 +918,13 @@ def main(argv: list[str] | None = None) -> int:
         return _zu_bauen(args)
     if args.befehl == "ticket-lage":
         return _ticket_lage(args)
+    if args.befehl == "komplett":
+        repo = config.repo_wurzel(_repo_aus_umgebung())
+        erg = komplett_lauf.komplett_einmal(repo, args.spec, _KOMPLETT_MOMENTE[args.moment], config.lade(repo))
+        # „läuft schon“ ist kein grüner Stand: vor Live erst weiter, wenn der andere Lauf grün ist.
+        frei = erg.ok and not erg.laeuft
+        print(erg.grund)
+        return 0 if frei else 1
     if args.befehl == "startklar":
         ordner = args.ordner.resolve() if args.ordner else config.repo_wurzel(_repo_aus_umgebung())
         code, text = startklar.ausgabe(startklar.pruefe(ordner, args.spec))

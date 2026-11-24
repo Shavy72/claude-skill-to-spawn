@@ -115,7 +115,9 @@ def test_ausroll_repo_ohne_einrichtung_takt_wie_vorher(welt: dict[str, Path]) ->
     assert not (welt["repo"] / ".to-spawn" / "pruef" / f"komplett-{SPEC}.json").exists()
 
 
-def test_ausnahme_bricht_takt_nicht_ab(welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch) -> None:
+def test_ausnahme_bricht_takt_nicht_ab(
+    welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
     _eingerichtet(welt, _zaehl(welt))
     _alle_zu(welt)
 
@@ -123,19 +125,35 @@ def test_ausnahme_bricht_takt_nicht_ab(welt: dict[str, Path], monkeypatch: pytes
         raise RuntimeError("kaputt")
 
     monkeypatch.setattr(komplett_lauf, "komplett_einmal", kaputt)
-    erg = capo.tick(welt["repo"], int(SPEC), "test/wegwerf", config.lade(welt["repo"]), wt_basis=str(welt["wt"]))
+    erg = capo.tick(
+        welt["repo"],
+        int(SPEC),
+        "test/wegwerf",
+        config.lade(welt["repo"]),
+        wt_basis=str(welt["wt"]),
+    )
     text = "\n".join(erg.zeilen)
     assert "FEHLER: Komplett-Prüfung" in text and "kaputt" in text, text
     assert not erg.fertig
     assert erg.exit_code == 1
 
 
-def test_takt_laeuft_schon_meldet_und_haelt_fertig(welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch) -> None:
+def test_takt_laeuft_schon_meldet_und_haelt_fertig(
+    welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
     _eingerichtet(welt, _zaehl(welt))
     _alle_zu(welt)
-    belegt = komplett_lauf.Ergebnis(False, True, "Komplett-Prüfung läuft schon", None, "", laeuft=True)
+    belegt = komplett_lauf.Ergebnis(
+        False, True, "Komplett-Prüfung läuft schon", None, "", laeuft=True
+    )
     monkeypatch.setattr(komplett_lauf, "komplett_einmal", lambda *_a, **_k: belegt)
-    erg = capo.tick(welt["repo"], int(SPEC), "test/wegwerf", config.lade(welt["repo"]), wt_basis=str(welt["wt"]))
+    erg = capo.tick(
+        welt["repo"],
+        int(SPEC),
+        "test/wegwerf",
+        config.lade(welt["repo"]),
+        wt_basis=str(welt["wt"]),
+    )
     text = "\n".join(erg.zeilen)
     assert "läuft schon" in text and "FEHLER" not in text, text
     assert not erg.fertig
@@ -218,7 +236,9 @@ def _warte_auf(zaehl: Path) -> None:
 
 def _langsam_eingerichtet(welt: dict[str, Path], zaehl: Path) -> None:
     befehl = _befehl(zaehl) + " && sleep 5"
-    _konfig(welt, pruefung={"schnell": "true", "komplett": befehl}, staging={"ohne": True})
+    _konfig(
+        welt, pruefung={"schnell": "true", "komplett": befehl}, staging={"ohne": True}
+    )
 
 
 def test_sperre_zweiter_aufruf_waehrend_lauf(welt: dict[str, Path]) -> None:
@@ -227,7 +247,9 @@ def test_sperre_zweiter_aufruf_waehrend_lauf(welt: dict[str, Path]) -> None:
     erster = _langsamer_lauf(welt["repo"], zaehl)
     try:
         _warte_auf(zaehl)
-        zweit = komplett_lauf.komplett_einmal(welt["repo"], int(SPEC), Moment.VOR_LIVE, config.lade(welt["repo"]))
+        zweit = komplett_lauf.komplett_einmal(
+            welt["repo"], int(SPEC), Moment.VOR_LIVE, config.lade(welt["repo"])
+        )
         assert (zweit.gelaufen, zweit.ok, zweit.laeuft) == (False, True, True)
         assert "läuft schon" in zweit.grund
     finally:
@@ -243,7 +265,13 @@ def test_sperre_abgestuerzter_lauf_sperrt_nicht(welt: dict[str, Path]) -> None:
     _warte_auf(zaehl)
     erster.send_signal(signal.SIGKILL)
     erster.wait(timeout=10)
-    _konfig(welt, pruefung={"schnell": "true", "komplett": _befehl(zaehl)}, staging={"ohne": True})
-    erg = komplett_lauf.komplett_einmal(welt["repo"], int(SPEC), Moment.VOR_LIVE, config.lade(welt["repo"]))
+    _konfig(
+        welt,
+        pruefung={"schnell": "true", "komplett": _befehl(zaehl)},
+        staging={"ohne": True},
+    )
+    erg = komplett_lauf.komplett_einmal(
+        welt["repo"], int(SPEC), Moment.VOR_LIVE, config.lade(welt["repo"])
+    )
     assert (erg.gelaufen, erg.ok) == (True, True), erg.grund
     assert _laeufe(zaehl) == 2

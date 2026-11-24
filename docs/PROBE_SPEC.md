@@ -42,7 +42,7 @@ Exit 2 ab.
 | Schlüssel | Wirkt heute? |
 |---|---|
 | `staging.url`, `staging_start`, `staging.ohne` | ja (`config.hat_staging`, `config.staging_bewusst_ohne`, #410) |
-| `pruefung.schnell`, `pruefung.komplett` | **erst mit Teil A** (`to_spawn/pruefplan.py`); heute wählt das Prüftor selbst (pytest, `testpaths = ["tests"]`) |
+| `pruefung.schnell`, `pruefung.komplett` | ja (`to_spawn/pruefplan.py`, #425): `komplett` läuft einmal je Spec über `to_spawn/komplett_lauf.py` — im capo-Takt, sobald alle Tickets auf Staging sind, sonst per `to_spawn.py komplett <S> --moment vor-live` |
 | `live.befehl`, `live.url` | **erst mit Teil A**; bis dahin führt die Lauf-Session den Live-Schritt nach diesem Ablauf aus |
 | `live.aufraeumen` | Vorschlag dieser Vorlage, nicht im Schnittplan; Teil A entscheidet, ob er bleibt |
 
@@ -64,12 +64,14 @@ Windows-PC (#426 Reihenfolge). Voraussetzung: Teile A–D gebaut und installiert
 3. **Start:** `/to-spawn <S>` (Bau-Server) bzw. `/to-spawn-local <S>` (PC). Ab hier kein Eingriff.
 4. **Beobachten** (Abschnitt 5 laufend füllen): Start jedes Tickets, Dauer der schnellen Prüfung je
    Ticket, Rückfragen in den Fenstern, jede Strecke über 10 min ohne Fortschritt.
-5. **Komplett-Prüfung:** mit Staging, sobald alle Tickets `staging:fertig` sind; ohne Staging vor
-   dem Live-Schritt. Zählen: genau 1.
+5. **Komplett-Prüfung:** mit Staging startet sie der capo-Takt selbst, sobald alle Tickets
+   `staging:fertig` sind; ohne Staging vor dem Live-Schritt (Schritt 8). Zählen: genau 1
+   (Merker `.to-spawn/pruef/komplett-<S>.json`).
 6. **Rundschau:** liegt als Datei im Lauf-Repo und enthält die Entscheidungs-Liste.
 7. **Kritik-Runde:** Kritik-Text aus Abschnitt 4 als Antwort auf die Abnahme-Frage geben. Erwartet:
    Nachbesserung ohne Rückfrage, neue Rundschau. Erst dann „passt“ geben.
-8. **Live-Schritt:** nach „passt“ geht der Stand in die Übungs-Live-App; Beleg-Zeile ins
+8. **Live-Schritt:** nach „passt“ zuerst `python to_spawn.py komplett <S> --moment vor-live`
+   (Exit 0 = weiter, Exit 1 = kein Live, Grund beheben); dann geht der Stand in die Übungs-Live-App; Beleg-Zeile ins
    Lauf-Protokoll, zusätzlich ein eigener Abruf der Live-Adresse.
 9. **Aufräumen:** Übungs-Live und Staging beenden, Worktrees/Zweige der Spec weg, Tickets im
    richtigen Zustand (M6). Endzeit in die Messtabelle.
