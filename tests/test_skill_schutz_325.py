@@ -125,6 +125,7 @@ def test_path_replace_im_python_code_bleibt_verweigert(home: Path) -> None:
     befehl = "python3 -c \"__import__('pathlib').Path('a').replace('/root/.claude/skills/b')\""
     ergebnis = _hook(home, _json("Bash", home, command=befehl))
     assert ergebnis.returncode == 2, ergebnis.stderr
+
 # --- #470: Text ist kein Befehl (Heredoc-Rumpf, mehrzeilige Zeichenkette) ---
 
 
@@ -155,4 +156,18 @@ def test_heredoc_als_code_fuer_shell_bleibt_verweigert(home: Path) -> None:
 
 def test_zeichenkette_als_code_fuer_shell_bleibt_verweigert(home: Path) -> None:
     befehl = 'sh -c "echo hi\nrm ~/.claude/skills/x"'
+    assert _bash(home, befehl) == 2
+@pytest.mark.parametrize(
+    "befehl",
+    [
+        "# cat <<EOF\nrm ~/.claude/skills/x\nEOF",
+        'echo "<<EOF"\nrm ~/.claude/skills/x\nEOF',
+        "cat <<<EOF\nrm ~/.claude/skills/x\nEOF",
+        "x=$((1<<N))\nrm ~/.claude/skills/x\nN",
+        "echo \\<<EOF\nrm ~/.claude/skills/x\nEOF",
+        "# it's\nrm ~/.claude/skills/x\n# don't",
+    ],
+    ids=["kommentar", "in_anfuehrung", "here_string", "rechenausdruck", "escape", "kommentar_apostroph"],
+)
+def test_scheinbarer_text_ist_befehl_bleibt_verweigert(home: Path, befehl: str) -> None:
     assert _bash(home, befehl) == 2
