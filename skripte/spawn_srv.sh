@@ -14,6 +14,7 @@
 # Exit 7: Platte voll (Start-Check des Hausmeisters, #1369) — wie Exit 5.
 # Exit 6: Speicherprüfung kaputt oder Hauptzweig nicht ermittelbar — nichts weiter gestartet.
 # Exit 9: Session ``spec-<S>`` gehört einem anderen Repo (gleiche Spec-Nummer, #457) — nichts gestartet.
+# Exit 10: ein anderer Lauf für dieselbe Spec hält die Start-Sperre (#560) — nichts gestartet.
 # Eine tmux-Session je Spec (``spec-<S>``), darin ``wache <S>``, ``leitstand <S>`` und
 # je Ticket ein Fenster ``bau <N>``. Gewartet wird in bau.py (0 Token).
 # Kontrolle: ``sessions <S>`` · ``tmux attach -t spec-<S>`` (raus: Strg+B d).
@@ -155,6 +156,20 @@ fi
 [ -n "$TICKETS" ] || [ "$NUR_WACHE" -eq 1 ] || { echo "Keine Tickets im Manifest $MANIFEST." >&2; exit 2; }
 
 # --- 3. Was läuft schon? (nie Duplikate) ------------------------------------
+# Sperre je Spec (#560): Prüfen „läuft schon?“ + Speicher und Starten sind ein Schritt — ein
+# zweiter Lauf (Nachstarter aus wache.py, Aufpasser, Hand) wartet, sonst starteten beide
+# dasselbe Ticket oder überschritten gemeinsam die Session-Obergrenze (#460). Exit 10 = Sperre
+# nach TO_SPAWN_SPERRE_WARTEN_S (300) noch belegt. tmux-Aufrufe schließen fd 9 (``9>&-``),
+# sonst hielten die Fenster die Sperre für immer.
+# ponytail: ohne flock (Git Bash unter Windows) keine Sperre, dort läuft kein Nachstarter-Takt parallel
+if [ "$DRY_RUN" -eq 0 ] && command -v flock >/dev/null; then
+  mkdir -p "$REPO/.to-spawn"
+  exec 9>"$REPO/.to-spawn/spawn-$SPEC.sperre"
+  if ! flock -w "${TO_SPAWN_SPERRE_WARTEN_S:-300}" 9; then
+    echo "Ein anderer spawn_srv.sh-Lauf für Spec #$SPEC startet gerade Fenster — nichts gestartet, später erneut." >&2
+    exit 10
+  fi
+fi
 STAND="$(TO_SPAWN_REPO="$REPO" "$PY" "$SKILL_HOME/skripte/sessions_stand.py" "$SPEC" --alle 2>/dev/null || true)"
 zustand_von() { echo "$STAND" | awk -v n="#$1" '$1==n {print $2; exit} ($1=="Spec" && $2==n) {print $3; exit}'; }
 # Lebt jetzt ein Aufseher-Prozess (``wache.py <S>`` in diesem Repo)? Frisch aus der Prozessliste,
@@ -170,7 +185,26 @@ aufseher_laeuft() {
 # ~/.bashrc (``REPO``), sonst startet ``bau`` in einem anderen Repo (#212). Seit #257 rufen
 # die Fenster die Skill-Skripte direkt auf (``bau.py``/``wache.py``), nicht die Shell-
 # Funktionen ``bau``/``wache`` aus ~/.bashrc — ein Fremd-Repo hat die nicht.
-VORSPANN="export REPO=$(printf %q "$REPO") TO_SPAWN_HOME=$(printf %q "$SKILL_HOME") TO_SPAWN_REPO=$(printf %q "$REPO");"
+# Warte-Datei (#560): Tickets, die „wartet auf Platz“ bekamen; der Aufseher (wache.py) startet sie
+# daraus in Sekunden nach, sobald Platz frei ist. Schreiben und Löschen nur hier, unter der Sperre.
+WARTE_DATEI="$REPO/.to-spawn/wartet-auf-platz-$SPEC"
+# >>> warteliste (#560) — Format: eine Zeile, Ticketnummern mit Komma, z. B. ``901,902``.
+# warteliste_aendern <hinzu> <weg>: vorhandene Liste ∪ <hinzu> ohne <weg> (beides Komma-Listen),
+# ohne Doppelte, alte Reihenfolge zuerst; in einem Zug per mv geschrieben (ein Leser sieht nie
+# eine halbe Datei), leer → Datei weg. Trockenlauf ändert nichts.
+warteliste_aendern() {
+  [ "$DRY_RUN" -eq 0 ] || return 0
+  local alt="" neu
+  if [ -f "$WARTE_DATEI" ]; then alt="$(cat "$WARTE_DATEI")"; fi
+  neu="$(printf '%s,%s\n' "$alt" "$1" | tr ',' '\n' | awk -v weg=",$2," 'NF && !index(weg, "," $1 ",") && !s[$1]++ {print $1}' | paste -sd, -)"
+  if [ -z "$neu" ]; then rm -f "$WARTE_DATEI"; return 0; fi
+  mkdir -p "${WARTE_DATEI%/*}"
+  printf '%s\n' "$neu" > "$WARTE_DATEI.$$.neu" && mv -f "$WARTE_DATEI.$$.neu" "$WARTE_DATEI"
+}
+# <<< warteliste
+# LAEUFT = Tickets dieses Laufs, die schon liefen oder gestartet wurden — nur die trägt der Lauf aus.
+LAEUFT=""
+VORSPANN="export REPO=$(printf %q "$REPO") TO_SPAWN_HOME=$(printf %q "$SKILL_HOME") TO_SPAWN_REPO=$(printf %q "$REPO") TO_SPAWN_WARTE_DATEI=$(printf %q "$WARTE_DATEI");"
 # GEPLANT = echte Fensterbefehle, KURZ = Kurzform ``bau <N> [--umzug …]`` / ``wache <S>`` für
 # Anzeige und Fenstername (erste zwei Wörter; sessions_stand/aufpasser lesen die Namen) —
 # beide Listen laufen parallel.
@@ -179,7 +213,13 @@ KURZ=()
 if [ "$OHNE_WACHE" -eq 0 ]; then
   z="$(zustand_von "$SPEC")"
   if [ -z "$z" ] || [ "$z" = "aus" ]; then
-    GEPLANT+=("$(printf %q "$PY") $(printf %q "$SKILL_HOME/skripte/wache.py") $SPEC")
+    # Stirbt wache.py (Absturz, OOM-Kill), startet das Fenster es bis zu 3-mal neu (#560) —
+    # sonst läge der wartende Rest still, bis der Aufpasser-Takt das Fenster neu anlegt.
+    # Absturz = Exit 1 (Python-Traceback) oder Signal ABRT/KILL/SEGV (134/137/139); gewollte
+    # Enden (0, 2 Konfig/Startklar, 130 Strg+C, 143 SIGTERM, Claude-Exit) starten nicht neu.
+    # ponytail: feste 3 Versuche à 5 s, Zähler/Meldung über den Aufpasser wenn Abstürze häufig sind
+    WACHE_BEFEHL="$(printf %q "$PY") $(printf %q "$SKILL_HOME/skripte/wache.py") $SPEC"
+    GEPLANT+=("v=0; while :; do $WACHE_BEFEHL; rc=\$?; case \$rc in 1|134|137|139) ;; *) break ;; esac; [ \$v -lt 3 ] || break; v=\$((v + 1)); echo \"wache.py Exit \$rc — Neustart \$v/3\" >&2; sleep \${TO_SPAWN_WACHE_NEUSTART_S:-5}; done")
     KURZ+=("wache $SPEC")
   else
     echo "Aufseher für Spec #$SPEC läuft bereits ($z) — übersprungen."
@@ -211,11 +251,13 @@ for n in $TICKETS; do
     exit 4
   else
     echo "Ticket #$n läuft bereits ($z) — übersprungen."
+    LAEUFT="$LAEUFT,$n"
   fi
 done
 
 if [ "${#GEPLANT[@]}" -eq 0 ]; then
   echo "Nichts zu starten — alle Fenster laufen schon."
+  warteliste_aendern "" "$LAEUFT"
   exit 0
 fi
 
@@ -280,6 +322,12 @@ for i in "${!GEPLANT[@]}"; do
   # Kein Platz, aber der Aufseher läuft (#460): er startet die fehlenden Fenster selbst nach,
   # sobald Platz frei ist — das ist der vorgesehene Weg, kein Fehler.
   if [ "$rc" -eq 8 ]; then
+    # ponytail: Umzug-Fenster nicht vermerkt (brauchen ihre Ref), die startet der Aufpasser-Takt nach
+    if [ -z "$UMZUG_REF" ]; then
+      # Rest-bau-Fenster zur vorhandenen Liste dazu, Laufendes austragen (#560).
+      liste="$(printf '%s\n' "${KURZ[@]:$i}" | awk '$1=="bau"{print $2}' | paste -sd, -)"
+      warteliste_aendern "$liste" "$LAEUFT"
+    fi
     echo "wartet auf Platz: ${KURZ[*]:$i} — $WARTE_GRUND; Aufseher startet nach, sobald Platz frei ist."
     exit 0
   fi
@@ -290,13 +338,15 @@ for i in "${!GEPLANT[@]}"; do
   # Fenstername = die ersten zwei Wörter der Kurzform (``bau <N>`` / ``wache <S>``), auch mit --umzug.
   name="$(echo "${KURZ[$i]}" | awk '{print $1" "$2}')"
   if tmux has-session -t "=$SESSION" 2>/dev/null; then
-    tmux new-window -t "=$SESSION" -n "$name" -c "$REPO" bash -lc "$VORSPANN $befehl"
+    tmux new-window -t "=$SESSION" -n "$name" -c "$REPO" bash -lc "$VORSPANN $befehl" 9>&-
   else
-    tmux new-session -d -s "$SESSION" -n "$name" -c "$REPO" bash -lc "$VORSPANN $befehl"
+    tmux new-session -d -s "$SESSION" -n "$name" -c "$REPO" bash -lc "$VORSPANN $befehl" 9>&-
   fi
   echo "gestartet: $name ($befehl)"
+  case "$name" in "bau "*) LAEUFT="$LAEUFT,${name#bau }" ;; esac
   GESTARTET=$((GESTARTET + 1))
 done
+warteliste_aendern "" "$LAEUFT"
 
 echo "== Anlauf (10 s) =="
 sleep 10

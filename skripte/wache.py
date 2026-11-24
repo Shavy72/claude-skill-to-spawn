@@ -26,6 +26,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from datetime import date
 from pathlib import Path
@@ -131,6 +132,99 @@ def auf_speicher_warten(
 ) -> int:
     """Warten, bis ``speicher.platz_frei_hier`` (eigene tmux-Sitzung, #409) frei meldet; Rückgabe = Zahl der Wartezyklen (#257 F3)."""
     return speicher.auf_platz_warten(konfig, wer=wer, pruefen=pruefen, schlafen=schlafen, takt_s=takt_s)
+
+
+#: Umgebungsvariable mit der Warte-Datei (#560): ``spawn_srv.sh`` setzt sie im Fenster ``wache <S>``
+#: und schreibt dorthin die Tickets, die beim Start „wartet auf Platz“ bekamen.
+WARTE_ENV = "TO_SPAWN_WARTE_DATEI"
+#: Takt des Nachstarters (#560): so viele Sekunden nach „Platz frei“ startet das nächste Fenster.
+NACHSTART_TAKT_S = 20
+
+
+def wartende_nachstarten(
+    datei: Path,
+    spec: int,
+    repo: Path,
+    *,
+    env: dict[str, str] | None = None,
+    schlafen=time.sleep,
+    takt_s: float | None = None,
+    max_laeufe: int | None = None,
+) -> int:
+    """Startet die Fenster nach, die ``spawn_srv.sh`` in ``datei`` als wartend vermerkt hat (#560).
+
+    Je Takt ein ``spawn_srv.sh <S> --tickets <liste>`` — es überspringt Laufendes und prüft vor
+    jedem Fenster den Speicher. Nur ``spawn_srv.sh`` schreibt und löscht die Datei, unter seiner
+    Sperre je Spec: es vereinigt neue Wartende mit der vorhandenen Liste, trägt nur gestartete oder
+    schon laufende Tickets aus und löscht die Datei erst, wenn sie leer ist. Exit 0 ohne „wartet
+    auf Platz“ und Datei weg = Ende; Datei noch da (weitere Wartende) oder sonst (wartet weiter,
+    voll, Fehler) → nächster Takt, unbegrenzt. Leere Datei = kein Auftrag, nächster Takt (#560).
+    Datei fehlt → im Takt weiter nachsehen:
+    ``spawn_srv.sh`` schreibt sie erst nach der Staffel-Pause, also nach dem Start des Aufsehers.
+    Rückgabe = Zahl der ``spawn_srv.sh``-Läufe. ``takt_s`` leer = ``NACHSTART_TAKT_S`` (je Takt gelesen).
+    """
+    from to_spawn import bash_wahl
+
+    skript = Path(_SKILL) / "skripte" / "spawn_srv.sh"
+    laeufe = 0
+    while max_laeufe is None or laeufe < max_laeufe:
+        if not datei.is_file():
+            schlafen(NACHSTART_TAKT_S if takt_s is None else takt_s)
+            continue
+        tickets = datei.read_text(encoding="utf-8").strip()
+        if not tickets:
+            schlafen(NACHSTART_TAKT_S if takt_s is None else takt_s)
+            continue
+        umgebung = dict(os.environ if env is None else env, TO_SPAWN_REPO=str(repo))
+        laeufe += 1
+        try:
+            lauf = bash_wahl.lauf(
+                [str(skript), str(spec), "--tickets", tickets],
+                cwd=str(repo),
+                env=umgebung,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=600,
+            )
+        except (OSError, subprocess.SubprocessError) as fehler:
+            log.warning("Nachstart Spec #%s: spawn_srv.sh nicht lauffähig: %s", spec, fehler)
+        else:
+            ausgabe = (lauf.stdout or "") + (lauf.stderr or "")
+            if lauf.returncode == 0 and "wartet auf Platz" not in ausgabe:
+                if not datei.is_file():
+                    log.info("Nachstart Spec #%s: wartende Fenster laufen (%s)", spec, tickets)
+                    return laeufe
+                log.info("Nachstart Spec #%s: %s läuft, neue Warteliste da", spec, tickets)
+            else:
+                log.info("Nachstart Spec #%s: wartet weiter (Exit %s)", spec, lauf.returncode)
+        schlafen(NACHSTART_TAKT_S if takt_s is None else takt_s)
+    return laeufe
+
+
+def _nachstarter_starten(spec: int, repo: Path) -> threading.Thread | None:
+    """Nachstarter-Faden (#560), nur wenn ``spawn_srv.sh`` eine Warte-Datei mitgegeben hat.
+
+    Lebt so lange wie der Aufseher: auch spätere ``spawn_srv.sh``-Läufe (Aufseher läuft schon, wird
+    nicht neu gestartet) vermerken ihre Wartenden in derselben Datei.
+    """
+    wert = os.environ.get(WARTE_ENV, "").strip()
+    if not wert:
+        return None
+    umgebung = dict(os.environ)  # vor dem Umgebungs-Wechsel für Claude festhalten
+
+    def faden() -> None:
+        while True:
+            try:
+                wartende_nachstarten(Path(wert), spec, repo, env=umgebung)
+            except Exception:  # Faden darf den Aufseher nie mitreißen
+                log.exception("Nachstart Spec #%s gescheitert", spec)
+                time.sleep(NACHSTART_TAKT_S)
+
+    neu = threading.Thread(target=faden, name=f"nachstart-{spec}", daemon=True)
+    neu.start()
+    return neu
 
 
 MODELL = "claude-opus-5-5"
@@ -398,6 +492,8 @@ def main() -> int:
     # Speicher-Schutz (#257 Paket B, Fixrunde 1 F3): RAM knapp oder Obergrenze an
     # Claude-Sessions erreicht → warten statt Exit 5, damit Fenster und Grund bleiben.
     auf_speicher_warten(konfig, wer=f"Aufseher #{a.spec}")
+    # Wartende Fenster (#560): sobald wieder Platz ist, in Sekunden statt erst beim Aufpasser-Takt.
+    _nachstarter_starten(a.spec, REPO_ORDNER)
     # Vertrauens-Dialog für die Repo-Wurzel vorab bestätigen (#257) — Fehler nur Warnung.
     vertrauen.still_sicherstellen(REPO_ORDNER)
     # Aus einer Claude-Session gestartet erben Kind-Sessions die Markierung
