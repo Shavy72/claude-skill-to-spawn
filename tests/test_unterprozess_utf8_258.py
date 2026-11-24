@@ -14,12 +14,9 @@ WURZEL = Path(__file__).resolve().parent.parent
 # Aufgeräumt ist, was Issue #258 nennt. ponytail: übrige Dateien stehen hier, bis sie migriert sind;
 # Upgrade-Pfad: Datei auf ``**konsole.UNTERPROZESS_TEXT`` umstellen und hier streichen.
 NOCH_NICHT_MIGRIERT = {
-    "to_spawn/belege.py", "to_spawn/config.py", "to_spawn/einreichen.py", "to_spawn/gh.py",
-    "to_spawn/hausmeister.py", "to_spawn/hausmeister_aufgabe.py", "to_spawn/hausmeister_windows.py",
-    "to_spawn/inventur.py", "to_spawn/komplett_lauf.py", "to_spawn/melder.py", "to_spawn/nest.py",
-    "to_spawn/pc_fenster.py", "to_spawn/probesitz.py", "to_spawn/respawn.py", "to_spawn/setup.py",
-    "to_spawn/skill_stand.py", "to_spawn/staging_schalter.py", "to_spawn/startklar.py",
-    "to_spawn/umzug.py", "to_spawn/prozessbaum.py",
+    "to_spawn/belege.py", "to_spawn/hausmeister_aufgabe.py", "to_spawn/komplett_lauf.py",
+    "to_spawn/nest.py", "to_spawn/pc_fenster.py", "to_spawn/respawn.py", "to_spawn/setup.py",
+    "to_spawn/startklar.py",
 }
 
 
@@ -108,3 +105,24 @@ def test_text_true_ohne_utf8_nur_in_allowlist() -> None:
         if zeilen := _ohne_utf8(datei):
             schlecht[rel] = zeilen
     assert not schlecht, f"text=True ohne **konsole.UNTERPROZESS_TEXT / encoding: {schlecht}"
+
+
+def test_jeder_allowlist_eintrag_hat_noch_einen_verstoss() -> None:
+    """Sonst wird die Datei grundlos übersprungen: Eintrag streichen."""
+    erledigt = [rel for rel in sorted(NOCH_NICHT_MIGRIERT) if not _ohne_utf8(WURZEL / rel)]
+    assert not erledigt, f"Eintrag streichen (kein Verstoß mehr): {erledigt}"
+
+
+def _kaputt_lauf(befehl: list[str], **_k: object) -> subprocess.CompletedProcess[bytes]:
+    return subprocess.CompletedProcess(befehl, 0, bytes([97, 98, 0x81, 99]), b"")
+
+
+def test_nicht_utf8_ausgabe_ist_nicht_lesbar_kein_absturz(monkeypatch) -> None:
+    from to_spawn import capo, docker_reste
+    from to_spawn.pruef import cache
+
+    monkeypatch.setattr(subprocess, "run", _kaputt_lauf)
+    assert konsole.lauf_daten(["x"]) is None
+    assert docker_reste._docker(("ps",))[0] is False
+    assert capo.vps_kopf({"ssh": "h", "pfad": "p"}) is None
+    assert cache._tree(Path("."), "HEAD") is None

@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import logging
+import subprocess
 import sys
-from typing import TypedDict
+from typing import Any, TypedDict
 
 
 class _TextLesart(TypedDict):
@@ -22,6 +24,26 @@ UNTERPROZESS_TEXT = UNTERPROZESS_ANZEIGE  # bisheriger Name = Anzeige-Variante
 #: sollen laut auffallen, nicht still zu U+FFFD werden. Für Dateinamen, die zurück an git/Dateisystem
 #: gehen: ``{**UNTERPROZESS_DATEN, "errors": "surrogateescape"}``. Im Zweifel diese Variante.
 UNTERPROZESS_DATEN: _TextLesart = {"encoding": "utf-8", "errors": "strict"}
+
+
+#: Für Dateinamen, die zurück an git/Dateisystem gehen: ungültige Bytes bleiben verlustfrei erhalten.
+UNTERPROZESS_PFADE: _TextLesart = {"encoding": "utf-8", "errors": "surrogateescape"}
+
+
+def lauf_daten(befehl: list[str], **kwargs: Any) -> "subprocess.CompletedProcess[str] | None":
+    """``subprocess.run`` mit Daten-Lesart (UTF-8 strict); ``None`` = Ausgabe nicht lesbar.
+
+    ``OSError``/``TimeoutExpired`` bleiben beim Aufrufer. Ein Nicht-UTF-8-Byte (z. B. Windows-Hinweis in
+    OEM-Kodierung) ist kein Absturz, sondern „nicht lesbar“: Aufräum- und Prüf-Wege laufen weiter.
+    """
+    roh = subprocess.run(befehl, capture_output=True, **kwargs)
+    try:
+        aus = (roh.stdout or b"").decode("utf-8")
+        fehler = (roh.stderr or b"").decode("utf-8")
+    except UnicodeDecodeError as ursache:
+        logging.getLogger(__name__).warning("Ausgabe von %s nicht UTF-8: %s", befehl[:1], ursache)
+        return None
+    return subprocess.CompletedProcess(roh.args, roh.returncode, aus, fehler)
 
 
 def utf8_ausgabe() -> None:

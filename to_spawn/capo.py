@@ -645,11 +645,11 @@ def vps_kopf(vps: dict[str, Any]) -> str | None:
         f"cd {_server_pfad(str(vps.get('pfad') or '.'))} && git rev-parse HEAD",
     ]
     try:
-        fertig = subprocess.run(
-            befehl, capture_output=True, **konsole.UNTERPROZESS_DATEN, timeout=60, check=False
-        )
+        fertig = konsole.lauf_daten(befehl, timeout=60, check=False)
     except (OSError, subprocess.TimeoutExpired) as fehler:
         log.warning("VPS-HEAD nicht lesbar: %s", fehler)
+        return None
+    if fertig is None:
         return None
     zeilen = fertig.stdout.strip().splitlines()
     sha = zeilen[-1].strip() if zeilen else ""

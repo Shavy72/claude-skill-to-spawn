@@ -123,15 +123,11 @@ def _docker(befehl: tuple[str, ...]) -> tuple[bool, str]:
     """(ok, Ausgabe bzw. Fehlertext) eines Befehls aus :data:`BEFEHLE`."""
     programm = os.environ.get("TO_SPAWN_HAUSMEISTER_DOCKER") or "docker"
     try:
-        lauf = subprocess.run(
-            [programm, *befehl],
-            capture_output=True,
-            **konsole.UNTERPROZESS_DATEN,
-            timeout=ZEITLIMIT_S,
-            check=False,
-        )
+        lauf = konsole.lauf_daten([programm, *befehl], timeout=ZEITLIMIT_S, check=False)
     except (OSError, subprocess.TimeoutExpired) as fehler:
         return False, str(fehler)
+    if lauf is None:
+        return False, "Docker nicht lesbar (Ausgabe nicht UTF-8)"
     if lauf.returncode != 0:
         return (
             False,

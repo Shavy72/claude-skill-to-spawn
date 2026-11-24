@@ -291,14 +291,14 @@ def ordner() -> Path:
 
 def _tree(repo: Path, ref: str) -> str | None:
     try:
-        erg = subprocess.run(
+        erg = konsole.lauf_daten(
             ["git", "rev-parse", "--verify", "--quiet", f"{ref}^{{tree}}"],
             cwd=repo,
-            capture_output=True,
-            **konsole.UNTERPROZESS_DATEN,
             check=False,
         )
     except OSError:
+        return None
+    if erg is None:
         return None
     return (erg.stdout.strip() or None) if erg.returncode == 0 else None
 

@@ -80,7 +80,10 @@ class Treffer:
 
 def _git(wt: Path, *args: str) -> str:
     return subprocess.run(
-        ["git", "-C", str(wt), *args], capture_output=True, **{**konsole.UNTERPROZESS_DATEN, "errors": "surrogateescape"}, check=True
+        ["git", "-C", str(wt), *args],
+        capture_output=True,
+        **konsole.UNTERPROZESS_PFADE,
+        check=True,
     ).stdout
 
 
