@@ -100,6 +100,7 @@ from to_spawn import (
     briefkasten,
     config,
     eigener_handoff,
+    gh,
     prozessbaum,
     sessions_datei,
     speicher,
@@ -209,6 +210,12 @@ EREIGNIS_VORFALL: dict[str, tuple[str, str, str, str]] = {
         "Session wartet auf nichts, meldet aber nichts — Stufe 1 des Aufpassers",
         "Aufpasser stupst an; wiederholt es sich am selben Ticket, Auftrag schärfen",
     ),
+    "blocker_falsch_gewartet": (
+        "skill",
+        "Bau-Session wartet auf Blocker, die schon erledigt sind",
+        "Blocker wurde während ihres Weckrufs (ScheduleWakeup) fertig; sie prüft erst beim nächsten Wecken",
+        "Aufpasser stößt die Session an (to_spawn.py blocker <N> neu prüfen); häuft es sich, Weckruf früher auslösen",
+    ),
     "rueckfrage": (
         "mensch",
         "Session stellt eine Rückfrage und wartet",
@@ -306,6 +313,15 @@ RUECKFRAGE_MARKER = (
     "(y/n)",
     "Trust",
     "Esc to cancel",
+)
+#: Letzte Zeile des Befehls ``to_spawn.py blocker <N>`` im Pane (#267, #269): ``WARTET: <Gründe>``
+#: oder ``FREI``, allein auf der Zeile — davor nur Rahmen der Claude-Ausgabe (``⎿``), sonst Prosa.
+BLOCKER_STATUS = re.compile(r"^[ \t⎿│]*(WARTET: .+?|FREI)[ \t]*$", re.MULTILINE)
+#: Anstoß, wenn die Session laut eigener Meldung auf Erledigtes wartet (#269).
+BLOCKER_FREI_TEXT = (
+    "Aufpasser: Deine Blocker ({blocker}) sind erledigt — jetzt "
+    "`python ~/.claude/skills/to-spawn/to_spawn.py blocker {ticket}` erneut prüfen und weiterbauen, "
+    "nicht auf den Weckruf warten."
 )
 #: Anstupser: derselbe Mindset-Stoß wie die Eingriffs-Leiter (#500, eine Quelle).
 ANSTUPS_TEXT = anleitung.anstupser("Aufpasser")
@@ -462,6 +478,14 @@ def arbeitet(text: str, status: str | None = None) -> bool:
         or bool(BLOCKER_WARTEN.search(text))
         or bool(LIMIT_TEXT.search(text))
     )
+
+
+def gemeldete_blocker(text: str) -> str | None:
+    """Gründe der letzten ``WARTET``-Zeile im Pane; ``None`` = keine Zeile oder zuletzt ``FREI`` (#269)."""
+    treffer = BLOCKER_STATUS.findall(text)
+    if not treffer or treffer[-1] == "FREI":
+        return None
+    return treffer[-1].removeprefix("WARTET: ").strip()
 
 
 def rueckfrage(text: str) -> bool:
@@ -1466,7 +1490,7 @@ class Aufpasser:
         return repo
 
     def vorfall_notieren(
-        self, spec: str, repo: Path, fenster: str, ereignis: str, text: str
+        self, spec: str, repo: Path, fenster: str, ereignis: str, text: str, *, beispiel: str = ""
     ) -> None:
         """Stillstand als ``vorfall``-Zeile ins Bau-Log — die Lernschleife (#286).
 
@@ -1492,7 +1516,7 @@ class Aufpasser:
                 symptom=symptom,
                 ursache=ursache,
                 loesung=loesung,
-                beispiel=f"#{ticket} {self.datum}",
+                beispiel=beispiel or f"#{ticket} {self.datum}",
                 regel=ereignis,
                 quelle="aufpasser",
             )
@@ -2046,6 +2070,13 @@ class Aufpasser:
             ticket is not None
             and ticket in offen
             and not arbeitend
+            and self.blocker_falsch_gewartet(f, ticket, repo, schluessel, e, hash_start, text)
+        ):
+            return
+        if (
+            ticket is not None
+            and ticket in offen
+            and not arbeitend
             and self.folge_ab_handoff(f, ticket, repo, schluessel, hash_start)
         ):
             return
@@ -2122,6 +2153,38 @@ class Aufpasser:
                 "braucht_david",
                 f"„{f.name}“ reagiert nach Anstupsen und Fortsetzen nicht — braucht den Menschen.",
             )
+
+    def blocker_falsch_gewartet(
+        self, f: Fenster, ticket: int, repo: Path, schluessel: str, e: dict, hash_start: str, text: str
+    ) -> bool:
+        """Session wartet laut eigener ``WARTET``-Zeile, ``gh.blocker_gruende`` sieht alles erledigt (#269).
+
+        Dann Vorfall ``blocker_falsch_gewartet`` mit Ticketnummern und sofort ein Anstoß ins
+        Fenster (zählt als Anstupser, Grenze R5). Wartet sie zu Recht oder ist die Lage
+        unbekannt (Abfrage scheitert), passiert nichts. True = Fenster fertig geprüft.
+        """
+        gemeldet = gemeldete_blocker(text)
+        if gemeldet is None:
+            return False
+        gh_repo = gh.repo_aus_origin(repo)
+        deps = gh.blocked_by(gh_repo, str(ticket), cwd=repo) if gh_repo else None
+        if deps is None or gh.blocker_gruende(repo, deps) != []:
+            return False
+        blocker = ", ".join(f"#{n}" for n in re.findall(r"#(\d+)", gemeldet)) or gemeldet
+        log.info("%s: wartet auf %s, laut GitHub erledigt — Anstoß", f.name, blocker)
+        if self.e.trocken:
+            print(f"[trocken] {f.ziel}: Blocker {blocker} erledigt, anstoßen")
+            return True
+        self.vorfall_notieren(
+            f.spec, repo, schluessel, "blocker_falsch_gewartet", gemeldet,
+            beispiel=f"#{ticket} wartete auf {blocker} {self.datum}",
+        )
+        if len(self._stupser_zaehlen(e)) >= STUPSER_MAX or not self.vor_eingriff(f, hash_start, repo):
+            return False  # Kette unten entscheidet (braucht den Menschen / nächster Lauf)
+        self._eingeben(f.ziel, BLOCKER_FREI_TEXT.format(blocker=blocker, ticket=ticket))
+        e["stupser"].append(self.jetzt)
+        e.update(hash=pane_hash(self.pane_text(f.ziel)), seit=self.jetzt)
+        return True
 
     def _frage_haelt(self, f: Fenster, ticket: int, repo: Path, daten: dict) -> bool:
         """Offene Frage des Tickets im Briefkasten hält das Fenster, auch bei Platznot (#416).

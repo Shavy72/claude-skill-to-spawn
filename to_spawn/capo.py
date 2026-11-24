@@ -54,7 +54,20 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from . import bau_log, befund, briefkasten, config, gh, komplett_lauf, melder, mensch_noetig, staging_schalter, starter, ticket_zustand, vorfall
+from . import (
+    bau_log,
+    befund,
+    briefkasten,
+    config,
+    gh,
+    komplett_lauf,
+    melder,
+    mensch_noetig,
+    staging_schalter,
+    starter,
+    ticket_zustand,
+    vorfall,
+)
 from . import sperre as _sperre
 from .pruefplan import Moment
 
@@ -70,15 +83,11 @@ OK_LABEL = "waechter:ok"
 #: Minuten nach ``closed_at``, bevor die Regeln greifen (Vorgabe, ``waechter.karenz_minuten``).
 KARENZ_MIN = 15.0
 #: Tick-Zeile, wenn ``mail.befehl`` fehlt: bewusste Wahl des Repos, kein Fehler.
-MAIL_AUS = (
-    "INFO: Mail nicht eingerichtet (mail.befehl leer) — Meldungen stehen nur hier."
-)
+MAIL_AUS = "INFO: Mail nicht eingerichtet (mail.befehl leer) — Meldungen stehen nur hier."
 #: Sekunden, die ein Tick auf die Sperre eines anderen Laufs wartet.
 SPERRE_S = 30.0
 
-_TEST_DATEI = re.compile(
-    r"(^|/)(tests?/|test_[^/]*\.py$|[^/]*_test\.py$|[^/]*\.(test|spec)\.[cm]?[jt]sx?$)"
-)
+_TEST_DATEI = re.compile(r"(^|/)(tests?/|test_[^/]*\.py$|[^/]*_test\.py$|[^/]*\.(test|spec)\.[cm]?[jt]sx?$)")
 #: Kopien von Tests (Belege, Archiv, Mutanten) sind keine Testdateien.
 _KEINE_TESTDATEI = re.compile(r"(^|/)(docs|archive)/|(^|/)mutants/")
 _PY_TEST = re.compile(r"^-[ \t]*(?:async[ \t]+)?def[ \t]+(test_\w+)", re.MULTILINE)
@@ -364,9 +373,7 @@ def _test_abschnitte(diff: str) -> dict[str, str]:
 
 def entfernte_tests(diff: str) -> list[str]:
     """Namen entfernter Testfälle, die im selben Diff nicht wieder auftauchen."""
-    plus = "\n".join(
-        z for z in diff.splitlines() if z.startswith("+") and not z.startswith("+++")
-    )
+    plus = "\n".join(z for z in diff.splitlines() if z.startswith("+") and not z.startswith("+++"))
     namen: list[str] = []
     for treffer in _PY_TEST.finditer(diff):
         name = treffer.group(1)
@@ -401,9 +408,7 @@ def umbenannte_tests(
     „umbenannt, dann gelöscht“.
     """
     mit_kopf = bool(re.search(r"(?m)^diff --git ", diff))
-    abschnitte: list[tuple[str | None, str]] = (
-        list(_test_abschnitte(diff).items()) if mit_kopf else [(None, diff)]
-    )
+    abschnitte: list[tuple[str | None, str]] = list(_test_abschnitte(diff).items()) if mit_kopf else [(None, diff)]
     teile = [teil for _, teil in abschnitte]
     alte: set[str] = set()
     for vermerk in _UMBENANNT.finditer(commit_text):
@@ -411,11 +416,7 @@ def umbenannte_tests(
         if zitate:
             # JS-Namen (#826) dürfen Kommas und Pfeile enthalten: Paare aus Zitaten.
             for alt, neu in zip(zitate[::2], zitate[1::2]):
-                if any(
-                    _steht_drin(neu, teil, "+")
-                    and (not mit_kopf or _steht_drin(alt, teil, "-"))
-                    for teil in teile
-                ):
+                if any(_steht_drin(neu, teil, "+") and (not mit_kopf or _steht_drin(alt, teil, "-")) for teil in teile):
                     alte.add(alt)
             continue
         for paar in re.split(r"[,;]", vermerk.group(1)):
@@ -430,9 +431,7 @@ def umbenannte_tests(
             if any(
                 _def_zeile("+", neu, teil)
                 and (not mit_kopf or _def_zeile("-", alt, teil))
-                and _paar_passt_zur_datei(
-                    pfad, neu, vermerk_pfad.group(1) if vermerk_pfad else None, an_spitze
-                )
+                and _paar_passt_zur_datei(pfad, neu, vermerk_pfad.group(1) if vermerk_pfad else None, an_spitze)
                 for pfad, teil in abschnitte
             ):
                 alte.add(alt)
@@ -458,9 +457,7 @@ def _paar_passt_zur_datei(
 
 def _def_zeile(zeichen: str, name: str, diff: str) -> bool:
     """Steht ``def <name>`` als ``+``- bzw. ``-``-Zeile im Diff?"""
-    muster = (
-        rf"(?m)^{re.escape(zeichen)}[ \t]*(?:async[ \t]+)?def[ \t]+{re.escape(name)}\b"
-    )
+    muster = rf"(?m)^{re.escape(zeichen)}[ \t]*(?:async[ \t]+)?def[ \t]+{re.escape(name)}\b"
     return re.search(muster, diff) is not None
 
 
@@ -494,9 +491,7 @@ def _test_verluste(
     if code != 0:
         # #1210: Ein gescheitertes ``git show`` ist kein „sauber“ — sonst fällt ein
         # echter Testverlust still weg und das Ticket bleibt zu.
-        log.warning(
-            "git show %s gescheitert (Exit %s) — Testverlust nicht prüfbar", sha[:7], code
-        )
+        log.warning("git show %s gescheitert (Exit %s) — Testverlust nicht prüfbar", sha[:7], code)
         raise _NichtPruefbar(f"git show Exit {code}")
     abschnitte = _test_abschnitte(diff)
     verluste = entfernte_tests("".join(abschnitte.values()))
@@ -513,11 +508,7 @@ def _test_verluste(
         )
         verluste = [name for name in verluste if name not in umbenannt]
     if verluste and spitze:
-        verluste = [
-            n
-            for n in verluste
-            if not _kein_netto_verlust(repo, basis, spitze, n, abschnitte)
-        ]
+        verluste = [n for n in verluste if not _kein_netto_verlust(repo, basis, spitze, n, abschnitte)]
     for status, pfad in _dateien(repo, sha):
         if status != "D" or not ist_testdatei(pfad):
             continue
@@ -525,11 +516,7 @@ def _test_verluste(
         abschnitt = abschnitte.get(pfad, "")
         if _PY_TEST.search(abschnitt) or _JS_TEST.search(abschnitt):
             continue
-        if (
-            spitze
-            and spitze != sha
-            and _datei_an_spitze(repo, spitze, pfad) is not None
-        ):
+        if spitze and spitze != sha and _datei_an_spitze(repo, spitze, pfad) is not None:
             continue
         verluste.append(f"Datei {pfad}")
     return verluste
@@ -554,9 +541,7 @@ def _steht_drin(name: str, text: str, zeichen: str = "") -> bool:
     return re.search(muster, text) is not None
 
 
-def _kein_netto_verlust(
-    repo: Path, basis: str | None, spitze: str, name: str, abschnitte: dict[str, str]
-) -> bool:
+def _kein_netto_verlust(repo: Path, basis: str | None, spitze: str, name: str, abschnitte: dict[str, str]) -> bool:
     """Netto-Diff gegen die Ticket-Basis (#826): kein Verlust, wenn der entfernte Test an
     der Spitze in derselben Datei wieder steht oder dort schon vor dem Ticket fehlte
     (im selben Ticket angelegt und wieder ersetzt)."""
@@ -576,9 +561,7 @@ def _kein_netto_verlust(
             continue
         vorher = _datei_an_spitze(repo, basis, pfad)
         if vorher is None or not _steht_drin(name, vorher):
-            log.info(
-                "Test %s in %s gab es vor dem Ticket nicht — kein Verlust", name, pfad
-            )
+            log.info("Test %s in %s gab es vor dem Ticket nicht — kein Verlust", name, pfad)
             return True
     return False
 
@@ -598,11 +581,7 @@ def _ticket_vermerke(repo: Path, eigene: list[Commit]) -> str:
 def regel_tests(repo: Path, ticket: int, eigene: list[Commit]) -> Verstoss | None:
     verluste: list[str] = []
     # Spitze = neuester Ticket-Commit; ``eigene`` kommt aus ``git log`` (neueste zuerst).
-    spitze = (
-        sorted(enumerate(eigene), key=lambda p: (-p[1].zeit, p[0]))[0][1].sha
-        if eigene
-        else None
-    )
+    spitze = sorted(enumerate(eigene), key=lambda p: (-p[1].zeit, p[0]))[0][1].sha if eigene else None
     # Basis = Elternteil des ältesten Ticket-Commits (Stand vor dem Ticket); bei gleicher
     # Zeit entscheidet die ``git log``-Reihenfolge (neueste zuerst).
     basis = None
@@ -623,9 +602,7 @@ def regel_tests(repo: Path, ticket: int, eigene: list[Commit]) -> Verstoss | Non
         return None
     teile: list[str] = []
     if verluste:
-        liste = ", ".join(verluste[:4]) + (
-            f" (+{len(verluste) - 4})" if len(verluste) > 4 else ""
-        )
+        liste = ", ".join(verluste[:4]) + (f" (+{len(verluste) - 4})" if len(verluste) > 4 else "")
         teile.append(f"Test entfernt statt ergänzt: {liste}")
     if nicht_pruefbar:
         teile.append(f"Testverlust nicht prüfbar: {', '.join(nicht_pruefbar)}")
@@ -667,9 +644,7 @@ def vps_kopf(vps: dict[str, Any]) -> str | None:
         f"cd {_server_pfad(str(vps.get('pfad') or '.'))} && git rev-parse HEAD",
     ]
     try:
-        fertig = subprocess.run(
-            befehl, capture_output=True, text=True, timeout=60, check=False
-        )
+        fertig = subprocess.run(befehl, capture_output=True, text=True, timeout=60, check=False)
     except (OSError, subprocess.TimeoutExpired) as fehler:
         log.warning("VPS-HEAD nicht lesbar: %s", fehler)
         return None
@@ -732,9 +707,7 @@ def _staging_zeilen(vps: dict[str, Any]) -> list[str] | None:
         log.warning("Staging-Log über %s nicht lesbar (Exit %s).", host, lauf.returncode)
         raise _StagingUnlesbar
     if lauf.returncode != 0:  # Verbindung stand, Log fehlt auf dem Server = kein Staging-Stand
-        log.warning(
-            "Staging-Log auf %s fehlt (Exit %s): %s", host, lauf.returncode, lauf.stderr.strip()[:200]
-        )
+        log.warning("Staging-Log auf %s fehlt (Exit %s): %s", host, lauf.returncode, lauf.stderr.strip()[:200])
         return None
     return lauf.stdout.splitlines()
 
@@ -753,11 +726,7 @@ def _gruener_sha(zeilen: list[str] | None) -> str | None:
             eintrag = json.loads(zeile)
         except ValueError:
             continue
-        if (
-            isinstance(eintrag, dict)
-            and eintrag.get("ergebnis") == "gruen"
-            and eintrag.get("sha")
-        ):
+        if isinstance(eintrag, dict) and eintrag.get("ergebnis") == "gruen" and eintrag.get("sha"):
             return str(eintrag["sha"])
     return None
 
@@ -789,9 +758,7 @@ class StagingStand:
 
 def live_freigabe(vps: dict[str, Any], ticket: int) -> bool:
     """True, wenn der Live-Zettel des Menschen ``<ordner>/<ticket>`` existiert und jünger als 24 h ist."""
-    zettel = Path(
-        str(vps.get("freigabe_ordner") or FREIGABE_STANDARD)
-    ).expanduser() / str(ticket)
+    zettel = Path(str(vps.get("freigabe_ordner") or FREIGABE_STANDARD)).expanduser() / str(ticket)
     try:
         return time.time() - zettel.stat().st_mtime < FREIGABE_MAX_ALTER_S
     except OSError:
@@ -814,9 +781,7 @@ def regel_vps(
         return None  # #275: grün auf Staging, Live erst nach Freigabe — kein Verstoß
     staging_stand = staging_stand or StagingStand(vps)
     muster = [str(m) for m in vps.get("deploy_pfade") or []]
-    relevant = [
-        c for c in eigene if any(_passt(p, muster) for _, p in _dateien(repo, c.sha))
-    ]
+    relevant = [c for c in eigene if any(_passt(p, muster) for _, p in _dateien(repo, c.sha))]
     if not relevant and any(z.get("typ") == "deploy_phase" for z in log_zeilen):
         relevant = eigene[:1]  # jüngster Ticket-Commit
     for commit in relevant:
@@ -827,9 +792,7 @@ def regel_vps(
             if staging_stand.unlesbar and not live_freigabe(vps, ticket):
                 return None  # nicht lesbar ≠ fehlt auf Staging (#1407), Log-Zeile kommt aus StagingStand
             if staging and not live_freigabe(vps, ticket):
-                auf_staging, _ = _git(
-                    repo, "merge-base", "--is-ancestor", commit.sha, staging
-                )
+                auf_staging, _ = _git(repo, "merge-base", "--is-ancestor", commit.sha, staging)
                 if auf_staging == 0:
                     continue
                 if auf_staging != 1:
@@ -875,9 +838,7 @@ def worktree_ordner(ticket: int, basis: str) -> Path:
     regel = getattr(config, "worktree_pfad", None)
     if callable(regel):
         return Path(regel(ticket))
-    wurzel = os.environ.get("BAU_WT_DIR") or (
-        "C:/dev" if sys.platform == "win32" else "~/wt"
-    )
+    wurzel = os.environ.get("BAU_WT_DIR") or ("C:/dev" if sys.platform == "win32" else "~/wt")
     return Path(wurzel).expanduser() / f"wt-{ticket}"
 
 
@@ -922,9 +883,7 @@ def regel_verwaist(
     datiert = [(t, z) for z in log_zeilen if (t := _zeit(z.get("ts")))]
     if datiert and max(datiert, key=lambda paar: paar[0])[1].get("typ") == "blockiert":
         return None  # Session hat „blockiert“ gemeldet — wartet, ist nicht tot
-    spuren: list[datetime] = [
-        datetime.fromtimestamp(c.zeit, timezone.utc) for c in eigene
-    ]
+    spuren: list[datetime] = [datetime.fromtimestamp(c.zeit, timezone.utc) for c in eigene]
     spuren += [t for t in (_zeit(z.get("ts")) for z in log_zeilen) if t]
     if wt_zeit is not None:
         spuren.append(datetime.fromtimestamp(wt_zeit, timezone.utc))
@@ -969,9 +928,7 @@ def _zeilen_aus(text: str, quelle: str) -> list[dict[str, Any]]:
         except ValueError:
             eintrag = None
         if not isinstance(eintrag, dict):
-            log.warning(
-                "Kaputte Bau-Log-Zeile %s:%s — als „kaputt“ gezählt.", quelle, nr
-            )
+            log.warning("Kaputte Bau-Log-Zeile %s:%s — als „kaputt“ gezählt.", quelle, nr)
             eintrag = {"typ": "kaputt"}
         zeilen.append(eintrag)
     return zeilen
@@ -1040,23 +997,16 @@ def verdichte(ticket: int, z: dict[str, Any]) -> str:
     if typ == "entscheidung":
         inhalt = " · ".join(t for t in entscheidung_teile(z) if t)
     elif typ == "deploy_phase":
-        inhalt = " ".join(
-            str(z.get(k)) for k in ("phase", "status", "ergebnis", "grund") if z.get(k)
-        )
+        inhalt = " ".join(str(z.get(k)) for k in ("phase", "status", "ergebnis", "grund") if z.get(k))
     else:
-        inhalt = next(
-            (str(z[k]) for k in ("grund", "text", "umfang", "nach") if z.get(k)), ""
-        )
+        inhalt = next((str(z[k]) for k in ("grund", "text", "umfang", "nach") if z.get(k)), "")
     return _kurz(f"#{ticket} {_uhr(z.get('ts'))} {typ}: {inhalt}".rstrip(": "), 200)
 
 
 def ist_gate_rot(z: dict[str, Any]) -> bool:
     if z.get("typ") != "deploy_phase":
         return False
-    return any(
-        str(z.get(k) or "").strip().lower() in ROT_WERTE
-        for k in ("status", "phase", "ergebnis")
-    )
+    return any(str(z.get(k) or "").strip().lower() in ROT_WERTE for k in ("status", "phase", "ergebnis"))
 
 
 # --- Übersicht ------------------------------------------------------------------
@@ -1158,9 +1108,7 @@ def kinder(gh_repo: str, spec: int) -> list[dict[str, Any]] | None:
     Ein einziger unlesbarer Eintrag macht die ganze Liste unbrauchbar: eine halbe Liste
     ließe die Spec fertig aussehen. Aufrufer setzen den Takt dann aus.
     """
-    daten = gh.json_lauf(
-        ["api", f"repos/{gh_repo}/issues/{spec}/sub_issues?per_page=100"]
-    )
+    daten = gh.json_lauf(["api", f"repos/{gh_repo}/issues/{spec}/sub_issues?per_page=100"])
     if not isinstance(daten, list):
         return None
     kaputt = [
@@ -1218,9 +1166,7 @@ def _tmux_befehl() -> list[str]:
         try:
             teile = json.loads(roh)
         except ValueError:
-            log.warning(
-                "TO_SPAWN_TMUX=%r ist keine JSON-Liste — nehme den Text als Pfad.", roh
-            )
+            log.warning("TO_SPAWN_TMUX=%r ist keine JSON-Liste — nehme den Text als Pfad.", roh)
             return [roh]
         return [str(teil) for teil in teile]
     return [roh]
@@ -1256,9 +1202,7 @@ def tmux_fenster(spec: int) -> list[str] | None:
     return [zeile.strip() for zeile in fertig.stdout.splitlines() if zeile.strip()]
 
 
-def laeuft_noch(
-    ticket: int, fenster: list[str] | None, wt_zeit: float | None, jetzt: datetime
-) -> str:
+def laeuft_noch(ticket: int, fenster: list[str] | None, wt_zeit: float | None, jetzt: datetime) -> str:
     """Kurzgrund, wenn an diesem Ticket noch jemand baut — sonst ``""``.
 
     Mit tmux entscheidet allein die Fensterliste (``bau <N>``). Ohne tmux zählt
@@ -1332,9 +1276,7 @@ def bau_startzeile(repo: Path, ticket: int, auftrag: str = "", *schalter: str) -
     return f"export {vorspann}; mkdir -p {ordner}; {tee}; {lauf}; {spur}"
 
 
-def folge_befehl(
-    repo: Path, spec: int, ticket: int, fenster: list[str] | None, auftrag: str = ""
-) -> list[str]:
+def folge_befehl(repo: Path, spec: int, ticket: int, fenster: list[str] | None, auftrag: str = "") -> list[str]:
     """Startbefehl der Folge-Runde: tmux-Fenster wie ``spawn_srv.sh``, ohne tmux lokal.
 
     Der Vorspann (``REPO``/``TO_SPAWN_HOME``) ist derselbe wie in
@@ -1345,11 +1287,7 @@ def folge_befehl(
     if fenster is None:
         return [sys.executable, str(_bau_skript(repo)), str(ticket), "--sofort"]
     innen = bau_startzeile(repo, ticket, auftrag)
-    kopf = (
-        ["new-window", "-t", f"=spec-{spec}"]
-        if fenster
-        else ["new-session", "-d", "-s", f"spec-{spec}"]
-    )
+    kopf = ["new-window", "-t", f"=spec-{spec}"] if fenster else ["new-session", "-d", "-s", f"spec-{spec}"]
     return [
         *_tmux_befehl(),
         *kopf,
@@ -1390,9 +1328,7 @@ def ereignis_vorfall(art: str, ticket: int, jetzt: datetime) -> vorfall.Vorfall:
     )
 
 
-def _starte_folge_runde(
-    repo: Path, ticket: int, befehl: list[str], ueber_tmux: bool, auftrag: str = ""
-) -> str:
+def _starte_folge_runde(repo: Path, ticket: int, befehl: list[str], ueber_tmux: bool, auftrag: str = "") -> str:
     """Folge-Runde starten; ``""`` = geklappt, sonst der Grund des Fehlschlags."""
     if ueber_tmux:
         fertig = starter.starte(
@@ -1445,9 +1381,7 @@ def _folge_runde(
     Aufseher-Kommentar. Sonst startet hier die nächste Runde ``bau <N> --sofort``,
     höchstens ``waechter.folgerunden_max`` Mal je Ticket.
     """
-    waechter = (
-        konfig.get("waechter", {}) if isinstance(konfig.get("waechter"), dict) else {}
-    )
+    waechter = konfig.get("waechter", {}) if isinstance(konfig.get("waechter"), dict) else {}
     grenze = folgerunden_max(waechter)
     grund = "; ".join(f"{f.regel} — {f.text}" for f in funde) or "Aufseher-Verstoß"
     fenster = tmux_fenster(spec)
@@ -1456,9 +1390,7 @@ def _folge_runde(
         return [f"#{n} läuft bereits ({laeuft}) — keine Folge-Runde"]
     schon = int(folgerunden.get(str(n), 0) or 0)
     if schon >= grenze:
-        zeilen = [
-            f"#{n} Folge-Runden-Grenze erreicht ({schon}/{grenze}) — keine neue Runde, ein Mensch muss ran"
-        ]
+        zeilen = [f"#{n} Folge-Runden-Grenze erreicht ({schon}/{grenze}) — keine neue Runde, ein Mensch muss ran"]
         zeilen += _melde(
             repo,
             konfig,
@@ -1485,9 +1417,7 @@ def _folge_runde(
         return [f"#{n} FEHLER: Folge-Runde nicht gestartet ({fehler})"]
     folgerunden[str(n)] = schon + 1
     weg = "tmux-Fenster" if fenster is not None else "lokal"
-    return [
-        f"#{n} Folge-Runde gestartet ({weg}, {schon + 1}/{grenze}) — Auftrag: {_kurz(grund)}"
-    ]
+    return [f"#{n} Folge-Runde gestartet ({weg}, {schon + 1}/{grenze}) — Auftrag: {_kurz(grund)}"]
 
 
 # --- Checkpoint-Annahme nach Doktrin (#285) -------------------------------------
@@ -1510,6 +1440,7 @@ def annahme_grenze(n: str | int, befehl: str = "to_spawn.py", frage_id: str = ""
         "nie den Live-Schritt: Live braucht immer ein eigenes Ja des Menschen, nur vom "
         f"Menschen selbst im Eingabefeld: {befehl_ja}."
     )
+
 
 #: „Vorschlag: …“ in einem Issue-Kommentar — alles danach ist die vorgeschlagene Wahl.
 _VORSCHLAG = re.compile(r"Vorschlag\s*:\s*(.+)", re.IGNORECASE | re.DOTALL)
@@ -1592,11 +1523,7 @@ def issue_kommentare(gh_repo: str, ticket: int) -> list[dict[str, Any]] | None:
         return None
     if all(isinstance(seite, list) for seite in daten):
         daten = [e for seite in daten for e in seite]
-    beteiligt = [
-        e
-        for e in daten
-        if isinstance(e, dict) and e.get("author_association") in BETEILIGTE_ROLLEN
-    ]
+    beteiligt = [e for e in daten if isinstance(e, dict) and e.get("author_association") in BETEILIGTE_ROLLEN]
     if len(beteiligt) < len(daten):
         log.info(
             "#%s: %d Kommentar(e) von Nicht-Beteiligten ignoriert",
@@ -1630,9 +1557,7 @@ def _ist_session_zeile(z: dict[str, Any], typen: tuple[str, ...]) -> bool:
     return z.get("typ") in typen and not eigene_annahme
 
 
-def checkpoint_vorschlag(
-    zeilen: list[dict[str, Any]], kommentare: list[dict[str, Any]]
-) -> Vorschlag | None:
+def checkpoint_vorschlag(zeilen: list[dict[str, Any]], kommentare: list[dict[str, Any]]) -> Vorschlag | None:
     """Jüngster eigener Vorschlag der Session — ``None`` heißt: nie raten.
 
     Zählt eine Bau-Log-Zeile ``entscheidung`` mit Wahl und ein Issue-Kommentar, der
@@ -1666,9 +1591,7 @@ def checkpoint_vorschlag(
     return max(kandidaten, key=lambda v: v.zeit) if kandidaten else None
 
 
-def checkpoint_frage_zeit(
-    zeilen: list[dict[str, Any]], kommentare: list[dict[str, Any]]
-) -> datetime | None:
+def checkpoint_frage_zeit(zeilen: list[dict[str, Any]], kommentare: list[dict[str, Any]]) -> datetime | None:
     """Wann hat die Session zuletzt etwas gefragt/gemeldet? ``None`` = keine Spur.
 
     Spuren der Session sind nur Bau-Log-Zeilen ``blockiert``/``entscheidung`` und
@@ -1676,11 +1599,7 @@ def checkpoint_frage_zeit(
     keine Frage (#451) — sonst meldet capo „Checkpoint wartet“ für ein Ticket, an dem
     nie eine Session gebaut hat. Ohne Spur wartet niemand, das Label allein löst nichts aus.
     """
-    zeiten = [
-        _zeit(z.get("ts"))
-        for z in zeilen
-        if _ist_session_zeile(z, ("blockiert", "entscheidung"))
-    ]
+    zeiten = [_zeit(z.get("ts")) for z in zeilen if _ist_session_zeile(z, ("blockiert", "entscheidung"))]
     for eintrag in kommentare:
         _, text, zeit = _kommentar_teile(eintrag)
         if _ist_session_kommentar(text):
@@ -1697,9 +1616,7 @@ def davids_antwort(kommentare: list[dict[str, Any]], seit: datetime) -> str:
     """
     for eintrag in sorted(
         kommentare,
-        key=lambda e: (
-            _kommentar_teile(e)[2] or datetime.min.replace(tzinfo=timezone.utc)
-        ),
+        key=lambda e: _kommentar_teile(e)[2] or datetime.min.replace(tzinfo=timezone.utc),
     ):
         autor, text, zeit = _kommentar_teile(eintrag)
         if zeit is None or zeit <= seit:
@@ -1765,9 +1682,7 @@ def _checkpoint(
     Solange ein Blocker offen ist, ruht der Checkpoint (keine Zeile); ist der
     Blocker-Stand nicht lesbar, kommt eine FEHLER-Zeile statt einer Annahme (#451).
     """
-    waechter = (
-        konfig.get("waechter", {}) if isinstance(konfig.get("waechter"), dict) else {}
-    )
+    waechter = konfig.get("waechter", {}) if isinstance(konfig.get("waechter"), dict) else {}
     frist = checkpoint_frist(waechter)
     kommentare = issue_kommentare(gh_repo, n)
     if kommentare is None:
@@ -1838,18 +1753,13 @@ def _checkpoint(
     if not befund.kommentiere(n, gh_repo, text):
         return [f"#{n} FEHLER: Checkpoint-Annahme nicht kommentiert"]
     erledigt.add(schluessel)
-    grund = (
-        f"{ANNAHME_GRUND} {frist:.0f} min ohne Antwort des Menschen (Doktrin, kippbar)"
-        + (f" · {vorschlag.grund}" if vorschlag.grund else "")
+    grund = f"{ANNAHME_GRUND} {frist:.0f} min ohne Antwort des Menschen (Doktrin, kippbar)" + (
+        f" · {vorschlag.grund}" if vorschlag.grund else ""
     )
     frage = vorschlag.frage or f"Checkpoint #{n}"
-    bau_log.schreibe(
-        repo, n, "entscheidung", frage=frage, wahl=vorschlag.wahl, grund=grund
-    )
+    bau_log.schreibe(repo, n, "entscheidung", frage=frage, wahl=vorschlag.wahl, grund=grund)
     datei = entscheidung_anhaengen(repo, spec, n, frage, vorschlag.wahl, grund, jetzt)
-    ausgabe = [
-        f"#{n} Checkpoint-Annahme nach {wartet:.0f} min: {_kurz(vorschlag.wahl)} (Bau-Log + {datei.name})"
-    ]
+    ausgabe = [f"#{n} Checkpoint-Annahme nach {wartet:.0f} min: {_kurz(vorschlag.wahl)} (Bau-Log + {datei.name})"]
     ausgabe += _melde(
         repo,
         konfig,
@@ -1862,9 +1772,7 @@ def _checkpoint(
         schluessel,
     )
     gelernt.append(ereignis_vorfall("checkpoint_annahme", n, jetzt))
-    if _gh_ok(
-        ["issue", "edit", str(n), "--repo", gh_repo, "--remove-label", checkpoint]
-    ):
+    if _gh_ok(["issue", "edit", str(n), "--repo", gh_repo, "--remove-label", checkpoint]):
         ausgabe.append(f"#{n} Label {checkpoint} entfernt — die Kette läuft weiter")
     else:
         ausgabe.append(f"#{n} FEHLER: Label {checkpoint} nicht entfernt")
@@ -1907,14 +1815,10 @@ def karenz_minuten(waechter: dict[str, Any]) -> float:
     try:
         wert = float(roh)
     except (TypeError, ValueError):
-        log.warning(
-            "waechter.karenz_minuten=%r ist keine Zahl — nehme %s min.", roh, KARENZ_MIN
-        )
+        log.warning("waechter.karenz_minuten=%r ist keine Zahl — nehme %s min.", roh, KARENZ_MIN)
         return KARENZ_MIN
     if wert < 0:
-        log.warning(
-            "waechter.karenz_minuten=%r ist negativ — nehme 0 (keine Karenz).", roh
-        )
+        log.warning("waechter.karenz_minuten=%r ist negativ — nehme 0 (keine Karenz).", roh)
         return 0.0
     return wert
 
@@ -1959,15 +1863,11 @@ def _sperr_wartezeit() -> float:
     try:
         return float(roh) if roh else SPERRE_S
     except ValueError:
-        log.warning(
-            "TO_SPAWN_CAPO_SPERRE_S=%r ist keine Zahl — nehme %s s.", roh, SPERRE_S
-        )
+        log.warning("TO_SPAWN_CAPO_SPERRE_S=%r ist keine Zahl — nehme %s s.", roh, SPERRE_S)
         return SPERRE_S
 
 
-def vorfall_aus_verstoss(
-    repo: Path, fund: Verstoss, jetzt: datetime
-) -> vorfall.Vorfall | None:
+def vorfall_aus_verstoss(repo: Path, fund: Verstoss, jetzt: datetime) -> vorfall.Vorfall | None:
     """Einen Verstoß als ``vorfall``-Zeile ins Bau-Log des Tickets schreiben.
 
     ``None`` heißt: derselbe Vorfall steht dort schon (zweiter Tick, gleiche Lage).
@@ -1989,9 +1889,7 @@ def vorfall_aus_verstoss(
             quelle="capo",
         )
     except (OSError, ValueError) as fehler:  # ein Tick darf daran nie sterben
-        log.warning(
-            "Vorfall zu #%s (%s) nicht notiert: %s", fund.ticket, fund.regel, fehler
-        )
+        log.warning("Vorfall zu #%s (%s) nicht notiert: %s", fund.ticket, fund.regel, fehler)
         return None
     if zeile is None:
         return None
@@ -2007,9 +1905,7 @@ def vorfall_aus_verstoss(
     )
 
 
-def katalog_pflegen(
-    repo: Path, konfig: dict[str, Any], vorfaelle: list[vorfall.Vorfall]
-) -> list[str]:
+def katalog_pflegen(repo: Path, konfig: dict[str, Any], vorfaelle: list[vorfall.Vorfall]) -> list[str]:
     """Neue Vorfälle in den Fehlerkatalog hängen; Rückgabe = Zeilen für den Tick.
 
     Der Katalog wird gegen parallele Aufseher gesperrt (zwei Specs, eine Datei).
@@ -2026,21 +1922,15 @@ def katalog_pflegen(
         except _sperre.SperreNichtOeffenbar as fehler:
             return [f"FEHLER: Katalog — {fehler}"]
         if not frei:
-            return [
-                "Katalog: ein anderer Lauf hält die Datei — dieser Tick lässt sie aus"
-            ]
+            return ["Katalog: ein anderer Lauf hält die Datei — dieser Tick lässt sie aus"]
         erg = vorfall.in_katalog(pfad, vorfaelle)
     zeilen: list[str] = []
     if erg.nummern:
-        zeilen.append(
-            f"Katalog: {len(erg.nummern)} neue Zeile(n) — {' '.join(erg.nummern)}"
-        )
+        zeilen.append(f"Katalog: {len(erg.nummern)} neue Zeile(n) — {' '.join(erg.nummern)}")
     elif erg.ohne_katalog:
         # Kein Dateiname in der Zeile: der Tick wertet jede Zeile mit „FEHLER“ als
         # roten Lauf, und der Dateiname trägt das Wort schon im Namen.
-        zeilen.append(
-            "Katalog: dieses Repo führt keinen Fehlerkatalog — nichts eingetragen"
-        )
+        zeilen.append("Katalog: dieses Repo führt keinen Fehlerkatalog — nichts eingetragen")
     elif not erg.probleme:
         zeilen.append("Katalog: nichts Neues")
     zeilen += [f"FEHLER: Katalog — {grund}" for grund in erg.probleme]
@@ -2048,9 +1938,7 @@ def katalog_pflegen(
 
 
 #: Regeln, nach denen capo ein geschlossenes Ticket wieder öffnet (#448: Grundlage der Rücknahme).
-REOPEN_REGELN = frozenset(
-    {"commit_ohne_nummer", "beweis_fehlt", "test_ersetzt", "vps_ungleich_origin"}
-)
+REOPEN_REGELN = frozenset({"commit_ohne_nummer", "beweis_fehlt", "test_ersetzt", "vps_ungleich_origin"})
 
 
 def reopen_funde(
@@ -2070,9 +1958,7 @@ def reopen_funde(
         regel_commit(n, eigene),
         regel_beweis(repo, ref, n, eigene, belege),
         regel_tests(repo, n, eigene),
-        regel_vps(repo, n, eigene, vps, kopf, alle_zeilen, staging_stand, issue)
-        if vps.get("ssh")
-        else None,
+        regel_vps(repo, n, eigene, vps, kopf, alle_zeilen, staging_stand, issue) if vps.get("ssh") else None,
     ]
     return [f for f in funde if f]
 
@@ -2141,10 +2027,7 @@ def merke_schliessen(n: int, closed_at: str, erledigt: set[str]) -> bool:
     if not closed_at or schluessel in erledigt:
         return False
     eigenes_reopen = any(
-        (teile := s.split("|"))[0] == str(n)
-        and len(teile) == 3
-        and teile[1] in REOPEN_REGELN
-        for s in erledigt
+        (teile := s.split("|"))[0] == str(n) and len(teile) == 3 and teile[1] in REOPEN_REGELN for s in erledigt
     )
     if not eigenes_reopen:
         return False
@@ -2184,9 +2067,7 @@ def spaeter_geschlossen(gh_repo: str, n: int, stempel: str) -> bool | None:
     if code != 0 or zeit is None:
         log.warning("Issue-Verlauf von #%s nicht lesbar (gh Exit %s).", n, code)
         return None
-    return any(
-        (spaeter := _zeit(z)) is not None and spaeter > zeit for z in ausgabe.split()
-    )
+    return any((spaeter := _zeit(z)) is not None and spaeter > zeit for z in ausgabe.split())
 
 
 def fehl_reopen_kandidat(
@@ -2215,11 +2096,7 @@ def fehl_reopen_kandidat(
         teile = schluessel.split("|")
         if len(teile) == 3 and teile[0] == str(n) and teile[1] in REOPEN_REGELN:
             je_stempel.setdefault(teile[2], []).append(teile[1])
-    mit_zeit = [
-        (zeit, stempel)
-        for stempel in je_stempel
-        if (zeit := _zeit(stempel)) is not None
-    ]
+    mit_zeit = [(zeit, stempel) for stempel in je_stempel if (zeit := _zeit(stempel)) is not None]
     if not mit_zeit:
         return None
     zeit, stempel = max(mit_zeit)
@@ -2284,23 +2161,17 @@ def _tick(
     regeln_aus = _git(repo, "fetch", "-q", "origin")[0] != 0
     if regeln_aus:
         log.warning("git fetch origin gescheitert — Regeln in diesem Tick ausgesetzt.")
-        kopfzeilen.append(
-            "FEHLER: fetch — Regeln ausgesetzt (kein Wieder-Öffnen, kein Kommentar in diesem Tick)."
-        )
+        kopfzeilen.append("FEHLER: fetch — Regeln ausgesetzt (kein Wieder-Öffnen, kein Kommentar in diesem Tick).")
     ref = haupt_ref(repo)
     liste = kinder(gh_repo, spec)
     if liste is None:
         erg.zeilen += kopfzeilen
-        erg.zeilen.append(
-            f"FEHLER: Sub-Issues von #{spec} in {gh_repo} nicht lesbar (gh)."
-        )
+        erg.zeilen.append(f"FEHLER: Sub-Issues von #{spec} in {gh_repo} nicht lesbar (gh).")
         erg.exit_code = 1
         return erg
     if ref is None:
         erg.zeilen += kopfzeilen
-        erg.zeilen.append(
-            "FEHLER: kein origin/master bzw. origin/main — git fetch prüfen."
-        )
+        erg.zeilen.append("FEHLER: kein origin/master bzw. origin/main — git fetch prüfen.")
         erg.exit_code = 1
         return erg
 
@@ -2312,25 +2183,15 @@ def _tick(
     sofort = ist_sofort(konfig)
     erster_tick = _zeit(zustand.get("erster_tick"))
     if erster_tick is None:
-        erster_tick = (
-            jetzt  # dieser Tick ist der erste: alles Geschlossene = Ausgangsstand
-        )
+        erster_tick = jetzt  # dieser Tick ist der erste: alles Geschlossene = Ausgangsstand
         zustand["erster_tick"] = jetzt.isoformat(timespec="seconds")
-        zustand["ausgangsstand"] = {
-            str(int(i["number"])): schliess_marke(i) for i in liste
-        }
+        zustand["ausgangsstand"] = {str(int(i["number"])): schliess_marke(i) for i in liste}
     ausgang = zustand.get("ausgangsstand")
     ausgang = ausgang if isinstance(ausgang, dict) else None
-    waechter = (
-        konfig.get("waechter", {}) if isinstance(konfig.get("waechter"), dict) else {}
-    )
+    waechter = konfig.get("waechter", {}) if isinstance(konfig.get("waechter"), dict) else {}
     stunden = float(waechter.get("verwaist_stunden") or 3)
     karenz = 0.0 if sofort else karenz_minuten(waechter)
-    regularien = (
-        konfig.get("regularien", {})
-        if isinstance(konfig.get("regularien"), dict)
-        else {}
-    )
+    regularien = konfig.get("regularien", {}) if isinstance(konfig.get("regularien"), dict) else {}
     belege = belege_ordner(konfig)
     checkpoint = str(regularien.get("checkpoint_label") or "checkpoint:human")
     vps = konfig.get("vps") if isinstance(konfig.get("vps"), dict) else {}
@@ -2430,11 +2291,7 @@ def _tick(
                         f"gate_rot|{n}|{z.get('ts')}|{z.get('lauf')}",
                     )
                 elif z.get("typ") == "blockiert":
-                    erg.verstoesse.append(
-                        Verstoss(
-                            n, "live_beweis_blockiert", _kurz(z.get("grund")), True
-                        )
-                    )
+                    erg.verstoesse.append(Verstoss(n, "live_beweis_blockiert", _kurz(z.get("grund")), True))
                     aktionen += _melde(
                         repo,
                         konfig,
@@ -2450,9 +2307,7 @@ def _tick(
         if zu:
             grund = ticket_zustand.schliessgrund(issue)
             geschlossen_zeit = _zeit(issue.get("closed_at"))
-            if not dry_run and merke_schliessen(
-                n, str(issue.get("closed_at") or ""), erledigt
-            ):
+            if not dry_run and merke_schliessen(n, str(issue.get("closed_at") or ""), erledigt):
                 sichern()
             if ticket_zustand.stufe(issue) == "verworfen":
                 aktionen.append(f"#{n} zu als {grund} — keine Regeln")
@@ -2460,9 +2315,7 @@ def _tick(
             nur_melden = OK_LABEL in label_namen(issue)
             if regeln_aus:
                 continue
-            ausgangsstand = not sofort and ist_ausgangsstand(
-                n, issue, ausgang, geschlossen_zeit, erster_tick
-            )
+            ausgangsstand = not sofort and ist_ausgangsstand(n, issue, ausgang, geschlossen_zeit, erster_tick)
             if (
                 not ausgangsstand
                 and geschlossen_zeit is not None
@@ -2470,20 +2323,14 @@ def _tick(
                 and jetzt - geschlossen_zeit < timedelta(minutes=karenz)
             ):
                 minuten = (jetzt - geschlossen_zeit).total_seconds() / 60
-                aktionen.append(
-                    f"#{n} prüfe später (zu seit {minuten:.0f} min, Karenz {karenz:.0f} min)"
-                )
+                aktionen.append(f"#{n} prüfe später (zu seit {minuten:.0f} min, Karenz {karenz:.0f} min)")
                 wartet += 1
                 continue
-            funde_ok = reopen_funde(
-                repo, ref, n, eigene, belege, vps, kopf, alle_zeilen, staging_stand, issue
-            )
+            funde_ok = reopen_funde(repo, ref, n, eigene, belege, vps, kopf, alle_zeilen, staging_stand, issue)
             if ausgangsstand:
                 erg.alt += funde_ok
                 for f in funde_ok:
-                    aktionen.append(
-                        f"#{n} alt: {f.regel} — {f.text} (Ausgangsstand, nicht wieder geöffnet)"
-                    )
+                    aktionen.append(f"#{n} alt: {f.regel} — {f.text} (Ausgangsstand, nicht wieder geöffnet)")
                 continue
             if nur_melden:
                 erg.alt += funde_ok
@@ -2497,26 +2344,18 @@ def _tick(
             geschlossen = str(issue.get("closed_at") or "?")
             if altmerker_ueberfuehren(n, funde_ok, erledigt):
                 sichern()
-            ungesehen = [
-                f for f in funde_ok if f"{n}|{f.regel}|{geschlossen}" not in erledigt
-            ]
+            ungesehen = [f for f in funde_ok if f"{n}|{f.regel}|{geschlossen}" not in erledigt]
             # #275: je Verstoß höchstens ein Wiederöffnen — danach nur einmal melden.
             erneut = [f for f in ungesehen if schon_geoeffnet(n, f, erledigt)]
             neu_funde = [f for f in ungesehen if f not in erneut]
             for f in funde_ok:
                 zusatz = (
-                    ""
-                    if f in neu_funde
-                    else " (erneut, nicht wieder geöffnet)"
-                    if f in erneut
-                    else " (schon gemeldet)"
+                    "" if f in neu_funde else " (erneut, nicht wieder geöffnet)" if f in erneut else " (schon gemeldet)"
                 )
                 aktionen.append(f"#{n} VERSTOSS {f.regel}: {f.text}{zusatz}")
             zu_melden = [f for f in erneut if f"erneut|{verstoss_kennung(n, f)}" not in erledigt]
             if zu_melden:
-                aktionen += befund.erneut_melden(
-                    n, gh_repo, [(f.regel, f.text) for f in zu_melden], dry_run
-                )
+                aktionen += befund.erneut_melden(n, gh_repo, [(f.regel, f.text) for f in zu_melden], dry_run)
                 if aktionen[-1] == f"#{n} erneut gemeldet":
                     erledigt.update(f"erneut|{verstoss_kennung(n, f)}" for f in zu_melden)
                     sichern()
@@ -2552,13 +2391,7 @@ def _tick(
             sichern()
         elif not regeln_aus:
             # #448: eigenes Fehl-Reopen zurücknehmen, wenn die Regeln jetzt grün sind.
-            kandidat = (
-                None
-                if vps_fehlt
-                else fehl_reopen_kandidat(
-                    n, issue, eigene, erledigt, checkpoint=checkpoint
-                )
-            )
+            kandidat = None if vps_fehlt else fehl_reopen_kandidat(n, issue, eigene, erledigt, checkpoint=checkpoint)
             if kandidat is not None and reopen_funde(
                 repo, ref, n, eigene, belege, vps, kopf, alle_zeilen, staging_stand, issue
             ):
@@ -2566,15 +2399,11 @@ def _tick(
             if kandidat is not None:
                 spaeter = spaeter_geschlossen(gh_repo, n, kandidat[0])
                 if spaeter is None:
-                    aktionen.append(
-                        f"#{n} Rücknahme ausgesetzt: Issue-Verlauf nicht lesbar (gh)"
-                    )
+                    aktionen.append(f"#{n} Rücknahme ausgesetzt: Issue-Verlauf nicht lesbar (gh)")
                 if spaeter is not False:
                     kandidat = None  # danach wieder zu (Mensch) — das jetzige Offen ist nicht capos Reopen
             if kandidat is not None:
-                sperre = ruecknahme_sperre(
-                    n, erledigt, laeuft_noch(n, tmux_fenster(spec), wt_zeit, jetzt)
-                )
+                sperre = ruecknahme_sperre(n, erledigt, laeuft_noch(n, tmux_fenster(spec), wt_zeit, jetzt))
                 if sperre:
                     aktionen.append(sperre)
                     kandidat = None
@@ -2632,15 +2461,11 @@ def _tick(
                 schluessel = f"{n}|{fund.regel}|{jetzt.astimezone():%Y-%m-%d}"
                 aktionen.append(f"#{n} VERSTOSS {fund.regel}: {fund.text}")
                 if dry_run:
-                    aktionen.append(
-                        f"#{n} [Probe] würde kommentieren + Mail session_tot"
-                    )
+                    aktionen.append(f"#{n} [Probe] würde kommentieren + Mail session_tot")
                     continue
                 if schluessel in erledigt:
                     aktionen[-1] += " (heute schon kommentiert)"
-                elif befund.kommentiere(
-                    n, gh_repo, f"{WAECHTER_KOPF} {fund.regel} — {fund.text}"
-                ):
+                elif befund.kommentiere(n, gh_repo, f"{WAECHTER_KOPF} {fund.regel} — {fund.text}"):
                     erledigt.add(schluessel)
                     sichern()
                     aktionen.append(f"#{n} kommentiert")
@@ -2681,13 +2506,38 @@ def _tick(
     eigene = mensch_noetig.eintraege_mit_zustand(
         spec, zustand, None if dry_run else sichern, repo, lambda n: worktree_ordner(n, wt_basis)
     )
+    # #530: Ruf zurücknehmen, wenn der Beleg nach dem Ruf doch noch kam (ein Satz am Ticket).
+    rufe = [r for r in zustand.get("mensch_noetig_rufe") or [] if isinstance(r, dict)]
+    for ruf in list(rufe):
+        if not mensch_noetig.beleg_da(ruf):
+            continue
+        ziel, fp = str(ruf.get("ticket")), str(ruf.get("fingerprint") or "")[:8]
+        aktionen.append(f"#{ziel} Review-Beleg nachgereicht (fp {fp}) — Ruf nach dem Menschen zurückgenommen.")
+        if dry_run or regeln_aus:
+            continue
+        text = f"{WAECHTER_KOPF} Ruf zurückgenommen — der Review-Beleg liegt jetzt vor (fp {fp}), kein Mensch nötig."
+        if befund.kommentiere(ziel, gh_repo, text):
+            rufe.remove(ruf)
+            zustand["mensch_noetig_rufe"] = rufe
+            sichern()
     for eintrag in eigene:  # #465/#498: fremde Repos filtert und loggt mensch_noetig
         ziel = str(eintrag.get("ticket") or spec)
         fp = str(eintrag.get("fingerprint") or "")[:8]
+        stand = mensch_noetig.review_stand(eintrag, jetzt)
+        if stand == "laeuft":  # nicht gemerkt: nächster Takt prüft erneut
+            aktionen.append(
+                f"#{ziel} Review läuft noch (fp {fp}) — Mensch nötig erst nach "
+                f"{mensch_noetig.REVIEW_WARTEZEIT_MIN} min ohne Beleg."
+            )
+            continue
+        if stand == "belegt":
+            if not dry_run:
+                mn_gesehen.append(mensch_noetig.schluessel(eintrag))
+                zustand["mensch_noetig_gesehen"] = mn_gesehen
+                sichern()
+            continue
         was = mensch_noetig_was(eintrag)
-        aktionen.append(
-            f"MENSCH NÖTIG: #{ziel} {was} (fp {fp}) — Kette läuft weiter, der Mensch prüft."
-        )
+        aktionen.append(f"MENSCH NÖTIG: #{ziel} {was} (fp {fp}) — Kette läuft weiter, der Mensch prüft.")
         if dry_run or regeln_aus:
             continue
         text = (
@@ -2706,6 +2556,10 @@ def _tick(
         )
         mn_gesehen.append(mensch_noetig.schluessel(eintrag))
         zustand["mensch_noetig_gesehen"] = mn_gesehen
+        if eintrag.get("grund") == "review_offen":
+            # ponytail: Rufe ohne späteren Beleg bleiben stehen, gekappt auf 50; Upgrade = mit Ticket-Zu räumen.
+            rufe.append({"ticket": ziel, "repo": eintrag.get("repo"), "fingerprint": eintrag.get("fingerprint")})
+            zustand["mensch_noetig_rufe"] = rufe[-50:]
         sichern()
     if katalog and not dry_run:
         aktionen += katalog_pflegen(repo, konfig, gelernt)
@@ -2748,9 +2602,7 @@ def _tick(
     if erg.fertig:
         alt_hinweis = f" ({len(erg.alt)} alte aus dem Ausgangsstand)" if erg.alt else ""
         if dry_run:
-            erg.zeilen.append(
-                f"SPEC FERTIG — alle {len(liste)} Tickets zu, keine Verstöße{alt_hinweis}. [Probe]"
-            )
+            erg.zeilen.append(f"SPEC FERTIG — alle {len(liste)} Tickets zu, keine Verstöße{alt_hinweis}. [Probe]")
         else:
             pfad = uebersicht(repo, spec, [int(i["number"]) for i in liste])
             erg.zeilen.append(
@@ -2801,9 +2653,7 @@ def _tick(
 
     if MAIL_AUS in erg.zeilen:  # je Tick nur einmal, nicht je Meldung
         erste = erg.zeilen.index(MAIL_AUS)
-        erg.zeilen = [
-            z for i, z in enumerate(erg.zeilen) if z != MAIL_AUS or i == erste
-        ]
+        erg.zeilen = [z for i, z in enumerate(erg.zeilen) if z != MAIL_AUS or i == erste]
     sichern()
     if any("FEHLER" in z for z in erg.zeilen):
         erg.exit_code = 1
@@ -2941,7 +2791,9 @@ def _hausmeister_schluss(spec: int, zustand: dict[str, Any], jetzt: datetime, dr
         return [f"Hausmeister: {rund.geloescht} gelöscht, {rund.bleibt} bleibt, 0 Fehler."]
     if rund.gelaufen:
         namen = ", ".join(e.ordner.name for e in rund.ergebnisse if e.fehler)
-        zeile = f"FEHLER: Hausmeister — {rund.fehler} Ordner: {namen} ({rund.geloescht} gelöscht, {rund.bleibt} bleibt)."
+        zeile = (
+            f"FEHLER: Hausmeister — {rund.fehler} Ordner: {namen} ({rund.geloescht} gelöscht, {rund.bleibt} bleibt)."
+        )
         zeilen = [zeile]
     else:
         zeilen = [f"FEHLER: Hausmeister — {rund.grund}."]
@@ -2949,9 +2801,7 @@ def _hausmeister_schluss(spec: int, zustand: dict[str, Any], jetzt: datetime, dr
     zustand["aufraeumen_versuche"] = versuche
     if versuche >= HAUSMEISTER_VERSUCHE:
         zustand["aufraeumen_erledigt"] = jetzt.isoformat(timespec="seconds")
-        zeilen.append(
-            f"FEHLER: Hausmeister — nach {versuche} Versuchen aufgegeben, Netz ist der Aufpasser-Takt"
-        )
+        zeilen.append(f"FEHLER: Hausmeister — nach {versuche} Versuchen aufgegeben, Netz ist der Aufpasser-Takt")
     return zeilen
 
 
@@ -2959,13 +2809,9 @@ def _gh_ok(args: list[str]) -> bool:
     return gh.lauf(args)[0] == 0
 
 
-def _wieder_oeffnen(
-    n: int, gh_repo: str, funde: list[Verstoss], dry_run: bool
-) -> list[str]:
+def _wieder_oeffnen(n: int, gh_repo: str, funde: list[Verstoss], dry_run: bool) -> list[str]:
     """Ticket einmal wieder öffnen (Regel lebt in :mod:`befund`); Verstöße sind immer rot."""
-    return befund.wieder_oeffnen(
-        n, gh_repo, [(f.regel, f.text) for f in funde], dry_run
-    )
+    return befund.wieder_oeffnen(n, gh_repo, [(f.regel, f.text) for f in funde], dry_run)
 
 
 #: ``nachsehen`` ruft den Wirkungskreis (bis 600 s) — Luft darüber für Mail und Start.
@@ -3020,7 +2866,17 @@ def _abschluss_versuch(repo: Path, spec: int, konfig: dict[str, Any], zustand: d
             stage = _stage_ohne_zugang(str((konfig.get("staging") or {}).get("url") or ""))
             grund = "fehlt (Aufseher hat kein Paket abgelegt)"
             fertig = str(zustand.get("spec_fertig_seit") or datetime.now().astimezone().isoformat(timespec="seconds"))
-            args = ["--stage", stage, "--rundschau", grund, "--tests", grund, "--ohne-rundschau", "--spec-fertig", fertig]
+            args = [
+                "--stage",
+                stage,
+                "--rundschau",
+                grund,
+                "--tests",
+                grund,
+                "--ohne-rundschau",
+                "--spec-fertig",
+                fertig,
+            ]
             code, out, err = _abschluss_lauf(repo, "ablegen", spec, *args)
             if code != 0:
                 text = _abschluss_ausgabe("ablegen", spec, code, out, err)
@@ -3092,19 +2948,13 @@ def _melde(
     if dry_run:
         return [f"[Probe] Mail {art}: {betreff}"]
     if not melder.darf_raus(art, konfig):
-        melder.melden(
-            repo, art, betreff, text, schluessel, konfig=konfig, gh_repo=gh_repo
-        )
+        melder.melden(repo, art, betreff, text, schluessel, konfig=konfig, gh_repo=gh_repo)
         return []
     if not melder.mail_eingerichtet(konfig):
         log.info("Mail nicht eingerichtet (mail.befehl leer) — %s: %s", art, betreff)
         return [MAIL_AUS]
     if melder.schon_gesendet(repo, schluessel, gh_repo):
         return []
-    if melder.melden(
-        repo, art, betreff, text, schluessel, konfig=konfig, gh_repo=gh_repo
-    ):
+    if melder.melden(repo, art, betreff, text, schluessel, konfig=konfig, gh_repo=gh_repo):
         return [f"Mail {art} verschickt: {betreff}"]
-    return [
-        f"FEHLER: Mail {art} nicht verschickt: {betreff} (nächster Tick versucht es wieder)"
-    ]
+    return [f"FEHLER: Mail {art} nicht verschickt: {betreff} (nächster Tick versucht es wieder)"]

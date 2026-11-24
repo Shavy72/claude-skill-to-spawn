@@ -7,6 +7,9 @@ genau zwischen ``ps`` und ``/proc/<pid>/cwd``, war der Ordner „unlesbar“ und
 ``fremdes_repo`` zählte den toten Prozess als eigenen Aufseher → „wartet auf Platz“, Exit 0,
 obwohl niemand nachstartet. Hier wird dieses Fenster gezielt hergestellt: Prozess steht in der
 Prozessliste, ist beim Ordner-Blick aber schon beendet und abgeholt.
+
+Seit #564 sitzt die Prüfung beim Lesen der echten Liste (``prozesse_linux``), nicht in ``zuordnen``:
+die Tests geben ``ps`` deshalb eine Zeile mit der echten Prozess-Nummer vor.
 """
 
 from __future__ import annotations
@@ -16,7 +19,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 
 import pytest
 
@@ -37,11 +40,17 @@ def _sessions_stand(repo: Path, monkeypatch: pytest.MonkeyPatch) -> ModuleType:
     return modul
 
 
-def _aufseher_zustand(modul: ModuleType, pid: int) -> str:
+def _ps_meldet(modul: ModuleType, monkeypatch: pytest.MonkeyPatch, pid: int, name: str, cmd: str) -> list:
+    """``prozesse_linux()``, wenn ``ps`` genau den Prozess ``pid`` mit ``name``/``cmd`` gemeldet hat."""
+    zeile = f"{pid} 1 Wed Sep 17 09:12:33 2026 {name} {cmd}\n"
+    monkeypatch.setattr(modul, "subprocess", SimpleNamespace(run=lambda *a, **k: SimpleNamespace(stdout=zeile)))
+    return modul.prozesse_linux()
+
+
+def _aufseher_zustand(modul: ModuleType, monkeypatch: pytest.MonkeyPatch, pid: int) -> str:
     """Zustand der Spec 900, wenn ``ps`` den Prozess ``pid`` als ``wache.py 900`` gemeldet hat."""
     eintraege = {"900": modul.Eintrag("900", "spec", "Aufseher Spec #900")}
-    prozess = modul.Prozess(pid, 1, "python3", f"{sys.executable} /x/skripte/wache.py 900", None)
-    modul.zuordnen(eintraege, [prozess])
+    modul.zuordnen(eintraege, _ps_meldet(modul, monkeypatch, pid, "python3", "python3 /x/skripte/wache.py 900"))
     return eintraege["900"].zustand
 
 
@@ -51,7 +60,7 @@ def test_beendeter_prozess_ist_kein_aufseher(tmp_path: Path, monkeypatch: pytest
     beendet = subprocess.Popen([sys.executable, "-c", "pass"], cwd=tmp_path)
     beendet.wait()  # beendet und abgeholt: /proc/<pid> ist weg
     assert not Path(f"/proc/{beendet.pid}").exists()
-    assert _aufseher_zustand(modul, beendet.pid) == "aus"
+    assert _aufseher_zustand(modul, monkeypatch, beendet.pid) == "aus"
 
 
 @pytest.mark.skipif(not Path("/proc/self/cwd").exists(), reason="braucht /proc (Linux)")
@@ -60,7 +69,7 @@ def test_lebender_aufseher_im_repo_zaehlt_weiter(tmp_path: Path, monkeypatch: py
     modul = _sessions_stand(tmp_path, monkeypatch)
     lebt = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"], cwd=tmp_path)
     try:
-        assert _aufseher_zustand(modul, lebt.pid) == "startet"
+        assert _aufseher_zustand(modul, monkeypatch, lebt.pid) == "startet"
     finally:
         lebt.kill()
         lebt.wait()
@@ -77,7 +86,7 @@ def test_zombie_prozess_ist_kein_aufseher(tmp_path: Path, monkeypatch: pytest.Mo
                 break
             time.sleep(0.05)
         assert Path(f"/proc/{zombie.pid}").exists()
-        assert _aufseher_zustand(modul, zombie.pid) == "aus"
+        assert _aufseher_zustand(modul, monkeypatch, zombie.pid) == "aus"
     finally:
         zombie.wait()
 
@@ -90,5 +99,5 @@ def test_beendete_claude_waise_wird_nicht_gemeldet(tmp_path: Path, monkeypatch: 
     beendet.wait()
     cmd = "claude --settings /h/x-bau/777-20260101-000000/settings.json"
     eintraege: dict = {}
-    modul.zuordnen(eintraege, [modul.Prozess(beendet.pid, 1, "claude", cmd, None)])
+    modul.zuordnen(eintraege, _ps_meldet(modul, monkeypatch, beendet.pid, "claude", cmd))
     assert eintraege == {}

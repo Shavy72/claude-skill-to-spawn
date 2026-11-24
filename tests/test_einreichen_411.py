@@ -13,7 +13,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from conftest import attrappe
+from conftest import attrappe, stub_pfad
 
 from to_spawn import anleitung, befugnis
 
@@ -97,7 +97,7 @@ def welt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path]:
     log.with_suffix(".json").write_text(
         json.dumps({"kratz": str(tmp_path / "gh-kratz"), "haupt": "main"}), encoding="utf-8"
     )
-    monkeypatch.setenv("TO_SPAWN_GH_STUB", str(stub))
+    monkeypatch.setenv("TO_SPAWN_GH_STUB", str(stub_pfad(stub)))
     monkeypatch.setenv("EINREICHEN_GH_LOG", str(log))
     return {"remote": remote, "klon": klon, "log": log, "tmp": tmp_path}
 

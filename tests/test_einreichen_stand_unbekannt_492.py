@@ -26,7 +26,7 @@ from test_einreichen_411 import (  # noqa: F401 — ``welt`` ist ein Fixture
     welt,
 )
 
-from conftest import attrappe
+from conftest import attrappe, stub_pfad
 
 _VIEW = 'elif args[:2] == ["pr", "view"]:'
 #: ``gh pr view`` scheitert so oft, wie ``EINREICHEN_PR_VIEW_KAPUTT`` sagt (Netz/Rate-Limit).
@@ -49,7 +49,7 @@ def kaputte_abfrage(
         "gh-Attrappe aus #411 geändert — Ersetzung greift nicht"
     )
     stub = attrappe(welt["tmp"] / "gh-bin-492", "gh", GH_VIEW_KAPUTT)
-    monkeypatch.setenv("TO_SPAWN_GH_STUB", str(stub))
+    monkeypatch.setenv("TO_SPAWN_GH_STUB", str(stub_pfad(stub)))
     monkeypatch.setenv("EINREICHEN_SPERRE_NACH_MERGE", "1")
     return welt
 

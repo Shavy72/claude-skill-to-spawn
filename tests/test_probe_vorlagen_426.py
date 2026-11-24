@@ -299,3 +299,107 @@ def test_skill_pytest_sammelt_probe_vorlagen_nicht_ein() -> None:
     )
     # Exit 5 = nichts gesammelt: Vorlagen-Tests (auch der rote) bleiben aus dem Skill-Lauf draußen.
     assert raus.returncode == 5, raus.stdout + raus.stderr
+
+
+# --- Probe-Inhalt „Leihliste“ (#426, Kommentar 24.11.: Leihlisten-Niveau) ---
+
+PROTOKOLL = SKILL / "probe" / "gemeinsam" / "docs" / "GRILL_probe.md"
+PROBE_SPEC = SKILL / "docs" / "PROBE_SPEC.md"
+
+
+def _ticket_schnitt() -> dict[str, set[str]]:
+    """Ticket -> Vorgänger aus der Schnitt-Tabelle (E9) des Beschluss-Protokolls."""
+    schnitt: dict[str, set[str]] = {}
+    for zeile in PROTOKOLL.read_text(encoding="utf-8").splitlines():
+        zellen = [z.strip() for z in zeile.strip().strip("|").split("|")]
+        if len(zellen) == 4 and zellen[0][:1] == "T" and zellen[0][1:].isdigit():
+            vor = zellen[3]
+            schnitt[zellen[0]] = (
+                set() if vor == "–" else {v.strip() for v in vor.split(",")}
+            )
+    return schnitt
+
+
+def _vorfahren(schnitt: dict[str, set[str]], ticket: str) -> set[str]:
+    gesehen: set[str] = set()
+    offen = list(schnitt[ticket])
+    while offen:
+        t = offen.pop()
+        if t not in gesehen:
+            gesehen.add(t)
+            offen.extend(schnitt[t])
+    return gesehen
+
+
+def test_beschluss_protokoll_hat_blocker_kette_und_parallele_tickets() -> None:
+    schnitt = _ticket_schnitt()
+    assert 5 <= len(schnitt) + 1 <= 7, schnitt  # + Abnahme-Ticket
+    for ticket, vor in schnitt.items():
+        assert vor <= schnitt.keys(), (ticket, vor)
+        assert ticket not in _vorfahren(schnitt, ticket), f"Kreis bei {ticket}"
+
+    def tiefe(t: str) -> int:
+        return 1 + max((tiefe(v) for v in schnitt[t]), default=0)
+
+    assert max(tiefe(t) for t in schnitt) >= 3, "keine Kette A -> B -> C"
+    parallel = [
+        (a, b)
+        for a in schnitt
+        for b in schnitt
+        if a < b and a not in _vorfahren(schnitt, b) and b not in _vorfahren(schnitt, a)
+    ]
+    assert len(parallel) >= 2, parallel
+
+
+def test_beide_varianten_bekommen_dasselbe_beschluss_protokoll(tmp_path: Path) -> None:
+    inhalte = []
+    for variante in VARIANTEN:
+        repo = tmp_path / variante
+        _anlegen(repo, variante)
+        heute = time.strftime("%Y-%m-%d")
+        datei = repo / "docs" / f"GRILL_{heute}_probe.md"
+        assert sorted((repo / "docs").glob("GRILL_*")) == [datei]
+        eingecheckt = subprocess.run(
+            ["git", "ls-files", "docs"],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.split()
+        assert eingecheckt == [f"docs/GRILL_{heute}_probe.md"]
+        inhalte.append(datei.read_bytes())
+    assert inhalte[0] == inhalte[1] == PROTOKOLL.read_bytes()
+
+
+def test_kritik_text_steht_in_probe_spec_und_nicht_im_lauf_repo() -> None:
+    spec = PROBE_SPEC.read_text(encoding="utf-8")
+    kritik = spec[
+        spec.index("### 4.1 Kritik-Text") : spec.index("### 4.2 Abnahme-Schritte")
+    ]
+    # Trifft Rechenlogik (Kulanz/Deckel) und eine sichtbare Stelle (Leihliste).
+    for teil in (
+        "Punkt Mahngebühr anders",
+        "Kulanz nur 2 Tage statt 3",
+        "7,50 €",
+        "Leihliste",
+    ):
+        assert teil in kritik, teil
+    protokoll = PROTOKOLL.read_text(encoding="utf-8")
+    assert "die ersten 3 Tage überfällig sind Kulanz" in protokoll
+    assert "höchstens 1000 Cent" in protokoll
+    # Die Bau-Sessions dürfen die Kritik nicht vorweg sehen.
+    assert "Punkt Mahngebühr anders" not in protokoll and "7,50" not in protokoll
+
+
+def test_probe_spec_verankert_messlatte_l10() -> None:
+    spec = PROBE_SPEC.read_text(encoding="utf-8")
+    auswertung = spec[
+        spec.index("## 6 Auswertung") : spec.index("## 7 Bestehens-Kriterien")
+    ]
+    for teil in (
+        "LASTENHEFT.md",
+        "L10",
+        "Ticket-Abhängigkeit",
+        "null System-Anomalien",
+    ):
+        assert teil in auswertung, teil
