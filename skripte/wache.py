@@ -148,21 +148,26 @@ def wartende_nachstarten(
     *,
     env: dict[str, str] | None = None,
     schlafen=time.sleep,
-    takt_s: float = NACHSTART_TAKT_S,
+    takt_s: float | None = None,
     max_laeufe: int | None = None,
 ) -> int:
     """Startet die Fenster nach, die ``spawn_srv.sh`` in ``datei`` als wartend vermerkt hat (#560).
 
     Je Takt ein ``spawn_srv.sh <S> --tickets <liste>`` (leere Liste: ``--nur-wache``) — es
     überspringt Laufendes und prüft vor jedem Fenster den Speicher. Exit 0 ohne „wartet auf
-    Platz“ = alles läuft → Datei weg, Ende. Sonst (wartet weiter, voll, Fehler) nächster Takt.
-    Datei fehlt → sofort Ende. Rückgabe = Zahl der ``spawn_srv.sh``-Läufe.
+    Platz“ = alles läuft → Datei weg, Ende. Sonst (wartet weiter, voll, Fehler) nächster Takt —
+    unbegrenzt, die Datei bleibt, bis ein Lauf durchgeht. Datei fehlt → im Takt weiter nachsehen:
+    ``spawn_srv.sh`` schreibt sie erst nach der Staffel-Pause, also nach dem Start der Wache.
+    Rückgabe = Zahl der ``spawn_srv.sh``-Läufe. ``takt_s`` leer = ``NACHSTART_TAKT_S`` (je Takt gelesen).
     """
     from to_spawn import bash_wahl
 
     skript = Path(_SKILL) / "skripte" / "spawn_srv.sh"
     laeufe = 0
-    while datei.is_file() and (max_laeufe is None or laeufe < max_laeufe):
+    while max_laeufe is None or laeufe < max_laeufe:
+        if not datei.is_file():
+            schlafen(NACHSTART_TAKT_S if takt_s is None else takt_s)
+            continue
         tickets = datei.read_text(encoding="utf-8").strip()
         auswahl = ["--tickets", tickets] if tickets else ["--nur-wache"]
         umgebung = dict(os.environ if env is None else env, TO_SPAWN_REPO=str(repo))
@@ -187,24 +192,32 @@ def wartende_nachstarten(
                 log.info("Nachstart Spec #%s: wartende Fenster laufen (%s)", spec, tickets or "nur Aufseher")
                 return laeufe
             log.info("Nachstart Spec #%s: wartet weiter (Exit %s)", spec, lauf.returncode)
-        schlafen(takt_s)
+        schlafen(NACHSTART_TAKT_S if takt_s is None else takt_s)
     return laeufe
 
 
-def _nachstarter_starten(spec: int, repo: Path) -> None:
-    """Nachstarter-Faden (#560), nur wenn ``spawn_srv.sh`` eine Warte-Datei mitgegeben hat."""
+def _nachstarter_starten(spec: int, repo: Path) -> threading.Thread | None:
+    """Nachstarter-Faden (#560), nur wenn ``spawn_srv.sh`` eine Warte-Datei mitgegeben hat.
+
+    Lebt so lange wie die Wache: auch spätere ``spawn_srv.sh``-Läufe (Wache läuft schon, wird
+    nicht neu gestartet) vermerken ihre Wartenden in derselben Datei.
+    """
     wert = os.environ.get(WARTE_ENV, "").strip()
     if not wert:
-        return
+        return None
     umgebung = dict(os.environ)  # vor dem Umgebungs-Wechsel für Claude festhalten
 
     def faden() -> None:
-        try:
-            wartende_nachstarten(Path(wert), spec, repo, env=umgebung)
-        except Exception:  # Faden darf den Aufseher nie mitreißen
-            log.exception("Nachstart Spec #%s gescheitert", spec)
+        while True:
+            try:
+                wartende_nachstarten(Path(wert), spec, repo, env=umgebung)
+            except Exception:  # Faden darf den Aufseher nie mitreißen
+                log.exception("Nachstart Spec #%s gescheitert", spec)
+                time.sleep(NACHSTART_TAKT_S)
 
-    threading.Thread(target=faden, name=f"nachstart-{spec}", daemon=True).start()
+    neu = threading.Thread(target=faden, name=f"nachstart-{spec}", daemon=True)
+    neu.start()
+    return neu
 
 
 MODELL = "claude-opus-5-5"
