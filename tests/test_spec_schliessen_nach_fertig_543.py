@@ -72,3 +72,43 @@ def test_tick_ruft_schritt_nach_hausmeister() -> None:
     assert quelle.index("_hausmeister_schluss(spec, zustand") < quelle.index(
         "_spec_schliessen_schritt(repo, spec"
     )
+
+
+# --- echter Tick (Git-Repo, Zustandsdatei wie #1370); nur ``spec_schliessen`` ist Attrappe -----------
+from test_aufraeumen_schluss_1370 import (  # noqa: F401
+    SPEC,
+    _spec_fertig,
+    _zustand,
+    config,
+    hm,
+    welt,
+)
+
+
+def _tick(welt, monkeypatch: pytest.MonkeyPatch, staging: bool) -> list[int]:  # noqa: F811
+    aufrufe: list[int] = []
+
+    def attrappe(repo: Path, gh_repo: str, spec: int, abruf=None):
+        aufrufe.append(spec)
+        return befund.Ergebnis(ok=True, zeilen=[f"Spec #{spec} geschlossen"])
+
+    monkeypatch.setattr(befund, "spec_schliessen", attrappe)
+    monkeypatch.setenv("TO_SPAWN_REPO", str(welt["repo"]))
+    monkeypatch.chdir(welt["repo"])
+    konfig = config.lade(welt["repo"])
+    if staging:
+        konfig["staging"] = {"url": "https://staging.example.test"}
+    capo.tick(welt["repo"], int(SPEC), "test/wegwerf", konfig, wt_basis=str(welt["wt"]))
+    return aufrufe
+
+
+def test_tick_ohne_staging_schliesst_nach_aufraeumen(welt, hm, monkeypatch) -> None:  # noqa: F811
+    _spec_fertig(welt)
+    assert _tick(welt, monkeypatch, staging=False) == [int(SPEC)]
+    assert _zustand(welt).get("spec_geschlossen")
+
+
+def test_tick_mit_staging_schliesst_nie(welt, hm, monkeypatch) -> None:  # noqa: F811
+    _spec_fertig(welt)
+    assert _tick(welt, monkeypatch, staging=True) == []
+    assert not _zustand(welt).get("spec_geschlossen")

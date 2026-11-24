@@ -2788,7 +2788,13 @@ def _tick(
     ):
         erg.zeilen += _hausmeister_schluss(spec, zustand, jetzt, dry_run)
     # Letzter Schritt der Kette (#543): Spec-Issue schließen, dort hängt das Aufseher-Fenster.
-    if zustand.get("aufraeumen_erledigt") and not zustand.get("spec_geschlossen"):
+    # Nur ohne Staging-App: bei Staging gibt es keinen einzelnen „Live ist gelaufen“-Merker,
+    # das Schließen vor dem Live-Ja wäre falsch (Folge-Issue: Live-Merker setzen).
+    if (
+        zustand.get("aufraeumen_erledigt")
+        and not zustand.get("spec_geschlossen")
+        and not config.hat_staging(konfig)
+    ):
         erg.zeilen += _spec_schliessen_schritt(repo, spec, gh_repo, zustand, jetzt, dry_run)
 
     if MAIL_AUS in erg.zeilen:  # je Tick nur einmal, nicht je Meldung
@@ -2837,8 +2843,8 @@ def _spec_schliessen_schritt(
 ) -> list[str]:
     """Spec nach SPEC FERTIG über den vorhandenen Weg schließen (#543, ``befund.spec_schliessen``).
 
-    Die Regel „darf zu?“ (alle Folge-/Spec-Tickets erledigt, bei Staging erst nach Live) steht
-    allein dort. Abbruch dort ist kein Fehler: Grund ins Log, der nächste Takt versucht es erneut.
+    Die Regel „darf zu?“ (alle Folge-/Spec-Tickets erledigt) steht allein dort; Staging-Repos
+    ruft der Tick gar nicht erst auf, weil ``spec_offen`` Live nicht kennt. Abbruch dort ist kein Fehler: Grund ins Log, der nächste Takt versucht es erneut.
     """
     if dry_run:
         return [f"[Probe] Spec #{spec} schließen: spec-schliessen {spec}"]
