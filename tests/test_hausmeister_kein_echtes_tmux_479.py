@@ -13,39 +13,35 @@ zeigt es in den Temp-Ordner des Testlaufs, gibt es keinen Server.
 from __future__ import annotations
 
 import os
-import stat
 from pathlib import Path
 
 import pytest
 
+from conftest import attrappe
 from to_spawn import hausmeister
 
-ATTRAPPE = """#!/bin/sh
-# tmux-Attrappe (#479): Server-Wahl wie echtes tmux — erst $TMUX, dann $TMUX_TMPDIR (Standard /tmp).
-if [ -n "$TMUX" ]; then
-    echo spec-11
-    exit 0
-fi
-case "${{TMUX_TMPDIR:-/tmp}}" in
-    "{basis}"/*)
-        echo "no server running on ${{TMUX_TMPDIR}}/tmux-0/default" >&2
-        exit 1
-        ;;
-esac
-echo spec-11
-exit 0
+#: tmux-Attrappe (#479): Server-Wahl wie echtes tmux — erst $TMUX, dann $TMUX_TMPDIR (Standard /tmp).
+ATTRAPPE = """
+import os
+import sys
+
+if os.environ.get("TMUX"):
+    print("spec-11")
+    sys.exit(0)
+ordner = os.environ.get("TMUX_TMPDIR") or "/tmp"
+if ordner.startswith({basis!r} + "/"):
+    print(f"no server running on {{ordner}}/tmux-0/default", file=sys.stderr)
+    sys.exit(1)
+print("spec-11")
 """
 
 
 @pytest.fixture
 def tmux_attrappe(tmp_path: Path, tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Legt die Attrappe als ``tmux`` vorn in den PATH."""
+    """Legt die Attrappe als ``tmux`` vorn in den PATH (über ``conftest.attrappe``, #93)."""
     bin_ordner = tmp_path / "bin"
-    bin_ordner.mkdir()
-    datei = bin_ordner / "tmux"
     basis = str(tmp_path_factory.getbasetemp().resolve())
-    datei.write_text(ATTRAPPE.format(basis=basis), encoding="utf-8")
-    datei.chmod(datei.stat().st_mode | stat.S_IXUSR)
+    attrappe(bin_ordner, "tmux", ATTRAPPE.format(basis=basis))
     monkeypatch.setenv("PATH", f"{bin_ordner}{os.pathsep}{os.environ.get('PATH', '')}")
 
 
