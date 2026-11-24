@@ -494,17 +494,59 @@ def _eingabefeld(zeilen: list[str]) -> tuple[int, int] | None:
     return oben, unten
 
 
+#: Steuerfolgen im Bild aus ``capture-pane -e`` (SGR-Farben und sonstige CSI-Folgen).
+_STEUERFOLGE = re.compile(r"\x1b\[([0-9;:?]*)([@-~])")
+
+
+def ohne_farben(text: str) -> str:
+    """Bild aus ``capture-pane -e`` ohne Steuerfolgen — so, wie ``capture-pane`` ohne ``-e`` es liefert."""
+    return _STEUERFOLGE.sub("", text)
+
+
+def _ohne_gedimmtes(zeile: str) -> str:
+    """Zeile ohne gedimmten Text (SGR 2) und ohne Steuerfolgen.
+
+    Claude Code zeigt Platzhalter und Prompt-Vorschläge gedimmt; getippter Text ist es nie.
+    ``38;2;r;g;b``/``48;5;n`` sind Farbwerte, ihre Zahlen zählen nicht als „gedimmt“.
+    """
+    raus: list[str] = []
+    gedimmt = False
+    pos = 0
+    for treffer in _STEUERFOLGE.finditer(zeile):
+        if not gedimmt:
+            raus.append(zeile[pos : treffer.start()])
+        pos = treffer.end()
+        if treffer.group(2) != "m":
+            continue
+        werte = re.split(r"[;:]", treffer.group(1))
+        i = 0
+        while i < len(werte):
+            wert = werte[i]
+            if wert in ("", "0", "22"):
+                gedimmt = False
+            elif wert == "2":
+                gedimmt = True
+            elif wert in ("38", "48", "58") and i + 1 < len(werte):
+                i += 4 if werte[i + 1] == "2" else 2  # Farbmodus + Werte überspringen
+            i += 1
+    if not gedimmt:
+        raus.append(zeile[pos:])
+    return "".join(raus)
+
+
 def eingabe_leer(text: str) -> bool:
     """Das Bild zeigt das Claude-Eingabefeld, und hinter ``❯`` steht nichts (#414).
 
-    Halber Text eines Menschen oder ein Prompt-Vorschlag (``capture-pane`` liefert ihn als
-    Text) zählt als belegt; kein Eingabefeld (Shell, Dialog, fremdes Programm) ebenso.
+    ``text`` darf Farbcodes tragen (``capture-pane -e``): gedimmter Text hinter ``❯`` ist ein
+    Platzhalter oder Prompt-Vorschlag von Claude Code und zählt als leer. Normal gezeigter Text
+    (halber Text eines Menschen, auch gemischt mit gedimmtem) zählt als belegt; ohne Farbcodes
+    ist jeder Text belegt. Kein Eingabefeld (Shell, Dialog, fremdes Programm) zählt nie als leer.
     """
     zeilen = text.splitlines()
-    feld = _eingabefeld(zeilen)
+    feld = _eingabefeld([ohne_farben(z) for z in zeilen])
     if feld is None:
         return False
-    inhalt = "".join(zeilen[feld[0] + 1 : feld[1]]).strip()
+    inhalt = "".join(_ohne_gedimmtes(z) for z in zeilen[feld[0] + 1 : feld[1]]).strip()
     return inhalt.removeprefix("❯").strip() == ""
 
 

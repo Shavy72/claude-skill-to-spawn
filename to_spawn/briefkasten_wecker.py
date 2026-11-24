@@ -134,8 +134,11 @@ class Wecker:
         pid, aktiv = self.werkzeug.pane_lage(ziel)
         if pid is None or not self.werkzeug.claude_laeuft(pid):
             return False
-        bild = self.werkzeug.bildschirm(ziel)
-        if bild is None or aufpasser.arbeitet(bild) or not aufpasser.eingabe_leer(bild):
+        farbig = self.werkzeug.bildschirm(ziel, farben=True)
+        if farbig is None:
+            return False
+        bild = aufpasser.ohne_farben(farbig)
+        if aufpasser.arbeitet(bild) or not aufpasser.eingabe_leer(farbig):
             return False
         jetzt = self.werkzeug.jetzt()
         bild_hash = aufpasser.pane_hash(bild)

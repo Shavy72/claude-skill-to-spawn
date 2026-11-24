@@ -256,8 +256,16 @@ class TmuxWerkzeug:
         # Ablösung tippen in eigenen Fäden desselben Prozesses (#414).
         puffer = f"respawn-{os.getpid()}-{next(_PUFFER_NR)}"
         with _TIPP_SPERRE:
-            self._tmux("load-buffer", "-b", puffer, "-", eingabe=text)
-            self._tmux("paste-buffer", "-p", "-d", "-b", puffer, "-t", ziel)
+            try:
+                self._tmux("load-buffer", "-b", puffer, "-", eingabe=text)
+                self._tmux("paste-buffer", "-p", "-d", "-b", puffer, "-t", ziel)
+            except TmuxFehler:
+                # ``-d`` greift nur nach gelungenem Einfügen: Puffer nicht liegen lassen.
+                try:
+                    self._tmux("delete-buffer", "-b", puffer)
+                except TmuxFehler as rest:
+                    log.warning("tmux-Puffer %s nicht gelöscht: %s", puffer, rest)
+                raise
             self.schlafen(TIPP_PAUSE_S)
             try:
                 self._tmux("send-keys", "-t", ziel, "Enter")
@@ -287,9 +295,15 @@ class TmuxWerkzeug:
             aktiv_s = None
         return (int(pid) if pid.isdigit() else None), aktiv_s
 
-    def bildschirm(self, ziel: str) -> str | None:
-        """Sichtbarer Text; :class:`FensterWeg` wenn das Fenster fehlt, ``None`` bei Fehlern."""
+    def bildschirm(self, ziel: str, *, farben: bool = False) -> str | None:
+        """Sichtbarer Text; :class:`FensterWeg` wenn das Fenster fehlt, ``None`` bei Fehlern.
+
+        ``farben=True`` liest mit ``-e`` (Farbcodes bleiben drin) — nur für
+        :func:`aufpasser.eingabe_leer`, das gedimmte Platzhalter erkennen muss (#414).
+        """
         try:
+            if farben:
+                return self._tmux("capture-pane", "-e", "-p", "-t", ziel)
             return self._tmux("capture-pane", "-p", "-t", ziel)
         except FensterWeg:
             raise
