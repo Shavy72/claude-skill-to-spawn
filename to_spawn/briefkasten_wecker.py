@@ -358,9 +358,12 @@ class Wecker:
 
     def _prompt_fenster(self, t: int, ziel: str) -> None:
         """Ein Fenster von :meth:`_prompt_blick`; Fehler fängt der Aufrufer je Fenster."""
-        if self._prompt_stupser.get(t, 0) >= aufpasser.STUPSER_MAX:
-            return  # Obergrenze erreicht: kein Bild, keine GitHub-Abfrage mehr je Takt
         bild = aufpasser.ohne_farben(self.werkzeug.bildschirm(ziel, farben=True) or "")
+        if self._prompt_stupser.get(t, 0) >= aufpasser.STUPSER_MAX:
+            if aufpasser.arbeitet(bild):  # #618: Session hat wieder gearbeitet → Zähler neu
+                self._prompt_stupser.pop(t, None)
+                self._prompt_geweckt.discard(t)
+            return  # Obergrenze erreicht: keine GitHub-Abfrage mehr je Takt
         if not aufpasser.steht_umsonst(bild, t, self.repo):
             self._prompt_geweckt.discard(t)
             return
