@@ -29,13 +29,6 @@ from to_spawn import hausmeister
 GEHEIM = "TOKEN=geheim-196-wert"
 
 
-@pytest.fixture(autouse=True)
-def eigenes_tmux(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Eigener tmux-Server je Test: die echten Sitzungen des Bau-Servers zählen nicht."""
-    monkeypatch.delenv("TMUX", raising=False)
-    monkeypatch.setenv("TMUX_TMPDIR", str(tmp_path))
-
-
 @pytest.fixture
 def haupt_bekannt(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> Welt:
     """Das Hauptrepo der Welt ist dem Hausmeister bekannt (wie ``repos[].pfad`` der Maschine)."""

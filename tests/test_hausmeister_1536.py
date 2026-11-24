@@ -33,13 +33,6 @@ ALT_TAGE = 30
 GEHEIM = "TOKEN=geheim-1536-wert"
 
 
-@pytest.fixture(autouse=True)
-def eigenes_tmux(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Eigener tmux-Server je Test: die echten Sitzungen des Bau-Servers zählen nicht."""
-    monkeypatch.delenv("TMUX", raising=False)
-    monkeypatch.setenv("TMUX_TMPDIR", str(tmp_path))
-
-
 def _altern(welt: Welt) -> None:
     """Die Uhr springt :data:`ALT_TAGE` Tage weiter (Dateien bleiben, wie sie sind)."""
     welt.jetzt += ALT_TAGE * TAG
