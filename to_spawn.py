@@ -59,6 +59,7 @@ from to_spawn import (  # noqa: E402
     hooks,
     inventur,
     komplett_lauf,
+    live_tuer,
     leiter,
     leitstand,
     manifest,
@@ -802,6 +803,9 @@ def main(argv: list[str] | None = None) -> int:
     p_komplett.add_argument("--moment", choices=sorted(_KOMPLETT_MOMENTE), default="vor-live")
     # Nur für den Hintergrund-Lauf aus dem capo-Takt (#455): Rot je Kopf gilt dort als geprüft.
     p_komplett.add_argument("--aus-takt", action="store_true", help=argparse.SUPPRESS)
+    # Live-Tür (#456): live.befehl startet nur nach grüner Komplett-Prüfung — Exit 0/1, 2 = live.befehl fehlt.
+    p_live = unter.add_parser("live", help="Live-Schritt der Spec, nur nach grüner Komplett-Prüfung (Exit 0/1/2)")
+    p_live.add_argument("spec", type=int)
 
     nest.richte_parser_ein(unter)
     leitstand.richte_parser_ein(unter)
@@ -925,9 +929,13 @@ def main(argv: list[str] | None = None) -> int:
         tuer = komplett_lauf.takt_kind if args.aus_takt else komplett_lauf.komplett_einmal
         erg = tuer(repo, args.spec, _KOMPLETT_MOMENTE[args.moment], config.lade(repo))
         # „läuft schon“ ist kein grüner Stand: vor Live erst weiter, wenn der andere Lauf grün ist.
-        frei = erg.ok and not erg.laeuft
         print(erg.grund)
-        return 0 if frei else 1
+        return 0 if erg.frei else 1
+    if args.befehl == "live":
+        repo = config.repo_wurzel(_repo_aus_umgebung())
+        code, zeilen = live_tuer.starte(repo, args.spec, config.lade(repo))
+        print("\n".join(zeilen))
+        return code
     if args.befehl == "startklar":
         ordner = args.ordner.resolve() if args.ordner else config.repo_wurzel(_repo_aus_umgebung())
         code, text = startklar.ausgabe(startklar.pruefe(ordner, args.spec))
