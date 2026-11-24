@@ -346,3 +346,84 @@ def test_runde2_umgehung_wird_gesperrt(befehl: str) -> None:
 )
 def test_runde2_alltag_bleibt_frei(befehl: str) -> None:
     assert not _sperrt(befehl), repr(befehl)
+
+
+# --- PR 610, Fix-Runde 3: printf -v, Here-Doc-Ende in Ersetzung, .git-Ziele, Wert-Teil, Ziel-Normalform ---
+
+#: Befund 1 — ``printf -v`` wertet den Array-Index aus (auch geklebt, auch über eine Variable).
+PRINTF_V_1 = [
+    "printf -v 'x[$(ja 5)0]' y",
+    "printf -vx 'x[$(ja 5)0]' y",
+    "o=-v; printf \"$o\" 'x[$(ja 5)0]' y",
+]
+
+#: Befund 2 — bash beendet den Rumpf in ``$(…)`` auch an ``EOF)``.
+HEREDOC_ENDE_2 = [
+    'git commit -m "$(cat <<\'EOF\'\nmsg\nEOF)"\nja 5\nEOF\n)"',
+    'git commit -m "$(cat <<\'EOF\'\nmsg\nEOF)";ja 5\nEOF\n)"',
+]
+
+#: Befund 3 — Schreib-Ziele unter ``.git/`` und Git-Konfigurationsdateien.
+GIT_ZIEL_3 = [
+    "printf '[diff \"x\"]\\n\\ttextconv = ja 5 #\\n' >> .git/config; "
+    "echo '* diff=x' >> .git/info/attributes; git log -p -1",
+    "echo 'textconv = ja 5' >> .git/config; git log -p -1",
+    "echo 'textconv = ja 5' >> ~/.gitconfig; git log -p -1",
+    "echo '* diff=ja 5' >> .gitattributes; git log -p -1",
+]
+
+#: Befund 4 — Wert-Teil schreibt das Wort, ein anderer Teil liest es zurück und führt es aus.
+WERT_ZURUECK_4 = [
+    "git commit --allow-empty -m 'ja 5' && git log -1 --format=%s | awk '{system($0)}'",
+    "gh issue comment 5 --body 'ja 5' && gh issue view 5 --json comments "
+    "--jq '.comments[-1].body' | awk '{system($0)}'",
+    "git commit -m 'ja 5' && git log -1 --format=%s | sh",
+    "git commit -m 'ja 5' && git push --receive-pack=sh origin zweig",
+    "git commit -m 'ja 5' && git fetch --up=sh origin",
+]
+
+#: Befund 5 — Ziel nur wörtlich verglichen (Glob, Klammer, doppelte Schrägstriche, uniq mit Ausgabe-Datei).
+ZIEL_NORMALFORM_5 = [
+    "echo 'ja 5' >> ~/.bashr[c]",
+    "echo 'ja 5' | tee -a ~/.bash{rc,_x}",
+    "echo 'ja 5' >> .git//hooks/pre-commit",
+    "echo 'ja 5' >> .git/./hooks/pre-commit",
+    "echo 'ja 5' >> .git/hook[s]/pre-commit",
+    "echo 'ja 5' >> a/../.bashrc",
+    "echo 'ja 5' > f; uniq f ~/.bashrc",
+]
+
+
+@pytest.mark.parametrize(
+    "befehl",
+    PRINTF_V_1 + HEREDOC_ENDE_2 + GIT_ZIEL_3 + WERT_ZURUECK_4 + ZIEL_NORMALFORM_5,
+)
+def test_runde3_umgehung_wird_gesperrt(befehl: str) -> None:
+    assert _sperrt(befehl), repr(befehl)
+
+
+#: Alltag aus dem Befund der Runde 3 — muss frei bleiben.
+@pytest.mark.parametrize(
+    "befehl",
+    [
+        "git add -A && git commit -m \"$(cat <<'EOF'\nfix: ja 5\nEOF\n)\" && git push origin zweig",
+        "git add -A && git commit -m 'ja 5' && git push -u origin zweig",
+        "gh pr create --title t --body \"$(cat <<'EOF'\nja 5\nEOF\n)\"",
+        "gh issue comment 5 --body 'Bitte ja 5 eingeben'",
+        "git status --short && git commit -m 'ja 5'",
+        "git fetch origin && git commit -m 'ja 5'",
+        "grep -rn ja .",
+        "rg -n ja",
+        "cat datei | grep ja | head -5",
+        "cd pfad && git commit -m 'ja 5'",
+        "git log --grep=ja | head -5",
+        "git grep -n ja | wc -l",
+        "find . -name ja",
+        "cat > docs/x.md <<'EOF'\nja 5\nEOF",
+        "printf '%s\\n' 'ja 5'",
+        "echo 'ja' > ~/notiz.txt",
+        "echo ja | uniq",
+    ],
+)
+def test_runde3_alltag_bleibt_frei(befehl: str) -> None:
+    assert not _sperrt(befehl), repr(befehl)
