@@ -56,6 +56,7 @@ def _spawn(
     max_sessions: int = 1,
     belegt: int = 0,
     belegt_tmux: str | None = None,
+    belegt_eigen: int = 0,
     fenster: list[str] | None = None,
     wache_prozess: bool = True,
     tmux_wert: str | None = None,
@@ -69,6 +70,8 @@ def _spawn(
     sessions.mkdir()
     for pid in range(201, 201 + belegt):
         _claude(proc, sessions, pid, belegt_tmux)
+    for pid in range(301, 301 + belegt_eigen):  # arbeitend in der Spec-Sitzung
+        _claude(proc, sessions, pid, f"{SOCKEL},1,{EIGEN}")
     meminfo = tmp_path / "meminfo"
     meminfo.write_text(
         "MemTotal:       16777216 kB\nMemAvailable:   10485760 kB\n", encoding="utf-8"

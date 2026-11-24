@@ -32,6 +32,11 @@ Gesamtgrenze (#460): stille Sessions belegen trotzdem Speicher. Mit Sitzung gilt
 :func:`gesamt_grenze` (:data:`GESAMT_FAKTOR` × Rechner-Grenze, bei 9 also 18) über alle
 Claude-Prozesse des Rechners — still, arbeitend und Anzeige.
 
+Fremd voll (#460): hat die eigene Sitzung Platz und füllen nur Sessions außerhalb die Rechner- oder
+Gesamtgrenze, endet ``to_spawn.py speicher`` mit :data:`EXIT_FREMD_VOLL` statt :data:`EXIT_VOLL`.
+Die Grenzen bleiben gleich hart; ``spawn_srv.sh`` öffnet dann nur das Aufseher-Fenster, das selbst
+per :func:`auf_platz_warten` wartet, und meldet den Rest als „wartet auf Platz“.
+
 Nur Standardbibliothek (plus ``to_spawn.config``), nur Linux: auf anderen Systemen gibt es kein Urteil,
 also „frei“. Test-Tür: die Umgebungsvariablen ``TO_SPAWN_SPEICHER_MEMINFO``
 (Pfad einer meminfo-Datei) und ``TO_SPAWN_SPEICHER_PROC`` (Ordner im Aufbau von
@@ -61,6 +66,9 @@ VORGABE: dict[str, int] = dict(config.DEFAULTS["speicher"])
 
 #: Exit-Code der CLI (``to_spawn.py speicher``) und der Starter, wenn kein Platz ist.
 EXIT_VOLL = 5
+#: Exit-Code der CLI, wenn nur Sessions außerhalb der Spec-Sitzung den Rechner füllen (#460):
+#: die eigene Sitzung hat Platz, ein Starter, der selbst wartet (Aufseher), darf sein Fenster öffnen.
+EXIT_FREMD_VOLL = 3
 #: Exit-Code der CLI, wenn der Hausmeister die Platte zu voll meldet (#1369).
 EXIT_PLATTE = 7
 #: Takt von :func:`auf_platte_warten` — der Hausmeister-Lauf fragt gh, also selten.
@@ -479,6 +487,22 @@ def _urteil(
     wo: str | None,
 ) -> tuple[bool, str]:
     """Gemeinsamer Kern von :func:`platz_frei`/:func:`platz_frei_hier`; ``welche`` erst beim Zählen."""
+    frei, grund, _fremd = _urteil_art(konfig, frei, sessions, welche, wo)
+    return frei, grund
+
+
+def _urteil_art(
+    konfig: dict[str, Any] | None,
+    frei: int | None,
+    sessions: int | None,
+    welche: Callable[[], Sitzung | None],
+    wo: str | None,
+) -> tuple[bool, str, bool]:
+    """:func:`_urteil` plus ``fremd``: „voll“ nur wegen der rechnerweiten Grenzen (#460).
+
+    ``fremd`` ist wahr, wenn RAM und eigene Sitzung Platz haben, aber Sessions außerhalb der
+    Sitzung die Rechner- oder Gesamtgrenze füllen — dann wartet ein Starter, der selbst wartet.
+    """
     linux = sys.platform == "linux"
     werte = grenzen(konfig)
     if frei is None and (linux or os.environ.get("TO_SPAWN_SPEICHER_MEMINFO")):
@@ -498,31 +522,39 @@ def _urteil(
             alle = _mit_vergebenen(claude_sessions(mit_stillen=True), None)
     if frei is None and sessions is None:
         grund = "/proc nicht lesbar" if linux else "kein Linux"
-        return True, f"Speicher: kein Urteil ({grund}) — Start erlaubt"
+        return True, f"Speicher: kein Urteil ({grund}) — Start erlaubt", False
     wo_text = f" in {wo}" if wo else ""
     if frei is not None and frei < werte["min_frei_mib"]:
-        return False, (f"Speicher knapp: {_gb_text(frei)} frei, Mindestmaß {_gb_text(werte['min_frei_mib'])}")
+        return False, f"Speicher knapp: {_gb_text(frei)} frei, Mindestmaß {_gb_text(werte['min_frei_mib'])}", False
     if sessions is not None and sessions >= werte["max_sessions"]:
-        return False, f"schon {sessions} Claude-Sessions{wo_text} (Obergrenze {werte['max_sessions']})"
+        return False, f"schon {sessions} Claude-Sessions{wo_text} (Obergrenze {werte['max_sessions']})", False
     rechner_text = ""
     if rechner is not None:
         grenze = rechner_grenze(werte["max_sessions"], gesamt_kib())
         if rechner >= grenze:
-            return False, f"Rechner voll: schon {rechner} Claude-Sessions auf dem Rechner (Obergrenze {grenze})"
+            return False, f"Rechner voll: schon {rechner} Claude-Sessions auf dem Rechner (Obergrenze {grenze})", True
         rechner_text = f", Rechner {rechner} von {grenze}"
     if alle is not None:
         obergrenze = gesamt_grenze(werte["max_sessions"], gesamt_kib())
         if alle >= obergrenze:
-            return False, (
-                f"Rechner voll mit stillen Sessions: schon {alle} Claude-Sessions insgesamt "
-                f"(still + arbeitend, Obergrenze {obergrenze})"
+            return (
+                False,
+                (
+                    f"Rechner voll mit stillen Sessions: schon {alle} Claude-Sessions insgesamt "
+                    f"(still + arbeitend, Obergrenze {obergrenze})"
+                ),
+                True,
             )
         rechner_text += f", insgesamt {alle} von {obergrenze}"
     frei_text = _gb_text(frei) if frei is not None else "unbekannt"
     sessions_text = str(sessions) if sessions is not None else "unbekannt"
-    return True, (
-        f"Speicher frei: {frei_text} frei, {sessions_text} Claude-Sessions{wo_text} "
-        f"(Obergrenze {werte['max_sessions']}{rechner_text}, Mindestmaß {_gb_text(werte['min_frei_mib'])})"
+    return (
+        True,
+        (
+            f"Speicher frei: {frei_text} frei, {sessions_text} Claude-Sessions{wo_text} "
+            f"(Obergrenze {werte['max_sessions']}{rechner_text}, Mindestmaß {_gb_text(werte['min_frei_mib'])})"
+        ),
+        False,
     )
 
 
@@ -666,7 +698,7 @@ def cli(
     sitzung: str | None = None,
 ) -> int:
     """Unterbefehl ``to_spawn.py speicher``: Stand drucken, Exit 0 = frei, 5 = voll,
-    7 = Platte voll (Start-Check des Hausmeisters, vor der RAM-Prüfung).
+    3 = voll nur durch Sessions außerhalb der Sitzung (:data:`EXIT_FREMD_VOLL`, #460), 7 = Platte voll (Start-Check des Hausmeisters, vor der RAM-Prüfung).
 
     ``--staffel`` druckt nur die Sekundenzahl der Staffel (für Shell-Skripte).
     ``--trocken`` (Probelauf, Status): nur messen, der Hausmeister löscht nie.
@@ -679,6 +711,8 @@ def cli(
     if not platte_ok:
         print(platte_grund)
         return EXIT_PLATTE
-    ok, grund = platz_frei(konfig, sitzung=sitzung)
+    ok, grund, fremd = _urteil_art(konfig, None, None, lambda: sitzung_nach_name(sitzung) if sitzung else None, sitzung)
     print(grund)
-    return 0 if ok else EXIT_VOLL
+    if ok:
+        return 0
+    return EXIT_FREMD_VOLL if fremd else EXIT_VOLL
