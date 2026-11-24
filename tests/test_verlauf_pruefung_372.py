@@ -32,6 +32,7 @@ from to_spawn import (
     leiter,
     leitstand,
     ticket_zustand,
+    waechter_lauf,
 )
 
 SID = "11111111-2222-3333-4444-555555555555"
@@ -138,7 +139,7 @@ class Welt:
         )
 
     def datei(self, sid: str = SID) -> Path:
-        ordner = self.heim / ".claude" / "projects" / str(CWD).replace("/", "-")
+        ordner = waechter_lauf.transkript_ordner(CWD, self.heim)  # Slug wie Claude Code, auch unter Windows
         ordner.mkdir(parents=True, exist_ok=True)
         return ordner / f"{sid}.jsonl"
 
