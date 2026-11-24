@@ -58,6 +58,7 @@ from to_spawn import (  # noqa: E402
     gh,
     hausmeister,
     hausmeister_aufgabe,
+    helfer_temp,
     hooks,
     inventur,
     komplett_lauf,
@@ -794,6 +795,7 @@ def main(argv: list[str] | None = None) -> int:
 
     # Tür B (#278 P2): Befugnis prüfen, Frage einwerfen, Antwort lesen/schreiben, Liste je Spec.
     briefkasten_cli.richte_parser_ein(unter)
+    helfer_temp.richte_parser_ein(unter)  # #551
     p_ents = unter.add_parser("entscheidungen", help="Liste aller Entscheidungen einer Spec")
     p_ents.add_argument("spec")
 
@@ -911,6 +913,8 @@ def main(argv: list[str] | None = None) -> int:
         return _umrechnen(args)
     if args.befehl in briefkasten_cli.BEFEHLE:
         return briefkasten_cli.lauf(args)
+    if args.befehl in helfer_temp.BEFEHLE:
+        return helfer_temp.lauf(args)
     if args.befehl == "entscheidungen":
         return _entscheidungen(args)
     if args.befehl == "nest":

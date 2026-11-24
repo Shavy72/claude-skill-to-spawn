@@ -2453,6 +2453,25 @@ def _loeschen(ordner: Path, ist_worktree: bool) -> None:
         shutil.rmtree(ordner, onerror=hausmeister_windows.schreibschutz_weg)
 
 
+def helfer_ordner_loeschen(ort: Path, name: str) -> bool:
+    """Genau den Helfer-Temp-Ordner ``ort/name`` löschen (#551); ``False``, wenn er fehlt.
+
+    Namensregeln prüft :mod:`to_spawn.helfer_temp`; hier nur das Sicherheitsnetz:
+    ``ValueError`` (nichts gelöscht), wenn ``ort`` oder das Ziel ein Symlink ist, das Ziel kein
+    Ordner ist oder aufgelöst nicht direkt unter ``ort`` liegt (``..``, ``/``, leerer Name).
+    """
+    ziel = ort / name
+    if ort.is_symlink() or ziel.is_symlink():
+        raise ValueError(f"Helfer-Temp: Symlink in {ziel} abgelehnt")
+    if not ziel.exists():
+        return False
+    if not ziel.is_dir() or ziel.resolve().parent != ort.resolve():
+        raise ValueError(f"Helfer-Temp: {ziel} liegt nicht direkt unter {ort}")
+    _loeschen(ziel, ist_worktree=False)
+    log.info("Hausmeister: Helfer-Temp %s gelöscht", ziel)
+    return True
+
+
 def altbestand_pfad() -> Path:
     """Liste des Laptop-Altbestands (E16), neben dem Hausmeister-Log."""
     return _log_pfad().parent / "altbestand.json"
