@@ -265,3 +265,84 @@ def test_runde1_ausnahme_im_parser_sperrt(monkeypatch: pytest.MonkeyPatch) -> No
 )
 def test_runde1_tiefe_verschachtelung_sperrt(befehl: str) -> None:
     assert _sperrt(befehl)
+
+
+# --- PR 610, Fix-Runde 2: Träger-Regel (ein Teil gibt das Wort aus → ganzer Befehl Positivliste) ---
+
+#: Befund 1 — Prozess-Ersetzung als Ausgabe-Ziel.
+PROZESS_ZIEL_1 = [
+    "echo 'ja 5' | tee >(awk '{system($0)}')",
+    "echo 'ja 5' > >(awk '{system($0)}')",
+]
+
+#: Befund 2 — Fluss endet nicht an ``;`` in Gruppen, Schleifen, Subshells.
+GRUPPE_2 = [
+    "{ echo 'ja 5'; true; } | awk '{system($0)}'",
+    "(echo 'ja 5'; true) | awk '{system($0)}'",
+    "for i in 1; do echo 'ja 5'; true; done | awk '{system($0)}'",
+    "if true; then echo 'ja 5'; true; fi | awk '{system($0)}'",
+    "echo 'ja 5' | (ls; awk '{system($0)}')",
+    "echo 'ja 5' | { ls; awk '{system($0)}'; }",
+]
+
+#: Befund 3 — Umleitung und Ausführung im selben Befehl, Deskriptoren, coproc, mkfifo.
+UMLEITUNG_3 = [
+    "echo 'ja 5' > x.sh; chmod +x x.sh; ./x.sh",
+    "echo 'ja 5' > f; awk '{system($0)}' f",
+    "exec 3> >(awk '{system($0)}'); echo 'ja 5' >&3",
+    "coproc awk '{system($0)}'; echo 'ja 5' >&4",
+    "mkfifo p; awk '{system($0)}' p & echo 'ja 5' > p",
+    "echo 'ja 5' >&3",
+]
+
+#: Befund 4 — xargs mit unbekanntem langem Schalter.
+XARGS_4 = ["echo 'ja 5' | xargs --process-slot-var echo -I{} sh -ec '{}'"]
+
+#: Befund 5 — Schreib-Ziele, die später von selbst laufen (Start- und Hook-Dateien).
+STARTDATEI_5 = [
+    "cat >> /home/x/.bashrc <<'EOF'\nja 5\nEOF",
+    "cat >> .git/hooks/pre-commit <<'EOF'\nja 5\nEOF",
+    "echo 'ja 5' | tee -a ~/.bashrc",
+    "echo 'ja 5' >> \"$HOME/.zshrc\"",
+    "echo 'ja 5' > Documents/PowerShell/Microsoft.PowerShell_profile.ps1",
+]
+
+#: Eigene Funde derselben Klasse: Pager aus der Umgebung, rg-Vorfilter, find schreibt Dateien.
+KLASSE_EIGEN = [
+    "GIT_PAGER=sh git log -1 --format='ja 5'",
+    "echo 'ja 5' > f; rg --pre sh x f",
+    "find . -maxdepth 0 -fprintf x.sh 'ja 5'; sh x.sh",
+]
+
+
+@pytest.mark.parametrize(
+    "befehl",
+    PROZESS_ZIEL_1 + GRUPPE_2 + UMLEITUNG_3 + XARGS_4 + STARTDATEI_5 + KLASSE_EIGEN,
+)
+def test_runde2_umgehung_wird_gesperrt(befehl: str) -> None:
+    assert _sperrt(befehl), repr(befehl)
+
+
+#: Alltag der Bau-Agenten — Wert-Teile und reine Text-Befehle bleiben frei.
+@pytest.mark.parametrize(
+    "befehl",
+    [
+        "grep -rn ja .",
+        "grep -rn 'ja 5' to_spawn | head -5",
+        "rg ja to_spawn",
+        "cat datei | grep ja",
+        "cd pfad && git commit -m ja",
+        "git add -A && git commit -m 'ja 5' && git push origin zweig",
+        "git add -A && git commit -m \"$(cat <<'EOF'\nja 5\nEOF\n)\" && git push origin zweig",
+        "gh issue comment 5 --body \"$(cat <<'EOF'\nja 5\nEOF\n)\"",
+        "git log --grep=ja | head -5",
+        "git grep -n ja | wc -l",
+        "find . -name ja",
+        "echo 'ja' > notiz.txt",
+        "cat >> notiz.md <<'EOF'\nja 5\nEOF",
+        "cd d && grep -c ja datei",
+        "echo ja | tee notiz.txt",
+    ],
+)
+def test_runde2_alltag_bleibt_frei(befehl: str) -> None:
+    assert not _sperrt(befehl), repr(befehl)

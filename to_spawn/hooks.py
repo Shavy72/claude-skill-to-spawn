@@ -822,8 +822,13 @@ def ja_aufrufe(befehl: str) -> bool:
     if _JA_WIN_PFAD.search(befehl):  # Windows-Pfad: shlex verschluckt die Backslashes
         return True
     try:
-        teile, _ = _ja_zerlegen(befehl.replace("\\\n", ""))
-        return not _ja_rumpf_ok(teile, ersetzung=False) or _ja_teile_sperren(teile, befehl)
+        alle: list[_JaTeil] = []
+        teile, _ = _ja_zerlegen(befehl.replace("\\\n", ""), alle=alle)
+        return (
+            not _ja_rumpf_ok(teile, ersetzung=False)
+            or _ja_teile_sperren(teile, befehl)
+            or _ja_traeger_sperren(alle + teile)
+        )
     except _JaTreffer:
         return True
     except _JaUnsicher as grund:
@@ -860,7 +865,9 @@ def _ja_traegt(text: str) -> bool:
     return _ja_im_text(text) or "nutzer-antwort" in text.lower() or bool(_JA_WIN_PFAD.search(text))
 
 
-def _ja_zerlegen(text: str, i: int = 0, ende: str = "", tiefe: int = 0) -> tuple[list[_JaTeil], int]:
+def _ja_zerlegen(
+    text: str, i: int = 0, ende: str = "", tiefe: int = 0, alle: list[_JaTeil] | None = None
+) -> tuple[list[_JaTeil], int]:
     """``text`` ab ``i`` in einfache Befehle, bis ``ende`` (``)``/Backtick) oder Textende.
 
     Wie die Shell: Trenner nur außerhalb von Quotes; ``$(…)``, Backticks und ``<(…)``/``>(…)``
@@ -902,10 +909,12 @@ def _ja_zerlegen(text: str, i: int = 0, ende: str = "", tiefe: int = 0) -> tuple
             return teile, i + 1
         if zeichen == "`" or text.startswith("$(", i) or (not quote and text.startswith(("<(", ">("), i)):
             innen = i + (1 if zeichen == "`" else 2)
-            innere, weiter = _ja_zerlegen(text, innen, "`" if zeichen == "`" else ")", tiefe + 1)
+            innere, weiter = _ja_zerlegen(text, innen, "`" if zeichen == "`" else ")", tiefe + 1, alle)
             inhalt = text[innen : weiter - 1]
             if not _ja_rumpf_ok(innere, ersetzung=True) or _ja_teile_sperren(innere, inhalt):
                 raise _JaTreffer
+            if alle is not None and not any(teil.eingabe for teil in innere):
+                alle.extend(innere)  # reines ``$(cat <<'WORT' …)``: Wert, der Empfänger entscheidet
             platzhalter = "$ja" if _ja_traegt(inhalt) else "$x"
             puffer.append(f" {platzhalter} " if zeichen in "<>" else platzhalter)
             i = weiter
@@ -1033,6 +1042,128 @@ def _ja_teile_sperren(teile: list[_JaTeil], befehl: str) -> bool:
     return False
 
 
+def _ja_traeger_sperren(alle: list[_JaTeil]) -> bool:
+    """Träger-Regel (PR 610, Runde 2): Gibt ein Teil das Wort aus oder schreibt es (:func:`_ja_traeger`),
+    muss JEDER Teil des ganzen Befehls frei sein (:func:`_ja_teil_frei`) — gleich, wie er verbunden ist
+    (Pipe, ``;``, ``&&``, ``&``, Gruppe, Schleife, Subshell, Prozess-Ersetzung). So braucht kein Weg der
+    Ausgabe zu einem ausführenden Programm (Umleitung in eine Datei, Deskriptor, FIFO, Gruppe) eine eigene
+    Erkennung. ``alle`` = alle einfachen Befehle, auch die aus Ersetzungen; ein reines
+    ``$(cat <<'WORT' …)`` fehlt darin — seine Ausgabe prüft der Empfänger über den Platzhalter."""
+    zerlegt: list[tuple[_JaTeil, list[str]]] = []
+    for teil in alle:
+        try:
+            roh = shlex.split(teil.text)
+        except ValueError as fehler:
+            raise _JaUnsicher("shlex") from fehler
+        if roh or teil.eingabe:
+            zerlegt.append((teil, roh))
+    if not any(_ja_traeger(roh, teil.eingabe) for teil, roh in zerlegt):
+        return False
+    return not all(_ja_teil_frei(roh) for _, roh in zerlegt)
+
+
+def _ja_traeger(roh: list[str], eingabe: bool) -> bool:
+    """Der Teil kann das Wort ausgeben oder schreiben: es steht in seinen Wörtern oder seiner Eingabe.
+    Ausnahme Wert-Teil: bei ``git commit -m``, ``gh pr create --body`` … (:data:`_JA_TEXT_WERTE`)
+    zählt das Wort nur außerhalb der Text-Werte."""
+    if eingabe:
+        return True
+    kern = _befehlskern(roh)
+    name = _name(kern[0]).lower() if kern else ""
+    if name in ("git", "gh") and _ja_unterbefehl(kern, name)[0] in _JA_TEXT_WERTE:
+        roh = roh[: len(roh) - len(kern)] + _ja_ohne_text(kern, name)
+    return any(_ja_wort_in(w) for w in roh)
+
+
+#: Befehle, die in einem Befehl mit Träger frei sind, obwohl sie kein Text-Befehl sind: sie führen nichts aus.
+_JA_HARMLOS = {"cd", "pwd", "true", "false", ":", "mkdir", "test", "["}
+#: Shell-Schlüsselwörter, die nur Gruppen/Bedingungen öffnen oder schließen — der Befehl dahinter zählt.
+#: ``for``, ``case``, ``select``, ``function``, ``exec``, ``coproc`` fehlen bewusst: dort sperrt der Teil.
+_JA_KLAMMERWORTE = {"{", "}", "!", "do", "done", "then", "else", "elif", "fi", "if", "while", "until", "time"}
+#: Umleitungs-Wort (``>``, ``>>f``, ``2>``, ``&>``, ``<<<`` …); Gruppe 1 = angeklebtes Ziel.
+_JA_UMLEITUNG = re.compile(r"(?:\d+|&)?(?:>>|>\||>&|<&|<<<|<>|>|<)(.*)", re.S)
+#: Umleitung auf einen eigenen Deskriptor (``3>``, ``>&4``) — Weg zu ``exec``/``coproc``-Empfängern.
+_JA_DESKRIPTOR = re.compile(r"(?:^|\W)(?:[3-9]|[1-9]\d+)[<>]|[<>]&-?(?:[3-9]|[1-9]\d+)")
+#: Dateien, die später von selbst laufen (Shell-Start, Git-Hooks, PowerShell-Profil).
+_JA_STARTDATEIEN = {
+    *(".bashrc", ".bash_profile", ".bash_login", ".bash_logout", ".profile"),
+    *(".zshrc", ".zshenv", ".zprofile", ".zlogin"),
+}
+#: xargs-Schalter ohne Wert, mit Wert als nächstes Wort oder angeklebt, lang mit ``=Wert``.
+_JA_XARGS_OHNE_WERT = {"-0", "-r", "-t", "-x", "--null", "--no-run-if-empty", "--verbose", "--exit"}
+_JA_XARGS_MIT_WERT = {"-I", "-n", "-L", "-P", "-s", "-d", "-E", "-a"}
+_JA_XARGS_LANG = {"--max-args", "--max-lines", "--max-procs", "--max-chars", "--delimiter", "--arg-file", "--replace"}
+_JA_FIND_SCHREIBT = ("-fprint", "-fls")
+
+
+def _ja_startdatei(pfad: str) -> bool:
+    """``pfad`` (schon ohne Quotes) ist eine Datei, die später von selbst läuft."""
+    pfad = pfad.replace("\\", "/").lower()
+    return _ja_basis(pfad) in _JA_STARTDATEIEN or pfad.endswith("profile.ps1") or ".git/hooks/" in f"/{pfad}"
+
+
+def _ja_teil_frei(roh: list[str]) -> bool:
+    """Positivliste für jeden Teil eines Befehls mit Träger: Text-Befehl (:data:`_JA_NUR_TEXT`, ``find``
+    ohne Start/Schreib-Schalter, ``git log``/``git grep``/``gh … view|list`` ohne Ausgabe-Weg, ``xargs``
+    mit lauter bekannten Schaltern und freiem Ziel) oder :data:`_JA_HARMLOS`. Befehlsname wörtlich
+    (kein Pfad, keine Zuweisung davor). Nie frei: Deskriptor-Umleitung, Schreib-Ziel Startdatei."""
+    if any(_JA_DESKRIPTOR.search(w) for w in roh):
+        return False
+    woerter, ziele, k = [], [], 0
+    while k < len(roh):
+        wort = roh[k]
+        if ">" in wort:
+            rest = wort.rsplit(">", 1)[1].lstrip("|")
+            ziele.append(rest or (roh[k + 1] if k + 1 < len(roh) else ""))
+        if umleitung := _JA_UMLEITUNG.fullmatch(wort):
+            k += 1 if umleitung.group(1) else 2
+            continue
+        woerter.append(wort)
+        k += 1
+    while woerter and woerter[0] in _JA_KLAMMERWORTE:
+        woerter = woerter[1:]
+    if woerter and woerter[0] == "tee":
+        ziele += [w for w in woerter[1:] if not w.startswith("-")]
+    if any(_ja_startdatei(z) for z in ziele):
+        return False
+    if not woerter:
+        return True
+    name = woerter[0]
+    if name == "rg":
+        return not any(
+            (w.startswith("--pre") and not w.startswith("--pre-")) or w.startswith("--hostname-bin") for w in woerter
+        )
+    if name in _JA_NUR_TEXT or name in _JA_HARMLOS:
+        return True
+    if name == "find":
+        return not any(w in _JA_FIND_START or w.startswith(_JA_FIND_SCHREIBT) for w in woerter)
+    if name == "xargs":
+        return _ja_xargs_frei(woerter)
+    if name in ("git", "gh"):
+        unter, ab = _ja_unterbefehl(woerter, name)
+        return unter in _JA_TEXT_UNTERBEFEHLE and not _ja_git_ausgabe_weg(unter, woerter[ab:])
+    return False
+
+
+def _ja_xargs_frei(woerter: list[str]) -> bool:
+    """``xargs`` nur mit bekannten Schaltern; das Ziel (ohne Ziel: ``echo``) muss selbst frei sein.
+    Ein unbekannter Schalter sperrt — sein Wert könnte sonst für das Ziel gehalten werden."""
+    i = 1
+    while i < len(woerter) and woerter[i].startswith("-"):
+        wort = woerter[i]
+        if wort in _JA_XARGS_MIT_WERT:
+            i += 2
+        elif (
+            wort in _JA_XARGS_OHNE_WERT
+            or wort[:2] in _JA_XARGS_MIT_WERT
+            or ("=" in wort and wort.split("=", 1)[0] in _JA_XARGS_LANG)
+        ):
+            i += 1
+        else:
+            return False
+    return i >= len(woerter) or _ja_teil_frei(woerter[i:])
+
+
 def _ja_wort_in(wort: str) -> bool:
     """Das Wort in ``wort``, auch an eine Kurz-Schalter-Gruppe geklebt (``-x'ja 5'``)."""
     return bool(_JA_WORT.search(wort) or _JA_GEKLEBT.match(wort))
@@ -1079,14 +1210,10 @@ def _ja_ohne_text(woerter: list[str], name: str) -> list[str]:
     globaler Schalter davor (``git -c …``) wird ganz geprüft. Vor dem git-Unterbefehl zählen nur
     ``-C <ordner>`` und ``--no-pager``.
     """
-    i = 1
-    while name == "git" and i < len(woerter) and woerter[i] in ("-C", "--no-pager"):
-        i += 2 if woerter[i] == "-C" else 1
-    unter = (name, *woerter[i : i + (1 if name == "git" else 2)])
-    rest = woerter[i + len(unter) - 1 :]
+    unter, ab = _ja_unterbefehl(woerter, name)
+    rest = woerter[ab:]
     if unter in _JA_TEXT_UNTERBEFEHLE:
-        pager = unter == ("git", "grep") and any(w.startswith("--o") or re.match(r"-[^-]*O", w) for w in rest)
-        return woerter if pager else woerter[: i + len(unter) - 1]
+        return woerter if _ja_git_ausgabe_weg(unter, rest) else woerter[:ab]
     schalter = _JA_TEXT_WERTE.get(unter)
     if schalter is None:
         return woerter
@@ -1099,13 +1226,31 @@ def _ja_ohne_text(woerter: list[str], name: str) -> list[str]:
             k += 1  # Wert ist das nächste Wort
         elif not (wort.split("=", 1)[0] in schalter or re.fullmatch(rf"-[A-Za-z]*[{kurz}].+", wort, re.S)):
             uebrig.append(wort)
-    return woerter[: i + len(unter) - 1] + uebrig
+    return woerter[:ab] + uebrig
+
+
+def _ja_unterbefehl(woerter: list[str], name: str) -> tuple[tuple[str, ...], int]:
+    """``git``/``gh``-Unterbefehl (``("git", "commit")``, ``("gh", "pr", "create")``) und der Index
+    des ersten Worts dahinter. Vor dem git-Unterbefehl zählen nur ``-C <ordner>`` und ``--no-pager``."""
+    i = 1
+    while name == "git" and i < len(woerter) and woerter[i] in ("-C", "--no-pager"):
+        i += 2 if woerter[i] == "-C" else 1
+    unter = (name, *woerter[i : i + (1 if name == "git" else 2)])
+    return unter, i + len(unter) - 1
+
+
+def _ja_git_ausgabe_weg(unter: tuple[str, ...], rest: list[str]) -> bool:
+    """Ein Text-Unterbefehl gibt seine Ausgabe an ein Programm oder eine Datei (``git grep -O``/
+    ``--open-files-in-pager``, ``git log --output``, auch abgekürzt) — dann ist er kein Text-Befehl."""
+    if unter == ("git", "grep"):
+        return any(w.startswith("--o") or re.match(r"-[^-]*O", w) for w in rest)
+    return unter[0] == "git" and any(w.startswith("--ou") for w in rest)
 
 
 #: Befehle, deren Argumente nie ein Programm starten — nur dort darf ``ja`` als Wort stehen (#591).
 #: ``rg --pre``/``--hostname-bin`` prüft :func:`_rg_vorfilter_ja` vorher; ``find`` gilt nur ohne
 #: :data:`_JA_FIND_START`.
-_JA_NUR_TEXT = {"echo", "printf", "grep", "rg", "cat", "ls", "tee"}
+_JA_NUR_TEXT = {"echo", "printf", "grep", "rg", "cat", "ls", "tee", "head", "tail", "wc", "cut", "tr", "uniq"}
 _JA_FIND_START = {"-exec", "-execdir", "-ok", "-okdir"}
 #: Unterbefehle, deren Argumente alle Text sind (kein Schalter startet ein Programm).
 _JA_TEXT_UNTERBEFEHLE = {
@@ -1239,6 +1384,9 @@ def _nur_datei_heredoc(befehl: str) -> bool:
     zeilen = befehl.removesuffix("\n").split("\n")
     kopf = _DATEI_HEREDOC_KOPF.fullmatch(zeilen[0])
     if not kopf or len(zeilen) < 2:
+        return False
+    ziel = re.search(r">>? ?([A-Za-z0-9_./:-]+)", zeilen[0])
+    if ziel and _ja_startdatei(ziel.group(1)):  # Start-/Hook-Datei: läuft später von selbst (PR 610)
         return False
     wort = kopf.group(1) or kopf.group(2)
     return wort in zeilen[1:] and zeilen.index(wort, 1) == len(zeilen) - 1
