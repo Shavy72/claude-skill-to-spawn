@@ -1527,6 +1527,9 @@ SESSION_KOPF = "Bau-Session:"
 #: Marken aller eigenen Kommentare ohne Bau-Session (die prüft ``_ist_session_kommentar``):
 #: so beginnende Kommentare sind nie „Antwort des Menschen“.
 EIGENE_KOEPFE: tuple[str, ...] = (*AUFSEHER_KOEPFE, AUFPASSER_KOPF)
+#: Anfang des Annahme-Kommentars nach der Marke — schreibt :func:`_checkpoint`, liest
+#: :func:`annahme_schon_gesetzt` (#507).
+ANNAHME_ANFANG = "Annahme nach"
 
 
 @dataclass
@@ -1690,6 +1693,23 @@ def davids_antwort(kommentare: list[dict[str, Any]], seit: datetime) -> str:
     return ""
 
 
+def annahme_schon_gesetzt(kommentare: list[dict[str, Any]]) -> bool:
+    """Steht am Ticket schon eine Annahme des Aufsehers? Dann nie eine zweite (#507).
+
+    Die eine Stelle der Regel „höchstens einmal je Ticket, nie nach eigener Rücknahme“:
+    eine Rücknahme setzt eine frühere Annahme voraus, also reicht die Annahme selbst als
+    Merkmal. Gelesen wird das Ticket, nicht der Zustand des Aufsehers — der geht bei einem
+    Neustart verloren, und die eigene Bau-Log-Zeile der Annahme gilt sonst nach der Frist
+    als neuer Vorschlag (Probe-Lauf 2, #15: 11:34 Annahme, 12:08 Rücknahme, 12:51 erneut).
+    """
+    for eintrag in kommentare:
+        text = _kommentar_teile(eintrag)[1].lstrip()
+        for kopf in AUFSEHER_KOEPFE:
+            if text.startswith(kopf) and text[len(kopf) :].lstrip().startswith(ANNAHME_ANFANG):
+                return True
+    return False
+
+
 def mensch_noetig_was(eintrag: dict[str, Any]) -> str:
     """Kurztext eines „Mensch nötig“-Eintrags; alte Zeilen ohne ``grund`` gelten als beleg_rot.
 
@@ -1755,6 +1775,8 @@ def _checkpoint(
     frage_zeit = checkpoint_frage_zeit(zeilen, kommentare)
     if vorschlag is None and frage_zeit is None:
         return []  # Label gesetzt, aber noch keine Frage gestellt
+    if annahme_schon_gesetzt(kommentare):
+        return [f"#{n} Checkpoint: Annahme steht schon am Ticket — keine zweite, der Mensch antwortet selbst"]
     # Erst nach der Spur fragen: spart den gh-Aufruf und macht capo ohne Frage nie rot.
     blocker = gh.blocked_by(gh_repo, str(n))
     if blocker is None:
@@ -1801,7 +1823,7 @@ def _checkpoint(
         return [f"#{n} Checkpoint schon angenommen — nichts zu tun"]
     if dry_run:
         return [f"#{n} [Probe] würde Vorschlag annehmen: {_kurz(vorschlag.wahl)}"]
-    text = f"{WAECHTER_KOPF} Annahme nach {frist:.0f} min nach Doktrin — der Mensch kann kippen. Vorschlag: {vorschlag.wahl}"
+    text = f"{WAECHTER_KOPF} {ANNAHME_ANFANG} {frist:.0f} min nach Doktrin — der Mensch kann kippen. Vorschlag: {vorschlag.wahl}"
     befehl = f"python {(_SKILL / 'to_spawn.py').as_posix()}"
     text += f"\n\n{annahme_grenze(n, befehl)}"  # #490: Live-Grenze sofort im Kommentar
     if not befund.kommentiere(n, gh_repo, text):
