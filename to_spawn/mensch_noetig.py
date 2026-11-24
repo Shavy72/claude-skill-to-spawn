@@ -12,10 +12,16 @@ import json
 import logging
 import os
 from collections.abc import Callable
+from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 log = logging.getLogger(__name__)
+
+#: So lange nach dem ``review_offen``-Eintrag gilt ein fehlender Beleg als „Review läuft noch“
+#: (#530: Probe-Lauf 2 kam der Beleg 2 min 44 s nach dem Ruf).
+#: ponytail: feste Zeit statt Lebenszeichen des Reviews; Upgrade = Review-Dirigent schreibt Start-/Ende-Marke.
+REVIEW_WARTEZEIT_MIN = 15
 
 
 def pfad() -> Path:
@@ -26,6 +32,40 @@ def pfad() -> Path:
 def schluessel(eintrag: dict[str, Any]) -> str:
     """Eine Meldung je Session und Code-Stand — Folgezeilen desselben Stands (neue Zeit) nicht."""
     return f"{eintrag.get('session_id')}|{eintrag.get('fingerprint')}"
+
+
+def beleg_da(eintrag: dict[str, Any]) -> bool:
+    """Liegt im ``repo`` des Eintrags ein Review-Beleg zu seinem Fingerabdruck?
+
+    Gleicher Name wie ``beleg_pfad()`` im Review (``.review/beleg-<sha>-<moment>-<fp[:12]>.json``);
+    der Beleg-Inhalt (grün/rot) zählt hier nicht — ein roter Beleg meldet der Hook selbst als ``beleg_rot``.
+    """
+    repo = str(eintrag.get("repo") or "")
+    fp = str(eintrag.get("fingerprint") or "")[:12]
+    if not repo or not fp:
+        return False
+    ordner = Path(os.path.expanduser(repo)) / ".review"
+    return any(ordner.glob(f"beleg-*-{fp}.json"))
+
+
+def review_stand(eintrag: dict[str, Any], jetzt: datetime) -> Literal["melden", "laeuft", "belegt"]:
+    """Die eine Regel, ob ein Eintrag den Menschen ruft (#530).
+
+    ``belegt`` = Beleg liegt inzwischen vor (kein Ruf); ``laeuft`` = ``review_offen`` jünger als
+    :data:`REVIEW_WARTEZEIT_MIN` (Review läuft noch, später erneut prüfen); sonst ``melden``.
+    Andere Gründe (``beleg_rot``), fehlende/unlesbare Zeit und Zeit in der Zukunft (Uhr
+    gesprungen) melden sofort — im Zweifel rufen, nie still warten.
+    """
+    if eintrag.get("grund") != "review_offen":
+        return "melden"
+    if beleg_da(eintrag):
+        return "belegt"
+    try:
+        zeit = datetime.strptime(str(eintrag.get("zeit")), "%Y-%m-%dT%H:%M:%S%z")
+    except ValueError:
+        return "melden"
+    alter_min = (jetzt - zeit).total_seconds() / 60
+    return "laeuft" if 0 <= alter_min < REVIEW_WARTEZEIT_MIN else "melden"
 
 
 def _alter_schluessel(eintrag: dict[str, Any]) -> str:
@@ -95,7 +135,9 @@ def eintraege_fuer_lauf(
             eigene.append(eintrag)
             continue
         fremd.add(schluessel(eintrag))
-        log.warning("mensch_noetig: fremder Eintrag #%s ignoriert (anderes Repo/Worktree: %s)", nummer, ort or "ohne repo")
+        log.warning(
+            "mensch_noetig: fremder Eintrag #%s ignoriert (anderes Repo/Worktree: %s)", nummer, ort or "ohne repo"
+        )
     return eigene
 
 

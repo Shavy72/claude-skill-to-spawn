@@ -341,6 +341,14 @@ def _shebang_aufloesen(args: Any) -> Any:
 
 
 @pytest.fixture(autouse=True)
+def _kommentar_sperre_leeren() -> None:
+    """#530: die Doppel-Sperre in ``befund.kommentiere`` merkt je Prozess — jeder Test startet leer."""
+    from to_spawn import befund
+
+    befund._gesendet.clear()
+
+
+@pytest.fixture(autouse=True)
 def _git_bash_statt_wsl_stub(monkeypatch: pytest.MonkeyPatch) -> None:
     """Unter Windows startet ein blankes ``bash`` aus Tests Git-Bash, nie den WSL-Stub (#68).
 

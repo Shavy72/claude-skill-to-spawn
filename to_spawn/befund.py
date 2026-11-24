@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -135,10 +136,32 @@ def kommentiere(n: int | str, gh_repo: str, text: str, befehl: str = "comment") 
         raise ValueError(f"befehl {befehl!r} unbekannt — erlaubt: {', '.join(erlaubt)}")
     schalter = "--body" if befehl == "comment" else "--comment"
     args = ["issue", befehl, str(n), "--repo", gh_repo, schalter]
-    code, _ = gh.lauf([*args, kuerze(text)])
+    schluessel = (gh_repo, str(n), befehl, kuerze(text))
+    jetzt = _uhr()
+    if jetzt - _gesendet.get(schluessel, float("-inf")) < DOPPELT_SEKUNDEN:
+        log.info(
+            "gh issue %s #%s: gleicher Text vor < %s s schon gesendet — übersprungen (#530).",
+            befehl,
+            n,
+            DOPPELT_SEKUNDEN,
+        )
+        return True
+    code, _ = gh.lauf([*args, schluessel[3]])
     if code != 0:
         log.warning("gh issue %s #%s gescheitert (Exit %s).", befehl, n, code)
-    return code == 0
+        return False
+    for alt in [k for k, t in _gesendet.items() if jetzt - t >= DOPPELT_SEKUNDEN]:
+        del _gesendet[alt]  # Obergrenze: nur Einträge im Zeitfenster bleiben gemerkt (#530)
+    _gesendet[schluessel] = jetzt
+    return True
+
+
+#: Gleicher Text an dasselbe Ticket binnen so vieler Sekunden geht nur einmal raus (#530);
+#: gewollte Wiederholungen Minuten später bleiben unberührt. Nur geglückte Sendungen zählen.
+#: ponytail: Merker je Prozess; Upgrade = letzten Kommentar am Ticket lesen, falls Prozesse doppeln.
+DOPPELT_SEKUNDEN = 10.0
+_uhr: Callable[[], float] = time.monotonic
+_gesendet: dict[tuple[str, str, str, str], float] = {}
 
 
 def wieder_oeffnen(n: int, gh_repo: str, gruende: Sequence[tuple[str, str]], dry_run: bool) -> list[str]:
