@@ -779,5 +779,61 @@ def hook_spec_sperre(strom: TextIO | None = None, fehler: TextIO | None = None) 
     return 2
 
 
+# --- Ja-Sperre (#531): das Live-Ja kommt nur vom Menschen, nie aus einem Werkzeug-Aufruf ---------
+
+#: Unterbefehle von ``to_spawn.py``, die das Ja des Nutzers schreiben (``ja`` = Kurzform, #531).
+JA_UNTERBEFEHLE = {"ja", "nutzer-antwort"}
+
+
+def ja_aufrufe(befehl: str) -> bool:
+    """True, wenn ``befehl`` das Ja des Nutzers schreiben würde — die eine Stelle des Musters (#531).
+
+    Erkannt: ``ja``/``ja.cmd`` als Befehl, ``nutzer-antwort`` als Wort, ``to_spawn.py ja`` (auch mit
+    ``python`` davor); ``eval …`` und ``bash -c "…"`` werden ausgepackt.
+    ponytail: nur wörtliche Aufrufe — Variablen, ein Skript, ``python -c`` oder ein direkter
+    Schreibzugriff auf die Briefkasten-Datei umgehen die Sperre (gleiche Grenze wie ``hook_spec_sperre``);
+    Upgrade-Pfad: Prüfung im Briefkasten selbst über einen Nachweis, den nur der Nutzer-Weg trägt.
+    """
+    for woerter in _einfache_befehle(befehl):
+        name = _name(woerter[0]).removesuffix(".cmd")
+        if name == "eval":
+            if ja_aufrufe(" ".join(woerter[1:])):
+                return True
+        elif name in _SHELLS and (text := _shell_text(woerter[1:])) is not None:
+            if ja_aufrufe(text):
+                return True
+        elif (
+            name == "ja"
+            or "nutzer-antwort" in woerter
+            or (any(_name(w) == "to_spawn.py" for w in woerter[:3]) and JA_UNTERBEFEHLE & set(woerter))
+        ):
+            return True
+    return False
+
+
+def hook_ja_sperre(strom: TextIO | None = None, fehler: TextIO | None = None) -> int:
+    """PreToolUse-Hook (Bash) in ``~/.claude/settings.json``: Ja-Befehle aus Werkzeug-Aufrufen ablehnen.
+
+    Der ``!``-Befehl des Nutzers läuft nicht durch PreToolUse-Hooks, ein Bash-Werkzeug-Aufruf einer
+    Session schon — das ist der Menschen-Nachweis ohne Terminal (#531). Exit 2 bei Treffer, sonst 0;
+    ein Fehler im Hook lässt durch (wie die Spec-Sperre, #204) — dafür verlangt ``briefkasten``
+    die Eintragung der Sperre (fail-closed), nicht ihr Gelingen.
+    """
+    try:
+        roh = _eingabe(strom or sys.stdin).get("tool_input")
+        befehl = roh.get("command") if isinstance(roh, dict) else None
+        treffer = isinstance(befehl, str) and ja_aufrufe(befehl)
+    except Exception:  # der Hook darf die Session nie stören
+        log.exception("Ja-Sperre fehlgeschlagen — Befehl wird nicht geprüft.")
+        return 0
+    if treffer:
+        (fehler or sys.stderr).write(
+            "Gesperrt: das Live-Ja gibt nur der Nutzer selbst (`! ja <N>` im Eingabefeld). "
+            "Eine Session meldet ihm die Frage und wartet.\n"
+        )
+        return 2
+    return 0
+
+
 #: Pfad der Skill-CLI für den Hinweis (dort liegt sie in jeder Installation).
 SKILL_CLI = (Path(__file__).resolve().parent.parent / "to_spawn.py").as_posix()

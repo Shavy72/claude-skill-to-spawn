@@ -152,7 +152,10 @@ def test_cli_von_nutzer_abgelehnt(tmp_path: Path) -> None:
 
 def test_cli_nutzer_antwort_ohne_terminal_verweigert(tmp_path: Path) -> None:
     fid = _id(_cli(tmp_path, "frage", "7", "--frage", "Live?", "--vorschlag", "nein").stdout)
-    lauf = _cli(tmp_path, "nutzer-antwort", "7", "--id", fid, "--wahl", "ja", "--grund", "x")
+    # #531: tmp-HOME ohne eingetragene Ja-Sperre → ohne Terminal fail-closed, egal was auf dieser Maschine installiert ist
+    lauf = _cli(
+        tmp_path, "nutzer-antwort", "7", "--id", fid, "--wahl", "ja", "--grund", "x", HOME=str(tmp_path), USERPROFILE=str(tmp_path)
+    )
     assert lauf.returncode == 2, lauf.stderr
     assert _cli(tmp_path, "antwort", "7", "--id", fid).returncode == 2
 

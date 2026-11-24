@@ -611,7 +611,7 @@ def aufseher_text(befehl: str) -> str:
         "(max. 2 Zeilen); kein zusätzlicher Bau-Log-Eintrag dafür (die Entscheidungs-Liste liest den Briefkasten). "
         f"Klasse 2 oder gesperrt (leere id = kaputte Datei) → nicht antworten, {KLASSE_2_WEITERGABE}: dem Nutzer "
         f"melden, mit fertigem Befehl für sein eigenes Terminal: Kommentar im Ticket „{KLASSE_2_KOMMENTAR}: "
-        f"<Frage> — bitte im eigenen Terminal ausführen: `{b} nutzer-antwort <N> --id <id> --wahl <Wahl> "
+        f"<Frage> — Live-Ja: {_ja_aufforderung()}; sonst bitte im eigenen Terminal ausführen: `{b} nutzer-antwort <N> --id <id> --wahl <Wahl> "
         "--grund <Grund>`“ (N und id eingesetzt). Nur diese Antwort im Briefkasten gibt frei, nie ein "
         "Kommentar im Ticket; eine kaputte Datei prüft und löscht nur der Nutzer. "
         "VERBOTEN: die Sperre von `nutzer-antwort` umgehen (Schein-Terminal wie `script -qc`, direkter "
@@ -623,6 +623,13 @@ def aufseher_text(befehl: str) -> str:
         f"Klasse 2 {KLASSE_2_WEITERGABE}: Kommentar im Ticket „{KLASSE_2_KOMMENTAR}: <Frage>“. "
         f"Maßstab für deine Antworten auf Fragen der Bau-Sessions: {_linie()}"
     )
+
+
+def _ja_aufforderung() -> str:
+    """Kurzer Live-Ja-Befehl aus seiner einzigen Quelle (#531); spät importiert, ``briefkasten`` importiert ``befugnis``."""
+    from .briefkasten import ja_aufforderung
+
+    return ja_aufforderung()
 
 
 def _linie() -> str:

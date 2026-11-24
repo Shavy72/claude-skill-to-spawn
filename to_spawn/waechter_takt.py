@@ -324,7 +324,8 @@ def bremse_text(schluessel: str, n: int) -> str:
     return (
         f"{_bremse_kopf(kennung)} {n} Takten offen, der Aufseher "
         f"hat nicht entschieden — der Takt zeigt sie ab jetzt nur noch alle {BREMSE_ABSTAND_S // 60} min.\n"
-        f"Ansehen: `{befehl} offene {ticket}` · Antwort nur im eigenen Terminal: "
+        f"Ansehen: `{befehl} offene {ticket}` · Antwort nur vom Nutzer selbst: "
+        f"{briefkasten.ja_aufforderung(ticket)} (Live-Ja) oder im eigenen Terminal "
         f"`{befehl} nutzer-antwort {ticket} --id <id> --wahl <Wahl> --grund <Grund>`"
     )
 

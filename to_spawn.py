@@ -747,6 +747,7 @@ def main(argv: list[str] | None = None) -> int:
     unter.add_parser(
         "hook-spec-sperre", help="PreToolUse-Hook: rohes `gh issue close <Spec>` sperren (E2-4)"
     )
+    unter.add_parser("hook-ja-sperre", help="PreToolUse-Hook: Ja-Befehle aus Werkzeug-Aufrufen sperren (#531)")
     p_schliessen = unter.add_parser(
         "spec-schliessen", help="Spec schließen, nur wenn alle Folge-Tickets erledigt sind (E2-4)"
     )
@@ -895,6 +896,8 @@ def main(argv: list[str] | None = None) -> int:
         return hooks.hook_subagent_stop()
     if args.befehl == "hook-spec-sperre":
         return hooks.hook_spec_sperre()
+    if args.befehl == "hook-ja-sperre":
+        return hooks.hook_ja_sperre()
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     if args.befehl == "eintrag":
         return _eintrag(args)
