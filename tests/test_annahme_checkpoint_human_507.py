@@ -95,3 +95,58 @@ def test_regel_erkennt_nur_annahme_des_aufsehers() -> None:
     assert not capo.annahme_schon_gesetzt([k("Bau-Session: Annahme nach 60 min wäre falsch")])
     assert not capo.annahme_schon_gesetzt([k("Annahme nach 60 min bitte")])  # Mensch
     assert not capo.annahme_schon_gesetzt([])
+
+
+# --- #511: Reste aus dem Review von 509 ----------------------------------------
+
+
+def test_eigene_annahme_zeile_ist_kein_vorschlag_und_keine_frage(
+    welt: dict[str, Path],  # noqa: F811
+) -> None:
+    """Wurzel (#511): die Bau-Log-Zeile, die die Annahme selbst schreibt, ist keine Spur der
+    Session — sonst gilt sie nach der Frist als neuer Vorschlag mit neuer Frist."""
+    _erste_annahme_und_ruecknahme(welt)
+    zeilen = cp._bau_log(welt, "902")
+    assert [z for z in zeilen if z.get("typ") == "entscheidung"], zeilen
+    assert capo.checkpoint_vorschlag(zeilen, []) is None
+    assert capo.checkpoint_frage_zeit(zeilen, []) is None
+
+
+def test_mensch_zitiert_aufseher_annahme_sperrt_nicht(
+    welt: dict[str, Path],  # noqa: F811
+) -> None:
+    """Ein Zitat des Aufseher-Texts (``> Aufseher: Annahme nach …``) stammt vom Menschen —
+    es ist keine Annahme am Ticket, die erste echte Annahme kommt trotzdem."""
+    cp._checkpoint_stellen(welt)
+    zitat = "> Aufseher: Annahme nach 60 min nach Doktrin — der Mensch kann kippen.\n\nWas heißt das hier?"
+    cp._kommentar(welt, "902", "david", zitat, 300)
+    cp._kommentar(welt, "902", "bau-bot", ABNAHME, 200)
+    ergebnis = _capo(welt)
+    assert ergebnis.returncode == 0, _text(ergebnis)
+    assert "Annahme steht schon am Ticket" not in ergebnis.stdout, _text(ergebnis)
+    assert len(_annahmen(welt)) == 1, cp._texte(welt, "902")
+    assert not capo.annahme_schon_gesetzt([{"body": zitat}])
+
+
+def test_erste_annahme_nach_60_min_kommt(welt: dict[str, Path]) -> None:  # noqa: F811
+    """Positiv-Fall als eigener Test: ohne frühere Annahme kommt nach 61 min genau eine."""
+    cp._checkpoint_stellen(welt)
+    cp._kommentar(welt, "902", "bau-bot", ABNAHME, 61)
+    ergebnis = _capo(welt)
+    assert ergebnis.returncode == 0, _text(ergebnis)
+    assert "#902 Checkpoint-Annahme nach 61 min" in ergebnis.stdout, _text(ergebnis)
+    assert "Annahme steht schon am Ticket" not in ergebnis.stdout, _text(ergebnis)
+    assert len(_annahmen(welt)) == 1, cp._texte(welt, "902")
+    assert cp._labels(welt, "902") == []
+
+
+def test_meldezeile_annahme_steht_nur_einmal(welt: dict[str, Path]) -> None:  # noqa: F811
+    """Die Zeile „Annahme steht schon am Ticket“ kommt einmal, nicht bei jedem Lauf (#511)."""
+    _erste_annahme_und_ruecknahme(welt)
+    _bau_log_zurueckdatieren(welt, 77)
+    erster = _capo(welt)
+    assert "Annahme steht schon am Ticket" in erster.stdout, _text(erster)
+    zweiter = _capo(welt)
+    assert zweiter.returncode == 0, _text(zweiter)
+    assert "Annahme steht schon am Ticket" not in zweiter.stdout, _text(zweiter)
+    assert len(_annahmen(welt)) == 1, cp._texte(welt, "902")
