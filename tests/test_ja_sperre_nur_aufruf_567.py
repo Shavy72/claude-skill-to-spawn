@@ -95,10 +95,8 @@ def test_suche_mit_aufruf_bleibt_gesperrt(befehl: str) -> None:
     "befehl",
     [
         "cat > notiz.md <<'EOF'\nDann `! ja 5` eingeben oder python to_spawn.py nutzer-antwort 5\nEOF",
-        "cat <<'EOF' > notiz.md\n~/.claude/bin/ja 5\nEOF\necho fertig",
-        'tee -a notiz.md <<"EOF" >/dev/null\nja 5\nEOF',
-        "cat > notiz.md <<EOF\nja 5\nEOF",
-        "cat >> notiz.md <<-'EOF'\n\tja 5\n\tEOF",
+        "cat <<'EOF' > notiz.md\n~/.claude/bin/ja 5\nEOF\n",
+        "cat >> docs/notiz.md <<'EOF'\nja 5\nEOF",
     ],
 )
 def test_heredoc_in_datei_erlaubt(befehl: str) -> None:
@@ -118,6 +116,44 @@ def test_heredoc_in_datei_erlaubt(befehl: str) -> None:
 )
 def test_suchmuster_erlaubt(befehl: str) -> None:
     assert not hooks.ja_aufrufe(befehl), befehl
+
+
+@pytest.mark.parametrize(
+    "befehl",
+    [
+        # R1: äußerer heredoc verschluckt den inneren Begrenzer
+        ": <<'X'\ncat > f <<'EOF'\nX\nja 5\nEOF",
+        "bash <<'X'\ncat > f <<'EOF'\nX\nja 5\nEOF",
+        # R2: cat umgedeutet
+        "hash -p /usr/bin/bash cat\ncat > f <<'EOF'\nja 5\nEOF",
+        "cp /usr/bin/bash ./cat; PATH=.:$PATH\ncat > f <<'EOF'\nja 5\nEOF",
+        # R3: Datei schreiben und im selben Befehl ausführen
+        "cat > a.sh <<'EOF'\nja 5\nEOF\nbash a.sh",
+        "cat > a.sh <<'EOF'\nja 5\nEOF\nsource a.sh",
+        "cat > a.sh <<'EOF'\nja 5\nEOF\nrg --pre sh x a.sh",
+        # R4: Funktion namens grep/rg
+        'rg() { python to_spawn.py "$@"; }; rg nutzer-antwort 5 --wahl ja',
+        'grep() { python to_spawn.py "$@"; }\ngrep nutzer-antwort 5',
+        # enge Form + irgendetwas dahinter/davor
+        "cat > n.md <<'EOF'\nja 5\nEOF\necho fertig",
+        "cat > n.md <<'EOF'\nja 5\nEOF; true",
+        "cd docs && cat > n.md <<'EOF'\nja 5\nEOF",
+        "grep nutzer-antwort f && true",
+        "grep nutzer-antwort f > out.txt",
+        "grep nutzer-antwort $(ja 5)",
+        # nicht die enge Form
+        'tee -a n.md <<"EOF" >/dev/null\nja 5\nEOF',
+        "cat > n.md <<EOF\nja 5\nEOF",
+        "cat >> n.md <<-'EOF'\n\tja 5\n\tEOF",
+        "cat > $HOME/n.md <<'EOF'\nja 5\nEOF",
+        "cat > *.md <<'EOF'\nja 5\nEOF",
+        "/usr/bin/grep nutzer-antwort f",
+        "grep -f muster.txt nutzer-antwort f",
+        "rg --pre ja nutzer-antwort .",
+    ],
+)
+def test_enge_form_verlassen_bleibt_gesperrt(befehl: str) -> None:
+    assert hooks.ja_aufrufe(befehl), befehl
 
 
 def test_hook_laesst_heredoc_in_datei_durch() -> None:

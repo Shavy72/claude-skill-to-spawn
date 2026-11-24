@@ -792,14 +792,15 @@ def ja_aufrufe(befehl: str) -> bool:
     Erkannt: ``ja``/``ja.cmd`` als Befehl, ``nutzer-antwort`` als Wort, ``to_spawn.py ja`` (auch mit
     ``python`` davor); ``eval …``, ``bash -c "…"``, ``powershell``/``pwsh``/``cmd`` (auch
     ``-EncodedCommand``) werden ausgepackt.
-    Bewusst breit, nur zwei eng definierte Ausnahmen (#567): der Rumpf eines heredocs, der per
-    ``cat``/``tee`` in eine Datei geht (:func:`_ohne_datei_heredocs`), und das Suchmuster von
-    ``grep``/``rg`` (:func:`_ohne_suchmuster`). Passt eine Form nicht genau, gilt die Ausnahme nicht.
+    Bewusst breit, nur zwei Positivlisten auf den GANZEN Befehl (#567): ``cat > datei <<'WORT'`` +
+    Rumpf (:func:`_nur_datei_heredoc`) und eine einzelne ``grep``/``rg``-Anweisung (:func:`_nur_suche`).
+    Passt der Befehl nicht exakt, wird er wie bisher geprüft — im Zweifel gesperrt.
     ponytail: nur wörtliche Aufrufe — Variablen, ein Skript, ``python -c`` oder ein direkter
     Schreibzugriff auf die Briefkasten-Datei umgehen die Sperre (gleiche Grenze wie ``hook_spec_sperre``);
     Upgrade-Pfad: Prüfung im Briefkasten selbst über einen Nachweis, den nur der Nutzer-Weg trägt.
     """
-    befehl = _ohne_datei_heredocs(befehl)
+    if _nur_datei_heredoc(befehl) or _nur_suche(befehl):
+        return False
     if _JA_WIN_PFAD.search(befehl):  # Windows-Pfad: shlex verschluckt die Backslashes
         return True
     for woerter in _einfache_befehle(befehl):
@@ -813,9 +814,9 @@ def ja_aufrufe(befehl: str) -> bool:
         elif name.lower().removesuffix(".exe") in _JA_WIN_SHELLS:
             if _ja_in_win_shell(woerter[1:]):
                 return True
-        elif name in _SUCHER and (woerter := _ohne_suchmuster(woerter)) is None:
-            return True  # ``rg --pre ja``: der Vorfilter läuft als Befehl
-        elif (  # bei grep/rg ohne Suchmuster (#567), sonst der ganze Teilbefehl
+        elif name == "rg" and _rg_vorfilter_ja(woerter):
+            return True
+        elif (
             name == "ja"
             or "nutzer-antwort" in woerter
             or (any(_name(w) == "to_spawn.py" for w in woerter[:3]) and JA_UNTERBEFEHLE & set(woerter))
@@ -866,118 +867,66 @@ def _ja_als_argument(woerter: list[str]) -> bool:
 
 # --- Ausnahmen und Windows-Shells der Ja-Sperre (#567) ---------------------------------------------
 
-#: heredoc-Operator mit Ende-Wort (``<<'EOF'``, ``<<-"EOF"``, ``<<EOF``); ``<<<`` ist keiner.
-_HEREDOC = re.compile(r"(?<!<)<<(?!<)(-?)[ \t]*(?:'(\w+)'|\"(\w+)\"|(\w+))(?![^\s<>])")
-#: Kann ``cat``/``tee`` umdeuten (Funktion, Alias) — dann gilt die heredoc-Ausnahme nie.
-_CAT_UMGEDEUTET = re.compile(r"\b(?:cat|tee)\s*\(|\bfunction\s+(?:cat|tee)\b|\balias\b")
-#: Ein Wort ohne Shell-Sonderzeichen (Dateiziel), auch ganz in Anführungszeichen ohne ``$``/Backtick.
-_DATEI_WORT = r"""(?:[^\s;&|()<>`$'"\\]+|'[^']*'|"[^"$`\\]*")+"""
-#: Die Zeile ohne heredoc-Operator: nur ``cat > datei`` oder ``tee [-a] datei [>/dev/null]``.
-_HEREDOC_IN_DATEI = re.compile(
-    rf"\s*(?:cat\s*>>?\s*{_DATEI_WORT}|tee(?:\s+-a)?\s+{_DATEI_WORT}(?:\s*>\s*/dev/null)?)\s*"
+#: Einziges erlaubtes Dateiziel: ein Wort ohne ``$``, Backtick, Glob, Quote, ``~`` oder Leerzeichen.
+_DATEI = r"[A-Za-z0-9_./:-]+"
+#: Kopfzeile der einzigen erlaubten heredoc-Form: ``cat > datei <<'WORT'`` (auch ``>>``, auch Ziel hinten).
+_DATEI_HEREDOC_KOPF = re.compile(
+    rf"[ \t]*cat[ \t]*(?:>>?[ \t]*{_DATEI}[ \t]*<<'(\w+)'|<<'(\w+)'[ \t]*>>?[ \t]*{_DATEI})[ \t]*"
 )
 
 
-def _ohne_datei_heredocs(befehl: str) -> str:
-    """``befehl`` ohne die Rümpfe von heredocs, die nur in eine Datei geschrieben werden.
+def _nur_datei_heredoc(befehl: str) -> bool:
+    """True, wenn der GANZE Befehl genau ``cat > datei <<'WORT'`` + Rumpf + Endzeile ist.
 
-    Gestrichen wird nur, wenn die Zeile genau einen heredoc trägt, sonst nur ``cat > datei`` bzw.
-    ``tee datei`` steht (keine Pipe, kein ``;``/``&&``, keine Befehls-Ersetzung), das Ende-Wort
-    gefunden wird und der Rumpf nichts ausführt: Ende-Wort in Anführungszeichen, oder ohne sie
-    ein Rumpf ganz ohne ``$`` und Backtick (dort würde die Shell ersetzen). Alles andere bleibt
-    stehen und wird Zeile für Zeile geprüft — ``bash <<EOF``, ``cat <<EOF | sh`` bleiben gesperrt.
-    Die Zeile muss als neuer Befehl beginnen: keine offene Quote davor, keine ``\\``-Fortsetzung
-    der Vorzeile (``bash -s \\`` + ``cat <<EOF``); eine ``cat``/``tee``-Funktion oder ein Alias im
-    Befehl schaltet die Ausnahme ganz ab.
+    Positivliste (#567): davor und danach nichts (keine zweite Anweisung, Pipe, Verkettung),
+    Begrenzer nur in einfachen Anführungszeichen (die Shell ersetzt im Rumpf dann nichts), kein
+    ``tee``, kein ``<<-``. Die erste Zeile gleich ``WORT`` muss die letzte sein — sonst endet der
+    heredoc früher und der Rest liefe als Befehl. Jede andere Form: ``False`` (normal prüfen).
     """
-    if _CAT_UMGEDEUTET.search(befehl):
-        return befehl
-    zeilen = befehl.split("\n")
-    raus: list[str] = []
-    i = 0
-    while i < len(zeilen):
-        zeile = zeilen[i]
-        raus.append(zeile)
-        i += 1
-        ops = list(_HEREDOC.finditer(zeile))
-        if (
-            len(ops) != 1
-            or not _HEREDOC_IN_DATEI.fullmatch(zeile[: ops[0].start()] + zeile[ops[0].end() :])
-            or (len(raus) > 1 and raus[-2].rstrip("\r").endswith("\\"))
-            or _quote_offen("\n".join(raus[:-1]) + "\n" + zeile[: ops[0].start()])
-        ):
-            continue
-        tab, ende = ops[0].group(1), ops[0].group(2) or ops[0].group(3) or ops[0].group(4)
-        gequotet = ops[0].group(4) is None
-        for j in range(i, len(zeilen)):
-            kandidat = zeilen[j].rstrip("\r")
-            if (kandidat.lstrip("\t") if tab else kandidat) == ende:
-                rumpf = "\n".join(zeilen[i:j])
-                if gequotet or not ("$" in rumpf or "`" in rumpf):
-                    i = j + 1  # Rumpf + Ende-Zeile fallen weg
-                break
-    return "\n".join(raus)
+    zeilen = befehl.removesuffix("\n").split("\n")
+    kopf = _DATEI_HEREDOC_KOPF.fullmatch(zeilen[0])
+    if not kopf or len(zeilen) < 2:
+        return False
+    wort = kopf.group(1) or kopf.group(2)
+    return zeilen.index(wort, 1) == len(zeilen) - 1 if wort in zeilen[1:] else False
 
 
-def _quote_offen(text: str) -> bool:
-    """True, wenn am Ende von ``text`` eine Quote offen ist (``#``-Kommentare zählen mit: im Zweifel offen)."""
-    quote, i = "", 0
-    while i < len(text):
-        zeichen = text[i]
-        if zeichen == "\\" and quote != "'":
-            i += 1
-        elif quote:
-            quote = "" if zeichen == quote else quote
-        elif zeichen in "'\"":
-            quote = zeichen
-        i += 1
-    return bool(quote)
+#: Zeichen, die in der erlaubten Such-Form nirgends stehen dürfen (Ersetzung, Escape, Umleitung, Zeilen).
+_SUCHE_VERBOTEN = frozenset("$`\\\n\r<>")
 
 
-#: Suchwerkzeuge, deren Suchmuster nie ausgeführt wird (Name ohne Pfad/``.exe``).
-_SUCHER = {"grep", "egrep", "fgrep", "rg"}
-#: Schalter von grep/rg mit eigenem Wert (``-A 3``, ``-g '*.py'``). Fehlt einer, fällt im
-#: schlimmsten Fall der falsche Wert weg und das Muster bleibt stehen — dann wird gesperrt.
-_SUCH_MIT_WERT = {
-    *("-A", "-B", "-C", "-m", "-f", "-d", "-D", "-g", "-t", "-j", "-M"),
-    *("--glob", "--iglob", "--type", "--type-not", "--max-count", "--file", "--context"),
-    *("--after-context", "--before-context", "--include", "--exclude", "--exclude-dir"),
-}
+def _nur_suche(befehl: str) -> bool:
+    """True, wenn der GANZE Befehl genau eine ``grep``/``rg``-Anweisung ist, die nichts ausführt.
 
-
-def _ohne_suchmuster(woerter: list[str]) -> list[str] | None:
-    """``grep``/``rg``-Befehl ohne sein Suchmuster; ``None``, wenn ``rg --pre`` ein Ja startet.
-
-    Das Muster ist der Wert von ``-e``/``--regexp`` oder sonst das erste Positions-Argument.
-    Mit ``--pre`` (rg führt den Vorfilter als Befehl aus) gilt die Ausnahme nicht.
+    Positivliste (#567): erstes Wort wortgleich ``grep`` oder ``rg`` (kein Pfad, nichts davor),
+    keine Pipe/Verkettung/Klammer außerhalb von Quotes, kein ``$``/Backtick/Backslash/Umleitung,
+    kein ``--pre`` (rg startet den Vorfilter als Befehl), kein ``-f``/``--file``. Grep und rg führen
+    ihre Argumente nie aus — dann darf das Suchmuster jeden Text tragen. Sonst ``False``.
     """
-    args = woerter[1:]
-    for k, arg in enumerate(args):
-        if arg.startswith("--pre"):
-            wert = arg.split("=", 1)[1] if "=" in arg else (args[k + 1] if k + 1 < len(args) else "")
-            return None if ja_aufrufe(wert) or _ja_basis(wert) in ("ja", "ja.cmd") else woerter
-    explizit = any(a in ("-e", "--regexp") or a.startswith(("--regexp=", "-e")) for a in args)
-    rest = [woerter[0]]
-    i, muster_weg, nur_positionen = 0, explizit, False
-    while i < len(args):
-        arg = args[i]
-        i += 1
-        if nur_positionen or not arg.startswith("-") or arg == "-":
-            if muster_weg:
-                rest.append(arg)
-            muster_weg = True
-        elif arg == "--":
-            nur_positionen = True
-        elif arg in ("-e", "--regexp"):
-            i += 1
-        elif arg.startswith(("--regexp=", "-e")):
-            continue
-        else:
-            rest.append(arg)
-            if arg in _SUCH_MIT_WERT and i < len(args):
-                rest.append(args[i])
-                i += 1
-    return rest
+    if _SUCHE_VERBOTEN & set(befehl) or befehl.split(None, 1)[:1] not in (["grep"], ["rg"]):
+        return False
+    try:
+        lexer = shlex.shlex(befehl, posix=True, punctuation_chars=True)
+        lexer.whitespace_split = True
+        woerter = list(lexer)
+    except ValueError:
+        return False
+    for wort in woerter[1:]:
+        if wort and set(wort) <= set(lexer.punctuation_chars):
+            return False  # ``;`` ``&&`` ``|`` ``(`` außerhalb von Quotes
+        if wort.startswith(("--pre", "--file")) or (wort[:1] == "-" and wort[1:2] != "-" and "f" in wort):
+            return False
+    return woerter[:1] in (["grep"], ["rg"])
+
+
+def _rg_vorfilter_ja(woerter: list[str]) -> bool:
+    """True, wenn ``rg --pre <befehl>`` ein Ja als Vorfilter startet."""
+    for k, wort in enumerate(woerter):
+        if wort.startswith("--pre") and not wort.startswith("--pre-"):
+            wert = wort.split("=", 1)[1] if "=" in wort else (woerter[k + 1] if k + 1 < len(woerter) else "")
+            if ja_aufrufe(wert) or _ja_basis(wert) in ("ja", "ja.cmd"):
+                return True
+    return False
 
 
 #: Windows-Shells, deren Argumente selbst ein Befehl sind (``powershell -Command …``, ``cmd /c …``).
