@@ -97,3 +97,33 @@ def eintraege_fuer_lauf(
         fremd.add(schluessel(eintrag))
         log.warning("mensch_noetig: fremder Eintrag #%s ignoriert (anderes Repo/Worktree: %s)", nummer, ort or "ohne repo")
     return eigene
+
+
+FREMD_MAX = 500  # Obergrenze gemerkter fremder Schlüssel; älteste fliegen zuerst raus
+
+
+def eintraege_mit_zustand(
+    spec: int,
+    zustand: dict[str, Any],
+    sichern: Callable[[], None] | None,
+    repo: Path,
+    worktree: Callable[[int], Path],
+) -> list[dict[str, Any]]:
+    """Wie :func:`eintraege_fuer_lauf`, aber die gemerkten fremden Schlüssel liegen in
+    ``zustand["mensch_noetig_fremd"]`` (Liste, älteste zuerst, max. ``FREMD_MAX``).
+
+    Laden, Änderung erkennen, Kappen und Sichern (``sichern()``) macht allein dieses Modul;
+    ein kaputter Wert (keine Liste, falsche Typen) zählt als leer. ``sichern=None`` (dry_run):
+    ``zustand`` bleibt unberührt.
+    ponytail: ändert sich ``--wt-basis`` zwischen Läufen, kann ein eigener Eintrag als fremd
+    gemerkt werden — Zustand je wt-basis wäre der Upgrade-Pfad.
+    """
+    roh = zustand.get("mensch_noetig_fremd")
+    alt = [s for s in roh if isinstance(s, str)] if isinstance(roh, list) else []
+    fremd = set(alt)
+    eigene = eintraege_fuer_lauf(spec, set(zustand.get("mensch_noetig_gesehen") or []), repo, worktree, fremd=fremd)
+    neu = alt + sorted(fremd - set(alt))
+    if sichern is not None and (neu != alt or roh != alt):
+        zustand["mensch_noetig_fremd"] = neu[-FREMD_MAX:]
+        sichern()
+    return eigene
