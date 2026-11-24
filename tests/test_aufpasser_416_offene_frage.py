@@ -143,3 +143,46 @@ def test_kaputte_briefkasten_datei_haelt_fenster(staging_9003: Welt) -> None:
     time.sleep(0.5)
     assert FENSTER in fenster_namen(), welt.log()
     assert not _geschlossen(welt), welt.kommentare()
+
+
+# Fix-Runde 1 (Review PR #436): die offene Frage verhindert nur das Schließen, nicht die
+# Behandlung einer beendeten Session.
+
+
+def test_tote_session_mit_offener_frage_laeuft_in_stufenkette(staging_9003: Welt) -> None:
+    """(f) Pane nur noch Shell (Claude beendet) + offene Frage ⇒ wie beendete Session:
+    ohne Gesprächs-ID „braucht den Menschen“, statt ewig still stehen zu bleiben."""
+    from test_aufpasser_236_fix import _fenster, _still_seit
+
+    welt = staging_9003
+    _frage_einwerfen(welt)
+    _fenster(welt, FENSTER, "bash --norc --noprofile")
+    _still_seit(welt, FENSTER, 100, stufe=0)
+    assert welt.lauf() == 0
+    assert FENSTER in fenster_namen(), welt.log()
+    assert not _geschlossen(welt), welt.kommentare()
+    treffer = [
+        k
+        for k in welt.kommentare()
+        if "Session beendet, keine Gesprächs-ID — braucht den Menschen" in k
+    ]
+    assert len(treffer) == 1, (welt.kommentare(), welt.log())
+    assert welt.eintrag(FENSTER)["stufe"] == 3
+
+
+def test_lebende_session_mit_offener_frage_bleibt_stehen(staging_9003: Welt) -> None:
+    """(g) Claude lebt, wartet auf die Antwort, lange still ⇒ kein Schließen, kein
+    Anstupsen, kein Fortsetzen — das Fenster bleibt unberührt."""
+    from test_aufpasser_236_fix import _still_seit
+
+    welt = staging_9003
+    _frage_einwerfen(welt)
+    welt.fenster_fake_claude(TICKET, str(uuid.uuid4()))
+    _still_seit(welt, FENSTER, 100, stufe=0)
+    assert welt.lauf() == 0
+    time.sleep(0.5)
+    assert FENSTER in fenster_namen(), welt.log()
+    assert not _geschlossen(welt), welt.kommentare()
+    assert not any("angestupst" in k or "fortgesetzt" in k for k in welt.kommentare())
+    assert welt.eintrag(FENSTER).get("stufe", 0) == 0
+    assert "offene Frage im Briefkasten" in welt.log()
