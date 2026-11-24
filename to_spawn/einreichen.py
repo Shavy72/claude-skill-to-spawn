@@ -87,7 +87,12 @@ def _wiederholt(lauf: Callable[[], T], nochmal: Callable[[T], bool], was: str) -
     for versuch in range(1, SPERRE_VERSUCHE):
         if not nochmal(erg):
             break
-        log.info("einreichen: %s gescheitert (Versuch %d), warte %.1f s", was, versuch, SPERRE_PAUSE_S)
+        log.info(
+            "einreichen: %s gescheitert (Versuch %d), warte %.1f s",
+            was,
+            versuch,
+            SPERRE_PAUSE_S,
+        )
         time.sleep(SPERRE_PAUSE_S)
         erg = lauf()
     return erg
@@ -115,7 +120,9 @@ def _git(ordner: Path, *args: str) -> str:
 
     aus = _wiederholt(lauf, gesperrt, f"git {args[0]} (gesperrt)")
     if aus.returncode != 0:
-        raise _Rot(ROT, f"git {' '.join(args[:2])} scheiterte: {aus.stderr.strip()[:300]}")
+        raise _Rot(
+            ROT, f"git {' '.join(args[:2])} scheiterte: {aus.stderr.strip()[:300]}"
+        )
     return aus.stdout.strip()
 
 
@@ -145,14 +152,24 @@ def _pr_gemergt(ordner: Path, nr: str) -> bool:
         "gh pr view",
     )
     if code != 0:
-        raise _Rot(UNBEKANNT, f"Pull-Request #{nr}: Stand-Abfrage ohne Antwort ({code}): {aus[:300]}")
+        raise _Rot(
+            UNBEKANNT,
+            f"Pull-Request #{nr}: Stand-Abfrage ohne Antwort ({code}): {aus[:300]}",
+        )
     return aus.strip() == "MERGED"
 
 
 def _projekt_weg(ordner: Path, haupt: str) -> bool:
     """Das Projekt bringt eigene Push-Sperre + Einreich-Dienst mit (übernimmt ``ticket/*``)."""
     erg = subprocess.run(
-        ["git", "-C", str(ordner), "cat-file", "-e", f"origin/{haupt}:{nest.GIT_HOOKS_INSTALLER.as_posix()}"],
+        [
+            "git",
+            "-C",
+            str(ordner),
+            "cat-file",
+            "-e",
+            f"origin/{haupt}:{nest.GIT_HOOKS_INSTALLER.as_posix()}",
+        ],
         capture_output=True,
         timeout=GIT_MAX_S,
         check=False,
@@ -163,7 +180,9 @@ def _projekt_weg(ordner: Path, haupt: str) -> bool:
 def _zweig(ordner: Path, nummer: str, haupt: str) -> tuple[str, bool]:
     """(Ziel-Zweig auf origin, vom Hauptzweig?) — nur eigener Ticket-Zweig oder der Hauptzweig."""
     aktuell = _git(ordner, "rev-parse", "--abbrev-ref", "HEAD")
-    if aktuell.startswith(f"ticket/{nummer}-") and len(aktuell) > len(f"ticket/{nummer}-"):
+    if aktuell.startswith(f"ticket/{nummer}-") and len(aktuell) > len(
+        f"ticket/{nummer}-"
+    ):
         return aktuell, False
     if aktuell == haupt:
         return f"ticket/{nummer}-uebergabe", True
@@ -175,7 +194,13 @@ def _zweig(ordner: Path, nummer: str, haupt: str) -> tuple[str, bool]:
 
 
 def _nur_aufseher_dateien(ordner: Path, haupt: str) -> None:
-    pfade = [p for p in _git(ordner, "diff", "--name-only", f"origin/{haupt}...HEAD").splitlines() if p]
+    pfade = [
+        p
+        for p in _git(
+            ordner, "diff", "--name-only", f"origin/{haupt}...HEAD"
+        ).splitlines()
+        if p
+    ]
     fremd = [p for p in pfade if not p.startswith(AUFSEHER_ORDNER)]
     if fremd:
         raise _Rot(
@@ -183,6 +208,20 @@ def _nur_aufseher_dateien(ordner: Path, haupt: str) -> None:
             f"vom Hauptzweig nur Übergaben unter {', '.join(AUFSEHER_ORDNER)} — Code gehört in ein Ticket: "
             + ", ".join(fremd[:5]),
         )
+
+
+def _volle_sha(ordner: Path, sha: str) -> str:
+    """Volle SHA (40 Hex) für ``--match-head-commit``; kurze wird aufgeweitet, Unauflösbares → ``_Rot`` (#464)."""
+    try:
+        voll = _git(ordner, "rev-parse", "--verify", "--quiet", f"{sha}^{{commit}}")
+    except _Rot:
+        voll = ""
+    if len(voll) != 40 or any(z not in "0123456789abcdef" for z in voll):
+        raise _Rot(
+            AUFRUF,
+            f"SHA „{sha}“ nicht eindeutig auflösbar — für den Merge die volle SHA (40 Zeichen) angeben",
+        )
+    return voll
 
 
 def _pull_request(ordner: Path, zweig: str, haupt: str, sha: str) -> str:
@@ -217,9 +256,16 @@ def _pruefung(ordner: Path, basis: str) -> str:
         urteil = pruef.pruefen(ordner, basis, "HEAD", art=art)
     else:
         log.warning("einreichen: %s", pruefplan.NICHT_EINGERICHTET)
-        urteil = pruef.pruefen(ordner, basis, "HEAD", warnung=pruefplan.NICHT_EINGERICHTET)
+        urteil = pruef.pruefen(
+            ordner, basis, "HEAD", warnung=pruefplan.NICHT_EINGERICHTET
+        )
     gelaufen = urteil.zeile.get("art", "alter Ablauf")
-    log.info("einreichen: Prüfung %s %.2f s (Exit %s)", gelaufen, urteil.zeile.get("gesamt_s", 0.0), urteil.exit)
+    log.info(
+        "einreichen: Prüfung %s %.2f s (Exit %s)",
+        gelaufen,
+        urteil.zeile.get("gesamt_s", 0.0),
+        urteil.exit,
+    )
     if urteil.exit != 0:
         kurz = urteil.zeile.get("fehler_kurz") or "Prüfung nicht grün"
         raise _Rot(ROT, f"Prüfung rot (Exit {urteil.exit}): {kurz}")
@@ -253,22 +299,35 @@ def _einreichen(ordner: Path, nummer: str) -> Ergebnis:
     sha = _git(ordner, "rev-parse", "HEAD")
     if _ist_vorfahr(ordner, sha, basis):
         return Ergebnis(OK, f"nichts einzureichen: {sha[:7]} ist schon auf {basis}")
-    if vom_haupt and not _ist_vorfahr(ordner, basis, sha) and not _git(ordner, "rev-list", "--no-merges", f"{sha}..{basis}"):
+    if (
+        vom_haupt
+        and not _ist_vorfahr(ordner, basis, sha)
+        and not _git(ordner, "rev-list", "--no-merges", f"{sha}..{basis}")
+    ):
         # #476: nur Merge-Commits eigener, schon gemergter Einreichungen fehlen (Nachziehen verpasst)
         try:
             _git(ordner, "merge", "--no-edit", "--quiet", basis)
         except _Rot:
             # Konflikt: keinen halben Merge im geteilten Klon liegen lassen
             subprocess.run(
-                ["git", "-C", str(ordner), "merge", "--abort"], capture_output=True, timeout=GIT_MAX_S, check=False
+                ["git", "-C", str(ordner), "merge", "--abort"],
+                capture_output=True,
+                timeout=GIT_MAX_S,
+                check=False,
             )
             raise
         sha = _git(ordner, "rev-parse", "HEAD")
     if not _ist_vorfahr(ordner, basis, sha):
-        raise _Rot(ROT, f"{basis} ist weiter: erst {basis} einarbeiten, dann erneut einreichen")
-    gesperrt = uebergabe_sichern.gesperrte_pfade(ordner, "HEAD", "--not", "--remotes=origin")
+        raise _Rot(
+            ROT, f"{basis} ist weiter: erst {basis} einarbeiten, dann erneut einreichen"
+        )
+    gesperrt = uebergabe_sichern.gesperrte_pfade(
+        ordner, "HEAD", "--not", "--remotes=origin"
+    )
     if gesperrt:
-        raise _Rot(ROT, f"enthält Dateien, die nie hochgeladen werden: {', '.join(gesperrt)}")
+        raise _Rot(
+            ROT, f"enthält Dateien, die nie hochgeladen werden: {', '.join(gesperrt)}"
+        )
     if vom_haupt:
         _nur_aufseher_dateien(ordner, haupt)
         hinweis = ""
@@ -276,18 +335,38 @@ def _einreichen(ordner: Path, nummer: str) -> Ergebnis:
         hinweis = _pruefung(ordner, basis)
     _git(ordner, "push", "--quiet", "origin", f"{sha}:refs/heads/{zweig}")
     if _projekt_weg(ordner, haupt):
-        return Ergebnis(OK, f"{zweig} ({sha[:7]}) gepusht{hinweis} — der Einreich-Dienst des Projekts übernimmt")
+        return Ergebnis(
+            OK,
+            f"{zweig} ({sha[:7]}) gepusht{hinweis} — der Einreich-Dienst des Projekts übernimmt",
+        )
     nr = _pull_request(ordner, zweig, haupt, sha)
-    _gh(ordner, "pr", "merge", nr, "--merge", "--match-head-commit", sha)
+    _gh(
+        ordner,
+        "pr",
+        "merge",
+        nr,
+        "--merge",
+        "--match-head-commit",
+        _volle_sha(ordner, sha),
+    )
     try:
         _git(ordner, "fetch", "--quiet", "origin", haupt)
     except _Rot as rot:  # #476: Nachziehen scheitert (Sperre) — der Pull-Request-Stand entscheidet
         if not _pr_gemergt(ordner, nr):
             raise
-        log.warning("einreichen #%s: %s — Pull-Request #%s ist gemergt", nummer, rot.text, nr)
-        return Ergebnis(OK, f"{sha[:7]} gemergt (Pull-Request #{nr}, {zweig}){hinweis} — {basis} lokal nicht nachgezogen")
+        log.warning(
+            "einreichen #%s: %s — Pull-Request #%s ist gemergt", nummer, rot.text, nr
+        )
+        return Ergebnis(
+            OK,
+            f"{sha[:7]} gemergt (Pull-Request #{nr}, {zweig}){hinweis} — {basis} lokal nicht nachgezogen",
+        )
     if not _ist_vorfahr(ordner, sha, basis):
-        raise _Rot(ROT, f"Pull-Request #{nr} gemeldet, aber {sha[:7]} fehlt auf {basis}")
+        raise _Rot(
+            ROT, f"Pull-Request #{nr} gemeldet, aber {sha[:7]} fehlt auf {basis}"
+        )
     if vom_haupt:
         _git(ordner, "merge", "--ff-only", "--quiet", basis)
-    return Ergebnis(OK, f"{sha[:7]} ist auf {basis} (Pull-Request #{nr}, {zweig}){hinweis}")
+    return Ergebnis(
+        OK, f"{sha[:7]} ist auf {basis} (Pull-Request #{nr}, {zweig}){hinweis}"
+    )

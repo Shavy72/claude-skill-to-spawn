@@ -12,10 +12,22 @@ from to_spawn import einreichen
 
 def _repo(tmp_path: Path) -> tuple[Path, str]:
     def git(*a: str) -> str:
-        return subprocess.run(["git", "-C", str(tmp_path), *a], check=True, capture_output=True, text=True).stdout.strip()
+        return subprocess.run(
+            ["git", "-C", str(tmp_path), *a], check=True, capture_output=True, text=True
+        ).stdout.strip()
 
     git("init", "-q")
-    git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "x")
+    git(
+        "-c",
+        "user.email=t@t",
+        "-c",
+        "user.name=t",
+        "commit",
+        "-q",
+        "--allow-empty",
+        "-m",
+        "x",
+    )
     return tmp_path, git("rev-parse", "HEAD")
 
 
