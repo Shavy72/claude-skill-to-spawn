@@ -26,6 +26,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from datetime import date
 from pathlib import Path
@@ -131,6 +132,79 @@ def auf_speicher_warten(
 ) -> int:
     """Warten, bis ``speicher.platz_frei_hier`` (eigene tmux-Sitzung, #409) frei meldet; Rückgabe = Zahl der Wartezyklen (#257 F3)."""
     return speicher.auf_platz_warten(konfig, wer=wer, pruefen=pruefen, schlafen=schlafen, takt_s=takt_s)
+
+
+#: Umgebungsvariable mit der Warte-Datei (#560): ``spawn_srv.sh`` setzt sie im Fenster ``wache <S>``
+#: und schreibt dorthin die Tickets, die beim Start „wartet auf Platz“ bekamen.
+WARTE_ENV = "TO_SPAWN_WARTE_DATEI"
+#: Takt des Nachstarters (#560): so viele Sekunden nach „Platz frei“ startet das nächste Fenster.
+NACHSTART_TAKT_S = 20
+
+
+def wartende_nachstarten(
+    datei: Path,
+    spec: int,
+    repo: Path,
+    *,
+    env: dict[str, str] | None = None,
+    schlafen=time.sleep,
+    takt_s: float = NACHSTART_TAKT_S,
+    max_laeufe: int | None = None,
+) -> int:
+    """Startet die Fenster nach, die ``spawn_srv.sh`` in ``datei`` als wartend vermerkt hat (#560).
+
+    Je Takt ein ``spawn_srv.sh <S> --tickets <liste>`` (leere Liste: ``--nur-wache``) — es
+    überspringt Laufendes und prüft vor jedem Fenster den Speicher. Exit 0 ohne „wartet auf
+    Platz“ = alles läuft → Datei weg, Ende. Sonst (wartet weiter, voll, Fehler) nächster Takt.
+    Datei fehlt → sofort Ende. Rückgabe = Zahl der ``spawn_srv.sh``-Läufe.
+    """
+    from to_spawn import bash_wahl
+
+    skript = Path(_SKILL) / "skripte" / "spawn_srv.sh"
+    laeufe = 0
+    while datei.is_file() and (max_laeufe is None or laeufe < max_laeufe):
+        tickets = datei.read_text(encoding="utf-8").strip()
+        auswahl = ["--tickets", tickets] if tickets else ["--nur-wache"]
+        umgebung = dict(os.environ if env is None else env, TO_SPAWN_REPO=str(repo))
+        laeufe += 1
+        try:
+            lauf = bash_wahl.lauf(
+                [str(skript), str(spec), *auswahl],
+                cwd=str(repo),
+                env=umgebung,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=600,
+            )
+        except (OSError, subprocess.SubprocessError) as fehler:
+            log.warning("Nachstart Spec #%s: spawn_srv.sh nicht lauffähig: %s", spec, fehler)
+        else:
+            ausgabe = (lauf.stdout or "") + (lauf.stderr or "")
+            if lauf.returncode == 0 and "wartet auf Platz" not in ausgabe:
+                datei.unlink(missing_ok=True)
+                log.info("Nachstart Spec #%s: wartende Fenster laufen (%s)", spec, tickets or "nur Aufseher")
+                return laeufe
+            log.info("Nachstart Spec #%s: wartet weiter (Exit %s)", spec, lauf.returncode)
+        schlafen(takt_s)
+    return laeufe
+
+
+def _nachstarter_starten(spec: int, repo: Path) -> None:
+    """Nachstarter-Faden (#560), nur wenn ``spawn_srv.sh`` eine Warte-Datei mitgegeben hat."""
+    wert = os.environ.get(WARTE_ENV, "").strip()
+    if not wert:
+        return
+    umgebung = dict(os.environ)  # vor dem Umgebungs-Wechsel für Claude festhalten
+
+    def faden() -> None:
+        try:
+            wartende_nachstarten(Path(wert), spec, repo, env=umgebung)
+        except Exception:  # Faden darf den Aufseher nie mitreißen
+            log.exception("Nachstart Spec #%s gescheitert", spec)
+
+    threading.Thread(target=faden, name=f"nachstart-{spec}", daemon=True).start()
 
 
 MODELL = "claude-opus-5-5"
@@ -398,6 +472,8 @@ def main() -> int:
     # Speicher-Schutz (#257 Paket B, Fixrunde 1 F3): RAM knapp oder Obergrenze an
     # Claude-Sessions erreicht → warten statt Exit 5, damit Fenster und Grund bleiben.
     auf_speicher_warten(konfig, wer=f"Aufseher #{a.spec}")
+    # Wartende Fenster (#560): sobald wieder Platz ist, in Sekunden statt erst beim Aufpasser-Takt.
+    _nachstarter_starten(a.spec, REPO_ORDNER)
     # Vertrauens-Dialog für die Repo-Wurzel vorab bestätigen (#257) — Fehler nur Warnung.
     vertrauen.still_sicherstellen(REPO_ORDNER)
     # Aus einer Claude-Session gestartet erben Kind-Sessions die Markierung

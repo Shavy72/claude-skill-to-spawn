@@ -170,7 +170,10 @@ aufseher_laeuft() {
 # ~/.bashrc (``REPO``), sonst startet ``bau`` in einem anderen Repo (#212). Seit #257 rufen
 # die Fenster die Skill-Skripte direkt auf (``bau.py``/``wache.py``), nicht die Shell-
 # Funktionen ``bau``/``wache`` aus ~/.bashrc — ein Fremd-Repo hat die nicht.
-VORSPANN="export REPO=$(printf %q "$REPO") TO_SPAWN_HOME=$(printf %q "$SKILL_HOME") TO_SPAWN_REPO=$(printf %q "$REPO");"
+# Warte-Datei (#560): Tickets, die „wartet auf Platz“ bekamen; der Aufseher (wache.py) startet sie
+# daraus in Sekunden nach, sobald Platz frei ist, und löscht sie, wenn alles läuft.
+WARTE_DATEI="$REPO/.to-spawn/wartet-auf-platz-$SPEC"
+VORSPANN="export REPO=$(printf %q "$REPO") TO_SPAWN_HOME=$(printf %q "$SKILL_HOME") TO_SPAWN_REPO=$(printf %q "$REPO") TO_SPAWN_WARTE_DATEI=$(printf %q "$WARTE_DATEI");"
 # GEPLANT = echte Fensterbefehle, KURZ = Kurzform ``bau <N> [--umzug …]`` / ``wache <S>`` für
 # Anzeige und Fenstername (erste zwei Wörter; sessions_stand/aufpasser lesen die Namen) —
 # beide Listen laufen parallel.
@@ -179,7 +182,11 @@ KURZ=()
 if [ "$OHNE_WACHE" -eq 0 ]; then
   z="$(zustand_von "$SPEC")"
   if [ -z "$z" ] || [ "$z" = "aus" ]; then
-    GEPLANT+=("$(printf %q "$PY") $(printf %q "$SKILL_HOME/skripte/wache.py") $SPEC")
+    # Stirbt wache.py (Absturz, OOM-Kill), startet das Fenster es bis zu 3-mal neu (#560) —
+    # sonst läge der wartende Rest still, bis der Aufpasser-Takt das Fenster neu anlegt.
+    # ponytail: feste 3 Versuche à 5 s, Zähler/Meldung über den Aufpasser wenn Abstürze häufig sind
+    WACHE_BEFEHL="$(printf %q "$PY") $(printf %q "$SKILL_HOME/skripte/wache.py") $SPEC"
+    GEPLANT+=("for v in 1 2 3; do $WACHE_BEFEHL && break; echo \"wache.py Exit \$? — Neustart \$v/3\" >&2; sleep 5; done")
     KURZ+=("wache $SPEC")
   else
     echo "Aufseher für Spec #$SPEC läuft bereits ($z) — übersprungen."
@@ -280,6 +287,11 @@ for i in "${!GEPLANT[@]}"; do
   # Kein Platz, aber der Aufseher läuft (#460): er startet die fehlenden Fenster selbst nach,
   # sobald Platz frei ist — das ist der vorgesehene Weg, kein Fehler.
   if [ "$rc" -eq 8 ]; then
+    # ponytail: Umzug-Fenster nicht vermerkt (brauchen ihre Ref), die startet der Aufpasser-Takt nach
+    if [ -z "$UMZUG_REF" ]; then
+      mkdir -p "${WARTE_DATEI%/*}"
+      printf '%s\n' "${KURZ[@]:$i}" | awk '$1=="bau"{print $2}' | paste -sd, - > "$WARTE_DATEI"
+    fi
     echo "wartet auf Platz: ${KURZ[*]:$i} — $WARTE_GRUND; Aufseher startet nach, sobald Platz frei ist."
     exit 0
   fi
