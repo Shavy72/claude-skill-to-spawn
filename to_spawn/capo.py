@@ -54,7 +54,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from . import bau_log, befund, briefkasten, config, gh, komplett_lauf, melder, mensch_noetig, staging_schalter, starter, ticket_zustand, vorfall
+from . import bau_log, befund, briefkasten, config, gh, komplett_lauf, konsole, melder, mensch_noetig, staging_schalter, starter, ticket_zustand, vorfall
 from . import sperre as _sperre
 from .pruefplan import Moment
 
@@ -668,7 +668,7 @@ def vps_kopf(vps: dict[str, Any]) -> str | None:
     ]
     try:
         fertig = subprocess.run(
-            befehl, capture_output=True, text=True, timeout=60, check=False
+            befehl, capture_output=True, **konsole.UNTERPROZESS_TEXT, timeout=60, check=False
         )
     except (OSError, subprocess.TimeoutExpired) as fehler:
         log.warning("VPS-HEAD nicht lesbar: %s", fehler)
@@ -1237,8 +1237,7 @@ def tmux_fenster(spec: int) -> list[str] | None:
         fertig = subprocess.run(
             befehl,
             capture_output=True,
-            text=True,
-            errors="replace",
+            **konsole.UNTERPROZESS_TEXT,
             timeout=TMUX_ZEIT_S,
             check=False,
         )
@@ -1400,8 +1399,7 @@ def _starte_folge_runde(
             warten=True,
             notnagel=None,
             capture_output=True,
-            text=True,
-            errors="replace",
+            **konsole.UNTERPROZESS_TEXT,
             timeout=TMUX_ZEIT_S,
             check=False,
         )

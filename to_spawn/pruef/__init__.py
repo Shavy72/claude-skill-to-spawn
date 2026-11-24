@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from to_spawn import config, pruefplan
+from to_spawn import config, konsole, pruefplan
 from to_spawn.pruef import (
     adapter_node,
     adapter_py,
@@ -53,7 +53,7 @@ def _sha(repo: Path, ref: str) -> str | None:
             ["git", "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"],
             cwd=repo,
             capture_output=True,
-            text=True,
+            **konsole.UNTERPROZESS_TEXT,
             check=False,
         )
     except OSError:

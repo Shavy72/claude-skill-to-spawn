@@ -42,7 +42,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Literal
 
-from . import config
+from . import config, konsole
 from . import sperre as _sperre
 
 #: Nur noch Alt-Naht für ältere Tests (``skipif``/Gegen-Sperre); gesperrt wird hier allein
@@ -126,7 +126,7 @@ def _docker(befehl: tuple[str, ...]) -> tuple[bool, str]:
         lauf = subprocess.run(
             [programm, *befehl],
             capture_output=True,
-            text=True,
+            **konsole.UNTERPROZESS_TEXT,
             timeout=ZEITLIMIT_S,
             check=False,
         )
