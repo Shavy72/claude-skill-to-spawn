@@ -564,4 +564,5 @@ def test_wechsel_scheitert_nie_am_log(welt: dict[str, Path]) -> None:
     assert ergebnis.returncode == 0, _text(ergebnis)
     assert len(_aufrufe(welt)) == 2
     assert [m["art"] for m in _mails(welt)] == ["waechter_ausweich"]
-    assert "Bau-Log" in ergebnis.stderr
+    log = (welt["repo"] / ".to-spawn" / f"wache_{SPEC}.log").read_text(encoding="utf-8")
+    assert "Bau-Log" in log
