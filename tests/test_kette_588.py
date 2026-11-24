@@ -16,6 +16,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
+from rundschau_beispiel import rundschau_args
 from test_waechter_213 import (
     SPEC,
     _beleg,
@@ -60,6 +61,7 @@ def _ablegen(kette: dict[str, Path], spec_fertig: datetime) -> None:
             *_LINKS,
             "--spec-fertig",
             spec_fertig.isoformat(timespec="seconds"),
+            *rundschau_args(kette["repo"], SPEC),  # #529: Abnahme verlangt ein gültiges Deck
         ],
         capture_output=True,
         text=True,

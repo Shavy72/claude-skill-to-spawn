@@ -2938,7 +2938,7 @@ def _abschluss_versuch(repo: Path, spec: int, konfig: dict[str, Any], zustand: d
             stage = _stage_ohne_zugang(str((konfig.get("staging") or {}).get("url") or ""))
             grund = "fehlt (Aufseher hat kein Paket abgelegt)"
             fertig = str(zustand.get("spec_fertig_seit") or datetime.now().astimezone().isoformat(timespec="seconds"))
-            args = ["--stage", stage, "--rundschau", grund, "--tests", grund, "--spec-fertig", fertig]
+            args = ["--stage", stage, "--rundschau", grund, "--tests", grund, "--ohne-rundschau", "--spec-fertig", fertig]
             code, out, err = _abschluss_lauf(repo, "ablegen", spec, *args)
             if code != 0:
                 text = _abschluss_ausgabe("ablegen", spec, code, out, err)

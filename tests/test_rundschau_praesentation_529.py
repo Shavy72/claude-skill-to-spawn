@@ -9,20 +9,21 @@ from __future__ import annotations
 import base64
 import json
 import os
+import struct
 import subprocess
 import sys
 from pathlib import Path
 from typing import Any
 
 import pytest
+from rundschau_beispiel import png as _png
 
 from to_spawn import rundschau_deck as rd
 
 SKILL = Path(__file__).resolve().parent.parent
-_PNG = base64.b64decode(
-    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg=="
-)
-_SVG = b'<svg xmlns="http://www.w3.org/2000/svg" width="40" height="20"><rect width="40" height="20"/></svg>'
+
+
+_SVG = b'<svg xmlns="http://www.w3.org/2000/svg" width="400" height="240"><rect width="400" height="240"/></svg>'
 
 
 def _eintrag(t: str, ts: str, was: str = "Frage → Wahl", **mehr: str) -> dict[str, str]:
@@ -48,7 +49,7 @@ EINTRAEGE = [
 @pytest.fixture
 def bild(tmp_path: Path) -> Path:
     p = tmp_path / "b.png"
-    p.write_bytes(_PNG + b"\0" * 80)
+    p.write_bytes(_png())
     return p
 
 
@@ -144,7 +145,9 @@ def test_viele_entscheidungen_bleiben_pruefbar(bild: Path) -> None:
     ]
     deck = rd.erzeuge(_texte(bild), viele)
     assert rd.pruefe(deck, viele) == []
-    assert "overflow-x:auto" in deck
+    assert (
+        'width="360"' in deck
+    )  # senkrechter Zeitstrahl, nicht 170 px je Eintrag in die Breite
 
 
 def test_teil1_textwueste_faellt_durch(bild: Path) -> None:
@@ -155,7 +158,7 @@ def test_teil1_textwueste_faellt_durch(bild: Path) -> None:
 
 
 def test_leeres_bild_faellt_durch(bild: Path) -> None:
-    deck = _deck(bild).replace(base64.b64encode(_PNG + b"\0" * 80).decode(), "AAAA")
+    deck = _deck(bild).replace(base64.b64encode(_png()).decode(), "AAAA")
     assert any("Bild" in m for m in rd.pruefe(deck, EINTRAEGE))
 
 
@@ -265,3 +268,170 @@ def test_abschluss_paket_ohne_deck_kein_bereit(tmp_path: Path) -> None:
     )
     assert lauf.returncode == 4, lauf.stdout + lauf.stderr
     assert "Deck" in lauf.stdout + lauf.stderr
+
+
+# --- Fix-Runde 535 --------------------------------------------------------------
+
+
+def _ohne_bild(deck: str, titel: str, ersatz: str = "") -> str:
+    """Ersetzt in der Folie mit dieser Überschrift die Bild-Figur."""
+    a = deck.index(f"<h2>{titel}</h2>")
+    b, c = deck.index("<figure>", a), deck.index("</figure>", a) + len("</figure>")
+    return deck[:b] + ersatz + deck[c:]
+
+
+def test_pflicht_rundschau_datei_bei_abnahme(tmp_path: Path, bild: Path) -> None:
+    def lauf(*extra: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [sys.executable, str(SKILL / "skripte" / "abschluss_paket.py"), "ablegen", "5", "--repo", str(tmp_path),
+             "--stage", "https://s.example", "--rundschau", "https://r.example", "--tests", "https://t.example", *extra],
+            capture_output=True, text=True, encoding="utf-8", timeout=60, check=False,
+            env={**os.environ, "PYTHONIOENCODING": "utf-8", "TO_SPAWN_ABSCHLUSS_ORDNER": str(tmp_path / "a")},
+        )  # fmt: skip
+
+    ohne = lauf()
+    assert ohne.returncode == 4, ohne.stdout + ohne.stderr
+    assert "--rundschau-datei" in ohne.stdout + ohne.stderr
+    assert not (tmp_path / ".to-spawn").exists(), "nichts darf abgelegt sein"
+    deck = tmp_path / "d.html"
+    deck.write_text(_deck(bild, []), encoding="utf-8")
+    assert lauf("--rundschau-datei", str(deck)).returncode == 0
+    assert lauf("--stand", "live").returncode == 0  # Pflicht gilt nur für die Abnahme
+
+
+def test_aufseher_text_nennt_den_schalter() -> None:
+    import importlib.util
+
+    from to_spawn import waechter_takt
+
+    spec = importlib.util.spec_from_file_location(
+        "wache_529", SKILL / "skripte" / "wache.py"
+    )
+    assert spec and spec.loader
+    wache = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(wache)
+    for prompt in (waechter_takt.PROMPT, wache.PROMPT):
+        ablegen = prompt.index("abschluss_paket.py ablegen {S} --stand abnahme")
+        assert "--rundschau-datei" in prompt[ablegen : ablegen + 200]
+
+
+def test_offenes_ist_pflicht_in_teil_2(bild: Path) -> None:
+    deck = _deck(bild).replace('data-art="offenes"', 'data-art="x"')
+    assert any("Offenes" in m for m in rd.pruefe(deck, EINTRAEGE))
+    t = _texte(bild)
+    del t["teil2"][1]["art"]
+    with pytest.raises(ValueError, match="Offenes"):
+        rd.erzeuge(t, EINTRAEGE)
+
+
+def test_bild_mindestmass_aus_dem_bildkopf(tmp_path: Path, bild: Path) -> None:
+    klein = tmp_path / "k.png"
+    klein.write_bytes(_png(20, 10))
+    with pytest.raises(ValueError, match="kleiner"):
+        rd.erzeuge(_texte(klein), EINTRAEGE)
+    deck = _deck(bild).replace(
+        base64.b64encode(_png()).decode(), base64.b64encode(_png(20, 10)).decode()
+    )
+    assert any("Bild" in m for m in rd.pruefe(deck, EINTRAEGE))
+    jpeg = b"\xff\xd8\xff\xc0" + struct.pack(">HBHH", 17, 8, 240, 400) + b"\0" * 20
+    webp = (
+        b"RIFF\0\0\0\0WEBPVP8X\x0a\0\0\0\0\0\0\0"
+        + (399).to_bytes(3, "little")
+        + (239).to_bytes(3, "little")
+    )
+    assert rd.bild_masse(jpeg) == (400, 240)
+    assert rd.bild_masse(webp) == (400, 240)
+    assert rd.bild_masse(b"nichts") is None
+
+
+def test_svg_viz_zaehlt_nur_mit_formen(bild: Path) -> None:
+    deck = _deck(bild)
+    leer = _ohne_bild(deck, "Früher / Jetzt", '<svg class="viz"></svg>')
+    assert any("Bild" in m for m in rd.pruefe(leer, EINTRAEGE))
+    voll = _ohne_bild(
+        deck, "Früher / Jetzt", '<svg class="viz"><rect width="9" height="9"/></svg>'
+    )
+    assert rd.pruefe(voll, EINTRAEGE) == []
+
+
+def test_wortgrenze_zaehlt_svg_text_mit(bild: Path) -> None:
+    text = " ".join(["wort"] * (rd.MAX_WOERTER_TEIL1 + 5))
+    deck = _ohne_bild(
+        _deck(bild), "Schneller", f'<svg class="viz"><text>{text}</text></svg>'
+    )
+    assert any("Wörter" in m for m in rd.pruefe(deck, EINTRAEGE))
+
+
+def test_grafik_nur_sichtbar_und_im_zeitstrahl(bild: Path) -> None:
+    deck = _deck(bild)
+    ausserhalb = deck.replace('<svg class="zeitstrahl"', '<svg class="anderes"')
+    assert any("sichtbare" in m for m in rd.pruefe(ausserhalb, EINTRAEGE))
+    versteckt = deck.replace(
+        '<svg class="zeitstrahl"', '<div style="display: none"><svg class="zeitstrahl"'
+    )
+    versteckt = versteckt.replace("</svg></section>", "</svg></div></section>")
+    assert any("sichtbare" in m for m in rd.pruefe(versteckt, EINTRAEGE))
+    hidden = deck.replace(
+        '<svg class="zeitstrahl"', '<div hidden><svg class="zeitstrahl"'
+    ).replace("</svg></section>", "</svg></div></section>")
+    assert any("sichtbare" in m for m in rd.pruefe(hidden, EINTRAEGE))
+
+
+def test_entscheidung_braucht_frage_und_wahl_im_text(bild: Path) -> None:
+    deck = _deck(bild)
+    assert any(
+        "Frage" in m for m in rd.pruefe(deck.replace(">Tabelle<", ">Weg<"), EINTRAEGE)
+    )
+    assert any(
+        "Wahl" in m for m in rd.pruefe(deck.replace("→ SQLite", "→ ?"), EINTRAEGE)
+    )
+
+
+def test_lange_texte_werden_umbrochen_nicht_gekappt(bild: Path) -> None:
+    lang = "Welche Datenbank nehmen wir für die neue Auswertung der Handy-Zustände im Dashboard heute"
+    e = [
+        _eintrag(
+            "4",
+            "2026-11-24T09:00:00+01:00",
+            f"{lang} → Die zweite, weil sie schon läuft und niemand sie warten muss",
+        )
+    ]
+    deck = rd.erzeuge(_texte(bild), e)
+    assert rd.pruefe(deck, e) == []
+    assert "heute" in deck and "warten" in deck and "muss</text>" in deck
+
+
+def test_ticket_spuren_und_senkrechte_form(bild: Path) -> None:
+    deck = rd.erzeuge(_texte(bild), EINTRAEGE)
+    for t in ("2", "3", "8"):
+        assert deck.count(f"Ticket #{t}</text>") == 1
+
+
+def test_aussehen_bedienung_zaehler_und_hell_dunkel(bild: Path) -> None:
+    deck = _deck(bild)
+    assert 'id="zaehler"' in deck and " / 5</span>" in deck  # Titel + 1 + 2 + Schluss
+    assert 'id="weiter"' in deck and 'id="zurueck"' in deck and 'id="bar"' in deck
+    assert "prefers-color-scheme:dark" in deck and "min-height:48px" in deck
+    assert deck.count("data-label=") == 5
+    assert 'data-art="titel"' in deck and "Spec 5" in deck
+    import re
+
+    assert not re.search(
+        r'(?:src|href)="https?:|@import|url\(\s*https?:', deck
+    )  # keine externen Dateien
+    assert "font:17px" in deck  # Fließtext >= 16 px
+
+
+def test_titel_folie_mit_datum(bild: Path) -> None:
+    t = _texte(bild)
+    t["datum"] = "24.11.2026"
+    assert "24.11.2026" in rd.erzeuge(t, EINTRAEGE)
+
+
+def test_ueberholt_nur_bei_gleicher_frage() -> None:
+    e = [
+        _eintrag("1", "2026-11-24T09:00:00+01:00", "Farbe → Blau"),
+        _eintrag("2", "2026-11-24T10:00:00+01:00", "Schrift → Groß"),
+        _eintrag("3", "2026-11-24T11:00:00+01:00", "Farbe → Grün"),
+    ]
+    assert rd.ueberholt_map(e) == {0: "3"}

@@ -225,10 +225,15 @@ def _parser() -> argparse.ArgumentParser:
     ap.add_argument("--neu", action="append", default=[], help="Satz „was ist neu“ (bis 3×)")
     ap.add_argument("--tun", action="append", default=[], help="Satz „was du tun musst“ (bis 3×)")
     ap.add_argument(
+        "--ohne-rundschau",
+        action="store_true",
+        help="nur Notfall-Ablage des capo (--rundschau nennt dann den Grund): Deck-Pflicht entfällt",
+    )
+    ap.add_argument(
         "--rundschau-datei",
         type=Path,
         default=None,
-        help="Rundschau-Deck als Datei; wird gegen to_spawn/rundschau_deck.py geprüft (#529), rot = Exit 4",
+        help="Rundschau-Deck als Datei (Pflicht bei --stand abnahme); Prüfung gegen to_spawn/rundschau_deck.py (#529), rot = Exit 4",
     )
     ap.add_argument("--stand", choices=("abnahme", "live"), default="abnahme")
     ap.add_argument("--repo", type=Path, default=None)
@@ -385,13 +390,17 @@ def ablegen(argv: list[str]) -> int:
     a = ap.parse_args(argv)
     repo = _repo(a.repo)
     p, neue_form = _paket(a, ap, repo)
-    if a.rundschau_datei is not None and not a.dry_run:
+    if a.dry_run:
+        maengel = []
+    elif a.rundschau_datei is None and p.stand == "abnahme" and not a.ohne_rundschau:
+        maengel = ["`--rundschau-datei <html>` fehlt: ohne Rundschau-Deck (drei Teile, #529) keine Abnahme."]
+    elif a.rundschau_datei is not None:
         maengel = _rundschau_maengel(repo, p.spec, a.rundschau_datei)
-        if maengel:
-            sys.stdout.write("Rundschau nicht bereit zur Abnahme:\n" + "\n".join(f"- {m}" for m in maengel) + "\n")
-            return 4
-    elif a.rundschau_datei is None:
-        log.warning("Keine --rundschau-datei: Rundschau-Deck (drei Teile, #529) wurde nicht geprüft.")
+    else:
+        maengel = []
+    if maengel:
+        sys.stdout.write("Rundschau nicht bereit zur Abnahme:\n" + "\n".join(f"- {m}" for m in maengel) + "\n")
+        return 4
     datei = ablage_pfad(repo, p.spec, p.stand)
     fertig = _zeit(a.spec_fertig, ap, "--spec-fertig").isoformat(timespec="seconds")
     alt = melder.lade_json(datei)
@@ -409,14 +418,18 @@ def ablegen(argv: list[str]) -> int:
     return 0
 
 
+def entscheidungs_daten(repo: Path, spec: int) -> list[dict[str, str]]:
+    """Entscheidungen der Spec für Rundschau-Grafik und -Prüfung (``briefkasten.liste``)."""
+    return briefkasten.liste(sorted(ticket_nummern(repo, spec)), log_repo=repo, hauptbaum=repo)
+
+
 def _rundschau_maengel(repo: Path, spec: int, datei: Path) -> list[str]:
     """Prüft die Rundschau-Datei (``rundschau_deck.pruefe``) gegen die Entscheidungen der Spec."""
     try:
         text = datei.read_text(encoding="utf-8")
     except OSError as exc:
         return [f"Rundschau-Datei nicht lesbar: {exc}"]
-    eintraege = briefkasten.liste(sorted(ticket_nummern(repo, spec)), log_repo=repo, hauptbaum=repo)
-    return rundschau_deck.pruefe(text, eintraege)
+    return rundschau_deck.pruefe(text, entscheidungs_daten(repo, spec))
 
 
 def ticket_nummern(repo: Path, spec: int) -> list[int]:
