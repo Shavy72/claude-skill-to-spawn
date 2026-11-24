@@ -3,7 +3,8 @@
 Zwei Türen:
 
 * :func:`luecken` ist die einzige Stelle des Wissens „was fehlt diesem Repo zur
-  Einrichtung?“ — heute Prüfung und Staging. Ein Repo, das bewusst ohne Staging
+  Einrichtung?“ — Prüf-Werkzeug, Staging, Befehle für schnelle Prüfung, Komplett-Prüfung
+  und Live-Schritt (#425). Ein Repo, das bewusst ohne Staging
   arbeitet (``staging.ohne: true``), hat dort keine Lücke.
 * :func:`sicherstellen` trägt bei Lücke das Einrichtungs-Ticket ins Manifest der Spec
   ein (``einrichtung: true``) und hängt jedes Ticket der Spec über
@@ -50,6 +51,31 @@ _AUFTRAG = {
         "Staging anlegen: `staging_start` und `staging.url` in `.to-spawn/config.json` "
         "eintragen — oder, wenn das Repo bewusst ohne Staging arbeitet, `staging.ohne: true`."
     ),
+    "pruefung.schnell": (
+        "Schnelle Prüfung je Ticket eintragen: in `.to-spawn/config.json` unter "
+        '`"pruefung"` den Schlüssel `"schnell"` mit einem Befehl als Text (Stil, '
+        "betroffene Tests, kleiner Rauchtest; 1–3 min). Beispiel: "
+        '`"pruefung": {"schnell": "ruff check . && pytest -q tests/rauch"}`.'
+    ),
+    "pruefung.komplett": (
+        "Komplett-Prüfung einmal je Spec eintragen: in `.to-spawn/config.json` unter "
+        '`"pruefung"` den Schlüssel `"komplett"` mit einem Befehl als Text (alle Tests). '
+        'Beispiel: `"pruefung": {"komplett": "pytest -q -n 8 tests/"}`.'
+    ),
+    "live.befehl": (
+        'Live-Schritt eintragen: in `.to-spawn/config.json` unter `"live"` den '
+        'Schlüssel `"befehl"` mit dem Befehl als Text, der den geprüften Stand live '
+        'bringt. Wahlweise `"url"` (Adresse für den Live-Beweis) und `"aufraeumen"` '
+        "(Befehl, der danach Reste wegräumt). Beispiel: "
+        '`"live": {"befehl": "bash scripts/deploy.sh", "url": "https://app.example"}`.'
+    ),
+}
+
+#: Pflicht-Schlüssel der Gruppen ``pruefung``/``live`` (#425): Kurzname → Lesart aus ``config``.
+_PFLICHT = {
+    "pruefung.schnell": lambda k: config.pruef_befehl(k, "schnell"),
+    "pruefung.komplett": lambda k: config.pruef_befehl(k, "komplett"),
+    "live.befehl": lambda k: config.live_schritt(k)["befehl"],
 }
 
 
@@ -62,12 +88,18 @@ class Ergebnis:
 
 
 def luecken(repo: Path, konfig: dict[str, Any]) -> list[str]:
-    """Was dem Repo zur Einrichtung fehlt (Kurznamen aus ``_AUFTRAG``); leer = nichts."""
+    """Was dem Repo zur Einrichtung fehlt (Kurznamen aus ``_AUFTRAG``); leer = nichts.
+
+    ``pruefung`` = kein Prüf-Werkzeug erkannt; ``pruefung.schnell``/``pruefung.komplett``/
+    ``live.befehl`` = Befehl fehlt in der Konfig (#425). Ob ein Befehl eingerichtet ist,
+    sagt allein :mod:`to_spawn.config`. ``live.url``/``live.aufraeumen`` sind keine Pflicht.
+    """
     fehlt: list[str] = []
     if not pruef.hat_werkzeug(repo):
         fehlt.append("pruefung")
     if not config.hat_staging(konfig) and not config.staging_bewusst_ohne(konfig):
         fehlt.append("staging")
+    fehlt.extend(name for name, lies in _PFLICHT.items() if not lies(konfig))
     return fehlt
 
 
