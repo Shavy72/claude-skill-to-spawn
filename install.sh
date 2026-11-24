@@ -110,7 +110,7 @@ for kette_ordner in "$HIER"/kette/skills/*/; do
 done
 PYTHONPATH="$ZIEL" "$PY" -m to_spawn.globale_regeln --ziel "$CLAUDE_MD"
 # Ja-Sperre (PreToolUse-Hook in settings.json neben der CLAUDE.md) + Befehl `ja` nach bin/ daneben (#531)
-PYTHONPATH="$ZIEL" "$PY" -m to_spawn.ja_einrichten --claude-dir "$(dirname "$CLAUDE_MD")" --python "$PY"
+PYTHONPATH="$ZIEL" "$PY" -m to_spawn.ja_einrichten --claude-dir "$(dirname "$CLAUDE_MD")" --python "$PY" --cli "$ZIEL/to_spawn.py"
 
 # --- 3c. Review-Hook (review-hook/ → ~/.claude/hooks/review, #214) + Werkzeug (review/ → ~/.claude/review, #329); Regel in to_spawn/review_hook.py
 PYTHONPATH="$ZIEL" "$PY" -m to_spawn.review_hook --klon "$HIER"  # Klon: nur versionierte Dateien

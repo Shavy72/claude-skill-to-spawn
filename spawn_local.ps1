@@ -1,4 +1,4 @@
-# /to-spawn local — alle Ticket-Sessions einer Spec auf einmal starten (Windows Terminal, ein Fenster).
+﻿# /to-spawn local — alle Ticket-Sessions einer Spec auf einmal starten (Windows Terminal, ein Fenster).
 # Aufruf (Repo-Wurzel):  pwsh -File ~/.claude/skills/to-spawn/spawn_local.ps1 -Spec 182 [-Tickets "188,189,190"] [-OhneWache] [-Window 1] [-DryRun]
 # Liest docs/agents/manifests/spec-<S>.json (Ticket-Nummern), öffnet je Ticket einen Tab `bau <N>` und
 # (sofern nicht -OhneWache) zuerst einen Tab `wache <S>` und einen Tab `leitstand <S>` (Schalter leitstand.aktiv). Prüft danach per scripts/sessions_stand.py.

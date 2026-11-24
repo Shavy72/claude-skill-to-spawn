@@ -29,6 +29,17 @@ MATCHER = "Bash|PowerShell"
 CLI = Path(__file__).resolve().parent.parent / "to_spawn.py"
 
 
+def _ist_sperre(hook: object) -> bool:
+    """Hook-Eintrag der Ja-Sperre (``<…>/to_spawn.py hook-ja-sperre``), auch wenn die Datei nicht mehr existiert."""
+    try:
+        woerter = shlex.split(hook["command"])  # type: ignore[index]
+    except (ValueError, KeyError, TypeError):
+        return False
+    return briefkasten.JA_SPERRE_HOOK in woerter and any(
+        w.replace("\\", "/").endswith("to_spawn.py") for w in woerter
+    )
+
+
 def sperre_eintragen(
     claude_dir: Path, python: str, cli: Path = CLI, zeit: str | None = None
 ) -> bool:
@@ -45,27 +56,33 @@ def sperre_eintragen(
         raise ValueError(  # noqa: TRY004 — main fängt ValueError
             f"{datei}: hooks/PreToolUse hat eine unerwartete Form (PreToolUse muss eine Liste sein) — nicht verändert."
         )
-    stehende = [
-        b
-        for b in blocks
-        if briefkasten.sperre_eingetragen_in({"hooks": {"PreToolUse": [b]}})
-    ]
-    if stehende and "PowerShell" in stehende[0]["matcher"].split("|"):
+    befehl = " ".join(
+        shlex.quote(t)
+        for t in (Path(python).as_posix(), cli.as_posix(), briefkasten.JA_SPERRE_HOOK)
+    )
+    neuer_block = {"matcher": MATCHER, "hooks": [{"type": "command", "command": befehl}]}
+    vorher = json.dumps(blocks)
+    # Genau ein Eintrag der Sperre: jeder bestehende (auch toter oder auf den Klon zeigende) wird entfernt,
+    # der erste Platz bekommt den Soll-Eintrag; fremde Hooks/Blöcke und ihre Reihenfolge bleiben.
+    ergebnis: list = []
+    gesetzt = False
+    for block in blocks:
+        hooks_liste = block.get("hooks", []) if isinstance(block, dict) else []
+        eigene = [h for h in hooks_liste if _ist_sperre(h)]
+        if not eigene:
+            ergebnis.append(block)
+            continue
+        fremde = [h for h in hooks_liste if not _ist_sperre(h)]
+        if fremde:
+            ergebnis.append({**block, "hooks": fremde})
+        if not gesetzt:
+            ergebnis.append(neuer_block)
+            gesetzt = True
+    if not gesetzt:
+        ergebnis.append(neuer_block)
+    blocks[:] = ergebnis
+    if json.dumps(blocks) == vorher:
         return False
-    if stehende:  # alter Eintrag nur für Bash: Matcher anheben, kein Doppel-Eintrag
-        stehende[0]["matcher"] = MATCHER
-    else:
-        befehl = " ".join(
-            shlex.quote(t)
-            for t in (
-                Path(python).as_posix(),
-                cli.as_posix(),
-                briefkasten.JA_SPERRE_HOOK,
-            )
-        )
-        blocks.append(
-            {"matcher": MATCHER, "hooks": [{"type": "command", "command": befehl}]}
-        )
     claude_dir.mkdir(parents=True, exist_ok=True)
     if datei.exists():
         stempel = zeit or datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -98,15 +115,17 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--claude-dir", type=Path, default=Path.home() / ".claude")
     parser.add_argument("--python", default=sys.executable)
+    # Installer geben den installierten Skill an: ``python -m`` aus dem Klon-Ordner lädt sonst das Klon-Modul (#566).
+    parser.add_argument("--cli", type=Path, default=CLI)
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     try:
-        neu = sperre_eintragen(args.claude_dir, args.python)
+        neu = sperre_eintragen(args.claude_dir, args.python, args.cli)
     except (OSError, ValueError) as fehler:
         log.error("Ja-Sperre nicht eingetragen: %s", fehler)
         return 1
     log.info("Ja-Sperre: %s", "eingetragen" if neu else "stand schon drin")
-    for pfad in befehl_anlegen(args.claude_dir, args.python):
+    for pfad in befehl_anlegen(args.claude_dir, args.python, args.cli):
         log.info("Befehl: %s", pfad)
     return 0
 
