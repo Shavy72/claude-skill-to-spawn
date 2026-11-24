@@ -15,7 +15,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from test_komplett_sperre_eigenes_skript_496 import _app_repo, _laeufe
 
 from to_spawn import aufseher_stand, bau_log, config, komplett_lauf, pruef
 from to_spawn.pruefplan import Moment
@@ -32,16 +31,18 @@ def _quellen(repo: Path) -> aufseher_stand.Quellen:
     return aufseher_stand.Quellen(repo=repo, kinder=kinder, tmux=lambda _args: None)
 
 
-def test_ablehnungen_stehen_im_aufseher_stand(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_ablehnungen_stehen_im_aufseher_stand(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, app_repo_komplett, komplett_laeufe
+) -> None:
     zaehl = tmp_path / "zaehl.txt"
-    repo = _app_repo(tmp_path, zaehl)
+    repo = app_repo_komplett(tmp_path, zaehl)
     monkeypatch.setenv("BAU_WT_DIR", str(tmp_path / "wt"))
     # Bau-Session wie bau.py sie startet: Ticket-Nummer + Ziel des Bau-Logs.
     monkeypatch.setenv("TO_SPAWN_TICKET", str(TICKET))
     monkeypatch.setenv("TO_SPAWN_LOG_REPO", str(repo))
     pruef.pruefen(repo, "base", "HEAD", art="komplett")
     komplett_lauf.komplett_einmal(repo, SPEC, Moment.VOR_LIVE, config.lade(repo))
-    assert _laeufe(zaehl) == 0
+    assert komplett_laeufe(zaehl) == 0
     monkeypatch.delenv("TO_SPAWN_TICKET")
     monkeypatch.delenv("TO_SPAWN_LOG_REPO")
 
@@ -50,8 +51,10 @@ def test_ablehnungen_stehen_im_aufseher_stand(tmp_path: Path, monkeypatch: pytes
     assert "2× Komplett abgelehnt" in zeile, ausgabe
 
 
-def test_ohne_ablehnung_bleibt_die_zeile_wie_bisher(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    repo = _app_repo(tmp_path, tmp_path / "zaehl.txt")
+def test_ohne_ablehnung_bleibt_die_zeile_wie_bisher(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, app_repo_komplett
+) -> None:
+    repo = app_repo_komplett(tmp_path, tmp_path / "zaehl.txt")
     monkeypatch.setenv("BAU_WT_DIR", str(tmp_path / "wt"))
     ausgabe = aufseher_stand.stand(SPEC, _quellen(repo), ordner=tmp_path / "stand")
     assert "abgelehnt" not in ausgabe, ausgabe
@@ -69,8 +72,10 @@ def test_ablehnung_ohne_bau_log_ziel_schreibt_nichts_ins_skill_repo(
     assert not (tmp_path / ".to-spawn").exists()
 
 
-def test_pruef_tuer_nennt_die_spec_aus_der_umgebung(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    repo = _app_repo(tmp_path, tmp_path / "zaehl.txt")
+def test_pruef_tuer_nennt_die_spec_aus_der_umgebung(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, app_repo_komplett
+) -> None:
+    repo = app_repo_komplett(tmp_path, tmp_path / "zaehl.txt")
     monkeypatch.setenv("BAU_WT_DIR", str(tmp_path / "wt"))
     monkeypatch.setenv("TO_SPAWN_TICKET", str(TICKET))
     monkeypatch.setenv("TO_SPAWN_LOG_REPO", str(repo))

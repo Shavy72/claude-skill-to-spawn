@@ -12,8 +12,6 @@ in eine Zähldatei schreibt. Bau-Session = ``TO_SPAWN_TICKET`` gesetzt (wie ``ba
 
 from __future__ import annotations
 
-import json
-import subprocess
 from pathlib import Path
 
 import pytest
@@ -25,64 +23,30 @@ from to_spawn.pruefplan import Moment
 SPEC = 496
 
 
-def _git(ordner: Path, *args: str) -> None:
-    subprocess.run(
-        ["git", "-c", "user.name=t", "-c", "user.email=t@t", *args],
-        cwd=ordner,
-        check=True,
-        capture_output=True,
-    )
-
-
-def _app_repo(tmp_path: Path, zaehl: Path) -> Path:
-    """App-Repo, dessen Komplett-Befehl ein eigenes Skript ohne jede Sperre ist."""
-    repo = tmp_path / "app"
-    (repo / "skripte").mkdir(parents=True)
-    (repo / "skripte" / "alles_pruefen.sh").write_text(
-        f"#!/usr/bin/env bash\necho lauf >> '{zaehl.as_posix()}'\n", encoding="utf-8"
-    )
-    (repo / ".to-spawn").mkdir()
-    konfig = {
-        "staging": {"ohne": True},
-        "pruefung": {"schnell": "true", "komplett": "bash skripte/alles_pruefen.sh"},
-    }
-    (repo / ".to-spawn" / "config.json").write_text(json.dumps(konfig), encoding="utf-8")
-    (repo / ".gitignore").write_text(".to-spawn/pruef/\n", encoding="utf-8")
-    _git(repo, "init", "-q")
-    _git(repo, "add", "-A")
-    _git(repo, "commit", "-qm", "base")
-    _git(repo, "tag", "base")
-    return repo
-
-
-def _laeufe(zaehl: Path) -> int:
-    return len(zaehl.read_text(encoding="utf-8").splitlines()) if zaehl.exists() else 0
-
-
 @pytest.fixture
 def zaehl(tmp_path: Path) -> Path:
     return tmp_path / "zaehl.txt"
 
 
 def test_pruef_tuer_fuehrt_eigenes_skript_im_bau_ticket_nicht_aus(
-    tmp_path: Path, zaehl: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, zaehl: Path, monkeypatch: pytest.MonkeyPatch, app_repo_komplett, komplett_laeufe
 ) -> None:
-    repo = _app_repo(tmp_path, zaehl)
+    repo = app_repo_komplett(tmp_path, zaehl)
     monkeypatch.setenv("TO_SPAWN_TICKET", "13")
     urteil = pruef.pruefen(repo, "base", "HEAD", art="komplett")
-    assert _laeufe(zaehl) == 0, "eigenes Komplett-Skript lief aus einem Bau-Ticket"
+    assert komplett_laeufe(zaehl) == 0, "eigenes Komplett-Skript lief aus einem Bau-Ticket"
     assert urteil.exit == leiter.GATE_FEHLER, urteil.zeile
     assert "schnelle Prüfung" in urteil.zeile["fehler_kurz"], urteil.zeile
 
 
 def test_komplett_lauf_fuehrt_eigenes_skript_im_bau_ticket_nicht_aus(
-    tmp_path: Path, zaehl: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, zaehl: Path, monkeypatch: pytest.MonkeyPatch, app_repo_komplett, komplett_laeufe
 ) -> None:
-    repo = _app_repo(tmp_path, zaehl)
+    repo = app_repo_komplett(tmp_path, zaehl)
     monkeypatch.setenv("TO_SPAWN_TICKET", "")
     erg = komplett_lauf.komplett_einmal(repo, SPEC, Moment.VOR_LIVE, config.lade(repo))
     assert not erg.ok and not erg.gelaufen, erg
-    assert _laeufe(zaehl) == 0
+    assert komplett_laeufe(zaehl) == 0
     assert komplett_lauf.lies_merker(repo, SPEC) is None
 
 
@@ -96,11 +60,27 @@ def test_eine_stelle_entscheidet(monkeypatch: pytest.MonkeyPatch) -> None:
     assert ohne_spec and "komplett <S> --moment vor-live" in ohne_spec
 
 
-def test_ohne_bau_ticket_laeuft_das_eigene_skript(tmp_path: Path, zaehl: Path) -> None:
-    repo = _app_repo(tmp_path, zaehl)
+def test_ohne_bau_ticket_laeuft_das_eigene_skript(
+    tmp_path: Path, zaehl: Path, app_repo_komplett, komplett_laeufe
+) -> None:
+    repo = app_repo_komplett(tmp_path, zaehl)
     urteil = pruef.pruefen(repo, "base", "HEAD", art="komplett")
     assert urteil.exit == leiter.GRUEN, urteil.zeile
-    assert _laeufe(zaehl) == 1
+    assert komplett_laeufe(zaehl) == 1
     erg = komplett_lauf.komplett_einmal(repo, SPEC, Moment.VOR_LIVE, config.lade(repo))
     assert erg.ok and erg.gelaufen, erg
-    assert _laeufe(zaehl) == 2
+    assert komplett_laeufe(zaehl) == 2
+
+
+def test_ohne_bau_ticket_laeuft_das_eigene_skript_auch_mit_staging(
+    tmp_path: Path, zaehl: Path, app_repo_komplett, komplett_laeufe
+) -> None:
+    """#504: Die Sperre trifft nur Bau-Tickets, ein berechtigter Lauf wird auch mit Staging nicht abgelehnt."""
+    repo = app_repo_komplett(tmp_path, zaehl, mit_staging=True)
+    assert config.hat_staging(config.lade(repo))
+    urteil = pruef.pruefen(repo, "base", "HEAD", art="komplett")
+    assert urteil.exit == leiter.GRUEN, urteil.zeile
+    assert komplett_laeufe(zaehl) == 1
+    erg = komplett_lauf.komplett_einmal(repo, SPEC, Moment.VOR_LIVE, config.lade(repo))
+    assert erg.ok and erg.gelaufen, erg
+    assert komplett_laeufe(zaehl) == 2
