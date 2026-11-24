@@ -66,6 +66,15 @@ def _gate_fehler(repo: Path, basis: str, ziel: str, grund: str, start: float) ->
     return Urteil(leiter.GATE_FEHLER, zeile)
 
 
+def hat_werkzeug(repo: Path) -> bool:
+    """Erkennt die Prüf-Tür in ``repo`` eine Sprache (Python/Node), die sie prüfen kann?
+
+    ``False`` heißt: es gibt nichts zu testen (z. B. reines Doku-Repo). ``pruefen`` meldet das
+    als Gate-Fehler; wer einen solchen Stand trotzdem durchlassen darf, fragt vorher hier.
+    """
+    return any(adapter.erkennt(repo) for adapter in _ADAPTER)
+
+
 def pruefen(repo: Path, basis: str, ziel: str) -> Urteil:
     """Prüft den Stand ``ziel`` gegen ``basis`` und protokolliert das Urteil."""
     start = time.monotonic()

@@ -254,7 +254,9 @@ def test_start_text_nennt_klasse_1_listen_aus_tabelle(befugnis: ModuleType) -> N
         for wort in (regel.ziele or ()) | (regel.arten or ()):
             wort = befugnis._ziel_text(wort, "7")  # Runde 5: Marke → lesbare Regel
             assert wort in klasse_1, wort
-    assert "pushen" in klasse_1 and "hauptzweig" not in klasse_1
+    assert "pushen" in klasse_1
+    # #411: Hauptzweig nur über einreichen, nie mit pushen o. ä. in Klasse 1.
+    assert klasse_1.count("hauptzweig") == 1 and "Ziel: hauptzweig · Art: einreichen)" in klasse_1
 
 
 @pytest.mark.parametrize(

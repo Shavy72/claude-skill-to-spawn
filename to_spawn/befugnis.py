@@ -163,6 +163,14 @@ _KLASSE_1: tuple[_Regel, ...] = (
     ),
     _Regel(
         1,
+        # #411: der einzige Weg auf den Hauptzweig; die Regeln (nur Ticket-Zweig, Prüf-Tür,
+        # --match-head-commit, kein Force) kennt nur to_spawn/einreichen.py.
+        "fertigen Stand einreichen (`to_spawn.py einreichen <N>`: pusht nur den Ticket-Zweig, prüft und bringt ihn auf den Hauptzweig)",
+        frozenset({"hauptzweig"}),
+        frozenset({"einreichen"}),
+    ),
+    _Regel(
+        1,
         "Engpass",
         frozenset({"engpass"}),
         frozenset({"warten", "wiederholen"}),
@@ -568,8 +576,9 @@ def start_text(n: str | int) -> str:
         f"Diesen Schritt anhalten, die Frage in den Briefkasten werfen (`to_spawn.py frage {n} --klasse 2 --frage … --vorschlag …`; "
         "der Aufseher bringt sie zum Nutzer), Bau-Log-Eintrag und Issue-Kommentar „braucht den Nutzer“, den Rest weiterbauen; "
         "auch eine Antwort des Aufsehers gibt das nicht frei, nur die des Nutzers im Briefkasten. "
-        "Klasse 3 – alles andere, jeder Zweifel zwischen Klasse 1 und 2 und jeder Push oder Merge auf "
-        f"den Hauptzweig oder fremde Zweige: Frage mit eigenem Vorschlag in den Briefkasten "
+        "Klasse 3 – alles andere, jeder Zweifel zwischen Klasse 1 und 2, jeder Push oder Merge auf "
+        "fremde Zweige und jeder direkte Push oder Merge auf den Hauptzweig (dorthin nur über `to_spawn.py einreichen`): "
+        f"Frage mit eigenem Vorschlag in den Briefkasten "
         f"(`to_spawn.py frage {n} --frage … --vorschlag <Vorschlag>`, "
         "gibt die id aus), nie eine Frage an den Nutzer. Der Aufseher liest den Briefkasten und antwortet dort. "
         f"Nachsehen mit `to_spawn.py antwort {n} --id <id>`: Exit 0 = Antwort da → annehmen und weiterbauen, "
