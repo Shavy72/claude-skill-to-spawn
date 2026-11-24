@@ -794,6 +794,8 @@ def ja_aufrufe(befehl: str) -> bool:
     Schreibzugriff auf die Briefkasten-Datei umgehen die Sperre (gleiche Grenze wie ``hook_spec_sperre``);
     Upgrade-Pfad: Prüfung im Briefkasten selbst über einen Nachweis, den nur der Nutzer-Weg trägt.
     """
+    if _JA_WIN_PFAD.search(befehl):  # Windows-Pfad: shlex verschluckt die Backslashes
+        return True
     for woerter in _einfache_befehle(befehl):
         name = _name(woerter[0]).removesuffix(".cmd")
         if name == "eval":
@@ -806,7 +808,35 @@ def ja_aufrufe(befehl: str) -> bool:
             name == "ja"
             or "nutzer-antwort" in woerter
             or (any(_name(w) == "to_spawn.py" for w in woerter[:3]) and JA_UNTERBEFEHLE & set(woerter))
+            or _ja_als_argument(woerter)
         ):
+            return True
+    return False
+
+
+#: Wörter, hinter denen das nächste Wort ein Befehl/Skript ist (``bash ja``, ``xargs ja``, ``. ja``).
+_JA_STARTER = {"bash", "sh", "zsh", "dash", "source", ".", "xargs", "python", "python3", "env", "command"}
+#: Grobe Erkennung auf Roh-Text, wenn die Prüfung ausfällt (kaputte Eingabe, Ausnahme).
+_JA_GROB = re.compile(r"[/\\]ja(\.cmd)?(?![\w.-])|nutzer-antwort|to_spawn\.py\s+ja\b")
+
+
+_JA_WIN_PFAD = re.compile(r"\\ja(\.cmd)?(?![\w.-])")
+
+
+def _ja_basis(wort: str) -> str:
+    return wort.replace("\\", "/").rsplit("/", 1)[-1]
+
+
+def _ja_als_argument(woerter: list[str]) -> bool:
+    """``ja`` als Pfad (``…/ja``, ``…\\ja.cmd``) oder direkt hinter ``bash``/``source``/``xargs`` …
+
+    Normales Deutsch (``echo "ja"``, ``grep ja datei``) bleibt frei: dort steht ``ja`` weder als Pfad
+    noch hinter einem dieser Starter.
+    """
+    for i, wort in enumerate(woerter[1:], 1):
+        if _ja_basis(wort) not in ("ja", "ja.cmd"):
+            continue
+        if "/" in wort or "\\" in wort or _name(woerter[i - 1]) in _JA_STARTER:
             return True
     return False
 
@@ -816,16 +846,20 @@ def hook_ja_sperre(strom: TextIO | None = None, fehler: TextIO | None = None) ->
 
     Der ``!``-Befehl des Nutzers läuft nicht durch PreToolUse-Hooks, ein Bash-Werkzeug-Aufruf einer
     Session schon — das ist der Menschen-Nachweis ohne Terminal (#531). Exit 2 bei Treffer, sonst 0;
-    ein Fehler im Hook lässt durch (wie die Spec-Sperre, #204) — dafür verlangt ``briefkasten``
-    die Eintragung der Sperre (fail-closed), nicht ihr Gelingen.
+    fällt die Prüfung aus (kaputte Eingabe, Ausnahme), entscheidet eine grobe Suche auf der Roh-Eingabe
+    (``…/ja``, ``nutzer-antwort``, ``to_spawn.py ja`` → Exit 2), fremde Befehle laufen durch (wie #204).
+    Der Befehl steht bei Bash und PowerShell in ``tool_input.command``.
     """
+    text = ""
     try:
-        roh = _eingabe(strom or sys.stdin).get("tool_input")
+        text = (strom or sys.stdin).read()
+        daten = json.loads(text)
+        roh = daten.get("tool_input") if isinstance(daten, dict) else None
         befehl = roh.get("command") if isinstance(roh, dict) else None
         treffer = isinstance(befehl, str) and ja_aufrufe(befehl)
-    except Exception:  # der Hook darf die Session nie stören
-        log.exception("Ja-Sperre fehlgeschlagen — Befehl wird nicht geprüft.")
-        return 0
+    except Exception:  # der Hook darf die Session bei fremden Befehlen nie stören
+        log.exception("Ja-Sperre: Prüfung fehlgeschlagen — grobe Prüfung auf Roh-Eingabe.")
+        treffer = bool(_JA_GROB.search(text))
     if treffer:
         (fehler or sys.stderr).write(
             "Gesperrt: das Live-Ja gibt nur der Nutzer selbst (`! ja <N>` im Eingabefeld). "

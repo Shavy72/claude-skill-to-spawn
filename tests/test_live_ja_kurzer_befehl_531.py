@@ -279,3 +279,152 @@ def test_aufforderung_kurz_und_ueberall_gleich() -> None:
         aufseher_text("python X/to_spawn.py").replace("<N>", "5"),
     ):
         assert befehl in text
+
+
+# --- Fix-Runde Review #534 --------------------------------------------------------------------------
+
+
+def _hook(roh: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, str(SKILL / "to_spawn.py"), "hook-ja-sperre"],
+        input=roh,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+
+
+def _roh(befehl: str, werkzeug: str = "Bash") -> str:
+    return json.dumps({"tool_name": werkzeug, "tool_input": {"command": befehl}})
+
+
+@pytest.mark.parametrize(
+    "befehl",
+    [
+        "bash ~/.claude/bin/ja 5",
+        "sh ~/.claude/bin/ja 5",
+        "source ~/.claude/bin/ja 5",
+        ". ~/.claude/bin/ja 5",
+        "echo 5 | xargs ~/.claude/bin/ja",
+        "echo 5 | xargs ja",
+        "python ja 5",
+        "env ja 5",
+        "C:\\Users\\x\\.claude\\bin\\ja.cmd 5",
+    ],
+)
+def test_hook_lehnt_umgehung_ueber_argument_ab(befehl: str) -> None:
+    assert _hook(_roh(befehl)).returncode == 2, befehl
+
+
+@pytest.mark.parametrize(
+    "befehl",
+    [
+        'echo "ja"',
+        'git commit -m "ja, passt"',
+        "grep ja datei",
+        "cat ja_liste.txt",
+        "ls ~/.claude/bin",
+    ],
+)
+def test_hook_sperrt_normales_deutsch_nicht(befehl: str) -> None:
+    assert _hook(_roh(befehl)).returncode == 0, befehl
+
+
+def test_hook_powershell_eingabe_wird_gelesen() -> None:
+    assert _hook(_roh("ja 5", "PowerShell")).returncode == 2
+
+
+@pytest.mark.parametrize(
+    "roh",
+    [
+        '{"tool_input": {"command": "~/.claude/bin/ja 5"',
+        "{kaputt ~/.claude/bin/ja 5",
+        "{kaputt nutzer-antwort 5",
+        "x to_spawn.py ja 5",
+    ],
+)
+def test_hook_kaputte_eingabe_mit_ja_wird_gesperrt(roh: str) -> None:
+    assert _hook(roh).returncode == 2
+
+
+def test_hook_kaputte_eingabe_ohne_ja_laeuft_durch() -> None:
+    assert _hook("{kaputt ls -la").returncode == 0
+    assert _hook("").returncode == 0
+
+
+def test_hook_ausnahme_in_pruefung_mit_ja_gesperrt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import io
+
+    from to_spawn import hooks
+
+    def boese(_: str) -> bool:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(hooks, "ja_aufrufe", boese)
+    assert (
+        hooks.hook_ja_sperre(io.StringIO(_roh("~/.claude/bin/ja 5")), io.StringIO())
+        == 2
+    )
+    assert hooks.hook_ja_sperre(io.StringIO(_roh("ls")), io.StringIO()) == 0
+
+
+def _settings(heim: Path, befehl: str, matcher: str = "Bash") -> None:
+    ordner = heim / ".claude"
+    ordner.mkdir(exist_ok=True)
+    daten = {
+        "hooks": {
+            "PreToolUse": [
+                {"matcher": matcher, "hooks": [{"type": "command", "command": befehl}]}
+            ]
+        }
+    }
+    (ordner / "settings.json").write_text(json.dumps(daten), encoding="utf-8")
+
+
+def test_nachweis_verlangt_echte_to_spawn_py(
+    heim: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("HOME", str(heim))
+    monkeypatch.setenv("USERPROFILE", str(heim))
+    _settings(heim, "echo hook-ja-sperre")
+    assert briefkasten.sperre_eingetragen() is False
+    _settings(heim, f"python {heim}/gibt_es_nicht/to_spawn.py hook-ja-sperre")
+    assert briefkasten.sperre_eingetragen() is False
+    _settings(heim, f"python {SKILL / 'to_spawn.py'} offene")
+    assert briefkasten.sperre_eingetragen() is False
+    _settings(heim, f"{sys.executable} {SKILL / 'to_spawn.py'} hook-ja-sperre")
+    assert briefkasten.sperre_eingetragen() is True
+    _settings(
+        heim,
+        f"{sys.executable} {SKILL / 'to_spawn.py'} hook-ja-sperre",
+        "Bash|PowerShell",
+    )
+    assert briefkasten.sperre_eingetragen() is True
+    _settings(heim, f"{sys.executable} {SKILL / 'to_spawn.py'} hook-ja-sperre", "Edit")
+    assert briefkasten.sperre_eingetragen() is False
+
+
+def test_einrichtung_matcher_deckt_powershell(heim: Path) -> None:
+    ordner = heim / ".claude"
+    ja_einrichten.sperre_eintragen(ordner, sys.executable)
+    block = json.loads((ordner / "settings.json").read_text(encoding="utf-8"))["hooks"][
+        "PreToolUse"
+    ][0]
+    assert set(block["matcher"].split("|")) == {"Bash", "PowerShell"}
+
+
+def test_einrichtung_pretooluse_keine_liste_meldung_statt_traceback(heim: Path) -> None:
+    ordner = heim / ".claude"
+    ordner.mkdir()
+    inhalt = json.dumps({"hooks": {"PreToolUse": {"matcher": "x"}}})
+    (ordner / "settings.json").write_text(inhalt, encoding="utf-8")
+    with pytest.raises(ValueError, match="PreToolUse"):
+        ja_einrichten.sperre_eintragen(ordner, sys.executable)
+    assert (ordner / "settings.json").read_text(encoding="utf-8") == inhalt
+    assert (
+        ja_einrichten.main(["--claude-dir", str(ordner), "--python", sys.executable])
+        == 1
+    )

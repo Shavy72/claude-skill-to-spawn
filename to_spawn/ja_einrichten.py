@@ -24,6 +24,8 @@ from to_spawn import briefkasten
 
 log = logging.getLogger("to_spawn.ja_einrichten")
 
+#: Bash-Werkzeug und (Windows) PowerShell-Werkzeug; beide tragen den Befehl in ``tool_input.command``.
+MATCHER = "Bash|PowerShell"
 CLI = Path(__file__).resolve().parent.parent / "to_spawn.py"
 
 
@@ -38,20 +40,19 @@ def sperre_eintragen(
         if not isinstance(daten, dict):
             raise ValueError(f"{datei}: kein JSON-Objekt — nicht überschrieben.")
     hooks = daten.setdefault("hooks", {})
-    blocks = hooks.setdefault("PreToolUse", [])
-    if any(
-        b.get("matcher") == "Bash"
-        and briefkasten.JA_SPERRE_HOOK in h.get("command", "")
-        for b in blocks
-        for h in b.get("hooks", [])
-    ):
+    blocks = hooks.setdefault("PreToolUse", []) if isinstance(hooks, dict) else None
+    if not isinstance(blocks, list):
+        raise ValueError(  # noqa: TRY004 — main fängt ValueError
+            f"{datei}: hooks/PreToolUse hat eine unerwartete Form (PreToolUse muss eine Liste sein) — nicht verändert."
+        )
+    if briefkasten.sperre_eingetragen_in(daten):
         return False
     befehl = " ".join(
         shlex.quote(t)
         for t in (Path(python).as_posix(), cli.as_posix(), briefkasten.JA_SPERRE_HOOK)
     )
     blocks.append(
-        {"matcher": "Bash", "hooks": [{"type": "command", "command": befehl}]}
+        {"matcher": MATCHER, "hooks": [{"type": "command", "command": befehl}]}
     )
     claude_dir.mkdir(parents=True, exist_ok=True)
     if datei.exists():

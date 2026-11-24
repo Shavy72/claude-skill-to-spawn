@@ -44,6 +44,7 @@ import logging
 import os
 import re
 import secrets
+import shlex
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -369,17 +370,42 @@ def ja_aufforderung(n: str | int = "<N>") -> str:
 
 
 def sperre_eingetragen() -> bool:
-    """Steht der Hook :data:`JA_SPERRE_HOOK` (PreToolUse, Bash) in ``~/.claude/settings.json`` dieser Maschine?"""
+    """Steht der Hook :data:`JA_SPERRE_HOOK` (PreToolUse, Matcher mit Bash) in ``~/.claude/settings.json``?"""
     try:
         einstellungen = json.loads((Path.home() / ".claude" / "settings.json").read_text(encoding="utf-8"))
+        return sperre_eingetragen_in(einstellungen)
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return False
+
+
+def sperre_eingetragen_in(einstellungen: dict[str, Any]) -> bool:
+    """Wie :func:`sperre_eingetragen`, für schon gelesene Einstellungen (``KeyError`` o. ä. = nicht da)."""
+    try:
         blocks = einstellungen["hooks"]["PreToolUse"]
         return any(
-            b.get("matcher") == "Bash" and JA_SPERRE_HOOK in h.get("command", "")
+            "Bash" in b.get("matcher", "").split("|") and _ruft_sperre_auf(h.get("command", ""))
             for b in blocks
             for h in b.get("hooks", [])
         )
-    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+    except (KeyError, TypeError, AttributeError):
         return False
+
+
+def _ruft_sperre_auf(befehl: str) -> bool:
+    """Ruft ``befehl`` eine vorhandene ``to_spawn.py`` mit dem Unterbefehl :data:`JA_SPERRE_HOOK` auf?
+
+    ``echo hook-ja-sperre`` o. ä. zählt nicht: nur ``<…>/to_spawn.py hook-ja-sperre`` mit existierender Datei.
+    """
+    try:
+        woerter = shlex.split(befehl)
+    except ValueError:
+        return False
+    return any(
+        w.replace("\\", "/").rsplit("/", 1)[-1] == "to_spawn.py"
+        and Path(w).is_file()
+        and woerter[i + 1 : i + 2] == [JA_SPERRE_HOOK]
+        for i, w in enumerate(woerter)
+    )
 
 
 def menschen_nachweis(ist_tty: bool) -> None:
