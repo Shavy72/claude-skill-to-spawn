@@ -73,8 +73,7 @@ ZU_TEXT = (
     "(nächstes Ticket, Rundschau, Abschluss) anstoßen. Deinen Takt (ScheduleWakeup) nicht ändern."
 )
 AUFSEHER_KOMMENTAR_TEXT = (
-    "Ticket #{ticket}: neuer Kommentar des Aufsehers — jetzt `gh issue view {ticket} --comments` "
-    "lesen und umsetzen."
+    "Ticket #{ticket}: neuer Kommentar des Aufsehers — jetzt `gh issue view {ticket} --comments` lesen und umsetzen."
 )
 #: So viele jüngste Kommentare je Ticket liest die GitHub-Abfrage (ein Durchgang ≈ 1 min).
 KOMMENTARE_JE_TICKET = 20
@@ -110,9 +109,7 @@ def ereignisse(lage: dict[str, Any]) -> list[Ereignis]:
                 and k.get("authorAssociation") in capo.BETEILIGTE_ROLLEN
                 and str(k.get("body") or "").lstrip().startswith(capo.AUFSEHER_KOEPFE)
             ):
-                aus.append(
-                    Ereignis(f"kommentar:{k['databaseId']}", t, AUFSEHER_KOMMENTAR_TEXT.format(ticket=t))
-                )
+                aus.append(Ereignis(f"kommentar:{k['databaseId']}", t, AUFSEHER_KOMMENTAR_TEXT.format(ticket=t)))
     return aus
 
 
@@ -247,6 +244,9 @@ class Wecker:
             return
         lage = self._lage(manifest.lade_manifest(self.repo, self.spec)["tickets"])
         if lage is None:
+            self._melde(
+                f"Briefkasten-Wecker Spec #{self.spec}: GitHub-Abfrage der Tickets gescheitert — Takt übernimmt"
+            )
             return
         jetzt = ereignisse(lage)
         if self._geweckt is None:
