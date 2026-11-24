@@ -98,3 +98,26 @@ def test_ohne_origin_entscheidet_der_git_ordner(welt: dict[str, Path]) -> None:
 def test_fehlender_ordner_ist_frei(welt: dict[str, Path]) -> None:
     assert config.worktree_fremd("6", welt["b"]) is None
     assert _start(welt["b"], "test/repo-b-499-frei", "6").erlaubt is True
+
+
+def test_probesitz_verweigert_fremden_ordner_und_loescht_ihn_nicht(welt: dict[str, Path]) -> None:
+    from to_spawn import probesitz
+
+    (welt["wt"] / "arbeit.txt").write_text("fremd", encoding="utf-8")
+
+    def laeufer(argv: list[str], cwd: Path | None = None, timeout: float = 0) -> subprocess.CompletedProcess[str]:
+        if Path(argv[0]).name == "gh":
+            ausgabe = "https://github.com/x/y/issues/5\n" if "create" in argv else ""
+            return subprocess.CompletedProcess(argv, 0, ausgabe, "")
+        return subprocess.run(argv, cwd=cwd, capture_output=True, text=True, check=False)
+
+    ergebnisse = probesitz.wegwerf_lauf(
+        welt["b"],
+        config.lade(welt["b"]),
+        laeufer=laeufer,
+        which=lambda name: f"/usr/bin/{name}",
+        worktree_anlegen=lambda *_a: pytest.fail("darf im fremden Ordner nicht anlegen"),
+        session_starter=lambda *_a, **_k: pytest.fail("darf nicht starten"),
+    )
+    assert not ergebnisse[2].ok and "repo-a" in ergebnisse[2].grund
+    assert (welt["wt"] / "arbeit.txt").read_text(encoding="utf-8") == "fremd"
