@@ -25,12 +25,6 @@ from test_hausmeister_ticket_repo_176 import APP, Repos, repos  # noqa: F401
 from to_spawn import hausmeister
 
 
-@pytest.fixture(autouse=True)
-def eigenes_tmux(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("TMUX", raising=False)
-    monkeypatch.setenv("TMUX_TMPDIR", str(tmp_path))
-
-
 def _commit(ordner: Path, datei: str) -> str:
     (ordner / datei).write_text(f"{datei}\n", encoding="utf-8")
     git(ordner, "add", datei)

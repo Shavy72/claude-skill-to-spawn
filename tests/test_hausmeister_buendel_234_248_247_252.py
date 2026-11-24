@@ -30,12 +30,6 @@ from to_spawn import hausmeister
 ECHT = f"https://github.com/{SKILL}"
 
 
-@pytest.fixture(autouse=True)
-def eigenes_tmux(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("TMUX", raising=False)
-    monkeypatch.setenv("TMUX_TMPDIR", str(tmp_path))
-
-
 def _auf_server(bare: Path, ref: str) -> str:
     return git(bare, "for-each-ref", "--format=%(objectname)", ref).strip()
 

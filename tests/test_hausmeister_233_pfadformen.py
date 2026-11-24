@@ -29,12 +29,6 @@ from test_hausmeister_1368 import (  # noqa: F401 — ``welt`` ist ein Fixture
 pytestmark = pytest.mark.skipif(sys.platform != "win32", reason="Junction und 8.3-Kurzname gibt es nur unter Windows")
 
 
-@pytest.fixture(autouse=True)
-def eigenes_tmux(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("TMUX", raising=False)
-    monkeypatch.setenv("TMUX_TMPDIR", str(tmp_path))
-
-
 @contextmanager
 def _junction(verweis: Path, ziel: Path) -> Iterator[Path]:
     subprocess.run(

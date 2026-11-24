@@ -30,12 +30,6 @@ ECHT = f"https://github.com/{SKILL}"
 VERLAUF = "ungesicherte Commits im Verlauf"
 
 
-@pytest.fixture(autouse=True)
-def eigenes_tmux(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("TMUX", raising=False)
-    monkeypatch.setenv("TMUX_TMPDIR", str(tmp_path))
-
-
 def _bare_kopie(welt: Welt, ziel: Path) -> Path:
     ziel.parent.mkdir(parents=True, exist_ok=True)
     subprocess.run(["git", "clone", "-q", "--bare", str(welt.tmp / "claude-skill-to-spawn.git"), str(ziel)], check=True)

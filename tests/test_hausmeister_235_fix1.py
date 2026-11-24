@@ -27,12 +27,6 @@ from test_hausmeister_ticket_repo_176 import SKILL, TAG, Repos, repos  # noqa: F
 from to_spawn import hausmeister
 
 
-@pytest.fixture(autouse=True)
-def eigenes_tmux(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("TMUX", raising=False)
-    monkeypatch.setenv("TMUX_TMPDIR", str(tmp_path))
-
-
 def _bare_kopie(welt: Welt, ziel: Path) -> Path:
     """Nacktes Repo als Kopie des Skill-Origin (ein fremder Server mit gleichem Inhalt)."""
     ziel.parent.mkdir(parents=True, exist_ok=True)
