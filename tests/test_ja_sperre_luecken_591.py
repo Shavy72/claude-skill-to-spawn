@@ -427,3 +427,58 @@ def test_runde3_umgehung_wird_gesperrt(befehl: str) -> None:
 )
 def test_runde3_alltag_bleibt_frei(befehl: str) -> None:
     assert not _sperrt(befehl), repr(befehl)
+
+
+# --- PR 610, Fix-Runde 4: maskierter Backslash, gequoteter Here-Doc, Konfig-Schreiber + git/gh ---
+
+#: Befund 1 — ``\\`` vor dem Zeilenumbruch ist ein maskierter Backslash, keine Zeilenfortsetzung.
+FORTSETZUNG_1 = [
+    "echo a\\\\\nja 5",
+    "cd pfad\\\\\nja 5",
+    "# kommentar \\\nja 5",
+]
+
+#: Befund 2 — im gequoteten Here-Doc bleibt ``\`` + Zeilenumbruch stehen, die Endzeile verschiebt sich nicht.
+HEREDOC_FORTSETZUNG_2 = [
+    "git commit -m \"$(cat <<'EOF'\nx\\\nEOF\nja 5\nEOF\n)\"",
+    "cat <<'EOF'\nx\\\nEOF\nja 5\nEOF",
+]
+
+#: Befund 3 — ein Träger schreibt eine Konfig-Datei, git im selben Befehl liest sie und startet das Programm.
+KONFIG_GIT_3 = [
+    "mkdir -p b/objects b/refs && echo 'ref: refs/heads/m' > b/HEAD && "
+    "printf '%s\\n' '[remote \"o\"]' 'url = .' 'uploadpack = ja 5' > b/config && git -C b fetch o",
+    "mkdir -p b/objects b/refs && echo 'ref: refs/heads/m' > b/HEAD && "
+    "printf '%s\\n' '[remote \"o\"]' 'url = .' 'uploadpack = ja 5' > b/config && cd b && git fetch o",
+    "printf 'uploadpack = ja 5\\n' | tee b/config && git -C b fetch o",
+]
+
+#: Befund 4 — ``gh … --web`` startet den Browser aus der gh-Konfiguration.
+KONFIG_GH_4 = [
+    "printf 'browser: ja 5\\n' > ~/.config/gh/config.yml && gh issue view 5 --web",
+    "printf 'browser: ja 5\\n' > ~/.config/gh/config.yml && gh issue view 5 -w",
+    "printf 'pager: ja 5\\n' > ~/.config/gh/config.yml && gh issue view 5",
+    "echo 'ja 5' | grep ja && gh issue view 5 --web",
+]
+
+
+@pytest.mark.parametrize(
+    "befehl", FORTSETZUNG_1 + HEREDOC_FORTSETZUNG_2 + KONFIG_GIT_3 + KONFIG_GH_4
+)
+def test_runde4_umgehung_wird_gesperrt(befehl: str) -> None:
+    assert _sperrt(befehl), repr(befehl)
+
+
+#: Alltag aus dem Befund der Runde 4 (zusätzlich zur Liste der Runde 3) — muss frei bleiben.
+ALLTAG_RUNDE4 = [
+    "git add -A && git commit -m \"$(cat <<'EOF'\nZeile mit Wort\nEOF\n)\" && git push origin zweig",
+    "git add -A && git commit -m \"$(cat <<'EOF'\nfix: a\\b ja 5\nEOF\n)\" && git push origin zweig",
+    "git commit -m 'ja 5' \\\n  && git push origin zweig",
+    "echo 'ja' > ~/notiz.txt && cat ~/notiz.txt",
+    "grep -rn ja . 2>/dev/null && git status --short",
+]
+
+
+@pytest.mark.parametrize("befehl", ALLTAG_RUNDE4)
+def test_runde4_alltag_bleibt_frei(befehl: str) -> None:
+    assert not _sperrt(befehl), repr(befehl)

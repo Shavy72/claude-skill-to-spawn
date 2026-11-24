@@ -822,19 +822,22 @@ def ja_aufrufe(befehl: str) -> bool:
     befehl = _JA_ANSI_C.sub(_ansi_c_aufloesen, befehl).replace('$"', '"')
     if _JA_WIN_PFAD.search(befehl):  # Windows-Pfad: shlex verschluckt die Backslashes
         return True
+    # Textsuche (Interpreter, unsichere Zerlegung) sieht beide Formen: ``\``+Zeilenumbruch ist in
+    # Python-/Shell-Text eine Fortsetzung, ``\\``+Zeilenumbruch nicht (PR 610, Runde 4).
+    suchtext = befehl + "\n" + befehl.replace("\\\n", "")
     try:
         alle: list[_JaTeil] = []
-        teile, _ = _ja_zerlegen(befehl.replace("\\\n", ""), alle=alle)
+        teile, _ = _ja_zerlegen(befehl, alle=alle)
         return (
             not _ja_rumpf_ok(teile, ersetzung=False)
-            or _ja_teile_sperren(teile, befehl)
+            or _ja_teile_sperren(teile, suchtext)
             or _ja_traeger_sperren(alle + teile)
         )
     except _JaTreffer:
         return True
     except _JaUnsicher as grund:
         log.info("Ja-Sperre: Zerlegung unsicher (%s) — Wort im Text entscheidet.", grund)
-        return _ja_traegt(befehl)
+        return _ja_traegt(suchtext)
 
 
 class _JaUnsicher(Exception):
@@ -900,6 +903,9 @@ def _ja_zerlegen(
             i += 1
             continue
         if zeichen == "\\":
+            if text.startswith("\\\n", i):  # Zeilenfortsetzung; ``\\`` ist schon als Paar verbraucht
+                i += 2
+                continue
             puffer.append(text[i : i + 2])
             i += 2
             continue
@@ -985,14 +991,25 @@ def _ja_heredoc_rumpf(
     """Rümpfe der vorgemerkten Here-Docs ab ``i`` überspringen; Wort im Rumpf → Eingabe trägt es.
 
     In einer Ersetzung beendet bash den Rumpf auch an ``WORT)`` (PR 610, Runde 3) — beginnt dort eine
-    Rumpf-Zeile mit dem Begrenzer, ohne ihm genau zu gleichen, ist das Ende nicht eindeutig → unsicher."""
+    Rumpf-Zeile mit dem Begrenzer, ohne ihm genau zu gleichen, ist das Ende nicht eindeutig → unsicher.
+    Backslash+Zeilenumbruch (Runde 4): nur bei ungequotetem Begrenzer zieht bash die Zeilen zusammen; in
+    einer Ersetzung gilt eine Rumpf-Zeile mit Backslash am Ende als unsicher."""
+
+    def naechste(i: int) -> tuple[str, int]:
+        umbruch = text.find("\n", i)
+        return (text[i:], len(text)) if umbruch < 0 else (text[i:umbruch], umbruch + 1)
+
     for teil, wort, gequotet, tabs in offen:
         zeilen: list[str] = []
         while True:
             if i >= len(text):
                 raise _JaUnsicher("Here-Doc ohne Endzeile")
-            umbruch = text.find("\n", i)
-            zeile, i = (text[i:], len(text)) if umbruch < 0 else (text[i:umbruch], umbruch + 1)
+            zeile, i = naechste(i)
+            while not gequotet and (len(zeile) - len(zeile.rstrip("\\"))) % 2 and i < len(text):
+                folge, i = naechste(i)
+                zeile = zeile[:-1] + folge
+            if ersetzung and zeile.endswith("\\"):
+                raise _JaUnsicher("Here-Doc-Zeile mit Backslash am Ende in Ersetzung")
             vergleich = zeile.lstrip("\t") if tabs else zeile
             if vergleich == wort:
                 break
@@ -1072,7 +1089,9 @@ def _ja_traeger_sperren(alle: list[_JaTeil]) -> bool:
     strikt = any(_ja_traeger(roh, teil.eingabe) for teil, roh in zerlegt)
     if not strikt and not any(_ja_wort_in(w) for _, roh in zerlegt for w in roh):
         return False
-    return not all(_ja_teil_frei(roh) or (not strikt and _ja_wert_teil(roh)) for _, roh in zerlegt)
+    # Runde 4: schreibt ein Teil in eine Datei, kann sie Konfiguration für git/gh sein (``b/config``).
+    schreibt = strikt and any(_ja_schreibt(roh) for _, roh in zerlegt)
+    return not all(_ja_teil_frei(roh, schreibt=schreibt) or (not strikt and _ja_wert_teil(roh)) for _, roh in zerlegt)
 
 
 def _ja_wert_teil(roh: list[str]) -> bool:
@@ -1146,14 +1165,8 @@ def _ja_git_frei(woerter: list[str]) -> bool:
     return True
 
 
-def _ja_teil_frei(roh: list[str]) -> bool:
-    """Positivliste für jeden Teil eines Befehls mit Träger: Text-Befehl (:data:`_JA_NUR_TEXT`, ``find``
-    ohne Start/Schreib-Schalter, ``git log``/``git grep``/``gh … view|list`` ohne Ausgabe-Weg, ``xargs``
-    mit lauter bekannten Schaltern und freiem Ziel) oder :data:`_JA_HARMLOS`. Befehlsname wörtlich
-    (kein Pfad, keine Zuweisung davor). Nie frei: Deskriptor-Umleitung, Schreib-Ziel Startdatei oder
-    mit Shell-Erweiterung (:data:`_JA_ZIEL_ERWEITERUNG`), ``printf -v``, ``uniq`` mit Ausgabe-Datei."""
-    if any(_JA_DESKRIPTOR.search(w) for w in roh):
-        return False
+def _ja_umleitungen(roh: list[str]) -> tuple[list[str], list[str], list[str]]:
+    """Wörter ohne Umleitungen und Klammerworte, alle Umleitungs-Ziele, Schreib-Ziele (auch ``tee``)."""
     woerter, ziele, schreib_ziele, k = [], [], [], 0
     while k < len(roh):
         wort = roh[k]
@@ -1171,6 +1184,34 @@ def _ja_teil_frei(roh: list[str]) -> bool:
         woerter = woerter[1:]
     if woerter and woerter[0] == "tee":
         schreib_ziele += [w for w in woerter[1:] if not w.startswith("-")]
+    return woerter, ziele, schreib_ziele
+
+
+#: Schreib-Ziel ohne Datei: Deskriptor-Kopie (``2>&1``, ``>&-``) oder ``/dev/null``.
+_JA_KEINE_DATEI = re.compile(r"&(?:\d+|-)|/dev/null")
+
+
+def _ja_schreibt(roh: list[str]) -> bool:
+    """Der Teil schreibt in eine Datei (Umleitung oder ``tee``) — ohne Deskriptor-Kopien und ``/dev/null``."""
+    return any(not _JA_KEINE_DATEI.fullmatch(z) for z in _ja_umleitungen(roh)[2])
+
+
+def _ja_gh_web(woerter: list[str]) -> bool:
+    """``gh … --web``/``-w`` (auch in einem Bündel kurzer Schalter): startet den Browser aus der Konfiguration."""
+    return any(w == "--web" or w.startswith("--web=") or re.fullmatch(r"-[A-Za-z]*w[A-Za-z]*", w) for w in woerter)
+
+
+def _ja_teil_frei(roh: list[str], *, schreibt: bool = False) -> bool:
+    """Positivliste für jeden Teil eines Befehls mit Träger: Text-Befehl (:data:`_JA_NUR_TEXT`, ``find``
+    ohne Start/Schreib-Schalter, ``git log``/``git grep``/``gh … view|list`` ohne Ausgabe-Weg, ``xargs``
+    mit lauter bekannten Schaltern und freiem Ziel) oder :data:`_JA_HARMLOS`. Befehlsname wörtlich
+    (kein Pfad, keine Zuweisung davor). Nie frei: Deskriptor-Umleitung, Schreib-Ziel Startdatei oder
+    mit Shell-Erweiterung (:data:`_JA_ZIEL_ERWEITERUNG`), ``printf -v``, ``uniq`` mit Ausgabe-Datei,
+    ``gh … --web``. ``schreibt`` (ein Teil des Befehls schreibt in eine Datei): ``git``/``gh`` lesen
+    Konfiguration aus Dateien und sind dann nie frei (Runde 4)."""
+    if any(_JA_DESKRIPTOR.search(w) for w in roh):
+        return False
+    woerter, ziele, schreib_ziele = _ja_umleitungen(roh)
     if any(_ja_startdatei(z) for z in ziele + schreib_ziele) or any(
         _JA_ZIEL_ERWEITERUNG.search(z) for z in schreib_ziele
     ):
@@ -1193,6 +1234,8 @@ def _ja_teil_frei(roh: list[str]) -> bool:
     if name == "xargs":
         return _ja_xargs_frei(woerter)
     if name in ("git", "gh"):
+        if schreibt or (name == "gh" and _ja_gh_web(woerter)):
+            return False
         unter, ab = _ja_unterbefehl(woerter, name)
         if unter in _JA_GIT_FREI:
             return _ja_git_frei(woerter)
