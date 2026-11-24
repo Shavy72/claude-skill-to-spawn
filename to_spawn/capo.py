@@ -1685,6 +1685,27 @@ def mensch_noetig_was(eintrag: dict[str, Any]) -> str:
     return f"Review-Beleg nach {'?' if runden is None else runden} Fixrunden noch rot"
 
 
+def mensch_noetig_eigen(
+    eintrag: dict[str, Any], repo: Path, wt_basis: str, spec: int
+) -> bool:
+    """Stammt der Eintrag aus diesem Lauf — Hauptbaum oder eigener ``wt-<Ticket>``? (#465)
+
+    Die Datei teilen alle Repos der Maschine; Spec- und Ticketnummer allein sind nicht
+    eindeutig (zwei Probe-Repos mit Spec 1/Ticket 5). Ohne ``repo`` gilt der Eintrag als fremd.
+    ponytail: ohne ``--wt-basis`` teilen Repos ``~/wt/wt-N`` — dann hilft nur Git-Common-Dir.
+    """
+    ort = str(eintrag.get("repo") or "")
+    if not ort:
+        return False
+    nummer = str(eintrag.get("ticket") or spec)
+    orte = [repo] + ([worktree_ordner(int(nummer), wt_basis)] if nummer.isdigit() else [])
+
+    def norm(pfad: str | Path) -> str:
+        return os.path.normcase(os.path.realpath(os.path.expanduser(str(pfad))))
+
+    return norm(ort) in {norm(o) for o in orte}
+
+
 def _checkpoint(
     repo: Path,
     konfig: dict[str, Any],
@@ -2609,6 +2630,8 @@ def _tick(
     # „Mensch nötig“ aus dem Review-Stop-Hook: je Eintrag einmal melden, Kette läuft weiter.
     mn_gesehen: list[str] = list(zustand.get("mensch_noetig_gesehen") or [])
     for eintrag in mensch_noetig.eintraege_fuer_spec(spec, set(mn_gesehen)):
+        if not mensch_noetig_eigen(eintrag, repo, wt_basis, spec):
+            continue  # #465: Eintrag eines anderen Repos mit gleicher Spec-Nummer
         ziel = str(eintrag.get("ticket") or spec)
         fp = str(eintrag.get("fingerprint") or "")[:8]
         was = mensch_noetig_was(eintrag)
