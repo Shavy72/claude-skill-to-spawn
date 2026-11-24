@@ -27,6 +27,8 @@ Geprüft wird der Arbeitsbaum am Kopf des Klons: ungespeicherte Änderungen
 nach fetch) → kein Lauf, kein Merker, ``ok=False`` mit Handlung. Zeitgrenze aus
 :func:`to_spawn.config.komplett_zeitgrenze_s`; Ablauf = rot mit Grund „Zeitgrenze“. Jeder Lauf
 steht zusätzlich als Zeile mit ``art: "komplett"`` im Prüf-Protokoll.
+Bau-Ticket (#474): mit ``TO_SPAWN_TICKET`` in der Umgebung lehnt jede Tür ab (``ok=False``, kein Lauf,
+kein Merker) — je Ticket nur die schnelle Prüfung.
 Übergangsregel: Repo ohne Gruppe ``pruefung`` (:func:`pruefplan.eingerichtet`) → nichts ausführen,
 ``ok=True`` (alter Ablauf).
 
@@ -110,6 +112,22 @@ class Merker:
     @property
     def gruen(self) -> bool:
         return self.exit == leiter.GRUEN
+
+
+#: #474: gesetzt (auch leer) = Bau-Session; dort läuft nie eine Komplett-Prüfung, nur die schnelle.
+#: Die Probe-Vorlage ``probe/gemeinsam/skripte/pruefen_komplett.py`` prüft dieselbe Variable selbst
+#: (eigenes Repo, kann den Skill nicht importieren) — gegen den Aufruf von Hand am Skill vorbei.
+BAU_TICKET_VARIABLE = "TO_SPAWN_TICKET"
+
+
+def _bau_ticket_grund(spec: int) -> str:
+    """Ablehnung mit Handlung: je Ticket schnelle Prüfung, Komplett genau einmal je Spec."""
+    return (
+        "Komplett-Prüfung nicht aus einem Bau-Ticket (TO_SPAWN_TICKET gesetzt). Handlung: je Ticket "
+        "nur die schnelle Prüfung (pruefung.schnell); die Komplett-Prüfung läuft genau einmal je Spec "
+        f"über `to_spawn.py komplett {int(spec)} --moment vor-live` (Aufseher) bzw. im capo-Takt, sobald "
+        "alle Tickets auf Staging sind."
+    )
 
 
 def _datei(klon: Path, spec: int) -> Path:
@@ -317,6 +335,10 @@ def _pruefen(
     rot_zaehlt: bool,
     hintergrund: bool,
 ) -> Ergebnis:
+    if BAU_TICKET_VARIABLE in os.environ:
+        # #474: eine Bau-Session (bau.py setzt die Variable, auch leer) ist nie ein Spec-Moment.
+        log.warning("komplett_lauf: Spec %s aus Bau-Ticket abgelehnt", spec)
+        return Ergebnis(False, False, _bau_ticket_grund(spec), None, "")
     if not pruefplan.eingerichtet(konfig):
         # Zuerst und ohne git: nicht eingerichtete Repos (laufende Specs) merken nichts davon.
         log.info("komplett_lauf: Spec %s %s", spec, pruefplan.NICHT_EINGERICHTET)

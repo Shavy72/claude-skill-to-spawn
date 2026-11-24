@@ -2,11 +2,16 @@
 
 ``python skripte/pruefen_komplett.py`` — Exit 0 nur, wenn beides grün ist. Der Rauchtest nutzt
 einen freien Port, stört also weder Staging noch die Übungs-Live-App.
+
+Aus einem Bau-Ticket (``TO_SPAWN_TICKET`` gesetzt, #474) lehnt es mit Exit 2 ab: je Ticket nur die
+schnelle Prüfung; die Komplett-Prüfung startet der Skill genau einmal je Spec (dort ohne die
+Variable). Gleiche Regel wie ``to_spawn/komplett_lauf.py`` im Skill.
 """
 
 from __future__ import annotations
 
 import logging
+import os
 import socket
 import subprocess
 import sys
@@ -52,6 +57,14 @@ def rauchtest() -> bool:
 
 def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
+    if "TO_SPAWN_TICKET" in os.environ:
+        log.error(
+            "Komplett-Prüfung nicht aus einem Bau-Ticket (TO_SPAWN_TICKET gesetzt). Handlung: je "
+            "Ticket nur die schnelle Prüfung (python -m unittest discover -s tests -t .); die "
+            "Komplett-Prüfung läuft genau einmal je Spec über `to_spawn.py komplett <S> --moment "
+            "vor-live` bzw. im capo-Takt, sobald alle Tickets auf Staging sind."
+        )
+        return 2
     tests = subprocess.run(
         [sys.executable, "-m", "unittest", "discover", "-s", "tests", "-t", "."],
         cwd=REPO,
