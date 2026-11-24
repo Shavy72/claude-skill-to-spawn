@@ -42,16 +42,28 @@ _ZAEHLER = itertools.count()
 #: keine Fließtext-Wörter wie „Blocker offen“ (die stehen zu Recht in Lastenheft/Plan).
 REGEL_MUSTER = {
     "GitHub-Zähler kennt staging:fertig nicht": re.compile(r"issue_dependencies_summary"),
-    "eigene Blocker-Abfrage per jq": re.compile(r"dependencies/blocked_by\S*\s+--jq"),
-    "eigene Commit-Prüfung des Blockers": re.compile(r"--grep[= ]\\?\"?\(#<Blocker>\)"),  # \" = JSON-Escape
+    # #269: auch Kurzform ``-q`` und Filter weiter hinten in der Zeile (``… --paginate --jq``).
+    "eigene Blocker-Abfrage per jq": re.compile(r"dependencies/blocked_by\S*[^\n]*?\s(?:--jq|-q)\b"),
+    # #269: jede Nummern-Form — ``(#<Blocker>)``, ``(#5)``, ``(#{N})`` —, mit ``=``, Leerzeichen, Anführung.
+    "eigene Commit-Prüfung des Blockers": re.compile(
+        r"--grep[= ]\\?[\"']?\(#(?:<\w+>|\{\w+\}|\d+)\)"  # \" = JSON-Escape
+    ),
 }
 #: Stellen, die ein Muster tragen dürfen, weil sie damit nichts freigeben.
 ERLAUBT = {
     # Nur Vorfilter/Anzeige; ob blockiert, entscheidet dort gh.offene_blocker (#1527).
     "to_spawn/ticketstand.py",
+    # Die eine Stelle der Regel (#267).
+    "to_spawn/gh.py",
+    # Dieser Wächter: Muster-Proben stehen hier als Text (#269).
+    "tests/test_267_warte_pruefung.py",
+    # Aufgezeichnete GitHub-Antworten mit dem Zähler-Feld (Vorfilter von ticketstand).
+    "tests/test_ticketstand.py",
+    "tests/test_blocker_staging_1527.py",
 }
-#: Testdaten (aufgezeichnete GitHub-Antworten, Attrappen) sind keine Entscheidung.
-ERLAUBT_ORDNER = ("tests/",)
+#: Testdaten (aufgezeichnete GitHub-Antworten, Attrappen) sind keine Entscheidung. Nur die
+#: Attrappen-Ordner, nicht ganz ``tests/`` (#269): ein Test, der die Regel nachbaut, fällt auf.
+ERLAUBT_ORDNER = ("tests/hilfen/",)
 
 
 def _dep(nr: int, state: str, *labels: str) -> dict[str, Any]:
@@ -130,7 +142,8 @@ def test_blocker_befehl_ohne_commit_auf_hauptzweig_wartet(tmp_path: Path, dep: d
     repo = _repo(tmp_path, "chore: anderes (#9)")
     erg = _blocker(repo, _stub(tmp_path, [dep]))
     assert erg.returncode == 1, erg.stderr
-    assert erg.stdout.strip().startswith("WARTET: #5 zu, aber kein Commit „(#5)“ auf origin/master")
+    wort = "zu" if dep["state"] == "closed" else "fertig gebaut"  # Wortlaut je Zustand (#269)
+    assert erg.stdout.strip().startswith(f"WARTET: #5 {wort}, aber kein Commit „(#5)“ auf origin/master")
 
 
 # --- Eine Stelle: bau.py und der Befehl fragen dieselbe Funktion -------------------
@@ -258,3 +271,89 @@ def test_keine_eigene_blocker_regel() -> None:
             continue
         treffer += [f"{rel}: {grund}" for grund, muster in REGEL_MUSTER.items() if muster.search(text)]
     assert treffer == [], f"Regel selbst ausformuliert statt `to_spawn.py blocker <N>` (#267): {treffer}"
+
+
+# --- #269: Wächter-Muster fangen abgewandelte Eigenregeln --------------------------
+
+
+@pytest.mark.parametrize(
+    "zeile",
+    [
+        "gh api repos/o/r/issues/7/dependencies/blocked_by --jq '.[].number'",
+        "gh api repos/o/r/issues/7/dependencies/blocked_by -q '.[].state'",
+        "gh api repos/o/r/issues/{N}/dependencies/blocked_by --paginate --jq length",
+        "git log origin/master --oneline --grep=(#<Blocker>)",
+        'git log origin/master --oneline --grep="(#5)"',
+        "git log origin/main --grep '(#{N})'",
+        'git log --grep=\\"(#<Blocker>)\\"',
+    ],
+)
+def test_regel_muster_fangen_abwandlungen(zeile: str) -> None:
+    assert any(m.search(zeile) for m in REGEL_MUSTER.values()), zeile
+
+
+@pytest.mark.parametrize(
+    "zeile",
+    [
+        "Blocker offen — Ticket wartet",
+        "gh.blocked_by(repo, ticket) liefert die Kanten",
+        'gh api "repos/o/r/issues/7/dependencies/blocked_by"',
+    ],
+)
+def test_regel_muster_lassen_fliesstext_und_reine_abfrage(zeile: str) -> None:
+    assert not any(m.search(zeile) for m in REGEL_MUSTER.values()), zeile
+
+
+def test_ausnahmen_haben_fundstellen() -> None:
+    """Jede erlaubte Datei trägt wirklich ein Muster — tote Ausnahmen fallen auf (#269)."""
+    tot = [
+        rel
+        for rel in sorted(ERLAUBT)
+        if not any(m.search((SKILL / rel).read_text(encoding="utf-8")) for m in REGEL_MUSTER.values())
+    ]
+    assert tot == [], f"ERLAUBT-Eintrag ohne Fundstelle — streichen: {tot}"
+
+
+# --- #269: Start-Schranke ohne --sofort, Repo nicht ermittelbar, Wortlaut je Zustand ---
+
+
+def test_start_schranke_voll_wartet_ohne_commit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ohne ``--sofort`` hält die Start-Schranke auch einen erledigten Blocker ohne Commit."""
+    repo = _repo(tmp_path, "chore: anderes (#9)")
+    stub = _stub(tmp_path, [_dep(5, "open", "staging:fertig")])
+    bau = _lade_bau(repo, monkeypatch)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    attrappe(bin_dir, "gh", f"import runpy\nrunpy.run_path({str(stub)!r}, run_name='__main__')\n")
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+
+    class Wartet(Exception):
+        pass
+
+    def _schlafen(_s: float) -> None:
+        raise Wartet
+
+    monkeypatch.setattr(bau, "auf_blocker_warten", functools.partial(bau.auf_blocker_warten, schlafen=_schlafen))
+    args = Namespace(sofort=False, umzug=None, resume=None, probesitz=False, takt=60)
+    with pytest.raises(Wartet):
+        bau.blocker_schranke("7", args)
+
+
+def test_blocker_befehl_repo_nicht_ermittelbar_wartet(tmp_path: Path) -> None:
+    """Kein ``--gh-repo`` und kein origin: nie „frei“, sondern „Abfrage fehlgeschlagen“."""
+    repo = tmp_path / "ohne_origin"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", "-b", "master"], cwd=repo, check=True, capture_output=True)
+    erg = _lauf([str(SKILL / "to_spawn.py"), "blocker", "7"], repo, _stub(tmp_path, []))
+    assert (erg.returncode, erg.stdout.strip()) == (1, "WARTET: Blocker-Abfrage fehlgeschlagen"), erg.stderr
+
+
+@pytest.mark.parametrize(
+    ("dep", "wort"),
+    [(_dep(5, "open", "staging:fertig"), "fertig gebaut"), (_dep(5, "closed"), "zu")],
+)
+def test_ohne_commit_nennt_den_echten_zustand(tmp_path: Path, dep: dict[str, Any], wort: str) -> None:
+    """„zu“ nur für geschlossene Blocker; ``staging:fertig`` heißt „fertig gebaut“ (#269)."""
+    repo = _repo(tmp_path, "chore: anderes (#9)")
+    erg = _blocker(repo, _stub(tmp_path, [dep]))
+    assert erg.stdout.strip().startswith(f"WARTET: #5 {wort}, aber kein Commit „(#5)“"), erg.stdout
