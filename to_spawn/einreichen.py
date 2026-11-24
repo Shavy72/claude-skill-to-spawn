@@ -210,7 +210,14 @@ def _einreichen(ordner: Path, nummer: str) -> Ergebnis:
         return Ergebnis(OK, f"nichts einzureichen: {sha[:7]} ist schon auf {basis}")
     if vom_haupt and not _ist_vorfahr(ordner, basis, sha) and not _git(ordner, "rev-list", "--no-merges", f"{sha}..{basis}"):
         # #476: nur Merge-Commits eigener, schon gemergter Einreichungen fehlen (Nachziehen verpasst)
-        _git(ordner, "merge", "--no-edit", "--quiet", basis)
+        try:
+            _git(ordner, "merge", "--no-edit", "--quiet", basis)
+        except _Rot:
+            # Konflikt: keinen halben Merge im geteilten Klon liegen lassen
+            subprocess.run(
+                ["git", "-C", str(ordner), "merge", "--abort"], capture_output=True, timeout=GIT_MAX_S, check=False
+            )
+            raise
         sha = _git(ordner, "rev-parse", "HEAD")
     if not _ist_vorfahr(ordner, basis, sha):
         raise _Rot(ROT, f"{basis} ist weiter: erst {basis} einarbeiten, dann erneut einreichen")
