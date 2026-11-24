@@ -228,6 +228,9 @@ def _beende(ordner: Path, port: int, pruefen: bool) -> bool:
             log.info("Prozess %s aus %s ist schon weg — Ordner wird abgebaut", pid, pid_datei)
     if ordner.exists():
         shutil.rmtree(ordner, ignore_errors=True)
+        if ordner.exists():  # etwas hält Dateien offen (z. B. der echte Server): nicht „aufgeräumt“
+            log.error("%s blieb stehen (Prozess aus %s, Ordner nicht löschbar)", ordner, pid_datei)
+            return False
     return True
 
 

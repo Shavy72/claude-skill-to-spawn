@@ -120,3 +120,25 @@ def test_alte_pid_datei_im_eigenen_ordner_fremder_prozess_lebt_abbau_laeuft(tmp_
         assert not (wt1 / "staging").exists()
     finally:
         _beenden(prozess)
+
+
+def test_eigener_ordner_frische_pid_datei_prozess_beendet_ordner_weg(tmp_path: Path) -> None:
+    wt1, _ = _welt(tmp_path)
+    (wt1 / "staging").mkdir()
+    prozess = _schlaefer(wt1 / "staging")
+    (wt1 / "staging" / "server.pid").write_text(str(prozess.pid), encoding="utf-8")
+    try:
+        assert _modul(wt1).aufraeumen("staging", 1) is True
+        assert not _lebt(prozess)
+        assert not (wt1 / "staging").exists()
+    finally:
+        _beenden(prozess)
+
+
+def test_ordner_bleibt_stehen_nicht_aufgeraeumt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    wt1, _ = _welt(tmp_path)
+    (wt1 / "staging").mkdir()
+    (wt1 / "staging" / "datei.txt").write_text("x", encoding="utf-8")
+    monkeypatch.setattr("shutil.rmtree", lambda *a, **k: None)  # Ordner lässt sich nicht löschen
+    assert _modul(wt1).aufraeumen("staging", 1) is False
+    assert (wt1 / "staging").exists()
