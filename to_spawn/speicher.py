@@ -626,14 +626,49 @@ def auf_platz_warten(
         schlafen(takt_s)
 
 
-def _platte_pruefen(loeschen: bool = True) -> tuple[bool, str]:
+def _platte_pruefen(loeschen: bool = True, nur_messen: bool = False) -> tuple[bool, str]:
     """Start-Check der Platte — die Entscheidung trifft der Hausmeister (#1369).
 
     ``loeschen=False``: nur messen (Probelauf, Status), nie aufräumen.
+    ``nur_messen=True``: kein Rundgang (#617), nur Urteil aus der Messung.
     """
     from to_spawn import hausmeister  # spät: hausmeister → aufpasser → speicher
 
-    return hausmeister.start_erlaubt(loeschen=loeschen)
+    return hausmeister.start_erlaubt(loeschen=loeschen, nur_messen=nur_messen)
+
+
+AUFRAEUM_ABSTAND_S = 600  # #617: so lange gilt „dieser Start hat schon geräumt“
+
+
+def _stempel(sitzung: str) -> Path:
+    from to_spawn import hausmeister  # spät: hausmeister → aufpasser → speicher
+
+    name = "".join(c if c.isalnum() or c in "-_" else "_" for c in sitzung)
+    return hausmeister._log_pfad().parent / f"start-geraeumt-{name}.stempel"
+
+
+def _platte_je_start(sitzung: str | None) -> tuple[bool, str]:
+    """Hausmeister räumt höchstens einmal je Start (#617): hat diese Sitzung vor kurzem
+    geräumt (Stempel jünger als :data:`AUFRAEUM_ABSTAND_S`), misst die Prüfung nur und
+    räumt erst bei „voll“ erneut. Stempel unlesbar/unschreibbar ⇒ wie bisher räumen."""
+    if sitzung:
+        try:
+            stempel = _stempel(sitzung)
+            if 0 <= time.time() - stempel.stat().st_mtime < AUFRAEUM_ABSTAND_S:  # Zukunft = Uhr-Sprung
+                ok, grund = _platte_pruefen(nur_messen=True)
+                if ok:
+                    return ok, grund
+        except OSError:
+            pass
+    ergebnis = _platte_pruefen()
+    if sitzung:
+        try:
+            stempel = _stempel(sitzung)
+            stempel.parent.mkdir(parents=True, exist_ok=True)
+            stempel.touch()
+        except OSError:
+            log.warning("Platte: Stempel für %s nicht schreibbar", sitzung)
+    return ergebnis
 
 
 def _platte_knapp() -> bool:
@@ -707,7 +742,7 @@ def cli(
     if nur_staffel:
         print(staffel_s(konfig))
         return 0
-    platte_ok, platte_grund = _platte_pruefen(loeschen=not trocken)
+    platte_ok, platte_grund = _platte_pruefen(loeschen=False) if trocken else _platte_je_start(sitzung)
     if not platte_ok:
         print(platte_grund)
         return EXIT_PLATTE
