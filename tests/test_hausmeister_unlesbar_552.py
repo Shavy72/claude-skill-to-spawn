@@ -1,4 +1,4 @@
-"""#552: Ein Prozess fremder Sitzung oder fremden Benutzers, dessen cwd sich nicht lesen lässt,
+"""#552: Ein Prozess eines fremden Benutzers, dessen cwd sich nicht lesen lässt,
 sperrt das Aufräumen nicht mehr; eigene unlesbare Prozesse und Prozesse im Ordner sperren weiter.
 
 Nur auf echtem Windows: die cwd kommt dort aus dem PEB (:func:`prozessbaum.arbeitsordner_in_windows`).
@@ -32,26 +32,55 @@ def _unlesbar(monkeypatch: pytest.MonkeyPatch, pid: int) -> None:
     monkeypatch.setattr(prozessbaum, "_arbeitsordner_windows", peb)
 
 
-@pytest.mark.parametrize("fremd", ["sitzung", "benutzer"])
-def test_unlesbarer_fremdprozess_sperrt_nicht(
-    welt: Welt, monkeypatch: pytest.MonkeyPatch, fremd: str
+def _fremder_benutzer(monkeypatch: pytest.MonkeyPatch, pid: int) -> None:
+    """``pid`` gehört einem anderen Benutzer (andere SID)."""
+    echt = prozessbaum._benutzer_windows
+    monkeypatch.setattr(
+        prozessbaum,
+        "_benutzer_windows",
+        lambda p: b"fremde-sid" if p == pid else echt(p),
+    )
+
+
+def test_unlesbarer_prozess_fremden_benutzers_sperrt_nicht(
+    welt: Welt, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     wt = welt.worktree(552)
     welt.ticket(552, "CLOSED", 48)
     proc = subprocess.Popen(["sleep", "60"], cwd=welt.tmp)
     try:
         _unlesbar(monkeypatch, proc.pid)
-        naht = "_sitzung_windows" if fremd == "sitzung" else "_benutzer_windows"
-        echt = getattr(prozessbaum, naht, None)
-        anders = 4242 if fremd == "sitzung" else b"fremde-sid"
-
-        def wert(pid: int) -> object:
-            return anders if pid == proc.pid else echt(pid)  # type: ignore[misc]
-
-        monkeypatch.setattr(prozessbaum, naht, wert, raising=False)
+        _fremder_benutzer(monkeypatch, proc.pid)
         r = welt.aufraeumen(wt, loeschen=True)
         assert r.art == "gelöscht", r.grund
         assert not wt.exists()
+    finally:
+        proc.kill()
+        proc.wait()
+
+
+def test_gleicher_benutzer_andere_sitzung_unlesbar_bleibt(
+    welt: Welt, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Eigener Benutzer ist nie fremd, auch in anderer Sitzung (ssh, Aufgabenplanung)."""
+    wt = welt.worktree(556)
+    welt.ticket(556, "CLOSED", 48)
+    proc = subprocess.Popen(["sleep", "60"], cwd=welt.tmp)
+    try:
+        _unlesbar(monkeypatch, proc.pid)
+        # eine Sitzungs-Naht darf nie entscheiden; gäbe es sie, meldete sie hier „andere Sitzung“
+        monkeypatch.setattr(
+            prozessbaum,
+            "_sitzung_windows",
+            lambda p: 4242 if p == proc.pid else 1,
+            raising=False,
+        )
+        assert prozessbaum._benutzer_windows(proc.pid) == prozessbaum._benutzer_windows(
+            os.getpid()
+        )
+        r = welt.aufraeumen(wt, loeschen=True)
+        assert r.art == "bleibt" and str(proc.pid) in r.grund, r.grund
+        assert wt.is_dir()
     finally:
         proc.kill()
         proc.wait()
@@ -84,12 +113,7 @@ def test_eigener_prozess_im_ordner_bleibt_trotz_unlesbarem_fremdprozess(
     fremd = subprocess.Popen(["sleep", "60"], cwd=welt.tmp)
     try:
         _unlesbar(monkeypatch, fremd.pid)
-        echt = prozessbaum._sitzung_windows
-        monkeypatch.setattr(
-            prozessbaum,
-            "_sitzung_windows",
-            lambda p: 4242 if p == fremd.pid else echt(p),
-        )
+        _fremder_benutzer(monkeypatch, fremd.pid)
         r = welt.aufraeumen(wt, loeschen=True)
         assert r.art == "bleibt" and str(drin.pid) in r.grund, r.grund
         assert str(fremd.pid) not in r.grund, r.grund
@@ -104,7 +128,7 @@ def test_eigener_prozess_im_ordner_bleibt_trotz_unlesbarem_fremdprozess(
 def test_nicht_feststellbar_gilt_als_eigen(
     monkeypatch: pytest.MonkeyPatch, seite: str
 ) -> None:
-    """Sitzung/Benutzer auf einer Seite unbekannt (``None``) ⇒ nie fremd, sperrt weiter."""
+    """Benutzer auf einer Seite unbekannt (``None``) ⇒ nie fremd, sperrt weiter."""
     eigen, anderer = os.getpid(), 999_999
 
     def unbekannt(echt_wert: object, anders: object):
@@ -117,7 +141,6 @@ def test_nicht_feststellbar_gilt_als_eigen(
 
         return wert
 
-    monkeypatch.setattr(prozessbaum, "_sitzung_windows", unbekannt(1, 2))
     monkeypatch.setattr(prozessbaum, "_benutzer_windows", unbekannt(b"ich", b"du"))
     assert not prozessbaum._ist_fremd_windows(anderer)
 
@@ -125,7 +148,7 @@ def test_nicht_feststellbar_gilt_als_eigen(
 def test_leere_cwd_eines_fremdprozesses_sperrt(
     welt: Welt, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Startphase (cwd im PEB noch leer) sperrt auch bei fremder Sitzung."""
+    """Startphase (cwd im PEB noch leer) sperrt auch bei fremdem Benutzer."""
     wt = welt.worktree(555)
     welt.ticket(555, "CLOSED", 48)
     proc = subprocess.Popen(["sleep", "60"], cwd=welt.tmp)
@@ -138,12 +161,7 @@ def test_leere_cwd_eines_fremdprozesses_sperrt(
             return echt(p)
 
         monkeypatch.setattr(prozessbaum, "_arbeitsordner_windows", peb)
-        sitzung = prozessbaum._sitzung_windows
-        monkeypatch.setattr(
-            prozessbaum,
-            "_sitzung_windows",
-            lambda p: 4242 if p == proc.pid else sitzung(p),
-        )
+        _fremder_benutzer(monkeypatch, proc.pid)
         r = welt.aufraeumen(wt, loeschen=True)
         assert r.art == "bleibt" and str(proc.pid) in r.grund, r.grund
         assert wt.is_dir()
@@ -152,8 +170,7 @@ def test_leere_cwd_eines_fremdprozesses_sperrt(
         proc.wait()
 
 
-def test_eigener_benutzer_und_sitzung_lesbar() -> None:
-    """Selbstprobe der Nähte: der eigene Prozess ist nie fremd."""
-    assert prozessbaum._sitzung_windows(os.getpid()) is not None
+def test_eigener_benutzer_lesbar() -> None:
+    """Selbstprobe der Naht: der eigene Prozess ist nie fremd."""
     assert prozessbaum._benutzer_windows(os.getpid())
     assert not prozessbaum._ist_fremd_windows(os.getpid())

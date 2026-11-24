@@ -109,7 +109,7 @@ def _kein_arbeitsordner_drin(ordner: Path) -> None:
     durch :func:`pfad_echt`; lesbar, aber nicht ganz auflösbar ⇒ bleibt mit Fehler, sobald ihre
     Text-Form oder Teil-Auflösung auf den Ordner (kanonisch oder wie übergeben) zeigt. Prozesse,
     die sich nicht öffnen lassen (fremd, erhöht), fehlen schon in der Liste (#243), ebenso
-    unlesbare Prozesse fremder Sitzung oder fremden Benutzers (#552)."""
+    unlesbare Prozesse fremder Benutzer (#552)."""
     try:
         befunde = prozessbaum.arbeitsordner_in_windows(ordner)
     except OSError as fehler:

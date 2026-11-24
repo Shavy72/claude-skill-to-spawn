@@ -389,8 +389,6 @@ def _win32() -> tuple[Any, Any]:
     kernel.GetFinalPathNameByHandleW.restype = ulong
     for abfrage in (nt.NtQueryInformationFile, nt.NtQueryVolumeInformationFile):
         abfrage.argtypes, abfrage.restype = [zeiger, zeiger, zeiger, ulong, ulong], ulong
-    # Besitzer eines Prozesses (siehe :func:`_ist_fremd_windows`)
-    kernel.ProcessIdToSessionId.argtypes = [ulong, ctypes.POINTER(ulong)]
     return kernel, nt
 
 
@@ -513,13 +511,6 @@ _TOKEN_QUERY = 0x0008
 _TOKEN_USER = 1
 
 
-def _sitzung_windows(pid: int) -> int | None:
-    """Windows-Sitzung von ``pid`` (0 = Dienste); nicht feststellbar = ``None``."""
-    kernel, _ = _win32()
-    sitzung = ctypes.c_ulong(0)
-    return sitzung.value if kernel.ProcessIdToSessionId(pid, ctypes.byref(sitzung)) else None
-
-
 def _benutzer_windows(pid: int) -> bytes | None:
     """SID des Benutzers, dem ``pid`` gehört (aus dem Prozess-Token); nicht lesbar = ``None``."""
     kernel, _ = _win32()
@@ -547,14 +538,11 @@ def _benutzer_windows(pid: int) -> bytes | None:
 
 
 def _ist_fremd_windows(pid: int) -> bool:
-    """Gehört ``pid`` nachweislich einer anderen Sitzung oder einem anderen Benutzer als dieser
-    Lauf? Nicht feststellbar (eigener oder fremder Wert fehlt) = ``False`` — im Zweifel eigen."""
-    eigen = os.getpid()
-    for wert in (_sitzung_windows, _benutzer_windows):
-        fremd, selbst = wert(pid), wert(eigen)
-        if fremd is not None and selbst is not None and fremd != selbst:
-            return True
-    return False
+    """Gehört ``pid`` nachweislich einem anderen Benutzer (SID) als dieser Lauf? Eigener Benutzer
+    ist nie fremd, auch in einer anderen Sitzung (ssh, Aufgabenplanung); nicht feststellbar
+    (eine SID fehlt) = ``False`` — im Zweifel eigen, der Prozess sperrt weiter."""
+    fremd, selbst = _benutzer_windows(pid), _benutzer_windows(os.getpid())
+    return fremd is not None and selbst is not None and fremd != selbst
 
 
 def _speicher(prozess: int, pid: int, adresse: int, anzahl: int) -> bytes:
@@ -753,7 +741,7 @@ def arbeitsordner_in_windows(ordner: str | Path) -> dict[int, ArbeitsordnerBefun
 
     Nicht prüfbar (Prozess fremd/geschützt: ``OpenProcess`` verweigert, siehe
     :func:`_arbeitsordner_windows`) fehlen wie bisher, ebenso offene Prozesse mit unlesbarer
-    cwd, die nachweislich einer anderen Sitzung oder einem anderen Benutzer gehören
+    cwd, die nachweislich einem anderen Benutzer gehören
     (:func:`_ist_fremd_windows`, #552 — ein geschützter Dienst sperrte sonst jedes Aufräumen).
     Jeder andere Fehler eines laufenden Prozesses ⇒ ``drin=None`` mit Grund (Aufrufer
     entscheidet fail-closed). ``ordner`` nicht zu öffnen oder Momentaufnahme unlesbar = ``OSError``.
@@ -771,7 +759,7 @@ def arbeitsordner_in_windows(ordner: str | Path) -> dict[int, ArbeitsordnerBefun
         except OSError as fehler:
             log.debug("cwd von Prozess %s unlesbar: %s", pid, fehler)
             if not isinstance(fehler, _LeereCwd) and _ist_fremd_windows(pid):
-                continue  # fremde Sitzung/fremder Benutzer: wie nicht zu öffnen (#243, #552)
+                continue  # fremder Benutzer: wie nicht zu öffnen (#243, #552)
             ergebnis[pid] = ArbeitsordnerBefund(None, None, f"cwd unlesbar: {fehler}")
             continue
         if text is None:
