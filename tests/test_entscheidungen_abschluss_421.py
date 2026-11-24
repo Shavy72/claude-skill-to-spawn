@@ -18,6 +18,7 @@ from pathlib import Path
 
 import pytest
 
+from rundschau_beispiel import rundschau_args
 from to_spawn import bau_log, briefkasten
 
 SKILL = Path(__file__).resolve().parent.parent
@@ -46,6 +47,11 @@ def _unter(
             "--repo",
             str(repo),
             *args,
+            *(
+                rundschau_args(repo, SPEC)  # #529: Abnahme verlangt ein gültiges Deck
+                if befehl == "ablegen" and "--dry-run" not in args
+                else []
+            ),
         ],
         capture_output=True,
         text=True,
