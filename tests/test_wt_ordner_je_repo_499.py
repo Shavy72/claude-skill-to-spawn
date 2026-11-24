@@ -152,3 +152,16 @@ def test_adresse_normal_fremder_host_pfad_unterscheidet_gross_klein() -> None:
 
 def test_adresse_normal_host_gross_klein_egal() -> None:
     assert config._adresse_normal("https://Git.Example.ORG/Wer/Repo") == config._adresse_normal("ssh://git@git.example.org/Wer/Repo.git")
+
+
+def test_adresse_normal_lokaler_windows_pfad_gross_klein_egal(monkeypatch: pytest.MonkeyPatch) -> None:
+    import ntpath
+
+    monkeypatch.setattr(config.os.path, "normcase", ntpath.normcase)
+    kennungen = {config._adresse_normal(a) for a in ("C:/dev/Repo", "c:/DEV/repo", "C:\\dev\\Repo\\", "C:/dev/Repo.git")}
+    assert len(kennungen) == 1
+    assert config._adresse_normal("https://gitlab.example.com/Team/Repo") == "gitlab.example.com/Team/Repo"
+
+
+def test_adresse_normal_lokaler_linux_pfad_behaelt_schreibweise() -> None:
+    assert config._adresse_normal("/home/a/Repo") != config._adresse_normal("/home/a/repo")
