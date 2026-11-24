@@ -50,18 +50,58 @@ def _warte(url: str, erreichbar: bool, sekunden: float = 15.0) -> str | None:
         time.sleep(0.2)
 
 
-def aufraeumen(umgebung: str, port: int) -> None:
-    ordner = REPO / umgebung
+def _fremde_staging_ordner() -> list[Path]:
+    """``staging/``-Ordner der anderen Worktrees dieses Repos (laut ``git worktree list``)."""
+    try:
+        roh = subprocess.run(
+            ["git", "worktree", "list", "--porcelain"],
+            cwd=REPO,
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=15,
+        ).stdout
+    except (OSError, subprocess.SubprocessError) as fehler:
+        log.info("Worktree-Liste nicht lesbar (%s) — nur eigene Instanz", fehler)
+        return []
+    wurzeln = [Path(z[9:]) for z in roh.splitlines() if z.startswith("worktree ")]
+    return [w / "staging" for w in wurzeln if w.resolve() != REPO.resolve()]
+
+
+def _prozess_im_ordner(pid: int, ordner: Path) -> bool:
+    """Positiver Beleg: Arbeitsordner des Prozesses ist genau ``ordner`` (nur Linux, sonst nein)."""
+    try:
+        return Path(f"/proc/{pid}/cwd").resolve() == ordner.resolve()
+    except OSError:
+        return False
+
+
+def _beende(ordner: Path, port: int, pruefen: bool) -> None:
     pid_datei = ordner / "server.pid"
     if pid_datei.is_file():
-        pid = int(pid_datei.read_text(encoding="utf-8").strip())
         try:
-            os.kill(pid, signal.SIGTERM)
-        except OSError as fehler:
-            log.info("Prozess %s schon weg (%s)", pid, fehler)
-        _warte(f"http://127.0.0.1:{port}/", erreichbar=False)
+            pid = int(pid_datei.read_text(encoding="utf-8").strip())
+        except (OSError, ValueError) as fehler:
+            log.info("PID-Datei %s unlesbar (%s) — Prozess bleibt", pid_datei, fehler)
+            pid = 0
+        if pid > 0 and (not pruefen or _prozess_im_ordner(pid, ordner)):
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except OSError as fehler:
+                log.info("Prozess %s schon weg (%s)", pid, fehler)
+            _warte(f"http://127.0.0.1:{port}/", erreichbar=False)
+        elif pid > 0:
+            log.warning("Prozess %s gehört nicht nachweislich zu %s — bleibt", pid, ordner)
+            return
     if ordner.exists():
         shutil.rmtree(ordner, ignore_errors=True)
+
+
+def aufraeumen(umgebung: str, port: int) -> None:
+    _beende(REPO / umgebung, port, pruefen=False)
+    if umgebung == "staging":  # #542: auch verwaiste Instanzen anderer Worktrees dieses Repos
+        for ordner in _fremde_staging_ordner():
+            _beende(ordner, port, pruefen=True)
     log.info("%s aufgeräumt", umgebung)
 
 
