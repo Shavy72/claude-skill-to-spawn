@@ -389,8 +389,26 @@ def ablegen(argv: list[str]) -> int:
         sys.stdout.write(f"[Probe] {datei}\n{json.dumps(daten, ensure_ascii=False, indent=2)}\n")
         return 0
     melder.speichere_json(datei, daten)
-    log.info("Abschluss-Paket abgelegt: %s (SPEC FERTIG %s)", datei, fertig)
+    # #421: Das Paket liegt schon vor „SPEC FERTIG“ (Abnahme offen) — die Entscheidungs-Liste
+    # entsteht darum hier mit; capo schreibt sie bei „SPEC FERTIG“ nur noch einmal neu.
+    liste = capo.uebersicht(repo, p.spec, ticket_nummern(repo, p.spec))
+    log.info("Abschluss-Paket abgelegt: %s (SPEC FERTIG %s) · %s", datei, fertig, liste)
     return 0
+
+
+def ticket_nummern(repo: Path, spec: int) -> list[int]:
+    """Ticket-Nummern der Spec aus dem Manifest; ohne Manifest alle Bau-Logs des Repos."""
+    nummern = [int(nr) for nr, _titel in _tickets(repo, spec) if nr.isdigit()]
+    return nummern or [int(t) for t in bau_log.alle_tickets(repo) if t.isdigit()]
+
+
+def entscheidungen_link(repo: Path, spec: int) -> str:
+    """Pfad der Entscheidungs-Liste (``capo.entscheidungs_datei``), relativ zum Repo wo möglich."""
+    datei = capo.entscheidungs_datei(repo, spec)
+    try:
+        return datei.relative_to(repo).as_posix()
+    except ValueError:
+        return str(datei)
 
 
 def _ticket_zeilen(repo: Path, spec: int, konfig: dict[str, Any]) -> list[str]:
@@ -454,6 +472,10 @@ def mail_text(repo: Path, p: Paket, neue_form: bool, konfig: dict[str, Any], sys
             "### Wirkungskreis",
             "",
             wirkungskreis(repo, p.spec),
+            "",
+            "### Für dich entschieden",
+            "",
+            f"Alle Entscheidungen der Spec (Bau-Log + Briefkasten): {entscheidungen_link(repo, p.spec)}",
             "",
             "## System-Teil",
             "",
