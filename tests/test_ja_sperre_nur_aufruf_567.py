@@ -226,3 +226,60 @@ def test_runde3_kommentarzeichen_bleibt_gesperrt(befehl: str) -> None:
 )
 def test_powershell_werkzeug_bekommt_keine_ausnahme(befehl: str) -> None:
     assert _sperrt(befehl, "PowerShell"), befehl
+
+
+@pytest.mark.parametrize(
+    "befehl",
+    [
+        # Runde 4: Option in Anführungszeichen — bash entfernt die Quotes, das Programm sieht die Option
+        "rg '--pre=./ja' x 1234",
+        'rg "--pre=./ja" x 1234',
+        "rg '--hostname-bin=./ja' x .",
+        'rg "--hostname-bin=./ja" x .',
+        "grep '--pre=./ja' x f",
+        'grep "-f" muster.txt f',
+        "grep '-f' muster.txt f",
+        "rg ' --pre=./ja' x .",
+        "rg '' x .",
+        'rg "" x .',
+        # Klebe-Formen: ein Wort ist ganz nackt oder ganz in Quotes
+        "rg -'-pre=./ja' x .",
+        "rg --pr'e=./ja' x .",
+        "grep -e'x' f",
+        "grep a'b' f",
+        "rg ''--pre=./ja x .",
+        'rg "-"-pre=./ja x .',
+        "rg -A1'--pre=./ja' x .",
+        # Wert nach -e mit führendem -
+        "grep -e -f muster.txt",
+        "grep -e '-f' muster.txt",
+        # nackte Wörter mit führendem - außerhalb der Liste
+        "rg --pre=./ja x .",
+        "grep -f muster.txt f",
+    ],
+)
+def test_runde4_option_in_quotes_keine_ausnahme(befehl: str) -> None:
+    assert not hooks._bash_text_ohne_aufruf(befehl), repr(befehl)
+
+
+@pytest.mark.parametrize(
+    "befehl",
+    [
+        "rg '--pre=./ja' x 1234",
+        'rg "--pre=./ja" x 1234',
+        "rg --pr'e=./ja' x .",
+        "rg '--hostname-bin=./ja' x .",
+        "rg --hostname-bin ./ja x .",
+        "rg --hostname-bin=ja x .",
+    ],
+)
+def test_runde4_vorfilter_in_quotes_bleibt_gesperrt(befehl: str) -> None:
+    assert _sperrt(befehl), befehl
+
+
+@pytest.mark.parametrize(
+    "befehl",
+    ["grep -rn nutzer-antwort .", "rg -n 'to_spawn.py ja' docs", "grep -e 'nutzer-antwort' f"],
+)
+def test_runde4_positiv_bleibt_erlaubt(befehl: str) -> None:
+    assert not _sperrt(befehl), befehl

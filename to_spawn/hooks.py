@@ -893,12 +893,14 @@ def _nur_datei_heredoc(befehl: str) -> bool:
     return wort in zeilen[1:] and zeilen.index(wort, 1) == len(zeilen) - 1
 
 
-#: Ein Wort der erlaubten Such-Form: feste Option, nacktes Wort oder ASCII-Text in Quotes.
+#: Ein Wort der erlaubten Such-Form: feste Option, nacktes Wort oder ASCII-Text in Quotes — je GANZ,
+#: nie geklebt. Nackt und in Quotes nie mit ``-`` oder Leerzeichen vorn, nie leer: bash entfernt die
+#: Quotes, ``'--pre=x'`` wäre sonst eine echte Option.
 _SUCH_WORT = (
     r"(?:-[rnilcowEFHhsvLx]+|-[ABCm][0-9]*|-e"
     r"|--(?:include|exclude|glob|type)=[A-Za-z0-9_.,/-]+"
     r"|[A-Za-z0-9_./:=,@%+][A-Za-z0-9_./:=,@%+-]*"
-    r"|'[A-Za-z0-9 _./:=,@%+-]*'|\"[A-Za-z0-9 _./:=,@%+-]*\")"
+    r"|'[A-Za-z0-9_./:=,@%+][A-Za-z0-9 _./:=,@%+-]*'|\"[A-Za-z0-9_./:=,@%+][A-Za-z0-9 _./:=,@%+-]*\")"
 )
 #: Der ganze Befehl: ``grep``/``rg`` wortgleich vorn, danach Wörter mit je genau einem Leerzeichen.
 _NUR_SUCHE = re.compile(rf"(?:grep|rg)(?: {_SUCH_WORT})+", re.ASCII)
@@ -918,9 +920,9 @@ def _nur_suche(befehl: str) -> bool:
 
 
 def _rg_vorfilter_ja(woerter: list[str]) -> bool:
-    """True, wenn ``rg --pre <befehl>`` ein Ja als Vorfilter startet."""
+    """True, wenn ``rg --pre``/``--hostname-bin <programm>`` ein Ja startet (Wörter schon ohne Quotes)."""
     for k, wort in enumerate(woerter):
-        if wort.startswith("--pre") and not wort.startswith("--pre-"):
+        if (wort.startswith("--pre") and not wort.startswith("--pre-")) or wort.startswith("--hostname-bin"):
             wert = wort.split("=", 1)[1] if "=" in wort else (woerter[k + 1] if k + 1 < len(woerter) else "")
             if ja_aufrufe(wert) or _ja_basis(wert) in ("ja", "ja.cmd"):
                 return True
