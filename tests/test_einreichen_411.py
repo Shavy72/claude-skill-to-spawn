@@ -361,6 +361,7 @@ def test_aufseher_heilt_verpasstes_nachziehen_beim_naechsten_einreichen(
     _commit(klon, "docs/HANDOFF_1.md", "Stand 1\n", "docs(aufseher): Handoff 1 [skip ci]")
     erst = _einreichen(klon, "1")
     assert erst.returncode == 0, erst.stdout + erst.stderr
+    assert _git(klon, "rev-parse", "main") != _remote_main(welt), "Lauf 1 muss das Nachziehen verpasst haben"
     monkeypatch.delenv("EINREICHEN_SPERRE_NACH_MERGE")
     sperre = Path(_git(klon, "rev-parse", "--path-format=absolute", "--git-common-dir")) / "refs/remotes/origin/main.lock"
     sperre.unlink()
@@ -422,3 +423,45 @@ def test_fehler_ohne_sperre_wird_nicht_wiederholt(tmp_path: Path, monkeypatch: p
         einreichen._git(tmp_path, "fetch", "origin", "main")
     assert len(aufrufe) == 1
     assert "couldn't find remote ref" in rot.value.text
+
+
+def _zweit_klon(welt: dict[str, Path]) -> Path:
+    zweit = welt["tmp"] / "zweit"
+    subprocess.run(["git", "clone", "-q", str(welt["remote"]), str(zweit)], check=True, capture_output=True)
+    _git(zweit, "config", "user.email", "f@test")
+    _git(zweit, "config", "user.name", "f")
+    return zweit
+
+
+def test_aufseher_vom_hauptzweig_bleibt_rot_wenn_origin_fremde_commits_hat(welt: dict[str, Path]) -> None:
+    """Heilen (#476) gilt nur für verpasste Merge-Commits: liegt ein fremder Commit auf origin, bleibt es rot."""
+    klon, zweit = welt["klon"], _zweit_klon(welt)
+    _commit(zweit, "docs/fremd.md", "fremd\n", "docs: fremder Commit")
+    _git(zweit, "push", "-q", "origin", "main")
+    fremd = _remote_main(welt)
+    sha = _commit(klon, "docs/HANDOFF_1.md", "Stand 1\n", "docs(aufseher): Handoff 1 [skip ci]")
+    erg = _einreichen(klon, "1")
+    assert erg.returncode != 0, erg.stdout + erg.stderr
+    assert "ist weiter" in erg.stdout + erg.stderr
+    assert _git(klon, "rev-parse", "HEAD") == sha, "kein stiller Merge fremder Commits"
+    assert _remote_main(welt) == fremd
+
+
+def test_aufseher_heil_merge_mit_konflikt_hinterlaesst_keinen_halben_merge(welt: dict[str, Path]) -> None:
+    """Scheitert der Heil-Merge (#476) an einem Konflikt, bleibt kein MERGE_HEAD im geteilten Klon liegen."""
+    klon, zweit = welt["klon"], _zweit_klon(welt)
+    _commit(klon, "docs/HANDOFF_1.md", "Stand 1\n", "docs(aufseher): Handoff 1 [skip ci]")
+    _git(klon, "push", "-q", "origin", "HEAD:refs/heads/einreich-1")
+    _git(zweit, "fetch", "-q", "origin")
+    _git(zweit, "merge", "--no-ff", "--no-commit", "origin/einreich-1")
+    (zweit / "docs/HANDOFF_1.md").write_text("Stand vom Merge\n", encoding="utf-8")
+    _git(zweit, "add", "docs/HANDOFF_1.md")
+    _git(zweit, "commit", "-q", "-m", "Merge einreich-1")
+    _git(zweit, "push", "-q", "origin", "main")
+    sha = _commit(klon, "docs/HANDOFF_1.md", "Stand 2\n", "docs(aufseher): Handoff 2 [skip ci]")
+    erg = _einreichen(klon, "1")
+    assert erg.returncode != 0, erg.stdout + erg.stderr
+    git_ordner = Path(_git(klon, "rev-parse", "--path-format=absolute", "--git-dir"))
+    assert not (git_ordner / "MERGE_HEAD").exists(), "halber Merge blieb liegen"
+    assert _git(klon, "rev-parse", "HEAD") == sha
+    assert _git(klon, "status", "--porcelain") == ""
