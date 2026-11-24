@@ -44,7 +44,9 @@ def _verstoesse(text: str) -> list[str]:
 
 def test_vorlage_ohne_verkettete_werkzeug_aufrufe(wache: ModuleType) -> None:
     text = wache.prompt_bauen(900, "x/y", 1800, {"ssh_ziel": "bau-server", "server_repo": "/home/bau/r"})
-    assert WERKZEUG.search(text), "Vorlage nennt capo.py/aufraeumen.mjs nicht mehr"
+    spans = re.findall(r"`([^`\n]+)`", text)
+    for werkzeug in ("capo.py", "aufraeumen.mjs"):
+        assert any(werkzeug in s for s in spans), f"Vorlage nennt keinen Aufruf von {werkzeug} mehr"
     assert _verstoesse(text) == []
 
 
