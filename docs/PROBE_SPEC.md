@@ -17,7 +17,7 @@ Der Probe-Lauf prüft den **ganzen** Standard-Ablauf, in **beiden** Repo-Arten:
 | `probe/gemeinsam/` | Probe-App (`app/`, nur Standardbibliothek), App-Tests (`tests/`), `skripte/pruefen_komplett.py`, `skripte/ausrollen.py`, absichtlich roter Werkzeug-Test `.to-spawn/werkzeug/test_werkzeug_rot.py`, README |
 | `probe/mit-staging/` | `.to-spawn/config.json` mit Staging-Adresse, `ports.json` mit Staging-Port |
 | `probe/ohne-staging/` | `.to-spawn/config.json` mit `staging.ohne: true`, `ports.json` ohne Staging-Port |
-| `probe/anlegen.sh` | legt daraus ein Lauf-Repo an (`git init` + erster Commit, kein GitHub, kein Push) |
+| `probe/anlegen.sh` | legt daraus ein Lauf-Repo an (`git init` + erster Commit; mit `--github <owner/name>` Repo anlegen und `main` pushen) |
 
 `anlegen.sh` kopiert `gemeinsam/` und legt die Variante darüber. Die App gibt es damit nur einmal;
 eine Änderung an ihr trifft beide Varianten gleich. Die Vorlagen-Tests sammelt das Skill-pytest
@@ -53,12 +53,13 @@ Windows-PC (#426 Reihenfolge). Voraussetzung: Teile A–D gebaut und installiert
 
 1. **Lauf-Repo anlegen** (je Variante, `<n>` = Laufnummer):
    ```
-   bash probe/anlegen.sh ~/to-spawn-probe-<n>-mit mit-staging
-   bash probe/anlegen.sh ~/to-spawn-probe-<n>-ohne ohne-staging --app-port 18511 --live-port 18513
+   bash probe/anlegen.sh ~/to-spawn-probe-<n>-mit mit-staging --github Shavy72/to-spawn-probe-<n>-mit
+   bash probe/anlegen.sh ~/to-spawn-probe-<n>-ohne ohne-staging --app-port 18511 --live-port 18513 \
+        --github Shavy72/to-spawn-probe-<n>-ohne
    ```
-   Danach je Repo ein privates GitHub-Repo mit `probe` im Namen anlegen und pushen
-   (`gh repo create Shavy72/to-spawn-probe-<n>-mit --private --source . --push`), damit Tickets
-   als Issues entstehen können. Startzeit in die Messtabelle.
+   `--github` legt das private GitHub-Repo (mit `probe` im Namen) an und pusht den Start-Commit
+   auf `main`, damit Tickets als Issues entstehen können und der erste Pull-Request ein Ziel hat
+   (#467). Kein zweiter Schritt von Hand. Startzeit in die Messtabelle.
 2. **Spec + Tickets:** Beschluss-Protokoll `docs/GRILL_<datum>_probe.md` aus Abschnitt 3 anlegen
    (Beschlüsse übernehmen, nicht neu grillen), dann `/to-spec`, `/to-tickets`.
 3. **Start:** `/to-spawn <S>` (Bau-Server) bzw. `/to-spawn-local <S>` (PC). Ab hier kein Eingriff.
