@@ -53,7 +53,8 @@ def review_stand(eintrag: dict[str, Any], jetzt: datetime) -> Literal["melden", 
 
     ``belegt`` = Beleg liegt inzwischen vor (kein Ruf); ``laeuft`` = ``review_offen`` jünger als
     :data:`REVIEW_WARTEZEIT_MIN` (Review läuft noch, später erneut prüfen); sonst ``melden``.
-    Andere Gründe (``beleg_rot``) und unlesbare Zeit melden sofort wie bisher.
+    Andere Gründe (``beleg_rot``), fehlende/unlesbare Zeit und Zeit in der Zukunft (Uhr
+    gesprungen) melden sofort — im Zweifel rufen, nie still warten.
     """
     if eintrag.get("grund") != "review_offen":
         return "melden"
@@ -64,7 +65,7 @@ def review_stand(eintrag: dict[str, Any], jetzt: datetime) -> Literal["melden", 
     except ValueError:
         return "melden"
     alter_min = (jetzt - zeit).total_seconds() / 60
-    return "laeuft" if alter_min < REVIEW_WARTEZEIT_MIN else "melden"
+    return "laeuft" if 0 <= alter_min < REVIEW_WARTEZEIT_MIN else "melden"
 
 
 def _alter_schluessel(eintrag: dict[str, Any]) -> str:

@@ -150,6 +150,8 @@ def kommentiere(n: int | str, gh_repo: str, text: str, befehl: str = "comment") 
     if code != 0:
         log.warning("gh issue %s #%s gescheitert (Exit %s).", befehl, n, code)
         return False
+    for alt in [k for k, t in _gesendet.items() if jetzt - t >= DOPPELT_SEKUNDEN]:
+        del _gesendet[alt]  # Obergrenze: nur Einträge im Zeitfenster bleiben gemerkt (#530)
     _gesendet[schluessel] = jetzt
     return True
 
