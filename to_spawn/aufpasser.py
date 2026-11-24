@@ -90,7 +90,7 @@ import time
 from collections.abc import Callable, Iterable, Sequence
 from contextlib import ExitStack
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
@@ -298,7 +298,7 @@ ARBEITS_MARKER = (
 )
 # Warte-Zeile von bau.py (Blocker offen). Nur diese Form zählt — „nächste Prüfung“
 # allein stand am 21.09. als Claude-Prosa im Scrollback eines idle Fensters.
-BLOCKER_WARTEN = re.compile(r"Ticket #\d+ wartet \(.*\) — nächste Prüfung in \d+ min")
+BLOCKER_WARTEN = re.compile(r"Ticket #\d+ wartet \(.*\) — nächste Prüfung in \d+ (?:min|s)\b")
 RUECKFRAGE_MARKER = (
     "Do you want to proceed?",
     "Do you want to",
@@ -1012,7 +1012,7 @@ def sichern(
                 gesehen.add(sha)
                 eltern += ["-p", sha]
         zeit = datetime.fromtimestamp(
-            jetzt or time.time(), tz=timezone.utc
+            jetzt or time.time(), tz=UTC
         ).astimezone()
         commit = _git(
             worktree,
@@ -1079,7 +1079,7 @@ def cron_einrichten(
     if trocken:
         return f"[trocken] Cron würde eingerichtet: {zeile}"
     zustand.mkdir(parents=True, exist_ok=True)
-    stempel = datetime.fromtimestamp(jetzt or time.time(), tz=timezone.utc).astimezone()
+    stempel = datetime.fromtimestamp(jetzt or time.time(), tz=UTC).astimezone()
     stempel = stempel.strftime("%Y%m%d-%H%M%S")
     (zustand / f"crontab.vorher.{stempel}").write_text(alt.stdout, encoding="utf-8")
     ergebnis = _crontab("-", eingabe="\n".join(neu) + "\n")
@@ -1108,7 +1108,7 @@ class Aufpasser:
         #: Deploy-Skripte dieses Laufs (``deploy.skripte`` der Repos) für ``deploy_art``.
         self.skripte: list[dict[str, Any]] = VORGABE_SKRIPTE
         self.datum = (
-            datetime.fromtimestamp(self.jetzt, tz=timezone.utc)
+            datetime.fromtimestamp(self.jetzt, tz=UTC)
             .astimezone()
             .strftime("%Y-%m-%d")
         )
@@ -1974,7 +1974,7 @@ class Aufpasser:
             code = eigener_handoff.folge_starten(
                 repo, int(f.spec), ticket, treffer, sperren=True
             )
-        except Exception:  # noqa: BLE001 - ein Fenster darf die übrigen nicht stoppen
+        except Exception:
             log.exception("%s: Neustart ab Handoff %s abgestürzt", f.name, treffer.datei)
             code = -1
         if code == eigener_handoff.EXIT_NICHTS:
