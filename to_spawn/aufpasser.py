@@ -590,6 +590,28 @@ def wartet_umsonst(text: str, ticket: int | None, repo: Path) -> bool:
     return eigener_handoff.aktuell(repo, ticket) is None
 
 
+def steht_umsonst(text: str, ticket: int | None, repo: Path) -> bool:
+    """Die eine Regel „steht umsonst am Prompt“ (#381, #485, #613): früher Anstoß statt ``hang_min``.
+
+    Umsonst steht, wer auf einen Nachfolger wartet, der nicht kommt (:func:`wartet_umsonst`),
+    oder wer mit einer Frage endet (:func:`frage_am_prompt`) — eine Bau-Session fragt nie.
+    Hat das Ticket eine offene Frage im Briefkasten, wartet die Session zu Recht auf die
+    Antwort (Briefkasten nicht lesbar ⇒ ebenso). Fragen: Aufpasser (Takt, kurze Schwelle) und
+    Briefkasten-Wecker (60 s).
+    """
+    if wartet_umsonst(text, ticket, repo):
+        return True
+    if not frage_am_prompt(text):
+        return False
+    if ticket is None:
+        return True
+    try:
+        return not briefkasten.offene([ticket], hauptbaum=repo)
+    except (OSError, ValueError, RuntimeError) as fehler:
+        log.warning("#%s: Briefkasten nicht lesbar (%s) — Frage am Prompt gilt als gewollt", ticket, fehler)
+        return False
+
+
 def _zeilen_am_prompt(text: str) -> list[str]:
     """Nicht-leere Text-Zeilen über dem Eingabefeld (ohne Rahmen, ``❯`` und Statuszeile)."""
     zeilen = [z for z in ohne_statuszeile(text).splitlines() if z.strip()]
@@ -2145,7 +2167,7 @@ class Aufpasser:
         ):
             return
         # Kurze Schwelle nur fürs erste Anstupsen; Fortsetzen (Kill) bleibt bei hang_min ≥ 61.
-        kurz = int(e.get("stufe", 0)) == 0 and (frage_am_prompt(text) or self.wartet_umsonst(text, ticket, repo))
+        kurz = int(e.get("stufe", 0)) == 0 and steht_umsonst(text, ticket, repo)
         schwelle = FRAGE_PROMPT_MIN if kurz else self.e.hang_min
         if arbeitend or still_min < schwelle:
             return
