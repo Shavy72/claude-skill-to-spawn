@@ -98,9 +98,6 @@ BUILTIN_SKILLS = [
     "super-token-saver:setup-git-lite",
     "super-token-saver:setup-statusline",
     "super-token-saver:usage-view",
-    # Pflicht-Skills ohne Datei (#478): security-review ist Builtin, sentry-security-review Plugin-Skill
-    "security-review",
-    "sentry-security-review",
     "loop",
     "run",
     "simplify",
@@ -392,7 +389,8 @@ def auf_speicher_warten(
 
 
 def known_skill_names() -> set[str]:
-    names: set[str] = set(BUILTIN_SKILLS)
+    # Pflicht-Skills werden ohnehin erzwungen, auch ohne Datei auf dem Rechner (#478).
+    names: set[str] = set(BUILTIN_SKILLS) | set(PFLICHT_SKILLS)
 
     registry = read_json(CLAUDE_DIR / "toolbox" / "registry.json", {})
     for entry in registry.get("entries") or []:
