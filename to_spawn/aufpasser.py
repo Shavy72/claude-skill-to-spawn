@@ -553,13 +553,40 @@ def frage_am_prompt(text: str) -> bool:
     Eine Bau-Session fragt nie (sie nimmt den Vorschlag); bleibt sie an so einer
     Frage stehen, wartet sie sonst bis ``hang_min`` auf den ersten Anstupser.
     """
-    zeilen = [z for z in ohne_statuszeile(text).splitlines() if z.strip()]
-    zeilen = [z for z in zeilen if not EINGABEFELD_LINIE.fullmatch(z) and not z.lstrip().startswith("❯")]
+    zeilen = _zeilen_am_prompt(text)
     if any(briefkasten.JA_BEFEHL in z for z in zeilen[-3:]):
         return False  # Live-Ja-Aufforderung (#531): Session wartet zu Recht auf den Menschen
     return any(FRAGE_JA_NEIN.search(z) for z in zeilen[-3:]) or (
         bool(zeilen) and zeilen[-1].rstrip().endswith("?")
     )
+
+
+#: „Wartet auf Nachfolger“ (#381): Session hält das Ticket für übergeben, obwohl keiner kommt.
+NACHFOLGER_WARTEN = re.compile(
+    r"\bwarte\w*\b[^.\n]{0,60}?\bauf\b[^.\n]{0,40}?"
+    r"(?:\b(?:neue|nächste|andere)\w*\s+Session|Folge-?\s?session|Nachfolger|Übergabe|Ablösung)",
+    re.IGNORECASE,
+)
+#: Echte Ablösung nennt ihren committeten Handoff — die startet der Launcher (#542), kein Anstoß.
+ECHTE_ABLOESUNG = re.compile(r"HANDOFF_\S+\.md")
+
+
+def wartet_auf_nachfolger(text: str) -> bool:
+    """Sagt die Session am Prompt, sie warte auf eine neue Session/einen Nachfolger (#381)?
+
+    Einen Nachfolger startet nur die eigene Ablösung (Handoff-Commit); ohne genannten
+    Handoff wartet sie umsonst und bekommt den frühen Anstupser wie eine Frage (#485).
+    """
+    zeilen = _zeilen_am_prompt(text)[-3:]
+    if any(ECHTE_ABLOESUNG.search(z) for z in zeilen):
+        return False
+    return any(NACHFOLGER_WARTEN.search(z) for z in zeilen)
+
+
+def _zeilen_am_prompt(text: str) -> list[str]:
+    """Nicht-leere Text-Zeilen über dem Eingabefeld (ohne Rahmen, ``❯`` und Statuszeile)."""
+    zeilen = [z for z in ohne_statuszeile(text).splitlines() if z.strip()]
+    return [z for z in zeilen if not EINGABEFELD_LINIE.fullmatch(z) and not z.lstrip().startswith("❯")]
 
 
 #: Rahmenlinie des Claude-Code-Eingabefelds: Zeile nur aus ``─`` (mind. 20).
@@ -2111,7 +2138,7 @@ class Aufpasser:
         ):
             return
         # Kurze Schwelle nur fürs erste Anstupsen; Fortsetzen (Kill) bleibt bei hang_min ≥ 61.
-        kurz = int(e.get("stufe", 0)) == 0 and frage_am_prompt(text)
+        kurz = int(e.get("stufe", 0)) == 0 and (frage_am_prompt(text) or wartet_auf_nachfolger(text))
         schwelle = FRAGE_PROMPT_MIN if kurz else self.e.hang_min
         if arbeitend or still_min < schwelle:
             return
