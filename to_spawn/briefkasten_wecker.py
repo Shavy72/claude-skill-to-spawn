@@ -159,7 +159,8 @@ class Wecker:
 
         Mensch = Kommentar ohne Marke des Aufsehers, Aufpassers oder der Bau-Session
         (``capo.EIGENE_KOEPFE``/``SESSION_KOPF``); Zitate beginnen mit ``>`` und zählen.
-        Je Kommentar höchstens ein Weckruf je Richtung.
+        Je Kommentar höchstens ein Weckruf je Richtung. Beim ersten Lesen (Neustart) weckt, was nach dem
+        letzten eigenen Kommentar steht; alles davor ist Bestand.
         """
         if not self.gh_repo:
             return
@@ -168,14 +169,17 @@ class Wecker:
             kommentare = capo.issue_kommentare(self.gh_repo, int(t))
             if kommentare is None:
                 continue
-            ids = {
-                int(c["id"])
-                for c in kommentare
-                if not str(c.get("body") or "").startswith((*capo.EIGENE_KOEPFE, capo.SESSION_KOPF))
-            }
+            koepfe = (*capo.EIGENE_KOEPFE, capo.SESSION_KOPF)
+            eigen = [str(c.get("body") or "").startswith(koepfe) for c in kommentare]
+            mensch = [(int(c["id"]), i) for i, (c, e) in enumerate(zip(kommentare, eigen, strict=True)) if not e]
+            ids = {i for i, _ in mensch}
             bekannt = self._kommentare.get(t)
-            self._kommentare[t] = ids if bekannt is None else bekannt | ids
-            if bekannt is not None and ids - bekannt:
+            if bekannt is None:
+                # Ausgangsstand: was nach dem letzten eigenen Kommentar steht, ist unbeantwortet und weckt.
+                letzter = max((i for i, e in enumerate(eigen) if e), default=-1)
+                bekannt = {k for k, pos in mensch if pos < letzter}
+            self._kommentare[t] = bekannt | ids
+            if ids - bekannt:
                 self._kommentar_aufseher.add(t)
                 self._kommentar_bau.add(t)
         for t in sorted(self._kommentar_aufseher):

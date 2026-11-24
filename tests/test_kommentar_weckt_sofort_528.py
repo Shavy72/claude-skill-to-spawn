@@ -15,7 +15,15 @@ from typing import Any
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from test_briefkasten_wecker_414 import PANE, SPEC, TICKET, _getippt, welt  # noqa: F401
+from test_briefkasten_wecker_414 import (  # noqa: F401
+    ARBEITET,
+    PANE,
+    SPEC,
+    STILL,
+    TICKET,
+    _getippt,
+    welt,
+)
 
 from to_spawn import briefkasten_wecker, gh
 
@@ -36,7 +44,7 @@ def github(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         if args[1].endswith(f"/issues/{TICKET}"):
             return z["issue"]
         if "/comments" in args[1]:
-            return [z["kommentare"]]
+            return None if z["kommentare"] is None else [z["kommentare"]]
         return None
 
     monkeypatch.setattr(gh, "json_lauf", json_lauf)
@@ -77,3 +85,38 @@ def test_ticket_ohne_checkpoint_label_weckt_nicht(welt: dict[str, Path], github:
     github["kommentare"].append(_komm(2, "passt"))
     w.einmal()
     assert _getippt(welt) == []
+
+
+def test_start_unbeantwortet_weckt_beantwortet_nicht(welt: dict[str, Path], github: dict[str, Any]) -> None:
+    github["kommentare"] = [_komm(1, "Aufseher: bereit"), _komm(2, "passt")]
+    _wecker(welt).einmal()
+    assert len(_getippt(welt)) == 2
+    (welt["tmux"] / "getippt.jsonl").unlink()
+    github["kommentare"] = [_komm(1, "Kritik"), _komm(2, "Aufseher: erledigt")]
+    _wecker(welt).einmal()
+    assert _getippt(welt) == []
+
+
+def test_gh_scheitert_nichts_gemerkt_naechster_takt_weckt(welt: dict[str, Path], github: dict[str, Any]) -> None:
+    w = _wecker(welt)
+    w.einmal()
+    kommentare = github["kommentare"]
+    github["kommentare"] = None
+    w.einmal()
+    assert _getippt(welt) == []
+    github["kommentare"] = [*kommentare, _komm(2, "passt")]
+    w.einmal()
+    assert len(_getippt(welt)) == 2
+
+
+def test_fenster_nicht_ruhig_wiederholt_und_weckt_einmal(welt: dict[str, Path], github: dict[str, Any]) -> None:
+    w = _wecker(welt)
+    w.einmal()
+    github["kommentare"].append(_komm(2, "passt"))
+    (welt["tmux"] / "bild.txt").write_text(ARBEITET, encoding="utf-8")
+    w.einmal()
+    assert _getippt(welt) == []
+    (welt["tmux"] / "bild.txt").write_text(STILL, encoding="utf-8")
+    w.einmal()
+    w.einmal()
+    assert len(_getippt(welt)) == 2
