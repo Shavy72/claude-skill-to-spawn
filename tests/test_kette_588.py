@@ -61,7 +61,9 @@ def _ablegen(kette: dict[str, Path], spec_fertig: datetime) -> None:
             *_LINKS,
             "--spec-fertig",
             spec_fertig.isoformat(timespec="seconds"),
-            *rundschau_args(kette["repo"], SPEC),  # #529: Abnahme verlangt ein gültiges Deck
+            *rundschau_args(
+                kette["repo"], SPEC
+            ),  # #529: Abnahme verlangt ein gültiges Deck
         ],
         capture_output=True,
         text=True,
@@ -77,8 +79,12 @@ def _ablegen(kette: dict[str, Path], spec_fertig: datetime) -> None:
 def _marker(kette: dict[str, Path]) -> None:
     ordner = kette["repo"] / "docs" / "agents"
     ordner.mkdir(parents=True, exist_ok=True)
-    (ordner / f"rueckblick_{SPEC}.md").write_text("Rückblick: keine Vorschläge\n", encoding="utf-8")
-    (ordner / f"thermo_{SPEC}.md").write_text("# Thermo 900\n\n- nichts auffällig\n", encoding="utf-8")
+    (ordner / f"rueckblick_{SPEC}.md").write_text(
+        "Rückblick: keine Vorschläge\n", encoding="utf-8"
+    )
+    (ordner / f"thermo_{SPEC}.md").write_text(
+        "# Thermo 900\n\n- nichts auffällig\n", encoding="utf-8"
+    )
 
 
 def _spec_fertig(kette: dict[str, Path]) -> None:
@@ -92,7 +98,9 @@ def _jetzt() -> datetime:
 
 
 def _keine_kurzmail(kette: dict[str, Path]) -> None:
-    assert all(m["betreff"] != f"Spec #{SPEC} fertig" for m in _mails(kette)), _mails(kette)
+    assert all(m["betreff"] != f"Spec #{SPEC} fertig" for m in _mails(kette)), _mails(
+        kette
+    )
 
 
 def test_a_ablage_und_marker_genau_eine_mail(kette: dict[str, Path]) -> None:
@@ -103,7 +111,9 @@ def test_a_ablage_und_marker_genau_eine_mail(kette: dict[str, Path]) -> None:
     assert "SPEC FERTIG" in erster.stdout, _text(erster)
     assert "Abschluss-Mail: verschickt/erledigt" in erster.stdout, _text(erster)
     mails = _mails(kette)
-    assert [(m["art"], m["betreff"]) for m in mails] == [("spec_fertig", _BETREFF)], mails
+    assert [(m["art"], m["betreff"]) for m in mails] == [("spec_fertig", _BETREFF)], (
+        mails
+    )
     zweiter = _capo(kette)
     assert len(_mails(kette)) == 1, _text(zweiter)
     assert "Abschluss-Mail" not in zweiter.stdout
@@ -138,8 +148,14 @@ def test_d_ohne_ablage_legt_capo_selbst_ab_keine_kurzmail(
     datei = kette["repo"] / ".to-spawn" / f"abschluss_{SPEC}_paket.json"
     assert datei.is_file(), _text(ergebnis)
     paket = json.loads(datei.read_text(encoding="utf-8"))["paket"]
-    assert paket["stage"] == "fehlt" and paket["rundschau"].startswith("fehlt")
-    assert json.loads(datei.read_text(encoding="utf-8"))["spec_fertig"] == _zustand(kette)["spec_fertig_seit"]
+    # Seit #529 trägt der Notweg (kein Rundschau-Deck) den Vermerk vorn; der Grund "fehlt" bleibt Pflicht.
+    assert paket["stage"] == "fehlt"
+    assert paket["rundschau"].startswith("nicht abnahmebereit")
+    assert "fehlt (" in paket["rundschau"]
+    assert (
+        json.loads(datei.read_text(encoding="utf-8"))["spec_fertig"]
+        == _zustand(kette)["spec_fertig_seit"]
+    )
     assert "Abschluss-Mail wartet" in ergebnis.stdout, _text(ergebnis)
     assert _mails(kette) == []
 
@@ -153,7 +169,9 @@ def prompts() -> Iterator[dict[str, str]]:
         mp.syspath_prepend(str(SKILL))
         from to_spawn import waechter_takt
 
-        modul_spec = importlib.util.spec_from_file_location("wache_588", SKRIPTE / "wache.py")
+        modul_spec = importlib.util.spec_from_file_location(
+            "wache_588", SKRIPTE / "wache.py"
+        )
         assert modul_spec and modul_spec.loader
         wache = importlib.util.module_from_spec(modul_spec)
         modul_spec.loader.exec_module(wache)
@@ -181,7 +199,9 @@ def test_prompt_kette_in_reihenfolge(name: str, prompts: dict[str, str]) -> None
 
 
 def test_wache_prompt_formatiert_ablegen_und_nachsehen(prompts: dict[str, str]) -> None:
-    text = prompts["wache"].format(S=900, REPO="x/y", DATUM="2026-09-24", TAKT=1800, SKILL="/skill")
+    text = prompts["wache"].format(
+        S=900, REPO="x/y", DATUM="2026-09-24", TAKT=1800, SKILL="/skill"
+    )
     assert "/skill/skripte/abschluss_paket.py ablegen 900 --stand abnahme" in text
     assert "/skill/skripte/rueckblick.py planen 900" in text
     assert "/skill/skripte/abschluss_paket.py nachsehen 900" in text
@@ -201,7 +221,9 @@ def test_e_ohne_mail_befehl_zeile_mail_aus(kette: dict[str, Path]) -> None:
     _ablegen(kette, _jetzt())
     _marker(kette)
     ergebnis = _capo(kette)
-    assert "INFO: Mail nicht eingerichtet (mail.befehl leer)" in ergebnis.stdout, _text(ergebnis)
+    assert "INFO: Mail nicht eingerichtet (mail.befehl leer)" in ergebnis.stdout, _text(
+        ergebnis
+    )
     assert "FEHLER: Abschluss-Mail" not in ergebnis.stdout
     assert _mails(kette) == []
 
@@ -238,7 +260,9 @@ def test_f_drei_fehlversuche_einmal_kommentar_erfolg_setzt_zurueck(
     ("url", "erwartet"),
     [("https://a:b@stage.x/pfad", "https://stage.x/pfad"), ("stage.x", "fehlt")],
 )
-def test_g_notfall_ablage_ohne_zugangsdaten(kette: dict[str, Path], url: str, erwartet: str) -> None:
+def test_g_notfall_ablage_ohne_zugangsdaten(
+    kette: dict[str, Path], url: str, erwartet: str
+) -> None:
     from test_waechter_213 import _konfig
 
     _konfig(kette, staging={"url": url})
