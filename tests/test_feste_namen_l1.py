@@ -14,7 +14,10 @@ from __future__ import annotations
 
 import re
 import subprocess
+import sys
 from pathlib import Path
+
+import pytest
 
 SKILL = Path(__file__).resolve().parents[1]
 
@@ -374,3 +377,19 @@ def test_jeder_code_ordner_wird_gescannt() -> None:
     ).stdout.splitlines()
     ordner = {teil.split("/", 1)[0] for teil in erfasst if "/" in teil and Path(teil).suffix in ENDUNGEN - {""}}
     assert sorted(ordner - set(ORDNER) - NICHT_GESCANNT) == []
+
+
+def test_ungetrackter_cache_ordner_bleibt_aussen_vor(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """#491: Werkzeug-Cache (z. B. ``.ruff_cache`` mit Heim-Pfad) zählt nicht, getrackter Code schon."""
+    git = ["git", "-C", str(tmp_path)]
+    subprocess.run([*git, "init", "-q"], check=True)
+    (tmp_path / "to_spawn").mkdir()
+    (tmp_path / "to_spawn" / "fest.py").write_text('LOG = "/home/bau/x.log"\n', encoding="utf-8")
+    subprocess.run([*git, "add", "to_spawn/fest.py"], check=True)
+    cache = tmp_path / "probe" / "gemeinsam" / ".ruff_cache" / "0.1"
+    cache.mkdir(parents=True)
+    (cache / "123").write_text("/home/bau/wt/skill-x/probe/gemeinsam\n", encoding="utf-8")
+    monkeypatch.setattr(sys.modules[__name__], "SKILL", tmp_path)
+    funde = _treffer()
+    assert not [d for d, _ in funde if ".ruff_cache" in d], funde
+    assert ("to_spawn/fest.py", "heim-pfad") in funde
