@@ -219,7 +219,17 @@ def beendet(pid: int) -> bool:
     Nachbar-Tests als lebender Aufseher, und ``spawn_srv.sh`` meldete bei vollem Rechner
     „Aufseher startet nach“ (Exit 0), obwohl niemand nachstartet.
     """
-    return Path("/proc/self").is_dir() and not Path(f"/proc/{pid}").exists()
+    if not Path("/proc/self").is_dir():
+        return False
+    if not Path(f"/proc/{pid}").exists():
+        return True
+    try:  # Zombie (beendet, nicht abgeholt): /proc/<pid> da, cwd aber ENOENT
+        os.readlink(f"/proc/{pid}/cwd")
+    except FileNotFoundError:
+        return True
+    except OSError:
+        pass
+    return False
 
 
 def zuordnen(eintraege: dict[str, Eintrag], alle: list[Prozess]) -> None:

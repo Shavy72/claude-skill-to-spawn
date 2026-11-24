@@ -14,6 +14,7 @@ from __future__ import annotations
 import importlib.util
 import subprocess
 import sys
+import time
 from pathlib import Path
 from types import ModuleType
 
@@ -63,3 +64,31 @@ def test_lebender_aufseher_im_repo_zaehlt_weiter(tmp_path: Path, monkeypatch: py
     finally:
         lebt.kill()
         lebt.wait()
+
+
+@pytest.mark.skipif(not Path("/proc/self/cwd").exists(), reason="braucht /proc (Linux)")
+def test_zombie_prozess_ist_kein_aufseher(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Zombie: beendet, aber nicht abgeholt. ``/proc/<pid>`` da, ``cwd`` aber ENOENT."""
+    modul = _sessions_stand(tmp_path, monkeypatch)
+    zombie = subprocess.Popen([sys.executable, "-c", "pass"], cwd=tmp_path)
+    try:
+        for _ in range(100):  # nicht wait()/poll(): sonst wird er abgeholt
+            if Path(f"/proc/{zombie.pid}/stat").read_text().rsplit(")", 1)[1].split()[0] == "Z":
+                break
+            time.sleep(0.05)
+        assert Path(f"/proc/{zombie.pid}").exists()
+        assert _aufseher_zustand(modul, zombie.pid) == "aus"
+    finally:
+        zombie.wait()
+
+
+@pytest.mark.skipif(not Path("/proc/self/cwd").exists(), reason="braucht /proc (Linux)")
+def test_beendete_claude_waise_wird_nicht_gemeldet(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Waisen-Zweig: beendeter ``claude``-Prozess mit passender Kommandozeile ist keine Waise."""
+    modul = _sessions_stand(tmp_path, monkeypatch)
+    beendet = subprocess.Popen([sys.executable, "-c", "pass"], cwd=tmp_path)
+    beendet.wait()
+    cmd = "claude --settings /h/x-bau/777-20260101-000000/settings.json"
+    eintraege: dict = {}
+    modul.zuordnen(eintraege, [modul.Prozess(beendet.pid, 1, "claude", cmd, None)])
+    assert eintraege == {}
