@@ -66,7 +66,7 @@ def test_symlink_nach_aussen_wird_nie_geloescht(ort: Path, tmp_path: Path) -> No
     with pytest.raises(ValueError):
         helfer_temp.aufraeumen("falle")
     assert (aussen / "wichtig.txt").is_file()
-    assert helfer_temp.aufraeumen_aelter_als(0, jetzt=time.time() + 86400 * 10) == []
+    assert helfer_temp.aufraeumen_aelter_als(1, jetzt=time.time() + 86400 * 10) == []
     assert (aussen / "wichtig.txt").is_file()
 
 
@@ -117,3 +117,33 @@ def test_cli_anlegen_gibt_pfad_aus_und_aufraeumen(ort: Path, capsys: pytest.Capt
 def test_loeschen_steckt_im_hausmeister() -> None:
     text = (SKILL / "to_spawn" / "helfer_temp.py").read_text(encoding="utf-8")
     assert "rmtree(" not in text and "hausmeister" in text
+
+
+@pytest.mark.parametrize("tage", [0, -1, float("nan"), float("inf")])
+def test_aelter_als_unsinnige_tage_abgelehnt_frischer_bleibt(ort: Path, tage: float) -> None:
+    frisch = helfer_temp.anlegen("frisch")
+    with pytest.raises(ValueError):
+        helfer_temp.aufraeumen_aelter_als(tage, jetzt=time.time() + 86400 * 1000)
+    assert frisch.is_dir()
+
+
+@pytest.mark.parametrize("wert", ["0", "-1", "nan", "inf", "abc"])
+def test_cli_aelter_als_unsinnige_tage_gleicher_exit(ort: Path, wert: str) -> None:
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("to_spawn_cli_551b", SKILL / "to_spawn.py")
+    assert spec and spec.loader
+    cli = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(cli)
+    frisch = helfer_temp.anlegen("frisch")
+    with pytest.raises(SystemExit) as aus:
+        cli.main(["helfer-temp", "aufraeumen", "--aelter-als-tage", wert])
+    assert aus.value.code == 2
+    assert frisch.is_dir()
+
+
+def test_name_mit_doppelpunkt_abgelehnt(ort: Path) -> None:
+    with pytest.raises(ValueError):
+        helfer_temp.anlegen("C:x")
+    with pytest.raises(ValueError):
+        helfer_temp.aufraeumen("C:x")

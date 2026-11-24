@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import math
 import sys
 import time
 from pathlib import Path
@@ -36,8 +37,8 @@ def ort() -> Path:
     return temp_ordner.pfad() / "helfer"
 
 
-#: Zeichen, die ein Helfer-Name nie enthält: Pfad-Trenner, Home-Kürzel, Platzhalter.
-_VERBOTEN = frozenset("/\\~*?[]")
+#: Zeichen, die ein Helfer-Name nie enthält: Pfad-Trenner, Laufwerk (``C:x``), Home-Kürzel, Platzhalter.
+_VERBOTEN = frozenset("/\\~*?[]:")
 
 
 def _name(name: str) -> str:
@@ -45,6 +46,21 @@ def _name(name: str) -> str:
     if not name.strip() or name != name.strip() or name in (".", "..") or _VERBOTEN & set(name):
         raise ValueError(f"Helfer-Temp: Name {name!r} abgelehnt (nur ein schlichter Ordnername)")
     return name
+
+
+def _tage(tage: float) -> float:
+    """Zulässiges Alter in Tagen (endlich, >= 1) oder ``ValueError`` — sonst träfe es frische Ordner."""
+    if not math.isfinite(tage) or tage < 1:
+        raise ValueError(f"Helfer-Temp: --aelter-als-tage {tage!r} abgelehnt (endliche Zahl >= 1)")
+    return tage
+
+
+def _tage_arg(text: str) -> float:
+    """``argparse``-Typ: dieselbe Regel wie :func:`_tage`, Fehler als Aufruf-Fehler (Exit 2)."""
+    try:
+        return _tage(float(text))
+    except ValueError as fehler:
+        raise argparse.ArgumentTypeError(str(fehler)) from None
 
 
 def anlegen(name: str) -> Path:
@@ -64,6 +80,7 @@ def aufraeumen_aelter_als(tage: float, *, jetzt: float | None = None) -> list[Pa
 
     Symlinks und Dateien bleiben stehen. Gibt die gelöschten Ordner zurück.
     """
+    tage = _tage(tage)
     basis = ort()
     if not basis.is_dir():
         return []
@@ -89,7 +106,7 @@ def richte_parser_ein(unter: Any) -> None:
     p_auf = tuer.add_parser("aufraeumen", help="genau einen Ordner oder alte Reste löschen")
     wahl = p_auf.add_mutually_exclusive_group(required=True)
     wahl.add_argument("name", nargs="?")
-    wahl.add_argument("--aelter-als-tage", type=float, metavar="N")
+    wahl.add_argument("--aelter-als-tage", type=_tage_arg, metavar="N")
 
 
 def lauf(args: argparse.Namespace) -> int:
