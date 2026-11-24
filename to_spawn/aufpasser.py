@@ -468,7 +468,12 @@ def rueckfrage(text: str) -> bool:
     return any(m in text for m in RUECKFRAGE_MARKER)
 
 
-FRAGE_JA_NEIN = re.compile(r"\bja\s*/\s*nein\b|\byes\s*/\s*no\b", re.IGNORECASE)
+# Ein Fehl-Treffer ist harmlos: er löst nur Stufe 0 aus (ein Anstupser, begrenzt durch STUPSER_MAX).
+FRAGE_JA_NEIN = re.compile(
+    r"\bja\s*/\s*nein\b|\byes\s*/\s*no\b|\bja oder nein\b|\byes or no\b"
+    r"|[(\[]\s*(?:j/n|y/n)\s*[)\]]",
+    re.IGNORECASE,
+)
 
 
 def frage_am_prompt(text: str) -> bool:
@@ -479,7 +484,9 @@ def frage_am_prompt(text: str) -> bool:
     """
     zeilen = [z for z in ohne_statuszeile(text).splitlines() if z.strip()]
     zeilen = [z for z in zeilen if not EINGABEFELD_LINIE.fullmatch(z) and not z.lstrip().startswith("❯")]
-    return any(FRAGE_JA_NEIN.search(z) for z in zeilen[-3:])
+    return any(FRAGE_JA_NEIN.search(z) for z in zeilen[-3:]) or (
+        bool(zeilen) and zeilen[-1].rstrip().endswith("?")
+    )
 
 
 #: Rahmenlinie des Claude-Code-Eingabefelds: Zeile nur aus ``─`` (mind. 20).
@@ -2053,7 +2060,9 @@ class Aufpasser:
             and self.folge_ab_handoff(f, ticket, repo, schluessel, hash_start)
         ):
             return
-        schwelle = FRAGE_PROMPT_MIN if frage_am_prompt(text) else self.e.hang_min
+        # Kurze Schwelle nur fürs erste Anstupsen; Fortsetzen (Kill) bleibt bei hang_min ≥ 61.
+        kurz = int(e.get("stufe", 0)) == 0 and frage_am_prompt(text)
+        schwelle = FRAGE_PROMPT_MIN if kurz else self.e.hang_min
         if arbeitend or still_min < schwelle:
             return
         if ticket is None and not f.ist_wache:

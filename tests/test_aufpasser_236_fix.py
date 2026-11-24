@@ -367,6 +367,44 @@ def test_frage_am_prompt_frisch_wartet(welt: Welt) -> None:
     assert welt.eintrag("bau 9002").get("stufe", 0) == 0
 
 
+@pytest.mark.parametrize(
+    "zeile",
+    [
+        "Starten? (j/n)",
+        "Weiter (y/n)",
+        "Überschreiben [y/N]",
+        "Überschreiben [J/n]",
+        "Soll ich das tun, Ja oder Nein",
+        "start it, yes or no",
+        "Soll ich weitermachen?",
+    ],
+)
+def test_frage_am_prompt_formen(zeile: str) -> None:
+    feld = "─" * 30 + "\n❯ \n" + "─" * 30 + "\n  Statuszeile\n"
+    assert aufpasser.frage_am_prompt(zeile + "\n\n" + feld), zeile
+    assert not aufpasser.frage_am_prompt(zeile + "\n" + "x\n" * 4 + feld), zeile
+
+
+def test_frage_am_prompt_arbeitende_session_nicht_angestupst(welt: Welt) -> None:
+    _fenster(welt, "bau 9002", "printf 'Review starten? Ja/Nein.\\nesc to interrupt\\n'; sleep 3600")
+    _still_seit(welt, "bau 9002", 10, stufe=0)
+    assert welt.lauf() == 0
+    time.sleep(0.5)
+    assert "Aufpasser: Du stehst" not in pane_text("bau 9002")
+    assert welt.eintrag("bau 9002").get("stufe", 0) == 0
+
+
+def test_frage_am_prompt_kurze_schwelle_nur_stufe_0(welt: Welt) -> None:
+    welt.worktree(9002, schmutzig=True)
+    _fenster(welt, "bau 9002", "printf 'Review starten? Ja/Nein.\\n'; sleep 3600")
+    t0 = time.time()
+    _still_seit(welt, "bau 9002", 10, stufe=1, eingriff=t0 - 600)
+    assert _lauf_direkt(welt, jetzt=t0) == 0
+    assert welt.eintrag("bau 9002")["stufe"] == 1
+    assert not welt.protokoll_bau.exists()
+    assert not git(welt.origin, "branch", "--list", "sicherung/*").strip()
+
+
 # --- F3: Stufen-Logik — Text geändert nach Eingriff = Erfolg ----------------
 
 
