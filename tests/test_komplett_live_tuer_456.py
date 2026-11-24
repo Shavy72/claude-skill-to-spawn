@@ -219,6 +219,8 @@ def test_werkzeug_fehler_kein_ok_und_nie_als_geprueft(
     assert merker is not None and merker.exit == 2 and "bash" in merker.grund
     assert _laeufe(zaehl) == 0
     monkeypatch.undo()
+    # undo() hebt auch das conftest-Entfernen auf: in einer Bau-Session lehnt die Tür sonst ab (#474).
+    monkeypatch.delenv("TO_SPAWN_TICKET", raising=False)
     # Gate-Fehler zählt nie als geprüft — auch im Takt nicht: nächster Aufruf prüft echt.
     takt = komplett_lauf.takt_kind(klon, KLON_SPEC, Moment.VOR_LIVE, konfig)
     assert (takt.gelaufen, takt.ok) == (True, True), takt

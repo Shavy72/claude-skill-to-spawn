@@ -14,7 +14,10 @@ from __future__ import annotations
 
 import re
 import subprocess
+import sys
 from pathlib import Path
+
+import pytest
 
 SKILL = Path(__file__).resolve().parents[1]
 
@@ -271,14 +274,40 @@ AUSNAHMEN: dict[tuple[str, str], tuple[tuple[str, ...], str]] = {
 }
 
 
+#: Nur im Rückfall ohne git: Ordner von Werkzeugen, kein Skill-Code.
+WERKZEUG_ORDNER = frozenset({".git", "__pycache__", ".ruff_cache", ".pytest_cache", ".mypy_cache"})
+
+
+def _git_dateien() -> list[str] | None:
+    """Skill-relative Pfade, die git kennt (``git ls-files``); ``None`` ohne git bzw. Repo."""
+    try:
+        lauf = subprocess.run(
+            ["git", "-C", str(SKILL), "ls-files"], capture_output=True, text=True, encoding="utf-8", check=True
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    return lauf.stdout.splitlines()
+
+
 def _skill_dateien() -> list[Path]:
-    dateien = [p for p in SKILL.iterdir() if p.is_file() and p.suffix in {".py", ".sh", ".ps1"}]
-    for name in ORDNER:
-        ordner = SKILL / name
-        if ordner.is_dir():
-            dateien += [
-                p for p in ordner.rglob("*") if p.is_file() and p.suffix in ENDUNGEN and "__pycache__" not in p.parts
-            ]
+    """Skill-Code zum Scannen: nur Dateien, die git kennt — Werkzeug-Caches (``.ruff_cache`` …) fallen raus (#491).
+
+    Ohne git: Rückfall auf den Ordner-Baum ohne WERKZEUG_ORDNER (``.to-spawn/`` u. ä. zählen mit).
+    """
+    bekannt = _git_dateien()
+    if bekannt is None:
+        kandidaten = [p for p in SKILL.rglob("*") if not WERKZEUG_ORDNER & set(p.relative_to(SKILL).parts)]
+    else:
+        kandidaten = [SKILL / rel for rel in bekannt]
+    dateien: list[Path] = []
+    for p in kandidaten:
+        teile = p.relative_to(SKILL).parts
+        if len(teile) == 1:
+            passt = p.suffix in {".py", ".sh", ".ps1"}
+        else:
+            passt = teile[0] in ORDNER and p.suffix in ENDUNGEN and "__pycache__" not in teile
+        if passt and p.is_file():
+            dateien.append(p)
     return sorted(dateien)
 
 
@@ -369,8 +398,23 @@ NICHT_GESCANNT = frozenset({"tests", "docs", ".review"})
 
 def test_jeder_code_ordner_wird_gescannt() -> None:
     """P7b (#79): ein neuer Code-Ordner fällt nicht still aus dem Scan (Dirigent P6b, :39)."""
-    erfasst = subprocess.run(
-        ["git", "-C", str(SKILL), "ls-files"], capture_output=True, text=True, encoding="utf-8", check=True
-    ).stdout.splitlines()
+    erfasst = _git_dateien()
+    assert erfasst is not None, "git ls-files im Skill-Ordner fehlgeschlagen"
     ordner = {teil.split("/", 1)[0] for teil in erfasst if "/" in teil and Path(teil).suffix in ENDUNGEN - {""}}
     assert sorted(ordner - set(ORDNER) - NICHT_GESCANNT) == []
+
+
+def test_ungetrackter_cache_ordner_bleibt_aussen_vor(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """#491: Werkzeug-Cache (z. B. ``.ruff_cache`` mit Heim-Pfad) zählt nicht, getrackter Code schon."""
+    git = ["git", "-C", str(tmp_path)]
+    subprocess.run([*git, "init", "-q"], check=True)
+    (tmp_path / "to_spawn").mkdir()
+    (tmp_path / "to_spawn" / "fest.py").write_text('LOG = "/home/bau/x.log"\n', encoding="utf-8")
+    subprocess.run([*git, "add", "to_spawn/fest.py"], check=True)
+    cache = tmp_path / "probe" / "gemeinsam" / ".ruff_cache" / "0.1"
+    cache.mkdir(parents=True)
+    (cache / "123").write_text("/home/bau/wt/skill-x/probe/gemeinsam\n", encoding="utf-8")
+    monkeypatch.setattr(sys.modules[__name__], "SKILL", tmp_path)
+    funde = _treffer()
+    assert not [d for d, _ in funde if ".ruff_cache" in d], funde
+    assert ("to_spawn/fest.py", "heim-pfad") in funde
