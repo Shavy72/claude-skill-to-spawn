@@ -70,9 +70,11 @@ Windows-PC (#426 Reihenfolge). Voraussetzung: Teile A–D gebaut und installiert
 6. **Rundschau:** liegt als Datei im Lauf-Repo und enthält die Entscheidungs-Liste.
 7. **Kritik-Runde:** Kritik-Text aus Abschnitt 4 als Antwort auf die Abnahme-Frage geben. Erwartet:
    Nachbesserung ohne Rückfrage, neue Rundschau. Erst dann „passt“ geben.
-8. **Live-Schritt:** nach „passt“ zuerst `python to_spawn.py komplett <S> --moment vor-live`
-   (Exit 0 = weiter, Exit 1 = kein Live, Grund beheben); dann geht der Stand in die Übungs-Live-App; Beleg-Zeile ins
-   Lauf-Protokoll, zusätzlich ein eigener Abruf der Live-Adresse.
+8. **Live-Schritt:** nach „passt“ `python to_spawn.py live <S>` – die Tür prüft selbst (Komplett-Prüfung
+   `vor-live`; mit Staging gilt der grüne Lauf aus dem Takt) und startet `live.befehl` nur bei Grün
+   (Exit 0 = live grün, Exit 1 = nicht gestartet oder Live rot, Grund beheben, Exit 2 = `live.befehl`
+   fehlt, Live-Schritt nach Repo-Ablauf von Hand). Beleg-Zeile ins Lauf-Protokoll, zusätzlich ein
+   eigener Abruf der Live-Adresse.
 9. **Aufräumen:** Übungs-Live und Staging beenden, Worktrees/Zweige der Spec weg, Tickets im
    richtigen Zustand (M6). Endzeit in die Messtabelle.
 

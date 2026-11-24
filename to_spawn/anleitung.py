@@ -56,7 +56,7 @@ def entscheidungs_linie(hauptzweig: str = "") -> str:
 2) Dann selbst claimen und den Skill `implement` starten.
 3) Keine Fragen an den Nutzer: eigenen Vorschlag nehmen, ins Bau-Log schreiben (`to_spawn.py eintrag --typ entscheidung`), weiterbauen; geht das nicht, entscheidet der Aufseher (Briefkasten-Frage mit Vorschlag).
 4) Staging- und Test-Daten sind frei, auch Löschen — vorher Sicherung, danach Beleg.
-5) Nie ohne den Nutzer: Live, Live-Daten, Live-Freigabe, Kosten, Konten echter Personen — diesen Schritt auslassen, Klasse-2-Frage in den Briefkasten (`to_spawn.py frage <N> --klasse 2 --frage … --vorschlag …`) + Issue-Kommentar „braucht den Nutzer“, den Rest weiterbauen.
+5) Nie ohne den Nutzer: Live, Live-Daten, Live-Freigabe, Kosten, Konten echter Personen — diesen Schritt auslassen, Klasse-2-Frage in den Briefkasten (`to_spawn.py frage <N> --klasse 2 --frage … --vorschlag …`) + Issue-Kommentar „braucht den Nutzer“, den Rest weiterbauen. Kostenpflichtiges Extra, das niemand bestellt hat (z. B. Cloud-Review `/code-review ultra`), ist Nein: nicht starten, nicht vorschlagen, nicht fragen — höchstens eine Hinweiszeile im Bericht.
 6) Fertig = grüne Schlange + echter Klickweg auf Staging + Beleg.
 7) Vor jedem Push die Vor-Prüfungen lokal grün.
 8) Jede für den Nutzer getroffene Entscheidung als eine Zeile (was · warum · Quelle) in die Entscheidungs-Liste der Spec: `to_spawn.py eintrag --typ entscheidung --frage <was> --wahl <Wahl> --grund "<warum> · Quelle: <Fundstelle>"`."""
