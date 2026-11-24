@@ -236,6 +236,111 @@ def _teil_schreibt(tokens: list[str], cwd: Path) -> bool:
     return False
 
 
+_HEREDOC_KOPF = re.compile(r"<<(-?)[ \t]*(['\"]?)([A-Za-z_]\w*)\2")
+_INTERPRETER = re.compile(
+    r"(?:^|[\s;&|(`/])(?:bash|sh|zsh|dash|ksh|eval|source|xargs|ssh|python\d*(?:\.\d+)?|perl|ruby|node)(?=[\s;&|)`]|$)"
+)
+
+
+class _Unsicher(Exception):
+    """Konstrukt nicht sicher verstanden → Befehl bleibt unverändert Befehl."""
+
+
+def _ohne_text(befehl: str) -> str:
+    """SSOT „Befehl oder Text“: Heredoc-Rümpfe und mehrzeilige Zeichenketten entfernen.
+
+    Ein Durchlauf Zeichen für Zeichen (außen / '…' / "…" / Kommentar / Escape). Ein Heredoc-Kopf
+    zählt nur im Zustand „außen“ (nie ``<<<``, ``\\<<``, in ``((…))``, Anführung oder Kommentar);
+    die Kopfzeile samt Umleitungs-Ziel bleibt. Mehrzeilige Zeichenketten werden nur geleert, wenn
+    sie sauber geöffnet und geschlossen wurden. Im Zweifel (Interpreter im Aufruf, ``$(``/Backtick
+    in Zeichenketten oder nicht angeführtem Heredoc, offene Anführung, unbekannter Kopf) bleibt der
+    ganze Befehl unverändert.
+    """
+    if _INTERPRETER.search(befehl):
+        return befehl
+    try:
+        return _text_entfernen(befehl)
+    except _Unsicher:
+        return befehl
+
+
+def _text_entfernen(s: str) -> str:
+    aus: list[str] = []
+    offen: list[tuple[bool, str, bool]] = []  # (<<-, Begrenzer, angeführt) bis zum Zeilenende
+    i, n = 0, len(s)
+    while i < n:
+        c = s[i]
+        if c == "\\":
+            aus.append(s[i : i + 2])
+            i += 2
+        elif c == "#" and (i == 0 or s[i - 1] in " \t\n;&|("):
+            ende = s.find("\n", i)
+            ende = n if ende < 0 else ende
+            aus.append(s[i:ende])
+            i = ende
+        elif c in "'\"":
+            ansi = c == "'" and i > 0 and s[i - 1] == "$"
+            j = i + 1
+            while j < n and s[j] != c:
+                j += 2 if (c == '"' or ansi) and s[j] == "\\" else 1
+            if j >= n:
+                raise _Unsicher
+            inhalt = s[i + 1 : j]
+            if c == '"' and ("$(" in inhalt or "`" in inhalt):
+                raise _Unsicher
+            aus.append(c + c if "\n" in inhalt and not ansi else s[i : j + 1])
+            i = j + 1
+        elif s.startswith("((", i):
+            tiefe, j = 0, i
+            while j < n:
+                tiefe += (s[j] == "(") - (s[j] == ")")
+                j += 1
+                if tiefe == 0:
+                    break
+            if tiefe:
+                raise _Unsicher
+            aus.append(s[i:j])
+            i = j
+        elif s.startswith("<<<", i):
+            aus.append("<<<")
+            i += 3
+        elif s.startswith("<<", i):
+            kopf = _HEREDOC_KOPF.match(s, i)
+            if not kopf:
+                raise _Unsicher
+            offen.append((bool(kopf.group(1)), kopf.group(3), bool(kopf.group(2))))
+            aus.append(kopf.group(0))
+            i = kopf.end()
+        elif c == "\n" and offen:
+            aus.append("\n")
+            i = _rumpf_ueberspringen(s, i + 1, offen)
+            offen = []
+        else:
+            if c == "\n":
+                offen = []
+            aus.append(c)
+            i += 1
+    return "".join(aus)
+
+
+def _rumpf_ueberspringen(s: str, start: int, offen: list[tuple[bool, str, bool]]) -> int:
+    """Index hinter den Rümpfen aller offenen Heredocs; nie geschlossen/ersetzend → _Unsicher."""
+    i = start
+    for strich, begrenzer, angefuehrt in offen:
+        rumpf_start = i
+        while True:
+            if i >= len(s):
+                raise _Unsicher
+            ende = s.find("\n", i)
+            ende = len(s) if ende < 0 else ende
+            zeile = s[i:ende]
+            i = ende + 1
+            if (zeile.lstrip("\t") if strich else zeile) == begrenzer:
+                break
+        rumpf = s[rumpf_start:i]
+        if not angefuehrt and ("$(" in rumpf or "`" in rumpf):
+            raise _Unsicher
+    return i
 def bash_schreibt_in_skills(befehl: str, cwd: Path) -> bool:
     """True, wenn der Bash-Befehl erkennbar in den Skill-Ordner schreibt."""
     # Python-Heredoc (``python3 - <<EOF … EOF``): Code steht hinter ``<<``.
@@ -245,6 +350,7 @@ def bash_schreibt_in_skills(befehl: str, cwd: Path) -> bool:
         if _PY_SCHREIBT.search(code) and (".claude/skills" in code or _in_skills(".", cwd)):
             return True
         befehl = befehl[: heredoc.start()]
+    befehl = _ohne_text(befehl)
     aktuell = cwd
     for teil in _TRENNER.split(befehl):
         if not teil:
