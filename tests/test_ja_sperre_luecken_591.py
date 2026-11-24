@@ -482,3 +482,39 @@ ALLTAG_RUNDE4 = [
 @pytest.mark.parametrize("befehl", ALLTAG_RUNDE4)
 def test_runde4_alltag_bleibt_frei(befehl: str) -> None:
     assert not _sperrt(befehl), repr(befehl)
+
+
+# --- PR 610, Fix-Runde 5: xargs mit Ziel tee, Wort nur im Wert-Teil + Datei-Schreiben, Deskriptor-Kopien ---
+
+#: Befund 1 (xargs + tee) und Befund 2 (Wort nur im Wert-Teil, ``git log`` schreibt es in die Konfiguration).
+SPERREN_RUNDE5 = [
+    "mkdir -p b/objects b/refs && echo 'ref: refs/heads/m' | xargs --arg-file=/dev/null tee b/HEAD && "
+    "printf '%s\\n' '[remote \"o\"]' 'url = .' 'uploadpack = ja 5' | xargs --arg-file=/dev/null tee b/config "
+    "&& git -C b fetch o",
+    "mkdir -p b/objects b/refs && echo 'ref: refs/heads/m' > b/HEAD && git commit -q --allow-empty -m x "
+    "-m '[remote \"o\"]' -m 'url = .' -m 'uploadpack = ja 5' && git log -1 --format=%b > b/config "
+    "&& git -C b fetch o",
+    "mkdir -p b/objects b/refs && echo 'ref: refs/heads/m' > b/HEAD && git commit -q --allow-empty -m x "
+    "-m '[remote \"o\"]' -m 'url = .' -m 'uploadpack = ja 5' && git log -1 --format=%b | tee b/config "
+    "&& git -C b fetch o",
+]
+
+
+@pytest.mark.parametrize("befehl", SPERREN_RUNDE5)
+def test_runde5_umgehung_wird_gesperrt(befehl: str) -> None:
+    assert _sperrt(befehl), repr(befehl)
+
+
+#: Alltag der Runde 5 — Wert-Teil ohne Datei-Ziel und Deskriptor-Kopien bleiben frei.
+ALLTAG_RUNDE5 = [
+    "git add -A && git commit -m \"$(cat <<'EOF'\nja 5\nEOF\n)\" && git push origin zweig",
+    "git commit -m 'ja 5' 2>/dev/null && git push origin zweig",
+    "echo 'ja 5' 2>&1 && git status",
+    "echo 'ja 5' >&2 && git status",
+    "echo 'ja 5' 1>&2 && git status",
+]
+
+
+@pytest.mark.parametrize("befehl", ALLTAG_RUNDE5)
+def test_runde5_alltag_bleibt_frei(befehl: str) -> None:
+    assert not _sperrt(befehl), repr(befehl)

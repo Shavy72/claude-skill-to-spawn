@@ -942,6 +942,10 @@ def _ja_zerlegen(
             i = _ja_heredoc_kopf(text, i + 2, offen, len(teile))
             puffer.append(" ")
             continue
+        elif zeichen == "&" and puffer and puffer[-1] in ("<", ">"):
+            puffer.append(zeichen)  # ``2>&1``, ``>&2``, ``<&3``: Deskriptor-Kopie, kein Trenner (Runde 5)
+            i += 1
+            continue
         elif zeichen in _TRENNER:
             if zeichen == "(" or (zeichen == ")" and klammern):
                 klammern += 1 if zeichen == "(" else -1
@@ -1090,7 +1094,8 @@ def _ja_traeger_sperren(alle: list[_JaTeil]) -> bool:
     if not strikt and not any(_ja_wort_in(w) for _, roh in zerlegt for w in roh):
         return False
     # Runde 4: schreibt ein Teil in eine Datei, kann sie Konfiguration für git/gh sein (``b/config``).
-    schreibt = strikt and any(_ja_schreibt(roh) for _, roh in zerlegt)
+    # Runde 5: auch ohne Träger — ``git log --format=%b > b/config`` liest das Wort aus dem Wert-Teil zurück.
+    schreibt = any(_ja_schreibt(roh) for _, roh in zerlegt)
     return not all(_ja_teil_frei(roh, schreibt=schreibt) or (not strikt and _ja_wert_teil(roh)) for _, roh in zerlegt)
 
 
@@ -1245,7 +1250,8 @@ def _ja_teil_frei(roh: list[str], *, schreibt: bool = False) -> bool:
 
 def _ja_xargs_frei(woerter: list[str]) -> bool:
     """``xargs`` nur mit bekannten Schaltern; das Ziel (ohne Ziel: ``echo``) muss selbst frei sein.
-    Ein unbekannter Schalter sperrt — sein Wert könnte sonst für das Ziel gehalten werden."""
+    Ein unbekannter Schalter sperrt — sein Wert könnte sonst für das Ziel gehalten werden.
+    Ziel ``tee`` sperrt (Runde 5): es schreibt in Dateien, die die Schreib-Prüfung hier nicht sieht."""
     i = 1
     while i < len(woerter) and woerter[i].startswith("-"):
         wort = woerter[i]
@@ -1259,7 +1265,7 @@ def _ja_xargs_frei(woerter: list[str]) -> bool:
             i += 1
         else:
             return False
-    return i >= len(woerter) or _ja_teil_frei(woerter[i:])
+    return i >= len(woerter) or (woerter[i] != "tee" and _ja_teil_frei(woerter[i:]))
 
 
 def _ja_wort_in(wort: str) -> bool:
