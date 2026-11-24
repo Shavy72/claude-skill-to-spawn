@@ -45,6 +45,8 @@ from importlib import metadata
 from pathlib import Path
 from typing import Any
 
+from to_spawn import konsole
+
 log = logging.getLogger("to_spawn.pruef")
 
 #: Neue Zahl, wenn sich Schlüssel- oder Dateiformat ändert: alte Einträge treffen dann nie.
@@ -289,14 +291,14 @@ def ordner() -> Path:
 
 def _tree(repo: Path, ref: str) -> str | None:
     try:
-        erg = subprocess.run(
+        erg = konsole.lauf_daten(
             ["git", "rev-parse", "--verify", "--quiet", f"{ref}^{{tree}}"],
             cwd=repo,
-            capture_output=True,
-            text=True,
             check=False,
         )
     except OSError:
+        return None
+    if erg is None:
         return None
     return (erg.stdout.strip() or None) if erg.returncode == 0 else None
 

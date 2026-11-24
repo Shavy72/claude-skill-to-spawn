@@ -132,7 +132,7 @@ KEIN_START = frozenset(
         ("to_spawn/hausmeister_windows.py", "_prozesse"),  # powershell -Command: CIM-Prozessliste lesen (#1373)
         ("skripte/sessions_stand.py", "prozesse_lesen"),  # powershell -Command: WMI-Prozessliste lesen
         ("to_spawn/setup.py", "pruefe_start"),  # Versions-Probe
-        ("to_spawn/docker_reste.py", "_docker"),  # docker image/builder prune, gefangene Ausgabe (#1372)
+        ("to_spawn/konsole.py", "lauf_daten"),  # Lese-Helfer, gefangene Ausgabe (docker prune #1372, git rev-parse, ssh git rev-parse)
         ("skripte/abschluss_paket.py", "wirkungskreis"),  # Repo-Skript, Ausgabe gelesen
         ("skripte/bau.py", "ticket_from_gh"),  # gh
         ("skripte/bau.py", "_gh_json"),  # gh
@@ -143,7 +143,6 @@ KEIN_START = frozenset(
         # bash-Tür (#186): einzige subprocess-Stelle für bash; Aufrufer startklar._standard_laeufer
         # (Hook-/Trockenlauf-Probe, Ausgabe gelesen) und stand._lauf (Stand-Check/Push), keine Session
         ("to_spawn/bash_wahl.py", "lauf"),  # bash Probe-/Prüf-/Push-Befehle, wartet, keine Session
-        ("to_spawn/capo.py", "vps_kopf"),  # ssh lesen
         ("to_spawn/capo.py", "_staging_zeilen"),  # ssh lesen
         ("to_spawn/capo.py", "tmux_fenster"),  # tmux list-windows
         ("to_spawn/capo.py", "_abschluss_lauf"),  # abschluss_paket.py

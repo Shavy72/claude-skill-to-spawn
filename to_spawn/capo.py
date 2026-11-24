@@ -61,6 +61,7 @@ from . import (
     config,
     gh,
     komplett_lauf,
+    konsole,
     melder,
     mensch_noetig,
     staging_schalter,
@@ -644,9 +645,11 @@ def vps_kopf(vps: dict[str, Any]) -> str | None:
         f"cd {_server_pfad(str(vps.get('pfad') or '.'))} && git rev-parse HEAD",
     ]
     try:
-        fertig = subprocess.run(befehl, capture_output=True, text=True, timeout=60, check=False)
+        fertig = konsole.lauf_daten(befehl, timeout=60, check=False)
     except (OSError, subprocess.TimeoutExpired) as fehler:
         log.warning("VPS-HEAD nicht lesbar: %s", fehler)
+        return None
+    if fertig is None:
         return None
     zeilen = fertig.stdout.strip().splitlines()
     sha = zeilen[-1].strip() if zeilen else ""
@@ -1183,8 +1186,7 @@ def tmux_fenster(spec: int) -> list[str] | None:
         fertig = subprocess.run(
             befehl,
             capture_output=True,
-            text=True,
-            errors="replace",
+            **konsole.UNTERPROZESS_TEXT,
             timeout=TMUX_ZEIT_S,
             check=False,
         )
@@ -1336,8 +1338,7 @@ def _starte_folge_runde(repo: Path, ticket: int, befehl: list[str], ueber_tmux: 
             warten=True,
             notnagel=None,
             capture_output=True,
-            text=True,
-            errors="replace",
+            **konsole.UNTERPROZESS_TEXT,
             timeout=TMUX_ZEIT_S,
             check=False,
         )
