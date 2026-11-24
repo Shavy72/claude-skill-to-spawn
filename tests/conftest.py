@@ -509,6 +509,20 @@ def _hausmeister_nur_im_test(
 
 
 @pytest.fixture(autouse=True)
+def _eigenes_tmux(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Eigener, leerer tmux-Server je Test (#479): kein Test liest tmux-Sitzungen des Rechners.
+
+    Ohne diese Fixture fragte ``hausmeister._keine_spec_sitzung`` das echte tmux ab — lief auf
+    dem Rechner zufällig ``spec-11``, blieb im Test ein Ordner stehen, der weg sollte. ``$TMUX``
+    geht weg (sonst nähme tmux den Server der umgebenden Sitzung), ``$TMUX_TMPDIR`` zeigt in
+    einen kurzen Ordner des Testlaufs (Unix-Socket-Pfade sind auf ~108 Zeichen begrenzt). Erbt
+    sich in Kind-Prozesse. Tests, die tmux-Verhalten prüfen, setzen eigene Werte darüber.
+    """
+    monkeypatch.delenv("TMUX", raising=False)
+    monkeypatch.setenv("TMUX_TMPDIR", str(tmp_path_factory.mktemp("tx")))
+
+
+@pytest.fixture(autouse=True)
 def _maschine_liste_im_test(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
