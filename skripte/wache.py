@@ -153,10 +153,13 @@ def wartende_nachstarten(
 ) -> int:
     """Startet die Fenster nach, die ``spawn_srv.sh`` in ``datei`` als wartend vermerkt hat (#560).
 
-    Je Takt ein ``spawn_srv.sh <S> --tickets <liste>`` (leere Liste: ``--nur-wache``) — es
-    überspringt Laufendes und prüft vor jedem Fenster den Speicher. Exit 0 ohne „wartet auf
-    Platz“ = alles läuft → Datei weg, Ende. Sonst (wartet weiter, voll, Fehler) nächster Takt —
-    unbegrenzt, die Datei bleibt, bis ein Lauf durchgeht. Datei fehlt → im Takt weiter nachsehen:
+    Je Takt ein ``spawn_srv.sh <S> --tickets <liste>`` — es überspringt Laufendes und prüft vor
+    jedem Fenster den Speicher. Nur ``spawn_srv.sh`` schreibt und löscht die Datei, unter seiner
+    Sperre je Spec: läuft alles aus ``<liste>``, löscht es sie, solange sie noch genau ``<liste>``
+    enthält — eine inzwischen geschriebene neue Liste bleibt stehen. Exit 0 ohne „wartet auf
+    Platz“ und Datei weg = Ende; Datei noch da (neue Liste) oder sonst (wartet weiter, voll,
+    Fehler) → nächster Takt, unbegrenzt. Leere Datei = kein Auftrag, nächster Takt (#560).
+    Datei fehlt → im Takt weiter nachsehen:
     ``spawn_srv.sh`` schreibt sie erst nach der Staffel-Pause, also nach dem Start der Wache.
     Rückgabe = Zahl der ``spawn_srv.sh``-Läufe. ``takt_s`` leer = ``NACHSTART_TAKT_S`` (je Takt gelesen).
     """
@@ -169,12 +172,14 @@ def wartende_nachstarten(
             schlafen(NACHSTART_TAKT_S if takt_s is None else takt_s)
             continue
         tickets = datei.read_text(encoding="utf-8").strip()
-        auswahl = ["--tickets", tickets] if tickets else ["--nur-wache"]
+        if not tickets:
+            schlafen(NACHSTART_TAKT_S if takt_s is None else takt_s)
+            continue
         umgebung = dict(os.environ if env is None else env, TO_SPAWN_REPO=str(repo))
         laeufe += 1
         try:
             lauf = bash_wahl.lauf(
-                [str(skript), str(spec), *auswahl],
+                [str(skript), str(spec), "--tickets", tickets],
                 cwd=str(repo),
                 env=umgebung,
                 capture_output=True,
@@ -188,10 +193,12 @@ def wartende_nachstarten(
         else:
             ausgabe = (lauf.stdout or "") + (lauf.stderr or "")
             if lauf.returncode == 0 and "wartet auf Platz" not in ausgabe:
-                datei.unlink(missing_ok=True)
-                log.info("Nachstart Spec #%s: wartende Fenster laufen (%s)", spec, tickets or "nur Aufseher")
-                return laeufe
-            log.info("Nachstart Spec #%s: wartet weiter (Exit %s)", spec, lauf.returncode)
+                if not datei.is_file():
+                    log.info("Nachstart Spec #%s: wartende Fenster laufen (%s)", spec, tickets)
+                    return laeufe
+                log.info("Nachstart Spec #%s: %s läuft, neue Warteliste da", spec, tickets)
+            else:
+                log.info("Nachstart Spec #%s: wartet weiter (Exit %s)", spec, lauf.returncode)
         schlafen(NACHSTART_TAKT_S if takt_s is None else takt_s)
     return laeufe
 

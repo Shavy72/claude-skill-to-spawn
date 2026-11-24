@@ -186,8 +186,15 @@ aufseher_laeuft() {
 # die Fenster die Skill-Skripte direkt auf (``bau.py``/``wache.py``), nicht die Shell-
 # Funktionen ``bau``/``wache`` aus ~/.bashrc — ein Fremd-Repo hat die nicht.
 # Warte-Datei (#560): Tickets, die „wartet auf Platz“ bekamen; der Aufseher (wache.py) startet sie
-# daraus in Sekunden nach, sobald Platz frei ist, und löscht sie, wenn alles läuft.
+# daraus in Sekunden nach, sobald Platz frei ist. Schreiben und Löschen nur hier, unter der Sperre.
 WARTE_DATEI="$REPO/.to-spawn/wartet-auf-platz-$SPEC"
+# warte_datei_erledigt: alles aus --tickets läuft → Datei weg, aber nur, solange sie noch genau
+# diese Liste enthält — eine inzwischen von einem anderen Lauf geschriebene Liste bleibt für den
+# nächsten Nachstart-Takt (#560).
+warte_datei_erledigt() {
+  [ -n "$TICKETS_ARG" ] && [ -f "$WARTE_DATEI" ] || return 0
+  if [ "$(cat "$WARTE_DATEI")" = "$TICKETS_ARG" ]; then rm -f "$WARTE_DATEI"; fi
+}
 VORSPANN="export REPO=$(printf %q "$REPO") TO_SPAWN_HOME=$(printf %q "$SKILL_HOME") TO_SPAWN_REPO=$(printf %q "$REPO") TO_SPAWN_WARTE_DATEI=$(printf %q "$WARTE_DATEI");"
 # GEPLANT = echte Fensterbefehle, KURZ = Kurzform ``bau <N> [--umzug …]`` / ``wache <S>`` für
 # Anzeige und Fenstername (erste zwei Wörter; sessions_stand/aufpasser lesen die Namen) —
@@ -240,6 +247,7 @@ done
 
 if [ "${#GEPLANT[@]}" -eq 0 ]; then
   echo "Nichts zu starten — alle Fenster laufen schon."
+  warte_datei_erledigt
   exit 0
 fi
 
@@ -306,8 +314,13 @@ for i in "${!GEPLANT[@]}"; do
   if [ "$rc" -eq 8 ]; then
     # ponytail: Umzug-Fenster nicht vermerkt (brauchen ihre Ref), die startet der Aufpasser-Takt nach
     if [ -z "$UMZUG_REF" ]; then
+      # In einem Zug (#560): Temp-Datei im selben Ordner, dann mv — ein Leser sieht nie eine leere
+      # Datei. Keine bau-Fenster im Rest → nichts zu vermerken, eine vorhandene Liste bleibt.
       mkdir -p "${WARTE_DATEI%/*}"
-      printf '%s\n' "${KURZ[@]:$i}" | awk '$1=="bau"{print $2}' | paste -sd, - > "$WARTE_DATEI"
+      liste="$(printf '%s\n' "${KURZ[@]:$i}" | awk '$1=="bau"{print $2}' | paste -sd, -)"
+      if [ -n "$liste" ]; then
+        printf '%s\n' "$liste" > "$WARTE_DATEI.$$.neu" && mv -f "$WARTE_DATEI.$$.neu" "$WARTE_DATEI"
+      fi
     fi
     echo "wartet auf Platz: ${KURZ[*]:$i} — $WARTE_GRUND; Aufseher startet nach, sobald Platz frei ist."
     exit 0
@@ -326,6 +339,7 @@ for i in "${!GEPLANT[@]}"; do
   echo "gestartet: $name ($befehl)"
   GESTARTET=$((GESTARTET + 1))
 done
+warte_datei_erledigt
 
 echo "== Anlauf (10 s) =="
 sleep 10

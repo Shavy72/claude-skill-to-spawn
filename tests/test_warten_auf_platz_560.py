@@ -321,3 +321,84 @@ def test_sperre_vererbt_sich_nicht_an_fenster(tmp_path: Path, monkeypatch: pytes
     assert ergebnis.returncode == 0, ergebnis.stdout + ergebnis.stderr
     assert "-n bau 901" in aufrufe
     assert not beleg.exists(), beleg.read_text(encoding="utf-8")
+
+
+# --- Prüfer-Funde (#560 Fixrunde 2) ------------------------------------------------
+
+
+@pytest.mark.braucht("bash", "posix")
+@pytest.mark.parametrize("wann", ["waehrend", "danach"])
+def test_neue_warteliste_waehrend_nachstart_geht_nicht_verloren(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, wann: str
+) -> None:
+    """Pflicht 1: ein zweiter ``spawn_srv.sh``-Lauf vermerkt L2, während der Nachstarter mit L1 läuft.
+
+    Nach Exit 0 muss L2 stehen bleiben und im nächsten Takt nachstarten — nicht erst beim Aufpasser.
+    """
+    _lauf, umgebung, repo = _spawn_fremd_voll(tmp_path, monkeypatch)
+    datei = repo / ".to-spawn" / f"wartet-auf-platz-{e2.SPEC}"
+    _platz_frei(umgebung)
+    echt = bash_wahl.lauf
+    l2 = str(e2.CHECKPOINT)
+
+    def lauf(argumente, **optionen):
+        if wann == "waehrend" and l2 not in argumente:
+            datei.write_text(f"{l2}\n", encoding="utf-8")
+        ergebnis = echt(argumente, **optionen)
+        if wann == "danach" and l2 not in argumente:
+            datei.write_text(f"{l2}\n", encoding="utf-8")
+        return ergebnis
+
+    monkeypatch.setattr(bash_wahl, "lauf", lauf)
+    zwischenstand: list[str] = []
+    wache = _wache()
+    laeufe = wache.wartende_nachstarten(
+        datei,
+        e2.SPEC,
+        repo,
+        env=umgebung,
+        schlafen=lambda _s: zwischenstand.append(datei.read_text(encoding="utf-8") if datei.exists() else "weg"),
+        max_laeufe=3,
+    )
+    assert zwischenstand == [f"{l2}\n"], zwischenstand
+    assert laeufe == 2
+    assert "-n bau 901" in _gestartet(tmp_path) and f"-n bau {l2}" in _gestartet(tmp_path)
+    assert not datei.exists()
+
+
+@pytest.mark.braucht("bash", "posix")
+def test_leere_warte_datei_ist_kein_auftrag_zum_loeschen(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pflicht 2: leerer Inhalt (Leser mitten im Schreiben) → kein Lauf, kein Löschen, nächster Takt."""
+    _lauf, umgebung, repo = _spawn_fremd_voll(tmp_path, monkeypatch)
+    datei = repo / ".to-spawn" / f"wartet-auf-platz-{e2.SPEC}"
+    datei.write_text("", encoding="utf-8")
+    _platz_frei(umgebung)
+    da: list[bool] = []
+
+    def schlafen(_s: float) -> None:
+        da.append(datei.exists())
+        datei.write_text("901\n", encoding="utf-8")  # Schreiber fertig
+
+    laeufe = _wache().wartende_nachstarten(datei, e2.SPEC, repo, env=umgebung, schlafen=schlafen, max_laeufe=1)
+    assert da == [True] and laeufe == 1, (da, laeufe)
+    assert "-n bau 901" in _gestartet(tmp_path) and not datei.exists()
+
+
+@pytest.mark.braucht("bash", "posix")
+def test_warte_datei_wird_in_einem_zug_ersetzt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pflicht 2: ``spawn_srv.sh`` ersetzt die Datei per ``mv`` — wer sie offen hat, sieht nie leeren Inhalt."""
+    _lauf, umgebung, repo = _spawn_fremd_voll(tmp_path, monkeypatch)
+    datei = repo / ".to-spawn" / f"wartet-auf-platz-{e2.SPEC}"
+    alt = datei.stat().st_ino
+    with datei.open(encoding="utf-8") as leser:
+        erneut = bash_wahl.lauf(
+            [str(SKILL / "skripte" / "spawn_srv.sh"), str(e2.SPEC), "--tickets", "901"],
+            cwd=str(repo),
+            env=umgebung,
+            capture_output=True,
+            text=True,
+        )
+        assert erneut.returncode == 0 and "wartet auf Platz" in erneut.stdout, erneut.stdout + erneut.stderr
+        assert leser.read() == "901\n"  # alte Fassung bleibt für den Leser ganz
+    assert datei.stat().st_ino != alt and datei.read_text(encoding="utf-8") == "901\n"
+    assert not list(datei.parent.glob("*.neu"))
