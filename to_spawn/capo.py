@@ -1496,18 +1496,21 @@ def _folge_runde(
 CHECKPOINT_FRIST_MIN = 60.0
 
 
-def annahme_grenze(n: str | int, befehl: str = "to_spawn.py") -> str:
+def annahme_grenze(n: str | int, befehl: str = "to_spawn.py", frage_id: str = "") -> str:
     """Was die Annahme nach der Frist deckt — die eine Stelle der Regel (#490).
 
     Der Annahme-Kommentar des Aufsehers (:func:`_checkpoint`) und der Start-Text der
     Bau-Session (Platzhalter ``{ANNAHME_GRENZE}`` in ``skripte/bau.py``) lesen nur diesen
     Text. ``befehl`` = Aufruf von ``to_spawn.py``; nennt den einen Weg für das Live-Ja.
+    ``frage_id`` = Kennung der offenen Live-Frage, sobald es sie gibt (#501); leer → ``<id>``
+    samt Hinweis, wo die Kennung steht (Start-Text: die Frage ist noch nicht gestellt).
     """
+    befehl_ja = f"`{befehl} nutzer-antwort {n} --id {frage_id or '<id>'} --wahl <Wahl> --grund <Grund>`"
     return (
         "Die Annahme nach der Frist deckt nur die Entscheidungs-Liste (Abnahme „passt“), "
         "nie den Live-Schritt: Live braucht immer ein eigenes Ja des Menschen, nur im eigenen "
-        f"Terminal: `{befehl} nutzer-antwort {n} --id <id> --wahl <Wahl> --grund <Grund>` "
-        f"(id der Live-Frage: `{befehl} offene {n}`)."
+        f"Terminal: {befehl_ja}"
+        + ("." if frage_id else f" (id der Live-Frage: `{befehl} offene {n}`).")
     )
 
 #: „Vorschlag: …“ in einem Issue-Kommentar — alles danach ist die vorgeschlagene Wahl.
@@ -1804,7 +1807,9 @@ def _checkpoint(
         return [f"#{n} [Probe] würde Vorschlag annehmen: {_kurz(vorschlag.wahl)}"]
     text = f"{WAECHTER_KOPF} {ANNAHME_ANFANG} {frist:.0f} min nach Doktrin — der Mensch kann kippen. Vorschlag: {vorschlag.wahl}"
     befehl = f"python {(_SKILL / 'to_spawn.py').as_posix()}"
-    text += f"\n\n{annahme_grenze(n, befehl)}"  # #490: Live-Grenze sofort im Kommentar
+    # #501: Kennung der jüngsten offenen Live-Frage (Klasse 2) statt „<id>“, falls schon gestellt.
+    live_ids = [o["id"] for o in briefkasten.offene([n], hauptbaum=repo) if o["klasse"] == "2" and o["id"]]
+    text += f"\n\n{annahme_grenze(n, befehl, live_ids[-1] if live_ids else '')}"  # #490: Live-Grenze
     if not befund.kommentiere(n, gh_repo, text):
         return [f"#{n} FEHLER: Checkpoint-Annahme nicht kommentiert"]
     erledigt.add(schluessel)
