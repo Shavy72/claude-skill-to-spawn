@@ -54,8 +54,9 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from . import bau_log, befund, briefkasten, config, gh, melder, mensch_noetig, staging_schalter, starter, ticket_zustand, vorfall
+from . import bau_log, befund, briefkasten, config, gh, komplett_lauf, melder, mensch_noetig, staging_schalter, starter, ticket_zustand, vorfall
 from . import sperre as _sperre
+from .pruefplan import Moment
 
 log = logging.getLogger("to_spawn.capo")
 
@@ -2636,6 +2637,10 @@ def _tick(
     if katalog and not dry_run:
         aktionen += katalog_pflegen(repo, konfig, gelernt)
 
+    komplett_haelt = False
+    if liste and not dry_run and all(ticket_zustand.fertig_gebaut(i) for i in liste):
+        komplett_haelt = _komplett_alle_auf_staging(repo, spec, konfig, aktionen)
+
     # #1407: unlesbares Staging ist kein „fehlt“, aber auch kein Beleg „liegt drauf“ — Abschluss zurückhalten.
     unlesbar_takte = int(zustand.get("staging_unlesbar_takte") or 0) + 1 if staging_stand.unlesbar else 0
     zustand["staging_unlesbar_takte"] = unlesbar_takte
@@ -2665,6 +2670,7 @@ def _tick(
         and not regeln_aus
         and not vps_fehlt
         and not staging_stand.unlesbar
+        and not komplett_haelt
     )
     if erg.fertig:
         alt_hinweis = f" ({len(erg.alt)} alte aus dem Ausgangsstand)" if erg.alt else ""
@@ -2718,6 +2724,25 @@ def _tick(
     if any("FEHLER" in z for z in erg.zeilen):
         erg.exit_code = 1
     return erg
+
+
+def _komplett_alle_auf_staging(repo: Path, spec: int, konfig: dict[str, Any], zeilen: list[str]) -> bool:
+    """Komplett-Prüfung „alle Tickets auf Staging“ (#425 C2); ``True`` = Spec in diesem Takt nicht fertig.
+
+    Einmal-Regel, Sperre und „nicht eingerichtet“ versteckt :mod:`to_spawn.komplett_lauf`. Eine Zeile
+    nur, wenn etwas passiert ist (Lauf, Fehler, läuft schon) — sonst bleibt der Takt wie vor #425.
+    """
+    try:
+        erg = komplett_lauf.komplett_einmal(repo, spec, Moment.ALLE_AUF_STAGING, konfig)
+    except Exception as fehler:  # ein Ausreißer darf den Tick (sichern) nicht abbrechen
+        log.exception("Komplett-Prüfung Spec #%s: unerwarteter Fehler", spec)
+        zeilen.append(f"FEHLER: Komplett-Prüfung — unerwarteter Fehler ({type(fehler).__name__}: {fehler}).")
+        return True
+    if not erg.ok:
+        zeilen.append(f"FEHLER: {erg.grund} Spec bleibt bis grün offen.")
+    elif erg.gelaufen or erg.laeuft:
+        zeilen.append(erg.grund)
+    return not erg.ok or erg.laeuft
 
 
 def _hausmeister_schluss(spec: int, zustand: dict[str, Any], jetzt: datetime, dry_run: bool) -> list[str]:
