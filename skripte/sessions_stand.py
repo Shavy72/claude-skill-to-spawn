@@ -211,6 +211,17 @@ def fremdes_repo(pid: int) -> bool:
     return ordner != wurzel and wurzel not in ordner.parents
 
 
+def beendet(pid: int) -> bool:
+    """Ist der Prozess seit ``ps`` beendet (``/proc/<pid>`` weg)? Ohne ``/proc`` (Windows): nein.
+
+    Ein beendeter Prozess läuft nicht mehr, auch wenn ``fremdes_repo`` ihn mangels lesbarem
+    Ordner mitzählt (#494): sonst gälte etwa die eben beendete Aufseher-Attrappe eines
+    Nachbar-Tests als lebender Aufseher, und ``spawn_srv.sh`` meldete bei vollem Rechner
+    „Aufseher startet nach“ (Exit 0), obwohl niemand nachstartet.
+    """
+    return Path("/proc/self").is_dir() and not Path(f"/proc/{pid}").exists()
+
+
 def zuordnen(eintraege: dict[str, Eintrag], alle: list[Prozess]) -> None:
     for p in alle:
         if not p.name.lower().startswith("python"):
@@ -218,7 +229,7 @@ def zuordnen(eintraege: dict[str, Eintrag], alle: list[Prozess]) -> None:
         m = MUSTER.search(p.cmd)
         if not m:
             continue
-        if fremdes_repo(p.pid):
+        if fremdes_repo(p.pid) or beendet(p.pid):
             continue
         art, nummer = m.group(1), m.group(2)
         e = eintraege.get(nummer)
@@ -243,7 +254,7 @@ def zuordnen(eintraege: dict[str, Eintrag], alle: list[Prozess]) -> None:
     for p in alle:
         if p.name.lower() not in VERWAIST_NAMEN or p.pid in bekannte:
             continue
-        if fremdes_repo(p.pid):  # Claude-Session eines anderen Repos ist hier keine Waise (#212)
+        if fremdes_repo(p.pid) or beendet(p.pid):  # fremdes Repo (#212) / schon weg (#494): keine Waise
             continue
         m = VERWAIST.search(p.cmd)
         if not m:
