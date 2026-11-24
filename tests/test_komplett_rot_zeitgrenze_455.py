@@ -214,7 +214,8 @@ def test_ungespeicherte_aenderung_kein_lauf_kein_merker(tmp_path: Path) -> None:
     assert komplett_lauf.lies_merker(klon, SPEC) is None
 
 
-def test_klon_hinter_origin_kein_lauf(tmp_path: Path) -> None:
+def test_notnagel_wenn_nachziehen_scheitert_kein_lauf(tmp_path: Path) -> None:
+    # Nur der Notnagel _stand_halt: die conftest-Naht macht das Nachziehen zum No-op (echt: test_takt_zieht_…).
     zaehl = tmp_path / "zaehl.txt"
     klon, konfig = _klon(tmp_path, {"komplett": _befehl(zaehl)})
     nackt = tmp_path / "origin.git"
@@ -387,3 +388,79 @@ def test_gestorbener_hintergrund_lauf_startet_im_naechsten_takt_neu(
     )
     assert _warte_merker(klon, kopf).gruen, neu
     assert _laeufe(zaehl) == 1
+
+
+# --- Review b1bf884: Sperre vor Nachziehen, Nachziehen nur bei Bedarf, setsid-Enkel ---------------
+
+
+def _zaehle_nachziehen(monkeypatch: pytest.MonkeyPatch) -> list[Path]:
+    """``arbeitsstand.sicherstellen`` mitzählen (Original läuft weiter)."""
+    from to_spawn import arbeitsstand
+
+    aufrufe: list[Path] = []
+    original = arbeitsstand.sicherstellen
+
+    def zaehlend(repo: Path, *, nachziehen: bool = True) -> Any:
+        aufrufe.append(repo)
+        return original(repo, nachziehen=nachziehen)
+
+    monkeypatch.setattr(arbeitsstand, "sicherstellen", zaehlend)
+    return aufrufe
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="fcntl-Sperre nur unter Linux")
+def test_belegte_sperre_zieht_nicht_nach_und_meldet_laeuft(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Läuft eine Prüfung (Sperre belegt), darf der Takt den Arbeitsbaum nicht verschieben."""
+    from to_spawn import sperre
+
+    zaehl = tmp_path / "zaehl.txt"
+    klon, konfig = _klon(tmp_path, {"komplett": _befehl(zaehl)})
+    aufrufe = _zaehle_nachziehen(monkeypatch)
+    sperr_datei = komplett_lauf._datei(klon, SPEC).with_suffix(".lock")
+    with sperre.halte(sperr_datei) as frei:
+        assert frei
+        erg = komplett_lauf.komplett_einmal(klon, SPEC, Moment.ALLE_AUF_STAGING, konfig, takt=True)
+    assert erg.laeuft and erg.ok and not erg.gelaufen, erg
+    assert aufrufe == [], "Nachziehen trotz belegter Sperre"
+    assert _laeufe(zaehl) == 0
+
+
+def test_takt_mit_gruenem_merker_zieht_nicht_nach(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Grüner Merker für den Kopf und Kopf gleich @{u}: kein Nachziehen im Takt; neuer Kopf auf origin schon."""
+    zaehl = tmp_path / "zaehl.txt"
+    klon, konfig = _klon(tmp_path, {"komplett": _befehl(zaehl)})
+    anderer, zweig = _mit_origin(tmp_path, klon)
+    hand = komplett_lauf.komplett_einmal(klon, SPEC, Moment.ALLE_AUF_STAGING, konfig)
+    assert (hand.gelaufen, hand.ok) == (True, True), hand
+    aufrufe = _zaehle_nachziehen(monkeypatch)
+    takt = komplett_lauf.komplett_einmal(klon, SPEC, Moment.ALLE_AUF_STAGING, konfig, takt=True)
+    assert (takt.gelaufen, takt.ok) == (False, True), takt
+    assert aufrufe == [], "Nachziehen trotz gültigem Merker"
+    _neu_auf_origin(anderer, zweig, klon, "neu.txt")
+    komplett_lauf.komplett_einmal(klon, SPEC, Moment.ALLE_AUF_STAGING, konfig, takt=True)
+    assert aufrufe == [klon], "Kopf hinter @{u}, trotzdem nicht nachgezogen"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="setsid nur unter Linux")
+def test_zeitgrenze_haelt_auch_bei_setsid_enkel(tmp_path: Path) -> None:
+    """Enkel mit eigenem setsid verlässt die Prozessgruppe und hält die Pipe: trotzdem Zeitgrenze."""
+    pid_datei = tmp_path / "enkel.pid"
+    befehl = f"setsid sh -c 'echo $$ > {shlex.quote(str(pid_datei))}; exec sleep 25' & echo bisher; wait"
+    start = time.monotonic()
+    try:
+        with pytest.raises(subprocess.TimeoutExpired):
+            bash_wahl.lauf(
+                ["-c", befehl],
+                cwd=tmp_path,
+                zeitgrenze_s=1.0,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
+        assert time.monotonic() - start < 15, "setsid-Enkel hält die Pipe offen"
+    finally:
+        if pid_datei.exists():
+            try:
+                os.kill(int(pid_datei.read_text(encoding="utf-8").strip()), 9)
+            except (OSError, ValueError):
+                pass

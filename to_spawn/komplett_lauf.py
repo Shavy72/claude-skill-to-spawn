@@ -159,6 +159,14 @@ def _kopf(klon: Path) -> str | None:
     return erg.stdout.strip() if erg.returncode == 0 and erg.stdout.strip() else None
 
 
+def _hinten(klon: Path) -> int:
+    """Commits, die ``HEAD`` hinter ``@{u}`` liegt (Stand des letzten fetch); ``0`` ohne Upstream."""
+    hinten = _git(klon, "rev-list", "--count", "HEAD..@{u}")
+    if hinten is None or hinten.returncode != 0:
+        return 0  # kein Upstream (z. B. reiner Test-Klon): nichts zu vergleichen
+    return int(hinten.stdout.strip() or 0)
+
+
 def _stand_halt(klon: Path, kopf: str) -> str:
     """Grund, warum der Arbeitsbaum nicht für ``kopf`` steht; ``""`` = prüfbar."""
     # Die Konfig trägt nur den Prüf-Befehl, keinen geprüften Code: zählt hier nicht als schmutzig.
@@ -173,10 +181,7 @@ def _stand_halt(klon: Path, kopf: str) -> str:
             f"Klon {klon} hat ungespeicherte Änderungen ({liste}) — Komplett-Prüfung nicht gestartet, "
             "kein Merker. Handlung: committen oder verwerfen, dann erneut rufen."
         )
-    hinten = _git(klon, "rev-list", "--count", "HEAD..@{u}")
-    if hinten is None or hinten.returncode != 0:
-        return ""  # kein Upstream (z. B. reiner Test-Klon): nichts zu vergleichen
-    anzahl = int(hinten.stdout.strip() or 0)
+    anzahl = _hinten(klon)
     if anzahl:
         return (
             f"Klon-Kopf {kopf[:7]} liegt {anzahl} Commit(s) hinter origin (Stand nach fetch) — geprüft würde "
@@ -243,63 +248,73 @@ def _pruefen(
         return Ergebnis(
             False, True, "Prüfung nicht eingerichtet, alter Ablauf", None, ""
         )
-    # Vor dem Kopf lesen nachziehen (Review a62e67a): der capo-Takt macht nur fetch; ohne das hielte
-    # ein Klon hinter origin die Komplett-Prüfung jeden Takt an, und ein neuer Kopf liefe nie.
-    stand = arbeitsstand.sicherstellen(klon, nachziehen=True)
-    if not stand.ok:
-        return Ergebnis(
-            False,
-            False,
-            f"Komplett-Prüfung nicht gestartet, kein Merker: {stand.text}",
-            None,
-            _kopf(klon) or "",
-        )
-    kopf = _kopf(klon)
-    if kopf is None:
-        return Ergebnis(
-            False,
-            False,
-            f"Kopf-SHA in {klon} nicht lesbar (git). Handlung: Klon prüfen, dann erneut rufen.",
-            None,
-            "",
-        )
-    gemerkt = _gemerkt(lies_merker(klon, spec), kopf, rot_zaehlt)
-    lief = gemerkt is not None and gemerkt.gruen
-    art = pruefplan.welche(konfig, SpecStand(moment, komplett_lief=lief))
-    if art != "komplett":
-        grund = (
-            f"Komplett-Prüfung für Stand {kopf[:7]} schon grün gelaufen"
-            if lief
-            else f"Komplett-Prüfung bei Moment {moment.value} nicht dran"
-        )
-        return Ergebnis(False, True, grund, None, kopf)
-    if gemerkt is not None:
-        return _aus_merker(gemerkt, spec, gelaufen=False)
-    befehl = pruefplan.befehl(konfig, "komplett")
-    if not befehl:
-        return Ergebnis(
-            False,
-            False,
-            "pruefung.komplett fehlt in .to-spawn/config.json. Handlung: Befehl im Einrichtungs-Ticket eintragen.",
-            None,
-            kopf,
-        )
-    halt = _stand_halt(klon, kopf)
-    if halt:
-        return Ergebnis(False, False, halt, None, kopf)
-    # Sperre gegen Doppellauf (capo-Takt + Tür vor Live): flock fällt mit dem Prozess, ein
+    # Sperre zuerst (Review b1bf884): läuft eine Prüfung, darf weder nachgezogen (der Arbeitsbaum
+    # verschöbe sich unter ihr) noch neu gestartet werden. flock fällt mit dem Prozess, ein
     # abgestürzter Lauf sperrt also nie dauerhaft.
     sperr_datei = _datei(klon, spec).with_suffix(".lock")
     belegt = f"Komplett-Prüfung läuft schon (Sperre {sperr_datei.name}). Handlung: später erneut rufen."
     try:
         with _sperre.halte(sperr_datei) as frei:
             if not frei:
-                return Ergebnis(False, True, belegt, None, kopf, laeuft=True)
+                return Ergebnis(False, True, belegt, None, _kopf(klon) or "", laeuft=True)
+            kopf = _kopf(klon)
+            gemerkt = (
+                _gemerkt(lies_merker(klon, spec), kopf, rot_zaehlt) if kopf else None
+            )
+            # Nachziehen nur, wenn ein Lauf anstehen kann: kein Merker für den Kopf oder Kopf hinter
+            # @{u}. Der Vergleich gegen @{u} taugt nur im Takt (rot_zaehlt), weil capo eben gefetcht
+            # hat; von Hand (Tür vor Live) wird immer nachgezogen, sonst gälte ein alter fetch.
+            if not rot_zaehlt or gemerkt is None or _hinten(klon):
+                # der capo-Takt macht nur fetch; ohne Nachziehen hielte ein Klon hinter origin die
+                # Komplett-Prüfung jeden Takt an, und ein neuer Kopf liefe nie (Review a62e67a).
+                stand = arbeitsstand.sicherstellen(klon, nachziehen=True)
+                if not stand.ok:
+                    return Ergebnis(
+                        False,
+                        False,
+                        f"Komplett-Prüfung nicht gestartet, kein Merker: {stand.text}",
+                        None,
+                        _kopf(klon) or "",
+                    )
+                kopf = _kopf(klon)
+                gemerkt = (
+                    _gemerkt(lies_merker(klon, spec), kopf, rot_zaehlt)
+                    if kopf
+                    else None
+                )
+            if kopf is None:
+                return Ergebnis(
+                    False,
+                    False,
+                    f"Kopf-SHA in {klon} nicht lesbar (git). Handlung: Klon prüfen, dann erneut rufen.",
+                    None,
+                    "",
+                )
+            lief = gemerkt is not None and gemerkt.gruen
+            art = pruefplan.welche(konfig, SpecStand(moment, komplett_lief=lief))
+            if art != "komplett":
+                grund = (
+                    f"Komplett-Prüfung für Stand {kopf[:7]} schon grün gelaufen"
+                    if lief
+                    else f"Komplett-Prüfung bei Moment {moment.value} nicht dran"
+                )
+                return Ergebnis(False, True, grund, None, kopf)
+            if gemerkt is not None:
+                return _aus_merker(gemerkt, spec, gelaufen=False)
+            befehl = pruefplan.befehl(konfig, "komplett")
+            if not befehl:
+                return Ergebnis(
+                    False,
+                    False,
+                    "pruefung.komplett fehlt in .to-spawn/config.json. Handlung: Befehl im Einrichtungs-Ticket eintragen.",
+                    None,
+                    kopf,
+                )
+            # Notnagel: Nachziehen meldete ok (z. B. Test-Naht), der Baum steht trotzdem nicht für origin.
+            halt = _stand_halt(klon, kopf)
+            if halt:
+                return Ergebnis(False, False, halt, None, kopf)
             if not hintergrund:
-                # der andere Lauf kann eben fertig geworden sein
-                gemerkt = _gemerkt(lies_merker(klon, spec), kopf, rot_zaehlt)
-                if gemerkt is not None:
-                    return _aus_merker(gemerkt, spec, gelaufen=False)
                 return _lauf(
                     klon,
                     spec,
@@ -314,7 +329,7 @@ def _pruefen(
             False,
             f"Sperre nicht öffenbar ({fehler}). Handlung: Ordner-Rechte prüfen, dann erneut rufen.",
             None,
-            kopf,
+            _kopf(klon) or "",
         )
     # Sperre frei, nur kurz geprüft: der Hintergrund-Prozess nimmt sie selbst und liest den Merker unter ihr.
     return _im_hintergrund(klon, spec, moment, kopf)
