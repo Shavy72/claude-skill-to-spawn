@@ -53,3 +53,19 @@ def aufrufen(*argumente: str, eingabe: str | None = None, start: bool = False) -
             unterbefehl, f"keine Antwort nach {fehler.timeout} s"
         ) from fehler
     return fertig.stdout
+
+
+def spec_session_schliessen(spec: int) -> None:
+    """tmux-Session ``spec-<S>`` samt allen Fenstern (``wache <S>``, ``bau <N>``) schließen (#546).
+
+    Fehlt die Session schon, ist das kein Fehler. Windows-Terminal: kein Weg vorhanden, dort
+    scheitert der Aufruf als :class:`TmuxFehler` (kein tmux) und der Aufrufer loggt nur.
+    """
+    try:
+        aufrufen("kill-session", "-t", f"=spec-{spec}")
+    except FensterWeg:
+        return
+    except TmuxFehler as fehler:
+        if "can't find session" in fehler.stderr or "no server running" in fehler.stderr:
+            return
+        raise

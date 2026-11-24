@@ -21,7 +21,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from to_spawn import bash_wahl, config, komplett_lauf
+from to_spawn import bash_wahl, capo, config, komplett_lauf
 
 log = logging.getLogger(__name__)
 
@@ -49,5 +49,7 @@ def starte(klon: Path, spec: int, konfig: dict[str, Any]) -> tuple[int, list[str
         zeilen.append(f"Live-Befehl rot (Exit {erg.returncode}). Handlung: Ausgabe oben lesen, beheben, erneut rufen.")
         return 1, zeilen
     log.info("live_tuer: Spec %s live-Befehl grün", spec)
+    if not capo.live_merken(klon, spec):  # Merker für den Takt (#546); Live selbst lief
+        zeilen.append("Live-Merker nicht gesetzt — Spec-Issue schließt der Takt dann nicht von selbst.")
     zeilen.append("Live-Befehl grün.")
     return 0, zeilen
