@@ -494,6 +494,8 @@ def repo_zusatz(konfig: dict) -> str:
 #: Platzhalter, die ein Repo-Zusatz nutzen darf (#274 P1). Alles andere (``{KONTEXT}``,
 #: JSON-Klammern …) bleibt im Zusatz wörtlich stehen — nichts wird zweimal eingesetzt.
 ZUSATZ_PLATZHALTER = ("{N}", "{S}", "{REPO}", "{WT}", "{HAUPTZWEIG}")
+#: Platzhalter-Stil der Start-Vorlage (#501): nur ``{GROSS_BUCHSTABEN}`` — JSON/Code-Klammern nie.
+_PLATZHALTER = re.compile(r"\{[A-Z][A-Z0-9_]*\}")
 
 
 def build_prompt(
@@ -512,7 +514,13 @@ def build_prompt(
     ``{ENTSCHEIDUNGS_LINIE}`` = ``anleitung.entscheidungs_linie`` mit dem Hauptzweig (#376),
     ``{ANNAHME_GRENZE}`` = ``capo.annahme_grenze`` (was die Checkpoint-Annahme deckt, #490),
     ``{REPO_ZUSATZ}`` = Inhalt von ``start_text.zusatz_datei`` (#274 P1) — zuletzt eingesetzt, darin
-    nur :data:`ZUSATZ_PLATZHALTER` ersetzt; leer → Platzhalter samt Überschrift darüber entfällt."""
+    nur :data:`ZUSATZ_PLATZHALTER` ersetzt; leer → Platzhalter samt Überschrift darüber entfällt.
+
+    Fehlt ``{ANNAHME_GRENZE}`` in der Vorlage, meldet :func:`start_warnung` das (#501); der Text
+    bleibt wie die Vorlage ihn will (Wegwerf-Vorlagen der Weg-Tests, #212).
+    ``ValueError``, wenn nach dem Füllen ein ``{GROSS}``-Platzhalter übrig bleibt (unbekannt oder
+    aus einem Wert ungefüllt), statt ihn roh in den Prompt zu geben (#501). Klammern aus Titel,
+    Kontext und Repo-Zusatz zählen nicht — das ist fremder Text, der wörtlich bleibt."""
     konfig = konfig if konfig is not None else config.lade(REPO)
     label = str((konfig.get("regularien") or {}).get("checkpoint_label") or "checkpoint:human")
     haupt = gh.hauptzweig(REPO)
@@ -532,11 +540,17 @@ def build_prompt(
         "{ENTSCHEIDUNGS_LINIE}": anleitung.entscheidungs_linie(haupt),
         "{ANNAHME_GRENZE}": capo.annahme_grenze(ticket),
     }
+    if "{ANNAHME_GRENZE}" not in template:
+        start_warnung("Start-Vorlage ohne {ANNAHME_GRENZE}: Annahme-Regel (#490) fehlt im Start-Text.")
     zusatz = repo_zusatz(konfig)
     if not zusatz:
         template = re.sub(r"(?:#[^\n]*\n)?\{REPO_ZUSATZ\}\n*", "", template)
     for platzhalter, wert in werte.items():
         template = template.replace(platzhalter, wert)
+    fremd = set(_PLATZHALTER.findall(f"{title}\n{kontext}"))
+    rest = sorted({p for p in _PLATZHALTER.findall(template) if p != "{REPO_ZUSATZ}"} - fremd)
+    if rest:
+        raise ValueError(f"Start-Vorlage: Platzhalter {', '.join(rest)} nach dem Füllen übrig (unbekannt/ungefüllt).")
     for platzhalter in ZUSATZ_PLATZHALTER:
         zusatz = zusatz.replace(platzhalter, werte[platzhalter])
     return template.replace("{REPO_ZUSATZ}", zusatz) if zusatz else template
@@ -979,13 +993,17 @@ def main() -> int:
         Vorlage, wie sie JETZT auf der Platte liegt. ``main`` ruft sie beim Start (Vorlage kaputt
         → sofort Exit 2, ``--print-prompt``) und erneut im Moment des Loslassens — ein Fenster,
         das stundenlang auf Blocker wartet, startet so mit der Regel von jetzt."""
-        grund = (
-            probesitz.WEGWERF_PROMPT.format(ticket=ticket)
-            if args.probesitz
-            else build_prompt(
-                load_default()["prompt_template"], ticket, spec, title, build_kontext(entry), config.lade(REPO)
+        try:
+            grund = (
+                probesitz.WEGWERF_PROMPT.format(ticket=ticket)
+                if args.probesitz
+                else build_prompt(
+                    load_default()["prompt_template"], ticket, spec, title, build_kontext(entry), config.lade(REPO)
+                )
             )
-        )
+        except ValueError as fehler:  # Platzhalter-Rest (#501): Vorlage kaputt → Exit 2 mit Grund
+            print(f"bau: {fehler}", file=sys.stderr)
+            raise SystemExit(2) from fehler
         if auftrag.strip():
             # Vor dem Prompt, damit auch jede Staffel-Runde den Auftrag dieser Runde sieht (#285).
             grund = auftrag_prompt(grund, auftrag)
