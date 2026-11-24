@@ -28,6 +28,10 @@ vergebene, noch nicht verfallene Platz (:data:`RESERVIERUNG_S`): :func:`auf_plat
 prüft und belegt unter einer Datei-Sperre in einem Schritt, so starten zwei wartende
 Fenster nie auf denselben freien Platz.
 
+Gesamtgrenze (#460): stille Sessions belegen trotzdem Speicher. Mit Sitzung gilt darum zusätzlich
+:func:`gesamt_grenze` (:data:`GESAMT_FAKTOR` × Rechner-Grenze, bei 9 also 18) über alle
+Claude-Prozesse des Rechners — still, arbeitend und Anzeige.
+
 Nur Standardbibliothek (plus ``to_spawn.config``), nur Linux: auf anderen Systemen gibt es kein Urteil,
 also „frei“. Test-Tür: die Umgebungsvariablen ``TO_SPAWN_SPEICHER_MEMINFO``
 (Pfad einer meminfo-Datei) und ``TO_SPAWN_SPEICHER_PROC`` (Ordner im Aufbau von
@@ -89,11 +93,16 @@ def _platz_pfad() -> Path:
 
 #: Umgebungs-Variable eines Anzeige-Fensters (Leitstand): dessen Claude-Prozess belegt nie einen Platz (#460).
 ANZEIGE_VARIABLE = "TO_SPAWN_ANZEIGE_FENSTER"
-#: So lange (Sekunden) gilt ein von :func:`auf_platz_warten` vergebener Platz als belegt, auch
-#: wenn noch kein arbeitender Claude-Prozess dazu sichtbar ist (#460).
-# ponytail: Platz verfällt nach fester Zeit und zählt bis dahin neben der neuen Session doppelt
-# (vorsichtig); genauer wäre Freigabe, sobald der Kind-Prozess des Starters arbeitet.
+#: Ein von :func:`auf_platz_warten` vergebener Platz (#460) endet, sobald unter dem Starter-Prozess
+#: ein Claude-Prozess sichtbar ist (der zählt dann selbst). Bis dahin gilt er, solange der Starter
+#: lebt, höchstens :data:`RESERVIERUNG_MAX_S`; ist der Starter nicht (mehr) sichtbar, verfällt er
+#: nach :data:`RESERVIERUNG_S` (Start gescheitert, Claude erschien nie).
 RESERVIERUNG_S = 120
+# ponytail: endet die Claude-Session vor RESERVIERUNG_MAX_S und der Starter lebt weiter (Kette),
+# zählt sein Platz bis dahin wieder mit (vorsichtig); genauer wäre ein „Claude gesehen“-Vermerk.
+RESERVIERUNG_MAX_S = 600
+#: So lange (Sekunden) wartet :func:`_pruefen_und_belegen` auf die Platz-Sperre.
+SPERRE_WARTEN_S = 30
 
 
 def frei_mib(meminfo: Path | None = None) -> int | None:
@@ -148,6 +157,16 @@ def rechner_grenze(max_sessions: int, gesamt: int | None) -> int:
     return int(RECHNER_FAKTOR * max_sessions * gb / BEZUG_GB)
 
 
+#: Gesamtgrenze (#460): alle Claude-Prozesse des Rechners (still + arbeitend + Anzeige) höchstens
+#: so oft die :func:`rechner_grenze` — stille Sessions belegen 250–1160 MB je Stück.
+GESAMT_FAKTOR = 2
+
+
+def gesamt_grenze(max_sessions: int, gesamt: int | None) -> int:
+    """Höchstzahl aller Claude-Prozesse auf dem Rechner: :data:`GESAMT_FAKTOR` × :func:`rechner_grenze`."""
+    return GESAMT_FAKTOR * rechner_grenze(max_sessions, gesamt)
+
+
 #: Eine tmux-Sitzung als (Socket-Pfad, Sitzungs-Nummer) — so steht sie in ``TMUX``.
 Sitzung = tuple[str, str]
 #: Sitzung, die es (noch) nicht gibt: kein Prozess gehört ihr.
@@ -183,13 +202,53 @@ def _ist_anzeige(eintrag: Path) -> bool:
     return any(teil.startswith(f"{ANZEIGE_VARIABLE}=".encode()) for teil in roh.split(b"\0"))
 
 
-def _ist_still(pid: str) -> bool:
-    """Meldet die Session-JSON des Prozesses ``status: idle``? Keine/kaputte JSON → nein."""
+def _stat(pid: int, proc: Path | None = None) -> tuple[int, int] | None:
+    """(ppid, starttime) aus ``<proc>/<pid>/stat`` (Felder 4 und 22), ``None`` = unlesbar."""
     try:
-        roh = json.loads((_sessions_pfad() / f"{pid}.json").read_text(encoding="utf-8"))
+        text = ((proc if proc is not None else _proc_pfad()) / str(pid) / "stat").read_text(
+            encoding="utf-8", errors="replace"
+        )
+    except OSError:
+        return None
+    rest = text[text.rfind(")") + 2 :].split()
+    if len(rest) < 20 or not rest[1].isdigit() or not rest[19].isdigit():
+        return None
+    return int(rest[1]), int(rest[19])
+
+
+def session_json_lesen(pid: int, sessions: Path | None = None, proc: Path | None = None) -> dict[str, Any] | None:
+    """Inhalt von ``<sessions>/<pid>.json`` — nur wenn sie zu genau diesem Prozess gehört.
+
+    Eine Quelle für Speicher-Schutz und Aufpasser (#460). ``None`` bei fehlender/kaputter Datei,
+    fremdem ``pid``-Feld oder wenn ``procStart`` nicht zur Startzeit des Prozesses passt (alte
+    Datei einer wiederverwendeten PID). Ohne ``procStart`` (ältere Claude-Versionen) gilt die Datei.
+    ``sessions``/``proc`` ohne Angabe: ``TO_SPAWN_SPEICHER_SESSIONS`` bzw. ``~/.claude/sessions``
+    und ``TO_SPAWN_SPEICHER_PROC`` bzw. ``/proc``. Ob der Prozess lebt, prüft der Aufrufer.
+    """
+    datei = (sessions if sessions is not None else _sessions_pfad()) / f"{pid}.json"
+    try:
+        roh = json.loads(datei.read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return False
-    return isinstance(roh, dict) and str(roh.get("pid") or pid) == pid and roh.get("status") == "idle"
+        return None
+    if not isinstance(roh, dict):
+        return None
+    try:
+        if int(roh.get("pid") or pid) != pid:
+            return None
+    except (TypeError, ValueError):
+        return None
+    start = roh.get("procStart")
+    if start is not None:
+        stat = _stat(pid, proc)
+        if stat is None or str(stat[1]) != str(start):
+            return None
+    return roh
+
+
+def _ist_still(eintrag: Path) -> bool:
+    """Meldet die Session-JSON des Prozesses ``status: idle``? Keine/fremde JSON → nein."""
+    roh = session_json_lesen(int(eintrag.name), proc=eintrag.parent)
+    return roh is not None and roh.get("status") == "idle"
 
 
 def sitzung_nach_name(name: str, tmux_socket: str | None = None) -> Sitzung | None:
@@ -218,20 +277,13 @@ def sitzung_nach_name(name: str, tmux_socket: str | None = None) -> Sitzung | No
     return KEINE_SITZUNG
 
 
-def claude_sessions(proc: Path | None = None, sitzung: Sitzung | None = None) -> int | None:
-    """Zahl der arbeitenden Claude-Prozesse (``argv[0]``-Basename ``claude``), ``None`` = unbekannt.
-
-    Stille Sessions und Anzeige-Fenster zählen nicht (#460, Regel im Modul-Kopf).
-    ``proc`` = Ordner im Aufbau von ``/proc`` (Unterordner je PID mit ``cmdline``, ``environ``);
-    ohne Angabe gilt ``TO_SPAWN_SPEICHER_PROC`` bzw. ``/proc``. ``sitzung`` = nur Prozesse
-    dieser tmux-Sitzung zählen (#409); ``None`` = alle der Maschine.
-    """
-    ordner = proc if proc is not None else _proc_pfad()
+def _claude_eintraege(ordner: Path) -> list[Path] | None:
+    """``/proc``-Einträge aller Claude-Sessions (``argv[0]``-Basename ``claude``, ohne ``-p``)."""
     try:
         eintraege = list(ordner.iterdir())
     except OSError:
         return None
-    anzahl = 0
+    treffer = []
     for eintrag in eintraege:
         if not eintrag.name.isdigit():
             continue
@@ -245,10 +297,30 @@ def claude_sessions(proc: Path | None = None, sitzung: Sitzung | None = None) ->
             continue
         if b"-p" in teile[1:] or b"--print" in teile[1:]:
             continue  # Einmal-Helfer (``claude -p``) einer Session — keine eigene Sitzung
+        treffer.append(eintrag)
+    return treffer
+
+
+def claude_sessions(
+    proc: Path | None = None, sitzung: Sitzung | None = None, *, mit_stillen: bool = False
+) -> int | None:
+    """Zahl der arbeitenden Claude-Prozesse (``argv[0]``-Basename ``claude``), ``None`` = unbekannt.
+
+    Stille Sessions und Anzeige-Fenster zählen nicht (#460, Regel im Modul-Kopf);
+    ``mit_stillen=True`` zählt sie mit (Gesamtgrenze, :func:`gesamt_grenze`).
+    ``proc`` = Ordner im Aufbau von ``/proc`` (Unterordner je PID mit ``cmdline``, ``environ``);
+    ohne Angabe gilt ``TO_SPAWN_SPEICHER_PROC`` bzw. ``/proc``. ``sitzung`` = nur Prozesse
+    dieser tmux-Sitzung zählen (#409); ``None`` = alle der Maschine.
+    """
+    eintraege = _claude_eintraege(proc if proc is not None else _proc_pfad())
+    if eintraege is None:
+        return None
+    anzahl = 0
+    for eintrag in eintraege:
         if sitzung is not None and not _gehoert_zu(eintrag, sitzung):
             continue  # fremde Session — bremst nur über min_frei_mib (#409)
-        if _ist_anzeige(eintrag) or _ist_still(eintrag.name):
-            continue  # Anzeige-Fenster / stille Session — bremst nur über min_frei_mib (#460)
+        if not mit_stillen and (_ist_anzeige(eintrag) or _ist_still(eintrag)):
+            continue  # Anzeige / still — bremst über min_frei_mib und die Gesamtgrenze (#460)
         anzahl += 1
     return anzahl
 
@@ -257,15 +329,49 @@ def _sitzung_text(sitzung: Sitzung | None) -> str:
     return ",".join(sitzung) if sitzung else ""
 
 
+def _vorfahren_von_claude(proc: Path) -> set[int]:
+    """PIDs aller Vorfahren sichtbarer Claude-Prozesse (Starter, Sandbox-Hülle …)."""
+    vorfahren: set[int] = set()
+    for eintrag in _claude_eintraege(proc) or []:
+        pid = int(eintrag.name)
+        for _ in range(64):  # Schutz gegen Kreise in kaputten /proc-Daten
+            stat = _stat(pid, proc)
+            if stat is None or stat[0] <= 1 or stat[0] in vorfahren:
+                break
+            pid = stat[0]
+            vorfahren.add(pid)
+    return vorfahren
+
+
 def _vergeben(jetzt: float) -> list[dict[str, Any]]:
-    """Noch gültige vergebene Plätze ``{"bis": <Zeit>, "sitzung": "<socket>,<nr>"}``; Fehler → keine."""
+    """Noch gültige vergebene Plätze (Regel bei :data:`RESERVIERUNG_S`); Fehler → keine.
+
+    Eintrag ``{"bis": <Zeit>, "sitzung": "<socket>,<nr>", "pid": <Starter>, "start": <starttime>,
+    "seit": <Zeit>}``; ``pid``/``start``/``seit`` fehlen in alten Einträgen (dann gilt nur ``bis``).
+    """
     try:
         roh = json.loads(_platz_pfad().read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return []
     if not isinstance(roh, list):
         return []
-    return [p for p in roh if isinstance(p, dict) and isinstance(p.get("bis"), (int, float)) and p["bis"] > jetzt]
+    plaetze = [p for p in roh if isinstance(p, dict) and isinstance(p.get("bis"), (int, float))]
+    if not plaetze:
+        return []
+    proc = _proc_pfad()
+    vorfahren = _vorfahren_von_claude(proc) if any(isinstance(p.get("pid"), int) for p in plaetze) else set()
+    gueltig = []
+    for p in plaetze:
+        pid, start, seit = p.get("pid"), p.get("start"), p.get("seit")
+        stat = _stat(pid, proc) if isinstance(pid, int) and isinstance(start, int) else None
+        if stat is not None and stat[1] == start and isinstance(seit, (int, float)):  # Starter lebt
+            if pid in vorfahren:
+                continue  # Claude ist da und zählt selbst
+            if jetzt < seit + RESERVIERUNG_MAX_S:  # Claude kommt noch
+                gueltig.append(p)
+        elif p["bis"] > jetzt:
+            gueltig.append(p)
+    return gueltig
 
 
 def _vergebene_zahl(sitzung: Sitzung | None) -> int:
@@ -281,9 +387,17 @@ def _mit_vergebenen(anzahl: int | None, sitzung: Sitzung | None) -> int | None:
 
 
 def _platz_vergeben(sitzung: Sitzung | None) -> None:
-    """Einen Platz für :data:`RESERVIERUNG_S` Sekunden belegen (nur unter der Platz-Sperre rufen)."""
+    """Einen Platz für diesen Starter-Prozess belegen (nur unter der Platz-Sperre rufen).
+
+    Ein älterer Platz desselben Starters (Kette: nächstes Ticket) wird ersetzt, nie gestapelt.
+    """
     jetzt = time.time()
-    plaetze = [*_vergeben(jetzt), {"bis": jetzt + RESERVIERUNG_S, "sitzung": _sitzung_text(sitzung)}]
+    eigen = os.getpid()
+    stat = _stat(eigen)
+    neu_platz: dict[str, Any] = {"bis": jetzt + RESERVIERUNG_S, "sitzung": _sitzung_text(sitzung)}
+    if stat is not None:  # ohne Startzeit kein sicherer PID-Abgleich → nur die feste Frist
+        neu_platz.update(pid=eigen, start=stat[1], seit=jetzt)
+    plaetze = [*(p for p in _vergeben(jetzt) if p.get("pid") != eigen), neu_platz]
     datei = _platz_pfad()
     try:
         datei.parent.mkdir(parents=True, exist_ok=True)
@@ -369,14 +483,19 @@ def _urteil(
     werte = grenzen(konfig)
     if frei is None and (linux or os.environ.get("TO_SPAWN_SPEICHER_MEMINFO")):
         frei = frei_mib()
-    rechner: int | None = None  # alle Claude-Sessions des Rechners — nur mit Sitzung gemessen
+    # Rechner-weit, nur mit Sitzung gemessen: arbeitende (Rechner-Grenze) und alle (Gesamtgrenze).
+    rechner: int | None = None
+    alle: int | None = None
     if sessions is None and (linux or os.environ.get("TO_SPAWN_SPEICHER_PROC")):
         sitzung = welche()
         sessions = _mit_vergebenen(claude_sessions(sitzung=sitzung), sitzung)
         if sitzung is None:
             wo = None  # keine/unbekannte Sitzung → der ganze Rechner zählt gegen max_sessions
         else:
+            # Fremde arbeitende Sessions zählen bewusst hart mit (#460): der Rechner-Speicher ist
+            # einer für alle Specs, eine Sitzung allein schützt nicht vor dem OOM-Kill (21.09.).
             rechner = _mit_vergebenen(claude_sessions(), None)
+            alle = _mit_vergebenen(claude_sessions(mit_stillen=True), None)
     if frei is None and sessions is None:
         grund = "/proc nicht lesbar" if linux else "kein Linux"
         return True, f"Speicher: kein Urteil ({grund}) — Start erlaubt"
@@ -391,6 +510,14 @@ def _urteil(
         if rechner >= grenze:
             return False, f"Rechner voll: schon {rechner} Claude-Sessions auf dem Rechner (Obergrenze {grenze})"
         rechner_text = f", Rechner {rechner} von {grenze}"
+    if alle is not None:
+        obergrenze = gesamt_grenze(werte["max_sessions"], gesamt_kib())
+        if alle >= obergrenze:
+            return False, (
+                f"Rechner voll mit stillen Sessions: schon {alle} Claude-Sessions insgesamt "
+                f"(still + arbeitend, Obergrenze {obergrenze})"
+            )
+        rechner_text += f", insgesamt {alle} von {obergrenze}"
     frei_text = _gb_text(frei) if frei is not None else "unbekannt"
     sessions_text = str(sessions) if sessions is not None else "unbekannt"
     return True, (
@@ -407,10 +534,10 @@ def _pruefen_und_belegen(
     """``pruefen`` und bei „frei“ :func:`_platz_vergeben` unter der Platz-Sperre (#460).
 
     Sperre nicht öffenbar → ohne Sperre weiter (lieber starten als grundlos blockieren, Warnung);
-    nach 30 s noch belegt → diesmal „nicht frei“, der nächste Zyklus versucht es neu.
+    nach :data:`SPERRE_WARTEN_S` noch belegt → diesmal „nicht frei“, der nächste Zyklus versucht es neu.
     """
     try:
-        with sperre.halte(_platz_pfad().with_suffix(".sperre"), warten=30) as gehalten:
+        with sperre.halte(_platz_pfad().with_suffix(".sperre"), warten=SPERRE_WARTEN_S) as gehalten:
             if not gehalten:
                 return False, "Platz-Vergabe gerade belegt (anderer Start)"
             frei, grund = pruefen(konfig)
