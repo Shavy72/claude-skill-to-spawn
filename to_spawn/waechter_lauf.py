@@ -52,7 +52,7 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from . import bau_log, hooks, melder, respawn, respawn_aufseher, sessions_datei, starter, startklar
+from . import anleitung, bau_log, hooks, melder, respawn, respawn_aufseher, sessions_datei, starter, startklar
 
 log = logging.getLogger("to_spawn.waechter_lauf")
 
@@ -962,7 +962,7 @@ def fahre(
             remote_control,
             spec,
             f"Aufpasser: Weiter als Bau-Aufseher Spec #{spec} genau dort, wo du warst — "
-            "nächster Tick wie gehabt.",
+            f"nächster Tick wie gehabt. {anleitung.aufseher_befugnis(startklar.skill_pfad())}",
         )
     else:
         sid = str(uuid.uuid4())
