@@ -18,6 +18,10 @@ Merge-Commit (``--match-head-commit``: nur genau der geprüfte Stand). Commit-SH
 erhalten, darum zieht der Hauptzweig vom Aufseher danach per Fast-Forward nach
 (lokal == origin). Keine Frage, kein Warten auf einen Takt.
 
+Laufen mehrere Tickets im selben Klon (#476), hält oft ein anderes gerade die Ref-Sperre auf
+``origin/<hauptzweig>``: ``_git`` wiederholt dann kurz. Scheitert nur das Nachziehen nach dem
+Merge, zählt der echte Pull-Request-Stand auf GitHub — nie ein falsches „nicht eingereicht“.
+
 Exit-Codes: 0 angekommen bzw. übergeben · 1 rot (Grund in der Meldung, nichts gemergt) ·
 5 Aufruf falsch (falscher Zweig/Ordner).
 """
@@ -26,6 +30,7 @@ from __future__ import annotations
 
 import logging
 import subprocess
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -38,6 +43,10 @@ OK, ROT, AUFRUF = 0, 1, 5
 AUFSEHER_ORDNER = ("docs/",)
 GIT_MAX_S = 120.0
 GH_MAX_S = 120.0
+#: Ref-/Index-Sperre eines parallelen git-Aufrufs im selben Klon (#476) ist vorübergehend.
+SPERRE_MERKMALE = ("cannot lock ref", ".lock': File exists")
+SPERRE_VERSUCHE = 3
+SPERRE_PAUSE_S = 1.0
 
 
 @dataclass(frozen=True)
@@ -53,18 +62,24 @@ class _Rot(Exception):
 
 
 def _git(ordner: Path, *args: str) -> str:
-    try:
-        aus = subprocess.run(
-            ["git", "-C", str(ordner), *args],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=GIT_MAX_S,
-            check=False,
-        )
-    except (OSError, subprocess.TimeoutExpired) as fehler:
-        raise _Rot(ROT, f"git {args[0]} scheiterte: {fehler}") from fehler
+    """git-Aufruf; Sperre eines parallelen Tickets (:data:`SPERRE_MERKMALE`) → kurz wiederholen."""
+    for versuch in range(1, SPERRE_VERSUCHE + 1):
+        try:
+            aus = subprocess.run(
+                ["git", "-C", str(ordner), *args],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=GIT_MAX_S,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired) as fehler:
+            raise _Rot(ROT, f"git {args[0]} scheiterte: {fehler}") from fehler
+        if aus.returncode == 0 or versuch == SPERRE_VERSUCHE or not any(m in aus.stderr for m in SPERRE_MERKMALE):
+            break
+        log.info("einreichen: git %s gesperrt (Versuch %d), warte %.1f s", args[0], versuch, SPERRE_PAUSE_S)
+        time.sleep(SPERRE_PAUSE_S)
     if aus.returncode != 0:
         raise _Rot(ROT, f"git {' '.join(args[:2])} scheiterte: {aus.stderr.strip()[:300]}")
     return aus.stdout.strip()
@@ -206,7 +221,13 @@ def _einreichen(ordner: Path, nummer: str) -> Ergebnis:
         return Ergebnis(OK, f"{zweig} ({sha[:7]}) gepusht{hinweis} — der Einreich-Dienst des Projekts übernimmt")
     nr = _pull_request(ordner, zweig, haupt, sha)
     _gh(ordner, "pr", "merge", nr, "--merge", "--match-head-commit", sha)
-    _git(ordner, "fetch", "--quiet", "origin", haupt)
+    try:
+        _git(ordner, "fetch", "--quiet", "origin", haupt)
+    except _Rot as rot:  # #476: Nachziehen scheitert (Sperre) — der Pull-Request-Stand entscheidet
+        if _gh(ordner, "pr", "view", nr, "--json", "state", "--jq", ".state").strip() != "MERGED":
+            raise
+        log.warning("einreichen #%s: %s — Pull-Request #%s ist gemergt", nummer, rot.text, nr)
+        return Ergebnis(OK, f"{sha[:7]} gemergt (Pull-Request #{nr}, {zweig}){hinweis} — {basis} lokal nicht nachgezogen")
     if not _ist_vorfahr(ordner, sha, basis):
         raise _Rot(ROT, f"Pull-Request #{nr} gemeldet, aber {sha[:7]} fehlt auf {basis}")
     if vom_haupt:
