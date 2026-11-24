@@ -1,0 +1,11 @@
+__pycache__/
+.pytest_cache/
+*.pyc
+.venv
+# Laufende Kopien der Probe-App (skripte/ausrollen.py), nie einchecken
+/staging/
+/live/
+# to-spawn: Laufdateien/Marker unversioniert, nur Konfig und Werkzeug-Test eingecheckt
+.to-spawn/*
+!.to-spawn/config.json
+!.to-spawn/werkzeug/
