@@ -349,3 +349,23 @@ def test_sperre_beim_fetch_wird_kurz_wiederholt(welt: dict[str, Path], monkeypat
     assert erg.exit == 0, erg.text
     assert fehlschlaege["fetch"] == 1
     assert _ist_vorfahr(welt["remote"], sha, _remote_main(welt))
+
+
+def test_aufseher_heilt_verpasstes_nachziehen_beim_naechsten_einreichen(
+    welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Nachziehen nach dem Merge verpasst (Sperre): das nächste Einreichen vom Hauptzweig wird nicht rot (#476)."""
+    klon = welt["klon"]
+    monkeypatch.setenv("EINREICHEN_SPERRE_NACH_MERGE", "1")
+    _commit(klon, "docs/HANDOFF_1.md", "Stand 1\n", "docs(aufseher): Handoff 1 [skip ci]")
+    erst = _einreichen(klon, "1")
+    assert erst.returncode == 0, erst.stdout + erst.stderr
+    monkeypatch.delenv("EINREICHEN_SPERRE_NACH_MERGE")
+    sperre = Path(_git(klon, "rev-parse", "--path-format=absolute", "--git-common-dir")) / "refs/remotes/origin/main.lock"
+    sperre.unlink()
+    sha = _commit(klon, "docs/HANDOFF_2.md", "Stand 2\n", "docs(aufseher): Handoff 2 [skip ci]")
+    zweit = _einreichen(klon, "1")
+    assert zweit.returncode == 0, zweit.stdout + zweit.stderr
+    assert _ist_vorfahr(welt["remote"], sha, _remote_main(welt))
+    _git(klon, "fetch", "-q", "origin")
+    assert _git(klon, "rev-parse", "main") == _git(klon, "rev-parse", "origin/main") == _remote_main(welt)
