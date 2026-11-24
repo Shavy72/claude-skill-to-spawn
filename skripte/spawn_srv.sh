@@ -223,7 +223,7 @@ echo "== Geplante Fenster in tmux-Session $SESSION =="
 for i in "${!GEPLANT[@]}"; do echo "  - ${KURZ[$i]}  →  ${GEPLANT[$i]}"; done
 
 # Speicher-Schutz (#257 Paket B): vor JEDEM Fenster fragt ``to_spawn.py speicher``, ob noch
-# Platz ist (Exit 0 = frei, 5 = voll → Rest nicht starten, alles andere = Prüfung kaputt →
+# Platz ist (Exit 0 = frei, 5 = voll, 3 = voll durch fremde Sessions → Rest nicht starten, alles andere = Prüfung kaputt →
 # Exit 6, F4). Zwischen zwei Fenstern eine Pause von STAFFEL Sekunden, damit die
 # Claude-Starts sich nicht stapeln (OOM-Absturz 21.09.).
 STAFFEL="$(TO_SPAWN_REPO="$REPO" "$PY" "$SKILL_HOME/to_spawn.py" speicher --staffel 2>/dev/null || echo 20)"
@@ -234,13 +234,24 @@ case "$STAFFEL" in ''|*[!0-9]*) STAFFEL=20 ;; esac
 # Zweites Argument --trocken (Probelauf): nur messen, der Hausmeister löscht nie.
 # TO_SPAWN_TMUX leer: die Sitzungs-Suche fragt dasselbe blanke ``tmux`` wie die Fenster unten
 # (#409) — sonst zählte sie auf einem anderen tmux-Server als dem, in dem $SESSION entsteht.
-# 8 = voll, aber der Aufseher-Prozess lebt (#460): keine Meldung hier, der Aufrufer meldet „wartet auf Platz“.
+# 8 = voll, aber der Aufseher-Prozess lebt (#460): keine Meldung hier, der Aufrufer meldet „wartet auf Platz“
+# mit dem Grund aus WARTE_GRUND.
+# speicher Exit 3 = voll nur durch Sessions außerhalb von $SESSION (#460): das Fenster ``wache <S>``
+# öffnet trotzdem — wache.py wartet darin selbst auf Platz (auf_platz_warten, gleiche Grenzen);
+# alle anderen Fenster behandeln es wie 5.
+WARTE_GRUND=""
+NL=$'\n'  # letzte Zeile des Stands = das Urteil (davor stehen Hausmeister-Warnungen)
 speicher_pruefen() {
   local rc=0 stand
   stand="$(TO_SPAWN_TMUX= TO_SPAWN_REPO="$REPO" "$PY" "$SKILL_HOME/to_spawn.py" speicher --sitzung "$SESSION" ${2:+"$2"} 2>&1)" || rc=$?
   case "$rc" in
     0) return 0 ;;
-    5) if [ -z "${2:-}" ] && aufseher_laeuft; then return 8; fi
+    3|5)
+       if [ "$rc" -eq 3 ] && [ -z "${2:-}" ] && [ "${1%% *}" = "wache" ]; then
+         echo "Aufseher-Fenster öffnet, wartet darin auf Platz: $1 — ${stand##*"$NL"}"
+         return 0
+       fi
+       if [ -z "${2:-}" ] && aufseher_laeuft; then WARTE_GRUND="${stand##*"$NL"}"; return 8; fi
        echo "nicht gestartet: $1 — $stand" >&2; return 5 ;;
     7) echo "nicht gestartet: $1 — $stand" >&2; return 7 ;;
     *) echo "Speicherprüfung kaputt (to_spawn.py speicher Exit $rc): $stand" >&2; return 6 ;;
@@ -269,7 +280,7 @@ for i in "${!GEPLANT[@]}"; do
   # Kein Platz, aber der Aufseher läuft (#460): er startet die fehlenden Fenster selbst nach,
   # sobald Platz frei ist — das ist der vorgesehene Weg, kein Fehler.
   if [ "$rc" -eq 8 ]; then
-    echo "wartet auf Platz: ${KURZ[*]:$i} — Aufseher startet nach, sobald Platz frei ist."
+    echo "wartet auf Platz: ${KURZ[*]:$i} — $WARTE_GRUND; Aufseher startet nach, sobald Platz frei ist."
     exit 0
   fi
   if [ "$rc" -ne 0 ]; then
