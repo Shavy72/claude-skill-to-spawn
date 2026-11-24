@@ -103,3 +103,91 @@ def test_frei_gemeldet_kein_vorfall(welt_269: Welt) -> None:
 )
 def test_gemeldete_blocker(text: str, erwartet: str | None) -> None:
     assert aufpasser.gemeldete_blocker(text) == erwartet
+
+
+def _gh_blocked_by_ersetzen(welt: Welt, verhalten: str) -> None:
+    """``gh api …/blocked_by`` antwortet nach ``verhalten``, alles andere bleibt beim ``gh_stub``.
+
+    ``fehler`` = Exit 1, ``kaputt`` = kein JSON, ``offen`` = Blocker noch offen.
+    """
+    import sys
+
+    from conftest import attrappe
+    from test_aufpasser_236 import HILFEN
+
+    attrappe(
+        welt.bin,
+        "gh",
+        f"""
+        import json, os, sys
+        if any("dependencies/blocked_by" in a for a in sys.argv[1:]):
+            verhalten = {verhalten!r}
+            if verhalten == "fehler":
+                print("HTTP 502: Bad Gateway", file=sys.stderr)
+                sys.exit(1)
+            if verhalten == "kaputt":
+                print("<html>kein JSON</html>")
+                sys.exit(0)
+            print(json.dumps([{{"number": {BLOCKER}, "state": "open"}}]))
+            sys.exit(0)
+        os.execv({sys.executable!r}, [{sys.executable!r}, {str(HILFEN / "gh_stub.py")!r}, *sys.argv[1:]])
+        """,
+    )
+
+
+@pytest.mark.parametrize("verhalten", ["fehler", "kaputt"])
+def test_blocker_abfrage_scheitert_kein_vorfall_kein_anstoss(welt_269: Welt, verhalten: str) -> None:
+    """GitHub-Abfrage scheitert ⇒ Lage unbekannt: kein Vorfall, kein Anstoß, Lauf endet sauber."""
+    welt = welt_269
+    _commit_auf_master(welt, f"feat: Vorgänger (#{BLOCKER}) [skip ci]")
+    _gh_blocked_by_ersetzen(welt, verhalten)
+    _fenster_mit(welt, f"WARTET: #{BLOCKER} offen")
+    assert welt.lauf() == 0
+    time.sleep(1)
+    assert _vorfaelle(welt) == [], welt.log()
+    assert "to_spawn.py blocker" not in pane_text(FENSTER)
+    assert not welt.eintrag(FENSTER).get("stupser")
+
+
+def test_blocker_wirklich_offen_kein_vorfall_kein_anstoss(welt_269: Welt) -> None:
+    welt = welt_269
+    _commit_auf_master(welt, f"feat: Vorgänger (#{BLOCKER}) [skip ci]")
+    _gh_blocked_by_ersetzen(welt, "offen")
+    _fenster_mit(welt, f"WARTET: #{BLOCKER} offen")
+    assert welt.lauf() == 0
+    time.sleep(1)
+    assert _vorfaelle(welt) == [], welt.log()
+    assert "to_spawn.py blocker" not in pane_text(FENSTER)
+    assert not welt.eintrag(FENSTER).get("stupser")
+
+
+def test_zweiter_takt_kein_zweiter_vorfall(welt_269: Welt) -> None:
+    """Zweiter Lauf am selben Ticket: Vorfall steht schon im Bau-Log, nur ein weiterer Anstoß."""
+    welt = welt_269
+    _commit_auf_master(welt, f"feat: Vorgänger (#{BLOCKER}) [skip ci]")
+    _fenster_mit(welt, f"WARTET: #{BLOCKER} offen")
+    assert welt.lauf() == 0
+    time.sleep(1)
+    assert welt.lauf() == 0
+    time.sleep(1)
+    assert len(_vorfaelle(welt)) == 1, welt.log()
+    assert len(welt.eintrag(FENSTER)["stupser"]) == 2, welt.eintrag(FENSTER)
+
+
+def test_stupser_max_erreicht_kein_weiterer_anstoss(welt_269: Welt) -> None:
+    """Grenze R5: nach ``STUPSER_MAX`` Anstupsern stößt der Blocker-Weg nicht mehr an."""
+    welt = welt_269
+    _commit_auf_master(welt, f"feat: Vorgänger (#{BLOCKER}) [skip ci]")
+    _fenster_mit(welt, f"WARTET: #{BLOCKER} offen")
+    jetzt = time.time()
+    welt.stand_setzen(
+        FENSTER,
+        hash=welt.hash_von(FENSTER),
+        seit=jetzt,
+        stufe=0,
+        stupser=[jetzt - 60] * aufpasser.STUPSER_MAX,
+    )
+    assert welt.lauf() == 0
+    time.sleep(1)
+    assert "to_spawn.py blocker" not in pane_text(FENSTER), pane_text(FENSTER)
+    assert len(welt.eintrag(FENSTER)["stupser"]) == aufpasser.STUPSER_MAX, welt.eintrag(FENSTER)
