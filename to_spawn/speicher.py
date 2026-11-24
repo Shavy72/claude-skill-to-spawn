@@ -8,15 +8,17 @@ Repo-Konfig (``DEFAULTS["speicher"]``):
 * ``min_frei_mib`` — so viel MiB müssen laut ``/proc/meminfo`` (``MemAvailable``)
   noch frei sein;
 * ``max_sessions`` — höchstens so viele Prozesse mit ``argv[0]``-Basename ``claude``
-  dürfen schon laufen (Richtwert 6 je 16 GB).
+  dürfen schon je Spec-Sitzung laufen (Richtwert 6 je 16 GB).
 
 Wer zählt gegen ``max_sessions`` (#409)? Nennt der Starter seine tmux-Sitzung
 (:func:`platz_frei` mit ``sitzung=``, :func:`platz_frei_hier` aus dem eigenen Fenster),
 zählen nur Claude-Prozesse dieser Sitzung — erkannt an der Variable ``TMUX``, die tmux
-jedem Prozess eines Fensters mitgibt. Nachweislich fremde Sessions (andere tmux-Sitzung,
-außerhalb von tmux) bremsen dann nur über ``min_frei_mib``, das immer maschinenweit
-misst. Prozesse mit unlesbarer Umgebung zählen vorsichtshalber mit. Ohne Sitzung zählt
-die ganze Maschine wie früher. Diese Regel lebt nur hier.
+jedem Prozess eines Fensters mitgibt. Prozesse mit unlesbarer Umgebung zählen
+vorsichtshalber mit. Dazu gilt dann die Rechner-Grenze :data:`RECHNER_FAKTOR` ×
+``max_sessions`` je 16 GB ``MemTotal`` (bei 6 also 9) über alle Claude-Prozesse des
+Rechners, damit viele Specs nebeneinander den Rechner nicht überladen. ``min_frei_mib``
+misst immer maschinenweit. Ohne Sitzung (oder wenn tmux nicht antwortet) zählt die ganze
+Maschine gegen ``max_sessions`` wie früher. Diese Regel lebt nur hier.
 
 Nur Standardbibliothek (plus ``to_spawn.config``), nur Linux: auf anderen Systemen gibt es kein Urteil,
 also „frei“. Test-Tür: die Umgebungsvariablen ``TO_SPAWN_SPEICHER_MEMINFO``
@@ -85,6 +87,37 @@ def frei_mib(meminfo: Path | None = None) -> int | None:
     return None
 
 
+#: Rechner-Grenze (#409): je 16 GB Gesamtspeicher dürfen 1,5 × ``max_sessions`` Claude-Sessions
+#: auf dem ganzen Rechner laufen — bei 16 GB und 6 also 9. Bewusst kein Konfig-Wert.
+RECHNER_FAKTOR = 1.5
+#: Bezugsgröße der Grenzen in GB; ohne ``MemTotal`` gilt sie als Gesamtspeicher.
+BEZUG_GB = 16
+
+
+def gesamt_kib(meminfo: Path | None = None) -> int | None:
+    """Gesamtspeicher in kB (``MemTotal``), ``None`` = unbekannt. Quelle wie :func:`frei_mib`."""
+    datei = meminfo if meminfo is not None else _meminfo_pfad()
+    try:
+        text = datei.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    for zeile in text.splitlines():
+        teile = zeile.split()
+        if len(teile) >= 2 and teile[0] == "MemTotal:" and teile[1].isdigit():
+            return int(teile[1])
+    return None
+
+
+def rechner_grenze(max_sessions: int, gesamt: int | None) -> int:
+    """Höchstzahl Claude-Sessions auf dem ganzen Rechner: 1,5 × ``max_sessions`` je 16 GB.
+
+    ``gesamt`` = ``MemTotal`` in kB; auf ganze GB gerundet (ein 16-GB-Rechner meldet etwas
+    weniger), mindestens 1 GB. Unbekannt → 16 GB.
+    """
+    gb = max(1, round(gesamt / 1024 / 1024)) if gesamt else BEZUG_GB
+    return int(RECHNER_FAKTOR * max_sessions * gb / BEZUG_GB)
+
+
 #: Eine tmux-Sitzung als (Socket-Pfad, Sitzungs-Nummer) — so steht sie in ``TMUX``.
 Sitzung = tuple[str, str]
 #: Sitzung, die es (noch) nicht gibt: kein Prozess gehört ihr.
@@ -111,11 +144,13 @@ def _gehoert_zu(eintrag: Path, sitzung: Sitzung) -> bool:
     return False  # außerhalb von tmux — fremd
 
 
-def sitzung_nach_name(name: str, tmux_socket: str | None = None) -> Sitzung:
+def sitzung_nach_name(name: str, tmux_socket: str | None = None) -> Sitzung | None:
     """tmux-Sitzung ``name`` (z. B. ``spec-12``) auf dem Server ``tmux_socket`` (``-L``).
 
-    Gibt es sie nicht oder kein tmux, kommt :data:`KEINE_SITZUNG` (dann läuft dort auch
-    keine eigene Session). tmux-Befehl wie überall aus ``TO_SPAWN_TMUX``.
+    Gibt es sie (noch) nicht oder läuft kein tmux-Server, kommt :data:`KEINE_SITZUNG`
+    (dann läuft dort auch keine eigene Session). Scheitert die Suche selbst (tmux fehlt,
+    Zeitüberschreitung, anderer Fehler), kommt ``None`` — dann zählt der ganze Rechner,
+    statt die Grenze still abzuschalten. tmux-Befehl wie überall aus ``TO_SPAWN_TMUX``.
     """
     from to_spawn import capo  # spät: capo zieht viele Module
 
@@ -124,9 +159,15 @@ def sitzung_nach_name(name: str, tmux_socket: str | None = None) -> Sitzung:
     try:
         lauf = subprocess.run(befehl, capture_output=True, text=True, timeout=10, check=False)
     except (OSError, subprocess.TimeoutExpired) as fehler:
-        log.warning("tmux-Sitzung %s nicht ermittelbar: %s", name, fehler)
-        return KEINE_SITZUNG
-    for zeile in lauf.stdout.splitlines() if lauf.returncode == 0 else []:
+        log.warning("tmux-Sitzung %s nicht ermittelbar (%s) — zähle den ganzen Rechner", name, fehler)
+        return None
+    if lauf.returncode != 0:
+        meldung = lauf.stderr.strip()
+        if "no server running" in meldung or "error connecting to" in meldung:
+            return KEINE_SITZUNG  # kein tmux-Server = auch keine Sitzung
+        log.warning("tmux-Sitzung %s nicht ermittelbar (%s) — zähle den ganzen Rechner", name, meldung)
+        return None
+    for zeile in lauf.stdout.splitlines():
         teile = zeile.split("\t")
         if len(teile) == 3 and teile[0] == name:
             return teile[1], teile[2].lstrip("$")
@@ -202,7 +243,9 @@ def platz_frei(
 
     ``sitzung`` = tmux-Sitzung des Laufs (``spec-<S>``): nur ihre Claude-Sessions zählen
     gegen ``max_sessions`` (#409); ``tmux_socket`` = ``-L``-Name ihres tmux-Servers.
-    Ohne ``sitzung`` zählt die ganze Maschine. Der RAM-Wert gilt immer maschinenweit.
+    Ohne ``sitzung`` (oder wenn tmux nicht antwortet) zählt die ganze Maschine. Mit
+    ``sitzung`` gilt zusätzlich die Rechner-Grenze (:func:`rechner_grenze`) über alle
+    Claude-Sessions. Der RAM-Wert gilt immer maschinenweit.
 
     ``frei``/``sessions`` = Messwerte für Tests; ohne Angabe wird gemessen. Vorgegebene
     Werte (Parameter oder ``TO_SPAWN_SPEICHER_MEMINFO``/``TO_SPAWN_SPEICHER_PROC``)
@@ -238,8 +281,14 @@ def _urteil(
     werte = grenzen(konfig)
     if frei is None and (linux or os.environ.get("TO_SPAWN_SPEICHER_MEMINFO")):
         frei = frei_mib()
+    rechner: int | None = None  # alle Claude-Sessions des Rechners — nur mit Sitzung gemessen
     if sessions is None and (linux or os.environ.get("TO_SPAWN_SPEICHER_PROC")):
-        sessions = claude_sessions(sitzung=welche())
+        sitzung = welche()
+        sessions = claude_sessions(sitzung=sitzung)
+        if sitzung is None:
+            wo = None  # keine/unbekannte Sitzung → der ganze Rechner zählt gegen max_sessions
+        else:
+            rechner = claude_sessions()
     if frei is None and sessions is None:
         grund = "/proc nicht lesbar" if linux else "kein Linux"
         return True, f"Speicher: kein Urteil ({grund}) — Start erlaubt"
@@ -248,11 +297,17 @@ def _urteil(
         return False, (f"Speicher knapp: {_gb_text(frei)} frei, Mindestmaß {_gb_text(werte['min_frei_mib'])}")
     if sessions is not None and sessions >= werte["max_sessions"]:
         return False, f"schon {sessions} Claude-Sessions{wo_text} (Obergrenze {werte['max_sessions']})"
+    rechner_text = ""
+    if rechner is not None:
+        grenze = rechner_grenze(werte["max_sessions"], gesamt_kib())
+        if rechner >= grenze:
+            return False, f"Rechner voll: schon {rechner} Claude-Sessions auf dem Rechner (Obergrenze {grenze})"
+        rechner_text = f", Rechner {rechner} von {grenze}"
     frei_text = _gb_text(frei) if frei is not None else "unbekannt"
     sessions_text = str(sessions) if sessions is not None else "unbekannt"
     return True, (
         f"Speicher frei: {frei_text} frei, {sessions_text} Claude-Sessions{wo_text} "
-        f"(Obergrenze {werte['max_sessions']}, Mindestmaß {_gb_text(werte['min_frei_mib'])})"
+        f"(Obergrenze {werte['max_sessions']}{rechner_text}, Mindestmaß {_gb_text(werte['min_frei_mib'])})"
     )
 
 
