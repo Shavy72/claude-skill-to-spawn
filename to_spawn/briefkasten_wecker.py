@@ -6,7 +6,9 @@ Aufseher-Prozess (``wache.py``, neben dem Handoff-Blick) und schaut alle :data:`
 in den Briefkasten der Spec (nur Dateien, kein GitHub):
 
 * neue offene Frage (mit id) → ein Weckruf ins eigene Pane des Aufsehers (``TMUX_PANE``);
-* Antwort auf eine gesehene Frage liegt → ein Weckruf ins Fenster ``bau <N>`` der Spec-Sitzung.
+* Antwort auf eine gesehene Frage liegt → ein Weckruf ins Fenster ``bau <N>`` der Spec-Sitzung;
+* Ticket der Spec geschlossen → Aufseher-Pane, Aufseher-Kommentar an offenem Ticket → ``bau <N>``
+  (#554, :func:`ereignisse`; eine GraphQL-Abfrage je Durchgang für alle Tickets der Spec).
 
 Jede Frage weckt je Richtung höchstens einmal. Getippt wird nur, wenn :meth:`Wecker._darf_tippen`
 es erlaubt (die eine Stelle der Regel): im Pane läuft Claude, das Bild zeigt ein leeres
@@ -15,8 +17,9 @@ Sonst versucht es der nächste Durchgang wieder. Was beim Start schon offen ist,
 Aufseher nicht (er liest es im ersten Tick), seine Antwort weckt die Bau-Session aber; scheitert
 dieser erste Blick, steht das im Log, und der nächste Durchgang weckt mit allen offenen Fragen.
 
-Grenzen (bewusst): Das Gedächtnis „schon geweckt“ liegt nur im Speicher des Aufseher-Prozesses.
-Nach einem Neustart des Aufsehers können Weckrufe verloren gehen — Netz ist der feste Takt.
+Grenzen (bewusst): Für Briefkasten und Abnahme-Kommentare liegt das Gedächtnis „schon geweckt“
+nur im Speicher; nach einem Neustart des Aufsehers können diese Weckrufe verloren gehen — Netz
+ist der feste Takt. Die GitHub-Ereignisse (#554) merkt :func:`gedaechtnis_datei` über Neustarts.
 Ohne ``TMUX_PANE`` (PC, kein tmux) läuft kein Faden, und der Cron-Modus (``waechter_takt``) hat
 keinen Wecker; dort gilt allein der Takt. Der Weckruf ist nur ein Anstoß: was gilt, steht im
 Briefkasten.
@@ -24,12 +27,14 @@ Briefkasten.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Any, NamedTuple
 
 from to_spawn import (
     aufpasser,
@@ -63,7 +68,57 @@ KOMMENTAR_TEXT = (
     "`gh issue view {ticket} --comments` lesen und darauf reagieren, nicht auf den eigenen Weckruf warten."
 )
 
+ZU_TEXT = (
+    "Ticket #{ticket} ist geschlossen — jetzt den Stand der Spec ansehen und den nächsten Schritt "
+    "(nächstes Ticket, Rundschau, Abschluss) anstoßen. Deinen Takt (ScheduleWakeup) nicht ändern."
+)
+AUFSEHER_KOMMENTAR_TEXT = (
+    "Ticket #{ticket}: neuer Kommentar des Aufsehers — jetzt `gh issue view {ticket} --comments` "
+    "lesen und umsetzen."
+)
+#: So viele jüngste Kommentare je Ticket liest die GitHub-Abfrage (ein Durchgang ≈ 1 min).
+KOMMENTARE_JE_TICKET = 20
+
 Schluessel = tuple[str, str]  # (Ticket, Frage-id)
+
+
+class Ereignis(NamedTuple):
+    """Ein Weckruf aus der GitHub-Lage (#554)."""
+
+    schluessel: str  # über Neustarts stabil, z. B. ``zu:12`` oder ``kommentar:<id>``
+    bau: str | None  # Ticket der zu weckenden Bau-Session; ``None`` = Aufseher-Pane
+    text: str
+
+
+def ereignisse(lage: dict[str, Any]) -> list[Ereignis]:
+    """Die eine Ereignis-Quelle (#554): GitHub-Lage der Spec-Tickets → wen mit welchem Text wecken.
+
+    ``lage`` = Ticket → ``{"state", "comments": {"nodes": [...]}}`` (Form von :meth:`Wecker._lage`).
+    Ein weiteres Ereignis ist ein weiterer Zweig hier; Gedächtnis und Wecken bleiben unberührt.
+    """
+    aus: list[Ereignis] = []
+    for t in sorted(lage, key=int):
+        issue = lage[t]
+        if not isinstance(issue, dict):
+            continue
+        if issue.get("state") == "CLOSED":
+            aus.append(Ereignis(f"zu:{t}", None, ZU_TEXT.format(ticket=t)))
+            continue
+        for k in (issue.get("comments") or {}).get("nodes") or []:
+            if (
+                isinstance(k, dict)
+                and k.get("authorAssociation") in capo.BETEILIGTE_ROLLEN
+                and str(k.get("body") or "").lstrip().startswith(capo.AUFSEHER_KOEPFE)
+            ):
+                aus.append(
+                    Ereignis(f"kommentar:{k['databaseId']}", t, AUFSEHER_KOMMENTAR_TEXT.format(ticket=t))
+                )
+    return aus
+
+
+def gedaechtnis_datei(repo: Path, spec: int) -> Path:
+    """Gedächtnis „schon geweckt“ der GitHub-Ereignisse (#554), neben dem übrigen Zustand."""
+    return repo / ".to-spawn" / f"wecker-{spec}.json"
 
 
 class Wecker:
@@ -92,6 +147,8 @@ class Wecker:
         self._fuer_bau: set[Schluessel] = set()  # gesehen, Bau-Session noch nicht geweckt
         self._gemeldet: set[str] = set()
         self._ruhe: dict[str, tuple[str, float]] = {}  # Ziel → (Bild-Hash, gleich seit)
+        self._geweckt: set[str] | None = None  # #554: Schlüssel schon geweckter Ereignisse
+        self._geschrieben: set[str] | None = None  # Stand der Gedächtnis-Datei
         try:
             self._bekannt = self._offen()
         except Exception as fehler:  # noqa: BLE001 — ohne Ausgangsstand weckt der nächste Durchgang alles
@@ -118,6 +175,10 @@ class Wecker:
             self._kommentare_blick()
         except Exception as fehler:  # noqa: BLE001 — GitHub-Ausfall darf den Briefkasten nicht aufhalten
             self._melde(f"Briefkasten-Wecker Spec #{self.spec}: Kommentare: {fehler!r}")
+        try:
+            self._tickets_blick()
+        except Exception as fehler:  # noqa: BLE001 — GitHub-Ausfall darf den Briefkasten nicht aufhalten
+            self._melde(f"Briefkasten-Wecker Spec #{self.spec}: Tickets: {fehler!r}")
         offen = self._offen()
         neu = offen - self._bekannt
         self._bekannt |= neu
@@ -138,6 +199,72 @@ class Wecker:
                 continue
             if erledigt:
                 self._fuer_bau.discard((t, fid))
+
+    def _lage(self, tickets: dict[str, Any]) -> dict[str, Any] | None:
+        """Zustand + jüngste Kommentare aller Tickets in EINER GraphQL-Abfrage; ``None`` = Fehler."""
+        besitzer, _, name = self.gh_repo.partition("/")
+        felder = " ".join(
+            f"t{int(t)}: issue(number: {int(t)}) {{ state comments(last: {KOMMENTARE_JE_TICKET}) "
+            "{ nodes { databaseId body authorAssociation } } }"
+            for t in tickets
+        )
+        daten = gh.json_lauf(
+            [
+                "api",
+                "graphql",
+                "-f",
+                f"owner={besitzer}",
+                "-f",
+                f"name={name}",
+                "-f",
+                f"query=query($owner: String!, $name: String!) {{ repository(owner: $owner, name: $name) {{ {felder} }} }}",
+            ]
+        )
+        repo = ((daten or {}).get("data") or {}).get("repository") if isinstance(daten, dict) else None
+        if not isinstance(repo, dict):
+            return None
+        return {str(t): repo.get(f"t{int(t)}") for t in tickets}
+
+    def _lies_gedaechtnis(self) -> set[str] | None:
+        """``None`` = keine (lesbare) Datei: dann wird der Bestand nur gemerkt, nicht geweckt."""
+        datei = gedaechtnis_datei(self.repo, self.spec)
+        if not datei.is_file():
+            return None
+        try:
+            return {str(k) for k in json.loads(datei.read_text(encoding="utf-8"))["geweckt"]}
+        except (OSError, ValueError, KeyError, TypeError) as fehler:
+            log.warning("Wecker-Gedächtnis %s unlesbar (%r) — Bestand gilt als geweckt", datei, fehler)
+            return None
+
+    def _tickets_blick(self) -> None:
+        """GitHub-Ereignisse (#554) wecken; erst nach erfolgreichem Wecken als „geweckt“ merken.
+
+        Ohne Gedächtnis-Datei (erster Lauf) wird der Bestand nur gemerkt. Abfrage gescheitert:
+        nichts wecken, nichts merken. Gemerkt bleibt nur, was GitHub noch zeigt — so weckt ein
+        wieder geöffnetes und erneut geschlossenes Ticket noch einmal, und die Datei wächst nicht.
+        """
+        if not self.gh_repo:
+            return
+        lage = self._lage(manifest.lade_manifest(self.repo, self.spec)["tickets"])
+        if lage is None:
+            return
+        jetzt = ereignisse(lage)
+        if self._geweckt is None:
+            self._geweckt = self._lies_gedaechtnis()
+        if self._geweckt is None:
+            self._geweckt = {e.schluessel for e in jetzt}
+        offen = [e for e in jetzt if e.schluessel not in self._geweckt]
+        for wen in dict.fromkeys(e.bau for e in offen):
+            gruppe = [e for e in offen if e.bau == wen]
+            text = " ".join(dict.fromkeys(e.text for e in gruppe))
+            if self._tippe(self.pane, text) if wen is None else self._wecke_bau_text(wen, text):
+                self._geweckt |= {e.schluessel for e in gruppe}
+        self._geweckt &= {e.schluessel for e in jetzt}
+        if self._geweckt != self._geschrieben:
+            datei = gedaechtnis_datei(self.repo, self.spec)
+            datei.parent.mkdir(parents=True, exist_ok=True)
+            manifest.schreibe_atomar(datei, {"geweckt": sorted(self._geweckt)})
+            self._geschrieben = set(self._geweckt)
 
     def _abnahme_tickets(self) -> set[str] | None:
         """Tickets der Spec mit Checkpoint-Label (einmal gelesen); ``None`` = GitHub nicht lesbar."""
