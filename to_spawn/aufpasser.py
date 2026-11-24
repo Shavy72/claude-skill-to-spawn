@@ -1936,7 +1936,7 @@ class Aufpasser:
         if ticket is not None and ticket not in offen and not arbeitend:
             # Volle Grenze + idle Session: nicht 15 min Karenz absitzen, sondern kurz
             # warten und Text vergleichen — der Platz wird gebraucht (#592).
-            platznot = still_min < KARENZ_MIN and self._platznot(repo, info)
+            platznot = still_min < KARENZ_MIN and self._platznot(repo, info, f.sitzung)
             if still_min >= KARENZ_MIN or platznot:
                 try:
                     daten = self.ticket_lesen(ticket, repo)
@@ -2038,8 +2038,8 @@ class Aufpasser:
                 f"„{f.name}“ reagiert nach Anstupsen und Fortsetzen nicht — braucht den Menschen.",
             )
 
-    def _platznot(self, repo: Path, info: SessionInfo | None) -> bool:
-        """Grenze voll (Speicher/Session-Zahl) und die Session meldet selbst ``idle``."""
+    def _platznot(self, repo: Path, info: SessionInfo | None, sitzung: str) -> bool:
+        """Grenze voll (Speicher/Session-Zahl der tmux-Sitzung) und die Session meldet selbst ``idle``."""
         if info is None or not info.aus_json or info.status != "idle":
             return False
         try:
@@ -2047,7 +2047,7 @@ class Aufpasser:
         except (OSError, ValueError) as fehler:
             log.warning("%s: Konfig nicht lesbar: %s", repo, fehler)
             return False
-        return not speicher.platz_frei(konfig)[0]
+        return not speicher.platz_frei(konfig, sitzung=sitzung, tmux_socket=self.e.tmux_socket)[0]
 
     def ticket_zu_schliessen(
         self,
@@ -2302,10 +2302,10 @@ class Aufpasser:
         else:
             befehl = self.wache_befehl(repo, spec, resume=sid)
         # Speicher-Schutz (#257 Paket B): kein Start, wenn RAM knapp oder die Obergrenze
-        # an Claude-Sessions erreicht ist — der nächste Tick prüft neu. Zwischen zwei
+        # an Claude-Sessions dieser tmux-Sitzung erreicht ist (#409) — der nächste Tick prüft neu. Zwischen zwei
         # echten Starts in einem Tick liegt die Staffel-Pause (nicht im Trockenlauf).
         konfig = config.lade(repo)
-        frei, grund = speicher.platz_frei(konfig)
+        frei, grund = speicher.platz_frei(konfig, sitzung=sitzung, tmux_socket=self.e.tmux_socket)
         if not frei:
             log.warning("%s: Fenster „%s“ nicht gestartet — %s", sitzung, name, grund)
             if self.e.trocken:

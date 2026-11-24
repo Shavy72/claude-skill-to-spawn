@@ -121,7 +121,7 @@ Dieselben Sessions als tmux-Fenster auf dem netcup-Bau-Server (`ssh bau-server`,
 
 ## Speicher (#257 Paket B, seit 2026-09-21)
 
-Obergrenze 6 Claude-Sessions je 16 GB RAM, Mindestmaß 2 GB frei, Staffel 20 s zwischen zwei Fenster-Starts — Konfig-Feld `speicher` (`min_frei_mib`, `max_sessions`, `staffel_s`) in `.to-spawn/config.json`. `bau <N>`, `wache <S>`, `spawn_srv.sh` und der Aufpasser fragen vor jedem Start `to_spawn.py speicher` (Exit 0 frei / 5 voll) und starten bei „voll“ nicht (Meldung „nicht gestartet: …“, nächster Aufpasser-Tick prüft neu). Das Nest legt Swap in RAM-Größe (mind. 8 GiB) und den tmux-Server als Dienst `tmux-bau.service` (OOMScoreAdjust=-900) an, damit ein OOM-Kill nie mehr alle Sessions mitnimmt.
+Obergrenze 6 Claude-Sessions je Spec-Sitzung `spec-<S>` und 16 GB RAM (`max_sessions`, zählt nur Prozesse dieser tmux-Sitzung, #409), dazu Rechner-Grenze 1,5-fach über alle Claude-Sessions des Rechners (9 je 16 GB, aus `MemTotal`, kein Konfig-Wert), Mindestmaß 2 GB frei (maschinenweit), Staffel 20 s zwischen zwei Fenster-Starts — Konfig-Feld `speicher` (`min_frei_mib`, `max_sessions`, `staffel_s`) in `.to-spawn/config.json`. `bau <N>`, `wache <S>`, `spawn_srv.sh` und der Aufpasser fragen vor jedem Start `to_spawn.py speicher` (Exit 0 frei / 5 voll) und starten bei „voll“ nicht (Meldung „nicht gestartet: …“, nächster Aufpasser-Tick prüft neu). Das Nest legt Swap in RAM-Größe (mind. 8 GiB) und den tmux-Server als Dienst `tmux-bau.service` (OOMScoreAdjust=-900) an, damit ein OOM-Kill nie mehr alle Sessions mitnimmt.
 
 ## Anhang: manueller Einzeiler (falls das Skript nicht geht)
 

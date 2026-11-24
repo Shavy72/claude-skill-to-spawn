@@ -124,11 +124,11 @@ def auf_speicher_warten(
     konfig: dict,
     *,
     wer: str = "Aufseher",
-    pruefen=speicher.platz_frei,
+    pruefen=speicher.platz_frei_hier,
     schlafen=time.sleep,
     takt_s: int = 60,
 ) -> int:
-    """Warten, bis ``speicher.platz_frei`` frei meldet; Rückgabe = Zahl der Wartezyklen (#257 F3)."""
+    """Warten, bis ``speicher.platz_frei_hier`` (eigene tmux-Sitzung, #409) frei meldet; Rückgabe = Zahl der Wartezyklen (#257 F3)."""
     return speicher.auf_platz_warten(konfig, wer=wer, pruefen=pruefen, schlafen=schlafen, takt_s=takt_s)
 
 
