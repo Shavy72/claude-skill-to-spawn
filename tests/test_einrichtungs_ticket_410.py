@@ -107,7 +107,16 @@ def _manifest(repo: Path) -> dict[str, Any]:
     return json.loads(e2._manifest(repo).read_text(encoding="utf-8"))
 
 
-VOLL = {"staging": {"url": "https://staging.example"}, "staging_start": "make staging"}
+#: Prüf- und Live-Befehle (#425 Teil D): ohne sie fordert das Einrichtungs-Ticket sie nach.
+BEFEHLE = {
+    "pruefung": {"schnell": "make pruefen-schnell", "komplett": "make pruefen-alles"},
+    "live": {"befehl": "make live"},
+}
+VOLL = {
+    "staging": {"url": "https://staging.example"},
+    "staging_start": "make staging",
+    **BEFEHLE,
+}
 
 
 def test_leere_einrichtung_legt_t0_vor_alle_tickets(tmp_path: Path) -> None:
@@ -150,7 +159,7 @@ def test_volle_einrichtung_bleibt_still(tmp_path: Path) -> None:
 
 def test_bewusst_ohne_staging_kein_staging_zwang(tmp_path: Path) -> None:
     repo, weltdatei, umgebung = _aufbau(
-        tmp_path, konfig={"staging": {"ohne": True}}, python=True
+        tmp_path, konfig={"staging": {"ohne": True}, **BEFEHLE}, python=True
     )
     lauf = _cli(repo, umgebung, "regularien", str(e2.SPEC))
     assert "angelegt" not in e2._welt(weltdatei), lauf.stdout

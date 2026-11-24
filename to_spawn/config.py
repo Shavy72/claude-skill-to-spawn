@@ -379,8 +379,23 @@ def _gruppe(konfig: dict[str, Any], name: str) -> dict[str, Any]:
 
 
 def _text(gruppe: dict[str, Any], schluessel: str) -> str:
-    """Textwert ohne Rand-Leerzeichen; fehlt er oder ist ``None`` → ``""``."""
-    return str(gruppe.get(schluessel) or "").strip()
+    """Textwert ohne Rand-Leerzeichen; ``""`` = nicht eingerichtet.
+
+    Nur echter Text zählt (#448): fehlt der Wert, ist er ``None`` oder kein Text (Liste,
+    Zahl, Wahrheitswert), gilt er als nicht eingerichtet und erscheint so als Lücke im
+    Einrichtungs-Ticket — statt still als ``"['pytest', '-q']"`` durchzugehen.
+    """
+    wert = gruppe.get(schluessel)
+    if wert is None:
+        return ""
+    if not isinstance(wert, str):
+        log.warning(
+            "Konfig-Wert %r ist kein Text (%s) — gilt als nicht eingerichtet",
+            schluessel,
+            type(wert).__name__,
+        )
+        return ""
+    return wert.strip()
 
 
 def _staging_gruppe(konfig: dict[str, Any]) -> dict[str, Any]:
