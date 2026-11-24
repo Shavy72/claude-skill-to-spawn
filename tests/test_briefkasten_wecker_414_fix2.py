@@ -262,3 +262,73 @@ def test_wecker_faden_ueberlebt_tmux_fehler(
 def test_stille_feld_ohne_farben_weiter_leer() -> None:
     """Gegenprobe zum Altbestand: das klare Bild aus #414 bleibt „leer“."""
     assert aufpasser.eingabe_leer(STILL) is True
+
+
+# --- Fix-Runde 3 (Review 395d121): Mehrzeiler, SGR-Feinheiten, sonstige Steuerfolgen ----------
+
+
+def test_mehrzeilig_gedimmte_erste_zeile_normaler_text_darunter_ist_belegt() -> None:
+    """Zeile 1 hinter ``❯`` gedimmt, Folgezeile ohne ``❯`` mit normalem Text → belegt."""
+    eingabe = '❯ \x1b[2mTry "fix lint errors"\x1b[0m\n  zweite Zeile getippt'
+    assert aufpasser.eingabe_leer(_feld(eingabe)) is False
+
+
+def test_mehrzeilig_alles_gedimmt_bleibt_leer() -> None:
+    eingabe = '❯ \x1b[2mTry "fix lint errors"\x1b[0m\n  \x1b[2mund noch mehr\x1b[0m'
+    assert aufpasser.eingabe_leer(_feld(eingabe)) is True
+
+
+def test_doppelt_unterstrichen_mit_doppelpunkt_ist_nicht_gedimmt() -> None:
+    """``4:2`` ist der Unterstrich-Stil „doppelt“, kein SGR 2 → Text bleibt belegt."""
+    assert aufpasser.eingabe_leer(_feld("❯ \x1b[4:2mich tippe\x1b[0m")) is False
+
+
+def test_truecolor_mit_doppelpunkt_ist_nicht_gedimmt() -> None:
+    assert (
+        aufpasser.eingabe_leer(_feld("❯ \x1b[38:2::153:153:153mich tippe\x1b[39m"))
+        is False
+    )
+
+
+def test_reset_und_gedimmt_in_einer_folge_ist_leer() -> None:
+    assert (
+        aufpasser.eingabe_leer(_feld('❯ \x1b[0;2mTry "fix lint errors"\x1b[0m')) is True
+    )
+
+
+def test_256_farben_index_2_ist_nicht_gedimmt() -> None:
+    assert aufpasser.eingabe_leer(_feld("❯ \x1b[38;5;2mich tippe\x1b[39m")) is False
+
+
+def test_reset_mitten_in_der_zeile_ist_belegt() -> None:
+    assert aufpasser.eingabe_leer(_feld("❯ \x1b[2mfoo\x1b[0m bar")) is False
+
+
+def test_cursor_und_csi_folgen_im_gedimmten_platzhalter_bleiben_leer() -> None:
+    """Cursor als inverser Block (SGR 7) und Cursor-Folgen ändern nichts am Gedimmt-Sein."""
+    eingabe = (
+        '❯ \x1b[?25l\x1b[2m\x1b[7mT\x1b[27mry "fix lint errors"\x1b[0m\x1b[1C\x1b[K'
+    )
+    assert aufpasser.eingabe_leer(_feld(eingabe)) is True
+
+
+def test_osc_link_folgen_zaehlen_nicht_als_text() -> None:
+    """OSC 8 (Link) endet mit BEL oder ``ESC \\`` und ist keine Eingabe."""
+    assert (
+        aufpasser.eingabe_leer(_feld("❯ \x1b]8;;https://x.de\x07\x1b]8;;\x07")) is True
+    )
+    assert (
+        aufpasser.eingabe_leer(_feld("❯ \x1b]8;;https://x.de\x1b\\\x1b]8;;\x1b\\"))
+        is True
+    )
+    assert aufpasser.ohne_farben("a\x1b]8;;https://x.de\x07b\x1b]8;;\x1b\\c") == "abc"
+
+
+def test_protocol_bildschirm_kennt_farben() -> None:
+    """Die Naht ``Werkzeug`` beschreibt ``bildschirm`` so, wie ``TmuxWerkzeug`` sie anbietet."""
+    import inspect
+
+    parameter = inspect.signature(respawn.Werkzeug.bildschirm).parameters
+    assert "farben" in parameter
+    assert parameter["farben"].kind is inspect.Parameter.KEYWORD_ONLY
+    assert parameter["farben"].default is False
