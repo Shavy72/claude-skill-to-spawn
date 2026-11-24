@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -21,9 +23,34 @@ from test_waechter_213 import _capo, _text, welt  # noqa: F401  (welt = Fixture)
 SKILL = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SKILL))
 
-from to_spawn import briefkasten, capo
+from to_spawn import briefkasten, capo, ja_einrichten
 
 PLATZHALTER = re.compile(r"\{[A-Z][A-Z0-9_]*\}")
+#: Der Ja-Befehl, wie er im Annahme-Kommentar steht: ``! ~/.claude/bin/ja 902`` (#531).
+JA_IM_KOMMENTAR = re.compile(r"`! ~/\.claude/bin/ja ([^`]+)`")
+
+
+def _ja_ausfuehren(
+    welt: dict[str, Path], tmp_path: Path, annahme: str  # noqa: F811
+) -> subprocess.CompletedProcess[str]:
+    """Den Befehl aus dem Kommentar herauslesen und genau so laufen lassen (ohne Terminal, mit Sperre)."""
+    treffer = JA_IM_KOMMENTAR.findall(annahme)
+    assert len(treffer) == 1, annahme
+    heim = tmp_path / "heim"
+    heim.mkdir()
+    assert ja_einrichten.sperre_eintragen(heim / ".claude", sys.executable) is True
+    sh, _cmd = ja_einrichten.befehl_anlegen(heim / ".claude", sys.executable)
+    env = {k: v for k, v in os.environ.items() if not k.startswith("TO_SPAWN_")}
+    env.update({"TO_SPAWN_REPO": str(welt["repo"]), "HOME": str(heim)})
+    return subprocess.run(
+        [str(sh), *treffer[0].split()],
+        cwd=welt["repo"],
+        env=env,
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
 
 
 def _bau() -> ModuleType:
@@ -88,10 +115,15 @@ def test_vorlage_ohne_annahme_platzhalter_wird_gemeldet(
     assert "ohne {ANNAHME_GRENZE}" in caplog.text, caplog.text
 
 
-def test_annahme_kommentar_nennt_echte_kennung(
+def test_annahme_kommentar_nennt_fertigen_ja_befehl_mit_echter_nummer(
     welt: dict[str, Path],  # noqa: F811
+    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Der Befehl im Kommentar trägt die echte Ticketnummer, keinen Platzhalter, und beantwortet die Frage.
+
+    Angepasst durch #531, Sinn aus #501 bleibt: kopierbarer, wirklich funktionierender Befehl.
+    """
     monkeypatch.delenv("TO_SPAWN_TICKET", raising=False)
     frage_id = briefkasten.einwerfen(
         902, "Live schalten?", "ja", 2, [], hauptbaum=welt["repo"]
@@ -104,8 +136,12 @@ def test_annahme_kommentar_nennt_echte_kennung(
         t for t in cp._texte(welt, "902") if t.startswith("Aufseher: Annahme nach")
     ]
     assert len(annahme) == 1, cp._texte(welt, "902")
-    assert f"--id {frage_id} " in annahme[0], annahme[0]
-    assert "<id>" not in annahme[0], annahme[0]
+    assert "! ~/.claude/bin/ja 902`" in annahme[0], annahme[0]
+    assert not re.search(r"<[^>\n]*>", annahme[0]), annahme[0]
+    lauf = _ja_ausfuehren(welt, tmp_path, annahme[0])
+    assert lauf.returncode == 0, lauf.stderr
+    stand = briefkasten.lesen("902", frage_id, hauptbaum=welt["repo"])
+    assert stand.von == briefkasten.NUTZER_VON and stand.wahl == "ja"
 
 
 def test_annahme_grenze_greift_ohne_tmux(
@@ -144,10 +180,15 @@ def test_start_mit_platzhalter_rest_endet_mit_exit_2(
     assert "{FOO_BAR}" in capsys.readouterr().err
 
 
-def test_zwei_offene_klasse_2_fragen_keine_kennung_im_kommentar(
+def test_zwei_offene_klasse_2_fragen_befehl_lehnt_sicher_ab(
     welt: dict[str, Path],  # noqa: F811
+    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Zwei offene Fragen: der Befehl im Kommentar beantwortet keine still, sondern lehnt klar ab.
+
+    Angepasst durch #531, Sinn aus #501 bleibt: nie still die falsche Frage beantworten.
+    """
     monkeypatch.delenv("TO_SPAWN_TICKET", raising=False)
     ids = [
         briefkasten.einwerfen(902, f"Frage {i}?", "ja", 2, [], hauptbaum=welt["repo"])
@@ -161,5 +202,7 @@ def test_zwei_offene_klasse_2_fragen_keine_kennung_im_kommentar(
         t for t in cp._texte(welt, "902") if t.startswith("Aufseher: Annahme nach")
     ]
     assert len(annahme) == 1, cp._texte(welt, "902")
-    assert all(i not in annahme[0] for i in ids), annahme[0]
-    assert "<id>" in annahme[0], annahme[0]
+    lauf = _ja_ausfuehren(welt, tmp_path, annahme[0])
+    assert lauf.returncode != 0 and "2 offene Fragen" in lauf.stderr, lauf.stderr
+    for i in ids:
+        assert briefkasten.lesen("902", i, hauptbaum=welt["repo"]) == briefkasten.NUTZER

@@ -1502,15 +1502,13 @@ def annahme_grenze(n: str | int, befehl: str = "to_spawn.py", frage_id: str = ""
     Der Annahme-Kommentar des Aufsehers (:func:`_checkpoint`) und der Start-Text der
     Bau-Session (Platzhalter ``{ANNAHME_GRENZE}`` in ``skripte/bau.py``) lesen nur diesen
     Text. ``befehl`` = Aufruf von ``to_spawn.py``; nennt den einen Weg für das Live-Ja.
-    ``frage_id`` = Kennung der offenen Live-Frage, sobald es sie gibt (#501); leer → ``<id>``
-    samt Hinweis, wo die Kennung steht (Start-Text: die Frage ist noch nicht gestellt).
+    ``befehl``/``frage_id`` bleiben für die Aufrufer; der Kurzbefehl (#531) braucht nur die Ticket-Nummer.
     """
-    befehl_ja = f"`{befehl} nutzer-antwort {n} --id {frage_id or '<id>'} --wahl <Wahl> --grund <Grund>`"
+    befehl_ja = briefkasten.ja_aufforderung(n)
     return (
         "Die Annahme nach der Frist deckt nur die Entscheidungs-Liste (Abnahme „passt“), "
-        "nie den Live-Schritt: Live braucht immer ein eigenes Ja des Menschen, nur im eigenen "
-        f"Terminal: {befehl_ja}"
-        + ("." if frage_id else f" (id der Live-Frage: `{befehl} offene {n}`).")
+        "nie den Live-Schritt: Live braucht immer ein eigenes Ja des Menschen, nur vom "
+        f"Menschen selbst im Eingabefeld: {befehl_ja}."
     )
 
 #: „Vorschlag: …“ in einem Issue-Kommentar — alles danach ist die vorgeschlagene Wahl.

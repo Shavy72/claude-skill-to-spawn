@@ -24,7 +24,7 @@ from to_spawn import befugnis, briefkasten
 
 log = logging.getLogger("to_spawn")
 
-BEFEHLE = ("befugnis", "frage", "antwort", "antworten", "nutzer-antwort", "offene")
+BEFEHLE = ("befugnis", "frage", "antwort", "antworten", "nutzer-antwort", "ja", "offene")
 #: Exit-Code von ``antwort`` bei falschem Aufruf — eigener Code, weil 2 „braucht den Nutzer“ heißt (#315).
 AUFRUF_FEHLER = 5
 
@@ -81,6 +81,8 @@ def richte_parser_ein(unter: Any) -> None:
     p_nutzer.add_argument("--wahl", required=True)
     p_nutzer.add_argument("--grund", required=True)
     p_nutzer.add_argument("--beleg", action="append", default=[])
+    p_ja = unter.add_parser("ja", help="Nur der Mensch: Live-Ja zur einzigen offenen Frage des Tickets (#531)")
+    p_ja.add_argument("ticket")
     p_offen = unter.add_parser("offene", help="Offene Briefkasten-Fragen (alle oder die genannten Tickets)")
     p_offen.add_argument("tickets", nargs="*")
 
@@ -106,9 +108,13 @@ def lauf(args: argparse.Namespace) -> int:
             briefkasten.antworten(args.ticket, args.frage_id, args.wahl, args.beleg, args.grund, args.von)
             print(f"#{args.ticket}: Antwort geschrieben")
             return 0
+        if args.befehl == "ja":
+            briefkasten.menschen_nachweis(sys.stdin.isatty())
+            briefkasten.ja(args.ticket)
+            print(f"#{args.ticket}: Ja geschrieben")
+            return 0
         if args.befehl == "nutzer-antwort":
-            if not sys.stdin.isatty():
-                raise briefkasten.Verweigert("nutzer-antwort nur im Terminal des Nutzers (stdin ist kein Terminal).")
+            briefkasten.menschen_nachweis(sys.stdin.isatty())
             datei = briefkasten.nutzer_antworten(args.ticket, args.frage_id, args.wahl, args.beleg, args.grund)
             print(f"#{args.ticket}: Antwort des Nutzers geschrieben")
             for o in briefkasten.offene([args.ticket]):
