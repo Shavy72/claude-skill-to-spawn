@@ -12,6 +12,7 @@ Dazu die festen Texte, die ``respawn``, Aufseher-Ablösung und Aufpasser in ein 
 from __future__ import annotations
 
 from .befugnis import KOPF as _BEFUGNIS_KOPF
+from .befugnis import aufseher_text as _aufseher_text
 from .ticket_zustand import STAGING_FERTIG_LABEL
 
 #: Überschrift der Entscheidungs-Linie (#376).
@@ -92,6 +93,16 @@ WEITER_AUFTRAG_AUFSEHER = (
     "Bau-Aufseher normal weiter (nächster Tick wie gehabt). Handoff-Datei und Start-Prompt "
     "dürfen liegen bleiben."
 )
+
+
+def aufseher_befugnis(skill: str) -> str:
+    """Befugnis + Mindset des Aufsehers für jeden Text, der ihn ohne vollen Auftrag weiterführt (#422).
+
+    ``skill`` = Skill-Ordner (``startklar.skill_pfad()``). Teile aus ihren Quellen
+    (``befugnis.KOPF``, ``befugnis.aufseher_text``, :data:`MINDSET`), keine Kopie.
+    """
+    return f"{_BEFUGNIS_KOPF} {_aufseher_text(f'python {skill}/to_spawn.py')} {MINDSET}"
+
 
 #: Schaltet Remote Control in der neuen Session ein (respawn Schritt d).
 REMOTE_CONTROL = "/remote-control"
