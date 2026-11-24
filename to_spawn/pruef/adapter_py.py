@@ -36,6 +36,10 @@ _SCHLUSS = re.compile(
 )
 #: ``-o cache_dir=…`` im Befehl: je Lauf, der unabhängig vom vorigen sein muss, frisch.
 _CACHE_PREFIX = "cache_dir="
+#: Orte des Bau-Werkzeugs im App-Repo: deren Tests sammelt die App-Prüfung nie ein, auch wenn die
+#: App ``norecursedirs`` selbst setzt (#425 Abnahme 4, #415). Auswahl und
+#: Wiederholung bauen auf ``voll`` auf und erben den Ausschluss.
+_WERKZEUG_ORTE = (".to-spawn", ".claude")
 
 
 #: Dateien, in denen ein Repo pytest-xdist als eigene Abhängigkeit nennt.
@@ -162,6 +166,7 @@ class PythonAdapter:
                 f"cache_dir={cache}",
                 "-o",
                 "console_output_style=count",
+                *(f"--ignore={ort}" for ort in _WERKZEUG_ORTE),
                 *parallel,
             ],
             fehler="",
