@@ -4,7 +4,9 @@ Schnittstelle: :func:`einreichen` (CLI ``to_spawn.py einreichen <N>``). Bau-Sess
 rufen denselben Befehl; die Regel, *wie* der Stand ankommt, steht nur hier:
 
 - Aus dem eigenen Ticket-Zweig ``ticket/<N>-…`` (Bau-Session): Stand muss committet sein, auf
-  ``origin/<hauptzweig>`` aufsetzen und die Prüf-Tür (``pruef.pruefen``) grün bestehen.
+  ``origin/<hauptzweig>`` aufsetzen und die Prüf-Tür (``pruef.pruefen``) grün bestehen. Kennt
+  die Prüf-Tür keine Sprache im Repo (weder Python noch Node), gibt es nichts zu testen: der
+  Stand geht ohne Tests durch, die Meldung sagt es.
 - Vom Hauptzweig selbst (Aufseher: Übergabe/Stand-Dateien): nur Commits, die ausschließlich
   ``docs/`` anfassen; sie gehen über den Zweig ``ticket/<N>-uebergabe``. Code gehört in ein Ticket.
 
@@ -133,13 +135,36 @@ def _pull_request(ordner: Path, zweig: str, haupt: str, sha: str) -> str:
     return url.rstrip("/").rsplit("/", 1)[-1]
 
 
+def _pruefung(ordner: Path, basis: str) -> str:
+    """Prüf-Tür für einen Ticket-Stand; gibt einen Hinweis für die Meldung zurück, rot → ``_Rot``.
+
+    Repo ohne Python/Node (reine Doku, Shell, Konfig): es gibt nichts zu testen, also ist das
+    kein Werkzeug-Fehler — der Stand geht ohne Tests durch und die Meldung sagt das.
+    """
+    if not pruef.hat_werkzeug(ordner):
+        return " (ohne Tests: weder Python noch Node im Repo)"
+    urteil = pruef.pruefen(ordner, basis, "HEAD")
+    if urteil.exit != 0:
+        kurz = urteil.zeile.get("fehler_kurz") or "Prüfung nicht grün"
+        raise _Rot(ROT, f"Prüfung rot (Exit {urteil.exit}): {kurz}")
+    return ""
+
+
 def einreichen(ordner: Path, nummer: str) -> Ergebnis:
-    """Bringt den fertigen Stand in ``ordner`` für Ticket/Spec ``nummer`` auf den Hauptzweig."""
+    """Bringt den fertigen Stand in ``ordner`` für Ticket/Spec ``nummer`` auf den Hauptzweig.
+
+    Wirft nie: jeder Abbruch (auch Werkzeug kaputt, Zeitüberschreitung) kommt als ``Ergebnis``
+    mit Exit 1 bzw. 5 zurück, damit Aufrufer nur ``exit`` lesen.
+    """
     try:
         return _einreichen(ordner, str(nummer).lstrip("#"))
     except _Rot as rot:
         log.warning("einreichen #%s: %s", nummer, rot.text)
         return Ergebnis(rot.code, rot.text)
+    except (OSError, subprocess.TimeoutExpired) as fehler:
+        text = f"Werkzeug brach ab ({type(fehler).__name__}): {str(fehler)[:300]}"
+        log.warning("einreichen #%s: %s", nummer, text)
+        return Ergebnis(ROT, text)
 
 
 def _einreichen(ordner: Path, nummer: str) -> Ergebnis:
@@ -159,14 +184,12 @@ def _einreichen(ordner: Path, nummer: str) -> Ergebnis:
         raise _Rot(ROT, f"enthält Dateien, die nie hochgeladen werden: {', '.join(gesperrt)}")
     if vom_haupt:
         _nur_aufseher_dateien(ordner, haupt)
+        hinweis = ""
     else:
-        urteil = pruef.pruefen(ordner, basis, "HEAD")
-        if urteil.exit != 0:
-            kurz = urteil.zeile.get("fehler_kurz") or "Prüfung nicht grün"
-            raise _Rot(ROT, f"Prüfung rot (Exit {urteil.exit}): {kurz}")
+        hinweis = _pruefung(ordner, basis)
     _git(ordner, "push", "--quiet", "origin", f"{sha}:refs/heads/{zweig}")
     if _projekt_weg(ordner, haupt):
-        return Ergebnis(OK, f"{zweig} ({sha[:7]}) gepusht — der Einreich-Dienst des Projekts übernimmt")
+        return Ergebnis(OK, f"{zweig} ({sha[:7]}) gepusht{hinweis} — der Einreich-Dienst des Projekts übernimmt")
     nr = _pull_request(ordner, zweig, haupt, sha)
     _gh(ordner, "pr", "merge", nr, "--merge", "--match-head-commit", sha)
     _git(ordner, "fetch", "--quiet", "origin", haupt)
@@ -174,4 +197,4 @@ def _einreichen(ordner: Path, nummer: str) -> Ergebnis:
         raise _Rot(ROT, f"Pull-Request #{nr} gemeldet, aber {sha[:7]} fehlt auf {basis}")
     if vom_haupt:
         _git(ordner, "merge", "--ff-only", "--quiet", basis)
-    return Ergebnis(OK, f"{sha[:7]} ist auf {basis} (Pull-Request #{nr}, {zweig})")
+    return Ergebnis(OK, f"{sha[:7]} ist auf {basis} (Pull-Request #{nr}, {zweig}){hinweis}")

@@ -73,6 +73,7 @@ def welt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path]:
     _git(klon, "config", "user.email", "t@test")
     _git(klon, "config", "user.name", "t")
     _git(klon, "checkout", "-q", "-b", "main")
+    _commit(klon, "pyproject.toml", "[tool.pytest.ini_options]\n", "chore: Projekt")
     _commit(klon, "rechnen.py", "def plus(a, b):\n    return a + b\n", "chore: Start")
     _commit(
         klon,
@@ -115,7 +116,7 @@ def _remote_main(welt: dict[str, Path]) -> str:
 
 
 def _ist_vorfahr(ordner: Path, a: str, b: str) -> bool:
-    return subprocess.run(["git", "-C", str(ordner), "merge-base", "--is-ancestor", a, b]).returncode == 0
+    return subprocess.run(["git", "-C", str(ordner), "merge-base", "--is-ancestor", a, b], check=False).returncode == 0
 
 
 def _gh_aufrufe(welt: dict[str, Path]) -> list[list[str]]:
@@ -127,6 +128,7 @@ def _gh_aufrufe(welt: dict[str, Path]) -> list[list[str]]:
 # --- Anleitungen: keine Bau-Session wird mehr zum Fragen geschickt ---------------------------
 
 
+@pytest.mark.xfail(strict=True, reason="Teil 2 von #411: Anleitungen noch nicht umgestellt")
 def test_bau_vorlage_reicht_ein_statt_fast_forward_push() -> None:
     vorlage = json.loads((SKILL / "repo-scripts" / "_default.json").read_text(encoding="utf-8"))
     text = vorlage["prompt_template"]
@@ -134,6 +136,7 @@ def test_bau_vorlage_reicht_ein_statt_fast_forward_push() -> None:
     assert "fast-forward nach origin/{HAUPTZWEIG}" not in text
 
 
+@pytest.mark.xfail(strict=True, reason="Teil 2 von #411: Anleitungen noch nicht umgestellt")
 def test_befugnis_einreichen_ist_klasse_1_ohne_frage() -> None:
     start = befugnis.start_text(7)
     assert "to_spawn.py einreichen" in start
@@ -141,6 +144,7 @@ def test_befugnis_einreichen_ist_klasse_1_ohne_frage() -> None:
     assert befugnis.einordnen("hauptzweig", "einreichen") == 1
 
 
+@pytest.mark.xfail(strict=True, reason="Teil 2 von #411: Anleitungen noch nicht umgestellt")
 def test_aufseher_und_abloese_sop_reichen_ein() -> None:
     sys.path.insert(0, str(SKILL / "skripte"))
     import wache  # noqa: PLC0415
@@ -190,7 +194,7 @@ def test_rote_pruefung_pusht_nichts(welt: dict[str, Path]) -> None:
     _commit(wt, "rechnen.py", "def plus(a, b):\n    return a - b\n", "fix: kaputt (#7)")
     erg = _einreichen(wt, "7")
     assert erg.returncode == 1
-    assert "Prüfung rot" in erg.stdout
+    assert "Prüfung rot (Exit 1)" in erg.stdout
     assert _remote_main(welt) == vorher
     assert _git(welt["remote"], "branch", "--list", "ticket/*") == ""
 
@@ -225,3 +229,51 @@ def test_projekt_mit_eigenem_einreich_dienst_nur_ticket_zweig(welt: dict[str, Pa
     assert _remote_main(welt) == vorher
     assert _git(welt["remote"], "rev-parse", "ticket/7-plus-doku") == sha
     assert _gh_aufrufe(welt) == []
+
+
+def test_repo_ohne_python_und_node_reicht_ein(welt: dict[str, Path]) -> None:
+    """Reines Doku-/Skript-Repo: nichts zu testen ist kein Werkzeug-Fehler (#411)."""
+    klon = welt["klon"]
+    _git(klon, "rm", "-q", "pyproject.toml", "rechnen.py", "test_rechnen.py")
+    _git(klon, "commit", "-q", "-m", "chore: nur Doku")
+    _git(klon, "push", "-q", "origin", "main")
+    wt = _ticket_wt(welt)
+    sha = _commit(wt, "README.md", "nur Text\n", "docs: Text (#7)")
+    erg = _einreichen(wt, "7")
+    assert erg.returncode == 0, erg.stdout + erg.stderr
+    assert "ohne Tests" in erg.stdout
+    assert _ist_vorfahr(welt["klon"], sha, _remote_main(welt))
+
+
+@pytest.mark.parametrize("stelle", ["gesperrte_pfade", "merge-base", "cat-file"])
+def test_werkzeug_bricht_ab_meldet_rot_statt_traceback(
+    welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch, stelle: str
+) -> None:
+    """OSError/Zeitüberschreitung an jeder Git-Stelle → ``Ergebnis`` mit Exit 1, kein Traceback."""
+    from to_spawn import einreichen  # noqa: PLC0415
+
+    klon = welt["klon"]
+    if stelle == "cat-file":  # erst ab Push erreicht: Doku-Übergabe des Aufsehers, ohne Prüf-Tür
+        _commit(klon, "docs/u.md", "u\n", "docs: u")
+        ordner = klon
+    else:
+        ordner = _ticket_wt(welt)
+        _commit(ordner, "README.md", "x\n", "docs: x (#7)")
+    if stelle == "gesperrte_pfade":
+
+        def kaputt(*_a: object, **_k: object) -> list[str]:
+            raise OSError("Platte weg")
+
+        monkeypatch.setattr(einreichen.uebergabe_sichern, "gesperrte_pfade", kaputt)
+    else:
+        echt = subprocess.run
+
+        def lauf(befehl: list[str], *a: object, **k: object) -> object:
+            if stelle in befehl:
+                raise subprocess.TimeoutExpired(befehl, 1)
+            return echt(befehl, *a, **k)
+
+        monkeypatch.setattr(einreichen.subprocess, "run", lauf)
+    erg = einreichen.einreichen(ordner, "1" if stelle == "cat-file" else "7")
+    assert erg.exit == 1
+    assert erg.text
