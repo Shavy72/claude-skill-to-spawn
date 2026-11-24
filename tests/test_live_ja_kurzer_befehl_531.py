@@ -428,3 +428,49 @@ def test_einrichtung_pretooluse_keine_liste_meldung_statt_traceback(heim: Path) 
         ja_einrichten.main(["--claude-dir", str(ordner), "--python", sys.executable])
         == 1
     )
+
+
+# --- Fix-Runde 2 Review #534 ------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "befehl",
+    [
+        "echo 5 | xargs -n1 ja",
+        "echo 5 | xargs -n 1 ja",
+        "echo 5 | xargs -I{} ja {}",
+        "python3 -X utf8 to_spawn.py ja 5",
+        "python3 -X utf8 ~/.claude/skills/to-spawn/to_spawn.py nutzer-antwort 5",
+        "env A=1 B=2 ja 5",
+        "timeout -k 1 5 ja 5",
+    ],
+)
+def test_hook_lehnt_schalter_vor_ziel_ab(befehl: str) -> None:
+    assert _hook(_roh(befehl)).returncode == 2, befehl
+
+
+@pytest.mark.parametrize(
+    "befehl", ["echo 5 | xargs -n1 echo ja", "python3 -X utf8 to_spawn.py offene 5"]
+)
+def test_hook_schalter_gegenprobe_frei(befehl: str) -> None:
+    assert _hook(_roh(befehl)).returncode == 0, befehl
+
+
+def test_nachweis_braucht_python_oder_to_spawn_als_befehlswort(
+    heim: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("HOME", str(heim))
+    monkeypatch.setenv("USERPROFILE", str(heim))
+    _settings(heim, f"echo {SKILL / 'to_spawn.py'} hook-ja-sperre")
+    assert briefkasten.sperre_eingetragen() is False
+    _settings(heim, f"{SKILL / 'to_spawn.py'} hook-ja-sperre")
+    assert briefkasten.sperre_eingetragen() is True
+
+
+def test_einrichtung_hebt_alten_bash_matcher_an(heim: Path) -> None:
+    ordner = heim / ".claude"
+    _settings(heim, f"{sys.executable} {SKILL / 'to_spawn.py'} hook-ja-sperre", "Bash")
+    assert ja_einrichten.sperre_eintragen(ordner, sys.executable, zeit="a") is True
+    daten = json.loads((ordner / "settings.json").read_text(encoding="utf-8"))
+    assert [b["matcher"] for b in daten["hooks"]["PreToolUse"]] == ["Bash|PowerShell"]
+    assert ja_einrichten.sperre_eintragen(ordner, sys.executable, zeit="b") is False

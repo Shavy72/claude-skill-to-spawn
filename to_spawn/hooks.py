@@ -820,6 +820,8 @@ _JA_STARTER = {"bash", "sh", "zsh", "dash", "source", ".", "xargs", "python", "p
 _JA_GROB = re.compile(r"[/\\]ja(\.cmd)?(?![\w.-])|nutzer-antwort|to_spawn\.py\s+ja\b")
 
 
+#: Schalter von xargs/python/env …, deren nächstes Wort sein Wert ist (``xargs -n 1 ja``, ``python -X utf8 …``).
+_JA_SCHALTER_MIT_WERT = {"-I", "-n", "-L", "-P", "-s", "-d", "-E", "-X", "-W", "-u", "-C"}
 _JA_WIN_PFAD = re.compile(r"\\ja(\.cmd)?(?![\w.-])")
 
 
@@ -828,15 +830,25 @@ def _ja_basis(wort: str) -> str:
 
 
 def _ja_als_argument(woerter: list[str]) -> bool:
-    """``ja`` als Pfad (``…/ja``, ``…\\ja.cmd``) oder direkt hinter ``bash``/``source``/``xargs`` …
+    """``ja`` als Pfad (``…/ja``) oder als Ziel hinter einem Starter (``bash``/``xargs``/``python`` …, Schalter
+    dazwischen übersprungen); ``to_spawn.py`` irgendwo im Teilbefehl, dann ``ja``/``nutzer-antwort``.
 
     Normales Deutsch (``echo "ja"``, ``grep ja datei``) bleibt frei: dort steht ``ja`` weder als Pfad
-    noch hinter einem dieser Starter.
+    noch als Ziel eines Starters.
     """
-    for i, wort in enumerate(woerter[1:], 1):
-        if _ja_basis(wort) not in ("ja", "ja.cmd"):
-            continue
-        if "/" in wort or "\\" in wort or _name(woerter[i - 1]) in _JA_STARTER:
+
+    def ziel(i: int) -> str:
+        """Erstes Nicht-Schalter-Wort ab ``i`` (Schalter mit eigenem Wert nehmen es mit)."""
+        while i < len(woerter) and woerter[i].startswith("-"):
+            i += 2 if woerter[i] in _JA_SCHALTER_MIT_WERT else 1
+        return woerter[i] if i < len(woerter) else ""
+
+    for i, wort in enumerate(woerter):
+        if i and _ja_basis(wort) in ("ja", "ja.cmd") and ("/" in wort or "\\" in wort):
+            return True
+        if _name(wort) in _JA_STARTER and _ja_basis(ziel(i + 1)) in ("ja", "ja.cmd"):
+            return True
+        if _ja_basis(wort) == "to_spawn.py" and ziel(i + 1) in JA_UNTERBEFEHLE:
             return True
     return False
 

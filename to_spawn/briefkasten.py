@@ -400,6 +400,9 @@ def _ruft_sperre_auf(befehl: str) -> bool:
         woerter = shlex.split(befehl)
     except ValueError:
         return False
+    erstes = next((w for w in woerter if "=" not in w), "").replace("\\", "/").rsplit("/", 1)[-1]
+    if erstes != "to_spawn.py" and not re.fullmatch(r"python[\d.]*(\.exe)?", erstes):
+        return False  # Befehlswort muss Python oder die to_spawn.py selbst sein (nicht ``echo …``)
     return any(
         w.replace("\\", "/").rsplit("/", 1)[-1] == "to_spawn.py"
         and Path(w).is_file()

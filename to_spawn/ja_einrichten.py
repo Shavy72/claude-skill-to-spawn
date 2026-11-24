@@ -45,15 +45,27 @@ def sperre_eintragen(
         raise ValueError(  # noqa: TRY004 — main fängt ValueError
             f"{datei}: hooks/PreToolUse hat eine unerwartete Form (PreToolUse muss eine Liste sein) — nicht verändert."
         )
-    if briefkasten.sperre_eingetragen_in(daten):
+    stehende = [
+        b
+        for b in blocks
+        if briefkasten.sperre_eingetragen_in({"hooks": {"PreToolUse": [b]}})
+    ]
+    if stehende and "PowerShell" in stehende[0]["matcher"].split("|"):
         return False
-    befehl = " ".join(
-        shlex.quote(t)
-        for t in (Path(python).as_posix(), cli.as_posix(), briefkasten.JA_SPERRE_HOOK)
-    )
-    blocks.append(
-        {"matcher": MATCHER, "hooks": [{"type": "command", "command": befehl}]}
-    )
+    if stehende:  # alter Eintrag nur für Bash: Matcher anheben, kein Doppel-Eintrag
+        stehende[0]["matcher"] = MATCHER
+    else:
+        befehl = " ".join(
+            shlex.quote(t)
+            for t in (
+                Path(python).as_posix(),
+                cli.as_posix(),
+                briefkasten.JA_SPERRE_HOOK,
+            )
+        )
+        blocks.append(
+            {"matcher": MATCHER, "hooks": [{"type": "command", "command": befehl}]}
+        )
     claude_dir.mkdir(parents=True, exist_ok=True)
     if datei.exists():
         stempel = zeit or datetime.now().strftime("%Y%m%d-%H%M%S")
