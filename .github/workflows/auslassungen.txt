@@ -1,0 +1,27 @@
+# Auf dem Runner ausgelassene Tests (#537): sie setzen private Teile des Entwickler-Rechners
+# voraus, die dort bewusst fehlen (#232). Format: <pytest-ID>  # <Grund>
+# Jede ID muss beim Sammeln existieren, sonst wird der Lauf rot (auslassungen.py).
+tests/test_aufpasser_236.py::test_bau_dry_run_zeigt_session_id  # Plugin context-mode fehlt unter ~/.claude/plugins
+tests/test_aufpasser_236.py::test_bau_dry_run_resume_ohne_session_id  # Plugin context-mode fehlt unter ~/.claude/plugins
+tests/test_aufpasser_236.py::test_bau_resume_wartet_nicht_auf_blocker  # Plugin context-mode fehlt unter ~/.claude/plugins
+tests/test_aufpasser_236.py::test_bau_neue_session_schreibt_id  # Plugin context-mode fehlt unter ~/.claude/plugins
+tests/test_aufpasser_236_review.py::test_r1_wache_resume_ohne_transkript_bricht_ab  # Plugin context-mode fehlt unter ~/.claude/plugins
+tests/test_aufpasser_236_review.py::test_r2_bau_schreibt_sessions_datei  # Plugin context-mode fehlt unter ~/.claude/plugins
+tests/test_respawn_431_konfig.py::test_bau_mit_respawn_schaltern_gibt_volle_konfiguration  # Plugin context-mode fehlt unter ~/.claude/plugins
+tests/test_review_pflicht_skills.py::test_review_skills_in_bau_session_an[vorlage]  # Plugin context-mode fehlt unter ~/.claude/plugins
+tests/test_review_pflicht_skills.py::test_manifest_kann_review_skills_nicht_abwaehlen  # Plugin context-mode fehlt unter ~/.claude/plugins
+tests/test_review_pflicht_skills.py::test_temp_ordner_je_start_eindeutig_und_erkannt  # Plugin context-mode fehlt unter ~/.claude/plugins
+tests/test_umzug_205.py::test_kind_session_erbt_kein_to_spawn_repo[bau-901]  # Plugin context-mode fehlt unter ~/.claude/plugins
+tests/test_umzug_205.py::test_modell_kommt_aus_der_repo_konfig[bau-901-claude-probe-ticket]  # Plugin context-mode fehlt unter ~/.claude/plugins
+tests/test_umzug_205.py::test_modell_kommt_aus_der_repo_konfig[wache-900-claude-probe-waechter]  # Plugin context-mode fehlt unter ~/.claude/plugins
+tests/test_umzug_205.py::test_probelauf_legt_keine_konfig_an[bau-901]  # Plugin context-mode fehlt unter ~/.claude/plugins
+tests/test_umzug_205.py::test_probelauf_legt_keine_konfig_an[wache-900]  # Plugin context-mode fehlt unter ~/.claude/plugins
+tests/test_umzug_212.py::test_bau_beendet_session_nach_umzug_ohne_staffel  # Plugin context-mode fehlt unter ~/.claude/plugins
+tests/test_umzug_212.py::test_bau_loescht_alte_anfragen  # Plugin context-mode fehlt unter ~/.claude/plugins
+tests/test_umzug_212.py::test_bau_umzug_startet_mit_handoff_vom_branch  # Plugin context-mode fehlt unter ~/.claude/plugins
+tests/test_umzug_212.py::test_bau_umzug_sha_liest_genau_diesen_stand  # Plugin context-mode fehlt unter ~/.claude/plugins
+tests/test_waechter_213.py::test_wache_dry_run_zeigt_remote_control_und_ausweich  # Plugin context-mode fehlt unter ~/.claude/plugins
+tests/test_umzug_205.py::test_kind_session_erbt_kein_to_spawn_repo[wache-900]  # Hook ~/.claude/hooks/smart-zone/staffel/aufraeumen.mjs fehlt (Startklar-Prüfung)
+tests/test_umzug_212.py::test_wache_setzt_umzug_umgebung  # Hook ~/.claude/hooks/smart-zone/staffel/aufraeumen.mjs fehlt (Startklar-Prüfung)
+tests/test_waechter_takt_316.py::test_f_takt_einrichten_trocken_idempotent  # claude-CLI nicht im PATH
+tests/test_frage_sperre_321.py::test_frage_sperre_hook_datei_existiert  # Hook ~/.claude/hooks/smart-zone/staffel/frage-sperre.mjs fehlt; Skip greift nur ohne ~/.claude, das andere Tests im Lauf anlegen (#232)
