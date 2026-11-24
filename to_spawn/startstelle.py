@@ -18,6 +18,8 @@ startet).
    Ticket: vorher das Staging-Label entfernen (#279).
 3. Ticket-Stand nicht bestimmbar (gh fehlt, Netz weg, kaputte Antwort) → fail-closed:
    kein Start, laute Meldung, Exit 2.
+4. Vor 2./3.: ``wt-<N>`` ist schon Worktree eines anderen Repos (gleiche Nummer, kein
+   ``worktree_basis``, :func:`config.worktree_fremd`) → kein Start, Exit 9 (#499).
 
 Ablösung (respawn startet ``bau.py <N> --sofort --ohne-prompt``): die neue Session darf neben der alten starten,
 aber nur eine Ablösung je Ticket gleichzeitig. Sie übernimmt die Ticket-Sperre, sobald
@@ -43,7 +45,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from to_spawn import sperre, starter, ticket_zustand
+from to_spawn import config, sperre, starter, ticket_zustand
 
 log = logging.getLogger(__name__)
 
@@ -53,6 +55,8 @@ SPERR_ORDNER_ENV = "TO_SPAWN_START_SPERREN"
 TEST_OFFEN_ENV = "TO_SPAWN_TEST_TICKET_OFFEN"
 #: Exit-Code, wenn der Ticket-Stand nicht bestimmbar ist (laut, fail-closed).
 EXIT_UNKLAR = 2
+#: Exit-Code, wenn ``wt-<N>`` schon einem anderen Repo gehört (#499, wie ``spec-<S>`` in #457).
+EXIT_FREMDER_ORDNER = 9
 #: Vor einer Staffel-Runde: so oft wird ein unbekannter Ticket-Stand gefragt (#191).
 STAND_VERSUCHE = 3
 #: Pause (s) zwischen den Versuchen; Umgebungsvariable kürzt sie (Tests).
@@ -92,6 +96,10 @@ def _zustand(ticket: str, cwd: Path | None, pruefer: TicketPruefer | None) -> bo
 
 
 def _pruefen(ticket: str, cwd: Path | None, pruefer: TicketPruefer | None) -> Entscheidung:
+    if fremd := config.worktree_fremd(ticket, cwd):
+        grund = f"WEIGERUNG (#499): bau {ticket}: {fremd} KEIN Start."
+        log.error("%s", grund)
+        return Entscheidung(False, grund, EXIT_FREMDER_ORDNER)
     offen = _zustand(ticket, cwd, pruefer)
     if offen is None:
         grund = (
