@@ -228,20 +228,12 @@ def ordner_fremd(ordner: Path | None) -> bool:
     return ordner != wurzel and wurzel not in ordner.parents
 
 
-def fremdes_repo(pid: int) -> bool:
-    """Läuft der Prozess ``pid`` jetzt in einem anderen Repo als ``REPO``? (#212)
-
-    Liest ``/proc`` selbst — darum nie in ``zuordnen`` (#588), dort zählt ``Prozess.ordner``.
-    """
-    return ordner_fremd(arbeitsordner(pid))
-
-
 def beendet(pid: int) -> bool:
     """Ist der Prozess seit ``ps`` beendet (``/proc/<pid>`` weg)? Ohne ``/proc`` (Windows): nein.
 
     Nur beim Lesen der echten Liste (``prozesse_linux``) gefragt, nie in ``zuordnen`` (#564).
 
-    Ein beendeter Prozess läuft nicht mehr, auch wenn ``fremdes_repo`` ihn mangels lesbarem
+    Ein beendeter Prozess läuft nicht mehr, auch wenn ``ordner_fremd`` ihn mangels lesbarem
     Ordner mitzählt (#494): sonst gälte etwa die eben beendete Aufseher-Attrappe eines
     Nachbar-Tests als lebender Aufseher, und ``spawn_srv.sh`` meldete bei vollem Rechner
     „Aufseher startet nach“ (Exit 0), obwohl niemand nachstartet.

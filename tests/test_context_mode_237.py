@@ -338,7 +338,7 @@ def test_sessions_stand_zeigt_context_mode_je_session() -> None:
         "901": modul.Eintrag("901", "ticket", "mit"),
         "902": modul.Eintrag("902", "ticket", "ohne"),
     }
-    modul.fremdes_repo = lambda pid: False
+    assert modul.ordner_fremd(None) is False  # Ordner unbekannt = eigenes Repo, beide zählen
     modul.zuordnen(eintraege, alle)
     assert eintraege["901"].ctx == "✓"
     assert eintraege["902"].ctx == "✗"

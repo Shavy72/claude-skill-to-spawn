@@ -130,7 +130,7 @@ def _ein_umzug_test_zur_zeit() -> Iterator[None]:
     """Tests dieser Datei laufen rechnerweit nacheinander (Datei-Sperre, auch über xdist-Worker).
 
     Mehrere Tests starten ``bau.py 9121`` (echt oder als Schläfer), andere prüfen, dass
-    #9121 nicht läuft. ``sessions_stand.fremdes_repo`` zählt einen Prozess, dessen
+    #9121 nicht läuft. ``sessions_stand.ordner_fremd`` zählt einen Prozess, dessen
     Ordner nicht lesbar ist, bewusst mit (lieber kein Doppelstart) — auch einen, der
     zwischen ``ps`` und dem Ordner-Blick endet. Parallel sah so ein Test den eben
     beendeten Prozess eines Nachbartests als „wartet“ (#1411).
@@ -882,9 +882,11 @@ def test_sessions_stand_zaehlt_nur_prozesse_im_eigenen_repo(tmp_path: Path) -> N
         )
     try:
         modul.REPO = eigen
-        assert modul.fremdes_repo(prozesse[0].pid) is False
-        assert modul.fremdes_repo(prozesse[1].pid) is True
-        assert modul.fremdes_repo(2**22 + 12345) is False  # unlesbar = zählt wie bisher
+        assert modul.ordner_fremd(modul.arbeitsordner(prozesse[0].pid)) is False
+        assert modul.ordner_fremd(modul.arbeitsordner(prozesse[1].pid)) is True
+        unlesbar = modul.arbeitsordner(2**22 + 12345)
+        assert unlesbar is None
+        assert modul.ordner_fremd(unlesbar) is False  # unlesbar = zählt wie bisher
     finally:
         for proz in prozesse:
             proz.kill()
