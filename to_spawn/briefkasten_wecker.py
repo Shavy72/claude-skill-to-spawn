@@ -31,7 +31,17 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
-from to_spawn import aufpasser, aufseher_stand, befugnis, briefkasten, manifest, respawn
+from to_spawn import (
+    aufpasser,
+    aufseher_stand,
+    befugnis,
+    briefkasten,
+    capo,
+    config,
+    gh,
+    manifest,
+    respawn,
+)
 from to_spawn.tmux_aufruf import FensterWeg, TmuxFehler
 
 log = logging.getLogger(__name__)
@@ -48,6 +58,11 @@ AUFSEHER_TEXT = (
 )
 BAU_TEXT = "Briefkasten: Antwort auf Frage {id} liegt — jetzt `{befehl}` nachsehen und weiterbauen."
 
+KOMMENTAR_TEXT = (
+    "Abnahme-Issue #{ticket}: neuer Kommentar des Menschen (Kritik oder „passt“) — jetzt "
+    "`gh issue view {ticket} --comments` lesen und darauf reagieren, nicht auf den eigenen Weckruf warten."
+)
+
 Schluessel = tuple[str, str]  # (Ticket, Frage-id)
 
 
@@ -57,8 +72,20 @@ class Wecker:
     Nicht thread-sicher: :meth:`einmal` läuft nur in einem Faden (siehe :func:`laeuft`).
     """
 
-    def __init__(self, spec: int, repo: Path, pane: str, werkzeug: respawn.TmuxWerkzeug | None = None) -> None:
-        self.spec, self.repo, self.pane = spec, repo, pane
+    def __init__(
+        self,
+        spec: int,
+        repo: Path,
+        pane: str,
+        werkzeug: respawn.TmuxWerkzeug | None = None,
+        gh_repo: str = "",
+    ) -> None:
+        self.spec, self.repo, self.pane, self.gh_repo = spec, repo, pane, gh_repo
+        # Abnahme-Issues (#528): Ticket → bekannte Mensch-Kommentar-ids; fehlt das Ticket, steht der Ausgangsstand aus.
+        self._checkpoints: set[str] | None = None
+        self._kommentare: dict[str, set[int]] = {}
+        self._kommentar_aufseher: set[str] = set()
+        self._kommentar_bau: set[str] = set()
         self.werkzeug = werkzeug or respawn.TmuxWerkzeug()
         self._bekannt: set[Schluessel] = set()  # je gesehene offene Frage
         self._fuer_aufseher: set[Schluessel] = set()
@@ -87,6 +114,10 @@ class Wecker:
         return {(f["ticket"], f["id"]) for f in briefkasten.offene(tickets, hauptbaum=self.repo) if f["id"]}
 
     def _durchgang(self) -> None:
+        try:
+            self._kommentare_blick()
+        except Exception as fehler:  # noqa: BLE001 — GitHub-Ausfall darf den Briefkasten nicht aufhalten
+            self._melde(f"Briefkasten-Wecker Spec #{self.spec}: Kommentare: {fehler!r}")
         offen = self._offen()
         neu = offen - self._bekannt
         self._bekannt |= neu
@@ -108,16 +139,65 @@ class Wecker:
             if erledigt:
                 self._fuer_bau.discard((t, fid))
 
+    def _abnahme_tickets(self) -> set[str] | None:
+        """Tickets der Spec mit Checkpoint-Label (einmal gelesen); ``None`` = GitHub nicht lesbar."""
+        if self._checkpoints is not None:
+            return self._checkpoints
+        label = manifest.checkpoint_label(config.lade(self.repo))
+        gefunden: set[str] = set()
+        for t in manifest.lade_manifest(self.repo, self.spec)["tickets"]:
+            daten = gh.json_lauf(["api", f"repos/{self.gh_repo}/issues/{t}"])
+            if not isinstance(daten, dict):
+                return None
+            if any(isinstance(e, dict) and e.get("name") == label for e in daten.get("labels") or []):
+                gefunden.add(str(t))
+        self._checkpoints = gefunden
+        return gefunden
+
+    def _kommentare_blick(self) -> None:
+        """Neuer Mensch-Kommentar am Abnahme-Issue → Aufseher-Pane und Bau-Fenster wecken (#528).
+
+        Mensch = Kommentar ohne Marke des Aufsehers, Aufpassers oder der Bau-Session
+        (``capo.EIGENE_KOEPFE``/``SESSION_KOPF``); Zitate beginnen mit ``>`` und zählen.
+        Je Kommentar höchstens ein Weckruf je Richtung.
+        """
+        if not self.gh_repo:
+            return
+        tickets = self._abnahme_tickets()
+        for t in sorted(tickets or ()):
+            kommentare = capo.issue_kommentare(self.gh_repo, int(t))
+            if kommentare is None:
+                continue
+            ids = {
+                int(c["id"])
+                for c in kommentare
+                if not str(c.get("body") or "").startswith((*capo.EIGENE_KOEPFE, capo.SESSION_KOPF))
+            }
+            bekannt = self._kommentare.get(t)
+            self._kommentare[t] = ids if bekannt is None else bekannt | ids
+            if bekannt is not None and ids - bekannt:
+                self._kommentar_aufseher.add(t)
+                self._kommentar_bau.add(t)
+        for t in sorted(self._kommentar_aufseher):
+            if self._tippe(self.pane, KOMMENTAR_TEXT.format(ticket=t)):
+                self._kommentar_aufseher.discard(t)
+        for t in sorted(self._kommentar_bau):
+            if self._wecke_bau_text(t, KOMMENTAR_TEXT.format(ticket=t)):
+                self._kommentar_bau.discard(t)
+
     def _wecke_bau(self, t: str, fid: str) -> bool:
         """``True`` = erledigt (geweckt oder kein Fenster mehr), ``False`` = nächster Durchgang."""
+        return self._wecke_bau_text(t, BAU_TEXT.format(id=fid, befehl=befugnis.antwort_befehl(t, fid)))
+
+    def _wecke_bau_text(self, t: str, text: str) -> bool:
         ziele = aufseher_stand.bau_fenster(self.spec)
         if ziele is None:
             return False
         ziel = ziele.get(int(t))
         if ziel is None:
-            log.debug("#%s: Antwort %s liegt, aber kein Fenster bau %s — Takt übernimmt", t, fid, t)
+            log.debug("#%s: Weckruf fällig, aber kein Fenster bau %s — Takt übernimmt", t, t)
             return True
-        return self._tippe(ziel, BAU_TEXT.format(id=fid, befehl=befugnis.antwort_befehl(t, fid)))
+        return self._tippe(ziel, text)
 
     def _darf_tippen(self, ziel: str) -> bool:
         """Die eine Regel „darf ich in dieses Fenster tippen“ (#414); alle Teile müssen gelten:
@@ -172,7 +252,7 @@ class Wecker:
 
 
 @contextmanager
-def laeuft(spec: int, repo: Path, *, takt_s: float | None = None) -> Iterator[Wecker | None]:
+def laeuft(spec: int, repo: Path, *, takt_s: float | None = None, gh_repo: str = "") -> Iterator[Wecker | None]:
     """Wecker als Daemon-Faden ``briefkasten-wecker-<S>``, solange der ``with``-Block läuft.
 
     Ohne ``TMUX_PANE`` (kein tmux) ``None`` und kein Faden: Fragen und Antworten nur im Takt.
@@ -183,7 +263,7 @@ def laeuft(spec: int, repo: Path, *, takt_s: float | None = None) -> Iterator[We
         yield None
         return
     abstand = TAKT_S if takt_s is None else takt_s
-    wecker = Wecker(spec, repo, pane)
+    wecker = Wecker(spec, repo, pane, gh_repo=gh_repo)
     stopp = threading.Event()
 
     def schleife() -> None:

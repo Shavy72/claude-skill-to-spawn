@@ -4,8 +4,10 @@ Echt sind Manifest, Wecker, tmux-Tür (Attrappe ``tmux`` wie in #414). Gestellt 
 (``gh.json_lauf``): ein Dict je Issue (Labels) bzw. die Kommentar-Seiten, so wie ``gh api`` sie liefert.
 """
 
+# ruff: noqa: F811
 from __future__ import annotations
 
+# ruff: noqa: F811 — pytest-Fixture ``welt`` wird importiert und als Argument benutzt
 import sys
 from pathlib import Path
 from typing import Any
@@ -13,7 +15,8 @@ from typing import Any
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from test_briefkasten_wecker_414 import PANE, SPEC, TICKET, _getippt, welt  # noqa: E402,F401
+from test_briefkasten_wecker_414 import PANE, SPEC, TICKET, _getippt, welt  # noqa: F401
+
 from to_spawn import briefkasten_wecker, gh
 
 CHECKPOINT = {"labels": [{"name": "checkpoint:human"}]}
