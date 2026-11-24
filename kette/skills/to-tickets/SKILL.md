@@ -156,7 +156,7 @@ In either form, avoid specific file paths or code snippets outside `## Kontext-P
 
 ### 6. Schluss-Prüfung
 
-`python ~/.claude/skills/to-spawn/to_spawn.py pruefen <S>` ausführen — muss Exit 0 liefern, sonst laut Fehlerzeile nachbessern (meist per `anhaengen`), bevor an den Nutzer übergeben wird. Ohne grüne Prüfung verweigert `/to-spawn` den Start.
+`python ~/.claude/skills/to-spawn/to_spawn.py regularien <S>` ausführen — muss Exit 0 liefern, sonst laut Fehlerzeile nachbessern (meist per `anhaengen`), bevor an den Nutzer übergeben wird. Ohne grüne Prüfung verweigert `/to-spawn` den Start.
 
 Dann pro Ticket eine Zeile an den Nutzer, in Reihenfolge der Blocker-Tiefe (blockerfreie zuerst):
 
@@ -168,5 +168,5 @@ und als Startbefehl `/to-spawn <S>` — der Rest läuft als Domino.
 
 <!-- LOKALER ZUSATZ — bei jedem Update/Neu-Import dieses Skills ERHALTEN: Abschnitt „Beschluss-Protokoll“
      ganz oben, Projekt-Zusatz nur zusätzlich, Kanten und Manifest nur über `to_spawn.py anhaengen`,
-     Schluss mit `to_spawn.py pruefen <S>`. Prüf-Skript: tests/test_kette_to_tickets_e2.py (Skill-Repo).
+     Schluss mit `to_spawn.py regularien <S>`. Prüf-Skript: tests/test_kette_to_tickets_e2.py (Skill-Repo).
      Quelle dieser Datei: kette/skills/to-tickets/SKILL.md, verteilt per install.sh/install.ps1. -->

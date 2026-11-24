@@ -87,7 +87,7 @@ sichere_und_kopiere() {
 # --- 1+2. Alten Stand sichern, Skill kopieren (ohne Git, Caches) -------------
 quellen=()
 for eintrag in SKILL.md README.md LICENSE to_spawn.py install.sh install.ps1 spawn_local.ps1 spawn_srv.ps1 \
-               to_spawn skripte repo-scripts aliase tests docs nest leitstand kette review-hook review; do
+               to_spawn skripte repo-scripts aliase tests docs nest leitstand kette review-hook review probe; do
   quellen+=("$HIER/$eintrag")
 done
 sichere_und_kopiere to-spawn "${quellen[@]}"
