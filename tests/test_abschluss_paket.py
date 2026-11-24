@@ -13,6 +13,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from rundschau_beispiel import rundschau_args
 
 SKILL = Path(__file__).resolve().parent.parent
 SKRIPTE = SKILL / "skripte"
@@ -436,9 +437,16 @@ _RUECKBLICK = "Rückblick: keine Vorschläge\n\nDatenlage: 4 Tickets, 0 Vorfäll
 _THERMO = "# Thermo 900\n\n- to_spawn/capo.py wächst (2143 Zeilen)\n"
 
 
+def _deck(befehl: str, repo: Path, args: tuple[str, ...]) -> list[str]:
+    """#529: Die Abnahme verlangt ein gültiges Rundschau-Deck — echt aus den Entscheidungen des Repos."""
+    if befehl != "ablegen" or "--dry-run" in args or "--stand" in args:
+        return []
+    return rundschau_args(repo, SPEC)
+
+
 def _unter(befehl: str, repo: Path, *args: str, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        [sys.executable, str(SKRIPTE / "abschluss_paket.py"), befehl, str(SPEC), "--repo", str(repo), *args],
+        [sys.executable, str(SKRIPTE / "abschluss_paket.py"), befehl, str(SPEC), "--repo", str(repo), *args, *_deck(befehl, repo, args)],
         capture_output=True,
         text=True,
         encoding="utf-8",
