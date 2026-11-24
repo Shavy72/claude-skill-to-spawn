@@ -10,6 +10,7 @@
 # ohne SHA geht weiter) und prüft keine Regularien. Läuft das Ticket hier schon:
 # Exit 4, nichts gestartet. --nur-wache startet nur Aufseher + Leitstand (fehlende).
 # Exit 5: Speicher voll (to_spawn.py speicher) — begonnene Fenster laufen, der Rest nicht.
+#   Läuft der Aufseher (``wache <S>``) schon, Exit 0 mit „wartet auf Platz“: er startet nach (#460).
 # Exit 7: Platte voll (Start-Check des Hausmeisters, #1369) — wie Exit 5.
 # Exit 6: Speicherprüfung kaputt oder Hauptzweig nicht ermittelbar — nichts weiter gestartet.
 # Eine tmux-Session je Spec (``spec-<S>``), darin ``wache <S>``, ``leitstand <S>`` und
@@ -40,7 +41,7 @@ while [ $# -gt 0 ]; do
     --umzug) UMZUG_REF="${2:-}"; OHNE_REGULARIEN=1; shift 2 ;;
     --ohne-regularien) OHNE_REGULARIEN=1; shift ;;
     --nur-wache) NUR_WACHE=1; shift ;;
-    -h|--help) sed -n '2,17p' "${BASH_SOURCE[0]}"; exit 0 ;;
+    -h|--help) sed -n '2,18p' "${BASH_SOURCE[0]}"; exit 0 ;;
     *)
       if [ -z "$SPEC" ]; then SPEC="$1"; shift; else echo "Unbekanntes Argument: $1" >&2; exit 2; fi ;;
   esac
@@ -235,6 +236,12 @@ for i in "${!GEPLANT[@]}"; do
   fi
   rc=0
   speicher_pruefen "${KURZ[$i]}" || rc=$?
+  # Kein Platz, aber der Aufseher läuft (#460): er startet die fehlenden Fenster selbst nach,
+  # sobald Platz frei ist — das ist der vorgesehene Weg, kein Fehler.
+  if [ "$rc" -eq 5 ] && tmux list-windows -t "=$SESSION" -F '#W' 2>/dev/null | grep -qx "wache $SPEC"; then
+    echo "wartet auf Platz: ${KURZ[*]:$i} — Aufseher startet nach, sobald Platz frei ist."
+    exit 0
+  fi
   if [ "$rc" -ne 0 ]; then
     echo "Rest bleibt aus; später erneut: bash scripts/spawn_srv.sh $SPEC" >&2
     exit "$rc"

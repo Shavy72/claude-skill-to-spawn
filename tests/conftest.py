@@ -404,6 +404,10 @@ def _speicher_immer_frei(
     (ordner / "proc").mkdir()
     monkeypatch.setenv("TO_SPAWN_SPEICHER_MEMINFO", str(meminfo))
     monkeypatch.setenv("TO_SPAWN_SPEICHER_PROC", str(ordner / "proc"))
+    # #460: Session-Status und vergebene Plätze ebenfalls aus der Attrappe, nie vom echten Rechner.
+    (ordner / "sessions").mkdir()
+    monkeypatch.setenv("TO_SPAWN_SPEICHER_SESSIONS", str(ordner / "sessions"))
+    monkeypatch.setenv("TO_SPAWN_SPEICHER_PLATZ", str(ordner / "platz.json"))
 
 
 @pytest.fixture(autouse=True)
