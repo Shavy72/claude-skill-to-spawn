@@ -107,8 +107,10 @@ elif [ ! -f "$SKILL_HOME/to_spawn.py" ]; then
 else
   PRUEF_ARGS=(pruefen "$SPEC")
   if [ -n "$TICKETS_ARG" ]; then PRUEF_ARGS+=(--tickets "$TICKETS_ARG"); fi
-  # Probelauf und --nur-wache (startet kein Ticket-Fenster) legen kein Einrichtungs-Ticket an (#410).
-  if [ "$DRY_RUN" -eq 1 ] || [ "$NUR_WACHE" -eq 1 ]; then PRUEF_ARGS+=(--dry-run); fi
+  # Probelauf und --nur-wache (startet kein Ticket-Fenster) legen kein Einrichtungs-Ticket an (#410);
+  # --nur-wache ist kein Probelauf: Konfig-Einrichtung (config.sicherstellen) läuft.
+  if [ "$DRY_RUN" -eq 1 ]; then PRUEF_ARGS+=(--dry-run); fi
+  if [ "$NUR_WACHE" -eq 1 ]; then PRUEF_ARGS+=(--ohne-einrichtung); fi
   rc=0
   "$PY" "$SKILL_HOME/to_spawn.py" "${PRUEF_ARGS[@]}" || rc=$?
   if [ "$rc" -eq 3 ]; then

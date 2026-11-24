@@ -106,6 +106,11 @@ def _regularien_optionen(p: argparse.ArgumentParser) -> None:
     p.add_argument("--tickets", help="gewählte Tickets (Komma), jedes muss im Manifest stehen")
     p.add_argument("--dry-run", action="store_true", help="ohne Wirkung, nur Lesen")
     p.add_argument(
+        "--ohne-einrichtung",
+        action="store_true",
+        help="Teil-Start ohne Ticket-Fenster (--nur-wache): Einrichtungs-Ticket nur melden",
+    )
+    p.add_argument(
         "--ohne-github",
         action="store_true",
         help="GitHub-Teil auslassen (Kanten, Checkpoint, Belegung, Zustände)",
@@ -127,8 +132,10 @@ def _pruefen(ap: argparse.ArgumentParser, args: argparse.Namespace) -> int | Non
         )
         args.befehl, args.spec = "regularien", args.basis
         return None
-    if args.tickets or args.dry_run or args.ohne_github:
-        ap.error("--tickets/--dry-run/--ohne-github gelten nur für „regularien <S>“")
+    if args.tickets or args.dry_run or args.ohne_github or args.ohne_einrichtung:
+        ap.error(
+            "--tickets/--dry-run/--ohne-einrichtung/--ohne-github gelten nur für „regularien <S>“"
+        )
     repo = config.repo_wurzel(args.repo.expanduser() if args.repo else _repo_aus_umgebung())
     urteil = pruef.pruefen(repo, args.basis, args.ziel)
     print(pruef.protokoll.text(urteil.zeile))
@@ -982,14 +989,14 @@ def main(argv: list[str] | None = None) -> int:
     if args.befehl == "regularien":
         # Einrichtungs-Ticket (#410) vor der Prüfung: es soll in ihr schon mitzählen.
         # Große Lücke wie im Einrichter: nur gemeldet, hält nicht auf (Plan L1, Tür 1).
-        # Probelauf/--nur-wache (beide --dry-run) und --tickets: nur Hinweis, nichts angelegt.
+        # Probelauf (--dry-run), --tickets und --nur-wache (--ohne-einrichtung): nur Hinweis.
         einrichtung = einrichtungs_ticket.sicherstellen(
             repo,
             args.spec,
             konfig,
             mit_github=not args.ohne_github,
             trocken=args.dry_run,
-            auswahl=bool(_tickets(args.tickets)),
+            auswahl=bool(_tickets(args.tickets)) or args.ohne_einrichtung,
         )
         for zeile in einrichtung.zeilen:
             print(zeile)

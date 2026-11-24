@@ -82,8 +82,8 @@ def sicherstellen(
 ) -> Ergebnis:
     """Einrichtungs-Ticket der Spec sicherstellen, falls dem Repo etwas fehlt.
 
-    ``trocken`` = Probelauf/``--nur-wache``, ``auswahl`` = Start nur gewählter Tickets
-    (``--tickets``): dann nur Hinweis. ``ok`` falsch nur, wenn es angelegt bzw.
+    ``trocken`` = Probelauf, ``auswahl`` = Teil-Start (nur gewählte Tickets per
+    ``--tickets`` oder kein Ticket-Fenster per ``--nur-wache``): dann nur Hinweis. ``ok`` falsch nur, wenn es angelegt bzw.
     angehängt werden sollte und das scheiterte (letzte Zeile ``EINRICHTUNG FEHLT``).
     """
     fehlt = luecken(repo, konfig)
@@ -111,7 +111,7 @@ def sicherstellen(
     grund = (
         "[trocken]"
         if trocken
-        else "Ticket-Auswahl (--tickets)"
+        else "Teil-Start (--tickets/--nur-wache)"
         if auswahl
         else "ohne GitHub"
         if not slug
@@ -153,6 +153,14 @@ def sicherstellen(
             )
         titel = str(stand.get("title") or "") if isinstance(stand, dict) else ""
         zeilen = [f"{kopf} — Einrichtungs-Ticket #{vorhanden} steht"]
+        if not isinstance(stand, dict):
+            # Zuordnung zur Spec unbekannt: Unter-Issue entfällt, Kanten hängen trotzdem.
+            warnung = (
+                f"WARNUNG: Einrichtungs-Ticket #{vorhanden} nicht lesbar (gh api) — "
+                f"nicht als Unter-Issue an Spec #{s} gehängt; erneut aufrufen"
+            )
+            log.warning(warnung)
+            zeilen.append(warnung)
     # Unter-Issue nur bei der Spec, für die es angelegt wurde (eine Eltern-Spec je Issue).
     eigen = _titel_fuer(s) in titel
     # Manifest-Prüfung macht ``regularien`` danach einmal für alle (pruefen=False).
@@ -184,7 +192,9 @@ def _laeuft_schon(repo: Path, slug: str, daten: dict[str, Any]) -> str:
     """Grund, warum die Spec schon läuft (``#N hat Bau-Log`` / ``#N ist zu``); leer = nicht."""
     tickets = sorted(daten["tickets"], key=manifest.ticket_schluessel)
     for t in tickets:
-        if bau_log.hat_log(repo, t):
+        # Wo das Log liegt, weiß nur bau_log.log_ort (zuerst Worktree, dann Hauptbaum).
+        wt = Path(config.worktree_pfad(t, repo)).expanduser()
+        if bau_log.log_ort(t, wt, repo) is not None:
             return f"#{t} hat Bau-Log"
     for t in tickets:
         stand = gh.json_lauf(["api", f"repos/{slug}/issues/{t}"], cwd=repo)

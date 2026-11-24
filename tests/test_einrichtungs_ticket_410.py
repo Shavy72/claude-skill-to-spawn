@@ -206,7 +206,9 @@ def test_probelauf_legt_nie_ein_issue_an(tmp_path: Path) -> None:
 def test_starter_reichen_probelauf_und_nur_wache_als_dry_run_weiter() -> None:
     wurzel = e2.CLI.parent
     srv = (wurzel / "skripte" / "spawn_srv.sh").read_text(encoding="utf-8")
-    assert 'if [ "$DRY_RUN" -eq 1 ] || [ "$NUR_WACHE" -eq 1 ]; then PRUEF_ARGS+=(--dry-run); fi' in srv
+    # Fix-Runde 2: --nur-wache ist kein Probelauf mehr, sondern Teil-Start (Weg-Test unten).
+    assert 'if [ "$DRY_RUN" -eq 1 ]; then PRUEF_ARGS+=(--dry-run); fi' in srv
+    assert 'if [ "$NUR_WACHE" -eq 1 ]; then PRUEF_ARGS+=(--ohne-einrichtung); fi' in srv
     lokal = (wurzel / "spawn_local.ps1").read_text(encoding="utf-8")
     assert 'if ($DryRun) { $pruefArgs += "--dry-run" }' in lokal
 
