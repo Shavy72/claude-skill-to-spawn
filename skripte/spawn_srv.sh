@@ -13,6 +13,7 @@
 #   Läuft der Aufseher (``wache <S>``) schon, Exit 0 mit „wartet auf Platz“: er startet nach (#460).
 # Exit 7: Platte voll (Start-Check des Hausmeisters, #1369) — wie Exit 5.
 # Exit 6: Speicherprüfung kaputt oder Hauptzweig nicht ermittelbar — nichts weiter gestartet.
+# Exit 9: Session ``spec-<S>`` gehört einem anderen Repo (gleiche Spec-Nummer, #457) — nichts gestartet.
 # Eine tmux-Session je Spec (``spec-<S>``), darin ``wache <S>``, ``leitstand <S>`` und
 # je Ticket ein Fenster ``bau <N>``. Gewartet wird in bau.py (0 Token).
 # Kontrolle: ``sessions <S>`` · ``tmux attach -t spec-<S>`` (raus: Strg+B d).
@@ -74,6 +75,26 @@ MANIFESTE="$(TO_SPAWN_REPO="$REPO" "$PY" -c 'import sys; sys.path.insert(0, sys.
 MANIFEST="$MANIFESTE/spec-$SPEC.json"
 [ -f "$MANIFEST" ] || { echo "Manifest fehlt: $MANIFEST" >&2; exit 2; }
 command -v tmux >/dev/null || { echo "tmux ist nicht installiert." >&2; exit 2; }
+
+# --- Session je Repo (#457) --------------------------------------------------
+# Der Name ``spec-<S>`` enthält das Repo nicht; jedes frische Repo beginnt bei Spec #1. Gehört
+# eine vorhandene Session ``spec-<S>`` einem anderen Repo, legt dieser Start nichts hinein
+# (Exit 9). Besitzer = Arbeitsordner der Session (``-c`` beim Anlegen, hier und in capo.py),
+# Repo-Kennung = ``origin``-Adresse (ein anderer Klon desselben Repos ist dieselbe Spec), ohne
+# ``origin`` der echte Pfad.
+SESSION="spec-$SPEC"
+repo_kennung() {
+  local url
+  url="$(git -C "$1" remote get-url origin 2>/dev/null || true)"
+  if [ -n "$url" ]; then echo "${url%.git}"; else (cd "$1" 2>/dev/null && pwd -P) || echo "$1"; fi
+}
+if tmux has-session -t "=$SESSION" 2>/dev/null; then
+  SESSION_ORDNER="$(tmux display-message -p -t "=$SESSION:" '#{session_path}' 2>/dev/null || true)"
+  if [ -n "$SESSION_ORDNER" ] && [ "$(repo_kennung "$SESSION_ORDNER")" != "$(repo_kennung "$REPO")" ]; then
+    echo "WEIGERUNG (#457): tmux-Session $SESSION gehört einem anderen Repo ($(repo_kennung "$SESSION_ORDNER"), Ordner $SESSION_ORDNER), nicht $(repo_kennung "$REPO") — nichts gestartet. Erst die andere Spec #$SPEC beenden (Session $SESSION schließen), dann erneut." >&2
+    exit 9
+  fi
+fi
 
 # --- 1. Stand holen (nie rebase/stash im geteilten Baum) --------------------
 # Hauptzweig je Repo (master/main/…, #257): Konfig, origin/HEAD, main, master. Leer oder
@@ -145,7 +166,6 @@ aufseher_laeuft() {
   [ -n "$z" ] && [ "$z" != "aus" ]
 }
 
-SESSION="spec-$SPEC"
 # Fenster laufen im Repo und mit dem Skill dieses Aufrufs — nicht mit den Vorgaben aus
 # ~/.bashrc (``REPO``), sonst startet ``bau`` in einem anderen Repo (#212). Seit #257 rufen
 # die Fenster die Skill-Skripte direkt auf (``bau.py``/``wache.py``), nicht die Shell-
