@@ -50,6 +50,6 @@ def starte(klon: Path, spec: int, konfig: dict[str, Any]) -> tuple[int, list[str
         return 1, zeilen
     log.info("live_tuer: Spec %s live-Befehl grün", spec)
     if not capo.live_merken(klon, spec):  # Merker für den Takt (#546); Live selbst lief
-        zeilen.append("Live-Merker nicht gesetzt — Spec-Issue schließt der Takt dann nicht von selbst.")
+        zeilen.append("Live-Merker nicht schreibbar — Spec-Issue schließt der Takt dann nicht von selbst.")
     zeilen.append("Live-Befehl grün.")
     return 0, zeilen
