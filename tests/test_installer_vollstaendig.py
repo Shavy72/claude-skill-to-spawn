@@ -16,7 +16,16 @@ SKILL = Path(__file__).resolve().parent.parent
 # Mess-Skripte des Prüftor-Vergleichs #81, nur Linux, kein Laufzeit-Code des Skills).
 # ``conftest.py``: nur Testsammlung, #214 Teil A; Teil B entfernt die Datei wieder.
 # ``review`` (#329 P2): wird mitkopiert und von ``to_spawn/review_hook.py`` nach ~/.claude/review eingespielt.
-NICHT_INSTALLIERT = {".gitignore", ".gitattributes", ".review", "messung", "conftest.py"}
+# ``probe`` (#426 Teil F): Vorlagen für Probe-Läufe, angelegt per ``probe/anlegen.sh`` aus dem
+# Skill-Repo; kein Laufzeit-Code des Skills.
+NICHT_INSTALLIERT = {
+    ".gitignore",
+    ".gitattributes",
+    ".review",
+    "messung",
+    "conftest.py",
+    "probe",
+}
 
 
 def _wurzel_eintraege() -> set[str]:

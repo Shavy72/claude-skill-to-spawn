@@ -290,7 +290,9 @@ def _funde_in(quelle: str, rel: str) -> set[tuple[str, str]]:
 
 
 #: Werkzeug-Ordner überall ausgenommen; Tests nur im obersten ``tests/``.
-_AUSSER = {".git", ".review", ".ruff_cache", "__pycache__", ".venv", "node_modules"}
+# ``probe``: Vorlagen-App für Probe-Läufe (#426 Teil F), läuft im Lauf-Repo ohne Skill und kann
+# die Tür ``to_spawn.starter`` dort nicht importieren.
+_AUSSER = {".git", ".review", ".ruff_cache", "__pycache__", ".venv", "node_modules", "probe"}
 
 
 def _start_stellen(wurzel: Path = SKILL) -> set[tuple[str, str]]:
