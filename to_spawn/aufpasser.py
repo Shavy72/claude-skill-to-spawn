@@ -553,13 +553,35 @@ def frage_am_prompt(text: str) -> bool:
     Eine Bau-Session fragt nie (sie nimmt den Vorschlag); bleibt sie an so einer
     Frage stehen, wartet sie sonst bis ``hang_min`` auf den ersten Anstupser.
     """
-    zeilen = [z for z in ohne_statuszeile(text).splitlines() if z.strip()]
-    zeilen = [z for z in zeilen if not EINGABEFELD_LINIE.fullmatch(z) and not z.lstrip().startswith("❯")]
+    zeilen = _zeilen_am_prompt(text)
     if any(briefkasten.JA_BEFEHL in z for z in zeilen[-3:]):
         return False  # Live-Ja-Aufforderung (#531): Session wartet zu Recht auf den Menschen
     return any(FRAGE_JA_NEIN.search(z) for z in zeilen[-3:]) or (
         bool(zeilen) and zeilen[-1].rstrip().endswith("?")
     )
+
+
+#: „Wartet auf Nachfolger“ (#381): Session hält das Ticket für übergeben, obwohl keiner kommt.
+NACHFOLGER_WARTEN = re.compile(
+    r"\bwarte\w*\b[^.\n]{0,60}?\bauf\b[^.\n]{0,40}?"
+    r"(?:\b(?:neue|nächste)\w*\s+Session|Folge-?\s?session|Nachfolger)",
+    re.IGNORECASE,
+)
+
+
+def wartet_auf_nachfolger(text: str) -> bool:
+    """Sagt die Session am Prompt, sie warte auf eine neue Session/einen Nachfolger (#381)?
+
+    Nur der Wortlaut; ob eine echte Ablösung aussteht, weiß allein
+    :func:`eigener_handoff.aktuell` (siehe :meth:`Aufpasser.wartet_umsonst`).
+    """
+    return any(NACHFOLGER_WARTEN.search(z) for z in _zeilen_am_prompt(text)[-3:])
+
+
+def _zeilen_am_prompt(text: str) -> list[str]:
+    """Nicht-leere Text-Zeilen über dem Eingabefeld (ohne Rahmen, ``❯`` und Statuszeile)."""
+    zeilen = [z for z in ohne_statuszeile(text).splitlines() if z.strip()]
+    return [z for z in zeilen if not EINGABEFELD_LINIE.fullmatch(z) and not z.lstrip().startswith("❯")]
 
 
 #: Rahmenlinie des Claude-Code-Eingabefelds: Zeile nur aus ``─`` (mind. 20).
@@ -2111,7 +2133,7 @@ class Aufpasser:
         ):
             return
         # Kurze Schwelle nur fürs erste Anstupsen; Fortsetzen (Kill) bleibt bei hang_min ≥ 61.
-        kurz = int(e.get("stufe", 0)) == 0 and frage_am_prompt(text)
+        kurz = int(e.get("stufe", 0)) == 0 and (frage_am_prompt(text) or self.wartet_umsonst(text, ticket, repo))
         schwelle = FRAGE_PROMPT_MIN if kurz else self.e.hang_min
         if arbeitend or still_min < schwelle:
             return
@@ -2209,6 +2231,16 @@ class Aufpasser:
         e["stupser"].append(self.jetzt)
         e.update(hash=pane_hash(self.pane_text(f.ziel)), seit=self.jetzt)
         return True
+
+    def wartet_umsonst(self, text: str, ticket: int | None, repo: Path) -> bool:
+        """Session wartet laut Text auf einen Nachfolger, ohne eigenen Handoff im Repo (#381).
+
+        Liegt ein gültiger eigener Handoff (fällig oder nicht), ist die Ablösung echt und
+        :meth:`folge_ab_handoff` startet den Nachfolger — dann kein früher Anstupser.
+        """
+        if ticket is None or not wartet_auf_nachfolger(text):
+            return False
+        return eigener_handoff.aktuell(repo, ticket) is None
 
     def _frage_haelt(self, f: Fenster, ticket: int, repo: Path, daten: dict) -> bool:
         """Offene Frage des Tickets im Briefkasten hält das Fenster, auch bei Platznot (#416).
