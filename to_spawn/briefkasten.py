@@ -45,6 +45,7 @@ import os
 import re
 import secrets
 import shlex
+import sys
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -431,11 +432,38 @@ def ja(n: str | int, *, hauptbaum: Path | None = None) -> Path:
     :func:`nutzer_antworten`. Wer das darf, entscheidet der Aufrufer über :func:`menschen_nachweis`.
     """
     offen = offene([n], hauptbaum=hauptbaum)
+    if len(offen) > 1:
+        raise ValueError(_mehrere_fragen_text(n, offen))
     if len(offen) != 1:
         raise ValueError(f"Ticket {n}: {len(offen)} offene Fragen (nötig: genau 1) — `offene {n}` zeigt sie.")
     if not offen[0]["id"]:
         raise Verweigert(f"Ticket {n}: {offen[0]['frage']} — nur der Nutzer löst die Sperre.")
     return nutzer_antworten(n, offen[0]["id"], "ja", [], "Live-Ja des Nutzers (ja)", hauptbaum=hauptbaum)
+
+
+def _mehrere_fragen_text(n: str | int, offen: list[dict[str, str]]) -> str:
+    """Meldung, wenn ``ja`` nicht weiß, welche Frage gemeint ist (#539): je Frage Kennung, erste Zeile, Befehl.
+
+    Eine Zeile (die CLI meldet Fehler einzeilig); der Befehl ist fertig zum Kopieren ins Eingabefeld.
+    Fragen ohne Kennung (kaputte Datei) bekommen keinen Befehl — die löst nur der Nutzer an der Datei.
+    """
+    skript = (Path(__file__).resolve().parent.parent / "to_spawn.py").as_posix()
+    teile = []
+    for o in offen:
+        zeile = (o["frage"].strip().splitlines() or [""])[0]
+        if not o["id"]:
+            teile.append(f"gesperrt: {zeile}")
+            continue
+        # ponytail: POSIX-Quoting (shlex), unter Windows-cmd ggf. anders zu quoten
+        befehl = shlex.join(
+            [Path(sys.executable).as_posix(), skript, "nutzer-antwort", str(n), "--id", o["id"]]
+            + ["--wahl", "ja", "--grund", "Live-Ja des Nutzers"]
+        )
+        teile.append(f"Frage {o['id']} „{zeile}“: `! {befehl}`")
+    return (
+        f"Ticket {n}: {len(offen)} offene Fragen, `ja` weiß nicht, welche gemeint ist. "
+        f"Für die gemeinte Frage diesen Befehl kopieren und ins Eingabefeld setzen — " + " · ".join(teile)
+    )
 
 
 def _schreibe_antwort(
