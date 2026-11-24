@@ -349,23 +349,29 @@ class Wecker:
         """
         for t, ziel in sorted((aufseher_stand.bau_fenster(self.spec) or {}).items()):
             try:
-                bild = aufpasser.ohne_farben(self.werkzeug.bildschirm(ziel, farben=True) or "")
+                self._nachfolger_fenster(t, ziel)
             except (FensterWeg, TmuxFehler):
                 continue
-            if not aufpasser.wartet_auf_nachfolger(bild):
-                self._nachfolger_geweckt.discard(t)
-                continue
-            # ponytail: Zähler nur im Speicher (Neustart des Aufsehers setzt ihn zurück); danach greift die Aufpasser-Kette
-            if (
-                t in self._nachfolger_geweckt
-                or self._nachfolger_stupser.get(t, 0) >= aufpasser.STUPSER_MAX
-                or aufpasser.arbeitet(bild)
-                or not aufpasser.wartet_umsonst(bild, t, self.repo)
-            ):
-                continue
-            if self._tippe(ziel, aufpasser.ANSTUPS_TEXT.format(min=int(RUHE_S // 60))):
-                self._nachfolger_geweckt.add(t)
-                self._nachfolger_stupser[t] = self._nachfolger_stupser.get(t, 0) + 1
+            except Exception as fehler:  # noqa: BLE001 — ein kaputtes Fenster darf die übrigen nicht aufhalten
+                self._melde(f"Briefkasten-Wecker Spec #{self.spec}: Nachfolger #{t}: {fehler!r}")
+
+    def _nachfolger_fenster(self, t: int, ziel: str) -> None:
+        """Ein Fenster von :meth:`_nachfolger_blick`; Fehler fängt der Aufrufer je Fenster."""
+        bild = aufpasser.ohne_farben(self.werkzeug.bildschirm(ziel, farben=True) or "")
+        if not aufpasser.wartet_auf_nachfolger(bild):
+            self._nachfolger_geweckt.discard(t)
+            return
+        # ponytail: Zähler nur im Speicher (Neustart des Aufsehers setzt ihn zurück); danach greift die Aufpasser-Kette
+        if (
+            t in self._nachfolger_geweckt
+            or self._nachfolger_stupser.get(t, 0) >= aufpasser.STUPSER_MAX
+            or aufpasser.arbeitet(bild)
+            or not aufpasser.wartet_umsonst(bild, t, self.repo)
+        ):
+            return
+        if self._tippe(ziel, aufpasser.ANSTUPS_TEXT.format(min=int(RUHE_S // 60))):
+            self._nachfolger_geweckt.add(t)
+            self._nachfolger_stupser[t] = self._nachfolger_stupser.get(t, 0) + 1
 
     def _abnahme_tickets(self) -> set[str] | None:
         """Tickets der Spec mit Checkpoint-Label (einmal gelesen); ``None`` = GitHub nicht lesbar."""

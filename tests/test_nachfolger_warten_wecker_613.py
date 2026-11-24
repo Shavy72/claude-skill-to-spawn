@@ -77,3 +77,49 @@ def test_echter_eigener_handoff_kein_anstoss(welt: dict[str, Any], monkeypatch: 
     _wecker(welt).einmal()
     assert gesehen == [TICKET]
     assert _getippt(welt) == []
+
+
+# --- Fix-Runde 1: Fehler je Fenster, STUPSER_MAX, Merker ---------------------------
+
+WARTET = "Ich warte auf die Folgesession für den Klickweg."
+
+
+def test_fehler_bei_einem_fenster_die_anderen_werden_geprueft(
+    welt: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    zweites = TICKET + 1
+    (welt["tmux"] / "fenster.txt").write_text(
+        f"@1\twache {SPEC}\t0\n@2\tbau {TICKET}\t0\n@3\tbau {zweites}\t0\n", encoding="utf-8"
+    )
+
+    def aktuell(repo: Path, ticket: int) -> None:
+        if ticket == TICKET:
+            raise OSError("git kaputt")
+
+    monkeypatch.setattr(eigener_handoff, "aktuell", aktuell)
+    _bild(welt, _sagt(WARTET))
+    _wecker(welt).einmal()
+    assert [g["ziel"] for g in _getippt(welt)] == [f"=spec-{SPEC}:@3"]
+
+
+def test_hoechstens_stupser_max_anstoesse_je_ticket(welt: dict[str, Any]) -> None:
+    w = _wecker(welt)
+    for _ in range(aufpasser.STUPSER_MAX + 3):
+        _bild(welt, _sagt(WARTET))
+        w.einmal()
+        _bild(welt, _sagt("Klickweg läuft, Beleg wird geschrieben."))
+        w.einmal()
+    assert len(_getippt(welt)) == aufpasser.STUPSER_MAX
+
+
+def test_merker_faellt_wenn_fenster_nicht_mehr_wartet(welt: dict[str, Any]) -> None:
+    w = _wecker(welt)
+    _bild(welt, _sagt(WARTET))
+    w.einmal()
+    w.einmal()
+    assert len(_getippt(welt)) == 1
+    _bild(welt, _sagt("Klickweg läuft, Beleg wird geschrieben."))
+    w.einmal()
+    _bild(welt, _sagt(WARTET))
+    w.einmal()  # neues Stehen: wieder ein Anstoß
+    assert len(_getippt(welt)) == 2
