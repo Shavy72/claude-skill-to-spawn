@@ -53,7 +53,8 @@ elif args[:2] == ["pr", "merge"]:
         sperre.parent.mkdir(parents=True, exist_ok=True)
         sperre.write_text("", encoding="utf-8")
 elif args[:2] == ["pr", "view"]:
-    print("MERGED" if log.with_suffix(".merged").exists() else "OPEN")
+    offen = os.environ.get("EINREICHEN_PR_OFFEN")  # #476: Merge kam bei GitHub nicht an
+    print("MERGED" if log.with_suffix(".merged").exists() and not offen else "OPEN")
 else:
     sys.exit(9)
 """
@@ -344,7 +345,7 @@ def test_sperre_beim_fetch_wird_kurz_wiederholt(welt: dict[str, Path], monkeypat
         return echt(befehl, *a, **k)
 
     monkeypatch.setattr(einreichen.subprocess, "run", lauf)
-    monkeypatch.setattr(einreichen, "SPERRE_PAUSE_S", 0.0, raising=False)
+    monkeypatch.setattr(einreichen, "SPERRE_PAUSE_S", 0.0)
     erg = einreichen.einreichen(wt, "7")
     assert erg.exit == 0, erg.text
     assert fehlschlaege["fetch"] == 1
@@ -369,3 +370,55 @@ def test_aufseher_heilt_verpasstes_nachziehen_beim_naechsten_einreichen(
     assert _ist_vorfahr(welt["remote"], sha, _remote_main(welt))
     _git(klon, "fetch", "-q", "origin")
     assert _git(klon, "rev-parse", "main") == _git(klon, "rev-parse", "origin/main") == _remote_main(welt)
+
+
+def test_sperre_nach_merge_aber_pull_request_offen_bleibt_rot(
+    welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Sperre beim Nachziehen und Pull-Request NICHT gemergt → kein falsches EINGEREICHT (#476)."""
+    monkeypatch.setenv("EINREICHEN_SPERRE_NACH_MERGE", "1")
+    monkeypatch.setenv("EINREICHEN_PR_OFFEN", "1")
+    wt = _ticket_wt(welt)
+    _commit(wt, "README.md", "x\n", "docs: x (#7)")
+    erg = _einreichen(wt, "7")
+    assert erg.returncode == 1, erg.stdout + erg.stderr
+    assert erg.stdout.startswith("NICHT EINGEREICHT"), erg.stdout
+    assert ["pr", "view", "41", "--json", "state", "--jq", ".state"] in _gh_aufrufe(welt)
+
+
+def _git_mit_fehler(monkeypatch: pytest.MonkeyPatch, stderr: str) -> list[list[str]]:
+    from to_spawn import einreichen  # noqa: PLC0415
+
+    aufrufe: list[list[str]] = []
+
+    def lauf(befehl: list[str], *_a: object, **_k: object) -> subprocess.CompletedProcess[str]:
+        aufrufe.append(befehl)
+        return subprocess.CompletedProcess(befehl, 1, "", stderr)
+
+    monkeypatch.setattr(einreichen.subprocess, "run", lauf)
+    monkeypatch.setattr(einreichen, "SPERRE_PAUSE_S", 0.0)
+    return aufrufe
+
+
+def test_anhaltende_sperre_kommt_nach_allen_versuchen_unveraendert_durch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from to_spawn import einreichen  # noqa: PLC0415
+
+    sperre = "error: cannot lock ref 'refs/remotes/origin/main': File exists."
+    aufrufe = _git_mit_fehler(monkeypatch, sperre)
+    with pytest.raises(einreichen._Rot) as rot:
+        einreichen._git(tmp_path, "fetch", "origin", "main")
+    assert len(aufrufe) == einreichen.SPERRE_VERSUCHE
+    assert rot.value.code == einreichen.ROT
+    assert sperre in rot.value.text
+
+
+def test_fehler_ohne_sperre_wird_nicht_wiederholt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from to_spawn import einreichen  # noqa: PLC0415
+
+    aufrufe = _git_mit_fehler(monkeypatch, "fatal: couldn't find remote ref main")
+    with pytest.raises(einreichen._Rot) as rot:
+        einreichen._git(tmp_path, "fetch", "origin", "main")
+    assert len(aufrufe) == 1
+    assert "couldn't find remote ref" in rot.value.text

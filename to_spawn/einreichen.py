@@ -21,6 +21,8 @@ erhalten, darum zieht der Hauptzweig vom Aufseher danach per Fast-Forward nach
 Laufen mehrere Tickets im selben Klon (#476), hält oft ein anderes gerade die Ref-Sperre auf
 ``origin/<hauptzweig>``: ``_git`` wiederholt dann kurz. Scheitert nur das Nachziehen nach dem
 Merge, zählt der echte Pull-Request-Stand auf GitHub — nie ein falsches „nicht eingereicht“.
+Das verpasste Nachziehen holt das nächste Einreichen vom Hauptzweig nach: fehlen dem Hauptzweig
+lokal nur Merge-Commits (keine fremden Commits), führt es ``origin/<hauptzweig>`` zuerst ein.
 
 Exit-Codes: 0 angekommen bzw. übergeben · 1 rot (Grund in der Meldung, nichts gemergt) ·
 5 Aufruf falsch (falscher Zweig/Ordner).
@@ -206,6 +208,10 @@ def _einreichen(ordner: Path, nummer: str) -> Ergebnis:
     sha = _git(ordner, "rev-parse", "HEAD")
     if _ist_vorfahr(ordner, sha, basis):
         return Ergebnis(OK, f"nichts einzureichen: {sha[:7]} ist schon auf {basis}")
+    if vom_haupt and not _ist_vorfahr(ordner, basis, sha) and not _git(ordner, "rev-list", "--no-merges", f"{sha}..{basis}"):
+        # #476: nur Merge-Commits eigener, schon gemergter Einreichungen fehlen (Nachziehen verpasst)
+        _git(ordner, "merge", "--no-edit", "--quiet", basis)
+        sha = _git(ordner, "rev-parse", "HEAD")
     if not _ist_vorfahr(ordner, basis, sha):
         raise _Rot(ROT, f"{basis} ist weiter: erst {basis} einarbeiten, dann erneut einreichen")
     gesperrt = uebergabe_sichern.gesperrte_pfade(ordner, "HEAD", "--not", "--remotes=origin")
