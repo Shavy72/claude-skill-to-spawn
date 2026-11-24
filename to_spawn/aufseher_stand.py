@@ -32,6 +32,8 @@ Quellen:
 - Phase: Typ der jüngsten Bau-Log-Zeile mit bekanntem Typ (:data:`PHASEN`);
   ``deploy_phase`` zeigt zusätzlich ``phase``/``status`` der Zeile.
 - Letzte Aussage: Feld ``text`` der jüngsten Bau-Log-Zeile, die eins hat.
+- Abgelehnte Komplett-Prüfungen (#496): Zahl aus :func:`komplett_lauf.ablehnungen`; nur ab 1
+  hängt ``<k>× Komplett abgelehnt`` an die Kurz-Zeile.
 
 Fehlt eine Quelle für ein Ticket, steht ``—`` und es gibt eine Warnung; fehlt gh
 ganz oder liefert die Sub-Issue-Liste nichts (Fehler oder leer), bricht :func:`lauf`
@@ -67,6 +69,7 @@ from to_spawn import (
     capo,
     config,
     gh,
+    komplett_lauf,
     pc_fenster,
     ticket_zustand,
     verlauf_pruefung,
@@ -192,6 +195,7 @@ class TicketLage:
     phase: str = STRICH
     aussage: str = STRICH
     neue_kommentare: int | None = None
+    abgelehnt: int = 0  # #496: Komplett-Prüfungen, die die Bau-Ticket-Sperre abgelehnt hat
 
     @property
     def endgueltig_zu(self) -> bool:
@@ -220,6 +224,8 @@ def kurz_zeile(lage: TicketLage) -> str:
         aussage,
         f"{kommentare} neue Kommentare",
     ]
+    if lage.abgelehnt:
+        teile.append(f"{lage.abgelehnt}× Komplett abgelehnt")
     return _kuerzen(" · ".join(teile), ZEILE_MAX)
 
 
@@ -351,8 +357,8 @@ def _fenster_lage(
     return STILL, minuten, merker
 
 
-def _log_lage(n: int, repo: Path) -> tuple[str, str, str] | None:
-    """(Kontext, Phase, letzte Aussage) aus dem Bau-Log; ``—`` je fehlendem Teil.
+def _log_lage(n: int, repo: Path) -> tuple[str, str, str, int] | None:
+    """(Kontext, Phase, letzte Aussage, Komplett-Ablehnungen) aus dem Bau-Log; ``—`` je fehlendem Teil.
 
     ``None`` = kein Bau-Log (Ticket noch nicht gestartet) — der Aufrufer warnt gesammelt.
     """
@@ -364,7 +370,7 @@ def _log_lage(n: int, repo: Path) -> tuple[str, str, str] | None:
         spitze_k = bau_log.zusammenfassung(ort, n, hauptbaum=repo)["spitze_k"]
     except (OSError, ValueError, KeyError) as fehler:
         log.warning("Bau-Log #%s unlesbar: %s", n, fehler)
-        return STRICH, STRICH, STRICH
+        return STRICH, STRICH, STRICH, 0
     kontext = bau_log.kontext_text(spitze_k)
     phase = STRICH
     for z in reversed(zeilen):
@@ -379,7 +385,7 @@ def _log_lage(n: int, repo: Path) -> tuple[str, str, str] | None:
         (str(z["text"]) for z in reversed(zeilen) if str(z.get("text") or "").strip()),
         STRICH,
     )
-    return kontext, phase, aussage
+    return kontext, phase, aussage, komplett_lauf.ablehnungen(zeilen)
 
 
 def _stufe(kind: dict[str, Any]) -> ticket_zustand.Stufe | None:
@@ -440,9 +446,11 @@ def sammeln(spec: int, q: Quellen, vorher: _Vorher) -> _Ergebnis:
         log_lage = _log_lage(n, q.repo)
         if log_lage is None:
             ohne_log.append(f"#{n}")
-            log_lage = (STRICH, STRICH, STRICH)
-        kontext, phase, aussage = log_lage
-        lagen.append(TicketLage(n, _stufe(kind), zustand, still_min, kontext, phase, aussage, neue))
+            log_lage = (STRICH, STRICH, STRICH, 0)
+        kontext, phase, aussage, abgelehnt = log_lage
+        lagen.append(
+            TicketLage(n, _stufe(kind), zustand, still_min, kontext, phase, aussage, neue, abgelehnt)
+        )
     if ohne_log:
         # Eine Zeile statt einer je Ticket: der Aufseher liest die Ausgabe in seinen Kontext.
         log.warning("Kein Bau-Log (Kontext/Phase/Aussage „—“): %s", ", ".join(ohne_log))
