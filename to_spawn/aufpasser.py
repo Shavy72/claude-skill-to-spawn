@@ -98,9 +98,11 @@ from to_spawn import (
     anleitung,
     bau_log,
     briefkasten,
+    capo,
     config,
     eigener_handoff,
     gh,
+    manifest,
     prozessbaum,
     sessions_datei,
     speicher,
@@ -602,7 +604,7 @@ def steht_umsonst(text: str, ticket: int | None, repo: Path) -> bool:
     if wartet_umsonst(text, ticket, repo):
         return True
     if not frage_am_prompt(text):
-        return False
+        return gemergt_und_offen(text, ticket, repo)
     if ticket is None:
         return True
     try:
@@ -610,6 +612,33 @@ def steht_umsonst(text: str, ticket: int | None, repo: Path) -> bool:
     except (OSError, ValueError, RuntimeError) as fehler:
         log.warning("#%s: Briefkasten nicht lesbar (%s) — Frage am Prompt gilt als gewollt", ticket, fehler)
         return False
+
+
+def gemergt_und_offen(text: str, ticket: int | None, repo: Path) -> bool:
+    """Still am Prompt, Commit ``(#N)`` liegt auf ``origin/<Hauptzweig>``, Ticket noch offen (#459).
+
+    Die Session hat ihre Arbeit abgegeben und schließt nicht ab — kein Mensch muss etwas tun.
+    Nie anstoßen bei Live-Ja-Aufforderung, Abnahme-Ticket (``checkpoint:human``), offener
+    Briefkasten-Frage; Ticket-Stand unlesbar ⇒ fail-closed. Billige Prüfungen (Bildschirm, Briefkasten-Datei) vor der
+    git-Suche, GitHub zuletzt.
+    """
+    if ticket is None or arbeitet(text):
+        return False
+    if any(briefkasten.JA_BEFEHL in z for z in _zeilen_am_prompt(text)[-3:]):
+        return False
+    try:
+        if briefkasten.offene([ticket], hauptbaum=repo):
+            return False
+    except (OSError, ValueError, RuntimeError) as fehler:
+        log.warning("#%s: Briefkasten nicht lesbar (%s) — kein Anstoß", ticket, fehler)
+        return False
+    betreffe = gh.commit_betreffe(repo, ticket, f"origin/{gh.hauptzweig(repo)}")
+    if not any(capo.betreff_hat_nummer(b, ticket) for b in betreffe or ()):
+        return False
+    daten = ticket_zustand.lesen(ticket, repo)  # GitHub zuletzt
+    if daten is None or ticket_zustand.stufe(daten) != "offen":
+        return False
+    return manifest.checkpoint_label(config.lade(repo)) not in ticket_zustand.label_namen(daten)
 
 
 def _zeilen_am_prompt(text: str) -> list[str]:
