@@ -15,6 +15,7 @@ steht sie in der Protokoll-Zeile (``art``) und die Dauer im Log.
 from __future__ import annotations
 
 import logging
+import os
 import subprocess
 import time
 from dataclasses import dataclass
@@ -116,7 +117,8 @@ def pruefen(repo: Path, basis: str, ziel: str, art: pruefplan.Art | None = None,
         # kein Lauf, keine Protokoll-Zeile. Import hier, weil komplett_lauf selbst pruef importiert.
         from to_spawn import komplett_lauf
 
-        abgelehnt = komplett_lauf.bau_ticket_ablehnung(None, "pruef.pruefen")
+        spec = os.environ.get("TO_SPAWN_SPEC", "").strip()  # setzt bau.py; sonst unbekannt
+        abgelehnt = komplett_lauf.bau_ticket_ablehnung(int(spec) if spec.isdigit() else None, "pruef.pruefen")
         if abgelehnt is not None:
             zeile = protokoll.zeile(
                 basis=basis,

@@ -10,13 +10,14 @@ Echt ohne Attrappen: App-Repo mit eigenem Komplett-Skript, beide Skill-Wege (PrÃ
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
 import pytest
 
 from tests.test_komplett_sperre_eigenes_skript_496 import _app_repo, _laeufe
-from to_spawn import aufseher_stand, config, komplett_lauf, pruef
+from to_spawn import aufseher_stand, bau_log, config, komplett_lauf, pruef
 from to_spawn.pruefplan import Moment
 
 SPEC = 496
@@ -66,3 +67,23 @@ def test_ablehnung_ohne_bau_log_ziel_schreibt_nichts_ins_skill_repo(
     assert komplett_lauf.bau_ticket_ablehnung(SPEC, "test")
     assert komplett_lauf.ablehnungen([]) == 0
     assert not (tmp_path / ".to-spawn").exists()
+
+
+def test_pruef_tuer_nennt_die_spec_aus_der_umgebung(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    repo = _app_repo(tmp_path, tmp_path / "zaehl.txt")
+    monkeypatch.setenv("BAU_WT_DIR", str(tmp_path / "wt"))
+    monkeypatch.setenv("TO_SPAWN_TICKET", str(TICKET))
+    monkeypatch.setenv("TO_SPAWN_LOG_REPO", str(repo))
+    monkeypatch.setenv("TO_SPAWN_SPEC", str(SPEC))
+    urteil = pruef.pruefen(repo, "base", "HEAD", art="komplett")
+    meldung = urteil.zeile["fehler_kurz"]
+    assert f"komplett {SPEC} --moment vor-live" in meldung and "<S>" not in meldung, meldung
+    zeilen = [json.loads(z) for p in repo.rglob("*.jsonl") for z in p.read_text(encoding="utf-8").splitlines()]
+    abgelehnt = [z for z in zeilen if z.get("typ") == bau_log.KOMPLETT_ABGELEHNT]
+    assert abgelehnt and abgelehnt[0].get("spec") == SPEC, zeilen
+
+
+def test_ablehnungs_typ_hat_eine_definition() -> None:
+    assert komplett_lauf.bau_log.KOMPLETT_ABGELEHNT is bau_log.KOMPLETT_ABGELEHNT
+    assert bau_log.KOMPLETT_ABGELEHNT in bau_log.TYPEN
+    assert not hasattr(komplett_lauf, "ABLEHNUNG_TYP")

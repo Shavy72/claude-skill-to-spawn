@@ -153,10 +153,6 @@ def bau_ticket_ablehnung(spec: int | None, weg: str) -> str | None:
     )
 
 
-#: Bau-Log-Typ einer Ablehnung (#496); Format nur hier, Lesen nur über :func:`ablehnungen`.
-ABLEHNUNG_TYP = "komplett_abgelehnt"
-
-
 def _ablehnung_ablegen(spec: int | None, weg: str) -> None:
     """Ablehnung als Zeile in die Bau-Log-Laufdatei des Tickets, die der Aufseher-Stand liest.
 
@@ -172,14 +168,14 @@ def _ablehnung_ablegen(spec: int | None, weg: str) -> None:
     if repo is None:
         return
     try:
-        bau_log.schreibe(repo, ticket, ABLEHNUNG_TYP, spec=spec, weg=weg)
+        bau_log.schreibe(repo, ticket, bau_log.KOMPLETT_ABGELEHNT, spec=spec, weg=weg)
     except OSError as fehler:
         log.warning("komplett_lauf: Ablehnung nicht ins Bau-Log #%s: %s", ticket, fehler)
 
 
 def ablehnungen(zeilen: list[dict[str, Any]]) -> int:
     """Wie oft die Komplett-Sperre in diesen Bau-Log-Zeilen eines Tickets abgelehnt hat (#496)."""
-    return sum(1 for z in zeilen if z.get("typ") == ABLEHNUNG_TYP)
+    return sum(1 for z in zeilen if z.get("typ") == bau_log.KOMPLETT_ABGELEHNT)
 
 
 def _datei(klon: Path, spec: int) -> Path:
