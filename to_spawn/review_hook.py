@@ -13,7 +13,8 @@ Skill-Ordner) alle außer den in ``<quelle>/.gitignore`` genannten. Darum geben 
 
 Beim Werkzeug kommt vorher (:func:`installiere_werkzeug`): Zeilen, die nur in lokal geänderten
 Auftrags-Vorlagen stehen (bisher fest eingebaute Projektregeln), wandern in die private ``regeln.md``
-(VERTRAG.md §2a); danach verliert eine lokale ``config.json``, was nur einen ausgelieferten Stand wiederholt.
+(VERTRAG.md §2a), bisher ausgelieferte ``projekt_woerter`` in die private ``config.json`` (#395); danach
+verliert eine lokale ``config.json``, was nur einen ausgelieferten Stand wiederholt.
 
 Türen: :func:`installiere`, :func:`installiere_werkzeug`.
 Aufruf: ``python -m to_spawn.review_hook [--ziel <ordner>] [--klon <skill-klon>]``.
@@ -47,6 +48,8 @@ REGELN_DATEI = "regeln.md"
 _FALLS_REPO = re.compile(r"(?i)^[\s>*-]*Falls Repo\s+`?([^:`]+?)`?\s*:")
 CONFIG_LOKAL = "config.json"
 CONFIG_STANDARD = "config.standard.json"
+#: Config-Schlüssel, die privat je Rechner sind (#395): die Entschlackung lässt sie immer stehen.
+_PRIVAT = ("projekt_woerter",)
 _NIE = {"__pycache__", ".pytest_cache", ".git"}
 
 
@@ -154,11 +157,12 @@ def installiere(ziel: Path, quelle: Path = QUELL_ORDNER, zeit: str | None = None
 
 
 def installiere_werkzeug(ziel: Path, quelle: Path = WERKZEUG_QUELLE, zeit: str | None = None) -> list[str]:
-    """Wie :func:`installiere`, vorher Projektregeln übernehmen, danach lokale Config entschlacken.
+    """Wie :func:`installiere`, vorher Projektregeln und -wörter übernehmen, danach lokale Config entschlacken.
 
     Entschlackt wird erst nach dem Einspielen: bricht es ab, bleibt die lokale Config unberührt.
     """
-    bericht = regeln_uebernehmen(ziel, quelle) + installiere(ziel, quelle, zeit)
+    bericht = regeln_uebernehmen(ziel, quelle) + woerter_uebernehmen(ziel, quelle)
+    bericht += installiere(ziel, quelle, zeit)
     return bericht + config_entschlacken(ziel, quelle, zeit)
 
 
@@ -238,6 +242,40 @@ def regeln_uebernehmen(ziel: Path, quelle: Path) -> list[str]:
     return [f"Projektregeln übernommen: {anzahl} Zeile(n) aus lokal geänderten Vorlagen → {regeln}"]
 
 
+def woerter_uebernehmen(ziel: Path, quelle: Path) -> list[str]:
+    """Bisher ausgelieferte ``projekt_woerter`` kommen in die private ``ziel/config.json`` (#395), bevor
+    :func:`installiere` den alten Standard ersetzt und :func:`config_entschlacken` aufräumt.
+
+    Gelesen wird nur der auf dem Rechner installierte alte Stand (``ziel/config.standard.json``, sonst die jüngste
+    Sicherung ``../_alt/<zielname>-*/config.standard.json``), nie das Repo: dort stehen die Wörter nicht mehr.
+    Setzt die lokale Config den Schlüssel schon (auch leer), bleibt alles unberührt; ein zweiter Lauf ändert nichts.
+
+    ponytail: wer den Schlüssel lokal löscht, bekommt ihn aus einer ``_alt``-Sicherung zurück; dann sie mit löschen.
+    """
+    schluessel = _PRIVAT[0]
+    lokal_pfad = ziel / CONFIG_LOKAL
+    if lokal_pfad.is_symlink():
+        return []
+    try:
+        lokal = json.loads(lokal_pfad.read_text(encoding="utf-8")) if lokal_pfad.is_file() else {}
+        neu = json.loads((quelle / CONFIG_STANDARD).read_text(encoding="utf-8")).get(schluessel)
+    except (OSError, ValueError, AttributeError):
+        return []  # Unlesbares meldet config_entschlacken; ohne Standard gibt es nichts zu vergleichen.
+    if not isinstance(lokal, dict) or schluessel in lokal:
+        return []
+    sicherungen = sorted(ziel.parent.glob(f"_alt/{ziel.name}-*/{CONFIG_STANDARD}"), reverse=True)
+    for alt in (ziel / CONFIG_STANDARD, *sicherungen):
+        try:
+            woerter = json.loads(alt.read_text(encoding="utf-8")).get(schluessel)
+        except (OSError, ValueError, AttributeError):
+            continue  # fehlt oder kaputt: nächste Sicherung
+        if woerter and isinstance(woerter, dict) and woerter != neu:
+            lokal[schluessel] = woerter
+            _schreibe_atomar(lokal_pfad, (json.dumps(lokal, indent=2, ensure_ascii=False) + "\n").encode("utf-8"))
+            return [f"Projektwörter übernommen: {sorted(woerter)} aus {alt} → {lokal_pfad}"]
+    return []
+
+
 def _ausgelieferte_texte(quelle: Path, aktuell: str, *frueher: str) -> list[str]:
     """Alle je ausgelieferten Fassungen: ``quelle/aktuell`` plus der git-Verlauf von ``aktuell`` und ``frueher``."""
     namen = (aktuell, *frueher)
@@ -262,7 +300,8 @@ def config_entschlacken(ziel: Path, quelle: Path, zeit: str | None = None) -> li
     """Lokale ``config.json`` verdeckt sonst künftige Standard-Änderungen still (Mischung oberste Ebene).
 
     Gleicht sie einem ausgelieferten Stand → nach ``_alt/``. Sonst fallen Schlüssel weg, deren Wert dem
-    aktuellen Standard gleicht; echte Abweichungen bleiben. Das Original liegt immer vorher in ``_alt/``.
+    aktuellen Standard gleicht; echte Abweichungen bleiben. Private Schlüssel (``_PRIVAT``, #395) bleiben
+    immer, auch wenn die Config sonst einem ausgelieferten Stand gleicht. Das Original liegt immer vorher in ``_alt/``.
     """
     lokal_pfad = ziel / CONFIG_LOKAL
     if lokal_pfad.is_symlink() or not lokal_pfad.is_file() or not (quelle / CONFIG_STANDARD).is_file():
@@ -274,13 +313,16 @@ def config_entschlacken(ziel: Path, quelle: Path, zeit: str | None = None) -> li
     stande = _ausgelieferte_configs(quelle)
     if not isinstance(lokal, dict) or not stande or not isinstance(stande[0], dict):
         return []
-    rest = {k: v for k, v in lokal.items() if k not in stande[0] or stande[0][k] != v}
-    if rest == lokal and lokal not in stande:
+    privat = {k: v for k, v in lokal.items() if k in _PRIVAT}
+    rest = {k: v for k, v in lokal.items() if k in privat or k not in stande[0] or stande[0][k] != v}
+    if lokal in stande:
+        rest = privat
+    if rest == lokal:
         return []
     sicherung = _sicherungs_ordner(ziel, zeit)
     sicherung.mkdir(parents=True)
     shutil.copy2(lokal_pfad, sicherung / CONFIG_LOKAL)
-    if lokal in stande or not rest:
+    if not rest:
         lokal_pfad.unlink()
         return [f"lokale Config glich ausgeliefertem Stand, entfernt: {CONFIG_LOKAL} → {sicherung / CONFIG_LOKAL}"]
     _schreibe_atomar(lokal_pfad, (json.dumps(rest, indent=2, ensure_ascii=False) + "\n").encode("utf-8"))
