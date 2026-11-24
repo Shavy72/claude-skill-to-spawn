@@ -47,7 +47,7 @@ def test_kommentar_feuert_nicht(tmp_path: Path) -> None:
 
 
 def test_echter_aufruf_ist_datenbank(tmp_path: Path) -> None:
-    assert "datenbank" in treffer("app.py", ["account_db.set_status(x)"], tmp_path)
+    assert "datenbank" in treffer("app.py", ["kunden_db.set_status(x)"], tmp_path)
 
 
 def test_env_literal_greift_weiter_auf_rohzeile(tmp_path: Path) -> None:

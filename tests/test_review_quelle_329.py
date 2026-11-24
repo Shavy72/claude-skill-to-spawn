@@ -9,6 +9,7 @@ Die Muster für (c) stammen aus den bestehenden Namens-Prüfungen (#323, L1).
 
 from __future__ import annotations
 
+import json
 import re
 import subprocess
 from collections.abc import Iterable
@@ -55,8 +56,9 @@ GEHEIMNIS = re.compile(
 )
 #: Begriffe aus App-Projekten (Plattform-Abläufe, Modul-Namen) — gehören in die private ``~/.claude/review/regeln.md`` (VERTRAG.md §2a).
 #: ``reels?``/``follows?`` fielen weg (#329 P2): normales Englisch („follows the rule“).
+#: Modul-/Dienstnamen des Routers prüft ``test_oeffentlich_ohne_projektwoerter`` aus der privaten Config (#395).
 PROJEKT_BEGRIFF = re.compile(
-    r"\b(rpa|instagram|postproxy|phone_power|account_db|duoplus)\b",
+    r"\b(rpa|instagram|duoplus)\b",
     re.IGNORECASE,
 )
 #: Mail-Adressen; reservierte Beispiel-Domains (RFC 2606) und ``\n@`` in Strings bleiben erlaubt.
@@ -127,16 +129,24 @@ NAMENS_PRUEFUNG = {
     "firmen-oder-personenname": FREMDNAME,
 }
 #: Ausnahmen je Zeile (#329 P2): (Datei, Begriff) → Textstück, das in derselben Zeile stehen muss.
-#: Projekt-Wörter des Routers leben nur in ``config.standard.json`` → ``projekt_woerter``.
-AUSNAHMEN = {
-    ("review/config.standard.json", "account_db"): '"projekt_woerter":',
-    ("review/config.standard.json", "postproxy"): '"projekt_woerter":',
-    ("review/config.standard.json", "phone_power"): '"projekt_woerter":',
-    (
-        "review/tests/test_router_runde2.py",
-        "account_db",
-    ): '["account_db.set_status(x)"]',
-}
+#: Projekt-Wörter des Routers leben seit #395 nur in der privaten ``~/.claude/review/config.json``.
+AUSNAHMEN: dict[tuple[str, str], str] = {}
+
+
+def lade_projektwoerter(*pfade: Path) -> frozenset[str]:
+    """``projekt_woerter`` aus privater Config und installiertem (altem) Standard; Fehlendes zählt leer."""
+    woerter: set[str] = set()
+    for pfad in pfade:
+        try:
+            je_signal = json.loads(pfad.read_text(encoding="utf-8")).get("projekt_woerter") or {}
+        except (OSError, ValueError, AttributeError):
+            continue
+        woerter |= {w.lower() for liste in je_signal.values() if isinstance(liste, list) for w in liste}
+    return frozenset(woerter)
+
+
+#: Wörter, die früher ausgeliefert wurden, liegen nur noch auf dem Rechner (#395); ohne sie springt der Test über.
+PROJEKTWOERTER = lade_projektwoerter(NAMEN_DATEI.with_name("config.json"), NAMEN_DATEI.with_name("config.standard.json"))
 
 
 def _verboten(datei: str, art: str, muster: re.Pattern[str] | _Namenmuster, zeile: str) -> bool:
@@ -203,6 +213,19 @@ def test_oeffentlich_ohne_namen() -> None:
     assert funde == [], f"Name aus der privaten Liste im Repo: {funde}"
 
 
+@pytest.mark.skipif(not PROJEKTWOERTER, reason="keine privaten Projektwörter in ~/.claude/review/")
+def test_oeffentlich_ohne_projektwoerter() -> None:
+    """#395: Projektwörter der privaten Config stehen in keiner Datei unter ``review/``."""
+    funde = _oeffentlich_funde({"projektwort": name_muster(PROJEKTWOERTER)})
+    assert funde == [], f"Projektwort aus der privaten Config im Repo: {funde}"
+
+
+def test_lade_projektwoerter(tmp_path: Path) -> None:
+    datei = tmp_path / "config.json"
+    datei.write_text('{"projekt_woerter": {"kosten": ["Funkmast_API"]}}', encoding="utf-8")
+    assert lade_projektwoerter(datei, tmp_path / "fehlt.json") == {"funkmast_api"}
+
+
 def test_review_tests_ohne_fremdes_conftest() -> None:
     """Werkzeug-Tests holen Helfer aus ``review_hilfen``, nie per ``from conftest``."""
     funde = [
@@ -248,12 +271,13 @@ def test_namensliste_format(tmp_path: Path) -> None:
     assert lade_namen(tmp_path / "fehlt.txt") == frozenset()
 
 
-def test_ausnahme_gilt_nur_fuer_ihre_zeile() -> None:
+def test_ausnahme_gilt_nur_fuer_ihre_zeile(monkeypatch: pytest.MonkeyPatch) -> None:
     """Eine Ausnahme gibt den Begriff nicht für die ganze Datei frei (Befund Review 334)."""
     datei = "review/config.standard.json"
-    erlaubt = '  "projekt_woerter": {"datenbank": ["account_db"]},'
+    monkeypatch.setitem(AUSNAHMEN, (datei, "instagram"), '"projekt_woerter":')
+    erlaubt = '  "projekt_woerter": {"datenbank": ["instagram"]},'
     assert not _verboten(datei, "projekt-begriff", PROJEKT_BEGRIFF, erlaubt)
-    assert _verboten(datei, "projekt-begriff", PROJEKT_BEGRIFF, '  "x": "account_db",')
+    assert _verboten(datei, "projekt-begriff", PROJEKT_BEGRIFF, '  "x": "instagram",')
 
 
 def _hook_verweise() -> set[str]:
