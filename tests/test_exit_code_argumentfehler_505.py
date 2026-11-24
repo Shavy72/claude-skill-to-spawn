@@ -72,3 +72,34 @@ def test_andere_unterbefehle_behalten_argparse_exit_2(tmp_path: Path) -> None:
     """Nur ``einreichen`` bekommt den eigenen Code; sonst bleibt argparse beim Üblichen."""
     lauf = _to_spawn(tmp_path, "blocker")
     assert lauf.returncode == 2, (lauf.returncode, lauf.stderr[-500:])
+
+
+@pytest.mark.parametrize("argumente", [("--help",), ("einreichen", "--help")], ids=["haupt-hilfe", "einreichen-hilfe"])
+def test_hilfe_endet_mit_exit_0(tmp_path: Path, argumente: tuple[str, ...]) -> None:
+    lauf = _to_spawn(tmp_path, *argumente)
+    assert lauf.returncode == 0, (lauf.returncode, lauf.stderr[-500:])
+    assert "usage" in lauf.stdout.lower(), lauf.stdout[-500:]
+
+
+@pytest.mark.parametrize(
+    "argumente",
+    [
+        pytest.param((), id="ohne-unterbefehl"),
+        pytest.param(("gibts-nicht-xyz",), id="unbekannter-unterbefehl"),
+        pytest.param(("blocker", "1", "2", "3"), id="zu-viele-argumente-anderer-unterbefehl"),
+        # Tippfehler im Namen des Unterbefehls: argparse kennt den Befehl nicht und endet mit seinem
+        # Standard 2. Bewusst so festgeschrieben (Entscheidung leit 185): kein Code-Umbau, weil nur
+        # ``einreichen`` mit Exit 2 „erneut rufen“ auslöst und ein Tippfehler im Befehl dort nie ankommt.
+        pytest.param(("einreichn", "12"), id="tippfehler-im-unterbefehl"),
+    ],
+)
+def test_gegentests_ausserhalb_von_einreichen_bleiben_exit_2(tmp_path: Path, argumente: tuple[str, ...]) -> None:
+    lauf = _to_spawn(tmp_path, *argumente)
+    assert lauf.returncode == 2, (lauf.returncode, lauf.stderr[-500:])
+    assert lauf.returncode != einreichen.AUFRUF
+
+
+@pytest.mark.parametrize("vorlage", ["repo-scripts/_default.json", "skripte/wache.py"])
+def test_beide_vorlagen_nennen_exit_5(vorlage: str) -> None:
+    text = (SKILL / vorlage).read_text(encoding="utf-8")
+    assert f"Exit {einreichen.AUFRUF} → Aufruf falsch" in text, vorlage
