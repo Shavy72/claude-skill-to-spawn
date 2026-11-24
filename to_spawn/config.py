@@ -109,6 +109,19 @@ DEFAULTS: dict[str, Any] = {
     "staging_start": "",
     #: Deploy-Befehl des Repos (leer = Repo deployt nicht über den Skill).
     "deploy_befehl": "",
+    #: Prüf-Befehle des Repos (#425), relativ zur Repo-Wurzel; leer = nicht eingerichtet.
+    #: ``schnell`` = je Ticket (Stil, betroffene Tests, Rauchtest, 1–3 min); ``komplett`` = genau
+    #: einmal je Spec. Welcher wann dran ist, entscheidet nur ``to_spawn.pruefplan``.
+    "pruefung": {
+        "schnell": "",
+        "komplett": "",
+    },
+    #: Live-Schritt des Repos (#425); leer = nicht eingerichtet. Lesen über :func:`live_schritt`.
+    "live": {
+        "befehl": "",
+        "url": "",
+        "aufraeumen": "",
+    },
     #: Staging-Nest (#211) für den Probesitz (#214): ``url`` = Adresse, ``zugang_datei`` = Datei mit
     #: ``nutzer=…``/``passwort=…`` (oder ``user:pass``); leer = Punkt 3 bleibt rot mit „fehlt noch“.
     "staging": {
@@ -359,9 +372,33 @@ def sicherstellen(repo: Path | None = None) -> Path:
     return datei
 
 
-def _staging_gruppe(konfig: dict[str, Any]) -> dict[str, Any]:
-    gruppe = konfig.get("staging")
+def _gruppe(konfig: dict[str, Any], name: str) -> dict[str, Any]:
+    """Verschachtelte Gruppe ``name`` der Konfig; fehlt sie oder ist kaputt → ``{}``."""
+    gruppe = konfig.get(name)
     return gruppe if isinstance(gruppe, dict) else {}
+
+
+def _text(gruppe: dict[str, Any], schluessel: str) -> str:
+    """Textwert ohne Rand-Leerzeichen; fehlt er oder ist ``None`` → ``""``."""
+    return str(gruppe.get(schluessel) or "").strip()
+
+
+def _staging_gruppe(konfig: dict[str, Any]) -> dict[str, Any]:
+    return _gruppe(konfig, "staging")
+
+
+def pruef_befehl(konfig: dict[str, Any], art: str) -> str:
+    """Befehl ``pruefung.<art>`` (``schnell``/``komplett``, #425); ``""`` = nicht eingerichtet.
+
+    Nur für :mod:`to_spawn.pruefplan` — Aufrufer fragen dort (``pruefplan.befehl``).
+    """
+    return _text(_gruppe(konfig, "pruefung"), art)
+
+
+def live_schritt(konfig: dict[str, Any]) -> dict[str, str]:
+    """Gruppe ``live`` (#425) mit allen Schlüsseln aus ``DEFAULTS``; ``""`` = nicht eingerichtet."""
+    gruppe = _gruppe(konfig, "live")
+    return {schluessel: _text(gruppe, schluessel) for schluessel in DEFAULTS["live"]}
 
 
 def staging_bewusst_ohne(konfig: dict[str, Any]) -> bool:
