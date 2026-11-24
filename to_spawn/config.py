@@ -356,6 +356,28 @@ def sicherstellen(repo: Path | None = None) -> Path:
     return datei
 
 
+def _staging_gruppe(konfig: dict[str, Any]) -> dict[str, Any]:
+    gruppe = konfig.get("staging")
+    return gruppe if isinstance(gruppe, dict) else {}
+
+
+def staging_bewusst_ohne(konfig: dict[str, Any]) -> bool:
+    """``staging.ohne: true`` — das Repo arbeitet bewusst ohne Staging-App (#410)."""
+    return _staging_gruppe(konfig).get("ohne") is True
+
+
+def hat_staging(konfig: dict[str, Any]) -> bool:
+    """Hat dieses Repo eine Staging-App? Einzige Stelle dieser Regel (#410, #425).
+
+    Ja = ``staging.url`` oder ``staging_start`` ist gesetzt und das Repo arbeitet nicht
+    bewusst ohne Staging (:func:`staging_bewusst_ohne` gewinnt).
+    """
+    if staging_bewusst_ohne(konfig):
+        return False
+    url = str(_staging_gruppe(konfig).get("url") or "").strip()
+    return bool(url or str(konfig.get("staging_start") or "").strip())
+
+
 def staffel_modus(konfig: dict[str, Any]) -> str:
     """ "hook" oder "eltern" — Umgebungsvariable ``TO_SPAWN_STAFFEL_MODUS`` gewinnt."""
     modus = os.environ.get("TO_SPAWN_STAFFEL_MODUS") or str(konfig.get("staffel", {}).get("modus", "eltern"))

@@ -5,13 +5,20 @@ Zwei Türen:
 * :func:`luecken` ist die einzige Stelle des Wissens „was fehlt diesem Repo zur
   Einrichtung?“ — heute Prüfung und Staging. Ein Repo, das bewusst ohne Staging
   arbeitet (``staging.ohne: true``), hat dort keine Lücke.
-* :func:`sicherstellen` legt bei Lücke das Einrichtungs-Ticket der Spec an (einmal:
-  Manifest-Eintrag mit ``einrichtung: true``) und hängt es über
-  :func:`spec_rand.anhaengen` an die Spec. ``anhaengen`` setzt die Kante „wartet auf
-  das offene Einrichtungs-Ticket“ für jedes Ticket der Spec — auch für spätere
-  Nachträge. ``regularien`` ruft :func:`sicherstellen` vor der Manifest-Prüfung.
+* :func:`sicherstellen` trägt bei Lücke das Einrichtungs-Ticket ins Manifest der Spec
+  ein (``einrichtung: true``) und hängt jedes Ticket der Spec über
+  :func:`spec_rand.anhaengen` dahinter — auch spätere Nachträge. ``regularien`` ruft es
+  vor der Manifest-Prüfung.
 
-Ohne GitHub (``--ohne-github``, ``origin`` nicht auf github.com) bleibt es beim Hinweis.
+Das Einrichtungs-Ticket gilt fürs Repo, nicht je Spec: Ein offenes Issue mit Label
+``einrichtung`` wird wiederverwendet (zweite Spec, Abbruch zwischen Anlegen und
+Manifest-Eintrag). Unter-Issue wird es nur bei der Spec, für die es angelegt wurde
+(GitHub erlaubt eine Eltern-Spec).
+
+Nur ein Hinweis, nichts angelegt, nichts umgehängt: ohne GitHub (``--ohne-github``,
+``origin`` nicht auf github.com), im Probelauf (``trocken``, auch ``--nur-wache``), bei
+Ticket-Auswahl (``--tickets``) und wenn die Spec schon läuft (ein Ticket zu oder mit
+Bau-Log). Scheitert das Anlegen, ist ``ok`` falsch — ``regularien`` weigert sich dann.
 """
 
 from __future__ import annotations
@@ -22,13 +29,15 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from . import gh, manifest, pruef, spec_rand, ticket_zustand
+from . import bau_log, config, gh, manifest, pruef, spec_rand, ticket_zustand
 
 log = logging.getLogger("to_spawn.einrichtungs_ticket")
 
 #: Schätzung des Einrichtungs-Tickets (Tausend Token).
 SCHAETZUNG_K = 60
 _ISSUE_URL = re.compile(r"/issues/(\d+)\s*$")
+#: Label, an dem das offene Einrichtungs-Ticket des Repos erkannt wird.
+LABEL = "einrichtung"
 
 #: Je Lücke: Kurzname → was das Einrichtungs-Ticket dafür baut.
 _AUFTRAG = {
@@ -46,6 +55,8 @@ _AUFTRAG = {
 
 @dataclass
 class Ergebnis:
+    """``ok`` falsch = Lücke, aber kein Einrichtungs-Ticket steht (Zeilen sagen, was fehlt)."""
+
     ok: bool
     zeilen: list[str] = field(default_factory=list)
 
@@ -55,11 +66,7 @@ def luecken(repo: Path, konfig: dict[str, Any]) -> list[str]:
     fehlt: list[str] = []
     if not pruef.hat_werkzeug(repo):
         fehlt.append("pruefung")
-    staging = konfig.get("staging") if isinstance(konfig.get("staging"), dict) else {}
-    if not staging.get("ohne") and not (
-        str(staging.get("url") or "").strip()
-        or str(konfig.get("staging_start") or "").strip()
-    ):
+    if not config.hat_staging(konfig) and not config.staging_bewusst_ohne(konfig):
         fehlt.append("staging")
     return fehlt
 
@@ -71,40 +78,70 @@ def sicherstellen(
     *,
     mit_github: bool = True,
     trocken: bool = False,
+    auswahl: bool = False,
 ) -> Ergebnis:
-    """Einrichtungs-Ticket der Spec anlegen/anhängen, falls dem Repo etwas fehlt.
+    """Einrichtungs-Ticket der Spec sicherstellen, falls dem Repo etwas fehlt.
 
-    ``ok`` = nichts fehlt bzw. Ticket steht (oder nur Hinweis ohne GitHub / ``trocken``);
-    ``False`` = Lücke, aber das Ticket ließ sich nicht anlegen oder anhängen (WARNUNG-Zeile).
-    Wie jede große Lücke hält das den Start nicht auf (Plan L1 Tür 1), es wird nur gemeldet.
+    ``trocken`` = Probelauf/``--nur-wache``, ``auswahl`` = Start nur gewählter Tickets
+    (``--tickets``): dann nur Hinweis. ``ok`` falsch nur, wenn es angelegt bzw.
+    angehängt werden sollte und das scheiterte (letzte Zeile ``EINRICHTUNG FEHLT``).
     """
     fehlt = luecken(repo, konfig)
     if not fehlt:
         return Ergebnis(True)
     s = str(spec).lstrip("#")
     kopf = f"Einrichtung fehlt: {', '.join(fehlt)}"
+    auftrag = " ".join(_AUFTRAG[x] for x in fehlt)
     try:
-        daten, _ = manifest.lade_manifest_mit_doppelten(repo, s)
+        daten, doppelt = manifest.lade_manifest_mit_doppelten(repo, s)
     except (OSError, ValueError) as fehler:
         # Fehlt/kaputt: das meldet die Manifest-Prüfung gleich selbst.
         return Ergebnis(True, [f"{kopf} — Manifest nicht lesbar ({fehler})"])
+    if doppelt or not s.isdigit():
+        # Doppelte Schlüssel: Schreiben löschte den Befund der Manifest-Prüfung.
+        # Spec ohne Issue-Nummer: kein Unter-Issue möglich. Beides nur melden.
+        grund = (
+            "Manifest mit doppelten Nummern" if doppelt else "Spec ohne Issue-Nummer"
+        )
+        return Ergebnis(
+            True, [f"{kopf} — {grund}: Einrichtungs-Ticket nicht angelegt."]
+        )
     vorhanden = manifest.einrichtungs_ticket(daten)
     slug = gh.repo_aus_origin(repo) if mit_github else ""
-    if not slug or trocken:
+    grund = (
+        "[trocken]"
+        if trocken
+        else "Ticket-Auswahl (--tickets)"
+        if auswahl
+        else "ohne GitHub"
+        if not slug
+        else ""
+    )
+    if grund:
         wie = (
-            "würde Einrichtungs-Ticket anlegen"
-            if not vorhanden
-            else f"Einrichtungs-Ticket #{vorhanden}"
+            f"Einrichtungs-Ticket #{vorhanden}"
+            if vorhanden
+            else "würde Einrichtungs-Ticket anlegen"
+            if trocken or not slug
+            else "Einrichtungs-Ticket nicht angelegt, erst beim Start der ganzen Spec"
         )
-        grund = "[trocken]" if trocken else "ohne GitHub"
-        return Ergebnis(
-            True, [f"{kopf} — {grund}: {wie}. " + " ".join(_AUFTRAG[x] for x in fehlt)]
-        )
+        return Ergebnis(True, [f"{kopf} — {grund}: {wie}. {auftrag}"])
     if vorhanden is None:
-        neu = _anlegen(repo, slug, s, daten, fehlt)
+        if laeuft := _laeuft_schon(repo, slug, daten):
+            return Ergebnis(
+                True,
+                [
+                    (
+                        f"{kopf} — Spec #{s} läuft schon ({laeuft}): Einrichtungs-Ticket "
+                        f"nicht angelegt, nichts umgehängt. Lücke von Hand schließen: {auftrag}"
+                    )
+                ],
+            )
+        neu = _einrichtungs_ticket_holen(repo, slug, s, daten, fehlt)
         if isinstance(neu, Ergebnis):
             return neu
-        vorhanden, zeilen = neu, [f"{kopf} — Einrichtungs-Ticket #{neu} angelegt"]
+        vorhanden, titel, zeile = neu
+        zeilen = [f"{kopf} — {zeile}"]
     else:
         stand = gh.json_lauf(["api", f"repos/{slug}/issues/{vorhanden}"], cwd=repo)
         if isinstance(stand, dict) and ticket_zustand.endgueltig_zu(stand):
@@ -114,24 +151,24 @@ def sicherstellen(
                     f"{kopf} — Einrichtungs-Ticket #{vorhanden} ist zu, Lücke bleibt: von Hand prüfen"
                 ],
             )
+        titel = str(stand.get("title") or "") if isinstance(stand, dict) else ""
         zeilen = [f"{kopf} — Einrichtungs-Ticket #{vorhanden} steht"]
-    # ponytail: je Ticket ein anhaengen samt Manifest-Prüfung (N× gh); ein Sammel-Lauf, wenn Specs groß werden.
+    # Unter-Issue nur bei der Spec, für die es angelegt wurde (eine Eltern-Spec je Issue).
+    eigen = _titel_fuer(s) in titel
+    # Manifest-Prüfung macht ``regularien`` danach einmal für alle (pruefen=False).
     # Einrichtungs-Ticket zuerst (Unter-Issue, Kante vor die Abnahme), dann jedes andere — idempotent.
-    for t in [
-        vorhanden,
-        *sorted(
-            (x for x in daten["tickets"] if x != vorhanden),
-            key=manifest.ticket_schluessel,
-        ),
-    ]:
-        lauf = spec_rand.anhaengen(repo, s, t, konfig)
+    andere = sorted(
+        (x for x in daten["tickets"] if x != vorhanden), key=manifest.ticket_schluessel
+    )
+    for t in [vorhanden, *andere] if eigen else andere:
+        lauf = spec_rand.anhaengen(repo, s, t, konfig, pruefen=False)
         if lauf.exit == spec_rand.EXIT_FEHLER:
             return Ergebnis(
                 False,
                 [
                     *zeilen,
                     *lauf.zeilen,
-                    f"WARNUNG: #{t} nicht hinter Einrichtungs-Ticket #{vorhanden} — erneut aufrufen",
+                    f"EINRICHTUNG FEHLT: #{t} nicht hinter Einrichtungs-Ticket #{vorhanden} — erneut aufrufen",
                 ],
             )
     return Ergebnis(
@@ -139,32 +176,72 @@ def sicherstellen(
     )
 
 
-def _anlegen(
+def _titel_fuer(s: str) -> str:
+    return f"Einrichtung für Spec #{s}:"
+
+
+def _laeuft_schon(repo: Path, slug: str, daten: dict[str, Any]) -> str:
+    """Grund, warum die Spec schon läuft (``#N hat Bau-Log`` / ``#N ist zu``); leer = nicht."""
+    tickets = sorted(daten["tickets"], key=manifest.ticket_schluessel)
+    for t in tickets:
+        if bau_log.hat_log(repo, t):
+            return f"#{t} hat Bau-Log"
+    for t in tickets:
+        stand = gh.json_lauf(["api", f"repos/{slug}/issues/{t}"], cwd=repo)
+        if isinstance(stand, dict) and ticket_zustand.endgueltig_zu(stand):
+            return f"#{t} ist zu"
+    return ""
+
+
+def _einrichtungs_ticket_holen(
     repo: Path, slug: str, s: str, daten: dict[str, Any], fehlt: list[str]
-) -> str | Ergebnis:
-    """Issue anlegen und im Manifest eintragen; Rückgabe Nummer oder Fehler-Ergebnis."""
-    titel = f"Einrichtung für Spec #{s}: {', '.join(fehlt)}"
-    auftrag = "\n".join(f"- {_AUFTRAG[x]}" for x in fehlt)
-    body = (
-        f"Teil von Spec #{s}. Einrichtungs-Ticket (T0): Dem Repo fehlt Einrichtung, "
-        f"alle anderen Tickets der Spec warten darauf.\n\n{auftrag}\n\n"
-        f"Steht im Manifest spec-{s}.json mit `einrichtung: true`."
+) -> tuple[str, str, str] | Ergebnis:
+    """Offenes Einrichtungs-Ticket des Repos nehmen oder anlegen, dann ins Manifest.
+
+    Rückgabe (Nummer, Titel, Meldung) oder Fehler-Ergebnis. Erst suchen, dann anlegen:
+    ein Abbruch zwischen ``gh issue create`` und Manifest-Eintrag findet beim nächsten
+    Lauf dasselbe Issue wieder (Label ``einrichtung`` hängt schon beim Anlegen dran).
+    """
+    fehlt_text = ", ".join(fehlt)
+    offen = gh.json_lauf(
+        [
+            "issue",
+            "list",
+            "--repo",
+            slug,
+            "--label",
+            LABEL,
+            "--state",
+            "open",
+            "--json",
+            "number,title",
+        ],
+        cwd=repo,
     )
-    code, ausgabe = gh.lauf(
-        ["issue", "create", "--repo", slug, "--title", titel, "--body", body], cwd=repo
-    )
-    treffer = _ISSUE_URL.search(ausgabe or "")
-    if code != 0 or not treffer:
-        log.warning(
-            "gh issue create gescheitert (Code %s): %s", code, (ausgabe or "")[:200]
-        )
+    if not isinstance(offen, list):
+        log.warning("gh issue list --label %s gescheitert", LABEL)
         return Ergebnis(
             False,
             [
-                f"WARNUNG: Einrichtung fehlt ({', '.join(fehlt)}), Einrichtungs-Ticket nicht angelegt (gh issue create)"
+                (
+                    f"EINRICHTUNG FEHLT ({fehlt_text}): offene Einrichtungs-Tickets nicht lesbar "
+                    f"(gh issue list --label {LABEL}) — erneut aufrufen"
+                )
             ],
         )
-    neu = treffer.group(1)
+    treffer = sorted(
+        (x for x in offen if isinstance(x, dict) and x.get("number")),
+        key=lambda x: int(x["number"]),
+    )
+    if treffer:
+        neu, titel = str(treffer[0]["number"]), str(treffer[0].get("title") or "")
+        zeile = f"offenes Einrichtungs-Ticket #{neu} des Repos übernommen"
+    else:
+        angelegt = _anlegen(repo, slug, s, fehlt)
+        if isinstance(angelegt, Ergebnis):
+            return angelegt
+        neu, titel = angelegt
+        zeile = f"Einrichtungs-Ticket #{neu} angelegt"
     daten["tickets"][neu] = {
         "title": titel,
         "schaetzung_k": SCHAETZUNG_K,
@@ -184,7 +261,60 @@ def _anlegen(
         return Ergebnis(
             False,
             [
-                f"WARNUNG: Einrichtungs-Ticket #{neu} angelegt, Manifest nicht geschrieben — von Hand eintragen ({datei.name}, einrichtung: true)"
+                (
+                    f"EINRICHTUNG FEHLT: Einrichtungs-Ticket #{neu} steht, Manifest nicht geschrieben "
+                    f"({datei.name}) — erneut aufrufen"
+                )
             ],
         )
-    return neu
+    return neu, titel, zeile
+
+
+def _anlegen(
+    repo: Path, slug: str, s: str, fehlt: list[str]
+) -> tuple[str, str] | Ergebnis:
+    """Issue mit Label ``einrichtung`` anlegen; Rückgabe (Nummer, Titel) oder Fehler-Ergebnis."""
+    titel = f"{_titel_fuer(s)} {', '.join(fehlt)}"
+    auftrag = "\n".join(f"- {_AUFTRAG[x]}" for x in fehlt)
+    body = (
+        f"Teil von Spec #{s}. Einrichtungs-Ticket (T0): Dem Repo fehlt Einrichtung, "
+        f"alle anderen Tickets der Spec warten darauf. Es gilt fürs ganze Repo: "
+        f"weitere Specs warten auf dasselbe Ticket, solange es offen ist.\n\n{auftrag}\n\n"
+        f"Steht im Manifest spec-{s}.json mit `einrichtung: true`."
+    )
+    gh.label_sicherstellen(
+        repo,
+        LABEL,
+        farbe="0e8a16",
+        beschreibung="Einrichtungs-Ticket des Repos: Prüfung/Staging anlegen (to-spawn #410)",
+    )
+    code, ausgabe = gh.lauf(
+        [
+            "issue",
+            "create",
+            "--repo",
+            slug,
+            "--title",
+            titel,
+            "--body",
+            body,
+            "--label",
+            LABEL,
+        ],
+        cwd=repo,
+    )
+    treffer = _ISSUE_URL.search(ausgabe or "")
+    if code != 0 or not treffer:
+        log.warning(
+            "gh issue create gescheitert (Code %s): %s", code, (ausgabe or "")[:200]
+        )
+        return Ergebnis(
+            False,
+            [
+                (
+                    f"EINRICHTUNG FEHLT ({', '.join(fehlt)}): Einrichtungs-Ticket nicht angelegt "
+                    f"(gh issue create, Code {code}) — erneut aufrufen"
+                )
+            ],
+        )
+    return treffer.group(1), titel

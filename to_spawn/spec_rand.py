@@ -62,8 +62,12 @@ def anhaengen(
     umfang: str | None = None,
     dateien: Sequence[str] = (),
     trocken: bool = False,
+    pruefen: bool = True,
 ) -> Ergebnis:
     """Issue ``ticket`` an Spec ``spec`` hängen (Kanten, Manifest, Unter-Issue).
+
+    ``pruefen=False`` lässt die Manifest-Prüfung am Ende aus — für Aufrufer, die sie
+    selbst einmal für die ganze Spec machen (``einrichtungs_ticket``, sonst N× ``gh``).
 
     ``schaetzung_k``/``umfang`` sind Pflicht, solange das Ticket nicht im Manifest
     steht; sonst überschreiben sie nur, was angegeben ist. ``trocken`` zeigt die
@@ -101,6 +105,8 @@ def anhaengen(
                 )
                 return Ergebnis(EXIT_FEHLER, zeilen)
             zeilen.append(f"ok  {schritt.text}")
+    if not pruefen:
+        return Ergebnis(0, zeilen)
     bericht = manifest.pruefe(repo, s, konfig)
     zeilen.extend(bericht.text().splitlines())
     return Ergebnis(0 if bericht.sauber else manifest.EXIT_WEIGERUNG, zeilen)

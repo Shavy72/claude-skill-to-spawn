@@ -982,8 +982,14 @@ def main(argv: list[str] | None = None) -> int:
     if args.befehl == "regularien":
         # Einrichtungs-Ticket (#410) vor der Prüfung: es soll in ihr schon mitzählen.
         # Große Lücke wie im Einrichter: nur gemeldet, hält nicht auf (Plan L1, Tür 1).
+        # Probelauf/--nur-wache (beide --dry-run) und --tickets: nur Hinweis, nichts angelegt.
         einrichtung = einrichtungs_ticket.sicherstellen(
-            repo, args.spec, konfig, mit_github=not args.ohne_github, trocken=args.dry_run
+            repo,
+            args.spec,
+            konfig,
+            mit_github=not args.ohne_github,
+            trocken=args.dry_run,
+            auswahl=bool(_tickets(args.tickets)),
         )
         for zeile in einrichtung.zeilen:
             print(zeile)
@@ -995,6 +1001,11 @@ def main(argv: list[str] | None = None) -> int:
             auswahl=_tickets(args.tickets),
         )
         print(bericht.text())
+        if not einrichtung.ok:
+            # Ohne Einrichtungs-Ticket bauten die Tickets ohne Prüfung/Staging los (#410):
+            # Weigerung, Schlusszeile wiederholt den Grund.
+            print(einrichtung.zeilen[-1])
+            return manifest.EXIT_WEIGERUNG
         return 0 if bericht.sauber else manifest.EXIT_WEIGERUNG
     if args.befehl == "log":
         print(bau_log.tabelle(repo, _spec_tickets(repo, args.spec)))
