@@ -293,15 +293,17 @@ def _vorher(spec: int, ordner: Path | None) -> _Vorher:
     )
 
 
-def _fenster_liste(spec: int, q: Quellen) -> dict[int, tuple[str, float]] | None:
-    """Ticket → (tmux-Ziel, window_activity); ``None`` = tmux/Sitzung nicht lesbar."""
-    raus = q.tmux(
+def _fenster_liste(
+    spec: int, tmux: Callable[[list[str]], str | None]
+) -> dict[int, tuple[str, float]] | None:
+    """Ticket → (tmux-Ziel per ``window_id``, window_activity); ``None`` = tmux/Sitzung nicht lesbar."""
+    raus = tmux(
         [
             "list-windows",
             "-t",
             f"=spec-{spec}",
             "-F",
-            "#{window_index}\t#{window_name}\t#{window_activity}",
+            "#{window_id}\t#{window_name}\t#{window_activity}",
         ]
     )
     if raus is None:
@@ -324,7 +326,7 @@ def _fenster_liste(spec: int, q: Quellen) -> dict[int, tuple[str, float]] | None
 
 def bau_fenster(spec: int) -> dict[int, str] | None:
     """Ticket → tmux-Ziel des Fensters ``bau <N>`` in ``spec-<S>``; ``None`` = tmux/Sitzung nicht lesbar."""
-    liste = _fenster_liste(spec, Quellen(repo=Path.cwd(), kinder=lambda _s: None, tmux=_tmux_echt))
+    liste = _fenster_liste(spec, _tmux_echt)
     return None if liste is None else {n: ziel for n, (ziel, _aktiv) in liste.items()}
 
 
@@ -406,7 +408,7 @@ def sammeln(spec: int, q: Quellen, vorher: _Vorher) -> _Ergebnis:
     if not kinder:
         raise RuntimeError(f"Spec #{spec} hat keine Sub-Issues — Spec-Nummer prüfen (gh)")
     jetzt = q.jetzt()
-    fenster = None if q.pc_still else _fenster_liste(spec, q)
+    fenster = None if q.pc_still else _fenster_liste(spec, q.tmux)
     lagen: list[TicketLage] = []
     kommentare: dict[str, int] = {}
     merker: dict[str, dict[str, Any]] = {}
@@ -574,7 +576,7 @@ def ticket_lage(spec: int, ticket: int, q: Quellen, ordner: Path | None = None) 
     """
     erg = sammeln(spec, q, _vorher(spec, ordner))
     lage = next((t for t in erg.lagen if t.nummer == ticket), None)
-    fenster = {} if q.pc_still else (_fenster_liste(spec, q) or {})
+    fenster = {} if q.pc_still else (_fenster_liste(spec, q.tmux) or {})
     eintrag = fenster.get(ticket)  # (tmux-Ziel, window_activity); am PC kein Ziel
     return TicketBlick(lage, eintrag[0] if eintrag else None)
 

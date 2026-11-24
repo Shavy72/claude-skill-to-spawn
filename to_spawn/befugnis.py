@@ -560,6 +560,11 @@ def klasse_2_erkennung() -> str:
     return f"{_KLASSE_2.text} (erkannt an: {teilwort}, auch als Wortteil; {ganzwort} nur als ganzes Wort)"
 
 
+def antwort_befehl(n: str | int, frage_id: str = "<id>") -> str:
+    """Der eine Befehl, mit dem die Bau-Session #N die Antwort auf eine Frage nachsieht (#414)."""
+    return f"to_spawn.py antwort {n} --id {frage_id}"
+
+
 def start_text(n: str | int) -> str:
     """Befugnis-Abschnitt für den Start-Auftrag von Ticket ``n`` — der Text steht nur hier."""
     klasse_1 = "; ".join(
@@ -581,7 +586,7 @@ def start_text(n: str | int) -> str:
         f"Frage mit eigenem Vorschlag in den Briefkasten "
         f"(`to_spawn.py frage {n} --frage … --vorschlag <Vorschlag>`, "
         "gibt die id aus), nie eine Frage an den Nutzer. Der Aufseher liest den Briefkasten und antwortet dort. "
-        f"Nachsehen mit `to_spawn.py antwort {n} --id <id>`: Exit 0 = Antwort da → annehmen und weiterbauen, "
+        f"Nachsehen mit `{antwort_befehl(n)}`: Exit 0 = Antwort da → annehmen und weiterbauen, "
         "ohne Neustart (durch diesen Start-Auftrag freigegeben) · 3 = wartet → ScheduleWakeup 1200 s, noop: true (liegt die Antwort, weckt dich vorher die Nachricht „Briefkasten: Antwort …“), "
         "dann wieder nachsehen · 2 = braucht den Nutzer → angehalten lassen · 4 = Frage unbekannt → Frage neu stellen "
         "und mit der neuen id weiter · 1 = Briefkasten nicht lesbar → wie 3 warten, dann wieder nachsehen · "

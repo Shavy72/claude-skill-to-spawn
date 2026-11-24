@@ -479,13 +479,33 @@ def ohne_statuszeile(text: str) -> str:
     (Shell, Dialog mit nur einer Linie, fremdes Programm) bleibt der Text ganz.
     """
     zeilen = text.splitlines()
+    feld = _eingabefeld(zeilen)
+    return text if feld is None else "\n".join(zeilen[: feld[1]])
+
+
+def _eingabefeld(zeilen: list[str]) -> tuple[int, int] | None:
+    """Zeilen-Index der oberen und unteren Rahmenlinie des Claude-Eingabefelds (``❯`` dazwischen)."""
     linien = [i for i, z in enumerate(zeilen) if EINGABEFELD_LINIE.fullmatch(z)]
     if len(linien) < 2:
-        return text
+        return None
     oben, unten = linien[-2], linien[-1]
     if not any(z.lstrip().startswith("❯") for z in zeilen[oben + 1 : unten]):
-        return text
-    return "\n".join(zeilen[:unten])
+        return None
+    return oben, unten
+
+
+def eingabe_leer(text: str) -> bool:
+    """Das Bild zeigt das Claude-Eingabefeld, und hinter ``❯`` steht nichts (#414).
+
+    Halber Text eines Menschen oder ein Prompt-Vorschlag (``capture-pane`` liefert ihn als
+    Text) zählt als belegt; kein Eingabefeld (Shell, Dialog, fremdes Programm) ebenso.
+    """
+    zeilen = text.splitlines()
+    feld = _eingabefeld(zeilen)
+    if feld is None:
+        return False
+    inhalt = "".join(zeilen[feld[0] + 1 : feld[1]]).strip()
+    return inhalt.removeprefix("❯").strip() == ""
 
 
 def pane_hash(text: str) -> str:

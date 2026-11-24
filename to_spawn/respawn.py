@@ -27,6 +27,7 @@ Außenwelt (tmux, Prozesse, Uhr) nur über das Protokoll :class:`Werkzeug`; echt
 
 from __future__ import annotations
 
+import itertools
 import logging
 import os
 import re
@@ -177,6 +178,11 @@ class Werkzeug(Protocol):
     def schlafen(self, s: float) -> None: ...
 
 
+#: Laufende Nummer für Puffernamen und die Tipp-Sperre aller Fäden (#414).
+_PUFFER_NR = itertools.count(1)
+_TIPP_SPERRE = threading.Lock()
+
+
 class TmuxWerkzeug:
     """Echte Umsetzung: tmux über ``subprocess``, Prozesse über ``pgrep``/``/proc``."""
 
@@ -246,22 +252,40 @@ class TmuxWerkzeug:
     def tippen(self, ziel: str, text: str) -> None:
         # Text als Bracketed Paste (ein Block, Zeilenumbrüche schicken nichts ab),
         # dann Enter getrennt — sonst schluckt die TUI das Enter im Einfügen.
-        puffer = f"respawn-{os.getpid()}"
-        self._tmux("load-buffer", "-b", puffer, "-", eingabe=text)
-        self._tmux("paste-buffer", "-p", "-d", "-b", puffer, "-t", ziel)
-        self.schlafen(TIPP_PAUSE_S)
-        try:
-            self._tmux("send-keys", "-t", ziel, "Enter")
-        except TmuxFehler:
-            # Kein halber Auftrag im Eingabefeld: Zeile leeren, Fehler weitergeben.
+        # Puffer je Aufruf eindeutig und eine Sperre je Prozess: Briefkasten-Wecker und
+        # Ablösung tippen in eigenen Fäden desselben Prozesses (#414).
+        puffer = f"respawn-{os.getpid()}-{next(_PUFFER_NR)}"
+        with _TIPP_SPERRE:
+            self._tmux("load-buffer", "-b", puffer, "-", eingabe=text)
+            self._tmux("paste-buffer", "-p", "-d", "-b", puffer, "-t", ziel)
+            self.schlafen(TIPP_PAUSE_S)
             try:
-                self._tmux("send-keys", "-t", ziel, "C-u")
-            except TmuxFehler as leeren:
-                log.warning("Eingabe in %s nicht geleert: %s", ziel, leeren)
-            raise
+                self._tmux("send-keys", "-t", ziel, "Enter")
+            except TmuxFehler:
+                # Kein halber Auftrag im Eingabefeld: Zeile leeren, Fehler weitergeben.
+                try:
+                    self._tmux("send-keys", "-t", ziel, "C-u")
+                except TmuxFehler as leeren:
+                    log.warning("Eingabe in %s nicht geleert: %s", ziel, leeren)
+                raise
 
     def taste(self, ziel: str, taste: str) -> None:
         self._tmux("send-keys", "-t", ziel, taste)
+
+    def pane_lage(self, ziel: str) -> tuple[int | None, float | None]:
+        """PID des Pane-Prozesses und ``window_activity`` (Epoche, s); ``None`` = nicht lesbar.
+
+        :class:`FensterWeg`/:class:`TmuxFehler` fliegen weiter.
+        """
+        roh = self._tmux(
+            "display-message", "-p", "-t", ziel, "#{pane_pid}\t#{window_activity}"
+        )
+        pid, _, aktiv = roh.strip().partition("\t")
+        try:
+            aktiv_s: float | None = float(aktiv)
+        except ValueError:
+            aktiv_s = None
+        return (int(pid) if pid.isdigit() else None), aktiv_s
 
     def bildschirm(self, ziel: str) -> str | None:
         """Sichtbarer Text; :class:`FensterWeg` wenn das Fenster fehlt, ``None`` bei Fehlern."""

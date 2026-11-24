@@ -8,11 +8,18 @@ in den Briefkasten der Spec (nur Dateien, kein GitHub):
 * neue offene Frage (mit id) → ein Weckruf ins eigene Pane des Aufsehers (``TMUX_PANE``);
 * Antwort auf eine gesehene Frage liegt → ein Weckruf ins Fenster ``bau <N>`` der Spec-Sitzung.
 
-Jede Frage weckt je Richtung höchstens einmal. Getippt wird nur in ein stilles Pane; arbeitet es
-oder steht eine Rückfrage offen, versucht es der nächste Durchgang wieder. Was beim Start schon
-offen ist, weckt den Aufseher nicht (er liest es im ersten Tick), seine Antwort weckt die
-Bau-Session aber. Ohne ``TMUX_PANE`` (PC, kein tmux) läuft kein Faden — dann gilt wie bisher der
-Takt, der ohnehin als Netz bleibt. Der Weckruf ist nur ein Anstoß: was gilt, steht im Briefkasten.
+Jede Frage weckt je Richtung höchstens einmal. Getippt wird nur, wenn :meth:`Wecker._darf_tippen`
+es erlaubt (die eine Stelle der Regel): im Pane läuft Claude, das Bild zeigt ein leeres
+Eingabefeld, nichts arbeitet oder fragt zurück, und das Fenster ist seit :data:`RUHE_S` ruhig.
+Sonst versucht es der nächste Durchgang wieder. Was beim Start schon offen ist, weckt den
+Aufseher nicht (er liest es im ersten Tick), seine Antwort weckt die Bau-Session aber; scheitert
+dieser erste Blick, steht das im Log, und der nächste Durchgang weckt mit allen offenen Fragen.
+
+Grenzen (bewusst): Das Gedächtnis „schon geweckt“ liegt nur im Speicher des Aufseher-Prozesses.
+Nach einem Neustart des Aufsehers können Weckrufe verloren gehen — Netz ist der feste Takt.
+Ohne ``TMUX_PANE`` (PC, kein tmux) läuft kein Faden, und der Cron-Modus (``waechter_takt``) hat
+keinen Wecker; dort gilt allein der Takt. Der Weckruf ist nur ein Anstoß: was gilt, steht im
+Briefkasten.
 """
 
 from __future__ import annotations
@@ -24,28 +31,28 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
-from to_spawn import aufpasser, aufseher_stand, briefkasten, manifest, respawn
+from to_spawn import aufpasser, aufseher_stand, befugnis, briefkasten, manifest, respawn
 from to_spawn.tmux_aufruf import FensterWeg, TmuxFehler
 
 log = logging.getLogger(__name__)
 
 #: Abstand zweier Durchgänge (s): Frage bzw. Antwort weckt spätestens nach ~1 min.
 TAKT_S = 60.0
+#: So lange muss ein Fenster ohne Aktivität sein, bevor getippt wird (s).
+RUHE_S = 60.0
 #: So lange wartet :func:`laeuft` beim Verlassen auf das Ende des Fadens (s).
 STOPP_S = 5.0
 AUFSEHER_TEXT = (
     "Briefkasten: neue Frage {fragen} — jetzt `to_spawn.py offene` ansehen und entscheiden bzw. an den "
     "Nutzer weitergeben (Befugnis-Abschnitt). Deinen Takt (ScheduleWakeup) nicht ändern."
 )
-BAU_TEXT = (
-    "Briefkasten: Antwort auf Frage {id} liegt — jetzt `to_spawn.py antwort {n} --id {id}` nachsehen und weiterbauen."
-)
+BAU_TEXT = "Briefkasten: Antwort auf Frage {id} liegt — jetzt `{befehl}` nachsehen und weiterbauen."
 
 Schluessel = tuple[str, str]  # (Ticket, Frage-id)
 
 
 class Wecker:
-    """Ein Durchgang je :meth:`einmal`; der erste (im Konstruktor) legt nur den Ausgangsstand fest.
+    """Ein Durchgang je :meth:`einmal`; der Konstruktor legt nur den Ausgangsstand fest.
 
     Nicht thread-sicher: :meth:`einmal` läuft nur in einem Faden (siehe :func:`laeuft`).
     """
@@ -53,11 +60,20 @@ class Wecker:
     def __init__(self, spec: int, repo: Path, pane: str, werkzeug: respawn.TmuxWerkzeug | None = None) -> None:
         self.spec, self.repo, self.pane = spec, repo, pane
         self.werkzeug = werkzeug or respawn.TmuxWerkzeug()
-        self._bekannt: set[Schluessel] | None = None  # je gesehene offene Frage
+        self._bekannt: set[Schluessel] = set()  # je gesehene offene Frage
         self._fuer_aufseher: set[Schluessel] = set()
         self._fuer_bau: set[Schluessel] = set()  # gesehen, Bau-Session noch nicht geweckt
         self._gemeldet: set[str] = set()
-        self.einmal()
+        self._ruhe: dict[str, tuple[str, float]] = {}  # Ziel → (Bild-Hash, gleich seit)
+        try:
+            self._bekannt = self._offen()
+        except Exception as fehler:  # noqa: BLE001 — ohne Ausgangsstand weckt der nächste Durchgang alles
+            log.warning(
+                "Briefkasten-Wecker Spec #%s: erster Blick gescheitert (%r) — nächster Durchgang weckt mit allen offenen Fragen",
+                spec,
+                fehler,
+            )
+        self._fuer_bau = set(self._bekannt)
 
     def einmal(self) -> None:
         """Ein Durchgang; wirft nie (gleicher Fehler-Text nur einmal laut)."""
@@ -72,9 +88,6 @@ class Wecker:
 
     def _durchgang(self) -> None:
         offen = self._offen()
-        if self._bekannt is None:
-            self._bekannt, self._fuer_bau = set(offen), set(offen)
-            return
         neu = offen - self._bekannt
         self._bekannt |= neu
         self._fuer_bau |= neu
@@ -84,8 +97,15 @@ class Wecker:
             if self._tippe(self.pane, AUFSEHER_TEXT.format(fragen=fragen)):
                 self._fuer_aufseher.clear()
         for t, fid in sorted(self._fuer_bau - offen):
-            stand = briefkasten.lesen(t, fid, hauptbaum=self.repo)
-            if stand == briefkasten.UNBEKANNT or (isinstance(stand, briefkasten.Antwort) and self._wecke_bau(t, fid)):
+            try:
+                stand = briefkasten.lesen(t, fid, hauptbaum=self.repo)
+                erledigt = stand == briefkasten.UNBEKANNT or (
+                    isinstance(stand, briefkasten.Antwort) and self._wecke_bau(t, fid)
+                )
+            except Exception as fehler:  # noqa: BLE001 — ein kaputtes Ticket hält die anderen nicht auf
+                self._melde(f"Briefkasten-Wecker #{t} Frage {fid}: {fehler!r}")
+                continue
+            if erledigt:
                 self._fuer_bau.discard((t, fid))
 
     def _wecke_bau(self, t: str, fid: str) -> bool:
@@ -97,15 +117,41 @@ class Wecker:
         if ziel is None:
             log.debug("#%s: Antwort %s liegt, aber kein Fenster bau %s — Takt übernimmt", t, fid, t)
             return True
-        return self._tippe(ziel, BAU_TEXT.format(id=fid, n=t))
+        return self._tippe(ziel, BAU_TEXT.format(id=fid, befehl=befugnis.antwort_befehl(t, fid)))
+
+    def _darf_tippen(self, ziel: str) -> bool:
+        """Die eine Regel „darf ich in dieses Fenster tippen“ (#414); alle Teile müssen gelten:
+
+        * im Pane läuft Claude, nicht nur die Shell (sonst führt Bash den Weckruf aus);
+        * das Bild zeigt das Claude-Eingabefeld, und hinter ``❯`` steht nichts
+          (kein halber Text eines Menschen, kein Prompt-Vorschlag);
+        * nichts arbeitet und keine Rückfrage steht offen (:func:`aufpasser.arbeitet`);
+        * seit :data:`RUHE_S` keine Aktivität: ``window_activity`` alt genug, oder — weil tmux die
+          tickende Statuszeile als Aktivität zählt — das Bild ohne Statuszeile so lange gleich.
+
+        :class:`FensterWeg` und :class:`TmuxFehler` fliegen weiter.
+        """
+        pid, aktiv = self.werkzeug.pane_lage(ziel)
+        if pid is None or not self.werkzeug.claude_laeuft(pid):
+            return False
+        bild = self.werkzeug.bildschirm(ziel)
+        if bild is None or aufpasser.arbeitet(bild) or not aufpasser.eingabe_leer(bild):
+            return False
+        jetzt = self.werkzeug.jetzt()
+        bild_hash = aufpasser.pane_hash(bild)
+        vorher = self._ruhe.get(ziel)
+        if vorher is None or vorher[0] != bild_hash:
+            vorher = self._ruhe[ziel] = (bild_hash, jetzt)
+        ruhig_seit = vorher[1] if aktiv is None else min(aktiv, vorher[1])
+        return jetzt - ruhig_seit >= RUHE_S
 
     def _tippe(self, ziel: str, text: str) -> bool:
-        """Nur in ein stilles Pane tippen; ``False`` = arbeitet, Rückfrage oder tmux-Fehler."""
+        """Nur tippen, wenn :meth:`_darf_tippen`; ``False`` = nächster Durchgang versucht es wieder."""
         try:
-            bild = self.werkzeug.bildschirm(ziel)
-            if bild is None or aufpasser.arbeitet(bild):
+            if not self._darf_tippen(ziel):
                 return False
             self.werkzeug.tippen(ziel, text)
+            self._ruhe.pop(ziel, None)
         except FensterWeg:
             return True  # Fenster weg: niemand mehr zu wecken
         except TmuxFehler as fehler:
