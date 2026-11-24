@@ -209,7 +209,10 @@ def _beende(ordner: Path, port: int, pruefen: bool) -> bool:
         if pid <= 0:
             log.warning("PID %s in %s ist kein Prozessbeleg — nichts beendet, Ordner bleibt", pid, pid_datei)
             return False
-        if _lebt(pid):
+        if _lebt(pid) and os.name == "nt" and not pruefen and not _prozess_im_ordner(pid, ordner):
+            # Eigener Ordner, alte server.pid, PID neu vergeben (#556): Prozess nicht unser, Ordner weg.
+            log.warning("Prozess %s gehört nicht zu %s (PID neu vergeben) — bleibt, Ordner wird abgebaut", pid, ordner)
+        elif _lebt(pid):
             if pruefen and not _prozess_im_ordner(pid, ordner):
                 log.warning("Prozess %s gehört nicht nachweislich zu %s — bleibt", pid, ordner)
                 return False

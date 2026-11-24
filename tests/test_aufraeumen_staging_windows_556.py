@@ -102,3 +102,21 @@ def test_tote_pid_ordner_wird_abgebaut(tmp_path: Path) -> None:
     (wt2 / "staging" / "server.pid").write_text(str(tot.pid), encoding="utf-8")
     assert _modul(wt1).aufraeumen("staging", 1) is True
     assert not (wt2 / "staging").exists()
+
+
+def test_alte_pid_datei_im_eigenen_ordner_fremder_prozess_lebt_abbau_laeuft(tmp_path: Path) -> None:
+    wt1, _ = _welt(tmp_path)
+    (wt1 / "staging").mkdir()
+    fremd = tmp_path / "fremd"
+    fremd.mkdir()
+    prozess = _schlaefer(fremd)
+    pid_datei = wt1 / "staging" / "server.pid"
+    pid_datei.write_text(str(prozess.pid), encoding="utf-8")
+    alt = time.time() - 300  # Datei älter als der Start: PID wurde neu vergeben
+    os.utime(pid_datei, (alt, alt))
+    try:
+        assert _modul(wt1).aufraeumen("staging", 1) is True
+        assert _lebt(prozess), "Fremder Prozess darf nie beendet werden"
+        assert not (wt1 / "staging").exists()
+    finally:
+        _beenden(prozess)
