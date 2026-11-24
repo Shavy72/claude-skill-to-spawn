@@ -107,7 +107,9 @@ def test_fremder_eintrag_log_zeile_mit_repo_und_ticket(ort: dict[str, Path], cap
 
 
 def test_capo_verworfener_eintrag_hinterlaesst_log(
-    welt: dict[str, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    welt: dict[str, Path],  # noqa: F811  (Fixture)
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Weg-Test über den echten Aufseher-Lauf: fremder Eintrag → kein Kommentar, aber eine Log-Zeile."""
     datei = tmp_path / "review-498" / "mensch_noetig.jsonl"

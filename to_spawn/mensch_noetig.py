@@ -2,7 +2,8 @@
 
 Der Hook hängt je roter Bau-Session nach max. Fixrunden eine JSON-Zeile an
 (``session_id, repo, fingerprint, spec, ticket, zeit, fix_runde``); der Aufseher
-meldet jeden Eintrag seiner Spec genau einmal.
+meldet jeden Eintrag seiner Spec genau einmal. Welche Einträge zum eigenen Lauf gehören,
+entscheidet nur :func:`eintraege_fuer_lauf` (#465, #498).
 """
 
 from __future__ import annotations
@@ -10,6 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -60,3 +62,37 @@ def eintraege_fuer_spec(spec: int, gesehen: set[str]) -> list[dict[str, Any]]:
         gesehen = gesehen | {schluessel(eintrag)}  # gleiche Datei, gleicher Stand: nur erste Zeile
         treffer.append(eintrag)
     return treffer
+
+
+def _norm(ort: str | Path) -> str:
+    """Vergleichsform eines Pfads: ``~``, Symlinks, End-Schrägstrich und Groß/klein (Windows) egal."""
+    return os.path.normcase(os.path.realpath(os.path.expanduser(str(ort))))
+
+
+def eintraege_fuer_lauf(
+    spec: int, gesehen: set[str], repo: Path, worktree: Callable[[int], Path]
+) -> list[dict[str, Any]]:
+    """Wie :func:`eintraege_fuer_spec`, aber nur Einträge aus diesem Lauf (#465, #498).
+
+    Eigen ist ein Eintrag, dessen ``repo`` der Hauptbaum ``repo`` oder der Worktree
+    ``worktree(<Ticket>)`` ist (ohne ``ticket`` gilt die Spec-Nummer). Die Datei teilen alle
+    Repos der Maschine; Spec- und Ticketnummer allein sind nicht eindeutig. Ohne ``repo``
+    gilt der Eintrag als fremd. Jeder verworfene Eintrag hinterlässt eine Log-Zeile.
+    ponytail: ohne ``--wt-basis`` teilen Repos ``~/wt/wt-N`` — dann hilft nur Git-Common-Dir.
+    """
+    eigene: list[dict[str, Any]] = []
+    for eintrag in eintraege_fuer_spec(spec, gesehen):
+        ort = str(eintrag.get("repo") or "")
+        nummer = str(eintrag.get("ticket") or spec)
+        orte = [repo] + ([worktree(int(nummer))] if nummer.isdigit() else [])
+        if ort and _norm(ort) in {_norm(o) for o in orte}:
+            eigene.append(eintrag)
+            continue
+        log.warning(
+            "Mensch nötig: Eintrag #%s (Spec %s) verworfen — %s, nicht aus diesem Lauf (%s).",
+            nummer,
+            spec,
+            f"Repo {ort}" if ort else "ohne repo",
+            repo,
+        )
+    return eigene
