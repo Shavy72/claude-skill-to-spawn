@@ -155,12 +155,12 @@ def wartende_nachstarten(
 
     Je Takt ein ``spawn_srv.sh <S> --tickets <liste>`` — es überspringt Laufendes und prüft vor
     jedem Fenster den Speicher. Nur ``spawn_srv.sh`` schreibt und löscht die Datei, unter seiner
-    Sperre je Spec: läuft alles aus ``<liste>``, löscht es sie, solange sie noch genau ``<liste>``
-    enthält — eine inzwischen geschriebene neue Liste bleibt stehen. Exit 0 ohne „wartet auf
-    Platz“ und Datei weg = Ende; Datei noch da (neue Liste) oder sonst (wartet weiter, voll,
-    Fehler) → nächster Takt, unbegrenzt. Leere Datei = kein Auftrag, nächster Takt (#560).
+    Sperre je Spec: es vereinigt neue Wartende mit der vorhandenen Liste, trägt nur gestartete oder
+    schon laufende Tickets aus und löscht die Datei erst, wenn sie leer ist. Exit 0 ohne „wartet
+    auf Platz“ und Datei weg = Ende; Datei noch da (weitere Wartende) oder sonst (wartet weiter,
+    voll, Fehler) → nächster Takt, unbegrenzt. Leere Datei = kein Auftrag, nächster Takt (#560).
     Datei fehlt → im Takt weiter nachsehen:
-    ``spawn_srv.sh`` schreibt sie erst nach der Staffel-Pause, also nach dem Start der Wache.
+    ``spawn_srv.sh`` schreibt sie erst nach der Staffel-Pause, also nach dem Start des Aufsehers.
     Rückgabe = Zahl der ``spawn_srv.sh``-Läufe. ``takt_s`` leer = ``NACHSTART_TAKT_S`` (je Takt gelesen).
     """
     from to_spawn import bash_wahl
@@ -206,7 +206,7 @@ def wartende_nachstarten(
 def _nachstarter_starten(spec: int, repo: Path) -> threading.Thread | None:
     """Nachstarter-Faden (#560), nur wenn ``spawn_srv.sh`` eine Warte-Datei mitgegeben hat.
 
-    Lebt so lange wie die Wache: auch spätere ``spawn_srv.sh``-Läufe (Wache läuft schon, wird
+    Lebt so lange wie der Aufseher: auch spätere ``spawn_srv.sh``-Läufe (Aufseher läuft schon, wird
     nicht neu gestartet) vermerken ihre Wartenden in derselben Datei.
     """
     wert = os.environ.get(WARTE_ENV, "").strip()

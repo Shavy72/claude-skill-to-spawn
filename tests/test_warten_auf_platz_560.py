@@ -402,3 +402,69 @@ def test_warte_datei_wird_in_einem_zug_ersetzt(tmp_path: Path, monkeypatch: pyte
         assert leser.read() == "901\n"  # alte Fassung bleibt für den Leser ganz
     assert datei.stat().st_ino != alt and datei.read_text(encoding="utf-8") == "901\n"
     assert not list(datei.parent.glob("*.neu"))
+
+
+def _warteliste(datei: Path, hinzu: str, weg: str, trocken: int = 0) -> None:
+    """Ruft ``warteliste_aendern`` aus ``spawn_srv.sh`` direkt auf (Block zwischen den Markern)."""
+    block = (
+        "eval \"$(sed -n '/^# >>> warteliste/,/^# <<< warteliste/p' \"$SKRIPT\")\"; "
+        'warteliste_aendern "$HINZU" "$WEG"'
+    )
+    umgebung = dict(
+        os.environ,
+        SKRIPT=str(SKILL / "skripte" / "spawn_srv.sh"),
+        WARTE_DATEI=str(datei),
+        DRY_RUN=str(trocken),
+        HINZU=hinzu,
+        WEG=weg,
+    )
+    lauf = bash_wahl.lauf(
+        ["-c", "set -euo pipefail; " + block], cwd=str(SKILL), env=umgebung, capture_output=True, text=True
+    )
+    assert lauf.returncode == 0, lauf.stdout + lauf.stderr
+
+
+@pytest.mark.braucht("bash", "posix")
+def test_lauf_fuer_ein_ticket_ersetzt_vorhandene_warteliste_nicht(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Hinweis 3a: Liste „<andere>,901“ + Lauf nur für 901, der wieder wartet → beide bleiben vermerkt.
+
+    Hinweis 2 im selben Aufbau (ein teurer Spawn weniger): ``--dry-run`` lässt die Liste unberührt,
+    auch im Zweig „Nichts zu starten“ (``warteliste_aendern`` direkt mit ``DRY_RUN=1``).
+    """
+    _lauf, umgebung, repo = _spawn_fremd_voll(tmp_path, monkeypatch)
+    datei = repo / ".to-spawn" / f"wartet-auf-platz-{e2.SPEC}"
+    andere = str(e2.CHECKPOINT)
+    datei.write_text(f"{andere},901\n", encoding="utf-8")
+    spawn = [str(SKILL / "skripte" / "spawn_srv.sh"), str(e2.SPEC), "--tickets", "901"]
+    trocken = bash_wahl.lauf(spawn + ["--dry-run"], cwd=str(repo), env=umgebung, capture_output=True, text=True)
+    assert trocken.returncode == 0, trocken.stdout + trocken.stderr
+    _warteliste(datei, "", f",{andere},901", trocken=1)
+    assert datei.read_text(encoding="utf-8") == f"{andere},901\n"
+    erneut = bash_wahl.lauf(spawn, cwd=str(repo), env=umgebung, capture_output=True, text=True)
+    assert erneut.returncode == 0 and "wartet auf Platz" in erneut.stdout, erneut.stdout + erneut.stderr
+    assert datei.read_text(encoding="utf-8") == f"{andere},901\n"
+
+
+@pytest.mark.braucht("bash", "posix")
+@pytest.mark.parametrize(
+    ("vorher", "hinzu", "weg", "nachher"),
+    [
+        ("901,902\n", "902", ",901", "902\n"),  # 3b: 901 gestartet, 902 wartet weiter
+        ("901,902\n", "", ",901,902", None),  # 3c: genau diese Liste läuft → Datei weg
+        ("901,902\n", "903,902", "", "901,902,903\n"),  # vereinigt, ohne Doppelte, stabile Reihenfolge
+        (None, "", ",901", None),  # nichts vermerkt, nichts zu tun
+    ],
+)
+def test_warteliste_traegt_nur_laufende_aus(
+    tmp_path: Path, vorher: str | None, hinzu: str, weg: str, nachher: str | None
+) -> None:
+    """Hinweis 3b/3c: Austragen nur der laufenden Tickets, Datei erst weg, wenn sie leer ist."""
+    datei = tmp_path / ".to-spawn" / "wartet-auf-platz-1"
+    if vorher is not None:
+        datei.parent.mkdir(parents=True)
+        datei.write_text(vorher, encoding="utf-8")
+    _warteliste(datei, hinzu, weg)
+    assert (datei.read_text(encoding="utf-8") if datei.exists() else None) == nachher
+    assert not list(tmp_path.rglob("*.neu"))

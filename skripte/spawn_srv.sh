@@ -188,13 +188,22 @@ aufseher_laeuft() {
 # Warte-Datei (#560): Tickets, die „wartet auf Platz“ bekamen; der Aufseher (wache.py) startet sie
 # daraus in Sekunden nach, sobald Platz frei ist. Schreiben und Löschen nur hier, unter der Sperre.
 WARTE_DATEI="$REPO/.to-spawn/wartet-auf-platz-$SPEC"
-# warte_datei_erledigt: alles aus --tickets läuft → Datei weg, aber nur, solange sie noch genau
-# diese Liste enthält — eine inzwischen von einem anderen Lauf geschriebene Liste bleibt für den
-# nächsten Nachstart-Takt (#560).
-warte_datei_erledigt() {
-  [ -n "$TICKETS_ARG" ] && [ -f "$WARTE_DATEI" ] || return 0
-  if [ "$(cat "$WARTE_DATEI")" = "$TICKETS_ARG" ]; then rm -f "$WARTE_DATEI"; fi
+# >>> warteliste (#560) — Format: eine Zeile, Ticketnummern mit Komma, z. B. ``901,902``.
+# warteliste_aendern <hinzu> <weg>: vorhandene Liste ∪ <hinzu> ohne <weg> (beides Komma-Listen),
+# ohne Doppelte, alte Reihenfolge zuerst; in einem Zug per mv geschrieben (ein Leser sieht nie
+# eine halbe Datei), leer → Datei weg. Trockenlauf ändert nichts.
+warteliste_aendern() {
+  [ "$DRY_RUN" -eq 0 ] || return 0
+  local alt="" neu
+  if [ -f "$WARTE_DATEI" ]; then alt="$(cat "$WARTE_DATEI")"; fi
+  neu="$(printf '%s,%s\n' "$alt" "$1" | tr ',' '\n' | awk -v weg=",$2," 'NF && !index(weg, "," $1 ",") && !s[$1]++ {print $1}' | paste -sd, -)"
+  if [ -z "$neu" ]; then rm -f "$WARTE_DATEI"; return 0; fi
+  mkdir -p "${WARTE_DATEI%/*}"
+  printf '%s\n' "$neu" > "$WARTE_DATEI.$$.neu" && mv -f "$WARTE_DATEI.$$.neu" "$WARTE_DATEI"
 }
+# <<< warteliste
+# LAEUFT = Tickets dieses Laufs, die schon liefen oder gestartet wurden — nur die trägt der Lauf aus.
+LAEUFT=""
 VORSPANN="export REPO=$(printf %q "$REPO") TO_SPAWN_HOME=$(printf %q "$SKILL_HOME") TO_SPAWN_REPO=$(printf %q "$REPO") TO_SPAWN_WARTE_DATEI=$(printf %q "$WARTE_DATEI");"
 # GEPLANT = echte Fensterbefehle, KURZ = Kurzform ``bau <N> [--umzug …]`` / ``wache <S>`` für
 # Anzeige und Fenstername (erste zwei Wörter; sessions_stand/aufpasser lesen die Namen) —
@@ -242,12 +251,13 @@ for n in $TICKETS; do
     exit 4
   else
     echo "Ticket #$n läuft bereits ($z) — übersprungen."
+    LAEUFT="$LAEUFT,$n"
   fi
 done
 
 if [ "${#GEPLANT[@]}" -eq 0 ]; then
   echo "Nichts zu starten — alle Fenster laufen schon."
-  warte_datei_erledigt
+  warteliste_aendern "" "$LAEUFT"
   exit 0
 fi
 
@@ -314,13 +324,9 @@ for i in "${!GEPLANT[@]}"; do
   if [ "$rc" -eq 8 ]; then
     # ponytail: Umzug-Fenster nicht vermerkt (brauchen ihre Ref), die startet der Aufpasser-Takt nach
     if [ -z "$UMZUG_REF" ]; then
-      # In einem Zug (#560): Temp-Datei im selben Ordner, dann mv — ein Leser sieht nie eine leere
-      # Datei. Keine bau-Fenster im Rest → nichts zu vermerken, eine vorhandene Liste bleibt.
-      mkdir -p "${WARTE_DATEI%/*}"
+      # Rest-bau-Fenster zur vorhandenen Liste dazu, Laufendes austragen (#560).
       liste="$(printf '%s\n' "${KURZ[@]:$i}" | awk '$1=="bau"{print $2}' | paste -sd, -)"
-      if [ -n "$liste" ]; then
-        printf '%s\n' "$liste" > "$WARTE_DATEI.$$.neu" && mv -f "$WARTE_DATEI.$$.neu" "$WARTE_DATEI"
-      fi
+      warteliste_aendern "$liste" "$LAEUFT"
     fi
     echo "wartet auf Platz: ${KURZ[*]:$i} — $WARTE_GRUND; Aufseher startet nach, sobald Platz frei ist."
     exit 0
@@ -337,9 +343,10 @@ for i in "${!GEPLANT[@]}"; do
     tmux new-session -d -s "$SESSION" -n "$name" -c "$REPO" bash -lc "$VORSPANN $befehl" 9>&-
   fi
   echo "gestartet: $name ($befehl)"
+  case "$name" in "bau "*) LAEUFT="$LAEUFT,${name#bau }" ;; esac
   GESTARTET=$((GESTARTET + 1))
 done
-warte_datei_erledigt
+warteliste_aendern "" "$LAEUFT"
 
 echo "== Anlauf (10 s) =="
 sleep 10
