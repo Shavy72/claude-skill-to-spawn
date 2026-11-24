@@ -18,6 +18,9 @@ Regeln: Grün (Exit 0) mit gleichem Kopf-SHA = „lief“, nie zweimal. Rot je K
 (``takt=True``) gilt ein roter Merker mit gleichem Kopf als geprüft — neu erst bei neuem Kopf oder
 von Hand (``to_spawn.py komplett <S>`` = ``takt=False``, prüft Rot erneut). Gate-Fehler (Werkzeug)
 zählen nie als geprüft. Neuer Kopf nach grünem Lauf (Nachbesserung) macht den Merker ungültig.
+Vorher zieht jeder Aufruf (Takt wie von Hand) den Klon per fast-forward auf ``origin/<Hauptzweig>``
+nach (:func:`to_spawn.arbeitsstand.sicherstellen`); geht das nicht (abgewichen, würde lokale Dateien
+überschreiben), kein Lauf, kein Merker, ``ok=False`` mit Handlung.
 Geprüft wird der Arbeitsbaum am Kopf des Klons: ungespeicherte Änderungen
 (:func:`to_spawn.pruef.sofort.ungespeichert`) oder ein Kopf hinter dem geholten Stand (``@{u}``
 nach fetch) → kein Lauf, kein Merker, ``ok=False`` mit Handlung. Zeitgrenze aus
@@ -52,7 +55,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from to_spawn import config, manifest, prozessbaum, pruefplan, starter
+from to_spawn import arbeitsstand, config, manifest, prozessbaum, pruefplan, starter
 from to_spawn import sperre as _sperre
 from to_spawn.pruef import leiter, protokoll, sofort
 from to_spawn.pruefplan import Moment, SpecStand
@@ -239,6 +242,17 @@ def _pruefen(
         log.info("komplett_lauf: Spec %s %s", spec, pruefplan.NICHT_EINGERICHTET)
         return Ergebnis(
             False, True, "Prüfung nicht eingerichtet, alter Ablauf", None, ""
+        )
+    # Vor dem Kopf lesen nachziehen (Review a62e67a): der capo-Takt macht nur fetch; ohne das hielte
+    # ein Klon hinter origin die Komplett-Prüfung jeden Takt an, und ein neuer Kopf liefe nie.
+    stand = arbeitsstand.sicherstellen(klon, nachziehen=True)
+    if not stand.ok:
+        return Ergebnis(
+            False,
+            False,
+            f"Komplett-Prüfung nicht gestartet, kein Merker: {stand.text}",
+            None,
+            _kopf(klon) or "",
         )
     kopf = _kopf(klon)
     if kopf is None:

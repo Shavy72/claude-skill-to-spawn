@@ -8,6 +8,7 @@ Hintergrund-Prozess ``to_spawn.py komplett`` für den Takt.
 from __future__ import annotations
 
 import json
+import os
 import shlex
 import subprocess
 import sys
@@ -244,3 +245,145 @@ def test_lauf_steht_im_pruef_protokoll(tmp_path: Path) -> None:
     assert len(zeilen) == 1, _protokoll(klon)
     assert zeilen[0]["ziel"] == kopf and zeilen[0]["urteil"] == "grün"
     assert zeilen[0]["stufen"][0]["name"] == "komplett"
+
+
+# --- Review a62e67a: Takt zieht nach, gestorbener Hintergrund-Lauf ------------------------------
+
+
+def _mit_origin(tmp_path: Path, klon: Path) -> tuple[Path, str]:
+    """Klon an ein nacktes origin hängen; ``anderer`` = zweiter Klon, der neue Commits pusht."""
+    nackt = tmp_path / "origin.git"
+    _git(tmp_path, "init", "-q", "--bare", str(nackt))
+    zweig = _git(klon, "rev-parse", "--abbrev-ref", "HEAD")
+    _git(klon, "remote", "add", "origin", str(nackt))
+    _git(klon, "push", "-q", "-u", "origin", zweig)
+    _git(nackt, "symbolic-ref", "HEAD", f"refs/heads/{zweig}")
+    anderer = tmp_path / "anderer"
+    _git(tmp_path, "clone", "-q", str(nackt), str(anderer))
+    return anderer, zweig
+
+
+def _neu_auf_origin(anderer: Path, zweig: str, klon: Path, name: str) -> str:
+    """Neuer Commit auf origin, im Klon nur ``git fetch`` (wie der capo-Takt, ohne merge)."""
+    kopf = _commit(anderer, name)
+    _git(anderer, "push", "-q", "origin", zweig)
+    _git(klon, "fetch", "-q", "origin")
+    return kopf
+
+
+@pytest.fixture
+def echtes_nachziehen(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test-Naht aus conftest aus: ``arbeitsstand.sicherstellen`` arbeitet mit echtem git."""
+    from to_spawn import arbeitsstand
+
+    monkeypatch.delenv(arbeitsstand.TEST_OK_ENV, raising=False)
+
+
+def test_takt_zieht_klon_hinter_origin_nach_und_prueft_neuen_kopf(
+    tmp_path: Path, echtes_nachziehen: None
+) -> None:
+    zaehl = tmp_path / "zaehl.txt"
+    klon, konfig = _klon(tmp_path, {"komplett": _befehl(zaehl)})
+    anderer, zweig = _mit_origin(tmp_path, klon)
+    neu = _neu_auf_origin(anderer, zweig, klon, "neu.txt")
+    erg = komplett_lauf.komplett_einmal(
+        klon, SPEC, Moment.ALLE_AUF_STAGING, konfig, takt=True
+    )
+    assert _git(klon, "rev-parse", "HEAD") == neu, "Klon nicht nachgezogen"
+    merker = _warte_merker(klon, neu)
+    assert merker.gruen, (erg, merker)
+    assert _laeufe(zaehl) == 1
+
+
+def test_takt_nach_rot_neuer_kopf_auf_origin_wird_nachgezogen_und_neu_geprueft(
+    tmp_path: Path, echtes_nachziehen: None
+) -> None:
+    zaehl = tmp_path / "zaehl.txt"
+    klon, konfig = _klon(tmp_path, {"komplett": _befehl(zaehl)})
+    anderer, zweig = _mit_origin(tmp_path, klon)
+    _rot(zaehl)
+    erst = komplett_lauf.komplett_einmal(
+        klon, SPEC, Moment.ALLE_AUF_STAGING, konfig, takt=True
+    )
+    assert (erst.gelaufen, erst.ok) == (True, False), erst
+    zaehl.with_name("exit.txt").unlink()
+    neu = _neu_auf_origin(anderer, zweig, klon, "fix.txt")
+    zweit = komplett_lauf.komplett_einmal(
+        klon, SPEC, Moment.ALLE_AUF_STAGING, konfig, takt=True
+    )
+    assert _git(klon, "rev-parse", "HEAD") == neu, zweit
+    assert _warte_merker(klon, neu).gruen, zweit
+    assert _laeufe(zaehl) == 2
+
+
+def test_nachziehen_unmoeglich_haelt_mit_handlung(
+    tmp_path: Path, echtes_nachziehen: None
+) -> None:
+    """Abgewichen (eigener Commit + neuer auf origin): kein Lauf, klare Zeile, HEAD bleibt."""
+    zaehl = tmp_path / "zaehl.txt"
+    klon, konfig = _klon(tmp_path, {"komplett": _befehl(zaehl)})
+    anderer, zweig = _mit_origin(tmp_path, klon)
+    eigen = _commit(klon, "eigen.txt")
+    _neu_auf_origin(anderer, zweig, klon, "fremd.txt")
+    erg = komplett_lauf.komplett_einmal(
+        klon, SPEC, Moment.ALLE_AUF_STAGING, konfig, takt=True
+    )
+    assert (erg.gelaufen, erg.ok) == (False, False), erg
+    assert "nicht vorspulbar" in erg.grund and "Tun:" in erg.grund, erg.grund
+    assert _git(klon, "rev-parse", "HEAD") == eigen
+    assert _laeufe(zaehl) == 0
+    assert komplett_lauf.lies_merker(klon, SPEC) is None
+
+
+def test_von_hand_zieht_auch_nach(tmp_path: Path, echtes_nachziehen: None) -> None:
+    zaehl = tmp_path / "zaehl.txt"
+    klon, konfig = _klon(tmp_path, {"komplett": _befehl(zaehl)})
+    anderer, zweig = _mit_origin(tmp_path, klon)
+    neu = _neu_auf_origin(anderer, zweig, klon, "neu.txt")
+    erg = komplett_lauf.komplett_einmal(klon, SPEC, Moment.VOR_LIVE, konfig)
+    assert (erg.gelaufen, erg.ok, erg.kopf) == (True, True, neu), erg
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="fcntl-Sperre im Kind nur unter Linux"
+)
+def test_gestorbener_hintergrund_lauf_startet_im_naechsten_takt_neu(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Kind hält die Sperre, stirbt ohne Merker → Sperre frei, nächster Takt startet neu."""
+    zaehl = tmp_path / "zaehl.txt"
+    klon, konfig = _klon(tmp_path, {"komplett": _befehl(zaehl)})
+    kopf = _git(klon, "rev-parse", "HEAD")
+    monkeypatch.setattr(komplett_lauf, "TAKT_WARTEN_S", 0.3)
+    sperr = komplett_lauf._datei(klon, SPEC).with_suffix(".lock")
+    echt = komplett_lauf.starter.starte
+    # Kind-Skript im Attrappen-Ordner: nur von dort lässt der Starter unter Test Python zu.
+    stirbt = Path(os.environ[komplett_lauf.starter.TEST_BIN_ENV]) / "stirbt.py"
+    stirbt.write_text(
+        "import fcntl,sys,time\n"
+        "f=open(sys.argv[1],'a');fcntl.flock(f,fcntl.LOCK_EX)\n"
+        "time.sleep(1.5);sys.exit(9)\n",
+        encoding="utf-8",
+    )
+
+    def sterbend(argv: list[str], **kw: Any) -> Any:
+        return echt([sys.executable, str(stirbt), str(sperr)], **kw)
+
+    monkeypatch.setattr(komplett_lauf.starter, "starte", sterbend)
+    erst = komplett_lauf.komplett_einmal(
+        klon, SPEC, Moment.ALLE_AUF_STAGING, konfig, takt=True
+    )
+    assert erst.laeuft, erst
+    time.sleep(0.5)
+    belegt = komplett_lauf.komplett_einmal(
+        klon, SPEC, Moment.ALLE_AUF_STAGING, konfig, takt=True
+    )
+    assert belegt.laeuft and "läuft schon" in belegt.grund, belegt
+    time.sleep(2.0)  # Kind ist tot, kein Merker, Sperre frei
+    assert komplett_lauf.lies_merker(klon, SPEC) is None
+    monkeypatch.setattr(komplett_lauf.starter, "starte", echt)
+    neu = komplett_lauf.komplett_einmal(
+        klon, SPEC, Moment.ALLE_AUF_STAGING, konfig, takt=True
+    )
+    assert _warte_merker(klon, kopf).gruen, neu
+    assert _laeufe(zaehl) == 1
