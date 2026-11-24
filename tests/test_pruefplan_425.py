@@ -1,6 +1,6 @@
 """#425 Teil A: eine Stelle entscheidet, welche Prüfung jetzt dran ist.
 
-Tabelle Repo-Art (mit/ohne Staging-App) × Spec-Stand. Davids Vorgabe (24.11.): je Ticket nur
+Tabelle Repo-Art (mit/ohne Staging-App) × Spec-Stand. Vorgabe des Auftraggebers (24.11.): je Ticket nur
 die schnelle Prüfung; die Komplett-Prüfung genau einmal je Spec — mit Staging, sobald alle
 Tickets auf Staging sind, ohne Staging vor dem Live-Schritt.
 """
