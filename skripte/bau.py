@@ -993,13 +993,17 @@ def main() -> int:
         Vorlage, wie sie JETZT auf der Platte liegt. ``main`` ruft sie beim Start (Vorlage kaputt
         → sofort Exit 2, ``--print-prompt``) und erneut im Moment des Loslassens — ein Fenster,
         das stundenlang auf Blocker wartet, startet so mit der Regel von jetzt."""
-        grund = (
-            probesitz.WEGWERF_PROMPT.format(ticket=ticket)
-            if args.probesitz
-            else build_prompt(
-                load_default()["prompt_template"], ticket, spec, title, build_kontext(entry), config.lade(REPO)
+        try:
+            grund = (
+                probesitz.WEGWERF_PROMPT.format(ticket=ticket)
+                if args.probesitz
+                else build_prompt(
+                    load_default()["prompt_template"], ticket, spec, title, build_kontext(entry), config.lade(REPO)
+                )
             )
-        )
+        except ValueError as fehler:  # Platzhalter-Rest (#501): Vorlage kaputt → Exit 2 mit Grund
+            print(f"bau: {fehler}", file=sys.stderr)
+            raise SystemExit(2) from fehler
         if auftrag.strip():
             # Vor dem Prompt, damit auch jede Staffel-Runde den Auftrag dieser Runde sieht (#285).
             grund = auftrag_prompt(grund, auftrag)

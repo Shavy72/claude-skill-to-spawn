@@ -1807,9 +1807,10 @@ def _checkpoint(
         return [f"#{n} [Probe] würde Vorschlag annehmen: {_kurz(vorschlag.wahl)}"]
     text = f"{WAECHTER_KOPF} {ANNAHME_ANFANG} {frist:.0f} min nach Doktrin — der Mensch kann kippen. Vorschlag: {vorschlag.wahl}"
     befehl = f"python {(_SKILL / 'to_spawn.py').as_posix()}"
-    # #501: Kennung der jüngsten offenen Live-Frage (Klasse 2) statt „<id>“, falls schon gestellt.
-    live_ids = [o["id"] for o in briefkasten.offene([n], hauptbaum=repo) if o["klasse"] == "2" and o["id"]]
-    text += f"\n\n{annahme_grenze(n, befehl, live_ids[-1] if live_ids else '')}"  # #490: Live-Grenze
+    # #501: echte Kennung nur, wenn genau EINE Klasse-2-Frage offen ist (sonst könnte es die falsche sein).
+    klasse_2 = [o for o in briefkasten.offene([n], hauptbaum=repo) if o["klasse"] == "2"]
+    live_id = klasse_2[0]["id"] if len(klasse_2) == 1 else ""
+    text += f"\n\n{annahme_grenze(n, befehl, live_id)}"  # #490: Live-Grenze
     if not befund.kommentiere(n, gh_repo, text):
         return [f"#{n} FEHLER: Checkpoint-Annahme nicht kommentiert"]
     erledigt.add(schluessel)
