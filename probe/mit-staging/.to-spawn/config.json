@@ -1,0 +1,17 @@
+{
+  "ziel_default": "srv",
+  "pruefung": {
+    "schnell": "python -m unittest discover -s tests -t .",
+    "komplett": "python skripte/pruefen_komplett.py"
+  },
+  "live": {
+    "befehl": "python skripte/ausrollen.py live",
+    "url": "http://127.0.0.1:@@LIVE_PORT@@/",
+    "aufraeumen": "python skripte/ausrollen.py live --aufraeumen"
+  },
+  "staging_start": "python skripte/ausrollen.py staging",
+  "staging": {
+    "url": "http://127.0.0.1:@@STAGING_PORT@@/",
+    "ohne": false
+  }
+}
