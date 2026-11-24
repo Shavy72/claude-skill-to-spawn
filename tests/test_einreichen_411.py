@@ -128,7 +128,6 @@ def _gh_aufrufe(welt: dict[str, Path]) -> list[list[str]]:
 # --- Anleitungen: keine Bau-Session wird mehr zum Fragen geschickt ---------------------------
 
 
-@pytest.mark.xfail(strict=True, reason="Teil 2 von #411: Anleitungen noch nicht umgestellt")
 def test_bau_vorlage_reicht_ein_statt_fast_forward_push() -> None:
     vorlage = json.loads((SKILL / "repo-scripts" / "_default.json").read_text(encoding="utf-8"))
     text = vorlage["prompt_template"]
@@ -136,7 +135,6 @@ def test_bau_vorlage_reicht_ein_statt_fast_forward_push() -> None:
     assert "fast-forward nach origin/{HAUPTZWEIG}" not in text
 
 
-@pytest.mark.xfail(strict=True, reason="Teil 2 von #411: Anleitungen noch nicht umgestellt")
 def test_befugnis_einreichen_ist_klasse_1_ohne_frage() -> None:
     start = befugnis.start_text(7)
     assert "to_spawn.py einreichen" in start
@@ -144,13 +142,25 @@ def test_befugnis_einreichen_ist_klasse_1_ohne_frage() -> None:
     assert befugnis.einordnen("hauptzweig", "einreichen") == 1
 
 
-@pytest.mark.xfail(strict=True, reason="Teil 2 von #411: Anleitungen noch nicht umgestellt")
 def test_aufseher_und_abloese_sop_reichen_ein() -> None:
     sys.path.insert(0, str(SKILL / "skripte"))
     import wache  # noqa: PLC0415
 
     assert "to_spawn.py einreichen" in anleitung.ABLOESE_SOP
     assert wache.PROMPT.count("einreichen {S}") >= 2
+
+
+@pytest.mark.parametrize("art", ["pushen", "mergen", "merge", "push"])
+def test_direkter_push_oder_merge_auf_hauptzweig_bleibt_klasse_3(art: str) -> None:
+    assert befugnis.einordnen("hauptzweig", art) == 3
+    assert befugnis.einordnen("master", "einreichen") == 3
+
+
+def test_aufseher_takt_reicht_ein_statt_push() -> None:
+    from to_spawn import waechter_takt  # noqa: PLC0415
+
+    assert waechter_takt.PROMPT.count("to_spawn.py einreichen {S}") >= 2
+    assert "committen + pushen" not in waechter_takt.PROMPT
 
 
 # --- Der Weg selbst, echte Repos -------------------------------------------------------------
