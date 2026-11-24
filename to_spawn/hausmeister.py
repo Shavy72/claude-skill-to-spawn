@@ -559,16 +559,18 @@ def _zweige_im_takt(loeschen: bool, jetzt: float | None) -> None:
         log.exception("Hausmeister: Ticket-Zweige gescheitert")
 
 
-def start_erlaubt(*, loeschen: bool = True) -> tuple[bool, str]:
+def start_erlaubt(*, loeschen: bool = True, nur_messen: bool = False) -> tuple[bool, str]:
     """Start-Check: (darf eine neue Session starten?, Satz für Menschen); wirft nie.
 
     Bei Platznot erst :func:`aufraeumen_alles`, dann neu messen (ohne Platznot lohnt
     der Lauf mit seinen gh-Abfragen nicht — die Platte bliebe über der Startsperre).
     ``loeschen=False`` (Probelauf, Status) misst nur und löscht nie. Messung unmöglich
     oder unerwarteter Fehler → Start erlaubt, mit Spur in cron.out und Hindernis-Log.
+    ``nur_messen=True`` (#617): auch bei Platznot kein Rundgang (der braucht gh/git je Ordner,
+    Minuten) — nur Messung und Urteil; der Aufrufer räumt bei „voll“ erneut ohne den Schalter.
     """
     try:
-        return _start_pruefen(loeschen)
+        return _start_pruefen(loeschen, nur_messen)
     except Exception as fehler:  # Vertrag: wirft nie, im Zweifel starten
         log.exception("Hausmeister: Start-Check gescheitert")
         satz = f"Platte: Start-Check gescheitert ({fehler}) — Start erlaubt"
@@ -576,10 +578,10 @@ def start_erlaubt(*, loeschen: bool = True) -> tuple[bool, str]:
         return True, satz
 
 
-def _start_pruefen(loeschen: bool) -> tuple[bool, str]:
+def _start_pruefen(loeschen: bool, nur_messen: bool = False) -> tuple[bool, str]:
     anteil = _frei_anteil()
     zusatz = ""
-    if _ist_platznot(anteil):
+    if _ist_platznot(anteil) and not nur_messen:
         rund = rundgang(loeschen=loeschen)
         if not rund.gelaufen and not rund.wartet:
             zusatz = " (Aufräumen gescheitert, siehe Log)"
