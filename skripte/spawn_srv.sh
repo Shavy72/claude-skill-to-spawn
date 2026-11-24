@@ -201,7 +201,7 @@ case "$STAFFEL" in ''|*[!0-9]*) STAFFEL=20 ;; esac
 # Zweites Argument --trocken (Probelauf): nur messen, der Hausmeister löscht nie.
 speicher_pruefen() {
   local rc=0 stand
-  stand="$(TO_SPAWN_REPO="$REPO" "$PY" "$SKILL_HOME/to_spawn.py" speicher ${2:+"$2"} 2>&1)" || rc=$?
+  stand="$(TO_SPAWN_REPO="$REPO" "$PY" "$SKILL_HOME/to_spawn.py" speicher --sitzung "$SESSION" ${2:+"$2"} 2>&1)" || rc=$?
   case "$rc" in
     0) return 0 ;;
     5) echo "nicht gestartet: $1 — $stand" >&2; return 5 ;;

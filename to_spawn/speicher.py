@@ -10,6 +10,14 @@ Repo-Konfig (``DEFAULTS["speicher"]``):
 * ``max_sessions`` — höchstens so viele Prozesse mit ``argv[0]``-Basename ``claude``
   dürfen schon laufen (Richtwert 6 je 16 GB).
 
+Wer zählt gegen ``max_sessions`` (#409)? Nennt der Starter seine tmux-Sitzung
+(:func:`platz_frei` mit ``sitzung=``, :func:`platz_frei_hier` aus dem eigenen Fenster),
+zählen nur Claude-Prozesse dieser Sitzung — erkannt an der Variable ``TMUX``, die tmux
+jedem Prozess eines Fensters mitgibt. Nachweislich fremde Sessions (andere tmux-Sitzung,
+außerhalb von tmux) bremsen dann nur über ``min_frei_mib``, das immer maschinenweit
+misst. Prozesse mit unlesbarer Umgebung zählen vorsichtshalber mit. Ohne Sitzung zählt
+die ganze Maschine wie früher. Diese Regel lebt nur hier.
+
 Nur Standardbibliothek (plus ``to_spawn.config``), nur Linux: auf anderen Systemen gibt es kein Urteil,
 also „frei“. Test-Tür: die Umgebungsvariablen ``TO_SPAWN_SPEICHER_MEMINFO``
 (Pfad einer meminfo-Datei) und ``TO_SPAWN_SPEICHER_PROC`` (Ordner im Aufbau von
@@ -21,6 +29,7 @@ from __future__ import annotations
 
 import logging
 import os
+import subprocess
 import sys
 import time
 from collections.abc import Callable
@@ -76,11 +85,60 @@ def frei_mib(meminfo: Path | None = None) -> int | None:
     return None
 
 
-def claude_sessions(proc: Path | None = None) -> int | None:
+#: Eine tmux-Sitzung als (Socket-Pfad, Sitzungs-Nummer) — so steht sie in ``TMUX``.
+Sitzung = tuple[str, str]
+#: Sitzung, die es (noch) nicht gibt: kein Prozess gehört ihr.
+KEINE_SITZUNG: Sitzung = ("", "")
+
+
+def _sitzung_aus_tmux_wert(wert: str | None) -> Sitzung | None:
+    """``TMUX``-Wert ``<socket>,<server-pid>,<nr>`` → (Socket, Nummer); sonst ``None``."""
+    teile = (wert or "").rsplit(",", 2)
+    if len(teile) != 3 or not teile[0] or not teile[2].isdigit():
+        return None
+    return teile[0], teile[2]
+
+
+def _gehoert_zu(eintrag: Path, sitzung: Sitzung) -> bool:
+    """Lebt der Prozess in ``sitzung``? Unlesbare Umgebung → ja (nicht nachweislich fremd)."""
+    try:
+        roh = (eintrag / "environ").read_bytes()
+    except OSError:
+        return True
+    for teil in roh.split(b"\0"):
+        if teil.startswith(b"TMUX="):
+            return _sitzung_aus_tmux_wert(teil[5:].decode("utf-8", errors="replace")) == sitzung
+    return False  # außerhalb von tmux — fremd
+
+
+def sitzung_nach_name(name: str, tmux_socket: str | None = None) -> Sitzung:
+    """tmux-Sitzung ``name`` (z. B. ``spec-12``) auf dem Server ``tmux_socket`` (``-L``).
+
+    Gibt es sie nicht oder kein tmux, kommt :data:`KEINE_SITZUNG` (dann läuft dort auch
+    keine eigene Session). tmux-Befehl wie überall aus ``TO_SPAWN_TMUX``.
+    """
+    from to_spawn import capo  # spät: capo zieht viele Module
+
+    befehl = [*capo._tmux_befehl(), *(["-L", tmux_socket] if tmux_socket else [])]
+    befehl += ["list-sessions", "-F", "#{session_name}\t#{socket_path}\t#{session_id}"]
+    try:
+        lauf = subprocess.run(befehl, capture_output=True, text=True, timeout=10, check=False)
+    except (OSError, subprocess.TimeoutExpired) as fehler:
+        log.warning("tmux-Sitzung %s nicht ermittelbar: %s", name, fehler)
+        return KEINE_SITZUNG
+    for zeile in lauf.stdout.splitlines() if lauf.returncode == 0 else []:
+        teile = zeile.split("\t")
+        if len(teile) == 3 and teile[0] == name:
+            return teile[1], teile[2].lstrip("$")
+    return KEINE_SITZUNG
+
+
+def claude_sessions(proc: Path | None = None, sitzung: Sitzung | None = None) -> int | None:
     """Zahl der laufenden Claude-Prozesse (``argv[0]``-Basename ``claude``), ``None`` = unbekannt.
 
-    ``proc`` = Ordner im Aufbau von ``/proc`` (Unterordner je PID mit ``cmdline``);
-    ohne Angabe gilt ``TO_SPAWN_SPEICHER_PROC`` bzw. ``/proc``.
+    ``proc`` = Ordner im Aufbau von ``/proc`` (Unterordner je PID mit ``cmdline``, ``environ``);
+    ohne Angabe gilt ``TO_SPAWN_SPEICHER_PROC`` bzw. ``/proc``. ``sitzung`` = nur Prozesse
+    dieser tmux-Sitzung zählen (#409); ``None`` = alle der Maschine.
     """
     ordner = proc if proc is not None else _proc_pfad()
     try:
@@ -101,6 +159,8 @@ def claude_sessions(proc: Path | None = None) -> int | None:
             continue
         if b"-p" in teile[1:] or b"--print" in teile[1:]:
             continue  # Einmal-Helfer (``claude -p``) einer Session — keine eigene Sitzung
+        if sitzung is not None and not _gehoert_zu(eintrag, sitzung):
+            continue  # fremde Session — bremst nur über min_frei_mib (#409)
         anzahl += 1
     return anzahl
 
@@ -134,33 +194,64 @@ def platz_frei(
     konfig: dict[str, Any] | None,
     frei: int | None = None,
     sessions: int | None = None,
+    *,
+    sitzung: str | None = None,
+    tmux_socket: str | None = None,
 ) -> tuple[bool, str]:
     """(darf starten?, Satz dazu) — die Entscheidung aller Starter.
+
+    ``sitzung`` = tmux-Sitzung des Laufs (``spec-<S>``): nur ihre Claude-Sessions zählen
+    gegen ``max_sessions`` (#409); ``tmux_socket`` = ``-L``-Name ihres tmux-Servers.
+    Ohne ``sitzung`` zählt die ganze Maschine. Der RAM-Wert gilt immer maschinenweit.
 
     ``frei``/``sessions`` = Messwerte für Tests; ohne Angabe wird gemessen. Vorgegebene
     Werte (Parameter oder ``TO_SPAWN_SPEICHER_MEMINFO``/``TO_SPAWN_SPEICHER_PROC``)
     gelten auf jeder Plattform; selbst gemessen wird nur unter Linux. Kein Wert →
     kein Urteil, also frei (lieber starten als grundlos blockieren). Der Satz ist für
     Menschen: „Speicher knapp: 1,2 GB frei, Mindestmaß 2 GB“ oder „schon 6
-    Claude-Sessions (Obergrenze 6)“.
+    Claude-Sessions in spec-12 (Obergrenze 6)“.
     """
+    return _urteil(
+        konfig, frei, sessions, lambda: sitzung_nach_name(sitzung, tmux_socket) if sitzung else None, sitzung
+    )
+
+
+def platz_frei_hier(konfig: dict[str, Any] | None) -> tuple[bool, str]:
+    """:func:`platz_frei` für die tmux-Sitzung, in der dieser Prozess läuft (``TMUX``).
+
+    Für Starter im eigenen Fenster (``bau``, ``wache``). Außerhalb von tmux (z. B. am
+    PC) zählt die ganze Maschine wie bei :func:`platz_frei` ohne Sitzung.
+    """
+    eigen = _sitzung_aus_tmux_wert(os.environ.get("TMUX"))
+    return _urteil(konfig, None, None, lambda: eigen, "dieser tmux-Sitzung" if eigen else None)
+
+
+def _urteil(
+    konfig: dict[str, Any] | None,
+    frei: int | None,
+    sessions: int | None,
+    welche: Callable[[], Sitzung | None],
+    wo: str | None,
+) -> tuple[bool, str]:
+    """Gemeinsamer Kern von :func:`platz_frei`/:func:`platz_frei_hier`; ``welche`` erst beim Zählen."""
     linux = sys.platform == "linux"
     werte = grenzen(konfig)
     if frei is None and (linux or os.environ.get("TO_SPAWN_SPEICHER_MEMINFO")):
         frei = frei_mib()
     if sessions is None and (linux or os.environ.get("TO_SPAWN_SPEICHER_PROC")):
-        sessions = claude_sessions()
+        sessions = claude_sessions(sitzung=welche())
     if frei is None and sessions is None:
         grund = "/proc nicht lesbar" if linux else "kein Linux"
         return True, f"Speicher: kein Urteil ({grund}) — Start erlaubt"
+    wo_text = f" in {wo}" if wo else ""
     if frei is not None and frei < werte["min_frei_mib"]:
         return False, (f"Speicher knapp: {_gb_text(frei)} frei, Mindestmaß {_gb_text(werte['min_frei_mib'])}")
     if sessions is not None and sessions >= werte["max_sessions"]:
-        return False, f"schon {sessions} Claude-Sessions (Obergrenze {werte['max_sessions']})"
+        return False, f"schon {sessions} Claude-Sessions{wo_text} (Obergrenze {werte['max_sessions']})"
     frei_text = _gb_text(frei) if frei is not None else "unbekannt"
     sessions_text = str(sessions) if sessions is not None else "unbekannt"
     return True, (
-        f"Speicher frei: {frei_text} frei, {sessions_text} Claude-Sessions "
+        f"Speicher frei: {frei_text} frei, {sessions_text} Claude-Sessions{wo_text} "
         f"(Obergrenze {werte['max_sessions']}, Mindestmaß {_gb_text(werte['min_frei_mib'])})"
     )
 
@@ -270,12 +361,18 @@ def auf_platte_warten(
         schlafen(takt_s)
 
 
-def cli(konfig: dict[str, Any] | None, nur_staffel: bool = False, trocken: bool = False) -> int:
+def cli(
+    konfig: dict[str, Any] | None,
+    nur_staffel: bool = False,
+    trocken: bool = False,
+    sitzung: str | None = None,
+) -> int:
     """Unterbefehl ``to_spawn.py speicher``: Stand drucken, Exit 0 = frei, 5 = voll,
     7 = Platte voll (Start-Check des Hausmeisters, vor der RAM-Prüfung).
 
     ``--staffel`` druckt nur die Sekundenzahl der Staffel (für Shell-Skripte).
     ``--trocken`` (Probelauf, Status): nur messen, der Hausmeister löscht nie.
+    ``--sitzung spec-<S>``: Obergrenze nur für diese tmux-Sitzung (#409).
     """
     if nur_staffel:
         print(staffel_s(konfig))
@@ -284,6 +381,6 @@ def cli(konfig: dict[str, Any] | None, nur_staffel: bool = False, trocken: bool 
     if not platte_ok:
         print(platte_grund)
         return EXIT_PLATTE
-    ok, grund = platz_frei(konfig)
+    ok, grund = platz_frei(konfig, sitzung=sitzung)
     print(grund)
     return 0 if ok else EXIT_VOLL
