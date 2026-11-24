@@ -40,7 +40,7 @@ PFLICHT_TO_TICKETS = (
     "## Werkzeuge",
     "checkpoint:human",
     "to_spawn.py anhaengen",
-    "to_spawn.py pruefen <S>",
+    "to_spawn.py regularien <S>",
     "pfade.manifeste",
     ".to-spawn/kette.md",
 )
