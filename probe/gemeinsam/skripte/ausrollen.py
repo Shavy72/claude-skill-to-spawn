@@ -112,6 +112,9 @@ def _beende(ordner: Path, port: int, pruefen: bool) -> bool:
         except (OSError, ValueError) as fehler:
             log.info("PID-Datei %s unlesbar (%s) — Prozess bleibt", pid_datei, fehler)
             return False
+        if pid <= 0:
+            log.warning("PID %s in %s ist kein Prozessbeleg — nichts beendet, Ordner bleibt", pid, pid_datei)
+            return False
         if _lebt(pid):
             if pruefen and not _prozess_im_ordner(pid, ordner):
                 log.warning("Prozess %s gehört nicht nachweislich zu %s — bleibt", pid, ordner)

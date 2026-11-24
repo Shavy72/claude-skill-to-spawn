@@ -174,3 +174,18 @@ def test_prozess_bleibt_trotz_signal_ordner_bleibt_und_rueckgabe_false(tmp_path:
     finally:
         prozess.kill()
         prozess.wait()
+
+
+@pytest.mark.parametrize("pid", ["0", "-1"])
+def test_pid_null_oder_negativ_ordner_bleibt_kein_signal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, pid: str
+) -> None:
+    wt1, wt2 = _zwei_worktrees(tmp_path)
+    (wt2 / "staging").mkdir()
+    (wt2 / "staging" / "server.pid").write_text(pid, encoding="utf-8")
+    modul = _modul(wt1)
+    signale: list[tuple[int, int]] = []
+    monkeypatch.setattr(modul.os, "kill", lambda p, s: signale.append((p, s)))
+    assert modul._beende(wt2 / "staging", 1, True) is False
+    assert (wt2 / "staging").exists()
+    assert signale == []
