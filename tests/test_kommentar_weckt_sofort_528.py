@@ -38,7 +38,7 @@ def _komm(i: int, text: str, rolle: str = "OWNER") -> dict[str, Any]:
 @pytest.fixture
 def github(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     """Zustand von GitHub: ``issue`` (Labels) und ``kommentare`` (Liste), beides frei änderbar."""
-    z: dict[str, Any] = {"issue": CHECKPOINT, "kommentare": [_komm(1, "Teilabnahme bereit")]}
+    z: dict[str, Any] = {"issue": CHECKPOINT, "kommentare": [_komm(1, "Aufseher: Teilabnahme bereit")]}
 
     def json_lauf(args: list[str], *_a: Any, **_k: Any) -> Any:
         if args[1].endswith(f"/issues/{TICKET}"):
