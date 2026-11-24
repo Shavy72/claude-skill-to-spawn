@@ -31,11 +31,12 @@ def _git(ordner: Path, *args: str) -> None:
     )
 
 
-def _probe(ordner: Path, konfig: dict | None = None) -> Path:
+def _probe(ordner: Path, konfig: dict | None = None, datei: str = "neu.py") -> Path:
     """Python-Repo mit einem Test, Tag ``base``; danach ein Commit mit ungetestetem Code.
 
     Der neue Code wird von keinem Test berührt: Die Auswahl findet 0 Tests (bzw. ist gar nicht
-    möglich) — genau der Fall, in dem die Leiter heute auf den vollen Lauf zurückfällt.
+    möglich) — genau der Fall, in dem die Leiter heute auf den vollen Lauf zurückfällt. ``datei`` =
+    die im Ticket-Commit neue Datei (``README.md`` = Ticket ohne Code-Datei).
     """
     ordner.mkdir()
     (ordner / "pytest.ini").write_text("[pytest]\ntestpaths = tests\n", encoding="utf-8")
@@ -59,7 +60,7 @@ def _probe(ordner: Path, konfig: dict | None = None) -> Path:
     _git(ordner, "add", "-A")
     _git(ordner, "commit", "-qm", "base")
     _git(ordner, "tag", "base")
-    (ordner / "neu.py").write_text("def neu():\n    return 1\n", encoding="utf-8")
+    (ordner / datei).write_text("def neu():\n    return 1\n", encoding="utf-8")
     _git(ordner, "add", "-A")
     _git(ordner, "commit", "-qm", "ticket")
     return ordner
@@ -119,3 +120,44 @@ def test_dauer_der_schnellen_pruefung_steht_in_protokoll_und_log(
     assert urteil.zeile["gesamt_s"] >= 0
     assert _letzte_zeile(repo)["art"] == "schnell"
     assert any("Dauer der schnellen Prüfung" in r.getMessage() for r in caplog.records)
+
+
+# Fix-Runde 1 (#425): „schnell“ mit geänderter Code-Datei und 0 gelaufenen Tests ist nie Grün.
+_KEINE_AUSWAHL = "schnell: keine Test-Auswahl möglich"
+
+
+def test_schnell_mit_code_ohne_gelaufenen_test_ist_gate_fehler(tmp_path: Path) -> None:
+    repo = _probe(tmp_path / "p")
+    urteil = pruef.pruefen(repo, "base", "HEAD", art="schnell")
+    assert urteil.exit == 2, urteil.zeile
+    assert _KEINE_AUSWAHL in urteil.zeile["fehler_kurz"], urteil.zeile
+    assert not _voll_lief(urteil.zeile), f"Rückfall auf den vollen Lauf: {urteil.zeile['stufen']}"
+
+
+def test_einreichen_nennt_den_grund_in_ergebnis_und_protokoll(tmp_path: Path) -> None:
+    repo = _probe(tmp_path / "p")
+    with pytest.raises(einreichen._Rot) as rot:
+        einreichen._pruefung(repo, "base")
+    assert _KEINE_AUSWAHL in rot.value.text
+    zeile = _letzte_zeile(repo)
+    assert zeile["urteil"] == "gate-fehler"
+    assert _KEINE_AUSWAHL in zeile["fehler_kurz"]
+    assert any(_KEINE_AUSWAHL in stufe["grund"] for stufe in zeile["stufen"]), zeile["stufen"]
+
+
+def test_schnell_nach_rotem_lauf_mit_code_ist_gate_fehler(tmp_path: Path) -> None:
+    repo = _probe(tmp_path / "p")
+    ordner = repo / ".to-spawn" / "pruef"
+    ordner.mkdir(parents=True)
+    (ordner / "protokoll.jsonl").write_text(json.dumps({"urteil": "rot"}) + "\n", encoding="utf-8")
+    urteil = pruef.pruefen(repo, "base", "HEAD", art="schnell")
+    assert urteil.exit == 2, urteil.zeile
+    assert "LF" in urteil.zeile["fehler_kurz"], urteil.zeile
+    assert not _voll_lief(urteil.zeile)
+
+
+def test_schnell_ohne_code_datei_bleibt_gruen(tmp_path: Path) -> None:
+    repo = _probe(tmp_path / "p", datei="README.md")
+    urteil = pruef.pruefen(repo, "base", "HEAD", art="schnell")
+    assert urteil.exit == 0, urteil.zeile
+    assert not _voll_lief(urteil.zeile)
