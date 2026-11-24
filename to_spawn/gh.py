@@ -172,7 +172,7 @@ def blocker_gruende(repo: Path, deps: list[dict], *, mit_commit: bool = True) ->
             erledigt.append(d.get("number"))
         else:
             gruende.append(f"#{d.get('number')} offen")
-    if not mit_commit or not erledigt:
+    if not mit_commit or not erledigt or gruende:  # fetch erst, wenn alle Blocker zu sind (#432)
         return gruende
     haupt = f"origin/{hauptzweig(repo)}"  # master/main/… je Repo (#257)
     code, _ = _git_ausgabe(["fetch", "-q", "origin"], repo, timeout=FETCH_ZEIT_S)

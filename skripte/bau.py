@@ -308,6 +308,11 @@ def _gh_json(gh: str, *args: str) -> object | None:
         return None
 
 
+#: Sekunden zwischen zwei Blocker-Prüfungen (#432): die eine Stelle; ``--takt`` überschreibt, Untergrenze 5 s.
+TAKT_STANDARD_S = 30
+TAKT_MIN_S = 5
+
+
 def blocker_offen(ticket: str, *, nur_offene: bool = False) -> list[str]:
     """Gründe, warum #ticket noch nicht starten darf (leer = frei).
 
@@ -347,10 +352,10 @@ def auf_blocker_warten(ticket: str, takt: int, *, nur_offene: bool = False, schl
             return
         runde += 1
         log.info(
-            "Ticket #%s wartet (%s) — nächste Prüfung in %d min [%s]",
+            "Ticket #%s wartet (%s) — nächste Prüfung in %d s [%s]",
             ticket,
             "; ".join(gruende),
-            takt // 60,
+            takt,
             datetime.now().strftime("%H:%M"),
         )
         schlafen(takt)
@@ -370,7 +375,7 @@ def blocker_schranke(ticket: str, args: argparse.Namespace) -> None:
     """Die eine Stelle in main (#906): je nach ``warte_modus`` auf Blocker warten oder nicht."""
     modus = warte_modus(args)
     if modus is not None:
-        auf_blocker_warten(ticket, max(60, args.takt), nur_offene=modus == "nur_offen")
+        auf_blocker_warten(ticket, max(TAKT_MIN_S, args.takt), nur_offene=modus == "nur_offen")
 
 
 def auf_speicher_warten(
@@ -892,7 +897,12 @@ def main() -> int:
         action="store_true",
         help="nur auf offene Blocker warten, Commit-Prüfung macht die Session (#906)",
     )
-    parser.add_argument("--takt", type=int, default=600, help="Sekunden zwischen zwei Blocker-Prüfungen (600)")
+    parser.add_argument(
+        "--takt",
+        type=int,
+        default=TAKT_STANDARD_S,
+        help=f"Sekunden zwischen zwei Blocker-Prüfungen ({TAKT_STANDARD_S}, mindestens {TAKT_MIN_S})",
+    )
     parser.add_argument(
         "--staffel-max",
         type=int,
