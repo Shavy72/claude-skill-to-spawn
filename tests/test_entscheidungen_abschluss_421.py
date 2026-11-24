@@ -159,3 +159,37 @@ def test_wache_ende_satz_passt_zum_ablauf() -> None:
         "entscheidungen_{S}.md"
         in prompt[ablegen : prompt.index("Danach Aufbau-Prüfung")]
     )
+
+
+def test_abschluss_text_enthaelt_alle_entscheidungen_mit_zahl_475(
+    repo: Path, tmp_path: Path
+) -> None:
+    """Die Mail zeigt jede Zeile der Liste samt Zahl — nicht nur den Link (#475)."""
+    echt = (
+        "Push nach Rebase abgelehnt",
+        "force-with-lease auf eigenen ticket/14-unbekannte-adressen",
+    )
+    for i in range(4):
+        bau_log.schreibe(
+            repo, 2, "entscheidung", frage=f"Frage {i}", wahl=f"Wahl {i}", grund="g"
+        )
+    bau_log.schreibe(
+        repo, 3, "entscheidung", frage=echt[0], wahl=echt[1], grund="Klasse 1 · Rebase"
+    )
+    assert (
+        _unter("ablegen", repo, tmp_path, *_LINKS, "--spec-fertig", _FERTIG).returncode
+        == 0
+    )
+    zeilen = [
+        z
+        for z in _datei(repo).read_text(encoding="utf-8").splitlines()
+        if z.startswith("| #")
+    ]
+    assert len(zeilen) == 7, zeilen
+    probe = _unter(
+        "nachsehen", repo, tmp_path, "--jetzt", "2026-11-24T23:00:00+01:00", "--dry-run"
+    )
+    assert probe.returncode == 0, probe.stdout + probe.stderr
+    assert "Entscheidungen (7)" in probe.stdout
+    assert all(z in probe.stdout for z in zeilen)
+    assert f"{echt[0]} → {echt[1]}" in probe.stdout

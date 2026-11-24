@@ -411,6 +411,16 @@ def entscheidungen_link(repo: Path, spec: int) -> str:
         return str(datei)
 
 
+def entscheidungs_zeilen(repo: Path, spec: int) -> list[str]:
+    """Alle Tabellenzeilen der Entscheidungs-Liste (``capo.entscheidungs_datei``); ohne Datei leer."""
+    datei = capo.entscheidungs_datei(repo, spec)
+    try:
+        text = datei.read_text(encoding="utf-8")
+    except OSError:
+        return []
+    return [z for z in text.splitlines() if z.startswith("| #")]
+
+
 def _ticket_zeilen(repo: Path, spec: int, konfig: dict[str, Any]) -> list[str]:
     """Je Ticket: Titel, Umfang aus der jüngsten Bau-Log-Zusammenfassung, Belegseiten (wie capo)."""
     ordner = capo.belege_ordner(konfig)
@@ -460,6 +470,7 @@ def wirkungskreis(repo: Path, spec: int) -> str:
 def mail_text(repo: Path, p: Paket, neue_form: bool, konfig: dict[str, Any], system: str, befunde: str) -> str:
     """Die eine Mail: Spec-Teil → System-Teil (Rückblick) → Code-Befunde (Thermo)."""
     heute = markdown_voll(p) if neue_form else markdown(p.spec, p.stage, p.rundschau, p.tests, p.saetze)
+    eintraege = entscheidungs_zeilen(repo, p.spec)
     return "\n".join(
         [
             "## Spec-Teil",
@@ -473,9 +484,11 @@ def mail_text(repo: Path, p: Paket, neue_form: bool, konfig: dict[str, Any], sys
             "",
             wirkungskreis(repo, p.spec),
             "",
-            "### Für dich entschieden",
+            f"### Für dich entschieden · Entscheidungen ({len(eintraege)})",
             "",
             f"Alle Entscheidungen der Spec (Bau-Log + Briefkasten): {entscheidungen_link(repo, p.spec)}",
+            "",
+            *eintraege,
             "",
             "## System-Teil",
             "",
