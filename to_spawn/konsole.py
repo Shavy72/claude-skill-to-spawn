@@ -30,6 +30,10 @@ UNTERPROZESS_DATEN: _TextLesart = {"encoding": "utf-8", "errors": "strict"}
 UNTERPROZESS_PFADE: _TextLesart = {"encoding": "utf-8", "errors": "surrogateescape"}
 
 
+def _text(wert: bytes | str | None) -> str:
+    return wert if isinstance(wert, str) else (wert or b"").decode("utf-8")
+
+
 def lauf_daten(befehl: list[str], **kwargs: Any) -> "subprocess.CompletedProcess[str] | None":
     """``subprocess.run`` mit Daten-Lesart (UTF-8 strict); ``None`` = Ausgabe nicht lesbar.
 
@@ -38,8 +42,8 @@ def lauf_daten(befehl: list[str], **kwargs: Any) -> "subprocess.CompletedProcess
     """
     roh = subprocess.run(befehl, capture_output=True, **kwargs)
     try:
-        aus = (roh.stdout or b"").decode("utf-8")
-        fehler = (roh.stderr or b"").decode("utf-8")
+        aus = _text(roh.stdout)
+        fehler = _text(roh.stderr)
     except UnicodeDecodeError as ursache:
         logging.getLogger(__name__).warning("Ausgabe von %s nicht UTF-8: %s", befehl[:1], ursache)
         return None
