@@ -21,11 +21,15 @@ erhalten, darum zieht der Hauptzweig vom Aufseher danach per Fast-Forward nach
 Laufen mehrere Tickets im selben Klon (#476), hält oft ein anderes gerade die Ref-Sperre auf
 ``origin/<hauptzweig>``: ``_git`` wiederholt dann kurz. Scheitert nur das Nachziehen nach dem
 Merge, zählt der echte Pull-Request-Stand auf GitHub — nie ein falsches „nicht eingereicht“.
+Bleibt auch diese Stand-Abfrage nach kurzem Wiederholen ohne Antwort (Netz, Zeitlimit,
+Rate-Limit, #492), lautet die Meldung „Stand unbekannt – erneut prüfen“ (Exit 2): derselbe
+Befehl noch einmal erkennt einen gelungenen Merge (``nichts einzureichen``) und reicht nie doppelt ein.
 Das verpasste Nachziehen holt das nächste Einreichen vom Hauptzweig nach: fehlen dem Hauptzweig
 lokal nur Merge-Commits (keine fremden Commits), führt es ``origin/<hauptzweig>`` zuerst ein.
 
 Exit-Codes: 0 angekommen bzw. übergeben · 1 rot (Grund in der Meldung, nichts gemergt) ·
-5 Aufruf falsch (falscher Zweig/Ordner).
+2 Stand unbekannt (gemergt oder nicht — denselben Befehl erneut rufen) · 5 Aufruf falsch
+(falscher Zweig/Ordner). Die Meldungs-Zeile samt Kopf liefert :attr:`Ergebnis.zeile`.
 """
 
 from __future__ import annotations
@@ -33,14 +37,18 @@ from __future__ import annotations
 import logging
 import subprocess
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TypeVar
 
 from . import config, gh, nest, pruef, pruefplan, uebergabe_sichern
 
 log = logging.getLogger("to_spawn.einreichen")
 
-OK, ROT, AUFRUF = 0, 1, 5
+OK, ROT, UNBEKANNT, AUFRUF = 0, 1, 2, 5
+#: Kopf der Meldungs-Zeile je Exit-Code; alles andere ist rot.
+KOPF = {OK: "EINGEREICHT", UNBEKANNT: "Stand unbekannt – erneut prüfen"}
 #: Ordner, die der Aufseher vom Hauptzweig aus einreichen darf (Übergaben, Stand-Dateien).
 AUFSEHER_ORDNER = ("docs/",)
 GIT_MAX_S = 120.0
@@ -50,11 +58,18 @@ SPERRE_MERKMALE = ("cannot lock ref", ".lock': File exists")
 SPERRE_VERSUCHE = 3
 SPERRE_PAUSE_S = 1.0
 
+T = TypeVar("T")
+
 
 @dataclass(frozen=True)
 class Ergebnis:
     exit: int
     text: str
+
+    @property
+    def zeile(self) -> str:
+        """Meldung für Bau-Session/Aufseher: Kopf nach :data:`KOPF`, sonst „NICHT EINGEREICHT“."""
+        return f"{KOPF.get(self.exit, 'NICHT EINGEREICHT')}: {self.text}"
 
 
 class _Rot(Exception):
@@ -63,11 +78,27 @@ class _Rot(Exception):
         self.code, self.text = code, text
 
 
+def _wiederholt(lauf: Callable[[], T], nochmal: Callable[[T], bool], was: str) -> T:
+    """``lauf`` bis zu :data:`SPERRE_VERSUCHE`-mal; ``nochmal(ergebnis)`` sagt „vorübergehend gescheitert“.
+
+    Gibt das letzte Ergebnis zurück — ob es gelungen ist, entscheidet der Aufrufer.
+    """
+    erg = lauf()
+    for versuch in range(1, SPERRE_VERSUCHE):
+        if not nochmal(erg):
+            break
+        log.info("einreichen: %s gescheitert (Versuch %d), warte %.1f s", was, versuch, SPERRE_PAUSE_S)
+        time.sleep(SPERRE_PAUSE_S)
+        erg = lauf()
+    return erg
+
+
 def _git(ordner: Path, *args: str) -> str:
     """git-Aufruf; Sperre eines parallelen Tickets (:data:`SPERRE_MERKMALE`) → kurz wiederholen."""
-    for versuch in range(1, SPERRE_VERSUCHE + 1):
+
+    def lauf() -> subprocess.CompletedProcess[str]:
         try:
-            aus = subprocess.run(
+            return subprocess.run(
                 ["git", "-C", str(ordner), *args],
                 capture_output=True,
                 text=True,
@@ -78,10 +109,11 @@ def _git(ordner: Path, *args: str) -> str:
             )
         except (OSError, subprocess.TimeoutExpired) as fehler:
             raise _Rot(ROT, f"git {args[0]} scheiterte: {fehler}") from fehler
-        if aus.returncode == 0 or versuch == SPERRE_VERSUCHE or not any(m in aus.stderr for m in SPERRE_MERKMALE):
-            break
-        log.info("einreichen: git %s gesperrt (Versuch %d), warte %.1f s", args[0], versuch, SPERRE_PAUSE_S)
-        time.sleep(SPERRE_PAUSE_S)
+
+    def gesperrt(aus: subprocess.CompletedProcess[str]) -> bool:
+        return aus.returncode != 0 and any(m in aus.stderr for m in SPERRE_MERKMALE)
+
+    aus = _wiederholt(lauf, gesperrt, f"git {args[0]} (gesperrt)")
     if aus.returncode != 0:
         raise _Rot(ROT, f"git {' '.join(args[:2])} scheiterte: {aus.stderr.strip()[:300]}")
     return aus.stdout.strip()
@@ -102,6 +134,19 @@ def _gh(ordner: Path, *args: str) -> str:
     if code != 0:
         raise _Rot(ROT, f"gh {' '.join(args[:2])} scheiterte ({code}): {aus[:300]}")
     return aus
+
+
+def _pr_gemergt(ordner: Path, nr: str) -> bool:
+    """Echter Pull-Request-Stand auf GitHub (#476); Abfrage scheitert auch wiederholt → Exit 2 (#492)."""
+    args = ["pr", "view", nr, "--json", "state", "--jq", ".state"]
+    code, aus = _wiederholt(
+        lambda: gh.lauf(args, cwd=ordner, timeout=GH_MAX_S, fehlertext=True),
+        lambda erg: erg[0] != 0,
+        "gh pr view",
+    )
+    if code != 0:
+        raise _Rot(UNBEKANNT, f"Pull-Request #{nr}: Stand-Abfrage ohne Antwort ({code}): {aus[:300]}")
+    return aus.strip() == "MERGED"
 
 
 def _projekt_weg(ordner: Path, haupt: str) -> bool:
@@ -185,7 +230,7 @@ def einreichen(ordner: Path, nummer: str) -> Ergebnis:
     """Bringt den fertigen Stand in ``ordner`` für Ticket/Spec ``nummer`` auf den Hauptzweig.
 
     Wirft nie: jeder Abbruch (auch Werkzeug kaputt, Zeitüberschreitung) kommt als ``Ergebnis``
-    mit Exit 1 bzw. 5 zurück, damit Aufrufer nur ``exit`` lesen.
+    mit Exit 1, 2 bzw. 5 zurück, damit Aufrufer nur ``exit`` lesen.
     """
     try:
         return _einreichen(ordner, str(nummer).lstrip("#"))
@@ -237,7 +282,7 @@ def _einreichen(ordner: Path, nummer: str) -> Ergebnis:
     try:
         _git(ordner, "fetch", "--quiet", "origin", haupt)
     except _Rot as rot:  # #476: Nachziehen scheitert (Sperre) — der Pull-Request-Stand entscheidet
-        if _gh(ordner, "pr", "view", nr, "--json", "state", "--jq", ".state").strip() != "MERGED":
+        if not _pr_gemergt(ordner, nr):
             raise
         log.warning("einreichen #%s: %s — Pull-Request #%s ist gemergt", nummer, rot.text, nr)
         return Ergebnis(OK, f"{sha[:7]} gemergt (Pull-Request #{nr}, {zweig}){hinweis} — {basis} lokal nicht nachgezogen")
