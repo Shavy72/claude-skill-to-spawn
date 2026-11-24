@@ -15,6 +15,7 @@ Verarbeitung der Runde. Deshalb legt der Hook zusätzlich eine Marker-Datei
 from __future__ import annotations
 
 import base64
+import fnmatch
 import json
 import logging
 import os
@@ -568,8 +569,8 @@ _API_CLOSED = re.compile(r"state=closed")
 _API_FELD = {"-f", "-F", "--field", "--raw-field"}
 
 
-def _einfache_befehle(befehl: str) -> Iterator[list[str]]:
-    """Einfache Befehle in ``befehl`` als Wortlisten, ohne Zuweisungen/Präfixe davor.
+def _roh_befehle(befehl: str) -> Iterator[list[str]]:
+    """Einfache Befehle in ``befehl`` als Wortlisten, Zuweisungen/Präfixe noch davor.
 
     Geteilt wird nur an Trennern außerhalb von Anführungszeichen (``-c "a; b"`` bleibt
     ein Wort); ``\\``+Zeilenumbruch fügt Zeilen wie die Shell zusammen. Ein ``gh`` in
@@ -610,10 +611,16 @@ def _einfache_befehle(befehl: str) -> Iterator[list[str]]:
     teile.append(befehl[start:])
     for teil in teile:
         try:
-            woerter = shlex.split(teil)
+            yield shlex.split(teil)
         except ValueError:
-            woerter = teil.split()
-        woerter = _befehlskern(woerter)
+            yield teil.split()
+
+
+def _einfache_befehle(befehl: str) -> Iterator[list[str]]:
+    """Einfache Befehle in ``befehl`` als Wortlisten, ohne Zuweisungen/Präfixe davor
+    (Zerlegung siehe :func:`_roh_befehle`, Kern siehe :func:`_befehlskern`)."""
+    for roh in _roh_befehle(befehl):
+        woerter = _befehlskern(roh)
         if woerter:
             yield woerter
 
@@ -792,32 +799,116 @@ def ja_aufrufe(befehl: str) -> bool:
     Erkannt: ``ja``/``ja.cmd`` als Befehl, ``nutzer-antwort`` als Wort, ``to_spawn.py ja`` (auch mit
     ``python`` davor); ``eval …``, ``bash -c "…"``, ``powershell``/``pwsh``/``cmd`` (auch
     ``-EncodedCommand``) werden ausgepackt.
+    Positivliste (#591, #538): Nur Befehle aus :data:`_JA_NUR_TEXT` (``echo``, ``grep`` …) dürfen
+    ``ja`` als Wort tragen; jeder andere Befehl mit dem Wort (auch in Zuweisung, Schalter-Wert oder
+    Text wie ``watch 'ja 5'``) sperrt — so braucht kein Starter (``ionice``, ``flock``, ``ksh`` …) eine
+    eigene Liste. Interpreter (:data:`_JA_INTERPRETER`) und dynamische Befehlsnamen (``$(…)``,
+    ``$X``) lesen ihr Programm aus Text, den die Prüfung nicht sieht: dort sperrt das Wort irgendwo im
+    ganzen Befehl. Groß/klein zählt nicht (Windows), ``$'…'`` wird wie von bash aufgelöst, Klammern
+    und Glob im Befehlsnamen werden gegen ``ja`` geprüft.
     Bewusst breit und ohne Ausnahmen; die zwei Positivlisten für das Bash-Werkzeug (#567) prüft
     :func:`hook_ja_sperre` vorher (:func:`_bash_text_ohne_aufruf`).
-    ponytail: nur wörtliche Aufrufe — Variablen, ein Skript, ``python -c`` oder ein direkter
-    Schreibzugriff auf die Briefkasten-Datei umgehen die Sperre (gleiche Grenze wie ``hook_spec_sperre``);
-    Upgrade-Pfad: Prüfung im Briefkasten selbst über einen Nachweis, den nur der Nutzer-Weg trägt.
+    ponytail: nur wörtliche Aufrufe — Variablen, ein Skript, kodierter Text (``printf '\\x6a…' | sh``)
+    oder ein direkter Schreibzugriff auf die Briefkasten-Datei umgehen die Sperre (gleiche Grenze wie
+    ``hook_spec_sperre``); Upgrade-Pfad: Prüfung im Briefkasten selbst über einen Nachweis, den nur der
+    Nutzer-Weg trägt.
     """
+    befehl = _JA_ANSI_C.sub(_ansi_c_aufloesen, befehl).replace('$"', '"')
     if _JA_WIN_PFAD.search(befehl):  # Windows-Pfad: shlex verschluckt die Backslashes
         return True
-    for woerter in _einfache_befehle(befehl):
-        name = _name(woerter[0]).removesuffix(".cmd")
-        if name == "eval":
-            if ja_aufrufe(" ".join(woerter[1:])):
-                return True
-        elif name in _SHELLS and (text := _shell_text(woerter[1:])) is not None:
-            if ja_aufrufe(text):
-                return True
-        elif name.lower().removesuffix(".exe") in _JA_WIN_SHELLS:
-            if _ja_in_win_shell(woerter[1:]):
-                return True
-        elif name == "rg" and _rg_vorfilter_ja(woerter):
+    if _JA_DYNAMISCHER_START.search(befehl) and _ja_im_text(befehl):
+        return True
+    for roh in _roh_befehle(befehl):
+        woerter = _befehlskern(roh)
+        if any(_JA_WORT.search(w) for w in roh[: len(roh) - len(woerter)]):
+            return True  # ``command -p ja``, ``env X=ja …``: Wort im Präfix-Teil
+        if woerter and _ja_im_einfachen(woerter, befehl):
             return True
-        elif (
-            name == "ja"
-            or "nutzer-antwort" in woerter
-            or (any(_name(w) == "to_spawn.py" for w in woerter[:3]) and JA_UNTERBEFEHLE & set(woerter))
-            or _ja_als_argument(woerter)
+    return False
+
+
+def _ja_im_einfachen(woerter: list[str], befehl: str) -> bool:
+    """Ein einfacher Befehl ab dem Befehlsnamen; ``befehl`` = ganzer Text für Interpreter-Fälle."""
+    name = _name(woerter[0]).lower().removesuffix(".cmd")
+    if name == "eval" and ja_aufrufe(" ".join(woerter[1:])):
+        return True
+    if name in _SHELLS and (text := _shell_text(woerter[1:])) is not None and ja_aufrufe(text):
+        return True
+    if name in _JA_WIN_SHELLS and _ja_in_win_shell(woerter[1:]):
+        return True
+    if name == "rg" and _rg_vorfilter_ja(woerter):
+        return True
+    if (
+        _ist_ja_name(woerter[0])
+        or "nutzer-antwort" in woerter
+        or (any(_name(w) == "to_spawn.py" for w in woerter[:3]) and JA_UNTERBEFEHLE & set(woerter))
+        or _ja_als_argument(woerter)
+    ):
+        return True
+    if (name in _JA_INTERPRETER or _JA_DYNAMISCH.search(woerter[0])) and _ja_im_text(befehl):
+        return True
+    if name == "xargs":
+        i = 1
+        while i < len(woerter) and woerter[i].startswith("-"):
+            i += 2 if woerter[i] in _JA_SCHALTER_MIT_WERT else 1
+        return i < len(woerter) and _ja_im_einfachen(woerter[i:], befehl)
+    if name in _JA_NUR_TEXT:
+        return False
+    if name in ("git", "gh"):  # Text-Werte (Nachricht, Body) sind nie ein Programm
+        woerter = [w for k, w in enumerate(woerter) if k == 0 or woerter[k - 1] not in _JA_TEXT_SCHALTER]
+        woerter = [w for w in woerter if w.split("=", 1)[0] not in _JA_TEXT_SCHALTER]
+    return any(_JA_WORT.search(w) for w in woerter)
+
+
+#: Befehle, deren Argumente nie ein Programm starten — nur dort darf ``ja`` als Wort stehen (#591).
+#: ``rg --pre``/``--hostname-bin`` prüft :func:`_rg_vorfilter_ja` vorher.
+_JA_NUR_TEXT = {"echo", "printf", "grep", "rg", "cat", "ls"}
+#: Programme, die Befehle aus Text, Datei oder Eingabe lesen (``echo 'ja 5' | sh``, ``bash <(…)``).
+_JA_INTERPRETER = {
+    *_SHELLS,
+    *("ksh", "ash", "fish", "busybox", "source", ".", "eval", "wsl"),
+    *("python", "python3", "py", "node", "perl", "ruby", "php", "powershell", "pwsh", "cmd"),
+}
+#: Schalter von git/gh, deren Wert reiner Text ist (``git commit -m 'ja'``, ``gh … --body ja``).
+_JA_TEXT_SCHALTER = {"-m", "--message", "-b", "--body", "-t", "--title", "--comment"}
+#: ``ja``/``ja.cmd`` als eigenes Wort (auch in ``X=ja``, ``a,ja``, ``{ja,}``), Groß/klein egal.
+_JA_WORT = re.compile(r"(?<![\w.-])ja(?:\.cmd)?(?![\w.-])", re.IGNORECASE)
+#: Befehlsname, den erst die Shell festlegt (Variable, Ersetzung, Glob, Klammern).
+_JA_DYNAMISCH = re.compile(r"[$`*?\[{]")
+#: Befehls-Ersetzung an einer Stelle, an der ein Befehl beginnt (`` `printf ja` 5``, ``$(…) 5``).
+_JA_DYNAMISCHER_START = re.compile(r"(?:^|[;&|(){}\n!]|\b(?:then|do|else|elif|if|while|until)\b)\s*[\"']?(?:\$\(|`)")
+#: ANSI-C-Quote ``$'…'``: bash löst ``\\x6a``, ``\\152`` … auf, shlex nicht.
+_JA_ANSI_C = re.compile(r"\$'((?:[^'\\]|\\.)*)'")
+
+
+def _ansi_c_aufloesen(treffer: re.Match[str]) -> str:
+    try:
+        text = treffer.group(1).encode("latin-1", "backslashreplace").decode("unicode_escape")
+    except UnicodeDecodeError:
+        text = treffer.group(1).replace("\\", "")
+    return shlex.quote(text)
+
+
+def _ja_im_text(befehl: str) -> bool:
+    """``ja`` als Wort irgendwo im Text, Quotes und Backslashes entfernt (``j''a``, ``j\\a``)."""
+    return bool(_JA_WORT.search(re.sub(r"[\\'\"]", "", befehl)))
+
+
+def _klammer_varianten(wort: str, tiefe: int = 0) -> list[str]:
+    """Wörter nach bash-Klammer-Erweiterung (``{ja,}`` → ``ja``, ``{j,x}a`` → ``ja``, ``xa``)."""
+    treffer = re.search(r"\{([^{}]*,[^{}]*)\}", wort)
+    if not treffer or tiefe > 4:
+        return [wort]
+    kopf, rest = wort[: treffer.start()], wort[treffer.end() :]
+    return [v for teil in treffer.group(1).split(",") for v in _klammer_varianten(kopf + teil + rest, tiefe + 1)]
+
+
+def _ist_ja_name(wort: str) -> bool:
+    """Befehlsname ist ``ja``/``ja.cmd`` — Groß/klein egal, auch über Klammern oder Glob (``j?``)."""
+    for variante in _klammer_varianten(wort):
+        basis = _ja_basis(variante).lower().removesuffix(".exe")
+        if basis in ("ja", "ja.cmd") or (
+            re.search(r"[*?\[]", basis) and any(fnmatch.fnmatchcase(z, basis) for z in ("ja", "ja.cmd"))
         ):
             return True
     return False
@@ -831,7 +922,7 @@ _JA_GROB = re.compile(r"[/\\]ja(\.cmd)?(?![\w.-])|nutzer-antwort|to_spawn\.py\s+
 
 #: Schalter von xargs/python/env …, deren nächstes Wort sein Wert ist (``xargs -n 1 ja``, ``python -X utf8 …``).
 _JA_SCHALTER_MIT_WERT = {"-I", "-n", "-L", "-P", "-s", "-d", "-E", "-X", "-W", "-u", "-C"}
-_JA_WIN_PFAD = re.compile(r"\\ja(\.cmd)?(?![\w.-])")
+_JA_WIN_PFAD = re.compile(r"\\ja(\.cmd)?(?![\w.-])", re.IGNORECASE)
 
 
 def _ja_basis(wort: str) -> str:
@@ -916,7 +1007,6 @@ def _nur_suche(befehl: str) -> bool:
     nie aus — dann darf das Suchmuster den Aufruftext tragen. Alles andere: ``False``.
     """
     return bool(_NUR_SUCHE.fullmatch(befehl))
-
 
 
 def _rg_vorfilter_ja(woerter: list[str]) -> bool:
