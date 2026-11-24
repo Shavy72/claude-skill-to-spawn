@@ -33,7 +33,9 @@ Immer im Repo-Wurzelordner ausführen:
 Gelesen wird `docs/agents/manifests/spec-<S>.json`. `regularien <S> [--tickets a,b] [--ohne-github]`
 läuft automatisch vor jedem Spawn (`spawn`, `scripts/spawn_srv.sh`,
 `spawn_local.ps1`); Exit 0 = frei, **Exit 3 = Weigerung**, nichts wird gestartet,
-jede Fehlerzeile nennt ihre Abhilfe.
+jede Fehlerzeile nennt ihre Abhilfe. Davor legt es bei fehlender Prüfung oder fehlendem
+Staging (außer `staging.ohne: true`) einmal das **Einrichtungs-Ticket** an, auf das alle
+Tickets der Spec warten (`to_spawn/einrichtungs_ticket.py`, #410).
 
 **Weigerung (Exit 3) bei:**
 - Pflichtfeld fehlt: `schaetzung_k` (Zahl, Tausend Token, > 0 und < `staffel.grenze_k`,

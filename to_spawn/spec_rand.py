@@ -163,6 +163,19 @@ def _planen(
         if b not in native:
             schritte.append(_kante(repo, slug, n, b, b_daten["id"]))
 
+    # Offenes Einrichtungs-Ticket der Spec (#410): jedes andere offene Ticket wartet darauf.
+    t0 = manifest.einrichtungs_ticket(daten)
+    if (
+        t0
+        and t0 != n
+        and t0 not in blocker
+        and t0 not in native
+        and _offen(ticket_daten)
+    ):
+        t0_daten = _issue(repo, slug, t0)
+        if _offen(t0_daten):
+            schritte.append(_kante(repo, slug, n, t0, t0_daten["id"]))
+
     if label not in _labels(ticket_daten):
         for t in sorted(daten["tickets"], key=manifest.ticket_schluessel):
             if t == n:

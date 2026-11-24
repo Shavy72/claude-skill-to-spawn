@@ -49,6 +49,7 @@ from to_spawn import (  # noqa: E402
     config,
     deploy_status,
     einrichten,
+    einrichtungs_ticket,
     gh,
     hausmeister,
     hausmeister_aufgabe,
@@ -979,6 +980,13 @@ def main(argv: list[str] | None = None) -> int:
     if args.befehl == "stand":
         return stand_modul.sichere_stand(repo, konfig)
     if args.befehl == "regularien":
+        # Einrichtungs-Ticket (#410) vor der Prüfung: es soll in ihr schon mitzählen.
+        # Große Lücke wie im Einrichter: nur gemeldet, hält nicht auf (Plan L1, Tür 1).
+        einrichtung = einrichtungs_ticket.sicherstellen(
+            repo, args.spec, konfig, mit_github=not args.ohne_github, trocken=args.dry_run
+        )
+        for zeile in einrichtung.zeilen:
+            print(zeile)
         bericht = manifest.pruefe(
             repo,
             args.spec,

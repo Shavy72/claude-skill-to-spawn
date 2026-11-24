@@ -111,6 +111,8 @@ DEFAULTS: dict[str, Any] = {
     "staging": {
         "url": "",
         "zugang_datei": "",
+        #: ``True`` = Repo arbeitet bewusst ohne Staging: kein Einrichtungs-Ticket dafür (#410).
+        "ohne": False,
         #: Schalter-Skript im App-Repo, relativ zur Repo-Wurzel (L1 #46).
         "schalter": vorgaben.STAGING_SCHALTER,
     },
