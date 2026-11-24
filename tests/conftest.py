@@ -71,6 +71,15 @@ def braucht_fehlt(name: str, plattform: str = sys.platform, finde=None) -> str |
     return None
 
 
+#: Von :func:`attrappe` angelegte Dateien (normalisierte Pfade): nur diese löst :func:`_shebang_aufloesen` auf.
+_ATTRAPPEN: set[str] = set()
+
+
+def stub_pfad(skript: Path) -> Path:
+    """Pfad für ``TO_SPAWN_GH_STUB``-artige Env-Variablen: Windows ``name.py`` (Produktcode startet es über den Interpreter), sonst ``skript``."""
+    return skript.with_name(skript.name + ".py") if os.name == "nt" else skript
+
+
 def attrappe(ordner: Path, name: str, python_code: str) -> Path:
     """Ausführbare Programm-Attrappe ``ordner/name`` (z. B. ``gh``, ``ssh``), #93.
 
@@ -84,9 +93,13 @@ def attrappe(ordner: Path, name: str, python_code: str) -> Path:
     """
     ordner.mkdir(parents=True, exist_ok=True)
     skript = ordner / name
-    skript.write_text(f"#!{sys.executable}\n{textwrap.dedent(python_code)}", encoding="utf-8")
+    text = f"#!{sys.executable}\n{textwrap.dedent(python_code)}"
+    skript.write_text(text, encoding="utf-8")
     skript.chmod(skript.stat().st_mode | 0o111)
+    _ATTRAPPEN.add(os.path.normcase(str(skript)))
     if os.name == "nt":
+        # ``name.py`` für Produktcode, der einen Stub nur mit ``.py`` über den Interpreter startet (:func:`stub_pfad`, #553)
+        skript.with_name(f"{name}.py").write_text(text, encoding="utf-8")
         (ordner / f"{name}.cmd").write_text(f'@"{sys.executable}" "{skript}" %*\r\n', encoding="utf-8")
     return skript
 
@@ -311,6 +324,22 @@ def _bash_aufloesen(args: Any) -> Any:
     return type(args)([bash, *args[1:]])
 
 
+def _shebang_aufloesen(args: Any) -> Any:
+    """Windows führt kein Shebang-Skript aus (``WinError 193``), Attrappen aber sind genau das (#553).
+
+    Liste/Tupel, deren erstes Element eine von :func:`attrappe` angelegte Datei ist,
+    startet über ``sys.executable`` (Shebang-Interpreter der Attrappe); alles
+    andere geht unverändert durch. Einzige Stelle: wirkt für jeden Test, der eine Attrappe
+    per Pfad startet (``Popen``, ``run``, ``check_output``).
+    """
+    if not isinstance(args, (list, tuple)) or not args or not isinstance(args[0], (str, os.PathLike)):
+        return args
+    if os.path.normcase(str(args[0])) not in _ATTRAPPEN:
+        return args
+    interpreter = sys.executable  # so schreibt :func:`attrappe` die Shebang-Zeile
+    return type(args)([interpreter, *args])
+
+
 @pytest.fixture(autouse=True)
 def _kommentar_sperre_leeren() -> None:
     """#530: die Doppel-Sperre in ``befund.kommentiere`` merkt je Prozess — jeder Test startet leer."""
@@ -334,7 +363,7 @@ def _git_bash_statt_wsl_stub(monkeypatch: pytest.MonkeyPatch) -> None:
 
     def _init(self: subprocess.Popen, args: Any, *rest: Any, **kw: Any) -> None:
         if kw.get("executable") is None:
-            args = _bash_aufloesen(args)
+            args = _shebang_aufloesen(_bash_aufloesen(args))
         original(self, args, *rest, **kw)
 
     monkeypatch.setattr(subprocess.Popen, "__init__", _init)
