@@ -10,6 +10,7 @@
 # ohne SHA geht weiter) und prüft keine Regularien. Läuft das Ticket hier schon:
 # Exit 4, nichts gestartet. --nur-wache startet nur Aufseher + Leitstand (fehlende).
 # Exit 5: Speicher voll (to_spawn.py speicher) — begonnene Fenster laufen, der Rest nicht.
+#   Läuft der Aufseher (``wache <S>``) schon, Exit 0 mit „wartet auf Platz“: er startet nach (#460).
 # Exit 7: Platte voll (Start-Check des Hausmeisters, #1369) — wie Exit 5.
 # Exit 6: Speicherprüfung kaputt oder Hauptzweig nicht ermittelbar — nichts weiter gestartet.
 # Eine tmux-Session je Spec (``spec-<S>``), darin ``wache <S>``, ``leitstand <S>`` und
@@ -40,7 +41,7 @@ while [ $# -gt 0 ]; do
     --umzug) UMZUG_REF="${2:-}"; OHNE_REGULARIEN=1; shift 2 ;;
     --ohne-regularien) OHNE_REGULARIEN=1; shift ;;
     --nur-wache) NUR_WACHE=1; shift ;;
-    -h|--help) sed -n '2,17p' "${BASH_SOURCE[0]}"; exit 0 ;;
+    -h|--help) sed -n '2,18p' "${BASH_SOURCE[0]}"; exit 0 ;;
     *)
       if [ -z "$SPEC" ]; then SPEC="$1"; shift; else echo "Unbekanntes Argument: $1" >&2; exit 2; fi ;;
   esac
@@ -135,6 +136,14 @@ fi
 # --- 3. Was läuft schon? (nie Duplikate) ------------------------------------
 STAND="$(TO_SPAWN_REPO="$REPO" "$PY" "$SKILL_HOME/skripte/sessions_stand.py" "$SPEC" --alle 2>/dev/null || true)"
 zustand_von() { echo "$STAND" | awk -v n="#$1" '$1==n {print $2; exit} ($1=="Spec" && $2==n) {print $3; exit}'; }
+# Lebt jetzt ein Aufseher-Prozess (``wache.py <S>`` in diesem Repo)? Frisch aus der Prozessliste,
+# gleiche Erkennung wie oben — ein Fenster ``wache <S>`` ohne Prozess startet niemanden nach (#460).
+aufseher_laeuft() {
+  local STAND z
+  STAND="$(TO_SPAWN_REPO="$REPO" "$PY" "$SKILL_HOME/skripte/sessions_stand.py" "$SPEC" --alle 2>/dev/null || true)"
+  z="$(zustand_von "$SPEC")"
+  [ -n "$z" ] && [ "$z" != "aus" ]
+}
 
 SESSION="spec-$SPEC"
 # Fenster laufen im Repo und mit dem Skill dieses Aufrufs — nicht mit den Vorgaben aus
@@ -205,12 +214,14 @@ case "$STAFFEL" in ''|*[!0-9]*) STAFFEL=20 ;; esac
 # Zweites Argument --trocken (Probelauf): nur messen, der Hausmeister löscht nie.
 # TO_SPAWN_TMUX leer: die Sitzungs-Suche fragt dasselbe blanke ``tmux`` wie die Fenster unten
 # (#409) — sonst zählte sie auf einem anderen tmux-Server als dem, in dem $SESSION entsteht.
+# 8 = voll, aber der Aufseher-Prozess lebt (#460): keine Meldung hier, der Aufrufer meldet „wartet auf Platz“.
 speicher_pruefen() {
   local rc=0 stand
   stand="$(TO_SPAWN_TMUX= TO_SPAWN_REPO="$REPO" "$PY" "$SKILL_HOME/to_spawn.py" speicher --sitzung "$SESSION" ${2:+"$2"} 2>&1)" || rc=$?
   case "$rc" in
     0) return 0 ;;
-    5) echo "nicht gestartet: $1 — $stand" >&2; return 5 ;;
+    5) if [ -z "${2:-}" ] && aufseher_laeuft; then return 8; fi
+       echo "nicht gestartet: $1 — $stand" >&2; return 5 ;;
     7) echo "nicht gestartet: $1 — $stand" >&2; return 7 ;;
     *) echo "Speicherprüfung kaputt (to_spawn.py speicher Exit $rc): $stand" >&2; return 6 ;;
   esac
@@ -235,6 +246,12 @@ for i in "${!GEPLANT[@]}"; do
   fi
   rc=0
   speicher_pruefen "${KURZ[$i]}" || rc=$?
+  # Kein Platz, aber der Aufseher läuft (#460): er startet die fehlenden Fenster selbst nach,
+  # sobald Platz frei ist — das ist der vorgesehene Weg, kein Fehler.
+  if [ "$rc" -eq 8 ]; then
+    echo "wartet auf Platz: ${KURZ[*]:$i} — Aufseher startet nach, sobald Platz frei ist."
+    exit 0
+  fi
   if [ "$rc" -ne 0 ]; then
     echo "Rest bleibt aus; später erneut: bash scripts/spawn_srv.sh $SPEC" >&2
     exit "$rc"

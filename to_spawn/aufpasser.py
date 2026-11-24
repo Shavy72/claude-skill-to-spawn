@@ -799,15 +799,11 @@ def _session_json_lesen(
     pid: int, window_id: str, pane_id: str, heim: Path | None = None
 ) -> SessionInfo | None:
     """``<heim>/.claude/sessions/<pid>.json`` lesen — nur gültig, wenn der Prozess lebt
-    und das ``tmux``-Feld (``sitzung:@fenster.%pane``) zu diesem Pane passt oder fehlt."""
+    und das ``tmux``-Feld (``sitzung:@fenster.%pane``) zu diesem Pane passt oder fehlt.
+    PID- und ``procStart``-Abgleich: :func:`speicher.session_json_lesen` (eine Quelle, #460)."""
     datei = (heim or Path.home()) / ".claude" / "sessions" / f"{pid}.json"
-    try:
-        roh = json.loads(datei.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-    if not isinstance(roh, dict) or not _prozess_lebt(pid):
-        return None
-    if int(roh.get("pid") or pid) != pid:
+    roh = speicher.session_json_lesen(pid, datei.parent, Path("/proc"))  # echte Prozesse, nie die Test-Tür
+    if roh is None or not _prozess_lebt(pid):
         return None
     sid = roh.get("sessionId")
     if not isinstance(sid, str) or not sid:
