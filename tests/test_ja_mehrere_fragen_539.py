@@ -12,8 +12,8 @@ import sys
 from pathlib import Path
 
 import pytest
+from test_live_ja_kurzer_befehl_531 import _cli
 
-from tests.test_live_ja_kurzer_befehl_531 import _cli
 from to_spawn import briefkasten, ja_einrichten
 
 
