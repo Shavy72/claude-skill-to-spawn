@@ -111,7 +111,7 @@ def test_kaputt_geklaert_gibt_wieder_frei(briefkasten: ModuleType, tmp_path: Pat
     fid = _kaputt_beiseite(briefkasten, tmp_path)
     for kaputt in (tmp_path / ".to-spawn").glob("entscheidung-7.json.kaputt-*"):
         kaputt.unlink()
-    briefkasten.antworten("7", fid, "neu", [], "passt", hauptbaum=tmp_path)
+    briefkasten.antworten("7", fid, "neu", ["Beleg"], "passt", hauptbaum=tmp_path)
     assert briefkasten.lesen("7", fid, hauptbaum=tmp_path).wahl == "neu"
 
 
@@ -207,12 +207,12 @@ def test_aeltere_offene_frage_beantwortbar(briefkasten: ModuleType, tmp_path: Pa
     q1 = briefkasten.einwerfen("7", "Q1?", "a", 3, [], hauptbaum=tmp_path)
     q2 = briefkasten.einwerfen("7", "Q2?", "b", 3, [], hauptbaum=tmp_path)
     assert {o["id"] for o in briefkasten.offene(hauptbaum=tmp_path)} == {q1, q2}
-    briefkasten.antworten("7", q1, "a", [], "für Q1", hauptbaum=tmp_path)
+    briefkasten.antworten("7", q1, "a", ["Beleg"], "für Q1", hauptbaum=tmp_path)
     assert briefkasten.lesen("7", q1, hauptbaum=tmp_path).wahl == "a"
     assert briefkasten.lesen("7", q2, hauptbaum=tmp_path) == briefkasten.WARTET
     assert [o["id"] for o in briefkasten.offene(hauptbaum=tmp_path)] == [q2]
     with pytest.raises(ValueError):
-        briefkasten.antworten("7", q1, "c", [], "zweimal", hauptbaum=tmp_path)
+        briefkasten.antworten("7", q1, "c", ["Beleg"], "zweimal", hauptbaum=tmp_path)
 
 
 def test_offene_meldet_klasse(briefkasten: ModuleType, tmp_path: Path) -> None:

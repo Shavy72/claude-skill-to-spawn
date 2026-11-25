@@ -60,7 +60,7 @@ def test_beantwortete_frage_faellt_aus_dem_merker(welt: dict[str, Any], monkeypa
     fid = briefkasten.einwerfen("297", "Ordner neu anlegen?", "neu", 3, [], hauptbaum=welt["repo"])
     assert _takt(welt, "--claude", str(CLAUDE_AUFZ)).returncode == 0
     assert f"297:{fid}" in (_merker(welt) or {}).get("fragen", [])
-    briefkasten.antworten("297", fid, "neu", [], "passt", hauptbaum=welt["repo"])
+    briefkasten.antworten("297", fid, "neu", ["Beleg"], "passt", hauptbaum=welt["repo"])
     danach = _takt(welt, "--claude", str(CLAUDE_AUFZ))
     assert danach.returncode == 0, danach.stdout + danach.stderr
     assert f"297:{fid}" not in (_merker(welt) or {}).get("fragen", [])
