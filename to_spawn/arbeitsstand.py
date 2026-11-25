@@ -57,7 +57,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from to_spawn import gh, sperre, starter
+from to_spawn import gh, prozessbaum, sperre, starter
 
 log = logging.getLogger("to_spawn.arbeitsstand")
 
@@ -105,6 +105,7 @@ def _git(repo: Path, *args: str, timeout: float = GIT_TIMEOUT_S) -> tuple[int, s
             errors="replace",
             timeout=timeout,
             check=False,
+            **prozessbaum.fensterlos(),
         )
     except subprocess.TimeoutExpired:
         return 124, f"Zeitlimit {timeout:.0f} s"

@@ -18,7 +18,7 @@ import urllib.parse
 from pathlib import Path
 from typing import Any
 
-from to_spawn import starter, ticket_zustand
+from to_spawn import prozessbaum, starter, ticket_zustand
 
 log = logging.getLogger("to_spawn.gh")
 _COMMIT_SUCHE_GEMELDET: set[tuple[str, str]] = set()  # #618: schon gewarnte (Repo, Ticket)
@@ -75,6 +75,7 @@ def lauf(
             errors="replace",
             check=False,
             timeout=timeout,
+            **prozessbaum.fensterlos(),
         )
     except subprocess.TimeoutExpired:
         log.warning("gh %s: Zeitlimit %s s überschritten", " ".join(args[:3]), timeout)
@@ -126,6 +127,7 @@ def _origin_url(cwd: Path | None) -> str | None:
             encoding="utf-8",
             errors="replace",
             check=False,
+            **prozessbaum.fensterlos(),
         ).stdout.strip()
     except OSError:
         return None
@@ -263,6 +265,7 @@ def _git_ausgabe(args: list[str], cwd: Path, timeout: float | None = None) -> tu
             errors="replace",
             timeout=timeout,
             check=False,
+            **prozessbaum.fensterlos(),
         )
     except subprocess.TimeoutExpired:
         log.warning("git %s: Zeitgrenze %s s überschritten", args[:1], timeout)

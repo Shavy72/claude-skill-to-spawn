@@ -139,6 +139,7 @@ from to_spawn import (
     ticket_zustand,
     uebergabe_sichern,
 )
+from to_spawn import prozessbaum
 from to_spawn import sperre as _sperre
 
 log = logging.getLogger("to_spawn.hausmeister")
@@ -1558,6 +1559,7 @@ def _keine_spec_sitzung(ticket: int) -> None:
             errors="replace",
             timeout=GH_ZEITLIMIT_S,
             check=False,
+            **prozessbaum.fensterlos(),
         )
     except FileNotFoundError:
         return

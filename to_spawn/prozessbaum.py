@@ -285,6 +285,21 @@ def ohne_fenster() -> dict[str, Any]:
     return {}
 
 
+def fensterlos() -> dict[str, Any]:
+    """Popen-Optionen für jeden Unterprozess-Start (git, gh, powershell …): Pflicht an jeder
+    ``subprocess``-Stelle, ``tests/test_fensterlos_658.py`` bricht sonst den Build.
+
+    Hat dieser Prozess unter Windows keine Konsole (``pythonw.exe`` aus der geplanten Aufgabe
+    „to-spawn Hausmeister“), bekäme jedes Konsolen-Kind eine eigene, und Windows Terminal macht
+    daraus je ein sichtbares Fenster (#658, ~300 Fenster) → dann ``ohne_fenster()``. Mit Konsole
+    erbt das Kind sie wie bisher: Durchreich-Starts (Kind schreibt ins Terminal, liest Eingabe)
+    bleiben unverändert. Linux/macOS: ``{}``.
+    """
+    if sys.platform != "win32" or ctypes.windll.kernel32.GetConsoleWindow():
+        return {}
+    return ohne_fenster()
+
+
 def ist_wrapper_zeile(zeile: str) -> bool:
     """Reicht diese Kommandozeile nur einen Befehl weiter (``sh -c '…'``, ``bash -lc '…'``)?
 
@@ -1057,6 +1072,7 @@ def _passende_linux(muster: str, zeitgrenze: float) -> list[tuple[int, str]]:
             errors="replace",
             check=False,
             timeout=zeitgrenze,
+            **fensterlos(),
         )
     except subprocess.TimeoutExpired:
         raise ProzesslisteFehler(f"pgrep nicht nutzbar (Zeitgrenze {zeitgrenze:g} s überschritten)") from None

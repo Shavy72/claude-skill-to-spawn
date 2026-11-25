@@ -33,7 +33,7 @@ from pathlib import Path
 _SKILL = str(Path(__file__).resolve().parent.parent)
 if _SKILL not in sys.path:
     sys.path.insert(0, _SKILL)
-from to_spawn import bau_log, config, konsole, manifest  # noqa: E402
+from to_spawn import bau_log, config, konsole, manifest, prozessbaum  # noqa: E402
 
 log = logging.getLogger("sessions_stand")
 #: Repo, in dem gearbeitet wird: ``TO_SPAWN_REPO`` (setzt die Weiterleitung im Repo), sonst
@@ -105,6 +105,7 @@ def prozesse_linux() -> list[Prozess]:
         errors="replace",
         check=False,
         env={**os.environ, "LC_ALL": "C"},
+        **prozessbaum.fensterlos(),
     ).stdout
     if not out.strip():
         log.error("Prozessliste leer — ist ``ps`` (procps) installiert?")
