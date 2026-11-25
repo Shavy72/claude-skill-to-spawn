@@ -76,6 +76,40 @@ def test_ohne_bash_klare_meldung_statt_wsl(tmp_path: Path, monkeypatch: pytest.M
         startklar._standard_laeufer("exit 0", tmp_path, None, 10, {})
 
 
+def test_test_naht_blendet_bash_auch_bei_festem_windows_pfad_aus(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#646: Test-Naht blendet bash auch dann aus, wenn Windows Git-Bash an festen Orten fände."""
+    fake_bash = tmp_path / "bash.exe"
+    fake_bash.write_text("", encoding="utf-8")
+    monkeypatch.setattr(bash_wahl.sys, "platform", "win32")
+    monkeypatch.setattr(bash_wahl.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(bash_wahl, "_GIT_BASH_STANDARD", str(fake_bash))
+    monkeypatch.setenv("CLAUDE_CODE_GIT_BASH_PATH", str(fake_bash))
+    monkeypatch.setenv("GIT_BASH", str(fake_bash))
+    assert bash_wahl.bash() == str(fake_bash)
+    monkeypatch.setenv(bash_wahl.TEST_FEHLT_ENV, "1")
+    with pytest.raises(FileNotFoundError, match=bash_wahl.TEST_FEHLT_ENV):
+        bash_wahl.bash()
+
+
+def test_test_naht_laesst_auch_lauf_scheitern(monkeypatch: pytest.MonkeyPatch) -> None:
+    """#646: Mit ``TEST_FEHLT_ENV=1`` bricht auch ``bash_wahl.lauf`` mit ``FileNotFoundError`` ab."""
+    monkeypatch.setenv(bash_wahl.TEST_FEHLT_ENV, "1")
+    with pytest.raises(FileNotFoundError, match=bash_wahl.TEST_FEHLT_ENV):
+        bash_wahl.lauf(["-c", "exit 0"])
+
+
+def test_test_naht_wirkt_nicht_ausserhalb_test(monkeypatch: pytest.MonkeyPatch) -> None:
+    """#646: Außerhalb von Tests (``starter.unter_test() == False``) greift die Test-Naht nicht."""
+    monkeypatch.setenv(bash_wahl.TEST_FEHLT_ENV, "1")
+    monkeypatch.setattr(bash_wahl.starter, "unter_test", lambda: False)
+    pfad = bash_wahl.bash()
+    assert Path(pfad).is_file(), pfad
+    if WINDOWS:
+        assert not bash_wahl.ist_wsl_stub(pfad), pfad
+
+
 def test_lauf_nimmt_pfadsperre_nur_unter_windows_heraus(tmp_path: Path) -> None:
     lauf = bash_wahl.lauf(
         ["-c", 'echo "${MSYS_NO_PATHCONV:-leer} $PFAD_X"'],
