@@ -20,10 +20,13 @@ import pytest
 
 SKRIPT = Path(os.environ.get("SPAWN_LOCAL_SKRIPT") or Path(__file__).resolve().parents[1] / "spawn_local.ps1")
 PS = shutil.which("pwsh") or shutil.which("powershell")
+PS51 = shutil.which("powershell")
+PY = shutil.which("python") or shutil.which("python3")
 
 pytestmark = [
     pytest.mark.skipif(sys.platform != "win32", reason="Lauf-Test für spawn_local.ps1 nur unter Windows"),
     pytest.mark.skipif(PS is None, reason="weder pwsh noch powershell vorhanden"),
+    pytest.mark.skipif(PY is None, reason="weder python noch python3 im PATH"),
 ]
 
 SPEC = 9100
@@ -65,6 +68,7 @@ def _lauf(
     ohne_wache: bool = True,
     zu_bauen_rc: int = 0,
     zu_bauen_ausgabe: str = str(OFFEN),
+    ps_exe: str | None = None,
 ) -> tuple[subprocess.CompletedProcess[str], list[list[str]], Path]:
     skill = tmp_path / "skill"
     skill.mkdir()
@@ -97,7 +101,7 @@ def _lauf(
     env["PYTHONIOENCODING"] = "utf-8"
 
     cmd = [
-        str(PS),
+        str(ps_exe or PS),
         "-NoProfile",
         "-ExecutionPolicy",
         "Bypass",
@@ -155,3 +159,16 @@ def test_gh_fehler_oeffnet_keine_tabs(tmp_path: Path) -> None:
     assert "keine Tabs" in ausgabe, ausgabe
     assert "Starte " not in ausgabe, ausgabe
     assert not wt_marke.exists(), "gh-Fehler darf kein Fenster öffnen"
+
+
+@pytest.mark.skipif(PS51 is None, reason="Windows PowerShell 5.1 (powershell) fehlt")
+def test_trockenlauf_unter_windows_powershell_51(tmp_path: Path) -> None:
+    """#637: ``spawn_local.ps1`` läuft auch unter Windows PowerShell 5.1 (ohne ``-AsHashtable``)."""
+    lauf, aufrufe, wt_marke = _lauf(tmp_path, ps_exe=PS51)
+    ausgabe = lauf.stdout + lauf.stderr
+
+    assert lauf.returncode == 0, ausgabe
+    assert ["zu-bauen", str(SPEC)] in aufrufe, aufrufe
+    assert f"bau {OFFEN}" in ausgabe
+    assert f"bau {FERTIG}" not in ausgabe
+    assert not wt_marke.exists(), "Trockenlauf darf kein Fenster öffnen"
