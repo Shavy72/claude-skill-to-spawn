@@ -48,6 +48,7 @@ from to_spawn import (  # noqa: E402
     manifest,
     nest,
     sitzung_env,
+    sitzung_filter,
     spawn_exit,
     speicher,
     starter,
@@ -491,6 +492,25 @@ def terminal_log_abschalten() -> None:
             root.removeHandler(h)
 
 
+def _filter_dateien_schreiben(
+    ordner: Path,
+    overrides: dict[str, str],
+    mcp_servers: dict[str, dict[str, object]],
+) -> tuple[Path, Path]:
+    """Schreibt ``settings.json`` (``skillOverrides``) und ``mcp.json`` in ``ordner`` (#412)."""
+    settings_path = ordner / "settings.json"
+    mcp_path = ordner / "mcp.json"
+    settings_path.write_text(
+        json.dumps(sitzung_filter.aufseher_settings(overrides), ensure_ascii=False, indent=1),
+        encoding="utf-8",
+    )
+    mcp_path.write_text(
+        json.dumps({"mcpServers": mcp_servers}, ensure_ascii=False, indent=1),
+        encoding="utf-8",
+    )
+    return settings_path, mcp_path
+
+
 def main() -> int:
     konsole.utf8_ausgabe()  # Prompt enthält „→“, Windows-Konsole ist cp1252 (#68)
     ap = argparse.ArgumentParser(description="Bau-Aufseher-Session für eine Spec.")
@@ -540,16 +560,26 @@ def main() -> int:
     if not a.dry_run:  # Push-Sperre (#1445) auch für den Aufseher, gleiche Funktion wie bau.py
         nest.git_hooks_einrichten(ordner)
     claude = starter.finde("claude")  # unter Test nur die Attrappe (#1406)
-    # Pflicht-MCP context-mode (#237): der Aufseher startet ohne ``--strict-mcp-config``,
-    # das Plugin-MCP lädt also von selbst — nur fehlen darf es nicht.
+    # Pflicht-MCP context-mode (#237) + Skill-/MCP-Filter wie bau.py (#412):
+    # ``--strict-mcp-config`` sperrt fremde MCPs aus, deshalb steht ``context-mode``
+    # ausdrücklich in ``mcp.json``; ``pruefen(streng=True)`` prüft weiter Installation/Registry/Aktivierung.
     try:
         ctx_wurzel = context_mode.pruefen(streng=True)
     except context_mode.ContextModeFehlt as fehler:
         log.error("%s", fehler)
         return 2
+    home = config.heim_ordner()
+    claude_dir = context_mode.claude_ordner()
+    whitelist, overrides = sitzung_filter.aufseher_skill_auswahl(
+        konfig, repo=REPO_ORDNER, claude_dir=claude_dir, logger=log
+    )
+    mcp_servers, chrome = sitzung_filter.aufseher_mcp_auswahl(
+        konfig, repo=REPO_ORDNER, home=home, claude_dir=claude_dir, logger=log
+    )
+    mcp_servers.update(context_mode.server_eintrag(ctx_wurzel))
+    off_count = sum(1 for v in overrides.values() if v == "off")
     ausweich = str(konfig.get("modelle", {}).get("waechter_ausweich") or "")
     remote_control = bool(konfig.get("waechter", {}).get("remote_control", True))
-    cmd = waechter_lauf.befehl(claude, a.model, ausweich, remote_control, a.spec, prompt, effort=effort)
     log.info(
         "Aufseher Spec #%s · Modell %s · Effort %s · Ausweich %s · Takt %ss",
         a.spec,
@@ -558,10 +588,41 @@ def main() -> int:
         ausweich or "-",
         a.takt,
     )
-    log.info("context-mode (Pflicht-MCP, lädt als Plugin): %s", ctx_wurzel)
-    if a.resume:  # Aufpasser (#236 R1): Sicherheitskette auch für das Aufseher-Fenster
-        cmd = waechter_lauf.resume_befehl(claude, a.resume, a.model, effort, remote_control, a.spec, "<weiter>")
+    log.info("Skills on (%d): %s", len(whitelist), ", ".join(whitelist))
+    log.info("Skills off: %d", off_count)
+    log.info("MCPs: %s", ", ".join(mcp_servers) or "—")
+    log.info("Chrome: %s", "ja" if chrome else "nein")
+    log.info("context-mode (Pflicht-MCP): %s", ctx_wurzel)
     if a.dry_run:
+        dry_ordner = Path(tempfile.mkdtemp(prefix=f"wache-{a.spec}-", dir=os.environ.get("TMPDIR")))
+        settings_path, mcp_path = _filter_dateien_schreiben(dry_ordner, overrides, mcp_servers)
+        log.info("Temp: %s", dry_ordner)
+        if a.resume:  # Aufpasser (#236 R1): Sicherheitskette auch für das Aufseher-Fenster
+            cmd = waechter_lauf.resume_befehl(
+                claude,
+                a.resume,
+                a.model,
+                effort,
+                remote_control,
+                a.spec,
+                "<weiter>",
+                settings_pfad=settings_path,
+                mcp_pfad=mcp_path,
+                chrome=chrome,
+            )
+        else:
+            cmd = waechter_lauf.befehl(
+                claude,
+                a.model,
+                ausweich,
+                remote_control,
+                a.spec,
+                prompt,
+                effort=effort,
+                settings_pfad=settings_path,
+                mcp_pfad=mcp_path,
+                chrome=chrome,
+            )
         print(" ".join(cmd[:-1]), '"<prompt>"')
         return 0
     # Speicher-Schutz (#257 Paket B, Fixrunde 1 F3): RAM knapp oder Obergrenze an
@@ -589,6 +650,7 @@ def main() -> int:
     # diese Aufseher-Session über die Umzug-Datei (Temp-Ordner je Lauf).
     lauf_ordner = Path(tempfile.mkdtemp(prefix=f"wache-{a.spec}-", dir=os.environ.get("TMPDIR")))
     try:
+        settings_path, mcp_path = _filter_dateien_schreiben(lauf_ordner, overrides, mcp_servers)
         umzug_datei = lauf_ordner / "umzug.json"
         abloese_datei = lauf_ordner / "abloesung.json"
         os.environ["BAU_UMZUG_DATEI"] = str(umzug_datei)
@@ -624,6 +686,9 @@ def main() -> int:
                     abbruch=lambda: umzug_datei.exists() or abloese_datei.exists(),
                     session_id=session_id,
                     effort=effort,
+                    settings_pfad=settings_path,
+                    mcp_pfad=mcp_path,
+                    chrome=chrome,
                 )
                 umzug_daten = umzug.lies_umzug(umzug_datei)
                 if umzug_daten is not None:

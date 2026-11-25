@@ -141,12 +141,14 @@ der Elternprozess muss es tun.
 ## Pflicht-MCP context-mode (#237)
 
 Jede Session, die to-spawn startet, hat das Plugin-MCP `context-mode` (Token-Sparer). `bau.py`
-startet mit `--strict-mcp-config`, das sperrt Plugin-MCPs aus — deshalb trägt `bau.py` den Server
-selbst in seine `mcp.json` ein (`to_spawn/context_mode.py`), unter dem Plugin-Namen
-`plugin_context-mode_context-mode`, damit die Werkzeuge weiter `mcp__plugin_context-mode_context-mode__ctx_*`
-heißen. Der Pfad kommt aus `~/.claude/plugins/installed_plugins.json`, sonst aus der neuesten Version
-im Plugin-Cache — nie aus einer festen Versionsnummer. Kein Manifest kann den Eintrag abwählen.
-`wache.py` startet ohne die Sperre (Plugin lädt selbst) und prüft nur, dass es installiert ist.
+und `wache.py` starten mit `--strict-mcp-config`, das sperrt fremde und Plugin-MCPs aus — deshalb
+tragen beide den Server selbst in ihre `mcp.json` ein (`to_spawn/context_mode.py`, gemeinsame Filter-Quelle
+`to_spawn/sitzung_filter.py`, #412), unter dem Plugin-Namen `plugin_context-mode_context-mode`, damit die
+Werkzeuge weiter `mcp__plugin_context-mode_context-mode__ctx_*` heißen. Ebenso schalten beide alle
+ungenutzten Skills per `--settings` (`skillOverrides`) ab. Der Pfad kommt aus
+`~/.claude/plugins/installed_plugins.json`, sonst aus der neuesten Version im Plugin-Cache — nie aus einer
+festen Versionsnummer. Kein Manifest kann den Eintrag abwählen. `wache.py` prüft zusätzlich streng, dass
+Registry und Aktivierung sauber sind (`context_mode.pruefen(streng=True)`).
 Fehlt das Plugin: `bau`/`wache` enden mit **Exit 2** und nennen `claude plugin install context-mode@context-mode`;
 `setup --zeige` trägt eine Zeile `context-mode … bereit — <Pfad>` bzw. `FEHLT`.
 Beleg je Session: `sessions` zeigt in der Spalte `ctx` ✓/✗ (start.mjs-Kindprozess unter der Claude-Session).

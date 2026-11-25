@@ -387,6 +387,22 @@ def effort(konfig: dict[str, Any]) -> str:
     return str(stufen.get("waechter") or EFFORT)
 
 
+def _filter_flags(
+    settings_pfad: Path | str | None,
+    mcp_pfad: Path | str | None,
+    chrome: bool | None,
+) -> list[str]:
+    """Optionale Skill-/MCP-Filter-Schalter für die Aufseher-Session (#412)."""
+    flags: list[str] = []
+    if settings_pfad:
+        flags += ["--settings", str(settings_pfad)]
+    if mcp_pfad:
+        flags += ["--mcp-config", str(mcp_pfad), "--strict-mcp-config"]
+    if chrome is False:
+        flags.append("--no-chrome")
+    return flags
+
+
 def befehl(
     claude: str,
     modell: str,
@@ -396,6 +412,10 @@ def befehl(
     prompt: str,
     session_id: str | None = None,
     effort: str = "",
+    *,
+    settings_pfad: Path | str | None = None,
+    mcp_pfad: Path | str | None = None,
+    chrome: bool | None = None,
 ) -> list[str]:
     """Start-Befehl der Aufseher-Session (``effort`` → ``--effort``, Konfig ``effort.waechter``)."""
     cmd = [claude, "--model", modell]
@@ -405,13 +425,24 @@ def befehl(
         cmd += ["--fallback-model", ausweich]
     if remote_control:
         cmd += ["--remote-control", f"Aufseher #{spec}"]
+    cmd += _filter_flags(settings_pfad, mcp_pfad, chrome)
     if session_id:
         cmd += ["--session-id", session_id]
     return [*cmd, prompt]
 
 
 def resume_befehl(
-    claude: str, sid: str, modell: str, effort: str, remote_control: bool, spec: int, text: str
+    claude: str,
+    sid: str,
+    modell: str,
+    effort: str,
+    remote_control: bool,
+    spec: int,
+    text: str,
+    *,
+    settings_pfad: Path | str | None = None,
+    mcp_pfad: Path | str | None = None,
+    chrome: bool | None = None,
 ) -> list[str]:
     """Fortsetzung eines Aufseher-Gesprächs mit denselben Flags wie beim Start."""
     cmd = [claude, "--resume", sid, "--model", modell]
@@ -419,6 +450,7 @@ def resume_befehl(
         cmd += ["--effort", effort]
     if remote_control:
         cmd += ["--remote-control", f"Aufseher #{spec}"]
+    cmd += _filter_flags(settings_pfad, mcp_pfad, chrome)
     return [*cmd, text]
 
 
@@ -888,6 +920,9 @@ def fahre(
     hoechstens: float = MAX_WARTE_S,
     effort: str = "",
     grenze: int | None = None,
+    settings_pfad: Path | str | None = None,
+    mcp_pfad: Path | str | None = None,
+    chrome: bool | None = None,
 ) -> int:
     """Aufseher starten und beaufsichtigen; Rückgabe = Exit-Code der letzten Session.
 
@@ -924,10 +959,25 @@ def fahre(
             spec,
             f"Aufpasser: Weiter als Bau-Aufseher Spec #{spec} genau dort, wo du warst — "
             f"nächster Tick wie gehabt. {anleitung.aufseher_befugnis(startklar.skill_pfad())}",
+            settings_pfad=settings_pfad,
+            mcp_pfad=mcp_pfad,
+            chrome=chrome,
         )
     else:
         sid = str(uuid.uuid4())
-        cmd = befehl(claude, modell, ausweich, remote_control, spec, prompt, session_id=sid, effort=effort)
+        cmd = befehl(
+            claude,
+            modell,
+            ausweich,
+            remote_control,
+            spec,
+            prompt,
+            session_id=sid,
+            effort=effort,
+            settings_pfad=settings_pfad,
+            mcp_pfad=mcp_pfad,
+            chrome=chrome,
+        )
     sessions_datei.schreiben(repo, f"wache-{spec}", sid, cwd, 1)
     pausen = 0  # Limit-Pausen dieser Session (Obergrenze MAX_PAUSEN, F1)
     while True:
@@ -1032,6 +1082,9 @@ def fahre(
                 f"Weiter als Bau-Aufseher Spec #{spec}: Das Nutzungs-Limit von {haupt} ist vorbei, "
                 f"Modell-Wechsel {modell} → {haupt}. Nächster Tick wie gehabt "
                 f"({capo_aufruf(spec)}).",
+                settings_pfad=settings_pfad,
+                mcp_pfad=mcp_pfad,
+                chrome=chrome,
             )
             modell = haupt
             rueckkehr_ab = None
@@ -1078,6 +1131,9 @@ def fahre(
                 f"{ziel.astimezone():%H:%M} wieder offen, die Pause ist vorbei. "
                 f"Nächster Tick wie gehabt ({capo_aufruf(spec)}); "
                 f"{bau_log.log_im_repo(repo, spec)} beim nächsten Handoff-Commit mitnehmen.",
+                settings_pfad=settings_pfad,
+                mcp_pfad=mcp_pfad,
+                chrome=chrome,
             )
             continue
 
@@ -1089,4 +1145,15 @@ def fahre(
         )
         rueckkehr_ab = _rueckkehr_ab(aufsicht.limit_eintrag, puffer)
         modell = ausweich
-        cmd = resume_befehl(claude, sid, ausweich, effort, remote_control, spec, weiter)
+        cmd = resume_befehl(
+            claude,
+            sid,
+            ausweich,
+            effort,
+            remote_control,
+            spec,
+            weiter,
+            settings_pfad=settings_pfad,
+            mcp_pfad=mcp_pfad,
+            chrome=chrome,
+        )

@@ -144,6 +144,11 @@ def plugin_wurzel(claude_dir: Path | None = None) -> Path | None:
     return _aus_registry(ordner) or _aus_cache(ordner)
 
 
+def server_eintrag(wurzel: str | os.PathLike[str]) -> dict[str, dict[str, Any]]:
+    """``mcpServers``-Eintrag für eine bereits geprüfte Plugin-Wurzel (eine Quelle mit :func:`server_definition`)."""
+    return {SERVER_NAME: {"command": "node", "args": [str(Path(wurzel) / START)]}}
+
+
 def server_definition(claude_dir: Path | None = None) -> dict[str, dict[str, Any]]:
     """``mcpServers``-Eintrag für die ``mcp.json`` einer Session: ``node <wurzel>/start.mjs``.
 
@@ -151,8 +156,7 @@ def server_definition(claude_dir: Path | None = None) -> dict[str, dict[str, Any
     absolute Pfade der Vorversion (Befund Prüfpanel 21.09.2026, das Plugin heilt sie erst
     im SessionStart-Hook — nach dem MCP-Start). Die Wurzel hier ist auf ``start.mjs`` geprüft.
     """
-    wurzel = pruefen(claude_dir)
-    return {SERVER_NAME: {"command": "node", "args": [str(wurzel / START)]}}
+    return server_eintrag(pruefen(claude_dir))
 
 
 def hinweis(claude_dir: Path | None = None) -> str:

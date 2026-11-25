@@ -33,7 +33,17 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any
 
-from . import bau_log, config, context_mode, hooks, konsole, manifest, sessions_datei, waechter_lauf
+from . import (
+    bau_log,
+    config,
+    context_mode,
+    hooks,
+    konsole,
+    manifest,
+    sessions_datei,
+    sitzung_filter,
+    waechter_lauf,
+)
 
 log = logging.getLogger("to_spawn.start_last")
 
@@ -386,40 +396,34 @@ def _manifest_auswahl(repo: Path, spec: int | None, ticket: str | None) -> tuple
     return spec if spec is not None else 1, "1", {}
 
 
-def _aufseher_mcps(repo: Path, home: Path, claude_dir: Path) -> tuple[str, ...]:
-    """Aktive MCP-Server des Aufsehers (läuft ohne ``--strict-mcp-config``)."""
-    namen: list[str] = []
-    claude_json = _lies_json(home / ".claude.json")
-    ziel_repo = repo.resolve()
-    for name in claude_json.get("mcpServers") or {}:
-        if name not in namen:
-            namen.append(str(name))
-    for key, projekt in (claude_json.get("projects") or {}).items():
-        if not isinstance(projekt, dict):
-            continue
-        try:
-            gleich = Path(key).resolve() == ziel_repo
-        except OSError:
-            gleich = False
-        if gleich:
-            for name in projekt.get("mcpServers") or {}:
-                if name not in namen:
-                    namen.append(str(name))
-    for name in _lies_json(repo / ".mcp.json").get("mcpServers") or {}:
-        if name not in namen:
-            namen.append(str(name))
-    if (
-        context_mode.plugin_wurzel(claude_dir) is not None
-        and not context_mode.registry_unlesbar(claude_dir)
-        and context_mode.aktiviert(claude_dir)
-        and context_mode.SERVER_NAME not in namen
-    ):
-        namen.append(context_mode.SERVER_NAME)
-    return tuple(sorted(namen))
+def _aktive_mcps(
+    gewuenscht: list[str],
+    repo: Path,
+    home: Path,
+    claude_dir: Path,
+) -> tuple[str, ...]:
+    """Aktive MCP-Server unter ``--strict-mcp-config`` (eine Quelle für ``bau`` und ``aufseher``, #412)."""
+    katalog = sitzung_filter.mcp_katalog(repo=repo, home=home, claude_dir=claude_dir)
+    aktiv: list[str] = []
+    for name in dict.fromkeys(gewuenscht):
+        if name == sitzung_filter.CHROME_MCP or name in katalog:
+            aktiv.append(name)
+    if context_mode.plugin_wurzel(claude_dir) is not None and context_mode.SERVER_NAME not in aktiv:
+        aktiv.append(context_mode.SERVER_NAME)
+    return tuple(sorted(aktiv))
+
+
+def _aufseher_mcps(
+    konfig: dict[str, Any],
+    repo: Path,
+    home: Path,
+    claude_dir: Path,
+) -> tuple[str, ...]:
+    """Aktive MCP-Server des Aufsehers (``--strict-mcp-config``, #412)."""
+    return _aktive_mcps(sitzung_filter.waechter_liste(konfig, "mcp"), repo, home, claude_dir)
 
 
 def _bau_mcps(
-    bau: ModuleType,
     default: dict[str, Any],
     eintrag: dict[str, Any],
     repo: Path,
@@ -427,17 +431,8 @@ def _bau_mcps(
     claude_dir: Path,
 ) -> tuple[str, ...]:
     """Aktive MCP-Server der Bau-Session (``--strict-mcp-config``)."""
-    gewuenscht = list(dict.fromkeys(list(default.get("core_mcp") or []) + list(eintrag.get("mcp") or [])))
-    katalog = bau.mcp_catalog(repo=repo, home=home, claude_dir=claude_dir)
-    aktiv: list[str] = []
-    for name in gewuenscht:
-        if name == bau.CHROME_MCP:
-            aktiv.append(name)
-        elif name in katalog:
-            aktiv.append(name)
-    if context_mode.plugin_wurzel(claude_dir) is not None and context_mode.SERVER_NAME not in aktiv:
-        aktiv.append(context_mode.SERVER_NAME)
-    return tuple(sorted(aktiv))
+    gewuenscht = list(default.get("core_mcp") or []) + list(eintrag.get("mcp") or [])
+    return _aktive_mcps(gewuenscht, repo, home, claude_dir)
 
 
 def transkript_messen(pfad: Path, *, name: str | None = None) -> TranskriptMessung:
@@ -585,7 +580,7 @@ def messen(
     beschreibungen = _skill_beschreibungen(repo, ziel_claude)
     globale_posten = _ladedateien_global(ziel_claude)
     repo_posten = _ladedateien_repo(repo)
-    bekannte_skills = bau.known_skill_names(repo=repo, claude_dir=ziel_claude)
+    bekannte_skills = sitzung_filter.bekannte_skills(repo=repo, claude_dir=ziel_claude)
 
     # --- Bau-Session ------------------------------------------------------------
     default = bau.load_default()
@@ -605,11 +600,11 @@ def messen(
             list(default.get("core_skills") or [])
             + list(eintrag.get("skills") or [])
             + config.repo_skills(konfig)
-            + list(bau.PFLICHT_SKILLS)
+            + list(sitzung_filter.PFLICHT_SKILLS)
         )
     )
     bau_aus = len(bekannte_skills - set(bau_whitelist))
-    bau_mcps = _bau_mcps(bau, default, eintrag, repo, ziel_home, ziel_claude)
+    bau_mcps = _bau_mcps(default, eintrag, repo, ziel_home, ziel_claude)
     bau_posten = sorted(
         [
             Posten(
@@ -629,8 +624,10 @@ def messen(
 
     # --- Aufseher-Session -------------------------------------------------------
     wache_prompt_text = wache.prompt_bauen(spec_nr, slug, wache.TAKT_S, konfig, repo_ordner=repo)
-    aufseher_skills = tuple(sorted(bekannte_skills | set(beschreibungen)))
-    aufseher_mcps = _aufseher_mcps(repo, ziel_home, ziel_claude)
+    aufseher_whitelist, aufseher_overrides = sitzung_filter.aufseher_skill_auswahl(konfig, known=bekannte_skills)
+    aufseher_skills = tuple(aufseher_whitelist)
+    aufseher_aus = sum(1 for v in aufseher_overrides.values() if v == "off")
+    aufseher_mcps = _aufseher_mcps(konfig, repo, ziel_home, ziel_claude)
     aufseher_posten = sorted(
         [
             Posten(
@@ -672,7 +669,7 @@ def messen(
             obergrenze_k=grenzen["aufseher"],
             posten=tuple(aufseher_posten),
             skills_aktiv=aufseher_skills,
-            skills_aus=0,
+            skills_aus=aufseher_aus,
             mcp_aktiv=aufseher_mcps,
             transkripte=tuple(tr_je_typ["aufseher"]),
         ),
