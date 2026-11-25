@@ -222,7 +222,7 @@ def arbeitsordner(pid: int) -> Path | None:
     """Arbeitsordner aus ``/proc/<pid>/cwd`` (Linux) bzw. PEB (Windows); ``None`` = unlesbar."""
     if sys.platform == "win32":
         try:
-            pfad = prozessbaum._arbeitsordner_windows(pid)
+            pfad = prozessbaum.arbeitsordner_windows(pid)
             return Path(pfad).resolve() if pfad else None
         except OSError:
             return None
@@ -257,7 +257,7 @@ def beendet(pid: int) -> bool:
     """
     if sys.platform == "win32":
         try:
-            return prozessbaum._ist_weg_windows(pid)
+            return prozessbaum.ist_weg_windows(pid)
         except OSError:
             return False
     if not Path("/proc/self").is_dir():

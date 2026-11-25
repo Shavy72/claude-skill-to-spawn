@@ -574,6 +574,18 @@ def _ist_beendet_griff(kernel: Any, griff: int) -> bool:
     return bool(kernel.GetExitCodeProcess(griff, ctypes.byref(code)) and code.value != _STILL_ACTIVE)
 
 
+def arbeitsordner_windows(pid: int) -> str | None:
+    """Arbeitsordner eines Windows-Prozesses aus seinem PEB; ``None`` = unlesbar.
+
+    Öffentliche Tür für Skripte (``skripte/sessions_stand.py``), die Interna bleiben verborgen."""
+    return _arbeitsordner_windows(pid)
+
+
+def ist_weg_windows(pid: int) -> bool:
+    """Ist der Windows-Prozess laut Kernel beendet? Öffentliche Tür zu ``_ist_weg_windows``."""
+    return _ist_weg_windows(pid)
+
+
 def _ist_weg_windows(pid: int) -> bool:
     """Ist ``pid`` nachweislich verschwunden oder beendet?
 
