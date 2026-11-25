@@ -196,6 +196,9 @@ Fehlt die Datei, gelten die Vorgaben aus `to_spawn/config.py`:
 }
 ```
 
+`runner` wählt das Werkzeug für Bau-Sessions in `skripte/bau.py` (`"claude"` Vorgabe oder `"agy"`
+für Antigravity; Standardmodell bei `"agy"` ist `gemini-4-neon-high`, sofern `modelle.ticket` kein
+eigenes Nicht-Claude-Modell setzt oder `--model` übergeben wird — einzige Stelle: `to_spawn/werkzeug.py`, #660).
 `staffel.grenze_k` ist nur der Ticket-Schnitt (Planungs-Grenze je Ticket), keine Ablöse-Grenze:
 die Ablösung einer laufenden Session hängt allein an `~/.claude/smart-zone.json` (#417).
 
