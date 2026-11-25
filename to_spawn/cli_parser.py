@@ -16,6 +16,7 @@ from to_spawn import (
     abgleich,
     aufpasser,
     aufseher_stand,
+    auswahl,
     befund,
     briefkasten_cli,
     deploy_status,
@@ -94,6 +95,7 @@ def baue_parser() -> _Parser:
     p_spawn.add_argument("spec")
     p_spawn.add_argument("--ziel", choices=["local", "srv"], help="Frage überspringen")
     p_spawn.add_argument("--tickets", help="nur diese Tickets, mit Komma getrennt")
+    p_spawn.add_argument("--ohne-wache", action="store_true", help="keinen Aufseher/Takt auf diesem Ziel starten")
     p_spawn.add_argument("--dry-run", action="store_true", help="nur den Befehl zeigen")
 
     p_neu = unter.add_parser("neustart", help="ein Ticket neu starten (Aufseher-Einzeiler)")
@@ -371,6 +373,7 @@ def baue_parser() -> _Parser:
     p_live.add_argument("spec", type=int)
 
     nest.richte_parser_ein(unter)
+    auswahl.richte_parser_ein(unter)
     leitstand.richte_parser_ein(unter)
     waechter_takt.richte_parser_ein(unter)
     aufseher_stand.richte_parser_ein(unter)

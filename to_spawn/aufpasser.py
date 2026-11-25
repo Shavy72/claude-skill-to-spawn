@@ -96,6 +96,7 @@ from typing import Any, Literal
 
 from to_spawn import (
     anleitung,
+    auswahl,
     bau_log,
     briefkasten,
     capo,
@@ -360,6 +361,44 @@ GIT_IDENTITAET = {
 
 def zustand_standard() -> Path:
     return Path.home() / ".local" / "state" / "to-spawn" / "aufpasser"
+
+
+def wache_log(repo: Path, spec: int | str) -> Path:
+    """Log eines tmux-Aufseher-Fensters: stderr von ``wache.py`` und Exit-Code bei Fehler (#271)."""
+    return Path(repo) / ".to-spawn" / f"fenster_wache_{spec}.log"
+
+
+def _hauptklon_aus_worktree(pfad: Path) -> Path | None:
+    """Löst bei einem Git-Worktree (``.git``-Datei mit ``gitdir: …/.git/worktrees/<name>``) den Hauptklon auf."""
+    git_pfad = pfad / ".git"
+    if not git_pfad.is_file():
+        return None
+    try:
+        erste = git_pfad.read_text(encoding="utf-8", errors="replace").splitlines()[0].strip()
+    except (OSError, IndexError):
+        return None
+    if not erste.lower().startswith("gitdir:"):
+        return None
+    ziel_roh = erste.split(":", 1)[1].strip()
+    ziel = Path(ziel_roh)
+    if not ziel.is_absolute():
+        ziel = (pfad / ziel).resolve()
+    else:
+        ziel = ziel.resolve()
+    if ziel.parent.name == "worktrees" and ziel.parent.parent.name == ".git":
+        klon = ziel.parent.parent.parent
+        if klon.is_dir():
+            return klon
+    return None
+
+
+def _origin_kennung(pfad: Path) -> str:
+    """Normalisierte ``origin``-URL eines Git-Repos (ohne ``.git``), leer bei Fehler."""
+    try:
+        url = _git(pfad, "remote", "get-url", "origin").strip()
+    except (RuntimeError, OSError):
+        return ""
+    return url.removesuffix(".git")
 
 
 # --- Bausteine ohne Seiteneffekte -------------------------------------------
@@ -1570,6 +1609,79 @@ class Aufpasser:
         roh = os.environ.get("TO_SPAWN_REPO")
         return Path(roh) if roh else None
 
+    def spec_repo_ordner(
+        self, spec: str, fenster: list[Fenster], basis: Path | None
+    ) -> Path | None:
+        """Ordner des Spec-Klons finden, in dem das Manifest liegt (#271 Nachtrag 4).
+
+        Startet der Aufpasser den Aufseher im Hauptrepo statt im Spec-Klon, fehlt dort oft
+        das Spec-Manifest (:func:`manifest.manifest_pfad`) und ``startklar.gate`` endet mit Exit 2.
+        """
+        kandidaten: list[Path] = []
+        gesehen: set[Path] = set()
+
+        def merk(pfad: Path | None) -> None:
+            if pfad is None:
+                return
+            try:
+                echt = pfad.resolve()
+            except OSError:
+                return
+            if echt not in gesehen and echt.is_dir():
+                gesehen.add(echt)
+                kandidaten.append(echt)
+
+        for f in fenster:
+            f_pfad = getattr(f, "pfad", None)
+            if not f_pfad:
+                continue
+            p = Path(f_pfad)
+            merk(p)
+            merk(_hauptklon_aus_worktree(p))
+        merk(basis)
+
+        def hat_manifest(ordner: Path) -> bool:
+            if not (ordner / config.KONFIG_PFAD).is_file():
+                return False
+            try:
+                return manifest.manifest_pfad(ordner, spec).is_file()
+            except (OSError, ValueError):
+                return False
+
+        for kand in kandidaten:
+            if hat_manifest(kand):
+                return kand
+
+        # Nachbar-Klone im selben Elternordner prüfen (z. B. ``projekt-1330`` neben ``projekt-haupt``).
+        basis_origin = _origin_kennung(basis) if basis is not None and basis.is_dir() else ""
+        eltern = {k.parent for k in kandidaten if k.parent.is_dir()}
+        treffer_origin: Path | None = None
+        treffer_name: Path | None = None
+        for ordner in sorted(eltern):
+            try:
+                kinder = sorted(ordner.iterdir())
+            except OSError:
+                continue
+            for kind in kinder:
+                try:
+                    kind_echt = kind.resolve()
+                except OSError:
+                    continue
+                if not kind.is_dir() or kind_echt in gesehen:
+                    continue
+                if not hat_manifest(kind):
+                    continue
+                if basis_origin and _origin_kennung(kind) == basis_origin:
+                    treffer_origin = kind
+                    break
+                if kind.name.endswith(f"-{spec}") and treffer_name is None:
+                    treffer_name = kind
+            if treffer_origin is not None:
+                return treffer_origin
+        if treffer_name is not None:
+            return treffer_name
+        return basis
+
     def offene_tickets(self, spec: str, repo: Path) -> dict[int, dict]:
         """Unter-Tickets, die nicht :func:`ticket_zustand.endgueltig_zu` sind, je Nummer
         mit ``state``/``labels`` — aus EINEM Listen-Aufruf, kein ``issue view`` je Ticket
@@ -1696,7 +1808,11 @@ class Aufpasser:
         )
 
     def wache_befehl(self, repo: Path, spec: str, resume: str | None) -> str:
-        """Startbefehl des Aufseher-Fensters (R1), analog ``bau_befehl``."""
+        """Startbefehl des Aufseher-Fensters (R1), analog ``bau_befehl``.
+
+        Schreibt stderr und Exit-Code (bei Fehler) zusätzlich nach :func:`wache_log`,
+        damit ein sofort verschwindendes Aufseher-Fenster seinen Grund belegt (#271).
+        """
         venv = repo / ".venv" / "bin" / "python"
         py = str(venv) if venv.is_file() else "python3"
         if self.e.wache_vorlage:
@@ -1705,12 +1821,22 @@ class Aufpasser:
             vorlage = VORLAGE_WACHE_REPO
         else:
             vorlage = VORLAGE_WACHE_SKILL
-        return vorlage.format(
+        kern = vorlage.format(
             repo=shlex.quote(str(repo)),
             py=shlex.quote(py),
             s=spec,
             resume=f" --resume {resume}" if resume else "",
         )
+        log_pfad = wache_log(repo, spec)
+        log_q = shlex.quote(str(log_pfad))
+        ordner_q = shlex.quote(str(log_pfad.parent))
+        tee = f"exec 3>&2 2> >(tee -a {log_q} >&3); tee_pid=$!"
+        spur = (
+            f'rc=$?; exec 2>&3 3>&-; [ "$rc" -eq 0 ] || {{ '
+            f'timeout 3 tail -s 0.1 --pid="$tee_pid" -f /dev/null 2>/dev/null; '
+            f'echo "$(date -Is) wache.py #{spec} Exit $rc" >> {log_q}; }}; exit "$rc"'
+        )
+        return f"mkdir -p {ordner_q}; {tee}; {{ {kern}; }}; {spur}"
 
     def resume_aus_datei(self, repo: Path, name: str) -> tuple[str, Path] | None:
         """Gesprächs-ID + cwd aus ``.to-spawn/sessions/<name>.json`` — nur wenn das
@@ -2262,7 +2388,7 @@ class Aufpasser:
                 except RuntimeError as fehler:
                     log.error("%s: Fenster nicht lesbar: %s", sitzung, fehler)
                     continue
-                repo = self.repo_ordner(fenster)
+                repo = self.spec_repo_ordner(spec, fenster, self.repo_ordner(fenster))
                 if repo is not None:
                     gesehen.append((sitzung, spec, fenster, repo))
             deploy = self._deploy_wache({repo for _, _, _, repo in gesehen})
@@ -2670,11 +2796,29 @@ class Aufpasser:
     # -- Ein Lauf ----------------------------------------------------------------
 
     def start_erlaubt(self, spec: str, repo: Path, ticket: int | None) -> bool:
-        """Regel 1: kein Start bei Stopp-Label oder wenn das Fenster in 6 h schon
-        ``START_MAX``-mal gestartet wurde (es verschwindet offenbar wieder).
-        ``ticket`` None = Aufseher-Fenster (kein Label, Start-Gedächtnis ``wache-<S>``)."""
+        """Regel 1: kein Start außerhalb der gespeicherten Teil-Start-Auswahl (#271), bei
+        Stopp-Label oder wenn das Fenster in 6 h schon ``START_MAX``-mal gestartet wurde.
+        ``ticket`` None = Aufseher-Fenster (prüft Auswahl/``--ohne-wache``/Rechner,
+        Start-Gedächtnis ``wache-<S>``)."""
         name = f"bau {ticket}" if ticket is not None else f"wache {spec}"
-        if ticket is not None:
+        auswahl_stand = auswahl.lesen(repo, spec)
+        if ticket is None:
+            if not auswahl.wache_erlaubt(repo, spec, auswahl=auswahl_stand, gelesen=True):
+                log.info(
+                    "spec %s: Aufseher laut Auswahl hier nicht erlaubt (%s) — kein Start",
+                    spec,
+                    auswahl.beschreibung(auswahl_stand),
+                )
+                return False
+        else:
+            if not auswahl.ticket_erlaubt(repo, spec, ticket, auswahl=auswahl_stand, gelesen=True):
+                log.info(
+                    "#%s: außerhalb der Auswahl für Spec #%s (%s) — kein Start",
+                    ticket,
+                    spec,
+                    auswahl.beschreibung(auswahl_stand),
+                )
+                return False
             try:
                 daten = self.ticket_lesen(ticket, repo)
             except RuntimeError as fehler:
@@ -2780,17 +2924,24 @@ class Aufpasser:
         except (RuntimeError, ValueError) as fehler:
             log.error("%s: GitHub nicht lesbar: %s", sitzung, fehler)
             return
+        auswahl_stand = auswahl.lesen(repo, spec)
+        offen_hier = {
+            n: t
+            for n, t in offen.items()
+            if auswahl.ticket_erlaubt(repo, spec, n, auswahl=auswahl_stand, gelesen=True)
+        }
         vorhanden = {f.name for f in fenster}
         log.info(
-            "%s: %d Fenster (%s), offene Tickets %s",
+            "%s: %d Fenster (%s), offene Tickets %s%s",
             sitzung,
             len(fenster),
             ", ".join(sorted(vorhanden)),
-            sorted(offen) or "-",
+            sorted(offen_hier) or "-",
+            f" ({auswahl.beschreibung(auswahl_stand)})" if auswahl_stand is not None else "",
         )
-        # Bau-Fenster nur für „noch nicht fertig gebaut“ (#279); der Aufseher unten
-        # bleibt, bis alles endgültig zu ist.
-        bauen = self.zu_bauen(offen)
+        # Bau-Fenster nur für „noch nicht fertig gebaut“ (#279) innerhalb der Auswahl (#271);
+        # der Aufseher unten bleibt, bis alle gewählten Tickets endgültig zu sind.
+        bauen = self.zu_bauen(offen_hier)
         fehlend = [t for t in sorted(bauen) if f"bau {t}" not in vorhanden]
         # Läuft das Ticket schon in einer Fenster-Kette (oder folgt dort noch),
         # kein eigenes Fenster — sonst zwei Sessions auf einem Ticket (#598).
@@ -2804,15 +2955,25 @@ class Aufpasser:
             if not self.start_erlaubt(spec, repo, ticket):
                 continue
             self.fehlendes_fenster(sitzung, spec, repo, ticket)
-        # Aufseher-Fenster fehlt (R2): nachstarten, solange die Spec offene Tickets
-        # hat — ist sie fertig, hat der Aufseher sich regulär beendet.
+        # Aufseher-Fenster fehlt (R2): nachstarten, solange die Spec (hier) offene Tickets
+        # hat und die Auswahl einen Aufseher auf diesem Rechner erlaubt (#271).
         if (
-            offen
+            offen_hier
             and f"wache {spec}" not in vorhanden
             and self.start_erlaubt(spec, repo, None)
         ):
             self.fehlendes_fenster(sitzung, spec, repo, None)
         for f in fenster:
+            if f.ist_wache and not auswahl.wache_erlaubt(
+                repo, spec, auswahl=auswahl_stand, gelesen=True
+            ):
+                log.info("%s: Aufseher-Fenster „%s“ außerhalb der Auswahl — übersprungen", sitzung, f.name)
+                continue
+            if f.ticket is not None and not auswahl.ticket_erlaubt(
+                repo, spec, f.ticket, auswahl=auswahl_stand, gelesen=True
+            ):
+                log.info("%s: Fenster „%s“ außerhalb der Auswahl — übersprungen", sitzung, f.name)
+                continue
             try:
                 self.fenster_pruefen(f, repo, bauen)
             except RuntimeError as fehler:
@@ -2895,7 +3056,7 @@ class Aufpasser:
             except RuntimeError as fehler:
                 log.error("%s: Fenster nicht lesbar: %s", sitzung, fehler)
                 continue
-            repo = self.repo_ordner(fenster)
+            repo = self.spec_repo_ordner(spec, fenster, self.repo_ordner(fenster))
             if repo is None:
                 log.warning("%s: kein Repo-Ordner gefunden — übersprungen", sitzung)
                 continue

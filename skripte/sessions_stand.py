@@ -33,7 +33,7 @@ from pathlib import Path
 _SKILL = str(Path(__file__).resolve().parent.parent)
 if _SKILL not in sys.path:
     sys.path.insert(0, _SKILL)
-from to_spawn import bau_log, config, konsole, manifest, prozessbaum, werkzeug  # noqa: E402
+from to_spawn import auswahl, bau_log, config, konsole, manifest, prozessbaum, werkzeug  # noqa: E402
 
 log = logging.getLogger("sessions_stand")
 #: Repo, in dem gearbeitet wird: ``TO_SPAWN_REPO`` (setzt die Weiterleitung im Repo), sonst
@@ -201,9 +201,12 @@ def manifeste_lesen(spec: str | None) -> dict[str, Eintrag]:
             log.warning("Manifest unlesbar %s: %s", d.name, e)
             continue
         s = str(m.get("spec") or "")
-        if s and s not in eintraege:
+        auswahl_stand = auswahl.lesen(REPO, s) if s else None
+        if s and s not in eintraege and auswahl.wache_erlaubt(REPO, s, auswahl=auswahl_stand, gelesen=True):
             eintraege[s] = Eintrag(s, "spec", f"Aufseher Spec #{s} ({m.get('feature', '')})")
         for n, t in (m.get("tickets") or {}).items():
+            if s and not auswahl.ticket_erlaubt(REPO, s, str(n), auswahl=auswahl_stand, gelesen=True):
+                continue
             eintraege[str(n)] = Eintrag(str(n), "ticket", str(t.get("title") or ""))
     return eintraege
 

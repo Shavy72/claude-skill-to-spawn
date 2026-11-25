@@ -73,6 +73,7 @@ if ($manRc -eq 0 -and $manOrdner) { $manifest = Join-Path ("$manOrdner".Trim()) 
 if (-not (Test-Path "./scripts/bau.py") -and -not (Test-Path "$PSScriptRoot/skripte/bau.py")) { throw "Kein ./scripts/bau.py — im Repo-Wurzelordner ausführen." }
 if (-not (Get-Command wt -ErrorAction SilentlyContinue)) { throw "wt (Windows Terminal) nicht gefunden." }
 
+$hatTicketAuswahl = $Tickets.Count -gt 0
 if ($Tickets.Count -eq 0) {
     if (-not (Test-Path $manifest)) { throw "Manifest fehlt: $manifest — erst /to-tickets." }
     $m = Get-Content $manifest -Raw | ConvertFrom-Json -AsHashtable
@@ -119,6 +120,18 @@ foreach ($n in $Tickets) {
     if ($zuBauen -notcontains $n) { Write-Host "#$n fertig gebaut oder Stand unbekannt — übersprungen" -ForegroundColor DarkGray; continue }
     if ($laufend -contains $n) { Write-Host "#$n läuft schon — übersprungen" -ForegroundColor Yellow; continue }
     $cmds += "bau $n"
+}
+# Teil-Start-Auswahl je Spec und Rechner merken (#271); Trockenlauf ändert nichts.
+if (-not $DryRun) {
+    $auswahlArgs = @("$PSScriptRoot/to_spawn.py", "auswahl", "$Spec")
+    if ($hatTicketAuswahl) { $auswahlArgs += @("--tickets", ($Tickets -join ",")) }
+    if ($OhneWache) { $auswahlArgs += "--ohne-wache" }
+    $ErrorActionPreference = "Continue"
+    try {
+        & $py @auswahlArgs
+    } finally {
+        $ErrorActionPreference = $eapVorher
+    }
 }
 if ($cmds.Count -eq 0) { Write-Host "Nichts zu starten."; exit 0 }
 
