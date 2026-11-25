@@ -12,7 +12,8 @@ Repo-Wurzel mit ``/`` (``fnmatch``, Groß/klein zählt, ``*`` passt auch über `
 ändert der Commit die Konfig, prüft die Leiter voll. Warum: Ob Code eine Datei liest, lässt sich nicht erraten (Tests über
 ``git ls-files``, ``iterdir``, Symlinks, ``mimetypes``) — nur das Repo weiß es. Abkürzung nur, wenn
 JEDE geänderte Datei (neu, gelöscht, bei Umbenennung alter und neuer Pfad) unter ein Muster fällt,
-eine Doku-Endung hat (Erlaubnisliste ``_DOKU_ENDUNGEN``/``_DOKU_NAMEN``), keine davon ein Symlink ist und kein getrackter Symlink auf sie zeigt. Fehlt der Schlüssel, ist er
+eine Doku-Endung hat (Erlaubnisliste ``_DOKU_ENDUNGEN``/``_DOKU_NAMEN``, ohne Konfig-Ausnahmen
+``_KONFIG_NAMEN`` und ``regeln._R3_ORDNER``), keine davon ein Symlink ist und kein getrackter Symlink auf sie zeigt. Fehlt der Schlüssel, ist er
 ungültig oder die Konfig kaputt: nie Abkürzung, die Leiter prüft voll (fail-closed). Gleiches gilt,
 wenn ein Muster eine Nicht-Doku-Datei trifft (``**``, ``*``, ``*.py``, ``*.sh``, ``Makefile``, #164): Die
 Basis kann ein Vorgänger-Commit sein, darum prüft die Tür die Weite selbst, statt der Basis-Wahl
@@ -36,7 +37,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
 from to_spawn import config, prozessbaum
-from to_spawn.pruef import ausfuehren, cache, leiter
+from to_spawn.pruef import ausfuehren, cache, leiter, regeln
 
 log = logging.getLogger("to_spawn.pruef")
 
@@ -250,7 +251,7 @@ _SHEBANG = "#!"
 
 
 def _ist_doku_datei(repo: Path, basis: str, pfad: str) -> bool:
-    """True, wenn ``pfad`` Doku sein kann: Doku-Endung bzw. -Name, kein Konfig-Name, kein Shebang in Zeile 1.
+    """True, wenn ``pfad`` Doku sein kann: Doku-Endung bzw. -Name, kein Konfig-Name/-Ordner, kein Shebang in Zeile 1.
 
     Shebang zählt im Arbeitsbaum und im Stand ``basis`` (gelöscht, alter Pfad bei Umbenennung);
     ist der Inhalt an keiner der beiden Stellen lesbar: im Zweifel Code. Muster entscheiden zusätzlich.
@@ -258,7 +259,9 @@ def _ist_doku_datei(repo: Path, basis: str, pfad: str) -> bool:
     datei = PurePosixPath(pfad)
     if not (datei.suffix.lower() in _DOKU_ENDUNGEN if datei.suffix else datei.name in _DOKU_NAMEN):
         return False
-    if any(fnmatch.fnmatchcase(datei.name.lower(), muster) for muster in _KONFIG_NAMEN):
+    if any(fnmatch.fnmatchcase(datei.name.lower(), muster) for muster in _KONFIG_NAMEN) or any(
+        teil.lower() in regeln._R3_ORDNER for teil in datei.parts[:-1]
+    ):
         return False
     gelesen = False
     try:
