@@ -29,6 +29,7 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("pruefen")
     p.add_argument("datei", type=Path)
     p.add_argument("--entscheidungen", type=Path, required=True)
+    p.add_argument("--tickets", default="", help="kommagetrennte Bau-Ticket-Nummern für Pflicht-Folie Bild + Klick-Schritte")
     a = ap.parse_args(argv)
     try:
         daten = json.loads(a.entscheidungen.read_text(encoding="utf-8"))
@@ -39,7 +40,8 @@ def main(argv: list[str] | None = None) -> int:
             texte = json.loads(a.texte.read_text(encoding="utf-8"))
             a.nach.write_text(rd.erzeuge(texte, daten), encoding="utf-8")
             return 0
-        maengel = rd.pruefe(a.datei.read_text(encoding="utf-8"), daten)
+        tickets = [t.strip() for t in a.tickets.split(",") if t.strip()] if a.tickets else None
+        maengel = rd.pruefe(a.datei.read_text(encoding="utf-8"), daten, tickets=tickets)
     except (OSError, ValueError, KeyError) as exc:
         sys.stderr.write(f"Eingabe unbrauchbar: {exc}\n")
         return 2

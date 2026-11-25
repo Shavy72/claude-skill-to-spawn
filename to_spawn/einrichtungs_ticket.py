@@ -4,8 +4,8 @@ Zwei Türen:
 
 * :func:`luecken` ist die einzige Stelle des Wissens „was fehlt diesem Repo zur
   Einrichtung?“ — Prüf-Werkzeug, Staging, Befehle für schnelle Prüfung, Komplett-Prüfung
-  und Live-Schritt (#425). Ein Repo, das bewusst ohne Staging
-  arbeitet (``staging.ohne: true``), hat dort keine Lücke.
+  und Live-Schritt (#425). Ein Repo, das bewusst ohne Staging (``staging.ohne: true``)
+  oder ohne Live-Schritt (``live.ohne: true``, #452) arbeitet, hat dort keine Lücke.
 * :func:`sicherstellen` trägt bei Lücke das Einrichtungs-Ticket ins Manifest der Spec
   ein (``einrichtung: true``) und hängt jedes Ticket der Spec über
   :func:`spec_rand.anhaengen` dahinter — auch spätere Nachträge. ``regularien`` ruft es
@@ -67,15 +67,17 @@ _AUFTRAG = {
         'Schlüssel `"befehl"` mit dem Befehl als Text, der den geprüften Stand live '
         'bringt. Wahlweise `"url"` (Adresse für den Live-Beweis) und `"aufraeumen"` '
         "(Befehl, der danach Reste wegräumt). Beispiel: "
-        '`"live": {"befehl": "bash scripts/deploy.sh", "url": "https://app.example"}`.'
+        '`"live": {"befehl": "bash scripts/deploy.sh", "url": "https://app.example"}` '
+        "— oder, wenn das Repo bewusst ohne Live-Schritt arbeitet, `live.ohne: true`."
     ),
 }
 
-#: Pflicht-Schlüssel der Gruppen ``pruefung``/``live`` (#425): Kurzname → Lesart aus ``config``.
+#: Pflicht-Schlüssel der Gruppen ``pruefung``/``live`` (#425, #452): Kurzname → Lesart aus ``config``.
 _PFLICHT = {
     "pruefung.schnell": lambda k: config.pruef_befehl(k, "schnell"),
     "pruefung.komplett": lambda k: config.pruef_befehl(k, "komplett"),
-    "live.befehl": lambda k: config.live_schritt(k)["befehl"],
+    "live.befehl": lambda k: bool(config.live_schritt(k)["befehl"])
+    or config.live_bewusst_ohne(k),
 }
 
 
@@ -91,8 +93,9 @@ def luecken(repo: Path, konfig: dict[str, Any]) -> list[str]:
     """Was dem Repo zur Einrichtung fehlt (Kurznamen aus ``_AUFTRAG``); leer = nichts.
 
     ``pruefung`` = kein Prüf-Werkzeug erkannt; ``pruefung.schnell``/``pruefung.komplett``/
-    ``live.befehl`` = Befehl fehlt in der Konfig (#425). Ob ein Befehl eingerichtet ist,
-    sagt allein :mod:`to_spawn.config`. ``live.url``/``live.aufraeumen`` sind keine Pflicht.
+    ``live.befehl`` = Befehl fehlt in der Konfig (#425; bei ``live.ohne: true`` entfällt
+    ``live.befehl``, #452). Ob ein Befehl eingerichtet ist, sagt allein
+    :mod:`to_spawn.config`. ``live.url``/``live.aufraeumen`` sind keine Pflicht.
     """
     fehlt: list[str] = []
     if not pruef.hat_werkzeug(repo):
@@ -236,14 +239,19 @@ def _titel_fuer(s: str) -> str:
 def _laeuft_schon(repo: Path, slug: str, daten: dict[str, Any]) -> tuple[str, str]:
     """``(läuft, unklar)``: Grund, nichts anzulegen; beide leer = frei.
 
-    ``läuft`` = sicher erkannt (``#N hat Bau-Log`` / ``#N ist zu``), nur Hinweis.
+    ``läuft`` = sicher erkannt (``#N hat Bau-Log`` lokal oder auf ``origin``,
+    ``#N ist zu`` oder ``#N ist fertig gebaut``), nur Hinweis. Unversionierte
+    Laufdateien auf einem anderen Rechner liegen außerhalb von Git und sind hier
+    nicht sichtbar (#438).
     ``unklar`` = ``gh api`` scheitert für ein Ticket: nichts anlegen, aber weigern (Exit 3).
     """
     tickets = sorted(daten["tickets"], key=manifest.ticket_schluessel)
+    haupt = gh.hauptzweig(repo)
     for t in tickets:
-        # Wo das Log liegt, weiß nur bau_log.log_ort (zuerst Worktree, dann Hauptbaum).
-        wt = Path(config.worktree_pfad(t, repo)).expanduser()
-        if bau_log.log_ort(t, wt, repo) is not None:
+        # Lokal (Worktree vor Hauptbaum) sowie versioniertes Bau-Log auf origin (#438).
+        if bau_log.log_ort_fuer(t, repo) is not None or bau_log.hat_log_auf_origin(
+            repo, t, hauptzweig=haupt
+        ):
             return f"#{t} hat Bau-Log", ""
     for t in tickets:
         stand = gh.json_lauf(["api", f"repos/{slug}/issues/{t}"], cwd=repo)
@@ -251,6 +259,8 @@ def _laeuft_schon(repo: Path, slug: str, daten: dict[str, Any]) -> tuple[str, st
             return "", f"Stand unklar: #{t} nicht lesbar (gh api)"
         if ticket_zustand.endgueltig_zu(stand):
             return f"#{t} ist zu", ""
+        if ticket_zustand.fertig_gebaut(stand):
+            return f"#{t} ist fertig gebaut", ""
     return "", ""
 
 

@@ -41,14 +41,19 @@ def sperre_eintragen(
     datei = claude_dir / "settings.json"
     daten: dict = {}
     if datei.exists():
-        daten = json.loads(datei.read_text(encoding="utf-8"))
+        try:
+            daten = json.loads(datei.read_text(encoding="utf-8"))
+        except ValueError as fehler:
+            raise ValueError(f"{datei}: ungültiges JSON ({fehler}) — nicht verändert.") from fehler
         if not isinstance(daten, dict):
             raise ValueError(f"{datei}: kein JSON-Objekt — nicht überschrieben.")
     hooks = daten.setdefault("hooks", {})
     if hooks is None:
         raise ValueError(f"{datei}: hooks ist null (erwartet ein Objekt) — nicht verändert.")
-    blocks = hooks.setdefault("PreToolUse", []) if isinstance(hooks, dict) else None
-    if blocks is None and isinstance(hooks, dict):
+    if not isinstance(hooks, dict):
+        raise ValueError(f"{datei}: hooks muss ein Objekt sein — nicht verändert.")  # noqa: TRY004 — main fängt ValueError
+    blocks = hooks.setdefault("PreToolUse", [])
+    if blocks is None:
         raise ValueError(f"{datei}: hooks/PreToolUse ist null (erwartet eine Liste) — nicht verändert.")
     if not isinstance(blocks, list):
         raise ValueError(  # noqa: TRY004 — main fängt ValueError

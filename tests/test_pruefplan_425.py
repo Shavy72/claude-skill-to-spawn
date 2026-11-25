@@ -120,7 +120,12 @@ def test_spec_stand_ist_unveraenderlich_und_moment_pflicht() -> None:
 
 def test_vorgaben_haben_neue_gruppen_leer() -> None:
     assert config.DEFAULTS["pruefung"] == {"schnell": "", "komplett": ""}
-    assert config.DEFAULTS["live"] == {"befehl": "", "url": "", "aufraeumen": ""}
+    assert config.DEFAULTS["live"] == {
+        "befehl": "",
+        "url": "",
+        "aufraeumen": "",
+        "ohne": False,
+    }
 
 
 def test_live_schritt_liest_gruppe() -> None:
