@@ -348,11 +348,11 @@ fi
 echo "== Geplante Fenster in tmux-Session $SESSION =="
 for i in "${!GEPLANT[@]}"; do echo "  - ${KURZ[$i]}  →  ${GEPLANT[$i]}"; done
 
-# Speicher-Schutz (#257 Paket B): vor JEDEM Fenster fragt ``to_spawn.speicher.cli`` (wie
-# ``to_spawn.py speicher``), ob noch Platz ist (Exit 0 = frei, 5 = voll, 3 = voll durch fremde
-# Sessions → Rest nicht starten, alles andere = Prüfung kaputt → Exit 6, F4). Zwischen zwei
-# Fenstern eine Pause von STAFFEL Sekunden (aus ``speicher.staffel_s`` / ``--staffel``), damit
-# die Claude-Starts sich nicht stapeln (OOM-Absturz 21.09.).
+# Speicher-Schutz (#257 Paket B): vor JEDEM Fenster fragt ``to_spawn.py speicher``, ob noch
+# Platz ist (Exit 0 = frei, 5 = voll, 3 = voll durch fremde Sessions → Rest nicht starten,
+# alles andere = Prüfung kaputt → Exit 6, F4). Zwischen zwei Fenstern eine Pause von STAFFEL
+# Sekunden (aus ``speicher.staffel_s`` / ``--staffel``), damit die Claude-Starts sich nicht
+# stapeln (OOM-Absturz 21.09.).
 
 # speicher_pruefen <Kurzname>: 0 = frei, 5 = voll (Meldung), 7 = Platte voll (Meldung, #1369),
 # 6 = Prüfung kaputt (Meldung).
@@ -368,14 +368,7 @@ WARTE_GRUND=""
 NL=$'\n'  # letzte Zeile des Stands = das Urteil (davor stehen Hausmeister-Warnungen)
 speicher_pruefen() {
   local rc=0 stand
-  stand="$(TO_SPAWN_TMUX= TO_SPAWN_REPO="$REPO" "$PY" -c '
-import sys
-sys.path.insert(0, sys.argv[1])
-from pathlib import Path
-from to_spawn import config, speicher
-repo = config.repo_wurzel(Path(sys.argv[2]))
-sys.exit(speicher.cli(config.lade(repo), trocken=(sys.argv[4] == "--trocken"), sitzung=sys.argv[3]))
-' "$SKILL_HOME" "$REPO" "$SESSION" "${2:-}" 2>&1)" || rc=$?
+  stand="$(TO_SPAWN_TMUX= TO_SPAWN_REPO="$REPO" "$PY" "$SKILL_HOME/to_spawn.py" speicher --sitzung "$SESSION" ${2:+"$2"} 2>&1)" || rc=$?
   case "$rc" in
     0) return 0 ;;
     3|5)

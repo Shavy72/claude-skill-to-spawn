@@ -239,9 +239,25 @@ sys.exit(int(code))
 
 @pytest.fixture(scope="module")
 def _wache_startbefehl(tmp_path_factory: pytest.TempPathFactory) -> str:
-    """Einmaliger Spawn für die parametrisierten Neustart-Fälle (spart 5 identische Repo-/Spawn-Aufbauten)."""
+    """Einmaliger Spawn für die parametrisierten Neustart-Fälle (spart 5 identische Repo-/Spawn-Aufbauten).
+
+    Läuft auf Modul-Ebene vor funktionsbezogenen ``autouse``-Fixtures (z. B. ``test_heim``, #232):
+    leitet ``HOME``/``USERPROFILE`` deshalb selbst in einen Temp-Ordner um, damit der echte
+    Heimordner unberührt bleibt.
+    """
+    import site
+
     ordner = tmp_path_factory.mktemp("wache_plan_560")
-    lauf, _ = _spawn(ordner, max_sessions=6, belegt=10, belegt_eigen=2)
+    heim = ordner / "heim"
+    heim.mkdir()
+    user_base = os.environ.get("PYTHONUSERBASE") or site.getuserbase()
+    with pytest.MonkeyPatch.context() as mp:
+        if user_base:
+            mp.setenv("PYTHONUSERBASE", user_base)
+        mp.setenv("HOME", str(heim))
+        mp.setenv("USERPROFILE", str(heim))
+        mp.delenv("CLAUDE_CONFIG_DIR", raising=False)
+        lauf, _ = _spawn(ordner, max_sessions=6, belegt=10, belegt_eigen=2)
     assert lauf.returncode == 0, lauf.stdout + lauf.stderr
     zeile = next(z for z in _gestartet(ordner).splitlines() if f"-n wache {e2.SPEC} " in z)
     return zeile.split(" bash -lc ", 1)[1]
