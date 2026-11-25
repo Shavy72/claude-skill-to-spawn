@@ -98,7 +98,7 @@ def lauf(
         umgebung = dict(basis)
     optionen.setdefault("check", False)
     if zeitgrenze_s is None:
-        return subprocess.run([bash(), *argumente], env=umgebung, **optionen)  # noqa: S603
+        return subprocess.run(_befehlszeile(argumente), env=umgebung, **optionen)  # noqa: S603
     pruefen, eingabe = optionen.pop("check"), optionen.pop("input", None)
     if sys.platform == "win32":
         optionen["creationflags"] = (
@@ -106,7 +106,7 @@ def lauf(
         )
     else:
         optionen["start_new_session"] = True
-    with subprocess.Popen([bash(), *argumente], env=umgebung, **optionen) as prozess:
+    with subprocess.Popen(_befehlszeile(argumente), env=umgebung, **optionen) as prozess:
         try:
             aus, fehler = prozess.communicate(eingabe, timeout=zeitgrenze_s)
         except subprocess.TimeoutExpired:
@@ -131,6 +131,22 @@ def lauf(
             prozess.returncode, prozess.args, aus, fehler
         )
     return subprocess.CompletedProcess(prozess.args, prozess.returncode, aus, fehler)
+
+
+def _befehlszeile(argumente: Sequence[str]) -> list[str] | str:
+    r"""``[bash, *argumente]``; unter Windows als fertige Zeile in MSYS-Quotierung (#553).
+
+    Git-Bash zerlegt seine Befehlszeile selbst und nicht nach den Regeln von
+    ``subprocess.list2cmdline``: ``'…'`` verliert die Anführungszeichen, in ``"…"`` wird
+    ``\\`` zu ``\``, unquotierte Argumente werden geglobbt. Darum jedes Argument in ``"…"``,
+    darin ``\`` und ``"`` mit ``\`` geschützt — so kommt jedes Byte unverändert an.
+    """
+    if sys.platform != "win32":
+        return [bash(), *argumente]
+    teile = [f'"{bash()}"']
+    for arg in argumente:
+        teile.append('"' + arg.replace("\\", "\\\\").replace('"', '\\"') + '"')
+    return " ".join(teile)
 
 
 def _text(roh: Any, optionen: Mapping[str, Any]) -> Any:

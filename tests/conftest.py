@@ -61,6 +61,8 @@ def braucht_fehlt(name: str, plattform: str = sys.platform, finde=None) -> str |
     """
     if name in _NUR_POSIX:
         return "nur POSIX (Linux/macOS)" if plattform == "win32" else None
+    if name == "proc":  # Prozess-Dateisystem (Linux), fehlt unter Windows und macOS
+        return None if Path("/proc/self/stat").exists() else "/proc fehlt"
     if name == "bash" and finde is None:  # echte Suche: die eine Tür ``bash_wahl``
         return None if git_bash() else "keine bash gefunden (Windows: nur WSL-Stub oder gar keine)"
     pfad = (finde or shutil.which)(name)
@@ -129,7 +131,7 @@ _RESTE_ALTER_KNAPP_S = 600
 def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line(
         "markers",
-        'braucht(*namen): Test braucht Programm im PATH (z. B. "tmux", "bash") oder "posix"; fehlt es → skip (#68)',
+        'braucht(*namen): Test braucht Programm im PATH (z. B. "tmux", "bash"), "posix" oder "proc"; fehlt es → skip (#68)',
     )
     _eigener_basetemp(config)
 

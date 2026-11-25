@@ -182,6 +182,7 @@ def test_alte_session_json_bei_wiederverwendeter_pid_zaehlt_nicht_als_still(
     assert speicher.claude_sessions() == 1
 
 
+@pytest.mark.braucht("proc")
 def test_gemeinsame_lese_funktion_prueft_proc_start(tmp_path: Path) -> None:
     """``aufpasser._session_json_lesen`` nutzt denselben procStart-Abgleich (lebender Testprozess)."""
     ordner = tmp_path / ".claude" / "sessions"

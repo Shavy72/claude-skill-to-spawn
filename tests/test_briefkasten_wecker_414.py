@@ -40,6 +40,8 @@ SHELL = "bau@server:~$ \n"
 FAKE_TMUX = """
 import json, os, sys
 from pathlib import Path
+sys.stdout.reconfigure(encoding="utf-8")  # tmux spricht UTF-8, auch unter Windows (#602)
+sys.stdin.reconfigure(encoding="utf-8")
 args = sys.argv[1:]
 ordner = Path(os.environ["FAKE_TMUX_ORDNER"])
 ordner.mkdir(parents=True, exist_ok=True)
