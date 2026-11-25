@@ -44,10 +44,20 @@ def main() -> int:
     bau.umzug_anfragen_aufraeumen = lambda _t: beleg.parent / "anfrage.json"
     bau.terminal_maus.maus_ruhig = lambda: None
 
+    ticket = sys.argv[2]
+    halte_datei = os.environ.get("BAU_LAUF_97_HALTE_DATEI")
+    schlaf_s = float(os.environ.get("BAU_LAUF_97_SCHLAF_S", "2.0"))
+
     def starte_session(_cmd: list[str], _umzug: Path) -> tuple[int, None]:
         with beleg.open("a", encoding="utf-8") as datei:
-            datei.write(f"START {os.getpid()}\n")
-        time.sleep(2.0)
+            datei.write(f"START {os.getpid()} {ticket}\n")
+        if halte_datei:
+            ziel = Path(halte_datei)
+            ende = time.monotonic() + 30.0
+            while not ziel.exists() and time.monotonic() < ende:
+                time.sleep(0.05)
+        elif schlaf_s > 0:
+            time.sleep(schlaf_s)
         return 0, None
 
     bau.starte_session = starte_session

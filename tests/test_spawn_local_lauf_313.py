@@ -51,12 +51,21 @@ if __name__ == "__main__":
     with open(os.environ["ATTRAPPE_PROTOKOLL"], "a", encoding="utf-8") as f:
         f.write(json.dumps(sys.argv[1:]) + "\\n")
     if sys.argv[1] == "zu-bauen":
-        print({OFFEN})
+        ausgabe = os.environ.get("ATTRAPPE_ZU_BAUEN_AUSGABE", "{OFFEN}")
+        if ausgabe:
+            print(ausgabe)
+        sys.exit(int(os.environ.get("ATTRAPPE_ZU_BAUEN_RC", "0")))
     sys.exit(0)
 """
 
 
-def _lauf(tmp_path: Path) -> tuple[subprocess.CompletedProcess[str], list[list[str]], Path]:
+def _lauf(
+    tmp_path: Path,
+    *,
+    ohne_wache: bool = True,
+    zu_bauen_rc: int = 0,
+    zu_bauen_ausgabe: str = str(OFFEN),
+) -> tuple[subprocess.CompletedProcess[str], list[list[str]], Path]:
     skill = tmp_path / "skill"
     skill.mkdir()
     shutil.copy(SKRIPT, skill / "spawn_local.ps1")
@@ -83,21 +92,26 @@ def _lauf(tmp_path: Path) -> tuple[subprocess.CompletedProcess[str], list[list[s
     env = dict(os.environ)
     env["PATH"] = str(attrappen_bin) + os.pathsep + env.get("PATH", "")
     env["ATTRAPPE_PROTOKOLL"] = str(protokoll)
+    env["ATTRAPPE_ZU_BAUEN_RC"] = str(zu_bauen_rc)
+    env["ATTRAPPE_ZU_BAUEN_AUSGABE"] = zu_bauen_ausgabe
     env["PYTHONIOENCODING"] = "utf-8"
 
+    cmd = [
+        str(PS),
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        str(skill / "spawn_local.ps1"),
+        "-Spec",
+        str(SPEC),
+    ]
+    if ohne_wache:
+        cmd.append("-OhneWache")
+    cmd.append("-DryRun")
+
     lauf = subprocess.run(
-        [
-            str(PS),
-            "-NoProfile",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-File",
-            str(skill / "spawn_local.ps1"),
-            "-Spec",
-            str(SPEC),
-            "-OhneWache",
-            "-DryRun",
-        ],
+        cmd,
         cwd=repo,
         env=env,
         capture_output=True,
@@ -129,3 +143,15 @@ def test_trockenlauf_ruft_pruefer_nur_im_pruefmodus(tmp_path: Path) -> None:
     _, aufrufe, _ = _lauf(tmp_path)
     assert ["arbeitsstand", "--pruefen"] in aufrufe, aufrufe
     assert ["regularien", str(SPEC), "--dry-run"] in aufrufe, aufrufe
+
+
+def test_gh_fehler_oeffnet_keine_tabs(tmp_path: Path) -> None:
+    """#191: Scheitert ``zu-bauen`` für alle Tickets (gh-Fehler), öffnet spawn_local.ps1 gar keine Tabs."""
+    lauf, aufrufe, wt_marke = _lauf(tmp_path, ohne_wache=False, zu_bauen_rc=1, zu_bauen_ausgabe="")
+    ausgabe = lauf.stdout + lauf.stderr
+
+    assert lauf.returncode == 2, ausgabe
+    assert aufrufe.count(["zu-bauen", str(SPEC)]) == 2, aufrufe
+    assert "keine Tabs" in ausgabe, ausgabe
+    assert "Starte " not in ausgabe, ausgabe
+    assert not wt_marke.exists(), "gh-Fehler darf kein Fenster öffnen"
