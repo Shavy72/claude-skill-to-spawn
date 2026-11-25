@@ -2184,6 +2184,25 @@ class Aufpasser:
                         return True
         return False
 
+    def _platz_fenster(self, f: Fenster, repo: Path, offen: set[int]) -> int:
+        text = self.pane_text(f.ziel)
+        info = self.session(f)
+        status = info.status if info else None
+        e = self.eintrag(f"{f.sitzung}/{f.name}", text)
+        self._fertiges_fenster(
+            f,
+            repo,
+            offen,
+            echtes_ticket(f),
+            text,
+            info,
+            e,
+            (self.jetzt - e["seit"]) / 60,
+            f"{f.sitzung}/{f.name}",
+            arbeitet(text, status),
+        )
+        return 1
+
     def platz_schaffen(self) -> int:
         """Nur die Schließ-Regel über alle Fenster, sofort statt im 15-min-Cron (#624).
 
@@ -2197,30 +2216,31 @@ class Aufpasser:
             return 0
         geprueft = 0
         try:
+            gesehen: list[tuple[str, str, list[Fenster], Path]] = []
             for sitzung, spec in self.sitzungen():
-                fenster = self.fenster(sitzung, spec)
-                repo = self.repo_ordner(fenster)
-                if repo is None:
+                try:
+                    fenster = self.fenster(sitzung, spec)
+                except RuntimeError as fehler:
+                    log.error("%s: Fenster nicht lesbar: %s", sitzung, fehler)
                     continue
-                offen = self.offene_tickets(spec, repo)
+                repo = self.repo_ordner(fenster)
+                if repo is not None:
+                    gesehen.append((sitzung, spec, fenster, repo))
+            deploy = self._deploy_wache({repo for _, _, _, repo in gesehen})
+            if deploy:
+                log.info("Platz schaffen: Deploy/Gate läuft (%s): nichts angefasst", "; ".join(deploy[:3]))
+                return 0
+            for sitzung, spec, fenster, repo in gesehen:
+                try:
+                    offen = self.zu_bauen(self.offene_tickets(spec, repo))
+                except (RuntimeError, ValueError) as fehler:
+                    log.error("%s: GitHub nicht lesbar: %s", sitzung, fehler)
+                    continue
                 for f in fenster:
-                    text = self.pane_text(f.ziel)
-                    info = self.session(f)
-                    status = info.status if info else None
-                    e = self.eintrag(f"{f.sitzung}/{f.name}", text)
-                    self._fertiges_fenster(
-                        f,
-                        repo,
-                        offen,
-                        echtes_ticket(f),
-                        text,
-                        info,
-                        e,
-                        (self.jetzt - e["seit"]) / 60,
-                        f"{f.sitzung}/{f.name}",
-                        arbeitet(text, status),
-                    )
-                    geprueft += 1
+                    try:
+                        geprueft += self._platz_fenster(f, repo, offen)
+                    except RuntimeError as fehler:
+                        log.error("%s/%s: Fenster übersprungen: %s", sitzung, f.name, fehler)
         finally:
             self._stand_schreiben()
             if hasattr(sperre, "close"):
@@ -2807,6 +2827,11 @@ class Aufpasser:
             " (trocken)" if self.e.trocken else "",
         )
 
+    def _deploy_wache(self, repos: Iterable[Path]) -> list[str]:
+        """Setzt das Deploy-Muster für diese Repos und liefert die laufenden Deploy-/Gate-Prozesse."""
+        self.muster = self.deploy_muster_fuer(repos)
+        return self.deploy_laeuft(self.muster)
+
     def _lauf(self) -> None:
         self._starts_in_tick = 0
         self._hausmeister_lauf()
@@ -2822,8 +2847,7 @@ class Aufpasser:
                 log.warning("%s: kein Repo-Ordner gefunden — übersprungen", sitzung)
                 continue
             gesehen.append((sitzung, spec, fenster, repo))
-        self.muster = self.deploy_muster_fuer({repo for _, _, _, repo in gesehen})
-        deploy = self.deploy_laeuft(self.muster)
+        deploy = self._deploy_wache({repo for _, _, _, repo in gesehen})
         if deploy:
             log.info("Deploy/Gate läuft (%s): nichts angefasst", "; ".join(deploy[:3]))
             if self.e.trocken:
