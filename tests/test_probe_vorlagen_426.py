@@ -438,3 +438,19 @@ def test_probe_spec_verankert_messlatte_l10() -> None:
         "null System-Anomalien",
     ):
         assert teil in auswertung, teil
+
+
+def test_probe_spec_konfig_schluessel_ohne_veralteten_teil_a_hinweis() -> None:
+    """#425: ``docs/PROBE_SPEC.md`` führt Live-Schlüssel als aktiv statt veraltetem Teil-A-Hinweis."""
+    spec = PROBE_SPEC.read_text(encoding="utf-8")
+    abschnitt = spec[spec.index("### Konfig-Schlüssel") : spec.index("## 2 Ablauf eines Laufs")]
+    assert "erst mit Teil A" not in abschnitt, abschnitt
+    assert "Teil A entscheidet" not in abschnitt, abschnitt
+    for teil in (
+        "live.befehl",
+        "live.url",
+        "live.aufraeumen",
+        "config.live_schritt",
+        "to_spawn/live_tuer.py",
+    ):
+        assert teil in abschnitt, teil
