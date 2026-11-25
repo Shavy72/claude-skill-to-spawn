@@ -31,6 +31,7 @@ from to_spawn import (
     vorfall,
     waechter_takt,
     warten,
+    wecker,
 )
 from to_spawn import einreichen as einreichen_modul
 from to_spawn.pruefplan import Moment
@@ -452,6 +453,8 @@ def baue_parser() -> _Parser:
     aufpasser.parser_fuellen(
         unter.add_parser("aufpasser", help="tmux-Fenster bau/wache beaufsichtigen (Cron)")
     )
+    # Externer Wecker (#287): Weckrufe von außerhalb der Session (Linux: Cron/tmux).
+    wecker.richte_parser_ein(unter)
     # Start-Last (#412): Kontext nach Start je Fenstertyp (bau, aufseher) + Obergrenzen-Prüfung.
     start_last.parser_fuellen(
         unter.add_parser(

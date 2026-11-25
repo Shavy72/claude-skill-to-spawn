@@ -65,7 +65,11 @@ Log nicht schreibbar ⇒ bleibt. Scheitert danach das Löschen, folgt eine zweit
 entscheiden muss.
 
 Zweite Tür (#1369): :func:`aufraeumen_alles` wendet dieselben Regeln auf alle Ordner
-unter den Wurzeln an. Platznot (weniger als :data:`PLATZNOT_ANTEIL` der Platte frei):
+unter den Wurzeln an. Im Aufpasser-Takt (:meth:`to_spawn.aufpasser.Aufpasser._lauf`,
+Entscheidung #262) läuft die Deploy-Wache immer VOR :func:`aufraeumen_alles`, sodass ein
+laufender Deploy/Prüflauf auch das Aufräumen sperrt; bei Direktaufrufen (CLI, Windows-Aufgabe,
+Start-Check) greifen die eigenen Sperren je Ordner (Prozess im Ordner, offenes Ticket, 24 h).
+Platznot (weniger als :data:`PLATZNOT_ANTEIL` der Platte frei):
 Ordner mit geschlossenem Ticket gehen sofort, auch vor Ablauf der 24 h — älteste
 Schließung zuerst, nach jeder Löschung neu gemessen; alle übrigen Regeln gelten
 unverändert. :func:`start_erlaubt` ist der Start-Check (``to_spawn.py speicher``,
