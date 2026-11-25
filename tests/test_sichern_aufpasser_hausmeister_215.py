@@ -56,6 +56,10 @@ def _repo_mit_worktree(tmp_path: Path, ticket: int) -> tuple[Path, Path, Path]:
         ("user.email", "test@example.invalid"),
         ("user.name", "Test"),
         ("commit.gpgsign", "false"),
+        # Unter Windows setzt ``git clone`` ``core.ignorecase=true``, sodass ``.gitignore``
+        # Groß-/Kleinschreibung ignoriert und ungetrackte Dateien in anderer Schreibung
+        # gar nicht erst in ``git add -A`` landen (der Fall aus #215).
+        ("core.ignorecase", "false"),
     ):
         _git(repo, "config", k, v)
     _git(repo, "checkout", "-q", "-b", "main")
