@@ -290,19 +290,46 @@ def test_259_echt_windows_neues_leeres_ziel_nach_umbenennen_frei(tmp_path: Path)
     umbenannt = tmp_path / "wt-259-fall-f-alt"
     proc = subprocess.Popen(["sleep", "60"], cwd=str(ziel), **prozessbaum.ohne_fenster())
     try:
-        ende = time.monotonic() + 10
+        # CreateProcessW trägt DosPath im PEB sofort ein, bevor ntdll/msys-2.0.dll den
+        # cwd-Griff (CURDIR.Handle) öffnen. Erst warten, bis der echte cwd-Griff auf ``ziel``
+        # zeigt — sonst verschiebt os.rename den Ordner vor dem Start und der Griff bleibt 0.
+        ende = time.monotonic() + 15
+        bereit = False
         while time.monotonic() < ende:
-            cwd = prozessbaum._arbeitsordner_windows(proc.pid)
-            if cwd and hausmeister_windows.pfad_norm(cwd) == hausmeister_windows.pfad_norm(ziel):
+            assert proc.poll() is None, "MSYS-sleep lief nicht an"
+            befund = prozessbaum.arbeitsordner_in_windows(ziel).get(proc.pid)
+            if (
+                befund is not None
+                and befund.drin is True
+                and befund.text is not None
+                and hausmeister_windows.pfad_norm(befund.text) == hausmeister_windows.pfad_norm(ziel)
+            ):
+                bereit = True
                 break
-            time.sleep(0.1)
-        assert proc.poll() is None, "MSYS-sleep lief nicht an"
-        os.rename(ziel, umbenannt)
+            time.sleep(0.05)
+        assert bereit, (
+            f"MSYS-sleep übernahm cwd-Griff nicht rechtzeitig: "
+            f"{prozessbaum.arbeitsordner_in_windows(ziel).get(proc.pid)!r}"
+        )
+
+        # Erst nach MSYS-Init trägt der cwd-Griff FILE_SHARE_DELETE; vorher sperrt noch der
+        # ntdll-Startgriff und os.rename meldet kurz PermissionError.
+        umbenannt_ok = False
+        while time.monotonic() < ende:
+            assert proc.poll() is None, "MSYS-sleep endete vor dem Umbenennen"
+            try:
+                os.rename(ziel, umbenannt)
+                umbenannt_ok = True
+                break
+            except PermissionError:
+                time.sleep(0.05)
+        assert umbenannt_ok, "MSYS-sleep gab Zielordner nicht zum Umbenennen frei"
         ziel.mkdir()
 
-        # Der umbenannte Ordner (wo der Prozess wirklich steht) bleibt gesperrt.
-        with pytest.raises(hausmeister_windows.Bleibt, match=str(proc.pid)):
+        # Der umbenannte Ordner (wo der Prozess wirklich steht) bleibt als echter Treffer gesperrt.
+        with pytest.raises(hausmeister_windows.Bleibt) as exc_umbenannt:
             hausmeister_windows._kein_arbeitsordner_drin(umbenannt)
+        assert not exc_umbenannt.value.fehler and str(proc.pid) in exc_umbenannt.value.grund, exc_umbenannt.value
 
         # Das neue leere Ziel am alten Pfad ist frei, trotz veraltetem PEB-Text.
         befunde = prozessbaum.arbeitsordner_in_windows(ziel)
