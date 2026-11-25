@@ -27,6 +27,11 @@ if str(_SKILL) not in sys.path:
 
 from to_spawn import prozessbaum, sitzungsjob  # noqa: E402
 
+# Windows-Konsole/Pipe nutzt ohne PYTHONUTF8 oft cp1252 — Meldungen mit Umlauten/Gedankenstrich brauchen UTF-8.
+for _strom in (sys.stdout, sys.stderr):
+    if hasattr(_strom, "reconfigure"):
+        _strom.reconfigure(encoding="utf-8", errors="replace")
+
 #: Ordner, die beim Datei-Sammeln immer übersprungen werden.
 _IMMER_IGNORIEREN = frozenset({".git", ".review", ".ruff_cache", ".pytest_cache", "__pycache__", ".venv", "node_modules"})
 

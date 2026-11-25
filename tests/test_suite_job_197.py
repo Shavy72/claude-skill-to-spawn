@@ -76,13 +76,16 @@ def test_suite_py_nutzt_sitzungsjob_ohne_zweiten_weg() -> None:
 
 
 def test_suite_py_bricht_ohne_wurzel_conftest_ab(tmp_path: Path) -> None:
-    """Ohne Wurzel-``conftest.py`` bricht ``suite.py`` mit Exit 64 ab."""
+    """Ohne Wurzel-``conftest.py`` bricht ``suite.py`` mit Exit 64 ab (auch unter cp1252-Pipe)."""
     assert SUITE_PY.is_file(), f"Suite-Läufer fehlt: {SUITE_PY}"
+    env = {k: v for k, v in os.environ.items() if k not in ("PYTHONUTF8", "PYTHONIOENCODING")}
     lauf = subprocess.run(
         [sys.executable, str(SUITE_PY), "--wurzel", str(tmp_path)],
         capture_output=True,
         text=True,
         encoding="utf-8",
+        errors="replace",
+        env=env,
         check=False,
         **prozessbaum.ohne_fenster(),
     )
@@ -106,6 +109,7 @@ def test_suite_py_je_datei_exit_codes(tmp_path: Path) -> None:
         capture_output=True,
         text=True,
         encoding="utf-8",
+        errors="replace",
         check=False,
         **prozessbaum.ohne_fenster(),
     )
@@ -117,6 +121,7 @@ def test_suite_py_je_datei_exit_codes(tmp_path: Path) -> None:
         capture_output=True,
         text=True,
         encoding="utf-8",
+        errors="replace",
         check=False,
         **prozessbaum.ohne_fenster(),
     )
@@ -167,6 +172,7 @@ def test_suite_py_beendet_term_ignorierendes_und_git_bash_kind(tmp_path: Path) -
             capture_output=True,
             text=True,
             encoding="utf-8",
+            errors="replace",
             timeout=60,
             check=False,
             **prozessbaum.ohne_fenster(),
@@ -213,6 +219,7 @@ def test_suite_py_abbruch_beendet_kinder_mit(tmp_path: Path) -> None:
             stderr=subprocess.PIPE,
             text=True,
             encoding="utf-8",
+            errors="replace",
             **prozessbaum.ohne_fenster(),
         )
         pids = _warte_pids(pid_datei, 1, frist=20.0)
@@ -262,6 +269,7 @@ def test_suite_sh_delegiert_unter_windows_an_suite_py(tmp_path: Path) -> None:
             capture_output=True,
             text=True,
             encoding="utf-8",
+            errors="replace",
             timeout=60,
             check=False,
             **prozessbaum.ohne_fenster(),
