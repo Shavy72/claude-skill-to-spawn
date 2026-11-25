@@ -154,10 +154,12 @@ def test_takt_claude_beendet_git_bash_kind(tmp_path: Path) -> None:
     datei = tmp_path / "pids.txt"
     gefunden: dict[str, int] = {}
     helfer = _beende_sobald_bereit(datei, gefunden)
+    beginn = time.monotonic()
     try:
         waechter_takt.starte_claude([sys.executable, str(HILFE), bash, str(datei)], tmp_path, "prompt")
         helfer.join(timeout=35)
         assert "sleep" in gefunden, "Session-Ersatz hat sleep nicht gestartet"
+        assert time.monotonic() - beginn < 15, "starte_claude hing an offenem stdout-Pipe des Kinds"
         assert _warte_tot(gefunden["sleep"]), "sleep.exe aus Git Bash überlebte waechter_takt.starte_claude"
     finally:
         if gefunden.get("sleep") and prozessbaum.lebt(gefunden["sleep"]):
