@@ -52,7 +52,7 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from . import anleitung, bau_log, hooks, melder, respawn, respawn_aufseher, sessions_datei, starter, startklar
+from . import anleitung, bau_log, hooks, melder, respawn, respawn_aufseher, sessions_datei, sitzungsjob, starter, startklar
 
 log = logging.getLogger("to_spawn.waechter_lauf")
 
@@ -973,106 +973,108 @@ def fahre(
         datei = transkript_ordner(cwd) / f"{sid}.jsonl"
         ab = datei.stat().st_size if datei.is_file() else 0
         proc = _starte(cmd, cwd)
-        limit = threading.Event()
-        gruende: list[str] = []
-        pause: list[tuple[datetime, float]] = []
-        auf_ausweich = not ausweich or modell == ausweich
-        # Der Rückruf braucht die ganze Limit-Zeile (Reset-Uhrzeit, #254); die Aufsicht
-        # legt sie vorher in ``limit_eintrag`` ab, deshalb wird sie zuerst gebaut.
-        aufsicht = Aufsicht(
-            datei, ab, takt, lambda _text: None, grenze=grenze or handoff_grenze(modell)
-        )
-
-        def bei_grenze(
-            _kontext: int,
-            _proc: subprocess.Popen[bytes] = proc,
-            _aufsicht: Aufsicht = aufsicht,
-        ) -> None:
-            abloesung.ausloesen(
-                lambda: _aufsicht.kontext, _aufsicht.grenze or 0, lambda: _proc.poll() is None
+        # Job hält den ganzen Baum, auch Git-Bash-Kinder; Blockende beendet den Rest (#122).
+        with sitzungsjob.gebunden(proc):
+            limit = threading.Event()
+            gruende: list[str] = []
+            pause: list[tuple[datetime, float]] = []
+            auf_ausweich = not ausweich or modell == ausweich
+            # Der Rückruf braucht die ganze Limit-Zeile (Reset-Uhrzeit, #254); die Aufsicht
+            # legt sie vorher in ``limit_eintrag`` ab, deshalb wird sie zuerst gebaut.
+            aufsicht = Aufsicht(
+                datei, ab, takt, lambda _text: None, grenze=grenze or handoff_grenze(modell)
             )
 
-        aufsicht.bei_grenze = bei_grenze
-
-        def bei_limit(
-            text: str,
-            _proc: subprocess.Popen[bytes] = proc,
-            _auf: bool = auf_ausweich,
-            _gruende: list[str] = gruende,
-            _limit: threading.Event = limit,
-            _modell: str = modell,
-            _pause: list[tuple[datetime, float]] = pause,
-            _aufsicht: Aufsicht = aufsicht,
-            _runde: int = pausen + 1,
-        ) -> None:
-            _gruende.append(text)
-            _limit.set()
-            log.warning(
-                "Aufseher #%s: Nutzungs-Limit erkannt (%s) — %s", spec, _modell, text
-            )
-            if not _auf:
-                _beende(_proc)
-                return
-            ziel = reset_zeitpunkt(_aufsicht.limit_eintrag or {})
-            wartezeit = (
-                warte_sekunden(ziel, puffer=puffer, hoechstens=hoechstens)
-                if ziel is not None
-                else None
-            )
-            if _runde > MAX_PAUSEN:
-                # Limit greift nach jedem Neustart sofort wieder — hier hilft nur ein Mensch (F1).
-                _melde_stillstand(
-                    repo,
-                    spec,
-                    sid,
-                    _modell,
-                    text,
-                    f"{MAX_PAUSEN} Pausen in Folge halfen nicht",
+            def bei_grenze(
+                _kontext: int,
+                _proc: subprocess.Popen[bytes] = proc,
+                _aufsicht: Aufsicht = aufsicht,
+            ) -> None:
+                abloesung.ausloesen(
+                    lambda: _aufsicht.kontext, _aufsicht.grenze or 0, lambda: _proc.poll() is None
                 )
-                return
-            if ziel is None or wartezeit is None:
-                # Keine brauchbare Uhrzeit → wie vor #254: melden, Fenster stehen lassen.
-                _melde_stillstand(
-                    repo, spec, sid, _modell, text, "keine brauchbare Reset-Uhrzeit"
-                )
-                return
-            _pause.append((ziel, wartezeit))
-            _beende(_proc)
 
-        aufsicht.bei_limit = bei_limit
-        aufsicht.start()
-        zurueck = False
-        while True:
-            try:
-                rc = proc.wait(timeout=takt)
-                break
-            except subprocess.TimeoutExpired:
-                if abbruch is not None and abbruch():
-                    log.info(
-                        "Aufseher #%s: Abbruch-Bedingung erfüllt — Session wird beendet.",
+            aufsicht.bei_grenze = bei_grenze
+
+            def bei_limit(
+                text: str,
+                _proc: subprocess.Popen[bytes] = proc,
+                _auf: bool = auf_ausweich,
+                _gruende: list[str] = gruende,
+                _limit: threading.Event = limit,
+                _modell: str = modell,
+                _pause: list[tuple[datetime, float]] = pause,
+                _aufsicht: Aufsicht = aufsicht,
+                _runde: int = pausen + 1,
+            ) -> None:
+                _gruende.append(text)
+                _limit.set()
+                log.warning(
+                    "Aufseher #%s: Nutzungs-Limit erkannt (%s) — %s", spec, _modell, text
+                )
+                if not _auf:
+                    _beende(_proc)
+                    return
+                ziel = reset_zeitpunkt(_aufsicht.limit_eintrag or {})
+                wartezeit = (
+                    warte_sekunden(ziel, puffer=puffer, hoechstens=hoechstens)
+                    if ziel is not None
+                    else None
+                )
+                if _runde > MAX_PAUSEN:
+                    # Limit greift nach jedem Neustart sofort wieder — hier hilft nur ein Mensch (F1).
+                    _melde_stillstand(
+                        repo,
                         spec,
+                        sid,
+                        _modell,
+                        text,
+                        f"{MAX_PAUSEN} Pausen in Folge halfen nicht",
                     )
-                    aufsicht.halt.set()
-                    _beende(proc)
-                    abloesung.stoppen(timeout=takt + 1)
-                    return 0
-                if (
-                    rueckkehr_ab is not None
-                    and modell != haupt
-                    and time.time() >= rueckkehr_ab
-                    and session_ruhig(datei, takt)
-                ):
-                    log.info(
-                        "Aufseher #%s: Limit vorbei — zurück von %s auf %s.", spec, modell, haupt
+                    return
+                if ziel is None or wartezeit is None:
+                    # Keine brauchbare Uhrzeit → wie vor #254: melden, Fenster stehen lassen.
+                    _melde_stillstand(
+                        repo, spec, sid, _modell, text, "keine brauchbare Reset-Uhrzeit"
                     )
-                    zurueck = True
-                    aufsicht.halt.set()
-                    _beende(proc)
-                    rc = 0
+                    return
+                _pause.append((ziel, wartezeit))
+                _beende(_proc)
+
+            aufsicht.bei_limit = bei_limit
+            aufsicht.start()
+            zurueck = False
+            while True:
+                try:
+                    rc = proc.wait(timeout=takt)
                     break
-        aufsicht.halt.set()
-        aufsicht.join(timeout=takt + 1)
-        abloesung.stoppen(timeout=takt + 1)  # Session vorbei: Ablöse-Faden tippt nichts mehr
+                except subprocess.TimeoutExpired:
+                    if abbruch is not None and abbruch():
+                        log.info(
+                            "Aufseher #%s: Abbruch-Bedingung erfüllt — Session wird beendet.",
+                            spec,
+                        )
+                        aufsicht.halt.set()
+                        _beende(proc)
+                        abloesung.stoppen(timeout=takt + 1)
+                        return 0
+                    if (
+                        rueckkehr_ab is not None
+                        and modell != haupt
+                        and time.time() >= rueckkehr_ab
+                        and session_ruhig(datei, takt)
+                    ):
+                        log.info(
+                            "Aufseher #%s: Limit vorbei — zurück von %s auf %s.", spec, modell, haupt
+                        )
+                        zurueck = True
+                        aufsicht.halt.set()
+                        _beende(proc)
+                        rc = 0
+                        break
+            aufsicht.halt.set()
+            aufsicht.join(timeout=takt + 1)
+            abloesung.stoppen(timeout=takt + 1)  # Session vorbei: Ablöse-Faden tippt nichts mehr
         if zurueck:
             _log_zeile(repo, spec, "waechter_modell", von=modell, nach=haupt, grund="Limit vorbei")
             cmd = resume_befehl(

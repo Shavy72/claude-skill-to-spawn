@@ -49,7 +49,7 @@ def gebunden(prozess: Any) -> Iterator[None]:
             griff = _job_fuer(int(prozess.pid))
         except (OSError, AttributeError, TypeError, ValueError, ctypes.ArgumentError) as fehler:
             # Ein Job-Fehler darf den Bau nie abbrechen — die Session läuft dann ohne Job.
-            log.warning("Job für Session %s nicht angelegt (%s) — ohne Job", prozess.pid, fehler)
+            log.warning("Job für Session %s nicht angelegt (%s) — ohne Job", getattr(prozess, "pid", "?"), fehler)
     try:
         yield
     finally:

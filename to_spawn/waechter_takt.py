@@ -45,7 +45,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from . import befugnis, befund, briefkasten, capo, config, gh, leitstand, starter, ticket_zustand, waechter_lauf
+from . import befugnis, befund, briefkasten, capo, config, gh, leitstand, sitzungsjob, starter, ticket_zustand, waechter_lauf
 
 log = logging.getLogger("to_spawn.waechter_takt")
 
@@ -423,11 +423,13 @@ def starte_claude(cmd: list[str], repo: Path, prompt: str) -> int:
     proc = starter.starte(  # Liste, kein Shell, Prompt nur über stdin
         cmd, cwd=repo, notnagel=None, stdin=subprocess.PIPE, env=_kind_env()
     )
-    try:
-        proc.communicate(prompt.encode("utf-8"), timeout=_timeout_s())
-    except subprocess.TimeoutExpired:
-        waechter_lauf._beende(proc)
-        raise
+    # Job hält den ganzen Baum, auch Git-Bash-Kinder; Blockende beendet den Rest (#122).
+    with sitzungsjob.gebunden(proc):
+        try:
+            proc.communicate(prompt.encode("utf-8"), timeout=_timeout_s())
+        except subprocess.TimeoutExpired:
+            waechter_lauf._beende(proc)
+            raise
     return proc.returncode
 
 

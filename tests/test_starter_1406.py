@@ -164,6 +164,8 @@ KEIN_START = frozenset(
         ("messung/rueckblick_auswahl_duoplus.py", "impacted"),  # impacted-tests, Ausgabe gelesen
         # to_spawn/pruef/: Prüf-Tür (3b-1a, PR #117) fährt den Testläufer blockierend, keine Session
         ("to_spawn/pruef/ausfuehren.py", "lauf"),  # subprocess.run pytest/node, wartet, Ausgabe gelesen
+        # skripte/suite.py (#197): Suite-Läufer fährt pytest je Testdatei im Job-Objekt, keine Session
+        ("skripte/suite.py", "_datei_lauf"),  # subprocess.Popen pytest im Job-Objekt
     }
 )
 
