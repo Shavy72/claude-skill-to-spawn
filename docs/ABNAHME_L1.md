@@ -48,7 +48,7 @@ Urteile: **belegt** · **teilweise** · **abweichend** (Soll anders erfüllt, mi
 | M11 | Kleinste Prüfung, drei Fälle | – | noch nicht geprüft |
 | M12 | ≥ 20 absichtliche Fehler, 0 übersehen (DuoPlus ggf. „nicht anwendbar, weil keine Auswahl läuft“, siehe Plan-Stand) | – | noch nicht geprüft |
 | M13 | `PRUEFTOR_VERGLEICH.md`, Tempo gemessen | – | noch nicht geprüft |
-| M14 | Aufräumen ohne den Menschen (L4): Reste im Probe-Lauf, Hausmeister räumt, kein Lösch-Auftrag an den Menschen | – | offen |
+| M14 | Aufräumen ohne den Menschen (L4): Reste im Probe-Lauf, Hausmeister räumt, kein Lösch-Auftrag an den Menschen | Teilbeleg #136: `tests/test_temp_ordner_136.py` (Hausmeister räumt markierte Temp-Reste geschlossener Tickets, schützt offene/frische/laufende/ungesicherte/kopierte/Hardlink-/Symlink-Reste, Prüf-Test „kein festes `/tmp`“ grün, Schutz-Hooks blocken `aufraeumen --alles --loeschen` nicht, A24-Übergabe-Regel in `to_spawn/anleitung.py`); Altbestand `/tmp`/`/tmp/claude-*` per `tmpfs`-Neustart entschieden (#178). Offen: Aufrufer auf `temp_ordner.anlegen()` (#177) und Probe-Lauf mit absichtlichen Resten | teilweise |
 | M15 | Kaltstart-Probe (L5) | Kaltstart-Probe 21.11.2026 auf dem Bau-Server: frische Sonnet-Session nur mit `docs/WIEDEREINSTIEG.md`, Urteil BESTANDEN, 0 verhindernde Lücken; Windows-Seite offen | belegt (Bau-Server), Windows offen |
 
 ## Probe-Lauf 3 (24./25.11.2026, Bau-Server)

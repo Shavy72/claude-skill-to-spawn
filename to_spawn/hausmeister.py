@@ -136,6 +136,7 @@ from to_spawn import (
     gh,
     hausmeister_windows,
     hindernis,
+    temp_ordner,
     ticket_zustand,
     uebergabe_sichern,
 )
@@ -521,6 +522,7 @@ def _alle_ordner(*, loeschen: bool, jetzt: float | None) -> Rundgang:
         if erg.art != "bleibt" and not erg.trocken:
             anteil = _frei_anteil()
     _kennzahl_schreiben(ergebnisse, trocken=not loeschen)
+    temp_ordner.aufraeumen(loeschen=loeschen, jetzt=jetzt)  # #136: Temp-Reste, wirft nie
     _zweige_im_takt(loeschen, jetzt)
     # L5 #145: Netz für vergessene Ablösungen, wirft nie; Probelauf schreibt/lädt nichts (#169).
     uebergabe_sichern.sichern(trocken=not loeschen)
