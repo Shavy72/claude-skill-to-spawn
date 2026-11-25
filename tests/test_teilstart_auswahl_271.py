@@ -397,7 +397,8 @@ def test_capo_tick_fasst_nur_auswahl_an_und_schliesst_spec_nicht(
     from to_spawn import auswahl
 
     monkeypatch.setenv("TO_SPAWN_RECHNER", "bau-srv-1")
-    monkeypatch.setenv("TO_SPAWN_ZUSTAND", str(tmp_path / "capo-zustand"))
+    zustand_ordner = tmp_path / "capo-zustand"
+    monkeypatch.setenv("TO_SPAWN_WAECHTER_ORDNER", str(zustand_ordner))
     repo = _init_git_repo(tmp_path / "repo")
     # origin/main anlegen, damit haupt_ref funktioniert.
     _git(repo, "update-ref", "refs/remotes/origin/main", "HEAD")
@@ -461,6 +462,7 @@ def test_capo_tick_fasst_nur_auswahl_an_und_schliesst_spec_nicht(
     )
 
     erg = capo.tick(repo, 1330, "probe/repo", {"waechter": {"karenz_min": 0}}, jetzt=jetzt)
+    assert (zustand_ordner / "probe_repo_1330.json").is_file()
     assert kommentare == []
     assert wieder_geoeffnet == []
     assert all("#102" not in z and "#103" not in z for z in erg.zeilen)
@@ -511,7 +513,7 @@ def test_teilstart_takt_fasst_fremde_tickets_nicht_an(
     from to_spawn import auswahl
 
     monkeypatch.setenv("TO_SPAWN_RECHNER", "bau-srv-1")
-    monkeypatch.setenv("TO_SPAWN_ZUSTAND", str(tmp_path / "capo-zustand"))
+    monkeypatch.setenv("TO_SPAWN_WAECHTER_ORDNER", str(tmp_path / "capo-zustand"))
     repo = _init_git_repo(tmp_path / "repo")
     _git(repo, "update-ref", "refs/remotes/origin/main", "HEAD")
     auswahl.speichern(repo, 1330, [101], ohne_wache=False)
