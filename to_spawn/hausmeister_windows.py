@@ -115,22 +115,17 @@ def _kein_arbeitsordner_drin(ordner: Path) -> None:
 
     Entscheidend ist die Identität des Ordners, in dem der Prozess wirklich steht
     (:func:`to_spawn.prozessbaum.arbeitsordner_in_windows`, cwd-Griff aus dem PEB): eine danach
-    entfernte oder umgebogene Junction oder eine cwd ``\\\\localhost\\C$\\…`` ändern daran nichts.
-    Nicht feststellbar (Griff nicht zu übernehmen, Kennung unlesbar, cwd unlesbar) ⇒ bleibt
-    mit Fehler. Zusätzlich sperrt der Pfad-Text wie bisher (nie als Freigabe): die cwd geht
-    durch :func:`pfad_echt`; lesbar, aber nicht ganz auflösbar ⇒ bleibt mit Fehler, sobald ihre
-    Text-Form oder Teil-Auflösung auf den Ordner (kanonisch oder wie übergeben) zeigt.
-    Nicht-MSYS-Prozesse, die sich nicht öffnen lassen (fremd, erhöht), fehlen schon in der Liste,
-    ebenso unlesbare Nicht-MSYS-Prozesse fremder Benutzer (#552); nicht zu öffnende
+    entfernte oder umgebogene Junction oder eine cwd ``\\\\localhost\\C$\\…`` ändern daran nichts,
+    und ein veralteter cwd-Text nach Umbenennen hält kein neues leeres Ziel mehr unnötig fest
+    (#259). Nicht feststellbar (Griff nicht zu übernehmen, Kennung unlesbar, cwd unlesbar) ⇒ bleibt
+    mit Fehler. Nicht-MSYS-Prozesse, die sich nicht öffnen lassen (fremd, erhöht), fehlen schon in
+    der Liste, ebenso unlesbare Nicht-MSYS-Prozesse fremder Benutzer (#552); nicht zu öffnende
     MSYS-/Cygwin-Prozesse stehen dagegen mit ``text=None, drin=None`` in der Liste und sperren
     fail-closed (#243)."""
     try:
         befunde = prozessbaum.arbeitsordner_in_windows(ordner)
     except OSError as fehler:
         raise Bleibt(f"Prozessliste nicht lesbar ({fehler})", fehler=True) from None
-    o, _ = pfad_echt(ordner)
-    ziele = {o, pfad_norm(ordner)}
-    echt: dict[str, tuple[str, bool]] = {}  # viele Prozesse teilen dieselbe cwd
     for pid, befund in befunde.items():
         if pid == os.getpid():
             continue  # dieser Lauf selbst
@@ -141,18 +136,6 @@ def _kein_arbeitsordner_drin(ordner: Path) -> None:
             raise Bleibt(f"Prozess {pid} arbeitet im Ordner oder hat Dateien offen")
         if befund.drin is None:
             raise Bleibt(f"Prozess {pid}: Arbeitsordner nicht prüfbar ({befund.grund})", fehler=True)
-        cwd = befund.text
-        if cwd not in echt:
-            echt[cwd] = pfad_echt(cwd)
-        c, ganz = echt[cwd]
-        if ganz:
-            if _liegt_in(c, o):
-                raise Bleibt(f"Prozess {pid} arbeitet im Ordner oder hat Dateien offen")
-        elif any(_liegt_in(k, z) for k in (c, pfad_norm(cwd)) for z in ziele):
-            raise Bleibt(
-                f"Prozess {pid}: Arbeitsordner nicht auflösbar, zeigt evtl. in den Ordner",
-                fehler=True,
-            )
 
 
 def _prozesse() -> list[tuple[int | None, str | None, str | None]]:
