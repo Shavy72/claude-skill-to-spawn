@@ -99,7 +99,9 @@ def _cmd32_in(start_cwd: Path, ziel_cwd: Path) -> Iterator[subprocess.Popen[str]
 @pytest.mark.skipif(not WINDOWS, reason="Windows-Weg von deploy_status.prozess_lebt und alter_s")
 def test_257_deploy_status_lebt_und_alter_echter_prozess_ignoriert_term() -> None:
     """Echter Prozess, der SIGTERM ignoriert: lebt vor Beenden, danach tot; Alter messbar."""
-    skript = "import signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); print('OK', flush=True); time.sleep(60)"
+    skript = (
+        "import signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); print('OK', flush=True); time.sleep(60)"
+    )
     kind = subprocess.Popen(
         [sys.executable, "-c", skript],
         stdout=subprocess.PIPE,

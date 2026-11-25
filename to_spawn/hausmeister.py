@@ -2364,7 +2364,7 @@ def _schliesszeit(ordner: Path) -> float | None:
         if ticket is None:
             return None
         ziel, unklar = _ordner_ticket_ziel(echt, ticket, _origin_slug(echt))
-        if unklar or ziel is None:
+        if unklar:
             return None
         daten = _ticket_daten(ticket, ziel)
     except (

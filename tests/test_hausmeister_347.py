@@ -536,3 +536,49 @@ def test_347_alle_ticket_repos_enthaelt_zweig_ticket_repo(monkeypatch: pytest.Mo
         ],
     )
     assert hausmeister._alle_ticket_repos() == [SKILL, "Org/Extra-Tickets"]
+
+
+def test_347_schliesszeit_nutzt_zweig_ticket_repo_und_bleibt_bei_leer_oder_kaputt_none(
+    welt: Welt, repos: Repos
+) -> None:
+    """``_schliesszeit`` nutzt ``zweig_ticket_repo`` und liefert bei leerer/ungültiger Regel ``None``."""
+    repos.repo(SKILL)
+    _maschine_schreiben(
+        [
+            {"slug": APP, "pfad": str(repos.haupt[APP]), "ticket_repo": APP, "worktree_basis": ""},
+            {
+                "slug": SKILL,
+                "pfad": str(repos.haupt[SKILL]),
+                "ticket_repo": SKILL,
+                "worktree_basis": "",
+                "zweig_ticket_repo": {"fix/": APP, "wip/": ""},
+            },
+        ]
+    )
+    haupt = repos.haupt[SKILL]
+    wt_fix = welt.heim / "wt" / "skill-1407"
+    git(haupt, "worktree", "add", "-q", "-b", "fix/1407", str(wt_fix), "origin/main")
+    repos.ticket(SKILL, 1407, "OPEN")
+    repos.ticket(APP, 1407, "CLOSED", 48)
+    assert hausmeister._schliesszeit(wt_fix) is not None
+
+    wt_wip = welt.heim / "wt" / "skill-1408"
+    git(haupt, "worktree", "add", "-q", "-b", "wip/1408", str(wt_wip), "origin/main")
+    repos.ticket(SKILL, 1408, "CLOSED", 48)
+    repos.ticket(APP, 1408, "CLOSED", 48)
+    assert hausmeister._schliesszeit(wt_wip) is None
+
+    _maschine_schreiben(
+        [
+            {"slug": APP, "pfad": str(repos.haupt[APP]), "ticket_repo": APP, "worktree_basis": ""},
+            {
+                "slug": SKILL,
+                "pfad": str(repos.haupt[SKILL]),
+                "ticket_repo": SKILL,
+                "worktree_basis": "",
+                "zweig_ticket_repo": "kaputt",
+            },
+        ]
+    )
+    hausmeister._ABGELEHNT_GEMELDET.clear()
+    assert hausmeister._schliesszeit(wt_fix) is None
