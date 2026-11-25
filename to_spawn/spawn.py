@@ -235,7 +235,20 @@ def wt_tab_befehl(repo: Path, ticket: int, auftrag: str, *schalter: str) -> list
         innen += " --auftrag '" + auftrag.replace(";", ",").replace("'", "''") + "'"
     if schalter:
         innen += " " + " ".join(schalter)
-    return ["wt", "-w", "0", "new-tab", "--title", f"bau {ticket}", "-d", str(repo), "pwsh", "-NoExit", "-Command", innen]
+    return [
+        "wt",
+        "-w",
+        "0",
+        "new-tab",
+        "--title",
+        f"bau {ticket}",
+        "-d",
+        str(repo),
+        "pwsh",
+        "-NoExit",
+        "-Command",
+        innen,
+    ]
 
 
 def neustart(
@@ -274,10 +287,7 @@ def neustart(
             argumente.append("--beenden")
         if dry_run:
             argumente.append("--dry-run")
-        fern = (
-            f"cd {fern_ordner(server_repo)} && "
-            f"python3 ~/.claude/skills/to-spawn/to_spawn.py {shlex.join(argumente)}"
-        )
+        fern = f"cd {fern_ordner(server_repo)} && python3 ~/.claude/skills/to-spawn/to_spawn.py {shlex.join(argumente)}"
         befehl = ["ssh", config.ssh_ziel(konfig), fern]
         print(" ".join(befehl[:2]), repr(fern))
         return starter.starte(befehl, cwd=repo, check=False, warten=True).returncode

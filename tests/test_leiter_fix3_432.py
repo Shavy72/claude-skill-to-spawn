@@ -60,9 +60,7 @@ def test_c1_stufe3_arbeitet_neue_session_belegt_abgeschlossen(ordner: Path) -> N
 
 
 @pytest.mark.parametrize("versatz", [None, -2 * MINUTE, 0.0])
-def test_c1_stufe3_arbeitet_ohne_neue_session_meldet(
-    ordner: Path, versatz: float | None
-) -> None:
+def test_c1_stufe3_arbeitet_ohne_neue_session_meldet(ordner: Path, versatz: float | None) -> None:
     u, seit = _stufe3_arbeitet(ordner, versatz)
     erg = _lauf(u)
     assert erg.exit == 1
@@ -89,9 +87,7 @@ def test_c1_entscheide_stufe3_arbeitet_ohne_start_kein_abschluss() -> None:
     assert leiter.entscheide(lage, gemerkt, jetzt, 250.0).aktion == "melden"
 
 
-def test_c1_stufe5_schreibfehler_exit1_keine_ausnahme(
-    ordner: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_c1_stufe5_schreibfehler_exit1_keine_ausnahme(ordner: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     def gescheitert(repo: Path, spec: int, ticket: int, **_kw: Any) -> respawn.Ergebnis:
         return respawn.Ergebnis(2, f"respawn #{ticket}: neues Fenster startet nicht")
 
@@ -107,9 +103,7 @@ def test_c1_stufe5_schreibfehler_exit1_keine_ausnahme(
 
     monkeypatch.setattr(leitstand, "setze_leiter_stufe", stufe5_kaputt)
     # Kein Netz der Tür: eine durchgereichte Ausnahme fiele hier sichtbar auf.
-    erg = leiter._respawn(
-        u, ordner, 1, TICKET, leiter.Gemerkt(2, u.uhr - MINUTE), u.uhr
-    )
+    erg = leiter._respawn(u, ordner, 1, TICKET, leiter.Gemerkt(2, u.uhr - MINUTE), u.uhr)
     assert erg.exit == 1
     assert "Stufe 5 nicht gemerkt" in erg.zeile
     assert leitstand.leiter_eintrag(TICKET)[0] == 3

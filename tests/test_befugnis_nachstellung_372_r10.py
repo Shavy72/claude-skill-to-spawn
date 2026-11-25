@@ -53,7 +53,10 @@ FAELLE: dict[str, tuple[dict[str, Any], int]] = {
     "2b mcp ssh exec": (_werkzeug("mcp__ssh__exec", command="docker restart app"), 2),
     "2c skill args live deploy": (_werkzeug("Skill", skill="deploy", args="live deploy"), 2),
     "2d powershell ssh": (_werkzeug("PowerShell", command="ssh clawy-vps 'docker ps'"), 2),
-    "2e powershell harmlos": (_werkzeug("PowerShell", command="Get-ChildItem C:/dev"), 2),  # E: PowerShell nicht auf Erlaubt-Liste
+    "2e powershell harmlos": (
+        _werkzeug("PowerShell", command="Get-ChildItem C:/dev"),
+        2,
+    ),  # E: PowerShell nicht auf Erlaubt-Liste
     "2f skill harmlos": (_werkzeug("Skill", skill="tdd", args="tests für parser"), 3),
     "2g powershell deploy ps1": (
         _werkzeug("PowerShell", command="powershell -File scripts/safe_deploy_vps.ps1"),
@@ -69,7 +72,10 @@ FAELLE: dict[str, tuple[dict[str, Any], int]] = {
     "3b rolle aus": (_text("Ich rolle den Fix auf den VPS aus."), 3),  # E: Text ist keine Handlung
     "3c starte neu": (_text("Ich starte den Container auf dem VPS neu."), 3),  # E: Text ist keine Handlung
     "3d spiele auf prod": (_text("Ich spiele den Stand auf Prod."), 3),  # E: Text ist keine Handlung
-    "3e logge mich ein": (_text("Ich logge mich mit dem Passwort aus dem Tresor in das Konto ein."), 3),  # E: Text ist keine Handlung
+    "3e logge mich ein": (
+        _text("Ich logge mich mit dem Passwort aus dem Tresor in das Konto ein."),
+        3,
+    ),  # E: Text ist keine Handlung
     "3f setze passwort": (_text("Ich setze das neue Passwort für den Login."), 3),  # E: Text ist keine Handlung
     "3g zustand ohne handlung": (_text("Produktion läuft wieder."), 3),  # E: Text ist keine Handlung
     # 4 Abstand zwischen Verb und Objekt (E: Text ist keine Handlung)

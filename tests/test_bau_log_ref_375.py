@@ -120,14 +120,10 @@ def test_bau_log_log_vom_ref_liest_ref_und_warnt_kaputte_zeile(
 ) -> None:
     repo = _init_repo(tmp_path / "repo")
     (repo / ".to-spawn").mkdir(parents=True)
-    (repo / ".to-spawn" / "config.json").write_text(
-        json.dumps({"pfade": {"bau_log": "eigen/logs"}}), encoding="utf-8"
-    )
+    (repo / ".to-spawn" / "config.json").write_text(json.dumps({"pfade": {"bau_log": "eigen/logs"}}), encoding="utf-8")
     log_datei = repo / "eigen" / "logs" / "42.jsonl"
     log_datei.parent.mkdir(parents=True)
-    log_datei.write_text(
-        json.dumps({"typ": "session_start"}) + "\n{kaputt\n", encoding="utf-8"
-    )
+    log_datei.write_text(json.dumps({"typ": "session_start"}) + "\n{kaputt\n", encoding="utf-8")
     _git(repo, "add", "-A")
     _git(repo, "commit", "-q", "-m", "log")
     _git(repo, "update-ref", "refs/remotes/origin/main", "HEAD")
@@ -162,15 +158,17 @@ def test_bau_log_ref_nutzt_git_zeitgrenze_und_faellt_sicher_zurueck(
 
 
 def test_entscheidung_felder_neu_und_rueckfall() -> None:
-    assert bau_log.entscheidung_felder(
-        {"frage": "NeuF", "wahl": "NeuW", "grund": "G"}
-    ) == ("NeuF", "NeuW", "G")
-    assert bau_log.entscheidung_felder(
-        {"text": "AltF", "entscheidungen": "AltW", "grund": "AltG"}
-    ) == ("AltF", "AltW", "AltG")
-    assert bau_log.entscheidung_felder(
-        {"frage": "NeuF", "text": "AltF", "wahl": "NeuW", "entscheidungen": "AltW"}
-    ) == ("NeuF", "NeuW", "")
+    assert bau_log.entscheidung_felder({"frage": "NeuF", "wahl": "NeuW", "grund": "G"}) == ("NeuF", "NeuW", "G")
+    assert bau_log.entscheidung_felder({"text": "AltF", "entscheidungen": "AltW", "grund": "AltG"}) == (
+        "AltF",
+        "AltW",
+        "AltG",
+    )
+    assert bau_log.entscheidung_felder({"frage": "NeuF", "text": "AltF", "wahl": "NeuW", "entscheidungen": "AltW"}) == (
+        "NeuF",
+        "NeuW",
+        "",
+    )
     assert bau_log.entscheidung_felder({}) == ("", "", "")
 
 
@@ -202,9 +200,7 @@ def test_briefkasten_und_capo_nutzen_dieselbe_entscheidung_felder_funktion(
     assert len(aufrufe) == 2
 
 
-def test_capo_weiterleitung_delegiert_an_bau_log(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_capo_weiterleitung_delegiert_an_bau_log(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(bau_log, "haupt_ref", lambda _r: "origin/spezial")
     monkeypatch.setattr(bau_log, "log_vom_ref", lambda _r, ref, t: [{"ref": ref, "t": t}])
     assert capo.haupt_ref(tmp_path) == "origin/spezial"

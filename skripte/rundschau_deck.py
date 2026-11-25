@@ -29,7 +29,9 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("pruefen")
     p.add_argument("datei", type=Path)
     p.add_argument("--entscheidungen", type=Path, required=True)
-    p.add_argument("--tickets", default="", help="kommagetrennte Bau-Ticket-Nummern für Pflicht-Folie Bild + Klick-Schritte")
+    p.add_argument(
+        "--tickets", default="", help="kommagetrennte Bau-Ticket-Nummern für Pflicht-Folie Bild + Klick-Schritte"
+    )
     a = ap.parse_args(argv)
     try:
         daten = json.loads(a.entscheidungen.read_text(encoding="utf-8"))

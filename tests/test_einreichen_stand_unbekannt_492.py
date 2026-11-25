@@ -42,12 +42,8 @@ PR_VIEW = ["pr", "view", "41", "--json", "state", "--jq", ".state"]
 
 
 @pytest.fixture
-def kaputte_abfrage(
-    welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch
-) -> dict[str, Path]:
-    assert _VIEW in GH_ATTRAPPE, (
-        "gh-Attrappe aus #411 geändert — Ersetzung greift nicht"
-    )
+def kaputte_abfrage(welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch) -> dict[str, Path]:
+    assert _VIEW in GH_ATTRAPPE, "gh-Attrappe aus #411 geändert — Ersetzung greift nicht"
     stub = attrappe(welt["tmp"] / "gh-bin-492", "gh", GH_VIEW_KAPUTT)
     monkeypatch.setenv("TO_SPAWN_GH_STUB", str(stub_pfad(stub)))
     monkeypatch.setenv("EINREICHEN_SPERRE_NACH_MERGE", "1")
@@ -63,18 +59,13 @@ def test_stand_abfrage_ohne_antwort_nach_merge_ist_nicht_rot(
     wt = _ticket_wt(welt)
     sha = _commit(wt, "README.md", "x\n", "docs: x (#7)")
     erg = _einreichen(wt, "7")
-    assert _ist_vorfahr(welt["remote"], sha, _remote_main(welt)), (
-        "Attrappe muss echt gemergt haben"
-    )
+    assert _ist_vorfahr(welt["remote"], sha, _remote_main(welt)), "Attrappe muss echt gemergt haben"
     assert not erg.stdout.startswith("NICHT EINGEREICHT"), erg.stdout
     assert erg.stdout.startswith("Stand unbekannt – erneut prüfen"), erg.stdout
     assert erg.returncode == STAND_UNBEKANNT, erg.stdout + erg.stderr
     assert _gh_aufrufe(welt).count(PR_VIEW) == 3, "Stand-Abfrage wird kurz wiederholt"
     # „erneut prüfen“: derselbe Befehl reicht nicht doppelt ein, sondern erkennt den Merge
-    sperre = (
-        Path(_git(wt, "rev-parse", "--path-format=absolute", "--git-common-dir"))
-        / "refs/remotes/origin/main.lock"
-    )
+    sperre = Path(_git(wt, "rev-parse", "--path-format=absolute", "--git-common-dir")) / "refs/remotes/origin/main.lock"
     sperre.unlink()
     zweit = _einreichen(wt, "7")
     assert zweit.returncode == 0, zweit.stdout + zweit.stderr
@@ -101,8 +92,6 @@ def test_vorlagen_sagen_was_bei_stand_unbekannt_zu_tun_ist() -> None:
     sys.path.insert(0, str(SKILL / "skripte"))
     import wache
 
-    bau = json.loads(
-        (SKILL / "repo-scripts" / "_default.json").read_text(encoding="utf-8")
-    )["prompt_template"]
+    bau = json.loads((SKILL / "repo-scripts" / "_default.json").read_text(encoding="utf-8"))["prompt_template"]
     for text in (bau, wache.PROMPT):
         assert "Exit 2 → Stand unbekannt" in text

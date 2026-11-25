@@ -127,9 +127,7 @@ def _git(wurzel: Path, *args: str) -> tuple[int, str]:
             **prozessbaum.fensterlos(),
         )
     except subprocess.TimeoutExpired:
-        log.warning(
-            "git %s: Zeitlimit %s s überschritten", " ".join(args[:2]), _GIT_TIMEOUT
-        )
+        log.warning("git %s: Zeitlimit %s s überschritten", " ".join(args[:2]), _GIT_TIMEOUT)
         return 124, ""
     except OSError:
         return 127, ""
@@ -241,11 +239,7 @@ def _pruefe_worktree_basis(ort: Ort) -> Befund:
 def _lege_worktree_basis_an(ort: Ort) -> None:
     datei = _konfig_datei(ort)
     roh = setup.lies_roh(datei)
-    if (
-        roh is None
-        or _getrackt(ort.wurzel, datei)
-        or str(roh.get("worktree_basis") or "").strip()
-    ):
+    if roh is None or _getrackt(ort.wurzel, datei) or str(roh.get("worktree_basis") or "").strip():
         return
     roh["worktree_basis"] = config.worktree_basis_vorgabe(ort.wurzel)
     _schreib_schutz(ort.wurzel, datei)
@@ -305,14 +299,10 @@ def _lege_gitignore_an(ort: Ort) -> None:
     code, git_ordner = _git(ort.wurzel, "rev-parse", "--git-common-dir")
     if code != 0 or not git_ordner:
         raise OSError("git rev-parse --git-common-dir scheiterte")
-    grenze = (
-        Path(git_ordner) if Path(git_ordner).is_absolute() else ort.wurzel / git_ordner
-    )
+    grenze = Path(git_ordner) if Path(git_ordner).is_absolute() else ort.wurzel / git_ordner
     _schreib_schutz(ort.wurzel, datei, grenze=grenze)
     vorhanden = datei.read_text(encoding="utf-8") if datei.is_file() else ""
-    zeilen = [
-        z for z in dict.fromkeys(offen.values()) if z not in vorhanden.splitlines()
-    ]
+    zeilen = [z for z in dict.fromkeys(offen.values()) if z not in vorhanden.splitlines()]
     if not zeilen:
         return
     trenner = "" if not vorhanden or vorhanden.endswith("\n") else "\n"
@@ -401,9 +391,7 @@ def _pruefe_maschine(ort: Ort) -> Befund:
         return FEHLT, "veraltetes ticket_repo: " + "; ".join(a.zeile() for a in veraltet)
     for eintrag in config.maschine()["repos"]:
         try:
-            gleich = (
-                Path(eintrag["pfad"]).expanduser().resolve() == ort.wurzel.resolve()
-            )
+            gleich = Path(eintrag["pfad"]).expanduser().resolve() == ort.wurzel.resolve()
         except (OSError, ValueError):
             gleich = False
         if gleich:
@@ -558,9 +546,7 @@ def _sicher(aufruf: Callable[[Ort], Befund], ort: Ort) -> Befund:
         return LUECKE, f"Prüfung scheiterte: {fehler}"
 
 
-def _pruefe_baustein(
-    baustein: Baustein, ort: Ort, version_alt: int | None
-) -> PruefBefund:
+def _pruefe_baustein(baustein: Baustein, ort: Ort, version_alt: int | None) -> PruefBefund:
     """Wertet einen Baustein für ``--pruefen`` an genau einer Stelle aus (#216).
 
     Liefert immer einen der drei Zustände aus :data:`PRUEF_ZUSTAENDE` zusammen mit
@@ -579,9 +565,7 @@ def _pruefe_baustein(
     return PruefBefund(PRUEF_OK, text)
 
 
-def einrichten(
-    repo: Path, *, pruefen: bool = False, ausgabe: TextIO = sys.stdout
-) -> int:
+def einrichten(repo: Path, *, pruefen: bool = False, ausgabe: TextIO = sys.stdout) -> int:
     """Richtet ``repo`` für to-spawn ein (``pruefen=True``: nur prüfen, schreibt nichts).
 
     Exit: 0 = eingerichtet (große Lücken nur gemeldet) bzw. alles da und aktuell;
@@ -605,9 +589,7 @@ def einrichten(
             ausgabe.write(f"  {baustein.name}: {ergebnis.zustand} — {ergebnis.text}\n")
             continue
         befund, text = _sicher(baustein.pruefe, ort)
-        if befund in (DA, NICHT_PRUEFBAR) and (
-            version_alt == baustein.version or version_alt is None
-        ):
+        if befund in (DA, NICHT_PRUEFBAR) and (version_alt == baustein.version or version_alt is None):
             zustand = DA
         else:
             if baustein.lege_an is not None:
@@ -620,9 +602,7 @@ def einrichten(
                     continue
                 except (OSError, ValueError, subprocess.SubprocessError) as fehler:
                     log.error("Anleger %s scheiterte: %s", baustein.name, fehler)
-                    ausgabe.write(
-                        f"  {baustein.name}: {LUECKE} — Anleger scheiterte: {fehler}\n"
-                    )
+                    ausgabe.write(f"  {baustein.name}: {LUECKE} — Anleger scheiterte: {fehler}\n")
                     luecken.append(baustein.name)
                     code = 1
                     continue
@@ -632,9 +612,7 @@ def einrichten(
                 vorher = befund
             if befund not in (DA, NICHT_PRUEFBAR):
                 zustand = LUECKE
-            elif vorher in (DA, NICHT_PRUEFBAR) or (
-                version_alt is not None and version_alt != baustein.version
-            ):
+            elif vorher in (DA, NICHT_PRUEFBAR) or (version_alt is not None and version_alt != baustein.version):
                 zustand = "nachgezogen"
             else:
                 zustand = "angelegt"
@@ -665,7 +643,5 @@ def einrichten(
             log.error("stand.json nicht geschrieben (%s): %s", stand_datei, fehler)
             code = 1
     if luecken:
-        ausgabe.write(
-            f"Große Lücke (nur gemeldet, hält nicht auf): {', '.join(luecken)}\n"
-        )
+        ausgabe.write(f"Große Lücke (nur gemeldet, hält nicht auf): {', '.join(luecken)}\n")
     return code

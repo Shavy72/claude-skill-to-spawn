@@ -74,17 +74,13 @@ def test_rebase_und_gemeldeter_stand_zweig_weg_ohne_sicherung(zw: Welt) -> None:
     git(wt, "rebase", "-q", "origin/master")
     git(wt, "push", "-q", "-f", "origin", "ticket/41-test")
     tip = _tip(zw, "ticket/41-test")
-    r = hausmeister.zweig_aufraeumen(
-        ORIGIN, "ticket/41-test", uebernommen_tip=tip, loeschen=True
-    )
+    r = hausmeister.zweig_aufraeumen(ORIGIN, "ticket/41-test", uebernommen_tip=tip, loeschen=True)
     assert r.art == "gelöscht" and not r.fehler and not r.trocken
     assert "ticket/41-test" not in _heads(zw)
     assert not [h for h in _heads(zw) if h.startswith("sicherung/")]
 
 
-def test_ticket_zu_commit_nirgends_sonst_wird_erst_gesichert(
-    zw: Welt, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_ticket_zu_commit_nirgends_sonst_wird_erst_gesichert(zw: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
     """Ticket zu, Commit nur auf dem Zweig: sicherung/<N> trägt ihn, dann ist der Zweig weg."""
     zw.worktree(42)
     zw.ticket(42, "CLOSED", vor_stunden=48)

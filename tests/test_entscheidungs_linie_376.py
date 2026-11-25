@@ -88,6 +88,7 @@ def test_linie_nur_an_einer_stelle_gepflegt() -> None:
 #: Punkt 5 hält nur den Schritt an, nie die ganze Arbeit.
 VERBOTEN_PUNKT_5 = ("Dort anhalten", "ganze Arbeit", "keinen Rest", "alles anhalten")
 
+
 def test_linie_punkt_5_passt_zum_befugnis_text() -> None:
     """Punkt 5 und Klasse 2 im Befugnis-Text nennen denselben Briefkasten-Befehl, keiner hält alles an."""
     from to_spawn import anleitung, befugnis

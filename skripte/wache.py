@@ -61,6 +61,8 @@ from to_spawn import (  # noqa: E402
 from to_spawn import prozessbaum  # noqa: E402
 
 log = logging.getLogger("wache")
+
+
 #: Repo, in dem gearbeitet wird: ``TO_SPAWN_REPO`` (setzt die Weiterleitung im Repo), sonst
 #: Git-Wurzel des aktuellen Ordners — nie der Ort dieses Skripts (liegt im Skill, #205).
 def start_ordner() -> Path:
@@ -78,7 +80,11 @@ def start_ordner() -> Path:
     return Path.cwd()
 
 
-REPO_ORDNER = Path(os.environ["TO_SPAWN_REPO"]).resolve() if os.environ.get("TO_SPAWN_REPO") else config.repo_wurzel(start_ordner())
+REPO_ORDNER = (
+    Path(os.environ["TO_SPAWN_REPO"]).resolve()
+    if os.environ.get("TO_SPAWN_REPO")
+    else config.repo_wurzel(start_ordner())
+)
 
 
 def repo_aus_origin(fallback: str = "") -> str:
@@ -341,9 +347,13 @@ def abloese_prompt(prompt: str, handoff: Path, runde: int, spec: int | None = No
             zeile = None
         if zeile:
             zeilen = zeile.get("zeilen")
-            text = "\n".join(str(z) for z in zeilen) if isinstance(zeilen, list) else json.dumps(zeile, ensure_ascii=False)
+            text = (
+                "\n".join(str(z) for z in zeilen) if isinstance(zeilen, list) else json.dumps(zeile, ensure_ascii=False)
+            )
             stand = f"----- LETZTER STAND ({zeile.get('zeit') or '?'}) -----\n{text}\n----- STAND ENDE -----\n\n"
-    start_teil = f"----- START-PROMPT DES VORGÄNGERS -----\n{start.strip()}\n----- START ENDE -----\n\n" if start.strip() else ""
+    start_teil = (
+        f"----- START-PROMPT DES VORGÄNGERS -----\n{start.strip()}\n----- START ENDE -----\n\n" if start.strip() else ""
+    )
     return (
         f"## Aufseher-Ablösung (Runde {runde})\n"
         f"Der Vorgänger-Aufseher hat an seiner Handoff-Grenze übergeben. Sein Handoff ({handoff}) ist "
@@ -426,9 +436,18 @@ Erste Zeile jeder Antwort: 🧭 Opus · medium · Aufseher #{S}"""
 
 
 # Werkzeug-Befehle aus derselben Quelle wie die Startklar-Probe (#450 F5).
-_PROMPT_ROH = _PROMPT_ROH.replace("{AUFRAEUMEN}", startklar.BEFEHL_AUFRAEUMEN).replace("{NEUSTART}", startklar.BEFEHL_NEUSTART).replace("{RESPAWN}", startklar.BEFEHL_RESPAWN)
+_PROMPT_ROH = (
+    _PROMPT_ROH.replace("{AUFRAEUMEN}", startklar.BEFEHL_AUFRAEUMEN)
+    .replace("{NEUSTART}", startklar.BEFEHL_NEUSTART)
+    .replace("{RESPAWN}", startklar.BEFEHL_RESPAWN)
+)
 # Feste Texte der Aufseher-Anleitung aus einer Quelle (#500, #367).
-_PROMPT_ROH = _PROMPT_ROH.replace("{MINDSET}", anleitung.MINDSET).replace("{STOSS}", anleitung.STOSS).replace("{ABLOESE_SOP}", anleitung.ABLOESE_SOP).replace("{ABSCHLUSS}", anleitung.ABSCHLUSS_ANWEISUNG)
+_PROMPT_ROH = (
+    _PROMPT_ROH.replace("{MINDSET}", anleitung.MINDSET)
+    .replace("{STOSS}", anleitung.STOSS)
+    .replace("{ABLOESE_SOP}", anleitung.ABLOESE_SOP)
+    .replace("{ABSCHLUSS}", anleitung.ABSCHLUSS_ANWEISUNG)
+)
 _PROMPT_ROH = _PROMPT_ROH.replace("{TAKT_ABNAHME}", str(TAKT_ABNAHME_S))
 # Beleg-Regel und Klasse-2-Liste aus je einer Quelle (#278 P3b, #289); ``{BEFUGNIS}`` folgt
 # erst beim Zugriff dem aktuellen ``HOME``/``OBSIDIAN_VAULT`` (Notiz-Tresor, #232).
@@ -561,7 +580,9 @@ def main() -> int:
     # Eine Session im Worktree darf nicht das Repo des Launchers erben (#205).
     os.environ.pop("TO_SPAWN_REPO", None)
     os.environ["CLAUDE_CODE_FORCE_SESSION_PERSISTENCE"] = "1"
-    os.environ.update(temp_ordner.umgebung(a.spec, repo=REPO, von="wache"))  # #136/#177: markierter Spec-Temp auf der Platte
+    os.environ.update(
+        temp_ordner.umgebung(a.spec, repo=REPO, von="wache")
+    )  # #136/#177: markierter Spec-Temp auf der Platte
     # Klick-Sperre nur für lokal gespawnte Sessions (Windows, Maus-Müll im Eingabefeld).
     terminal_maus.maus_ruhig()
     # Umzug (#212): /to-spawn-of im Aufseher zieht alle Sessions um und beendet am Ende
@@ -580,9 +601,10 @@ def main() -> int:
         # Handoff-Blick (#542): eigener Faden prüft alle ≤ 2,5 min fällige Handoffs und
         # startet die Leiter — nicht erst beim nächsten Aufseher-Tick (bis 30 min).
         # Briefkasten-Wecker (#414): neue Frage weckt diese Session, Antwort die Bau-Session (≤ 1 min).
-        with handoff_blick.laeuft(
-            a.spec, handoff_blick.EchteNaht(REPO_ORDNER, ordner, REPO)
-        ), briefkasten_wecker.laeuft(a.spec, REPO_ORDNER, gh_repo=REPO):
+        with (
+            handoff_blick.laeuft(a.spec, handoff_blick.EchteNaht(REPO_ORDNER, ordner, REPO)),
+            briefkasten_wecker.laeuft(a.spec, REPO_ORDNER, gh_repo=REPO),
+        ):
             for runde in range(1, MAX_ABLOESUNGEN + 2):
                 # Aufsicht (#213): Limit im Transkript → Ausweich-Modell; Umzug-/Ablöse-Datei → Ende.
                 code = waechter_lauf.fahre(
@@ -594,16 +616,10 @@ def main() -> int:
                     remote_control=remote_control,
                     repo=REPO_ORDNER,
                     cwd=ordner,
-                    takt=waechter_lauf.zahl_aus_umgebung(
-                        "TO_SPAWN_AUFSICHT_TAKT", waechter_lauf.TAKT_S
-                    )
+                    takt=waechter_lauf.zahl_aus_umgebung("TO_SPAWN_AUFSICHT_TAKT", waechter_lauf.TAKT_S)
                     or waechter_lauf.TAKT_S,
-                    puffer=waechter_lauf.zahl_aus_umgebung(
-                        "TO_SPAWN_RESET_PUFFER_S", waechter_lauf.RESET_PUFFER_S
-                    ),
-                    hoechstens=waechter_lauf.zahl_aus_umgebung(
-                        "TO_SPAWN_RESET_MAX_S", waechter_lauf.MAX_WARTE_S
-                    )
+                    puffer=waechter_lauf.zahl_aus_umgebung("TO_SPAWN_RESET_PUFFER_S", waechter_lauf.RESET_PUFFER_S),
+                    hoechstens=waechter_lauf.zahl_aus_umgebung("TO_SPAWN_RESET_MAX_S", waechter_lauf.MAX_WARTE_S)
                     or waechter_lauf.MAX_WARTE_S,
                     abbruch=lambda: umzug_datei.exists() or abloese_datei.exists(),
                     session_id=session_id,

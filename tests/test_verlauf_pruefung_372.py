@@ -54,9 +54,7 @@ HARMLOS = "Soll ich mit Ticket 13 weitermachen?"
 _zaehler = iter(range(10**6))
 
 
-def _a(
-    *bloecke: dict[str, Any] | str, uuid: str | None = None, **extra: Any
-) -> dict[str, Any]:
+def _a(*bloecke: dict[str, Any] | str, uuid: str | None = None, **extra: Any) -> dict[str, Any]:
     """Assistent-Eintrag; ein ``str``-Block ist ein Text-Block."""
     inhalt = [{"type": "text", "text": b} if isinstance(b, str) else b for b in bloecke]
     return {
@@ -97,9 +95,7 @@ def _ergebnis(text: str) -> dict[str, Any]:
         "sessionId": SID,
         "message": {
             "role": "user",
-            "content": [
-                {"type": "tool_result", "tool_use_id": "toolu_1", "content": text}
-            ],
+            "content": [{"type": "tool_result", "tool_use_id": "toolu_1", "content": text}],
         },
     }
 
@@ -111,16 +107,12 @@ class Welt:
         self.heim = heim
         self.fenster = ""
         self.verlauf: str | None = None
-        self.session: aufpasser.SessionInfo | None = aufpasser.SessionInfo(
-            SID, CWD, "idle", 4242
-        )
+        self.session: aufpasser.SessionInfo | None = aufpasser.SessionInfo(SID, CWD, "idle", 4242)
         self.aufrufe: list[list[str]] = []
         monkeypatch.setenv("HOME", str(heim))
         monkeypatch.setattr(aufpasser, "session_finden", self._session_finden)
 
-    def _session_finden(
-        self, pane_pid: int, window_id: str, pane_id: str, heim: Path | None = None
-    ) -> Any:
+    def _session_finden(self, pane_pid: int, window_id: str, pane_id: str, heim: Path | None = None) -> Any:
         assert (pane_pid, window_id, pane_id) == (4242, "@7", "%9")
         return self.session
 
@@ -129,18 +121,12 @@ class Welt:
         if args[0] == "display-message":
             return "4242 @7 %9\n"
         if args[0] == "capture-pane":
-            return (
-                (self.verlauf if self.verlauf is not None else self.fenster)
-                if "-S" in args
-                else self.fenster
-            )
+            return (self.verlauf if self.verlauf is not None else self.fenster) if "-S" in args else self.fenster
         return None
 
     @property
     def quellen(self) -> aufseher_stand.Quellen:
-        return aufseher_stand.Quellen(
-            repo=self.heim, kinder=lambda n: [], tmux=self.tmux
-        )
+        return aufseher_stand.Quellen(repo=self.heim, kinder=lambda n: [], tmux=self.tmux)
 
     def datei(self, sid: str = SID) -> Path:
         ordner = waechter_lauf.transkript_ordner(CWD, self.heim)  # Slug wie Claude Code, auch unter Windows
@@ -175,20 +161,14 @@ def _k2(frage: str) -> bool:
 # --- Nachstellungen: (Fenster, Transkript, uuid der Stelle oder None, Klasse 2?) ----------------
 
 _TABELLE = "\n".join(f"  | Zeile {i} | ok |" for i in range(60))
-_R6H = "\n".join(
-    ("❯ mach weiter\n\n" + LIVE + _TABELLE + "\n\n● Passt das so?" + FUSS).splitlines()[
-        -50:
-    ]
-)
+_R6H = "\n".join(("❯ mach weiter\n\n" + LIVE + _TABELLE + "\n\n● Passt das so?" + FUSS).splitlines()[-50:])
 _F3_BERICHT = "\n".join(f"Bericht Zeile {i} ohne Befund." for i in range(12))
 _DIALOG_D = (
     "> los\n\n● Bash(bash scripts/safe_deploy_vps.sh --skip-ci)\n\n"
     " Bash command\n   bash scripts/safe_deploy_vps.sh --skip-ci\n Do you want to proceed?\n"
     " ❯ 1. Yes\n   2. No\n\n Esc to cancel"
 )
-_PASTE = "Bitte nimm diesen Plan:\n" + "\n".join(
-    f"Schritt {i}: aufräumen" for i in range(12)
-)
+_PASTE = "Bitte nimm diesen Plan:\n" + "\n".join(f"Schritt {i}: aufräumen" for i in range(12))
 
 FAELLE: dict[str, tuple[str, list[dict[str, Any]], str | None, bool]] = {
     # Runde 4 (probe_374_live_luecke): E: reiner Assistent-Text ist keine Handlung (#389).
@@ -241,10 +221,7 @@ FAELLE: dict[str, tuple[str, list[dict[str, Any]], str | None, bool]] = {
     # trägt ihn die Frage selbst (Dialog-Zeilen).
     "D dialog, tool_use noch nicht im transkript": (_DIALOG_D, [_u("los")], None, True),
     "F3 live weit oben, ein block": (
-        "> los\n\n● Ich würde jetzt live deployen.\n"
-        + _F3_BERICHT
-        + "\n\nPasst das so?"
-        + FUSS,
+        "> los\n\n● Ich würde jetzt live deployen.\n" + _F3_BERICHT + "\n\nPasst das so?" + FUSS,
         [
             _u("los"),
             _a(f"Ich würde jetzt live deployen.\n{_F3_BERICHT}\n\nPasst das so?"),
@@ -254,9 +231,7 @@ FAELLE: dict[str, tuple[str, list[dict[str, Any]], str | None, bool]] = {
     ),
     # Runde-3-Fehlalarm bleibt zu: die Stelle steht hinter der Live-Handlung.
     "F2 stelle hinter live-text": (
-        "> deploy live\n\n● Live-Deploy ist durch.\n\n> jetzt Ticket 12\n\n● Tests grün.\n\n"
-        + HARMLOS
-        + FUSS,
+        "> deploy live\n\n● Live-Deploy ist durch.\n\n> jetzt Ticket 12\n\n● Tests grün.\n\n" + HARMLOS + FUSS,
         [
             _u("deploy live"),
             _a(_LIVE_AKTION, "Live-Deploy ist durch.", uuid="s1"),
@@ -267,9 +242,7 @@ FAELLE: dict[str, tuple[str, list[dict[str, Any]], str | None, bool]] = {
         False,
     ),
     "F2b dito mit ❯-eingabezeile": (
-        "❯ deploy live\n\n● Live-Deploy ist durch.\n\n❯ jetzt Ticket 12\n\n● Tests grün.\n\n"
-        + HARMLOS
-        + FUSS,
+        "❯ deploy live\n\n● Live-Deploy ist durch.\n\n❯ jetzt Ticket 12\n\n● Tests grün.\n\n" + HARMLOS + FUSS,
         [
             _u("deploy live"),
             _a(_LIVE_AKTION, "Live-Deploy ist durch.", uuid="s1"),
@@ -281,9 +254,7 @@ FAELLE: dict[str, tuple[str, list[dict[str, Any]], str | None, bool]] = {
     ),
     # Bewusster Einmal-Fehlalarm: ohne gemerkte Stelle zählt das ganze Transkript.
     "F2 ohne stelle (einmal-fehlalarm)": (
-        "> deploy live\n\n● Live-Deploy ist durch.\n\n> jetzt Ticket 12\n\n● Tests grün.\n\n"
-        + HARMLOS
-        + FUSS,
+        "> deploy live\n\n● Live-Deploy ist durch.\n\n> jetzt Ticket 12\n\n● Tests grün.\n\n" + HARMLOS + FUSS,
         [
             _u("deploy live"),
             _a(_LIVE_AKTION, "Live-Deploy ist durch."),
@@ -301,10 +272,7 @@ FAELLE: dict[str, tuple[str, list[dict[str, Any]], str | None, bool]] = {
         True,
     ),
     "2a2 live-text, mindset-stoß aufseher, frage": (
-        "❯ mach weiter\n\n"
-        + LIVE
-        + f"❯ {STUPS_AUFSEHER}\n\n● Soll ich weitermachen?"
-        + FUSS,
+        "❯ mach weiter\n\n" + LIVE + f"❯ {STUPS_AUFSEHER}\n\n● Soll ich weitermachen?" + FUSS,
         [
             _u("mach weiter"),
             _a(_LIVE_AKTION),
@@ -315,9 +283,7 @@ FAELLE: dict[str, tuple[str, list[dict[str, Any]], str | None, bool]] = {
         True,
     ),
     "2a3 live-text, entscheider-antwort, frage": (
-        "❯ mach weiter\n\n"
-        + LIVE
-        + "● Soll ich vorher noch die Tests laufen lassen?\n\n"
+        "❯ mach weiter\n\n" + LIVE + "● Soll ich vorher noch die Tests laufen lassen?\n\n"
         "❯ Ja, erst Tests, dann weiter.\n\n● Tests grün. Passt das so?" + FUSS,
         [
             _u("mach weiter"),
@@ -330,10 +296,7 @@ FAELLE: dict[str, tuple[str, list[dict[str, Any]], str | None, bool]] = {
         True,
     ),
     "2b auswahl ohne nummern ganz links": (
-        "❯ los\n\n"
-        + LIVE
-        + "● Wie weiter?\n❯ Weiter\n  Abbrechen\n\nWelche Option?"
-        + FUSS,
+        "❯ los\n\n" + LIVE + "● Wie weiter?\n❯ Weiter\n  Abbrechen\n\nWelche Option?" + FUSS,
         [_u("los"), _a(_LIVE_AKTION), _a("Wie weiter?\n\nWelche Option?")],
         None,
         True,
@@ -351,10 +314,7 @@ FAELLE: dict[str, tuple[str, list[dict[str, Any]], str | None, bool]] = {
         True,
     ),
     "3 live vor menschen-eingabe, stelle hinter weitergegebener frage": (
-        LIVE
-        + "● Passt das so?\n\n❯ ja, aber nur Staging\n\n● Erledigt. "
-        + HARMLOS
-        + FUSS,
+        LIVE + "● Passt das so?\n\n❯ ja, aber nur Staging\n\n● Erledigt. " + HARMLOS + FUSS,
         [
             _a(_LIVE_AKTION),
             _a("Passt das so?", uuid="s1"),
@@ -366,10 +326,7 @@ FAELLE: dict[str, tuple[str, list[dict[str, Any]], str | None, bool]] = {
     ),
     # Runde 6 (probe_374_runde6).
     "R6a1 live, freier aufseher-text, harmlose frage": (
-        "❯ mach weiter\n\n"
-        + LIVE
-        + "❯ Weiter mit Ticket 13, Tests zuerst.\n\n● Passt das so?"
-        + FUSS,
+        "❯ mach weiter\n\n" + LIVE + "❯ Weiter mit Ticket 13, Tests zuerst.\n\n● Passt das so?" + FUSS,
         [
             _u("mach weiter"),
             _a(_LIVE_AKTION),
@@ -380,10 +337,7 @@ FAELLE: dict[str, tuple[str, list[dict[str, Any]], str | None, bool]] = {
         True,
     ),
     "R6a2 start-prompt, dann live, frage": (
-        "❯ Übernimm Ticket 12 laut Handoff docs/handoffs/HANDOFF_x.md\n\n"
-        + LIVE
-        + "● Passt das so?"
-        + FUSS,
+        "❯ Übernimm Ticket 12 laut Handoff docs/handoffs/HANDOFF_x.md\n\n" + LIVE + "● Passt das so?" + FUSS,
         [
             _u("Übernimm Ticket 12 laut Handoff docs/handoffs/HANDOFF_x.md"),
             _a(_LIVE_AKTION),
@@ -406,10 +360,7 @@ FAELLE: dict[str, tuple[str, list[dict[str, Any]], str | None, bool]] = {
         True,
     ),
     "R6b2 echo, eingerückte frage direkt darunter": (
-        "❯ los\n\n"
-        + LIVE
-        + f"❯ {STUPS_AUFSEHER[:70]}\n  Soll ich live deployen?"
-        + FUSS,
+        "❯ los\n\n" + LIVE + f"❯ {STUPS_AUFSEHER[:70]}\n  Soll ich live deployen?" + FUSS,
         [_u("los"), _a(_LIVE_AKTION), _u(STUPS_AUFSEHER), _a("Soll ich live deployen?")],
         None,
         True,
@@ -430,9 +381,7 @@ FAELLE: dict[str, tuple[str, list[dict[str, Any]], str | None, bool]] = {
         "❯ bitte erst alles auf Staging prüfen und auf keinen Fall\n  live deployen, danke\n\n"
         "● Erledigt. " + HARMLOS + FUSS,
         [
-            _u(
-                "bitte erst alles auf Staging prüfen und auf keinen Fall live deployen, danke"
-            ),
+            _u("bitte erst alles auf Staging prüfen und auf keinen Fall live deployen, danke"),
             _a(f"Erledigt. {HARMLOS}"),
         ],
         None,
@@ -452,8 +401,7 @@ FAELLE: dict[str, tuple[str, list[dict[str, Any]], str | None, bool]] = {
     ),
     # Nicht durchsucht: tool_result, thinking; Neben-Agenten werden mitgelesen.
     "live nur im tool_result": (
-        "> los\n\n● Bash(cat log.txt)\n  ⎿  Deploy live ok\n\n● Fertig. Soll ich weitermachen?"
-        + FUSS,
+        "> los\n\n● Bash(cat log.txt)\n  ⎿  Deploy live ok\n\n● Fertig. Soll ich weitermachen?" + FUSS,
         [
             _u("los"),
             _a(_bash("cat log.txt")),
@@ -495,9 +443,7 @@ def test_nachstellung(welt: Welt, name: str) -> None:
     welt.schreibe(eintraege)
     frage, bis = welt.blick(f"{SID}:{stelle}" if stelle else None)
     assert _k2(frage) is soll_k2, frage
-    eigene = [
-        e for e in eintraege if e["type"] == "assistant" and not e.get("isSidechain")
-    ]
+    eigene = [e for e in eintraege if e["type"] == "assistant" and not e.get("isSidechain")]
     assert bis == f"{SID}:{eigene[-1]['uuid'] if eigene else ''}"
 
 
@@ -522,22 +468,16 @@ def test_stelle_fremder_session_prueft_ab_anfang(welt: Welt) -> None:
     welt.schreibe([_u("los"), _a(_LIVE_AKTION, uuid="s1"), _a("Passt das so?")])
     assert not _k2(welt.blick(f"{SID}:s1")[0])  # gleiche Session: Stelle gilt
     assert _k2(welt.blick("alte-session-id:s1")[0])  # Respawn/Compact: ab Dateianfang
-    assert _k2(
-        welt.blick(f"{SID}:unbekannt")[0]
-    )  # uuid nicht zu finden: ab Dateianfang
+    assert _k2(welt.blick(f"{SID}:unbekannt")[0])  # uuid nicht zu finden: ab Dateianfang
 
 
 # --- Rückfall ----------------------------------------------------------------------------
 
 
-def test_rueckfall_ohne_transkript_prueft_ganzen_verlauf(
-    welt: Welt, caplog: pytest.LogCaptureFixture
-) -> None:
+def test_rueckfall_ohne_transkript_prueft_ganzen_verlauf(welt: Welt, caplog: pytest.LogCaptureFixture) -> None:
     welt.session = None
     welt.fenster = "● Tests grün.\n\n● " + HARMLOS + FUSS
-    welt.verlauf = (
-        LIVE + "\n".join(f"Zeile {i} ok" for i in range(1500)) + "\n" + welt.fenster
-    )
+    welt.verlauf = LIVE + "\n".join(f"Zeile {i} ok" for i in range(1500)) + "\n" + welt.fenster
     with caplog.at_level(logging.WARNING):
         frage, bis = welt.blick(f"{SID}:s1")
     assert _k2(frage) and bis == "fenster"
@@ -650,9 +590,7 @@ def test_weitergabe_rueckt_stelle_weiter_spaetere_harmlose_frage_ist_klasse_3(
     erg = leiter.eingreifen(SKILL, SPEC, TICKET, umwelt=u)
     assert "Entscheider" in erg.zeile, erg.zeile
     assert _grenze() == f"{SID}:f2"
-    klassen = sorted(
-        f["klasse"] for f in briefkasten.offene([TICKET], hauptbaum=welt.heim)
-    )
+    klassen = sorted(f["klasse"] for f in briefkasten.offene([TICKET], hauptbaum=welt.heim))
     assert klassen == ["2", "3"]
 
 
@@ -669,9 +607,7 @@ def test_einwerfen_scheitert_stelle_bleibt_zweiter_takt_sieht_live_noch(
     u.einwurf_kaputt = False
     erg = leiter.eingreifen(SKILL, SPEC, TICKET, umwelt=u)
     assert "braucht den Menschen" in erg.zeile
-    assert [f["klasse"] for f in briefkasten.offene([TICKET], hauptbaum=welt.heim)] == [
-        "2"
-    ]
+    assert [f["klasse"] for f in briefkasten.offene([TICKET], hauptbaum=welt.heim)] == ["2"]
 
 
 # --- Runde 8: Ablösung, Unter-Agenten, kaputte Zeile, Reichweite und Wortgrenzen --------------
@@ -701,8 +637,7 @@ def _harmlose_neue_session(welt: Welt) -> None:
 def test_r8_abloesung_liest_rest_der_alten_datei_ab_der_stelle(welt: Welt) -> None:
     welt.datei(ALT).write_text(
         "".join(
-            json.dumps(e, ensure_ascii=False) + "\n"
-            for e in [_u("los"), _a("Frage?", uuid="alt1"), _a(_LIVE_AKTION)]
+            json.dumps(e, ensure_ascii=False) + "\n" for e in [_u("los"), _a("Frage?", uuid="alt1"), _a(_LIVE_AKTION)]
         ),
         encoding="utf-8",
     )
@@ -730,9 +665,7 @@ def test_r8_abloesung_alte_datei_fehlt_geht_zum_menschen(welt: Welt) -> None:
 
 def test_r8_unter_agent_nach_der_stelle_zaehlt(welt: Welt) -> None:
     welt.fenster = FRAGE_FENSTER
-    welt.schreibe(
-        [_u("los"), _a("Frage?", uuid="s1", timestamp=_zeit(10)), _a("Passt das so?")]
-    )
+    welt.schreibe([_u("los"), _a("Frage?", uuid="s1", timestamp=_zeit(10)), _a("Passt das so?")])
     _unter_agent(
         welt,
         [_a(_bash("ssh clawy-vps 'docker restart app'"), isSidechain=True, timestamp=_zeit(20))],
@@ -742,9 +675,7 @@ def test_r8_unter_agent_nach_der_stelle_zaehlt(welt: Welt) -> None:
 
 def test_r8_unter_agent_vor_der_stelle_zaehlt_nicht(welt: Welt) -> None:
     welt.fenster = FRAGE_FENSTER
-    welt.schreibe(
-        [_u("los"), _a("Frage?", uuid="s1", timestamp=_zeit(30)), _a("Passt das so?")]
-    )
+    welt.schreibe([_u("los"), _a("Frage?", uuid="s1", timestamp=_zeit(30)), _a("Passt das so?")])
     _unter_agent(
         welt,
         [_a(_bash("ssh clawy-vps 'docker restart app'"), isSidechain=True, timestamp=_zeit(20))],
@@ -807,9 +738,7 @@ def test_r8_kaputte_zeile_vor_der_stelle_bleibt_klasse_3(welt: Welt) -> None:
     ],
     ids=["deliver", "reproduziert", "edit-inhalt", "write-inhalt"],
 )
-def test_r8_kein_fehlalarm_durch_wortteil_oder_datei_inhalt(
-    welt: Welt, eintrag: dict[str, Any]
-) -> None:
+def test_r8_kein_fehlalarm_durch_wortteil_oder_datei_inhalt(welt: Welt, eintrag: dict[str, Any]) -> None:
     welt.fenster = FRAGE_FENSTER
     welt.schreibe([_u("los"), eintrag, _a("Passt das so?")])
     assert not _k2(welt.blick()[0])
@@ -824,9 +753,7 @@ def test_r8_kein_fehlalarm_durch_wortteil_oder_datei_inhalt(
     # Variante E (#389): Werkzeug-Handlungen (auch im Unter-Agenten) zählen; reiner Text ist keine Handlung.
     ids=["bash-befehl", "sidechain"],
 )
-def test_r8_live_wort_am_wortanfang_und_im_befehl_zaehlt(
-    welt: Welt, eintrag: dict[str, Any]
-) -> None:
+def test_r8_live_wort_am_wortanfang_und_im_befehl_zaehlt(welt: Welt, eintrag: dict[str, Any]) -> None:
     welt.fenster = FRAGE_FENSTER
     welt.schreibe([_u("los"), eintrag, _a("Passt das so?")])
     assert _k2(welt.blick()[0])
@@ -848,9 +775,7 @@ def test_r8_ganzwort_suche_ist_eigene_funktion_andere_nutzer_bleiben_streng() ->
     ],
     ids=["wortanfang-stamm", "umlaut-satz", "bindestrich"],
 )
-def test_r9_zustand_mit_klasse_2_wort_ist_klasse_2(
-    welt: Welt, eintrag: dict[str, Any]
-) -> None:
+def test_r9_zustand_mit_klasse_2_wort_ist_klasse_2(welt: Welt, eintrag: dict[str, Any]) -> None:
     welt.fenster = FRAGE_FENSTER
     welt.schreibe([_u("los"), eintrag, _a("Passt das so?")])
     # E (#389): reiner Assistent-Text ist keine Handlung → Klasse 3.
@@ -889,9 +814,7 @@ def test_r9_zustand_mit_klasse_2_wort_ist_klasse_2(
     ],
     ids=["merge", "rm", "bash-c-ssh", "golive", "kundenkonto", "env", "mcp", "task"],
 )
-def test_r9_handlung_im_verlauf_ist_klasse_2(
-    welt: Welt, eintrag: dict[str, Any], soll_2: bool
-) -> None:
+def test_r9_handlung_im_verlauf_ist_klasse_2(welt: Welt, eintrag: dict[str, Any], soll_2: bool) -> None:
     """Unbekannte Werkzeug-Handlung → Klasse 2 (mit HANDLUNG_KOPF); Text/Task-Prompt → Klasse 3 (#389)."""
     welt.fenster = FRAGE_FENSTER
     welt.schreibe([_u("los"), eintrag, _a("Passt das so?")])
@@ -956,17 +879,13 @@ def test_r9_rueckfall_prueft_breit_kundenkonto(welt: Welt) -> None:
 
 def test_r10_t7d_ohne_stelle_prueft_die_vorgaengerin_mit(welt: Welt) -> None:
     """T7d: Vorgängerin hat nie gefragt (keine Stelle), Live-Arbeit nur in ihrer Datei."""
-    welt.datei(ALT).write_text(
-        json.dumps(_a(_LIVE_AKTION, uuid="alt1")) + "\n", encoding="utf-8"
-    )
+    welt.datei(ALT).write_text(json.dumps(_a(_LIVE_AKTION, uuid="alt1")) + "\n", encoding="utf-8")
     _harmlose_neue_session(welt)
     assert _k2(welt.blick(None)[0])
 
 
 def test_r10_t7d_ohne_stelle_harmlose_vorgaengerin_bleibt_klasse_3(welt: Welt) -> None:
-    welt.datei(ALT).write_text(
-        json.dumps(_a("Tests grün.", uuid="alt1")) + "\n", encoding="utf-8"
-    )
+    welt.datei(ALT).write_text(json.dumps(_a("Tests grün.", uuid="alt1")) + "\n", encoding="utf-8")
     _harmlose_neue_session(welt)
     assert not _k2(welt.blick(None)[0])
 

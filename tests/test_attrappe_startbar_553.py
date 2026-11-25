@@ -48,7 +48,20 @@ def test_attrappe_startet_als_git_uploadpack_mit_leerzeichen(tmp_path: Path) -> 
     subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(bare)], check=True)
     subprocess.run(["git", "clone", "-q", str(bare), str(klon)], check=True)
     subprocess.run(
-        ["git", "-C", str(klon), "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "a"],
+        [
+            "git",
+            "-C",
+            str(klon),
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "a",
+        ],
         check=True,
     )
     subprocess.run(["git", "-C", str(klon), "push", "-q", "-u", "origin", "main"], check=True)
@@ -69,8 +82,12 @@ def test_attrappe_startet_als_git_uploadpack_mit_leerzeichen(tmp_path: Path) -> 
     )
     subprocess.run(["git", "-C", str(klon), "config", "remote.origin.uploadpack", shell_befehl(wrapper)], check=True)
 
-    erster = subprocess.run(["git", "-C", str(klon), "fetch", "-q", "origin"], capture_output=True, text=True, check=False)
-    zweiter = subprocess.run(["git", "-C", str(klon), "ls-remote", "--heads", "origin"], capture_output=True, text=True, check=False)
+    erster = subprocess.run(
+        ["git", "-C", str(klon), "fetch", "-q", "origin"], capture_output=True, text=True, check=False
+    )
+    zweiter = subprocess.run(
+        ["git", "-C", str(klon), "ls-remote", "--heads", "origin"], capture_output=True, text=True, check=False
+    )
 
     assert erster.returncode == 0, erster.stderr
     assert zweiter.returncode != 0 and "Server weg" in zweiter.stderr

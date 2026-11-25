@@ -236,14 +236,10 @@ def test_echter_tmux_weg_limit_scheitert_und_nach_reset_weiter(tmp_path: Path) -
 
         # Gescheiterter Weckruf steht strukturiert im Log mit Grund (Abnahme 3).
         log_zeilen = [
-            json.loads(z)
-            for z in (zustand / "wecker.jsonl").read_text(encoding="utf-8").splitlines()
-            if z.strip()
+            json.loads(z) for z in (zustand / "wecker.jsonl").read_text(encoding="utf-8").splitlines() if z.strip()
         ]
         assert any(
-            z["name"] == "leit-aufsicht"
-            and z["ereignis"] == "gescheitert"
-            and "weekly limit" in z["grund"].lower()
+            z["name"] == "leit-aufsicht" and z["ereignis"] == "gescheitert" and "weekly limit" in z["grund"].lower()
             for z in log_zeilen
         ), log_zeilen
 
@@ -269,17 +265,13 @@ def test_echter_tmux_weg_limit_scheitert_und_nach_reset_weiter(tmp_path: Path) -
             puffer_s=120.0,
         )
         assert erg3[0].ereignis == "geweckt", erg3[0]
-        assert "Weiterarbeit aufgenommen" in _warte_auf_text(
-            socket, ziel, "Weiterarbeit aufgenommen"
-        )
+        assert "Weiterarbeit aufgenommen" in _warte_auf_text(socket, ziel, "Weiterarbeit aufgenommen")
         assert "WEITER:Weckruf: Stand pruefen und weiterbauen" in spur.read_text(encoding="utf-8")
     finally:
         _tmux(socket, "kill-server", check=False)
 
 
-def test_aufpasser_stoesst_registrierten_wecker_an(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_aufpasser_stoesst_registrierten_wecker_an(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Der Aufpasser-Lauf ruft den externen Wecker mit auf (nach der Deploy-Wache)."""
     from to_spawn import aufpasser, wecker
 
@@ -330,10 +322,7 @@ def test_neue_limit_zeile_trennt_altes_scrollback_von_frischem_limit() -> None:
     from to_spawn import wecker
 
     rahmen = "─" * 30
-    vorher = (
-        f"alte Zeile 1\n95% of your weekly limit · resets 11pm\n"
-        f"{rahmen}\n❯ \n{rahmen}\nStatus alt"
-    )
+    vorher = f"alte Zeile 1\n95% of your weekly limit · resets 11pm\n{rahmen}\n❯ \n{rahmen}\nStatus alt"
     # Nach Reset: Pane scrollt um 1 Zeile nach oben, langer Weckruf bricht um, Antwort ok.
     nachher_ok = (
         f"95% of your weekly limit · resets 11pm\n"
@@ -349,10 +338,7 @@ def test_neue_limit_zeile_trennt_altes_scrollback_von_frischem_limit() -> None:
         f"❯ Langer Weckruf der im schmalen\nPane umgebrochen wird\n"
         f"95% of your weekly limit · resets 11pm\n{rahmen}\n❯ \n{rahmen}"
     )
-    assert (
-        wecker.neue_limit_zeile(vorher, nachher_limit, wecktext)
-        == "95% of your weekly limit · resets 11pm"
-    )
+    assert wecker.neue_limit_zeile(vorher, nachher_limit, wecktext) == "95% of your weekly limit · resets 11pm"
 
 
 def test_limit_ohne_reset_uhrzeit_versucht_nach_takt_erneut(tmp_path: Path) -> None:
@@ -370,9 +356,7 @@ def test_limit_ohne_reset_uhrzeit_versucht_nach_takt_erneut(tmp_path: Path) -> N
             self.getippt: list[str] = []
 
         def pane_lesen(self, ziel: str, *, tmux_socket: str | None = None) -> wecker.PaneStand:
-            return wecker.PaneStand(
-                existiert=True, session_laeuft=True, farbig=self.bild, text=self.bild
-            )
+            return wecker.PaneStand(existiert=True, session_laeuft=True, farbig=self.bild, text=self.bild)
 
         def tippen(self, ziel: str, text: str, *, tmux_socket: str | None = None) -> None:
             self.getippt.append(text)
@@ -381,9 +365,7 @@ def test_limit_ohne_reset_uhrzeit_versucht_nach_takt_erneut(tmp_path: Path) -> N
             else:
                 self.bild = f"❯ {text}\nWeiter geht es\n{leer_bild}"
 
-        def cron_einrichten(
-            self, zustand: Path, *, takt_min: int = 5, trocken: bool = False, python: str = ""
-        ) -> str:
+        def cron_einrichten(self, zustand: Path, *, takt_min: int = 5, trocken: bool = False, python: str = "") -> str:
             return ""
 
     zustand = tmp_path / "wecker"
@@ -404,4 +386,3 @@ def test_limit_ohne_reset_uhrzeit_versucht_nach_takt_erneut(tmp_path: Path) -> N
     erg3 = wecker.durchgang(zustand, werkzeug=kasten, jetzt=1305.0, nachpruef_s=0.0)
     assert erg3[0].ereignis == "geweckt"
     assert len(kasten.getippt) == 2
-

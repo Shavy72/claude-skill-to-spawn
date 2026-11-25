@@ -444,9 +444,7 @@ class LinuxTmuxWecker:
         with _TIPP_SPERRE:
             self._tmux("load-buffer", "-b", puffer, "-", tmux_socket=tmux_socket, eingabe=text)
             try:
-                self._tmux(
-                    "paste-buffer", "-p", "-d", "-b", puffer, "-t", ziel, tmux_socket=tmux_socket
-                )
+                self._tmux("paste-buffer", "-p", "-d", "-b", puffer, "-t", ziel, tmux_socket=tmux_socket)
             except tmux_aufruf.TmuxFehler:
                 try:
                     self._tmux("delete-buffer", "-b", puffer, tmux_socket=tmux_socket)
@@ -551,9 +549,7 @@ def pruefe_auftrag(
                 f"Limit-Reset noch ~{rest_min} min entfernt "
                 f"(bis {_jetzt_iso(auftrag.warten_bis)}; {auftrag.letzter_grund})"
             )
-            return Ergebnis(
-                auftrag.name, auftrag.ziel, "wartet_auf_reset", grund, warten_bis=auftrag.warten_bis
-            )
+            return Ergebnis(auftrag.name, auftrag.ziel, "wartet_auf_reset", grund, warten_bis=auftrag.warten_bis)
         # Pane hat sich verändert (z. B. manuelle Fortsetzung) → Limit-Wartezeit erledigt.
         auftrag.warten_bis = 0.0
         auftrag.limit_hash = ""
@@ -570,13 +566,9 @@ def pruefe_auftrag(
         auftrag.letzter_grund = stand.fehler or f"Fenster/Pane nicht gefunden: {auftrag.ziel}"
         return Ergebnis(auftrag.name, auftrag.ziel, "gescheitert", auftrag.letzter_grund)
     if not stand.session_laeuft:
-        return Ergebnis(
-            auftrag.name, auftrag.ziel, "uebersprungen", "keine laufende Session im Pane (nur Shell)"
-        )
+        return Ergebnis(auftrag.name, auftrag.ziel, "uebersprungen", "keine laufende Session im Pane (nur Shell)")
     if aufpasser.arbeitet_echt(stand.text, stand.status):
-        return Ergebnis(
-            auftrag.name, auftrag.ziel, "uebersprungen", "Session arbeitet oder wartet auf Rückfrage"
-        )
+        return Ergebnis(auftrag.name, auftrag.ziel, "uebersprungen", "Session arbeitet oder wartet auf Rückfrage")
     if not aufpasser.eingabe_leer(stand.farbig):
         return Ergebnis(auftrag.name, auftrag.ziel, "uebersprungen", "Eingabefeld nicht leer")
 
@@ -592,9 +584,7 @@ def pruefe_auftrag(
             auftrag.warten_bis = warten_bis
             auftrag.limit_hash = bild_hash
             grund = f"Limit im Pane erkannt ({sichtbares_limit}) — warte bis Reset"
-            return Ergebnis(
-                auftrag.name, auftrag.ziel, "gescheitert", grund, warten_bis=warten_bis
-            )
+            return Ergebnis(auftrag.name, auftrag.ziel, "gescheitert", grund, warten_bis=warten_bis)
 
     if trocken:
         return Ergebnis(auftrag.name, auftrag.ziel, "trocken", f"würde wecken: {auftrag.text[:80]}")
@@ -768,9 +758,7 @@ def lauf(args: argparse.Namespace) -> int:
         except (ValueError, TypeError, RuntimeError, OSError) as fehler:
             print(f"FEHLER: {fehler}", file=sys.stderr)
             return 1
-        print(
-            f"Wecker gesetzt: {auftrag.name} → {auftrag.ziel} (alle {auftrag.takt_min} min)"
-        )
+        print(f"Wecker gesetzt: {auftrag.name} → {auftrag.ziel} (alle {auftrag.takt_min} min)")
         return 0
     if aktion == "loeschen":
         try:
@@ -802,11 +790,7 @@ def lauf(args: argparse.Namespace) -> int:
         return 0
     if aktion == "einrichten":
         try:
-            print(
-                system_wecker().cron_einrichten(
-                    zustand, takt_min=args.takt_min, trocken=args.trocken
-                )
-            )
+            print(system_wecker().cron_einrichten(zustand, takt_min=args.takt_min, trocken=args.trocken))
             return 0
         except NotImplementedError as fehler:
             print(f"OFFEN: {fehler}", file=sys.stderr)
@@ -817,9 +801,7 @@ def lauf(args: argparse.Namespace) -> int:
     if aktion == "lauf":
         handler = _logging_einrichten(zustand, args.trocken)
         try:
-            ergebnisse = durchgang(
-                zustand, tmux_socket=args.tmux_socket, trocken=args.trocken
-            )
+            ergebnisse = durchgang(zustand, tmux_socket=args.tmux_socket, trocken=args.trocken)
         except NotImplementedError as fehler:
             log.warning("%s", fehler)
             print(f"OFFEN: {fehler}", file=sys.stderr)

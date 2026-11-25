@@ -347,9 +347,7 @@ def _kontext_paket_posten(repo: Path, eintrag: dict[str, Any]) -> list[Posten]:
     return posten
 
 
-def _manifest_auswahl(
-    repo: Path, spec: int | None, ticket: str | None
-) -> tuple[int, str, dict[str, Any]]:
+def _manifest_auswahl(repo: Path, spec: int | None, ticket: str | None) -> tuple[int, str, dict[str, Any]]:
     """Wählt (spec, ticket, eintrag) aus den Repo-Manifesten; ohne Manifest sichere Vorgaben."""
     alle = manifest.alle_manifeste(repo)
     kandidaten: list[tuple[int, dict[str, Any]]] = []
@@ -491,9 +489,7 @@ def _session_transkripte(
         if transkript_wurzel is not None:
             kandidaten.append(transkript_wurzel / f"{sid}.jsonl")
             if cwd_wert:
-                kandidaten.append(
-                    transkript_wurzel / re.sub(r"[^A-Za-z0-9]", "-", cwd_wert) / f"{sid}.jsonl"
-                )
+                kandidaten.append(transkript_wurzel / re.sub(r"[^A-Za-z0-9]", "-", cwd_wert) / f"{sid}.jsonl")
         if cwd_wert:
             kandidaten.append(waechter_lauf.transkript_ordner(Path(cwd_wert), heim=home) / f"{sid}.jsonl")
         for kandidat in kandidaten:
@@ -530,9 +526,7 @@ def grenzen_ermitteln(
     }
 
 
-def _skill_posten(
-    aktive: tuple[str, ...], beschreibungen: dict[str, tuple[str, str]]
-) -> list[Posten]:
+def _skill_posten(aktive: tuple[str, ...], beschreibungen: dict[str, tuple[str, str]]) -> list[Posten]:
     posten: list[Posten] = []
     for name in aktive:
         treffer = beschreibungen.get(name)
@@ -572,11 +566,7 @@ def messen(
         raise EingabeFehler(f"Repo-Ordner existiert nicht: {repo}")
 
     ziel_home = (home if home is not None else Path.home()).expanduser().resolve()
-    ziel_claude = (
-        claude_dir.expanduser().resolve()
-        if claude_dir is not None
-        else (ziel_home / ".claude")
-    )
+    ziel_claude = claude_dir.expanduser().resolve() if claude_dir is not None else (ziel_home / ".claude")
 
     bau = _lade_skript("bau")
     wache = _lade_skript("wache")
@@ -696,9 +686,7 @@ def _gruppen_summen(messung: FensterMessung) -> dict[str, int]:
     return summen
 
 
-def als_dict(
-    repo: Path, ergebnisse: dict[str, FensterMessung], *, top: int = 10
-) -> dict[str, Any]:
+def als_dict(repo: Path, ergebnisse: dict[str, FensterMessung], *, top: int = 10) -> dict[str, Any]:
     """Maschinenlesbare Darstellung für ``--json`` und Tests."""
     ok = all(ergebnisse[typ].bestanden for typ in FENSTERTYPEN)
     fenster: dict[str, Any] = {}
@@ -750,9 +738,7 @@ def als_dict(
     }
 
 
-def formatiere_text(
-    repo: Path, ergebnisse: dict[str, FensterMessung], *, top: int = 10
-) -> str:
+def formatiere_text(repo: Path, ergebnisse: dict[str, FensterMessung], *, top: int = 10) -> str:
     """Übersichtlicher Klartextbericht je Fenstertyp mit den größten Posten."""
     zeilen: list[str] = [f"Start-Last je Fenstertyp ({repo.resolve()})", ""]
     kopf = ("Fenster", "Start-Kontext", "Quelle", "Obergrenze", "Status", "Skills", "MCPs")
@@ -781,7 +767,9 @@ def formatiere_text(
     for typ in FENSTERTYPEN:
         m = ergebnisse[typ]
         zeilen.append("")
-        zeilen.append(f"## {typ} (geschätzt {bau_log.kontext_text(m.geschaetzt_k)}, Obergrenze {bau_log.kontext_text(m.obergrenze_k)})")
+        zeilen.append(
+            f"## {typ} (geschätzt {bau_log.kontext_text(m.geschaetzt_k)}, Obergrenze {bau_log.kontext_text(m.obergrenze_k)})"
+        )
         if m.transkripte:
             for tr in m.transkripte:
                 zeilen.append(

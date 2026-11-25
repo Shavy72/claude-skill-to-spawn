@@ -122,9 +122,7 @@ def test_r1_wache_fenster_wird_fortgesetzt(welt: Welt) -> None:
     assert not _origin_hat_branch(welt, 9001), "Wächter hat keinen Worktree"
 
 
-def test_r1_wache_resume_ohne_transkript_bricht_ab(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_r1_wache_resume_ohne_transkript_bricht_ab(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """``wache.py <S> --resume abc --dry-run`` zeigt ``--resume abc`` und keine
     ``--session-id``; ``waechter_lauf.fahre(session_id=…)`` ohne Transkript endet
     mit 2 und startet nie eine Session."""
@@ -191,11 +189,7 @@ def test_r2_fehlendes_fenster_startet_mit_resume_wenn_id_datei_liegt(
     assert welt.lauf() == 0
     assert "bau 9002" in fenster_namen()
     assert _argv_protokoll(welt) == [f"9002 --resume {sid}"]
-    treffer = [
-        k
-        for k in welt.kommentare()
-        if f"#9002 hatte keine Session, mit Gespräch {sid[:8]}… fortgesetzt." in k
-    ]
+    treffer = [k for k in welt.kommentare() if f"#9002 hatte keine Session, mit Gespräch {sid[:8]}… fortgesetzt." in k]
     assert len(treffer) == 1, welt.kommentare()
 
 
@@ -226,10 +220,7 @@ def test_r2_fehlendes_wache_fenster_mit_resume(welt: Welt) -> None:
     assert welt.lauf("--wache-vorlage", _wache_protokoll_vorlage(welt)) == 0
     assert WACHE in fenster_namen()
     assert _argv_protokoll(welt) == [f"{SPEC} --resume {sid}"]
-    assert any(
-        f"Aufseher-Fenster fehlte, mit Gespräch {sid[:8]}… fortgesetzt." in k
-        for k in welt.kommentare()
-    )
+    assert any(f"Aufseher-Fenster fehlte, mit Gespräch {sid[:8]}… fortgesetzt." in k for k in welt.kommentare())
 
 
 def test_r2_pane_nur_shell_kein_send_keys_sondern_fortsetzen(welt: Welt) -> None:
@@ -262,11 +253,7 @@ def test_r2_pane_nur_shell_ohne_id_datei_braucht_david(welt: Welt) -> None:
     assert pane_text("bau 9002") == text_vorher, "nichts getippt"
     assert _argv_protokoll(welt) == []
     assert welt.eintrag("bau 9002")["stufe"] == 3
-    treffer = [
-        k
-        for k in welt.kommentare()
-        if "Session beendet, keine Gesprächs-ID — braucht den Menschen" in k
-    ]
+    treffer = [k for k in welt.kommentare() if "Session beendet, keine Gesprächs-ID — braucht den Menschen" in k]
     assert len(treffer) == 1, welt.kommentare()
 
 
@@ -296,9 +283,7 @@ def test_r2_bau_schreibt_sessions_datei(repo_bau: Path, tmp_path: Path) -> None:
     assert daten["runde"] == 1 and daten["zeit"]
 
 
-def test_r2_wache_schreibt_sessions_datei(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_r2_wache_schreibt_sessions_datei(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """``waechter_lauf.fahre`` legt ``.to-spawn/sessions/wache-<S>.json`` an."""
     arbeit = tmp_path / "repo"
     arbeit.mkdir()
@@ -334,9 +319,7 @@ def test_r3_zwei_starts_am_selben_tag_zwei_kommentare(welt: Welt) -> None:
     tmux("kill-window", "-t", fenster_ziel("bau 9002"))
     time.sleep(0.5)
     assert welt.lauf() == 0
-    treffer = [
-        k for k in welt.kommentare() if "#9002 hatte keine Session, gestartet." in k
-    ]
+    treffer = [k for k in welt.kommentare() if "#9002 hatte keine Session, gestartet." in k]
     assert len(treffer) == 2, welt.kommentare()
 
 
@@ -351,14 +334,10 @@ def test_r4_deploy_startet_waehrend_verzoegerung_kein_eingriff(welt: Welt) -> No
     _fenster(welt, "bau 9002", "cat")
     _still_seit(welt, "bau 9002", 100, stufe=0)
     gestartet: list[subprocess.Popen[bytes]] = []
-    zuender = threading.Timer(
-        1.5, lambda: gestartet.append(subprocess.Popen([str(skript)]))
-    )
+    zuender = threading.Timer(1.5, lambda: gestartet.append(subprocess.Popen([str(skript)])))
     zuender.start()
     try:
-        e = _einstellungen(
-            welt, verzoegerung_s=4.0, deploy_muster=name.replace(".", r"\.")
-        )
+        e = _einstellungen(welt, verzoegerung_s=4.0, deploy_muster=name.replace(".", r"\."))
         assert aufpasser.lauf_mit_einstellungen(e) == 0
     finally:
         zuender.cancel()
@@ -396,9 +375,7 @@ def test_r5_drei_stupser_in_24h_dann_braucht_david(welt: Welt) -> None:
     assert welt.lauf() == 0
     assert pane_text("bau 9002") == text_vorher, "kein vierter Anstupser"
     assert welt.eintrag("bau 9002")["stufe"] == 3
-    erwartet = (
-        "„bau 9002“ wurde 3× angestupst und wird immer wieder still — braucht den Menschen."
-    )
+    erwartet = "„bau 9002“ wurde 3× angestupst und wird immer wieder still — braucht den Menschen."
     assert [k for k in welt.kommentare() if erwartet in k], welt.kommentare()
     assert welt.lauf() == 0
     assert len([k for k in welt.kommentare() if erwartet in k]) == 1
@@ -422,9 +399,7 @@ def test_r5_alte_stupser_zaehlen_nicht(welt: Welt) -> None:
 # --- R6: Start-Nachweis ---------------------------------------------------------
 
 
-def test_r6_start_attrappe_endet_sofort_start_fehlgeschlagen(
-    welt: Welt, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_r6_start_attrappe_endet_sofort_start_fehlgeschlagen(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
     # R6 prüft bewusst mit der vollen Produkt-Frist (Attrappe endet sofort → schnell).
     monkeypatch.setattr(aufpasser, "START_NACHWEIS_S", 5.0)
     vorlage = _bau_claude_vorlage(welt, BAU_SOFORT_WEG)
@@ -432,16 +407,11 @@ def test_r6_start_attrappe_endet_sofort_start_fehlgeschlagen(
     assert _argv_protokoll(welt) == ["9002"]
     kommentare = welt.kommentare()
     assert not any("gestartet." in k for k in kommentare), kommentare
-    assert any(
-        "#9002: Start fehlgeschlagen (Fenster gleich wieder weg)" in k
-        for k in kommentare
-    ), kommentare
+    assert any("#9002: Start fehlgeschlagen (Fenster gleich wieder weg)" in k for k in kommentare), kommentare
     assert len(welt.stand()["starts"]["9002"]) == 1
 
 
-def test_r6_start_nachweis_prueft_volle_frist(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_r6_start_nachweis_prueft_volle_frist(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """#353: Produkt-Vorgabe ``START_NACHWEIS_S`` bleibt 5,0 s; ``_start_nachweisen`` prüft
     über die gesamte Frist statt nach dem ersten Treffer abzubrechen."""
     assert aufpasser.START_NACHWEIS_S == 5.0
@@ -453,9 +423,7 @@ def test_r6_start_nachweis_prueft_volle_frist(
     monkeypatch.setattr(aufpasser.time, "monotonic", lambda: uhr[0])
     monkeypatch.setattr(aufpasser.time, "sleep", _schlafen)
     monkeypatch.setattr(aufpasser, "_prozess_lebt", lambda _pid: True)
-    instanz = aufpasser.Aufpasser(
-        aufpasser.Einstellungen(zustand=tmp_path / "zustand")
-    )
+    instanz = aufpasser.Aufpasser(aufpasser.Einstellungen(zustand=tmp_path / "zustand"))
 
     # Verschwindet das Fenster nach 3 s (vor 5 s) → Nachweis scheitert.
     abrufe = [0]
@@ -470,9 +438,7 @@ def test_r6_start_nachweis_prueft_volle_frist(
 
     # Bleibt das Fenster über die vollen 5 s am Leben → Nachweis erfolgreich.
     uhr[0] = 0.0
-    monkeypatch.setattr(
-        instanz, "tmux", lambda *_a, **_kw: "bau 9002\t12345\t0\n"
-    )
+    monkeypatch.setattr(instanz, "tmux", lambda *_a, **_kw: "bau 9002\t12345\t0\n")
     assert instanz._start_nachweisen("spec-9001", "bau 9002") is True
     assert uhr[0] >= aufpasser.START_NACHWEIS_S
 
@@ -562,11 +528,7 @@ def test_d2_shell_pane_kein_fortsetzen_wenn_gespraech_woanders_lebt(
     assert _argv_protokoll(welt) == []
     assert not _origin_hat_branch(welt, 9002), "keine Sicherung ohne Fortsetzen"
     assert welt.eintrag("bau 9002")["stufe"] == 3
-    treffer = [
-        k
-        for k in welt.kommentare()
-        if "Session beendet, keine Gesprächs-ID — braucht den Menschen" in k
-    ]
+    treffer = [k for k in welt.kommentare() if "Session beendet, keine Gesprächs-ID — braucht den Menschen" in k]
     assert len(treffer) == 1, welt.kommentare()
 
 

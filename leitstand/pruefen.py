@@ -85,7 +85,9 @@ def handy_tests(page) -> dict:
         " const knoepfe = [...document.querySelectorAll('#detail button, #detail a')].map(b => b.getBoundingClientRect().height);"
         " return { unten: Math.round(d.bottom), breite: Math.round(d.width), zuOben: Math.round(z.top), zuH: Math.round(z.height), zuW: Math.round(z.width), minTap: Math.min(...knoepfe) }; }"
     )
-    tests["blatt_unten_volle_breite"] = geo["unten"] == page.viewport_size["height"] and geo["breite"] == page.viewport_size["width"]
+    tests["blatt_unten_volle_breite"] = (
+        geo["unten"] == page.viewport_size["height"] and geo["breite"] == page.viewport_size["width"]
+    )
     tests["schliessen_erreichbar_44"] = 0 <= geo["zuOben"] < page.viewport_size["height"] and geo["zuH"] >= 44
     tests["tap_ziele_44"] = geo["minTap"] >= 44
     page.screenshot(path=str(ORDNER / "m-390-blatt.png"))
@@ -113,7 +115,9 @@ def handy_tests(page) -> dict:
 
 def handy_lauf(pw, name: str, breite: int, hoehe: int, schema: str, fehler: list[str], funktion: bool) -> dict:
     browser = pw.chromium.launch()
-    ctx = browser.new_context(viewport={"width": breite, "height": hoehe}, color_scheme=schema, has_touch=True, device_scale_factor=2)
+    ctx = browser.new_context(
+        viewport={"width": breite, "height": hoehe}, color_scheme=schema, has_touch=True, device_scale_factor=2
+    )
     page = ctx.new_page()
     page.on("console", lambda m: fehler.append(f"{name} console: {m.text}") if m.type == "error" else None)
     page.on("pageerror", lambda e: fehler.append(f"{name} pageerror: {e}"))

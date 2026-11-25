@@ -34,9 +34,7 @@ _LINKS = [
 ]
 
 
-def _lauf(
-    *args: str, env: dict[str, str] | None = None
-) -> subprocess.CompletedProcess[str]:
+def _lauf(*args: str, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, str(SKRIPTE / "abschluss_paket.py"), *args],
         capture_output=True,
@@ -115,9 +113,7 @@ def repo(tmp_path: Path) -> Path:
         },
     }
     (r / "docs" / "agents" / "manifests").mkdir(parents=True)
-    (r / "docs" / "agents" / "manifests" / f"spec-{SPEC}.json").write_text(
-        json.dumps(manifest), encoding="utf-8"
-    )
+    (r / "docs" / "agents" / "manifests" / f"spec-{SPEC}.json").write_text(json.dumps(manifest), encoding="utf-8")
     auftrag = _lauf(
         "rundschau-auftrag",
         str(SPEC),
@@ -226,9 +222,7 @@ def test_selbstpruefung_planen_schreibt_auftrag_mit_klickschritten_und_testdaten
     assert doppelt.returncode == 4, doppelt.stdout + doppelt.stderr
 
 
-def test_selbstpruefung_planen_passwort_schutz_und_staging_sanitierung(
-    repo: Path, tmp_path: Path
-) -> None:
+def test_selbstpruefung_planen_passwort_schutz_und_staging_sanitierung(repo: Path, tmp_path: Path) -> None:
     rot = _lauf(
         "selbstpruefung",
         "planen",
@@ -250,16 +244,12 @@ def test_selbstpruefung_planen_passwort_schutz_und_staging_sanitierung(
     )
     ok = _lauf("selbstpruefung", "planen", str(SPEC), "--repo", str(repo), env=_env(tmp_path))
     assert ok.returncode == 0, ok.stdout + ok.stderr
-    auftrag = (repo / ".to-spawn" / "selbstpruefung" / str(SPEC) / "auftrag.md").read_text(
-        encoding="utf-8"
-    )
+    auftrag = (repo / ".to-spawn" / "selbstpruefung" / str(SPEC) / "auftrag.md").read_text(encoding="utf-8")
     assert "https://stage.example/app" in auftrag
     assert "geheim123" not in auftrag
 
 
-def test_selbstpruefung_sammeln_fehlt_kaputt_gruen_und_passt_nicht(
-    repo: Path, tmp_path: Path
-) -> None:
+def test_selbstpruefung_sammeln_fehlt_kaputt_gruen_und_passt_nicht(repo: Path, tmp_path: Path) -> None:
     env = _env(tmp_path)
     assert _lauf("selbstpruefung", "planen", str(SPEC), "--repo", str(repo), env=env).returncode == 0
     # 1. Ergebnis fehlt → Exit 3, Sperre wird freigegeben.
@@ -300,9 +290,7 @@ def test_selbstpruefung_sammeln_fehlt_kaputt_gruen_und_passt_nicht(
     assert _lauf("selbstpruefung", "planen", str(SPEC), "--repo", str(repo), env=env).returncode == 4
 
 
-def test_ablegen_verweigert_ohne_ergebnis_und_zeigt_passt_nicht_im_paket(
-    repo: Path, tmp_path: Path
-) -> None:
+def test_ablegen_verweigert_ohne_ergebnis_und_zeigt_passt_nicht_im_paket(repo: Path, tmp_path: Path) -> None:
     env = _env(tmp_path)
     deck = f"docs/agents/rundschau_{SPEC}.html"
     # 1. Ohne Ergebnis-Datei bei gesetzter staging.url → Exit 4, nichts abgelegt.
@@ -376,9 +364,7 @@ def test_ablegen_verweigert_ohne_ergebnis_und_zeigt_passt_nicht_im_paket(
     assert live.returncode == 0, live.stdout + live.stderr
 
 
-def test_ohne_staging_url_meldet_klar_und_paket_nennt_grund(
-    repo: Path, tmp_path: Path
-) -> None:
+def test_ohne_staging_url_meldet_klar_und_paket_nennt_grund(repo: Path, tmp_path: Path) -> None:
     env = _env(tmp_path)
     (repo / ".to-spawn" / "config.json").write_text(json.dumps({}), encoding="utf-8")
 
@@ -428,17 +414,13 @@ def test_ohne_staging_url_meldet_klar_und_paket_nennt_grund(
     assert "staging.ohne" in ohne.stdout
 
 
-def test_selbstpruefung_fallback_auf_rundschau_auftrag_und_testdaten_warnung(
-    repo: Path, tmp_path: Path
-) -> None:
+def test_selbstpruefung_fallback_auf_rundschau_auftrag_und_testdaten_warnung(repo: Path, tmp_path: Path) -> None:
     env = _env(tmp_path)
     # Ohne Rundschau-HTML nutzt planen den Rundschau-Auftrag als Quelle.
     (repo / "docs" / "agents" / f"rundschau_{SPEC}.html").unlink()
     plan = _lauf("selbstpruefung", "planen", str(SPEC), "--repo", str(repo), env=env)
     assert plan.returncode == 0, plan.stdout + plan.stderr
-    auftrag = (repo / ".to-spawn" / "selbstpruefung" / str(SPEC) / "auftrag.md").read_text(
-        encoding="utf-8"
-    )
+    auftrag = (repo / ".to-spawn" / "selbstpruefung" / str(SPEC) / "auftrag.md").read_text(encoding="utf-8")
     assert "#10" in auftrag and "https://stage.example/filter" in auftrag
 
     # Kaputtes ergebnis.json blockiert ablegen mit Exit 4.
@@ -458,13 +440,9 @@ def test_selbstpruefung_fallback_auf_rundschau_auftrag_und_testdaten_warnung(
     assert "Selbstprüfung ungültig" in kaputt_ablage.stdout
 
     # testdaten_bereinigt: false erscheint als Warnung im Marker und im Paket.
-    _ergebnis_pfad(repo).write_text(
-        json.dumps(_ergebnis_daten(mit_fehler=False, bereinigt=False)), encoding="utf-8"
-    )
+    _ergebnis_pfad(repo).write_text(json.dumps(_ergebnis_daten(mit_fehler=False, bereinigt=False)), encoding="utf-8")
     assert _lauf("selbstpruefung", "sammeln", str(SPEC), "--repo", str(repo), env=env).returncode == 0
-    marker_inhalt = (repo / "docs" / "agents" / f"selbstpruefung_{SPEC}.md").read_text(
-        encoding="utf-8"
-    )
+    marker_inhalt = (repo / "docs" / "agents" / f"selbstpruefung_{SPEC}.md").read_text(encoding="utf-8")
     assert "nicht vollständig bereinigt" in marker_inhalt
     assert (
         _lauf(
@@ -495,9 +473,7 @@ def test_selbstpruefung_fallback_auf_rundschau_auftrag_und_testdaten_warnung(
     assert "nicht vollständig bereinigt" in probe.stdout
 
 
-def test_pfade_agenten_gilt_auch_fuer_selbstpruefung_marker(
-    repo: Path, tmp_path: Path
-) -> None:
+def test_pfade_agenten_gilt_auch_fuer_selbstpruefung_marker(repo: Path, tmp_path: Path) -> None:
     env = _env(tmp_path)
     (repo / ".to-spawn" / "config.json").write_text(
         json.dumps(

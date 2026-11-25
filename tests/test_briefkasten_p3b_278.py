@@ -205,7 +205,12 @@ def test_wache_traegt_aufseher_text_wortgleich(befugnis: ModuleType) -> None:
 
 @pytest.mark.parametrize(
     "literal",
-    ["nie selbst freigeben, geht an den Nutzer", "Live, Kosten, Konten echter Personen", "VERBOTEN: die Sperre", "script -qc"],
+    [
+        "nie selbst freigeben, geht an den Nutzer",
+        "Live, Kosten, Konten echter Personen",
+        "VERBOTEN: die Sperre",
+        "script -qc",
+    ],
 )
 def test_pflicht_saetze_nur_in_befugnis(befugnis: ModuleType, literal: str) -> None:
     for datei in (SKILL / "skripte" / "wache.py", SKILL / "to_spawn" / "waechter_takt.py"):
@@ -231,7 +236,9 @@ def test_cli_offene_zeigt_frage(briefkasten: ModuleType, tmp_path: Path) -> None
     assert leer.returncode == 0 and leer.stdout == ""
 
 
-def test_uebergangsregel_klasse_2_aus_einer_quelle(befugnis: ModuleType, briefkasten: ModuleType, tmp_path: Path) -> None:
+def test_uebergangsregel_klasse_2_aus_einer_quelle(
+    befugnis: ModuleType, briefkasten: ModuleType, tmp_path: Path
+) -> None:
     import importlib.util
 
     from to_spawn import waechter_takt

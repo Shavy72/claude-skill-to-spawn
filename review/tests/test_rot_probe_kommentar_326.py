@@ -39,9 +39,7 @@ def test_nur_kommentar_im_code_ist_nicht_beurteilbar(repo: Path) -> None:
     )
     daten = probe(repo, "capo.py", "tests/test_gh_letzter.py")
     assert daten["befunde"] == [], daten
-    assert (
-        "nicht beurteilbar: Diff ändert den geprüften Code nicht" in daten["hinweis"]
-    ), daten
+    assert "nicht beurteilbar: Diff ändert den geprüften Code nicht" in daten["hinweis"], daten
 
 
 def test_gegenprobe_codeaenderung_mit_gruenem_test_bleibt_befund(repo: Path) -> None:
@@ -49,9 +47,7 @@ def test_gegenprobe_codeaenderung_mit_gruenem_test_bleibt_befund(repo: Path) -> 
     basis_anlegen(repo)
     (repo / "capo.py").write_text('"""Capo."""\n\nX = 2\n', encoding="utf-8")
     daten = probe(repo, "capo.py", "tests/test_gh_letzter.py")
-    assert [(b["datei"], b["schwere"]) for b in daten["befunde"]] == [
-        ("tests/test_gh_letzter.py", "hoch")
-    ], daten
+    assert [(b["datei"], b["schwere"]) for b in daten["befunde"]] == [("tests/test_gh_letzter.py", "hoch")], daten
 
 
 def test_eine_code_datei_nur_kommentar_andere_mit_codeaenderung_bleibt_befund(
@@ -59,14 +55,10 @@ def test_eine_code_datei_nur_kommentar_andere_mit_codeaenderung_bleibt_befund(
 ) -> None:
     """Zwei Code-Dateien: eine nur Kommentar, eine echt geändert → harter Befund (any, nicht all)."""
     basis_anlegen(repo)
-    (repo / "capo.py").write_text(
-        '"""Capo."""\n\n# nur Kommentar\nX = 1\n', encoding="utf-8"
-    )
+    (repo / "capo.py").write_text('"""Capo."""\n\n# nur Kommentar\nX = 1\n', encoding="utf-8")
     (repo / "gh.py").write_text("def letzter():\n    return 'xyz'\n", encoding="utf-8")
     daten = probe(repo, "capo.py", "gh.py", "tests/test_gh_letzter.py")
-    assert [(b["datei"], b["schwere"]) for b in daten["befunde"]] == [
-        ("tests/test_gh_letzter.py", "hoch")
-    ], daten
+    assert [(b["datei"], b["schwere"]) for b in daten["befunde"]] == [("tests/test_gh_letzter.py", "hoch")], daten
     assert "nicht beurteilbar" not in daten["hinweis"], daten
 
 
@@ -75,16 +67,12 @@ def test_eine_code_datei_nur_kommentar_andere_mit_codeaenderung_bleibt_befund(
     [("neu.py", "X = 1\n"), ("capo.py", "def kaputt(:\n")],
     ids=["neue-datei", "syntaxfehler"],
 )
-def test_vorsichtiger_rueckfall_zaehlt_als_codeaenderung(
-    repo: Path, datei: str, inhalt: str
-) -> None:
+def test_vorsichtiger_rueckfall_zaehlt_als_codeaenderung(repo: Path, datei: str, inhalt: str) -> None:
     """Datei fehlt in base oder ist nicht parsebar → gilt als ausführbar geändert, Befund bleibt."""
     basis_anlegen(repo)
     (repo / datei).write_text(inhalt, encoding="utf-8")
     daten = probe(repo, datei, "tests/test_gh_letzter.py")
-    assert [(b["datei"], b["schwere"]) for b in daten["befunde"]] == [
-        ("tests/test_gh_letzter.py", "hoch")
-    ], daten
+    assert [(b["datei"], b["schwere"]) for b in daten["befunde"]] == [("tests/test_gh_letzter.py", "hoch")], daten
     assert "nicht beurteilbar" not in daten["hinweis"], daten
 
 

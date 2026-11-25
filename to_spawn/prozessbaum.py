@@ -343,9 +343,7 @@ def gruppe_beenden(
     except ProcessLookupError:
         pass
     except OSError as fehler:
-        log.warning(
-            "Prozessgruppe %d nicht beendet: %s — Rückfall auf Prozessbaum", prozess.pid, fehler
-        )
+        log.warning("Prozessgruppe %d nicht beendet: %s — Rückfall auf Prozessbaum", prozess.pid, fehler)
         try:
             pids = baum(prozess.pid)
         except OSError:

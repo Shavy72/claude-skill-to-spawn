@@ -101,9 +101,7 @@ def takt_welt(tmp_path: Path) -> dict[str, Any]:
     _git(repo, "init", "-q", "-b", "master")
     _git(repo, "add", "docs")
     _git(repo, "commit", "-q", "-m", "bau-logs #293")
-    _git(
-        repo, "remote", "add", "origin", (tmp_path / "fern" / "o" / "r.git").as_posix()
-    )
+    _git(repo, "remote", "add", "origin", (tmp_path / "fern" / "o" / "r.git").as_posix())
     _git(repo, "update-ref", "refs/remotes/origin/master", "HEAD")
     env = dict(os.environ)
     env.update(
@@ -137,9 +135,7 @@ def _label_297(takt_welt: dict[str, Any]) -> None:
 def _merker_setzen(takt_welt: dict[str, Any], merker: dict[str, Any]) -> None:
     ordner = Path(takt_welt["env"]["TO_SPAWN_LEITSTAND_ORDNER"])
     ordner.mkdir(parents=True, exist_ok=True)
-    (ordner / "zustand.json").write_text(
-        json.dumps({"takt": {"293": merker}}), encoding="utf-8"
-    )
+    (ordner / "zustand.json").write_text(json.dumps({"takt": {"293": merker}}), encoding="utf-8")
 
 
 def test_takt_erster_lauf_frage_am_fertig_gebauten_ticket_geht_nicht_an_claude(
@@ -180,9 +176,7 @@ def test_takt_fertig_gebaut_ist_nicht_neu_geschlossen(
         json.dumps(["nur Text"]),
     ],
 )
-def test_takt_kaputte_zustands_abfrage_kein_absturz_kein_alarm(
-    takt_welt: dict[str, Any], inhalt: str | None
-) -> None:
+def test_takt_kaputte_zustands_abfrage_kein_absturz_kein_alarm(takt_welt: dict[str, Any], inhalt: str | None) -> None:
     datei: Path = takt_welt["aufz"]
     if inhalt is None:
         datei.unlink()
@@ -203,9 +197,7 @@ def test_capo_kaputte_zustands_abfrage_kein_absturz(tmp_path: Path) -> None:
     stub = tmp_path / "gh_kaputt.py"
     stub.write_text('import sys\nprint(\'[{"title": "x"}]\')\n', encoding="utf-8")
     env = {**os.environ, "TO_SPAWN_GH_STUB": str(stub)}
-    code = (
-        "from to_spawn import capo\nassert capo.kinder('o/r', 1) is None\nprint('ok')\n"
-    )
+    code = "from to_spawn import capo\nassert capo.kinder('o/r', 1) is None\nprint('ok')\n"
     lauf = subprocess.run(
         [sys.executable, "-c", code],
         cwd=str(Path(__file__).resolve().parent.parent),
@@ -236,9 +228,7 @@ def _schliessen_297(takt_welt: dict[str, Any], grund: str) -> None:
     ("grund", "meldet"),
     [("duplicate", False), ("not_planned", False), ("completed", True)],
 )
-def test_takt_neu_geschlossen_nur_bei_echtem_schluss(
-    takt_welt: dict[str, Any], grund: str, meldet: bool
-) -> None:
+def test_takt_neu_geschlossen_nur_bei_echtem_schluss(takt_welt: dict[str, Any], grund: str, meldet: bool) -> None:
     """Verworfen (nicht geplant, Duplikat) hat keine Belegseite — keine Meldung."""
     _schliessen_297(takt_welt, grund)
     alt = {"zeilen": [], "zu": [296, 298, 299, 300], "verstoesse": [], "fertig": False}
@@ -278,7 +268,7 @@ def test_capo_checkpoint_blocker_fertig_gebaut_gibt_frei(
 def test_capo_kinder_ohne_liste_ist_none(tmp_path: Path) -> None:
     """Zweiter Fall: GitHub-Fehlerobjekt statt Liste → ``None``, kein Absturz."""
     stub = tmp_path / "gh_fehler.py"
-    stub.write_text("print('{\"message\": \"Not Found\"}')\n", encoding="utf-8")
+    stub.write_text('print(\'{"message": "Not Found"}\')\n', encoding="utf-8")
     env = {**os.environ, "TO_SPAWN_GH_STUB": str(stub)}
     code = "from to_spawn import capo\nassert capo.kinder('o/r', 1) is None\nprint('ok')\n"
     lauf = subprocess.run(

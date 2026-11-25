@@ -299,8 +299,7 @@ def _fern_antwort(name: str, stdout: str) -> tuple[dict[str, set[str]], list[Ort
         if not isinstance(tickets, dict) or not all(isinstance(z, list) for z in tickets.values()):
             raise TypeError("'tickets' ist kein dict aus Listen")
         if not isinstance(orte, list) or not all(
-            isinstance(o, dict) and isinstance(o.get("text"), str) and isinstance(o.get("rot"), bool)
-            for o in orte
+            isinstance(o, dict) and isinstance(o.get("text"), str) and isinstance(o.get("rot"), bool) for o in orte
         ):
             raise TypeError("'orte' ist keine Liste aus {text, rot}")
     except (ValueError, KeyError, TypeError) as fehler:
@@ -317,9 +316,7 @@ def _fern_antwort(name: str, stdout: str) -> tuple[dict[str, set[str]], list[Ort
     return logs, ergebnis
 
 
-def _bau_server(
-    repo: Path, spec: int, tickets: list[str], ohne: bool
-) -> tuple[dict[str, set[str]], list[Ort]]:
+def _bau_server(repo: Path, spec: int, tickets: list[str], ohne: bool) -> tuple[dict[str, set[str]], list[Ort]]:
     """Logs vom Bau-Server: lokal gelesen, per SSH geholt oder mit Grund ausgelassen — nie Absturz."""
     if ohne:
         return {}, [("Bau-Server: ausgelassen (--ohne-bau-server)", True)]
@@ -359,9 +356,7 @@ def zaehle_namen(logs: dict[str, list[dict[str, Any]]]) -> list[tuple[str, list[
             regel = z.get("regel")
             if z.get("typ") == "vorfall" and isinstance(regel, str) and regel.strip():
                 namen.setdefault(regel.strip(), set()).add(ticket)
-    return sorted(
-        ((n, sorted(t, key=_nr)) for n, t in namen.items()), key=lambda p: (-len(p[1]), p[0])
-    )
+    return sorted(((n, sorted(t, key=_nr)) for n, t in namen.items()), key=lambda p: (-len(p[1]), p[0]))
 
 
 def _nr(ticket: str) -> tuple[int, str]:
@@ -386,7 +381,10 @@ def datenlage(tickets: list[str], logs: dict[str, list[dict[str, Any]]], orte: l
 def auftrag_text(spec: int, tickets: list[str], logs: dict[str, list[dict[str, Any]]], kopf: list[str]) -> str:
     teile = [*kopf, "", f"# Rückblick Spec #{spec}", "", "## Zählung feste Namen", ""]
     if UNVOLLSTAENDIG in kopf:
-        teile += [f"{UNVOLLSTAENDIG}: nicht alle Ablageorte gelesen (siehe Kopf) — Zählung kann Vorfälle übersehen.", ""]
+        teile += [
+            f"{UNVOLLSTAENDIG}: nicht alle Ablageorte gelesen (siehe Kopf) — Zählung kann Vorfälle übersehen.",
+            "",
+        ]
     if not any(logs.get(t) for t in tickets):
         teile.append("Keine Auswertung möglich: kein einziges Bau-Log gefunden.")
     else:
@@ -527,9 +525,7 @@ def _pruefe_kandidat(kandidat: object, nr: int) -> dict[str, Any]:
         raise Fehler(f"Kandidat {nr}: 'weg' muss 1–4 sein, ist {weg!r}")
     tickets = kandidat.get("tickets")
     nummern = (
-        [str(t).lstrip("#") for t in tickets if type(t) in (int, str)]
-        if isinstance(tickets, list) and tickets
-        else []
+        [str(t).lstrip("#") for t in tickets if type(t) in (int, str)] if isinstance(tickets, list) and tickets else []
     )
     if not nummern or len(nummern) != len(tickets) or not all(n.isdigit() for n in nummern):
         raise Fehler(f"Kandidat {nr}: 'tickets' ist keine nicht leere Liste aus Ticketnummern, ist {tickets!r}")

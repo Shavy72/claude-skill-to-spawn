@@ -15,9 +15,7 @@ from test_hooks import Umgebung, repo, u  # noqa: F401, E402
 import stop  # noqa: E402
 
 
-def test_nach_repo_meldet_keine_fremde_datei_aus_unterordner_bei_wurzeldatei(
-    u: Umgebung, repo: Path
-) -> None:
+def test_nach_repo_meldet_keine_fremde_datei_aus_unterordner_bei_wurzeldatei(u: Umgebung, repo: Path) -> None:
     (repo / "README.md").write_text("neu\n", encoding="utf-8")
     (repo / "andere").mkdir()
     (repo / "andere" / "x.py").write_text("y = 1\n", encoding="utf-8")

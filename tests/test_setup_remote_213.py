@@ -55,8 +55,6 @@ def test_weg_remote_control_standard_an(repo: Path) -> None:
 def test_weg_remote_control_aus_laut_konfig(repo: Path) -> None:
     datei = repo / ".to-spawn" / "config.json"
     datei.parent.mkdir(parents=True)
-    datei.write_text(
-        json.dumps({"waechter": {"remote_control": False}}), encoding="utf-8"
-    )
+    datei.write_text(json.dumps({"waechter": {"remote_control": False}}), encoding="utf-8")
     zeile = _remote_zeile(_zeigen(repo))
     assert ": aus" in zeile

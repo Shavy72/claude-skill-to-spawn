@@ -114,9 +114,7 @@ def _lauf(repo: Path, pruefen: bool = False) -> tuple[int, str]:
     return code, ausgabe.getvalue()
 
 
-def test_frisches_repo_legt_beide_labels_idempotent_an(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_frisches_repo_legt_beide_labels_idempotent_an(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """#404 Abnahme: frisches Repo ohne Labels → beide entstehen, zweiter Lauf ändert nichts."""
     repo, zustand_datei = _frisches_repo(tmp_path, monkeypatch)
 
@@ -150,9 +148,7 @@ def test_vorhandenes_checkpoint_label_bleibt_unveraendert_ready_wird_ergaenzt(
 ) -> None:
     """Ist ``checkpoint:human`` schon da, bleibt Farbe/Beschreibung erhalten; ``ready-for-agent`` wird ergänzt."""
     eigen = {"color": "112233", "description": "Eigene Beschreibung"}
-    repo, zustand_datei = _frisches_repo(
-        tmp_path, monkeypatch, labels={"checkpoint:human": eigen}
-    )
+    repo, zustand_datei = _frisches_repo(tmp_path, monkeypatch, labels={"checkpoint:human": eigen})
 
     code_vorher, text_vorher = _lauf(repo, pruefen=True)
     assert code_vorher == einrichten.EXIT_ABWEICHUNG, text_vorher
@@ -170,9 +166,7 @@ def test_vorhandenes_checkpoint_label_bleibt_unveraendert_ready_wird_ergaenzt(
     assert code_danach == 0, text_danach
 
 
-def test_angepasstes_checkpoint_label_und_ready_label(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_angepasstes_checkpoint_label_und_ready_label(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Eigenes ``regularien.checkpoint_label`` aus der Repo-Konfig wird zusammen mit ``ready-for-agent`` angelegt."""
     repo, zustand_datei = _frisches_repo(tmp_path, monkeypatch)
     konfig_pfad = repo / config.KONFIG_PFAD
@@ -193,6 +187,6 @@ def test_to_tickets_skill_ruft_einrichten_vor_erstem_issue_auf() -> None:
     text = TO_TICKETS.read_text(encoding="utf-8")
     schritt_5 = text[text.index("### 5.") :]
     assert "to_spawn.py einrichten" in schritt_5, "to_spawn.py einrichten fehlt in Schritt 5"
-    assert schritt_5.index("to_spawn.py einrichten") < schritt_5.index(
-        "Issue im Repo dieses Arbeitsordners anlegen"
-    ), "einrichten muss vor dem ersten Issue-Anlegen stehen"
+    assert schritt_5.index("to_spawn.py einrichten") < schritt_5.index("Issue im Repo dieses Arbeitsordners anlegen"), (
+        "einrichten muss vor dem ersten Issue-Anlegen stehen"
+    )

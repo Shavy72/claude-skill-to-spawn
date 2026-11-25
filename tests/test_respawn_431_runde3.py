@@ -27,10 +27,7 @@ from test_respawn_431 import (
 
 from to_spawn import respawn, sessions_datei
 
-SPEICHER_SCHIRM = (
-    f"bau {TICKET} wartet auf Speicher (Zyklus 1, Takt 60 s): "
-    "13 Claude-Sessions (Obergrenze 12)"
-)
+SPEICHER_SCHIRM = f"bau {TICKET} wartet auf Speicher (Zyklus 1, Takt 60 s): 13 Claude-Sessions (Obergrenze 12)"
 
 
 def _lauf(repo: Path, fake: FakeWerkzeug, warte_max: float) -> respawn.Ergebnis:

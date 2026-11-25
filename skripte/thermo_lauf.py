@@ -432,9 +432,7 @@ def _tabelle(befunde: list[dict[str, Any]]) -> list[str]:
     return zeilen
 
 
-def _marker_text(
-    spec: int, lauf: dict[str, Any], befunde: list[dict[str, Any]], vermerke: list[str]
-) -> str:
+def _marker_text(spec: int, lauf: dict[str, Any], befunde: list[dict[str, Any]], vermerke: list[str]) -> str:
     basis, kopf = str(lauf.get("basis") or "?")[:7], str(lauf.get("kopf") or "?")[:7]
     zeilen = [
         f"# Thermo-Review Spec #{spec}",
@@ -601,7 +599,9 @@ def belege_pruefen(
         eintrag = tickets[nr]
         titel = str(eintrag.get("title") or "").strip() if isinstance(eintrag, dict) else ""
         if _ist_abnahme_ticket(titel):
-            uebersicht.append({"ticket": nr, "titel": titel, "status": "abnahme", "beleg": "Abnahme-Ticket (offen vor Abnahme)"})
+            uebersicht.append(
+                {"ticket": nr, "titel": titel, "status": "abnahme", "beleg": "Abnahme-Ticket (offen vor Abnahme)"}
+            )
             continue
         ausw = belege.auswerten(verify_hard, str(nr))
         if ausw.status == "gruen":
@@ -935,9 +935,7 @@ def _live_bereit_marker_text(
                 folge = f"Folge-Ticket: #{luecke['folge_ticket']}"
             else:
                 folge = f"Folge-Ticket: {luecke.get('folge_hinweis') or 'offen'}"
-            zeilen.append(
-                f"- [{luecke['frage']}]{ticket_tag} {luecke['titel']} — {luecke['grund']} · {folge}"
-            )
+            zeilen.append(f"- [{luecke['frage']}]{ticket_tag} {luecke['titel']} — {luecke['grund']} · {folge}")
     return ergebnis, "\n".join(zeilen) + "\n"
 
 

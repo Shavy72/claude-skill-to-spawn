@@ -357,9 +357,7 @@ def hauptzweig(repo: Path | None = None) -> str:
     eigen = str(config.lade(wurzel).get("hauptzweig") or "").strip()
     if eigen:
         return eigen
-    code, kopf = _git_ausgabe(
-        ["symbolic-ref", "-q", "--short", "refs/remotes/origin/HEAD"], wurzel, timeout=GIT_ZEIT_S
-    )
+    code, kopf = _git_ausgabe(["symbolic-ref", "-q", "--short", "refs/remotes/origin/HEAD"], wurzel, timeout=GIT_ZEIT_S)
     if code == 0 and kopf.startswith("origin/") and len(kopf) > len("origin/"):
         return kopf[len("origin/") :]
     for name in ("main", "master"):

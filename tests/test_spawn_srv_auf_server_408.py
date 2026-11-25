@@ -109,9 +109,7 @@ def test_ist_bau_server_aus_maschinen_datei(
     assert config.ist_bau_server({}) is erwartet
 
 
-def test_ist_bau_server_rolle_pc_ueberstimmt_hostnamen(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_ist_bau_server_rolle_pc_ueberstimmt_hostnamen(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _maschine(tmp_path, monkeypatch, {"rolle": "pc"})
     monkeypatch.setattr(config.socket, "gethostname", lambda: "bau-server")
     assert config.ist_bau_server({}) is False
@@ -147,9 +145,7 @@ def test_ssh_ziel_eine_quelle_mit_umzug(monkeypatch: pytest.MonkeyPatch) -> None
 # --- 2. spawn --ziel srv im Server-Modus startet wie local -----------------------
 
 
-def test_baue_befehl_srv_im_server_modus_wie_local(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_baue_befehl_srv_im_server_modus_wie_local(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _maschine(tmp_path, monkeypatch, {"rolle": "server"})
     monkeypatch.setattr(sys, "platform", "linux")
     befehl_srv = spawn.baue_befehl("srv", 1, ["2"], {}, True)
@@ -197,9 +193,7 @@ def test_spawn_srv_per_hostname_startet_wie_local(
     assert "spawn_srv.sh" in ausgabe
 
 
-def test_cli_spawn_srv_im_server_modus_gleich_wie_local(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_cli_spawn_srv_im_server_modus_gleich_wie_local(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Echter CLI-Weg: ``to_spawn.py spawn 1 --ziel srv --dry-run`` im Server-Modus = ``--ziel local``."""
     repo = _wegwerf_repo(tmp_path, monkeypatch)
     _maschine(tmp_path, monkeypatch, {"rolle": "server"})
@@ -227,9 +221,7 @@ def test_spawn_srv_im_pc_modus_ohne_server_repo_exit_2_mit_hinweis(
     assert "auf dem Server: --ziel local" in caplog.text
 
 
-def test_cli_spawn_srv_im_pc_modus_ohne_server_repo_exit_2(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_cli_spawn_srv_im_pc_modus_ohne_server_repo_exit_2(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Echter CLI-Weg: im PC-Modus ohne ``server_repo`` bleibt Exit 2 mit Hinweistext."""
     repo = _wegwerf_repo(tmp_path, monkeypatch)
     _maschine(tmp_path, monkeypatch, {"rolle": "pc"})
@@ -252,9 +244,7 @@ def test_baue_befehl_srv_im_pc_modus_mit_server_repo_bleibt_ssh(
 # --- 4. neustart --ziel srv folgt derselben Regel --------------------------------
 
 
-def test_neustart_srv_im_server_modus_wie_local(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_neustart_srv_im_server_modus_wie_local(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _maschine(tmp_path, monkeypatch, {"rolle": "server"})
     aus = type("Eintrag", (), {"zustand": "aus", "pid": None, "session_pid": None})()
     monkeypatch.setattr(spawn, "ticket_eintrag", lambda *_a: aus)

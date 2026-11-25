@@ -28,7 +28,10 @@ ERLAUBT = {
     ("to_spawn/nest.py", ""): "Rechte-Liste ``Bash(gh issue comment:*)``, schreibt nichts",
     ("to_spawn/hooks.py", ""): "Ja-Sperre: Tabelle der Text-Schalter (#591), schreibt nichts",
     ("to_spawn/erlaubt.py", ""): "Erlaubt-Liste der Verlauf-Prüfung (#389), schreibt nichts",
-    ("to_spawn/install_pruefung.py", "ticket_melden"): "Installations-Schutz (#415): hängt roten Lauf ans eine offene install:rot-Ticket, kein Aufseher",
+    (
+        "to_spawn/install_pruefung.py",
+        "ticket_melden",
+    ): "Installations-Schutz (#415): hängt roten Lauf ans eine offene install:rot-Ticket, kein Aufseher",
 }
 #: Ordner, die der Prüf-Test nicht liest (Tests stellen gh nach, der Rest ist kein Quelltext).
 AUSGENOMMEN = {"tests", ".git", ".venv", "venv", "__pycache__", ".pytest_cache"}

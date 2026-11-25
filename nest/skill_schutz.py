@@ -360,7 +360,7 @@ def _ende_backtick(s: str, start: int) -> tuple[str, int, bool]:
             if s.startswith("\\\n", j):
                 j += 2
                 continue
-            if j + 1 < n and s[j + 1] in "$`\\\"":
+            if j + 1 < n and s[j + 1] in '$`\\"':
                 inhalt.append(s[j + 1])
                 j += 2
                 continue

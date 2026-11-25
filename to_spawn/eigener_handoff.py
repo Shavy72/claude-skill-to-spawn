@@ -98,9 +98,7 @@ def finde(wt: Path, ticket: int, letzter_start: float | None) -> Treffer | None:
         return None
     name = re.compile(rf"{re.escape(ORDNER)}/HANDOFF_[^/]+_{int(ticket)}\.md")
     try:
-        dateien = _git(
-            wt, "ls-files", "--", f"{ORDNER}/HANDOFF_*_{int(ticket)}.md"
-        ).split("\n")
+        dateien = _git(wt, "ls-files", "--", f"{ORDNER}/HANDOFF_*_{int(ticket)}.md").split("\n")
         beste: Treffer | None = None
         for datei in (d for d in dateien if name.fullmatch(d)):
             if _git(wt, "status", "--porcelain", "--", datei).strip():
@@ -135,15 +133,9 @@ def aktuell(repo: Path, ticket: int) -> Treffer | None:
     """
     try:
         ort = bau_log.log_ort_fuer(ticket, repo)
-        start = (
-            None
-            if ort is None
-            else bau_log.letzter_session_start(ort, ticket, hauptbaum=repo)
-        )
+        start = None if ort is None else bau_log.letzter_session_start(ort, ticket, hauptbaum=repo)
     except (OSError, ValueError, KeyError, TypeError) as fehler:
-        log.warning(
-            "#%s: Bau-Log unlesbar — kein Neustart ab Handoff (%s)", ticket, fehler
-        )
+        log.warning("#%s: Bau-Log unlesbar — kein Neustart ab Handoff (%s)", ticket, fehler)
         return None
     if start is None:
         return None
@@ -176,9 +168,7 @@ def pruefe(repo: Path, ticket: int, jetzt: float) -> Treffer | None:
     return treffer if treffer is not None and treffer.faellig(jetzt) else None
 
 
-def folge_starten(
-    repo: Path, spec: int, ticket: int, treffer: Treffer, *, sperren: bool
-) -> int:
+def folge_starten(repo: Path, spec: int, ticket: int, treffer: Treffer, *, sperren: bool) -> int:
     """Folge-Session ab ``treffer`` starten (alte Session beenden) und merken.
 
     ``sperren=True`` (Aufpasser): nimmt die Leiter-Sperre ``leiter-<N>`` und prüft darin
@@ -190,9 +180,7 @@ def folge_starten(
         return _folge_starten(repo, spec, ticket, treffer)
     halter = leitstand.versuche(f"leiter-{ticket}", f"handoff-{os.getpid()}")
     if halter is None:
-        log.info(
-            "#%s: Leiter-Sperre belegt — Neustart ab Handoff im nächsten Takt", ticket
-        )
+        log.info("#%s: Leiter-Sperre belegt — Neustart ab Handoff im nächsten Takt", ticket)
         return EXIT_NICHTS
     with halter:
         if pruefe(repo, ticket, time.time()) != treffer:
@@ -210,9 +198,7 @@ def _folge_starten(repo: Path, spec: int, ticket: int, treffer: Treffer) -> int:
 
     vorher = os.environ.get("TO_SPAWN_REPO")
     try:
-        code = spawn.neustart(
-            repo, spec, ticket, config.lade(repo), handoff=treffer.datei, beenden=True
-        )
+        code = spawn.neustart(repo, spec, ticket, config.lade(repo), handoff=treffer.datei, beenden=True)
     finally:  # neustart setzt TO_SPAWN_REPO — der Aufrufer betreut evtl. mehrere Repos
         if vorher is None:
             os.environ.pop("TO_SPAWN_REPO", None)

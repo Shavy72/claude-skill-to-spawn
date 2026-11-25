@@ -43,9 +43,7 @@ def mensch_noetig_pfad() -> Path:
     return Path(os.environ.get("REVIEW_MENSCH_NOETIG") or Path.home() / ".claude" / ".review" / "mensch_noetig.jsonl")
 
 
-def mensch_noetig_merken(
-    session_id: str, wurzel: Path, fp: str, fix_runde: int, grund: str = "review_offen"
-) -> None:
+def mensch_noetig_merken(session_id: str, wurzel: Path, fp: str, fix_runde: int, grund: str = "review_offen") -> None:
     """„Mensch nötig“ zusätzlich als JSON-Zeile festhalten (nachts liest der Aufseher das
     statt der flüchtigen systemMessage). O_APPEND + ein os.write je Zeile."""
     zeile = {
@@ -151,7 +149,19 @@ def _merge_commit_dateien(wurzel: Path, p1: str, p2: str, commit: str) -> set[st
         return None
     auto_tree, konflikte = sim
     diff = befehl(
-        ["git", "-C", str(wurzel), "diff-tree", "-r", "--no-commit-id", "--name-only", "-z", "--no-renames", auto_tree, commit]
+        [
+            "git",
+            "-C",
+            str(wurzel),
+            "diff-tree",
+            "-r",
+            "--no-commit-id",
+            "--name-only",
+            "-z",
+            "--no-renames",
+            auto_tree,
+            commit,
+        ]
     )
     if diff.returncode != 0:
         return None
@@ -236,7 +246,19 @@ def merge_umfang(wurzel: Path, start: str | None, kandidaten: list[str]) -> tupl
             sha, eltern = teile[0], teile[1:]
             if len(eltern) == 1:
                 dt = befehl(
-                    ["git", "-C", str(wurzel), "diff-tree", "-r", "--no-commit-id", "--name-only", "-z", "--no-renames", eltern[0], sha]
+                    [
+                        "git",
+                        "-C",
+                        str(wurzel),
+                        "diff-tree",
+                        "-r",
+                        "--no-commit-id",
+                        "--name-only",
+                        "-z",
+                        "--no-renames",
+                        eltern[0],
+                        sha,
+                    ]
                 )
                 if dt.returncode != 0:
                     return start, kandidaten

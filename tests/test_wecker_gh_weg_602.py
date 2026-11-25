@@ -26,9 +26,7 @@ print(json.dumps({"data": {"repository": {
 """
 
 
-def test_graphql_abfrage_laeuft_ueber_echten_gh_start(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_graphql_abfrage_laeuft_ueber_echten_gh_start(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Abfrage-Text kommt unverändert beim gh-Prozess an, die Antwort wird je Ticket gelesen."""
     protokoll = tmp_path / "gh-argv.json"
     stub = attrappe(tmp_path / "bin", "gh", FAKE_GH)

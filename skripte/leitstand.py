@@ -486,7 +486,8 @@ def gebaut_um(issue: dict[str, Any], zeilen: list[dict[str, Any]]) -> str | None
     aktiv = [als_zeit(z.get("ts")) for z in zeilen if z.get("typ") in AKTIVITAET]
     if not (zeiten := [t for t in gesetzt if t]):
         zeiten = [t for t in aktiv if t]
-        log.info("gebaut um: kein Label-Ereignis, %s", "Ersatz aus Bau-Log" if zeiten else "unbekannt (auch kein Bau-Log)")
+        quelle = "Ersatz aus Bau-Log" if zeiten else "unbekannt (auch kein Bau-Log)"
+        log.info("gebaut um: kein Label-Ereignis, %s", quelle)
     return max(zeiten).astimezone().isoformat(timespec="seconds") if zeiten else None
 
 
@@ -667,9 +668,10 @@ def blocker_nummern(kanten: list[dict[str, Any]] | None, body: str) -> list[int]
 
 def beobachten_fuer(ziel: str, spec: str, ssh_ziel: str, tmux_sitzung: str | None = None) -> list[dict[str, str]]:
     if ziel == "local":
+        lokal = f"Windows-Terminal-Fenster der Spec {spec} – je Ticket ein Tab „bau <N>“, dazu „wache {spec}“ (der Aufseher)"
         return [
             {"titel": "Stand als Tabelle", "befehl": f"sessions {spec}"},
-            {"titel": "Live zuschauen (lokal)", "befehl": f"Windows-Terminal-Fenster der Spec {spec} – je Ticket ein Tab „bau <N>“, dazu „wache {spec}“ (der Aufseher)"},
+            {"titel": "Live zuschauen (lokal)", "befehl": lokal},
         ]
     sitz = tmux_sitzung or tmux_aufruf.sitzung_alt(spec)
     return [

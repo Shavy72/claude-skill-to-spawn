@@ -52,9 +52,7 @@ def _git(repo: Path, *args: str) -> str:
     ).stdout.strip()
 
 
-def _lauf(
-    skript: str, *args: str, env: dict[str, str] | None = None
-) -> subprocess.CompletedProcess[str]:
+def _lauf(skript: str, *args: str, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, str(SKRIPTE / skript), *args],
         capture_output=True,
@@ -421,7 +419,18 @@ def test_runde_2_verlangt_neue_rundschau_und_selbstpruefung_und_titel_runde_2(tm
     _selbstpruefung_gruen(repo, SPEC, ["901", "902"], runde=1)
     live_bereit_marker(repo, SPEC)
     r1_deck = rundschau_args(repo, SPEC)
-    r1 = _lauf("abschluss_paket.py", "ablegen", str(SPEC), "--repo", str(repo), *_LINKS, *r1_deck, "--spec-fertig", _FERTIG, env=env)
+    r1 = _lauf(
+        "abschluss_paket.py",
+        "ablegen",
+        str(SPEC),
+        "--repo",
+        str(repo),
+        *_LINKS,
+        *r1_deck,
+        "--spec-fertig",
+        _FERTIG,
+        env=env,
+    )
     assert r1.returncode == 0, r1.stdout + r1.stderr
 
     ablage1 = json.loads((repo / ".to-spawn" / f"abschluss_{SPEC}_paket.json").read_text(encoding="utf-8"))
@@ -432,7 +441,16 @@ def test_runde_2_verlangt_neue_rundschau_und_selbstpruefung_und_titel_runde_2(tm
     # Marker für nachsehen (Runde-1-Mail raus).
     (repo / "docs" / "agents" / f"rueckblick_{SPEC}.md").write_text("Rückblick ok\n", encoding="utf-8")
     (repo / "docs" / "agents" / f"thermo_{SPEC}.md").write_text("Thermo ok\n", encoding="utf-8")
-    mail1 = _lauf("abschluss_paket.py", "nachsehen", str(SPEC), "--repo", str(repo), "--jetzt", "2026-11-25T10:05:00+01:00", env=env)
+    mail1 = _lauf(
+        "abschluss_paket.py",
+        "nachsehen",
+        str(SPEC),
+        "--repo",
+        str(repo),
+        "--jetzt",
+        "2026-11-25T10:05:00+01:00",
+        env=env,
+    )
     assert mail1.returncode == 0, mail1.stdout + mail1.stderr
     mails_nach_r1 = [json.loads(z) for z in postfach.read_text(encoding="utf-8").splitlines() if z.strip()]
     assert len(mails_nach_r1) == 1
@@ -578,7 +596,10 @@ def test_ohne_nutzer_wort_geht_nichts_live(tmp_path: Path) -> None:
     repo, _ = _repo_anlegen(tmp_path, mit_staging=False)
     env = _env(tmp_path)
     r1_deck = rundschau_args(repo, SPEC)
-    assert _lauf("abschluss_paket.py", "ablegen", str(SPEC), "--repo", str(repo), *_LINKS, *r1_deck, env=env).returncode == 0
+    assert (
+        _lauf("abschluss_paket.py", "ablegen", str(SPEC), "--repo", str(repo), *_LINKS, *r1_deck, env=env).returncode
+        == 0
+    )
     assert not (repo / ".to-spawn" / f"abschluss_{SPEC}_live_paket.json").exists()
     assert not (repo / "docs" / "agents" / f"abschluss_{SPEC}_live.md").exists()
     assert not capo.live_gelaufen(repo, SPEC)

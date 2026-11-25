@@ -48,15 +48,8 @@ def _start_laeuft_weiter(ausgabe: str, *extra: str) -> None:
     ``--resume`` das fehlende Transkript. Ein wieder eingebauter Abbruch (auch ein nacktes
     ``return 2``) lässt diese Zeile weg und macht den Test rot.
     """
-    assert (
-        "Kein Start: Arbeitsordner" not in ausgabe
-        and "Kein Start: Stand" not in ausgabe
-    ), ausgabe
-    folge = (
-        ("Transkript", "fehlt")
-        if "--resume" in extra
-        else ("Kein Manifest führt Ticket #7",)
-    )
+    assert "Kein Start: Arbeitsordner" not in ausgabe and "Kein Start: Stand" not in ausgabe, ausgabe
+    folge = ("Transkript", "fehlt") if "--resume" in extra else ("Kein Manifest führt Ticket #7",)
     assert any(all(t in z for t in folge) for z in ausgabe.splitlines()), ausgabe
 
 
@@ -68,15 +61,11 @@ def test_bau_hinter_mit_lokaler_aenderung_nur_hinweis(klon: Path) -> None:
     _start_laeuft_weiter(ausgabe)
     assert len(_hinweis_zeilen(ausgabe, HINTER)) == 1, ausgabe
     assert _git(klon, "rev-parse", "HEAD") == vorher
-    assert (klon / VORLAGE).read_text(
-        encoding="utf-8"
-    ) == '{"prompt_template": "von Hand"}'
+    assert (klon / VORLAGE).read_text(encoding="utf-8") == '{"prompt_template": "von Hand"}'
 
 
 @pytest.mark.parametrize("weg", ["kein_origin", "fetch_scheitert"])
-def test_bau_stand_nicht_pruefbar_nur_warnung(
-    klon: Path, tmp_path: Path, weg: str
-) -> None:
+def test_bau_stand_nicht_pruefbar_nur_warnung(klon: Path, tmp_path: Path, weg: str) -> None:
     """Fall 2a/2b: kein origin bzw. fetch scheitert → eine Warn-Zeile, kein Abbruch."""
     if weg == "kein_origin":
         _git(klon, "remote", "remove", "origin")
@@ -104,9 +93,7 @@ def test_bau_nicht_auf_hauptzweig_kein_abbruch(klon: Path, weg: str) -> None:
 
 
 @pytest.mark.parametrize("extra", [(), ("--resume", "abc")])
-def test_bau_sauberer_klon_hinter_wird_nicht_vorgespult(
-    klon: Path, extra: tuple[str, ...]
-) -> None:
+def test_bau_sauberer_klon_hinter_wird_nicht_vorgespult(klon: Path, extra: tuple[str, ...]) -> None:
     """Fall 3c: sauberer Klon hinter origin → Start und ``--resume`` bewegen HEAD nicht."""
     vorher = _git(klon, "rev-parse", "HEAD")
     _, ausgabe = _bau(klon, *extra)
@@ -116,9 +103,7 @@ def test_bau_sauberer_klon_hinter_wird_nicht_vorgespult(
     assert _git(klon, "rev-parse", "HEAD") == vorher
 
 
-def test_erst_start_fetch_fehler_warnt_und_laeuft_weiter(
-    klon: Path, tmp_path: Path
-) -> None:
+def test_erst_start_fetch_fehler_warnt_und_laeuft_weiter(klon: Path, tmp_path: Path) -> None:
     """Erst-Start: fetch scheitert → Warn-Zeile, Exit 0 (spawn_srv.sh/spawn_local.ps1 starten weiter)."""
     _git(klon, "remote", "set-url", "origin", str(tmp_path / "gibt-es-nicht.git"))
     fertig, ausgabe = _erst_start(klon)

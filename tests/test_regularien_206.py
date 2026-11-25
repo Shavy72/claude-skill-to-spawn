@@ -75,9 +75,7 @@ def _gh_daten(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, daten: dict[str, 
     monkeypatch.setenv("GH_STUB_DATEN", str(datei))
 
 
-def _cli(
-    repo: Path, *args: str, zusatz_env: dict[str, str] | None = None
-) -> subprocess.CompletedProcess[str]:
+def _cli(repo: Path, *args: str, zusatz_env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, str(CLI), *args],
         cwd=str(repo),
@@ -135,9 +133,7 @@ def test_schaetzung_muss_positive_zahl_sein(repo: Path, wert: object) -> None:
 def test_doppelter_ticket_schluessel_weigert_sich(repo: Path) -> None:
     """``json.loads`` würde den ersten Eintrag still verschlucken."""
     eintrag = json.dumps(_voll(), ensure_ascii=False)
-    text = (
-        f'{{"spec": {SPEC}, "tickets": {{"901": {eintrag}, "902": {eintrag}, "901": {eintrag}}}}}'
-    )
+    text = f'{{"spec": {SPEC}, "tickets": {{"901": {eintrag}, "902": {eintrag}, "901": {eintrag}}}}}'
     (_manifest_ordner(repo) / f"spec-{SPEC}.json").write_text(text, encoding="utf-8")
     ergebnis = _cli(repo, "regularien", str(SPEC))
     assert ergebnis.returncode == 3, _ausgabe(ergebnis)
@@ -156,9 +152,7 @@ def test_ticket_offen_in_zweitem_manifest_weigert_sich(repo: Path) -> None:
     assert "Aus einem Manifest streichen." in ergebnis.stdout
 
 
-def test_ticket_zu_in_zweitem_manifest_ist_egal(
-    repo: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_ticket_zu_in_zweitem_manifest_ist_egal(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _manifest_schreiben(repo, {TICKETS[0]: _voll()}, spec=800)
     monkeypatch.setenv("GH_STUB_ZU", TICKETS[0])
     ergebnis = _cli(repo, "regularien", str(SPEC))
@@ -169,9 +163,7 @@ def test_ticket_zu_in_zweitem_manifest_ist_egal(
 def test_fremde_dateinamen_und_kaputtes_manifest(repo: Path) -> None:
     """Nur ``spec-*.json`` zählt; ein unlesbares Manifest ist eine Warnung."""
     ordner = _manifest_ordner(repo)
-    (ordner / "vorlage-900.json").write_text(
-        json.dumps({"tickets": {TICKETS[0]: _voll()}}), encoding="utf-8"
-    )
+    (ordner / "vorlage-900.json").write_text(json.dumps({"tickets": {TICKETS[0]: _voll()}}), encoding="utf-8")
     (ordner / "spec-801.json").write_text("{ kaputt", encoding="utf-8")
     ergebnis = _cli(repo, "regularien", str(SPEC))
     assert ergebnis.returncode == 0, _ausgabe(ergebnis)
@@ -198,18 +190,14 @@ def test_body_verweis_ohne_native_kante_weigert_sich(
     )
     ergebnis = _cli(repo, "regularien", str(SPEC))
     assert ergebnis.returncode == 3, _ausgabe(ergebnis)
-    assert (
-        "#902: laut Ticket-Text blockiert von #901, aber die native Kante fehlt" in ergebnis.stdout
-    )
+    assert "#902: laut Ticket-Text blockiert von #901, aber die native Kante fehlt" in ergebnis.stdout
     assert "gh api -X POST repos/" in ergebnis.stdout
     assert "/issues/902/dependencies/blocked_by -F issue_id=$(gh api repos/" in ergebnis.stdout
     assert "/issues/901 --jq .id)" in ergebnis.stdout
     assert "#999" not in ergebnis.stdout
 
 
-def test_body_verweis_mit_kante_geht_durch(
-    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_body_verweis_mit_kante_geht_durch(repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _gh_daten(
         tmp_path,
         monkeypatch,
@@ -219,9 +207,7 @@ def test_body_verweis_mit_kante_geht_durch(
     assert ergebnis.returncode == 0, _ausgabe(ergebnis)
 
 
-def test_entwurfs_nummer_im_body_ist_warnung(
-    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_entwurfs_nummer_im_body_ist_warnung(repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("GH_STUB_ZU", "3")
     _gh_daten(
         tmp_path,
@@ -251,16 +237,11 @@ def test_geschlossenes_ticket_ueberspringt_body_pruefung(
     assert "native Kante fehlt" not in ergebnis.stdout
 
 
-def test_fehlendes_checkpoint_label_weigert_sich(
-    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_fehlendes_checkpoint_label_weigert_sich(repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _gh_daten(tmp_path, monkeypatch, {t: {"labels": ["enhancement"]} for t in TICKETS})
     ergebnis = _cli(repo, "regularien", str(SPEC))
     assert ergebnis.returncode == 3, _ausgabe(ergebnis)
-    assert (
-        "Kein Checkpoint-Ticket: keins der Tickets trägt das Label checkpoint:human"
-        in ergebnis.stdout
-    )
+    assert "Kein Checkpoint-Ticket: keins der Tickets trägt das Label checkpoint:human" in ergebnis.stdout
 
 
 @pytest.mark.parametrize("zu", ["", f"{TICKETS[0]},{TICKETS[1]}"])
@@ -285,9 +266,7 @@ def test_ohne_labels_in_antwort_nur_warnung(repo: Path) -> None:
     assert "Checkpoint ungeprüft (GitHub-Antwort ohne Labels)" in ergebnis.stdout
 
 
-def test_belegtes_ticket_ist_nur_warnung(
-    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_belegtes_ticket_ist_nur_warnung(repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("GH_STUB_BLOCKER", f"{TICKETS[0]}:{TICKETS[1]}")
     _gh_daten(
         tmp_path,
@@ -316,9 +295,7 @@ def test_github_abfrage_scheitert_weigert_sich(repo: Path, tmp_path: Path) -> No
 
 
 @pytest.mark.parametrize("probelauf", [True, False])
-def test_spawn_weigert_sich_und_startet_kein_pwsh(
-    repo: Path, tmp_path: Path, probelauf: bool
-) -> None:
+def test_spawn_weigert_sich_und_startet_kein_pwsh(repo: Path, tmp_path: Path, probelauf: bool) -> None:
     _manifest_schreiben(repo, {TICKETS[0]: {"title": "ohne Umfang", "schaetzung_k": 100}})
     marker = tmp_path / "pwsh_gestartet"
     bin_ordner = tmp_path / "bin"
@@ -333,9 +310,7 @@ def test_spawn_weigert_sich_und_startet_kein_pwsh(
             """,
         )
     args = ["spawn", str(SPEC), "--ziel", "srv"] + (["--dry-run"] if probelauf else [])
-    ergebnis = _cli(
-        repo, *args, zusatz_env={"PATH": f"{bin_ordner}{os.pathsep}{os.environ['PATH']}"}
-    )
+    ergebnis = _cli(repo, *args, zusatz_env={"PATH": f"{bin_ordner}{os.pathsep}{os.environ['PATH']}"})
     assert ergebnis.returncode == 3, _ausgabe(ergebnis)
     assert "WEIGERUNG" in ergebnis.stdout
     assert not marker.exists()
@@ -429,10 +404,7 @@ def test_lernstoff_faustregeln(repo: Path) -> None:
     assert ergebnis.returncode == 0, _ausgabe(ergebnis)
     text = ergebnis.stdout
     assert "Faustregeln für den Schnitt:" in text
-    assert (
-        f"Schätzungen lagen im Mittel bei Faktor 1,3 — Schätzung × 1,3 muss unter {GRENZE}k bleiben."
-        in text
-    )
+    assert f"Schätzungen lagen im Mittel bei Faktor 1,3 — Schätzung × 1,3 muss unter {GRENZE}k bleiben." in text
     assert "Datenbank+Oberfläche brauchte im Mittel 1,8 Sessions (n=5)" in text
     assert "Skript brauchte im Mittel 1,0 Sessions (n=1)" in text
     assert text.index("Datenbank+Oberfläche brauchte") < text.index("Skript brauchte")
@@ -464,9 +436,7 @@ def test_f1_pruefen_auswahl_ausserhalb_manifest_weigert_sich(
     assert "#901 steht nicht" not in ergebnis.stdout
 
 
-def test_f1_pruefen_auswahl_im_manifest_geht_durch(
-    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_f1_pruefen_auswahl_im_manifest_geht_durch(repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _gh_daten(tmp_path, monkeypatch, _CP_902)
     ergebnis = _cli(repo, "regularien", str(SPEC), "--tickets", "901, #902")
     assert ergebnis.returncode == 0, _ausgabe(ergebnis)
@@ -475,9 +445,7 @@ def test_f1_pruefen_auswahl_im_manifest_geht_durch(
 def test_f1_regeln_laufen_trotz_auswahl_ueber_ganzes_manifest(
     repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _manifest_schreiben(
-        repo, {TICKETS[0]: _voll(), TICKETS[1]: {"title": "ohne Umfang", "schaetzung_k": 50}}
-    )
+    _manifest_schreiben(repo, {TICKETS[0]: _voll(), TICKETS[1]: {"title": "ohne Umfang", "schaetzung_k": 50}})
     _gh_daten(tmp_path, monkeypatch, _CP_902)
     ergebnis = _cli(repo, "regularien", str(SPEC), "--tickets", TICKETS[0])
     assert ergebnis.returncode == 3, _ausgabe(ergebnis)
@@ -503,9 +471,7 @@ def test_f1_spawn_mit_fremder_auswahl_startet_kein_pwsh(
         )
     args = ["spawn", str(SPEC), "--ziel", "srv", "--tickets", "999"]
     args += ["--dry-run"] if probelauf else []
-    ergebnis = _cli(
-        repo, *args, zusatz_env={"PATH": f"{bin_ordner}{os.pathsep}{os.environ['PATH']}"}
-    )
+    ergebnis = _cli(repo, *args, zusatz_env={"PATH": f"{bin_ordner}{os.pathsep}{os.environ['PATH']}"})
     assert ergebnis.returncode == 3, _ausgabe(ergebnis)
     assert f"#999 steht nicht im Manifest spec-{SPEC}.json" in ergebnis.stdout
     assert not marker.exists()
@@ -547,9 +513,7 @@ def test_f2_geschlossener_fremder_verweis_ist_warnung(
     assert "Warnung #902: Blocker-Verweis #950 ist kein Ticket dieser Spec" in ergebnis.stdout
 
 
-def test_f2_zustand_nicht_abfragbar_weigert_sich(
-    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_f2_zustand_nicht_abfragbar_weigert_sich(repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Fail-closed: ohne Zustand des Verweises kein Start."""
     monkeypatch.setenv("GH_STUB_KAPUTT", "950")
     _gh_daten(
@@ -576,9 +540,7 @@ def test_f2_fremder_verweis_mit_nativer_kante_ist_still(
     assert "#950" not in ergebnis.stdout
 
 
-def test_f2_zustand_je_nummer_nur_einmal_abgefragt(
-    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_f2_zustand_je_nummer_nur_einmal_abgefragt(repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     protokoll = tmp_path / "gh_aufrufe.txt"
     monkeypatch.setenv("GH_STUB_PROTOKOLL", str(protokoll))
     monkeypatch.setenv("GH_STUB_ZU", "950")
@@ -621,9 +583,7 @@ def test_f3_schreibweisen_werden_erkannt(
     _gh_daten(tmp_path, monkeypatch, {TICKETS[1]: {"labels": ["checkpoint:human"], "body": body}})
     ergebnis = _cli(repo, "regularien", str(SPEC))
     assert ergebnis.returncode == 3, _ausgabe(ergebnis)
-    assert "#902: laut Ticket-Text blockiert von #901, aber die native Kante fehlt" in (
-        ergebnis.stdout
-    )
+    assert "#902: laut Ticket-Text blockiert von #901, aber die native Kante fehlt" in (ergebnis.stdout)
 
 
 @pytest.mark.parametrize(
@@ -644,9 +604,7 @@ def test_f3_abschnitt_endet_an_klarer_grenze(
 
 
 @pytest.mark.parametrize("leer", ["None", "Keine", "-", "keine."])
-def test_f3_kein_verweis_woerter(
-    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, leer: str
-) -> None:
+def test_f3_kein_verweis_woerter(repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, leer: str) -> None:
     body = f"## Blocked by\n{leer}\n\n**Blocked by:** {leer}\n"
     _gh_daten(tmp_path, monkeypatch, {TICKETS[1]: {"labels": ["checkpoint:human"], "body": body}})
     ergebnis = _cli(repo, "regularien", str(SPEC))
@@ -664,10 +622,7 @@ def test_f4_geschlossener_checkpoint_bei_offenen_tickets_weigert_sich(
     _gh_daten(tmp_path, monkeypatch, _CP_902)
     ergebnis = _cli(repo, "regularien", str(SPEC))
     assert ergebnis.returncode == 3, _ausgabe(ergebnis)
-    assert (
-        "Checkpoint-Ticket #902 ist schon zu, aber #901 ist offen — neues Abnahme-Ticket "
-        "anlegen." in ergebnis.stdout
-    )
+    assert "Checkpoint-Ticket #902 ist schon zu, aber #901 ist offen — neues Abnahme-Ticket anlegen." in ergebnis.stdout
 
 
 def test_f4_offener_checkpoint_ohne_kante_weigert_sich(
@@ -682,9 +637,7 @@ def test_f4_offener_checkpoint_ohne_kante_weigert_sich(
     )
 
 
-def test_f4_checkpoint_allein_offen_geht_durch(
-    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_f4_checkpoint_allein_offen_geht_durch(repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Alle anderen Tickets zu: der offene Checkpoint braucht keine Kante mehr."""
     monkeypatch.setenv("GH_STUB_BLOCKER", "")
     monkeypatch.setenv("GH_STUB_ZU", TICKETS[0])
@@ -710,9 +663,7 @@ def test_f5_nicht_numerischer_schluessel_stuerzt_nicht(
     assert "#neu steht auch in spec-800.json" in ergebnis.stdout
 
 
-def test_f5_ticket_manifest_mit_namen_zaehlt_mit(
-    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_f5_ticket_manifest_mit_namen_zaehlt_mit(repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     (_manifest_ordner(repo) / "spec-800-ticket-901.json").write_text(
         json.dumps({"tickets": {TICKETS[0]: _voll()}}), encoding="utf-8"
     )

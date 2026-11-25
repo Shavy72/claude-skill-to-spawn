@@ -122,9 +122,7 @@ def test_wache_startet_trotz_kaputtem_umgebungswert(welt: dict[str, Path]) -> No
 # --- F4/F5: Bau-Log-Spuren ---------------------------------------------------
 
 
-def test_log_zeile_weicht_auf_die_laufdatei_aus(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_log_zeile_weicht_auf_die_laufdatei_aus(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Zeigt ``TO_SPAWN_LOG_REPO`` ins Leere, darf die Zeile nicht verschwinden."""
     repo = tmp_path / "repo"
     (repo / ".to-spawn").mkdir(parents=True)
@@ -190,11 +188,7 @@ def test_wache_steht_nach_mehreren_pausen_still(welt: dict[str, Path]) -> None:
     assert time.monotonic() - beginn < 50, "Wächter hängt in der Pausen-Schleife"
 
     aufrufe = [
-        json.loads(z)
-        for z in (welt["tmp"] / "claude_aufrufe.jsonl")
-        .read_text(encoding="utf-8")
-        .splitlines()
-        if z
+        json.loads(z) for z in (welt["tmp"] / "claude_aufrufe.jsonl").read_text(encoding="utf-8").splitlines() if z
     ]
     assert len(aufrufe) == waechter_lauf.MAX_PAUSEN + 1, aufrufe
 
@@ -213,9 +207,7 @@ def test_wache_ohne_uhrzeit_schreibt_blockiert_ins_bau_log(
 ) -> None:
     zeile: dict[str, Any] = json.loads(ECHT.read_bytes())
     zeile.pop("quotaLimits", None)
-    zeile["message"]["content"] = [
-        {"type": "text", "text": "You've hit your session limit"}
-    ]
+    zeile["message"]["content"] = [{"type": "text", "text": "You've hit your session limit"}]
     env = {
         **_wache_welt(welt),
         "FAKE_LIMIT": json.dumps(zeile, ensure_ascii=False),

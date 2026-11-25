@@ -24,9 +24,7 @@ def treffer(pfad: str, hinzu: list[str], tmp_path: Path) -> set[str]:
 
 
 def test_bearer_im_fstring_ist_sicherheit(tmp_path: Path) -> None:
-    ids = treffer(
-        "app.py", ['headers["Authorization"] = f"Bearer {token_wert}"'], tmp_path
-    )
+    ids = treffer("app.py", ['headers["Authorization"] = f"Bearer {token_wert}"'], tmp_path)
     assert "sicherheit" in ids
 
 
@@ -43,9 +41,7 @@ def test_secret_in_einzelzuweisung_ist_sicherheit(tmp_path: Path) -> None:
 
 
 def test_katalog_mit_typ_feuert_nicht(tmp_path: Path) -> None:
-    ids = treffer(
-        "kat.py", ['_KOSTEN: tuple[str, ...] = ("shutdown", "boot")'], tmp_path
-    )
+    ids = treffer("kat.py", ['_KOSTEN: tuple[str, ...] = ("shutdown", "boot")'], tmp_path)
     assert "kosten" not in ids
 
 

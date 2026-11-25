@@ -119,9 +119,7 @@ def test_probe_repo_vollstaendig_eingerichtet_ohne_stand_json_exit_0(
     probe_repo: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Vollständig eingerichtet, aber ``stand.json`` fehlt → Exit 0, kein „nicht eingerichtet“."""
-    monkeypatch.setattr(
-        skill_stand, "vergleich", lambda *a, **k: (skill_stand.AKTUELL, "abc123456789 = main")
-    )
+    monkeypatch.setattr(skill_stand, "vergleich", lambda *a, **k: (skill_stand.AKTUELL, "abc123456789 = main"))
     (probe_repo / einrichten.STAND_PFAD).unlink()
     code, text = _pruefen(probe_repo)
     assert code == 0, text
@@ -139,9 +137,7 @@ def test_probe_repo_mit_alter_stand_json_ohne_neue_bausteine_exit_0(
     probe_repo: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Ältere ``stand.json`` ohne ``gh``/``venv``/``skill_aktuell`` → Exit 0, kein Widerspruch."""
-    monkeypatch.setattr(
-        skill_stand, "vergleich", lambda *a, **k: (skill_stand.AKTUELL, "deadbeef1234 = main")
-    )
+    monkeypatch.setattr(skill_stand, "vergleich", lambda *a, **k: (skill_stand.AKTUELL, "deadbeef1234 = main"))
     stand_datei = probe_repo / einrichten.STAND_PFAD
     daten = json.loads(stand_datei.read_text(encoding="utf-8"))
     for name in ("gh", "venv", "skill_aktuell"):
@@ -162,9 +158,7 @@ def test_ein_punkt_abweichend_meldet_genau_diesen_punkt_exit_3(
     probe_repo: Path, monkeypatch: pytest.MonkeyPatch, fall: str
 ) -> None:
     """Genau ein Punkt weicht ab → genau dieser Punkt gemeldet, Exit 3, übrige in Ordnung."""
-    monkeypatch.setattr(
-        skill_stand, "vergleich", lambda *a, **k: (skill_stand.AKTUELL, "abc123456789 = main")
-    )
+    monkeypatch.setattr(skill_stand, "vergleich", lambda *a, **k: (skill_stand.AKTUELL, "abc123456789 = main"))
     erwartet = fall
     if fall == "manifest":
         config.pfad(config.lade(probe_repo), "manifeste").rmdir()
@@ -179,8 +173,7 @@ def test_ein_punkt_abweichend_meldet_genau_diesen_punkt_exit_3(
     elif fall == "version":
         erwartet = "manifest"
         neu = [
-            dataclasses.replace(b, version=b.version + 1) if b.name == "manifest" else b
-            for b in einrichten._BAUSTEINE
+            dataclasses.replace(b, version=b.version + 1) if b.name == "manifest" else b for b in einrichten._BAUSTEINE
         ]
         monkeypatch.setattr(einrichten, "_BAUSTEINE", neu)
 

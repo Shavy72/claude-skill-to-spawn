@@ -97,11 +97,7 @@ def _betroffene_py_tests(repo: Path, basis: str) -> set[str]:
     """Betroffene ``tests/test_*.py``-Pfade (POSIX) aus ``git diff basis..HEAD`` + AST-Import-Graph."""
     raus = _git(repo, "diff", "--name-only", "--no-renames", "-z", basis, "--")
     geaendert = {p for p in raus.split("\0") if p}
-    py_dateien = [
-        p
-        for p in repo.rglob("*.py")
-        if not any(teil in _IGNORIERT for teil in p.relative_to(repo).parts)
-    ]
+    py_dateien = [p for p in repo.rglob("*.py") if not any(teil in _IGNORIERT for teil in p.relative_to(repo).parts)]
     pfad_zu_modul = {p.relative_to(repo).as_posix(): _modulname(p.relative_to(repo)) for p in py_dateien}
     modul_zu_pfad = {mod: pfad for pfad, mod in pfad_zu_modul.items() if mod}
     bekannt = set(modul_zu_pfad)
@@ -136,11 +132,7 @@ class AstAuswahlAdapter(adapter_py.PythonAdapter):
         plan = self.voll(repo)
         if plan.fehler:
             return plan
-        alle_tests = sorted(
-            p.relative_to(repo).as_posix()
-            for p in (repo / "tests").rglob("test_*.py")
-            if p.is_file()
-        )
+        alle_tests = sorted(p.relative_to(repo).as_posix() for p in (repo / "tests").rglob("test_*.py") if p.is_file())
         betroffen = _betroffene_py_tests(repo, basis)
         abgewaehlt = [p for p in alle_tests if p not in betroffen]
         return Plan(

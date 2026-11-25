@@ -67,9 +67,7 @@ def test_takt_abnahme_60_min(wache: ModuleType) -> None:
 
 
 def test_bau_vorlage_bekommt_mindset_und_sop() -> None:
-    vorlage = json.loads((SKILL / "repo-scripts" / "_default.json").read_text(encoding="utf-8"))[
-        "prompt_template"
-    ]
+    vorlage = json.loads((SKILL / "repo-scripts" / "_default.json").read_text(encoding="utf-8"))["prompt_template"]
     assert "{MINDSET}" in vorlage and "{ABLOESE_SOP}" in vorlage
     bau = _lade("bau_anleitung_500", SKILL / "skripte" / "bau.py")
     text = bau.build_prompt(vorlage, "7", "9", "T", "- k", konfig={})

@@ -92,9 +92,7 @@ def test_d2_folgelauf_nach_stufe5_schreibfehler_schliesst_nicht_ab(
     assert u.wz.getippt == []
 
 
-def test_d1_stufe3_nach_abloesen_neu_gemerkt_juenger_als_start(
-    ordner: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_d1_stufe3_nach_abloesen_neu_gemerkt_juenger_als_start(ordner: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     u, _ = _respawn_scheitert_mit_start(ordner, monkeypatch, {5})
     erg = _lauf(u)
     assert erg.exit == 1
@@ -161,9 +159,7 @@ def test_d3_echte_lage_leser_wirft_log_unlesbar(
 
     stand_test.bau_log(repo, TICKET, fix3_test._start(stand_test.JETZT))
     monkeypatch.setattr(bau_log, "letzter_session_start", kaputt)
-    lage = leiter._EchteUmwelt(repo, w.quellen(repo)).lage(
-        stand_test.SPEC, TICKET, None
-    )
+    lage = leiter._EchteUmwelt(repo, w.quellen(repo)).lage(stand_test.SPEC, TICKET, None)
     assert lage.letzter_start is None
     assert lage.log_unlesbar is True
 
@@ -172,8 +168,6 @@ def test_d3_echte_lage_ohne_bau_log_nicht_unlesbar(
     welt: tuple[stand_test.FakeWelt, Path],
 ) -> None:
     w, repo = welt
-    lage = leiter._EchteUmwelt(repo, w.quellen(repo)).lage(
-        stand_test.SPEC, TICKET, None
-    )
+    lage = leiter._EchteUmwelt(repo, w.quellen(repo)).lage(stand_test.SPEC, TICKET, None)
     assert lage.letzter_start is None
     assert lage.log_unlesbar is False

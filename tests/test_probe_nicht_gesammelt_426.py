@@ -35,9 +35,7 @@ def test_sammlung_an_der_wurzel_ohne_probe(tmp_path: Path) -> None:
         timeout=300,
         env={**os.environ, "TMPDIR": str(tmp_path)},
     )
-    schluss = (
-        lauf.stdout.strip().splitlines()[-1] if lauf.stdout.strip() else lauf.stderr
-    )
+    schluss = lauf.stdout.strip().splitlines()[-1] if lauf.stdout.strip() else lauf.stderr
     assert lauf.returncode == 0, schluss
     assert not re.search(r"\d+ errors?", schluss), schluss
     aus_probe = [z for z in lauf.stdout.splitlines() if z.startswith("probe/")]

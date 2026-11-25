@@ -85,9 +85,7 @@ def test_aufseher_text_nennt_obsidian_session_logs_und_pflicht_beleg() -> None:
 
 
 @pytest.mark.parametrize("belege", [[], [""], ["   "], ["\t\n"]])
-def test_antworten_ohne_beleg_verweigert(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, belege: list[str]
-) -> None:
+def test_antworten_ohne_beleg_verweigert(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, belege: list[str]) -> None:
     monkeypatch.delenv("TO_SPAWN_TICKET", raising=False)
     fid = briefkasten.einwerfen("7", "Ordner umbenennen?", "neu", 3, [], hauptbaum=tmp_path)
     with pytest.raises(ValueError, match="--beleg|Beleg|Fundstelle"):
@@ -128,9 +126,7 @@ def test_cli_antworten_mit_beleg_schreibt_fundstelle(tmp_path: Path) -> None:
     assert antwort.belege == ["~/obsidian/projects/bau-system/regel.md:12"]
 
 
-def test_nutzer_antwort_braucht_weiterhin_keinen_beleg(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_nutzer_antwort_braucht_weiterhin_keinen_beleg(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("TO_SPAWN_TICKET", raising=False)
     fid = briefkasten.einwerfen("7", "Live schalten?", "nein", 2, [], hauptbaum=tmp_path)
     briefkasten.nutzer_antworten("7", fid, "nein", [], "später", hauptbaum=tmp_path)
@@ -141,9 +137,7 @@ def test_nutzer_antwort_braucht_weiterhin_keinen_beleg(
 # --- 3: Aufseher-Takt: 0 offene Fragen → kein Helfer-Auftrag --------------------------
 
 
-def test_takt_ohne_offene_fragen_kein_helfer_auftrag(
-    welt: dict[str, Any], monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_takt_ohne_offene_fragen_kein_helfer_auftrag(welt: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("TO_SPAWN_TICKET", raising=False)
     # 0 offene Fragen im Briefkasten → kein Briefkasten-Eintrag, kein Helfer-Auftrag in der Liste.
     assert waechter_takt.briefkasten_eintraege(welt["repo"], [297, 298], set()) == []

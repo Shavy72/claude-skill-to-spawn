@@ -155,9 +155,7 @@ def probe(tmp_path_factory: pytest.TempPathFactory) -> Iterator[dict[str, Path]]
     repos = probe_helfer.baue_probe_repos(ziel)
     py_repo = repos["py"]
     alt_pypath = os.environ.get("PYTHONPATH", "")
-    pypath = os.pathsep.join(
-        teil for teil in (str(py_repo), str(py_repo / "deps" / "greetlib-1"), alt_pypath) if teil
-    )
+    pypath = os.pathsep.join(teil for teil in (str(py_repo), str(py_repo / "deps" / "greetlib-1"), alt_pypath) if teil)
     with pytest.MonkeyPatch.context() as mp:
         mp.setenv("PYTHONPATH", pypath)
         if not probe_helfer.hat_pytest_impacted():

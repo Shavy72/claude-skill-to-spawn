@@ -53,14 +53,8 @@ def _git(ort: Path, *args: str) -> None:
     subprocess.run(["git", *args], cwd=ort, check=True, capture_output=True)
 
 
-def _cli(
-    repo: Path, *args: str, env_extra: dict[str, str] | None = None
-) -> subprocess.CompletedProcess[str]:
-    umg = {
-        k: v
-        for k, v in os.environ.items()
-        if k != "TO_SPAWN_UNBEAUFSICHTIGT"
-    }
+def _cli(repo: Path, *args: str, env_extra: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+    umg = {k: v for k, v in os.environ.items() if k != "TO_SPAWN_UNBEAUFSICHTIGT"}
     if env_extra:
         umg.update(env_extra)
     return subprocess.run(
@@ -121,18 +115,14 @@ def test_unbeaufsichtigt_umgebungsvariable_ueberschreibt_konfig(
     """``TO_SPAWN_UNBEAUFSICHTIGT`` gewinnt vor der Konfig — sowohl an (1) als auch aus (0)."""
     monkeypatch.setenv("TO_SPAWN_UNBEAUFSICHTIGT", "1")
     with caplog.at_level(logging.WARNING, logger="to_spawn.manifest"):
-        weich = manifest.pruefe_spec(
-            SPEC_OHNE_PROTOKOLL, {"regularien": {"unbeaufsichtigt": False}}
-        )
+        weich = manifest.pruefe_spec(SPEC_OHNE_PROTOKOLL, {"regularien": {"unbeaufsichtigt": False}})
     assert weich.unbeaufsichtigt is True
     assert weich.zustimmung_noetig is False
     assert weich.darf_schneiden is True
     assert len(weich.warnungen) == 2
 
     monkeypatch.setenv("TO_SPAWN_UNBEAUFSICHTIGT", "0")
-    hart = manifest.pruefe_spec(
-        SPEC_OHNE_PROTOKOLL, {"regularien": {"unbeaufsichtigt": True}}
-    )
+    hart = manifest.pruefe_spec(SPEC_OHNE_PROTOKOLL, {"regularien": {"unbeaufsichtigt": True}})
     assert hart.unbeaufsichtigt is False
     assert hart.zustimmung_noetig is True
     assert hart.darf_schneiden is False
@@ -142,9 +132,7 @@ def test_unbeaufsichtigt_umgebungsvariable_ueberschreibt_konfig(
     caplog.clear()
     monkeypatch.setenv("TO_SPAWN_UNBEAUFSICHTIGT", "vielleicht")
     with caplog.at_level(logging.WARNING, logger="to_spawn.manifest"):
-        rueckfall = manifest.pruefe_spec(
-            SPEC_OHNE_PROTOKOLL, {"regularien": {"unbeaufsichtigt": False}}
-        )
+        rueckfall = manifest.pruefe_spec(SPEC_OHNE_PROTOKOLL, {"regularien": {"unbeaufsichtigt": False}})
     assert rueckfall.unbeaufsichtigt is False
     assert rueckfall.darf_schneiden is False
     assert any("TO_SPAWN_UNBEAUFSICHTIGT" in r.message for r in caplog.records)

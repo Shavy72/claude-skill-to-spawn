@@ -43,9 +43,7 @@ def _git(ordner: Path, *args: str, zeit: float | None = None) -> None:
     env = dict(os.environ)
     if zeit is not None:
         env["GIT_AUTHOR_DATE"] = env["GIT_COMMITTER_DATE"] = f"@{int(zeit)} +0000"
-    subprocess.run(
-        ["git", "-C", str(ordner), *args], check=True, capture_output=True, env=env
-    )
+    subprocess.run(["git", "-C", str(ordner), *args], check=True, capture_output=True, env=env)
 
 
 def _repo(ordner: Path) -> Path:
@@ -82,9 +80,7 @@ def _session_start(wt: Path, zeit: float) -> None:
     datei = bau_log.lauf_pfad(wt, TICKET)
     datei.parent.mkdir(parents=True, exist_ok=True)
     with datei.open("a", encoding="utf-8") as f:
-        f.write(
-            json.dumps({"ts": ts, "typ": "session_start", "ticket": str(TICKET)}) + "\n"
-        )
+        f.write(json.dumps({"ts": ts, "typ": "session_start", "ticket": str(TICKET)}) + "\n")
 
 
 def _handoff(wt: Path, zeit: float, *, committen: bool = True) -> None:
@@ -99,36 +95,24 @@ def _handoff(wt: Path, zeit: float, *, committen: bool = True) -> None:
 # --- Aufpasser ---------------------------------------------------------------------
 
 
-def _aufpasser(
-    tmp: Path, deploy: list[str] | None = None
-) -> tuple[aufpasser.Aufpasser, list[str]]:
+def _aufpasser(tmp: Path, deploy: list[str] | None = None) -> tuple[aufpasser.Aufpasser, list[str]]:
     a = aufpasser.Aufpasser(
-        aufpasser.Einstellungen(
-            zustand=tmp / "stand.json", tmux_socket="nie-benutzt", jetzt=lambda: JETZT
-        )
+        aufpasser.Einstellungen(zustand=tmp / "stand.json", tmux_socket="nie-benutzt", jetzt=lambda: JETZT)
     )
     meldungen: list[str] = []
-    a.pane_text = lambda ziel: (
-        "✻ Baked for 40s\n\nHandoff committet, ich höre hier auf.\n"
-    )  # type: ignore[method-assign]
+    a.pane_text = lambda ziel: "✻ Baked for 40s\n\nHandoff committet, ich höre hier auf.\n"  # type: ignore[method-assign]
     a.session = lambda f: aufpasser.SessionInfo("sid", None, "idle", 4242)  # type: ignore[method-assign]
     a.deploy_laeuft = lambda muster=None: list(deploy or [])  # type: ignore[method-assign]
-    a.melden = lambda spec, repo, fenster, ereignis, text: meldungen.append(
-        f"{ereignis}: {text}"
-    )  # type: ignore[method-assign]
+    a.melden = lambda spec, repo, fenster, ereignis, text: meldungen.append(f"{ereignis}: {text}")  # type: ignore[method-assign]
     a.muster = aufpasser.DEPLOY_MUSTER
     return a, meldungen
 
 
 def _fenster() -> aufpasser.Fenster:
-    return aufpasser.Fenster(
-        f"spec-{SPEC}", str(SPEC), "3", f"bau {TICKET}", "/x", 4242
-    )
+    return aufpasser.Fenster(f"spec-{SPEC}", str(SPEC), "3", f"bau {TICKET}", "/x", 4242)
 
 
-def test_a_aufpasser_frischer_handoff_idle_startet_neu(
-    welt: dict, tmp_path: Path
-) -> None:
+def test_a_aufpasser_frischer_handoff_idle_startet_neu(welt: dict, tmp_path: Path) -> None:
     """Rot vor #542: Session sitzt mit committetem Handoff still — niemand startet neu."""
     _handoff(welt["wt"], JETZT - 5 * MINUTE)
     a, meldungen = _aufpasser(tmp_path)
@@ -150,17 +134,13 @@ def test_a_aufpasser_frischer_handoff_idle_startet_neu(
     assert len(welt["gestartet"]) == 1
 
 
-def test_b_aufpasser_nur_still_ohne_handoff_altes_verhalten(
-    welt: dict, tmp_path: Path
-) -> None:
+def test_b_aufpasser_nur_still_ohne_handoff_altes_verhalten(welt: dict, tmp_path: Path) -> None:
     a, meldungen = _aufpasser(tmp_path)
     a.fenster_pruefen(_fenster(), welt["haupt"], {TICKET})
     assert welt["gestartet"] == [] and meldungen == []
 
 
-def test_c_aufpasser_handoff_aelter_als_session_start_nichts(
-    welt: dict, tmp_path: Path
-) -> None:
+def test_c_aufpasser_handoff_aelter_als_session_start_nichts(welt: dict, tmp_path: Path) -> None:
     _handoff(welt["wt"], JETZT - 90 * MINUTE)  # gehört zur Vorsession
     a, _ = _aufpasser(tmp_path)
     a.fenster_pruefen(_fenster(), welt["haupt"], {TICKET})
@@ -186,9 +166,7 @@ def test_e_aufpasser_handoff_nicht_committet_nichts(welt: dict, tmp_path: Path) 
     assert welt["gestartet"] == []
 
 
-def test_aufpasser_handoff_erst_eine_minute_alt_wartet(
-    welt: dict, tmp_path: Path
-) -> None:
+def test_aufpasser_handoff_erst_eine_minute_alt_wartet(welt: dict, tmp_path: Path) -> None:
     _handoff(welt["wt"], JETZT - 1 * MINUTE)
     a, _ = _aufpasser(tmp_path)
     a.fenster_pruefen(_fenster(), welt["haupt"], {TICKET})
@@ -228,9 +206,7 @@ class EchteHandoffUmwelt:
             prompt_datei=False,
             ziel="=spec-9542:3",
             letzter_start=start,
-            eigener_handoff=eigener_handoff.finde(
-                self.wt, ticket, eigener_handoff.grenze(start, ticket)
-            ),
+            eigener_handoff=eigener_handoff.finde(self.wt, ticket, eigener_handoff.grenze(start, ticket)),
         )
 
     def handoff_k(self) -> float:
@@ -249,9 +225,7 @@ class EchteHandoffUmwelt:
     def folge_ab_handoff(self, spec: int, ticket: int, treffer: Any) -> int:
         from to_spawn import eigener_handoff
 
-        return eigener_handoff.folge_starten(
-            self.haupt, spec, ticket, treffer, sperren=False
-        )
+        return eigener_handoff.folge_starten(self.haupt, spec, ticket, treffer, sperren=False)
 
 
 def test_a_leiter_frischer_handoff_startet_neu(welt: dict) -> None:
@@ -302,25 +276,12 @@ def test_entscheide_folge_nur_stufe_0_und_1() -> None:
     from to_spawn import eigener_handoff
 
     treffer = eigener_handoff.Treffer(HANDOFF, JETZT - 5 * MINUTE)
-    lage = leiter.Lage(
-        "offen", aufseher_stand.STILL, 0, None, False, eigener_handoff=treffer
-    )
+    lage = leiter.Lage("offen", aufseher_stand.STILL, 0, None, False, eigener_handoff=treffer)
     for stufe in (0, 1):
-        assert (
-            leiter.entscheide(lage, leiter.Gemerkt(stufe, None), JETZT, 250.0).aktion
-            == "folge_handoff"
-        )
-    assert (
-        leiter.entscheide(lage, leiter.Gemerkt(2, JETZT), JETZT, 250.0).aktion
-        != "folge_handoff"
-    )
-    arbeitet = leiter.Lage(
-        "offen", aufseher_stand.ARBEITET, None, None, False, eigener_handoff=treffer
-    )
-    assert (
-        leiter.entscheide(arbeitet, leiter.Gemerkt(0, None), JETZT, 250.0).aktion
-        == "nichts"
-    )
+        assert leiter.entscheide(lage, leiter.Gemerkt(stufe, None), JETZT, 250.0).aktion == "folge_handoff"
+    assert leiter.entscheide(lage, leiter.Gemerkt(2, JETZT), JETZT, 250.0).aktion != "folge_handoff"
+    arbeitet = leiter.Lage("offen", aufseher_stand.ARBEITET, None, None, False, eigener_handoff=treffer)
+    assert leiter.entscheide(arbeitet, leiter.Gemerkt(0, None), JETZT, 250.0).aktion == "nichts"
     jung = leiter.Lage(
         "offen",
         aufseher_stand.STILL,
@@ -329,19 +290,14 @@ def test_entscheide_folge_nur_stufe_0_und_1() -> None:
         False,
         eigener_handoff=eigener_handoff.Treffer(HANDOFF, JETZT - 30),
     )
-    assert (
-        leiter.entscheide(jung, leiter.Gemerkt(0, None), JETZT, 250.0).aktion
-        == "nichts"
-    )
+    assert leiter.entscheide(jung, leiter.Gemerkt(0, None), JETZT, 250.0).aktion == "nichts"
 
 
 # --- wache: Neustart im richtigen Ordner (Punkt 4) ---------------------------------
 
 
 def _wache() -> Any:
-    modul_spec = importlib.util.spec_from_file_location(
-        "wache_542", SKILL / "skripte" / "wache.py"
-    )
+    modul_spec = importlib.util.spec_from_file_location("wache_542", SKILL / "skripte" / "wache.py")
     assert modul_spec and modul_spec.loader
     modul = importlib.util.module_from_spec(modul_spec)
     modul_spec.loader.exec_module(modul)
@@ -349,9 +305,7 @@ def _wache() -> Any:
 
 
 @pytest.mark.parametrize("name", ["TO_SPAWN_REPO", "REPO"])
-def test_f_wache_nimmt_repo_aus_umgebung_statt_cwd(
-    name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_f_wache_nimmt_repo_aus_umgebung_statt_cwd(name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     repo = _repo(tmp_path / "repo")
     anderswo = tmp_path / "anderswo"
     anderswo.mkdir()
@@ -362,17 +316,13 @@ def test_f_wache_nimmt_repo_aus_umgebung_statt_cwd(
     assert wache.REPO_ORDNER == repo.resolve()
 
 
-def test_f_wache_ohne_umgebung_bleibt_cwd(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_f_wache_ohne_umgebung_bleibt_cwd(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("REPO", raising=False)
     monkeypatch.chdir(tmp_path)
     assert _wache().start_ordner() == tmp_path.resolve()
 
 
-def test_f_wache_repo_ohne_ordner_wird_ignoriert(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_f_wache_repo_ohne_ordner_wird_ignoriert(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """``REPO`` kann auch ein Slug sein (``owner/name``) — dann zählt der aktuelle Ordner."""
     monkeypatch.setenv("REPO", "owner/gibt-es-nicht")
     monkeypatch.chdir(tmp_path)
@@ -380,9 +330,7 @@ def test_f_wache_repo_ohne_ordner_wird_ignoriert(
 
 
 @pytest.mark.parametrize("name", ["TO_SPAWN_REPO", "REPO"])
-def test_f_wache_cwd_im_git_repo_schlaegt_umgebung(
-    name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_f_wache_cwd_im_git_repo_schlaegt_umgebung(name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Läuft der Aufseher in einem Repo/Worktree, zählt dieser Ordner (#450 F1) — ``REPO``
     der Shell (z. B. Hauptbaum auf dem Bau-Server) darf ihn nicht umlenken."""
     hier = _repo(tmp_path / "hier")
@@ -443,32 +391,24 @@ def test_folge_starten_belegte_leiter_sperre_startet_nicht(welt: dict) -> None:
     halter = leitstand.versuche(f"leiter-{TICKET}", "test-halter")
     assert halter is not None
     with halter:
-        code = eigener_handoff.folge_starten(
-            welt["haupt"], SPEC, TICKET, treffer, sperren=True
-        )
+        code = eigener_handoff.folge_starten(welt["haupt"], SPEC, TICKET, treffer, sperren=True)
     assert code == eigener_handoff.EXIT_NICHTS
     assert welt["gestartet"] == []
 
 
-def test_folge_starten_nicht_mehr_faellig_in_sperre_startet_nicht(
-    welt: dict, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_folge_starten_nicht_mehr_faellig_in_sperre_startet_nicht(welt: dict, monkeypatch: pytest.MonkeyPatch) -> None:
     from to_spawn import eigener_handoff
 
     _handoff(welt["wt"], JETZT - 5 * MINUTE)
     treffer = eigener_handoff.pruefe(welt["haupt"], TICKET, JETZT)
     assert treffer is not None
     monkeypatch.setattr(eigener_handoff, "pruefe", lambda *a, **k: None)
-    code = eigener_handoff.folge_starten(
-        welt["haupt"], SPEC, TICKET, treffer, sperren=True
-    )
+    code = eigener_handoff.folge_starten(welt["haupt"], SPEC, TICKET, treffer, sperren=True)
     assert code == eigener_handoff.EXIT_NICHTS
     assert welt["gestartet"] == []
 
 
-def test_aufpasser_belegte_leiter_sperre_meldet_nichts_und_behaelt_fenster(
-    welt: dict, tmp_path: Path
-) -> None:
+def test_aufpasser_belegte_leiter_sperre_meldet_nichts_und_behaelt_fenster(welt: dict, tmp_path: Path) -> None:
     """#542: Sperre belegt = nichts gestartet; kein folge_handoff, Fensterstand bleibt."""
     _handoff(welt["wt"], JETZT - 5 * MINUTE)
     a, meldungen = _aufpasser(tmp_path)

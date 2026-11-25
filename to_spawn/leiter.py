@@ -197,9 +197,11 @@ class Umwelt(Protocol):
     def werkzeug(self) -> respawn.Werkzeug | pc_fenster.PcWerkzeug:
         """Werkzeug von respawn: tmux (``tippen`` = Text einfügen, Enter getrennt) oder PC."""
         ...
+
     def folge_ab_handoff(self, spec: int, ticket: int, treffer: eigener_handoff.Treffer) -> int:
         """Folge-Session ab eigenem Handoff starten (#542); Exit-Code des Neustarts."""
         ...
+
     def frage_einwerfen(self, spec: int, ticket: int, frage: str) -> str:
         """Fenster-Frage in den Briefkasten (#372); gibt deren ``id``."""
         ...
@@ -212,29 +214,21 @@ def entscheide(lage: Lage, gemerkt: Gemerkt, jetzt: float, handoff_k: float) -> 
         if lage.fenster == aufseher_stand.ARBEITET:
             # Arbeitet allein beweist nichts — es kann noch die alte Session sein.
             if _neu_gestartet(lage, gemerkt):
-                return Schritt(
-                    "abschliessen", "neue Session arbeitet, Abschluss nachgeholt"
-                )
+                return Schritt("abschliessen", "neue Session arbeitet, Abschluss nachgeholt")
             if lage.log_unlesbar:
                 text = "hängt, Bau-Log unlesbar — neue Session nicht prüfbar"
                 return Schritt("melden", f"{text}, Aufseher prüfen")
-            return Schritt(
-                "melden", "hängt, keine neue Session belegt — Aufseher prüfen"
-            )
+            return Schritt("melden", "hängt, keine neue Session belegt — Aufseher prüfen")
         vor = _minuten(jetzt, gemerkt.seit)
         text = f"respawn vor {vor} min nicht abgeschlossen — Aufseher prüfen"
         return Schritt("melden", text)
     if stufe == 5 and _neu_gestartet(lage, gemerkt):
-        return Schritt(
-            "zuruecksetzen", "Ticket neu gestartet nach gescheitertem respawn"
-        )
+        return Schritt("zuruecksetzen", "Ticket neu gestartet nach gescheitertem respawn")
     if lage.fenster == aufseher_stand.ARBEITET:
         if stufe == 1:
             return Schritt("zuruecksetzen", "arbeitet wieder nach Stupser")
         if stufe == 5:
-            return Schritt(
-                "zuruecksetzen", "arbeitet wieder nach gescheitertem respawn"
-            )
+            return Schritt("zuruecksetzen", "arbeitet wieder nach gescheitertem respawn")
         if gemerkt.frage is not None:
             return Schritt("zuruecksetzen", "arbeitet wieder nach Frage", stufe_behalten=(stufe == 2))
         return Schritt("nichts", "arbeitet")
@@ -305,9 +299,7 @@ def entscheide(lage: Lage, gemerkt: Gemerkt, jetzt: float, handoff_k: float) -> 
             return Schritt("melden", text)
         return Schritt("nichts", f"wartet auf Start-Prompt-Datei seit {warte} min")
     if ruhig and lage.kontext_k is not None and lage.kontext_k >= handoff_k:
-        return Schritt(
-            "handoff", f"Kontext {lage.kontext_k:g}k ≥ Handoff-Grenze {handoff_k:g}k"
-        )
+        return Schritt("handoff", f"Kontext {lage.kontext_k:g}k ≥ Handoff-Grenze {handoff_k:g}k")
     if stufe == 1:
         seit_stups = _minuten(jetzt, gemerkt.seit)
         if still >= NACH_STUPS_MIN and seit_stups >= NACH_STUPS_MIN:
@@ -356,11 +348,7 @@ def _frage_schritt(frage: str, gemerkt: Gemerkt) -> Schritt:
 
 def _neu_gestartet(lage: Lage, gemerkt: Gemerkt) -> bool:
     """``session_start`` jünger als der gemerkte Eingriff = das Ticket beginnt neu."""
-    return (
-        lage.letzter_start is not None
-        and gemerkt.seit is not None
-        and lage.letzter_start > gemerkt.seit
-    )
+    return lage.letzter_start is not None and gemerkt.seit is not None and lage.letzter_start > gemerkt.seit
 
 
 def _minuten(jetzt: float, seit: float | None) -> int:
@@ -413,9 +401,7 @@ def eingreifen(
             return _schritt(u, repo, spec, ticket)
     except Exception as fehler:  # Tür gibt nie eine Ausnahme weiter (geloggt)
         log.exception("leiter #%s abgebrochen.", ticket)
-        return Ergebnis(
-            EXIT_FEHLER, _zeile(ticket, f"Fehler — {type(fehler).__name__}: {fehler}")
-        )
+        return Ergebnis(EXIT_FEHLER, _zeile(ticket, f"Fehler — {type(fehler).__name__}: {fehler}"))
 
 
 #: Leitstand-Notiz je Ticket mit dem Schlüssel der weitergegebenen Fenster-Frage (#372).
@@ -498,7 +484,9 @@ def _schritt(u: Umwelt, repo: Path, spec: int, ticket: int) -> Ergebnis:
         if code == eigener_handoff.EXIT_NICHTS:
             return Ergebnis(EXIT_OK, _zeile(ticket, "Neustart ab Handoff: nichts zu tun"))
         if code != 0:
-            return Ergebnis(EXIT_FEHLER, _zeile(ticket, f"Neustart ab Handoff gescheitert (Exit {code}) — {schritt.grund}"))
+            return Ergebnis(
+                EXIT_FEHLER, _zeile(ticket, f"Neustart ab Handoff gescheitert (Exit {code}) — {schritt.grund}")
+            )
         return Ergebnis(EXIT_OK, _zeile(ticket, f"Stufe 0 {_WORT[schritt.aktion]} — {schritt.grund}"))
     if schritt.aktion in ("entscheider", "mensch"):
         return _frage_weitergeben(u, spec, ticket, gemerkt, lage, schritt)
@@ -546,9 +534,7 @@ def _schritt(u: Umwelt, repo: Path, spec: int, ticket: int) -> Ergebnis:
     return Ergebnis(EXIT_OK, _zeile(ticket, text))
 
 
-def _frage_weitergeben(
-    u: Umwelt, spec: int, ticket: int, gemerkt: Gemerkt, lage: Lage, schritt: Schritt
-) -> Ergebnis:
+def _frage_weitergeben(u: Umwelt, spec: int, ticket: int, gemerkt: Gemerkt, lage: Lage, schritt: Schritt) -> Ergebnis:
     """Frage einwerfen, dann merken: lieber eine doppelte Frage als eine verlorene (#372).
 
     Kein Tippen ins Fenster. Scheitert das Merken (Exit 1), gibt der nächste Takt dieselbe Frage
@@ -575,9 +561,7 @@ def _frage_weitergeben(
     return Ergebnis(EXIT_OK, _zeile(ticket, text))
 
 
-def _respawn(
-    u: Umwelt, repo: Path, spec: int, ticket: int, gemerkt: Gemerkt, jetzt: float
-) -> Ergebnis:
+def _respawn(u: Umwelt, repo: Path, spec: int, ticket: int, gemerkt: Gemerkt, jetzt: float) -> Ergebnis:
     """Stufe 3: erst „respawn läuft“ merken, dann Skill respawn.
 
     Gescheitert → Stufe 5 mit der Zeit NACH ``abloesen`` (ein ``session_start`` des
@@ -594,9 +578,7 @@ def _respawn(
         log.warning("leiter #%s: Stufe 3 nicht gemerkt: %s", ticket, fehler)
         text = f"Stufe 2 Leitstand nicht schreibbar, nichts abgelöst — {fehler}"
         return Ergebnis(EXIT_FEHLER, _zeile(ticket, text))
-    erg = respawn.abloesen(
-        repo, spec, ticket, werkzeug=u.werkzeug(), handoff_seit=gemerkt.seit
-    )
+    erg = respawn.abloesen(repo, spec, ticket, werkzeug=u.werkzeug(), handoff_seit=gemerkt.seit)
     if erg.exit != respawn.EXIT_OK:
         nach = u.jetzt()
         try:
@@ -604,9 +586,7 @@ def _respawn(
         except (OSError, ValueError, leitstand.ZustandKaputt) as fehler:
             log.warning("leiter #%s: Stufe 5 nicht gemerkt: %s", ticket, fehler)
             text = f"Stufe 3 respawn gescheitert, Stufe 5 nicht gemerkt — {fehler}"
-            return Ergebnis(
-                EXIT_FEHLER, _zeile(ticket, _stufe3_nachziehen(ticket, nach, text))
-            )
+            return Ergebnis(EXIT_FEHLER, _zeile(ticket, _stufe3_nachziehen(ticket, nach, text)))
         text = f"Stufe 5 respawn gescheitert — {erg.zeile}"
         return Ergebnis(erg.exit, _zeile(ticket, text))
     try:
@@ -626,8 +606,7 @@ def _stufe3_nachziehen(ticket: int, nach: float, text: str) -> str:
         leitstand.setze_leiter_stufe(ticket, 3, nach)
     except (OSError, ValueError, leitstand.ZustandKaputt) as fehler:
         log.error(
-            "leiter #%s: Stufe 3 nicht neu gemerkt — Folgelauf kann fälschlich "
-            "abschließen: %s",
+            "leiter #%s: Stufe 3 nicht neu gemerkt — Folgelauf kann fälschlich abschließen: %s",
             ticket,
             fehler,
         )
@@ -728,9 +707,7 @@ class _EchteUmwelt:
             ort = bau_log.log_ort(ticket, wt, self.repo)
             if ort is None:
                 return None, False
-            return bau_log.letzter_session_start(
-                ort, ticket, hauptbaum=self.repo
-            ), False
+            return bau_log.letzter_session_start(ort, ticket, hauptbaum=self.repo), False
         except (OSError, ValueError, KeyError, TypeError) as fehler:
             log.warning("Bau-Log #%s unlesbar — Start unbekannt: %s", ticket, fehler)
             return None, True
@@ -741,9 +718,7 @@ class _EchteUmwelt:
             ort = bau_log.log_ort(ticket, wt, self.repo)
             if ort is None:
                 return None
-            return bau_log.kontext_aktuell_k(
-                ort, ticket, hauptbaum=self.repo, nach=leitstand.leiter_respawn(ticket)
-            )
+            return bau_log.kontext_aktuell_k(ort, ticket, hauptbaum=self.repo, nach=leitstand.leiter_respawn(ticket))
         except (OSError, ValueError, KeyError, TypeError) as fehler:
             log.warning("Bau-Log #%s unlesbar — Kontext unbekannt: %s", ticket, fehler)
             return None
@@ -761,8 +736,6 @@ def cli(repo: Path, spec: int, ticket: int, gh_repo: str, dry_run: bool) -> Erge
     if not gh_repo:
         return Ergebnis(
             EXIT_FEHLER,
-            _zeile(
-                ticket, "Fehler — GitHub-Repo unbekannt, --gh-repo owner/name angeben"
-            ),
+            _zeile(ticket, "Fehler — GitHub-Repo unbekannt, --gh-repo owner/name angeben"),
         )
     return eingreifen(repo, spec, ticket, gh_repo=gh_repo, dry_run=dry_run)

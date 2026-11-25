@@ -42,9 +42,7 @@ def befugnis() -> ModuleType:
 
 @pytest.fixture(scope="module")
 def bau_prompt() -> str:
-    vorlage = json.loads(
-        (SKILL / "repo-scripts" / "_default.json").read_text(encoding="utf-8")
-    )["prompt_template"]
+    vorlage = json.loads((SKILL / "repo-scripts" / "_default.json").read_text(encoding="utf-8"))["prompt_template"]
     bau = _lade("bau_befugnis_278", SKILL / "skripte" / "bau.py")
     return bau.build_prompt(vorlage, "7", "9", "T", "- k", konfig={})
 
@@ -65,9 +63,7 @@ def test_bau_prompt_traegt_befugnis_abschnitt(bau_prompt: str) -> None:
     assert "keine Rückfragen stellen" not in bau_prompt
 
 
-def test_bau_prompt_enthaelt_start_text_wortgleich(
-    befugnis: ModuleType, bau_prompt: str
-) -> None:
+def test_bau_prompt_enthaelt_start_text_wortgleich(befugnis: ModuleType, bau_prompt: str) -> None:
     assert befugnis.start_text("7") in bau_prompt
 
 
@@ -91,9 +87,7 @@ def test_bau_prompt_enthaelt_start_text_wortgleich(
         ("", "", False, 3),
     ],
 )
-def test_einordnen_kernfaelle(
-    befugnis: ModuleType, ziel: str, art: str, gesichert: bool, klasse: int
-) -> None:
+def test_einordnen_kernfaelle(befugnis: ModuleType, ziel: str, art: str, gesichert: bool, klasse: int) -> None:
     assert befugnis.einordnen(ziel, art, gesichert) == klasse
 
 
@@ -102,8 +96,7 @@ def test_tabellentext_nur_in_befugnis() -> None:
         p.relative_to(SKILL).as_posix()
         for ordner in ("to_spawn", "skripte", "repo-scripts")
         for p in repo_dateien(SKILL / ordner)
-        if p.suffix in {".py", ".json", ".md", ".txt"}
-        and GRENZE in p.read_text(encoding="utf-8")
+        if p.suffix in {".py", ".json", ".md", ".txt"} and GRENZE in p.read_text(encoding="utf-8")
     ]
     assert treffer == ["to_spawn/befugnis.py"]
 
@@ -131,9 +124,7 @@ def test_live_synonyme_sind_klasse_2(befugnis: ModuleType, ziel: str) -> None:
 
 @pytest.mark.parametrize("art", ["deploy", "irgendwas", "umbenennen_irgendwas"])
 @pytest.mark.parametrize("ziel", ["arbeitsordner", "zweig"])
-def test_arbeitsordner_unbekannte_art_ist_klasse_3(
-    befugnis: ModuleType, ziel: str, art: str
-) -> None:
+def test_arbeitsordner_unbekannte_art_ist_klasse_3(befugnis: ModuleType, ziel: str, art: str) -> None:
     assert befugnis.einordnen(ziel, art, True) == 3
 
 
@@ -160,9 +151,7 @@ def test_live_mit_sicherung_bleibt_klasse_2(befugnis: ModuleType) -> None:
     ("ziel", "art"),
     [(None, None), (None, "ändern"), ("arbeitsordner", None), (1, 2), (0, "ändern")],
 )
-def test_nicht_string_eingaben_nie_klasse_1(
-    befugnis: ModuleType, ziel: object, art: object
-) -> None:
+def test_nicht_string_eingaben_nie_klasse_1(befugnis: ModuleType, ziel: object, art: object) -> None:
     assert befugnis.einordnen(ziel, art, True) in (2, 3)  # type: ignore[arg-type]
 
 
@@ -195,17 +184,13 @@ def test_start_text_nennt_live_synonyme_aus_tabelle(befugnis: ModuleType) -> Non
         ("vps live", "anlegen"),
     ],
 )
-def test_klasse_2_teilwort_in_ziel_und_art(
-    befugnis: ModuleType, ziel: str, art: str
-) -> None:
+def test_klasse_2_teilwort_in_ziel_und_art(befugnis: ModuleType, ziel: str, art: str) -> None:
     assert befugnis.einordnen(ziel, art, True) == 2
 
 
 @pytest.mark.parametrize("ziel", ["arbeitsordner", "zweig", "staging", "testdaten"])
 @pytest.mark.parametrize("art", ["anlegen", "ändern", "testen", "committen"])
-def test_harmlose_faelle_nie_klasse_2(
-    befugnis: ModuleType, ziel: str, art: str
-) -> None:
+def test_harmlose_faelle_nie_klasse_2(befugnis: ModuleType, ziel: str, art: str) -> None:
     assert befugnis.einordnen(ziel, art, True) != 2
 
 
@@ -262,8 +247,22 @@ def test_start_text_nennt_klasse_1_listen_aus_tabelle(befugnis: ModuleType) -> N
 
 @pytest.mark.parametrize(
     "wort",
-    ["zahlung", "zahlen", "auszahlung", "zahl", "abbuchung", "rechnung", "kredit",
-     "payment", "billing", "passwort", "password", "login", "abo", "abo-kuendigen"],
+    [
+        "zahlung",
+        "zahlen",
+        "auszahlung",
+        "zahl",
+        "abbuchung",
+        "rechnung",
+        "kredit",
+        "payment",
+        "billing",
+        "passwort",
+        "password",
+        "login",
+        "abo",
+        "abo-kuendigen",
+    ],
 )
 def test_neue_klasse_2_woerter(befugnis: ModuleType, wort: str) -> None:
     assert befugnis.einordnen(wort, "ändern", True) == 2
@@ -303,9 +302,7 @@ def test_deploy_auf_staging_ist_bau_alltag(befugnis: ModuleType) -> None:
         "ticket/13-fremd",
     ],
 )
-def test_push_fremdes_ziel_ist_klasse_3(
-    befugnis: ModuleType, monkeypatch: pytest.MonkeyPatch, ziel: str
-) -> None:
+def test_push_fremdes_ziel_ist_klasse_3(befugnis: ModuleType, monkeypatch: pytest.MonkeyPatch, ziel: str) -> None:
     monkeypatch.setenv("TO_SPAWN_TICKET", "12")
     assert befugnis.einordnen(ziel, "pushen", False) == 3
 
@@ -320,11 +317,36 @@ def test_push_gueltiger_eigener_zweig_bleibt_klasse_1(
 
 @pytest.mark.parametrize(
     "wort",
-    ["zugang", "secret", "credential", "api-key", "API_KEY", "apikey", "api-token",
-     "access-token", "abonnement", "abos", "subscription", "Überweisung",
-     "Überweisung", "ueberweisen", "invoice", "paypal", "stripe", "purchase",
-     "kündigen", "kuendigen", "bezahlt", "pay", "buy", "cost", "charge", "ssh",
-     "ssh-key", "server ssh"],
+    [
+        "zugang",
+        "secret",
+        "credential",
+        "api-key",
+        "API_KEY",
+        "apikey",
+        "api-token",
+        "access-token",
+        "abonnement",
+        "abos",
+        "subscription",
+        "Überweisung",
+        "Überweisung",
+        "ueberweisen",
+        "invoice",
+        "paypal",
+        "stripe",
+        "purchase",
+        "kündigen",
+        "kuendigen",
+        "bezahlt",
+        "pay",
+        "buy",
+        "cost",
+        "charge",
+        "ssh",
+        "ssh-key",
+        "server ssh",
+    ],
 )
 def test_runde_4_klasse_2_woerter(befugnis: ModuleType, wort: str) -> None:
     assert befugnis.einordnen(wort, "ändern", True) == 2
@@ -333,8 +355,14 @@ def test_runde_4_klasse_2_woerter(befugnis: ModuleType, wort: str) -> None:
 
 @pytest.mark.parametrize(
     ("ziel", "art"),
-    [("staging", "deploy"), ("token-zaehler", "ändern"), ("arbeitsordner", "token"),
-     ("display", "ändern"), ("discharge", "ändern"), ("costume", "ändern")],
+    [
+        ("staging", "deploy"),
+        ("token-zaehler", "ändern"),
+        ("arbeitsordner", "token"),
+        ("display", "ändern"),
+        ("discharge", "ändern"),
+        ("costume", "ändern"),
+    ],
 )
 def test_runde_4_bewusst_nicht_klasse_2(befugnis: ModuleType, ziel: str, art: str) -> None:
     assert befugnis.einordnen(ziel, art, True) != 2
@@ -358,11 +386,22 @@ def test_start_text_zeigt_eigene_nummer(befugnis: ModuleType) -> None:
 # --- Runde 5 -----------------------------------------------------------------------------
 @pytest.mark.parametrize(
     "ziel",
-    ["ticket/12-login-seite", "ticket/12-account-status", "ticket/12-live-ampel",
-     "ticket/12-produkt-bild", "ticket/12-deliver", "ticket/12-olive",
-     "ticket/12-kosten-anzeige", "wip/12-verkauf", "ticket/12-vpsfix",
-     "ticket/12-zugangs-check", "ticket/12-secrets-scan", "ticket/12-pay",
-     "ticket/12-a.b_c-1", "ticket/12-x"],
+    [
+        "ticket/12-login-seite",
+        "ticket/12-account-status",
+        "ticket/12-live-ampel",
+        "ticket/12-produkt-bild",
+        "ticket/12-deliver",
+        "ticket/12-olive",
+        "ticket/12-kosten-anzeige",
+        "wip/12-verkauf",
+        "ticket/12-vpsfix",
+        "ticket/12-zugangs-check",
+        "ticket/12-secrets-scan",
+        "ticket/12-pay",
+        "ticket/12-a.b_c-1",
+        "ticket/12-x",
+    ],
 )
 def test_r5_eigener_zweig_mit_woertern_im_kurznamen_ist_1(
     befugnis: ModuleType, monkeypatch: pytest.MonkeyPatch, ziel: str
@@ -373,12 +412,14 @@ def test_r5_eigener_zweig_mit_woertern_im_kurznamen_ist_1(
 
 @pytest.mark.parametrize(
     ("ziel", "art"),
-    [("ticket/13-login-seite", "pushen"), ("ticket/13-x", "pushen"),
-     ("ticket/12-x", "live schalten"), ("ticket/12-x", "kosten")],
+    [
+        ("ticket/13-login-seite", "pushen"),
+        ("ticket/13-x", "pushen"),
+        ("ticket/12-x", "live schalten"),
+        ("ticket/12-x", "kosten"),
+    ],
 )
-def test_r5_gegenproben(
-    befugnis: ModuleType, monkeypatch: pytest.MonkeyPatch, ziel: str, art: str
-) -> None:
+def test_r5_gegenproben(befugnis: ModuleType, monkeypatch: pytest.MonkeyPatch, ziel: str, art: str) -> None:
     monkeypatch.setenv("TO_SPAWN_TICKET", "12")
     assert befugnis.einordnen(ziel, art, True) != 1
     if (ziel, art) == ("ticket/13-x", "pushen"):
@@ -387,26 +428,20 @@ def test_r5_gegenproben(
         assert befugnis.einordnen(ziel, art, True) == 2
 
 
-def test_r5_fremde_nummer_mit_klasse_2_wort_ist_2(
-    befugnis: ModuleType, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_r5_fremde_nummer_mit_klasse_2_wort_ist_2(befugnis: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("TO_SPAWN_TICKET", "12")
     assert befugnis.einordnen("ticket/13-login-seite", "pushen", True) == 2
 
 
 @pytest.mark.parametrize("ziel", ["wip-zweig", "WIP zweig", "wip_zweig"])
-def test_r5_symbolisches_wip_ziel_ist_3(
-    befugnis: ModuleType, monkeypatch: pytest.MonkeyPatch, ziel: str
-) -> None:
+def test_r5_symbolisches_wip_ziel_ist_3(befugnis: ModuleType, monkeypatch: pytest.MonkeyPatch, ziel: str) -> None:
     monkeypatch.setenv("TO_SPAWN_TICKET", "12")
     assert befugnis.einordnen(ziel, "pushen", True) == 3
     monkeypatch.delenv("TO_SPAWN_TICKET")
     assert befugnis.einordnen(ziel, "pushen", True) == 3
 
 
-@pytest.mark.parametrize(
-    "ziel", ["ticket/12--force", "ticket/12-x.lock", "ticket/12-x.", "ticket/12-."]
-)
+@pytest.mark.parametrize("ziel", ["ticket/12--force", "ticket/12-x.lock", "ticket/12-x.", "ticket/12-."])
 def test_r5_zweigname_endet_auf_buchstabe_oder_ziffer(
     befugnis: ModuleType, monkeypatch: pytest.MonkeyPatch, ziel: str
 ) -> None:

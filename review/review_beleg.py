@@ -33,9 +33,7 @@ SCHWEREN = ("hoch", "mittel", "niedrig")
 BEFUND_STATUS = ("behalten", "gestrichen")
 
 
-def datei_hashes_berechnen(
-    dateien: list[str], diffs: dict[str, DateiDiff]
-) -> dict[str, str]:
+def datei_hashes_berechnen(dateien: list[str], diffs: dict[str, DateiDiff]) -> dict[str, str]:
     """Für schreiben()/Aufrufer: datei_hashes-Feld aus den aktuellen Diffs bauen."""
     return {p: datei_hash(diffs[p]) for p in dateien if p in diffs}
 
@@ -50,9 +48,7 @@ def _deckt_ab(beleg: dict[str, Any], feld: str, dateien: list[str], hashes: dict
     return all(p in bekannt and hashes.get(p) and hashes[p] == beleg_hashes.get(p) for p in dateien)
 
 
-def beleg_gueltig_teilmenge(
-    beleg: dict[str, Any], sha: str, dateien: list[str], datei_hashes: dict[str, str]
-) -> bool:
+def beleg_gueltig_teilmenge(beleg: dict[str, Any], sha: str, dateien: list[str], datei_hashes: dict[str, str]) -> bool:
     """Beleg deckt Dateimenge B ab: gleiche sha, alle Dateien von B im Beleg, Hashes gleich.
     Beleg ohne datei_hashes (alt) → immer False (abwärtskompatibel, nur fingerprint zählt dann)."""
     if beleg.get("sha") != sha:
@@ -60,9 +56,7 @@ def beleg_gueltig_teilmenge(
     return _deckt_ab(beleg, "datei_hashes", dateien, datei_hashes)
 
 
-def beleg_inhalt_gleich(
-    beleg: dict[str, Any], dateien: list[str], inhalt_hashes: dict[str, str]
-) -> bool:
+def beleg_inhalt_gleich(beleg: dict[str, Any], dateien: list[str], inhalt_hashes: dict[str, str]) -> bool:
     """Wie beleg_gueltig_teilmenge, aber über inhalt_hashes und ohne sha-Bindung: für die Suche
     nach Commit. Beleg ohne inhalt_hashes (alt) → False, dann gilt nur der sha-gebundene Weg."""
     return bool(dateien) and _deckt_ab(beleg, "inhalt_hashes", dateien, inhalt_hashes)
@@ -116,9 +110,7 @@ def validieren(entwurf: dict[str, Any]) -> None:
             raise EingabeFehler(f"{liste} muss Liste sein")
     for feld in ("datei_hashes", "inhalt_hashes"):
         dh = entwurf.get(feld)
-        if dh is not None and (
-            not isinstance(dh, dict) or not all(isinstance(v, str) for v in dh.values())
-        ):
+        if dh is not None and (not isinstance(dh, dict) or not all(isinstance(v, str) for v in dh.values())):
             raise EingabeFehler(f"{feld} muss Objekt {{pfad: hash}} sein")
     for i, b in enumerate(entwurf.get("befunde", [])):
         if not isinstance(b, dict):
@@ -131,11 +123,7 @@ def validieren(entwurf: dict[str, Any]) -> None:
             if text_feld in b and not isinstance(b[text_feld], str):
                 raise EingabeFehler(f"befunde[{i}].{text_feld} muss Text sein")
         konf = b.get("konfidenz")
-        if (
-            isinstance(konf, bool)
-            or not isinstance(konf, int | float)
-            or not 0 <= konf <= 100
-        ):
+        if isinstance(konf, bool) or not isinstance(konf, int | float) or not 0 <= konf <= 100:
             raise EingabeFehler(f"befunde[{i}].konfidenz ungültig: {konf!r}")
 
 
@@ -152,15 +140,11 @@ def schreiben(entwurf_pfad: str, repo_arg: str | None) -> int:
         raise EingabeFehler("kein Git-Repo")
     sha = entwurf["sha"]
     if sha != KEIN_SHA and not git(repo, "rev-parse", "--verify", "-q", f"{sha}^{{commit}}", check=False).strip():
-        raise EingabeFehler(
-            f"sha {sha} gehört nicht zu Repo {repo.as_posix()} – --repo oder Entwurf-Feld repo setzen"
-        )
+        raise EingabeFehler(f"sha {sha} gehört nicht zu Repo {repo.as_posix()} – --repo oder Entwurf-Feld repo setzen")
     diff_modus = entwurf.get("diff_modus")
     # Ohne diff_modus ist bei commit/ticket/deploy unklar, ob staged oder gegen base gehasht
     # werden muss -> nicht nachtragen, nur fingerprint gilt.
-    nachtragen = (
-        isinstance(diff_modus, dict) or entwurf["moment"] not in _MOMENTE_MIT_DIFF_MODUS
-    )
+    nachtragen = isinstance(diff_modus, dict) or entwurf["moment"] not in _MOMENTE_MIT_DIFF_MODUS
     fehlt_hash = "datei_hashes" not in entwurf or "inhalt_hashes" not in entwurf
     if fehlt_hash and entwurf.get("dateien") and nachtragen:
         # Dirigent muss das Feld nicht kennen: aus dem Diff derselben Dateien im selben Modus nachtragen.
@@ -176,9 +160,7 @@ def schreiben(entwurf_pfad: str, repo_arg: str | None) -> int:
         except (EingabeFehler, OSError, subprocess.SubprocessError) as fehler:
             LOG.warning("datei_hashes nicht berechenbar: %s", fehler)
         else:
-            if route.get("sha") == entwurf.get("sha") and route.get(
-                "fingerprint"
-            ) == entwurf.get("fingerprint"):
+            if route.get("sha") == entwurf.get("sha") and route.get("fingerprint") == entwurf.get("fingerprint"):
                 entwurf.setdefault("datei_hashes", route.get("datei_hashes", {}))
                 entwurf.setdefault("inhalt_hashes", route.get("inhalt_hashes", {}))
             else:
@@ -201,14 +183,10 @@ def schreiben(entwurf_pfad: str, repo_arg: str | None) -> int:
     ignore = ziel.parent / ".gitignore"
     if not ignore.exists():
         ignore.write_text("*\n", encoding="utf-8")
-    ziel.write_text(
-        json.dumps(beleg, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-    )
+    ziel.write_text(json.dumps(beleg, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     behalten = sum(1 for b in beleg["befunde"] if b["status"] == "behalten")
     print(ziel.as_posix())
-    print(
-        f"Status: {beleg['status']} ({behalten} behaltene Befunde, Stufe {beleg['stufe']})"
-    )
+    print(f"Status: {beleg['status']} ({behalten} behaltene Befunde, Stufe {beleg['stufe']})")
     return 0
 
 
@@ -248,19 +226,11 @@ def kurz(pfad: str) -> int:
         f"Beleg {b.get('moment')} {b.get('sha')}: {str(b.get('status', '?')).upper()} "
         f"(Stufe {b.get('stufe')}, Modus {b.get('modus')}, Fix-Runde {b.get('fix_runde', 0)})",
         "Prüfer: "
-        + (
-            ", ".join(
-                f"{p.get('name')} ({p.get('befunde_roh', 0)} roh)"
-                for p in b.get("pruefer", [])
-            )
-            or "–"
-        ),
+        + (", ".join(f"{p.get('name')} ({p.get('befunde_roh', 0)} roh)" for p in b.get("pruefer", [])) or "–"),
     ]
     richter = b.get("richter")
     if isinstance(richter, dict):
-        zeilen.append(
-            f"Richter {richter.get('modell')}: {richter.get('gestrichen', 0)} gestrichen"
-        )
+        zeilen.append(f"Richter {richter.get('modell')}: {richter.get('gestrichen', 0)} gestrichen")
     rang = {s: i for i, s in enumerate(SCHWEREN)}
     behalten = sorted(
         (x for x in b.get("befunde", []) if x.get("status") == "behalten"),

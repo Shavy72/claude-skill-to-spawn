@@ -51,9 +51,7 @@ def _lade_bau(monkeypatch: pytest.MonkeyPatch, repo: Path) -> types.ModuleType:
 
 def _kind_env(echtes_heim: Path, **extra: str) -> dict[str, str]:
     env = {
-        k: v
-        for k, v in os.environ.items()
-        if not k.startswith(("PYTEST_", "TO_SPAWN_")) and k != "CLAUDE_CONFIG_DIR"
+        k: v for k, v in os.environ.items() if not k.startswith(("PYTEST_", "TO_SPAWN_")) and k != "CLAUDE_CONFIG_DIR"
     }
     env["HOME"] = str(echtes_heim)
     env["USERPROFILE"] = str(echtes_heim)
@@ -96,9 +94,7 @@ def test_testheim_fixture_lenkt_home_und_userprofile_um(test_heim: Path) -> None
     assert not (test_heim / ".claude" / "settings.json").exists()
 
 
-def test_vertrauen_schreibt_ins_testheim_und_sperrt_echtes_heim(
-    test_heim: Path, tmp_path: Path
-) -> None:
+def test_vertrauen_schreibt_ins_testheim_und_sperrt_echtes_heim(test_heim: Path, tmp_path: Path) -> None:
     """``vertrauen.sicherstellen`` schreibt ins Test-Heim und sperrt die echte Nutzer-Konfiguration."""
     ziel = tmp_path / "projekt"
     ziel.mkdir()
@@ -144,9 +140,7 @@ def test_bau_und_context_mode_folgen_umgebogenem_home_zur_laufzeit(
     assert context_mode.plugin_wurzel() is None
 
 
-def test_aufseher_prompts_folgen_umgebogenem_home_nach_import(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_aufseher_prompts_folgen_umgebogenem_home_nach_import(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Nach dem Import folgen ``waechter_takt`` und ``wache`` einem neuen HOME (Notiz-Tresor, #232)."""
     from to_spawn import befugnis, waechter_takt
 

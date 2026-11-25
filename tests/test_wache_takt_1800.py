@@ -90,7 +90,9 @@ def test_wache_modell_opus(wache: ModuleType) -> None:
     assert "Fable" not in wache.PROMPT
 
 
-@pytest.mark.xfail(strict=True, reason="überholt durch E38 (#500): 60 min, wenn nur noch die Abnahme des Menschen offen ist")
+@pytest.mark.xfail(
+    strict=True, reason="überholt durch E38 (#500): 60 min, wenn nur noch die Abnahme des Menschen offen ist"
+)
 def test_alt_keine_3600_ausnahme(wache: ModuleType) -> None:
     """Alter Ist-Stand (2026-09-24): Prompt kannte keine 3600-s-Ausnahme."""
     assert "3600" not in wache.PROMPT

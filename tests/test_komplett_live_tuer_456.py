@@ -180,9 +180,7 @@ def test_live_befehl_rot_exit_1(welt: dict[str, Path]) -> None:
     assert erg.returncode == 1 and "Exit 7" in erg.stdout, _text(erg)
 
 
-def test_live_befehl_oserror_exit_1_mit_handlung(
-    welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_live_befehl_oserror_exit_1_mit_handlung(welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch) -> None:
     """#482: Scheitert der Start von ``live.befehl`` mit ``OSError``, meldet die Tür Exit 1 + Handlung."""
     zaehl, live_zaehl = _einrichten(welt, staging=False)
     konfig = config.lade(welt["repo"])
@@ -312,9 +310,7 @@ def test_probelauf_merker_ohne_schluessel_kein_spec_fertig(welt: dict[str, Path]
 # --- 3. Lücken aus #425 (Tür direkt, echtes Wegwerf-Repo) ----------------------------------------
 
 
-def test_werkzeug_fehler_kein_ok_und_nie_als_geprueft(
-    klon: Path, zaehl: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_werkzeug_fehler_kein_ok_und_nie_als_geprueft(klon: Path, zaehl: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     konfig = _klon_konfig(zaehl, staging=False)
     monkeypatch.setenv(bash_wahl.TEST_FEHLT_ENV, "1")
     erg = komplett_lauf.komplett_einmal(klon, KLON_SPEC, Moment.VOR_LIVE, konfig)

@@ -139,9 +139,7 @@ def test_cli_parser_registriert_alle_unterbefehle() -> None:
     cli_parser = importlib.import_module("to_spawn.cli_parser")
     ap = cli_parser.baue_parser()
     vorhanden = _unterbefehle(ap)
-    assert ERWARTETE_UNTERBEFEHLE <= vorhanden, (
-        f"Fehlende Unterbefehle: {sorted(ERWARTETE_UNTERBEFEHLE - vorhanden)}"
-    )
+    assert ERWARTETE_UNTERBEFEHLE <= vorhanden, f"Fehlende Unterbefehle: {sorted(ERWARTETE_UNTERBEFEHLE - vorhanden)}"
 
 
 def test_cli_parser_bewahrt_argumentfehler_exit_codes(capsys: pytest.CaptureFixture[str]) -> None:

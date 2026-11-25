@@ -23,10 +23,7 @@ SKILL = Path(__file__).resolve().parent.parent.parent
 def main(argv: list[str]) -> int:
     ziel = Path(os.environ["CLAUDE_AUFZEICHNUNG"])
     eingabe = sys.stdin.buffer.read().decode("utf-8") if sys.stdin else ""
-    umgebung = {
-        k: os.environ.get(k)
-        for k in ("TO_SPAWN_TICKET", "TO_SPAWN_SPEC", "TO_SPAWN_LOG_REPO")
-    }
+    umgebung = {k: os.environ.get(k) for k in ("TO_SPAWN_TICKET", "TO_SPAWN_SPEC", "TO_SPAWN_LOG_REPO")}
     eintrag = {"argv": argv, "cwd": os.getcwd(), "stdin": eingabe, "env": umgebung}
     with ziel.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(eintrag, ensure_ascii=False) + "\n")

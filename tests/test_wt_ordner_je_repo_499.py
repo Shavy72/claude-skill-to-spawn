@@ -24,9 +24,7 @@ TICKET = "5"
 
 
 def _git(ort: Path, *args: str) -> None:
-    subprocess.run(
-        ["git", "-C", str(ort), *args], check=True, capture_output=True, text=True
-    )
+    subprocess.run(["git", "-C", str(ort), *args], check=True, capture_output=True, text=True)
 
 
 def _repo(tmp: Path, name: str) -> Path:
@@ -34,9 +32,7 @@ def _repo(tmp: Path, name: str) -> Path:
     fern = tmp / f"{name}.git"
     subprocess.run(["git", "init", "-q", "--bare", str(fern)], check=True)
     repo = tmp / name
-    subprocess.run(
-        ["git", "clone", "-q", str(fern), str(repo)], check=True, capture_output=True
-    )
+    subprocess.run(["git", "clone", "-q", str(fern), str(repo)], check=True, capture_output=True)
     _git(
         repo,
         "-c",
@@ -59,9 +55,7 @@ def welt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path]:
     monkeypatch.delenv("TO_SPAWN_REPO", raising=False)
     a, b = _repo(tmp_path, "repo-a"), _repo(tmp_path, "repo-b")
     wt = Path(config.worktree_pfad(TICKET, a)).expanduser()
-    assert wt == Path(config.worktree_pfad(TICKET, b)).expanduser(), (
-        "Ausgangslage: beide Repos teilen wt-5"
-    )
+    assert wt == Path(config.worktree_pfad(TICKET, b)).expanduser(), "Ausgangslage: beide Repos teilen wt-5"
     _git(a, "worktree", "add", "-q", "-b", f"ticket/{TICKET}-a", str(wt))
     return {"tmp": tmp_path, "a": a, "b": b, "wt": wt}
 
@@ -81,12 +75,8 @@ def test_eigenes_repo_und_zweiter_klon_starten_weiter(welt: dict[str, Path]) -> 
     assert config.worktree_fremd(TICKET, welt["a"]) is None
     assert _start(welt["a"], "test/repo-a-499").erlaubt
     klon = welt["tmp"] / "repo-a-klon"
-    subprocess.run(
-        ["git", "clone", "-q", str(welt["tmp"] / "repo-a.git"), str(klon)], check=True
-    )
-    assert config.worktree_fremd(TICKET, klon) is None, (
-        "anderer Klon desselben Repos ist dasselbe Repo"
-    )
+    subprocess.run(["git", "clone", "-q", str(welt["tmp"] / "repo-a.git"), str(klon)], check=True)
+    assert config.worktree_fremd(TICKET, klon) is None, "anderer Klon desselben Repos ist dasselbe Repo"
 
 
 def test_ohne_origin_entscheidet_der_git_ordner(welt: dict[str, Path]) -> None:
@@ -139,33 +129,44 @@ def test_adresse_normal_gleiche_kennung_je_schreibweise(adresse: str) -> None:
 
 
 def test_adresse_normal_verschiedene_repos_bleiben_verschieden() -> None:
-    assert config._adresse_normal("git@github.com:wer/repo-a.git") != config._adresse_normal("git@github.com:wer/repo-b.git")
+    assert config._adresse_normal("git@github.com:wer/repo-a.git") != config._adresse_normal(
+        "git@github.com:wer/repo-b.git"
+    )
     assert config._adresse_normal("https://github.com/a/repo") != config._adresse_normal("https://github.com/b/repo")
 
 
 def test_adresse_normal_github_pfad_gross_klein_egal() -> None:
-    assert config._adresse_normal("https://github.com/Shavy72/x") == config._adresse_normal("git@GitHub.com:shavy72/x.git")
+    assert config._adresse_normal("https://github.com/Shavy72/x") == config._adresse_normal(
+        "git@GitHub.com:shavy72/x.git"
+    )
 
 
 def test_adresse_normal_fremder_host_pfad_unterscheidet_gross_klein() -> None:
-    assert config._adresse_normal("https://git.example.org/Wer/Repo") != config._adresse_normal("https://git.example.org/wer/repo")
+    assert config._adresse_normal("https://git.example.org/Wer/Repo") != config._adresse_normal(
+        "https://git.example.org/wer/repo"
+    )
 
 
 def test_adresse_normal_host_gross_klein_egal() -> None:
-    assert config._adresse_normal("https://Git.Example.ORG/Wer/Repo") == config._adresse_normal("ssh://git@git.example.org/Wer/Repo.git")
+    assert config._adresse_normal("https://Git.Example.ORG/Wer/Repo") == config._adresse_normal(
+        "ssh://git@git.example.org/Wer/Repo.git"
+    )
 
 
 def test_adresse_normal_lokaler_windows_pfad_gross_klein_egal(monkeypatch: pytest.MonkeyPatch) -> None:
     import ntpath
 
     monkeypatch.setattr(config.os.path, "normcase", ntpath.normcase)
-    kennungen = {config._adresse_normal(a) for a in ("C:/dev/Repo", "c:/DEV/repo", "C:\\dev\\Repo\\", "C:/dev/Repo.git")}
+    kennungen = {
+        config._adresse_normal(a) for a in ("C:/dev/Repo", "c:/DEV/repo", "C:\\dev\\Repo\\", "C:/dev/Repo.git")
+    }
     assert len(kennungen) == 1
     assert config._adresse_normal("https://gitlab.example.com/Team/Repo") == "gitlab.example.com/Team/Repo"
 
 
 @pytest.mark.skipif(
-    os.name == "nt", reason="Windows vergleicht Pfade ohne Groß-/Kleinschreibung (normcase), gewollt laut _adresse_normal"
+    os.name == "nt",
+    reason="Windows vergleicht Pfade ohne Groß-/Kleinschreibung (normcase), gewollt laut _adresse_normal",
 )
 def test_adresse_normal_lokaler_linux_pfad_behaelt_schreibweise() -> None:
     assert config._adresse_normal("/home/a/Repo") != config._adresse_normal("/home/a/repo")

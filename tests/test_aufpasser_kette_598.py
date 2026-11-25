@@ -61,20 +61,12 @@ def _bau_py_zahl(ticket: int) -> int:
     for pane in _pane_pids():
         for pid in prozessbaum.baum(pane):
             argv = aufpasser._argv(pid)
-            zahl += any(
-                t.endswith("bau.py") and argv[i + 1] == str(ticket)
-                for i, t in enumerate(argv[:-1])
-            )
+            zahl += any(t.endswith("bau.py") and argv[i + 1] == str(ticket) for i, t in enumerate(argv[:-1]))
     return zahl
 
 
 def _claude_pids(name: str) -> list[int]:
-    ziel = [
-        z
-        for z in tmux(
-            "list-windows", "-t", f"={SITZUNG}", "-F", "#{window_name}\t#{pane_pid}"
-        ).splitlines()
-    ]
+    ziel = [z for z in tmux("list-windows", "-t", f"={SITZUNG}", "-F", "#{window_name}\t#{pane_pid}").splitlines()]
     pane = next(int(z.split("\t")[1]) for z in ziel if z.split("\t")[0] == name)
     return [p for p in prozessbaum.baum(pane) if prozessbaum.ist_claude(p)]
 
@@ -96,9 +88,7 @@ def test_echtes_ticket_ohne_prozess_nimmt_fensternamen() -> None:
     assert aufpasser.kette_folge(0, 7) == []
 
 
-def test_kette_ticket_m_zu_session_endet(
-    welt: Welt, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_kette_ticket_m_zu_session_endet(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
     """Befund 1: Fenster „bau 9003“, bau.py 9004 läuft, 9004 ist zu ⇒ Ms Session endet."""
     monkeypatch.setenv("GH_STUB_UNTER", f"{SPEC}:9003|9004")
     monkeypatch.setenv("GH_STUB_ZU", "9003,9004")
@@ -111,14 +101,10 @@ def test_kette_ticket_m_zu_session_endet(
     assert _lauf(welt, exit_warten_s=5) == 0
     assert _warte_auf(marker), welt.log()
     assert not any(prozessbaum.lebt(p) for p in claude), welt.log()
-    assert any("geschlossen (Ticket zu)" in k for k in welt.kommentare()), (
-        welt.kommentare()
-    )
+    assert any("geschlossen (Ticket zu)" in k for k in welt.kommentare()), welt.kommentare()
 
 
-def test_kette_haenger_setzt_echtes_ticket_fort(
-    welt: Welt, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_kette_haenger_setzt_echtes_ticket_fort(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
     """Befund 2: Hängt Ms Session im Fenster „bau 9003“, geht sie als 9004 weiter, Kette lebt."""
     monkeypatch.setenv("GH_STUB_UNTER", f"{SPEC}:9003|9004")
     monkeypatch.delenv("GH_STUB_ZU", raising=False)
@@ -135,27 +121,19 @@ def test_kette_haenger_setzt_echtes_ticket_fort(
         hash=welt.hash_von("bau 9003"),
     )
     assert welt.lauf("--bau-vorlage", welt.vorlage_mit_claude()) == 0
-    argv = (
-        welt.protokoll_bau.read_text(encoding="utf-8").splitlines()
-        if welt.protokoll_bau.is_file()
-        else []
-    )
+    argv = welt.protokoll_bau.read_text(encoding="utf-8").splitlines() if welt.protokoll_bau.is_file() else []
     assert argv == [f"9004 --resume {sids[9004]}"], (argv, welt.log())
     assert _warte_auf(marker), welt.log()
     namen = fenster_namen()
     assert namen.count("bau 9003") == 1 and namen.count("bau 9004") == 1, namen
 
 
-def test_kette_folge_laeuft_schon_kein_doppel_start(
-    welt: Welt, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_kette_folge_laeuft_schon_kein_doppel_start(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
     """Befund 3: Kette „bau 9003; bau 9004“, 9004 läuft schon im eigenen Fenster ⇒ kein zweites bau.py 9004."""
     monkeypatch.setenv("GH_STUB_UNTER", f"{SPEC}:9003|9004")
     monkeypatch.setenv("GH_STUB_ZU", "9003")
     welt.worktree(9003, schmutzig=False)
-    welt.fenster_still(
-        9004, 'python3 -c "import time; time.sleep(3600)" scripts/bau.py 9004'
-    )
+    welt.fenster_still(9004, 'python3 -c "import time; time.sleep(3600)" scripts/bau.py 9004')
     marker = welt.tmp / "weiter"
     befehl, _ = _kette(welt, [9003, 9004], marker)
     welt.fenster_still(9003, befehl)

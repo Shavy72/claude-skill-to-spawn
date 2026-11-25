@@ -342,5 +342,8 @@ def test_speicher_zaehlt_interaktive_agy_session_mit(tmp_path: Path) -> None:
 
 
 def test_aufpasser_liest_resume_id_von_agy() -> None:
-    assert aufpasser.session_id_aus_argv(["/opt/bin/agy", "--resume", "conv-77", "--model", "gemini-4-neon-high"]) == "conv-77"
+    assert (
+        aufpasser.session_id_aus_argv(["/opt/bin/agy", "--resume", "conv-77", "--model", "gemini-4-neon-high"])
+        == "conv-77"
+    )
     assert aufpasser.session_id_aus_argv(["agy", "--conversation=conv-88"]) == "conv-88"
