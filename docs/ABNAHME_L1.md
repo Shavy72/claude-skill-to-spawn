@@ -35,7 +35,7 @@ Urteile: **belegt** · **teilweise** · **abweichend** (Soll anders erfüllt, mi
 
 | # | Soll | Beleg | Urteil |
 |---|---|---|---|
-| M1 | Probe-Repo auf Bau-Server bis Staging, ohne Eingriff | – | noch nicht geprüft |
+| M1 | Probe-Repo auf Bau-Server bis Staging, ohne Eingriff | Probe-Lauf 3 am 25.11. (siehe Abschnitt „Probe-Lauf 3“ unten): `-mit` Bau fertig 01:39 ohne Eingriff, aber 2 System-Anomalien; `-ohne` Bau fertig 03:00, 3 Anomalien, 2 Eingriffe der Leit-Session. Abnahme durch David 25.11. 04:17 ohne Wartezeit im Minuten-Takt. | teilweise (Messlatte „null Anomalien“ nicht bestanden → 624, 641, 650) |
 | M2 | dasselbe am Windows-PC (`--ziel local`) | – | noch nicht geprüft |
 | M3 | zweite Spec: Einrichter „alles da“ | Vorstufe F4 | noch nicht geprüft |
 | M4 | Soll-Liste +1 Baustein → Spawn zieht nach | Vorstufe F5 | noch nicht geprüft |
@@ -50,6 +50,49 @@ Urteile: **belegt** · **teilweise** · **abweichend** (Soll anders erfüllt, mi
 | M13 | `PRUEFTOR_VERGLEICH.md`, Tempo gemessen | – | noch nicht geprüft |
 | M14 | Aufräumen ohne den Menschen (L4): Reste im Probe-Lauf, Hausmeister räumt, kein Lösch-Auftrag an den Menschen | – | offen |
 | M15 | Kaltstart-Probe (L5) | Kaltstart-Probe 21.11.2026 auf dem Bau-Server: frische Sonnet-Session nur mit `docs/WIEDEREINSTIEG.md`, Urteil BESTANDEN, 0 verhindernde Lücken; Windows-Seite offen | belegt (Bau-Server), Windows offen |
+
+## Probe-Lauf 3 (24./25.11.2026, Bau-Server)
+
+Quelle: `~/systemcheck-1119/probe_leihliste_srv_3.md` (Server-Uhr). Probe-Inhalt auf Leihlisten-Niveau, zwei Varianten:
+`-mit` (Repo `~/to-spawn-probe-3-mit`, Spec 1, Tickets 2–7, Abnahme 8) und `-ohne` (Repo `~/to-spawn-probe-3-ohne`, Spec 31,
+Tickets 32–37, Abnahme 38). Installierter Skill war `5fb4af9` (nicht Skill-main `168176f`), die Fixes 616/619/620 waren
+im Lauf also noch nicht wirksam. Messlatte (Davids Leitziel, `LASTENHEFT.md` L10, A65–A69): bestanden = null System-Anomalien;
+falsches Warten (Ticket wartet auf einen schon fertigen Vorgänger) zählt als Anomalie.
+
+**Für M1 belegt**
+- `-mit`: Start-Befehl 00:39:10, Tickets 2–7 zu bis 01:09:09, Bau fertig 01:39 (60 min ab Befehl). Keine Eingriffe der Leit-Session.
+- `-ohne`: Start-Befehl 01:49:21, Bau fertig 03:00 (71 min, davon ca. 36 min System-Anomalien). Zwei Eingriffe der Leit-Session (02:50:45, 02:53:22).
+- Wartezeiten durch Ticket-Abhängigkeit (2 → 3/4, 5 → 6 → 7, 36 zu → 38 arbeitet < 1 min) waren zulässig.
+- Messlatte nicht bestanden: `-mit` 2 Anomalien, `-ohne` 3 Anomalien.
+
+**Anomalien**
+1. `-mit`, ca. 01:08–01:14 (Skill-Issue 624, Folge 460): `bau 21` (6 Wartezyklen à 60 s) und `bau 25` (4 Zyklen) warteten auf einen Platz.
+   Gesamtgrenze 18 Claude-Sessions voll, weil fertige stille Fenster `bau 3/4/5` erst vom Cron-Aufpasser 01:15 geschlossen wurden; RAM war frei.
+   Kein Eingriff, löste sich selbst (ca. 6 + 4 min Leerlauf).
+2. `-ohne`-Start 01:44–01:46 gesperrt („schon 18 Claude-Sessions insgesamt“, RAM 5,9 GB frei), gleiche Ursache wie 1 (624), frei nach dem Cron-Aufpasser 01:45.
+3. `-ohne`, Skill-Issue 641: `bau 35` startete nicht (`bau.py 35` 02:11:04 Exit 9, „WEIGERUNG (#499)“: `~/wt/wt-35` ist schon Worktree eines anderen Repos).
+   Gleiche Ticket-Nummer in zwei Repos, Worktree-Ordner hängt nur an der Nummer. Der Aufseher heilte es selbst im Tick 02:24
+   (`worktree_basis` lokal gesetzt, `bau 35` 02:26 neu gestartet). Verlust 02:11:04 → 02:26 = 15 min Stillstand.
+4. `-ohne`, Skill-Issue 624 + Plätze: `bau 36` und `bau 37` warteten nach „35 zu“ (02:35:23) 16–19 min auf einen Platz, obwohl der Vorgänger fertig war;
+   das fertige stille Fenster `bau 35` hielt selbst einen Platz. Eingriff 1 (02:50:45): `bau 35` per `/exit` beendet. Eingriff 2 (02:53:22):
+   `speicher.max_sessions: 8` lokal gesetzt (Rechner-Grenze 12 / Gesamtgrenze 24, nicht committet). Fixes: 625 gemergt (nicht installiert), 650 (Plätze 12/24) in Prüfung, 641 offen.
+
+**Abnahme durch David, 25.11. 04:17** (gemessen von `leit 220`; Quelle: tmux `window_activity` im 10-s-Raster + `.to-spawn/wache_1.log`).
+Kommentar „abgenommen“: Issue 8 (`-mit`) 04:17:44, Issue 38 (`-ohne`) 04:17:45.
+
+| Lauf | Fenster | erste Regung nach Kommentar | Einordnung |
+|---|---|---|---|
+| `-mit` | `bau 8` | +24 s | in Ordnung |
+| `-mit` | `wache 1` (Aufseher) | +45 s (Wecker-Log 04:18:29) | in Ordnung |
+| `-ohne` | `wache 31` | +66 s | in Ordnung (≈ 1 min) |
+| `-ohne` | `bau 38` | +66 s | Issue 38 war schon 04:13 zu (Aufseher-Annahme nach 70 min) |
+
+- `-mit`: Aufseher trug 04:18:42 „Abnahme #8 bestätigt“ ein (PR 43) und wartete korrekt auf das Live-Ja des Nutzers (Kommentar im Ticket zählt dafür nicht).
+  Live-Ja des Nutzers 04:22:14 (`entscheidung-8.json`, `von: nutzer`), Wecker an `bau 8` 04:22:35 (+21 s), Issue 8 geschlossen 04:23:36
+  „abgenommen und live“ mit Live-Beleg (+82 s nach Ja).
+- Auffällig: zweiter Wecker „Abnahme-Issue #8: neuer Kommentar des Menschen“ an `bau 8` erst 04:20:32 (+168 s). Die Regung im Fenster `bau 8` war schon bei +24 s;
+  vermutlich doppelter Weckruf, keine Wartezeit. Offen: prüfen, ob der Wecker je Empfänger getaktet ist (ca. 2 min Abstand).
+- Ergebnis für diesen Schritt: keine Wartezeit im Minuten-Takt, kein Eingriff nötig.
 
 ## Offene Punkte
 
