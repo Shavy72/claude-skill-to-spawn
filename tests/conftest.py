@@ -10,6 +10,7 @@ Dateien. Die Zeitgrenzen selbst prüft ``test_waechter_213_fix.py`` ohne Schalte
 
 from __future__ import annotations
 
+import functools
 import json
 import logging
 import os
@@ -635,6 +636,7 @@ def _hausmeister_nur_im_test(
 
     echt_arbeitsordner = prozessbaum.arbeitsordner_in_windows
 
+    @functools.wraps(echt_arbeitsordner)
     def _arbeitsordner_nur_eigene(ziel: str | Path) -> dict[int, prozessbaum.ArbeitsordnerBefund]:
         echt_momentaufnahme = prozessbaum._momentaufnahme_windows
         ich = os.getpid()
