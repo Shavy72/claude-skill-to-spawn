@@ -30,7 +30,7 @@ gezählt) — eigene Datei, damit Leser des Ordner-Logs nur Ordner-Zeilen sehen.
 
 Ungesichert heißt: geänderte/neue Dateien oder Commits auf keinem Remote. Vorher
 ``git fetch --prune origin`` (veraltete Tracking-Refs täuschen „gepusht“ vor), dann
-zählt nur ``--remotes=origin``. Beim Klon (``.git`` ist Ordner) zählen alle lokalen
+zählt der erreichbare Server-Stand (``ls-remote --heads origin``, #179/#242). Beim Klon (``.git`` ist Ordner) zählen alle lokalen
 Refs außer ``refs/remotes`` (Zweige, Tags, Notes) + HEAD, denn mit dem Klon sterben
 sie alle; ein Stash bleibt. Beim verknüpften Worktree (``.git`` ist Datei) nur HEAD:
 die übrigen Refs gehören dem Hauptrepo und überleben das ``worktree remove`` — sie
@@ -130,8 +130,9 @@ import shutil
 import stat
 import subprocess
 import sys
+import tempfile
 import time
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from contextlib import ExitStack
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
@@ -323,6 +324,13 @@ ZWEIGE_SCHALTER = "TO_SPAWN_HAUSMEISTER_ZWEIGE_LOESCHEN"
 ZWEIGE_AUS = f"Zweig-Löschen aus ({ZWEIGE_SCHALTER}=1 fehlt)"
 #: Unter diesem Anteil freier Platte startet keine neue Session.
 STARTSPERRE_ANTEIL = 0.05
+#: Ab diesem belegten Inode-Anteil der Temp-Wurzel warnt und räumt der Hausmeister (#355);
+#: einzige Stelle der Schwelle (auch für ``tests/conftest.py``).
+INODE_WARN_ANTEIL = 0.70
+#: Ab diesem belegten Inode-Anteil der Temp-Wurzel startet keine neue Session (#355).
+INODE_SPERRE_ANTEIL = 0.90
+#: Läuft gerade :func:`_start_pruefen`? Dann schreibt :func:`_alle_ordner` keine doppelte Inode-Warnung.
+_IM_STARTCHECK: ContextVar[bool] = ContextVar("hausmeister_im_startcheck", default=False)
 #: Sperrdatei gegen parallele Aufräum-Läufe, im Ordner des Hausmeister-Logs.
 SPERR_DATEI = "hausmeister.lock"
 #: Zeitlimit je gh-Abfrage in Sekunden.
@@ -419,7 +427,8 @@ def _name_muster() -> tuple[re.Pattern[str], ...]:
 
 
 #: #248/#347 W3: ``20JJ-<Ziffer>`` direkt nach dem Präfix ist datumsartig, nie eine Ticket-Nummer
-#: (``l1/2026-11-21-stand``, ``fix/2026-11``, auch ``ticket/2026-13-x``) — ohne Nummer bleibt der Zweig.
+#: (``l1/2026-11-21-stand``, ``fix/2026-11``, auch ``ticket/2026-13-x``) — im Zweig-Pfad bleibt ein
+#: Zweig ohne Nummer stehen; ein Ordner mit Datums-Zweig läuft über den Weg „ohne Nummer“.
 _KEIN_DATUM = r"(?!20\d\d-\d)"
 _ZWEIG_MUSTER = re.compile(rf"^(?:(?:ticket|fix|wip|aufseher)/|fix-|abschluss-){_KEIN_DATUM}{_TICKET_NR}(?:-.*)?$")
 #: #235: Etappen-Zweig ``l<Etappe>/<N>[buchstabe]-…`` (``l4/176-…``, ``l1/214a-…``); erst ab
@@ -572,6 +581,7 @@ def _alle_ordner(*, loeschen: bool, jetzt: float | None) -> Rundgang:
         _WORKTREE_CACHE.reset(wt_token)
     _kennzahl_schreiben(ergebnisse, trocken=not loeschen)
     temp_ordner.aufraeumen(loeschen=loeschen, jetzt=jetzt)  # #136: Temp-Reste, wirft nie
+    _temp_inodes_im_takt()  # #355: Datei-Zähler (Inodes) der Temp-Wurzel prüfen
     _zweige_im_takt(loeschen, jetzt)
     # L5 #145: Netz für vergessene Ablösungen, wirft nie; Probelauf schreibt/lädt nichts (#169).
     uebergabe_sichern.sichern(trocken=not loeschen)
@@ -626,25 +636,49 @@ def start_erlaubt(*, loeschen: bool = True, nur_messen: bool = False) -> tuple[b
 
 def _start_pruefen(loeschen: bool, nur_messen: bool = False) -> tuple[bool, str]:
     anteil = _frei_anteil()
+    inodes = _temp_inode_anteil()
     zusatz = ""
-    if _ist_platznot(anteil) and not nur_messen:
-        rund = rundgang(loeschen=loeschen)
+    if (_ist_platznot(anteil) or _ist_inode_knapp(inodes)) and not nur_messen:
+        token = _IM_STARTCHECK.set(True)
+        try:
+            rund = rundgang(loeschen=loeschen)
+        finally:
+            _IM_STARTCHECK.reset(token)
         if not rund.gelaufen and not rund.wartet:
             zusatz = " (Aufräumen gescheitert, siehe Log)"
         anteil = _frei_anteil()
+        inodes = _temp_inode_anteil()
+    if _ist_inode_voll(inodes):
+        assert inodes is not None
+        nach = "trotz gescheitertem Aufräumen" if zusatz else "auch nach dem Aufräumen"
+        satz = (
+            f"Temp-Wurzel voll: {_prozent(inodes)} der Inodes belegt (Startsperre ab "
+            f"{_prozent(INODE_SPERRE_ANTEIL)}), {nach} — keine neue Session"
+        )
+        _spur("temp_inodes_voll", satz, inodes_belegt=round(inodes, 4))
+        return False, satz
     if anteil is None:
         satz = f"Platte nicht messbar — kein Urteil, Start erlaubt{zusatz}"
         _spur("platte_unmessbar", satz)
         return True, satz
-    if anteil >= STARTSPERRE_ANTEIL:
-        return True, f"Platte frei: {_prozent(anteil)} frei{zusatz}"
-    nach = "trotz gescheitertem Aufräumen" if zusatz else "auch nach dem Aufräumen"
-    satz = (
-        f"Platte voll: nur {_prozent(anteil)} frei (Startsperre unter "
-        f"{_prozent(STARTSPERRE_ANTEIL)}), {nach} — keine neue Session"
-    )
-    _spur("platte_voll", satz, frei_anteil=round(anteil, 4))
-    return False, satz
+    if anteil < STARTSPERRE_ANTEIL:
+        nach = "trotz gescheitertem Aufräumen" if zusatz else "auch nach dem Aufräumen"
+        satz = (
+            f"Platte voll: nur {_prozent(anteil)} frei (Startsperre unter "
+            f"{_prozent(STARTSPERRE_ANTEIL)}), {nach} — keine neue Session"
+        )
+        _spur("platte_voll", satz, frei_anteil=round(anteil, 4))
+        return False, satz
+    if _ist_inode_knapp(inodes):
+        assert inodes is not None
+        warn = (
+            f"Temp-Wurzel knapp: {_prozent(inodes)} der Inodes belegt "
+            f"(Warnschwelle {_prozent(INODE_WARN_ANTEIL)})"
+        )
+        log.warning("Hausmeister: %s", warn)
+        _spur("temp_inodes_knapp", warn, inodes_belegt=round(inodes, 4))
+        return True, f"Platte frei: {_prozent(anteil)} frei{zusatz} ({warn})"
+    return True, f"Platte frei: {_prozent(anteil)} frei{zusatz}"
 
 
 def _spur(art: str, satz: str, **felder: object) -> None:
@@ -1184,10 +1218,7 @@ def _zweig_entscheiden(
         return ergebnis("bleibt", ZWEIGE_AUS, sha, fehler=not trocken)
     art = "gesichert+gelöscht" if fehlende else "gelöscht"
     if fehlende and ort == "lokal":  # Remote-Commits liegen schon auf GitHub, lokale nicht
-        leck = aufpasser.git_lauf(
-            o.cwd, "log", "--format=", "--name-only", sha, "--not", o.haupt_ref,
-            f"--glob={o.sicherungen}", "--", *_glob(aufpasser.SICHERUNG_AUSSCHLUSS),
-        ).split()  # fmt: skip
+        leck = _geheimnis_pfade(o.cwd, sha, "--not", o.haupt_ref, f"--glob={o.sicherungen}")
         if leck:
             return ergebnis("bleibt", f"Geheimnis-Datei {leck[0]} in ungesichertem Commit", sha, fuer_david=True)
         try:  # #169: dieselbe Sperre wie der Zweig-Upload, Übergaben nie auf sicherung/<N>
@@ -1573,7 +1604,7 @@ def _regeln(
     _kein_offener_pull_request(echt, slug)
 
     # 8 Ungesichertes prüfen (auch trocken: fetch, Geheimnisse, Ignoriertes)
-    koepfe, zu_sichern, status_vorher = _ungesichertes(echt, ist_worktree)
+    koepfe, zu_sichern, status_vorher, sicherung_vorher = _ungesichertes(echt, ist_worktree, ticket)
     art: Art = "gesichert und gelöscht" if (koepfe or zu_sichern) else "gelöscht"
     if ticket is None:  # 8b #235: ohne Nummer keine Sicherung (sicherung/<N>) ⇒ nur Fertiges
         if zu_sichern:
@@ -1594,8 +1625,9 @@ def _regeln(
     if trocken:
         return Ergebnis(ordner, art, grund, stand.ticket, trocken=True), None
     if ticket is not None and (koepfe or zu_sichern):
+        zusatz = [*koepfe, *([sicherung_vorher] if sicherung_vorher else [])]
         try:
-            stand.sicherung = aufpasser.sichern(echt, ticket, jetzt, zusatz_koepfe=koepfe)
+            stand.sicherung = aufpasser.sichern(echt, ticket, jetzt, zusatz_koepfe=zusatz)
         except RuntimeError as fehler:
             raise _Bleibt(f"Sicherung gescheitert: {_kurz(fehler)}", fehler=True) from None
         if stand.sicherung is None:
@@ -2300,6 +2332,76 @@ def _ist_platznot(anteil: float | None) -> bool:
     return anteil is not None and anteil < PLATZNOT_ANTEIL
 
 
+def _ist_inode_knapp(belegt: float | None) -> bool:
+    return belegt is not None and belegt >= INODE_WARN_ANTEIL
+
+
+def _ist_inode_voll(belegt: float | None) -> bool:
+    return belegt is not None and belegt >= INODE_SPERRE_ANTEIL
+
+
+def inode_anteil(pfad: Path) -> float | None:
+    """Belegter Inode-Anteil (0..1) des Dateisystems unter ``pfad`` (#355); ``None`` = unbekannt.
+
+    Einzige Mess-Stelle (auch für ``tests/conftest.py``): ohne ``os.statvfs`` (Windows), bei
+    ``OSError`` oder ohne feste Inode-Zahl (``f_files <= 0``, z. B. btrfs) kommt ``None``.
+    """
+    statvfs = getattr(os, "statvfs", None)
+    if statvfs is None:
+        return None
+    try:
+        werte = statvfs(pfad)
+    except OSError:
+        return None
+    if werte.f_files <= 0:
+        return None
+    return 1 - werte.f_ffree / werte.f_files
+
+
+def _temp_inode_basen() -> list[Path]:
+    """Existierende Temp-Wurzeln (System-Temp + konfigurierter Temp-Ordner), ohne Doppelte."""
+    basen: dict[str, Path] = {}
+    kandidaten = [Path(tempfile.gettempdir())]
+    try:
+        kandidaten.append(temp_ordner._pfad_ohne_anlegen())
+    except (OSError, config.KeinHeimOrdner):
+        pass
+    for pfad in kandidaten:
+        if pfad.is_dir():
+            basen.setdefault(_pfad_schluessel(pfad), pfad)
+    return list(basen.values())
+
+
+def _temp_inode_anteil() -> float | None:
+    """Höchster belegter Inode-Anteil (0..1) der Temp-Wurzeln (#355); ``None`` = unbekannt.
+
+    Test-Naht ``TO_SPAWN_HAUSMEISTER_INODES``: Anteil (0..1) oder Datei mit einem Anteil je Zeile.
+    """
+    roh = os.environ.get("TO_SPAWN_HAUSMEISTER_INODES", "").strip()
+    if roh:
+        anteil = _naht_anteil(roh)
+        if anteil is None:
+            log.warning("Temp-Inodes nicht messbar: TO_SPAWN_HAUSMEISTER_INODES=%r ungültig", roh)
+        return anteil
+    werte = [w for basis in _temp_inode_basen() if (w := inode_anteil(basis)) is not None]
+    return max(werte) if werte else None
+
+
+def _temp_inodes_im_takt() -> None:
+    """#355: warnt im regulären Takt, sobald der Inode-Zähler einer Temp-Wurzel knapp wird."""
+    if _IM_STARTCHECK.get():
+        return
+    inodes = _temp_inode_anteil()
+    if not _ist_inode_knapp(inodes):
+        return
+    assert inodes is not None
+    art = "temp_inodes_voll" if _ist_inode_voll(inodes) else "temp_inodes_knapp"
+    schwelle = INODE_SPERRE_ANTEIL if art == "temp_inodes_voll" else INODE_WARN_ANTEIL
+    satz = f"Temp-Wurzel: {_prozent(inodes)} der Inodes belegt (Schwelle {_prozent(schwelle)})"
+    log.warning("Hausmeister: %s", satz)
+    _spur(art, satz, inodes_belegt=round(inodes, 4))
+
+
 def _frei_anteil() -> float | None:
     """Anteil freier Platte (0..1) der Wurzeln, ``None`` = nicht messbar.
 
@@ -2516,9 +2618,17 @@ def _origin_slug(echt: Path) -> str:
     return _slug(roh[0])
 
 
+#: Eingebaute Git-URL-Schemas; jedes andere ``<schema>://`` ruft einen ``git-remote-<x>``-Helfer.
+_GIT_SCHEMAS = frozenset({"http", "https", "ssh", "git", "file"})
+
+
 def _ist_transport_helfer(url: str) -> bool:
-    """``ext::…``, ``fd::…`` u. ä.: führt einen Befehl statt eines Servers aus."""
-    return bool(re.match(r"^[A-Za-z][A-Za-z0-9+.-]*::", url.strip()))
+    """``ext::…``, ``fd::…`` oder fremdes ``<schema>://`` (startet ``git-remote-<x>``)."""
+    text = url.strip()
+    if re.match(r"^[A-Za-z][A-Za-z0-9+.-]*::", text):
+        return True
+    treffer = re.match(r"^([A-Za-z][A-Za-z0-9+.-]*)://", text)
+    return treffer is not None and treffer.group(1).lower() not in _GIT_SCHEMAS
 
 
 def _ziel_im_ordner(echt: Path, url: str) -> bool:
@@ -2627,8 +2737,10 @@ def _gleiche_kopie(haupt: Path | None, repo: Path, rel: str) -> bool:
         return False
 
 
-def _ungesichertes(repo: Path, ist_worktree: bool) -> tuple[list[str], bool, list[tuple[str, str]]]:
-    """Regel 8: (ungepushte Köpfe, zu sichernde Dateien da?, Status-Schnappschuss).
+def _ungesichertes(
+    repo: Path, ist_worktree: bool, ticket: int | None = None
+) -> tuple[list[str], bool, list[tuple[str, str]], str | None]:
+    """Regel 8: (ungepushte Köpfe, zu sichernde Dateien da?, Status-Schnappschuss, Server-``sicherung/<N>``).
 
     Alles, was die Sicherung nicht retten kann, wirft ``_Bleibt``.
     """
@@ -2638,7 +2750,9 @@ def _ungesichertes(repo: Path, ist_worktree: bool) -> tuple[list[str], bool, lis
         raise _Bleibt(f"git fetch origin gescheitert: {_kurz(fehler)}", fehler=True) from None
     if not ist_worktree and _git_oder_none(repo, "rev-parse", "--verify", "-q", "refs/stash"):
         raise _Bleibt("Stash vorhanden (git stash list)", fuer_david=True)
-    auf_server = _server_koepfe(repo)
+    server_zweige = _server_zweige(repo)
+    sicherung_vorher = _sicherung_stand_holen(repo, ticket, server_zweige) if ticket is not None else None
+    auf_server = list(server_zweige.values())
     if _nur_im_reflog(repo, ist_worktree, auf_server):
         raise _Bleibt("ungesicherte Commits im Verlauf (Reflog, auf keinem Zweig)", fuer_david=True)
     for zeile in aufpasser.git_lauf(repo, "ls-files", "-s").splitlines():
@@ -2672,20 +2786,30 @@ def _ungesichertes(repo: Path, ist_worktree: bool) -> tuple[list[str], bool, lis
     koepfe = _ungepushte_koepfe(repo, ist_worktree, auf_server)
     if koepfe:
         gegen = ["--not", *auf_server] if auf_server else []
-        leck = aufpasser.git_lauf(
-            repo,
-            "log",
-            "--ignore-missing",
-            "--format=",
-            "--name-only",
-            *koepfe,
-            *gegen,
-            "--",
-            *_glob(aufpasser.SICHERUNG_AUSSCHLUSS),
-        ).split()
+        leck = _geheimnis_pfade(repo, "--ignore-missing", *koepfe, *gegen)
         if leck:
             raise _Bleibt(f"Geheimnis-Datei {leck[0]} in ungepushtem Commit", fuer_david=True)
-    return koepfe, zu_sichern, alle
+    return koepfe, zu_sichern, alle, sicherung_vorher
+
+
+def _geheimnis_pfade(cwd: Path, *rev_args: str) -> list[str]:
+    """Geheimnis-Pfade (``SICHERUNG_AUSSCHLUSS``) in Commits von ``rev_args`` per ``-z`` (#215).
+
+    Trennt NUL-getrennt über :func:`to_spawn.uebergabe_sichern.pfade_aus_nul`, damit Pfade
+    mit Leerzeichen, Zeilenumbruch oder Nicht-ASCII-Zeichen nie gequotet oder zerlegt werden.
+    """
+    aus = aufpasser.git_lauf(
+        cwd,
+        "log",
+        "-z",
+        "--format=",
+        "--name-only",
+        "--diff-merges=separate",
+        *rev_args,
+        "--",
+        *_glob(aufpasser.SICHERUNG_AUSSCHLUSS),
+    )
+    return uebergabe_sichern.pfade_aus_nul(aus)
 
 
 def _lokale_koepfe(repo: Path, ist_worktree: bool) -> list[str]:
@@ -2702,18 +2826,242 @@ def _lokale_koepfe(repo: Path, ist_worktree: bool) -> list[str]:
 
 #: So viele Reflog-Stände je ``rev-list``-Aufruf (Windows: Kommandozeile höchstens 32 KiB).
 _REFLOG_HAPPEN = 200
+#: Obergrenze der Server-Commits für die Baum-/Patch-Prüfung (#253, Schutz vor Alt-Historie).
+_SERVER_PRUEF_LIMIT = 1000
+#: Deterministische Diff-Optionen ohne externe Diff-Treiber/Textconv und mit vollem Blob-Hash (#253).
+_DIFF_OPTIONEN = ("--no-ext-diff", "--no-textconv", "--no-renames", "--full-index")
+
+
+def _git_bytes(cwd: Path, *args: str, eingabe: bytes | None = None) -> bytes:
+    """Führt ``git`` binärsicher mit optionaler Standardeingabe und ``fensterlos()`` aus."""
+    env = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GIT_ASKPASS": ""}
+    try:
+        ergebnis = subprocess.run(
+            ["git", *args],
+            cwd=str(cwd),
+            input=eingabe,
+            env=env,
+            capture_output=True,
+            check=False,
+            timeout=300,
+            **prozessbaum.fensterlos(),
+        )
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(f"git {' '.join(args[:3])}: Zeitgrenze 300 s") from None
+    except FileNotFoundError as fehler:
+        raise RuntimeError(f"git {' '.join(args[:3])}: {fehler}") from None
+    if ergebnis.returncode != 0:
+        meldung = ergebnis.stderr.decode("utf-8", errors="replace").strip()[:300]
+        raise RuntimeError(f"git {' '.join(args[:3])}: {meldung}")
+    return ergebnis.stdout
+
+
+def _commit_infos(repo: Path, shas: Iterable[str]) -> dict[str, tuple[str, tuple[str, ...]]]:
+    """Liefert ``sha → (baum_sha, eltern_shas)`` über ``--stdin`` (Windows-Befehlszeile bleibt kurz)."""
+    eingabe = "".join(f"{s}\n" for s in shas).encode("ascii")
+    if not eingabe:
+        return {}
+    roh = _git_bytes(repo, "log", "--no-walk", "--format=%H%x09%T%x09%P", "--stdin", eingabe=eingabe)
+    infos: dict[str, tuple[str, tuple[str, ...]]] = {}
+    for zeile in roh.decode("ascii", errors="replace").splitlines():
+        teile = zeile.split("\t")
+        if len(teile) == 3:
+            infos[teile[0]] = (teile[1], tuple(teile[2].split()))
+    return infos
+
+
+def _server_kandidaten(repo: Path, server: list[str], grenzen: set[str]) -> tuple[list[str], set[str]]:
+    """Server-Commits abseits von ``grenzen`` (höchstens :data:`_SERVER_PRUEF_LIMIT`): ``(SHAs, Baum-SHAs)``."""
+    zeilen = [f"{s}\n" for s in server] + [f"^{g}\n" for g in sorted(grenzen)]
+    roh = _git_bytes(
+        repo,
+        "rev-list",
+        "--ignore-missing",
+        f"--max-count={_SERVER_PRUEF_LIMIT}",
+        "--format=%H%x09%T",
+        "--stdin",
+        eingabe="".join(zeilen).encode("ascii"),
+    )
+    shas: list[str] = []
+    baeume: set[str] = set()
+    for zeile in roh.decode("ascii", errors="replace").splitlines():
+        if "\t" in zeile:
+            sha, _, baum = zeile.partition("\t")
+            shas.append(sha)
+            baeume.add(baum)
+    return shas, baeume
+
+
+def _patch_ids_von_commits(repo: Path, shas: Iterable[str]) -> dict[str, str]:
+    """``commit_sha → patch_id`` (``git patch-id --stable``) für alle Nicht-Merge-Commits mit Diff."""
+    eingabe = "".join(f"{s}\n" for s in shas).encode("ascii")
+    if not eingabe:
+        return {}
+    diffs = _git_bytes(
+        repo,
+        "log",
+        "--no-walk",
+        "--no-merges",
+        "--format=commit %H",
+        "-p",
+        *_DIFF_OPTIONEN,
+        "--stdin",
+        eingabe=eingabe,
+    )
+    if not diffs:
+        return {}
+    roh = _git_bytes(repo, "patch-id", "--stable", eingabe=diffs)
+    ids: dict[str, str] = {}
+    for zeile in roh.decode("ascii", errors="replace").splitlines():
+        teile = zeile.split()
+        if len(teile) >= 2:
+            ids[teile[1]] = teile[0]
+    return ids
+
+
+def _diff_patch_id(repo: Path, basis: str, ziel: str) -> str | None:
+    """Stabile Patch-ID für den Gesamt-Diff ``basis..ziel`` (Squash-Merge); ``None`` bei leerem Diff."""
+    diff = _git_bytes(repo, "diff", *_DIFF_OPTIONEN, basis, ziel)
+    if not diff:
+        return None
+    roh = _git_bytes(repo, "patch-id", "--stable", eingabe=diff).decode("ascii", errors="replace").strip()
+    teile = roh.split()
+    return teile[0] if teile else None
+
+
+def _verwaist_auf_server(repo: Path, verwaist: set[str], server: list[str]) -> bool:
+    """#253: Liegen alle verwaisten Reflog-Commits als Baum oder Patch bereits im Server-Stand?
+
+    Erkennt ``amend``, ``rebase``, ``pull --rebase``, Squash-Merge (auch mehrerer Commits
+    auf bewegtem Hauptzweig) und Force-Push nach ``amend``. Leere Commits, Reverts zurück
+    auf die Basis und wirklich verlorene Änderungen bleiben fail-closed ungedeckt.
+    """
+    if not server:
+        return False
+    infos = _commit_infos(repo, sorted(verwaist))
+    if not verwaist <= infos.keys():
+        return False
+    hat_kind = {p for _, ps in infos.values() for p in ps if p in verwaist}
+    spitzen = sorted(c for c in verwaist if c not in hat_kind)
+    alle_grenzen = {p for _, ps in infos.values() for p in ps if p not in verwaist}
+    grenz_infos = _commit_infos(repo, sorted(alle_grenzen)) if alle_grenzen else {}
+    baum_von: dict[str, str] = {c: t for c, (t, _) in infos.items()}
+    baum_von.update({c: t for c, (t, _) in grenz_infos.items()})
+
+    def vorfahren_im_graph(start: str) -> set[str]:
+        gesehen: set[str] = set()
+        stapel = [start]
+        while stapel:
+            aktuell = stapel.pop()
+            if aktuell in gesehen or aktuell not in verwaist:
+                continue
+            gesehen.add(aktuell)
+            stapel.extend(p for p in infos[aktuell][1] if p in verwaist and p not in gesehen)
+        return gesehen
+
+    def baum_trifft(commit: str, server_baeume: set[str], grenz_baeume: set[str]) -> bool:
+        t = baum_von[commit]
+        if t not in server_baeume or t in grenz_baeume:
+            return False
+        # Leerer Commit (Baum == Baum eines eigenen Elternteils) zählt nie als Treffer (#254).
+        return all(t != baum_von.get(p) for p in infos[commit][1])
+
+    abgedeckt: set[str] = set()
+    for spitze in spitzen:
+        gruppe = vorfahren_im_graph(spitze)
+        if gruppe <= abgedeckt:
+            continue
+        grenzen = {p for c in gruppe for p in infos[c][1] if p not in verwaist}
+        grenz_baeume = {baum_von[g] for g in grenzen if g in baum_von}
+        kandidaten, server_baeume = _server_kandidaten(repo, server, grenzen)
+        if not kandidaten:
+            return False
+        if baum_trifft(spitze, server_baeume, grenz_baeume):
+            abgedeckt |= gruppe
+            continue
+        server_patches = set(_patch_ids_von_commits(repo, kandidaten).values())
+        # Squash-Merge (ein oder mehrere Commits, auch auf bewegtem Hauptzweig):
+        # Gesamt-Diff ab maximaler Grenze gegen die Server-Patches prüfen.
+        if grenzen:
+            if len(grenzen) == 1:
+                max_grenzen = sorted(grenzen)
+            elif len(grenzen) <= _REFLOG_HAPPEN:
+                max_grenzen = aufpasser.git_lauf(repo, "merge-base", "--independent", *sorted(grenzen)).split()
+            else:
+                max_grenzen = []
+            if len(max_grenzen) == 1:
+                gesamt = _diff_patch_id(repo, max_grenzen[0], spitze)
+                if gesamt and gesamt in server_patches:
+                    abgedeckt |= gruppe
+                    continue
+        # Einzel-Commits (Rebase, pull --rebase, umgeordnete Commits): Baum oder Patch je Commit.
+        offen = [c for c in sorted(gruppe) if c not in abgedeckt]
+        for c in list(offen):
+            if baum_trifft(c, server_baeume, grenz_baeume):
+                abgedeckt |= vorfahren_im_graph(c)
+        offen = [c for c in offen if c not in abgedeckt]
+        if offen:
+            einzel = _patch_ids_von_commits(repo, offen)
+            for c in offen:
+                if (pid := einzel.get(c)) and pid in server_patches:
+                    abgedeckt.add(c)
+        if not gruppe <= abgedeckt:
+            return False
+    return abgedeckt == verwaist
+
+
+def _existiert_streng(pfad: Path) -> bool:
+    """``True`` wenn ``pfad`` existiert, ``False`` nur bei ``FileNotFoundError`` (``PermissionError`` steigt auf)."""
+    try:
+        os.lstat(pfad)
+    except FileNotFoundError:
+        return False
+    return True
+
+
+def _reflog_dateien(git_dir: Path, ist_worktree: bool) -> list[Path]:
+    """Alle Reflog-Dateien unter ``logs/`` (und beim Klon ``worktrees/*/logs/``), fail-closed (#347).
+
+    Anders als ``Path.rglob``/``glob`` (überspringen unter Python 3.13 unlesbare Ordner still)
+    lässt ``os.scandir`` jeden ``OSError`` durch — ein gesperrter Unterordner hält den Ordner.
+    """
+    wurzeln: list[Path] = []
+    logs_dir = git_dir / "logs"
+    if _existiert_streng(logs_dir):
+        wurzeln.append(logs_dir)
+    wt_dir = git_dir / "worktrees"
+    if not ist_worktree and _existiert_streng(wt_dir):
+        with os.scandir(wt_dir) as it:
+            eintraege = sorted(it, key=lambda e: e.name)
+        for eintrag in eintraege:
+            if eintrag.is_dir(follow_symlinks=False):
+                wt_logs = Path(eintrag.path) / "logs"
+                if _existiert_streng(wt_logs):
+                    wurzeln.append(wt_logs)
+    dateien: list[Path] = []
+    stapel = list(wurzeln)
+    while stapel:
+        ordner = stapel.pop()
+        with os.scandir(ordner) as it:
+            for eintrag in it:
+                if eintrag.is_dir(follow_symlinks=False):
+                    stapel.append(Path(eintrag.path))
+                elif eintrag.is_file(follow_symlinks=True):
+                    dateien.append(Path(eintrag.path))
+    return dateien
 
 
 def _nur_im_reflog(
     repo: Path, ist_worktree: bool, auf_server: list[str] | None = None
 ) -> bool:
-    """#235 R1: liegt ein Commit nur im Reflog, der mit dem Ordner verschwindet?
+    """#235 R1/#253: liegt ein Commit nur im Reflog, der mit dem Ordner verschwindet?
 
     Verschwinden: beim Klon alle Reflogs (auch die verknüpfter Worktrees), beim Worktree die
     seines eigenen Git-Verzeichnisses (die Zweig-Reflogs liegen im Hauptklon und bleiben). Kein Verlust ist, was von einem Zweig auf
     ``origin`` (nach dem ``fetch`` in :func:`_ungesichertes`) oder einem lokalen Ref erreichbar
     ist — lokale Refs prüfen die übrigen Regeln (Sicherung ``sicherung/<N>`` oder bleibt).
-    Gewöhnliche alte Stände liegen so längst auf dem Server und halten den Ordner nicht.
+    #253: Stände, deren Baum oder Patch bereits im Server-Stand liegt (``amend``, ``rebase``,
+    ``pull --rebase``, Squash-Merge, Force-Push nach ``amend``), gelten ebenfalls als gesichert.
 
     #254: „auf dem Server“ heißt ``ls-remote`` (nicht fälschbare Tracking-Refs). Die Stände
     kommen roh aus den Reflog-Dateien (``git log -g`` überspringt fehlende Objekte still);
@@ -2727,10 +3075,9 @@ def _nur_im_reflog(
     # Was mit dem Ordner stirbt: beim Worktree sein Git-Verzeichnis (``HEAD``, ``refs/worktree/*``,
     # ``refs/bisect/*``), beim Klon das ganze ``.git`` samt ``worktrees/*/logs`` verknüpfter Worktrees.
     git_dir = Path(aufpasser.git_lauf(repo, "rev-parse", "--absolute-git-dir").strip())
-    wurzeln = [git_dir / "logs"] + ([] if ist_worktree else sorted(git_dir.glob("worktrees/*/logs")))
     staende: set[str] = set()
     try:
-        dateien = [p for w in wurzeln for p in w.rglob("*") if p.is_file()]
+        dateien = _reflog_dateien(git_dir, ist_worktree)
         inhalte = [(d, d.read_bytes()) for d in dateien]
     except OSError as fehler:
         raise _Bleibt(f"Reflog nicht lesbar: {fehler}", fehler=True) from None
@@ -2743,15 +3090,18 @@ def _nur_im_reflog(
     server = _server_koepfe(repo) if auf_server is None else auf_server
     sicher = ("--not", "--exclude=refs/remotes/*", "--all", *server)
     liste = sorted(staende)
+    verwaist: set[str] = set()
     for i in range(0, len(liste), _REFLOG_HAPPEN):
         happen = liste[i : i + _REFLOG_HAPPEN]
         try:  # ohne --ignore-missing: ein fehlendes Objekt ist ein Fehler
             aufpasser.git_lauf(repo, "rev-list", "--no-walk", *happen)
         except RuntimeError as fehler:
             raise _Bleibt(f"Reflog verweist auf fehlendes Objekt: {_kurz(fehler)}", fuer_david=True) from None
-        if aufpasser.git_lauf(repo, "rev-list", "-n", "1", "--ignore-missing", *happen, *sicher).strip():
-            return True
-    return False
+        aus = aufpasser.git_lauf(repo, "rev-list", "--ignore-missing", *happen, *sicher)
+        verwaist.update(aus.split())
+    if not verwaist:
+        return False
+    return not _verwaist_auf_server(repo, verwaist, server)
 
 
 def _ungepushte_koepfe(
@@ -2788,25 +3138,57 @@ def _server_zweig_sha(repo: Path, zweig: str) -> str:
     return treffer.group(1)
 
 
-def _server_koepfe(repo: Path) -> list[str]:
-    """SHAs aller Zweig-Köpfe von ``origin`` laut Server (``ls-remote --heads``); nicht
-    erreichbar oder unlesbare Zeile ⇒ ``_Bleibt``.
-
-    ponytail: ein ls-remote je Aufrufer (ohne Nummer zwei je Ordner), alle Köpfe auf einer
-    Kommandozeile; zwischenspeichern bzw. in Happen, wenn Zweig-Zahl oder Laufzeit stört."""
+def _server_zweige(repo: Path) -> dict[str, str]:
+    """``refs/heads/… → SHA`` aller Zweig-Köpfe von ``origin`` laut Server (``ls-remote --heads``);
+    nicht erreichbar oder unlesbare Zeile ⇒ ``_Bleibt``."""
     try:
         roh = _git_ohne_frage(repo, "ls-remote", "--heads", "origin")
     except RuntimeError as fehler:
         raise _Bleibt(f"Server nicht erreichbar (ls-remote): {_kurz(fehler)}", fehler=True) from None
-    auf_server: list[str] = []
+    zweige: dict[str, str] = {}
     for zeile in roh.splitlines():
         if not zeile.strip():
             continue
         treffer = _LS_REMOTE_ZEILE.match(zeile)
         if treffer is None:  # #235 N2: nur „<sha>\trefs/heads/…“ ist eine Server-Angabe
             raise _Bleibt(f"unlesbare ls-remote-Zeile {_kurz(zeile)!r}", fehler=True)
-        auf_server.append(treffer.group(1))
-    return auf_server
+        sha, _, ref = zeile.partition("\t")
+        zweige[ref.strip()] = sha
+    return zweige
+
+
+def _sicherung_stand_holen(repo: Path, ticket: int, server_zweige: dict[str, str]) -> str | None:
+    """#242: holt ``refs/heads/sicherung/<ticket>``, falls am Server vorhanden aber lokal fehlend.
+
+    Einzelzweig-Klone ohne ``refs/remotes/origin/sicherung/*`` bekommen so die Objekte
+    des bestehenden Sicherungs-Zweigs, damit Prüfung und Folge-Sicherung nahtlos anketten.
+    """
+    ref = f"refs/heads/sicherung/{ticket}"
+    sha = server_zweige.get(ref)
+    if sha is None:
+        return None
+    if _git_oder_none(repo, "cat-file", "-e", f"{sha}^{{commit}}") is not None:
+        return sha
+    try:
+        _git_ohne_frage(repo, "fetch", "-q", "origin", ref)
+    except RuntimeError as fehler:
+        raise _Bleibt(f"sicherung/{ticket} nicht holbar: {_kurz(fehler)}", fehler=True) from None
+    if _git_oder_none(repo, "cat-file", "-e", f"{sha}^{{commit}}") is not None:
+        return sha
+    geholt = _git_oder_none(repo, "rev-parse", "--verify", "-q", "FETCH_HEAD^{commit}")
+    if geholt:
+        server_zweige[ref] = geholt
+        return geholt
+    raise _Bleibt(f"sicherung/{ticket} nach fetch lokal nicht lesbar", fehler=True)
+
+
+def _server_koepfe(repo: Path) -> list[str]:
+    """SHAs aller Zweig-Köpfe von ``origin`` laut Server (``ls-remote --heads``); nicht
+    erreichbar oder unlesbare Zeile ⇒ ``_Bleibt``.
+
+    ponytail: ein ls-remote je Aufrufer (ohne Nummer zwei je Ordner), alle Köpfe auf einer
+    Kommandozeile; zwischenspeichern bzw. in Happen, wenn Zweig-Zahl oder Laufzeit stört."""
+    return list(_server_zweige(repo).values())
 
 
 def _sicherung_auf_server(repo: Path, ticket: int, sha: str) -> None:
@@ -3031,13 +3413,20 @@ def helfer_ordner_loeschen(ort: Path, name: str) -> bool:
     return True
 
 
-def temp_ordner_loeschen(ordner: Path) -> None:
-    """Entfernt einen geprüften Temp-Rest (#136): verknüpfte Worktrees sauber über Git,
+def temp_ordner_loeschen(ordner: Path, *, erwartet: tuple[int, int] | None = None) -> None:
+    """Entfernt einen geprüften Temp-Rest (#136, #177): verknüpfte Worktrees sauber über Git,
     sonst über :func:`_loeschen` (mit Windows-Schreibschutz-Behandlung).
 
     Die Prüfregeln liegen in :mod:`to_spawn.temp_ordner`; die eigentliche Löschung bleibt
-    allein hier, damit es im gesamten Skill genau eine Lösch-Stelle gibt.
+    allein hier, damit es im gesamten Skill genau eine Lösch-Stelle gibt. Direkt vor dem
+    Löschen wird per ``os.lstat`` erneut gegen Symlink-Tausch und (mit ``erwartet``) gegen
+    ``(st_dev, st_ino)``-Wechsel geprüft (TOCTOU-Schutz).
     """
+    info = os.lstat(ordner)
+    if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+        raise OSError(f"Temp-Rest {ordner} ist kein echter Ordner mehr (Symlink?)")
+    if erwartet is not None and (info.st_dev, info.st_ino) != erwartet:
+        raise OSError(f"Temp-Rest {ordner} wurde während der Prüfung ersetzt")
     git_marke = ordner / ".git"
     if git_marke.is_file() and not git_marke.is_symlink():
         try:
@@ -3131,10 +3520,12 @@ def _kein_altbestand(echt: Path) -> None:
         raise _Bleibt(f"Altbestand, wartet auf das Ja des Menschen (Liste {pfad})")
 
 
-def _kennzahl_schreiben(ergebnisse: list[Ergebnis], *, trocken: bool) -> None:
-    """#1536: je Takt eine Zeile ``art="kennzahl"`` in :func:`_kennzahl_pfad` — „x von y gelöscht, z bleiben“
-    und die Bleib-Gründe gezählt (Zahlen im Grund als ``N``, ohne Klammer-Zusatz)."""
-    geloescht = sum(1 for e in ergebnisse if e.art != "bleibt")
+def bleib_gruende(ergebnisse: Sequence[Ergebnis]) -> tuple[dict[str, int], dict[str, list[str]]]:
+    """Zählt die Bleib-Gründe absteigend (Zahlen als ``N``, ohne Klammer-Zusatz).
+
+    Einzige Zähl- und Normier-Stelle für :func:`_kennzahl_schreiben` und
+    :meth:`to_spawn.aufpasser.Aufpasser._hausmeister_lauf` (#235, #261).
+    """
     gruende: dict[str, int] = {}
     fehler_je: dict[str, list[str]] = {}
     for e in ergebnisse:
@@ -3143,12 +3534,31 @@ def _kennzahl_schreiben(ergebnisse: list[Ergebnis], *, trocken: bool) -> None:
             gruende[schluessel] = gruende.get(schluessel, 0) + 1
             if e.fehler:
                 fehler_je.setdefault(schluessel, []).append(f"{e.ordner}: {e.grund}")
+    geordnet = dict(sorted(gruende.items(), key=lambda kv: (-kv[1], kv[0])))
+    return geordnet, fehler_je
+
+
+def bleib_zeilen(ergebnisse: Sequence[Ergebnis]) -> list[str]:
+    """Formatierte Log-Zeilen je Bleib-Grund (Anzahl + Grund, bei Fehlern Ordner und Text)."""
+    gruende, fehler_je = bleib_gruende(ergebnisse)
+    zeilen: list[str] = []
+    for schluessel, anzahl in gruende.items():
+        fehl = fehler_je.get(schluessel)
+        zusatz = f" — Fehler: {' | '.join(fehl)}" if fehl else ""
+        zeilen.append(f"Hausmeister: bleibt {anzahl}× {schluessel}{zusatz}")
+    return zeilen
+
+
+def _kennzahl_schreiben(ergebnisse: list[Ergebnis], *, trocken: bool) -> None:
+    """#1536: je Takt eine Zeile ``art="kennzahl"`` in :func:`_kennzahl_pfad` — „x von y gelöscht, z bleiben“
+    und die Bleib-Gründe gezählt (Zahlen im Grund als ``N``, ohne Klammer-Zusatz)."""
+    geloescht = sum(1 for e in ergebnisse if e.art != "bleibt")
+    gruende, _ = bleib_gruende(ergebnisse)
     satz = f"{geloescht} von {len(ergebnisse)} gelöscht, {len(ergebnisse) - geloescht} bleiben"
     log.info("Hausmeister: Kennzahl %s%s", satz, " (trocken)" if trocken else "")
     # #235: eine Zeile je Bleib-Grund mit Anzahl; Fehler zusätzlich mit Ordner und Text
-    for schluessel, anzahl in sorted(gruende.items(), key=lambda kv: -kv[1]):
-        fehl = fehler_je.get(schluessel)
-        log.info("Hausmeister: bleibt %d× %s%s", anzahl, schluessel, f" — Fehler: {' | '.join(fehl)}" if fehl else "")
+    for zeile in bleib_zeilen(ergebnisse):
+        log.info("%s", zeile)
     _log_zeile(
         {
             "zeit": datetime.now().astimezone().isoformat(timespec="seconds"),
@@ -3159,7 +3569,7 @@ def _kennzahl_schreiben(ergebnisse: list[Ergebnis], *, trocken: bool) -> None:
             "geloescht": geloescht,
             "bleiben": len(ergebnisse) - geloescht,
             "fehler": sum(1 for e in ergebnisse if e.fehler),
-            "bleib_gruende": dict(sorted(gruende.items(), key=lambda kv: -kv[1])),
+            "bleib_gruende": gruende,
         },
         _kennzahl_pfad(),
     )

@@ -80,6 +80,11 @@ $env:PYTHONIOENCODING = "utf-8"
 $env:PYTHONPATH = $ziel
 python -m to_spawn.install_pruefung verbuchen --klon $hier --ziel $ziel
 if ($LASTEXITCODE -ne 0) { throw "Installations-Log nicht geschrieben: $ziel" }
+# Maschinen-Liste: veraltete ticket_repo-Vorgaben nachziehen (#261, wiederholbar)
+try {
+    $tr = python (Join-Path $ziel "to_spawn.py") ticket-repo --nachziehen 2>&1
+    if ($LASTEXITCODE -eq 0) { if ($tr) { Write-Host "$tr" } } else { Write-Warning "Maschinen-Liste nicht nachgezogen: $tr" }
+} catch { Write-Warning "Maschinen-Liste nicht nachgezogen: $_" }
 
 # PowerShell-Profil: bau / wache / sessions (nur ergänzen, nie überschreiben)
 $profilPfad = $PROFILE.CurrentUserAllHosts

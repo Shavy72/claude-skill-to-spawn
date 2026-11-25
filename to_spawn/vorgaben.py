@@ -53,6 +53,13 @@ REPOS: list[dict[str, str]] = [
         "worktree_basis": "",
     },
 ]
+#: Veraltete Vorgabe-Werte von ``ticket_repo`` je Repo-Slug (vor #235, nachgezogen in #261).
+#: Nur diese bekannten Alt-Vorgaben zieht der Einrichter selbst auf den aktuellen Vorgabe-Wert
+#: aus :data:`REPOS` nach; bewusst anders gesetzte Werte bleiben erhalten (#542).
+VERALTETE_TICKET_REPOS: dict[str, tuple[str, ...]] = {
+    "Shavy72/duoplus-management": ("",),
+    "Shavy72/claude-skill-to-spawn": ("", "Shavy72/duoplus-management"),
+}
 #: Sperr-Dateien laufender Staging-Deploys (Fundstelle #11).
 STAGING_SPERREN: list[str] = ["/home/bau/staging/.deploy.lock"]
 #: Hausmeister: Such-Muster der Worktree-Wurzeln (#4) und Ordner-Präfixe (#5).

@@ -39,6 +39,7 @@ import subprocess
 import sys
 import tempfile
 from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -877,6 +878,172 @@ def _gleicher_ort(a: str, b: Path) -> bool:
         return False
 
 
+def _schreibe_maschine(datei: Path, daten: dict[str, Any]) -> None:
+    """Schreibt die Maschinen-Liste atomar (temporäre Datei + ``os.replace``)."""
+    datei.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix=".maschine-", suffix=".tmp", dir=datei.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as strom:
+            strom.write(json.dumps(daten, indent=2, ensure_ascii=False) + "\n")
+        os.replace(tmp, datei)
+    except OSError:
+        Path(tmp).unlink(missing_ok=True)
+        raise
+
+
+#: Gültige Form eines GitHub-Ticket-Repos ``<besitzer>/<name>`` (#261).
+_TICKET_REPO_MUSTER = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+
+
+@dataclass(frozen=True)
+class TicketRepoAenderung:
+    """Ergebnis einer ``ticket_repo``-Änderung an einem ``repos[]``-Eintrag (#261)."""
+
+    slug: str
+    pfad: str
+    vorher: str
+    nachher: str
+
+    @property
+    def geaendert(self) -> bool:
+        return self.vorher != self.nachher
+
+    def zeile(self) -> str:
+        alt = self.vorher or "(leer)"
+        neu = self.nachher or "(leer)"
+        if not self.geaendert:
+            return f"{self.slug} ({self.pfad}): ticket_repo unverändert ({alt})"
+        return f"{self.slug} ({self.pfad}): ticket_repo {alt} → {neu}"
+
+
+def _veraltete_ticket_repo_ziele(daten: dict[str, Any]) -> list[tuple[dict[str, str], TicketRepoAenderung]]:
+    """Findet Einträge in ``daten["repos"]`` mit bekannter Alt-Vorgabe (``vorgaben.VERALTETE_TICKET_REPOS``)."""
+    soll_je_slug = {
+        e["slug"].lower(): e["ticket_repo"]
+        for e in vorgaben.REPOS
+        if e.get("slug") and e.get("ticket_repo")
+    }
+    alt_je_slug = {
+        slug.lower(): {wert.lower() for wert in werte}
+        for slug, werte in vorgaben.VERALTETE_TICKET_REPOS.items()
+    }
+    treffer: list[tuple[dict[str, str], TicketRepoAenderung]] = []
+    for eintrag in daten.get("repos", []):
+        if not isinstance(eintrag, dict):
+            continue
+        slug = (eintrag.get("slug") or "").strip()
+        schluessel = slug.lower()
+        soll = soll_je_slug.get(schluessel, "")
+        alte = alt_je_slug.get(schluessel, set())
+        ist = (eintrag.get("ticket_repo") or "").strip()
+        if soll and ist.lower() in alte and ist != soll:
+            treffer.append(
+                (
+                    eintrag,
+                    TicketRepoAenderung(
+                        slug=slug,
+                        pfad=str(eintrag.get("pfad") or ""),
+                        vorher=ist,
+                        nachher=soll,
+                    ),
+                )
+            )
+    return treffer
+
+
+def veraltete_ticket_repos(daten: dict[str, Any] | None = None) -> list[TicketRepoAenderung]:
+    """Liest veraltete Vorgabe-Werte von ``ticket_repo`` in der Maschinen-Liste (nur lesend, #261).
+
+    Fehlt die Datei oder ist sie unlesbar, liefert sie leer (keine stillschweigende Migration).
+    """
+    if daten is None:
+        datei = maschine_datei()
+        if not datei.is_file() or _lies(datei)[0] is None:
+            return []
+        daten = maschine()
+    return [aenderung for _, aenderung in _veraltete_ticket_repo_ziele(daten)]
+
+
+def maschine_ticket_repos_nachziehen() -> list[TicketRepoAenderung]:
+    """Zieht bekannte veraltete Vorgabe-Werte von ``ticket_repo`` in der Maschinen-Liste nach (#261).
+
+    Wiederholbar: fehlt die Datei oder ist alles aktuell, wird nichts geschrieben. Eine kaputte
+    Datei wird nie überschrieben (Warnung im Log). Bewusst abweichend gesetzte Werte bleiben (#542).
+    """
+    datei = maschine_datei()
+    if not datei.is_file():
+        return []
+    if _lies(datei)[0] is None:
+        log.warning("Maschinen-Liste unlesbar (%s) — nicht überschrieben", datei)
+        return []
+    daten = maschine()
+    treffer = _veraltete_ticket_repo_ziele(daten)
+    if not treffer:
+        return []
+    aenderungen: list[TicketRepoAenderung] = []
+    for eintrag, aenderung in treffer:
+        eintrag["ticket_repo"] = aenderung.nachher
+        aenderungen.append(aenderung)
+    _schreibe_maschine(datei, daten)
+    for aenderung in aenderungen:
+        log.info("Maschinen-Liste nachgezogen: %s (%s)", aenderung.zeile(), datei)
+    return aenderungen
+
+
+def maschine_ticket_repo_setzen(ziel: str | Path, ticket_repo: str) -> list[TicketRepoAenderung]:
+    """Setzt ``ticket_repo`` für passende Einträge in der Maschinen-Liste ausdrücklich (#261).
+
+    ``ziel`` trifft per ``slug`` (Groß-/Kleinschreibung egal) oder per Ordner-``pfad``.
+    ``ticket_repo`` muss die Form ``<besitzer>/<name>`` haben. Wiederholbar: stimmt der Wert
+    schon (und die Datei existiert), wird nicht neu geschrieben.
+    """
+    wert = ticket_repo.strip()
+    if not _TICKET_REPO_MUSTER.fullmatch(wert):
+        raise ValueError(
+            f"ticket_repo ungültig ({ticket_repo!r}) — erwartet wird <besitzer>/<name>"
+        )
+    datei = maschine_datei()
+    if datei.is_file() and _lies(datei)[0] is None:
+        raise ValueError(f"Maschinen-Liste unlesbar ({datei}) — nicht überschrieben")
+    daten = maschine()
+    ziel_text = str(ziel).strip()
+    ziel_klein = ziel_text.lower()
+    try:
+        ziel_pfad: Path | None = Path(ziel_text).expanduser().resolve()
+    except (OSError, ValueError):
+        ziel_pfad = None
+
+    treffer: list[dict[str, str]] = []
+    for eintrag in daten["repos"]:
+        if (eintrag.get("slug") or "").strip().lower() == ziel_klein or (
+            ziel_pfad is not None and _gleicher_ort(eintrag.get("pfad") or "", ziel_pfad)
+        ):
+            treffer.append(eintrag)
+    if not treffer:
+        raise LookupError(f"Kein Eintrag in {datei} für {ziel_text!r}")
+
+    aenderungen: list[TicketRepoAenderung] = []
+    geaendert = False
+    for eintrag in treffer:
+        vorher = (eintrag.get("ticket_repo") or "").strip()
+        aenderung = TicketRepoAenderung(
+            slug=eintrag.get("slug") or "",
+            pfad=eintrag.get("pfad") or "",
+            vorher=vorher,
+            nachher=wert,
+        )
+        if aenderung.geaendert:
+            eintrag["ticket_repo"] = wert
+            geaendert = True
+        aenderungen.append(aenderung)
+
+    if geaendert or not datei.is_file():
+        _schreibe_maschine(datei, daten)
+        for aenderung in aenderungen:
+            log.info("Maschinen-Liste geändert: %s (%s)", aenderung.zeile(), datei)
+    return aenderungen
+
+
 def maschine_eintragen(repo: Path | None = None, ticket_repo: str = "") -> dict[str, str]:
     """Trägt das Repo in ``repos[]`` der Maschinen-Liste ein und gibt seinen Eintrag zurück.
 
@@ -923,15 +1090,7 @@ def maschine_eintragen(repo: Path | None = None, ticket_repo: str = "") -> dict[
     else:
         eintrag = neu
         daten["repos"].append(eintrag)
-    datei.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(prefix=".maschine-", suffix=".tmp", dir=datei.parent)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as strom:
-            strom.write(json.dumps(daten, indent=2, ensure_ascii=False) + "\n")
-        os.replace(tmp, datei)
-    except OSError:
-        Path(tmp).unlink(missing_ok=True)
-        raise
+    _schreibe_maschine(datei, daten)
     log.info("Maschinen-Liste: %s eingetragen (%s)", wurzel, datei)
     return eintrag
 

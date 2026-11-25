@@ -42,6 +42,7 @@ from git_bash import git_bash  # liegt in ``tests/hilfen`` (Pfad oben)
 
 from to_spawn import (  # Pfad setzt ``git_bash``
     bash_wahl,
+    hausmeister,
     hausmeister_windows,
     prozessbaum,
     vertrauen,
@@ -184,9 +185,10 @@ _LOG = logging.getLogger(__name__)
 #: ponytail: feste Frist, Einstellung über ``temp_ordner``/Maschinen-Liste, wenn eine Maschine anders braucht.
 _RESTE_ALTER_S = 3600
 
-#: Ab diesem Inode-Anteil der Temp-Wurzel gilt nur noch :data:`_RESTE_ALTER_KNAPP_S` (#355):
-#: eine volle Suite hinterlässt rot ~220k Einträge, ``/tmp`` als tmpfs hat oft nur 1 Mio.
-_INODE_GRENZE = 0.70
+#: Ab diesem Inode-Anteil der Temp-Wurzel gilt nur noch :data:`_RESTE_ALTER_KNAPP_S` (#355) —
+#: Schwelle und Messung kommen aus genau einer Stelle (:mod:`to_spawn.hausmeister`).
+_INODE_GRENZE = hausmeister.INODE_WARN_ANTEIL
+_inode_anteil = hausmeister.inode_anteil
 
 #: Mindestalter toter Reste bei Inode-Knappheit (#355) — nie ein gerade startender Lauf.
 _RESTE_ALTER_KNAPP_S = 600
@@ -219,22 +221,21 @@ def _eigener_basetemp(config: pytest.Config) -> None:
     config.stash[_EIGENER_BASETEMP] = ordner
 
 
-def _inode_anteil(temp: Path) -> float | None:
-    """Belegter Inode-Anteil (0..1) des Laufwerks unter ``temp`` (#355); ``None`` = unbekannt.
+def _marker_retten(ordner: Path, pid: int, mtime: float | None = None) -> None:
+    """Steht ein ``pt-*``-Ordner nach ``rmtree`` noch ohne Marker, Marker neu schreiben (#355).
 
-    Unbekannt heißt: kein ``os.statvfs`` (Windows), Fehler, oder das Dateisystem meldet keine
-    feste Inode-Zahl (``f_files == 0``, z. B. btrfs). Dann gilt die normale Schonfrist.
+    Sonst verwaisen Ordner, in die während/nach ``rmtree`` noch ein Nachzügler-Prozess schrieb,
+    für immer, weil der Räumer nur markierte Ordner anfasst.
     """
-    statvfs = getattr(os, "statvfs", None)
-    if statvfs is None:
-        return None
+    marker = ordner / _MARKER
+    if not ordner.is_dir() or marker.exists():
+        return
     try:
-        werte = statvfs(temp)
-    except OSError:
-        return None
-    if werte.f_files <= 0:
-        return None
-    return 1 - werte.f_ffree / werte.f_files
+        marker.write_text(f"{pid}\n", encoding="utf-8")
+        if mtime is not None:
+            os.utime(marker, (mtime, mtime))
+    except OSError as fehler:
+        _LOG.warning("pt-Marker in %s nicht wiederherstellbar: %s", ordner, fehler)
 
 
 def _reste_raeumen(temp: Path, inode_anteil: Callable[[Path], float | None] = _inode_anteil) -> None:
@@ -282,7 +283,10 @@ def _reste_raeumen_roh(temp: Path, inode_anteil: Callable[[Path], float | None])
     for ordner in kandidaten:
         marker = ordner / _MARKER
         try:
-            if ordner.is_symlink() or marker.stat().st_mtime > grenze:
+            if ordner.is_symlink():
+                continue
+            marker_mtime = marker.stat().st_mtime
+            if marker_mtime > grenze:
                 continue
             pid = int(marker.read_text(encoding="utf-8").strip())
         except (OSError, ValueError):
@@ -295,6 +299,8 @@ def _reste_raeumen_roh(temp: Path, inode_anteil: Callable[[Path], float | None])
             _pt_ordner_loeschen(ordner)
         except OSError as fehler:
             _LOG.warning("pt-Räumer: Rest %s nicht löschbar: %s", ordner, fehler)
+        finally:
+            _marker_retten(ordner, pid, marker_mtime)
 
 
 def _datei_sha256(pfad: Path) -> str | None:
@@ -403,6 +409,8 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
             pass
         except OSError as fehler:
             _LOG.warning("pt-Ordner %s nach grünem Lauf nicht löschbar: %s", ordner, fehler)
+        finally:
+            _marker_retten(ordner, os.getpid())
 
 
 def pytest_unconfigure(config: pytest.Config) -> None:
@@ -753,6 +761,7 @@ def _hausmeister_nur_im_test(
     monkeypatch.setenv("TO_SPAWN_HINDERNIS_LOG", str(ordner / "hindernisse.jsonl"))
     monkeypatch.setenv("TO_SPAWN_INSTALL_LOG", str(ordner / "install_fehler.jsonl"))
     monkeypatch.setenv("TO_SPAWN_HAUSMEISTER_PLATTE", "1")
+    monkeypatch.setenv("TO_SPAWN_HAUSMEISTER_INODES", "0")
     # #1371: keine echten GitHub-Remotes — sonst löschte ein Test alte sicherung/*-Zweige.
     monkeypatch.setenv("TO_SPAWN_HAUSMEISTER_ZWEIG_REPOS", "")
     # #1439: Zweig-Lauf fasst keine echten Hauptrepos an (leer = keine).

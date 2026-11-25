@@ -220,6 +220,8 @@ fi
 
 # --- 3e. Grünen installierten SHA im Fehler-Log vermerken (#415) --------------
 PYTHONPATH="$ZIEL" "$PY" -m to_spawn.install_pruefung verbuchen --klon "$HIER" --ziel "$ZIEL"
+# --- 3f. Maschinen-Liste: veraltete ticket_repo-Vorgaben nachziehen (#261) ----
+"$PY" "$ZIEL/to_spawn.py" ticket-repo --nachziehen || echo "Hinweis: Maschinen-Liste nicht nachgezogen" >&2
 
 # --- 4. Repo-Hälfte (optional): nur fehlende Dateien --------------------------
 if [ -n "$REPO" ]; then

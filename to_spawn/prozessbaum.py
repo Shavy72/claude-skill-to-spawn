@@ -94,6 +94,44 @@ def lebt(pid: int) -> bool:
     return _lebt_windows(pid) if _WINDOWS else (_PROC / str(pid)).exists()
 
 
+def _stat_linux(pid: int) -> tuple[str, int] | None:
+    """(Zustand, Startzeit) aus ``/proc/<pid>/stat``; außerhalb von Linux oder unlesbar ``None``."""
+    if _WINDOWS or sys.platform != "linux":
+        return None
+    try:
+        stat = (_PROC / str(pid) / "stat").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    rest = stat[stat.rfind(")") + 2 :].split()  # Felder ab 3 (Zustand); 22 = starttime
+    if len(rest) < 20 or not rest[19].isdigit():
+        return None
+    return rest[0], int(rest[19])
+
+
+def startzeit(pid: int) -> int | None:
+    """Startzeit von ``pid`` (Linux: Ticks seit Boot aus ``/proc/<pid>/stat``); sonst ``None``."""
+    info = _stat_linux(pid)
+    return info[1] if info is not None else None
+
+
+def aktiv(pid: int, *, erwartet_start: int | None = None) -> bool:
+    """Läuft ``pid`` noch aktiv — kein Zombie (``Z``/``X``) und keine recycelte PID?
+
+    Baut auf :func:`lebt` auf und prüft unter Linux zusätzlich Zustand und Startzeit aus
+    ``/proc/<pid>/stat`` (während :func:`lebt` Zombies bewusst als vorhanden zählt).
+    """
+    if pid <= 0 or not lebt(pid):
+        return False
+    info = _stat_linux(pid)
+    if info is not None:
+        zustand, aktuell_start = info
+        if zustand in ("Z", "X"):  # Zombie oder tot: Prozess läuft nicht mehr
+            return False
+        if erwartet_start is not None and aktuell_start != erwartet_start:
+            return False
+    return True
+
+
 def prozesse() -> dict[int, tuple[int, str, int]]:
     """PID → (Eltern-PID, Kommandozeile, Startzeit) aller Prozesse; unlesbar = leer.
 
