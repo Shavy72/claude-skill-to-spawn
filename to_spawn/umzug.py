@@ -35,7 +35,7 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any, TextIO
 
-from . import config, manifest, prozessbaum, sitzungsjob, starter, tmux_aufruf
+from . import config, manifest, prozessbaum, sitzungsjob, spawn_exit, starter, tmux_aufruf
 
 log = logging.getLogger("to_spawn.umzug")
 
@@ -43,14 +43,19 @@ EXIT_OK = 0
 EXIT_FEHLER = 1
 EXIT_WEIGERUNG = 3
 #: ``spawn_srv.sh --umzug``: das Ticket läuft auf dem Server schon — Umzug abgebrochen.
-EXIT_LAEUFT_SCHON = 4
+EXIT_LAEUFT_SCHON = spawn_exit.EXIT_UMZUG_LAEUFT
+#: ``spawn_srv.sh``: Start-Sperre belegt — später erneut, kein Fehler (#604).
+EXIT_SPERRE = spawn_exit.EXIT_SPERRE
 #: ``ssh`` selbst scheiterte (Verbindung weg) — der Befehl kann trotzdem gelaufen sein.
 SSH_EXIT_EIGEN = 255
 
 #: Server-Beweis: Takt und Höchstdauer (Sekunden) des Pollens nach dem Start.
 BEWEIS_TAKT = 5.0
 BEWEIS_MAX = 90.0
-#: Höchstdauer des Server-Starts per SSH (``spawn_srv.sh`` wartet selbst 10 s).
+#: Wiederholungen bei belegter Start-Sperre (Exit 10, #604).
+SPERRE_VERSUCHE = 3
+SPERRE_PAUSE_S = 5.0
+#: Höchstdauer des Server-Starts per SSH (``spawn_srv.sh`` wartet bis zu 10 s auf Fenster).
 SSH_START_TIMEOUT = 300
 SSH_KURZ_TIMEOUT = 30
 #: Frist zwischen ``terminate()`` und ``kill()`` für das Claude-Kind.
@@ -197,6 +202,81 @@ def spawn_befehl(
     return fern_skill_befehl(ordner, "bash", "spawn_srv.sh", teile)
 
 
+def _server_start_ergebnis(
+    spec: str,
+    ticket: str | None,
+    *,
+    ziel: str,
+    ordner: str,
+    umzug_ref: str | None = None,
+    nur_wache: bool = False,
+    repo: Path | None = None,
+) -> int:
+    """Wie :func:`server_starten`, liefert aber den Ergebnis-Code (0 ok, 10 Sperre, 1 Fehler)."""
+    befehl = spawn_befehl(spec, ticket, ordner, umzug_ref=umzug_ref, nur_wache=nur_wache)
+    was = f"#{ticket}" if ticket else f"Aufseher Spec #{spec}"
+    versuche = max(1, SPERRE_VERSUCHE)
+    for versuch in range(1, versuche + 1):
+        log.info("Server-Start: ssh %s %s", ziel, befehl)
+        ergebnis = _ssh(ziel, befehl, SSH_START_TIMEOUT)
+        if ergebnis is not None and ergebnis.returncode == 0:
+            return EXIT_OK
+        if ergebnis is not None and spawn_exit.ist_spaeter_erneut(ergebnis.returncode):
+            if versuch < versuche:
+                log.info(
+                    "%s: %s (Exit %s) — warte %s s, später erneut (Versuch %d/%d).",
+                    was,
+                    spawn_exit.beschreibung(ergebnis.returncode),
+                    ergebnis.returncode,
+                    SPERRE_PAUSE_S,
+                    versuch,
+                    versuche,
+                )
+                if SPERRE_PAUSE_S > 0:
+                    time.sleep(SPERRE_PAUSE_S)
+                continue
+            log.warning(
+                "%s: %s (Exit %s) — später erneut versuchen: %s",
+                was,
+                spawn_exit.beschreibung(ergebnis.returncode),
+                ergebnis.returncode,
+                (ergebnis.stderr or ergebnis.stdout).strip()[-400:],
+            )
+            return EXIT_SPERRE
+        if ergebnis is not None and ergebnis.returncode == EXIT_LAEUFT_SCHON:
+            log.error(
+                "%s läuft auf dem Server schon — Umzug abgebrochen, lokale Session läuft weiter "
+                "(nie zwei Sessions für ein Ticket): %s",
+                was,
+                (ergebnis.stderr or ergebnis.stdout).strip()[-400:],
+            )
+            return EXIT_FEHLER
+        if ergebnis is None or ergebnis.returncode == SSH_EXIT_EIGEN:
+            grund = (
+                "keine Antwort"
+                if ergebnis is None
+                else (ergebnis.stderr or ergebnis.stdout).strip()[-200:]
+            )
+            log.warning(
+                "SSH brach beim Server-Start ab (%s) — prüfe einmal, ob %s trotzdem läuft.",
+                grund,
+                was,
+            )
+            if server_laeuft(spec, ticket, ziel=ziel, ordner=ordner, repo=repo):
+                log.warning("%s läuft trotzdem auf %s — Start gilt als gelungen.", was, ziel)
+                return EXIT_OK
+            log.error("Server-Start scheiterte: SSH abgebrochen und %s läuft nicht auf %s.", was, ziel)
+            return EXIT_FEHLER
+        log.error(
+            "Server-Start scheiterte (Exit %s, %s): %s",
+            ergebnis.returncode,
+            spawn_exit.beschreibung(ergebnis.returncode),
+            (ergebnis.stderr or ergebnis.stdout).strip()[-400:],
+        )
+        return EXIT_FEHLER
+    return EXIT_SPERRE
+
+
 def server_starten(
     spec: str,
     ticket: str | None,
@@ -213,43 +293,20 @@ def server_starten(
     trotzdem durchgelaufen sein — dann einmal den Server-Beweis prüfen: läuft die
     Session, gilt der Start (laut geloggt), sonst bleibt es ein Fehler. Exit 4 von
     ``spawn_srv.sh --umzug`` = das Ticket läuft dort schon → Umzug abgebrochen.
+    Exit 10 = Start-Sperre belegt → wird kurz wiederholt, sonst als „später erneut“ geloggt (#604).
     """
-    befehl = spawn_befehl(spec, ticket, ordner, umzug_ref=umzug_ref, nur_wache=nur_wache)
-    log.info("Server-Start: ssh %s %s", ziel, befehl)
-    ergebnis = _ssh(ziel, befehl, SSH_START_TIMEOUT)
-    if ergebnis is not None and ergebnis.returncode == 0:
-        return True
-    was = f"#{ticket}" if ticket else f"Aufseher Spec #{spec}"
-    if ergebnis is not None and ergebnis.returncode == EXIT_LAEUFT_SCHON:
-        log.error(
-            "%s läuft auf dem Server schon — Umzug abgebrochen, lokale Session läuft weiter "
-            "(nie zwei Sessions für ein Ticket): %s",
-            was,
-            (ergebnis.stderr or ergebnis.stdout).strip()[-400:],
+    return (
+        _server_start_ergebnis(
+            spec,
+            ticket,
+            ziel=ziel,
+            ordner=ordner,
+            umzug_ref=umzug_ref,
+            nur_wache=nur_wache,
+            repo=repo,
         )
-        return False
-    if ergebnis is None or ergebnis.returncode == SSH_EXIT_EIGEN:
-        grund = (
-            "keine Antwort"
-            if ergebnis is None
-            else (ergebnis.stderr or ergebnis.stdout).strip()[-200:]
-        )
-        log.warning(
-            "SSH brach beim Server-Start ab (%s) — prüfe einmal, ob %s trotzdem läuft.",
-            grund,
-            was,
-        )
-        if server_laeuft(spec, ticket, ziel=ziel, ordner=ordner, repo=repo):
-            log.warning("%s läuft trotzdem auf %s — Start gilt als gelungen.", was, ziel)
-            return True
-        log.error("Server-Start scheiterte: SSH abgebrochen und %s läuft nicht auf %s.", was, ziel)
-        return False
-    log.error(
-        "Server-Start scheiterte (Exit %s): %s",
-        ergebnis.returncode,
-        (ergebnis.stderr or ergebnis.stdout).strip()[-400:],
+        == EXIT_OK
     )
-    return False
 
 
 def _sitzungen_fern(spec: str, repo: Path | None = None) -> tuple[str, ...]:
@@ -563,7 +620,13 @@ def umzug_einzel(
             print(f"Probelauf: ssh -o BatchMode=yes {ziel} {shlex.quote(spawn_befehl(spec, ticket, ordner, umzug_ref=ref))}")
             print("Probelauf — nichts committet, gepusht oder gestartet.")
             return EXIT_OK
-        if not server_starten(spec, ticket, ziel=ziel, ordner=ordner, umzug_ref=ref, repo=haupt):
+        start_rc = _server_start_ergebnis(spec, ticket, ziel=ziel, ordner=ordner, umzug_ref=ref, repo=haupt)
+        if spawn_exit.ist_spaeter_erneut(start_rc):
+            raise Abbruch(
+                EXIT_SPERRE,
+                f"{spawn_exit.beschreibung(start_rc)} — lokale Session läuft weiter, später erneut.",
+            )
+        if start_rc != EXIT_OK:
             raise Abbruch(EXIT_FEHLER, "Server-Start scheiterte — lokale Session läuft weiter.")
         if not _warte_auf_server(spec, ticket, ziel=ziel, ordner=ordner, repo=haupt):
             raise Abbruch(
@@ -572,8 +635,11 @@ def umzug_einzel(
                 "lokale Session läuft weiter, auf dem Server nachsehen: sessions " + spec,
             )
     except Abbruch as abbruch:
-        stufe = "WEIGERUNG" if abbruch.code == EXIT_WEIGERUNG else "FEHLER"
-        log.error("%s: %s", stufe, abbruch.text)
+        if spawn_exit.ist_spaeter_erneut(abbruch.code):
+            log.warning("SPÄTER ERNEUT: %s", abbruch.text)
+        else:
+            stufe = "WEIGERUNG" if abbruch.code == EXIT_WEIGERUNG else "FEHLER"
+            log.error("%s: %s", stufe, abbruch.text)
         if not dry_run:
             ergebnis_melden(abbruch.code, abbruch.text)
         return abbruch.code

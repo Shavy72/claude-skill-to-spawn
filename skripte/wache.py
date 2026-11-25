@@ -47,6 +47,7 @@ from to_spawn import (  # noqa: E402
     manifest,
     nest,
     sitzung_env,
+    spawn_exit,
     speicher,
     starter,
     startklar,
@@ -136,9 +137,8 @@ def auf_speicher_warten(
     return speicher.auf_platz_warten(konfig, wer=wer, pruefen=pruefen, schlafen=schlafen, takt_s=takt_s)
 
 
-#: Umgebungsvariable mit der Warte-Datei (#560): ``spawn_srv.sh`` setzt sie im Fenster ``wache <S>``
-#: und schreibt dorthin die Tickets, die beim Start „wartet auf Platz“ bekamen.
-WARTE_ENV = "TO_SPAWN_WARTE_DATEI"
+#: Umgebungsvariable mit der Warte-Datei (#560, #604): einzige Quelle ist ``to_spawn.spawn_exit``.
+WARTE_ENV = spawn_exit.WARTE_ENV
 #: Takt des Nachstarters (#560): so viele Sekunden nach „Platz frei“ startet das nächste Fenster.
 NACHSTART_TAKT_S = 20
 
@@ -153,16 +153,15 @@ def wartende_nachstarten(
     takt_s: float | None = None,
     max_laeufe: int | None = None,
 ) -> int:
-    """Startet die Fenster nach, die ``spawn_srv.sh`` in ``datei`` als wartend vermerkt hat (#560).
+    """Startet die Fenster nach, die ``spawn_srv.sh`` in ``datei`` als wartend vermerkt hat (#560, #604).
 
-    Je Takt ein ``spawn_srv.sh <S> --tickets <liste>`` — es überspringt Laufendes und prüft vor
-    jedem Fenster den Speicher. Nur ``spawn_srv.sh`` schreibt und löscht die Datei, unter seiner
-    Sperre je Spec: es vereinigt neue Wartende mit der vorhandenen Liste, trägt nur gestartete oder
-    schon laufende Tickets aus und löscht die Datei erst, wenn sie leer ist. Exit 0 ohne „wartet
-    auf Platz“ und Datei weg = Ende; Datei noch da (weitere Wartende) oder sonst (wartet weiter,
-    voll, Fehler) → nächster Takt, unbegrenzt. Leere Datei = kein Auftrag, nächster Takt (#560).
-    Datei fehlt → im Takt weiter nachsehen:
-    ``spawn_srv.sh`` schreibt sie erst nach der Staffel-Pause, also nach dem Start des Aufsehers.
+    Normale Tickets laufen gebündelt über ``spawn_srv.sh <S> --tickets <liste>``, vermerkte
+    ``--umzug``-Zeilen einzeln über ``spawn_srv.sh <S> --tickets <N> --ohne-wache --umzug <ref>``.
+    Nur ``spawn_srv.sh`` schreibt und löscht die Datei, unter seiner Sperre je Spec: es vereinigt
+    neue Wartende mit der vorhandenen Liste, trägt nur gestartete oder schon laufende Tickets aus
+    und löscht die Datei erst, wenn sie leer ist. Exit 10 (Start-Sperre belegt) gilt als „später
+    erneut“, nicht als Fehler. Exit 0 ohne „wartet auf Platz“ und Datei weg = Ende; sonst nächster
+    Takt, unbegrenzt. Leere oder fehlende Datei → im Takt weiter nachsehen.
     Rückgabe = Zahl der ``spawn_srv.sh``-Läufe. ``takt_s`` leer = ``NACHSTART_TAKT_S`` (je Takt gelesen).
     """
     from to_spawn import bash_wahl
@@ -173,51 +172,86 @@ def wartende_nachstarten(
         if not datei.is_file():
             schlafen(NACHSTART_TAKT_S if takt_s is None else takt_s)
             continue
-        tickets = datei.read_text(encoding="utf-8").strip()
-        if not tickets:
+        normal, umzuege = spawn_exit.warteliste_lesen(datei.read_text(encoding="utf-8"))
+        if not normal and not umzuege:
             schlafen(NACHSTART_TAKT_S if takt_s is None else takt_s)
             continue
         umgebung = dict(os.environ if env is None else env, TO_SPAWN_REPO=str(repo), TO_SPAWN_NACHSTART="1")
-        laeufe += 1
-        try:
-            lauf = bash_wahl.lauf(
-                [str(skript), str(spec), "--tickets", tickets],
-                cwd=str(repo),
-                env=umgebung,
-                capture_output=True,
-                **konsole.UNTERPROZESS_TEXT,
-                timeout=600,
+        auftraege: list[tuple[str, list[str]]] = []
+        if normal:
+            liste = ",".join(normal)
+            auftraege.append((liste, [str(skript), str(spec), "--tickets", liste]))
+        for ticket, ref in umzuege:
+            auftraege.append(
+                (
+                    f"{ticket} (umzug)",
+                    [str(skript), str(spec), "--tickets", ticket, "--ohne-wache", "--umzug", ref],
+                )
             )
-        except (OSError, subprocess.SubprocessError) as fehler:
-            log.warning("Nachstart Spec #%s: spawn_srv.sh nicht lauffähig: %s", spec, fehler)
-        else:
+        alle_gestartet = True
+        for beschreibung_text, befehl in auftraege:
+            if max_laeufe is not None and laeufe >= max_laeufe:
+                alle_gestartet = False
+                break
+            laeufe += 1
+            try:
+                lauf = bash_wahl.lauf(
+                    befehl,
+                    cwd=str(repo),
+                    env=umgebung,
+                    capture_output=True,
+                    **konsole.UNTERPROZESS_TEXT,
+                    timeout=600,
+                )
+            except (OSError, subprocess.SubprocessError) as fehler:
+                log.warning("Nachstart Spec #%s: spawn_srv.sh nicht lauffähig: %s", spec, fehler)
+                alle_gestartet = False
+                break
             ausgabe = (lauf.stdout or "") + (lauf.stderr or "")
             if lauf.returncode == 0 and "wartet auf Platz" not in ausgabe:
-                if not datei.is_file():
-                    log.info("Nachstart Spec #%s: wartende Fenster laufen (%s)", spec, tickets)
-                    return laeufe
-                log.info("Nachstart Spec #%s: %s läuft, neue Warteliste da", spec, tickets)
+                log.info("Nachstart Spec #%s: %s gestartet", spec, beschreibung_text)
+            elif spawn_exit.ist_spaeter_erneut(lauf.returncode):
+                log.info(
+                    "Nachstart Spec #%s: %s (Exit %s) — später erneut",
+                    spec,
+                    spawn_exit.beschreibung(lauf.returncode),
+                    lauf.returncode,
+                )
+                alle_gestartet = False
+                break
             else:
-                log.info("Nachstart Spec #%s: wartet weiter (Exit %s)", spec, lauf.returncode)
+                log.info(
+                    "Nachstart Spec #%s: wartet weiter (Exit %s, %s)",
+                    spec,
+                    lauf.returncode,
+                    spawn_exit.beschreibung(lauf.returncode),
+                )
+                alle_gestartet = False
+                break
+        if alle_gestartet:
+            if not datei.is_file():
+                log.info("Nachstart Spec #%s: alle wartenden Fenster laufen", spec)
+                return laeufe
+            log.info("Nachstart Spec #%s: neue Warteliste da", spec)
         schlafen(NACHSTART_TAKT_S if takt_s is None else takt_s)
     return laeufe
 
 
 def _nachstarter_starten(spec: int, repo: Path) -> threading.Thread | None:
-    """Nachstarter-Faden (#560), nur wenn ``spawn_srv.sh`` eine Warte-Datei mitgegeben hat.
+    """Nachstarter-Faden (#560, #604) für die Warteliste dieser Spec.
 
-    Lebt so lange wie der Aufseher: auch spätere ``spawn_srv.sh``-Läufe (Aufseher läuft schon, wird
-    nicht neu gestartet) vermerken ihre Wartenden in derselben Datei.
+    Nutzt ``TO_SPAWN_WARTE_DATEI`` (von ``spawn_srv.sh``/Aufpasser gesetzt) oder den
+    kanonischen Pfad :func:`to_spawn.spawn_exit.warte_datei`, damit auch ein direkt oder
+    vom Aufpasser gestarteter Aufseher die Warteliste kennt.
     """
     wert = os.environ.get(WARTE_ENV, "").strip()
-    if not wert:
-        return None
+    ziel = Path(wert) if wert else spawn_exit.warte_datei(repo, spec)
     umgebung = dict(os.environ)  # vor dem Umgebungs-Wechsel für Claude festhalten
 
     def faden() -> None:
         while True:
             try:
-                wartende_nachstarten(Path(wert), spec, repo, env=umgebung)
+                wartende_nachstarten(ziel, spec, repo, env=umgebung)
             except Exception:  # Faden darf den Aufseher nie mitreißen
                 log.exception("Nachstart Spec #%s gescheitert", spec)
                 time.sleep(NACHSTART_TAKT_S)

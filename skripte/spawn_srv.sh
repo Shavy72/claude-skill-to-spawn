@@ -14,7 +14,8 @@
 # Exit 7: Platte voll (Start-Check des Hausmeisters, #1369) — wie Exit 5.
 # Exit 6: Speicherprüfung kaputt oder Hauptzweig nicht ermittelbar — nichts weiter gestartet.
 # Exit 9: Session ``spec-<S>`` gehört einem anderen Repo (gleiche Spec-Nummer, #457) — nichts gestartet.
-# Exit 10: ein anderer Lauf für dieselbe Spec hält die Start-Sperre (#560) — nichts gestartet.
+# Exit 10: ein anderer Lauf für dieselbe Spec hält die Start-Sperre (#560, #604) — später erneut, kein Fehler.
+# Alle Exit-Codes für Aufrufer an einer Stelle: to_spawn/spawn_exit.py.
 # Eine tmux-Session je Spec (``spec-<S>``), darin ``wache <S>``, ``leitstand <S>`` und
 # je Ticket ein Fenster ``bau <N>``. Gewartet wird in bau.py (0 Token).
 # Kontrolle: ``sessions <S>`` · ``tmux attach -t spec-<S>`` (raus: Strg+B d).
@@ -81,27 +82,47 @@ MANIFEST="$MANIFESTE/spec-$SPEC.json"
 [ -f "$MANIFEST" ] || { echo "Manifest fehlt: $MANIFEST" >&2; exit 2; }
 command -v tmux >/dev/null || { echo "tmux ist nicht installiert." >&2; exit 2; }
 
-# --- Session je Repo (#457) --------------------------------------------------
-# Name (``spec-<kurz>-<S>``, im Übergang bestehende eigene ``spec-<S>``) und Besitzer-Prüfung
-# leben an genau einer Stelle (to_spawn/tmux_aufruf.py). Gehört die Ziel-Session einem
-# anderen Repo (normalisierte origin-Adresse, ohne origin gemeinsamer Git-Ordner): Exit 9.
+# --- Session je Repo (#457) + Hauptzweig (#257) + Staffel (#257) -------------
+# Ein gemeinsamer Python-Aufruf statt drei CLI-Starts (gleiche Quellen: tmux_aufruf, gh,
+# speicher — entspricht ``to_spawn.py sitzung``, ``hauptzweig`` und ``speicher --staffel``).
+# Exit 9: Session gehört anderem Repo; Exit 6: Hauptzweig leer/kaputt; sonst Exit 2.
 rc=0
-SESSION="$(TO_SPAWN_TMUX= TO_SPAWN_REPO="$REPO" "$PY" "$SKILL_HOME/to_spawn.py" sitzung "$SPEC")" || rc=$?
-if [ "$rc" -ne 0 ] || [ -z "$SESSION" ]; then
+START_DATEN="$(TO_SPAWN_TMUX= TO_SPAWN_REPO="$REPO" "$PY" -c '
+import sys
+sys.path.insert(0, sys.argv[1])
+from pathlib import Path
+from to_spawn import config, gh, speicher, tmux_aufruf
+repo = config.repo_wurzel(Path(sys.argv[2]))
+name, fremd = tmux_aufruf.sitzung_aufloesen(repo, sys.argv[3])
+if fremd:
+    print(fremd, file=sys.stderr)
+    sys.exit(tmux_aufruf.EXIT_FREMD)
+if not name:
+    sys.exit(2)
+try:
+    haupt = gh.hauptzweig(repo)
+except Exception as fehler:
+    print(f"Hauptzweig nicht ermittelbar: {fehler}", file=sys.stderr)
+    sys.exit(6)
+if not haupt:
+    print("Hauptzweig nicht ermittelbar: <leer>", file=sys.stderr)
+    sys.exit(6)
+try:
+    staffel = speicher.staffel_s(config.lade(repo))
+except Exception:
+    staffel = 20
+print(f"{name}\t{haupt}\t{staffel}")
+' "$SKILL_HOME" "$REPO" "$SPEC")" || rc=$?
+if [ "$rc" -ne 0 ] || [ -z "$START_DATEN" ]; then
   [ "$rc" -eq 9 ] && exit 9
-  echo "tmux-Session-Name nicht ermittelbar (to_spawn.py sitzung Exit $rc)." >&2
+  [ "$rc" -eq 6 ] && exit 6
+  echo "tmux-Session-Name nicht ermittelbar (Exit $rc)." >&2
   exit 2
 fi
+IFS=$'\t' read -r SESSION HAUPT STAFFEL <<< "$START_DATEN"
+case "$STAFFEL" in ''|*[!0-9]*) STAFFEL=20 ;; esac
 
 # --- 1. Stand holen (nie rebase/stash im geteilten Baum) --------------------
-# Hauptzweig je Repo (master/main/…, #257): Konfig, origin/HEAD, main, master. Leer oder
-# Fehler → Abbruch Exit 6, kein stiller Rückfall (F4).
-rc=0
-HAUPT="$(TO_SPAWN_REPO="$REPO" "$PY" "$SKILL_HOME/to_spawn.py" hauptzweig 2>&1)" || rc=$?
-if [ "$rc" -ne 0 ] || [ -z "$HAUPT" ]; then
-  echo "Hauptzweig nicht ermittelbar (to_spawn.py hauptzweig Exit $rc): ${HAUPT:-<leer>}" >&2
-  exit 6
-fi
 echo "== Stand (origin/$HAUPT) =="
 # Erst-Start (#283): nachziehen (nur fast-forward) oder Abbruch mit Zeile — Regel allein in
 # to_spawn/arbeitsstand.py. fetch-Fehler/Ticket-Zweig = Hinweis, weiter. Probelauf prüft nur.
@@ -152,20 +173,41 @@ fi
 [ -n "$TICKETS" ] || [ "$NUR_WACHE" -eq 1 ] || { echo "Keine Tickets im Manifest $MANIFEST." >&2; exit 2; }
 
 # --- 3. Was läuft schon? (nie Duplikate) ------------------------------------
-# Sperre je Spec (#560): Prüfen „läuft schon?“ + Speicher und Starten sind ein Schritt — ein
-# zweiter Lauf (Nachstarter aus wache.py, Aufpasser, Hand) wartet, sonst starteten beide
-# dasselbe Ticket oder überschritten gemeinsam die Session-Obergrenze (#460). Exit 10 = Sperre
-# nach TO_SPAWN_SPERRE_WARTEN_S (300) noch belegt. tmux-Aufrufe schließen fd 9 (``9>&-``),
-# sonst hielten die Fenster die Sperre für immer.
-# ponytail: ohne flock (Git Bash unter Windows) keine Sperre, dort läuft kein Nachstarter-Takt parallel
-if [ "$DRY_RUN" -eq 0 ] && command -v flock >/dev/null; then
+# Sperre je Spec (#560, #604): schützt Lesen/Schreiben der Warteliste und die Start-Entscheidung
+# (läuft schon? + Speicher + tmux-Start), NICHT die Staffel-Pausen und NICHT den Anlauf — so
+# blockiert ein zweiter Lauf nicht minutenlang. Exit 10 = Sperre nach TO_SPAWN_SPERRE_WARTEN_S
+# (300) noch belegt (Exit-Codes: to_spawn/spawn_exit.py). tmux-Aufrufe schließen fd 9 (``9>&-``),
+# sonst hielten die Fenster die Sperre für immer. Fehlt ``flock`` (Git Bash unter Windows),
+# erscheint genau eine Hinweis-Zeile auf stderr.
+SPERRE_DATEI="$REPO/.to-spawn/spawn-$SPEC.sperre"
+SPERRE_GEHALTEN=0
+SPERRE_WARNUNG_GEZEIGT=0
+sperre_holen() {
+  [ "$DRY_RUN" -eq 0 ] || return 0
+  [ "$SPERRE_GEHALTEN" -eq 0 ] || return 0
+  if ! command -v flock >/dev/null 2>&1; then
+    if [ "$SPERRE_WARNUNG_GEZEIGT" -eq 0 ]; then
+      echo "Hinweis: flock fehlt — Start-Sperre für Spec #$SPEC nicht aktiv (kein Parallelschutz)." >&2
+      SPERRE_WARNUNG_GEZEIGT=1
+    fi
+    return 0
+  fi
   mkdir -p "$REPO/.to-spawn"
-  exec 9>"$REPO/.to-spawn/spawn-$SPEC.sperre"
+  exec 9>"$SPERRE_DATEI"
   if ! flock -w "${TO_SPAWN_SPERRE_WARTEN_S:-300}" 9; then
+    exec 9>&-
     echo "Ein anderer spawn_srv.sh-Lauf für Spec #$SPEC startet gerade Fenster — nichts gestartet, später erneut." >&2
     exit 10
   fi
-fi
+  SPERRE_GEHALTEN=1
+}
+sperre_frei() {
+  [ "$SPERRE_GEHALTEN" -eq 1 ] || return 0
+  flock -u 9 2>/dev/null || true
+  exec 9>&-
+  SPERRE_GEHALTEN=0
+}
+sperre_holen
 STAND="$(TO_SPAWN_REPO="$REPO" "$PY" "$SKILL_HOME/skripte/sessions_stand.py" "$SPEC" --alle 2>/dev/null || true)"
 zustand_von() { echo "$STAND" | awk -v n="#$1" '$1==n {print $2; exit} ($1=="Spec" && $2==n) {print $3; exit}'; }
 # Lebt jetzt ein Aufseher-Prozess (``wache.py <S>`` in diesem Repo)? Frisch aus der Prozessliste,
@@ -181,21 +223,49 @@ aufseher_laeuft() {
 # ~/.bashrc (``REPO``), sonst startet ``bau`` in einem anderen Repo (#212). Seit #257 rufen
 # die Fenster die Skill-Skripte direkt auf (``bau.py``/``wache.py``), nicht die Shell-
 # Funktionen ``bau``/``wache`` aus ~/.bashrc — ein Fremd-Repo hat die nicht.
-# Warte-Datei (#560): Tickets, die „wartet auf Platz“ bekamen; der Aufseher (wache.py) startet sie
-# daraus in Sekunden nach, sobald Platz frei ist. Schreiben und Löschen nur hier, unter der Sperre.
+# Warte-Datei (#560, #604): Tickets, die „wartet auf Platz“ bekamen (auch ``--umzug``); der
+# Aufseher (wache.py) startet sie daraus in Sekunden nach, sobald Platz frei ist. Schreiben und
+# Löschen nur hier, unter der Sperre.
 WARTE_DATEI="$REPO/.to-spawn/wartet-auf-platz-$SPEC"
-# >>> warteliste (#560) — Format: eine Zeile, Ticketnummern mit Komma, z. B. ``901,902``.
-# warteliste_aendern <hinzu> <weg>: vorhandene Liste ∪ <hinzu> ohne <weg> (beides Komma-Listen),
-# ohne Doppelte, alte Reihenfolge zuerst; in einem Zug per mv geschrieben (ein Leser sieht nie
-# eine halbe Datei), leer → Datei weg. Trockenlauf ändert nichts.
+# >>> warteliste (#560, #604) — Format: optional eine Zeile normale Ticketnummern mit Komma
+# (z. B. ``901,902``) sowie optional je eine Zeile ``umzug <N> <ref>`` für wartende Umzug-Fenster.
+# warteliste_aendern <hinzu> <weg> [umzug_ticket] [umzug_ref]: vorhandene Liste ∪ <hinzu> ohne
+# <weg>, ohne Doppelte, alte Reihenfolge zuerst; in einem Zug per mv geschrieben (ein Leser sieht
+# nie eine halbe Datei), leer → Datei weg. Trockenlauf ändert nichts.
 warteliste_aendern() {
   [ "$DRY_RUN" -eq 0 ] || return 0
-  local alt="" neu
-  if [ -f "$WARTE_DATEI" ]; then alt="$(cat "$WARTE_DATEI")"; fi
-  neu="$(printf '%s,%s\n' "$alt" "$1" | tr ',' '\n' | awk -v weg=",$2," 'NF && !index(weg, "," $1 ",") && !s[$1]++ {print $1}' | paste -sd, -)"
-  if [ -z "$neu" ]; then rm -f "$WARTE_DATEI"; return 0; fi
+  local hinzu="${1:-}" weg="${2:-}" umzug_n="${3:-}" umzug_ref="${4:-}"
+  local alt_norm="" alt_umzug="" neu_norm="" neu_umzug="" weg_norm="" inhalt=""
+  if [ -f "$WARTE_DATEI" ]; then
+    alt_norm="$(awk '$1!="umzug" && NF {print}' "$WARTE_DATEI" | paste -sd, -)"
+    alt_umzug="$(awk '$1=="umzug" && NF>=3 {print}' "$WARTE_DATEI")"
+  fi
+  weg_norm="$weg"
+  [ -n "$umzug_n" ] && weg_norm="$weg_norm,$umzug_n"
+  neu_norm="$(printf '%s,%s\n' "$alt_norm" "$hinzu" | tr ',' '\n' | awk -v weg=",$weg_norm," 'NF && !index(weg, "," $1 ",") && !s[$1]++ {print $1}' | paste -sd, -)"
+  neu_umzug="$(
+    if [ -n "$alt_umzug" ]; then
+      printf '%s\n' "$alt_umzug" | awk -v weg=",$weg_norm," '$1=="umzug" && NF>=3 && !index(weg, "," $2 ",") && !s[$2]++ {print}'
+    fi
+    if [ -n "$umzug_n" ] && [ -n "$umzug_ref" ]; then
+      case ",$weg," in
+        *",$umzug_n,"*) ;;
+        *) printf 'umzug %s %s\n' "$umzug_n" "$umzug_ref" ;;
+      esac
+    fi
+  )"
+  if [ -n "$neu_norm" ] && [ -n "$neu_umzug" ]; then
+    inhalt="$(printf '%s\n%s' "$neu_norm" "$neu_umzug")"
+  elif [ -n "$neu_norm" ]; then
+    inhalt="$neu_norm"
+  elif [ -n "$neu_umzug" ]; then
+    inhalt="$neu_umzug"
+  else
+    rm -f "$WARTE_DATEI"
+    return 0
+  fi
   mkdir -p "${WARTE_DATEI%/*}"
-  printf '%s\n' "$neu" > "$WARTE_DATEI.$$.neu" && mv -f "$WARTE_DATEI.$$.neu" "$WARTE_DATEI"
+  printf '%s\n' "$inhalt" > "$WARTE_DATEI.$$.neu" && mv -f "$WARTE_DATEI.$$.neu" "$WARTE_DATEI"
 }
 # <<< warteliste
 # LAEUFT = Tickets dieses Laufs, die schon liefen oder gestartet wurden — nur die trägt der Lauf aus.
@@ -244,6 +314,8 @@ for n in $TICKETS; do
   elif [ -n "$UMZUG_REF" ]; then
     # Umzug: nie eine zweite Session für dasselbe Ticket — der Umzug bricht ab (Exit 4).
     echo "Ticket #$n läuft auf dem Server bereits ($z) — Umzug abgebrochen, nichts gestartet." >&2
+    warteliste_aendern "" ",$n"
+    sperre_frei
     exit 4
   else
     echo "Ticket #$n läuft bereits ($z) — übersprungen."
@@ -269,6 +341,7 @@ fi
 if [ "${#GEPLANT[@]}" -eq 0 ]; then
   echo "Nichts zu starten — alle Fenster laufen schon."
   warteliste_aendern "" "$LAEUFT"
+  sperre_frei
   exit 0
 fi
 
@@ -276,11 +349,10 @@ echo "== Geplante Fenster in tmux-Session $SESSION =="
 for i in "${!GEPLANT[@]}"; do echo "  - ${KURZ[$i]}  →  ${GEPLANT[$i]}"; done
 
 # Speicher-Schutz (#257 Paket B): vor JEDEM Fenster fragt ``to_spawn.py speicher``, ob noch
-# Platz ist (Exit 0 = frei, 5 = voll, 3 = voll durch fremde Sessions → Rest nicht starten, alles andere = Prüfung kaputt →
-# Exit 6, F4). Zwischen zwei Fenstern eine Pause von STAFFEL Sekunden, damit die
-# Claude-Starts sich nicht stapeln (OOM-Absturz 21.09.).
-STAFFEL="$(TO_SPAWN_REPO="$REPO" "$PY" "$SKILL_HOME/to_spawn.py" speicher --staffel 2>/dev/null || echo 20)"
-case "$STAFFEL" in ''|*[!0-9]*) STAFFEL=20 ;; esac
+# Platz ist (Exit 0 = frei, 5 = voll, 3 = voll durch fremde Sessions → Rest nicht starten,
+# alles andere = Prüfung kaputt → Exit 6, F4). Zwischen zwei Fenstern eine Pause von STAFFEL
+# Sekunden (aus ``speicher.staffel_s`` / ``--staffel``), damit die Claude-Starts sich nicht
+# stapeln (OOM-Absturz 21.09.).
 
 # speicher_pruefen <Kurzname>: 0 = frei, 5 = voll (Meldung), 7 = Platte voll (Meldung, #1369),
 # 6 = Prüfung kaputt (Meldung).
@@ -322,27 +394,73 @@ fi
 
 # --- 4. tmux-Fenster anlegen ------------------------------------------------
 GESTARTET=0
+GESTARTETE_NAMEN=()
+fenster_laeuft_schon() {
+  local kurz="$1" art nr z
+  art="${kurz%% *}"
+  if [ "$art" = "wache" ]; then
+    aufseher_laeuft
+    return $?
+  fi
+  if [ "$art" = "leitstand" ]; then
+    tmux list-windows -t "=$SESSION" -F '#W' 2>/dev/null | grep -qx "leitstand $SPEC"
+    return $?
+  fi
+  nr="$(echo "$kurz" | awk '{print $2}')"
+  STAND="$(TO_SPAWN_REPO="$REPO" "$PY" "$SKILL_HOME/skripte/sessions_stand.py" "$SPEC" --alle 2>/dev/null || true)"
+  z="$(zustand_von "$nr")"
+  if [ -n "$z" ] && [ "$z" != "aus" ]; then return 0; fi
+  tmux list-windows -t "=$SESSION" -F '#W' 2>/dev/null | grep -qx "bau $nr"
+}
+
 for i in "${!GEPLANT[@]}"; do
   befehl="${GEPLANT[$i]}"
   if [ "$GESTARTET" -gt 0 ]; then
     echo "Staffel: $STAFFEL s Pause vor dem nächsten Fenster"
-    sleep "$STAFFEL"
+    if [ "$STAFFEL" -gt 0 ]; then
+      # Sperre vor der Staffel-Pause freigeben (#604), damit parallele Läufe nicht
+      # über alle Pausen hinweg blockieren; danach Sperre erneut holen und Stand prüfen.
+      sperre_frei
+      sleep "$STAFFEL"
+      sperre_holen
+      if fenster_laeuft_schon "${KURZ[$i]}"; then
+        case "${KURZ[$i]}" in
+          "bau "*)
+            nr="$(echo "${KURZ[$i]}" | awk '{print $2}')"
+            if [ -n "$UMZUG_REF" ]; then
+              echo "Ticket #$nr läuft auf dem Server bereits — Umzug abgebrochen, nichts gestartet." >&2
+              warteliste_aendern "" ",$nr"
+              sperre_frei
+              exit 4
+            fi
+            echo "Ticket #$nr läuft bereits — übersprungen."
+            LAEUFT="$LAEUFT,$nr" ;;
+          *)
+            echo "${KURZ[$i]} läuft bereits — übersprungen." ;;
+        esac
+        continue
+      fi
+    fi
   fi
   rc=0
   speicher_pruefen "${KURZ[$i]}" || rc=$?
   # Kein Platz, aber der Aufseher läuft (#460): er startet die fehlenden Fenster selbst nach,
   # sobald Platz frei ist — das ist der vorgesehene Weg, kein Fehler.
   if [ "$rc" -eq 8 ]; then
-    # ponytail: Umzug-Fenster nicht vermerkt (brauchen ihre Ref), die startet der Aufpasser-Takt nach
-    if [ -z "$UMZUG_REF" ]; then
+    if [ -n "$UMZUG_REF" ]; then
+      # Umzug-Fenster samt Ref in der Warteliste vermerken (#604), damit der Aufseher nachstartet.
+      warteliste_aendern "" "$LAEUFT" "$TICKETS_ARG" "$UMZUG_REF"
+    else
       # Rest-bau-Fenster zur vorhandenen Liste dazu, Laufendes austragen (#560).
       liste="$(printf '%s\n' "${KURZ[@]:$i}" | awk '$1=="bau"{print $2}' | paste -sd, -)"
       warteliste_aendern "$liste" "$LAEUFT"
     fi
+    sperre_frei
     echo "wartet auf Platz: ${KURZ[*]:$i} — $WARTE_GRUND; Aufseher startet nach, sobald Platz frei ist."
     exit 0
   fi
   if [ "$rc" -ne 0 ]; then
+    sperre_frei
     echo "Rest bleibt aus; später erneut: bash scripts/spawn_srv.sh $SPEC" >&2
     exit "$rc"
   fi
@@ -355,12 +473,34 @@ for i in "${!GEPLANT[@]}"; do
   fi
   echo "gestartet: $name ($befehl)"
   case "$name" in "bau "*) LAEUFT="$LAEUFT,${name#bau }" ;; esac
+  GESTARTETE_NAMEN+=("$name")
   GESTARTET=$((GESTARTET + 1))
 done
 warteliste_aendern "" "$LAEUFT"
+sperre_frei
 
-echo "== Anlauf (10 s) =="
-sleep 10
+# Anlauf (#604): auf das Ereignis warten (gestartete tmux-Fenster sind da), statt fest 10 s
+# zu schlafen. Höchstdauer TO_SPAWN_ANLAUF_MAX_S (Vorgabe 10 s), Takt 0,2 s.
+ANLAUF_MAX_S="${TO_SPAWN_ANLAUF_MAX_S:-10}"
+case "$ANLAUF_MAX_S" in ''|*[!0-9]*) ANLAUF_MAX_S=10 ;; esac
+anlauf_bereit() {
+  local fenster n
+  fenster="$(tmux list-windows -t "=$SESSION" -F '#W' 2>/dev/null || true)"
+  [ -n "$fenster" ] || return 1
+  for n in "${GESTARTETE_NAMEN[@]}"; do
+    printf '%s\n' "$fenster" | grep -qxF "$n" || return 1
+  done
+  return 0
+}
+echo "== Anlauf (wartet auf Fenster, max. ${ANLAUF_MAX_S} s) =="
+if [ "${#GESTARTETE_NAMEN[@]}" -gt 0 ] && [ "$ANLAUF_MAX_S" -gt 0 ]; then
+  anlauf_schritte=$((ANLAUF_MAX_S * 5))
+  anlauf_i=0
+  while ! anlauf_bereit && [ "$anlauf_i" -lt "$anlauf_schritte" ]; do
+    sleep 0.2 2>/dev/null || sleep 1
+    anlauf_i=$((anlauf_i + 1))
+  done
+fi
 TO_SPAWN_REPO="$REPO" "$PY" "$SKILL_HOME/skripte/sessions_stand.py" "$SPEC" --alle || true
 echo
 echo "Kontrolle: sessions $SPEC · tmux attach -t $SESSION (Fenster wechseln Strg+B n, raus Strg+B d)"
