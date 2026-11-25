@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -20,6 +21,10 @@ sys.path.insert(0, str(SKILL))
 
 from to_spawn import briefkasten, capo, ja_einrichten, waechter_takt
 from to_spawn.befugnis import aufseher_text
+
+# Hook-Befehle schreibt die Einrichtung mit Schrägstrichen (``as_posix``); Backslashes frisst die Shell.
+CLI_POSIX = (SKILL / "to_spawn.py").as_posix()
+PY_POSIX = Path(sys.executable).as_posix()
 
 
 def _cli(
@@ -42,6 +47,7 @@ def _cli(
         stdin=None if eingabe is not None else subprocess.DEVNULL,
         capture_output=True,
         text=True,
+        encoding="utf-8",  # die CLI schreibt UTF-8 (konsole.py), nicht die Gebietsschema-Kodierung
         timeout=60,
         check=False,
     )
@@ -244,9 +250,17 @@ def test_befehl_ja_wird_angelegt_und_laeuft_ohne_terminal(
     assert os.access(sh, os.X_OK) and cmd.read_bytes().endswith(b"%*\r\n")
     _frage(tmp_path, mit_sperre)
     env = {k: v for k, v in os.environ.items() if not k.startswith("TO_SPAWN_")}
-    env.update({"TO_SPAWN_REPO": str(tmp_path), "HOME": str(mit_sperre)})
+    env.update(
+        {
+            "TO_SPAWN_REPO": str(tmp_path),
+            "HOME": str(mit_sperre),
+            "USERPROFILE": str(mit_sperre),
+        }
+    )
+    # Windows startet kein Shebang-Skript direkt; das Eingabefeld führt ``ja`` dort per Git-Bash-``sh`` aus.
+    start = [shutil.which("sh") or "sh"] if sys.platform == "win32" else []
     lauf = subprocess.run(
-        [str(sh), "7"],
+        [*start, str(sh), "7"],
         cwd=tmp_path,
         env=env,
         stdin=subprocess.DEVNULL,
@@ -391,19 +405,21 @@ def test_nachweis_verlangt_echte_to_spawn_py(
     monkeypatch.setenv("USERPROFILE", str(heim))
     _settings(heim, "echo hook-ja-sperre")
     assert briefkasten.sperre_eingetragen() is False
-    _settings(heim, f"python {heim}/gibt_es_nicht/to_spawn.py hook-ja-sperre")
+    _settings(
+        heim, f"python {heim.as_posix()}/gibt_es_nicht/to_spawn.py hook-ja-sperre"
+    )
     assert briefkasten.sperre_eingetragen() is False
-    _settings(heim, f"python {SKILL / 'to_spawn.py'} offene")
+    _settings(heim, f"python {CLI_POSIX} offene")
     assert briefkasten.sperre_eingetragen() is False
-    _settings(heim, f"{sys.executable} {SKILL / 'to_spawn.py'} hook-ja-sperre")
+    _settings(heim, f"{PY_POSIX} {CLI_POSIX} hook-ja-sperre")
     assert briefkasten.sperre_eingetragen() is True
     _settings(
         heim,
-        f"{sys.executable} {SKILL / 'to_spawn.py'} hook-ja-sperre",
+        f"{PY_POSIX} {CLI_POSIX} hook-ja-sperre",
         "Bash|PowerShell",
     )
     assert briefkasten.sperre_eingetragen() is True
-    _settings(heim, f"{sys.executable} {SKILL / 'to_spawn.py'} hook-ja-sperre", "Edit")
+    _settings(heim, f"{PY_POSIX} {CLI_POSIX} hook-ja-sperre", "Edit")
     assert briefkasten.sperre_eingetragen() is False
 
 
@@ -461,15 +477,15 @@ def test_nachweis_braucht_python_oder_to_spawn_als_befehlswort(
 ) -> None:
     monkeypatch.setenv("HOME", str(heim))
     monkeypatch.setenv("USERPROFILE", str(heim))
-    _settings(heim, f"echo {SKILL / 'to_spawn.py'} hook-ja-sperre")
+    _settings(heim, f"echo {CLI_POSIX} hook-ja-sperre")
     assert briefkasten.sperre_eingetragen() is False
-    _settings(heim, f"{SKILL / 'to_spawn.py'} hook-ja-sperre")
+    _settings(heim, f"{CLI_POSIX} hook-ja-sperre")
     assert briefkasten.sperre_eingetragen() is True
 
 
 def test_einrichtung_hebt_alten_bash_matcher_an(heim: Path) -> None:
     ordner = heim / ".claude"
-    _settings(heim, f"{sys.executable} {SKILL / 'to_spawn.py'} hook-ja-sperre", "Bash")
+    _settings(heim, f"{PY_POSIX} {CLI_POSIX} hook-ja-sperre", "Bash")
     assert ja_einrichten.sperre_eintragen(ordner, sys.executable, zeit="a") is True
     daten = json.loads((ordner / "settings.json").read_text(encoding="utf-8"))
     assert [b["matcher"] for b in daten["hooks"]["PreToolUse"]] == ["Bash|PowerShell"]
