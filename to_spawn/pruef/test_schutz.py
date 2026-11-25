@@ -33,7 +33,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from to_spawn import prozessbaum
+from to_spawn import konsole, prozessbaum
 
 log = logging.getLogger("to_spawn.pruef.test_schutz")
 
@@ -945,6 +945,7 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    konsole.utf8_ausgabe()
     args = _parser().parse_args(argv)
     erg = pruefe_diff(args.repo, args.basis, args.ziel)
     if args.als_json:

@@ -111,9 +111,13 @@ def _commit(ordner: Path, datei: str, text: str) -> None:
     _git(ordner, "commit", "-qm", f"ändert {datei}")
 
 
-def _cli(modul: str, *args: str, cwd: Path) -> subprocess.CompletedProcess[str]:
+def _cli(
+    modul: str, *args: str, cwd: Path, extra_env: dict[str, str] | None = None
+) -> subprocess.CompletedProcess[str]:
     env = dict(os.environ)
     env["PYTHONPATH"] = str(SKILL) + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
+    if extra_env:
+        env.update(extra_env)
     return subprocess.run(
         [sys.executable, "-m", modul, *args],
         cwd=cwd,
@@ -502,6 +506,32 @@ def test_stufe0_cli_gruen_und_rot(tmp_path: Path) -> None:
     assert rot.returncode == 1, rot.stdout + rot.stderr
     daten_rot = json.loads(rot.stdout)
     assert daten_rot["ok"] is False
+
+
+def test_cli_ausgabe_utf8_unter_cp1252_pipe(tmp_path: Path) -> None:
+    """Windows-Pipes nutzen ohne UTF-8-Modus cp1252 — beide CLIs müssen dennoch UTF-8 ausgeben (#794)."""
+    repo = _probe_repo(tmp_path / "cp1252_cli")
+    text = (repo / "tests" / "test_rechnen.py").read_text(encoding="utf-8")
+    geaendert = text.replace("    assert addiere(2, 3) < 10\n", "").replace("MAX_DAUER_S = 10", "MAX_DAUER_S = 99")
+    _commit(repo, "tests/test_rechnen.py", geaendert)
+    cp1252 = {"PYTHONIOENCODING": "cp1252"}
+
+    for modul in ("to_spawn.pruef.test_schutz", "to_spawn.pruef.sofort"):
+        json_lauf = _cli(
+            modul, "--repo", str(repo), "--basis", "base", "--ziel", "HEAD", "--json", cwd=repo, extra_env=cp1252
+        )
+        assert json_lauf.returncode == 1, json_lauf.stdout + json_lauf.stderr
+        assert "Traceback" not in json_lauf.stderr, json_lauf.stderr
+        daten = json.loads(json_lauf.stdout)
+        assert daten["ok"] is False
+        assert "\ufffd" not in json_lauf.stdout
+        assert "→" in json_lauf.stdout
+
+        text_lauf = _cli(modul, "--repo", str(repo), "--basis", "base", "--ziel", "HEAD", cwd=repo, extra_env=cp1252)
+        assert text_lauf.returncode == 1, text_lauf.stdout + text_lauf.stderr
+        assert "Traceback" not in text_lauf.stderr, text_lauf.stderr
+        assert "\ufffd" not in text_lauf.stdout
+        assert "→" in text_lauf.stdout
 
 
 # --- Abnahme-Kriterium: kein testmon im Produktivcode ------------------------------------------

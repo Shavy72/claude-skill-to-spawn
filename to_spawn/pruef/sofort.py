@@ -40,7 +40,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from to_spawn import bash_wahl, config, prozessbaum, temp_ordner
+from to_spawn import bash_wahl, config, konsole, prozessbaum, temp_ordner
 from to_spawn.pruef import ausfuehren, cache, leiter, regeln, test_schutz
 
 log = logging.getLogger("to_spawn.pruef")
@@ -743,6 +743,7 @@ def _stufe0_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    konsole.utf8_ausgabe()
     args = _stufe0_parser().parse_args(argv)
     erg = stufe0(
         args.repo,
