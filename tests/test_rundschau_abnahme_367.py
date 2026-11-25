@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from rundschau_beispiel import live_bereit_marker
 from rundschau_beispiel import png as _png
 
 from to_spawn import anleitung, bau_log, belege, briefkasten, rundschau_deck as rd, waechter_takt
@@ -318,6 +319,7 @@ def test_ablegen_prueft_bild_klickschritte_repo_pfad_und_speichert_inhalt(
 
     # 4. Vollständiges Deck im Repo (relativer Pfad) → Exit 0, Paket + Ausgabe nennen Pfad & Inhalt.
     _deck_schreiben(repo, deck_pfad, voll_teil2)
+    live_bereit_marker(repo, SPEC)  # #369: Abnahme verlangt grüne Bereit-für-Live-Prüfung
     gruen = _lauf(
         "abschluss_paket.py",
         "ablegen",

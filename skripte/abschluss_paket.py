@@ -53,7 +53,7 @@ _SKRIPTE = str(Path(__file__).resolve().parent)
 if _SKRIPTE not in sys.path:
     sys.path.insert(0, _SKRIPTE)
 from test_uebersicht import lade_tickets  # noqa: E402
-from thermo_lauf import SPERRE_MIN, repo_ordner  # noqa: E402
+from thermo_lauf import SPERRE_MIN, live_bereit_marker_pfad, live_bereit_pruefen, repo_ordner  # noqa: E402
 from thermo_lauf import marker_pfad as thermo_marker_pfad  # noqa: E402
 
 from to_spawn import bau_log, briefkasten, capo, config, melder, prozessbaum, rundschau_deck  # noqa: E402
@@ -88,6 +88,7 @@ class Paket:
     stand: str = "abnahme"
     rundschau_datei: str = ""
     rundschau_inhalt: dict[str, Any] = field(default_factory=dict)
+    live_bereit: str = ""
 
 
 def abschluss_ordner() -> Path:
@@ -178,6 +179,7 @@ def markdown(
     *,
     rundschau_datei: str = "",
     rundschau_inhalt: dict[str, Any] | None = None,
+    live_bereit: str = "",
 ) -> str:
     """Alte Kurzform: 3 Links + was neu ist."""
     zeilen = [
@@ -186,6 +188,7 @@ def markdown(
         f"1. **Stage-App** (auch am Handy): {stage}",
         f"2. **Rundschau**: {_rundschau_text(rundschau, rundschau_datei, rundschau_inhalt)}",
         f"3. **Test-Übersicht**: {tests}",
+        *(["", f"**Bereit für Live?**: {live_bereit}"] if live_bereit else []),
         "",
         "## Was ist neu",
         "",
@@ -223,6 +226,7 @@ def markdown_voll(p: Paket) -> str:
         *direkt,
         "5. **Zugang**:",
         *zugang,
+        *(["", f"**Bereit für Live?**: {p.live_bereit}"] if p.live_bereit else []),
         "",
         "## Was ist neu",
         "",
@@ -342,6 +346,7 @@ def _offen_daten(repo: Path, p: Paket) -> dict[str, Any]:
         "belege": p.belege,
         "direkt": [{"titel": t, "url": u} for t, u in p.direkt],
         "stand": p.stand,
+        "live_bereit": p.live_bereit,
         "zugang": {"basic_auth_nutzer": p.basic_auth_nutzer, "app_rollen": p.app_rollen, "bitwarden": p.bitwarden},
         "erstellt": datetime.now().isoformat(timespec="seconds"),
     }
@@ -375,6 +380,8 @@ def main(argv: list[str] | None = None) -> int:
     a = ap.parse_args(argv)
     repo = _repo(a.repo)
     p, neue_form = _paket(a, ap, repo)
+    if live_bereit_marker_pfad(repo, p.spec).is_file():
+        p = replace(p, live_bereit=live_bereit_pruefen(repo, p.spec).zeile)
     text = (
         markdown_voll(p)
         if neue_form
@@ -386,6 +393,7 @@ def main(argv: list[str] | None = None) -> int:
             p.saetze,
             rundschau_datei=p.rundschau_datei,
             rundschau_inhalt=p.rundschau_inhalt,
+            live_bereit=p.live_bereit,
         )
     )
     md_datei, offen = _md_datei(repo, p), _offen_datei(repo, p)
@@ -572,6 +580,7 @@ def ablegen(argv: list[str]) -> int:
     p, neue_form = _paket(a, ap, repo)
     rel_pfad = ""
     info: dict[str, Any] = {}
+    live_bereit_zeile = ""
     if a.dry_run:
         maengel: list[str] = []
     elif a.rundschau_datei is None and p.stand == "abnahme" and not a.ohne_rundschau:
@@ -583,11 +592,29 @@ def ablegen(argv: list[str]) -> int:
         maengel, rel_pfad, info = _rundschau_pruefen(repo, p.spec, a.rundschau_datei)
     else:
         maengel = []
-    if maengel:
-        sys.stdout.write("Rundschau nicht bereit zur Abnahme:\n" + "\n".join(f"- {m}" for m in maengel) + "\n")
+    lb_maengel: list[str] = []
+    if not a.dry_run and p.stand == "abnahme" and not a.ohne_rundschau:
+        lb = live_bereit_pruefen(repo, p.spec)
+        if lb.bereit:
+            live_bereit_zeile = lb.zeile
+        else:
+            lb_maengel = lb.maengel
+    elif not a.dry_run and live_bereit_marker_pfad(repo, p.spec).is_file():
+        live_bereit_zeile = live_bereit_pruefen(repo, p.spec).zeile
+    elif not a.dry_run and a.ohne_rundschau and p.stand == "abnahme":
+        live_bereit_zeile = "nicht geprüft (Notfall-Ablage)"
+    if maengel or lb_maengel:
+        bloecke: list[str] = []
+        if maengel:
+            bloecke.append("Rundschau nicht bereit zur Abnahme:\n" + "\n".join(f"- {m}" for m in maengel))
+        if lb_maengel:
+            bloecke.append("Prüfung „Bereit für Live?“ nicht bestanden:\n" + "\n".join(f"- {m}" for m in lb_maengel))
+        sys.stdout.write("\n".join(bloecke) + "\n")
         return 4
     if rel_pfad:
         p = replace(p, rundschau_datei=rel_pfad, rundschau_inhalt=info)
+    if live_bereit_zeile:
+        p = replace(p, live_bereit=live_bereit_zeile)
     if a.ohne_rundschau and a.rundschau_datei is None and p.stand == "abnahme":
         p = replace(p, rundschau=f"nicht abnahmebereit (ohne Rundschau-Deck) — {p.rundschau}")
     datei = ablage_pfad(repo, p.spec, p.stand)
@@ -729,6 +756,7 @@ def mail_text(repo: Path, p: Paket, neue_form: bool, konfig: dict[str, Any], sys
             p.saetze,
             rundschau_datei=p.rundschau_datei,
             rundschau_inhalt=p.rundschau_inhalt,
+            live_bereit=p.live_bereit,
         )
     )
     eintraege = entscheidungs_zeilen(repo, p.spec)
