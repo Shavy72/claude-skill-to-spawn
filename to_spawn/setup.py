@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, TextIO
 
-from . import config, context_mode, konsole, probesitz, prozessbaum
+from . import config, context_mode, konsole, probesitz, prozessbaum, werkzeug
 
 log = logging.getLogger("to_spawn.setup")
 
@@ -207,7 +207,15 @@ def _rollen_wert(konfig: dict[str, Any], feld: str, rolle: str) -> str:
 
 
 def modell_name(modell: str) -> str:
-    return next((name for mid, name in MODELLE if mid == modell), modell)
+    return next((name for mid, name in (*MODELLE, *werkzeug.AGY_MODELLE) if mid == modell), modell)
+
+
+def erlaubte_modelle(runner: str = werkzeug.STANDARD_RUNNER) -> list[str]:
+    """Erlaubte Modell-IDs für ``--modell-ticket`` / ``--modell-leicht`` je Werkzeug (#660)."""
+    basis = [mid for mid, _ in MODELLE]
+    if runner == "agy":
+        return [*basis, *(mid for mid, _ in werkzeug.AGY_MODELLE if mid not in basis)]
+    return basis
 
 
 def standards(konfig: dict[str, Any], plattform: str | None = None) -> dict[str, Any]:
@@ -405,6 +413,8 @@ def speichere(repo: Path | None, aenderungen: dict[str, Any], plattform: str | N
         objekt = _terminal_objekt(daten.get("terminal"))
         objekt[plattform_von(plattform)] = aenderungen["terminal"]
         daten["terminal"] = objekt
+    if "runner" in aenderungen and aenderungen["runner"] is not None:
+        daten["runner"] = str(aenderungen["runner"])
     for feld in ("modelle", "effort"):
         neu = aenderungen.get(feld) or {}
         ziel = daten.get(feld)
@@ -462,8 +472,15 @@ def zeige(
         zeilen.append(f"  {wahl}: {_terminal_zeile(option)}{marke}")
     zeilen.append(f"  {remote_hinweis(konfig)}")
     zeilen.append(f"  {context_mode.hinweis()}")
+    aktueller_runner = werkzeug.runner_von(konfig)
+    zeilen += ["", "Werkzeug (--runner):"]
+    for name in werkzeug.WERKZEUGE:
+        marke = " [Standard]" if name == aktueller_runner else ""
+        zusatz = f" (Standardmodell: {werkzeug.AGY_STANDARD_MODELL})" if name == "agy" else ""
+        zeilen.append(f"  {name}{zusatz}{marke}")
     zeilen += ["", "Modelle (--modell-ticket, --modell-leicht):"]
     zeilen += [f"  {mid}: {name}" for mid, name in MODELLE]
+    zeilen += [f"  {mid}: {name} (nur agy)" for mid, name in werkzeug.AGY_MODELLE]
     zeilen += [
         "",
         f"Effort (--effort-ticket, --effort-leicht, --effort-waechter): {', '.join(EFFORTS)}",
@@ -474,6 +491,8 @@ def zeige(
     else:
         terminal = roh.get("terminal")
         zeilen.append("  terminal: " + ("fehlt" if terminal is None else json.dumps(terminal, ensure_ascii=False)))
+        runner_roh = roh.get("runner")
+        zeilen.append("  runner: " + ("fehlt" if runner_roh is None else str(runner_roh)))
         for rolle, klartext in ROLLEN.items():
             teile = []
             for feld in ("modelle", "effort"):
@@ -481,7 +500,7 @@ def zeige(
                 eintrag = wert.get(rolle) if isinstance(wert, dict) else None
                 teile.append(f"{feld} {'fehlt' if eintrag is None else eintrag}")
             zeilen.append(f"  {rolle} ({klartext}): {', '.join(teile)}")
-    zeilen += ["", "Standard (Enter im Dialog):", f"  terminal: {vorgabe['terminal']}"]
+    zeilen += ["", "Standard (Enter im Dialog):", f"  terminal: {vorgabe['terminal']}", f"  runner: {aktueller_runner}"]
     for rolle, klartext in ROLLEN.items():
         modell = vorgabe["modelle"][rolle]
         fest = ", fest" if rolle == "waechter" else ""

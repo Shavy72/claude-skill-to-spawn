@@ -63,6 +63,7 @@ from to_spawn import (
     startstelle,
     temp_ordner,
     terminal_maus,
+    ticket_zustand,
     umzug,
     vertrauen,
     werkzeug,
@@ -1018,7 +1019,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Schlanke Claude-Session für ein Ticket.")
     parser.add_argument("ticket", type=int, help="GitHub-Issue-Nummer")
     parser.add_argument("--dry-run", action="store_true", help="nur Zusammenfassung + Befehl")
-    parser.add_argument("--model", help="Claude-Modell (überschreibt Manifest)")
+    parser.add_argument("--model", help="Modell (überschreibt Konfig/Manifest)")
+    parser.add_argument(
+        "--runner",
+        choices=list(werkzeug.WERKZEUGE),
+        help="Bau-Session-Werkzeug überschreiben (claude oder agy, #660)",
+    )
     parser.add_argument("--print-prompt", action="store_true", help="nur den Prompt ausgeben")
     parser.add_argument(
         "--sofort",
@@ -1092,7 +1098,7 @@ def main() -> int:
     if not args.dry_run:  # Probelauf ohne Seiteneffekte (#205)
         config.sicherstellen(REPO)
     konfig = config.lade(REPO)
-    runner = werkzeug.runner_von(konfig)
+    runner = args.runner or werkzeug.runner_von(konfig)
     # Fortsetzen nur mit vorhandenem Transkript (#236, F5): ohne die Datei startete
     # ``claude --resume`` eine frische Session — genau das darf der Aufpasser nie.
     # Bei ``agy`` liegen Gespräche nicht als Claude-JSONL unter ``~/.claude/projects``.
@@ -1400,7 +1406,48 @@ def main() -> int:
                 code,
             )
             return 0
+        if runner == "agy" and sys.platform != "win32":
+            wt_pfad = Path(worktree_pfad(ticket)).expanduser()
+            try:
+                werkzeug.agy_bau_log_nachtragen(
+                    REPO,
+                    ticket,
+                    wt_pfad,
+                    start_ts=float(umgebung["BAU_SESSION_START"]),
+                    runde=runde,
+                    modell=model,
+                    effort=effort,
+                )
+            except OSError as fehler:
+                log.warning("agy-Bau-Log #%s nicht nachgetragen: %s", ticket, fehler)
         uebergabe = staffel_uebergabe(staffel_datei)
+        if uebergabe is None and runner == "agy" and sys.platform != "win32" and staffel_aktiv(konfig):
+            fund = werkzeug.agy_staffel_handoff(
+                [Path(p) for p in handoff_dirs(ticket)],
+                ticket,
+                seit=float(umgebung["BAU_SESSION_START"]),
+                schon_uebergeben=fingerabdruck,
+            )
+            if fund is not None:
+                h_pfad, h_fp = fund
+                offen = args.probesitz
+                if not offen:
+                    stand_daten = ticket_zustand.lesen(ticket, REPO)
+                    offen = stand_daten is not None and not ticket_zustand.fertig_gebaut(stand_daten)
+                if offen:
+                    wt_pfad = Path(worktree_pfad(ticket)).expanduser()
+                    try:
+                        bau_log.schreibe(
+                            wt_pfad if wt_pfad.is_dir() else REPO,
+                            ticket,
+                            "handoff",
+                            datei=h_pfad.name,
+                            staffel=runde,
+                            runner="agy",
+                        )
+                    except OSError as fehler:
+                        log.warning("agy-Handoff-Zeile #%s nicht geschrieben: %s", ticket, fehler)
+                    uebergabe = {"handoff": str(h_pfad), "fingerabdruck": h_fp}
         if uebergabe is None:
             return exit_code(code)
         handoff = staffel_ziel(uebergabe)
@@ -1426,7 +1473,13 @@ def main() -> int:
             handoff.name,
             code,
         )
-        session_id_setzen(cmd, out, str(uuid.uuid4()), ticket=ticket, runde=runde)
+        if runner == "agy":
+            if "--resume" in cmd[:-1]:
+                idx = cmd.index("--resume")
+                del cmd[idx : idx + 2]
+            session_id_setzen(cmd, out, ticket=ticket, runde=runde)
+        else:
+            session_id_setzen(cmd, out, str(uuid.uuid4()), ticket=ticket, runde=runde)
 
 
 def ticket_ende_anstossen() -> None:

@@ -137,14 +137,14 @@ import subprocess
 import sys
 import tempfile
 import time
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from contextlib import ExitStack, nullcontext
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from types import EllipsisType
-from typing import Literal
+from typing import Any, Literal
 
 from to_spawn import (
     aufpasser,
@@ -174,7 +174,7 @@ Art = Literal["gelöscht", "gesichert und gelöscht", "bleibt"]
 # (Aliase für Aufrufer und Tests), wirksam sind die Funktionen ``_eigene_repos()`` usw.
 
 
-def _ticket_repo_aus(repos: list[dict[str, str]]) -> str | None:
+def _ticket_repo_aus(repos: Sequence[Mapping[str, Any]]) -> str | None:
     """Das eine Ticket-Repo aller Einträge; ``None`` = keins, mehrere oder unklar.
 
     Nie aus dem ``slug`` geraten: ein falsches Repo könnte ein fremdes geschlossenes #N
@@ -187,7 +187,7 @@ def _ticket_repo_aus(repos: list[dict[str, str]]) -> str | None:
     return next(iter(explizit)) if len(explizit) == 1 else None
 
 
-def _ohne_ticket_repo(repos: list[dict[str, str]]) -> list[dict[str, str]]:
+def _ohne_ticket_repo(repos: Sequence[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
     """Einträge ohne brauchbares Ticket-Repo: kein ``ticket_repo`` und der ``slug`` ist nicht
     das ausdrückliche Ticket-Repo eines Eintrags (z. B. Wegwerf-Klon, #112)."""
     bekannt = {t.lower() for e in repos if (t := (e.get("ticket_repo") or "").strip())}
@@ -198,7 +198,7 @@ def _ohne_ticket_repo(repos: list[dict[str, str]]) -> list[dict[str, str]]:
     ]
 
 
-def _hauptrepo_namen_aus(repos: list[dict[str, str]]) -> tuple[str, ...]:
+def _hauptrepo_namen_aus(repos: Sequence[Mapping[str, Any]]) -> tuple[str, ...]:
     namen: list[str] = []
     for e in repos:
         p = (e.get("pfad") or "").strip()
@@ -211,11 +211,11 @@ def _hauptrepo_namen_aus(repos: list[dict[str, str]]) -> tuple[str, ...]:
     return tuple(namen)
 
 
-def _remotes_aus(repos: list[dict[str, str]]) -> tuple[str, ...]:
+def _remotes_aus(repos: Sequence[Mapping[str, Any]]) -> tuple[str, ...]:
     return tuple(f"https://github.com/{s}" for e in repos if (s := (e.get("slug") or "").strip()))
 
 
-_VORGABE_REPOS: list[dict[str, str]] = config.MASCHINE_DEFAULTS["repos"]
+_VORGABE_REPOS: list[dict[str, Any]] = config.MASCHINE_DEFAULTS["repos"]
 #: Gemeinsames Ticket-Repo aller Vorgabe-Einträge; seit #235 leer (jedes Repo hat eigene Tickets).
 TICKET_REPO = _ticket_repo_aus(_VORGABE_REPOS) or ""
 EIGENE_REPOS = tuple(e["slug"].lower() for e in _VORGABE_REPOS if e.get("slug"))
@@ -231,7 +231,7 @@ WURZELN_STANDARD = tuple(config.MASCHINE_DEFAULTS["hausmeister"]["wurzeln"])
 ORDNER_PRAEFIXE_STANDARD = tuple(config.MASCHINE_DEFAULTS["hausmeister"]["ordner_praefixe"])
 
 
-def _maschinen_repos() -> list[dict[str, str]]:
+def _maschinen_repos() -> list[dict[str, Any]]:
     return config.maschine()["repos"]
 
 
@@ -250,6 +250,11 @@ def _alle_ticket_repos() -> list[str]:
         wert = (eintrag.get("ticket_repo") or "").strip()
         if wert and wert.lower() not in gesehen:
             gesehen[wert.lower()] = wert
+        zuordnung, _ = config.zweig_ticket_repo_pruefen(eintrag.get("zweig_ticket_repo"))
+        if zuordnung:
+            for ziel in zuordnung.values():
+                if ziel and ziel.lower() not in gesehen:
+                    gesehen[ziel.lower()] = ziel
     return list(gesehen.values())
 
 
@@ -277,7 +282,7 @@ def _ticket_repo_fuer(slug: str) -> str | None:
     return next(iter(treffer)) if len(treffer) == 1 else None
 
 
-def _kaputten_eintrag_melden(eintrag: dict[str, str]) -> None:
+def _kaputten_eintrag_melden(eintrag: Mapping[str, Any]) -> None:
     schluessel = f"ohne-ticket-repo:{eintrag.get('pfad')}:{eintrag.get('slug')}"
     if schluessel not in _ABGELEHNT_GEMELDET:
         _ABGELEHNT_GEMELDET.add(schluessel)
@@ -288,6 +293,54 @@ def _kaputten_eintrag_melden(eintrag: dict[str, str]) -> None:
             eintrag.get("pfad"),
             config.maschine_datei(),
         )
+
+
+def _zweig_ticket_repo_fehler_melden(eintrag: Mapping[str, Any], grund: str) -> None:
+    schluessel = f"zweig-ticket-repo:{eintrag.get('pfad')}:{eintrag.get('slug')}:{grund}"
+    if schluessel not in _ABGELEHNT_GEMELDET:
+        _ABGELEHNT_GEMELDET.add(schluessel)
+        log.warning(
+            "Hausmeister: zweig_ticket_repo für slug=%r pfad=%r in %s ungültig (%s) — "
+            "Zweige und Ordner bleiben fail-closed",
+            eintrag.get("slug"),
+            eintrag.get("pfad"),
+            config.maschine_datei(),
+            grund,
+        )
+
+
+def _zweig_ticket_repo_regeln(slug: str) -> tuple[dict[str, str] | None, bool]:
+    """Gültige ``zweig_ticket_repo``-Zuordnung für ``slug`` aus der Maschinen-Liste (#347).
+
+    Rückgabe ``(regeln, ok)``:
+    - ``ok=True``: gültige Zuordnung (leer = keine Sonderregeln).
+    - ``ok=False`` (``regeln=None``): kaputte oder widersprüchliche Einträge ⇒ fail-closed.
+    """
+    gesucht = slug.strip().lower()
+    if not gesucht:
+        return {}, True
+    passende = [e for e in _maschinen_repos() if (e.get("slug") or "").strip().lower() == gesucht]
+    if not passende:
+        return {}, True
+    normalisiert: list[tuple[frozenset[tuple[str, str]], dict[str, str]]] = []
+    for eintrag in passende:
+        zuordnung, fehler = config.zweig_ticket_repo_pruefen(eintrag.get("zweig_ticket_repo"))
+        if zuordnung is None:
+            _zweig_ticket_repo_fehler_melden(eintrag, fehler)
+            return None, False
+        normalisiert.append((frozenset((k, v.lower()) for k, v in zuordnung.items()), zuordnung))
+    if len({sig for sig, _ in normalisiert}) > 1:
+        _zweig_ticket_repo_fehler_melden(passende[0], "widersprüchliche Einträge zum selben slug")
+        return None, False
+    return normalisiert[0][1], True
+
+
+def _zweig_ticket_repo_treffer(zweig: str, regeln: Mapping[str, str]) -> str | None:
+    """Längster passender Klartext-Präfix aus ``regeln`` → Ticket-Repo oder ``""``; ``None`` = kein Treffer."""
+    treffer = [praefix for praefix in regeln if zweig.startswith(praefix)]
+    if not treffer:
+        return None
+    return regeln[max(treffer, key=len)]
 
 
 def _eigene_repos() -> frozenset[str]:
@@ -440,8 +493,9 @@ _ZWEIG_MUSTER = re.compile(rf"^(?:(?:ticket|fix|wip|aufseher)/|fix-|abschluss-){
 #: 2 Ziffern — ``l3/3b-1b-…`` ist ein Etappen-Schritt, kein Issue, ``l1/p7f-…`` ebenso.
 _ZWEIG_MUSTER_ETAPPE = re.compile(rf"^l\d+/{_KEIN_DATUM}([1-9]\d{{1,2}}|[1-4]\d{{3}})[a-z]?(?:-.*)?$")
 #: Alle Zweig-Formen mit Ticket-Nummer — die einzige Stelle „Zweigname → Nummer“ (#248, auch
-#: für das Zweig-Aufräumen, :func:`_zweig_ticket`); welches Repo die Nummer meint, sagt allein
-#: ``origin`` — Zweig + origin → Repo + Nummer nur über :func:`zweig_zu_ticket` (#234, #357).
+#: für das Zweig-Aufräumen, :func:`_zweig_ticket`); welches Repo die Nummer meint, bestimmen
+#: ``zweig_ticket_repo`` (optional je Repo in der Maschinen-Liste, #347) und sonst ``origin`` —
+#: Zweig + origin → Repo + Nummer nur über :func:`zweig_zu_ticket` (#234, #357).
 _ZWEIG_FORMEN = (_ZWEIG_MUSTER, _ZWEIG_MUSTER_ETAPPE)
 #: #235 N2: eine Zeile von ``git ls-remote --heads`` (SHA-1 oder SHA-256, Tab, Zweig).
 _LS_REMOTE_ZEILE = re.compile(r"([0-9a-f]{40}(?:[0-9a-f]{24})?)\trefs/heads/\S+$")
@@ -1580,12 +1634,13 @@ def _regeln(
     # bleiben still stehen — nie löschen, nie in liste_fuer_david.
     if ticket is None and not _in_wurzeln(echt):
         raise _Bleibt(f"{OHNE_NUMMER} (außerhalb der Wurzeln)")
-    # 4b #135: die Nummer zählt nur im Ticket-Repo selbst (skill-103 ist kein App-Ticket #103)
+    # 4b #135/#347: Nummer zählt im Ziel-Repo aus zweig_ticket_repo bzw. origin; unklar ⇒ Fehler
     slug = _origin_slug(echt)
-    # #176: eigener Ordner ohne bestimmbares Ticket-Repo ⇒ bleibt (nie über „fremd, aber fertig“)
-    if ticket is not None and slug.lower() in _eigene_repos() and _ticket_repo_fuer(slug) is None:
-        raise _Bleibt("Ticket-Repo nicht bestimmbar (Maschinen-Liste)", fuer_david=True, fehler=True)
-    ziel = _ticket_ziel(ticket, slug) if ticket is not None else None
+    ziel: tuple[str, int] | None = None
+    if ticket is not None:
+        ziel, unklar = _ordner_ticket_ziel(echt, ticket, slug)
+        if unklar:
+            raise _Bleibt("Ticket-Repo nicht bestimmbar (Maschinen-Liste)", fuer_david=True, fehler=True)
     fremd = ticket is not None and ziel is None
     if fremd:
         stand.ticket = None
@@ -2138,21 +2193,50 @@ def _nummer_zaehlt(slug: str) -> bool:
 def zweig_zu_ticket(zweig: str, slug: str) -> tuple[str, int] | None:
     """Zweigname + ``origin`` (``slug``) → (Ticket-Repo, Nummer); ``None`` = kein abfragbares Ticket.
 
-    Einzige Stelle für diese Zuordnung (#357): versteckt die Zweig-Formen samt Datums-Sperre
-    (``_ZWEIG_FORMEN``) und die Regel „origin entscheidet“ (:func:`_nummer_zaehlt`). Wer ein
-    Ticket zu einem Zweig abfragt, reicht das Ergebnis unverändert an :func:`_ticket_daten`
-    weiter — so kann kein Aufrufer Nummer und Repo falsch verbinden. Eine App-Nummer in einem
-    Skill-Zweig meint bewusst das Skill-Repo (vor dem Löschen wird ohnehin gesichert).
+    Einzige Stelle für diese Zuordnung (#357, #347): versteckt die Zweig-Formen samt Datums-Sperre
+    (``_ZWEIG_FORMEN``), optionale Zweig-Regeln aus der Maschinen-Liste (``zweig_ticket_repo``,
+    längster passender Klartext-Präfix gewinnt; leer = kein Ticket-Repo; ungültig/widersprüchlich =
+    fail-closed ``None``) und sonst die Regel „origin entscheidet“ (:func:`_nummer_zaehlt`). Wer ein
+    Ticket zu einem Zweig abfragt, reicht das Ergebnis unverändert an :func:`_ticket_daten` weiter —
+    so kann kein Aufrufer Nummer und Repo falsch verbinden.
     """
     nr = _nummer(zweig, _ZWEIG_FORMEN)
-    return None if nr is None else _ticket_ziel(nr, slug)
+    if nr is None:
+        return None
+    regeln, ok = _zweig_ticket_repo_regeln(slug)
+    if not ok or regeln is None:
+        return None
+    treffer = _zweig_ticket_repo_treffer(zweig, regeln)
+    if treffer is not None:
+        return (treffer, nr) if treffer else None
+    return _ticket_ziel(nr, slug)
+
+
+def _ordner_ticket_ziel(echt: Path, ticket: int, slug: str) -> tuple[tuple[str, int] | None, bool]:
+    """Bestimmt ``(ziel, unklar)`` für einen Ordner mit Nummer ``ticket`` und ``origin`` ``slug`` (#347).
+
+    Trägt der ausgecheckte Zweig dieselbe Ticket-Nummer, gelten ``zweig_ticket_repo``-Regeln
+    über :func:`_zweig_ticket_repo_treffer`; sonst :func:`_ticket_ziel`. ``unklar=True`` heißt:
+    eigenes Repo ohne bestimmbares ``ticket_repo`` oder ungültiges/widersprüchliches
+    ``zweig_ticket_repo`` ⇒ Ordner bleibt mit Fehler (nie über :func:`_fremd_fertig`).
+    """
+    regeln, ok = _zweig_ticket_repo_regeln(slug)
+    if not ok or regeln is None:
+        return None, True
+    zweig = _git_oder_none(echt, "symbolic-ref", "--short", "-q", "HEAD") or ""
+    if _nummer(zweig, _ZWEIG_FORMEN) == ticket:
+        treffer = _zweig_ticket_repo_treffer(zweig, regeln)
+        if treffer is not None:
+            return ((treffer, ticket) if treffer else None), False
+    if slug.lower() in _eigene_repos() and _ticket_repo_fuer(slug) is None:
+        return None, True
+    return _ticket_ziel(ticket, slug), False
 
 
 def _ticket_ziel(nr: int, slug: str) -> tuple[str, int] | None:
     """Nummer ``nr`` (aus Zweig oder Ordnername) + ``origin`` → (Ticket-Repo, Nummer) oder ``None``.
 
-    Der Ordner-Pfad nutzt das direkt (seine Nummer kann aus dem Ordnernamen kommen);
-    für Zweige gilt :func:`zweig_zu_ticket`."""
+    Der Ordner-Pfad nutzt das über :func:`_ordner_ticket_ziel`; für Zweige gilt :func:`zweig_zu_ticket`."""
     repo = _ticket_repo_fuer(slug) if _nummer_zaehlt(slug) else None
     return None if repo is None else (repo, nr)
 
@@ -2280,7 +2364,10 @@ def _schliesszeit(ordner: Path) -> float | None:
         ticket = _ticket_nummer(ordner, echt)
         if ticket is None:
             return None
-        daten = _ticket_daten(ticket, _ticket_ziel(ticket, _origin_slug(echt)))
+        ziel, unklar = _ordner_ticket_ziel(echt, ticket, _origin_slug(echt))
+        if unklar:
+            return None
+        daten = _ticket_daten(ticket, ziel)
     except (
         _Bleibt,
         OSError,

@@ -62,7 +62,7 @@ Ablauf für dich (das Modell), wenn die Konfig fehlt oder der Nutzer „setup“
 ## Ablösen `/respawn` (#431)
 
 - Alias-Skill `/respawn` (`aliase/respawn/SKILL.md`), Logik `to_spawn/respawn.py`: Aufseher löst eine hängende oder an der Handoff-Grenze stehende Bau-Session nach fester SOP ab (`to_spawn.py respawn <S> <N>`, über Ablöse-Subagent, Exit 0–3). Am PC (Windows, #501): alte Session samt `bau.py` per `taskkill /T` beenden, neuer Windows-Terminal-Tab `bau <N>` mit `--remote-control` und Handoff-Auftrag (jüngster `docs/handoffs/HANDOFF_*_<N>.md`), Beleg = neue Session in der Prozessliste; nichts wird getippt. `neustart --beenden` bleibt für tote Sessions.
-- **sichern (L5 #145):** `to_spawn.py sichern [DATEI…]` kopiert Übergaben + Entscheidungs-Log (je Repo aus `repos[]`: `.claude-handoff*.md`, `entscheidungen.md`; Maschinen-Liste `sicherung.dateien`) in den privaten Sicherungs-Ordner (`sicherung.ziel`, Vorgabe Notiz-Tresor) und lädt angefangene Skill-Repo-Zweige hoch (nie Hauptzweig, nie `ticket/*`). Ziel in öffentlichem Repo → verweigert. Läuft auch von selbst bei der Aufseher-Ablösung und jedem Hausmeister-Rundgang.
+- **sichern (L5 #145, #755):** `to_spawn.py sichern [DATEI…] [--trocken|--pruefen]` kopiert Übergaben + Entscheidungs-Log (je Repo aus `repos[]`: `.claude-handoff*.md`, `entscheidungen.md`; Maschinen-Liste `sicherung.dateien`) in den privaten Sicherungs-Ordner (`sicherung.ziel`, Vorgabe Notiz-Tresor) und lädt angefangene Skill-Repo-Zweige hoch (nie Hauptzweig, nie `ticket/*`). Ziel in öffentlichem Repo → verweigert. `--pruefen` prüft `sicherung.dateien`/`sicherung.ziel` rein lesend (Exit 0/1). Läuft auch von selbst bei der Aufseher-Ablösung und jedem Hausmeister-Rundgang.
 
 ## Eingriffs-Leiter `leiter` (#432)
 - Logik `to_spawn/leiter.py`, Aufruf `to_spawn.py leiter <S> <N> [--dry-run]` — nur über einen Ablöse-Subagenten (`model: sonnet`, Antwort = die eine Zeile). stdout genau 1 Zeile `leiter #<N>: Stufe <x> <aktion> — <grund>`.
@@ -104,6 +104,8 @@ Ablauf für dich (das Modell), wenn die Konfig fehlt oder der Nutzer „setup“
 - Nach dem Spawn immer per Prozessliste prüfen, nie „läuft“ behaupten.
 - ⊗-Tabs erst schließen, wenn `sessions` keine VERWAIST-Zeile mehr zeigt.
 - Tabs schließen kann `wt` nicht per Befehl; ganze Fenster schließt der Mensch.
+- **„Ist der Fix drin?“ immer am Datei-Inhalt prüfen, nie per Commit-Abstammung (#757):** Deploy-Schlange, Rebase und Squash-Merge setzen Commits mit neuer Kennung (SHA) neu auf — `git merge-base --is-ancestor <alte-sha> origin/<hauptzweig>` meldet dann fälschlich „fehlt“. Richtig ist die Prüfung am Datei-Inhalt (`git show origin/<hauptzweig>:<pfad>` oder `git grep` auf `origin/<hauptzweig>`).
+- **Kein Force-Push auf eigene Zweige (#757):** Der Projekt-`pre-push`-Hook (`pre-push-master-sperre.sh`) sperrt nur den Hauptzweig, nie `wip/*`/`ticket/*`; in der Verlauf-Prüfung (`to_spawn/erlaubt.py`) gilt jeder Force-Push (`-f`, `--force`, `--force-with-lease`, `+ref`) auch auf eigene Zweige als Klasse 2.
 
 ## `srv` — Bau-Server (gebaut 2026-09-17)
 
@@ -118,6 +120,7 @@ Dieselben Sessions als tmux-Fenster auf dem netcup-Bau-Server (`ssh bau-server`,
 3. Harte Regeln gelten gleich (nie `wartet` überspringen, kein Duplikat, kein Kill ohne `sessions`-Check).
 4. Browser-Beweise auf dem Server: **kein** `claude-in-chrome` (kein Desktop) — Playwright-Weg (`scripts/beweis_*.py`-Vorlagen), siehe Memory `reference_cmo_browser_beweis_playwright`.
 5. SSH-Falle Windows: `Bad permissions` auf `.ssh/config`/Key-Datei → `icacls <Datei> /inheritance:r; icacls <Datei> /grant:r "$env:USERNAME:(R)"` einmalig fixen.
+6. `crontab`-Falle Linux (#757): Debian-/Vixie-`crontab <pfad>` schneidet Dateipfade ab 99 Zeichen still ab (`MAX_FNAME = 100`). Skripte und Anleitungen übergeben Crontabs immer über stdin (`crontab - < datei`; im Code `aufpasser._crontab("-", eingabe=...)` — Dateipfade weist `_crontab` mit `ValueError` ab).
 
 ## Speicher (#257 Paket B, seit 2026-09-21)
 
