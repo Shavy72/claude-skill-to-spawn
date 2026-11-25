@@ -18,6 +18,8 @@ from pathlib import Path
 
 import pytest
 
+from to_spawn import prozessbaum
+
 SKILL = Path(__file__).resolve().parent.parent
 
 #: Start-Funktionen; ohne ``creationflags`` bekommt ein Konsolen-Kind unter ``pythonw`` ein Fenster.
@@ -223,3 +225,10 @@ def test_kind_ohne_konsolenfenster_wenn_eltern_ohne_konsole() -> None:
     assert stand["eltern"] == 0, f"Eltern hat doch eine Konsole: {stand}"
     assert stand["kontrolle"] != 0, f"Messung blind: Kind ohne Flag bekam kein Konsolenfenster: {stand}"
     assert stand["echt"] == 0, f"to_spawn-Unterprozess öffnete ein Konsolenfenster (#658): {stand}"
+
+
+def test_fensterlos_ohne_windll_kein_absturz(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Gepatchtes ``sys.platform == 'win32'`` unter Linux darf nie an fehlendem ``ctypes.windll`` scheitern."""
+    monkeypatch.setattr(prozessbaum.sys, "platform", "win32")
+    monkeypatch.delattr(prozessbaum.ctypes, "windll", raising=False)
+    assert prozessbaum.fensterlos() == {}
