@@ -605,10 +605,12 @@ FRAGE_JA_NEIN = re.compile(
     r"|[(\[]\s*(?:j/n|y/n)\s*[)\]]",
     re.IGNORECASE,
 )
+#: Frage mit nachgestelltem „Vorschlag: …“ (ein- oder zweizeilig, #286 Anomalie 8).
+FRAGE_VORSCHLAG = re.compile(r"\?\s*Vorschlag:", re.IGNORECASE)
 
 
 def frage_am_prompt(text: str) -> bool:
-    """Steht in den letzten Zeilen über dem Eingabefeld eine Ja/Nein-Frage (#485)?
+    """Steht in den letzten Zeilen über dem Eingabefeld eine Ja/Nein-Frage (#485, #286)?
 
     Eine Bau-Session fragt nie (sie nimmt den Vorschlag); bleibt sie an so einer
     Frage stehen, wartet sie sonst bis ``hang_min`` auf den ersten Anstupser.
@@ -616,8 +618,10 @@ def frage_am_prompt(text: str) -> bool:
     zeilen = _zeilen_am_prompt(text)
     if any(briefkasten.JA_BEFEHL in z for z in zeilen[-3:]):
         return False  # Live-Ja-Aufforderung (#531): Session wartet zu Recht auf den Menschen
-    return any(FRAGE_JA_NEIN.search(z) for z in zeilen[-3:]) or (
-        bool(zeilen) and zeilen[-1].rstrip().endswith("?")
+    return (
+        any(FRAGE_JA_NEIN.search(z) for z in zeilen[-3:])
+        or (bool(zeilen) and zeilen[-1].rstrip().endswith("?"))
+        or bool(FRAGE_VORSCHLAG.search("\n".join(zeilen[-3:])))
     )
 
 
