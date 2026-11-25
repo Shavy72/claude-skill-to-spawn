@@ -23,6 +23,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from conftest import attrappe
 from to_spawn.pruef import adapter_py
 from to_spawn.pruef.leiter import Plan
 
@@ -325,15 +326,24 @@ def installiere_lokales_vitest(repo: Path) -> None:
     vitest_dir = repo / "node_modules" / "vitest"
     bin_dir = repo / "node_modules" / ".bin"
     vitest_dir.mkdir(parents=True, exist_ok=True)
-    bin_dir.mkdir(parents=True, exist_ok=True)
     (vitest_dir / "package.json").write_text(_VITEST_PKG, encoding="utf-8")
     (vitest_dir / "config.js").write_text(_VITEST_CONFIG_JS, encoding="utf-8")
     (vitest_dir / "index.js").write_text(_VITEST_INDEX_JS, encoding="utf-8")
     (vitest_dir / "cli.mjs").write_text(_VITEST_CLI_MJS, encoding="utf-8")
-    posix_bin = bin_dir / "vitest"
-    posix_bin.write_text('#!/bin/sh\nexec node "$(dirname "$0")/../vitest/cli.mjs" "$@"\n', encoding="utf-8")
-    posix_bin.chmod(0o755)
-    (bin_dir / "vitest.cmd").write_text('@node "%~dp0..\\vitest\\cli.mjs" %*\r\n', encoding="utf-8")
+    attrappe(
+        bin_dir,
+        "vitest",
+        """
+        import shutil
+        import subprocess
+        import sys
+        from pathlib import Path
+
+        cli = Path(__file__).resolve().parents[1] / "vitest" / "cli.mjs"
+        node = shutil.which("node") or "node"
+        raise SystemExit(subprocess.call([node, str(cli), *sys.argv[1:]]))
+        """,
+    )
 
 
 def baue_probe_repos(ziel: Path) -> dict[str, Path]:
