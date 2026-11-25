@@ -43,7 +43,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
-from . import bau_log, config, konsole, manifest, prozessbaum, speicher, sperre
+from . import bau_log, config, konsole, manifest, prozessbaum, speicher, sperre, starter
 
 log = logging.getLogger("to_spawn.warten")
 
@@ -176,43 +176,20 @@ def _speicher_text(frei: int | None) -> str:
 # --- Prozess-Prüfung & Abbruch-Erkennung ----------------------------------------------
 
 
-def _linux_stat(pid: int) -> tuple[str, int] | None:
-    """(Zustand, Startzeit) aus ``/proc/<pid>/stat``; sonst ``None``."""
-    if sys.platform != "linux":
-        return None
-    try:
-        text = (prozessbaum._PROC / str(pid) / "stat").read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return None
-    rest = text[text.rfind(")") + 2 :].split()
-    if len(rest) < 20 or not rest[19].isdigit():
-        return None
-    return rest[0], int(rest[19])
-
-
 def _prozess_start(pid: int) -> int | None:
     """Startzeit (Linux ``/proc/<pid>/stat``) gegen PID-Wiederverwendung; sonst ``None``."""
-    info = _linux_stat(pid)
-    return info[1] if info is not None else None
+    return prozessbaum.startzeit(pid)
 
 
 def _prozess_aktiv(pid: Any, erwartet_start: Any = None) -> bool:
     """Lebt der gemerkte Prozess noch aktiv (kein Zombie, keine recycelte PID)?"""
     if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
         return False
+    start = erwartet_start if isinstance(erwartet_start, int) and not isinstance(erwartet_start, bool) else None
     try:
-        if not prozessbaum.lebt(pid):
-            return False
+        return prozessbaum.aktiv(pid, erwartet_start=start)
     except OSError:
         return False
-    info = _linux_stat(pid)
-    if info is not None:
-        zustand, aktuell_start = info
-        if zustand in ("Z", "X"):  # Zombie oder tot: Prozess läuft nicht mehr
-            return False
-        if isinstance(erwartet_start, int) and aktuell_start != erwartet_start:
-            return False
-    return True
 
 
 def ist_abbruch_exit(code: int, *, plattform: str | None = None) -> bool:
@@ -459,15 +436,18 @@ def _starte_laeufer_prozess(
         "--laeufer",
         str(state_datei),
     ]
+    eigen: dict[str, Any] = (
+        prozessbaum.ohne_fenster() if sys.platform == "win32" else {"start_new_session": True}
+    )
     with log_datei.open("ab") as log_fh:
-        return subprocess.Popen(
+        return starter.starte(
             cmd,
-            cwd=str(arbeitsordner),
+            cwd=arbeitsordner,
+            notnagel=None,
             stdin=subprocess.DEVNULL,
             stdout=log_fh,
             stderr=subprocess.STDOUT,
-            start_new_session=(sys.platform != "win32"),
-            **prozessbaum.ohne_fenster(),
+            **eigen,
         )
 
 
@@ -494,9 +474,10 @@ def _ueberwachen(
 
     while True:
         try:
-            kind = subprocess.Popen(
+            kind = starter.starte(
                 befehl,
-                cwd=str(arbeitsordner),
+                cwd=arbeitsordner,
+                notnagel=None,
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,

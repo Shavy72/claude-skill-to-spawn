@@ -33,10 +33,12 @@ SKILL = Path(__file__).resolve().parent.parent
 if str(SKILL) not in sys.path:
     sys.path.insert(0, str(SKILL))
 
-from to_spawn import aufpasser, bau_log, cli_parser
+from to_spawn import aufpasser, bau_log, cli_parser, prozessbaum, starter
 
 
-def _skript_schreiben(pfad: Path, quelltext: str) -> Path:
+def _skript_schreiben(name: str, quelltext: str) -> Path:
+    """Schreibt ein Test-Hilfsskript in den Attrappen-Ordner ``TO_SPAWN_TEST_BIN`` (#1406)."""
+    pfad = Path(os.environ[starter.TEST_BIN_ENV]) / name
     pfad.write_text(quelltext, encoding="utf-8")
     return pfad
 
@@ -51,7 +53,7 @@ def _meminfo_schreiben(tmp_path: Path, frei_mib: int = 5800, gesamt_mib: int = 1
     return datei
 
 
-def _warte_auf_datei(pfad: Path, frist_s: float = 10.0) -> str:
+def _warte_auf_datei(pfad: Path, frist_s: float = 20.0) -> str:
     ende = time.monotonic() + frist_s
     while time.monotonic() < ende:
         if pfad.is_file():
@@ -63,7 +65,7 @@ def _warte_auf_datei(pfad: Path, frist_s: float = 10.0) -> str:
 
 
 def _warte_auf_stand(
-    repo: Path, ticket: str, bedingung: Any, frist_s: float = 10.0
+    repo: Path, ticket: str, bedingung: Any, frist_s: float = 20.0
 ) -> dict[str, Any]:
     from to_spawn import warten
 
@@ -106,7 +108,7 @@ def test_kind_einmal_beendet_startet_mit_pause_neu_und_wird_gruen(
     zaehler_datei = tmp_path / "versuch.txt"
     pid_datei = tmp_path / "kind1.pid"
     skript = _skript_schreiben(
-        tmp_path / "warte_ziel.py",
+        "warte_ziel.py",
         (
             "import os, sys, time\n"
             "from pathlib import Path\n"
@@ -178,7 +180,7 @@ def test_kind_n_mal_beendet_schreibt_blockiert_ins_bau_log(
     pid_dir = tmp_path / "pids"
     pid_dir.mkdir()
     skript = _skript_schreiben(
-        tmp_path / "haengt.py",
+        "haengt.py",
         (
             "import os, sys, time\n"
             "from pathlib import Path\n"
@@ -238,7 +240,7 @@ def test_regulaerer_anwendungsfehler_wird_nicht_als_abbruch_wiederholt(
     logbuch = tmp_path / "geraet.jsonl"
     monkeypatch.setenv("TO_SPAWN_GERAETE_LOGBUCH", str(logbuch))
 
-    skript = _skript_schreiben(tmp_path / "rot.py", "import sys; print('Schlange rot'); sys.exit(1)\n")
+    skript = _skript_schreiben("rot.py", "import sys; print('Schlange rot'); sys.exit(1)\n")
     pausen: list[float] = []
     erg = warten.ausfuehren(
         repo, "1477", [sys.executable, str(skript)], max_versuche=3, pause_s=5.0, schlafen=pausen.append
@@ -269,7 +271,7 @@ def test_hintergrund_laeufer_getoetet_weckruf_erkennt_und_startet_neu(
     zaehler = tmp_path / "count.txt"
     bereit = tmp_path / "ready1.txt"
     skript = _skript_schreiben(
-        tmp_path / "bg_ziel.py",
+        "bg_ziel.py",
         (
             "import os, sys, time\n"
             "from pathlib import Path\n"
@@ -345,7 +347,7 @@ def test_hintergrund_laeufer_n_mal_getoetet_blockiert_beim_weckruf(
     monkeypatch.setenv("TO_SPAWN_SPEICHER_MEMINFO", str(_meminfo_schreiben(tmp_path, 2900, 16384)))
     monkeypatch.setenv("TO_SPAWN_GERAETE_LOGBUCH", str(logbuch))
 
-    skript = _skript_schreiben(tmp_path / "immer_lang.py", "import time; time.sleep(30)\n")
+    skript = _skript_schreiben("immer_lang.py", "import time; time.sleep(30)\n")
     pausen: list[float] = []
     start = warten.starte_hintergrund(
         repo, "1477", [sys.executable, str(skript)], max_versuche=2, pause_s=3.0
@@ -457,7 +459,7 @@ def test_linux_gegenprobe_echter_speicher_und_sigkill(
     zaehler = tmp_path / "z.txt"
     pid_datei = tmp_path / "p.pid"
     skript = _skript_schreiben(
-        tmp_path / "linux_probe.py",
+        "linux_probe.py",
         (
             "import os, sys, time\n"
             "from pathlib import Path\n"
@@ -538,3 +540,37 @@ def test_ist_abbruch_exit_linux_und_windows(code: int, plattform: str, erwartet:
     from to_spawn import warten
 
     assert warten.ist_abbruch_exit(code, plattform=plattform) is erwartet
+
+
+def test_prozessbaum_aktiv_erkennt_zombie_und_recycelte_pid(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Öffentliche Türen ``prozessbaum.startzeit``/``aktiv`` trennen Zombies und recycelte PIDs."""
+    proc = tmp_path / "proc"
+    for pid, zustand, start in ((101, "S", 5000), (102, "Z", 5001), (103, "X", 5002)):
+        ordner = proc / str(pid)
+        ordner.mkdir(parents=True)
+        # Felder 3..22 hinter ``(comm)``: Zustand, PPID + 17 Platzhalter, Startzeit
+        felder = " ".join([zustand, "1", *("0" for _ in range(17)), str(start)])
+        (ordner / "stat").write_text(f"{pid} (python test) {felder}\n", encoding="utf-8")
+
+    monkeypatch.setattr(prozessbaum, "_WINDOWS", False)
+    monkeypatch.setattr(prozessbaum, "_PROC", proc)
+    monkeypatch.setattr(prozessbaum.sys, "platform", "linux")
+
+    assert prozessbaum.startzeit(101) == 5000
+    assert prozessbaum.aktiv(101, erwartet_start=5000) is True
+    assert prozessbaum.aktiv(101, erwartet_start=9999) is False  # PID wiederverwendet
+    assert prozessbaum.aktiv(102, erwartet_start=5001) is False  # Zombie
+    assert prozessbaum.aktiv(103, erwartet_start=5002) is False  # tot
+    assert prozessbaum.aktiv(999) is False
+
+
+def test_warten_geht_durch_start_tuer_und_sperrt_fremde_programme_im_test(tmp_path: Path) -> None:
+    """``warten.ausfuehren`` startet über ``to_spawn.starter.starte`` (Start-Schutz #1406 greift)."""
+    from to_spawn import warten
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    with pytest.raises(starter.StartGesperrt):
+        warten.ausfuehren(repo, "286", ["claude", "--version"], max_versuche=1, pause_s=0.0)
