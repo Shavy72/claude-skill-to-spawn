@@ -17,7 +17,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -127,29 +126,17 @@ def _einzeilig(text: Any) -> str:
 
 
 def prozess_lebt(pid: Any) -> bool | None:
-    """True = lebt, False = sicher tot, None = unbekannt (keine PID, Fehler).
+    """True = lebt, False = sicher tot, None = unbekannt (ungültige PID oder Fehler).
 
-    Linux fragt ``os.kill(pid, 0)``, Windows die Kernel-Tür
-    :func:`to_spawn.prozessbaum.lebt` (#257).
+    Fragt die eine Stelle :func:`prozessbaum.lebt` (Linux: ``/proc``, Windows: Kernel).
     """
-    if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
+    if not isinstance(pid, int) or isinstance(pid, bool) or not 0 < pid < 2**31:
         return None
-    if sys.platform == "win32":
-        try:
-            return prozessbaum.lebt(pid)
-        except OSError as fehler:
-            log.warning("PID %s nicht prüfbar: %s", pid, fehler)
-            return None
     try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
+        return prozessbaum.lebt(pid)
     except OSError as fehler:
         log.warning("PID %s nicht prüfbar: %s", pid, fehler)
         return None
-    return True
 
 
 def bericht(
