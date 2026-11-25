@@ -232,7 +232,7 @@ def _quellen(extra: list[Path]) -> list[Path]:
     muster += [m.strip() for m in roh if isinstance(m, str) and m.strip()] if isinstance(roh, list) else []
     gefunden = [pfad for m in muster for pfad in _muster_treffer(m)]
     eindeutig: dict[Path, Path] = {}
-    for pfad in [*extra, *gefunden]:
+    for pfad in [*(config.expand_heim(p) for p in extra), *gefunden]:
         if pfad.is_file():
             eindeutig.setdefault(pfad.resolve(), pfad)
     return list(eindeutig.values())
