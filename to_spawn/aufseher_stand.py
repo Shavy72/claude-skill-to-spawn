@@ -67,7 +67,6 @@ from to_spawn import (
     bau_log,
     befugnis,
     capo,
-    config,
     gh,
     komplett_lauf,
     pc_fenster,
@@ -363,7 +362,7 @@ def _log_lage(n: int, repo: Path) -> tuple[str, str, str, int] | None:
     ``None`` = kein Bau-Log (Ticket noch nicht gestartet) — der Aufrufer warnt gesammelt.
     """
     try:
-        ort = bau_log.log_ort(n, Path(config.worktree_pfad(n, repo)).expanduser(), repo)
+        ort = bau_log.log_ort_fuer(n, repo)
         if ort is None:
             return None
         zeilen = bau_log.lese(ort, n, hauptbaum=repo)
