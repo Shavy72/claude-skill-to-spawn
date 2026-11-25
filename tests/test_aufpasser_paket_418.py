@@ -151,6 +151,7 @@ def test_418_echter_lauf_startet_aufseher_vor_bau_und_laesst_blockiertes_weg(
         SITZUNG,
         SOCKET,
         SPEC,
+        _pane_prozesse_beenden,
         fenster_namen,
         fenster_ziel,
         git,
@@ -203,6 +204,17 @@ def test_418_echter_lauf_startet_aufseher_vor_bau_und_laesst_blockiertes_weg(
 
     tmux("new-session", "-d", "-s", SITZUNG, "-n", "halter", "-c", str(repo), "sleep 3600")
     try:
+        # Unter CPU-Last (z. B. CI mit pytest-xdist) liefert tmux ``#{pane_current_path}``
+        # direkt nach ``new-session -d`` kurzzeitig leer, bis der Kindprozess ``chdir`` beendet hat.
+        frist = time.monotonic() + 3.0
+        erwartet = {str(repo), str(repo.resolve())}
+        while time.monotonic() < frist:
+            pfad = tmux(
+                "list-windows", "-t", f"={SITZUNG}", "-F", "#{pane_current_path}"
+            ).strip()
+            if pfad in erwartet:
+                break
+            time.sleep(0.05)
         code = aufpasser.main(
             [
                 "--tmux-socket",
@@ -230,7 +242,9 @@ def test_418_echter_lauf_startet_aufseher_vor_bau_und_laesst_blockiertes_weg(
         # Aufräumen: Ziel-Helfer bestätigt echte Fenster
         assert fenster_ziel(f"wache {SPEC}")
     finally:
+        _pane_prozesse_beenden()
         tmux("kill-server", check=False)
+        Path(f"/tmp/tmux-{os.getuid()}/{SOCKET}").unlink(missing_ok=True)
 
 
 # --- #419: Aufpasser.bau_befehl nutzt capo.bau_startzeile (fenster_<N>.log) ---

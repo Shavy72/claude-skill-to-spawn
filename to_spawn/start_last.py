@@ -614,6 +614,7 @@ def messen(
         dict.fromkeys(
             list(default.get("core_skills") or [])
             + list(eintrag.get("skills") or [])
+            + config.repo_skills(konfig)
             + list(bau.PFLICHT_SKILLS)
         )
     )
