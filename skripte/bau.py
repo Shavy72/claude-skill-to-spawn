@@ -34,6 +34,7 @@ import sys
 import tempfile
 import time
 import uuid
+from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -484,6 +485,41 @@ def known_skill_names(*, repo: Path | None = None, claude_dir: Path | None = Non
         names.add(skill_md.parent.name)
 
     return names
+
+
+def skill_auswahl(
+    default: Mapping[str, Any],
+    entry: Mapping[str, Any],
+    konfig: Mapping[str, Any],
+    *,
+    known: set[str] | None = None,
+) -> tuple[list[str], dict[str, str]]:
+    """Whitelist und ``skillOverrides`` für die Bau-Session (#413).
+
+    Aktiv (``on``) sind ``core_skills`` aus der Vorlage, die Pflicht-Skills, die
+    Repo-Skills aus ``.to-spawn/config.json`` (``skills.pflicht``) und die Ticket-Skills
+    des Manifests. Gegen ``known`` geprüft und bei Fehlen gewarnt werden nur die vom Repo
+    bzw. Ticket angeforderten Skills (``skills.pflicht`` + ``entry["skills"]``) — fremde
+    Vorgaben aus der Skill-Vorlage erzeugen in einem fremden Repo keine Warnung.
+    """
+    repo_erwartet = config.repo_skills(konfig)
+    ticket_skills = [s.strip() for s in (entry.get("skills") or []) if isinstance(s, str) and s.strip()]
+    geprueft = list(dict.fromkeys(repo_erwartet + ticket_skills))
+    whitelist = list(
+        dict.fromkeys(
+            list(default.get("core_skills", []))
+            + ticket_skills
+            + repo_erwartet
+            + list(PFLICHT_SKILLS)
+        )
+    )
+    bekannt = known if known is not None else known_skill_names()
+    for name in geprueft:
+        if name not in bekannt:
+            log.warning("Skill unbekannt, trotzdem 'on': %s", name)
+    overrides = {name: "off" for name in sorted(bekannt - set(whitelist))}
+    overrides.update({name: "on" for name in whitelist})
+    return whitelist, overrides
 
 
 # --- MCP-Katalog ------------------------------------------------------------
@@ -1131,13 +1167,7 @@ def main() -> int:
         return 0
 
     # Skills
-    whitelist = list(dict.fromkeys(default.get("core_skills", []) + (entry.get("skills") or []) + PFLICHT_SKILLS))
-    known = known_skill_names()
-    for name in whitelist:
-        if name not in known:
-            log.warning("Skill unbekannt, trotzdem 'on': %s", name)
-    overrides = {name: "off" for name in sorted(known - set(whitelist))}
-    overrides.update({name: "on" for name in whitelist})
+    whitelist, overrides = skill_auswahl(default, entry, konfig)
 
     # MCPs
     mcp_wanted = list(dict.fromkeys(default.get("core_mcp", []) + (entry.get("mcp") or [])))

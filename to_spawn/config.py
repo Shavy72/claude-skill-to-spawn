@@ -38,6 +38,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -180,6 +181,19 @@ DEFAULTS: dict[str, Any] = {
     #: Abschnitt „Regeln dieses Repos“ in den Skill-Start-Text kommt. Leer = kein Zusatz.
     "start_text": {
         "zusatz_datei": "",
+    },
+    #: Git-Hooks / Push-Sperre (#413): Pfad des Hook-Installers (und optional der
+    #: Begleit-Datei, relativ zur Repo-Wurzel auf ``origin/<hauptzweig>``). Leer = nicht
+    #: eingetragen (fremdes Repo wird nicht mit app-spezifischem Pfad gewarnt).
+    "git_hooks": {
+        "installer": "",
+        "sperre": "",
+    },
+    #: Repo-Skills (#413): ``pflicht`` = Skill-Namen, die dieses Repo in Bau-Sessions
+    #: erwartet und prüft (fehlt einer auf dem Rechner → Warnung). Leer = keine eigene
+    #: Skill-Prüfung des Repos.
+    "skills": {
+        "pflicht": [],
     },
     "speicher": {
         "min_frei_mib": 2048,
@@ -618,13 +632,13 @@ def sicherstellen(repo: Path | None = None) -> Path:
     return datei
 
 
-def _gruppe(konfig: dict[str, Any], name: str) -> dict[str, Any]:
+def _gruppe(konfig: Mapping[str, Any], name: str) -> dict[str, Any]:
     """Verschachtelte Gruppe ``name`` der Konfig; fehlt sie oder ist kaputt → ``{}``."""
     gruppe = konfig.get(name)
     return gruppe if isinstance(gruppe, dict) else {}
 
 
-def _text(gruppe: dict[str, Any], schluessel: str) -> str:
+def _text(gruppe: Mapping[str, Any], schluessel: str) -> str:
     """Textwert ohne Rand-Leerzeichen; ``""`` = nicht eingerichtet.
 
     Nur echter Text zählt (#448): fehlt der Wert, ist er ``None`` oder kein Text (Liste,
@@ -644,8 +658,50 @@ def _text(gruppe: dict[str, Any], schluessel: str) -> str:
     return wert.strip()
 
 
-def _staging_gruppe(konfig: dict[str, Any]) -> dict[str, Any]:
+def _staging_gruppe(konfig: Mapping[str, Any]) -> dict[str, Any]:
     return _gruppe(konfig, "staging")
+
+
+def git_hooks_konfig(konfig: Mapping[str, Any]) -> tuple[str, str]:
+    """Konfigurierte Git-Hook-Pfade ``(installer, sperre)`` aus ``git_hooks`` (#413); leer = nicht eingetragen."""
+    gruppe = _gruppe(konfig, "git_hooks")
+    return _text(gruppe, "installer"), _text(gruppe, "sperre")
+
+
+def repo_skills(konfig: Mapping[str, Any]) -> list[str]:
+    """Repo-eigene Pflicht-Skills aus ``skills.pflicht`` (#413); fehlt/leer → ``[]``.
+
+    Erlaubt als Abkürzung auch eine Liste direkt unter ``skills`` (``"skills": ["…"]``);
+    ungültige Typen melden eine Warnung und gelten als leer.
+    """
+    roh = konfig.get("skills")
+    if roh is None:
+        return []
+    if isinstance(roh, dict):
+        werte = roh.get("pflicht")
+        if werte is None:
+            return []
+    elif isinstance(roh, list):
+        werte = roh
+    else:
+        log.warning(
+            "Konfig-Wert 'skills' hat ungültigen Typ (%s) — gilt als leer",
+            type(roh).__name__,
+        )
+        return []
+    if not isinstance(werte, list):
+        log.warning(
+            "Konfig-Wert 'skills.pflicht' ist keine Liste (%s) — gilt als leer",
+            type(werte).__name__,
+        )
+        return []
+    ergebnis: list[str] = []
+    for eintrag in werte:
+        if isinstance(eintrag, str) and eintrag.strip():
+            name = eintrag.strip()
+            if name not in ergebnis:
+                ergebnis.append(name)
+    return ergebnis
 
 
 def pruef_befehl(konfig: dict[str, Any], art: str) -> str:
