@@ -13,7 +13,9 @@ in den Briefkasten der Spec (nur Dateien, kein GitHub):
 * Bau-Session wartet laut ``WARTET``-Zeile auf Blocker, die schon erledigt sind → ``bau <N>``
   (#596, :meth:`Wecker._blocker_blick`; GitHub nur für Fenster, die ``WARTET`` zeigen);
 * Bau-Session steht umsonst am Prompt — wartet auf einen Nachfolger ohne eigenen Handoff (#613)
-  oder endet mit einer Frage (#485) → ``bau <N>`` (:meth:`Wecker._prompt_blick`; ohne GitHub).
+  oder endet mit einer Frage (#485) → ``bau <N>`` (:meth:`Wecker._prompt_blick`; ohne GitHub);
+* Warte-Zustand ``.to-spawn/warten/<N>[-<name>].json`` wechselt auf ``fertig``, ``fehlgeschlagen``
+  oder ``blockiert`` → ``bau <N>`` (#783, :meth:`Wecker._warten_blick`; rein lokal, ohne GitHub).
 
 Jede Frage weckt je Richtung höchstens einmal. Getippt wird nur, wenn :meth:`Wecker._darf_tippen`
 es erlaubt (die eine Stelle der Regel): im Pane läuft Claude, das Bild zeigt ein leeres
@@ -52,6 +54,7 @@ from to_spawn import (
     gh,
     manifest,
     respawn,
+    warten,
 )
 from to_spawn.tmux_aufruf import FensterWeg, TmuxFehler
 
@@ -87,10 +90,34 @@ LIVE = "live"
 AUFSEHER_KOMMENTAR_TEXT = (
     "Ticket #{ticket}: neuer Kommentar des Aufsehers — jetzt `gh issue view {ticket} --comments` lesen und umsetzen."
 )
+WARTEN_TEXT = (
+    "Warten #{ticket}: Zustand ist jetzt „{status}“{zusatz} — jetzt `{befehl}` prüfen und "
+    "sofort reagieren, nicht auf den eigenen Weckruf warten."
+)
 #: So viele jüngste Kommentare je Ticket liest die GitHub-Abfrage (ein Durchgang ≈ 1 min).
 KOMMENTARE_JE_TICKET = 20
 
 Schluessel = tuple[str, str]  # (Ticket, Frage-id)
+
+
+def _warten_text(ticket: str, stand: dict[str, Any]) -> str:
+    """Einzeiliger Weckruf für einen beendeten Warte-Schritt (#783)."""
+    status = str(stand.get("status") or "").strip()
+    name = str(stand.get("name") or "").strip()
+    befehl = (
+        f"to_spawn.py warten {ticket} --name {name} --pruefen" if name else f"to_spawn.py warten {ticket} --pruefen"
+    )
+    zeile = " ".join(warten.letzte_zeile(str(stand.get("ergebnis_text") or ""), max_zeichen=120).split())
+    code = stand.get("ergebnis_exit")
+    if isinstance(code, int) and not isinstance(code, bool) and code != 0 and zeile:
+        zusatz = f" (Exit {code}: {zeile})"
+    elif zeile:
+        zusatz = f" ({zeile})"
+    elif isinstance(code, int) and not isinstance(code, bool) and code != 0:
+        zusatz = f" (Exit {code})"
+    else:
+        zusatz = ""
+    return WARTEN_TEXT.format(ticket=ticket, status=status, zusatz=zusatz, befehl=befehl)
 
 
 class Ereignis(NamedTuple):
@@ -164,6 +191,8 @@ class Wecker:
         self._blocker_geweckt: dict[int, str] = {}  # #596: Ticket → WARTET-Gründe, zu denen schon angestoßen
         self._prompt_geweckt: set[int] = set()  # #613/#485: Tickets, deren jetziges Stehen schon angestoßen ist
         self._prompt_stupser: dict[int, int] = {}  # #613/#485: Anstöße je Ticket, höchstens STUPSER_MAX
+        self._warten_stand: dict[Path, tuple[str, str]] | None = None  # #783: Datei → (status, gestartet_am)
+        self._warten_wecken: dict[Path, tuple[str, str]] = {}  # #783: Datei → (Ticket, Weckruf-Text)
         try:
             self._bekannt = self._offen()
         except Exception as fehler:  # noqa: BLE001 — ohne Ausgangsstand weckt der nächste Durchgang alles
@@ -173,6 +202,16 @@ class Wecker:
                 fehler,
             )
         self._fuer_bau = set(self._bekannt)
+        try:
+            self._warten_stand = {
+                pfad: (status, gestartet) for pfad, (_t, status, gestartet, _stand) in self._warten_staende().items()
+            }
+        except Exception as fehler:  # noqa: BLE001 — ohne Ausgangsstand merkt der nächste Durchgang den Bestand
+            log.warning(
+                "Briefkasten-Wecker Spec #%s: erster Warte-Blick gescheitert (%r) — nächster Durchgang setzt Ausgangsstand",
+                spec,
+                fehler,
+            )
 
     def einmal(self) -> None:
         """Ein Durchgang; wirft nie (gleicher Fehler-Text nur einmal laut)."""
@@ -186,11 +225,15 @@ class Wecker:
         return {(f["ticket"], f["id"]) for f in briefkasten.offene(tickets, hauptbaum=self.repo) if f["id"]}
 
     def _durchgang(self) -> None:
-        # Lokaler Briefkasten zuerst: langsames/hängendes GitHub oder tmux-Scans dürfen Weckrufe nicht verzögern.
+        # Lokaler Briefkasten und Warte-Zustände zuerst: langsames/hängendes GitHub oder tmux-Scans dürfen sie nicht verzögern.
         try:
             self._briefkasten_blick()
         except Exception as fehler:  # noqa: BLE001 — Briefkasten-Fehler darf die übrigen Blicke nicht aufhalten
             self._melde(f"Briefkasten-Wecker Spec #{self.spec}: {fehler!r}")
+        try:
+            self._warten_blick()
+        except Exception as fehler:  # noqa: BLE001 — Warte-Blick-Fehler darf die übrigen Blicke nicht aufhalten
+            self._melde(f"Briefkasten-Wecker Spec #{self.spec}: Warten: {fehler!r}")
         try:
             self._kommentare_blick()
         except Exception as fehler:  # noqa: BLE001 — GitHub-Ausfall darf den Briefkasten nicht aufhalten
@@ -230,6 +273,54 @@ class Wecker:
                 continue
             if erledigt:
                 self._fuer_bau.discard((t, fid))
+
+    def _warten_staende(self) -> dict[Path, tuple[str, str, str, dict[str, Any]]]:
+        """Aktuelle Warte-Zustände aller Spec-Tickets: Datei → (Ticket, Status, gestartet_am, Stand)."""
+        tickets = manifest.lade_manifest(self.repo, self.spec)["tickets"]
+        ergebnis: dict[Path, tuple[str, str, str, dict[str, Any]]] = {}
+        for t in tickets:
+            nummer = str(t).strip()
+            if not nummer.isdigit():
+                continue
+            for pfad, stand in warten.zustaende_fuer_ticket(self.repo, nummer):
+                status = str(stand.get("status") or "").strip()
+                if status != "laeuft" and status not in warten.ENDZUSTAENDE:
+                    continue
+                gestartet = str(stand.get("gestartet_am") or "").strip()
+                ergebnis[pfad] = (nummer, status, gestartet, stand)
+        return ergebnis
+
+    def _warten_blick(self) -> None:
+        """Warte-Ende (``laeuft`` → ``fertig``/``fehlgeschlagen``/``blockiert``) weckt ``bau <N>`` (#783).
+
+        Rein lokal (nur Dateien + tmux, kein GitHub). Beim Start schon beendete Dateien gelten als
+        Bestand und wecken nicht. Ist das Fenster noch beschäftigt/unruhig, merkt
+        ``_warten_wecken`` den Übergang bis zum nächsten stillen Durchgang; ein neuer Lauf
+        (``laeuft``) verwirft einen alten offenen Weckruf für dieselbe Datei.
+        """
+        aktuell = self._warten_staende()
+        if self._warten_stand is None:
+            self._warten_stand = {
+                pfad: (status, gestartet) for pfad, (_t, status, gestartet, _stand) in aktuell.items()
+            }
+            return
+        for pfad in list(self._warten_stand):
+            if pfad not in aktuell:
+                self._warten_stand.pop(pfad, None)
+                self._warten_wecken.pop(pfad, None)
+        for pfad, (ticket, status, gestartet, stand) in sorted(aktuell.items(), key=lambda x: str(x[0])):
+            vorher = self._warten_stand.get(pfad)
+            if status == "laeuft":
+                self._warten_stand[pfad] = (status, gestartet)
+                self._warten_wecken.pop(pfad, None)
+                continue
+            neu_beendet = vorher is None or vorher[0] == "laeuft" or (bool(gestartet) and vorher[1] != gestartet)
+            if neu_beendet:
+                self._warten_wecken[pfad] = (ticket, _warten_text(ticket, stand))
+            self._warten_stand[pfad] = (status, gestartet)
+        for pfad, (ticket, text) in sorted(self._warten_wecken.items(), key=lambda x: str(x[0])):
+            if self._wecke_bau_text(ticket, text):
+                self._warten_wecken.pop(pfad, None)
 
     def _lage(self, tickets: dict[str, Any]) -> dict[str, Any] | None:
         """Zustand + jüngste Kommentare aller Tickets in EINER GraphQL-Abfrage; ``None`` = Fehler.
