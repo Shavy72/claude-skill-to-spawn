@@ -44,6 +44,7 @@ from to_spawn import (
     ort_wahl,
     probesitz,
     pruef,
+    regel_pruefung,
     respawn,
     setup,
     spec_rand,
@@ -602,6 +603,8 @@ def verteilen(ap: argparse.ArgumentParser, args: argparse.Namespace) -> int:
         return ssh_beobachten.lauf(args, config.repo_wurzel(_repo_aus_umgebung()))
     if args.befehl in ort_wahl.BEFEHLE:
         return ort_wahl.lauf(args, config.repo_wurzel(_repo_aus_umgebung()))
+    if args.befehl == "regeln-pruefen":
+        return regel_pruefung.lauf(args)
     if args.befehl == "aufraeumen":
         return _aufraeumen(args, ap)
     if args.befehl == "sichern":
