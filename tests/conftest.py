@@ -36,7 +36,7 @@ if _HILFEN not in sys.path:
 
 from git_bash import git_bash  # noqa: E402 — liegt in ``tests/hilfen`` (Pfad oben)
 
-from to_spawn import bash_wahl, prozessbaum  # noqa: E402 — Pfad setzt ``git_bash``
+from to_spawn import bash_wahl, hausmeister_windows, prozessbaum  # noqa: E402 — Pfad setzt ``git_bash``
 
 _WINDOWS = sys.platform == "win32"
 
@@ -237,6 +237,23 @@ def _reste_raeumen(temp: Path, inode_anteil: Callable[[Path], float | None] = _i
         _LOG.warning("pt-Räumer abgebrochen unter %s: %r", temp, fehler)
 
 
+def _pt_ordner_loeschen(ordner: Path) -> None:
+    """Löscht einen ``pt-*``-Ordner; unter Windows erst Schreibschutz lösen (``.git/objects``, #655).
+
+    Einzige Lösch-Stelle für ``pt-*``-Ordner (``_reste_raeumen_roh`` und ``pytest_sessionfinish``).
+    Nutzt :func:`to_spawn.hausmeister_windows.schreibschutz_weg` (eine Stelle für den
+    Schreibschutz-Handler). Unter POSIX bleibt ``shutil.rmtree`` ohne Handler: dort sperrt
+    ein Nur-Lese-Bit an Dateien das Löschen nicht, und fehlende Ordnerrechte bleiben sichtbar.
+    """
+    if not _WINDOWS:
+        shutil.rmtree(ordner)
+        return
+    if sys.version_info >= (3, 12):
+        shutil.rmtree(ordner, onexc=hausmeister_windows.schreibschutz_weg)
+    else:
+        shutil.rmtree(ordner, onerror=hausmeister_windows.schreibschutz_weg)
+
+
 def _reste_raeumen_roh(temp: Path, inode_anteil: Callable[[Path], float | None]) -> None:
     anteil = inode_anteil(temp)
     knapp = anteil is not None and anteil >= _INODE_GRENZE
@@ -259,7 +276,7 @@ def _reste_raeumen_roh(temp: Path, inode_anteil: Callable[[Path], float | None])
         if prozessbaum.lebt(pid):
             continue
         try:
-            shutil.rmtree(ordner)
+            _pt_ordner_loeschen(ordner)
         except OSError as fehler:
             _LOG.warning("pt-Räumer: Rest %s nicht löschbar: %s", ordner, fehler)
 
@@ -293,7 +310,12 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
     """
     ordner = session.config.stash.get(_EIGENER_BASETEMP, None)
     if ordner is not None and exitstatus == 0:
-        shutil.rmtree(ordner, ignore_errors=True)
+        try:
+            _pt_ordner_loeschen(ordner)
+        except FileNotFoundError:
+            pass
+        except OSError as fehler:
+            _LOG.warning("pt-Ordner %s nach grünem Lauf nicht löschbar: %s", ordner, fehler)
 
 
 def pytest_unconfigure(config: pytest.Config) -> None:
@@ -553,19 +575,51 @@ def _arbeitsstand_im_test(monkeypatch: pytest.MonkeyPatch, _keine_to_spawn_umgeb
     monkeypatch.setenv("TO_SPAWN_TEST_ARBEITSSTAND_OK", "1")
 
 
+def _eigene_nachfahren(alle: dict[int, tuple[int, int]], wurzel: int) -> dict[int, tuple[int, int]]:
+    """Filtert eine Windows-Momentaufnahme auf Nachfahren von ``wurzel`` (#649).
+
+    So sieht die Hausmeister-Prüfung in Tests nie fremde Rechner-Prozesse (die gerade starten
+    oder enden und ohne cwd-Griff im PEB einen Test zufällig sperren), wohl aber jeden vom
+    Test selbst gestarteten Kindprozess samt Enkeln (z. B. ``sleep``, ``git``, MSYS-Kind).
+    Recycelte Eltern-PIDs fallen heraus wie in :func:`prozessbaum._kinder`.
+    """
+    kinder: dict[int, list[int]] = {}
+    for pid, (eltern, start) in alle.items():
+        if pid == eltern:
+            continue
+        vorfahr = alle.get(eltern)
+        if vorfahr is None:
+            if eltern != wurzel:
+                continue
+        elif vorfahr[1] and start and vorfahr[1] > start:
+            continue
+        kinder.setdefault(eltern, []).append(pid)
+    eigene: set[int] = set()
+    warteschlange = list(kinder.get(wurzel, ()))
+    while warteschlange:
+        pid = warteschlange.pop()
+        if pid not in eigene:
+            eigene.add(pid)
+            warteschlange.extend(kinder.get(pid, ()))
+    return {pid: alle[pid] for pid in eigene}
+
+
 @pytest.fixture(autouse=True)
 def _hausmeister_nur_im_test(
     tmp_path_factory: pytest.TempPathFactory,
     monkeypatch: pytest.MonkeyPatch,
     _keine_to_spawn_umgebung: None,
 ) -> None:
-    """Hausmeister (#1369) räumt in Tests nie echte Ordner auf.
+    """Hausmeister (#1369) räumt in Tests nie echte Ordner auf und sieht keine Fremdprozesse (#649).
 
     Start-Check (``to_spawn.py speicher``, ``bau.py``) und Aufpasser rufen
     ``hausmeister.aufraeumen_alles`` — ohne diese Fixture liefe das mit
     ``loeschen=True`` über die echten ``~/wt/*`` der Testmaschine. Wurzeln zeigen
-    auf einen leeren Ordner, Logs in ``tmp``, Platte gilt als frei. Tests mit
-    eigener Welt (``test_hausmeister_1368/1369``) setzen die Variablen neu.
+    auf einen leeren Ordner, Logs in ``tmp``, Platte gilt als frei. Unter Windows
+    bleibt die Prozessprüfung bei eigenen Kindprozessen (kein echtes PowerShell,
+    keine fremden Rechner-Prozesse im PEB). Tests mit eigener Welt
+    (``test_hausmeister_1368/1369``) setzen die Variablen neu; PowerShell-Attrappen
+    (``_POWERSHELL != "powershell"``) und direkte ``_prozesse()``-Tests laufen normal.
     """
     ordner = tmp_path_factory.mktemp("hausmeister")
     monkeypatch.setenv("TO_SPAWN_HAUSMEISTER_WURZELN", str(ordner / "keine" / "*"))
@@ -595,6 +649,41 @@ def _hausmeister_nur_im_test(
     # #145: Sicherung (Rundgang, Aufseher-Ablösung) schreibt nur in tmp, lädt keine echten Zweige hoch.
     monkeypatch.setenv("TO_SPAWN_SICHERUNG_ZIEL", str(ordner / "sicherung"))
     monkeypatch.setenv("TO_SPAWN_SICHERUNG_ZWEIG_REPOS", "")
+
+    # #649: Windows-Prozessprüfung des Hausmeisters sieht nie fremde Rechner-Prozesse.
+    from to_spawn import hausmeister_windows
+
+    echt_kein_prozess = hausmeister_windows.kein_prozess
+    echt_prozesse = hausmeister_windows._prozesse
+
+    def _kein_prozess_im_test(ziel: Path) -> None:
+        if hausmeister_windows._POWERSHELL == "powershell" and hausmeister_windows._prozesse is echt_prozesse:
+            hausmeister_windows._prozesse = list
+            try:
+                echt_kein_prozess(ziel)
+            finally:
+                hausmeister_windows._prozesse = echt_prozesse
+            return
+        echt_kein_prozess(ziel)
+
+    monkeypatch.setattr(hausmeister_windows, "kein_prozess", _kein_prozess_im_test)
+
+    echt_arbeitsordner = prozessbaum.arbeitsordner_in_windows
+
+    def _arbeitsordner_nur_eigene(ziel: str | Path) -> dict[int, prozessbaum.ArbeitsordnerBefund]:
+        echt_momentaufnahme = prozessbaum._momentaufnahme_windows
+        ich = os.getpid()
+
+        def _nur_eigene_momentaufnahme() -> dict[int, tuple[int, int]]:
+            return _eigene_nachfahren(echt_momentaufnahme(), ich)
+
+        prozessbaum._momentaufnahme_windows = _nur_eigene_momentaufnahme
+        try:
+            return echt_arbeitsordner(ziel)
+        finally:
+            prozessbaum._momentaufnahme_windows = echt_momentaufnahme
+
+    monkeypatch.setattr(prozessbaum, "arbeitsordner_in_windows", _arbeitsordner_nur_eigene)
 
 
 @pytest.fixture(autouse=True)

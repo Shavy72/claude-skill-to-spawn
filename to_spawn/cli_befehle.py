@@ -373,6 +373,7 @@ def _anhaengen(args: argparse.Namespace) -> int:
         args.ticket,
         config.lade(repo),
         blockiert_von=_tickets(args.blockiert_von) or [],
+        abnahme=_tickets(args.abnahme) or [],
         schaetzung_k=args.schaetzung,
         umfang=args.umfang,
         dateien=args.datei,

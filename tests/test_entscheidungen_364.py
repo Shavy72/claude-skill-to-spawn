@@ -42,7 +42,8 @@ def test_spalten_und_bau_log_quelle(tmp_path: Path) -> None:
 
 
 def test_leere_quelle_sichtbar(tmp_path: Path) -> None:
-    _antwort(tmp_path, [])
+    fid = briefkasten.einwerfen("7", "Blocker erledigt?", "weiterbauen", 3, [], hauptbaum=tmp_path)
+    briefkasten.nutzer_antworten("7", fid, "weiterbauen", [], "Blocker sind zu", hauptbaum=tmp_path)
     (zeile,) = _zeilen(capo.uebersicht(tmp_path, 3, [7]))
     assert zeile.endswith("| keine Quelle |")
 
