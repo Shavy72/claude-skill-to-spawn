@@ -877,3 +877,14 @@ def test_wache_echter_lauf_gibt_filter_flags_an_claude_und_limit_resume(tmp_path
     )
     # Lauf-Ordner nach Ende sauber weggeräumt (#355).
     assert not list(temp_basis.rglob("wache-1-*"))
+
+
+def test_context_mode_server_eintrag_akzeptiert_str_und_path(tmp_path: Path) -> None:
+    """#412: ``context_mode.server_eintrag`` verarbeitet sowohl ``Path`` als auch ``str``
+    (z. B. Attrappen in bestehenden Aufseher-Tests wie ``test_aufseher_log_in_datei_541.py``)."""
+    from to_spawn import context_mode
+
+    aus_path = context_mode.server_eintrag(tmp_path)
+    aus_str = context_mode.server_eintrag(str(tmp_path))
+    assert aus_str == aus_path
+    assert aus_str == {context_mode.SERVER_NAME: {"command": "node", "args": [str(tmp_path / context_mode.START)]}}

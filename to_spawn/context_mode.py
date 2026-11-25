@@ -144,9 +144,9 @@ def plugin_wurzel(claude_dir: Path | None = None) -> Path | None:
     return _aus_registry(ordner) or _aus_cache(ordner)
 
 
-def server_eintrag(wurzel: Path) -> dict[str, dict[str, Any]]:
+def server_eintrag(wurzel: str | os.PathLike[str]) -> dict[str, dict[str, Any]]:
     """``mcpServers``-Eintrag für eine bereits geprüfte Plugin-Wurzel (eine Quelle mit :func:`server_definition`)."""
-    return {SERVER_NAME: {"command": "node", "args": [str(wurzel / START)]}}
+    return {SERVER_NAME: {"command": "node", "args": [str(Path(wurzel) / START)]}}
 
 
 def server_definition(claude_dir: Path | None = None) -> dict[str, dict[str, Any]]:
