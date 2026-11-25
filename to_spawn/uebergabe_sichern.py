@@ -136,7 +136,7 @@ def ziel_ordner() -> Path:
     if roh:
         basis = Path(roh).expanduser()
     else:
-        tresor = Path(os.environ.get("OBSIDIAN_VAULT") or "~/obsidian").expanduser()
+        tresor = config.notiz_tresor()
         if tresor.is_dir():
             basis = tresor / TRESOR_UNTERORDNER
         else:

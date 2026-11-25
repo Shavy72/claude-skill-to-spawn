@@ -231,6 +231,46 @@ _KLASSE_2_AM_WORTANFANG = re.compile(
     + r")(?!\w)"
 )
 
+#: Aktions-Wörter ``deploy``, ``merge`` und ``push`` mit Ganzwort- und Kontext-Grenzen (#383):
+#: geprüft auf NFKC-Text ohne ``_``-Ersetzung, damit ``DEPLOY_WORKERS``, ``deploy_staging.sh`` und
+#: ``test_deploy_x.py`` nicht als Ganzwort treffen. ``staging`` nimmt Staging-Deploys aus,
+#: ``merge-base`` den Lese-Befehl, eigene ``ticket/``- oder ``wip/``-Zweige ohne Gefahr-Marke den
+#: alltäglichen Zweig-Push. :func:`einordnen` behält seine eigene Ziel/Art-Tabelle unverändert.
+_AKTION_DEPLOY_FRAGE = re.compile(r"(?<!\w)deploy(?:en|e|t|st)?(?!\w)", re.I)
+_AKTION_DEPLOY_GANZWORT = re.compile(r"(?<!\w)deploy(?!\w)", re.I)
+_AKTION_MERGE_FRAGE = re.compile(r"(?<!\w)merg(?:e|en|t|st)(?!\w)(?!-base)", re.I)
+_AKTION_MERGE_GANZWORT = re.compile(r"(?<!\w)merge(?!\w)(?!-base)", re.I)
+_AKTION_PUSH_FRAGE = re.compile(r"(?<!\w)push(?:en|e|t)?(?!\w)", re.I)
+_STAGING_GANZWORT = re.compile(r"(?<!\w)staging(?!\w)", re.I)
+_EIGENER_ZWEIG_TEXT = re.compile(
+    r"(?:(?<=[\s:/(„\"'])|^)(?:refs/heads/)?(?:ticket|wip)/[a-z0-9][a-z0-9._-]*", re.I
+)
+_PUSH_LOESCH_ODER_PLUS = re.compile(r"(?:^|\s)[:+][^\s;]+", re.I)
+_PUSH_GEFAHR_TEXT = re.compile(
+    r"(?:--(?:all|mirror|tags|delete)\b|(?<!\S)-[a-z]*d[a-z]*\b|--force(?!-with-lease)\b"
+    r"|(?<!\S)-[a-z]*f[a-z]*\b|\b(?:main|master|hauptzweig)\b|:(?!//)[^\s;]+)",
+    re.I,
+)
+
+
+def _ist_aktion_klasse_2(text: str, *, mit_push: bool) -> bool:
+    """Ganzwort-Prüfung für ``deploy`` (ohne Staging), ``merge`` (ohne ``merge-base``) und
+    (bei freien Fragen) ``push`` außerhalb eigener ``ticket/``- bzw. ``wip/``-Zweige (#383)."""
+    t = unicodedata.normalize("NFKC", text)
+    deploy = _AKTION_DEPLOY_FRAGE if mit_push else _AKTION_DEPLOY_GANZWORT
+    if deploy.search(t) and not _STAGING_GANZWORT.search(t):
+        return True
+    merge = _AKTION_MERGE_FRAGE if mit_push else _AKTION_MERGE_GANZWORT
+    if merge.search(t):
+        return True
+    if mit_push and _AKTION_PUSH_FRAGE.search(t):
+        if _PUSH_LOESCH_ODER_PLUS.search(t) or not _EIGENER_ZWEIG_TEXT.search(t):
+            return True
+        ohne_eigene = _EIGENER_ZWEIG_TEXT.sub(" ", t)
+        if _PUSH_GEFAHR_TEXT.search(ohne_eigene):
+            return True
+    return False
+
 
 def einordnen(ziel: str, art: str, gesichert: bool = False) -> int:
     """Klasse 1, 2 oder 3 für eine geplante Handlung; Unbekanntes und Zweifel ergeben 3.
@@ -261,12 +301,18 @@ def einordnen(ziel: str, art: str, gesichert: bool = False) -> int:
 
 
 def ist_klasse_2(*texte: object) -> bool:
-    """``True``, sobald einer der Texte ein Klasse-2-Wort trägt (gleiches Raster wie :func:`einordnen`).
+    """``True``, sobald einer der Texte ein Klasse-2-Wort oder ein Klasse-2-Aktionswort trägt.
 
     Für freie Texte ohne Ziel/Art-Raster (z. B. Frage und Vorschlag im Briefkasten); Nicht-Strings
-    zählen nicht. Kein eigener-Zweig-Ausnahme: hier gilt jedes Wort.
+    zählen nicht. Prüft :data:`_KLASSE_2_WOERTER`/:data:`_KLASSE_2_GANZWORT` sowie die Ganzwort-Regel
+    für ``deploy`` (ohne Staging), ``merge`` und ``push`` außerhalb eigener Zweige (#383).
     """
-    return any(_ist_klasse_2(_norm(t)) for t in texte if _norm(t))
+    sauber = [t for t in texte if isinstance(t, str) and t.strip()]
+    if not sauber:
+        return False
+    return any(_ist_klasse_2(_norm(t)) for t in sauber) or _ist_aktion_klasse_2(
+        "\n".join(sauber), mit_push=True
+    )
 
 
 def ist_klasse_2_am_wortanfang(*texte: object) -> bool:
@@ -275,9 +321,15 @@ def ist_klasse_2_am_wortanfang(*texte: object) -> bool:
     Breite Verlauf-Erkennung (Stand ``cb5e5f5``, :mod:`to_spawn.verlauf_pruefung`): dort machen
     Wortteile („deliver“ → live, „reproduziert“ → prod) aus fast jedem Abschnitt einen Treffer.
     Zusammensetzungen ohne Trenner („Kundenkonto“) treffen hier nicht; freie Fragen und Vorschläge
-    bleiben darum bei der strengeren :func:`ist_klasse_2`.
+    bleiben darum bei der strengeren :func:`ist_klasse_2`. Ganzwörter ``deploy`` (ohne Staging) und
+    ``merge`` (ohne ``merge-base``) zählen mit (#383); ``git push`` prüft :func:`handlung_klasse_2`.
     """
-    return any(_KLASSE_2_AM_WORTANFANG.search(_norm(t)) for t in texte if _norm(t))
+    sauber = [t for t in texte if isinstance(t, str) and t.strip()]
+    if not sauber:
+        return False
+    return any(_KLASSE_2_AM_WORTANFANG.search(_norm(t)) for t in sauber) or _ist_aktion_klasse_2(
+        "\n".join(sauber), mit_push=False
+    )
 
 
 #: Steht vor jedem Handlungs-Grund ohne eigenes Klasse-2-Wort (``gh pr merge 374``): der Grund
@@ -354,7 +406,11 @@ _DEPLOY_SKRIPT = re.compile(
 )
 #: Heredoc-Inhalt; dort zählt auch Zitiertes (``subprocess.run(['ssh', …])``).
 _HEREDOC = re.compile(r"<<-?[ \t]*(['\"]?)(\w+)\1[^\n]*\n(.*?)(?=\n[ \t]*\2[ \t]*(?:\n|$)|\Z)", re.S)
-_GIT = r"\bgit(?:\s+(?:-c\s+\S+|--[\w-]+=\S+))*"  # „git -C <pfad> push“ (Text ist klein geschrieben)
+#: ``git`` samt beliebigen Global-Optionen (``-C <pfad>``, ``-C "…"``, ``-P``, ``--no-pager``, ``-c k=v``).
+_GIT = (
+    r"\bgit(?:\s+(?:-[a-z](?:\s+(?!push\b)[^-\s;&|\n][^\s;&|\n]*)?"
+    r"|--[\w-]+(?:=\S+|\s+(?!push\b)[^-\s;&|\n][^\s;&|\n]*)?))*"
+)
 _BEFEHL = re.compile(
     "|".join(
         (
@@ -367,10 +423,8 @@ _BEFEHL = re.compile(
             r"\bkubectl\s+(?:apply|delete|rollout)\b|\bterraform\s+(?:apply|destroy)\b",
             r"\bgh\s+workflow\s+run\b|\bdocker\s+push\b|\bgh\s+release\s+create\b",
             r"\bsystemctl\s+(?:restart|stop|disable)\b|\bcrontab\s+-r\b",
-            # Merge
+            # Merge (``git push`` prüft gesammelt :func:`_push_treffer`)
             r"\bgh\s+pr\s+merge\b|\bgh\s+api\b[^;&|\n]*/merge\b",
-            _GIT + r"\s+push\b[^;&|\n]*(?:\s|:|refs/heads/)(?:main|master)(?=$|[\s;&|)])",
-            _GIT + r"\s+push\b[^;&|\n]*\s--(?:mirror|all)\b",
             # HTTP mit Schreib-Methode
             r"\bcurl\b[^;&|\n]*?(?:\s-[a-z]*x\s*(?:post|put|delete|patch)\b|--request[\s=]+(?:post|put|delete|patch)\b"
             r"|\s-d(?![\w-])|\s--data[\w-]*|\s--form\b)",
@@ -394,7 +448,7 @@ _SQL = re.compile(r"\b(?:drop\s+(?:table|database|schema)|delete\s+from|truncate
 _RM = re.compile(r"(?:^|[;&|(`\s])rm\s+([^;&|\n`)]*)")
 _RM_ERLAUBT = re.compile(r"(?:/tmp/|/var/tmp/|(?:~|\$\{?home\}?|/home/[^/\s]+|/root)/wt/)")
 _PUSH = re.compile(_GIT + r"\s+push\b([^;&|\n]*)")
-_EIGENER_ZIEL = re.compile(r"(?:refs/heads/)?(?:wip|ticket)/\S")
+_EIGENER_ZIEL = re.compile(r"(?:refs/heads/)?(?:wip|ticket)/[a-z0-9][a-z0-9._-]*$")
 
 
 def _nur_umbrueche(text: str) -> str:
@@ -428,16 +482,25 @@ def _rm_treffer(b: str) -> re.Match[str] | None:
     return None
 
 
-def _force_push_treffer(b: str) -> re.Match[str] | None:
+def _push_treffer(b: str) -> re.Match[str] | None:
+    """Jeder ``git push`` außer einem ausdrücklichen Push auf ``ticket/`` oder ``wip/`` (#383).
+
+    Bloßes ``git push``, ``HEAD``, ``--all``/``--mirror``/``--tags``/``--delete``, ``:ref`` (löschen),
+    ``+ref`` (erzwingen) und jedes fremde Ziel (inkl. ``main``/``master``) sind Klasse 2.
+    """
     for m in _PUSH.finditer(b):
         teile = re.split(r"\s+\d*[<>]", m.group(1))[0].split()  # Umleitung „2>…“ gehört nicht dazu
         flags = [t for t in teile if t.startswith("-")]
         rest = [t for t in teile if not t.startswith("-")]
-        force = any(re.fullmatch(r"-[a-z]*f[a-z]*|--force(?:-with-lease|-if-includes)?(?:=\S*)?", t) for t in flags)
-        if not force and not any(t.startswith("+") for t in rest):
-            continue
-        ziele = [t.lstrip("+").rpartition(":")[2] for t in rest[1:]]
-        if not ziele or not all(_EIGENER_ZIEL.match(z) for z in ziele):
+        if any(re.fullmatch(r"--(?:all|mirror|tags|delete)|-[a-z]*d[a-z]*", t) for t in flags):
+            return m
+        if len(rest) < 2:
+            return m
+        ziele_roh = rest[1:]
+        if any(z.startswith((":", "+")) for z in ziele_roh):
+            return m
+        ziele = [z.rpartition(":")[2] for z in ziele_roh]
+        if not ziele or not all(".." not in z and _EIGENER_ZIEL.fullmatch(z) for z in ziele):
             return m
     return None
 
@@ -456,14 +519,15 @@ def _befehl_zeile(befehl: str) -> str | None:
         if "staging" not in skript and "tests/" not in skript and "=" not in skript:
             nr.append(ohne.count("\n", 0, m.start("skript")))
             break
-    if m := _force_push_treffer(ohne):
+    if m := _push_treffer(ohne):
         nr.append(ohne.count("\n", 0, m.end()))
     for m in _DEPLOY_SKRIPT.finditer(roh):
         if "staging" not in m.group(0) and "tests/" not in m.group(0):
             nr.append(roh.count("\n", 0, m.end()))
             break
     for h in _HEREDOC.finditer(roh):
-        if m := _BEFEHL.search(re.sub(r"['\"]", " ", h.group(3))):
+        heredoc = re.sub(r"['\"]", " ", h.group(3))
+        if m := _BEFEHL.search(heredoc) or _push_treffer(heredoc):
             nr.append(roh.count("\n", 0, h.start(3) + m.end()))
             break
     if m := _rm_treffer(offen) or _SQL.search(offen):
@@ -557,7 +621,10 @@ def klasse_2_erkennung() -> str:
     """Klasse 2 mit allen Erkennungs-Wörtern — die eine Fassung für jede Liste „was gehört dem Nutzer“."""
     teilwort = ", ".join(sorted(_KLASSE_2_WOERTER))
     ganzwort = ", ".join(sorted(_KLASSE_2_GANZWORT))
-    return f"{_KLASSE_2.text} (erkannt an: {teilwort}, auch als Wortteil; {ganzwort} nur als ganzes Wort)"
+    return (
+        f"{_KLASSE_2.text} (erkannt an: {teilwort}, auch als Wortteil; "
+        f"{ganzwort} nur als ganzes Wort; sowie deploy ohne Staging, merge und push außerhalb eigener ticket-/wip-Zweige)"
+    )
 
 
 def antwort_befehl(n: str | int, frage_id: str = "<id>") -> str:
@@ -605,8 +672,11 @@ def aufseher_text(befehl: str) -> str:
         f"Befugnis und Briefkasten (Tür B): PFLICHT: Klasse 2 – {klasse_2_erkennung()} – "
         f"{KLASSE_2_WEITERGABE}; die Handlung auch nach deiner Antwort nie selbst ausführen. "
         f"Offene Briefkasten-Fragen: `{b} offene` (je Ticket id, Klasse, Frage, Vorschlag). "
-        "Klasse 3 entscheidest du: Helfer suchen die Haltung des Nutzers (Gedächtnis, Übergaben, Lastenheft, "
-        f"Chat-Protokolle), dann `{b} antworten <N> --id <id> --wahl … --grund … --beleg …` (Antwort gilt nur "
+        "Klasse 3 entscheidest du: je offener Frage ein frischer Helfer (ohne offene Frage keinen Helfer "
+        "starten) sucht die Haltung des Nutzers (Gedächtnis, Übergaben, Lastenheft, Chat-Protokolle, "
+        f"Notiz-Tresor/Obsidian `{_tresor_pfad()}` aus `$OBSIDIAN_VAULT` bzw. `~/obsidian`, alte Session-Logs "
+        "`~/.claude/projects/`; fehlt ein Ort auf der Maschine, überspringen und das im Beleg nennen), "
+        f"dann `{b} antworten <N> --id <id> --wahl … --grund … --beleg …` (`--beleg` Pflicht, Antwort gilt nur "
         "im Briefkasten) plus Spiegel-Kommentar im Ticket „Aufseher: Entscheidung <id>: <Wahl> — Belege: …“ "
         "(max. 2 Zeilen); kein zusätzlicher Bau-Log-Eintrag dafür (die Entscheidungs-Liste liest den Briefkasten). "
         f"Klasse 2 oder gesperrt (leere id = kaputte Datei) → nicht antworten, {KLASSE_2_WEITERGABE}: dem Nutzer "
@@ -623,6 +693,13 @@ def aufseher_text(befehl: str) -> str:
         f"Klasse 2 {KLASSE_2_WEITERGABE}: Kommentar im Ticket „{KLASSE_2_KOMMENTAR}: <Frage>“. "
         f"Maßstab für deine Antworten auf Fragen der Bau-Sessions: {_linie()}"
     )
+
+
+def _tresor_pfad() -> str:
+    """Aktueller Ort des Notiz-Tresors aus der einen Quelle :func:`config.notiz_tresor` (#365)."""
+    from . import config
+
+    return config.notiz_tresor().as_posix()
 
 
 def _ja_aufforderung() -> str:

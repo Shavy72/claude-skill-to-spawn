@@ -130,8 +130,8 @@ def _briefkasten_offen(repo: Path, nummern: list[int]) -> list[tuple[Eintrag, bo
             )
         elif f["klasse"] == "3":
             text = (
-                f"#{t} Briefkasten-Frage {fid} (Klasse 3, du entscheidest): {frage} · Vorschlag: {vorschlag} → "
-                f"`{befehl} antworten {t} --id {fid} --wahl … --grund … --beleg …`"
+                f"#{t} Briefkasten-Frage {fid} (Klasse 3, du entscheidest, frischer Helfer): {frage} · "
+                f"Vorschlag: {vorschlag} → `{befehl} antworten {t} --id {fid} --wahl … --grund … --beleg …`"
             )
         else:
             text = (
