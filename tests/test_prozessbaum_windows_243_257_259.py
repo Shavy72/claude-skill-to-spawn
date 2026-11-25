@@ -99,7 +99,9 @@ def _cmd32_in(start_cwd: Path, ziel_cwd: Path) -> Iterator[subprocess.Popen[str]
 @pytest.mark.skipif(not WINDOWS, reason="Windows-Weg von deploy_status.prozess_lebt und alter_s")
 def test_257_deploy_status_lebt_und_alter_echter_prozess_ignoriert_term() -> None:
     """Echter Prozess, der SIGTERM ignoriert: lebt vor Beenden, danach tot; Alter messbar."""
-    skript = "import signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); print('OK', flush=True); time.sleep(60)"
+    skript = (
+        "import signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); print('OK', flush=True); time.sleep(60)"
+    )
     kind = subprocess.Popen(
         [sys.executable, "-c", skript],
         stdout=subprocess.PIPE,
@@ -403,6 +405,180 @@ def test_243_nicht_msys_mit_zugriff_verweigert_haelt_nicht(welt: Welt, monkeypat
         proc.kill()
         proc.wait(timeout=10)
     assert not prozessbaum.lebt(proc.pid)
+
+
+def _kernel_naht_243(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    pid: int = 4321,
+    bildpfad: str | None = None,
+    limited_fehler: int = 0,
+    exit_code: int = prozessbaum._STILL_ACTIVE,
+    fremd: bool = False,
+    mindest_puffer: int = 0,
+) -> dict[str, int]:
+    """Stellt ``_win32`` für #243-Randfälle (läuft auf Linux und Windows ohne Admin-Rechte)."""
+    letzter_fehler = 0
+    offen: set[int] = set()
+    naechster = 100
+    zaehler = {"query_aufrufe": 0, "offene_griffe": 0}
+
+    def get_err() -> int:
+        return letzter_fehler
+
+    def set_err(wert: int) -> None:
+        nonlocal letzter_fehler
+        letzter_fehler = wert
+
+    def open_process(recht: int, _erben: bool, p: int) -> int:
+        nonlocal letzter_fehler, naechster
+        if p != pid:
+            letzter_fehler = prozessbaum._FEHLER_UNGUELTIGER_PARAMETER
+            return 0
+        if recht & prozessbaum._PROCESS_VM_READ:
+            letzter_fehler = prozessbaum._FEHLER_ZUGRIFF_VERWEIGERT
+            return 0
+        if limited_fehler:
+            letzter_fehler = limited_fehler
+            return 0
+        letzter_fehler = 0
+        griff = naechster
+        naechster += 1
+        offen.add(griff)
+        zaehler["offene_griffe"] = len(offen)
+        return griff
+
+    def close_handle(griff: int) -> int:
+        assert griff in offen, f"unbekannter oder doppelt geschlossener Griff {griff}"
+        offen.remove(griff)
+        zaehler["offene_griffe"] = len(offen)
+        return 1
+
+    def get_exit_code(griff: int, out_code: object) -> int:
+        assert griff in offen
+        out_code._obj.value = exit_code  # type: ignore[attr-defined]
+        return 1
+
+    def query_image(griff: int, _flags: int, puffer: object, laenge: object) -> int:
+        nonlocal letzter_fehler
+        assert griff in offen
+        zaehler["query_aufrufe"] += 1
+        if bildpfad is None:
+            letzter_fehler = prozessbaum._FEHLER_ZUGRIFF_VERWEIGERT
+            return 0
+        kapazitaet = laenge._obj.value  # type: ignore[attr-defined]
+        if kapazitaet < mindest_puffer or len(bildpfad) >= kapazitaet:
+            letzter_fehler = prozessbaum._FEHLER_PUFFER_ZU_KLEIN
+            return 0
+        puffer.value = bildpfad  # type: ignore[attr-defined]
+        laenge._obj.value = len(bildpfad)  # type: ignore[attr-defined]
+        return 1
+
+    kernel = types.SimpleNamespace(
+        OpenProcess=open_process,
+        CloseHandle=close_handle,
+        GetExitCodeProcess=get_exit_code,
+        QueryFullProcessImageNameW=query_image,
+    )
+    monkeypatch.setattr(ctypes, "get_last_error", get_err, raising=False)
+    monkeypatch.setattr(ctypes, "set_last_error", set_err, raising=False)
+    monkeypatch.setattr(prozessbaum, "_win32", lambda: (kernel, types.SimpleNamespace()))
+    monkeypatch.setattr(
+        prozessbaum,
+        "arbeitsordner_in_windows",
+        getattr(prozessbaum.arbeitsordner_in_windows, "__wrapped__", prozessbaum.arbeitsordner_in_windows),
+    )
+    monkeypatch.setattr(prozessbaum, "_momentaufnahme_windows", lambda: {pid: (os.getpid(), 1000)})
+    monkeypatch.setattr(prozessbaum, "_ordner_von", lambda _pfad: ((1, 42), r"\\?\C:\ziel"))
+    monkeypatch.setattr(prozessbaum, "_ist_fremd_windows", lambda _pid: fremd)
+    return zaehler
+
+
+def test_243_unlesbarer_bildordner_sperrt_hausmeister_nicht(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ein Nicht-MSYS-Prozess in einem gesperrten Bildordner (wie ``WindowsApps``, ``PermissionError``
+    beim Prüfen auf ``msys-2.0.dll``) darf nicht als unlesbare cwd den Hausmeister blockieren."""
+    gesperrt = tmp_path / "WindowsApps" / "App"
+    gesperrt.mkdir(parents=True)
+    exe = gesperrt / "app.exe"
+    exe.write_bytes(b"")
+    echt_is_file = Path.is_file
+
+    def verweigert_im_ordner(pfad: Path, *, follow_symlinks: bool = True) -> bool:
+        if pfad.parent == gesperrt:
+            raise PermissionError(13, "Zugriff verweigert", str(pfad))
+        return echt_is_file(pfad, follow_symlinks=follow_symlinks)
+
+    monkeypatch.setattr(Path, "is_file", verweigert_im_ordner)
+    stand = _kernel_naht_243(monkeypatch, pid=4321, bildpfad=str(exe), fremd=False)
+
+    assert prozessbaum._ist_msys_bildpfad(str(exe)) is False
+    assert prozessbaum.arbeitsordner_in_windows(tmp_path) == {}
+    hausmeister_windows._kein_arbeitsordner_drin(tmp_path)
+    assert stand["offene_griffe"] == 0
+
+
+@pytest.mark.parametrize("dll", ["msys-2.0.dll", "cygwin1.dll"])
+@pytest.mark.parametrize("fremd", [False, True])
+def test_243_msys_und_cygwin_sperren_auch_bei_fremdem_benutzer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, dll: str, fremd: bool
+) -> None:
+    """Erhöhter MSYS- oder Cygwin-Prozess mit ``ERROR_ACCESS_DENIED`` sperrt fail-closed —
+    auch wenn er unter einem anderen Benutzerkonto (z. B. UAC-Admin) läuft."""
+    bin_dir = tmp_path / "usr" / "bin"
+    bin_dir.mkdir(parents=True)
+    (bin_dir / dll).write_bytes(b"")
+    exe = bin_dir / "sleep.exe"
+    exe.write_bytes(b"")
+    stand = _kernel_naht_243(monkeypatch, pid=4322, bildpfad=str(exe), fremd=fremd)
+
+    befunde = prozessbaum.arbeitsordner_in_windows(tmp_path)
+    assert 4322 in befunde
+    assert befunde[4322].text is None and befunde[4322].drin is None
+    assert "MSYS/Cygwin" in befunde[4322].grund
+    with pytest.raises(hausmeister_windows.Bleibt) as exc:
+        hausmeister_windows._kein_arbeitsordner_drin(tmp_path)
+    assert exc.value.fehler is True and "4322" in exc.value.grund
+    assert stand["offene_griffe"] == 0
+
+
+def test_243_beendeter_msys_prozess_und_geschuetzter_systemprozess_sperren_nicht(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Beendeter MSYS-Prozess und geschützter Prozess ohne ``QUERY_LIMITED``-Zugriff sperren nicht."""
+    bin_dir = tmp_path / "usr" / "bin"
+    bin_dir.mkdir(parents=True)
+    (bin_dir / "msys-2.0.dll").write_bytes(b"")
+    exe = bin_dir / "bash.exe"
+    exe.write_bytes(b"")
+
+    stand_tot = _kernel_naht_243(monkeypatch, pid=4323, bildpfad=str(exe), exit_code=0)
+    assert prozessbaum.arbeitsordner_in_windows(tmp_path) == {}
+    assert stand_tot["offene_griffe"] == 0
+
+    stand_ppl = _kernel_naht_243(
+        monkeypatch,
+        pid=4324,
+        bildpfad=str(exe),
+        limited_fehler=prozessbaum._FEHLER_ZUGRIFF_VERWEIGERT,
+    )
+    assert prozessbaum.arbeitsordner_in_windows(tmp_path) == {}
+    assert stand_ppl["offene_griffe"] == 0
+
+
+def test_243_bildpfad_waechst_bei_kleinem_puffer(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Meldet ``QueryFullProcessImageNameW`` ``ERROR_INSUFFICIENT_BUFFER`` (122), wächst der Puffer
+    und erkennt den MSYS-Bildpfad im Folgeversuch."""
+    bin_dir = tmp_path / "usr" / "bin"
+    bin_dir.mkdir(parents=True)
+    (bin_dir / "msys-2.0.dll").write_bytes(b"")
+    exe = bin_dir / "sleep.exe"
+    exe.write_bytes(b"")
+    stand = _kernel_naht_243(monkeypatch, pid=4325, bildpfad=str(exe), mindest_puffer=1500)
+
+    befunde = prozessbaum.arbeitsordner_in_windows(tmp_path)
+    assert 4325 in befunde and befunde[4325].drin is None and "MSYS/Cygwin" in befunde[4325].grund
+    assert stand["query_aufrufe"] == 2
+    assert stand["offene_griffe"] == 0
 
 
 def _starte_als_standardnutzer(befehl: list[str], ausgabe: Path) -> int:

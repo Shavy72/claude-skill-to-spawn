@@ -119,9 +119,11 @@ def _kein_arbeitsordner_drin(ordner: Path) -> None:
     Nicht feststellbar (Griff nicht zu übernehmen, Kennung unlesbar, cwd unlesbar) ⇒ bleibt
     mit Fehler. Zusätzlich sperrt der Pfad-Text wie bisher (nie als Freigabe): die cwd geht
     durch :func:`pfad_echt`; lesbar, aber nicht ganz auflösbar ⇒ bleibt mit Fehler, sobald ihre
-    Text-Form oder Teil-Auflösung auf den Ordner (kanonisch oder wie übergeben) zeigt. Prozesse,
-    die sich nicht öffnen lassen (fremd, erhöht), fehlen schon in der Liste (#243), ebenso
-    unlesbare Prozesse fremder Benutzer (#552)."""
+    Text-Form oder Teil-Auflösung auf den Ordner (kanonisch oder wie übergeben) zeigt.
+    Nicht-MSYS-Prozesse, die sich nicht öffnen lassen (fremd, erhöht), fehlen schon in der Liste,
+    ebenso unlesbare Nicht-MSYS-Prozesse fremder Benutzer (#552); nicht zu öffnende
+    MSYS-/Cygwin-Prozesse stehen dagegen mit ``text=None, drin=None`` in der Liste und sperren
+    fail-closed (#243)."""
     try:
         befunde = prozessbaum.arbeitsordner_in_windows(ordner)
     except OSError as fehler:
