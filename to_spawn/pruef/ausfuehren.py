@@ -13,7 +13,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from to_spawn import speicher, temp_ordner
+from to_spawn import prozessbaum, speicher, temp_ordner
 
 #: RAM je Test-Worker (MiB), Grundlage des Deckels.
 # ponytail: Schätzwert, nicht gemessen; Upgrade: Spitze je Worker messen (3b-5).
@@ -48,6 +48,7 @@ def lauf(befehl: list[str], ordner: Path) -> Lauf:
             encoding="utf-8",
             errors="replace",
             check=False,
+            **prozessbaum.fensterlos(),
         )
     except OSError as fehler:
         return Lauf(NICHT_GESTARTET, f"{befehl[0]}: {fehler}", time.monotonic() - start)

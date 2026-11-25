@@ -32,7 +32,7 @@ from test_waechter_213 import (  # noqa: F401  (welt = Fixture)
     welt,
 )
 
-from to_spawn import capo, config, komplett_lauf
+from to_spawn import capo, config, komplett_lauf, prozessbaum
 from to_spawn.pruefplan import Moment
 
 SKILL = Path(__file__).resolve().parents[1]
@@ -231,6 +231,7 @@ def _langsamer_lauf(klon: Path, zaehl: Path) -> subprocess.Popen[str]:
         cwd=str(SKILL),
         stdout=subprocess.PIPE,
         text=True,
+        **prozessbaum.ohne_fenster(),
     )
 
 
@@ -265,13 +266,30 @@ def test_sperre_zweiter_aufruf_waehrend_lauf(welt: dict[str, Path]) -> None:
     assert _laeufe(zaehl) == 1
 
 
+def _hart_beenden(prozess: subprocess.Popen[str]) -> None:
+    """Beendet ``prozess`` samt Nachfahren hart über ``prozessbaum`` (Linux + Windows, #647).
+
+    Unter Windows fehlt ``signal.SIGKILL``; jedes Signal beendet dort per ``TerminateProcess``.
+    ``prozessbaum.baum`` liefert die Wurzel zuerst — so stirbt der Halter der Sperre hart,
+    bevor Kindprozesse (``bash``/``sleep``) enden, und auch ein Windows-venv-Kindprozess
+    samt Nachfahren wird mit beendet.
+    """
+    hart = getattr(signal, "SIGKILL", signal.SIGTERM)
+    pids = prozessbaum.baum(prozess.pid)
+    prozessbaum.beenden(pids, ((hart, 5.0),), warten_auf=pids[1:])
+    prozess.wait(timeout=10)
+    if prozess.stdout is not None:
+        prozess.stdout.close()
+
+
 def test_sperre_abgestuerzter_lauf_sperrt_nicht(welt: dict[str, Path]) -> None:
     zaehl = _zaehl(welt)
     _langsam_eingerichtet(welt, zaehl)
     erster = _langsamer_lauf(welt["repo"], zaehl)
-    _warte_auf(zaehl)
-    erster.send_signal(signal.SIGKILL)
-    erster.wait(timeout=10)
+    try:
+        _warte_auf(zaehl)
+    finally:
+        _hart_beenden(erster)
     _konfig(
         welt,
         pruefung={"schnell": "true", "komplett": _befehl(zaehl)},
@@ -282,3 +300,11 @@ def test_sperre_abgestuerzter_lauf_sperrt_nicht(welt: dict[str, Path]) -> None:
     )
     assert (erg.gelaufen, erg.ok) == (True, True), erg.grund
     assert _laeufe(zaehl) == 2
+
+
+def test_sperre_abgestuerzter_lauf_ohne_sigkill(
+    welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#647: Unter Windows fehlt ``signal.SIGKILL`` — Abbruch läuft trotzdem über ``prozessbaum``."""
+    monkeypatch.delattr(signal, "SIGKILL", raising=False)
+    test_sperre_abgestuerzter_lauf_sperrt_nicht(welt)

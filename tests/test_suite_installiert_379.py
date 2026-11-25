@@ -8,6 +8,7 @@ einer einzeiligen Meldung ab und startet pytest gar nicht.
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -16,6 +17,30 @@ from pathlib import Path
 from conftest import attrappe
 
 SKILL = Path(__file__).resolve().parent.parent
+
+
+def _klon_vorbereiten(tmp_path: Path, exit_code: int = 0) -> tuple[Path, Path, dict[str, str]]:
+    """Minimal-Klon mit ``skripte/suite.sh``, Wurzel-``conftest.py`` und Python-Attrappe."""
+    klon = tmp_path / "klon"
+    (klon / "skripte").mkdir(parents=True)
+    shutil.copy(SKILL / "skripte" / "suite.sh", klon / "skripte" / "suite.sh")
+    (klon / "conftest.py").write_text("", encoding="utf-8")
+    spur = tmp_path / "python_aufruf.json"
+    attrappen = tmp_path / "bin"
+    attrappe(
+        attrappen,
+        "python",
+        f"""
+        import json, os, pathlib, sys
+        pathlib.Path({str(spur)!r}).write_text(
+            json.dumps({{"argv": sys.argv[1:], "cwd": os.getcwd()}}),
+            encoding="utf-8",
+        )
+        raise SystemExit({exit_code})
+        """,
+    )
+    env = {**os.environ, "PATH": f"{attrappen}{os.pathsep}{os.environ['PATH']}"}
+    return klon, spur, env
 
 
 def test_suite_sh_bricht_ohne_wurzel_conftest_ab_ohne_pytest(tmp_path: Path) -> None:
@@ -74,3 +99,52 @@ def test_suite_sh_ruft_mit_wurzel_conftest_pytest_auf(tmp_path: Path) -> None:
     assert spur.read_text(encoding="utf-8").startswith("-m pytest"), spur.read_text(
         encoding="utf-8"
     )
+
+
+def test_suite_sh_nutzt_vier_worker_und_worksteal(tmp_path: Path) -> None:
+    """#353: Standard-Aufruf nutzt vier Worker mit ``--dist worksteal`` gegen langsame End-Worker."""
+    klon, spur, env = _klon_vorbereiten(tmp_path)
+
+    lauf = subprocess.run(
+        ["bash", str(klon / "skripte" / "suite.sh")],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+    )
+
+    assert lauf.returncode == 0, lauf.stderr
+    daten = json.loads(spur.read_text(encoding="utf-8"))
+    assert daten["argv"] == [
+        "-m",
+        "pytest",
+        "-q",
+        "-p",
+        "no:cacheprovider",
+        "-n",
+        "4",
+        "--dist",
+        "worksteal",
+    ], daten["argv"]
+
+
+def test_suite_sh_reicht_argumente_cwd_und_exit_code_durch(tmp_path: Path) -> None:
+    """#353: Aufruf aus fremdem Ordner wechselt in den Klon, reicht Argumente mit Leerzeichen
+    und Exit-Codes ungleich 0 unverändert durch."""
+    klon, spur, env = _klon_vorbereiten(tmp_path, exit_code=1)
+    woanders = tmp_path / "woanders"
+    woanders.mkdir()
+
+    lauf = subprocess.run(
+        ["bash", str(klon / "skripte" / "suite.sh"), "-k", "foo bar", "--durations=5"],
+        cwd=str(woanders),
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+    )
+
+    assert lauf.returncode == 1, (lauf.returncode, lauf.stderr)
+    daten = json.loads(spur.read_text(encoding="utf-8"))
+    assert Path(daten["cwd"]).resolve() == klon.resolve(), daten["cwd"]
+    assert daten["argv"][-3:] == ["-k", "foo bar", "--durations=5"], daten["argv"]
