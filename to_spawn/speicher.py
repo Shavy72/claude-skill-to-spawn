@@ -540,7 +540,7 @@ def _urteil_art(
             return (
                 False,
                 (
-                    f"Rechner voll mit stillen Sessions: schon {alle} Claude-Sessions insgesamt "
+                    f"{GESAMT_VOLL_TEXT}: schon {alle} Claude-Sessions insgesamt "
                     f"(still + arbeitend, Obergrenze {obergrenze})"
                 ),
                 True,
@@ -581,6 +581,20 @@ def _pruefen_und_belegen(
         return pruefen(konfig)
 
 
+GESAMT_VOLL_TEXT = "Rechner voll mit stillen Sessions"  # #624: Anlass fürs Platz-Schaffen
+
+
+def _platz_schaffen() -> object:
+    """Bittet den Aufpasser, fertige stille Fenster zu schließen (#624). Fehler ⇒ nur Log."""
+    from to_spawn import aufpasser  # spät: aufpasser importiert speicher
+
+    try:
+        return aufpasser.platz_schaffen()
+    except Exception:  # Warten darf daran nie scheitern
+        log.exception("Platz schaffen gescheitert")
+        return None
+
+
 def auf_platz_warten(
     konfig: dict[str, Any] | None,
     *,
@@ -589,6 +603,7 @@ def auf_platz_warten(
     schlafen: Callable[[float], object] = time.sleep,
     takt_s: int = 60,
     meldung_alle: int = 5,
+    platz_schaffen: Callable[[], object] = _platz_schaffen,
 ) -> int:
     """Wartet, bis :func:`platz_frei` „frei“ sagt; gibt die Zahl der Wartezyklen zurück (#257 F1).
 
@@ -612,6 +627,14 @@ def auf_platz_warten(
     while True:
         konfig = config.frisch(konfig)
         frei, grund = _pruefen_und_belegen(konfig, pruefen, eigen)
+        if not frei and GESAMT_VOLL_TEXT in grund:
+            # #624: stille fertige Fenster belegen die Gesamtgrenze — Aufpasser schließt sie
+            # jetzt (er allein kennt die Regeln), dann neu prüfen statt auf den Cron zu warten.
+            try:
+                platz_schaffen()
+            except Exception:  # Test-/Rückruf-Fehler: weiterwarten
+                log.exception("Platz schaffen gescheitert")
+            frei, grund = _pruefen_und_belegen(konfig, pruefen, eigen)
         if frei:
             if zyklen:
                 text = f"{wer}: Speicher wieder frei nach {zyklen} Wartezyklen — {grund}"
