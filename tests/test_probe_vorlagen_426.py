@@ -388,6 +388,9 @@ def test_anlegen_reserviert_drei_verschiedene_ports_gleichzeitig(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Ports bleiben bis zur Vergabe aller drei belegt, damit das OS keinen doppelt ausgibt."""
+    # Vorab echte freie Ports vom OS holen (#787/#789): ``anlegen.sh`` prüft die Ports real auf
+    # 127.0.0.1; feste Nummern wie 40000–40002 kollidieren unter ``pytest -n auto`` mit anderen Workern.
+    vorrat = _freie_ports(3)
     belegt: set[int] = set()
 
     class _WiederverwendenderSocket:
@@ -402,11 +405,12 @@ def test_anlegen_reserviert_drei_verschiedene_ports_gleichzeitig(
 
         def bind(self, adresse: tuple[str, int]) -> None:
             assert adresse == ("127.0.0.1", 0)
-            port = 40000
-            while port in belegt:
-                port += 1
-            belegt.add(port)
-            self._port = port
+            for kandidat in vorrat:
+                if kandidat not in belegt:
+                    belegt.add(kandidat)
+                    self._port = kandidat
+                    return
+            raise AssertionError("mehr als 3 Ports angefordert")
 
         def getsockname(self) -> tuple[str, int]:
             assert self._port is not None
@@ -420,6 +424,7 @@ def test_anlegen_reserviert_drei_verschiedene_ports_gleichzeitig(
     monkeypatch.setattr(socket, "socket", _WiederverwendenderSocket)
     ports = _anlegen(tmp_path / "lauf", "mit-staging")
     assert len(set(ports.values())) == 3
+    assert set(ports.values()) == set(vorrat)
     assert not belegt
 
 

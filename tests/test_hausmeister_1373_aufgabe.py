@@ -16,9 +16,11 @@ import os
 import subprocess
 import sys
 import uuid
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
+import schtasks_test  # liegt in ``tests/hilfen`` (#789)
 from test_hausmeister_1368 import (  # noqa: F401 — ``welt`` ist ein Fixture
     SKILL,
     Welt,
@@ -351,8 +353,12 @@ def test_kein_detached_process_in_neuen_dateien() -> None:
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="schtasks gibt es nur unter Windows")
-def test_echt_windows_zweimal_einrichten(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    name = f"to-spawn Hausmeister Test {uuid.uuid4().hex[:6]}"
+def test_echt_windows_zweimal_einrichten(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    schtasks_aufgabe: Callable[..., str],
+) -> None:
+    name = schtasks_aufgabe("hausmeister")
     monkeypatch.setattr(hausmeister_aufgabe, "AUFGABE_NAME", name)
     monkeypatch.setattr(
         hausmeister,
@@ -360,18 +366,9 @@ def test_echt_windows_zweimal_einrichten(monkeypatch: pytest.MonkeyPatch, tmp_pa
         lambda o: tmp_path / "a.json",
         raising=False,
     )
-    try:
-        assert "eingerichtet" in hausmeister_aufgabe.aufgabe_einrichten()
-        assert "schon eingerichtet" in hausmeister_aufgabe.aufgabe_einrichten()
-        abfrage = subprocess.run(
-            ["schtasks", "/Query", "/TN", name],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        assert abfrage.returncode == 0, abfrage.stderr
-    finally:
-        subprocess.run(["schtasks", "/Delete", "/TN", name, "/F"], capture_output=True, check=False)
+    assert "eingerichtet" in hausmeister_aufgabe.aufgabe_einrichten()
+    assert "schon eingerichtet" in hausmeister_aufgabe.aufgabe_einrichten()
+    assert schtasks_test.existiert(name), f"Aufgabe {name!r} nach aufgabe_einrichten nicht in schtasks gefunden"
 
 
 # --- Fixrunde 1 -----------------------------------------------------------------
