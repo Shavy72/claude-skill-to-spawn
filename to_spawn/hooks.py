@@ -321,7 +321,7 @@ def _starte_takt(repo: Path, ticket: str) -> None:
         stand_auswahl = auswahl.lesen(ziel, int(spec))
         if not auswahl.wache_erlaubt(ziel, int(spec), auswahl=stand_auswahl, gelesen=True):
             log.info(
-                "Aufseher-Takt #%s unterdrückt: laut Auswahl hier keine Wache (%s).",
+                "Aufseher-Takt #%s unterdrückt: laut Auswahl hier kein Aufseher (%s).",
                 spec,
                 auswahl.beschreibung(stand_auswahl),
             )

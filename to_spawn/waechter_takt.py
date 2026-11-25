@@ -508,11 +508,11 @@ def takt(
     auswahl_stand = auswahl.lesen(repo, spec)
     if not auswahl.wache_erlaubt(repo, spec, auswahl=auswahl_stand, gelesen=True):
         log.info(
-            "Takt #%s ausgelassen: laut Auswahl hier keine Wache (%s).",
+            "Takt #%s ausgelassen: laut Auswahl hier kein Aufseher (%s).",
             spec,
             auswahl.beschreibung(auswahl_stand),
         )
-        print(f"Takt #{spec}: laut Auswahl hier keine Wache — steige aus.")
+        print(f"Takt #{spec}: laut Auswahl hier kein Aufseher — steige aus.")
         return 0
     halter = f"takt pid {os.getpid()}" + (f" ({grund})" if grund else "")
     try:
@@ -614,13 +614,13 @@ def starte_abgeloest(spec: int, repo: Path, grund: str) -> bool:
     Stop feuert nach jeder Runde, nicht nur am Session-Ende (der Hook kann das nicht
     unterscheiden) — daher höchstens ein Start je ``MIN_ABSTAND_S`` und Spec
     (Zeitpunkt im Leitstand-Zustand ``takt_ausloeser``). ``True`` = gestartet.
-    Erlaubt die gespeicherte Auswahl auf diesem Rechner keine Wache (``--ohne-wache``
+    Erlaubt die gespeicherte Auswahl auf diesem Rechner keinen Aufseher (``--ohne-wache``
     oder fremder Rechner, #271), wird kein Takt gestartet.
     """
     auswahl_stand = auswahl.lesen(repo, spec)
     if not auswahl.wache_erlaubt(repo, spec, auswahl=auswahl_stand, gelesen=True):
         log.info(
-            "Takt #%s: laut Auswahl hier keine Wache (%s) — %s ausgelassen.",
+            "Takt #%s: laut Auswahl hier kein Aufseher (%s) — %s ausgelassen.",
             spec,
             auswahl.beschreibung(auswahl_stand),
             grund,

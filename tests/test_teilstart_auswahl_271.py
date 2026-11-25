@@ -25,6 +25,7 @@ import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -635,3 +636,14 @@ def test_spawn_srv_speichert_auswahl_und_beachtet_dry_run_und_nachstart(
     r_voll = lauf()
     assert r_voll.returncode == 0, r_voll.stdout + r_voll.stderr
     assert auswahl.lesen(repo, 1330) is None
+
+
+def test_spec_repo_ordner_vertraegt_fenster_ohne_pfad_und_nicht_git_ordner(tmp_path: Path) -> None:
+    """spec_repo_ordner darf bei Fenstern ohne ``pfad`` und Nicht-Git-Ordnern nie abstürzen (#271)."""
+    basis = tmp_path / "kein-git"
+    basis.mkdir()
+    a = aufpasser.Aufpasser(aufpasser.Einstellungen(zustand=tmp_path / "zustand"))
+    fenster = [SimpleNamespace(name="bau 101"), SimpleNamespace(name="bau 102", pfad="")]
+    assert a.spec_repo_ordner("1330", fenster, basis) == basis  # type: ignore[arg-type]
+    assert aufpasser._origin_kennung(basis) == ""
+

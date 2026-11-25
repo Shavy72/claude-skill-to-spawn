@@ -111,7 +111,7 @@ def lesen(repo: Path, spec: int | str) -> Auswahl | None:
 
     Fehlt die Datei, liefert die Funktion ``None`` (Verhalten wie bisher, volle Spec).
     Existiert die Datei, ist aber kaputt/unlesbar, liefert sie fail-closed eine gesperrte
-    Auswahl (keine Tickets, keine Wache).
+    Auswahl (keine Tickets, kein Aufseher).
     """
     datei = pfad(repo, spec)
     try:
@@ -201,7 +201,7 @@ def speichern(
       Datei entfernt).
     - ``zusammenfuehren=True`` (Standard): weitere ``--tickets``-Starts auf demselben
       Rechner erweitern die bestehende Auswahl (z. B. Nachstart/Umzug einzelner Tickets).
-    - ``umzug=True``: schaltet eine auf diesem Rechner bereits aktive Wache nicht ab.
+    - ``umzug=True``: schaltet einen auf diesem Rechner bereits aktiven Aufseher nicht ab.
     """
     host = (rechner if rechner is not None else aktueller_rechner()).strip()
     datei = pfad(repo, spec)
@@ -328,7 +328,7 @@ def beschreibung(auswahl: Auswahl | None, *, rechner: str | None = None) -> str:
         liste = ", ".join(f"#{n}" for n in auswahl.tickets) if auswahl.tickets else "keine"
         teile.append(f"Tickets {liste}")
     if auswahl.ohne_wache:
-        teile.append("ohne Wache")
+        teile.append("ohne Aufseher")
     if auswahl.rechner:
         teile.append(f"Rechner {auswahl.rechner}")
     return ", ".join(teile)
@@ -360,7 +360,7 @@ def richte_parser_ein(unter: Any) -> None:
     p.add_argument("--tickets", default=None, help="gewählte Tickets (Komma-Liste)")
     p.add_argument("--ohne-wache", action="store_true", help="keinen Aufseher/Takt auf diesem Rechner")
     p.add_argument("--nur-wache", action="store_true", help="Aufseher auf diesem Rechner freigeben")
-    p.add_argument("--umzug", action="store_true", help="Umzug: aktive Wache nicht abschalten")
+    p.add_argument("--umzug", action="store_true", help="Umzug: aktiven Aufseher nicht abschalten")
     p.add_argument(
         "--ersetzen",
         action="store_true",

@@ -394,8 +394,11 @@ def _hauptklon_aus_worktree(pfad: Path) -> Path | None:
 
 def _origin_kennung(pfad: Path) -> str:
     """Normalisierte ``origin``-URL eines Git-Repos (ohne ``.git``), leer bei Fehler."""
-    url = _git(pfad, "remote", "get-url", "origin").strip()
-    return url[:-4] if url.endswith(".git") else url
+    try:
+        url = _git(pfad, "remote", "get-url", "origin").strip()
+    except (RuntimeError, OSError):
+        return ""
+    return url.removesuffix(".git")
 
 
 # --- Bausteine ohne Seiteneffekte -------------------------------------------
@@ -1629,7 +1632,10 @@ class Aufpasser:
                 kandidaten.append(echt)
 
         for f in fenster:
-            p = Path(f.pfad)
+            f_pfad = getattr(f, "pfad", None)
+            if not f_pfad:
+                continue
+            p = Path(f_pfad)
             merk(p)
             merk(_hauptklon_aus_worktree(p))
         merk(basis)
@@ -1657,7 +1663,11 @@ class Aufpasser:
             except OSError:
                 continue
             for kind in kinder:
-                if not kind.is_dir() or kind.resolve() in gesehen:
+                try:
+                    kind_echt = kind.resolve()
+                except OSError:
+                    continue
+                if not kind.is_dir() or kind_echt in gesehen:
                     continue
                 if not hat_manifest(kind):
                     continue
@@ -2946,7 +2956,7 @@ class Aufpasser:
                 continue
             self.fehlendes_fenster(sitzung, spec, repo, ticket)
         # Aufseher-Fenster fehlt (R2): nachstarten, solange die Spec (hier) offene Tickets
-        # hat und die Auswahl eine Wache auf diesem Rechner erlaubt (#271).
+        # hat und die Auswahl einen Aufseher auf diesem Rechner erlaubt (#271).
         if (
             offen_hier
             and f"wache {spec}" not in vorhanden
