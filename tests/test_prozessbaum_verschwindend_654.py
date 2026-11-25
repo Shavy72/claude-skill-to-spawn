@@ -200,6 +200,13 @@ class _WinWelt:
         _setze(kopie_ref, kopie)
         return 1
 
+    def _is_wow64(self, griff: int, prozess_maschine: Any, host_maschine: Any) -> int:
+        art, _pid = self.offene_griffe[griff]
+        assert art == "prozess"
+        _setze(prozess_maschine, prozessbaum._IMAGE_FILE_MACHINE_UNKNOWN)
+        _setze(host_maschine, 0x8664)
+        return 1
+
     def _kernel(self) -> types.SimpleNamespace:
         return types.SimpleNamespace(
             OpenProcess=self._open_process,
@@ -208,6 +215,7 @@ class _WinWelt:
             ReadProcessMemory=self._read_memory,
             GetCurrentProcess=lambda: 0xFFFF,
             DuplicateHandle=self._duplicate_handle,
+            IsWow64Process2=self._is_wow64,
         )
 
     def _nt(self) -> types.SimpleNamespace:
