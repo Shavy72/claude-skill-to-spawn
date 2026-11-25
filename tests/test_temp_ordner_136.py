@@ -41,7 +41,9 @@ def _maschine(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, inhalt: dict) -> 
     monkeypatch.delenv("TO_SPAWN_TEMP_ORDNER", raising=False)
 
 
-def test_vorgabe_liegt_im_home_nicht_im_system_temp() -> None:
+def test_vorgabe_liegt_im_home_nicht_im_system_temp(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Realistisches Heim außerhalb des System-Temps (#232: conftest-Testheim liegt unter tmp_path).
+    monkeypatch.setenv("HOME", "C:/Users/nutzer" if sys.platform == "win32" else "/home/nutzer")
     vorgabe = Path(config.MASCHINE_DEFAULTS["temp_ordner"]).expanduser()
     assert str(vorgabe).startswith(str(Path.home()))
     assert not str(vorgabe).startswith(tempfile.gettempdir())

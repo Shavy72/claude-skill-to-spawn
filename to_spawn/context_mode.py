@@ -28,8 +28,23 @@ SERVER_NAME = "plugin_context-mode_context-mode"
 #: Einstiegsdatei des MCP-Servers im Plugin-Ordner.
 START = "start.mjs"
 INSTALL_BEFEHL = "claude plugin install context-mode@context-mode"
+def standard_claude_dir() -> Path:
+    """Claude Codes Konfig-Ordner zur Laufzeit — ``CLAUDE_CONFIG_DIR``, sonst ``~/.claude`` (#232)."""
+    return Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
+
+
+_START_CLAUDE_DIR = standard_claude_dir()
 #: Claude Codes Konfig-Ordner — ``CLAUDE_CONFIG_DIR`` gilt dort wie hier.
-CLAUDE_DIR = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
+CLAUDE_DIR = _START_CLAUDE_DIR
+
+
+def _ziel_claude_dir(claude_dir: Path | None) -> Path:
+    """Effektiver Konfig-Ordner: Argument > gepatches ``CLAUDE_DIR`` > Laufzeit-HOME (#232)."""
+    if claude_dir is not None:
+        return claude_dir
+    if CLAUDE_DIR != _START_CLAUDE_DIR:
+        return CLAUDE_DIR
+    return standard_claude_dir()
 
 
 class ContextModeFehlt(RuntimeError):
@@ -95,7 +110,7 @@ def _aus_cache(claude_dir: Path) -> Path | None:
 
 def plugin_wurzel(claude_dir: Path | None = None) -> Path | None:
     """Ordner des installierten Plugins (mit ``start.mjs``) oder None."""
-    ordner = claude_dir or CLAUDE_DIR
+    ordner = _ziel_claude_dir(claude_dir)
     return _aus_registry(ordner) or _aus_cache(ordner)
 
 
@@ -127,7 +142,7 @@ def pruefen(claude_dir: Path | None = None, streng: bool = False) -> Path:
     ``enabledPlugins`` nicht abgeschaltet sein. ``bau.py`` schreibt den Server selbst und
     braucht nur die Dateien.
     """
-    ordner = claude_dir or CLAUDE_DIR
+    ordner = _ziel_claude_dir(claude_dir)
     wurzel = plugin_wurzel(ordner)
     if wurzel is None:
         raise ContextModeFehlt(
