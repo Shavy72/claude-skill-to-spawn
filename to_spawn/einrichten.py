@@ -396,6 +396,9 @@ def _pruefe_maschine(ort: Ort) -> Befund:
             LUECKE,
             f"Maschinen-Liste unlesbar ({fehler}) — von Hand reparieren: {datei}",
         )
+    veraltet = config.veraltete_ticket_repos()
+    if veraltet:
+        return FEHLT, "veraltetes ticket_repo: " + "; ".join(a.zeile() for a in veraltet)
     for eintrag in config.maschine()["repos"]:
         try:
             gleich = (
@@ -425,6 +428,9 @@ def _belegtes_ticket_repo(wurzel: Path) -> str:
 
 
 def _lege_maschine_an(ort: Ort) -> None:
+    for aenderung in config.maschine_ticket_repos_nachziehen():
+        if ort.ausgabe is not None:
+            ort.ausgabe.write(f"  {aenderung.zeile()}\n")
     eintrag = config.maschine_eintragen(ort.wurzel)
     if eintrag["slug"] and not eintrag["ticket_repo"]:  # #542: nur mit Beleg, nie geraten (#66)
         beleg = _belegtes_ticket_repo(ort.wurzel)

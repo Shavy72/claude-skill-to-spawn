@@ -180,6 +180,26 @@ def baue_parser() -> _Parser:
         action="store_true",
         help="nur prüfen, nichts schreiben (Exit 0 = alles da und aktuell, 3 = Abweichung)",
     )
+    p_tr = unter.add_parser(
+        "ticket-repo",
+        help="ticket_repo in der Maschinen-Liste ausdrücklich setzen, zeigen oder veraltete Vorgaben nachziehen (#261)",
+    )
+    p_tr.add_argument(
+        "eintrag",
+        nargs="?",
+        help="Repo-Slug (<besitzer>/<name>) oder Ordner-Pfad aus der Maschinen-Liste",
+    )
+    p_tr.add_argument(
+        "wert",
+        nargs="?",
+        metavar="ticket_repo",
+        help="neues ticket_repo (<besitzer>/<name>)",
+    )
+    p_tr.add_argument(
+        "--nachziehen",
+        action="store_true",
+        help="bekannte veraltete Vorgabe-Werte in der Maschinen-Liste nachziehen (wiederholbar)",
+    )
     p_setup = unter.add_parser(
         "setup", help="Terminal, Modell und Effort je Rolle wählen"
     )

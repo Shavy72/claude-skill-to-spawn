@@ -251,6 +251,17 @@ def nie_oeffentlich(pfad: str) -> bool:
     return any(fnmatch(name, muster.lower()) for muster in MUSTER_JE_REPO)
 
 
+def pfade_aus_nul(ausgabe: str) -> list[str]:
+    """Zerlegt NUL-getrennte ``git log -z --name-only --format=``-Ausgabe unverändert (#215).
+
+    Kein ``strip("\\r\\n")``: ein echter Zeilenumbruch am Ende eines Dateinamens bleibt
+    erhalten, und Pfade mit Leerzeichen oder Nicht-ASCII-Zeichen werden nicht zerlegt.
+    Einzige Zerlegungsstelle für :func:`gesperrte_pfade` und die Geheimnis-Prüfung im
+    Hausmeister.
+    """
+    return [p for p in ausgabe.split("\0") if p]
+
+
 def gesperrte_pfade(ordner: Path, *bereich: str) -> list[str]:
     """Pfade nach :func:`nie_oeffentlich` in allen Commits von ``bereich`` (rev-list-Argumente).
 
@@ -263,8 +274,7 @@ def gesperrte_pfade(ordner: Path, *bereich: str) -> list[str]:
     )
     if aus.returncode != 0:
         raise OSError(aus.stderr.strip() or f"git log {' '.join(bereich)} gescheitert")
-    pfade = (p.strip("\r\n") for p in aus.stdout.split("\0"))
-    return sorted({p for p in pfade if p and nie_oeffentlich(p)})
+    return sorted({p for p in pfade_aus_nul(aus.stdout) if nie_oeffentlich(p)})
 
 
 def _gesperrte_pfade(ordner: Path, zweig: str) -> list[str]:

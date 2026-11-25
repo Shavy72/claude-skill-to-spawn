@@ -111,6 +111,7 @@ from to_spawn import (
     starter,
     ticket_zustand,
     tmux_aufruf,
+    uebergabe_sichern,
     vorfall,
     werkzeug,
 )
@@ -1312,6 +1313,26 @@ def sichern(
         ).strip()
     finally:
         Path(index).unlink(missing_ok=True)
+    # #215: dieselbe Sperre wie beim Zweig-Upload und beim Hausmeister — nie vor dem Push
+    # eine Übergabe oder ein Entscheidungs-Log (auch in anderer Großschreibung) hochladen.
+    ausschluss_refs = (
+        ("--remotes=origin", "--glob=refs/haupt/*", "--glob=refs/sicherung/*", "--glob=refs/zweige/*")
+        if kopf is not None
+        else ("--remotes=origin",)
+    )
+    try:
+        gesperrt = uebergabe_sichern.gesperrte_pfade(worktree, commit, "--not", *ausschluss_refs)
+    except OSError as fehler:
+        raise RuntimeError(f"Prüfung gesperrter Pfade gescheitert: {fehler}") from None
+    if gesperrt:
+        log.error(
+            "Sicherung #%s verweigert: %s nie öffentlich",
+            ticket,
+            ", ".join(gesperrt),
+        )
+        raise RuntimeError(
+            f"Sicherung verweigert: {', '.join(gesperrt)} nie öffentlich"
+        )
     # #242: erst pushen, dann lokalen Ref nachziehen — ein gescheiterter Push darf
     # keinen ungepushten lokalen sicherung/<N>-Zweig hinterlassen.
     _git(worktree, "push", "-q", "origin", f"{commit}:{ref}")
@@ -3189,6 +3210,9 @@ class Aufpasser:
             fehler,
             " (trocken)" if self.e.trocken else "",
         )
+        # #261: Bleib-Gründe gezählt auch im Aufpasser-Log (eine Format-Stelle im Hausmeister).
+        for zeile in hausmeister.bleib_zeilen(ergebnisse):
+            log.info("%s", zeile)
 
     def _deploy_wache(self, repos: Iterable[Path]) -> list[str]:
         """Setzt das Deploy-Muster für diese Repos und liefert die laufenden Deploy-/Gate-Prozesse."""

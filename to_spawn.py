@@ -18,6 +18,7 @@ Aufruf (im Repo-Wurzelordner):
     python ~/.claude/skills/to-spawn/to_spawn.py lernstoff [--letzte 30]
     python ~/.claude/skills/to-spawn/to_spawn.py setup [--zeigen|--standard|--terminal …]
     python ~/.claude/skills/to-spawn/to_spawn.py einrichten [--pruefen]  # Repo einrichten (Exit 0/1, --pruefen 0/3)
+    python ~/.claude/skills/to-spawn/to_spawn.py ticket-repo [<eintrag> <ticket_repo>|--nachziehen]  # Maschinen-Liste (#261)
     python ~/.claude/skills/to-spawn/to_spawn.py probesitz [--punkt N …] [--zeigen] [--modell M]  # 7-Punkte-Abnahme (#214)
     python ~/.claude/skills/to-spawn/to_spawn.py deploy-status [--datei P] [--ticket N] [--still-min 60]
     python ~/.claude/skills/to-spawn/to_spawn.py hook-stop          # JSON auf stdin
