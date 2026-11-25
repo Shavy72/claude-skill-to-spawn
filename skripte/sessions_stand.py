@@ -332,11 +332,18 @@ def token_text(ticket: str, repo: Path = REPO) -> str:
     # Bewusst ohne ``repo``: ``worktree_pfad`` liest das Repo selbst aus ``TO_SPAWN_REPO``
     # bzw. dem aktuellen Ordner — genau die Quelle von ``REPO`` oben. Die Alt-Tests (#238)
     # stubben die Funktion mit einem Argument, ein zweites bricht sie (Fixrunde #257).
-    ort = bau_log.log_ort(ticket, Path(config.worktree_pfad(ticket)).expanduser(), repo)
-    if ort is None:
-        return bau_log.kontext_text(None)
-    # Rückfall-Laufdatei im Hauptbaum kommt dazu (Worktree fehlte beim Schreiben, #257).
-    spitze_k = bau_log.zusammenfassung(ort, ticket, hauptbaum=repo)["spitze_k"]
+    wt = Path(config.worktree_pfad(ticket)).expanduser()
+    ort = bau_log.log_ort(ticket, wt, repo)
+    spitze_k: float | None = None
+    if ort is not None:
+        # Rückfall-Laufdatei im Hauptbaum kommt dazu (Worktree fehlte beim Schreiben, #257).
+        spitze_k = bau_log.zusammenfassung(ort, ticket, hauptbaum=repo)["spitze_k"]
+    # Linux-Teil (#660): laufende ``agy``-Sessions schreiben keinen Claude-Stop-Hook —
+    # Spitzen-Kontext aus dem ``agy``-Transkript lesen, wenn das Bau-Log noch keinen Wert hat.
+    if sys.platform != "win32" and (spitze_k is None or werkzeug.runner_von(config.lade(repo)) == "agy"):
+        agy_k = werkzeug.agy_spitze_k(wt)
+        if agy_k is not None:
+            spitze_k = max(spitze_k, agy_k) if spitze_k is not None else agy_k
     return bau_log.kontext_text(spitze_k)
 
 

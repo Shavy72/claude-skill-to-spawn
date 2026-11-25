@@ -208,6 +208,134 @@ def test_257_aufpasser_waise_aelter_6h_unter_windows(
         proc.wait(timeout=15)
 
 
+def test_257_alter_s_windows_pid_grenze_und_ungueltige_werte(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Windows-``alter_s`` weist ungültige und >= 2**31 PIDs ab, bevor ``OpenProcess``
+    (32-Bit-DWORD) sie abschneidet oder einen fremden Prozess trifft."""
+    aufrufe: list[int] = []
+    jetzt_s = 1_800_000_000.0
+    start_42 = prozessbaum._FILETIME_EPOCH_100NS + int((jetzt_s - 120.0) * 10_000_000)
+
+    def oeffnen(_recht: int, _erben: bool, pid: int) -> int:
+        aufrufe.append(pid)
+        return 101 if (pid & 0xFFFFFFFF) == 42 else 0
+
+    def exit_code(_griff: int, ziel: object) -> int:
+        ziel._obj.value = prozessbaum._STILL_ACTIVE  # type: ignore[attr-defined]
+        return 1
+
+    def zeiten(_griff: int, erstellt: object, *_rest: object) -> int:
+        erstellt._obj.value = start_42  # type: ignore[attr-defined]
+        return 1
+
+    kernel = types.SimpleNamespace(
+        OpenProcess=oeffnen,
+        GetExitCodeProcess=exit_code,
+        GetProcessTimes=zeiten,
+        CloseHandle=lambda _g: 1,
+    )
+    monkeypatch.setattr(prozessbaum, "_WINDOWS", True)
+    monkeypatch.setattr(prozessbaum, "_win32", lambda: (kernel, types.SimpleNamespace()))
+    monkeypatch.setattr(prozessbaum.time, "time", lambda: jetzt_s)
+    monkeypatch.setattr(ctypes, "set_last_error", lambda _n: None, raising=False)
+    monkeypatch.setattr(ctypes, "get_last_error", lambda: 0, raising=False)
+
+    for ungueltig in (None, 0, -5, True, False, "42", 2**31, 2**32 + 42):
+        assert prozessbaum.alter_s(ungueltig) is None  # type: ignore[arg-type]
+    assert aufrufe == [], f"OpenProcess wurde für ungültige PIDs aufgerufen: {aufrufe}"
+    assert prozessbaum.alter_s(42) == pytest.approx(120.0)
+
+
+def test_257_alter_s_windows_zugriff_verweigert_rueckfall_und_beendet(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Windows-``alter_s``: bei ``ERROR_ACCESS_DENIED`` Rückfall auf Kernel-Momentaufnahme,
+    beendeter Prozess mit offenem Griff liefert ``None`` (Griff geschlossen), Zukunft → 0.0."""
+    jetzt_s = 1_800_000_000.0
+
+    def filetime(vor_s: float) -> int:
+        return prozessbaum._FILETIME_EPOCH_100NS + int((jetzt_s - vor_s) * 10_000_000)
+
+    letzter_fehler = 0
+    geschlossen: list[int] = []
+
+    def set_err(code: int) -> None:
+        nonlocal letzter_fehler
+        letzter_fehler = code
+
+    def oeffnen(_recht: int, _erben: bool, pid: int) -> int:
+        nonlocal letzter_fehler
+        if pid == 10:  # fremdes Konto → ERROR_ACCESS_DENIED
+            letzter_fehler = prozessbaum._FEHLER_ZUGRIFF_VERWEIGERT
+            return 0
+        if pid in (20, 30):
+            return pid * 10
+        letzter_fehler = prozessbaum._FEHLER_UNGUELTIGER_PARAMETER
+        return 0
+
+    def exit_code(griff: int, ziel: object) -> int:
+        ziel._obj.value = 0 if griff == 200 else prozessbaum._STILL_ACTIVE  # type: ignore[attr-defined]
+        return 1
+
+    def zeiten(griff: int, erstellt: object, *_rest: object) -> int:
+        # PID 30: leichte Uhrabweichung (Startzeit 5 s in der Zukunft) → geklemmt auf 0.0
+        erstellt._obj.value = filetime(-5.0) if griff == 300 else 0  # type: ignore[attr-defined]
+        return 1
+
+    kernel = types.SimpleNamespace(
+        OpenProcess=oeffnen,
+        GetExitCodeProcess=exit_code,
+        GetProcessTimes=zeiten,
+        CloseHandle=lambda g: geschlossen.append(g) or 1,
+    )
+    monkeypatch.setattr(prozessbaum, "_WINDOWS", True)
+    monkeypatch.setattr(prozessbaum, "_win32", lambda: (kernel, types.SimpleNamespace()))
+    monkeypatch.setattr(prozessbaum, "_momentaufnahme_windows", lambda: {10: (4, filetime(7 * 3600))})
+    monkeypatch.setattr(prozessbaum.time, "time", lambda: jetzt_s)
+    monkeypatch.setattr(ctypes, "set_last_error", set_err, raising=False)
+    monkeypatch.setattr(ctypes, "get_last_error", lambda: letzter_fehler, raising=False)
+
+    assert prozessbaum.alter_s(10) == pytest.approx(7 * 3600)
+    assert prozessbaum.alter_s(20) is None
+    assert prozessbaum.alter_s(30) == 0.0
+    assert prozessbaum.alter_s(99) is None
+    assert 200 in geschlossen and 300 in geschlossen, geschlossen
+
+    # Kernel-Fehler in Momentaufnahme → None statt Ausnahme
+    monkeypatch.setattr(prozessbaum, "_momentaufnahme_windows", lambda: (_ for _ in ()).throw(OSError("gesperrt")))
+    assert prozessbaum.alter_s(10) is None
+
+
+def test_257_aufpasser_windows_waisenregel_und_fail_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Aufpasser nutzt unter Windows ``prozessbaum.alter_s`` (kein ``ps``):
+    Prozess > 6 h wird als Waise ignoriert, unbekanntes Alter (``None``) sperrt weiter."""
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(
+        prozessbaum,
+        "passende",
+        lambda _m, zeitgrenze=30: [(11, "deploy.sh"), (12, "deploy.sh"), (13, "deploy.sh")],
+    )
+    monkeypatch.setattr(prozessbaum, "argv", lambda _pid: ["bash", "deploy.sh"])
+    alter_werte: dict[int, float | None] = {11: 7 * 3600.0, 12: 60.0, 13: None}
+    monkeypatch.setattr(prozessbaum, "alter_s", lambda pid: alter_werte[pid])
+
+    wache = Aufpasser(
+        Einstellungen(
+            zustand=tmp_path / "zustand",
+            tmux_socket=f"waise257-unit-{os.getpid()}",
+            deploy_muster=r"deploy\.sh",
+        )
+    )
+    # Unter Windows darf ``ps`` nie aufgerufen werden.
+    monkeypatch.setattr(
+        wache, "sh", lambda *a, **k: (_ for _ in ()).throw(AssertionError(f"ps unerwartet aufgerufen: {a}"))
+    )
+
+    caplog.set_level(logging.INFO)
+    treffer = wache.deploy_laeuft(r"deploy\.sh")
+    assert len(treffer) == 2, treffer  # PID 12 (< 6 h) und PID 13 (Alter None = fail-closed)
+    assert "Waise ignoriert: PID 11" in caplog.text
+
+
 # --- #259: 32-Bit-Prozess (WOW64) + fail-closed + Griff-Leck ------------------------------
 
 

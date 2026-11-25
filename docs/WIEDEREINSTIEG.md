@@ -22,7 +22,8 @@ jüngste Merge auf `main`.
    Tresor `~/.local/share/to-spawn/sicherung/<Rechnername>/`; eigener Ort: Maschinen-Liste
    `~/.config/to-spawn/maschine.json`, Gruppe `sicherung`, Schlüssel `ziel`) und lädt angefangene
    Zweige des Skill-Repos hoch (nie `main`/`master`, nie `ticket/*`). Ein Ziel in einem öffentlichen
-   Repo wird verweigert.
+   Repo wird verweigert. Ob `sicherung.dateien` und `sicherung.ziel` auf einer Maschine stimmen,
+   prüft `python <skill>/to_spawn.py sichern --pruefen` rein lesend (Exit 0 = ok, 1 = Lücke).
 
 Die Aufseher-Ablösung und jeder Hausmeister-Rundgang rufen dieselbe Sicherung von selbst auf.
 
@@ -52,6 +53,26 @@ was zum Weiterbauen nötig ist.
 ## 3. Stand
 
 Chronologisch absteigend (neuester Eintrag oben, ältere Einträge als Verlauf darunter; alle Uhrzeiten Europe/Berlin).
+
+- **2026-11-25 17:45 (Europe/Berlin, main 0741c91):** Großes Bau-Paket (Wellen 1–12) gemergt, #145 in Linux (#755) und Windows (#756) geteilt:
+  - Seit `f3c85b1` gemergt (Auswahl): Pull-Requests 659 (Windows-Unterprozesse ohne Konsole), 662
+    (Issue 660, Bau-Session wahlweise über `agy`), 666 (Issue 145, Stand-Prüfung mit Squash-Merges
+    und Kaltstart-Probe M15 Lauf 3), 673 (Issue 149, Wackler-Voll-Lauf), 679 (Issue 216, Einrichter
+    und `STAND.json`), 703/738 (Issues 136/177, Temp-Ordner L4), 705 (Issues 243/257/259,
+    Windows-Prozessbaum), 737 (Issue 282, Wiederanlauf), 741 (Issues 215/261, Aufpasser-Sperre,
+    `-z`-Geheimnisprüfung, `ticket_repo`), 744 (Issues 262/287, Deploy-Wache/Wecker Linux), 748/749
+    (Issues 615/424/707, Hausmeister-Räumung und Klon-Ordner) sowie 751 (Issue 190, einheitliche
+    Ruff-Formatierung).
+  - Issue 145 (L5) wurde in #755 (Linux-Teil Bau-Server) und #756 (Windows-Teil PC) aufgeteilt.
+    Auf dem Bau-Server sind `sicherung.dateien` und `sicherung.ziel` (Vorgabe Notiz-Tresor) in
+    `~/.config/to-spawn/maschine.json` geprüft und über `to_spawn.py sichern --pruefen` belegt;
+    offen bleibt für #755 nur die Abschluss-Probe M15 „vor fertig“ kurz vor Abschluss aller M1–M15.
+  - Offen im Pull-Request (laut `gh pr list --state open`): 754 (Issue 204), 678 (Issue 122,
+    Windows-Job-Objekt), 250 (Issue 149 Rest).
+  - Als Nächstes: offene Pull-Requests (754, 678, 250) und offene Welle-13-Pakete (u. a. 755, 757–762)
+    prüfen und mergen → offene Anomalien aus Probe-Lauf 3 (u. a. 624, 641) → Windows-Seite (#68, #756)
+    und offene M-Zeilen M1–M15 in `docs/ABNAHME_L1.md` abnehmen; kurz vor „fertig“ zweite
+    Kaltstart-Probe M15 (#755).
 
 - **2026-11-25 04:55 (Europe/Berlin, main f3c85b1):** Stand nach Probe-Lauf 3 und Windows-Härtung:
   - Probe-Lauf 3 am 24./25.11.2026 auf dem Bau-Server in `docs/ABNAHME_L1.md` dokumentiert

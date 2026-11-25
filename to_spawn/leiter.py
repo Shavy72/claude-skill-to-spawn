@@ -67,6 +67,7 @@ import hashlib
 import json
 import logging
 import os
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Protocol
@@ -85,6 +86,7 @@ from to_spawn import (
     respawn,
     ticket_zustand,
     waechter_lauf,
+    werkzeug,
     wiederanlauf,
 )
 
@@ -715,10 +717,12 @@ class _EchteUmwelt:
     def _kontext_k(self, ticket: int, wt: Path) -> float | None:
         """Kontext der aktuellen Session — Zeilen vor dem letzten Leiter-Respawn zählen nicht."""
         try:
+            nach = leitstand.leiter_respawn(ticket)
             ort = bau_log.log_ort(ticket, wt, self.repo)
-            if ort is None:
-                return None
-            return bau_log.kontext_aktuell_k(ort, ticket, hauptbaum=self.repo, nach=leitstand.leiter_respawn(ticket))
+            wert = bau_log.kontext_aktuell_k(ort, ticket, hauptbaum=self.repo, nach=nach) if ort is not None else None
+            if wert is None and sys.platform != "win32" and werkzeug.runner_von(config.lade(self.repo)) == "agy":
+                return werkzeug.agy_spitze_k(wt, nach=nach)
+            return wert
         except (OSError, ValueError, KeyError, TypeError) as fehler:
             log.warning("Bau-Log #%s unlesbar — Kontext unbekannt: %s", ticket, fehler)
             return None

@@ -386,10 +386,23 @@ def _pruefe_maschine(ort: Ort) -> Befund:
             LUECKE,
             f"Maschinen-Liste unlesbar ({fehler}) — von Hand reparieren: {datei}",
         )
-    veraltet = config.veraltete_ticket_repos()
+    daten = config.maschine()
+    gesehen_ztr: dict[str, frozenset[tuple[str, str]]] = {}
+    for eintrag in daten["repos"]:
+        zuordnung, ztr_fehler = config.zweig_ticket_repo_pruefen(eintrag.get("zweig_ticket_repo"))
+        name = str(eintrag.get("slug") or eintrag.get("pfad") or "?")
+        if zuordnung is None:
+            return LUECKE, f"zweig_ticket_repo ungültig ({name}: {ztr_fehler}) — von Hand reparieren: {datei}"
+        slug_klein = str(eintrag.get("slug") or "").strip().lower()
+        if slug_klein:
+            signatur = frozenset((k, v.lower()) for k, v in zuordnung.items())
+            alt_sig = gesehen_ztr.setdefault(slug_klein, signatur)
+            if alt_sig != signatur:
+                return LUECKE, f"zweig_ticket_repo widersprüchlich für {name} — von Hand reparieren: {datei}"
+    veraltet = config.veraltete_ticket_repos(daten)
     if veraltet:
         return FEHLT, "veraltetes ticket_repo: " + "; ".join(a.zeile() for a in veraltet)
-    for eintrag in config.maschine()["repos"]:
+    for eintrag in daten["repos"]:
         try:
             gleich = Path(eintrag["pfad"]).expanduser().resolve() == ort.wurzel.resolve()
         except (OSError, ValueError):

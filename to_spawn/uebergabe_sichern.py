@@ -96,6 +96,56 @@ class Sicherung:
         return kopf + ", ".join(teile)
 
 
+@dataclass
+class SicherungPruefung:
+    """Ergebnis von :func:`pruefen` — rein lesende Prüfung von ``sicherung.*`` (#755)."""
+
+    maschine_datei: Path
+    maschine_vorhanden: bool
+    ziel: Path
+    ziel_herkunft: str
+    ziel_oeffentlich: bool
+    ziel_vorhanden: bool
+    muster: list[str] = field(default_factory=list)
+    trefferlose_muster: list[str] = field(default_factory=list)
+    quellen: list[Path] = field(default_factory=list)
+    zweig_repos: list[Path] = field(default_factory=list)
+    fehler: list[str] = field(default_factory=list)
+    hinweise: list[str] = field(default_factory=list)
+
+    @property
+    def ok(self) -> bool:
+        return not self.fehler
+
+    def bericht(self) -> str:
+        kopf = "Sicherung-Prüfung: OK" if self.ok else f"Sicherung-Prüfung: LÜCKE ({len(self.fehler)} Fehler)"
+        zeilen = [
+            kopf,
+            f"  Maschinen-Liste: {self.maschine_datei} ({'vorhanden' if self.maschine_vorhanden else 'fehlt'})",
+            (
+                f"  Ziel: {self.ziel} ({self.ziel_herkunft}, "
+                f"{'ÖFFENTLICH' if self.ziel_oeffentlich else 'privat'}, "
+                f"{'vorhanden' if self.ziel_vorhanden else 'wird beim ersten Lauf angelegt'})"
+            ),
+            (
+                f"  sicherung.dateien: {len(self.muster)} Muster ({len(self.trefferlose_muster)} ohne Treffer)"
+                if self.muster
+                else "  sicherung.dateien: nicht eingetragen"
+            ),
+            f"  Quellen gefunden: {len(self.quellen)} Datei(en)",
+            (
+                f"  Zweig-Repos: {len(self.zweig_repos)} ({', '.join(p.name for p in self.zweig_repos)})"
+                if self.zweig_repos
+                else "  Zweig-Repos: 0"
+            ),
+        ]
+        for eintrag in self.fehler:
+            zeilen.append(f"  FEHLER: {eintrag}")
+        for eintrag in self.hinweise:
+            zeilen.append(f"  Hinweis: {eintrag}")
+        return "\n".join(zeilen)
+
+
 def _gruppe() -> dict[str, object]:
     roh = config.maschine().get("sicherung")
     return roh if isinstance(roh, dict) else {}
@@ -139,18 +189,34 @@ def ist_oeffentlich(ziel: Path) -> bool:
     return False
 
 
+def _ziel_mit_herkunft() -> tuple[Path, str]:
+    """Bestimmt Sicherungs-Ordner und Herkunft (``umgebung``/``maschine.json``/``notiz-tresor``/``vorgabe``)."""
+    umg = os.environ.get(UMGEBUNG_ZIEL, "").strip()
+    if umg:
+        basis, herkunft = config.expand_heim(umg), "umgebung"
+    else:
+        ziel_wert = _gruppe().get("ziel")
+        konfig_ziel = ziel_wert.strip() if isinstance(ziel_wert, str) else ""
+        if konfig_ziel:
+            basis, herkunft = config.expand_heim(konfig_ziel), "maschine.json"
+        else:
+            tresor = config.notiz_tresor()
+            if tresor.is_dir():
+                basis, herkunft = tresor / TRESOR_UNTERORDNER, "notiz-tresor"
+            else:
+                basis, herkunft = config.heim_ordner() / ".local" / "share" / "to-spawn" / "sicherung", "vorgabe"
+    return basis / (socket.gethostname().lower() or "maschine"), herkunft
+
+
 def ziel_ordner() -> Path:
     """Sicherungs-Ordner dieser Maschine (ohne Öffentlich-Prüfung, siehe :func:`sichern`)."""
-    roh = os.environ.get(UMGEBUNG_ZIEL) or str(_gruppe().get("ziel") or "").strip()
-    if roh:
-        basis = Path(roh).expanduser()
-    else:
-        tresor = config.notiz_tresor()
-        if tresor.is_dir():
-            basis = tresor / TRESOR_UNTERORDNER
-        else:
-            basis = Path.home() / ".local" / "share" / "to-spawn" / "sicherung"
-    return basis / (socket.gethostname().lower() or "maschine")
+    return _ziel_mit_herkunft()[0]
+
+
+def _muster_treffer(muster: str) -> list[Path]:
+    """Löst ein Dateimuster (``~`` und ``*`` erlaubt) zu vorhandenen Dateien auf."""
+    erweitert = str(config.expand_heim(muster))
+    return [pfad for treffer in glob.glob(erweitert) if (pfad := Path(treffer)).is_file()]
 
 
 def _quellen(extra: list[Path]) -> list[Path]:
@@ -163,8 +229,8 @@ def _quellen(extra: list[Path]) -> list[Path]:
             repo_pfade.append(stempel_klon)
     muster = [str(pfad / m) for pfad in dict.fromkeys(repo_pfade) for m in MUSTER_JE_REPO]
     roh = _gruppe().get("dateien")
-    muster += [str(m) for m in roh if isinstance(m, str)] if isinstance(roh, list) else []
-    gefunden = [Path(t) for m in muster for t in glob.glob(os.path.expanduser(m))]
+    muster += [m.strip() for m in roh if isinstance(m, str) and m.strip()] if isinstance(roh, list) else []
+    gefunden = [pfad for m in muster for pfad in _muster_treffer(m)]
     eindeutig: dict[Path, Path] = {}
     for pfad in [*extra, *gefunden]:
         if pfad.is_file():
@@ -423,6 +489,87 @@ def juengster_main_stand(repo: Path) -> datetime | None:
     return datetime.fromtimestamp(int(roh), tz=UTC).astimezone(_stand_zone())
 
 
+def pruefen() -> SicherungPruefung:
+    """Prüft ``sicherung.ziel`` und ``sicherung.dateien`` der Maschinen-Liste rein lesend (#755).
+
+    Legt keine Ordner an, kopiert keine Dateien und lädt keine Zweige hoch. Meldet unlesbare
+    ``maschine.json``, ungültige Feld-Typen, öffentliche Ziele und Muster ohne Treffer als Fehler.
+    """
+    datei = config.maschine_datei()
+    vorhanden = datei.is_file()
+    fehler: list[str] = []
+    hinweise: list[str] = []
+    muster: list[str] = []
+    trefferlose: list[str] = []
+
+    roh_maschine: dict[str, object] | None = None
+    if vorhanden:
+        gelesen, lesefehler = config._lies(datei)
+        if gelesen is None:
+            fehler.append(f"Maschinen-Liste unlesbar ({datei}): {lesefehler}")
+        else:
+            roh_maschine = gelesen
+    else:
+        hinweise.append(f"Maschinen-Liste fehlt ({datei}) — Vorgaben gelten")
+
+    if roh_maschine is not None and "sicherung" in roh_maschine:
+        roh_gruppe = roh_maschine["sicherung"]
+        if not isinstance(roh_gruppe, dict):
+            fehler.append(f"sicherung ist kein Objekt ({type(roh_gruppe).__name__})")
+        else:
+            if "ziel" in roh_gruppe and roh_gruppe["ziel"] is not None and not isinstance(roh_gruppe["ziel"], str):
+                fehler.append(f"sicherung.ziel ist kein Text ({type(roh_gruppe['ziel']).__name__})")
+            if "dateien" in roh_gruppe and roh_gruppe["dateien"] is not None:
+                roh_dateien = roh_gruppe["dateien"]
+                if not isinstance(roh_dateien, list):
+                    fehler.append(f"sicherung.dateien ist keine Liste ({type(roh_dateien).__name__})")
+                else:
+                    for eintrag in roh_dateien:
+                        if not isinstance(eintrag, str) or not eintrag.strip():
+                            fehler.append(f"sicherung.dateien enthält ungültigen Eintrag: {eintrag!r}")
+                            continue
+                        sauber = eintrag.strip()
+                        muster.append(sauber)
+                        if not _muster_treffer(sauber):
+                            trefferlose.append(sauber)
+                    if trefferlose:
+                        fehler.append("sicherung.dateien: Muster ohne Treffer: " + ", ".join(trefferlose))
+
+    ziel, herkunft = _ziel_mit_herkunft()
+    oeffentlich = ist_oeffentlich(ziel)
+    ziel_da = ziel.is_dir()
+    if oeffentlich:
+        fehler.append(f"{ziel} liegt in einem öffentlichen Repo — Sicherung wäre gesperrt")
+    elif not ziel_da:
+        hinweise.append("Ziel-Ordner noch nicht angelegt (wird beim ersten Lauf erstellt)")
+
+    if not muster and not any("sicherung.dateien" in f for f in fehler):
+        hinweise.append(f"sicherung.dateien nicht eingetragen — nur Repo-Muster ({', '.join(MUSTER_JE_REPO)}) aktiv")
+
+    quellen = _quellen([])
+    zweig_repos = _zweig_repos()
+    for repo in zweig_repos:
+        if not repo.is_dir():
+            hinweise.append(f"Zweig-Repo fehlt auf der Platte: {repo}")
+
+    erg = SicherungPruefung(
+        maschine_datei=datei,
+        maschine_vorhanden=vorhanden,
+        ziel=ziel,
+        ziel_herkunft=herkunft,
+        ziel_oeffentlich=oeffentlich,
+        ziel_vorhanden=ziel_da,
+        muster=muster,
+        trefferlose_muster=trefferlose,
+        quellen=quellen,
+        zweig_repos=zweig_repos,
+        fehler=fehler,
+        hinweise=hinweise,
+    )
+    (log.warning if erg.fehler else log.info)("%s", erg.bericht().splitlines()[0])
+    return erg
+
+
 def richte_parser_ein(unter: object) -> None:
     p = unter.add_parser(  # type: ignore[attr-defined]
         "sichern",
@@ -434,9 +581,18 @@ def richte_parser_ein(unter: object) -> None:
         action="store_true",
         help="nur zeigen, was gesichert und hochgeladen würde (#169)",
     )
+    p.add_argument(
+        "--pruefen",
+        action="store_true",
+        help="Maschinen-Pfade (sicherung.dateien / sicherung.ziel) rein lesend prüfen (#755)",
+    )
 
 
-def lauf(dateien: list[Path], *, trocken: bool = False) -> int:
+def lauf(dateien: list[Path], *, trocken: bool = False, nur_pruefen: bool = False) -> int:
+    if nur_pruefen:
+        pruefung = pruefen()
+        print(pruefung.bericht())
+        return 0 if pruefung.ok else 1
     erg = sichern(dateien, trocken=trocken)
     print(erg.zeile())
     return 1 if erg.fehler else 0
