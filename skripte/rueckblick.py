@@ -66,7 +66,7 @@ if _SKILL not in sys.path:
     sys.path.insert(0, _SKILL)
 from thermo_lauf import SPERRE_MIN, Fehler, repo_ordner, sperre_aktiv  # noqa: E402
 
-from to_spawn import config, manifest  # noqa: E402
+from to_spawn import config, manifest, prozessbaum  # noqa: E402
 from to_spawn.bau_log import LAUF_ORDNER, log_ordner, rohzeilen  # noqa: E402
 from to_spawn.spawn import fern_ordner  # noqa: E402
 from to_spawn.umzug import _ssh, server_repo  # noqa: E402
@@ -162,6 +162,7 @@ def _worktrees(repo: Path) -> tuple[list[Path], str | None]:
             errors="replace",
             timeout=GIT_TIMEOUT_S,
             check=False,
+            **prozessbaum.fensterlos(),
         )
     except subprocess.TimeoutExpired:
         return [repo], f"git worktree list: keine Antwort nach {GIT_TIMEOUT_S} s"
@@ -251,6 +252,7 @@ def _origin(repo: Path) -> str | None:
             errors="replace",
             timeout=GIT_TIMEOUT_S,
             check=False,
+            **prozessbaum.fensterlos(),
         )
     except (OSError, subprocess.TimeoutExpired) as fehler:
         log.warning("origin von %s nicht lesbar: %s", repo, fehler)

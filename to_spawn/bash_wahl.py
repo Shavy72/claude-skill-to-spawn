@@ -23,6 +23,8 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path, PureWindowsPath
 from typing import Any
 
+from to_spawn import prozessbaum
+
 log = logging.getLogger("to_spawn.bash_wahl")
 
 #: Standard-Installationsort von Git für Windows.
@@ -96,6 +98,7 @@ def lauf(
         umgebung = {k: v for k, v in basis.items() if k.upper() not in _PFAD_SPERREN}
     else:
         umgebung = dict(basis)
+    optionen = {**prozessbaum.fensterlos(), **optionen}  # #658: vor dem Gruppen-Flag unten
     optionen.setdefault("check", False)
     if zeitgrenze_s is None:
         return subprocess.run(_befehlszeile(argumente), env=umgebung, **optionen)  # noqa: S603

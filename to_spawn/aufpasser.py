@@ -1052,6 +1052,7 @@ def _git(cwd: Path, *args: str, env: dict[str, str] | None = None) -> str:
             errors="replace",
             check=False,
             timeout=300,
+            **prozessbaum.fensterlos(),
         )
     except subprocess.TimeoutExpired:
         raise RuntimeError(f"git {' '.join(args[:3])}: Zeitgrenze 300 s") from None
@@ -1191,6 +1192,7 @@ def _crontab(
             encoding="utf-8",
             check=False,
             timeout=30,
+            **prozessbaum.fensterlos(),
         )
     except subprocess.TimeoutExpired:
         raise RuntimeError("crontab antwortet nicht (30 s)") from None
@@ -1289,7 +1291,7 @@ class Aufpasser:
             if start:
                 ergebnis = starter.starte(args, warten=True, **optionen)
             else:
-                ergebnis = subprocess.run(args, **optionen)
+                ergebnis = subprocess.run(args, **optionen, **prozessbaum.fensterlos())
         except subprocess.TimeoutExpired:
             raise RuntimeError(
                 f"{' '.join(args[:4])}: Zeitgrenze {timeout:g} s überschritten"

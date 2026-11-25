@@ -27,6 +27,7 @@ import re
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
+from to_spawn import prozessbaum
 
 log = logging.getLogger("belege")
 
@@ -168,6 +169,7 @@ def zeitpunkt(datei: Path) -> float:
             text=True,
             timeout=15,
             check=False,
+            **prozessbaum.fensterlos(),
         )
         if aus.returncode == 0 and aus.stdout.strip():
             return float(aus.stdout.strip())

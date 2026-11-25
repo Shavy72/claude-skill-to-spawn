@@ -227,6 +227,7 @@ class TmuxWerkzeug:
             text=True,
             check=False,
             timeout=30,
+            **prozessbaum.fensterlos(),
         )
         if fertig.returncode not in (0, 1):
             raise RuntimeError(f"pgrep nicht nutzbar: {fertig.stderr.strip()}")
@@ -234,19 +235,8 @@ class TmuxWerkzeug:
 
     def fenster_starten(self, sitzung: str, name: str, cwd: str, befehl: str) -> str:
         raus = self._tmux(
-            "new-window",
-            "-d",
-            "-P",
-            "-F",
-            "=#{session_name}:#{window_id}",
-            "-t",
-            f"={sitzung}:",
-            "-n",
-            name,
-            "-c",
-            cwd,
-            befehl,
-            start=True,
+            "new-window", "-d", "-P", "-F", "=#{session_name}:#{window_id}",
+            "-t", f"={sitzung}:", "-n", name, "-c", cwd, befehl, start=True,
         )
         return raus.strip()
 
@@ -343,6 +333,7 @@ class TmuxWerkzeug:
             text=True,
             check=True,
             timeout=30,
+            **prozessbaum.fensterlos(),
         ).stdout
 
     def alte_session_beenden(self, pane_pid: int) -> Beendet:
