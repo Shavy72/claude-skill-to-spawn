@@ -52,15 +52,15 @@ def test_ein_unterschied_in_datei_wird_genau_gemeldet(tmp_path: Path) -> None:
     ziel = tmp_path / "server"
     _schreibe_json(quelle / "settings.json", {"env": {"CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH": "3"}})
     _schreibe_json(ziel / "settings.json", {"env": {"CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH": "3"}})
-    _schreibe_text(quelle / "hooks" / "filter-test-output.sh", "#!/bin/sh\necho neu\n")
-    _schreibe_text(ziel / "hooks" / "filter-test-output.sh", "#!/bin/sh\necho alt\n")
+    _schreibe_text(quelle / "hooks" / "filter-test-output.sh", "# Hook-Skript\necho neu\n")
+    _schreibe_text(ziel / "hooks" / "filter-test-output.sh", "# Hook-Skript\necho alt\n")
 
     erg = abgleich.vergleichen(quelle, ziel)
     assert not erg.gleich
     assert [a.kennung for a in erg.abweichungen] == ["hooks/filter-test-output.sh"]
     assert erg.abweichungen[0].art == "abweichung"
     # Nur lesen: Ziel unverändert, keine Sicherung angelegt.
-    assert (ziel / "hooks" / "filter-test-output.sh").read_text(encoding="utf-8") == "#!/bin/sh\necho alt\n"
+    assert (ziel / "hooks" / "filter-test-output.sh").read_text(encoding="utf-8") == "# Hook-Skript\necho alt\n"
     assert list((ziel / "hooks").glob("*.bak-*")) == []
 
 
@@ -216,8 +216,8 @@ def test_angleichen_schreibt_sicherung_und_bewahrt_gewollt_verschiedenes(tmp_pat
             "skillsWhitelist": ["to-spawn"],
         },
     )
-    _schreibe_text(quelle / "hooks" / "filter-test-output.sh", "#!/bin/sh\necho aktuell\n")
-    _schreibe_text(ziel / "hooks" / "filter-test-output.sh", "#!/bin/sh\necho alt\n")
+    _schreibe_text(quelle / "hooks" / "filter-test-output.sh", "# Hook-Skript\necho aktuell\n")
+    _schreibe_text(ziel / "hooks" / "filter-test-output.sh", "# Hook-Skript\necho alt\n")
     _schreibe_text(quelle / "hooks" / "smart-zone" / "kopien-check.mjs", "// neu\n")
 
     erg = abgleich.angleichen(quelle, ziel, zeit="20261125-071500")
@@ -232,7 +232,7 @@ def test_angleichen_schreibt_sicherung_und_bewahrt_gewollt_verschiedenes(tmp_pat
     hook_bak = ziel / "hooks" / "filter-test-output.sh.bak-20261125-071500"
     assert settings_bak.is_file()
     assert hook_bak.is_file()
-    assert hook_bak.read_text(encoding="utf-8") == "#!/bin/sh\necho alt\n"
+    assert hook_bak.read_text(encoding="utf-8") == "# Hook-Skript\necho alt\n"
     assert json.loads(settings_bak.read_text(encoding="utf-8"))["env"] == {"HOME": "/home/bau"}
 
     # Ziel ist jetzt angeglichen, aber „gewollt verschieden“ blieb unberührt!
@@ -242,7 +242,7 @@ def test_angleichen_schreibt_sicherung_und_bewahrt_gewollt_verschiedenes(tmp_pat
     assert ziel_settings["permissions"] == {"allow": ["Bash(server-only:*)"]}
     assert ziel_settings["skillsWhitelist"] == ["to-spawn"]
     assert "PostToolUse" in ziel_settings["hooks"]
-    assert (ziel / "hooks" / "filter-test-output.sh").read_text(encoding="utf-8") == "#!/bin/sh\necho aktuell\n"
+    assert (ziel / "hooks" / "filter-test-output.sh").read_text(encoding="utf-8") == "# Hook-Skript\necho aktuell\n"
     assert (ziel / "hooks" / "smart-zone" / "kopien-check.mjs").read_text(encoding="utf-8") == "// neu\n"
 
     # Folgevergleich meldet keine Unterschiede mehr.
@@ -269,8 +269,8 @@ def test_angleichen_laesst_bei_ungueltiger_settings_json_alles_unveraendert(
     ziel = tmp_path / "server"
     _schreibe_json(quelle / "settings.json", {"env": {"CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH": "3"}})
     _schreibe_json(ziel / "settings.json", {"env": {"HOME": "/home/bau"}})
-    _schreibe_text(quelle / "hooks" / "filter-test-output.sh", "#!/bin/sh\necho neu\n")
-    _schreibe_text(ziel / "hooks" / "filter-test-output.sh", "#!/bin/sh\necho alt\n")
+    _schreibe_text(quelle / "hooks" / "filter-test-output.sh", "# Hook-Skript\necho neu\n")
+    _schreibe_text(ziel / "hooks" / "filter-test-output.sh", "# Hook-Skript\necho alt\n")
 
     (quelle if kaputt_seite == "quelle" else ziel).joinpath("settings.json").write_text(
         kaputt_inhalt, encoding="utf-8"
@@ -457,7 +457,7 @@ def test_angleichen_loescht_keine_ziel_einzeldateien_oder_schluessel(tmp_path: P
     ziel = tmp_path / "server"
     _schreibe_json(quelle / "settings.json", {"a": 1})
     _schreibe_json(ziel / "settings.json", {"a": 1, "nur_server": True})
-    _schreibe_text(ziel / "hooks" / "filter-test-output.sh", "#!/bin/sh\n")
+    _schreibe_text(ziel / "hooks" / "filter-test-output.sh", "# Hook-Skript\n")
 
     erg = abgleich.angleichen(quelle, ziel, zeit="20261125-072100")
     assert erg.aktualisiert == ()
