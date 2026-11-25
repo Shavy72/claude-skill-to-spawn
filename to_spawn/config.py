@@ -295,7 +295,7 @@ def repo_kurzname(repo: Path) -> str:
     """Eindeutiger, tmux-tauglicher Kurzname des Repos (Kleinbuchstaben, ``[a-z0-9_-]``, #457).
 
     Bevorzugt den Repo-Namen aus der normalisierten ``origin``-Adresse, damit zwei Klone
-    desselben Repos (z. B. Hauptklon und Spec-Klon ``~/duoplus-<S>`` oder HTTPS vs. SSH)
+    desselben Repos (z. B. Hauptklon und Spec-Klon ``~/<repo>-<S>`` oder HTTPS vs. SSH)
     denselben Session-Namen bilden. Ohne ``origin`` gilt :func:`_hauptrepo_name`.
     """
     wurzel = repo_wurzel(repo)

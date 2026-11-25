@@ -56,9 +56,7 @@ _SKRIPTE = Path(__file__).resolve().parent
 _SKILL = str(_SKRIPTE.parent)
 if _SKILL not in sys.path:
     sys.path.insert(0, _SKILL)
-from to_spawn import bau_log, config, ticket_zustand, tmux_aufruf  # noqa: E402
-from to_spawn import gh as gh_modul  # noqa: E402
-from to_spawn import manifest as manifest_modul  # noqa: E402
+from to_spawn import bau_log, config, gh as gh_modul, manifest as manifest_modul, ticket_zustand, tmux_aufruf  # noqa: E402
 from to_spawn.capo import AUFSEHER_KOEPFE  # noqa: E402
 
 # Fenster-Teil (Ablage, Zustands-/URL-Datei, seite, anweisung, mail, aktiv, sitzung) liegt in leitstand_fenster.py.
@@ -667,16 +665,11 @@ def blocker_nummern(kanten: list[dict[str, Any]] | None, body: str) -> list[int]
     return sorted(dict.fromkeys(nummern))
 
 
-def beobachten_fuer(
-    ziel: str, spec: str, ssh_ziel: str, tmux_sitzung: str | None = None
-) -> list[dict[str, str]]:
+def beobachten_fuer(ziel: str, spec: str, ssh_ziel: str, tmux_sitzung: str | None = None) -> list[dict[str, str]]:
     if ziel == "local":
         return [
             {"titel": "Stand als Tabelle", "befehl": f"sessions {spec}"},
-            {
-                "titel": "Live zuschauen (lokal)",
-                "befehl": f"Windows-Terminal-Fenster der Spec {spec} – je Ticket ein Tab „bau <N>“, dazu „wache {spec}“ (der Aufseher)",
-            },
+            {"titel": "Live zuschauen (lokal)", "befehl": f"Windows-Terminal-Fenster der Spec {spec} – je Ticket ein Tab „bau <N>“, dazu „wache {spec}“ (der Aufseher)"},
         ]
     sitz = tmux_sitzung or tmux_aufruf.sitzung_alt(spec)
     return [
