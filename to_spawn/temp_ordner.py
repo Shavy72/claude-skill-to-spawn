@@ -53,7 +53,7 @@ import tempfile
 import time
 from pathlib import Path
 
-from . import aufpasser, config, ticket_zustand
+from . import config, ticket_zustand
 
 log = logging.getLogger("to_spawn.temp_ordner")
 
@@ -148,12 +148,7 @@ def _eigene_ticket_repos() -> dict[str, str]:
     """Bekannte Ticket-Repos der Maschine (klein → Originalschreibweise)."""
     from . import hausmeister as hm
 
-    repos: dict[str, str] = {}
-    for eintrag in hm._maschinen_repos():
-        wert = (eintrag.get("ticket_repo") or "").strip()
-        if wert:
-            repos[wert.lower()] = wert
-    return repos
+    return {wert.lower(): wert for wert in hm._alle_ticket_repos()}
 
 
 def _markierte(wurzel: Path) -> list[Path]:
@@ -275,13 +270,14 @@ def _repo_pruefen(repo: Path, rel: str, ist_worktree: bool, wurzel_ordner: Path)
         url = hm._git_oder_none(repo, "remote", "get-url", "origin")
         if not url:
             raise hm._Bleibt(f"ungesichert: kein Remote origin in {rel}")
+        if hm._ist_transport_helfer(url):
+            raise hm._Bleibt(f"ungesichert: Transport-Helfer als Remote in {rel}")
         if hm._ziel_im_ordner(wurzel_ordner, url):
             raise hm._Bleibt(f"ungesichert: Remote liegt im Temp-Ordner in {rel}")
         auf_server = hm._server_koepfe(repo)
-        for ref in hm._lokale_koepfe(repo, ist_worktree):
-            if aufpasser.git_lauf(repo, "rev-list", "--ignore-missing", "-n", "1", ref, "--not", *auf_server).strip():
-                raise hm._Bleibt(f"ungesichert: Commits auf keinem erreichbaren Remote in {rel}")
-        if hm._nur_im_reflog(repo, ist_worktree):
+        if hm._ungepushte_koepfe(repo, ist_worktree, auf_server):
+            raise hm._Bleibt(f"ungesichert: Commits auf keinem erreichbaren Remote in {rel}")
+        if hm._nur_im_reflog(repo, ist_worktree, auf_server):
             raise hm._Bleibt(f"ungesichert: Commits nur im Reflog in {rel}")
     except RuntimeError as fehler:  # leeres/kaputtes Repo: nicht prüfbar ⇒ bleibt
         raise hm._Bleibt(f"ungesichert: Repo {rel} nicht prüfbar ({fehler})") from None
