@@ -422,7 +422,11 @@ def test_r5_alte_stupser_zaehlen_nicht(welt: Welt) -> None:
 # --- R6: Start-Nachweis ---------------------------------------------------------
 
 
-def test_r6_start_attrappe_endet_sofort_start_fehlgeschlagen(welt: Welt) -> None:
+def test_r6_start_attrappe_endet_sofort_start_fehlgeschlagen(
+    welt: Welt, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # R6 prüft bewusst mit der vollen Produkt-Frist (Attrappe endet sofort → schnell).
+    monkeypatch.setattr(aufpasser, "START_NACHWEIS_S", 5.0)
     vorlage = _bau_claude_vorlage(welt, BAU_SOFORT_WEG)
     assert welt.lauf("--bau-vorlage", vorlage) == 0
     assert _argv_protokoll(welt) == ["9002"]
@@ -433,6 +437,44 @@ def test_r6_start_attrappe_endet_sofort_start_fehlgeschlagen(welt: Welt) -> None
         for k in kommentare
     ), kommentare
     assert len(welt.stand()["starts"]["9002"]) == 1
+
+
+def test_r6_start_nachweis_prueft_volle_frist(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#353: Produkt-Vorgabe ``START_NACHWEIS_S`` bleibt 5,0 s; ``_start_nachweisen`` prüft
+    über die gesamte Frist statt nach dem ersten Treffer abzubrechen."""
+    assert aufpasser.START_NACHWEIS_S == 5.0
+    uhr = [0.0]
+
+    def _schlafen(sekunden: float) -> None:
+        uhr[0] += sekunden
+
+    monkeypatch.setattr(aufpasser.time, "monotonic", lambda: uhr[0])
+    monkeypatch.setattr(aufpasser.time, "sleep", _schlafen)
+    monkeypatch.setattr(aufpasser, "_prozess_lebt", lambda _pid: True)
+    instanz = aufpasser.Aufpasser(
+        aufpasser.Einstellungen(zustand=tmp_path / "zustand")
+    )
+
+    # Verschwindet das Fenster nach 3 s (vor 5 s) → Nachweis scheitert.
+    abrufe = [0]
+
+    def _tmux_stirbt_spaet(*_args: str, **_kw: object) -> str:
+        abrufe[0] += 1
+        return "bau 9002\t12345\t0\n" if uhr[0] < 3.0 else ""
+
+    monkeypatch.setattr(instanz, "tmux", _tmux_stirbt_spaet)
+    assert instanz._start_nachweisen("spec-9001", "bau 9002") is False
+    assert uhr[0] >= 3.0 and abrufe[0] >= 2
+
+    # Bleibt das Fenster über die vollen 5 s am Leben → Nachweis erfolgreich.
+    uhr[0] = 0.0
+    monkeypatch.setattr(
+        instanz, "tmux", lambda *_a, **_kw: "bau 9002\t12345\t0\n"
+    )
+    assert instanz._start_nachweisen("spec-9001", "bau 9002") is True
+    assert uhr[0] >= aufpasser.START_NACHWEIS_S
 
 
 # --- R7: Aufräumen --------------------------------------------------------------
