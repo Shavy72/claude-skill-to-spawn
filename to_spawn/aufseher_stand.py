@@ -73,6 +73,7 @@ from to_spawn import (
     komplett_lauf,
     pc_fenster,
     ticket_zustand,
+    tmux_aufruf,
     verlauf_pruefung,
     wiederanlauf,
 )
@@ -373,39 +374,66 @@ def _vorher(spec: int, ordner: Path | None) -> _Vorher:
 
 
 def _fenster_liste(
-    spec: int, tmux: Callable[[list[str]], str | None]
+    spec: int,
+    tmux: Callable[[list[str]], str | None],
+    repo: Path | None = None,
 ) -> dict[int, tuple[str, float]] | None:
-    """Ticket → (tmux-Ziel per ``window_id``, window_activity); ``None`` = tmux/Sitzung nicht lesbar."""
-    raus = tmux(
-        [
-            "list-windows",
-            "-t",
-            f"=spec-{spec}",
-            "-F",
-            "#{window_id}\t#{window_name}\t#{window_activity}",
-        ]
-    )
-    if raus is None:
-        log.warning("tmux-Sitzung spec-%s nicht lesbar — Fenster-Zustand „—“.", spec)
-        return None
-    liste: dict[int, tuple[str, float]] = {}
-    for zeile in raus.splitlines():
-        teile = zeile.split("\t")
-        if len(teile) != 3 or not teile[1].startswith("bau "):
+    """Ticket → (tmux-Ziel per ``window_id``, window_activity); ``None`` = tmux/Sitzung nicht lesbar.
+
+    Prüft zuerst eine bestehende eigene Alt-Session ``spec-<S>`` (Übergangszeit #457) und
+    sonst ``spec-<kurz>-<S>``. Liefert tmux ``#{session_path}`` (4. Feld) eines anderen Repos,
+    wird die fremde Session übersprungen — kein Repo sieht fremde Fenster.
+    """
+    kandidaten = [tmux_aufruf.sitzung_alt(spec)]
+    if repo is not None:
+        neu = tmux_aufruf.sitzung_name(repo, spec)
+        if neu not in kandidaten:
+            kandidaten.append(neu)
+    for sitzung in kandidaten:
+        raus = tmux(
+            [
+                "list-windows",
+                "-t",
+                f"={sitzung}",
+                "-F",
+                "#{window_id}\t#{window_name}\t#{window_activity}\t#{session_path}",
+            ]
+        )
+        if raus is None:
             continue
-        try:
-            liste[int(teile[1][4:])] = (
-                f"=spec-{spec}:{teile[0]}",
-                float(teile[2] or 0),
-            )
-        except ValueError:
+        fremd = False
+        liste: dict[int, tuple[str, float]] = {}
+        for zeile in raus.splitlines():
+            teile = zeile.split("\t")
+            if len(teile) < 3:
+                continue
+            if (
+                repo is not None
+                and len(teile) >= 4
+                and teile[3].strip()
+                and tmux_aufruf.ordner_ist_fremd(Path(teile[3].strip()), repo)
+            ):
+                fremd = True
+                break
+            if not teile[1].startswith("bau "):
+                continue
+            try:
+                liste[int(teile[1][4:])] = (
+                    f"={sitzung}:{teile[0]}",
+                    float(teile[2] or 0),
+                )
+            except ValueError:
+                continue
+        if fremd:
             continue
-    return liste
+        return liste
+    log.warning("tmux-Sitzung für Spec #%s nicht lesbar — Fenster-Zustand „—“.", spec)
+    return None
 
 
-def bau_fenster(spec: int) -> dict[int, str] | None:
-    """Ticket → tmux-Ziel des Fensters ``bau <N>`` in ``spec-<S>``; ``None`` = tmux/Sitzung nicht lesbar."""
-    liste = _fenster_liste(spec, _tmux_echt)
+def bau_fenster(spec: int, repo: Path | None = None) -> dict[int, str] | None:
+    """Ticket → tmux-Ziel des Fensters ``bau <N>`` der Spec-Sitzung; ``None`` = tmux/Sitzung nicht lesbar."""
+    liste = _fenster_liste(spec, _tmux_echt, repo=repo)
     return None if liste is None else {n: ziel for n, (ziel, _aktiv) in liste.items()}
 
 
@@ -544,7 +572,7 @@ def sammeln(spec: int, q: Quellen, vorher: _Vorher) -> _Ergebnis:
     if auswahl_stand is not None:
         kinder = auswahl.filtere_issues(kinder, auswahl_stand)
     jetzt = q.jetzt()
-    fenster = None if q.pc_still else _fenster_liste(spec, q.tmux)
+    fenster = None if q.pc_still else _fenster_liste(spec, q.tmux, repo=q.repo)
     lagen: list[TicketLage] = []
     kommentare: dict[str, int] = {}
     merker: dict[str, dict[str, Any]] = {}
