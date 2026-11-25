@@ -32,7 +32,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from . import anleitung, befugnis
+from . import anleitung, befugnis, konsole
 
 log = logging.getLogger(__name__)
 
@@ -438,6 +438,8 @@ def lauf(args: argparse.Namespace) -> int:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    # Windows-Pipes sind cp1252: Umlaute in JSON/Text sonst UnicodeDecodeError beim Aufrufer.
+    konsole.utf8_ausgabe()
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     parser = argparse.ArgumentParser(
         prog="to_spawn.regel_pruefung",

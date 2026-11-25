@@ -279,3 +279,40 @@ def test_regel_pruefung_windows_pfade_und_einzeldatei(tmp_path: Path) -> None:
     )
     assert lauf.returncode == 0, lauf.stdout + lauf.stderr
     assert "1 Datei(en) geprüft" in lauf.stdout
+
+
+def test_regel_pruefung_modul_utf8_trotz_cp1252_konsole(tmp_path: Path) -> None:
+    """Modul-CLI spricht UTF-8 auch bei cp1252-Pipe wie unter Windows (#584)."""
+    env = dict(os.environ)
+    env["PYTHONIOENCODING"] = "cp1252"
+    env["PYTHONUTF8"] = "0"
+
+    einzel = tmp_path / "einzel.md"
+    einzel.write_text("# Nur Projekt\n\nKeine Kopie.\n", encoding="utf-8")
+    ok_lauf = subprocess.run(
+        [sys.executable, "-m", "to_spawn.regel_pruefung", "--datei", str(einzel)],
+        cwd=SKILL,
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    assert ok_lauf.returncode == 0, f"{ok_lauf.stdout!r} {ok_lauf.stderr!r}"
+    assert ok_lauf.stdout is not None and "1 Datei(en) geprüft" in ok_lauf.stdout
+
+    (tmp_path / "CLAUDE.md").write_text("# Projekt\n\n" + anleitung.ABLOESE_SOP + "\n", encoding="utf-8")
+    rot_lauf = subprocess.run(
+        [sys.executable, "-m", "to_spawn.regel_pruefung", "--wurzel", str(tmp_path), "--json"],
+        cwd=SKILL,
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    assert rot_lauf.returncode == 1, f"{rot_lauf.stdout!r} {rot_lauf.stderr!r}"
+    assert rot_lauf.stdout is not None
+    daten = json.loads(rot_lauf.stdout)
+    assert daten["ok"] is False
+    assert daten["funde"][0]["datei"] == "CLAUDE.md"
