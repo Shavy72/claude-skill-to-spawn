@@ -226,9 +226,11 @@ def test_kind_ohne_konsolenfenster_wenn_eltern_ohne_konsole() -> None:
 
 
 def test_fensterlos_ohne_ctypes_windll_liefert_leer(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Unter Linux mit gepatchtem ``sys.platform='win32'`` fehlt ``ctypes.windll`` → ``{}`` statt Absturz."""
+    """Fehlt ``ctypes.windll`` bei simuliertem Windows (``sys.platform``/``_WINDOWS``) → ``{}`` statt Absturz."""
     from to_spawn import prozessbaum
 
     monkeypatch.setattr(prozessbaum.sys, "platform", "win32")
     monkeypatch.delattr(prozessbaum.ctypes, "windll", raising=False)
+    assert prozessbaum.fensterlos() == {}
+    monkeypatch.setattr(prozessbaum, "_WINDOWS", True)
     assert prozessbaum.fensterlos() == {}
