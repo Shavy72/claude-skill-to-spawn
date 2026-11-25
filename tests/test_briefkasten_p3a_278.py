@@ -169,7 +169,7 @@ def test_cli_nutzer_antwort_im_terminal(
     monkeypatch.setenv("TO_SPAWN_LOG_RUECKFALL", str(tmp_path))
     monkeypatch.setattr(sys.stdin, "isatty", lambda: True, raising=False)
     # Unter Windows zählt nur eine echte Konsole; der Test täuscht das Terminal an der Naht vor.
-    monkeypatch.setattr(briefkasten_cli.briefkasten, "stdin_ist_terminal", lambda: True)
+    monkeypatch.setattr(briefkasten_cli.konsole, "stdin_ist_terminal", lambda: True)
     args = argparse.Namespace(
         befehl="nutzer-antwort", ticket="7", frage_id=fid, wahl="nein", grund="noch nicht", beleg=[]
     )

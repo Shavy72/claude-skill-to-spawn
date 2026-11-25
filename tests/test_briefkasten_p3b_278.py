@@ -164,7 +164,7 @@ def test_nutzer_antwort_meldet_liegende_kaputt_datei(
     monkeypatch.setenv("TO_SPAWN_LOG_RUECKFALL", str(tmp_path))
     monkeypatch.setattr(sys.stdin, "isatty", lambda: True, raising=False)
     # Unter Windows zählt nur eine echte Konsole; der Test täuscht das Terminal an der Naht vor.
-    monkeypatch.setattr(briefkasten_cli.briefkasten, "stdin_ist_terminal", lambda: True)
+    monkeypatch.setattr(briefkasten_cli.konsole, "stdin_ist_terminal", lambda: True)
     args = argparse.Namespace(befehl="nutzer-antwort", ticket="7", frage_id=fid, wahl="neu", grund="ok", beleg=[])
     assert briefkasten_cli.lauf(args) == 0
     aus = capsys.readouterr().out

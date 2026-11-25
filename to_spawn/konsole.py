@@ -62,7 +62,7 @@ def stdin_ist_terminal() -> bool:
 
     Unter Windows meldet ``isatty()`` auch das Gerät ``NUL`` (``< /dev/null``, ``stdin=DEVNULL``) als
     Terminal; dort zählt darum nur eine echte Konsole (``GetConsoleMode`` gelingt). Im Zweifel ``False``.
-    Wächter: ``tests/test_terminal_pruefung_windows_553.py`` (kein ``isatty()`` daneben).
+    Prüf-Test: ``tests/test_terminal_pruefung_windows_553.py`` (kein ``isatty()`` daneben).
     """
     if sys.stdin is None or not sys.stdin.isatty():
         return False
