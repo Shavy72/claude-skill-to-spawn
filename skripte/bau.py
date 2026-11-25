@@ -843,10 +843,12 @@ def staffel_prompt(prompt: str, handoff: Path, runde: int) -> str:
 
 
 def resume_prompt(ticket: str) -> str:
-    """Kurzer Weiter-Text, wenn der Aufpasser eine Session mit ``--resume`` fortsetzt."""
+    """Kurzer Weiter-Text, wenn der Aufpasser eine Session mit ``--resume`` fortsetzt (#236, #288)."""
     return (
         f"Aufpasser: Weiter mit Ticket #{ticket} genau dort, wo du warst. "
-        "Ticket offen? weiterbauen; nichts zu tun? ScheduleWakeup."
+        "Ticket noch offen? weiterbauen (bei offenem Blocker oder Checkpoint: ScheduleWakeup); "
+        "Ticket fertig gebaut oder geschlossen (nichts zu tun)? Loop mit stop: true beenden und "
+        "Session sofort mit /exit schließen — kein ScheduleWakeup."
     )
 
 
