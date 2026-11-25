@@ -148,7 +148,7 @@ def staffel_hook_pfad(repo: Path = REPO) -> Path:
     return eigene if eigene.is_file() else STAFFEL_HOOK_SKILL
 
 
-#: Frage-Sperre (#321): Bau-Sessions fragen David nie (AskUserQuestion aus, Stop mit Frage → weiter).
+#: Frage-Sperre (#321): Bau-Sessions fragen den Menschen nie (AskUserQuestion aus, Stop mit Frage → weiter).
 #: Wortgleich mit dem Server-Template (setup_bau_server_push.sh): Claude Code legt identische Befehle
 #: zusammen, der Hook läuft auf dem Bau-Server so nur einmal. ``~`` lösen Git-Bash und Linux auf.
 FRAGE_SPERRE_BEFEHL = "node ~/.claude/hooks/smart-zone/staffel/frage-sperre.mjs"
@@ -662,7 +662,7 @@ def frage_sperre_befehl() -> str:
 def staffel_aktiv(konfig: dict) -> bool:
     """Staffel-Neustart an der Smart-Zone-Grenze erlaubt? ``staffel.aktiv`` in der Repo-Konfig.
 
-    Aus (David, 24.09.2026): Neustarts mitten im Deploy-Gate brachen Tests ab und verloren
+    Aus (Vorgabe des Menschen, 24.09.2026): Neustarts mitten im Deploy-Gate brachen Tests ab und verloren
     Kontext. Die Smart Zone regelt dann allein der Ticket-Schnitt vorab; die Session baut
     ihr Ticket bis zum Ende durch.
 
