@@ -88,6 +88,65 @@ def lebt(pid: int) -> bool:
     return _lebt_windows(pid) if _WINDOWS else (_PROC / str(pid)).exists()
 
 
+def _startzeit_windows(pid: int) -> int | None:
+    """Startzeit von ``pid`` als Windows-FILETIME (100-ns-Takte ab 1601 UTC); tot/weg = ``None``.
+
+    Fragt zuerst ``GetProcessTimes`` (ein Aufruf); bei ``ERROR_ACCESS_DENIED`` (z. B. fremdes
+    Konto) liefert die Kernel-Momentaufnahme die Startzeit trotzdem.
+    """
+    kernel, _ = _win32()
+    ctypes.set_last_error(0)
+    griff = kernel.OpenProcess(_PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    if griff:
+        try:
+            code = ctypes.c_ulong(0)
+            if kernel.GetExitCodeProcess(griff, ctypes.byref(code)) and code.value != _STILL_ACTIVE:
+                return None
+            erstellt = ctypes.c_ulonglong(0)
+            ende = ctypes.c_ulonglong(0)
+            kern = ctypes.c_ulonglong(0)
+            nutzer = ctypes.c_ulonglong(0)
+            if kernel.GetProcessTimes(
+                griff, ctypes.byref(erstellt), ctypes.byref(ende), ctypes.byref(kern), ctypes.byref(nutzer)
+            ):
+                return erstellt.value or None
+            return None
+        finally:
+            kernel.CloseHandle(griff)
+    if ctypes.get_last_error() == _FEHLER_ZUGRIFF_VERWEIGERT:
+        eintrag = _momentaufnahme_windows().get(pid)
+        return eintrag[1] if eintrag and eintrag[1] else None
+    return None
+
+
+def alter_s(pid: int) -> float | None:
+    """Laufzeit von ``pid`` in Sekunden; Prozess weg oder unlesbar = ``None`` (#257)."""
+    if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
+        return None
+    if _WINDOWS:
+        try:
+            start = _startzeit_windows(pid)
+        except OSError:
+            return None
+        if not start or start < _FILETIME_EPOCH_100NS:
+            return None
+        return max(0.0, time.time() - (start - _FILETIME_EPOCH_100NS) / 10_000_000.0)
+    try:
+        stat = _proc(pid, "stat").decode("utf-8", errors="replace")
+        uptime = float((_PROC / "uptime").read_text(encoding="utf-8").split()[0])
+        takt = os.sysconf("SC_CLK_TCK")
+    except (OSError, ValueError, AttributeError):
+        return None
+    rest = stat[stat.rfind(")") + 2 :].split()
+    if len(rest) < 20 or takt <= 0:
+        return None
+    try:
+        start_s = int(rest[19]) / takt
+    except ValueError:
+        return None
+    return max(0.0, uptime - start_s)
+
+
 def prozesse() -> dict[int, tuple[int, str, int]]:
     """PID → (Eltern-PID, Kommandozeile, Startzeit) aller Prozesse; unlesbar = leer.
 
@@ -444,13 +503,19 @@ def _win32() -> tuple[Any, Any]:
     nt.NtQuerySystemInformation.restype = ulong
     nt.NtQueryInformationProcess.argtypes = [zeiger, ulong, zeiger, ulong, ctypes.POINTER(ulong)]
     nt.NtQueryInformationProcess.restype = ulong
-    # Ordner-Kennung (siehe :func:`arbeitsordner_in_windows`)
+    # Ordner-Kennung (siehe :func:`arbeitsordner_in_windows`), WOW64 (#259), Bildpfad (#243), Alter (#257)
     kernel.GetCurrentProcess.argtypes, kernel.GetCurrentProcess.restype = [], zeiger
     kernel.DuplicateHandle.argtypes = [zeiger, zeiger, zeiger, ctypes.POINTER(zeiger), ulong, ctypes.c_int, ulong]
     kernel.CreateFileW.argtypes = [ctypes.c_wchar_p, ulong, ulong, zeiger, ulong, ulong, zeiger]
     kernel.CreateFileW.restype = zeiger
     kernel.GetFinalPathNameByHandleW.argtypes = [zeiger, ctypes.c_wchar_p, ulong, ulong]
     kernel.GetFinalPathNameByHandleW.restype = ulong
+    ushort_p = ctypes.POINTER(ctypes.c_ushort)
+    kernel.IsWow64Process2.argtypes, kernel.IsWow64Process2.restype = [zeiger, ushort_p, ushort_p], ctypes.c_int
+    kernel.QueryFullProcessImageNameW.argtypes = [zeiger, ulong, ctypes.c_wchar_p, ctypes.POINTER(ulong)]
+    kernel.QueryFullProcessImageNameW.restype = ctypes.c_int
+    u64_p = ctypes.POINTER(ctypes.c_ulonglong)
+    kernel.GetProcessTimes.argtypes, kernel.GetProcessTimes.restype = [zeiger, u64_p, u64_p, u64_p, u64_p], ctypes.c_int
     for abfrage in (nt.NtQueryInformationFile, nt.NtQueryVolumeInformationFile):
         abfrage.argtypes, abfrage.restype = [zeiger, zeiger, zeiger, ulong, ulong], ulong
     return kernel, nt
@@ -554,36 +619,91 @@ _PROCESS_VM_READ = 0x0010
 _STILL_ACTIVE = 259
 _FEHLER_ZUGRIFF_VERWEIGERT = 5
 _FEHLER_UNGUELTIGER_PARAMETER = 87  # OpenProcess: PID gibt es nicht (mehr)
+_FEHLER_PUFFER_ZU_KLEIN = 122  # QueryFullProcessImageNameW: ERROR_INSUFFICIENT_BUFFER
+_PROCESS_WOW64_INFORMATION = 26
+_IMAGE_FILE_MACHINE_UNKNOWN = 0
 _PEB_PROCESS_PARAMETERS = 0x20
 _PARAMS_CURRENT_DIRECTORY = 0x38
+_PEB32_PROCESS_PARAMETERS = 0x10
+_PARAMS32_CURRENT_DIRECTORY = 0x24
+_MSYS_DLLS = ("msys-2.0.dll", "cygwin1.dll")
+_FILETIME_EPOCH_100NS = 116_444_736_000_000_000  # 1601-01-01 → 1970-01-01 in 100-ns-Takten
 
 
 class _LeereCwd(OSError):
     """PEB lesbar, cwd darin (noch) leer — Startphase: sperrt immer, auch bei fremden Prozessen."""
 
 
-def _arbeitsordner_windows(pid: int) -> str | None:
-    """Win32-cwd von ``pid``; ``None`` = nicht zu prüfen (weg, beendet, fremd/geschützt —
-    wie ``PermissionError`` unter ``/proc``); ``OSError`` = läuft, ist offen, liefert aber nichts.
+class _MsysZugriffVerweigert(OSError):
+    """MSYS/Cygwin-Prozess mit verweigertem Zugriff (z. B. erhöht gestartet, #243): sperrt immer."""
 
-    ponytail: 32-Bit-Prozesse (WOW64) führen ihre cwd im 32-Bit-PEB, hier steht die vom
-    Start; Upgrade: ``ProcessWow64Information`` + PEB32 lesen. Die Umbenennungs-Probe
-    deckt native 32-Bit-Prozesse ab.
+
+def _bildpfad_windows(pid: int) -> str | None:
+    """Vollständiger Bildpfad von ``pid`` (``QueryFullProcessImageNameW`` mit
+    ``PROCESS_QUERY_LIMITED_INFORMATION`` — klappt auch bei erhöhten Prozessen, #243);
+    weg, beendet oder nicht lesbar = ``None``."""
+    kernel, _ = _win32()
+    griff = kernel.OpenProcess(_PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    if not griff:
+        return None
+    try:
+        code = ctypes.c_ulong(0)
+        if kernel.GetExitCodeProcess(griff, ctypes.byref(code)) and code.value != _STILL_ACTIVE:
+            return None
+        groesse = 1024
+        for _ in range(3):
+            puffer = ctypes.create_unicode_buffer(groesse)
+            laenge = ctypes.c_ulong(groesse)
+            if kernel.QueryFullProcessImageNameW(griff, 0, puffer, ctypes.byref(laenge)):
+                return puffer.value
+            if ctypes.get_last_error() != _FEHLER_PUFFER_ZU_KLEIN:
+                return None
+            groesse *= 2
+        return None
+    finally:
+        kernel.CloseHandle(griff)
+
+
+def _ist_msys_bildpfad(bildpfad: str | None) -> bool:
+    """Liegt ``bildpfad`` neben ``msys-2.0.dll`` oder ``cygwin1.dll`` (Git Bash / MSYS / Cygwin)?
+
+    Nur solche Programme halten ihre Win32-cwd ohne Umbenennungs-Sperre offen (#243)."""
+    if not bildpfad:
+        return False
+    ordner = Path(bildpfad).parent
+    return any((ordner / dll).is_file() for dll in _MSYS_DLLS)
+
+
+def _arbeitsordner_windows(pid: int) -> str | None:
+    """Win32-cwd von ``pid`` (64-Bit-PEB bzw. 32-Bit-PEB bei WOW64, #259).
+
+    ``None`` = nicht zu prüfen (weg, beendet oder ``OpenProcess`` verweigert — unter Windows
+    trifft das anders als ``PermissionError`` unter ``/proc`` auch eigene erhöhte Prozesse,
+    #243). Ausnahme: ein nicht zu öffnender MSYS-/Cygwin-Prozess (Bildpfad neben
+    ``msys-2.0.dll``/``cygwin1.dll``) wirft :class:`_MsysZugriffVerweigert`, weil die
+    Umbenennungs-Probe dessen cwd nicht sieht. Sonstiges ``OSError`` = läuft, ist offen,
+    liefert aber nichts.
     """
     kernel, _ = _win32()
     ctypes.set_last_error(0)
     griff = kernel.OpenProcess(_PROCESS_QUERY_INFORMATION | _PROCESS_VM_READ, False, pid)
     if not griff:
         fehler = ctypes.get_last_error()
-        if fehler in (_FEHLER_ZUGRIFF_VERWEIGERT, _FEHLER_UNGUELTIGER_PARAMETER):
+        if fehler == _FEHLER_UNGUELTIGER_PARAMETER:
+            return None
+        if fehler == _FEHLER_ZUGRIFF_VERWEIGERT:
+            bild = _bildpfad_windows(pid)
+            if _ist_msys_bildpfad(bild):
+                raise _MsysZugriffVerweigert(
+                    fehler, f"Prozess {pid} ({bild}): Zugriff verweigert, MSYS/Cygwin-cwd unlesbar"
+                )
             return None
         raise OSError(fehler, f"OpenProcess({pid}) gescheitert")
     try:
         code = ctypes.c_ulong(0)
         if kernel.GetExitCodeProcess(griff, ctypes.byref(code)) and code.value != _STILL_ACTIVE:
             return None  # beendet, nur noch Griffe offen (wie Zombie unter Linux)
-        kopf = _curdir(griff, pid)
-        bytes_lang, puffer_adresse = int.from_bytes(kopf[:2], "little"), int.from_bytes(kopf[8:16], "little")
+        bytes_lang, puffer_adresse, _, _ = _curdir(griff, pid)
         if not bytes_lang or not puffer_adresse:
             raise _LeereCwd(f"Prozess {pid}: leere cwd im PEB")
         try:
@@ -643,16 +763,53 @@ def _speicher(prozess: int, pid: int, adresse: int, anzahl: int) -> bytes:
     return puffer.raw
 
 
-def _curdir(prozess: int, pid: int) -> bytes:
-    """``CURDIR`` aus dem PEB (x64): Bytes 0–15 ``UNICODE_STRING DosPath``, 16–23 ``Handle``."""
+def _ist_wow64(prozess: int, pid: int) -> bool:
+    """Läuft ``prozess`` als 32-Bit-Prozess unter WOW64 (``IsWow64Process2``)? Fehler = ``OSError``."""
+    kernel, _ = _win32()
+    prozess_maschine = ctypes.c_ushort(0)
+    host_maschine = ctypes.c_ushort(0)
+    if not kernel.IsWow64Process2(prozess, ctypes.byref(prozess_maschine), ctypes.byref(host_maschine)):
+        raise OSError(ctypes.get_last_error(), f"IsWow64Process2({pid}) gescheitert")
+    return prozess_maschine.value != _IMAGE_FILE_MACHINE_UNKNOWN
+
+
+def _curdir(prozess: int, pid: int) -> tuple[int, int, int, bytes]:
+    """``CURDIR`` aus dem PEB (x64 oder 32-Bit-PEB bei WOW64, #259).
+
+    Rückgabe: ``(dospath_bytes, dospath_puffer, ordner_griff, rohbytes)``."""
     _, nt = _win32()
-    basis = (ctypes.c_void_p * 6)()  # PROCESS_BASIC_INFORMATION, [1] = PebBaseAddress
     laenge = ctypes.c_ulong(0)
+    if _ist_wow64(prozess, pid):
+        peb32 = ctypes.c_void_p(0)
+        status = nt.NtQueryInformationProcess(
+            prozess, _PROCESS_WOW64_INFORMATION, ctypes.byref(peb32), ctypes.sizeof(peb32), ctypes.byref(laenge)
+        )
+        if status or not peb32.value:
+            raise OSError(f"NtQueryInformationProcess(Wow64, {pid}): Status 0x{status:08X}")
+        parameter = int.from_bytes(_speicher(prozess, pid, peb32.value + _PEB32_PROCESS_PARAMETERS, 4), "little")
+        if not parameter:
+            raise OSError(f"Prozess {pid}: leere ProcessParameters im 32-Bit-PEB")
+        roh = _speicher(prozess, pid, parameter + _PARAMS32_CURRENT_DIRECTORY, 12)
+        return (
+            int.from_bytes(roh[:2], "little"),
+            int.from_bytes(roh[4:8], "little"),
+            int.from_bytes(roh[8:12], "little"),
+            roh,
+        )
+    basis = (ctypes.c_void_p * 6)()  # PROCESS_BASIC_INFORMATION, [1] = PebBaseAddress
     status = nt.NtQueryInformationProcess(prozess, 0, basis, ctypes.sizeof(basis), ctypes.byref(laenge))
     if status or not basis[1]:
         raise OSError(f"NtQueryInformationProcess({pid}): Status 0x{status:08X}")
     parameter = int.from_bytes(_speicher(prozess, pid, basis[1] + _PEB_PROCESS_PARAMETERS, 8), "little")
-    return _speicher(prozess, pid, parameter + _PARAMS_CURRENT_DIRECTORY, 24)
+    if not parameter:
+        raise OSError(f"Prozess {pid}: leere ProcessParameters im PEB")
+    roh = _speicher(prozess, pid, parameter + _PARAMS_CURRENT_DIRECTORY, 24)
+    return (
+        int.from_bytes(roh[:2], "little"),
+        int.from_bytes(roh[8:16], "little"),
+        int.from_bytes(roh[16:24], "little"),
+        roh,
+    )
 
 
 # --- Ordner-Identität statt Pfad-Text (PR 233, Fix-Runde 2) ---------------------------------
@@ -787,8 +944,7 @@ def _arbeitsordner_griff_windows(pid: int) -> int | None:
         if kernel.GetExitCodeProcess(prozess, ctypes.byref(code)) and code.value != _STILL_ACTIVE:
             return None
 
-        vorher = _curdir(prozess, pid)
-        fremd = int.from_bytes(vorher[16:24], "little")
+        _, _, fremd, vorher = _curdir(prozess, pid)
         if not fremd:
             raise OSError(f"Prozess {pid}: kein cwd-Griff im PEB")
         kopie = ctypes.c_void_p()
@@ -796,9 +952,12 @@ def _arbeitsordner_griff_windows(pid: int) -> int | None:
             prozess, fremd, kernel.GetCurrentProcess(), ctypes.byref(kopie), 0, False, _DUPLICATE_SAME_ACCESS
         ):
             raise OSError(ctypes.get_last_error(), f"DuplicateHandle({pid}) gescheitert")
-        if _curdir(prozess, pid) != vorher:  # cwd wechselte: der Griff-Wert kann schon einem anderen gehören
+        try:
+            if _curdir(prozess, pid)[3] != vorher:  # cwd wechselte: der Griff-Wert kann schon einem anderen gehören
+                raise OSError(f"Prozess {pid}: cwd wechselte während der Prüfung")
+        except Exception:
             kernel.CloseHandle(kopie)
-            raise OSError(f"Prozess {pid}: cwd wechselte während der Prüfung")
+            raise
         return kopie.value
     finally:
         kernel.CloseHandle(prozess)
@@ -845,7 +1004,7 @@ def arbeitsordner_in_windows(ordner: str | Path) -> dict[int, ArbeitsordnerBefun
             text = _arbeitsordner_windows(pid)
         except OSError as fehler:
             log.debug("cwd von Prozess %s unlesbar: %s", pid, fehler)
-            if not isinstance(fehler, _LeereCwd) and _ist_fremd_windows(pid):
+            if not isinstance(fehler, (_LeereCwd, _MsysZugriffVerweigert)) and _ist_fremd_windows(pid):
                 continue  # fremder Benutzer: wie nicht zu öffnen (#243, #552)
             ergebnis[pid] = ArbeitsordnerBefund(None, None, f"cwd unlesbar: {fehler}")
             continue

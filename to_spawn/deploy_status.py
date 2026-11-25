@@ -22,7 +22,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from . import bau_log, config
+from . import bau_log, config, prozessbaum
 
 log = logging.getLogger("to_spawn.deploy_status")
 
@@ -127,18 +127,19 @@ def _einzeilig(text: Any) -> str:
 
 
 def prozess_lebt(pid: Any) -> bool | None:
-    """True = lebt, False = sicher tot, None = unbekannt (keine PID, Windows, Fehler).
+    """True = lebt, False = sicher tot, None = unbekannt (keine PID, Fehler).
 
-    Unter Windows gibt es keine Prüfung: ``os.kill(pid, 0)`` würde dort den
-    Prozess beenden, und die PID aus Git-Bash ist keine Windows-PID.
+    Linux fragt ``os.kill(pid, 0)``, Windows die Kernel-Tür
+    :func:`to_spawn.prozessbaum.lebt` (#257).
     """
-    if (
-        not isinstance(pid, int)
-        or isinstance(pid, bool)
-        or pid <= 0
-        or sys.platform == "win32"
-    ):
+    if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
         return None
+    if sys.platform == "win32":
+        try:
+            return prozessbaum.lebt(pid)
+        except OSError as fehler:
+            log.warning("PID %s nicht prüfbar: %s", pid, fehler)
+            return None
     try:
         os.kill(pid, 0)
     except ProcessLookupError:

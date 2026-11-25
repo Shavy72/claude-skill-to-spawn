@@ -1378,6 +1378,8 @@ class Aufpasser:
         return "|".join(dict.fromkeys(teile)) or NIE_MUSTER
 
     def _prozess_alter_s(self, pid: int) -> float | None:
+        if sys.platform == "win32":
+            return prozessbaum.alter_s(pid)
         try:
             raus = self.sh("ps", "-o", "etimes=", "-p", str(pid), timeout=30).strip()
             return float(raus) if raus else None
