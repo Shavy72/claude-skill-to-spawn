@@ -238,6 +238,8 @@ def _tote_pid() -> int:
     return kind.pid
 
 
+# Unter Windows meldet ``prozess_lebt`` bewusst „unbekannt“ (Git-Bash-PID ist keine Windows-PID).
+@pytest.mark.braucht("posix")
 def test_getoeteter_gate_prozess_ohne_ende_meldet_rot(repo: Path) -> None:
     start, vor, pytest_zeile = _laeuft()
     daten = json.loads(start)

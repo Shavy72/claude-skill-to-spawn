@@ -66,8 +66,12 @@ if [ "$NUR_WACHE" -eq 1 ] && [ "$OHNE_WACHE" -eq 1 ]; then
 fi
 
 # Python für die Skill-Aufrufe: Repo-venv, wenn vorhanden, sonst python3 (#257 F4: ein PY für alles).
+# Windows (Git-Bash): python3 ist dort oft nur der Store-Platzhalter → "python" wie
+# leitstand_fenster.python_befehl; venv dort unter Scripts/.
 PY=python3
+case "$(uname -s)" in MINGW* | MSYS* | CYGWIN*) PY=python ;; esac
 [ -x "$REPO/.venv/bin/python" ] && PY="$REPO/.venv/bin/python"
+[ -x "$REPO/.venv/Scripts/python.exe" ] && PY="$REPO/.venv/Scripts/python.exe"
 
 # Manifest-Ordner aus der Repo-Konfig (pfade.manifeste, L1 P4b); fehlt der Schlüssel, gilt die
 # Vorgabe aus to_spawn/config.py. Nicht ermittelbar → Abbruch, kein stiller Rückfall (F4).
