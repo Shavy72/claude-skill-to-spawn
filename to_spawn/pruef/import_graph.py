@@ -187,6 +187,35 @@ def _modul_index(dateien: Sequence[str]) -> tuple[dict[str, set[str]], dict[str,
     return modul_zu_pfaden, pfad_zu_modulen
 
 
+def _import_anweisungen(baum: ast.Module) -> list[ast.Import | ast.ImportFrom]:
+    """Sammelt alle ``import``/``from … import``-Anweisungen ohne Ausdrucks-Unterbäume zu durchlaufen."""
+    treffer: list[ast.Import | ast.ImportFrom] = []
+    stapel: list[Sequence[ast.stmt]] = [baum.body]
+    while stapel:
+        block = stapel.pop()
+        for knoten in block:
+            if isinstance(knoten, (ast.Import, ast.ImportFrom)):
+                treffer.append(knoten)
+            elif isinstance(knoten, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.With, ast.AsyncWith)):
+                stapel.append(knoten.body)
+            elif isinstance(knoten, (ast.If, ast.For, ast.AsyncFor, ast.While)):
+                stapel.append(knoten.body)
+                if knoten.orelse:
+                    stapel.append(knoten.orelse)
+            elif isinstance(knoten, (ast.Try, ast.TryStar)):
+                stapel.append(knoten.body)
+                for handler in knoten.handlers:
+                    stapel.append(handler.body)
+                if knoten.orelse:
+                    stapel.append(knoten.orelse)
+                if knoten.finalbody:
+                    stapel.append(knoten.finalbody)
+            elif isinstance(knoten, ast.Match):
+                for fall in knoten.cases:
+                    stapel.append(fall.body)
+    return treffer
+
+
 def _statische_importe(
     datei: Path,
     pfad: str,
@@ -210,7 +239,7 @@ def _statische_importe(
                 if ziel != pfad:
                     ziele.add(ziel)
 
-    for knoten in ast.walk(baum):
+    for knoten in _import_anweisungen(baum):
         if isinstance(knoten, ast.Import):
             for eintrag in knoten.names:
                 _aufloesen(eintrag.name)
@@ -237,14 +266,23 @@ def _statische_importe(
     return ziele
 
 
-def baue_graph(repo: Path) -> ImportGraph:
-    """Scannt alle Python-Dateien in ``repo`` und baut den statischen AST-Import-Graph."""
+def baue_graph(repo: Path, *, extra_dateien: Iterable[str] = ()) -> ImportGraph:
+    """Scannt alle Python-Dateien in ``repo`` und baut den statischen AST-Import-Graph.
+
+    ``extra_dateien`` nimmt auch gelöschte/umbenannte ``.py``-Pfade aus dem Diff als virtuelle
+    Zielknoten auf, damit verbliebene Dateien mit Alt-Import weiterhin gefunden werden.
+    """
     start = time.perf_counter()
     dateien = _py_dateien(repo)
-    modul_zu_pfaden, pfad_zu_modulen = _modul_index(dateien)
+    vorhanden = frozenset(dateien)
+    virtuell = sorted(
+        {norm for pfad in extra_dateien if (norm := regeln.normal(pfad)).endswith(".py") and norm not in vorhanden}
+    )
+    alle = sorted([*dateien, *virtuell])
+    modul_zu_pfaden, pfad_zu_modulen = _modul_index(alle)
 
     importe_roh: dict[str, set[str]] = {pfad: set() for pfad in dateien}
-    nutzer_roh: dict[str, set[str]] = {pfad: set() for pfad in dateien}
+    nutzer_roh: dict[str, set[str]] = {pfad: set() for pfad in alle}
 
     for pfad in dateien:
         ziele = _statische_importe(repo / pfad, pfad, pfad_zu_modulen[pfad], modul_zu_pfaden)
@@ -359,10 +397,12 @@ def auswaehlen(
         roh_pfade = list(geaendert)
 
     norm_geaendert = tuple(sorted({regeln.normal(p) for p in roh_pfade if p and p.strip()}))
-    fertiger_graph = graph if graph is not None else baue_graph(repo)
+    fertiger_graph = (
+        graph if graph is not None else baue_graph(repo, extra_dateien=(p for p in norm_geaendert if p.endswith(".py")))
+    )
     wurzeln = test_wurzeln(repo, test_pfade)
     alle_tests = tuple(p for p in fertiger_graph.dateien if ist_test_datei(p, wurzeln))
-    bekannt = frozenset(fertiger_graph.dateien)
+    bekannt = frozenset(fertiger_graph.dateien) | frozenset(fertiger_graph.nutzer)
 
     betroffen: set[str] = {p for p in norm_geaendert if p in bekannt}
     # Wird eine Paket-``__init__.py`` direkt geändert, läuft sie beim Import jedes Untermoduls mit.

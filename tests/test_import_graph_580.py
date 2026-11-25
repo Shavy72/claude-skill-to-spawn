@@ -179,6 +179,25 @@ def test_import_graph_paket_hat_vorrang_vor_gleichnamigem_skript(tmp_path: Path)
     assert wahl.tests == ("tests/test_a.py",)
 
 
+def test_import_graph_waehlt_tests_fuer_geloeschtes_oder_umbenanntes_modul(tmp_path: Path) -> None:
+    """Wird ein Modul gelöscht/umbenannt, werden verbliebene Tests mit Alt-Import weiter gewählt."""
+    repo = tmp_path / "umbenannt_mod"
+    _schreibe(repo, "rechner.py", "def addiere(a: int, b: int) -> int:\n    return a + b\n")
+    _schreibe(
+        repo, "tests/test_neu.py", "from rechner import addiere\n\ndef test_neu():\n    assert addiere(1, 2) == 3\n"
+    )
+    _schreibe(
+        repo,
+        "tests/test_alt.py",
+        "from rechnen import addiere\n\ndef test_alt():\n    assert addiere(1, 2) == 3\n",
+    )
+    _schreibe(repo, "tests/test_fremd.py", "def test_fremd():\n    assert True\n")
+
+    # rechnen.py existiert nach ``git mv rechnen.py rechner.py`` nicht mehr auf Platte.
+    wahl = import_graph.auswaehlen(repo, geaendert=["rechnen.py", "rechner.py", "tests/test_neu.py"])
+    assert wahl.tests == ("tests/test_alt.py", "tests/test_neu.py")
+
+
 def test_import_graph_laufzeit_auf_skill_repo_in_sekunden() -> None:
     """Lokal auf dem echten Skill-Repo (ohne Einzelpaket-Zwang): echte Auswahl unter 5 s."""
     wahl = import_graph.auswaehlen(WURZEL, geaendert=["to_spawn/pruef/regeln.py"])
