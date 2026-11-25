@@ -43,17 +43,30 @@ def _wurzel_eintraege() -> set[str]:
     return {p.name for p in SKILL.iterdir() if not p.name.startswith((".", "__"))}
 
 
-def test_install_ps1_kopiert_jeden_wurzel_eintrag() -> None:
+def _kopiert_ps1() -> set[str]:
     text = (SKILL / "install.ps1").read_text(encoding="utf-8")
-    liste = re.search(r"foreach \(\$f in @\((.*?)\)\)", text, re.S)
+    liste = re.search(r"foreach \(\$f in @\((.*?)\)\)", text, re.DOTALL)
     assert liste, "Kopierliste in install.ps1 nicht gefunden"
-    kopiert = set(re.findall(r'"([^"]+)"', liste.group(1)))
-    assert _wurzel_eintraege() - kopiert == set()
+    return set(re.findall(r'"([^"]+)"', liste.group(1)))
+
+
+def _kopiert_sh() -> set[str]:
+    text = (SKILL / "install.sh").read_text(encoding="utf-8")
+    liste = re.search(r"for eintrag in (.*?); do", text, re.DOTALL)
+    assert liste, "Kopierliste in install.sh nicht gefunden"
+    return set(liste.group(1).replace("\\", " ").split())
+
+
+def test_install_ps1_kopiert_jeden_wurzel_eintrag() -> None:
+    assert _wurzel_eintraege() - _kopiert_ps1() == set()
 
 
 def test_install_sh_kopiert_jeden_wurzel_eintrag() -> None:
-    text = (SKILL / "install.sh").read_text(encoding="utf-8")
-    liste = re.search(r"for eintrag in (.*?); do", text, re.S)
-    assert liste, "Kopierliste in install.sh nicht gefunden"
-    kopiert = set(liste.group(1).replace("\\", " ").split())
-    assert _wurzel_eintraege() - kopiert == set()
+    assert _wurzel_eintraege() - _kopiert_sh() == set()
+
+
+def test_beide_installer_kopieren_gleiche_wurzel_eintraege() -> None:
+    """#329: ``install.sh`` und ``install.ps1`` pflegen dieselbe Kopierliste inkl. ``review``."""
+    sh, ps1 = _kopiert_sh(), _kopiert_ps1()
+    assert sh == ps1
+    assert "review" in sh
