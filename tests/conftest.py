@@ -518,19 +518,51 @@ def _arbeitsstand_im_test(monkeypatch: pytest.MonkeyPatch, _keine_to_spawn_umgeb
     monkeypatch.setenv("TO_SPAWN_TEST_ARBEITSSTAND_OK", "1")
 
 
+def _eigene_nachfahren(alle: dict[int, tuple[int, int]], wurzel: int) -> dict[int, tuple[int, int]]:
+    """Filtert eine Windows-Momentaufnahme auf Nachfahren von ``wurzel`` (#649).
+
+    So sieht die Hausmeister-Prüfung in Tests nie fremde Rechner-Prozesse (die gerade starten
+    oder enden und ohne cwd-Griff im PEB einen Test zufällig sperren), wohl aber jeden vom
+    Test selbst gestarteten Kindprozess samt Enkeln (z. B. ``sleep``, ``git``, MSYS-Kind).
+    Recycelte Eltern-PIDs fallen heraus wie in :func:`prozessbaum._kinder`.
+    """
+    kinder: dict[int, list[int]] = {}
+    for pid, (eltern, start) in alle.items():
+        if pid == eltern:
+            continue
+        vorfahr = alle.get(eltern)
+        if vorfahr is None:
+            if eltern != wurzel:
+                continue
+        elif vorfahr[1] and start and vorfahr[1] > start:
+            continue
+        kinder.setdefault(eltern, []).append(pid)
+    eigene: set[int] = set()
+    warteschlange = list(kinder.get(wurzel, ()))
+    while warteschlange:
+        pid = warteschlange.pop()
+        if pid not in eigene:
+            eigene.add(pid)
+            warteschlange.extend(kinder.get(pid, ()))
+    return {pid: alle[pid] for pid in eigene}
+
+
 @pytest.fixture(autouse=True)
 def _hausmeister_nur_im_test(
     tmp_path_factory: pytest.TempPathFactory,
     monkeypatch: pytest.MonkeyPatch,
     _keine_to_spawn_umgebung: None,
 ) -> None:
-    """Hausmeister (#1369) räumt in Tests nie echte Ordner auf.
+    """Hausmeister (#1369) räumt in Tests nie echte Ordner auf und sieht keine Fremdprozesse (#649).
 
     Start-Check (``to_spawn.py speicher``, ``bau.py``) und Aufpasser rufen
     ``hausmeister.aufraeumen_alles`` — ohne diese Fixture liefe das mit
     ``loeschen=True`` über die echten ``~/wt/*`` der Testmaschine. Wurzeln zeigen
-    auf einen leeren Ordner, Logs in ``tmp``, Platte gilt als frei. Tests mit
-    eigener Welt (``test_hausmeister_1368/1369``) setzen die Variablen neu.
+    auf einen leeren Ordner, Logs in ``tmp``, Platte gilt als frei. Unter Windows
+    bleibt die Prozessprüfung bei eigenen Kindprozessen (kein echtes PowerShell,
+    keine fremden Rechner-Prozesse im PEB). Tests mit eigener Welt
+    (``test_hausmeister_1368/1369``) setzen die Variablen neu; PowerShell-Attrappen
+    (``_POWERSHELL != "powershell"``) und direkte ``_prozesse()``-Tests laufen normal.
     """
     ordner = tmp_path_factory.mktemp("hausmeister")
     monkeypatch.setenv("TO_SPAWN_HAUSMEISTER_WURZELN", str(ordner / "keine" / "*"))
@@ -560,6 +592,41 @@ def _hausmeister_nur_im_test(
     # #145: Sicherung (Rundgang, Aufseher-Ablösung) schreibt nur in tmp, lädt keine echten Zweige hoch.
     monkeypatch.setenv("TO_SPAWN_SICHERUNG_ZIEL", str(ordner / "sicherung"))
     monkeypatch.setenv("TO_SPAWN_SICHERUNG_ZWEIG_REPOS", "")
+
+    # #649: Windows-Prozessprüfung des Hausmeisters sieht nie fremde Rechner-Prozesse.
+    from to_spawn import hausmeister_windows
+
+    echt_kein_prozess = hausmeister_windows.kein_prozess
+    echt_prozesse = hausmeister_windows._prozesse
+
+    def _kein_prozess_im_test(ziel: Path) -> None:
+        if hausmeister_windows._POWERSHELL == "powershell" and hausmeister_windows._prozesse is echt_prozesse:
+            hausmeister_windows._prozesse = list
+            try:
+                echt_kein_prozess(ziel)
+            finally:
+                hausmeister_windows._prozesse = echt_prozesse
+            return
+        echt_kein_prozess(ziel)
+
+    monkeypatch.setattr(hausmeister_windows, "kein_prozess", _kein_prozess_im_test)
+
+    echt_arbeitsordner = prozessbaum.arbeitsordner_in_windows
+
+    def _arbeitsordner_nur_eigene(ziel: str | Path) -> dict[int, prozessbaum.ArbeitsordnerBefund]:
+        echt_momentaufnahme = prozessbaum._momentaufnahme_windows
+        ich = os.getpid()
+
+        def _nur_eigene_momentaufnahme() -> dict[int, tuple[int, int]]:
+            return _eigene_nachfahren(echt_momentaufnahme(), ich)
+
+        prozessbaum._momentaufnahme_windows = _nur_eigene_momentaufnahme
+        try:
+            return echt_arbeitsordner(ziel)
+        finally:
+            prozessbaum._momentaufnahme_windows = echt_momentaufnahme
+
+    monkeypatch.setattr(prozessbaum, "arbeitsordner_in_windows", _arbeitsordner_nur_eigene)
 
 
 @pytest.fixture(autouse=True)
