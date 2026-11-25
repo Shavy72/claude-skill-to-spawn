@@ -6,8 +6,10 @@ Alles in Wegwerf-Ordnern, nie gegen das echte ``~/.claude``; ``gh`` ist eine Att
 
 from __future__ import annotations
 
+import contextlib
 import os
 import shutil
+import socket
 import stat
 import subprocess
 import sys
@@ -19,6 +21,15 @@ SKILL = Path(__file__).resolve().parent.parent
 BASH = shutil.which("bash")
 GIT = shutil.which("git")
 brauche_bash = pytest.mark.skipif(BASH is None or GIT is None, reason="braucht bash und git")
+
+
+def _freie_ports(anzahl: int) -> list[int]:
+    """Reserviert ``anzahl`` freie Ports gleichzeitig, damit laufende Proben (18502/18503) nicht stören."""
+    with contextlib.ExitStack() as stapel:
+        sockets = [stapel.enter_context(socket.socket()) for _ in range(anzahl)]
+        for sock in sockets:
+            sock.bind(("127.0.0.1", 0))
+        return [int(sock.getsockname()[1]) for sock in sockets]
 
 
 @brauche_bash
@@ -65,6 +76,7 @@ def test_anlegen_github_pusht_main_mit_startcommit(tmp_path: Path) -> None:
     )
     gh.chmod(gh.stat().st_mode | stat.S_IEXEC)
     ziel = tmp_path / "lauf"
+    app_port, staging_port, live_port = _freie_ports(3)
     env = dict(os.environ, PATH=f"{bin_ordner}{os.pathsep}{os.environ['PATH']}")
     lauf = subprocess.run(
         [
@@ -72,6 +84,12 @@ def test_anlegen_github_pusht_main_mit_startcommit(tmp_path: Path) -> None:
             str(SKILL / "probe" / "anlegen.sh"),
             str(ziel),
             "mit-staging",
+            "--app-port",
+            str(app_port),
+            "--staging-port",
+            str(staging_port),
+            "--live-port",
+            str(live_port),
             "--github",
             "Shavy72/to-spawn-probe-x-mit",
         ],
@@ -128,6 +146,7 @@ def test_447_anlegen_github_push_fehler_meldet_leeres_fern_repo(tmp_path: Path) 
     )
     gh.chmod(gh.stat().st_mode | stat.S_IEXEC)
     ziel = tmp_path / "lauf_push_fehler"
+    app_port, staging_port, live_port = _freie_ports(3)
     env = dict(os.environ, PATH=f"{bin_ordner}{os.pathsep}{os.environ['PATH']}")
     lauf = subprocess.run(
         [
@@ -135,6 +154,12 @@ def test_447_anlegen_github_push_fehler_meldet_leeres_fern_repo(tmp_path: Path) 
             str(SKILL / "probe" / "anlegen.sh"),
             str(ziel),
             "mit-staging",
+            "--app-port",
+            str(app_port),
+            "--staging-port",
+            str(staging_port),
+            "--live-port",
+            str(live_port),
             "--github",
             "Shavy72/to-spawn-probe-x-mit",
         ],

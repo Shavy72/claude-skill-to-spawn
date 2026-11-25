@@ -60,7 +60,9 @@ Windows-PC (#426 Reihenfolge). Voraussetzung: Teile A–D gebaut und installiert
    ```
    `--github` legt das private GitHub-Repo (mit `probe` im Namen) an und pusht den Start-Commit
    auf `main`, damit Tickets als Issues entstehen können und der erste Pull-Request ein Ziel hat
-   (#467). Kein zweiter Schritt von Hand. Startzeit in die Messtabelle.
+   (#467). Kein zweiter Schritt von Hand. Fehlt `--staging-port`, leitet `anlegen.sh` den Port aus
+   `--app-port + 1` ab (`--live-port` aus `--app-port + 2`) und prüft vor dem Anlegen, ob alle
+   benötigten Ports frei sind (#787). Startzeit in die Messtabelle.
 2. **Spec + Tickets:** Das Beschluss-Protokoll `docs/GRILL_<datum>_probe.md` liegt schon im
    Lauf-Repo (Abschnitt 3; nicht neu grillen), dann `/to-spec docs/GRILL_<datum>_probe.md`,
    `/to-tickets`.
