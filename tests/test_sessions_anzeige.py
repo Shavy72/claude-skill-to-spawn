@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 import sys
@@ -9,6 +10,8 @@ from pathlib import Path
 
 import pytest
 from git_bash import git_bash  # tests/hilfen: eine Tür ``to_spawn.bash_wahl``
+
+from to_spawn import bash_wahl  # noqa: E402 — Pfad setzt ``git_bash``
 
 SKILL = Path(__file__).resolve().parent.parent
 NEST = SKILL / "nest" / "nest_server.sh"
@@ -57,7 +60,14 @@ def test_sessions_nimmt_spec_klon_sonst_repo(tmp_path: Path) -> None:
     block = tmp_path / "f.sh"
     block.write_text(_funktionen(), encoding="utf-8", newline="\n")
     skript = f'export HOME="{home.as_posix()}" REPO="{home.as_posix()}/duoplus-management"; source "{block.as_posix()}"; sessions 551; sessions 999; sessions'
-    lauf = subprocess.run([_bash() or "bash", "-c", skript], capture_output=True, text=True, check=False, timeout=30)
+    lauf = bash_wahl.lauf(
+        ["-c", skript],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=30,
+    )
     assert lauf.returncode == 0, lauf.stderr
     zeilen = lauf.stdout.splitlines()
     assert zeilen == ["KLON duoplus-551 551", "KLON duoplus-management 999", "KLON duoplus-management"]
@@ -74,10 +84,14 @@ def test_nest_nachtrag_ersetzt_alte_sessions_funktion_idempotent(tmp_path: Path)
     blk = tmp_path / "blk.sh"
     blk.write_text(m.group(0), encoding="utf-8", newline="\n")
     for _ in range(2):
-        lauf = subprocess.run(
-            [_bash() or "bash", str(blk)],
-            env={**__import__("os").environ, "NUTZER_HOME": str(tmp_path)},
-            capture_output=True, text=True, check=False, timeout=30,
+        lauf = bash_wahl.lauf(
+            [str(blk)],
+            env={**os.environ, "NUTZER_HOME": str(tmp_path)},
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
         )
         assert lauf.returncode == 0, lauf.stderr
     neu = (tmp_path / ".bashrc").read_text(encoding="utf-8")
