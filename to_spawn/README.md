@@ -251,8 +251,8 @@ oder `/proc` unlesbar = kein Urteil = frei. Test-Tür: `TO_SPAWN_SPEICHER_MEMINF
 
 ## Test
 
-Volle Suite: `bash skripte/suite.sh` (einziger Standard-Aufruf, Exit-Code von pytest;
-weitere Argumente gehen an pytest). Nur im Klon: sie sammelt `tests/`, `review/` und
+Volle Suite: `bash skripte/suite.sh` (einziger Standard-Aufruf: `-n 4 --dist worksteal`,
+Exit-Code von pytest; weitere Argumente wie `--durations=25` oder `-n 6` gehen an pytest). Nur im Klon: sie sammelt `tests/`, `review/` und
 `skripte/test_*.py`; im installierten Skill fehlt die Wurzel-`conftest.py`, dort bricht sie mit
 Exit 64 ab. Weg-Test gegen ein Wegwerf-Repo mit Bare-Remote. Gestellt sind nur zwei Programme:
 

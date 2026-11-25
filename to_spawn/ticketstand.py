@@ -100,8 +100,15 @@ def zustand(
         return CHECKPOINT, "wartet auf Abnahme des Menschen"
     fenster = lage.fenster if lage else aufseher_stand.FENSTER_UNBEKANNT
     minuten = f" {lage.still_min} min" if lage and lage.still_min is not None else ""
+    if fenster == aufseher_stand.BLOCKIERT:
+        detail = (lage.blockiert_text if lage else "") or (
+            f"blockiert{minuten}" if minuten else "Session meldet blockiert"
+        )
+        return BLOCKIERT, detail
     if fenster == aufseher_stand.ARBEITET:
         return LAEUFT, "arbeitet"
+    if fenster == aufseher_stand.WARTET:
+        return WARTET, f"wartet{minuten}" if minuten else "wartet"
     if fenster == aufseher_stand.STILL:
         return LAEUFT, f"still{minuten}"
     if fenster == aufseher_stand.RUECKFRAGE:

@@ -295,7 +295,7 @@ def fensterlos() -> dict[str, Any]:
     erbt das Kind sie wie bisher: Durchreich-Starts (Kind schreibt ins Terminal, liest Eingabe)
     bleiben unverändert. Linux/macOS: ``{}``.
     """
-    if sys.platform != "win32" or ctypes.windll.kernel32.GetConsoleWindow():
+    if not _WINDOWS or ctypes.windll.kernel32.GetConsoleWindow():
         return {}
     return ohne_fenster()
 
