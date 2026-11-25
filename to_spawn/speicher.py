@@ -57,7 +57,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from to_spawn import config, sperre
+from to_spawn import config, sperre, werkzeug
 
 log = logging.getLogger("to_spawn.speicher")
 
@@ -291,7 +291,7 @@ def sitzung_nach_name(name: str, tmux_socket: str | None = None) -> Sitzung | No
 
 
 def _claude_eintraege(ordner: Path) -> list[Path] | None:
-    """``/proc``-Einträge aller Claude-Sessions (``argv[0]``-Basename ``claude``, ohne ``-p``)."""
+    """``/proc``-Einträge aller interaktiven Bau-Sessions (``claude`` und ``agy``, ohne ``-p``)."""
     try:
         eintraege = list(ordner.iterdir())
     except OSError:
@@ -306,10 +306,10 @@ def _claude_eintraege(ordner: Path) -> list[Path] | None:
             continue  # Prozess schon weg oder nicht lesbar — zählt nicht
         teile = roh.split(b"\0")
         argv0 = teile[0].decode("utf-8", errors="replace")
-        if Path(argv0).name != "claude":
+        if not werkzeug.ist_session_programm(argv0, windows=False):
             continue
         if b"-p" in teile[1:] or b"--print" in teile[1:]:
-            continue  # Einmal-Helfer (``claude -p``) einer Session — keine eigene Sitzung
+            continue  # Einmal-Helfer (``claude -p`` / ``agy -p``) — keine eigene Sitzung
         treffer.append(eintrag)
     return treffer
 

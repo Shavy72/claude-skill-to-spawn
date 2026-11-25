@@ -51,6 +51,7 @@ from to_spawn import (
     sessions_datei,
     speicher,
     tmux_aufruf,
+    werkzeug,
 )
 from to_spawn.tmux_aufruf import FensterWeg, TmuxFehler
 
@@ -350,7 +351,7 @@ class TmuxWerkzeug:
         ``schon_weg``: kein claude-Prozess mehr (Session hat sich selbst beendet).
         """
         baum = prozessbaum.baum(pane_pid)
-        claude = [pid for pid in baum if prozessbaum.ist_claude(pid)]
+        claude = [pid for pid in baum if werkzeug.ist_session_pid(pid)]
         andere = [pid for pid in baum if pid not in claude]
         tot = prozessbaum.beenden(
             [*andere, *claude],
@@ -371,8 +372,8 @@ class TmuxWerkzeug:
         return LEBT
 
     def claude_laeuft(self, pane_pid: int) -> bool:
-        """Läuft im Prozessbaum des Panes eine Claude-Session (sonst nur Shell)?"""
-        return any(prozessbaum.ist_claude(pid) for pid in prozessbaum.baum(pane_pid))
+        """Läuft im Prozessbaum des Panes eine Bau-Session (``claude`` oder ``agy``, sonst nur Shell)?"""
+        return werkzeug.session_laeuft(pane_pid)
 
     def jetzt(self) -> float:
         return time.time()
