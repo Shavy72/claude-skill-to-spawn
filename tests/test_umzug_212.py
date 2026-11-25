@@ -839,6 +839,7 @@ time.sleep(120)
             "TO_SPAWN_REPO": str(repo),
             "FAKE_UMGEBUNG": str(beweis),
             "TMPDIR": str(temp),
+            "TO_SPAWN_AUFSICHT_TAKT": "0.2",  # statt 5 s Standard-Takt (#232)
             "TO_SPAWN_TEST_BIN": str(binaer),  # Start-Tür (#1406): nur diese Attrappe startet (#1411)
         },
         capture_output=True,

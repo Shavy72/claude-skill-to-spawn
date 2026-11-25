@@ -331,9 +331,10 @@ def antworten(
     """Antwort des Aufsehers auf die offene Frage ``frage_id`` schreiben.
 
     ``von`` nur aus :data:`AUFSEHER_VON` (``ValueError`` sonst; der Nutzer antwortet über
-    :func:`nutzer_antworten`). ``ValueError`` bei leerer ``wahl`` oder ohne offene Frage mit dieser
-    ``id``; ``Verweigert`` in einer Bau-Session und solange das Ticket auf den Nutzer wartet
-    (offene Klasse-2-Frage, ``.kaputt-*``-Datei oder unlesbare/kaputte Hauptdatei).
+    :func:`nutzer_antworten`). ``ValueError`` bei leerer ``wahl``, ohne nicht leeren Beleg
+    (Fundstelle Pflicht, #365) oder ohne offene Frage mit dieser ``id``; ``Verweigert`` in einer
+    Bau-Session und solange das Ticket auf den Nutzer wartet (offene Klasse-2-Frage,
+    ``.kaputt-*``-Datei oder unlesbare/kaputte Hauptdatei).
     """
     if von not in AUFSEHER_VON:
         raise ValueError(f"von {von!r}: der Aufseher schreibt nur als {', '.join(AUFSEHER_VON)}.")
@@ -379,48 +380,98 @@ def sperre_eingetragen() -> bool:
         return False
 
 
-def sperre_eingetragen_in(einstellungen: dict[str, Any]) -> bool:
-    """Wie :func:`sperre_eingetragen`, für schon gelesene Einstellungen (``KeyError`` o. ä. = nicht da)."""
+_ENV_ZUWEISUNG = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=[^`$]*")
+_PYTHON_NAME = re.compile(r"python(\d+(\.\d+)*)?(\.exe)?")
+_PYTHON_FLAG_EINFACH = re.compile(r"-[uBEsIOqP]+")
+_PYTHON_FLAG_WERT = re.compile(r"[A-Za-z0-9_.,:=-]+")
+
+
+def _zerlege_sperre_befehl(befehl: str) -> list[str] | None:
+    """Befehl wie die Shell in Wörter und Operatoren (``;``, ``|``, ``&``, ``<``, ``>``, ``()``) zerlegen."""
     try:
-        blocks = einstellungen["hooks"]["PreToolUse"]
-        return any(
-            "Bash" in b.get("matcher", "").split("|") and ist_sperre_befehl(h.get("command"), nur_aktiv=True)
-            for b in blocks
-            for h in b.get("hooks", [])
-        )
-    except (KeyError, TypeError, AttributeError):
+        lex = shlex.shlex(befehl, posix=True, punctuation_chars=True)
+        lex.whitespace_split = True
+        lex.commenters = ""
+        return list(lex)
+    except ValueError:
+        return None
+
+
+def sperre_eingetragen_in(einstellungen: dict[str, Any]) -> bool:
+    """Wie :func:`sperre_eingetragen`, für schon gelesene Einstellungen (falsche Form = nicht da)."""
+    if not isinstance(einstellungen, dict):
         return False
+    hooks = einstellungen.get("hooks")
+    if not isinstance(hooks, dict):
+        return False
+    blocks = hooks.get("PreToolUse")
+    if not isinstance(blocks, list):
+        return False
+    return any(
+        isinstance(b, dict)
+        and isinstance(b.get("matcher"), str)
+        and "Bash" in b["matcher"].split("|")
+        and isinstance(b.get("hooks"), list)
+        and any(
+            isinstance(h, dict) and ist_sperre_befehl(h.get("command"), nur_aktiv=True)
+            for h in b["hooks"]
+        )
+        for b in blocks
+    )
 
 
 def ist_sperre_befehl(befehl: object, *, nur_aktiv: bool = False) -> bool:
-    """Die eine Erkennung der Ja-Sperre in einem Hook-Befehl (#599).
+    """Die eine Erkennung der Ja-Sperre in einem Hook-Befehl (#599, #632).
 
     Standard (breit, für ``ja_einrichten``): jeder Eintrag ``<…>to_spawn.py … hook-ja-sperre`` —
-    auch tote (Datei fehlt) oder alte, damit Einrichten sie ersetzt statt verdoppelt.
-    ``nur_aktiv=True`` (eng, für den Nachweis :func:`sperre_eingetragen_in`): zusätzlich Befehlswort
-    Python oder ``to_spawn.py``, die Datei existiert und :data:`JA_SPERRE_HOOK` folgt direkt;
-    ``echo hook-ja-sperre`` o. ä. zählt nie als aktive Sperre.
+    auch tote (Datei fehlt), alte oder entschärfte, damit Einrichten sie ersetzt statt verdoppelt.
+    ``nur_aktiv=True`` (eng, für den Nachweis :func:`sperre_eingetragen_in`): ein einzelner Befehl
+    ohne Shell-Anhängsel, Zeilenumbrüche oder Umleitungen, bei dem ``to_spawn.py`` (direkt oder über
+    Python mit harmlosen Schaltern) das ausgeführte Programm ist, die Datei existiert und
+    :data:`JA_SPERRE_HOOK` das einzige Argument dahinter ist.
     Kein Text (``None``, leer, kein ``str``) oder nicht zerlegbar → ``False``.
     """
     if not isinstance(befehl, str):
         return False
-    try:
-        woerter = shlex.split(befehl)
-    except ValueError:
+    woerter = _zerlege_sperre_befehl(befehl)
+    if not woerter:
         return False
     if JA_SPERRE_HOOK not in woerter or not any(w.replace("\\", "/").endswith("to_spawn.py") for w in woerter):
         return False
     if not nur_aktiv:
         return True
-    erstes = next((w for w in woerter if "=" not in w), "").replace("\\", "/").rsplit("/", 1)[-1]
-    if erstes != "to_spawn.py" and not re.fullmatch(r"python[\d.]*(\.exe)?", erstes):
-        return False  # Befehlswort muss Python oder die to_spawn.py selbst sein (nicht ``echo …``)
-    return any(
-        w.replace("\\", "/").rsplit("/", 1)[-1] == "to_spawn.py"
-        and Path(w).is_file()
-        and woerter[i + 1 : i + 2] == [JA_SPERRE_HOOK]
-        for i, w in enumerate(woerter)
-    )
+    if "\n" in befehl.strip() or "\r" in befehl.strip():
+        return False
+    i = 0
+    while i < len(woerter) and _ENV_ZUWEISUNG.fullmatch(woerter[i]):
+        i += 1
+    if i >= len(woerter):
+        return False
+    name = woerter[i].replace("\\", "/").rsplit("/", 1)[-1].lower()
+    if name == "to_spawn.py":
+        skript = woerter[i]
+        i += 1
+    elif _PYTHON_NAME.fullmatch(name):
+        i += 1
+        while i < len(woerter):
+            wort = woerter[i]
+            if _PYTHON_FLAG_EINFACH.fullmatch(wort):
+                i += 1
+            elif wort in ("-X", "-W") and i + 1 < len(woerter) and _PYTHON_FLAG_WERT.fullmatch(woerter[i + 1]):
+                i += 2
+            elif len(wort) > 2 and wort[:2] in ("-X", "-W") and _PYTHON_FLAG_WERT.fullmatch(wort[2:]):
+                i += 1
+            else:
+                break
+        if i >= len(woerter):
+            return False
+        skript = woerter[i]
+        if skript.replace("\\", "/").rsplit("/", 1)[-1].lower() != "to_spawn.py":
+            return False
+        i += 1
+    else:
+        return False
+    return Path(skript).is_file() and woerter[i:] == [JA_SPERRE_HOOK]
 
 
 def menschen_nachweis(ist_tty: bool) -> None:
@@ -510,6 +561,11 @@ def _schreibe_antwort(
             raise ValueError(f"Ticket {n}: keine offene Frage {frage_id!r} im Briefkasten.")
         if von != NUTZER_VON and (gruende or _klasse_2_offen(daten["fragen"])):
             raise Verweigert(f"Ticket {n}: wartet auf den Nutzer (Klasse 2 oder kaputte Datei).")
+        belege_liste = [str(b).strip() for b in belege if str(b).strip()]
+        if von != NUTZER_VON and not belege_liste:
+            raise ValueError(
+                "Beleg fehlt (--beleg): eine Antwort des Aufsehers braucht mindestens eine nicht leere Fundstelle."
+            )
         frage = treffer[-1]
         if frage.get("antwort") is not None:
             alt = frage.get("verworfen")
@@ -518,7 +574,7 @@ def _schreibe_antwort(
             "ts": _jetzt(),
             "wahl": wahl,
             "grund": grund,
-            "belege": list(belege),
+            "belege": belege_liste,
             "von": von,
         }
         manifest.schreibe_atomar(datei, daten)
@@ -594,17 +650,18 @@ def _was(frage: Any, wahl: Any) -> str:
 def eintrag_aus_bau_log(ticket: str | int, z: dict[str, Any]) -> dict[str, str]:
     """Ein Listen-Eintrag (Schlüssel wie :func:`liste`) aus einer Bau-Log-Zeile ``entscheidung``.
 
-    Alte Felder (``text``/``entscheidungen``) gelten als Rückfall für Frage/Wahl. Auch der
-    Zwischenstand des Aufsehers (``capo.entscheidung_anhaengen``) baut seine Zeile hierüber,
+    Rückfall auf alte Felder (``text``/``entscheidungen``) liegt in :func:`bau_log.entscheidung_felder`.
+    Auch der Zwischenstand des Aufsehers (``capo.entscheidung_anhaengen``) baut seine Zeile hierüber,
     damit Zwischen- und Abschluss-Datei dieselben Spalten zeigen.
     """
     nummer = str(ticket).strip()
+    frage, wahl, grund = bau_log.entscheidung_felder(z)
     return {
         "ticket": nummer,
         "ts": str(z.get("ts", "")),
         "wer": "Bau-Session",
-        "was": _was(z.get("frage") or z.get("text"), z.get("wahl") or z.get("entscheidungen")),
-        "warum": str(z.get("grund") or ""),
+        "was": _was(frage, wahl),
+        "warum": grund,
         "beleg": f"Bau-Log #{nummer} {z.get('ts', '')}".rstrip(),
         "ueberholt_durch": str(z.get("ueberholt_durch") or ""),  # #529: Rundschau-Grafik
     }
@@ -614,12 +671,8 @@ def _log_entscheidungen(repo: Path, nummer: str, basis: Path, ref: str | None) -
     """``entscheidung``-Zeilen: Arbeitsbaum + Laufdateien, mit ``ref`` dazu der Stand dort (ohne Doppel)."""
     zeilen = bau_log.lese(repo, nummer, hauptbaum=basis)
     if ref and nummer.isdigit():
-        from to_spawn import (
-            capo,  # spät: capo importiert briefkasten (Kreis-Import sonst)
-        )
-
         gesehen = {json.dumps(z, sort_keys=True) for z in zeilen}
-        zeilen += [z for z in capo.log_vom_ref(repo, ref, int(nummer)) if json.dumps(z, sort_keys=True) not in gesehen]
+        zeilen += [z for z in bau_log.log_vom_ref(repo, ref, nummer) if json.dumps(z, sort_keys=True) not in gesehen]
     return sorted((z for z in zeilen if z.get("typ") == "entscheidung"), key=lambda z: str(z.get("ts", "")))
 
 
@@ -635,16 +688,14 @@ def liste(
     geltenden Briefkasten-Antworten (Aufseher oder Nutzer). Wer die Entscheidungen zeigt
     (``capo.uebersicht``, CLI ``entscheidungen``), fragt nur hier und kennt die Quellen nicht.
     Das versionierte Bau-Log zählt zusätzlich so, wie es auf ``origin/<Hauptzweig>`` liegt
-    (``capo.haupt_ref``) — der Hauptbaum kann dahinter stehen. Nur hier wird der Stand gewählt.
+    (``bau_log.haupt_ref``) — der Hauptbaum kann dahinter stehen. Nur hier wird der Stand gewählt.
 
     Je Eintrag feste Schlüssel ``ticket``, ``ts``, ``wer``, ``was``, ``warum``, ``beleg``;
     ``beleg`` ist nie leer (sonst :data:`KEINE_QUELLE`).
     """
-    from to_spawn import capo  # spät: capo importiert briefkasten (Kreis-Import sonst)
-
     basis = _hauptbaum(hauptbaum)
     repo = log_repo or basis
-    ref = capo.haupt_ref(repo)
+    ref = bau_log.haupt_ref(repo)
     zeilen: list[dict[str, str]] = []
     for t in tickets:
         nummer = str(t).strip()

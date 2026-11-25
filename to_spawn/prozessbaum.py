@@ -26,8 +26,14 @@ import subprocess
 import sys
 import time
 from collections.abc import Callable, Iterator, Sequence
+from contextlib import contextmanager
 from pathlib import Path, PureWindowsPath
 from typing import Any, NamedTuple
+
+try:
+    from to_spawn import sitzungsjob
+except ImportError:  # Direktaufruf als Skript: ``python to_spawn/prozessbaum.py --nachlauf``
+    import sitzungsjob  # type: ignore[import-not-found,no-redef]
 
 log = logging.getLogger(__name__)
 
@@ -86,6 +92,44 @@ def baum(pid: int) -> list[int]:
 def lebt(pid: int) -> bool:
     """Prozess existiert noch (Linux: ``/proc/<pid>`` vorhanden, auch Zombies; Windows: noch aktiv)."""
     return _lebt_windows(pid) if _WINDOWS else (_PROC / str(pid)).exists()
+
+
+def _stat_linux(pid: int) -> tuple[str, int] | None:
+    """(Zustand, Startzeit) aus ``/proc/<pid>/stat``; außerhalb von Linux oder unlesbar ``None``."""
+    if _WINDOWS or sys.platform != "linux":
+        return None
+    try:
+        stat = (_PROC / str(pid) / "stat").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    rest = stat[stat.rfind(")") + 2 :].split()  # Felder ab 3 (Zustand); 22 = starttime
+    if len(rest) < 20 or not rest[19].isdigit():
+        return None
+    return rest[0], int(rest[19])
+
+
+def startzeit(pid: int) -> int | None:
+    """Startzeit von ``pid`` (Linux: Ticks seit Boot aus ``/proc/<pid>/stat``); sonst ``None``."""
+    info = _stat_linux(pid)
+    return info[1] if info is not None else None
+
+
+def aktiv(pid: int, *, erwartet_start: int | None = None) -> bool:
+    """Läuft ``pid`` noch aktiv — kein Zombie (``Z``/``X``) und keine recycelte PID?
+
+    Baut auf :func:`lebt` auf und prüft unter Linux zusätzlich Zustand und Startzeit aus
+    ``/proc/<pid>/stat`` (während :func:`lebt` Zombies bewusst als vorhanden zählt).
+    """
+    if pid <= 0 or not lebt(pid):
+        return False
+    info = _stat_linux(pid)
+    if info is not None:
+        zustand, aktuell_start = info
+        if zustand in ("Z", "X"):  # Zombie oder tot: Prozess läuft nicht mehr
+            return False
+        if erwartet_start is not None and aktuell_start != erwartet_start:
+            return False
+    return True
 
 
 def prozesse() -> dict[int, tuple[int, str, int]]:
@@ -239,6 +283,81 @@ def beenden(
     return not any(lebt(pid) for pid in ziel)
 
 
+#: Wartezeit (Sekunden) beim harten Beenden eines Prozessbaums in :func:`gruppe_beenden`.
+_GRUPPE_WARTE_S = 2.0
+
+
+@contextmanager
+def gruppe_gebunden(prozess: Any) -> Iterator[sitzungsjob.Job]:
+    """Bindet ``prozess`` samt Nachkommen an ein Windows-Job-Objekt (Linux: ohne Wirkung, #645).
+
+    Schließt die Start-Lücke unter Windows: Kinder, die zwischen ``Popen`` und der
+    Job-Aufnahme schon entstanden (z. B. ``usr\\bin\\bash.exe`` unter ``bin\\bash.exe``),
+    werden direkt danach über :func:`baum` mit aufgenommen.
+    """
+    with sitzungsjob.gebunden(prozess) as job:
+        if _WINDOWS and job.aktiv:
+            try:
+                nachfahren = baum(int(prozess.pid))[1:]
+            except OSError:
+                nachfahren = []
+            for kind in nachfahren:
+                job.aufnehmen(kind)
+        yield job
+
+
+def gruppe_beenden(
+    prozess: subprocess.Popen[Any],
+    *,
+    job: sitzungsjob.Job | None = None,
+) -> None:
+    """Beendet ``prozess`` samt ganzer Prozessgruppe / ganzem Prozessbaum hart (#645).
+
+    Einzige Stelle dafür:
+    - Windows: beendet zuerst den gebundenen Job (:meth:`sitzungsjob.Job.beenden`, trifft auch
+      Git-Bash-/MSYS-Enkel ohne lebenden Windows-Elternteil), räumt danach den noch sichtbaren
+      :func:`baum` über :func:`beenden` ab (Kinder vor Wurzel) und nutzt ``prozess.kill()``
+      als letztes Netz.
+    - Linux/macOS: ``SIGKILL`` an die eigene Prozessgruppe (``os.killpg``); scheitert das
+      (z. B. fehlende Rechte), fällt es auf :func:`beenden` über :func:`baum` und
+      ``prozess.kill()`` zurück.
+    """
+    if _WINDOWS:
+        if job is not None:
+            job.beenden()
+        try:
+            pids = baum(prozess.pid)
+        except OSError as fehler:
+            log.warning("Prozessbaum von PID %d nicht lesbar: %s", prozess.pid, fehler)
+            pids = [prozess.pid]
+        beenden(list(reversed(pids)), ((signal.SIGTERM, _GRUPPE_WARTE_S),))
+        if prozess.poll() is None:
+            try:
+                prozess.kill()
+            except OSError:
+                pass
+        return
+    sigkill = getattr(signal, "SIGKILL", signal.SIGTERM)
+    try:
+        os.killpg(prozess.pid, sigkill)
+    except ProcessLookupError:
+        pass
+    except OSError as fehler:
+        log.warning(
+            "Prozessgruppe %d nicht beendet: %s — Rückfall auf Prozessbaum", prozess.pid, fehler
+        )
+        try:
+            pids = baum(prozess.pid)
+        except OSError:
+            pids = [prozess.pid]
+        beenden(list(reversed(pids)), ((sigkill, _GRUPPE_WARTE_S),))
+        if prozess.poll() is None:
+            try:
+                prozess.kill()
+            except OSError:
+                pass
+
+
 # --- Session der Staffel finden und beenden (Linux + Windows, #501) ----------------------
 
 #: Höchstens so viele Vorfahren werden nach der Session abgesucht.
@@ -295,7 +414,8 @@ def fensterlos() -> dict[str, Any]:
     erbt das Kind sie wie bisher: Durchreich-Starts (Kind schreibt ins Terminal, liest Eingabe)
     bleiben unverändert. Linux/macOS: ``{}``.
     """
-    if sys.platform != "win32" or ctypes.windll.kernel32.GetConsoleWindow():
+    windll = getattr(ctypes, "windll", None)
+    if not _WINDOWS or windll is None or windll.kernel32.GetConsoleWindow():
         return {}
     return ohne_fenster()
 
@@ -556,15 +676,62 @@ _FEHLER_ZUGRIFF_VERWEIGERT = 5
 _FEHLER_UNGUELTIGER_PARAMETER = 87  # OpenProcess: PID gibt es nicht (mehr)
 _PEB_PROCESS_PARAMETERS = 0x20
 _PARAMS_CURRENT_DIRECTORY = 0x38
+#: Kurze Pausen (Sekunden) vor erneuter PEB-Griff-Prüfung bei Übergangszuständen
+#: (Startphase ohne cwd-Griff, laufender cwd-Wechsel, laufendes Beenden; #654).
+_GRIFF_WARTEN_S: tuple[float, ...] = (0.02, 0.05)
+#: So oft wird ``CURDIR`` insgesamt gelesen, wenn ein Prozess seine cwd während der Prüfung wechselt.
+_CURDIR_VERSUCHE = len(_GRIFF_WARTEN_S) + 1
 
 
 class _LeereCwd(OSError):
     """PEB lesbar, cwd darin (noch) leer — Startphase: sperrt immer, auch bei fremden Prozessen."""
 
 
+def _ist_beendet_griff(kernel: Any, griff: int) -> bool:
+    """True, wenn der geöffnete Prozess-Griff nachweislich schon beendet ist."""
+    code = ctypes.c_ulong(0)
+    return bool(kernel.GetExitCodeProcess(griff, ctypes.byref(code)) and code.value != _STILL_ACTIVE)
+
+
+def arbeitsordner_windows(pid: int) -> str | None:
+    """Arbeitsordner eines Windows-Prozesses aus seinem PEB; ``None`` = unlesbar.
+
+    Öffentliche Tür für Skripte (``skripte/sessions_stand.py``), die Interna bleiben verborgen."""
+    return _arbeitsordner_windows(pid)
+
+
+def ist_weg_windows(pid: int) -> bool:
+    """Ist der Windows-Prozess laut Kernel beendet? Öffentliche Tür zu ``_ist_weg_windows``."""
+    return _ist_weg_windows(pid)
+
+
+def _ist_weg_windows(pid: int) -> bool:
+    """Ist ``pid`` nachweislich verschwunden oder beendet?
+
+    Nur ``True``, wenn Windows meldet, dass es die PID nicht mehr gibt
+    (``ERROR_INVALID_PARAMETER``) oder der Prozess schon einen Exit-Code
+    ungleich ``STILL_ACTIVE`` hat. Bei Zugriffsverweigerung
+    (``ERROR_ACCESS_DENIED``) oder anderen Fehlern immer ``False`` — die
+    sichere Seite bleibt (#654).
+    """
+    kernel, _ = _win32()
+    ctypes.set_last_error(0)
+    griff = kernel.OpenProcess(_PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    if not griff:
+        return ctypes.get_last_error() == _FEHLER_UNGUELTIGER_PARAMETER
+    try:
+        return _ist_beendet_griff(kernel, griff)
+    finally:
+        kernel.CloseHandle(griff)
+
+
 def _arbeitsordner_windows(pid: int) -> str | None:
     """Win32-cwd von ``pid``; ``None`` = nicht zu prüfen (weg, beendet, fremd/geschützt —
     wie ``PermissionError`` unter ``/proc``); ``OSError`` = läuft, ist offen, liefert aber nichts.
+
+    Wechselt ``pid`` seine cwd während des Lesens, wird bis zu :data:`_CURDIR_VERSUCHE`-mal neu
+    gelesen; bleibt die cwd unlesbar, zählt das weiter als ``OSError`` (fail-closed). Endet der
+    Prozess während des Lesens, zählt er als beendet (``None``).
 
     ponytail: 32-Bit-Prozesse (WOW64) führen ihre cwd im 32-Bit-PEB, hier steht die vom
     Start; Upgrade: ``ProcessWow64Information`` + PEB32 lesen. Die Umbenennungs-Probe
@@ -575,21 +742,51 @@ def _arbeitsordner_windows(pid: int) -> str | None:
     griff = kernel.OpenProcess(_PROCESS_QUERY_INFORMATION | _PROCESS_VM_READ, False, pid)
     if not griff:
         fehler = ctypes.get_last_error()
-        if fehler in (_FEHLER_ZUGRIFF_VERWEIGERT, _FEHLER_UNGUELTIGER_PARAMETER):
+        if fehler in (_FEHLER_ZUGRIFF_VERWEIGERT, _FEHLER_UNGUELTIGER_PARAMETER) or _ist_weg_windows(pid):
             return None
         raise OSError(fehler, f"OpenProcess({pid}) gescheitert")
     try:
-        code = ctypes.c_ulong(0)
-        if kernel.GetExitCodeProcess(griff, ctypes.byref(code)) and code.value != _STILL_ACTIVE:
-            return None  # beendet, nur noch Griffe offen (wie Zombie unter Linux)
-        kopf = _curdir(griff, pid)
-        bytes_lang, puffer_adresse = int.from_bytes(kopf[:2], "little"), int.from_bytes(kopf[8:16], "little")
-        if not bytes_lang or not puffer_adresse:
-            raise _LeereCwd(f"Prozess {pid}: leere cwd im PEB")
-        try:
-            return _speicher(griff, pid, puffer_adresse, bytes_lang).decode("utf-16-le")
-        except UnicodeDecodeError as fehler:  # kaputte cwd = nicht lesbar, nie Abbruch
-            raise OSError(f"Prozess {pid}: cwd nicht als UTF-16 lesbar ({fehler})") from None
+        for _ in range(_CURDIR_VERSUCHE):
+            if _ist_beendet_griff(kernel, griff):
+                return None  # beendet, nur noch Griffe offen (wie Zombie unter Linux)
+            try:
+                kopf = _curdir(griff, pid)
+            except OSError:
+                if _ist_beendet_griff(kernel, griff):
+                    return None  # während des PEB-Lesens beendet (#654)
+                raise
+            bytes_lang, puffer_adresse = int.from_bytes(kopf[:2], "little"), int.from_bytes(kopf[8:16], "little")
+            if not bytes_lang or not puffer_adresse:
+                if _ist_beendet_griff(kernel, griff):
+                    return None
+                raise _LeereCwd(f"Prozess {pid}: leere cwd im PEB")
+            try:
+                roh = _speicher(griff, pid, puffer_adresse, bytes_lang)
+            except OSError as fehler:
+                if _ist_beendet_griff(kernel, griff):
+                    return None
+                try:
+                    jetzt = _curdir(griff, pid)
+                except OSError:
+                    if _ist_beendet_griff(kernel, griff):
+                        return None
+                    raise fehler from None
+                if jetzt != kopf:  # cwd wechselte während des Lesens → neu versuchen
+                    continue
+                raise
+            try:
+                return roh.decode("utf-16-le")
+            except UnicodeDecodeError as fehler:  # kaputte cwd = nicht lesbar, nie Abbruch
+                if _ist_beendet_griff(kernel, griff):
+                    return None
+                try:
+                    if _curdir(griff, pid) != kopf:
+                        continue
+                except OSError:
+                    if _ist_beendet_griff(kernel, griff):
+                        return None
+                raise OSError(f"Prozess {pid}: cwd nicht als UTF-16 lesbar ({fehler})") from None
+        raise OSError(f"Prozess {pid}: cwd wechselte während der Prüfung")
     finally:
         kernel.CloseHandle(griff)
 
@@ -773,33 +970,75 @@ def _liegt_darin(griff: int, ziel: tuple[tuple[int, int], str], kennungen: dict[
 def _arbeitsordner_griff_windows(pid: int) -> int | None:
     """Eigene Kopie des cwd-Griffs von ``pid`` (Aufrufer schließt); ``None`` = Prozess weg oder
     beendet; ``OSError`` = läuft, Griff aber nicht zu übernehmen (fehlt, Rechte, cwd wechselte
-    während des Lesens)."""
+    wiederholt während des Lesens).
+
+    Bei Übergangszuständen eines noch aktiven Prozesses (Startphase ohne cwd-Griff, laufender
+    cwd-Wechsel oder Abbau beim Beenden) wird kurz nachgeprüft (:data:`_GRIFF_WARTEN_S`),
+    bevor der Fehler durchgereicht wird (#654). Echte Zugriffsverweigerung
+    (``ERROR_ACCESS_DENIED``) an einem laufenden Prozess bleibt sofort ein Fehler.
+    """
     kernel, _ = _win32()
     ctypes.set_last_error(0)
     prozess = kernel.OpenProcess(_PROCESS_QUERY_INFORMATION | _PROCESS_VM_READ | _PROCESS_DUP_HANDLE, False, pid)
     if not prozess:
         fehler = ctypes.get_last_error()
-        if fehler == _FEHLER_UNGUELTIGER_PARAMETER:
+        if fehler == _FEHLER_UNGUELTIGER_PARAMETER or _ist_weg_windows(pid):
             return None
         raise OSError(fehler, f"OpenProcess({pid}) zum Übernehmen des cwd-Griffs gescheitert")
     try:
-        code = ctypes.c_ulong(0)
-        if kernel.GetExitCodeProcess(prozess, ctypes.byref(code)) and code.value != _STILL_ACTIVE:
-            return None
-
-        vorher = _curdir(prozess, pid)
-        fremd = int.from_bytes(vorher[16:24], "little")
-        if not fremd:
-            raise OSError(f"Prozess {pid}: kein cwd-Griff im PEB")
-        kopie = ctypes.c_void_p()
-        if not kernel.DuplicateHandle(
-            prozess, fremd, kernel.GetCurrentProcess(), ctypes.byref(kopie), 0, False, _DUPLICATE_SAME_ACCESS
-        ):
-            raise OSError(ctypes.get_last_error(), f"DuplicateHandle({pid}) gescheitert")
-        if _curdir(prozess, pid) != vorher:  # cwd wechselte: der Griff-Wert kann schon einem anderen gehören
-            kernel.CloseHandle(kopie)
-            raise OSError(f"Prozess {pid}: cwd wechselte während der Prüfung")
-        return kopie.value
+        pausen: tuple[float | None, ...] = (*_GRIFF_WARTEN_S, None)
+        for pause in pausen:
+            if _ist_beendet_griff(kernel, prozess):
+                return None
+            try:
+                vorher = _curdir(prozess, pid)
+            except OSError:
+                if _ist_beendet_griff(kernel, prozess):
+                    return None
+                if pause is None:
+                    raise
+                time.sleep(pause)
+                continue
+            fremd = int.from_bytes(vorher[16:24], "little")
+            if not fremd:
+                if _ist_beendet_griff(kernel, prozess):
+                    return None
+                if pause is None:
+                    raise OSError(f"Prozess {pid}: kein cwd-Griff im PEB")
+                time.sleep(pause)
+                continue
+            kopie = ctypes.c_void_p()
+            ctypes.set_last_error(0)
+            if not kernel.DuplicateHandle(
+                prozess, fremd, kernel.GetCurrentProcess(), ctypes.byref(kopie), 0, False, _DUPLICATE_SAME_ACCESS
+            ):
+                fehler = ctypes.get_last_error()
+                if _ist_beendet_griff(kernel, prozess):
+                    return None
+                if fehler == _FEHLER_ZUGRIFF_VERWEIGERT or pause is None:
+                    raise OSError(fehler, f"DuplicateHandle({pid}) gescheitert")
+                time.sleep(pause)
+                continue
+            try:
+                danach = _curdir(prozess, pid)
+            except OSError:
+                kernel.CloseHandle(kopie.value)
+                if _ist_beendet_griff(kernel, prozess):
+                    return None
+                if pause is None:
+                    raise
+                time.sleep(pause)
+                continue
+            if danach != vorher:  # cwd wechselte: der Griff-Wert kann schon einem anderen gehören
+                kernel.CloseHandle(kopie.value)
+                if _ist_beendet_griff(kernel, prozess):
+                    return None
+                if pause is None:
+                    raise OSError(f"Prozess {pid}: cwd wechselte während der Prüfung")
+                time.sleep(pause)
+                continue
+            return kopie.value
+        raise AssertionError("unerreichbar")  # pragma: no cover
     finally:
         kernel.CloseHandle(prozess)
 
@@ -827,11 +1066,13 @@ def arbeitsordner_in_windows(ordner: str | Path) -> dict[int, ArbeitsordnerBefun
     die zusätzlich per Text sperren wollen.
 
     Nicht prüfbar (Prozess fremd/geschützt: ``OpenProcess`` verweigert, siehe
-    :func:`_arbeitsordner_windows`) fehlen wie bisher, ebenso offene Prozesse mit unlesbarer
-    cwd, die nachweislich einem anderen Benutzer gehören
+    :func:`_arbeitsordner_windows`) fehlen wie bisher, ebenso Prozesse, die zwischen Auflisten
+    und PEB-/Griff-Lesen verschwunden oder beendet sind (:func:`_ist_weg_windows`, #654), und
+    offene Prozesse mit unlesbarer cwd, die nachweislich einem anderen Benutzer gehören
     (:func:`_ist_fremd_windows`, #552 — ein geschützter Dienst sperrte sonst jedes Aufräumen).
-    Jeder andere Fehler eines laufenden Prozesses ⇒ ``drin=None`` mit Grund (Aufrufer
-    entscheidet fail-closed). ``ordner`` nicht zu öffnen oder Momentaufnahme unlesbar = ``OSError``.
+    Jeder andere Fehler eines laufenden Prozesses (insbesondere echte Zugriffsverweigerung
+    beim Übernehmen des cwd-Griffs) ⇒ ``drin=None`` mit Grund (Aufrufer entscheidet fail-closed).
+    ``ordner`` nicht zu öffnen oder Momentaufnahme unlesbar = ``OSError``.
 
     ponytail: unlesbarer Prozess eines fremden Benutzers mit cwd im Ordner bleibt unentdeckt
     (wie bei #243); offene Dateien fängt im echten Lauf die Umbenennungs-Probe."""
@@ -845,6 +1086,8 @@ def arbeitsordner_in_windows(ordner: str | Path) -> dict[int, ArbeitsordnerBefun
             text = _arbeitsordner_windows(pid)
         except OSError as fehler:
             log.debug("cwd von Prozess %s unlesbar: %s", pid, fehler)
+            if _ist_weg_windows(pid):
+                continue  # während der Prüfung verschwunden oder beendet (#654)
             if not isinstance(fehler, _LeereCwd) and _ist_fremd_windows(pid):
                 continue  # fremder Benutzer: wie nicht zu öffnen (#243, #552)
             ergebnis[pid] = ArbeitsordnerBefund(None, None, f"cwd unlesbar: {fehler}")
@@ -855,6 +1098,8 @@ def arbeitsordner_in_windows(ordner: str | Path) -> dict[int, ArbeitsordnerBefun
             drin = _arbeitsordner_drin(pid, ziel, kennungen)
         except OSError as fehler:
             log.debug("cwd-Ordner von Prozess %s nicht feststellbar: %s", pid, fehler)
+            if _ist_weg_windows(pid):
+                continue  # während der Prüfung verschwunden oder beendet (#654)
             ergebnis[pid] = ArbeitsordnerBefund(text, None, f"Ordner-Identität nicht lesbar: {fehler}")
             continue
         if drin is not None:

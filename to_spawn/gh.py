@@ -255,10 +255,13 @@ FETCH_ZEIT_S = 60.0
 
 def _git_ausgabe(args: list[str], cwd: Path, timeout: float | None = None) -> tuple[int, str]:
     """``git <args>`` im Ordner ``cwd``; (Exit-Code, stdout) — 127 wenn git fehlt, 124 bei Zeitablauf."""
+    if timeout is None:
+        timeout = GIT_ZEIT_S
     try:
         fertig = subprocess.run(
             ["git", *args],
             cwd=str(cwd),
+            env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -327,6 +330,20 @@ def origin_zweige(repo: Path, muster: str) -> list[str] | None:
     return [ref[len(praefix) :] for ref in refs if ref.startswith(praefix)]
 
 
+def lokale_zweige(repo: Path, muster: str) -> list[str] | None:
+    """Lokale Zweige in ``repo``, die das git-Muster ``muster`` treffen (z. B. ``ticket/7-*``).
+
+    Namen ohne ``refs/heads/``. ``None`` = git gescheitert.
+    """
+    code, text = _git_ausgabe(
+        ["for-each-ref", "--format=%(refname:short)", f"refs/heads/{muster}"], repo, timeout=GIT_ZEIT_S
+    )
+    if code != 0:
+        log.warning("git for-each-ref %s gescheitert (Exit %s)", muster, code)
+        return None
+    return [zeile.strip() for zeile in text.splitlines() if zeile.strip()]
+
+
 def hauptzweig(repo: Path | None = None) -> str:
     """Name des Hauptzweigs (``master``/``main``/…) — nie hart verdrahtet (#257).
 
@@ -340,11 +357,13 @@ def hauptzweig(repo: Path | None = None) -> str:
     eigen = str(config.lade(wurzel).get("hauptzweig") or "").strip()
     if eigen:
         return eigen
-    code, kopf = _git_ausgabe(["symbolic-ref", "-q", "--short", "refs/remotes/origin/HEAD"], wurzel)
+    code, kopf = _git_ausgabe(
+        ["symbolic-ref", "-q", "--short", "refs/remotes/origin/HEAD"], wurzel, timeout=GIT_ZEIT_S
+    )
     if code == 0 and kopf.startswith("origin/") and len(kopf) > len("origin/"):
         return kopf[len("origin/") :]
     for name in ("main", "master"):
-        if _git_ausgabe(["rev-parse", "--verify", "-q", f"origin/{name}"], wurzel)[0] == 0:
+        if _git_ausgabe(["rev-parse", "--verify", "-q", f"origin/{name}"], wurzel, timeout=GIT_ZEIT_S)[0] == 0:
             return name
     return "master"
 

@@ -27,7 +27,7 @@ import re
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
-from to_spawn import prozessbaum
+from to_spawn import konsole
 
 log = logging.getLogger("belege")
 
@@ -35,7 +35,13 @@ MAX_BYTES = 2_000_000
 _ROT_DATEI = re.compile(r"(?:^|[_\-/.])rot(?:[_\-/.]|$)", re.I)
 _PASSED = re.compile(r"\b(\d+) passed\b")
 _FAILED = re.compile(r"\b(\d+) (?:failed|errors?)\b")
-_BEFEHL = re.compile(r"(?<![\w./])(?:python3? -m pytest|pytest|node --test|npm (?:run )?test) [^\n`|]*")
+_UNITTEST_RAN = re.compile(r"\bRan\s+(\d+)\s+tests?\s+in\s+[\d.]+s\b")
+_UNITTEST_STATUS = re.compile(r"^(OK|FAILED)(?:\s*\(([^)]*)\))?$")
+_NODE_TESTS = re.compile(r"^\s*(?:ℹ|#)\s+tests\s+(\d+)\s*$")
+_NODE_WERT = re.compile(r"^\s*(?:ℹ|#)\s+(pass|fail|cancelled|skipped|todo|suites|duration_ms)\s+([\d.]+)\s*$")
+_BEFEHL = re.compile(
+    r"(?<![\w./])(?:python3? -m (?:pytest|unittest)(?: [^\n`|]*)?|(?:pytest|node --test) [^\n`|]*|npm (?:run )?test(?: [^\n`|]*)?)"
+)
 _ABNAHME = re.compile(r"ABNAHME[^:\n]*:\s*\**\s*([^\n*|]+)")
 # Abnahme-Stichwörter: Wortanfang fest, Endung frei (grün/grüne/grünen, belegt/belegte), aber
 # "unbelegt" trifft nicht. ROT nicht vor Bindestrich ("Rot-Beweis" ist Beleg, kein Urteil).
@@ -69,12 +75,20 @@ _ENTFAELLT = re.compile(
 _FORTSETZUNG = re.compile(
     r"[*_]*[ \t]*(?:\([^()\n]*\))?[ \t]*(?:[:—–,-][ \t]*[^\n]{1,80}?)?[ \t]*\.?[ \t]*"
 )
-#: Klammerzusatz und Grund dürfen nichts verneinen oder einfordern; „kein UI / keine Oberfläche“
+#: Vor der Aussage (selbe Tabellenzelle): offene Checkbox oder Frage-/Bedingungswort
+#: („- [ ] Klickweg entfällt“, „Ob Klickweg entfällt …“) zählt nicht als entfällt (#282).
+_VOR_DAGEGEN = re.compile(
+    r"\[\s\]|\b(?:ob|falls|wenn|sofern|vielleicht|eventuell|ggf|unklar|offen|prüf\w*|klär\w*|frage|behaupt\w*)\b",
+    re.IGNORECASE,
+)
+#: Klammerzusatz und Grund dürfen nichts verneinen, offenlassen oder bedingen; „kein UI / keine Oberfläche“
 #: ist ein Grund, keine Verneinung. „nur“ allein ist erlaubt („nur Doku“).
 _DAGEGEN = re.compile(
     r"\b(?:nicht|nie|nein|kein\w*(?!\s+(?:Oberfläche|UI|Frontend)\b)|nötig|erforderlich|pflicht\w*"
-    r"|trotzdem|aber|doch|jedoch|falsch|erst)\b|klick.?weg",
-    re.I,
+    r"|trotzdem|aber|doch|jedoch|falsch|erst"
+    r"|wenn|falls|sofern|sobald|bis|unklar|offen|fehlt|nachgeholt|nachholen|aussteh\w*|später|todo|tbd"
+    r"|prüf\w*|klär\w*|vielleicht|eventuell|ggf)\b|klick.?weg|live-beweis|live-klick",
+    re.IGNORECASE,
 )
 
 
@@ -82,6 +96,9 @@ def _entfaellt(zeile: str) -> bool:
     """Sagt die Zeile ausdrücklich und ohne Einschränkung, dass der Klickweg entfällt?"""
     treffer = _ENTFAELLT.search(zeile)
     if treffer is None:
+        return False
+    vor = zeile[: treffer.start()].rsplit("|", 1)[-1]
+    if _VOR_DAGEGEN.search(vor):
         return False
     rest = zeile[treffer.end() :].split("|", 1)[0].rstrip("\r\n")
     return _FORTSETZUNG.fullmatch(rest) is not None and not _DAGEGEN.search(rest)
@@ -140,8 +157,14 @@ def _lies(datei: Path) -> str:
         return ""
 
 
-def finde_dateien(verify_hard: Path, nummer: str) -> list[Path]:
-    """Alle .md/.txt-Belegdateien eines Tickets (Datei ``<N>…`` oder Ordner ``[<datum>_]<N>…``)."""
+TEXT_ENDUNGEN = frozenset({".md", ".txt"})
+BILD_ENDUNGEN = frozenset({".png", ".jpg", ".jpeg", ".webp"})
+
+
+def finde_dateien(
+    verify_hard: Path, nummer: str, *, endungen: frozenset[str] = TEXT_ENDUNGEN
+) -> list[Path]:
+    """Belegdateien eines Tickets (Datei ``<N>…`` oder Ordner ``[<datum>_]<N>…``) mit passenden Endungen."""
     muster = re.compile(rf"^(?:\d{{4}}-\d{{2}}-\d{{2}}_)?{re.escape(nummer)}(?=$|[_.\-])")
     treffer: list[Path] = []
     if not verify_hard.is_dir():
@@ -150,8 +173,13 @@ def finde_dateien(verify_hard: Path, nummer: str) -> list[Path]:
         if not muster.match(eintrag.name):
             continue
         kandidaten = sorted(eintrag.rglob("*")) if eintrag.is_dir() else [eintrag]
-        treffer += [k for k in kandidaten if k.is_file() and k.suffix.lower() in (".md", ".txt")]
+        treffer += [k for k in kandidaten if k.is_file() and k.suffix.lower() in endungen]
     return treffer
+
+
+def finde_bilder(verify_hard: Path, nummer: str) -> list[Path]:
+    """Alle Bild-Belege (``.png``/``.jpg``/``.jpeg``/``.webp``) eines Tickets (#367)."""
+    return finde_dateien(verify_hard, nummer, endungen=BILD_ENDUNGEN)
 
 
 def zeitpunkt(datei: Path) -> float:
@@ -162,16 +190,13 @@ def zeitpunkt(datei: Path) -> float:
     # Bekannte Grenze: Eine schon committete Belegdatei, die danach lokal überschrieben und
     # noch nicht neu committet wurde, zählt mit ihrer alten Commit-Zeit, nicht mit „jetzt“.
     try:
-        aus = subprocess.run(
+        aus = konsole.lauf_daten(
             ["git", "log", "-1", "--format=%ct", "--", datei.name],
             cwd=datei.parent,
-            capture_output=True,
-            text=True,
             timeout=15,
             check=False,
-            **prozessbaum.fensterlos(),
         )
-        if aus.returncode == 0 and aus.stdout.strip():
+        if aus is not None and aus.returncode == 0 and aus.stdout.strip():
             return float(aus.stdout.strip())
     except (OSError, subprocess.SubprocessError, ValueError) as fehler:
         log.debug("Commit-Zeit nicht lesbar %s: %s", datei, fehler)
@@ -181,8 +206,78 @@ def zeitpunkt(datei: Path) -> float:
         return 0.0
 
 
+def _unittest_zahl(name: str, details: str) -> int:
+    treffer = re.search(rf"\b{re.escape(name)}=(\d+)\b", details)
+    return int(treffer.group(1)) if treffer else 0
+
+
+def _unittest_lauf(
+    zeilen: list[str], index: int, befehl: str, datei: str, nur_saubere_zeilen: bool
+) -> Lauf | None:
+    """Erkennt ``Ran N test(s) in …s`` samt ``OK``/``FAILED (…)`` ab Zeile ``index`` (#472)."""
+    zeile = zeilen[index]
+    treffer = _UNITTEST_RAN.search(zeile)
+    if treffer is None:
+        return None
+    rest = zeile[treffer.end() :].strip(" \t—–-:,`|*")
+    status_m = _UNITTEST_STATUS.match(rest) if rest else None
+    if status_m is None:
+        for folge in zeilen[index + 1 : index + 4]:
+            sauber = folge.strip()
+            if not sauber:
+                continue
+            status_m = _UNITTEST_STATUS.match(sauber)
+            break
+    if status_m is None:
+        return None
+    gesamt = int(treffer.group(1))
+    urteil, details = status_m.group(1), status_m.group(2) or ""
+    skipped = _unittest_zahl("skipped", details)
+    if urteil == "FAILED":
+        failed = (
+            _unittest_zahl("failures", details)
+            + _unittest_zahl("errors", details)
+            + _unittest_zahl("unexpected successes", details)
+        ) or 1
+        passed = max(0, gesamt - failed - skipped)
+    else:
+        failed = 0
+        passed = max(0, gesamt - skipped)
+    if passed == 0 and failed == 0:
+        return None
+    if nur_saubere_zeilen and (failed > 0 or "→" in zeile or re.search(r"\brot\b", zeile, re.IGNORECASE)):
+        return None
+    anzeige = f"{treffer.group(0)} — {status_m.group(0).strip()}"[:200]
+    return Lauf(passed=passed, failed=failed, zeile=anzeige, befehl=befehl, datei=datei)
+
+
+def _node_lauf(
+    zeilen: list[str], index: int, befehl: str, datei: str, nur_saubere_zeilen: bool
+) -> Lauf | None:
+    """Erkennt ``node --test``-Zusammenfassungen (``ℹ/# tests``, ``pass``, ``fail``, #472)."""
+    treffer = _NODE_TESTS.match(zeilen[index])
+    if treffer is None:
+        return None
+    werte: dict[str, int] = {}
+    for folge in zeilen[index + 1 : index + 11]:
+        wm = _NODE_WERT.match(folge)
+        if wm is None:
+            break
+        if wm.group(1) in ("pass", "fail"):
+            werte[wm.group(1)] = int(wm.group(2))
+    if "pass" not in werte or "fail" not in werte:
+        return None
+    passed, failed = werte["pass"], werte["fail"]
+    if passed == 0 and failed == 0:
+        return None
+    if nur_saubere_zeilen and failed > 0:
+        return None
+    anzeige = f"tests {treffer.group(1)}, pass {passed}, fail {failed}"
+    return Lauf(passed=passed, failed=failed, zeile=anzeige, befehl=befehl, datei=datei)
+
+
 def lauf_aus_text(text: str, datei: str, nur_saubere_zeilen: bool = False) -> Lauf | None:
-    """Letzte Zusammenfassungs-Zeile (``N passed``/``N failed``) eines Textes als Lauf.
+    """Letzte Zusammenfassungs-Zeile (pytest, unittest oder ``node --test``) eines Textes als Lauf.
 
     Stehen in einer Zeile mehrere ``N passed`` („54 passed vor Fix, danach 71 passed“), zählt
     die letzte.
@@ -193,21 +288,25 @@ def lauf_aus_text(text: str, datei: str, nur_saubere_zeilen: bool = False) -> La
     befehl_m = _BEFEHL.search(text)
     befehl = befehl_m.group(0).strip()[:200] if befehl_m else ""
     beste: Lauf | None = None
-    for zeile in text.splitlines():
+    zeilen = text.splitlines()
+    for index, zeile in enumerate(zeilen):
         p = _PASSED.findall(zeile)
         f = _FAILED.search(zeile)
-        if not p and not f:
-            continue
-        if nur_saubere_zeilen and (f or "→" in zeile or re.search(r"\brot\b", zeile, re.I)):
-            continue
-        lauf = Lauf(
-            passed=int(p[-1]) if p else 0,
-            failed=sum(int(x) for x in _FAILED.findall(zeile)),
-            zeile=zeile.strip(" =|\t")[:200],
-            befehl=befehl,
-            datei=datei,
-        )
-        if not nur_saubere_zeilen or beste is None or lauf.passed >= beste.passed:
+        lauf: Lauf | None = None
+        if p or f:
+            if not (nur_saubere_zeilen and (f or "→" in zeile or re.search(r"\brot\b", zeile, re.IGNORECASE))):
+                lauf = Lauf(
+                    passed=int(p[-1]) if p else 0,
+                    failed=sum(int(x) for x in _FAILED.findall(zeile)),
+                    zeile=zeile.strip(" =|\t")[:200],
+                    befehl=befehl,
+                    datei=datei,
+                )
+        else:
+            lauf = _unittest_lauf(zeilen, index, befehl, datei, nur_saubere_zeilen) or _node_lauf(
+                zeilen, index, befehl, datei, nur_saubere_zeilen
+            )
+        if lauf is not None and (not nur_saubere_zeilen or beste is None or lauf.passed >= beste.passed):
             beste = lauf
     return beste
 

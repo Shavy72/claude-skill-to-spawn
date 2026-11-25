@@ -29,7 +29,7 @@ from test_hausmeister_1368 import (  # noqa: F401 — ``welt`` ist ein Fixture
 
 from windows_attrappen import windows_starter
 
-from to_spawn import hausmeister, hausmeister_windows
+from to_spawn import hausmeister, hausmeister_windows, prozessbaum
 
 # Aufzeichnung: Get-CimInstance Win32_Process | Select-Object ProcessId,CommandLine,
 # ExecutablePath | ConvertTo-Json -Compress (gekürzt; System-Prozesse ohne Pfad).
@@ -70,6 +70,11 @@ def win(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> Welt:
     aufzeichnung = welt.tmp / "ps.json"
     monkeypatch.setenv("PS_AUFZEICHNUNG", str(aufzeichnung))
     _prozesse(welt, AUFZEICHNUNG_LEER)
+    # Unter Windows sieht die PEB-Prüfung sonst jeden echten Prozess des Runners
+    # (z. B. parallele pytest-Worker mit wechselnder cwd oder ohne cwd-Griff, #649);
+    # die ``win``-Tests stellen die Prozessliste über die PowerShell-Attrappe nach
+    # (echte PEB-Prozesse prüft ``test_echt_windows_unterprozess_mit_cwd_im_ordner_bleibt``).
+    monkeypatch.setattr(prozessbaum, "arbeitsordner_in_windows", lambda _ordner: {})
     # Laptop nach dem Einrichten: leere Altbestand-Liste (ohne Datei hielte der erste
     # echte Lauf alles fest, siehe test_win_ohne_altbestand_datei_haelt_erst_alles_fest).
     altbestand = hausmeister.altbestand_pfad()
@@ -499,3 +504,78 @@ def test_win_sperre_frei_raeumt_auf(win: Welt, monkeypatch: pytest.MonkeyPatch) 
     assert m.aufrufe == [(2, 1)]
     assert [e.art for e in erg if e.ordner.name == "wt-54"] == ["gelöscht"]
     assert not wt.exists()
+
+
+def test_win_fixture_entkoppelt_peb_prozessliste(win: Welt) -> None:
+    """Die ``win``-Fixture simuliert Prozesse per PowerShell-Attrappe, nie über echte Runner-PEBs."""
+    wt = win.worktree(55)
+    assert prozessbaum.arbeitsordner_in_windows(wt) == {}
+    hausmeister_windows._kein_arbeitsordner_drin(wt)
+
+
+def test_arbeitsordner_griff_wiederholt_bei_kurzem_cwd_wechsel(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ein einmaliger cwd-Wechsel im fremden Prozess während der PEB-Probe wird wiederholt;
+    dauerhafter Wechsel bleibt fail-closed und schließt alle kopierten Griffe."""
+    geschlossen: list[int] = []
+    naechster_griff = 500
+
+    class _Kernel:
+        def OpenProcess(self, _zugriff: int, _erbe: bool, _pid: int) -> int:
+            return 100
+
+        def GetCurrentProcess(self) -> int:
+            return 200
+
+        def GetExitCodeProcess(self, _griff: int, code_ptr: object) -> int:
+            code_ptr._obj.value = prozessbaum._STILL_ACTIVE  # type: ignore[attr-defined]
+            return 1
+
+        def DuplicateHandle(
+            self,
+            _quelle: int,
+            _fremd: int,
+            _ziel: int,
+            kopie_ptr: object,
+            _zugriff: int,
+            _erbe: bool,
+            _optionen: int,
+        ) -> int:
+            nonlocal naechster_griff
+            naechster_griff += 1
+            kopie_ptr._obj.value = naechster_griff  # type: ignore[attr-defined]
+            return 1
+
+        def CloseHandle(self, griff: object) -> int:
+            wert = getattr(griff, "value", griff)
+            assert isinstance(wert, int)
+            geschlossen.append(wert)
+            return 1
+
+    monkeypatch.setattr(prozessbaum, "_win32", lambda: (_Kernel(), object()))
+    monkeypatch.setattr(prozessbaum.ctypes, "set_last_error", lambda _e: None, raising=False)
+    monkeypatch.setattr(prozessbaum.ctypes, "get_last_error", lambda: 0, raising=False)
+
+    # Fall 1: erster Versuch sieht cwd-Wechsel, zweiter Versuch ist stabil → gelingt, alter Griff zu.
+    alt = b"A" * 16 + (111).to_bytes(8, "little")
+    neu = b"B" * 16 + (222).to_bytes(8, "little")
+    antworten = iter([alt, neu, neu, neu])
+    monkeypatch.setattr(prozessbaum, "_curdir", lambda _p, _pid: next(antworten))
+    griff = prozessbaum._arbeitsordner_griff_windows(816)
+    assert griff == 502
+    assert 501 in geschlossen and 100 in geschlossen
+
+    # Fall 2: cwd wechselt bei jedem Versuch → bleibt fail-closed, alle kopierten Griffe zu.
+    geschlossen.clear()
+    zaehler = 0
+
+    def _wechselnd(_p: int, _pid: int) -> bytes:
+        nonlocal zaehler
+        zaehler += 1
+        return b"X" * 16 + zaehler.to_bytes(8, "little")
+
+    monkeypatch.setattr(prozessbaum, "_curdir", _wechselnd)
+    with pytest.raises(OSError, match="cwd wechselte"):
+        prozessbaum._arbeitsordner_griff_windows(816)
+    assert 503 in geschlossen and 504 in geschlossen and 505 in geschlossen and 100 in geschlossen

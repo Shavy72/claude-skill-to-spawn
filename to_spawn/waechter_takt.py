@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import json
 import logging
 import os
@@ -44,10 +45,13 @@ import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from types import ModuleType
 from typing import Any
 
 from . import (
+    anleitung,
     aufseher_stand,
+    auswahl,
     befugnis,
     befund,
     briefkasten,
@@ -55,6 +59,7 @@ from . import (
     config,
     gh,
     leitstand,
+    manifest,
     sitzungsjob,
     starter,
     ticket_zustand,
@@ -94,7 +99,8 @@ CAPO_ABBRUCH = (
 #: (Text, Merker-Feld, Schlüssel) — Feld/Schlüssel sagen, was „gesehen“ bedeutet.
 Eintrag = tuple[str, str, Any]
 
-PROMPT = """Aufseher-Takt Spec #{S} ({REPO}). Einmaliger Lauf: kein Handoff, kein /loop, kein ScheduleWakeup — nach dieser Liste endest du. Ziel: Spec {S} vollständig, sauber, autonom fertig. {BEFUGNIS} Klasse 3 im besten Interesse des Menschen (Nordstern, Doktrinen). Nur Label checkpoint:human bleibt für den Menschen. Du baust nichts und sprichst keine Bau-Session an. Ticket neu zu → Belegseite unter docs/verify-hard/ per Grep prüfen (Akzeptanz erfüllt? Live-Klick-Weg-Beleg mit Rolle da?), bei Mangel 2-Zeilen-Kommentar „Aufseher: … fehlt“ + `gh issue reopen`. capo-Verstoß: capo hat schon geöffnet/kommentiert — nicht doppelt tun. Bau fertig, bereit zur Abnahme (alle Bau-Tickets zu oder nur noch Live-Belege/checkpoint:human-Abnahme offen, bzw. „Kette … durch“ oder „SPEC FERTIG“) → Abschluss-Paket `--stand abnahme` (einmal): Rundschau als Artifact: Skill `rundschau` (fehlt er: melden, kein Ersatz), Aufbau und Prüfung allein nach to_spawn/rundschau_deck.py — `python {SKILL}/skripte/rundschau_deck.py erzeugen --texte <json> --entscheidungen <json> --nach <html>` (Teil 1 Nutzer-Präsentation, Teil 2 gewohnter Rest, Schluss Entscheidungs-Zeitstrahl aus dem Bau-Verlauf; Zahl nennen), Screenshots per echtem Browser-Blick; `ablegen --stand abnahme` verlangt `--rundschau-datei <html>`, fehlt sie oder ist die Prüfung rot: Exit 4 mit Mängelliste, nichts abgelegt, `python {SKILL}/skripte/belege_uebersicht.py {S}` und `python {SKILL}/skripte/test_uebersicht.py {S}` je als Artifact, Direkt-Links je Ticket in die Stage-App (staging.url aus .to-spawn/config.json + Route an die richtige Stelle, Rolle im Titel), Zugang nur als Namen (Basic-Auth-Nutzer, App-Rolle, Bitwarden-Eintragsname — nie Passwort), dann `python {SKILL}/skripte/abschluss_paket.py ablegen {S} --stand abnahme --stage <url> --rundschau <link> --rundschau-datei <html> --belege <link> --tests <link> --direkt "<Titel (als Rolle)>=<url>"… --basic-auth-nutzer <name> --app-rolle "<Name (rolle)>" --bitwarden <eintrag>` (legt ab, mailt nicht), Abschlussbericht als Kommentar auf #{S} (max. 10 Zeilen). Danach Aufbau-Prüfung (einmal): `python {SKILL}/skripte/thermo_lauf.py plan {S}`. Exit 0 → je Eintrag in `teile` ein Subagent, alle parallel im selben Zug (`model: opus`, Prompt = Feld `prompt` unverändert); jede JSON-Antwort als `<befunde_ordner>/teil-<nr>.json` speichern, dann `python {SKILL}/skripte/thermo_lauf.py sammeln {S}` (schreibt docs/agents/thermo_{S}.md, mit Pathspec + [skip ci] committen + `python {SKILL}/to_spawn.py einreichen {S}`). Exit 2/4 → überspringen. Exit 3 → fehlenden Teil nachstarten, erneut sammeln. Kein Umbau in der Spec — Befunde stehen als Code-Befunde im Marker docs/agents/thermo_{S}.md (dritter Teil der Abschluss-Mail), kein Issue. Danach Rückblick (einmal): `python {SKILL}/skripte/rueckblick.py planen {S}`. Exit 0 → ein Subagent (`model: opus`, Skill mp-retro) liest `.to-spawn/rueckblick/{S}/auftrag.md` und schreibt dort `ergebnis.json` wie im Auftrag beschrieben, dann `python {SKILL}/skripte/rueckblick.py sammeln {S}` (schreibt docs/agents/rueckblick_{S}.md, mit Pathspec + [skip ci] committen + `python {SKILL}/to_spawn.py einreichen {S}`). Exit 4 → überspringen. Exit 3 → KI nachstarten, erneut sammeln. Exit 1 → Grund notieren, weiter. Zum Schluss `python {SKILL}/skripte/abschluss_paket.py nachsehen {S}` (genau eine Mail an den Menschen; nur für `--stand abnahme` gilt: Exit 3 = wartet noch, capo stößt es je Tick selbst an — nicht warten). Nach dem Live-Deploy dasselbe einmal mit `--stand live` (`abschluss_paket.py ablegen {S} --stand live …` + `abschluss_paket.py nachsehen {S} --stand live`); `nachsehen --stand live` bis Exit 0 wiederholen (capo stößt live nicht an). Kontext sparen: Tickets nie voll laden, Belegseiten per Grep/limit.
+_PROMPT_ROH = (
+    """Aufseher-Takt Spec #{S} ({REPO}). Einmaliger Lauf: kein Handoff, kein /loop, kein ScheduleWakeup — nach dieser Liste endest du. Ziel: Spec {S} vollständig, sauber, autonom fertig. {BEFUGNIS} Klasse 3 im besten Interesse des Menschen (Nordstern, Doktrinen). Nur Label checkpoint:human bleibt für den Menschen. Du baust nichts und sprichst keine Bau-Session an. Ticket neu zu → Belegseite unter docs/verify-hard/ per Grep prüfen (Akzeptanz erfüllt? Live-Klick-Weg-Beleg mit Rolle da?), bei Mangel 2-Zeilen-Kommentar „Aufseher: … fehlt“ + `gh issue reopen`. capo-Verstoß: capo hat schon geöffnet/kommentiert — nicht doppelt tun. {ABSCHLUSS} Abschlussbericht als Kommentar auf #{S} (max. 10 Zeilen). Kontext sparen: Tickets nie voll laden, Belegseiten per Grep/limit.
 
 Zu entscheiden:
 {LISTE}
@@ -103,11 +109,23 @@ Notizzettel aus dem letzten Takt:
 {NOTIZ}
 
 PFLICHT am Ende: Notizzettel fortschreiben (Stand + offene Punkte, knapp) mit `python {SKILL}/to_spawn.py takt {S} --notiz "<text>"`. {BELEG_HINWEIS}"""
-# Befugnis und Beleg-Regel aus je einer Quelle (#278 P3b, #289), einmal beim Laden: jeder
-# ``PROMPT.format`` braucht nur noch S/REPO/SKILL/LISTE/NOTIZ; ``{S}`` und ``{SKILL}`` bleiben stehen.
-PROMPT = PROMPT.replace("{BEFUGNIS}", befugnis.aufseher_text("python {SKILL}/to_spawn.py")).replace(
-    "{BELEG_HINWEIS}", aufseher_stand.beleg_hinweis("python {SKILL}/to_spawn.py")
+    # Abschluss-Anweisung und Beleg-Regel aus je einer Quelle (#289, #367); ``{BEFUGNIS}``
+    # kommt erst beim Zugriff hinzu, weil ``befugnis.aufseher_text`` den aktuellen Notiz-Tresor
+    # (``HOME``/``OBSIDIAN_VAULT``) zur Laufzeit auflöst (#232, #278 P3b).
+    .replace("{ABSCHLUSS}", anleitung.ABSCHLUSS_ANWEISUNG)
+    .replace("{BELEG_HINWEIS}", aufseher_stand.beleg_hinweis("python {SKILL}/to_spawn.py"))
 )
+
+
+def _prompt_vorlage() -> str:
+    """Takt-Vorlage mit aktuellem ``befugnis.aufseher_text`` (folgt ``HOME``/``OBSIDIAN_VAULT`` zur Laufzeit, #232)."""
+    return _PROMPT_ROH.replace("{BEFUGNIS}", befugnis.aufseher_text("python {SKILL}/to_spawn.py"))
+
+
+def __getattr__(name: str) -> Any:
+    if name == "PROMPT":
+        return _prompt_vorlage()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 # --- Prüfen ---------------------------------------------------------------------
@@ -119,6 +137,22 @@ def _jetzt_iso() -> str:
 
 def _schluessel(text: str) -> str:
     return hashlib.sha1(text.encode("utf-8")).hexdigest()[:16]
+
+
+def _abschluss_paket() -> ModuleType:
+    """Lädt ``skripte/abschluss_paket.py`` einmal (einzige Stelle für Runden-Zustand, #370)."""
+    name = "_to_spawn_abschluss_paket"
+    vorhanden = sys.modules.get(name)
+    if vorhanden is not None:
+        return vorhanden
+    pfad = SKILL / "skripte" / "abschluss_paket.py"
+    spez = importlib.util.spec_from_file_location(name, pfad)
+    if spez is None or spez.loader is None:
+        raise RuntimeError(f"Modul nicht ladbar: {pfad}")
+    modul = importlib.util.module_from_spec(spez)
+    sys.modules[name] = modul
+    spez.loader.exec_module(modul)
+    return modul
 
 
 def _zeilen(repo: Path, ref: str | None, ticket: int, wt_basis: str) -> list[dict[str, Any]]:
@@ -149,8 +183,8 @@ def _briefkasten_offen(repo: Path, nummern: list[int]) -> list[tuple[Eintrag, bo
             )
         elif f["klasse"] == "3":
             text = (
-                f"#{t} Briefkasten-Frage {fid} (Klasse 3, du entscheidest): {frage} · Vorschlag: {vorschlag} → "
-                f"`{befehl} antworten {t} --id {fid} --wahl … --grund … --beleg …`"
+                f"#{t} Briefkasten-Frage {fid} (Klasse 3, du entscheidest, frischer Helfer): {frage} · "
+                f"Vorschlag: {vorschlag} → `{befehl} antworten {t} --id {fid} --wahl … --grund … --beleg …`"
             )
         else:
             text = (
@@ -243,6 +277,9 @@ def pruefe(
     liste = capo.kinder(gh_repo, spec)
     if liste is None:
         raise RuntimeError(f"Sub-Issues von #{spec} in {gh_repo} nicht lesbar (gh)")
+    auswahl_stand = auswahl.lesen(repo, spec)
+    if auswahl_stand is not None:
+        liste = auswahl.filtere_issues(liste, auswahl_stand)
     ref = capo.haupt_ref(repo)
     if ref is None:
         raise RuntimeError("kein origin/master bzw. origin/main — git fetch prüfen")
@@ -296,7 +333,48 @@ def pruefe(
         if not erster and k not in alt_verstoesse:
             text = f"#{v.ticket} capo-Verstoß {v.regel}: {capo._kurz(v.text)}"
             eintraege.append((text, "verstoesse", k))
-    if tick.fertig and not erster and not alt.get("fertig"):
+    alt_spec_kommentare = set(alt.get("spec_kommentare") or [])
+    alt_abschluss_runden = set(alt.get("abschluss_runden") or [])
+    spec_kommentare: set[str] = set(alt_spec_kommentare)
+    abschluss_runden: set[str] = set(alt_abschluss_runden)
+    runde_gemeldet = False
+    if auswahl_stand is None or not auswahl_stand.ist_teilauswahl():
+        stand = _abschluss_paket().abschluss_faellig(
+            repo,
+            spec,
+            liste,
+            checkpoint_label=manifest.checkpoint_label(konfig),
+            verstoesse=bool(tick.verstoesse),
+        )
+        if stand.runde >= 1 and stand.stand != "live":
+            for c in capo.issue_kommentare(gh_repo, spec) or []:
+                body = str(c.get("body") or "").strip()
+                if not body or body.startswith((capo.WAECHTER_KOPF, capo.SESSION_KOPF)):
+                    continue
+                k = _schluessel(f"{c.get('id', '')}:{c.get('created_at', '')}:{body}")
+                spec_kommentare.add(k)
+                if k not in alt_spec_kommentare:
+                    text = (
+                        f"#{spec} Kommentar im Spec-Issue nach Abnahme (Runde {stand.runde}): "
+                        f"{capo._kurz(body, 140)} — bei Nachbesserung je Punkt "
+                        f"`python {SKILL.as_posix()}/skripte/abschluss_paket.py nachbesserung {spec} --punkt \"…\"` "
+                        f"(Folge-Ticket + Manifest, Kette baut weiter); Live nur nach ausdrücklichem Wort des Nutzers"
+                    )
+                    eintraege.append((text, "spec_kommentare", k))
+        if stand.faellig and stand.naechste_runde >= 2:
+            runde_k = f"r{stand.naechste_runde}:{','.join(map(str, stand.neue_tickets))}"
+            abschluss_runden.add(runde_k)
+            if runde_k not in alt_abschluss_runden:
+                folgen_txt = ", ".join(f"#{n}" for n in stand.neue_tickets)
+                text = (
+                    f"#{spec} Abschluss Runde {stand.naechste_runde} fällig "
+                    f"(Folge-Tickets fertig: {folgen_txt}) — neue Rundschau, neue Selbstprüfung, "
+                    f"Prüfung Bereit für Live? und `abschluss_paket.py ablegen {spec} --stand abnahme` "
+                    f"(Live nur nach ausdrücklichem Wort des Nutzers)"
+                )
+                eintraege.append((text, "abschluss_runden", runde_k))
+                runde_gemeldet = True
+    if tick.fertig and not erster and not alt.get("fertig") and not runde_gemeldet:
         eintraege.append((f"#{spec} SPEC FERTIG — Abschluss-Kette (Thermo → Rückblick → Mail)", "fertig", True))
     neu = {
         "zeilen": sorted(zeilen),
@@ -305,6 +383,8 @@ def pruefe(
         "fragen": sorted(offen_schluessel),  # nur noch offene; beantwortete fallen raus
         "belegt": sorted(belegt),
         "gezeigt": gezeigt,
+        "spec_kommentare": sorted(spec_kommentare),
+        "abschluss_runden": sorted(abschluss_runden),
         "fertig": bool(tick.fertig),
         "zuletzt": _jetzt_iso(),
     }
@@ -374,13 +454,21 @@ def baue_prompt(spec: int, repo: Path, eintraege: list[str], notiz: str | None) 
     if rest > 0:
         liste.append(f"- … und {rest} weitere (nächster Takt)")
     notiz_text = (notiz or "(leer — erster Takt)")[:MAX_NOTIZ]
-    return PROMPT.format(
+    text = _prompt_vorlage().format(
         S=spec,
         REPO=repo,
         SKILL=SKILL.as_posix(),
         LISTE="\n".join(liste),
         NOTIZ=notiz_text,
     )
+    auswahl_stand = auswahl.lesen(repo, spec)
+    if auswahl_stand is not None and auswahl_stand.ist_teilauswahl():
+        text += (
+            f"\n\nTEIL-START (#271): Fasse AUSSCHLIESSLICH die Tickets dieser Auswahl an "
+            f"({auswahl.beschreibung(auswahl_stand)}) — keine Kommentare, keine Entscheidungen "
+            f"und kein Abschluss für Tickets außerhalb der Auswahl."
+        )
+    return text
 
 
 # --- Claude ---------------------------------------------------------------------
@@ -510,6 +598,15 @@ def takt(
     claude: str | None = None,
     grund: str = "",
 ) -> int:
+    auswahl_stand = auswahl.lesen(repo, spec)
+    if not auswahl.wache_erlaubt(repo, spec, auswahl=auswahl_stand, gelesen=True):
+        log.info(
+            "Takt #%s ausgelassen: laut Auswahl hier kein Aufseher (%s).",
+            spec,
+            auswahl.beschreibung(auswahl_stand),
+        )
+        print(f"Takt #{spec}: laut Auswahl hier kein Aufseher — steige aus.")
+        return 0
     halter = f"takt pid {os.getpid()}" + (f" ({grund})" if grund else "")
     try:
         schein = leitstand.versuche(f"takt-{spec}", halter)
@@ -610,7 +707,18 @@ def starte_abgeloest(spec: int, repo: Path, grund: str) -> bool:
     Stop feuert nach jeder Runde, nicht nur am Session-Ende (der Hook kann das nicht
     unterscheiden) — daher höchstens ein Start je ``MIN_ABSTAND_S`` und Spec
     (Zeitpunkt im Leitstand-Zustand ``takt_ausloeser``). ``True`` = gestartet.
+    Erlaubt die gespeicherte Auswahl auf diesem Rechner keinen Aufseher (``--ohne-wache``
+    oder fremder Rechner, #271), wird kein Takt gestartet.
     """
+    auswahl_stand = auswahl.lesen(repo, spec)
+    if not auswahl.wache_erlaubt(repo, spec, auswahl=auswahl_stand, gelesen=True):
+        log.info(
+            "Takt #%s: laut Auswahl hier kein Aufseher (%s) — %s ausgelassen.",
+            spec,
+            auswahl.beschreibung(auswahl_stand),
+            grund,
+        )
+        return False
     jetzt = time.time()
     frei: list[bool] = []
 

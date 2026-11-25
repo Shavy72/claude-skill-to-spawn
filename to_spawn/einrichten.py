@@ -32,7 +32,17 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TextIO
 
-from . import arbeitsstand, config, gh, konsole, prozessbaum, setup, skill_stand, umzug
+from . import (
+    arbeitsstand,
+    config,
+    gh,
+    konsole,
+    manifest,
+    prozessbaum,
+    setup,
+    skill_stand,
+    umzug,
+)
 
 log = logging.getLogger("to_spawn.einrichten")
 
@@ -50,9 +60,38 @@ _GH_TIMEOUT = 15.0
 _GIT_TIMEOUT = 15.0
 
 #: Ergebnis von ``pruefe``: ``DA`` = in Ordnung, ``FEHLT`` = ``lege_an`` kann es
-#: richten, ``LUECKE`` = nur von Hand zu richten (große Lücke).
-DA, FEHLT, LUECKE = "da_aktuell", "fehlt", "grosse_luecke"
+#: richten, ``LUECKE`` = nur von Hand zu richten (große Lücke),
+#: ``NICHT_PRUEFBAR`` = hier/jetzt nicht prüfbar (kein Fehler, keine Abweichung).
+DA, FEHLT, LUECKE, NICHT_PRUEFBAR = (
+    "da_aktuell",
+    "fehlt",
+    "grosse_luecke",
+    "nicht_pruefbar",
+)
 Befund = tuple[str, str]
+
+#: Die drei Zustände für ``einrichten --pruefen`` (#216): Text und Zustand kommen
+#: aus genau einer Stelle (:func:`_pruefe_baustein`) und können sich nicht widersprechen.
+PRUEF_OK = DA
+PRUEF_ABWEICHUNG = "weicht_ab"
+PRUEF_UNPRUEFBAR = NICHT_PRUEFBAR
+PRUEF_ZUSTAENDE: tuple[str, str, str] = (
+    PRUEF_OK,
+    PRUEF_ABWEICHUNG,
+    PRUEF_UNPRUEFBAR,
+)
+
+
+@dataclass(frozen=True)
+class PruefBefund:
+    """Prüf-Ergebnis eines Bausteins für ``--pruefen``: Zustand und Text aus einer Stelle."""
+
+    zustand: str
+    text: str
+
+    @property
+    def weicht_ab(self) -> bool:
+        return self.zustand == PRUEF_ABWEICHUNG
 
 
 @dataclass(frozen=True)
@@ -169,7 +208,7 @@ def _lege_konfig_an(ort: Ort) -> None:
             ausgabe=ort.ausgabe,
         )
         return
-    # Wie config.sicherstellen, aber ohne .gitignore-Schreiben (getrackt im App-Repo).
+    # Wie config.sicherstellen, aber ohne Exclude-Zeilen (eigener Baustein gitignore).
     inhalt = copy.deepcopy(config.DEFAULTS)
     inhalt["worktree_basis"] = config.worktree_basis_vorgabe(ort.wurzel)
     datei.parent.mkdir(parents=True, exist_ok=True)
@@ -247,6 +286,8 @@ def _nicht_ignoriert(ort: Ort) -> dict[str, str]:
 
 
 def _pruefe_gitignore(ort: Ort) -> Befund:
+    if _git(ort.wurzel, "rev-parse", "--git-dir")[0] != 0:
+        return NICHT_PRUEFBAR, "kein Git-Repo"
     offen = _nicht_ignoriert(ort)
     if not offen:
         return DA, "Laufdateien ignoriert"
@@ -281,27 +322,54 @@ def _lege_gitignore_an(ort: Ort) -> None:
         strom.write(trenner + kopf + "\n".join(zeilen) + "\n")
 
 
+#: Standard-Label für startbereite Tickets (``/to-tickets``, #404).
+READY_LABEL = "ready-for-agent"
+_READY_LABEL_FARBE = "0e8a16"
+_READY_LABEL_BESCHREIBUNG = "Bereit zur Umsetzung durch einen Agenten"
+_CHECKPOINT_LABEL_FARBE = "d93f0b"
+_CHECKPOINT_LABEL_BESCHREIBUNG = "Ticket wartet auf menschliche Abnahme (to-spawn)"
+
+
 def _label(ort: Ort) -> str:
-    regularien = config.lade(ort.wurzel).get("regularien") or {}
-    return str(regularien.get("checkpoint_label") or "checkpoint:human")
+    return manifest.checkpoint_label(config.lade(ort.wurzel))
+
+
+def _ticket_labels(ort: Ort) -> list[tuple[str, str, str]]:
+    """Beide Ticket-Labels, die ``/to-tickets`` vor dem ersten Issue braucht (#404)."""
+    checkpoint = _label(ort)
+    liste = [(checkpoint, _CHECKPOINT_LABEL_FARBE, _CHECKPOINT_LABEL_BESCHREIBUNG)]
+    if checkpoint != READY_LABEL:
+        liste.append((READY_LABEL, _READY_LABEL_FARBE, _READY_LABEL_BESCHREIBUNG))
+    return liste
 
 
 def _pruefe_label(ort: Ort) -> Befund:
-    label = _label(ort)
-    pfad = "repos/{owner}/{repo}/labels/" + urllib.parse.quote(label, safe="")
-    code, _ = gh.lauf(["api", pfad], cwd=ort.wurzel, timeout=_GH_TIMEOUT)
-    if code == 0:
-        return DA, label
-    if code == 127:
-        return LUECKE, f"gh fehlt — von Hand: gh label create {label}"
-    if code == 124:
-        return LUECKE, f"gh Zeitlimit — von Hand: gh label create {label}"
-    return FEHLT, f"{label} fehlt im GitHub-Repo"
+    labels = _ticket_labels(ort)
+    fehlend: list[str] = []
+    for label, _, _ in labels:
+        pfad = "repos/{owner}/{repo}/labels/" + urllib.parse.quote(label, safe="")
+        code, _ = gh.lauf(["api", pfad], cwd=ort.wurzel, timeout=_GH_TIMEOUT)
+        if code == 127:
+            return LUECKE, f"gh fehlt — von Hand: gh label create {label}"
+        if code == 124:
+            return LUECKE, f"gh Zeitlimit — von Hand: gh label create {label}"
+        if code != 0:
+            fehlend.append(label)
+    if fehlend:
+        return FEHLT, f"{', '.join(fehlend)} fehlt im GitHub-Repo"
+    return DA, ", ".join(label for label, _, _ in labels)
 
 
 def _lege_label_an(ort: Ort) -> None:
     # Scheitern/Zeitlimit gibt False (Warnung im Log); die Nachprüfung meldet die Lücke.
-    gh.label_sicherstellen(ort.wurzel, _label(ort), timeout=_GH_TIMEOUT)
+    for label, farbe, beschreibung in _ticket_labels(ort):
+        gh.label_sicherstellen(
+            ort.wurzel,
+            label,
+            farbe=farbe,
+            beschreibung=beschreibung,
+            timeout=_GH_TIMEOUT,
+        )
 
 
 def _maschinen_soll(ort: Ort) -> dict[str, str]:
@@ -328,6 +396,9 @@ def _pruefe_maschine(ort: Ort) -> Befund:
             LUECKE,
             f"Maschinen-Liste unlesbar ({fehler}) — von Hand reparieren: {datei}",
         )
+    veraltet = config.veraltete_ticket_repos()
+    if veraltet:
+        return FEHLT, "veraltetes ticket_repo: " + "; ".join(a.zeile() for a in veraltet)
     for eintrag in config.maschine()["repos"]:
         try:
             gleich = (
@@ -357,6 +428,9 @@ def _belegtes_ticket_repo(wurzel: Path) -> str:
 
 
 def _lege_maschine_an(ort: Ort) -> None:
+    for aenderung in config.maschine_ticket_repos_nachziehen():
+        if ort.ausgabe is not None:
+            ort.ausgabe.write(f"  {aenderung.zeile()}\n")
     eintrag = config.maschine_eintragen(ort.wurzel)
     if eintrag["slug"] and not eintrag["ticket_repo"]:  # #542: nur mit Beleg, nie geraten (#66)
         beleg = _belegtes_ticket_repo(ort.wurzel)
@@ -416,7 +490,10 @@ def _pruefe_server_klon(ort: Ort) -> Befund:
     if (Path(ordner).expanduser() / ".git").exists():
         return DA, f"{ordner} auf diesem Rechner"
     # ponytail: kein SSH-Aufruf je Spawn, Server-Klon nur lokal geprüft; Upgrade: ssh test -d in Etappe 3.
-    return DA, f"{ordner} auf {umzug.ssh_ziel(konfig)} nicht geprüft (kein Netz-Aufruf)"
+    return (
+        NICHT_PRUEFBAR,
+        f"{ordner} auf {umzug.ssh_ziel(konfig)} nicht geprüft (kein Netz-Aufruf)",
+    )
 
 
 def _pruefe_gh(ort: Ort) -> Befund:
@@ -435,9 +512,13 @@ def _pruefe_venv(ort: Ort) -> Befund:
 
 
 def _pruefe_skill_aktuell(ort: Ort) -> Befund:
-    """Installierte Kopie gegen ``main`` des Skill-Repos; nicht erreichbar = nur Hinweis."""
+    """Installierte Kopie gegen ``main`` des Skill-Repos; unbekannt = nicht prüfbar."""
     zustand, text = skill_stand.vergleich()
-    return (LUECKE, text) if zustand == skill_stand.VERALTET else (DA, text)
+    if zustand == skill_stand.AKTUELL:
+        return DA, text
+    if zustand == skill_stand.VERALTET:
+        return LUECKE, text
+    return NICHT_PRUEFBAR, text
 
 
 _BAUSTEINE: list[Baustein] = [
@@ -445,8 +526,8 @@ _BAUSTEINE: list[Baustein] = [
     Baustein("worktree_basis", 1, _pruefe_worktree_basis, _lege_worktree_basis_an),
     Baustein("manifest", 1, _pruefe_manifest, _lege_manifest_an),
     Baustein("gitignore", 1, _pruefe_gitignore, _lege_gitignore_an),
-    Baustein("checkpoint_label", 1, _pruefe_label, _lege_label_an),
-    Baustein("maschinen_liste", 1, _pruefe_maschine, _lege_maschine_an),
+    Baustein("checkpoint_label", 2, _pruefe_label, _lege_label_an),
+    Baustein("maschinen_liste", 2, _pruefe_maschine, _lege_maschine_an),
     Baustein("weiterleitungen", 1, _pruefe_weiterleitungen, _lege_weiterleitungen_an),
     Baustein("server_klon", 1, _pruefe_server_klon),
     Baustein("gh", 1, _pruefe_gh),
@@ -477,6 +558,27 @@ def _sicher(aufruf: Callable[[Ort], Befund], ort: Ort) -> Befund:
         return LUECKE, f"Prüfung scheiterte: {fehler}"
 
 
+def _pruefe_baustein(
+    baustein: Baustein, ort: Ort, version_alt: int | None
+) -> PruefBefund:
+    """Wertet einen Baustein für ``--pruefen`` an genau einer Stelle aus (#216).
+
+    Liefert immer einen der drei Zustände aus :data:`PRUEF_ZUSTAENDE` zusammen mit
+    dem dazu passenden Text — Zustand und Text können sich nicht widersprechen.
+    """
+    befund, text = _sicher(baustein.pruefe, ort)
+    if befund == NICHT_PRUEFBAR:
+        return PruefBefund(PRUEF_UNPRUEFBAR, text)
+    if befund != DA:
+        return PruefBefund(PRUEF_ABWEICHUNG, text)
+    if version_alt is not None and version_alt != baustein.version:
+        return PruefBefund(
+            PRUEF_ABWEICHUNG,
+            f"Stand-Version {version_alt} statt {baustein.version} ({text})",
+        )
+    return PruefBefund(PRUEF_OK, text)
+
+
 def einrichten(
     repo: Path, *, pruefen: bool = False, ausgabe: TextIO = sys.stdout
 ) -> int:
@@ -496,18 +598,17 @@ def einrichten(
     ausgabe.write(f"{'Prüfen' if pruefen else 'Einrichten'}: {ort.wurzel}\n")
     for baustein in _BAUSTEINE:
         version_alt = alt.get(baustein.name)
+        if pruefen:
+            ergebnis = _pruefe_baustein(baustein, ort, version_alt)
+            if ergebnis.weicht_ab:
+                abweichungen.append(baustein.name)
+            ausgabe.write(f"  {baustein.name}: {ergebnis.zustand} — {ergebnis.text}\n")
+            continue
         befund, text = _sicher(baustein.pruefe, ort)
-        if befund == DA and (
-            version_alt == baustein.version or (version_alt is None and not pruefen)
+        if befund in (DA, NICHT_PRUEFBAR) and (
+            version_alt == baustein.version or version_alt is None
         ):
             zustand = DA
-        elif pruefen:
-            zustand = (
-                befund
-                if befund != DA
-                else ("veraltet" if version_alt is not None else "nicht eingerichtet")
-            )
-            abweichungen.append(baustein.name)
         else:
             if baustein.lege_an is not None:
                 try:
@@ -529,9 +630,9 @@ def einrichten(
                 befund, text = _sicher(baustein.pruefe, ort)
             else:
                 vorher = befund
-            if befund != DA:
+            if befund not in (DA, NICHT_PRUEFBAR):
                 zustand = LUECKE
-            elif vorher == DA or (
+            elif vorher in (DA, NICHT_PRUEFBAR) or (
                 version_alt is not None and version_alt != baustein.version
             ):
                 zustand = "nachgezogen"

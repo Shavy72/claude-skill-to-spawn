@@ -13,9 +13,12 @@ startet).
 1. Läuft für das Ticket schon eine Session auf dieser Maschine? → kein Start (Exit 0,
    eine Zeile, kein Fehler-Lärm). Die Sperre hält der laufende ``bau.py`` bis zu seinem
    Ende; stirbt er, gibt das Betriebssystem sie frei (tote Sperre = keine Sperre).
-2. Ticket fertig gebaut (:func:`ticket_zustand.fertig_gebaut`: geschlossen oder grün auf
-   Staging)? → kein Start (Exit 0, eine Zeile). Nachbesserung an einem fertig gebauten
-   Ticket: vorher das Staging-Label entfernen (#279).
+2. Ticket-Lage über :func:`wiederanlauf.feststellen` (fragt :func:`ticket_zustand.fertig_gebaut`
+   und :func:`ticket_zustand.endgueltig_zu`, #279, #282): endgültig zu oder fertig gebaut mit
+   allen Belegen (``art == "nichts"``) → kein Start (Exit 0, eine Zeile „nichts zu tun“).
+   Fertig gebaut, aber es fehlen noch Abschluss-Schritte (``art == "abschluss"``) → Start
+   erlaubt mit Stand-Hinweis in :attr:`Entscheidung.hinweis` (ohne Blocker-Warten).
+   Nachbesserung an einem fertig gebauten Ticket: vorher das Staging-Label entfernen (#279).
 3. Ticket-Stand nicht bestimmbar (gh fehlt, Netz weg, kaputte Antwort) → fail-closed:
    kein Start, laute Meldung, Exit 2.
 4. Vor 2./3.: ``wt-<N>`` ist schon Worktree eines anderen Repos (gleiche Nummer, kein
@@ -45,7 +48,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from to_spawn import config, sperre, starter, ticket_zustand
+from to_spawn import config, sperre, starter, ticket_zustand, wiederanlauf
 
 log = logging.getLogger(__name__)
 
@@ -77,6 +80,10 @@ class Entscheidung:
     erlaubt: bool
     grund: str
     exit_code: int = 0
+    #: Wiederanlauf-Art (``neu``/``fortsetzen``/``abschluss``/``nichts``), leer ohne Lage-Prüfung (#282).
+    art: str = ""
+    #: Fertiger Stand-Hinweis für den Start-Text der Session (nur bei ``erlaubt=True`` und bekannter Lage).
+    hinweis: str = ""
 
 
 def sperr_datei(ticket: str, gh_repo: str) -> Path:
@@ -86,21 +93,8 @@ def sperr_datei(ticket: str, gh_repo: str) -> Path:
     return Path(ordner) / f"{slug}-{ticket}.lock"
 
 
-def _zustand(ticket: str, cwd: Path | None, pruefer: TicketPruefer | None) -> bool | None:
-    if pruefer is not None:
-        return pruefer(ticket, cwd)
-    if os.environ.get(TEST_OFFEN_ENV) == "1" and starter.unter_test():
-        return True
-    daten = ticket_zustand.lesen(ticket, cwd)
-    return None if daten is None else not ticket_zustand.fertig_gebaut(daten)
-
-
-def _pruefen(ticket: str, cwd: Path | None, pruefer: TicketPruefer | None) -> Entscheidung:
-    if fremd := config.worktree_fremd(ticket, cwd):
-        grund = f"WEIGERUNG (#499): bau {ticket}: {fremd} KEIN Start."
-        log.error("%s", grund)
-        return Entscheidung(False, grund, EXIT_FREMDER_ORDNER)
-    offen = _zustand(ticket, cwd, pruefer)
+def _pruefen_mit_pruefer(ticket: str, cwd: Path | None, pruefer: TicketPruefer) -> Entscheidung:
+    offen = pruefer(ticket, cwd)
     if offen is None:
         grund = (
             f"bau {ticket}: Ticket-Stand nicht bestimmbar (gh fehlt/Fehler/Zeitüberschreitung) — KEIN Start "
@@ -116,6 +110,62 @@ def _pruefen(ticket: str, cwd: Path | None, pruefer: TicketPruefer | None) -> En
         )
         log.info("%s", grund)
         return Entscheidung(False, grund)
+    return Entscheidung(True, f"bau {ticket}: offen, Sperre gehalten — Start.")
+
+
+def _pruefen(ticket: str, cwd: Path | None, pruefer: TicketPruefer | None) -> Entscheidung:
+    if fremd := config.worktree_fremd(ticket, cwd):
+        grund = f"WEIGERUNG (#499): bau {ticket}: {fremd} KEIN Start."
+        log.error("%s", grund)
+        return Entscheidung(False, grund, EXIT_FREMDER_ORDNER)
+    if pruefer is not None:
+        return _pruefen_mit_pruefer(ticket, cwd, pruefer)
+    if os.environ.get(TEST_OFFEN_ENV) == "1" and starter.unter_test():
+        return Entscheidung(True, f"bau {ticket}: offen, Sperre gehalten — Start.")
+    daten = ticket_zustand.lesen(ticket, cwd, mit_claim=True)
+    if daten is None:
+        grund = (
+            f"bau {ticket}: Ticket-Stand nicht bestimmbar (gh fehlt/Fehler/Zeitüberschreitung) — KEIN Start "
+            "(fail-closed). gh prüfen, dann neu starten."
+        )
+        log.error("%s", grund)
+        return Entscheidung(False, grund, EXIT_UNKLAR)
+    if ticket_zustand.endgueltig_zu(daten):
+        grund = f"bau {ticket}: nichts zu tun ({ticket_zustand.wortlaut(daten)}) — Ticket ist geschlossen, kein Start."
+        log.info("%s", grund)
+        return Entscheidung(False, grund, art="nichts")
+    lage = (
+        wiederanlauf.feststellen(int(ticket), cwd, daten=daten)
+        if cwd is not None and ticket.isdigit() and (cwd / ".git").exists()
+        else None
+    )
+    if lage is not None:
+        if lage.art == "nichts":
+            grund = (
+                f"bau {ticket}: nichts zu tun — Ticket ist fertig gebaut (alle Belege da), kein Start. "
+                f"Nachbesserung an einem fertig gebauten Ticket: vorher Label „{ticket_zustand.STAGING_FERTIG_LABEL}“ "
+                "entfernen, dann neu starten."
+            )
+            log.info("%s", grund)
+            return Entscheidung(False, grund, art="nichts")
+        if lage.art == "abschluss":
+            grund = f"bau {ticket}: fertig gebaut, Abschluss offen (fehlt: {', '.join(lage.fehlt)}) — Start."
+            log.info("%s", grund)
+            return Entscheidung(True, grund, art=lage.art, hinweis=lage.hinweis)
+        return Entscheidung(
+            True,
+            f"bau {ticket}: {lage.art}, Sperre gehalten — Start.",
+            art=lage.art,
+            hinweis=lage.hinweis,
+        )
+    if ticket_zustand.fertig_gebaut(daten):
+        grund = (
+            f"bau {ticket}: nichts zu tun — Ticket ist geschlossen oder fertig gebaut (grün auf Staging) — kein Start. "
+            f"Nachbesserung an einem fertig gebauten Ticket: vorher Label „{ticket_zustand.STAGING_FERTIG_LABEL}“ "
+            "entfernen, dann neu starten."
+        )
+        log.info("%s", grund)
+        return Entscheidung(False, grund, art="nichts")
     return Entscheidung(True, f"bau {ticket}: offen, Sperre gehalten — Start.")
 
 
@@ -211,6 +261,12 @@ def weiter_entscheidung(
     return entscheidung
 
 
-def weiter_erlaubt(ticket: str, cwd: Path | None = None, *, pruefer: TicketPruefer | None = None) -> bool:
-    """Wie :func:`weiter_entscheidung`, nur ja/nein (unbekannt = Nein, ohne Wiederholung)."""
-    return _pruefen(str(ticket), cwd, pruefer).erlaubt
+def weiter_erlaubt(
+    ticket: str,
+    cwd: Path | None = None,
+    *,
+    pruefer: TicketPruefer | None = None,
+    abstand: float | None = None,
+) -> bool:
+    """Wie :func:`weiter_entscheidung`, nur ja/nein (gleiche Wiederhol-Regel bei unbekanntem Stand)."""
+    return weiter_entscheidung(ticket, cwd, pruefer=pruefer, abstand=abstand).erlaubt

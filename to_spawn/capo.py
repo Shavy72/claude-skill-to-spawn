@@ -55,6 +55,7 @@ from pathlib import Path
 from typing import Any
 
 from . import (
+    auswahl,
     bau_log,
     befund,
     briefkasten,
@@ -236,11 +237,8 @@ def _git(repo: Path, *args: str) -> tuple[int, str]:
 
 
 def haupt_ref(repo: Path) -> str | None:
-    """``origin/<Hauptzweig>`` nach der Regel von ``gh.hauptzweig`` (#257); ``None`` ohne den Ref."""
-    ref = f"origin/{gh.hauptzweig(repo)}"
-    if _git(repo, "rev-parse", "--verify", "-q", ref)[0] == 0:
-        return ref
-    return None
+    """Weiterleitung auf :func:`bau_log.haupt_ref` (#375)."""
+    return bau_log.haupt_ref(repo)
 
 
 def alle_commits(repo: Path, ref: str) -> list[Commit]:
@@ -919,30 +917,9 @@ def label_namen(issue: dict[str, Any]) -> set[str]:
     return namen
 
 
-def _zeilen_aus(text: str, quelle: str) -> list[dict[str, Any]]:
-    zeilen: list[dict[str, Any]] = []
-    for nr, roh in enumerate(text.splitlines(), 1):
-        roh = roh.strip()
-        if not roh:
-            continue
-        try:
-            eintrag = json.loads(roh)
-        except ValueError:
-            eintrag = None
-        if not isinstance(eintrag, dict):
-            log.warning("Kaputte Bau-Log-Zeile %s:%s — als „kaputt“ gezählt.", quelle, nr)
-            eintrag = {"typ": "kaputt"}
-        zeilen.append(eintrag)
-    return zeilen
-
-
 def log_vom_ref(repo: Path, ref: str, ticket: int) -> list[dict[str, Any]]:
-    """Bau-Log-Zeilen eines Tickets, wie sie auf ``ref`` liegen."""
-    pfad = bau_log.log_im_repo(repo, ticket)
-    code, text = _git(repo, "show", f"{ref}:{pfad}")
-    if code != 0:
-        return []
-    return _zeilen_aus(text, f"{ref}:{pfad}")
+    """Weiterleitung auf :func:`bau_log.log_vom_ref` (#375)."""
+    return bau_log.log_vom_ref(repo, ref, ticket)
 
 
 def lauf_zeilen(datei: Path) -> list[dict[str, Any]] | None:
@@ -954,7 +931,7 @@ def lauf_zeilen(datei: Path) -> list[dict[str, Any]] | None:
     except OSError as fehler:
         log.warning("Laufdatei %s nicht lesbar: %s", datei, fehler)
         return None
-    return _zeilen_aus(text, str(datei))
+    return bau_log.zeilen_aus(text, str(datei))
 
 
 def laufdateien(repo: Path, wt: Path, ticket: int) -> list[tuple[str, Path]]:
@@ -988,10 +965,9 @@ def _kurz(text: Any, grenze: int = 140) -> str:
 
 
 def entscheidung_teile(z: dict[str, Any]) -> tuple[str, str, str]:
-    """(Frage, Wahl, Grund) einer ``entscheidung``-Zeile (alte Felder als Rückfall)."""
-    frage = z.get("frage") or z.get("text") or ""
-    wahl = z.get("wahl") or z.get("entscheidungen") or ""
-    return _kurz(frage), _kurz(wahl), _kurz(z.get("grund"))
+    """(Frage, Wahl, Grund) einer ``entscheidung``-Zeile, gekürzt (Rückfall in :func:`bau_log.entscheidung_felder`)."""
+    frage, wahl, grund = bau_log.entscheidung_felder(z)
+    return _kurz(frage), _kurz(wahl), _kurz(grund)
 
 
 def verdichte(ticket: int, z: dict[str, Any]) -> str:
@@ -1082,16 +1058,19 @@ def entscheidung_anhaengen(
     return datei
 
 
-def uebersicht(repo: Path, spec: int, tickets: list[int]) -> Path:
+def uebersicht(repo: Path, spec: int, tickets: list[int], *, hinweis: str = "") -> Path:
     """Schreibt :func:`entscheidungs_datei` neu: alle Entscheidungen der Spec (#364).
 
     Woher sie kommen (Bau-Log im Hauptbaum und auf ``origin/<Hauptzweig>``, Briefkasten-
     Antworten), weiß nur ``briefkasten.liste``; hier steht nur die Darstellung (eine
     Tabellenzeile je Eintrag). Die Kopfzeile nennt ``haupt_ref`` — den Stand, den
-    ``briefkasten.liste`` liest.
+    ``briefkasten.liste`` liest. Optionaler ``hinweis`` markiert unvollständige Listen
+    (z. B. fehlendes Manifest, #445).
     """
     eintraege = briefkasten.liste(sorted(tickets), log_repo=repo, hauptbaum=repo)
     zeilen = _tabellen_kopf(spec, f"Bau-Logs auf {haupt_ref(repo) or '-'} + Briefkasten")
+    if hinweis.strip():
+        zeilen = [*zeilen[:3], "", f"> **Hinweis:** {hinweis.strip()}", *zeilen[3:]]
     zeilen += [_entscheidungs_zeile(e) for e in eintraege]
     if not eintraege:
         zeilen += ["", "_Keine Entscheidungen im Bau-Log oder Briefkasten._"]
@@ -1174,13 +1153,16 @@ def _tmux_befehl() -> list[str]:
     return [roh]
 
 
-def tmux_fenster(spec: int) -> list[str] | None:
-    """Fensternamen der tmux-Session ``spec-<S>``.
+def tmux_fenster(spec: int, *, sitzung: str | None = None) -> list[str] | None:
+    """Fensternamen der tmux-Session einer Spec (``sitzung`` oder alt ``spec-<S>``).
 
     ``None`` = kein tmux da (dann läuft die Folge-Runde lokal), ``[]`` = tmux da,
     aber (noch) keine Session für diese Spec.
     """
-    befehl = [*_tmux_befehl(), "list-windows", "-t", f"=spec-{spec}", "-F", "#W"]
+    from . import tmux_aufruf  # spät: tmux_aufruf ruft _tmux_befehl aus capo
+
+    ziel = sitzung or tmux_aufruf.sitzung_alt(spec)
+    befehl = [*_tmux_befehl(), "list-windows", "-t", f"={ziel}", "-F", "#W"]
     try:
         fertig = subprocess.run(
             befehl,
@@ -1195,13 +1177,23 @@ def tmux_fenster(spec: int) -> list[str] | None:
         return None
     if fertig.returncode != 0:
         log.info(
-            "tmux list-windows für spec-%s: Exit %s (%s)",
-            spec,
+            "tmux list-windows für %s: Exit %s (%s)",
+            ziel,
             fertig.returncode,
             (fertig.stderr or "").strip()[:120],
         )
         return []
     return [zeile.strip() for zeile in fertig.stdout.splitlines() if zeile.strip()]
+
+
+_TMUX_FENSTER_ORIG = tmux_fenster
+
+
+def _fenster_fuer_sitzung(spec: int, sitzung: str) -> list[str] | None:
+    """Ruft :func:`tmux_fenster` für ``sitzung``; respektiert 1-Arg-Test-Nähte."""
+    if tmux_fenster is _TMUX_FENSTER_ORIG:
+        return tmux_fenster(spec, sitzung=sitzung)
+    return tmux_fenster(spec)
 
 
 def laeuft_noch(ticket: int, fenster: list[str] | None, wt_zeit: float | None, jetzt: datetime) -> str:
@@ -1247,7 +1239,7 @@ def fenster_log(repo: Path, ticket: int) -> Path:
 def bau_startzeile(repo: Path, ticket: int, auftrag: str = "", *schalter: str) -> str:
     """Shell-Zeile, mit der ein tmux-Fenster eine Bau-Session startet (``bash -lc``).
 
-    Einziger Ort für Ablösung (respawn) und Folge-Runde. Ruft ``bau.py`` des Skills direkt
+    Einziger Ort für Ablösung (respawn), Folge-Runde und Aufpasser (#419). Ruft ``bau.py`` des Skills direkt
     mit diesem Python auf, wie ``skripte/spawn_srv.sh`` (#257) — nie die Shell-Funktion
     ``bau`` aus ``~/.bashrc`` oder die ``.venv`` des Repos, die ein Spec-Klon nicht hat
     (#277). Vorspann ``REPO``/``TO_SPAWN_HOME``/``TO_SPAWN_REPO`` wie dort (#212). Die
@@ -1278,7 +1270,15 @@ def bau_startzeile(repo: Path, ticket: int, auftrag: str = "", *schalter: str) -
     return f"export {vorspann}; mkdir -p {ordner}; {tee}; {lauf}; {spur}"
 
 
-def folge_befehl(repo: Path, spec: int, ticket: int, fenster: list[str] | None, auftrag: str = "") -> list[str]:
+def folge_befehl(
+    repo: Path,
+    spec: int,
+    ticket: int,
+    fenster: list[str] | None,
+    auftrag: str = "",
+    *,
+    sitzung: str | None = None,
+) -> list[str]:
     """Startbefehl der Folge-Runde: tmux-Fenster wie ``spawn_srv.sh``, ohne tmux lokal.
 
     Der Vorspann (``REPO``/``TO_SPAWN_HOME``) ist derselbe wie in
@@ -1288,8 +1288,11 @@ def folge_befehl(repo: Path, spec: int, ticket: int, fenster: list[str] | None, 
     """
     if fenster is None:
         return [sys.executable, str(_bau_skript(repo)), str(ticket), "--sofort"]
+    from . import tmux_aufruf
+
+    ziel = sitzung or tmux_aufruf.sitzung_aufloesen(repo, spec)[0]
     innen = bau_startzeile(repo, ticket, auftrag)
-    kopf = ["new-window", "-t", f"=spec-{spec}"] if fenster else ["new-session", "-d", "-s", f"spec-{spec}"]
+    kopf = ["new-window", "-t", f"={ziel}"] if fenster else ["new-session", "-d", "-s", ziel]
     return [
         *_tmux_befehl(),
         *kopf,
@@ -1331,8 +1334,19 @@ def ereignis_vorfall(art: str, ticket: int, jetzt: datetime) -> vorfall.Vorfall:
 
 
 def _starte_folge_runde(repo: Path, ticket: int, befehl: list[str], ueber_tmux: bool, auftrag: str = "") -> str:
-    """Folge-Runde starten; ``""`` = geklappt, sonst der Grund des Fehlschlags."""
+    """Folge-Runde starten; ``""`` = geklappt, sonst der Grund des Fehlschlags.
+
+    Vor einem tmux-Start prüft :func:`tmux_aufruf.sitzung_fremd` den Besitzer der
+    Ziel-Session (#457), damit nie ein Fenster in ein fremdes Repo gelegt wird.
+    """
     if ueber_tmux:
+        from . import tmux_aufruf
+
+        ziel = tmux_aufruf.sitzung_aus_befehl(befehl)
+        if ziel:
+            fremd = tmux_aufruf.sitzung_fremd(ziel, repo)
+            if fremd:
+                return fremd
         fertig = starter.starte(
             befehl,
             warten=True,
@@ -1385,7 +1399,13 @@ def _folge_runde(
     waechter = konfig.get("waechter", {}) if isinstance(konfig.get("waechter"), dict) else {}
     grenze = folgerunden_max(waechter)
     grund = "; ".join(f"{f.regel} — {f.text}" for f in funde) or "Aufseher-Verstoß"
-    fenster = tmux_fenster(spec)
+    from . import tmux_aufruf
+
+    sitzung, fremd = tmux_aufruf.sitzung_aufloesen(repo, spec)
+    if fremd:
+        log.warning("Folge-Runde für #%s verweigert: %s", n, fremd)
+        return [f"#{n} {fremd}"]
+    fenster = _fenster_fuer_sitzung(spec, sitzung)
     laeuft = laeuft_noch(n, fenster, wt_zeit, jetzt)
     if laeuft:
         return [f"#{n} läuft bereits ({laeuft}) — keine Folge-Runde"]
@@ -1406,7 +1426,7 @@ def _folge_runde(
         if not dry_run:
             gelernt.append(ereignis_vorfall("folgerunden_grenze", n, jetzt))
         return zeilen
-    befehl = folge_befehl(repo, spec, n, fenster, grund)
+    befehl = folge_befehl(repo, spec, n, fenster, grund, sitzung=sitzung)
     if dry_run:
         return [f"#{n} [Probe] würde Folge-Runde starten: {shlex.join(befehl)}"]
     try:
@@ -2164,12 +2184,15 @@ def _tick(
         log.warning("git fetch origin gescheitert — Regeln in diesem Tick ausgesetzt.")
         kopfzeilen.append("FEHLER: fetch — Regeln ausgesetzt (kein Wieder-Öffnen, kein Kommentar in diesem Tick).")
     ref = haupt_ref(repo)
-    liste = kinder(gh_repo, spec)
-    if liste is None:
+    alle_kinder = kinder(gh_repo, spec)
+    if alle_kinder is None:
         erg.zeilen += kopfzeilen
         erg.zeilen.append(f"FEHLER: Sub-Issues von #{spec} in {gh_repo} nicht lesbar (gh).")
         erg.exit_code = 1
         return erg
+    auswahl_stand = auswahl.lesen(repo, spec)
+    teilauswahl = auswahl_stand is not None and auswahl_stand.ist_teilauswahl()
+    liste = auswahl.filtere_issues(alle_kinder, auswahl_stand) if auswahl_stand is not None else alle_kinder
     if ref is None:
         erg.zeilen += kopfzeilen
         erg.zeilen.append("FEHLER: kein origin/master bzw. origin/main — git fetch prüfen.")
@@ -2186,7 +2209,7 @@ def _tick(
     if erster_tick is None:
         erster_tick = jetzt  # dieser Tick ist der erste: alles Geschlossene = Ausgangsstand
         zustand["erster_tick"] = jetzt.isoformat(timespec="seconds")
-        zustand["ausgangsstand"] = {str(int(i["number"])): schliess_marke(i) for i in liste}
+        zustand["ausgangsstand"] = {str(int(i["number"])): schliess_marke(i) for i in alle_kinder}
     ausgang = zustand.get("ausgangsstand")
     ausgang = ausgang if isinstance(ausgang, dict) else None
     waechter = konfig.get("waechter", {}) if isinstance(konfig.get("waechter"), dict) else {}
@@ -2404,7 +2427,11 @@ def _tick(
                 if spaeter is not False:
                     kandidat = None  # danach wieder zu (Mensch) — das jetzige Offen ist nicht capos Reopen
             if kandidat is not None:
-                sperre = ruecknahme_sperre(n, erledigt, laeuft_noch(n, tmux_fenster(spec), wt_zeit, jetzt))
+                from . import tmux_aufruf
+
+                sitzung, fremd = tmux_aufruf.sitzung_aufloesen(repo, spec)
+                fenster_stand = None if fremd else _fenster_fuer_sitzung(spec, sitzung)
+                sperre = ruecknahme_sperre(n, erledigt, laeuft_noch(n, fenster_stand, wt_zeit, jetzt))
                 if sperre:
                     aktionen.append(sperre)
                     kandidat = None
@@ -2510,6 +2537,9 @@ def _tick(
     # #530: Ruf zurücknehmen, wenn der Beleg nach dem Ruf doch noch kam (ein Satz am Ticket).
     rufe = [r for r in zustand.get("mensch_noetig_rufe") or [] if isinstance(r, dict)]
     for ruf in list(rufe):
+        ziel_ruf = str(ruf.get("ticket") or "")
+        if auswahl_stand is not None and ziel_ruf.isdigit() and not auswahl_stand.enthaelt(int(ziel_ruf)):
+            continue
         if not mensch_noetig.beleg_da(ruf):
             continue
         ziel, fp = str(ruf.get("ticket")), str(ruf.get("fingerprint") or "")[:8]
@@ -2523,6 +2553,8 @@ def _tick(
             sichern()
     for eintrag in eigene:  # #465/#498: fremde Repos filtert und loggt mensch_noetig
         ziel = str(eintrag.get("ticket") or spec)
+        if auswahl_stand is not None and ziel.isdigit() and int(ziel) != spec and not auswahl_stand.enthaelt(int(ziel)):
+            continue
         fp = str(eintrag.get("fingerprint") or "")[:8]
         stand = mensch_noetig.review_stand(eintrag, jetzt)
         if stand == "laeuft":  # nicht gemerkt: nächster Takt prüft erneut
@@ -2566,7 +2598,7 @@ def _tick(
         aktionen += katalog_pflegen(repo, konfig, gelernt)
 
     komplett_haelt = False
-    if liste and all(ticket_zustand.fertig_gebaut(i) for i in liste):
+    if not teilauswahl and liste and all(ticket_zustand.fertig_gebaut(i) for i in liste):
         komplett_haelt = _komplett_alle_auf_staging(repo, spec, konfig, aktionen, dry_run)
 
     # #1407: unlesbares Staging ist kein „fehlt“, aber auch kein Beleg „liegt drauf“ — Abschluss zurückhalten.
@@ -2580,8 +2612,9 @@ def _tick(
     elif staging_stand.unlesbar:
         kopfzeilen.append("FEHLER: Staging nicht lesbar — Regel vps teils ausgesetzt, Spec-Abschluss zurückgehalten.")
     erg.zeilen += kopfzeilen
+    auswahl_zusatz = f" · Auswahl {len(liste)}/{len(alle_kinder)}" if teilauswahl else ""
     erg.zeilen.append(
-        f"Spec #{spec} · {ref} {ref_kurz} · VPS {kopf[:7] if kopf else '-'} · offen {offen}/{len(liste)} · "
+        f"Spec #{spec} · {ref} {ref_kurz} · VPS {kopf[:7] if kopf else '-'} · offen {offen}/{len(liste)}{auswahl_zusatz} · "
         f"{jetzt.astimezone():%d.%m. %H:%M}"
     )
     erg.zeilen += stand
@@ -2591,7 +2624,8 @@ def _tick(
     erg.zeilen += aktionen
 
     erg.fertig = (
-        bool(liste)
+        not teilauswahl
+        and bool(liste)
         and offen == 0
         and wartet == 0
         and not erg.verstoesse

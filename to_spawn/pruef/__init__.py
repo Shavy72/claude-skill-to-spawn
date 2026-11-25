@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from to_spawn import config, konsole, pruefplan
+from to_spawn import config, konsole, pruefplan, temp_ordner
 from to_spawn.pruef import (
     adapter_node,
     adapter_py,
@@ -185,10 +185,11 @@ def pruefen(repo: Path, basis: str, ziel: str, art: pruefplan.Art | None = None,
         _schreibe(repo, zeile, art, warnung)
         return Urteil(leiter.GRUEN, zeile)
     eigen = pruefplan.befehl(config.lade(repo), art) if art is not None else None
-    if eigen:
-        liste = [leiter.eigener_befehl(repo, eigen, art)]
-    else:
-        liste = leiter.stufen(repo, _ADAPTER, basis_sha, art)
+    with temp_ordner.lauf(repo, von="pruef"):
+        if eigen:
+            liste = [leiter.eigener_befehl(repo, eigen, art)]
+        else:
+            liste = leiter.stufen(repo, _ADAPTER, basis_sha, art)
     if not liste:
         return _gate_fehler(
             repo,

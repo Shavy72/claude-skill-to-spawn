@@ -122,7 +122,11 @@ def test_wache_stirbt_beim_warten_fenster_startet_sie_neu(tmp_path: Path, monkey
         capture_output=True,
         text=True,
         timeout=60,
-        env={**os.environ, "PATH": f"{Path(sys.executable).parent}{os.pathsep}{os.environ['PATH']}"},
+        env={
+            **os.environ,
+            "PATH": f"{Path(sys.executable).parent}{os.pathsep}{os.environ['PATH']}",
+            "TO_SPAWN_WACHE_NEUSTART_S": "0",
+        },
     )
     assert fenster.returncode == 0, fenster.stderr
     assert (attrappe.parent / "laeufe.txt").read_text() == "2"
@@ -233,24 +237,48 @@ sys.exit(int(code))
 """
 
 
+@pytest.fixture(scope="module")
+def _wache_startbefehl(tmp_path_factory: pytest.TempPathFactory) -> str:
+    """Einmaliger Spawn für die parametrisierten Neustart-Fälle (spart 5 identische Repo-/Spawn-Aufbauten).
+
+    Läuft auf Modul-Ebene vor funktionsbezogenen ``autouse``-Fixtures (z. B. ``test_heim``, #232):
+    leitet ``HOME``/``USERPROFILE`` deshalb selbst in einen Temp-Ordner um, damit der echte
+    Heimordner unberührt bleibt.
+    """
+    import site
+
+    ordner = tmp_path_factory.mktemp("wache_plan_560")
+    heim = ordner / "heim"
+    heim.mkdir()
+    user_base = os.environ.get("PYTHONUSERBASE") or site.getuserbase()
+    with pytest.MonkeyPatch.context() as mp:
+        if user_base:
+            mp.setenv("PYTHONUSERBASE", user_base)
+        mp.setenv("HOME", str(heim))
+        mp.setenv("USERPROFILE", str(heim))
+        mp.delenv("CLAUDE_CONFIG_DIR", raising=False)
+        lauf, _ = _spawn(ordner, max_sessions=6, belegt=10, belegt_eigen=2)
+    assert lauf.returncode == 0, lauf.stdout + lauf.stderr
+    zeile = next(z for z in _gestartet(ordner).splitlines() if f"-n wache {e2.SPEC} " in z)
+    return zeile.split(" bash -lc ", 1)[1]
+
+
 @pytest.mark.braucht("bash", "posix")
 @pytest.mark.parametrize(
     ("plan", "laeufe"),
     [("130", 1), ("2", 1), ("143", 1), ("0", 1), ("1,0", 2), ("kill", 4)],
     ids=["strg-c", "konfig-fehler", "sigterm", "normal", "traceback-dann-ok", "absturz-immer"],
 )
-def test_wache_neustart_nur_nach_absturz(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, plan: str, laeufe: int) -> None:
+def test_wache_neustart_nur_nach_absturz(
+    tmp_path: Path, _wache_startbefehl: str, plan: str, laeufe: int
+) -> None:
     """Pflicht 2: gewollter Abbruch → kein Neustart; Absturz → Neustart, höchstens 3-mal."""
-    lauf, _umgebung, _repo = _spawn_fremd_voll(tmp_path, monkeypatch)
-    assert lauf.returncode == 0, lauf.stdout + lauf.stderr
-    zeile = next(z for z in _gestartet(tmp_path).splitlines() if f"-n wache {e2.SPEC} " in z)
-    befehl = zeile.split(" bash -lc ", 1)[1]
     attrappe = tmp_path / "plan" / "wache.py"
     attrappe.parent.mkdir()
     attrappe.write_text(_WACHE_PLAN, encoding="utf-8")
     echt = str(SKILL / "skripte" / "wache.py")
     fenster = subprocess.run(
-        ["bash", "-c", befehl.replace(echt, str(attrappe))],
+        ["bash", "-c", _wache_startbefehl.replace(echt, str(attrappe))],
         check=False,
         capture_output=True,
         text=True,

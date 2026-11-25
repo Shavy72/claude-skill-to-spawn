@@ -38,6 +38,18 @@ _BLOCKED_BY_FETT = re.compile(r"\*\*\s*blocked by\s*:?\s*\*\*\s*:?\s*(.*)$", re.
 _UEBERSCHRIFT = re.compile(r"^\s{0,3}#{1,6}\s")
 #: Verweis als ``#12`` oder als volle URL ``…/issues/12``.
 _VERWEIS = re.compile(r"(?:#|/issues/)(\d+)\b")
+#: Umgebungsvariable für den unbeaufsichtigten Modus (Dauerauftrag, #405) — gewinnt vor Konfig.
+UNBEAUFSICHTIGT_ENV = "TO_SPAWN_UNBEAUFSICHTIGT"
+_WAHR_WERTE = frozenset({"1", "true", "ja", "yes", "an", "on"})
+_FALSCH_WERTE = frozenset({"0", "false", "nein", "no", "aus", "off"})
+#: Kopfzeile ``Quelle: docs/GRILL_…`` (auch fett ``**Quelle:** …``) am Zeilenanfang (#405).
+_QUELLE_ZEILE = re.compile(
+    r"^\s*(?:\*\*Quelle:?\*\*|Quelle:)\s*\S+", re.IGNORECASE | re.MULTILINE
+)
+#: Beschluss-Verweis in Klammern, z. B. ``(E1)`` oder ``(E3, E7)`` (#405).
+_E_NUMMER = re.compile(r"\([^)]*\bE\d+\b[^)]*\)")
+#: Issue-Nummer als Zahl, ``#N`` oder GitHub-Issue-URL.
+_ISSUE_QUELLE = re.compile(r"^(?:#|https?://[^\s/]+/[^/\s]+/[^/\s]+/issues/)?(\d+)/?$")
 
 
 def ticket_schluessel(nummer: Any) -> tuple[int, int | str]:
@@ -118,6 +130,121 @@ def schreibe_atomar(datei: Path, daten: dict[str, Any]) -> None:
 def checkpoint_label(konfig: dict[str, Any]) -> str:
     """Label des Abnahme-Tickets (``regularien.checkpoint_label``, Vorgabe ``checkpoint:human``)."""
     return str(konfig.get("regularien", {}).get("checkpoint_label") or "checkpoint:human")
+
+
+def ist_unbeaufsichtigt(konfig: dict[str, Any] | None = None) -> bool:
+    """Läuft ``/to-tickets`` unbeaufsichtigt (Dauerauftrag, #405)?
+
+    Umgebungsvariable ``TO_SPAWN_UNBEAUFSICHTIGT`` (``1/true/ja/yes/an/on`` bzw.
+    ``0/false/nein/no/aus/off``) gewinnt vor ``regularien.unbeaufsichtigt`` (nur
+    striktes ``True`` zählt). Ein ungültiger Env-Wert wird geloggt und fällt auf
+    die Konfig zurück (fail-closed).
+    """
+    roh = os.environ.get(UNBEAUFSICHTIGT_ENV)
+    if roh is not None and roh.strip():
+        normal = roh.strip().lower()
+        if normal in _WAHR_WERTE:
+            return True
+        if normal in _FALSCH_WERTE:
+            return False
+        log.warning(
+            "%s=%r ungültig (erwartet 1/0, true/false, ja/nein) — Konfig entscheidet",
+            UNBEAUFSICHTIGT_ENV,
+            roh,
+        )
+    regularien = (konfig or {}).get("regularien")
+    return isinstance(regularien, dict) and regularien.get("unbeaufsichtigt") is True
+
+
+@dataclass
+class SpecPruefung:
+    """Ergebnis der Spec-Prüfung vor ``/to-tickets`` (#405)."""
+
+    unbeaufsichtigt: bool
+    zustimmung_noetig: bool
+    fehler: list[str] = field(default_factory=list)
+    warnungen: list[str] = field(default_factory=list)
+
+    @property
+    def darf_schneiden(self) -> bool:
+        return not self.fehler
+
+    def text(self) -> str:
+        modus = (
+            "unbeaufsichtigt (Zustimmung gilt als gegeben)"
+            if self.unbeaufsichtigt
+            else "beaufsichtigt (Zustimmung des Nutzers nötig)"
+        )
+        zeilen = [f"Spec-Prüfung · Modus: {modus}"]
+        for eintrag in self.fehler:
+            zeilen.append(f"  FEHLER  {eintrag}")
+        for eintrag in self.warnungen:
+            zeilen.append(f"  Warnung {eintrag}")
+        if not self.fehler and not self.warnungen:
+            zeilen.append("  alles erfüllt")
+        elif self.fehler:
+            zeilen.append(
+                "  → STOPP — nicht schneiden; erst /to-spec aus dem Beschluss-Protokoll "
+                f"oder Modus unbeaufsichtigt setzen (regularien.unbeaufsichtigt / {UNBEAUFSICHTIGT_ENV}=1)."
+            )
+        return "\n".join(zeilen)
+
+
+def pruefe_spec(spec_text: str, konfig: dict[str, Any] | None = None) -> SpecPruefung:
+    """Prüft einen Spec-Text auf ``Quelle:``-Zeile und ``(E<n>)``-Zuordnung (#405).
+
+    Im Modus ``unbeaufsichtigt`` (:func:`ist_unbeaufsichtigt`): Zustimmung gilt als
+    gegeben (``zustimmung_noetig=False``); fehlende ``Quelle:``-Zeile oder fehlende
+    ``(E<n>)`` sind Warnungen (auch per ``log.warning``), kein Stopp.
+    Ohne den Modus bleibt die Prüfung hart (``darf_schneiden=False``,
+    ``zustimmung_noetig=True``).
+    """
+    modus = ist_unbeaufsichtigt(konfig)
+    ergebnis = SpecPruefung(unbeaufsichtigt=modus, zustimmung_noetig=not modus)
+    text = spec_text or ""
+    maengel: list[str] = []
+    if not _QUELLE_ZEILE.search(text):
+        maengel.append("Spec hat keine Quelle-Zeile (erwartet: Quelle: docs/GRILL_<…>.md)")
+    if not _E_NUMMER.search(text):
+        maengel.append("Spec hat keine (E<n>)-Zuordnung an den Spec-Punkten")
+    for mangel in maengel:
+        if modus:
+            log.warning("unbeaufsichtigt: %s — nur Warnung, Schnitt läuft weiter", mangel)
+            ergebnis.warnungen.append(
+                f"{mangel} — Modus unbeaufsichtigt: nur Warnung, ## Beschlüsse verweist auf den Spec-Abschnitt."
+            )
+        else:
+            ergebnis.fehler.append(
+                f"{mangel} — erst /to-spec aus dem Beschluss-Protokoll (docs/GRILL_*.md)."
+            )
+    return ergebnis
+
+
+def lies_spec_text(repo: Path, quelle: str) -> str:
+    """Liest den Spec-Text aus Dateipfad, Issue-Nummer (``42``/``#42``) oder Issue-URL (#405)."""
+    roh = quelle.strip()
+    if not roh:
+        raise ValueError("Spec-Angabe fehlt (Issue-Nummer, URL oder Dateipfad).")
+    kandidat = Path(roh).expanduser()
+    if not kandidat.is_absolute():
+        rel = repo / kandidat
+        if rel.is_file():
+            kandidat = rel
+    if kandidat.is_file():
+        try:
+            return kandidat.read_text(encoding="utf-8")
+        except OSError as fehler:
+            raise ValueError(f"Spec-Datei nicht lesbar ({kandidat}): {fehler}") from fehler
+    treffer = _ISSUE_QUELLE.match(roh)
+    if treffer:
+        nummer = treffer.group(1)
+        daten = gh.ticket_daten(nummer, cwd=repo)
+        if daten is None:
+            raise ValueError(
+                f"Spec-Issue #{nummer} nicht lesbar (`gh auth status` und Repo prüfen)."
+            )
+        return str(daten.get("body") or "")
+    raise ValueError(f"Spec nicht gefunden: {quelle!r} (weder Datei noch Issue-Nummer/URL).")
 
 
 def einrichtungs_ticket(daten: dict[str, Any]) -> str | None:

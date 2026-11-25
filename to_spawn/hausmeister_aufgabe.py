@@ -26,7 +26,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from to_spawn import hausmeister, starter
+from to_spawn import hausmeister, konsole, starter
 
 log = logging.getLogger(__name__)
 
@@ -126,8 +126,7 @@ def _schtasks(*args: str) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
             ["schtasks", *args],
             capture_output=True,
-            text=True,
-            errors="replace",
+            **konsole.UNTERPROZESS_TEXT,
             check=False,
             timeout=SCHTASKS_ZEITLIMIT_S,
             creationflags=CREATE_NO_WINDOW,

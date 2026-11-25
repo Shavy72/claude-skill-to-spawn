@@ -72,7 +72,12 @@ def richte_parser_ein(unter: Any) -> None:
     p_antw.add_argument("--id", required=True, dest="frage_id")
     p_antw.add_argument("--wahl", required=True)
     p_antw.add_argument("--grund", required=True)
-    p_antw.add_argument("--beleg", action="append", default=[])
+    p_antw.add_argument(
+        "--beleg",
+        action="append",
+        default=[],
+        help="Fundstelle (Pflicht, mindestens ein nicht leerer Beleg)",
+    )
     p_antw.add_argument("--von", choices=briefkasten.AUFSEHER_VON, default=briefkasten.AUFSEHER_VON[0])
     p_nutzer = unter.add_parser("nutzer-antwort", help="Nur der Mensch im Terminal: Antwort des Nutzers")
     p_nutzer.add_argument("ticket")

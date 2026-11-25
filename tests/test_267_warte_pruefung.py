@@ -27,7 +27,7 @@ from typing import Any
 
 import pytest
 
-from conftest import attrappe
+from conftest import attrappe, repo_dateien
 
 SKILL = Path(__file__).resolve().parent.parent
 if str(SKILL) not in sys.path:
@@ -261,9 +261,9 @@ def test_prompt_fragt_den_blocker_befehl() -> None:
 def test_keine_eigene_blocker_regel() -> None:
     """Wächter: kein Prompt, keine Doku, kein Code formuliert die Regel neben gh.py aus."""
     treffer = []
-    for pfad in SKILL.rglob("*"):
+    for pfad in repo_dateien(SKILL):
         rel = pfad.relative_to(SKILL).as_posix()
-        if not pfad.is_file() or rel.startswith((".git", *ERLAUBT_ORDNER)) or rel in ERLAUBT:
+        if rel.startswith(ERLAUBT_ORDNER) or rel in ERLAUBT:
             continue
         try:
             text = pfad.read_text(encoding="utf-8")

@@ -133,3 +133,130 @@ def test_kommandozeile_gerade_beendetes_kind_ist_leer() -> None:
     kind = subprocess.Popen([sys.executable, "-c", "pass"], **prozessbaum.ohne_fenster())
     kind.wait()
     assert prozessbaum._kommandozeile_windows(kind.pid) == ""
+
+
+def _curdir_bytes(griff: int, text_len: int = 12, puffer: int = 0x2000) -> bytes:
+    """24-Byte-``CURDIR`` (DosPath-Kopf + Handle) für PEB-Tests."""
+    return (
+        text_len.to_bytes(2, "little")
+        + text_len.to_bytes(2, "little")
+        + b"\x00" * 4
+        + puffer.to_bytes(8, "little")
+        + griff.to_bytes(8, "little")
+    )
+
+
+def _peb_attrappe(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    curdirs: list[bytes],
+    duplizieren: Any,
+    exit_codes: list[int] | None = None,
+) -> types.SimpleNamespace:
+    """Attrappe für ``_arbeitsordner_griff_windows`` und ``_arbeitsordner_windows``."""
+    zustand = types.SimpleNamespace(
+        geschlossen=[],
+        curdir_idx=0,
+        exit_idx=0,
+        dup_aufrufe=[],
+    )
+    codes = exit_codes or [prozessbaum._STILL_ACTIVE]
+
+    def get_exit_code(_griff: int, ziel: Any) -> int:
+        wert = codes[min(zustand.exit_idx, len(codes) - 1)]
+        zustand.exit_idx += 1
+        _setze(ziel, wert)
+        return 1
+
+    def dup_handle(_src: int, fremd: int, _dst: int, ziel: Any, *_rest: Any) -> int:
+        zustand.dup_aufrufe.append(fremd)
+        erg = duplizieren(fremd)
+        if erg is None:
+            return 0
+        _setze(ziel, erg)
+        return 1
+
+    def curdir(_prozess: int, _pid: int) -> bytes:
+        wert = curdirs[min(zustand.curdir_idx, len(curdirs) - 1)]
+        zustand.curdir_idx += 1
+        return wert
+
+    kernel = types.SimpleNamespace(
+        OpenProcess=lambda _recht, _erben, _pid: 900,
+        CloseHandle=lambda griff: zustand.geschlossen.append(getattr(griff, "value", griff)) or 1,
+        GetExitCodeProcess=get_exit_code,
+        GetCurrentProcess=lambda: 1,
+        DuplicateHandle=dup_handle,
+    )
+    monkeypatch.setattr(prozessbaum, "_win32", lambda: (kernel, types.SimpleNamespace()))
+    monkeypatch.setattr(prozessbaum, "_curdir", curdir)
+    monkeypatch.setattr(ctypes, "set_last_error", lambda _wert: None, raising=False)
+    monkeypatch.setattr(ctypes, "get_last_error", lambda: 6, raising=False)
+    return zustand
+
+
+def test_cwd_griff_einmaliger_wechsel_wird_neu_gelesen(monkeypatch: pytest.MonkeyPatch) -> None:
+    alt, neu = _curdir_bytes(101), _curdir_bytes(102)
+    zustand = _peb_attrappe(
+        monkeypatch,
+        curdirs=[alt, neu, neu, neu],
+        duplizieren=lambda fremd: 500 + fremd,
+    )
+    assert prozessbaum._arbeitsordner_griff_windows(42) == 602
+    assert zustand.dup_aufrufe == [101, 102]
+    assert zustand.geschlossen == [601, 900]
+
+
+def test_cwd_griff_duplicate_scheitert_wegen_wechsel_wird_neu_gelesen(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    alt, neu = _curdir_bytes(101), _curdir_bytes(102)
+    zustand = _peb_attrappe(
+        monkeypatch,
+        curdirs=[alt, neu, neu, neu],
+        duplizieren=lambda fremd: None if fremd == 101 else 602,
+    )
+    assert prozessbaum._arbeitsordner_griff_windows(42) == 602
+    assert zustand.dup_aufrufe == [101, 102]
+    assert zustand.geschlossen == [900]
+
+
+def test_cwd_griff_dauerhafter_wechsel_bleibt_fehler(monkeypatch: pytest.MonkeyPatch) -> None:
+    wechselnd = [_curdir_bytes(100 + i) for i in range(20)]
+    zustand = _peb_attrappe(
+        monkeypatch,
+        curdirs=wechselnd,
+        duplizieren=lambda fremd: 500 + fremd,
+    )
+    with pytest.raises(OSError, match="cwd wechselte während der Prüfung"):
+        prozessbaum._arbeitsordner_griff_windows(42)
+    assert len(zustand.dup_aufrufe) == prozessbaum._CURDIR_VERSUCHE
+    assert zustand.geschlossen[-1] == 900
+    assert len(zustand.geschlossen) == prozessbaum._CURDIR_VERSUCHE + 1
+
+
+def test_cwd_griff_prozess_endet_waehrend_lesen_ist_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    zustand = _peb_attrappe(
+        monkeypatch,
+        curdirs=[_curdir_bytes(101)],
+        duplizieren=lambda _fremd: None,
+        exit_codes=[prozessbaum._STILL_ACTIVE, 0],
+    )
+    assert prozessbaum._arbeitsordner_griff_windows(42) is None
+    assert zustand.geschlossen == [900]
+
+
+def test_cwd_text_prozess_endet_waehrend_lesen_ist_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    zustand = _peb_attrappe(
+        monkeypatch,
+        curdirs=[_curdir_bytes(101)],
+        duplizieren=lambda _fremd: None,
+        exit_codes=[prozessbaum._STILL_ACTIVE, 0],
+    )
+    monkeypatch.setattr(
+        prozessbaum,
+        "_speicher",
+        lambda *_a: (_ for _ in ()).throw(OSError(299, "ReadProcessMemory gescheitert")),
+    )
+    assert prozessbaum._arbeitsordner_windows(42) is None
+    assert zustand.geschlossen == [900]

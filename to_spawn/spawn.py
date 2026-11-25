@@ -17,13 +17,36 @@ import time
 from pathlib import Path
 from typing import Any, Sequence, TextIO
 
-from . import capo, manifest, probesitz, stand, starter, umzug
+from . import auswahl, capo, config, manifest, probesitz, spawn_exit, stand, starter, tmux_aufruf, umzug
 
 log = logging.getLogger("to_spawn.spawn")
 
 SKILL_ORDNER = Path(__file__).resolve().parent.parent
 SKRIPTE = {"local": "spawn_local.ps1", "srv": "spawn_srv.ps1"}
 SPAWN_SH = SKILL_ORDNER / "skripte" / "spawn_srv.sh"
+#: Exit-Codes von ``spawn_srv.sh`` — einzige Quelle ist :mod:`to_spawn.spawn_exit` (#604).
+EXIT_SPERRE = spawn_exit.EXIT_SPERRE
+SPAWN_SRV_EXITS = spawn_exit.BESCHREIBUNG
+_FEHLER_SERVER_REPO = (
+    "Ziel Server braucht `server_repo` in .to-spawn/config.json "
+    "(Repo-Ordner auf dem Bau-Server) — auf dem Server: --ziel local."
+)
+
+
+def ziel_aufloesen(ziel: str, konfig: dict[str, Any]) -> str:
+    """Auf dem Bau-Server selbst gilt ``srv`` wie ``local`` — kein SSH auf sich selbst (#408)."""
+    if ziel == "srv" and config.ist_bau_server(konfig):
+        log.info("Läuft auf dem Bau-Server — Ziel srv wird wie local behandelt.")
+        return "local"
+    return ziel
+
+
+def _server_repo_pflicht(konfig: dict[str, Any]) -> str:
+    """``server_repo`` für Fern-Start per SSH; fehlt es, ``ValueError`` mit Hinweis (#408)."""
+    wert = str(konfig.get("server_repo") or "").strip()
+    if not wert:
+        raise ValueError(_FEHLER_SERVER_REPO)
+    return wert
 
 
 def frage_ziel(vorgabe: str, eingabe: TextIO | None = None) -> str:
@@ -48,21 +71,29 @@ def baue_befehl(
     tickets: Sequence[str] | None,
     konfig: dict[str, Any],
     dry_run: bool,
+    *,
+    ohne_wache: bool = False,
 ) -> list[str]:
     """argv des Terminal-Skripts; auf Nicht-Windows ohne ``pwsh`` (#257).
 
-    ``srv`` braucht dort ``server_repo`` aus der Konfig (Repo-Ordner auf dem Bau-Server) —
-    fehlt er, ``ValueError`` mit klarer Meldung statt eines blinden SSH-Aufrufs.
+    Auf dem Bau-Server selbst wird ``srv`` wie ``local`` behandelt (#408). Sonst braucht
+    ``srv`` ``server_repo`` aus der Konfig (Repo-Ordner auf dem Bau-Server) — fehlt er,
+    ``ValueError`` mit klarer Meldung statt eines blinden SSH-Aufrufs.
     """
+    ziel = ziel_aufloesen(ziel, konfig)
     if sys.platform != "win32":
-        return _befehl_unix(ziel, spec, tickets, konfig, dry_run)
+        return _befehl_unix(ziel, spec, tickets, konfig, dry_run, ohne_wache=ohne_wache)
+    if ziel == "srv":
+        _server_repo_pflicht(konfig)
     skript = SKILL_ORDNER / SKRIPTE[ziel]
     pwsh = shutil.which("pwsh") or shutil.which("powershell") or "pwsh"
     befehl = [pwsh, "-File", str(skript), "-Spec", str(spec)]
     if tickets:
         befehl += ["-Tickets", ",".join(str(t) for t in tickets)]
+    if ohne_wache:
+        befehl.append("-OhneWache")
     if ziel == "srv":
-        befehl += ["-Zielserver", str(konfig.get("ssh_ziel", "bau-server"))]
+        befehl += ["-Zielserver", config.ssh_ziel(konfig)]
     if dry_run:
         befehl.append("-DryRun")
     return befehl
@@ -83,22 +114,20 @@ def _befehl_unix(
     tickets: Sequence[str] | None,
     konfig: dict[str, Any],
     dry_run: bool,
+    *,
+    ohne_wache: bool = False,
 ) -> list[str]:
     argumente = [str(spec)]
     if tickets:
         argumente += ["--tickets", ",".join(str(t) for t in tickets)]
+    if ohne_wache:
+        argumente.append("--ohne-wache")
     if dry_run:
         argumente.append("--dry-run")
     if ziel == "local":
         return ["bash", str(SPAWN_SH), *argumente]
-    server_repo = str(konfig.get("server_repo") or "").strip()
-    if not server_repo:
-        raise ValueError(
-            "Ziel Server braucht `server_repo` in .to-spawn/config.json "
-            "(Repo-Ordner auf dem Bau-Server) — oder lokal starten (Ziel 1)."
-        )
-    ssh_ziel = str(konfig.get("ssh_ziel") or "bau-server")
-    return ["ssh", ssh_ziel, umzug.fern_skill_befehl(server_repo, "bash", "spawn_srv.sh", argumente)]
+    server_repo = _server_repo_pflicht(konfig)
+    return ["ssh", config.ssh_ziel(konfig), umzug.fern_skill_befehl(server_repo, "bash", "spawn_srv.sh", argumente)]
 
 
 def spawn(
@@ -108,6 +137,7 @@ def spawn(
     *,
     ziel: str | None = None,
     tickets: Sequence[str] | None = None,
+    ohne_wache: bool = False,
     dry_run: bool = False,
     eingabe: TextIO | None = None,
 ) -> int:
@@ -121,8 +151,9 @@ def spawn(
     if gewaehlt not in SKRIPTE:
         log.error("Unbekanntes Ziel: %s", gewaehlt)
         return 2
+    gewaehlt = ziel_aufloesen(gewaehlt, konfig)
     try:
-        befehl = baue_befehl(gewaehlt, spec, tickets, konfig, dry_run)
+        befehl = baue_befehl(gewaehlt, spec, tickets, konfig, dry_run, ohne_wache=ohne_wache)
     except ValueError as fehler:
         log.error("%s", fehler)
         return 2
@@ -144,8 +175,19 @@ def spawn(
     # Das Skript arbeitet im Repo des Aufrufs, nicht im Repo aus ~/.bashrc (#212/#257).
     umgebung = {**os.environ, "TO_SPAWN_REPO": str(repo)}
     rc = starter.starte(befehl, cwd=repo, check=False, env=umgebung, warten=True).returncode
+    if spawn_exit.ist_spaeter_erneut(rc):
+        log.info(
+            "Terminal-Skript endete mit Exit %s (%s) — später erneut versuchen.",
+            rc,
+            spawn_exit.beschreibung(rc),
+        )
+        return rc
     if rc != 0:
-        log.error("Terminal-Skript endete mit Exit %s — es wurde nichts (vollständig) gestartet; Ausgabe siehe oben.", rc)
+        log.error(
+            "Terminal-Skript endete mit Exit %s (%s) — es wurde nichts (vollständig) gestartet; Ausgabe siehe oben.",
+            rc,
+            spawn_exit.beschreibung(rc),
+        )
     return rc
 
 
@@ -176,8 +218,9 @@ def ticket_eintrag(spec: int | str, ticket: int | str) -> Any:
 def _neustart_lokal_befehl(repo: Path, spec: int, ticket: int, auftrag: str) -> tuple[list[str], bool]:
     """(argv, über tmux?) — Linux: tmux-Fenster ``bau <N>`` wie capo; Windows: neuer wt-Tab."""
     if sys.platform != "win32":
-        fenster = capo.tmux_fenster(spec)
-        return capo.folge_befehl(repo, spec, ticket, fenster, auftrag), fenster is not None
+        sitzung, _ = tmux_aufruf.sitzung_aufloesen(repo, spec)
+        fenster = capo.tmux_fenster(spec, sitzung=sitzung)
+        return capo.folge_befehl(repo, spec, ticket, fenster, auftrag, sitzung=sitzung), fenster is not None
     return wt_tab_befehl(repo, ticket, auftrag), False
 
 
@@ -214,10 +257,12 @@ def neustart(
     zuerst nur die Claude-Session beendet (ohne Session ``bau.py`` selbst, das dann
     nichts mehr zu tun hat), nie ein fremder Prozess.
     """
+    ziel = ziel_aufloesen(ziel, konfig)
     if ziel == "srv":
-        server_repo = str(konfig.get("server_repo") or "").strip()
-        if not server_repo:
-            log.error("Ziel Server braucht `server_repo` in .to-spawn/config.json.")
+        try:
+            server_repo = _server_repo_pflicht(konfig)
+        except ValueError as fehler:
+            log.error("%s", fehler)
             return 2
         stand_rc = stand.sichere_stand(repo, konfig, nur_pruefen=dry_run)
         if stand_rc != 0 and not (dry_run and stand_rc == stand.EXIT_ABWEICHEND):
@@ -233,9 +278,19 @@ def neustart(
             f"cd {fern_ordner(server_repo)} && "
             f"python3 ~/.claude/skills/to-spawn/to_spawn.py {shlex.join(argumente)}"
         )
-        befehl = ["ssh", str(konfig.get("ssh_ziel") or "bau-server"), fern]
+        befehl = ["ssh", config.ssh_ziel(konfig), fern]
         print(" ".join(befehl[:2]), repr(fern))
         return starter.starte(befehl, cwd=repo, check=False, warten=True).returncode
+
+    stand_auswahl = auswahl.lesen(repo, spec)
+    if not auswahl.ticket_erlaubt(repo, spec, ticket, auswahl=stand_auswahl, gelesen=True):
+        meldung = (
+            f"WEIGERUNG: Ticket #{ticket} liegt außerhalb der gespeicherten Auswahl "
+            f"für Spec #{spec} ({auswahl.beschreibung(stand_auswahl)}) — kein Neustart."
+        )
+        log.error("%s", meldung)
+        print(meldung, file=sys.stderr)
+        return manifest.EXIT_WEIGERUNG
 
     os.environ["TO_SPAWN_REPO"] = str(repo)
     eintrag = ticket_eintrag(spec, ticket)

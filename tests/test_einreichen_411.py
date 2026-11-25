@@ -245,7 +245,12 @@ def test_fremder_zweig_ist_aufruf_falsch(welt: dict[str, Path]) -> None:
 
 def test_projekt_mit_eigenem_einreich_dienst_nur_ticket_zweig(welt: dict[str, Path]) -> None:
     klon = welt["klon"]
-    _commit(klon, "scripts/hooks/install_git_hooks.sh", "# eigene Sperre\n", "chore: eigene Sperre")
+    _commit(
+        klon,
+        ".to-spawn/config.json",
+        json.dumps({"einreichen": {"eigener_dienst": True}}) + "\n",
+        "chore: eigener Einreich-Dienst",
+    )
     _git(klon, "push", "-q", "origin", "main")
     vorher = _remote_main(welt)
     wt = _ticket_wt(welt)

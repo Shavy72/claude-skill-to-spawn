@@ -14,7 +14,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Self
 
 import pytest
 from test_komplett_je_spec_425 import SPEC, _befehl, _commit, _git, _laeufe, _rot
@@ -132,7 +132,10 @@ def test_takt_blockiert_nicht_und_startet_nie_doppelt(
 
 def test_zeitgrenze_beendet_ganze_prozessgruppe(tmp_path: Path) -> None:
     pid_datei = tmp_path / "enkel.pid"
-    befehl = f"sleep 60 & echo $! > {shlex.quote(str(pid_datei))}; wait"
+    # Unter Windows (Git-Bash) liefert /proc/$p/winpid die echte Windows-PID statt der MSYS-PID.
+    befehl = (
+        f'sleep 60 & p=$!; w=$(cat /proc/$p/winpid 2>/dev/null); echo "${{w:-$p}}" > {shlex.quote(str(pid_datei))}; wait'
+    )
     start = time.monotonic()
     stufe = leiter.eigener_befehl(tmp_path, befehl, "komplett", zeitgrenze_s=1.0)
     assert time.monotonic() - start < 15, "Ausgabe blieb offen — Enkel hält die Pipe"
@@ -464,3 +467,321 @@ def test_zeitgrenze_haelt_auch_bei_setsid_enkel(tmp_path: Path) -> None:
                 os.kill(int(pid_datei.read_text(encoding="utf-8").strip()), 9)
             except (OSError, ValueError):
                 pass
+
+
+# --- #468: Kopfwechsel im Hintergrund-Lauf -------------------------------------------------------
+
+
+def test_hintergrund_kopfwechsel_vor_kind_pruefung_keine_falschmeldung(
+    tmp_path: Path, echtes_nachziehen: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#468: Neuer Kopf kommt an, bevor das Kind prüft — Kind prüft den neuen Kopf, keine Falschmeldung."""
+    zaehl = tmp_path / "zaehl.txt"
+    klon, konfig = _klon(tmp_path, {"komplett": _befehl(zaehl)})
+    anderer, zweig = _mit_origin(tmp_path, klon)
+    echt = komplett_lauf.starter.starte
+    neuer_kopf: list[str] = []
+
+    def mit_kopfwechsel(argv: list[str], **kw: Any) -> Any:
+        if not neuer_kopf:
+            neuer_kopf.append(_neu_auf_origin(anderer, zweig, klon, "waehrenddessen.txt"))
+        return echt(argv, **kw)
+
+    monkeypatch.setattr(komplett_lauf.starter, "starte", mit_kopfwechsel)
+    erg = komplett_lauf.komplett_einmal(
+        klon, SPEC, Moment.ALLE_AUF_STAGING, konfig, takt=True
+    )
+    assert len(neuer_kopf) == 1
+    assert "ohne Ergebnis" not in erg.grund, erg
+    assert (erg.gelaufen, erg.ok, erg.laeuft, erg.kopf) == (True, True, False, neuer_kopf[0]), erg
+    assert "grün" in erg.grund, erg.grund
+    assert _laeufe(zaehl) == 1
+
+
+def test_hintergrund_kopfwechsel_nach_kind_pruefung_keine_falschmeldung(
+    tmp_path: Path,
+) -> None:
+    """#468: Kopf wechselt nach Start des Prüf-Befehls — kein „ohne Ergebnis“, aber noch nicht frei."""
+    zaehl = tmp_path / "zaehl.txt"
+    # Der Prüf-Befehl zählt sich und erzeugt während des Laufs einen neuen Commit im Klon,
+    # sodass der Merker auf den geprüften alten Kopf zeigt, HEAD danach aber schon weiter ist.
+    befehl = (
+        f"{_befehl(zaehl)} && "
+        "printf 'neu\\n' > nach.txt && "
+        "git add nach.txt && "
+        "git -c user.name=Bau -c user.email=bau@example.invalid commit -q -m nach"
+    )
+    klon, konfig = _klon(tmp_path, {"komplett": befehl})
+    alt = _git(klon, "rev-parse", "HEAD")
+    erg = komplett_lauf.komplett_einmal(
+        klon, SPEC, Moment.ALLE_AUF_STAGING, konfig, takt=True
+    )
+    neu = _git(klon, "rev-parse", "HEAD")
+    assert neu != alt
+    assert "ohne Ergebnis" not in erg.grund, erg
+    assert erg.ok and erg.laeuft and not erg.frei, erg
+    assert erg.kopf == neu, erg
+    assert _laeufe(zaehl) == 1
+
+
+def test_hintergrund_echt_ohne_ergebnis_meldet_fehler(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#468: Endet der Hintergrund-Lauf wirklich ohne Merker, bleibt die Fehlermeldung erhalten."""
+    zaehl = tmp_path / "zaehl.txt"
+    klon, konfig = _klon(tmp_path, {"komplett": _befehl(zaehl)})
+    echt = komplett_lauf.starter.starte
+    absturz = Path(os.environ[komplett_lauf.starter.TEST_BIN_ENV]) / "absturz_468.py"
+    absturz.write_text("import sys\nprint('kaputt')\nsys.exit(9)\n", encoding="utf-8")
+
+    def abgestuerzt(argv: list[str], **kw: Any) -> Any:
+        return echt([sys.executable, str(absturz)], **kw)
+
+    monkeypatch.setattr(komplett_lauf.starter, "starte", abgestuerzt)
+    erg = komplett_lauf.komplett_einmal(
+        klon, SPEC, Moment.ALLE_AUF_STAGING, konfig, takt=True
+    )
+    assert (erg.gelaufen, erg.ok, erg.laeuft) == (False, False, False), erg
+    assert "ohne Ergebnis beendet (Exit 9)" in erg.grund and "kaputt" in erg.grund, erg.grund
+    assert komplett_lauf.lies_merker(klon, SPEC) is None
+
+
+# --- #645: Prozessbaum-Abbruch unter Windows über prozessbaum + Job-Objekt -----------------------
+
+
+def test_sitzungsjob_beenden_und_aufnehmen_einmalig(monkeypatch: pytest.MonkeyPatch) -> None:
+    """#645: ``sitzungsjob.gebunden`` liefert einen Job; ``aufnehmen`` und ``beenden`` arbeiten sauber ohne Doppel-Close."""
+    from to_spawn import sitzungsjob
+
+    ereignisse: list[tuple[str, Any]] = []
+
+    class FakeKernel:
+        def CreateJobObjectW(self, _attr: Any, _name: Any) -> int:
+            ereignisse.append(("CreateJobObjectW", None))
+            return 7001
+
+        def SetInformationJobObject(self, job: int, klasse: int, _info: Any, _groesse: int) -> int:
+            ereignisse.append(("SetInformationJobObject", (job, klasse)))
+            return 1
+
+        def OpenProcess(self, _rechte: int, _erben: bool, pid: int) -> int:
+            ereignisse.append(("OpenProcess", pid))
+            return 8000 + pid
+
+        def IsProcessInJob(self, _proz: int, _job: int, ergebnis: Any) -> int:
+            ergebnis._obj.value = 0
+            return 1
+
+        def AssignProcessToJobObject(self, job: int, proz: int) -> int:
+            ereignisse.append(("AssignProcessToJobObject", (job, proz)))
+            return 1
+
+        def TerminateJobObject(self, job: int, code: int) -> int:
+            ereignisse.append(("TerminateJobObject", (job, code)))
+            return 1
+
+        def CloseHandle(self, griff: int) -> int:
+            ereignisse.append(("CloseHandle", griff))
+            return 1
+
+    class FakeProzess:
+        pid = 42
+
+        def poll(self) -> int | None:
+            return None
+
+    monkeypatch.setattr(sitzungsjob, "_WINDOWS", True)
+    monkeypatch.setattr(sitzungsjob, "_kernel", lambda: FakeKernel())
+
+    with sitzungsjob.gebunden(FakeProzess()) as job:
+        assert job is not None and job.aktiv
+        assert job.aufnehmen(99) is True
+        assert job.beenden() is True
+        assert not job.aktiv
+        # Zweiter Aufruf und Blockende dürfen den Griff nicht ein zweites Mal schließen.
+        assert job.beenden() is False
+
+    assert ereignisse.count(("TerminateJobObject", (7001, 1))) == 1
+    assert ereignisse.count(("CloseHandle", 7001)) == 1
+    assert ("AssignProcessToJobObject", (7001, 8099)) in ereignisse
+
+
+def test_gruppe_beenden_delegiert_an_prozessbaum_und_nutzt_job_vor_baum(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#645: Unter Windows beendet ``_gruppe_beenden`` über ``prozessbaum.gruppe_beenden`` zuerst den Job, dann Kinder vor Wurzel."""
+    ereignisse: list[tuple[str, Any]] = []
+
+    class FakeJob:
+        aktiv = True
+
+        def beenden(self) -> bool:
+            ereignisse.append(("job.beenden", None))
+            self.aktiv = False
+            return True
+
+    class FakeProzess:
+        pid = 100
+
+        def poll(self) -> int | None:
+            return 1
+
+        def kill(self) -> None:
+            ereignisse.append(("prozess.kill", self.pid))
+
+    monkeypatch.setattr(prozessbaum, "_WINDOWS", True)
+    monkeypatch.setattr(prozessbaum, "baum", lambda pid: [pid, pid + 1, pid + 2])
+    monkeypatch.setattr(
+        prozessbaum,
+        "beenden",
+        lambda pids, stufen, **_kw: ereignisse.append(("beenden", list(pids))) or True,
+    )
+
+    bash_wahl._gruppe_beenden(FakeProzess(), job=FakeJob())  # type: ignore[arg-type]
+    assert ereignisse == [
+        ("job.beenden", None),
+        ("beenden", [102, 101, 100]),
+    ]
+
+    # Ohne Job (Fallback) wird der Baum ebenfalls über prozessbaum.beenden (Kinder zuerst) abgeräumt.
+    ereignisse.clear()
+    bash_wahl._gruppe_beenden(FakeProzess())  # type: ignore[arg-type]
+    assert ereignisse == [("beenden", [102, 101, 100])]
+
+
+def test_lauf_bindet_job_und_beendet_ihn_vor_nachlauf_communicate(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """#645: ``bash_wahl.lauf`` bindet die Gruppe sofort (inkl. früher Kinder) und beendet den Job vor dem Nachlauf-``communicate``."""
+    ereignisse: list[str] = []
+
+    class FakeJob:
+        aktiv = True
+
+        def aufnehmen(self, pid: int) -> bool:
+            ereignisse.append(f"aufnehmen:{pid}")
+            return True
+
+        def beenden(self) -> bool:
+            ereignisse.append("job.beenden")
+            self.aktiv = False
+            return True
+
+        def schliessen(self) -> None:
+            ereignisse.append("job.schliessen")
+
+    class FakePopen:
+        def __init__(self, *_a: Any, **_kw: Any) -> None:
+            self.pid = 500
+            self.args = ["bash", "-c", "sleep 60 & wait"]
+            self.stdout = None
+            self.stderr = None
+            self.returncode: int | None = None
+            self._aufrufe = 0
+
+        def __enter__(self) -> Self:
+            return self
+
+        def __exit__(self, *_a: object) -> None:
+            pass
+
+        def poll(self) -> int | None:
+            return self.returncode
+
+        def kill(self) -> None:
+            ereignisse.append("prozess.kill")
+            self.returncode = 1
+
+        def communicate(self, *_a: Any, timeout: float | None = None) -> tuple[str, str]:
+            self._aufrufe += 1
+            ereignisse.append(f"communicate:{self._aufrufe}")
+            if self._aufrufe == 1:
+                raise subprocess.TimeoutExpired(self.args, timeout or 1.0)
+            assert "job.beenden" in ereignisse, "Job muss vor Nachlauf-communicate beendet sein"
+            self.returncode = 1
+            return ("teil", "")
+
+    from contextlib import contextmanager
+
+    from to_spawn import sitzungsjob
+
+    @contextmanager
+    def fake_gebunden(_proz: Any) -> Any:
+        ereignisse.append("job.gebunden")
+        job = FakeJob()
+        try:
+            yield job
+        finally:
+            job.schliessen()
+
+    monkeypatch.setattr(bash_wahl.sys, "platform", "win32")
+    monkeypatch.setattr(bash_wahl.subprocess, "CREATE_NEW_PROCESS_GROUP", 0x200, raising=False)
+    monkeypatch.setattr(bash_wahl, "bash", lambda: "C:/Program Files/Git/bin/bash.exe")
+    monkeypatch.setattr(bash_wahl.subprocess, "Popen", FakePopen)
+    monkeypatch.setattr(prozessbaum, "_WINDOWS", True)
+    monkeypatch.setattr(prozessbaum, "baum", lambda pid: [pid, pid + 1])
+    monkeypatch.setattr(prozessbaum, "beenden", lambda *_a, **_kw: True)
+    monkeypatch.setattr(sitzungsjob, "gebunden", fake_gebunden)
+
+    with pytest.raises(subprocess.TimeoutExpired) as exc:
+        bash_wahl.lauf(["-c", "sleep 60 & wait"], cwd=tmp_path, zeitgrenze_s=1.0, stdout=subprocess.PIPE, text=True)
+
+    assert exc.value.output == "teil"
+    assert ereignisse.index("job.gebunden") < ereignisse.index("aufnehmen:501") < ereignisse.index("communicate:1")
+    assert ereignisse.index("communicate:1") < ereignisse.index("job.beenden") < ereignisse.index("communicate:2")
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="killpg-Rückfall auf Prozessbaum unter Linux")
+def test_gruppe_beenden_linux_beendet_prozessgruppe_und_hat_baum_rueckfall(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#645: ``prozessbaum.gruppe_beenden`` beendet unter Linux die Prozessgruppe und fällt bei ``OSError`` auf ``baum``+``beenden`` zurück."""
+    pid_datei = tmp_path / "enkel_645.pid"
+    proz = subprocess.Popen(
+        [bash_wahl.bash(), "-c", f"sleep 60 & echo $! > {shlex.quote(str(pid_datei))}; wait"],
+        start_new_session=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    enkel = 0
+    try:
+        ende = time.monotonic() + 5
+        while (not pid_datei.exists() or not pid_datei.read_text(encoding="utf-8").strip()) and time.monotonic() < ende:
+            time.sleep(0.05)
+        enkel = int(pid_datei.read_text(encoding="utf-8").strip())
+        assert prozessbaum.lebt(enkel)
+        prozessbaum.gruppe_beenden(proz)
+        proz.wait(timeout=5)
+        ende = time.monotonic() + 5
+        while prozessbaum.lebt(enkel) and time.monotonic() < ende:
+            time.sleep(0.05)
+        assert not prozessbaum.lebt(enkel) or "Z" in _zustand(enkel)
+    finally:
+        if proz.poll() is None:
+            proz.kill()
+            proz.wait(timeout=5)
+        if enkel and prozessbaum.lebt(enkel):
+            try:
+                os.kill(enkel, 9)
+            except OSError:
+                pass
+
+    # Rückfall, wenn os.killpg scheitert (OSError != ProcessLookupError).
+    beendet: list[list[int]] = []
+
+    class FakeProz:
+        pid = 321
+
+        def poll(self) -> int | None:
+            return 0
+
+        def kill(self) -> None:
+            pass
+
+    monkeypatch.setattr(prozessbaum.os, "killpg", lambda *_a: (_ for _ in ()).throw(PermissionError("gesperrt")))
+    monkeypatch.setattr(prozessbaum, "baum", lambda pid: [pid, pid + 1])
+    monkeypatch.setattr(prozessbaum, "beenden", lambda pids, *_a, **_kw: beendet.append(list(pids)) or True)
+    prozessbaum.gruppe_beenden(FakeProz())  # type: ignore[arg-type]
+    assert beendet == [[322, 321]]
+
+

@@ -1,6 +1,6 @@
 # Regeln für Helfer der Leit-Session (Skill-Repo `Shavy72/claude-skill-to-spawn`)
 
-Absender: Leit-Session Bau-System auf dem Bau-Server, im Auftrag Davids, nicht von David getippt.
+Absender: Leit-Session Bau-System auf dem Bau-Server, im Auftrag des Menschen, nicht vom Menschen getippt.
 
 1. Arbeite nur im genannten Worktree (er steht schon auf dem Zweig des Pull-Requests). Kein anderer Ordner, nie `~/.claude`, nie `install.sh`.
 2. Temp nur über den Befehl anlegen, nie mit Platzhalter (`*`) löschen, Aufräumen nur über den Befehl (#551):

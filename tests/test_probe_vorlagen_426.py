@@ -8,6 +8,7 @@ Werkzeug-Test wird von der App-Prüfung nicht eingesammelt.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import shlex
 import shutil
@@ -31,14 +32,18 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def _freier_port() -> int:
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return int(s.getsockname()[1])
+def _freie_ports(anzahl: int) -> list[int]:
+    """Reserviert ``anzahl`` freie Ports gleichzeitig, damit keiner doppelt vergeben wird."""
+    with contextlib.ExitStack() as stapel:
+        sockets = [stapel.enter_context(socket.socket()) for _ in range(anzahl)]
+        for sock in sockets:
+            sock.bind(("127.0.0.1", 0))
+        return [int(sock.getsockname()[1]) for sock in sockets]
 
 
 def _anlegen(ziel: Path, variante: str) -> dict[str, int]:
-    ports = {"app": _freier_port(), "staging": _freier_port(), "live": _freier_port()}
+    app, staging, live = _freie_ports(3)
+    ports = {"app": app, "staging": staging, "live": live}
     raus = subprocess.run(
         [
             "bash",
@@ -391,6 +396,45 @@ def test_kritik_text_steht_in_probe_spec_und_nicht_im_lauf_repo() -> None:
     assert "höchstens 1000 Cent" in protokoll
     # Die Bau-Sessions dürfen die Kritik nicht vorweg sehen.
     assert "Punkt Mahngebühr anders" not in protokoll and "7,50" not in protokoll
+
+
+def test_anlegen_reserviert_drei_verschiedene_ports_gleichzeitig(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ports bleiben bis zur Vergabe aller drei belegt, damit das OS keinen doppelt ausgibt."""
+    belegt: set[int] = set()
+
+    class _WiederverwendenderSocket:
+        def __init__(self) -> None:
+            self._port: int | None = None
+
+        def __enter__(self) -> _WiederverwendenderSocket:
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            self.close()
+
+        def bind(self, adresse: tuple[str, int]) -> None:
+            assert adresse == ("127.0.0.1", 0)
+            port = 40000
+            while port in belegt:
+                port += 1
+            belegt.add(port)
+            self._port = port
+
+        def getsockname(self) -> tuple[str, int]:
+            assert self._port is not None
+            return ("127.0.0.1", self._port)
+
+        def close(self) -> None:
+            if self._port is not None:
+                belegt.discard(self._port)
+                self._port = None
+
+    monkeypatch.setattr(socket, "socket", _WiederverwendenderSocket)
+    ports = _anlegen(tmp_path / "lauf", "mit-staging")
+    assert len(set(ports.values())) == 3
+    assert not belegt
 
 
 def test_probe_spec_verankert_messlatte_l10() -> None:

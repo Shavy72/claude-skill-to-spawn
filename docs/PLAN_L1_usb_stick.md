@@ -2,9 +2,9 @@
 
 Quelle des Ziels: `docs/LASTENHEFT.md`, Eintrag L1 (A1–A12, N1–N6). Dieses Dokument ist die
 Vorgabe, wie L1 erreicht wird. Es ersetzt die alte Messlatte der Leit-Kette („alle Bremsen-Tickets
-zu“) durch die Abnahme unten. Entscheidungen hier sind nach Davids Auftrag vom 21.11.2026 selbst
+zu“) durch die Abnahme unten. Entscheidungen hier sind nach dem Auftrag des Menschen vom 21.11.2026 selbst
 getroffen („entscheide selbst … ich möchte nicht ein einziges mal irgend etwas sagen müssen“) und
-stehen zusätzlich im Entscheidungs-Log. David kann jede kippen.
+stehen zusätzlich im Entscheidungs-Log. Der Mensch kann jede kippen.
 
 ## Befund (belegt, 21.11.2026 18:40–19:15, sieben Lese-Helfer)
 
@@ -35,7 +35,7 @@ stehen zusätzlich im Entscheidungs-Log. David kann jede kippen.
 - **P3 System-Arbeit läuft ab jetzt im Skill-Repo.** Neue System-Tickets = Issues in
   `Shavy72/claude-skill-to-spawn`, Änderung = Pull-Request dort, geprüft von der Skill-eigenen
   Test-Suite, eingeschaltet durch Installieren. Nie mehr über die App-Schlange, nie an eine
-  App-Freigabe gekoppelt (Davids Wort 21.11. 18:10).
+  App-Freigabe gekoppelt (Wort des Menschen 21.11. 18:10).
 - **P4 Bremsen-Tickets im App-Repo:** nur fertig machen, was hochlade-fertig ist oder
   master/Schlange blockiert (#1539, #1536, #1537, #1385, #1445, #1429). Jedes andere offene
   System-Ticket bekommt genau eine von drei Antworten: „entfällt durch Umzug“ (schließen mit Verweis),
@@ -141,7 +141,7 @@ eingerichteten Repos (Liste auf der Maschine), löscht Fertiges ohne Rückfrage,
    (erst gegen ein Bare-Repo proben). System-Tests ziehen mit; im App-Gate laufen danach nur App-Tests.
 
 Etappe 5 darf die laufende App-Arbeit (Spec #1330 am PC) nie blockieren: jeder Schritt
-verhaltensgleich, Staging zuerst, App-Live bleibt Davids Entscheidung.
+verhaltensgleich, Staging zuerst, App-Live bleibt Entscheidung des Menschen.
 
 ## Abnahme (neue Messlatte für „fertig“)
 
@@ -175,10 +175,10 @@ verhaltensgleich, Staging zuerst, App-Live bleibt Davids Entscheidung.
   2 min. DuoPlus: Median und langsamstes Zehntel von Push bis Urteil vorher/nachher, nachher
   mindestens halbiert. Zehn Tickets gleichzeitig laufen durch, ohne dass der RAM-Deckel reißt
   oder ein Ticket länger als 15 min wartet.
-- **M14** (L4, A22–A24) Aufräumen ohne David: Im Probe-Lauf werden absichtlich Reste hinterlassen
+- **M14** (L4, A22–A24) Aufräumen ohne den Menschen: Im Probe-Lauf werden absichtlich Reste hinterlassen
   (Arbeitsordner und Temp-Kopie eines geschlossenen Tickets, auch auf der RAM-Platte `/tmp`). Der
   Hausmeister räumt beides von selbst, kein Schutz-Hook blockt ihn, und in allen
-  Sitzungs-Protokollen und Übergaben des Laufs steht kein einziger Lösch-Auftrag an David.
+  Sitzungs-Protokollen und Übergaben des Laufs steht kein einziger Lösch-Auftrag an den Menschen.
 - **M15** (L5, A25–A28) Kaltstart-Probe: Eine frische Session ohne Chat und ohne Übergabe-Datei
   bekommt nur „Lies `docs/WIEDEREINSTIEG.md`“. Sie nennt danach Stand und nächsten Schritt; die
   Ober-Aufsicht vergleicht beides mit der Wirklichkeit (offene Pull-Requests, Issues, laufende
@@ -190,7 +190,7 @@ Jede M-Zeile braucht einen Beleg (Befehl + Ausgabe oder Protokoll-Zeile) in
 
 ## Arbeitsweise
 
-- Keine Fragen an David. Entscheidung + Grund ins Entscheidungs-Log, weiterbauen.
+- Keine Fragen an den Menschen. Entscheidung + Grund ins Entscheidungs-Log, weiterbauen.
 - App-Live nie anfassen. Probe-Repos sind privat, tragen `probe` im Namen und werden nach der
   Abnahme archiviert, nicht gelöscht.
 - Design-Schritt vor jedem neuen Modul: zwei Varianten, schmale Schnittstelle, Wissen an einem Ort.
@@ -210,7 +210,7 @@ Jede M-Zeile braucht einen Beleg (Befehl + Ausgabe oder Protokoll-Zeile) in
   2. In einem Repo ohne `scripts\bau.py` (Wegwerf-Klon): `pwsh -File <klon>\spawn_local.ps1 <S> -DryRun` bricht nicht mehr mit „Kein ./scripts/bau.py“ ab.
   3. `install.ps1` nur in einem Wegwerf-Profil prüfen (`$PROFILE` umbiegen), dann `bau --help` ohne `scripts\bau.py` → startet Skill-`bau.py`.
   Hinweis: ps1-Änderungen wirken erst nach Neuinstallation am PC. Fundstelle 18 (Prozess-Regex `spawn_local.ps1`) bewusst nicht gebaut, weil Spec #1330 die Zeile nutzt. `pwsh` gibt es auf dem Bau-Server (`/usr/local/bin/pwsh`), Parser dort 0 Fehler.
-- 2026-11-21 20:20 (PC-Uhr, Ober-Aufsicht Session 1) — **Neuer Lastenheft-Eintrag L3** (David,
+- 2026-11-21 20:20 (PC-Uhr, Ober-Aufsicht Session 1) — **Neuer Lastenheft-Eintrag L3** (Mensch,
   Wortlaut in `docs/LASTENHEFT.md`): Tempo und kluges Prüfen in jedem Repo. Im Plan ergänzt:
   Design „Prüf-Werkzeugkasten“, Etappe 3 um 3a Vergleich und 3b Bau, Abnahme M10–M13. Damit gilt
   „fertig“ erst mit M1–M13. Noch nichts davon gebaut oder gemessen.
@@ -226,7 +226,7 @@ Jede M-Zeile braucht einen Beleg (Befehl + Ausgabe oder Protokoll-Zeile) in
   Abschnitt 6.4): Wird für DuoPlus auf „Voll-Lauf schneller, keine Auswahl“ gewechselt, gilt M12 für
   DuoPlus als „nicht anwendbar, weil keine Auswahl läuft“ und wird in `docs/ABNAHME_L1.md` genau so
   benannt (kein Schein-Nachweis). M12 muss dann im Probe-Repo mit zweiter, unbekannter Fehlerreihe
-  (≥ 20 Fehler) voll erfüllt sein. Grund: Davids L3 „nachweislich gut … nur das was mindestens
+  (≥ 20 Fehler) voll erfüllt sein. Grund: L3 des Menschen „nachweislich gut … nur das was mindestens
   notwendig ist“ (abgeleitet aus Lastenheft L3).
 - 2026-11-21 21:25 (Server-Uhr, im Auftrag von `leit 62`) — **Skill auf dem Bau-Server installiert:
   c2f4c07** (21.11. 21:06). Etappe 2 geschnitten (Issues #85–#97), Etappe 3b geschnitten (#98–#106).
@@ -236,11 +236,11 @@ Jede M-Zeile braucht einen Beleg (Befehl + Ausgabe oder Protokoll-Zeile) in
   F6 teilweise (Server belegt, PC offen #68) · F7 abweichend (Trocken-Entscheidungen gleich; Probe-Eintrag
   in der Maschinen-Liste legte den Hausmeister still, Trockenlauf zeigte es nicht, #112). M1–M13 noch
   nicht geprüft.
-- 2026-11-21 22:15 (PC-Uhr, Ober-Aufsicht Session 1) — **Neuer Lastenheft-Eintrag L4** (David):
-  Aufräumen landet nie bei David. Abnahme **M14** neu; „fertig“ = M1–M14. Anlass: zwei alte
-  Test-Kopien in `/tmp` wurden David als Lösch-Befehl hingelegt (Fehler der Ober-Aufsicht); sie
+- 2026-11-21 22:15 (PC-Uhr, Ober-Aufsicht Session 1) — **Neuer Lastenheft-Eintrag L4** (Mensch):
+  Aufräumen landet nie beim Menschen. Abnahme **M14** neu; „fertig“ = M1–M14. Anlass: zwei alte
+  Test-Kopien in `/tmp` wurden dem Menschen als Lösch-Befehl hingelegt (Fehler der Ober-Aufsicht); sie
   sind gelöscht. Wurzel: Skill-Issue 136 (Temp-Ordner auf die Platte, Hausmeister räumt ihn).
-- 2026-11-21 22:25 (PC-Uhr, Ober-Aufsicht Session 1) — **Neuer Lastenheft-Eintrag L5** (David):
+- 2026-11-21 22:25 (PC-Uhr, Ober-Aufsicht Session 1) — **Neuer Lastenheft-Eintrag L5** (Mensch):
   jederzeit weiterbauen können. Neu: `docs/WIEDEREINSTIEG.md` (ein Einstieg), Abnahme **M15**
   (Kaltstart-Probe); „fertig“ = M1–M15. Pflege des Abschnitts „Stand“ dort liegt bei der führenden
   Leit-Session. Übergaben und Entscheidungs-Log werden in den privaten Notiz-Tresor gespiegelt

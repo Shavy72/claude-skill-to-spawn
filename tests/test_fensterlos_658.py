@@ -207,6 +207,16 @@ _ELTERN = textwrap.dedent(
 )
 
 
+def test_fensterlos_ohne_windll_bei_simuliertem_win32(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Simuliertes ``win32`` ohne ``ctypes.windll`` (z. B. Tests unter Linux) stürzt nicht ab."""
+    from to_spawn import prozessbaum
+
+    monkeypatch.setattr(prozessbaum.sys, "platform", "win32")
+    monkeypatch.setattr(prozessbaum, "_WINDOWS", True)
+    monkeypatch.delattr(prozessbaum.ctypes, "windll", raising=False)
+    assert prozessbaum.fensterlos() == {}
+
+
 @pytest.mark.skipif(sys.platform != "win32", reason="Konsolenfenster gibt es nur unter Windows")
 def test_kind_ohne_konsolenfenster_wenn_eltern_ohne_konsole() -> None:
     """Eltern ohne Konsole (wie die Hausmeister-Aufgabe) → 0 neue Konsolenfenster über den echten Weg."""
@@ -223,3 +233,14 @@ def test_kind_ohne_konsolenfenster_wenn_eltern_ohne_konsole() -> None:
     assert stand["eltern"] == 0, f"Eltern hat doch eine Konsole: {stand}"
     assert stand["kontrolle"] != 0, f"Messung blind: Kind ohne Flag bekam kein Konsolenfenster: {stand}"
     assert stand["echt"] == 0, f"to_spawn-Unterprozess öffnete ein Konsolenfenster (#658): {stand}"
+
+
+def test_fensterlos_ohne_ctypes_windll_liefert_leer(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fehlt ``ctypes.windll`` bei simuliertem Windows (``sys.platform``/``_WINDOWS``) → ``{}`` statt Absturz."""
+    from to_spawn import prozessbaum
+
+    monkeypatch.setattr(prozessbaum.sys, "platform", "win32")
+    monkeypatch.delattr(prozessbaum.ctypes, "windll", raising=False)
+    assert prozessbaum.fensterlos() == {}
+    monkeypatch.setattr(prozessbaum, "_WINDOWS", True)
+    assert prozessbaum.fensterlos() == {}

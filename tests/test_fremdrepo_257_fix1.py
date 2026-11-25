@@ -268,23 +268,27 @@ def test_spawn_srv_kaputte_speicherpruefung_meldet_text_und_exit6() -> None:
 
 
 def test_gitignore_ergaenzen_idempotent(tmp_path: Path) -> None:
+    (tmp_path / ".git").mkdir()
     erster = config.gitignore_ergaenzen(tmp_path)
     zweiter = config.gitignore_ergaenzen(tmp_path)
     assert erster is True
     assert zweiter is False
-    text = (tmp_path / ".gitignore").read_text(encoding="utf-8")
+    text = (tmp_path / ".git" / "info" / "exclude").read_text(encoding="utf-8")
     assert ".to-spawn/*" in text
     assert "!.to-spawn/config.json" in text
+    assert not (tmp_path / ".gitignore").exists()
 
 
 def test_gitignore_ergaenzen_ohne_abschliessenden_zeilenumbruch(tmp_path: Path) -> None:
-    datei = tmp_path / ".gitignore"
+    datei = tmp_path / ".git" / "info" / "exclude"
+    datei.parent.mkdir(parents=True)
     datei.write_text("bestehend.txt", encoding="utf-8")  # bewusst kein \n am Ende
     ergebnis = config.gitignore_ergaenzen(tmp_path)
     assert ergebnis is True
     text = datei.read_text(encoding="utf-8")
     assert "bestehend.txt\n" in text, "Trenner vor dem Block fehlt"
     assert ".to-spawn/*" in text
+    assert not (tmp_path / ".gitignore").exists()
 
 
 # --- F10 Rest Paket B: B9-Leser mit hauptbaum -----------------------------------

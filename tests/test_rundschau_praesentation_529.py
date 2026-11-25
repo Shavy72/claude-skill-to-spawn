@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from rundschau_beispiel import live_bereit_marker
 from rundschau_beispiel import png as _png
 
 from to_spawn import rundschau_deck as rd
@@ -295,6 +296,7 @@ def test_pflicht_rundschau_datei_bei_abnahme(tmp_path: Path, bild: Path) -> None
     assert not (tmp_path / ".to-spawn").exists(), "nichts darf abgelegt sein"
     deck = tmp_path / "d.html"
     deck.write_text(_deck(bild, []), encoding="utf-8")
+    live_bereit_marker(tmp_path, 5)  # #369: Abnahme verlangt grüne Bereit-für-Live-Prüfung
     assert lauf("--rundschau-datei", str(deck)).returncode == 0
     assert lauf("--stand", "live").returncode == 0  # Pflicht gilt nur für die Abnahme
 

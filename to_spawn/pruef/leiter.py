@@ -29,6 +29,9 @@ ZEITGRENZE = "Zeitgrenze"
 AUSGELASSEN = -1
 #: Höchstens so viele Zeilen gehen als ``fehler_kurz`` ins Protokoll.
 FEHLER_ZEILEN = 20
+#: Orte des Bau-Werkzeugs im App-Repo: deren Tests sammelt die App-Prüfung nie ein,
+#: auch wenn die App ihre eigene Ausschluss-Liste setzt (#425 Abnahme 4, #415, #446).
+WERKZEUG_ORTE: tuple[str, ...] = (".to-spawn", ".claude")
 
 
 @dataclass(frozen=True)
@@ -186,13 +189,26 @@ def _pruefe(repo: Path, adapter: Adapter, basis: str, pfade: list[str] | None, a
 def _gedeutet(repo: Path, adapter: Adapter, plan: Plan, erg: ausfuehren.Lauf, roh: Stufe) -> Stufe:
     """Ergebnis eines Laufs in ``roh`` eintragen; rot → einmalige Wiederholung (3b-4)."""
     ergebnis = adapter.deute(erg.code)
+    grund = roh.grund
+    if ergebnis == GRUEN and isinstance(adapter, wackler.Berichtbar):
+        bericht = adapter.bericht(plan.befehl, erg.ausgabe)
+        if bericht is None:
+            ergebnis = GATE_FEHLER
+            grund = "Prüf-Bericht fehlt oder unlesbar (kein Grün ohne Nachweis)"
+        elif bericht.abgebrochen:
+            ergebnis = ROT
+            grund = "Prüflauf vorzeitig abgebrochen (kein Grün trotz Exit 0)"
+        elif bericht.im_bericht == 0:
+            ergebnis = GATE_FEHLER
+            grund = "0 Tests im Prüf-Bericht gelaufen (kein Grün trotz Exit 0)"
     stufe = replace(
         roh,
+        grund=grund,
         dauer_s=round(erg.dauer_s, 2),
         befehl=" ".join(plan.befehl),
         werkzeug=plan.werkzeug,
         ergebnis=ergebnis,
-        ausgabe=erg.ausgabe if ergebnis != GRUEN else "",
+        ausgabe=(erg.ausgabe or grund) if ergebnis != GRUEN else "",
     )
     zweit = wackler.nochmal(adapter, repo, plan.befehl, erg) if ergebnis == ROT else None
     if zweit is None:
@@ -223,7 +239,9 @@ def stufen(repo: Path, adapter_liste: tuple[Adapter, ...], basis: str, art: str 
     return vorn + [_pruefe(repo, adapter, basis, pfade, art) for adapter in erkannt]
 
 
-def eigener_befehl(repo: Path, befehl: str, art: str, zeitgrenze_s: float | None = None) -> Stufe:
+def eigener_befehl(
+    repo: Path, befehl: str, art: str, zeitgrenze_s: float | None = None, *, ticket: int | None = None
+) -> Stufe:
     """Eingerichteten Prüf-Befehl ``pruefung.<art>`` in bash laufen lassen: Exit 0 grün, sonst rot.
 
     Fehlt bash, ist das ein Gate-Fehler (Werkzeug), kein roter Code. ``zeitgrenze_s`` (#455):
@@ -236,7 +254,7 @@ def eigener_befehl(repo: Path, befehl: str, art: str, zeitgrenze_s: float | None
             ["-c", befehl],
             zeitgrenze_s=zeitgrenze_s,
             cwd=repo,
-            env={**os.environ, **temp_ordner.umgebung()},
+            env={**os.environ, **temp_ordner.umgebung(ticket, ordner=repo, von="pruef", wiederverwenden=True)},
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,

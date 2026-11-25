@@ -186,6 +186,11 @@ class Wecker:
         return {(f["ticket"], f["id"]) for f in briefkasten.offene(tickets, hauptbaum=self.repo) if f["id"]}
 
     def _durchgang(self) -> None:
+        # Lokaler Briefkasten zuerst: langsames/hängendes GitHub oder tmux-Scans dürfen Weckrufe nicht verzögern.
+        try:
+            self._briefkasten_blick()
+        except Exception as fehler:  # noqa: BLE001 — Briefkasten-Fehler darf die übrigen Blicke nicht aufhalten
+            self._melde(f"Briefkasten-Wecker Spec #{self.spec}: {fehler!r}")
         try:
             self._kommentare_blick()
         except Exception as fehler:  # noqa: BLE001 — GitHub-Ausfall darf den Briefkasten nicht aufhalten
@@ -202,6 +207,9 @@ class Wecker:
             self._prompt_blick()
         except Exception as fehler:  # noqa: BLE001 — tmux-/git-Ausfall darf den Briefkasten nicht aufhalten
             self._melde(f"Briefkasten-Wecker Spec #{self.spec}: Prompt: {fehler!r}")
+
+    def _briefkasten_blick(self) -> None:
+        """Neue offene Fragen → Aufseher-Pane; eingegangene Antworten → Bau-Fenster (nur lokale Dateien)."""
         offen = self._offen()
         neu = offen - self._bekannt
         self._bekannt |= neu
@@ -321,7 +329,7 @@ class Wecker:
         """
         if not self.gh_repo:
             return
-        for t, ziel in sorted((aufseher_stand.bau_fenster(self.spec) or {}).items()):
+        for t, ziel in sorted((aufseher_stand.bau_fenster(self.spec, self.repo) or {}).items()):
             try:
                 bild = self.werkzeug.bildschirm(ziel) or ""
             except (FensterWeg, TmuxFehler):
@@ -348,7 +356,7 @@ class Wecker:
         Stille. Je Stehen ein Anstoß: der Merker fällt erst, wenn das Fenster nicht mehr steht.
         Das Tippen ändert das Bild, darum stupst der Aufpasser dasselbe Stehen nicht nach.
         """
-        for t, ziel in sorted((aufseher_stand.bau_fenster(self.spec) or {}).items()):
+        for t, ziel in sorted((aufseher_stand.bau_fenster(self.spec, self.repo) or {}).items()):
             try:
                 self._prompt_fenster(t, ziel)
             except (FensterWeg, TmuxFehler):
@@ -432,7 +440,7 @@ class Wecker:
         return self._wecke_bau_text(t, BAU_TEXT.format(id=fid, befehl=befugnis.antwort_befehl(t, fid)))
 
     def _wecke_bau_text(self, t: str, text: str) -> bool:
-        ziele = aufseher_stand.bau_fenster(self.spec)
+        ziele = aufseher_stand.bau_fenster(self.spec, self.repo)
         if ziele is None:
             return False
         ziel = ziele.get(int(t))
