@@ -130,6 +130,7 @@ import shutil
 import stat
 import subprocess
 import sys
+import tempfile
 import time
 from collections.abc import Iterable
 from contextlib import ExitStack
@@ -323,6 +324,13 @@ ZWEIGE_SCHALTER = "TO_SPAWN_HAUSMEISTER_ZWEIGE_LOESCHEN"
 ZWEIGE_AUS = f"Zweig-Löschen aus ({ZWEIGE_SCHALTER}=1 fehlt)"
 #: Unter diesem Anteil freier Platte startet keine neue Session.
 STARTSPERRE_ANTEIL = 0.05
+#: Ab diesem belegten Inode-Anteil der Temp-Wurzel warnt und räumt der Hausmeister (#355);
+#: einzige Stelle der Schwelle (auch für ``tests/conftest.py``).
+INODE_WARN_ANTEIL = 0.70
+#: Ab diesem belegten Inode-Anteil der Temp-Wurzel startet keine neue Session (#355).
+INODE_SPERRE_ANTEIL = 0.90
+#: Läuft gerade :func:`_start_pruefen`? Dann schreibt :func:`_alle_ordner` keine doppelte Inode-Warnung.
+_IM_STARTCHECK: ContextVar[bool] = ContextVar("hausmeister_im_startcheck", default=False)
 #: Sperrdatei gegen parallele Aufräum-Läufe, im Ordner des Hausmeister-Logs.
 SPERR_DATEI = "hausmeister.lock"
 #: Zeitlimit je gh-Abfrage in Sekunden.
@@ -419,7 +427,8 @@ def _name_muster() -> tuple[re.Pattern[str], ...]:
 
 
 #: #248/#347 W3: ``20JJ-<Ziffer>`` direkt nach dem Präfix ist datumsartig, nie eine Ticket-Nummer
-#: (``l1/2026-11-21-stand``, ``fix/2026-11``, auch ``ticket/2026-13-x``) — ohne Nummer bleibt der Zweig.
+#: (``l1/2026-11-21-stand``, ``fix/2026-11``, auch ``ticket/2026-13-x``) — im Zweig-Pfad bleibt ein
+#: Zweig ohne Nummer stehen; ein Ordner mit Datums-Zweig läuft über den Weg „ohne Nummer“.
 _KEIN_DATUM = r"(?!20\d\d-\d)"
 _ZWEIG_MUSTER = re.compile(rf"^(?:(?:ticket|fix|wip|aufseher)/|fix-|abschluss-){_KEIN_DATUM}{_TICKET_NR}(?:-.*)?$")
 #: #235: Etappen-Zweig ``l<Etappe>/<N>[buchstabe]-…`` (``l4/176-…``, ``l1/214a-…``); erst ab
@@ -572,6 +581,7 @@ def _alle_ordner(*, loeschen: bool, jetzt: float | None) -> Rundgang:
         _WORKTREE_CACHE.reset(wt_token)
     _kennzahl_schreiben(ergebnisse, trocken=not loeschen)
     temp_ordner.aufraeumen(loeschen=loeschen, jetzt=jetzt)  # #136: Temp-Reste, wirft nie
+    _temp_inodes_im_takt()  # #355: Datei-Zähler (Inodes) der Temp-Wurzel prüfen
     _zweige_im_takt(loeschen, jetzt)
     # L5 #145: Netz für vergessene Ablösungen, wirft nie; Probelauf schreibt/lädt nichts (#169).
     uebergabe_sichern.sichern(trocken=not loeschen)
@@ -626,25 +636,49 @@ def start_erlaubt(*, loeschen: bool = True, nur_messen: bool = False) -> tuple[b
 
 def _start_pruefen(loeschen: bool, nur_messen: bool = False) -> tuple[bool, str]:
     anteil = _frei_anteil()
+    inodes = _temp_inode_anteil()
     zusatz = ""
-    if _ist_platznot(anteil) and not nur_messen:
-        rund = rundgang(loeschen=loeschen)
+    if (_ist_platznot(anteil) or _ist_inode_knapp(inodes)) and not nur_messen:
+        token = _IM_STARTCHECK.set(True)
+        try:
+            rund = rundgang(loeschen=loeschen)
+        finally:
+            _IM_STARTCHECK.reset(token)
         if not rund.gelaufen and not rund.wartet:
             zusatz = " (Aufräumen gescheitert, siehe Log)"
         anteil = _frei_anteil()
+        inodes = _temp_inode_anteil()
+    if _ist_inode_voll(inodes):
+        assert inodes is not None
+        nach = "trotz gescheitertem Aufräumen" if zusatz else "auch nach dem Aufräumen"
+        satz = (
+            f"Temp-Wurzel voll: {_prozent(inodes)} der Inodes belegt (Startsperre ab "
+            f"{_prozent(INODE_SPERRE_ANTEIL)}), {nach} — keine neue Session"
+        )
+        _spur("temp_inodes_voll", satz, inodes_belegt=round(inodes, 4))
+        return False, satz
     if anteil is None:
         satz = f"Platte nicht messbar — kein Urteil, Start erlaubt{zusatz}"
         _spur("platte_unmessbar", satz)
         return True, satz
-    if anteil >= STARTSPERRE_ANTEIL:
-        return True, f"Platte frei: {_prozent(anteil)} frei{zusatz}"
-    nach = "trotz gescheitertem Aufräumen" if zusatz else "auch nach dem Aufräumen"
-    satz = (
-        f"Platte voll: nur {_prozent(anteil)} frei (Startsperre unter "
-        f"{_prozent(STARTSPERRE_ANTEIL)}), {nach} — keine neue Session"
-    )
-    _spur("platte_voll", satz, frei_anteil=round(anteil, 4))
-    return False, satz
+    if anteil < STARTSPERRE_ANTEIL:
+        nach = "trotz gescheitertem Aufräumen" if zusatz else "auch nach dem Aufräumen"
+        satz = (
+            f"Platte voll: nur {_prozent(anteil)} frei (Startsperre unter "
+            f"{_prozent(STARTSPERRE_ANTEIL)}), {nach} — keine neue Session"
+        )
+        _spur("platte_voll", satz, frei_anteil=round(anteil, 4))
+        return False, satz
+    if _ist_inode_knapp(inodes):
+        assert inodes is not None
+        warn = (
+            f"Temp-Wurzel knapp: {_prozent(inodes)} der Inodes belegt "
+            f"(Warnschwelle {_prozent(INODE_WARN_ANTEIL)})"
+        )
+        log.warning("Hausmeister: %s", warn)
+        _spur("temp_inodes_knapp", warn, inodes_belegt=round(inodes, 4))
+        return True, f"Platte frei: {_prozent(anteil)} frei{zusatz} ({warn})"
+    return True, f"Platte frei: {_prozent(anteil)} frei{zusatz}"
 
 
 def _spur(art: str, satz: str, **felder: object) -> None:
@@ -2301,6 +2335,76 @@ def _ist_platznot(anteil: float | None) -> bool:
     return anteil is not None and anteil < PLATZNOT_ANTEIL
 
 
+def _ist_inode_knapp(belegt: float | None) -> bool:
+    return belegt is not None and belegt >= INODE_WARN_ANTEIL
+
+
+def _ist_inode_voll(belegt: float | None) -> bool:
+    return belegt is not None and belegt >= INODE_SPERRE_ANTEIL
+
+
+def inode_anteil(pfad: Path) -> float | None:
+    """Belegter Inode-Anteil (0..1) des Dateisystems unter ``pfad`` (#355); ``None`` = unbekannt.
+
+    Einzige Mess-Stelle (auch für ``tests/conftest.py``): ohne ``os.statvfs`` (Windows), bei
+    ``OSError`` oder ohne feste Inode-Zahl (``f_files <= 0``, z. B. btrfs) kommt ``None``.
+    """
+    statvfs = getattr(os, "statvfs", None)
+    if statvfs is None:
+        return None
+    try:
+        werte = statvfs(pfad)
+    except OSError:
+        return None
+    if werte.f_files <= 0:
+        return None
+    return 1 - werte.f_ffree / werte.f_files
+
+
+def _temp_inode_basen() -> list[Path]:
+    """Existierende Temp-Wurzeln (System-Temp + konfigurierter Temp-Ordner), ohne Doppelte."""
+    basen: dict[str, Path] = {}
+    kandidaten = [Path(tempfile.gettempdir())]
+    try:
+        kandidaten.append(temp_ordner._pfad_ohne_anlegen())
+    except (OSError, config.KeinHeimOrdner):
+        pass
+    for pfad in kandidaten:
+        if pfad.is_dir():
+            basen.setdefault(_pfad_schluessel(pfad), pfad)
+    return list(basen.values())
+
+
+def _temp_inode_anteil() -> float | None:
+    """Höchster belegter Inode-Anteil (0..1) der Temp-Wurzeln (#355); ``None`` = unbekannt.
+
+    Test-Naht ``TO_SPAWN_HAUSMEISTER_INODES``: Anteil (0..1) oder Datei mit einem Anteil je Zeile.
+    """
+    roh = os.environ.get("TO_SPAWN_HAUSMEISTER_INODES", "").strip()
+    if roh:
+        anteil = _naht_anteil(roh)
+        if anteil is None:
+            log.warning("Temp-Inodes nicht messbar: TO_SPAWN_HAUSMEISTER_INODES=%r ungültig", roh)
+        return anteil
+    werte = [w for basis in _temp_inode_basen() if (w := inode_anteil(basis)) is not None]
+    return max(werte) if werte else None
+
+
+def _temp_inodes_im_takt() -> None:
+    """#355: warnt im regulären Takt, sobald der Inode-Zähler einer Temp-Wurzel knapp wird."""
+    if _IM_STARTCHECK.get():
+        return
+    inodes = _temp_inode_anteil()
+    if not _ist_inode_knapp(inodes):
+        return
+    assert inodes is not None
+    art = "temp_inodes_voll" if _ist_inode_voll(inodes) else "temp_inodes_knapp"
+    schwelle = INODE_SPERRE_ANTEIL if art == "temp_inodes_voll" else INODE_WARN_ANTEIL
+    satz = f"Temp-Wurzel: {_prozent(inodes)} der Inodes belegt (Schwelle {_prozent(schwelle)})"
+    log.warning("Hausmeister: %s", satz)
+    _spur(art, satz, inodes_belegt=round(inodes, 4))
+
+
 def _frei_anteil() -> float | None:
     """Anteil freier Platte (0..1) der Wurzeln, ``None`` = nicht messbar.
 
@@ -2517,9 +2621,17 @@ def _origin_slug(echt: Path) -> str:
     return _slug(roh[0])
 
 
+#: Eingebaute Git-URL-Schemas; jedes andere ``<schema>://`` ruft einen ``git-remote-<x>``-Helfer.
+_GIT_SCHEMAS = frozenset({"http", "https", "ssh", "git", "file"})
+
+
 def _ist_transport_helfer(url: str) -> bool:
-    """``ext::…``, ``fd::…`` u. ä.: führt einen Befehl statt eines Servers aus."""
-    return bool(re.match(r"^[A-Za-z][A-Za-z0-9+.-]*::", url.strip()))
+    """``ext::…``, ``fd::…`` oder fremdes ``<schema>://`` (startet ``git-remote-<x>``)."""
+    text = url.strip()
+    if re.match(r"^[A-Za-z][A-Za-z0-9+.-]*::", text):
+        return True
+    treffer = re.match(r"^([A-Za-z][A-Za-z0-9+.-]*)://", text)
+    return treffer is not None and treffer.group(1).lower() not in _GIT_SCHEMAS
 
 
 def _ziel_im_ordner(echt: Path, url: str) -> bool:
@@ -2891,6 +3003,47 @@ def _verwaist_auf_server(repo: Path, verwaist: set[str], server: list[str]) -> b
     return abgedeckt == verwaist
 
 
+def _existiert_streng(pfad: Path) -> bool:
+    """``True`` wenn ``pfad`` existiert, ``False`` nur bei ``FileNotFoundError`` (``PermissionError`` steigt auf)."""
+    try:
+        os.lstat(pfad)
+    except FileNotFoundError:
+        return False
+    return True
+
+
+def _reflog_dateien(git_dir: Path, ist_worktree: bool) -> list[Path]:
+    """Alle Reflog-Dateien unter ``logs/`` (und beim Klon ``worktrees/*/logs/``), fail-closed (#347).
+
+    Anders als ``Path.rglob``/``glob`` (überspringen unter Python 3.13 unlesbare Ordner still)
+    lässt ``os.scandir`` jeden ``OSError`` durch — ein gesperrter Unterordner hält den Ordner.
+    """
+    wurzeln: list[Path] = []
+    logs_dir = git_dir / "logs"
+    if _existiert_streng(logs_dir):
+        wurzeln.append(logs_dir)
+    wt_dir = git_dir / "worktrees"
+    if not ist_worktree and _existiert_streng(wt_dir):
+        with os.scandir(wt_dir) as it:
+            eintraege = sorted(it, key=lambda e: e.name)
+        for eintrag in eintraege:
+            if eintrag.is_dir(follow_symlinks=False):
+                wt_logs = Path(eintrag.path) / "logs"
+                if _existiert_streng(wt_logs):
+                    wurzeln.append(wt_logs)
+    dateien: list[Path] = []
+    stapel = list(wurzeln)
+    while stapel:
+        ordner = stapel.pop()
+        with os.scandir(ordner) as it:
+            for eintrag in it:
+                if eintrag.is_dir(follow_symlinks=False):
+                    stapel.append(Path(eintrag.path))
+                elif eintrag.is_file(follow_symlinks=True):
+                    dateien.append(Path(eintrag.path))
+    return dateien
+
+
 def _nur_im_reflog(
     repo: Path, ist_worktree: bool, auf_server: list[str] | None = None
 ) -> bool:
@@ -2915,10 +3068,9 @@ def _nur_im_reflog(
     # Was mit dem Ordner stirbt: beim Worktree sein Git-Verzeichnis (``HEAD``, ``refs/worktree/*``,
     # ``refs/bisect/*``), beim Klon das ganze ``.git`` samt ``worktrees/*/logs`` verknüpfter Worktrees.
     git_dir = Path(aufpasser.git_lauf(repo, "rev-parse", "--absolute-git-dir").strip())
-    wurzeln = [git_dir / "logs"] + ([] if ist_worktree else sorted(git_dir.glob("worktrees/*/logs")))
     staende: set[str] = set()
     try:
-        dateien = [p for w in wurzeln for p in w.rglob("*") if p.is_file()]
+        dateien = _reflog_dateien(git_dir, ist_worktree)
         inhalte = [(d, d.read_bytes()) for d in dateien]
     except OSError as fehler:
         raise _Bleibt(f"Reflog nicht lesbar: {fehler}", fehler=True) from None
