@@ -11,11 +11,13 @@ Dateien. Die Zeitgrenzen selbst prüft ``test_waechter_213_fix.py`` ohne Schalte
 from __future__ import annotations
 
 import functools
+import hashlib
 import json
 import logging
 import os
 import shlex
 import shutil
+import site
 import subprocess
 import sys
 import tempfile
@@ -35,11 +37,24 @@ _HILFEN = str(Path(__file__).resolve().parent / "hilfen")
 if _HILFEN not in sys.path:
     sys.path.insert(0, _HILFEN)
 
-from git_bash import git_bash  # noqa: E402 — liegt in ``tests/hilfen`` (Pfad oben)
+import context_mode_attrappe  # liegt in ``tests/hilfen`` (Pfad oben)
+from git_bash import git_bash  # liegt in ``tests/hilfen`` (Pfad oben)
 
-from to_spawn import bash_wahl, hausmeister_windows, prozessbaum  # noqa: E402 — Pfad setzt ``git_bash``
+from to_spawn import (  # Pfad setzt ``git_bash``
+    bash_wahl,
+    hausmeister_windows,
+    prozessbaum,
+    vertrauen,
+)
 
 _WINDOWS = sys.platform == "win32"
+
+#: Echter Heimordner der Maschine vor Test-Umleitung (#232) — nur für Wächter/Prüfsummen, nie beschreiben.
+_ECHTES_HEIM: Path = Path.home().resolve()
+#: Python-User-Base vor HOME-Umleitung (#232): Kindprozesse finden weiter user-installierte Pakete (z. B. pytest).
+_START_USER_BASE: str = site.getuserbase()
+#: Vorher-Stand des echten Heimordners für den Prüfsummen-Wächter (#232): ``(claude_json, sha256, claude_dir_da)``.
+_HEIM_STAND = pytest.StashKey[tuple[Path, str | None, bool]]()
 
 #: Zeitgrenze je Test in Sekunden (#68): ein hängender Test (unter Windows z. B.
 #: ``test_aufseher_abloesung_436``) darf die Suite nicht unbegrenzt aufhalten. Gilt nur,
@@ -282,13 +297,64 @@ def _reste_raeumen_roh(temp: Path, inode_anteil: Callable[[Path], float | None])
             _LOG.warning("pt-Räumer: Rest %s nicht löschbar: %s", ordner, fehler)
 
 
+def _datei_sha256(pfad: Path) -> str | None:
+    """SHA-256 einer Datei oder ``None``, wenn sie nicht existiert (#232)."""
+    try:
+        return hashlib.sha256(pfad.read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
+def _heim_waechter_aktiv() -> bool:
+    """Session-Prüfsumme fürs echte Heim: in CI immer aktiv, lokal per ``TO_SPAWN_HEIM_WAECHTER=1`` (#232).
+
+    Auf einem Bau-Server mit laufenden Live-Sessions schreibt Claude Code parallel in die echte
+    ``~/.claude.json`` — dort schützt die ``test_heim``-Fixture plus Schreibsperre je Test,
+    ohne dass fremde Sessions den Lauf kippen.
+    """
+    return bool(os.environ.get("CI") or os.environ.get("TO_SPAWN_HEIM_WAECHTER") == "1")
+
+
+def heim_anlegen(heim: Path) -> Path:
+    """Richtet einen isolierten Test-Heimordner mit genau den Start-Attrappen ein (#232).
+
+    Enthält:
+    - Pflicht-Plugin ``context-mode`` (:func:`context_mode_attrappe.plugin_anlegen`)
+    - Aufräum-Skript-Attrappe ``~/.claude/hooks/smart-zone/staffel/aufraeumen.mjs``
+    - Minimale ``.gitconfig`` (Name, E-Mail, ``defaultBranch = main``) für ``git commit`` in Tests
+    Bewusst KEINE ``~/.claude/settings.json`` (keine privaten Hooks) und keine echte ``~/.claude.json``.
+    """
+    heim.mkdir(parents=True, exist_ok=True)
+    context_mode_attrappe.plugin_anlegen(heim)
+    aufraeumen = heim / ".claude" / "hooks" / "smart-zone" / "staffel" / "aufraeumen.mjs"
+    aufraeumen.parent.mkdir(parents=True, exist_ok=True)
+    aufraeumen.write_text(
+        "// Attrappe für Startklar-Prüfung (#232)\nprocess.exit(0);\n",
+        encoding="utf-8",
+    )
+    gitconfig = heim / ".gitconfig"
+    if not gitconfig.exists():
+        gitconfig.write_text(
+            "[user]\n\tname = test\n\temail = test@example.invalid\n[init]\n\tdefaultBranch = main\n",
+            encoding="utf-8",
+        )
+    return heim
+
+
 @pytest.hookimpl(trylast=True)
 def pytest_sessionstart(session: pytest.Session) -> None:
-    """Eigenen Temp-Ordner markieren (#177): PID des Leit-Prozesses in :data:`_MARKER`.
+    """Eigenen Temp-Ordner markieren (#177) und bei aktivem Wächter Heim-Prüfsumme merken (#232).
 
     Erst hier, weil pytest einen gegebenen ``--basetemp`` beim ersten Zugriff leert
     (``getbasetemp``); der Aufruf hier legt ihn endgültig an, der Marker überlebt.
     """
+    if not hasattr(session.config, "workerinput") and _heim_waechter_aktiv():
+        claude_json = _ECHTES_HEIM / ".claude.json"
+        session.config.stash[_HEIM_STAND] = (
+            claude_json,
+            _datei_sha256(claude_json),
+            (_ECHTES_HEIM / ".claude").exists(),
+        )
     ordner = session.config.stash.get(_EIGENER_BASETEMP, None)
     if ordner is None:
         return
@@ -304,11 +370,31 @@ def pytest_sessionstart(session: pytest.Session) -> None:
 
 @pytest.hookimpl(trylast=True)
 def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
-    """Grüner Lauf: den selbst angelegten Temp-Ordner löschen (#349); rot bleibt er zum Nachsehen.
+    """Heim-Prüfsumme prüfen (#232) und bei grünem Lauf den eigenen Temp-Ordner löschen (#349).
 
     Nur der in ``_eigener_basetemp`` angelegte Pfad, nie ein Muster und nie ein fremdes
     ``--basetemp``. Reste roter Läufe räumt der Temp-Räumer (#177).
     """
+    if not hasattr(session.config, "workerinput"):
+        stand = session.config.stash.get(_HEIM_STAND, None)
+        if stand is not None:
+            claude_json, vorher_sha, vorher_claude_dir = stand
+            nachher_sha = _datei_sha256(claude_json)
+            verstoesse: list[str] = []
+            if nachher_sha != vorher_sha:
+                verstoesse.append(
+                    f"echte Nutzer-Konfiguration verändert: {claude_json} (vorher {vorher_sha}, nachher {nachher_sha})"
+                )
+            if not vorher_claude_dir and (_ECHTES_HEIM / ".claude").exists():
+                verstoesse.append(
+                    f"echter Ordner {_ECHTES_HEIM / '.claude'} wurde während des Testlaufs angelegt"
+                )
+            if verstoesse:
+                meldung = "Heim-Wächter (#232): " + "; ".join(verstoesse)
+                _LOG.error("%s", meldung)
+                sys.stderr.write(f"\nFEHLER: {meldung}\n")
+                session.exitstatus = pytest.ExitCode.TESTS_FAILED
+                exitstatus = int(pytest.ExitCode.TESTS_FAILED)
     ordner = session.config.stash.get(_EIGENER_BASETEMP, None)
     if ordner is not None and exitstatus == 0:
         try:
@@ -493,6 +579,45 @@ def _keine_to_spawn_umgebung(monkeypatch: pytest.MonkeyPatch) -> None:
     # → die ausdrückliche Vorgabe ``TO_SPAWN_GH_REPO`` gilt nur, wenn kein GitHub-Origin
     # da ist; Tests mit github.com-Origin sehen weiter ihren eigenen Slug.
     monkeypatch.setenv("TO_SPAWN_GH_REPO", "test-org/test-repo")
+
+
+@pytest.fixture(autouse=True)
+def test_heim(
+    tmp_path_factory: pytest.TempPathFactory,
+    monkeypatch: pytest.MonkeyPatch,
+    _keine_to_spawn_umgebung: None,
+) -> Path:
+    """Isolierter Test-Heimordner je Test (#232): kein Test liest/schreibt das echte HOME.
+
+    ``HOME`` und ``USERPROFILE`` zeigen auf einen frischen Temp-Ordner mit Attrappen für
+    ``context-mode`` und ``aufraeumen.mjs`` (ohne private Hooks in ``settings.json``).
+    ``CLAUDE_CONFIG_DIR`` wird geleert; ``PYTHONUSERBASE`` bleibt erhalten, damit Python-
+    Kindprozesse user-installierte Pakete weiter finden. Schreibzugriffe auf die echte
+    ``~/.claude.json`` über ``vertrauen.sicherstellen`` werden aktiv gesperrt.
+    """
+    heim = heim_anlegen(tmp_path_factory.mktemp("heim"))
+    if not os.environ.get("PYTHONUSERBASE") and _START_USER_BASE:
+        monkeypatch.setenv("PYTHONUSERBASE", _START_USER_BASE)
+    monkeypatch.setenv("HOME", str(heim))
+    monkeypatch.setenv("USERPROFILE", str(heim))
+    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
+
+    echte_claude_json = (_ECHTES_HEIM / ".claude.json").resolve()
+    echt_sicherstellen = vertrauen.sicherstellen
+
+    @functools.wraps(echt_sicherstellen)
+    def _sicherstellen_ohne_echtes_heim(
+        *pfade: Path, claude_json: Path | None = None
+    ) -> list[str]:
+        ziel = (claude_json or vertrauen.claude_json_pfad()).expanduser().resolve()
+        if ziel == echte_claude_json:
+            raise PermissionError(
+                f"Test darf die echte Nutzer-Konfiguration nicht beschreiben: {ziel} (#232)"
+            )
+        return echt_sicherstellen(*pfade, claude_json=claude_json)
+
+    monkeypatch.setattr(vertrauen, "sicherstellen", _sicherstellen_ohne_echtes_heim)
+    return heim
 
 
 @pytest.fixture(autouse=True)

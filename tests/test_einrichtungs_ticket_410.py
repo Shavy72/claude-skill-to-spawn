@@ -420,6 +420,20 @@ def _fake_tmux(ordner: Path) -> Path:
     return aufrufe
 
 
+def _fake_powershell_leer(ordner: Path) -> None:
+    """Attrappe für ``powershell`` im PATH: leere Prozessliste für ``sessions_stand.py`` auf Windows (#232).
+
+    Unter Windows liest ``sessions_stand.py`` alle Prozesse per WMI ohne Arbeitsordner-Filter;
+    parallele pytest-xdist-Worker mit ``bau.py 901``/``wache.py 900`` ließen sonst ``spawn_srv.sh``
+    fälschlich „läuft bereits“ annehmen und Fenster überspringen.
+    """
+    from windows_attrappen import windows_starter
+
+    from conftest import attrappe
+
+    windows_starter(attrappe(ordner, "powershell", "print('[]')\n"))
+
+
 def _spawn_srv_weg(
     tmp_path: Path, *args: str
 ) -> tuple[subprocess.CompletedProcess[str], Path, Path, bytes, Path]:
@@ -430,6 +444,7 @@ def _spawn_srv_weg(
         konfig={"hauptzweig": "main", "worktree_basis": (tmp_path / "wt").as_posix()},
     )
     aufrufe = _fake_tmux(tmp_path / "bin")
+    _fake_powershell_leer(tmp_path / "bin")
     umgebung.update(
         {
             "PATH": f"{tmp_path / 'bin'}{os.pathsep}{umgebung['PATH']}",
@@ -489,6 +504,29 @@ def test_weg_spawn_srv_ganze_spec_legt_t0_an(tmp_path: Path) -> None:
     gestartet = aufrufe.read_text(encoding="utf-8") if aufrufe.exists() else ""
     assert "-n bau 901 " in gestartet, gestartet
     assert f"-n bau {T0} " in gestartet, gestartet
+
+
+def test_spawn_srv_weg_isoliert_windows_prozessliste(tmp_path: Path) -> None:
+    """``_spawn_srv_weg`` stellt ``powershell`` im PATH mit leerer Prozessliste (#232).
+
+    Unter Windows liest ``sessions_stand.py`` sonst alle Prozesse der Maschine ohne
+    Arbeitsordner-Filter; parallele xdist-Worker mit ``bau.py 901``/``wache.py 900``
+    lassen ``spawn_srv.sh`` dann Fenster überspringen.
+    """
+    lauf, *_ = _spawn_srv_weg(tmp_path, "--dry-run")
+    assert lauf.returncode == 0, lauf.stdout + lauf.stderr
+    ps = tmp_path / "bin" / ("powershell.exe" if sys.platform == "win32" else "powershell")
+    assert ps.is_file(), f"PowerShell-Attrappe fehlt unter {ps}"
+    probe = subprocess.run(
+        [str(ps), "-NoProfile", "-Command", "Get-CimInstance Win32_Process"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+        timeout=30,
+    )
+    assert probe.returncode == 0, probe.stderr
+    assert json.loads(probe.stdout) == []
 
 
 if __name__ == "__main__":

@@ -230,12 +230,16 @@ def repo_wurzel(start: Path | None = None) -> Path:
     return pfad
 
 
+#: Konkreter ``Path``-Typ des laufenden Systems — bleibt auch bei umgebogenem ``os.name`` gültig (#232).
+_SYSTEM_PFAD: type[Path] = type(Path())
+
+
 def notiz_tresor() -> Path:
     """Ort des privaten Notiz-Tresors (Obsidian-Vault): ``$OBSIDIAN_VAULT``, sonst ``~/obsidian`` (#365).
 
     Einzige Quelle für :mod:`to_spawn.uebergabe_sichern` und :mod:`to_spawn.befugnis`.
     """
-    return Path(os.environ.get("OBSIDIAN_VAULT") or "~/obsidian").expanduser()
+    return _SYSTEM_PFAD(os.environ.get("OBSIDIAN_VAULT") or "~/obsidian").expanduser()
 
 
 def worktree_pfad(ticket: str | int, repo: Path | None = None) -> str:
