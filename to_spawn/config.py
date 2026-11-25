@@ -34,6 +34,7 @@ import json
 import logging
 import os
 import re
+import socket
 import subprocess
 import sys
 import tempfile
@@ -732,3 +733,51 @@ def maschine_eintragen(repo: Path | None = None, ticket_repo: str = "") -> dict[
         raise
     log.info("Maschinen-Liste: %s eingetragen (%s)", wurzel, datei)
     return eintrag
+
+
+#: Erlaubte Werte für ``rolle`` in der Maschinen-Liste (``maschine.json``, #408).
+_SERVER_ROLLEN = frozenset({"server", "bau-server", "bau_server"})
+_PC_ROLLEN = frozenset({"pc", "laptop", "lokal", "local"})
+_LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+
+
+def ssh_ziel(konfig: dict[str, Any] | None = None) -> str:
+    """SSH-Ziel des Bau-Servers: ``TO_SPAWN_SSH_ZIEL`` gewinnt, sonst Konfig ``ssh_ziel`` oder Vorgabe."""
+    umg = os.environ.get("TO_SPAWN_SSH_ZIEL", "").strip()
+    if umg:
+        return umg
+    wert = str((konfig or {}).get("ssh_ziel") or "").strip()
+    return wert or str(DEFAULTS["ssh_ziel"])
+
+
+def ist_bau_server(konfig: dict[str, Any] | None = None) -> bool:
+    """Läuft der Skill auf dem Bau-Server selbst? Einzige Stelle dieser Prüfung (#408).
+
+    Reihenfolge:
+    1. Maschinen-Liste (``maschine.json``): ``rolle`` (``"server"``/``"bau-server"`` → True,
+       ``"pc"``/``"laptop"``/``"lokal"`` → False) oder ``bau_server`` (Bool) gewinnt immer.
+    2. Hostname (``socket.gethostname()``) passt zu ``ssh_ziel`` (klein, ohne ``nutzer@``,
+       bei blankem Namen ohne Punkt auch der Kurzname vor dem ersten Punkt).
+    """
+    daten = maschine()
+    rolle = daten.get("rolle")
+    if isinstance(rolle, str) and rolle.strip():
+        normal = rolle.strip().lower()
+        if normal in _SERVER_ROLLEN:
+            return True
+        if normal in _PC_ROLLEN:
+            return False
+        log.warning("Maschinen-Liste: unbekannte rolle %r — Hostname entscheidet", rolle)
+    schalter = daten.get("bau_server")
+    if isinstance(schalter, bool):
+        return schalter
+    try:
+        host = socket.gethostname().strip().lower()
+    except OSError:
+        return False
+    if not host:
+        return False
+    ziel_host = ssh_ziel(konfig).strip().lower().rsplit("@", 1)[-1]
+    if not ziel_host or ziel_host in _LOOPBACK_HOSTS:
+        return False
+    return host == ziel_host or ("." not in ziel_host and host.split(".", 1)[0] == ziel_host)

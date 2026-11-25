@@ -35,7 +35,7 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any, TextIO
 
-from . import manifest, sitzungsjob, starter
+from . import config, manifest, sitzungsjob, starter
 
 log = logging.getLogger("to_spawn.umzug")
 
@@ -113,7 +113,7 @@ def haupt_repo(ort: Path) -> Path:
 
 def ssh_ziel(konfig: dict[str, Any]) -> str:
     """SSH-Ziel: Umgebung ``TO_SPAWN_SSH_ZIEL`` gewinnt, sonst Konfig ``ssh_ziel``."""
-    return os.environ.get("TO_SPAWN_SSH_ZIEL") or str(konfig.get("ssh_ziel") or "bau-server")
+    return config.ssh_ziel(konfig)
 
 
 def server_repo(konfig: dict[str, Any], repo: Path) -> str:
