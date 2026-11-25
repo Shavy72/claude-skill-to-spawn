@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 import subprocess
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -34,14 +35,28 @@ class Lauf:
     dauer_s: float
 
 
-def _umgebung(ordner: Path | None = None) -> dict[str, str]:
+def _umgebung(
+    ordner: Path | None = None,
+    extra_env: Mapping[str, str | None] | None = None,
+) -> dict[str, str]:
     """Eigene Prozess-Umgebung je Lauf: markierter Ticket-Temp (#136/#177), kein ``PYTEST_ADDOPTS`` (#149)."""
     umg = {k: v for k, v in os.environ.items() if k not in _BEREINIGEN}
     umg.update(temp_ordner.umgebung(ordner=ordner, von="pruef", wiederverwenden=True))
+    if extra_env:
+        for schluessel, wert in extra_env.items():
+            if wert is None:
+                umg.pop(schluessel, None)
+            else:
+                umg[schluessel] = wert
     return umg
 
 
-def lauf(befehl: list[str], ordner: Path) -> Lauf:
+def lauf(
+    befehl: list[str],
+    ordner: Path,
+    *,
+    extra_env: Mapping[str, str | None] | None = None,
+) -> Lauf:
     """Startet ``befehl`` (Liste, keine Shell) in ``ordner``; stdout und stderr zusammen."""
     # ponytail: keine Zeitgrenze, ein hängender Test hängt die Tür; Upgrade in 3b-3 (Ausführen).
     start = time.monotonic()
@@ -49,7 +64,7 @@ def lauf(befehl: list[str], ordner: Path) -> Lauf:
         erg = subprocess.run(
             befehl,
             cwd=ordner,
-            env=_umgebung(ordner),
+            env=_umgebung(ordner, extra_env),
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,

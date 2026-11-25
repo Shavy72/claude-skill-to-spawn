@@ -23,7 +23,7 @@ import sys
 import tempfile
 import textwrap
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from pathlib import Path, PurePath
 from typing import Any
 
@@ -71,17 +71,38 @@ ZEITGRENZE_S = 600
 #: Plattform-Bedarf, der kein Programm im PATH ist (``@pytest.mark.braucht("posix")``):
 #: POSIX-Dateirechte, ``signal.SIGKILL``, ``/proc`` — unter Windows nicht vorhanden.
 _NUR_POSIX = frozenset({"posix"})
+#: Bau-Server-Bedarf (``@pytest.mark.braucht("server")`` / ``braucht("bau-server")``, #797):
+#: läuft nur auf dem Linux-Bau-Server und wird auf GitHub-Runnern sowie Nicht-Linux übersprungen.
+_NUR_SERVER = frozenset({"server", "bau-server"})
 
 
-def braucht_fehlt(name: str, plattform: str = sys.platform, finde=None) -> str | None:
-    """Grund, warum der Test-Bedarf ``name`` hier fehlt (``None`` = vorhanden), #68 P7b.
+def braucht_fehlt(
+    name: str,
+    plattform: str = sys.platform,
+    finde=None,
+    umgebung: Mapping[str, str] | None = None,
+) -> str | None:
+    """Grund, warum der Test-Bedarf ``name`` hier fehlt (``None`` = vorhanden), #68 P7b, #797.
 
-    Einzige Stelle dieses Wissens: ``posix`` fehlt unter Windows; ``bash`` zählt unter
-    Windows nur als echte Shell (Git-Bash), nicht als WSL-Stub aus ``System32``/
+    Einzige Stelle dieses Wissens: ``posix`` fehlt unter Windows; ``server``/``bau-server``
+    läuft nur auf dem Linux-Bau-Server (auf GitHub-Runnern, bei ``TO_SPAWN_BAU_SERVER=0``,
+    in generischer CI ohne Freigabe und unter Nicht-Linux ausgeschlossen); ``bash`` zählt
+    unter Windows nur als echte Shell (Git-Bash), nicht als WSL-Stub aus ``System32``/
     ``WindowsApps`` (startet ohne Distribution nicht); sonst Programm im PATH.
     """
     if name in _NUR_POSIX:
         return "nur POSIX (Linux/macOS)" if plattform == "win32" else None
+    if name in _NUR_SERVER:
+        umg = os.environ if umgebung is None else umgebung
+        if umg.get("GITHUB_ACTIONS", "").lower() == "true":
+            return "nur auf dem Bau-Server (auf GitHub-Runnern ausgeschlossen)"
+        if umg.get("TO_SPAWN_BAU_SERVER") == "0":
+            return "nur auf dem Bau-Server (TO_SPAWN_BAU_SERVER=0)"
+        if plattform != "linux":
+            return f"nur auf dem Linux-Bau-Server (hier: {plattform})"
+        if umg.get("CI", "").lower() in ("1", "true", "yes") and umg.get("TO_SPAWN_BAU_SERVER") != "1":
+            return "nur auf dem Bau-Server (CI-Umgebung ausgeschlossen)"
+        return None
     if name == "proc":  # Prozess-Dateisystem (Linux), fehlt unter Windows und macOS
         return None if Path("/proc/self/stat").exists() else "/proc fehlt"
     if name == "bash" and finde is None:  # echte Suche: die eine Tür ``bash_wahl``
@@ -197,7 +218,11 @@ _RESTE_ALTER_KNAPP_S = 600
 def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line(
         "markers",
-        'braucht(*namen): Test braucht Programm im PATH (z. B. "tmux", "bash"), "posix" oder "proc"; fehlt es → skip (#68)',
+        'braucht(*namen): Test braucht Programm im PATH (z. B. "tmux", "bash"), "posix", "proc" oder "server" (Bau-Server); fehlt es → skip (#68, #797)',
+    )
+    config.addinivalue_line(
+        "markers",
+        "braucht_server: Test läuft nur auf dem Linux-Bau-Server und wird auf GitHub-Runnern ausgeschlossen (#797)",
     )
     _eigener_basetemp(config)
 
@@ -457,6 +482,11 @@ def _braucht_ueberspringen(items: list[pytest.Item]) -> None:
                     gruende[name] = braucht_fehlt(name)
                 if gruende[name]:
                     item.add_marker(pytest.mark.skip(reason=f"braucht {name}: {gruende[name]}"))
+        if item.get_closest_marker("braucht_server") is not None:
+            if "server" not in gruende:
+                gruende["server"] = braucht_fehlt("server")
+            if gruende["server"]:
+                item.add_marker(pytest.mark.skip(reason=f"braucht_server: {gruende['server']}"))
 
 
 def _zeitgrenze_setzen(config: pytest.Config, items: list[pytest.Item]) -> None:
