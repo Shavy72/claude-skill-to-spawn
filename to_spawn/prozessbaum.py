@@ -10,8 +10,8 @@ Kernel-Prozessliste (ctypes, kein Prozess-Start, #154). Wie der Baum gelesen wir
 steht nur hier. Die Aufrufer wählen nur Stufen (Signal + Wartezeit), Reihenfolge der PIDs und worauf gewartet wird.
 
 Windows: jedes Signal wird zu ``TerminateProcess`` (so macht es ``os.kill``) — die erste
-Stufe beendet also schon hart, ``SIGTERM`` lässt sich nicht abfangen. Nur ``ist_claude``
-liest weiter ``/proc`` (unter Windows immer „kein Claude“).
+Stufe beendet also schon hart, ``SIGTERM`` lässt sich nicht abfangen. ``ist_claude`` liest
+unter Windows die Kommandozeile aus dem Kernel statt ``/proc`` (#602).
 """
 
 from __future__ import annotations
@@ -127,8 +127,11 @@ def ist_claude(pid: int) -> bool:
 
     Prozess weg (``FileNotFoundError``/``ProcessLookupError``) heißt „kein Claude“.
     Unlesbar aus anderem Grund zählt als Claude: lieber warten als eine lebende
-    Session für beendet halten.
+    Session für beendet halten. Windows: Kommandozeile aus dem Kernel, geprüft wie
+    beim Staffel-Hook (:func:`ist_session_zeile`).
     """
+    if _WINDOWS:
+        return _ist_claude_windows(pid)
     try:
         name = _proc(pid, "comm").decode(errors="replace").strip()
         argv = [teil.decode(errors="replace") for teil in _proc(pid, "cmdline").split(b"\0")]
@@ -145,6 +148,20 @@ def ist_claude(pid: int) -> bool:
     skript = argv[1] if len(argv) > 1 else ""
     return Path(skript).name == "claude" or skript.endswith("claude-code/cli.js")
 
+
+def _ist_claude_windows(pid: int) -> bool:
+    """``ist_claude`` unter Windows: leere Kommandozeile heißt weg oder unlesbar — ``lebt`` entscheidet."""
+    try:
+        zeile = _kommandozeile_windows(pid)
+    except OSError as fehler:
+        log.warning("Kommandozeile von %s nicht lesbar (%s) — zählt als Claude.", pid, fehler)
+        return True
+    if zeile:
+        return ist_session_zeile(zeile, windows=True)
+    if not _lebt_windows(pid):
+        return False
+    log.warning("Kommandozeile von %s nicht lesbar — zählt als Claude.", pid)
+    return True
 
 def senden(pids: Sequence[int], sig: signal.Signals) -> None:
     """Schickt ``sig`` an jede PID in Listenfolge; schon beendete zählen nicht als Fehler.
