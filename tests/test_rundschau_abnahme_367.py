@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from rundschau_beispiel import live_bereit_marker
 from rundschau_beispiel import png as _png
 
 from to_spawn import anleitung, bau_log, belege, briefkasten, rundschau_deck as rd, waechter_takt
@@ -316,8 +317,9 @@ def test_ablegen_prueft_bild_klickschritte_repo_pfad_und_speichert_inhalt(
     assert "Repo" in rot_ort.stdout
     assert not (repo / ".to-spawn" / f"abschluss_{SPEC}_paket.json").exists()
 
-    # 4. Vollständiges Deck im Repo (relativer Pfad) + Selbstprüfung (#368) → Exit 0, Paket + Ausgabe nennen Pfad & Inhalt.
+    # 4. Vollständiges Deck im Repo (relativer Pfad) + Selbstprüfung (#368) + Bereit-für-Live (#369) → Exit 0.
     _deck_schreiben(repo, deck_pfad, voll_teil2)
+    live_bereit_marker(repo, SPEC)
     sp_dir = repo / ".to-spawn" / "selbstpruefung" / str(SPEC)
     sp_dir.mkdir(parents=True, exist_ok=True)
     (sp_dir / "ergebnis.json").write_text(

@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from rundschau_beispiel import live_bereit_marker
 from rundschau_beispiel import png as _png
 
 from to_spawn import anleitung, rundschau_deck as rd, waechter_takt
@@ -128,6 +129,7 @@ def repo(tmp_path: Path) -> Path:
     )
     assert auftrag.returncode == 0, auftrag.stdout + auftrag.stderr
     _deck_schreiben(r, r / "docs" / "agents" / f"rundschau_{SPEC}.html")
+    live_bereit_marker(r, SPEC)  # #369: Abnahme verlangt grüne Bereit-für-Live-Prüfung
     return r
 
 
