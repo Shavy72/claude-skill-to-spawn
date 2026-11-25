@@ -101,7 +101,7 @@ class FensterMessung:
     """Start-Last-Ergebnis für genau einen Fenstertyp (``bau`` oder ``aufseher``)."""
 
     typ: str
-    grenze_k: float
+    obergrenze_k: float
     posten: tuple[Posten, ...]
     skills_aktiv: tuple[str, ...]
     skills_aus: int
@@ -138,7 +138,7 @@ class FensterMessung:
 
     @property
     def bestanden(self) -> bool:
-        return self.massgeblich_k <= self.grenze_k
+        return self.massgeblich_k <= self.obergrenze_k
 
 
 def schaetze_tokens(text: str) -> int:
@@ -669,7 +669,7 @@ def messen(
     return {
         "bau": FensterMessung(
             typ="bau",
-            grenze_k=grenzen["bau"],
+            obergrenze_k=grenzen["bau"],
             posten=tuple(bau_posten),
             skills_aktiv=bau_whitelist,
             skills_aus=bau_aus,
@@ -678,7 +678,7 @@ def messen(
         ),
         "aufseher": FensterMessung(
             typ="aufseher",
-            grenze_k=grenzen["aufseher"],
+            obergrenze_k=grenzen["aufseher"],
             posten=tuple(aufseher_posten),
             skills_aktiv=aufseher_skills,
             skills_aus=0,
@@ -705,7 +705,7 @@ def als_dict(
         m = ergebnisse[typ]
         gruppen = _gruppen_summen(m)
         fenster[typ] = {
-            "grenze_k": m.grenze_k,
+            "obergrenze_k": m.obergrenze_k,
             "geschaetzt_tokens": m.geschaetzt_tokens,
             "geschaetzt_k": m.geschaetzt_k,
             "gemessen_tokens": m.gemessen_tokens,
@@ -743,7 +743,7 @@ def als_dict(
         }
     return {
         "repo": str(repo.resolve()),
-        "grenzen_k": {typ: ergebnisse[typ].grenze_k for typ in FENSTERTYPEN},
+        "grenzen_k": {typ: ergebnisse[typ].obergrenze_k for typ in FENSTERTYPEN},
         "ok": ok,
         "fenster": fenster,
     }
@@ -766,7 +766,7 @@ def formatiere_text(
                 typ,
                 bau_log.kontext_text(m.massgeblich_k),
                 m.quelle_massgeblich,
-                bau_log.kontext_text(m.grenze_k),
+                bau_log.kontext_text(m.obergrenze_k),
                 status,
                 skills_text,
                 mcp_text,
@@ -780,7 +780,7 @@ def formatiere_text(
     for typ in FENSTERTYPEN:
         m = ergebnisse[typ]
         zeilen.append("")
-        zeilen.append(f"## {typ} (geschätzt {bau_log.kontext_text(m.geschaetzt_k)}, Grenze {bau_log.kontext_text(m.grenze_k)})")
+        zeilen.append(f"## {typ} (geschätzt {bau_log.kontext_text(m.geschaetzt_k)}, Obergrenze {bau_log.kontext_text(m.obergrenze_k)})")
         if m.transkripte:
             for tr in m.transkripte:
                 zeilen.append(

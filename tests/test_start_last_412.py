@@ -328,6 +328,8 @@ def test_probe_repo_unter_obergrenze_gruen(tmp_path: Path) -> None:
     daten = json.loads(lauf.stdout)
     assert daten["ok"] is True
     assert daten["grenzen_k"] == {"bau": 50.0, "aufseher": 80.0}
+    assert daten["fenster"]["bau"]["obergrenze_k"] == 50.0
+    assert daten["fenster"]["aufseher"]["obergrenze_k"] == 80.0
     assert daten["fenster"]["bau"]["massgeblich_k"] <= 50.0
     assert daten["fenster"]["aufseher"]["massgeblich_k"] <= 80.0
     assert daten["fenster"]["bau"]["bestanden"] is True
