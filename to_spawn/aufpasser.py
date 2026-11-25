@@ -2136,19 +2136,25 @@ class Aufpasser:
         )
         return True
 
-    def fenster_pruefen(self, f: Fenster, repo: Path, offen: set[int]) -> None:
-        schluessel = f"{f.sitzung}/{f.name}"
-        text = self.pane_text(f.ziel)
-        info = self.session(f)
-        status = info.status if info else None
-        e = self.eintrag(schluessel, text)
-        hash_start = e["hash"]
-        still_min = (self.jetzt - e["seit"]) / 60
-        ticket = echtes_ticket(f)
-        if ticket != f.ticket:
-            log.info("%s: bau.py arbeitet an Ticket %s", f.name, ticket)
-        arbeitend = arbeitet(text, status)
+    def _fertiges_fenster(
+        self,
+        f: Fenster,
+        repo: Path,
+        offen: set[int],
+        ticket: int | None,
+        text: str,
+        info: SessionInfo | None,
+        e: dict,
+        still_min: float,
+        schluessel: str,
+        arbeitend: bool,
+    ) -> bool:
+        """Die einzige Regel „wann darf ein fertiges Fenster zu“ (#416/#592).
 
+        Wahr ⇒ das Fenster ist erledigt (geschlossen oder von einer offenen Frage gehalten),
+        :meth:`fenster_pruefen` macht nichts weiter damit. Falsch ⇒ weiter in der Stufenkette.
+        """
+        hash_start = e["hash"]
         if ticket is not None and ticket not in offen and not arbeitend:
             # Volle Grenze + idle Session: nicht 15 min Karenz absitzen, sondern kurz
             # warten und Text vergleichen — der Platz wird gebraucht (#592).
@@ -2162,14 +2168,82 @@ class Aufpasser:
                 if ticket_zustand.fertig_gebaut(daten):
                     if not self._frage_haelt(f, ticket, repo, daten):
                         self.ticket_zu_schliessen(
-                            f, ticket, repo, schluessel, hash_start, info, platznot,
+                            f,
+                            ticket,
+                            repo,
+                            schluessel,
+                            hash_start,
+                            info,
+                            platznot,
                             grund=ticket_zustand.wortlaut(daten),
                         )
-                        return
+                        return True
                     # Frage hält nur das Schließen: lebt Claude, bleibt das Fenster
-                    # unberührt; beendete Session läuft in die Stufenkette unten (#416).
+                    # unberührt; beendete Session läuft in die Stufenkette (#416).
                     if info is not None or not session_beendet(f.pane_pid):
-                        return
+                        return True
+        return False
+
+    def platz_schaffen(self) -> int:
+        """Nur die Schließ-Regel über alle Fenster, sofort statt im 15-min-Cron (#624).
+
+        Wartende Starts rufen das bei voller Gesamtgrenze. Kein Hausmeister, keine Stufenkette,
+        kein Nachstarten. Lauf-Sperre belegt (Cron läuft) ⇒ 0, der Starter wartet normal.
+        Gibt die Zahl der geprüften Fenster zurück.
+        """
+        sperre = self._sperren()
+        if sperre is None:
+            log.info("Platz schaffen: Aufpasser läuft schon (Sperre belegt)")
+            return 0
+        geprueft = 0
+        try:
+            for sitzung, spec in self.sitzungen():
+                fenster = self.fenster(sitzung, spec)
+                repo = self.repo_ordner(fenster)
+                if repo is None:
+                    continue
+                offen = self.offene_tickets(spec, repo)
+                for f in fenster:
+                    text = self.pane_text(f.ziel)
+                    info = self.session(f)
+                    status = info.status if info else None
+                    e = self.eintrag(f"{f.sitzung}/{f.name}", text)
+                    self._fertiges_fenster(
+                        f,
+                        repo,
+                        offen,
+                        echtes_ticket(f),
+                        text,
+                        info,
+                        e,
+                        (self.jetzt - e["seit"]) / 60,
+                        f"{f.sitzung}/{f.name}",
+                        arbeitet(text, status),
+                    )
+                    geprueft += 1
+        finally:
+            self._stand_schreiben()
+            if hasattr(sperre, "close"):
+                sperre.close()
+        return geprueft
+
+    def fenster_pruefen(self, f: Fenster, repo: Path, offen: set[int]) -> None:
+        schluessel = f"{f.sitzung}/{f.name}"
+        text = self.pane_text(f.ziel)
+        info = self.session(f)
+        status = info.status if info else None
+        e = self.eintrag(schluessel, text)
+        hash_start = e["hash"]
+        still_min = (self.jetzt - e["seit"]) / 60
+        ticket = echtes_ticket(f)
+        if ticket != f.ticket:
+            log.info("%s: bau.py arbeitet an Ticket %s", f.name, ticket)
+        arbeitend = arbeitet(text, status)
+
+        if self._fertiges_fenster(
+            f, repo, offen, ticket, text, info, e, still_min, schluessel, arbeitend
+        ):
+            return
 
         if rueckfrage(text):
             if still_min >= RUECKFRAGE_MIN:
@@ -2867,6 +2941,28 @@ def lauf_mit_args(args: argparse.Namespace) -> int:
         print(f"aufpasser: {fehler}", file=sys.stderr)
         return 2
     return lauf_mit_einstellungen(einstellungen)
+
+
+def platz_schaffen(tmux_socket: str | None = None) -> int:
+    """Die eine Tür für wartende Starts (#624): fertige, stille Fenster jetzt schließen.
+
+    Gleiche Regeln wie der Cron-Lauf (:meth:`Aufpasser._fertiges_fenster`), aber nur das
+    Schließen. Fehler gehen nie nach außen: ``-1`` ⇒ der Start wartet wie bisher.
+    """
+    zustand = zustand_standard()
+    try:
+        handler = _logging_einrichten(zustand, False)
+    except OSError:
+        log.warning("Platz schaffen: Log nicht schreibbar")
+        return -1
+    try:
+        return Aufpasser(Einstellungen(zustand=zustand, tmux_socket=tmux_socket)).platz_schaffen()
+    except Exception:  # Start darf daran nie scheitern
+        log.exception("Platz schaffen gescheitert — Start wartet normal weiter")
+        return -1
+    finally:
+        log.removeHandler(handler)
+        handler.close()
 
 
 def main(argv: list[str] | None = None) -> int:
