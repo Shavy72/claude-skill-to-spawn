@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
-from conftest import attrappe
+from conftest import attrappe, braucht_fehlt
 
 SKILL = Path(__file__).resolve().parent.parent
 HILFEN = SKILL / "tests" / "hilfen"
@@ -232,6 +232,9 @@ class Welt:
 
 @pytest.fixture()
 def welt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Welt]:
+    # Eine Stelle für alle Dateien, die ``welt`` importieren: ``pytestmark`` oben gilt nur hier.
+    if grund := braucht_fehlt("tmux"):
+        pytest.skip(f"braucht tmux: {grund}")
     heim = tmp_path / "heim"
     heim.mkdir()
     monkeypatch.setenv("HOME", str(heim))
