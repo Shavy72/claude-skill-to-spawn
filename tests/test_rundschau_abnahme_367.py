@@ -131,7 +131,7 @@ def test_rundschau_auftrag_schreibt_tickets_direktlinks_pflichtfolien_und_entsch
     )
     assert erg.returncode == 0, erg.stdout + erg.stderr
     pfad = Path(erg.stdout.strip().splitlines()[-1])
-    assert pfad == repo / "docs" / "agents" / f"rundschau_auftrag_{SPEC}.md"
+    assert pfad.resolve() == (repo / "docs" / "agents" / f"rundschau_auftrag_{SPEC}.md").resolve()
     assert pfad.is_file()
     text = pfad.read_text(encoding="utf-8")
     assert "#10" in text and "Filter zeigt offene Punkte" in text
