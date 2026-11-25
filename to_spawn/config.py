@@ -93,6 +93,9 @@ DEFAULTS: dict[str, Any] = {
         "checkpoint_label": "checkpoint:human",
         #: Ordner der Belegseiten, den der Aufseher je Ticket prüft (#213).
         "belege_ordner": "docs/verify-hard",
+        #: Unbeaufsichtigter Lauf (Dauerauftrag, #405): ``/to-tickets`` wertet die Zustimmung
+        #: als gegeben und meldet fehlende ``Quelle:``-Zeile / ``(E<n>)`` nur als Warnung.
+        "unbeaufsichtigt": False,
     },
     #: Aufseher (#213): Remote Control an, verwaist ab so vielen Stunden ohne Spur.
     "waechter": {

@@ -32,7 +32,17 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TextIO
 
-from . import arbeitsstand, config, gh, konsole, prozessbaum, setup, skill_stand, umzug
+from . import (
+    arbeitsstand,
+    config,
+    gh,
+    konsole,
+    manifest,
+    prozessbaum,
+    setup,
+    skill_stand,
+    umzug,
+)
 
 log = logging.getLogger("to_spawn.einrichten")
 
@@ -312,27 +322,54 @@ def _lege_gitignore_an(ort: Ort) -> None:
         strom.write(trenner + kopf + "\n".join(zeilen) + "\n")
 
 
+#: Standard-Label für startbereite Tickets (``/to-tickets``, #404).
+READY_LABEL = "ready-for-agent"
+_READY_LABEL_FARBE = "0e8a16"
+_READY_LABEL_BESCHREIBUNG = "Bereit zur Umsetzung durch einen Agenten"
+_CHECKPOINT_LABEL_FARBE = "d93f0b"
+_CHECKPOINT_LABEL_BESCHREIBUNG = "Ticket wartet auf menschliche Abnahme (to-spawn)"
+
+
 def _label(ort: Ort) -> str:
-    regularien = config.lade(ort.wurzel).get("regularien") or {}
-    return str(regularien.get("checkpoint_label") or "checkpoint:human")
+    return manifest.checkpoint_label(config.lade(ort.wurzel))
+
+
+def _ticket_labels(ort: Ort) -> list[tuple[str, str, str]]:
+    """Beide Ticket-Labels, die ``/to-tickets`` vor dem ersten Issue braucht (#404)."""
+    checkpoint = _label(ort)
+    liste = [(checkpoint, _CHECKPOINT_LABEL_FARBE, _CHECKPOINT_LABEL_BESCHREIBUNG)]
+    if checkpoint != READY_LABEL:
+        liste.append((READY_LABEL, _READY_LABEL_FARBE, _READY_LABEL_BESCHREIBUNG))
+    return liste
 
 
 def _pruefe_label(ort: Ort) -> Befund:
-    label = _label(ort)
-    pfad = "repos/{owner}/{repo}/labels/" + urllib.parse.quote(label, safe="")
-    code, _ = gh.lauf(["api", pfad], cwd=ort.wurzel, timeout=_GH_TIMEOUT)
-    if code == 0:
-        return DA, label
-    if code == 127:
-        return LUECKE, f"gh fehlt — von Hand: gh label create {label}"
-    if code == 124:
-        return LUECKE, f"gh Zeitlimit — von Hand: gh label create {label}"
-    return FEHLT, f"{label} fehlt im GitHub-Repo"
+    labels = _ticket_labels(ort)
+    fehlend: list[str] = []
+    for label, _, _ in labels:
+        pfad = "repos/{owner}/{repo}/labels/" + urllib.parse.quote(label, safe="")
+        code, _ = gh.lauf(["api", pfad], cwd=ort.wurzel, timeout=_GH_TIMEOUT)
+        if code == 127:
+            return LUECKE, f"gh fehlt — von Hand: gh label create {label}"
+        if code == 124:
+            return LUECKE, f"gh Zeitlimit — von Hand: gh label create {label}"
+        if code != 0:
+            fehlend.append(label)
+    if fehlend:
+        return FEHLT, f"{', '.join(fehlend)} fehlt im GitHub-Repo"
+    return DA, ", ".join(label for label, _, _ in labels)
 
 
 def _lege_label_an(ort: Ort) -> None:
     # Scheitern/Zeitlimit gibt False (Warnung im Log); die Nachprüfung meldet die Lücke.
-    gh.label_sicherstellen(ort.wurzel, _label(ort), timeout=_GH_TIMEOUT)
+    for label, farbe, beschreibung in _ticket_labels(ort):
+        gh.label_sicherstellen(
+            ort.wurzel,
+            label,
+            farbe=farbe,
+            beschreibung=beschreibung,
+            timeout=_GH_TIMEOUT,
+        )
 
 
 def _maschinen_soll(ort: Ort) -> dict[str, str]:
@@ -483,7 +520,7 @@ _BAUSTEINE: list[Baustein] = [
     Baustein("worktree_basis", 1, _pruefe_worktree_basis, _lege_worktree_basis_an),
     Baustein("manifest", 1, _pruefe_manifest, _lege_manifest_an),
     Baustein("gitignore", 1, _pruefe_gitignore, _lege_gitignore_an),
-    Baustein("checkpoint_label", 1, _pruefe_label, _lege_label_an),
+    Baustein("checkpoint_label", 2, _pruefe_label, _lege_label_an),
     Baustein("maschinen_liste", 1, _pruefe_maschine, _lege_maschine_an),
     Baustein("weiterleitungen", 1, _pruefe_weiterleitungen, _lege_weiterleitungen_an),
     Baustein("server_klon", 1, _pruefe_server_klon),
