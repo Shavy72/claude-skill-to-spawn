@@ -140,8 +140,14 @@ def _lies(datei: Path) -> str:
         return ""
 
 
-def finde_dateien(verify_hard: Path, nummer: str) -> list[Path]:
-    """Alle .md/.txt-Belegdateien eines Tickets (Datei ``<N>…`` oder Ordner ``[<datum>_]<N>…``)."""
+TEXT_ENDUNGEN = frozenset({".md", ".txt"})
+BILD_ENDUNGEN = frozenset({".png", ".jpg", ".jpeg", ".webp"})
+
+
+def finde_dateien(
+    verify_hard: Path, nummer: str, *, endungen: frozenset[str] = TEXT_ENDUNGEN
+) -> list[Path]:
+    """Belegdateien eines Tickets (Datei ``<N>…`` oder Ordner ``[<datum>_]<N>…``) mit passenden Endungen."""
     muster = re.compile(rf"^(?:\d{{4}}-\d{{2}}-\d{{2}}_)?{re.escape(nummer)}(?=$|[_.\-])")
     treffer: list[Path] = []
     if not verify_hard.is_dir():
@@ -150,8 +156,13 @@ def finde_dateien(verify_hard: Path, nummer: str) -> list[Path]:
         if not muster.match(eintrag.name):
             continue
         kandidaten = sorted(eintrag.rglob("*")) if eintrag.is_dir() else [eintrag]
-        treffer += [k for k in kandidaten if k.is_file() and k.suffix.lower() in (".md", ".txt")]
+        treffer += [k for k in kandidaten if k.is_file() and k.suffix.lower() in endungen]
     return treffer
+
+
+def finde_bilder(verify_hard: Path, nummer: str) -> list[Path]:
+    """Alle Bild-Belege (``.png``/``.jpg``/``.jpeg``/``.webp``) eines Tickets (#367)."""
+    return finde_dateien(verify_hard, nummer, endungen=BILD_ENDUNGEN)
 
 
 def zeitpunkt(datei: Path) -> float:
