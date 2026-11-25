@@ -776,8 +776,9 @@ def _bildpfad_windows(pid: int) -> str | None:
         for _ in range(3):
             puffer = ctypes.create_unicode_buffer(groesse)
             laenge = ctypes.c_ulong(groesse)
+            ctypes.set_last_error(0)
             if kernel.QueryFullProcessImageNameW(griff, 0, puffer, ctypes.byref(laenge)):
-                return puffer.value
+                return puffer.value or None
             if ctypes.get_last_error() != _FEHLER_PUFFER_ZU_KLEIN:
                 return None
             groesse *= 2
@@ -789,11 +790,19 @@ def _bildpfad_windows(pid: int) -> str | None:
 def _ist_msys_bildpfad(bildpfad: str | None) -> bool:
     """Liegt ``bildpfad`` neben ``msys-2.0.dll`` oder ``cygwin1.dll`` (Git Bash / MSYS / Cygwin)?
 
-    Nur solche Programme halten ihre Win32-cwd ohne Umbenennungs-Sperre offen (#243)."""
+    Nur solche Programme halten ihre Win32-cwd ohne Umbenennungs-Sperre offen (#243). Ist der
+    Bildordner selbst nicht lesbar (z. B. ``WindowsApps``), liefert die Prüfung ``False`` statt
+    den Hausmeister mit ``PermissionError`` auf fremden oder geschützten Programmen zu sperren."""
     if not bildpfad:
         return False
     ordner = Path(bildpfad).parent
-    return any((ordner / dll).is_file() for dll in _MSYS_DLLS)
+    for dll in _MSYS_DLLS:
+        try:
+            if (ordner / dll).is_file():
+                return True
+        except OSError:
+            continue
+    return False
 
 
 def _ist_beendet_griff(kernel: Any, griff: int) -> bool:
@@ -1235,17 +1244,20 @@ def arbeitsordner_in_windows(ordner: str | Path) -> dict[int, ArbeitsordnerBefun
     ``\\\\localhost\\C$\\…``, 8.3, ``subst`` ändern daran nichts. ``text`` bleibt für Aufrufer,
     die zusätzlich per Text sperren wollen.
 
-    Nicht prüfbar (Prozess fremd/geschützt: ``OpenProcess`` verweigert, siehe
-    :func:`_arbeitsordner_windows`) fehlen wie bisher, ebenso Prozesse, die zwischen Auflisten
-    und PEB-/Griff-Lesen verschwunden oder beendet sind (:func:`_ist_weg_windows`, #654), und
-    offene Prozesse mit unlesbarer cwd, die nachweislich einem anderen Benutzer gehören
-    (:func:`_ist_fremd_windows`, #552 — ein geschützter Dienst sperrte sonst jedes Aufräumen).
+    Nicht prüfbar (Nicht-MSYS-Prozess fremd/geschützt: ``OpenProcess`` verweigert, siehe
+    :func:`_arbeitsordner_windows`) fehlen wie bisher; ein nicht zu öffnender MSYS-/Cygwin-Prozess
+    (:class:`_MsysZugriffVerweigert`, #243) sperrt hingegen fail-closed (auch bei fremdem
+    Benutzer), weil die Umbenennungs-Probe dessen cwd nicht sieht. Ebenso fehlen Prozesse, die
+    zwischen Auflisten und PEB-/Griff-Lesen verschwunden oder beendet sind
+    (:func:`_ist_weg_windows`, #654), und offene Nicht-MSYS-Prozesse mit unlesbarer cwd, die
+    nachweislich einem anderen Benutzer gehören (:func:`_ist_fremd_windows`, #552 — ein
+    geschützter Dienst sperrte sonst jedes Aufräumen).
     Jeder andere Fehler eines laufenden Prozesses (insbesondere echte Zugriffsverweigerung
     beim Übernehmen des cwd-Griffs) ⇒ ``drin=None`` mit Grund (Aufrufer entscheidet fail-closed).
     ``ordner`` nicht zu öffnen oder Momentaufnahme unlesbar = ``OSError``.
 
-    ponytail: unlesbarer Prozess eines fremden Benutzers mit cwd im Ordner bleibt unentdeckt
-    (wie bei #243); offene Dateien fängt im echten Lauf die Umbenennungs-Probe."""
+    ponytail: unlesbarer Nicht-MSYS-Prozess eines fremden Benutzers mit cwd im Ordner bleibt
+    unentdeckt (Grenze aus #243); offene Dateien fängt im echten Lauf die Umbenennungs-Probe."""
     ziel = _ordner_von(str(ordner))
     kennungen: dict[str, tuple[int, int]] = {}
     ergebnis: dict[int, ArbeitsordnerBefund] = {}
