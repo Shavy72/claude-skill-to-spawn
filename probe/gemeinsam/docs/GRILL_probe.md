@@ -153,8 +153,9 @@ Randfall: Gleichstand, Gebühr 0 ausgeblendet).
 **Wort des Menschen:** „mehrere sichtbar geänderte Stellen“ (#426, 24.11.).
 
 ### E9 — Ticket-Schnitt (Vorgabe für /to-tickets) ✅
-**Beschluss:** Sechs Bau-Tickets plus das übliche Abnahme-Ticket. Abhängigkeiten als native
-`blocked_by`:
+**Beschluss:** Sechs Bau-Tickets plus das Abnahme-Ticket am Kettenende (blockiert durch T1–T6;
+trägt **immer** die Labels `ready-for-agent` und `checkpoint:human`, nie nur `ready-for-agent`,
+sonst verweigert `regularien` mit Exit 3). Abhängigkeiten als native `blocked_by`:
 
 | Ticket | Titel | Beschluss | blockiert durch |
 |---|---|---|---|

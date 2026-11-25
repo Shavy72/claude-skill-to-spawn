@@ -96,7 +96,7 @@ Publish the approved tickets. **How** depends on the tracker `/setup-matt-pocock
 
 - **Local files** → write one file per ticket under `.scratch/<feature-slug>/issues/<NN>-<slug>.md`, numbered from `01` in dependency order (blockers first). Each file's "Blocked by" lists the numbers/titles it depends on. Use the per-ticket file template below: one ticket per file, never a single combined file.
 - **A real issue tracker (GitHub, …)** → vor dem ersten Issue-Anlegen `python ~/.claude/skills/to-spawn/to_spawn.py einrichten` ausführen (legt u. a. die Labels `ready-for-agent` und `checkpoint:human` bzw. `regularien.checkpoint_label` idempotent an, falls sie im Repo fehlen). Dann je Ticket in Blocker-Reihenfolge (Blocker zuerst, Abnahme-Ticket zuletzt):
-  1. Issue im Repo dieses Arbeitsordners anlegen (Vorlage unten, `ready-for-agent`, beim Abnahme-Ticket zusätzlich `checkpoint:human`). `## Blocked by` nennt nur echte Issue-Nummern, nie Entwurfs-Nummern (#1, #2 …).
+  1. Issue im Repo dieses Arbeitsordners anlegen (Vorlage unten, `ready-for-agent`; das Abnahme-Ticket erhält **immer** zusätzlich `checkpoint:human` bzw. `regularien.checkpoint_label` — nie nur `ready-for-agent`, sonst verweigert `regularien` mit Exit 3). `## Blocked by` nennt nur echte Issue-Nummern, nie Entwurfs-Nummern (#1, #2 …).
   2. Ticket an die Spec hängen — **die eine Tür für Kanten und Manifest**, nie Kanten von Hand setzen:
 
      ```
@@ -104,7 +104,7 @@ Publish the approved tickets. **How** depends on the tracker `/setup-matt-pocock
      ```
 
      Erst mit `--trocken` ansehen, dann ohne. `anhaengen` setzt die nativen Blocker-Kanten, schreibt den Manifest-Eintrag (Ordner aus `pfade.manifeste` in `.to-spawn/config.json`, fehlt der Schlüssel: Vorgabe des Skills; Ticket-Schlüssel = echte Issue-Nummer, `files` = Kontext-Paket), hängt die Kante vor das offene Abnahme-Ticket seiner Kette (bei mehreren Abnahmen ggf. `--abnahme` angeben) und macht das Issue zuletzt zum Unter-Issue der Spec. Ein zweiter Aufruf ändert nichts; Exit ≠ 0 heißt: nichts geschrieben, Fehlerzeile beheben, neu aufrufen.
-  3. Das Abnahme-Ticket zuletzt anhängen, mit `--blockiert-von` aller Tickets, die es abnimmt.
+  3. Das Abnahme-Ticket zuletzt anhängen (Pflicht-Label `checkpoint:human` bzw. `regularien.checkpoint_label` am Issue prüfen — fehlt es, sofort ergänzen), mit `--blockiert-von` aller Tickets, die es abnimmt.
 
 Work the **frontier**: any ticket whose blockers are all done. For a purely linear chain that means top to bottom.
 
@@ -120,7 +120,7 @@ Do NOT close the parent issue or edit its text — `anhaengen` only links each t
 
 **Beschlüsse:** the spec's E-Nummern this ticket implements, e.g. E3, E7.
 
-**Status:** ready-for-agent
+**Status:** ready-for-agent (beim Abnahme-Ticket immer zusätzlich: checkpoint:human)
 
 - [ ] Acceptance criterion 1
 - [ ] Acceptance criterion 2
