@@ -237,11 +237,8 @@ def _git(repo: Path, *args: str) -> tuple[int, str]:
 
 
 def haupt_ref(repo: Path) -> str | None:
-    """``origin/<Hauptzweig>`` nach der Regel von ``gh.hauptzweig`` (#257); ``None`` ohne den Ref."""
-    ref = f"origin/{gh.hauptzweig(repo)}"
-    if _git(repo, "rev-parse", "--verify", "-q", ref)[0] == 0:
-        return ref
-    return None
+    """Weiterleitung auf :func:`bau_log.haupt_ref` (#375)."""
+    return bau_log.haupt_ref(repo)
 
 
 def alle_commits(repo: Path, ref: str) -> list[Commit]:
@@ -920,30 +917,9 @@ def label_namen(issue: dict[str, Any]) -> set[str]:
     return namen
 
 
-def _zeilen_aus(text: str, quelle: str) -> list[dict[str, Any]]:
-    zeilen: list[dict[str, Any]] = []
-    for nr, roh in enumerate(text.splitlines(), 1):
-        roh = roh.strip()
-        if not roh:
-            continue
-        try:
-            eintrag = json.loads(roh)
-        except ValueError:
-            eintrag = None
-        if not isinstance(eintrag, dict):
-            log.warning("Kaputte Bau-Log-Zeile %s:%s — als „kaputt“ gezählt.", quelle, nr)
-            eintrag = {"typ": "kaputt"}
-        zeilen.append(eintrag)
-    return zeilen
-
-
 def log_vom_ref(repo: Path, ref: str, ticket: int) -> list[dict[str, Any]]:
-    """Bau-Log-Zeilen eines Tickets, wie sie auf ``ref`` liegen."""
-    pfad = bau_log.log_im_repo(repo, ticket)
-    code, text = _git(repo, "show", f"{ref}:{pfad}")
-    if code != 0:
-        return []
-    return _zeilen_aus(text, f"{ref}:{pfad}")
+    """Weiterleitung auf :func:`bau_log.log_vom_ref` (#375)."""
+    return bau_log.log_vom_ref(repo, ref, ticket)
 
 
 def lauf_zeilen(datei: Path) -> list[dict[str, Any]] | None:
@@ -955,7 +931,7 @@ def lauf_zeilen(datei: Path) -> list[dict[str, Any]] | None:
     except OSError as fehler:
         log.warning("Laufdatei %s nicht lesbar: %s", datei, fehler)
         return None
-    return _zeilen_aus(text, str(datei))
+    return bau_log.zeilen_aus(text, str(datei))
 
 
 def laufdateien(repo: Path, wt: Path, ticket: int) -> list[tuple[str, Path]]:
@@ -989,10 +965,9 @@ def _kurz(text: Any, grenze: int = 140) -> str:
 
 
 def entscheidung_teile(z: dict[str, Any]) -> tuple[str, str, str]:
-    """(Frage, Wahl, Grund) einer ``entscheidung``-Zeile (alte Felder als Rückfall)."""
-    frage = z.get("frage") or z.get("text") or ""
-    wahl = z.get("wahl") or z.get("entscheidungen") or ""
-    return _kurz(frage), _kurz(wahl), _kurz(z.get("grund"))
+    """(Frage, Wahl, Grund) einer ``entscheidung``-Zeile, gekürzt (Rückfall in :func:`bau_log.entscheidung_felder`)."""
+    frage, wahl, grund = bau_log.entscheidung_felder(z)
+    return _kurz(frage), _kurz(wahl), _kurz(grund)
 
 
 def verdichte(ticket: int, z: dict[str, Any]) -> str:

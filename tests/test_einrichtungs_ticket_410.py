@@ -475,7 +475,7 @@ def test_weg_spawn_srv_nur_wache_tickets_probelauf_legen_kein_t0_an(
             assert "bau 901" not in gestartet, gestartet
         if args == ("--tickets", "901"):
             # Start-Nachweis (#438): das Fenster bau 901 startet tatsächlich.
-            assert "-n bau 901 " in gestartet, gestartet
+            assert "-n bau 901 " in gestartet, (gestartet, ausgabe)
         if args == ("--dry-run",):
             assert "new-session" not in gestartet and "new-window" not in gestartet
 
