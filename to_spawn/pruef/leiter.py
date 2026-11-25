@@ -186,13 +186,26 @@ def _pruefe(repo: Path, adapter: Adapter, basis: str, pfade: list[str] | None, a
 def _gedeutet(repo: Path, adapter: Adapter, plan: Plan, erg: ausfuehren.Lauf, roh: Stufe) -> Stufe:
     """Ergebnis eines Laufs in ``roh`` eintragen; rot → einmalige Wiederholung (3b-4)."""
     ergebnis = adapter.deute(erg.code)
+    grund = roh.grund
+    if ergebnis == GRUEN and isinstance(adapter, wackler.Berichtbar):
+        bericht = adapter.bericht(plan.befehl, erg.ausgabe)
+        if bericht is None:
+            ergebnis = GATE_FEHLER
+            grund = "Prüf-Bericht fehlt oder unlesbar (kein Grün ohne Nachweis)"
+        elif bericht.abgebrochen:
+            ergebnis = ROT
+            grund = "Prüflauf vorzeitig abgebrochen (kein Grün trotz Exit 0)"
+        elif bericht.im_bericht == 0:
+            ergebnis = GATE_FEHLER
+            grund = "0 Tests im Prüf-Bericht gelaufen (kein Grün trotz Exit 0)"
     stufe = replace(
         roh,
+        grund=grund,
         dauer_s=round(erg.dauer_s, 2),
         befehl=" ".join(plan.befehl),
         werkzeug=plan.werkzeug,
         ergebnis=ergebnis,
-        ausgabe=erg.ausgabe if ergebnis != GRUEN else "",
+        ausgabe=(erg.ausgabe or grund) if ergebnis != GRUEN else "",
     )
     zweit = wackler.nochmal(adapter, repo, plan.befehl, erg) if ergebnis == ROT else None
     if zweit is None:
