@@ -11,7 +11,7 @@ import tempfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-from to_spawn.pruef import ausfuehren, wackler
+from to_spawn.pruef import ausfuehren, leiter, wackler
 from to_spawn.pruef.leiter import Plan
 
 log = logging.getLogger("to_spawn.pruef")
@@ -45,10 +45,6 @@ _CACHE_PREFIX = "cache_dir="
 _BERICHT_PREFIX = "--junitxml="
 #: Abbruch-Zeile von pytest (``pytest.exit(..., returncode=0)`` oder ``Interrupted``).
 _ABBRUCH = re.compile(r"^!{3,}.*(?:Interrupted|_pytest\.outcomes\.Exit).*!{3,}$", re.MULTILINE)
-#: Orte des Bau-Werkzeugs im App-Repo: deren Tests sammelt die App-Prüfung nie ein, auch wenn die
-#: App ``norecursedirs`` selbst setzt (#425 Abnahme 4, #415). Auswahl und
-#: Wiederholung bauen auf ``voll`` auf und erben den Ausschluss.
-_WERKZEUG_ORTE = (".to-spawn", ".claude")
 
 
 #: Dateien, in denen ein Repo pytest-xdist als eigene Abhängigkeit nennt.
@@ -218,7 +214,7 @@ class PythonAdapter:
                 "-o",
                 "console_output_style=count",
                 f"{_BERICHT_PREFIX}{bericht}",
-                *(f"--ignore={ort}" for ort in _WERKZEUG_ORTE),
+                *(f"--ignore={ort}" for ort in leiter.WERKZEUG_ORTE),
                 *parallel,
             ],
             fehler="",

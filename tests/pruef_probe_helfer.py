@@ -219,20 +219,62 @@ const wurzel = process.cwd();
 const args = process.argv.slice(2);
 const idx = args.indexOf("--changed");
 const basis = idx >= 0 && args[idx + 1] ? args[idx + 1] : null;
+const cliExcludes = [];
+for (let i = 0; i < args.length; i += 1) {
+  if (args[i] === "--exclude" && args[i + 1]) {
+    cliExcludes.push(args[i + 1]);
+    i += 1;
+  } else if (args[i].startsWith("--exclude=")) {
+    cliExcludes.push(args[i].slice("--exclude=".length));
+  }
+}
 
 const posix = (p) => p.split(path.sep).join("/");
+
+function globRegExp(muster) {
+  let re = "^";
+  for (let i = 0; i < muster.length; i += 1) {
+    if (muster.startsWith("**/", i)) {
+      re += "(?:.*/)?";
+      i += 2;
+    } else if (muster.startsWith("**", i)) {
+      re += ".*";
+      i += 1;
+    } else if (muster[i] === "*") {
+      re += "[^/]*";
+    } else if (muster[i] === "?") {
+      re += "[^/]";
+    } else {
+      re += muster[i].replace(/[.+^${}()|[\]\\]/g, "\\$&");
+    }
+  }
+  return new RegExp(re + "$");
+}
+
+const konfigPfad = path.join(wurzel, "vitest.config.js");
+const konfig = fs.existsSync(konfigPfad)
+  ? (await import(pathToFileURL(konfigPfad).href)).default ?? {}
+  : {};
+const konfigExcludes = Array.isArray(konfig?.test?.exclude)
+  ? konfig.test.exclude
+  : ["**/node_modules/**", "**/.git/**"];
+const ausschluss = [...konfigExcludes, ...cliExcludes].map(globRegExp);
+const istAusgeschlossen = (relPfad) => ausschluss.some((re) => re.test(relPfad));
 
 function sammleDateien(ordner, endung, ziel = []) {
   if (!fs.existsSync(ordner)) return ziel;
   for (const eintrag of fs.readdirSync(ordner, { withFileTypes: true })) {
-    if (eintrag.name === "node_modules" || eintrag.name === ".git" || eintrag.name === ".to-spawn") {
+    if (eintrag.name === "node_modules" || eintrag.name === ".git") {
       continue;
     }
     const voll = path.join(ordner, eintrag.name);
+    const rel = posix(path.relative(wurzel, voll));
     if (eintrag.isDirectory()) {
-      sammleDateien(voll, endung, ziel);
-    } else if (eintrag.name.endsWith(endung)) {
-      ziel.push(posix(path.relative(wurzel, voll)));
+      if (!istAusgeschlossen(`${rel}/`)) {
+        sammleDateien(voll, endung, ziel);
+      }
+    } else if (eintrag.name.endsWith(endung) && !istAusgeschlossen(rel)) {
+      ziel.push(rel);
     }
   }
   return ziel;
@@ -249,7 +291,7 @@ function statischeImporte(relPfad) {
   return ziele;
 }
 
-const alleTests = sammleDateien(path.join(wurzel, "test"), ".test.js").sort();
+const alleTests = sammleDateien(wurzel, ".test.js").sort();
 let gewaehlt = alleTests;
 
 if (basis !== null) {
@@ -259,10 +301,7 @@ if (basis !== null) {
     { cwd: wurzel, encoding: "utf8" },
   );
   const geaendert = new Set(diff.split("\0").filter(Boolean).map(posix));
-  const alleJs = [
-    ...sammleDateien(path.join(wurzel, "src"), ".js"),
-    ...sammleDateien(path.join(wurzel, "test"), ".js"),
-  ];
+  const alleJs = sammleDateien(wurzel, ".js");
   const nutzer = new Map();
   for (const datei of alleJs) {
     for (const ziel of statischeImporte(datei)) {
@@ -288,12 +327,8 @@ if (basis !== null) {
   }
 }
 
-const konfigPfad = path.join(wurzel, "vitest.config.js");
-if (fs.existsSync(konfigPfad)) {
-  const konfig = (await import(pathToFileURL(konfigPfad).href)).default ?? {};
-  for (const setup of konfig?.test?.setupFiles ?? []) {
-    await import(pathToFileURL(path.resolve(wurzel, setup)).href);
-  }
+for (const setup of konfig?.test?.setupFiles ?? []) {
+  await import(pathToFileURL(path.resolve(wurzel, setup)).href);
 }
 
 let bestanden = 0;

@@ -29,6 +29,9 @@ ZEITGRENZE = "Zeitgrenze"
 AUSGELASSEN = -1
 #: Höchstens so viele Zeilen gehen als ``fehler_kurz`` ins Protokoll.
 FEHLER_ZEILEN = 20
+#: Orte des Bau-Werkzeugs im App-Repo: deren Tests sammelt die App-Prüfung nie ein,
+#: auch wenn die App ihre eigene Ausschluss-Liste setzt (#425 Abnahme 4, #415, #446).
+WERKZEUG_ORTE: tuple[str, ...] = (".to-spawn", ".claude")
 
 
 @dataclass(frozen=True)
