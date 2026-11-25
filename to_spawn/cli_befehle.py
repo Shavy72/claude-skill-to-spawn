@@ -45,6 +45,7 @@ from to_spawn import (
     setup,
     spec_rand,
     speicher,
+    start_last,
     startklar,
     ticket_zustand,
     ticketstand,
@@ -525,6 +526,8 @@ def verteilen(ap: argparse.ArgumentParser, args: argparse.Namespace) -> int:
         return waechter_takt.lauf(args)
     if args.befehl == "aufpasser":
         return aufpasser.lauf_mit_args(args)
+    if args.befehl == "start-last":
+        return start_last.lauf_mit_args(args)
     if args.befehl == "aufraeumen":
         return _aufraeumen(args, ap)
     if args.befehl == "sichern":

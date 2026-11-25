@@ -63,6 +63,7 @@ def _windows_peb_welt(
     monkeypatch.setattr(prozessbaum, "_arbeitsordner_windows", _arbeitsordner)
     monkeypatch.setattr(prozessbaum, "_arbeitsordner_drin", _liegt_drin)
     monkeypatch.setattr(prozessbaum, "_ist_fremd_windows", lambda pid: pid in (fremd or set()))
+    monkeypatch.setattr(prozessbaum, "_ist_weg_windows", lambda _pid: False)
 
 
 def test_fremder_rechnerprozess_ohne_cwd_griff_sperrt_welt_nicht(
@@ -210,6 +211,7 @@ def test_peb_pruefung_sieht_fremden_prozess_9648_nicht(
         if pid == 9648
         else False,
     )
+    monkeypatch.setattr(prozessbaum, "_ist_weg_windows", lambda _pid: False)
 
     hausmeister_windows._kein_arbeitsordner_drin(ordner)
 

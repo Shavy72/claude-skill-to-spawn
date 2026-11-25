@@ -10,6 +10,7 @@ Dateien. Die Zeitgrenzen selbst prüft ``test_waechter_213_fix.py`` ohne Schalte
 
 from __future__ import annotations
 
+import functools
 import json
 import logging
 import os
@@ -118,6 +119,41 @@ def attrappe(ordner: Path, name: str, python_code: str) -> Path:
         skript.with_name(f"{name}.py").write_text(text, encoding="utf-8")
         (ordner / f"{name}.cmd").write_text(f'@"{sys.executable}" "{skript}" %*\r\n', encoding="utf-8")
     return skript
+
+
+#: Ordner von Werkzeugen, kein Repo-Inhalt — Rückfall, wenn git nicht greift (#491, #532).
+WERKZEUG_ORDNER = frozenset({".git", "__pycache__", ".ruff_cache", ".pytest_cache", ".mypy_cache"})
+
+
+def git_dateien(wurzel: Path) -> list[str] | None:
+    """Relativpfade unter ``wurzel``, die git kennt (``git ls-files``); ``None`` ohne git bzw. Repo (#491, #532)."""
+    try:
+        lauf = subprocess.run(
+            ["git", "-C", str(wurzel), "-c", "core.quotepath=false", "ls-files", "-z"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=True,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    return [rel for rel in lauf.stdout.split("\0") if rel]
+
+
+def repo_dateien(ordner: Path) -> list[Path]:
+    """Dateien unter ``ordner``, die zum Repo gehören — ohne ``__pycache__``/Caches (#491, #532).
+
+    Im Git-Repo liefert ``git ls-files`` nur erfasste Dateien (übrig gebliebene
+    ``__pycache__/*.pyc`` oder ``.ruff_cache`` fallen heraus). Ohne git: Rückfall auf
+    ``ordner.rglob("*")`` ohne :data:`WERKZEUG_ORDNER`.
+    """
+    bekannt = git_dateien(ordner)
+    kandidaten = ordner.rglob("*") if bekannt is None else (ordner / rel for rel in bekannt)
+    return sorted(
+        p
+        for p in kandidaten
+        if p.is_file() and not (WERKZEUG_ORDNER & set(p.relative_to(ordner).parts))
+    )
 
 
 #: Eigener Temp-Ordner dieses Laufs (#349), nur gesetzt, wenn ``pytest_configure`` ihn anlegte.
@@ -635,6 +671,7 @@ def _hausmeister_nur_im_test(
 
     echt_arbeitsordner = prozessbaum.arbeitsordner_in_windows
 
+    @functools.wraps(echt_arbeitsordner)
     def _arbeitsordner_nur_eigene(ziel: str | Path) -> dict[int, prozessbaum.ArbeitsordnerBefund]:
         echt_momentaufnahme = prozessbaum._momentaufnahme_windows
         ich = os.getpid()
