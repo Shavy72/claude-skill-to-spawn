@@ -487,6 +487,28 @@ def _starte_als_standardnutzer(befehl: list[str], ausgabe: Path) -> int:
     kernel.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
     kernel.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
 
+    STARTF_USESTDHANDLES = 0x00000100
+    CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+    CREATE_NEW_PROCESS_GROUP = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)
+
+    class SECURITY_ATTRIBUTES(ctypes.Structure):
+        _fields_ = [
+            ("nLength", wintypes.DWORD),
+            ("lpSecurityDescriptor", ctypes.c_void_p),
+            ("bInheritHandle", wintypes.BOOL),
+        ]
+
+    kernel.CreateFileW.argtypes = [
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        ctypes.POINTER(SECURITY_ATTRIBUTES),
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.HANDLE,
+    ]
+    kernel.CreateFileW.restype = wintypes.HANDLE
+
     eigen = wintypes.HANDLE()
     eingeschraenkt = wintypes.HANDLE()
     medium_sid = ctypes.c_void_p()
@@ -507,36 +529,72 @@ def _starte_als_standardnutzer(befehl: list[str], ausgabe: Path) -> int:
             finally:
                 kernel.LocalFree(medium_sid)
 
-            si = STARTUPINFOW(cb=ctypes.sizeof(STARTUPINFOW))
-            pi = PROCESS_INFORMATION()
-            zeile = ctypes.create_unicode_buffer(subprocess.list2cmdline(befehl))
-            flags = subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP
-            ok = advapi.CreateProcessAsUserW(
-                eingeschraenkt,
-                None,
-                zeile,
-                None,
-                None,
-                False,
-                flags,
-                None,
-                str(ausgabe.parent),
-                ctypes.byref(si),
-                ctypes.byref(pi),
-            )
-            assert ok, f"CreateProcessAsUserW gescheitert: WinError {ctypes.get_last_error()}"
+            sa = SECURITY_ATTRIBUTES(ctypes.sizeof(SECURITY_ATTRIBUTES), None, True)
+            log_handle = kernel.CreateFileW(str(ausgabe), 0x40000000, 0x7, ctypes.byref(sa), 2, 0x80, None)
+            assert log_handle and log_handle != ctypes.c_void_p(-1).value, ctypes.get_last_error()
             try:
-                kernel.WaitForSingleObject(pi.hProcess, WAIT_INFINITE)
-                code = wintypes.DWORD(1)
-                kernel.GetExitCodeProcess(pi.hProcess, ctypes.byref(code))
-                return int(code.value)
+                si = STARTUPINFOW(
+                    cb=ctypes.sizeof(STARTUPINFOW),
+                    dwFlags=STARTF_USESTDHANDLES,
+                    hStdOutput=log_handle,
+                    hStdError=log_handle,
+                )
+                pi = PROCESS_INFORMATION()
+                zeile = ctypes.create_unicode_buffer(subprocess.list2cmdline(befehl))
+                ok = advapi.CreateProcessAsUserW(
+                    eingeschraenkt,
+                    None,
+                    zeile,
+                    None,
+                    None,
+                    True,
+                    CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP,
+                    None,
+                    str(ausgabe.parent),
+                    ctypes.byref(si),
+                    ctypes.byref(pi),
+                )
+                assert ok, f"CreateProcessAsUserW gescheitert: WinError {ctypes.get_last_error()}"
+                try:
+                    kernel.WaitForSingleObject(pi.hProcess, WAIT_INFINITE)
+                    code = wintypes.DWORD(1)
+                    kernel.GetExitCodeProcess(pi.hProcess, ctypes.byref(code))
+                    return int(code.value)
+                finally:
+                    kernel.CloseHandle(pi.hThread)
+                    kernel.CloseHandle(pi.hProcess)
             finally:
-                kernel.CloseHandle(pi.hThread)
-                kernel.CloseHandle(pi.hProcess)
+                kernel.CloseHandle(log_handle)
         finally:
             kernel.CloseHandle(eingeschraenkt)
     finally:
         kernel.CloseHandle(eigen)
+
+
+_PRUEF_SKRIPT_243 = """\
+import ctypes
+import pathlib
+import sys
+
+sys.path.insert(0, sys.argv[1])
+from to_spawn import hausmeister_windows, prozessbaum
+
+wt, pid = pathlib.Path(sys.argv[2]), int(sys.argv[3])
+k, _ = prozessbaum._win32()
+ctypes.set_last_error(0)
+h = k.OpenProcess(prozessbaum._PROCESS_QUERY_INFORMATION | prozessbaum._PROCESS_VM_READ, False, pid)
+err = ctypes.get_last_error()
+if h:
+    k.CloseHandle(h)
+bild = prozessbaum._bildpfad_windows(pid)
+try:
+    hausmeister_windows._kein_arbeitsordner_drin(wt)
+    print(f"FREI h={h} err={err} bild={bild!r}")
+    sys.exit(2)
+except hausmeister_windows.Bleibt as b:
+    print(f"BLEIBT fehler={b.fehler} h={h} err={err} bild={bild!r} grund={b.grund}")
+    sys.exit(0 if (b.fehler and h == 0 and err == 5 and str(pid) in b.grund) else 3)
+"""
 
 
 @pytest.mark.skipif(not WINDOWS, reason="Erhöhter MSYS-Prozess nur unter Windows")
@@ -549,32 +607,16 @@ def test_243_echter_erhoehter_msys_prozess_sperrt_ohne_attrappe(tmp_path: Path) 
     geprüft aus einem echten nicht-erhöhten Kindprozess — ganz ohne Attrappen."""
     wt = tmp_path / "wt-243-admin"
     wt.mkdir()
+    skript = tmp_path / "pruefer_243.py"
+    skript.write_text(_PRUEF_SKRIPT_243, encoding="utf-8")
     bericht = tmp_path / "ergebnis.txt"
     erhoeht = subprocess.Popen(["sleep", "60"], cwd=wt, **prozessbaum.ohne_fenster())
     try:
-        pruef_code = (
-            "import ctypes, pathlib, sys; "
-            "sys.path.insert(0, sys.argv[1]); "
-            "from to_spawn import hausmeister_windows, prozessbaum; "
-            "wt, pid, out = pathlib.Path(sys.argv[2]), int(sys.argv[3]), pathlib.Path(sys.argv[4]); "
-            "k, _ = prozessbaum._win32(); "
-            "ctypes.set_last_error(0); "
-            "h = k.OpenProcess(prozessbaum._PROCESS_QUERY_INFORMATION | prozessbaum._PROCESS_VM_READ, False, pid); "
-            "err = ctypes.get_last_error(); "
-            "if h: k.CloseHandle(h); "
-            "try:\n"
-            "    hausmeister_windows._kein_arbeitsordner_drin(wt)\n"
-            "    out.write_text(f'FREI h={h} err={err}', encoding='utf-8')\n"
-            "    sys.exit(2)\n"
-            "except hausmeister_windows.Bleibt as b:\n"
-            "    out.write_text(f'BLEIBT fehler={b.fehler} h={h} err={err} grund={b.grund}', encoding='utf-8')\n"
-            "    sys.exit(0 if (b.fehler and h == 0 and err == 5 and str(pid) in b.grund) else 3)\n"
-        )
         code = _starte_als_standardnutzer(
-            [sys.executable, "-c", pruef_code, str(REPO), str(wt), str(erhoeht.pid), str(bericht)],
+            [sys.executable, str(skript), str(REPO), str(wt), str(erhoeht.pid)],
             bericht,
         )
-        inhalt = bericht.read_text(encoding="utf-8") if bericht.is_file() else "<keine Ausgabe>"
+        inhalt = bericht.read_text(encoding="utf-8", errors="replace") if bericht.is_file() else "<keine Ausgabe>"
         assert code == 0, f"Exit {code}: {inhalt}"
     finally:
         erhoeht.kill()
