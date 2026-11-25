@@ -17,13 +17,16 @@ import time
 from pathlib import Path
 from typing import Any, Sequence, TextIO
 
-from . import auswahl, capo, config, manifest, probesitz, stand, starter, tmux_aufruf, umzug
+from . import auswahl, capo, config, manifest, probesitz, spawn_exit, stand, starter, tmux_aufruf, umzug
 
 log = logging.getLogger("to_spawn.spawn")
 
 SKILL_ORDNER = Path(__file__).resolve().parent.parent
 SKRIPTE = {"local": "spawn_local.ps1", "srv": "spawn_srv.ps1"}
 SPAWN_SH = SKILL_ORDNER / "skripte" / "spawn_srv.sh"
+#: Exit-Codes von ``spawn_srv.sh`` — einzige Quelle ist :mod:`to_spawn.spawn_exit` (#604).
+EXIT_SPERRE = spawn_exit.EXIT_SPERRE
+SPAWN_SRV_EXITS = spawn_exit.BESCHREIBUNG
 _FEHLER_SERVER_REPO = (
     "Ziel Server braucht `server_repo` in .to-spawn/config.json "
     "(Repo-Ordner auf dem Bau-Server) — auf dem Server: --ziel local."
@@ -172,8 +175,19 @@ def spawn(
     # Das Skript arbeitet im Repo des Aufrufs, nicht im Repo aus ~/.bashrc (#212/#257).
     umgebung = {**os.environ, "TO_SPAWN_REPO": str(repo)}
     rc = starter.starte(befehl, cwd=repo, check=False, env=umgebung, warten=True).returncode
+    if spawn_exit.ist_spaeter_erneut(rc):
+        log.info(
+            "Terminal-Skript endete mit Exit %s (%s) — später erneut versuchen.",
+            rc,
+            spawn_exit.beschreibung(rc),
+        )
+        return rc
     if rc != 0:
-        log.error("Terminal-Skript endete mit Exit %s — es wurde nichts (vollständig) gestartet; Ausgabe siehe oben.", rc)
+        log.error(
+            "Terminal-Skript endete mit Exit %s (%s) — es wurde nichts (vollständig) gestartet; Ausgabe siehe oben.",
+            rc,
+            spawn_exit.beschreibung(rc),
+        )
     return rc
 
 
