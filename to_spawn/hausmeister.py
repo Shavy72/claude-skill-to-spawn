@@ -154,6 +154,7 @@ from to_spawn import (
     hausmeister_windows,
     hindernis,
     prozessbaum,
+    starter,
     temp_ordner,
     ticket_zustand,
     tmux_aufruf,
@@ -391,6 +392,10 @@ INODE_SPERRE_ANTEIL = 0.90
 _IM_STARTCHECK: ContextVar[bool] = ContextVar("hausmeister_im_startcheck", default=False)
 #: Sperrdatei gegen parallele Aufräum-Läufe, im Ordner des Hausmeister-Logs.
 SPERR_DATEI = "hausmeister.lock"
+#: #781: Mindestabstand (s) zwischen zwei Hintergrund-Anstößen bei Platznot im Start-Check.
+HINTERGRUND_ABSTAND_S = 600
+_HINTERGRUND_STEMPEL = "start-hintergrund.stempel"
+_CLI = Path(__file__).resolve().parent.parent / "to_spawn.py"
 #: Zeitlimit je gh-Abfrage in Sekunden.
 GH_ZEITLIMIT_S = 60
 # Plattform-Naht (Tests stellen "win32" ein); nur _ist_windows() liest sie
@@ -656,12 +661,13 @@ def _rundgang(*, loeschen: bool, jetzt: float | None, docker: bool) -> Rundgang:
 def _alle_ordner(*, loeschen: bool, jetzt: float | None) -> Rundgang:
     wt_token = _WORKTREE_CACHE.set({})
     origin_token = _ORIGIN_BAEUME_CACHE.set({})
+    ticket_token = _TICKET_DATEN_CACHE.set({})
     try:
         try:
             kandidaten = _kandidaten()
             anteil = _frei_anteil()
             if _ist_platznot(anteil):
-                # ponytail: Schließzeit kommt hier und in den Regeln je einmal per gh; Cache, falls zu langsam.
+                # #781: Ticket-Daten aus _schliesszeit bleiben über _TICKET_DATEN_CACHE für _regeln erhalten.
                 zeiten = {k: _schliesszeit(k) for k in kandidaten}
                 kandidaten.sort(key=lambda k: (zeiten[k] is None, zeiten[k] or 0.0, str(k)))
         except Exception as fehler:  # Vertrag: wirft nie
@@ -676,6 +682,7 @@ def _alle_ordner(*, loeschen: bool, jetzt: float | None) -> Rundgang:
                 if erg.art != "bleibt" and not erg.trocken:
                     anteil = _frei_anteil()
     finally:
+        _TICKET_DATEN_CACHE.reset(ticket_token)
         _ORIGIN_BAEUME_CACHE.reset(origin_token)
         _WORKTREE_CACHE.reset(wt_token)
     _kennzahl_schreiben(ergebnisse, trocken=not loeschen)
@@ -714,7 +721,9 @@ def _zweige_im_takt(loeschen: bool, jetzt: float | None) -> None:
         log.exception("Hausmeister: Ticket-Zweige gescheitert")
 
 
-def start_erlaubt(*, loeschen: bool = True, nur_messen: bool = False) -> tuple[bool, str]:
+def start_erlaubt(
+    *, loeschen: bool = True, nur_messen: bool = False, synchron_nur_bei_sperre: bool = False
+) -> tuple[bool, str]:
     """Start-Check: (darf eine neue Session starten?, Satz für Menschen); wirft nie.
 
     Bei Platznot erst :func:`aufraeumen_alles`, dann neu messen (ohne Platznot lohnt
@@ -723,9 +732,12 @@ def start_erlaubt(*, loeschen: bool = True, nur_messen: bool = False) -> tuple[b
     oder unerwarteter Fehler → Start erlaubt, mit Spur in cron.out und Hindernis-Log.
     ``nur_messen=True`` (#617): auch bei Platznot kein Rundgang (der braucht gh/git je Ordner,
     Minuten) — nur Messung und Urteil; der Aufrufer räumt bei „voll“ erneut ohne den Schalter.
+    ``synchron_nur_bei_sperre=True`` (#781): synchroner Rundgang nur unterhalb der Startsperre
+    (bzw. bei vollen Temp-Inodes); bei bloßer Platznot darüber stößt Linux nur gedrosselt im
+    Hintergrund an, sodass der Session-Start nicht minutenlang blockiert.
     """
     try:
-        return _start_pruefen(loeschen, nur_messen)
+        return _start_pruefen(loeschen, nur_messen, synchron_nur_bei_sperre)
     except Exception as fehler:  # Vertrag: wirft nie, im Zweifel starten
         log.exception("Hausmeister: Start-Check gescheitert")
         satz = f"Platte: Start-Check gescheitert ({fehler}) — Start erlaubt"
@@ -733,11 +745,73 @@ def start_erlaubt(*, loeschen: bool = True, nur_messen: bool = False) -> tuple[b
         return True, satz
 
 
-def _start_pruefen(loeschen: bool, nur_messen: bool = False) -> tuple[bool, str]:
+def _ist_start_gesperrt(anteil: float | None, inodes: float | None) -> bool:
+    """Greift die Startsperre (Platte unter :data:`STARTSPERRE_ANTEIL` oder Inodes ab :data:`INODE_SPERRE_ANTEIL`)?"""
+    return (anteil is not None and anteil < STARTSPERRE_ANTEIL) or _ist_inode_voll(inodes)
+
+
+def _start_sperrt() -> bool:
+    """Nur messen: greift gerade die Startsperre (Platte oder Temp-Inodes)?
+
+    Für :func:`to_spawn.speicher.auf_platte_warten` (#781): nur dann läuft ein synchroner
+    Rundgang und die Vorab-Wartezeile ist angebracht. Messfehler → ``True``.
+    """
+    try:
+        return _ist_start_gesperrt(_frei_anteil(), _temp_inode_anteil())
+    except Exception:  # Messfehler: vorsichtshalber melden, Start-Check entscheidet
+        log.exception("Hausmeister: Vorab-Messung gescheitert")
+        return True
+
+
+def _hintergrund_stempel() -> Path:
+    return _log_pfad().parent / _HINTERGRUND_STEMPEL
+
+
+def _hintergrund_anstossen() -> bool:
+    """#781 (Linux-Teil): stößt bei Platznot über der Startsperre einen abgelösten
+    Hausmeister-Rundgang im Hintergrund an, gedrosselt über :data:`HINTERGRUND_ABSTAND_S`.
+
+    Gibt ``True`` bei Anstoß zurück, sonst ``False`` (Windows-Zweig unberührt, frischer
+    Stempel, Test-Sperre oder Start-Fehler). Wirft nie.
+    """
+    if _ist_windows():
+        return False
+    stempel = _hintergrund_stempel()
+    try:
+        if 0 <= time.time() - stempel.stat().st_mtime < HINTERGRUND_ABSTAND_S:  # Zukunft = Uhr-Sprung
+            return False
+    except OSError:
+        pass
+    fehlerdatei = _log_pfad().parent / "hausmeister-start.err"
+    try:
+        fehlerdatei.parent.mkdir(parents=True, exist_ok=True)
+        with fehlerdatei.open("ab") as stderr:
+            starter.starte(  # einzige Start-Tür (#1406)
+                [sys.executable, str(_CLI), "aufraeumen", "--alles", "--loeschen"],
+                notnagel=None,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=stderr,
+                start_new_session=True,
+            )
+    except (OSError, starter.StartGesperrt) as fehler:
+        log.debug("Hausmeister: Hintergrund-Anstoß übersprungen (%s)", fehler)
+        return False
+    try:
+        stempel.parent.mkdir(parents=True, exist_ok=True)
+        stempel.touch()
+    except OSError as fehler:
+        log.warning("Hausmeister: Hintergrund-Stempel %s nicht schreibbar (%s)", stempel, fehler)
+    return True
+
+
+def _start_pruefen(loeschen: bool, nur_messen: bool = False, synchron_nur_bei_sperre: bool = False) -> tuple[bool, str]:
     anteil = _frei_anteil()
     inodes = _temp_inode_anteil()
     zusatz = ""
-    if (_ist_platznot(anteil) or _ist_inode_knapp(inodes)) and not nur_messen:
+    knapp = _ist_platznot(anteil) or _ist_inode_knapp(inodes)
+    gesperrt = _ist_start_gesperrt(anteil, inodes)
+    if not nur_messen and (gesperrt if synchron_nur_bei_sperre else knapp):
         token = _IM_STARTCHECK.set(True)
         try:
             rund = rundgang(loeschen=loeschen)
@@ -747,6 +821,8 @@ def _start_pruefen(loeschen: bool, nur_messen: bool = False) -> tuple[bool, str]
             zusatz = " (Aufräumen gescheitert, siehe Log)"
         anteil = _frei_anteil()
         inodes = _temp_inode_anteil()
+    elif not nur_messen and synchron_nur_bei_sperre and knapp and loeschen:
+        _hintergrund_anstossen()
     if _ist_inode_voll(inodes):
         assert inodes is not None
         nach = "trotz gescheitertem Aufräumen" if zusatz else "auch nach dem Aufräumen"
@@ -1557,6 +1633,10 @@ _WORKTREE_CACHE: ContextVar[dict[str, tuple[_WorktreeEintrag, ...] | None] | Non
 #: #241: Origin-Bäume je Hauptrepo innerhalb eines Rundgangs einmal lesen (``None`` = kein Cache).
 _ORIGIN_BAEUME_CACHE: ContextVar[dict[str, tuple[str, dict[str, str], list[str]]] | None] = ContextVar(
     "hausmeister_origin_baeume_cache", default=None
+)
+#: #781: Ticket-Daten je ``(repo_klein, ticket)`` innerhalb eines Rundgangs einmal abfragen (``None`` = kein Cache).
+_TICKET_DATEN_CACHE: ContextVar[dict[tuple[str, int], object] | None] = ContextVar(
+    "hausmeister_ticket_daten_cache", default=None
 )
 
 
@@ -2461,17 +2541,33 @@ def _ticket_daten(ticket: int, ziel: tuple[str, int] | None | EllipsisType = ...
 
     ``ziel`` = Ergebnis von :func:`zweig_zu_ticket` bzw. :func:`_ticket_ziel`, unverändert: gefragt
     wird genau dieses Repo mit dieser Nummer, ``None`` = nicht abfragbar (#234, #357). Ohne
-    ``ziel`` (kein GitHub-origin) das eine Ticket-Repo der Maschine für ``ticket``."""
+    ``ziel`` (kein GitHub-origin) das eine Ticket-Repo der Maschine für ``ticket``. Innerhalb von
+    :func:`_alle_ordner` liefert :data:`_TICKET_DATEN_CACHE` je ``(repo, nr)`` höchstens einen
+    ``gh``-Aufruf (#781).
+    """
     if ziel is None:
         return None
     if not isinstance(ziel, EllipsisType):
         repo, nr = ziel
-        return _gh_ticket(nr, repo)
+        return _gh_ticket_gecached(nr, repo)
     repo = _ticket_repo()
     if repo is None:
         log.warning("Hausmeister: kein eindeutiges Ticket-Repo in der Maschinen-Liste — #%s bleibt", ticket)
         return None
-    return _gh_ticket(ticket, repo)
+    return _gh_ticket_gecached(ticket, repo)
+
+
+def _gh_ticket_gecached(ticket: int, repo: str | None) -> object:
+    if repo is None:
+        return None
+    cache = _TICKET_DATEN_CACHE.get()
+    schluessel = (repo.lower(), ticket)
+    if cache is not None and schluessel in cache:
+        return cache[schluessel]
+    daten = _gh_ticket(ticket, repo)
+    if cache is not None:
+        cache[schluessel] = daten
+    return daten
 
 
 def _gh_ticket(ticket: int, repo: str | None) -> object:

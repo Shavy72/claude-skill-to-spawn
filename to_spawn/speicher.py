@@ -709,15 +709,33 @@ def auf_platz_warten(
         schlafen(takt_s)
 
 
-def _platte_pruefen(loeschen: bool = True, nur_messen: bool = False) -> tuple[bool, str]:
+def _platte_pruefen(
+    loeschen: bool = True, nur_messen: bool = False, *, synchron_nur_bei_sperre: bool = False
+) -> tuple[bool, str]:
     """Start-Check der Platte — die Entscheidung trifft der Hausmeister (#1369).
 
     ``loeschen=False``: nur messen (Probelauf, Status), nie aufräumen.
     ``nur_messen=True``: kein Rundgang (#617), nur Urteil aus der Messung.
+    ``synchron_nur_bei_sperre=True`` (#781): synchrones Aufräumen nur, wenn die Platte
+    tatsächlich sperrt — sonst blockiert der Start nicht durch einen Rundgang.
     """
     from to_spawn import hausmeister  # spät: hausmeister → aufpasser → speicher
 
-    return hausmeister.start_erlaubt(loeschen=loeschen, nur_messen=nur_messen)
+    return hausmeister.start_erlaubt(
+        loeschen=loeschen, nur_messen=nur_messen, synchron_nur_bei_sperre=synchron_nur_bei_sperre
+    )
+
+
+def _platte_fuer_warten() -> tuple[bool, str]:
+    """Standard-Prüfung für :func:`auf_platte_warten` (#781): räumt synchron nur bei Sperre."""
+    return _platte_pruefen(synchron_nur_bei_sperre=True)
+
+
+def _platte_sperrt() -> bool:
+    """Nur messen: braucht :func:`auf_platte_warten` jetzt einen synchronen Rundgang (#781)?"""
+    from to_spawn import hausmeister  # spät: hausmeister → aufpasser → speicher
+
+    return hausmeister._start_sperrt()
 
 
 AUFRAEUM_ABSTAND_S = 600  # #617: so lange gilt „dieser Start hat schon geräumt“
@@ -771,7 +789,7 @@ def _platte_knapp() -> bool:
 def auf_platte_warten(
     *,
     wer: str = "Session",
-    pruefen: Callable[[], tuple[bool, str]] = _platte_pruefen,
+    pruefen: Callable[[], tuple[bool, str]] = _platte_fuer_warten,
     schlafen: Callable[[float], object] = time.sleep,
     takt_s: int = PLATTE_TAKT_S,
     knapp: Callable[[], bool] | None = None,
@@ -781,11 +799,12 @@ def auf_platte_warten(
     Wie :func:`auf_platz_warten`: das Fenster bleibt offen, der Grund steht auf stderr
     und im Log. ``pruefen``/``schlafen``/``knapp`` sind Test-Türen. Bei genug Platz
     bleibt alles still — „wartet“ erscheint nur, wenn wirklich gewartet wird.
-    ``knapp=None``: mit dem echten Start-Check misst :func:`_platte_knapp`; mit einer
-    eingesetzten Prüf-Tür gilt Platznot (die Tür spielt den langen Hausmeister-Lauf).
+    ``knapp=None``: mit dem echten Start-Check misst :func:`_platte_sperrt` (#781:
+    synchrones Räumen erst bei voller Platte); mit einer eingesetzten Prüf-Tür gilt
+    Platznot (die Tür spielt den langen Hausmeister-Lauf).
     """
     if knapp is None:
-        knapp = _platte_knapp if pruefen is _platte_pruefen else (lambda: True)
+        knapp = _platte_sperrt if pruefen is _platte_fuer_warten else (lambda: True)
     # Bei Platznot schon vor der ersten Prüfung eine Zeile mit WARTE_TEXT: der
     # Hausmeister räumt darin synchron auf (gh/git, Minuten) — respawn erkennt daran
     # das Warten. Ohne Platznot ist die Prüfung kurz, eine Vorab-Zeile wäre falsch.

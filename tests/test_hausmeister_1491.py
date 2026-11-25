@@ -92,9 +92,20 @@ def test_ohne_schalter_bau_start_check_bei_platznot_loescht_keinen_zweig(
     ohne: Welt, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     caplog.set_level(logging.INFO, logger="to_spawn.hausmeister")
-    monkeypatch.setenv("TO_SPAWN_HAUSMEISTER_PLATTE", "0.10")  # Platznot, über der Startsperre
     monkeypatch.setenv("TO_SPAWN_HINDERNIS_LOG", str(ohne.tmp / "h.jsonl"))
+    # Über der Startsperre (#781): kein synchroner Rundgang, Zweig bleibt.
+    monkeypatch.setenv("TO_SPAWN_HAUSMEISTER_PLATTE", "0.10")
     assert speicher.auf_platte_warten(wer="bau 1491") == 0
+    assert _auf_remote(ohne)
+    assert _zweig_zeilen(ohne) == []
+    # Unter der Startsperre: synchroner Hausmeister-Lauf aus bau.py löscht ohne Schalter keinen Zweig.
+    platte = ohne.tmp / "platte_1491.txt"
+    platte.write_text("0.03\n", encoding="utf-8")
+    monkeypatch.setenv("TO_SPAWN_HAUSMEISTER_PLATTE", str(platte))
+    assert (
+        speicher.auf_platte_warten(wer="bau 1491", schlafen=lambda _s: platte.write_text("0.50\n", encoding="utf-8"))
+        == 1
+    )
     assert _auf_remote(ohne)
     assert _zweig_zeilen(ohne) == []
     assert _aus_gemeldet(caplog)

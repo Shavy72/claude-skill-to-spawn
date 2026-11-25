@@ -1204,7 +1204,8 @@ def main() -> int:
     # Speicher-Schutz (#257 Paket B, Fixrunde 1 F3), die EINE Stelle vor dem Prozessstart
     # (gilt für Erststart, --resume und --umzug): RAM knapp oder Obergrenze an
     # Claude-Sessions erreicht → warten statt Exit 5, damit das Fenster und der Grund bleiben.
-    # Platte (#1369): Start-Check des Hausmeisters, bei voller Platte warten (Takt ~15 min).
+    # Platte (#1369, #781): Start-Check des Hausmeisters — synchrones Räumen und Warten
+    # (Takt ~15 min) erst bei voller Platte; bei Platznot darüber nur Hintergrund-Anstoß.
     speicher.auf_platte_warten(wer=f"bau {ticket}")
     auf_speicher_warten(konfig, wer=f"bau {ticket}")
     # Start-Text erst jetzt, im Moment des Loslassens (#281): in der Wartezeit kann sich die

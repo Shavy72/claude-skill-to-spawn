@@ -65,6 +65,10 @@ EXIT_AUFRUF = 5
 
 #: Env-Naht für Tests und eigene Ablage des lokalen Geräte-Logbuchs (L7 N17).
 LOGBUCH_ENV = "TO_SPAWN_GERAETE_LOGBUCH"
+#: Relativer Ordner der Warte-Zustandsdateien unter einem Repo/Worktree.
+WARTEN_ORDNER = Path(".to-spawn") / "warten"
+#: Endzustände, bei deren Erreichen ein aktiver Weckruf fällig ist (#783).
+ENDZUSTAENDE: frozenset[str] = frozenset({"fertig", "fehlgeschlagen", "blockiert"})
 
 Status = Literal["laeuft", "fertig", "fehlgeschlagen", "blockiert"]
 
@@ -90,7 +94,7 @@ def zustand_pfad(repo: Path, ticket: str | int, name: str = "") -> Path:
     """Zustandsdatei ``<repo>/.to-spawn/warten/<ticket>[-<name>].json``."""
     zusatz = _SAUBER_NAME.sub("-", name.strip()).strip("-") if name.strip() else ""
     dateiname = f"{ticket}-{zusatz}.json" if zusatz else f"{ticket}.json"
-    return repo / ".to-spawn" / "warten" / dateiname
+    return repo / WARTEN_ORDNER / dateiname
 
 
 def _sperr_pfad(datei: Path) -> Path:
@@ -264,9 +268,56 @@ def _kurz_ausgabe(text: str) -> str:
     return "…\n" + sauber[-AUSGABE_MAX:]
 
 
-def _letzte_zeile(text: str) -> str:
+def letzte_zeile(text: str, *, max_zeichen: int = 200) -> str:
+    """Letzte nicht-leere Zeile aus einer Warte-Ausgabe, auf ``max_zeichen`` gekürzt."""
     zeilen = [z.strip() for z in text.splitlines() if z.strip()]
-    return zeilen[-1][:200] if zeilen else ""
+    return zeilen[-1][:max_zeichen] if zeilen else ""
+
+
+def _letzte_zeile(text: str) -> str:
+    return letzte_zeile(text)
+
+
+def zustaende_fuer_ticket(repo: Path, ticket: str | int) -> list[tuple[Path, dict[str, Any]]]:
+    """Alle lesbaren Warte-Zustandsdateien eines Tickets (Ticket-Worktree + Hauptbaum, #783).
+
+    Liefert ``[(pfad, daten), ...]`` für ``<ticket>.json`` und ``<ticket>-<name>.json``.
+    Unlesbare Dateien werden über :func:`_lies_zustand` gewarnt und übersprungen; fremde
+    Nummern mit gemeinsamem Präfix (z. B. ``<ticket>0.json``) werden nie mitgelesen.
+    """
+    nummer = str(ticket).strip()
+    if not nummer.isdigit():
+        return []
+    orte: list[Path] = []
+    gesehen: set[Path] = set()
+    for wurzel in (Path(config.worktree_pfad(nummer, repo)).expanduser(), repo):
+        ordner = wurzel / WARTEN_ORDNER
+        if not ordner.is_dir():
+            continue
+        try:
+            echt = ordner.resolve()
+        except OSError:
+            echt = ordner
+        if echt in gesehen:
+            continue
+        gesehen.add(echt)
+        orte.append(echt)
+    treffer: list[tuple[Path, dict[str, Any]]] = []
+    for ordner in orte:
+        dateien: list[Path] = []
+        haupt = ordner / f"{nummer}.json"
+        if haupt.is_file():
+            dateien.append(haupt)
+        dateien.extend(p for p in sorted(ordner.glob(f"{nummer}-*.json")) if p.is_file())
+        for datei in dateien:
+            daten = _lies_zustand(datei)
+            if daten is None:
+                continue
+            datei_ticket = str(daten.get("ticket") or nummer).strip()
+            if datei_ticket != nummer:
+                continue
+            treffer.append((datei, daten))
+    return treffer
 
 
 def logbuch_schreiben(
