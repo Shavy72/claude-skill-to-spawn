@@ -25,6 +25,7 @@ from test_einrichtungs_ticket_410 import _aufbau
 
 SPAWN_SH = e2.CLI.parent / "skripte" / "spawn_srv.sh"
 SITZUNG = f"spec-{e2.SPEC}"
+SITZUNG_NEU = f"spec-{e2.SLUG.split('/')[-1]}-{e2.SPEC}"
 
 pytestmark = pytest.mark.skipif(shutil.which("tmux") is None, reason="tmux fehlt")
 
@@ -49,14 +50,14 @@ def _git_ordner(ordner: Path, origin: str | None) -> Path:
     return ordner
 
 
-def _vorhandene_sitzung(socket: str, ordner: Path) -> None:
-    """Session ``spec-<S>`` mit Arbeitsordner ``ordner`` — wie sie ein früherer Start anlegt."""
+def _vorhandene_sitzung(socket: str, ordner: Path, name: str = SITZUNG) -> None:
+    """Session ``name`` mit Arbeitsordner ``ordner`` — wie sie ein früherer Start anlegt."""
     lauf = _tmux(
         socket,
         "new-session",
         "-d",
         "-s",
-        SITZUNG,
+        name,
         "-n",
         f"wache {e2.SPEC}",
         "-c",
@@ -66,8 +67,10 @@ def _vorhandene_sitzung(socket: str, ordner: Path) -> None:
     assert lauf.returncode == 0, lauf.stderr
 
 
-def _spawn(tmp_path: Path, socket: str) -> subprocess.CompletedProcess[str]:
-    """``spawn_srv.sh <S> --dry-run`` mit einem ``tmux`` im PATH, das nur ``-L socket`` spricht."""
+def _spawn(
+    tmp_path: Path, socket: str, *extra: str
+) -> subprocess.CompletedProcess[str]:
+    """``spawn_srv.sh <S>`` mit einem ``tmux`` im PATH, das nur ``-L socket`` spricht."""
     from to_spawn import bash_wahl
 
     tmp_path.mkdir(parents=True, exist_ok=True)
@@ -99,8 +102,9 @@ def _spawn(tmp_path: Path, socket: str) -> subprocess.CompletedProcess[str]:
             "GIT_TERMINAL_PROMPT": "0",
         }
     )
+    argumente = list(extra) if extra else ["--dry-run"]
     return bash_wahl.lauf(
-        [str(SPAWN_SH), str(e2.SPEC), "--dry-run"],
+        [str(SPAWN_SH), str(e2.SPEC), *argumente],
         cwd=str(repo),
         env=umgebung,
         capture_output=True,
@@ -111,31 +115,35 @@ def _spawn(tmp_path: Path, socket: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-def _fenster(socket: str) -> list[str]:
-    return _tmux(socket, "list-windows", "-t", f"={SITZUNG}", "-F", "#W").stdout.split()
+def _fenster(socket: str, name: str = SITZUNG) -> list[str]:
+    return _tmux(socket, "list-windows", "-t", f"={name}", "-F", "#W").stdout.splitlines()
 
 
 @pytest.mark.braucht("bash", "posix")
 def test_fremdes_repo_gleiche_spec_wird_verweigert(tmp_path: Path, socket: str) -> None:
-    """Session ``spec-<S>`` gehört einem anderen Repo → Exit 9, klare Meldung, nichts angefasst."""
-    fremd = _git_ordner(tmp_path / "fremd", "https://github.com/fremd/anderes-repo.git")
-    _vorhandene_sitzung(socket, fremd)
-    vorher = _fenster(socket)
+    """Ziel-Session gehört einem anderen Repo (gleicher Kurzname) → Exit 9, klare Meldung, nichts angefasst.
 
-    lauf = _spawn(tmp_path / "eigen", socket)
+    Läuft bewusst OHNE ``--dry-run`` (behebt :131), damit ein fehlender Schutz wirklich ein
+    Fenster in die fremde Session legte und die Fenster-Prüfung rot werden kann.
+    """
+    fremd = _git_ordner(tmp_path / "fremd", "https://github.com/fremd/repo.git")
+    _vorhandene_sitzung(socket, fremd, SITZUNG_NEU)
+    vorher = _fenster(socket, SITZUNG_NEU)
+
+    lauf = _spawn(tmp_path / "eigen", socket, "--ohne-regularien", "--nur-wache")
 
     ausgabe = lauf.stdout + lauf.stderr
     assert lauf.returncode == 9, ausgabe
-    assert SITZUNG in ausgabe and "anderes-repo" in ausgabe and "#457" in ausgabe, ausgabe
-    assert "Probelauf — nichts gestartet." not in ausgabe, ausgabe
-    assert _fenster(socket) == vorher
+    assert SITZUNG_NEU in ausgabe and "fremd/repo" in ausgabe and "#457" in ausgabe, ausgabe
+    assert "gestartet:" not in ausgabe, ausgabe
+    assert _fenster(socket, SITZUNG_NEU) == vorher
 
 
 @pytest.mark.braucht("bash", "posix")
 def test_fremder_ordner_ohne_origin_wird_verweigert(tmp_path: Path, socket: str) -> None:
-    """Ohne ``origin`` zählt der echte Pfad: anderer Ordner = anderes Repo → Exit 9."""
+    """Ohne ``origin`` zählt der gemeinsame Git-Ordner: anderer Ordner = anderes Repo → Exit 9."""
     fremd = _git_ordner(tmp_path / "ohne-origin", None)
-    _vorhandene_sitzung(socket, fremd)
+    _vorhandene_sitzung(socket, fremd, SITZUNG_NEU)
 
     lauf = _spawn(tmp_path / "eigen", socket)
 

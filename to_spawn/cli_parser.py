@@ -134,6 +134,11 @@ def baue_parser() -> _Parser:
     p_regularien = unter.add_parser("regularien", help="Regularien des Manifests prüfen")
     p_regularien.add_argument("spec")
     _regularien_optionen(p_regularien)
+    p_spec_pruefen = unter.add_parser(
+        "spec-pruefen",
+        help="Spec auf Quelle-Zeile und (E<n>) prüfen (Exit 0 frei / 3 Stopp / 1 unlesbar, #405)",
+    )
+    p_spec_pruefen.add_argument("spec", help="Spec als Issue-Nummer, URL oder Dateipfad")
     # Prüf-Werkzeugkasten (#99); ``pruefen <S>`` (nur ein Argument) leitet auf ``regularien``.
     p_pruefen = unter.add_parser(
         "pruefen", help="Stand prüfen: Exit 0 grün, 1 rot, 2 Gate-Fehler, JSON-Zeile auf stdout"
@@ -243,6 +248,16 @@ def baue_parser() -> _Parser:
 
     unter.add_parser(
         "hauptzweig", help="Name des Hauptzweigs ausgeben (Konfig, origin/HEAD, master/main) (#257)"
+    )
+    p_sitzung = unter.add_parser(
+        "sitzung",
+        help="tmux-Session-Name je Repo ausgeben (#457; Exit 9 = gehört anderem Repo)",
+    )
+    p_sitzung.add_argument("spec", help="Spec-Nummer")
+    p_sitzung.add_argument(
+        "--nur-name",
+        action="store_true",
+        help="nur den eindeutigen Namen ausgeben, ohne tmux abzufragen",
     )
     p_arbeit = unter.add_parser(
         "arbeitsstand",
