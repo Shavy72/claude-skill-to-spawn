@@ -51,7 +51,7 @@ def _spawn_fremd_voll(
         return echt(argumente, **optionen)
 
     monkeypatch.setattr(bash_wahl, "lauf", lauf)
-    ergebnis, _ = _spawn(tmp_path, max_sessions=6, belegt=7, belegt_eigen=2)
+    ergebnis, _ = _spawn(tmp_path, max_sessions=6, belegt=10, belegt_eigen=2)  # 284: Rechner-Grenze 12 (war 9)
     return ergebnis, mitschnitt["env"], Path(mitschnitt["cwd"])
 
 

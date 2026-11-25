@@ -209,12 +209,18 @@ def _tmux_attrappe(ordner: Path, proc: Path, *, wache_prozess: bool = True) -> P
 
 @pytest.mark.braucht("bash", "posix")
 def test_spawn_srv_rest_wartet_auf_aufseher_kein_fehler_exit(tmp_path: Path) -> None:
-    """Rechner-Grenze 1: Aufseher startet, dann ist der Rechner voll — Exit 0, ehrliche Meldung."""
+    """Rechner-Grenze 12 (11 belegt): Aufseher startet, dann ist der Rechner voll — Exit 0, ehrliche Meldung."""
     from to_spawn import bash_wahl
 
     proc = tmp_path / "proc"
     proc.mkdir()
     (tmp_path / "sessions").mkdir()
+    # 284: Rechner-Grenze ist 12 je 16 GB (Messung 25.11.2026, vorher aus max_sessions) → 11 fremde belegen
+    # vor, der Aufseher-Start ist der 12. Platz.
+    for pid in range(201, 212):
+        (proc / str(pid)).mkdir()
+        (proc / str(pid) / "cmdline").write_bytes(b"/usr/bin/claude\0")
+        (proc / str(pid) / "environ").write_bytes(b"PATH=/usr/bin\0")
     repo, _welt_datei, umgebung = _aufbau(
         tmp_path,
         konfig={

@@ -14,9 +14,9 @@ Wer zählt gegen ``max_sessions`` (#409)? Nennt der Starter seine tmux-Sitzung
 (:func:`platz_frei` mit ``sitzung=``, :func:`platz_frei_hier` aus dem eigenen Fenster),
 zählen nur Claude-Prozesse dieser Sitzung — erkannt an der Variable ``TMUX``, die tmux
 jedem Prozess eines Fensters mitgibt. Prozesse mit unlesbarer Umgebung zählen
-vorsichtshalber mit. Dazu gilt dann die Rechner-Grenze :data:`RECHNER_FAKTOR` ×
-``max_sessions`` je 16 GB ``MemTotal`` (bei 6 also 9) über alle Claude-Prozesse des
-Rechners, damit viele Specs nebeneinander den Rechner nicht überladen. ``min_frei_mib``
+vorsichtshalber mit. Dazu gilt dann die Rechner-Grenze :data:`ARBEITEND_JE_BEZUG`
+je 16 GB ``MemTotal`` (also 12, unabhängig von ``max_sessions``, #284) über alle arbeitenden
+Claude-Prozesse des Rechners, damit viele Specs nebeneinander den Rechner nicht überladen. ``min_frei_mib``
 misst immer maschinenweit. Ohne Sitzung (oder wenn tmux nicht antwortet) zählt die ganze
 Maschine gegen ``max_sessions`` wie früher. Diese Regel lebt nur hier.
 
@@ -29,7 +29,7 @@ prüft und belegt unter einer Datei-Sperre in einem Schritt, so starten zwei war
 Fenster nie auf denselben freien Platz.
 
 Gesamtgrenze (#460): stille Sessions belegen trotzdem Speicher. Mit Sitzung gilt darum zusätzlich
-:func:`gesamt_grenze` (:data:`GESAMT_FAKTOR` × Rechner-Grenze, bei 9 also 18) über alle
+:func:`gesamt_grenze` (:data:`GESAMT_FAKTOR` × Rechner-Grenze, bei 12 also 24) über alle
 Claude-Prozesse des Rechners — still, arbeitend und Anzeige.
 
 Fremd voll (#460): hat die eigene Sitzung Platz und füllen nur Sessions außerhalb die Rechner- oder
@@ -134,9 +134,14 @@ def frei_mib(meminfo: Path | None = None) -> int | None:
     return None
 
 
-#: Rechner-Grenze (#409): je 16 GB Gesamtspeicher dürfen 1,5 × ``max_sessions`` Claude-Sessions
-#: auf dem ganzen Rechner laufen — bei 16 GB und 6 also 9. Bewusst kein Konfig-Wert.
-RECHNER_FAKTOR = 1.5
+#: Rechner-Grenze (#409, #284): je 16 GB Gesamtspeicher dürfen so viele arbeitende Claude-Sessions
+#: auf dem ganzen Rechner laufen. Bewusst kein Konfig-Wert und unabhängig von ``max_sessions``:
+#: eine Quelle je Rechner, kein Ordner-Effekt. Messung 25.11.2026 (Bau-Server, 16 GB RAM + 16 GB
+#: Auslagerung, 50 Messungen à 30 s, PSS + Auslagerung je Claude-Prozessbaum): Bau-Fenster ohne
+#: MCP-Server Median 0,43 GB (max 0,53), Aufseher/Leitstand mit MCP-Servern Median 1,05 GB (max 1,21),
+#: Schnitt 0,73 GB je Session; bei 19 Sessions 13,2 GB belegt, 3,3 GB RAM + 4,9 GB Auslagerung frei.
+#: 24 Sessions ≈ +3,7 GB → ~2,5 GB Luft über dem Mindestmaß (``min_frei_mib``).
+ARBEITEND_JE_BEZUG = 12
 #: Bezugsgröße der Grenzen in GB; ohne ``MemTotal`` gilt sie als Gesamtspeicher.
 BEZUG_GB = 16
 
@@ -155,14 +160,14 @@ def gesamt_kib(meminfo: Path | None = None) -> int | None:
     return None
 
 
-def rechner_grenze(max_sessions: int, gesamt: int | None) -> int:
-    """Höchstzahl Claude-Sessions auf dem ganzen Rechner: 1,5 × ``max_sessions`` je 16 GB.
+def rechner_grenze(gesamt: int | None) -> int:
+    """Höchstzahl arbeitender Claude-Sessions auf dem ganzen Rechner: :data:`ARBEITEND_JE_BEZUG` je 16 GB.
 
     ``gesamt`` = ``MemTotal`` in kB; auf ganze GB gerundet (ein 16-GB-Rechner meldet etwas
     weniger), mindestens 1 GB. Unbekannt → 16 GB.
     """
     gb = max(1, round(gesamt / 1024 / 1024)) if gesamt else BEZUG_GB
-    return int(RECHNER_FAKTOR * max_sessions * gb / BEZUG_GB)
+    return max(1, ARBEITEND_JE_BEZUG * gb // BEZUG_GB)
 
 
 #: Gesamtgrenze (#460): alle Claude-Prozesse des Rechners (still + arbeitend + Anzeige) höchstens
@@ -170,9 +175,9 @@ def rechner_grenze(max_sessions: int, gesamt: int | None) -> int:
 GESAMT_FAKTOR = 2
 
 
-def gesamt_grenze(max_sessions: int, gesamt: int | None) -> int:
+def gesamt_grenze(gesamt: int | None) -> int:
     """Höchstzahl aller Claude-Prozesse auf dem Rechner: :data:`GESAMT_FAKTOR` × :func:`rechner_grenze`."""
-    return GESAMT_FAKTOR * rechner_grenze(max_sessions, gesamt)
+    return GESAMT_FAKTOR * rechner_grenze(gesamt)
 
 
 #: Eine tmux-Sitzung als (Socket-Pfad, Sitzungs-Nummer) — so steht sie in ``TMUX``.
@@ -530,12 +535,12 @@ def _urteil_art(
         return False, f"schon {sessions} Claude-Sessions{wo_text} (Obergrenze {werte['max_sessions']})", False
     rechner_text = ""
     if rechner is not None:
-        grenze = rechner_grenze(werte["max_sessions"], gesamt_kib())
+        grenze = rechner_grenze(gesamt_kib())
         if rechner >= grenze:
             return False, f"Rechner voll: schon {rechner} Claude-Sessions auf dem Rechner (Obergrenze {grenze})", True
         rechner_text = f", Rechner {rechner} von {grenze}"
     if alle is not None:
-        obergrenze = gesamt_grenze(werte["max_sessions"], gesamt_kib())
+        obergrenze = gesamt_grenze(gesamt_kib())
         if alle >= obergrenze:
             return (
                 False,
