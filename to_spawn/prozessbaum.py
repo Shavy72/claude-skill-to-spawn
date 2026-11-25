@@ -296,7 +296,7 @@ def fensterlos() -> dict[str, Any]:
     bleiben unverändert. Linux/macOS: ``{}``.
     """
     windll = getattr(ctypes, "windll", None)
-    if sys.platform != "win32" or windll is None or windll.kernel32.GetConsoleWindow():
+    if not _WINDOWS or windll is None or windll.kernel32.GetConsoleWindow():
         return {}
     return ohne_fenster()
 

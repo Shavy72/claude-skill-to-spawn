@@ -3,7 +3,8 @@
 Echt laufen: Wegwerf-Git-Repos (``welt`` aus ``test_waechter_213`` bzw. ``klon`` aus
 ``test_komplett_je_spec_425``), echte Merker-Dateien, ein echter kleiner Prüf-Befehl mit Zähldatei,
 ein echter Live-Befehl mit eigener Zähldatei, der capo-Takt und ``to_spawn.py`` als Prozess.
-Werkzeug-Fehler entsteht echt: ``PATH`` ohne bash (nur git verlinkt).
+Werkzeug-Fehler wird über die Tür ``bash_wahl`` eingespeist (``TO_SPAWN_TEST_BASH_FEHLT=1``) —
+wirkt unter Linux wie Windows, wo ``bash_wahl`` Git-Bash sonst an festen Orten fände (#646).
 
 Teile:
 1. ``to_spawn.py live <S>`` — der Live-Befehl (``live.befehl``) startet nur, wenn die
@@ -39,7 +40,7 @@ from test_waechter_213 import (  # noqa: F401  (welt = Fixture)
     welt,
 )
 
-from to_spawn import config, komplett_lauf, live_tuer, sperre
+from to_spawn import bash_wahl, config, komplett_lauf, live_tuer, sperre
 from to_spawn.pruefplan import Moment
 
 SKILL = Path(__file__).resolve().parents[1]
@@ -82,18 +83,6 @@ def _live(repo: Path, env: dict[str, str] | None = None) -> subprocess.Completed
     )
 
 
-def _ohne_bash(tmp: Path) -> str:
-    """``PATH`` mit nur git darin — bash fehlt echt (Werkzeug-Fehler der Prüfung)."""
-    ordner = tmp / "nur-git"
-    ordner.mkdir(exist_ok=True)
-    git = shutil.which("git")
-    assert git, "git fehlt auf der Test-Maschine"
-    ziel = ordner / "git"
-    if not ziel.exists():
-        ziel.symlink_to(git)
-    return str(ordner)
-
-
 # --- 1. Live-Schritt an der Tür ------------------------------------------------------------------
 
 
@@ -117,7 +106,7 @@ def test_live_ohne_staging_rot_startet_nicht_dann_gruen_einmal(welt: dict[str, P
 
 def test_live_werkzeug_fehler_startet_nicht(welt: dict[str, Path]) -> None:
     zaehl, live_zaehl = _einrichten(welt, staging=False)
-    erg = _live(welt["repo"], {"PATH": _ohne_bash(welt["tmp"])})
+    erg = _live(welt["repo"], {bash_wahl.TEST_FEHLT_ENV: "1"})
     assert erg.returncode == 1, _text(erg)
     assert "Live-Schritt nicht gestartet" in erg.stdout and "Werkzeug" in erg.stdout, _text(erg)
     assert _laeufe(zaehl) == 0 and _laeufe(live_zaehl) == 0
@@ -324,19 +313,17 @@ def test_probelauf_merker_ohne_schluessel_kein_spec_fertig(welt: dict[str, Path]
 
 
 def test_werkzeug_fehler_kein_ok_und_nie_als_geprueft(
-    klon: Path, zaehl: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    klon: Path, zaehl: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     konfig = _klon_konfig(zaehl, staging=False)
-    monkeypatch.setenv("PATH", _ohne_bash(tmp_path))
+    monkeypatch.setenv(bash_wahl.TEST_FEHLT_ENV, "1")
     erg = komplett_lauf.komplett_einmal(klon, KLON_SPEC, Moment.VOR_LIVE, konfig)
     assert (erg.gelaufen, erg.ok) == (True, False), erg
     assert "Werkzeug-Fehler" in erg.grund and "bash" in erg.grund, erg.grund
     merker = komplett_lauf.lies_merker(klon, KLON_SPEC)
     assert merker is not None and merker.exit == 2 and "bash" in merker.grund
     assert _laeufe(zaehl) == 0
-    monkeypatch.undo()
-    # undo() hebt auch das conftest-Entfernen auf: in einer Bau-Session lehnt die Tür sonst ab (#474).
-    monkeypatch.delenv("TO_SPAWN_TICKET", raising=False)
+    monkeypatch.delenv(bash_wahl.TEST_FEHLT_ENV)
     # Gate-Fehler zählt nie als geprüft — auch im Takt nicht: nächster Aufruf prüft echt.
     takt = komplett_lauf.takt_kind(klon, KLON_SPEC, Moment.VOR_LIVE, konfig)
     assert (takt.gelaufen, takt.ok) == (True, True), takt
