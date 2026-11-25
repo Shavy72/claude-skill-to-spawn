@@ -41,6 +41,7 @@ from to_spawn import (
     live_tuer,
     manifest,
     nest,
+    ort_wahl,
     probesitz,
     pruef,
     respawn,
@@ -596,6 +597,8 @@ def verteilen(ap: argparse.ArgumentParser, args: argparse.Namespace) -> int:
         return start_last.lauf_mit_args(args)
     if args.befehl == "warten":
         return warten.lauf(args, config.repo_wurzel(_repo_aus_umgebung()))
+    if args.befehl in ort_wahl.BEFEHLE:
+        return ort_wahl.lauf(args, config.repo_wurzel(_repo_aus_umgebung()))
     if args.befehl == "aufraeumen":
         return _aufraeumen(args, ap)
     if args.befehl == "sichern":

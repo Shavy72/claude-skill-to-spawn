@@ -208,6 +208,20 @@ DEFAULTS: dict[str, Any] = {
         "max_sessions": 6,
         "staffel_s": 20,
     },
+    #: Ort-Wahl für große Testläufe (#760, Beschluss E33): Grenzwerte an genau einer Stelle.
+    #: Misst den Linux-Bau-Server über ``fenster_min`` Minuten (bei Bedarf weitere
+    #: ``verlaengerung_min`` Minuten) im Takt ``takt_s``: freier Speicher (``min_frei_mib``),
+    #: 1-Minuten-Systemlast (``max_last``) und arbeitende Bau-Sessions (``max_bau_sessions``).
+    #: ``lauf_takt_s`` = Prüftakt während eines laufenden Server-Tests.
+    "ort_wahl": {
+        "fenster_min": 30,
+        "verlaengerung_min": 30,
+        "takt_s": 60,
+        "lauf_takt_s": 30,
+        "min_frei_mib": 4096,
+        "max_last": 2.0,
+        "max_bau_sessions": 0,
+    },
 }
 
 KONFIG_PFAD = Path(".to-spawn") / "config.json"

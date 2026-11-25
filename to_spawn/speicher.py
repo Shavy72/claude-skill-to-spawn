@@ -42,14 +42,16 @@ also „frei“. Test-Tür: die Umgebungsvariablen ``TO_SPAWN_SPEICHER_MEMINFO``
 (Pfad einer meminfo-Datei) und ``TO_SPAWN_SPEICHER_PROC`` (Ordner im Aufbau von
 ``/proc``) ersetzen den echten ``/proc`` — so bleibt das Ergebnis in Tests
 unabhängig von den Sessions, die gerade auf der Testmaschine laufen. Ebenso
-``TO_SPAWN_SPEICHER_SESSIONS`` (Ordner der Session-JSONs) und ``TO_SPAWN_SPEICHER_PLATZ``
-(Datei der vergebenen Plätze).
+``TO_SPAWN_SPEICHER_SESSIONS`` (Ordner der Session-JSONs), ``TO_SPAWN_SPEICHER_PLATZ``
+(Datei der vergebenen Plätze) und ``TO_SPAWN_SPEICHER_LOADAVG`` (Datei im Aufbau von
+``/proc/loadavg``).
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import sys
 import time
@@ -82,6 +84,10 @@ WARTE_TEXT = "wartet auf Speicher"
 
 def _meminfo_pfad() -> Path:
     return Path(os.environ.get("TO_SPAWN_SPEICHER_MEMINFO") or "/proc/meminfo")
+
+
+def _loadavg_pfad() -> Path:
+    return Path(os.environ.get("TO_SPAWN_SPEICHER_LOADAVG") or "/proc/loadavg")
 
 
 def _proc_pfad() -> Path:
@@ -132,6 +138,27 @@ def frei_mib(meminfo: Path | None = None) -> int | None:
             return None
         return int(teile[1]) // 1024  # kB → MiB
     return None
+
+
+def last_1m(loadavg: Path | None = None) -> float | None:
+    """1-Minuten-Systemlast aus ``/proc/loadavg``, ``None`` = unbekannt (#760).
+
+    ``loadavg`` = Datei im Aufbau von ``/proc/loadavg``; ohne Angabe gilt
+    ``TO_SPAWN_SPEICHER_LOADAVG`` bzw. ``/proc/loadavg``.
+    """
+    datei = loadavg if loadavg is not None else _loadavg_pfad()
+    try:
+        text = datei.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    teile = text.split()
+    if not teile:
+        return None
+    try:
+        wert = float(teile[0])
+    except ValueError:
+        return None
+    return wert if math.isfinite(wert) and wert >= 0 else None
 
 
 #: Rechner-Grenze (#409, #284): je 16 GB Gesamtspeicher dürfen so viele arbeitende Claude-Sessions
@@ -336,6 +363,18 @@ def claude_sessions(
             continue  # Anzeige / still — bremst über min_frei_mib und die Gesamtgrenze (#460)
         anzahl += 1
     return anzahl
+
+
+def laufende_sessions(proc: Path | None = None, *, mit_vergebenen: bool = True) -> int | None:
+    """Zahl der arbeitenden Bau-Sessions auf dem ganzen Rechner (#760).
+
+    Nutzt :func:`claude_sessions` (``claude`` und ``agy`` ohne ``-p``, ohne Anzeige und
+    stille Sessions) und zählt bei ``mit_vergebenen=True`` noch vergebene Start-Plätze mit.
+    """
+    anzahl = claude_sessions(proc=proc)
+    if not mit_vergebenen:
+        return anzahl
+    return _mit_vergebenen(anzahl, None)
 
 
 def _sitzung_text(sitzung: Sitzung | None) -> str:
