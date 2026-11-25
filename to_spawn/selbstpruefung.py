@@ -33,6 +33,7 @@ import logging
 import re
 import sys
 import urllib.parse
+from collections.abc import Iterable
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -266,14 +267,16 @@ def auftrag_text(
     *,
     rundschau_rel: str = "",
     rundschau_auftrag_rel: str = "",
+    runde: int = 1,
 ) -> str:
-    """Markdown-Auftrag für den frischen Selbstprüfungs-Helfer (#368)."""
+    """Markdown-Auftrag für den frischen Selbstprüfungs-Helfer (#368, Runden #370)."""
     ergebnis_rel = _rel(repo, ergebnis_pfad(repo, spec))
     konfig = config.lade(repo)
     zugang_datei = str((konfig.get("staging") or {}).get("zugang_datei") or "").strip()
+    runde_zusatz = f" (Runde {runde})" if runde > 1 else ""
 
     zeilen = [
-        f"# KI-Selbstprüfung Spec #{spec} (Rundschau gegen Staging)",
+        f"# KI-Selbstprüfung Spec #{spec}{runde_zusatz} (Rundschau gegen Staging)",
         "",
         f"- **Stage-App**: {stage}",
         f"- **Browser**: {BROWSER_HINWEIS}",
@@ -320,30 +323,28 @@ def auftrag_text(
     beispiel_ticket = str(folgen[0].get("ticket") or "10")
     beispiel_titel = str(folgen[0].get("titel") or "Ticket #10")
     beispiel_schritt = str(folgen[0]["schritte"][0]) if folgen[0].get("schritte") else "Stage öffnen"
-    schema = json.dumps(
-        {
-            "spec": spec,
-            "stage": stage,
-            "browser": BROWSER_MODUS,
-            "testdaten_bereinigt": True,
-            "folgen": [
-                {
-                    "ticket": beispiel_ticket,
-                    "titel": beispiel_titel,
-                    "schritte": [
-                        {
-                            "schritt": beispiel_schritt,
-                            "ergebnis": "passt",
-                            "beleg": f"docs/verify-hard/selbstpruefung_{spec}_{beispiel_ticket}_1.png",
-                            "hinweis": "",
-                        }
-                    ],
-                }
-            ],
-        },
-        ensure_ascii=False,
-        indent=2,
-    )
+    schema_daten: dict[str, Any] = {
+        "spec": spec,
+        **({"runde": runde} if runde > 1 else {}),
+        "stage": stage,
+        "browser": BROWSER_MODUS,
+        "testdaten_bereinigt": True,
+        "folgen": [
+            {
+                "ticket": beispiel_ticket,
+                "titel": beispiel_titel,
+                "schritte": [
+                    {
+                        "schritt": beispiel_schritt,
+                        "ergebnis": "passt",
+                        "beleg": f"docs/verify-hard/selbstpruefung_{spec}_{beispiel_ticket}_1.png",
+                        "hinweis": "",
+                    }
+                ],
+            }
+        ],
+    }
+    schema = json.dumps(schema_daten, ensure_ascii=False, indent=2)
     zeilen.extend(
         [
             "## Ergebnisformat",
@@ -385,6 +386,9 @@ def lies_ergebnis(pfad: Path, spec: int) -> dict[str, Any]:
         raise Fehler(f"{pfad}: kein JSON-Objekt")
     if type(daten.get("spec")) is not int or daten["spec"] != spec:
         raise Fehler(f"{pfad}: 'spec' fehlt oder ist {daten.get('spec')!r}, erwartet {spec}")
+    runde_roh = daten.get("runde", 1)
+    if type(runde_roh) is not int or runde_roh < 1:
+        raise Fehler(f"{pfad}: 'runde' muss eine Ganzzahl >= 1 sein, ist {runde_roh!r}")
 
     bereinigt = daten.get("testdaten_bereinigt", True)
     if not isinstance(bereinigt, bool):
@@ -449,6 +453,7 @@ def lies_ergebnis(pfad: Path, spec: int) -> dict[str, Any]:
 
     return {
         "spec": spec,
+        "runde": runde_roh,
         "stage": stage,
         "browser": browser,
         "testdaten_bereinigt": bereinigt,
@@ -522,6 +527,7 @@ def planen(
     stage: str = "",
     rundschau_datei: Path | None = None,
     neu: bool = False,
+    runde: int = 1,
 ) -> int:
     """Auftrag für die KI-Selbstprüfung schreiben (Exit 0/2/4/1)."""
     url, grund = staging_status(repo, stage)
@@ -536,14 +542,14 @@ def planen(
     if _sperre_aktiv(sperre):
         sys.stdout.write(f"{laeuft}\n")
         return 4
-    if not neu and _vorher_gruen(repo, spec):
+    if not neu and runde <= 1 and _vorher_gruen(repo, spec):
         sys.stdout.write(f"Schon erledigt: {marker}\n")
         return 4
 
     folgen, html_rel, auftrag_rel = _sammle_folgen(repo, spec, rundschau_datei)
     ordner.mkdir(parents=True, exist_ok=True)
     start = datetime.now().astimezone().isoformat(timespec="seconds")
-    if not _sperre_anlegen(sperre, {"start": start, "spec": spec}):
+    if not _sperre_anlegen(sperre, {"start": start, "spec": spec, "runde": runde}):
         sys.stdout.write(f"{laeuft}\n")
         return 4
     try:
@@ -558,12 +564,14 @@ def planen(
                 folgen,
                 rundschau_rel=html_rel,
                 rundschau_auftrag_rel=auftrag_rel,
+                runde=runde,
             ),
             encoding="utf-8",
         )
         lauf = {
             "start": start,
             "spec": spec,
+            "runde": runde,
             "stage": url,
             "browser": BROWSER_MODUS,
             "rundschau_datei": html_rel,
@@ -630,11 +638,18 @@ def sammeln(repo: Path, spec: int) -> int:
             sperre.unlink(missing_ok=True)
 
 
-def pruefe_fuer_abnahme(repo: Path, spec: int) -> tuple[list[str], dict[str, Any]]:
-    """Prüfung für ``abschluss_paket.py ablegen --stand abnahme`` (#368).
+def pruefe_fuer_abnahme(
+    repo: Path,
+    spec: int,
+    *,
+    min_runde: int = 1,
+    pflicht_tickets: Iterable[int | str] = (),
+) -> tuple[list[str], dict[str, Any]]:
+    """Prüfung für ``abschluss_paket.py ablegen --stand abnahme`` (#368, Runden #370).
 
     Rückgabe ``(maengel, paket_daten)``:
-    - ``ergebnis.json`` da und gültig → ``([], daten)`` (inkl. aller „passt nicht“-Schritte)
+    - ``ergebnis.json`` da, gültig und passend zur Runde/zu den Folge-Tickets → ``([], daten)``
+    - ``ergebnis.json`` veraltet (aus früherer Runde / neue Folge-Tickets fehlen) → ``([mangel], {})`` (Exit 4)
     - ``ergebnis.json`` da, aber ungültig → ``([mangel], {})`` (Exit 4)
     - ``ergebnis.json`` fehlt und ``staging.url`` fehlt/``staging.ohne`` → ``([], {"status": "nicht_moeglich", "grund": …})``
     - ``ergebnis.json`` fehlt und ``staging.url`` gesetzt → ``([mangel], {})`` (Exit 4)
@@ -649,9 +664,25 @@ def pruefe_fuer_abnahme(repo: Path, spec: int) -> tuple[list[str], dict[str, Any
                 f"Selbstprüfung ungültig ({fehler}) — ergebnis.json prüfen und "
                 f"`abschluss_paket.py selbstpruefung sammeln {spec}` ausführen."
             ], {}
+        geprueft = {str(f.get("ticket") or "").strip().lstrip("#") for f in daten["folgen"]}
+        pflicht = [str(t).strip().lstrip("#") for t in pflicht_tickets if str(t).strip()]
+        fehlende = [t for t in pflicht if t not in geprueft]
+        ist_runde = int(daten.get("runde") or 1)
+        if fehlende or (min_runde > 1 and not pflicht and ist_runde < min_runde):
+            detail = (
+                f"Folge-Ticket(s) {', '.join(f'#{t}' for t in fehlende)} fehlen"
+                if fehlende
+                else f"Stand ist noch Runde {ist_runde}, erwartet Runde {min_runde}"
+            )
+            return [
+                f"Selbstprüfung veraltet ({detail}) — für Runde {max(min_runde, 2)} erst "
+                f"`abschluss_paket.py selbstpruefung planen {spec} --neu`, Helfer gegen Staging "
+                f"klicken lassen und `abschluss_paket.py selbstpruefung sammeln {spec}` ausführen (#370)."
+            ], {}
         status = "passt_nicht" if daten["passt_nicht"] else "ok"
         return [], {
             "status": status,
+            "runde": ist_runde,
             "gesamt": daten["gesamt"],
             "passt": daten["passt"],
             "passt_nicht": daten["passt_nicht"],

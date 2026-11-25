@@ -199,3 +199,88 @@ def test_abschluss_text_enthaelt_alle_entscheidungen_mit_zahl_475(
     assert "Entscheidungen (7)" in probe.stdout
     assert all(z in probe.stdout for z in zeilen)
     assert f"{echt[0]} → {echt[1]}" in probe.stdout
+
+
+def test_ohne_manifest_keine_fremden_bau_logs_und_unvollstaendig_markiert_445(
+    tmp_path: Path,
+) -> None:
+    """Ohne Manifest landen keine fremden Bau-Logs in entscheidungen_<S>.md; Liste als unvollständig markiert (#445)."""
+    r = tmp_path / "projekt_ohne_manifest"
+    r.mkdir()
+    # Fremde Tickets ohne Spec-Bezug bzw. mit fremder Spec dürfen nicht auftauchen.
+    bau_log.schreibe(
+        r, 999, "entscheidung", frage="Fremdes Thema", wahl="Fremde Wahl", grund="andere Spec"
+    )
+    bau_log.schreibe(
+        r,
+        888,
+        "entscheidung",
+        spec="888",
+        frage="Anderes Spec-Thema",
+        wahl="Andere Wahl",
+        grund="Spec 888",
+    )
+    fid = briefkasten.einwerfen("999", "Fremde Briefkasten-Frage?", "nein", 3, [], hauptbaum=r)
+    briefkasten.antworten("999", fid, "nein", ["Quelle"], "fremd", hauptbaum=r)
+
+    # Ticket mit ausdrücklichem Spec-Bezug im Bau-Log darf enthalten sein.
+    bau_log.schreibe(
+        r,
+        422,
+        "entscheidung",
+        spec=str(SPEC),
+        frage="Eigenes Spec-Thema",
+        wahl="Eigene Wahl",
+        grund="gehört zu 421",
+    )
+
+    lauf = _unter(
+        "ablegen",
+        r,
+        tmp_path,
+        *_LINKS,
+        "--stand",
+        "abnahme",
+        "--ohne-rundschau",
+        "--spec-fertig",
+        _FERTIG,
+    )
+    assert lauf.returncode == 0, lauf.stdout + lauf.stderr
+    inhalt = _datei(r).read_text(encoding="utf-8")
+    zeilen = [z for z in inhalt.splitlines() if z.startswith("| #")]
+    assert not any("#999" in z for z in zeilen), f"Fremdes Ticket #999 in Liste: {zeilen}"
+    assert not any("#888" in z for z in zeilen), f"Fremdes Ticket #888 in Liste: {zeilen}"
+    assert any(
+        z.startswith("| #422 | Eigenes Spec-Thema → Eigene Wahl | gehört zu 421 |")
+        for z in zeilen
+    ), zeilen
+    assert "unvollständig" in inhalt.lower()
+    assert f"spec-{SPEC}.json" in inhalt
+
+
+def test_ohne_manifest_und_ohne_spec_tag_leere_unvollstaendige_liste_445(
+    tmp_path: Path,
+) -> None:
+    """Ohne Manifest und ohne Spec-Zuordnung im Bau-Log bleibt die Liste frei von Fremd-Tickets (#445)."""
+    r = tmp_path / "projekt_nur_fremd"
+    r.mkdir()
+    bau_log.schreibe(
+        r, 777, "entscheidung", frage="Nur fremd", wahl="X", grund="gehört nicht zu 421"
+    )
+    lauf = _unter(
+        "ablegen",
+        r,
+        tmp_path,
+        *_LINKS,
+        "--stand",
+        "abnahme",
+        "--ohne-rundschau",
+        "--spec-fertig",
+        _FERTIG,
+    )
+    assert lauf.returncode == 0, lauf.stdout + lauf.stderr
+    inhalt = _datei(r).read_text(encoding="utf-8")
+    assert [z for z in inhalt.splitlines() if z.startswith("| #")] == []
+    assert "#777" not in inhalt
+    assert "unvollständig" in inhalt.lower()
+

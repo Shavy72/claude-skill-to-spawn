@@ -1058,16 +1058,19 @@ def entscheidung_anhaengen(
     return datei
 
 
-def uebersicht(repo: Path, spec: int, tickets: list[int]) -> Path:
+def uebersicht(repo: Path, spec: int, tickets: list[int], *, hinweis: str = "") -> Path:
     """Schreibt :func:`entscheidungs_datei` neu: alle Entscheidungen der Spec (#364).
 
     Woher sie kommen (Bau-Log im Hauptbaum und auf ``origin/<Hauptzweig>``, Briefkasten-
     Antworten), weiß nur ``briefkasten.liste``; hier steht nur die Darstellung (eine
     Tabellenzeile je Eintrag). Die Kopfzeile nennt ``haupt_ref`` — den Stand, den
-    ``briefkasten.liste`` liest.
+    ``briefkasten.liste`` liest. Optionaler ``hinweis`` markiert unvollständige Listen
+    (z. B. fehlendes Manifest, #445).
     """
     eintraege = briefkasten.liste(sorted(tickets), log_repo=repo, hauptbaum=repo)
     zeilen = _tabellen_kopf(spec, f"Bau-Logs auf {haupt_ref(repo) or '-'} + Briefkasten")
+    if hinweis.strip():
+        zeilen = [*zeilen[:3], "", f"> **Hinweis:** {hinweis.strip()}", *zeilen[3:]]
     zeilen += [_entscheidungs_zeile(e) for e in eintraege]
     if not eintraege:
         zeilen += ["", "_Keine Entscheidungen im Bau-Log oder Briefkasten._"]
