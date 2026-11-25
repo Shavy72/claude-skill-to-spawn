@@ -177,6 +177,24 @@ def test_ohne_git_frisch_oder_frische_unterdatei_bleibt(welt: Welt) -> None:
     assert unter_frisch.is_dir()
 
 
+def test_ohne_git_frisch_bleibt_ohne_ticket_abfrage_und_ohne_fehler(
+    welt: Welt, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ein frischer Ordner ohne Git bleibt wegen Alter ohne gh-Abfrage (kein Fehler)."""
+    frisch = _ordner(welt, "wt/wt-1648")
+    aufrufe: list[list[str]] = []
+
+    def kein_gh(args: list[str], **_: object) -> tuple[int, str]:
+        aufrufe.append(args)
+        return 1, "darf nicht aufgerufen werden"
+
+    monkeypatch.setattr(hausmeister.gh, "lauf", kein_gh)
+    r = welt.aufraeumen(frisch, loeschen=True)
+    assert r.art == "bleibt" and not r.fehler and "frisch" in r.grund, r.grund
+    assert aufrufe == []
+    assert frisch.is_dir()
+
+
 @pytest.mark.parametrize(
     "datei",
     [

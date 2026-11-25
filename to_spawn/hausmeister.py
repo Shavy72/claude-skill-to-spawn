@@ -1710,11 +1710,12 @@ def _ohne_git_regeln(
             fuer_david=True,
         )
     stand.ticket = nr
-    _keine_spec_sitzung(nr)
-    _kein_offenes_ticket_ohne_git(nr)
+    # Lokale Prüfungen vor der Netzabfrage: frische/aktive Ordner bleiben ohne gh-Aufruf.
     _kein_prozess(echt)
     jetzt_ts = jetzt if jetzt is not None else time.time()
     _ohne_git_baum_pruefen(echt, jetzt_ts)
+    _keine_spec_sitzung(nr)
+    _kein_offenes_ticket_ohne_git(nr)
     grund = (
         f"verwaister Ordner ohne Git (#{nr}: kein offenes Ticket, alt, "
         "kein Prozess, kein Geheimnis-Verdacht)"
