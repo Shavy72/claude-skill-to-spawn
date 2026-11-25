@@ -196,6 +196,9 @@ Fehlt die Datei, gelten die Vorgaben aus `to_spawn/config.py`:
 }
 ```
 
+`runner` wählt das Werkzeug für Bau-Sessions in `skripte/bau.py` (`"claude"` Vorgabe oder `"agy"`
+für Antigravity; Standardmodell bei `"agy"` ist `gemini-4-neon-high`, sofern `modelle.ticket` kein
+eigenes Nicht-Claude-Modell setzt oder `--model` übergeben wird — einzige Stelle: `to_spawn/werkzeug.py`, #660).
 `staffel.grenze_k` ist nur der Ticket-Schnitt (Planungs-Grenze je Ticket), keine Ablöse-Grenze:
 die Ablösung einer laufenden Session hängt allein an `~/.claude/smart-zone.json` (#417).
 
@@ -208,7 +211,9 @@ Modul liest sie über `config.lade` / `config.pfad` / `config.maschine`. Ein fre
 - Repo (`.to-spawn/config.json`): `pfade.{manifeste,bau_log,agenten}`,
   `deploy.skripte[]` (`name`, `art` live/pruef, `pruef_schalter`, `fern`),
   `staging.schalter`, `befehle.wirkungskreis`, `vps.staging_log`, `worktree_basis`, `hauptzweig`.
-- Maschine (`~/.config/to-spawn/maschine.json`, Env `TO_SPAWN_MASCHINE`): `repos[]`
+- Maschine (`~/.config/to-spawn/maschine.json`, Env `TO_SPAWN_MASCHINE`): `rolle`
+  (`"server"`/`"pc"`, optional; auf dem Bau-Server wird `--ziel srv` wie `--ziel local`
+  behandelt, #408), `repos[]`
   (`slug`, `pfad`, `ticket_repo`, `worktree_basis`), `staging_sperren[]`,
   `hausmeister.{wurzeln,ordner_praefixe}` und `hausmeister.geschuetzte_ordner` — Letzteres
   schützt nur zusätzlich, die eingebaute Liste bleibt immer gültig. Wurzeln mit verstecktem

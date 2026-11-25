@@ -10,7 +10,7 @@ Aufruf (im Repo-Wurzelordner):
         # --tickets, --dry-run, --ohne-einrichtung (= --nur-wache), Spec läuft schon: nur Hinweis
     python ~/.claude/skills/to-spawn/to_spawn.py pruefen <basis> <ziel> [--repo <pfad>]  # Exit 0/1/2 + JSON (#99)
     python ~/.claude/skills/to-spawn/to_spawn.py anhaengen <S> <N> [--blockiert-von B,…] \
-        [--schaetzung K] [--umfang TEXT] [--datei PFAD:a-b …] [--trocken]  # Ticket nachtragen (E2-2)
+        [--abnahme A,…|keine] [--schaetzung K] [--umfang TEXT] [--datei PFAD:a-b …] [--trocken]  # Ticket nachtragen (E2-2)
     python ~/.claude/skills/to-spawn/to_spawn.py befund --spec <S> --ticket <N> --stufe gelb --text "…"  # Folge-Ticket
     python ~/.claude/skills/to-spawn/to_spawn.py spec-schliessen <S>  # Spec schließen mit Sperre (E2-4, Exit 0/1)
     python ~/.claude/skills/to-spawn/to_spawn.py hook-spec-sperre    # PreToolUse-Hook (Bash), JSON auf stdin

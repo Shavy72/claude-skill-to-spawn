@@ -142,13 +142,15 @@ def test_wache_frage_weckt_aufseher_ohne_takt(
 
     def fahre(**_kw: Any) -> int:
         frage_id = _frage(welt)  # Frage kommt erst, als der Aufseher schon läuft
-        ende = time.monotonic() + 10
+        ende = time.monotonic() + 30
         while time.monotonic() < ende and not _getippt(welt):
             time.sleep(0.1)
         gesehen.append(_getippt(welt))
         gesehen.append([{"id": frage_id}])
         return 0
 
+    # GitHub ist hier nicht Thema — kein echtes ``gh`` ins Netz starten (bremst Windows-CI aus).
+    monkeypatch.setattr(wecker.gh, "lauf", lambda *_a, **_k: (1, ""))
     monkeypatch.setattr(wache.handoff_blick, "laeuft", ohne_blick)
     monkeypatch.setattr(wache.waechter_lauf, "fahre", fahre)
     monkeypatch.setattr(wache, "REPO_ORDNER", welt["haupt"])
@@ -390,3 +392,33 @@ def test_tippen_eigener_puffer_und_kein_verschraenken(welt: dict[str, Any]) -> N
         assert laden[2] == einfuegen[einfuegen.index("-b") + 1]
         puffer.add(laden[2])
     assert len(puffer) == 8, puffer
+
+
+def test_langsames_github_haelt_briefkasten_weckruf_nicht_auf(
+    welt: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ein langsamer oder hängender ``gh``-Aufruf darf den lokalen Briefkasten-Weckruf nicht verzögern."""
+    wecker = _wecker_modul()
+    freigeben = threading.Event()
+    gh_gerufen = threading.Event()
+
+    def langsames_gh(*_a: Any, **_k: Any) -> tuple[int, str]:
+        gh_gerufen.set()
+        freigeben.wait(timeout=5.0)
+        return 1, ""
+
+    monkeypatch.setattr(wecker.gh, "lauf", langsames_gh)
+    w = wecker.Wecker(SPEC, welt["haupt"], PANE, gh_repo="o/r")
+    frage_id = _frage(welt)
+    faden = threading.Thread(target=w.einmal, daemon=True)
+    faden.start()
+    try:
+        assert gh_gerufen.wait(timeout=5.0), "gh-Blick lief nicht an"
+        # Zu diesem Zeitpunkt hängt ``gh.lauf`` noch in ``freigeben.wait``:
+        # der lokale Briefkasten-Weckruf muss trotzdem schon im Pane stehen.
+        getippt = _getippt(welt)
+        assert [g["ziel"] for g in getippt] == [PANE], getippt
+        assert frage_id in getippt[0]["text"]
+    finally:
+        freigeben.set()
+        faden.join(timeout=5.0)

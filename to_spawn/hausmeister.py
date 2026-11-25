@@ -136,6 +136,7 @@ from to_spawn import (
     gh,
     hausmeister_windows,
     hindernis,
+    temp_ordner,
     ticket_zustand,
     uebergabe_sichern,
 )
@@ -522,6 +523,7 @@ def _alle_ordner(*, loeschen: bool, jetzt: float | None) -> Rundgang:
         if erg.art != "bleibt" and not erg.trocken:
             anteil = _frei_anteil()
     _kennzahl_schreiben(ergebnisse, trocken=not loeschen)
+    temp_ordner.aufraeumen(loeschen=loeschen, jetzt=jetzt)  # #136: Temp-Reste, wirft nie
     _zweige_im_takt(loeschen, jetzt)
     # L5 #145: Netz für vergessene Ablösungen, wirft nie; Probelauf schreibt/lädt nichts (#169).
     uebergabe_sichern.sichern(trocken=not loeschen)
@@ -2468,6 +2470,26 @@ def helfer_ordner_loeschen(ort: Path, name: str) -> bool:
     _loeschen(ziel, ist_worktree=False)
     log.info("Hausmeister: Helfer-Temp %s gelöscht", ziel)
     return True
+
+
+def temp_ordner_loeschen(ordner: Path) -> None:
+    """Entfernt einen geprüften Temp-Rest (#136): verknüpfte Worktrees sauber über Git,
+    sonst über :func:`_loeschen` (mit Windows-Schreibschutz-Behandlung).
+
+    Die Prüfregeln liegen in :mod:`to_spawn.temp_ordner`; die eigentliche Löschung bleibt
+    allein hier, damit es im gesamten Skill genau eine Lösch-Stelle gibt.
+    """
+    git_marke = ordner / ".git"
+    if git_marke.is_file() and not git_marke.is_symlink():
+        try:
+            haupt = _hauptrepo(ordner)
+        except RuntimeError:
+            haupt = None
+        if haupt is not None and _als_worktree_eingetragen(haupt, ordner):
+            aufpasser.git_lauf(haupt, "worktree", "remove", "--force", str(ordner))
+            aufpasser.git_lauf(haupt, "worktree", "prune")
+            return
+    _loeschen(ordner, False)
 
 
 def altbestand_pfad() -> Path:
