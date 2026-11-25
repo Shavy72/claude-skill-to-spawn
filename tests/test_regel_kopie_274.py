@@ -59,6 +59,7 @@ def _lauf(repo: Path, tmp_path: Path) -> subprocess.CompletedProcess[str]:
         [sys.executable, str(BAU), "7", "--dry-run", "--print-prompt"],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         env=env,
         cwd=repo,
         timeout=120,
