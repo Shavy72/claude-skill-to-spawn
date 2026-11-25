@@ -215,9 +215,7 @@ def _git_lauf(ordner: Path, *args: str) -> subprocess.CompletedProcess[str] | No
 
 def _git_dirs(ordner: Path) -> tuple[Path, Path] | None:
     """(gemeinsames .git, eigenes .git) von ``ordner`` oder ``None``."""
-    ergebnis = _git_lauf(
-        ordner, "rev-parse", "--path-format=absolute", "--git-common-dir", "--git-dir"
-    )
+    ergebnis = _git_lauf(ordner, "rev-parse", "--path-format=absolute", "--git-common-dir", "--git-dir")
     if ergebnis is None or ergebnis.returncode != 0:
         return None
     zeilen = [z for z in ergebnis.stdout.splitlines() if z.strip()]
@@ -252,11 +250,7 @@ def _venv_ausschliessen(ordner: Path) -> str:
         return " — Warnung: kein Git-Ordner, .venv nicht ausgeschlossen"
     exclude = dirs[0] / "info" / "exclude"
     try:
-        zeilen = (
-            exclude.read_text(encoding="utf-8").splitlines()
-            if exclude.is_file()
-            else []
-        )
+        zeilen = exclude.read_text(encoding="utf-8").splitlines() if exclude.is_file() else []
         if "/.venv" in zeilen:
             return ""
         exclude.parent.mkdir(parents=True, exist_ok=True)
@@ -295,9 +289,7 @@ def _laeuft(python: Path) -> bool:
         return False
 
 
-def _ausfuehren(
-    argv: Sequence[str], timeout: float, geheim: Iterable[str] = ()
-) -> str | None:
+def _ausfuehren(argv: Sequence[str], timeout: float, geheim: Iterable[str] = ()) -> str | None:
     """Führt ``argv`` aus; gibt bei Fehler den (geschwärzten) Grund zurück, sonst ``None``."""
     try:
         ergebnis = subprocess.run(
@@ -348,9 +340,7 @@ _PAKET_PROBE = (
 )
 
 
-def _fehlende_pakete(
-    python: Path, namen: Sequence[str], geheim: Iterable[str] = ()
-) -> list[str] | str:
+def _fehlende_pakete(python: Path, namen: Sequence[str], geheim: Iterable[str] = ()) -> list[str] | str:
     """Pakete, die im Interpreter fehlen — oder (geschwärzter) Fehlertext, wenn die Probe scheitert."""
     if not namen:
         return []
@@ -393,9 +383,7 @@ def venv_sicherstellen(
     venv = ordner / ".venv"
     py = _py_name()
     anforderungen = ordner / "requirements.txt"
-    pip_befehl = (
-        f"`{_venv_python(Path('.venv')).as_posix()} -m pip install -r requirements.txt`"
-    )
+    pip_befehl = f"`{_venv_python(Path('.venv')).as_posix()} -m pip install -r requirements.txt`"
     behebung = f"im Ordner {ordner}: `{py} -m venv .venv` bzw. Symlink .venv → <Hauptrepo>/.venv"
     if anforderungen.is_file():
         behebung += f", dann {pip_befehl}"
@@ -439,9 +427,7 @@ def venv_sicherstellen(
         if not venv.exists():
             grund = _neue_venv(venv, mit_pip=anforderungen.is_file())
             if grund:
-                return Befund(
-                    "venv", False, f".venv anlegen scheitert: {grund}", behebung
-                )
+                return Befund("venv", False, f".venv anlegen scheitert: {grund}", behebung)
             aktion = "neu angelegt"
             if anforderungen.is_file():
                 grund = _ausfuehren(
@@ -466,19 +452,11 @@ def venv_sicherstellen(
                     )
                 aktion += " + requirements.txt installiert"
         if not _laeuft(_venv_python(venv)):
-            return Befund(
-                "venv", False, f".venv {aktion}, Interpreter läuft aber nicht", behebung
-            )
+            return Befund("venv", False, f".venv {aktion}, Interpreter läuft aber nicht", behebung)
     if anforderungen.is_file():
-        fehlend = _fehlende_pakete(
-            _venv_python(venv), _anforderungen(anforderungen), geheim
-        )
+        fehlend = _fehlende_pakete(_venv_python(venv), _anforderungen(anforderungen), geheim)
         if isinstance(fehlend, str) or fehlend:
-            was = (
-                fehlend
-                if isinstance(fehlend, str)
-                else _schwaerzen(", ".join(fehlend), geheim)
-            )
+            was = fehlend if isinstance(fehlend, str) else _schwaerzen(", ".join(fehlend), geheim)
             return Befund(
                 "venv",
                 False,
@@ -537,9 +515,7 @@ def _env_quellen(ordner: Path) -> list[dict[str, str]]:
     return quellen
 
 
-def _geheime_werte(
-    ordner: Path, environ: Mapping[str, str] | None = None, spec: int | None = None
-) -> list[str]:
+def _geheime_werte(ordner: Path, environ: Mapping[str, str] | None = None, spec: int | None = None) -> list[str]:
     """Werte zum Schwärzen: alle ``.env``-Werte + Umgebungswerte möglicher Schlüssel.
 
     Mögliche Schlüssel = Namen aus ``.env``/``.env.example``, Konfig und Manifest
@@ -584,9 +560,7 @@ def _konfig_typfehler(daten: object) -> str | None:
     if not isinstance(abschnitt, dict):
         return "Feld startklar ist kein Objekt"
     namen = abschnitt.get("schluessel")
-    if namen is not None and not (
-        isinstance(namen, list) and all(isinstance(n, str) for n in namen)
-    ):
+    if namen is not None and not (isinstance(namen, list) and all(isinstance(n, str) for n in namen)):
         return "Feld startklar.schluessel ist keine Liste von Texten"
     return None
 
@@ -631,20 +605,12 @@ def _manifest_tickets(ordner: Path, spec: int) -> dict[str, dict[str, Any]] | No
     except (OSError, ValueError) as fehler:
         raise ManifestKaputt(f"Manifest {pfad} unlesbar: {fehler}") from fehler
     tickets = daten.get("tickets") if isinstance(daten, dict) else None
-    if not isinstance(tickets, dict) or not all(
-        isinstance(v, dict) for v in tickets.values()
-    ):
-        raise ManifestKaputt(
-            f"Manifest {pfad}: Feld tickets ist kein Objekt {{Nummer: {{…}}}}"
-        )
+    if not isinstance(tickets, dict) or not all(isinstance(v, dict) for v in tickets.values()):
+        raise ManifestKaputt(f"Manifest {pfad}: Feld tickets ist kein Objekt {{Nummer: {{…}}}}")
     for nummer, ticket in tickets.items():
         namen = ticket.get("schluessel")
-        if namen is not None and not (
-            isinstance(namen, list) and all(isinstance(n, str) for n in namen)
-        ):
-            raise ManifestKaputt(
-                f"Manifest {pfad}: Feld tickets.{nummer}.schluessel ist keine Liste von Texten"
-            )
+        if namen is not None and not (isinstance(namen, list) and all(isinstance(n, str) for n in namen)):
+            raise ManifestKaputt(f"Manifest {pfad}: Feld tickets.{nummer}.schluessel ist keine Liste von Texten")
     return {str(k): v for k, v in tickets.items()}
 
 
@@ -714,9 +680,7 @@ def _benoetigt(
         namen.update(str(n) for n in ticket.get("schluessel", []) or [])
         if not bekannt:
             continue
-        text = " ".join(
-            str(ticket.get(feld, "")) for feld in ("title", "umfang", "files", "body")
-        )
+        text = " ".join(str(ticket.get(feld, "")) for feld in ("title", "umfang", "files", "body"))
         if unvollstaendig:
             nicht_geprueft.append(f"#{nummer}")
         else:
@@ -726,13 +690,8 @@ def _benoetigt(
                 unvollstaendig = f"Issue #{nummer} nicht lesbar (gh nicht installiert)"
                 behebung = "GitHub-CLI gh installieren und `gh auth status` prüfen, dann erneut prüfen"
             except (OSError, subprocess.TimeoutExpired, RuntimeError) as fehler:
-                unvollstaendig = (
-                    f"Issue #{nummer} nicht lesbar "
-                    f"({_kurz(_schwaerzen(str(fehler), geheim), 120)})"
-                )
-                behebung = (
-                    "`gh auth status` prüfen (Anmeldung/Netz), dann erneut prüfen"
-                )
+                unvollstaendig = f"Issue #{nummer} nicht lesbar ({_kurz(_schwaerzen(str(fehler), geheim), 120)})"
+                behebung = "`gh auth status` prüfen (Anmeldung/Netz), dann erneut prüfen"
         for name in bekannt:
             if re.search(rf"(?<![A-Za-z0-9_]){re.escape(name)}(?![A-Za-z0-9_])", text):
                 namen.add(name)
@@ -743,7 +702,9 @@ def _benoetigt(
 
 def schluessel_behebung_befehl(ordner: Path) -> str:
     """Befehl, der die Schlüssel aus Bitwarden in ``<ordner>/.env`` schreibt."""
-    return f"{_py_name()} {skill_pfad()}/to_spawn.py nest secrets --ziel {shlex.quote((Path(ordner) / '.env').as_posix())}"
+    return (
+        f"{_py_name()} {skill_pfad()}/to_spawn.py nest secrets --ziel {shlex.quote((Path(ordner) / '.env').as_posix())}"
+    )
 
 
 def schluessel_pruefen(
@@ -790,12 +751,9 @@ def schluessel_pruefen(
             fehlend.append(name)
     if nur_umgebung:
         warnungen.append(
-            "nur in der Umgebung dieses Prozesses, nicht in .env (bau lädt sie evtl. nicht): "
-            + ", ".join(nur_umgebung)
+            "nur in der Umgebung dieses Prozesses, nicht in .env (bau lädt sie evtl. nicht): " + ", ".join(nur_umgebung)
         )
-    hinweis = (
-        "" if tickets is not None else " (kein Manifest, nur Konfig-Schlüssel geprüft)"
-    )
+    hinweis = "" if tickets is not None else " (kein Manifest, nur Konfig-Schlüssel geprüft)"
     warnung = (" — Warnung: " + "; ".join(warnungen)) if warnungen else ""
     zusatz: list[Befund] = []
     if tickets is None and manifest_pflicht:
@@ -819,9 +777,7 @@ def schluessel_pruefen(
     if not fehlend:
         liste = ", ".join(benoetigt) if benoetigt else "keine nötig"
         return [
-            Befund(
-                "schlüssel", True, f"Schlüssel vorhanden: {liste}{hinweis}{warnung}"
-            ),
+            Befund("schlüssel", True, f"Schlüssel vorhanden: {liste}{hinweis}{warnung}"),
             *zusatz,
         ]
     befehl = schluessel_behebung_befehl(ordner)
@@ -847,9 +803,7 @@ def standard_settings_dateien(ordner: Path) -> list[Path]:
     if sys.platform == "win32":
         verwaltet = Path("C:/Program Files/ClaudeCode/managed-settings.json")
     elif sys.platform == "darwin":
-        verwaltet = Path(
-            "/Library/Application Support/ClaudeCode/managed-settings.json"
-        )
+        verwaltet = Path("/Library/Application Support/ClaudeCode/managed-settings.json")
     else:
         verwaltet = Path("/etc/claude-code/managed-settings.json")
     return [
@@ -906,16 +860,10 @@ def _regeln(settings_dateien: Iterable[Path]) -> _Regeln:
         regeln = (daten.get("permissions", {}) or {}).get("deny", []) or []
         deny.extend(str(r) for r in regeln if isinstance(r, str))
         for eintrag in (daten.get("hooks", {}) or {}).get("PreToolUse", []) or []:
-            if not isinstance(eintrag, dict) or not _passt(
-                str(eintrag.get("matcher", "") or "")
-            ):
+            if not isinstance(eintrag, dict) or not _passt(str(eintrag.get("matcher", "") or "")):
                 continue
             for hook in eintrag.get("hooks", []) or []:
-                if (
-                    isinstance(hook, dict)
-                    and hook.get("type", "command") == "command"
-                    and hook.get("command")
-                ):
+                if isinstance(hook, dict) and hook.get("type", "command") == "command" and hook.get("command"):
                     hooks.append((str(hook["command"]), _timeout(hook.get("timeout"))))
     return _Regeln(hooks, deny, fehler)
 
@@ -1018,9 +966,7 @@ def _probe_eines(
     for hook, timeout in regeln.hooks:
         name = f"Hook `{_kurz(hook, 120)}`"
         try:
-            ergebnis = laeufer(
-                hook, ordner, eingabe, timeout, {"CLAUDE_PROJECT_DIR": str(ordner)}
-            )
+            ergebnis = laeufer(hook, ordner, eingabe, timeout, {"CLAUDE_PROJECT_DIR": str(ordner)})
         except subprocess.TimeoutExpired:
             return _rot(
                 werkzeug,
@@ -1042,9 +988,7 @@ def _probe_eines(
             )
         if ergebnis.returncode != 0:
             fehlertext = _kurz(_schwaerzen(ergebnis.stderr, geheim), 120)
-            warnungen.append(
-                f"Hook `{_kurz(hook, 80)}` Exit {ergebnis.returncode} (kein Block): {fehlertext}"
-            )
+            warnungen.append(f"Hook `{_kurz(hook, 80)}` Exit {ergebnis.returncode} (kein Block): {fehlertext}")
     for warnung in warnungen:
         log.warning("%s: %s", werkzeug.name, warnung)
     trocken = befehl + werkzeug.trocken
@@ -1085,22 +1029,12 @@ def werkzeug_probe(
 ) -> list[Befund]:
     """Spielt jedes Aufseher-Werkzeug durch deny-Regeln, PreToolUse-Hooks und trocken."""
     ordner = Path(ordner)
-    dateien = (
-        standard_settings_dateien(ordner)
-        if settings_dateien is None
-        else list(settings_dateien)
-    )
+    dateien = standard_settings_dateien(ordner) if settings_dateien is None else list(settings_dateien)
     regeln = _regeln(dateien)
-    befunde = [
-        Befund("werkzeug", False, text, "Settings-Datei reparieren (gültiges JSON)")
-        for text in regeln.fehler
-    ]
+    befunde = [Befund("werkzeug", False, text, "Settings-Datei reparieren (gültiges JSON)") for text in regeln.fehler]
     ticket = _beispiel_ticket(ordner, spec)
     geheim = _geheime_werte(ordner, environ, spec)
-    return befunde + [
-        _probe_eines(w, ordner, spec, ticket, regeln, laeufer, geheim)
-        for w in werkzeuge
-    ]
+    return befunde + [_probe_eines(w, ordner, spec, ticket, regeln, laeufer, geheim) for w in werkzeuge]
 
 
 # --- Gesamt --------------------------------------------------------------------
@@ -1125,12 +1059,8 @@ def pruefe(
     return [
         venv_sicherstellen(ordner, environ, spec),
         *konfig_pruefen(ordner),
-        *schluessel_pruefen(
-            ordner, spec, environ, issue_leser, manifest_pflicht=manifest_pflicht
-        ),
-        *werkzeug_probe(
-            ordner, spec, settings_dateien, laeufer, werkzeuge, environ=environ
-        ),
+        *schluessel_pruefen(ordner, spec, environ, issue_leser, manifest_pflicht=manifest_pflicht),
+        *werkzeug_probe(ordner, spec, settings_dateien, laeufer, werkzeuge, environ=environ),
     ]
 
 
@@ -1158,9 +1088,7 @@ def gate(
     """
     umgebung = os.environ if environ is None else environ
     if umgebung.get(SCHALTER, "").strip().lower() == "aus":
-        log.warning(
-            "Startklar-Prüfung abgeschaltet (%s=aus) — Start ohne Prüfung.", SCHALTER
-        )
+        log.warning("Startklar-Prüfung abgeschaltet (%s=aus) — Start ohne Prüfung.", SCHALTER)
         return 0
     if pruefer is None:
         befunde = pruefe(Path(ordner), spec, manifest_pflicht=True)

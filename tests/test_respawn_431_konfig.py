@@ -88,9 +88,7 @@ def test_respawn_startet_ueber_bau_wie_capo(umgebung: tuple[Path, Path]) -> None
     assert cwd == str(repo)
 
 
-def test_bau_mit_respawn_schaltern_gibt_volle_konfiguration(
-    umgebung: tuple[Path, Path], welt: dict[str, Path]
-) -> None:
+def test_bau_mit_respawn_schaltern_gibt_volle_konfiguration(umgebung: tuple[Path, Path], welt: dict[str, Path]) -> None:
     _cwd, befehl = _respawn_befehl(umgebung)
     schalter = _bau_schalter(befehl, TICKET)
 
@@ -127,9 +125,7 @@ def test_bau_mit_respawn_schaltern_gibt_volle_konfiguration(
     umg = json.loads((tmp / "fake" / "umgebung.json").read_text(encoding="utf-8"))
 
     # Settings mit Frage-Sperre (#321) und Stop-Hooks.
-    settings = json.loads(
-        Path(argv[argv.index("--settings") + 1]).read_text(encoding="utf-8")
-    )
+    settings = json.loads(Path(argv[argv.index("--settings") + 1]).read_text(encoding="utf-8"))
     assert "AskUserQuestion" in settings["permissions"]["deny"]
     assert settings["hooks"]["Stop"]
     assert settings["skillOverrides"]

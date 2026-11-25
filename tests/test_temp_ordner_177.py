@@ -144,7 +144,9 @@ def _wache_vorbereiten(
     return modul
 
 
-def _ticket_probe_repo(tmp_path: Path, ticket: int, *, repo_slug: str = TEST_REPO, test_text: str | None = None) -> Path:
+def _ticket_probe_repo(
+    tmp_path: Path, ticket: int, *, repo_slug: str = TEST_REPO, test_text: str | None = None
+) -> Path:
     """Python-Probe-Repo unter ``wt-<ticket>`` mit GitHub-Origin und Zweig ``ticket/<ticket>-probe``."""
     ordner = _probe_py(tmp_path / f"wt-{ticket}", test_text="assert addiere(2, 3) == 5")
     if test_text is not None:
@@ -167,9 +169,7 @@ def _ticket_probe_repo(tmp_path: Path, ticket: int, *, repo_slug: str = TEST_REP
 # --- 1. Bau-Sitzung ------------------------------------------------------------------
 
 
-def test_bau_sitzung_bekommt_markierten_ticket_temp_ordner(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_bau_sitzung_bekommt_markierten_ticket_temp_ordner(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     wurzel = _wurzel(tmp_path, monkeypatch, set())
     bau = _bau_vorbereiten(tmp_path, monkeypatch)
 
@@ -208,9 +208,7 @@ def test_bau_sitzung_bekommt_markierten_ticket_temp_ordner(
 # --- 2. Aufseher-Sitzung -------------------------------------------------------------
 
 
-def test_aufseher_sitzung_bekommt_markierten_spec_temp_ordner(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_aufseher_sitzung_bekommt_markierten_spec_temp_ordner(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     wurzel = _wurzel(tmp_path, monkeypatch, set())
     wache = _wache_vorbereiten(tmp_path, monkeypatch)
 

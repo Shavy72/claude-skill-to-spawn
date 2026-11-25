@@ -369,9 +369,7 @@ def test_vorfall_alter_rollenname_ist_kein_neuer_vorfall(monkeypatch: pytest.Mon
     assert alt.schluessel() == neu.schluessel()
 
 
-def test_aktive_dateien_ueberspringt_unter_pycache_und_caches(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_aktive_dateien_ueberspringt_unter_pycache_und_caches(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """#532: verschachtelte ``__pycache__``/``.ruff_cache``-Reste zählen nicht als aktive Skill-Dateien."""
     (tmp_path / "nest" / "__pycache__").mkdir(parents=True)
     (tmp_path / "nest" / "sauber.sh").write_text("echo ok\n", encoding="utf-8")

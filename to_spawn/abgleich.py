@@ -158,11 +158,7 @@ class VergleichErgebnis:
 
     def text(self) -> str:
         if self.gleich:
-            hinweis = (
-                f" ({len(self.ausgenommen)} gewollt verschieden)"
-                if self.ausgenommen
-                else ""
-            )
+            hinweis = f" ({len(self.ausgenommen)} gewollt verschieden)" if self.ausgenommen else ""
             return f"Abgleich: keine Unterschiede gefunden{hinweis}."
         zeilen = [f"Abgleich: {len(self.abweichungen)} Unterschied(e) gefunden:"]
         zeilen.extend(a.zeile() for a in self.abweichungen)
@@ -198,9 +194,7 @@ class AngleichErgebnis:
             zeilen.append(f"Sicherungen: {len(self.sicherungen)}")
             zeilen.extend(f"- {pfad}" for pfad in self.sicherungen)
         if self.uebersprungen:
-            zeilen.append(
-                f"Unverändert im Ziel (fehlt in der Quelle): {len(self.uebersprungen)}"
-            )
+            zeilen.append(f"Unverändert im Ziel (fehlt in der Quelle): {len(self.uebersprungen)}")
             zeilen.extend(a.zeile() for a in self.uebersprungen)
         return "\n".join(zeilen)
 
@@ -242,9 +236,7 @@ def _muster_text(eintrag: str | Ausnahme) -> str:
     return regeln.normal(roh)
 
 
-def ist_gewollt_verschieden(
-    kennung: str, ausnahmen: Sequence[str | Ausnahme] = GEWOLLT_VERSCHIEDEN
-) -> bool:
+def ist_gewollt_verschieden(kennung: str, ausnahmen: Sequence[str | Ausnahme] = GEWOLLT_VERSCHIEDEN) -> bool:
     """Prüft, ob Datei-Pfad oder ``settings.json:<Schlüssel>`` in „gewollt verschieden“ steht."""
     norm_kennung = _muster_text(kennung)
     for eintrag in ausnahmen:
@@ -325,9 +317,7 @@ def _validiere_settings_objekt(daten: Any, quelle_name: str) -> dict[str, Any]:
             raise AbgleichFehler(f"{quelle_name}: Feld 'hooks' muss ein JSON-Objekt sein.")
         for ereignis, bloecke in hooks.items():
             if not isinstance(bloecke, list):
-                raise AbgleichFehler(
-                    f"{quelle_name}: Feld 'hooks.{ereignis}' muss eine JSON-Liste sein."
-                )
+                raise AbgleichFehler(f"{quelle_name}: Feld 'hooks.{ereignis}' muss eine JSON-Liste sein.")
     return daten
 
 
@@ -524,9 +514,7 @@ def _sicherung_anlegen(datei: Path, stempel: str) -> Path:
 def _schreibe_bytes_atomar(ziel: Path, inhalt: bytes, vorlage: Path | None = None) -> None:
     """Schreibt Rohdaten über eine Zwischendatei im selben Ordner + ``os.replace``."""
     ziel.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp_name = tempfile.mkstemp(
-        dir=ziel.parent, prefix=f".{ziel.name}.", suffix=".tmp"
-    )
+    fd, tmp_name = tempfile.mkstemp(dir=ziel.parent, prefix=f".{ziel.name}.", suffix=".tmp")
     tmp = Path(tmp_name)
     try:
         with os.fdopen(fd, "wb") as strom:
@@ -558,16 +546,12 @@ def angleichen(
     Vor jedem Schreibvorgang werden alle Pfade und ``settings.json`` (Quelle, Ziel und
     Mischergebnis) vollständig geprüft — bei einem Fehler bleibt das Ziel komplett unverändert.
     """
-    vergleich = vergleichen(
-        quelle, ziel, dateien=dateien, gewollt_verschieden=gewollt_verschieden
-    )
+    vergleich = vergleichen(quelle, ziel, dateien=dateien, gewollt_verschieden=gewollt_verschieden)
     stempel = zeit or datetime.now().strftime("%Y%m%d-%H%M%S")
 
     # Vorab-Prüfung und Planung im Speicher: erst nach vollständiger Gültigkeit wird geschrieben.
     settings_abw = [
-        a
-        for a in vergleich.abweichungen
-        if a.pfad == SETTINGS_DATEI and a.art in ("fehlt_ziel", "abweichung")
+        a for a in vergleich.abweichungen if a.pfad == SETTINGS_DATEI and a.art in ("fehlt_ziel", "abweichung")
     ]
     gemergte_settings: dict[str, Any] | None = None
     if settings_abw:
@@ -704,9 +688,7 @@ def lauf(args: argparse.Namespace) -> int:
         ziel = args.ziel.expanduser()
 
         if args.angleichen:
-            erg_sync = angleichen(
-                quelle, ziel, dateien=dateien, gewollt_verschieden=ausnahmen
-            )
+            erg_sync = angleichen(quelle, ziel, dateien=dateien, gewollt_verschieden=ausnahmen)
             if args.json:
                 sys.stdout.write(json.dumps(erg_sync.als_dict(), ensure_ascii=False, indent=2) + "\n")
             else:

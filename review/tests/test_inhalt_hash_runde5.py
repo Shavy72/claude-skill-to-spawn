@@ -25,19 +25,48 @@ def test_gleiche_zeilen_andere_stelle_anderer_hash() -> None:
 
 def test_modus_aenderung_zaehlt() -> None:
     ohne = _diff("@@ -1 +1 @@", "-a", "+b")
-    mit = DateiDiff("a.py", 1, [], ["diff --git a/a.py b/a.py", "old mode 100644", "new mode 100755",
-                                    "index 1..2", "@@ -1 +1 @@", "-a", "+b"])
+    mit = DateiDiff(
+        "a.py",
+        1,
+        [],
+        ["diff --git a/a.py b/a.py", "old mode 100644", "new mode 100755", "index 1..2", "@@ -1 +1 @@", "-a", "+b"],
+    )
     assert inhalt_hash(ohne) != inhalt_hash(mit)
 
 
 def test_untracked_gleich_new_file() -> None:
     untracked = DateiDiff("n.py", 2, [], ["untracked n.py", "+a", "+b"])
-    neu = DateiDiff("n.py", 2, [], ["diff --git a/n.py b/n.py", "new file mode 100644", "index 0000000..abc",
-                                    "--- /dev/null", "+++ b/n.py", "@@ -0,0 +1,2 @@", "+a", "+b"])
+    neu = DateiDiff(
+        "n.py",
+        2,
+        [],
+        [
+            "diff --git a/n.py b/n.py",
+            "new file mode 100644",
+            "index 0000000..abc",
+            "--- /dev/null",
+            "+++ b/n.py",
+            "@@ -0,0 +1,2 @@",
+            "+a",
+            "+b",
+        ],
+    )
     assert inhalt_hash(untracked) == inhalt_hash(neu) != ""
     eins_u = DateiDiff("n.py", 1, [], ["untracked n.py", "+a"])
-    eins_n = DateiDiff("n.py", 1, [], ["diff --git a/n.py b/n.py", "new file mode 100644", "index 0..1",
-                                       "--- /dev/null", "+++ b/n.py", "@@ -0,0 +1 @@", "+a"])
+    eins_n = DateiDiff(
+        "n.py",
+        1,
+        [],
+        [
+            "diff --git a/n.py b/n.py",
+            "new file mode 100644",
+            "index 0..1",
+            "--- /dev/null",
+            "+++ b/n.py",
+            "@@ -0,0 +1 @@",
+            "+a",
+        ],
+    )
     assert inhalt_hash(eins_u) == inhalt_hash(eins_n)
 
 
@@ -46,11 +75,14 @@ def test_kaputte_und_alte_belege_kein_absturz(repo: Path, umgebung) -> None:  # 
     ordner = repo / ".review"
     ordner.mkdir(exist_ok=True)
     (ordner / "beleg-aaaaaaa-sitzung.json").write_text(
-        json.dumps({"dateien": None, "inhalt_hashes": {"rechnen.py": "x"}}), encoding="utf-8")
+        json.dumps({"dateien": None, "inhalt_hashes": {"rechnen.py": "x"}}), encoding="utf-8"
+    )
     (ordner / "beleg-bbbbbbb-sitzung.json").write_text(
-        json.dumps({"dateien": [["nicht", "hashbar"]], "inhalt_hashes": {"rechnen.py": "x"}}), encoding="utf-8")
+        json.dumps({"dateien": [["nicht", "hashbar"]], "inhalt_hashes": {"rechnen.py": "x"}}), encoding="utf-8"
+    )
     (ordner / "beleg-ccccccc-sitzung.json").write_text(
-        json.dumps({"dateien": ["rechnen.py"], "datei_hashes": {"rechnen.py": "x"}}), encoding="utf-8")
+        json.dumps({"dateien": ["rechnen.py"], "datei_hashes": {"rechnen.py": "x"}}), encoding="utf-8"
+    )
     (ordner / "beleg-ddddddd-sitzung.json").write_text("[1, 2]", encoding="utf-8")
     assert beleg_nach_inhalt(repo, "sitzung", ["rechnen.py"], {"rechnen.py": "x"}) is None
     (repo / "rechnen.py").write_text("def eins():\n    return 5\n", encoding="utf-8")

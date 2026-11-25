@@ -66,9 +66,7 @@ def _windows_peb_welt(
     monkeypatch.setattr(prozessbaum, "_ist_weg_windows", lambda _pid: False)
 
 
-def test_fremder_rechnerprozess_ohne_cwd_griff_sperrt_welt_nicht(
-    welt: Welt, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_fremder_rechnerprozess_ohne_cwd_griff_sperrt_welt_nicht(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
     """Genau der #649-Befund: fremder Prozess 9648 ohne cwd-Griff darf ``welt`` nicht sperren."""
     wt = welt.worktree(649)
     welt.ticket(649, "CLOSED", 48)
@@ -86,9 +84,7 @@ def test_fremder_rechnerprozess_ohne_cwd_griff_sperrt_welt_nicht(
     assert not wt.exists()
 
 
-def test_eigener_kindprozess_und_enkel_im_ordner_sperren_weiter(
-    welt: Welt, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_eigener_kindprozess_und_enkel_im_ordner_sperren_weiter(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
     """Vom Test gestartete Kinder (und Enkel, z. B. MSYS) im Ordner halten den Ordner weiter."""
     wt = welt.worktree(650)
     welt.ticket(650, "CLOSED", 48)
@@ -139,9 +135,7 @@ def test_eigener_kindprozess_mit_unlesbarem_peb_sperrt_auch_mit_repos(
     assert wt.is_dir()
 
 
-def test_recycelte_eltern_pid_zaehlt_nicht_als_eigenes_kind(
-    welt: Welt, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_recycelte_eltern_pid_zaehlt_nicht_als_eigenes_kind(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
     """Ein fremder Prozess, der vor ``os.getpid()`` startete, ist trotz gleicher Eltern-PID fremd."""
     wt = welt.worktree(652)
     welt.ticket(652, "CLOSED", 48)
@@ -194,9 +188,7 @@ def test_kein_echtes_powershell_ohne_attrappe_aber_attrappe_und_direktaufruf_wir
     assert len(aufrufe) == 2
 
 
-def test_peb_pruefung_sieht_fremden_prozess_9648_nicht(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_peb_pruefung_sieht_fremden_prozess_9648_nicht(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Direkte Probe auf den PEB-Pfad: fremder Prozess 9648 ohne cwd-Griff löst kein Bleibt aus."""
     ordner = tmp_path / "wt-6495"
     ordner.mkdir()
@@ -207,11 +199,10 @@ def test_peb_pruefung_sieht_fremden_prozess_9648_nicht(
     monkeypatch.setattr(
         prozessbaum,
         "_arbeitsordner_drin",
-        lambda pid, _z, _k: (_ for _ in ()).throw(OSError(f"Prozess {pid}: kein cwd-Griff im PEB"))
-        if pid == 9648
-        else False,
+        lambda pid, _z, _k: (
+            (_ for _ in ()).throw(OSError(f"Prozess {pid}: kein cwd-Griff im PEB")) if pid == 9648 else False
+        ),
     )
     monkeypatch.setattr(prozessbaum, "_ist_weg_windows", lambda _pid: False)
 
     hausmeister_windows._kein_arbeitsordner_drin(ordner)
-

@@ -73,21 +73,23 @@ def test_ein_unterschied_in_settings_schluessel_wird_genau_gemeldet(tmp_path: Pa
         quelle / "settings.json",
         {
             "env": {"CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH": "3"},
-            "hooks": {"PostToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "filter-test-output.sh"}]}]},
+            "hooks": {
+                "PostToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "filter-test-output.sh"}]}]
+            },
         },
     )
     _schreibe_json(
         ziel / "settings.json",
         {
-            "hooks": {"PostToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "filter-test-output.sh"}]}]},
+            "hooks": {
+                "PostToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "filter-test-output.sh"}]}]
+            },
         },
     )
 
     erg = abgleich.vergleichen(quelle, ziel)
     assert not erg.gleich
-    assert [a.kennung for a in erg.abweichungen] == [
-        "settings.json:env.CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH"
-    ]
+    assert [a.kennung for a in erg.abweichungen] == ["settings.json:env.CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH"]
     assert erg.abweichungen[0].art == "fehlt_ziel"
 
 
@@ -144,9 +146,7 @@ def test_benutzerdefinierte_ausnahme_unterdrueckt_datei_mit_windows_trennern(tmp
     assert erg.abweichungen == ()
 
 
-def test_keine_geheimnisse_aus_env_in_ausgabe_und_log(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture
-) -> None:
+def test_keine_geheimnisse_aus_env_in_ausgabe_und_log(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     """Soll 4: Werte unter ``env`` erscheinen niemals in Text-, JSON-Ausgabe oder Logs."""
     abgleich = importlib.import_module("to_spawn.abgleich")
     geheim_pc = "SUPER_GEHEIMER_API_TOKEN_PC_987654"
@@ -201,9 +201,7 @@ def test_angleichen_schreibt_sicherung_und_bewahrt_gewollt_verschiedenes(tmp_pat
                 "CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH": "3",
             },
             "hooks": {
-                "PostToolUse": [
-                    {"matcher": "Bash", "hooks": [{"type": "command", "command": "filter-test-output.sh"}]}
-                ]
+                "PostToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "filter-test-output.sh"}]}]
             },
             "permissions": {"allow": ["Bash(pc-only:*)"]},
         },
@@ -272,9 +270,7 @@ def test_angleichen_laesst_bei_ungueltiger_settings_json_alles_unveraendert(
     _schreibe_text(quelle / "hooks" / "filter-test-output.sh", "# Hook-Skript\necho neu\n")
     _schreibe_text(ziel / "hooks" / "filter-test-output.sh", "# Hook-Skript\necho alt\n")
 
-    (quelle if kaputt_seite == "quelle" else ziel).joinpath("settings.json").write_text(
-        kaputt_inhalt, encoding="utf-8"
-    )
+    (quelle if kaputt_seite == "quelle" else ziel).joinpath("settings.json").write_text(kaputt_inhalt, encoding="utf-8")
     vorher_settings = (ziel / "settings.json").read_bytes()
     vorher_hook = (ziel / "hooks" / "filter-test-output.sh").read_bytes()
 
@@ -287,9 +283,7 @@ def test_angleichen_laesst_bei_ungueltiger_settings_json_alles_unveraendert(
     assert list(ziel.rglob("*.bak-*")) == []
 
 
-def test_angleichen_nutzt_atomares_schreiben_fuer_settings(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_angleichen_nutzt_atomares_schreiben_fuer_settings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """``settings.json`` wird über :func:`to_spawn.manifest.schreibe_atomar` geschrieben."""
     abgleich = importlib.import_module("to_spawn.abgleich")
     manifest = importlib.import_module("to_spawn.manifest")
@@ -322,9 +316,7 @@ def test_boese_dateipfade_abgelehnt(tmp_path: Path) -> None:
             abgleich.vergleichen(quelle, ziel, dateien=(boese,))
 
 
-def test_cli_nur_lesen_standard_und_angleichen_schalter(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_cli_nur_lesen_standard_und_angleichen_schalter(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """CLI ``to_spawn.py abgleich``: Standard nur lesen (Exit 3 bei Abweichung), ``--angleichen`` ändert."""
     cli = _lade_cli()
     quelle = tmp_path / "pc"
@@ -382,9 +374,7 @@ def test_cli_echter_prozess_aufruf(tmp_path: Path) -> None:
     assert lauf.returncode == 0, lauf.stderr
 
 
-def test_ausnahmen_datei_json_und_text_sowie_cli_json(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_ausnahmen_datei_json_und_text_sowie_cli_json(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """``--ausnahmen-datei`` (JSON und Text) und ``--json`` arbeiten ohne Geheimnisse."""
     abgleich = importlib.import_module("to_spawn.abgleich")
     cli = _lade_cli()
@@ -401,9 +391,7 @@ def test_ausnahmen_datei_json_und_text_sowie_cli_json(
 
     aus_json = tmp_path / "ausnahmen.json"
     _schreibe_json(aus_json, {"gewollt_verschieden": ["settings.json:env.EIGENES_ENV"]})
-    code = cli.main(
-        ["abgleich", str(quelle), str(ziel), "--ausnahmen-datei", str(aus_json), "--json"]
-    )
+    code = cli.main(["abgleich", str(quelle), str(ziel), "--ausnahmen-datei", str(aus_json), "--json"])
     aus = capsys.readouterr()
     assert code == 3
     daten = json.loads(aus.out)
@@ -467,4 +455,3 @@ def test_angleichen_loescht_keine_ziel_einzeldateien_oder_schluessel(tmp_path: P
     }
     assert (ziel / "hooks" / "filter-test-output.sh").is_file()
     assert json.loads((ziel / "settings.json").read_text(encoding="utf-8")) == {"a": 1, "nur_server": True}
-

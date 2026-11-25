@@ -83,7 +83,9 @@ def test_keine_folge_session_fuer_fertig_gebautes(repo: Path, tmp_path: Path, mo
     assert sum(1 for z in zeilen if z["typ"] == "session_start") == 1
 
 
-def test_folge_session_laeuft_bei_lese_fehler_weiter(repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:  # noqa: F811
+def test_folge_session_laeuft_bei_lese_fehler_weiter(
+    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:  # noqa: F811
     """Fail-open: ein Lese-Fehler hält keinen laufenden Bau an (die Start-Tür fängt es danach ab)."""
     _labels(tmp_path, {}, monkeypatch)
     monkeypatch.setenv("GH_STUB_KAPUTT", TICKETS[0])

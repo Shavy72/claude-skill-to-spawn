@@ -21,12 +21,7 @@ def png(breite: int = 400, hoehe: int = 240) -> bytes:
     """Echte PNG-Datei (graue Fläche) in gewünschter Größe."""
 
     def chunk(art: bytes, daten: bytes) -> bytes:
-        return (
-            struct.pack(">I", len(daten))
-            + art
-            + daten
-            + struct.pack(">I", zlib.crc32(art + daten))
-        )
+        return struct.pack(">I", len(daten)) + art + daten + struct.pack(">I", zlib.crc32(art + daten))
 
     zeile = b"\0" + b"\x80" * breite
     return (

@@ -304,7 +304,9 @@ def test_neuer_teil_lauf_verdeckt_aelteren_roten_lauf_nicht(wa: ModuleType, welt
     (ordner / "7_breit.txt").write_text("3 failed, 37 passed in 9s\n", encoding="utf-8")
     alt = {"GIT_AUTHOR_DATE": "2026-11-01T10:00:00+01:00", "GIT_COMMITTER_DATE": "2026-11-01T10:00:00+01:00"}
     subprocess.run(["git", "add", "-A"], cwd=klon, check=True, capture_output=True)
-    subprocess.run(["git", "commit", "-qm", "breit"], cwd=klon, check=True, capture_output=True, env={**os.environ, **alt})
+    subprocess.run(
+        ["git", "commit", "-qm", "breit"], cwd=klon, check=True, capture_output=True, env={**os.environ, **alt}
+    )
     (ordner / "7_gruen.txt").write_text("5 passed in 1s\n", encoding="utf-8")
     _git(klon, "add", "-A")
     _git(klon, "commit", "-q", "-m", "gruen")

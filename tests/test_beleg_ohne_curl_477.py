@@ -51,9 +51,7 @@ def test_start_text_der_bau_session_nennt_beleg_weg_ohne_curl(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.delenv("BAU_AUFTRAG", raising=False)
-    vorlage = json.loads(
-        (SKILL / "repo-scripts" / "_default.json").read_text(encoding="utf-8")
-    )["prompt_template"]
+    vorlage = json.loads((SKILL / "repo-scripts" / "_default.json").read_text(encoding="utf-8"))["prompt_template"]
     bau = _lade("bau_beleg_477", SKILL / "skripte" / "bau.py")
     text = bau.build_prompt(vorlage, "12", "1", "T", "- k", konfig={})
     assert MERKMAL_KEIN_CURL in text and MERKMAL_PYTHON in text

@@ -44,12 +44,8 @@ def _git(ordner: Path, *args: str) -> None:
 def _probe_py(ordner: Path, test_text: str = "assert addiere(1, 2) == 3") -> Path:
     """Frisches Python-Repo: Code, ein Test, Commit + Tag ``base`` — kein ``.to-spawn/``."""
     ordner.mkdir()
-    (ordner / "pytest.ini").write_text(
-        "[pytest]\ntestpaths = tests\n", encoding="utf-8"
-    )
-    (ordner / "rechnen.py").write_text(
-        "def addiere(a, b):\n    return a + b\n", encoding="utf-8"
-    )
+    (ordner / "pytest.ini").write_text("[pytest]\ntestpaths = tests\n", encoding="utf-8")
+    (ordner / "rechnen.py").write_text("def addiere(a, b):\n    return a + b\n", encoding="utf-8")
     (ordner / "tests").mkdir()
     (ordner / "tests" / "test_rechnen.py").write_text(
         textwrap.dedent(f"""\
@@ -98,9 +94,7 @@ def test_gruen_im_frischen_repo_ohne_vorarbeit(tmp_path: Path) -> None:
     stufe = zeile["stufen"][0]
     assert (stufe["name"], stufe["adapter"], stufe["lief"]) == ("voll", "py", True)
     assert {"grund", "dauer_s", "befehl"} <= stufe.keys()
-    protokoll = (probe / ".to-spawn" / "pruef" / "protokoll.jsonl").read_text(
-        encoding="utf-8"
-    )
+    protokoll = (probe / ".to-spawn" / "pruef" / "protokoll.jsonl").read_text(encoding="utf-8")
     assert json.loads(protokoll.strip().splitlines()[-1]) == zeile
     assert not (probe / ".to-spawn" / "config.json").exists()
     status = subprocess.run(
@@ -137,17 +131,13 @@ def test_fehlendes_pytest_ist_gate_fehler_nicht_rot(tmp_path: Path) -> None:
     assert "pytest fehlt" in zeile["fehler_kurz"]
 
 
-def test_fehlendes_npm_ist_gate_fehler(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_fehlendes_npm_ist_gate_fehler(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from to_spawn import pruef
     from to_spawn.pruef import adapter_node
 
     probe = tmp_path / "node"
     probe.mkdir()
-    (probe / "package.json").write_text(
-        '{"scripts": {"test": "vitest run"}}', encoding="utf-8"
-    )
+    (probe / "package.json").write_text('{"scripts": {"test": "vitest run"}}', encoding="utf-8")
     _git(probe, "init", "-q")
     _git(probe, "add", "-A")
     _git(probe, "commit", "-qm", "base")
@@ -184,17 +174,13 @@ def test_ungespeicherter_arbeitsbaum_ist_gate_fehler_nicht_gruen(
     """Roter Commit + lokal reparierter Baum darf nie Grün für den roten SHA ergeben (#100)."""
     probe = _probe_py(tmp_path / "py", test_text="assert addiere(2, 2) == 5")
     test_datei = probe / "tests" / "test_rechnen.py"
-    test_datei.write_text(
-        test_datei.read_text(encoding="utf-8").replace("== 5", "== 4"), encoding="utf-8"
-    )
+    test_datei.write_text(test_datei.read_text(encoding="utf-8").replace("== 5", "== 4"), encoding="utf-8")
     erg = _tuer(probe, "base", "HEAD")
     assert erg.returncode == 2, erg.stdout + erg.stderr
     assert "Arbeitsbaum nicht gespeichert" in _zeile(erg)["fehler_kurz"]
     test_datei.write_text("x", encoding="utf-8")
     _git(probe, "checkout", "--", "tests/test_rechnen.py")
-    (probe / "helfer.py").write_text(
-        "X = 1\n", encoding="utf-8"
-    )  # neu, nicht committet
+    (probe / "helfer.py").write_text("X = 1\n", encoding="utf-8")  # neu, nicht committet
     erg = _tuer(probe, "base", "HEAD")
     assert erg.returncode == 2, erg.stdout + erg.stderr
     assert "helfer.py" in _zeile(erg)["fehler_kurz"]
@@ -203,8 +189,6 @@ def test_ungespeicherter_arbeitsbaum_ist_gate_fehler_nicht_gruen(
 def test_cache_ordner_nach_lauf_machen_baum_nicht_ungespeichert(tmp_path: Path) -> None:
     probe = _probe_py(tmp_path / "py")
     assert _tuer(probe, "base", "HEAD").returncode == 0
-    assert (probe / ".pytest_cache").exists() or (
-        probe / "tests" / "__pycache__"
-    ).exists()
+    assert (probe / ".pytest_cache").exists() or (probe / "tests" / "__pycache__").exists()
     erg = _tuer(probe, "base", "HEAD")
     assert erg.returncode == 0, erg.stdout + erg.stderr

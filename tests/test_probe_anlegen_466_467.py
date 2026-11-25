@@ -23,12 +23,24 @@ brauche_bash = pytest.mark.skipif(BASH is None or GIT is None, reason="braucht b
 
 @brauche_bash
 def test_install_sh_kopiert_probe(tmp_path: Path) -> None:
-    env = dict(os.environ, HOME=str(tmp_path), USERPROFILE=str(tmp_path), PYTHONIOENCODING="utf-8",
-               TO_SPAWN_PY=sys.executable)
+    env = dict(
+        os.environ, HOME=str(tmp_path), USERPROFILE=str(tmp_path), PYTHONIOENCODING="utf-8", TO_SPAWN_PY=sys.executable
+    )
     lauf = subprocess.run(
-        [str(BASH), str(SKILL / "install.sh"), "--skills", str(tmp_path / "skills"),
-         "--claude-md", str(tmp_path / "CLAUDE.md")],
-        env=env, capture_output=True, text=True, encoding="utf-8", check=False, timeout=300,
+        [
+            str(BASH),
+            str(SKILL / "install.sh"),
+            "--skills",
+            str(tmp_path / "skills"),
+            "--claude-md",
+            str(tmp_path / "CLAUDE.md"),
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+        timeout=300,
     )
     assert lauf.returncode == 0, lauf.stdout + lauf.stderr
     assert (tmp_path / "skills" / "to-spawn" / "probe" / "anlegen.sh").is_file()
@@ -55,16 +67,29 @@ def test_anlegen_github_pusht_main_mit_startcommit(tmp_path: Path) -> None:
     ziel = tmp_path / "lauf"
     env = dict(os.environ, PATH=f"{bin_ordner}{os.pathsep}{os.environ['PATH']}")
     lauf = subprocess.run(
-        [str(BASH), str(SKILL / "probe" / "anlegen.sh"), str(ziel), "mit-staging",
-         "--github", "Shavy72/to-spawn-probe-x-mit"],
-        env=env, capture_output=True, text=True, encoding="utf-8", check=False, timeout=60,
+        [
+            str(BASH),
+            str(SKILL / "probe" / "anlegen.sh"),
+            str(ziel),
+            "mit-staging",
+            "--github",
+            "Shavy72/to-spawn-probe-x-mit",
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+        timeout=60,
     )
     assert lauf.returncode == 0, lauf.stdout + lauf.stderr
-    zweige = subprocess.run([str(GIT), "-C", str(fern), "branch", "--list", "main"],
-                            capture_output=True, text=True, check=True).stdout
+    zweige = subprocess.run(
+        [str(GIT), "-C", str(fern), "branch", "--list", "main"], capture_output=True, text=True, check=True
+    ).stdout
     assert "main" in zweige
-    n = subprocess.run([str(GIT), "-C", str(fern), "rev-list", "--count", "main"],
-                       capture_output=True, text=True, check=True).stdout.strip()
+    n = subprocess.run(
+        [str(GIT), "-C", str(fern), "rev-list", "--count", "main"], capture_output=True, text=True, check=True
+    ).stdout.strip()
     assert int(n) >= 1
 
 
@@ -75,7 +100,11 @@ def test_447_anlegen_schalter_ohne_wert_meldet_klaren_fehler(tmp_path: Path, sch
     ziel = tmp_path / "lauf"
     lauf = subprocess.run(
         [str(BASH), str(SKILL / "probe" / "anlegen.sh"), str(ziel), "mit-staging", schalter],
-        capture_output=True, text=True, encoding="utf-8", check=False, timeout=60,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+        timeout=60,
     )
     assert lauf.returncode == 2, lauf.stdout + lauf.stderr
     assert schalter in lauf.stderr and "Wert" in lauf.stderr, lauf.stderr
@@ -101,9 +130,20 @@ def test_447_anlegen_github_push_fehler_meldet_leeres_fern_repo(tmp_path: Path) 
     ziel = tmp_path / "lauf_push_fehler"
     env = dict(os.environ, PATH=f"{bin_ordner}{os.pathsep}{os.environ['PATH']}")
     lauf = subprocess.run(
-        [str(BASH), str(SKILL / "probe" / "anlegen.sh"), str(ziel), "mit-staging",
-         "--github", "Shavy72/to-spawn-probe-x-mit"],
-        env=env, capture_output=True, text=True, encoding="utf-8", check=False, timeout=60,
+        [
+            str(BASH),
+            str(SKILL / "probe" / "anlegen.sh"),
+            str(ziel),
+            "mit-staging",
+            "--github",
+            "Shavy72/to-spawn-probe-x-mit",
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+        timeout=60,
     )
     assert lauf.returncode == 1, lauf.stdout + lauf.stderr
     assert "git push" in lauf.stderr, lauf.stderr

@@ -191,9 +191,7 @@ def _quelle_anlegen(basis: Path) -> Path:
     return quelle
 
 
-def test_anlegen_schreibt_an_ordner_gebundenen_marker(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_anlegen_schreibt_an_ordner_gebundenen_marker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     wurzel = _wurzel(tmp_path, monkeypatch, set())
     ordner = temp_ordner.anlegen(136, repo=TEST_REPO, von="bau")
     assert ordner.parent == wurzel and ordner.name.startswith("t136-")
@@ -247,9 +245,7 @@ def test_hausmeister_raeumt_markierte_temp_reste_geschlossener_tickets(
     hausmeister.aufraeumen_alles(loeschen=False)
     assert all(p.exists() for p in weg + bleibt), "Probelauf löscht nie"
 
-    prozess = subprocess.Popen(
-        [sys.executable, "-c", "import time; time.sleep(60)"], cwd=platte / "t1600"
-    )
+    prozess = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"], cwd=platte / "t1600")
     try:
         hausmeister.aufraeumen_alles(loeschen=True)
     finally:
@@ -299,9 +295,7 @@ def test_kopierter_ordner_kopierter_marker_und_hardlink_marker_bleiben(
     assert anderer.is_dir() and "Hardlink" in ergebnis[anderer], ergebnis[anderer]
 
 
-def test_symlink_ordner_und_marker_bleiben_mit_grund(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_symlink_ordner_und_marker_bleiben_mit_grund(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     wurzel = _wurzel(tmp_path, monkeypatch, {1070, 1072})
     aussen = tmp_path / "heim" / "t1070"
     aussen.mkdir(parents=True)
@@ -472,7 +466,7 @@ TMP_AUSNAHMEN: dict[str, tuple[tuple[str, ...], str]] = {
     "nest/nest_server.sh": (
         (
             "curl -fsSL https://deb.nodesource.com/setup_22.x -o /tmp/nodesource.sh",
-            'tmux -S /tmp/tmux-$NUTZER_UID/default list-sessions',
+            "tmux -S /tmp/tmux-$NUTZER_UID/default list-sessions",
         ),
         "Einrichtung frischer Server (Node-Installer vor Skill-Setup, System-tmux-Socket)",
     ),
@@ -489,7 +483,7 @@ TMP_AUSNAHMEN: dict[str, tuple[tuple[str, ...], str]] = {
         "Kommentar zur Gate-Erkennung (#1411)",
     ),
     "to_spawn/befugnis.py": (
-        ("_RM_ERLAUBT = re.compile(r\"(?:/tmp/|/var/tmp/",),
+        ('_RM_ERLAUBT = re.compile(r"(?:/tmp/|/var/tmp/',),
         "Erlaubnis-Muster für rm -r in System-Temp-Ordnern (Verlauf-Prüfung, kein Arbeitsordner)",
     ),
     "to_spawn/erlaubt.py": (
@@ -588,9 +582,7 @@ def test_schutz_hooks_blocken_hausmeister_weg_nicht() -> None:
     for befehl in befehle:
         assert befugnis.handlung_klasse_2(befehle=[befehl]) is None, befehl
         assert (
-            skill_schutz.pruefe(
-                {"tool_name": "Bash", "tool_input": {"command": befehl}, "cwd": str(Path.home())}
-            )
+            skill_schutz.pruefe({"tool_name": "Bash", "tool_input": {"command": befehl}, "cwd": str(Path.home())})
             is False
         ), befehl
 

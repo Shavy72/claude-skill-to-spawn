@@ -121,9 +121,7 @@ def test_mit_eigenem_git_hooks_pfad_richtet_hook_ein(tmp_path: Path) -> None:
     assert Path(marke.read_text(encoding="utf-8").strip()).resolve() == klon.resolve()
 
 
-def test_ungueltiger_git_hooks_pfad_warnt_ohne_ausfuehrung(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture
-) -> None:
+def test_ungueltiger_git_hooks_pfad_warnt_ohne_ausfuehrung(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     klon, _heim = _welt(tmp_path, mit_installer=False)
     _konfig_schreiben(klon, {"git_hooks": {"installer": "../ausbruch.sh"}})
     with caplog.at_level(logging.WARNING, logger=nest.log.name):

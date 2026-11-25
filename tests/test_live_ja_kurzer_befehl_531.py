@@ -86,9 +86,7 @@ def _frage(repo: Path, heim: Path, ticket: str = "7") -> str:
 # --- ja ohne Terminal ---------------------------------------------------------------------------
 
 
-def test_ja_ohne_terminal_mit_sperre_schreibt_das_ja(
-    tmp_path: Path, mit_sperre: Path
-) -> None:
+def test_ja_ohne_terminal_mit_sperre_schreibt_das_ja(tmp_path: Path, mit_sperre: Path) -> None:
     fid = _frage(tmp_path, mit_sperre)
     lauf = _cli(tmp_path, mit_sperre, "ja", "7")
     assert lauf.returncode == 0, lauf.stderr
@@ -104,9 +102,7 @@ def test_ja_ohne_terminal_ohne_sperre_fail_closed(tmp_path: Path, heim: Path) ->
     assert briefkasten.lesen("7", fid, hauptbaum=tmp_path) == briefkasten.NUTZER
 
 
-def test_nutzer_antwort_ohne_terminal_ohne_sperre_bleibt_verweigert(
-    tmp_path: Path, heim: Path
-) -> None:
+def test_nutzer_antwort_ohne_terminal_ohne_sperre_bleibt_verweigert(tmp_path: Path, heim: Path) -> None:
     fid = _frage(tmp_path, heim)
     lauf = _cli(
         tmp_path,
@@ -123,9 +119,7 @@ def test_nutzer_antwort_ohne_terminal_ohne_sperre_bleibt_verweigert(
     assert lauf.returncode == 2
 
 
-def test_bau_session_bleibt_gesperrt_auch_mit_sperre(
-    tmp_path: Path, mit_sperre: Path
-) -> None:
+def test_bau_session_bleibt_gesperrt_auch_mit_sperre(tmp_path: Path, mit_sperre: Path) -> None:
     fid = _frage(tmp_path, mit_sperre)
     lauf = _cli(tmp_path, mit_sperre, "ja", "7", TO_SPAWN_TICKET="7")
     assert lauf.returncode == 2
@@ -135,21 +129,15 @@ def test_bau_session_bleibt_gesperrt_auch_mit_sperre(
 def test_ja_ohne_offene_frage_eine_zeile(tmp_path: Path, mit_sperre: Path) -> None:
     lauf = _cli(tmp_path, mit_sperre, "ja", "7")
     assert lauf.returncode == 1
-    assert (
-        "0 offene Fragen" in lauf.stderr and len(lauf.stderr.strip().splitlines()) == 1
-    )
+    assert "0 offene Fragen" in lauf.stderr and len(lauf.stderr.strip().splitlines()) == 1
 
 
-def test_ja_bei_mehreren_offenen_fragen_eine_zeile(
-    tmp_path: Path, mit_sperre: Path
-) -> None:
+def test_ja_bei_mehreren_offenen_fragen_eine_zeile(tmp_path: Path, mit_sperre: Path) -> None:
     _frage(tmp_path, mit_sperre)
     _frage(tmp_path, mit_sperre)
     lauf = _cli(tmp_path, mit_sperre, "ja", "7")
     assert lauf.returncode == 1
-    assert (
-        "2 offene Fragen" in lauf.stderr and len(lauf.stderr.strip().splitlines()) == 1
-    )
+    assert "2 offene Fragen" in lauf.stderr and len(lauf.stderr.strip().splitlines()) == 1
 
 
 # --- Hook -----------------------------------------------------------------------------------------
@@ -212,25 +200,15 @@ def test_einrichtung_idempotent_erhaelt_fremdes_mit_sicherung(heim: Path) -> Non
     ordner.mkdir()
     fremd = {
         "model": "x",
-        "hooks": {
-            "PreToolUse": [
-                {"matcher": "Edit", "hooks": [{"type": "command", "command": "fremd"}]}
-            ]
-        },
+        "hooks": {"PreToolUse": [{"matcher": "Edit", "hooks": [{"type": "command", "command": "fremd"}]}]},
     }
     (ordner / "settings.json").write_text(json.dumps(fremd), encoding="utf-8")
     assert ja_einrichten.sperre_eintragen(ordner, sys.executable, zeit="t1") is True
     assert ja_einrichten.sperre_eintragen(ordner, sys.executable, zeit="t2") is False
     daten = json.loads((ordner / "settings.json").read_text(encoding="utf-8"))
-    assert (
-        daten["model"] == "x"
-        and daten["hooks"]["PreToolUse"][0] == fremd["hooks"]["PreToolUse"][0]
-    )
+    assert daten["model"] == "x" and daten["hooks"]["PreToolUse"][0] == fremd["hooks"]["PreToolUse"][0]
     assert len(daten["hooks"]["PreToolUse"]) == 2
-    assert (
-        json.loads((ordner / "settings.json.bak-t1").read_text(encoding="utf-8"))
-        == fremd
-    )
+    assert json.loads((ordner / "settings.json.bak-t1").read_text(encoding="utf-8")) == fremd
     assert not (ordner / "settings.json.bak-t2").exists()
 
 
@@ -243,9 +221,7 @@ def test_einrichtung_ueberschreibt_kaputtes_json_nie(heim: Path) -> None:
     assert (ordner / "settings.json").read_text(encoding="utf-8") == "{kaputt"
 
 
-def test_befehl_ja_wird_angelegt_und_laeuft_ohne_terminal(
-    tmp_path: Path, mit_sperre: Path
-) -> None:
+def test_befehl_ja_wird_angelegt_und_laeuft_ohne_terminal(tmp_path: Path, mit_sperre: Path) -> None:
     sh, cmd = ja_einrichten.befehl_anlegen(mit_sperre / ".claude", sys.executable)
     assert os.access(sh, os.X_OK) and cmd.read_bytes().endswith(b"%*\r\n")
     _frage(tmp_path, mit_sperre)
@@ -271,9 +247,7 @@ def test_befehl_ja_wird_angelegt_und_laeuft_ohne_terminal(
     assert lauf.returncode == 0, lauf.stderr
 
 
-def test_sperre_eingetragen_liest_nur_dieses_home(
-    heim: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_sperre_eingetragen_liest_nur_dieses_home(heim: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("HOME", str(heim))
     monkeypatch.setenv("USERPROFILE", str(heim))
     assert briefkasten.sperre_eingetragen() is False
@@ -378,36 +352,23 @@ def test_hook_ausnahme_in_pruefung_mit_ja_gesperrt(
         raise RuntimeError("boom")
 
     monkeypatch.setattr(hooks, "ja_aufrufe", boese)
-    assert (
-        hooks.hook_ja_sperre(io.StringIO(_roh("~/.claude/bin/ja 5")), io.StringIO())
-        == 2
-    )
+    assert hooks.hook_ja_sperre(io.StringIO(_roh("~/.claude/bin/ja 5")), io.StringIO()) == 2
     assert hooks.hook_ja_sperre(io.StringIO(_roh("ls")), io.StringIO()) == 0
 
 
 def _settings(heim: Path, befehl: str, matcher: str = "Bash") -> None:
     ordner = heim / ".claude"
     ordner.mkdir(exist_ok=True)
-    daten = {
-        "hooks": {
-            "PreToolUse": [
-                {"matcher": matcher, "hooks": [{"type": "command", "command": befehl}]}
-            ]
-        }
-    }
+    daten = {"hooks": {"PreToolUse": [{"matcher": matcher, "hooks": [{"type": "command", "command": befehl}]}]}}
     (ordner / "settings.json").write_text(json.dumps(daten), encoding="utf-8")
 
 
-def test_nachweis_verlangt_echte_to_spawn_py(
-    heim: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_nachweis_verlangt_echte_to_spawn_py(heim: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("HOME", str(heim))
     monkeypatch.setenv("USERPROFILE", str(heim))
     _settings(heim, "echo hook-ja-sperre")
     assert briefkasten.sperre_eingetragen() is False
-    _settings(
-        heim, f"python {heim.as_posix()}/gibt_es_nicht/to_spawn.py hook-ja-sperre"
-    )
+    _settings(heim, f"python {heim.as_posix()}/gibt_es_nicht/to_spawn.py hook-ja-sperre")
     assert briefkasten.sperre_eingetragen() is False
     _settings(heim, f"python {CLI_POSIX} offene")
     assert briefkasten.sperre_eingetragen() is False
@@ -426,9 +387,7 @@ def test_nachweis_verlangt_echte_to_spawn_py(
 def test_einrichtung_matcher_deckt_powershell(heim: Path) -> None:
     ordner = heim / ".claude"
     ja_einrichten.sperre_eintragen(ordner, sys.executable)
-    block = json.loads((ordner / "settings.json").read_text(encoding="utf-8"))["hooks"][
-        "PreToolUse"
-    ][0]
+    block = json.loads((ordner / "settings.json").read_text(encoding="utf-8"))["hooks"]["PreToolUse"][0]
     assert set(block["matcher"].split("|")) == {"Bash", "PowerShell"}
 
 
@@ -440,10 +399,7 @@ def test_einrichtung_pretooluse_keine_liste_meldung_statt_traceback(heim: Path) 
     with pytest.raises(ValueError, match="PreToolUse"):
         ja_einrichten.sperre_eintragen(ordner, sys.executable)
     assert (ordner / "settings.json").read_text(encoding="utf-8") == inhalt
-    assert (
-        ja_einrichten.main(["--claude-dir", str(ordner), "--python", sys.executable])
-        == 1
-    )
+    assert ja_einrichten.main(["--claude-dir", str(ordner), "--python", sys.executable]) == 1
 
 
 # --- Fix-Runde 2 Review #534 ------------------------------------------------------------------------
@@ -465,16 +421,12 @@ def test_hook_lehnt_schalter_vor_ziel_ab(befehl: str) -> None:
     assert _hook(_roh(befehl)).returncode == 2, befehl
 
 
-@pytest.mark.parametrize(
-    "befehl", ["echo 5 | xargs -n1 echo ja", "python3 -X utf8 to_spawn.py offene 5"]
-)
+@pytest.mark.parametrize("befehl", ["echo 5 | xargs -n1 echo ja", "python3 -X utf8 to_spawn.py offene 5"])
 def test_hook_schalter_gegenprobe_frei(befehl: str) -> None:
     assert _hook(_roh(befehl)).returncode == 0, befehl
 
 
-def test_nachweis_braucht_python_oder_to_spawn_als_befehlswort(
-    heim: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_nachweis_braucht_python_oder_to_spawn_als_befehlswort(heim: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("HOME", str(heim))
     monkeypatch.setenv("USERPROFILE", str(heim))
     _settings(heim, f"echo {CLI_POSIX} hook-ja-sperre")

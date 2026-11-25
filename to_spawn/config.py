@@ -259,9 +259,7 @@ class KeinHeimOrdner(RuntimeError):
     """Heimat-Ordner nicht bestimmbar (weder ``HOME`` noch ``USERPROFILE`` gesetzt, #212)."""
 
 
-_KEIN_HEIM_MELDUNG = (
-    "Heimat-Ordner nicht bestimmbar: weder HOME noch USERPROFILE in der Umgebung gesetzt."
-)
+_KEIN_HEIM_MELDUNG = "Heimat-Ordner nicht bestimmbar: weder HOME noch USERPROFILE in der Umgebung gesetzt."
 
 
 def _ist_path_home_umgebogen() -> bool:
@@ -1036,13 +1034,10 @@ class TicketRepoAenderung:
 def _veraltete_ticket_repo_ziele(daten: dict[str, Any]) -> list[tuple[dict[str, str], TicketRepoAenderung]]:
     """Findet Einträge in ``daten["repos"]`` mit bekannter Alt-Vorgabe (``vorgaben.VERALTETE_TICKET_REPOS``)."""
     soll_je_slug = {
-        e["slug"].lower(): e["ticket_repo"]
-        for e in vorgaben.REPOS
-        if e.get("slug") and e.get("ticket_repo")
+        e["slug"].lower(): e["ticket_repo"] for e in vorgaben.REPOS if e.get("slug") and e.get("ticket_repo")
     }
     alt_je_slug = {
-        slug.lower(): {wert.lower() for wert in werte}
-        for slug, werte in vorgaben.VERALTETE_TICKET_REPOS.items()
+        slug.lower(): {wert.lower() for wert in werte} for slug, werte in vorgaben.VERALTETE_TICKET_REPOS.items()
     }
     treffer: list[tuple[dict[str, str], TicketRepoAenderung]] = []
     for eintrag in daten.get("repos", []):
@@ -1116,9 +1111,7 @@ def maschine_ticket_repo_setzen(ziel: str | Path, ticket_repo: str) -> list[Tick
     """
     wert = ticket_repo.strip()
     if not _TICKET_REPO_MUSTER.fullmatch(wert):
-        raise ValueError(
-            f"ticket_repo ungültig ({ticket_repo!r}) — erwartet wird <besitzer>/<name>"
-        )
+        raise ValueError(f"ticket_repo ungültig ({ticket_repo!r}) — erwartet wird <besitzer>/<name>")
     datei = maschine_datei()
     if datei.is_file() and _lies(datei)[0] is None:
         raise ValueError(f"Maschinen-Liste unlesbar ({datei}) — nicht überschrieben")

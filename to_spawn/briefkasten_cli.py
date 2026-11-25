@@ -99,7 +99,9 @@ def lauf(args: argparse.Namespace) -> int:
         return 0 if klasse == 1 else klasse
     if args.befehl == "offene":
         for o in briefkasten.offene(args.tickets or None):
-            print(f"#{o['ticket']} · id {o['id'] or '–'} · Klasse {o['klasse']} · {o['frage']} · Vorschlag: {o['vorschlag']}")
+            print(
+                f"#{o['ticket']} · id {o['id'] or '–'} · Klasse {o['klasse']} · {o['frage']} · Vorschlag: {o['vorschlag']}"
+            )
         return 0
     try:
         if args.befehl == "frage":

@@ -65,7 +65,10 @@ def test_mit_feld_steht_effort_im_befehl(tmp_path: Path) -> None:
     assert "--effort high" in _befehl(tmp_path, "high")
 
 
-@pytest.mark.xfail(strict=True, reason="Alt-Verhalten: ohne Feld erbte die Session den globalen Standard (high) — seit 2026-10-28 immer --effort")
+@pytest.mark.xfail(
+    strict=True,
+    reason="Alt-Verhalten: ohne Feld erbte die Session den globalen Standard (high) — seit 2026-10-28 immer --effort",
+)
 def test_ohne_feld_kein_effort_im_befehl(tmp_path: Path) -> None:
     assert "--effort" not in _befehl(tmp_path, None)
 

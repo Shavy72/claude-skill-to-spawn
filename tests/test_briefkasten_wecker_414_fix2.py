@@ -60,10 +60,7 @@ def test_normaler_text_bleibt_belegt() -> None:
 
 
 def test_gemischt_gedimmt_und_normal_ist_belegt() -> None:
-    assert (
-        aufpasser.eingabe_leer(_feld('❯ ich\x1b[2mTry "fix lint errors"\x1b[0m'))
-        is False
-    )
+    assert aufpasser.eingabe_leer(_feld('❯ ich\x1b[2mTry "fix lint errors"\x1b[0m')) is False
     assert aufpasser.eingabe_leer(_feld('❯ \x1b[2mTry "fix\x1b[22m lint')) is False
 
 
@@ -75,24 +72,15 @@ def test_leeres_feld_gefaerbt_und_klar() -> None:
 
 def test_truecolor_mit_2_im_farbwert_ist_nicht_gedimmt() -> None:
     """``38;2;r;g;b`` enthält eine 2 als Farbmodus, nicht als „gedimmt“ → Text bleibt belegt."""
-    assert (
-        aufpasser.eingabe_leer(_feld("❯ \x1b[38;2;153;153;153mich tippe\x1b[39m"))
-        is False
-    )
+    assert aufpasser.eingabe_leer(_feld("❯ \x1b[38;2;153;153;153mich tippe\x1b[39m")) is False
 
 
 def test_truecolor_mit_lauter_zweien_ist_nicht_gedimmt() -> None:
     """#435: ``38;2;2;2;2`` (alle Farbwerte 2) ist Echtfarbe, kein SGR 2 → Text bleibt belegt;
     erst eine weitere ``2`` danach schaltet wirklich auf gedimmt."""
-    assert (
-        aufpasser.eingabe_leer(_feld("❯ \x1b[38;2;2;2;2mich tippe\x1b[39m")) is False
-    )
-    assert (
-        aufpasser.eingabe_leer(_feld("❯ \x1b[48;2;2;2;2mich tippe\x1b[49m")) is False
-    )
-    assert (
-        aufpasser.eingabe_leer(_feld('❯ \x1b[38;2;2;2;2;2mTry "fix"\x1b[0m')) is True
-    )
+    assert aufpasser.eingabe_leer(_feld("❯ \x1b[38;2;2;2;2mich tippe\x1b[39m")) is False
+    assert aufpasser.eingabe_leer(_feld("❯ \x1b[48;2;2;2;2mich tippe\x1b[49m")) is False
+    assert aufpasser.eingabe_leer(_feld('❯ \x1b[38;2;2;2;2;2mTry "fix"\x1b[0m')) is True
 
 
 def test_ohne_eingabefeld_nie_leer() -> None:
@@ -100,9 +88,7 @@ def test_ohne_eingabefeld_nie_leer() -> None:
 
 
 def test_ohne_farben_entfernt_nur_steuerzeichen() -> None:
-    assert aufpasser.ohne_farben(_feld(PLATZHALTER)) == _feld(
-        '❯ Try "fix lint errors"', linie=LINIE
-    )
+    assert aufpasser.ohne_farben(_feld(PLATZHALTER)) == _feld('❯ Try "fix lint errors"', linie=LINIE)
 
 
 # --- Aufgabe 1 im Wecker: Bild mit Farbcodes, nur für diese Prüfung --------------------------
@@ -191,9 +177,7 @@ def kaputt(welt: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> dict[str, A
 
 
 def _kaputt_machen(welt: dict[str, Any], befehl: str, stderr: str) -> None:
-    (welt["tmux"] / "kaputt.json").write_text(
-        json.dumps({"befehl": befehl, "stderr": stderr}), encoding="utf-8"
-    )
+    (welt["tmux"] / "kaputt.json").write_text(json.dumps({"befehl": befehl, "stderr": stderr}), encoding="utf-8")
 
 
 def _heil_machen(welt: dict[str, Any]) -> None:
@@ -209,9 +193,7 @@ def test_tippen_raeumt_puffer_bei_paste_fehler(kaputt: dict[str, Any]) -> None:
     geladen = next(a for a in aufrufe if a[:1] == ["load-buffer"])
     puffer = geladen[geladen.index("-b") + 1]
     assert ["delete-buffer", "-b", puffer] in aufrufe, aufrufe
-    assert not any(a[:1] == ["send-keys"] for a in aufrufe), (
-        "nach gescheitertem Einfügen kein Enter"
-    )
+    assert not any(a[:1] == ["send-keys"] for a in aufrufe), "nach gescheitertem Einfügen kein Enter"
 
 
 def test_tippen_ohne_fehler_loescht_keinen_puffer_extra(kaputt: dict[str, Any]) -> None:
@@ -246,14 +228,10 @@ def test_fenster_weg_beim_tippen_frage_erledigt(kaputt: dict[str, Any]) -> None:
     _heil_machen(kaputt)
     w.einmal()
     w.einmal()
-    assert _getippt(kaputt) == [], (
-        "Fenster war weg: Frage gilt als erledigt, kein später Weckruf"
-    )
+    assert _getippt(kaputt) == [], "Fenster war weg: Frage gilt als erledigt, kein später Weckruf"
 
 
-def test_wecker_faden_ueberlebt_tmux_fehler(
-    kaputt: dict[str, Any], monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_wecker_faden_ueberlebt_tmux_fehler(kaputt: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
     """Der echte Faden aus ``laeuft`` läuft nach einem tmux-Fehler weiter und weckt danach."""
     modul = _wecker_modul()
     monkeypatch.setattr(modul, "TAKT_S", 0.05)
@@ -263,9 +241,7 @@ def test_wecker_faden_ueberlebt_tmux_fehler(
         assert w is not None
         _frage(kaputt)
         ende = time.time() + 5
-        while time.time() < ende and not any(
-            a[:1] == ["paste-buffer"] for a in _aufrufe(kaputt)
-        ):
+        while time.time() < ende and not any(a[:1] == ["paste-buffer"] for a in _aufrufe(kaputt)):
             time.sleep(0.05)
         _heil_machen(kaputt)
         while time.time() < ende and not _getippt(kaputt):
@@ -298,16 +274,11 @@ def test_doppelt_unterstrichen_mit_doppelpunkt_ist_nicht_gedimmt() -> None:
 
 
 def test_truecolor_mit_doppelpunkt_ist_nicht_gedimmt() -> None:
-    assert (
-        aufpasser.eingabe_leer(_feld("❯ \x1b[38:2::153:153:153mich tippe\x1b[39m"))
-        is False
-    )
+    assert aufpasser.eingabe_leer(_feld("❯ \x1b[38:2::153:153:153mich tippe\x1b[39m")) is False
 
 
 def test_reset_und_gedimmt_in_einer_folge_ist_leer() -> None:
-    assert (
-        aufpasser.eingabe_leer(_feld('❯ \x1b[0;2mTry "fix lint errors"\x1b[0m')) is True
-    )
+    assert aufpasser.eingabe_leer(_feld('❯ \x1b[0;2mTry "fix lint errors"\x1b[0m')) is True
 
 
 def test_256_farben_index_2_ist_nicht_gedimmt() -> None:
@@ -320,9 +291,7 @@ def test_reset_mitten_in_der_zeile_ist_belegt() -> None:
 
 def test_cursor_und_csi_folgen_im_gedimmten_platzhalter_bleiben_leer() -> None:
     """Cursor als inverser Block (SGR 7) und Cursor-Folgen ändern nichts am Gedimmt-Sein."""
-    eingabe = (
-        '❯ \x1b[?25l\x1b[2m\x1b[7mT\x1b[27mry "fix lint errors"\x1b[0m\x1b[1C\x1b[K'
-    )
+    eingabe = '❯ \x1b[?25l\x1b[2m\x1b[7mT\x1b[27mry "fix lint errors"\x1b[0m\x1b[1C\x1b[K'
     assert aufpasser.eingabe_leer(_feld(eingabe)) is True
 
 
@@ -347,23 +316,18 @@ def test_inverser_text_ohne_platzhalter_bleibt_belegt() -> None:
         '❯ \x1b[7mTr\x1b[27m\x1b[2my "fix"\x1b[0m',
         '❯ ich\x1b[7mT\x1b[27m\x1b[2mry "fix"\x1b[0m',
         '❯ \x1b[7mT\x1b[27m \x1b[2mry "fix"\x1b[0m',
-        '❯ \x1b[2mfoo\x1b[0m\x1b[7mT\x1b[27m\x1b[2mbar\x1b[0m',
+        "❯ \x1b[2mfoo\x1b[0m\x1b[7mT\x1b[27m\x1b[2mbar\x1b[0m",
         '❯ \x1b[7mT\x1b[27m\x1b[2mry "fix"\x1b[0m\n  zweite Zeile',
         '❯ \x1b[38;2;7;7;7mT\x1b[39m\x1b[2mry "fix"\x1b[0m',
-        '❯ \x1b[7mT\x1b[27m\x1b[2m   \x1b[0m',
+        "❯ \x1b[7mT\x1b[27m\x1b[2m   \x1b[0m",
     ):
         assert aufpasser.eingabe_leer(_feld(eingabe)) is False, eingabe
 
 
 def test_osc_link_folgen_zaehlen_nicht_als_text() -> None:
     """OSC 8 (Link) endet mit BEL oder ``ESC \\`` und ist keine Eingabe."""
-    assert (
-        aufpasser.eingabe_leer(_feld("❯ \x1b]8;;https://x.de\x07\x1b]8;;\x07")) is True
-    )
-    assert (
-        aufpasser.eingabe_leer(_feld("❯ \x1b]8;;https://x.de\x1b\\\x1b]8;;\x1b\\"))
-        is True
-    )
+    assert aufpasser.eingabe_leer(_feld("❯ \x1b]8;;https://x.de\x07\x1b]8;;\x07")) is True
+    assert aufpasser.eingabe_leer(_feld("❯ \x1b]8;;https://x.de\x1b\\\x1b]8;;\x1b\\")) is True
     assert aufpasser.ohne_farben("a\x1b]8;;https://x.de\x07b\x1b]8;;\x1b\\c") == "abc"
 
 

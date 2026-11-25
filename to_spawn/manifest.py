@@ -43,9 +43,7 @@ UNBEAUFSICHTIGT_ENV = "TO_SPAWN_UNBEAUFSICHTIGT"
 _WAHR_WERTE = frozenset({"1", "true", "ja", "yes", "an", "on"})
 _FALSCH_WERTE = frozenset({"0", "false", "nein", "no", "aus", "off"})
 #: Kopfzeile ``Quelle: docs/GRILL_…`` (auch fett ``**Quelle:** …``) am Zeilenanfang (#405).
-_QUELLE_ZEILE = re.compile(
-    r"^\s*(?:\*\*Quelle:?\*\*|Quelle:)\s*\S+", re.IGNORECASE | re.MULTILINE
-)
+_QUELLE_ZEILE = re.compile(r"^\s*(?:\*\*Quelle:?\*\*|Quelle:)\s*\S+", re.IGNORECASE | re.MULTILINE)
 #: Beschluss-Verweis in Klammern, z. B. ``(E1)`` oder ``(E3, E7)`` (#405).
 _E_NUMMER = re.compile(r"\([^)]*\bE\d+\b[^)]*\)")
 #: Issue-Nummer als Zahl, ``#N`` oder GitHub-Issue-URL.
@@ -214,9 +212,7 @@ def pruefe_spec(spec_text: str, konfig: dict[str, Any] | None = None) -> SpecPru
                 f"{mangel} — Modus unbeaufsichtigt: nur Warnung, ## Beschlüsse verweist auf den Spec-Abschnitt."
             )
         else:
-            ergebnis.fehler.append(
-                f"{mangel} — erst /to-spec aus dem Beschluss-Protokoll (docs/GRILL_*.md)."
-            )
+            ergebnis.fehler.append(f"{mangel} — erst /to-spec aus dem Beschluss-Protokoll (docs/GRILL_*.md).")
     return ergebnis
 
 
@@ -240,9 +236,7 @@ def lies_spec_text(repo: Path, quelle: str) -> str:
         nummer = treffer.group(1)
         daten = gh.ticket_daten(nummer, cwd=repo)
         if daten is None:
-            raise ValueError(
-                f"Spec-Issue #{nummer} nicht lesbar (`gh auth status` und Repo prüfen)."
-            )
+            raise ValueError(f"Spec-Issue #{nummer} nicht lesbar (`gh auth status` und Repo prüfen).")
         return str(daten.get("body") or "")
     raise ValueError(f"Spec nicht gefunden: {quelle!r} (weder Datei noch Issue-Nummer/URL).")
 
@@ -368,9 +362,7 @@ def pruefe(
         github = _hole_github(repo, bericht)
     _pruefe_andere_manifeste(repo, bericht, github)
     if github:
-        _pruefe_github(
-            repo, bericht, github, konfig, checkpoint_pflicht=checkpoint_pflicht
-        )
+        _pruefe_github(repo, bericht, github, konfig, checkpoint_pflicht=checkpoint_pflicht)
     return bericht
 
 
@@ -408,9 +400,7 @@ def pruefe_eintrag(nummer: str, roh: Any, konfig: dict[str, Any]) -> list[str]:
             f"geschnitten; in Teil-Tickets je unter {_zahl(grenze)}k schneiden (/to-tickets)."
         )
     if not isinstance(umfang, str) or not umfang.strip():
-        fehler.append(
-            f"#{nummer}: Feld umfang (Klartext) fehlt — in /to-tickets in einem Satz eintragen."
-        )
+        fehler.append(f"#{nummer}: Feld umfang (Klartext) fehlt — in /to-tickets in einem Satz eintragen.")
     return fehler
 
 
@@ -419,13 +409,9 @@ def _fertig_gebaut(daten: dict[str, Any] | None) -> bool:
     return isinstance(daten, dict) and ticket_zustand.fertig_gebaut(daten)
 
 
-def _offen_frage(
-    repo: Path, github: dict[str, dict[str, Any] | None]
-) -> Callable[[str], bool | None]:
+def _offen_frage(repo: Path, github: dict[str, dict[str, Any] | None]) -> Callable[[str], bool | None]:
     """Frage „wird #N noch gebaut?“ (``None`` = Abfrage gescheitert) — je Prüflauf nur einmal je Nummer."""
-    zustaende: dict[str, bool | None] = {
-        n: not _fertig_gebaut(d) for n, d in github.items() if isinstance(d, dict)
-    }
+    zustaende: dict[str, bool | None] = {n: not _fertig_gebaut(d) for n, d in github.items() if isinstance(d, dict)}
 
     def offen(verweis: str) -> bool | None:
         if verweis not in zustaende:
@@ -436,9 +422,7 @@ def _offen_frage(
     return offen
 
 
-def _pruefe_andere_manifeste(
-    repo: Path, bericht: Bericht, github: dict[str, dict[str, Any] | None]
-) -> None:
+def _pruefe_andere_manifeste(repo: Path, bericht: Bericht, github: dict[str, dict[str, Any] | None]) -> None:
     """Ticket in einem zweiten Manifest = zwei Spawns auf demselben Ticket.
 
     Mitgeprüft wird jede ``spec-*.json`` außer der eigenen Datei, also auch
@@ -552,9 +536,7 @@ def _pruefe_github(
             mit_kante += 1
         if "labels" in daten:
             labels_gesehen = True
-            namen = {
-                str(eintrag.get("name")) for eintrag in daten["labels"] if isinstance(eintrag, dict)
-            }
+            namen = {str(eintrag.get("name")) for eintrag in daten["labels"] if isinstance(eintrag, dict)}
             if label in namen:
                 checkpoints.append(nummer)
         if _fertig_gebaut(daten):
@@ -595,9 +577,7 @@ def _pruefe_github(
         _pruefe_checkpoint(bericht, github, checkpoints)
 
 
-def _pruefe_checkpoint(
-    bericht: Bericht, github: dict[str, dict[str, Any] | None], checkpoints: list[str]
-) -> None:
+def _pruefe_checkpoint(bericht: Bericht, github: dict[str, dict[str, Any] | None], checkpoints: list[str]) -> None:
     """Solange andere Tickets offen sind: Checkpoint offen und per Kante hinten dran."""
     offene_andere = [
         n
@@ -615,8 +595,7 @@ def _pruefe_checkpoint(
         verb = "ist" if len(checkpoints) == 1 else "sind"
         offen_verb = "ist" if len(offene_andere) == 1 else "sind"
         bericht.fehler.append(
-            f"{wort} {zu} {verb} schon zu, aber {andere} {offen_verb} offen — neues "
-            "Abnahme-Ticket anlegen."
+            f"{wort} {zu} {verb} schon zu, aber {andere} {offen_verb} offen — neues Abnahme-Ticket anlegen."
         )
         return
     for nummer in offene_cp:
@@ -629,9 +608,7 @@ def _pruefe_checkpoint(
             )
 
 
-def _pruefe_checkpoint_am_ende(
-    bericht: Bericht, github: dict[str, dict[str, Any] | None], checkpoint: str
-) -> None:
+def _pruefe_checkpoint_am_ende(bericht: Bericht, github: dict[str, dict[str, Any] | None], checkpoint: str) -> None:
     """Fehler, wenn die Frage an den Menschen andere Tickets blockiert (#285, verschärft #325).
 
     Blockiert, weil es hinten dran hängt, ist gewollt (Abnahme-Ticket). Steht der
@@ -690,9 +667,7 @@ def _pruefe_verweise(
             continue
         zustand = offen(verweis)
         if zustand is None:
-            bericht.fehler.append(
-                f"#{nummer}: " + _github_fehler(bericht, f"für Blocker-Verweis #{verweis}")
-            )
+            bericht.fehler.append(f"#{nummer}: " + _github_fehler(bericht, f"für Blocker-Verweis #{verweis}"))
         elif zustand:
             bericht.fehler.append(
                 f"#{nummer}: laut Ticket-Text blockiert von #{verweis} (offen, nicht in dieser "

@@ -120,9 +120,7 @@ def still_sicherstellen(*pfade: Path, claude_json: Path | None = None) -> list[s
     try:
         geaendert = sicherstellen(*pfade, claude_json=claude_json)
     except (OSError, ValueError, TypeError) as fehler:
-        log.warning(
-            "Vertrauens-Dialog nicht vorab bestätigt (%s): %s", claude_json or claude_json_pfad(), fehler
-        )
+        log.warning("Vertrauens-Dialog nicht vorab bestätigt (%s): %s", claude_json or claude_json_pfad(), fehler)
         return []
     for pfad in geaendert:
         log.info("Vertrauens-Dialog vorab bestätigt: %s", pfad)

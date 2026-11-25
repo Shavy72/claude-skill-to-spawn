@@ -105,7 +105,9 @@ def test_eigener_commit_mit_cd_davor(u: Umgebung, repo: Path) -> None:
     anderes.mkdir()
     git(anderes, "init", "-q")
     for schreibweise in (repo.as_posix(), f'"{repo}"'):
-        _commit_aus_fremdem_cwd(u, anderes, f"cd {schreibweise} && git add -f skripte/bau.py && git commit -q -m bau -- skripte/bau.py")
+        _commit_aus_fremdem_cwd(
+            u, anderes, f"cd {schreibweise} && git add -f skripte/bau.py && git commit -q -m bau -- skripte/bau.py"
+        )
     git(repo, "add", "-f", "skripte/bau.py")
     git(repo, "commit", "-q", "-m", "bau", "--", "skripte/bau.py")
 

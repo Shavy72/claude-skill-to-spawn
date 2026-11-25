@@ -139,9 +139,7 @@ def test_gestoerte_deploy_wache_sperrt_hausmeister(
     assert "Hausmeister:" not in log_text, log_text
 
 
-def test_repo_ordner_nutzt_pane_start_path_als_rueckfall(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_repo_ordner_nutzt_pane_start_path_als_rueckfall(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """#262-Nachzug: Fehlt ``pane_current_path`` direkt nach ``tmux new-session -d``
     oder zeigt auf einen Fremdordner, findet ``repo_ordner`` das Repo über ``pane_start_path``."""
     repo = tmp_path / "repo"
@@ -160,9 +158,7 @@ def test_repo_ordner_nutzt_pane_start_path_als_rueckfall(
     assert a.repo_ordner(fenster_leer) == repo
 
     # Fall 2: pane_current_path im Fremdordner (vor chdir oder nach cd weg), start_pfad im Repo.
-    monkeypatch.setattr(
-        a, "tmux", lambda *_a, **_k: f"0\thalter\t{fremd}\t1234\t@0\t%0\t{repo}\n"
-    )
+    monkeypatch.setattr(a, "tmux", lambda *_a, **_k: f"0\thalter\t{fremd}\t1234\t@0\t%0\t{repo}\n")
     fenster_fremd = a.fenster("spec-9262", "9262")
     assert a.repo_ordner(fenster_fremd) == repo
 
@@ -202,9 +198,7 @@ def test_echtes_tmux_findet_repo_trotz_weggewechseltem_pane_pfad(
         check=True,
     )
     try:
-        a = aufpasser.Aufpasser(
-            aufpasser.Einstellungen(zustand=tmp_path / "zustand", tmux_socket=socket)
-        )
+        a = aufpasser.Aufpasser(aufpasser.Einstellungen(zustand=tmp_path / "zustand", tmux_socket=socket))
         fenster = a.fenster(sitzung, "9262")
         assert a.repo_ordner(fenster) == repo
     finally:

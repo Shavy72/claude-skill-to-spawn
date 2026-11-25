@@ -70,7 +70,16 @@ def _mini_klon(
     klon.mkdir(parents=True)
 
     # Wurzeldateien & Pflichtordner für install.sh / install.ps1
-    for datei in ("install.sh", "install.ps1", "to_spawn.py", "SKILL.md", "README.md", "LICENSE", "spawn_local.ps1", "spawn_srv.ps1"):
+    for datei in (
+        "install.sh",
+        "install.ps1",
+        "to_spawn.py",
+        "SKILL.md",
+        "README.md",
+        "LICENSE",
+        "spawn_local.ps1",
+        "spawn_srv.ps1",
+    ):
         quelle = SKILL / datei
         if quelle.is_file():
             shutil.copy2(quelle, klon / datei)
@@ -513,7 +522,16 @@ def test_install_ps1_rot_stand_bleibt_unveraendert(tmp_path: Path) -> None:
     skills = heim / ".claude" / "skills"
     claude_md = heim / ".claude" / "CLAUDE.md"
     lauf = subprocess.run(
-        [PWSH or "pwsh", "-NoProfile", "-File", str(klon / "install.ps1"), "-Skills", str(skills), "-ClaudeMd", str(claude_md)],
+        [
+            PWSH or "pwsh",
+            "-NoProfile",
+            "-File",
+            str(klon / "install.ps1"),
+            "-Skills",
+            str(skills),
+            "-ClaudeMd",
+            str(claude_md),
+        ],
         env=_env_ohne_pytest(heim, gh_stub=stub),
         capture_output=True,
         text=True,
@@ -558,4 +576,3 @@ def test_geschlossenes_ticket_laesst_neues_offenes_ticket_zu(tmp_path: Path, mon
     daten = json.loads(gh_stand.read_text(encoding="utf-8"))
     offene = [i for i in daten["issues"] if i["state"] == "open"]
     assert len(offene) == 1 and offene[0]["number"] == 2
-

@@ -46,8 +46,7 @@ def _skript_schreiben(name: str, quelltext: str) -> Path:
 def _meminfo_schreiben(tmp_path: Path, frei_mib: int = 5800, gesamt_mib: int = 16384) -> Path:
     datei = tmp_path / "meminfo"
     datei.write_text(
-        f"MemTotal:       {gesamt_mib * 1024} kB\n"
-        f"MemAvailable:   {frei_mib * 1024} kB\n",
+        f"MemTotal:       {gesamt_mib * 1024} kB\nMemAvailable:   {frei_mib * 1024} kB\n",
         encoding="utf-8",
     )
     return datei
@@ -64,9 +63,7 @@ def _warte_auf_datei(pfad: Path, frist_s: float = 20.0) -> str:
     raise AssertionError(f"Datei {pfad} erschien nicht binnen {frist_s} s")
 
 
-def _warte_auf_stand(
-    repo: Path, ticket: str, bedingung: Any, frist_s: float = 20.0
-) -> dict[str, Any]:
+def _warte_auf_stand(repo: Path, ticket: str, bedingung: Any, frist_s: float = 20.0) -> dict[str, Any]:
     from to_spawn import warten
 
     pfad = warten.zustand_pfad(repo, ticket)
@@ -165,9 +162,7 @@ def test_kind_einmal_beendet_startet_mit_pause_neu_und_wird_gruen(
     assert bau_log.lese(repo, "1477") == []  # nicht blockiert, da Versuch 2 klappte
 
 
-def test_kind_n_mal_beendet_schreibt_blockiert_ins_bau_log(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_kind_n_mal_beendet_schreibt_blockiert_ins_bau_log(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Nach N Abbrüchen von außen: keine weiteren Versuche, Eintrag ``blockiert`` im Bau-Log, 0 Fragen."""
     from to_spawn import warten
 
@@ -295,9 +290,7 @@ def test_hintergrund_laeufer_getoetet_weckruf_erkennt_und_startet_neu(
     assert start.exit == warten.EXIT_LAEUFT, start.zeile
     _warte_auf_datei(bereit)
 
-    stand_vorher = _warte_auf_stand(
-        repo, "1477", lambda s: bool(s.get("pid")) and bool(s.get("kind_pid"))
-    )
+    stand_vorher = _warte_auf_stand(repo, "1477", lambda s: bool(s.get("pid")) and bool(s.get("kind_pid")))
     laeufer_pid = int(stand_vorher["pid"])
     kind_pid = int(stand_vorher["kind_pid"])
     assert warten._prozess_aktiv(laeufer_pid)
@@ -349,9 +342,7 @@ def test_hintergrund_laeufer_n_mal_getoetet_blockiert_beim_weckruf(
 
     skript = _skript_schreiben("immer_lang.py", "import time; time.sleep(30)\n")
     pausen: list[float] = []
-    start = warten.starte_hintergrund(
-        repo, "1477", [sys.executable, str(skript)], max_versuche=2, pause_s=3.0
-    )
+    start = warten.starte_hintergrund(repo, "1477", [sys.executable, str(skript)], max_versuche=2, pause_s=3.0)
     assert start.exit == warten.EXIT_LAEUFT
     sig = getattr(signal, "SIGKILL", signal.SIGTERM)
 
@@ -386,9 +377,7 @@ def test_hintergrund_laeufer_n_mal_getoetet_blockiert_beim_weckruf(
 # --- 3. CLI-Anbindung & explizites --abbruch -------------------------------------------
 
 
-def test_cli_warten_registriert_und_abbruch_protokolliert(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_cli_warten_registriert_und_abbruch_protokolliert(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """``to_spawn.py warten`` ist im CLI-Parser registriert und protokolliert ``--abbruch`` mit Grund."""
     from to_spawn import warten
 
@@ -444,9 +433,7 @@ def test_cli_warten_registriert_und_abbruch_protokolliert(
 
 
 @pytest.mark.skipif(sys.platform != "linux", reason="Linux-Gegenprobe mit echtem /proc/meminfo und SIGKILL")
-def test_linux_gegenprobe_echter_speicher_und_sigkill(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_linux_gegenprobe_echter_speicher_und_sigkill(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Abnahme 4: Gegenprobe auf Linux — echte /proc/meminfo-Messung (kein Stub) + echtes SIGKILL."""
     from to_spawn import warten
 
@@ -542,9 +529,7 @@ def test_ist_abbruch_exit_linux_und_windows(code: int, plattform: str, erwartet:
     assert warten.ist_abbruch_exit(code, plattform=plattform) is erwartet
 
 
-def test_prozessbaum_aktiv_erkennt_zombie_und_recycelte_pid(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_prozessbaum_aktiv_erkennt_zombie_und_recycelte_pid(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Öffentliche Türen ``prozessbaum.startzeit``/``aktiv`` trennen Zombies und recycelte PIDs."""
     proc = tmp_path / "proc"
     for pid, zustand, start in ((101, "S", 5000), (102, "Z", 5001), (103, "X", 5002)):

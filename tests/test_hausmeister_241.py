@@ -126,9 +126,7 @@ def test_kopie_ohne_git_mit_geheimnis_oder_frisch_bleibt(
     assert (geheim / ".env").is_file()
 
 
-def test_kopie_ohne_git_mit_laufendem_prozess_bleibt(
-    welt: Welt, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_kopie_ohne_git_mit_laufendem_prozess_bleibt(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
     """Echter Prozess im Ordner hält die Kopie (ohne Prozess-Naht, damit auch Windows echt prüft)."""
     monkeypatch.setenv("TO_SPAWN_HAUSMEISTER_HAUPTREPOS", str(welt.haupt))
     aktiv = _kopie_ohne_git(welt, "kopie-aktiv")

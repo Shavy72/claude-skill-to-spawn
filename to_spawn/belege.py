@@ -72,9 +72,7 @@ _ENTFAELLT = re.compile(
 #: „:“ / „—“ / „-“ / „,“ mit kurzem Grund („, keine Oberfläche“, „: nur Doku“). Fragezeichen,
 #: schließende Anführungszeichen („Behauptung „Klickweg entfällt“ ist falsch“), Durchgestrichenes
 #: („~~…~~“) oder Text ohne Trennzeichen („entfällt nur auf Staging“) zählen nicht.
-_FORTSETZUNG = re.compile(
-    r"[*_]*[ \t]*(?:\([^()\n]*\))?[ \t]*(?:[:—–,-][ \t]*[^\n]{1,80}?)?[ \t]*\.?[ \t]*"
-)
+_FORTSETZUNG = re.compile(r"[*_]*[ \t]*(?:\([^()\n]*\))?[ \t]*(?:[:—–,-][ \t]*[^\n]{1,80}?)?[ \t]*\.?[ \t]*")
 #: Vor der Aussage (selbe Tabellenzelle): offene Checkbox oder Frage-/Bedingungswort
 #: („- [ ] Klickweg entfällt“, „Ob Klickweg entfällt …“) zählt nicht als entfällt (#282).
 _VOR_DAGEGEN = re.compile(
@@ -161,9 +159,7 @@ TEXT_ENDUNGEN = frozenset({".md", ".txt"})
 BILD_ENDUNGEN = frozenset({".png", ".jpg", ".jpeg", ".webp"})
 
 
-def finde_dateien(
-    verify_hard: Path, nummer: str, *, endungen: frozenset[str] = TEXT_ENDUNGEN
-) -> list[Path]:
+def finde_dateien(verify_hard: Path, nummer: str, *, endungen: frozenset[str] = TEXT_ENDUNGEN) -> list[Path]:
     """Belegdateien eines Tickets (Datei ``<N>…`` oder Ordner ``[<datum>_]<N>…``) mit passenden Endungen."""
     muster = re.compile(rf"^(?:\d{{4}}-\d{{2}}-\d{{2}}_)?{re.escape(nummer)}(?=$|[_.\-])")
     treffer: list[Path] = []
@@ -211,9 +207,7 @@ def _unittest_zahl(name: str, details: str) -> int:
     return int(treffer.group(1)) if treffer else 0
 
 
-def _unittest_lauf(
-    zeilen: list[str], index: int, befehl: str, datei: str, nur_saubere_zeilen: bool
-) -> Lauf | None:
+def _unittest_lauf(zeilen: list[str], index: int, befehl: str, datei: str, nur_saubere_zeilen: bool) -> Lauf | None:
     """Erkennt ``Ran N test(s) in …s`` samt ``OK``/``FAILED (…)`` ab Zeile ``index`` (#472)."""
     zeile = zeilen[index]
     treffer = _UNITTEST_RAN.search(zeile)
@@ -251,9 +245,7 @@ def _unittest_lauf(
     return Lauf(passed=passed, failed=failed, zeile=anzeige, befehl=befehl, datei=datei)
 
 
-def _node_lauf(
-    zeilen: list[str], index: int, befehl: str, datei: str, nur_saubere_zeilen: bool
-) -> Lauf | None:
+def _node_lauf(zeilen: list[str], index: int, befehl: str, datei: str, nur_saubere_zeilen: bool) -> Lauf | None:
     """Erkennt ``node --test``-Zusammenfassungen (``ℹ/# tests``, ``pass``, ``fail``, #472)."""
     treffer = _NODE_TESTS.match(zeilen[index])
     if treffer is None:

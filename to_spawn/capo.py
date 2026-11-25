@@ -702,7 +702,15 @@ def _staging_zeilen(vps: dict[str, Any]) -> list[str] | None:
         f"tail -n 200 {_server_pfad(pfad_text)}",
     ]
     try:
-        lauf = subprocess.run(befehl, capture_output=True, text=True, encoding="utf-8", timeout=30, check=False, **prozessbaum.fensterlos())
+        lauf = subprocess.run(
+            befehl,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=30,
+            check=False,
+            **prozessbaum.fensterlos(),
+        )
     except (OSError, subprocess.SubprocessError) as fehler:
         log.warning("Staging-Log über %s nicht lesbar: %s", host, fehler)
         raise _StagingUnlesbar from fehler

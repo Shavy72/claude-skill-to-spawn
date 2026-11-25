@@ -114,7 +114,10 @@ def test_checkpoint_ohne_bekannten_login_nimmt_keinen_kommentar_vorschlag_an(
 
 def test_checkpoint_vorschlag_filtert_fremde_autoren() -> None:
     # Angepasst (Nachschau R1): kein session_login mehr — „fremd“ heißt jetzt: ohne Marke.
-    kommentare = [_kommentar("bau-bot", f"{MARKE} Vorschlag: eigener", 90), _kommentar("fremder", "Vorschlag: fremd", 30)]
+    kommentare = [
+        _kommentar("bau-bot", f"{MARKE} Vorschlag: eigener", 90),
+        _kommentar("fremder", "Vorschlag: fremd", 30),
+    ]
     vorschlag = capo.checkpoint_vorschlag([], kommentare)
     assert vorschlag is not None
     assert (vorschlag.wahl, vorschlag.autor) == ("eigener", "bau-bot")
@@ -281,9 +284,7 @@ def test_s1_session_vorschlag_von_beteiligtem_wird_angenommen(
     assert any("würde Vorschlag annehmen: sofort aus." in z for z in zeilen), zeilen
 
 
-def test_s1_kommentar_ohne_author_association_zaehlt_nicht(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_s1_kommentar_ohne_author_association_zaehlt_nicht(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     zeilen = _checkpoint_ueber_gh(monkeypatch, tmp_path, [_kommentar(KONTO, SESSION_VORSCHLAG, 90)])
     assert not any("würde Vorschlag annehmen" in z for z in zeilen), zeilen
 

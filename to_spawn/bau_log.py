@@ -182,9 +182,7 @@ def entscheidung_felder(z: dict[str, Any]) -> tuple[str, str, str]:
     return frage, wahl, grund
 
 
-def hat_log_auf_origin(
-    repo: Path, ticket: str | int, *, hauptzweig: str | None = None
-) -> bool:
+def hat_log_auf_origin(repo: Path, ticket: str | int, *, hauptzweig: str | None = None) -> bool:
     """Liegt ein versioniertes Bau-Log von ``ticket`` auf ``origin/<Hauptzweig>`` oder
     einem geholten Remote-Ticket-Zweig ``origin/ticket/<N>-*``? (#438)
 
@@ -246,13 +244,10 @@ def log_repo(fallback: Path | None = None, *, versioniert: bool = False) -> Path
             return pfad.resolve()
         rueckfall = None if versioniert else log_rueckfall()
         if rueckfall is not None:
-            log.info(
-                "TO_SPAWN_LOG_REPO %s existiert nicht — Laufdatei im Hauptbaum %s.", pfad, rueckfall
-            )
+            log.info("TO_SPAWN_LOG_REPO %s existiert nicht — Laufdatei im Hauptbaum %s.", pfad, rueckfall)
             return rueckfall
         log.info(
-            "TO_SPAWN_LOG_REPO %s existiert (noch) nicht — keine Log-Zeile, "
-            "kein Ausweichen in den Hauptbaum.",
+            "TO_SPAWN_LOG_REPO %s existiert (noch) nicht — keine Log-Zeile, kein Ausweichen in den Hauptbaum.",
             pfad,
         )
         return None
@@ -487,16 +482,13 @@ def kontext_aktuell_k(
     enden = [
         z
         for z in lese(repo, ticket, hauptbaum=hauptbaum)
-        if z.get("typ") == "session_ende"
-        and (nach is None or _sortier_zeit(z).timestamp() > nach)
+        if z.get("typ") == "session_ende" and (nach is None or _sortier_zeit(z).timestamp() > nach)
     ]
     spitzen = _spitzen(enden[-1:])
     return _k(spitzen[0]) if spitzen else None
 
 
-def letzter_session_start(
-    repo: Path, ticket: str | int, *, hauptbaum: Path | None = None
-) -> float | None:
+def letzter_session_start(repo: Path, ticket: str | int, *, hauptbaum: Path | None = None) -> float | None:
     """Unix-Zeit der jüngsten ``session_start``-Zeile — „Ticket beginnt neu“ (#432).
 
     Zählt Starter- und Hook-Zeilen gleich. ``None`` = keine Zeile mit lesbarer Zeit.
@@ -504,8 +496,7 @@ def letzter_session_start(
     zeiten = [
         zeitpunkt.timestamp()
         for z in lese(repo, ticket, hauptbaum=hauptbaum)
-        if z.get("typ") == "session_start"
-        and (zeitpunkt := _zeitpunkt(z.get("ts"))) is not None
+        if z.get("typ") == "session_start" and (zeitpunkt := _zeitpunkt(z.get("ts"))) is not None
     ]
     return max(zeiten) if zeiten else None
 
@@ -517,9 +508,7 @@ def _dauer(zeile: dict[str, Any]) -> int:
         return 0
 
 
-def zusammenfassung(
-    repo: Path, ticket: str | int, *, hauptbaum: Path | None = None
-) -> dict[str, Any]:
+def zusammenfassung(repo: Path, ticket: str | int, *, hauptbaum: Path | None = None) -> dict[str, Any]:
     """Kennzahlen eines Tickets für Tabelle und Lernstoff (``hauptbaum`` wie bei :func:`lese`)."""
     zeilen = lese(repo, ticket, hauptbaum=hauptbaum)
     enden = _juengste_je_session(z for z in zeilen if z.get("typ") == "session_ende")
@@ -686,29 +675,19 @@ def umfang_art(text: str) -> str:
 
 def _faustregeln(zeilen: list[dict[str, Any]], grenze: float) -> list[str]:
     regeln = ["Faustregeln für den Schnitt:"]
-    faktoren = [
-        z["ist_k"] / z["schaetzung_k"]
-        for z in zeilen
-        if ist_schaetzung(z["schaetzung_k"]) and z["ist_k"]
-    ]
+    faktoren = [z["ist_k"] / z["schaetzung_k"] for z in zeilen if ist_schaetzung(z["schaetzung_k"]) and z["ist_k"]]
     if faktoren:
         mittel = _komma(sum(faktoren) / len(faktoren))
         regeln.append(
-            f"- Schätzungen lagen im Mittel bei Faktor {mittel} — Schätzung × {mittel} "
-            f"muss unter {grenze:g}k bleiben."
+            f"- Schätzungen lagen im Mittel bei Faktor {mittel} — Schätzung × {mittel} muss unter {grenze:g}k bleiben."
         )
     je_art: dict[str, list[int]] = {}
     for z in zeilen:
         if z["sessions"] >= 1:
             art = umfang_art(f"{z['umfang'] or ''} {z['title'] or ''}")
             je_art.setdefault(art, []).append(z["sessions"])
-    for art, anzahl in sorted(
-        je_art.items(), key=lambda paar: (-sum(paar[1]) / len(paar[1]), paar[0])
-    ):
-        regeln.append(
-            f"- {art} brauchte im Mittel {_komma(sum(anzahl) / len(anzahl))} Sessions "
-            f"(n={len(anzahl)})"
-        )
+    for art, anzahl in sorted(je_art.items(), key=lambda paar: (-sum(paar[1]) / len(paar[1]), paar[0])):
+        regeln.append(f"- {art} brauchte im Mittel {_komma(sum(anzahl) / len(anzahl))} Sessions (n={len(anzahl)})")
     staffel = [z["ticket"] for z in zeilen if z["staffel"] > 1]
     if staffel:
         regeln.append(
@@ -746,15 +725,12 @@ def lernstoff(repo: Path, letzte: int = 30, grenze_k: float | None = None) -> st
         schaetzung = z["schaetzung_k"]
         hat_schaetzung = ist_schaetzung(schaetzung)
         soll = f"{schaetzung:g}k" if hat_schaetzung else "ohne Schätzung"
-        faktor = (
-            f" (Faktor {_komma(z['ist_k'] / schaetzung)})" if hat_schaetzung and z["ist_k"] else ""
-        )
+        faktor = f" (Faktor {_komma(z['ist_k'] / schaetzung)})" if hat_schaetzung and z["ist_k"] else ""
         ist = f"{z['ist_k']:g}k" if z["ist_k"] else "?"
         umfang = str(z["umfang"] or "").replace("\n", " ")[:110]
         zeilen.append(
             f"- #{z['ticket']}: {soll} geschätzt → {ist} ist{faktor}, "
-            f"{z['sessions']} Session(s), {z['subagenten']} Subagent(en)"
-            + (f" · {umfang}" if umfang else "")
+            f"{z['sessions']} Session(s), {z['subagenten']} Subagent(en)" + (f" · {umfang}" if umfang else "")
         )
         schwer = str(z["schwierigkeiten"] or "").replace("\n", " ")[:110]
         if schwer:

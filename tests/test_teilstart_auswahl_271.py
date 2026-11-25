@@ -83,10 +83,7 @@ def _schreibe_manifest(repo: Path, spec: int, tickets: list[int]) -> Path:
             {
                 "spec": spec,
                 "feature": "teilstart-probe",
-                "tickets": {
-                    str(n): {"title": f"Ticket {n}", "schaetzung_k": 40, "umfang": "Probe."}
-                    for n in tickets
-                },
+                "tickets": {str(n): {"title": f"Ticket {n}", "schaetzung_k": 40, "umfang": "Probe."} for n in tickets},
             },
             ensure_ascii=False,
         ),
@@ -109,9 +106,7 @@ def _lade_sessions_stand(repo: Path, monkeypatch: pytest.MonkeyPatch) -> Any:
 # --- 1. Auswahl-Speicher (eine Stelle: to_spawn.auswahl) ----------------------
 
 
-def test_auswahl_speichern_lesen_zusammenfuehren_und_vollstart(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_auswahl_speichern_lesen_zusammenfuehren_und_vollstart(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from to_spawn import auswahl
 
     monkeypatch.setenv("TO_SPAWN_RECHNER", "bau-srv-1")
@@ -173,9 +168,7 @@ def test_auswahl_speichern_lesen_zusammenfuehren_und_vollstart(
 # --- 2. Aufpasser: Weg-Test (5 Tickets, Start mit 2) + Nachträge 1 & 4 --------
 
 
-def test_aufpasser_wegtest_fuenf_tickets_start_mit_zwei(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_aufpasser_wegtest_fuenf_tickets_start_mit_zwei(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Weg-Test aus #271: Spec mit 5 offenen Tickets, Auswahl [101, 102], ein
     Aufpasser-Lauf → genau 2 Bau-Fenster + Aufseher, kein Schreibzugriff auf die anderen 3."""
     from to_spawn import auswahl
@@ -196,14 +189,13 @@ def test_aufpasser_wegtest_fuenf_tickets_start_mit_zwei(
         a,
         "offene_tickets",
         lambda _s, _r: {
-            n: {"number": n, "state": "open", "state_reason": None, "labels": []}
-            for n in (101, 102, 103, 104, 105)
+            n: {"number": n, "state": "open", "state_reason": None, "labels": []} for n in (101, 102, 103, 104, 105)
         },
     )
     monkeypatch.setattr(
         a,
         "ticket_lesen",
-        lambda n, _r: (ticket_abfragen.append(n) or {"number": n, "state": "open", "labels": set()}),
+        lambda n, _r: ticket_abfragen.append(n) or {"number": n, "state": "open", "labels": set()},
     )
     monkeypatch.setattr(a, "belegte_tickets", lambda: set())
     monkeypatch.setattr(aufpasser.gh, "blocked_by", lambda *_a, **_k: [])
@@ -345,9 +337,7 @@ def test_neustart_verweigert_ausserhalb_auswahl(
 # --- 4. Aufseher-Stand & sessions_stand begrenzt ------------------------------
 
 
-def test_aufseher_stand_begrenzt_auf_auswahl(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_aufseher_stand_begrenzt_auf_auswahl(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from to_spawn import auswahl
 
     monkeypatch.setenv("TO_SPAWN_RECHNER", "bau-srv-1")
@@ -373,9 +363,7 @@ def test_aufseher_stand_begrenzt_auf_auswahl(
     assert "2 offen" in text
 
 
-def test_sessions_stand_begrenzt_auf_auswahl(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_sessions_stand_begrenzt_auf_auswahl(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from to_spawn import auswahl
 
     monkeypatch.setenv("TO_SPAWN_RECHNER", "bau-srv-1")
@@ -453,12 +441,12 @@ def test_capo_tick_fasst_nur_auswahl_an_und_schliesst_spec_nicht(
     monkeypatch.setattr(
         befund,
         "kommentiere",
-        lambda n, _g, text: (kommentare.append((n, text)) or True),
+        lambda n, _g, text: kommentare.append((n, text)) or True,
     )
     monkeypatch.setattr(
         capo,
         "_wieder_oeffnen",
-        lambda n, *_a: (wieder_geoeffnet.append(n) or [f"#{n} wieder geöffnet"]),
+        lambda n, *_a: wieder_geoeffnet.append(n) or [f"#{n} wieder geöffnet"],
     )
 
     erg = capo.tick(repo, 1330, "probe/repo", {"waechter": {"karenz_min": 0}}, jetzt=jetzt)
@@ -473,9 +461,7 @@ def test_capo_tick_fasst_nur_auswahl_an_und_schliesst_spec_nicht(
 # --- 6. Stop-Hook & Aufseher-Takt (Nachträge 2 & 3) ---------------------------
 
 
-def test_stop_hook_ohne_wache_startet_keinen_takt(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_stop_hook_ohne_wache_startet_keinen_takt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Nachtrag 2 & 3: Bei --ohne-wache löst der Stop-Hook keinen Takt aus."""
     from to_spawn import auswahl
 
@@ -505,9 +491,7 @@ def test_stop_hook_ohne_wache_startet_keinen_takt(
     assert capo_aufrufe == []
 
 
-def test_teilstart_takt_fasst_fremde_tickets_nicht_an(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_teilstart_takt_fasst_fremde_tickets_nicht_an(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Abnahme-Zusatz Nachtrag 3: Teil-Start mit einem Ticket [101], Turn-Ende →
     0 Kommentare und 0 Einträge für fremde Tickets."""
     from to_spawn import auswahl
@@ -548,12 +532,10 @@ def test_teilstart_takt_fasst_fremde_tickets_nicht_an(
     monkeypatch.setattr(
         capo,
         "log_vom_ref",
-        lambda _r, _ref, n: (
-            [{"ts": jetzt.isoformat(), "typ": "frage", "text": "Fremde Frage"}] if n == 102 else []
-        ),
+        lambda _r, _ref, n: [{"ts": jetzt.isoformat(), "typ": "frage", "text": "Fremde Frage"}] if n == 102 else [],
     )
     monkeypatch.setattr(capo, "laufdateien", lambda *_a: [])
-    monkeypatch.setattr(befund, "kommentiere", lambda n, _g, t: (kommentare.append((n, t)) or True))
+    monkeypatch.setattr(befund, "kommentiere", lambda n, _g, t: kommentare.append((n, t)) or True)
     monkeypatch.setattr(waechter_takt.briefkasten, "offene", lambda nummern, **_k: [])
 
     eintraege, _neu = waechter_takt.pruefe(repo, 1330, "probe/repo", {}, None, dry_run=False)
@@ -651,4 +633,3 @@ def test_spec_repo_ordner_vertraegt_fenster_ohne_pfad_und_nicht_git_ordner(tmp_p
     fenster = [SimpleNamespace(name="bau 101"), SimpleNamespace(name="bau 102", pfad="")]
     assert a.spec_repo_ordner("1330", fenster, basis) == basis  # type: ignore[arg-type]
     assert aufpasser._origin_kennung(basis) == ""
-

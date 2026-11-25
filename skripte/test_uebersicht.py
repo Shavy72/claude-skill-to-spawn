@@ -135,9 +135,7 @@ def _stand(lauf: Lauf) -> str:
     return datetime.fromtimestamp(lauf.zeit).strftime("%Y-%m-%d %H:%M") if lauf.zeit else "unbekannt"
 
 
-def _karte_html(
-    k: Karte, *, belege_rel: str = capo.BELEGE_ORDNER, suchpfad: Path | None = None
-) -> str:
+def _karte_html(k: Karte, *, belege_rel: str = capo.BELEGE_ORDNER, suchpfad: Path | None = None) -> str:
     e = html.escape
     marke, titel_quelle = _STATUS_TEXT[k.status], "Zahl stammt aus"
     if k.lauf:
@@ -165,9 +163,7 @@ def _karte_html(
                 zahl = ""
                 marke = "✅ grün — laut Abnahme-Zeile" if k.status == "gruen" else "❌ rot — laut Abnahme-Zeile"
         elif k.dateien:
-            beleg = "Belegseite ohne Testzahl: " + ", ".join(
-                f"<code>{e(belege_rel)}/{e(d)}</code>" for d in k.dateien
-            )
+            beleg = "Belegseite ohne Testzahl: " + ", ".join(f"<code>{e(belege_rel)}/{e(d)}</code>" for d in k.dateien)
             titel_quelle = "Gesuchter Pfad"
             quelle = f"<code>{e(pfad_ort)}</code>"
         else:

@@ -36,7 +36,17 @@ MUSTER: dict[str, re.Pattern[str]] = {
 #: Ordner (Skill-Wurzel-relativ) und Dateitypen, die zum Skill-Code zählen. ``tests/`` nicht.
 #: ``messung/`` wird nicht installiert (NICHT_INSTALLIERT in test_installer_vollstaendig.py), aber gescannt.
 ORDNER = (
-    "to_spawn", "skripte", "scripts", "repo-scripts", "leitstand", "aliase", "nest", "messung", "review-hook", "review", "probe",
+    "to_spawn",
+    "skripte",
+    "scripts",
+    "repo-scripts",
+    "leitstand",
+    "aliase",
+    "nest",
+    "messung",
+    "review-hook",
+    "review",
+    "probe",
     ".github",  # #537: Workflow-Hilfsskript
 )
 ENDUNGEN = {".py", ".sh", ".ps1", ".json", ".html", ""}
@@ -67,109 +77,87 @@ AUSNAHMEN: dict[tuple[str, str], tuple[tuple[str, ...], str]] = {
         "Aufruf-Docstring der Weiterleitung",
     ),
     ("repo-scripts/_default.json", "bau-log-ordner"): (
-        (
-            "m Worktree {WT}), danach docs/agents/bau_log/{N}.jsonl per Pathspec m",
-        ),
+        ("m Worktree {WT}), danach docs/agents/bau_log/{N}.jsonl per Pathspec m",),
         _TEXT_BESTANDSTEST + " (test_bau_log_204.py)",
     ),
     ("spawn_local.ps1", "manifest-ordner"): (
         (
             "# Liest docs/agents/manifests/spec-<S>.json (Ticket-Nu",
-            "ifest = Join-Path $repo \"docs/agents/manifests/spec-$Spec.json\"",
+            'ifest = Join-Path $repo "docs/agents/manifests/spec-$Spec.json"',
         ),
         "Rückfall vor config.pfad (test_starter_shell_l1.py) + Kopf-Kommentar",
     ),
     ("spawn_local.ps1", "repo-skript"): (
-        (
-            "if (-not (Test-Path \"./scripts/bau.py\") -and -not (Test-Path \"",
-        ),
+        ('if (-not (Test-Path "./scripts/bau.py") -and -not (Test-Path "',),
         _WEITERLEITUNG + " (test_starter_shell_l1.py)",
     ),
     ("install.ps1", "repo-skript"): (
         (
             "äuft in jedem Repo mit ./scripts/bau.py ---",
-            "if (-not (Test-Path \"./scripts/bau.py\") -and (Test-Path \"$env:",
-            "if (-not (Test-Path \"./scripts/bau.py\")) { Write-Error \"bau: k",
-            "python \"./scripts/bau.py\" @args",
-            "if (-not (Test-Path \"./scripts/wache.py\") -and (Test-Path \"$env:",
-            "if (-not (Test-Path \"./scripts/wache.py\")) { Write-Error \"wache:",
-            "python \"./scripts/wache.py\" @args",
-            "if (-not (Test-Path \"./scripts/wache.py\") -and (Test-Path \"$env:",
-            "if (-not (Test-Path \"./scripts/wache.py\")) { Write-Error \"aufseh",
-            "python \"./scripts/wache.py\" @args",
+            'if (-not (Test-Path "./scripts/bau.py") -and (Test-Path "$env:',
+            'if (-not (Test-Path "./scripts/bau.py")) { Write-Error "bau: k',
+            'python "./scripts/bau.py" @args',
+            'if (-not (Test-Path "./scripts/wache.py") -and (Test-Path "$env:',
+            'if (-not (Test-Path "./scripts/wache.py")) { Write-Error "wache:',
+            'python "./scripts/wache.py" @args',
+            'if (-not (Test-Path "./scripts/wache.py") -and (Test-Path "$env:',
+            'if (-not (Test-Path "./scripts/wache.py")) { Write-Error "aufseh',
+            'python "./scripts/wache.py" @args',
         ),
         _WEITERLEITUNG + " (test_starter_shell_l1.py)",
     ),
     ("install.ps1", "manifest-ordner"): (
-        (
-            "th (Resolve-Path $Repo) \"docs\\agents\\manifests\"",
-        ),
+        ('th (Resolve-Path $Repo) "docs\\agents\\manifests"',),
         "Rückfall vor config.pfad (test_starter_shell_l1.py)",
     ),
     ("install.ps1", "github-konto"): (("--- to-spawn (github.com/Shavy72/claude-skill-to-spawn): l",), _SKILL_HEIMAT),
     ("nest/nest_server.sh", "heim-pfad"): (
         (
             "if [ -f /root/.ssh/authorized_keys ] &&",
-            "o \"$NUTZER\" -g \"$NUTZER\" /root/.ssh/authorized_keys \"$NU",
+            'o "$NUTZER" -g "$NUTZER" /root/.ssh/authorized_keys "$NU',
         ),
         "Root-Schlüssel des frischen Servers (/root/.ssh), Systempfad, kein Nutzername",
     ),
     # Weiterleitungs-Rückfall: Repo-Skript, sonst Skill-Skript
     ("to_spawn/aufpasser.py", "repo-skript"): (
         (
-            "EPO = \"cd {repo} && {py} scripts/wache.py {s}{resume}\"",
-            "} {s} {resume} (Vorgabe: scripts/wache.py bzw. Skill)\",",
+            'EPO = "cd {repo} && {py} scripts/wache.py {s}{resume}"',
+            '} {s} {resume} (Vorgabe: scripts/wache.py bzw. Skill)",',
         ),
         _WEITERLEITUNG + " (VORLAGE_WACHE_REPO, Hilfe-Text)",
     ),
     ("to_spawn/aufpasser.py", "duoplus"): (("Beispiele unten sind die DuoPlus-Vorgabe. Erster Treffer",), _DOKU),
     ("to_spawn/capo.py", "repo-skript"): (
-        (
-            "ein Start OHNE Vorspann ruft (lokal, Windows-Tab): ``scripts/bau.py``",
-        ),
+        ("ein Start OHNE Vorspann ruft (lokal, Windows-Tab): ``scripts/bau.py``",),
         _WEITERLEITUNG + " (Docstring)",
     ),
     ("repo-scripts/bau.py", "repo-skript"): (
-        (
-            "nen wie bisher: ``python scripts/bau.py --help``.",
-        ),
+        ("nen wie bisher: ``python scripts/bau.py --help``.",),
         "Aufruf-Docstring der Weiterleitung selbst",
     ),
     ("repo-scripts/wache.py", "repo-skript"): (
-        (
-            "nen wie bisher: ``python scripts/wache.py --help``.",
-        ),
+        ("nen wie bisher: ``python scripts/wache.py --help``.",),
         "Aufruf-Docstring der Weiterleitung selbst",
     ),
     ("repo-scripts/_to_spawn_weiterleitung.py", "repo-skript"): (
-        (
-            "* Als Programm (``python scripts/bau.py 205``): Umgebung setzen,",
-        ),
+        ("* Als Programm (``python scripts/bau.py 205``): Umgebung setzen,",),
         "Aufruf-Docstring der Weiterleitung selbst",
     ),
     ("repo-scripts/_to_spawn_weiterleitung.py", "github-konto"): (
-        (
-            "QUELLE = \"github.com/Shavy72/claude-skill-to-spawn\"",
-        ),
+        ('QUELLE = "github.com/Shavy72/claude-skill-to-spawn"',),
         _SKILL_HEIMAT,
     ),
     ("repo-scripts/spawn_srv.sh", "github-konto"): (
-        (
-            "installieren (github.com/Shavy72/claude-skill-to-spawn, in",
-        ),
+        ("installieren (github.com/Shavy72/claude-skill-to-spawn, in",),
         _SKILL_HEIMAT,
     ),
     ("skripte/spawn_srv.sh", "github-konto"): (
-        (
-            "installieren (github.com/Shavy72/claude-skill-to-spawn), d",
-        ),
+        ("installieren (github.com/Shavy72/claude-skill-to-spawn), d",),
         _SKILL_HEIMAT,
     ),
     # Erkennung, kein Pfad
     ("to_spawn/inventur.py", "duoplus"): (
-        (
-            'TER: tuple[str, ...] = ("duoplus", "n8n", "adb", "airtable")',
-        ),
+        ('TER: tuple[str, ...] = ("duoplus", "n8n", "adb", "airtable")',),
         "PROJEKT_WÖRTER: Wortliste zur Erkennung von Projekt-Wissen",
     ),
     # Herkunft und Doku in Docstrings/Kommentaren
@@ -178,30 +166,22 @@ AUSNAHMEN: dict[tuple[str, str], tuple[tuple[str, ...], str]] = {
     ("to_spawn/stand.py", "duoplus"): (("em Server-Start sichern (duoplus-management#325).",), _HERKUNFT),
     ("to_spawn/deploy_status.py", "duoplus"): (("ins Bau-Log übernehmen (duoplus-management#207).",), _HERKUNFT),
     ("to_spawn/config.py", "duoplus"): (
-        (
-            "DuoPlus-Werte stehen nur in ``to",
-        ),
+        ("DuoPlus-Werte stehen nur in ``to",),
         "Verweis auf die Vorgabe-Stelle vorgaben.py",
     ),
     ("to_spawn/einrichten.py", "duoplus"): (("fig ist gültige Vorgabe (DuoPlus, altes Verhalten).",), _DOKU),
     ("to_spawn/gh.py", "duoplus"): (("s heißen heute meist so; DuoPlus hat kein ``origin/main``",), _DOKU),
     ("to_spawn/hausmeister.py", "duoplus"): (("n Eintrags ist (Vorgabe: DuoPlus, Skill-Ordner fragen dor",), _DOKU),
     ("to_spawn/handoff_blick.py", "manifest-ordner"): (
-        (
-            "\"\"\"Ticket-Nummern aus ``docs/agents/manifests/spec-<S>.json``; Namen o",
-        ),
+        ('"""Ticket-Nummern aus ``docs/agents/manifests/spec-<S>.json``; Namen o',),
         _DOKU,
     ),
     ("to_spawn/ticketstand.py", "manifest-ordner"): (
-        (
-            "+ Kurztitel: Manifest ``docs/agents/manifests/spec-<S>.json`` (:mod:`m",
-        ),
+        ("+ Kurztitel: Manifest ``docs/agents/manifests/spec-<S>.json`` (:mod:`m",),
         _DOKU,
     ),
     ("to_spawn/bau_loop.py", "repo-skript"): (
-        (
-            "ife gehört dem Skill — ``scripts/bau.py`` im Projekt-Repo bleibt",
-        ),
+        ("ife gehört dem Skill — ``scripts/bau.py`` im Projekt-Repo bleibt",),
         _DOKU,
     ),
     ("to_spawn/bau_log.py", "bau-log-ordner"): (
@@ -213,9 +193,7 @@ AUSNAHMEN: dict[tuple[str, str], tuple[tuple[str, ...], str]] = {
     ),
     ("to_spawn/waechter_lauf.py", "bau-log-ordner"): (("oniert=True)  # schreibt docs/agents/bau_log/ (#257)",), _DOKU),
     ("skripte/bau.py", "repo-skript"): (
-        (
-            "Aufruf: ``python scripts/bau.py <N> [--dry-run] [--model",
-        ),
+        ("Aufruf: ``python scripts/bau.py <N> [--dry-run] [--model",),
         "Aufruf-Docstring der Weiterleitung",
     ),
     ("skripte/bau.py", "manifest-ordner"): (
@@ -223,27 +201,19 @@ AUSNAHMEN: dict[tuple[str, str], tuple[tuple[str, ...], str]] = {
         _DOKU,
     ),
     ("skripte/belege_uebersicht.py", "manifest-ordner"): (
-        (
-            "Je Ticket aus ``docs/agents/manifests/spec-<S>.json``: Titel,",
-        ),
+        ("Je Ticket aus ``docs/agents/manifests/spec-<S>.json``: Titel,",),
         _DOKU,
     ),
     ("skripte/test_uebersicht.py", "manifest-ordner"): (
-        (
-            "Liest die Tickets aus ``docs/agents/manifests/spec-<S>.json`` und dere",
-        ),
+        ("Liest die Tickets aus ``docs/agents/manifests/spec-<S>.json`` und dere",),
         _DOKU,
     ),
     ("skripte/sessions_stand.py", "manifest-ordner"): (
-        (
-            "Spec-Nummer (Manifest ``docs/agents/manifests/spec-<S>.json``); ohne A",
-        ),
+        ("Spec-Nummer (Manifest ``docs/agents/manifests/spec-<S>.json``); ohne A",),
         _DOKU,
     ),
     ("skripte/rueckblick.py", "manifest-ordner"): (
-        (
-            "n`` liest das Manifest ``docs/agents/manifests/spec-<S>.json``, vereini",
-        ),
+        ("n`` liest das Manifest ``docs/agents/manifests/spec-<S>.json``, vereini",),
         _DOKU,
     ),
     ("skripte/rueckblick.py", "bau-log-ordner"): (("- Repo: ``<repo>/docs/agents/bau_log/<N>.jsonl``",), _DOKU),
@@ -256,16 +226,14 @@ AUSNAHMEN: dict[tuple[str, str], tuple[tuple[str, ...], str]] = {
         _DOKU + " (Klon-Namen des Bau-Servers)",
     ),
     ("skripte/hooks/staffel_stop.py", "repo-skript"): (
-        (
-            "t nur in Sessions, die ``scripts/bau.py`` gestartet hat — der La",
-        ),
+        ("t nur in Sessions, die ``scripts/bau.py`` gestartet hat — der La",),
         _DOKU,
     ),
     # Mess-Skripte des Prüftor-Vergleichs (#81): Name nur in Docstring und Aufruf-Beispiel
-    ("messung/vorher_zeiten.py", "duoplus"): (("\"\"\"Vorher-Zeiten der DuoPlus-Schlange.",), _DOKU),
+    ("messung/vorher_zeiten.py", "duoplus"): (('"""Vorher-Zeiten der DuoPlus-Schlange.',), _DOKU),
     ("messung/rueckblick_auswahl_duoplus.py", "duoplus"): (
         (
-            "\"\"Rückblick Test-Auswahl DuoPlus (Etappe 3a): heutige gat",
+            '""Rückblick Test-Auswahl DuoPlus (Etappe 3a): heutige gat',
             "thon3 rueckblick_auswahl_duoplus.py --schlange <schlangen",
         ),
         _DOKU + " (Aufruf-Beispiel mit Dateinamen)",

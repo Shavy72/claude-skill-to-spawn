@@ -14,9 +14,7 @@ import pytest
 
 from to_spawn import capo, config, docker_reste, staging_schalter
 
-SPEC_TEXT = (
-    "## Hauptschalter\n\n- **Name des Hauptschalters:** `demo_funktion.an` — Demo.\n"
-)
+SPEC_TEXT = "## Hauptschalter\n\n- **Name des Hauptschalters:** `demo_funktion.an` — Demo.\n"
 
 
 def _konfig(repo: Path, daten: dict) -> None:
@@ -25,14 +23,10 @@ def _konfig(repo: Path, daten: dict) -> None:
     datei.write_text(json.dumps(daten), encoding="utf-8")
 
 
-def _maschine(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, daten: dict | None
-) -> None:
+def _maschine(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, daten: dict | None) -> None:
     datei = tmp_path / "maschine.json"
     monkeypatch.setenv("TO_SPAWN_MASCHINE", str(datei))
-    monkeypatch.delenv(
-        "TO_SPAWN_STAGING_SPERRE", raising=False
-    )  # conftest setzt die Naht
+    monkeypatch.delenv("TO_SPAWN_STAGING_SPERRE", raising=False)  # conftest setzt die Naht
     if daten is not None:
         datei.write_text(json.dumps(daten), encoding="utf-8")
 
@@ -73,25 +67,19 @@ def test_entscheidungen_aus_konfig(tmp_path: Path) -> None:
 # --- Fundstelle 11: Staging-Sperre ------------------------------------------------
 
 
-def test_sperre_ohne_maschinen_liste_alter_pfad(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_sperre_ohne_maschinen_liste_alter_pfad(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _maschine(tmp_path, monkeypatch, None)
     assert docker_reste._sperr_pfade() == [Path("/home/bau/staging/.deploy.lock")]
 
 
-def test_sperre_aus_maschinen_liste(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_sperre_aus_maschinen_liste(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     a, b = tmp_path / "a.lock", tmp_path / "b.lock"
     _maschine(tmp_path, monkeypatch, {"staging_sperren": [str(a), str(b)]})
     assert docker_reste._sperr_pfade() == [a, b]
 
 
 @pytest.mark.skipif(docker_reste.fcntl is None, reason="flock nur auf dem Bau-Server")
-def test_sperre_maschinen_liste_belegt_heisst_staging_baut(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_sperre_maschinen_liste_belegt_heisst_staging_baut(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     fcntl = docker_reste.fcntl
     frei, belegt = tmp_path / "frei.lock", tmp_path / "belegt.lock"
     frei.touch()
@@ -106,9 +94,7 @@ def test_sperre_maschinen_liste_belegt_heisst_staging_baut(
 
 
 def test_sperre_env_gewinnt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    _maschine(
-        tmp_path, monkeypatch, {"staging_sperren": [str(tmp_path / "liste.lock")]}
-    )
+    _maschine(tmp_path, monkeypatch, {"staging_sperren": [str(tmp_path / "liste.lock")]})
     monkeypatch.setenv("TO_SPAWN_STAGING_SPERRE", str(tmp_path / "env.lock"))
     assert docker_reste._sperr_pfade() == [tmp_path / "env.lock"]
 
@@ -122,14 +108,8 @@ def _schalte_probe(repo: Path, monkeypatch: pytest.MonkeyPatch) -> str:
     return "\n".join(ergebnis.zeilen)
 
 
-def test_schalter_ohne_schluessel_alter_pfad(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    assert (
-        staging_schalter.SKRIPT
-        == "scripts/schalter.py"
-        == config.DEFAULTS["staging"]["schalter"]
-    )
+def test_schalter_ohne_schluessel_alter_pfad(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    assert staging_schalter.SKRIPT == "scripts/schalter.py" == config.DEFAULTS["staging"]["schalter"]
     (tmp_path / "scripts").mkdir()
     (tmp_path / "scripts" / "schalter.py").write_text("", encoding="utf-8")
     text = _schalte_probe(tmp_path, monkeypatch)

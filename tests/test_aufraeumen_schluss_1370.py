@@ -61,9 +61,7 @@ def hm(welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch) -> Path:  # noqa:
 def _laeufe(log: Path) -> list[dict]:
     if not log.exists():
         return []
-    return [
-        json.loads(z) for z in log.read_text(encoding="utf-8").splitlines() if z.strip()
-    ]
+    return [json.loads(z) for z in log.read_text(encoding="utf-8").splitlines() if z.strip()]
 
 
 def _zustand(welt: dict[str, Path]) -> dict:  # noqa: F811
@@ -101,9 +99,7 @@ def test_probe_raeumt_nur_trocken_ohne_marker(welt: dict[str, Path], hm: Path) -
     _spec_fertig(welt)
     probe = _capo(welt, "--dry-run")
     assert "SPEC FERTIG" in probe.stdout, _text(probe)
-    assert "Hausmeister (Probe): 0 würde löschen, 1 bleibt, 0 Fehler" in probe.stdout, (
-        _text(probe)
-    )
+    assert "Hausmeister (Probe): 0 würde löschen, 1 bleibt, 0 Fehler" in probe.stdout, _text(probe)
     assert [lauf["trocken"] for lauf in _laeufe(hm)] == [True]
     assert not _zustand(welt).get("aufraeumen_erledigt")
 
@@ -130,20 +126,14 @@ def test_fehler_im_hausmeister_zeile_und_naechster_tick_erneut(
         mp.chdir(welt["repo"])
         mp.setattr(hausmeister, "rundgang", kaputt)
         konfig = config.lade(welt["repo"])
-        erg = capo.tick(
-            welt["repo"], int(SPEC), "test/wegwerf", konfig, wt_basis=str(welt["wt"])
-        )
+        erg = capo.tick(welt["repo"], int(SPEC), "test/wegwerf", konfig, wt_basis=str(welt["wt"]))
     text = "\n".join(erg.zeilen)
     assert "SPEC FERTIG" in text, text
-    assert (
-        "FEHLER: Hausmeister — unerwarteter Fehler (RuntimeError: Platte weg)." in text
-    ), text
+    assert "FEHLER: Hausmeister — unerwarteter Fehler (RuntimeError: Platte weg)." in text, text
     assert any("Abschluss-Mail" in z for z in erg.zeilen), text  # Tick lief weiter
     assert not _zustand(welt).get("aufraeumen_erledigt")
     zweiter = _capo(welt)
-    assert "Hausmeister: 0 gelöscht, 1 bleibt, 0 Fehler" in zweiter.stdout, _text(
-        zweiter
-    )
+    assert "Hausmeister: 0 gelöscht, 1 bleibt, 0 Fehler" in zweiter.stdout, _text(zweiter)
     assert _zustand(welt).get("aufraeumen_erledigt")
 
 
@@ -155,9 +145,7 @@ def _tick(welt: dict[str, Path], **ersatz: object) -> list[str]:  # noqa: F811
         for name, wert in ersatz.items():
             mp.setattr(hausmeister, name, wert)
         konfig = config.lade(welt["repo"])
-        return capo.tick(
-            welt["repo"], int(SPEC), "test/wegwerf", konfig, wt_basis=str(welt["wt"])
-        ).zeilen
+        return capo.tick(welt["repo"], int(SPEC), "test/wegwerf", konfig, wt_basis=str(welt["wt"])).zeilen
 
 
 def _sperre_halten(hm: Path):
@@ -198,18 +186,12 @@ def test_ordnersuche_scheitert_drei_versuche_dann_aufgegeben(
 
     for versuch in (1, 2):
         text = "\n".join(_tick(welt, _kandidaten=unlesbar))
-        assert (
-            "FEHLER: Hausmeister — Ordnersuche gescheitert (OSError: Wurzel nicht lesbar)."
-            in text
-        ), text
+        assert "FEHLER: Hausmeister — Ordnersuche gescheitert (OSError: Wurzel nicht lesbar)." in text, text
         assert "aufgegeben" not in text, text
         assert not _zustand(welt).get("aufraeumen_erledigt")
         assert _zustand(welt).get("aufraeumen_versuche") == versuch
     text = "\n".join(_tick(welt, _kandidaten=unlesbar))
-    assert (
-        "FEHLER: Hausmeister — nach 3 Versuchen aufgegeben, Netz ist der Aufpasser-Takt"
-        in text
-    ), text
+    assert "FEHLER: Hausmeister — nach 3 Versuchen aufgegeben, Netz ist der Aufpasser-Takt" in text, text
     assert _zustand(welt).get("aufraeumen_erledigt")
     assert "Hausmeister" not in "\n".join(_tick(welt, _kandidaten=unlesbar))
 
@@ -265,12 +247,8 @@ def test_rundgang_bei_sperre_nicht_gelaufen(hm: Path) -> None:
 def _prompt() -> str:
     import importlib.util
 
-    vorlage = json.loads(
-        (SKILL / "repo-scripts" / "_default.json").read_text(encoding="utf-8")
-    )["prompt_template"]
-    spec = importlib.util.spec_from_file_location(
-        "bau_1370", SKILL / "skripte" / "bau.py"
-    )
+    vorlage = json.loads((SKILL / "repo-scripts" / "_default.json").read_text(encoding="utf-8"))["prompt_template"]
+    spec = importlib.util.spec_from_file_location("bau_1370", SKILL / "skripte" / "bau.py")
     assert spec and spec.loader
     bau = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(bau)
@@ -286,11 +264,7 @@ def _helfer_quelle() -> str:
 
 
 def _kettenzeile() -> str:
-    zeilen = [
-        z
-        for z in (SKILL / "SKILL.md").read_text(encoding="utf-8").splitlines()
-        if "Kette am Spec-Ende" in z
-    ]
+    zeilen = [z for z in (SKILL / "SKILL.md").read_text(encoding="utf-8").splitlines() if "Kette am Spec-Ende" in z]
     assert len(zeilen) == 1, zeilen
     return zeilen[0]
 
@@ -306,8 +280,6 @@ def test_kettenzeile_nennt_tuer() -> None:
 
 @pytest.mark.parametrize("quelle", ["prompt", "kettenzeile", "helfer"])
 def test_aufrufer_ohne_regel_woerter(quelle: str) -> None:
-    text = {"prompt": _prompt, "kettenzeile": _kettenzeile, "helfer": _helfer_quelle}[
-        quelle
-    ]()
+    text = {"prompt": _prompt, "kettenzeile": _kettenzeile, "helfer": _helfer_quelle}[quelle]()
     gefunden = [w for w in REGEL_WOERTER if w in text]
     assert gefunden == [], gefunden

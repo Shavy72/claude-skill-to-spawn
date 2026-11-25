@@ -76,8 +76,7 @@ _AUFTRAG = {
 _PFLICHT = {
     "pruefung.schnell": lambda k: config.pruef_befehl(k, "schnell"),
     "pruefung.komplett": lambda k: config.pruef_befehl(k, "komplett"),
-    "live.befehl": lambda k: bool(config.live_schritt(k)["befehl"])
-    or config.live_bewusst_ohne(k),
+    "live.befehl": lambda k: bool(config.live_schritt(k)["befehl"]) or config.live_bewusst_ohne(k),
 }
 
 
@@ -136,12 +135,8 @@ def sicherstellen(
     if doppelt or not s.isdigit():
         # Doppelte Schlüssel: Schreiben löschte den Befund der Manifest-Prüfung.
         # Spec ohne Issue-Nummer: kein Unter-Issue möglich. Beides nur melden.
-        grund = (
-            "Manifest mit doppelten Nummern" if doppelt else "Spec ohne Issue-Nummer"
-        )
-        return Ergebnis(
-            True, [f"{kopf} — {grund}: Einrichtungs-Ticket nicht angelegt."]
-        )
+        grund = "Manifest mit doppelten Nummern" if doppelt else "Spec ohne Issue-Nummer"
+        return Ergebnis(True, [f"{kopf} — {grund}: Einrichtungs-Ticket nicht angelegt."])
     vorhanden = manifest.einrichtungs_ticket(daten)
     slug = gh.repo_aus_origin(repo) if mit_github else ""
     grund = (
@@ -195,9 +190,7 @@ def sicherstellen(
         if isinstance(stand, dict) and ticket_zustand.endgueltig_zu(stand):
             return Ergebnis(
                 True,
-                [
-                    f"{kopf} — Einrichtungs-Ticket #{vorhanden} ist zu, Lücke bleibt: von Hand prüfen"
-                ],
+                [f"{kopf} — Einrichtungs-Ticket #{vorhanden} ist zu, Lücke bleibt: von Hand prüfen"],
             )
         titel = str(stand.get("title") or "") if isinstance(stand, dict) else ""
         zeilen = [f"{kopf} — Einrichtungs-Ticket #{vorhanden} steht"]
@@ -213,9 +206,7 @@ def sicherstellen(
     eigen = _titel_fuer(s) in titel
     # Manifest-Prüfung macht ``regularien`` danach einmal für alle (pruefen=False).
     # Einrichtungs-Ticket zuerst (Unter-Issue, Kante vor die Abnahme), dann jedes andere — idempotent.
-    andere = sorted(
-        (x for x in daten["tickets"] if x != vorhanden), key=manifest.ticket_schluessel
-    )
+    andere = sorted((x for x in daten["tickets"] if x != vorhanden), key=manifest.ticket_schluessel)
     for t in [vorhanden, *andere] if eigen else andere:
         lauf = spec_rand.anhaengen(repo, s, t, konfig, pruefen=False)
         if lauf.exit == spec_rand.EXIT_FEHLER:
@@ -227,9 +218,7 @@ def sicherstellen(
                     f"EINRICHTUNG FEHLT: #{t} nicht hinter Einrichtungs-Ticket #{vorhanden} — erneut aufrufen",
                 ],
             )
-    return Ergebnis(
-        True, [*zeilen, f"alle Tickets der Spec #{s} warten auf #{vorhanden}"]
-    )
+    return Ergebnis(True, [*zeilen, f"alle Tickets der Spec #{s} warten auf #{vorhanden}"])
 
 
 def _titel_fuer(s: str) -> str:
@@ -249,9 +238,7 @@ def _laeuft_schon(repo: Path, slug: str, daten: dict[str, Any]) -> tuple[str, st
     haupt = gh.hauptzweig(repo)
     for t in tickets:
         # Lokal (Worktree vor Hauptbaum) sowie versioniertes Bau-Log auf origin (#438).
-        if bau_log.log_ort_fuer(t, repo) is not None or bau_log.hat_log_auf_origin(
-            repo, t, hauptzweig=haupt
-        ):
+        if bau_log.log_ort_fuer(t, repo) is not None or bau_log.hat_log_auf_origin(repo, t, hauptzweig=haupt):
             return f"#{t} hat Bau-Log", ""
     for t in tickets:
         stand = gh.json_lauf(["api", f"repos/{slug}/issues/{t}"], cwd=repo)
@@ -341,9 +328,7 @@ def _einrichtungs_ticket_holen(
     return neu, titel, zeile
 
 
-def _anlegen(
-    repo: Path, slug: str, s: str, fehlt: list[str]
-) -> tuple[str, str] | Ergebnis:
+def _anlegen(repo: Path, slug: str, s: str, fehlt: list[str]) -> tuple[str, str] | Ergebnis:
     """Issue mit Label ``einrichtung`` anlegen; Rückgabe (Nummer, Titel) oder Fehler-Ergebnis."""
     titel = f"{_titel_fuer(s)} {', '.join(fehlt)}"
     auftrag = "\n".join(f"- {_AUFTRAG[x]}" for x in fehlt)
@@ -376,9 +361,7 @@ def _anlegen(
     )
     treffer = _ISSUE_URL.search(ausgabe or "")
     if code != 0 or not treffer:
-        log.warning(
-            "gh issue create gescheitert (Code %s): %s", code, (ausgabe or "")[:200]
-        )
+        log.warning("gh issue create gescheitert (Code %s): %s", code, (ausgabe or "")[:200])
         return Ergebnis(
             False,
             [

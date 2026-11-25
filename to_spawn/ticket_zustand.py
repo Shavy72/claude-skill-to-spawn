@@ -117,7 +117,11 @@ def lesen(ticket: int | str, cwd: Path | None = None, *, mit_claim: bool = False
     """
     from to_spawn import gh  # spät: gh fragt seinerseits diesen Baustein
 
-    daten = gh.json_lauf(["issue", "view", str(ticket), "--json", _FELDER_CLAIM if mit_claim else _FELDER], cwd=cwd, timeout=gh.ticket_stand_timeout())
+    daten = gh.json_lauf(
+        ["issue", "view", str(ticket), "--json", _FELDER_CLAIM if mit_claim else _FELDER],
+        cwd=cwd,
+        timeout=gh.ticket_stand_timeout(),
+    )
     return daten if isinstance(daten, dict) and "state" in daten else None
 
 

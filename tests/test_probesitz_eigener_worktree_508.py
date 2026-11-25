@@ -9,14 +9,10 @@ from to_spawn import probesitz
 
 
 def _git(ort: Path, *args: str) -> None:
-    subprocess.run(
-        ["git", "-C", str(ort), *args], check=True, capture_output=True, text=True
-    )
+    subprocess.run(["git", "-C", str(ort), *args], check=True, capture_output=True, text=True)
 
 
-def _lauf(
-    argv: list[str], cwd: Path | None = None, timeout: float = 0
-) -> subprocess.CompletedProcess[str]:
+def _lauf(argv: list[str], cwd: Path | None = None, timeout: float = 0) -> subprocess.CompletedProcess[str]:
     if Path(argv[0]).name == "gh":
         return subprocess.CompletedProcess(argv, 0, "", "")
     return subprocess.run(argv, cwd=cwd, capture_output=True, text=True, check=False)
@@ -26,9 +22,7 @@ def _welt(tmp: Path) -> tuple[Path, Path]:
     fern = tmp / "r.git"
     subprocess.run(["git", "init", "-q", "--bare", str(fern)], check=True)
     repo = tmp / "r"
-    subprocess.run(
-        ["git", "clone", "-q", str(fern), str(repo)], check=True, capture_output=True
-    )
+    subprocess.run(["git", "clone", "-q", str(fern), str(repo)], check=True, capture_output=True)
     _git(
         repo,
         "-c",

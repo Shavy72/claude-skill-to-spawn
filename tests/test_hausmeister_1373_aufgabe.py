@@ -56,9 +56,7 @@ class Schtasks:
         self.xml: str | None = None
         self.aufrufe: list[tuple[list[str], dict]] = []
 
-    def __call__(
-        self, args: list[str], **kw: object
-    ) -> subprocess.CompletedProcess[str]:
+    def __call__(self, args: list[str], **kw: object) -> subprocess.CompletedProcess[str]:
         self.aufrufe.append((list(args), dict(kw)))
         if "/Query" in args:
             if self.xml is None:
@@ -165,9 +163,7 @@ def test_schtasks_fehlt_klare_meldung(win, monkeypatch: pytest.MonkeyPatch) -> N
 def test_nicht_windows_tut_nichts(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(hausmeister_aufgabe, "_ist_windows", lambda: False)
     aufrufe: list = []
-    monkeypatch.setattr(
-        hausmeister_aufgabe.subprocess, "run", lambda *a, **k: aufrufe.append(a)
-    )
+    monkeypatch.setattr(hausmeister_aufgabe.subprocess, "run", lambda *a, **k: aufrufe.append(a))
     assert "Windows" in hausmeister_aufgabe.aufgabe_einrichten()
     assert aufrufe == []
 
@@ -187,14 +183,10 @@ def _vier_ordner(welt: Welt) -> list[Path]:
 
 
 def _ordner_stand(welt: Welt) -> list[str]:
-    return sorted(p.name for p in (welt.heim / "wt").iterdir()) + sorted(
-        p.name for p in welt.heim.iterdir()
-    )
+    return sorted(p.name for p in (welt.heim / "wt").iterdir()) + sorted(p.name for p in welt.heim.iterdir())
 
 
-def test_loesch_liste_vier_gruppen_loescht_nichts(
-    welt: Welt, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_loesch_liste_vier_gruppen_loescht_nichts(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
     ordner = _vier_ordner(welt)
     vorher = _ordner_stand(welt)
     festgehalten: list = []
@@ -220,9 +212,7 @@ def test_loesch_liste_vier_gruppen_loescht_nichts(
     }
     assert "wt-31" in teile["Löschbar"] and "(1)" in teile["Löschbar"]
     assert "wt-32" in teile["Sichern + löschen"]
-    assert (
-        "wt-33" in teile["Bleibt (mit Grund)"] and "#33" in teile["Bleibt (mit Grund)"]
-    )
+    assert "wt-33" in teile["Bleibt (mit Grund)"] and "#33" in teile["Bleibt (mit Grund)"]
     assert "wt-ohne" in teile["Ohne Ticket-Nummer"]
     assert sum(1 for z in text.splitlines() if z.startswith("- ")) == 4
     assert festgehalten and sorted(p.name for p in festgehalten[0]) == [
@@ -287,9 +277,7 @@ def test_cli_ordner_weiter_unveraendert(welt: Welt) -> None:
 # --- Ticket-Ende ------------------------------------------------------------------
 
 
-def test_ticket_ende_windows_ohne_fenster_nie_detached(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_ticket_ende_windows_ohne_fenster_nie_detached(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("TO_SPAWN_HAUSMEISTER_LOG", str(tmp_path / "hm" / "h.jsonl"))
     gestartet: list = []
     monkeypatch.setattr(hausmeister_aufgabe, "_ist_windows", lambda: True)
@@ -320,16 +308,12 @@ def test_ticket_ende_windows_ohne_fenster_nie_detached(
 def test_ticket_ende_server_nur_aufpasser(monkeypatch: pytest.MonkeyPatch) -> None:
     gestartet: list = []
     monkeypatch.setattr(hausmeister_aufgabe, "_ist_windows", lambda: False)
-    monkeypatch.setattr(
-        hausmeister_aufgabe.subprocess, "Popen", lambda *a, **k: gestartet.append(a)
-    )
+    monkeypatch.setattr(hausmeister_aufgabe.subprocess, "Popen", lambda *a, **k: gestartet.append(a))
     hausmeister_aufgabe.ticket_ende_anstossen()
     assert gestartet == []  # auf dem Server räumt der Aufpasser-Cron
 
 
-def test_ticket_ende_fehler_nur_geloggt(
-    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
-) -> None:
+def test_ticket_ende_fehler_nur_geloggt(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
     monkeypatch.setattr(hausmeister_aufgabe, "_ist_windows", lambda: True)
 
     def kaputt(*a, **k):
@@ -355,10 +339,7 @@ def test_bau_py_stoesst_am_ende_an_und_install_richtet_ein() -> None:
     bau = (SKILL / "skripte" / "bau.py").read_text(encoding="utf-8")
     assert "hausmeister_aufgabe.ticket_ende_anstossen()" in bau
     install = (SKILL / "install.ps1").read_text(encoding="utf-8")
-    assert (
-        "aufraeumen --aufgabe-einrichten" in install
-        or "--aufgabe-einrichten" in install
-    )
+    assert "aufraeumen --aufgabe-einrichten" in install or "--aufgabe-einrichten" in install
 
 
 def test_kein_detached_process_in_neuen_dateien() -> None:
@@ -369,12 +350,8 @@ def test_kein_detached_process_in_neuen_dateien() -> None:
 # --- Echt unter Windows -----------------------------------------------------------
 
 
-@pytest.mark.skipif(
-    sys.platform != "win32", reason="schtasks gibt es nur unter Windows"
-)
-def test_echt_windows_zweimal_einrichten(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+@pytest.mark.skipif(sys.platform != "win32", reason="schtasks gibt es nur unter Windows")
+def test_echt_windows_zweimal_einrichten(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     name = f"to-spawn Hausmeister Test {uuid.uuid4().hex[:6]}"
     monkeypatch.setattr(hausmeister_aufgabe, "AUFGABE_NAME", name)
     monkeypatch.setattr(
@@ -394,9 +371,7 @@ def test_echt_windows_zweimal_einrichten(
         )
         assert abfrage.returncode == 0, abfrage.stderr
     finally:
-        subprocess.run(
-            ["schtasks", "/Delete", "/TN", name, "/F"], capture_output=True, check=False
-        )
+        subprocess.run(["schtasks", "/Delete", "/TN", name, "/F"], capture_output=True, check=False)
 
 
 # --- Fixrunde 1 -----------------------------------------------------------------
@@ -427,9 +402,7 @@ def test_altbestand_festhalten_ergaenzt_nie_entfernt(welt: Welt) -> None:
     assert daten["freigegeben"] is False
 
 
-def test_altbestand_freigegeben_bleibt_unveraendert(
-    welt: Welt, caplog: pytest.LogCaptureFixture
-) -> None:
+def test_altbestand_freigegeben_bleibt_unveraendert(welt: Welt, caplog: pytest.LogCaptureFixture) -> None:
     a, b = welt.worktree(38), welt.worktree(39)
     pfad = hausmeister.altbestand_festhalten([a])
     daten = json.loads(pfad.read_text(encoding="utf-8"))
@@ -443,9 +416,7 @@ def test_altbestand_freigegeben_bleibt_unveraendert(
 
 
 def test_fuer_david_mit_ticket_eigene_gruppe() -> None:
-    e = hausmeister.Ergebnis(
-        Path("/x/wt-77"), "bleibt", "Geheimnis", 77, fuer_david=True
-    )
+    e = hausmeister.Ergebnis(Path("/x/wt-77"), "bleibt", "Geheimnis", 77, fuer_david=True)
     ohne = hausmeister.Ergebnis(Path("/x/wt-ohne"), "bleibt", "keine Nummer", None)
     assert hausmeister_aufgabe._gruppe(e) == "Für den Menschen (selbst prüfen)"
     assert hausmeister_aufgabe._gruppe(ohne) == "Ohne Ticket-Nummer"
@@ -467,14 +438,10 @@ def _bau_modul(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     return bau
 
 
-def test_bau_ticket_ende_nur_nach_echtem_lauf(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_bau_ticket_ende_nur_nach_echtem_lauf(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     bau = _bau_modul(monkeypatch, tmp_path)
     angestossen: list[int] = []
-    monkeypatch.setattr(
-        hausmeister_aufgabe, "ticket_ende_anstossen", lambda: angestossen.append(1)
-    )
+    monkeypatch.setattr(hausmeister_aufgabe, "ticket_ende_anstossen", lambda: angestossen.append(1))
     assert bau._ECHTER_LAUF is False  # --dry-run / --print-prompt setzen ihn nie
     bau.ticket_ende_anstossen()
     assert angestossen == []

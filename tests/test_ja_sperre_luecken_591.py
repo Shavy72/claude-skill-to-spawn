@@ -96,16 +96,12 @@ STARTER_538 = [
 ]
 
 
-@pytest.mark.parametrize(
-    "befehl", SCHREIBWEISE + ANDERE_SHELL + OHNE_TRENNER + EINGABE + SUCHE + STARTER_538
-)
+@pytest.mark.parametrize("befehl", SCHREIBWEISE + ANDERE_SHELL + OHNE_TRENNER + EINGABE + SUCHE + STARTER_538)
 def test_variante_wird_gesperrt(befehl: str) -> None:
     assert _sperrt(befehl), repr(befehl)
 
 
-@pytest.mark.parametrize(
-    "befehl", ["JA 5", "iex 'ja 5'", "Start-Process ja -ArgumentList 5", "watch ja"]
-)
+@pytest.mark.parametrize("befehl", ["JA 5", "iex 'ja 5'", "Start-Process ja -ArgumentList 5", "watch ja"])
 def test_variante_wird_im_powershell_werkzeug_gesperrt(befehl: str) -> None:
     assert _sperrt(befehl, "PowerShell"), repr(befehl)
 
@@ -198,14 +194,7 @@ BEWUSST_GESPERRT = ["mkdir -p d && cat > d/x.md <<'EOF'\nja 5\nEOF"]
 
 @pytest.mark.parametrize(
     "befehl",
-    FLUSS_1
-    + XARGS_2
-    + STARTER_3
-    + GIT_4
-    + KOMMENTAR_5
-    + HEREDOC_UMGEHUNG
-    + BEWUSST_GESPERRT_9
-    + BEWUSST_GESPERRT,
+    FLUSS_1 + XARGS_2 + STARTER_3 + GIT_4 + KOMMENTAR_5 + HEREDOC_UMGEHUNG + BEWUSST_GESPERRT_9 + BEWUSST_GESPERRT,
 )
 def test_runde1_umgehung_wird_gesperrt(befehl: str) -> None:
     assert _sperrt(befehl), repr(befehl)
@@ -462,9 +451,7 @@ KONFIG_GH_4 = [
 ]
 
 
-@pytest.mark.parametrize(
-    "befehl", FORTSETZUNG_1 + HEREDOC_FORTSETZUNG_2 + KONFIG_GIT_3 + KONFIG_GH_4
-)
+@pytest.mark.parametrize("befehl", FORTSETZUNG_1 + HEREDOC_FORTSETZUNG_2 + KONFIG_GIT_3 + KONFIG_GH_4)
 def test_runde4_umgehung_wird_gesperrt(befehl: str) -> None:
     assert _sperrt(befehl), repr(befehl)
 

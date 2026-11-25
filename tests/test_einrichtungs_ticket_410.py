@@ -45,11 +45,7 @@ def _stub_main(args: list[str]) -> int:
         ]
         print(json.dumps(treffer))
         return 0
-    if (
-        args[:1] == ["api"]
-        and (stelle := welt.get("api_scheitert_einmal"))
-        and args[1].endswith(stelle)
-    ):
+    if args[:1] == ["api"] and (stelle := welt.get("api_scheitert_einmal")) and args[1].endswith(stelle):
         # Lesefehler nachstellen (gh api scheitert genau einmal, dann heilt die Welt).
         del welt["api_scheitert_einmal"]
         pfad.write_text(json.dumps(welt), encoding="utf-8")
@@ -80,19 +76,13 @@ def _aufbau(
     umgebung["TO_SPAWN_GH_STUB"] = str(Path(__file__).resolve())
     if konfig is not None:
         (repo / ".to-spawn").mkdir()
-        (repo / ".to-spawn" / "config.json").write_text(
-            json.dumps(konfig), encoding="utf-8"
-        )
+        (repo / ".to-spawn" / "config.json").write_text(json.dumps(konfig), encoding="utf-8")
     if python:
-        (repo / "pyproject.toml").write_text(
-            "[project]\nname = 'x'\n", encoding="utf-8"
-        )
+        (repo / "pyproject.toml").write_text("[project]\nname = 'x'\n", encoding="utf-8")
     return repo, weltdatei, umgebung
 
 
-def _cli(
-    repo: Path, umgebung: dict[str, str], *args: str
-) -> subprocess.CompletedProcess[str]:
+def _cli(repo: Path, umgebung: dict[str, str], *args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, str(e2.CLI), *args],
         check=False,
@@ -160,9 +150,7 @@ def test_volle_einrichtung_bleibt_still(tmp_path: Path) -> None:
 
 
 def test_bewusst_ohne_staging_kein_staging_zwang(tmp_path: Path) -> None:
-    repo, weltdatei, umgebung = _aufbau(
-        tmp_path, konfig={"staging": {"ohne": True}, **BEFEHLE}, python=True
-    )
+    repo, weltdatei, umgebung = _aufbau(tmp_path, konfig={"staging": {"ohne": True}, **BEFEHLE}, python=True)
     lauf = _cli(repo, umgebung, "regularien", str(e2.SPEC))
     assert "angelegt" not in e2._welt(weltdatei), lauf.stdout
     assert lauf.returncode == 0, lauf.stdout + lauf.stderr
@@ -368,9 +356,7 @@ def test_bau_log_nur_im_worktree_legt_nichts_an(tmp_path: Path) -> None:
     from to_spawn import bau_log
 
     wt_basis = tmp_path / "wt"
-    repo, weltdatei, umgebung = _aufbau(
-        tmp_path, konfig={"worktree_basis": wt_basis.as_posix()}
-    )
+    repo, weltdatei, umgebung = _aufbau(tmp_path, konfig={"worktree_basis": wt_basis.as_posix()})
     log = bau_log.lauf_pfad(wt_basis / "wt-901", 901)
     log.parent.mkdir(parents=True)
     log.write_text("{}\n", encoding="utf-8")
@@ -475,9 +461,7 @@ def _fake_ps_leer(ordner: Path) -> None:
     )
 
 
-def _spawn_srv_weg(
-    tmp_path: Path, *args: str
-) -> tuple[subprocess.CompletedProcess[str], Path, Path, bytes, Path]:
+def _spawn_srv_weg(tmp_path: Path, *args: str) -> tuple[subprocess.CompletedProcess[str], Path, Path, bytes, Path]:
     from to_spawn import bash_wahl
 
     repo, weltdatei, umgebung = _aufbau(
@@ -516,9 +500,7 @@ def test_weg_spawn_srv_nur_wache_tickets_probelauf_legen_kein_t0_an(
 ) -> None:
     for i, args in enumerate((("--nur-wache",), ("--tickets", "901"), ("--dry-run",))):
         (tmp_path / str(i)).mkdir()
-        lauf, repo, weltdatei, vorher, aufrufe = _spawn_srv_weg(
-            tmp_path / str(i), *args
-        )
+        lauf, repo, weltdatei, vorher, aufrufe = _spawn_srv_weg(tmp_path / str(i), *args)
         ausgabe = lauf.stdout + lauf.stderr
         assert "== Regularien ==" in ausgabe, ausgabe
         assert f"Regularien Spec #{e2.SPEC}" in ausgabe, ausgabe
@@ -597,9 +579,7 @@ def test_spawn_srv_weg_mit_9_fremden_sessions_und_portabler_tmux_attrappe(
     )
     lauf_ordner = tmp_path / "lauf"
     lauf_ordner.mkdir()
-    lauf, _repo, _weltdatei, _vorher, aufrufe = _spawn_srv_weg(
-        lauf_ordner, "--nur-wache"
-    )
+    lauf, _repo, _weltdatei, _vorher, aufrufe = _spawn_srv_weg(lauf_ordner, "--nur-wache")
     ausgabe = lauf.stdout + lauf.stderr
     assert lauf.returncode == 0, ausgabe
     assert "zähle den ganzen Rechner" not in ausgabe, ausgabe
@@ -630,9 +610,7 @@ def test_spawn_srv_weg_mit_9_fremden_sessions_und_portabler_tmux_attrappe(
     assert probe.stdout == ""
 
 
-def test_spawn_srv_weg_isoliert_fremde_wache_in_prozessliste(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_spawn_srv_weg_isoliert_fremde_wache_in_prozessliste(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """#731: eine fremde ``wache.py 900`` im PATH-``ps``/``powershell`` darf ``wache 900`` nicht überspringen lassen."""
     from windows_attrappen import windows_starter
 
@@ -663,9 +641,7 @@ def test_spawn_srv_weg_isoliert_fremde_wache_in_prozessliste(
 
     lauf_ordner = tmp_path / "lauf"
     lauf_ordner.mkdir()
-    lauf, _repo, _weltdatei, _vorher, aufrufe = _spawn_srv_weg(
-        lauf_ordner, "--nur-wache"
-    )
+    lauf, _repo, _weltdatei, _vorher, aufrufe = _spawn_srv_weg(lauf_ordner, "--nur-wache")
     ausgabe = lauf.stdout + lauf.stderr
     assert lauf.returncode == 0, ausgabe
     gestartet = aufrufe.read_text(encoding="utf-8") if aufrufe.exists() else ""

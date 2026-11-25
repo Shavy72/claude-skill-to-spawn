@@ -176,9 +176,7 @@ def test_draussen_rundgang_liest_keine_echte_windows_prozessliste(
     assert erg.art == "bleibt" and not erg.fehler and ".env" in erg.grund, erg.grund
 
 
-def test_draussen_eigene_prozessliste_ueber_naht_wirkt(
-    haupt_bekannt: Welt, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_draussen_eigene_prozessliste_ueber_naht_wirkt(haupt_bekannt: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
     """#709: Rechenlogik bleibt aktiv — eine eingespeiste Prozessliste sperrt den Ordner weiter."""
     welt = haupt_bekannt
     _windows_zweig(monkeypatch)

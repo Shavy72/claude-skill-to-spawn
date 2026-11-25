@@ -81,7 +81,9 @@ def test_lange_frage_behaelt_die_wahl(tmp_path: Path) -> None:
 
 
 def _git(repo: Path, *args: str) -> None:
-    subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *args], cwd=repo, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-c", "user.name=t", "-c", "user.email=t@t", *args], cwd=repo, check=True, capture_output=True
+    )
 
 
 def test_liste_liest_auch_den_hauptzweig_auf_origin(tmp_path: Path) -> None:
@@ -89,7 +91,13 @@ def test_liste_liest_auch_den_hauptzweig_auf_origin(tmp_path: Path) -> None:
     _git(tmp_path, "init", "-q", "-b", "main")
     log_datei = tmp_path / bau_log.log_im_repo(tmp_path, 7)
     log_datei.parent.mkdir(parents=True, exist_ok=True)
-    zeile = {"typ": "entscheidung", "ts": "2026-11-23T10:00:00+00:00", "frage": "Ordner?", "wahl": "neu", "grund": "frei"}
+    zeile = {
+        "typ": "entscheidung",
+        "ts": "2026-11-23T10:00:00+00:00",
+        "frage": "Ordner?",
+        "wahl": "neu",
+        "grund": "frei",
+    }
     log_datei.write_text(json.dumps(zeile, ensure_ascii=False) + "\n", encoding="utf-8")
     _git(tmp_path, "add", "-A")
     _git(tmp_path, "commit", "-q", "-m", "log")

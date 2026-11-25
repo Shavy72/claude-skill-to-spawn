@@ -89,9 +89,7 @@ def _lauf_zeilen(repo: Path, ticket: int | str) -> list[dict]:
     pfad = bau_log.lauf_pfad(repo, ticket)
     if not pfad.is_file():
         return []
-    return [
-        json.loads(z) for z in pfad.read_text(encoding="utf-8").splitlines() if z.strip()
-    ]
+    return [json.loads(z) for z in pfad.read_text(encoding="utf-8").splitlines() if z.strip()]
 
 
 def _vorfaelle(repo: Path, ticket: int | str) -> list[dict]:
@@ -138,27 +136,19 @@ def test_gleicher_vorfall_wird_nicht_doppelt_geschrieben(tmp_path: Path) -> None
 
 
 def test_anderer_vorfall_kommt_dazu(tmp_path: Path) -> None:
-    vorfall.schreibe(
-        tmp_path, 901, klasse="skill", symptom="A", ursache="B", loesung="C"
-    )
-    vorfall.schreibe(
-        tmp_path, 901, klasse="infra", symptom="D", ursache="E", loesung="F"
-    )
+    vorfall.schreibe(tmp_path, 901, klasse="skill", symptom="A", ursache="B", loesung="C")
+    vorfall.schreibe(tmp_path, 901, klasse="infra", symptom="D", ursache="E", loesung="F")
     assert len(_vorfaelle(tmp_path, 901)) == 2
 
 
 def test_unbekannte_klasse_wird_abgelehnt(tmp_path: Path) -> None:
     with pytest.raises(ValueError):
-        vorfall.schreibe(
-            tmp_path, 901, klasse="quatsch", symptom="A", ursache="B", loesung="C"
-        )
+        vorfall.schreibe(tmp_path, 901, klasse="quatsch", symptom="A", ursache="B", loesung="C")
 
 
 def test_leeres_symptom_wird_abgelehnt(tmp_path: Path) -> None:
     with pytest.raises(ValueError):
-        vorfall.schreibe(
-            tmp_path, 901, klasse="skill", symptom="  ", ursache="B", loesung="C"
-        )
+        vorfall.schreibe(tmp_path, 901, klasse="skill", symptom="  ", ursache="B", loesung="C")
 
 
 # --- Naht 2: Katalog-Zeile ------------------------------------------------------
@@ -187,9 +177,7 @@ def test_katalog_haengt_zeile_an_den_abschnitt_der_klasse(tmp_path: Path) -> Non
     assert "basetemp auf die Platte" in skill_zeilen[-1]
     assert "#286" in skill_zeilen[-1]
     # Nachbar-Abschnitte bleiben unberührt.
-    assert len(_abschnitt(text, "### 3.4")) == len(
-        _abschnitt(KATALOG_TEXT, "### 3.4")
-    )
+    assert len(_abschnitt(text, "### 3.4")) == len(_abschnitt(KATALOG_TEXT, "### 3.4"))
     assert text.count("## 4. Wiederholungen") == 1
 
 
@@ -198,15 +186,9 @@ def test_katalog_zaehlt_je_klasse_weiter(tmp_path: Path) -> None:
     neu = vorfall.in_katalog(
         pfad,
         [
-            vorfall.Vorfall(
-                klasse="extern", symptom="X1", ursache="Y1", loesung="Z1"
-            ),
-            vorfall.Vorfall(
-                klasse="prozess", symptom="X2", ursache="Y2", loesung="Z2"
-            ),
-            vorfall.Vorfall(
-                klasse="extern", symptom="X3", ursache="Y3", loesung="Z3"
-            ),
+            vorfall.Vorfall(klasse="extern", symptom="X1", ursache="Y1", loesung="Z1"),
+            vorfall.Vorfall(klasse="prozess", symptom="X2", ursache="Y2", loesung="Z2"),
+            vorfall.Vorfall(klasse="extern", symptom="X3", ursache="Y3", loesung="Z3"),
         ],
     )
     assert neu.nummern == ["E2", "P2", "E3"]
@@ -226,9 +208,7 @@ def test_katalog_ueberspringt_bekannten_vorfall(tmp_path: Path) -> None:
 
 def test_katalog_schreibt_denselben_vorfall_nur_einmal(tmp_path: Path) -> None:
     pfad = _katalog_legen(tmp_path)
-    neuer = vorfall.Vorfall(
-        klasse="skill", symptom="Neu", ursache="Grund", loesung="Fix"
-    )
+    neuer = vorfall.Vorfall(klasse="skill", symptom="Neu", ursache="Grund", loesung="Fix")
     assert vorfall.in_katalog(pfad, [neuer, neuer]).nummern == ["S3"]
     assert pfad.read_text(encoding="utf-8").count("| S3 |") == 1
 
@@ -309,9 +289,7 @@ def test_eintrag_cli_schreibt_vorfall_in_die_versionierte_datei(
     assert ergebnis.returncode == 0, ergebnis.stdout + ergebnis.stderr
     zeilen = [
         json.loads(z)
-        for z in (repo / "docs" / "agents" / "bau_log" / "286.jsonl")
-        .read_text(encoding="utf-8")
-        .splitlines()
+        for z in (repo / "docs" / "agents" / "bau_log" / "286.jsonl").read_text(encoding="utf-8").splitlines()
         if z.strip()
     ]
     assert zeilen[-1]["typ"] == "vorfall"
@@ -438,9 +416,7 @@ def test_weg_fehlender_abschnitt_meldet_fehler(welt: dict[str, Path]) -> None:
     """Katalog ohne den Abschnitt der Klasse: FEHLER-Zeile statt stiller Erfolg."""
     repo = welt["repo"]
     _welt_sofort(welt)
-    ohne_34 = KATALOG_TEXT.replace(
-        "### 3.4 Prozess-Regel (Zusammenspiel mehrerer Sessions)", "### 3.9 Anderes"
-    )
+    ohne_34 = KATALOG_TEXT.replace("### 3.4 Prozess-Regel (Zusammenspiel mehrerer Sessions)", "### 3.9 Anderes")
     _commit(
         repo,
         "feat: Bauteil ohne Nummer",
@@ -469,9 +445,7 @@ def test_weg_ohne_katalogdatei_kein_fehler(welt: dict[str, Path]) -> None:
 def test_katalog_zeile_mit_pipe_wird_beim_zweiten_lauf_erkannt(tmp_path: Path) -> None:
     """Doppelschutz muss auch halten, wenn Symptom oder Ursache ein ``|`` enthält."""
     pfad = _katalog_legen(tmp_path)
-    vor = vorfall.Vorfall(
-        klasse="skill", symptom="a | b", ursache="c | d", loesung="e"
-    )
+    vor = vorfall.Vorfall(klasse="skill", symptom="a | b", ursache="c | d", loesung="e")
     assert vorfall.in_katalog(pfad, [vor]).nummern == ["S3"]
     assert vorfall.in_katalog(pfad, [vor]).nummern == []
     assert pfad.read_text(encoding="utf-8").count("| S3 |") == 1
@@ -484,9 +458,7 @@ def test_katalog_abschnitt_ohne_tabelle_bleibt_unberuehrt(tmp_path: Path) -> Non
         "Hier steht nur Fließtext.\n",
     ).replace("| # | Symptom | Ursache | Lösung | Schutz | Beispiel |\n|---|---|---|---|---|---|\n", "", 1)
     pfad = _katalog_legen(tmp_path, text)
-    erg = vorfall.in_katalog(
-        pfad, [vorfall.Vorfall(klasse="skill", symptom="A", ursache="B", loesung="C")]
-    )
+    erg = vorfall.in_katalog(pfad, [vorfall.Vorfall(klasse="skill", symptom="A", ursache="B", loesung="C")])
     assert erg.nummern == []
     assert erg.probleme and "Tabelle" in erg.probleme[0]
     assert pfad.read_text(encoding="utf-8") == text
@@ -494,12 +466,8 @@ def test_katalog_abschnitt_ohne_tabelle_bleibt_unberuehrt(tmp_path: Path) -> Non
 
 def test_katalog_nummer_mit_auszeichnung_wird_mitgezaehlt(tmp_path: Path) -> None:
     """``| **S2** |`` ist dieselbe Nummer — sonst vergibt das Skript sie doppelt."""
-    pfad = _katalog_legen(
-        tmp_path, KATALOG_TEXT.replace("| S2 | Session", "| **S2** | Session")
-    )
-    erg = vorfall.in_katalog(
-        pfad, [vorfall.Vorfall(klasse="skill", symptom="Neu", ursache="Grund", loesung="Fix")]
-    )
+    pfad = _katalog_legen(tmp_path, KATALOG_TEXT.replace("| S2 | Session", "| **S2** | Session"))
+    erg = vorfall.in_katalog(pfad, [vorfall.Vorfall(klasse="skill", symptom="Neu", ursache="Grund", loesung="Fix")])
     assert erg.nummern == ["S3"]
 
 

@@ -67,9 +67,7 @@ def test_wartender_start_schafft_platz_ohne_cron(zu_9003: Welt, monkeypatch: pyt
         return _aufpasser(welt).platz_schaffen()
 
     schlafen_aufrufe: list[float] = []
-    zyklen = speicher.auf_platz_warten(
-        None, pruefen=pruefen, schlafen=schlafen_aufrufe.append, platz_schaffen=schaffen
-    )
+    zyklen = speicher.auf_platz_warten(None, pruefen=pruefen, schlafen=schlafen_aufrufe.append, platz_schaffen=schaffen)
     time.sleep(0.5)
     assert zyklen == 0 and schlafen_aufrufe == [], welt.log()
     assert FENSTER not in fenster_namen(), welt.log()

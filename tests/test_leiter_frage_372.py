@@ -286,11 +286,7 @@ def test_klasse_2_wort_vorn_bleibt_nach_kuerzen_klasse_2(baum: Path) -> None:
 def test_frage_kurz_behaelt_ende() -> None:
     assert aufseher_stand.frage_kurz("kurz?") == "kurz?"
     lang = aufseher_stand.frage_kurz("a " * 400 + "Ende?")
-    assert (
-        len(lang) == aufseher_stand.FRAGE_MAX
-        and lang.endswith("Ende?")
-        and lang.startswith("…")
-    )
+    assert len(lang) == aufseher_stand.FRAGE_MAX and lang.endswith("Ende?") and lang.startswith("…")
 
 
 # --- Fix-Runde: kein Doppel-Einwurf, Merken scheitert ------------------------------------
@@ -374,9 +370,7 @@ def test_doppel_schutz_verschluckt_live_wort_im_abgeschnittenen_anfang_nicht(
     assert zweit != erst
     offen = briefkasten.offene([TICKET], hauptbaum=baum)
     assert sorted(f["klasse"] for f in offen) == ["2", "3"]
-    assert (
-        leiter.frage_einwerfen(baum, SPEC, TICKET, live) == zweit
-    )  # Klasse-2-Doppel bleibt einer
+    assert leiter.frage_einwerfen(baum, SPEC, TICKET, live) == zweit  # Klasse-2-Doppel bleibt einer
 
 
 def test_live_wort_im_absatz_davor_braucht_den_menschen() -> None:
@@ -540,10 +534,7 @@ def test_live_wort_vor_letzter_eingabe_bleibt_klasse_3(zeichen: str) -> None:
 
 def test_lange_live_zeile_behaelt_live_wort_im_gespeicherten_text(baum: Path) -> None:
     fuell = " ".join(f"Wort{i} ohne Befund" for i in range(40))
-    text = (
-        f"> los\n\n● {fuell} dann deploye ich live {fuell}\n\n"
-        f"{BERICHT_ZEILEN}\n\nPasst das so?" + FUSS
-    )
+    text = f"> los\n\n● {fuell} dann deploye ich live {fuell}\n\n{BERICHT_ZEILEN}\n\nPasst das so?" + FUSS
     frage = _rueckfall_frage(text)
     assert frage.endswith("Passt das so?")
     erg = _lauf(FakeUmwelt(baum, frage=frage))
@@ -556,9 +547,7 @@ def test_lange_live_zeile_behaelt_live_wort_im_gespeicherten_text(baum: Path) ->
 
 # --- Fix-Runde 6: vom System getippte Zeilen sind keine Grenze (Review PR 374 Runde 5) --------
 
-LIVE_TEXT = (
-    "● Ich deploye den Stand jetzt live auf die Hauptapp (safe_deploy_vps.sh).\n\n"
-)
+LIVE_TEXT = "● Ich deploye den Stand jetzt live auf die Hauptapp (safe_deploy_vps.sh).\n\n"
 #: Platzhalter so, wie die Tipp-Stellen sie einsetzen.
 WERTE = {
     "min": 12,
@@ -588,16 +577,8 @@ SYSTEM_FAELLE = [t.format(**WERTE) for t in SYSTEM_TEXTE]
 # 2000: ganzer Text in einer Zeile — ohne Umbruch-Zeile trägt nur der Live-Text das Wort.
 @pytest.mark.parametrize("breite", [76, 200, 2000])
 @pytest.mark.parametrize("getippt", SYSTEM_FAELLE, ids=lambda t: t[:20])
-def test_live_text_dann_system_eingabe_dann_frage_ist_klasse_2(
-    getippt: str, breite: int
-) -> None:
-    text = (
-        "❯ mach weiter\n\n"
-        + LIVE_TEXT
-        + _echo(getippt, breite)
-        + "\n\n● Passt das so?"
-        + FUSS
-    )
+def test_live_text_dann_system_eingabe_dann_frage_ist_klasse_2(getippt: str, breite: int) -> None:
+    text = "❯ mach weiter\n\n" + LIVE_TEXT + _echo(getippt, breite) + "\n\n● Passt das so?" + FUSS
     assert _klasse_2(text)
 
 
@@ -605,8 +586,11 @@ def test_live_text_dann_system_eingabe_dann_frage_ist_klasse_2(
 def test_system_eingabe_macht_harmlose_frage_nicht_zu_klasse_2(getippt: str) -> None:
     # Der Anstupser trägt selbst „live“ — sein Echo darf die Folgefrage nicht zum Menschen schicken.
     text = (
-        LIVE_TEXT + "❯ ja, aber nur Staging\n\n● Erledigt.\n\n" + _echo(getippt)
-        + "\n\n● Soll ich mit Ticket 13 weitermachen?" + FUSS
+        LIVE_TEXT
+        + "❯ ja, aber nur Staging\n\n● Erledigt.\n\n"
+        + _echo(getippt)
+        + "\n\n● Soll ich mit Ticket 13 weitermachen?"
+        + FUSS
     )
     frage = aufseher_stand.frage_im_text(text)
     assert frage == "● Soll ich mit Ticket 13 weitermachen?"
@@ -615,12 +599,7 @@ def test_system_eingabe_macht_harmlose_frage_nicht_zu_klasse_2(getippt: str) -> 
 
 def test_entscheider_antwort_bleibt_grenze_seine_frage_war_schon_klasse_2() -> None:
     # Vor der Antwort: dieselbe Frage mit Live-Text davor geht zum Menschen, der Helfer antwortet nie.
-    vorher = (
-        "❯ mach weiter\n\n"
-        + LIVE_TEXT
-        + "● Soll ich vorher noch die Tests laufen lassen?"
-        + FUSS
-    )
+    vorher = "❯ mach weiter\n\n" + LIVE_TEXT + "● Soll ich vorher noch die Tests laufen lassen?" + FUSS
     assert _klasse_2(vorher)
     nachher = (
         "❯ mach weiter\n\n● Tests grün. Soll ich vorher noch aufräumen?\n\n"

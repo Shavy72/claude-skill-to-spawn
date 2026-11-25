@@ -287,7 +287,12 @@ def test_sammeln_hoch_legt_kein_issue_an_marker_traegt_befunde(repo: Path, tmp_p
     env, spur = _gh_attrappe(tmp_path)
     lauf = subprocess.run(
         [sys.executable, str(SKRIPT), "sammeln", str(SPEC), "--repo", str(repo)],
-        capture_output=True, text=True, encoding="utf-8", env=env, timeout=120, check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        env=env,
+        timeout=120,
+        check=False,
     )
     assert lauf.returncode == 0, lauf.stderr
     assert not spur.exists(), spur.read_text(encoding="utf-8")
@@ -304,7 +309,9 @@ def test_sammeln_sortierung_dedup_ohne_issue(repo: Path) -> None:
     b1 = {"datei": "web/a.py", "zeile": 10, "schwere": "niedrig", "titel": "Klein", "vorschlag": "später"}
     b2 = {"datei": "web/b.py", "zeile": 5, "schwere": "hoch", "titel": "Riesen-Datei", "vorschlag": "zerlegen"}
     b3 = {"datei": "web/c.py", "zeile": 7, "schwere": "mittel", "titel": "Sonder-ifs", "vorschlag": "Tabelle"}
-    _teile(ordner, json.dumps({"teil": 1, "befunde": [b1, b2]}), json.dumps({"teil": 2, "befunde": [b3, b2]}), "{kaputt")
+    _teile(
+        ordner, json.dumps({"teil": 1, "befunde": [b1, b2]}), json.dumps({"teil": 2, "befunde": [b3, b2]}), "{kaputt"
+    )
     (ordner / "lauf.json").write_text(json.dumps({"start": "2026-09-27T10:00:00+02:00"}), encoding="utf-8")
     assert _lauf(repo, "sammeln").returncode == 0
     marker = (repo / "docs" / "agents" / f"thermo_{SPEC}.md").read_text(encoding="utf-8")

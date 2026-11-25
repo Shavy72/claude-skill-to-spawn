@@ -117,9 +117,7 @@ def test_m11_fall_1_nur_readme_laeuft_kein_test(tmp_path: Path) -> None:
 
 # Echte Werkzeug-Grenze: ohne ruff gibt es keine Stufe 1 für Python (Fall „fehlt“ prüft der Test unten).
 # In CI (CI gesetzt) ist ruff Pflicht: dort scheitert der Test, statt still übersprungen zu werden.
-@pytest.mark.skipif(
-    shutil.which("ruff") is None and not os.environ.get("CI"), reason="ruff nicht im PATH"
-)
+@pytest.mark.skipif(shutil.which("ruff") is None and not os.environ.get("CI"), reason="ruff nicht im PATH")
 def test_syntax_fehler_ist_rot_in_stufe_1_und_voll_laeuft_nicht(tmp_path: Path) -> None:
     probe = _probe(tmp_path / "py")
     _commit(probe, "rechnen.py", "def addiere(a, b)\n    return a + b\n")
@@ -432,9 +430,7 @@ def test_ungetrackter_code_in_unterordner_venv_ist_ungespeichert(
     probe = _probe(tmp_path / "py")
     (probe / "src" / "venv").mkdir(parents=True)
     (probe / "src" / "venv" / "x.py").write_text("X = 1\n", encoding="utf-8")
-    assert pruef._ungespeichert(probe) == [
-        "src/"
-    ]  # normal: neuer Ordner zusammengefasst
+    assert pruef._ungespeichert(probe) == ["src/"]  # normal: neuer Ordner zusammengefasst
     _git(probe, "add", "src/venv/x.py")
     _git(probe, "commit", "-qm", "src")
     (probe / "src" / "venv" / "y.py").write_text("Y = 1\n", encoding="utf-8")
@@ -443,9 +439,7 @@ def test_ungetrackter_code_in_unterordner_venv_ist_ungespeichert(
     (probe / "src" / "__pycache__" / "x.pyc").write_bytes(b"\0")
     (probe / ".venv").mkdir()
     (probe / ".venv" / "a").write_text("", encoding="utf-8")
-    (probe / "node_modules").write_text(
-        "", encoding="utf-8"
-    )  # Datei, kein Werkzeug-Ordner
+    (probe / "node_modules").write_text("", encoding="utf-8")  # Datei, kein Werkzeug-Ordner
     assert pruef._ungespeichert(probe) == ["node_modules", "src/venv/y.py"]
 
 
@@ -501,7 +495,10 @@ _F1C = {
                 assert "\\t" not in (WURZEL / d).read_text(errors="ignore"), d
         """),
 }
-_F6 = {"doku/x.md": "ok\n", "app.py": 'from pathlib import Path\ndef f():\n    return (Path(__file__).parent / "vorlage.txt").read_text().strip()\n'}
+_F6 = {
+    "doku/x.md": "ok\n",
+    "app.py": 'from pathlib import Path\ndef f():\n    return (Path(__file__).parent / "vorlage.txt").read_text().strip()\n',
+}
 _ITERDIR = 'from pathlib import Path\ndef f():\n    return sorted((Path(__file__).parent / "zz").iterdir())[0].read_text().strip()\n'
 
 
@@ -646,9 +643,7 @@ KONFIG_GEAENDERT = "Konfig geändert (.to-spawn/config.json)"
 
 def _konfig(ordner: Path, muster: object) -> None:
     (ordner / ".to-spawn").mkdir(exist_ok=True)
-    (ordner / ".to-spawn" / "config.json").write_text(
-        json.dumps({"pruefen": {"doku_pfade": muster}}), encoding="utf-8"
-    )
+    (ordner / ".to-spawn" / "config.json").write_text(json.dumps({"pruefen": {"doku_pfade": muster}}), encoding="utf-8")
 
 
 @pytest.mark.parametrize(

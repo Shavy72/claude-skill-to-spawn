@@ -124,9 +124,7 @@ def test_fehlende_entscheidung_in_grafik_faellt_durch(bild: Path) -> None:
 def test_ueberholt_durch_erscheint(bild: Path) -> None:
     deck = _deck(bild)
     assert "überholt durch #9" in deck  # ausdrücklich
-    assert (
-        "überholt durch #3" in deck
-    )  # gleiche Frage „Farbe“, später in #3 neu entschieden
+    assert "überholt durch #3" in deck  # gleiche Frage „Farbe“, später in #3 neu entschieden
 
 
 def test_null_entscheidungen_leer_folie(bild: Path) -> None:
@@ -146,9 +144,7 @@ def test_viele_entscheidungen_bleiben_pruefbar(bild: Path) -> None:
     ]
     deck = rd.erzeuge(_texte(bild), viele)
     assert rd.pruefe(deck, viele) == []
-    assert (
-        'width="360"' in deck
-    )  # senkrechter Zeitstrahl, nicht 170 px je Eintrag in die Breite
+    assert 'width="360"' in deck  # senkrechter Zeitstrahl, nicht 170 px je Eintrag in die Breite
 
 
 def test_teil1_textwueste_faellt_durch(bild: Path) -> None:
@@ -177,19 +173,13 @@ def test_svg_bild_gilt(tmp_path: Path) -> None:
     assert rd.pruefe(rd.erzeuge(t, EINTRAEGE), EINTRAEGE) == []
 
 
-def test_skill_fehlt_klare_meldung(
-    tmp_path: Path, bild: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setenv(
-        "TO_SPAWN_RUNDSCHAU_SKILL", str(tmp_path / "nichtda" / "SKILL.md")
-    )
+def test_skill_fehlt_klare_meldung(tmp_path: Path, bild: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TO_SPAWN_RUNDSCHAU_SKILL", str(tmp_path / "nichtda" / "SKILL.md"))
     assert not rd.skill_da()
     assert "rundschau" in rd.SKILL_FEHLT
 
 
-def _cli(
-    *args: str, env: dict[str, str] | None = None
-) -> subprocess.CompletedProcess[str]:
+def _cli(*args: str, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, str(SKILL / "skripte" / "rundschau_deck.py"), *args],
         capture_output=True,
@@ -306,9 +296,7 @@ def test_aufseher_text_nennt_den_schalter() -> None:
 
     from to_spawn import waechter_takt
 
-    spec = importlib.util.spec_from_file_location(
-        "wache_529", SKILL / "skripte" / "wache.py"
-    )
+    spec = importlib.util.spec_from_file_location("wache_529", SKILL / "skripte" / "wache.py")
     assert spec and spec.loader
     wache = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(wache)
@@ -331,16 +319,10 @@ def test_bild_mindestmass_aus_dem_bildkopf(tmp_path: Path, bild: Path) -> None:
     klein.write_bytes(_png(20, 10))
     with pytest.raises(ValueError, match="kleiner"):
         rd.erzeuge(_texte(klein), EINTRAEGE)
-    deck = _deck(bild).replace(
-        base64.b64encode(_png()).decode(), base64.b64encode(_png(20, 10)).decode()
-    )
+    deck = _deck(bild).replace(base64.b64encode(_png()).decode(), base64.b64encode(_png(20, 10)).decode())
     assert any("Bild" in m for m in rd.pruefe(deck, EINTRAEGE))
     jpeg = b"\xff\xd8\xff\xc0" + struct.pack(">HBHH", 17, 8, 240, 400) + b"\0" * 20
-    webp = (
-        b"RIFF\0\0\0\0WEBPVP8X\x0a\0\0\0\0\0\0\0"
-        + (399).to_bytes(3, "little")
-        + (239).to_bytes(3, "little")
-    )
+    webp = b"RIFF\0\0\0\0WEBPVP8X\x0a\0\0\0\0\0\0\0" + (399).to_bytes(3, "little") + (239).to_bytes(3, "little")
     assert rd.bild_masse(jpeg) == (400, 240)
     assert rd.bild_masse(webp) == (400, 240)
     assert rd.bild_masse(b"nichts") is None
@@ -350,17 +332,13 @@ def test_svg_viz_zaehlt_nur_mit_formen(bild: Path) -> None:
     deck = _deck(bild)
     leer = _ohne_bild(deck, "Früher / Jetzt", '<svg class="viz"></svg>')
     assert any("Bild" in m for m in rd.pruefe(leer, EINTRAEGE))
-    voll = _ohne_bild(
-        deck, "Früher / Jetzt", '<svg class="viz"><rect width="9" height="9"/></svg>'
-    )
+    voll = _ohne_bild(deck, "Früher / Jetzt", '<svg class="viz"><rect width="9" height="9"/></svg>')
     assert rd.pruefe(voll, EINTRAEGE) == []
 
 
 def test_wortgrenze_zaehlt_svg_text_mit(bild: Path) -> None:
     text = " ".join(["wort"] * (rd.MAX_WOERTER_TEIL1 + 5))
-    deck = _ohne_bild(
-        _deck(bild), "Schneller", f'<svg class="viz"><text>{text}</text></svg>'
-    )
+    deck = _ohne_bild(_deck(bild), "Schneller", f'<svg class="viz"><text>{text}</text></svg>')
     assert any("Wörter" in m for m in rd.pruefe(deck, EINTRAEGE))
 
 
@@ -368,25 +346,19 @@ def test_grafik_nur_sichtbar_und_im_zeitstrahl(bild: Path) -> None:
     deck = _deck(bild)
     ausserhalb = deck.replace('<svg class="zeitstrahl"', '<svg class="anderes"')
     assert any("sichtbare" in m for m in rd.pruefe(ausserhalb, EINTRAEGE))
-    versteckt = deck.replace(
-        '<svg class="zeitstrahl"', '<div style="display: none"><svg class="zeitstrahl"'
-    )
+    versteckt = deck.replace('<svg class="zeitstrahl"', '<div style="display: none"><svg class="zeitstrahl"')
     versteckt = versteckt.replace("</svg></section>", "</svg></div></section>")
     assert any("sichtbare" in m for m in rd.pruefe(versteckt, EINTRAEGE))
-    hidden = deck.replace(
-        '<svg class="zeitstrahl"', '<div hidden><svg class="zeitstrahl"'
-    ).replace("</svg></section>", "</svg></div></section>")
+    hidden = deck.replace('<svg class="zeitstrahl"', '<div hidden><svg class="zeitstrahl"').replace(
+        "</svg></section>", "</svg></div></section>"
+    )
     assert any("sichtbare" in m for m in rd.pruefe(hidden, EINTRAEGE))
 
 
 def test_entscheidung_braucht_frage_und_wahl_im_text(bild: Path) -> None:
     deck = _deck(bild)
-    assert any(
-        "Frage" in m for m in rd.pruefe(deck.replace(">Tabelle<", ">Weg<"), EINTRAEGE)
-    )
-    assert any(
-        "Wahl" in m for m in rd.pruefe(deck.replace("→ SQLite", "→ ?"), EINTRAEGE)
-    )
+    assert any("Frage" in m for m in rd.pruefe(deck.replace(">Tabelle<", ">Weg<"), EINTRAEGE))
+    assert any("Wahl" in m for m in rd.pruefe(deck.replace("→ SQLite", "→ ?"), EINTRAEGE))
 
 
 def test_lange_texte_werden_umbrochen_nicht_gekappt(bild: Path) -> None:
@@ -418,9 +390,7 @@ def test_aussehen_bedienung_zaehler_und_hell_dunkel(bild: Path) -> None:
     assert 'data-art="titel"' in deck and "Spec 5" in deck
     import re
 
-    assert not re.search(
-        r'(?:src|href)="https?:|@import|url\(\s*https?:', deck
-    )  # keine externen Dateien
+    assert not re.search(r'(?:src|href)="https?:|@import|url\(\s*https?:', deck)  # keine externen Dateien
     assert "font:17px" in deck  # Fließtext >= 16 px
 
 
@@ -488,13 +458,9 @@ def test_versteckte_teil1_folie_zaehlt_nicht(bild: Path, alt: str, neu: str) -> 
 
 def test_versteckte_teil1_folie_per_klasse_zaehlt_nicht(bild: Path) -> None:
     deck = _deck(bild).replace("</style>", ".weg{color:transparent}</style>", 1)
-    deck = deck.replace(
-        'class="folie" data-teil="1"', 'class="folie weg" data-teil="1"'
-    )
+    deck = deck.replace('class="folie" data-teil="1"', 'class="folie weg" data-teil="1"')
     assert 'class="folie weg"' in deck
-    assert any(
-        "versteckt" in m or "nur die Titel" in m for m in rd.pruefe(deck, EINTRAEGE)
-    )
+    assert any("versteckt" in m or "nur die Titel" in m for m in rd.pruefe(deck, EINTRAEGE))
 
 
 def test_notweg_ohne_rundschau_traegt_vermerk(tmp_path: Path) -> None:

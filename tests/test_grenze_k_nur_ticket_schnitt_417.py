@@ -121,9 +121,7 @@ def test_grenze_k_nur_in_erlaubten_modulen_gelesen() -> None:
 
 
 def test_stop_hook_kennt_grenze_k_nicht() -> None:
-    hook = (WURZEL / "skripte" / "hooks" / "staffel_stop.py").read_text(
-        encoding="utf-8"
-    )
+    hook = (WURZEL / "skripte" / "hooks" / "staffel_stop.py").read_text(encoding="utf-8")
     assert "grenze_k" not in hook
 
 
@@ -131,9 +129,7 @@ def test_skill_md_sagt_klar_was_grenze_k_ist() -> None:
     text = (WURZEL / "SKILL.md").read_text(encoding="utf-8")
     assert "`staffel.grenze_k` ist nur der Ticket-Schnitt" in text
     assert "~/.claude/smart-zone.json" in text
-    assert "Staffel (200k)" not in text, (
-        "Anleitung legt eine feste Ablöse-Zahl im Skill nahe"
-    )
+    assert "Staffel (200k)" not in text, "Anleitung legt eine feste Ablöse-Zahl im Skill nahe"
 
 
 def test_konfig_vorgabe_erklaert_grenze_k() -> None:

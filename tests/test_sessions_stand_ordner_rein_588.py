@@ -97,10 +97,34 @@ def test_prozesse_lesen_windows_liest_arbeitsordner_und_filtert_beendete(
     modul.REPO = eigen
 
     wmi = [
-        {"ProcessId": 401, "ParentProcessId": 1, "Name": "python.exe", "CommandLine": r"python.exe skripte\bau.py 901", "Start": ""},
-        {"ProcessId": 402, "ParentProcessId": 1, "Name": "python.exe", "CommandLine": r"python.exe skripte\bau.py 902", "Start": ""},
-        {"ProcessId": 403, "ParentProcessId": 1, "Name": "python.exe", "CommandLine": r"python.exe skripte\bau.py 903", "Start": ""},
-        {"ProcessId": 404, "ParentProcessId": 1, "Name": "python.exe", "CommandLine": r"python.exe skripte\bau.py 904", "Start": ""},
+        {
+            "ProcessId": 401,
+            "ParentProcessId": 1,
+            "Name": "python.exe",
+            "CommandLine": r"python.exe skripte\bau.py 901",
+            "Start": "",
+        },
+        {
+            "ProcessId": 402,
+            "ParentProcessId": 1,
+            "Name": "python.exe",
+            "CommandLine": r"python.exe skripte\bau.py 902",
+            "Start": "",
+        },
+        {
+            "ProcessId": 403,
+            "ParentProcessId": 1,
+            "Name": "python.exe",
+            "CommandLine": r"python.exe skripte\bau.py 903",
+            "Start": "",
+        },
+        {
+            "ProcessId": 404,
+            "ParentProcessId": 1,
+            "Name": "python.exe",
+            "CommandLine": r"python.exe skripte\bau.py 904",
+            "Start": "",
+        },
     ]
 
     def _peb_cwd(pid: int) -> str | None:
@@ -211,9 +235,27 @@ def test_prozesse_lesen_windows_trennt_fremde_und_beendete_wache(
     modul.REPO = eigen
 
     wmi = [
-        {"ProcessId": 601, "ParentProcessId": 1, "Name": "python.exe", "CommandLine": r"python.exe skripte\wache.py 900", "Start": ""},
-        {"ProcessId": 602, "ParentProcessId": 1, "Name": "python.exe", "CommandLine": r"python.exe skripte\wache.py 901", "Start": ""},
-        {"ProcessId": 603, "ParentProcessId": 1, "Name": "python.exe", "CommandLine": r"python.exe skripte\wache.py 902", "Start": ""},
+        {
+            "ProcessId": 601,
+            "ParentProcessId": 1,
+            "Name": "python.exe",
+            "CommandLine": r"python.exe skripte\wache.py 900",
+            "Start": "",
+        },
+        {
+            "ProcessId": 602,
+            "ParentProcessId": 1,
+            "Name": "python.exe",
+            "CommandLine": r"python.exe skripte\wache.py 901",
+            "Start": "",
+        },
+        {
+            "ProcessId": 603,
+            "ParentProcessId": 1,
+            "Name": "python.exe",
+            "CommandLine": r"python.exe skripte\wache.py 902",
+            "Start": "",
+        },
     ]
 
     def _peb_cwd(pid: int) -> str | None:

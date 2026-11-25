@@ -62,9 +62,7 @@ def _waechter_seit(welt: dict[str, Path], stunden: float = 1.0) -> None:
     datei.write_text(json.dumps(daten), encoding="utf-8")
 
 
-def _frisch_zu(
-    welt: dict[str, Path], nummer: str = "901", minuten: float = 20, **felder: object
-) -> None:
+def _frisch_zu(welt: dict[str, Path], nummer: str = "901", minuten: float = 20, **felder: object) -> None:
     """Wächter läuft seit 1 h, Ticket wurde vor ``minuten`` geschlossen (nach der Karenz)."""
     _waechter_seit(welt)
     _gh_setzen(
@@ -274,14 +272,10 @@ def test_gate_rot_nur_in_gitignorierter_laufdatei_im_worktree(
 ) -> None:
     _ignoriert_laufdateien(welt)
     wt = welt["wt"] / "wt-902"
-    subprocess.run(
-        ["git", "clone", "-q", str(welt["tmp"] / "fern.git"), str(wt)], check=True
-    )
+    subprocess.run(["git", "clone", "-q", str(welt["tmp"] / "fern.git"), str(wt)], check=True)
     lauf = wt / ".to-spawn" / "bau_log" / "902.jsonl"
     lauf.parent.mkdir(parents=True)
-    zeile = _log_zeile(
-        "deploy_phase", lauf="7", phase="ende", ergebnis="rot", grund="pytest rot"
-    )
+    zeile = _log_zeile("deploy_phase", lauf="7", phase="ende", ergebnis="rot", grund="pytest rot")
     lauf.write_text(zeile, encoding="utf-8")
     assert _git(wt, "check-ignore", ".to-spawn/bau_log/902.jsonl")  # wirklich ignoriert
     erste = _capo(welt)
@@ -308,9 +302,7 @@ def test_blockiert_in_laufdatei_des_repo_ordners(welt: dict[str, Path]) -> None:
     assert "Farbe · blau" in zweite and "Handy aus" not in zweite
 
 
-def test_kaputte_log_zeile_wird_gewarnt(
-    welt: dict[str, Path], caplog: pytest.LogCaptureFixture
-) -> None:
+def test_kaputte_log_zeile_wird_gewarnt(welt: dict[str, Path], caplog: pytest.LogCaptureFixture) -> None:
     from to_spawn import capo
 
     _commit(welt["repo"], "docs: Log", {"docs/agents/bau_log/902.jsonl": "{kaputt\n"})
@@ -325,14 +317,10 @@ def test_kaputte_log_zeile_wird_gewarnt(
 
 def _verwaist(welt: dict[str, Path], **felder: object) -> None:
     _commit(welt["repo"], "feat: Bauteil (#901)", _beleg())
-    _gh_setzen(
-        welt, "902", assignees=["bau"], updated_at=_iso(timedelta(hours=5)), **felder
-    )
+    _gh_setzen(welt, "902", assignees=["bau"], updated_at=_iso(timedelta(hours=5)), **felder)
 
 
-def test_mail_session_tot_trotz_kommentar_fehler(
-    welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_mail_session_tot_trotz_kommentar_fehler(welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch) -> None:
     _verwaist(welt)
     monkeypatch.setenv("GH_STUB_FEHLER", "comment")
     ergebnis = _capo(welt)
@@ -377,9 +365,7 @@ def test_mutanten_kopie_unter_docs_ist_kein_test(welt: dict[str, Path]) -> None:
     "Soll in tests/test_waechter_213_spec_streng.py"
 )
 def test_trailer_test_entfernt_erlaubt(welt: dict[str, Path]) -> None:
-    _commit(
-        welt["repo"], "test: alt", {"tests/test_a.py": "def test_alt():\n    pass\n"}
-    )
+    _commit(welt["repo"], "test: alt", {"tests/test_a.py": "def test_alt():\n    pass\n"})
     _commit(
         welt["repo"],
         "refactor: Umbau (#901)\n\nTest-entfernt: test_alt prüfte die alte Tabelle, die es nicht mehr gibt",
@@ -396,9 +382,7 @@ def test_trailer_test_entfernt_erlaubt(welt: dict[str, Path]) -> None:
 
 
 def test_ohne_trailer_bleibt_test_ersetzt(welt: dict[str, Path]) -> None:
-    _commit(
-        welt["repo"], "test: alt", {"tests/test_a.py": "def test_alt():\n    pass\n"}
-    )
+    _commit(welt["repo"], "test: alt", {"tests/test_a.py": "def test_alt():\n    pass\n"})
     _commit(
         welt["repo"],
         "refactor: Umbau (#901)\n\nTest entfernt, weil alt",
@@ -412,9 +396,7 @@ def test_ohne_trailer_bleibt_test_ersetzt(welt: dict[str, Path]) -> None:
 # --- 9: VPS unlesbar ------------------------------------------------------------------
 
 
-def test_vps_unlesbar_kein_spec_fertig(
-    welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_vps_unlesbar_kein_spec_fertig(welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch) -> None:
     _konfig(welt, vps={"ssh": "vps-test", "pfad": "/opt/x", "deploy_pfade": ["web/"]})
     _commit(welt["repo"], "feat: A (#901)", _beleg("901"))
     _commit(welt["repo"], "feat: B (#902)", _beleg("902"))
@@ -462,9 +444,7 @@ def test_juengste_zeile_blockiert_ist_nicht_verwaist(welt: dict[str, Path]) -> N
 # --- 15: Sperre gegen Parallelläufe --------------------------------------------------
 
 
-def test_zweiter_capo_lauf_wartet_nicht_endlos(
-    welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_zweiter_capo_lauf_wartet_nicht_endlos(welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch) -> None:
     from to_spawn import capo
 
     monkeypatch.setenv("TO_SPAWN_CAPO_SPERRE_S", "0")
@@ -506,18 +486,12 @@ def test_rate_limit_ohne_limit_text_ist_kein_limit() -> None:
         "type": "assistant",
         "isApiErrorMessage": True,
         "error": "rate_limit",
-        "message": {
-            "content": [
-                {"type": "text", "text": "API Error: Rate limit reached for requests"}
-            ]
-        },
+        "message": {"content": [{"type": "text", "text": "API Error: Rate limit reached for requests"}]},
     }
     assert waechter_lauf.ist_limit_zeile(zeile) is False
 
 
-def test_aufsicht_liest_nach_halt_noch_einmal(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture
-) -> None:
+def test_aufsicht_liest_nach_halt_noch_einmal(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     from test_waechter_213 import LIMIT_ZEILE
     from to_spawn import waechter_lauf
 
@@ -533,14 +507,10 @@ def test_aufsicht_liest_nach_halt_noch_einmal(
     assert "unlesbar" in caplog.text
 
 
-def test_aufsicht_warnt_wenn_transkript_fehlt(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture
-) -> None:
+def test_aufsicht_warnt_wenn_transkript_fehlt(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     from to_spawn import waechter_lauf
 
-    aufsicht = waechter_lauf.Aufsicht(
-        tmp_path / "fehlt.jsonl", 0, 0.02, lambda _t: None, warte_s=0.05
-    )
+    aufsicht = waechter_lauf.Aufsicht(tmp_path / "fehlt.jsonl", 0, 0.02, lambda _t: None, warte_s=0.05)
     with caplog.at_level(logging.WARNING, logger="to_spawn.waechter_lauf"):
         aufsicht.start()
         time.sleep(0.3)

@@ -259,9 +259,7 @@ def test_dialog_waechter_fragt_nur_effort() -> None:
         fragen.append(frage)
         return rest.pop(0)
 
-    konfig = config._mische(
-        config.DEFAULTS, {"modelle": {"waechter": "claude-haiku-4-5-20251001"}}
-    )
+    konfig = config._mische(config.DEFAULTS, {"modelle": {"waechter": "claude-haiku-4-5-20251001"}})
     ergebnis = setup.fuehre_dialog(
         konfig,
         eingabe,
@@ -334,9 +332,7 @@ def test_speichere_ueberschreibt_unlesbare_datei_nie(repo: Path) -> None:
     assert datei.read_text(encoding="utf-8") == "{ kaputt"
 
 
-def test_speichere_schreibt_atomar_ohne_reste(
-    repo: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_speichere_schreibt_atomar_ohne_reste(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _schreibe_konfig(repo, {"terminal": "wt"})
     aufrufe: list[tuple[str, str]] = []
     echt = setup.os.replace
@@ -351,9 +347,7 @@ def test_speichere_schreibt_atomar_ohne_reste(
     quelle, ziel = aufrufe[0]
     assert Path(quelle).parent == _konfig_datei(repo).parent
     assert Path(ziel) == _konfig_datei(repo)
-    assert sorted(p.name for p in _konfig_datei(repo).parent.iterdir()) == [
-        "config.json"
-    ]
+    assert sorted(p.name for p in _konfig_datei(repo).parent.iterdir()) == ["config.json"]
 
 
 # --- 4. Weg-Tests: CLI als Prozess ---------------------------------------------
@@ -367,17 +361,12 @@ def test_weg_nur_enter_ergibt_standards(repo: Path) -> None:
     assert daten["modelle"] == config.DEFAULTS["modelle"]
     assert daten["effort"] == config.DEFAULTS["effort"]
     assert daten["staffel"] == config.DEFAULTS["staffel"]
-    assert (
-        "Laufende Sessions bleiben unberührt; neue Starts lesen die Werte."
-        in ergebnis.stdout
-    )
+    assert "Laufende Sessions bleiben unberührt; neue Starts lesen die Werte." in ergebnis.stdout
     assert str(_konfig_datei(repo)) in ergebnis.stdout
 
 
 def test_weg_gezielte_antworten_und_fremdes_feld(repo: Path) -> None:
-    _schreibe_konfig(
-        repo, {"terminal": "wt", "fremd": {"bleibt": [1, 2]}, "ssh_ziel": "anderer"}
-    )
+    _schreibe_konfig(repo, {"terminal": "wt", "fremd": {"bleibt": [1, 2]}, "ssh_ziel": "anderer"})
     # Terminal 1 (tmux) · Ticket 3 (Sonnet 5) · Effort 3 (high) · leicht 4 (Haiku) ·
     # Effort 1 (low) · Wächter-Effort "xhigh".
     ergebnis = _cli(
@@ -521,9 +510,7 @@ def test_terminal_fuer_liest_objekt_und_alten_text() -> None:
 
 
 def test_speichere_aendert_nur_eigene_plattform(repo: Path) -> None:
-    _schreibe_konfig(
-        repo, {"terminal": {"win32": "wt", "linux": "tmux", "darwin": "eigen"}}
-    )
+    _schreibe_konfig(repo, {"terminal": {"win32": "wt", "linux": "tmux", "darwin": "eigen"}})
     setup.speichere(repo, {"terminal": "wt"}, plattform="win32")
     assert _lies(repo)["terminal"] == {
         "win32": "wt",
@@ -539,9 +526,7 @@ def test_speichere_wandelt_alten_text_um(repo: Path) -> None:
 
 
 def test_weg_standard_plus_flags_flags_gewinnen(repo: Path) -> None:
-    ergebnis = _cli(
-        repo, "setup", "--plattform", "linux", "--standard", "--effort-ticket", "max"
-    )
+    ergebnis = _cli(repo, "setup", "--plattform", "linux", "--standard", "--effort-ticket", "max")
     assert ergebnis.returncode == 0, ergebnis.stdout + ergebnis.stderr
     daten = _lies(repo)
     assert daten["effort"]["ticket"] == "max"
@@ -550,9 +535,7 @@ def test_weg_standard_plus_flags_flags_gewinnen(repo: Path) -> None:
 
 
 def test_weg_zeigen_mit_setz_flags_exit_2(repo: Path) -> None:
-    ergebnis = _cli(
-        repo, "setup", "--plattform", "linux", "--zeigen", "--effort-ticket", "max"
-    )
+    ergebnis = _cli(repo, "setup", "--plattform", "linux", "--zeigen", "--effort-ticket", "max")
     assert ergebnis.returncode == 2
     assert "--zeigen schreibt nichts" in ergebnis.stdout + ergebnis.stderr
     assert not (repo / ".to-spawn").exists()
@@ -560,9 +543,7 @@ def test_weg_zeigen_mit_setz_flags_exit_2(repo: Path) -> None:
 
 def test_weg_felder_kein_objekt_werden_normalisiert(repo: Path) -> None:
     _schreibe_konfig(repo, {"effort": "kaputt", "modelle": 5, "fremd": 1})
-    ergebnis = _cli(
-        repo, "setup", "--plattform", "linux", "--modell-ticket", "claude-sonnet-5"
-    )
+    ergebnis = _cli(repo, "setup", "--plattform", "linux", "--modell-ticket", "claude-sonnet-5")
     assert ergebnis.returncode == 0, ergebnis.stdout + ergebnis.stderr
     daten = _lies(repo)
     assert daten["modelle"] == {"ticket": "claude-sonnet-5", "waechter": FLAGGSCHIFF}

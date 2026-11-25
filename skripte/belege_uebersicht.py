@@ -120,9 +120,7 @@ def _bild_src(bild_rel: str, ziel_ordner: Path | None, verify_hard: Path | None)
     return quote(pfad, safe="/._-~")
 
 
-def _karte_html(
-    e: Eintrag, *, ziel_ordner: Path | None = None, verify_hard: Path | None = None
-) -> str:
+def _karte_html(e: Eintrag, *, ziel_ordner: Path | None = None, verify_hard: Path | None = None) -> str:
     x = html.escape
     klasse = "rot" if e.zeile == KEIN_BELEG else _KLASSE[e.status]
     dateien = (

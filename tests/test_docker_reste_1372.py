@@ -45,9 +45,7 @@ def welt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str, 
         """,
     )
     log_ordner = tmp_path / "hm"
-    monkeypatch.setenv(
-        "TO_SPAWN_HAUSMEISTER_LOG", str(log_ordner / "hausmeister.jsonl")
-    )
+    monkeypatch.setenv("TO_SPAWN_HAUSMEISTER_LOG", str(log_ordner / "hausmeister.jsonl"))
     monkeypatch.setenv("TO_SPAWN_HAUSMEISTER_DOCKER", str(docker))
     sperre = tmp_path / "staging" / ".deploy.lock"
     sperre.parent.mkdir()
@@ -102,9 +100,7 @@ def test_keine_sperrdatei_heisst_kein_neubau(welt: dict[str, Path]) -> None:
     welt["sperre"].unlink()
     hausmeister.aufraeumen_alles(loeschen=True, jetzt=1_000_000.0)
     assert len(_aufrufe(welt)) == 2
-    assert not welt["sperre"].exists(), (
-        "Hausmeister legt die Staging-Sperre nie selbst an"
-    )
+    assert not welt["sperre"].exists(), "Hausmeister legt die Staging-Sperre nie selbst an"
 
 
 def test_probelauf_und_start_check_fassen_docker_nie_an(welt: dict[str, Path]) -> None:
@@ -121,18 +117,11 @@ def test_docker_fehler_wird_geloggt_und_nicht_alle_15_min_wiederholt(
     zeile = json.loads(welt["stand"].read_text(encoding="utf-8").splitlines()[-1])
     assert zeile["ausgang"] == "fehler"
     assert "kaputt" in " ".join(zeile["fehler"])
-    assert (
-        docker_reste.freigeben(welt["stand"].parent, jetzt=1_000_900.0)
-        == "nicht_faellig"
-    )
+    assert docker_reste.freigeben(welt["stand"].parent, jetzt=1_000_900.0) == "nicht_faellig"
 
 
-def test_fehlendes_docker_wirft_nie(
-    welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setenv(
-        "TO_SPAWN_HAUSMEISTER_DOCKER", str(welt["stand"].parent / "gibt-es-nicht")
-    )
+def test_fehlendes_docker_wirft_nie(welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TO_SPAWN_HAUSMEISTER_DOCKER", str(welt["stand"].parent / "gibt-es-nicht"))
     assert docker_reste.freigeben(welt["stand"].parent, jetzt=1_000_000.0) == "fehler"
 
 
@@ -166,32 +155,23 @@ def test_unlesbare_staging_sperre_heisst_im_zweifel_nicht_raeumen(
 ) -> None:
     welt["sperre"].unlink()
     welt["sperre"].mkdir()  # IsADirectoryError statt FileNotFoundError
-    assert (
-        docker_reste.freigeben(welt["stand"].parent, jetzt=1_000_000.0)
-        == "staging_baut"
-    )
+    assert docker_reste.freigeben(welt["stand"].parent, jetzt=1_000_000.0) == "staging_baut"
     assert _aufrufe(welt) == []
 
 
 def test_stand_in_der_zukunft_blockiert_nicht_fuer_immer(welt: dict[str, Path]) -> None:
     welt["stand"].parent.mkdir(parents=True, exist_ok=True)
     welt["stand"].write_text('{"zeit": 9999999999}\n', encoding="utf-8")
-    assert (
-        docker_reste.freigeben(welt["stand"].parent, jetzt=1_000_000.0) == "freigegeben"
-    )
+    assert docker_reste.freigeben(welt["stand"].parent, jetzt=1_000_000.0) == "freigegeben"
 
 
 def test_kaputte_stand_datei_heisst_nie_gelaufen(welt: dict[str, Path]) -> None:
     welt["stand"].parent.mkdir(parents=True, exist_ok=True)
     welt["stand"].write_bytes(b"\xff\xfe kaputt\n")
-    assert (
-        docker_reste.freigeben(welt["stand"].parent, jetzt=1_000_000.0) == "freigegeben"
-    )
+    assert docker_reste.freigeben(welt["stand"].parent, jetzt=1_000_000.0) == "freigegeben"
 
 
-def test_ohne_hausmeister_sperre_kein_docker(
-    welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_ohne_hausmeister_sperre_kein_docker(welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch) -> None:
     def kaputt() -> None:
         raise OSError("Sperre nicht nutzbar")
 

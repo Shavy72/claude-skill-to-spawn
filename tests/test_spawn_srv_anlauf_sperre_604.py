@@ -445,7 +445,7 @@ def test_echter_tmux_lauf_wartet_und_startet_nach(tmp_path: Path, tmux_socket: s
     bin_ordner = tmp_path / "bin"
     huelle = bin_ordner / "tmux"
     huelle.write_text(
-        f"#!/usr/bin/env bash\nexec {echtes_tmux!r} -L {tmux_socket!r} \"$@\"\n",
+        f'#!/usr/bin/env bash\nexec {echtes_tmux!r} -L {tmux_socket!r} "$@"\n',
         encoding="utf-8",
     )
     huelle.chmod(0o755)
@@ -533,9 +533,7 @@ def test_echter_tmux_lauf_wartet_und_startet_nach(tmp_path: Path, tmux_socket: s
         (proc / str(pid)).rmdir()
         (sessions / f"{pid}.json").unlink()
     t0 = time.monotonic()
-    laeufe = _wache().wartende_nachstarten(
-        datei, e2.SPEC, repo, env=umgebung, schlafen=lambda _s: None, max_laeufe=2
-    )
+    laeufe = _wache().wartende_nachstarten(datei, e2.SPEC, repo, env=umgebung, schlafen=lambda _s: None, max_laeufe=2)
     dauer = time.monotonic() - t0
     assert laeufe == 1
     assert not datei.exists()

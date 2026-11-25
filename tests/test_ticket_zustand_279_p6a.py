@@ -125,9 +125,7 @@ def _wache(tmp_path: Path) -> tuple[aufpasser.Aufpasser, list[tuple]]:
     return wache, aufrufe
 
 
-def test_aufpasser_ticket_lesen_geht_ueber_den_baustein(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_aufpasser_ticket_lesen_geht_ueber_den_baustein(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     gefragt: list[tuple[int | str, Path | None]] = []
 
     def lesen(ticket: int | str, cwd: Path | None = None) -> dict[str, Any]:
@@ -147,9 +145,7 @@ def test_aufpasser_ticket_lesen_geht_ueber_den_baustein(
     assert ticket_zustand.stufe(daten) == "fertig_gebaut"
 
 
-def test_aufpasser_ticket_lesen_unlesbar_ist_fehler(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_aufpasser_ticket_lesen_unlesbar_ist_fehler(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(ticket_zustand, "lesen", lambda *a, **k: None)
     wache, _ = _wache(tmp_path)
     with pytest.raises(RuntimeError, match="#7"):

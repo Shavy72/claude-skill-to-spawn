@@ -181,9 +181,7 @@ def test_kaputtes_json_klare_meldung_und_nicht_aktiv(
     assert briefkasten.sperre_eingetragen() is False
 
 
-def test_hooks_als_liste_klare_meldung_und_nicht_aktiv(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture
-) -> None:
+def test_hooks_als_liste_klare_meldung_und_nicht_aktiv(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     """``hooks: []`` statt Objekt: Exit 1 mit Meldung zu ``hooks``, Datei bleibt, Nachweis ``False``."""
     claude = tmp_path / ".claude"
     claude.mkdir()
@@ -199,18 +197,14 @@ def test_hooks_als_liste_klare_meldung_und_nicht_aktiv(
     assert briefkasten.sperre_eingetragen_in({"hooks": []}) is False
 
 
-def test_block_hooks_als_objekt_klare_meldung_und_nicht_aktiv(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture
-) -> None:
+def test_block_hooks_als_objekt_klare_meldung_und_nicht_aktiv(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     """``hooks`` als Objekt in einem Block: Exit 1 mit klarer Meldung, Datei bleibt, Nachweis ``False``."""
     claude = tmp_path / ".claude"
     claude.mkdir()
     datei = claude / "settings.json"
     daten = {
         "hooks": {
-            "PreToolUse": [
-                {"matcher": "Bash", "hooks": {"type": "command", "command": f"{PY} {CLI} hook-ja-sperre"}}
-            ]
+            "PreToolUse": [{"matcher": "Bash", "hooks": {"type": "command", "command": f"{PY} {CLI} hook-ja-sperre"}}]
         }
     }
     roh = json.dumps(daten)

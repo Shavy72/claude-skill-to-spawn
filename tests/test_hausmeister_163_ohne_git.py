@@ -82,9 +82,7 @@ def test_verwaister_ordner_ohne_git_wird_geraeumt(welt: Welt) -> None:
 
 def test_verwaister_worktree_mit_totem_gitdir_wird_geraeumt(welt: Welt) -> None:
     ordner = _ordner(welt, "wt/wt-1632", ("arbeit.txt",))
-    (ordner / ".git").write_text(
-        f"gitdir: {welt.tmp / 'weg' / 'worktrees' / 'wt-1632'}\n", encoding="utf-8"
-    )
+    (ordner / ".git").write_text(f"gitdir: {welt.tmp / 'weg' / 'worktrees' / 'wt-1632'}\n", encoding="utf-8")
     _altern(welt)
     welt.ticket(1632, "CLOSED", 48)
 
@@ -97,9 +95,7 @@ def test_ohne_git_mit_prozess_bleibt(welt: Welt) -> None:
     ordner = _ordner(welt, "wt/wt-1633")
     _altern(welt)
     welt.ticket(1633, "CLOSED", 48)
-    proc = subprocess.Popen(
-        [sys.executable, "-c", "import time; time.sleep(60)"], cwd=ordner
-    )
+    proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"], cwd=ordner)
     try:
         r = welt.aufraeumen(ordner, loeschen=True)
         assert r.art == "bleibt" and "Prozess" in r.grund, r.grund
@@ -257,9 +253,7 @@ def test_ohne_git_ticket_abfrage_fehler_fail_closed(welt: Welt) -> None:
     assert ordner.is_dir()
 
 
-def test_ohne_git_lesefehler_scandir_fail_closed(
-    welt: Welt, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_ohne_git_lesefehler_scandir_fail_closed(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
     ordner = _ordner(welt, "wt/wt-1644", ("zu/datei.txt",))
     _altern(welt)
     welt.ticket(1644, "CLOSED", 48)

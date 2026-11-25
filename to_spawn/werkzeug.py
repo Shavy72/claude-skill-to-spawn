@@ -33,9 +33,7 @@ AGY_STANDARD_MODELL = "gemini-4-neon-high"
 #: Normalisierte Programmnamen (ohne Endung/Pfad) laufender Session-Prozesse.
 SESSION_PROZESSNAMEN: frozenset[str] = frozenset({"claude", "agy"})
 #: Prozessnamen für ``sessions_stand.py`` (Windows + Linux, inkl. npm-Node-Hülle).
-SESSION_NAMEN_ALLE: frozenset[str] = frozenset(
-    {"claude.exe", "node.exe", "claude", "node", "agy.exe", "agy"}
-)
+SESSION_NAMEN_ALLE: frozenset[str] = frozenset({"claude.exe", "node.exe", "claude", "node", "agy.exe", "agy"})
 
 #: Pane-Marker, die eine arbeitende Session anzeigen (Claude Code und agy).
 ARBEITS_MARKER: tuple[str, ...] = (
@@ -103,9 +101,7 @@ def modell_fuer(
     if cli_modell and cli_modell.strip():
         return cli_modell.strip()
     modelle = konfig.get("modelle") if isinstance(konfig, Mapping) else None
-    konfig_modell = (
-        str(modelle.get("ticket") or "").strip() if isinstance(modelle, Mapping) else ""
-    ) or None
+    konfig_modell = (str(modelle.get("ticket") or "").strip() if isinstance(modelle, Mapping) else "") or None
     if runner == "agy":
         if konfig_modell and not konfig_modell.startswith("claude-"):
             return konfig_modell

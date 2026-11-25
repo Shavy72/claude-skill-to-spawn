@@ -402,9 +402,7 @@ def _daten_ordner(welt: Welt, nr: int, dateien: tuple[str, ...]) -> Path:
     ],
 )
 def test_fix2_echte_datei_im_daten_ordner_haelt_den_ordner(welt: Welt, datei: str) -> None:
-    wt = _daten_ordner(
-        welt, 1632, ("data/content_studio/uploads/_characters/6/.thumb_ab12_480.webp", datei)
-    )
+    wt = _daten_ordner(welt, 1632, ("data/content_studio/uploads/_characters/6/.thumb_ab12_480.webp", datei))
     r = welt.aufraeumen(wt, loeschen=True)
     assert r.art == "bleibt" and datei in r.grund, r.grund
     assert (wt / datei).is_file()

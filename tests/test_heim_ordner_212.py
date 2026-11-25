@@ -35,11 +35,7 @@ HEIM_VARIABLEN = ("HOME", "USERPROFILE", "HOMEDRIVE", "HOMEPATH", "CLAUDE_CONFIG
 
 def _env_ohne_heim(**zusatz: str) -> dict[str, str]:
     """Minimale Prozess-Umgebung ohne jeden Hinweis auf den Heimat-Ordner."""
-    basis = {
-        k: v
-        for k, v in os.environ.items()
-        if k.upper() not in HEIM_VARIABLEN and not k.startswith("TO_SPAWN_")
-    }
+    basis = {k: v for k, v in os.environ.items() if k.upper() not in HEIM_VARIABLEN and not k.startswith("TO_SPAWN_")}
     basis["PYTHONIOENCODING"] = "utf-8"
     basis.update(zusatz)
     return basis
@@ -128,9 +124,7 @@ def test_heim_ordner_eine_tuer_ohne_umgebung_wirft_klar(monkeypatch: pytest.Monk
     assert "HOME" in text and "USERPROFILE" in text
 
 
-def test_heim_ordner_liest_home_oder_userprofile(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_heim_ordner_liest_home_oder_userprofile(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Mit ``HOME`` oder ``USERPROFILE`` liefert die eine Tür den jeweiligen Pfad."""
     _ohne_heim_monkeypatch(monkeypatch)
     a = tmp_path / "heim-a"
@@ -149,9 +143,7 @@ def test_heim_ordner_liest_home_oder_userprofile(
         assert config.heim_ordner() == a
 
 
-def test_heim_ordner_respektiert_umgebogenes_path_home(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_heim_ordner_respektiert_umgebogenes_path_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Biegt ein Test ``Path.home`` um, respektiert :func:`config.heim_ordner` das
     (z. B. ``test_maschine_standardort_unter_home``) und übersetzt ``RuntimeError`` klar."""
     ziel = tmp_path / "umgebogen"
@@ -194,9 +186,7 @@ def test_context_mode_claude_ordner_lazy_und_respektiert_config_dir(
 def test_hausmeister_hauptrepo_namen_ohne_heimordner(monkeypatch: pytest.MonkeyPatch) -> None:
     """``_hauptrepo_namen_aus`` liest Namen von ``~/…``-Einträgen ohne Heimordner."""
     _ohne_heim_monkeypatch(monkeypatch)
-    namen = hausmeister._hauptrepo_namen_aus(
-        [{"pfad": "~/alpha"}, {"pfad": "/srv/beta"}, {"pfad": "C:/dev/gamma"}]
-    )
+    namen = hausmeister._hauptrepo_namen_aus([{"pfad": "~/alpha"}, {"pfad": "/srv/beta"}, {"pfad": "C:/dev/gamma"}])
     assert namen == ("alpha", "beta", "gamma")
 
 

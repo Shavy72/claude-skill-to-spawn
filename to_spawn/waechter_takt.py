@@ -110,8 +110,9 @@ PFLICHT am Ende: Notizzettel fortschreiben (Stand + offene Punkte, knapp) mit `p
     # Abschluss-Anweisung und Beleg-Regel aus je einer Quelle (#289, #367); ``{BEFUGNIS}``
     # kommt erst beim Zugriff hinzu, weil ``befugnis.aufseher_text`` den aktuellen Notiz-Tresor
     # (``HOME``/``OBSIDIAN_VAULT``) zur Laufzeit auflöst (#232, #278 P3b).
-    .replace("{ABSCHLUSS}", anleitung.ABSCHLUSS_ANWEISUNG)
-    .replace("{BELEG_HINWEIS}", aufseher_stand.beleg_hinweis("python {SKILL}/to_spawn.py"))
+    .replace("{ABSCHLUSS}", anleitung.ABSCHLUSS_ANWEISUNG).replace(
+        "{BELEG_HINWEIS}", aufseher_stand.beleg_hinweis("python {SKILL}/to_spawn.py")
+    )
 )
 
 
@@ -355,7 +356,7 @@ def pruefe(
                     text = (
                         f"#{spec} Kommentar im Spec-Issue nach Abnahme (Runde {stand.runde}): "
                         f"{capo._kurz(body, 140)} — bei Nachbesserung je Punkt "
-                        f"`python {SKILL.as_posix()}/skripte/abschluss_paket.py nachbesserung {spec} --punkt \"…\"` "
+                        f'`python {SKILL.as_posix()}/skripte/abschluss_paket.py nachbesserung {spec} --punkt "…"` '
                         f"(Folge-Ticket + Manifest, Kette baut weiter); Live nur nach ausdrücklichem Wort des Nutzers"
                     )
                     eintraege.append((text, "spec_kommentare", k))

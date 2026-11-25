@@ -676,10 +676,7 @@ def _start_pruefen(loeschen: bool, nur_messen: bool = False) -> tuple[bool, str]
         return False, satz
     if _ist_inode_knapp(inodes):
         assert inodes is not None
-        warn = (
-            f"Temp-Wurzel knapp: {_prozent(inodes)} der Inodes belegt "
-            f"(Warnschwelle {_prozent(INODE_WARN_ANTEIL)})"
-        )
+        warn = f"Temp-Wurzel knapp: {_prozent(inodes)} der Inodes belegt (Warnschwelle {_prozent(INODE_WARN_ANTEIL)})"
         log.warning("Hausmeister: %s", warn)
         _spur("temp_inodes_knapp", warn, inodes_belegt=round(inodes, 4))
         return True, f"Platte frei: {_prozent(anteil)} frei{zusatz} ({warn})"
@@ -1308,11 +1305,7 @@ def _hauptrepos() -> list[Path]:
     roh = os.environ.get("TO_SPAWN_HAUSMEISTER_HAUPTREPOS")
     if roh is not None:
         return [Path(p).expanduser() for p in roh.split()]
-    pfade = (
-        pfad
-        for e in _maschinen_repos()
-        if (pfad := config.repo_klon_pfad(e)) is not None
-    )
+    pfade = (pfad for e in _maschinen_repos() if (pfad := config.repo_klon_pfad(e)) is not None)
     return [p for p in dict.fromkeys(pfade) if _ist_git_repo(p)]
 
 
@@ -1967,10 +1960,7 @@ def _inhalt_auf_origin(echt: Path) -> tuple[str, str, str | None] | None:
 def _ist_ticket_nicht_vorhanden(fehlertext: str) -> bool:
     """True nur, wenn ``gh issue view`` eindeutig meldet, dass die Nummer im Repo fehlt."""
     klein = fehlertext.lower()
-    return any(
-        text in klein
-        for text in ("could not resolve to an issue", "issue not found", "http 404")
-    )
+    return any(text in klein for text in ("could not resolve to an issue", "issue not found", "http 404"))
 
 
 def _kein_offenes_ticket_ohne_git(nr: int) -> None:
@@ -2032,9 +2022,7 @@ def _ohne_git_baum_pruefen(echt: Path, jetzt: float) -> None:
             try:
                 info = e.stat(follow_symlinks=False)
             except OSError as fehler:
-                raise _Bleibt(
-                    f"Eintrag nicht lesbar ({e.name}): {_kurz(fehler)}", fehler=True
-                ) from None
+                raise _Bleibt(f"Eintrag nicht lesbar ({e.name}): {_kurz(fehler)}", fehler=True) from None
             rel = Path(e.path).relative_to(echt).as_posix()
             art = info.st_mode
             if stat.S_ISSOCK(art) or stat.S_ISFIFO(art):
@@ -2042,13 +2030,9 @@ def _ohne_git_baum_pruefen(echt: Path, jetzt: float) -> None:
             if jetzt - info.st_mtime < OHNE_GIT_ALTER_SEKUNDEN:
                 raise _Bleibt(f"frisch geändert ({rel})")
             if any(m.match(rel) for m in _OHNE_GIT_GEHEIMNIS_MUSTER) and not _neu_erzeugbar(rel):
-                raise _Bleibt(
-                    f"Geheimnis-Verdacht {rel} (ohne Git nicht sicherbar)", fuer_david=True
-                )
+                raise _Bleibt(f"Geheimnis-Verdacht {rel} (ohne Git nicht sicherbar)", fuer_david=True)
             if any(m.match(rel) for m in _OHNE_GIT_DB_MUSTER) and not ist_test_db(echt, rel):
-                raise _Bleibt(
-                    f"Datenbank {rel} ist keine Test-Kopie (nicht sicherbar)", fuer_david=True
-                )
+                raise _Bleibt(f"Datenbank {rel} ist keine Test-Kopie (nicht sicherbar)", fuer_david=True)
             if stat.S_ISDIR(art):
                 stapel.append(Path(e.path))
 
@@ -2092,10 +2076,7 @@ def _ohne_git_regeln(
     stand.ticket = nr
     _keine_spec_sitzung(nr)
     _kein_offenes_ticket_ohne_git(nr)
-    grund = (
-        f"verwaister Ordner ohne Git (#{nr}: kein offenes Ticket, alt, "
-        "kein Prozess, kein Geheimnis-Verdacht)"
-    )
+    grund = f"verwaister Ordner ohne Git (#{nr}: kein offenes Ticket, alt, kein Prozess, kein Geheimnis-Verdacht)"
     if trocken:
         return Ergebnis(ordner, "gelöscht", grund, nr, trocken=True), None
     _kein_prozess(echt, probe=True)
@@ -3060,9 +3041,7 @@ def _reflog_dateien(git_dir: Path, ist_worktree: bool) -> list[Path]:
     return dateien
 
 
-def _nur_im_reflog(
-    repo: Path, ist_worktree: bool, auf_server: list[str] | None = None
-) -> bool:
+def _nur_im_reflog(repo: Path, ist_worktree: bool, auf_server: list[str] | None = None) -> bool:
     """#235 R1/#253: liegt ein Commit nur im Reflog, der mit dem Ordner verschwindet?
 
     Verschwinden: beim Klon alle Reflogs (auch die verknüpfter Worktrees), beim Worktree die
@@ -3113,9 +3092,7 @@ def _nur_im_reflog(
     return not _verwaist_auf_server(repo, verwaist, server)
 
 
-def _ungepushte_koepfe(
-    repo: Path, ist_worktree: bool, auf_server: list[str] | None = None
-) -> list[str]:
+def _ungepushte_koepfe(repo: Path, ist_worktree: bool, auf_server: list[str] | None = None) -> list[str]:
     """#179: Refs mit Commits auf keinem erreichbaren Remote-Kopf (``ls-remote origin``)."""
     server = _server_koepfe(repo) if auf_server is None else auf_server
     return [
@@ -3448,9 +3425,7 @@ def _baum_alter_pruefen(ordner: Path, *, jetzt: float, mindestalter_s: float) ->
             try:
                 info = eintrag.stat(follow_symlinks=False)
             except OSError as fehler:
-                raise _Bleibt(
-                    f"Eintrag nicht lesbar ({eintrag.name}): {_kurz(fehler)}", fehler=True
-                ) from None
+                raise _Bleibt(f"Eintrag nicht lesbar ({eintrag.name}): {_kurz(fehler)}", fehler=True) from None
             rel = Path(eintrag.path).relative_to(ordner).as_posix()
             if jetzt - info.st_mtime < mindestalter_s:
                 raise _Bleibt(f"frisch ({rel})")
@@ -3474,9 +3449,7 @@ def helfer_altbestand_aufraeumen(
     Log-Zeile vor dem Löschen („ohne Log kein Löschen“). Vorgabe ist der Trockenlauf.
     """
     if isinstance(aelter_als_tage, bool) or not math.isfinite(aelter_als_tage) or aelter_als_tage < 1:
-        raise ValueError(
-            f"Helfer-Altbestand: --aelter-als-tage {aelter_als_tage!r} abgelehnt (endliche Zahl >= 1)"
-        )
+        raise ValueError(f"Helfer-Altbestand: --aelter-als-tage {aelter_als_tage!r} abgelehnt (endliche Zahl >= 1)")
     basis = heim if heim is not None else config.heim_ordner()
     if basis.is_symlink() or not basis.is_dir():
         log.warning("Hausmeister: Helfer-Altbestand-Basis %s ist kein echter Ordner", basis)
@@ -3553,7 +3526,9 @@ def helfer_altbestand_aufraeumen(
             ergebnisse.append(erg)
             continue
         except OSError as fehler:
-            erg = Ergebnis(ordner, "bleibt", f"Gegenprobe gescheitert: {_kurz(fehler)}", None, trocken=False, fehler=True)
+            erg = Ergebnis(
+                ordner, "bleibt", f"Gegenprobe gescheitert: {_kurz(fehler)}", None, trocken=False, fehler=True
+            )
             _log_schreiben(erg)
             ergebnisse.append(erg)
             continue

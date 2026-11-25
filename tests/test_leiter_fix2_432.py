@@ -66,9 +66,7 @@ def _stufe2(wt: Path) -> FakeUmwelt:
 # --- B3: Stufe 3 „respawn läuft“ vor dem Ablösen gemerkt ----------------------------------
 
 
-def test_b3_merken_vor_abloesen_scheitert_nichts_abgeloest(
-    ordner: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_b3_merken_vor_abloesen_scheitert_nichts_abgeloest(ordner: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     spion = Spion()
     monkeypatch.setattr(respawn, "abloesen", spion)
     u = _stufe2(ordner)
@@ -83,9 +81,7 @@ def test_b3_merken_vor_abloesen_scheitert_nichts_abgeloest(
     assert spion.aufrufe == []
 
 
-def test_b3_stufe3_waehrend_abloesen_gemerkt(
-    ordner: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_b3_stufe3_waehrend_abloesen_gemerkt(ordner: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     gesehen: list[tuple[int, float | None]] = []
 
     def spion(repo: Path, spec: int, ticket: int, **_kw: Any) -> respawn.Ergebnis:
@@ -102,9 +98,7 @@ def test_b3_stufe3_waehrend_abloesen_gemerkt(
     assert leitstand.leiter_respawn(TICKET) == u.uhr
 
 
-def test_b3_abschluss_scheitert_kein_zweites_abloesen(
-    ordner: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_b3_abschluss_scheitert_kein_zweites_abloesen(ordner: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     echt = leitstand.aendere_zustand
     aufrufe: list[int] = []
 
@@ -148,9 +142,7 @@ def test_b3_stufe3_fenster_arbeitet_abschluss_nachgeholt(ordner: Path) -> None:
     assert leitstand.leiter_respawn(TICKET) == seit
 
 
-def test_b3_schliesse_respawn_ein_schreibvorgang(
-    ordner: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_b3_schliesse_respawn_ein_schreibvorgang(ordner: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     echt = leitstand.aendere_zustand
     zaehler: list[int] = []
 
@@ -191,9 +183,7 @@ def test_b1_stufe5_alter_session_start_bleibt(ordner: Path) -> None:
     assert u.wz.getippt == []
 
 
-def test_b1_stufe5_zeit_erst_nach_abloesen(
-    ordner: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_b1_stufe5_zeit_erst_nach_abloesen(ordner: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Startet das abgebrochene neue Fenster während abloesen, setzt das nicht zurück."""
     u = _stufe2(ordner)
     _start_datei(ordner, u.uhr - MINUTE)
@@ -235,9 +225,7 @@ def test_b1_bau_log_letzter_session_start(tmp_path: Path) -> None:
 # --- B4: Ersatz für die xfail-Alt-Tests mit Mindest-Ruhe ------------------------------------
 
 
-def test_b4_prompt_datei_alt_nichts(
-    ordner: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_b4_prompt_datei_alt_nichts(ordner: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     spion = Spion()
     monkeypatch.setattr(respawn, "abloesen", spion)
     u = _stufe2(ordner)

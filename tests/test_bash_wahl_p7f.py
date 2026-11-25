@@ -245,23 +245,13 @@ def test_ohne_bash_klare_meldung_beide_plattformen(
     werkzeug = startklar.Werkzeug("probe", "echo ok", werkzeug_datei.as_posix())
     settings = tmp_path / "settings.json"
     settings.write_text(
-        json.dumps(
-            {
-                "hooks": {
-                    "PreToolUse": [
-                        {"matcher": "Bash", "hooks": [{"type": "command", "command": "true"}]}
-                    ]
-                }
-            }
-        ),
+        json.dumps({"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "true"}]}]}}),
         encoding="utf-8",
     )
 
     # Hook-Weg und Trockenlauf-Weg (ohne Hooks) melden beide die eigene Klartext-Meldung.
     for dateien in ([settings], []):
-        befunde = startklar.werkzeug_probe(
-            tmp_path, 186, settings_dateien=dateien, werkzeuge=(werkzeug,)
-        )
+        befunde = startklar.werkzeug_probe(tmp_path, 186, settings_dateien=dateien, werkzeuge=(werkzeug,))
         assert len(befunde) == 1 and not befunde[0].ok, befunde
         assert erwartet in befunde[0].text, befunde[0]
 
@@ -277,9 +267,7 @@ def test_stand_und_lauf_bereinigen_pfadsperren_nur_unter_windows(
     """#186: ``stand._lauf`` und ``bash_wahl.lauf`` entfernen MSYS-Pfadsperren nur unter Windows."""
     gesehen: list[dict[str, str]] = []
 
-    def fake_run(
-        _cmd: Any, *, env: dict[str, str], **_optionen: Any
-    ) -> subprocess.CompletedProcess[str]:
+    def fake_run(_cmd: Any, *, env: dict[str, str], **_optionen: Any) -> subprocess.CompletedProcess[str]:
         gesehen.append(dict(env))
         return subprocess.CompletedProcess([], 0, "", "")
 
@@ -308,9 +296,7 @@ def _code_strings(datei: Path) -> set[str]:
     baum = ast.parse(datei.read_text(encoding="utf-8"), filename=str(datei))
     docstrings: set[int] = set()
     for knoten in ast.walk(baum):
-        if isinstance(
-            knoten, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)
-        ) and knoten.body:
+        if isinstance(knoten, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)) and knoten.body:
             erste = knoten.body[0]
             if (
                 isinstance(erste, ast.Expr)
@@ -321,9 +307,7 @@ def _code_strings(datei: Path) -> set[str]:
     return {
         k.value
         for k in ast.walk(baum)
-        if isinstance(k, ast.Constant)
-        and isinstance(k.value, str)
-        and id(k) not in docstrings
+        if isinstance(k, ast.Constant) and isinstance(k.value, str) and id(k) not in docstrings
     }
 
 

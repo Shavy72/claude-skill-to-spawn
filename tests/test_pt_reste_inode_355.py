@@ -88,9 +88,7 @@ def test_gruener_xdist_lauf_nach_rotem_laesst_nur_den_roten_ordner(tmp_path: Pat
 # --- #355 Rest-Punkte: _inode_anteil Randfälle, Marker-Rettung, Hausmeister-Zähler, wache ---
 
 
-def test_inode_anteil_null_dateien_und_oserror_sind_unbekannt(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_inode_anteil_null_dateien_und_oserror_sind_unbekannt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """``f_files == 0`` (z. B. btrfs) und ``OSError`` bei ``statvfs`` liefern ``None``."""
     from types import SimpleNamespace
 
@@ -215,9 +213,7 @@ def test_hausmeister_rundgang_warnt_bei_knappen_temp_inodes(
     assert [z["art"] for z in hindernis.lesen()] == ["temp_inodes_knapp"]
 
 
-def test_wache_raeumt_eigenen_lauf_ordner_nach_ende_auf(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_wache_raeumt_eigenen_lauf_ordner_nach_ende_auf(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """``skripte/wache.py`` hinterlässt nach dem Ende keinen ``wache-<spec>-*``-Ordner (#355)."""
     import importlib.util
     import sys
@@ -253,4 +249,3 @@ def test_wache_raeumt_eigenen_lauf_ordner_nach_ende_auf(
     assert wache.main() == 0
     reste = [p.name for p in temp.iterdir() if p.name.startswith("wache-900-")]
     assert reste == [], f"wache.py ließ Lauf-Ordner liegen: {reste}"
-

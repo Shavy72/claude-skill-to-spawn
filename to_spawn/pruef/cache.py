@@ -247,11 +247,7 @@ def _versteckte(repo: Path) -> list[str]:
             dateien += [f"{ort}/{u}" for u in links]
             dateien += [_paketliste(repo, f"{ort}/{u}") for u in unter if u == _MODULE and u not in links]
             unter[:] = [
-                u
-                for u in unter
-                if u != _MODULE
-                and u not in links
-                and not ist_werkzeug_rest(repo, f"{ort}/{u}/")
+                u for u in unter if u != _MODULE and u not in links and not ist_werkzeug_rest(repo, f"{ort}/{u}/")
             ]
             dateien += [f"{ort}/{n}" for n in namen if not ist_werkzeug_rest(repo, f"{ort}/{n}")]
             if len(dateien) > _VERSTECKT_MAX_DATEIEN:

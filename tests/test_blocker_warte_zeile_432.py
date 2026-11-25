@@ -54,7 +54,9 @@ def test_aenderung_der_gruende_loggt_sofort(tmp_path: Path, monkeypatch: pytest.
     assert zeiten == [0.0, 60.0]
 
 
-def test_abstand_waechst_bei_fehlern_und_faellt_zurueck(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog) -> None:
+def test_abstand_waechst_bei_fehlern_und_faellt_zurueck(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog
+) -> None:
     bau = _lade_bau(tmp_path, monkeypatch)
     f = [bau.ABFRAGE_FEHLER[0]]
     schlaefe, _z = _lauf(bau, [f, f, f, f, f, ["#8 offen"], []], caplog)

@@ -422,9 +422,7 @@ def _waise_beenden(stand: dict[str, Any]) -> None:
 # --- Hintergrund-Läufer starten -------------------------------------------------------
 
 
-def _starte_laeufer_prozess(
-    state_datei: Path, ticket: str | int, arbeitsordner: Path
-) -> subprocess.Popen[bytes]:
+def _starte_laeufer_prozess(state_datei: Path, ticket: str | int, arbeitsordner: Path) -> subprocess.Popen[bytes]:
     """Startet den entkoppelten, fensterlosen Läufer (Linux: eigene Sitzung, Windows: ohne Fenster)."""
     log_datei = _laeufer_log_pfad(state_datei)
     log_datei.parent.mkdir(parents=True, exist_ok=True)
@@ -436,9 +434,7 @@ def _starte_laeufer_prozess(
         "--laeufer",
         str(state_datei),
     ]
-    eigen: dict[str, Any] = (
-        prozessbaum.ohne_fenster() if sys.platform == "win32" else {"start_new_session": True}
-    )
+    eigen: dict[str, Any] = prozessbaum.ohne_fenster() if sys.platform == "win32" else {"start_new_session": True}
     with log_datei.open("ab") as log_fh:
         return starter.starte(
             cmd,

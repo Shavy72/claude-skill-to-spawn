@@ -55,16 +55,10 @@ def _drei_ordner(welt: Welt) -> tuple[Path, Path, Path]:
 
 
 def _geloescht(welt: Welt) -> list[str]:
-    return [
-        Path(z["ordner"]).name
-        for z in welt.zeilen()
-        if z.get("ordner") and z["art"] != "bleibt"
-    ]
+    return [Path(z["ordner"]).name for z in welt.zeilen() if z.get("ordner") and z["art"] != "bleibt"]
 
 
-def test_platznot_loescht_fertige_sofort_aelteste_zuerst(
-    welt: Welt, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_platznot_loescht_fertige_sofort_aelteste_zuerst(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
     a, b, c = _drei_ordner(welt)
     _platte(welt, monkeypatch, 0.10)
     erg = hausmeister.aufraeumen_alles(loeschen=True, jetzt=welt.jetzt)
@@ -74,9 +68,7 @@ def test_platznot_loescht_fertige_sofort_aelteste_zuerst(
     assert {e.ordner.name: e.art for e in erg}["wt-23"] == "bleibt"
 
 
-def test_ohne_platznot_bleiben_frisch_geschlossene(
-    welt: Welt, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_ohne_platznot_bleiben_frisch_geschlossene(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
     a, b, c = _drei_ordner(welt)
     _platte(welt, monkeypatch, 0.50)
     erg = hausmeister.aufraeumen_alles(loeschen=True, jetzt=welt.jetzt)
@@ -85,9 +77,7 @@ def test_ohne_platznot_bleiben_frisch_geschlossene(
     assert _geloescht(welt) == []
 
 
-def test_wieder_ueber_grenze_nach_erster_loeschung(
-    welt: Welt, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_wieder_ueber_grenze_nach_erster_loeschung(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
     a, b, _ = _drei_ordner(welt)
     _platte(welt, monkeypatch, 0.10, 0.20)
     hausmeister.aufraeumen_alles(loeschen=True, jetzt=welt.jetzt)
@@ -96,9 +86,7 @@ def test_wieder_ueber_grenze_nach_erster_loeschung(
     assert _geloescht(welt) == ["wt-22"]
 
 
-def test_platznot_trocken_loescht_nichts(
-    welt: Welt, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_platznot_trocken_loescht_nichts(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
     a, b, _ = _drei_ordner(welt)
     _platte(welt, monkeypatch, 0.10)
     erg = hausmeister.aufraeumen_alles(jetzt=welt.jetzt)
@@ -116,9 +104,7 @@ def _speicher_cli(welt: Welt) -> subprocess.CompletedProcess[str]:
     )
 
 
-def test_platte_voll_speicher_cli_eigener_exit_und_logs(
-    welt: Welt, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_platte_voll_speicher_cli_eigener_exit_und_logs(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
     alt = welt.worktree(41)
     welt.ticket(41, "CLOSED", 3)
     _platte(welt, monkeypatch, 0.03)
@@ -136,9 +122,7 @@ def test_platte_voll_speicher_cli_eigener_exit_und_logs(
     assert "Platte" in zeilen[0]["text"]
 
 
-def test_platte_frei_speicher_cli_exit_null(
-    welt: Welt, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_platte_frei_speicher_cli_exit_null(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
     _platte(welt, monkeypatch, 0.50)
     monkeypatch.setenv("TO_SPAWN_HINDERNIS_LOG", str(welt.tmp / "h.jsonl"))
     lauf = _speicher_cli(welt)
@@ -146,9 +130,7 @@ def test_platte_frei_speicher_cli_exit_null(
     assert not (welt.tmp / "h.jsonl").exists()
 
 
-def test_aufpasser_lauf_ruft_aufraeumen_alles(
-    welt: Welt, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_aufpasser_lauf_ruft_aufraeumen_alles(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
     alt = welt.worktree(31)
     welt.ticket(31, "CLOSED", 48)
     _platte(welt, monkeypatch, 0.50)
@@ -165,9 +147,7 @@ def test_aufpasser_lauf_ruft_aufraeumen_alles(
     assert re.search(r"Hausmeister: 1 gelöscht, 0 bleibt", text), text
 
 
-def test_aufpasser_trocken_loescht_nichts(
-    welt: Welt, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_aufpasser_trocken_loescht_nichts(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
     alt = welt.worktree(32)
     welt.ticket(32, "CLOSED", 48)
     _platte(welt, monkeypatch, 0.50)
@@ -183,9 +163,7 @@ def test_aufpasser_trocken_loescht_nichts(
     assert [z["trocken"] for z in welt.zeilen()] == [True]
 
 
-def test_bau_start_wartet_bei_voller_platte(
-    welt: Welt, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_bau_start_wartet_bei_voller_platte(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
     datei = _platte(welt, monkeypatch, 0.03)
     monkeypatch.setenv("TO_SPAWN_HINDERNIS_LOG", str(welt.tmp / "h.jsonl"))
     pausen: list[float] = []
@@ -197,9 +175,7 @@ def test_bau_start_wartet_bei_voller_platte(
     zyklen = speicher.auf_platte_warten(wer="bau 999", schlafen=schlafen)
     assert zyklen == 1
     assert pausen == [speicher.PLATTE_TAKT_S]
-    assert (
-        speicher.PLATTE_TAKT_S >= 600
-    )  # teurer Hausmeister-Lauf höchstens ~alle 15 min
+    assert speicher.PLATTE_TAKT_S >= 600  # teurer Hausmeister-Lauf höchstens ~alle 15 min
     # bau.py: Platten-Warten vor Speicher-Warten, beides vor dem Claude-Start.
     quelle = (SKILL / "skripte" / "bau.py").read_text(encoding="utf-8")
     platte = quelle.index("speicher.auf_platte_warten(")
@@ -210,9 +186,7 @@ def test_bau_start_wartet_bei_voller_platte(
 def test_bau_start_wartet_ueber_pruef_tuer() -> None:
     antworten = iter([(False, "Platte voll"), (False, "Platte voll"), (True, "frei")])
     pausen: list[float] = []
-    zyklen = speicher.auf_platte_warten(
-        wer="bau 1", pruefen=lambda: next(antworten), schlafen=pausen.append
-    )
+    zyklen = speicher.auf_platte_warten(wer="bau 1", pruefen=lambda: next(antworten), schlafen=pausen.append)
     assert zyklen == 2 and len(pausen) == 2
 
 
@@ -228,9 +202,7 @@ def _skill_dateien() -> list[Path]:
 
 
 def test_schwellen_nur_im_hausmeister() -> None:
-    muster = re.compile(
-        r"0\.15\b|0\.05\b|\b15 ?%|(?<![\d,.])5 ?%|Startsperre|PLATZNOT_ANTEIL|STARTSPERRE_ANTEIL"
-    )
+    muster = re.compile(r"0\.15\b|0\.05\b|\b15 ?%|(?<![\d,.])5 ?%|Startsperre|PLATZNOT_ANTEIL|STARTSPERRE_ANTEIL")
     treffer = []
     for datei in _skill_dateien():
         try:
@@ -251,28 +223,20 @@ def test_keine_mail_im_neuen_code() -> None:
         re.IGNORECASE,
     )
     quellen = {
-        "hausmeister.py": (SKILL / "to_spawn" / "hausmeister.py").read_text(
-            encoding="utf-8"
-        ),
+        "hausmeister.py": (SKILL / "to_spawn" / "hausmeister.py").read_text(encoding="utf-8"),
         "speicher.auf_platte_warten": inspect.getsource(speicher.auf_platte_warten),
         "speicher.cli": inspect.getsource(speicher.cli),
-        "aufpasser._hausmeister_lauf": inspect.getsource(
-            aufpasser.Aufpasser._hausmeister_lauf
-        ),
+        "aufpasser._hausmeister_lauf": inspect.getsource(aufpasser.Aufpasser._hausmeister_lauf),
     }
     for name, text in quellen.items():
         assert not verboten.search(text), name
     # hindernis.py definiert ``melden`` selbst — dort zählt nur, dass nichts verschickt wird.
     text = (SKILL / "to_spawn" / "hindernis.py").read_text(encoding="utf-8")
-    assert not re.search(
-        r"to_spawn_mail|telegram|smtplib|sendmail|urllib|requests", text, re.IGNORECASE
-    )
+    assert not re.search(r"to_spawn_mail|telegram|smtplib|sendmail|urllib|requests", text, re.IGNORECASE)
 
 
 def test_hindernis_wirft_nie(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv(
-        "TO_SPAWN_HINDERNIS_LOG", str(tmp_path / "ordner-ist-datei" / "x.jsonl")
-    )
+    monkeypatch.setenv("TO_SPAWN_HINDERNIS_LOG", str(tmp_path / "ordner-ist-datei" / "x.jsonl"))
     (tmp_path / "ordner-ist-datei").write_text("", encoding="utf-8")
     assert hindernis.melden("test", "geht nicht") is False
     assert hindernis.lesen() == []
@@ -287,9 +251,7 @@ def test_hindernis_wirft_nie(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
 # --- Fixrunde 1 -----------------------------------------------------------------
 
 
-def test_f1_probelauf_speicher_trocken_loescht_nie(
-    welt: Welt, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_f1_probelauf_speicher_trocken_loescht_nie(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
     """Probelauf/Status (``speicher --trocken``) misst nur — bei Platznot bleibt der Ordner."""
     alt = welt.worktree(51)
     welt.ticket(51, "CLOSED", 3)
@@ -319,10 +281,9 @@ def test_f2_platte_unmessbar_start_erlaubt_mit_spur(
     with caplog.at_level("WARNING", logger="to_spawn.hausmeister"):
         ok, satz = hausmeister.start_erlaubt()
     assert ok, satz
-    assert any(
-        r.levelname == "WARNING" and "TO_SPAWN_HAUSMEISTER_PLATTE" in r.getMessage()
-        for r in caplog.records
-    ), caplog.text
+    assert any(r.levelname == "WARNING" and "TO_SPAWN_HAUSMEISTER_PLATTE" in r.getMessage() for r in caplog.records), (
+        caplog.text
+    )
     cron_out = aufpasser.zustand_standard() / aufpasser.CRON_LOG
     zeilen = cron_out.read_text(encoding="utf-8").splitlines()
     assert len(zeilen) == 1 and "nicht messbar" in zeilen[0], zeilen
@@ -384,9 +345,7 @@ def test_f4_paralleler_lauf_raeumt_nicht(
     assert not alt.exists()
 
 
-def test_f5_gh_zeitlimit_ordner_bleibt(
-    welt: Welt, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_f5_gh_zeitlimit_ordner_bleibt(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
     wt = welt.worktree(81)
     welt.ticket(81, "CLOSED", 48)
     # Windows nimmt die Attrappe über TO_SPAWN_GH_STUB (siehe Fixture), nicht ``bin/gh``.
@@ -405,9 +364,7 @@ def test_f6_respawn_erkennt_platten_warten(
     from to_spawn import respawn
 
     antworten = iter([(False, "Platte voll: nur 3 % frei"), (True, "Platte frei")])
-    speicher.auf_platte_warten(
-        wer="bau 1", pruefen=lambda: next(antworten), schlafen=lambda _s: None
-    )
+    speicher.auf_platte_warten(wer="bau 1", pruefen=lambda: next(antworten), schlafen=lambda _s: None)
     zeilen = capsys.readouterr().err.splitlines()
     # Vorab-Zeile (Hausmeister prüft), Wartezeile, „wieder frei“ (Nachprüfung Fixrunde).
     assert len(zeilen) == 3, zeilen
@@ -416,9 +373,7 @@ def test_f6_respawn_erkennt_platten_warten(
     assert not respawn._wartet_auf_speicher("\n".join(zeilen))
 
 
-def test_f_aufpasser_zaehlt_fehler_getrennt(
-    welt: Welt, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_f_aufpasser_zaehlt_fehler_getrennt(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
     welt.worktree(91)  # kein Ticket-Eintrag → gh scheitert → bleibt mit Fehler
     _platte(welt, monkeypatch, 0.50)
     zustand = welt.tmp / "zustand"

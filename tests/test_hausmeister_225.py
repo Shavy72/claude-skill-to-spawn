@@ -29,9 +29,7 @@ from to_spawn import aufpasser, hausmeister, hausmeister_windows, prozessbaum
 TAG = 24 * 3600.0
 
 
-def _draussen(
-    haupt: Path, ziel: Path, zweig: str, *, datei: str = "arbeit.txt", push: bool = True
-) -> Path:
+def _draussen(haupt: Path, ziel: Path, zweig: str, *, datei: str = "arbeit.txt", push: bool = True) -> Path:
     """Legt einen echten Worktree von ``haupt`` außerhalb der Wurzeln an."""
     ziel.parent.mkdir(parents=True, exist_ok=True)
     git(haupt, "worktree", "add", "-q", "-b", zweig, str(ziel))
@@ -134,9 +132,7 @@ def test_worktree_list_einmal_je_hauptrepo_pro_rundgang(
     assert len(aufrufe) == 2, f"erwartet 2 (Anzahl Hauptrepos), erhalten {len(aufrufe)}: {aufrufe}"
 
 
-def test_bare_hauptrepo_mit_worktree_und_sperre(
-    welt: Welt, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_bare_hauptrepo_mit_worktree_und_sperre(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
     """Bare-Hauptrepo: Worktrees werden erkannt, normale geräumt, gesperrte als Regel behalten."""
     bare_haupt = welt.tmp / "bare-haupt.git"
     subprocess.run(["git", "clone", "-q", "--bare", str(welt.bare), str(bare_haupt)], check=True)
@@ -198,9 +194,7 @@ def test_als_worktree_eingetragen_nutzt_eine_parse_stelle_und_normcase(
 
     # Windows-Pfadvergleich (Laufwerksbuchstabe / Groß-Klein über normcase)
     monkeypatch.setattr(os.path, "normcase", lambda s: s.replace("/", "\\").lower())
-    assert hausmeister._pfad_schluessel(Path("C:/Dev/WT-1")) == hausmeister._pfad_schluessel(
-        Path("c:\\dev\\wt-1")
-    )
+    assert hausmeister._pfad_schluessel(Path("C:/Dev/WT-1")) == hausmeister._pfad_schluessel(Path("c:\\dev\\wt-1"))
 
 
 def test_docstrings_nennen_erweiterten_bereich_und_schutz() -> None:

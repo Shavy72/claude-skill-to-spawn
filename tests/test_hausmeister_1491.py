@@ -40,9 +40,7 @@ def ohne(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> Welt:
     (h / "arbeit.txt").write_text("fertig\n", encoding="utf-8")
     git(h, "add", "arbeit.txt")
     git(h, "commit", "-q", "-m", "arbeit")
-    git(
-        h, "push", "-q", "origin", f"{ZWEIG}:{ZWEIG}", f"{ZWEIG}:master"
-    )  # Schlange hat übernommen
+    git(h, "push", "-q", "origin", f"{ZWEIG}:{ZWEIG}", f"{ZWEIG}:master")  # Schlange hat übernommen
     git(h, "checkout", "-q", "master")
     git(h, "reset", "-q", "--hard", f"origin/{ZWEIG}")
     git(h, "branch", "-q", "-D", ZWEIG)  # nur noch auf dem Remote
@@ -81,9 +79,7 @@ def test_ohne_schalter_aufpasser_takt_loescht_keinen_zweig(
     assert _aus_gemeldet(caplog)
 
 
-def test_ohne_schalter_capo_schlussschritt_loescht_keinen_zweig(
-    ohne: Welt, caplog: pytest.LogCaptureFixture
-) -> None:
+def test_ohne_schalter_capo_schlussschritt_loescht_keinen_zweig(ohne: Welt, caplog: pytest.LogCaptureFixture) -> None:
     caplog.set_level(logging.INFO, logger="to_spawn.hausmeister")
     zeilen = capo._hausmeister_schluss(1491, {}, datetime.now(UTC), False)
     assert zeilen and "Hausmeister" in zeilen[0]
@@ -96,9 +92,7 @@ def test_ohne_schalter_bau_start_check_bei_platznot_loescht_keinen_zweig(
     ohne: Welt, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     caplog.set_level(logging.INFO, logger="to_spawn.hausmeister")
-    monkeypatch.setenv(
-        "TO_SPAWN_HAUSMEISTER_PLATTE", "0.10"
-    )  # Platznot, über der Startsperre
+    monkeypatch.setenv("TO_SPAWN_HAUSMEISTER_PLATTE", "0.10")  # Platznot, über der Startsperre
     monkeypatch.setenv("TO_SPAWN_HINDERNIS_LOG", str(ohne.tmp / "h.jsonl"))
     assert speicher.auf_platte_warten(wer="bau 1491") == 0
     assert _auf_remote(ohne)
@@ -111,39 +105,28 @@ def test_ohne_schalter_trockenlauf_keine_zweig_zeile(ohne: Welt) -> None:
     assert _zweig_zeilen(ohne) == []
 
 
-def test_ohne_schalter_sicherungs_zweig_bleibt(
-    welt: Welt, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_ohne_schalter_sicherungs_zweig_bleibt(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("TO_SPAWN_HAUSMEISTER_ZWEIG_REPOS", ORIGIN)
     monkeypatch.delenv(SCHALTER, raising=False)
     _sicherung(welt, monkeypatch, 31, 91)
     assert hausmeister.sicherungen_aufraeumen(loeschen=True, jetzt=welt.jetzt) == []
-    assert (
-        "sicherung/31"
-        in welt.im_bare("for-each-ref", "--format=%(refname:short)").split()
-    )
+    assert "sicherung/31" in welt.im_bare("for-each-ref", "--format=%(refname:short)").split()
 
 
 # --- Mit Schalter wie bisher (#1439) --------------------------------------------
 
 
 @pytest.mark.parametrize("wert", ["0", "", "ja"])
-def test_nur_eins_schaltet_ein(
-    ohne: Welt, monkeypatch: pytest.MonkeyPatch, wert: str
-) -> None:
+def test_nur_eins_schaltet_ein(ohne: Welt, monkeypatch: pytest.MonkeyPatch, wert: str) -> None:
     monkeypatch.setenv(SCHALTER, wert)
     hausmeister.aufraeumen_alles(loeschen=True, jetzt=ohne.jetzt)
     assert _auf_remote(ohne)
 
 
-def test_mit_schalter_loescht_wie_bisher_ueber_jeden_weg(
-    ohne: Welt, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_mit_schalter_loescht_wie_bisher_ueber_jeden_weg(ohne: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(SCHALTER, "1")
     hausmeister.aufraeumen_alles(loeschen=False, jetzt=ohne.jetzt)
-    assert [(z["zweig"], z["art"], z["trocken"]) for z in _zweig_zeilen(ohne)] == [
-        (ZWEIG, "gelöscht", True)
-    ]
+    assert [(z["zweig"], z["art"], z["trocken"]) for z in _zweig_zeilen(ohne)] == [(ZWEIG, "gelöscht", True)]
     assert _auf_remote(ohne)
     zeilen = capo._hausmeister_schluss(1491, {}, datetime.now(UTC), False)
     assert zeilen and "Hausmeister" in zeilen[0]
@@ -158,9 +141,7 @@ def _cli():
 
     from test_hausmeister_1368 import SKILL
 
-    spec = importlib.util.spec_from_file_location(
-        "to_spawn_cli_1491", SKILL / "to_spawn.py"
-    )
+    spec = importlib.util.spec_from_file_location("to_spawn_cli_1491", SKILL / "to_spawn.py")
     assert spec and spec.loader
     cli = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(cli)
@@ -184,9 +165,7 @@ def test_ohne_schalter_befehl_zweig_tuer_loescht_nicht_auf_github(
     assert pushes == []  # weder Lösch-Push noch Sicherungs-Push Richtung GitHub
     assert _auf_remote(ohne)
     assert "Zweig-Löschen aus" in aus
-    assert (
-        code == 1
-    )  # Aufrufer (z. B. Deploy-Schlange) merkt: verlangt, aber nicht gelöscht
+    assert code == 1  # Aufrufer (z. B. Deploy-Schlange) merkt: verlangt, aber nicht gelöscht
 
 
 def test_ohne_schalter_zweig_tuer_trocken_zeigt_aus(ohne: Welt) -> None:
@@ -202,9 +181,7 @@ def test_loesch_senke_ohne_schalter_pusht_nie(
 ) -> None:
     monkeypatch.delenv(SCHALTER, raising=False)
     aufrufe: list[tuple[str, ...]] = []
-    monkeypatch.setattr(
-        hausmeister, "_git_ohne_frage", lambda cwd, *a: aufrufe.append(a)
-    )
+    monkeypatch.setattr(hausmeister, "_git_ohne_frage", lambda cwd, *a: aufrufe.append(a))
     with pytest.raises(RuntimeError, match="Zweig-Löschen aus"):
         hausmeister._zweig_loeschen(tmp_path, ZWEIG, "0" * 40)
     assert aufrufe == []

@@ -159,9 +159,7 @@ def test_vorlage_haelt_weckruf_bis_abloesung() -> None:
     """Text-Quelle: Übergabe beendet den Loop nicht mehr, Ablösung ab dem Ziel-Wert."""
     from to_spawn import anleitung
 
-    vorlage = json.loads((SKILL / "repo-scripts" / "_default.json").read_text(encoding="utf-8"))[
-        "prompt_template"
-    ]
+    vorlage = json.loads((SKILL / "repo-scripts" / "_default.json").read_text(encoding="utf-8"))["prompt_template"]
     assert "Schritt 3–5 macht der Aufseher" not in vorlage
     assert "ScheduleWakeup 600 s" in vorlage and "ab Ziel-Wert" in vorlage
     assert "Staffel-Hook von `bau.py`" in anleitung.ABLOESE_SOP
@@ -178,9 +176,7 @@ def test_letzte_runde_ohne_dauer_weckruf(welt: dict[str, Any], monkeypatch: pyte
     # Kein Nachfolger → niemand merkt eine Ablösung; Leiter/Aufpasser bleiben das Netz.
     assert welt["beendet"] == [] and leitstand.leiter_respawn(TICKET) is None
     assert eigener_handoff.der_session(welt["wt"], TICKET, JETZT - 1800) is not None
-    vorlage = json.loads((SKILL / "repo-scripts" / "_default.json").read_text(encoding="utf-8"))[
-        "prompt_template"
-    ]
+    vorlage = json.loads((SKILL / "repo-scripts" / "_default.json").read_text(encoding="utf-8"))["prompt_template"]
     assert "höchstens einmal" in vorlage and "dann Loop mit stop: true beenden" in vorlage
 
 

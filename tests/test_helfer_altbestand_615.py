@@ -125,9 +125,7 @@ def test_ordner_mit_git_bleibt_stehen(welt: tuple[Path, Path]) -> None:
     assert repo.is_dir()
 
 
-def test_laufender_prozess_haelt_ordner_fest(
-    welt: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_laufender_prozess_haelt_ordner_fest(welt: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch) -> None:
     heim, _ = welt
     alt = _ordner(heim / "tmp-l201-aktiv", alter_tage=5)
 
@@ -203,10 +201,7 @@ def test_schutz_hooks_erlauben_helfer_altbestand_befehl() -> None:
 
     assert befugnis.handlung_klasse_2(befehle=[befehl]) is None
     assert (
-        skill_schutz.pruefe(
-            {"tool_name": "Bash", "tool_input": {"command": befehl}, "cwd": str(Path.home())}
-        )
-        is False
+        skill_schutz.pruefe({"tool_name": "Bash", "tool_input": {"command": befehl}, "cwd": str(Path.home())}) is False
     )
     hook = Path.home() / ".claude" / "hooks" / "block-dangerous.sh"
     bash = shutil.which("bash")

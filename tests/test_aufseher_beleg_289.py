@@ -212,9 +212,7 @@ def test_cli_aufseher_stand_ticket_liefert_beleg_zeile(
     assert aufseher_stand.pruefe_meldung(raus) is None
 
 
-def test_leiter_prueft_wirkung_nach_anstoss_und_nennt_beleg(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_leiter_prueft_wirkung_nach_anstoss_und_nennt_beleg(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Abnahme 1 + 3: Nach dem Anstupsen holt die Leiter den Beleg und meldet ``blockiert`` mit Wortlaut."""
     monkeypatch.setenv("TO_SPAWN_LEITSTAND_ORDNER", str(tmp_path / "leitstand"))
     wt = tmp_path / "wt"
@@ -294,10 +292,7 @@ def test_pruefe_meldung_lehnt_fehlenden_oder_widerspruechlichen_beleg_ab(meldung
 
 
 def test_pruefe_meldung_akzeptiert_gueltigen_beleg() -> None:
-    gueltig = (
-        "#1479 steht auf blockiert (Wortlaut unten).\n"
-        f"Beleg #1479 · 03:08 · blockiert · „{BLOCKIERT_WORTLAUT}“"
-    )
+    gueltig = f"#1479 steht auf blockiert (Wortlaut unten).\nBeleg #1479 · 03:08 · blockiert · „{BLOCKIERT_WORTLAUT}“"
     assert waechter_takt.pruefe_meldung(gueltig) is None
 
 
@@ -316,8 +311,7 @@ def test_takt_unterprozess_lehnt_meldung_ohne_beleg_ab_und_akzeptiert_mit_beleg(
 
     # Mit gültiger Beleg-Zeile → Exit 0, Merker fortgeschrieben.
     welt["env"]["CLAUDE_AUFZEICHNUNG_AUSGABE"] = (
-        "#297 steht auf blockiert.\n"
-        f"Beleg #297 · 03:08 · blockiert · „{BLOCKIERT_WORTLAUT}“"
+        f"#297 steht auf blockiert.\nBeleg #297 · 03:08 · blockiert · „{BLOCKIERT_WORTLAUT}“"
     )
     gruen = _takt(welt, "--claude", str(CLAUDE_AUFZ))
     assert gruen.returncode == 0, gruen.stdout + gruen.stderr
