@@ -58,6 +58,7 @@ from to_spawn import (
     prozessbaum,
     sessions_datei,
     sitzung_env,
+    sitzung_filter,
     speicher,
     starter,
     startstelle,
@@ -106,39 +107,10 @@ def _aktuelles_claude_dir(home: Path | None = None) -> Path:
     return context_mode.standard_claude_dir()
 
 
-# Pflicht-Skills: der globale Review-Stop-Hook (``~/.claude/hooks/review/stop.py``) fordert
-# „Skill review-dirigent ausführen“, der Dirigent ruft diese Skills per Skill-Werkzeug. Stehen
-# sie auf ``off``, scheitert der Aufruf und jedes Ticket endet mit „Mensch nötig“
-# (Handoff 2026-09-24). Kein Manifest kann sie abwählen — wie context-mode bei den MCPs.
-PFLICHT_SKILLS = ["review-dirigent", "code-review", "security-review", "sentry-security-review"]
-
-# Builtins, die Claude Code ohne Datei mitbringt (per skillOverrides abschaltbar).
-BUILTIN_SKILLS = [
-    # Plugin-Skills ohne Datei auf der Platte (nur per Override erreichbar)
-    "super-token-saver:report-limit",
-    "super-token-saver:s-compact",
-    "super-token-saver:s-continue",
-    "super-token-saver:setup-git-lite",
-    "super-token-saver:setup-statusline",
-    "super-token-saver:usage-view",
-    "loop",
-    "run",
-    "simplify",
-    "dataviz",
-    "update-config",
-    "schedule",
-    "init",
-    "keybindings-help",
-    "fewer-permission-prompts",
-    "workflow-authoring",
-    "design",
-    "artifact-design",
-    "artifact-diagramming",
-    "artifact-capabilities",
-    "claude-in-chrome",
-    "tdd",
-]
-CHROME_MCP = "claude-in-chrome"
+# Pflicht-Skills und Builtins aus der gemeinsamen Filter-Quelle (to_spawn.sitzung_filter, #412).
+PFLICHT_SKILLS = list(sitzung_filter.PFLICHT_SKILLS)
+BUILTIN_SKILLS = list(sitzung_filter.BUILTIN_SKILLS)
+CHROME_MCP = sitzung_filter.CHROME_MCP
 #: Staffel-Hook des Skills (#257): Fremd-Repos brauchen keine eigene Kopie.
 STAFFEL_HOOK_SKILL = Path(_SKILL) / "skripte" / "hooks" / "staffel_stop.py"
 
@@ -448,43 +420,12 @@ def known_skill_names(*, repo: Path | None = None, claude_dir: Path | None = Non
     ziel_repo = repo if repo is not None else REPO
     ziel_claude = claude_dir if claude_dir is not None else _aktuelles_claude_dir()
     # Pflicht-Skills werden ohnehin erzwungen, auch ohne Datei auf dem Rechner (#478).
-    names: set[str] = set(BUILTIN_SKILLS) | set(PFLICHT_SKILLS)
-
-    registry = read_json(ziel_claude / "toolbox" / "registry.json", {})
-    for entry in registry.get("entries") or []:
-        if entry.get("type") in ("skill", "command") and entry.get("name"):
-            names.add(entry["name"])
-
-    # Namespaced Commands: ~/.claude/commands/<ns>/<name>.md → "<ns>:<name>"
-    commands_dir = ziel_claude / "commands"
-    if commands_dir.is_dir():
-        for md in commands_dir.glob("*.md"):
-            names.add(md.stem)
-        for md in commands_dir.glob("*/*.md"):
-            names.add(f"{md.parent.name}:{md.stem}")
-
-    # Plugin-Skills: plugins/cache/<marketplace>/<plugin>/<version>/skills/<skill>/SKILL.md
-    # und plugins/cache/<marketplace>/<plugin>/<version>/commands/<name>.md
-    cache = ziel_claude / "plugins" / "cache"
-    if cache.is_dir():
-        for skill_md in cache.glob("*/*/*/skills/*/SKILL.md"):
-            plugin = skill_md.parents[3].name
-            names.add(f"{plugin}:{skill_md.parent.name}")
-        for cmd_md in cache.glob("*/*/*/commands/*.md"):
-            plugin = cmd_md.parents[2].name
-            names.add(f"{plugin}:{cmd_md.stem}")
-
-    # Repo-Skills + Repo-Commands (.claude/commands/<name>.md → "<name>")
-    for skill_md in (ziel_repo / ".claude" / "skills").glob("*/SKILL.md"):
-        names.add(skill_md.parent.name)
-    for md in (ziel_repo / ".claude" / "commands").glob("*.md"):
-        names.add(md.stem)
-    for md in (ziel_repo / ".claude" / "commands").glob("*/*.md"):
-        names.add(f"{md.parent.name}:{md.stem}")
-    for skill_md in (ziel_claude / "skills").glob("*/SKILL.md"):
-        names.add(skill_md.parent.name)
-
-    return names
+    return sitzung_filter.bekannte_skills(
+        repo=ziel_repo,
+        claude_dir=ziel_claude,
+        basis=[*BUILTIN_SKILLS, *PFLICHT_SKILLS],
+        logger=log,
+    )
 
 
 def skill_auswahl(
@@ -509,12 +450,7 @@ def skill_auswahl(
         dict.fromkeys(list(default.get("core_skills", [])) + ticket_skills + repo_erwartet + list(PFLICHT_SKILLS))
     )
     bekannt = known if known is not None else known_skill_names()
-    for name in geprueft:
-        if name not in bekannt:
-            log.warning("Skill unbekannt, trotzdem 'on': %s", name)
-    overrides = {name: "off" for name in sorted(bekannt - set(whitelist))}
-    overrides.update({name: "on" for name in whitelist})
-    return whitelist, overrides
+    return sitzung_filter.skill_overrides(whitelist, bekannt, geprueft=geprueft, logger=log)
 
 
 # --- MCP-Katalog ------------------------------------------------------------
@@ -524,29 +460,10 @@ def mcp_catalog(
     *, repo: Path | None = None, home: Path | None = None, claude_dir: Path | None = None
 ) -> dict[str, dict]:
     """Reihenfolge: ~/.claude.json (global + dieses Projekt) → Repo .mcp.json → toolbox/mcp-archive.json."""
-    ziel_repo = (repo if repo is not None else REPO).resolve()
+    ziel_repo = repo if repo is not None else REPO
     ziel_home = home if home is not None else _aktuelles_home()
     ziel_claude = claude_dir if claude_dir is not None else _aktuelles_claude_dir(home)
-    catalog: dict[str, dict] = {}
-    claude_json = read_json(ziel_home / ".claude.json", {})
-    project_servers: dict[str, dict] = {}
-    for key, project in (claude_json.get("projects") or {}).items():
-        try:
-            same = Path(key).resolve() == ziel_repo
-        except OSError:
-            same = False
-        if same:
-            project_servers = project.get("mcpServers") or {}
-    sources = (
-        (claude_json.get("mcpServers") or {}),
-        project_servers,
-        (read_json(ziel_repo / ".mcp.json", {}).get("mcpServers") or {}),
-        (read_json(ziel_claude / "toolbox" / "mcp-archive.json", {}).get("servers") or {}),
-    )
-    for servers in sources:
-        for name, definition in servers.items():
-            catalog.setdefault(name, definition)
-    return catalog
+    return sitzung_filter.mcp_katalog(repo=ziel_repo, home=ziel_home, claude_dir=ziel_claude, logger=log)
 
 
 # --- Prompt -----------------------------------------------------------------
@@ -1166,16 +1083,8 @@ def main() -> int:
 
     # MCPs
     mcp_wanted = list(dict.fromkeys(default.get("core_mcp", []) + (entry.get("mcp") or [])))
-    chrome = CHROME_MCP in mcp_wanted
     catalog = mcp_catalog()
-    mcp_servers: dict[str, dict] = {}
-    for name in mcp_wanted:
-        if name == CHROME_MCP:
-            continue
-        if name in catalog:
-            mcp_servers[name] = catalog[name]
-        else:
-            log.warning("MCP unauflösbar, übersprungen: %s", name)
+    mcp_servers, chrome = sitzung_filter.mcp_auswahl(mcp_wanted, catalog, logger=log)
     # Pflicht-MCP context-mode (#237): ``--strict-mcp-config`` sperrt das Plugin-MCP aus,
     # also steht es hier selbst in der mcp.json — kein Manifest kann es abwählen.
     # Gilt nur für ``claude``; ``agy`` nutzt weder ``--mcp-config`` noch das Claude-Plugin (#660).
