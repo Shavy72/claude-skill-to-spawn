@@ -109,10 +109,17 @@ def test_sandbox_der_bau_session_darf_in_den_temp_ordner_schreiben(
     assert str(ziel) in einst["filesystem"]["allowWrite"]
 
 
-@pytest.mark.parametrize("skript", ["skripte/bau.py", "skripte/wache.py"])
-def test_bau_und_aufseher_setzen_tmpdir_aus_der_einen_stelle(skript: str) -> None:
+@pytest.mark.parametrize(
+    ("skript", "aufruf"),
+    [
+        ("skripte/bau.py", 'temp_ordner.umgebung(args.ticket, repo=GH_REPO, von="bau")'),
+        ("skripte/wache.py", 'temp_ordner.umgebung(a.spec, repo=REPO, von="wache")'),
+    ],
+)
+def test_bau_und_aufseher_setzen_tmpdir_aus_der_einen_stelle(skript: str, aufruf: str) -> None:
     quelle = (SKILL / skript).read_text(encoding="utf-8")
-    assert "os.environ.update(temp_ordner.umgebung())" in quelle
+    assert aufruf in quelle
+    assert "os.environ.update(" in quelle
     assert 'LOCALAPPDATA") or tempfile.gettempdir()) / "Temp"' not in quelle
 
 

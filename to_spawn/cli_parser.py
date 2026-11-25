@@ -30,6 +30,7 @@ from to_spawn import (
     uebergabe_sichern,
     vorfall,
     waechter_takt,
+    warten,
     wecker,
 )
 from to_spawn import einreichen as einreichen_modul
@@ -441,4 +442,6 @@ def baue_parser() -> _Parser:
             help="Start-Last (Kontext nach Start) je Fenstertyp messen und gegen Obergrenzen prüfen",
         )
     )
+    # Abbruchfester Warte-Schritt (#286): Zustand in Datei, Neustart mit Pause, Geräte-Logbuch.
+    warten.richte_parser_ein(unter)
     return ap

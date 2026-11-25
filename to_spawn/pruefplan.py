@@ -3,7 +3,7 @@
 Für Aufrufer (Bau-Session, Aufseher, Abschluss): übergib nur, *wo* die Spec gerade steht
 (:class:`SpecStand`), und frag :func:`welche`. Den Befehl dazu liefert :func:`befehl`.
 
-Regel (Davids Vorgabe, 24.11.2026, Beschlüsse E10–E13):
+Regel (Vorgabe des Menschen, 24.11.2026, Beschlüsse E10–E13):
 
 * Je Ticket immer nur die schnelle Prüfung (Stil, betroffene Tests, Rauchtest; 1–3 min).
 * Die Komplett-Prüfung genau einmal je Spec:

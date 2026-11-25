@@ -56,6 +56,7 @@ from to_spawn import (
     umzug,
     vorfall,
     waechter_takt,
+    warten,
     wecker,
 )
 from to_spawn import einreichen as einreichen_modul
@@ -555,6 +556,8 @@ def verteilen(ap: argparse.ArgumentParser, args: argparse.Namespace) -> int:
         return wecker.lauf(args)
     if args.befehl == "start-last":
         return start_last.lauf_mit_args(args)
+    if args.befehl == "warten":
+        return warten.lauf(args, config.repo_wurzel(_repo_aus_umgebung()))
     if args.befehl == "aufraeumen":
         return _aufraeumen(args, ap)
     if args.befehl == "sichern":
