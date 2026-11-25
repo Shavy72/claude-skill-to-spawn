@@ -12,6 +12,7 @@ läuft über :func:`eigener_befehl`.
 
 from __future__ import annotations
 
+import inspect
 import os
 import subprocess
 import time
@@ -78,8 +79,18 @@ class Stufe:
     #: Zweiter voller Lauf nach grüner Einzel-Wiederholung: eigene Zeit (0 = nicht gelaufen).
     voll_nochmal_s: float = 0.0
     wackler: tuple[str, ...] = ()
+    #: Namen der roten Tests dieser Stufe (für „Nach Rot“-Regel, #795).
+    rote_tests: tuple[str, ...] = ()
     #: Entscheidung Auswahl/voll fürs Protokoll: {adapter, n, gesamt, sicher, grund}.
     auswahl: dict[str, Any] | None = None
+
+
+def _unterstuetzt_rote(adapter: Adapter) -> bool:
+    """True, wenn ``adapter.auswahl`` gezielte ``extra_tests`` (Nach-Rot-Regel) annimmt."""
+    try:
+        return "extra_tests" in inspect.signature(adapter.auswahl).parameters
+    except (TypeError, ValueError):
+        return False
 
 
 def _kurz(text: str) -> str:
@@ -143,6 +154,8 @@ def _pruefe(repo: Path, adapter: Adapter, basis: str, pfade: list[str] | None, a
         return _ohne_voll(a, grund, pfade) if art == "schnell" else _voll(repo, a, grund)
 
     doku = sofort.erklaerte_doku(repo, basis, pfade or [])
+    kann_rote = _unterstuetzt_rote(adapter)
+    rote = protokoll.letzte_rote(repo, adapter.name) if kann_rote else ()
     grund = regeln.vorab(
         pfade,
         adapter.name,
@@ -150,14 +163,33 @@ def _pruefe(repo: Path, adapter: Adapter, basis: str, pfade: list[str] | None, a
         protokoll.letztes_urteil(repo),
         doku=doku,
         offen=sofort.ungespeichert(repo),
+        rote_tests=rote,
     )
     if grund:
         return rueckfall(adapter, grund)
-    plan = adapter.auswahl(repo, basis)
+    if kann_rote:
+        plan = adapter.auswahl(repo, basis, extra_tests=rote, pfade=pfade)  # type: ignore[call-arg]
+    else:
+        plan = adapter.auswahl(repo, basis)
     if plan.fehler:
         return rueckfall(adapter, f"Auswahl nicht möglich: {plan.fehler}")
-    erg = ausfuehren.lauf(plan.befehl, repo)
-    n, gesamt = adapter.zaehle(erg.code, erg.ausgabe)
+    if not plan.befehl:
+        erg = ausfuehren.Lauf(0, "", 0.0)
+        n: int | None = 0
+        gesamt: int | None = None
+    else:
+        erg = ausfuehren.lauf(plan.befehl, repo)
+        n, gesamt = adapter.zaehle(erg.code, erg.ausgabe)
+    if n is None and adapter.deute(erg.code) == ROT:
+        # Sammelfehler/Importfehler in ausgewählter Datei ist ein echtes Rot, kein Rückfall.
+        wahl = _wahl(adapter, "", None, gesamt)
+        return _gedeutet(
+            repo,
+            adapter,
+            plan,
+            erg,
+            Stufe("auswahl", adapter.name, True, "Auswahl rot (Sammelfehler)", 0.0, "", "", ROT, "", auswahl=wahl),
+        )
     grund = regeln.nach_auswahl(n, pfade or [], adapter.name, doku)
     if grund:
         return rueckfall(adapter, grund)
@@ -177,12 +209,13 @@ def _pruefe(repo: Path, adapter: Adapter, basis: str, pfade: list[str] | None, a
             "",
             auswahl=wahl,
         )
+    text_grund = f"Nach Rot: {len(rote)} zuletzt rote + Auswahl ({n} Tests)" if rote else f"{n} betroffene Tests"
     return _gedeutet(
         repo,
         adapter,
         plan,
         erg,
-        Stufe("auswahl", adapter.name, True, f"{n} betroffene Tests", 0.0, "", "", GRUEN, "", auswahl=wahl),
+        Stufe("auswahl", adapter.name, True, text_grund, 0.0, "", "", GRUEN, "", auswahl=wahl),
     )
 
 
@@ -201,6 +234,11 @@ def _gedeutet(repo: Path, adapter: Adapter, plan: Plan, erg: ausfuehren.Lauf, ro
         elif bericht.im_bericht == 0:
             ergebnis = GATE_FEHLER
             grund = "0 Tests im Prüf-Bericht gelaufen (kein Grün trotz Exit 0)"
+    erst_rote = (
+        tuple(sorted(adapter.rote(erg.ausgabe)))
+        if ergebnis == ROT and isinstance(adapter, wackler.Wiederholbar)
+        else ()
+    )
     stufe = replace(
         roh,
         grund=grund,
@@ -209,10 +247,12 @@ def _gedeutet(repo: Path, adapter: Adapter, plan: Plan, erg: ausfuehren.Lauf, ro
         werkzeug=plan.werkzeug,
         ergebnis=ergebnis,
         ausgabe=(erg.ausgabe or grund) if ergebnis != GRUEN else "",
+        rote_tests=erst_rote,
     )
     zweit = wackler.nochmal(adapter, repo, plan.befehl, erg) if ergebnis == ROT else None
     if zweit is None:
         return stufe
+    bleibend_rot = () if zweit.gruen else (tuple(sorted(set(erst_rote) - set(zweit.wackler))) or erst_rote)
     return replace(
         stufe,
         ergebnis=GRUEN if zweit.gruen else ROT,
@@ -221,6 +261,7 @@ def _gedeutet(repo: Path, adapter: Adapter, plan: Plan, erg: ausfuehren.Lauf, ro
         wiederholung_s=zweit.dauer_s,
         voll_nochmal_s=zweit.voll_s,
         wackler=zweit.wackler,
+        rote_tests=bleibend_rot,
     )
 
 
