@@ -11,6 +11,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from conftest import repo_dateien
+
 WURZEL = Path(__file__).resolve().parent.parent
 
 #: Die einzigen Code-Stellen, die ``grenze_k`` lesen dürfen (Grep-Beleg #417), je mit Grund.
@@ -51,8 +53,8 @@ AUSGENOMMEN = {
 def _code_dateien() -> list[Path]:
     """Alle Code-Dateien des Repos: Wurzel (``to_spawn.py``) und jeder Code-Ordner."""
     dateien = []
-    for datei in WURZEL.rglob("*"):
-        if not datei.is_file() or datei.suffix not in ENDUNGEN:
+    for datei in repo_dateien(WURZEL):
+        if datei.suffix not in ENDUNGEN:
             continue
         if AUSGENOMMEN & set(datei.relative_to(WURZEL).parts):
             continue
