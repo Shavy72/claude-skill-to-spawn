@@ -26,8 +26,14 @@ import subprocess
 import sys
 import time
 from collections.abc import Callable, Iterator, Sequence
+from contextlib import contextmanager
 from pathlib import Path, PureWindowsPath
 from typing import Any, NamedTuple
+
+try:
+    from to_spawn import sitzungsjob
+except ImportError:  # Direktaufruf als Skript: ``python to_spawn/prozessbaum.py --nachlauf``
+    import sitzungsjob  # type: ignore[import-not-found,no-redef]
 
 log = logging.getLogger(__name__)
 
@@ -237,6 +243,81 @@ def beenden(
         if _warte_tot(ziel, warte_s, takt_s, schlafen):
             return True
     return not any(lebt(pid) for pid in ziel)
+
+
+#: Wartezeit (Sekunden) beim harten Beenden eines Prozessbaums in :func:`gruppe_beenden`.
+_GRUPPE_WARTE_S = 2.0
+
+
+@contextmanager
+def gruppe_gebunden(prozess: Any) -> Iterator[sitzungsjob.Job]:
+    """Bindet ``prozess`` samt Nachkommen an ein Windows-Job-Objekt (Linux: ohne Wirkung, #645).
+
+    Schließt die Start-Lücke unter Windows: Kinder, die zwischen ``Popen`` und der
+    Job-Aufnahme schon entstanden (z. B. ``usr\\bin\\bash.exe`` unter ``bin\\bash.exe``),
+    werden direkt danach über :func:`baum` mit aufgenommen.
+    """
+    with sitzungsjob.gebunden(prozess) as job:
+        if _WINDOWS and job.aktiv:
+            try:
+                nachfahren = baum(int(prozess.pid))[1:]
+            except OSError:
+                nachfahren = []
+            for kind in nachfahren:
+                job.aufnehmen(kind)
+        yield job
+
+
+def gruppe_beenden(
+    prozess: subprocess.Popen[Any],
+    *,
+    job: sitzungsjob.Job | None = None,
+) -> None:
+    """Beendet ``prozess`` samt ganzer Prozessgruppe / ganzem Prozessbaum hart (#645).
+
+    Einzige Stelle dafür:
+    - Windows: beendet zuerst den gebundenen Job (:meth:`sitzungsjob.Job.beenden`, trifft auch
+      Git-Bash-/MSYS-Enkel ohne lebenden Windows-Elternteil), räumt danach den noch sichtbaren
+      :func:`baum` über :func:`beenden` ab (Kinder vor Wurzel) und nutzt ``prozess.kill()``
+      als letztes Netz.
+    - Linux/macOS: ``SIGKILL`` an die eigene Prozessgruppe (``os.killpg``); scheitert das
+      (z. B. fehlende Rechte), fällt es auf :func:`beenden` über :func:`baum` und
+      ``prozess.kill()`` zurück.
+    """
+    if _WINDOWS:
+        if job is not None:
+            job.beenden()
+        try:
+            pids = baum(prozess.pid)
+        except OSError as fehler:
+            log.warning("Prozessbaum von PID %d nicht lesbar: %s", prozess.pid, fehler)
+            pids = [prozess.pid]
+        beenden(list(reversed(pids)), ((signal.SIGTERM, _GRUPPE_WARTE_S),))
+        if prozess.poll() is None:
+            try:
+                prozess.kill()
+            except OSError:
+                pass
+        return
+    sigkill = getattr(signal, "SIGKILL", signal.SIGTERM)
+    try:
+        os.killpg(prozess.pid, sigkill)
+    except ProcessLookupError:
+        pass
+    except OSError as fehler:
+        log.warning(
+            "Prozessgruppe %d nicht beendet: %s — Rückfall auf Prozessbaum", prozess.pid, fehler
+        )
+        try:
+            pids = baum(prozess.pid)
+        except OSError:
+            pids = [prozess.pid]
+        beenden(list(reversed(pids)), ((sigkill, _GRUPPE_WARTE_S),))
+        if prozess.poll() is None:
+            try:
+                prozess.kill()
+            except OSError:
+                pass
 
 
 # --- Session der Staffel finden und beenden (Linux + Windows, #501) ----------------------
