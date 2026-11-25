@@ -32,7 +32,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TextIO
 
-from . import arbeitsstand, config, gh, prozessbaum, setup, skill_stand, umzug
+from . import arbeitsstand, config, gh, konsole, prozessbaum, setup, skill_stand, umzug
 
 log = logging.getLogger("to_spawn.einrichten")
 
@@ -161,7 +161,7 @@ def _lege_konfig_an(ort: Ort) -> None:
     if datei.exists():
         return
     _schreib_schutz(ort.wurzel, datei)
-    if sys.stdin.isatty():
+    if konsole.stdin_ist_terminal():
         setup.erster_start(
             ort.wurzel,
             ist_tty=True,
