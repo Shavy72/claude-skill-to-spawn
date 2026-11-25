@@ -1252,7 +1252,7 @@ def sichern(
     Kein stash, kein Branch-Wechsel, kein Index-Zugriff: temporärer ``GIT_INDEX_FILE``
     ab ``HEAD`` → ``add -A`` ohne Geheimnisse (``SICHERUNG_AUSSCHLUSS``) →
     ``write-tree`` → ``commit-tree`` mit Eltern ``HEAD`` und (falls vorhanden) der
-    vorigen ``sicherung/<N>`` → ``update-ref`` → ``push`` (kein ``+``, die Kette ist
+    vorigen ``sicherung/<N>`` → ``push`` → ``update-ref`` (kein ``+``, die Kette ist
     fast-forward). Rückgabe = Commit-SHA; sauberer Baum → None. Fehler ⇒ RuntimeError.
 
     ``zusatz_koepfe`` (Refs/SHAs, z. B. lokale Zweige mit Commits auf keinem Remote):
@@ -1308,8 +1308,10 @@ def sichern(
         ).strip()
     finally:
         Path(index).unlink(missing_ok=True)
+    # #242: erst pushen, dann lokalen Ref nachziehen — ein gescheiterter Push darf
+    # keinen ungepushten lokalen sicherung/<N>-Zweig hinterlassen.
+    _git(worktree, "push", "-q", "origin", f"{commit}:{ref}")
     _git(worktree, "update-ref", ref, commit)
-    _git(worktree, "push", "-q", "origin", f"{ref}:{ref}")
     return commit
 
 

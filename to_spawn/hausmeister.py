@@ -30,7 +30,7 @@ gezählt) — eigene Datei, damit Leser des Ordner-Logs nur Ordner-Zeilen sehen.
 
 Ungesichert heißt: geänderte/neue Dateien oder Commits auf keinem Remote. Vorher
 ``git fetch --prune origin`` (veraltete Tracking-Refs täuschen „gepusht“ vor), dann
-zählt nur ``--remotes=origin``. Beim Klon (``.git`` ist Ordner) zählen alle lokalen
+zählt der erreichbare Server-Stand (``ls-remote --heads origin``, #179/#242). Beim Klon (``.git`` ist Ordner) zählen alle lokalen
 Refs außer ``refs/remotes`` (Zweige, Tags, Notes) + HEAD, denn mit dem Klon sterben
 sie alle; ein Stash bleibt. Beim verknüpften Worktree (``.git`` ist Datei) nur HEAD:
 die übrigen Refs gehören dem Hauptrepo und überleben das ``worktree remove`` — sie
@@ -1573,7 +1573,7 @@ def _regeln(
     _kein_offener_pull_request(echt, slug)
 
     # 8 Ungesichertes prüfen (auch trocken: fetch, Geheimnisse, Ignoriertes)
-    koepfe, zu_sichern, status_vorher = _ungesichertes(echt, ist_worktree)
+    koepfe, zu_sichern, status_vorher, sicherung_vorher = _ungesichertes(echt, ist_worktree, ticket)
     art: Art = "gesichert und gelöscht" if (koepfe or zu_sichern) else "gelöscht"
     if ticket is None:  # 8b #235: ohne Nummer keine Sicherung (sicherung/<N>) ⇒ nur Fertiges
         if zu_sichern:
@@ -1594,8 +1594,9 @@ def _regeln(
     if trocken:
         return Ergebnis(ordner, art, grund, stand.ticket, trocken=True), None
     if ticket is not None and (koepfe or zu_sichern):
+        zusatz = [*koepfe, *([sicherung_vorher] if sicherung_vorher else [])]
         try:
-            stand.sicherung = aufpasser.sichern(echt, ticket, jetzt, zusatz_koepfe=koepfe)
+            stand.sicherung = aufpasser.sichern(echt, ticket, jetzt, zusatz_koepfe=zusatz)
         except RuntimeError as fehler:
             raise _Bleibt(f"Sicherung gescheitert: {_kurz(fehler)}", fehler=True) from None
         if stand.sicherung is None:
@@ -2627,8 +2628,10 @@ def _gleiche_kopie(haupt: Path | None, repo: Path, rel: str) -> bool:
         return False
 
 
-def _ungesichertes(repo: Path, ist_worktree: bool) -> tuple[list[str], bool, list[tuple[str, str]]]:
-    """Regel 8: (ungepushte Köpfe, zu sichernde Dateien da?, Status-Schnappschuss).
+def _ungesichertes(
+    repo: Path, ist_worktree: bool, ticket: int | None = None
+) -> tuple[list[str], bool, list[tuple[str, str]], str | None]:
+    """Regel 8: (ungepushte Köpfe, zu sichernde Dateien da?, Status-Schnappschuss, Server-``sicherung/<N>``).
 
     Alles, was die Sicherung nicht retten kann, wirft ``_Bleibt``.
     """
@@ -2638,7 +2641,9 @@ def _ungesichertes(repo: Path, ist_worktree: bool) -> tuple[list[str], bool, lis
         raise _Bleibt(f"git fetch origin gescheitert: {_kurz(fehler)}", fehler=True) from None
     if not ist_worktree and _git_oder_none(repo, "rev-parse", "--verify", "-q", "refs/stash"):
         raise _Bleibt("Stash vorhanden (git stash list)", fuer_david=True)
-    auf_server = _server_koepfe(repo)
+    server_zweige = _server_zweige(repo)
+    sicherung_vorher = _sicherung_stand_holen(repo, ticket, server_zweige) if ticket is not None else None
+    auf_server = list(server_zweige.values())
     if _nur_im_reflog(repo, ist_worktree, auf_server):
         raise _Bleibt("ungesicherte Commits im Verlauf (Reflog, auf keinem Zweig)", fuer_david=True)
     for zeile in aufpasser.git_lauf(repo, "ls-files", "-s").splitlines():
@@ -2685,7 +2690,7 @@ def _ungesichertes(repo: Path, ist_worktree: bool) -> tuple[list[str], bool, lis
         ).split()
         if leck:
             raise _Bleibt(f"Geheimnis-Datei {leck[0]} in ungepushtem Commit", fuer_david=True)
-    return koepfe, zu_sichern, alle
+    return koepfe, zu_sichern, alle, sicherung_vorher
 
 
 def _lokale_koepfe(repo: Path, ist_worktree: bool) -> list[str]:
@@ -2702,18 +2707,201 @@ def _lokale_koepfe(repo: Path, ist_worktree: bool) -> list[str]:
 
 #: So viele Reflog-Stände je ``rev-list``-Aufruf (Windows: Kommandozeile höchstens 32 KiB).
 _REFLOG_HAPPEN = 200
+#: Obergrenze der Server-Commits für die Baum-/Patch-Prüfung (#253, Schutz vor Alt-Historie).
+_SERVER_PRUEF_LIMIT = 1000
+#: Deterministische Diff-Optionen ohne externe Diff-Treiber/Textconv und mit vollem Blob-Hash (#253).
+_DIFF_OPTIONEN = ("--no-ext-diff", "--no-textconv", "--no-renames", "--full-index")
+
+
+def _git_bytes(cwd: Path, *args: str, eingabe: bytes | None = None) -> bytes:
+    """Führt ``git`` binärsicher mit optionaler Standardeingabe und ``fensterlos()`` aus."""
+    env = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GIT_ASKPASS": ""}
+    try:
+        ergebnis = subprocess.run(
+            ["git", *args],
+            cwd=str(cwd),
+            input=eingabe,
+            env=env,
+            capture_output=True,
+            check=False,
+            timeout=300,
+            **prozessbaum.fensterlos(),
+        )
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(f"git {' '.join(args[:3])}: Zeitgrenze 300 s") from None
+    except FileNotFoundError as fehler:
+        raise RuntimeError(f"git {' '.join(args[:3])}: {fehler}") from None
+    if ergebnis.returncode != 0:
+        meldung = ergebnis.stderr.decode("utf-8", errors="replace").strip()[:300]
+        raise RuntimeError(f"git {' '.join(args[:3])}: {meldung}")
+    return ergebnis.stdout
+
+
+def _commit_infos(repo: Path, shas: Iterable[str]) -> dict[str, tuple[str, tuple[str, ...]]]:
+    """Liefert ``sha → (baum_sha, eltern_shas)`` über ``--stdin`` (Windows-Befehlszeile bleibt kurz)."""
+    eingabe = "".join(f"{s}\n" for s in shas).encode("ascii")
+    if not eingabe:
+        return {}
+    roh = _git_bytes(repo, "log", "--no-walk", "--format=%H%x09%T%x09%P", "--stdin", eingabe=eingabe)
+    infos: dict[str, tuple[str, tuple[str, ...]]] = {}
+    for zeile in roh.decode("ascii", errors="replace").splitlines():
+        teile = zeile.split("\t")
+        if len(teile) == 3:
+            infos[teile[0]] = (teile[1], tuple(teile[2].split()))
+    return infos
+
+
+def _server_kandidaten(repo: Path, server: list[str], grenzen: set[str]) -> tuple[list[str], set[str]]:
+    """Server-Commits abseits von ``grenzen`` (höchstens :data:`_SERVER_PRUEF_LIMIT`): ``(SHAs, Baum-SHAs)``."""
+    zeilen = [f"{s}\n" for s in server] + [f"^{g}\n" for g in sorted(grenzen)]
+    roh = _git_bytes(
+        repo,
+        "rev-list",
+        "--ignore-missing",
+        f"--max-count={_SERVER_PRUEF_LIMIT}",
+        "--format=%H%x09%T",
+        "--stdin",
+        eingabe="".join(zeilen).encode("ascii"),
+    )
+    shas: list[str] = []
+    baeume: set[str] = set()
+    for zeile in roh.decode("ascii", errors="replace").splitlines():
+        if "\t" in zeile:
+            sha, _, baum = zeile.partition("\t")
+            shas.append(sha)
+            baeume.add(baum)
+    return shas, baeume
+
+
+def _patch_ids_von_commits(repo: Path, shas: Iterable[str]) -> dict[str, str]:
+    """``commit_sha → patch_id`` (``git patch-id --stable``) für alle Nicht-Merge-Commits mit Diff."""
+    eingabe = "".join(f"{s}\n" for s in shas).encode("ascii")
+    if not eingabe:
+        return {}
+    diffs = _git_bytes(
+        repo,
+        "log",
+        "--no-walk",
+        "--no-merges",
+        "--format=commit %H",
+        "-p",
+        *_DIFF_OPTIONEN,
+        "--stdin",
+        eingabe=eingabe,
+    )
+    if not diffs:
+        return {}
+    roh = _git_bytes(repo, "patch-id", "--stable", eingabe=diffs)
+    ids: dict[str, str] = {}
+    for zeile in roh.decode("ascii", errors="replace").splitlines():
+        teile = zeile.split()
+        if len(teile) >= 2:
+            ids[teile[1]] = teile[0]
+    return ids
+
+
+def _diff_patch_id(repo: Path, basis: str, ziel: str) -> str | None:
+    """Stabile Patch-ID für den Gesamt-Diff ``basis..ziel`` (Squash-Merge); ``None`` bei leerem Diff."""
+    diff = _git_bytes(repo, "diff", *_DIFF_OPTIONEN, basis, ziel)
+    if not diff:
+        return None
+    roh = _git_bytes(repo, "patch-id", "--stable", eingabe=diff).decode("ascii", errors="replace").strip()
+    teile = roh.split()
+    return teile[0] if teile else None
+
+
+def _verwaist_auf_server(repo: Path, verwaist: set[str], server: list[str]) -> bool:
+    """#253: Liegen alle verwaisten Reflog-Commits als Baum oder Patch bereits im Server-Stand?
+
+    Erkennt ``amend``, ``rebase``, ``pull --rebase``, Squash-Merge (auch mehrerer Commits
+    auf bewegtem Hauptzweig) und Force-Push nach ``amend``. Leere Commits, Reverts zurück
+    auf die Basis und wirklich verlorene Änderungen bleiben fail-closed ungedeckt.
+    """
+    if not server:
+        return False
+    infos = _commit_infos(repo, sorted(verwaist))
+    if not verwaist <= infos.keys():
+        return False
+    hat_kind = {p for _, ps in infos.values() for p in ps if p in verwaist}
+    spitzen = sorted(c for c in verwaist if c not in hat_kind)
+    alle_grenzen = {p for _, ps in infos.values() for p in ps if p not in verwaist}
+    grenz_infos = _commit_infos(repo, sorted(alle_grenzen)) if alle_grenzen else {}
+    baum_von: dict[str, str] = {c: t for c, (t, _) in infos.items()}
+    baum_von.update({c: t for c, (t, _) in grenz_infos.items()})
+
+    def vorfahren_im_graph(start: str) -> set[str]:
+        gesehen: set[str] = set()
+        stapel = [start]
+        while stapel:
+            aktuell = stapel.pop()
+            if aktuell in gesehen or aktuell not in verwaist:
+                continue
+            gesehen.add(aktuell)
+            stapel.extend(p for p in infos[aktuell][1] if p in verwaist and p not in gesehen)
+        return gesehen
+
+    def baum_trifft(commit: str, server_baeume: set[str], grenz_baeume: set[str]) -> bool:
+        t = baum_von[commit]
+        if t not in server_baeume or t in grenz_baeume:
+            return False
+        # Leerer Commit (Baum == Baum eines eigenen Elternteils) zählt nie als Treffer (#254).
+        return all(t != baum_von.get(p) for p in infos[commit][1])
+
+    abgedeckt: set[str] = set()
+    for spitze in spitzen:
+        gruppe = vorfahren_im_graph(spitze)
+        if gruppe <= abgedeckt:
+            continue
+        grenzen = {p for c in gruppe for p in infos[c][1] if p not in verwaist}
+        grenz_baeume = {baum_von[g] for g in grenzen if g in baum_von}
+        kandidaten, server_baeume = _server_kandidaten(repo, server, grenzen)
+        if not kandidaten:
+            return False
+        if baum_trifft(spitze, server_baeume, grenz_baeume):
+            abgedeckt |= gruppe
+            continue
+        server_patches = set(_patch_ids_von_commits(repo, kandidaten).values())
+        # Squash-Merge (ein oder mehrere Commits, auch auf bewegtem Hauptzweig):
+        # Gesamt-Diff ab maximaler Grenze gegen die Server-Patches prüfen.
+        if grenzen:
+            if len(grenzen) == 1:
+                max_grenzen = sorted(grenzen)
+            elif len(grenzen) <= _REFLOG_HAPPEN:
+                max_grenzen = aufpasser.git_lauf(repo, "merge-base", "--independent", *sorted(grenzen)).split()
+            else:
+                max_grenzen = []
+            if len(max_grenzen) == 1:
+                gesamt = _diff_patch_id(repo, max_grenzen[0], spitze)
+                if gesamt and gesamt in server_patches:
+                    abgedeckt |= gruppe
+                    continue
+        # Einzel-Commits (Rebase, pull --rebase, umgeordnete Commits): Baum oder Patch je Commit.
+        offen = [c for c in sorted(gruppe) if c not in abgedeckt]
+        for c in list(offen):
+            if baum_trifft(c, server_baeume, grenz_baeume):
+                abgedeckt |= vorfahren_im_graph(c)
+        offen = [c for c in offen if c not in abgedeckt]
+        if offen:
+            einzel = _patch_ids_von_commits(repo, offen)
+            for c in offen:
+                if (pid := einzel.get(c)) and pid in server_patches:
+                    abgedeckt.add(c)
+        if not gruppe <= abgedeckt:
+            return False
+    return abgedeckt == verwaist
 
 
 def _nur_im_reflog(
     repo: Path, ist_worktree: bool, auf_server: list[str] | None = None
 ) -> bool:
-    """#235 R1: liegt ein Commit nur im Reflog, der mit dem Ordner verschwindet?
+    """#235 R1/#253: liegt ein Commit nur im Reflog, der mit dem Ordner verschwindet?
 
     Verschwinden: beim Klon alle Reflogs (auch die verknüpfter Worktrees), beim Worktree die
     seines eigenen Git-Verzeichnisses (die Zweig-Reflogs liegen im Hauptklon und bleiben). Kein Verlust ist, was von einem Zweig auf
     ``origin`` (nach dem ``fetch`` in :func:`_ungesichertes`) oder einem lokalen Ref erreichbar
     ist — lokale Refs prüfen die übrigen Regeln (Sicherung ``sicherung/<N>`` oder bleibt).
-    Gewöhnliche alte Stände liegen so längst auf dem Server und halten den Ordner nicht.
+    #253: Stände, deren Baum oder Patch bereits im Server-Stand liegt (``amend``, ``rebase``,
+    ``pull --rebase``, Squash-Merge, Force-Push nach ``amend``), gelten ebenfalls als gesichert.
 
     #254: „auf dem Server“ heißt ``ls-remote`` (nicht fälschbare Tracking-Refs). Die Stände
     kommen roh aus den Reflog-Dateien (``git log -g`` überspringt fehlende Objekte still);
@@ -2743,15 +2931,18 @@ def _nur_im_reflog(
     server = _server_koepfe(repo) if auf_server is None else auf_server
     sicher = ("--not", "--exclude=refs/remotes/*", "--all", *server)
     liste = sorted(staende)
+    verwaist: set[str] = set()
     for i in range(0, len(liste), _REFLOG_HAPPEN):
         happen = liste[i : i + _REFLOG_HAPPEN]
         try:  # ohne --ignore-missing: ein fehlendes Objekt ist ein Fehler
             aufpasser.git_lauf(repo, "rev-list", "--no-walk", *happen)
         except RuntimeError as fehler:
             raise _Bleibt(f"Reflog verweist auf fehlendes Objekt: {_kurz(fehler)}", fuer_david=True) from None
-        if aufpasser.git_lauf(repo, "rev-list", "-n", "1", "--ignore-missing", *happen, *sicher).strip():
-            return True
-    return False
+        aus = aufpasser.git_lauf(repo, "rev-list", "--ignore-missing", *happen, *sicher)
+        verwaist.update(aus.split())
+    if not verwaist:
+        return False
+    return not _verwaist_auf_server(repo, verwaist, server)
 
 
 def _ungepushte_koepfe(
@@ -2788,25 +2979,57 @@ def _server_zweig_sha(repo: Path, zweig: str) -> str:
     return treffer.group(1)
 
 
-def _server_koepfe(repo: Path) -> list[str]:
-    """SHAs aller Zweig-Köpfe von ``origin`` laut Server (``ls-remote --heads``); nicht
-    erreichbar oder unlesbare Zeile ⇒ ``_Bleibt``.
-
-    ponytail: ein ls-remote je Aufrufer (ohne Nummer zwei je Ordner), alle Köpfe auf einer
-    Kommandozeile; zwischenspeichern bzw. in Happen, wenn Zweig-Zahl oder Laufzeit stört."""
+def _server_zweige(repo: Path) -> dict[str, str]:
+    """``refs/heads/… → SHA`` aller Zweig-Köpfe von ``origin`` laut Server (``ls-remote --heads``);
+    nicht erreichbar oder unlesbare Zeile ⇒ ``_Bleibt``."""
     try:
         roh = _git_ohne_frage(repo, "ls-remote", "--heads", "origin")
     except RuntimeError as fehler:
         raise _Bleibt(f"Server nicht erreichbar (ls-remote): {_kurz(fehler)}", fehler=True) from None
-    auf_server: list[str] = []
+    zweige: dict[str, str] = {}
     for zeile in roh.splitlines():
         if not zeile.strip():
             continue
         treffer = _LS_REMOTE_ZEILE.match(zeile)
         if treffer is None:  # #235 N2: nur „<sha>\trefs/heads/…“ ist eine Server-Angabe
             raise _Bleibt(f"unlesbare ls-remote-Zeile {_kurz(zeile)!r}", fehler=True)
-        auf_server.append(treffer.group(1))
-    return auf_server
+        sha, _, ref = zeile.partition("\t")
+        zweige[ref.strip()] = sha
+    return zweige
+
+
+def _sicherung_stand_holen(repo: Path, ticket: int, server_zweige: dict[str, str]) -> str | None:
+    """#242: holt ``refs/heads/sicherung/<ticket>``, falls am Server vorhanden aber lokal fehlend.
+
+    Einzelzweig-Klone ohne ``refs/remotes/origin/sicherung/*`` bekommen so die Objekte
+    des bestehenden Sicherungs-Zweigs, damit Prüfung und Folge-Sicherung nahtlos anketten.
+    """
+    ref = f"refs/heads/sicherung/{ticket}"
+    sha = server_zweige.get(ref)
+    if sha is None:
+        return None
+    if _git_oder_none(repo, "cat-file", "-e", f"{sha}^{{commit}}") is not None:
+        return sha
+    try:
+        _git_ohne_frage(repo, "fetch", "-q", "origin", ref)
+    except RuntimeError as fehler:
+        raise _Bleibt(f"sicherung/{ticket} nicht holbar: {_kurz(fehler)}", fehler=True) from None
+    if _git_oder_none(repo, "cat-file", "-e", f"{sha}^{{commit}}") is not None:
+        return sha
+    geholt = _git_oder_none(repo, "rev-parse", "--verify", "-q", "FETCH_HEAD^{commit}")
+    if geholt:
+        server_zweige[ref] = geholt
+        return geholt
+    raise _Bleibt(f"sicherung/{ticket} nach fetch lokal nicht lesbar", fehler=True)
+
+
+def _server_koepfe(repo: Path) -> list[str]:
+    """SHAs aller Zweig-Köpfe von ``origin`` laut Server (``ls-remote --heads``); nicht
+    erreichbar oder unlesbare Zeile ⇒ ``_Bleibt``.
+
+    ponytail: ein ls-remote je Aufrufer (ohne Nummer zwei je Ordner), alle Köpfe auf einer
+    Kommandozeile; zwischenspeichern bzw. in Happen, wenn Zweig-Zahl oder Laufzeit stört."""
+    return list(_server_zweige(repo).values())
 
 
 def _sicherung_auf_server(repo: Path, ticket: int, sha: str) -> None:
