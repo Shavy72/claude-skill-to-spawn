@@ -6,3 +6,5 @@ review-hook/**/*.py text eol=lf
 review/**/*.py text eol=lf
 review/**/*.md text eol=lf
 review/**/*.json text eol=lf
+# Review-Dirigent (#396): immer LF, auch im Windows-Klon — gleicher Schutz wie review/.
+review-dirigent/**/*.md text eol=lf

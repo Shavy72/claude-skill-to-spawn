@@ -23,6 +23,7 @@ from to_spawn import (
     leitstand,
     nest,
     respawn,
+    start_last,
     ticketstand,
     uebergabe_sichern,
     vorfall,
@@ -409,5 +410,12 @@ def baue_parser() -> _Parser:
     # ``skripte/aufpasser.py``.
     aufpasser.parser_fuellen(
         unter.add_parser("aufpasser", help="tmux-Fenster bau/wache beaufsichtigen (Cron)")
+    )
+    # Start-Last (#412): Kontext nach Start je Fenstertyp (bau, aufseher) + Obergrenzen-Prüfung.
+    start_last.parser_fuellen(
+        unter.add_parser(
+            "start-last",
+            help="Start-Last (Kontext nach Start) je Fenstertyp messen und gegen Obergrenzen prüfen",
+        )
     )
     return ap
