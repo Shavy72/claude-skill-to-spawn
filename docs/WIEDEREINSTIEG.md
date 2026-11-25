@@ -60,7 +60,7 @@ Chronologisch absteigend (neuester Eintrag oben, ältere Einträge als Verlauf d
     Linux-Ort-Wahl für große Testläufe), 769 (Issue 757, Probe-1330-Befunde und `crontab`-Pfadschutz),
     770 (Issue 257, Windows-PID-Grenze), 771 (Issue 347, `zweig_ticket_repo` in `maschine.json`),
     772 (Issue 353, feste Wartezeiten in `spawn_srv`-Tests abgebaut), 773 (Issue 412, Skill-/MCP-Filter
-    in der Wache) und 774 (Issue 660, `agy`-Kontext-Auswertung und `--runner`).
+    im Aufseher) und 774 (Issue 660, `agy`-Kontext-Auswertung und `--runner`).
   - Windows-PC (#756): `~/.config/to-spawn/maschine.json` angelegt (`sicherung.dateien` auf
     Ober-Aufsicht-Übergabe + Entscheidungs-Log, `sicherung.ziel` auf privaten Notiz-Tresor), per
     `to_spawn.py sichern --pruefen`, `--trocken` und zwei idempotenten Läufen (Exit 0) belegt sowie
