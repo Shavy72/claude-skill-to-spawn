@@ -34,7 +34,6 @@ import os
 import re
 import shutil
 import stat
-import subprocess
 import sys
 import tempfile
 from collections.abc import Sequence
@@ -42,7 +41,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, NamedTuple
 
-from to_spawn import gh, prozessbaum, skill_stand
+from to_spawn import gh, skill_stand
+from to_spawn.pruef import ausfuehren
 
 log = logging.getLogger("to_spawn.install_pruefung")
 
@@ -138,32 +138,19 @@ def rote_kennungen_aus_ausgabe(ausgabe: str, exit_code: int) -> list[str]:
 
 
 def suite_fahren(klon: Path, python_exe: str = sys.executable) -> SuiteErgebnis:
-    """Fährt die Skill-Test-Suite gegen ``klon`` (bricht ohne Wurzel-``conftest.py`` sauber ab)."""
+    """Fährt die Skill-Test-Suite gegen ``klon`` über die Prüf-Tür ``pruef.ausfuehren.lauf``."""
     if not (klon / "conftest.py").is_file():
         meldung = "conftest.py fehlt — Skill-Suite läuft nur im Git-Klon, nicht aus einer Kopie."
         return SuiteErgebnis(False, 64, ["conftest.py-fehlt"], meldung)
-    env = dict(os.environ)
-    env["PYTHONIOENCODING"] = "utf-8"
+    os.environ.setdefault("PYTHONIOENCODING", "utf-8")
     befehl = suite_befehl(python_exe)
-    try:
-        lauf = subprocess.run(
-            befehl,
-            cwd=str(klon),
-            env=env,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            check=False,
-            **prozessbaum.fensterlos(),
-        )
-    except OSError as fehler:
-        return SuiteErgebnis(False, 127, ["pytest-start-fehler"], str(fehler))
-    ausgabe = (lauf.stdout or "") + ("\n" + lauf.stderr if lauf.stderr else "")
-    if lauf.returncode == 0:
-        return SuiteErgebnis(True, 0, [], ausgabe)
-    kennungen = rote_kennungen_aus_ausgabe(ausgabe, lauf.returncode)
-    return SuiteErgebnis(False, lauf.returncode, kennungen, ausgabe)
+    lauf = ausfuehren.lauf(befehl, klon)
+    if lauf.code == 0:
+        return SuiteErgebnis(True, 0, [], lauf.ausgabe)
+    if lauf.code == ausfuehren.NICHT_GESTARTET and lauf.ausgabe.startswith(f"{befehl[0]}: "):
+        return SuiteErgebnis(False, lauf.code, ["pytest-start-fehler"], lauf.ausgabe)
+    kennungen = rote_kennungen_aus_ausgabe(lauf.ausgabe, lauf.code)
+    return SuiteErgebnis(False, lauf.code, kennungen, lauf.ausgabe)
 
 
 def log_schreiben(eintrag: dict[str, Any], datei: Path | None = None) -> bool:
@@ -416,14 +403,6 @@ def _kopiere_eintrag(quelle: Path, ziel_ordner: Path) -> None:
         shutil.copy2(quelle, ziel)
 
 
-def _caches_entfernen(ordner: Path) -> None:
-    for wurzel, unterordner, _dateien in os.walk(ordner, topdown=True):
-        weg = [u for u in unterordner if u in CACHE_ORDNER]
-        for name in weg:
-            shutil.rmtree(Path(wurzel) / name, ignore_errors=True)
-            unterordner.remove(name)
-
-
 def _ausfuehrbar_setzen(ordner: Path, muster: Sequence[str]) -> None:
     if os.name == "nt":
         return
@@ -476,7 +455,6 @@ def tausche_atomar(
     try:
         for quelle in quellen:
             _kopiere_eintrag(quelle, staging)
-        _caches_entfernen(staging)
         _ausfuehrbar_setzen(staging, ausfuehrbar)
         if klon is not None:
             stempel_daten = skill_stand.stempel(staging, klon)
@@ -502,7 +480,13 @@ def tausche_atomar(
                     raise
     finally:
         if not staging_verbraucht and staging.exists():
-            shutil.rmtree(staging, ignore_errors=True)
+            # Einzige Lösch-Stelle ist der Hausmeister (#1368).
+            from to_spawn import hausmeister
+
+            try:
+                hausmeister.helfer_ordner_loeschen(skills.resolve(), staging.name)
+            except (OSError, ValueError) as fehler:
+                log.warning("Staging-Ordner %s nicht entfernt: %s", staging, fehler)
 
     if sicherung is not None:
         log.info("Alter Stand gesichert: %s", sicherung)
