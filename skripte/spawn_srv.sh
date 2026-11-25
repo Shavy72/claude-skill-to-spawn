@@ -13,6 +13,7 @@
 #   Läuft der Aufseher (``wache <S>``) schon, Exit 0 mit „wartet auf Platz“: er startet nach (#460).
 # Exit 7: Platte voll (Start-Check des Hausmeisters, #1369) — wie Exit 5.
 # Exit 6: Speicherprüfung kaputt oder Hauptzweig nicht ermittelbar — nichts weiter gestartet.
+# Exit 8: mindestens ein Bau-Fenster endete direkt nach dem Start mit Exit ≠ 0 (#641) — Aufseher über Briefkasten geweckt.
 # Exit 9: Session ``spec-<S>`` gehört einem anderen Repo (gleiche Spec-Nummer, #457) — nichts gestartet.
 # Exit 10: ein anderer Lauf für dieselbe Spec hält die Start-Sperre (#560, #604) — später erneut, kein Fehler.
 # Alle Exit-Codes für Aufrufer an einer Stelle: to_spawn/spawn_exit.py.
@@ -395,6 +396,152 @@ fi
 # --- 4. tmux-Fenster anlegen ------------------------------------------------
 GESTARTET=0
 GESTARTETE_NAMEN=()
+GESTARTETE_OFFSETS=()
+BAU_GESTARTET_NR=()
+BAU_GESTARTET_BEFEHL=()
+BAU_GESTARTET_OFFSET=()
+BAU_START_FEHLER=0
+
+# Prüft, ob ``.to-spawn/fenster_<nr>.log`` ab Byte-Offset ``off`` eine neue Zeile
+# ``bau.py #<nr> Exit <rc>`` mit ``rc != 0`` enthält (#641).
+bau_log_hat_exit() {
+  local nr="$1" off="$2"
+  local log_datei="$REPO/.to-spawn/fenster_${nr}.log" groesse
+  [ -f "$log_datei" ] || return 1
+  groesse="$(wc -c < "$log_datei" | tr -d '[:space:]')"
+  case "$groesse" in ''|*[!0-9]*) groesse=0 ;; esac
+  if [ "$groesse" -lt "$off" ]; then off=0; fi
+  tail -c "+$((off + 1))" "$log_datei" 2>/dev/null \
+    | grep -Eq "(^|[^[:alnum:]_])bau\.py[[:space:]]+#${nr}[[:space:]]+Exit[[:space:]]+-?[1-9][0-9]*([^0-9]|$)"
+}
+
+# Anlauf (#604) und Sofort-Exit-Prüfung (#641): wartet auf das Ereignis (gestartete tmux-Fenster
+# sind da oder schon mit Exit ≠ 0 im Fenster-Log), prüft dann bis TO_SPAWN_ANLAUF_PRUEF_S
+# (Vorgabe 2 s) die Fenster-Logs der gestarteten Bau-Fenster und meldet erst danach ehrlich
+# „gestartet“ oder „nicht gestartet“ (samt Briefkasten-Weckruf an den Aufseher).
+anlauf_und_bau_pruefen() {
+  local anlauf_max_s anlauf_pruef_s anlauf_schritte anlauf_i pruef_schritte pruef_i
+  local idx nr off befehl alle_raus meldung rc_py
+  anlauf_max_s="${TO_SPAWN_ANLAUF_MAX_S:-10}"
+  case "$anlauf_max_s" in ''|*[!0-9]*) anlauf_max_s=10 ;; esac
+  anlauf_pruef_s="${TO_SPAWN_ANLAUF_PRUEF_S:-2}"
+  case "$anlauf_pruef_s" in ''|*[!0-9]*) anlauf_pruef_s=2 ;; esac
+
+  anlauf_bereit() {
+    local fenster n i_n nr_n off_n
+    fenster="$(tmux list-windows -t "=$SESSION" -F '#W' 2>/dev/null || true)"
+    for i_n in "${!GESTARTETE_NAMEN[@]}"; do
+      n="${GESTARTETE_NAMEN[$i_n]}"
+      if [ -n "$fenster" ] && printf '%s\n' "$fenster" | grep -qxF "$n"; then
+        continue
+      fi
+      case "$n" in
+        "bau "*)
+          nr_n="${n#bau }"
+          off_n="${GESTARTETE_OFFSETS[$i_n]}"
+          bau_log_hat_exit "$nr_n" "$off_n" && continue
+          ;;
+      esac
+      return 1
+    done
+    return 0
+  }
+
+  echo "== Anlauf (wartet auf Fenster, max. ${anlauf_max_s} s) =="
+  if [ "${#GESTARTETE_NAMEN[@]}" -gt 0 ] && [ "$anlauf_max_s" -gt 0 ]; then
+    anlauf_schritte=$((anlauf_max_s * 5))
+    anlauf_i=0
+    while ! anlauf_bereit && [ "$anlauf_i" -lt "$anlauf_schritte" ]; do
+      sleep 0.2 2>/dev/null || sleep 1
+      anlauf_i=$((anlauf_i + 1))
+    done
+    if [ "${#BAU_GESTARTET_NR[@]}" -gt 0 ] && [ "$anlauf_pruef_s" -gt 0 ]; then
+      if [ "$anlauf_pruef_s" -gt "$anlauf_max_s" ]; then
+        anlauf_pruef_s="$anlauf_max_s"
+      fi
+      pruef_schritte=$((anlauf_pruef_s * 5))
+      pruef_i=0
+      while [ "$pruef_i" -lt "$pruef_schritte" ]; do
+        alle_raus=1
+        for idx in "${!BAU_GESTARTET_NR[@]}"; do
+          if ! bau_log_hat_exit "${BAU_GESTARTET_NR[$idx]}" "${BAU_GESTARTET_OFFSET[$idx]}"; then
+            alle_raus=0
+            break
+          fi
+        done
+        [ "$alle_raus" -eq 1 ] && break
+        sleep 0.2 2>/dev/null || sleep 1
+        pruef_i=$((pruef_i + 1))
+      done
+    fi
+  fi
+
+  if [ "${#BAU_GESTARTET_NR[@]}" -gt 0 ]; then
+    for idx in "${!BAU_GESTARTET_NR[@]}"; do
+      nr="${BAU_GESTARTET_NR[$idx]}"
+      befehl="${BAU_GESTARTET_BEFEHL[$idx]}"
+      off="${BAU_GESTARTET_OFFSET[$idx]}"
+      if bau_log_hat_exit "$nr" "$off"; then
+        BAU_START_FEHLER=1
+        rc_py=0
+        meldung="$(env -u TO_SPAWN_TICKET TO_SPAWN_REPO="$REPO" "$PY" -c '
+import re, sys
+sys.path.insert(0, sys.argv[1])
+from pathlib import Path
+from to_spawn import briefkasten, capo
+
+repo = Path(sys.argv[2])
+nr = sys.argv[3]
+off = int(sys.argv[4])
+log_pfad = capo.fenster_log(repo, int(nr))
+daten = log_pfad.read_bytes()
+ausschnitt = daten[off:] if off <= len(daten) else daten
+zeilen = [z.strip() for z in ausschnitt.decode("utf-8", errors="replace").splitlines() if z.strip()]
+muster = re.compile(rf"(?:^|[^\w])bau\.py\s+#{re.escape(nr)}\s+Exit\s+(-?[1-9][0-9]*)\b")
+exit_idx = -1
+exit_code = ""
+for i, z in enumerate(zeilen):
+    m = muster.search(z)
+    if m:
+        exit_idx = i
+        exit_code = m.group(1)
+exit_zeile = zeilen[exit_idx] if exit_idx >= 0 else f"bau.py #{nr} Exit ≠ 0"
+kontext = zeilen[exit_idx - 1][:240] if exit_idx > 0 else ""
+code_text = exit_code or "≠ 0"
+frage = f"Start von bau #{nr} fehlgeschlagen (Exit {code_text}) — Fenster-Log prüfen und Ursache beheben"
+vorschlag = f"Fenster-Log .to-spawn/fenster_{nr}.log prüfen, Ursache beheben und Ticket #{nr} neu starten"
+belege = [f".to-spawn/fenster_{nr}.log: {exit_zeile}"]
+if kontext:
+    belege.append(kontext)
+try:
+    vorhanden = next(
+        (o["id"] for o in briefkasten.offene([nr], hauptbaum=repo) if o["id"] and o["frage"] == frage),
+        None,
+    )
+    fid = vorhanden or briefkasten.einwerfen(
+        nr,
+        frage,
+        vorschlag,
+        3,
+        belege,
+        art="start-fehlgeschlagen",
+        hauptbaum=repo,
+    )
+    print(f"{exit_zeile} (Aufseher über Briefkasten geweckt, id {fid})")
+except Exception as fehler:
+    print(f"{exit_zeile} (Briefkasten-Weckruf fehlgeschlagen: {fehler})")
+' "$SKILL_HOME" "$REPO" "$nr" "$off" 2>/dev/null)" || rc_py=$?
+        if [ "$rc_py" -ne 0 ] || [ -z "$meldung" ]; then
+          meldung="bau.py #$nr Exit ≠ 0 (Log: .to-spawn/fenster_${nr}.log)"
+        fi
+        echo "nicht gestartet: bau $nr — $meldung" >&2
+      else
+        echo "gestartet: bau $nr ($befehl)"
+      fi
+    done
+  fi
+}
+
 fenster_laeuft_schon() {
   local kurz="$1" art nr z
   art="${kurz%% *}"
@@ -456,51 +603,69 @@ for i in "${!GEPLANT[@]}"; do
       warteliste_aendern "$liste" "$LAEUFT"
     fi
     sperre_frei
+    if [ "${#BAU_GESTARTET_NR[@]}" -gt 0 ]; then
+      anlauf_und_bau_pruefen
+    fi
     echo "wartet auf Platz: ${KURZ[*]:$i} — $WARTE_GRUND; Aufseher startet nach, sobald Platz frei ist."
+    if [ "$BAU_START_FEHLER" -ne 0 ]; then exit 8; fi
     exit 0
   fi
   if [ "$rc" -ne 0 ]; then
     sperre_frei
+    if [ "${#BAU_GESTARTET_NR[@]}" -gt 0 ]; then
+      anlauf_und_bau_pruefen
+    fi
     echo "Rest bleibt aus; später erneut: bash scripts/spawn_srv.sh $SPEC" >&2
     exit "$rc"
   fi
   # Fenstername = die ersten zwei Wörter der Kurzform (``bau <N>`` / ``wache <S>``), auch mit --umzug.
   name="$(echo "${KURZ[$i]}" | awk '{print $1" "$2}')"
+  fenster_befehl="$VORSPANN $befehl"
+  log_offset=0
+  case "$name" in
+    "bau "*)
+      nr="${name#bau }"
+      log_datei="$REPO/.to-spawn/fenster_${nr}.log"
+      if [ -f "$log_datei" ]; then
+        log_offset="$(wc -c < "$log_datei" | tr -d '[:space:]')"
+        case "$log_offset" in ''|*[!0-9]*) log_offset=0 ;; esac
+      fi
+      # Wie capo.bau_startzeile (#277, #641): stderr zusätzlich ins Fenster-Log und bei
+      # Exit ≠ 0 die Zeile ``<zeit> bau.py #<N> Exit <rc>`` anhängen, damit der Anlauf-Check
+      # sofortige Fehlstarts erkennt.
+      q_log="$(printf %q "$log_datei")"
+      q_ordner="$(printf %q "$REPO/.to-spawn")"
+      fenster_befehl="$VORSPANN mkdir -p $q_ordner; exec 3>&2 2> >(tee -a $q_log >&3); tee_pid=\$!; $befehl; rc=\$?; exec 2>&3 3>&-; [ \"\$rc\" -eq 0 ] || { timeout 3 tail -s 0.1 --pid=\"\$tee_pid\" -f /dev/null 2>/dev/null; echo \"\$(date -Is) bau.py #$nr Exit \$rc\" >> $q_log; }; exit \"\$rc\""
+      ;;
+  esac
   if tmux has-session -t "=$SESSION" 2>/dev/null; then
-    tmux new-window -t "=$SESSION" -n "$name" -c "$REPO" bash -lc "$VORSPANN $befehl" 9>&-
+    tmux new-window -t "=$SESSION" -n "$name" -c "$REPO" bash -lc "$fenster_befehl" 9>&-
   else
-    tmux new-session -d -s "$SESSION" -n "$name" -c "$REPO" bash -lc "$VORSPANN $befehl" 9>&-
+    tmux new-session -d -s "$SESSION" -n "$name" -c "$REPO" bash -lc "$fenster_befehl" 9>&-
   fi
-  echo "gestartet: $name ($befehl)"
-  case "$name" in "bau "*) LAEUFT="$LAEUFT,${name#bau }" ;; esac
+  case "$name" in
+    "bau "*)
+      nr="${name#bau }"
+      LAEUFT="$LAEUFT,$nr"
+      BAU_GESTARTET_NR+=("$nr")
+      BAU_GESTARTET_BEFEHL+=("$befehl")
+      BAU_GESTARTET_OFFSET+=("$log_offset")
+      ;;
+    *)
+      echo "gestartet: $name ($befehl)"
+      ;;
+  esac
   GESTARTETE_NAMEN+=("$name")
+  GESTARTETE_OFFSETS+=("$log_offset")
   GESTARTET=$((GESTARTET + 1))
 done
 warteliste_aendern "" "$LAEUFT"
 sperre_frei
 
-# Anlauf (#604): auf das Ereignis warten (gestartete tmux-Fenster sind da), statt fest 10 s
-# zu schlafen. Höchstdauer TO_SPAWN_ANLAUF_MAX_S (Vorgabe 10 s), Takt 0,2 s.
-ANLAUF_MAX_S="${TO_SPAWN_ANLAUF_MAX_S:-10}"
-case "$ANLAUF_MAX_S" in ''|*[!0-9]*) ANLAUF_MAX_S=10 ;; esac
-anlauf_bereit() {
-  local fenster n
-  fenster="$(tmux list-windows -t "=$SESSION" -F '#W' 2>/dev/null || true)"
-  [ -n "$fenster" ] || return 1
-  for n in "${GESTARTETE_NAMEN[@]}"; do
-    printf '%s\n' "$fenster" | grep -qxF "$n" || return 1
-  done
-  return 0
-}
-echo "== Anlauf (wartet auf Fenster, max. ${ANLAUF_MAX_S} s) =="
-if [ "${#GESTARTETE_NAMEN[@]}" -gt 0 ] && [ "$ANLAUF_MAX_S" -gt 0 ]; then
-  anlauf_schritte=$((ANLAUF_MAX_S * 5))
-  anlauf_i=0
-  while ! anlauf_bereit && [ "$anlauf_i" -lt "$anlauf_schritte" ]; do
-    sleep 0.2 2>/dev/null || sleep 1
-    anlauf_i=$((anlauf_i + 1))
-  done
-fi
+anlauf_und_bau_pruefen
 TO_SPAWN_REPO="$REPO" "$PY" "$SKILL_HOME/skripte/sessions_stand.py" "$SPEC" --alle || true
 echo
 echo "Kontrolle: sessions $SPEC · tmux attach -t $SESSION (Fenster wechseln Strg+B n, raus Strg+B d)"
+if [ "$BAU_START_FEHLER" -ne 0 ]; then
+  exit 8
+fi

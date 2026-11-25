@@ -25,6 +25,8 @@ EXIT_SPEICHER_VOLL = 5
 EXIT_PRUEFUNG_KAPUTT = 6
 #: Platte voll (Start-Check des Hausmeisters) — Rest bleibt aus.
 EXIT_PLATTE_VOLL = 7
+#: Mindestens ein Bau-Fenster endete sofort nach dem Start mit Exit ≠ 0 (#641) — Aufseher geweckt.
+EXIT_START_FEHLGESCHLAGEN = 8
 #: tmux-Session ``spec-<S>`` gehört einem anderen Repo — nichts gestartet.
 EXIT_FREMD_SITZUNG = 9
 #: Start-Sperre je Spec belegt (anderer ``spawn_srv.sh``-Lauf aktiv) — später erneut, kein Fehler.
@@ -40,6 +42,7 @@ BESCHREIBUNG: dict[int, str] = {
     EXIT_SPEICHER_VOLL: "Speicher- oder Session-Obergrenze voll",
     EXIT_PRUEFUNG_KAPUTT: "Speicherprüfung kaputt oder Hauptzweig nicht ermittelbar",
     EXIT_PLATTE_VOLL: "Platte voll (Hausmeister-Start-Check)",
+    EXIT_START_FEHLGESCHLAGEN: "Bau-Fenster endete direkt nach dem Start mit Exit ≠ 0",
     EXIT_FREMD_SITZUNG: "tmux-Session gehört einem anderen Repo",
     EXIT_SPERRE: "Start-Sperre belegt (anderer Lauf aktiv) — später erneut",
 }
