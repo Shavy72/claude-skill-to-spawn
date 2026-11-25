@@ -1,7 +1,8 @@
 """Arbeitsordner auf Hauptzweig-Stand vor dem Start (#283).
 
-Der Start einer Bau-Session liest Vorlage (``_default.json`` im Manifest-Ordner) und
-Hilfs-Skripte aus dem Arbeitsordner des Repos. Liegt der hinter ``origin/<Hauptzweig>``,
+Der Start einer Bau-Session liest Manifest und Hilfs-Skripte aus dem Arbeitsordner des
+Repos (die Vorlage ``_default.json`` liegt seit #274 im Skill unter ``repo-scripts/``).
+Liegt der hinter ``origin/<Hauptzweig>``,
 liefe die Session still mit altem Stand (Fall PC: 5839 Commits zurück). Dieses Modul
 stellt den Stand sicher, bevor irgendetwas davon gelesen wird.
 
@@ -17,7 +18,8 @@ Zwei Türen:
 - ``aktuell``     — nicht hinter ``origin/<Hauptzweig>`` (eigene Commits voraus sind ok).
 - ``nachgezogen`` — war N Commits zurück, per fast-forward nachgezogen.
 - ``hinweis``     — Start geht weiter, ``text`` warnt: Stand nicht prüfbar (fetch/Netz/kein
-  ``origin``) oder N Commits zurück auf anderem Zweig bzw. losgelöstem HEAD (ein Bau-Klon
+  ``origin``; der Text nennt das Alter des letzten erfolgreichen fetch) oder N Commits
+  zurück auf anderem Zweig bzw. losgelöstem HEAD (ein Bau-Klon
   steht regelmäßig auf einem Ticket-Zweig) — dann wird nichts nachgezogen.
 - ``veraltet``    — N Commits zurück, nur geprüft (``nachziehen=False``).
 - ``abbruch``     — N Commits zurück auf dem Hauptzweig und nicht nachziehbar (eigene Commits
@@ -51,6 +53,7 @@ from __future__ import annotations
 import logging
 import os
 import subprocess
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -163,17 +166,36 @@ def sicherstellen(repo: Path, *, nachziehen: bool = True) -> Stand:
         )
 
 
+def _fetch_alter(repo: Path) -> str:
+    """Alter des letzten erfolgreichen fetch (Änderungszeit von ``FETCH_HEAD``) als Text."""
+    code, ort = _git(repo, "rev-parse", "--git-path", "FETCH_HEAD")
+    pfad = Path(ort) if Path(ort).is_absolute() else repo / ort
+    try:
+        sekunden = max(0.0, time.time() - pfad.stat().st_mtime) if code == 0 else None
+    except OSError:
+        sekunden = None
+    if sekunden is None:
+        return "letzter erfolgreicher fetch unbekannt"
+    if sekunden < 3600:
+        return f"letzter erfolgreicher fetch vor {int(sekunden // 60)} Min."
+    if sekunden < 48 * 3600:
+        return f"letzter erfolgreicher fetch vor {int(sekunden // 3600)} Std."
+    return f"letzter erfolgreicher fetch vor {int(sekunden // 86400)} Tagen"
+
+
 def _pruefen_und_nachziehen(repo: Path, nachziehen: bool) -> Stand:
-    haupt = gh.hauptzweig(repo)
-    ziel = f"origin/{haupt}"
     frist = FETCH_TIMEOUT_S if nachziehen else FETCH_TIMEOUT_PRUEFEN_S
+    alter = _fetch_alter(repo)  # vor dem fetch lesen: ein erfolgreicher fetch setzt die Zeit neu
     code, aus = _git(repo, "fetch", "--quiet", "origin", timeout=frist)
     if code != 0:
         return Stand(
             HINWEIS,
-            f"Stand nicht prüfbar: git fetch origin scheiterte in {repo} ({_kurz(aus)}) — "
+            f"Stand nicht prüfbar: git fetch origin scheiterte in {repo} ({_kurz(aus)}, {alter}) — "
             "Start mit vorhandenem Stand; Netz/Zugang prüfen.",
         )
+    # Erst nach dem fetch: ein frischer Klon hat vorher weder origin/HEAD noch origin/<Hauptzweig>.
+    haupt = gh.hauptzweig(repo)
+    ziel = f"origin/{haupt}"
     code, aus = _git(repo, "rev-list", "--count", f"HEAD..{ziel}")
     if code != 0 or not aus.isdigit():
         return Stand(
