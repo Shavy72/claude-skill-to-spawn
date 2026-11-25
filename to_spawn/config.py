@@ -42,7 +42,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from . import prozessbaum, vorgaben
+from . import prozessbaum, skill_stand, vorgaben
 
 log = logging.getLogger("to_spawn.config")
 
@@ -770,6 +770,32 @@ def pfad(konfig: dict[str, Any], name: str) -> Path:
     wert = gruppe.get(name) if isinstance(gruppe, dict) else None
     text = wert.strip() if isinstance(wert, str) and wert.strip() else vorgabe
     return _wurzel_von(konfig) / Path(text).expanduser()
+
+
+def ist_skill_slug(slug: str) -> bool:
+    """``True``, wenn ``slug`` zu den eigenen Skill-Slugs (:data:`OEFFENTLICHE_SLUGS`) zählt."""
+    return slug.strip().lower() in {s.lower() for s in OEFFENTLICHE_SLUGS}
+
+
+def repo_klon_pfad(eintrag: dict[str, str], *, skill: Path | None = None) -> Path | None:
+    """Aufgelöster Klon-Ordner für einen ``repos[]``-Eintrag der Maschinen-Liste (#707).
+
+    Einzige Stelle für die Reihenfolge „Maschinen-Liste vor ``STAND.json``“:
+    1. Existiert ``eintrag["pfad"]`` als Ordner, gilt er (Maschinen-Liste gewinnt).
+    2. Fehlt er bei einem Skill-Eintrag (:data:`OEFFENTLICHE_SLUGS`), liefert
+       :func:`skill_stand.klon_ordner` den echten Klon aus ``STAND.json`` (``klon``).
+    3. Existiert keiner der beiden, bleibt der konfigurierte Pfad (falls gesetzt)
+       erhalten, damit Aufrufer ihn klar loggen können; leer ergibt ``None``.
+    """
+    roh = (eintrag.get("pfad") or "").strip()
+    pfad = expand_heim(roh) if roh else None
+    if pfad is not None and pfad.is_dir():
+        return pfad
+    if ist_skill_slug(eintrag.get("slug") or ""):
+        aus_stempel = skill_stand.klon_ordner(skill)
+        if aus_stempel is not None:
+            return aus_stempel
+    return pfad
 
 
 def maschine_datei() -> Path:

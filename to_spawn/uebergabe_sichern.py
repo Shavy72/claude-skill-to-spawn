@@ -39,7 +39,7 @@ from fnmatch import fnmatch
 from pathlib import Path, PurePosixPath
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from . import config, konsole, prozessbaum
+from . import config, konsole, prozessbaum, skill_stand
 
 log = logging.getLogger("to_spawn.uebergabe_sichern")
 
@@ -102,7 +102,7 @@ def _gruppe() -> dict[str, object]:
 
 
 def _skill_wurzel() -> Path:
-    return Path(__file__).resolve().parent.parent
+    return skill_stand.SKILL.resolve()
 
 
 def _git(cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -154,10 +154,20 @@ def ziel_ordner() -> Path:
 
 
 def _quellen(extra: list[Path]) -> list[Path]:
+    skill = _skill_wurzel()
+    repos = config.maschine()["repos"]
+    repo_pfade = [
+        pfad
+        for e in repos
+        if (pfad := config.repo_klon_pfad(e, skill=skill)) is not None
+    ]
+    if not any(config.ist_skill_slug(e["slug"]) for e in repos):
+        stempel_klon = skill_stand.klon_ordner(skill)
+        if stempel_klon is not None:
+            repo_pfade.append(stempel_klon)
     muster = [
-        str(Path(e["pfad"]).expanduser() / m)
-        for e in config.maschine()["repos"]
-        if e["pfad"]
+        str(pfad / m)
+        for pfad in dict.fromkeys(repo_pfade)
         for m in MUSTER_JE_REPO
     ]
     roh = _gruppe().get("dateien")
@@ -204,22 +214,34 @@ def _zweig_repos() -> list[Path]:
             return []
         if os.pathsep in text:
             teile = [t.strip() for t in text.split(os.pathsep) if t.strip()]
-        elif Path(text).expanduser().exists():
+        elif config.expand_heim(text).exists():
             teile = [text]
         else:
             teile = text.split()
-        return [Path(p).expanduser() for p in teile]
+        return [config.expand_heim(p) for p in teile]
     slugs = _gruppe().get("zweige_slugs")
     erlaubt = {
         s.lower()
         for s in (slugs if isinstance(slugs, list) else OEFFENTLICHE_SLUGS)
         if isinstance(s, str)
     }
-    return [
-        Path(e["pfad"]).expanduser()
-        for e in config.maschine()["repos"]
-        if e["pfad"] and e["slug"].lower() in erlaubt
-    ]
+    skill = _skill_wurzel()
+    gefunden: list[Path] = []
+    skill_abgedeckt = False
+    for eintrag in config.maschine()["repos"]:
+        slug = eintrag["slug"].lower()
+        if slug not in erlaubt:
+            continue
+        if config.ist_skill_slug(slug):
+            skill_abgedeckt = True
+        pfad = config.repo_klon_pfad(eintrag, skill=skill)
+        if pfad is not None:
+            gefunden.append(pfad)
+    if not skill_abgedeckt and any(config.ist_skill_slug(s) for s in erlaubt):
+        aus_stempel = skill_stand.klon_ordner(skill)
+        if aus_stempel is not None:
+            gefunden.append(aus_stempel)
+    return list(dict.fromkeys(gefunden))
 
 
 def _worktree_zweige(repo: Path) -> list[tuple[Path, str]]:
@@ -345,6 +367,12 @@ def sichern(dateien: list[Path] | None = None, *, trocken: bool = False) -> Sich
         erg.fehler.append(f"Dateien: {type(fehler).__name__}: {fehler}")
     try:
         for repo in _zweig_repos():
+            if not repo.is_dir():
+                log.info(
+                    "Sicherung: Klon-Ordner %s fehlt — Zweig-Upload übersprungen",
+                    repo,
+                )
+                continue
             try:
                 _hochladen(repo, erg)
             except (OSError, subprocess.SubprocessError) as fehler:
