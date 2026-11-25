@@ -645,7 +645,13 @@ def test_startstelle_msvcrt_zweig_sperrt_und_gibt_nach_ende_frei(tmp_path: Path)
         "if sys.argv[1] == 'halten' and e.erlaubt:\n"
         "    sys.stdin.readline()\n"
     )
-    env = {**os.environ, startstelle.SPERR_ORDNER_ENV: str(tmp_path / "sperren")}
+    # UTF-8 explizit erzwingen: unter Windows nutzt Python für Pipes sonst cp1252 (Umlaute/Gedankenstrich).
+    env = {
+        **os.environ,
+        startstelle.SPERR_ORDNER_ENV: str(tmp_path / "sperren"),
+        "PYTHONIOENCODING": "utf-8",
+        "PYTHONUTF8": "1",
+    }
     halter = subprocess.Popen(
         [sys.executable, "-c", skript, "halten"],
         env=env,
