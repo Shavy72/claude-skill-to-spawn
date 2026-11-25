@@ -513,7 +513,11 @@ def test_abloesung_nach_fehlschlag_wiederholt_mit_abstand(
     assert not ab.faden.is_alive()
     assert len(zeiten) == 2, zeiten
     assert len(beginne) == 2, beginne
-    assert beginne[1] - beginne[0] >= 0.3
+    # Toleranz 20 ms: ``Abloesung`` wartet per ``Event.wait`` auf echter Uhr (keine
+    # eingespritzte Uhr). Unter Windows (Takt ~15,6 ms) kehrt das Warten minimal früher
+    # zurück, als ``time.monotonic`` misst — gemessen 0,2998 s (#623). Ein fehlender
+    # Abstand (0 s) bleibt klar rot.
+    assert beginne[1] - beginne[0] >= 0.3 - 0.02
     assert [z["exit"] for z in zeilen if z["typ"] == "aufseher_abloesung"] == [2, 0]
     assert json.loads((tmp_path / "abloesung.json").read_text(encoding="utf-8"))["start"] == "Start bitte"
     # Erledigt → ein weiteres Auslösen startet nichts mehr.
