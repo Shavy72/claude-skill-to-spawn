@@ -629,11 +629,6 @@ h1 .specnr{color:var(--muted);font-weight:600}
   const kommaZahl = (n) => String(n).replace(".", ",");
   const nrListe = (arr) => "#" + arr.join(", #");
   const STUFEN = ["offen", "fertig_gebaut", "zu", "verworfen"];
-  const ZUSTAND_ALIAS = { braucht_david: "braucht_mensch" }; // Übergangs-Alias (#325)
-  const normZustand = (z) => {
-    const n = ZUSTAND_ALIAS[z] || z;
-    return ["wartet", "läuft", "fertig", "braucht_mensch", "fehler"].includes(n) ? n : "wartet";
-  };
   const ZWORT = { wartet: "wartet", blockiert: "blockiert", bereit: "bereit", "läuft": "läuft", fertig: "fertig", braucht_mensch: "braucht dich", fehler: "Fehler" };
   const ZFARBE = { wartet: "var(--wait)", blockiert: "var(--wait)", bereit: "var(--wait)", "läuft": "var(--run)", fertig: "var(--done)", braucht_mensch: "var(--mensch)", fehler: "var(--err)" };
   const ZKLASSE = { "läuft": "z-laeuft", fertig: "z-fertig", braucht_mensch: "z-mensch", fehler: "z-fehler" };
@@ -642,11 +637,12 @@ h1 .specnr{color:var(--muted);font-weight:600}
     const r = raw || {};
     const nr = zahl(r.nr, Number(idFallback));
     const naht = zahl(r.naht, null);
+    const zustand = r.zustand === "braucht_david" ? "braucht_mensch" : r.zustand; // Übergangs-Alias (#325)
     return {
       nr, titel: String(r.titel || "Ticket " + nr), kurz: String(r.kurz || ""),
       art: r.art === "checkpoint" ? "checkpoint" : "bau",
       blocked_by: Array.isArray(r.blocked_by) ? r.blocked_by.map(Number).filter(Number.isFinite) : [],
-      zustand: normZustand(r.zustand),
+      zustand: ["wartet", "läuft", "fertig", "braucht_mensch", "fehler"].includes(zustand) ? zustand : "wartet",
       schaetzung_k: zahl(r.schaetzung_k, 0), ist_k: zahl(r.ist_k, null), erwartet_min: zahl(r.erwartet_min, 30),
       stufe: STUFEN.includes(r.stufe) ? r.stufe : r.ende ? "zu" : r.zustand === "fertig" ? "fertig_gebaut" : "offen",
       start: r.start || null, ende: r.ende || null, gebaut: r.gebaut || null, liefert: String(r.liefert || ""), beweis: String(r.beweis || ""),

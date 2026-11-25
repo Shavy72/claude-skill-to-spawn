@@ -212,3 +212,24 @@ console.log(JSON.stringify(new Function(body)()));
     assert daten["arten"] == ["mensch", "mensch"]
     assert daten["menschListe"] == [1, 2, 3, 4]
     assert daten["offen"] == ["a", "b"]
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node fehlt")
+def test_leitstand_seite_norm_ticket_allein_lauffaehig() -> None:
+    """``normTicket`` bleibt ohne äußere Zusatz-Hilfe extrahierbar (wie in #279-Tests)."""
+    seite = (SKILL / "leitstand" / "seite.html").read_text(encoding="utf-8").replace("\r\n", "\n")
+    anfang = seite.index("  function normTicket(")
+    norm_ticket = seite[anfang : seite.index("\n  }\n", anfang) + 4]
+    js = (
+        "const zahl = (v, d) => (typeof v === 'number' && Number.isFinite(v) ? v : d);\n"
+        "const STUFEN = ['offen', 'fertig_gebaut', 'zu', 'verworfen'];\n"
+        + norm_ticket
+        + "\nconsole.log(JSON.stringify([\n"
+        "  normTicket({ nr: 1, zustand: 'braucht_mensch' }, 1).zustand,\n"
+        "  normTicket({ nr: 2, zustand: 'braucht_david' }, 2).zustand,\n"
+        "  normTicket({ nr: 3, zustand: 'fertig' }, 3).zustand,\n"
+        "  normTicket({ nr: 4, zustand: 'unbekannt' }, 4).zustand,\n"
+        "]));\n"
+    )
+    erg = subprocess.run(["node", "-e", js], capture_output=True, text=True, check=True, encoding="utf-8", timeout=30)
+    assert json.loads(erg.stdout.strip()) == ["braucht_mensch", "braucht_mensch", "fertig", "wartet"]

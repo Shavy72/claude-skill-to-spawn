@@ -359,16 +359,8 @@ def aus_bau_log(ticket: str, zeilen: list[dict[str, Any]]) -> list[Ereignis]:
             text = f"{kurz(frage, 140)} → {kurz(wahl, 80)}" if wahl else kurz(frage, 200)
             ergebnis.append(Ereignis(quelle, zeit, "befund", f"#{nr} Entscheidung", einfach(text), nr))
         elif typ == "mensch_noetig":
-            ergebnis.append(
-                Ereignis(
-                    quelle,
-                    zeit,
-                    "mensch",
-                    f"#{nr} braucht den Menschen",
-                    "Die Bau-Session kommt ohne dich nicht weiter. Bitte ins Fenster schauen.",
-                    nr,
-                )
-            )
+            text = "Die Bau-Session kommt ohne dich nicht weiter. Bitte ins Fenster schauen."
+            ergebnis.append(Ereignis(quelle, zeit, "mensch", f"#{nr} braucht den Menschen", text, nr))
         elif typ == "deploy_phase":
             inhalt = felder_text(z, ("phase", "status", "ergebnis", "grund"))
             art = "problem" if _ist_rot(z) else "info"
@@ -379,16 +371,8 @@ def aus_bau_log(ticket: str, zeilen: list[dict[str, Any]]) -> list[Ereignis]:
             )
         elif typ == "waechter_modell":
             inhalt = felder_text(z, ("von", "nach", "modell", "grund", "text"))
-            ergebnis.append(
-                Ereignis(
-                    quelle,
-                    zeit,
-                    "info",
-                    f"#{nr} Modell gewechselt",
-                    einfach(f"Der Aufseher hat das Modell gewechselt: {inhalt}."),
-                    nr,
-                )
-            )
+            text = einfach(f"Der Aufseher hat das Modell gewechselt: {inhalt}.")
+            ergebnis.append(Ereignis(quelle, zeit, "info", f"#{nr} Modell gewechselt", text, nr))
     return ergebnis
 
 
