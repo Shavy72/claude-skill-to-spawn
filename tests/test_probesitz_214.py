@@ -306,6 +306,44 @@ def test_p4_innen_gesperrt_ist_rot(repo: Path, tmp_path: Path) -> None:
     assert not erg.ok and "innerhalb" in erg.grund
 
 
+def test_p4_eigener_sandbox_heimordner_je_lauf_260(repo: Path, tmp_path: Path) -> None:
+    """``pruefe_sandbox`` bindet nie das gemeinsame ``<home>/.claude`` ein (#260)."""
+    heim = tmp_path / "heim"
+    (heim / ".claude").mkdir(parents=True)
+    settings_inhalte: list[dict[str, Any]] = []
+
+    class Beobachter(Laeufer):
+        def __call__(self, argv: list[str], **_: Any) -> subprocess.CompletedProcess[str]:
+            self.aufrufe.append(list(argv))
+            datei = Path(argv[argv.index("--settings") + 1])
+            ziel = Path(argv[-1])
+            if "aussen" in ziel.parent.name:
+                return subprocess.CompletedProcess(argv, 1, "", "Read-only file system")
+            settings_inhalte.append(json.loads(datei.read_text(encoding="utf-8")))
+            ziel.touch()
+            return subprocess.CompletedProcess(argv, 0, "", "")
+
+    laeufer = Beobachter()
+    for _ in range(2):
+        erg = probesitz.pruefe_sandbox(
+            config.lade(repo), repo, laeufer=laeufer, which=_which_alles, home=heim
+        )
+        assert erg.ok, erg
+
+    assert len(settings_inhalte) == 2
+    gemeinsam_claude = str(heim / ".claude")
+    claude_pfade: list[str] = []
+    for daten in settings_inhalte:
+        fs = daten["filesystem"]
+        assert gemeinsam_claude not in fs["allowWrite"]
+        assert str(heim / ".claude" / "settings.local.json") not in fs["denyWrite"]
+        eintraege = [p for p in fs["denyWrite"] if p.endswith("settings.local.json")]
+        assert len(eintraege) == 1
+        claude_pfade.append(eintraege[0])
+    assert claude_pfade[0] != claude_pfade[1], "Jeder Lauf braucht einen eigenen Ort"
+    assert not list(heim.glob(".probesitz-*")), "Temp-Ordner werden aufgeräumt"
+
+
 # --- Punkte 5/6 aus dem Bau-Log ---------------------------------------------------
 
 
