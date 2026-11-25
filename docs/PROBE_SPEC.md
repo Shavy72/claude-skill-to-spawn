@@ -38,14 +38,14 @@ Staging und Übungs-Live laufen als Kopie von `app/` in den Ordnern `staging/` u
 Lauf-Repos (nicht eingecheckt), je mit eigenem Port. Ohne Staging lehnt der Staging-Schritt mit
 Exit 2 ab.
 
-### Konfig-Schlüssel und Teil A
+### Konfig-Schlüssel
 
 | Schlüssel | Wirkt heute? |
 |---|---|
 | `staging.url`, `staging_start`, `staging.ohne` | ja (`config.hat_staging`, `config.staging_bewusst_ohne`, #410) |
-| `pruefung.schnell`, `pruefung.komplett` | ja (`to_spawn/pruefplan.py`, #425): `komplett` läuft einmal je Spec über `to_spawn/komplett_lauf.py` — im capo-Takt, sobald alle Tickets auf Staging sind, sonst per `to_spawn.py komplett <S> --moment vor-live` |
-| `live.befehl`, `live.url` | **erst mit Teil A**; bis dahin führt die Lauf-Session den Live-Schritt nach diesem Ablauf aus |
-| `live.aufraeumen` | Vorschlag dieser Vorlage, nicht im Schnittplan; Teil A entscheidet, ob er bleibt |
+| `pruefung.schnell`, `pruefung.komplett` | ja (`to_spawn/pruefplan.py`, #425): `schnell` je Ticket über `einreichen` / `to_spawn/pruef`; `komplett` genau einmal je Spec über `to_spawn/komplett_lauf.py` — im capo-Takt, sobald alle Tickets auf Staging sind, sonst an der Live-Tür (`to_spawn.py live <S>` bzw. `to_spawn.py komplett <S> --moment vor-live`) |
+| `live.befehl`, `live.url` | ja (`config.live_schritt`, #425; `to_spawn/live_tuer.py`, #456): `to_spawn.py live <S>` startet `live.befehl` nur nach grüner Komplett-Prüfung; `live.url` nennt wahlweise die Adresse für den Live-Beweis |
+| `live.aufraeumen` | ja (`config.live_schritt`, #425, wahlweise): Aufräum-Befehl für die Übungs-Live-App nach dem Lauf |
 
 ## 2 Ablauf eines Laufs
 
@@ -227,3 +227,6 @@ Lauf-Protokoll (Abschnitt 5) aufnehmen:
 Die Vorlage selbst ist geprüft durch `tests/test_probe_vorlagen_426.py` (echte Prozesse und
 Abrufe): Anlegen, schnelle und Komplett-Prüfung grün, App-Abruf, Staging-/Live-Schritt mit
 Aufräumen, roter Werkzeug-Test wird weder vom Prüf-Befehl noch von nacktem `pytest` eingesammelt.
+Den gemeinsamen Spec-Abnahme-Beleg für beide Repo-Arten (schnelle Prüfung je Ticket ≤ 3 min,
+Komplett-Prüfung genau 1× je Spec im Takt bzw. an der Live-Tür, Live-Abruf und Aufräumen) prüft
+`tests/test_komplett_einhaengen_425.py::test_abnahme_beide_repo_arten_mit_messung` (#425).
