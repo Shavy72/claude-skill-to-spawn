@@ -551,6 +551,62 @@ def test_f5_fenster_weg_nach_nachweis_meldung_statt_absturz(
     assert welt.eintrag("bau 9002")["stufe"] == 3
 
 
+def test_f5_fortsetzen_nachweis_braucht_zwei_treffer_hintereinander(
+    welt: Welt, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#149: Ein einzelner Treffer reicht nicht (Session kann sofort wieder enden);
+    erst zwei Treffer direkt hintereinander belegen das Fortsetzen."""
+    sid = str(uuid.uuid4())
+    treffer = aufpasser.SessionInfo(
+        pid=12345, session_id=sid, cwd=welt.repo, status="idle", aus_json=True
+    )
+    a = aufpasser.Aufpasser(
+        aufpasser.Einstellungen(zustand=welt.zustand, tmux_socket=SOCKET)
+    )
+    fenster = aufpasser.Fenster(
+        sitzung=SITZUNG,
+        spec=SPEC,
+        index="1",
+        name="bau 9002",
+        pfad=str(welt.repo),
+        pane_pid=12345,
+        window_id="@1",
+        pane_id="%1",
+    )
+    monkeypatch.setattr(a, "tmux", lambda *_args, **_kw: "12345\n")
+    monkeypatch.setattr(aufpasser, "NACHWEIS_S", 3)
+
+    zeit = [0.0]
+
+    def uhr() -> float:
+        return zeit[0]
+
+    def schlafen(s: float) -> None:
+        zeit[0] += s
+
+    monkeypatch.setattr(aufpasser.time, "monotonic", uhr)
+    monkeypatch.setattr(aufpasser.time, "sleep", schlafen)
+
+    # Wechselnd da/weg: nie zweimal direkt hintereinander → False.
+    folge_wechsel = iter([treffer, None, treffer, None])
+    monkeypatch.setattr(
+        aufpasser,
+        "session_finden",
+        lambda *_a, **_k: next(folge_wechsel, None),
+    )
+    assert a._fortsetzen_nachweisen(fenster, sid) is False
+
+    # Erst zwei Treffer direkt hintereinander → True.
+    zeit[0] = 0.0
+    folge_doppelt = iter([treffer, None, treffer, treffer])
+    monkeypatch.setattr(
+        aufpasser,
+        "session_finden",
+        lambda *_a, **_k: next(folge_doppelt, None),
+    )
+    assert a._fortsetzen_nachweisen(fenster, sid) is True
+
+
 def test_f4_respawn_und_kill_nur_mit_freigabe() -> None:
     quelle = (SKILL / "to_spawn" / "aufpasser.py").read_text(encoding="utf-8")
     assert quelle.count("kill-window") == 1

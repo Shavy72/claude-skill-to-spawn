@@ -650,17 +650,18 @@ def _was(frage: Any, wahl: Any) -> str:
 def eintrag_aus_bau_log(ticket: str | int, z: dict[str, Any]) -> dict[str, str]:
     """Ein Listen-Eintrag (Schlüssel wie :func:`liste`) aus einer Bau-Log-Zeile ``entscheidung``.
 
-    Alte Felder (``text``/``entscheidungen``) gelten als Rückfall für Frage/Wahl. Auch der
-    Zwischenstand des Aufsehers (``capo.entscheidung_anhaengen``) baut seine Zeile hierüber,
+    Rückfall auf alte Felder (``text``/``entscheidungen``) liegt in :func:`bau_log.entscheidung_felder`.
+    Auch der Zwischenstand des Aufsehers (``capo.entscheidung_anhaengen``) baut seine Zeile hierüber,
     damit Zwischen- und Abschluss-Datei dieselben Spalten zeigen.
     """
     nummer = str(ticket).strip()
+    frage, wahl, grund = bau_log.entscheidung_felder(z)
     return {
         "ticket": nummer,
         "ts": str(z.get("ts", "")),
         "wer": "Bau-Session",
-        "was": _was(z.get("frage") or z.get("text"), z.get("wahl") or z.get("entscheidungen")),
-        "warum": str(z.get("grund") or ""),
+        "was": _was(frage, wahl),
+        "warum": grund,
         "beleg": f"Bau-Log #{nummer} {z.get('ts', '')}".rstrip(),
         "ueberholt_durch": str(z.get("ueberholt_durch") or ""),  # #529: Rundschau-Grafik
     }
@@ -670,12 +671,8 @@ def _log_entscheidungen(repo: Path, nummer: str, basis: Path, ref: str | None) -
     """``entscheidung``-Zeilen: Arbeitsbaum + Laufdateien, mit ``ref`` dazu der Stand dort (ohne Doppel)."""
     zeilen = bau_log.lese(repo, nummer, hauptbaum=basis)
     if ref and nummer.isdigit():
-        from to_spawn import (
-            capo,  # spät: capo importiert briefkasten (Kreis-Import sonst)
-        )
-
         gesehen = {json.dumps(z, sort_keys=True) for z in zeilen}
-        zeilen += [z for z in capo.log_vom_ref(repo, ref, int(nummer)) if json.dumps(z, sort_keys=True) not in gesehen]
+        zeilen += [z for z in bau_log.log_vom_ref(repo, ref, nummer) if json.dumps(z, sort_keys=True) not in gesehen]
     return sorted((z for z in zeilen if z.get("typ") == "entscheidung"), key=lambda z: str(z.get("ts", "")))
 
 
@@ -691,16 +688,14 @@ def liste(
     geltenden Briefkasten-Antworten (Aufseher oder Nutzer). Wer die Entscheidungen zeigt
     (``capo.uebersicht``, CLI ``entscheidungen``), fragt nur hier und kennt die Quellen nicht.
     Das versionierte Bau-Log zählt zusätzlich so, wie es auf ``origin/<Hauptzweig>`` liegt
-    (``capo.haupt_ref``) — der Hauptbaum kann dahinter stehen. Nur hier wird der Stand gewählt.
+    (``bau_log.haupt_ref``) — der Hauptbaum kann dahinter stehen. Nur hier wird der Stand gewählt.
 
     Je Eintrag feste Schlüssel ``ticket``, ``ts``, ``wer``, ``was``, ``warum``, ``beleg``;
     ``beleg`` ist nie leer (sonst :data:`KEINE_QUELLE`).
     """
-    from to_spawn import capo  # spät: capo importiert briefkasten (Kreis-Import sonst)
-
     basis = _hauptbaum(hauptbaum)
     repo = log_repo or basis
-    ref = capo.haupt_ref(repo)
+    ref = bau_log.haupt_ref(repo)
     zeilen: list[dict[str, str]] = []
     for t in tickets:
         nummer = str(t).strip()

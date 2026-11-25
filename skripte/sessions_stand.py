@@ -58,9 +58,8 @@ class Prozess:
     name: str
     cmd: str
     start: datetime | None
-    #: Arbeitsordner, gelesen beim Erstellen der echten Liste (``prozesse_linux`` /
-    #: ``prozesse_lesen`` unter Windows, #588); ``None`` = unbekannt (aufgezeichnete Liste,
-    #: unlesbar) → zählt als eigenes Repo.
+    #: Arbeitsordner, gelesen beim Erstellen der echten Liste (``prozesse_linux`` / ``prozesse_lesen``, #588);
+    #: ``None`` = unbekannt (aufgezeichnete Liste, unlesbar) → zählt als eigenes Repo.
     ordner: Path | None = None
 
 
@@ -123,55 +122,6 @@ def prozesse_linux() -> list[Prozess]:
     return lebende
 
 
-def _fremd_ordner(text: str | None, pid: int) -> Path:
-    """Pfad sicher außerhalb von ``REPO`` für einen Windows-Prozess mit ``drin=False``."""
-    if text:
-        try:
-            pfad = Path(text).resolve()
-        except OSError:
-            pfad = Path(text)
-        if ordner_fremd(pfad):
-            return pfad
-    wurzel = REPO.resolve()
-    basis = wurzel.parent if wurzel.parent != wurzel else wurzel
-    kandidat = basis / f".fremd-{pid}"
-    return kandidat if ordner_fremd(kandidat) else Path(f"__fremd__-{pid}")
-
-
-def _befunde_windows() -> dict[int, prozessbaum.ArbeitsordnerBefund] | None:
-    """Arbeitsordner-Befunde aller prüfbaren Windows-Prozesse gegen ``REPO``; Fehler = ``None``."""
-    try:
-        return prozessbaum.arbeitsordner_in_windows(REPO)
-    except OSError as fehler:
-        log.warning("Windows-Arbeitsordner für %s nicht lesbar (%s) — ohne Repo-Filter.", REPO, fehler)
-        return None
-
-
-def _ordner_und_lebend_windows(
-    pid: int, befunde: dict[int, prozessbaum.ArbeitsordnerBefund] | None
-) -> tuple[bool, Path | None]:
-    """``(behalten, ordner)`` für einen Windows-Prozess aus WMI (#212, #494).
-
-    - ``befund.drin is True`` → eigener Repo-Ordner (``REPO.resolve()``).
-    - ``befund.drin is False`` → fremder Ordner (``ordner_fremd`` = ``True``), bleibt für
-      Kind-Zuordnung in der Liste, zählt aber nicht als eigener ``bau``/``wache``-Prozess.
-    - ``befund`` fehlt oder ``drin is None`` → Lebensprüfung über :func:`prozessbaum.lebt`:
-      bereits beendete Prozesse fallen raus (wie :func:`beendet` unter Linux), noch lebende
-      bleiben mit ``ordner=None`` (im Zweifel eigen).
-    """
-    if befunde is None:
-        return True, None
-    befund = befunde.get(pid)
-    if befund is not None:
-        if befund.drin is True:
-            return True, REPO.resolve()
-        if befund.drin is False:
-            return True, _fremd_ordner(befund.text, pid)
-    if not prozessbaum.lebt(pid):
-        return False, None
-    return True, None
-
-
 def prozesse_lesen() -> list[Prozess]:
     """Alle Prozesse mit Kommandozeile und Startzeit (Windows: PowerShell/WMI, sonst ``ps``)."""
     if sys.platform != "win32":
@@ -196,19 +146,21 @@ def prozesse_lesen() -> list[Prozess]:
     rohe = json.loads(out)
     if isinstance(rohe, dict):
         rohe = [rohe]
-    befunde = _befunde_windows() if rohe else None
     ergebnis: list[Prozess] = []
     for r in rohe:
-        pid = int(r["ProcessId"])
-        behalten, ordner = _ordner_und_lebend_windows(pid, befunde)
-        if not behalten:
-            continue
         start = None
         if r.get("Start"):
             try:
                 start = datetime.fromisoformat(r["Start"])
             except ValueError:
                 start = None
+        pid = int(r["ProcessId"])
+        # Arbeitsordner (#212) und Lebens-Prüfung (#494) wie in prozesse_linux:
+        # Ordner zuerst, dann Lebens-Prüfung — ein zwischen WMI und Blick beendeter
+        # Prozess fällt raus, statt mit unlesbarem Ordner als eigener zu zählen.
+        ordner = arbeitsordner(pid)
+        if beendet(pid):
+            continue
         ergebnis.append(
             Prozess(
                 pid,
@@ -270,7 +222,13 @@ def manifeste_lesen(spec: str | None) -> dict[str, Eintrag]:
 
 
 def arbeitsordner(pid: int) -> Path | None:
-    """Arbeitsordner aus ``/proc/<pid>/cwd``; ``None`` ohne ``/proc`` (Windows) oder unlesbar."""
+    """Arbeitsordner aus ``/proc/<pid>/cwd`` (Linux) bzw. PEB (Windows); ``None`` = unlesbar."""
+    if sys.platform == "win32":
+        try:
+            pfad = prozessbaum.arbeitsordner_windows(pid)
+            return Path(pfad).resolve() if pfad else None
+        except OSError:
+            return None
     try:
         return Path(os.readlink(f"/proc/{pid}/cwd")).resolve()
     except OSError:
@@ -291,15 +249,20 @@ def ordner_fremd(ordner: Path | None) -> bool:
 
 
 def beendet(pid: int) -> bool:
-    """Ist der Prozess seit ``ps`` beendet (``/proc/<pid>`` weg)? Ohne ``/proc`` (Windows): nein.
+    """Ist der Prozess seit ``ps``/WMI beendet? Linux: ``/proc/<pid>`` weg/Zombie; Windows: Kernel.
 
-    Nur beim Lesen der echten Liste (``prozesse_linux``) gefragt, nie in ``zuordnen`` (#564).
+    Nur beim Lesen der echten Liste (``prozesse_linux`` / ``prozesse_lesen``) gefragt, nie in ``zuordnen`` (#564).
 
     Ein beendeter Prozess läuft nicht mehr, auch wenn ``ordner_fremd`` ihn mangels lesbarem
     Ordner mitzählt (#494): sonst gälte etwa die eben beendete Aufseher-Attrappe eines
     Nachbar-Tests als lebender Aufseher, und ``spawn_srv.sh`` meldete bei vollem Rechner
     „Aufseher startet nach“ (Exit 0), obwohl niemand nachstartet.
     """
+    if sys.platform == "win32":
+        try:
+            return prozessbaum.ist_weg_windows(pid)
+        except OSError:
+            return False
     if not Path("/proc/self").is_dir():
         return False
     if not Path(f"/proc/{pid}").exists():

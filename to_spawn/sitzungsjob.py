@@ -26,6 +26,7 @@ der Nachläufer des Stop-Hooks, der dann evtl. seine ``OK``-Zeile nicht mehr sch
 from __future__ import annotations
 
 import ctypes
+import functools
 import logging
 import sys
 from collections.abc import Iterator
@@ -38,26 +39,103 @@ _WINDOWS = sys.platform == "win32"
 _JOB_ERWEITERTE_GRENZEN = 9  # JobObjectExtendedLimitInformation
 _KILL_ON_JOB_CLOSE = 0x2000
 _PROZESS_RECHTE = 0x0100 | 0x0001  # PROCESS_SET_QUOTA | PROCESS_TERMINATE
+_PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+
+
+def _letzter_fehler() -> int:
+    """``ctypes.get_last_error()`` unter Windows; unter Linux (Test-Attrappe) ``0``."""
+    return int(ctypes.get_last_error()) if hasattr(ctypes, "get_last_error") else 0
+
+
+def _fehler_zuruecksetzen() -> None:
+    if hasattr(ctypes, "set_last_error"):
+        ctypes.set_last_error(0)
+
+
+class Job:
+    """Offener Windows-Job-Griff (``None`` unter Linux/macOS oder bei Job-Fehler).
+
+    ``schliessen()`` schließt den Griff (``KILL_ON_JOB_CLOSE`` beendet Rest-Mitglieder),
+    ``beenden()`` bricht alle Mitglieder sofort über ``TerminateJobObject`` ab und schließt
+    den Griff. Beide sind mehrfach sicher aufrufbar.
+    """
+
+    def __init__(self, pid: int, griff: int | None) -> None:
+        self._pid = pid
+        self._griff = griff
+
+    @property
+    def aktiv(self) -> bool:
+        """``True``, solange ein offener Job-Griff gehalten wird."""
+        return self._griff is not None
+
+    def aufnehmen(self, pid: int) -> bool:
+        """Nimmt einen bereits gestarteten Nachfahren ``pid`` in den offenen Job auf."""
+        if self._griff is None:
+            return False
+        kernel = _kernel()
+        prozess = kernel.OpenProcess(_PROZESS_RECHTE | _PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if not prozess:
+            return False
+        try:
+            drin = ctypes.c_int(0)
+            if kernel.IsProcessInJob(prozess, self._griff, ctypes.byref(drin)) and drin.value:
+                return True
+            return bool(kernel.AssignProcessToJobObject(self._griff, prozess))
+        finally:
+            kernel.CloseHandle(prozess)
+
+    def beenden(self) -> bool:
+        """Beendet alle Prozesse im Job sofort (``TerminateJobObject``) und schließt den Griff."""
+        if self._griff is None:
+            return False
+        griff, self._griff = self._griff, None
+        kernel = _kernel()
+        ok = False
+        try:
+            _fehler_zuruecksetzen()
+            ok = bool(kernel.TerminateJobObject(griff, 1))
+            if not ok:
+                log.warning(
+                    "TerminateJobObject für Session %d fehlgeschlagen (Fehler %d)",
+                    self._pid,
+                    _letzter_fehler(),
+                )
+        finally:
+            kernel.CloseHandle(griff)
+        log.info("Job der Session %d beendet und geschlossen — Rest-Baum beendet", self._pid)
+        return ok
+
+    def schliessen(self) -> None:
+        """Schließt den Job-Griff (``KILL_ON_JOB_CLOSE`` räumt Rest-Baum ab)."""
+        if self._griff is None:
+            return
+        griff, self._griff = self._griff, None
+        _kernel().CloseHandle(griff)
+        log.info("Job der Session %d geschlossen — Rest-Baum beendet", self._pid)
 
 
 @contextmanager
-def gebunden(prozess: Any) -> Iterator[None]:
+def gebunden(prozess: Any) -> Iterator[Job]:
     """Hält ``prozess`` samt allen Nachkommen für die Dauer des Blocks in einem Job (siehe oben)."""
     griff: int | None = None
+    pid = int(prozess.pid) if hasattr(prozess, "pid") else 0
     if _WINDOWS:
-        try:
-            griff = _job_fuer(int(prozess.pid))
-        except (OSError, AttributeError, TypeError, ValueError, ctypes.ArgumentError) as fehler:
-            # Ein Job-Fehler darf den Bau nie abbrechen — die Session läuft dann ohne Job.
-            log.warning("Job für Session %s nicht angelegt (%s) — ohne Job", prozess.pid, fehler)
+        bereits_beendet = callable(getattr(prozess, "poll", None)) and prozess.poll() is not None
+        if not bereits_beendet:
+            try:
+                griff = _job_fuer(pid)
+            except (OSError, AttributeError, TypeError, ValueError, ctypes.ArgumentError) as fehler:
+                # Ein Job-Fehler darf den Bau nie abbrechen — die Session läuft dann ohne Job.
+                log.warning("Job für Session %s nicht angelegt (%s) — ohne Job", pid, fehler)
+    job = Job(pid, griff)
     try:
-        yield
+        yield job
     finally:
-        if griff is not None:
-            _kernel().CloseHandle(griff)
-            log.info("Job der Session %d geschlossen — Rest-Baum beendet", prozess.pid)
+        job.schliessen()
 
 
+@functools.cache
 def _kernel() -> Any:
     from ctypes import wintypes
 
@@ -65,15 +143,23 @@ def _kernel() -> Any:
     kernel.CreateJobObjectW.restype = wintypes.HANDLE
     kernel.CreateJobObjectW.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR]
     kernel.SetInformationJobObject.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD]
+    kernel.SetInformationJobObject.restype = wintypes.BOOL
     kernel.OpenProcess.restype = wintypes.HANDLE
     kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel.IsProcessInJob.argtypes = [wintypes.HANDLE, wintypes.HANDLE, ctypes.POINTER(wintypes.BOOL)]
+    kernel.IsProcessInJob.restype = wintypes.BOOL
     kernel.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
+    kernel.AssignProcessToJobObject.restype = wintypes.BOOL
+    kernel.TerminateJobObject.argtypes = [wintypes.HANDLE, wintypes.UINT]
+    kernel.TerminateJobObject.restype = wintypes.BOOL
     kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel.CloseHandle.restype = wintypes.BOOL
     return kernel
 
 
-def _job_fuer(pid: int) -> int | None:
-    """Neuer Job mit KILL_ON_JOB_CLOSE, ``pid`` aufgenommen; Griff oder ``None`` bei Fehler."""
+@functools.cache
+def _job_grenzen_typ() -> type[ctypes.Structure]:
+    """``JOBOBJECT_EXTENDED_LIMIT_INFORMATION`` — einmal gebaut, statt je Start neu."""
     from ctypes import wintypes
 
     class _Basis(ctypes.Structure):
@@ -99,15 +185,22 @@ def _job_fuer(pid: int) -> int | None:
             ("PeakJobMemoryUsed", ctypes.c_size_t),
         ]
 
+    return _Erweitert
+
+
+def _job_fuer(pid: int) -> int | None:
+    """Neuer Job mit KILL_ON_JOB_CLOSE, ``pid`` aufgenommen; Griff oder ``None`` bei Fehler."""
+    erweitert_typ = _job_grenzen_typ()
     kernel = _kernel()
+    _fehler_zuruecksetzen()
     job = kernel.CreateJobObjectW(None, None)
     if not job:
-        log.warning("Job für Session %d nicht angelegt (Fehler %d) — ohne Job", pid, ctypes.get_last_error())
+        log.warning("Job für Session %d nicht angelegt (Fehler %d) — ohne Job", pid, _letzter_fehler())
         return None
     ok = False
     prozess = None
     try:
-        grenzen = _Erweitert()
+        grenzen = erweitert_typ()
         grenzen.BasicLimitInformation.LimitFlags = _KILL_ON_JOB_CLOSE
         prozess = kernel.OpenProcess(_PROZESS_RECHTE, False, pid)
         ok = (
@@ -119,7 +212,7 @@ def _job_fuer(pid: int) -> int | None:
             )
             and bool(kernel.AssignProcessToJobObject(job, prozess))
         )
-        fehler = ctypes.get_last_error()
+        fehler = _letzter_fehler()
     finally:
         # Griffe auch bei Ausnahme schließen; der Job-Griff bleibt nur bei Erfolg offen.
         if prozess:

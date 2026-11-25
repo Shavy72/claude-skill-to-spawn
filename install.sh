@@ -153,46 +153,35 @@ if [ -n "$REPO" ] && [ -d "$REPO" ]; then
 fi
 pruefe_zielrechte "${ZIEL_PFADE[@]}"
 
+# Skill-Test-Suite vor jedem Tausch prüfen (#415): rot → Abbruch ohne Änderung + Fehler-Log + Ticket.
+PYTHONPATH="$HIER" "$PY" -m to_spawn.install_pruefung pruefen --klon "$HIER" --python "$PY"
+
 mkdir -p "$SKILLS"
 
 ZEIT="$(date +%Y%m%d-%H%M%S)"
 
-# sichere_und_kopiere <name> <quelle>...: alten Ordner <skills>/<name> nach _alt/<name>-<zeit>
-# verschieben (nie löschen), dann jede vorhandene <quelle> hinein kopieren. Dateien, die es nur
-# im alten Stand gibt, werden gemeldet (liegen weiter in der Sicherung); STAND.json nicht, den
-# stempelt der Installer danach neu.
+# sichere_und_kopiere <name> <quelle>...: kopiert erst vollständig in einen Staging-Ordner in <skills>,
+# bereinigt Caches, setzt bei to-spawn Ausführungsrechte + STAND.json und tauscht danach atomar (#415).
+# Ein vorhandener Ordner wird nie gelöscht, sondern nach _alt/<name>-<zeit> verschoben; Dateien, die es
+# nur im alten Stand gibt, werden gemeldet (STAND.json nicht).
 sichere_und_kopiere() {
-  local name="$1" ziel="$SKILLS/$1" sicherung="" quelle datei
+  local name="$1"
   shift
-  if [ -e "$ziel" ]; then
-    sicherung="$SKILLS/_alt/$name-$ZEIT"
-    while [ -e "$sicherung" ]; do sicherung="$sicherung-1"; done
-    mkdir -p "$SKILLS/_alt"
-    mv "$ziel" "$sicherung"
-    echo "Alter Stand gesichert: $sicherung"
+  local -a extra=()
+  if [ "$name" = "to-spawn" ]; then
+    extra=(--klon "$HIER" --ausfuehrbar skripte/spawn_srv.sh --ausfuehrbar repo-scripts/spawn_srv.sh --ausfuehrbar 'nest/*.sh')
   fi
-  mkdir -p "$ziel"
-  for quelle in "$@"; do
-    if [ -e "$quelle" ]; then cp -a "$quelle" "$ziel/"; fi
-  done
-  find "$ziel" \( -name __pycache__ -o -name .pytest_cache -o -name .ruff_cache \) -prune -exec rm -rf {} +
-  if [ -n "$sicherung" ]; then
-    (cd "$sicherung" && find . \( -name __pycache__ -o -name .pytest_cache -o -name .ruff_cache \) -prune -o -type f -print) |
-      while IFS= read -r datei; do
-        if [ "$datei" != "./STAND.json" ] && [ ! -e "$ziel/$datei" ]; then echo "Hinweis: nur im alten Stand (liegt in $sicherung): ${datei#./}"; fi
-      done
-  fi
+  PYTHONPATH="$HIER" "$PY" -m to_spawn.install_pruefung tauschen \
+    --skills "$SKILLS" --name "$name" --zeit "$ZEIT" "${extra[@]}" -- "$@"
 }
 
-# --- 1+2. Alten Stand sichern, Skill kopieren (ohne Git, Caches) -------------
+# --- 1+2. Alten Stand sichern, Skill atomar kopieren (ohne Git, Caches) -------
 quellen=()
 for eintrag in SKILL.md README.md LICENSE to_spawn.py install.sh install.ps1 spawn_local.ps1 spawn_srv.ps1 \
                to_spawn skripte repo-scripts aliase tests docs nest leitstand kette review-hook review review-dirigent probe; do
   quellen+=("$HIER/$eintrag")
 done
 sichere_und_kopiere to-spawn "${quellen[@]}"
-chmod +x "$ZIEL/skripte/spawn_srv.sh" "$ZIEL/repo-scripts/spawn_srv.sh" "$ZIEL"/nest/*.sh
-"$PY" "$ZIEL/to_spawn/skill_stand.py" --stempel "$ZIEL" --klon "$HIER"
 echo "Skill installiert: $ZIEL"
 
 # --- 3. Alias-Skills ----------------------------------------------------------
@@ -220,6 +209,9 @@ if [ -d "$HIER/review-dirigent" ]; then
   sichere_und_kopiere review-dirigent "$HIER"/review-dirigent/*
   echo "Review-Dirigent installiert: $SKILLS/review-dirigent"
 fi
+
+# --- 3e. Grünen installierten SHA im Fehler-Log vermerken (#415) --------------
+PYTHONPATH="$ZIEL" "$PY" -m to_spawn.install_pruefung verbuchen --klon "$HIER" --ziel "$ZIEL"
 
 # --- 4. Repo-Hälfte (optional): nur fehlende Dateien --------------------------
 if [ -n "$REPO" ]; then
