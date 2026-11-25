@@ -224,13 +224,16 @@ Modul liest sie über `config.lade` / `config.pfad` / `config.maschine`. Ein fre
 - Maschine (`~/.config/to-spawn/maschine.json`, Env `TO_SPAWN_MASCHINE`): `rolle`
   (`"server"`/`"pc"`, optional; auf dem Bau-Server wird `--ziel srv` wie `--ziel local`
   behandelt, #408), `repos[]`
-  (`slug`, `pfad`, `ticket_repo`, `worktree_basis`), `staging_sperren[]`,
+  (`slug`, `pfad`, `ticket_repo`, `worktree_basis`, optional `zweig_ticket_repo`), `staging_sperren[]`,
   `hausmeister.{wurzeln,ordner_praefixe}` und `hausmeister.geschuetzte_ordner` — Letzteres
   schützt nur zusätzlich, die eingebaute Liste bleibt immer gültig. Wurzeln mit verstecktem
   Ordner (`~/.ssh/*`) lehnt der Hausmeister ab.
   `ticket_repo` sagt, in welchem Repo die Nummer eines Helfer-Ordners mit diesem `origin` ein
   Ticket ist; die Vorgabe gibt jedem Repo seine eigenen Tickets (Skill-Ordner fragen das
-  Skill-Repo, #235). Bekannte veraltete Vorgaben zieht der Einrichter (und der Installer per
+  Skill-Repo, #235). Optionales `zweig_ticket_repo` je Repo (`{praefix: "<besitzer>/<name>" | ""}`,
+  Klartext-Präfixe, längster Präfix gewinnt, #347) lenkt einzelne Zweig-Formen (z. B. `fix/`,
+  `wip/`, `ticket/14`) auf ein anderes Ticket-Repo um oder schaltet sie mit `""` fail-closed ab;
+  ungültige oder widersprüchliche Einträge halten Zweige und Ordner sicher fest. Bekannte veraltete Vorgaben zieht der Einrichter (und der Installer per
   `to_spawn.py ticket-repo --nachziehen`) selbst nach; einzelne Einträge lassen sich über
   `to_spawn.py ticket-repo <eintrag> <ticket_repo>` ausdrücklich ändern (#261). Die Nummer liest der
   Hausmeister aus Ordnername und Zweig (`ticket/<N>-…`, `l<Etappe>/<N>[a-z]-…`, Formen nur in
