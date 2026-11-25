@@ -32,7 +32,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TextIO
 
-from . import arbeitsstand, config, gh, konsole, setup, skill_stand, umzug
+from . import arbeitsstand, config, gh, konsole, prozessbaum, setup, skill_stand, umzug
 
 log = logging.getLogger("to_spawn.einrichten")
 
@@ -85,6 +85,7 @@ def _git(wurzel: Path, *args: str) -> tuple[int, str]:
             errors="replace",
             check=False,
             timeout=_GIT_TIMEOUT,
+            **prozessbaum.fensterlos(),
         )
     except subprocess.TimeoutExpired:
         log.warning(

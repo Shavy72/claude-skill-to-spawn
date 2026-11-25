@@ -24,8 +24,11 @@ from to_spawn import review_hook  # noqa: E402
 _ROH_START = 'import subprocess\ndef neu():\n    subprocess.Popen(["x"])\n'
 
 
-def test_wache_ausnahme_gilt_nur_fuer_die_eine_zeile() -> None:
-    (rel, zeile) = next(iter(aufseher.AUSNAHME_ZEILEN))
+def test_wache_ausnahme_gilt_nur_fuer_die_eine_zeile(monkeypatch: pytest.MonkeyPatch) -> None:
+    assert aufseher.AUSNAHME_ZEILEN == frozenset()
+    rel = "review-hook/stop.py"
+    zeile = '"""Beispielzeile (nachts liest die Wache das'
+    monkeypatch.setattr(aufseher, "AUSNAHME_ZEILEN", frozenset({(rel, zeile)}))
     assert aufseher._funde_in_zeilen(rel, [zeile]) == []
     assert aufseher._funde_in_zeilen("review-hook/neu.py", [zeile]) == ["review-hook/neu.py:1: Wache"]
     assert aufseher._funde_in_zeilen(rel, ["die Wache startet"]) == [f"{rel}:1: Wache"]
