@@ -35,7 +35,7 @@ Urteile: **belegt** · **teilweise** · **abweichend** (Soll anders erfüllt, mi
 
 | # | Soll | Beleg | Urteil |
 |---|---|---|---|
-| M1 | Probe-Repo auf Bau-Server bis Staging, ohne Eingriff | Probe-Lauf 3 am 25.11. (siehe Abschnitt „Probe-Lauf 3“ unten): `-mit` Bau fertig 01:39 ohne Eingriff, aber 2 System-Anomalien; `-ohne` Bau fertig 03:00, 3 Anomalien, 2 Eingriffe der Leit-Session. Abnahme durch David 25.11. 04:17 ohne Wartezeit im Minuten-Takt. | teilweise (Messlatte „null Anomalien“ nicht bestanden → 624, 641, 650) |
+| M1 | Probe-Repo auf Bau-Server bis Staging, ohne Eingriff | Probe-Lauf 3 am 25.11. (siehe Abschnitt „Probe-Lauf 3“ unten): `-mit` Bau fertig 01:39 ohne Eingriff, aber 2 System-Anomalien; `-ohne` Bau fertig 03:00, 3 Anomalien, 2 Eingriffe der Leit-Session. Abnahme durch den Nutzer 25.11. 04:17 ohne Wartezeit im Minuten-Takt. | teilweise (Messlatte „null Anomalien“ nicht bestanden → 624, 641, 650) |
 | M2 | dasselbe am Windows-PC (`--ziel local`) | – | noch nicht geprüft |
 | M3 | zweite Spec: Einrichter „alles da“ | Vorstufe F4 | noch nicht geprüft |
 | M4 | Soll-Liste +1 Baustein → Spawn zieht nach | Vorstufe F5 | noch nicht geprüft |
@@ -56,7 +56,7 @@ Urteile: **belegt** · **teilweise** · **abweichend** (Soll anders erfüllt, mi
 Quelle: `~/systemcheck-1119/probe_leihliste_srv_3.md` (Server-Uhr). Probe-Inhalt auf Leihlisten-Niveau, zwei Varianten:
 `-mit` (Repo `~/to-spawn-probe-3-mit`, Spec 1, Tickets 2–7, Abnahme 8) und `-ohne` (Repo `~/to-spawn-probe-3-ohne`, Spec 31,
 Tickets 32–37, Abnahme 38). Installierter Skill war `5fb4af9` (nicht Skill-main `168176f`), die Fixes 616/619/620 waren
-im Lauf also noch nicht wirksam. Messlatte (Davids Leitziel, `LASTENHEFT.md` L10, A65–A69): bestanden = null System-Anomalien;
+im Lauf also noch nicht wirksam. Messlatte (Leitziel des Nutzers, `LASTENHEFT.md` L10, A65–A69): bestanden = null System-Anomalien;
 falsches Warten (Ticket wartet auf einen schon fertigen Vorgänger) zählt als Anomalie.
 
 **Für M1 belegt**
@@ -77,7 +77,7 @@ falsches Warten (Ticket wartet auf einen schon fertigen Vorgänger) zählt als A
    das fertige stille Fenster `bau 35` hielt selbst einen Platz. Eingriff 1 (02:50:45): `bau 35` per `/exit` beendet. Eingriff 2 (02:53:22):
    `speicher.max_sessions: 8` lokal gesetzt (Rechner-Grenze 12 / Gesamtgrenze 24, nicht committet). Fixes: 625 gemergt (nicht installiert), 650 (Plätze 12/24) in Prüfung, 641 offen.
 
-**Abnahme durch David, 25.11. 04:17** (gemessen von `leit 220`; Quelle: tmux `window_activity` im 10-s-Raster + `.to-spawn/wache_1.log`).
+**Abnahme durch den Nutzer, 25.11. 04:17** (gemessen von `leit 220`; Quelle: tmux `window_activity` im 10-s-Raster + `.to-spawn/wache_1.log`).
 Kommentar „abgenommen“: Issue 8 (`-mit`) 04:17:44, Issue 38 (`-ohne`) 04:17:45.
 
 | Lauf | Fenster | erste Regung nach Kommentar | Einordnung |
