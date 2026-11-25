@@ -384,7 +384,7 @@ def sperre_eingetragen_in(einstellungen: dict[str, Any]) -> bool:
     try:
         blocks = einstellungen["hooks"]["PreToolUse"]
         return any(
-            "Bash" in b.get("matcher", "").split("|") and _ruft_sperre_auf(h.get("command", ""))
+            "Bash" in b.get("matcher", "").split("|") and ist_sperre_befehl(h.get("command"), nur_aktiv=True)
             for b in blocks
             for h in b.get("hooks", [])
         )
@@ -392,15 +392,26 @@ def sperre_eingetragen_in(einstellungen: dict[str, Any]) -> bool:
         return False
 
 
-def _ruft_sperre_auf(befehl: str) -> bool:
-    """Ruft ``befehl`` eine vorhandene ``to_spawn.py`` mit dem Unterbefehl :data:`JA_SPERRE_HOOK` auf?
+def ist_sperre_befehl(befehl: object, *, nur_aktiv: bool = False) -> bool:
+    """Die eine Erkennung der Ja-Sperre in einem Hook-Befehl (#599).
 
-    ``echo hook-ja-sperre`` o. ä. zählt nicht: nur ``<…>/to_spawn.py hook-ja-sperre`` mit existierender Datei.
+    Standard (breit, für ``ja_einrichten``): jeder Eintrag ``<…>to_spawn.py … hook-ja-sperre`` —
+    auch tote (Datei fehlt) oder alte, damit Einrichten sie ersetzt statt verdoppelt.
+    ``nur_aktiv=True`` (eng, für den Nachweis :func:`sperre_eingetragen_in`): zusätzlich Befehlswort
+    Python oder ``to_spawn.py``, die Datei existiert und :data:`JA_SPERRE_HOOK` folgt direkt;
+    ``echo hook-ja-sperre`` o. ä. zählt nie als aktive Sperre.
+    Kein Text (``None``, leer, kein ``str``) oder nicht zerlegbar → ``False``.
     """
+    if not isinstance(befehl, str):
+        return False
     try:
         woerter = shlex.split(befehl)
     except ValueError:
         return False
+    if JA_SPERRE_HOOK not in woerter or not any(w.replace("\\", "/").endswith("to_spawn.py") for w in woerter):
+        return False
+    if not nur_aktiv:
+        return True
     erstes = next((w for w in woerter if "=" not in w), "").replace("\\", "/").rsplit("/", 1)[-1]
     if erstes != "to_spawn.py" and not re.fullmatch(r"python[\d.]*(\.exe)?", erstes):
         return False  # Befehlswort muss Python oder die to_spawn.py selbst sein (nicht ``echo …``)

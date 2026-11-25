@@ -30,14 +30,8 @@ CLI = Path(__file__).resolve().parent.parent / "to_spawn.py"
 
 
 def _ist_sperre(hook: object) -> bool:
-    """Hook-Eintrag der Ja-Sperre (``<…>/to_spawn.py hook-ja-sperre``), auch wenn die Datei nicht mehr existiert."""
-    try:
-        woerter = shlex.split(hook["command"])  # type: ignore[index]
-    except (ValueError, KeyError, TypeError):
-        return False
-    return briefkasten.JA_SPERRE_HOOK in woerter and any(
-        w.replace("\\", "/").endswith("to_spawn.py") for w in woerter
-    )
+    """Hook-Eintrag der Ja-Sperre, auch wenn die Datei nicht mehr existiert (Regel: :func:`briefkasten.ist_sperre_befehl`)."""
+    return isinstance(hook, dict) and briefkasten.ist_sperre_befehl(hook.get("command"))
 
 
 def sperre_eintragen(
@@ -51,11 +45,31 @@ def sperre_eintragen(
         if not isinstance(daten, dict):
             raise ValueError(f"{datei}: kein JSON-Objekt — nicht überschrieben.")
     hooks = daten.setdefault("hooks", {})
+    if hooks is None:
+        raise ValueError(f"{datei}: hooks ist null (erwartet ein Objekt) — nicht verändert.")
     blocks = hooks.setdefault("PreToolUse", []) if isinstance(hooks, dict) else None
+    if blocks is None and isinstance(hooks, dict):
+        raise ValueError(f"{datei}: hooks/PreToolUse ist null (erwartet eine Liste) — nicht verändert.")
     if not isinstance(blocks, list):
         raise ValueError(  # noqa: TRY004 — main fängt ValueError
             f"{datei}: hooks/PreToolUse hat eine unerwartete Form (PreToolUse muss eine Liste sein) — nicht verändert."
         )
+    for nr, block in enumerate(blocks, 1):
+        if not isinstance(block, dict):
+            continue
+        hooks_liste = block.get("hooks", [])
+        if hooks_liste is None:
+            raise ValueError(f"{datei}: PreToolUse-Block {nr}: hooks ist null (erwartet eine Liste) — nicht verändert.")
+        if not isinstance(hooks_liste, list):
+            raise ValueError(f"{datei}: PreToolUse-Block {nr}: hooks muss eine Liste sein — nicht verändert.")
+        for h in hooks_liste:
+            befehl = h.get("command") if isinstance(h, dict) else None
+            if not isinstance(befehl, str) or not befehl.strip():
+                log.warning(
+                    "%s: PreToolUse-Block %s hat einen Hook-Eintrag ohne Befehl — bleibt unverändert, bitte prüfen.",
+                    datei,
+                    nr,
+                )
     befehl = " ".join(
         shlex.quote(t)
         for t in (Path(python).as_posix(), cli.as_posix(), briefkasten.JA_SPERRE_HOOK)
