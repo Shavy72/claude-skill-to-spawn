@@ -2690,13 +2690,20 @@ def helfer_ordner_loeschen(ort: Path, name: str) -> bool:
     return True
 
 
-def temp_ordner_loeschen(ordner: Path) -> None:
-    """Entfernt einen geprüften Temp-Rest (#136): verknüpfte Worktrees sauber über Git,
+def temp_ordner_loeschen(ordner: Path, *, erwartet: tuple[int, int] | None = None) -> None:
+    """Entfernt einen geprüften Temp-Rest (#136, #177): verknüpfte Worktrees sauber über Git,
     sonst über :func:`_loeschen` (mit Windows-Schreibschutz-Behandlung).
 
     Die Prüfregeln liegen in :mod:`to_spawn.temp_ordner`; die eigentliche Löschung bleibt
-    allein hier, damit es im gesamten Skill genau eine Lösch-Stelle gibt.
+    allein hier, damit es im gesamten Skill genau eine Lösch-Stelle gibt. Direkt vor dem
+    Löschen wird per ``os.lstat`` erneut gegen Symlink-Tausch und (mit ``erwartet``) gegen
+    ``(st_dev, st_ino)``-Wechsel geprüft (TOCTOU-Schutz).
     """
+    info = os.lstat(ordner)
+    if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+        raise OSError(f"Temp-Rest {ordner} ist kein echter Ordner mehr (Symlink?)")
+    if erwartet is not None and (info.st_dev, info.st_ino) != erwartet:
+        raise OSError(f"Temp-Rest {ordner} wurde während der Prüfung ersetzt")
     git_marke = ordner / ".git"
     if git_marke.is_file() and not git_marke.is_symlink():
         try:

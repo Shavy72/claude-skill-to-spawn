@@ -1134,8 +1134,9 @@ def main() -> int:
 
     # Temp-Dateien
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    # #136: auf der Platte (temp_ordner), nicht auf der RAM-Platte des System-Temps
-    out = Path(temp_ordner.umgebung().get("TMPDIR") or tempfile.gettempdir())
+    # #136/#177: markierter Ticket-Temp-Ordner auf der Platte (temp_ordner.anlegen)
+    temp_umg = temp_ordner.umgebung(args.ticket, repo=GH_REPO, von="bau")
+    out = Path(temp_umg.get("TMPDIR") or tempfile.gettempdir())
     basis = out / f"{GH_REPO.rsplit('/', 1)[-1]}-bau"
     basis.mkdir(parents=True, exist_ok=True)
     # mkdtemp statt ``<ticket>-<stamp>``: zwei Starts desselben Tickets in derselben Sekunde
@@ -1273,7 +1274,7 @@ def main() -> int:
     # Eine Session im Worktree darf nicht das Repo des Launchers erben (#205).
     os.environ.pop("TO_SPAWN_REPO", None)
     os.environ["CLAUDE_CODE_FORCE_SESSION_PERSISTENCE"] = "1"
-    os.environ.update(temp_ordner.umgebung())  # #136: Temp auf die Platte, nie die RAM-Platte
+    os.environ.update(temp_umg)  # #136/#177: markierter Ticket-Temp auf der Platte, nie die RAM-Platte
     # Klick-Sperre nur für lokal gespawnte Sessions (Windows, Maus-Müll im Eingabefeld).
     terminal_maus.maus_ruhig()
 

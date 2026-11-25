@@ -34,10 +34,10 @@ class Lauf:
     dauer_s: float
 
 
-def _umgebung() -> dict[str, str]:
-    """Eigene Prozess-Umgebung je Lauf: Temp auf die Platte (#136), kein ``PYTEST_ADDOPTS`` (#149)."""
+def _umgebung(ordner: Path | None = None) -> dict[str, str]:
+    """Eigene Prozess-Umgebung je Lauf: markierter Ticket-Temp (#136/#177), kein ``PYTEST_ADDOPTS`` (#149)."""
     umg = {k: v for k, v in os.environ.items() if k not in _BEREINIGEN}
-    umg.update(temp_ordner.umgebung())
+    umg.update(temp_ordner.umgebung(ordner=ordner, von="pruef", wiederverwenden=True))
     return umg
 
 
@@ -49,7 +49,7 @@ def lauf(befehl: list[str], ordner: Path) -> Lauf:
         erg = subprocess.run(
             befehl,
             cwd=ordner,
-            env=_umgebung(),
+            env=_umgebung(ordner),
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,

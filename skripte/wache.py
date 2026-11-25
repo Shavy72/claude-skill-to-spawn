@@ -526,7 +526,7 @@ def main() -> int:
     # Eine Session im Worktree darf nicht das Repo des Launchers erben (#205).
     os.environ.pop("TO_SPAWN_REPO", None)
     os.environ["CLAUDE_CODE_FORCE_SESSION_PERSISTENCE"] = "1"
-    os.environ.update(temp_ordner.umgebung())  # #136: Temp auf die Platte, nie die RAM-Platte
+    os.environ.update(temp_ordner.umgebung(a.spec, repo=REPO, von="wache"))  # #136/#177: markierter Spec-Temp auf der Platte
     # Klick-Sperre nur für lokal gespawnte Sessions (Windows, Maus-Müll im Eingabefeld).
     terminal_maus.maus_ruhig()
     # Umzug (#212): /to-spawn-of im Aufseher zieht alle Sessions um und beendet am Ende
