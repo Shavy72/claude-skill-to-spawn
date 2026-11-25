@@ -64,11 +64,11 @@ from typing import Any, Literal, NamedTuple
 
 from to_spawn import (
     aufpasser,
+    auswahl,
     bau_log,
     befugnis,
     briefkasten,
     capo,
-    config,
     gh,
     komplett_lauf,
     pc_fenster,
@@ -490,7 +490,7 @@ def _log_lage(n: int, repo: Path) -> tuple[str, str, str, int] | None:
     ``None`` = kein Bau-Log (Ticket noch nicht gestartet) — der Aufrufer warnt gesammelt.
     """
     try:
-        ort = bau_log.log_ort(n, Path(config.worktree_pfad(n, repo)).expanduser(), repo)
+        ort = bau_log.log_ort_fuer(n, repo)
         if ort is None:
             return None
         zeilen = bau_log.lese(ort, n, hauptbaum=repo)
@@ -540,6 +540,9 @@ def sammeln(spec: int, q: Quellen, vorher: _Vorher) -> _Ergebnis:
         raise RuntimeError(f"Sub-Issues von Spec #{spec} nicht lesbar (gh)")
     if not kinder:
         raise RuntimeError(f"Spec #{spec} hat keine Sub-Issues — Spec-Nummer prüfen (gh)")
+    auswahl_stand = auswahl.lesen(q.repo, spec)
+    if auswahl_stand is not None:
+        kinder = auswahl.filtere_issues(kinder, auswahl_stand)
     jetzt = q.jetzt()
     fenster = None if q.pc_still else _fenster_liste(spec, q.tmux)
     lagen: list[TicketLage] = []

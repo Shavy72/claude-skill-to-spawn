@@ -211,6 +211,12 @@ def weiter_entscheidung(
     return entscheidung
 
 
-def weiter_erlaubt(ticket: str, cwd: Path | None = None, *, pruefer: TicketPruefer | None = None) -> bool:
-    """Wie :func:`weiter_entscheidung`, nur ja/nein (unbekannt = Nein, ohne Wiederholung)."""
-    return _pruefen(str(ticket), cwd, pruefer).erlaubt
+def weiter_erlaubt(
+    ticket: str,
+    cwd: Path | None = None,
+    *,
+    pruefer: TicketPruefer | None = None,
+    abstand: float | None = None,
+) -> bool:
+    """Wie :func:`weiter_entscheidung`, nur ja/nein (gleiche Wiederhol-Regel bei unbekanntem Stand)."""
+    return weiter_entscheidung(ticket, cwd, pruefer=pruefer, abstand=abstand).erlaubt

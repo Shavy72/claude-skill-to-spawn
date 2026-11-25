@@ -20,14 +20,13 @@ from __future__ import annotations
 import logging
 import os
 import shutil
-import signal
 import subprocess
 import sys
 from collections.abc import Mapping, Sequence
 from pathlib import Path, PureWindowsPath
 from typing import Any
 
-from to_spawn import prozessbaum, starter
+from to_spawn import prozessbaum, sitzungsjob, starter
 
 log = logging.getLogger("to_spawn.bash_wahl")
 
@@ -117,11 +116,14 @@ def lauf(
         )
     else:
         optionen["start_new_session"] = True
-    with subprocess.Popen(_befehlszeile(argumente), env=umgebung, **optionen) as prozess:
+    with (
+        subprocess.Popen(_befehlszeile(argumente), env=umgebung, **optionen) as prozess,
+        prozessbaum.gruppe_gebunden(prozess) as job,
+    ):
         try:
             aus, fehler = prozess.communicate(eingabe, timeout=zeitgrenze_s)
         except subprocess.TimeoutExpired:
-            _gruppe_beenden(prozess)
+            _gruppe_beenden(prozess, job=job)
             try:
                 aus, fehler = prozess.communicate(timeout=NACHLAUF_S)
             except subprocess.TimeoutExpired as rest:
@@ -169,29 +171,17 @@ def _text(roh: Any, optionen: Mapping[str, Any]) -> Any:
     return roh
 
 
-def _gruppe_beenden(prozess: subprocess.Popen[Any]) -> None:
+def _gruppe_beenden(
+    prozess: subprocess.Popen[Any],
+    *,
+    job: sitzungsjob.Job | None = None,
+) -> None:
     """bash aus :func:`lauf` samt allen Unterprozessen hart beenden.
 
-    Linux/macOS: ``SIGKILL`` an die eigene Prozessgruppe. Windows: ganzer Prozessbaum über
-    :mod:`to_spawn.prozessbaum` (dort ist jedes Signal ``TerminateProcess``).
-    ponytail: ein Enkel, der selbst ``setsid`` ruft, verlässt die Gruppe und lebt weiter;
-    :func:`lauf` wartet dann nur :data:`NACHLAUF_S` auf die Pipe. Upgrade-Pfad: Ausgabe in Datei.
+    Delegiert an die eine Stelle :func:`to_spawn.prozessbaum.gruppe_beenden` (Linux/macOS:
+    ``SIGKILL`` an die eigene Prozessgruppe; Windows: Job-Objekt + Prozessbaum).
+    ponytail: ein Enkel unter Linux, der selbst ``setsid`` ruft, verlässt die Gruppe und lebt
+    weiter; :func:`lauf` wartet dann nur :data:`NACHLAUF_S` auf die Pipe. Upgrade-Pfad: Ausgabe
+    in Datei.
     """
-    if sys.platform == "win32":
-        from to_spawn import prozessbaum  # spät: nur Windows braucht die Prozessliste
-
-        try:
-            prozessbaum.senden(prozessbaum.baum(prozess.pid), signal.SIGTERM)
-        except OSError as fehler:
-            log.warning("Prozessbaum von PID %d nicht beendet: %s", prozess.pid, fehler)
-        prozess.kill()
-        return
-    try:
-        os.killpg(prozess.pid, signal.SIGKILL)
-    except ProcessLookupError:
-        pass
-    except OSError as fehler:
-        log.warning(
-            "Prozessgruppe %d nicht beendet: %s — nur bash selbst", prozess.pid, fehler
-        )
-        prozess.kill()
+    prozessbaum.gruppe_beenden(prozess, job=job)

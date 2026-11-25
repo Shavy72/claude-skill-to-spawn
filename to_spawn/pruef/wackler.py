@@ -50,6 +50,27 @@ class Zaehlbar(Protocol):
 
 
 @dataclass(frozen=True)
+class Bericht:
+    """Maschinenlesbares Ergebnis eines Testlaufs (z. B. aus JUnit-XML, #149)."""
+
+    #: Zahl der gelaufenen Tests, wenn alle ausgewählten liefen; ``None`` = unbelegt/abgebrochen.
+    gelaufen: int | None
+    #: Zahl der bestandenen Tests ohne skip/xfail/error/failure; ``None`` = unbelegt.
+    bestanden: int | None
+    #: Zahl der im Bericht eingetragenen Testfälle (0 = nichts gelaufen, z. B. ``--co``).
+    im_bericht: int = 0
+    #: Vorzeitiger Abbruch (z. B. ``pytest.exit(..., returncode=0)``).
+    abgebrochen: bool = False
+
+
+@runtime_checkable
+class Berichtbar(Protocol):
+    def bericht(self, befehl: list[str], ausgabe: str) -> Bericht | None:
+        """Maschinenlesbares Ergebnis zum gelaufenen ``befehl``; ``None`` = Bericht fehlt."""
+        ...
+
+
+@dataclass(frozen=True)
 class Wiederholung:
     gruen: bool
     wackler: tuple[str, ...]
@@ -57,6 +78,18 @@ class Wiederholung:
     dauer_s: float
     #: Zweiter voller Lauf (nur, wenn die Einzel-Wiederholung grün war): eigene Zeit.
     voll_s: float = 0.0
+
+
+def _zaehle(adapter: object, befehl: list[str], ausgabe: str) -> tuple[int | None, int | None]:
+    """(gelaufen, bestanden) bevorzugt aus dem maschinenlesbaren Bericht, sonst aus ``Zaehlbar``."""
+    if isinstance(adapter, Berichtbar):
+        b = adapter.bericht(befehl, ausgabe)
+        if b is None or b.abgebrochen:
+            return None, None
+        return b.gelaufen, b.bestanden
+    if isinstance(adapter, Zaehlbar):
+        return adapter.gelaufen(ausgabe), adapter.bestanden(ausgabe)
+    return None, None
 
 
 def nochmal(adapter: object, repo: Path, befehl: list[str], erst: ausfuehren.Lauf) -> Wiederholung | None:
@@ -67,9 +100,10 @@ def nochmal(adapter: object, repo: Path, befehl: list[str], erst: ausfuehren.Lau
     erst_rot = adapter.rote(erst.ausgabe)
     if zweit_befehl is None or not erst_rot:
         return None
-    zaehlt = isinstance(adapter, Zaehlbar)
-    if zaehlt and adapter.gelaufen(erst.ausgabe) is None:
-        # Erster Lauf nicht belegt ganz (abgebrochen, Ausgabe ohne Zählung): ungelaufene Tests
+    zaehlt = isinstance(adapter, (Berichtbar, Zaehlbar))
+    erst_gelaufen, erst_bestanden = _zaehle(adapter, befehl, erst.ausgabe) if zaehlt else (None, None)
+    if zaehlt and (erst_gelaufen is None or erst_bestanden is None):
+        # Erster Lauf nicht belegt ganz (abgebrochen, Bericht/Zählung fehlt): ungelaufene Tests
         # könnten rot sein, also kann keine Wiederholung daraus Grün machen.
         return None
     zweit = ausfuehren.lauf(zweit_befehl, repo)
@@ -83,19 +117,31 @@ def nochmal(adapter: object, repo: Path, befehl: list[str], erst: ausfuehren.Lau
         return Wiederholung(False, (), zweit_befehl, dauer)
     # Gelaufen == gesammelt: genau die roten Tests müssen nochmal gelaufen sein, sonst ist
     # „nicht mehr rot“ nur „nicht gelaufen“. Bestanden == nicht mehr rot: skip/xfail ist kein
-    # Grün. Ohne ``Zaehlbar`` ist beides nie belegt.
+    # Grün. Ohne ``Berichtbar``/``Zaehlbar`` ist beides nie belegt.
+    zweit_gelaufen, zweit_bestanden = _zaehle(adapter, zweit_befehl, zweit.ausgabe)
     if (
         not zaehlt
-        or adapter.gelaufen(zweit.ausgabe) != len(erst_rot)
-        or adapter.bestanden(zweit.ausgabe) != len(erst_rot - noch_rot)
+        or zweit_gelaufen != len(erst_rot)
+        or zweit_bestanden != len(erst_rot - noch_rot)
     ):
         return Wiederholung(False, (), zweit_befehl, dauer)
     wackler = tuple(sorted(erst_rot - noch_rot))
     if zweit.code:
         return Wiederholung(False, wackler, zweit_befehl, dauer)
     # Einzeln grün reicht nicht (reihenfolge-abhängig): erst ein zweiter voller Lauf entscheidet.
-    voll = ausfuehren.lauf(adapter.voll_nochmal_befehl(befehl), repo)
+    # Auch er wird ausgezählt: Skip, Abwahl oder Ausstieg mit Exit 0 ergeben nie „wackler“ (#149).
+    voll_befehl = adapter.voll_nochmal_befehl(befehl)
+    voll = ausfuehren.lauf(voll_befehl, repo)
     voll_s = round(voll.dauer_s, 2)
     if voll.code != 0:
+        return Wiederholung(False, (), zweit_befehl, dauer, voll_s)
+    voll_gelaufen, voll_bestanden = _zaehle(adapter, voll_befehl, voll.ausgabe)
+    if (
+        erst_gelaufen is None
+        or erst_bestanden is None
+        or voll_gelaufen != erst_gelaufen
+        or voll_bestanden is None
+        or voll_bestanden < erst_bestanden + len(erst_rot)
+    ):
         return Wiederholung(False, (), zweit_befehl, dauer, voll_s)
     return Wiederholung(True, wackler, zweit_befehl, dauer, voll_s)

@@ -48,6 +48,7 @@ from typing import Any
 from . import (
     anleitung,
     aufseher_stand,
+    auswahl,
     befugnis,
     befund,
     briefkasten,
@@ -245,6 +246,9 @@ def pruefe(
     liste = capo.kinder(gh_repo, spec)
     if liste is None:
         raise RuntimeError(f"Sub-Issues von #{spec} in {gh_repo} nicht lesbar (gh)")
+    auswahl_stand = auswahl.lesen(repo, spec)
+    if auswahl_stand is not None:
+        liste = auswahl.filtere_issues(liste, auswahl_stand)
     ref = capo.haupt_ref(repo)
     if ref is None:
         raise RuntimeError("kein origin/master bzw. origin/main — git fetch prüfen")
@@ -376,13 +380,21 @@ def baue_prompt(spec: int, repo: Path, eintraege: list[str], notiz: str | None) 
     if rest > 0:
         liste.append(f"- … und {rest} weitere (nächster Takt)")
     notiz_text = (notiz or "(leer — erster Takt)")[:MAX_NOTIZ]
-    return PROMPT.format(
+    text = PROMPT.format(
         S=spec,
         REPO=repo,
         SKILL=SKILL.as_posix(),
         LISTE="\n".join(liste),
         NOTIZ=notiz_text,
     )
+    auswahl_stand = auswahl.lesen(repo, spec)
+    if auswahl_stand is not None and auswahl_stand.ist_teilauswahl():
+        text += (
+            f"\n\nTEIL-START (#271): Fasse AUSSCHLIESSLICH die Tickets dieser Auswahl an "
+            f"({auswahl.beschreibung(auswahl_stand)}) — keine Kommentare, keine Entscheidungen "
+            f"und kein Abschluss für Tickets außerhalb der Auswahl."
+        )
+    return text
 
 
 # --- Claude ---------------------------------------------------------------------
@@ -493,6 +505,15 @@ def takt(
     claude: str | None = None,
     grund: str = "",
 ) -> int:
+    auswahl_stand = auswahl.lesen(repo, spec)
+    if not auswahl.wache_erlaubt(repo, spec, auswahl=auswahl_stand, gelesen=True):
+        log.info(
+            "Takt #%s ausgelassen: laut Auswahl hier kein Aufseher (%s).",
+            spec,
+            auswahl.beschreibung(auswahl_stand),
+        )
+        print(f"Takt #{spec}: laut Auswahl hier kein Aufseher — steige aus.")
+        return 0
     halter = f"takt pid {os.getpid()}" + (f" ({grund})" if grund else "")
     try:
         schein = leitstand.versuche(f"takt-{spec}", halter)
@@ -593,7 +614,18 @@ def starte_abgeloest(spec: int, repo: Path, grund: str) -> bool:
     Stop feuert nach jeder Runde, nicht nur am Session-Ende (der Hook kann das nicht
     unterscheiden) — daher höchstens ein Start je ``MIN_ABSTAND_S`` und Spec
     (Zeitpunkt im Leitstand-Zustand ``takt_ausloeser``). ``True`` = gestartet.
+    Erlaubt die gespeicherte Auswahl auf diesem Rechner keinen Aufseher (``--ohne-wache``
+    oder fremder Rechner, #271), wird kein Takt gestartet.
     """
+    auswahl_stand = auswahl.lesen(repo, spec)
+    if not auswahl.wache_erlaubt(repo, spec, auswahl=auswahl_stand, gelesen=True):
+        log.info(
+            "Takt #%s: laut Auswahl hier kein Aufseher (%s) — %s ausgelassen.",
+            spec,
+            auswahl.beschreibung(auswahl_stand),
+            grund,
+        )
+        return False
     jetzt = time.time()
     frei: list[bool] = []
 

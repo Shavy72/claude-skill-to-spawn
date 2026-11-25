@@ -117,6 +117,44 @@ def log_ort(ticket: str | int, worktree: Path, hauptbaum: Path) -> Path | None:
     return None
 
 
+def log_ort_fuer(ticket: str | int, repo: Path) -> Path | None:
+    """Wie :func:`log_ort`, bestimmt den Ticket-Worktree selbst über :func:`config.worktree_pfad` (#438).
+
+    Gemeinsamer Helfer, damit Aufrufer ``config.worktree_pfad`` und :func:`log_ort` nicht
+    jeweils selbst zusammensetzen.
+    """
+    return log_ort(ticket, Path(config.worktree_pfad(ticket, repo)).expanduser(), repo)
+
+
+def hat_log_auf_origin(
+    repo: Path, ticket: str | int, *, hauptzweig: str | None = None
+) -> bool:
+    """Liegt ein versioniertes Bau-Log von ``ticket`` auf ``origin/<Hauptzweig>`` oder
+    einem geholten Remote-Ticket-Zweig ``origin/ticket/<N>-*``? (#438)
+
+    Prüft nur lokale Remote-Tracking-Refs (kein Netz, kein ``git fetch``). Unversionierte
+    Laufdateien auf einem anderen Rechner liegen außerhalb von Git und sind hier nicht sichtbar.
+    """
+    from . import gh  # spät: gh fragt config, aber nicht bau_log
+
+    pfad = log_im_repo(repo, ticket)
+    if Path(pfad).is_absolute():
+        return False
+    haupt = hauptzweig or gh.hauptzweig(repo)
+    refs = [f"origin/{haupt}"]
+    code, zweige = gh._git_ausgabe(
+        ["for-each-ref", "--format=%(refname)", f"refs/remotes/origin/ticket/{ticket}-*"],
+        repo,
+        timeout=gh.GIT_ZEIT_S,
+    )
+    if code == 0 and zweige:
+        refs.extend(z.strip() for z in zweige.splitlines() if z.strip())
+    for ref in refs:
+        if gh._git_ausgabe(["cat-file", "-e", f"{ref}:{pfad}"], repo, timeout=gh.GIT_ZEIT_S)[0] == 0:
+            return True
+    return False
+
+
 def kontext_text(spitze_k: float | None) -> str:
     """Spitzen-Kontext als Text, z. B. „180,2k“; ``—`` ohne Wert (#238, #430)."""
     return f"{_komma(spitze_k)}k" if spitze_k else "—"

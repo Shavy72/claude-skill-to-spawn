@@ -125,7 +125,7 @@ def handoff_auftrag(handoff: str, start: str) -> str:
 
 
 #: Einzige Quelle der Abschluss-Anweisung für Aufseher-Prompt (``skripte/wache.py``) und
-#: Aufseher-Takt (``to_spawn/waechter_takt.py``) (#367). Platzhalter ``{S}`` und ``{SKILL}``
+#: Aufseher-Takt (``to_spawn/waechter_takt.py``) (#367, #429). Platzhalter ``{S}`` und ``{SKILL}``
 #: werden erst beim Bauen des jeweiligen Prompts gefüllt.
 ABSCHLUSS_ANWEISUNG = (
     "Bau fertig, bereit zur Abnahme (alle Bau-Tickets zu oder nur noch Live-Belege/checkpoint:human-Abnahme offen, "
@@ -139,6 +139,15 @@ ABSCHLUSS_ANWEISUNG = (
     "(Teil 1 Nutzer-Präsentation, Teil 2 Details mit Bild + Klick-Schritten je Bau-Ticket + „Offenes“, Schluss Entscheidungs-Zeitstrahl aus dem Bau-Verlauf; Zahl nennen), "
     "Screenshots per echtem Browser-Blick; `ablegen --stand abnahme` verlangt `--rundschau-datei docs/agents/rundschau_{S}.html` im Repo, "
     "fehlt die Datei oder fehlt einem Bau-Ticket Bild/Klick-Schritte oder ist die Prüfung rot: Exit 4 mit Mängelliste, nichts abgelegt. "
+    "Danach KI-Selbstprüfung der Rundschau gegen Staging (einmal, vor `ablegen`, #368): "
+    "`python {SKILL}/skripte/abschluss_paket.py selbstpruefung planen {S}` — "
+    "Exit 0 → genau einen frischen Helfer starten (liest `.to-spawn/selbstpruefung/{S}/auftrag.md`, "
+    "klickt jede Klick-Schrittfolge kopflos gegen Staging, legt keine Testdaten dauerhaft an bzw. löscht markierte Dummy-Daten, "
+    "schreibt je Schritt „passt / passt nicht“ + Beleg in `.to-spawn/selbstpruefung/{S}/ergebnis.json`), "
+    "dann `python {SKILL}/skripte/abschluss_paket.py selbstpruefung sammeln {S}` "
+    "(schreibt `docs/agents/selbstpruefung_{S}.md`; „passt nicht“-Schritte vor Abnahme reparieren oder im Paket sichtbar stehen lassen). "
+    "Exit 2 → keine Staging-Adresse (`staging.url` fehlt), ohne Helfer weiter (`ablegen` vermerkt „Selbstprüfung nicht möglich, weil …“). "
+    "Ohne Ergebnis-Datei bei gesetzter `staging.url` verweigert `ablegen --stand abnahme` (Exit 4). "
     "`python {SKILL}/skripte/belege_uebersicht.py {S}` und `python {SKILL}/skripte/test_uebersicht.py {S}` je als Datei im Repo und Artifact, "
     "Direkt-Links je Ticket in die Stage-App (staging.url aus .to-spawn/config.json + Route an die richtige Stelle, Rolle im Titel), "
     "Zugang nur als Namen (Basic-Auth-Nutzer, App-Rolle, Bitwarden-Eintragsname — nie Passwort), "
