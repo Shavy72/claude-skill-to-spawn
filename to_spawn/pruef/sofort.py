@@ -490,13 +490,17 @@ class Stufe0Ergebnis:
         return "\n".join(zeilen)
 
 
-def _geaendert_zwischen(repo: Path, basis: str, ziel: str | None) -> list[str] | None:
+def geaendert_zwischen(repo: Path, basis: str, ziel: str | None = None) -> list[str] | None:
+    """Geänderte Dateien zwischen ``basis`` und ``ziel`` (``None`` = Arbeitsbaum gegen ``basis``)."""
     if ziel is None:
         return geaendert(repo, basis)
     code, raus = _git(repo, "diff", "--name-only", "--no-renames", "-z", basis, ziel, "--")
     if code != 0:
         return None
     return sorted({pfad for pfad in raus.split("\0") if pfad})
+
+
+_geaendert_zwischen = geaendert_zwischen
 
 
 def _konfig_aus_basis(repo: Path, basis: str) -> dict[str, Any] | None:

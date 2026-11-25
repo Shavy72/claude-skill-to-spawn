@@ -30,6 +30,7 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
+from to_spawn import konsole
 from to_spawn.pruef import regeln
 
 log = logging.getLogger("to_spawn.pruef")
@@ -369,11 +370,11 @@ def ist_test_datei(pfad: str, wurzeln: Sequence[str] = ()) -> bool:
     return any(norm == w or norm.startswith(f"{w}/") for w in wurzeln)
 
 
-def geaenderte_dateien(repo: Path, basis: str) -> list[str] | None:
-    """Geänderte Dateien seit ``basis`` über die eine Stelle :func:`sofort.geaendert`."""
+def geaenderte_dateien(repo: Path, basis: str, ziel: str | None = None) -> list[str] | None:
+    """Geänderte Dateien seit ``basis`` (optional bis ``ziel``) über :func:`sofort.geaendert_zwischen`."""
     from to_spawn.pruef import sofort
 
-    return sofort.geaendert(repo, basis)
+    return sofort.geaendert_zwischen(repo, basis, ziel)
 
 
 def auswaehlen(
@@ -381,6 +382,7 @@ def auswaehlen(
     geaendert: Iterable[str] | None = None,
     *,
     basis: str | None = None,
+    ziel: str | None = None,
     test_pfade: Sequence[str] | None = None,
     graph: ImportGraph | None = None,
 ) -> Auswahl:
@@ -389,9 +391,10 @@ def auswaehlen(
     if geaendert is None:
         if basis is None:
             raise ValueError("import_graph.auswaehlen: geaendert oder basis erforderlich")
-        diff_pfade = geaenderte_dateien(repo, basis)
+        diff_pfade = geaenderte_dateien(repo, basis, ziel)
         if diff_pfade is None:
-            raise RuntimeError(f"geänderte Dateien gegen {basis!r} in {repo} nicht bestimmbar")
+            spanne = f"{basis!r}..{ziel!r}" if ziel else repr(basis)
+            raise RuntimeError(f"geänderte Dateien gegen {spanne} in {repo} nicht bestimmbar")
         roh_pfade = diff_pfade
     else:
         roh_pfade = list(geaendert)
@@ -524,6 +527,7 @@ def ziele_mit_roten(
 
 def main(argv: Sequence[str] | None = None) -> int:
     """CLI für lokale Aufrufe und CI-Vorlagen (``python -m to_spawn.pruef.import_graph``)."""
+    konsole.utf8_ausgabe()
     parser = argparse.ArgumentParser(
         prog="python -m to_spawn.pruef.import_graph",
         description="Wählt betroffene Python-Tests per AST-Import-Graph aus.",
@@ -532,6 +536,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     quelle = parser.add_mutually_exclusive_group(required=True)
     quelle.add_argument("--basis", help="Git-Basis-Ref für die Änderungsermittlung (z. B. origin/main)")
     quelle.add_argument("--geaendert", nargs="+", help="Geänderte Relativpfade statt git diff")
+    parser.add_argument(
+        "--ziel",
+        default=None,
+        help="Optionaler Git-Ziel-Ref (z. B. HEAD in CI; weglassen = Arbeitsbaum gegen Basis)",
+    )
     parser.add_argument("--test-pfad", action="append", default=None, help="Suchordner für Tests (mehrfach möglich)")
     parser.add_argument("--mit-roten", action="store_true", help="Zuletzt rote Tests aus dem Protokoll voranstellen")
     parser.add_argument("--json", action="store_true", dest="als_json", help="Ergebnis als JSON ausgeben")
@@ -539,7 +548,13 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     repo = args.repo.resolve()
     try:
-        wahl = auswaehlen(repo, geaendert=args.geaendert, basis=args.basis, test_pfade=args.test_pfad)
+        wahl = auswaehlen(
+            repo,
+            geaendert=args.geaendert,
+            basis=args.basis,
+            ziel=args.ziel,
+            test_pfade=args.test_pfad,
+        )
     except (OSError, RuntimeError, ValueError) as fehler:
         sys.stderr.write(f"Fehler: {fehler}\n")
         return 2
