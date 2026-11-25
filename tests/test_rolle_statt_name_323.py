@@ -11,6 +11,7 @@ import ast
 import re
 import sys
 import tokenize
+from collections.abc import Iterable
 from pathlib import Path
 
 import pytest
@@ -399,3 +400,106 @@ def test_kein_name_in_diesem_test() -> None:
         if NAME.search(zeile)
     ]
     assert funde == [], f"Name im Test: {funde}"
+
+
+#: Teil 7 (#325): Auch Bezeichner, Daten-Schlüssel, CSS-Variablen und Schalter unter ``to_spawn/``,
+#: ``skripte/``, ``leitstand/`` und ``SKILL.md`` tragen keinen festen Personennamen.
+#: Nur explizit markierte Übergangs-Alias-Zeilen in ``ALIAS_DATEIEN_TEIL7`` bleiben
+#: vorübergehend für gespeicherte Stände und bestehende Aufrufer erlaubt.
+BEZEICHNER_ORDNER_TEIL7 = ("to_spawn", "skripte", "leitstand")
+BEZEICHNER_EINZEL_TEIL7 = ("SKILL.md",)
+BEZEICHNER_ENDUNGEN_TEIL7 = frozenset({".py", ".html", ".sh", ".ps1"})
+ALIAS_MARKE_TEIL7 = "Übergangs-Alias (#325)"
+ALIAS_DATEIEN_TEIL7 = frozenset(
+    {
+        "to_spawn/aufpasser.py",
+        "to_spawn/capo.py",
+        "to_spawn/hausmeister.py",
+        "to_spawn/hausmeister_windows.py",
+        "skripte/leitstand.py",
+        "leitstand/seite.html",
+    }
+)
+
+
+def _name_teilwort_muster(woerter: Iterable[str]) -> re.Pattern[str]:
+    """Trifft Namen aus ``woerter`` auch in zusammengesetzten Bezeichnern und Schaltern."""
+    teile = sorted({re.escape(w) for w in woerter}, key=len, reverse=True)
+    return re.compile("|".join(teile), re.IGNORECASE) if teile else re.compile(r"(?!)")
+
+
+NAME_TEILWORT = _name_teilwort_muster(NAMEN)
+
+
+def _bezeichner_funde_teil7() -> tuple[list[str], list[str]]:
+    """Liefert ``(verstoesse, veraltete_alias_dateien)`` für Teil 7 (#325)."""
+    dateien: list[Path] = []
+    for ordner in BEZEICHNER_ORDNER_TEIL7:
+        basis = SKILL / ordner
+        if basis.is_dir():
+            dateien.extend(
+                p
+                for p in basis.rglob("*")
+                if p.is_file() and p.suffix in BEZEICHNER_ENDUNGEN_TEIL7 and "__pycache__" not in p.parts
+            )
+    for einzel in BEZEICHNER_EINZEL_TEIL7:
+        pfad = SKILL / einzel
+        if pfad.is_file():
+            dateien.append(pfad)
+    dateien.sort(key=lambda p: p.relative_to(SKILL).as_posix())
+
+    verstoesse: list[str] = []
+    mit_alias: set[str] = set()
+    for pfad in dateien:
+        rel = pfad.relative_to(SKILL).as_posix()
+        for nr, zeile in enumerate(pfad.read_text(encoding="utf-8").splitlines(), 1):
+            if not NAME_TEILWORT.search(zeile):
+                continue
+            if rel in ALIAS_DATEIEN_TEIL7 and ALIAS_MARKE_TEIL7 in zeile:
+                mit_alias.add(rel)
+                continue
+            verstoesse.append(f"{rel}:{nr}")
+    veraltet = sorted(d for d in ALIAS_DATEIEN_TEIL7 if (SKILL / d).is_file() and d not in mit_alias)
+    return verstoesse, veraltet
+
+
+@nur_mit_namensliste
+def test_kein_fester_personenname_in_bezeichnern_und_schaltern_teil7() -> None:
+    """Teil 7 (#325): Bezeichner, CSS-Variablen und Schalter nutzen die Rolle statt eines Namens."""
+    verstoesse, veraltet = _bezeichner_funde_teil7()
+    assert verstoesse == [], f"fester Personenname in Bezeichnern/Schaltern (ohne Übergangs-Alias): {verstoesse}"
+    assert veraltet == [], f"veraltete Alias-Ausnahme ohne Treffer: {veraltet}"
+
+
+def test_teil7_bezeichner_scan_mechanik(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Teil 7 (#325): Mechanik für Bezeichner-/Schalter-Scan mit Kunstwort (auch ohne private Liste)."""
+    (tmp_path / "to_spawn").mkdir()
+    (tmp_path / "skripte").mkdir()
+    (tmp_path / "leitstand").mkdir()
+    (tmp_path / "to_spawn" / "capo.py").write_text(
+        "def mensch_antwort():\n    return ''\nkunstworts_antwort = mensch_antwort  # Übergangs-Alias (#325)\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "to_spawn" / "hausmeister.py").write_text(
+        "fuer_kunstwort = True\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "leitstand" / "seite.html").write_text(
+        ':root { --kunstwort: #c27400; }\nconst LOGART_ALIAS = { kunstwort: "mensch" }; // Übergangs-Alias (#325)\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "leitstand" / "pruefen.py").write_text(
+        'arten = ("art-problem", "art-kunstwort")\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "SKILL.md").write_text("Meldung `braucht_kunstwort`.\n", encoding="utf-8")
+    monkeypatch.setattr(sys.modules[__name__], "SKILL", tmp_path)
+    monkeypatch.setattr(sys.modules[__name__], "NAME_TEILWORT", _name_teilwort_muster({"kunstwort"}))
+    verstoesse, veraltet = _bezeichner_funde_teil7()
+    assert verstoesse == [
+        "SKILL.md:1",
+        "leitstand/pruefen.py:1",
+        "leitstand/seite.html:1",
+        "to_spawn/hausmeister.py:1",
+    ]
+    assert veraltet == ["to_spawn/hausmeister.py"]

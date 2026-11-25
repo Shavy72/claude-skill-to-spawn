@@ -145,9 +145,9 @@ def test_ticket_stand_reihenfolge(ls: ModuleType) -> None:
     assert ls.ticket_stand("1", "VERWAIST pid 9", {}, [], [], leer) == ("fehler", "Session verwaist")
     rot = [_zeile("deploy_phase", 1, phase="gate", status="rot")]
     assert ls.ticket_stand("1", "läuft", {}, rot, [], leer)[0] == "fehler"
-    david = [ls.als_zeit(_zeile("x", 5)["ts"])]
-    assert ls.ticket_stand("1", "läuft", {}, [_zeile("session_start", 0)], david, leer) == (
-        "braucht_david",
+    mensch = [ls.als_zeit(_zeile("x", 5)["ts"])]
+    assert ls.ticket_stand("1", "läuft", {}, [_zeile("session_start", 0)], mensch, leer) == (
+        "braucht_mensch",
         "Wartet auf den Menschen",
     )
     assert ls.ticket_stand("1", "läuft", {}, [_zeile("handoff", 2)], [], leer) == (

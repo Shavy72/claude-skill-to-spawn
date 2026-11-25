@@ -20,10 +20,10 @@ nichts jünger als :data:`OHNE_GIT_ALTER_SEKUNDEN`, kein Geheimnis-Verdacht, kei
 Datenbank, kein eingebettetes Repo und kein Lesefehler. Ohne Ticket-Nummer im Namen
 werden solche Ordner (#241) zusätzlich nur dann geräumt, wenn ihr gesamter Nicht-Erzeugnis-
 Inhalt bytegleich einem Commit auf ``origin`` eines bekannten eigenen Hauptrepos ist; sonst
-bleiben sie (``fuer_david=True``).
+bleiben sie (``fuer_mensch=True``).
 #225 — Gesperrte Worktrees (``locked``) bleiben als Regel (kein Fehler); eingetragene
 Worktrees ohne Ticket-Nummer außerhalb der Wurzeln (z. B. ``deploy-tmp``) bleiben still
-stehen (kein ``fuer_david``).
+stehen (kein ``fuer_mensch``).
 Unterordner eines fremden Repos und unlesbare Git-Ordner bleiben. Je Takt schreibt :func:`aufraeumen_alles` eine Zeile
 nach :data:`KENNZAHL_DATEI` neben dem Log („x von y gelöscht, z bleiben“, Bleib-Gründe
 gezählt) — eigene Datei, damit Leser des Ordner-Logs nur Ordner-Zeilen sehen.
@@ -42,12 +42,12 @@ weg, nach deren Regeln. Gesichert wird über :func:`to_spawn.aufpasser.sichern` 
 Dateien, die die Sicherung NICHT mitnimmt, gehen beim Löschen verloren — darum:
 - Geheimnisse (``SICHERUNG_AUSSCHLUSS``, z. B. ``.env*``, ``*.key``), geändert, neu
   oder ignoriert: dürfen nur weg, wenn das Hauptrepo des Worktrees dieselbe Datei mit
-  gleichem Inhalt hat; sonst (und beim Klon immer) bleibt, ``fuer_david=True``.
-  Geheimnisse in ungepushten Commits würde die Sicherung mit hochladen ⇒ bleibt, ``fuer_david=True``.
+  gleichem Inhalt hat; sonst (und beim Klon immer) bleibt, ``fuer_mensch=True``.
+  Geheimnisse in ungepushten Commits würde die Sicherung mit hochladen ⇒ bleibt, ``fuer_mensch=True``.
 - Ignorierte Dateien: nur bekannte Erzeugnisse (:data:`ERZEUGNISSE`) dürfen weg,
   jede andere ignorierte Datei ⇒ bleibt.
 - Datenbanken (``aufpasser.NIE_HOCHLADEN``) lädt die Sicherung nie hoch: weg dürfen nur
-  kleine Test-Kopien (:func:`ist_test_db`), jede andere ⇒ bleibt, ``fuer_david=True``.
+  kleine Test-Kopien (:func:`ist_test_db`), jede andere ⇒ bleibt, ``fuer_mensch=True``.
 - Eingebettete Repos und Submodule (Sicherung sähe nur den Gitlink) ⇒ bleibt.
 
 Prozesse kommen aus ``/proc``; unter Windows (Laptop, ``C:/dev/wt-*``, #1373) aus
@@ -61,7 +61,7 @@ Lauf zuerst alle vorhandenen Ordner fest (am Server: keine Wirkung).
 Jede Entscheidung schreibt eine JSON-Zeile nach ``TO_SPAWN_HAUSMEISTER_LOG``
 (Standard ``~/.claude/to-spawn/hausmeister.jsonl``), beim Löschen VOR dem Löschen;
 Log nicht schreibbar ⇒ bleibt. Scheitert danach das Löschen, folgt eine zweite Zeile
-„bleibt“. :func:`liste_fuer_david` liest daraus die Ordner, über die der Mensch selbst
+„bleibt“. :func:`liste_fuer_mensch` liest daraus die Ordner, über die der Mensch selbst
 entscheiden muss.
 
 Zweite Tür (#1369): :func:`aufraeumen_alles` wendet dieselben Regeln auf alle Ordner
@@ -106,7 +106,7 @@ Commits weder auf ``origin/master`` noch auf einem ``sicherung/*``-Zweig, nie
 ``git branch --merged``. Fehlendes geht erst über :func:`aufpasser.sichern` (``kopf=``,
 ohne Arbeitsdateien) nach ``sicherung/<N>``, Gegenprobe, dann Remote-Löschen mit Lease
 auf den geprüften Stand bzw. lokal ``branch -D`` (nie, wenn in einem Worktree
-ausgecheckt). Ohne Ticket-Nummer bleibt der Zweig und steht in :func:`liste_fuer_david`.
+ausgecheckt). Ohne Ticket-Nummer bleibt der Zweig und steht in :func:`liste_fuer_mensch`.
 Remote-Zweige liest der Zwischenspeicher der Sicherungs-Zweige. :func:`zweige_aufraeumen`
 läuft im Takt von :func:`aufraeumen_alles` höchstens täglich je Modus: je Hauptrepo
 ``fetch --prune`` + ``worktree prune`` (nur echt), lokale ``ticket/*`` ohne Arbeitsordner,
@@ -508,19 +508,58 @@ class Ergebnis:
     grund: str
     ticket: int | None
     sicherung: str | None = None
-    fuer_david: bool = False
+    fuer_mensch: bool = False
     trocken: bool = True
     fehler: bool = False  # True = „bleibt“ wegen eines Fehlers, nicht wegen einer Regel
+
+    def __init__(
+        self,
+        ordner: Path,
+        art: Art,
+        grund: str,
+        ticket: int | None,
+        sicherung: str | None = None,
+        fuer_mensch: bool = False,
+        trocken: bool = True,
+        fehler: bool = False,
+        *,
+        fuer_david: bool | None = None,  # Übergangs-Alias (#325)
+    ) -> None:
+        object.__setattr__(self, "ordner", ordner)
+        object.__setattr__(self, "art", art)
+        object.__setattr__(self, "grund", grund)
+        object.__setattr__(self, "ticket", ticket)
+        object.__setattr__(self, "sicherung", sicherung)
+        object.__setattr__(self, "fuer_mensch", bool(fuer_mensch or fuer_david))  # Übergangs-Alias (#325)
+        object.__setattr__(self, "trocken", trocken)
+        object.__setattr__(self, "fehler", fehler)
+
+    @property
+    def fuer_david(self) -> bool:  # Übergangs-Alias (#325)
+        """Übergangs-Alias für :attr:`fuer_mensch` (#325)."""
+        return self.fuer_mensch
 
 
 class _Bleibt(Exception):
     """Eine Regel (oder ein Fehler) hält den Ordner fest."""
 
-    def __init__(self, grund: str, *, fuer_david: bool = False, fehler: bool = False) -> None:
+    def __init__(
+        self,
+        grund: str,
+        *,
+        fuer_mensch: bool = False,
+        fuer_david: bool = False,  # Übergangs-Alias (#325)
+        fehler: bool = False,
+    ) -> None:
         super().__init__(grund)
         self.grund = grund
-        self.fuer_david = fuer_david
+        self.fuer_mensch = bool(fuer_mensch or fuer_david)  # Übergangs-Alias (#325)
         self.fehler = fehler
+
+    @property
+    def fuer_david(self) -> bool:  # Übergangs-Alias (#325)
+        """Übergangs-Alias für :attr:`fuer_mensch` (#325)."""
+        return self.fuer_mensch
 
 
 @dataclass(frozen=True)
@@ -791,8 +830,8 @@ def _aufraeumen(ordner: Path, *, loeschen: bool, jetzt: float | None, platznot: 
     return erg
 
 
-def liste_fuer_david(log_datei: Path | None = None) -> list[Path | str]:
-    """Ordner aller Log-Zeilen mit ``fuer_david=True``, jeder nur einmal (Reihenfolge des Logs).
+def liste_fuer_mensch(log_datei: Path | None = None) -> list[Path | str]:
+    """Ordner aller Log-Zeilen mit ``fuer_mensch=True``, jeder nur einmal (Reihenfolge des Logs).
 
     Ordner kommen als ``Path``; Zweig-Zeilen (#1439) als Text ``<remote> <zweig>`` (kein
     ``Path``: der machte aus ``https://`` ein ``https:/``).
@@ -808,13 +847,19 @@ def liste_fuer_david(log_datei: Path | None = None) -> list[Path | str]:
             daten = json.loads(zeile)
         except ValueError:
             continue
-        if not isinstance(daten, dict) or not daten.get("fuer_david"):
+        if not isinstance(daten, dict):
+            continue
+        fuer_mensch = daten.get("fuer_mensch") or daten.get("fuer_david")  # Übergangs-Alias (#325)
+        if not fuer_mensch:
             continue
         if daten.get("ordner"):
             gesehen.setdefault(Path(daten["ordner"]), None)
         elif daten.get("zweig"):
             gesehen.setdefault(f"{daten.get('remote') or ''} {daten['zweig']}", None)
     return list(gesehen)
+
+
+liste_fuer_david = liste_fuer_mensch  # Übergangs-Alias (#325)
 
 
 #: Zweige ``sicherung/<N>`` gehen so viele Tage nach dem Anlegen (E41).
@@ -840,7 +885,38 @@ class ZweigErgebnis:
     trocken: bool = True
     fehler: bool = False
     ort: Literal["remote", "lokal"] = "remote"
-    fuer_david: bool = False
+    fuer_mensch: bool = False
+
+    def __init__(
+        self,
+        remote: str,
+        zweig: str,
+        sha: str,
+        angelegt: float | None,
+        art: Literal["gelöscht", "gesichert+gelöscht", "bleibt"],
+        grund: str,
+        trocken: bool = True,
+        fehler: bool = False,
+        ort: Literal["remote", "lokal"] = "remote",
+        fuer_mensch: bool = False,
+        *,
+        fuer_david: bool | None = None,  # Übergangs-Alias (#325)
+    ) -> None:
+        object.__setattr__(self, "remote", remote)
+        object.__setattr__(self, "zweig", zweig)
+        object.__setattr__(self, "sha", sha)
+        object.__setattr__(self, "angelegt", angelegt)
+        object.__setattr__(self, "art", art)
+        object.__setattr__(self, "grund", grund)
+        object.__setattr__(self, "trocken", trocken)
+        object.__setattr__(self, "fehler", fehler)
+        object.__setattr__(self, "ort", ort)
+        object.__setattr__(self, "fuer_mensch", bool(fuer_mensch or fuer_david))  # Übergangs-Alias (#325)
+
+    @property
+    def fuer_david(self) -> bool:  # Übergangs-Alias (#325)
+        """Übergangs-Alias für :attr:`fuer_mensch` (#325)."""
+        return self.fuer_mensch
 
 
 def sicherungen_aufraeumen(*, loeschen: bool = False, jetzt: float | None = None) -> list[ZweigErgebnis]:
@@ -1091,7 +1167,8 @@ def _zweig_log(erg: ZweigErgebnis, *, absicht: bool = False) -> bool:
             "trocken": erg.trocken,
             "fehler": erg.fehler,
             "ort": erg.ort,
-            "fuer_david": erg.fuer_david,
+            "fuer_mensch": erg.fuer_mensch,
+            "fuer_david": erg.fuer_mensch,  # Übergangs-Alias (#325)
         }
     )
 
@@ -1260,7 +1337,7 @@ def _zweig_entscheiden(
     quelle = str(repo)
     nr = _zweig_ticket(zweig)
     if nr is None:
-        return ergebnis("bleibt", "keine Ticket-Nummer im Zweig — der Mensch entscheidet", fuer_david=True)
+        return ergebnis("bleibt", "keine Ticket-Nummer im Zweig — der Mensch entscheidet", fuer_mensch=True)
     o = _zweig_ort(repo, ort)
     quelle = o.remote
     if ort == "lokal" and (wo := _ausgecheckt_in(o.cwd, zweig)):
@@ -1276,7 +1353,7 @@ def _zweig_entscheiden(
     if fehlende and ort == "lokal":  # Remote-Commits liegen schon auf GitHub, lokale nicht
         leck = _geheimnis_pfade(o.cwd, sha, "--not", o.haupt_ref, f"--glob={o.sicherungen}")
         if leck:
-            return ergebnis("bleibt", f"Geheimnis-Datei {leck[0]} in ungesichertem Commit", sha, fuer_david=True)
+            return ergebnis("bleibt", f"Geheimnis-Datei {leck[0]} in ungesichertem Commit", sha, fuer_mensch=True)
         try:  # #169: dieselbe Sperre wie der Zweig-Upload, Übergaben nie auf sicherung/<N>
             gesperrt = uebergabe_sichern.gesperrte_pfade(o.cwd, sha, "--not", o.haupt_ref, f"--glob={o.sicherungen}")
         except OSError as fehler:
@@ -1284,7 +1361,7 @@ def _zweig_entscheiden(
         if gesperrt:
             log.error("Sicherung von %s verweigert: %s nie öffentlich", zweig, ", ".join(gesperrt))
             grund = f"Sicherung verweigert: {', '.join(gesperrt)} nie öffentlich"
-            return ergebnis("bleibt", grund, sha, fehler=True, fuer_david=True)
+            return ergebnis("bleibt", grund, sha, fehler=True, fuer_mensch=True)
     if trocken:
         return ergebnis(art, grund, sha)
     if fehlende:
@@ -1599,7 +1676,7 @@ def _bleibt(ordner: Path, trocken: bool, stand: _Stand, b: _Bleibt) -> Ergebnis:
         b.grund,
         stand.ticket,
         stand.sicherung,
-        fuer_david=b.fuer_david,
+        fuer_mensch=b.fuer_mensch,
         trocken=trocken,
         fehler=b.fehler,
     )
@@ -1630,7 +1707,7 @@ def _regeln(
     # 4 Ticket-Nummer aus Name und Zweig (None = keine, #1536)
     stand.ticket = ticket = _ticket_nummer(ordner, echt)
     # 4a #225: eingetragene Worktrees ohne Ticket-Nummer außerhalb der Wurzeln (z. B. deploy-tmp)
-    # bleiben still stehen — nie löschen, nie in liste_fuer_david.
+    # bleiben still stehen — nie löschen, nie in liste_fuer_mensch.
     if ticket is None and not _in_wurzeln(echt):
         raise _Bleibt(f"{OHNE_NUMMER} (außerhalb der Wurzeln)")
     # 4b #135/#347: Nummer zählt im Ziel-Repo aus zweig_ticket_repo bzw. origin; unklar ⇒ Fehler
@@ -1639,7 +1716,7 @@ def _regeln(
     if ticket is not None:
         ziel, unklar = _ordner_ticket_ziel(echt, ticket, slug)
         if unklar:
-            raise _Bleibt("Ticket-Repo nicht bestimmbar (Maschinen-Liste)", fuer_david=True, fehler=True)
+            raise _Bleibt("Ticket-Repo nicht bestimmbar (Maschinen-Liste)", fuer_mensch=True, fehler=True)
     fremd = ticket is not None and ziel is None
     if fremd:
         stand.ticket = None
@@ -1667,12 +1744,12 @@ def _regeln(
         if zu_sichern:
             raise _Bleibt(
                 f"{OHNE_NUMMER}: Änderungen oder Commits nicht auf origin (ohne Nummer nicht sicherbar)",
-                fuer_david=True,
+                fuer_mensch=True,
             )
         if koepfe:
             raise _Bleibt(
                 f"{OHNE_NUMMER}: {koepfe[0]} nicht auf dem Server (ls-remote origin, ohne Nummer nicht sicherbar)",
-                fuer_david=True,
+                fuer_mensch=True,
             )
         grund = f"{OHNE_NUMMER}; alles auf origin, Baum sauber, seit 24 h unverändert, kein Pull-Request offen"
     elif fremd:  # 8b #135: ohne gültiges Ticket nur, was nachweislich fertig ist
@@ -1717,7 +1794,7 @@ def _git_ordner_pruefen(echt: Path) -> bool | None:
             return None
         raise _Bleibt("Git-Ordner nicht lesbar (git rev-parse scheitert)", fehler=True)
     if Path(oben).resolve() != echt:  # Unterordner eines anderen Repos: nie löschen
-        raise _Bleibt(f"kein eigener Git-Ordner (gehört zu {oben})", fuer_david=True)
+        raise _Bleibt(f"kein eigener Git-Ordner (gehört zu {oben})", fuer_mensch=True)
     ist_worktree = (echt / ".git").is_file()
     if not ist_worktree:
         if echt.name in _hauptrepo_namen():
@@ -1726,7 +1803,7 @@ def _git_ordner_pruefen(echt: Path) -> bool | None:
             raise _Bleibt("Hauptrepo mit verknüpften Worktrees")
     url = _git_oder_none(echt, "config", "--get", "remote.origin.url") or ""
     if _origin_slug(echt).lower() not in _eigene_repos():
-        raise _Bleibt(f"fremdes Repo ({url or 'ohne origin'})", fuer_david=True)
+        raise _Bleibt(f"fremdes Repo ({url or 'ohne origin'})", fuer_mensch=True)
     if ist_worktree:
         return _worktree_eintrag_pruefen(echt)
     return False
@@ -2072,7 +2149,7 @@ def _ohne_git_baum_pruefen(echt: Path, jetzt: float) -> None:
             namen = {e.name for e in eintraege}
             if ".git" in namen or {"HEAD", "objects", "refs"} <= namen:
                 rel_d = d.relative_to(echt).as_posix()
-                raise _Bleibt(f"eingebettetes Repo {rel_d}", fuer_david=True)
+                raise _Bleibt(f"eingebettetes Repo {rel_d}", fuer_mensch=True)
         for e in eintraege:
             try:
                 info = e.stat(follow_symlinks=False)
@@ -2085,9 +2162,9 @@ def _ohne_git_baum_pruefen(echt: Path, jetzt: float) -> None:
             if jetzt - info.st_mtime < OHNE_GIT_ALTER_SEKUNDEN:
                 raise _Bleibt(f"frisch geändert ({rel})")
             if any(m.match(rel) for m in _OHNE_GIT_GEHEIMNIS_MUSTER) and not _neu_erzeugbar(rel):
-                raise _Bleibt(f"Geheimnis-Verdacht {rel} (ohne Git nicht sicherbar)", fuer_david=True)
+                raise _Bleibt(f"Geheimnis-Verdacht {rel} (ohne Git nicht sicherbar)", fuer_mensch=True)
             if any(m.match(rel) for m in _OHNE_GIT_DB_MUSTER) and not ist_test_db(echt, rel):
-                raise _Bleibt(f"Datenbank {rel} ist keine Test-Kopie (nicht sicherbar)", fuer_david=True)
+                raise _Bleibt(f"Datenbank {rel} ist keine Test-Kopie (nicht sicherbar)", fuer_mensch=True)
             if stat.S_ISDIR(art):
                 stapel.append(Path(e.path))
 
@@ -2107,7 +2184,7 @@ def _ohne_git_regeln(
         if treffer is None:
             raise _Bleibt(
                 "kein eigener Git-Ordner und keine Ticket-Nummer (nicht sicherbar)",
-                fuer_david=True,
+                fuer_mensch=True,
             )
         slug, commit, baum_sha = treffer
         grund = (
@@ -2173,7 +2250,7 @@ def _ticket_nummer(ordner: Path, echt: Path) -> int | None:
     if aus_name is not None and aus_zweig is not None and aus_name != aus_zweig:
         raise _Bleibt(
             f"Ordnername (#{aus_name}) und Zweig {zweig} (#{aus_zweig}) widersprechen sich",
-            fuer_david=True,
+            fuer_mensch=True,
         )
     return aus_name if aus_name is not None else aus_zweig
 
@@ -2264,7 +2341,7 @@ def _fremd_fertig(echt: Path, ticket: int, ungesichert: bool, jetzt: float | Non
     Rückgabe: Grund für Log und Ergebnis."""
     vorne = f"#{ticket} ist kein Ticket dieses Repos"
     if ungesichert:
-        raise _Bleibt(f"{vorne}: Änderungen oder Commits nicht im Hauptzweig gesichert", fuer_david=True)
+        raise _Bleibt(f"{vorne}: Änderungen oder Commits nicht im Hauptzweig gesichert", fuer_mensch=True)
     haupt = _hauptzweig(echt, str(echt))
     haupt_sha = _server_zweig_sha(echt, haupt)
     offen = _git_oder_none(echt, "rev-list", "--ignore-missing", "-n", "1", "HEAD", "--not", haupt_sha)
@@ -2283,7 +2360,7 @@ def _ohne_nummer_nicht_frisch(echt: Path, jetzt: float | None) -> None:
     mit dem Grund ``keine Ticket-Nummer`` (#1536) — er ist vermutlich in Arbeit."""
     jetzt_ts = jetzt if jetzt is not None else time.time()
     if jetzt_ts - _juengste_aenderung(echt) < MINDEST_ZU_SEKUNDEN:
-        raise _Bleibt(OHNE_NUMMER, fuer_david=True)
+        raise _Bleibt(OHNE_NUMMER, fuer_mensch=True)
 
 
 def _juengste_aenderung(echt: Path) -> float:
@@ -2826,20 +2903,20 @@ def _ungesichertes(
     except RuntimeError as fehler:
         raise _Bleibt(f"git fetch origin gescheitert: {_kurz(fehler)}", fehler=True) from None
     if not ist_worktree and _git_oder_none(repo, "rev-parse", "--verify", "-q", "refs/stash"):
-        raise _Bleibt("Stash vorhanden (git stash list)", fuer_david=True)
+        raise _Bleibt("Stash vorhanden (git stash list)", fuer_mensch=True)
     server_zweige = _server_zweige(repo)
     sicherung_vorher = _sicherung_stand_holen(repo, ticket, server_zweige) if ticket is not None else None
     auf_server = list(server_zweige.values())
     if _nur_im_reflog(repo, ist_worktree, auf_server):
-        raise _Bleibt("ungesicherte Commits im Verlauf (Reflog, auf keinem Zweig)", fuer_david=True)
+        raise _Bleibt("ungesicherte Commits im Verlauf (Reflog, auf keinem Zweig)", fuer_mensch=True)
     for zeile in aufpasser.git_lauf(repo, "ls-files", "-s").splitlines():
         if zeile.startswith("160000 "):
-            raise _Bleibt(f"Submodul {zeile.split(chr(9), 1)[-1]}", fuer_david=True)
+            raise _Bleibt(f"Submodul {zeile.split(chr(9), 1)[-1]}", fuer_mensch=True)
 
     alle = _status(repo)
     for _, pfad in alle:
         if pfad.endswith("/"):
-            raise _Bleibt(f"eingebettetes Repo {pfad}", fuer_david=True)
+            raise _Bleibt(f"eingebettetes Repo {pfad}", fuer_mensch=True)
     erzeugnis = {p for xy, p in _status(repo, *_glob(ERZEUGNISSE)) if xy == "!!"}
     geheim = {p for _, p in _status(repo, *_glob(aufpasser.SICHERUNG_AUSSCHLUSS))}
     # Nur sicher neu Erzeugbares ist nie ein Geheimnis (__pycache__/tempo_zugang.*.pyc).
@@ -2848,12 +2925,12 @@ def _ungesichertes(
     haupt = _hauptrepo(repo) if ist_worktree else None
     ungleich = [p for p in sorted(geheim) if not _gleiche_kopie(haupt, repo, p)]
     if ungleich:
-        raise _Bleibt(f"Geheimnis-Datei {ungleich[0]} nicht gleich im Hauptrepo", fuer_david=True)
+        raise _Bleibt(f"Geheimnis-Datei {ungleich[0]} nicht gleich im Hauptrepo", fuer_mensch=True)
     # #1536: Datenbanken lädt die Sicherung nie hoch — weg dürfen nur Test-Kopien.
     datenbanken = {p for _, p in _status(repo, *_glob(aufpasser.NIE_HOCHLADEN))}
     fremd = sorted(p for p in datenbanken if not ist_test_db(repo, p))
     if fremd:
-        raise _Bleibt(f"Datenbank {fremd[0]} ist keine Test-Kopie (nicht sicherbar)", fuer_david=True)
+        raise _Bleibt(f"Datenbank {fremd[0]} ist keine Test-Kopie (nicht sicherbar)", fuer_mensch=True)
     for xy, pfad in alle:
         if xy == "!!" and pfad not in geheim | erzeugnis | datenbanken:
             raise _Bleibt(f"ignorierte Datei {pfad} ist kein bekanntes Erzeugnis")
@@ -2865,7 +2942,7 @@ def _ungesichertes(
         gegen = ["--not", *auf_server] if auf_server else []
         leck = _geheimnis_pfade(repo, "--ignore-missing", *koepfe, *gegen)
         if leck:
-            raise _Bleibt(f"Geheimnis-Datei {leck[0]} in ungepushtem Commit", fuer_david=True)
+            raise _Bleibt(f"Geheimnis-Datei {leck[0]} in ungepushtem Commit", fuer_mensch=True)
     return koepfe, zu_sichern, alle, sicherung_vorher
 
 
@@ -3144,9 +3221,9 @@ def _nur_im_reflog(repo: Path, ist_worktree: bool, auf_server: list[str] | None 
     Ref-Speicher als ``files`` (keine Reflog-Dateien) ⇒ ``_Bleibt``.
     """
     if _git_oder_none(repo, "config", "--bool", "--get", "core.logAllRefUpdates") == "false":
-        raise _Bleibt("core.logAllRefUpdates=false: Verlauf (Reflog) nicht prüfbar", fuer_david=True)
+        raise _Bleibt("core.logAllRefUpdates=false: Verlauf (Reflog) nicht prüfbar", fuer_mensch=True)
     if (_git_oder_none(repo, "config", "--get", "extensions.refStorage") or "files").lower() != "files":
-        raise _Bleibt("Ref-Speicher ohne Reflog-Dateien: Verlauf nicht prüfbar", fuer_david=True)
+        raise _Bleibt("Ref-Speicher ohne Reflog-Dateien: Verlauf nicht prüfbar", fuer_mensch=True)
     # Was mit dem Ordner stirbt: beim Worktree sein Git-Verzeichnis (``HEAD``, ``refs/worktree/*``,
     # ``refs/bisect/*``), beim Klon das ganze ``.git`` samt ``worktrees/*/logs`` verknüpfter Worktrees.
     git_dir = Path(aufpasser.git_lauf(repo, "rev-parse", "--absolute-git-dir").strip())
@@ -3171,7 +3248,7 @@ def _nur_im_reflog(repo: Path, ist_worktree: bool, auf_server: list[str] | None 
         try:  # ohne --ignore-missing: ein fehlendes Objekt ist ein Fehler
             aufpasser.git_lauf(repo, "rev-list", "--no-walk", *happen)
         except RuntimeError as fehler:
-            raise _Bleibt(f"Reflog verweist auf fehlendes Objekt: {_kurz(fehler)}", fuer_david=True) from None
+            raise _Bleibt(f"Reflog verweist auf fehlendes Objekt: {_kurz(fehler)}", fuer_mensch=True) from None
         aus = aufpasser.git_lauf(repo, "rev-list", "--ignore-missing", *happen, *sicher)
         verwaist.update(aus.split())
     if not verwaist:
@@ -3195,7 +3272,7 @@ def _koepfe_auf_server(repo: Path, ist_worktree: bool) -> None:
     Server-Köpfe, die lokal fehlen, zählen nicht (``--ignore-missing``). Sonst ``_Bleibt``."""
     fehlend = _ungepushte_koepfe(repo, ist_worktree)
     if fehlend:
-        raise _Bleibt(f"{OHNE_NUMMER}: {fehlend[0]} nicht auf dem Server (ls-remote origin)", fuer_david=True)
+        raise _Bleibt(f"{OHNE_NUMMER}: {fehlend[0]} nicht auf dem Server (ls-remote origin)", fuer_mensch=True)
 
 
 def _server_zweig_sha(repo: Path, zweig: str) -> str:
@@ -3296,7 +3373,7 @@ def _kein_prozess(ordner: Path, *, probe: bool = False) -> None:
             if probe:
                 hausmeister_windows.umbenennen_probe(ordner)
         except hausmeister_windows.Bleibt as b:
-            raise _Bleibt(b.grund, fuer_david=b.fuer_david, fehler=b.fehler) from None
+            raise _Bleibt(b.grund, fuer_mensch=b.fuer_mensch, fehler=b.fehler) from None
         return
     proc = Path("/proc")
     try:
@@ -3459,7 +3536,7 @@ def _loeschen(ordner: Path, ist_worktree: bool) -> None:
         aufpasser.git_lauf(hauptrepo, "worktree", "prune")
         if zweig and zweig.startswith("ticket/"):  # #1439: wirft nie, entscheidet selbst
             erg = zweig_aufraeumen(hauptrepo, zweig, loeschen=True, ort="lokal")
-            if erg.fehler or (erg.art == "bleibt" and erg.fuer_david):
+            if erg.fehler or (erg.art == "bleibt" and erg.fuer_mensch):
                 log.warning("Hausmeister: %s entfernt, Zweig %s bleibt: %s", ordner, zweig, erg.grund)
     elif sys.version_info >= (3, 12):
         shutil.rmtree(ordner, onexc=hausmeister_windows.schreibschutz_weg)
@@ -3819,7 +3896,8 @@ def _log_schreiben(erg: Ergebnis) -> bool:
         "ticket": erg.ticket,
         "sicherung": erg.sicherung,
         "trocken": erg.trocken,
-        "fuer_david": erg.fuer_david,
+        "fuer_mensch": erg.fuer_mensch,
+        "fuer_david": erg.fuer_mensch,  # Übergangs-Alias (#325)
         "fehler": erg.fehler,
     }
     log.info("Hausmeister: %s — %s (%s)", erg.ordner, erg.art, erg.grund)

@@ -149,7 +149,7 @@ STUPSER_FENSTER_S = 24 * 3600
 MELDUNG_EINMAL_PRO_TAG = frozenset(
     {
         "rueckfrage",
-        "braucht_david",
+        "braucht_mensch",
         "sicherung_fehlgeschlagen",
         "fortsetzen_fehlgeschlagen",
         "startet_nicht",
@@ -159,6 +159,9 @@ MELDUNG_EINMAL_PRO_TAG = frozenset(
         "folge_handoff_fehler",
     }
 )
+#: Übergangs-Aliase für gespeicherte Stände und bestehende Aufrufer (#325).
+EREIGNIS_ALIAS: dict[str, str] = {"braucht_david": "braucht_mensch"}  # Übergangs-Alias (#325)
+_METHODE_ALIAS: dict[str, str] = {"_braucht_david": "_braucht_mensch"}  # Übergangs-Alias (#325)
 #: Ereignis → Vorfall (Klasse, Symptom, Ursache, Lösung) für die Lernschleife (#286).
 #: Jeder erkannte Stillstand steht hier, auch der erste Anstupser. Nur die Züge, bei
 #: denen nichts stockte — ``gestartet``, ``fortgesetzt``, ``geschlossen`` — fehlen:
@@ -194,7 +197,7 @@ EREIGNIS_VORFALL: dict[str, tuple[str, str, str, str]] = {
         "Session hängt oder wartet auf etwas, das nie kommt",
         "Fenster ansehen, Session beenden und die Runde neu starten",
     ),
-    "braucht_david": (
+    "braucht_mensch": (
         "mensch",
         "Bau-Kette wartet auf die Entscheidung des Menschen",
         "Die Frage wurde nicht vor dem Spawn im Grill entschieden",
@@ -609,6 +612,7 @@ def notiere_vorfall(repo: Path, ticket: str, ereignis: str, beispiel: str) -> No
     Ziel wie :meth:`Aufpasser.log_ordner`; dieselbe Zeile steht höchstens einmal drin
     (:func:`vorfall.schreibe`). Ein Fehler beim Schreiben kippt den Aufrufer nie.
     """
+    ereignis = EREIGNIS_ALIAS.get(ereignis, ereignis)
     worte = EREIGNIS_VORFALL.get(ereignis)
     if worte is None:
         return
@@ -1810,6 +1814,7 @@ class Aufpasser:
         Meldungen ohne Eingriff (``MELDUNG_EINMAL_PRO_TAG``) je Fenster/Ereignis/Tag
         nur einmal — der Doppelschutz-Schlüssel wird erst nach erfolgreichem
         Kommentar gesetzt (R3)."""
+        ereignis = EREIGNIS_ALIAS.get(ereignis, ereignis)
         log.info("spec %s: %s", spec, text)
         schluessel = f"{fenster}|{ereignis}|{self.datum}"
         if self.e.trocken:
@@ -1818,7 +1823,12 @@ class Aufpasser:
         # Vorfall VOR der Tages-Sperre: die Lernschleife hat ihren eigenen
         # Doppelschutz, sonst verlöre ein gescheiterter Schreibversuch den Tag.
         self.vorfall_notieren(spec, repo, fenster, ereignis, text)
-        if ereignis in MELDUNG_EINMAL_PRO_TAG and schluessel in self.stand.meldungen:
+        schon_gemeldet = schluessel in self.stand.meldungen or any(
+            f"{fenster}|{alt}|{self.datum}" in self.stand.meldungen
+            for alt, neu in EREIGNIS_ALIAS.items()
+            if neu == ereignis
+        )
+        if ereignis in MELDUNG_EINMAL_PRO_TAG and schon_gemeldet:
             log.info("spec %s: Meldung heute schon abgesetzt (%s)", spec, ereignis)
             return
         try:
@@ -2297,7 +2307,7 @@ class Aufpasser:
         for f in fenster:
             self.eintrag(f"{sitzung}/{f.name}", self.pane_text(f.ziel))
 
-    def _braucht_david(
+    def _braucht_mensch(
         self,
         e: dict,
         f: Fenster,
@@ -2309,6 +2319,24 @@ class Aufpasser:
         """Kette beenden: Stufe 3 (nichts mehr anfassen) + einmalige Meldung (R7)."""
         e.update(stufe=3, eingriff=self.jetzt)
         self.melden(f.spec, repo, schluessel, ereignis, text)
+
+    def _braucht_david(  # Übergangs-Alias (#325)
+        self,
+        e: dict,
+        f: Fenster,
+        repo: Path,
+        schluessel: str,
+        ereignis: str,
+        text: str,
+    ) -> None:
+        """Übergangs-Alias für :meth:`_braucht_mensch` (#325)."""
+        self._braucht_mensch(e, f, repo, schluessel, ereignis, text)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        super().__setattr__(_METHODE_ALIAS.get(name, name), value)
+
+    def __delattr__(self, name: str) -> None:
+        super().__delattr__(_METHODE_ALIAS.get(name, name))
 
     def _stupser_zaehlen(self, e: dict) -> list[float]:
         """Anstupser der letzten 24 h (R5) — ältere fallen heraus."""
@@ -2538,7 +2566,7 @@ class Aufpasser:
         if stufe < 2 and info is None and session_beendet(f.pane_pid):
             gemerkt = self.resume_aus_datei(repo, f.sessions_name)
             if gemerkt is None:
-                self._braucht_david(
+                self._braucht_mensch(
                     e,
                     f,
                     repo,
@@ -2560,7 +2588,7 @@ class Aufpasser:
             return
         if stufe == 0:
             if len(self._stupser_zaehlen(e)) >= STUPSER_MAX:
-                self._braucht_david(
+                self._braucht_mensch(
                     e,
                     f,
                     repo,
@@ -2587,12 +2615,12 @@ class Aufpasser:
         elif stufe == 1:
             self.sichern_und_fortsetzen(f, ticket, repo, schluessel, e, hash_start, info)
         elif stufe == 2:
-            self._braucht_david(
+            self._braucht_mensch(
                 e,
                 f,
                 repo,
                 schluessel,
-                "braucht_david",
+                "braucht_mensch",
                 f"„{f.name}“ reagiert nach Anstupsen und Fortsetzen nicht — braucht den Menschen.",
             )
 
@@ -2753,12 +2781,12 @@ class Aufpasser:
         """Stufe 1 → 2: Worktree sichern (nur ``bau <N>``; der Aufseher hat keinen),
         Fenster mit ``--resume <id>`` fortsetzen, Nachweis (R1: auch ``wache <S>``)."""
         if info is None:
-            self._braucht_david(
+            self._braucht_mensch(
                 e,
                 f,
                 repo,
                 schluessel,
-                "braucht_david",
+                "braucht_mensch",
                 f"„{f.name}“ weiter still, aber keine Gesprächs-ID gefunden — braucht den Menschen.",
             )
             return
@@ -2769,7 +2797,7 @@ class Aufpasser:
                 sha = self.sichern_worktree(repo, ticket, info.cwd)
             except RuntimeError as fehler:
                 log.error("%s: Sicherung fehlgeschlagen, Fenster bleibt: %s", f.name, fehler)
-                self._braucht_david(
+                self._braucht_mensch(
                     e,
                     f,
                     repo,
@@ -2797,7 +2825,7 @@ class Aufpasser:
             # Prozess ist womöglich schon beendet, das Fenster aber leer: nicht
             # noch einmal versuchen, sondern den Menschen rufen (Stufe 3).
             log.error("Fenster %s fortsetzen fehlgeschlagen: %s", f.ziel, fehler)
-            self._braucht_david(
+            self._braucht_mensch(
                 e,
                 f,
                 repo,
@@ -2828,7 +2856,7 @@ class Aufpasser:
                 log.error("Fenster %s nach dem Nachweis weg: %s", neu.ziel, fehler)
                 nachgewiesen = False
         if not nachgewiesen:
-            self._braucht_david(
+            self._braucht_mensch(
                 e,
                 neu,
                 repo,

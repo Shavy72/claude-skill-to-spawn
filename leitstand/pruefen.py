@@ -109,7 +109,7 @@ def handy_tests(page) -> dict:
     arten = page.evaluate(
         "() => [...document.querySelectorAll('#log-liste .log-e')].filter(e => e.offsetParent).map(e => [...e.classList].find(c => c.startsWith('art-')))"
     )
-    tests["log_probleme"] = bool(arten) and all(a in ("art-problem", "art-david") for a in arten)
+    tests["log_probleme"] = bool(arten) and all(a in ("art-problem", "art-mensch") for a in arten)
     return {"tests": tests, "blatt": geo}
 
 
@@ -165,7 +165,7 @@ def lauf(pw, name: str, breite: int, hoehe: int, schema: str, fehler: list[str],
         arten = page.evaluate(
             "() => [...document.querySelectorAll('#log-liste .log-e')].filter(e => e.offsetParent).map(e => [...e.classList].find(c => c.startsWith('art-')))"
         )
-        tests["log_probleme"] = bool(arten) and all(a in ("art-problem", "art-david") for a in arten)
+        tests["log_probleme"] = bool(arten) and all(a in ("art-problem", "art-mensch") for a in arten)
         ergebnis["tests"] = tests
         ergebnis["log_arten"] = arten
     browser.close()

@@ -39,11 +39,23 @@ _msvcrt: Any = None
 class Bleibt(Exception):
     """Der Ordner bleibt (Grund für Menschen); ``fehler`` = unklarer Zustand statt Regel."""
 
-    def __init__(self, grund: str, *, fuer_david: bool = False, fehler: bool = False) -> None:
+    def __init__(
+        self,
+        grund: str,
+        *,
+        fuer_mensch: bool = False,
+        fuer_david: bool = False,  # Übergangs-Alias (#325)
+        fehler: bool = False,
+    ) -> None:
         super().__init__(grund)
         self.grund = grund
-        self.fuer_david = fuer_david
+        self.fuer_mensch = bool(fuer_mensch or fuer_david)  # Übergangs-Alias (#325)
         self.fehler = fehler
+
+    @property
+    def fuer_david(self) -> bool:  # Übergangs-Alias (#325)
+        """Übergangs-Alias für :attr:`fuer_mensch` (#325)."""
+        return self.fuer_mensch
 
 
 def pfad_norm(pfad: str | Path) -> str:
@@ -213,7 +225,7 @@ def umbenennen_probe(ordner: Path) -> None:
         )
         raise Bleibt(
             f"Rückbenennen gescheitert, Ordner liegt unter {probe}",
-            fuer_david=True,
+            fuer_mensch=True,
             fehler=True,
         ) from None
 
