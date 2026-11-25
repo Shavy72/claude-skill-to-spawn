@@ -23,6 +23,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -566,85 +567,90 @@ def main() -> int:
     # Umzug (#212): /to-spawn-of im Aufseher zieht alle Sessions um und beendet am Ende
     # diese Aufseher-Session über die Umzug-Datei (Temp-Ordner je Lauf).
     lauf_ordner = Path(tempfile.mkdtemp(prefix=f"wache-{a.spec}-", dir=os.environ.get("TMPDIR")))
-    umzug_datei = lauf_ordner / "umzug.json"
-    abloese_datei = lauf_ordner / "abloesung.json"
-    os.environ["BAU_UMZUG_DATEI"] = str(umzug_datei)
-    os.environ["TO_SPAWN_WACHE_SPEC"] = str(a.spec)
-    os.environ[ABLOESE_ENV] = str(abloese_datei)
-    umzug_datei.unlink(missing_ok=True)
-    session_id = a.resume
-    start_prompt = prompt
-    terminal_log_abschalten()  # #541: ab hier gehört das Terminal Claude, Fäden loggen nur in die Datei
-    # Handoff-Blick (#542): eigener Faden prüft alle ≤ 2,5 min fällige Handoffs und
-    # startet die Leiter — nicht erst beim nächsten Aufseher-Tick (bis 30 min).
-    # Briefkasten-Wecker (#414): neue Frage weckt diese Session, Antwort die Bau-Session (≤ 1 min).
-    with handoff_blick.laeuft(
-        a.spec, handoff_blick.EchteNaht(REPO_ORDNER, ordner, REPO)
-    ), briefkasten_wecker.laeuft(a.spec, REPO_ORDNER, gh_repo=REPO):
-        for runde in range(1, MAX_ABLOESUNGEN + 2):
-            # Aufsicht (#213): Limit im Transkript → Ausweich-Modell; Umzug-/Ablöse-Datei → Ende.
-            code = waechter_lauf.fahre(
-                claude=claude,
-                spec=a.spec,
-                prompt=start_prompt,
-                modell=a.model,
-                ausweich=ausweich,
-                remote_control=remote_control,
-                repo=REPO_ORDNER,
-                cwd=ordner,
-                takt=waechter_lauf.zahl_aus_umgebung(
-                    "TO_SPAWN_AUFSICHT_TAKT", waechter_lauf.TAKT_S
+    try:
+        umzug_datei = lauf_ordner / "umzug.json"
+        abloese_datei = lauf_ordner / "abloesung.json"
+        os.environ["BAU_UMZUG_DATEI"] = str(umzug_datei)
+        os.environ["TO_SPAWN_WACHE_SPEC"] = str(a.spec)
+        os.environ[ABLOESE_ENV] = str(abloese_datei)
+        umzug_datei.unlink(missing_ok=True)
+        session_id = a.resume
+        start_prompt = prompt
+        terminal_log_abschalten()  # #541: ab hier gehört das Terminal Claude, Fäden loggen nur in die Datei
+        # Handoff-Blick (#542): eigener Faden prüft alle ≤ 2,5 min fällige Handoffs und
+        # startet die Leiter — nicht erst beim nächsten Aufseher-Tick (bis 30 min).
+        # Briefkasten-Wecker (#414): neue Frage weckt diese Session, Antwort die Bau-Session (≤ 1 min).
+        with handoff_blick.laeuft(
+            a.spec, handoff_blick.EchteNaht(REPO_ORDNER, ordner, REPO)
+        ), briefkasten_wecker.laeuft(a.spec, REPO_ORDNER, gh_repo=REPO):
+            for runde in range(1, MAX_ABLOESUNGEN + 2):
+                # Aufsicht (#213): Limit im Transkript → Ausweich-Modell; Umzug-/Ablöse-Datei → Ende.
+                code = waechter_lauf.fahre(
+                    claude=claude,
+                    spec=a.spec,
+                    prompt=start_prompt,
+                    modell=a.model,
+                    ausweich=ausweich,
+                    remote_control=remote_control,
+                    repo=REPO_ORDNER,
+                    cwd=ordner,
+                    takt=waechter_lauf.zahl_aus_umgebung(
+                        "TO_SPAWN_AUFSICHT_TAKT", waechter_lauf.TAKT_S
+                    )
+                    or waechter_lauf.TAKT_S,
+                    puffer=waechter_lauf.zahl_aus_umgebung(
+                        "TO_SPAWN_RESET_PUFFER_S", waechter_lauf.RESET_PUFFER_S
+                    ),
+                    hoechstens=waechter_lauf.zahl_aus_umgebung(
+                        "TO_SPAWN_RESET_MAX_S", waechter_lauf.MAX_WARTE_S
+                    )
+                    or waechter_lauf.MAX_WARTE_S,
+                    abbruch=lambda: umzug_datei.exists() or abloese_datei.exists(),
+                    session_id=session_id,
+                    effort=effort,
                 )
-                or waechter_lauf.TAKT_S,
-                puffer=waechter_lauf.zahl_aus_umgebung(
-                    "TO_SPAWN_RESET_PUFFER_S", waechter_lauf.RESET_PUFFER_S
-                ),
-                hoechstens=waechter_lauf.zahl_aus_umgebung(
-                    "TO_SPAWN_RESET_MAX_S", waechter_lauf.MAX_WARTE_S
-                )
-                or waechter_lauf.MAX_WARTE_S,
-                abbruch=lambda: umzug_datei.exists() or abloese_datei.exists(),
-                session_id=session_id,
-                effort=effort,
-            )
-            umzug_daten = umzug.lies_umzug(umzug_datei)
-            if umzug_daten is not None:
+                umzug_daten = umzug.lies_umzug(umzug_datei)
+                if umzug_daten is not None:
+                    log.info(
+                        "Umzug nach %s bestätigt — lokaler Aufseher beendet (Exit %s).",
+                        umzug_daten.get("ziel") or "?",
+                        code,
+                    )
+                    return 0
+                if not abloese_datei.exists():
+                    return code
+                try:
+                    daten = json.loads(abloese_datei.read_text(encoding="utf-8"))
+                    handoff = Path(daten["handoff"])
+                    start = str(daten.get("start") or "")
+                except (OSError, ValueError, KeyError, TypeError) as fehler:
+                    log.error(
+                        "Ablöse-Datei %s unlesbar (%s) — Aufseher endet.",
+                        abloese_datei,
+                        fehler,
+                    )
+                    return 2
+                abloese_datei.unlink(missing_ok=True)
+                if runde > MAX_ABLOESUNGEN:
+                    log.error(
+                        "Aufseher #%s: %s Ablösungen erreicht — keine weitere Nachfolge.",
+                        a.spec,
+                        MAX_ABLOESUNGEN,
+                    )
+                    return 2
                 log.info(
-                    "Umzug nach %s bestätigt — lokaler Aufseher beendet (Exit %s).",
-                    umzug_daten.get("ziel") or "?",
-                    code,
-                )
-                return 0
-            if not abloese_datei.exists():
-                return code
-            try:
-                daten = json.loads(abloese_datei.read_text(encoding="utf-8"))
-                handoff = Path(daten["handoff"])
-                start = str(daten.get("start") or "")
-            except (OSError, ValueError, KeyError, TypeError) as fehler:
-                log.error(
-                    "Ablöse-Datei %s unlesbar (%s) — Aufseher endet.",
-                    abloese_datei,
-                    fehler,
-                )
-                return 2
-            abloese_datei.unlink(missing_ok=True)
-            if runde > MAX_ABLOESUNGEN:
-                log.error(
-                    "Aufseher #%s: %s Ablösungen erreicht — keine weitere Nachfolge.",
+                    "Aufseher #%s: Ablösung %s — Nachfolge-Aufseher startet mit %s.",
                     a.spec,
-                    MAX_ABLOESUNGEN,
+                    runde,
+                    handoff,
                 )
-                return 2
-            log.info(
-                "Aufseher #%s: Ablösung %s — Nachfolge-Aufseher startet mit %s.",
-                a.spec,
-                runde,
-                handoff,
-            )
-            session_id = None
-            start_prompt = abloese_prompt(prompt, handoff, runde + 1, a.spec, start)
-    return code
+                session_id = None
+                start_prompt = abloese_prompt(prompt, handoff, runde + 1, a.spec, start)
+        return code
+    finally:
+        # #355: eigenen Lauf-Ordner räumen (nur echte ``wache-<spec>-*``-Ordner, keine Test-tmp_paths)
+        if lauf_ordner.name.startswith(f"wache-{a.spec}-"):
+            shutil.rmtree(lauf_ordner, ignore_errors=True)
 
 
 if __name__ == "__main__":
