@@ -10,7 +10,7 @@ Aufruf (im Repo-Wurzelordner):
         # --tickets, --dry-run, --ohne-einrichtung (= --nur-wache), Spec läuft schon: nur Hinweis
     python ~/.claude/skills/to-spawn/to_spawn.py pruefen <basis> <ziel> [--repo <pfad>]  # Exit 0/1/2 + JSON (#99)
     python ~/.claude/skills/to-spawn/to_spawn.py anhaengen <S> <N> [--blockiert-von B,…] \
-        [--schaetzung K] [--umfang TEXT] [--datei PFAD:a-b …] [--trocken]  # Ticket nachtragen (E2-2)
+        [--abnahme A,…|keine] [--schaetzung K] [--umfang TEXT] [--datei PFAD:a-b …] [--trocken]  # Ticket nachtragen (E2-2)
     python ~/.claude/skills/to-spawn/to_spawn.py befund --spec <S> --ticket <N> --stufe gelb --text "…"  # Folge-Ticket
     python ~/.claude/skills/to-spawn/to_spawn.py spec-schliessen <S>  # Spec schließen mit Sperre (E2-4, Exit 0/1)
     python ~/.claude/skills/to-spawn/to_spawn.py hook-spec-sperre    # PreToolUse-Hook (Bash), JSON auf stdin
@@ -421,6 +421,7 @@ def _anhaengen(args: argparse.Namespace) -> int:
         args.ticket,
         config.lade(repo),
         blockiert_von=_tickets(args.blockiert_von) or [],
+        abnahme=_tickets(args.abnahme) or [],
         schaetzung_k=args.schaetzung,
         umfang=args.umfang,
         dateien=args.datei,
@@ -628,6 +629,12 @@ def main(argv: list[str] | None = None) -> int:
     p_anh.add_argument("spec", type=int, help="Spec-Nummer (Eltern-Issue + Manifest)")
     p_anh.add_argument("ticket", type=int, help="anzuhängendes Issue")
     p_anh.add_argument("--blockiert-von", default="", metavar="B,…", help="Blocker-Tickets (Komma)")
+    p_anh.add_argument(
+        "--abnahme",
+        default="",
+        metavar="A,…|keine",
+        help="Abnahme-Ticket(s) dieser Kette (Komma; oder 'keine' für eine neue Kette)",
+    )
     p_anh.add_argument("--schaetzung", type=float, metavar="K", help="schaetzung_k (Tausend Token)")
     p_anh.add_argument("--umfang", metavar="TEXT", help="umfang (ein Satz Klartext)")
     p_anh.add_argument(

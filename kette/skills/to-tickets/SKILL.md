@@ -93,7 +93,7 @@ Publish the approved tickets. **How** depends on the tracker `/setup-matt-pocock
      python ~/.claude/skills/to-spawn/to_spawn.py anhaengen <S> <N> --blockiert-von <B1,B2> --schaetzung <K> --umfang "<ein Satz>" --datei <pfad:a-b> --datei <pfad:a-b>
      ```
 
-     Erst mit `--trocken` ansehen, dann ohne. `anhaengen` setzt die nativen Blocker-Kanten, schreibt den Manifest-Eintrag (Ordner aus `pfade.manifeste` in `.to-spawn/config.json`, fehlt der Schlüssel: Vorgabe des Skills; Ticket-Schlüssel = echte Issue-Nummer, `files` = Kontext-Paket), hängt die Kante vor jedes offene Abnahme-Ticket und macht das Issue zuletzt zum Unter-Issue der Spec. Ein zweiter Aufruf ändert nichts; Exit ≠ 0 heißt: nichts geschrieben, Fehlerzeile beheben, neu aufrufen.
+     Erst mit `--trocken` ansehen, dann ohne. `anhaengen` setzt die nativen Blocker-Kanten, schreibt den Manifest-Eintrag (Ordner aus `pfade.manifeste` in `.to-spawn/config.json`, fehlt der Schlüssel: Vorgabe des Skills; Ticket-Schlüssel = echte Issue-Nummer, `files` = Kontext-Paket), hängt die Kante vor das offene Abnahme-Ticket seiner Kette (bei mehreren Abnahmen ggf. `--abnahme` angeben) und macht das Issue zuletzt zum Unter-Issue der Spec. Ein zweiter Aufruf ändert nichts; Exit ≠ 0 heißt: nichts geschrieben, Fehlerzeile beheben, neu aufrufen.
   3. Das Abnahme-Ticket zuletzt anhängen, mit `--blockiert-von` aller Tickets, die es abnimmt.
 
 Work the **frontier**: any ticket whose blockers are all done. For a purely linear chain that means top to bottom.
