@@ -361,7 +361,7 @@ GIT_IDENTITAET = {
 
 
 def zustand_standard() -> Path:
-    return Path.home() / ".local" / "state" / "to-spawn" / "aufpasser"
+    return config.heim_ordner() / ".local" / "state" / "to-spawn" / "aufpasser"
 
 
 def wache_log(repo: Path, spec: int | str) -> Path:
@@ -3096,7 +3096,7 @@ def parser_fuellen(ap: argparse.ArgumentParser) -> argparse.ArgumentParser:
         "--zustand",
         type=Path,
         default=None,
-        help=f"Zustandsordner ({zustand_standard()})",
+        help="Zustandsordner (Vorgabe: ~/.local/state/to-spawn/aufpasser)",
     )
     ap.add_argument(
         "--hang-min",

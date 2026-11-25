@@ -187,7 +187,16 @@ def _ohne_ticket_repo(repos: list[dict[str, str]]) -> list[dict[str, str]]:
 
 
 def _hauptrepo_namen_aus(repos: list[dict[str, str]]) -> tuple[str, ...]:
-    return tuple(Path(p).expanduser().name for e in repos if (p := (e.get("pfad") or "").strip()))
+    namen: list[str] = []
+    for e in repos:
+        p = (e.get("pfad") or "").strip()
+        if not p:
+            continue
+        # Für ``~/foo`` oder absolute Pfade reicht ``.name`` ohne Heimordner-Auflösung (#212);
+        # nur ein nacktes ``~`` braucht den aufgelösten Ordnernamen.
+        pfad = config.heim_ordner() if p.rstrip("/\\") == "~" else Path(p)
+        namen.append(pfad.name)
+    return tuple(namen)
 
 
 def _remotes_aus(repos: list[dict[str, str]]) -> tuple[str, ...]:
@@ -655,6 +664,9 @@ def _aufraeumen(ordner: Path, *, loeschen: bool, jetzt: float | None, platznot: 
         erg, ziel = _regeln(ordner, trocken, jetzt, stand, platznot)
     except _Bleibt as b:
         erg = _bleibt(ordner, trocken, stand, b)
+    except config.KeinHeimOrdner as fehler:
+        log.error("Hausmeister: %s (%s)", fehler, ordner)
+        erg = _bleibt(ordner, trocken, stand, _Bleibt(f"Fehler: {_kurz(fehler)}", fehler=True))
     except Exception as fehler:  # Vertrag: wirft nie, im Zweifel bleibt
         log.exception("Hausmeister: Fehler bei %s", ordner)
         erg = _bleibt(ordner, trocken, stand, _Bleibt(f"Fehler: {_kurz(fehler)}", fehler=True))
@@ -2005,7 +2017,7 @@ def _platten_basen() -> list[Path]:
             basis = Path(*teile)
             if basis.is_dir():
                 basen.setdefault(basis, None)
-    return list(basen) or [Path.home()]
+    return list(basen) or [config.heim_ordner()]
 
 
 def _naht_anteil(roh: str) -> float | None:
@@ -2066,7 +2078,7 @@ def _ablehnen(art: str, wert: str) -> None:
 def _echt_unter_home(pfad: Path) -> bool:
     """Absolut und nach Auflösen (Symlinks) echt unter dem Home — nicht Home, nicht darüber."""
     try:
-        echt, heim = pfad.resolve(), Path.home().resolve()
+        echt, heim = pfad.resolve(), config.heim_ordner().resolve()
     except (OSError, RuntimeError):
         return False
     return pfad.is_absolute() and heim in echt.parents
@@ -2074,7 +2086,7 @@ def _echt_unter_home(pfad: Path) -> bool:
 
 def _versteckt_unter_home(pfad: Path) -> bool:
     """Ein Teil unterhalb des Home beginnt mit ``.`` (``~/.ssh``, ``~/a/.cache``)."""
-    heim = Path.home().parts
+    heim = config.heim_ordner().parts
     rest = pfad.parts[len(heim) :] if pfad.parts[: len(heim)] == heim else pfad.parts
     return any(teil.startswith(".") for teil in rest)
 
@@ -2818,7 +2830,7 @@ def _kennzahl_pfad() -> Path:
 
 def _log_pfad() -> Path:
     roh = os.environ.get("TO_SPAWN_HAUSMEISTER_LOG")
-    return Path(roh).expanduser() if roh else Path.home() / ".claude" / "to-spawn" / "hausmeister.jsonl"
+    return config.expand_heim(roh) if roh else config.heim_ordner() / ".claude" / "to-spawn" / "hausmeister.jsonl"
 
 
 def _log_schreiben(erg: Ergebnis) -> bool:
@@ -2845,7 +2857,7 @@ def _log_zeile(zeile: dict[str, object], datei: Path | None = None) -> bool:
         datei.parent.mkdir(parents=True, exist_ok=True)
         with datei.open("a", encoding="utf-8") as f:
             f.write(json.dumps(zeile, ensure_ascii=False) + "\n")
-    except OSError as fehler:
+    except (OSError, config.KeinHeimOrdner) as fehler:
         log.warning("Hausmeister-Log nicht schreibbar: %s", fehler)
         return False
     return True

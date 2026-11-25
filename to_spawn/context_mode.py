@@ -19,6 +19,8 @@ import os
 from pathlib import Path
 from typing import Any
 
+from . import config
+
 #: Plugin-Kennung in Claude Codes Registry (``<plugin>@<marketplace>``).
 PLUGIN = "context-mode@context-mode"
 #: Server-Name, den Claude Code dem Plugin-MCP gibt → gleiche Werkzeug-Namen. Pflicht, nicht Kür:
@@ -28,23 +30,51 @@ SERVER_NAME = "plugin_context-mode_context-mode"
 #: Einstiegsdatei des MCP-Servers im Plugin-Ordner.
 START = "start.mjs"
 INSTALL_BEFEHL = "claude plugin install context-mode@context-mode"
-def standard_claude_dir() -> Path:
-    """Claude Codes Konfig-Ordner zur Laufzeit — ``CLAUDE_CONFIG_DIR``, sonst ``~/.claude`` (#232)."""
-    return Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
 
 
-_START_CLAUDE_DIR = standard_claude_dir()
-#: Claude Codes Konfig-Ordner — ``CLAUDE_CONFIG_DIR`` gilt dort wie hier.
-CLAUDE_DIR = _START_CLAUDE_DIR
+def claude_ordner() -> Path:
+    """Claude Codes Konfig-Ordner — ``CLAUDE_CONFIG_DIR`` gilt dort wie hier; erst bei Gebrauch (#212, #232)."""
+    roh = os.environ.get("CLAUDE_CONFIG_DIR", "").strip()
+    if roh:
+        return config.expand_heim(roh)
+    return config.heim_ordner() / ".claude"
+
+
+#: Alias für Aufrufer aus #232 (z. B. ``skripte/bau.py``) — gleiche Tür :func:`claude_ordner`.
+standard_claude_dir = claude_ordner
+
+
+class _LazyClaudeDir(os.PathLike[str]):
+    """Verzögerter Alias auf :func:`claude_ordner` — kein ``Path.home()`` beim Import (#212)."""
+
+    def __fspath__(self) -> str:
+        return os.fspath(claude_ordner())
+
+    def __truediv__(self, other: str | os.PathLike[str]) -> Path:
+        return claude_ordner() / other
+
+    def __eq__(self, other: object) -> bool:
+        return claude_ordner() == other
+
+    def __str__(self) -> str:
+        return str(claude_ordner())
+
+    def __repr__(self) -> str:
+        return f"CLAUDE_DIR({claude_ordner()!r})"
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(claude_ordner(), name)
+
+
+#: Rückwärtskompatibler Alias auf :func:`claude_ordner` (erst bei Gebrauch aufgelöst, #212).
+CLAUDE_DIR: Any = _LazyClaudeDir()
 
 
 def _ziel_claude_dir(claude_dir: Path | None) -> Path:
-    """Effektiver Konfig-Ordner: Argument > gepatches ``CLAUDE_DIR`` > Laufzeit-HOME (#232)."""
+    """Effektiver Konfig-Ordner: Argument > gepatchtes ``CLAUDE_DIR`` > Laufzeit-HOME (#212, #232)."""
     if claude_dir is not None:
         return claude_dir
-    if CLAUDE_DIR != _START_CLAUDE_DIR:
-        return CLAUDE_DIR
-    return standard_claude_dir()
+    return claude_ordner() if isinstance(CLAUDE_DIR, _LazyClaudeDir) else CLAUDE_DIR
 
 
 class ContextModeFehlt(RuntimeError):

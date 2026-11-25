@@ -697,10 +697,17 @@ def aufseher_text(befehl: str) -> str:
 
 
 def _tresor_pfad() -> str:
-    """Aktueller Ort des Notiz-Tresors aus der einen Quelle :func:`config.notiz_tresor` (#365)."""
+    """Aktueller Ort des Notiz-Tresors aus der einen Quelle :func:`config.notiz_tresor` (#365).
+
+    Fehlt ein bestimmbarer Heimordner (z. B. Import in schmaler Umgebung, #212),
+    bleibt der symbolische Pfad ``~/obsidian`` statt eines Import-Absturzes.
+    """
     from . import config
 
-    return config.notiz_tresor().as_posix()
+    try:
+        return config.notiz_tresor().as_posix()
+    except config.KeinHeimOrdner:
+        return "~/obsidian"
 
 
 def _ja_aufforderung() -> str:
