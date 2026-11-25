@@ -132,10 +132,11 @@ def test_cron_zeilen_idempotent_und_fenster_getrennt() -> None:
     assert sum(wecker.CRON_MARKE in z for z in zweimal) == 1
     assert "0 3 * * * echo fremd" in zweimal
 
-    # Windows-Werkzeugkasten ist sauber getrennt und nennt #287 als offen.
+    # Windows-Werkzeugkasten ist sauber getrennt und richtet per schtasks trocken ein.
     win = wecker.system_wecker("win32")
-    with pytest.raises(NotImplementedError, match="Windows"):
-        win.cron_einrichten(zustand, takt_min=5, trocken=True)
+    assert isinstance(win, wecker.WindowsWecker)
+    ausgabe = win.cron_einrichten(zustand, takt_min=5, trocken=True)
+    assert "Wecker-Aufgabe" in ausgabe and "alle 5 min" in ausgabe and "pythonw.exe" in ausgabe
 
 
 def test_cli_setzen_liste_loeschen(tmp_path: Path) -> None:

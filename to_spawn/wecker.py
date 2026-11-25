@@ -6,14 +6,15 @@ des Limits bleibt die Leit-/Aufsichts-Session still stehen, bis jemand von Hand
 anstößt.
 
 Lösung: Der Weckruf kommt von **außerhalb** der Session über den System-Taktgeber
-(Linux: Cron über ``crontab``; Windows: geplante Aufgabe als eigener Kasten noch
-offen, siehe Lastenheft L6). Eine schmale Schnittstelle (:class:`SystemWecker`)
+(Linux: Cron über ``crontab`` + tmux; Windows: geplante Aufgabe über ``schtasks`` mit
+``pythonw.exe`` + Session-Anstoß über ``claude --resume`` — jeweils im eigenen
+Werkzeugkasten, siehe Lastenheft L6). Eine schmale Schnittstelle (:class:`SystemWecker`)
 trennt die fachliche Weck- und Limit-Logik vom System-Werkzeugkasten:
 
 1. Registrierte Weckaufträge liegen atomar in ``<zustand>/auftraege.json``.
-2. Jeder Durchgang (:func:`durchgang`, ausgelöst per Cron alle ``M`` Minuten oder als
-   Sicherheitsnetz über :mod:`to_spawn.aufpasser`) prüft fällige Aufträge unter der
-   Lauf-Sperre ``<zustand>/lock``.
+2. Jeder Durchgang (:func:`durchgang`, ausgelöst per Cron / geplanter Aufgabe alle ``M``
+   Minuten oder als Sicherheitsnetz über :mod:`to_spawn.aufpasser`) prüft fällige
+   Aufträge unter der Lauf-Sperre ``<zustand>/lock``.
 3. Trifft ein Weckruf auf ein Limit (z. B. ``95% of your weekly limit · resets 11pm``
    oder ``You've hit your … limit``), steht der gescheiterte Weckruf mit Grund im Log
    (``wecker.jsonl`` und ``wecker.log``), und der Wecker merkt sich den Reset-Zeitpunkt
@@ -21,18 +22,27 @@ trennt die fachliche Weck- und Limit-Logik vom System-Werkzeugkasten:
 4. Während des aktiven Limit-Fensters wird nicht gespammt; spätestens ``M`` Minuten
    nach dem Reset sendet der externe Wecker den Weckruf erneut — auch wenn die alte
    Limit-Meldung noch im Verlauf steht — und die Session läuft ohne Eingriff weiter.
+
+Wochen-Limit PC ↔ Bau-Server (#287 Abnahme 4, L7):
+Windows-PC und Linux-Bau-Server nutzen dasselbe Claude.ai-Konto und dieselbe
+Organisation (``authMethod: claude.ai``, ``apiProvider: firstParty``, kein getrennter
+``ANTHROPIC_API_KEY``). Sie teilen daher **dasselbe** 5-Stunden- und Wochen-Limit —
+parallele Sessions über beide Maschinen schöpfen aus einem gemeinsamen Kontingent.
 """
 
 from __future__ import annotations
 
 import argparse
 import difflib
+import hashlib
+import html
 import itertools
 import json
 import logging
 import os
 import re
 import shlex
+import subprocess
 import sys
 import threading
 import time
@@ -43,7 +53,19 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
-from . import aufpasser, config, manifest, sperre, tmux_aufruf, waechter_lauf
+from . import (
+    aufpasser,
+    config,
+    konsole,
+    manifest,
+    prozessbaum,
+    sitzung_env,
+    sperre,
+    starter,
+    tmux_aufruf,
+    waechter_lauf,
+    werkzeug,
+)
 
 log = logging.getLogger("to_spawn.wecker")
 
@@ -487,19 +509,429 @@ class LinuxTmuxWecker:
         return f"Wecker-Cron eingerichtet: {zeile}"
 
 
-class WindowsWecker:
-    """Windows-Werkzeugkasten (geplante Aufgabe) — noch offen (#287, braucht Windows-Prüfung)."""
+#: Name der geplanten Aufgabe in der Windows-Aufgabenplanung (#287).
+WINDOWS_AUFGABE_NAME = "to-spawn Wecker"
+#: Zeitlimit je ``schtasks``-Aufruf in Sekunden.
+SCHTASKS_ZEITLIMIT_S = 30
+#: Höchste gelesene Schwanzlänge eines Session-Transkripts unter Windows (Bytes).
+_TRANSKRIPT_TAIL_BYTES = 64 * 1024
+_PROMPT_RAHMEN = "─" * 30
+_LEER_PROMPT = f"{_PROMPT_RAHMEN}\n❯ \n{_PROMPT_RAHMEN}\n"
+_ISO_INTERVALL_RE = re.compile(r"^PT(?:(?P<h>\d+)H)?(?:(?P<m>\d+)M)?$", re.IGNORECASE)
+_AKTIV_STATUS = frozenset({"busy", "shell"})
 
-    _HINWEIS = (
-        "Externer Wecker für Windows (geplante Aufgabe / Fenster-Anstoß) ist noch offen (#287) "
-        "— auf dem Linux-Bau-Server nicht prüfbar."
+
+def windows_aufgabe_intervall(takt_min: int) -> str:
+    """ISO-8601-Intervall für Windows-Aufgabenplanung (1–59 → ``PT<M>M``, 60 → ``PT1H``)."""
+    if takt_min < 1 or takt_min > 60:
+        raise ValueError(f"Aufgaben-Takt muss zwischen 1 und 60 Minuten liegen (erhalten: {takt_min})")
+    if takt_min == 60:
+        return "PT1H"
+    return f"PT{takt_min}M"
+
+
+def windows_aufgabe_argumente(zustand: Path) -> str:
+    """Argumente für ``pythonw.exe`` in der Windows-Aufgabenplanung."""
+    return f'"{SKILL / "to_spawn.py"}" wecker lauf --zustand "{zustand}"'
+
+
+def _windows_intervall_min(intervall: str) -> int | None:
+    treffer = _ISO_INTERVALL_RE.fullmatch(intervall.strip())
+    if not treffer or (treffer["h"] is None and treffer["m"] is None):
+        return None
+    return int(treffer["h"] or 0) * 60 + int(treffer["m"] or 0)
+
+
+def windows_aufgabe_gleich(xml: str | None, pythonw: str, argumente: str, takt_min: int) -> bool:
+    """Prüft, ob die vorhandene ``schtasks /Query /XML``-Aufgabe Befehl, Argumente und Takt trifft."""
+    # Regex statt XML-Parser: schtasks kündigt UTF-16 an, liefert über die Pipe aber Text.
+    if not xml:
+        return False
+
+    def feld(name: str) -> str:
+        treffer = re.search(rf"<{name}>(.*?)</{name}>", xml, re.DOTALL)
+        return html.unescape(treffer.group(1)).strip() if treffer else ""
+
+    return (
+        feld("Command").strip('"').lower() == pythonw.lower()
+        and feld("Arguments") == argumente
+        and _windows_intervall_min(feld("Interval")) == takt_min
     )
 
+
+@dataclass(frozen=True)
+class _WindowsZiel:
+    """Aufgelöste Windows-Session für :class:`WindowsWecker`."""
+
+    session_id: str
+    cwd: Path | None
+    transkript: Path | None
+    pid: int | None
+    status: str | None
+    schluessel: str
+
+
+class WindowsWecker:
+    """Windows-Werkzeugkasten: geplante Aufgabe (``schtasks``) + Session-Anstoß (#287, L6).
+
+    Unter Windows gibt es kein tmux; statt in ein Terminal-Fenster zu tippen, liest der
+    Kasten den Zustand aus ``~/.claude/sessions/<pid>.json`` und dem Session-Transkript
+    (``~/.claude/projects/<slug>/<session-id>.jsonl``) und stößt die Session von außen
+    fensterlos über ``claude -p --no-chrome --resume <session-id> <weckruf>`` an
+    (durch die Start-Tür :func:`to_spawn.starter.starte` mit ``CREATE_NO_WINDOW |
+    CREATE_NEW_PROCESS_GROUP`` und bereinigter Umgebung :func:`sitzung_env.ohne_sitzung`).
+    """
+
+    def __init__(
+        self,
+        *,
+        heim: Path | None = None,
+        zustand: Path | None = None,
+        aufgabe_name: str = WINDOWS_AUFGABE_NAME,
+    ) -> None:
+        self._heim = heim
+        self._zustand = zustand
+        self.aufgabe_name = aufgabe_name
+        self._prozesse: dict[str, subprocess.Popen[Any]] = {}
+
+    def _heim_ordner(self) -> Path:
+        return self._heim if self._heim is not None else config.heim_ordner()
+
+    def _zustand_ordner(self) -> Path:
+        return self._zustand if self._zustand is not None else zustand_standard()
+
+    @staticmethod
+    def _norm_status(wert: object) -> str | None:
+        if not isinstance(wert, str):
+            return None
+        klein = wert.strip().lower()
+        if klein in _AKTIV_STATUS:
+            return "busy"
+        if klein == "idle":
+            return "idle"
+        return None
+
+    def _live_sessions(self) -> list[dict[str, Any]]:
+        ordner = self._heim_ordner() / ".claude" / "sessions"
+        if not ordner.is_dir():
+            return []
+        treffer: list[tuple[str, float, dict[str, Any]]] = []
+        for datei in ordner.glob("*.json"):
+            try:
+                roh = json.loads(datei.read_text(encoding="utf-8"))
+                mtime = datei.stat().st_mtime
+            except (OSError, ValueError):
+                continue
+            if not isinstance(roh, dict):
+                continue
+            sid = roh.get("sessionId")
+            if not isinstance(sid, str) or not sid.strip():
+                continue
+            try:
+                pid = int(roh.get("pid") or datei.stem)
+            except (TypeError, ValueError):
+                continue
+            if pid <= 0 or not prozessbaum.lebt(pid):
+                continue
+            eintrag = dict(roh)
+            eintrag["pid"] = pid
+            treffer.append((str(roh.get("updatedAt") or ""), mtime, eintrag))
+        treffer.sort(key=lambda t: (t[0], t[1]), reverse=True)
+        return [e for _, _, e in treffer]
+
+    def _transkript_finden(self, session_id: str, cwd: Path | None) -> Path | None:
+        heim = self._heim_ordner()
+        if cwd is not None:
+            kandidat = waechter_lauf.transkript_ordner(cwd, heim=heim) / f"{session_id}.jsonl"
+            if kandidat.is_file():
+                return kandidat
+        projekte = heim / ".claude" / "projects"
+        if projekte.is_dir():
+            kandidaten = list(projekte.glob(f"*/{session_id}.jsonl"))
+            if kandidaten:
+                return max(kandidaten, key=lambda p: p.stat().st_mtime)
+        if cwd is not None:
+            return waechter_lauf.transkript_ordner(cwd, heim=heim) / f"{session_id}.jsonl"
+        return None
+
+    @staticmethod
+    def _cwd_aus_transkript(pfad: Path) -> Path | None:
+        try:
+            with pfad.open("rb") as fh:
+                fh.seek(0, os.SEEK_END)
+                groesse = fh.tell()
+                fh.seek(max(0, groesse - _TRANSKRIPT_TAIL_BYTES))
+                roh = fh.read().decode("utf-8", errors="replace")
+        except OSError:
+            return None
+        for zeile in reversed(roh.splitlines()):
+            zeile = zeile.strip()
+            if not zeile:
+                continue
+            try:
+                eintrag = json.loads(zeile)
+            except ValueError:
+                continue
+            cwd = eintrag.get("cwd") if isinstance(eintrag, dict) else None
+            if isinstance(cwd, str) and cwd.strip():
+                return Path(cwd)
+        return None
+
+    def _ziel_aufloesen(self, ziel: str) -> _WindowsZiel | None:
+        roh = ziel.strip()
+        if not roh:
+            return None
+        live = self._live_sessions()
+
+        def bauen(sid: str, cwd: Path | None, pid: int | None, status: str | None) -> _WindowsZiel:
+            for eintrag in live:
+                if eintrag.get("sessionId") == sid:
+                    pid = int(eintrag["pid"])
+                    status = self._norm_status(eintrag.get("status"))
+                    if cwd is None and isinstance(eintrag.get("cwd"), str) and eintrag["cwd"].strip():
+                        cwd = Path(eintrag["cwd"])
+                    break
+            transkript = self._transkript_finden(sid, cwd)
+            if cwd is None and transkript is not None and transkript.is_file():
+                cwd = self._cwd_aus_transkript(transkript)
+            schluessel = hashlib.sha1(sid.encode("utf-8")).hexdigest()[:16]
+            return _WindowsZiel(
+                session_id=sid,
+                cwd=cwd,
+                transkript=transkript,
+                pid=pid,
+                status=status,
+                schluessel=schluessel,
+            )
+
+        # 1) Pfad zu einer Sessions-JSON (z. B. .to-spawn/sessions/wache-<S>.json)
+        pfad = Path(roh).expanduser()
+        if pfad.suffix.lower() == ".json" and pfad.is_file():
+            try:
+                daten = json.loads(pfad.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                return None
+            if not isinstance(daten, dict):
+                return None
+            sid = daten.get("session_id") or daten.get("sessionId")
+            if not isinstance(sid, str) or not sid.strip():
+                return None
+            cwd = Path(daten["cwd"]) if isinstance(daten.get("cwd"), str) and daten["cwd"].strip() else None
+            pid_roh = daten.get("pid")
+            pid = int(pid_roh) if isinstance(pid_roh, int) and pid_roh > 0 and prozessbaum.lebt(pid_roh) else None
+            status = self._norm_status(daten.get("status")) if pid is not None else None
+            return bauen(sid.strip(), cwd, pid, status)
+
+        # 2) PID (``pid:<N>`` oder reine Ziffernfolge)
+        pid_text = roh[4:].strip() if roh.lower().startswith("pid:") else (roh if roh.isdigit() else "")
+        if pid_text.isdigit():
+            pid_val = int(pid_text)
+            datei = self._heim_ordner() / ".claude" / "sessions" / f"{pid_val}.json"
+            if not datei.is_file():
+                return None
+            try:
+                daten = json.loads(datei.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                return None
+            sid = daten.get("sessionId") if isinstance(daten, dict) else None
+            if not isinstance(sid, str) or not sid.strip():
+                return None
+            lebt = prozessbaum.lebt(pid_val)
+            cwd = Path(daten["cwd"]) if isinstance(daten.get("cwd"), str) and daten["cwd"].strip() else None
+            status = self._norm_status(daten.get("status")) if lebt else None
+            return bauen(sid.strip(), cwd, pid_val if lebt else None, status)
+
+        # 3) Explizite Session-ID (``session:<id>``)
+        if roh.lower().startswith("session:"):
+            sid = roh.split(":", 1)[1].strip()
+            if not sid:
+                return None
+            if any(e.get("sessionId") == sid for e in live) or self._transkript_finden(sid, None) is not None:
+                return bauen(sid, None, None, None)
+            return None
+
+        # 4) Lebende Session über Name oder Session-ID
+        klein = roh.lower()
+        for eintrag in live:
+            sid = str(eintrag["sessionId"])
+            name = str(eintrag.get("name") or "").strip().lower()
+            if sid == roh or (name and name == klein):
+                cwd = Path(eintrag["cwd"]) if isinstance(eintrag.get("cwd"), str) and eintrag["cwd"].strip() else None
+                return bauen(sid, cwd, int(eintrag["pid"]), self._norm_status(eintrag.get("status")))
+
+        # 5) Session-ID direkt über vorhandenes Transkript unter ``~/.claude/projects/``
+        if self._transkript_finden(roh, None) is not None:
+            return bauen(roh, None, None, None)
+        return None
+
+    def _laeufer_pfad(self, schluessel: str) -> Path:
+        return self._zustand_ordner() / f"win-laeufer-{schluessel}.json"
+
+    def _laeufer_lesen(self, schluessel: str) -> dict[str, Any] | None:
+        pfad = self._laeufer_pfad(schluessel)
+        if not pfad.is_file():
+            return None
+        try:
+            roh = json.loads(pfad.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        return roh if isinstance(roh, dict) else None
+
+    def _laeufer_aktiv(self, schluessel: str, laeufer: dict[str, Any] | None) -> bool:
+        proc = self._prozesse.get(schluessel)
+        if proc is not None:
+            if proc.poll() is None:
+                return True
+            self._prozesse.pop(schluessel, None)
+        if not laeufer:
+            return False
+        pid = laeufer.get("pid")
+        if not isinstance(pid, int) or pid <= 0 or not prozessbaum.aktiv(pid):
+            return False
+        erwartet_start = laeufer.get("startzeit")
+        if sys.platform == "win32" and isinstance(erwartet_start, int):
+            aktuell_start = prozessbaum._startzeit_windows(pid)
+            if aktuell_start is not None and aktuell_start != erwartet_start:
+                return False
+        return True
+
+    @staticmethod
+    def _transkript_zeilen(pfad: Path | None) -> list[str]:
+        if pfad is None or not pfad.is_file():
+            return []
+        try:
+            with pfad.open("rb") as fh:
+                fh.seek(0, os.SEEK_END)
+                groesse = fh.tell()
+                start = max(0, groesse - _TRANSKRIPT_TAIL_BYTES)
+                fh.seek(start)
+                roh = fh.read().decode("utf-8", errors="replace")
+        except OSError:
+            return []
+        rohe_zeilen = roh.splitlines()
+        if start > 0 and rohe_zeilen:
+            rohe_zeilen = rohe_zeilen[1:]  # abgeschnittene erste Zeile überspringen
+        aus: list[str] = []
+        for zeile in rohe_zeilen:
+            zeile = zeile.strip()
+            if not zeile:
+                continue
+            try:
+                eintrag = json.loads(zeile)
+            except ValueError:
+                continue
+            if not isinstance(eintrag, dict):
+                continue
+            art = eintrag.get("type")
+            inhalt = waechter_lauf._texte(eintrag).strip()
+            if not inhalt:
+                continue
+            if art == "user":
+                teile = inhalt.splitlines()
+                aus.append(f"❯ {teile[0]}")
+                aus.extend(teile[1:])
+            elif art in ("assistant", "system"):
+                if waechter_lauf.ist_limit_zeile(eintrag):
+                    quota = waechter_lauf._aus_quota(eintrag)
+                    if quota is not None and waechter_lauf._aus_text(inhalt, quota) is None:
+                        uhr = quota.strftime("%I:%M%p").lstrip("0").lower()
+                        inhalt = f"{inhalt} · resets {uhr}"
+                aus.extend(inhalt.splitlines())
+        return aus
+
     def pane_lesen(self, ziel: str, *, tmux_socket: str | None = None) -> PaneStand:
-        raise NotImplementedError(self._HINWEIS)
+        info = self._ziel_aufloesen(ziel)
+        if info is None:
+            return PaneStand(existiert=False, fehler=f"Windows-Session nicht gefunden: {ziel}")
+        laeufer = self._laeufer_lesen(info.schluessel)
+        laeufer_laeuft = self._laeufer_aktiv(info.schluessel, laeufer)
+        transkript_da = bool(info.transkript is not None and info.transkript.is_file())
+        session_laeuft = info.pid is not None or laeufer_laeuft or transkript_da
+        status = "busy" if (info.status == "busy" or laeufer_laeuft) else info.status
+        zeilen = self._transkript_zeilen(info.transkript)
+        if laeufer and not laeufer_laeuft:
+            ausgabe_str = str(laeufer.get("ausgabe") or "").strip()
+            ausgabe_pfad = Path(ausgabe_str) if ausgabe_str else None
+            if ausgabe_pfad is not None and ausgabe_pfad.is_file():
+                try:
+                    ausgabe = ausgabe_pfad.read_text(encoding="utf-8", errors="replace").strip()
+                except OSError:
+                    ausgabe = ""
+                if ausgabe and limit_zeile(ausgabe) is not None:
+                    wecktext = str(laeufer.get("text") or "").strip()
+                    erste_zeile = wecktext.splitlines()[0].strip() if wecktext else ""
+                    bisher = "\n".join(zeilen)
+                    schon_da = bool(
+                        erste_zeile and erste_zeile in bisher and limit_zeile(bisher.rsplit(erste_zeile, 1)[1])
+                    )
+                    if not schon_da:
+                        if erste_zeile:
+                            zeilen.append(f"❯ {erste_zeile}")
+                        zeilen.extend(ausgabe.splitlines())
+        text = ("\n".join(zeilen) + "\n" + _LEER_PROMPT) if zeilen else _LEER_PROMPT
+        return PaneStand(
+            existiert=True,
+            session_laeuft=session_laeuft,
+            farbig=text,
+            text=text,
+            status=status,
+        )
 
     def tippen(self, ziel: str, text: str, *, tmux_socket: str | None = None) -> None:
-        raise NotImplementedError(self._HINWEIS)
+        info = self._ziel_aufloesen(ziel)
+        if info is None:
+            raise RuntimeError(f"Windows-Session nicht gefunden: {ziel}")
+        cmd = werkzeug.startbefehl("claude", resume=info.session_id, prompt=text, interaktiv=False)
+        ordner = self._zustand_ordner()
+        ordner.mkdir(parents=True, exist_ok=True)
+        ausgabe_pfad = ordner / f"win-ausgabe-{info.schluessel}.log"
+        cwd = info.cwd if (info.cwd is not None and info.cwd.is_dir()) else None
+        umgebung = sitzung_env.ohne_sitzung()
+        try:
+            with ausgabe_pfad.open("wb") as ausgabe_fh:  # Kind erbt den Handle, Eltern schließen
+                proc = starter.starte(
+                    cmd,
+                    cwd=cwd,
+                    env=umgebung,
+                    stdin=subprocess.DEVNULL,
+                    stdout=ausgabe_fh,
+                    stderr=subprocess.STDOUT,
+                    notnagel=None,
+                    **prozessbaum.ohne_fenster(),
+                )
+        except (OSError, ValueError, starter.StartGesperrt) as fehler:
+            raise RuntimeError(f"Windows-Weckruf nicht gestartet: {fehler}") from fehler
+        self._prozesse[info.schluessel] = proc
+        startzeit = prozessbaum._startzeit_windows(proc.pid) if sys.platform == "win32" else None
+        manifest.schreibe_atomar(
+            self._laeufer_pfad(info.schluessel),
+            {
+                "pid": proc.pid,
+                "startzeit": startzeit,
+                "text": text,
+                "ausgabe": str(ausgabe_pfad),
+                "zeit": time.time(),
+            },
+        )
+
+    def _schtasks(self, *args: str) -> subprocess.CompletedProcess[str]:
+        try:
+            return subprocess.run(
+                ["schtasks", *args],
+                capture_output=True,
+                **konsole.UNTERPROZESS_TEXT,
+                check=False,
+                timeout=SCHTASKS_ZEITLIMIT_S,
+                **prozessbaum.ohne_fenster(),
+            )
+        except FileNotFoundError as fehler:
+            raise RuntimeError("schtasks nicht gefunden — Windows-Aufgabenplanung fehlt") from fehler
+        except subprocess.TimeoutExpired as fehler:
+            raise RuntimeError(f"schtasks {args[0]} hängt (über {SCHTASKS_ZEITLIMIT_S} s)") from fehler
+
+    def _abfrage(self) -> str | None:
+        lauf = self._schtasks("/Query", "/TN", self.aufgabe_name, "/XML")
+        return lauf.stdout if lauf.returncode == 0 else None
 
     def cron_einrichten(
         self,
@@ -509,14 +941,47 @@ class WindowsWecker:
         trocken: bool = False,
         python: str = sys.executable,
     ) -> str:
-        raise NotImplementedError(self._HINWEIS)
+        windows_aufgabe_intervall(takt_min)  # prüft 1–60 Minuten
+        pythonw = Path(python).with_name("pythonw.exe")
+        argumente = windows_aufgabe_argumente(zustand)
+        befehl = f'"{pythonw}" {argumente}'
+        try:
+            vorhanden = self._abfrage()
+        except RuntimeError:
+            if not trocken:
+                raise
+            vorhanden = None
+        if windows_aufgabe_gleich(vorhanden, str(pythonw), argumente, takt_min):
+            return f"Wecker-Aufgabe unverändert: alle {takt_min} min {befehl}"
+        if trocken:
+            return f"[trocken] Wecker-Aufgabe würde eingerichtet: alle {takt_min} min {befehl}"
+        if not pythonw.is_file():
+            raise RuntimeError(
+                f"pythonw.exe fehlt neben {python} — ohne sie öffnet die geplante Aufgabe bei jedem Takt ein Fenster."
+            )
+        zustand.mkdir(parents=True, exist_ok=True)
+        lauf = self._schtasks(
+            "/Create",
+            "/F",
+            "/SC",
+            "MINUTE",
+            "/MO",
+            str(takt_min),
+            "/TN",
+            self.aufgabe_name,
+            "/TR",
+            befehl,
+        )
+        if lauf.returncode != 0:
+            raise RuntimeError(f"schtasks /Create: {(lauf.stderr or lauf.stdout).strip()[:300]}")
+        return f"Wecker-Aufgabe eingerichtet: alle {takt_min} min {befehl}"
 
 
-def system_wecker(plattform: str | None = None) -> SystemWecker:
+def system_wecker(plattform: str | None = None, *, zustand: Path | None = None) -> SystemWecker:
     """Automatische Wahl des System-Werkzeugkastens (L6)."""
     ziel_plattform = sys.platform if plattform is None else plattform
     if ziel_plattform == "win32":
-        return WindowsWecker()
+        return WindowsWecker(zustand=zustand)
     return LinuxTmuxWecker()
 
 
@@ -643,7 +1108,7 @@ def durchgang(
     if not auftraege_pfad(ordner).is_file():
         return []
     jetzt_s = time.time() if jetzt is None else jetzt
-    kasten = werkzeug if werkzeug is not None else system_wecker()
+    kasten = werkzeug if werkzeug is not None else system_wecker(zustand=ordner)
     ergebnisse: list[Ergebnis] = []
     stapel = ExitStack()
     if not trocken:
@@ -694,7 +1159,11 @@ def richte_parser_ein(unter: Any) -> None:
 
     p_set = sub.add_parser("setzen", help="Weckauftrag anlegen oder aktualisieren")
     p_set.add_argument("name", help="eindeutiger Name (z. B. leit-bau)")
-    p_set.add_argument("--ziel", required=True, help="Ziel-Pane (z. B. =leit:0 oder %%12)")
+    p_set.add_argument(
+        "--ziel",
+        required=True,
+        help="Ziel-Pane (Linux: =leit:0 / %%12) oder Session-Ziel (Windows: Sessions-JSON, Session-ID, Name, pid:<N>)",
+    )
     p_set.add_argument("--text", required=True, help="Weckruf-Text")
     p_set.add_argument(
         "--takt-min",
@@ -717,12 +1186,12 @@ def richte_parser_ein(unter: Any) -> None:
     p_lauf.add_argument("--tmux-socket", default=None, help="optionaler tmux-Socket (-L)")
     p_lauf.add_argument("--zustand", type=Path, default=None, help="Zustandsordner")
 
-    p_ein = sub.add_parser("einrichten", help="System-Taktgeber einrichten (Linux: Cron)")
+    p_ein = sub.add_parser("einrichten", help="System-Taktgeber einrichten (Linux: Cron, Windows: geplante Aufgabe)")
     p_ein.add_argument(
         "--takt-min",
         type=int,
         default=CRON_TAKT_MIN,
-        help=f"Cron-Abstand in Minuten (1–60, Vorgabe: {CRON_TAKT_MIN})",
+        help=f"Takt-Abstand in Minuten (1–60, Vorgabe: {CRON_TAKT_MIN})",
     )
     p_ein.add_argument("--trocken", action="store_true", help="nur zeigen, nichts schreiben")
     p_ein.add_argument("--zustand", type=Path, default=None, help="Zustandsordner")
@@ -790,7 +1259,7 @@ def lauf(args: argparse.Namespace) -> int:
         return 0
     if aktion == "einrichten":
         try:
-            print(system_wecker().cron_einrichten(zustand, takt_min=args.takt_min, trocken=args.trocken))
+            print(system_wecker(zustand=zustand).cron_einrichten(zustand, takt_min=args.takt_min, trocken=args.trocken))
             return 0
         except NotImplementedError as fehler:
             print(f"OFFEN: {fehler}", file=sys.stderr)
