@@ -15,7 +15,6 @@ import json
 import logging
 import os
 import signal
-import stat
 import subprocess
 import sys
 import time
@@ -23,6 +22,7 @@ from datetime import timedelta
 from pathlib import Path
 
 import pytest
+from conftest import attrappe
 from test_komplett_je_spec_425 import _befehl, _laeufe, _rot
 from test_probe_vorlagen_426 import ANLEGEN, ROT, _abruf, _freie_ports
 from test_waechter_213 import (  # noqa: F401  (welt = Fixture)
@@ -313,10 +313,16 @@ def _python_im_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         ziel_ordner = py_ordner
     else:
         ziel_ordner = tmp_path / "py_bin"
-        ziel_ordner.mkdir(exist_ok=True)
-        huelle = ziel_ordner / "python"
-        huelle.write_text(f'#!/bin/sh\nexec "{sys.executable}" "$@"\n', encoding="utf-8")
-        huelle.chmod(huelle.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+        attrappe(
+            ziel_ordner,
+            "python",
+            f"""
+            import os, subprocess, sys
+            if os.name == "nt":
+                raise SystemExit(subprocess.run([{sys.executable!r}, *sys.argv[1:]], check=False).returncode)
+            os.execv({sys.executable!r}, [{sys.executable!r}, *sys.argv[1:]])
+            """,
+        )
     monkeypatch.setenv("PATH", f"{ziel_ordner}{os.pathsep}{os.environ.get('PATH', '')}")
 
 
