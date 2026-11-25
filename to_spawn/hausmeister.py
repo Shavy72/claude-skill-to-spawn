@@ -139,6 +139,7 @@ from to_spawn import (
     ticket_zustand,
     uebergabe_sichern,
 )
+from to_spawn import prozessbaum
 from to_spawn import sperre as _sperre
 
 log = logging.getLogger("to_spawn.hausmeister")
@@ -385,11 +386,6 @@ _ZWEIG_MUSTER_ETAPPE = re.compile(rf"^l\d+/{_KEIN_DATUM}([1-9]\d{{1,2}}|[1-4]\d{
 #: für das Zweig-Aufräumen, :func:`_zweig_ticket`); welches Repo die Nummer meint, sagt allein
 #: ``origin`` — Zweig + origin → Repo + Nummer nur über :func:`zweig_zu_ticket` (#234, #357).
 _ZWEIG_FORMEN = (_ZWEIG_MUSTER, _ZWEIG_MUSTER_ETAPPE)
-#: #235 H1: nur diese drei Anfänge sind GitHub; ein fremder Host (``notgithub.com``) oder
-#: ein lokaler Pfad mit ``github.com/…`` im Namen ist ein fremdes Repo (nur mit ``.match``).
-_GITHUB_SLUG = re.compile(
-    r"(?:https://github\.com/|ssh://git@github\.com/|git@github\.com:)([^/\s]+/[^/\s]+?)(?:\.git)?/?$"
-)
 #: #235 N2: eine Zeile von ``git ls-remote --heads`` (SHA-1 oder SHA-256, Tab, Zweig).
 _LS_REMOTE_ZEILE = re.compile(r"([0-9a-f]{40}(?:[0-9a-f]{24})?)\trefs/heads/\S+$")
 
@@ -1563,6 +1559,7 @@ def _keine_spec_sitzung(ticket: int) -> None:
             errors="replace",
             timeout=GH_ZEITLIMIT_S,
             check=False,
+            **prozessbaum.fensterlos(),
         )
     except FileNotFoundError:
         return
@@ -2002,8 +1999,7 @@ def _ziel_im_ordner(echt: Path, url: str) -> bool:
 
 def _slug(url: str) -> str:
     """``owner/name`` einer GitHub-URL; alles andere (fremder Host, Pfad, ``http://``) ⇒ ``""``."""
-    treffer = _GITHUB_SLUG.match(url.strip())
-    return treffer.group(1) if treffer else ""
+    return gh.github_slug(url)
 
 
 def _zeitpunkt(text: object) -> float | None:

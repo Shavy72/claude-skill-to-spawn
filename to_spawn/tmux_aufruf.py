@@ -12,7 +12,7 @@ import logging
 import subprocess
 from pathlib import Path
 
-from to_spawn import capo, starter
+from to_spawn import capo, prozessbaum, starter
 
 log = logging.getLogger(__name__)
 
@@ -53,7 +53,7 @@ def aufrufen(*argumente: str, eingabe: str | None = None, start: bool = False) -
         if start:
             fertig = starter.starte([*capo._tmux_befehl(), *argumente], warten=True, **lauf_args)
         else:
-            fertig = subprocess.run([*capo._tmux_befehl(), *argumente], **lauf_args)
+            fertig = subprocess.run([*capo._tmux_befehl(), *argumente], **lauf_args, **prozessbaum.fensterlos())
     except subprocess.CalledProcessError as fehler:
         stderr = str(fehler.stderr or "")
         if "can't find window" in stderr or "can't find pane" in stderr:
