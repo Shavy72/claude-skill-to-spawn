@@ -10,14 +10,28 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import sqlite3
+import subprocess
 import sys
+import time
 import types
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
-from to_spawn import aufpasser, config, context_mode, speicher, werkzeug
+from to_spawn import (
+    aufpasser,
+    aufseher_stand,
+    bau_log,
+    cli_parser,
+    config,
+    context_mode,
+    probesitz,
+    setup,
+    speicher,
+    werkzeug,
+)
 
 SKILL = Path(__file__).resolve().parent.parent
 SKRIPTE = SKILL / "skripte"
@@ -347,3 +361,350 @@ def test_aufpasser_liest_resume_id_von_agy() -> None:
         == "conv-77"
     )
     assert aufpasser.session_id_aus_argv(["agy", "--conversation=conv-88"]) == "conv-88"
+
+
+# --- Kontext-Auswertung für agy (#660) --------------------------------------
+
+
+def _schreibe_agy_db(
+    agy_ordner: Path,
+    zeilen: list[tuple[str, list[str], str, str, str]],
+) -> Path:
+    db = agy_ordner / "conversation_summaries.db"
+    agy_ordner.mkdir(parents=True, exist_ok=True)
+    con = sqlite3.connect(db)
+    try:
+        con.execute(
+            "CREATE TABLE conversation_summaries ("
+            "conversation_id TEXT PRIMARY KEY, "
+            "workspace_uris TEXT NOT NULL, "
+            "last_modified_time TEXT NOT NULL, "
+            "status TEXT NOT NULL DEFAULT '', "
+            "parent_conversation_id TEXT NOT NULL DEFAULT '')"
+        )
+        for cid, uris, mod, status, parent in zeilen:
+            con.execute(
+                "INSERT INTO conversation_summaries VALUES (?, ?, ?, ?, ?)",
+                (cid, json.dumps(uris), mod, status, parent),
+            )
+        con.commit()
+    finally:
+        con.close()
+    return db
+
+
+def _schreibe_agy_transkript(agy_ordner: Path, cid: str, eintraege: list[object]) -> Path:
+    pfad = agy_ordner / "brain" / cid / ".system_generated" / "logs" / "transcript.jsonl"
+    pfad.parent.mkdir(parents=True, exist_ok=True)
+    zeilen = [e if isinstance(e, str) else json.dumps(e) for e in eintraege]
+    pfad.write_text("\n".join(zeilen) + "\n", encoding="utf-8")
+    return pfad
+
+
+def test_agy_transkript_auswerten_kontext_und_tokens(tmp_path: Path) -> None:
+    pfad = _schreibe_agy_transkript(
+        tmp_path,
+        "conv-1",
+        [
+            {"step_index": 0, "type": "USER_INPUT", "created_at": "2026-11-25T16:00:00Z"},
+            "{kaputtes json",
+            {
+                "step_index": 1,
+                "type": "PLANNER_RESPONSE",
+                "model": "gemini-4-neon-high",
+                "input_tokens": 9000,
+                "cache_read_tokens": 0,
+                "output_tokens": 200,
+                "created_at": "2026-11-25T16:00:05Z",
+            },
+            {"step_index": 2, "type": "GENERIC", "created_at": "2026-11-25T16:00:10Z"},
+            {
+                "step_index": 3,
+                "type": "PLANNER_RESPONSE",
+                "model": "gemini-4-neon-high",
+                "input_tokens": 2500,
+                "cache_read_tokens": 182000,
+                "output_tokens": 800,
+                "created_at": "2026-11-25T16:02:00Z",
+            },
+        ],
+    )
+    erg = werkzeug.agy_transkript_auswerten(pfad)
+    assert erg is not None
+    assert erg["kontext"] == {"spitze": 184500, "aufrufe": 2}
+    assert erg["spitze_k"] == 184.5
+    assert erg["tokens"] == {
+        "input": 11500,
+        "cache_read": 182000,
+        "cache_creation": 0,
+        "output": 1000,
+        "gesamt": 194500,
+    }
+    assert erg["modell"] == "gemini-4-neon-high"
+    assert erg["dauer_s"] == 120
+    assert werkzeug.agy_transkript_auswerten(tmp_path / "fehlt.jsonl") is None
+
+
+def test_agy_json_auswerten_print_ausgabe() -> None:
+    einzel = json.dumps(
+        {
+            "conversation_id": "conv-json-1",
+            "model": "gemini-4-neon-high",
+            "usage": {"input_tokens": 4000, "cache_read_tokens": 12000, "output_tokens": 350},
+        }
+    )
+    erg = werkzeug.agy_json_auswerten(einzel)
+    assert erg is not None
+    assert erg["session_id"] == "conv-json-1"
+    assert erg["kontext"] == {"spitze": 16000, "aufrufe": 1}
+    assert erg["tokens"]["gesamt"] == 16350
+    assert werkzeug.agy_json_auswerten("kein json") is None
+
+
+def test_agy_gespraech_kontext_und_bau_log_nachtragen(tmp_path: Path) -> None:
+    wt = tmp_path / "wt-660"
+    wt.mkdir()
+    anderer = tmp_path / "wt-999"
+    anderer.mkdir()
+    agy_ordner = tmp_path / "agy-home"
+
+    _schreibe_agy_db(
+        agy_ordner,
+        [
+            # Ältere Sitzung im selben Worktree
+            ("conv-alt", [wt.resolve().as_uri()], "2026-11-25 10:00:00.123456789+00:00", "CASCADE_RUN_STATUS_IDLE", ""),
+            # Subagent im selben Worktree (darf nicht als Hauptsession zählen)
+            (
+                "conv-sub",
+                [wt.resolve().as_uri()],
+                "2026-11-25 16:30:00.999999999+00:00",
+                "CASCADE_RUN_STATUS_IDLE",
+                "conv-neu",
+            ),
+            # Neueste Hauptsitzung im selben Worktree
+            (
+                "conv-neu",
+                [wt.resolve().as_uri()],
+                "2026-11-25 16:20:00.555555555+00:00",
+                "CASCADE_RUN_STATUS_RUNNING",
+                "",
+            ),
+            # Anderer Worktree
+            (
+                "conv-fremd",
+                [anderer.resolve().as_uri()],
+                "2026-11-25 16:40:00.000000000+00:00",
+                "CASCADE_RUN_STATUS_RUNNING",
+                "",
+            ),
+        ],
+    )
+    _schreibe_agy_transkript(
+        agy_ordner,
+        "conv-neu",
+        [
+            {
+                "step_index": 1,
+                "type": "PLANNER_RESPONSE",
+                "model": "gemini-4-neon-high",
+                "input_tokens": 3000,
+                "cache_read_tokens": 97000,
+                "output_tokens": 500,
+                "created_at": "2026-11-25T16:15:00Z",
+            }
+        ],
+    )
+    assert werkzeug.agy_gespraech_fuer_ordner(wt, agy_ordner=agy_ordner) == "conv-neu"
+    # Filter nach=16:25 blendet conv-neu (16:20) aus.
+    grenze = datetime(2026, 11, 25, 16, 25, tzinfo=UTC).timestamp()
+    assert werkzeug.agy_gespraech_fuer_ordner(wt, agy_ordner=agy_ordner, nach=grenze) is None
+    assert werkzeug.agy_spitze_k(wt, agy_ordner=agy_ordner) == 100.0
+
+    zeile = werkzeug.agy_bau_log_nachtragen(tmp_path, "660", wt, runde=1, agy_ordner=agy_ordner)
+    assert zeile is not None
+    assert zeile["typ"] == "session_ende"
+    assert zeile["runner"] == "agy"
+    assert zeile["kontext"] == {"spitze": 100000, "aufrufe": 1}
+    assert zeile["tokens"]["gesamt"] == 100500
+    gelesen = bau_log.lese(wt, "660")
+    assert [z["typ"] for z in gelesen] == ["session_start", "session_ende"]
+    assert bau_log.zusammenfassung(wt, "660")["spitze_k"] == 100.0
+
+
+def test_agy_staffel_handoff_erkennt_frischen_handoff_mit_marker(tmp_path: Path) -> None:
+    ordner = tmp_path / "docs" / "handoffs"
+    ordner.mkdir(parents=True)
+    seit = time.time() - 10
+    ohne_marker = ordner / "HANDOFF_2026-11-25_660_alt.md"
+    ohne_marker.write_text("# Handoff\nNur Notizen.\n", encoding="utf-8")
+    assert werkzeug.agy_staffel_handoff([ordner], "660", seit=seit) is None
+
+    mit_marker = ordner / "HANDOFF_2026-11-25_660.md"
+    mit_marker.write_text("# Handoff #660\nStaffel: weiter\nRunde 1 fertig.\n", encoding="utf-8")
+    treffer = werkzeug.agy_staffel_handoff([ordner], "660", seit=seit)
+    assert treffer is not None
+    pfad, fp = treffer
+    assert pfad == mit_marker
+    assert fp
+    # Derselbe Fingerabdruck wird nicht ein zweites Mal ausgelöst.
+    assert werkzeug.agy_staffel_handoff([ordner], "660", seit=seit, schon_uebergeben=fp) is None
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Linux-Teil (#660)")
+def test_sessions_stand_und_aufseher_stand_lesen_agy_kontext(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (tmp_path / ".to-spawn").mkdir()
+    (tmp_path / ".to-spawn" / "config.json").write_text(json.dumps({"runner": "agy"}), encoding="utf-8")
+    wt = tmp_path / "wt-660"
+    wt.mkdir()
+    monkeypatch.setattr(werkzeug, "agy_spitze_k", lambda pfad, **_k: 184.5 if Path(pfad) == wt else None)
+
+    stand = _lade_skript("sessions_stand_660_kontext", SKRIPTE / "sessions_stand.py", monkeypatch, repo=tmp_path)
+    monkeypatch.setattr(stand.config, "worktree_pfad", lambda _t: str(wt))
+    assert stand.token_text("660", tmp_path) == "184,5k"
+
+    monkeypatch.setattr(aufseher_stand.config, "worktree_pfad", lambda _t, _r=None: str(wt))
+    lage = aufseher_stand._log_lage(660, tmp_path)
+    assert lage == ("184,5k", "—", "—", 0)
+
+
+def test_bau_cli_runner_flag_ueberschreibt_konfig(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    bau = _bau_fixture(tmp_path, monkeypatch, {"runner": "claude"})
+    monkeypatch.setattr(bau.starter, "finde", lambda name: f"/bin/{name}")
+    monkeypatch.setattr(sys, "argv", ["bau.py", "660", "--dry-run", "--runner", "agy"])
+    assert bau.main() == 0
+    ausgabe = capsys.readouterr().out
+    assert "/bin/agy" in ausgabe
+    assert "--model gemini-4-neon-high" in ausgabe
+    assert "--dangerously-skip-permissions" in ausgabe
+
+
+# --- --runner im Setup-Wizard (#660) ----------------------------------------
+
+
+def test_setup_speichere_zeige_und_cli_mit_runner(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=str(repo), check=True, capture_output=True)
+
+    # Ungültiger Runner: Exit 2, nichts geschrieben.
+    kaputt = subprocess.run(
+        [sys.executable, str(SKILL / "to_spawn.py"), "setup", "--plattform", "linux", "--runner", "fremd"],
+        cwd=str(repo),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+        timeout=60,
+    )
+    assert kaputt.returncode == 2
+    assert not (repo / ".to-spawn" / "config.json").exists()
+
+    # Gültiger Runner + agy-Modell: schreibt runner und modell in .to-spawn/config.json.
+    ok = subprocess.run(
+        [
+            sys.executable,
+            str(SKILL / "to_spawn.py"),
+            "setup",
+            "--plattform",
+            "linux",
+            "--runner",
+            "agy",
+            "--modell-ticket",
+            "gemini-4-neon-xhigh",
+        ],
+        cwd=str(repo),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+        timeout=60,
+    )
+    assert ok.returncode == 0, ok.stdout + ok.stderr
+    daten = json.loads((repo / ".to-spawn" / "config.json").read_text(encoding="utf-8"))
+    assert daten["runner"] == "agy"
+    assert daten["modelle"]["ticket"] == "gemini-4-neon-xhigh"
+    assert "runner: agy" in ok.stdout
+
+    # setup --zeigen zeigt Werkzeug (--runner) und den gespeicherten Wert.
+    ansicht = setup.zeige(config.lade(repo), repo / config.KONFIG_PFAD, "linux", repo=repo)
+    assert "--runner" in ansicht
+    assert "runner: agy" in ansicht
+
+
+# --- --runner / agy im Probesitz (#660) -------------------------------------
+
+
+def test_probesitz_p1_login_agy_ok_fehler_und_fehlt() -> None:
+    def _which_da(name: str) -> str | None:
+        return f"/usr/local/bin/{name}"
+
+    def _ok(argv: list[str], **_k: object) -> subprocess.CompletedProcess[str]:
+        assert argv[1:] == ["models"]
+        out = "Fetching available models...\ngemini-4-neon-high\tGemini 4 Neon (High)\ngemini-4-neon-low\tGemini 4 Neon (Low)\n"
+        return subprocess.CompletedProcess(argv, 0, out, "")
+
+    erg_ok = probesitz.pruefe_login(laeufer=_ok, which=_which_da, runner="agy")
+    assert erg_ok.ok and erg_ok.nummer == 1
+    assert "agy" in erg_ok.grund and "gemini-4-neon-high" in erg_ok.grund
+
+    def _fehler(argv: list[str], **_k: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(argv, 1, "", "not authenticated")
+
+    erg_rot = probesitz.pruefe_login(laeufer=_fehler, which=_which_da, runner="agy")
+    assert not erg_rot.ok
+    assert "agy models Exit 1" in erg_rot.grund
+    assert "agy" in erg_rot.fehlt_noch
+
+    erg_fehlt = probesitz.pruefe_login(laeufer=_ok, which=lambda _n: None, runner="agy")
+    assert not erg_fehlt.ok
+    assert erg_fehlt.grund == "agy nicht gefunden"
+
+
+def test_probesitz_wegwerf_lauf_werte_bau_log_und_parser_mit_runner_agy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    args = cli_parser.baue_parser().parse_args(["probesitz", "--runner", "agy", "--zeigen"])
+    assert args.runner == "agy"
+
+    p5, p6 = probesitz.werte_bau_log([], runner="agy")
+    assert not p5.ok and not p6.ok
+    assert "agy" in p5.fehlt_noch and "agy" in p6.fehlt_noch
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=str(repo), check=True, capture_output=True)
+    (repo / ".to-spawn").mkdir()
+    (repo / ".to-spawn" / "config.json").write_text("{}\n", encoding="utf-8")
+    monkeypatch.setenv("BAU_WT_DIR", str(tmp_path / "wt"))
+
+    gesehen_argv: list[str] = []
+
+    def _laeufer(argv: list[str], **_k: object) -> subprocess.CompletedProcess[str]:
+        text = " ".join(argv)
+        if "issue create" in text:
+            return subprocess.CompletedProcess(argv, 0, "https://github.com/x/y/issues/4712\n", "")
+        if "ls-remote" in text:
+            return subprocess.CompletedProcess(argv, 0, "abc\trefs/heads/probesitz-4712\n", "")
+        if "log " in text:
+            return subprocess.CompletedProcess(argv, 0, "abc chore(probesitz): Runde 1 (#4712) [skip ci]\n", "")
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    def _starter(argv: list[str], **_k: object) -> probesitz.SessionLauf:
+        gesehen_argv.extend(argv)
+        return probesitz.SessionLauf(0, "Session PID 1", False, "")
+
+    erg = probesitz.wegwerf_lauf(
+        repo,
+        config.lade(repo),
+        runner="agy",
+        laeufer=_laeufer,
+        which=lambda name: f"/usr/bin/{name}",
+        session_starter=_starter,
+        worktree_anlegen=lambda wt, _r, _t: wt.mkdir(parents=True, exist_ok=True),
+    )
+    assert erg[2].ok, erg[2]
+    assert "--runner" in gesehen_argv
+    assert gesehen_argv[gesehen_argv.index("--runner") + 1] == "agy"
+    assert gesehen_argv[gesehen_argv.index("--model") + 1] == "gemini-4-neon-high"

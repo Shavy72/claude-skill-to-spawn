@@ -69,15 +69,17 @@ from to_spawn import (
     befugnis,
     briefkasten,
     capo,
+    config,
     gh,
     komplett_lauf,
     pc_fenster,
+    prozessbaum,
     ticket_zustand,
     tmux_aufruf,
     verlauf_pruefung,
+    werkzeug,
     wiederanlauf,
 )
-from to_spawn import prozessbaum
 
 log = logging.getLogger("to_spawn.aufseher_stand")
 
@@ -519,10 +521,19 @@ def _log_lage(n: int, repo: Path) -> tuple[str, str, str, int] | None:
     """
     try:
         ort = bau_log.log_ort_fuer(n, repo)
+        ist_agy = sys.platform != "win32" and werkzeug.runner_von(config.lade(repo)) == "agy"
         if ort is None:
+            if ist_agy:
+                agy_k = werkzeug.agy_spitze_k(Path(config.worktree_pfad(n, repo)).expanduser())
+                if agy_k is not None:
+                    return bau_log.kontext_text(agy_k), STRICH, STRICH, 0
             return None
         zeilen = bau_log.lese(ort, n, hauptbaum=repo)
         spitze_k = bau_log.zusammenfassung(ort, n, hauptbaum=repo)["spitze_k"]
+        if sys.platform != "win32" and (spitze_k is None or ist_agy):
+            agy_k = werkzeug.agy_spitze_k(Path(config.worktree_pfad(n, repo)).expanduser())
+            if agy_k is not None:
+                spitze_k = max(spitze_k, agy_k) if spitze_k is not None else agy_k
     except (OSError, ValueError, KeyError) as fehler:
         log.warning("Bau-Log #%s unlesbar: %s", n, fehler)
         return STRICH, STRICH, STRICH, 0

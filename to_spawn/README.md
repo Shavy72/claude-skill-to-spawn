@@ -172,7 +172,9 @@ Block „Probesitz (7 Punkte)“ an. Rot = Grund + „fehlt noch: …“, nie nu
   Zweige werden immer aufgeräumt (`gh issue close`, `git push --delete`, `worktree remove`),
   auch bei Fehlern.
 - `--punkt N` (mehrfach) prüft nur diese Punkte, `--zeigen` zeigt nur den Stand,
-  `--modell` wählt das Modell der Wegwerf-Session.
+  `--modell` wählt das Modell der Wegwerf-Session, `--runner claude|agy` wählt das Werkzeug (#660;
+  für `agy` prüft Punkt 1 `agy models` und Punkt 5/6 nutzen das `agy`-Transkript bzw. die
+  `bau.py`-Staffel-Übergabe).
 - Exit 0 = 7/7 ✓ · 1 = mindestens ein ✗ · 2 = Konfig/Repo unlesbar.
 - Jeder Lauf trägt eine Lauf-Kennung; Punkt 7 geht nur raus, wenn 1–6 im SELBEN Lauf grün
   waren (`--punkt 7` allein = Rot „Punkte aus älterem Lauf“). Die Wegwerf-Session bekommt
@@ -201,8 +203,12 @@ Fehlt die Datei, gelten die Vorgaben aus `to_spawn/config.py`:
 ```
 
 `runner` wählt das Werkzeug für Bau-Sessions in `skripte/bau.py` (`"claude"` Vorgabe oder `"agy"`
-für Antigravity; Standardmodell bei `"agy"` ist `gemini-4-neon-high`, sofern `modelle.ticket` kein
-eigenes Nicht-Claude-Modell setzt oder `--model` übergeben wird — einzige Stelle: `to_spawn/werkzeug.py`, #660).
+für Antigravity; auch per `to_spawn.py setup --runner claude|agy`, `to_spawn.py probesitz --runner …`
+und `skripte/bau.py --runner …` setzbar; Standardmodell bei `"agy"` ist `gemini-4-neon-high`, sofern
+`modelle.ticket` kein eigenes Nicht-Claude-Modell setzt oder `--model` übergeben wird — einzige Stelle:
+`to_spawn/werkzeug.py`, #660). Auf Linux lesen `sessions_stand.py`, `aufseher_stand.py`, `leiter.py` und
+`bau.py` den Spitzen-Kontext und die Token-Zahlen von `agy`-Sessions aus
+`~/.gemini/antigravity-cli/conversation_summaries.db` und `brain/<id>/.system_generated/logs/transcript.jsonl`.
 `staffel.grenze_k` ist nur der Ticket-Schnitt (Planungs-Grenze je Ticket), keine Ablöse-Grenze:
 die Ablösung einer laufenden Session hängt allein an `~/.claude/smart-zone.json` (#417).
 
