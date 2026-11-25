@@ -248,7 +248,14 @@ def volles_fenster(modell: str) -> str:
     return modell
 
 
-def prompt_bauen(spec: int, repo: str, takt: int, konfig: dict) -> str:
+def prompt_bauen(
+    spec: int,
+    repo: str,
+    takt: int,
+    konfig: dict,
+    *,
+    repo_ordner: Path | None = None,
+) -> str:
     """Aufseher-Prompt mit Server-Befehlen aus der Konfig (``ssh_ziel``, ``server_repo``)
     und dem Manifest-Pfad aus ``pfade.manifeste``."""
     # aufseher_vorlage (#450 F5): Linux/Bau-Server kennt nur ``python3``.
@@ -256,7 +263,8 @@ def prompt_bauen(spec: int, repo: str, takt: int, konfig: dict) -> str:
     text = vorlage.format(
         S=spec, REPO=repo, DATUM=date.today().isoformat(), TAKT=max(600, takt), SKILL=startklar.skill_pfad()
     )
-    text = text.replace("<MANIFEST>", manifest.manifest_im_repo(REPO_ORDNER, spec))
+    ziel_ordner = repo_ordner if repo_ordner is not None else REPO_ORDNER
+    text = text.replace("<MANIFEST>", manifest.manifest_im_repo(ziel_ordner, spec))
     return text.replace("<SSH>", str(konfig.get("ssh_ziel") or "bau-server")).replace(
         "<SERVER_REPO>", str(konfig.get("server_repo") or "<server_repo fehlt in .to-spawn/config.json>")
     )

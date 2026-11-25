@@ -74,6 +74,7 @@ from to_spawn import (  # noqa: E402
     setup,
     spec_rand,
     speicher,
+    start_last,
     startklar,
     ticket_zustand,
     ticketstand,
@@ -886,6 +887,13 @@ def main(argv: list[str] | None = None) -> int:
     aufpasser.parser_fuellen(
         unter.add_parser("aufpasser", help="tmux-Fenster bau/wache beaufsichtigen (Cron)")
     )
+    # Start-Last (#412): Kontext nach Start je Fenstertyp (bau, aufseher) + Obergrenzen-Prüfung.
+    start_last.parser_fuellen(
+        unter.add_parser(
+            "start-last",
+            help="Start-Last (Kontext nach Start) je Fenstertyp messen und gegen Obergrenzen prüfen",
+        )
+    )
 
     args = ap.parse_args(argv)
     if args.befehl == "pruefen":
@@ -926,6 +934,8 @@ def main(argv: list[str] | None = None) -> int:
         return waechter_takt.lauf(args)
     if args.befehl == "aufpasser":
         return aufpasser.lauf_mit_args(args)
+    if args.befehl == "start-last":
+        return start_last.lauf_mit_args(args)
     if args.befehl == "aufraeumen":
         return _aufraeumen(args, ap)
     if args.befehl == "sichern":

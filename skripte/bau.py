@@ -417,17 +417,19 @@ def auf_speicher_warten(
 # --- Skill-Katalog ----------------------------------------------------------
 
 
-def known_skill_names() -> set[str]:
+def known_skill_names(*, repo: Path | None = None, claude_dir: Path | None = None) -> set[str]:
+    ziel_repo = repo if repo is not None else REPO
+    ziel_claude = claude_dir if claude_dir is not None else CLAUDE_DIR
     # Pflicht-Skills werden ohnehin erzwungen, auch ohne Datei auf dem Rechner (#478).
     names: set[str] = set(BUILTIN_SKILLS) | set(PFLICHT_SKILLS)
 
-    registry = read_json(CLAUDE_DIR / "toolbox" / "registry.json", {})
+    registry = read_json(ziel_claude / "toolbox" / "registry.json", {})
     for entry in registry.get("entries") or []:
         if entry.get("type") in ("skill", "command") and entry.get("name"):
             names.add(entry["name"])
 
     # Namespaced Commands: ~/.claude/commands/<ns>/<name>.md → "<ns>:<name>"
-    commands_dir = CLAUDE_DIR / "commands"
+    commands_dir = ziel_claude / "commands"
     if commands_dir.is_dir():
         for md in commands_dir.glob("*.md"):
             names.add(md.stem)
@@ -436,7 +438,7 @@ def known_skill_names() -> set[str]:
 
     # Plugin-Skills: plugins/cache/<marketplace>/<plugin>/<version>/skills/<skill>/SKILL.md
     # und plugins/cache/<marketplace>/<plugin>/<version>/commands/<name>.md
-    cache = CLAUDE_DIR / "plugins" / "cache"
+    cache = ziel_claude / "plugins" / "cache"
     if cache.is_dir():
         for skill_md in cache.glob("*/*/*/skills/*/SKILL.md"):
             plugin = skill_md.parents[3].name
@@ -446,13 +448,13 @@ def known_skill_names() -> set[str]:
             names.add(f"{plugin}:{cmd_md.stem}")
 
     # Repo-Skills + Repo-Commands (.claude/commands/<name>.md → "<name>")
-    for skill_md in (REPO / ".claude" / "skills").glob("*/SKILL.md"):
+    for skill_md in (ziel_repo / ".claude" / "skills").glob("*/SKILL.md"):
         names.add(skill_md.parent.name)
-    for md in (REPO / ".claude" / "commands").glob("*.md"):
+    for md in (ziel_repo / ".claude" / "commands").glob("*.md"):
         names.add(md.stem)
-    for md in (REPO / ".claude" / "commands").glob("*/*.md"):
+    for md in (ziel_repo / ".claude" / "commands").glob("*/*.md"):
         names.add(f"{md.parent.name}:{md.stem}")
-    for skill_md in (CLAUDE_DIR / "skills").glob("*/SKILL.md"):
+    for skill_md in (ziel_claude / "skills").glob("*/SKILL.md"):
         names.add(skill_md.parent.name)
 
     return names
@@ -461,14 +463,17 @@ def known_skill_names() -> set[str]:
 # --- MCP-Katalog ------------------------------------------------------------
 
 
-def mcp_catalog() -> dict[str, dict]:
+def mcp_catalog(*, repo: Path | None = None, home: Path | None = None, claude_dir: Path | None = None) -> dict[str, dict]:
     """Reihenfolge: ~/.claude.json (global + dieses Projekt) → Repo .mcp.json → toolbox/mcp-archive.json."""
+    ziel_repo = (repo if repo is not None else REPO).resolve()
+    ziel_home = home if home is not None else HOME
+    ziel_claude = claude_dir if claude_dir is not None else (ziel_home / ".claude" if home is not None else CLAUDE_DIR)
     catalog: dict[str, dict] = {}
-    claude_json = read_json(HOME / ".claude.json", {})
+    claude_json = read_json(ziel_home / ".claude.json", {})
     project_servers: dict[str, dict] = {}
     for key, project in (claude_json.get("projects") or {}).items():
         try:
-            same = Path(key).resolve() == REPO
+            same = Path(key).resolve() == ziel_repo
         except OSError:
             same = False
         if same:
@@ -476,8 +481,8 @@ def mcp_catalog() -> dict[str, dict]:
     sources = (
         (claude_json.get("mcpServers") or {}),
         project_servers,
-        (read_json(REPO / ".mcp.json", {}).get("mcpServers") or {}),
-        (read_json(CLAUDE_DIR / "toolbox" / "mcp-archive.json", {}).get("servers") or {}),
+        (read_json(ziel_repo / ".mcp.json", {}).get("mcpServers") or {}),
+        (read_json(ziel_claude / "toolbox" / "mcp-archive.json", {}).get("servers") or {}),
     )
     for servers in sources:
         for name, definition in servers.items():
@@ -500,7 +505,7 @@ def worktree_pfad(ticket: str) -> str:
     return config.worktree_pfad(ticket, REPO)
 
 
-def repo_zusatz(konfig: dict) -> str:
+def repo_zusatz(konfig: dict, *, repo: Path | None = None) -> str:
     """Text der Repo-Zusatz-Datei (``start_text.zusatz_datei``, relativ zum Repo), sonst ``""``.
 
     Die eine Stelle für alle Fehlerfälle (#274 P1): nicht konfiguriert → still ``""``;
@@ -509,7 +514,7 @@ def repo_zusatz(konfig: dict) -> str:
     rel = str((konfig.get("start_text") or {}).get("zusatz_datei") or "").strip()
     if not rel:
         return ""
-    wurzel = REPO.resolve()
+    wurzel = (repo if repo is not None else REPO).resolve()
     pfad = (wurzel / rel).resolve()
     if not pfad.is_relative_to(wurzel):
         start_warnung(f"Repo-Zusatz {rel} liegt außerhalb des Repos — Start ohne Zusatz.")
@@ -535,6 +540,9 @@ def build_prompt(
     title: str,
     kontext: str,
     konfig: dict | None = None,
+    *,
+    repo: Path | None = None,
+    gh_repo: str | None = None,
 ) -> str:
     """Platzhalter der Vorlage füllen — auch die repo-neutralen (#257):
     ``{REPO}`` = owner/name, ``{HAUPTZWEIG}``, ``{CHECKPOINT_LABEL}`` aus der Konfig,
@@ -551,16 +559,18 @@ def build_prompt(
     ``ValueError``, wenn nach dem Füllen ein ``{GROSS}``-Platzhalter übrig bleibt (unbekannt oder
     aus einem Wert ungefüllt), statt ihn roh in den Prompt zu geben (#501). Klammern aus Titel,
     Kontext und Repo-Zusatz zählen nicht — das ist fremder Text, der wörtlich bleibt."""
-    konfig = konfig if konfig is not None else config.lade(REPO)
+    ziel_repo = repo if repo is not None else REPO
+    ziel_gh = gh_repo if gh_repo is not None else GH_REPO
+    konfig = konfig if konfig is not None else config.lade(ziel_repo)
     label = str((konfig.get("regularien") or {}).get("checkpoint_label") or "checkpoint:human")
-    haupt = gh.hauptzweig(REPO)
+    haupt = gh.hauptzweig(ziel_repo)
     werte = {
-        "{WT}": worktree_pfad(ticket),
+        "{WT}": config.worktree_pfad(ticket, ziel_repo) if repo is not None else worktree_pfad(ticket),
         "{N}": ticket,
         "{S}": spec,
         "{TITLE}": title,
         "{KONTEXT}": kontext,
-        "{REPO}": GH_REPO,
+        "{REPO}": ziel_gh,
         "{HAUPTZWEIG}": haupt,
         "{CHECKPOINT_LABEL}": label,
         "{SESSION_KOPF}": capo.SESSION_KOPF,
@@ -572,7 +582,7 @@ def build_prompt(
     }
     if "{ANNAHME_GRENZE}" not in template:
         start_warnung("Start-Vorlage ohne {ANNAHME_GRENZE}: Annahme-Regel (#490) fehlt im Start-Text.")
-    zusatz = repo_zusatz(konfig)
+    zusatz = repo_zusatz(konfig, repo=ziel_repo)
     if not zusatz:
         template = re.sub(r"(?:#[^\n]*\n)?\{REPO_ZUSATZ\}\n*", "", template)
     for platzhalter, wert in werte.items():
