@@ -28,7 +28,7 @@ from test_hausmeister_1368 import (  # noqa: F401 — ``welt`` ist ein Fixture
     welt,
 )
 
-from to_spawn import hausmeister, prozessbaum
+from to_spawn import hausmeister
 
 APP = "Shavy72/duoplus-management"
 SKILL = "Shavy72/claude-skill-to-spawn"
@@ -71,15 +71,6 @@ class Repos:
         monkeypatch.setenv("GH_TICKETS_JE_REPO", str(self.tickets))
         # Platz reichlich: keine Platznot-Reihenfolge, die 24-h-Regel gilt
         monkeypatch.setenv("TO_SPAWN_HAUSMEISTER_PLATTE", "0.9")
-        # Unter Windows sieht die PEB-Prüfung jeden echten Prozess des Rechners; einer im
-        # Start/Ende ohne cwd-Griff (``drin=None``) ließe den Ordner zufällig stehen (#649).
-        # Hier zählen nur Prozesse, die nachweislich im Test-Ordner stehen (test_d).
-        echt = prozessbaum.arbeitsordner_in_windows
-        monkeypatch.setattr(
-            prozessbaum,
-            "arbeitsordner_in_windows",
-            lambda ordner: {pid: b for pid, b in echt(ordner).items() if b.drin},
-        )
 
     def repo(self, slug: str) -> Path:
         """Echtes Repo ``slug`` (bare + Hauptklon, Hauptzweig ``main``)."""

@@ -1,9 +1,12 @@
-"""Stufe 3 nur betroffene Tests + Rückfall-Regeln R1–R3 (L3 3b-2a, #101).
+"""Stufe 3 nur betroffene Tests + Rückfall-Regeln R1–R3 (L3 3b-2a, #101, #218).
 
-Regel-Tests laufen überall. Die Proben (M11 Fall 2 + 3, M12 a, Rot-Beweis R1) brauchen den
-Probe-Ordner aus ``messung/README.md`` (``py/``, ``node/`` mit ``node_modules``, ``.venv`` mit
-pytest-impacted): Umgebungsvariable ``TO_SPAWN_PROBE``, sonst übersprungen. Die alte Reihe 34 kommt
-aus ``messung/fehler_reihe.py`` (eine Quelle, per ``ast`` gelesen, nicht kopiert).
+Regel-Tests und Abnahme-Proben (M11 Fall 2 + 3, M12 a, Rot-Beweis R1) laufen überall ohne
+Umgebungsvariable: fehlt ``TO_SPAWN_PROBE``, erzeugt die Fixture echte Git-Repos direkt aus
+``messung/gen_py.py`` und ``messung/gen_node.py`` (mit lokalem AST-Import-Graph-Adapter bzw.
+lokalem ESM-Vitest-Läufer, falls ``pytest-impacted``/``vitest`` nicht installiert sind). Mit
+gesetztem ``TO_SPAWN_PROBE`` laufen sie unverändert gegen den Probe-Ordner aus
+``messung/README.md``. Die alte Reihe 34 kommt aus ``messung/fehler_reihe.py`` (eine Quelle, per
+``ast`` gelesen, nicht kopiert).
 """
 
 from __future__ import annotations
@@ -12,16 +15,17 @@ import ast
 import functools
 import os
 import subprocess
+from collections.abc import Iterator
 from pathlib import Path
 
+import pruef_probe_helfer as probe_helfer
 import pytest
 
 from to_spawn import pruef
-from to_spawn.pruef import cache, protokoll, regeln
+from to_spawn.pruef import adapter_node, cache, protokoll, regeln
 
 REIHE = Path(__file__).resolve().parents[1] / "messung" / "fehler_reihe.py"
 PROBE = Path(os.environ["TO_SPAWN_PROBE"]) if os.environ.get("TO_SPAWN_PROBE") else None
-braucht_probe = pytest.mark.skipif(PROBE is None, reason="TO_SPAWN_PROBE nicht gesetzt")
 #: Fehler der alten Reihe, die ein neues Paket bräuchten (``uv pip install``/``npm install``): hier
 #: zählt nur, dass R3 voll prüft; dass voll sie rot sieht, belegt ``messung/ergebnis_*.json``.
 NEU_INSTALLIEREN = {"P19", "N10"}
@@ -131,21 +135,34 @@ def _git(ordner: Path, *args: str) -> None:
 
 
 @pytest.fixture(scope="module")
-def probe(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Path]:
-    assert PROBE is not None
+def probe(tmp_path_factory: pytest.TempPathFactory) -> Iterator[dict[str, Path]]:
     ziel = tmp_path_factory.mktemp("probe")
-    repos = {}
-    for name, link in (("py", ".venv"), ("node", "node_modules")):
-        repo = ziel / name
-        subprocess.run(["git", "clone", "-q", str(PROBE / name), str(repo)], check=True)
-        quelle = PROBE / ".venv" if name == "py" else PROBE / name / "node_modules"
-        (repo / link).symlink_to(quelle, target_is_directory=True)
-        with (repo / ".git" / "info" / "exclude").open("a", encoding="utf-8") as datei:
-            datei.write(f"/{link}\n")
-        _git(repo, "config", "user.email", "probe@example.org")
-        _git(repo, "config", "user.name", "probe")
-        repos[name] = repo
-    return repos
+    if PROBE is not None:
+        repos = {}
+        for name, link in (("py", ".venv"), ("node", "node_modules")):
+            repo = ziel / name
+            subprocess.run(["git", "clone", "-q", str(PROBE / name), str(repo)], check=True)
+            quelle = PROBE / ".venv" if name == "py" else PROBE / name / "node_modules"
+            (repo / link).symlink_to(quelle, target_is_directory=True)
+            with (repo / ".git" / "info" / "exclude").open("a", encoding="utf-8") as datei:
+                datei.write(f"/{link}\n")
+            _git(repo, "config", "user.email", "probe@example.org")
+            _git(repo, "config", "user.name", "probe")
+            repos[name] = repo
+        yield repos
+        return
+
+    repos = probe_helfer.baue_probe_repos(ziel)
+    py_repo = repos["py"]
+    alt_pypath = os.environ.get("PYTHONPATH", "")
+    pypath = os.pathsep.join(
+        teil for teil in (str(py_repo), str(py_repo / "deps" / "greetlib-1"), alt_pypath) if teil
+    )
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv("PYTHONPATH", pypath)
+        if not probe_helfer.hat_pytest_impacted():
+            mp.setattr(pruef, "_ADAPTER", (probe_helfer.AstAuswahlAdapter(), adapter_node.ADAPTER))
+        yield repos
 
 
 def _fall(repo: Path, pfad: str, alt: str, neu: str) -> dict:
@@ -169,7 +186,6 @@ def _kein_cache(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(cache, "merke", lambda *_a, **_k: None)
 
 
-@braucht_probe
 @pytest.mark.parametrize(
     ("name", "pfad", "alt", "neu"),
     [
@@ -189,7 +205,6 @@ def test_m11_fall2_kleine_aenderung_waehlt_aus(
     assert any(w.startswith("regeln@") for w in erg["zeile"]["werkzeug"])
 
 
-@braucht_probe
 @pytest.mark.parametrize(
     ("name", "pfad", "alt", "neu"),
     [
@@ -223,14 +238,12 @@ def _alle() -> list[tuple[str, str, str, str, str, str]]:
     return [("py", *f) for f in _reihe("PY_FEHLER")] + [("node", *f) for f in _reihe("NODE_FEHLER")]
 
 
-@braucht_probe
 def test_m12a_alte_reihe_34_nichts_uebersehen(probe: dict[str, Path]) -> None:
     faelle = _alle()
     assert len(faelle) == 34
     assert _uebersehen(probe, faelle) == []
 
 
-@braucht_probe
 def test_rot_beweis_ohne_r1_wird_bekannter_fall_uebersehen(
     probe: dict[str, Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -238,8 +251,9 @@ def test_rot_beweis_ohne_r1_wird_bekannter_fall_uebersehen(
     # Fix-Runde 1: auch das 0-Tests-Netz aus (alles gilt als erklärte Doku), sonst fängt es R1-Fälle.
     nach = regeln.nach_auswahl
     monkeypatch.setattr(regeln, "nach_auswahl", lambda n, pfade, adapter, doku=(): nach(n, pfade, adapter, pfade))
-    r1_faelle = [f for f in _alle() if f[1] in {"P09", "P11", "P18", "N05"}]
-    assert _uebersehen(probe, r1_faelle) != []
+    erwartet = {"P09", "P11", "P18", "N05"}
+    r1_faelle = [f for f in _alle() if f[1] in erwartet]
+    assert set(_uebersehen(probe, r1_faelle)) == erwartet
 
 
 def test_regeln_stand_unabhaengig_von_zeilenende(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
