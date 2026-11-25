@@ -53,7 +53,7 @@ def main() -> int:
             datei.write(f"START {os.getpid()} {ticket}\n")
         if halte_datei:
             ziel = Path(halte_datei)
-            ende = time.monotonic() + 30.0
+            ende = time.monotonic() + 60.0
             while not ziel.exists() and time.monotonic() < ende:
                 time.sleep(0.05)
         elif schlaf_s > 0:

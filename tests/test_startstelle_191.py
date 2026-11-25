@@ -63,6 +63,7 @@ def umgebung(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
     monkeypatch.delenv(startstelle.TEST_OFFEN_ENV, raising=False)
     monkeypatch.setenv("TO_SPAWN_REPO", str(tmp_path))
     monkeypatch.setenv("TMPDIR", str(tmp_path))
+    monkeypatch.setenv(startstelle.SPERR_ORDNER_ENV, str(tmp_path / "sperren"))
     monkeypatch.setenv(startstelle.STAND_ABSTAND_ENV, "0")
     monkeypatch.delenv("LOCALAPPDATA", raising=False)
     monkeypatch.delenv("BAU_AUFTRAG", raising=False)
@@ -568,15 +569,22 @@ def test_abloesung_uebernimmt_haupt_sperre_nach_ende_der_alten_session(
         _warte_zeilen(1)
         neu = _starten(frei_neu, "--ohne-prompt")
         _warte_zeilen(2)
+
+        haupt_lock = startstelle.sperr_datei("19110", "test-org/test-repo")
+        assert haupt_lock.parent == tmp_path / "sperren", haupt_lock
+        abloese_lock = haupt_lock.with_name(haupt_lock.name + ".abloesung")
+        from to_spawn import sperre
+
+        with sperre.halte(haupt_lock) as haupt_frei:
+            assert not haupt_frei, "Alte Session muss die Haupt-Sperre halten"
+        with sperre.halte(abloese_lock) as abloese_frei:
+            assert not abloese_frei, "Ablösung muss die Ablöse-Sperre halten"
+
         frei_alt.write_text("go", encoding="utf-8")
         alt.communicate(timeout=30)
 
         # Warten, bis der Hintergrund-Thread der Ablösung die Haupt-Sperre übernommen hat
         # (daran erkennbar, dass die Ablöse-Sperre wieder frei ist).
-        abloese_lock = startstelle.sperr_datei("19110", "test-org/test-repo")
-        abloese_lock = abloese_lock.with_name(abloese_lock.name + ".abloesung")
-        from to_spawn import sperre
-
         ende = time.monotonic() + 10.0
         uebernommen = False
         while time.monotonic() < ende:
@@ -586,6 +594,7 @@ def test_abloesung_uebernimmt_haupt_sperre_nach_ende_der_alten_session(
                     break
             time.sleep(0.05)
         assert uebernommen, "Ablösung hat die Haupt-Sperre nach Ende der alten Session nicht übernommen"
+        assert neu.poll() is None, "Ablösung darf vor Freigabe von frei_neu nicht beendet sein"
 
         # Jetzt muss ein normaler Start abgewiesen werden („läuft schon“), kein dritter Start.
         dritter = subprocess.run(
@@ -605,9 +614,10 @@ def test_abloesung_uebernimmt_haupt_sperre_nach_ende_der_alten_session(
     finally:
         frei_alt.write_text("go", encoding="utf-8")
         frei_neu.write_text("go", encoding="utf-8")
-        alt.wait(timeout=30)
+        if alt.poll() is None:
+            alt.communicate(timeout=30)
         if neu is not None:
-            neu.wait(timeout=30)
+            neu.communicate(timeout=30)
 
 
 def test_start_sperre_oserror_ist_fail_closed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
