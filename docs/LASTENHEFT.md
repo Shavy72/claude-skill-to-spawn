@@ -607,3 +607,44 @@ aber nicht einzeln bestätigt.
 - **N24** kein Leerlauf, weil ein Takt noch nicht wieder dran ist, obwohl die Voraussetzung schon
   erfüllt ist
 - **N25** kein Probe-Lauf gilt als bestanden, solange eine System-Anomalie darin vorkam
+
+---
+
+## L11 — Betriebssystem- und Hardware-Unabhängigkeit, Schutz von Live und laufenden Sessions (der Auftraggeber, 2026-11-25)
+
+### Wortlaut (1:1)
+
+Ziel des Auftraggebers (25.11.2026, ca. 22:30, wörtlich):
+
+> das Ziel ist, dass unser Skill/System-Repo mit egal welchem Betriebssystem (Windows/Linux) und egal welcher Hardware reibungslos arbeiten und laufen kann … wenn ich mal von einem anderen Laptop aus arbeite oder sich der Server ändert, dann soll das immer noch perfekt laufen wie ein Schweizer Uhrwerk
+
+Ergänzung des Auftraggebers (25.11.2026, wörtlich):
+
+> es geht drum, dass der Skill oder unser System sich immer darüber bewusst ist, nichts im Live-Zustand zu gefährden, sondern die Pipeline ordentlich steuert, reibungslos
+
+### Verdichtung in prüfbare Anforderungen (L11)
+
+Die Verdichtung ist eine Auslegung der Sessions. Der Auftraggeber hat den Wortlaut gesagt, die
+einzelnen Punkte aber nicht einzeln bestätigt.
+
+- **A70 Beliebiges Betriebssystem (Linux und Windows) und beliebige Hardware:** Das Bau-System läuft
+  auf Linux und Windows sowie auf jeder Maschine (anderer Laptop, geänderter Server) ohne
+  maschinenspezifische Anpassung. Pfade, Grenzwerte, Speicher-Schwellen und Rechnernamen sind nicht
+  fest eingetragen, sondern werden zur Laufzeit selbst gemessen und abgeleitet.
+- **A71 Maschinenwechsel prüfbar abgenommen:** Ein Wechsel auf ein anderes Gerät (Linux oder Windows
+  mit abweichender Hardware) ist als eigener Prüfpunkt Teil der Abnahme (z. B. M16 „andere
+  Maschine“); das System besteht ihn ohne feste Maschinen-Annahmen.
+- **A72 Schutz von Live und laufenden Sessions hat Vorrang:** Das System gefährdet zu keinem
+  Zeitpunkt den Live-Zustand oder bereits laufende Sessions; jede Entscheidung der Pipeline ordnet
+  Last und Ablauf zuerst diesem Schutz unter.
+- **A73 Ort-Wahl vor jedem Testlauf, im Zweifel GitHub:** Vor jedem Testlauf (kleine Ticket-Prüfung
+  ebenso wie voller Lauf) prüft das System anhand der gemessenen Hardware- und
+  Betriebssystem-Reserve selbst, ob lokal oder bei GitHub geprüft wird; bei knapper Reserve oder
+  unsicherer Messung wählt es GitHub, um Live und laufende Sessions zu schützen (siehe Issue #802).
+
+**Ausdrücklich nicht gewollt (L11)**
+
+- **N26** keine fest eingetragenen Maschinen-Werte (Pfade, feste RAM-Grenzen, Rechnernamen), die bei
+  Laptop- oder Server-Wechsel brechen
+- **N27** kein lokaler Testlauf, der bei knapper oder unsicherer Reserve den Live-Zustand oder
+  laufende Sessions gefährdet
