@@ -304,6 +304,67 @@ def darf_live(klon: Path, spec: int, konfig: dict[str, Any]) -> Ergebnis:
     return komplett_einmal(klon, spec, Moment.VOR_LIVE, konfig)
 
 
+def _nicht_eingerichtet(spec: int, konfig: dict[str, Any]) -> Ergebnis | None:
+    """Übergangsregel (#425): ohne Gruppe ``pruefung`` alter Ablauf, ohne git/Sperre."""
+    if pruefplan.eingerichtet(konfig):
+        return None
+    log.info("komplett_lauf: Spec %s %s", spec, pruefplan.NICHT_EINGERICHTET)
+    return Ergebnis(False, True, "Prüfung nicht eingerichtet, alter Ablauf", None, "")
+
+
+def _vorbereiten(
+    klon: Path,
+    spec: int,
+    moment: Moment,
+    konfig: dict[str, Any],
+    *,
+    rot_zaehlt: bool,
+    nachziehen: bool,
+) -> tuple[str | None, Ergebnis | None]:
+    """Kopf + Merker lesen (mit ``nachziehen=True`` bei Bedarf vorspulen) und ohne Lauf prüfen.
+
+    Einzige Stelle der Vorbereitung für :func:`nur_lesen` und :func:`_pruefen` (#482): liefert
+    ``(None, Ergebnis)``, wenn schon eine Antwort feststeht (Kopf unlesbar, Nachziehen
+    gescheitert, nicht dran, schon geprüft), sonst ``(kopf, None)``.
+    """
+    kopf = _kopf(klon)
+    gemerkt = _gemerkt(lies_merker(klon, spec), kopf, rot_zaehlt) if kopf else None
+    if nachziehen:
+        # Nachziehen nur, wenn ein Lauf anstehen kann: kein Merker für den Kopf oder Kopf hinter
+        # @{u}. Der Vergleich gegen @{u} taugt nur im Takt (rot_zaehlt), weil capo eben gefetcht
+        # hat; von Hand (Tür vor Live) wird immer nachgezogen, sonst gälte ein alter fetch.
+        if not rot_zaehlt or gemerkt is None or _hinten(klon):
+            # der capo-Takt macht nur fetch; ohne Nachziehen hielte ein Klon hinter origin die
+            # Komplett-Prüfung jeden Takt an, und ein neuer Kopf liefe nie (Review a62e67a).
+            stand = arbeitsstand.sicherstellen(klon, nachziehen=True)
+            if not stand.ok:
+                return None, Ergebnis(
+                    False,
+                    False,
+                    f"Komplett-Prüfung nicht gestartet, kein Merker: {stand.text}",
+                    None,
+                    _kopf(klon) or "",
+                )
+            kopf = _kopf(klon)
+            gemerkt = (
+                _gemerkt(lies_merker(klon, spec), kopf, rot_zaehlt) if kopf else None
+            )
+    elif kopf is not None and _hinten(klon):
+        gemerkt = None
+    if kopf is None:
+        return None, Ergebnis(
+            False,
+            False,
+            f"Kopf-SHA in {klon} nicht lesbar (git). Handlung: Klon prüfen, dann erneut rufen.",
+            None,
+            "",
+        )
+    antwort = _ohne_lauf(konfig, moment, spec, kopf, gemerkt)
+    if antwort is not None:
+        return None, antwort
+    return kopf, None
+
+
 def nur_lesen(
     klon: Path, spec: int, moment: Moment, konfig: dict[str, Any]
 ) -> Ergebnis:
@@ -313,23 +374,14 @@ def nur_lesen(
     als geprüft). Fehlt ein gültiger Merker für den Kopf (oder liegt der Klon hinter ``@{u}``),
     ist ``ok=False`` mit „würde jetzt prüfen“ — der Probelauf zeigt dann kein Fertig.
     """
-    if not pruefplan.eingerichtet(konfig):
-        return Ergebnis(
-            False, True, "Prüfung nicht eingerichtet, alter Ablauf", None, ""
-        )
-    kopf = _kopf(klon)
-    if kopf is None:
-        return Ergebnis(
-            False,
-            False,
-            f"Kopf-SHA in {klon} nicht lesbar (git). Handlung: Klon prüfen, dann erneut rufen.",
-            None,
-            "",
-        )
-    gemerkt = None if _hinten(klon) else _gemerkt(lies_merker(klon, spec), kopf, True)
-    antwort = _ohne_lauf(konfig, Moment(moment), spec, kopf, gemerkt)
+    if (antwort := _nicht_eingerichtet(spec, konfig)) is not None:
+        return antwort
+    kopf, antwort = _vorbereiten(
+        klon, spec, Moment(moment), konfig, rot_zaehlt=True, nachziehen=False
+    )
     if antwort is not None:
         return antwort
+    assert kopf is not None
     return Ergebnis(
         False,
         False,
@@ -387,12 +439,9 @@ def _pruefen(
     if abgelehnt is not None:
         # #474: eine Bau-Session (bau.py setzt die Variable, auch leer) ist nie ein Spec-Moment.
         return Ergebnis(False, False, abgelehnt, None, "")
-    if not pruefplan.eingerichtet(konfig):
+    if (antwort := _nicht_eingerichtet(spec, konfig)) is not None:
         # Zuerst und ohne git: nicht eingerichtete Repos (laufende Specs) merken nichts davon.
-        log.info("komplett_lauf: Spec %s %s", spec, pruefplan.NICHT_EINGERICHTET)
-        return Ergebnis(
-            False, True, "Prüfung nicht eingerichtet, alter Ablauf", None, ""
-        )
+        return antwort
     # Sperre zuerst (Review b1bf884): läuft eine Prüfung, darf weder nachgezogen (der Arbeitsbaum
     # verschöbe sich unter ihr) noch neu gestartet werden. flock fällt mit dem Prozess, ein
     # abgestürzter Lauf sperrt also nie dauerhaft.
@@ -402,42 +451,12 @@ def _pruefen(
         with _sperre.halte(sperr_datei) as frei:
             if not frei:
                 return Ergebnis(False, True, belegt, None, _kopf(klon) or "", laeuft=True)
-            kopf = _kopf(klon)
-            gemerkt = (
-                _gemerkt(lies_merker(klon, spec), kopf, rot_zaehlt) if kopf else None
+            kopf, antwort = _vorbereiten(
+                klon, spec, moment, konfig, rot_zaehlt=rot_zaehlt, nachziehen=True
             )
-            # Nachziehen nur, wenn ein Lauf anstehen kann: kein Merker für den Kopf oder Kopf hinter
-            # @{u}. Der Vergleich gegen @{u} taugt nur im Takt (rot_zaehlt), weil capo eben gefetcht
-            # hat; von Hand (Tür vor Live) wird immer nachgezogen, sonst gälte ein alter fetch.
-            if not rot_zaehlt or gemerkt is None or _hinten(klon):
-                # der capo-Takt macht nur fetch; ohne Nachziehen hielte ein Klon hinter origin die
-                # Komplett-Prüfung jeden Takt an, und ein neuer Kopf liefe nie (Review a62e67a).
-                stand = arbeitsstand.sicherstellen(klon, nachziehen=True)
-                if not stand.ok:
-                    return Ergebnis(
-                        False,
-                        False,
-                        f"Komplett-Prüfung nicht gestartet, kein Merker: {stand.text}",
-                        None,
-                        _kopf(klon) or "",
-                    )
-                kopf = _kopf(klon)
-                gemerkt = (
-                    _gemerkt(lies_merker(klon, spec), kopf, rot_zaehlt)
-                    if kopf
-                    else None
-                )
-            if kopf is None:
-                return Ergebnis(
-                    False,
-                    False,
-                    f"Kopf-SHA in {klon} nicht lesbar (git). Handlung: Klon prüfen, dann erneut rufen.",
-                    None,
-                    "",
-                )
-            antwort = _ohne_lauf(konfig, moment, spec, kopf, gemerkt)
             if antwort is not None:
                 return antwort
+            assert kopf is not None
             befehl = pruefplan.befehl(konfig, "komplett")
             if not befehl:
                 return Ergebnis(
@@ -484,6 +503,7 @@ def _im_hintergrund(klon: Path, spec: int, moment: Moment, kopf: str) -> Ergebni
         if sys.platform == "win32"
         else {"start_new_session": True}
     )
+    vorher = lies_merker(klon, spec)
     try:
         ausgabe.parent.mkdir(parents=True, exist_ok=True)
         with ausgabe.open("a", encoding="utf-8") as datei:
@@ -525,9 +545,32 @@ def _im_hintergrund(klon: Path, spec: int, moment: Moment, kopf: str) -> Ergebni
             kopf,
             laeuft=True,
         )
-    gemerkt = _gemerkt(lies_merker(klon, spec), kopf, True)
+    aktuell = _kopf(klon) or kopf
+    merker = lies_merker(klon, spec)
+    gemerkt = _gemerkt(merker, aktuell, True)
     if gemerkt is not None:
-        return _aus_merker(gemerkt, spec, gelaufen=True)
+        return _aus_merker(gemerkt, spec, gelaufen=merker != vorher)
+    if (
+        merker is not None
+        and merker != vorher
+        and _gemerkt(merker, merker.kopf, True) is not None
+        and aktuell != merker.kopf
+    ):
+        log.info(
+            "komplett_lauf: Spec %s Kopf wechselte während Hintergrund-Lauf (%s → %s)",
+            spec,
+            merker.kopf[:7],
+            aktuell[:7],
+        )
+        return Ergebnis(
+            False,
+            True,
+            f"Kopf wechselte während der Komplett-Prüfung ({merker.kopf[:7]} → {aktuell[:7]}) — "
+            "nächster Takt prüft den neuen Stand.",
+            None,
+            aktuell,
+            laeuft=True,
+        )
     letzte = _letzte_zeile(ausgabe)
     return Ergebnis(
         False,
@@ -535,7 +578,7 @@ def _im_hintergrund(klon: Path, spec: int, moment: Moment, kopf: str) -> Ergebni
         f"Komplett-Prüfung im Hintergrund ohne Ergebnis beendet (Exit {code}): {letzte} "
         f"Handlung: {ausgabe} lesen, dann erneut rufen.",
         None,
-        kopf,
+        aktuell,
     )
 
 
