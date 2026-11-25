@@ -55,6 +55,7 @@ from pathlib import Path
 from typing import Any
 
 from . import (
+    auswahl,
     bau_log,
     befund,
     briefkasten,
@@ -2164,12 +2165,15 @@ def _tick(
         log.warning("git fetch origin gescheitert — Regeln in diesem Tick ausgesetzt.")
         kopfzeilen.append("FEHLER: fetch — Regeln ausgesetzt (kein Wieder-Öffnen, kein Kommentar in diesem Tick).")
     ref = haupt_ref(repo)
-    liste = kinder(gh_repo, spec)
-    if liste is None:
+    alle_kinder = kinder(gh_repo, spec)
+    if alle_kinder is None:
         erg.zeilen += kopfzeilen
         erg.zeilen.append(f"FEHLER: Sub-Issues von #{spec} in {gh_repo} nicht lesbar (gh).")
         erg.exit_code = 1
         return erg
+    auswahl_stand = auswahl.lesen(repo, spec)
+    teilauswahl = auswahl_stand is not None and auswahl_stand.ist_teilauswahl()
+    liste = auswahl.filtere_issues(alle_kinder, auswahl_stand) if auswahl_stand is not None else alle_kinder
     if ref is None:
         erg.zeilen += kopfzeilen
         erg.zeilen.append("FEHLER: kein origin/master bzw. origin/main — git fetch prüfen.")
@@ -2186,7 +2190,7 @@ def _tick(
     if erster_tick is None:
         erster_tick = jetzt  # dieser Tick ist der erste: alles Geschlossene = Ausgangsstand
         zustand["erster_tick"] = jetzt.isoformat(timespec="seconds")
-        zustand["ausgangsstand"] = {str(int(i["number"])): schliess_marke(i) for i in liste}
+        zustand["ausgangsstand"] = {str(int(i["number"])): schliess_marke(i) for i in alle_kinder}
     ausgang = zustand.get("ausgangsstand")
     ausgang = ausgang if isinstance(ausgang, dict) else None
     waechter = konfig.get("waechter", {}) if isinstance(konfig.get("waechter"), dict) else {}
@@ -2510,6 +2514,9 @@ def _tick(
     # #530: Ruf zurücknehmen, wenn der Beleg nach dem Ruf doch noch kam (ein Satz am Ticket).
     rufe = [r for r in zustand.get("mensch_noetig_rufe") or [] if isinstance(r, dict)]
     for ruf in list(rufe):
+        ziel_ruf = str(ruf.get("ticket") or "")
+        if auswahl_stand is not None and ziel_ruf.isdigit() and not auswahl_stand.enthaelt(int(ziel_ruf)):
+            continue
         if not mensch_noetig.beleg_da(ruf):
             continue
         ziel, fp = str(ruf.get("ticket")), str(ruf.get("fingerprint") or "")[:8]
@@ -2523,6 +2530,8 @@ def _tick(
             sichern()
     for eintrag in eigene:  # #465/#498: fremde Repos filtert und loggt mensch_noetig
         ziel = str(eintrag.get("ticket") or spec)
+        if auswahl_stand is not None and ziel.isdigit() and int(ziel) != spec and not auswahl_stand.enthaelt(int(ziel)):
+            continue
         fp = str(eintrag.get("fingerprint") or "")[:8]
         stand = mensch_noetig.review_stand(eintrag, jetzt)
         if stand == "laeuft":  # nicht gemerkt: nächster Takt prüft erneut
@@ -2566,7 +2575,7 @@ def _tick(
         aktionen += katalog_pflegen(repo, konfig, gelernt)
 
     komplett_haelt = False
-    if liste and all(ticket_zustand.fertig_gebaut(i) for i in liste):
+    if not teilauswahl and liste and all(ticket_zustand.fertig_gebaut(i) for i in liste):
         komplett_haelt = _komplett_alle_auf_staging(repo, spec, konfig, aktionen, dry_run)
 
     # #1407: unlesbares Staging ist kein „fehlt“, aber auch kein Beleg „liegt drauf“ — Abschluss zurückhalten.
@@ -2580,8 +2589,9 @@ def _tick(
     elif staging_stand.unlesbar:
         kopfzeilen.append("FEHLER: Staging nicht lesbar — Regel vps teils ausgesetzt, Spec-Abschluss zurückgehalten.")
     erg.zeilen += kopfzeilen
+    auswahl_zusatz = f" · Auswahl {len(liste)}/{len(alle_kinder)}" if teilauswahl else ""
     erg.zeilen.append(
-        f"Spec #{spec} · {ref} {ref_kurz} · VPS {kopf[:7] if kopf else '-'} · offen {offen}/{len(liste)} · "
+        f"Spec #{spec} · {ref} {ref_kurz} · VPS {kopf[:7] if kopf else '-'} · offen {offen}/{len(liste)}{auswahl_zusatz} · "
         f"{jetzt.astimezone():%d.%m. %H:%M}"
     )
     erg.zeilen += stand
@@ -2591,7 +2601,8 @@ def _tick(
     erg.zeilen += aktionen
 
     erg.fertig = (
-        bool(liste)
+        not teilauswahl
+        and bool(liste)
         and offen == 0
         and wartet == 0
         and not erg.verstoesse

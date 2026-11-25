@@ -133,9 +133,8 @@ def aktuell(repo: Path, ticket: int) -> Treffer | None:
     einen Handoff schon vor :attr:`Treffer.faellig_ab` zeigen wollen; wer neu starten
     will, fragt :func:`pruefe`.
     """
-    wt = Path(config.worktree_pfad(ticket, repo)).expanduser()
     try:
-        ort = bau_log.log_ort(ticket, wt, repo)
+        ort = bau_log.log_ort_fuer(ticket, repo)
         start = (
             None
             if ort is None
@@ -146,6 +145,9 @@ def aktuell(repo: Path, ticket: int) -> Treffer | None:
             "#%s: Bau-Log unlesbar — kein Neustart ab Handoff (%s)", ticket, fehler
         )
         return None
+    if start is None:
+        return None
+    wt = Path(config.worktree_pfad(ticket, repo)).expanduser()
     return der_session(wt, ticket, start)
 
 

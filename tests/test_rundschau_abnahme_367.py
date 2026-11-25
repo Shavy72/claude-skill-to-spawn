@@ -317,9 +317,31 @@ def test_ablegen_prueft_bild_klickschritte_repo_pfad_und_speichert_inhalt(
     assert "Repo" in rot_ort.stdout
     assert not (repo / ".to-spawn" / f"abschluss_{SPEC}_paket.json").exists()
 
-    # 4. Vollständiges Deck im Repo (relativer Pfad) → Exit 0, Paket + Ausgabe nennen Pfad & Inhalt.
+    # 4. Vollständiges Deck im Repo (relativer Pfad) + Selbstprüfung (#368) + Bereit-für-Live (#369) → Exit 0.
     _deck_schreiben(repo, deck_pfad, voll_teil2)
-    live_bereit_marker(repo, SPEC)  # #369: Abnahme verlangt grüne Bereit-für-Live-Prüfung
+    live_bereit_marker(repo, SPEC)
+    sp_dir = repo / ".to-spawn" / "selbstpruefung" / str(SPEC)
+    sp_dir.mkdir(parents=True, exist_ok=True)
+    (sp_dir / "ergebnis.json").write_text(
+        json.dumps(
+            {
+                "spec": SPEC,
+                "stage": "https://stage.example",
+                "browser": "kopflos",
+                "testdaten_bereinigt": True,
+                "folgen": [
+                    {
+                        "ticket": "10",
+                        "titel": "Ticket #10 — Filter",
+                        "schritte": [
+                            {"schritt": "Stage öffnen", "ergebnis": "passt", "beleg": "HTTP 200"}
+                        ],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
     gruen = _lauf(
         "abschluss_paket.py",
         "ablegen",

@@ -63,6 +63,7 @@ def umgebung(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
     monkeypatch.delenv(startstelle.TEST_OFFEN_ENV, raising=False)
     monkeypatch.setenv("TO_SPAWN_REPO", str(tmp_path))
     monkeypatch.setenv("TMPDIR", str(tmp_path))
+    monkeypatch.setenv(startstelle.SPERR_ORDNER_ENV, str(tmp_path / "sperren"))
     monkeypatch.setenv(startstelle.STAND_ABSTAND_ENV, "0")
     monkeypatch.delenv("LOCALAPPDATA", raising=False)
     monkeypatch.delenv("BAU_AUFTRAG", raising=False)
@@ -136,26 +137,90 @@ def test_ticket_stand_zeitgrenze_hat_einen_standardwert(monkeypatch: pytest.Monk
 
 # --- 3. tmux-Fenster mit claude --------------------------------------------------------
 
-#: Fenster-Befehle von tmux, die einen Prozess starten.
-_TMUX_START = {"new-window", "respawn-window", "split-window", "new-session", "respawn-pane"}
-_CLAUDE_BEFEHL = __import__("re").compile(r"(?<![\w./~-])claude(\.exe|\.cmd)?(?![\w./-])")
+#: Fenster-Befehle von tmux, die einen Prozess starten oder eintippen.
+_TMUX_START = {"new-window", "respawn-window", "split-window", "new-session", "respawn-pane", "send-keys"}
+_CLAUDE_BEFEHL = __import__("re").compile(r"(?:^|[\s'\"`;&|(/\\])claude(?:\.exe|\.cmd)?(?=$|[\s'\"`;&|)])")
 
 
-def _texte(knoten: ast.AST) -> list[str]:
-    return [k.value for k in ast.walk(knoten) if isinstance(k, ast.Constant) and isinstance(k.value, str)]
+def _docstring_ids(baum: ast.AST) -> set[int]:
+    ids: set[int] = set()
+    for knoten in ast.walk(baum):
+        if (
+            isinstance(knoten, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
+            and knoten.body
+            and isinstance(knoten.body[0], ast.Expr)
+            and isinstance(knoten.body[0].value, ast.Constant)
+            and isinstance(knoten.body[0].value.value, str)
+        ):
+            ids.add(id(knoten.body[0].value))
+    return ids
+
+
+def _texte(knoten: ast.AST, docstrings: set[int]) -> list[str]:
+    return [
+        k.value
+        for k in ast.walk(knoten)
+        if isinstance(k, ast.Constant) and isinstance(k.value, str) and id(k) not in docstrings
+    ]
+
+
+def _hat_tmux_start(texte: list[str]) -> bool:
+    for t in texte:
+        if t in _TMUX_START or (_TMUX_START & set(t.split())):
+            return True
+    return False
 
 
 def tmux_claude_fenster(quelle: str) -> list[int]:
-    """Zeilen der Funktionen, die ein tmux-Fenster öffnen UND darin ``claude`` starten.
+    """Zeilen der Funktionen, die ein tmux-Fenster öffnen/bespielen UND darin ``claude`` starten.
 
-    Je Funktion (auch verteilt über Listen/f-Strings, wie ``capo.bau_startzeile``):
-    ein tmux-Start-Befehl und ein Text, in dem ``claude`` als Befehl steht.
+    Je Funktion (auch verteilt über Listen/f-Strings, Modul-Konstanten und aufgerufene
+    Hilfsfunktionen im selben Modul): ein tmux-Start-/send-keys-Befehl und ein Text, in dem
+    ``claude`` als Befehl oder Pfad (z. B. ``~/.local/bin/claude``) steht.
     """
-    treffer = []
-    for knoten in ast.walk(ast.parse(quelle)):
+    baum = ast.parse(quelle)
+    docstrings = _docstring_ids(baum)
+    konstanten: dict[str, list[str]] = {}
+    for anweisung in baum.body:
+        if isinstance(anweisung, ast.Assign):
+            werte = _texte(anweisung.value, docstrings)
+            for ziel in anweisung.targets:
+                if isinstance(ziel, ast.Name):
+                    konstanten.setdefault(ziel.id, []).extend(werte)
+        elif isinstance(anweisung, ast.AnnAssign) and isinstance(anweisung.target, ast.Name) and anweisung.value:
+            konstanten.setdefault(anweisung.target.id, []).extend(_texte(anweisung.value, docstrings))
+
+    funktionen: dict[str, list[ast.FunctionDef | ast.AsyncFunctionDef]] = {}
+    for knoten in ast.walk(baum):
         if isinstance(knoten, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            texte = _texte(knoten)
-            if _TMUX_START & set(texte) and any(_CLAUDE_BEFEHL.search(t) for t in texte):
+            funktionen.setdefault(knoten.name, []).append(knoten)
+
+    def _erreichbare_texte(knoten: ast.AST, besucht: set[int]) -> list[str]:
+        if id(knoten) in besucht:
+            return []
+        besucht.add(id(knoten))
+        gefunden = _texte(knoten, docstrings)
+        for teil in ast.walk(knoten):
+            if isinstance(teil, ast.Name) and teil.id in konstanten:
+                gefunden.extend(konstanten[teil.id])
+            elif isinstance(teil, ast.Call):
+                zielname = (
+                    teil.func.id
+                    if isinstance(teil.func, ast.Name)
+                    else teil.func.attr
+                    if isinstance(teil.func, ast.Attribute)
+                    else None
+                )
+                if zielname and zielname in funktionen:
+                    for helfer in funktionen[zielname]:
+                        gefunden.extend(_erreichbare_texte(helfer, besucht))
+        return gefunden
+
+    treffer: list[int] = []
+    for knoten in ast.walk(baum):
+        if isinstance(knoten, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            eigen = _texte(knoten, docstrings)
+            if _hat_tmux_start(eigen) and any(_CLAUDE_BEFEHL.search(t) for t in _erreichbare_texte(knoten, set())):
                 treffer.append(knoten.lineno)
     return treffer
 
@@ -190,3 +255,445 @@ def test_kein_tmux_fenster_startet_claude_an_der_startstelle_vorbei() -> None:
         if zeilen and name not in CLAUDE_STARTER:
             funde[name] = zeilen
     assert not funde, f"tmux-Fenster mit claude an bau.py vorbei: {funde}"
+
+
+# --- 4. Offene Befunde aus PR #202 + Rest aus #191 ------------------------------------
+
+ANGRIFF_TILDE_PFAD = """
+def folgerunde(spec, ticket):
+    tmux("new-window", "-t", f"=spec-{spec}", f"bash -lc '~/.local/bin/claude --ticket {ticket}'")
+"""
+ANGRIFF_HOME_PFAD = """
+def folgerunde(spec, ticket):
+    tmux("new-window", "-t", f"=spec-{spec}", f"bash -lc '$HOME/.local/bin/claude -p {ticket}'")
+"""
+ANGRIFF_SEND_KEYS = """
+def folgerunde(ziel):
+    tmux("send-keys", "-t", ziel, "claude -p hallo", "Enter")
+"""
+ANGRIFF_KONSTANTE = """
+CLAUDE_ZEILE = "bash -lc 'claude --model sonnet'"
+def folgerunde(spec):
+    tmux("new-window", "-t", f"=spec-{spec}", CLAUDE_ZEILE)
+"""
+ANGRIFF_HILFSFUNKTION = """
+def _befehl(ticket):
+    return f"~/.local/bin/claude --ticket {ticket}"
+def folgerunde(spec, ticket):
+    tmux("new-window", "-t", f"=spec-{spec}", _befehl(ticket))
+"""
+ERLAUBT_FREMDES_LOG = """
+def _anderes_log():
+    log.warning("claude %s lebt noch", 42)
+def fenster(befehl):
+    tmux("new-window", "-d", "-n", "bau 7", f"bash -lc {befehl}")
+    pfad = "~/.claude/skills/to-spawn/claude-skill"
+    modell = "claude-opus-5-5"
+"""
+
+
+@pytest.mark.parametrize(
+    ("name", "quelle"),
+    [
+        ("tilde-pfad", ANGRIFF_TILDE_PFAD),
+        ("home-pfad", ANGRIFF_HOME_PFAD),
+        ("send-keys", ANGRIFF_SEND_KEYS),
+        ("modul-konstante", ANGRIFF_KONSTANTE),
+        ("hilfsfunktion", ANGRIFF_HILFSFUNKTION),
+    ],
+)
+def test_tmux_claude_scanner_erkennt_umgehungen(name: str, quelle: str) -> None:
+    """PR #202 Befund 1: Pfad-Aufrufe, send-keys, Modul-Konstanten und Hilfsfunktionen fallen auf."""
+    assert tmux_claude_fenster(quelle), f"Umgehung nicht erkannt: {name}"
+    assert not tmux_claude_fenster(ERLAUBT_FREMDES_LOG)
+
+
+def test_weiter_erlaubt_delegiert_an_weiter_entscheidung(monkeypatch: pytest.MonkeyPatch) -> None:
+    """PR #202 Befund 2: ``weiter_erlaubt`` nutzt dieselbe Wiederhol-Logik wie ``weiter_entscheidung``."""
+    monkeypatch.setenv(startstelle.STAND_ABSTAND_ENV, "0")
+    aufrufe, pruefer = _zaehler(None, True)
+    assert startstelle.weiter_erlaubt("1", pruefer=pruefer) is True
+    assert len(aufrufe) == 2
+
+
+def test_spawn_local_gh_fehler_bricht_vor_tab_bau_ab() -> None:
+    """#191: ``spawn_local.ps1`` öffnet bei komplettem gh-Fehler keine Tabs (auch kein wache/leitstand)."""
+    import shutil
+
+    skript = SKILL / "spawn_local.ps1"
+    text = skript.read_text(encoding="utf-8")
+    pwsh = shutil.which("pwsh") or shutil.which("powershell")
+    if pwsh:
+        pruef = subprocess.run(
+            [
+                pwsh,
+                "-NoProfile",
+                "-Command",
+                "$e = $null; [void][System.Management.Automation.Language.Parser]::ParseFile($env:TO_SPAWN_PS_PFAD, [ref]$null, [ref]$e); if ($e) { $e | Out-String; exit 1 }",
+            ],
+            env={**os.environ, "TO_SPAWN_PS_PFAD": str(skript)},
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=60,
+            check=False,
+        )
+        assert pruef.returncode == 0, pruef.stdout + pruef.stderr
+
+    stelle_zu_bauen = text.index("$zuBauenRc = $LASTEXITCODE")
+    stelle_cmds = text.index("$cmds = @()")
+    abschnitt = text[stelle_zu_bauen:stelle_cmds]
+    assert "$zuBauen.Count -eq 0" in abschnitt, "Abbruch bei komplettem gh-Fehler vor Tab-Bau fehlt"
+    assert "exit 2" in abschnitt, "gh-Fehler muss vor Tab-Bau mit Exit 2 enden"
+
+
+# --- 5. Pflichtfall 10.11.: 3 Sessions statt 13 über spawn_srv.sh + tmux-Attrappe -----
+
+
+def _pflichtfall_welt(tmp_path: Path, *, kaputt_alle: bool = False) -> tuple[Path, Path, dict[str, str]]:
+    """Wegwerf-Git-Repo mit 13-Ticket-Manifest (10 geschlossen, 3 offen) und tmux-Attrappe."""
+    import json
+
+    from to_spawn import bash_wahl
+
+    _ = bash_wahl  # Verfügbarkeit prüfen
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=repo, check=True)
+    subprocess.run(["git", "remote", "add", "origin", "https://github.com/test-org/test-repo.git"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "test"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.invalid"], cwd=repo, check=True)
+
+    spec = 1011
+    tickets = [str(n) for n in range(1011, 1024)]  # 13 Tickets
+    geschlossen = tickets[:10]  # 10 geschlossen (1011..1020)
+    offen = tickets[10:]  # 3 offen (1021..1023)
+
+    manifeste = repo / "docs" / "agents" / "manifests"
+    manifeste.mkdir(parents=True)
+    (manifeste / f"spec-{spec}.json").write_text(
+        json.dumps(
+            {
+                "spec": spec,
+                "feature": "Pflichtfall 10.11.",
+                "tickets": {t: {"title": f"Ticket {t}"} for t in tickets},
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    (repo / ".to-spawn").mkdir()
+    (repo / ".to-spawn" / "config.json").write_text(
+        json.dumps(
+            {
+                "hauptzweig": "main",
+                "worktree_basis": (tmp_path / "wt").as_posix(),
+                "speicher": {"max_sessions": 20, "min_frei_mib": 0, "staffel_s": 0},
+                "leitstand": {"aktiv": False},
+            }
+        ),
+        encoding="utf-8",
+    )
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "init"], cwd=repo, check=True)
+
+    beleg = tmp_path / "beleg.txt"
+    fenster_datei = tmp_path / "fenster.txt"
+    fenster_exits = tmp_path / "fenster_exits.txt"
+    bin_ordner = tmp_path / "bin"
+    bin_ordner.mkdir()
+
+    # tmux-Attrappe: nimmt new-session/new-window von spawn_srv.sh entgegen und startet den
+    # echten bau.py-Befehl über tests/hilfen/bau_lauf_97.py (echtes bau.main + startstelle.betreten).
+    tmux_helfer = bin_ordner / "tmux_helfer.py"
+    tmux_helfer.write_text(
+        "import os, re, subprocess, sys\n"
+        "from pathlib import Path\n"
+        f"fenster = Path({str(fenster_datei)!r})\n"
+        f"exits = Path({str(fenster_exits)!r})\n"
+        f"beleg = Path({str(beleg)!r})\n"
+        f"lauf = {str(LAUF)!r}\n"
+        f"bau_echt = {str(SKILL / 'skripte' / 'bau.py')!r}\n"
+        "args = sys.argv[1:]\n"
+        "cmd = args[0] if args else ''\n"
+        "if cmd == 'has-session':\n"
+        "    sys.exit(0 if fenster.exists() and fenster.read_text(encoding='utf-8').strip() else 1)\n"
+        "if cmd == 'display-message':\n"
+        f"    print({str(repo)!r})\n"
+        "    sys.exit(0)\n"
+        "if cmd in ('list-windows', 'list-sessions'):\n"
+        "    if fenster.exists():\n"
+        "        print(fenster.read_text(encoding='utf-8').strip())\n"
+        "    sys.exit(0)\n"
+        "if cmd in ('new-session', 'new-window'):\n"
+        "    name = args[args.index('-n') + 1] if '-n' in args else ''\n"
+        "    with fenster.open('a', encoding='utf-8') as fh:\n"
+        "        fh.write(name + '\\n')\n"
+        "    befehl = args[-1]\n"
+        "    m = re.search(r'bau\\.py\\s+(\\d+)', befehl)\n"
+        "    if m:\n"
+        "        ticket = m.group(1)\n"
+        "        erg = subprocess.run(\n"
+        "            [sys.executable, lauf, str(beleg), ticket],\n"
+        "            cwd=str(beleg.parent),\n"
+        "            env=os.environ,\n"
+        "            capture_output=True,\n"
+        "            text=True,\n"
+        "            encoding='utf-8',\n"
+        "            timeout=60,\n"
+        "            check=False,\n"
+        "        )\n"
+        "        with exits.open('a', encoding='utf-8') as fh:\n"
+        "            fh.write(f'{ticket}:{erg.returncode}\\n')\n"
+        "    sys.exit(0)\n"
+        "sys.exit(0)\n",
+        encoding="utf-8",
+    )
+    tmux = bin_ordner / "tmux"
+    tmux.write_text(f'#!/usr/bin/env bash\nexec {sys.executable!r} {str(tmux_helfer)!r} "$@"\n', encoding="utf-8")
+    tmux.chmod(0o755)
+
+    env = dict(os.environ)
+    env.pop(startstelle.TEST_OFFEN_ENV, None)
+    env.pop("TMUX", None)
+    env.pop("LOCALAPPDATA", None)
+    env.pop("BAU_AUFTRAG", None)
+    env.update(
+        {
+            "PATH": f"{bin_ordner}{os.pathsep}{env.get('PATH', '')}",
+            "TO_SPAWN_REPO": str(repo),
+            "TO_SPAWN_GH_STUB": str(SKILL / "tests" / "hilfen" / "gh_stub.py"),
+            "TO_SPAWN_TEST_BIN": str(bin_ordner),
+            startstelle.SPERR_ORDNER_ENV: str(tmp_path / "sperren"),
+            startstelle.STAND_ABSTAND_ENV: "0",
+            "BAU_LAUF_97_SCHLAF_S": "0",
+            "TMPDIR": str(tmp_path),
+            "GH_STUB_ZU": ",".join(geschlossen),
+            "GH_STUB_KAPUTT": ",".join(tickets) if kaputt_alle else "",
+        }
+    )
+    assert len(tickets) == 13 and len(offen) == 3
+    return repo, beleg, env
+
+
+@pytest.mark.braucht("bash", "posix")
+def test_pflichtfall_10_11_drei_sessions_statt_dreizehn(tmp_path: Path) -> None:
+    """#191 Pflichtfall: 13 Tickets (10 geschlossen, 3 offen) über ``spawn_srv.sh`` → genau 3 Sessions."""
+    from to_spawn import bash_wahl
+
+    repo, beleg, env = _pflichtfall_welt(tmp_path)
+    lauf = bash_wahl.lauf(
+        [str(SKILL / "skripte" / "spawn_srv.sh"), "1011", "--ohne-wache", "--ohne-regularien"],
+        cwd=str(repo),
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=180,
+    )
+    ausgabe = lauf.stdout + lauf.stderr
+    assert lauf.returncode == 0, ausgabe
+    zeilen = beleg.read_text(encoding="utf-8").splitlines() if beleg.exists() else []
+    gestartet = [z.split()[2] for z in zeilen]
+    assert gestartet == ["1021", "1022", "1023"], (gestartet, ausgabe)
+    exits = dict(
+        z.split(":", 1) for z in (tmp_path / "fenster_exits.txt").read_text(encoding="utf-8").splitlines() if ":" in z
+    )
+    assert len(exits) == 13
+    assert all(code == "0" for code in exits.values()), exits
+
+
+@pytest.mark.braucht("bash", "posix")
+def test_pflichtfall_10_11_gh_ausfall_startet_null_sessions(tmp_path: Path) -> None:
+    """#191 Gegenprobe: fällt gh für alle 13 Tickets aus, startet keine einzige Session (Exit 2 je Fenster)."""
+    from to_spawn import bash_wahl
+
+    repo, beleg, env = _pflichtfall_welt(tmp_path, kaputt_alle=True)
+    lauf = bash_wahl.lauf(
+        [str(SKILL / "skripte" / "spawn_srv.sh"), "1011", "--ohne-wache", "--ohne-regularien"],
+        cwd=str(repo),
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=180,
+    )
+    assert lauf.returncode == 0, lauf.stdout + lauf.stderr
+    assert not beleg.exists(), beleg.read_text(encoding="utf-8")
+    exits = [
+        z.split(":", 1)[1]
+        for z in (tmp_path / "fenster_exits.txt").read_text(encoding="utf-8").splitlines()
+        if ":" in z
+    ]
+    assert len(exits) == 13 and all(c == str(startstelle.EXIT_UNKLAR) for c in exits), exits
+
+
+# --- 6. Testlücken aus PR #193 Befund 5 (Ablöse-Übernahme, OSError, msvcrt-Zweig) -----
+
+
+def test_abloesung_uebernimmt_haupt_sperre_nach_ende_der_alten_session(
+    umgebung: dict[str, str], tmp_path: Path
+) -> None:
+    """PR #193 Befund 5: endet die alte Session, übernimmt die Ablösung die Haupt-Sperre."""
+    umgebung["TO_SPAWN_GH_STUB"] = str(SKILL / "tests" / "hilfen" / "gh_stub.py")
+    umgebung[startstelle.SPERR_ORDNER_ENV] = str(tmp_path / "sperren")
+    beleg = tmp_path / "beleg.txt"
+    frei_alt = tmp_path / "frei_alt"
+    frei_neu = tmp_path / "frei_neu"
+
+    def _starten(halte: Path, *extra: str) -> subprocess.Popen[str]:
+        env = {**umgebung, "BAU_LAUF_97_HALTE_DATEI": str(halte)}
+        return subprocess.Popen(
+            [sys.executable, str(LAUF), str(beleg), "19110", "--sofort", *extra],
+            env=env,
+            cwd=str(tmp_path),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+        )
+
+    def _warte_zeilen(anzahl: int) -> None:
+        ende = time.monotonic() + 20.0
+        while time.monotonic() < ende:
+            if beleg.exists() and len(beleg.read_text(encoding="utf-8").splitlines()) >= anzahl:
+                return
+            time.sleep(0.05)
+        raise AssertionError(f"Erwartet {anzahl} Starts in {beleg}")
+
+    alt = _starten(frei_alt)
+    neu: subprocess.Popen[str] | None = None
+    try:
+        _warte_zeilen(1)
+        neu = _starten(frei_neu, "--ohne-prompt")
+        _warte_zeilen(2)
+
+        haupt_lock = startstelle.sperr_datei("19110", "test-org/test-repo")
+        assert haupt_lock.parent == tmp_path / "sperren", haupt_lock
+        abloese_lock = haupt_lock.with_name(haupt_lock.name + ".abloesung")
+        from to_spawn import sperre
+
+        with sperre.halte(haupt_lock) as haupt_frei:
+            assert not haupt_frei, "Alte Session muss die Haupt-Sperre halten"
+        with sperre.halte(abloese_lock) as abloese_frei:
+            assert not abloese_frei, "Ablösung muss die Ablöse-Sperre halten"
+
+        frei_alt.write_text("go", encoding="utf-8")
+        alt.communicate(timeout=30)
+
+        # Warten, bis der Hintergrund-Thread der Ablösung die Haupt-Sperre übernommen hat
+        # (daran erkennbar, dass die Ablöse-Sperre wieder frei ist).
+        ende = time.monotonic() + 10.0
+        uebernommen = False
+        while time.monotonic() < ende:
+            with sperre.halte(abloese_lock) as frei:
+                if frei:
+                    uebernommen = True
+                    break
+            time.sleep(0.05)
+        assert uebernommen, "Ablösung hat die Haupt-Sperre nach Ende der alten Session nicht übernommen"
+        assert neu.poll() is None, "Ablösung darf vor Freigabe von frei_neu nicht beendet sein"
+
+        # Jetzt muss ein normaler Start abgewiesen werden („läuft schon“), kein dritter Start.
+        dritter = subprocess.run(
+            [sys.executable, str(LAUF), str(beleg), "19110", "--sofort"],
+            env={**umgebung, "BAU_LAUF_97_SCHLAF_S": "0"},
+            cwd=str(tmp_path),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=30,
+            check=False,
+        )
+        ausgabe = dritter.stdout + dritter.stderr
+        assert dritter.returncode == 0, ausgabe
+        assert "läuft schon" in ausgabe, ausgabe
+        assert len(beleg.read_text(encoding="utf-8").splitlines()) == 2
+    finally:
+        frei_alt.write_text("go", encoding="utf-8")
+        frei_neu.write_text("go", encoding="utf-8")
+        if alt.poll() is None:
+            alt.communicate(timeout=30)
+        if neu is not None:
+            neu.communicate(timeout=30)
+
+
+def test_start_sperre_oserror_ist_fail_closed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """PR #193 Befund 5: unbenutzbarer Sperr-Ordner (Datei statt Ordner) → fail-closed, Exit 2."""
+    blockiert = tmp_path / "datei_statt_ordner"
+    blockiert.write_text("x", encoding="utf-8")
+    monkeypatch.setenv(startstelle.SPERR_ORDNER_ENV, str(blockiert))
+    e = startstelle.betreten("19111", "test-org/test-repo", pruefer=lambda _t, _c: True)
+    assert not e.erlaubt
+    assert e.exit_code == startstelle.EXIT_UNKLAR
+    assert "nicht nutzbar" in e.grund
+
+
+def test_startstelle_msvcrt_zweig_sperrt_und_gibt_nach_ende_frei(tmp_path: Path) -> None:
+    """#191: msvcrt-Zweig der Sperre in ``startstelle.betreten`` (zwei Prozesse, Prozess-Ende gibt frei)."""
+    if sys.platform != "win32":
+        pytest.importorskip("fcntl", reason="msvcrt-Nachbau unter POSIX braucht fcntl")
+    skript = (
+        "import errno, os, sys\n"
+        "from pathlib import Path\n"
+        f"sys.path.insert(0, {str(SKILL)!r})\n"
+        "from to_spawn import sperre, startstelle\n"
+        "if sys.platform != 'win32':\n"
+        "    import fcntl\n"
+        "    class _M:\n"
+        "        LK_NBLCK = 2\n"
+        "        def locking(self, fd, m, n):\n"
+        "            try:\n"
+        "                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)\n"
+        "            except OSError:\n"
+        "                raise OSError(errno.EACCES, 'belegt') from None\n"
+        "    sperre._fcntl, sperre._msvcrt = None, _M()\n"
+        "e = startstelle.betreten('19112', 'test-org/test-repo', pruefer=lambda _t, _c: True)\n"
+        "print('JA' if e.erlaubt else f'NEIN:{e.grund}', flush=True)\n"
+        "if sys.argv[1] == 'halten' and e.erlaubt:\n"
+        "    sys.stdin.readline()\n"
+    )
+    # UTF-8 explizit erzwingen: unter Windows nutzt Python für Pipes sonst cp1252 (Umlaute/Gedankenstrich).
+    env = {
+        **os.environ,
+        startstelle.SPERR_ORDNER_ENV: str(tmp_path / "sperren"),
+        "PYTHONIOENCODING": "utf-8",
+        "PYTHONUTF8": "1",
+    }
+    halter = subprocess.Popen(
+        [sys.executable, "-c", skript, "halten"],
+        env=env,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+    )
+    try:
+        assert halter.stdout is not None
+        assert halter.stdout.readline().strip() == "JA"
+        zweiter = subprocess.run(
+            [sys.executable, "-c", skript, "pruefen"],
+            env=env,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=30,
+            check=False,
+        )
+        assert zweiter.returncode == 0 and "läuft schon" in zweiter.stdout, zweiter.stdout + zweiter.stderr
+    finally:
+        halter.communicate("\n", timeout=30)
+    assert halter.returncode == 0
+    danach = subprocess.run(
+        [sys.executable, "-c", skript, "pruefen"],
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=30,
+        check=False,
+    )
+    assert danach.stdout.strip() == "JA", danach.stdout + danach.stderr
