@@ -387,7 +387,7 @@ E Dich selbst ablösen (deine Handoff-Grenze ist erreicht) — Selbstneustart na
 
 ## Abschluss
 ABSCHLUSS schon vor Live: {ABSCHLUSS}
-ENDE erst bei „SPEC FERTIG“ (alle Tickets zu; capo schreibt dann docs/agents/entscheidungen_{S}.md noch einmal neu). Übersichten + Abschluss + docs/agents/rundschau_{S}.html + docs/agents/entscheidungen_{S}.md + docs/agents/thermo_{S}.md + docs/agents/rueckblick_{S}.md mit Pathspec + [skip ci] committen + `python {SKILL}/to_spawn.py einreichen {S}`, Abschlussbericht als Kommentar auf #{S} (max. 10 Zeilen, die Links); bei „SPEC FERTIG“ stop: true.
+ENDE erst bei „SPEC FERTIG“ (alle Tickets zu; capo schreibt dann docs/agents/entscheidungen_{S}.md noch einmal neu). Übersichten + Abschluss + docs/agents/rundschau_{S}.html + docs/agents/selbstpruefung_{S}.md + docs/agents/entscheidungen_{S}.md + docs/agents/thermo_{S}.md + docs/agents/rueckblick_{S}.md mit Pathspec + [skip ci] committen + `python {SKILL}/to_spawn.py einreichen {S}`, Abschlussbericht als Kommentar auf #{S} (max. 10 Zeilen, die Links); bei „SPEC FERTIG“ stop: true.
 
 Erste Zeile jeder Antwort: 🧭 Opus · medium · Aufseher #{S}"""
 

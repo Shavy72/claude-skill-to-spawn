@@ -56,7 +56,7 @@ from test_uebersicht import lade_tickets  # noqa: E402
 from thermo_lauf import SPERRE_MIN, repo_ordner  # noqa: E402
 from thermo_lauf import marker_pfad as thermo_marker_pfad  # noqa: E402
 
-from to_spawn import bau_log, briefkasten, capo, config, melder, prozessbaum, rundschau_deck  # noqa: E402
+from to_spawn import bau_log, briefkasten, capo, config, melder, prozessbaum, rundschau_deck, selbstpruefung  # noqa: E402
 
 log = logging.getLogger("abschluss_paket")
 
@@ -88,6 +88,7 @@ class Paket:
     stand: str = "abnahme"
     rundschau_datei: str = ""
     rundschau_inhalt: dict[str, Any] = field(default_factory=dict)
+    selbstpruefung: dict[str, Any] = field(default_factory=dict)
 
 
 def abschluss_ordner() -> Path:
@@ -178,6 +179,7 @@ def markdown(
     *,
     rundschau_datei: str = "",
     rundschau_inhalt: dict[str, Any] | None = None,
+    sp_daten: dict[str, Any] | None = None,
 ) -> str:
     """Alte Kurzform: 3 Links + was neu ist."""
     zeilen = [
@@ -191,6 +193,7 @@ def markdown(
         "",
         *[f"- {s}" for s in saetze],
         "",
+        *selbstpruefung.paket_abschnitt(sp_daten or {}),
     ]
     return "\n".join(zeilen)
 
@@ -232,6 +235,7 @@ def markdown_voll(p: Paket) -> str:
         "",
         *[f"- {s}" for s in p.tun],
         "",
+        *selbstpruefung.paket_abschnitt(p.selbstpruefung),
     ]
     return "\n".join(zeilen)
 
@@ -338,6 +342,7 @@ def _offen_daten(repo: Path, p: Paket) -> dict[str, Any]:
         "rundschau": p.rundschau,
         "rundschau_datei": p.rundschau_datei,
         "rundschau_inhalt": p.rundschau_inhalt,
+        "selbstpruefung": p.selbstpruefung,
         "tests": p.tests,
         "belege": p.belege,
         "direkt": [{"titel": t, "url": u} for t, u in p.direkt],
@@ -365,6 +370,8 @@ def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     if argv[:1] == ["rundschau-auftrag"]:
         return rundschau_auftrag(argv[1:])
+    if argv[:1] == ["selbstpruefung"]:
+        return selbstpruefung_cli(argv[1:])
     if argv[:1] == ["ablegen"]:
         return ablegen(argv[1:])
     if argv[:1] == ["nachsehen"]:
@@ -386,6 +393,7 @@ def main(argv: list[str] | None = None) -> int:
             p.saetze,
             rundschau_datei=p.rundschau_datei,
             rundschau_inhalt=p.rundschau_inhalt,
+            sp_daten=p.selbstpruefung,
         )
     )
     md_datei, offen = _md_datei(repo, p), _offen_datei(repo, p)
@@ -561,6 +569,41 @@ def rundschau_auftrag(argv: list[str]) -> int:
     return 0
 
 
+def selbstpruefung_cli(argv: list[str]) -> int:
+    """Unterbefehle ``selbstpruefung planen|sammeln <S>`` (#368)."""
+    if _geheimnis_abbruch(argv):
+        return 2
+    ap = argparse.ArgumentParser(
+        description="KI-Selbstprüfung der Rundschau gegen Staging planen und Ergebnis sammeln (#368)."
+    )
+    unter = ap.add_subparsers(dest="aktion", required=True)
+    p_plan = unter.add_parser("planen")
+    p_plan.add_argument("spec", type=int)
+    p_plan.add_argument("--stage", default="", help="Stage-App-Link (Vorgabe: staging.url aus .to-spawn/config.json)")
+    p_plan.add_argument("--rundschau-datei", type=Path, default=None, help="Rundschau-HTML-Datei (Vorgabe: docs/agents/rundschau_<S>.html)")
+    p_plan.add_argument("--neu", action="store_true", help="Auch nach grünem Marker erneut planen")
+    p_plan.add_argument("--repo", type=Path, default=None)
+    p_sam = unter.add_parser("sammeln")
+    p_sam.add_argument("spec", type=int)
+    p_sam.add_argument("--repo", type=Path, default=None)
+    a = ap.parse_args(argv)
+    repo = _repo(a.repo)
+    try:
+        if a.aktion == "planen":
+            return selbstpruefung.planen(
+                repo,
+                a.spec,
+                stage=a.stage,
+                rundschau_datei=a.rundschau_datei,
+                neu=a.neu,
+            )
+        return selbstpruefung.sammeln(repo, a.spec)
+    except selbstpruefung.Fehler as fehler:
+        log.error("%s", fehler)
+        sys.stderr.write(f"FEHLER: {fehler}\n")
+        return 1
+
+
 def ablegen(argv: list[str]) -> int:
     """Paket bauen und ablegen, nicht mailen. Eine schon abgelegte SPEC-FERTIG-Zeit bleibt."""
     if _geheimnis_abbruch(argv):
@@ -572,6 +615,8 @@ def ablegen(argv: list[str]) -> int:
     p, neue_form = _paket(a, ap, repo)
     rel_pfad = ""
     info: dict[str, Any] = {}
+    sp_daten: dict[str, Any] = {}
+    sp_maengel: list[str] = []
     if a.dry_run:
         maengel: list[str] = []
     elif a.rundschau_datei is None and p.stand == "abnahme" and not a.ohne_rundschau:
@@ -583,11 +628,22 @@ def ablegen(argv: list[str]) -> int:
         maengel, rel_pfad, info = _rundschau_pruefen(repo, p.spec, a.rundschau_datei)
     else:
         maengel = []
+    if not a.dry_run and p.stand == "abnahme":
+        if a.ohne_rundschau:
+            sp_daten = {
+                "status": "nicht_moeglich",
+                "grund": "Selbstprüfung nicht möglich, weil Notfall-Ablage ohne Rundschau-Deck.",
+            }
+        else:
+            sp_maengel, sp_daten = selbstpruefung.pruefe_fuer_abnahme(repo, p.spec)
+            maengel = [*maengel, *sp_maengel]
     if maengel:
-        sys.stdout.write("Rundschau nicht bereit zur Abnahme:\n" + "\n".join(f"- {m}" for m in maengel) + "\n")
+        sys.stdout.write("Rundschau/Abnahme nicht bereit:\n" + "\n".join(f"- {m}" for m in maengel) + "\n")
         return 4
     if rel_pfad:
         p = replace(p, rundschau_datei=rel_pfad, rundschau_inhalt=info)
+    if sp_daten:
+        p = replace(p, selbstpruefung=sp_daten)
     if a.ohne_rundschau and a.rundschau_datei is None and p.stand == "abnahme":
         p = replace(p, rundschau=f"nicht abnahmebereit (ohne Rundschau-Deck) — {p.rundschau}")
     datei = ablage_pfad(repo, p.spec, p.stand)
@@ -729,6 +785,7 @@ def mail_text(repo: Path, p: Paket, neue_form: bool, konfig: dict[str, Any], sys
             p.saetze,
             rundschau_datei=p.rundschau_datei,
             rundschau_inhalt=p.rundschau_inhalt,
+            sp_daten=p.selbstpruefung,
         )
     )
     eintraege = entscheidungs_zeilen(repo, p.spec)
