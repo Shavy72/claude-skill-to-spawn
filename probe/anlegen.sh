@@ -12,6 +12,7 @@ set -euo pipefail
 
 hilfe() { sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'; }
 fehler() { echo "anlegen.sh: $*" >&2; exit 2; }
+braucht_wert() { [ $# -ge 2 ] && [ -n "$2" ] && [[ $2 != --* ]] || fehler "Schalter $1 braucht einen Wert"; }
 
 [ $# -ge 2 ] || { hilfe >&2; exit 2; }
 ziel=$1
@@ -23,10 +24,10 @@ live_port=18503
 github=
 while [ $# -gt 0 ]; do
   case $1 in
-    --app-port) app_port=${2:-}; shift 2 ;;
-    --staging-port) staging_port=${2:-}; shift 2 ;;
-    --live-port) live_port=${2:-}; shift 2 ;;
-    --github) github=${2:-}; shift 2 ;;
+    --app-port) braucht_wert "$@"; app_port=$2; shift 2 ;;
+    --staging-port) braucht_wert "$@"; staging_port=$2; shift 2 ;;
+    --live-port) braucht_wert "$@"; live_port=$2; shift 2 ;;
+    --github) braucht_wert "$@"; github=$2; shift 2 ;;
     -h|--help) hilfe; exit 0 ;;
     *) fehler "unbekannter Schalter: $1" ;;
   esac
@@ -84,6 +85,9 @@ if [ -n "$github" ]; then
   }
   # Über Variable: frisches leeres Probe-Repo, der erste Push von main ist dort der gewollte
   # Start-Commit; kein Weg für echte Repos.
-  git push -u origin "$variante_zweig"
+  git push -u origin "$variante_zweig" || {
+    echo "Fehler: git push fehlgeschlagen; leeres Fern-Repo $github wurde bereits angelegt, lokaler Ordner bleibt stehen: $(pwd) (Push wiederholen: git -C \"$(pwd)\" push -u origin $variante_zweig oder Repo löschen)" >&2
+    exit 1
+  }
 fi
 echo "Lauf-Repo angelegt: $(pwd) ($variante; lokal $app_port, Staging $staging_text, Übungs-Live $live_port)"

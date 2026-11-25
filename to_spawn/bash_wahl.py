@@ -9,6 +9,10 @@ sie als ``C:\\c\\…`` missverstehen. Linux/macOS: ``bash`` aus dem ``PATH``, Um
 Tür für Aufrufer: ``lauf`` startet bash samt passender Umgebung — die Pfadsperre lässt sich so
 nicht vergessen. ``bash`` nur, wer allein den Pfad braucht (Test-Helfer); ``ist_wsl_stub`` ist
 die Regel, an der ein gefundener Pfad als WSL-Stub erkannt wird.
+
+Test-Naht (#646): ``TO_SPAWN_TEST_BASH_FEHLT=1`` wirkt nur unter Test
+(:func:`to_spawn.starter.unter_test`) und lässt :func:`bash` mit ``FileNotFoundError`` abbrechen —
+wirkt auch in Kind-Prozessen und unter Windows (wo Git-Bash sonst an festen Orten gefunden wird).
 """
 
 from __future__ import annotations
@@ -23,12 +27,14 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path, PureWindowsPath
 from typing import Any
 
-from to_spawn import prozessbaum
+from to_spawn import prozessbaum, starter
 
 log = logging.getLogger("to_spawn.bash_wahl")
 
 #: Standard-Installationsort von Git für Windows.
 _GIT_BASH_STANDARD = "C:/Program Files/Git/bin/bash.exe"
+#: Nur unter Test wirksam: :func:`bash` meldet ``FileNotFoundError`` (auch in Kind-Prozessen, #646).
+TEST_FEHLT_ENV = "TO_SPAWN_TEST_BASH_FEHLT"
 #: Schalter, mit denen MSYS die Pfad-Umsetzung für Windows-Programme abschaltet.
 _PFAD_SPERREN = ("MSYS_NO_PATHCONV", "MSYS2_ARG_CONV_EXCL")
 #: Sekunden, die :func:`lauf` nach dem Gruppen-Abbruch noch auf die Pipes wartet (#455).
@@ -49,6 +55,8 @@ def bash() -> str:
     ``git`` oder ``bash`` im ``PATH`` (nie der WSL-Stub). Sonst ``bash`` im ``PATH``.
     Fehlt sie → ``FileNotFoundError`` mit verständlicher Meldung, nie stiller Rückfall.
     """
+    if os.environ.get(TEST_FEHLT_ENV) == "1" and starter.unter_test():
+        raise FileNotFoundError(f"bash im Test ausgeblendet ({TEST_FEHLT_ENV}=1)")
     if sys.platform != "win32":
         pfad = shutil.which("bash")
         if pfad is None:

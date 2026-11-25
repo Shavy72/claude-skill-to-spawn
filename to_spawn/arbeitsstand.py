@@ -96,7 +96,7 @@ def _git(repo: Path, *args: str, timeout: float = GIT_TIMEOUT_S) -> tuple[int, s
     """``git <args>`` in ``repo`` → (Exit, stdout bzw. stderr bei Fehler); 127/124 = fehlt/Zeit."""
     try:
         fertig = subprocess.run(
-            ["git", *args],
+            ["git", "-c", "core.quotepath=off", *args],
             cwd=str(repo),
             env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
             capture_output=True,

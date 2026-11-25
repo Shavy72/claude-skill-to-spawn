@@ -3,7 +3,8 @@
 Echt laufen: Wegwerf-Git-Repos (``welt`` aus ``test_waechter_213`` bzw. ``klon`` aus
 ``test_komplett_je_spec_425``), echte Merker-Dateien, ein echter kleiner Prüf-Befehl mit Zähldatei,
 ein echter Live-Befehl mit eigener Zähldatei, der capo-Takt und ``to_spawn.py`` als Prozess.
-Werkzeug-Fehler entsteht echt: ``PATH`` ohne bash (nur git verlinkt).
+Werkzeug-Fehler wird über die Tür ``bash_wahl`` eingespeist (``TO_SPAWN_TEST_BASH_FEHLT=1``) —
+wirkt unter Linux wie Windows, wo ``bash_wahl`` Git-Bash sonst an festen Orten fände (#646).
 
 Teile:
 1. ``to_spawn.py live <S>`` — der Live-Befehl (``live.befehl``) startet nur, wenn die
@@ -26,7 +27,8 @@ from pathlib import Path
 
 import pytest
 from test_komplett_je_spec_425 import SPEC as KLON_SPEC
-from test_komplett_je_spec_425 import _befehl, _konfig as _klon_konfig, _laeufe, _rot, klon, zaehl  # noqa: F401
+from test_komplett_je_spec_425 import _befehl, _laeufe, _rot, klon, zaehl  # noqa: F401
+from test_komplett_je_spec_425 import _konfig as _klon_konfig
 from test_waechter_213 import (  # noqa: F401  (welt = Fixture)
     SPEC,
     _capo,
@@ -38,7 +40,7 @@ from test_waechter_213 import (  # noqa: F401  (welt = Fixture)
     welt,
 )
 
-from to_spawn import komplett_lauf
+from to_spawn import bash_wahl, config, komplett_lauf, live_tuer, sperre
 from to_spawn.pruefplan import Moment
 
 SKILL = Path(__file__).resolve().parents[1]
@@ -81,18 +83,6 @@ def _live(repo: Path, env: dict[str, str] | None = None) -> subprocess.Completed
     )
 
 
-def _ohne_bash(tmp: Path) -> str:
-    """``PATH`` mit nur git darin — bash fehlt echt (Werkzeug-Fehler der Prüfung)."""
-    ordner = tmp / "nur-git"
-    ordner.mkdir(exist_ok=True)
-    git = shutil.which("git")
-    assert git, "git fehlt auf der Test-Maschine"
-    ziel = ordner / "git"
-    if not ziel.exists():
-        ziel.symlink_to(git)
-    return str(ordner)
-
-
 # --- 1. Live-Schritt an der Tür ------------------------------------------------------------------
 
 
@@ -116,7 +106,7 @@ def test_live_ohne_staging_rot_startet_nicht_dann_gruen_einmal(welt: dict[str, P
 
 def test_live_werkzeug_fehler_startet_nicht(welt: dict[str, Path]) -> None:
     zaehl, live_zaehl = _einrichten(welt, staging=False)
-    erg = _live(welt["repo"], {"PATH": _ohne_bash(welt["tmp"])})
+    erg = _live(welt["repo"], {bash_wahl.TEST_FEHLT_ENV: "1"})
     assert erg.returncode == 1, _text(erg)
     assert "Live-Schritt nicht gestartet" in erg.stdout and "Werkzeug" in erg.stdout, _text(erg)
     assert _laeufe(zaehl) == 0 and _laeufe(live_zaehl) == 0
@@ -130,6 +120,40 @@ def test_live_mit_staging_nach_gruenem_takt_ohne_neuen_lauf(welt: dict[str, Path
     erg = _live(welt["repo"])
     assert erg.returncode == 0 and "schon grün" in erg.stdout, _text(erg)
     assert _laeufe(zaehl) == 1 and _laeufe(live_zaehl) == 1
+
+
+def test_live_mit_staging_roter_merker_loest_neuen_lauf_aus(welt: dict[str, Path]) -> None:
+    """#482: Mit Staging löst ein roter Takt-Merker an der Live-Tür einen neuen Prüf-Lauf aus."""
+    zaehl, live_zaehl = _einrichten(welt, staging=True)
+    _alle_zu(welt)
+    _rot(zaehl)
+    _capo(welt)
+    assert _laeufe(zaehl) == 1
+    noch_rot = _live(welt["repo"])
+    assert noch_rot.returncode == 1, _text(noch_rot)
+    assert "Live-Schritt nicht gestartet" in noch_rot.stdout and "rot" in noch_rot.stdout, _text(noch_rot)
+    assert _laeufe(zaehl) == 2 and _laeufe(live_zaehl) == 0
+    zaehl.with_name("exit.txt").unlink()
+    gruen = _live(welt["repo"])
+    assert gruen.returncode == 0 and "Komplett-Prüfung grün" in gruen.stdout, _text(gruen)
+    assert _laeufe(zaehl) == 3 and _laeufe(live_zaehl) == 1
+
+
+def test_live_mit_staging_merker_anderer_kopf_prueft_neu(welt: dict[str, Path]) -> None:
+    """#482: Nach neuem Commit zählt der alte grüne Takt-Merker nicht — Live-Tür prüft neu."""
+    zaehl, live_zaehl = _einrichten(welt, staging=True)
+    _alle_zu(welt)
+    _capo(welt)
+    assert _laeufe(zaehl) == 1
+    # Der Fertig-Takt legt den ungetrackten Abschluss-Bericht unter docs/ ab; wegräumen für sauberen Baum.
+    shutil.rmtree(welt["repo"] / "docs", ignore_errors=True)
+    neu = _commit(welt["repo"], "fix: Nachbesserung", {"nach.txt": "x\n"})
+    erg = _live(welt["repo"])
+    assert erg.returncode == 0, _text(erg)
+    assert "Komplett-Prüfung grün" in erg.stdout and "schon grün" not in erg.stdout, _text(erg)
+    assert _laeufe(zaehl) == 2 and _laeufe(live_zaehl) == 1
+    merker = komplett_lauf.lies_merker(welt["repo"], int(SPEC))
+    assert merker is not None and merker.kopf == neu
 
 
 def test_live_nicht_eingerichtet_alter_ablauf(welt: dict[str, Path]) -> None:
@@ -154,6 +178,38 @@ def test_live_befehl_rot_exit_1(welt: dict[str, Path]) -> None:
     (welt["repo"] / ".to-spawn" / "config.json").write_text(json.dumps(daten), encoding="utf-8")
     erg = _live(welt["repo"])
     assert erg.returncode == 1 and "Exit 7" in erg.stdout, _text(erg)
+
+
+def test_live_befehl_oserror_exit_1_mit_handlung(
+    welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#482: Scheitert der Start von ``live.befehl`` mit ``OSError``, meldet die Tür Exit 1 + Handlung."""
+    zaehl, live_zaehl = _einrichten(welt, staging=False)
+    konfig = config.lade(welt["repo"])
+    assert komplett_lauf.darf_live(welt["repo"], int(SPEC), konfig).frei
+    assert _laeufe(zaehl) == 1
+
+    def kaputt(*_a: object, **_k: object) -> subprocess.CompletedProcess[str]:
+        raise FileNotFoundError("bash fehlt")
+
+    monkeypatch.setattr(live_tuer.bash_wahl, "lauf", kaputt)
+    code, zeilen = live_tuer.starte(welt["repo"], int(SPEC), konfig)
+    text = "\n".join(zeilen)
+    assert code == 1, text
+    assert "Live-Befehl nicht gestartet" in text and "Handlung" in text, text
+    assert _laeufe(zaehl) == 1 and _laeufe(live_zaehl) == 0
+
+
+def test_live_sperre_belegt_startet_nicht(welt: dict[str, Path]) -> None:
+    """#482: Hält ein anderer Prozess die Prüf-Sperre, gibt die Live-Tür nicht frei."""
+    zaehl, live_zaehl = _einrichten(welt, staging=False)
+    sperr_datei = komplett_lauf._datei(welt["repo"], int(SPEC)).with_suffix(".lock")
+    with sperre.halte(sperr_datei) as frei:
+        assert frei
+        erg = _live(welt["repo"])
+    assert erg.returncode == 1, _text(erg)
+    assert "Live-Schritt nicht gestartet" in erg.stdout and "läuft schon" in erg.stdout, _text(erg)
+    assert _laeufe(zaehl) == 0 and _laeufe(live_zaehl) == 0
 
 
 # --- 2. Probelauf liest nur ---------------------------------------------------------------------
@@ -190,6 +246,55 @@ def test_probelauf_gruener_merker_zeigt_spec_fertig(welt: dict[str, Path]) -> No
     assert _laeufe(zaehl) == 1
 
 
+def test_probelauf_merker_anderer_kopf_kein_spec_fertig(welt: dict[str, Path]) -> None:
+    """#482: Grüner Merker eines alten Kopfes reicht im Probelauf nicht für „SPEC FERTIG“."""
+    zaehl, _ = _einrichten(welt, staging=True)
+    _alle_zu(welt)
+    _capo(welt)
+    assert _laeufe(zaehl) == 1
+    _commit(welt["repo"], "fix: neuer Stand", {"neu.txt": "x\n"})
+    probe = _capo(welt, "--dry-run")
+    assert "SPEC FERTIG" not in probe.stdout, _text(probe)
+    assert "[Probe]" in probe.stdout and "fehlt noch" in probe.stdout, _text(probe)
+    assert _laeufe(zaehl) == 1
+
+
+def test_probelauf_klon_hinter_upstream_kein_spec_fertig(welt: dict[str, Path]) -> None:
+    """#482: Liegt der Klon hinter ``@{u}``, zeigt der Probelauf trotz grünem Merker kein „SPEC FERTIG“."""
+    zaehl, _ = _einrichten(welt, staging=True)
+    _alle_zu(welt)
+    _capo(welt)
+    assert _laeufe(zaehl) == 1
+    subprocess.run(
+        ["git", "-C", str(welt["repo"]), "branch", "--set-upstream-to=origin/master", "master"],
+        check=True,
+        capture_output=True,
+    )
+    alt = subprocess.run(
+        ["git", "-C", str(welt["repo"]), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    anderer = welt["tmp"] / "anderer"
+    subprocess.run(["git", "clone", "-q", str(welt["tmp"] / "fern.git"), str(anderer)], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(anderer), "config", "user.email", "test@example.invalid"], check=True)
+    subprocess.run(["git", "-C", str(anderer), "config", "user.name", "Test"], check=True)
+    _commit(anderer, "feat: fern weiter", {"fern.txt": "x\n"})
+    subprocess.run(["git", "-C", str(welt["repo"]), "fetch", "-q", "origin"], check=True, capture_output=True)
+    probe = _capo(welt, "--dry-run")
+    assert "SPEC FERTIG" not in probe.stdout, _text(probe)
+    assert "[Probe]" in probe.stdout and "fehlt noch" in probe.stdout, _text(probe)
+    assert _laeufe(zaehl) == 1
+    jetzt = subprocess.run(
+        ["git", "-C", str(welt["repo"]), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    assert jetzt == alt  # Probelauf zieht nicht nach
+
+
 def test_probelauf_merker_ohne_schluessel_kein_spec_fertig(welt: dict[str, Path]) -> None:
     zaehl, _ = _einrichten(welt, staging=True)
     _alle_zu(welt)
@@ -208,19 +313,17 @@ def test_probelauf_merker_ohne_schluessel_kein_spec_fertig(welt: dict[str, Path]
 
 
 def test_werkzeug_fehler_kein_ok_und_nie_als_geprueft(
-    klon: Path, zaehl: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    klon: Path, zaehl: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     konfig = _klon_konfig(zaehl, staging=False)
-    monkeypatch.setenv("PATH", _ohne_bash(tmp_path))
+    monkeypatch.setenv(bash_wahl.TEST_FEHLT_ENV, "1")
     erg = komplett_lauf.komplett_einmal(klon, KLON_SPEC, Moment.VOR_LIVE, konfig)
     assert (erg.gelaufen, erg.ok) == (True, False), erg
     assert "Werkzeug-Fehler" in erg.grund and "bash" in erg.grund, erg.grund
     merker = komplett_lauf.lies_merker(klon, KLON_SPEC)
     assert merker is not None and merker.exit == 2 and "bash" in merker.grund
     assert _laeufe(zaehl) == 0
-    monkeypatch.undo()
-    # undo() hebt auch das conftest-Entfernen auf: in einer Bau-Session lehnt die Tür sonst ab (#474).
-    monkeypatch.delenv("TO_SPAWN_TICKET", raising=False)
+    monkeypatch.delenv(bash_wahl.TEST_FEHLT_ENV)
     # Gate-Fehler zählt nie als geprüft — auch im Takt nicht: nächster Aufruf prüft echt.
     takt = komplett_lauf.takt_kind(klon, KLON_SPEC, Moment.VOR_LIVE, konfig)
     assert (takt.gelaufen, takt.ok) == (True, True), takt
