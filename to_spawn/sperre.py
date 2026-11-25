@@ -8,6 +8,9 @@ Versteckt wird hier, welches Werkzeug sperrt:
 - Linux/macOS: ``fcntl.flock`` auf ``datei`` (verträgt sich mit ``flock`` aus der Shell).
 - Windows: ``msvcrt.locking`` auf 1 Byte weit hinter dem Inhalt von ``datei`` (der
   Inhalt bleibt für andere Prozesse lesbar, z. B. Wartezettel im Leitstand).
+  Übergangsschutz beim Skill-Update (#226): Byte 0 (alte Sperrstelle vor #221) wird
+  mitgeprüft und bei leerer Sperrdatei mitgehalten, bei Datei mit Inhalt sofort per
+  ``LK_UNLCK`` wieder freigegeben.
 - Ohne beide: Rückfall auf eine O_EXCL-Datei ``<datei>.excl`` neben ``datei``.
 
 Zwei Fehlerarten, getrennt nur hier (#165):
@@ -48,6 +51,13 @@ _BELEGT = {errno.EACCES, getattr(errno, "EDEADLOCK", errno.EDEADLK)}
 # Windows sperrt Bytes verbindlich (auch fürs Lesen); darum hinter jedem echten Inhalt.
 # Sperren jenseits des Dateiendes erlaubt Windows, die Datei wächst dadurch nicht.
 _MSVCRT_VERSATZ = 2**31 - 2
+# Alte Sperrstelle vor #221 (Übergangsschutz beim Skill-Update, #226):
+# - Leere Sperrdatei (st_size == 0): beide Stellen halten ⇒ alter und neuer Prozess schließen
+#   sich in beiden Richtungen aus.
+# - Datei mit Inhalt (z. B. Wartezettel im Leitstand): Byte 0 kurz prüfen und sofort wieder
+#   freigeben, damit der Inhalt lesbar bleibt, ein noch laufender Alt-Prozess auf Byte 0 aber
+#   trotzdem als „belegt“ erkannt wird.
+_MSVCRT_VERSATZ_ALT = 0
 
 
 class SperreNichtOeffenbar(OSError):
@@ -98,8 +108,13 @@ def halte(datei: Path, warten: float = 0.0, *, msvcrt: Any = None) -> Iterator[b
         fd = os.open(str(datei), os.O_RDONLY | os.O_CREAT, 0o666)
     except OSError as fehler:
         raise _oeffnen_gescheitert(datei, fehler) from fehler
+    gehalten_versatze: list[int] = []
     try:
-        while not _versuch(fd, fc, ms):
+        while True:
+            versatze = _versuch(fd, fc, ms)
+            if versatze is not None:
+                gehalten_versatze = versatze
+                break
             if time.monotonic() >= ende:
                 yield False
                 return
@@ -110,21 +125,16 @@ def halte(datei: Path, warten: float = 0.0, *, msvcrt: Any = None) -> Iterator[b
             if fc is not None:
                 with contextlib.suppress(OSError):
                     fc.flock(fd, fc.LOCK_UN)
-            # ponytail: msvcrt gibt erst das close() frei (kein LK_UNLCK, die alte Test-Naht
-            # kennt es nicht); reicht für Läufe im Minutentakt. Upgrade: LK_UNLCK vor close().
+            elif ms is not None:
+                for versatz in reversed(gehalten_versatze):
+                    _msvcrt_freigeben(fd, ms, versatz)
     finally:
         os.close(fd)
 
 
-def _versuch(fd: int, fc: Any, ms: Any) -> bool:
-    """Ein nicht blockierender Versuch: ``True`` = gesperrt, ``False`` = belegt."""
-    if fc is not None:
-        try:
-            fc.flock(fd, fc.LOCK_EX | fc.LOCK_NB)
-        except BlockingIOError:
-            return False
-        return True
-    os.lseek(fd, _MSVCRT_VERSATZ, os.SEEK_SET)
+def _msvcrt_sperren(fd: int, ms: Any, versatz: int) -> bool:
+    """Sperrt 1 Byte bei ``versatz`` nicht blockierend; ``False`` = belegt."""
+    os.lseek(fd, versatz, os.SEEK_SET)
     try:
         ms.locking(fd, ms.LK_NBLCK, 1)
     except OSError as fehler:
@@ -132,6 +142,49 @@ def _versuch(fd: int, fc: Any, ms: Any) -> bool:
             return False
         raise
     return True
+
+
+def _msvcrt_freigeben(fd: int, ms: Any, versatz: int) -> None:
+    """Gibt 1 Byte bei ``versatz`` frei, falls ``ms`` ``LK_UNLCK`` kennt (alte Test-Naht nicht)."""
+    lk_unlck = getattr(ms, "LK_UNLCK", None)
+    if lk_unlck is None:
+        return
+    with contextlib.suppress(OSError):
+        os.lseek(fd, versatz, os.SEEK_SET)
+        ms.locking(fd, lk_unlck, 1)
+
+
+def _versuch(fd: int, fc: Any, ms: Any) -> list[int] | None:
+    """Ein nicht blockierender Versuch: gehaltene msvcrt-Versätze (Linux: ``[]``), ``None`` = belegt."""
+    if fc is not None:
+        try:
+            fc.flock(fd, fc.LOCK_EX | fc.LOCK_NB)
+        except BlockingIOError:
+            return None
+        return []
+    if not _msvcrt_sperren(fd, ms, _MSVCRT_VERSATZ):
+        return None
+    if getattr(ms, "LK_UNLCK", None) is None:
+        # Alte Test-Nähte kennen kein LK_UNLCK — ohne Freigabe kein Zweit-Versuch.
+        return [_MSVCRT_VERSATZ]
+    try:
+        alt_frei = _msvcrt_sperren(fd, ms, _MSVCRT_VERSATZ_ALT)
+    except BaseException:
+        _msvcrt_freigeben(fd, ms, _MSVCRT_VERSATZ)
+        raise
+    if not alt_frei:
+        _msvcrt_freigeben(fd, ms, _MSVCRT_VERSATZ)
+        return None
+    try:
+        hat_inhalt = os.fstat(fd).st_size > 0
+    except BaseException:
+        _msvcrt_freigeben(fd, ms, _MSVCRT_VERSATZ_ALT)
+        _msvcrt_freigeben(fd, ms, _MSVCRT_VERSATZ)
+        raise
+    if hat_inhalt:
+        _msvcrt_freigeben(fd, ms, _MSVCRT_VERSATZ_ALT)
+        return [_MSVCRT_VERSATZ]
+    return [_MSVCRT_VERSATZ, _MSVCRT_VERSATZ_ALT]
 
 
 @contextlib.contextmanager
