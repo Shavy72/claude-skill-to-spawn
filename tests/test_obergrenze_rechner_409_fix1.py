@@ -19,7 +19,6 @@ from test_obergrenze_eigene_sitzung_409 import (  # noqa: F401 — ``welt`` ist 
     _KONFIG,
     EIGEN,
     FREMD,
-    SOCKET,
     Welt,
     _claude,
     _tmux,
@@ -34,8 +33,10 @@ pytestmark = pytest.mark.braucht("tmux")
 
 
 def _sitzung_dazu(welt: Welt, name: str) -> None:
-    _tmux("new-session", "-d", "-s", name, "sleep 600")
-    for zeile in _tmux("list-sessions", "-F", "#{session_name}\t#{socket_path},#{pid},#{session_id}").splitlines():
+    _tmux(welt.socket, "new-session", "-d", "-s", name, "sleep 600")
+    for zeile in _tmux(
+        welt.socket, "list-sessions", "-F", "#{session_name}\t#{socket_path},#{pid},#{session_id}"
+    ).splitlines():
         sitzung, wert = zeile.split("\t")
         welt.tmux_wert[sitzung] = wert.replace("$", "")
 
@@ -57,7 +58,7 @@ def test_zwei_sitzungen_an_rechner_grenze_blockieren(welt: Welt) -> None:
         _claude(welt, pid, EIGEN)
     for pid in range(201, 211):
         _claude(welt, pid, FREMD)
-    frei, text = speicher.platz_frei(_KONFIG, sitzung=EIGEN, tmux_socket=SOCKET)
+    frei, text = speicher.platz_frei(_KONFIG, sitzung=EIGEN, tmux_socket=welt.socket)
     assert not frei, text
     assert text == "Rechner voll: schon 12 Claude-Sessions auf dem Rechner (Obergrenze 12)"
 
@@ -70,7 +71,7 @@ def test_rechner_grenze_waechst_mit_gesamtspeicher(welt: Welt, tmp_path: Path, m
         _claude(welt, pid, EIGEN)
     for pid in range(201, 211):
         _claude(welt, pid, FREMD)
-    frei, text = speicher.platz_frei(_KONFIG, sitzung=EIGEN, tmux_socket=SOCKET)
+    frei, text = speicher.platz_frei(_KONFIG, sitzung=EIGEN, tmux_socket=welt.socket)
     assert frei, text
     assert "Rechner 12 von 24" in text, text  # 284: war 7 von 15
 
@@ -81,8 +82,8 @@ def test_rechner_grenze_waechst_mit_gesamtspeicher(welt: Welt, tmp_path: Path, m
 def test_tmux_fehlt_zaehlt_rechnerweit(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
     _vier_fremde_zwei_eigene(welt)
     monkeypatch.setenv("TO_SPAWN_TMUX", json.dumps([f"/nicht/da/tmux-{os.getpid()}"]))
-    assert speicher.sitzung_nach_name(EIGEN, SOCKET) is None
-    assert speicher.platz_frei(_KONFIG, sitzung=EIGEN, tmux_socket=SOCKET) == (
+    assert speicher.sitzung_nach_name(EIGEN, welt.socket) is None
+    assert speicher.platz_frei(_KONFIG, sitzung=EIGEN, tmux_socket=welt.socket) == (
         False,
         "schon 6 Claude-Sessions (Obergrenze 5)",
     )
@@ -94,8 +95,8 @@ def test_tmux_fehler_zaehlt_rechnerweit(welt: Welt, tmp_path: Path, monkeypatch:
     )
     monkeypatch.setenv("TO_SPAWN_TMUX", str(kaputt))
     _vier_fremde_zwei_eigene(welt)
-    assert speicher.sitzung_nach_name(EIGEN, SOCKET) is None
-    frei, text = speicher.platz_frei(_KONFIG, sitzung=EIGEN, tmux_socket=SOCKET)
+    assert speicher.sitzung_nach_name(EIGEN, welt.socket) is None
+    frei, text = speicher.platz_frei(_KONFIG, sitzung=EIGEN, tmux_socket=welt.socket)
     assert not frei and text == "schon 6 Claude-Sessions (Obergrenze 5)", text
 
 
@@ -117,10 +118,10 @@ def test_praefix_name_zaehlt_nicht_mit(welt: Welt) -> None:
     for pid in range(501, 506):
         _claude(welt, pid, "spec-13")
     _claude(welt, 601, "spec-1")
-    frei, text = speicher.platz_frei(_KONFIG, sitzung="spec-1", tmux_socket=SOCKET)
+    frei, text = speicher.platz_frei(_KONFIG, sitzung="spec-1", tmux_socket=welt.socket)
     assert frei, text
     assert "1 Claude-Sessions in spec-1 " in text, text
-    frei13, text13 = speicher.platz_frei(_KONFIG, sitzung="spec-13", tmux_socket=SOCKET)
+    frei13, text13 = speicher.platz_frei(_KONFIG, sitzung="spec-13", tmux_socket=welt.socket)
     assert not frei13 and text13 == "schon 5 Claude-Sessions in spec-13 (Obergrenze 5)", text13
 
 
@@ -136,7 +137,7 @@ def _aufpasser(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> tuple[aufpasser.A
     repo = welt.tmp / "repo"
     (repo / ".to-spawn").mkdir(parents=True)
     (repo / ".to-spawn" / "config.json").write_text(json.dumps(_KONFIG), encoding="utf-8")
-    e = aufpasser.Einstellungen(zustand=welt.tmp / "zustand", tmux_socket=SOCKET, deploy_muster="niemals-409")
+    e = aufpasser.Einstellungen(zustand=welt.tmp / "zustand", tmux_socket=welt.socket, deploy_muster="niemals-409")
     return aufpasser.Aufpasser(e), repo
 
 
