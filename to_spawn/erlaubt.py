@@ -238,10 +238,13 @@ GIT_HARMLOS: frozenset[str] = frozenset(
 #: Erlaubte Zweig-Präfixe für ``git push`` ohne Force, ``+``, ``:`` oder Sammel-Schalter.
 GIT_PUSH_PRAEFIXE: tuple[str, ...] = ("ticket/", "fix/", "wip/")
 
+#: Schreibende ``gh``-Aktionen (im Lese-Modus verboten, sonst bei ``issue``/``pr`` erlaubt).
+_GH_SCHREIB_AKTIONEN: frozenset[str] = frozenset({"comment", "create", "edit"})
+
 #: Erlaubte ``gh``-Unterbefehle: Lesen sowie Issue-/PR-Kommentare, Anlegen und Bearbeiten.
 GH_HARMLOS: dict[str, frozenset[str]] = {
-    "issue": frozenset({"view", "list", "status", "comment", "create", "edit"}),
-    "pr": frozenset({"view", "list", "status", "diff", "checks", "comment", "create", "edit"}),
+    "issue": frozenset({"view", "list", "status"}) | _GH_SCHREIB_AKTIONEN,
+    "pr": frozenset({"view", "list", "status", "diff", "checks"}) | _GH_SCHREIB_AKTIONEN,
     "run": frozenset({"view", "list", "watch"}),
     "workflow": frozenset({"list", "view"}),
     "repo": frozenset({"view", "list"}),
@@ -1636,7 +1639,7 @@ def _pruefe_gh(args: list[_Token], *, nur_lesend: bool) -> str | None:
         aktion = args[1].wert
         if aktion not in GH_HARMLOS[gruppe]:
             return f"gh {gruppe} {aktion}"
-        if nur_lesend and aktion in ("comment", "create", "edit"):
+        if nur_lesend and aktion in _GH_SCHREIB_AKTIONEN:
             return f"gh {gruppe} {aktion} im Lese-Modus"
         return _pruefe_keine_geheimnisse(f"gh {gruppe} {aktion}", args[2:])
     return f"gh {gruppe}"
