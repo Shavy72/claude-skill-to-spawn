@@ -86,6 +86,10 @@ def _bash(befehl: str) -> dict[str, Any]:
     }
 
 
+#: Echte Klasse-2-Werkzeug-Handlung für Infrastruktur-Tests unter Variante E (#389).
+_LIVE_AKTION = _bash("bash scripts/safe_deploy_vps.sh --skip-ci")
+
+
 def _ergebnis(text: str) -> dict[str, Any]:
     return {
         "type": "user",
@@ -187,7 +191,7 @@ _PASTE = "Bitte nimm diesen Plan:\n" + "\n".join(
 )
 
 FAELLE: dict[str, tuple[str, list[dict[str, Any]], str | None, bool]] = {
-    # Runde 4 (probe_374_live_luecke): Live in früherem Block derselben Antwort — Absicherung.
+    # Runde 4 (probe_374_live_luecke): E: reiner Assistent-Text ist keine Handlung (#389).
     "A text+werkzeug+frage": (
         "> mach weiter mit Ticket 12\n\n● Ich deploye den Stand gleich live auf die Hauptapp.\n\n"
         "● Bash(git status --short)\n  ⎿  (No content)\n\n● Passt das so?" + FUSS,
@@ -199,7 +203,7 @@ FAELLE: dict[str, tuple[str, list[dict[str, Any]], str | None, bool]] = {
             _a("Passt das so?"),
         ],
         None,
-        True,
+        False,  # E: Text ist keine Handlung (#389)
     ),
     "B werkzeug-live+text-frage": (
         "> los\n\n● Bash(bash scripts/safe_deploy_vps.sh --skip-ci)\n  ⎿  Deploy ok\n\n"
@@ -225,7 +229,7 @@ FAELLE: dict[str, tuple[str, list[dict[str, Any]], str | None, bool]] = {
             _a(_bash("git log -1")),
         ],
         None,
-        True,
+        False,  # E: Text ist keine Handlung (#389)
     ),
     "D rueckfrage live-befehl": (
         _DIALOG_D,
@@ -246,16 +250,16 @@ FAELLE: dict[str, tuple[str, list[dict[str, Any]], str | None, bool]] = {
             _a(f"Ich würde jetzt live deployen.\n{_F3_BERICHT}\n\nPasst das so?"),
         ],
         None,
-        True,
+        False,  # E: Text ist keine Handlung (#389)
     ),
-    # Runde-3-Fehlalarm bleibt zu: die Stelle steht hinter „Live-Deploy ist durch“.
+    # Runde-3-Fehlalarm bleibt zu: die Stelle steht hinter der Live-Handlung.
     "F2 stelle hinter live-text": (
         "> deploy live\n\n● Live-Deploy ist durch.\n\n> jetzt Ticket 12\n\n● Tests grün.\n\n"
         + HARMLOS
         + FUSS,
         [
             _u("deploy live"),
-            _a("Live-Deploy ist durch.", uuid="s1"),
+            _a(_LIVE_AKTION, "Live-Deploy ist durch.", uuid="s1"),
             _u("jetzt Ticket 12"),
             _a(f"Tests grün.\n\n{HARMLOS}"),
         ],
@@ -268,7 +272,7 @@ FAELLE: dict[str, tuple[str, list[dict[str, Any]], str | None, bool]] = {
         + FUSS,
         [
             _u("deploy live"),
-            _a("Live-Deploy ist durch.", uuid="s1"),
+            _a(_LIVE_AKTION, "Live-Deploy ist durch.", uuid="s1"),
             _u("jetzt Ticket 12"),
             _a(f"Tests grün.\n\n{HARMLOS}"),
         ],
@@ -282,17 +286,17 @@ FAELLE: dict[str, tuple[str, list[dict[str, Any]], str | None, bool]] = {
         + FUSS,
         [
             _u("deploy live"),
-            _a("Live-Deploy ist durch."),
+            _a(_LIVE_AKTION, "Live-Deploy ist durch."),
             _u("jetzt Ticket 12"),
             _a(f"Tests grün.\n\n{HARMLOS}"),
         ],
         None,
         True,
     ),
-    # Runde 5 (probe_374_runde5): System- und Entscheider-Eingaben zwischen Live-Text und Frage.
+    # Runde 5 (probe_374_runde5): System- und Entscheider-Eingaben zwischen Live-Handlung und Frage.
     "2a1 live-text, anstups aufpasser, frage": (
         "❯ mach weiter\n\n" + LIVE + f"❯ {STUPS_AUFPASSER}\n\n● Passt das so?" + FUSS,
-        [_u("mach weiter"), _a(LIVE_SATZ), _u(STUPS_AUFPASSER), _a("Passt das so?")],
+        [_u("mach weiter"), _a(_LIVE_AKTION), _u(STUPS_AUFPASSER), _a("Passt das so?")],
         None,
         True,
     ),
@@ -303,7 +307,7 @@ FAELLE: dict[str, tuple[str, list[dict[str, Any]], str | None, bool]] = {
         + FUSS,
         [
             _u("mach weiter"),
-            _a(LIVE_SATZ),
+            _a(_LIVE_AKTION),
             _u(STUPS_AUFSEHER),
             _a("Soll ich weitermachen?"),
         ],
@@ -317,7 +321,7 @@ FAELLE: dict[str, tuple[str, list[dict[str, Any]], str | None, bool]] = {
         "❯ Ja, erst Tests, dann weiter.\n\n● Tests grün. Passt das so?" + FUSS,
         [
             _u("mach weiter"),
-            _a(LIVE_SATZ),
+            _a(_LIVE_AKTION),
             _a("Soll ich vorher noch die Tests laufen lassen?"),
             _u("Ja, erst Tests, dann weiter."),
             _a("Tests grün. Passt das so?"),
@@ -330,19 +334,19 @@ FAELLE: dict[str, tuple[str, list[dict[str, Any]], str | None, bool]] = {
         + LIVE
         + "● Wie weiter?\n❯ Weiter\n  Abbrechen\n\nWelche Option?"
         + FUSS,
-        [_u("los"), _a(LIVE_SATZ), _a("Wie weiter?\n\nWelche Option?")],
+        [_u("los"), _a(_LIVE_AKTION), _a("Wie weiter?\n\nWelche Option?")],
         None,
         True,
     ),
     "2c1 slash-befehl dann live": (
         "❯ /loop 3m weiter\n\n" + LIVE + "● Passt das so?" + FUSS,
-        [_u("/loop 3m weiter"), _a(LIVE_SATZ), _a("Passt das so?")],
+        [_u("/loop 3m weiter"), _a(_LIVE_AKTION), _a("Passt das so?")],
         None,
         True,
     ),
     "2c2 mehrzeilige eingabe dann live": (
         "❯ erste Zeile\n  zweite Zeile\n\n" + LIVE + "● Passt das so?" + FUSS,
-        [_u("erste Zeile\nzweite Zeile"), _a(LIVE_SATZ), _a("Passt das so?")],
+        [_u("erste Zeile\nzweite Zeile"), _a(_LIVE_AKTION), _a("Passt das so?")],
         None,
         True,
     ),
@@ -352,7 +356,7 @@ FAELLE: dict[str, tuple[str, list[dict[str, Any]], str | None, bool]] = {
         + HARMLOS
         + FUSS,
         [
-            _a(LIVE_SATZ),
+            _a(_LIVE_AKTION),
             _a("Passt das so?", uuid="s1"),
             _u("ja, aber nur Staging"),
             _a(f"Erledigt. {HARMLOS}"),
@@ -368,7 +372,7 @@ FAELLE: dict[str, tuple[str, list[dict[str, Any]], str | None, bool]] = {
         + FUSS,
         [
             _u("mach weiter"),
-            _a(LIVE_SATZ),
+            _a(_LIVE_AKTION),
             _u("Weiter mit Ticket 13, Tests zuerst."),
             _a("Passt das so?"),
         ],
@@ -382,7 +386,7 @@ FAELLE: dict[str, tuple[str, list[dict[str, Any]], str | None, bool]] = {
         + FUSS,
         [
             _u("Übernimm Ticket 12 laut Handoff docs/handoffs/HANDOFF_x.md"),
-            _a(LIVE_SATZ),
+            _a(_LIVE_AKTION),
             _a("Passt das so?"),
         ],
         None,
@@ -395,7 +399,7 @@ FAELLE: dict[str, tuple[str, list[dict[str, Any]], str | None, bool]] = {
         [
             _u("mach weiter"),
             _u(STUPS_AUFSEHER),
-            _a("Ich deploye jetzt live auf die Hauptapp."),
+            _a(_LIVE_AKTION),
             _a("Passt das so?"),
         ],
         None,
@@ -406,19 +410,19 @@ FAELLE: dict[str, tuple[str, list[dict[str, Any]], str | None, bool]] = {
         + LIVE
         + f"❯ {STUPS_AUFSEHER[:70]}\n  Soll ich live deployen?"
         + FUSS,
-        [_u("los"), _a(LIVE_SATZ), _u(STUPS_AUFSEHER), _a("Soll ich live deployen?")],
+        [_u("los"), _a(_LIVE_AKTION), _u(STUPS_AUFSEHER), _a("Soll ich live deployen?")],
         None,
         True,
     ),
     "R6c1 mensch tippt präfix eines system-texts, live davor": (
         LIVE + "❯ Aufseher: Du stehst\n\n● Ok. " + HARMLOS + FUSS,
-        [_a(LIVE_SATZ), _u("Aufseher: Du stehst"), _a(f"Ok. {HARMLOS}")],
+        [_a(_LIVE_AKTION), _u("Aufseher: Du stehst"), _a(f"Ok. {HARMLOS}")],
         None,
         True,
     ),
     "R6g1 [pasted text], live davor, stelle hinter live-text": (
         LIVE + "❯ [Pasted text #1 +12 lines]\n\n● Erledigt. " + HARMLOS + FUSS,
-        [_a(LIVE_SATZ, uuid="s1"), _u(_PASTE), _a(f"Erledigt. {HARMLOS}")],
+        [_a(_LIVE_AKTION, uuid="s1"), _u(_PASTE), _a(f"Erledigt. {HARMLOS}")],
         "s1",
         False,
     ),
@@ -436,17 +440,17 @@ FAELLE: dict[str, tuple[str, list[dict[str, Any]], str | None, bool]] = {
     ),
     "R6g3 /export, live davor, stelle hinter live-text": (
         LIVE + "❯ /export\n\n● Exportiert. " + HARMLOS + FUSS,
-        [_a(LIVE_SATZ, uuid="s1"), _u("/export"), _a(f"Exportiert. {HARMLOS}")],
+        [_a(_LIVE_AKTION, uuid="s1"), _u("/export"), _a(f"Exportiert. {HARMLOS}")],
         "s1",
         False,
     ),
     "R6h live über den sichtbaren bereich hinaus gescrollt": (
         _R6H,
-        [_u("mach weiter"), _a(LIVE_SATZ), _a(_TABELLE + "\n\nPasst das so?")],
+        [_u("mach weiter"), _a(_LIVE_AKTION), _a(_TABELLE + "\n\nPasst das so?")],
         None,
         True,
     ),
-    # Nicht durchsucht: tool_result, thinking, Neben-Agenten.
+    # Nicht durchsucht: tool_result, thinking; Neben-Agenten werden mitgelesen.
     "live nur im tool_result": (
         "> los\n\n● Bash(cat log.txt)\n  ⎿  Deploy live ok\n\n● Fertig. Soll ich weitermachen?"
         + FUSS,
@@ -475,7 +479,7 @@ FAELLE: dict[str, tuple[str, list[dict[str, Any]], str | None, bool]] = {
         "> los\n\n● Fertig. Soll ich weitermachen?" + FUSS,
         [
             _u("los"),
-            _a(LIVE_SATZ, isSidechain=True),
+            _a(_LIVE_AKTION, isSidechain=True),
             _a("Fertig. Soll ich weitermachen?"),
         ],
         None,
@@ -506,7 +510,7 @@ def test_r6b2_frage_direkt_unter_echo_ist_nicht_leer(welt: Welt) -> None:
 
 def test_grund_steht_vor_der_frage_und_ueberlebt_das_kuerzen(welt: Welt) -> None:
     welt.fenster = "❯ mach weiter\n\n" + LIVE + "● Passt das so?" + FUSS
-    welt.schreibe([_u("mach weiter"), _a(LIVE_SATZ), _a("x " * 900 + "Passt das so?")])
+    welt.schreibe([_u("mach weiter"), _a(_LIVE_AKTION), _a("x " * 900 + "Passt das so?")])
     frage, _ = welt.blick()
     kurz = aufseher_stand.frage_kurz(frage)
     assert befugnis.ist_klasse_2(kurz) and kurz.endswith("Passt das so?")
@@ -515,7 +519,7 @@ def test_grund_steht_vor_der_frage_und_ueberlebt_das_kuerzen(welt: Welt) -> None
 
 def test_stelle_fremder_session_prueft_ab_anfang(welt: Welt) -> None:
     welt.fenster = "❯ los\n\n" + LIVE + "● Passt das so?" + FUSS
-    welt.schreibe([_u("los"), _a(LIVE_SATZ, uuid="s1"), _a("Passt das so?")])
+    welt.schreibe([_u("los"), _a(_LIVE_AKTION, uuid="s1"), _a("Passt das so?")])
     assert not _k2(welt.blick(f"{SID}:s1")[0])  # gleiche Session: Stelle gilt
     assert _k2(welt.blick("alte-session-id:s1")[0])  # Respawn/Compact: ab Dateianfang
     assert _k2(
@@ -635,7 +639,7 @@ def test_weitergabe_rueckt_stelle_weiter_spaetere_harmlose_frage_ist_klasse_3(
     welt: Welt,
 ) -> None:
     welt.fenster = "❯ mach weiter\n\n" + LIVE + "● Passt das so?" + FUSS
-    welt.schreibe([_u("mach weiter"), _a(LIVE_SATZ), _a("Passt das so?", uuid="f1")])
+    welt.schreibe([_u("mach weiter"), _a(_LIVE_AKTION), _a("Passt das so?", uuid="f1")])
     u = Umwelt(welt)
     erg = leiter.eingreifen(SKILL, SPEC, TICKET, umwelt=u)
     assert "braucht den Menschen" in erg.zeile
@@ -656,7 +660,7 @@ def test_einwerfen_scheitert_stelle_bleibt_zweiter_takt_sieht_live_noch(
     welt: Welt,
 ) -> None:
     welt.fenster = "❯ mach weiter\n\n" + LIVE + "● Passt das so?" + FUSS
-    welt.schreibe([_u("mach weiter"), _a(LIVE_SATZ), _a("Passt das so?", uuid="f1")])
+    welt.schreibe([_u("mach weiter"), _a(_LIVE_AKTION), _a("Passt das so?", uuid="f1")])
     u = Umwelt(welt)
     u.einwurf_kaputt = True
     erg = leiter.eingreifen(SKILL, SPEC, TICKET, umwelt=u)
@@ -698,7 +702,7 @@ def test_r8_abloesung_liest_rest_der_alten_datei_ab_der_stelle(welt: Welt) -> No
     welt.datei(ALT).write_text(
         "".join(
             json.dumps(e, ensure_ascii=False) + "\n"
-            for e in [_u("los"), _a("Frage?", uuid="alt1"), _a(LIVE_SATZ)]
+            for e in [_u("los"), _a("Frage?", uuid="alt1"), _a(_LIVE_AKTION)]
         ),
         encoding="utf-8",
     )
@@ -711,7 +715,7 @@ def test_r8_abloesung_live_vor_der_alten_stelle_bleibt_klasse_3(welt: Welt) -> N
     welt.datei(ALT).write_text(
         "".join(
             json.dumps(e, ensure_ascii=False) + "\n"
-            for e in [_a(LIVE_SATZ), _a("Frage?", uuid="alt1"), _a("Tests grün.")]
+            for e in [_a(_LIVE_AKTION), _a("Frage?", uuid="alt1"), _a("Tests grün.")]
         ),
         encoding="utf-8",
     )
@@ -731,7 +735,7 @@ def test_r8_unter_agent_nach_der_stelle_zaehlt(welt: Welt) -> None:
     )
     _unter_agent(
         welt,
-        [_a(_bash("ssh clawy-vps 'docker ps'"), isSidechain=True, timestamp=_zeit(20))],
+        [_a(_bash("ssh clawy-vps 'docker restart app'"), isSidechain=True, timestamp=_zeit(20))],
     )
     assert _k2(welt.blick(f"{SID}:s1")[0])
 
@@ -743,7 +747,7 @@ def test_r8_unter_agent_vor_der_stelle_zaehlt_nicht(welt: Welt) -> None:
     )
     _unter_agent(
         welt,
-        [_a(_bash("ssh clawy-vps 'docker ps'"), isSidechain=True, timestamp=_zeit(20))],
+        [_a(_bash("ssh clawy-vps 'docker restart app'"), isSidechain=True, timestamp=_zeit(20))],
     )
     assert not _k2(welt.blick(f"{SID}:s1")[0])
 
@@ -753,7 +757,7 @@ def test_r8_unter_agent_der_alten_session_zaehlt_nach_abloesung(welt: Welt) -> N
         json.dumps(_a("Frage?", uuid="alt1", timestamp=_zeit(10))) + "\n",
         encoding="utf-8",
     )
-    _unter_agent(welt, [_a(LIVE_SATZ, isSidechain=True, timestamp=_zeit(20))], sid=ALT)
+    _unter_agent(welt, [_a(_LIVE_AKTION, isSidechain=True, timestamp=_zeit(20))], sid=ALT)
     _harmlose_neue_session(welt)
     assert _k2(welt.blick(f"{ALT}:alt1")[0])
 
@@ -815,13 +819,10 @@ def test_r8_kein_fehlalarm_durch_wortteil_oder_datei_inhalt(
     "eintrag",
     [
         _a(_bash("bash scripts/safe_deploy_vps.sh --skip-ci")),
-        _a("Jetzt der Live-Deploy."),
-        _a(LIVE_SATZ, isSidechain=True),
+        _a(_LIVE_AKTION, isSidechain=True),
     ],
-    # Runde 9 (V-a), absichtlich umgestellt: „Die Produktion läuft wieder.“ und „Das Passwort
-    # liegt in Bitwarden.“ sind Zustände ohne Handlung; seit U (#372) Klasse 2 durch breite
-    # Erkennung, siehe test_r9_zustand_mit_klasse_2_wort_ist_klasse_2.
-    ids=["bash-befehl", "bindestrich", "sidechain"],
+    # Variante E (#389): Werkzeug-Handlungen (auch im Unter-Agenten) zählen; reiner Text ist keine Handlung.
+    ids=["bash-befehl", "sidechain"],
 )
 def test_r8_live_wort_am_wortanfang_und_im_befehl_zaehlt(
     welt: Welt, eintrag: dict[str, Any]
@@ -832,9 +833,7 @@ def test_r8_live_wort_am_wortanfang_und_im_befehl_zaehlt(
 
 
 def test_r8_ganzwort_suche_ist_eigene_funktion_andere_nutzer_bleiben_streng() -> None:
-    # Runde 9, absichtlich umgestellt: die Wortanfang-Suche entfällt (V-a prüft den Verlauf nach
-    # Handlungen, befugnis.handlung_klasse_2). Geblieben ist: Frage und andere Nutzer streng.
-    # U: breite Erkennung gilt wieder, Sicherheit vor Quote (#372): die Wortanfang-Suche ist wieder da (Verlauf).
+    # Frage und andere Nutzer (Briefkasten, Leiter, Rückfall) bleiben bei der strengen breiten Liste.
     assert hasattr(befugnis, "ist_klasse_2_am_wortanfang")
     assert befugnis.ist_klasse_2("goLive") and befugnis.ist_klasse_2("Kundenkonto")
     assert befugnis.ist_klasse_2("deliver")
@@ -842,51 +841,61 @@ def test_r8_ganzwort_suche_ist_eigene_funktion_andere_nutzer_bleiben_streng() ->
 
 @pytest.mark.parametrize(
     "eintrag",
-    [_a("Die Produktion läuft wieder."), _a("Das Passwort liegt in Bitwarden.")],
-    ids=["wortanfang-stamm", "umlaut-satz"],
+    [
+        _a("Die Produktion läuft wieder."),
+        _a("Das Passwort liegt in Bitwarden."),
+        _a("Jetzt der Live-Deploy."),
+    ],
+    ids=["wortanfang-stamm", "umlaut-satz", "bindestrich"],
 )
 def test_r9_zustand_mit_klasse_2_wort_ist_klasse_2(
     welt: Welt, eintrag: dict[str, Any]
 ) -> None:
     welt.fenster = FRAGE_FENSTER
     welt.schreibe([_u("los"), eintrag, _a("Passt das so?")])
-    # U: breite Erkennung gilt wieder, Sicherheit vor Quote (#372): „Produktion“/„Passwort“ am Wortanfang → Klasse 2.
-    assert _k2(welt.blick()[0])
+    # E (#389): reiner Assistent-Text ist keine Handlung → Klasse 3.
+    assert not _k2(welt.blick()[0])
 
 
 @pytest.mark.parametrize(
-    "eintrag",
+    "eintrag, soll_2",
     [
-        _a(_bash("gh pr merge 374")),
-        _a(_bash("rm -rf /opt/app")),
-        _a(_bash('bash -c "ssh clawy-vps uptime"')),
-        _a("Das goLive mache ich jetzt"),
-        _a("Ich lege ein Kundenkonto an"),
-        _a(
-            {
-                "type": "tool_use",
-                "name": "Write",
-                "input": {"file_path": "/opt/app/.env", "content": "A=1"},
-            }
+        (_a(_bash("gh pr merge 374")), True),
+        (_a(_bash("rm -rf /opt/app")), True),
+        (_a(_bash('bash -c "ssh clawy-vps uptime"')), True),
+        (_a("Das goLive mache ich jetzt"), False),  # E: Text ist keine Handlung
+        (_a("Ich lege ein Kundenkonto an"), False),  # E: Text ist keine Handlung
+        (
+            _a(
+                {
+                    "type": "tool_use",
+                    "name": "Write",
+                    "input": {"file_path": "/opt/app/.env", "content": "A=1"},
+                }
+            ),
+            True,
         ),
-        _a({"type": "tool_use", "name": "mcp__x__purchase_phone", "input": {}}),
-        _a(
-            {
-                "type": "tool_use",
-                "name": "Task",
-                "input": {"description": "x", "prompt": "Deploy auf vps prüfen"},
-            }
+        (_a({"type": "tool_use", "name": "mcp__x__purchase_phone", "input": {}}), True),
+        (
+            _a(
+                {
+                    "type": "tool_use",
+                    "name": "Task",
+                    "input": {"description": "x", "prompt": "Deploy auf vps prüfen"},
+                }
+            ),
+            False,  # E: Task-Prompt ist Text; Unter-Agent-Handlungen prüft dessen Transkript
         ),
     ],
     ids=["merge", "rm", "bash-c-ssh", "golive", "kundenkonto", "env", "mcp", "task"],
 )
 def test_r9_handlung_im_verlauf_ist_klasse_2(
-    welt: Welt, eintrag: dict[str, Any]
+    welt: Welt, eintrag: dict[str, Any], soll_2: bool
 ) -> None:
-    """Der Grund trägt selbst ein Klasse-2-Wort und steht vor der harmlosen Frage."""
+    """Unbekannte Werkzeug-Handlung → Klasse 2 (mit HANDLUNG_KOPF); Text/Task-Prompt → Klasse 3 (#389)."""
     welt.fenster = FRAGE_FENSTER
     welt.schreibe([_u("los"), eintrag, _a("Passt das so?")])
-    assert _k2(welt.blick()[0])
+    assert _k2(welt.blick()[0]) is soll_2
 
 
 @pytest.mark.parametrize(
@@ -910,12 +919,10 @@ def test_r9_handlung_im_verlauf_ist_klasse_2(
 def test_r9_ohne_handlung_klasse_2_nur_mit_klasse_2_wort(
     welt: Welt, eintrag: dict[str, Any], request: pytest.FixtureRequest
 ) -> None:
-    """Ohne Handlung entscheidet die breite Erkennung: Klasse-2-Wort im Text → 2, sonst 3."""
+    """Variante E (#389): erlaubte Werkzeuge/Befehle → 3; fremdes Skript / Push mit -f und : → 2."""
     welt.fenster = FRAGE_FENSTER
     welt.schreibe([_u("los"), eintrag, _a("Passt das so?")])
-    # U: breite Erkennung gilt wieder, Sicherheit vor Quote (#372):
-    # „live“/„vps“ in Commit-Text, Heredoc und Read-Pfad → Klasse 2.
-    soll_2 = request.node.callspec.id in {"commit", "heredoc", "read-pfad"}
+    soll_2 = request.node.callspec.id in {"wip-force", "staging"}
     assert _k2(welt.blick()[0]) is soll_2
 
 
@@ -950,7 +957,7 @@ def test_r9_rueckfall_prueft_breit_kundenkonto(welt: Welt) -> None:
 def test_r10_t7d_ohne_stelle_prueft_die_vorgaengerin_mit(welt: Welt) -> None:
     """T7d: Vorgängerin hat nie gefragt (keine Stelle), Live-Arbeit nur in ihrer Datei."""
     welt.datei(ALT).write_text(
-        json.dumps(_a(LIVE_SATZ, uuid="alt1")) + "\n", encoding="utf-8"
+        json.dumps(_a(_LIVE_AKTION, uuid="alt1")) + "\n", encoding="utf-8"
     )
     _harmlose_neue_session(welt)
     assert _k2(welt.blick(None)[0])
