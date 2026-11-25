@@ -58,8 +58,9 @@ class Prozess:
     name: str
     cmd: str
     start: datetime | None
-    #: Arbeitsordner, gelesen beim Erstellen der echten Liste (``prozesse_linux``, #588);
-    #: ``None`` = unbekannt (Windows, aufgezeichnete Liste, unlesbar) → zählt als eigenes Repo.
+    #: Arbeitsordner, gelesen beim Erstellen der echten Liste (``prozesse_linux`` /
+    #: ``prozesse_lesen`` unter Windows, #588); ``None`` = unbekannt (aufgezeichnete Liste,
+    #: unlesbar) → zählt als eigenes Repo.
     ordner: Path | None = None
 
 
@@ -122,6 +123,55 @@ def prozesse_linux() -> list[Prozess]:
     return lebende
 
 
+def _fremd_ordner(text: str | None, pid: int) -> Path:
+    """Pfad sicher außerhalb von ``REPO`` für einen Windows-Prozess mit ``drin=False``."""
+    if text:
+        try:
+            pfad = Path(text).resolve()
+        except OSError:
+            pfad = Path(text)
+        if ordner_fremd(pfad):
+            return pfad
+    wurzel = REPO.resolve()
+    basis = wurzel.parent if wurzel.parent != wurzel else wurzel
+    kandidat = basis / f".fremd-{pid}"
+    return kandidat if ordner_fremd(kandidat) else Path(f"__fremd__-{pid}")
+
+
+def _befunde_windows() -> dict[int, prozessbaum.ArbeitsordnerBefund] | None:
+    """Arbeitsordner-Befunde aller prüfbaren Windows-Prozesse gegen ``REPO``; Fehler = ``None``."""
+    try:
+        return prozessbaum.arbeitsordner_in_windows(REPO)
+    except OSError as fehler:
+        log.warning("Windows-Arbeitsordner für %s nicht lesbar (%s) — ohne Repo-Filter.", REPO, fehler)
+        return None
+
+
+def _ordner_und_lebend_windows(
+    pid: int, befunde: dict[int, prozessbaum.ArbeitsordnerBefund] | None
+) -> tuple[bool, Path | None]:
+    """``(behalten, ordner)`` für einen Windows-Prozess aus WMI (#212, #494).
+
+    - ``befund.drin is True`` → eigener Repo-Ordner (``REPO.resolve()``).
+    - ``befund.drin is False`` → fremder Ordner (``ordner_fremd`` = ``True``), bleibt für
+      Kind-Zuordnung in der Liste, zählt aber nicht als eigener ``bau``/``wache``-Prozess.
+    - ``befund`` fehlt oder ``drin is None`` → Lebensprüfung über :func:`prozessbaum.lebt`:
+      bereits beendete Prozesse fallen raus (wie :func:`beendet` unter Linux), noch lebende
+      bleiben mit ``ordner=None`` (im Zweifel eigen).
+    """
+    if befunde is None:
+        return True, None
+    befund = befunde.get(pid)
+    if befund is not None:
+        if befund.drin is True:
+            return True, REPO.resolve()
+        if befund.drin is False:
+            return True, _fremd_ordner(befund.text, pid)
+    if not prozessbaum.lebt(pid):
+        return False, None
+    return True, None
+
+
 def prozesse_lesen() -> list[Prozess]:
     """Alle Prozesse mit Kommandozeile und Startzeit (Windows: PowerShell/WMI, sonst ``ps``)."""
     if sys.platform != "win32":
@@ -144,8 +194,15 @@ def prozesse_lesen() -> list[Prozess]:
         log.error("Prozessliste leer — läuft das auf Windows mit PowerShell?")
         return []
     rohe = json.loads(out)
+    if isinstance(rohe, dict):
+        rohe = [rohe]
+    befunde = _befunde_windows() if rohe else None
     ergebnis: list[Prozess] = []
     for r in rohe:
+        pid = int(r["ProcessId"])
+        behalten, ordner = _ordner_und_lebend_windows(pid, befunde)
+        if not behalten:
+            continue
         start = None
         if r.get("Start"):
             try:
@@ -154,11 +211,12 @@ def prozesse_lesen() -> list[Prozess]:
                 start = None
         ergebnis.append(
             Prozess(
-                int(r["ProcessId"]),
+                pid,
                 int(r.get("ParentProcessId") or 0),
                 str(r.get("Name") or ""),
                 str(r.get("CommandLine") or ""),
                 start,
+                ordner,
             )
         )
     return ergebnis
