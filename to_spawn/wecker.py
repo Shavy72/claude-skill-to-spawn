@@ -786,12 +786,14 @@ class WindowsWecker:
         if not laeufer:
             return False
         pid = laeufer.get("pid")
-        if not isinstance(pid, int) or pid <= 0 or not prozessbaum.aktiv(pid):
-            return False
         erwartet_start = laeufer.get("startzeit")
-        if sys.platform == "win32" and isinstance(erwartet_start, int):
-            aktuell_start = prozessbaum._startzeit_windows(pid)
-            if aktuell_start is not None and aktuell_start != erwartet_start:
+        start_int = erwartet_start if isinstance(erwartet_start, int) else None
+        if not isinstance(pid, int) or pid <= 0 or not prozessbaum.aktiv(pid, erwartet_start=start_int):
+            return False
+        start_ts = laeufer.get("zeit")
+        if isinstance(start_ts, (int, float)):
+            alter = prozessbaum.alter_s(pid)
+            if alter is not None and (time.time() - alter) > float(start_ts) + 5.0:
                 return False
         return True
 
@@ -902,7 +904,7 @@ class WindowsWecker:
         except (OSError, ValueError, starter.StartGesperrt) as fehler:
             raise RuntimeError(f"Windows-Weckruf nicht gestartet: {fehler}") from fehler
         self._prozesse[info.schluessel] = proc
-        startzeit = prozessbaum._startzeit_windows(proc.pid) if sys.platform == "win32" else None
+        startzeit = prozessbaum.startzeit(proc.pid)
         manifest.schreibe_atomar(
             self._laeufer_pfad(info.schluessel),
             {
