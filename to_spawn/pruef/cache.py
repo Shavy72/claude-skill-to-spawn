@@ -45,7 +45,7 @@ from importlib import metadata
 from pathlib import Path
 from typing import Any
 
-from to_spawn import konsole
+from to_spawn import konsole, prozessbaum
 
 log = logging.getLogger("to_spawn.pruef")
 
@@ -226,6 +226,7 @@ def _versteckte(repo: Path) -> list[str]:
         cwd=repo,
         capture_output=True,
         check=False,
+        **prozessbaum.fensterlos(),
     )
     if erg.returncode != 0:
         raise OSError(f"git ls-files: {erg.stderr.decode(errors='replace').strip()}")

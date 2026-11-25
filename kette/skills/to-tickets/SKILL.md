@@ -16,7 +16,7 @@ Dieser Abschnitt geht jedem anderen Text dieses Skills und jedem Projekt-Zusatz 
 3. **Nie 💭/❌.** Offene Fragen (💭) und Out of Scope (❌) werden keine Tickets und keine Akzeptanzkriterien.
 4. **Abdeckung vor dem Veröffentlichen.** Jede E-Nummer der Spec steckt in mindestens einem Ticket; kein Ticket ohne E-Nummer. Lücke → Schnitt nachbessern, nicht still weglassen.
 
-> **Projekt-Zusatz (Pflicht, zuerst prüfen):** Liegt im Arbeitsordner `.to-spawn/kette.md`, dann diese Datei jetzt lesen. Sie gilt **zusätzlich** zu diesem Skill, nie statt: Projekt-Regeln wie Klickweg-Rollen oder eine Werkzeug-Tabelle kommen dazu, der Text hier bleibt verbindlich. Der Abschnitt „Beschluss-Protokoll“ oben geht auch dem Projekt-Zusatz vor.
+> **Projekt-Vorrang (Pflicht, zuerst prüfen):** Liegt im Arbeitsordner `.to-spawn/kette.md`, dann diese Datei jetzt lesen (Projekt-Zusatz). Sie gilt **zusätzlich** zu diesem Skill, nie als Ersatz: Projekt-Regeln wie Klickweg-Rollen oder eine Werkzeug-Tabelle haben für Projekt-Spezifisches Vorrang, der übrige Text hier bleibt verbindlich. Der Abschnitt „Beschluss-Protokoll“ oben geht auch dem Projekt-Zusatz vor.
 
 > **Übergang (bis das Projekt eine `.to-spawn/kette.md` hat):** Liegt im Arbeitsordner `.claude/skills/to-tickets/SKILL.md`, dann diese Datei zusätzlich lesen; solange es keine `.to-spawn/kette.md` gibt, haben ihre Projekt-Regeln Vorrang vor dem übrigen Text hier. Der Abschnitt „Beschluss-Protokoll“ oben und die Schluss-Prüfung (Schritt 6) gelten trotzdem.
 
@@ -44,6 +44,14 @@ Look for opportunities to prefactor the code to make the implementation easier. 
 
 **Kontext-Paket je Ticket.** Beim Erkunden pro Ticket die konkreten Stellen als `Pfad:Start-Ende` festhalten. Sie kommen als Block `## Kontext-Paket` in den Ticket-Text und als `--datei` in den Manifest-Eintrag (Schritt 5).
 
+### Repo-Zuordnung (vor dem Schnitt)
+
+Das Skill-Repo (Bau-System) wird eigenständig gebaut und begleitet App-Repos nur. Ordne jedes Ticket vor dem Schnitt eindeutig einem der drei Werte zu:
+
+- **Skill-Repo:** Bau-Werkzeug oder Regel, die für jedes angeschlossene Repo gilt — Ticket gehört ins Skill-Repo.
+- **App-Repo:** projektspezifische Änderung — Ticket gehört ins App-Repo.
+- **beide:** betrifft Bau-System und App — ergibt **je ein eigenes Ticket pro Repo** mit gegenseitigem Querverweis (nie ein gemischtes Ticket über beide Repos).
+
 ### 3. Draft vertical slices
 
 Break the work into **tracer bullet** tickets.
@@ -68,6 +76,7 @@ Give each ticket its **blocking edges**: the other tickets that must complete be
 Present the proposed breakdown as a numbered list. For each ticket, show:
 
 - **Title**: short descriptive name
+- **Repo-Zuordnung**: Skill-Repo, App-Repo oder beide (bei „beide“: je ein Ticket pro Repo mit Querverweis)
 - **Blocked by**: which other tickets (if any) must complete first
 - **What it delivers**: the end-to-end behaviour this ticket makes work
 - **Schätzung**: `schaetzung_k` (Tausend Token) und Umfang in einem Satz
@@ -167,6 +176,7 @@ Dann pro Ticket eine Zeile an den Nutzer, in Reihenfolge der Blocker-Tiefe (bloc
 und als Startbefehl `/to-spawn <S>` — der Rest läuft als Domino.
 
 <!-- LOKALER ZUSATZ — bei jedem Update/Neu-Import dieses Skills ERHALTEN: Abschnitt „Beschluss-Protokoll“
-     ganz oben, Projekt-Zusatz nur zusätzlich, Kanten und Manifest nur über `to_spawn.py anhaengen`,
-     Schluss mit `to_spawn.py regularien <S>`. Prüf-Skript: tests/test_kette_to_tickets_e2.py (Skill-Repo).
-     Quelle dieser Datei: kette/skills/to-tickets/SKILL.md, verteilt per install.sh/install.ps1. -->
+     ganz oben, Projekt-Vorrang / Projekt-Zusatz, Repo-Zuordnung (Skill-Repo / App-Repo / beide),
+     Kanten und Manifest nur über `to_spawn.py anhaengen`, Schluss mit `to_spawn.py regularien <S>`.
+     Prüf-Skript: tests/test_kette_to_tickets_e2.py (Skill-Repo). Quelle dieser Datei:
+     kette/skills/to-tickets/SKILL.md, verteilt per install.sh/install.ps1. -->

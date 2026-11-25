@@ -24,7 +24,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from . import config
+from . import config, prozessbaum
 
 log = logging.getLogger("to_spawn.melder")
 
@@ -169,6 +169,7 @@ def melden(
             errors="replace",
             timeout=ZEITLIMIT_S,
             check=False,
+            **prozessbaum.fensterlos(),
         )
     except (OSError, subprocess.TimeoutExpired) as fehler:
         log.warning("Mail-Befehl gescheitert (%s): %s", art, fehler)

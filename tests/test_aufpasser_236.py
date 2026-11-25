@@ -235,6 +235,9 @@ def welt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Welt]:
     # Eine Stelle für alle Dateien, die ``welt`` importieren: ``pytestmark`` oben gilt nur hier.
     if grund := braucht_fehlt("tmux"):
         pytest.skip(f"braucht tmux: {grund}")
+    # #353: verkürzt die feste 5-s-Startnachweis-Schleife je Fenster-Start auf 1,0 s (≥ 2 Poll-Takte
+    # à 0,5 s, voller Pfad läuft); die volle 5,0-s-Produkt-Frist prüft test_aufpasser_236_review.py (R6).
+    monkeypatch.setattr(aufpasser, "START_NACHWEIS_S", 1.0)
     heim = tmp_path / "heim"
     heim.mkdir()
     monkeypatch.setenv("HOME", str(heim))

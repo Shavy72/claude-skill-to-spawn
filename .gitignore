@@ -1,6 +1,7 @@
 __pycache__/
 .pytest_cache/
 .ruff_cache/
+.review/
 # #169: Übergaben und Entscheidungs-Logs nie ins öffentliche Repo (Liste: uebergabe_sichern.MUSTER_JE_REPO).
 .claude-handoff*.md
 entscheidungen.md
