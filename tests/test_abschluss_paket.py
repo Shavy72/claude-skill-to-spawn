@@ -843,3 +843,117 @@ def test_uebersicht_nur_abnahme_eindeutig(repo: Path, tmp_path: Path) -> None:
     assert 'karte gruen"><h2>Ticket #903' in seite
     assert "offen" not in karte_903
     assert "Abnahme-Zeile in <code>docs/verify-hard/903.md</code>" in karte_903
+
+
+# --- #472: unittest-/node-Belege unter docs/verify-hard/*_gruen.txt + gesuchter Pfad -------------
+
+
+def test_uebersicht_erkennt_unittest_gruen_belege_472(tmp_path: Path) -> None:
+    """Grüne unittest-Belege unter docs/verify-hard/*_gruen.txt werden angezeigt (#472)."""
+    r = tmp_path / "projekt"
+    (r / "docs" / "agents" / "manifests").mkdir(parents=True)
+    tickets = {
+        "12": {"title": "Gesund-Abruf"},
+        "13": {"title": "Version"},
+        "14": {"title": "Mit Übersprungen"},
+        "15": {"title": "Roter Lauf"},
+    }
+    (r / "docs" / "agents" / "manifests" / f"spec-{SPEC}.json").write_text(
+        json.dumps({"spec": SPEC, "tickets": tickets}), encoding="utf-8"
+    )
+    vh = r / "docs" / "verify-hard"
+    vh.mkdir(parents=True)
+    (vh / "12_rot.txt").write_text("Ran 3 tests in 1.018s\n\nFAILED (errors=1)\nEXIT 1\n", encoding="utf-8")
+    (vh / "12_gruen.txt").write_text(
+        "$ python -m unittest discover -s tests -t .\n...\n"
+        "----------------------------------------------------------------------\n"
+        "Ran 3 tests in 1.019s\n\nOK\nEXIT 0\n",
+        encoding="utf-8",
+    )
+    (vh / "13_gruen.txt").write_text("Ran 6 tests in 1.024s\nOK\n", encoding="utf-8")
+    (vh / "14_gruen.txt").write_text("Ran 5 tests in 0.420s\n\nOK (skipped=1)\n", encoding="utf-8")
+    (vh / "15_gruen.txt").write_text("Ran 5 tests in 0.500s\n\nFAILED (failures=2, errors=1)\n", encoding="utf-8")
+    ziel = tmp_path / "u.html"
+    ergebnis = _lauf("test_uebersicht.py", r, "--aus", str(ziel))
+    assert ergebnis.returncode == 0, ergebnis.stdout + ergebnis.stderr
+    seite = ziel.read_text(encoding="utf-8")
+    # 3 (#12) + 6 (#13) + 4 (#14: 5 minus 1 skipped) + 2 (#15: 5 minus 3 failed) = 15 grün von 18.
+    assert "❌ 15 von 18 Tests grün — 1 Ticket rot" in seite
+    assert 'class="karte gruen"><h2>Ticket #12' in seite
+    assert "python -m unittest discover -s tests -t ." in seite
+    assert "Ran 3 tests in 1.019s — OK" in seite
+    assert 'class="karte gruen"><h2>Ticket #13' in seite
+    assert "(6 von 6 Tests grün)" in seite
+    assert 'class="karte gruen"><h2>Ticket #14' in seite
+    assert "(4 von 4 Tests grün)" in seite
+    assert 'class="karte rot"><h2>Ticket #15' in seite
+    assert "(2 von 5 Tests grün)" in seite
+    assert "kein Testlauf gefunden" not in seite
+
+
+def test_belege_unittest_grenzfaelle_und_node_test_472(tmp_path: Path) -> None:
+    """Abgebrochener/leerer unittest-Lauf zählt nicht als grün; node --test wird erkannt (#472)."""
+    vh = tmp_path / "verify-hard"
+    vh.mkdir()
+    (vh / "21_gruen.txt").write_text("Ran 0 tests in 0.000s\n\nNO TESTS RAN\n", encoding="utf-8")
+    (vh / "22_gruen.txt").write_text("Ran 4 tests in 0.100s\n", encoding="utf-8")
+    (vh / "23_gruen.txt").write_text("Ran 2 tests in 0.050s\n\nOK (skipped=2)\n", encoding="utf-8")
+    (vh / "24_gruen.txt").write_text(
+        "$ node --test tests/app.test.js\nℹ tests 8\nℹ suites 2\nℹ pass 8\nℹ fail 0\n",
+        encoding="utf-8",
+    )
+    belege = _belege_mod()
+    for nr in ("21", "22", "23"):
+        b = belege.auswerten(vh, nr)
+        assert b.lauf is None and b.status == "offen", f"Ticket #{nr} darf nicht grün sein: {b}"
+    b24 = belege.auswerten(vh, "24")
+    assert b24.status == "gruen" and b24.lauf is not None
+    assert (b24.lauf.passed, b24.lauf.failed) == (8, 0)
+    assert b24.lauf.befehl == "node --test tests/app.test.js"
+
+
+def test_uebersicht_ohne_beleg_nennt_gesuchten_pfad_472(repo: Path, tmp_path: Path) -> None:
+    """Fehlt wirklich jeder Beleg, nennt die Meldung den gesuchten Pfad in Seite und Log (#472)."""
+    vh = repo / "docs" / "verify-hard"
+    for datei in [*vh.rglob("*")]:
+        if datei.is_file():
+            datei.unlink()
+    ziel = tmp_path / "u.html"
+    ergebnis = _lauf("test_uebersicht.py", repo, "--aus", str(ziel))
+    assert ergebnis.returncode == 0, ergebnis.stdout + ergebnis.stderr
+    seite = ziel.read_text(encoding="utf-8")
+    kopf = seite.split("<h1>", 1)[1].split("</h1>", 1)[0]
+    assert kopf == "⚠️ offen – kein Testlauf gefunden — 4 ohne Beleg"
+    erwarteter_pfad = str(vh.resolve())
+    assert erwarteter_pfad in seite
+    assert "docs/verify-hard/&lt;N&gt;_gruen.txt" in seite
+    assert erwarteter_pfad in ergebnis.stderr
+    karte_901 = seite.split("Ticket #901", 1)[1].split("</section>", 1)[0]
+    assert "docs/verify-hard/901_gruen.txt" in karte_901
+    assert erwarteter_pfad in karte_901
+
+
+def test_uebersicht_folgt_konfiguriertem_belege_ordner_472(tmp_path: Path) -> None:
+    """Konfigurierter regularien.belege_ordner wird gelesen und als Suchpfad angezeigt (#472)."""
+    r = tmp_path / "projekt"
+    (r / ".to-spawn").mkdir(parents=True)
+    (r / ".to-spawn" / "config.json").write_text(
+        json.dumps({"regularien": {"belege_ordner": "belege/pruef"}}), encoding="utf-8"
+    )
+    (r / "docs" / "agents" / "manifests").mkdir(parents=True)
+    (r / "docs" / "agents" / "manifests" / f"spec-{SPEC}.json").write_text(
+        json.dumps({"spec": SPEC, "tickets": {"50": {"title": "Eigener Ordner"}, "51": {"title": "Fehlt"}}}),
+        encoding="utf-8",
+    )
+    ordner = r / "belege" / "pruef"
+    ordner.mkdir(parents=True)
+    (ordner / "50_gruen.txt").write_text("Ran 4 tests in 0.200s\n\nOK\n", encoding="utf-8")
+    ziel = tmp_path / "u.html"
+    ergebnis = _lauf("test_uebersicht.py", r, "--aus", str(ziel))
+    assert ergebnis.returncode == 0, ergebnis.stdout + ergebnis.stderr
+    seite = ziel.read_text(encoding="utf-8")
+    assert "⚠️ 4 von 4 Tests grün — 1 ohne Beleg" in seite
+    assert "belege/pruef/50_gruen.txt" in seite
+    karte_51 = seite.split("Ticket #51", 1)[1].split("</section>", 1)[0]
+    assert "belege/pruef/51_gruen.txt" in karte_51
+    assert str(ordner.resolve()) in karte_51
