@@ -14,6 +14,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from test_kette_to_tickets_e2 import pruefe_repo_zuordnung_und_projekt_vorrang
 
 SKILL = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SKILL))
@@ -28,6 +29,8 @@ PFLICHT_TO_SPEC = (
     "Offene Fragen",
     "Gegenprüfung",
     "Quelle: docs/GRILL_",
+    "Projekt-Vorrang",
+    "Repo-Zuordnung",
 )
 REGELN = ("beschluss-protokoll", "strategisches-design")
 PWSH = shutil.which("pwsh") or shutil.which("powershell")
@@ -78,6 +81,11 @@ def _pruefe_installiert(heim: Path) -> None:
     assert "statt des restlichen Texts" not in to_spec, (
         "to-spec: alter Projekt-Vorrang (ersetzt) noch drin"
     )
+    pruefe_repo_zuordnung_und_projekt_vorrang(to_spec, "to-spec")
+    to_tickets = (heim / "skills" / "to-tickets" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
+    pruefe_repo_zuordnung_und_projekt_vorrang(to_tickets, "to-tickets")
     grill = (heim / "skills" / "grill-with-docs" / "SKILL.md").read_text(
         encoding="utf-8"
     )
@@ -322,3 +330,17 @@ def test_installer_sichert_abweichenden_alten_skill_und_behaelt_agents(
     for name in ("to-spec", "grill-with-docs"):
         assert (tmp_path / "skills" / name / "agents" / "openai.yaml").is_file(), name
     assert "eigene_notiz.md" in lauf.stdout, "Datei nur im alten Stand nicht gemeldet"
+
+
+def test_install_sh_enthaelt_repo_zuordnung_und_projekt_vorrang_579(
+    tmp_path: Path,
+) -> None:
+    """#579 (E15, E29): Nach install.sh enthalten to-spec und to-tickets beide Pflicht-Blöcke."""
+    lauf = _install_sh(tmp_path)
+    assert lauf.returncode == 0, lauf.stdout + lauf.stderr
+    for skill in ("to-spec", "to-tickets"):
+        datei = tmp_path / "skills" / skill / "SKILL.md"
+        assert datei.is_file(), f"installierter Skill {skill} fehlt"
+        pruefe_repo_zuordnung_und_projekt_vorrang(
+            datei.read_text(encoding="utf-8"), f"install/{skill}"
+        )
