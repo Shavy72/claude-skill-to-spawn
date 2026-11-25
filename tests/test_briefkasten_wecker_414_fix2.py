@@ -81,6 +81,20 @@ def test_truecolor_mit_2_im_farbwert_ist_nicht_gedimmt() -> None:
     )
 
 
+def test_truecolor_mit_lauter_zweien_ist_nicht_gedimmt() -> None:
+    """#435: ``38;2;2;2;2`` (alle Farbwerte 2) ist Echtfarbe, kein SGR 2 → Text bleibt belegt;
+    erst eine weitere ``2`` danach schaltet wirklich auf gedimmt."""
+    assert (
+        aufpasser.eingabe_leer(_feld("❯ \x1b[38;2;2;2;2mich tippe\x1b[39m")) is False
+    )
+    assert (
+        aufpasser.eingabe_leer(_feld("❯ \x1b[48;2;2;2;2mich tippe\x1b[49m")) is False
+    )
+    assert (
+        aufpasser.eingabe_leer(_feld('❯ \x1b[38;2;2;2;2;2mTry "fix"\x1b[0m')) is True
+    )
+
+
 def test_ohne_eingabefeld_nie_leer() -> None:
     assert aufpasser.eingabe_leer(f"\x1b[2m{LINIE}\x1b[0m\nbau@server:~$ \n") is False
 
@@ -310,6 +324,35 @@ def test_cursor_und_csi_folgen_im_gedimmten_platzhalter_bleiben_leer() -> None:
         '❯ \x1b[?25l\x1b[2m\x1b[7mT\x1b[27mry "fix lint errors"\x1b[0m\x1b[1C\x1b[K'
     )
     assert aufpasser.eingabe_leer(_feld(eingabe)) is True
+
+
+def test_inverser_cursor_ohne_dim_vor_gedimmtem_platzhalter_ist_leer() -> None:
+    """#435: Ein einzelner inverser Cursor-Buchstabe (SGR 7) ohne SGR 2 direkt vor einem
+    gedimmten Platzhalter gehört zum Platzhalter, nicht zu getipptem Text."""
+    for eingabe in (
+        '❯ \x1b[7mT\x1b[27m\x1b[2mry "fix lint errors"\x1b[0m',
+        '❯ \x1b[7mT\x1b[0m\x1b[2mry "fix lint errors"\x1b[0m',
+        '❯ \x1b[7mT\x1b[27;2mry "fix lint errors"\x1b[0m',
+        '❯ \x1b[7mT\x1b[0;2mry "fix lint errors"\x1b[0m',
+        '❯ \x1b[?25l\x1b[7mT\x1b[27m\x1b[2mry "fix lint errors"\x1b[0m\x1b[1C\x1b[K',
+    ):
+        assert aufpasser.eingabe_leer(_feld(eingabe)) is True, eingabe
+
+
+def test_inverser_text_ohne_platzhalter_bleibt_belegt() -> None:
+    """#435 Gegenproben: inverser Text ohne folgenden gedimmten Platzhalter, mehr als ein
+    inverses Zeichen oder echter Text im Feld gelten weiter als belegt."""
+    for eingabe in (
+        "❯ \x1b[7mT\x1b[27m",
+        '❯ \x1b[7mTr\x1b[27m\x1b[2my "fix"\x1b[0m',
+        '❯ ich\x1b[7mT\x1b[27m\x1b[2mry "fix"\x1b[0m',
+        '❯ \x1b[7mT\x1b[27m \x1b[2mry "fix"\x1b[0m',
+        '❯ \x1b[2mfoo\x1b[0m\x1b[7mT\x1b[27m\x1b[2mbar\x1b[0m',
+        '❯ \x1b[7mT\x1b[27m\x1b[2mry "fix"\x1b[0m\n  zweite Zeile',
+        '❯ \x1b[38;2;7;7;7mT\x1b[39m\x1b[2mry "fix"\x1b[0m',
+        '❯ \x1b[7mT\x1b[27m\x1b[2m   \x1b[0m',
+    ):
+        assert aufpasser.eingabe_leer(_feld(eingabe)) is False, eingabe
 
 
 def test_osc_link_folgen_zaehlen_nicht_als_text() -> None:

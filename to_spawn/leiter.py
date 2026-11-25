@@ -497,6 +497,7 @@ def _schritt(u: Umwelt, repo: Path, spec: int, ticket: int) -> Ergebnis:
     if schritt.aktion in ("entscheider", "mensch"):
         return _frage_weitergeben(u, spec, ticket, gemerkt, lage, schritt)
     stufe = gemerkt.stufe
+    beleg_zusatz = ""
     if schritt.aktion in ("anstupsen", "handoff", "exit"):
         if not lage.ziel:
             raise RuntimeError(f"tmux-Ziel von bau {ticket} unbekannt")
@@ -516,6 +517,16 @@ def _schritt(u: Umwelt, repo: Path, spec: int, ticket: int) -> Ergebnis:
             log.warning("leiter #%s: Tippen gescheitert: %s", ticket, fehler)
             zeile = f"Stufe {stufe} gemerkt, Tippen gescheitert — {fehler}"
             return Ergebnis(EXIT_FEHLER, _zeile(ticket, zeile))
+        # #289: Nach jedem Anstoß Wirkung am Fenster/Stand prüfen und Beleg nennen.
+        beleg_fn = getattr(u, "beleg", None)
+        if schritt.aktion == "anstupsen" and callable(beleg_fn):
+            try:
+                beleg = beleg_fn(spec, ticket)
+            except (OSError, RuntimeError, ValueError) as fehler:
+                log.warning("leiter #%s: Beleg nach Anstoß nicht prüfbar: %s", ticket, fehler)
+                beleg_zusatz = f" · Beleg nicht prüfbar ({fehler})"
+            else:
+                beleg_zusatz = f" · {aufseher_stand.beleg_zeile(beleg)}"
     elif schritt.aktion == "zuruecksetzen":
         stufe = 0
         leitstand.setze_leiter_stufe(ticket, 0, None)
@@ -524,7 +535,7 @@ def _schritt(u: Umwelt, repo: Path, spec: int, ticket: int) -> Ergebnis:
     elif schritt.aktion == "abschliessen":
         stufe = 0
         leitstand.schliesse_leiter_respawn(ticket, gemerkt.seit or jetzt)
-    text = f"Stufe {stufe} {_WORT[schritt.aktion]} — {schritt.grund}"
+    text = f"Stufe {stufe} {_WORT[schritt.aktion]} — {schritt.grund}{beleg_zusatz}"
     return Ergebnis(EXIT_OK, _zeile(ticket, text))
 
 
@@ -699,6 +710,10 @@ class _EchteUmwelt:
 
     def frage_einwerfen(self, spec: int, ticket: int, frage: str) -> str:
         return frage_einwerfen(self.repo, spec, ticket, frage)
+
+    def beleg(self, spec: int, ticket: int) -> aufseher_stand.StandBeleg:
+        """Wirkung nach einem Anstoß am Fenster/Stand prüfen (#289)."""
+        return aufseher_stand.beleg_fuer(spec, ticket, self.q)
 
     def _letzter_start(self, ticket: int, wt: Path) -> tuple[float | None, bool]:
         """Jüngster ``session_start`` im Bau-Log und ob das Lesen scheiterte (Warnung)."""

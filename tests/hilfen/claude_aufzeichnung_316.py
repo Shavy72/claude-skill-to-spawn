@@ -46,6 +46,10 @@ def main(argv: list[str]) -> int:
             check=True,
             timeout=60,
         )
+    ausgabe = os.environ.get("CLAUDE_AUFZEICHNUNG_AUSGABE")
+    if ausgabe:
+        sys.stdout.reconfigure(encoding="utf-8")
+        print(ausgabe)
     return int(os.environ.get("CLAUDE_AUFZEICHNUNG_EXIT", "0"))
 
 

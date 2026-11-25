@@ -305,17 +305,19 @@ def _funde_in(quelle: str, rel: str) -> set[tuple[str, str]]:
     return funde
 
 
-#: Werkzeug-Ordner überall ausgenommen; Tests nur im obersten ``tests/``.
+#: Werkzeug-Ordner überall ausgenommen; ``tests/`` und ``probe/`` nur auf der obersten Ebene.
 # ``probe``: Vorlagen-App für Probe-Läufe (#426 Teil F), läuft im Lauf-Repo ohne Skill und kann
-# die Tür ``to_spawn.starter`` dort nicht importieren.
-_AUSSER = {".git", ".review", ".ruff_cache", "__pycache__", ".venv", "node_modules", "probe"}
+# die Tür ``to_spawn.starter`` dort nicht importieren (#447: enger auf parts[0] == "probe").
+_AUSSER = {".git", ".review", ".ruff_cache", "__pycache__", ".venv", "node_modules"}
+_AUSSER_OBEN = {"tests", "probe"}
 
 
 def _start_stellen(wurzel: Path = SKILL) -> set[tuple[str, str]]:
     funde: set[tuple[str, str]] = set()
-    for datei in wurzel.rglob("*.py"):  # ganzes Repo außer Tests und Werkzeug-Ordnern
+    for datei in wurzel.rglob("*.py"):  # ganzes Repo außer Tests, Probe-Vorlagen und Werkzeug-Ordnern
         rel = datei.relative_to(wurzel).as_posix()
-        if Path(rel).parts[0] == "tests" or _AUSSER & set(Path(rel).parts):
+        teile = Path(rel).parts
+        if teile[0] in _AUSSER_OBEN or _AUSSER & set(teile):
             continue
         if rel != "to_spawn/starter.py":
             funde |= _funde_in(datei.read_text(encoding="utf-8"), rel)
@@ -390,6 +392,15 @@ def test_pruef_test_sucht_auch_in_unter_ordnern_namens_tests(tmp_path: Path) -> 
         datei.parent.mkdir(parents=True, exist_ok=True)
         datei.write_text('import subprocess\ndef f():\n    subprocess.Popen(["x"])\n', encoding="utf-8")
     assert _start_stellen(tmp_path) == {("to_spawn/tests/probe.py", "f")}
+
+
+def test_pruef_test_sucht_auch_in_unter_ordnern_namens_probe(tmp_path: Path) -> None:
+    """#447: Nur der oberste ``probe/`` ist ausgenommen, nicht etwa ``to_spawn/probe/``."""
+    for rel in ("probe/x.py", "to_spawn/probe/x.py"):
+        datei = tmp_path / rel
+        datei.parent.mkdir(parents=True, exist_ok=True)
+        datei.write_text('import subprocess\ndef f():\n    subprocess.Popen(["x"])\n', encoding="utf-8")
+    assert _start_stellen(tmp_path) == {("to_spawn/probe/x.py", "f")}
 
 
 def test_keine_start_stelle_ausserhalb_der_tuer() -> None:
