@@ -153,6 +153,7 @@ class Bericht:
     tickets: list[str] = field(default_factory=list)
     fehler: list[str] = field(default_factory=list)
     warnungen: list[str] = field(default_factory=list)
+    hinweise: list[str] = field(default_factory=list)
 
     @property
     def sauber(self) -> bool:
@@ -164,7 +165,9 @@ class Bericht:
             zeilen.append(f"  FEHLER  {eintrag}")
         for eintrag in self.warnungen:
             zeilen.append(f"  Warnung {eintrag}")
-        if self.sauber and not self.warnungen:
+        for eintrag in self.hinweise:
+            zeilen.append(f"  Info    {eintrag}")
+        if self.sauber and not self.warnungen and not self.hinweise:
             zeilen.append("  alles erfüllt")
         elif self.fehler:
             zeilen.append(
@@ -185,12 +188,15 @@ def pruefe(
     *,
     mit_github: bool = True,
     auswahl: Sequence[str] | None = None,
+    checkpoint_pflicht: bool = True,
 ) -> Bericht:
     """Manifest gegen die Regularien prüfen (Felder, Grenze, Belegung, GitHub).
 
     ``auswahl`` sind die Tickets, die gestartet werden sollen (``--tickets``):
     jede Nummer muss im Manifest stehen. Die Regeln laufen trotzdem über das
-    ganze Manifest.
+    ganze Manifest. ``checkpoint_pflicht=False`` (für ``anhaengen``, #406)
+    meldet ein noch fehlendes Checkpoint-Ticket nur als Info statt als Fehler —
+    ``regularien`` und ``spawn`` prüfen es weiterhin hart.
     """
     bericht = Bericht(spec=str(spec))
     try:
@@ -235,7 +241,9 @@ def pruefe(
         github = _hole_github(repo, bericht)
     _pruefe_andere_manifeste(repo, bericht, github)
     if github:
-        _pruefe_github(repo, bericht, github, konfig)
+        _pruefe_github(
+            repo, bericht, github, konfig, checkpoint_pflicht=checkpoint_pflicht
+        )
     return bericht
 
 
@@ -398,6 +406,8 @@ def _pruefe_github(
     bericht: Bericht,
     github: dict[str, dict[str, Any] | None],
     konfig: dict[str, Any],
+    *,
+    checkpoint_pflicht: bool = True,
 ) -> None:
     eigene = set(bericht.tickets)
     label = checkpoint_label(konfig)
@@ -443,11 +453,17 @@ def _pruefe_github(
     if not labels_gesehen:
         bericht.warnungen.append("Checkpoint ungeprüft (GitHub-Antwort ohne Labels).")
     elif not checkpoints:
-        bericht.fehler.append(
-            f"Kein Checkpoint-Ticket: keins der Tickets trägt das Label {label} — /to-tickets: "
-            "Abnahme-Ticket für den menschlichen Test anlegen, von allen anderen blockiert. "
-            f"Fehlt das Label im Repo: `gh label create {label}` oder `to_spawn.py setup` (#257)."
-        )
+        if checkpoint_pflicht:
+            bericht.fehler.append(
+                f"Kein Checkpoint-Ticket: keins der Tickets trägt das Label {label} — /to-tickets: "
+                "Abnahme-Ticket für den menschlichen Test anlegen, von allen anderen blockiert. "
+                f"Fehlt das Label im Repo: `gh label create {label}` oder `to_spawn.py setup` (#257)."
+            )
+        else:
+            bericht.hinweise.append(
+                f"Noch kein Checkpoint-Ticket ({label}) — Abnahme-Ticket zuletzt anhängen; "
+                "`regularien`/`spawn` prüfen es hart."
+            )
     else:
         _pruefe_checkpoint(bericht, github, checkpoints)
 

@@ -218,6 +218,7 @@ def _git(klon: Path, *args: str) -> subprocess.CompletedProcess[str] | None:
             capture_output=True,
             text=True,
             check=False,
+            **prozessbaum.fensterlos(),
         )
     except OSError as fehler:
         log.warning("komplett_lauf: git fehlt: %s", fehler)

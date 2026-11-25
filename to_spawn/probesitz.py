@@ -37,7 +37,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, TextIO
 
-from . import bau_log, config, melder, nest, sitzung_env, sitzungsjob, starter
+from . import bau_log, config, melder, nest, prozessbaum, sitzung_env, sitzungsjob, starter
 
 log = logging.getLogger("to_spawn.probesitz")
 
@@ -150,6 +150,7 @@ def laeufer_standard(
             errors="replace",
             timeout=timeout,
             check=False,
+            **prozessbaum.fensterlos(),
         )
     except subprocess.TimeoutExpired:
         return subprocess.CompletedProcess(argv, 124, "", f"Zeitlimit {timeout}s überschritten")
@@ -395,16 +396,24 @@ def pruefe_sandbox(
         fehlt = " und ".join(n for n, p in (("srt", srt), ("bwrap", bwrap)) if not p)
         return _rot(4, f"{fehlt} nicht gefunden", "srt + bubblewrap installieren (nest werkzeuge)")
     heim = home or Path.home()
-    # Beide Ordner unter HOME, nicht unter /tmp: /tmp ist in der Sandbox immer beschreibbar.
-    innen = Path(tempfile.mkdtemp(prefix=".probesitz-innen-", dir=heim))
-    aussen = Path(tempfile.mkdtemp(prefix=".probesitz-aussen-", dir=heim))
+    # Alle Ordner unter HOME, nicht unter /tmp: /tmp ist in der Sandbox immer beschreibbar.
+    # Eigener Sandbox-Heimordner je Lauf (#260): srt legt für fehlende denyWrite-Ziele wie
+    # ~/.claude/settings.local.json kurz leere Mount-Dateien an und löscht sie beim Ende —
+    # parallele Sandbox-Läufe auf demselben ~/.claude ziehen sich die Datei gegenseitig weg.
+    lauf = Path(tempfile.mkdtemp(prefix=".probesitz-", dir=heim))
     try:
-        einstellungen = nest.sandbox_einstellungen(innen, repo, konfig, None, heim)
+        innen = lauf / "innen"
+        aussen = lauf / "aussen"
+        sandbox_heim = lauf / "heim"
+        innen.mkdir()
+        aussen.mkdir()
+        (sandbox_heim / ".claude").mkdir(parents=True)
+        einstellungen = nest.sandbox_einstellungen(innen, repo, konfig, None, sandbox_heim)
         datei = innen / "sandbox.json"
         datei.write_text(json.dumps(einstellungen, indent=1), encoding="utf-8")
         ziel_innen, ziel_aussen = innen / "probesitz.txt", aussen / "probesitz.txt"
-        drinnen = laeufer([srt, "--settings", str(datei), "--", "touch", str(ziel_innen)], timeout=120)
-        draussen = laeufer([srt, "--settings", str(datei), "--", "touch", str(ziel_aussen)], timeout=120)
+        drinnen = laeufer([srt, "--settings", str(datei), "--", "touch", str(ziel_innen)], cwd=innen, timeout=120)
+        draussen = laeufer([srt, "--settings", str(datei), "--", "touch", str(ziel_aussen)], cwd=innen, timeout=120)
         beleg = f"innen Exit {drinnen.returncode} · außen Exit {draussen.returncode}, Datei außen: {'da' if ziel_aussen.exists() else 'fehlt'}"
         modus = str((konfig.get("sandbox") or {}).get("modus", "aus")) if isinstance(konfig.get("sandbox"), dict) else "aus"
         hinweis = " (sandbox.modus aus — Sessions laufen ohne Sandbox)" if modus != "an" else " (sandbox.modus an)"
@@ -421,8 +430,7 @@ def pruefe_sandbox(
     except OSError as fehler:
         return _rot(4, f"Sandbox-Prüfung scheiterte: {fehler}", "srt/bwrap-Setup prüfen (nest werkzeuge)")
     finally:
-        shutil.rmtree(innen, ignore_errors=True)
-        shutil.rmtree(aussen, ignore_errors=True)
+        shutil.rmtree(lauf, ignore_errors=True)
 
 
 # --- Punkte 2/5/6: Wegwerf-Lauf ------------------------------------------------------------
