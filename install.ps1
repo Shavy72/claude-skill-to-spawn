@@ -56,7 +56,7 @@ function Sichere-UndKopiere([string]$name, [string[]]$quellen) {
     }
 }
 $quellen = foreach ($f in @("SKILL.md", "README.md", "LICENSE", "to_spawn.py", "install.sh", "install.ps1", "spawn_local.ps1", "spawn_srv.ps1",
-                           "to_spawn", "skripte", "repo-scripts", "aliase", "tests", "docs", "nest", "leitstand", "kette", "review-hook", "review", "probe")) { Join-Path $hier $f }
+                           "to_spawn", "skripte", "repo-scripts", "aliase", "tests", "docs", "nest", "leitstand", "kette", "review-hook", "review", "review-dirigent", "probe")) { Join-Path $hier $f }
 Sichere-UndKopiere "to-spawn" $quellen
 $env:PYTHONIOENCODING = "utf-8"
 python (Join-Path (Join-Path $ziel "to_spawn") "skill_stand.py") --stempel $ziel --klon $hier
@@ -81,6 +81,12 @@ if ($LASTEXITCODE -ne 0) { throw "Ja-Sperre nicht eingetragen" }
 # Review-Hook (review-hook/ → ~/.claude/hooks/review, #214) + Review-Werkzeug (review/ → ~/.claude/review, #329); Überschreib-Regel in to_spawn/review_hook.py.
 python (Join-Path (Join-Path $ziel "to_spawn") "review_hook.py") --klon $hier  # Klon: nur versionierte Dateien
 if ($LASTEXITCODE -ne 0) { throw "Review-Hook nicht installiert" }
+# Review-Dirigent (review-dirigent/ → <Skills>/review-dirigent, #396); alter Ordner nach _alt/, nie gelöscht.
+$dirigentOrdner = Join-Path $hier "review-dirigent"
+if (Test-Path $dirigentOrdner) {
+    Sichere-UndKopiere "review-dirigent" @(Get-ChildItem $dirigentOrdner -Force | ForEach-Object { $_.FullName })
+    Write-Host "Review-Dirigent installiert: $(Join-Path $skills 'review-dirigent')"
+}
 
 # PowerShell-Profil: bau / wache / sessions (nur ergänzen, nie überschreiben)
 $profilPfad = $PROFILE.CurrentUserAllHosts
