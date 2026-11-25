@@ -832,17 +832,14 @@ def _zeit(text: Any) -> datetime | None:
     return wert if wert.tzinfo else wert.replace(tzinfo=timezone.utc)
 
 
-def worktree_ordner(ticket: int, basis: str) -> Path:
-    """``<basis>/wt-N``; ohne Basis die Regel des Skills (``config.worktree_pfad``)."""
+def worktree_ordner(ticket: int, basis: str, repo: Path | None = None) -> Path:
+    """``<basis>/wt-N``; ohne Basis die Regel des Skills (``config.worktree_pfad`` für ``repo``,
+    samt Ausweich-Ordner bei gleicher Nummer in zwei Repos, #641)."""
     if basis:
         return Path(basis).expanduser() / f"wt-{ticket}"
     from . import config
 
-    regel = getattr(config, "worktree_pfad", None)
-    if callable(regel):
-        return Path(regel(ticket))
-    wurzel = os.environ.get("BAU_WT_DIR") or ("C:/dev" if sys.platform == "win32" else "~/wt")
-    return Path(wurzel).expanduser() / f"wt-{ticket}"
+    return Path(config.worktree_pfad(ticket, repo)).expanduser()
 
 
 def worktree_spur(wt: Path, ref: str) -> tuple[float | None, str]:
@@ -2231,7 +2228,7 @@ def _tick(
         offen += 0 if zu else 1
         eigene = ticket_commits(commits, n)
         log_zeilen = log_vom_ref(repo, ref, n)
-        wt = worktree_ordner(n, wt_basis)
+        wt = worktree_ordner(n, wt_basis, repo)
         wt_zeit, wt_info = worktree_spur(wt, ref)
         lauf: list[tuple[str, list[dict[str, Any]]]] = []
         for quelle, pfad in laufdateien(repo, wt, n):
@@ -2486,7 +2483,7 @@ def _tick(
 
     # Der Aufpasser meldet Vorfälle eines Aufseher-Fensters auf die Spec-Nummer —
     # die steht nicht in der Kinderliste und käme sonst nie in den Katalog (#286).
-    spec_wt = worktree_ordner(spec, wt_basis)
+    spec_wt = worktree_ordner(spec, wt_basis, repo)
     spec_zeilen = log_vom_ref(repo, ref, spec)
     for _, pfad_lauf in laufdateien(repo, spec_wt, spec):
         spec_lauf = lauf_zeilen(pfad_lauf)
@@ -2505,7 +2502,7 @@ def _tick(
     # „Mensch nötig“ aus dem Review-Stop-Hook: je Eintrag einmal melden, Kette läuft weiter.
     mn_gesehen: list[str] = list(zustand.get("mensch_noetig_gesehen") or [])
     eigene = mensch_noetig.eintraege_mit_zustand(
-        spec, zustand, None if dry_run else sichern, repo, lambda n: worktree_ordner(n, wt_basis)
+        spec, zustand, None if dry_run else sichern, repo, lambda n: worktree_ordner(n, wt_basis, repo)
     )
     # #530: Ruf zurücknehmen, wenn der Beleg nach dem Ruf doch noch kam (ein Satz am Ticket).
     rufe = [r for r in zustand.get("mensch_noetig_rufe") or [] if isinstance(r, dict)]
