@@ -343,7 +343,7 @@ class Wecker:
             blocker = aufpasser.erledigt_gewartet(bild, t, self.repo, self.gh_repo)
             if blocker is None:
                 continue
-            if self._tippe(ziel, aufpasser.BLOCKER_FREI_TEXT.format(blocker=blocker, ticket=t)):
+            if self._tippe(ziel, aufpasser.blocker_frei_text(blocker, t)):
                 self._blocker_geweckt[t] = gemeldet
                 aufpasser.notiere_blocker_falsch(self.repo, t, blocker, time.strftime("%Y-%m-%d"))
 

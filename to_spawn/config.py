@@ -35,6 +35,7 @@ import json
 import logging
 import os
 import re
+import shlex
 import socket
 import subprocess
 import sys
@@ -332,6 +333,50 @@ def expand_heim(pfad: str | Path) -> Path:
     if text.startswith("~"):
         return _SYSTEM_PFAD(text).expanduser()
     return _SYSTEM_PFAD(text)
+
+
+#: Umgebungsvariable für einen abweichenden Skill-Ort (z. B. getrennter Probe-Install, #786).
+SKILL_HOME_ENV = "TO_SPAWN_HOME"
+#: Wurzel dieses laufenden Skills (Ordner über ``to_spawn/``).
+_SKILL_EIGEN = Path(__file__).resolve().parent.parent
+#: Einzige Rückfall-Stelle für den Skill-Ort auf dem Bau-Server per SSH (#786).
+FERN_SKILL_VORGABE = "~/.claude/skills/to-spawn"
+
+
+def skill_ordner() -> Path:
+    """Lokaler Skill-Ordner: ``TO_SPAWN_HOME`` (falls gesetzt), sonst Ordner dieser Datei (#786)."""
+    wert = (os.environ.get(SKILL_HOME_ENV) or "").strip()
+    if wert:
+        return expand_heim(wert)
+    return _SKILL_EIGEN
+
+
+def fern_ordner(pfad: str) -> str:
+    """Pfad für einen SSH-Shell-Befehl quoten — führendes ``~/`` bleibt für die Ziel-Shell auflösbar."""
+    if pfad == "~":
+        return "~"
+    if pfad.startswith("~/"):
+        return "~/" + shlex.quote(pfad[2:])
+    return shlex.quote(pfad)
+
+
+def fern_skill_ordner() -> str:
+    """Skill-Ordner auf dem Bau-Server (SSH): ``TO_SPAWN_HOME`` (falls gesetzt), sonst Rückfall (#786).
+
+    Ohne gesetztes ``TO_SPAWN_HOME`` bleibt die Tilde-Vorgabe (wird erst auf dem Bau-Server
+    aufgelöst, damit ein Windows-PC keinen lokalen Laufwerkspfad per SSH schickt).
+    """
+    wert = (os.environ.get(SKILL_HOME_ENV) or "").strip()
+    if wert:
+        return wert.replace("\\", "/").rstrip("/") or wert
+    return FERN_SKILL_VORGABE
+
+
+def fern_skill_pfad(rel: str = "") -> str:
+    """Shell-gequoteter Pfad im Fern-Skill (optional Unterpfad ``rel``, z. B. ``to_spawn.py``) (#786)."""
+    basis = fern_skill_ordner()
+    ziel = f"{basis}/{rel.lstrip('/')}" if rel else basis
+    return fern_ordner(ziel)
 
 
 def notiz_tresor() -> Path:

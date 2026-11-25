@@ -330,16 +330,24 @@ RUECKFRAGE_MARKER = (
 #: Letzte Zeile des Befehls ``to_spawn.py blocker <N>`` im Pane (#267, #269): ``WARTET: <Gründe>``
 #: oder ``FREI``, allein auf der Zeile — davor nur Rahmen der Claude-Ausgabe (``⎿``), sonst Prosa.
 BLOCKER_STATUS = re.compile(r"^[ \t⎿│]*(WARTET: .+?|FREI)[ \t]*$", re.MULTILINE)
-#: Anstoß, wenn die Session laut eigener Meldung auf Erledigtes wartet (#269).
+#: Anstoß, wenn die Session laut eigener Meldung auf Erledigtes wartet (#269, #786).
 BLOCKER_FREI_TEXT = (
     "Aufpasser: Deine Blocker ({blocker}) sind erledigt — jetzt "
-    "`python ~/.claude/skills/to-spawn/to_spawn.py blocker {ticket}` erneut prüfen und weiterbauen, "
+    "`python {cli} blocker {ticket}` erneut prüfen und weiterbauen, "
     "nicht auf den Weckruf warten."
 )
+
+
+def blocker_frei_text(blocker: str, ticket: int) -> str:
+    """Anstoß-Text bei erledigten Blockern mit aktuellem Skill-Ort (#269, #786)."""
+    cli = shlex.quote((config.skill_ordner() / "to_spawn.py").as_posix())
+    return BLOCKER_FREI_TEXT.format(blocker=blocker, ticket=ticket, cli=cli)
+
+
 #: Anstupser: derselbe Mindset-Stoß wie die Eingriffs-Leiter (#500, eine Quelle).
 ANSTUPS_TEXT = anleitung.anstupser("Aufpasser")
 VORLAGE_WACHE_REPO = "cd {repo} && {py} scripts/wache.py {s}{resume}"
-VORLAGE_WACHE_SKILL = "cd {repo} && TO_SPAWN_REPO={repo} {py} ~/.claude/skills/to-spawn/skripte/wache.py {s}{resume}"
+VORLAGE_WACHE_SKILL = "cd {repo} && TO_SPAWN_REPO={repo} {py} {wache} {s}{resume}"
 #: Nie in eine Sicherung: Geheimnisse und Zugangsdateien — in JEDEM Unterordner.
 #: Glob-Muster für ``:(exclude,glob)``: ohne ``glob``-Magie ist ``.env.*`` an den
 #: Pfadanfang gebunden und ``web/.env.local`` wäre mit hochgeladen worden (#1368).
@@ -1897,6 +1905,9 @@ class Aufpasser:
         """
         venv = repo / ".venv" / "bin" / "python"
         py = str(venv) if venv.is_file() else "python3"
+        skill = config.skill_ordner()
+        skill_q = shlex.quote(skill.as_posix())
+        wache_q = shlex.quote((skill / "skripte" / "wache.py").as_posix())
         if self.e.wache_vorlage:
             vorlage = self.e.wache_vorlage
         elif (repo / "scripts" / "wache.py").is_file():
@@ -1908,6 +1919,8 @@ class Aufpasser:
             py=shlex.quote(py),
             s=spec,
             resume=f" --resume {resume}" if resume else "",
+            skill=skill_q,
+            wache=wache_q,
         )
         log_pfad = wache_log(repo, spec)
         log_q = shlex.quote(str(log_pfad))
@@ -1919,7 +1932,10 @@ class Aufpasser:
             f'timeout 3 tail -s 0.1 --pid="$tee_pid" -f /dev/null 2>/dev/null; '
             f'echo "$(date -Is) wache.py #{spec} Exit $rc" >> {log_q}; }}; exit "$rc"'
         )
-        return f"export {spawn_exit.WARTE_ENV}={warte_q}; mkdir -p {ordner_q}; {tee}; {{ {kern}; }}; {spur}"
+        return (
+            f"export {config.SKILL_HOME_ENV}={skill_q} {spawn_exit.WARTE_ENV}={warte_q}; "
+            f"mkdir -p {ordner_q}; {tee}; {{ {kern}; }}; {spur}"
+        )
 
     def resume_aus_datei(self, repo: Path, name: str) -> tuple[str, Path] | None:
         """Gesprächs-ID + cwd aus ``.to-spawn/sessions/<name>.json`` — nur wenn das
@@ -2645,7 +2661,7 @@ class Aufpasser:
         notiere_blocker_falsch(repo, ticket, blocker, self.datum)
         if len(self._stupser_zaehlen(e)) >= STUPSER_MAX or not self.vor_eingriff(f, hash_start, repo):
             return False  # Kette unten entscheidet (braucht den Menschen / nächster Lauf)
-        self._eingeben(f.ziel, BLOCKER_FREI_TEXT.format(blocker=blocker, ticket=ticket))
+        self._eingeben(f.ziel, blocker_frei_text(blocker, ticket))
         e["stupser"].append(self.jetzt)
         e.update(hash=pane_hash(self.pane_text(f.ziel)), seit=self.jetzt)
         return True

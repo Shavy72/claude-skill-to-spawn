@@ -132,23 +132,26 @@ def _cd(ordner: str) -> str:
     return f"cd {shlex.quote(ordner)}"
 
 
-#: Skill-Ordner auf dem Bau-Server (wie ``neustart --ziel srv`` in ``spawn.py``).
-FERN_SKILL = "~/.claude/skills/to-spawn"
-
-
 def fern_skill_befehl(ordner: str, aufruf: str, skript: str, argumente: Sequence[str]) -> str:
-    """Fern-Befehl: Skill-Skript ``skripte/<skript>`` für das Server-Repo ``ordner`` (Etappe 1, P4a).
+    """Fern-Befehl: Skill-Skript ``skripte/<skript>`` für das Server-Repo ``ordner`` (Etappe 1, P4a; #786).
 
     Hat das Repo die Weiterleitung ``scripts/<skript>`` (DuoPlus), läuft der Befehl unverändert über
-    sie. Sonst ruft er direkt ``~/.claude/skills/to-spawn/skripte/<skript>`` mit ``TO_SPAWN_REPO`` =
-    Repo auf, wie ``skripte/spawn_srv.sh`` die Skill-Skripte startet. ``aufruf`` = ``bash``/``python3``.
+    sie. Sonst ruft er direkt ``<Skill-Ort>/skripte/<skript>`` (über :func:`config.fern_skill_pfad`)
+    mit ``TO_SPAWN_REPO`` = Repo auf, wie ``skripte/spawn_srv.sh`` die Skill-Skripte startet.
+    ``aufruf`` = ``bash``/``python3``.
     """
     ort = _cd(ordner)[3:]
     weiter = f"scripts/{skript}"
     args = shlex.join(argumente)
+    skill_skript = config.fern_skill_pfad(f"skripte/{skript}")
+    fern_env = (
+        f"{config.SKILL_HOME_ENV}={config.fern_skill_pfad()} "
+        if (os.environ.get(config.SKILL_HOME_ENV) or "").strip()
+        else ""
+    )
     return (
-        f"if [ -f {ort}/{weiter} ]; then cd {ort} && {aufruf} {weiter} {args}; "
-        f'else cd {ort} && TO_SPAWN_REPO="$PWD" {aufruf} {FERN_SKILL}/skripte/{skript} {args}; fi'
+        f"if [ -f {ort}/{weiter} ]; then cd {ort} && {fern_env}{aufruf} {weiter} {args}; "
+        f'else cd {ort} && {fern_env}TO_SPAWN_REPO="$PWD" {aufruf} {skill_skript} {args}; fi'
     )
 
 

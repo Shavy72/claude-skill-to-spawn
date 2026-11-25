@@ -101,11 +101,7 @@ def baue_befehl(
 
 def fern_ordner(pfad: str) -> str:
     """Ordner für ``cd`` in einem SSH-Befehl quoten — ``~/`` bleibt aufgelöst (``'~/x'`` würde es nicht)."""
-    if pfad == "~":
-        return "~"
-    if pfad.startswith("~/"):
-        return "~/" + shlex.quote(pfad[2:])
-    return shlex.quote(pfad)
+    return config.fern_ordner(pfad)
 
 
 def _befehl_unix(
@@ -287,7 +283,13 @@ def neustart(
             argumente.append("--beenden")
         if dry_run:
             argumente.append("--dry-run")
-        fern = f"cd {fern_ordner(server_repo)} && python3 ~/.claude/skills/to-spawn/to_spawn.py {shlex.join(argumente)}"
+        fern_cli = config.fern_skill_pfad("to_spawn.py")
+        fern_env = (
+            f"{config.SKILL_HOME_ENV}={config.fern_skill_pfad()} "
+            if (os.environ.get(config.SKILL_HOME_ENV) or "").strip()
+            else ""
+        )
+        fern = f"cd {fern_ordner(server_repo)} && {fern_env}python3 {fern_cli} {shlex.join(argumente)}"
         befehl = ["ssh", config.ssh_ziel(konfig), fern]
         print(" ".join(befehl[:2]), repr(fern))
         return starter.starte(befehl, cwd=repo, check=False, warten=True).returncode
