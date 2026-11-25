@@ -593,7 +593,7 @@ def _lauf(
 ) -> Ergebnis:
     """Befehl ausführen, Merker + Protokoll-Zeile schreiben; nur unter der Sperre aus :func:`_pruefen`."""
     start_zeit, start = _jetzt(), time.monotonic()
-    stufe = leiter.eigener_befehl(klon, befehl, "komplett", zeitgrenze_s)
+    stufe = leiter.eigener_befehl(klon, befehl, "komplett", zeitgrenze_s, ticket=spec)
     dauer = round(time.monotonic() - start, 2)
     exit_code = stufe.ergebnis
     if exit_code == leiter.GRUEN:
