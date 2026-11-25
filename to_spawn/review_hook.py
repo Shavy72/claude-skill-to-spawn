@@ -16,8 +16,8 @@ Auftrags-Vorlagen stehen (bisher fest eingebaute Projektregeln), wandern in die 
 (VERTRAG.md §2a), bisher ausgelieferte ``projekt_woerter`` in die private ``config.json`` (#395); danach
 verliert eine lokale ``config.json``, was nur einen ausgelieferten Stand wiederholt.
 
-Türen: :func:`installiere`, :func:`installiere_werkzeug`.
-Aufruf: ``python -m to_spawn.review_hook [--ziel <ordner>] [--klon <skill-klon>]``.
+Türen: :func:`installiere`, :func:`installiere_werkzeug`, :func:`pruefe`.
+Aufruf: ``python -m to_spawn.review_hook [--ziel <ordner>] [--klon <skill-klon>] [--pruefen]``.
 """
 
 from __future__ import annotations
@@ -154,6 +154,36 @@ def installiere(ziel: Path, quelle: Path = QUELL_ORDNER, zeit: str | None = None
     if neu_stand != alt_stand:
         _schreibe_atomar(stand_pfad, (json.dumps(neu_stand, indent=1, sort_keys=True) + "\n").encode("utf-8"))
     return bericht
+
+
+def pruefe(ziel: Path, quelle: Path = QUELL_ORDNER) -> list[str]:
+    """Prüft, ob jede versionierte Datei aus ``quelle`` gleich in ``ziel`` liegt (ohne CR).
+
+    Gibt die Liste der Abweichungen zurück (leer = aktuell); Dateien, die nur in ``ziel`` liegen
+    (Laufzeit-Daten, private Config/Regeln), bleiben unberührt. Wirft ``FileNotFoundError``, wenn
+    ``quelle`` fehlt oder keine Dateien liefert.
+    """
+    if not quelle.is_dir():
+        raise FileNotFoundError(f"Quelle fehlt: {quelle}")
+    dateien = _quell_dateien(quelle)
+    if not dateien:
+        raise FileNotFoundError(f"Quelle enthält keine Dateien: {quelle}")
+    abweichungen: list[str] = []
+    ziel_echt = ziel.resolve()
+    for rel in dateien:
+        datei = ziel / rel
+        if datei.is_symlink() or not datei.resolve().is_relative_to(ziel_echt):
+            abweichungen.append(f"abweichend (Link): {rel}")
+            continue
+        if not datei.exists():
+            abweichungen.append(f"fehlt: {rel}")
+            continue
+        if datei.is_dir():
+            abweichungen.append(f"abweichend (Ordner): {rel}")
+            continue
+        if _pruefsumme(datei.read_bytes()) != _pruefsumme((quelle / rel).read_bytes()):
+            abweichungen.append(f"abweichend: {rel}")
+    return abweichungen
 
 
 def installiere_werkzeug(ziel: Path, quelle: Path = WERKZEUG_QUELLE, zeit: str | None = None) -> list[str]:
@@ -356,15 +386,39 @@ def _umask() -> int:
 
 def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
-    parser = argparse.ArgumentParser(description="Review-Hook nach ~/.claude/hooks/review installieren")
+    parser = argparse.ArgumentParser(description="Review-Hook und Review-Werkzeug einspielen oder prüfen")
     parser.add_argument("--ziel", type=Path, default=Path.home() / ".claude" / "hooks" / "review")
     parser.add_argument("--klon", type=Path, help="Skill-Klon (git): Dateiliste nur aus versionierten Dateien")
+    parser.add_argument(
+        "--pruefen",
+        action="store_true",
+        help="nur prüfen: Exit 1 bei fehlender oder abweichender Datei (ändert nichts)",
+    )
     args = parser.parse_args(argv)
     basis = args.klon or QUELL_ORDNER.parent
-    for name, ziel, quelle, einspielen in (
+    ziele = (
         ("Review-Hook", args.ziel, basis / QUELL_ORDNER.name, installiere),
         ("Review-Werkzeug", Path.home() / ".claude" / "review", basis / WERKZEUG_QUELLE.name, installiere_werkzeug),
-    ):
+    )
+    if args.pruefen:
+        gesamt = 0
+        for name, ziel, quelle, _ in ziele:
+            try:
+                abweichungen = pruefe(ziel, quelle)
+            except (OSError, ValueError) as fehler:
+                log.error("[!!] %s nicht prüfbar (%s): %s", name, ziel, fehler)
+                return 2
+            for zeile in abweichungen:
+                log.warning("%s %s", name, zeile)
+            gesamt += len(abweichungen)
+            log.info(
+                "%s geprüft: %s (%s)",
+                name,
+                ziel,
+                f"{len(abweichungen)} Abweichung(en)" if abweichungen else "aktuell",
+            )
+        return 1 if gesamt else 0
+    for name, ziel, quelle, einspielen in ziele:
         try:
             bericht = einspielen(ziel, quelle)
         except (OSError, ValueError) as fehler:
