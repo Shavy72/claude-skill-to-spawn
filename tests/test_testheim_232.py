@@ -144,6 +144,35 @@ def test_bau_und_context_mode_folgen_umgebogenem_home_zur_laufzeit(
     assert context_mode.plugin_wurzel() is None
 
 
+def test_aufseher_prompts_folgen_umgebogenem_home_nach_import(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Nach dem Import folgen ``waechter_takt`` und ``wache`` einem neuen HOME (Notiz-Tresor, #232)."""
+    from to_spawn import befugnis, waechter_takt
+
+    spec = importlib.util.spec_from_file_location("wache_testheim_232", SKRIPTE / "wache.py")
+    assert spec is not None and spec.loader is not None
+    wache = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(wache)
+
+    # Nach dem Import HOME/USERPROFILE auf einen zweiten Test-Heimordner umbiegen (wie im nächsten Test).
+    neues_heim = tmp_path / "zweites-heim"
+    neues_heim.mkdir()
+    monkeypatch.delenv("OBSIDIAN_VAULT", raising=False)
+    monkeypatch.setenv("HOME", str(neues_heim))
+    monkeypatch.setenv("USERPROFILE", str(neues_heim))
+
+    erwarteter_tresor = (neues_heim / "obsidian").as_posix()
+    takt_prompt = waechter_takt.baue_prompt(293, Path("/r"), ["- x"], None)
+    assert befugnis.aufseher_text(f"python {waechter_takt.SKILL.as_posix()}/to_spawn.py") in takt_prompt
+    assert erwarteter_tresor in waechter_takt.PROMPT
+
+    wache_prompt = wache.prompt_bauen(293, "/r", 1800, {})
+    erwartet_wache = startklar.aufseher_vorlage(befugnis.aufseher_text(f"python {startklar.skill_pfad()}/to_spawn.py"))
+    assert erwartet_wache in wache_prompt
+    assert erwarteter_tresor in wache.PROMPT
+
+
 def test_start_tests_fuehren_keine_privaten_hooks_aus_und_lassen_claude_json_unveraendert(
     tmp_path: Path,
 ) -> None:

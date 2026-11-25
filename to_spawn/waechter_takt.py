@@ -93,7 +93,8 @@ CAPO_ABBRUCH = (
 #: (Text, Merker-Feld, Schlüssel) — Feld/Schlüssel sagen, was „gesehen“ bedeutet.
 Eintrag = tuple[str, str, Any]
 
-PROMPT = """Aufseher-Takt Spec #{S} ({REPO}). Einmaliger Lauf: kein Handoff, kein /loop, kein ScheduleWakeup — nach dieser Liste endest du. Ziel: Spec {S} vollständig, sauber, autonom fertig. {BEFUGNIS} Klasse 3 im besten Interesse des Menschen (Nordstern, Doktrinen). Nur Label checkpoint:human bleibt für den Menschen. Du baust nichts und sprichst keine Bau-Session an. Ticket neu zu → Belegseite unter docs/verify-hard/ per Grep prüfen (Akzeptanz erfüllt? Live-Klick-Weg-Beleg mit Rolle da?), bei Mangel 2-Zeilen-Kommentar „Aufseher: … fehlt“ + `gh issue reopen`. capo-Verstoß: capo hat schon geöffnet/kommentiert — nicht doppelt tun. {ABSCHLUSS} Abschlussbericht als Kommentar auf #{S} (max. 10 Zeilen). Kontext sparen: Tickets nie voll laden, Belegseiten per Grep/limit.
+_PROMPT_ROH = (
+    """Aufseher-Takt Spec #{S} ({REPO}). Einmaliger Lauf: kein Handoff, kein /loop, kein ScheduleWakeup — nach dieser Liste endest du. Ziel: Spec {S} vollständig, sauber, autonom fertig. {BEFUGNIS} Klasse 3 im besten Interesse des Menschen (Nordstern, Doktrinen). Nur Label checkpoint:human bleibt für den Menschen. Du baust nichts und sprichst keine Bau-Session an. Ticket neu zu → Belegseite unter docs/verify-hard/ per Grep prüfen (Akzeptanz erfüllt? Live-Klick-Weg-Beleg mit Rolle da?), bei Mangel 2-Zeilen-Kommentar „Aufseher: … fehlt“ + `gh issue reopen`. capo-Verstoß: capo hat schon geöffnet/kommentiert — nicht doppelt tun. {ABSCHLUSS} Abschlussbericht als Kommentar auf #{S} (max. 10 Zeilen). Kontext sparen: Tickets nie voll laden, Belegseiten per Grep/limit.
 
 Zu entscheiden:
 {LISTE}
@@ -102,14 +103,23 @@ Notizzettel aus dem letzten Takt:
 {NOTIZ}
 
 PFLICHT am Ende: Notizzettel fortschreiben (Stand + offene Punkte, knapp) mit `python {SKILL}/to_spawn.py takt {S} --notiz "<text>"`. {BELEG_HINWEIS}"""
-# Befugnis, Abschluss-Anweisung und Beleg-Regel aus je einer Quelle (#278 P3b, #289, #367),
-# einmal beim Laden: jeder ``PROMPT.format`` braucht nur noch S/REPO/SKILL/LISTE/NOTIZ;
-# ``{S}`` und ``{SKILL}`` bleiben stehen.
-PROMPT = (
-    PROMPT.replace("{BEFUGNIS}", befugnis.aufseher_text("python {SKILL}/to_spawn.py"))
+    # Abschluss-Anweisung und Beleg-Regel aus je einer Quelle (#289, #367); ``{BEFUGNIS}``
+    # kommt erst beim Zugriff hinzu, weil ``befugnis.aufseher_text`` den aktuellen Notiz-Tresor
+    # (``HOME``/``OBSIDIAN_VAULT``) zur Laufzeit auflöst (#232, #278 P3b).
     .replace("{ABSCHLUSS}", anleitung.ABSCHLUSS_ANWEISUNG)
     .replace("{BELEG_HINWEIS}", aufseher_stand.beleg_hinweis("python {SKILL}/to_spawn.py"))
 )
+
+
+def _prompt_vorlage() -> str:
+    """Takt-Vorlage mit aktuellem ``befugnis.aufseher_text`` (folgt ``HOME``/``OBSIDIAN_VAULT`` zur Laufzeit, #232)."""
+    return _PROMPT_ROH.replace("{BEFUGNIS}", befugnis.aufseher_text("python {SKILL}/to_spawn.py"))
+
+
+def __getattr__(name: str) -> Any:
+    if name == "PROMPT":
+        return _prompt_vorlage()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 # --- Prüfen ---------------------------------------------------------------------
@@ -376,7 +386,7 @@ def baue_prompt(spec: int, repo: Path, eintraege: list[str], notiz: str | None) 
     if rest > 0:
         liste.append(f"- … und {rest} weitere (nächster Takt)")
     notiz_text = (notiz or "(leer — erster Takt)")[:MAX_NOTIZ]
-    return PROMPT.format(
+    return _prompt_vorlage().format(
         S=spec,
         REPO=repo,
         SKILL=SKILL.as_posix(),
