@@ -30,7 +30,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from to_spawn import capo, config, gh, hausmeister, inventur, temp_ordner
+from to_spawn import capo, config, gh, hausmeister, inventur, konsole, temp_ordner
 
 log = logging.getLogger("to_spawn.nest")
 
@@ -1059,7 +1059,7 @@ def lauf(args: argparse.Namespace) -> int:
             skill = Path(__file__).resolve().parent.parent
             vorschlag = rechte_vorschlag(wt_dir, skill, Path(tempfile.gettempdir()))
             if args.eintragen:
-                ist_tty = sys.stdin.isatty() and sys.stdout.isatty()
+                ist_tty = konsole.stdin_ist_terminal() and sys.stdout.isatty()
                 return rechte_eintragen(datei, vorschlag, ist_tty)
             print(rechte_text(datei, vorschlag, skill / "to_spawn.py"))
             return 0

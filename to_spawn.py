@@ -62,6 +62,7 @@ from to_spawn import (  # noqa: E402
     hooks,
     inventur,
     komplett_lauf,
+    konsole,
     live_tuer,
     leiter,
     leitstand,
@@ -238,7 +239,7 @@ def _setup(repo: Path, args: argparse.Namespace) -> int:
                 aenderungen["modelle"][rolle] = modell
             if effort:
                 aenderungen["effort"][rolle] = effort
-    elif args.dialog or sys.stdin.isatty():
+    elif args.dialog or konsole.stdin_ist_terminal():
         aenderungen = setup.fuehre_dialog(
             konfig, setup.stdin_eingabe(sys.stdout), sys.stdout, args.plattform
         )
@@ -1016,7 +1017,7 @@ def main(argv: list[str] | None = None) -> int:
             return code
         setup.erster_start(
             repo,
-            ist_tty=sys.stdin.isatty(),
+            ist_tty=konsole.stdin_ist_terminal(),
             eingabe=setup.stdin_eingabe(sys.stdout),
             ausgabe=sys.stdout,
         )

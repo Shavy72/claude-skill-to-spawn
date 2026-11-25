@@ -55,3 +55,25 @@ def utf8_ausgabe() -> None:
     for strom in (sys.stdout, sys.stderr):
         if hasattr(strom, "reconfigure"):
             strom.reconfigure(encoding="utf-8", errors="replace")
+
+
+def stdin_ist_terminal() -> bool:
+    """Ist stdin ein echtes Terminal? Die eine Prüf-Stelle für „nur ein Mensch im Terminal“ (#553).
+
+    Unter Windows meldet ``isatty()`` auch das Gerät ``NUL`` (``< /dev/null``, ``stdin=DEVNULL``) als
+    Terminal; dort zählt darum nur eine echte Konsole (``GetConsoleMode`` gelingt). Im Zweifel ``False``.
+    Wächter: ``tests/test_terminal_pruefung_windows_553.py`` (kein ``isatty()`` daneben).
+    """
+    if sys.stdin is None or not sys.stdin.isatty():
+        return False
+    if sys.platform != "win32":
+        return True
+    import ctypes
+    import msvcrt
+
+    try:
+        griff = msvcrt.get_osfhandle(sys.stdin.fileno())
+    except (OSError, ValueError):
+        return False
+    modus = ctypes.c_uint32()
+    return bool(ctypes.windll.kernel32.GetConsoleMode(griff, ctypes.byref(modus)))
