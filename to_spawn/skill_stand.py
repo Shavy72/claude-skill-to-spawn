@@ -30,15 +30,6 @@ ZWEIG = "main"
 KURZ = 12
 _TIMEOUT = 15.0
 AKTUELL, VERALTET, UNBEKANNT = "aktuell", "veraltet", "unbekannt"
-#: Unter Windows ohne sichtbares Konsolenfenster (eigenständig ohne Paket-Import).
-_OHNE_FENSTER: dict[str, int] = (
-    {
-        "creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0)
-        | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-    }
-    if sys.platform == "win32"
-    else {}
-)
 
 
 def _git(ort: Path, *args: str) -> str | None:
@@ -57,7 +48,9 @@ def _git(ort: Path, *args: str) -> str | None:
             errors="replace",
             check=False,
             timeout=_TIMEOUT,
-            **_OHNE_FENSTER,
+            # Eigenständig (Installer startet das Modul als Skript), daher ohne prozessbaum.fensterlos():
+            # Ausgabe ist abgefangen, ohne Fenster also immer unschädlich (#658).
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
     except (OSError, subprocess.TimeoutExpired) as fehler:
         log.warning("git %s: %s", " ".join(args[:2]), fehler)

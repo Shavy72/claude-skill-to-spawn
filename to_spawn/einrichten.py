@@ -114,7 +114,7 @@ def _git(wurzel: Path, *args: str) -> tuple[int, str]:
             errors="replace",
             check=False,
             timeout=_GIT_TIMEOUT,
-            **prozessbaum.ohne_fenster(),
+            **prozessbaum.fensterlos(),
         )
     except subprocess.TimeoutExpired:
         log.warning(
