@@ -73,7 +73,7 @@ def test_einwurf_dann_antwort(briefkasten: ModuleType, tmp_path: Path) -> None:
 
 def test_zweite_frage_wartet_wieder_und_alte_antwort_bleibt(briefkasten: ModuleType, tmp_path: Path) -> None:
     fa = briefkasten.einwerfen("7", "A?", "a", 3, [], hauptbaum=tmp_path)
-    briefkasten.antworten("7", fa, "a", [], "passt", hauptbaum=tmp_path)
+    briefkasten.antworten("7", fa, "a", ["Beleg"], "passt", hauptbaum=tmp_path)
     fb = briefkasten.einwerfen("7", "B?", "b", 3, [], hauptbaum=tmp_path)
     assert briefkasten.lesen("7", fb, hauptbaum=tmp_path) == briefkasten.WARTET
     assert [e["was"] for e in briefkasten.liste(["7"], hauptbaum=tmp_path)] == ["A? → a"]
@@ -99,7 +99,7 @@ def test_klasse_2_von_hand_beantwortet_bleibt_nutzer(briefkasten: ModuleType, tm
 def test_halbe_datei_sperrt(briefkasten: ModuleType, tmp_path: Path) -> None:
     # Seit PR 306 strenger: halbe Datei = NUTZER (fail-closed, sichtbar), nicht mehr WARTET.
     fid = briefkasten.einwerfen("7", "A?", "a", 3, [], hauptbaum=tmp_path)
-    briefkasten.antworten("7", fid, "a", [], "passt", hauptbaum=tmp_path)
+    briefkasten.antworten("7", fid, "a", ["Beleg"], "passt", hauptbaum=tmp_path)
     datei = tmp_path / ".to-spawn" / "entscheidung-7.json"
     inhalt = datei.read_text(encoding="utf-8")
     datei.write_text(inhalt[: len(inhalt) // 2], encoding="utf-8")
@@ -369,9 +369,9 @@ def test_antwort_fuer_q1_landet_nicht_an_q2(briefkasten: ModuleType, tmp_path: P
     q1 = briefkasten.einwerfen("7", "Q1?", "a", 3, [], hauptbaum=tmp_path)
     q2 = briefkasten.einwerfen("7", "Q2?", "b", 3, [], hauptbaum=tmp_path)
     assert q1 != q2
-    briefkasten.antworten("7", q1, "a", [], "für Q1", hauptbaum=tmp_path)  # P3a: jede offene per id
+    briefkasten.antworten("7", q1, "a", ["Beleg"], "für Q1", hauptbaum=tmp_path)  # P3a: jede offene per id
     assert briefkasten.lesen("7", q2, hauptbaum=tmp_path) == briefkasten.WARTET
-    briefkasten.antworten("7", q2, "b", [], "für Q2", hauptbaum=tmp_path)
+    briefkasten.antworten("7", q2, "b", ["Beleg"], "für Q2", hauptbaum=tmp_path)
     assert briefkasten.lesen("7", q2, hauptbaum=tmp_path).wahl == "b"
     assert briefkasten.lesen("7", q1, hauptbaum=tmp_path).wahl == "a"
     assert briefkasten.lesen("7", "ffff", hauptbaum=tmp_path) == briefkasten.UNBEKANNT  # P3b: unbekannte id
@@ -425,7 +425,7 @@ def test_klasse_2_nach_nutzer_antwort_gibt_klasse_3_frei(briefkasten: ModuleType
     datei.write_text(json.dumps(daten), encoding="utf-8")
     assert briefkasten.lesen("7", q2, hauptbaum=tmp_path).von == "nutzer"  # P3a: Session sieht sie
     q3 = briefkasten.einwerfen("7", "Ordner?", "neu", 3, [], hauptbaum=tmp_path)
-    briefkasten.antworten("7", q3, "neu", [], "passt", hauptbaum=tmp_path)
+    briefkasten.antworten("7", q3, "neu", ["Beleg"], "passt", hauptbaum=tmp_path)
     assert briefkasten.lesen("7", q3, hauptbaum=tmp_path).wahl == "neu"
 
 
@@ -450,9 +450,9 @@ def test_liste_zeigt_klasse_2_nie_als_aufseher_antwort(briefkasten: ModuleType, 
 
 def test_antworten_auf_beantwortete_frage(briefkasten: ModuleType, tmp_path: Path) -> None:
     fid = briefkasten.einwerfen("7", "A?", "a", 3, [], hauptbaum=tmp_path)
-    briefkasten.antworten("7", fid, "a", [], "passt", hauptbaum=tmp_path)
+    briefkasten.antworten("7", fid, "a", ["Beleg"], "passt", hauptbaum=tmp_path)
     with pytest.raises(ValueError):
-        briefkasten.antworten("7", fid, "b", [], "doch nicht", hauptbaum=tmp_path)
+        briefkasten.antworten("7", fid, "b", ["Beleg"], "doch nicht", hauptbaum=tmp_path)
     assert briefkasten.lesen("7", fid, hauptbaum=tmp_path).wahl == "a"
 
 

@@ -17,13 +17,33 @@ import time
 from pathlib import Path
 from typing import Any, Sequence, TextIO
 
-from . import capo, manifest, probesitz, stand, starter, umzug
+from . import capo, config, manifest, probesitz, stand, starter, umzug
 
 log = logging.getLogger("to_spawn.spawn")
 
 SKILL_ORDNER = Path(__file__).resolve().parent.parent
 SKRIPTE = {"local": "spawn_local.ps1", "srv": "spawn_srv.ps1"}
 SPAWN_SH = SKILL_ORDNER / "skripte" / "spawn_srv.sh"
+_FEHLER_SERVER_REPO = (
+    "Ziel Server braucht `server_repo` in .to-spawn/config.json "
+    "(Repo-Ordner auf dem Bau-Server) — auf dem Server: --ziel local."
+)
+
+
+def ziel_aufloesen(ziel: str, konfig: dict[str, Any]) -> str:
+    """Auf dem Bau-Server selbst gilt ``srv`` wie ``local`` — kein SSH auf sich selbst (#408)."""
+    if ziel == "srv" and config.ist_bau_server(konfig):
+        log.info("Läuft auf dem Bau-Server — Ziel srv wird wie local behandelt.")
+        return "local"
+    return ziel
+
+
+def _server_repo_pflicht(konfig: dict[str, Any]) -> str:
+    """``server_repo`` für Fern-Start per SSH; fehlt es, ``ValueError`` mit Hinweis (#408)."""
+    wert = str(konfig.get("server_repo") or "").strip()
+    if not wert:
+        raise ValueError(_FEHLER_SERVER_REPO)
+    return wert
 
 
 def frage_ziel(vorgabe: str, eingabe: TextIO | None = None) -> str:
@@ -51,18 +71,22 @@ def baue_befehl(
 ) -> list[str]:
     """argv des Terminal-Skripts; auf Nicht-Windows ohne ``pwsh`` (#257).
 
-    ``srv`` braucht dort ``server_repo`` aus der Konfig (Repo-Ordner auf dem Bau-Server) —
-    fehlt er, ``ValueError`` mit klarer Meldung statt eines blinden SSH-Aufrufs.
+    Auf dem Bau-Server selbst wird ``srv`` wie ``local`` behandelt (#408). Sonst braucht
+    ``srv`` ``server_repo`` aus der Konfig (Repo-Ordner auf dem Bau-Server) — fehlt er,
+    ``ValueError`` mit klarer Meldung statt eines blinden SSH-Aufrufs.
     """
+    ziel = ziel_aufloesen(ziel, konfig)
     if sys.platform != "win32":
         return _befehl_unix(ziel, spec, tickets, konfig, dry_run)
+    if ziel == "srv":
+        _server_repo_pflicht(konfig)
     skript = SKILL_ORDNER / SKRIPTE[ziel]
     pwsh = shutil.which("pwsh") or shutil.which("powershell") or "pwsh"
     befehl = [pwsh, "-File", str(skript), "-Spec", str(spec)]
     if tickets:
         befehl += ["-Tickets", ",".join(str(t) for t in tickets)]
     if ziel == "srv":
-        befehl += ["-Zielserver", str(konfig.get("ssh_ziel", "bau-server"))]
+        befehl += ["-Zielserver", config.ssh_ziel(konfig)]
     if dry_run:
         befehl.append("-DryRun")
     return befehl
@@ -91,14 +115,8 @@ def _befehl_unix(
         argumente.append("--dry-run")
     if ziel == "local":
         return ["bash", str(SPAWN_SH), *argumente]
-    server_repo = str(konfig.get("server_repo") or "").strip()
-    if not server_repo:
-        raise ValueError(
-            "Ziel Server braucht `server_repo` in .to-spawn/config.json "
-            "(Repo-Ordner auf dem Bau-Server) — oder lokal starten (Ziel 1)."
-        )
-    ssh_ziel = str(konfig.get("ssh_ziel") or "bau-server")
-    return ["ssh", ssh_ziel, umzug.fern_skill_befehl(server_repo, "bash", "spawn_srv.sh", argumente)]
+    server_repo = _server_repo_pflicht(konfig)
+    return ["ssh", config.ssh_ziel(konfig), umzug.fern_skill_befehl(server_repo, "bash", "spawn_srv.sh", argumente)]
 
 
 def spawn(
@@ -121,6 +139,7 @@ def spawn(
     if gewaehlt not in SKRIPTE:
         log.error("Unbekanntes Ziel: %s", gewaehlt)
         return 2
+    gewaehlt = ziel_aufloesen(gewaehlt, konfig)
     try:
         befehl = baue_befehl(gewaehlt, spec, tickets, konfig, dry_run)
     except ValueError as fehler:
@@ -214,10 +233,12 @@ def neustart(
     zuerst nur die Claude-Session beendet (ohne Session ``bau.py`` selbst, das dann
     nichts mehr zu tun hat), nie ein fremder Prozess.
     """
+    ziel = ziel_aufloesen(ziel, konfig)
     if ziel == "srv":
-        server_repo = str(konfig.get("server_repo") or "").strip()
-        if not server_repo:
-            log.error("Ziel Server braucht `server_repo` in .to-spawn/config.json.")
+        try:
+            server_repo = _server_repo_pflicht(konfig)
+        except ValueError as fehler:
+            log.error("%s", fehler)
             return 2
         stand_rc = stand.sichere_stand(repo, konfig, nur_pruefen=dry_run)
         if stand_rc != 0 and not (dry_run and stand_rc == stand.EXIT_ABWEICHEND):
@@ -233,7 +254,7 @@ def neustart(
             f"cd {fern_ordner(server_repo)} && "
             f"python3 ~/.claude/skills/to-spawn/to_spawn.py {shlex.join(argumente)}"
         )
-        befehl = ["ssh", str(konfig.get("ssh_ziel") or "bau-server"), fern]
+        befehl = ["ssh", config.ssh_ziel(konfig), fern]
         print(" ".join(befehl[:2]), repr(fern))
         return starter.starte(befehl, cwd=repo, check=False, warten=True).returncode
 

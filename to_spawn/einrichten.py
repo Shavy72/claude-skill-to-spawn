@@ -50,9 +50,38 @@ _GH_TIMEOUT = 15.0
 _GIT_TIMEOUT = 15.0
 
 #: Ergebnis von ``pruefe``: ``DA`` = in Ordnung, ``FEHLT`` = ``lege_an`` kann es
-#: richten, ``LUECKE`` = nur von Hand zu richten (große Lücke).
-DA, FEHLT, LUECKE = "da_aktuell", "fehlt", "grosse_luecke"
+#: richten, ``LUECKE`` = nur von Hand zu richten (große Lücke),
+#: ``NICHT_PRUEFBAR`` = hier/jetzt nicht prüfbar (kein Fehler, keine Abweichung).
+DA, FEHLT, LUECKE, NICHT_PRUEFBAR = (
+    "da_aktuell",
+    "fehlt",
+    "grosse_luecke",
+    "nicht_pruefbar",
+)
 Befund = tuple[str, str]
+
+#: Die drei Zustände für ``einrichten --pruefen`` (#216): Text und Zustand kommen
+#: aus genau einer Stelle (:func:`_pruefe_baustein`) und können sich nicht widersprechen.
+PRUEF_OK = DA
+PRUEF_ABWEICHUNG = "weicht_ab"
+PRUEF_UNPRUEFBAR = NICHT_PRUEFBAR
+PRUEF_ZUSTAENDE: tuple[str, str, str] = (
+    PRUEF_OK,
+    PRUEF_ABWEICHUNG,
+    PRUEF_UNPRUEFBAR,
+)
+
+
+@dataclass(frozen=True)
+class PruefBefund:
+    """Prüf-Ergebnis eines Bausteins für ``--pruefen``: Zustand und Text aus einer Stelle."""
+
+    zustand: str
+    text: str
+
+    @property
+    def weicht_ab(self) -> bool:
+        return self.zustand == PRUEF_ABWEICHUNG
 
 
 @dataclass(frozen=True)
@@ -247,6 +276,8 @@ def _nicht_ignoriert(ort: Ort) -> dict[str, str]:
 
 
 def _pruefe_gitignore(ort: Ort) -> Befund:
+    if _git(ort.wurzel, "rev-parse", "--git-dir")[0] != 0:
+        return NICHT_PRUEFBAR, "kein Git-Repo"
     offen = _nicht_ignoriert(ort)
     if not offen:
         return DA, "Laufdateien ignoriert"
@@ -416,7 +447,10 @@ def _pruefe_server_klon(ort: Ort) -> Befund:
     if (Path(ordner).expanduser() / ".git").exists():
         return DA, f"{ordner} auf diesem Rechner"
     # ponytail: kein SSH-Aufruf je Spawn, Server-Klon nur lokal geprüft; Upgrade: ssh test -d in Etappe 3.
-    return DA, f"{ordner} auf {umzug.ssh_ziel(konfig)} nicht geprüft (kein Netz-Aufruf)"
+    return (
+        NICHT_PRUEFBAR,
+        f"{ordner} auf {umzug.ssh_ziel(konfig)} nicht geprüft (kein Netz-Aufruf)",
+    )
 
 
 def _pruefe_gh(ort: Ort) -> Befund:
@@ -435,9 +469,13 @@ def _pruefe_venv(ort: Ort) -> Befund:
 
 
 def _pruefe_skill_aktuell(ort: Ort) -> Befund:
-    """Installierte Kopie gegen ``main`` des Skill-Repos; nicht erreichbar = nur Hinweis."""
+    """Installierte Kopie gegen ``main`` des Skill-Repos; unbekannt = nicht prüfbar."""
     zustand, text = skill_stand.vergleich()
-    return (LUECKE, text) if zustand == skill_stand.VERALTET else (DA, text)
+    if zustand == skill_stand.AKTUELL:
+        return DA, text
+    if zustand == skill_stand.VERALTET:
+        return LUECKE, text
+    return NICHT_PRUEFBAR, text
 
 
 _BAUSTEINE: list[Baustein] = [
@@ -477,6 +515,27 @@ def _sicher(aufruf: Callable[[Ort], Befund], ort: Ort) -> Befund:
         return LUECKE, f"Prüfung scheiterte: {fehler}"
 
 
+def _pruefe_baustein(
+    baustein: Baustein, ort: Ort, version_alt: int | None
+) -> PruefBefund:
+    """Wertet einen Baustein für ``--pruefen`` an genau einer Stelle aus (#216).
+
+    Liefert immer einen der drei Zustände aus :data:`PRUEF_ZUSTAENDE` zusammen mit
+    dem dazu passenden Text — Zustand und Text können sich nicht widersprechen.
+    """
+    befund, text = _sicher(baustein.pruefe, ort)
+    if befund == NICHT_PRUEFBAR:
+        return PruefBefund(PRUEF_UNPRUEFBAR, text)
+    if befund != DA:
+        return PruefBefund(PRUEF_ABWEICHUNG, text)
+    if version_alt is not None and version_alt != baustein.version:
+        return PruefBefund(
+            PRUEF_ABWEICHUNG,
+            f"Stand-Version {version_alt} statt {baustein.version} ({text})",
+        )
+    return PruefBefund(PRUEF_OK, text)
+
+
 def einrichten(
     repo: Path, *, pruefen: bool = False, ausgabe: TextIO = sys.stdout
 ) -> int:
@@ -496,18 +555,17 @@ def einrichten(
     ausgabe.write(f"{'Prüfen' if pruefen else 'Einrichten'}: {ort.wurzel}\n")
     for baustein in _BAUSTEINE:
         version_alt = alt.get(baustein.name)
+        if pruefen:
+            ergebnis = _pruefe_baustein(baustein, ort, version_alt)
+            if ergebnis.weicht_ab:
+                abweichungen.append(baustein.name)
+            ausgabe.write(f"  {baustein.name}: {ergebnis.zustand} — {ergebnis.text}\n")
+            continue
         befund, text = _sicher(baustein.pruefe, ort)
-        if befund == DA and (
-            version_alt == baustein.version or (version_alt is None and not pruefen)
+        if befund in (DA, NICHT_PRUEFBAR) and (
+            version_alt == baustein.version or version_alt is None
         ):
             zustand = DA
-        elif pruefen:
-            zustand = (
-                befund
-                if befund != DA
-                else ("veraltet" if version_alt is not None else "nicht eingerichtet")
-            )
-            abweichungen.append(baustein.name)
         else:
             if baustein.lege_an is not None:
                 try:
@@ -529,9 +587,9 @@ def einrichten(
                 befund, text = _sicher(baustein.pruefe, ort)
             else:
                 vorher = befund
-            if befund != DA:
+            if befund not in (DA, NICHT_PRUEFBAR):
                 zustand = LUECKE
-            elif vorher == DA or (
+            elif vorher in (DA, NICHT_PRUEFBAR) or (
                 version_alt is not None and version_alt != baustein.version
             ):
                 zustand = "nachgezogen"
