@@ -17,7 +17,8 @@ import sys
 from pathlib import Path
 
 import pytest
-from conftest import attrappe
+
+from conftest import attrappe, repo_dateien
 
 SKILL = Path(__file__).resolve().parent.parent
 CLI = SKILL / "to_spawn.py"
@@ -607,9 +608,43 @@ def test_rechte_eintragen_nur_mit_ja_ohne_doppelte(tmp_path: Path) -> None:
 
 
 def test_nest_ordner_ohne_repo_eigene_namen() -> None:
-    for datei in [*NEST.rglob("*"), SKILL / "to_spawn" / "nest.py"]:
-        if datei.is_file():
-            assert "duoplus" not in datei.read_text(encoding="utf-8").lower(), datei
+    for datei in [*repo_dateien(NEST), SKILL / "to_spawn" / "nest.py"]:
+        try:
+            text = datei.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            continue
+        assert "duoplus" not in text.lower(), datei
+
+
+def test_nest_ordner_ueberspringt_pycache_und_binaer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#532: übrig gebliebene ``nest/__pycache__/*.pyc`` und Binärdateien machen den Wächter nicht rot."""
+    # Fall 1: Git-Repo mit getrackter Textdatei + ungetracktem __pycache__/x.pyc (Zufalls-Bytes)
+    repo = _neues_repo(tmp_path / "repo")
+    nest_git = repo / "nest"
+    nest_git.mkdir()
+    (nest_git / "sauber.sh").write_text("#!/usr/bin/env bash\necho ok\n", encoding="utf-8")
+    _git(repo, "add", "nest/sauber.sh")
+    (nest_git / "__pycache__").mkdir()
+    (nest_git / "__pycache__" / "x.pyc").write_bytes(b"\xcb\r\r\n\x00\x80\xff\xfe\xde\xad")
+    monkeypatch.setattr(sys.modules[__name__], "NEST", nest_git)
+    test_nest_ordner_ohne_repo_eigene_namen()
+
+    # Gegenprobe: getrackte Datei mit verbotenem Namen schlägt weiter an
+    (nest_git / "verboten.sh").write_text("echo duoplus\n", encoding="utf-8")
+    _git(repo, "add", "nest/verboten.sh")
+    with pytest.raises(AssertionError):
+        test_nest_ordner_ohne_repo_eigene_namen()
+
+    # Fall 2: Ohne git (Rückfall) überspringt der Wächter __pycache__ und Binärdateien ebenfalls
+    nest_lose = tmp_path / "ohne-git" / "nest"
+    (nest_lose / "__pycache__").mkdir(parents=True)
+    (nest_lose / "sauber.sh").write_text("#!/usr/bin/env bash\necho ok\n", encoding="utf-8")
+    (nest_lose / "__pycache__" / "x.pyc").write_bytes(b"\xcb\r\r\n\x00\x80\xff\xfe")
+    (nest_lose / "bild.bin").write_bytes(b"\x89PNG\r\n\x1a\n\x80\xff")
+    monkeypatch.setattr(sys.modules[__name__], "NEST", nest_lose)
+    test_nest_ordner_ohne_repo_eigene_namen()
 
 
 @pytest.mark.parametrize("name", ["nest_server.sh", "nest_push.sh", "ssh_durch_sandbox.sh"])
