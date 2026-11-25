@@ -222,8 +222,9 @@ Modul liest sie über `config.lade` / `config.pfad` / `config.maschine`. Ein fre
   Ordner (`~/.ssh/*`) lehnt der Hausmeister ab.
   `ticket_repo` sagt, in welchem Repo die Nummer eines Helfer-Ordners mit diesem `origin` ein
   Ticket ist; die Vorgabe gibt jedem Repo seine eigenen Tickets (Skill-Ordner fragen das
-  Skill-Repo, #235). Der Einrichter füllt nur leere Felder — ein altes `ticket_repo` in einer
-  bestehenden Liste bleibt stehen, bis es von Hand angepasst wird. Die Nummer liest der
+  Skill-Repo, #235). Bekannte veraltete Vorgaben zieht der Einrichter (und der Installer per
+  `to_spawn.py ticket-repo --nachziehen`) selbst nach; einzelne Einträge lassen sich über
+  `to_spawn.py ticket-repo <eintrag> <ticket_repo>` ausdrücklich ändern (#261). Die Nummer liest der
   Hausmeister aus Ordnername und Zweig (`ticket/<N>-…`, `l<Etappe>/<N>[a-z]-…`, Formen nur in
   `hausmeister._ZWEIG_FORMEN`; Zweig + origin → Ticket-Repo + Nummer nur über
   `hausmeister.zweig_zu_ticket`); Ordner ohne Nummer räumt er erst, wenn 24 h nichts geändert
