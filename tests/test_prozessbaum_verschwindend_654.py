@@ -358,8 +358,9 @@ def test_lebender_eigener_prozess_peb_unlesbar_bleibt_sichere_seite(
 @pytest.mark.skipif(sys.platform != "win32", reason="echter Windows-PEB-Weg nur unter Windows")
 def test_echt_windows_prozess_endet_waehrend_pruefung_ordner_frei(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
     """Echter Prozess endet zwischen cwd-Lesen und Griff-Prüfung → Ordner wird geräumt."""
-    wt = welt.worktree(6541)
-    welt.ticket(6541, "CLOSED", 48)
+    # Ticket-Nummern müssen im Bereich 1–4999 liegen (hausmeister._TICKET_NR, #1526).
+    wt = welt.worktree(4654)
+    welt.ticket(4654, "CLOSED", 48)
     proc = subprocess.Popen(
         [sys.executable, "-c", "import time; time.sleep(60)"],
         cwd=welt.tmp,
@@ -379,6 +380,7 @@ def test_echt_windows_prozess_endet_waehrend_pruefung_ordner_frei(welt: Welt, mo
     monkeypatch.setattr(prozessbaum, "_arbeitsordner_drin", stirbt_dann_pruefen)
     try:
         r = welt.aufraeumen(wt, loeschen=True)
+        assert proc.poll() is not None
         assert r.art == "gelöscht" and not r.fehler, r.grund
         assert not wt.exists()
     finally:
@@ -390,8 +392,8 @@ def test_echt_windows_prozess_endet_waehrend_pruefung_ordner_frei(welt: Welt, mo
 @pytest.mark.skipif(sys.platform != "win32", reason="echter Windows-PEB-Weg nur unter Windows")
 def test_echt_windows_zugriff_verweigert_bleibt_sichere_seite(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
     """Echter lebender Prozess mit Zugriffsverweigerung beim Griff-Lesen hält den Ordner."""
-    wt = welt.worktree(6542)
-    welt.ticket(6542, "CLOSED", 48)
+    wt = welt.worktree(4655)
+    welt.ticket(4655, "CLOSED", 48)
     proc = subprocess.Popen(
         [sys.executable, "-c", "import time; time.sleep(60)"],
         cwd=welt.tmp,
