@@ -38,11 +38,12 @@ import socket
 import subprocess
 import sys
 import tempfile
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from . import prozessbaum, vorgaben
+from . import prozessbaum, skill_stand, vorgaben
 
 log = logging.getLogger("to_spawn.config")
 
@@ -188,6 +189,19 @@ DEFAULTS: dict[str, Any] = {
     "start_text": {
         "zusatz_datei": "",
     },
+    #: Git-Hooks / Push-Sperre (#413): Pfad des Hook-Installers (und optional der
+    #: Begleit-Datei, relativ zur Repo-Wurzel auf ``origin/<hauptzweig>``). Leer = nicht
+    #: eingetragen (fremdes Repo wird nicht mit app-spezifischem Pfad gewarnt).
+    "git_hooks": {
+        "installer": "",
+        "sperre": "",
+    },
+    #: Repo-Skills (#413): ``pflicht`` = Skill-Namen, die dieses Repo in Bau-Sessions
+    #: erwartet und prüft (fehlt einer auf dem Rechner → Warnung). Leer = keine eigene
+    #: Skill-Prüfung des Repos.
+    "skills": {
+        "pflicht": [],
+    },
     "speicher": {
         "min_frei_mib": 2048,
         "max_sessions": 6,
@@ -245,9 +259,7 @@ class KeinHeimOrdner(RuntimeError):
     """Heimat-Ordner nicht bestimmbar (weder ``HOME`` noch ``USERPROFILE`` gesetzt, #212)."""
 
 
-_KEIN_HEIM_MELDUNG = (
-    "Heimat-Ordner nicht bestimmbar: weder HOME noch USERPROFILE in der Umgebung gesetzt."
-)
+_KEIN_HEIM_MELDUNG = "Heimat-Ordner nicht bestimmbar: weder HOME noch USERPROFILE in der Umgebung gesetzt."
 
 
 def _ist_path_home_umgebogen() -> bool:
@@ -701,13 +713,13 @@ def sicherstellen(repo: Path | None = None) -> Path:
     return datei
 
 
-def _gruppe(konfig: dict[str, Any], name: str) -> dict[str, Any]:
+def _gruppe(konfig: Mapping[str, Any], name: str) -> dict[str, Any]:
     """Verschachtelte Gruppe ``name`` der Konfig; fehlt sie oder ist kaputt → ``{}``."""
     gruppe = konfig.get(name)
     return gruppe if isinstance(gruppe, dict) else {}
 
 
-def _text(gruppe: dict[str, Any], schluessel: str) -> str:
+def _text(gruppe: Mapping[str, Any], schluessel: str) -> str:
     """Textwert ohne Rand-Leerzeichen; ``""`` = nicht eingerichtet.
 
     Nur echter Text zählt (#448): fehlt der Wert, ist er ``None`` oder kein Text (Liste,
@@ -727,8 +739,50 @@ def _text(gruppe: dict[str, Any], schluessel: str) -> str:
     return wert.strip()
 
 
-def _staging_gruppe(konfig: dict[str, Any]) -> dict[str, Any]:
+def _staging_gruppe(konfig: Mapping[str, Any]) -> dict[str, Any]:
     return _gruppe(konfig, "staging")
+
+
+def git_hooks_konfig(konfig: Mapping[str, Any]) -> tuple[str, str]:
+    """Konfigurierte Git-Hook-Pfade ``(installer, sperre)`` aus ``git_hooks`` (#413); leer = nicht eingetragen."""
+    gruppe = _gruppe(konfig, "git_hooks")
+    return _text(gruppe, "installer"), _text(gruppe, "sperre")
+
+
+def repo_skills(konfig: Mapping[str, Any]) -> list[str]:
+    """Repo-eigene Pflicht-Skills aus ``skills.pflicht`` (#413); fehlt/leer → ``[]``.
+
+    Erlaubt als Abkürzung auch eine Liste direkt unter ``skills`` (``"skills": ["…"]``);
+    ungültige Typen melden eine Warnung und gelten als leer.
+    """
+    roh = konfig.get("skills")
+    if roh is None:
+        return []
+    if isinstance(roh, dict):
+        werte = roh.get("pflicht")
+        if werte is None:
+            return []
+    elif isinstance(roh, list):
+        werte = roh
+    else:
+        log.warning(
+            "Konfig-Wert 'skills' hat ungültigen Typ (%s) — gilt als leer",
+            type(roh).__name__,
+        )
+        return []
+    if not isinstance(werte, list):
+        log.warning(
+            "Konfig-Wert 'skills.pflicht' ist keine Liste (%s) — gilt als leer",
+            type(werte).__name__,
+        )
+        return []
+    ergebnis: list[str] = []
+    for eintrag in werte:
+        if isinstance(eintrag, str) and eintrag.strip():
+            name = eintrag.strip()
+            if name not in ergebnis:
+                ergebnis.append(name)
+    return ergebnis
 
 
 def pruef_befehl(konfig: dict[str, Any], art: str) -> str:
@@ -863,6 +917,32 @@ def pfad(konfig: dict[str, Any], name: str) -> Path:
     return _wurzel_von(konfig) / Path(text).expanduser()
 
 
+def ist_skill_slug(slug: str) -> bool:
+    """``True``, wenn ``slug`` zu den eigenen Skill-Slugs (:data:`OEFFENTLICHE_SLUGS`) zählt."""
+    return slug.strip().lower() in {s.lower() for s in OEFFENTLICHE_SLUGS}
+
+
+def repo_klon_pfad(eintrag: dict[str, str], *, skill: Path | None = None) -> Path | None:
+    """Aufgelöster Klon-Ordner für einen ``repos[]``-Eintrag der Maschinen-Liste (#707).
+
+    Einzige Stelle für die Reihenfolge „Maschinen-Liste vor ``STAND.json``“:
+    1. Existiert ``eintrag["pfad"]`` als Ordner, gilt er (Maschinen-Liste gewinnt).
+    2. Fehlt er bei einem Skill-Eintrag (:data:`OEFFENTLICHE_SLUGS`), liefert
+       :func:`skill_stand.klon_ordner` den echten Klon aus ``STAND.json`` (``klon``).
+    3. Existiert keiner der beiden, bleibt der konfigurierte Pfad (falls gesetzt)
+       erhalten, damit Aufrufer ihn klar loggen können; leer ergibt ``None``.
+    """
+    roh = (eintrag.get("pfad") or "").strip()
+    pfad = expand_heim(roh) if roh else None
+    if pfad is not None and pfad.is_dir():
+        return pfad
+    if ist_skill_slug(eintrag.get("slug") or ""):
+        aus_stempel = skill_stand.klon_ordner(skill)
+        if aus_stempel is not None:
+            return aus_stempel
+    return pfad
+
+
 def maschine_datei() -> Path:
     """Ort der Maschinen-Liste: ``TO_SPAWN_MASCHINE``, sonst ``~/.config/to-spawn/maschine.json``."""
     roh = os.environ.get("TO_SPAWN_MASCHINE")
@@ -954,13 +1034,10 @@ class TicketRepoAenderung:
 def _veraltete_ticket_repo_ziele(daten: dict[str, Any]) -> list[tuple[dict[str, str], TicketRepoAenderung]]:
     """Findet Einträge in ``daten["repos"]`` mit bekannter Alt-Vorgabe (``vorgaben.VERALTETE_TICKET_REPOS``)."""
     soll_je_slug = {
-        e["slug"].lower(): e["ticket_repo"]
-        for e in vorgaben.REPOS
-        if e.get("slug") and e.get("ticket_repo")
+        e["slug"].lower(): e["ticket_repo"] for e in vorgaben.REPOS if e.get("slug") and e.get("ticket_repo")
     }
     alt_je_slug = {
-        slug.lower(): {wert.lower() for wert in werte}
-        for slug, werte in vorgaben.VERALTETE_TICKET_REPOS.items()
+        slug.lower(): {wert.lower() for wert in werte} for slug, werte in vorgaben.VERALTETE_TICKET_REPOS.items()
     }
     treffer: list[tuple[dict[str, str], TicketRepoAenderung]] = []
     for eintrag in daten.get("repos", []):
@@ -1034,9 +1111,7 @@ def maschine_ticket_repo_setzen(ziel: str | Path, ticket_repo: str) -> list[Tick
     """
     wert = ticket_repo.strip()
     if not _TICKET_REPO_MUSTER.fullmatch(wert):
-        raise ValueError(
-            f"ticket_repo ungültig ({ticket_repo!r}) — erwartet wird <besitzer>/<name>"
-        )
+        raise ValueError(f"ticket_repo ungültig ({ticket_repo!r}) — erwartet wird <besitzer>/<name>")
     datei = maschine_datei()
     if datei.is_file() and _lies(datei)[0] is None:
         raise ValueError(f"Maschinen-Liste unlesbar ({datei}) — nicht überschrieben")

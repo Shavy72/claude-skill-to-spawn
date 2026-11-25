@@ -55,9 +55,7 @@ def _lauf(befehl: str, repo: Path, timeout_s: float) -> int | None:
             teile, cwd=str(repo), check=False, timeout=timeout_s, env=umgebung, **prozessbaum.fensterlos()
         ).returncode
     except subprocess.TimeoutExpired:
-        log.error(
-            "Zeitlimit (%g s) überschritten: %s — nichts gestartet", timeout_s, befehl
-        )
+        log.error("Zeitlimit (%g s) überschritten: %s — nichts gestartet", timeout_s, befehl)
         return None
     except (OSError, ValueError) as fehler:
         log.error("Befehl nicht ausführbar: %s (%s) — nichts gestartet", befehl, fehler)
@@ -83,9 +81,7 @@ def syntaxfehler(skill_ordner: Path) -> list[str]:
     return kaputt
 
 
-def sichere_stand(
-    repo: Path, konfig: dict[str, Any], *, nur_pruefen: bool = False
-) -> int:
+def sichere_stand(repo: Path, konfig: dict[str, Any], *, nur_pruefen: bool = False) -> int:
     """Stand prüfen, bei Abweichung pushen und nachprüfen.
 
     Rückgabe: 0 = gleich/nachgezogen/nicht eingerichtet · 3 = abweichend (nur bei
@@ -114,9 +110,7 @@ def sichere_stand(
         log.error("Stand nicht prüfbar (Exit %s) — nichts gestartet", rc)
         return EXIT_FEHLER
     if nur_pruefen:
-        log.warning(
-            "Stand-Check: Bau-Server weicht ab — echter Start würde erst pushen."
-        )
+        log.warning("Stand-Check: Bau-Server weicht ab — echter Start würde erst pushen.")
         return EXIT_ABWEICHEND
     if not push:
         log.error("Bau-Server weicht ab, aber `stand.push` ist leer — nichts gestartet")
@@ -136,9 +130,7 @@ def sichere_stand(
     if rc is None:
         return EXIT_FEHLER
     if rc != 0:
-        log.error(
-            "Push auf den Bau-Server gescheitert (Exit %s) — nichts gestartet", rc
-        )
+        log.error("Push auf den Bau-Server gescheitert (Exit %s) — nichts gestartet", rc)
         return EXIT_FEHLER
 
     log.info("Push fertig — Stand-Check erneut.")

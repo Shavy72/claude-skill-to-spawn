@@ -121,7 +121,8 @@ def _kein_arbeitsordner_drin(ordner: Path) -> None:
         if pid == os.getpid():
             continue  # dieser Lauf selbst
         if befund.text is None:
-            raise Bleibt(f"Prozess {pid}: Arbeitsordner nicht lesbar", fehler=True)
+            zusatz = f" ({befund.grund})" if befund.grund else ""
+            raise Bleibt(f"Prozess {pid}: Arbeitsordner nicht lesbar{zusatz}", fehler=True)
         if befund.drin:
             raise Bleibt(f"Prozess {pid} arbeitet im Ordner oder hat Dateien offen")
         if befund.drin is None:

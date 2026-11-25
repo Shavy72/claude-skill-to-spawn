@@ -65,9 +65,7 @@ def hauptschalter(spec_text: str) -> str | None:
     (Platzhalter ``<spec-kurzname>.an``), kommt :class:`NameUnlesbar` — nie ein
     anderer Name aus derselben Zeile (Vorbild ``story_macher.an``).
     """
-    abschnitt = re.search(
-        r"^##\s+Hauptschalter\s*$(.*?)(?=^##\s|\Z)", spec_text, re.MULTILINE | re.DOTALL
-    )
+    abschnitt = re.search(r"^##\s+Hauptschalter\s*$(.*?)(?=^##\s|\Z)", spec_text, re.MULTILINE | re.DOTALL)
     if not abschnitt:
         return None
     for zeile in abschnitt.group(1).splitlines():
@@ -128,21 +126,19 @@ def schalte_an(repo: Path, gh_repo: str, spec: int, dry_run: bool) -> Ergebnis:
     """
     text = _spec_text(gh_repo, spec)
     if text is None:
-        return Ergebnis(
-            [f"FEHLER: Staging-Schalter — Spec-Text #{spec} nicht lesbar (gh)."], False
-        )
+        return Ergebnis([f"FEHLER: Staging-Schalter — Spec-Text #{spec} nicht lesbar (gh)."], False)
     try:
         name = hauptschalter(text)
     except NameUnlesbar as fehler:
         log.warning("Staging-Schalter: Name in Spec #%s unlesbar: %s", spec, fehler)
         return Ergebnis(
-            [
-                f"FEHLER: Staging-Schalter — Name des Hauptschalters in Spec #{spec} unlesbar: {fehler}"
-            ],
+            [f"FEHLER: Staging-Schalter — Name des Hauptschalters in Spec #{spec} unlesbar: {fehler}"],
             False,
         )
     if name is None:
-        meldung = f"Staging-Schalter: Spec #{spec} hat kein Hauptschalter-Feld — nichts geschaltet (kein Hauptschalter)."
+        meldung = (
+            f"Staging-Schalter: Spec #{spec} hat kein Hauptschalter-Feld — nichts geschaltet (kein Hauptschalter)."
+        )
         log.info("%s", meldung)
         return Ergebnis([meldung], True)
     skript = _skript(repo)
@@ -175,9 +171,7 @@ def schalte_an(repo: Path, gh_repo: str, spec: int, dry_run: bool) -> Ergebnis:
     except (OSError, subprocess.TimeoutExpired) as fehler:
         log.warning("Staging-Schalter %s: Aufruf gescheitert: %s", name, fehler)
         return Ergebnis(
-            [
-                f"FEHLER: Staging-Schalter {name} nicht geschaltet ({fehler}) — nächster Tick versucht es wieder."
-            ],
+            [f"FEHLER: Staging-Schalter {name} nicht geschaltet ({fehler}) — nächster Tick versucht es wieder."],
             False,
         )
     if lauf.returncode != 0:

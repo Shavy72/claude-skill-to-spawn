@@ -30,9 +30,7 @@ SPEC = 450
 
 
 def _git(ordner: Path, *args: str) -> str:
-    return subprocess.run(
-        ["git", *args], cwd=str(ordner), check=True, capture_output=True, text=True
-    ).stdout.strip()
+    return subprocess.run(["git", *args], cwd=str(ordner), check=True, capture_output=True, text=True).stdout.strip()
 
 
 _MINI_VENV: list[Path] = []
@@ -59,9 +57,7 @@ def _gh_still(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(startklar, "_gh_issue_text", lambda _ordner, _nummer: "")
 
 
-def _repo_mit_worktree(
-    tmp_path: Path, venv_im_haupt: bool = True, name: str = "haupt"
-) -> tuple[Path, Path]:
+def _repo_mit_worktree(tmp_path: Path, venv_im_haupt: bool = True, name: str = "haupt") -> tuple[Path, Path]:
     """Echtes Hauptrepo + Worktree; Hauptrepo-.venv = Symlink auf ein echtes Mini-venv."""
     haupt = tmp_path / name
     haupt.mkdir()
@@ -81,9 +77,7 @@ def _repo_mit_worktree(
 
 
 def _py(ordner: Path) -> Path:
-    return (
-        ordner / ".venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
-    )
+    return ordner / ".venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
 
 
 # --- venv ----------------------------------------------------------------------
@@ -143,9 +137,7 @@ _bau_py() {  # gemeinsamer Aufruf fuer bau/wache/sessions
 """
 
 
-@pytest.mark.skipif(
-    os.name == "nt" or not shutil.which("bash"), reason="bash-Funktion nur unter Linux"
-)
+@pytest.mark.skipif(os.name == "nt" or not shutil.which("bash"), reason="bash-Funktion nur unter Linux")
 def test_weg_bau_funktion_exit_127_dann_0(tmp_path: Path) -> None:
     """Vorfall V2: ``bau <N>`` im Aufseher-Worktree ohne .venv → Exit 127."""
     _haupt, wt = _repo_mit_worktree(tmp_path)
@@ -217,9 +209,7 @@ def test_schluessel_aus_env_und_umgebung_ok_ohne_wert_in_ausgabe(
     wt = _schluessel_welt(tmp_path)
     (wt / ".env").write_text('# x\nexport FAL_KEY="geheim123"\n', encoding="utf-8")
     caplog.set_level(logging.DEBUG)
-    befunde = startklar.schluessel_pruefen(
-        wt, SPEC, environ={"ELEVENLABS_API_KEY": "geheim456"}
-    )
+    befunde = startklar.schluessel_pruefen(wt, SPEC, environ={"ELEVENLABS_API_KEY": "geheim456"})
     assert all(b.ok for b in befunde), befunde
     _code, ausgabe = startklar.ausgabe(befunde)
     alles = ausgabe + caplog.text + repr(befunde)
@@ -267,9 +257,7 @@ if "aufraeumen" in d["tool_input"]["command"]:
         "permissionDecision": "deny", "permissionDecisionReason": "verboten per JSON"}}))
 """
 _HOOK_HARMLOS = "import sys; sys.stdin.read()\n"
-_HOOK_KAPUTT = (
-    "import sys; sys.stdin.read(); print('kaputt', file=sys.stderr); sys.exit(1)\n"
-)
+_HOOK_KAPUTT = "import sys; sys.stdin.read(); print('kaputt', file=sys.stderr); sys.exit(1)\n"
 
 
 def _werkzeuge(tmp_path: Path) -> tuple[startklar.Werkzeug, ...]:
@@ -313,9 +301,7 @@ def _settings(tmp_path: Path, hook_code: str, matcher: str = "Bash") -> Path:
 
 
 def _probe(tmp_path: Path, settings: list[Path]) -> list[startklar.Befund]:
-    return startklar.werkzeug_probe(
-        tmp_path, SPEC, settings_dateien=settings, werkzeuge=_werkzeuge(tmp_path)
-    )
+    return startklar.werkzeug_probe(tmp_path, SPEC, settings_dateien=settings, werkzeuge=_werkzeuge(tmp_path))
 
 
 def test_hook_exit2_blockt_werkzeug(tmp_path: Path) -> None:
@@ -334,12 +320,7 @@ def test_hook_deny_json_blockt_werkzeug(tmp_path: Path) -> None:
 
 
 def test_hook_mit_anderem_matcher_greift_nicht(tmp_path: Path) -> None:
-    assert all(
-        b.ok
-        for b in _probe(
-            tmp_path, [_settings(tmp_path, _HOOK_EXIT2, matcher="Edit|Write")]
-        )
-    )
+    assert all(b.ok for b in _probe(tmp_path, [_settings(tmp_path, _HOOK_EXIT2, matcher="Edit|Write")]))
 
 
 def test_hook_harmlos_und_kaputt_kein_block(tmp_path: Path) -> None:
@@ -361,9 +342,7 @@ def test_werkzeug_fehlt_oder_scheitert(tmp_path: Path) -> None:
         ),
         startklar.Werkzeug("rot", f'{py} -c "import sys; sys.exit(3)"', py),
     )
-    befunde = startklar.werkzeug_probe(
-        tmp_path, SPEC, settings_dateien=[], werkzeuge=werkzeuge
-    )
+    befunde = startklar.werkzeug_probe(tmp_path, SPEC, settings_dateien=[], werkzeuge=werkzeuge)
     assert [b.ok for b in befunde] == [False, False], befunde
     assert "fehlt" in befunde[0].text and "Exit 3" in befunde[1].text
 
@@ -389,15 +368,10 @@ def test_ausgabe_exit_und_zeilen() -> None:
     assert startklar.ausgabe([gut])[0] == 0
     code, text = startklar.ausgabe([gut, schlecht])
     assert code == 1
-    assert (
-        "✅ venv: .venv da" in text
-        and "❌ schlüssel: FAL_KEY fehlt → Bitwarden prüfen" in text
-    )
+    assert "✅ venv: .venv da" in text and "❌ schlüssel: FAL_KEY fehlt → Bitwarden prüfen" in text
 
 
-def test_gate_verweigert_bei_rot_und_ist_abschaltbar(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture
-) -> None:
+def test_gate_verweigert_bei_rot_und_ist_abschaltbar(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     rot = [startklar.Befund("schlüssel", False, "FAL_KEY fehlt", "x")]
     caplog.set_level(logging.INFO)
     assert startklar.gate(tmp_path, SPEC, environ={}, pruefer=lambda o, s: rot) == 2
@@ -424,9 +398,7 @@ def _heim_mit_werkzeugen(tmp_path: Path) -> Path:
     return heim
 
 
-def _cli(
-    ordner: Path, heim: Path, env: dict[str, str] | None = None
-) -> subprocess.CompletedProcess[str]:
+def _cli(ordner: Path, heim: Path, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [
             sys.executable,
@@ -456,9 +428,7 @@ def test_cli_startklar_exit_1_und_0(tmp_path: Path) -> None:
     rot = _cli(wt, heim, env)
     assert rot.returncode == 1, rot.stdout + rot.stderr
     assert "❌ schlüssel" in rot.stdout and "FAL_KEY" in rot.stdout
-    (wt / ".env").write_text(
-        "FAL_KEY=geheim123\nELEVENLABS_API_KEY=geheim456\n", encoding="utf-8"
-    )
+    (wt / ".env").write_text("FAL_KEY=geheim123\nELEVENLABS_API_KEY=geheim456\n", encoding="utf-8")
     gruen = _cli(wt, heim, env)
     if gruen.returncode != 0 and "Hook" in gruen.stdout:
         pytest.skip(f"Systemweiter Hook blockt hier: {gruen.stdout}")
@@ -499,9 +469,7 @@ def test_weg_wache_verweigert_start_bei_rotem_befund(tmp_path: Path) -> None:
 # --- Fixrunde 1 (Prüfpanel Runde 1, docs/verify-hard/450/panel_runde1.md) --------
 
 
-def _wache(
-    cwd: Path, repo: Path, heim: Path, *args: str
-) -> subprocess.CompletedProcess[str]:
+def _wache(cwd: Path, repo: Path, heim: Path, *args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, str(SKILL / "skripte" / "wache.py"), str(SPEC), *args],
         cwd=str(cwd),
@@ -550,9 +518,7 @@ def test_f2_venv_ohne_pakete_aus_requirements_ist_rot(tmp_path: Path) -> None:
     ordner = tmp_path / "o"
     ordner.mkdir()
     _leere_venv(ordner)
-    (ordner / "requirements.txt").write_text(
-        "# x\ngibts-nicht-450==1.0\n", encoding="utf-8"
-    )
+    (ordner / "requirements.txt").write_text("# x\ngibts-nicht-450==1.0\n", encoding="utf-8")
     befund = startklar.venv_sicherstellen(ordner)
     assert not befund.ok, befund
     assert "gibts-nicht-450" in befund.text
@@ -582,9 +548,7 @@ def test_f2_venv_mit_allen_paketen_gruen(tmp_path: Path) -> None:
     assert startklar.venv_sicherstellen(ordner).ok
 
 
-@pytest.mark.parametrize(
-    "inhalt", ["{kaputt", json.dumps({"tickets": [1, 2]}), json.dumps([1])]
-)
+@pytest.mark.parametrize("inhalt", ["{kaputt", json.dumps({"tickets": [1, 2]}), json.dumps([1])])
 def test_f3_kaputtes_manifest_ist_rot(tmp_path: Path, inhalt: str) -> None:
     _haupt, wt = _repo_mit_worktree(tmp_path)
     pfad = wt / "docs" / "agents" / "manifests" / f"spec-{SPEC}.json"
@@ -595,9 +559,7 @@ def test_f3_kaputtes_manifest_ist_rot(tmp_path: Path, inhalt: str) -> None:
     assert rot and "Manifest" in rot[0].text, befunde
 
 
-def test_f4_ohne_bash_ist_probe_rot(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_f4_ohne_bash_ist_probe_rot(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     def _fehlt() -> str:
         raise FileNotFoundError("bash fehlt im PATH (Paket bash installieren)")
 
@@ -630,38 +592,26 @@ def _settings_mit_argument(tmp_path: Path, hook_code: str, argument: str) -> Pat
     datei = tmp_path / "settings_mitschnitt.json"
     befehl = f"{Path(sys.executable).as_posix()} {hook.as_posix()} {argument}"
     datei.write_text(
-        json.dumps(
-            {
-                "hooks": {
-                    "PreToolUse": [{"matcher": "Bash", "hooks": [{"command": befehl}]}]
-                }
-            }
-        ),
+        json.dumps({"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"command": befehl}]}]}}),
         encoding="utf-8",
     )
     return datei
 
 
 @pytest.mark.skipif(not shutil.which("node"), reason="node fehlt")
-def test_f5_v7_hook_sieht_tilde_wie_im_prompt(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_f5_v7_hook_sieht_tilde_wie_im_prompt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Vorfall V7 nachgestellt: Hook blockt ``node ~/.claude/…`` — Probe muss das sehen."""
     heim = _heim_mit_werkzeugen(tmp_path)
     monkeypatch.setenv("HOME", str(heim))
     monkeypatch.setenv("USERPROFILE", str(heim))  # (#68)
-    befunde = startklar.werkzeug_probe(
-        tmp_path, SPEC, settings_dateien=[_settings(tmp_path, _HOOK_V7)]
-    )
+    befunde = startklar.werkzeug_probe(tmp_path, SPEC, settings_dateien=[_settings(tmp_path, _HOOK_V7)])
     rot = {b.text.split(":")[0] for b in befunde if not b.ok}
     assert rot == {"aufraeumen"}, befunde
     assert "Git-Sperre" in " ".join(b.text for b in befunde)
 
 
 @pytest.mark.skipif(not shutil.which("node"), reason="node fehlt")
-def test_f5_hooks_bekommen_prompt_text_woertlich(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_f5_hooks_bekommen_prompt_text_woertlich(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     heim = _heim_mit_werkzeugen(tmp_path)
     monkeypatch.setenv("HOME", str(heim))
     monkeypatch.setenv("USERPROFILE", str(heim))  # (#68)
@@ -670,9 +620,7 @@ def test_f5_hooks_bekommen_prompt_text_woertlich(
     befunde = startklar.werkzeug_probe(
         tmp_path,
         SPEC,
-        settings_dateien=[
-            _settings_mit_argument(tmp_path, _HOOK_MITSCHNITT, mitschnitt.as_posix())
-        ],
+        settings_dateien=[_settings_mit_argument(tmp_path, _HOOK_MITSCHNITT, mitschnitt.as_posix())],
     )
     assert all(b.ok for b in befunde), befunde
     py = "python" if os.name == "nt" else "python3"
@@ -695,9 +643,7 @@ def test_f5_prompt_und_probe_aus_einer_quelle(tmp_path: Path) -> None:
 def test_f7_schluessel_nur_in_umgebung_ist_warnung(tmp_path: Path) -> None:
     wt = _schluessel_welt(tmp_path)
     (wt / ".env").write_text("FAL_KEY=a\n", encoding="utf-8")
-    befunde = startklar.schluessel_pruefen(
-        wt, SPEC, environ={"ELEVENLABS_API_KEY": "geheim456"}
-    )
+    befunde = startklar.schluessel_pruefen(wt, SPEC, environ={"ELEVENLABS_API_KEY": "geheim456"})
     assert all(b.ok for b in befunde), befunde
     text = " ".join(b.text for b in befunde)
     assert "Warnung" in text and "ELEVENLABS_API_KEY" in text
@@ -726,9 +672,7 @@ def test_f6_issue_text_wird_gescannt_fehler_ist_warnung(tmp_path: Path) -> None:
         {"continue": False, "stopReason": "halt"},
     ],
 )
-def test_f8_ask_und_continue_false_blocken(
-    tmp_path: Path, antwort: dict[str, object]
-) -> None:
+def test_f8_ask_und_continue_false_blocken(tmp_path: Path, antwort: dict[str, object]) -> None:
     code = (
         "import json, sys\nd = json.load(sys.stdin)\n"
         f"if 'aufraeumen' in d['tool_input']['command']: print(json.dumps({antwort!r}))\n"
@@ -774,9 +718,7 @@ def test_n4_hook_timeout_kein_zahlwert(tmp_path: Path) -> None:
     assert all(b.ok for b in _probe(tmp_path, [datei]))
 
 
-def test_f11_unlink_scheitert_gibt_roten_befund(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_f11_unlink_scheitert_gibt_roten_befund(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _haupt, wt = _repo_mit_worktree(tmp_path)
     os.symlink(tmp_path / "gibts_nicht", wt / ".venv", target_is_directory=True)
 
@@ -828,10 +770,7 @@ def test_n1_behebung_nennt_passenden_python() -> None:
 
 def test_n2_hook_stderr_ohne_schluesselwerte(tmp_path: Path) -> None:
     (tmp_path / ".env").write_text("FAL_KEY=supergeheim99\n", encoding="utf-8")
-    code = (
-        "import sys; sys.stdin.read(); "
-        "print('FAL_KEY=supergeheim99', file=sys.stderr); sys.exit(1)\n"
-    )
+    code = "import sys; sys.stdin.read(); print('FAL_KEY=supergeheim99', file=sys.stderr); sys.exit(1)\n"
     befunde = _probe(tmp_path, [_settings(tmp_path, code)])
     alles = " ".join(b.text + b.behebung for b in befunde)
     assert "FAL_KEY" in alles and "supergeheim99" not in alles, befunde
@@ -857,9 +796,7 @@ def test_r2_cli_fehlendes_manifest_bleibt_gruen_mit_hinweis(tmp_path: Path) -> N
     assert all(b.ok for b in befunde) and "kein Manifest" in befunde[0].text
 
 
-def test_r2_gate_setzt_manifest_pflicht(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_r2_gate_setzt_manifest_pflicht(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     gesehen: dict[str, object] = {}
 
     def pruefe(ordner: Path, spec: int, **kw: object) -> list[startklar.Befund]:
@@ -874,9 +811,7 @@ def test_r2_gate_setzt_manifest_pflicht(
 def test_r2_ohne_env_example_warnung_issue_scan_uebersprungen(tmp_path: Path) -> None:
     _haupt, wt = _repo_mit_worktree(tmp_path)
     _manifest(wt, {"451": {"title": "x"}})
-    befunde = startklar.schluessel_pruefen(
-        wt, SPEC, environ={}, issue_leser=lambda o, n: ""
-    )
+    befunde = startklar.schluessel_pruefen(wt, SPEC, environ={}, issue_leser=lambda o, n: "")
     text = " ".join(b.text for b in befunde)
     assert "Issue-Scan übersprungen, .env.example fehlt" in text, befunde
 
@@ -940,10 +875,7 @@ def test_r2_pruefe_meldet_kaputte_konfig(tmp_path: Path) -> None:
 
 def test_r2_umgebungswerte_werden_geschwaerzt(tmp_path: Path) -> None:
     _konfig_schluessel(tmp_path, "UMGEBUNGS_KEY")
-    code = (
-        "import sys; sys.stdin.read(); "
-        "print('Wert umgebungsgeheim777', file=sys.stderr); sys.exit(1)\n"
-    )
+    code = "import sys; sys.stdin.read(); print('Wert umgebungsgeheim777', file=sys.stderr); sys.exit(1)\n"
     befunde = startklar.werkzeug_probe(
         tmp_path,
         SPEC,
@@ -959,9 +891,7 @@ _GEHEIM64 = "g" * 20 + "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQR"[
 
 
 @pytest.mark.parametrize(("exit_code", "vorlauf"), [(1, 100), (2, 150)])
-def test_r2_erst_schwaerzen_dann_kuerzen(
-    tmp_path: Path, exit_code: int, vorlauf: int
-) -> None:
+def test_r2_erst_schwaerzen_dann_kuerzen(tmp_path: Path, exit_code: int, vorlauf: int) -> None:
     assert len(_GEHEIM64) == 64
     (tmp_path / ".env").write_text(f"FAL_KEY={_GEHEIM64}\n", encoding="utf-8")
     code = (
@@ -981,12 +911,8 @@ def test_r2_trockenlauf_erst_schwaerzen_dann_kuerzen(tmp_path: Path) -> None:
         f"import sys; print('x' * 120 + {_GEHEIM64!r}, file=sys.stderr); sys.exit(3)\n",
         encoding="utf-8",
     )
-    werkzeug = startklar.Werkzeug(
-        "laut", f"{shlex.quote(sys.executable)} {shlex.quote(str(skript))}", str(skript)
-    )
-    befunde = startklar.werkzeug_probe(
-        tmp_path, SPEC, settings_dateien=[], werkzeuge=(werkzeug,)
-    )
+    werkzeug = startklar.Werkzeug("laut", f"{shlex.quote(sys.executable)} {shlex.quote(str(skript))}", str(skript))
+    befunde = startklar.werkzeug_probe(tmp_path, SPEC, settings_dateien=[], werkzeuge=(werkzeug,))
     alles = " ".join(b.text for b in befunde)
     assert "Exit 3" in alles and _GEHEIM64[:8] not in alles, befunde
 
@@ -1002,9 +928,7 @@ def test_r2_symlink_venv_paket_probe(tmp_path: Path) -> None:
     assert not befund.ok and "gibts-nicht-450" in befund.text, befund
 
 
-def test_r2_pip_fehler_wird_geschwaerzt(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_r2_pip_fehler_wird_geschwaerzt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _haupt, wt = _repo_mit_worktree(tmp_path, venv_im_haupt=False)
     (wt / ".env").write_text("FAL_KEY=geheimpaketxyz123\n", encoding="utf-8")
     (wt / "requirements.txt").write_text("geheimpaketxyz123==1.0\n", encoding="utf-8")
@@ -1053,9 +977,7 @@ def _gh_welt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Pat
     return wt, bin_ordner
 
 
-def test_r3_ohne_gh_im_path_ist_rot_gh_nicht_installiert(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_r3_ohne_gh_im_path_ist_rot_gh_nicht_installiert(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     wt, _bin = _gh_welt(tmp_path, monkeypatch)
     befunde = startklar.schluessel_pruefen(wt, SPEC, environ={})
     rot = [b for b in befunde if not b.ok]
@@ -1063,9 +985,7 @@ def test_r3_ohne_gh_im_path_ist_rot_gh_nicht_installiert(
     assert "unvollständig" in rot[0].text
 
 
-def test_r3_gh_exit1_ist_rot_und_fragt_nur_ein_issue(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_r3_gh_exit1_ist_rot_und_fragt_nur_ein_issue(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     wt, bin_ordner = _gh_welt(tmp_path, monkeypatch)
     zaehl = tmp_path / "aufrufe.txt"
     attrappe(
@@ -1087,9 +1007,7 @@ def test_r3_gh_exit1_ist_rot_und_fragt_nur_ein_issue(
     assert "452" in rot[0].text  # nicht geprüft, aber genannt
 
 
-def test_r3_gh_fehlertext_ist_geschwaerzt(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_r3_gh_fehlertext_ist_geschwaerzt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     wt, bin_ordner = _gh_welt(tmp_path, monkeypatch)
     (wt / ".env").write_text("FAL_KEY=geheimer-wert-12345\n", encoding="utf-8")
     attrappe(
@@ -1107,9 +1025,7 @@ def test_r3_gh_fehlertext_ist_geschwaerzt(
     assert "geheimer-wert-12345" not in text
 
 
-def test_r3_gate_ohne_manifest_laeuft_durch_und_ist_rot(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_r3_gate_ohne_manifest_laeuft_durch_und_ist_rot(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _haupt, wt = _repo_mit_worktree(tmp_path)
     echt = startklar.pruefe
 
@@ -1131,9 +1047,7 @@ def test_r3_gate_ohne_manifest_laeuft_durch_und_ist_rot(
     "inhalt",
     ['{"startklar": "abc"}', '{"startklar": {"schluessel": "FAL_KEY"}}'],
 )
-def test_r4_konfig_falscher_typ_rot_ohne_absturz(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, inhalt: str
-) -> None:
+def test_r4_konfig_falscher_typ_rot_ohne_absturz(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, inhalt: str) -> None:
     _haupt, wt = _repo_mit_worktree(tmp_path)
     datei = startklar.konfig_pfad(wt)
     datei.parent.mkdir(parents=True, exist_ok=True)
@@ -1147,21 +1061,15 @@ def test_r4_konfig_falscher_typ_rot_ohne_absturz(
 
 
 @pytest.mark.parametrize("wert", [5, "FAL_KEY", ["FAL_KEY", 7]])
-def test_r5_manifest_schluessel_falscher_typ_rot_ohne_absturz(
-    tmp_path: Path, wert: object
-) -> None:
+def test_r5_manifest_schluessel_falscher_typ_rot_ohne_absturz(tmp_path: Path, wert: object) -> None:
     _haupt, wt = _repo_mit_worktree(tmp_path)
     _manifest(wt, {"1": {"title": "x", "schluessel": wert}})
-    befunde = startklar.pruefe(
-        wt, SPEC, werkzeuge=(), environ={}, issue_leser=lambda _o, _n: ""
-    )
+    befunde = startklar.pruefe(wt, SPEC, werkzeuge=(), environ={}, issue_leser=lambda _o, _n: "")
     rot = [b for b in befunde if not b.ok and b.bereich == "schlüssel"]
     assert len(rot) == 1 and "schluessel" in rot[0].text, befunde
 
 
-@pytest.mark.skipif(
-    os.name == "nt", reason="Symlink-Interpreter nur unter Linux (#1502)"
-)
+@pytest.mark.skipif(os.name == "nt", reason="Symlink-Interpreter nur unter Linux (#1502)")
 def test_1502_symlink_python_pfad_bleibt_unveraendert(tmp_path: Path) -> None:
     """#1502: ``…/bin/python`` als Symlink auf python3 — der Pfad wird nicht zu ``…/python3``."""
     ordner = tmp_path / "bin"
@@ -1169,15 +1077,9 @@ def test_1502_symlink_python_pfad_bleibt_unveraendert(tmp_path: Path) -> None:
     link = ordner / "python"
     link.symlink_to(Path(sys.executable).resolve())
     assert not (ordner / "python3").exists()
-    werkzeug = startklar.Werkzeug(
-        "neustart", f"{link.as_posix()} -c pass", link.as_posix()
-    )
+    werkzeug = startklar.Werkzeug("neustart", f"{link.as_posix()} -c pass", link.as_posix())
     assert startklar.befehl_text(werkzeug, SPEC, 7) == f"{link.as_posix()} -c pass"
     # Nacktes Befehlswort wird unter Linux weiter zu python3.
-    assert startklar.aufseher_vorlage("python x.py && `python y.py`") == (
-        "python3 x.py && `python3 y.py`"
-    )
-    befunde = startklar.werkzeug_probe(
-        tmp_path, SPEC, settings_dateien=[], werkzeuge=(werkzeug,)
-    )
+    assert startklar.aufseher_vorlage("python x.py && `python y.py`") == ("python3 x.py && `python3 y.py`")
+    befunde = startklar.werkzeug_probe(tmp_path, SPEC, settings_dateien=[], werkzeuge=(werkzeug,))
     assert all(b.ok for b in befunde), befunde

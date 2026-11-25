@@ -52,7 +52,9 @@ BEOBACHTUNGS_TAKT_S = 5.0
 #: Frist nach SIGTERM, bevor die Prozessgruppe hart beendet wird.
 BEENDEN_FRIST_S = 30.0
 #: Muster im Session-Protokoll, die einen Rechte-Stopp verraten (Fixrunde #214).
-RECHTE_MUSTER = re.compile(r"permission denied|requires? permission|requested permissions|haven't granted|not allowed to use", re.IGNORECASE)
+RECHTE_MUSTER = re.compile(
+    r"permission denied|requires? permission|requested permissions|haven't granted|not allowed to use", re.IGNORECASE
+)
 #: stderr von ``touch`` in der Sandbox, das als echte Sperre zählt.
 SPERR_MUSTER = re.compile(r"permission denied|read-only file system|keine berechtigung", re.IGNORECASE)
 BELEG_ZEILEN_MAX = 20
@@ -173,9 +175,7 @@ def speichere_zustand(repo: Path, zustand: dict[str, Any]) -> None:
     melder.speichere_json(zustand_datei(repo), zustand)
 
 
-def eintragen(
-    zustand: dict[str, Any], ergebnis: Ergebnis, lauf_id: str | None = None
-) -> dict[str, Any]:
+def eintragen(zustand: dict[str, Any], ergebnis: Ergebnis, lauf_id: str | None = None) -> dict[str, Any]:
     """Ergebnis in den Zustand mischen (neues Objekt, Eingabe bleibt unverändert).
 
     ``lauf_id`` kennzeichnet den Lauf: Punkt 7 und der Exit-Code trauen nur Punkten
@@ -214,15 +214,12 @@ def punkt_nicht_konfiguriert(zustand: dict[str, Any], nummer: int) -> bool:
     )
 
 
-def offene_punkte(
-    zustand: dict[str, Any], bis: int = 7, *, ohne_nicht_konfiguriert: bool = True
-) -> list[int]:
+def offene_punkte(zustand: dict[str, Any], bis: int = 7, *, ohne_nicht_konfiguriert: bool = True) -> list[int]:
     """Rote Punkte 1..``bis``; ``ohne_nicht_konfiguriert`` lässt „nur nicht konfiguriert“ aus."""
     return [
         n
         for n in range(1, bis + 1)
-        if not punkt_gruen(zustand, n)
-        and not (ohne_nicht_konfiguriert and punkt_nicht_konfiguriert(zustand, n))
+        if not punkt_gruen(zustand, n) and not (ohne_nicht_konfiguriert and punkt_nicht_konfiguriert(zustand, n))
     ]
 
 
@@ -230,9 +227,7 @@ def aeltere_punkte(zustand: dict[str, Any], lauf_id: str, bis: int = 6) -> list[
     """Grüne Punkte, die nicht aus dem Lauf ``lauf_id`` stammen."""
     punkte = zustand.get("punkte") or {}
     return [
-        n
-        for n in range(1, bis + 1)
-        if punkt_gruen(zustand, n) and (punkte.get(str(n)) or {}).get("lauf_id") != lauf_id
+        n for n in range(1, bis + 1) if punkt_gruen(zustand, n) and (punkte.get(str(n)) or {}).get("lauf_id") != lauf_id
     ]
 
 
@@ -268,9 +263,7 @@ def zeige(zustand: dict[str, Any]) -> str:
             zeile += f" · {_stempel_kurz(eintrag.get('ts'))}"
         zeilen.append(zeile)
     stand = zustand.get("letzter_lauf")
-    zeilen.append(
-        f"  Stand: {stand}" if stand else "  Noch nie gelaufen: python to_spawn.py probesitz"
-    )
+    zeilen.append(f"  Stand: {stand}" if stand else "  Noch nie gelaufen: python to_spawn.py probesitz")
     return "\n".join(zeilen)
 
 
@@ -292,7 +285,11 @@ def pruefe_login(*, laeufer: Laeufer = laeufer_standard, which: Which = shutil.w
     if not daten.get("loggedIn"):
         return _rot(1, "loggedIn false", "claude login (Abo-Konto)")
     konto = daten.get("subscriptionType") or daten.get("authMethod") or "angemeldet"
-    return _gruen(1, f"loggedIn true ({konto})", beleg=json.dumps({"authMethod": daten.get("authMethod"), "subscriptionType": daten.get("subscriptionType")}))
+    return _gruen(
+        1,
+        f"loggedIn true ({konto})",
+        beleg=json.dumps({"authMethod": daten.get("authMethod"), "subscriptionType": daten.get("subscriptionType")}),
+    )
 
 
 # --- Punkt 3: Playwright gegen Staging --------------------------------------------------
@@ -343,9 +340,7 @@ def seite_laden_playwright(url: str, nutzer: str, passwort: str) -> tuple[int, s
             browser.close()
 
 
-def pruefe_staging(
-    konfig: dict[str, Any], repo: Path, *, seite_laden: SeiteLaden | None = None
-) -> Ergebnis:
+def pruefe_staging(konfig: dict[str, Any], repo: Path, *, seite_laden: SeiteLaden | None = None) -> Ergebnis:
     staging = konfig.get("staging") if isinstance(konfig.get("staging"), dict) else {}
     url = str(staging.get("url") or "").strip()
     zugang_datei = str(staging.get("zugang_datei") or "").strip()
@@ -357,7 +352,11 @@ def pruefe_staging(
         try:
             adresse, nutzer, passwort = lies_zugang(pfad.read_text(encoding="utf-8"))
         except OSError as fehler:
-            return _rot(3, f"staging.zugang_datei unlesbar ({fehler.__class__.__name__})", f"Zugangsdatei {pfad} anlegen (Staging-Nest, #211)")
+            return _rot(
+                3,
+                f"staging.zugang_datei unlesbar ({fehler.__class__.__name__})",
+                f"Zugangsdatei {pfad} anlegen (Staging-Nest, #211)",
+            )
         url = url or adresse
     if not url:
         return _rot(3, "staging.url fehlt", "staging.url in .to-spawn/config.json (Staging-Nest, #211)")
@@ -373,9 +372,13 @@ def pruefe_staging(
             "&& .venv/bin/python -m playwright install chromium)",
         )
     except Exception as fehler:  # noqa: BLE001 (Browser-/Netzfehler jeder Art → Rot mit Grund, nie Absturz)
-        return _rot(3, f"{ziel} nicht erreichbar: {str(fehler)[:160]}", "Staging starten / Adresse und Zugang prüfen (#211)")
+        return _rot(
+            3, f"{ziel} nicht erreichbar: {str(fehler)[:160]}", "Staging starten / Adresse und Zugang prüfen (#211)"
+        )
     if status != 200:
-        return _rot(3, f"{ziel} antwortet {status}", "Staging-Login-Seite muss 200 liefern (Zugangsdatei/Staging-Nest, #211)")
+        return _rot(
+            3, f"{ziel} antwortet {status}", "Staging-Login-Seite muss 200 liefern (Zugangsdatei/Staging-Nest, #211)"
+        )
     return _gruen(3, f"{ziel} antwortet 200", beleg=f"Titel: {titel}")
 
 
@@ -415,17 +418,31 @@ def pruefe_sandbox(
         drinnen = laeufer([srt, "--settings", str(datei), "--", "touch", str(ziel_innen)], cwd=innen, timeout=120)
         draussen = laeufer([srt, "--settings", str(datei), "--", "touch", str(ziel_aussen)], cwd=innen, timeout=120)
         beleg = f"innen Exit {drinnen.returncode} · außen Exit {draussen.returncode}, Datei außen: {'da' if ziel_aussen.exists() else 'fehlt'}"
-        modus = str((konfig.get("sandbox") or {}).get("modus", "aus")) if isinstance(konfig.get("sandbox"), dict) else "aus"
+        modus = (
+            str((konfig.get("sandbox") or {}).get("modus", "aus")) if isinstance(konfig.get("sandbox"), dict) else "aus"
+        )
         hinweis = " (sandbox.modus aus — Sessions laufen ohne Sandbox)" if modus != "an" else " (sandbox.modus an)"
         if drinnen.returncode != 0 or not ziel_innen.exists():
             kurz = (drinnen.stderr or drinnen.stdout).strip()[-160:]
-            return _rot(4, f"srt sperrt auch innerhalb des Worktrees (Exit {drinnen.returncode}: {kurz})", "srt/bwrap-Setup prüfen (nest werkzeuge, user namespaces)", beleg)
+            return _rot(
+                4,
+                f"srt sperrt auch innerhalb des Worktrees (Exit {drinnen.returncode}: {kurz})",
+                "srt/bwrap-Setup prüfen (nest werkzeuge, user namespaces)",
+                beleg,
+            )
         if draussen.returncode == 0 or ziel_aussen.exists():
-            return _rot(4, "srt lässt Schreiben außerhalb des Worktrees zu", "srt-Einstellungen prüfen (nest sandbox)", beleg)
+            return _rot(
+                4, "srt lässt Schreiben außerhalb des Worktrees zu", "srt-Einstellungen prüfen (nest sandbox)", beleg
+            )
         meldung = (draussen.stderr or draussen.stdout).strip()
         if draussen.returncode != 1 or not SPERR_MUSTER.search(meldung):
             # 124 = Zeitlimit, 126/127 = srt/bwrap nicht startbar — das ist keine Sperre.
-            return _rot(4, f"srt außen Exit {draussen.returncode} ohne Sperr-Meldung: {meldung[-160:]}", "srt/bwrap-Setup prüfen (nest werkzeuge)", beleg)
+            return _rot(
+                4,
+                f"srt außen Exit {draussen.returncode} ohne Sperr-Meldung: {meldung[-160:]}",
+                "srt/bwrap-Setup prüfen (nest werkzeuge)",
+                beleg,
+            )
         return _gruen(4, f"innen erlaubt, außen gesperrt{hinweis}", beleg)
     except OSError as fehler:
         return _rot(4, f"Sandbox-Prüfung scheiterte: {fehler}", "srt/bwrap-Setup prüfen (nest werkzeuge)")
@@ -609,24 +626,46 @@ def werte_bau_log(zeilen: Iterable[dict[str, Any]]) -> tuple[Ergebnis, Ergebnis]
     zeilen = list(zeilen)
     if not zeilen:
         return (
-            _rot(5, "keine Bau-Log-Zeile", "Bau-Log-Hook (to_spawn.py hook-stop) in der Session-Settings-Datei + TO_SPAWN_LOG_REPO"),
+            _rot(
+                5,
+                "keine Bau-Log-Zeile",
+                "Bau-Log-Hook (to_spawn.py hook-stop) in der Session-Settings-Datei + TO_SPAWN_LOG_REPO",
+            ),
             _rot(6, "keine Bau-Log-Zeile", f"{STAFFEL_HOOK_HINWEIS} + Handoff mit „Staffel: weiter“"),
         )
     enden = [z for z in zeilen if z.get("typ") == "session_ende"]
     mit_token = [z for z in enden if isinstance(z.get("tokens"), dict) and int(z["tokens"].get("gesamt") or 0) > 0]
     if mit_token:
         erste = mit_token[0]
-        p5 = _gruen(5, f"session_ende mit {erste['tokens']['gesamt']} Token ({erste.get('modell') or 'Modell unbekannt'})", beleg=f"{erste.get('modell') or '?'} · {erste['tokens']['gesamt']} Token · Session {erste.get('session_id') or '?'}")
+        p5 = _gruen(
+            5,
+            f"session_ende mit {erste['tokens']['gesamt']} Token ({erste.get('modell') or 'Modell unbekannt'})",
+            beleg=f"{erste.get('modell') or '?'} · {erste['tokens']['gesamt']} Token · Session {erste.get('session_id') or '?'}",
+        )
     elif enden:
-        p5 = _rot(5, f"{len(enden)} session_ende-Zeile(n), aber 0 Token", "Transkript-Pfad im Stop-Hook (Token kommen aus dem Transkript) — Session-Persistenz prüfen")
+        p5 = _rot(
+            5,
+            f"{len(enden)} session_ende-Zeile(n), aber 0 Token",
+            "Transkript-Pfad im Stop-Hook (Token kommen aus dem Transkript) — Session-Persistenz prüfen",
+        )
     else:
-        p5 = _rot(5, f"{len(zeilen)} Zeile(n), aber keine session_ende", "Bau-Log-Hook (to_spawn.py hook-stop) in der Session-Settings-Datei")
+        p5 = _rot(
+            5,
+            f"{len(zeilen)} Zeile(n), aber keine session_ende",
+            "Bau-Log-Hook (to_spawn.py hook-stop) in der Session-Settings-Datei",
+        )
     handoffs = [z for z in zeilen if z.get("typ") == "handoff"]
     starts_2 = [z for z in zeilen if z.get("typ") == "session_start" and int(z.get("staffel") or 0) == 2]
     if handoffs and starts_2:
-        p6 = _gruen(6, "handoff geschrieben, Staffel 2 gestartet", beleg=f"Handoff-Session {handoffs[0].get('session_id') or '?'} → Folge-Session {starts_2[0].get('session_id') or '?'}")
+        p6 = _gruen(
+            6,
+            "handoff geschrieben, Staffel 2 gestartet",
+            beleg=f"Handoff-Session {handoffs[0].get('session_id') or '?'} → Folge-Session {starts_2[0].get('session_id') or '?'}",
+        )
     elif handoffs:
-        p6 = _rot(6, "handoff da, aber keine session_start mit Staffel 2", f"{STAFFEL_HOOK_HINWEIS} (Übergabe an bau.py)")
+        p6 = _rot(
+            6, "handoff da, aber keine session_start mit Staffel 2", f"{STAFFEL_HOOK_HINWEIS} (Übergabe an bau.py)"
+        )
     else:
         p6 = _rot(6, "keine handoff-Zeile", f"{STAFFEL_HOOK_HINWEIS} + Handoff mit „Staffel: weiter“")
     return p5, p6
@@ -640,15 +679,24 @@ def pruefe_push(repo: Path, ticket: str, zweig: str, laeufer: Laeufer) -> Ergebn
     """Punkt 2: Zweig liegt auf origin und trägt mindestens einen Commit ``(#N)``."""
     fern = _git(repo, laeufer, "ls-remote", "origin", f"refs/heads/{zweig}")
     if fern.returncode != 0 or not fern.stdout.strip():
-        return _rot(2, f"origin/{zweig} fehlt (Push kam nicht an)", "Session-Protokoll lesen: git push in der Wegwerf-Session")
+        return _rot(
+            2, f"origin/{zweig} fehlt (Push kam nicht an)", "Session-Protokoll lesen: git push in der Wegwerf-Session"
+        )
     abruf = _git(repo, laeufer, "fetch", "origin", zweig)
     if abruf.returncode != 0:
-        return _rot(2, f"git fetch origin {zweig} scheiterte: {abruf.stderr.strip()[-160:]}", "Netz/Zugang zu origin prüfen")
+        return _rot(
+            2, f"git fetch origin {zweig} scheiterte: {abruf.stderr.strip()[-160:]}", "Netz/Zugang zu origin prüfen"
+        )
     basis = nest._standard_zweig(repo) or "origin/HEAD"
     protokoll = _git(repo, laeufer, "log", f"{basis}..FETCH_HEAD", "--oneline")
     betreffe = [z for z in protokoll.stdout.splitlines() if f"(#{ticket})" in z]
     if not betreffe:
-        return _rot(2, f"origin/{zweig} ohne Commit mit (#{ticket}) im Betreff", "Wegwerf-Session hat nicht committet — Protokoll lesen", protokoll.stdout.strip()[:400])
+        return _rot(
+            2,
+            f"origin/{zweig} ohne Commit mit (#{ticket}) im Betreff",
+            "Wegwerf-Session hat nicht committet — Protokoll lesen",
+            protokoll.stdout.strip()[:400],
+        )
     return _gruen(2, f"{len(betreffe)} Commit(s) auf origin/{zweig}", beleg="\n".join(betreffe))
 
 
@@ -659,21 +707,41 @@ def _wegwerf_ticket(repo: Path, laeufer: Laeufer, which: Which) -> tuple[str | N
         return None, "gh nicht gefunden"
     stempel = datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M")
     fertig = laeufer(
-        [gh, "issue", "create", "--title", f"Probesitz {stempel}", "--body", "Wegwerf-Ticket des Probesitz (Skill to-spawn, #214). Wird am Ende automatisch geschlossen."],
+        [
+            gh,
+            "issue",
+            "create",
+            "--title",
+            f"Probesitz {stempel}",
+            "--body",
+            "Wegwerf-Ticket des Probesitz (Skill to-spawn, #214). Wird am Ende automatisch geschlossen.",
+        ],
         cwd=repo,
         timeout=120,
     )
     meldung = (fertig.stderr or fertig.stdout).strip()
     if fertig.returncode != 0:
         log.warning("gh issue create scheiterte: %s", meldung[-200:])
-        return None, (f"gh issue create Exit {fertig.returncode}: {meldung[-160:]}" if meldung else "gh nicht angemeldet")
+        return None, (
+            f"gh issue create Exit {fertig.returncode}: {meldung[-160:]}" if meldung else "gh nicht angemeldet"
+        )
     treffer = re.search(r"/(\d+)\s*$", fertig.stdout.strip())
     if not treffer:
         return None, f"gh issue create ohne Ticket-Nummer in der Antwort: {fertig.stdout.strip()[-160:]}"
     return treffer.group(1), ""
 
 
-def _aufraeumen(repo: Path, ticket: str, worktree: Path, zweig: str, laeufer: Laeufer, which: Which, fazit: str, *, worktree_loeschen: bool = True) -> list[str]:
+def _aufraeumen(
+    repo: Path,
+    ticket: str,
+    worktree: Path,
+    zweig: str,
+    laeufer: Laeufer,
+    which: Which,
+    fazit: str,
+    *,
+    worktree_loeschen: bool = True,
+) -> list[str]:
     """Immer: Ticket schließen, Fern-Zweig, Worktree und lokale Zweige weg.
 
     ``worktree_loeschen=False``: Ordner gehört einem anderen Repo (#499) — nie anfassen.
@@ -756,10 +824,22 @@ def wegwerf_lauf(
         if fremd:
             raise RuntimeError(fremd)
         worktree_anlegen(worktree, repo, ticket)
-        argv = [sys.executable, str(skill / "skripte" / "bau.py"), ticket, "--probesitz", "--sofort", "--staffel-max", "2", "--model", modell or MODELL_VORGABE]
+        argv = [
+            sys.executable,
+            str(skill / "skripte" / "bau.py"),
+            ticket,
+            "--probesitz",
+            "--sofort",
+            "--staffel-max",
+            "2",
+            "--model",
+            modell or MODELL_VORGABE,
+        ]
         env = sitzung_env.ohne_sitzung()  # sonst Child Session: kein Transkript/Resume
         env["TO_SPAWN_REPO"] = str(repo)
-        lauf = session_starter(argv, cwd=worktree, env=env, zeitlimit_s=zeitlimit_s, beobachter=beobachter, ticket=ticket, ausgabe=ausgabe)
+        lauf = session_starter(
+            argv, cwd=worktree, env=env, zeitlimit_s=zeitlimit_s, beobachter=beobachter, ticket=ticket, ausgabe=ausgabe
+        )
         # Worktree-Datei + Rückfall-Laufdatei im Hauptbaum (Zeilen vor dem Worktree, #257)
         p5, p6 = werte_bau_log(bau_log.lese(worktree, ticket, hauptbaum=repo))
         p2 = pruefe_push(repo, ticket, zweig, laeufer)
@@ -772,11 +852,26 @@ def wegwerf_lauf(
             p2.beleg = (p2.beleg + "\n" if p2.beleg else "") + f"Protokoll: {lauf.protokoll}"
         rechte = protokoll_grund(lauf.protokoll) if lauf.protokoll else None
         if lauf.zeit_ueberschritten:
-            p2 = _rot(2, f"Zeitlimit {int(zeitlimit_s)} s überschritten (Protokoll {lauf.protokoll})", "Session-Protokoll lesen", p2.beleg)
+            p2 = _rot(
+                2,
+                f"Zeitlimit {int(zeitlimit_s)} s überschritten (Protokoll {lauf.protokoll})",
+                "Session-Protokoll lesen",
+                p2.beleg,
+            )
         elif rechte:
-            p2 = _rot(2, f"Session ohne Werkzeug-Rechte: {rechte}", "claude -p braucht --allowedTools (bau.py --probesitz) oder bypassPermissions", p2.beleg)
+            p2 = _rot(
+                2,
+                f"Session ohne Werkzeug-Rechte: {rechte}",
+                "claude -p braucht --allowedTools (bau.py --probesitz) oder bypassPermissions",
+                p2.beleg,
+            )
         elif lauf.exit_code != 0:
-            p2 = _rot(2, f"bau.py Exit {lauf.exit_code} (Protokoll {lauf.protokoll})", "Session-Protokoll lesen (Sandbox-Pflicht, srt, claude, context-mode?)", p2.beleg)
+            p2 = _rot(
+                2,
+                f"bau.py Exit {lauf.exit_code} (Protokoll {lauf.protokoll})",
+                "Session-Protokoll lesen (Sandbox-Pflicht, srt, claude, context-mode?)",
+                p2.beleg,
+            )
         if not staffel_hook_vorhanden(repo, skill) and not p6.ok:
             p6.fehlt_noch = f"{STAFFEL_HOOK_HINWEIS} fehlt — Skill neu installieren (install.sh)"
         ergebnisse = {2: p2, 5: p5, 6: p6}
@@ -784,7 +879,11 @@ def wegwerf_lauf(
     except Exception as fehler:  # jeder Fehler wird Rot mit Grund, aufgeräumt wird trotzdem
         log.exception("Wegwerf-Lauf abgebrochen")
         grund = f"{fehler.__class__.__name__}: {str(fehler)[:200]}"
-        ergebnisse = {2: _rot(2, grund, "Fehler beheben, Probesitz erneut"), 5: _rot(5, "hängt an Punkt 2"), 6: _rot(6, "hängt an Punkt 2")}
+        ergebnisse = {
+            2: _rot(2, grund, "Fehler beheben, Probesitz erneut"),
+            5: _rot(5, "hängt an Punkt 2"),
+            6: _rot(6, "hängt an Punkt 2"),
+        }
         fazit = f"abgebrochen ({grund})"
     finally:
         reste = _aufraeumen(repo, ticket, worktree, zweig, laeufer, which, fazit, worktree_loeschen=not fremd)
@@ -820,7 +919,11 @@ def pruefe_mail(
         if alt:
             punkte = zustand.get("punkte") or {}
             stempel = ", ".join(f"{n} ({_stempel_kurz((punkte.get(str(n)) or {}).get('ts'))})" for n in alt)
-            return _rot(7, f"Punkte aus älterem Lauf: {', '.join(str(n) for n in alt)} — {stempel}", "vollständiger Lauf ohne --punkt")
+            return _rot(
+                7,
+                f"Punkte aus älterem Lauf: {', '.join(str(n) for n in alt)} — {stempel}",
+                "vollständiger Lauf ohne --punkt",
+            )
     if not melder.mail_eingerichtet(konfig):
         return _rot(7, "kein Mail-Befehl", "mail.befehl in .to-spawn/config.json")
     # Staging nicht konfiguriert (Punkt 3 nur „staging.url fehlt“) → grün ohne Staging (#257).
@@ -831,7 +934,11 @@ def pruefe_mail(
     text = _zusammenfassung(vorschau)
     if melden(repo, "probesitz_gruen", betreff, text, f"probesitz:{stempel}", konfig=konfig):
         return _gruen(7, f"Mail verschickt ({stempel}){' — ohne Staging' if ohne_staging else ''}", beleg=text)
-    return _rot(7, "mail.befehl hat die Meldung nicht angenommen (Exit ≠ 0, siehe Log)", "mail.befehl prüfen: JSON auf stdin, Exit 0 = gesendet")
+    return _rot(
+        7,
+        "mail.befehl hat die Meldung nicht angenommen (Exit ≠ 0, siehe Log)",
+        "mail.befehl prüfen: JSON auf stdin, Exit 0 = gesendet",
+    )
 
 
 # --- Alles zusammen -----------------------------------------------------------------
@@ -870,7 +977,16 @@ def laufen(
     if 1 in gewaehlt:
         merken(pruefe_login(laeufer=laeufer, which=which))
     if gewaehlt & {2, 5, 6}:
-        lauf = wegwerf_lauf(repo, konfig, modell=modell, laeufer=laeufer, which=which, session_starter=session_starter, beobachter=beobachter, ausgabe=ausgabe)
+        lauf = wegwerf_lauf(
+            repo,
+            konfig,
+            modell=modell,
+            laeufer=laeufer,
+            which=which,
+            session_starter=session_starter,
+            beobachter=beobachter,
+            ausgabe=ausgabe,
+        )
         merken(*(lauf[n] for n in (2, 5, 6) if n in gewaehlt))
     if 3 in gewaehlt:
         merken(pruefe_staging(konfig, repo, seite_laden=seite_laden))
@@ -881,7 +997,9 @@ def laufen(
     return sorted(ergebnisse, key=lambda e: e.nummer)
 
 
-def befehl(repo: Path, *, punkte: list[int] | None, nur_zeigen: bool, modell: str | None, ausgabe: TextIO = sys.stdout) -> int:
+def befehl(
+    repo: Path, *, punkte: list[int] | None, nur_zeigen: bool, modell: str | None, ausgabe: TextIO = sys.stdout
+) -> int:
     """Unterbefehl ``probesitz``: 0 = 7/7 ✓, 1 = mindestens ein ✗, 2 = Konfig/Repo unlesbar."""
     if not repo.is_dir():
         ausgabe.write(f"Repo nicht lesbar: {repo}\n")

@@ -51,11 +51,7 @@ ZEITLIMIT_S = 120
 def zustand_ordner() -> Path:
     """``$TO_SPAWN_WAECHTER_ORDNER`` oder ``~/.claude/to-spawn/waechter``."""
     eigen = os.environ.get("TO_SPAWN_WAECHTER_ORDNER")
-    return (
-        Path(eigen).expanduser()
-        if eigen
-        else Path.home() / ".claude" / "to-spawn" / "waechter"
-    )
+    return Path(eigen).expanduser() if eigen else Path.home() / ".claude" / "to-spawn" / "waechter"
 
 
 def repo_kennung(repo: Path, gh_repo: str = "") -> str:
@@ -80,9 +76,7 @@ def lade_json(datei: Path) -> dict[str, Any]:
 def speichere_json(datei: Path, daten: dict[str, Any]) -> None:
     datei.parent.mkdir(parents=True, exist_ok=True)
     zwischen = datei.with_suffix(datei.suffix + ".neu")
-    zwischen.write_text(
-        json.dumps(daten, ensure_ascii=False, indent=1), encoding="utf-8"
-    )
+    zwischen.write_text(json.dumps(daten, ensure_ascii=False, indent=1), encoding="utf-8")
     zwischen.replace(datei)
 
 
@@ -132,17 +126,13 @@ def melden(
     """Eine Meldung verschicken; ``True`` nur, wenn der Befehl sie mit Exit 0 angenommen hat."""
     konfig = konfig if konfig is not None else config.lade(repo)
     if not darf_raus(art, konfig):
-        log.info(
-            "Meldung %s nur im Log (mail.nur_kritisch): %s — %s", art, betreff, text
-        )
+        log.info("Meldung %s nur im Log (mail.nur_kritisch): %s — %s", art, betreff, text)
         return False
     datei = _zustand_datei(repo, gh_repo)
     zustand = lade_json(datei)
     gesendet = set(zustand.get("gesendet") or [])
     if schluessel in gesendet:
-        log.info(
-            "Meldung %s schon verschickt (%s) — kein zweites Mal.", art, schluessel
-        )
+        log.info("Meldung %s schon verschickt (%s) — kein zweites Mal.", art, schluessel)
         return False
     befehl = mail_befehl(konfig)
     if not befehl:

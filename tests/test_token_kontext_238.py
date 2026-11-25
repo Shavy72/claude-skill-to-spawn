@@ -271,9 +271,7 @@ def test_gemischtes_log_ohne_teilwert(worktree: Path, tmp_path: Path) -> None:
     assert z["spitze_k"] is None
 
 
-def test_sessions_spalte_zeigt_einzelspitze_bei_staffel(
-    worktree: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_sessions_spalte_zeigt_einzelspitze_bei_staffel(worktree: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     for kennung in ("staffel-1", "staffel-2"):
         bau_log.schreibe(
             worktree,
@@ -310,9 +308,7 @@ def test_umrechnen_subagent_kennung_aus_dateiname(worktree: Path, tmp_path: Path
     assert bau_log.zusammenfassung(worktree, TICKET)["sub_spitze_k"] == 169.2
 
 
-def test_tabelle_weist_aufrufe_verbrauch_und_subagent_getrennt_aus(
-    worktree: Path, tmp_path: Path
-) -> None:
+def test_tabelle_weist_aufrufe_verbrauch_und_subagent_getrennt_aus(worktree: Path, tmp_path: Path) -> None:
     _stop(worktree, tmp_path)
     _subagent_stop(worktree, tmp_path)
     kopf, _strich, zeile = bau_log.tabelle(worktree, [TICKET]).splitlines()[:3]

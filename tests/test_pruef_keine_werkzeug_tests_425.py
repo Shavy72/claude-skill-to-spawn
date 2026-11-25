@@ -50,9 +50,7 @@ def _app_repo(ordner: Path, konfig: str, mit_venv: bool) -> Path:
     (repo / "tests").mkdir()
     (repo / "pyproject.toml").write_text(KONFIG[konfig], encoding="utf-8")
     (repo / "app" / "__init__.py").write_text("", encoding="utf-8")
-    (repo / "app" / "rechne.py").write_text(
-        "def plus(a: int, b: int) -> int:\n    return a + b\n", encoding="utf-8"
-    )
+    (repo / "app" / "rechne.py").write_text("def plus(a: int, b: int) -> int:\n    return a + b\n", encoding="utf-8")
     (repo / "tests" / "test_rechne.py").write_text(
         "from app.rechne import plus\n\n\ndef test_plus() -> None:\n    assert plus(2, 3) == 5\n",
         encoding="utf-8",
@@ -96,9 +94,7 @@ def test_werkzeug_tests_nie_in_app_pruefung(
     repo = _app_repo(tmp_path, konfig, mit_venv=weg == "auswahl")
     if weg == "auswahl":
         datei = repo / "app" / "rechne.py"
-        datei.write_text(
-            datei.read_text(encoding="utf-8") + "\n\nNULL = 0\n", encoding="utf-8"
-        )
+        datei.write_text(datei.read_text(encoding="utf-8") + "\n\nNULL = 0\n", encoding="utf-8")
     else:
         datei = repo / "pyproject.toml"
         datei.write_text(

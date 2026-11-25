@@ -101,9 +101,7 @@ def test_suite_py_je_datei_exit_codes(tmp_path: Path) -> None:
     (tmp_path / "tests").mkdir()
     (tmp_path / "tests" / "test_ok.py").write_text("def test_ok():\n    assert True\n", encoding="utf-8")
     (tmp_path / "review-hook").mkdir()
-    (tmp_path / "review-hook" / "test_ignoriert.py").write_text(
-        "def test_nie():\n    assert False\n", encoding="utf-8"
-    )
+    (tmp_path / "review-hook" / "test_ignoriert.py").write_text("def test_nie():\n    assert False\n", encoding="utf-8")
     ok = subprocess.run(
         [sys.executable, str(SUITE_PY), "--wurzel", str(tmp_path), "--je-datei"],
         capture_output=True,
@@ -140,11 +138,7 @@ def test_suite_py_beendet_term_ignorierendes_und_git_bash_kind(tmp_path: Path) -
     (tmp_path / "tests").mkdir()
     pid_datei = tmp_path / "kinder.txt"
     testdatei = tmp_path / "tests" / "test_rest_kinder.py"
-    kind_code = (
-        "import os, signal, sys, time\n"
-        "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
-        "time.sleep(37)\n"
-    )
+    kind_code = "import os, signal, sys, time\nsignal.signal(signal.SIGTERM, signal.SIG_IGN)\ntime.sleep(37)\n"
     testdatei.write_text(
         "import os, subprocess, sys, time\n"
         "from pathlib import Path\n\n"
@@ -153,7 +147,7 @@ def test_suite_py_beendet_term_ignorierendes_und_git_bash_kind(tmp_path: Path) -
         "creationflags=subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP)\n"
         f"    bash = {bash!r}\n"
         f"    out = Path({str(pid_datei)!r})\n"
-        "    skript = 'sleep 37 & echo \"$(cat /proc/$!/winpid)\" > \"$1.tmp\"; mv \"$1.tmp\" \"$1\"; wait'\n"
+        '    skript = \'sleep 37 & echo "$(cat /proc/$!/winpid)" > "$1.tmp"; mv "$1.tmp" "$1"; wait\'\n'
         "    bash_pid_datei = out.with_suffix('.bash')\n"
         "    subprocess.Popen([bash, '-c', skript, '_', str(bash_pid_datei)], "
         "creationflags=subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP)\n"
@@ -204,7 +198,7 @@ def test_suite_py_abbruch_beendet_kinder_mit(tmp_path: Path) -> None:
         "def test_wartet_lang():\n"
         f"    bash = {bash!r}\n"
         f"    out = Path({str(pid_datei)!r})\n"
-        "    skript = 'sleep 37 & echo \"$(cat /proc/$!/winpid)\" > \"$1.tmp\"; mv \"$1.tmp\" \"$1\"; wait'\n"
+        '    skript = \'sleep 37 & echo "$(cat /proc/$!/winpid)" > "$1.tmp"; mv "$1.tmp" "$1"; wait\'\n'
         "    subprocess.Popen([bash, '-c', skript, '_', str(out)], "
         "creationflags=subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP)\n"
         "    time.sleep(37)\n",
@@ -253,7 +247,7 @@ def test_suite_sh_delegiert_unter_windows_an_suite_py(tmp_path: Path) -> None:
         "def test_hinterlaesst_bash_kind():\n"
         f"    bash = {bash!r}\n"
         f"    out = Path({str(pid_datei)!r})\n"
-        "    skript = 'sleep 37 & echo \"$(cat /proc/$!/winpid)\" > \"$1.tmp\"; mv \"$1.tmp\" \"$1\"; wait'\n"
+        '    skript = \'sleep 37 & echo "$(cat /proc/$!/winpid)" > "$1.tmp"; mv "$1.tmp" "$1"; wait\'\n'
         "    subprocess.Popen([bash, '-c', skript, '_', str(out)], "
         "creationflags=subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP)\n"
         "    ende = time.monotonic() + 15\n"

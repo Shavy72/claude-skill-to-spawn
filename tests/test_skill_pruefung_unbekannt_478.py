@@ -11,13 +11,9 @@ from pathlib import Path
 from test_bau_ohne_prompt_431 import _lade_bau
 
 
-def test_jeder_pflicht_skill_ist_bekannt_auf_leerem_rechner(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_jeder_pflicht_skill_ist_bekannt_auf_leerem_rechner(tmp_path: Path, monkeypatch) -> None:
     bau = _lade_bau(monkeypatch, tmp_path)
-    monkeypatch.setattr(
-        bau, "CLAUDE_DIR", tmp_path / "leer"
-    )  # kein Skill-Ordner, keine Registry, kein Cache
+    monkeypatch.setattr(bau, "CLAUDE_DIR", tmp_path / "leer")  # kein Skill-Ordner, keine Registry, kein Cache
     bekannt = bau.known_skill_names()
     assert {"security-review", "sentry-security-review"} <= set(bau.PFLICHT_SKILLS)
     unbekannt = [n for n in bau.PFLICHT_SKILLS if n not in bekannt]

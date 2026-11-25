@@ -89,9 +89,7 @@ def entscheide(signale: Signale) -> Wiederanlauf:
     return Wiederanlauf("neu", (), f"Stand #{n}: noch keine Spur (kein Zweig, kein Commit).{claim} Von vorn beginnen.")
 
 
-def feststellen(
-    ticket: int, repo: Path, *, daten: Mapping[str, Any] | None = None
-) -> Wiederanlauf | None:
+def feststellen(ticket: int, repo: Path, *, daten: Mapping[str, Any] | None = None) -> Wiederanlauf | None:
     """Lage von ``ticket`` aus Issue (gh), git (Zweige auf origin + lokal, Commits) und Belegseiten.
 
     ``daten``: schon gelesenes Issue-JSON (erspart eine doppelte ``gh``-Abfrage in der Startstelle).

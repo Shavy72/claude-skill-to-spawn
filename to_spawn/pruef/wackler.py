@@ -119,11 +119,7 @@ def nochmal(adapter: object, repo: Path, befehl: list[str], erst: ausfuehren.Lau
     # „nicht mehr rot“ nur „nicht gelaufen“. Bestanden == nicht mehr rot: skip/xfail ist kein
     # Grün. Ohne ``Berichtbar``/``Zaehlbar`` ist beides nie belegt.
     zweit_gelaufen, zweit_bestanden = _zaehle(adapter, zweit_befehl, zweit.ausgabe)
-    if (
-        not zaehlt
-        or zweit_gelaufen != len(erst_rot)
-        or zweit_bestanden != len(erst_rot - noch_rot)
-    ):
+    if not zaehlt or zweit_gelaufen != len(erst_rot) or zweit_bestanden != len(erst_rot - noch_rot):
         return Wiederholung(False, (), zweit_befehl, dauer)
     wackler = tuple(sorted(erst_rot - noch_rot))
     if zweit.code:

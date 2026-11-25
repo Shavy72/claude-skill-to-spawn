@@ -191,7 +191,9 @@ def test_berechne_und_dedupe(ls: ModuleType) -> None:
     spaeter = ls.neue_dokumente(gesendet, live, ereignisse, jetzt + timedelta(seconds=ls.HERZSCHLAG_S))
     assert [s for s, _, _ in spaeter] == ["live"]
     # Ereignis-ids deterministisch.
-    assert [e.id for e in ereignisse] == [e.id for e in ls.berechne("376", titel, {"377": "läuft"}, issues, zeilen, zustand)[1]]
+    assert [e.id for e in ereignisse] == [
+        e.id for e in ls.berechne("376", titel, {"377": "läuft"}, issues, zeilen, zustand)[1]
+    ]
 
 
 def test_david_nicht_doppelt(ls: ModuleType) -> None:

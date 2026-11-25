@@ -146,9 +146,7 @@ def test_merge_ohne_konflikt_verlangt_keinen_beleg(u: Umgebung, tmp_path: Path) 
     assert u.stop(repo) is None
 
 
-def test_merge_ohne_konflikt_nach_belegter_aenderung_braucht_keinen_neuen_beleg(
-    u: Umgebung, tmp_path: Path
-) -> None:
+def test_merge_ohne_konflikt_nach_belegter_aenderung_braucht_keinen_neuen_beleg(u: Umgebung, tmp_path: Path) -> None:
     """Abnahme 2b: Eigene Änderung war schon belegt, danach sauberer Merge von main → kein neuer Beleg."""
     repo = _basis_repo(tmp_path)
     _zweig_anlegen(repo, mit_konflikt=False)

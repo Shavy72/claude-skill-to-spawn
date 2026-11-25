@@ -132,7 +132,10 @@ KEIN_START = frozenset(
         ("to_spawn/hausmeister_windows.py", "_prozesse"),  # powershell -Command: CIM-Prozessliste lesen (#1373)
         ("skripte/sessions_stand.py", "prozesse_lesen"),  # powershell -Command: WMI-Prozessliste lesen
         ("to_spawn/setup.py", "pruefe_start"),  # Versions-Probe
-        ("to_spawn/konsole.py", "lauf_daten"),  # Lese-Helfer, gefangene Ausgabe (docker prune #1372, git rev-parse, ssh git rev-parse)
+        (
+            "to_spawn/konsole.py",
+            "lauf_daten",
+        ),  # Lese-Helfer, gefangene Ausgabe (docker prune #1372, git rev-parse, ssh git rev-parse)
         ("to_spawn/docker_reste.py", "_docker"),  # docker image/builder prune über konsole.lauf_daten (#1372, #608)
         ("skripte/abschluss_paket.py", "wirkungskreis"),  # Repo-Skript, Ausgabe gelesen
         ("skripte/bau.py", "ticket_from_gh"),  # gh
@@ -548,7 +551,7 @@ def test_batch_ziel_mit_punkt_oder_leerzeichen_am_ende(ziel: str) -> None:
         "from to_spawn import konsole\ndef f(befehl):\n    konsole.lauf_daten(befehl)",
         'from to_spawn import konsole\ndef f():\n    konsole.lauf_daten(befehl=["claude"])',
         'from to_spawn import konsole as k\ndef f():\n    k.lauf_daten(["claude"])',
-        'from . import konsole as k\ndef f(befehl):\n    k.lauf_daten(befehl)',
+        "from . import konsole as k\ndef f(befehl):\n    k.lauf_daten(befehl)",
         'from to_spawn.konsole import lauf_daten\ndef f():\n    lauf_daten(["claude"])',
         'from .konsole import lauf_daten as ld\ndef f():\n    ld(["ssh", "h", "x"])',
         'import to_spawn.konsole as k\ndef f():\n    k.lauf_daten(["claude"])',

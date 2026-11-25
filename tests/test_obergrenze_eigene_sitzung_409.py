@@ -310,9 +310,7 @@ def test_tmux_fehler_enthaelt_stderr(welt: Welt) -> None:
     assert "duplicate session" in str(fehler.value)
 
 
-def test_welt_setup_fehler_meldet_stderr_und_raeumt_auf(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_welt_setup_fehler_meldet_stderr_und_raeumt_auf(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """#428: Scheitert das zweite ``new-session``, steht ``stderr`` in der Meldung und der Server wird beendet."""
     monkeypatch.setattr(sys.modules[__name__], "FREMD", EIGEN)
     gen = welt.__wrapped__(tmp_path, monkeypatch)

@@ -191,8 +191,15 @@ def test_abschluss_paket_abnahme_mail_nummeriert_mit_allem(repo: Path, tmp_path:
     assert [m["betreff"] for m in mails] == [f"Spec {SPEC} bereit zur Abnahme — alles zum Durchschauen"]
     assert mails[0]["art"] == "spec_fertig"
     text = mails[0]["text"]
-    reihenfolge = ["1. **Rundschau**", "2. **Belegseiten**", "3. **Test-Übersicht**", "4. **Direkt-Links**",
-                   "5. **Zugang**", "## Was ist neu", "## Was du tun musst"]
+    reihenfolge = [
+        "1. **Rundschau**",
+        "2. **Belegseiten**",
+        "3. **Test-Übersicht**",
+        "4. **Direkt-Links**",
+        "5. **Zugang**",
+        "## Was ist neu",
+        "## Was du tun musst",
+    ]
     stellen = [text.find(t) for t in reihenfolge]
     assert -1 not in stellen and stellen == sorted(stellen), text
     assert "https://r.test/1" in text and "https://b.test/3" in text and "https://t.test/2" in text
@@ -233,7 +240,12 @@ def test_abschluss_paket_tun_saetze_bis_drei(repo: Path, tmp_path: Path) -> None
 
 @pytest.mark.parametrize(
     "falsch",
-    ["Ohne Gleichheitszeichen https://stage.test", "Titel=stage.test/ohne-schema", "Titel=ftp://stage.test", "=https://x.test"],
+    [
+        "Ohne Gleichheitszeichen https://stage.test",
+        "Titel=stage.test/ohne-schema",
+        "Titel=ftp://stage.test",
+        "=https://x.test",
+    ],
 )
 def test_abschluss_paket_direkt_falsch_exit_2(repo: Path, tmp_path: Path, falsch: str) -> None:
     postfach = _mail_konfig(repo, tmp_path)
@@ -263,7 +275,11 @@ def test_abschluss_paket_direkt_falsch_exit_2(repo: Path, tmp_path: Path, falsch
 )
 def test_abschluss_paket_passwort_schutz_exit_2(repo: Path, tmp_path: Path, schalter: str, wert: str) -> None:
     postfach = _mail_konfig(repo, tmp_path)
-    args = [a for a in _LINKS] if schalter != "--stage" else ["--rundschau", "https://r.test/1", "--tests", "https://t.test/2"]
+    args = (
+        [a for a in _LINKS]
+        if schalter != "--stage"
+        else ["--rundschau", "https://r.test/1", "--tests", "https://t.test/2"]
+    )
     ergebnis = _lauf("abschluss_paket.py", repo, *args, schalter, wert, env=_env(tmp_path))
     assert ergebnis.returncode == 2, ergebnis.stdout + ergebnis.stderr
     assert "Passwort" in ergebnis.stderr
@@ -312,8 +328,12 @@ def test_belege_uebersicht_ohne_github(repo: Path, tmp_path: Path) -> None:
     assert ergebnis.returncode == 0, ergebnis.stdout + ergebnis.stderr
     assert str(ziel) in ergebnis.stdout
     seite = ziel.read_text(encoding="utf-8")
-    for nr, titel in [("901", "Knopf zeigt den Status"), ("902", "Handy schaltet sich aus"),
-                      ("903", "Live-Beweis am echten Handy"), ("904", "Ohne Beleg")]:
+    for nr, titel in [
+        ("901", "Knopf zeigt den Status"),
+        ("902", "Handy schaltet sich aus"),
+        ("903", "Live-Beweis am echten Handy"),
+        ("904", "Ohne Beleg"),
+    ]:
         assert f"Ticket #{nr}" in seite and titel in seite
     assert seite.count("Status: unbekannt") == 4
     assert "**ABNAHME: ABGENOMMEN (Live)**" in seite  # Beleg-Zeile 903 (erste Zeile mit ABNAHME)
@@ -446,7 +466,16 @@ def _deck(befehl: str, repo: Path, args: tuple[str, ...]) -> list[str]:
 
 def _unter(befehl: str, repo: Path, *args: str, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        [sys.executable, str(SKRIPTE / "abschluss_paket.py"), befehl, str(SPEC), "--repo", str(repo), *args, *_deck(befehl, repo, args)],
+        [
+            sys.executable,
+            str(SKRIPTE / "abschluss_paket.py"),
+            befehl,
+            str(SPEC),
+            "--repo",
+            str(repo),
+            *args,
+            *_deck(befehl, repo, args),
+        ],
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -597,7 +626,9 @@ def test_ablage_je_stand_live_ueberschreibt_staging_nicht(repo: Path, tmp_path: 
     live = _unter("ablegen", repo, *_LINKS, "--stand", "live", "--spec-fertig", _FERTIG, env=_env(tmp_path))
     assert live.returncode == 0, live.stdout + live.stderr
     assert (repo / ".to-spawn" / f"abschluss_{SPEC}_paket.json").read_text(encoding="utf-8") == staging
-    assert json.loads((repo / ".to-spawn" / f"abschluss_{SPEC}_live_paket.json").read_text())["paket"]["stand"] == "live"
+    assert (
+        json.loads((repo / ".to-spawn" / f"abschluss_{SPEC}_live_paket.json").read_text())["paket"]["stand"] == "live"
+    )
     _marker(repo)
     probe = _unter(
         "nachsehen", repo, "--stand", "live", "--jetzt", "2026-10-06T10:05:00+02:00", "--dry-run", env=_env(tmp_path)

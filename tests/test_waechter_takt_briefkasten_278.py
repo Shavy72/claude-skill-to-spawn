@@ -35,7 +35,9 @@ def test_takt_zeigt_briefkasten_frage_einmal(welt: dict[str, Any], monkeypatch: 
 
     for name in ("TO_SPAWN_GH_STUB", "GH_AUFZEICHNUNG_ORDNER", "GH_AUFZEICHNUNG_KOMMENTARE"):
         monkeypatch.setenv(name, welt["env"][name])
-    assert befund.kommentiere(297, "o/r", f"Aufseher: braucht den Nutzer: Live schalten? — `nutzer-antwort 297 --id {fid}`")
+    assert befund.kommentiere(
+        297, "o/r", f"Aufseher: braucht den Nutzer: Live schalten? — `nutzer-antwort 297 --id {fid}`"
+    )
     zweiter = _takt(welt, "--dry-run")
     assert f"Briefkasten-Frage {fid}" not in zweiter.stdout
 

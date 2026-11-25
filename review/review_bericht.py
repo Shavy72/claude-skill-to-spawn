@@ -67,9 +67,7 @@ def tabelle(ausloeser: list[dict[str, Any]], belege: list[dict[str, Any]]) -> st
     soll: dict[str, set[tuple[str, str]]] = defaultdict(set)
     for a in ausloeser:
         if a.get("stufe", "keine") != "keine":
-            soll[str(a.get("moment"))].add(
-                (str(a.get("repo")), str(a.get("fingerprint")))
-            )
+            soll[str(a.get("moment"))].add((str(a.get("repo")), str(a.get("fingerprint"))))
     ist: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for b in belege:
         ist[str(b.get("moment"))].append(b)
@@ -81,22 +79,15 @@ def tabelle(ausloeser: list[dict[str, Any]], belege: list[dict[str, Any]]) -> st
     for m in momente:
         n_soll, liste = len(soll[m]), ist[m]
         n_ist = len(liste)
-        status = {
-            s: sum(1 for b in liste if b.get("status") == s)
-            for s in ("gruen", "gelb", "rot")
-        }
-        roh = sum(
-            int(p.get("befunde_roh", 0)) for b in liste for p in b.get("pruefer", [])
-        )
+        status = {s: sum(1 for b in liste if b.get("status") == s) for s in ("gruen", "gelb", "rot")}
+        roh = sum(int(p.get("befunde_roh", 0)) for b in liste for p in b.get("pruefer", []))
         gestrichen = 0
         for b in liste:
             richter = b.get("richter")
             if isinstance(richter, dict) and "gestrichen" in richter:
                 gestrichen += int(richter["gestrichen"])
             else:
-                gestrichen += sum(
-                    1 for x in b.get("befunde", []) if x.get("status") == "gestrichen"
-                )
+                gestrichen += sum(1 for x in b.get("befunde", []) if x.get("status") == "gestrichen")
         token = sum(int(b.get("token_schaetzung", 0)) for b in liste)
         quote = f"{n_ist / n_soll:.0%}" if n_soll else "–"
         fehlalarm = f"{gestrichen / roh:.0%}" if roh else "–"
@@ -121,9 +112,7 @@ def main(argv: list[str] | None = None) -> int:
     ausloeser = ausloeser_lesen(ab)
     repos = {str(a["repo"]) for a in ausloeser if a.get("repo")}
     repos |= {Path(r).resolve().as_posix() for r in args.repo}
-    text = f"# Review-Bericht (letzte {args.tage} Tage)\n\n" + tabelle(
-        ausloeser, belege_lesen(repos, ab)
-    )
+    text = f"# Review-Bericht (letzte {args.tage} Tage)\n\n" + tabelle(ausloeser, belege_lesen(repos, ab))
     print(text)
     if args.md:
         try:

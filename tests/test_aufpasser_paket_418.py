@@ -90,10 +90,7 @@ def test_418_aufseher_startet_zuerst_und_blockierte_tickets_werden_uebersprungen
     monkeypatch.setattr(
         a,
         "offene_tickets",
-        lambda _s, _r: {
-            n: {"number": n, "state": "open", "state_reason": None, "labels": []}
-            for n in (6, 7, 8)
-        },
+        lambda _s, _r: {n: {"number": n, "state": "open", "state_reason": None, "labels": []} for n in (6, 7, 8)},
     )
     monkeypatch.setattr(a, "ticket_lesen", lambda n, _r: {"number": n, "state": "open", "labels": set()})
     monkeypatch.setattr(a, "belegte_tickets", lambda: set())
@@ -113,9 +110,7 @@ def test_418_aufseher_startet_zuerst_und_blockierte_tickets_werden_uebersprungen
     assert pausen == [20, 20]
 
 
-def test_418_blocker_abfrage_fehler_sperrt_nicht(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_418_blocker_abfrage_fehler_sperrt_nicht(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Scheitert ``gh.blocked_by`` (``None``), startet das Fenster weiter — ``bau.py`` prüft selbst."""
     repo = _mini_repo(tmp_path / "repo-418")
     a = aufpasser.Aufpasser(aufpasser.Einstellungen(zustand=tmp_path / "zustand", repo=repo))
@@ -151,6 +146,7 @@ def test_418_echter_lauf_startet_aufseher_vor_bau_und_laesst_blockiertes_weg(
         SITZUNG,
         SOCKET,
         SPEC,
+        _pane_prozesse_beenden,
         fenster_namen,
         fenster_ziel,
         git,
@@ -203,6 +199,15 @@ def test_418_echter_lauf_startet_aufseher_vor_bau_und_laesst_blockiertes_weg(
 
     tmux("new-session", "-d", "-s", SITZUNG, "-n", "halter", "-c", str(repo), "sleep 3600")
     try:
+        # Unter CPU-Last (z. B. CI mit pytest-xdist) liefert tmux ``#{pane_current_path}``
+        # direkt nach ``new-session -d`` kurzzeitig leer, bis der Kindprozess ``chdir`` beendet hat.
+        frist = time.monotonic() + 3.0
+        erwartet = {str(repo), str(repo.resolve())}
+        while time.monotonic() < frist:
+            pfad = tmux("list-windows", "-t", f"={SITZUNG}", "-F", "#{pane_current_path}").strip()
+            if pfad in erwartet:
+                break
+            time.sleep(0.05)
         code = aufpasser.main(
             [
                 "--tmux-socket",
@@ -230,7 +235,9 @@ def test_418_echter_lauf_startet_aufseher_vor_bau_und_laesst_blockiertes_weg(
         # Aufräumen: Ziel-Helfer bestätigt echte Fenster
         assert fenster_ziel(f"wache {SPEC}")
     finally:
+        _pane_prozesse_beenden()
         tmux("kill-server", check=False)
+        Path(f"/tmp/tmux-{os.getuid()}/{SOCKET}").unlink(missing_ok=True)
 
 
 # --- #419: Aufpasser.bau_befehl nutzt capo.bau_startzeile (fenster_<N>.log) ---
@@ -271,9 +278,7 @@ def test_419_bau_befehl_mit_expliziter_vorlage_bleibt_erhalten(tmp_path: Path) -
     sys.platform == "win32" or shutil.which("bash") is None,
     reason="bash-Startzeile läuft nur unter Linux",
 )
-def test_419_aufpasser_startzeile_schreibt_echtes_fenster_log(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_419_aufpasser_startzeile_schreibt_echtes_fenster_log(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Echter ``bash -lc``-Lauf der Aufpasser-Startzeile schreibt stderr + Exit-Code
     nach ``.to-spawn/fenster_<N>.log``."""
     skill = tmp_path / "skill"
@@ -332,9 +337,7 @@ def test_434_aktiver_background_agent_in_statuszeile_bleibt_arbeit() -> None:
     ):
         bild = _claude_bild("● Subagent läuft.", status=status)
         assert aufpasser.arbeitet(bild) is True, status
-        q = aufseher_stand.Quellen(
-            repo=SKILL, kinder=lambda _s: [], tmux=lambda _args, text=bild: text
-        )
+        q = aufseher_stand.Quellen(repo=SKILL, kinder=lambda _s: [], tmux=lambda _args, text=bild: text)
         zustand, *_ = aufseher_stand._fenster_lage(7, "=spec-1:1", 1000.0, q, aufseher_stand._Vorher(), 1600.0)
         assert zustand == aufseher_stand.ARBEITET, status
 
@@ -367,9 +370,7 @@ def test_434_briefkasten_wecker_weckt_trotz_stehengebliebener_background_agent_z
         frage_id = _frage(welt)
         _bild(
             welt,
-            _claude_bild(
-                "✻ Waiting for 1 background agent to finish\n● Frage eingeworfen, warte."
-            ),
+            _claude_bild("✻ Waiting for 1 background agent to finish\n● Frage eingeworfen, warte."),
         )
         w.einmal()
         w.einmal()

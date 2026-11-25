@@ -263,9 +263,7 @@ def _test_knoten(
         klasse = treffer[-1]
         klassen.append(klasse)
         rumpf = klasse.body
-    treffer_fn = [
-        k for k in rumpf if isinstance(k, (ast.FunctionDef, ast.AsyncFunctionDef)) and k.name == teile[-1]
-    ]
+    treffer_fn = [k for k in rumpf if isinstance(k, (ast.FunctionDef, ast.AsyncFunctionDef)) and k.name == teile[-1]]
     if not treffer_fn:
         return None
     return treffer_fn[-1], klassen

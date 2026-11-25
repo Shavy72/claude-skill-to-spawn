@@ -108,9 +108,7 @@ def baue_parser() -> _Parser:
     p_neu.add_argument("--beenden", action="store_true", help="laufende Claude-Session vorher beenden")
     p_neu.add_argument("--dry-run", action="store_true", help="nur zeigen, nichts starten/beenden")
 
-    p_resp = unter.add_parser(
-        "respawn", help="Bau-Session nach SOP a–e ablösen (#431), stdout genau eine Zeile"
-    )
+    p_resp = unter.add_parser("respawn", help="Bau-Session nach SOP a–e ablösen (#431), stdout genau eine Zeile")
     p_resp.add_argument("spec", type=int)
     p_resp.add_argument("ticket", type=int)
     p_resp.add_argument(
@@ -121,17 +119,13 @@ def baue_parser() -> _Parser:
     )
     p_resp.add_argument("--dry-run", action="store_true", help="nur Duplikat-Prüfung + geplanter Befehl")
 
-    p_leiter = unter.add_parser(
-        "leiter", help="Eingriffs-Leiter je Ticket (#432), stdout genau eine Zeile"
-    )
+    p_leiter = unter.add_parser("leiter", help="Eingriffs-Leiter je Ticket (#432), stdout genau eine Zeile")
     p_leiter.add_argument("spec", type=int)
     p_leiter.add_argument("ticket", type=int)
     p_leiter.add_argument("--gh-repo", default="", help="owner/name (sonst aus origin)")
     p_leiter.add_argument("--dry-run", action="store_true", help="nur entscheiden, nichts tippen/merken")
 
-    unter.add_parser(
-        "stand", help="Skill-Stand des Bau-Servers prüfen, bei Abweichung pushen (#325)"
-    )
+    unter.add_parser("stand", help="Skill-Stand des Bau-Servers prüfen, bei Abweichung pushen (#325)")
 
     p_regularien = unter.add_parser("regularien", help="Regularien des Manifests prüfen")
     p_regularien.add_argument("spec")
@@ -165,9 +159,7 @@ def baue_parser() -> _Parser:
     )
     p_anh.add_argument("--schaetzung", type=float, metavar="K", help="schaetzung_k (Tausend Token)")
     p_anh.add_argument("--umfang", metavar="TEXT", help="umfang (ein Satz Klartext)")
-    p_anh.add_argument(
-        "--datei", action="append", default=[], metavar="PFAD:a-b", help="files-Eintrag (mehrfach)"
-    )
+    p_anh.add_argument("--datei", action="append", default=[], metavar="PFAD:a-b", help="files-Eintrag (mehrfach)")
     p_anh.add_argument("--trocken", action="store_true", help="Schritte zeigen, nichts schreiben")
     p_log = unter.add_parser("log", help="Gesamt-Tabelle aus dem Bau-Log")
     p_log.add_argument("spec")
@@ -201,17 +193,13 @@ def baue_parser() -> _Parser:
         action="store_true",
         help="bekannte veraltete Vorgabe-Werte in der Maschinen-Liste nachziehen (wiederholbar)",
     )
-    p_setup = unter.add_parser(
-        "setup", help="Terminal, Modell und Effort je Rolle wählen"
-    )
+    p_setup = unter.add_parser("setup", help="Terminal, Modell und Effort je Rolle wählen")
     p_setup.add_argument(
         "--zeigen",
         action="store_true",
         help="Optionen + Werte zeigen, nichts schreiben",
     )
-    p_probe = unter.add_parser(
-        "probesitz", help="7-Punkte-Abnahme des Setups selbst fahren (#214)"
-    )
+    p_probe = unter.add_parser("probesitz", help="7-Punkte-Abnahme des Setups selbst fahren (#214)")
     p_probe.add_argument(
         "--punkt",
         action="append",
@@ -219,28 +207,18 @@ def baue_parser() -> _Parser:
         choices=range(1, 8),
         help="nur diesen Punkt (1–7), mehrfach möglich",
     )
-    p_probe.add_argument(
-        "--zeigen", action="store_true", help="nur den gemerkten Stand zeigen, nichts prüfen"
-    )
+    p_probe.add_argument("--zeigen", action="store_true", help="nur den gemerkten Stand zeigen, nichts prüfen")
     p_probe.add_argument("--modell", help="Modell der Wegwerf-Session (Vorgabe claude-sonnet-5)")
-    p_setup.add_argument(
-        "--dialog", action="store_true", help="Dialog auch ohne Terminal (stdin gepipt)"
-    )
-    p_setup.add_argument(
-        "--standard", action="store_true", help="alle Standards ohne Fragen"
-    )
+    p_setup.add_argument("--dialog", action="store_true", help="Dialog auch ohne Terminal (stdin gepipt)")
+    p_setup.add_argument("--standard", action="store_true", help="alle Standards ohne Fragen")
     p_setup.add_argument("--terminal")
     p_setup.add_argument("--modell-ticket")
     p_setup.add_argument("--effort-ticket")
     p_setup.add_argument("--modell-leicht")
     p_setup.add_argument("--effort-leicht")
     p_setup.add_argument("--effort-waechter")
-    p_setup.add_argument(
-        "--modell-waechter", help="wird ignoriert: Aufseher = immer Flaggschiff"
-    )
-    p_setup.add_argument(
-        "--plattform", choices=["win32", "linux", "darwin"], help="zum Testen"
-    )
+    p_setup.add_argument("--modell-waechter", help="wird ignoriert: Aufseher = immer Flaggschiff")
+    p_setup.add_argument("--plattform", choices=["win32", "linux", "darwin"], help="zum Testen")
     p_inv = unter.add_parser("inventur", help="Werkzeug-Inventur (Setup-Wizard Teil 2)")
     p_inv.add_argument("--json", action="store_true", help="JSON statt Liste ausgeben")
     p_inv.add_argument("--abwahl", help="diese Werkzeuge abwählen (Komma)")
@@ -251,8 +229,7 @@ def baue_parser() -> _Parser:
         "--letzte",
         type=int,
         default=inventur.HISTORIE_VORGABE,
-        help="so viele neueste Historie-Dateien (JSONL) auswerten "
-        f"(Standard {inventur.HISTORIE_VORGABE}, 0 = keine)",
+        help=f"so viele neueste Historie-Dateien (JSONL) auswerten (Standard {inventur.HISTORIE_VORGABE}, 0 = keine)",
     )
 
     p_status = unter.add_parser(
@@ -268,9 +245,7 @@ def baue_parser() -> _Parser:
         help="ab so vielen Minuten ohne neue Phase gilt der Lauf als hängend (Exit 4)",
     )
 
-    unter.add_parser(
-        "hauptzweig", help="Name des Hauptzweigs ausgeben (Konfig, origin/HEAD, master/main) (#257)"
-    )
+    unter.add_parser("hauptzweig", help="Name des Hauptzweigs ausgeben (Konfig, origin/HEAD, master/main) (#257)")
     p_sitzung = unter.add_parser(
         "sitzung",
         help="tmux-Session-Name je Repo ausgeben (#457; Exit 9 = gehört anderem Repo)",
@@ -306,14 +281,13 @@ def baue_parser() -> _Parser:
     )
     p_zu_bauen.add_argument("spec")
     p_lage = unter.add_parser(
-        "ticket-lage", help="Lage beim erneuten Start: neu/fortsetzen/abschluss/nichts + fehlt (Exit 0, unbekannt 2, #282)"
+        "ticket-lage",
+        help="Lage beim erneuten Start: neu/fortsetzen/abschluss/nichts + fehlt (Exit 0, unbekannt 2, #282)",
     )
     p_lage.add_argument("ticket", type=int)
     unter.add_parser("hook-stop", help="Stop-Hook (JSON auf stdin)")
     unter.add_parser("hook-subagent-stop", help="SubagentStop-Hook (JSON auf stdin)")
-    unter.add_parser(
-        "hook-spec-sperre", help="PreToolUse-Hook: rohes `gh issue close <Spec>` sperren (E2-4)"
-    )
+    unter.add_parser("hook-spec-sperre", help="PreToolUse-Hook: rohes `gh issue close <Spec>` sperren (E2-4)")
     unter.add_parser("hook-ja-sperre", help="PreToolUse-Hook: Ja-Befehle aus Werkzeug-Aufrufen sperren (#531)")
     p_schliessen = unter.add_parser(
         "spec-schliessen", help="Spec schließen, nur wenn alle Folge-Tickets erledigt sind (E2-4)"
@@ -347,17 +321,13 @@ def baue_parser() -> _Parser:
     p_eintrag.add_argument("--wahl", help="Entscheidung: was gewählt wurde")
     p_eintrag.add_argument("--grund", help="Entscheidung: warum · blockiert: woran es hängt")
     # Lernschleife (#286): ein Vorfall braucht Klasse, Symptom, Ursache, Lösung.
-    p_eintrag.add_argument(
-        "--klasse", choices=sorted(vorfall.KLASSEN), help="Vorfall: welche Klasse"
-    )
+    p_eintrag.add_argument("--klasse", choices=sorted(vorfall.KLASSEN), help="Vorfall: welche Klasse")
     p_eintrag.add_argument("--symptom", help="Vorfall: was man sieht")
     p_eintrag.add_argument("--ursache", help="Vorfall: woran es lag")
     p_eintrag.add_argument("--loesung", help="Vorfall: was hilft")
     p_eintrag.add_argument("--schutz", help="Vorfall: Schutz-Spalte im Katalog")
     p_eintrag.add_argument("--beispiel", help="Vorfall: Beleg (Ticket, Datum)")
-    p_eintrag.add_argument(
-        "--repo", help="Ordner mit dem Bau-Log (sonst TO_SPAWN_LOG_REPO bzw. Git-Wurzel)"
-    )
+    p_eintrag.add_argument("--repo", help="Ordner mit dem Bau-Log (sonst TO_SPAWN_LOG_REPO bzw. Git-Wurzel)")
 
     # Tür B (#278 P2): Befugnis prüfen, Frage einwerfen, Antwort lesen/schreiben, Liste je Spec.
     briefkasten_cli.richte_parser_ein(unter)
@@ -366,9 +336,7 @@ def baue_parser() -> _Parser:
     p_ents = unter.add_parser("entscheidungen", help="Liste aller Entscheidungen einer Spec")
     p_ents.add_argument("spec")
 
-    p_um = unter.add_parser(
-        "umrechnen", help="alte Bau-Log-Zeilen: Spitzen-Kontext aus dem Transkript nachtragen"
-    )
+    p_um = unter.add_parser("umrechnen", help="alte Bau-Log-Zeilen: Spitzen-Kontext aus dem Transkript nachtragen")
     p_um.add_argument("--ticket", help="Ticket-Nummer (sonst TO_SPAWN_TICKET/wt-<N>)")
     p_um.add_argument("--repo", help="Ordner mit dem Bau-Log (sonst TO_SPAWN_LOG_REPO)")
     p_um.add_argument(
@@ -384,12 +352,8 @@ def baue_parser() -> _Parser:
         "speicher",
         help="darf noch eine Claude-Session starten? (Exit 0 frei / 5 voll / 7 Platte voll)",
     )
-    p_speicher.add_argument(
-        "--staffel", action="store_true", help="nur die Staffel-Pause in Sekunden ausgeben"
-    )
-    p_speicher.add_argument(
-        "--trocken", action="store_true", help="nur messen, nie aufräumen (Probelauf, Status)"
-    )
+    p_speicher.add_argument("--staffel", action="store_true", help="nur die Staffel-Pause in Sekunden ausgeben")
+    p_speicher.add_argument("--trocken", action="store_true", help="nur messen, nie aufräumen (Probelauf, Status)")
     p_speicher.add_argument(
         "--sitzung", default=None, help="Obergrenze nur für diese tmux-Sitzung zählen, z. B. spec-12 (#409)"
     )
@@ -418,12 +382,8 @@ def baue_parser() -> _Parser:
     uebergabe_sichern.richte_parser_ein(unter)
     # Gelb-Liste (#438): Befund des Aufsehers — gelb → Folge-Ticket, rot → wieder öffnen.
     # E2-4: einzige Tür für Folge-Tickets (auch Bau-Sessions) — nie roh `gh issue create`.
-    p_befund = unter.add_parser(
-        "befund", help="Befund melden: gelb → Folge-Ticket an der Spec, rot → wieder öffnen"
-    )
-    p_befund.add_argument(
-        "--spec", required=True, type=int, help="Herkunfts-Spec (Manifest, Unter-Issue)"
-    )
+    p_befund = unter.add_parser("befund", help="Befund melden: gelb → Folge-Ticket an der Spec, rot → wieder öffnen")
+    p_befund.add_argument("--spec", required=True, type=int, help="Herkunfts-Spec (Manifest, Unter-Issue)")
     p_befund.add_argument("--ticket", required=True, type=int, help="Ticket mit dem Befund")
     p_befund.add_argument("--stufe", required=True, choices=list(befund.STUFEN))
     p_befund.add_argument("--text", required=True, help="was fehlt / der Hinweis")
@@ -434,9 +394,20 @@ def baue_parser() -> _Parser:
     p_aufr.add_argument("--loeschen", action="store_true", help="wirklich sichern und löschen")
     # Hausmeister am Laptop (#1373): alle Ordner, tägliche Windows-Aufgabe, Altbestand-Liste.
     p_aufr.add_argument("--alles", action="store_true", help="alle Ordner unter den Wurzeln")
+    # Helfer-Altbestand (#615): alte ~/tmp-l<N>-…-Ordner im Home sicher wegräumen.
     p_aufr.add_argument(
-        "--aufgabe-einrichten", action="store_true", help="tägliche Windows-Aufgabe einrichten"
+        "--helfer-altbestand",
+        action="store_true",
+        help="alte ~/tmp-l<N>-…-Ordner im Home aufräumen (#615; Vorgabe: Trockenlauf)",
     )
+    p_aufr.add_argument(
+        "--aelter-als-tage",
+        type=helfer_temp._tage_arg,
+        default=None,
+        metavar="N",
+        help="mit --helfer-altbestand: Mindestalter in Tagen (Vorgabe: 1, >= 1)",
+    )
+    p_aufr.add_argument("--aufgabe-einrichten", action="store_true", help="tägliche Windows-Aufgabe einrichten")
     p_aufr.add_argument("--trocken", action="store_true", help="mit --aufgabe-einrichten: nur zeigen")
     p_aufr.add_argument(
         "--altbestand-liste", type=Path, metavar="DATEI.md", help="Lösch-Liste für den Menschen schreiben"
@@ -445,14 +416,10 @@ def baue_parser() -> _Parser:
     p_aufr.add_argument("--zweig", help="Zweig ticket/<N>-… aufräumen (statt eines Ordners)")
     p_aufr.add_argument("--repo", help="mit --zweig: Repo-Pfad (sein origin zählt)")
     p_aufr.add_argument("--uebernommen-tip", help="mit --zweig: Stand, den die Schlange übernahm")
-    p_aufr.add_argument(
-        "--zweige-probelauf", type=Path, metavar="DATEI", help="Probelauf-Liste aller Ticket-Zweige"
-    )
+    p_aufr.add_argument("--zweige-probelauf", type=Path, metavar="DATEI", help="Probelauf-Liste aller Ticket-Zweige")
     # Aufpasser (#236): Cron-Hausmeister für die tmux-Fenster; gleiche Argumente wie
     # ``skripte/aufpasser.py``.
-    aufpasser.parser_fuellen(
-        unter.add_parser("aufpasser", help="tmux-Fenster bau/wache beaufsichtigen (Cron)")
-    )
+    aufpasser.parser_fuellen(unter.add_parser("aufpasser", help="tmux-Fenster bau/wache beaufsichtigen (Cron)"))
     # Externer Wecker (#287): Weckrufe von außerhalb der Session (Linux: Cron/tmux).
     wecker.richte_parser_ein(unter)
     # Start-Last (#412): Kontext nach Start je Fenstertyp (bau, aufseher) + Obergrenzen-Prüfung.

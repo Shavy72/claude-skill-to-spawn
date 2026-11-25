@@ -81,9 +81,7 @@ def test_zurueck_mit_lokaler_aenderung_bricht_ab_mit_zahl_und_anweisung(
     assert f"{N} Commits hinter origin/main" in stand.text
     assert "Tun:" in stand.text and "pull --ff-only" in stand.text
     # Lokale Änderung unberührt, nichts vorgespult.
-    assert (klon / VORLAGE).read_text(
-        encoding="utf-8"
-    ) == '{"prompt_template": "von Hand"}'
+    assert (klon / VORLAGE).read_text(encoding="utf-8") == '{"prompt_template": "von Hand"}'
     assert _git(klon, "rev-list", "--count", "HEAD..origin/main") == str(N)
 
 
@@ -119,9 +117,7 @@ def test_nur_pruefen_hinter_und_voraus_ohne_ff_rat(klon: Path) -> None:
     """Hinter und eigene Commits voraus: kein ``pull --ff-only``-Rat (der würde scheitern)."""
     _git(klon, "commit", "-q", "--allow-empty", "-m", "eigen")
     stand = arbeitsstand.sicherstellen(klon, nachziehen=False)
-    assert stand.zustand == arbeitsstand.VERALTET and "voraus: 1" in stand.text, (
-        stand.text
-    )
+    assert stand.zustand == arbeitsstand.VERALTET and "voraus: 1" in stand.text, stand.text
     assert "pull --ff-only" not in stand.text
 
 
@@ -154,13 +150,9 @@ def test_bau_start_bei_veraltetem_ordner_nur_hinweis_zeile(klon: Path) -> None:
         check=False,
     )
     ausgabe = fertig.stdout + fertig.stderr
-    hinweise = [
-        z for z in ausgabe.splitlines() if f"{N} Commits hinter origin/main" in z
-    ]
+    hinweise = [z for z in ausgabe.splitlines() if f"{N} Commits hinter origin/main" in z]
     assert len(hinweise) == 1 and "Tun:" in hinweise[0], ausgabe
-    assert (
-        "Kein Start:" not in ausgabe and "Kein Manifest führt Ticket #7" in ausgabe
-    ), ausgabe
+    assert "Kein Start:" not in ausgabe and "Kein Manifest führt Ticket #7" in ausgabe, ausgabe
     assert _git(klon, "rev-parse", "HEAD") == vorher
 
 
@@ -177,9 +169,7 @@ def test_nicht_auf_hauptzweig_und_hinter_bricht_ab(klon: Path, weg: str) -> None
     vorher = _git(klon, "rev-parse", "HEAD")
     stand = arbeitsstand.sicherstellen(klon)
     assert stand.zustand == arbeitsstand.HINWEIS and stand.ok
-    assert (
-        f"{N} Commits hinter origin/main" in stand.text and "switch main" in stand.text
-    )
+    assert f"{N} Commits hinter origin/main" in stand.text and "switch main" in stand.text
     assert _git(klon, "rev-parse", "HEAD") == vorher
 
 
@@ -222,9 +212,7 @@ def test_zwei_starts_zugleich_scheitern_nicht_an_git_sperre(klon: Path) -> None:
         for _ in range(2)
     ]
     ergebnisse = [p.communicate(timeout=120) for p in starts]
-    zustaende = sorted(
-        aus.splitlines()[0] if aus else f"leer: {err}" for aus, err in ergebnisse
-    )
+    zustaende = sorted(aus.splitlines()[0] if aus else f"leer: {err}" for aus, err in ergebnisse)
     assert zustaende == [arbeitsstand.AKTUELL, arbeitsstand.NACHGEZOGEN], ergebnisse
     assert _git(klon, "rev-parse", "HEAD") == _git(klon, "rev-parse", "origin/main")
 
@@ -256,9 +244,7 @@ def test_bau_start_eigene_gitignore_ergaenzung_blockiert_nachziehen_nicht(
         check=False,
     )
     ausgabe = fertig.stdout + fertig.stderr
-    assert (
-        "lokal geändert" not in ausgabe and "Kein Start: Arbeitsordner" not in ausgabe
-    ), ausgabe
+    assert "lokal geändert" not in ausgabe and "Kein Start: Arbeitsordner" not in ausgabe, ausgabe
     assert _git(klon, "rev-parse", "HEAD") != _git(klon, "rev-parse", "origin/main")
     assert "Commits hinter origin/main" in ausgabe, ausgabe
 
@@ -286,14 +272,8 @@ def _getrackte_gitignore(klon: Path) -> Path:
     return klon / ".gitignore"
 
 
-def _laeuft(
-    befehl: list[str], ort: Path, **env: str
-) -> subprocess.CompletedProcess[str]:
-    umgebung = {
-        k: v
-        for k, v in os.environ.items()
-        if k not in (arbeitsstand.TEST_OK_ENV, "TO_SPAWN_REPO")
-    }
+def _laeuft(befehl: list[str], ort: Path, **env: str) -> subprocess.CompletedProcess[str]:
+    umgebung = {k: v for k, v in os.environ.items() if k not in (arbeitsstand.TEST_OK_ENV, "TO_SPAWN_REPO")}
     umgebung.update(env)
     return subprocess.run(
         befehl,
@@ -314,10 +294,7 @@ def test_unbeteiligte_lokale_aenderung_hindert_nachziehen_nicht(klon: Path) -> N
     gitignore.write_text("node_modules/\n# to-spawn\n.to-spawn/\n", encoding="utf-8")
     stand = arbeitsstand.sicherstellen(klon)
     assert stand.zustand == arbeitsstand.NACHGEZOGEN and stand.hinter == N, stand.text
-    assert (
-        gitignore.read_text(encoding="utf-8")
-        == "node_modules/\n# to-spawn\n.to-spawn/\n"
-    )
+    assert gitignore.read_text(encoding="utf-8") == "node_modules/\n# to-spawn\n.to-spawn/\n"
     assert _git(klon, "rev-parse", "HEAD") == _git(klon, "rev-parse", "origin/main")
 
 
@@ -328,13 +305,9 @@ def test_kollidierende_lokale_aenderung_bricht_ab_und_nennt_datei(klon: Path) ->
     stand = arbeitsstand.sicherstellen(klon)
     assert stand.zustand == arbeitsstand.ABBRUCH and stand.hinter == N, stand.text
     assert f"{N} Commits hinter origin/main" in stand.text
-    assert (
-        VORLAGE.as_posix() in stand.text and "eigene Commits voraus" not in stand.text
-    ), stand.text
+    assert VORLAGE.as_posix() in stand.text and "eigene Commits voraus" not in stand.text, stand.text
     assert "Tun:" in stand.text
-    assert (klon / VORLAGE).read_text(
-        encoding="utf-8"
-    ) == '{"prompt_template": "von Hand"}'
+    assert (klon / VORLAGE).read_text(encoding="utf-8") == '{"prompt_template": "von Hand"}'
     assert _git(klon, "rev-parse", "HEAD") == vorher
 
 
@@ -358,9 +331,7 @@ def test_unversionierte_datei_die_origin_einfuehrt_bricht_ab(klon: Path) -> None
     vorher = _git(klon, "rev-parse", "HEAD")
     stand = arbeitsstand.sicherstellen(klon)
     assert stand.zustand == arbeitsstand.ABBRUCH, stand.text
-    assert f"{N + 1} Commits hinter" in stand.text and "neu.txt" in stand.text, (
-        stand.text
-    )
+    assert f"{N + 1} Commits hinter" in stand.text and "neu.txt" in stand.text, stand.text
     assert "eigene Commits voraus" not in stand.text
     assert notiz.read_text(encoding="utf-8") == "lokal"
     assert _git(klon, "rev-parse", "HEAD") == vorher
@@ -377,15 +348,10 @@ def test_abweichende_historie_nennt_eigene_commits(klon: Path) -> None:
     _git(klon, "add", ".")
     _git(klon, "commit", "-q", "-m", "eigen")
     stand = arbeitsstand.sicherstellen(klon)
-    assert (
-        stand.zustand == arbeitsstand.ABBRUCH
-        and "eigene Commits voraus: 1" in stand.text
-    )
+    assert stand.zustand == arbeitsstand.ABBRUCH and "eigene Commits voraus: 1" in stand.text
 
 
-def test_tun_befehle_mit_leerzeichen_im_pfad_kopierbar(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_tun_befehle_mit_leerzeichen_im_pfad_kopierbar(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Befund 5: Pfad mit Leerzeichen steht in den Tun-Befehlen in doppelten Anführungszeichen."""
     monkeypatch.delenv(arbeitsstand.TEST_OK_ENV, raising=False)
     ort = _klon_bauen(tmp_path, "mein app")
@@ -408,9 +374,7 @@ def test_pruefen_wartet_nur_kurz_auf_die_sperre(klon: Path) -> None:
     with sperre.halte(arbeitsstand._sperr_datei(klon)) as gehalten:
         assert gehalten
         fertig = _laeuft([sys.executable, "-c", code, str(SKILL), str(klon)], klon)
-    assert fertig.stdout.splitlines()[0] == arbeitsstand.ABBRUCH, (
-        fertig.stdout + fertig.stderr
-    )
+    assert fertig.stdout.splitlines()[0] == arbeitsstand.ABBRUCH, fertig.stdout + fertig.stderr
     assert f"{arbeitsstand.SPERRE_WARTEN_PRUEFEN_S:.0f} s" in fertig.stdout
 
 
@@ -422,9 +386,7 @@ def test_bau_zieht_verlegten_manifest_ordner_nicht_nach(klon: Path) -> None:
     """
     vorher = _git(klon, "rev-parse", "HEAD")
     _quelle_schiebt(klon, "neu/manifeste/_default.json", '{"kaputt": 1}')
-    _quelle_schiebt(
-        klon, ".to-spawn/config.json", '{"pfade": {"manifeste": "neu/manifeste"}}'
-    )
+    _quelle_schiebt(klon, ".to-spawn/config.json", '{"pfade": {"manifeste": "neu/manifeste"}}')
     fertig = _laeuft(
         [sys.executable, str(SKILL / "skripte" / "bau.py"), "7"],
         klon,
@@ -447,9 +409,7 @@ def test_bau_probelauf_im_veralteten_ordner_warnt_nur(klon: Path) -> None:
         TO_SPAWN_GH_REPO="test-org/app",
     )
     ausgabe = fertig.stdout + fertig.stderr
-    assert (
-        f"{N} Commits hinter origin/main" in ausgabe and "Kein Start" not in ausgabe
-    ), ausgabe
+    assert f"{N} Commits hinter origin/main" in ausgabe and "Kein Start" not in ausgabe, ausgabe
     assert _git(klon, "rev-parse", "HEAD") == vorher
 
 
@@ -460,9 +420,7 @@ def test_cli_arbeitsstand_zieht_nach_exit_0(klon: Path) -> None:
         TO_SPAWN_REPO=str(klon),
     )
     assert fertig.returncode == 0, fertig.stdout + fertig.stderr
-    assert fertig.stdout.startswith(
-        f"Arbeitsstand: nachgezogen — Arbeitsordner {N} Commits"
-    )
+    assert fertig.stdout.startswith(f"Arbeitsstand: nachgezogen — Arbeitsordner {N} Commits")
     assert _git(klon, "rev-parse", "HEAD") == _git(klon, "rev-parse", "origin/main")
 
 
@@ -474,10 +432,7 @@ def test_cli_arbeitsstand_pruefen_exit_1_ohne_nachziehen(klon: Path) -> None:
         TO_SPAWN_REPO=str(klon),
     )
     assert fertig.returncode == 1, fertig.stdout + fertig.stderr
-    assert (
-        fertig.stderr.startswith("Arbeitsstand: veraltet — ")
-        and f"{N} Commits hinter" in fertig.stderr
-    )
+    assert fertig.stderr.startswith("Arbeitsstand: veraltet — ") and f"{N} Commits hinter" in fertig.stderr
     assert _git(klon, "rev-parse", "HEAD") == vorher
 
 
@@ -495,9 +450,7 @@ def test_einrichten_pruefen_abweichung_nennt_arbeitsstand_nur_wenn_veraltet(
     aktuell = io.StringIO()
     einrichten.einrichten(klon, pruefen=True, ausgabe=aktuell)
     assert "arbeitsstand: aktuell" in aktuell.getvalue(), aktuell.getvalue()
-    assert "arbeitsstand" not in _abweichung_zeile(aktuell.getvalue()), (
-        aktuell.getvalue()
-    )
+    assert "arbeitsstand" not in _abweichung_zeile(aktuell.getvalue()), aktuell.getvalue()
 
 
 PS = shutil.which("pwsh")
@@ -516,9 +469,7 @@ def test_spawn_local_bricht_bei_kollidierender_aenderung_ab(klon: Path) -> None:
     )
     ausgabe = fertig.stdout + fertig.stderr
     assert fertig.returncode != 0, ausgabe
-    assert (
-        "nichts gestartet" in ausgabe and f"{N} Commits hinter origin/main" in ausgabe
-    ), ausgabe
+    assert "nichts gestartet" in ausgabe and f"{N} Commits hinter origin/main" in ausgabe, ausgabe
     assert "Starte" not in ausgabe
     assert _git(klon, "rev-parse", "HEAD") == vorher
 
@@ -528,9 +479,7 @@ def test_spawn_local_ohne_python_endet_nicht_mit_exit_0(tmp_path: Path) -> None:
     """Befund 4: Interpreter fehlt → ``$rc`` bleibt nicht leer (``exit $null`` wäre Exit 0)."""
     namen = ("python.exe", "python3.exe", "python", "python3")
     pfad = os.pathsep.join(
-        d
-        for d in os.environ.get("PATH", "").split(os.pathsep)
-        if d and not any((Path(d) / n).exists() for n in namen)
+        d for d in os.environ.get("PATH", "").split(os.pathsep) if d and not any((Path(d) / n).exists() for n in namen)
     )
     fertig = _laeuft(
         [str(PS), "-NoProfile", "-File", str(SPAWN_LOCAL), "-Spec", "48"],

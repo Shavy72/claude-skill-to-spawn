@@ -45,9 +45,7 @@ FENSTER = f"bau {TICKET}"
 def staging_9003(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> Iterator[Welt]:
     """Ticket 9003 OPEN mit ``staging:fertig``, volle Grenze, idle Fake-Claude im Fenster."""
     daten = welt.tmp / "gh_daten.json"
-    daten.write_text(
-        json.dumps({str(TICKET): {"labels": ["staging:fertig"]}}), encoding="utf-8"
-    )
+    daten.write_text(json.dumps({str(TICKET): {"labels": ["staging:fertig"]}}), encoding="utf-8")
     monkeypatch.setenv("GH_STUB_DATEN", str(daten))
     monkeypatch.setenv("GH_STUB_UNTER", f"{SPEC}:{TICKET}")
     monkeypatch.delenv("GH_STUB_ZU", raising=False)
@@ -95,9 +93,7 @@ def test_ohne_offene_frage_schliesst_wie_bisher(staging_9003: Welt) -> None:
 def test_beantwortete_frage_haelt_nicht(staging_9003: Welt) -> None:
     welt = staging_9003
     fid = _frage_einwerfen(welt)
-    briefkasten.antworten(
-        TICKET, fid, "ja", ["Test"], "Zweig ist grün", hauptbaum=welt.repo
-    )
+    briefkasten.antworten(TICKET, fid, "ja", ["Test"], "Zweig ist grün", hauptbaum=welt.repo)
     welt.fenster_fake_claude(TICKET, str(uuid.uuid4()))
     assert _lauf_kurze_karenz(welt) == 0
     time.sleep(0.5)
@@ -105,9 +101,7 @@ def test_beantwortete_frage_haelt_nicht(staging_9003: Welt) -> None:
     assert _geschlossen(welt), welt.log()
 
 
-def test_issue_zu_alte_frage_darf_schliessen(
-    staging_9003: Welt, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_issue_zu_alte_frage_darf_schliessen(staging_9003: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
     welt = staging_9003
     monkeypatch.setenv("GH_STUB_ZU", str(TICKET))
     _frage_einwerfen(welt)
@@ -118,9 +112,7 @@ def test_issue_zu_alte_frage_darf_schliessen(
     assert any(f"„{FENSTER}“ geschlossen (Ticket zu)." in k for k in welt.kommentare())
 
 
-def test_briefkasten_wirft_fenster_bleibt(
-    staging_9003: Welt, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_briefkasten_wirft_fenster_bleibt(staging_9003: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
     welt = staging_9003
 
     def wirft(*_a: object, **_k: object) -> list[dict[str, str]]:
@@ -163,11 +155,7 @@ def test_tote_session_mit_offener_frage_laeuft_in_stufenkette(staging_9003: Welt
     assert welt.lauf() == 0
     assert FENSTER in fenster_namen(), welt.log()
     assert not _geschlossen(welt), welt.kommentare()
-    treffer = [
-        k
-        for k in welt.kommentare()
-        if "Session beendet, keine Gesprächs-ID — braucht den Menschen" in k
-    ]
+    treffer = [k for k in welt.kommentare() if "Session beendet, keine Gesprächs-ID — braucht den Menschen" in k]
     assert len(treffer) == 1, (welt.kommentare(), welt.log())
     assert welt.eintrag(FENSTER)["stufe"] == 3
 
@@ -221,9 +209,7 @@ def test_gehaltenes_fenster_loggt_erst_bei_eintritt_und_aenderung(staging_9003: 
     assert len(zeilen) == 2, zeilen
 
 
-def test_briefkasten_wirft_loggt_entprellt(
-    staging_9003: Welt, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_briefkasten_wirft_loggt_entprellt(staging_9003: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
     """#440: Auch die Warnung bei unlesbarem Briefkasten kommt nur beim Eintritt und bei Änderung."""
     welt = staging_9003
     grund = ["Briefkasten nicht lesbar (Test A)"]
@@ -266,11 +252,7 @@ def test_tote_session_mit_offener_frage_wird_fortgesetzt(staging_9003: Welt) -> 
     assert welt.lauf("--bau-vorlage", _bau_claude_vorlage(welt)) == 0
     assert FENSTER in fenster_namen(), welt.log()
     assert not _geschlossen(welt), welt.kommentare()
-    assert welt.protokoll_bau.read_text(encoding="utf-8").splitlines() == [
-        f"{TICKET} --resume {sid}"
-    ]
+    assert welt.protokoll_bau.read_text(encoding="utf-8").splitlines() == [f"{TICKET} --resume {sid}"]
     assert git(welt.origin, "branch", "--list", f"sicherung/{TICKET}").strip()
     assert welt.eintrag(FENSTER)["stufe"] == 2
-    assert any(
-        "fortgesetzt" in k and sid[:8] in k for k in welt.kommentare()
-    ), welt.kommentare()
+    assert any("fortgesetzt" in k and sid[:8] in k for k in welt.kommentare()), welt.kommentare()

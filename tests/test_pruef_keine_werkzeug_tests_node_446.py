@@ -166,9 +166,7 @@ def test_node_test_nativ_ignoriert_werkzeug_orte(tmp_path: Path) -> None:
     assert "--exclude" not in stufe["befehl"]
 
 
-def test_beide_adapter_lesen_dieselbe_werkzeug_orte_konstante(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_beide_adapter_lesen_dieselbe_werkzeug_orte_konstante(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Eine Quelle: ``leiter.WERKZEUG_ORTE`` speist Python- und Node-Adapter ohne Kopie."""
     assert ".to-spawn" in leiter.WERKZEUG_ORTE
     assert ".claude" in leiter.WERKZEUG_ORTE

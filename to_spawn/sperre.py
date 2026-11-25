@@ -72,9 +72,7 @@ class SperreNichtOeffenbar(OSError):
 
 
 def _oeffnen_gescheitert(datei: Path, fehler: OSError) -> SperreNichtOeffenbar:
-    return SperreNichtOeffenbar(
-        fehler.errno, f"Sperr-Datei nicht öffenbar: {fehler.strerror}", str(datei)
-    )
+    return SperreNichtOeffenbar(fehler.errno, f"Sperr-Datei nicht öffenbar: {fehler.strerror}", str(datei))
 
 
 def flock_vorhanden() -> bool:
@@ -202,9 +200,7 @@ def _excl(datei: Path, ende: float) -> Iterator[bool]:
             break
         except FileExistsError:
             if exkl.is_dir():  # ein Ordner wird nie frei — kein „belegt“
-                raise _oeffnen_gescheitert(
-                    exkl, OSError(errno.EISDIR, os.strerror(errno.EISDIR))
-                ) from None
+                raise _oeffnen_gescheitert(exkl, OSError(errno.EISDIR, os.strerror(errno.EISDIR))) from None
             if time.monotonic() >= ende:
                 yield False
                 return

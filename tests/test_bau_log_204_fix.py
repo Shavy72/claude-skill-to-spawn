@@ -48,9 +48,7 @@ def _roh(datei: Path) -> list[str]:
 # --- Fix 1: eine Antwort in mehreren Zeilen zählt einmal -------------------------
 
 
-def _antwort(
-    usage: dict, nachricht_id: str | None = None, anfrage_id: str | None = None
-) -> dict:
+def _antwort(usage: dict, nachricht_id: str | None = None, anfrage_id: str | None = None) -> dict:
     zeile: dict = {"type": "assistant", "message": {"usage": usage}}
     if nachricht_id:
         zeile["message"]["id"] = nachricht_id
@@ -101,9 +99,7 @@ def _status(worktree: Path) -> str:
     ).stdout
 
 
-def test_weg_hooks_lassen_worktree_sauber_eintrag_uebertraegt(
-    repo: Path, tmp_path: Path
-) -> None:
+def test_weg_hooks_lassen_worktree_sauber_eintrag_uebertraegt(repo: Path, tmp_path: Path) -> None:
     wt_basis, worktree = _repo_mit_gitignore(repo, tmp_path)
 
     ergebnis = _bau(repo, tmp_path, wt_basis)
@@ -166,15 +162,13 @@ def test_lese_vereint_versioniert_und_laufdatei(repo: Path) -> None:
     fest = bau_log.log_pfad(repo, TICKET)
     fest.parent.mkdir(parents=True)
     fest.write_text(
-        json.dumps({"ts": "2026-09-18T10:03:00+00:00", "typ": "zusammenfassung"}) + "\n"
-        + json.dumps(gemeinsam) + "\n",
+        json.dumps({"ts": "2026-09-18T10:03:00+00:00", "typ": "zusammenfassung"}) + "\n" + json.dumps(gemeinsam) + "\n",
         encoding="utf-8",
     )
     lauf = _laufdatei(repo)
     lauf.parent.mkdir(parents=True)
     lauf.write_text(
-        json.dumps(gemeinsam) + "\n"
-        + json.dumps({"ts": "2026-09-18T10:00:00+00:00", "typ": "session_start"}) + "\n",
+        json.dumps(gemeinsam) + "\n" + json.dumps({"ts": "2026-09-18T10:00:00+00:00", "typ": "session_start"}) + "\n",
         encoding="utf-8",
     )
     zeilen = bau_log.lese(repo, TICKET)
@@ -190,9 +184,7 @@ def test_alle_tickets_findet_nur_laufdatei(repo: Path) -> None:
 
 
 def test_prompt_eintrag_vor_handoff_commit() -> None:
-    prompt = json.loads((SKILL / "repo-scripts" / "_default.json").read_text(encoding="utf-8"))[
-        "prompt_template"
-    ]
+    prompt = json.loads((SKILL / "repo-scripts" / "_default.json").read_text(encoding="utf-8"))["prompt_template"]
     assert "vor jedem Handoff-Commit" in prompt
     assert "`" not in prompt
 
@@ -256,11 +248,7 @@ def test_hook_protokolliert_fehlenden_worktree(repo: Path, tmp_path: Path) -> No
         assert ergebnis.returncode == 0, ergebnis.stderr
     protokoll = heim / ".claude" / "to-spawn" / "hooks.log"
     assert protokoll.is_file()
-    zeilen = [
-        z
-        for z in protokoll.read_text(encoding="utf-8").splitlines()
-        if str(fehlt) in z and f"#{TICKET}" in z
-    ]
+    zeilen = [z for z in protokoll.read_text(encoding="utf-8").splitlines() if str(fehlt) in z and f"#{TICKET}" in z]
     assert any("Stop-Hook" in z and "SubagentStop" not in z for z in zeilen), zeilen
     assert any("SubagentStop-Hook" in z for z in zeilen), zeilen
 
@@ -331,9 +319,7 @@ def test_subagent_ohne_agent_id_nimmt_dateinamen(hook_umgebung: Path, tmp_path: 
     assert bau_log.zusammenfassung(hook_umgebung, TICKET)["subagenten"] == 2
 
 
-def test_subagent_ohne_agent_id_und_datei_nimmt_session_und_zeit(
-    hook_umgebung: Path, tmp_path: Path
-) -> None:
+def test_subagent_ohne_agent_id_und_datei_nimmt_session_und_zeit(hook_umgebung: Path, tmp_path: Path) -> None:
     haupt = tmp_path / "haupt.jsonl"
     haupt.write_text(
         json.dumps({"type": "user", "timestamp": "2026-09-18T10:00:00Z"})
@@ -348,8 +334,6 @@ def test_subagent_ohne_agent_id_und_datei_nimmt_session_und_zeit(
 
 def test_subagent_dauer_nur_aus_eigener_kette(hook_umgebung: Path, tmp_path: Path) -> None:
     eins = _subagent_transkript(tmp_path / "agent-ccc.jsonl")
-    _subagent_stop(
-        {"session_id": HAUPT_SESSION, "agent_id": "a1", "agent_transcript_path": str(eins)}
-    )
+    _subagent_stop({"session_id": HAUPT_SESSION, "agent_id": "a1", "agent_transcript_path": str(eins)})
     subs = [z for z in bau_log.lese(hook_umgebung, TICKET) if z["typ"] == "subagent_ende"]
     assert subs[0]["dauer_s"] == 60

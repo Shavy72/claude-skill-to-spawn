@@ -146,7 +146,9 @@ def lade_projektwoerter(*pfade: Path) -> frozenset[str]:
 
 
 #: Wörter, die früher ausgeliefert wurden, liegen nur noch auf dem Rechner (#395); ohne sie springt der Test über.
-PROJEKTWOERTER = lade_projektwoerter(NAMEN_DATEI.with_name("config.json"), NAMEN_DATEI.with_name("config.standard.json"))
+PROJEKTWOERTER = lade_projektwoerter(
+    NAMEN_DATEI.with_name("config.json"), NAMEN_DATEI.with_name("config.standard.json")
+)
 
 
 def _verboten(datei: str, art: str, muster: re.Pattern[str] | _Namenmuster, zeile: str) -> bool:

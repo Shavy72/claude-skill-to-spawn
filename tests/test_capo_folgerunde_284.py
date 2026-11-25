@@ -52,11 +52,7 @@ def tmux(welt: dict[str, Path], monkeypatch: pytest.MonkeyPatch) -> dict[str, Pa
 def _aufrufe(tmux: dict[str, Path]) -> list[list[str]]:
     if not tmux["protokoll"].is_file():
         return []
-    return [
-        json.loads(z)
-        for z in tmux["protokoll"].read_text(encoding="utf-8").splitlines()
-        if z.strip()
-    ]
+    return [json.loads(z) for z in tmux["protokoll"].read_text(encoding="utf-8").splitlines() if z.strip()]
 
 
 def _starts(tmux: dict[str, Path]) -> list[list[str]]:
@@ -87,9 +83,7 @@ def _wieder_oeffnen_lassen(welt: dict[str, Path], **zusatz: object) -> None:
 # --- a) wieder geöffnet + keine Session → Folge-Runde ------------------------
 
 
-def test_folge_runde_startet_mit_richtigem_befehl(
-    welt: dict[str, Path], tmux: dict[str, Path]
-) -> None:
+def test_folge_runde_startet_mit_richtigem_befehl(welt: dict[str, Path], tmux: dict[str, Path]) -> None:
     _wieder_oeffnen_lassen(welt)
     ergebnis = _capo(welt)
     assert ergebnis.returncode == 0, _text(ergebnis)
@@ -110,9 +104,7 @@ def test_folge_runde_startet_mit_richtigem_befehl(
 # --- b) Session läuft noch → kein Start --------------------------------------
 
 
-def test_laufende_session_startet_nichts(
-    welt: dict[str, Path], tmux: dict[str, Path]
-) -> None:
+def test_laufende_session_startet_nichts(welt: dict[str, Path], tmux: dict[str, Path]) -> None:
     _wieder_oeffnen_lassen(welt)
     tmux["fenster"].write_text(f"wache {SPEC}\nbau 901\n", encoding="utf-8")
     ergebnis = _capo(welt)
@@ -125,9 +117,7 @@ def test_laufende_session_startet_nichts(
 # --- c) Grenze erreicht → kein Start, Meldung --------------------------------
 
 
-def test_grenze_erreicht_meldet_statt_zu_starten(
-    welt: dict[str, Path], tmux: dict[str, Path]
-) -> None:
+def test_grenze_erreicht_meldet_statt_zu_starten(welt: dict[str, Path], tmux: dict[str, Path]) -> None:
     _wieder_oeffnen_lassen(welt, folgerunden_max=2)
     datei = _zustand_datei(welt)
     daten = json.loads(datei.read_text(encoding="utf-8"))

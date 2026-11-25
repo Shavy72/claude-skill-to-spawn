@@ -111,9 +111,7 @@ def _pruefen(ap: argparse.ArgumentParser, args: argparse.Namespace) -> int | Non
         args.befehl, args.spec = "regularien", args.basis
         return None
     if args.tickets or args.dry_run or args.ohne_github or args.ohne_einrichtung:
-        ap.error(
-            "--tickets/--dry-run/--ohne-einrichtung/--ohne-github gelten nur für „regularien <S>“"
-        )
+        ap.error("--tickets/--dry-run/--ohne-einrichtung/--ohne-github gelten nur für „regularien <S>“")
     repo = config.repo_wurzel(args.repo.expanduser() if args.repo else _repo_aus_umgebung())
     urteil = pruef.pruefen(repo, args.basis, args.ziel)
     print(pruef.protokoll.text(urteil.zeile))
@@ -175,16 +173,12 @@ def _setup(repo: Path, args: argparse.Namespace) -> int:
             )
             return 2
     if args.modell_waechter and args.modell_waechter != setup.FLAGGSCHIFF:
-        print(
-            f"Hinweis: Aufseher läuft immer auf {setup.FLAGGSCHIFF} — Angabe ignoriert."
-        )
+        print(f"Hinweis: Aufseher läuft immer auf {setup.FLAGGSCHIFF} — Angabe ignoriert.")
 
     if args.standard or hat_werte:
         # --standard = Basis, gesetzte Flags gewinnen darüber.
         aenderungen: dict[str, Any] = (
-            setup.standards(konfig, args.plattform)
-            if args.standard
-            else {"modelle": {}, "effort": {}}
+            setup.standards(konfig, args.plattform) if args.standard else {"modelle": {}, "effort": {}}
         )
         if args.terminal:
             aenderungen["terminal"] = args.terminal
@@ -198,9 +192,7 @@ def _setup(repo: Path, args: argparse.Namespace) -> int:
             if effort:
                 aenderungen["effort"][rolle] = effort
     elif args.dialog or konsole.stdin_ist_terminal():
-        aenderungen = setup.fuehre_dialog(
-            konfig, setup.stdin_eingabe(sys.stdout), sys.stdout, args.plattform
-        )
+        aenderungen = setup.fuehre_dialog(konfig, setup.stdin_eingabe(sys.stdout), sys.stdout, args.plattform)
     else:
         print(
             "Kein Terminal: `--standard` oder Werte als Flags angeben (Optionen: `--zeigen`).",
@@ -220,10 +212,7 @@ def _setup(repo: Path, args: argparse.Namespace) -> int:
     print(f"  terminal ({setup.plattform_von(args.plattform)}): {stand['terminal']}")
     for rolle in setup.ROLLEN:
         modell = stand["modelle"][rolle]
-        print(
-            f"  {rolle}: {setup.modell_name(modell)} ({modell}), "
-            f"Effort {stand['effort'][rolle]}"
-        )
+        print(f"  {rolle}: {setup.modell_name(modell)} ({modell}), Effort {stand['effort'][rolle]}")
     print(setup.SCHLUSS_SATZ)
     # Checkpoint-Label im GitHub-Repo anlegen (#257) — Weigerung „Kein Checkpoint-Ticket“ vorbeugen.
     label = manifest.checkpoint_label(config.lade(repo))
@@ -304,12 +293,22 @@ def _aufraeumen(args: argparse.Namespace, ap: argparse.ArgumentParser) -> int:
         )
         print(f"{erg.zweig}: {erg.art} ({erg.grund}) [{'trocken' if erg.trocken else 'echt'}]")
         return 1 if erg.fehler else 0
-    if args.alles:
+    if args.aelter_als_tage is not None and not args.helfer_altbestand:
+        ap.error("--aelter-als-tage gilt nur mit --helfer-altbestand")
+    if args.helfer_altbestand:
+        tage = args.aelter_als_tage if args.aelter_als_tage is not None else hausmeister.HELFER_ALTBESTAND_TAGE
+        ergebnisse = hausmeister.helfer_altbestand_aufraeumen(
+            loeschen=args.loeschen,
+            aelter_als_tage=tage,
+        )
+    elif args.alles:
         ergebnisse = hausmeister.aufraeumen_alles(loeschen=args.loeschen)
     elif args.ordner:
         ergebnisse = [hausmeister.aufraeumen(args.ordner, loeschen=args.loeschen)]
     else:
-        ap.error("aufraeumen: Ordner, --alles, --aufgabe-einrichten oder --altbestand-liste angeben")
+        ap.error(
+            "aufraeumen: Ordner, --alles, --helfer-altbestand, --aufgabe-einrichten oder --altbestand-liste angeben"
+        )
     for erg in ergebnisse:
         modus = "trocken" if erg.trocken else "echt"
         print(f"{erg.ordner}: {erg.art} ({erg.grund}) [{modus}]")
@@ -323,9 +322,7 @@ def _befund(args: argparse.Namespace) -> int:
     if not gh_repo:
         print("FEHLER: kein GitHub-Repo erkannt (origin fehlt oder zeigt nicht auf github.com)")
         return 2
-    ergebnis = befund.melde(
-        repo, gh_repo, args.spec, args.ticket, args.stufe, args.text, dry_run=args.dry_run
-    )
+    ergebnis = befund.melde(repo, gh_repo, args.spec, args.ticket, args.stufe, args.text, dry_run=args.dry_run)
     for zeile in ergebnis.zeilen:
         print(zeile)
     return 0 if ergebnis.ok else 1
@@ -509,9 +506,7 @@ def _umrechnen(args: argparse.Namespace) -> int:
         log.error("Ticket-Nummer fehlt — --ticket <N> angeben.")
         return 2
     transkripte = (
-        config.expand_heim(args.transkripte)
-        if args.transkripte
-        else config.heim_ordner() / ".claude" / "projects"
+        config.expand_heim(args.transkripte) if args.transkripte else config.heim_ordner() / ".claude" / "projects"
     )
     if not transkripte.is_dir():
         log.error("Transkript-Ordner %s fehlt.", transkripte)
@@ -519,10 +514,7 @@ def _umrechnen(args: argparse.Namespace) -> int:
     umgerechnet, ohne = hooks.umrechnen(repo, ticket, transkripte)
     z = bau_log.zusammenfassung(repo, ticket)
     ist = f"{z['ist_k']:g}k" if z["ist_k"] else "—"
-    print(
-        f"Bau-Log #{ticket}: {umgerechnet} Zeile(n) umgerechnet, {ohne} ohne Transkript "
-        f"· Kontext jetzt {ist}"
-    )
+    print(f"Bau-Log #{ticket}: {umgerechnet} Zeile(n) umgerechnet, {ohne} ohne Transkript · Kontext jetzt {ist}")
     return 0
 
 
@@ -620,9 +612,7 @@ def verteilen(ap: argparse.ArgumentParser, args: argparse.Namespace) -> int:
         return erg.exit
     if args.befehl == "arbeitsstand":
         # Exit 0 = aktuell/nachgezogen/hinweis, 1 = veraltet/Abbruch (Zeile nennt Zahl und was zu tun ist).
-        erg = arbeitsstand.sicherstellen(
-            config.repo_wurzel(_repo_aus_umgebung()), nachziehen=not args.pruefen
-        )
+        erg = arbeitsstand.sicherstellen(config.repo_wurzel(_repo_aus_umgebung()), nachziehen=not args.pruefen)
         print(f"Arbeitsstand: {erg.zustand} — {erg.text}", file=sys.stdout if erg.ok else sys.stderr)
         return 0 if erg.ok else 1
     if args.befehl == "hauptzweig":
@@ -695,9 +685,7 @@ def verteilen(ap: argparse.ArgumentParser, args: argparse.Namespace) -> int:
     if args.befehl == "einrichten":
         return einrichten.einrichten(repo, pruefen=args.pruefen, ausgabe=sys.stdout)
     if args.befehl == "probesitz":
-        return probesitz.befehl(
-            repo, punkte=args.punkt, nur_zeigen=args.zeigen, modell=args.modell
-        )
+        return probesitz.befehl(repo, punkte=args.punkt, nur_zeigen=args.zeigen, modell=args.modell)
     if args.befehl == "spawn" and args.dry_run:
         # Probelauf (L1): Einrichter nur prüfend, schreibt nichts, Abweichung hält nicht auf.
         einrichten.einrichten(repo, pruefen=True, ausgabe=sys.stdout)
@@ -785,9 +773,7 @@ def verteilen(ap: argparse.ArgumentParser, args: argparse.Namespace) -> int:
         print(bau_log.lernstoff(repo, args.letzte))
         return 0
     if args.befehl == "deploy-status":
-        return deploy_status.deploy_status(
-            repo, datei=args.datei, ticket=args.ticket, still_min=args.still_min
-        )
+        return deploy_status.deploy_status(repo, datei=args.datei, ticket=args.ticket, still_min=args.still_min)
     if args.befehl == "hook-umzug":
         return umzug.hook_umzug_anfrage()
     if args.befehl == "umzug":

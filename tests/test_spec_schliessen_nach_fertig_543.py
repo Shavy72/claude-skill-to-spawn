@@ -36,23 +36,15 @@ def _lauf(
 
 
 def test_erfolg_merkt_geschlossen(monkeypatch: pytest.MonkeyPatch) -> None:
-    aufrufe, zustand, zeilen = _lauf(
-        monkeypatch, befund.Ergebnis(ok=True, zeilen=["Spec #7 geschlossen"])
-    )
-    assert (
-        aufrufe == [7]
-        and "spec_geschlossen" in zustand
-        and zeilen == ["Spec #7 geschlossen"]
-    )
+    aufrufe, zustand, zeilen = _lauf(monkeypatch, befund.Ergebnis(ok=True, zeilen=["Spec #7 geschlossen"]))
+    assert aufrufe == [7] and "spec_geschlossen" in zustand and zeilen == ["Spec #7 geschlossen"]
 
 
 def test_abbruch_ist_kein_fehler_und_wird_wiederholt(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     with caplog.at_level(logging.WARNING):
-        _, zustand, zeilen = _lauf(
-            monkeypatch, befund.Ergebnis(ok=False, zeilen=["Spec #7 bleibt offen"])
-        )
+        _, zustand, zeilen = _lauf(monkeypatch, befund.Ergebnis(ok=False, zeilen=["Spec #7 bleibt offen"]))
     assert "spec_geschlossen" not in zustand and zeilen == []
     assert "bleibt offen" in caplog.text
 
@@ -63,17 +55,13 @@ def test_ausnahme_stuerzt_nicht_ab(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_probelauf_schliesst_nichts(monkeypatch: pytest.MonkeyPatch) -> None:
-    aufrufe, zustand, zeilen = _lauf(
-        monkeypatch, befund.Ergebnis(ok=True, zeilen=[]), dry_run=True
-    )
+    aufrufe, zustand, zeilen = _lauf(monkeypatch, befund.Ergebnis(ok=True, zeilen=[]), dry_run=True)
     assert aufrufe == [] and not zustand and "[Probe]" in zeilen[0]
 
 
 def test_tick_ruft_schritt_nach_hausmeister() -> None:
     quelle = inspect.getsource(capo)
-    assert quelle.index("_hausmeister_schluss(spec, zustand") < quelle.index(
-        "_spec_schliessen_schritt(repo, spec"
-    )
+    assert quelle.index("_hausmeister_schluss(spec, zustand") < quelle.index("_spec_schliessen_schritt(repo, spec")
 
 
 # --- echter Tick (Git-Repo, Zustandsdatei wie #1370); nur ``spec_schliessen`` ist Attrappe -----------
@@ -87,9 +75,7 @@ from test_aufraeumen_schluss_1370 import (  # noqa: F401
 )
 
 
-def _tick(
-    welt, monkeypatch: pytest.MonkeyPatch, konfig_zusatz: dict | str
-) -> list[int]:
+def _tick(welt, monkeypatch: pytest.MonkeyPatch, konfig_zusatz: dict | str) -> list[int]:
     """Tick mit echter ``config.lade`` über die geschriebene ``.to-spawn/config.json``."""
     aufrufe: list[int] = []
 
@@ -113,9 +99,7 @@ def _tick(
     return aufrufe
 
 
-def test_tick_bewusst_ohne_staging_schliesst_nach_aufraeumen(
-    welt, hm, monkeypatch
-) -> None:
+def test_tick_bewusst_ohne_staging_schliesst_nach_aufraeumen(welt, hm, monkeypatch) -> None:
     _spec_fertig(welt)
     assert _tick(welt, monkeypatch, {"staging": {"ohne": True}}) == [int(SPEC)]
     assert _zustand(welt).get("spec_geschlossen")

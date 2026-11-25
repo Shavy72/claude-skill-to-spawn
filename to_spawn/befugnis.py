@@ -242,9 +242,7 @@ _AKTION_MERGE_FRAGE = re.compile(r"(?<!\w)merg(?:e|en|t|st)(?!\w)(?!-base)", re.
 _AKTION_MERGE_GANZWORT = re.compile(r"(?<!\w)merge(?!\w)(?!-base)", re.I)
 _AKTION_PUSH_FRAGE = re.compile(r"(?<!\w)push(?:en|e|t)?(?!\w)", re.I)
 _STAGING_GANZWORT = re.compile(r"(?<!\w)staging(?!\w)", re.I)
-_EIGENER_ZWEIG_TEXT = re.compile(
-    r"(?:(?<=[\s:/(„\"'])|^)(?:refs/heads/)?(?:ticket|wip)/[a-z0-9][a-z0-9._-]*", re.I
-)
+_EIGENER_ZWEIG_TEXT = re.compile(r"(?:(?<=[\s:/(„\"'])|^)(?:refs/heads/)?(?:ticket|wip)/[a-z0-9][a-z0-9._-]*", re.I)
 _PUSH_LOESCH_ODER_PLUS = re.compile(r"(?:^|\s)[:+][^\s;]+", re.I)
 _PUSH_GEFAHR_TEXT = re.compile(
     r"(?:--(?:all|mirror|tags|delete)\b|(?<!\S)-[a-z]*d[a-z]*\b|--force(?!-with-lease)\b"
@@ -310,9 +308,7 @@ def ist_klasse_2(*texte: object) -> bool:
     sauber = [t for t in texte if isinstance(t, str) and t.strip()]
     if not sauber:
         return False
-    return any(_ist_klasse_2(_norm(t)) for t in sauber) or _ist_aktion_klasse_2(
-        "\n".join(sauber), mit_push=True
-    )
+    return any(_ist_klasse_2(_norm(t)) for t in sauber) or _ist_aktion_klasse_2("\n".join(sauber), mit_push=True)
 
 
 def ist_klasse_2_am_wortanfang(*texte: object) -> bool:

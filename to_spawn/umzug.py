@@ -64,13 +64,9 @@ KILL_FRIST = 20.0
 HANDOFF_NAME = re.compile(r"^HANDOFF_\d{4}-\d{2}-\d{2}_(\d+)\.md$")
 #: Pflichtzeile im Umzug-Handoff — Fettschrift/Groß-Klein egal (wie ``STAFFEL_MARKER``),
 #: auch als Markdown-Überschrift (``## Umzug: server``).
-UMZUG_MARKER = re.compile(
-    r"^\s*(?:#+\s*)?\**\s*umzug\s*\**\s*:\s*\**\s*server", re.IGNORECASE | re.MULTILINE
-)
+UMZUG_MARKER = re.compile(r"^\s*(?:#+\s*)?\**\s*umzug\s*\**\s*:\s*\**\s*server", re.IGNORECASE | re.MULTILINE)
 #: Gleiches Muster wie ``scripts/hooks/staffel_stop.py`` — diese Zeile startet die lokale Staffel neu.
-STAFFEL_MARKER = re.compile(
-    r"^\s*\**\s*staffel\s*\**\s*:\s*\**\s*weiter", re.IGNORECASE | re.MULTILINE
-)
+STAFFEL_MARKER = re.compile(r"^\s*\**\s*staffel\s*\**\s*:\s*\**\s*weiter", re.IGNORECASE | re.MULTILINE)
 GESCHUETZTE_BRANCHES = frozenset({"master", "main"})
 SKILL = Path(__file__).resolve().parent.parent
 
@@ -252,11 +248,7 @@ def _server_start_ergebnis(
             )
             return EXIT_FEHLER
         if ergebnis is None or ergebnis.returncode == SSH_EXIT_EIGEN:
-            grund = (
-                "keine Antwort"
-                if ergebnis is None
-                else (ergebnis.stderr or ergebnis.stdout).strip()[-200:]
-            )
+            grund = "keine Antwort" if ergebnis is None else (ergebnis.stderr or ergebnis.stdout).strip()[-200:]
             log.warning(
                 "SSH brach beim Server-Start ab (%s) — prüfe einmal, ob %s trotzdem läuft.",
                 grund,
@@ -318,14 +310,9 @@ def _sitzungen_fern(spec: str, repo: Path | None = None) -> tuple[str, ...]:
     return (neu, alt) if neu != alt else (alt,)
 
 
-def server_fenster_schliessen(
-    spec: str, ticket: str, *, ziel: str, repo: Path | None = None
-) -> bool:
+def server_fenster_schliessen(spec: str, ticket: str, *, ziel: str, repo: Path | None = None) -> bool:
     """tmux-Fenster ``bau <N>`` auf dem Server schließen (Doppelstart zurücknehmen)."""
-    teile = [
-        f"tmux kill-window -t {shlex.quote(f'={sitz}:bau {ticket}')}"
-        for sitz in _sitzungen_fern(spec, repo)
-    ]
+    teile = [f"tmux kill-window -t {shlex.quote(f'={sitz}:bau {ticket}')}" for sitz in _sitzungen_fern(spec, repo)]
     befehl = " 2>/dev/null || ".join(teile)
     log.info("Server-Fenster schließen: ssh %s %s", ziel, befehl)
     ergebnis = _ssh(ziel, befehl, SSH_KURZ_TIMEOUT)
@@ -359,10 +346,7 @@ def server_laeuft(
 ) -> bool:
     """Einmal prüfen: tmux-Fenster da und (bei Tickets) Session nicht ``aus``."""
     fenster = "bau " + ticket if ticket else f"wache {spec}"
-    teile = [
-        f"tmux list-windows -t ={shlex.quote(sitz)} -F '#W'"
-        for sitz in _sitzungen_fern(spec, repo)
-    ]
+    teile = [f"tmux list-windows -t ={shlex.quote(sitz)} -F '#W'" for sitz in _sitzungen_fern(spec, repo)]
     liste = _ssh(ziel, " 2>/dev/null || ".join(teile), SSH_KURZ_TIMEOUT)
     if liste is None or liste.returncode != 0:
         return False
@@ -482,9 +466,7 @@ def _relativ(handoff: Path, worktree: Path) -> str:
     try:
         return handoff.resolve().relative_to(worktree.resolve()).as_posix()
     except ValueError as fehler:
-        raise Abbruch(
-            EXIT_WEIGERUNG, f"Handoff {handoff} liegt nicht im Worktree {worktree}."
-        ) from fehler
+        raise Abbruch(EXIT_WEIGERUNG, f"Handoff {handoff} liegt nicht im Worktree {worktree}.") from fehler
 
 
 def _fremde_aenderungen(worktree: Path, rel: str) -> list[str]:
@@ -506,9 +488,7 @@ def _fremde_aenderungen(worktree: Path, rel: str) -> list[str]:
     return fremde
 
 
-def stand_sichern(
-    worktree: Path, handoff: Path, ticket: str, *, dry_run: bool
-) -> tuple[str, str, str]:
+def stand_sichern(worktree: Path, handoff: Path, ticket: str, *, dry_run: bool) -> tuple[str, str, str]:
     """Handoff committen (nur er, mit Pathspec) und pushen.
 
     Rückgabe ``(branch, relpfad, sha)`` — ``sha`` ist der gepushte Commit (im Probelauf
@@ -520,7 +500,8 @@ def stand_sichern(
     if fremde:
         raise Abbruch(
             EXIT_WEIGERUNG,
-            "Ungesicherte Änderungen: " + ", ".join(fremde[:5])
+            "Ungesicherte Änderungen: "
+            + ", ".join(fremde[:5])
             + " — Abhilfe: erst eigene Arbeit mit Pathspec committen (neue Dateien mit "
             "git add), dann erneut.",
         )
@@ -617,7 +598,9 @@ def umzug_einzel(
         # auch wenn der Branch inzwischen weiterläuft.
         ref = f"{branch}@{sha}:{rel}"
         if dry_run:
-            print(f"Probelauf: ssh -o BatchMode=yes {ziel} {shlex.quote(spawn_befehl(spec, ticket, ordner, umzug_ref=ref))}")
+            print(
+                f"Probelauf: ssh -o BatchMode=yes {ziel} {shlex.quote(spawn_befehl(spec, ticket, ordner, umzug_ref=ref))}"
+            )
             print("Probelauf — nichts committet, gepusht oder gestartet.")
             return EXIT_OK
         start_rc = _server_start_ergebnis(spec, ticket, ziel=ziel, ordner=ordner, umzug_ref=ref, repo=haupt)
@@ -687,7 +670,9 @@ def lokale_zustaende(repo: Path, spec: str) -> dict[str, tuple[str, int | None]]
 def prozess_beenden(pid: int) -> None:
     """Lokales ``bau.py`` beenden (nur im Zustand ``wartet`` — kein Claude-Kind)."""
     if _ist_windows():
-        subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True, check=False, **prozessbaum.fensterlos())
+        subprocess.run(
+            ["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True, check=False, **prozessbaum.fensterlos()
+        )
         return
     try:
         os.kill(pid, signal.SIGTERM)
@@ -808,9 +793,7 @@ def umzug_alle(
             if daten is not None and daten.get("exit") != EXIT_OK:
                 ergebnis.update(daten)
                 return True
-            return frisch(ticket)[0] == "aus" and server_laeuft(
-                spec, ticket, ziel=ziel, ordner=ordner, repo=repo
-            )
+            return frisch(ticket)[0] == "aus" and server_laeuft(spec, ticket, ziel=ziel, ordner=ordner, repo=repo)
 
         try:
             anfrage_schreiben(repo, ticket)
@@ -818,10 +801,7 @@ def umzug_alle(
         finally:
             anfrage_loeschen(repo, ticket)
         if ergebnis:
-            return (
-                f"Session meldet Fehlschlag (Exit {ergebnis.get('exit')}): "
-                f"{ergebnis.get('grund') or '?'}"
-            )
+            return f"Session meldet Fehlschlag (Exit {ergebnis.get('exit')}): {ergebnis.get('grund') or '?'}"
         if not bestaetigt:
             return f"Umzug nicht binnen {int(warte_max)} s bestätigt"
         return None
@@ -836,11 +816,7 @@ def umzug_alle(
                 print(f"#{ticket} übersprungen (lokal aus)")
                 continue
             if dry_run:
-                weg = (
-                    "neu auf dem Server, dann bau.py beenden"
-                    if zustand == "wartet"
-                    else "Anfrage an die Session"
-                )
+                weg = "neu auf dem Server, dann bau.py beenden" if zustand == "wartet" else "Anfrage an die Session"
                 print(f"#{ticket} Probelauf: {zustand} → {weg}")
                 continue
             if zustand == "wartet":
@@ -863,15 +839,13 @@ def umzug_alle(
                         server_fenster_schliessen(spec, ticket, ziel=ziel, repo=repo)
                         return stopp(
                             ticket,
-                            f"bau.py (pid {ziel_pid}) lässt sich nicht beenden — "
-                            "Server-Fenster wieder geschlossen",
+                            f"bau.py (pid {ziel_pid}) lässt sich nicht beenden — Server-Fenster wieder geschlossen",
                         )
                 elif zustand != "aus":
                     # Lokal ist inzwischen Claude gestartet: Server-Start zurücknehmen,
                     # die Session zieht über den Anfrage-Weg um (mit Handoff).
                     log.warning(
-                        "#%s startete lokal, während der Server hochfuhr (%s) — "
-                        "Server-Fenster zu, Anfrage-Weg.",
+                        "#%s startete lokal, während der Server hochfuhr (%s) — Server-Fenster zu, Anfrage-Weg.",
                         ticket,
                         zustand,
                     )
@@ -953,9 +927,7 @@ def hook_umzug_anfrage(stdin_json: str | None = None, ausgabe: TextIO | None = N
         f"--handoff {shlex.quote(handoff)} ausführen. "
         "Sonst nichts tun."
     )
-    (ausgabe or sys.stdout).write(
-        json.dumps({"decision": "block", "reason": grund}, ensure_ascii=False) + "\n"
-    )
+    (ausgabe or sys.stdout).write(json.dumps({"decision": "block", "reason": grund}, ensure_ascii=False) + "\n")
     return 0
 
 
@@ -995,8 +967,7 @@ def _baum_beenden(prozess: subprocess.Popen[Any], frist: float) -> bool:
             return False
         if tk.returncode != 0:
             log.error(
-                "taskkill /T meldete Exit %s (%s) — Unterprozesse der Session können noch "
-                "laufen, Doppel-Lauf prüfen.",
+                "taskkill /T meldete Exit %s (%s) — Unterprozesse der Session können noch laufen, Doppel-Lauf prüfen.",
                 tk.returncode,
                 (tk.stderr or tk.stdout).strip()[:200],
             )

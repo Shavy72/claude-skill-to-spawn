@@ -35,17 +35,13 @@ def frischer_handoff(repo: Path, ticket: str | int, seit: float) -> Path | None:
     ordner = repo / "docs" / "handoffs"
     if not ordner.is_dir():
         return None
-    kandidaten = [
-        pfad for pfad in ordner.glob(f"HANDOFF_*_{ticket}.md") if pfad.stat().st_mtime >= seit
-    ]
+    kandidaten = [pfad for pfad in ordner.glob(f"HANDOFF_*_{ticket}.md") if pfad.stat().st_mtime >= seit]
     if not kandidaten:
         return None
     return max(kandidaten, key=lambda p: p.stat().st_mtime)
 
 
-def _marker_waechter(
-    marker: Path, prozess: subprocess.Popen, stopp: threading.Event, takt: float
-) -> None:
+def _marker_waechter(marker: Path, prozess: subprocess.Popen, stopp: threading.Event, takt: float) -> None:
     """Beendet das Kind, sobald die Marker-Datei auftaucht (Weg ``eltern``)."""
     while not stopp.wait(takt):
         if not marker.exists():
@@ -93,11 +89,7 @@ def run_ticket(
     wurzel = config.repo_wurzel(repo)
     einstellungen = konfig if konfig is not None else config.lade(wurzel)
     modus = config.staffel_modus(einstellungen)
-    grenze = int(
-        max_staffeln
-        if max_staffeln is not None
-        else einstellungen.get("staffel", {}).get("max_staffeln", 3)
-    )
+    grenze = int(max_staffeln if max_staffeln is not None else einstellungen.get("staffel", {}).get("max_staffeln", 3))
     marker = hooks.marker_pfad(wurzel, ticket)
     aktuell = list(cmd)
     code = 0

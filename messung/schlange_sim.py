@@ -60,7 +60,9 @@ def pct(v: list[float], p: float) -> float | None:  # gleiche Formel wie vorher_
 
 
 def ctime(klon: Path, sha: str) -> datetime | None:  # Push-Zeit-Näherung wie vorher_zeiten.py
-    o = subprocess.run(["git", "-C", str(klon), "show", "-s", "--format=%cI", sha], check=False, capture_output=True, text=True)
+    o = subprocess.run(
+        ["git", "-C", str(klon), "show", "-s", "--format=%cI", sha], check=False, capture_output=True, text=True
+    )
     try:
         return datetime.fromisoformat(o.stdout.strip())
     except ValueError:
@@ -394,7 +396,9 @@ def lauf(jobs: list[Job], bau, bremse: float, quote: float, seed: int) -> dict[s
     return kennzahlen(jobs, urteil, e.pol.start, {j.sha: j.ank_eff for j in rest}, e.maschine_s, e.spitze)
 
 
-def stress(jobs: list[Job], bau, bremse: float, quote: float, seed: int, runden: int = 200) -> tuple[float, float, float]:
+def stress(
+    jobs: list[Job], bau, bremse: float, quote: float, seed: int, runden: int = 200
+) -> tuple[float, float, float]:
     """M13: 10 Tickets gleichzeitig auf leerer Maschine (Ergebnis-Mix aus den Daten), `runden` Ziehungen.
     Mit Vorprüfung: gefangene Rote fallen raus, der Rest kommt VOR_S später. Rückgabe: Max-Warte Median, P90, % > 15 min."""
     rng = random.Random(seed)
@@ -443,8 +447,10 @@ def main() -> None:
     rg, rs, nl = ruestzeit(jobs, grenze)
     if not a.ohne_ruest:
         RUEST.update(gate=rg, skip=rs)
-    print(f"Rüstzeit je Lauf (gemessen, serieller Abschnitt, n={nl} Lücken): Gate {RUEST['gate']:.0f} s, "
-          f"SKIP {RUEST['skip']:.0f} s.\n")
+    print(
+        f"Rüstzeit je Lauf (gemessen, serieller Abschnitt, n={nl} Lücken): Gate {RUEST['gate']:.0f} s, "
+        f"SKIP {RUEST['skip']:.0f} s.\n"
+    )
     vor_b = [j for j in jobs if j.ank < grenze]
 
     S = a.seed

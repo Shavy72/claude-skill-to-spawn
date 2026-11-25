@@ -172,9 +172,7 @@ def _cmd_zeile(argv: list[str]) -> str:
     abgelehnt. Prompts mit solchen Zeichen gehören per Datei/stdin übergeben."""
     if any("\n" in arg or "\r" in arg for arg in argv):
         raise ValueError("Notnagel: Zeilenumbruch im Argument würde von cmd.exe abgeschnitten")
-    if _endung(argv[0]) not in {".exe", ".com"} and any(
-        '"' in arg for arg in argv[1:]
-    ):
+    if _endung(argv[0]) not in {".exe", ".com"} and any('"' in arg for arg in argv[1:]):
         raise ValueError("Notnagel: Anführungszeichen im Argument eines Batch-Ziels (BatBadBut)")
 
     def quote(arg: str) -> str:
@@ -193,11 +191,21 @@ def _cmd_zeile(argv: list[str]) -> str:
 
 @overload
 def starte(
-    cmd: Sequence[str], *, cwd: Path | str | None = ..., warten: Literal[False] = ..., notnagel: type[OSError] | None = ..., **popen_args: Any
+    cmd: Sequence[str],
+    *,
+    cwd: Path | str | None = ...,
+    warten: Literal[False] = ...,
+    notnagel: type[OSError] | None = ...,
+    **popen_args: Any,
 ) -> subprocess.Popen[Any]: ...
 @overload
 def starte(
-    cmd: Sequence[str], *, cwd: Path | str | None = ..., warten: Literal[True], notnagel: type[OSError] | None = ..., **popen_args: Any
+    cmd: Sequence[str],
+    *,
+    cwd: Path | str | None = ...,
+    warten: Literal[True],
+    notnagel: type[OSError] | None = ...,
+    **popen_args: Any,
 ) -> subprocess.CompletedProcess[Any]: ...
 def starte(
     cmd: Sequence[str],

@@ -35,9 +35,7 @@ def _klon(tmp_path: Path, pruefung: dict[str, Any]) -> tuple[Path, dict[str, Any
     }
     (repo / ".to-spawn").mkdir()
     (repo / ".to-spawn" / "config.json").write_text(json.dumps(eigen), encoding="utf-8")
-    (repo / ".gitignore").write_text(
-        "\n".join(config.GITIGNORE_BLOCK) + "\n", encoding="utf-8"
-    )
+    (repo / ".gitignore").write_text("\n".join(config.GITIGNORE_BLOCK) + "\n", encoding="utf-8")
     _git(repo, "add", ".gitignore", ".to-spawn/config.json")
     _commit(repo, "a.txt")
     return repo, config.lade(repo)
@@ -57,11 +55,7 @@ def _protokoll(klon: Path) -> list[dict[str, Any]]:
     datei = klon / protokoll.ORDNER / protokoll.DATEI
     if not datei.exists():
         return []
-    return [
-        json.loads(z)
-        for z in datei.read_text(encoding="utf-8").splitlines()
-        if z.strip()
-    ]
+    return [json.loads(z) for z in datei.read_text(encoding="utf-8").splitlines() if z.strip()]
 
 
 # --- rot je Kopf nur einmal ---------------------------------------------------------------------
@@ -73,13 +67,9 @@ def test_takt_rot_je_kopf_nur_einmal_neu_bei_neuem_kopf_oder_von_hand(
     zaehl = tmp_path / "zaehl.txt"
     klon, konfig = _klon(tmp_path, {"komplett": _befehl(zaehl)})
     _rot(zaehl)
-    erst = komplett_lauf.komplett_einmal(
-        klon, SPEC, Moment.ALLE_AUF_STAGING, konfig, takt=True
-    )
+    erst = komplett_lauf.komplett_einmal(klon, SPEC, Moment.ALLE_AUF_STAGING, konfig, takt=True)
     assert (erst.gelaufen, erst.ok) == (True, False), erst
-    zweit = komplett_lauf.komplett_einmal(
-        klon, SPEC, Moment.ALLE_AUF_STAGING, konfig, takt=True
-    )
+    zweit = komplett_lauf.komplett_einmal(klon, SPEC, Moment.ALLE_AUF_STAGING, konfig, takt=True)
     assert (zweit.gelaufen, zweit.ok) == (False, False), zweit
     assert "schon rot" in zweit.grund and "Handlung" in zweit.grund, zweit.grund
     assert _laeufe(zaehl) == 1
@@ -90,9 +80,7 @@ def test_takt_rot_je_kopf_nur_einmal_neu_bei_neuem_kopf_oder_von_hand(
     # Neuer Kopf läuft im Takt einmal neu.
     zaehl.with_name("exit.txt").unlink()
     _commit(klon, "b.txt")
-    neu = komplett_lauf.komplett_einmal(
-        klon, SPEC, Moment.ALLE_AUF_STAGING, konfig, takt=True
-    )
+    neu = komplett_lauf.komplett_einmal(klon, SPEC, Moment.ALLE_AUF_STAGING, konfig, takt=True)
     assert (neu.gelaufen, neu.ok) == (True, True), neu
     assert _laeufe(zaehl) == 3
 
@@ -100,29 +88,21 @@ def test_takt_rot_je_kopf_nur_einmal_neu_bei_neuem_kopf_oder_von_hand(
 # --- Takt nicht blockieren ----------------------------------------------------------------------
 
 
-def test_takt_blockiert_nicht_und_startet_nie_doppelt(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_takt_blockiert_nicht_und_startet_nie_doppelt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     zaehl = tmp_path / "zaehl.txt"
     langsam = f"sleep 4; {_befehl(zaehl)}"
     klon, konfig = _klon(tmp_path, {"komplett": langsam})
     monkeypatch.setattr(komplett_lauf, "TAKT_WARTEN_S", 0.5)
     kopf = _git(klon, "rev-parse", "HEAD")
     start = time.monotonic()
-    erst = komplett_lauf.komplett_einmal(
-        klon, SPEC, Moment.ALLE_AUF_STAGING, konfig, takt=True
-    )
+    erst = komplett_lauf.komplett_einmal(klon, SPEC, Moment.ALLE_AUF_STAGING, konfig, takt=True)
     assert time.monotonic() - start < 3.5, "Takt wartet auf die ganze Prüfung"
     assert erst.laeuft and erst.ok and not erst.gelaufen, erst
-    zweit = komplett_lauf.komplett_einmal(
-        klon, SPEC, Moment.ALLE_AUF_STAGING, konfig, takt=True
-    )
+    zweit = komplett_lauf.komplett_einmal(klon, SPEC, Moment.ALLE_AUF_STAGING, konfig, takt=True)
     assert zweit.laeuft, zweit
     merker = _warte_merker(klon, kopf)
     assert merker.gruen
-    nach = komplett_lauf.komplett_einmal(
-        klon, SPEC, Moment.ALLE_AUF_STAGING, konfig, takt=True
-    )
+    nach = komplett_lauf.komplett_einmal(klon, SPEC, Moment.ALLE_AUF_STAGING, konfig, takt=True)
     assert (nach.gelaufen, nach.ok, nach.laeuft) == (False, True, False), nach
     assert _laeufe(zaehl) == 1
 
@@ -133,9 +113,7 @@ def test_takt_blockiert_nicht_und_startet_nie_doppelt(
 def test_zeitgrenze_beendet_ganze_prozessgruppe(tmp_path: Path) -> None:
     pid_datei = tmp_path / "enkel.pid"
     # Unter Windows (Git-Bash) liefert /proc/$p/winpid die echte Windows-PID statt der MSYS-PID.
-    befehl = (
-        f'sleep 60 & p=$!; w=$(cat /proc/$p/winpid 2>/dev/null); echo "${{w:-$p}}" > {shlex.quote(str(pid_datei))}; wait'
-    )
+    befehl = f'sleep 60 & p=$!; w=$(cat /proc/$p/winpid 2>/dev/null); echo "${{w:-$p}}" > {shlex.quote(str(pid_datei))}; wait'
     start = time.monotonic()
     stufe = leiter.eigener_befehl(tmp_path, befehl, "komplett", zeitgrenze_s=1.0)
     assert time.monotonic() - start < 15, "Ausgabe blieb offen — Enkel hält die Pipe"
@@ -145,9 +123,7 @@ def test_zeitgrenze_beendet_ganze_prozessgruppe(tmp_path: Path) -> None:
     ende = time.monotonic() + 5
     while prozessbaum.lebt(enkel) and time.monotonic() < ende:
         time.sleep(0.1)
-    assert not prozessbaum.lebt(enkel) or "Z" in _zustand(enkel), (
-        "Enkel lebt nach Zeitgrenze weiter"
-    )
+    assert not prozessbaum.lebt(enkel) or "Z" in _zustand(enkel), "Enkel lebt nach Zeitgrenze weiter"
 
 
 def _zustand(pid: int) -> str:
@@ -158,32 +134,23 @@ def _zustand(pid: int) -> str:
 
 
 def test_zeitgrenze_aus_konfig_ist_rot_mit_grund_und_gemerkt(tmp_path: Path) -> None:
-    klon, konfig = _klon(
-        tmp_path, {"komplett": "sleep 60", "komplett_zeitgrenze_min": 0.02}
-    )
+    klon, konfig = _klon(tmp_path, {"komplett": "sleep 60", "komplett_zeitgrenze_min": 0.02})
     erg = komplett_lauf.komplett_einmal(klon, SPEC, Moment.ALLE_AUF_STAGING, konfig)
     assert (erg.gelaufen, erg.ok) == (True, False), erg
     assert "Zeitgrenze" in erg.grund, erg.grund
     merker = komplett_lauf.lies_merker(klon, SPEC)
-    assert (
-        merker is not None
-        and merker.exit == leiter.ROT
-        and merker.grund == "Zeitgrenze"
-    )
+    assert merker is not None and merker.exit == leiter.ROT and merker.grund == "Zeitgrenze"
 
 
 def test_zeitgrenze_vorgabe_und_kaputter_wert() -> None:
     assert config.komplett_zeitgrenze_s({}) == config.KOMPLETT_ZEITGRENZE_MIN * 60
-    assert config.komplett_zeitgrenze_s(
-        {"pruefung": {"komplett_zeitgrenze_min": "viel"}}
-    ) == (config.KOMPLETT_ZEITGRENZE_MIN * 60)
-    assert config.komplett_zeitgrenze_s(
-        {"pruefung": {"komplett_zeitgrenze_min": -1}}
-    ) == (config.KOMPLETT_ZEITGRENZE_MIN * 60)
-    assert (
-        config.komplett_zeitgrenze_s({"pruefung": {"komplett_zeitgrenze_min": 5}})
-        == 300
+    assert config.komplett_zeitgrenze_s({"pruefung": {"komplett_zeitgrenze_min": "viel"}}) == (
+        config.KOMPLETT_ZEITGRENZE_MIN * 60
     )
+    assert config.komplett_zeitgrenze_s({"pruefung": {"komplett_zeitgrenze_min": -1}}) == (
+        config.KOMPLETT_ZEITGRENZE_MIN * 60
+    )
+    assert config.komplett_zeitgrenze_s({"pruefung": {"komplett_zeitgrenze_min": 5}}) == 300
 
 
 @pytest.mark.skipif(
@@ -283,16 +250,12 @@ def echtes_nachziehen(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv(arbeitsstand.TEST_OK_ENV, raising=False)
 
 
-def test_takt_zieht_klon_hinter_origin_nach_und_prueft_neuen_kopf(
-    tmp_path: Path, echtes_nachziehen: None
-) -> None:
+def test_takt_zieht_klon_hinter_origin_nach_und_prueft_neuen_kopf(tmp_path: Path, echtes_nachziehen: None) -> None:
     zaehl = tmp_path / "zaehl.txt"
     klon, konfig = _klon(tmp_path, {"komplett": _befehl(zaehl)})
     anderer, zweig = _mit_origin(tmp_path, klon)
     neu = _neu_auf_origin(anderer, zweig, klon, "neu.txt")
-    erg = komplett_lauf.komplett_einmal(
-        klon, SPEC, Moment.ALLE_AUF_STAGING, konfig, takt=True
-    )
+    erg = komplett_lauf.komplett_einmal(klon, SPEC, Moment.ALLE_AUF_STAGING, konfig, takt=True)
     assert _git(klon, "rev-parse", "HEAD") == neu, "Klon nicht nachgezogen"
     merker = _warte_merker(klon, neu)
     assert merker.gruen, (erg, merker)
@@ -306,32 +269,24 @@ def test_takt_nach_rot_neuer_kopf_auf_origin_wird_nachgezogen_und_neu_geprueft(
     klon, konfig = _klon(tmp_path, {"komplett": _befehl(zaehl)})
     anderer, zweig = _mit_origin(tmp_path, klon)
     _rot(zaehl)
-    erst = komplett_lauf.komplett_einmal(
-        klon, SPEC, Moment.ALLE_AUF_STAGING, konfig, takt=True
-    )
+    erst = komplett_lauf.komplett_einmal(klon, SPEC, Moment.ALLE_AUF_STAGING, konfig, takt=True)
     assert (erst.gelaufen, erst.ok) == (True, False), erst
     zaehl.with_name("exit.txt").unlink()
     neu = _neu_auf_origin(anderer, zweig, klon, "fix.txt")
-    zweit = komplett_lauf.komplett_einmal(
-        klon, SPEC, Moment.ALLE_AUF_STAGING, konfig, takt=True
-    )
+    zweit = komplett_lauf.komplett_einmal(klon, SPEC, Moment.ALLE_AUF_STAGING, konfig, takt=True)
     assert _git(klon, "rev-parse", "HEAD") == neu, zweit
     assert _warte_merker(klon, neu).gruen, zweit
     assert _laeufe(zaehl) == 2
 
 
-def test_nachziehen_unmoeglich_haelt_mit_handlung(
-    tmp_path: Path, echtes_nachziehen: None
-) -> None:
+def test_nachziehen_unmoeglich_haelt_mit_handlung(tmp_path: Path, echtes_nachziehen: None) -> None:
     """Abgewichen (eigener Commit + neuer auf origin): kein Lauf, klare Zeile, HEAD bleibt."""
     zaehl = tmp_path / "zaehl.txt"
     klon, konfig = _klon(tmp_path, {"komplett": _befehl(zaehl)})
     anderer, zweig = _mit_origin(tmp_path, klon)
     eigen = _commit(klon, "eigen.txt")
     _neu_auf_origin(anderer, zweig, klon, "fremd.txt")
-    erg = komplett_lauf.komplett_einmal(
-        klon, SPEC, Moment.ALLE_AUF_STAGING, konfig, takt=True
-    )
+    erg = komplett_lauf.komplett_einmal(klon, SPEC, Moment.ALLE_AUF_STAGING, konfig, takt=True)
     assert (erg.gelaufen, erg.ok) == (False, False), erg
     assert "nicht vorspulbar" in erg.grund and "Tun:" in erg.grund, erg.grund
     assert _git(klon, "rev-parse", "HEAD") == eigen
@@ -348,9 +303,7 @@ def test_von_hand_zieht_auch_nach(tmp_path: Path, echtes_nachziehen: None) -> No
     assert (erg.gelaufen, erg.ok, erg.kopf) == (True, True, neu), erg
 
 
-@pytest.mark.skipif(
-    sys.platform == "win32", reason="fcntl-Sperre im Kind nur unter Linux"
-)
+@pytest.mark.skipif(sys.platform == "win32", reason="fcntl-Sperre im Kind nur unter Linux")
 def test_gestorbener_hintergrund_lauf_startet_im_naechsten_takt_neu(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -364,9 +317,7 @@ def test_gestorbener_hintergrund_lauf_startet_im_naechsten_takt_neu(
     # Kind-Skript im Attrappen-Ordner: nur von dort lässt der Starter unter Test Python zu.
     stirbt = Path(os.environ[komplett_lauf.starter.TEST_BIN_ENV]) / "stirbt.py"
     stirbt.write_text(
-        "import fcntl,sys,time\n"
-        "f=open(sys.argv[1],'a');fcntl.flock(f,fcntl.LOCK_EX)\n"
-        "time.sleep(1.5);sys.exit(9)\n",
+        "import fcntl,sys,time\nf=open(sys.argv[1],'a');fcntl.flock(f,fcntl.LOCK_EX)\ntime.sleep(1.5);sys.exit(9)\n",
         encoding="utf-8",
     )
 
@@ -374,21 +325,15 @@ def test_gestorbener_hintergrund_lauf_startet_im_naechsten_takt_neu(
         return echt([sys.executable, str(stirbt), str(sperr)], **kw)
 
     monkeypatch.setattr(komplett_lauf.starter, "starte", sterbend)
-    erst = komplett_lauf.komplett_einmal(
-        klon, SPEC, Moment.ALLE_AUF_STAGING, konfig, takt=True
-    )
+    erst = komplett_lauf.komplett_einmal(klon, SPEC, Moment.ALLE_AUF_STAGING, konfig, takt=True)
     assert erst.laeuft, erst
     time.sleep(0.5)
-    belegt = komplett_lauf.komplett_einmal(
-        klon, SPEC, Moment.ALLE_AUF_STAGING, konfig, takt=True
-    )
+    belegt = komplett_lauf.komplett_einmal(klon, SPEC, Moment.ALLE_AUF_STAGING, konfig, takt=True)
     assert belegt.laeuft and "läuft schon" in belegt.grund, belegt
     time.sleep(2.0)  # Kind ist tot, kein Merker, Sperre frei
     assert komplett_lauf.lies_merker(klon, SPEC) is None
     monkeypatch.setattr(komplett_lauf.starter, "starte", echt)
-    neu = komplett_lauf.komplett_einmal(
-        klon, SPEC, Moment.ALLE_AUF_STAGING, konfig, takt=True
-    )
+    neu = komplett_lauf.komplett_einmal(klon, SPEC, Moment.ALLE_AUF_STAGING, konfig, takt=True)
     assert _warte_merker(klon, kopf).gruen, neu
     assert _laeufe(zaehl) == 1
 
@@ -488,9 +433,7 @@ def test_hintergrund_kopfwechsel_vor_kind_pruefung_keine_falschmeldung(
         return echt(argv, **kw)
 
     monkeypatch.setattr(komplett_lauf.starter, "starte", mit_kopfwechsel)
-    erg = komplett_lauf.komplett_einmal(
-        klon, SPEC, Moment.ALLE_AUF_STAGING, konfig, takt=True
-    )
+    erg = komplett_lauf.komplett_einmal(klon, SPEC, Moment.ALLE_AUF_STAGING, konfig, takt=True)
     assert len(neuer_kopf) == 1
     assert "ohne Ergebnis" not in erg.grund, erg
     assert (erg.gelaufen, erg.ok, erg.laeuft, erg.kopf) == (True, True, False, neuer_kopf[0]), erg
@@ -513,9 +456,7 @@ def test_hintergrund_kopfwechsel_nach_kind_pruefung_keine_falschmeldung(
     )
     klon, konfig = _klon(tmp_path, {"komplett": befehl})
     alt = _git(klon, "rev-parse", "HEAD")
-    erg = komplett_lauf.komplett_einmal(
-        klon, SPEC, Moment.ALLE_AUF_STAGING, konfig, takt=True
-    )
+    erg = komplett_lauf.komplett_einmal(klon, SPEC, Moment.ALLE_AUF_STAGING, konfig, takt=True)
     neu = _git(klon, "rev-parse", "HEAD")
     assert neu != alt
     assert "ohne Ergebnis" not in erg.grund, erg
@@ -524,9 +465,7 @@ def test_hintergrund_kopfwechsel_nach_kind_pruefung_keine_falschmeldung(
     assert _laeufe(zaehl) == 1
 
 
-def test_hintergrund_echt_ohne_ergebnis_meldet_fehler(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_hintergrund_echt_ohne_ergebnis_meldet_fehler(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """#468: Endet der Hintergrund-Lauf wirklich ohne Merker, bleibt die Fehlermeldung erhalten."""
     zaehl = tmp_path / "zaehl.txt"
     klon, konfig = _klon(tmp_path, {"komplett": _befehl(zaehl)})
@@ -538,9 +477,7 @@ def test_hintergrund_echt_ohne_ergebnis_meldet_fehler(
         return echt([sys.executable, str(absturz)], **kw)
 
     monkeypatch.setattr(komplett_lauf.starter, "starte", abgestuerzt)
-    erg = komplett_lauf.komplett_einmal(
-        klon, SPEC, Moment.ALLE_AUF_STAGING, konfig, takt=True
-    )
+    erg = komplett_lauf.komplett_einmal(klon, SPEC, Moment.ALLE_AUF_STAGING, konfig, takt=True)
     assert (erg.gelaufen, erg.ok, erg.laeuft) == (False, False, False), erg
     assert "ohne Ergebnis beendet (Exit 9)" in erg.grund and "kaputt" in erg.grund, erg.grund
     assert komplett_lauf.lies_merker(klon, SPEC) is None
@@ -783,5 +720,3 @@ def test_gruppe_beenden_linux_beendet_prozessgruppe_und_hat_baum_rueckfall(
     monkeypatch.setattr(prozessbaum, "beenden", lambda pids, *_a, **_kw: beendet.append(list(pids)) or True)
     prozessbaum.gruppe_beenden(FakeProz())  # type: ignore[arg-type]
     assert beendet == [[322, 321]]
-
-

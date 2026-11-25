@@ -22,9 +22,7 @@ LOG = logging.getLogger("review.route")
 
 
 def kurzzeile(route: dict[str, Any]) -> str:
-    namen = [p["name"] for p in route["pruefer"]] + [
-        b["befehl"] for b in route["builtin"]
-    ]
+    namen = [p["name"] for p in route["pruefer"]] + [b["befehl"] for b in route["builtin"]]
     liste = ", ".join(namen) if namen else "–"
     zeile = f"Review {route['stufe']}: {liste} ({route['diff_zeilen']} Zeilen, {len(route['dateien'])} Dateien)"
     regeln, woerter = route.get("projektregeln"), route.get("projekt_woerter")
@@ -56,9 +54,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--kurz", action="store_true")
     args = parser.parse_args(argv)
     try:
-        route = berechne_route(
-            args.repo, args.moment, args.base, args.staged, args.files
-        )
+        route = berechne_route(args.repo, args.moment, args.base, args.staged, args.files)
     except EingabeFehler as fehler:
         LOG.error("%s", fehler)
         return 2

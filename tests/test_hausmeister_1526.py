@@ -145,9 +145,7 @@ def test_echte_wt_ordner_mit_kurzem_zusatz_bleiben_lesbar(name: str, nr: int) ->
     assert hausmeister._nummer(name, hausmeister._NAME_MUSTER) == nr
 
 
-@pytest.mark.parametrize(
-    "pfad", ["scripts/x.pyc", "foo__pycache__/x.pyc", "sub/data/.secret_key"]
-)
+@pytest.mark.parametrize("pfad", ["scripts/x.pyc", "foo__pycache__/x.pyc", "sub/data/.secret_key"])
 def test_grenzfaelle_gelten_nicht_als_neu_erzeugbar(pfad: str) -> None:
     assert not hausmeister._neu_erzeugbar(pfad)
 

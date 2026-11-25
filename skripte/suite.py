@@ -33,7 +33,9 @@ for _strom in (sys.stdout, sys.stderr):
         _strom.reconfigure(encoding="utf-8", errors="replace")
 
 #: Ordner, die beim Datei-Sammeln immer übersprungen werden.
-_IMMER_IGNORIEREN = frozenset({".git", ".review", ".ruff_cache", ".pytest_cache", "__pycache__", ".venv", "node_modules"})
+_IMMER_IGNORIEREN = frozenset(
+    {".git", ".review", ".ruff_cache", ".pytest_cache", "__pycache__", ".venv", "node_modules"}
+)
 
 #: pytest-Schalter, die das nächste Argument als Wert verbrauchen (kein Test-Pfad).
 _MIT_WERT = frozenset(
@@ -170,7 +172,9 @@ def _datei_lauf(befehl: list[str], wurzel: Path) -> int:
 
 
 def _hat_parallel_schalter(extra: Sequence[str]) -> bool:
-    return any(a == "-n" or a.startswith("-n") or a == "--numprocesses" or a.startswith("--numprocesses=") for a in extra)
+    return any(
+        a == "-n" or a.startswith("-n") or a == "--numprocesses" or a.startswith("--numprocesses=") for a in extra
+    )
 
 
 def main(argv: Sequence[str] | None = None, *, wurzel: Path = _SKILL) -> int:

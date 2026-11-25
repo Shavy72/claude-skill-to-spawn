@@ -82,9 +82,7 @@ def heim(tmp_path: Path) -> Path:
     return home
 
 
-def _probelauf(
-    repo: Path, name: str, nummer: str, home: Path
-) -> subprocess.CompletedProcess[str]:
+def _probelauf(repo: Path, name: str, nummer: str, home: Path) -> subprocess.CompletedProcess[str]:
     env = {k: v for k, v in os.environ.items() if k not in {"TO_SPAWN_REPO"}}
     env["HOME"] = str(home)
     env["USERPROFILE"] = str(home)
@@ -251,15 +249,29 @@ def test_weg_echte_session_hat_start_mjs_und_ruft_ctx_werkzeug(tmp_path: Path) -
     werkzeug = f"mcp__{SERVER}__ctx_execute"
     prozess = subprocess.Popen(
         [
-            "claude", "-p", "--model", "claude-haiku-4-5-20251001",
-            "--settings", str(einstellungen), "--mcp-config", str(mcp), "--strict-mcp-config",
-            "--no-chrome", "--output-format", "stream-json", "--verbose",
+            "claude",
+            "-p",
+            "--model",
+            "claude-haiku-4-5-20251001",
+            "--settings",
+            str(einstellungen),
+            "--mcp-config",
+            str(mcp),
+            "--strict-mcp-config",
+            "--no-chrome",
+            "--output-format",
+            "stream-json",
+            "--verbose",
             (
-                f"Rufe das Werkzeug {werkzeug} auf mit language \"python\" und "
-                "code \"print(6*7*1000+237)\". Antworte nur mit der Ausgabe des Werkzeugs."
+                f'Rufe das Werkzeug {werkzeug} auf mit language "python" und '
+                'code "print(6*7*1000+237)". Antworte nur mit der Ausgabe des Werkzeugs.'
             ),
         ],
-        cwd=str(tmp_path), env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        cwd=str(tmp_path),
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
         **konsole.UNTERPROZESS_TEXT,  # stream-json ist UTF-8; cp1252 bricht im Lese-Thread ab
         start_new_session=True,  # eigene Prozessgruppe: bei Timeout stirbt auch start.mjs
     )

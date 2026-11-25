@@ -114,9 +114,9 @@ ZUSATZ_PROBEN: dict[str, tuple[dict[str, Any], int]] = {
     "e py -c getattr": (_bash("python3 -c 'getattr(int, \"__class__\")'"), 2),
     "e py -c dunder": (_bash("python3 -c '().__class__.__bases__'"), 2),
     "e py -c os": (_bash("python3 -c 'import os; os.system(\"id\")'"), 2),
-    "e py -c open write": (_bash("python3 -c 'open(\"/tmp/x\", \"w\").write(\"a\")'"), 2),
-    "e py -c open alias": (_bash("python3 -c 'f = open; f(\"/tmp/x\", \"w\").write(\"a\")'"), 2),
-    "e py -c io fileio": (_bash("python3 -c 'import io; io.FileIO(\"/tmp/x\", \"w\")'"), 2),
+    "e py -c open write": (_bash('python3 -c \'open("/tmp/x", "w").write("a")\''), 2),
+    "e py -c open alias": (_bash('python3 -c \'f = open; f("/tmp/x", "w").write("a")\''), 2),
+    "e py -c io fileio": (_bash('python3 -c \'import io; io.FileIO("/tmp/x", "w")\''), 2),
     "e py -c env pfad": (_bash("python3 -c 'from pathlib import Path; print(Path(\".env\").read_text())'"), 2),
     "e rg --pre": (_bash("rg --pre='bash -c id' x"), 2),
     "e sort compress-program": (_bash("sort --compress-program=sh a.txt"), 2),
@@ -176,6 +176,7 @@ ZUSATZ_PROBEN: dict[str, tuple[dict[str, Any], int]] = {
     "e schedule wakeup": (_werkzeug("ScheduleWakeup", delaySeconds=60, prompt="x"), 3),
     "e send message": (_werkzeug("SendMessage", to="a", message="hi"), 3),
 }
+
 
 @pytest.mark.parametrize("name", sorted(BLOECKE))
 def test_erlaubt_bestand_und_gegenprobe(name: str) -> None:
@@ -253,9 +254,7 @@ def _oeffentliche_erlaubt_konstanten() -> set[str]:
     return {
         name
         for name, wert in vars(erlaubt).items()
-        if name.isupper()
-        and not name.startswith("_")
-        and isinstance(wert, (frozenset, tuple, dict, str))
+        if name.isupper() and not name.startswith("_") and isinstance(wert, (frozenset, tuple, dict, str))
     }
 
 
@@ -270,9 +269,7 @@ def test_jede_erlaubt_konstante_hat_testfall() -> None:
 
 
 @pytest.mark.parametrize("konstante", sorted(KONSTANTEN_PROBEN))
-def test_eintrag_entfernen_macht_fall_zu_klasse_2(
-    konstante: str, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_eintrag_entfernen_macht_fall_zu_klasse_2(konstante: str, monkeypatch: pytest.MonkeyPatch) -> None:
     eintrag_wert, block = KONSTANTEN_PROBEN[konstante]
     e = _eintrag(block)
     assert erlaubt.unbekannt(e) is None, f"{konstante}: Ausgangsfall nicht harmlos"
@@ -291,6 +288,4 @@ def test_eintrag_entfernen_macht_fall_zu_klasse_2(
     else:
         raise TypeError(f"Unerwarteter Konstanten-Typ für {konstante}: {type(alt)}")
     monkeypatch.setattr(erlaubt, konstante, neu)
-    assert erlaubt.unbekannt(e) is not None, (
-        f"{konstante}: Entfernen von {eintrag_wert!r} wurde nicht erkannt"
-    )
+    assert erlaubt.unbekannt(e) is not None, f"{konstante}: Entfernen von {eintrag_wert!r} wurde nicht erkannt"

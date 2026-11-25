@@ -360,7 +360,9 @@ def _pflichtfall_welt(tmp_path: Path, *, kaputt_alle: bool = False) -> tuple[Pat
     repo = tmp_path / "repo"
     repo.mkdir()
     subprocess.run(["git", "init", "-q", "-b", "main"], cwd=repo, check=True)
-    subprocess.run(["git", "remote", "add", "origin", "https://github.com/test-org/test-repo.git"], cwd=repo, check=True)
+    subprocess.run(
+        ["git", "remote", "add", "origin", "https://github.com/test-org/test-repo.git"], cwd=repo, check=True
+    )
     subprocess.run(["git", "config", "user.name", "test"], cwd=repo, check=True)
     subprocess.run(["git", "config", "user.email", "test@example.invalid"], cwd=repo, check=True)
 

@@ -231,7 +231,12 @@ def test_cli_entscheidungen_listet_beide_quellen(tmp_path: Path) -> None:
     eingeworfen = _cli(tmp_path, "frage", "7", "--frage", "Blocker?", "--vorschlag", "bauen")
     assert eingeworfen.returncode == 0
     fid = _id(eingeworfen.stdout)
-    assert _cli(tmp_path, "antworten", "7", "--id", fid, "--wahl", "bauen", "--grund", "Blocker zu", "--beleg", "#5").returncode == 0
+    assert (
+        _cli(
+            tmp_path, "antworten", "7", "--id", fid, "--wahl", "bauen", "--grund", "Blocker zu", "--beleg", "#5"
+        ).returncode
+        == 0
+    )
     liste = _cli(tmp_path, "entscheidungen", "99")
     assert liste.returncode == 0, liste.stderr
     zeilen = [z for z in liste.stdout.splitlines() if z.startswith("#7")]
@@ -349,7 +354,12 @@ def test_cli_bau_session_antwortet_nicht(tmp_path: Path) -> None:
     env.update(TO_SPAWN_REPO=str(tmp_path), TO_SPAWN_TICKET="7")
     lauf = subprocess.run(
         [sys.executable, str(SKILL / "to_spawn.py"), "antworten", "7", "--id", fid, "--wahl", "bauen", "--grund", "x"],
-        cwd=tmp_path, env=env, capture_output=True, text=True, timeout=60, check=False,
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
     )
     assert lauf.returncode == 2, lauf.stderr
     assert _cli(tmp_path, "antwort", "7", "--id", fid).returncode == 3
@@ -519,9 +529,7 @@ def test_ungueltige_bytes_beim_einwurf_beiseitegelegt(briefkasten: ModuleType, t
     assert briefkasten.lesen("7", "ab", hauptbaum=tmp_path) == briefkasten.NUTZER
 
 
-def test_liste_meldet_kaputte_datei(
-    briefkasten: ModuleType, tmp_path: Path, caplog: pytest.LogCaptureFixture
-) -> None:
+def test_liste_meldet_kaputte_datei(briefkasten: ModuleType, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     ordner = tmp_path / ".to-spawn"
     ordner.mkdir()
     (ordner / "entscheidung-7.json").write_text("[]", encoding="utf-8")

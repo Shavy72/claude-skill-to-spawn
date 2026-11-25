@@ -27,9 +27,7 @@ START_WIE_BISHER = (
 
 
 def _wache() -> ModuleType:
-    spec = importlib.util.spec_from_file_location(
-        "wache_422", SKILL / "skripte" / "wache.py"
-    )
+    spec = importlib.util.spec_from_file_location("wache_422", SKILL / "skripte" / "wache.py")
     assert spec and spec.loader
     modul = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(modul)
@@ -40,9 +38,7 @@ def _traegt_befugnis(text: str) -> None:
     assert befugnis.KOPF in text, "Befugnis-Kopf fehlt"
     assert anleitung.MINDSET in text, "Mindset fehlt"
     # Briefkasten-Teil des Aufsehers (``befugnis.aufseher_text``, Anfang ohne Befehlspfad).
-    assert befugnis.aufseher_text("X").split("`X")[0] in text, (
-        "Befugnis-Abschnitt fehlt"
-    )
+    assert befugnis.aufseher_text("X").split("`X")[0] in text, "Befugnis-Abschnitt fehlt"
 
 
 class _Werkzeug:
@@ -53,9 +49,7 @@ class _Werkzeug:
         self.uhr = time.time()
 
     def tippen(self, ziel: str, text: str) -> None:
-        treffer = re.search(
-            r"Handoff nach (\S+) und den Start-Prompt .*? nach (\S+) ", text
-        )
+        treffer = re.search(r"Handoff nach (\S+) und den Start-Prompt .*? nach (\S+) ", text)
         if treffer:
             for rel, inhalt in (
                 (treffer[1], "Handoff\n"),
@@ -74,9 +68,7 @@ class _Werkzeug:
 
 def test_abloesung_auftrag_wie_bisher_traegt_befugnis(tmp_path: Path) -> None:
     """respawn-Tür → Ablöse-Datei → ``wache.abloese_prompt``: Startkontext des Nachfolgers."""
-    erg = respawn_aufseher.aufseher_abloesen(
-        tmp_path, 1, "%5", werkzeug=_Werkzeug(tmp_path), warte_max=60
-    )
+    erg = respawn_aufseher.aufseher_abloesen(tmp_path, 1, "%5", werkzeug=_Werkzeug(tmp_path), warte_max=60)
     assert erg.exit == 0 and erg.handoff is not None, erg.zeile
     wache = _wache()
     auftrag = wache.prompt_bauen(1, "x/y", 600, {})
@@ -94,9 +86,7 @@ class _Gestartet(Exception):
     pass
 
 
-def test_aufpasser_fortgesetzt_traegt_befugnis(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_aufpasser_fortgesetzt_traegt_befugnis(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Aufpasser setzt das Aufseher-Gespräch fort (``fahre(session_id=…)``) → Weiter-Text trägt Befugnis."""
     monkeypatch.setenv("HOME", str(tmp_path / "heim"))
     cwd = tmp_path / "repo"

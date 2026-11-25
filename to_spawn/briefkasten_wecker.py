@@ -376,10 +376,7 @@ class Wecker:
             self._prompt_geweckt.discard(t)
             return
         # ponytail: Zähler nur im Speicher (Neustart des Aufsehers setzt ihn zurück); danach greift die Aufpasser-Kette
-        if (
-            t in self._prompt_geweckt
-            or aufpasser.arbeitet(bild)
-        ):
+        if t in self._prompt_geweckt or aufpasser.arbeitet(bild):
             return
         if self._tippe(ziel, aufpasser.ANSTUPS_TEXT.format(min=int(RUHE_S // 60))):
             self._prompt_geweckt.add(t)

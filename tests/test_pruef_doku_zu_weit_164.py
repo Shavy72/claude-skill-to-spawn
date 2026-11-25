@@ -87,7 +87,7 @@ def _liest(ziel: str) -> str:
 
 
 NICHT_DOKU_ENDUNG = [
-    ("tool", "tool", "#!/usr/bin/env python3\nprint(\"kaputt\")\n", "geaendert"),
+    ("tool", "tool", '#!/usr/bin/env python3\nprint("kaputt")\n', "geaendert"),
     ("*.sh", "run.sh", "kaputt\n", "geaendert"),
     ("*.sh", "run.sh", "", "geloescht"),
     ("*.ps1", "start.ps1", "kaputt\n", "geaendert"),
@@ -131,7 +131,9 @@ def test_umbenennung_doku_zu_code_ist_nie_doku(tmp_path: Path) -> None:
     _voll_und_rot(probe)
 
 
-@pytest.mark.parametrize(("datei", "text"), [("docs/x.md", "# Neu\n"), ("docs/bild.png", "png"), ("CHANGELOG", "neu\n")])
+@pytest.mark.parametrize(
+    ("datei", "text"), [("docs/x.md", "# Neu\n"), ("docs/bild.png", "png"), ("CHANGELOG", "neu\n")]
+)
 def test_echte_doku_bleibt_nur_doku(tmp_path: Path, datei: str, text: str) -> None:
     probe = sofort_test._probe(tmp_path / "g")
     sofort_test._erklaere(probe, ["docs/**", "README.md", "CHANGELOG"])
@@ -150,12 +152,14 @@ _LETZTE_ZEILE = 'from pathlib import Path\ndef f():\n    return (Path(__file__).
 @pytest.mark.parametrize("art", ["geaendert", "geloescht"])
 def test_datei_mit_shebang_ist_nie_doku(tmp_path: Path, art: str) -> None:
     """Shebang in Zeile 1 heißt Skript, auch mit Doku-Endung und passendem Muster (gelöscht: Stand der Basis)."""
-    probe = sofort_test._angriff(tmp_path / "s", {"docs/start.txt": "#!/usr/bin/env python3\nprint(\"ok\")\n", "app.py": _LETZTE_ZEILE})
+    probe = sofort_test._angriff(
+        tmp_path / "s", {"docs/start.txt": '#!/usr/bin/env python3\nprint("ok")\n', "app.py": _LETZTE_ZEILE}
+    )
     sofort_test._erklaere(probe, ["docs/**"])
     if art == "geloescht":
         (probe / "docs/start.txt").unlink()
         sofort_test._git(probe, "add", "-A")
         sofort_test._git(probe, "commit", "-qm", "löscht docs/start.txt")
     else:
-        sofort_test._commit(probe, "docs/start.txt", "#!/usr/bin/env python3\nprint(\"kaputt\")\n")
+        sofort_test._commit(probe, "docs/start.txt", '#!/usr/bin/env python3\nprint("kaputt")\n')
     _voll_und_rot(probe)

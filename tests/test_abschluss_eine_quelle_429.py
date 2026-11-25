@@ -76,9 +76,7 @@ def test_thermo_und_rueckblick_wortlaut_nur_einmal_im_quelltext() -> None:
         assert anleitung.ABSCHLUSS_ANWEISUNG.count(merkmal) == 1, merkmal
 
     fundorte = quelltext_fundorte(SKILL)
-    abweichungen = {
-        m: orte for m, orte in fundorte.items() if orte != [("to_spawn/anleitung.py", 1)]
-    }
+    abweichungen = {m: orte for m, orte in fundorte.items() if orte != [("to_spawn/anleitung.py", 1)]}
     assert not abweichungen, f"Abschluss-/Thermo-/Rückblick-Wortlaut nicht nur einmal in anleitung.py: {abweichungen}"
 
 

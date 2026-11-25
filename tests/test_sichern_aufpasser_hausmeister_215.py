@@ -84,9 +84,7 @@ def _aufpasser_instanz(tmp_path: Path) -> aufpasser.Aufpasser:
     "pfad",
     [".CLAUDE-HANDOFF.md", "docs/Entscheidungen.md", "unter/.CLAUDE-HANDOFF-LOOP.md"],
 )
-def test_a_sichern_worktree_verweigert_ungetrackte_gesperrte_datei(
-    tmp_path: Path, pfad: str
-) -> None:
+def test_a_sichern_worktree_verweigert_ungetrackte_gesperrte_datei(tmp_path: Path, pfad: str) -> None:
     origin, repo, wt = _repo_mit_worktree(tmp_path, 42)
     (wt / "arbeit.txt").write_text("echte arbeit\n", encoding="utf-8")
     gesperrt = wt / pfad
@@ -128,7 +126,7 @@ def test_a_sichern_und_fortsetzen_verweigert_ungetrackte_gesperrte_datei(
         gemeldet.append((ereignis, text))
 
     a._braucht_david = _merken  # type: ignore[method-assign]
-    a.vor_eingriff = lambda *_a, **_k: (fortgesetzt.append("vor_eingriff") or True)  # type: ignore[method-assign]
+    a.vor_eingriff = lambda *_a, **_k: fortgesetzt.append("vor_eingriff") or True  # type: ignore[method-assign]
     f = aufpasser.Fenster("spec-99", "99", "1", "bau 43", str(wt), 0, "@1", "%1")
     info = aufpasser.SessionInfo("11111111-1111-1111-1111-111111111111", wt, "idle", 0)
     eintrag: dict[str, object] = {"hash": "h", "seit": 0.0, "stufe": 1}
@@ -159,9 +157,7 @@ def test_a_sichern_verweigert_gesperrte_datei_im_ungepushten_commit(tmp_path: Pa
 
 
 @pytest.mark.parametrize("rel", ["ordner mit leer/.env", "Ümlaut/.env"])
-def test_b_hausmeister_ordner_geheimnis_mit_leerzeichen_und_umlaut(
-    welt: Welt, rel: str
-) -> None:
+def test_b_hausmeister_ordner_geheimnis_mit_leerzeichen_und_umlaut(welt: Welt, rel: str) -> None:
     wt = welt.worktree(51)
     ziel = wt / rel
     ziel.parent.mkdir(parents=True, exist_ok=True)
@@ -177,9 +173,7 @@ def test_b_hausmeister_ordner_geheimnis_mit_leerzeichen_und_umlaut(
 
 
 @pytest.mark.parametrize("rel", ["ordner mit leer/.env", "Ümlaut/.env"])
-def test_b_hausmeister_zweig_geheimnis_mit_leerzeichen_und_umlaut(
-    zw: Welt, rel: str
-) -> None:
+def test_b_hausmeister_zweig_geheimnis_mit_leerzeichen_und_umlaut(zw: Welt, rel: str) -> None:
     wt = zw.heim / "wt" / "wt-52"
     git(zw.haupt, "worktree", "add", "-q", "-b", "ticket/52-geheim", str(wt))
     ziel = wt / rel
@@ -191,9 +185,7 @@ def test_b_hausmeister_zweig_geheimnis_mit_leerzeichen_und_umlaut(
 
     # Worktree entfernen, Zweig bleibt lokal mit ungesichertem Geheimnis-Commit.
     git(zw.haupt, "worktree", "remove", "--force", str(wt))
-    erg = hausmeister._zweig_entscheiden(
-        zw.haupt, "ticket/52-geheim", None, trocken=True, ort="lokal", holen=False
-    )
+    erg = hausmeister._zweig_entscheiden(zw.haupt, "ticket/52-geheim", None, trocken=True, ort="lokal", holen=False)
 
     assert erg.art == "bleibt", erg
     assert f"Geheimnis-Datei {rel} in ungesichertem Commit" == erg.grund, erg.grund

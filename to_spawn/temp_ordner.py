@@ -141,9 +141,7 @@ def _ticket_aus_ordner(ordner: Path) -> int | None:
     return aus_name if aus_name is not None else aus_zweig
 
 
-def ticket_erkennen(
-    ordner: Path | None = None, env: Mapping[str, str] | None = None
-) -> tuple[int | None, str | None]:
+def ticket_erkennen(ordner: Path | None = None, env: Mapping[str, str] | None = None) -> tuple[int | None, str | None]:
     """Ermittelt ``(ticket, repo)`` aus ``ordner`` und Umgebung (``None`` = unklar).
 
     Ticket-Nummer: zuerst aus ``ordner`` (Name/Zweig über Hausmeister-Regeln), sonst
@@ -188,12 +186,7 @@ def _bestehender_ordner(wurzel: Path, ticket: int, ziel_repo: str) -> Path | Non
         fd = os.open(marker, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
         with os.fdopen(fd, "rb") as datei:
             m = os.fstat(datei.fileno())
-            if (
-                not stat.S_ISREG(m.st_mode)
-                or m.st_dev != m_vor.st_dev
-                or m.st_ino != m_vor.st_ino
-                or m.st_nlink != 1
-            ):
+            if not stat.S_ISREG(m.st_mode) or m.st_dev != m_vor.st_dev or m.st_ino != m_vor.st_ino or m.st_nlink != 1:
                 return None
             daten_roh = datei.read(_MARKER_MAX + 1)
         if len(daten_roh) > _MARKER_MAX:
@@ -203,11 +196,7 @@ def _bestehender_ordner(wurzel: Path, ticket: int, ziel_repo: str) -> Path | Non
         return None
     if not isinstance(daten, dict) or daten.get("ticket") != ticket:
         return None
-    if (
-        daten.get("ordner") != kandidat.name
-        or daten.get("dev") != info.st_dev
-        or daten.get("ino") != info.st_ino
-    ):
+    if daten.get("ordner") != kandidat.name or daten.get("dev") != info.st_dev or daten.get("ino") != info.st_ino:
         return None
     if ziel_repo:
         m_repo = daten.get("repo")
@@ -216,9 +205,7 @@ def _bestehender_ordner(wurzel: Path, ticket: int, ziel_repo: str) -> Path | Non
     return kandidat
 
 
-def _ticket_und_repo(
-    ticket: int | None, repo: str | None, ordner: Path | None
-) -> tuple[int | None, str]:
+def _ticket_und_repo(ticket: int | None, repo: str | None, ordner: Path | None) -> tuple[int | None, str]:
     """Bestimmt ``(ticket, ticket_repo)`` aus expliziten Argumenten, ``ordner`` und Umgebung."""
     nr = ticket
     ziel_repo = _repo_aufloesen(repo, ordner) if repo is not None else ""
@@ -532,9 +519,7 @@ def aufraeumen(*, loeschen: bool, jetzt: float | None = None) -> list[tuple[Path
     return ergebnis
 
 
-def _entscheiden(
-    ordner: Path, wurzel: Path, jetzt: float, zu: dict[tuple[str, int], bool]
-) -> tuple[int, str | None]:
+def _entscheiden(ordner: Path, wurzel: Path, jetzt: float, zu: dict[tuple[str, int], bool]) -> tuple[int, str | None]:
     """``(Ticket, None)`` = wegwerfbar, sonst ``(Ticket oder 0, Grund)``."""
     from . import hausmeister as hm  # spät: hausmeister ruft dieses Modul
 

@@ -45,9 +45,7 @@ def _claude(proc: Path, sessions: Path, pid: int, tmux_wert: str | None = None) 
         *([f"TMUX={tmux_wert}".encode()] if tmux_wert else []),
     ]
     (ordner / "environ").write_bytes(b"\0".join(umgebung) + b"\0")
-    (sessions / f"{pid}.json").write_text(
-        json.dumps({"pid": pid, "status": "busy"}), encoding="utf-8"
-    )
+    (sessions / f"{pid}.json").write_text(json.dumps({"pid": pid, "status": "busy"}), encoding="utf-8")
 
 
 def _spawn(
@@ -73,9 +71,7 @@ def _spawn(
     for pid in range(301, 301 + belegt_eigen):  # arbeitend in der Spec-Sitzung
         _claude(proc, sessions, pid, f"{SOCKEL},1,{EIGEN}")
     meminfo = tmp_path / "meminfo"
-    meminfo.write_text(
-        "MemTotal:       16777216 kB\nMemAvailable:   10485760 kB\n", encoding="utf-8"
-    )
+    meminfo.write_text("MemTotal:       16777216 kB\nMemAvailable:   10485760 kB\n", encoding="utf-8")
     repo, _welt, umgebung = _aufbau(
         tmp_path,
         konfig={
@@ -91,9 +87,7 @@ def _spawn(
     )
     aufrufe = _tmux_attrappe(tmp_path / "bin", proc, wache_prozess=wache_prozess)
     if fenster:
-        (tmp_path / "bin" / "fenster.txt").write_text(
-            "".join(f"{f}\n" for f in fenster), encoding="utf-8"
-        )
+        (tmp_path / "bin" / "fenster.txt").write_text("".join(f"{f}\n" for f in fenster), encoding="utf-8")
     (tmp_path / "bin" / "sitzungen.txt").write_text(
         f"leit\t{SOCKEL}\t${FREMD}\nspec-{e2.SPEC}\t{SOCKEL}\t${EIGEN}\n",
         encoding="utf-8",
@@ -139,23 +133,17 @@ def test_voll_ohne_aufseher_exit_5(tmp_path: Path) -> None:
     lauf, gestartet = _spawn(tmp_path, "--ohne-wache", belegt=12)  # 284: Rechner-Grenze 12 (war 1 über max_sessions)
     ausgabe = lauf.stdout + lauf.stderr
     assert lauf.returncode == 5, ausgabe
-    assert (
-        "nicht gestartet: bau 901" in ausgabe and "wartet auf Platz" not in ausgabe
-    ), ausgabe
+    assert "nicht gestartet: bau 901" in ausgabe and "wartet auf Platz" not in ausgabe, ausgabe
     assert "new-" not in gestartet, gestartet
 
 
 @pytest.mark.braucht("bash", "posix")
 def test_voll_wache_fenster_ohne_prozess_exit_5(tmp_path: Path) -> None:
     """Fenster ``wache <S>`` steht, aber kein ``wache.py`` lebt → niemand startet nach."""
-    lauf, gestartet = _spawn(
-        tmp_path, "--ohne-wache", belegt=12, fenster=[f"wache {e2.SPEC}"]
-    )
+    lauf, gestartet = _spawn(tmp_path, "--ohne-wache", belegt=12, fenster=[f"wache {e2.SPEC}"])
     ausgabe = lauf.stdout + lauf.stderr
     assert lauf.returncode == 5, ausgabe
-    assert (
-        "nicht gestartet: bau 901" in ausgabe and "wartet auf Platz" not in ausgabe
-    ), ausgabe
+    assert "nicht gestartet: bau 901" in ausgabe and "wartet auf Platz" not in ausgabe, ausgabe
     assert "new-" not in gestartet, gestartet
 
 
@@ -167,9 +155,7 @@ def test_warte_zweig_ohne_nicht_gestartet(tmp_path: Path) -> None:
     assert f"wache {e2.SPEC}" in gestartet and "bau 901" not in gestartet, gestartet
     assert lauf.returncode == 0, ausgabe
     assert "wartet auf Platz: bau 901" in ausgabe, ausgabe
-    assert "nicht gestartet" not in ausgabe and "Rest bleibt aus" not in ausgabe, (
-        ausgabe
-    )
+    assert "nicht gestartet" not in ausgabe and "Rest bleibt aus" not in ausgabe, ausgabe
 
 
 @pytest.mark.braucht("bash", "posix")
@@ -214,9 +200,7 @@ def test_tmux_gesetzt_eigene_sitzung_voll(tmp_path: Path) -> None:
 
 
 @pytest.mark.braucht("posix")
-def test_leitstand_session_zaehlt_nicht(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_leitstand_session_zaehlt_nicht(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Echter ``leitstand.py <S> sitzung`` startet die ``claude``-Attrappe; ihre Umgebung als
     Prozess in ``/proc`` belegt keinen Platz (ohne Marke zählt derselbe Prozess)."""
     import test_leitstand_fenster as lf

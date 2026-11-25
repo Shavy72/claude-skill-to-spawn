@@ -26,24 +26,17 @@ def test_capo_zu_als_nennt_schliessgrund(welt: dict[str, Path]) -> None:
     assert "#901 zu als not_planned — keine Regeln" in ergebnis.stdout, _text(ergebnis)
 
 
-def test_capo_folge_runde_fertig_gebaut_meldet_wortlaut(
-    welt: dict[str, Path], tmux: dict[str, Path]
-) -> None:
+def test_capo_folge_runde_fertig_gebaut_meldet_wortlaut(welt: dict[str, Path], tmux: dict[str, Path]) -> None:
     """``jetzt_offen``: Stand nach dem Wieder-Öffnen mit Staging-Label → keine Folge-Runde, klare Zeile."""
     _wieder_oeffnen_lassen(welt)
     _gh_setzen(welt, "901", labels=[ticket_zustand.STAGING_FERTIG_LABEL])
     ergebnis = _capo(welt)
     assert "#901 wieder geöffnet" in ergebnis.stdout, _text(ergebnis)
-    assert (
-        "#901 Ticket fertig gebaut, wartet auf Live — keine Folge-Runde"
-        in ergebnis.stdout
-    ), _text(ergebnis)
+    assert "#901 Ticket fertig gebaut, wartet auf Live — keine Folge-Runde" in ergebnis.stdout, _text(ergebnis)
     assert _starts(tmux) == []
 
 
-def test_capo_folge_runde_offen_startet(
-    welt: dict[str, Path], tmux: dict[str, Path]
-) -> None:
+def test_capo_folge_runde_offen_startet(welt: dict[str, Path], tmux: dict[str, Path]) -> None:
     """Gegenprobe: ohne Staging-Label ist ``jetzt_offen`` offen → Folge-Runde startet."""
     _wieder_oeffnen_lassen(welt)
     ergebnis = _capo(welt)

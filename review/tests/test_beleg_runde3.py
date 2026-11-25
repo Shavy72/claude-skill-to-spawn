@@ -28,13 +28,9 @@ def test_baum_geaendert_seit_entwurf_keine_datei_hashes(repo: Path) -> None:
     with (repo / "rechnen.py").open("a", encoding="utf-8") as f:
         f.write("def drei():\n    return 3\n")
 
-    ergebnis = lauf(
-        "review_beleg.py", "schreiben", "--datei", str(entwurf), "--repo", str(repo)
-    )
+    ergebnis = lauf("review_beleg.py", "schreiben", "--datei", str(entwurf), "--repo", str(repo))
     assert ergebnis.returncode == 0, ergebnis.stderr
-    beleg = json.loads(
-        Path(ergebnis.stdout.splitlines()[0]).read_text(encoding="utf-8")
-    )
+    beleg = json.loads(Path(ergebnis.stdout.splitlines()[0]).read_text(encoding="utf-8"))
     assert not beleg.get("datei_hashes")
 
 
@@ -44,11 +40,7 @@ def test_baum_unveraendert_datei_hashes_vorhanden(repo: Path) -> None:
     r = route(repo, "--moment", "sitzung")
     entwurf = _entwurf_schreiben(repo, r)
 
-    ergebnis = lauf(
-        "review_beleg.py", "schreiben", "--datei", str(entwurf), "--repo", str(repo)
-    )
+    ergebnis = lauf("review_beleg.py", "schreiben", "--datei", str(entwurf), "--repo", str(repo))
     assert ergebnis.returncode == 0, ergebnis.stderr
-    beleg = json.loads(
-        Path(ergebnis.stdout.splitlines()[0]).read_text(encoding="utf-8")
-    )
+    beleg = json.loads(Path(ergebnis.stdout.splitlines()[0]).read_text(encoding="utf-8"))
     assert beleg.get("datei_hashes")

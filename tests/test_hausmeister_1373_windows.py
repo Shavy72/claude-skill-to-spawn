@@ -84,9 +84,7 @@ def win(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> Welt:
 
 
 def _prozesse(welt: Welt, daten: object) -> None:
-    (welt.tmp / "ps.json").write_text(
-        json.dumps(daten, separators=(",", ":")), encoding="utf-8"
-    )
+    (welt.tmp / "ps.json").write_text(json.dumps(daten, separators=(",", ":")), encoding="utf-8")
 
 
 # --- Kern-Fälle im Windows-Zweig ------------------------------------------------
@@ -107,9 +105,7 @@ def test_win_geaendert_gesichert_und_geloescht(win: Welt) -> None:
     r = win.aufraeumen(wt, loeschen=True)
     assert r.art == "gesichert und gelöscht" and r.sicherung
     assert not wt.exists()
-    assert "geaendert.txt" in win.im_bare(
-        "ls-tree", "-r", "--name-only", "sicherung/32"
-    )
+    assert "geaendert.txt" in win.im_bare("ls-tree", "-r", "--name-only", "sicherung/32")
 
 
 def test_win_ticket_offen_bleibt(win: Welt) -> None:
@@ -196,9 +192,7 @@ def test_win_nachbarordner_mit_laengerem_namen_zaehlt_nicht(win: Welt) -> None:
     assert win.aufraeumen(wt).art == "gelöscht"
 
 
-def test_win_umbenennen_verweigert_bleibt(
-    win: Welt, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_win_umbenennen_verweigert_bleibt(win: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
     wt = win.worktree(38)
     win.ticket(38, "CLOSED", 48)
 
@@ -232,10 +226,7 @@ def test_win_rueckbenennen_scheitert_bleibt_laut(
     assert r.art == "bleibt" and r.fehler
     probe = wt.with_name(wt.name + ".hausmeister-probe")
     assert probe.is_dir()  # nichts gelöscht, liegt unter dem Probe-Namen
-    assert any(
-        rec.levelno == logging.ERROR and str(probe) in rec.getMessage()
-        for rec in caplog.records
-    )
+    assert any(rec.levelno == logging.ERROR and str(probe) in rec.getMessage() for rec in caplog.records)
 
 
 def test_win_probeziel_existiert_bleibt(win: Welt) -> None:
@@ -257,22 +248,16 @@ def test_win_powershell_ausgabe_kaputt_bleibt_fehler(win: Welt, ausgabe: str) ->
     assert wt.is_dir()
 
 
-def test_win_powershell_fehlt_bleibt_fehler(
-    win: Welt, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_win_powershell_fehlt_bleibt_fehler(win: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
     wt = win.worktree(42)
     win.ticket(42, "CLOSED", 48)
-    monkeypatch.setattr(
-        hausmeister_windows, "_POWERSHELL", str(win.tmp / "gibt-es-nicht")
-    )
+    monkeypatch.setattr(hausmeister_windows, "_POWERSHELL", str(win.tmp / "gibt-es-nicht"))
     r = win.aufraeumen(wt, loeschen=True)
     assert r.art == "bleibt" and r.fehler and "PowerShell" in r.grund
     assert wt.is_dir()
 
 
-def test_win_powershell_zeitlimit_bleibt_fehler(
-    win: Welt, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_win_powershell_zeitlimit_bleibt_fehler(win: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
     wt = win.worktree(43)
     win.ticket(43, "CLOSED", 48)
     attrappe(win.tmp / "bin", "powershell", "import time\ntime.sleep(5)\n")
@@ -305,9 +290,7 @@ def test_nur_lese_dateien_werden_geloescht(win: Welt) -> None:
 # --- Platte der Wurzeln ---------------------------------------------------------
 
 
-def test_platte_der_wurzel_gemessen(
-    welt: Welt, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_platte_der_wurzel_gemessen(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("TO_SPAWN_HAUSMEISTER_PLATTE", raising=False)
     gemessen: list[Path] = []
 
@@ -321,9 +304,7 @@ def test_platte_der_wurzel_gemessen(
     assert welt.heim / "wt" in gemessen
 
 
-def test_platte_ohne_existierende_wurzel_misst_home(
-    welt: Welt, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_platte_ohne_existierende_wurzel_misst_home(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("TO_SPAWN_HAUSMEISTER_PLATTE", raising=False)
     monkeypatch.setenv("TO_SPAWN_HAUSMEISTER_WURZELN", str(welt.tmp / "nix" / "wt-*"))
     gemessen: list[Path] = []
@@ -396,9 +377,7 @@ def test_altbestand_kaputt_alles_bleibt(win: Welt, inhalt: str) -> None:
     assert wt.is_dir()
 
 
-def test_altbestand_fehlt_keine_wirkung_auf_server(
-    welt: Welt, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_altbestand_fehlt_keine_wirkung_auf_server(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
     wt = welt.worktree(59)
     welt.ticket(59, "CLOSED", 48)
     hausmeister.altbestand_pfad().unlink(missing_ok=True)  # Windows-Welt legt sie an (#68)
@@ -428,9 +407,7 @@ def test_echt_windows_unterprozess_mit_cwd_im_ordner_bleibt(welt: Welt) -> None:
     wt = welt.worktree(60)
     welt.ticket(60, "CLOSED", 48)
     (wt / "unter").mkdir()
-    proc = subprocess.Popen(
-        [sys.executable, "-c", "import time; time.sleep(60)"], cwd=wt / "unter"
-    )
+    proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"], cwd=wt / "unter")
     try:
         r = welt.aufraeumen(wt, loeschen=True)
         assert r.art == "bleibt" and not r.fehler, r.grund
@@ -455,15 +432,11 @@ def test_win_ohne_altbestand_datei_haelt_erst_alles_fest(win: Welt) -> None:
     assert wt.resolve().as_posix() in daten["ordner"]
 
 
-def test_win_trockenlauf_ohne_umbenennungs_probe(
-    win: Welt, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_win_trockenlauf_ohne_umbenennungs_probe(win: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
     wt = win.worktree(52)
     win.ticket(52, "CLOSED", 48)
     aufrufe: list[str] = []
-    monkeypatch.setattr(
-        hausmeister_windows, "_umbenennen", lambda alt, neu: aufrufe.append(str(neu))
-    )
+    monkeypatch.setattr(hausmeister_windows, "_umbenennen", lambda alt, neu: aufrufe.append(str(neu)))
     assert win.aufraeumen(wt).art == "gelöscht"
     assert hausmeister.aufraeumen_alles(jetzt=win.jetzt)
     assert aufrufe == [] and wt.is_dir()
@@ -484,9 +457,7 @@ class _Msvcrt:
             raise self.fehler
 
 
-def test_win_sperre_belegt_raeumt_nicht_auf(
-    win: Welt, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_win_sperre_belegt_raeumt_nicht_auf(win: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
     wt = win.worktree(53)
     win.ticket(53, "CLOSED", 48)
     m = _Msvcrt(OSError(errno.EACCES, "Permission denied"))

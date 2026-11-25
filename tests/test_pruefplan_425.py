@@ -58,9 +58,7 @@ TABELLE = [
 
 
 @pytest.mark.parametrize(("art", "stand", "erwartet"), TABELLE)
-def test_tabelle_repo_art_mal_spec_stand(
-    art: str, stand: SpecStand, erwartet: str
-) -> None:
+def test_tabelle_repo_art_mal_spec_stand(art: str, stand: SpecStand, erwartet: str) -> None:
     konfig = _konfig(MIT_STAGING if art == "mit" else OHNE_STAGING)
     assert config.hat_staging(konfig) is (art == "mit")
     assert pruefplan.welche(konfig, stand) == erwartet
@@ -89,10 +87,7 @@ def test_komplett_laeuft_genau_einmal_je_spec(eigen: dict[str, Any]) -> None:
 
 def test_befehl_aus_konfig() -> None:
     konfig = _konfig(MIT_STAGING)
-    assert (
-        pruefplan.befehl(konfig, "schnell")
-        == "ruff check . && pytest -q tests/betroffen"
-    )
+    assert pruefplan.befehl(konfig, "schnell") == "ruff check . && pytest -q tests/betroffen"
     assert pruefplan.befehl(konfig, "komplett") == "pytest -q"
     assert pruefplan.befehl(konfig, "keine") is None
 
@@ -129,9 +124,7 @@ def test_vorgaben_haben_neue_gruppen_leer() -> None:
 
 
 def test_live_schritt_liest_gruppe() -> None:
-    konfig = _konfig(
-        {"live": {"befehl": " python skripte/ausrollen.py live ", "url": "http://x/"}}
-    )
+    konfig = _konfig({"live": {"befehl": " python skripte/ausrollen.py live ", "url": "http://x/"}})
     assert config.live_schritt(konfig) == {
         "befehl": "python skripte/ausrollen.py live",
         "url": "http://x/",
@@ -162,13 +155,8 @@ def test_schluessel_passen_zu_probe_vorlagen_442(tmp_path: Path) -> None:
     datei = tmp_path / ".to-spawn" / "config.json"
     datei.parent.mkdir()
     datei.write_text(json.dumps(VORLAGE), encoding="utf-8")
-    konfig = config._mische(
-        config.DEFAULTS, json.loads(datei.read_text(encoding="utf-8"))
-    )
+    konfig = config._mische(config.DEFAULTS, json.loads(datei.read_text(encoding="utf-8")))
     assert set(konfig["pruefung"]) == set(config.DEFAULTS["pruefung"])
     assert set(konfig["live"]) == set(config.DEFAULTS["live"])
     assert pruefplan.befehl(konfig, "komplett") == "python skripte/pruefen_komplett.py"
-    assert (
-        config.live_schritt(konfig)["aufraeumen"]
-        == "python skripte/ausrollen.py live --aufraeumen"
-    )
+    assert config.live_schritt(konfig)["aufraeumen"] == "python skripte/ausrollen.py live --aufraeumen"

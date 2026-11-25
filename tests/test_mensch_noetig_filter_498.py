@@ -136,9 +136,7 @@ def test_fremder_eintrag_wird_ueber_laeufe_nur_einmal_gemeldet(
     def lauf() -> list[str]:
         caplog.clear()
         with caplog.at_level(logging.INFO, logger="to_spawn.mensch_noetig"):
-            mensch_noetig.eintraege_fuer_lauf(
-                3, set(), ort["repo"], lambda n: ort["wt"] / f"wt-{n}", fremd=zustand
-            )
+            mensch_noetig.eintraege_fuer_lauf(3, set(), ort["repo"], lambda n: ort["wt"] / f"wt-{n}", fremd=zustand)
         return [r.getMessage() for r in caplog.records]
 
     erster, zweiter = lauf(), lauf()
@@ -173,7 +171,10 @@ def _prozess(ort: dict[str, Path], datei: Path) -> subprocess.CompletedProcess[s
     env = {**os.environ, "PYTHONPATH": str(wurzel), "REVIEW_MENSCH_NOETIG": str(ort["datei"])}
     return subprocess.run(
         [sys.executable, str(skript), str(datei), str(ort["repo"]), str(ort["wt"])],
-        capture_output=True, text=True, env=env, check=True,
+        capture_output=True,
+        text=True,
+        env=env,
+        check=True,
     )
 
 
@@ -215,5 +216,7 @@ def test_fehlender_schluessel_ohne_fremde_kein_sichern(ort: dict[str, Path]) -> 
     _schreibe(ort["datei"], _zeile(ort["repo"].as_posix(), fp="a1"))
     gesichert: list[int] = []
     zustand: dict[str, object] = {}
-    mensch_noetig.eintraege_mit_zustand(3, zustand, lambda: gesichert.append(1), ort["repo"], lambda n: ort["wt"] / f"wt-{n}")
+    mensch_noetig.eintraege_mit_zustand(
+        3, zustand, lambda: gesichert.append(1), ort["repo"], lambda n: ort["wt"] / f"wt-{n}"
+    )
     assert gesichert == [] and zustand == {}

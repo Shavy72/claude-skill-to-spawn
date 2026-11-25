@@ -43,11 +43,7 @@ def _stufen_im_frischen_prozess(vorbereitung: str) -> list[list[float]]:
 
 def test_import_ohne_sighup_und_sigkill_wie_windows() -> None:
     """Fehlen SIGHUP und SIGKILL (Windows), bleibt SIGTERM als einzige Stufe."""
-    ohne = (
-        "for name in ('SIGHUP', 'SIGKILL'):\n"
-        "    if hasattr(signal, name):\n"
-        "        delattr(signal, name)"
-    )
+    ohne = "for name in ('SIGHUP', 'SIGKILL'):\n    if hasattr(signal, name):\n        delattr(signal, name)"
     assert _stufen_im_frischen_prozess(ohne) == [[int(signal.SIGTERM), 5.0]]
 
 

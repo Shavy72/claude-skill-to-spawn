@@ -42,9 +42,7 @@ def _welt_ohne_abnahme() -> dict[str, Any]:
     return {"issues": issues, "unter": {str(SPEC): []}, "kanten": {}, "posts": []}
 
 
-def _aufbau(
-    tmp_path: Path, welt: dict[str, Any] | None = None
-) -> tuple[Path, Path, dict[str, str]]:
+def _aufbau(tmp_path: Path, welt: dict[str, Any] | None = None) -> tuple[Path, Path, dict[str, str]]:
     """Wegwerf-Repo mit vollständiger Einrichtungs-Konfig und gestelltem gh."""
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -93,9 +91,7 @@ def _cli(repo: Path, umgebung: dict[str, str], *args: str) -> subprocess.Complet
     )
 
 
-def _anhaengen(
-    repo: Path, umgebung: dict[str, str], nummer: int, *extra: str
-) -> subprocess.CompletedProcess[str]:
+def _anhaengen(repo: Path, umgebung: dict[str, str], nummer: int, *extra: str) -> subprocess.CompletedProcess[str]:
     return _cli(
         repo,
         umgebung,
@@ -151,9 +147,7 @@ def test_sechs_tickets_nacheinander_ohne_fehler_regularien_bleibt_hart(tmp_path:
     assert "alles erfüllt" in reg_danach.stdout, reg_danach.stdout
 
 
-def test_pruefe_checkpoint_pflicht_schalter(
-    tmp_path: Path, monkeypatch: Any
-) -> None:
+def test_pruefe_checkpoint_pflicht_schalter(tmp_path: Path, monkeypatch: Any) -> None:
     """``manifest.pruefe`` meldet fehlendes Checkpoint-Ticket nur bei ``checkpoint_pflicht=True`` hart."""
     repo, _, umgebung = _aufbau(tmp_path)
     lauf = _anhaengen(repo, umgebung, BAU_TICKETS[0])

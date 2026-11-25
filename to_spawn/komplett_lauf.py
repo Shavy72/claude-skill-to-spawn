@@ -238,11 +238,7 @@ def _hinten(klon: Path) -> int:
 def _stand_halt(klon: Path, kopf: str) -> str:
     """Grund, warum der Arbeitsbaum nicht für ``kopf`` steht; ``""`` = prüfbar."""
     # Die Konfig trägt nur den Prüf-Befehl, keinen geprüften Code: zählt hier nicht als schmutzig.
-    offen = [
-        pfad
-        for pfad in sofort.ungespeichert(klon)
-        if pfad != config.KONFIG_PFAD.as_posix()
-    ]
+    offen = [pfad for pfad in sofort.ungespeichert(klon) if pfad != config.KONFIG_PFAD.as_posix()]
     if offen:
         liste = ", ".join(offen[:3]) + (" …" if len(offen) > 3 else "")
         return (
@@ -272,9 +268,7 @@ def _gemerkt(merker: Merker | None, kopf: str, rot_zaehlt: bool) -> Merker | Non
     return None
 
 
-def komplett_einmal(
-    klon: Path, spec: int, moment: Moment, konfig: dict[str, Any], *, takt: bool = False
-) -> Ergebnis:
+def komplett_einmal(klon: Path, spec: int, moment: Moment, konfig: dict[str, Any], *, takt: bool = False) -> Ergebnis:
     """Komplett-Prüfung der Spec ``spec`` im Klon laufen lassen, wenn sie jetzt dran ist — höchstens einmal.
 
     ``moment`` = wo die Spec steht (``Moment.ALLE_AUF_STAGING`` oder ``Moment.VOR_LIVE``; ``TICKET``
@@ -284,9 +278,7 @@ def komplett_einmal(
     Hintergrund-Prozess, der Aufruf kehrt nach höchstens :data:`TAKT_WARTEN_S` zurück.
     ``takt=False`` (von Hand, Tür vor Live): läuft im Aufruf, Rot wird erneut geprüft.
     """
-    return _pruefen(
-        klon, spec, Moment(moment), konfig, rot_zaehlt=takt, hintergrund=takt
-    )
+    return _pruefen(klon, spec, Moment(moment), konfig, rot_zaehlt=takt, hintergrund=takt)
 
 
 def darf_live(klon: Path, spec: int, konfig: dict[str, Any]) -> Ergebnis:
@@ -342,9 +334,7 @@ def _vorbereiten(
                     _kopf(klon) or "",
                 )
             kopf = _kopf(klon)
-            gemerkt = (
-                _gemerkt(lies_merker(klon, spec), kopf, rot_zaehlt) if kopf else None
-            )
+            gemerkt = _gemerkt(lies_merker(klon, spec), kopf, rot_zaehlt) if kopf else None
     elif kopf is not None and _hinten(klon):
         gemerkt = None
     if kopf is None:
@@ -361,9 +351,7 @@ def _vorbereiten(
     return kopf, None
 
 
-def nur_lesen(
-    klon: Path, spec: int, moment: Moment, konfig: dict[str, Any]
-) -> Ergebnis:
+def nur_lesen(klon: Path, spec: int, moment: Moment, konfig: dict[str, Any]) -> Ergebnis:
     """Probelauf (#456): was der Takt jetzt sähe — liest nur Kopf und Merker, startet nichts.
 
     Kein Nachziehen, keine Sperre, kein Lauf, kein Merker. Regel wie im Takt (rot je Kopf gilt
@@ -372,9 +360,7 @@ def nur_lesen(
     """
     if (antwort := _nicht_eingerichtet(spec, konfig)) is not None:
         return antwort
-    kopf, antwort = _vorbereiten(
-        klon, spec, Moment(moment), konfig, rot_zaehlt=True, nachziehen=False
-    )
+    kopf, antwort = _vorbereiten(klon, spec, Moment(moment), konfig, rot_zaehlt=True, nachziehen=False)
     if antwort is not None:
         return antwort
     assert kopf is not None
@@ -410,16 +396,12 @@ def _ohne_lauf(
     return None
 
 
-def takt_kind(
-    klon: Path, spec: int, moment: Moment, konfig: dict[str, Any]
-) -> Ergebnis:
+def takt_kind(klon: Path, spec: int, moment: Moment, konfig: dict[str, Any]) -> Ergebnis:
     """Nur für den Hintergrund-Prozess aus ``komplett_einmal(takt=True)`` (``--aus-takt``).
 
     Läuft im Aufruf wie von Hand, aber mit der Takt-Regel „rot je Kopf nur einmal“.
     """
-    return _pruefen(
-        klon, spec, Moment(moment), konfig, rot_zaehlt=True, hintergrund=False
-    )
+    return _pruefen(klon, spec, Moment(moment), konfig, rot_zaehlt=True, hintergrund=False)
 
 
 def _pruefen(
@@ -447,9 +429,7 @@ def _pruefen(
         with _sperre.halte(sperr_datei) as frei:
             if not frei:
                 return Ergebnis(False, True, belegt, None, _kopf(klon) or "", laeuft=True)
-            kopf, antwort = _vorbereiten(
-                klon, spec, moment, konfig, rot_zaehlt=rot_zaehlt, nachziehen=True
-            )
+            kopf, antwort = _vorbereiten(klon, spec, moment, konfig, rot_zaehlt=rot_zaehlt, nachziehen=True)
             if antwort is not None:
                 return antwort
             assert kopf is not None
@@ -494,11 +474,7 @@ def _im_hintergrund(klon: Path, spec: int, moment: Moment, kopf: str) -> Ergebni
         sys.executable, str(_SKRIPT), "komplett", str(int(spec)),
         "--moment", moment.value.replace("_", "-"), "--aus-takt",
     ]  # fmt: skip
-    eigen = (
-        prozessbaum.ohne_fenster()
-        if sys.platform == "win32"
-        else {"start_new_session": True}
-    )
+    eigen = prozessbaum.ohne_fenster() if sys.platform == "win32" else {"start_new_session": True}
     vorher = lies_merker(klon, spec)
     try:
         ausgabe.parent.mkdir(parents=True, exist_ok=True)
@@ -514,9 +490,7 @@ def _im_hintergrund(klon: Path, spec: int, moment: Moment, kopf: str) -> Ergebni
                 **eigen,
             )
     except OSError as fehler:
-        log.error(
-            "komplett_lauf: Hintergrund-Lauf Spec %s nicht gestartet: %s", spec, fehler
-        )
+        log.error("komplett_lauf: Hintergrund-Lauf Spec %s nicht gestartet: %s", spec, fehler)
         return Ergebnis(
             False,
             False,
@@ -580,17 +554,13 @@ def _im_hintergrund(klon: Path, spec: int, moment: Moment, kopf: str) -> Ergebni
 
 def _letzte_zeile(datei: Path) -> str:
     try:
-        zeilen = (
-            datei.read_text(encoding="utf-8", errors="replace").strip().splitlines()
-        )
+        zeilen = datei.read_text(encoding="utf-8", errors="replace").strip().splitlines()
     except OSError:
         return ""
     return zeilen[-1][:200] if zeilen else ""
 
 
-def _lauf(
-    klon: Path, spec: int, moment: Moment, befehl: str, kopf: str, zeitgrenze_s: float
-) -> Ergebnis:
+def _lauf(klon: Path, spec: int, moment: Moment, befehl: str, kopf: str, zeitgrenze_s: float) -> Ergebnis:
     """Befehl ausführen, Merker + Protokoll-Zeile schreiben; nur unter der Sperre aus :func:`_pruefen`."""
     start_zeit, start = _jetzt(), time.monotonic()
     stufe = leiter.eigener_befehl(klon, befehl, "komplett", zeitgrenze_s, ticket=spec)
@@ -638,9 +608,7 @@ def _lauf(
     return _aus_merker(Merker(**daten), spec, gelaufen=True)  # type: ignore[arg-type]
 
 
-def _protokoll(
-    klon: Path, spec: int, moment: Moment, stufe: leiter.Stufe, kopf: str, dauer: float
-) -> None:
+def _protokoll(klon: Path, spec: int, moment: Moment, stufe: leiter.Stufe, kopf: str, dauer: float) -> None:
     """Eine Zeile ``art: "komplett"`` im Prüf-Protokoll (#455); Schreibfehler bleiben eine Warnung."""
     zeile = protokoll.zeile(
         basis=kopf,
@@ -680,9 +648,7 @@ def _aus_merker(merker: Merker, spec: int, *, gelaufen: bool) -> Ergebnis:
             f"`to_spawn.py komplett {int(spec)} --moment {merker.moment.replace('_', '-')}`."
         )
     else:
-        handlung = (
-            f"Handlung: Werkzeug-Fehler beheben ({merker.grund}), dann erneut rufen."
-        )
+        handlung = f"Handlung: Werkzeug-Fehler beheben ({merker.grund}), dann erneut rufen."
     if gelaufen:
         text = f"Komplett-Prüfung rot (Exit {merker.exit}) für Stand {kurz}: {merker.grund} {handlung}"
     else:

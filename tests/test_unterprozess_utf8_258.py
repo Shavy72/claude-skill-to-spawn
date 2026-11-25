@@ -143,9 +143,7 @@ def test_nicht_utf8_ausgabe_ist_nicht_lesbar_kein_absturz(monkeypatch) -> None:
     assert cache._tree(Path("."), "HEAD") is None
 
 
-def test_pruef_sha_nicht_utf8_ausgabe_liefert_none(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_pruef_sha_nicht_utf8_ausgabe_liefert_none(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """#608 (1): ``pruef._sha`` stürzt bei kaputter Nicht-UTF-8-Ausgabe nicht ab, sondern liefert ``None``."""
     from to_spawn import pruef
 
@@ -186,16 +184,13 @@ def test_lauf_daten_vereinheitlicht_crlf_zu_lf(monkeypatch: pytest.MonkeyPatch) 
 def test_waechter_erlaubt_unterprozess_pfade(tmp_path: Path) -> None:
     quelle = tmp_path / "pfade.py"
     quelle.write_text(
-        "import subprocess\n"
-        "subprocess.run(['git', 'status'], text=True, **konsole.UNTERPROZESS_PFADE)\n",
+        "import subprocess\nsubprocess.run(['git', 'status'], text=True, **konsole.UNTERPROZESS_PFADE)\n",
         encoding="utf-8",
     )
     assert _ohne_utf8(quelle) == []
 
 
-def test_rest_module_nicht_utf8_ohne_absturz(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_rest_module_nicht_utf8_ohne_absturz(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """#258 Rest-Migration: ``lauf_daten``-Stellen stürzen bei Nicht-UTF-8 nicht ab."""
     from to_spawn import belege, komplett_lauf, nest
 
@@ -221,9 +216,7 @@ def _lade_skript(name: str, monkeypatch: pytest.MonkeyPatch) -> Any:
     return modul
 
 
-def test_migrierte_aufrufe_uebergeben_utf8_lesart(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_migrierte_aufrufe_uebergeben_utf8_lesart(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """#258: Alle nachgezogenen Unterprozess-Stellen nutzen UTF-8 über ``konsole``."""
     from to_spawn import (
         hausmeister_aufgabe,

@@ -191,9 +191,7 @@ def test_beenden_term_reicht(eltern_mit_kind: subprocess.Popen[bytes]) -> None:
     kind = baum[1]
     stufen = ((signal.SIGTERM, 5.0), (SIGKILL, 5.0))
     eskaliert: list[int] = []
-    assert prozessbaum.beenden(
-        list(reversed(baum)), stufen, eskalation=lambda sig, _: eskaliert.append(sig)
-    )
+    assert prozessbaum.beenden(list(reversed(baum)), stufen, eskalation=lambda sig, _: eskaliert.append(sig))
     eltern_mit_kind.wait(timeout=5)
     assert not prozessbaum.lebt(kind)
     assert eskaliert == []
@@ -245,9 +243,7 @@ def test_beenden_wartet_nur_auf_ziel(tmp_path: Path, starten: Starter) -> None:
 
 
 @pytest.mark.skipif(WINDOWS, reason="/proc gibt es nur unter Linux; Windows-Fall siehe unten")
-def test_baum_proc_unlesbar_ist_fehler(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_baum_proc_unlesbar_ist_fehler(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Ein nicht lesbares ``/proc`` heißt Fehler, nicht „keine Kinder“."""
     monkeypatch.setattr(prozessbaum, "_PROC", tmp_path / "fehlt")
     with pytest.raises(OSError):
@@ -348,9 +344,7 @@ def test_respawn_und_aufpasser_nutzen_prozessbaum(modul: str) -> None:
 
 
 def test_respawn_unter_1000_zeilen() -> None:
-    zeilen = (
-        (WURZEL / "to_spawn" / "respawn.py").read_text(encoding="utf-8").count("\n")
-    )
+    zeilen = (WURZEL / "to_spawn" / "respawn.py").read_text(encoding="utf-8").count("\n")
     assert zeilen < 1000, f"respawn.py hat {zeilen} Zeilen"
 
 
@@ -386,8 +380,6 @@ def test_aufpasser_beenden_stufen_und_reihenfolge(
     aufpasser.Aufpasser._prozesse_beenden(object(), 100)  # type: ignore[arg-type]
     # Windows kennt weder SIGHUP noch SIGKILL: dort bleibt nur die SIGTERM-Stufe.
     stufen = (
-        ((signal.SIGTERM, 5.0),)
-        if WINDOWS
-        else ((signal.SIGHUP, 5.0), (signal.SIGTERM, 5.0), (signal.SIGKILL, 5.0))
+        ((signal.SIGTERM, 5.0),) if WINDOWS else ((signal.SIGHUP, 5.0), (signal.SIGTERM, 5.0), (signal.SIGKILL, 5.0))
     )
     assert aufrufe == [([102, 101, 100], stufen)]

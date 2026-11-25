@@ -105,9 +105,7 @@ def _zelle(text: Any) -> str:
 def pruefe(klasse: str, symptom: str, ursache: str, loesung: str) -> None:
     """Vier Pflichtangaben — ein halber Vorfall hilft niemandem."""
     if klasse not in KLASSEN:
-        raise ValueError(
-            f"Unbekannte Klasse {klasse!r} — erlaubt: {', '.join(sorted(KLASSEN))}"
-        )
+        raise ValueError(f"Unbekannte Klasse {klasse!r} — erlaubt: {', '.join(sorted(KLASSEN))}")
     fehlend = [
         name
         for name, wert in (
@@ -162,9 +160,7 @@ def ist_waechter_zeile(zeile: dict[str, Any]) -> bool:
     Ohne diese Unterscheidung hält der Aufseher seinen eigenen Fund für eine frische
     Spur der Session und meldet die tote Session ab dem zweiten Tick nicht mehr.
     """
-    return zeile.get("typ") == TYP and str(
-        zeile.get("quelle") or SESSION_QUELLE
-    ) in ("capo", "aufpasser")
+    return zeile.get("typ") == TYP and str(zeile.get("quelle") or SESSION_QUELLE) in ("capo", "aufpasser")
 
 
 def ohne_waechter_zeilen(zeilen: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -309,10 +305,7 @@ def _spalten(zeile: str) -> list[str]:
     if not roh.startswith("|"):
         return []
     geschuetzt = roh.replace("\\|", _PIPE_MARKE)
-    return [
-        teil.strip().replace(_PIPE_MARKE, "\\|")
-        for teil in geschuetzt.strip("|").split("|")
-    ]
+    return [teil.strip().replace(_PIPE_MARKE, "\\|") for teil in geschuetzt.strip("|").split("|")]
 
 
 def _hoechste_nummer(zeilen: list[str], von: int, bis: int, buchstabe: str) -> int:
@@ -378,15 +371,11 @@ def in_katalog(pfad: Path, vorfaelle: list[Vorfall]) -> KatalogErgebnis:
         buchstabe, praefix = eintrag
         grenzen = _abschnitt_grenzen(zeilen, praefix)
         if grenzen is None:
-            erg.probleme.append(
-                f"Abschnitt {praefix} fehlt im Katalog (Klasse {vor.klasse}) — {vor.symptom}"
-            )
+            erg.probleme.append(f"Abschnitt {praefix} fehlt im Katalog (Klasse {vor.klasse}) — {vor.symptom}")
             continue
         von, bis = grenzen
         if not _hat_tabelle(zeilen, von, bis):
-            erg.probleme.append(
-                f"Abschnitt {praefix} hat keine Tabelle — {vor.symptom} nicht abgelegt"
-            )
+            erg.probleme.append(f"Abschnitt {praefix} hat keine Tabelle — {vor.symptom} nicht abgelegt")
             continue
         if (_norm(vor.symptom), _norm(vor.ursache)) in _bekannt(zeilen, von, bis):
             log.info("Vorfall steht schon im Katalog-Abschnitt %s.", praefix)

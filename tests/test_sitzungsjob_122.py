@@ -17,7 +17,17 @@ from pathlib import Path
 import pytest
 from git_bash import git_bash
 
-from to_spawn import bau_loop, pc_fenster, probesitz, prozessbaum, sitzungsjob, ticket_zustand, umzug, waechter_lauf, waechter_takt
+from to_spawn import (
+    bau_loop,
+    pc_fenster,
+    probesitz,
+    prozessbaum,
+    sitzungsjob,
+    ticket_zustand,
+    umzug,
+    waechter_lauf,
+    waechter_takt,
+)
 
 HILFE = Path(__file__).resolve().parent / "hilfen" / "session_git_bash_kind_122.py"
 

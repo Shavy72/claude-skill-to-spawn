@@ -63,9 +63,7 @@ def _laeuft_ohne_maschine(repo: Path, home: Path, *schalter: str) -> None:
 
 def test_folge_runde_startet_bau_py_ohne_bashrc_und_venv(tmp_path: Path) -> None:
     repo = _klon(tmp_path)
-    assert capo.folge_befehl(repo, 9, TICKET, ["wache 9"])[-1] == capo.bau_startzeile(
-        repo, TICKET, ""
-    )
+    assert capo.folge_befehl(repo, 9, TICKET, ["wache 9"])[-1] == capo.bau_startzeile(repo, TICKET, "")
     _laeuft_ohne_maschine(repo, tmp_path / "home")
 
 
@@ -102,9 +100,7 @@ def test_gestorbenes_fenster_hinterlaesst_exit_code(tmp_path: Path) -> None:
 _SCHEITERT = "import sys\nprint('Absicht: Manifest fehlt', file=sys.stderr)\nsys.exit(3)\n"
 
 
-def _attrappe_skill(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, code: str = _SCHEITERT
-) -> None:
+def _attrappe_skill(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, code: str = _SCHEITERT) -> None:
     """Skill-Attrappe, deren ``bau.py`` (Standard: mit Meldung auf stderr) scheitert."""
     skill = tmp_path / "skill"
     (skill / "skripte").mkdir(parents=True)
@@ -112,9 +108,7 @@ def _attrappe_skill(
     monkeypatch.setattr(capo, "_SKILL", skill)
 
 
-def test_gestorbenes_fenster_hinterlaesst_fehlermeldung(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_gestorbenes_fenster_hinterlaesst_fehlermeldung(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Befund PR 293: stderr von ``bau.py`` steht im Fenster-Log, nicht nur der Exit-Code."""
     _attrappe_skill(tmp_path, monkeypatch)
     repo = _klon(tmp_path)
@@ -137,9 +131,7 @@ _REST_KIND = (
 )
 
 
-def test_rest_kind_haelt_fenster_nicht_offen(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_rest_kind_haelt_fenster_nicht_offen(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Review PR 293: hält ein Rest-Kind von ``bau.py`` stderr offen, endet das Fenster
     trotzdem binnen weniger Sekunden, und die Exit-Zeile steht im Log."""
     _attrappe_skill(tmp_path, monkeypatch, _REST_KIND)

@@ -34,6 +34,7 @@ import sys
 import tempfile
 import time
 import uuid
+from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -486,10 +487,42 @@ def known_skill_names(*, repo: Path | None = None, claude_dir: Path | None = Non
     return names
 
 
+def skill_auswahl(
+    default: Mapping[str, Any],
+    entry: Mapping[str, Any],
+    konfig: Mapping[str, Any],
+    *,
+    known: set[str] | None = None,
+) -> tuple[list[str], dict[str, str]]:
+    """Whitelist und ``skillOverrides`` für die Bau-Session (#413).
+
+    Aktiv (``on``) sind ``core_skills`` aus der Vorlage, die Pflicht-Skills, die
+    Repo-Skills aus ``.to-spawn/config.json`` (``skills.pflicht``) und die Ticket-Skills
+    des Manifests. Gegen ``known`` geprüft und bei Fehlen gewarnt werden nur die vom Repo
+    bzw. Ticket angeforderten Skills (``skills.pflicht`` + ``entry["skills"]``) — fremde
+    Vorgaben aus der Skill-Vorlage erzeugen in einem fremden Repo keine Warnung.
+    """
+    repo_erwartet = config.repo_skills(konfig)
+    ticket_skills = [s.strip() for s in (entry.get("skills") or []) if isinstance(s, str) and s.strip()]
+    geprueft = list(dict.fromkeys(repo_erwartet + ticket_skills))
+    whitelist = list(
+        dict.fromkeys(list(default.get("core_skills", [])) + ticket_skills + repo_erwartet + list(PFLICHT_SKILLS))
+    )
+    bekannt = known if known is not None else known_skill_names()
+    for name in geprueft:
+        if name not in bekannt:
+            log.warning("Skill unbekannt, trotzdem 'on': %s", name)
+    overrides = {name: "off" for name in sorted(bekannt - set(whitelist))}
+    overrides.update({name: "on" for name in whitelist})
+    return whitelist, overrides
+
+
 # --- MCP-Katalog ------------------------------------------------------------
 
 
-def mcp_catalog(*, repo: Path | None = None, home: Path | None = None, claude_dir: Path | None = None) -> dict[str, dict]:
+def mcp_catalog(
+    *, repo: Path | None = None, home: Path | None = None, claude_dir: Path | None = None
+) -> dict[str, dict]:
     """Reihenfolge: ~/.claude.json (global + dieses Projekt) → Repo .mcp.json → toolbox/mcp-archive.json."""
     ziel_repo = (repo if repo is not None else REPO).resolve()
     ziel_home = home if home is not None else _aktuelles_home()
@@ -812,11 +845,7 @@ def wiederanlauf_prompt(prompt: str, hinweis: str, *, art: str = "") -> str:
             "nach, belege sie und schließe die Session ab.\n\n"
             f"---\n\n{prompt}"
         )
-    return (
-        "## Wiederanlauf-Stand\n"
-        f"{text}\n\n"
-        f"---\n\n{prompt}"
-    )
+    return f"## Wiederanlauf-Stand\n{text}\n\n---\n\n{prompt}"
 
 
 def staffel_prompt(prompt: str, handoff: Path, runde: int) -> str:
@@ -1133,13 +1162,7 @@ def main() -> int:
         return 0
 
     # Skills
-    whitelist = list(dict.fromkeys(default.get("core_skills", []) + (entry.get("skills") or []) + PFLICHT_SKILLS))
-    known = known_skill_names()
-    for name in whitelist:
-        if name not in known:
-            log.warning("Skill unbekannt, trotzdem 'on': %s", name)
-    overrides = {name: "off" for name in sorted(known - set(whitelist))}
-    overrides.update({name: "on" for name in whitelist})
+    whitelist, overrides = skill_auswahl(default, entry, konfig)
 
     # MCPs
     mcp_wanted = list(dict.fromkeys(default.get("core_mcp", []) + (entry.get("mcp") or [])))
@@ -1242,16 +1265,10 @@ def main() -> int:
             return 2
         dry_cmd = list(cmd)
         if mit_prompt:
-            werkzeug.prompt_setzen(
-                dry_cmd, runner, "<prompt>", hat_prompt=False, interaktiv=not args.probesitz
-            )
+            werkzeug.prompt_setzen(dry_cmd, runner, "<prompt>", hat_prompt=False, interaktiv=not args.probesitz)
         dry_cmd = praefix + dry_cmd
         print("\nBefehl:")
-        print(
-            " ".join(
-                f'"{c}"' if " " in c or "\n" in c or c == "<prompt>" else c for c in dry_cmd
-            )
-        )
+        print(" ".join(f'"{c}"' if " " in c or "\n" in c or c == "<prompt>" else c for c in dry_cmd))
         return 0
     # Die eine Start-Stelle (#97): unter Sperre je Ticket prüfen, ob schon eine Session
     # läuft und ob das Ticket offen ist; unbekannt → kein Start (fail-closed).
@@ -1283,9 +1300,7 @@ def main() -> int:
     (out / "prompt.txt").write_text(prompt, encoding="utf-8")
     aktueller_prompt = erster_prompt if mit_prompt else ""
     if mit_prompt:
-        werkzeug.prompt_setzen(
-            cmd, runner, erster_prompt, hat_prompt=False, interaktiv=not args.probesitz
-        )
+        werkzeug.prompt_setzen(cmd, runner, erster_prompt, hat_prompt=False, interaktiv=not args.probesitz)
     # Push-Sperre (#1445): Git-Hooks vor JEDEM Start (Erststart, --resume, --umzug),
     # unabhängig vom Sandbox-Modus; Quelle origin, nie der Arbeitsordner.
     nest.git_hooks_einrichten(REPO)
@@ -1365,9 +1380,7 @@ def main() -> int:
         elif handoff_aktuell is not None:
             runden_grund = wiederanlauf_prompt(prompt, lage_hinweis, art=lage_art)
             aktueller_prompt = staffel_prompt(runden_grund, handoff_aktuell, runde)
-            werkzeug.prompt_setzen(
-                cmd, runner, aktueller_prompt, hat_prompt=mit_prompt, interaktiv=not args.probesitz
-            )
+            werkzeug.prompt_setzen(cmd, runner, aktueller_prompt, hat_prompt=mit_prompt, interaktiv=not args.probesitz)
             mit_prompt = True
         (out / f"prompt-runde{runde}.txt").write_text(aktueller_prompt, encoding="utf-8")
         code, umzug_daten = starte_session(cmd, umzug_datei)

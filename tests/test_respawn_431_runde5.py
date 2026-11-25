@@ -51,10 +51,7 @@ def test_r5_b2_unlesbare_fensterliste_meldet_neues_fenster_evtl_offen(
     erg = _lauf(repo, fake)
 
     assert erg.exit == 1, erg.zeile
-    assert (
-        f"Fenster „bau {TICKET} neu“ evtl. offen (Fensterliste unlesbar), Handarbeit nötig"
-        in erg.zeile
-    ), erg.zeile
+    assert f"Fenster „bau {TICKET} neu“ evtl. offen (Fensterliste unlesbar), Handarbeit nötig" in erg.zeile, erg.zeile
 
 
 # --- Befund 4: Commit-Stand nicht prüfbar ---------------------------------------------
@@ -78,9 +75,7 @@ def test_r5_b4_git_fehler_heisst_nicht_pruefbar(
     assert "nicht committet" not in erg.zeile, erg.zeile
 
 
-def test_r5_b4_tmux_werkzeug_reicht_git_fehler_weiter(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_r5_b4_tmux_werkzeug_reicht_git_fehler_weiter(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     werkzeug = respawn.TmuxWerkzeug()
 
     def git(wt: Path, *argumente: str) -> str:
@@ -98,9 +93,7 @@ def test_r5_b5_abbruch_beim_beenden_behaelt_hinweise(
     umgebung: tuple[Path, Path],  # noqa: F811
 ) -> None:
     repo, wt = umgebung
-    fake = FakeWerkzeug(
-        wt, fehler_bei={"alte_session_beenden": RuntimeError("kill gescheitert")}
-    )
+    fake = FakeWerkzeug(wt, fehler_bei={"alte_session_beenden": RuntimeError("kill gescheitert")})
     _speicher_sperre(fake, 120)
 
     erg = _lauf(repo, fake)

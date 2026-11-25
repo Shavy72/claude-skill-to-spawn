@@ -111,9 +111,7 @@ def lauf(
         return subprocess.run(_befehlszeile(argumente), env=umgebung, **optionen)  # noqa: S603
     pruefen, eingabe = optionen.pop("check"), optionen.pop("input", None)
     if sys.platform == "win32":
-        optionen["creationflags"] = (
-            optionen.get("creationflags", 0) | subprocess.CREATE_NEW_PROCESS_GROUP
-        )
+        optionen["creationflags"] = optionen.get("creationflags", 0) | subprocess.CREATE_NEW_PROCESS_GROUP
     else:
         optionen["start_new_session"] = True
     with (
@@ -136,13 +134,9 @@ def lauf(
                 for rohr in (prozess.stdout, prozess.stderr):
                     if rohr is not None:
                         rohr.close()
-            raise subprocess.TimeoutExpired(
-                prozess.args, zeitgrenze_s, output=aus, stderr=fehler
-            ) from None
+            raise subprocess.TimeoutExpired(prozess.args, zeitgrenze_s, output=aus, stderr=fehler) from None
     if pruefen and prozess.returncode:
-        raise subprocess.CalledProcessError(
-            prozess.returncode, prozess.args, aus, fehler
-        )
+        raise subprocess.CalledProcessError(prozess.returncode, prozess.args, aus, fehler)
     return subprocess.CompletedProcess(prozess.args, prozess.returncode, aus, fehler)
 
 

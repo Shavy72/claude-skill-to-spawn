@@ -88,9 +88,7 @@ def _erledigt_setzen(welt: dict[str, Path], *schluessel: str) -> None:  # noqa: 
 
 
 def _erledigt(welt: dict[str, Path]) -> list[str]:  # noqa: F811
-    return list(
-        json.loads(_zustand(welt).read_text(encoding="utf-8")).get("erledigt") or []
-    )
+    return list(json.loads(_zustand(welt).read_text(encoding="utf-8")).get("erledigt") or [])
 
 
 def _tick(welt: dict[str, Path]) -> capo.TickErgebnis:  # noqa: F811
@@ -143,9 +141,7 @@ def test_umbenennung_mit_vermerk_ist_kein_test_ersetzt(welt: dict[str, Path]) ->
 
 def test_vermerk_formen_tolerant() -> None:
     diff = "+def test_neu(a):\n+def test_zwei():\n"
-    assert capo.umbenannte_tests(
-        diff, "x\n\ntest-umbenannt: test_alt → test_neu\n"
-    ) == {"test_alt"}
+    assert capo.umbenannte_tests(diff, "x\n\ntest-umbenannt: test_alt → test_neu\n") == {"test_alt"}
     text = "Test-Umbenannt: tests/t.py::test_alt -> tests/t.py::test_neu, test_eins => test_zwei"
     assert capo.umbenannte_tests(diff, text) == {"test_alt", "test_eins"}
     # Neuer Name fehlt in den +Zeilen → kein Freibrief.
@@ -272,9 +268,7 @@ def test_fehlerpfad_gh_close_scheitert(
 
     erg = _tick(welt)
 
-    assert any(
-        z.startswith(f"#{N} FEHLER") and "zurücknehmen" in z for z in erg.zeilen
-    ), erg.zeilen
+    assert any(z.startswith(f"#{N} FEHLER") and "zurücknehmen" in z for z in erg.zeilen), erg.zeilen
     assert erg.exit_code == 1
     assert f"ruecknahme|{N}|{geschlossen}" not in _erledigt(welt)
     assert not bau_log.lese(welt["repo"], N)
@@ -290,9 +284,7 @@ def test_probelauf_schliesst_nichts(
     _erledigt_setzen(welt, f"{N}|test_ersetzt|{geschlossen}")
     _kinder(monkeypatch, _issue())
 
-    erg = capo.tick(
-        welt["repo"], SPEC, GH_REPO, {}, wt_basis=str(welt["wt"]), dry_run=True
-    )
+    erg = capo.tick(welt["repo"], SPEC, GH_REPO, {}, wt_basis=str(welt["wt"]), dry_run=True)
 
     assert fake_gh.schliessen() == []
     assert any("würde Fehl-Reopen zurücknehmen" in z for z in erg.zeilen), erg.zeilen
@@ -304,13 +296,9 @@ def test_probelauf_schliesst_nichts(
 def test_stand_zeigt_ruecknahme(repo: Path, ordner: Path) -> None:  # noqa: F811
     w = FakeWelt()
     w.ticket(N, zu=True)
-    bau_log.schreibe(
-        repo, N, "ruecknahme", text="Fehl-Reopen zurückgenommen: test_ersetzt"
-    )
+    bau_log.schreibe(repo, N, "ruecknahme", text="Fehl-Reopen zurückgenommen: test_ersetzt")
 
-    ausgabe = aufseher_stand.stand(
-        STAND_SPEC, w.quellen(repo), ordner=ordner, alle=True
-    )
+    ausgabe = aufseher_stand.stand(STAND_SPEC, w.quellen(repo), ordner=ordner, alle=True)
 
     zeile = next(z for z in ausgabe.splitlines() if z.startswith(f"#{N} "))
     assert "Phase Rücknahme" in zeile, ausgabe
@@ -326,10 +314,7 @@ def test_sperren_im_kandidaten_label_ok_und_checkpoint() -> None:
     assert frei is not None
     for label in (capo.OK_LABEL, "checkpoint:human"):
         issue = _issue(labels=[{"name": label}])
-        assert (
-            capo.fehl_reopen_kandidat(N, issue, [], erledigt, checkpoint="checkpoint:human")
-            is None
-        ), label
+        assert capo.fehl_reopen_kandidat(N, issue, [], erledigt, checkpoint="checkpoint:human") is None, label
 
 
 def test_sperre_vps_fehlt_keine_ruecknahme(
@@ -343,9 +328,7 @@ def test_sperre_vps_fehlt_keine_ruecknahme(
     _kinder(monkeypatch, _issue())
     monkeypatch.setattr(capo, "vps_kopf", lambda vps: None)
 
-    capo.tick(
-        welt["repo"], SPEC, GH_REPO, {"vps": {"ssh": "nirgends"}}, wt_basis=str(welt["wt"])
-    )
+    capo.tick(welt["repo"], SPEC, GH_REPO, {"vps": {"ssh": "nirgends"}}, wt_basis=str(welt["wt"]))
 
     assert fake_gh.schliessen() == []
 
@@ -385,9 +368,7 @@ def test_folge_runde_laeuft_ruecknahme_wartet(
     erg = _tick(welt)
 
     assert fake_gh.schliessen() == []
-    assert any(
-        z.startswith(f"#{N} Rücknahme wartet: Folge-Runde läuft") for z in erg.zeilen
-    ), erg.zeilen
+    assert any(z.startswith(f"#{N} Rücknahme wartet: Folge-Runde läuft") for z in erg.zeilen), erg.zeilen
     assert f"ruecknahme|{N}|{geschlossen}" not in _erledigt(welt)
 
 
@@ -410,10 +391,7 @@ def test_zweite_ruecknahme_nur_gemeldet(
     erg = _tick(welt)
 
     assert len(fake_gh.schliessen()) == 1, erg.zeilen
-    assert any(
-        f"#{N} Fehl-Reopen erneut — nicht zurückgenommen, Mensch prüfen" in z
-        for z in erg.zeilen
-    ), erg.zeilen
+    assert any(f"#{N} Fehl-Reopen erneut — nicht zurückgenommen, Mensch prüfen" in z for z in erg.zeilen), erg.zeilen
 
 
 def test_vermerk_neuer_test_in_anderer_datei_zaehlt_nicht() -> None:
@@ -431,9 +409,7 @@ def test_vermerk_neuer_test_in_anderer_datei_zaehlt_nicht() -> None:
         "--- a/tests/test_a.py\n+++ b/tests/test_a.py\n"
         "@@ -1 +1 @@\n-def test_alt(a):\n+def test_neu(a):\n"
     )
-    assert capo.umbenannte_tests(gleiche, "test-umbenannt: test_alt -> test_neu") == {
-        "test_alt"
-    }
+    assert capo.umbenannte_tests(gleiche, "test-umbenannt: test_alt -> test_neu") == {"test_alt"}
 
 
 def test_reopen_regeln_stimmen_mit_reopen_funde_ueberein() -> None:
@@ -446,9 +422,7 @@ def test_reopen_regeln_stimmen_mit_reopen_funde_ueberein() -> None:
     assert pruefer, quelle
     namen: set[str] = set()
     for name in pruefer:
-        namen |= set(
-            re.findall(r'Verstoss\(\s*ticket,\s*"(\w+)"', inspect.getsource(getattr(capo, name)))
-        )
+        namen |= set(re.findall(r'Verstoss\(\s*ticket,\s*"(\w+)"', inspect.getsource(getattr(capo, name))))
     assert namen == set(capo.REOPEN_REGELN)
 
 

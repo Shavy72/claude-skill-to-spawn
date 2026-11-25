@@ -165,11 +165,7 @@ def repo_dateien(ordner: Path) -> list[Path]:
     """
     bekannt = git_dateien(ordner)
     kandidaten = ordner.rglob("*") if bekannt is None else (ordner / rel for rel in bekannt)
-    return sorted(
-        p
-        for p in kandidaten
-        if p.is_file() and not (WERKZEUG_ORDNER & set(p.relative_to(ordner).parts))
-    )
+    return sorted(p for p in kandidaten if p.is_file() and not (WERKZEUG_ORDNER & set(p.relative_to(ordner).parts)))
 
 
 #: Eigener Temp-Ordner dieses Laufs (#349), nur gesetzt, wenn ``pytest_configure`` ihn anlegte.
@@ -392,9 +388,7 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
                     f"echte Nutzer-Konfiguration verändert: {claude_json} (vorher {vorher_sha}, nachher {nachher_sha})"
                 )
             if not vorher_claude_dir and (_ECHTES_HEIM / ".claude").exists():
-                verstoesse.append(
-                    f"echter Ordner {_ECHTES_HEIM / '.claude'} wurde während des Testlaufs angelegt"
-                )
+                verstoesse.append(f"echter Ordner {_ECHTES_HEIM / '.claude'} wurde während des Testlaufs angelegt")
             if verstoesse:
                 meldung = "Heim-Wächter (#232): " + "; ".join(verstoesse)
                 _LOG.error("%s", meldung)
@@ -614,14 +608,10 @@ def test_heim(
     echt_sicherstellen = vertrauen.sicherstellen
 
     @functools.wraps(echt_sicherstellen)
-    def _sicherstellen_ohne_echtes_heim(
-        *pfade: Path, claude_json: Path | None = None
-    ) -> list[str]:
+    def _sicherstellen_ohne_echtes_heim(*pfade: Path, claude_json: Path | None = None) -> list[str]:
         ziel = (claude_json or vertrauen.claude_json_pfad()).expanduser().resolve()
         if ziel == echte_claude_json:
-            raise PermissionError(
-                f"Test darf die echte Nutzer-Konfiguration nicht beschreiben: {ziel} (#232)"
-            )
+            raise PermissionError(f"Test darf die echte Nutzer-Konfiguration nicht beschreiben: {ziel} (#232)")
         return echt_sicherstellen(*pfade, claude_json=claude_json)
 
     monkeypatch.setattr(vertrauen, "sicherstellen", _sicherstellen_ohne_echtes_heim)

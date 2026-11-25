@@ -100,15 +100,11 @@ def git(cwd: Path, *args: str) -> str:
 
 
 def fenster_namen() -> list[str]:
-    return tmux("list-windows", "-t", f"={SITZUNG}", "-F", "#{window_name}").split(
-        "\n"
-    )[:-1]
+    return tmux("list-windows", "-t", f"={SITZUNG}", "-F", "#{window_name}").split("\n")[:-1]
 
 
 def fenster_ziel(name: str) -> str:
-    for zeile in tmux(
-        "list-windows", "-t", f"={SITZUNG}", "-F", "#{window_index}\t#{window_name}"
-    ).splitlines():
+    for zeile in tmux("list-windows", "-t", f"={SITZUNG}", "-F", "#{window_index}\t#{window_name}").splitlines():
         idx, nm = zeile.split("\t")
         if nm == name:
             return f"={SITZUNG}:{idx}"
@@ -137,11 +133,7 @@ class Welt:
     def kommentare(self) -> list[str]:
         if not self.protokoll_gh.is_file():
             return []
-        return [
-            z
-            for z in self.protokoll_gh.read_text(encoding="utf-8").splitlines()
-            if z.startswith("issue comment")
-        ]
+        return [z for z in self.protokoll_gh.read_text(encoding="utf-8").splitlines() if z.startswith("issue comment")]
 
     def stand(self) -> dict:
         datei = self.zustand / "stand.json"
@@ -247,9 +239,7 @@ def welt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Welt]:
     shutil.copy2(HILFEN / "fake_claude_schlaeft.sh", binaer / "claude")
     (binaer / "claude").chmod(0o755)
     protokoll_bau = tmp_path / "bau_argv.txt"
-    (binaer / "bau_protokoll.sh").write_text(
-        BAU_PROTOKOLL.format(datei=protokoll_bau), encoding="utf-8"
-    )
+    (binaer / "bau_protokoll.sh").write_text(BAU_PROTOKOLL.format(datei=protokoll_bau), encoding="utf-8")
     (binaer / "bau_protokoll.sh").chmod(0o755)
     monkeypatch.setenv("PATH", f"{binaer}{os.pathsep}{os.environ['PATH']}")
     monkeypatch.setenv("TO_SPAWN_TEST_BIN", str(binaer))  # Start-Tür (#1406): nur diese Attrappe startet
@@ -340,15 +330,11 @@ def _origin_hat_branch(welt: Welt, ticket: int) -> bool:
 # --- 1. fehlendes Fenster wird gestartet -----------------------------------
 
 
-def test_fehlendes_fenster_wird_gestartet(
-    welt: Welt, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_fehlendes_fenster_wird_gestartet(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("GH_STUB_UNTER", f"{SPEC}:9002|9003")
     # Staffel-Pause zwischen den zwei Starts über die echte Stellschraube auf 0
     # (Vorgabe 20 s, #353) — der Staffel-Zweig läuft trotzdem.
-    (welt.repo / ".to-spawn" / "config.json").write_text(
-        '{"speicher": {"staffel_s": 0}}', encoding="utf-8"
-    )
+    (welt.repo / ".to-spawn" / "config.json").write_text('{"speicher": {"staffel_s": 0}}', encoding="utf-8")
     assert fenster_namen() == [f"wache {SPEC}"]
     assert welt.lauf(hang_min=90) == 0
     time.sleep(1)
@@ -356,12 +342,8 @@ def test_fehlendes_fenster_wird_gestartet(
     argv = welt.protokoll_bau.read_text(encoding="utf-8").splitlines()
     assert sorted(argv) == ["9002", "9003"]
     kommentare = welt.kommentare()
-    assert any("#9002 hatte keine Session, gestartet." in k for k in kommentare), (
-        kommentare
-    )
-    assert any("#9003 hatte keine Session, gestartet." in k for k in kommentare), (
-        kommentare
-    )
+    assert any("#9002 hatte keine Session, gestartet." in k for k in kommentare), kommentare
+    assert any("#9003 hatte keine Session, gestartet." in k for k in kommentare), kommentare
     assert "gestartet" in welt.log()
 
 
@@ -382,9 +364,7 @@ def test_stilles_fenster_wird_angestupst(welt: Welt) -> None:
     nachher = pane_text("bau 9002")
     assert "Aufpasser: Du stehst seit 100 min still" in nachher, nachher
     assert welt.eintrag("bau 9002")["stufe"] == 1
-    assert any(
-        "„bau 9002“ stand 100 min still, angestupst." in k for k in welt.kommentare()
-    )
+    assert any("„bau 9002“ stand 100 min still, angestupst." in k for k in welt.kommentare())
 
 
 def test_frisches_fenster_gilt_nicht_als_still(welt: Welt) -> None:
@@ -476,9 +456,7 @@ def test_deploy_wache_zaehlt_nur_programm_nicht_prompt(tmp_path: Path) -> None:
     skript = tmp_path / probe
     skript.write_text("#!/bin/bash\nsleep 3600\n", encoding="utf-8")
     skript.chmod(0o755)
-    e = aufpasser.Einstellungen(
-        zustand=tmp_path / "zustand", deploy_muster=r"safe_deploy_vps\.sh|pytest"
-    )
+    e = aufpasser.Einstellungen(zustand=tmp_path / "zustand", deploy_muster=r"safe_deploy_vps\.sh|pytest")
     claude = subprocess.Popen(
         [
             str(binaer / "claude"),
@@ -611,9 +589,7 @@ def test_kill_window_nur_in_fenster_schliessen() -> None:
     assert quelle.count("kill-window") == 1
     baum = ast.parse(quelle)
     funktionen = {
-        knoten.name: knoten
-        for knoten in ast.walk(baum)
-        if isinstance(knoten, (ast.FunctionDef, ast.AsyncFunctionDef))
+        knoten.name: knoten for knoten in ast.walk(baum) if isinstance(knoten, (ast.FunctionDef, ast.AsyncFunctionDef))
     }
     assert "_fenster_schliessen" in funktionen
     konstanten = [
@@ -626,11 +602,7 @@ def test_kill_window_nur_in_fenster_schliessen() -> None:
     erzeuger: set[str] = set()
     for name, fn in funktionen.items():
         for aufruf in ast.walk(fn):
-            if (
-                isinstance(aufruf, ast.Call)
-                and isinstance(aufruf.func, ast.Name)
-                and aufruf.func.id == "Freigabe"
-            ):
+            if isinstance(aufruf, ast.Call) and isinstance(aufruf.func, ast.Name) and aufruf.func.id == "Freigabe":
                 erzeuger.add(name)
     assert erzeuger == {"freigabe_ticket_zu", "freigabe_gesichert"}, erzeuger
     assert quelle.count("Freigabe(") == 2
@@ -653,9 +625,7 @@ def test_push_scheitert_kein_kill(welt: Welt) -> None:
     time.sleep(0.5)
     assert fenster_namen().count("bau 9002") == 1
     assert not welt.protokoll_bau.exists()
-    treffer = [
-        k for k in welt.kommentare() if "Sicherung fehlgeschlagen — braucht den Menschen" in k
-    ]
+    treffer = [k for k in welt.kommentare() if "Sicherung fehlgeschlagen — braucht den Menschen" in k]
     assert len(treffer) == 1, welt.kommentare()
     assert welt.eintrag("bau 9002")["stufe"] == 3
     # Das Fenster ist noch das alte: der Fake-Claude mit derselben ID läuft darin.
@@ -663,26 +633,20 @@ def test_push_scheitert_kein_kill(welt: Welt) -> None:
 
 
 def welt_pane_pid(name: str) -> int:
-    return int(
-        tmux("display-message", "-p", "-t", fenster_ziel(name), "#{pane_pid}").strip()
-    )
+    return int(tmux("display-message", "-p", "-t", fenster_ziel(name), "#{pane_pid}").strip())
 
 
 # --- 9. geschlossenes Ticket ⇒ Fenster zu ---------------------------------
 
 
-def test_geschlossenes_ticket_fenster_zu(
-    welt: Welt, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_geschlossenes_ticket_fenster_zu(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("GH_STUB_UNTER", f"{SPEC}:9002|9003")
     monkeypatch.setenv("GH_STUB_ZU", "9003")
     welt.worktree(9003, schmutzig=True)
     welt.fenster_still(9003, "sleep 3600")
     welt.fenster_still(9002, "sleep 3600")
     # geändert wegen Fix F11: Schließen erst nach 15 min unverändertem Text.
-    welt.stand_setzen(
-        "bau 9003", seit=time.time() - 20 * 60, hash=welt.hash_von("bau 9003")
-    )
+    welt.stand_setzen("bau 9003", seit=time.time() - 20 * 60, hash=welt.hash_von("bau 9003"))
     assert welt.lauf(hang_min=90) == 0
     time.sleep(0.5)
     assert sorted(fenster_namen()) == ["bau 9002", f"wache {SPEC}"]
@@ -693,9 +657,7 @@ def test_geschlossenes_ticket_fenster_zu(
     assert f"{SITZUNG}/bau 9003" not in welt.stand().get("fenster", {})
 
 
-def test_geschlossenes_ticket_arbeitend_bleibt(
-    welt: Welt, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_geschlossenes_ticket_arbeitend_bleibt(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("GH_STUB_UNTER", f"{SPEC}:9003")
     monkeypatch.setenv("GH_STUB_ZU", "9003")
     welt.fenster_still(9003, "printf 'esc to interrupt\\n'; sleep 3600")
@@ -746,9 +708,7 @@ def test_cron_einrichten_ersetzt_alte_zeile(
     assert datei.read_text(encoding="utf-8") == stand
 
 
-def test_cron_einrichten_leere_crontab(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_cron_einrichten_leere_crontab(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     binaer = tmp_path / "bin"
     binaer.mkdir()
     (binaer / "crontab").write_text(CRONTAB_FAKE, encoding="utf-8")
@@ -791,10 +751,7 @@ def test_trockenlauf_ueber_starter_und_cli(welt: Welt) -> None:
             timeout=60,
         )
         assert ergebnis.returncode == 0, ergebnis.stdout + ergebnis.stderr
-        assert (
-            "[trocken]" in ergebnis.stdout
-            and "#9002 hatte keine Session" in ergebnis.stdout
-        )
+        assert "[trocken]" in ergebnis.stdout and "#9002 hatte keine Session" in ergebnis.stdout
     assert fenster_namen() == [f"wache {SPEC}"]
     assert welt.kommentare() == []
     assert not (welt.zustand / "stand.json").exists()
@@ -839,9 +796,7 @@ def repo_bau(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return arbeit
 
 
-def _bau(
-    repo: Path, *args: str, env: dict[str, str] | None = None
-) -> subprocess.CompletedProcess[str]:
+def _bau(repo: Path, *args: str, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
     umgebung = {k: v for k, v in os.environ.items() if k != "TO_SPAWN_REPO"}
     umgebung.update(env or {})
     return subprocess.run(
@@ -960,15 +915,9 @@ def test_arbeitet_marker() -> None:
 
 
 def test_session_id_aus_argv() -> None:
-    assert (
-        aufpasser.session_id_aus_argv(["claude", "--session-id", "abc", "x"]) == "abc"
-    )
-    assert (
-        aufpasser.session_id_aus_argv(["/usr/bin/claude", "--resume", "def"]) == "def"
-    )
-    assert (
-        aufpasser.session_id_aus_argv(["python", "bau.py", "--resume", "def"]) is None
-    )
+    assert aufpasser.session_id_aus_argv(["claude", "--session-id", "abc", "x"]) == "abc"
+    assert aufpasser.session_id_aus_argv(["/usr/bin/claude", "--resume", "def"]) == "def"
+    assert aufpasser.session_id_aus_argv(["python", "bau.py", "--resume", "def"]) is None
     assert aufpasser.session_id_aus_argv(["claude", "prompt"]) is None
 
 

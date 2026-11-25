@@ -30,9 +30,7 @@ _PFAD = befugnis._PFAD
 # --- Erlaubt-Listen (Konstanten mit einem Satz „warum harmlos“) ------------------------------
 
 #: Lokale Datei- und Such-Werkzeuge sind harmlos, solange kein Geheimnis-Pfad berührt wird.
-WERKZEUGE_MIT_PFAD: frozenset[str] = frozenset(
-    {"Read", "Grep", "Glob", "Edit", "Write", "MultiEdit", "NotebookEdit"}
-)
+WERKZEUGE_MIT_PFAD: frozenset[str] = frozenset({"Read", "Grep", "Glob", "Edit", "Write", "MultiEdit", "NotebookEdit"})
 
 #: Planungs-, Lese- und Kommunikations-Werkzeuge führen keine Shell-Befehle aus (Unter-Agenten
 #: werden über ihre eigenen Transkript-Dateien geprüft).
@@ -438,7 +436,9 @@ _GIT_LESEND = frozenset(
 )
 _GIT_GLOBAL_OHNE_WERT = frozenset({"-P", "--no-pager", "--literal-pathspecs", "--no-optional-locks", "--bare"})
 _GIT_GLOBAL_MIT_WERT = frozenset({"-C", "--git-dir", "--work-tree"})
-_GIT_PUSH_FLAGS = frozenset({"-u", "--set-upstream", "-q", "--quiet", "-v", "--verbose", "--porcelain", "-n", "--dry-run"})
+_GIT_PUSH_FLAGS = frozenset(
+    {"-u", "--set-upstream", "-q", "--quiet", "-v", "--verbose", "--porcelain", "-n", "--dry-run"}
+)
 
 _GH_API_VERBOTENE_FLAGS = frozenset({"-X", "--method", "-f", "--raw-field", "-F", "--field", "--input"})
 _GH_API_VERBOTENE_PRAEFIXE = ("-X", "-f", "-F", "--method=", "--raw-field=", "--field=", "--input=")
@@ -452,9 +452,7 @@ _DOCKER_EXEC_MIT_WERT = frozenset({"-u", "--user", "-w", "--workdir", "-e", "--e
 
 _TMUX_GLOBAL_MIT_WERT = frozenset({"-L", "-S", "-f"})
 
-_FIND_VERBOTEN = frozenset(
-    {"-exec", "-execdir", "-ok", "-okdir", "-delete", "-fls", "-fprint", "-fprint0", "-fprintf"}
-)
+_FIND_VERBOTEN = frozenset({"-exec", "-execdir", "-ok", "-okdir", "-delete", "-fls", "-fprint", "-fprint0", "-fprintf"})
 _XARGS_MIT_WERT = frozenset({"-I", "-L", "-l", "-n", "-P", "-d", "-E", "-e", "-s", "-a", "--max-args", "--max-procs"})
 
 _AST_VERBOTENE_NAMEN = frozenset(
@@ -858,7 +856,7 @@ def _zerlege_befehl(text: str) -> tuple[list[_Glied], list[str]]:
             tok_dyn = tok_dyn or dyn
             continue
 
-        if ch == "\\" :
+        if ch == "\\":
             if i + 1 >= n:
                 raise _Unlesbar("offener Backslash")
             buf.append(text[i + 1])
@@ -1522,7 +1520,11 @@ def _pruefe_python_ast(code: str) -> str | None:
             if top not in PYTHON_AST_MODULE_HARMLOS:
                 return f"python from {knoten.module} import nicht erlaubt"
             for alias in knoten.names:
-                if alias.name.startswith("_") or alias.name in _AST_VERBOTENE_NAMEN or alias.name in _AST_VERBOTENE_ATTRS:
+                if (
+                    alias.name.startswith("_")
+                    or alias.name in _AST_VERBOTENE_NAMEN
+                    or alias.name in _AST_VERBOTENE_ATTRS
+                ):
                     return f"python Import-Name {alias.name} nicht erlaubt"
         elif isinstance(knoten, ast.Attribute):
             if knoten.attr.startswith("__") or knoten.attr in _AST_VERBOTENE_ATTRS:
@@ -1532,11 +1534,7 @@ def _pruefe_python_ast(code: str) -> str | None:
                 return f"python Name {knoten.id} nicht erlaubt"
             if knoten.id == "open" and id(knoten) not in erlaubte_open_namen:
                 return "python open-Referenz nicht erlaubt"
-        elif (
-            isinstance(knoten, ast.Constant)
-            and isinstance(knoten.value, str)
-            and _PFAD.search(knoten.value.lower())
-        ):
+        elif isinstance(knoten, ast.Constant) and isinstance(knoten.value, str) and _PFAD.search(knoten.value.lower()):
             return f"python Geheimnis-Pfad im Code: {knoten.value[:60]}"
     return None
 
@@ -1720,9 +1718,7 @@ def _pruefe_git_push(args: list[_Token]) -> str | None:
         w = ziel.wert
         if ziel.dynamisch or "+" in w or ":" in w or ".." in w:
             return f"git push mit unsicherem Refspec: {w}"
-        if not any(
-            w.startswith(p) and _PUSH_ZIEL.fullmatch(w[len(p) :]) for p in GIT_PUSH_PRAEFIXE
-        ):
+        if not any(w.startswith(p) and _PUSH_ZIEL.fullmatch(w[len(p) :]) for p in GIT_PUSH_PRAEFIXE):
             return f"git push auf nicht erlaubtes Ziel: {w}"
     return None
 

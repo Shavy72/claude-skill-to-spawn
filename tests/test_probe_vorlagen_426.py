@@ -27,9 +27,7 @@ ANLEGEN = SKILL / "probe" / "anlegen.sh"
 VARIANTEN = ("mit-staging", "ohne-staging")
 ROT = ".to-spawn/werkzeug/test_werkzeug_rot.py"
 
-pytestmark = pytest.mark.skipif(
-    shutil.which("bash") is None, reason="anlegen.sh braucht bash"
-)
+pytestmark = pytest.mark.skipif(shutil.which("bash") is None, reason="anlegen.sh braucht bash")
 
 
 def _freie_ports(anzahl: int) -> list[int]:
@@ -78,9 +76,7 @@ def _befehl(text: str) -> list[str]:
     return teile
 
 
-def _lauf(
-    repo: Path, text: str, timeout: int = 180
-) -> subprocess.CompletedProcess[str]:
+def _lauf(repo: Path, text: str, timeout: int = 180) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         _befehl(text),
         cwd=repo,
@@ -123,9 +119,7 @@ def test_anlegen_legt_git_repo_mit_konfig_an(tmp_path: Path, variante: str) -> N
         check=True,
     )
     assert sauber.stdout == ""
-    verfolgt = subprocess.run(
-        ["git", "ls-files"], cwd=repo, capture_output=True, text=True, check=True
-    ).stdout.split()
+    verfolgt = subprocess.run(["git", "ls-files"], cwd=repo, capture_output=True, text=True, check=True).stdout.split()
     assert ROT in verfolgt and ".to-spawn/config.json" in verfolgt
     for datei in repo.rglob("*"):
         if datei.is_file() and ".git" not in datei.parts:
@@ -162,9 +156,7 @@ def test_anlegen_lehnt_unbekannte_variante_und_vollen_ordner_ab(tmp_path: Path) 
 
 
 @pytest.mark.parametrize("variante", VARIANTEN)
-def test_schnelle_pruefung_gruen_und_unter_drei_minuten(
-    tmp_path: Path, variante: str
-) -> None:
+def test_schnelle_pruefung_gruen_und_unter_drei_minuten(tmp_path: Path, variante: str) -> None:
     repo = tmp_path / "lauf"
     _anlegen(repo, variante)
     start = time.monotonic()
@@ -254,9 +246,7 @@ def test_staging_schritt_nur_mit_staging(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("variante", VARIANTEN)
-def test_roter_werkzeug_test_wird_nicht_eingesammelt(
-    tmp_path: Path, variante: str
-) -> None:
+def test_roter_werkzeug_test_wird_nicht_eingesammelt(tmp_path: Path, variante: str) -> None:
     repo = tmp_path / "lauf"
     _anlegen(repo, variante)
     # Der Werkzeug-Test ist wirklich rot …
@@ -319,9 +309,7 @@ def _ticket_schnitt() -> dict[str, set[str]]:
         zellen = [z.strip() for z in zeile.strip().strip("|").split("|")]
         if len(zellen) == 4 and zellen[0][:1] == "T" and zellen[0][1:].isdigit():
             vor = zellen[3]
-            schnitt[zellen[0]] = (
-                set() if vor == "–" else {v.strip() for v in vor.split(",")}
-            )
+            schnitt[zellen[0]] = set() if vor == "–" else {v.strip() for v in vor.split(",")}
     return schnitt
 
 
@@ -380,9 +368,7 @@ def test_beide_varianten_bekommen_dasselbe_beschluss_protokoll(tmp_path: Path) -
 
 def test_kritik_text_steht_in_probe_spec_und_nicht_im_lauf_repo() -> None:
     spec = PROBE_SPEC.read_text(encoding="utf-8")
-    kritik = spec[
-        spec.index("### 4.1 Kritik-Text") : spec.index("### 4.2 Abnahme-Schritte")
-    ]
+    kritik = spec[spec.index("### 4.1 Kritik-Text") : spec.index("### 4.2 Abnahme-Schritte")]
     # Trifft Rechenlogik (Kulanz/Deckel) und eine sichtbare Stelle (Leihliste).
     for teil in (
         "Punkt Mahngebühr anders",
@@ -439,9 +425,7 @@ def test_anlegen_reserviert_drei_verschiedene_ports_gleichzeitig(
 
 def test_probe_spec_verankert_messlatte_l10() -> None:
     spec = PROBE_SPEC.read_text(encoding="utf-8")
-    auswertung = spec[
-        spec.index("## 6 Auswertung") : spec.index("## 7 Bestehens-Kriterien")
-    ]
+    auswertung = spec[spec.index("## 6 Auswertung") : spec.index("## 7 Bestehens-Kriterien")]
     for teil in (
         "LASTENHEFT.md",
         "L10",

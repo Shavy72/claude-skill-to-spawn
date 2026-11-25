@@ -28,9 +28,7 @@ def git(repo: Path, *args: str) -> str:
     ).stdout
 
 
-def lauf(
-    skript: str, *args: str, cwd: Path | None = None
-) -> subprocess.CompletedProcess[str]:
+def lauf(skript: str, *args: str, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, str(REVIEW / skript), *args],
         check=False,

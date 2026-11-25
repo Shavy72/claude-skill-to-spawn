@@ -39,7 +39,7 @@ from fnmatch import fnmatch
 from pathlib import Path, PurePosixPath
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from . import config, konsole, prozessbaum
+from . import config, konsole, prozessbaum, skill_stand
 
 log = logging.getLogger("to_spawn.uebergabe_sichern")
 
@@ -102,7 +102,7 @@ def _gruppe() -> dict[str, object]:
 
 
 def _skill_wurzel() -> Path:
-    return Path(__file__).resolve().parent.parent
+    return skill_stand.SKILL.resolve()
 
 
 def _git(cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -154,16 +154,16 @@ def ziel_ordner() -> Path:
 
 
 def _quellen(extra: list[Path]) -> list[Path]:
-    muster = [
-        str(Path(e["pfad"]).expanduser() / m)
-        for e in config.maschine()["repos"]
-        if e["pfad"]
-        for m in MUSTER_JE_REPO
-    ]
+    skill = _skill_wurzel()
+    repos = config.maschine()["repos"]
+    repo_pfade = [pfad for e in repos if (pfad := config.repo_klon_pfad(e, skill=skill)) is not None]
+    if not any(config.ist_skill_slug(e["slug"]) for e in repos):
+        stempel_klon = skill_stand.klon_ordner(skill)
+        if stempel_klon is not None:
+            repo_pfade.append(stempel_klon)
+    muster = [str(pfad / m) for pfad in dict.fromkeys(repo_pfade) for m in MUSTER_JE_REPO]
     roh = _gruppe().get("dateien")
-    muster += (
-        [str(m) for m in roh if isinstance(m, str)] if isinstance(roh, list) else []
-    )
+    muster += [str(m) for m in roh if isinstance(m, str)] if isinstance(roh, list) else []
     gefunden = [Path(t) for m in muster for t in glob.glob(os.path.expanduser(m))]
     eindeutig: dict[Path, Path] = {}
     for pfad in [*extra, *gefunden]:
@@ -204,22 +204,30 @@ def _zweig_repos() -> list[Path]:
             return []
         if os.pathsep in text:
             teile = [t.strip() for t in text.split(os.pathsep) if t.strip()]
-        elif Path(text).expanduser().exists():
+        elif config.expand_heim(text).exists():
             teile = [text]
         else:
             teile = text.split()
-        return [Path(p).expanduser() for p in teile]
+        return [config.expand_heim(p) for p in teile]
     slugs = _gruppe().get("zweige_slugs")
-    erlaubt = {
-        s.lower()
-        for s in (slugs if isinstance(slugs, list) else OEFFENTLICHE_SLUGS)
-        if isinstance(s, str)
-    }
-    return [
-        Path(e["pfad"]).expanduser()
-        for e in config.maschine()["repos"]
-        if e["pfad"] and e["slug"].lower() in erlaubt
-    ]
+    erlaubt = {s.lower() for s in (slugs if isinstance(slugs, list) else OEFFENTLICHE_SLUGS) if isinstance(s, str)}
+    skill = _skill_wurzel()
+    gefunden: list[Path] = []
+    skill_abgedeckt = False
+    for eintrag in config.maschine()["repos"]:
+        slug = eintrag["slug"].lower()
+        if slug not in erlaubt:
+            continue
+        if config.ist_skill_slug(slug):
+            skill_abgedeckt = True
+        pfad = config.repo_klon_pfad(eintrag, skill=skill)
+        if pfad is not None:
+            gefunden.append(pfad)
+    if not skill_abgedeckt and any(config.ist_skill_slug(s) for s in erlaubt):
+        aus_stempel = skill_stand.klon_ordner(skill)
+        if aus_stempel is not None:
+            gefunden.append(aus_stempel)
+    return list(dict.fromkeys(gefunden))
 
 
 def _worktree_zweige(repo: Path) -> list[tuple[Path, str]]:
@@ -237,9 +245,7 @@ def _worktree_zweige(repo: Path) -> list[tuple[Path, str]]:
 
 
 def darf_hochladen(zweig: str) -> bool:
-    return zweig not in GESCHUETZTE_ZWEIGE and not zweig.startswith(
-        GESCHUETZTE_PRAEFIXE
-    )
+    return zweig not in GESCHUETZTE_ZWEIGE and not zweig.startswith(GESCHUETZTE_PRAEFIXE)
 
 
 def nie_oeffentlich(pfad: str) -> bool:
@@ -269,9 +275,7 @@ def gesperrte_pfade(ordner: Path, *bereich: str) -> list[str]:
     wieder gelöschte Übergabe würde mitgepusht. ``-z`` hält Nicht-ASCII-Pfade ungequotet,
     ``--diff-merges=separate`` zeigt Dateien, die erst in einer Merge-Auflösung entstehen.
     """
-    aus = _git(
-        ordner, "log", "-z", "--name-only", "--diff-merges=separate", "--format=", *bereich
-    )
+    aus = _git(ordner, "log", "-z", "--name-only", "--diff-merges=separate", "--format=", *bereich)
     if aus.returncode != 0:
         raise OSError(aus.stderr.strip() or f"git log {' '.join(bereich)} gescheitert")
     return sorted({p for p in pfade_aus_nul(aus.stdout) if nie_oeffentlich(p)})
@@ -292,9 +296,7 @@ def _hochladen(repo: Path, erg: Sicherung) -> None:
             continue  # nichts Neues
         gesperrt = _gesperrte_pfade(ordner, zweig)
         if gesperrt:
-            erg.fehler.append(
-                f"Push {repo.name}:{zweig} verweigert — enthält {', '.join(gesperrt)}"
-            )
+            erg.fehler.append(f"Push {repo.name}:{zweig} verweigert — enthält {', '.join(gesperrt)}")
             log.error(
                 "Sicherung: Push %s:%s verweigert, Übergabe/Entscheidungs-Log im Zweig: %s",
                 repo.name,
@@ -324,12 +326,8 @@ def sichern(dateien: list[Path] | None = None, *, trocken: bool = False) -> Sich
     try:
         ziel = ziel_ordner()
         if ist_oeffentlich(ziel):
-            erg.fehler.append(
-                f"{ziel} liegt in einem öffentlichen Repo — nichts kopiert"
-            )
-            log.error(
-                "Sicherung: %s liegt in einem öffentlichen Repo — nichts kopiert", ziel
-            )
+            erg.fehler.append(f"{ziel} liegt in einem öffentlichen Repo — nichts kopiert")
+            log.error("Sicherung: %s liegt in einem öffentlichen Repo — nichts kopiert", ziel)
         else:
             if not trocken:
                 ziel.mkdir(parents=True, exist_ok=True)
@@ -345,6 +343,12 @@ def sichern(dateien: list[Path] | None = None, *, trocken: bool = False) -> Sich
         erg.fehler.append(f"Dateien: {type(fehler).__name__}: {fehler}")
     try:
         for repo in _zweig_repos():
+            if not repo.is_dir():
+                log.info(
+                    "Sicherung: Klon-Ordner %s fehlt — Zweig-Upload übersprungen",
+                    repo,
+                )
+                continue
             try:
                 _hochladen(repo, erg)
             except (OSError, subprocess.SubprocessError) as fehler:
@@ -374,16 +378,11 @@ def stand_zeitpunkt(text: str) -> datetime | None:
         return None
     abschnitt = text.split("## 3. Stand", 1)[1].split("\n## ", 1)[0]
     zone = _stand_zone()
-    zeiten = [
-        datetime.strptime(t, "%Y-%m-%d %H:%M").replace(tzinfo=zone)
-        for t in STAND_ZEILE.findall(abschnitt)
-    ]
+    zeiten = [datetime.strptime(t, "%Y-%m-%d %H:%M").replace(tzinfo=zone) for t in STAND_ZEILE.findall(abschnitt)]
     return max(zeiten) if zeiten else None
 
 
-def stand_veraltet(
-    text: str, referenz: datetime, frist: timedelta = STAND_FRIST
-) -> bool:
+def stand_veraltet(text: str, referenz: datetime, frist: timedelta = STAND_FRIST) -> bool:
     """``True``, wenn der jüngste Stand-Eintrag fehlt oder älter ist als ``referenz`` minus ``frist``."""
     juengster = stand_zeitpunkt(text)
     if juengster is None:

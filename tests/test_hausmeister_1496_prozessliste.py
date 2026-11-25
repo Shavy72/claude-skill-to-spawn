@@ -19,9 +19,7 @@ import pytest
 
 from to_spawn import hausmeister_windows
 
-pytestmark = pytest.mark.skipif(
-    sys.platform != "win32", reason="echte PowerShell nur unter Windows"
-)
+pytestmark = pytest.mark.skipif(sys.platform != "win32", reason="echte PowerShell nur unter Windows")
 
 MARKE = "hausmeister-1496 „Ticket“ – läuft"
 
