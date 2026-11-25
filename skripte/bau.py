@@ -413,9 +413,10 @@ def auf_blocker_warten(
 def warte_modus(args: argparse.Namespace) -> str | None:
     """Blocker-Warten vor dem Start (#906): ``"voll"``, ``"nur_offen"`` (``--sofort``) oder ``None``.
 
-    ``--umzug``, ``--resume`` und ``--probesitz`` setzen laufende Arbeit fort → kein Warten.
+    ``--umzug``, ``--resume``, ``--probesitz`` und Abschluss-Wiederanlauf (#282) setzen
+    laufende/fertige Arbeit fort → kein Warten.
     """
-    if args.umzug or args.resume or args.probesitz:
+    if args.umzug or args.resume or args.probesitz or getattr(args, "abschluss", False):
         return None
     return "nur_offen" if args.sofort else "voll"
 
@@ -1259,12 +1260,12 @@ def main() -> int:
         if not start.erlaubt:
             print(start.grund, flush=True)
             return start.exit_code
+    # Fertig gebaut mit offenem Abschluss (#282): kein Blocker-Warten, kein Neubau.
+    args.abschluss = start is not None and start.art == "abschluss"
     global _ECHTER_LAUF
     _ECHTER_LAUF = True  # ab hier echter Lauf (Ticket-Ende stößt den Hausmeister an)
 
-    # Fertig gebaut mit offenem Abschluss (#282): kein Blocker-Warten, kein Neubau.
-    if start is None or start.art != "abschluss":
-        blocker_schranke(ticket, args)
+    blocker_schranke(ticket, args)
     # Speicher-Schutz (#257 Paket B, Fixrunde 1 F3), die EINE Stelle vor dem Prozessstart
     # (gilt für Erststart, --resume und --umzug): RAM knapp oder Obergrenze an
     # Claude-Sessions erreicht → warten statt Exit 5, damit das Fenster und der Grund bleiben.

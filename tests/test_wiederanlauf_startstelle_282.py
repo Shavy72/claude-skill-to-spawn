@@ -106,11 +106,11 @@ def _bau_umgebung(
     monkeypatch.setattr(bau, "umzug_anfragen_aufraeumen", lambda _t: tmp_path / f"anfrage-{name}.json")
     monkeypatch.setattr(bau.terminal_maus, "maus_ruhig", lambda: None)
 
-    def _blocker(t: str, _args: object) -> None:
+    def _blocker(t: str, _takt: int, *, nur_offene: bool = False) -> None:
         if blocker_gerufen is not None:
             blocker_gerufen.append(t)
 
-    monkeypatch.setattr(bau, "blocker_schranke", _blocker)
+    monkeypatch.setattr(bau, "auf_blocker_warten", _blocker)
 
     befehle: list[list[str]] = []
     dateien: dict[str, str] = {}
