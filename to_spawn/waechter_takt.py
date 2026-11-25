@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import json
 import logging
 import os
@@ -43,6 +44,7 @@ import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from types import ModuleType
 from typing import Any
 
 from . import (
@@ -56,6 +58,7 @@ from . import (
     config,
     gh,
     leitstand,
+    manifest,
     starter,
     ticket_zustand,
     waechter_lauf,
@@ -122,6 +125,22 @@ def _jetzt_iso() -> str:
 
 def _schluessel(text: str) -> str:
     return hashlib.sha1(text.encode("utf-8")).hexdigest()[:16]
+
+
+def _abschluss_paket() -> ModuleType:
+    """Lädt ``skripte/abschluss_paket.py`` einmal (einzige Stelle für Runden-Zustand, #370)."""
+    name = "_to_spawn_abschluss_paket"
+    vorhanden = sys.modules.get(name)
+    if vorhanden is not None:
+        return vorhanden
+    pfad = SKILL / "skripte" / "abschluss_paket.py"
+    spez = importlib.util.spec_from_file_location(name, pfad)
+    if spez is None or spez.loader is None:
+        raise RuntimeError(f"Modul nicht ladbar: {pfad}")
+    modul = importlib.util.module_from_spec(spez)
+    sys.modules[name] = modul
+    spez.loader.exec_module(modul)
+    return modul
 
 
 def _zeilen(repo: Path, ref: str | None, ticket: int, wt_basis: str) -> list[dict[str, Any]]:
@@ -302,7 +321,48 @@ def pruefe(
         if not erster and k not in alt_verstoesse:
             text = f"#{v.ticket} capo-Verstoß {v.regel}: {capo._kurz(v.text)}"
             eintraege.append((text, "verstoesse", k))
-    if tick.fertig and not erster and not alt.get("fertig"):
+    alt_spec_kommentare = set(alt.get("spec_kommentare") or [])
+    alt_abschluss_runden = set(alt.get("abschluss_runden") or [])
+    spec_kommentare: set[str] = set(alt_spec_kommentare)
+    abschluss_runden: set[str] = set(alt_abschluss_runden)
+    runde_gemeldet = False
+    if auswahl_stand is None or not auswahl_stand.ist_teilauswahl():
+        stand = _abschluss_paket().abschluss_faellig(
+            repo,
+            spec,
+            liste,
+            checkpoint_label=manifest.checkpoint_label(konfig),
+            verstoesse=bool(tick.verstoesse),
+        )
+        if stand.runde >= 1 and stand.stand != "live":
+            for c in capo.issue_kommentare(gh_repo, spec) or []:
+                body = str(c.get("body") or "").strip()
+                if not body or body.startswith((capo.WAECHTER_KOPF, capo.SESSION_KOPF)):
+                    continue
+                k = _schluessel(f"{c.get('id', '')}:{c.get('created_at', '')}:{body}")
+                spec_kommentare.add(k)
+                if k not in alt_spec_kommentare:
+                    text = (
+                        f"#{spec} Kommentar im Spec-Issue nach Abnahme (Runde {stand.runde}): "
+                        f"{capo._kurz(body, 140)} — bei Nachbesserung je Punkt "
+                        f"`python {SKILL.as_posix()}/skripte/abschluss_paket.py nachbesserung {spec} --punkt \"…\"` "
+                        f"(Folge-Ticket + Manifest, Kette baut weiter); Live nur nach ausdrücklichem Wort des Nutzers"
+                    )
+                    eintraege.append((text, "spec_kommentare", k))
+        if stand.faellig and stand.naechste_runde >= 2:
+            runde_k = f"r{stand.naechste_runde}:{','.join(map(str, stand.neue_tickets))}"
+            abschluss_runden.add(runde_k)
+            if runde_k not in alt_abschluss_runden:
+                folgen_txt = ", ".join(f"#{n}" for n in stand.neue_tickets)
+                text = (
+                    f"#{spec} Abschluss Runde {stand.naechste_runde} fällig "
+                    f"(Folge-Tickets fertig: {folgen_txt}) — neue Rundschau, neue Selbstprüfung, "
+                    f"Prüfung Bereit für Live? und `abschluss_paket.py ablegen {spec} --stand abnahme` "
+                    f"(Live nur nach ausdrücklichem Wort des Nutzers)"
+                )
+                eintraege.append((text, "abschluss_runden", runde_k))
+                runde_gemeldet = True
+    if tick.fertig and not erster and not alt.get("fertig") and not runde_gemeldet:
         eintraege.append((f"#{spec} SPEC FERTIG — Abschluss-Kette (Thermo → Rückblick → Mail)", "fertig", True))
     neu = {
         "zeilen": sorted(zeilen),
@@ -311,6 +371,8 @@ def pruefe(
         "fragen": sorted(offen_schluessel),  # nur noch offene; beantwortete fallen raus
         "belegt": sorted(belegt),
         "gezeigt": gezeigt,
+        "spec_kommentare": sorted(spec_kommentare),
+        "abschluss_runden": sorted(abschluss_runden),
         "fertig": bool(tick.fertig),
         "zuletzt": _jetzt_iso(),
     }
