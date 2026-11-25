@@ -2422,7 +2422,7 @@ def _wurzel_erlaubt(muster: str) -> bool:
 
     Hinweis zum Wirkungsbereich (#196/#225): :func:`_im_bereich` nimmt zusätzlich jeden
     laut git eingetragenen Worktree der bekannten Hauptrepos überall auf der Platte mit
-    (auch ``/tmp``, ``C:/dev/wt-<name>``, Prüf-/Deploy-Worktrees). Dort schützen nicht
+    (auch in Temp-Ordnern, ``C:/dev/wt-<name>``, Prüf-/Deploy-Worktrees). Dort schützen nicht
     die Wurzel-Grenzen, sondern allein die Wegwerf-Prüfung, die Sperr-Regel (``locked``),
     das stille Stehenlassen ohne Ticket-Nummer außerhalb der Wurzeln und die Sicherung."""
     if muster in WURZELN_STANDARD:
@@ -2459,8 +2459,8 @@ def _im_bereich(ordner: Path) -> bool:
     echte Pfad zählt, nicht der Mustertext (``[.]ssh``, Symlink auf ``.ssh``, #112).
 
     Erweiterter Bereich (#196/#225): Zusätzlich zählt jeder laut git eingetragene Worktree
-    eines bekannten Hauptrepos überall (auch ``/tmp``, ``C:/dev/wt-<name>``, Prüf-/Deploy-
-    Worktrees; gleiche Quelle wie :func:`_kandidaten`). Schutz bieten die Wegwerf-Prüfung
+    eines bekannten Hauptrepos überall (auch in Temp-Ordnern, ``C:/dev/wt-<name>``, Prüf-/
+    Deploy-Worktrees; gleiche Quelle wie :func:`_kandidaten`). Schutz bieten die Wegwerf-Prüfung
     samt Sicherung (``sicherung/<N>``), die Sperr-Regel (``locked``) sowie das stille
     Stehenlassen von Worktrees ohne Ticket-Nummer außerhalb der Wurzeln."""
     try:
