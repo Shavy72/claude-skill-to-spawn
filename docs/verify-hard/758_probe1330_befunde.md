@@ -1,0 +1,33 @@
+# Befundseite #758 — Probe 1330: Nachstellung und Einordnung (Windows-Teil / PC)
+
+Ticket: Shavy72/claude-skill-to-spawn#758 (aufgeteilt aus #291; PC-/Windows-Teil auf echtem Windows-PC, ohne neue Terminal-Fenster, ohne `wt`-Tabs und ohne `spawn_local.ps1`-Start).
+
+## Übersicht aller 4 Punkte
+
+| # | Beobachtung (Probe 1330, PC) | System-Einordnung | Urteil | Beleg / Maßnahme |
+|---|---|---|---|---|
+| 1 | **6 Minuten Anlauf** (22.11. 23:09–23:15, App-Ticket 1477): steht nach Start auf „wartet“ und fragt per `gh`/`git` viele Tickets ab, auch fremde | `system:kern` (mit Windows-Verstärker) | **Nachgestellt → Folge-Ticket #781** | Am Windows-PC real 9,5 % freie Platte auf `C:/` (`96,8 GB / 1022,6 GB < PLATZNOT_ANTEIL 15 %`, aber `>= STARTSPERRE_ANTEIL 5 %`). `skripte/bau.py:1208` ruft `speicher.auf_platte_warten()` → `hausmeister.start_erlaubt(loeschen=True)` synchron auf (umgeht `_platte_je_start` aus #617) und scannt alle Ordner inkl. fremder Tickets (2× `gh` je Ordner + unter Windows ungecachtes `hausmeister_windows._prozesse()` je Ordner), während `sessions_stand.py:298` `wartet` zeigt. Beleg: `tests/test_probe_1330_758.py::test_punkt1_*`. |
+| 2 | **Toter Tab** (22.11. 20:45): zwei Tabs für dasselbe Ticket, einer seit 100 min ohne Kind-Prozess | `system:windows` | **Code-/Prozesslogik nachgestellt (ohne wt-Start) → Folge-Ticket #782** | Drei Ursachen im Windows-Werkzeugkasten belegt: (a) `pc_fenster.lauf_aus` sucht `bau.py <N>` in der Eltern-Kommandozeile und verpasst `spawn_local.ps1`-Tabs (`pwsh -NoExit -Command "bau <N>"`, `tab_pid=None`) → `pc_fenster.abloesen` beendet nur `bau.py`, lässt den leeren Tab offen und öffnet einen zweiten Tab; (b) `spawn.neustart --beenden` beendet nie den Eltern-`pwsh`; (c) `-NoExit` in `spawn_local.ps1:142` und `spawn.wt_tab_befehl:248` hält jeden beendeten Tab endlos ohne Kind offen. Live-wt-Gegenprobe im Fix-Ticket #782 (hier ausgeschlossen). Beleg: `tests/test_probe_1330_758.py::test_punkt2_*`. |
+| 3 | **Session merkt „ticket-rot“ 29 min nicht** (22.11. 19:53–20:37), heilt sich dann selbst | `system:kern` | **Nachgestellt → Folge-Ticket #783** | `ticket-rot` ist das Fehler-Urteil der Projekt-Deploy-Schlange (`docs/PRUEFTOR_VERGLEICH.md`, `ticket_status.py`). `to_spawn/warten.py` persistiert `status="fehlgeschlagen"` sofort in `.to-spawn/warten/<N>.json`, löst aber keinen aktiven Weckruf aus; `briefkasten_wecker.py` beobachtet weder `warten`-Dateien noch Schlangen-Urteile und läuft am PC (ohne tmux, `kann_tippen == False`) gar nicht. Die Session erfährt es erst beim nächsten `ScheduleWakeup` (20–30 min Leerlauf). Beleg: `tests/test_probe_1330_758.py::test_punkt3_*`. |
+| 4 | **Session außerhalb von `bau.py` fortgesetzt** (23.11. 02:47): keine Staffel-Ablösung, in Übersicht evtl. „aus“ | `system:kern` | **Abgehakt (Auslöser mit #278 entfallen; Falle belegt & in `SKILL.md` dokumentiert)** | Der ursprüngliche Anlass (Neustart mit Nutzer-Freigabe im Start-Auftrag) ist auf `main` durch #278 (`to_spawn/befugnis.py` + Briefkasten), #285 (`bau.py --auftrag`) und #236 (`bau.py --resume`) entfallen. Die Falle bei rohem `claude --resume` ohne `bau.py` ist nachgestellt: `staffel_stop.py` tut nichts, `sessions_stand.py` meldet `aus` (kein `…-bau/<N>-…/settings.json`), `pc_fenster.lauf_aus` liefert leer, `startstelle` hält keine Sperre. Regel in `SKILL.md` ergänzt; Beleg: `tests/test_probe_1330_758.py::test_punkt4_*`. |
+
+## Detail-Belege (echter Windows-PC)
+
+### 1. 6 Minuten Anlauf (`system:kern`, Folge-Ticket #781)
+- **Live-Messung auf diesem Windows-PC:** `python -c "import shutil; u = shutil.disk_usage('C:/'); print(f'{u.free/1e9:.1f}/{u.total/1e9:.1f} GB ({u.free/u.total:.3f})')"` → `96.8/1022.6 GB (0.095)` — also `9,5 % < hausmeister.PLATZNOT_ANTEIL (0,15)` bei gleichzeitig `9,5 % >= STARTSPERRE_ANTEIL (0,05)`.
+- **Code-Kette:** `skripte/bau.py:1208` → `speicher.auf_platte_warten()` → `hausmeister.start_erlaubt(loeschen=True, nur_messen=False)` → `hausmeister._start_pruefen()` (Z. 740–743) → `rundgang(loeschen=True)` → `_alle_ordner()` (Z. 661–677).
+- **Wirkung:** `_alle_ordner()` prüft alle Worktrees/Klone aller Wurzeln (auch fremde Tickets), fragt `gh issue view` in `_schliesszeit()` und erneut in `_ticket_lange_zu()` doppelt ab und ruft unter Windows für jeden geschlossenen Ordner ungecacht `hausmeister_windows._prozesse()` (`powershell … Get-CimInstance Win32_Process`) auf. Solange noch kein `claude.exe`-Kind läuft, zeigt `skripte/sessions_stand.py:298` das Ticket als `wartet`.
+
+### 2. Toter Tab (`system:windows`, Folge-Ticket #782)
+- **`spawn_local.ps1:142`:** `new-tab --title "bau <N>" -d "<repo>" pwsh -NoExit -Command "bau <N>"`.
+- **`to_spawn/pc_fenster.py:160,180`:** `muster = re.compile(rf"bau\.py[\"']?\s+{ticket}(\s|$)")` trifft die Tab-Kommandozeile `"bau <N>"` nicht → `lauf.tab_pid` ist `None` → `pc_fenster.abloesen()` beendet nur `bau.py`, der alte `pwsh -NoExit`-Tab bleibt ohne Kind-Prozess offen, während ein zweiter Tab startet.
+- **`to_spawn/spawn.py:248,309-333`:** `neustart --beenden` tötet nur `session_pid`/`pid`, nie den Eltern-`pwsh`, und `wt_tab_befehl` nutzt ebenfalls `-NoExit`.
+- **Grenze in #758:** Keine neuen Terminal-Fenster, keine `wt`-Tabs, kein `spawn_local.ps1`-Start — Live-Gegenprobe im Windows Terminal ist Teil der Abnahme von #782.
+
+### 3. Session merkt „ticket-rot“ 29 min nicht (`system:kern`, Folge-Ticket #783)
+- **`to_spawn/warten.py:598-613,899-905`:** Ein regulär mit Exit ≠ 0 beendeter Warte-Befehl (z. B. `ticket-rot` aus der Deploy-Schlange) setzt `status="fehlgeschlagen"` in `.to-spawn/warten/<N>.json`, sendet aber keinen Weckruf.
+- **`to_spawn/briefkasten_wecker.py:28,104-128`:** Kein Beobachter für `.to-spawn/warten/<N>.json`, und am PC (Windows, kein tmux) läuft der Wecker-Faden mangels `TMUX_PANE` nicht (`pc_fenster.kann_tippen` ist `False`). Die Session sieht `ticket-rot` erst beim nächsten `ScheduleWakeup` und heilt sich danach selbst.
+
+### 4. Session außerhalb von `bau.py` fortgesetzt (`system:kern`, abgehakt mit #278)
+- **Auslöser behoben:** #278 (geschlossen, PRs #300/#303/#306/#310) verankert `befugnis.KOPF` (`{BEFUGNIS}`) und Briefkasten (`to_spawn.py frage <N>`) im Start-Auftrag jeder Bau-Session; zusätzlich decken `bau.py --auftrag` (#285) und `bau.py --resume` (#236) Sonderfälle innerhalb von `bau.py` ab.
+- **Nachgestellte Falle:** Ohne `bau.py` fehlen `BAU_*`-Umgebungsvariablen (`staffel_stop.py:213-218` → keine Staffel), `sessions_stand.py:47,310` erkennt rohes `claude --resume` ohne `…-bau/<N>-…/settings.json` nicht als `VERWAIST` (→ `aus`), `pc_fenster.lauf_aus` liefert leer und `startstelle` hält keine Sperre. In `SKILL.md` unter „Harte Regeln“ dokumentiert.
