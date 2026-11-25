@@ -218,3 +218,41 @@ def test_schnell_mit_unbekannter_aenderung_ist_gate_fehler(tmp_path: Path, monke
     assert urteil.exit == 2, urteil.zeile
     assert _KEINE_AUSWAHL in urteil.zeile["fehler_kurz"], urteil.zeile
     assert not _voll_lief(urteil.zeile), f"Rückfall auf den vollen Lauf: {urteil.zeile['stufen']}"
+
+
+# #453: Leerer Diff (``pfade == []``, bleibt ausgelassen) klar von ``None`` (Gate-Fehler) getrennt,
+# und Grund-Text ohne holpriges „Code geändert (Änderung unbekannt)“.
+def test_regel_trennt_leeren_diff_von_unbekannter_aenderung() -> None:
+    from to_spawn.pruef import regeln
+
+    assert regeln.schnell_ohne_test([], "py", "nichts geändert (nie Grün ohne Lauf)") == ""
+
+    unbekannt = regeln.schnell_ohne_test(None, "py", "geänderte Dateien unbekannt (git diff gescheitert)")
+    assert _KEINE_AUSWAHL in unbekannt and _HANDLUNG in unbekannt, unbekannt
+    assert "Änderung unbekannt" in unbekannt, unbekannt
+    assert "Code geändert" not in unbekannt, unbekannt
+
+    mit_code = regeln.schnell_ohne_test(["neu.py"], "py", "R2: 0 Tests")
+    assert "Code geändert (neu.py)" in mit_code and _HANDLUNG in mit_code, mit_code
+
+
+def test_schnell_trennt_leeren_diff_von_unbekannter_aenderung(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from to_spawn.pruef import sofort
+
+    leer_repo = _probe(tmp_path / "leer")
+    leer = pruef.pruefen(leer_repo, "HEAD", "HEAD", art="schnell")
+    assert leer.exit == 0, leer.zeile
+    assert leer.zeile["fehler_kurz"] == "", leer.zeile
+    assert not _voll_lief(leer.zeile), leer.zeile["stufen"]
+    ausgelassen = [s for s in leer.zeile["stufen"] if s["name"] == "voll" and not s["lief"]]
+    assert ausgelassen and "nichts geändert" in ausgelassen[0]["grund"], leer.zeile["stufen"]
+
+    unklar_repo = _probe(tmp_path / "unklar", datei="README.md")
+    monkeypatch.setattr(sofort, "geaendert", lambda _repo, _basis: None)
+    unklar = pruef.pruefen(unklar_repo, "base", "HEAD", art="schnell")
+    assert unklar.exit == 2, unklar.zeile
+    assert _KEINE_AUSWAHL in unklar.zeile["fehler_kurz"], unklar.zeile
+    assert _HANDLUNG in unklar.zeile["fehler_kurz"], unklar.zeile
+    assert "Änderung unbekannt" in unklar.zeile["fehler_kurz"], unklar.zeile
+    assert "Code geändert" not in unklar.zeile["fehler_kurz"], unklar.zeile
+    assert not _voll_lief(unklar.zeile), unklar.zeile["stufen"]
