@@ -691,16 +691,27 @@ def _ohne_gedimmtes(zeile: str) -> str:
     """Zeile ohne gedimmten Text (SGR 2) und ohne Steuerfolgen.
 
     Claude Code zeigt Platzhalter und Prompt-Vorschläge gedimmt; getippter Text ist es nie.
-    ``38;2;r;g;b``/``48;5;n`` sind Farbwerte, ihre Zahlen zählen nicht als „gedimmt“. Parameter
-    werden nur an ``;`` geteilt; Unterparameter hinter ``:`` (``4:2``, ``38:2::r:g:b``) gehören
-    zu ihrem Code und zählen nie als eigener Wert.
+    Ein einzelner inverser Cursor-Buchstabe (SGR 7 ohne SGR 2) direkt vor einem gedimmten
+    Platzhalter hinter ``❯`` gehört ebenfalls zum Platzhalter (#435).
+    ``38;2;r;g;b``/``48;5;n`` sind Farbwerte, ihre Zahlen zählen nicht als „gedimmt“ oder
+    „invers“. Parameter werden nur an ``;`` geteilt; Unterparameter hinter ``:`` (``4:2``,
+    ``38:2::r:g:b``) gehören zu ihrem Code und zählen nie als eigener Wert.
     """
-    raus: list[str] = []
+    stuecke: list[tuple[str, bool, bool]] = []
     gedimmt = False
+    invers = False
     pos = 0
+
+    def _anhaengen(text: str) -> None:
+        if not text:
+            return
+        if stuecke and stuecke[-1][1] == gedimmt and stuecke[-1][2] == invers:
+            stuecke[-1] = (stuecke[-1][0] + text, gedimmt, invers)
+        else:
+            stuecke.append((text, gedimmt, invers))
+
     for treffer in _STEUERFOLGE.finditer(zeile):
-        if not gedimmt:
-            raus.append(zeile[pos : treffer.start()])
+        _anhaengen(zeile[pos : treffer.start()])
         pos = treffer.end()
         if treffer.group(2) != "m":
             continue
@@ -709,16 +720,41 @@ def _ohne_gedimmtes(zeile: str) -> str:
         while i < len(werte):
             wert, _, unterwerte = werte[i].partition(":")
             if unterwerte:
-                pass  # Code mit eigenen Unterparametern (4:2, 38:2:…): nie Dim, nichts überspringen
-            elif wert in ("", "0", "22"):
+                pass  # Code mit eigenen Unterparametern (4:2, 38:2:…): nie Dim/Invers, nichts überspringen
+            elif wert in ("", "0"):
+                gedimmt = False
+                invers = False
+            elif wert == "22":
                 gedimmt = False
             elif wert == "2":
                 gedimmt = True
+            elif wert == "7":
+                invers = True
+            elif wert == "27":
+                invers = False
             elif wert in ("38", "48", "58") and i + 1 < len(werte):
                 i += 4 if werte[i + 1] == "2" else 2  # Farbmodus + Werte überspringen
             i += 1
-    if not gedimmt:
-        raus.append(zeile[pos:])
+    _anhaengen(zeile[pos:])
+
+    raus: list[str] = []
+    for i, (text, ist_gedimmt, ist_invers) in enumerate(stuecke):
+        if ist_gedimmt:
+            continue
+        # Inverser Cursor-Buchstabe (SGR 7 ohne SGR 2) direkt vor einem gedimmten Platzhalter (#435).
+        vor = "".join(raus).lstrip()
+        if (
+            ist_invers
+            and len(text) == 1
+            and i + 1 < len(stuecke)
+            and stuecke[i + 1][1]
+            and stuecke[i + 1][0].strip()
+            and not any(s[1] for s in stuecke[:i])
+            and vor.startswith("❯")
+            and not vor[1:].strip()
+        ):
+            continue
+        raus.append(text)
     return "".join(raus)
 
 
@@ -2166,7 +2202,7 @@ class Aufpasser:
                     log.error("%s: Ticket-Zustand nicht lesbar: %s", f.name, fehler)
                     daten = {}  # gilt als offen: nichts schließen
                 if ticket_zustand.fertig_gebaut(daten):
-                    if not self._frage_haelt(f, ticket, repo, daten):
+                    if not self._frage_haelt(f, ticket, repo, daten, e):
                         self.ticket_zu_schliessen(
                             f,
                             ticket,
@@ -2180,8 +2216,8 @@ class Aufpasser:
                         return True
                     # Frage hält nur das Schließen: lebt Claude, bleibt das Fenster
                     # unberührt; beendete Session läuft in die Stufenkette (#416).
-                    if info is not None or not session_beendet(f.pane_pid):
-                        return True
+                    return info is not None or not session_beendet(f.pane_pid)
+        e.pop("frage_gehalten", None)
         return False
 
     def _platz_fenster(self, f: Fenster, repo: Path, offen: set[int]) -> int:
@@ -2393,27 +2429,41 @@ class Aufpasser:
         """Siehe :func:`wartet_umsonst` (Modul-Funktion, auch vom Wecker gefragt)."""
         return wartet_umsonst(text, ticket, repo)
 
-    def _frage_haelt(self, f: Fenster, ticket: int, repo: Path, daten: dict) -> bool:
+    def _frage_haelt(
+        self, f: Fenster, ticket: int, repo: Path, daten: dict[str, Any], e: dict[str, Any]
+    ) -> bool:
         """Offene Frage des Tickets im Briefkasten hält das Fenster, auch bei Platznot (#416).
 
         Die Bau-Session wartet auf die Antwort und schließt danach selbst das Ticket — ohne
         sie bliebe es ohne Schließer. Ist das Issue schon zu, braucht es keinen mehr: eine
         alte, nie beantwortete Frage hält dann nicht. Briefkasten nicht lesbar ⇒ hält.
+        Die Log-Zeile wird über ``e["frage_gehalten"]`` entprellt: einmal beim Eintritt,
+        danach erst wieder bei Änderung (#440).
         """
         if ticket_zustand.endgueltig_zu(daten):
+            e.pop("frage_gehalten", None)
             return False
         try:
             fragen = briefkasten.offene([ticket], hauptbaum=repo)
         except (OSError, ValueError, RuntimeError) as fehler:
-            log.warning("%s: Briefkasten nicht lesbar (%s) — Fenster bleibt", f.name, fehler)
+            stand = f"fehler:{fehler}"
+            if e.get("frage_gehalten") != stand:
+                log.warning("%s: Briefkasten nicht lesbar (%s) — Fenster bleibt", f.name, fehler)
+                e["frage_gehalten"] = stand
             return True
         if fragen:
-            log.info(
-                "%s: offene Frage im Briefkasten (%s) — Fenster bleibt, Ticket braucht die Session",
-                f.name,
-                ", ".join(q["id"] or q["frage"] for q in fragen),
-            )
-        return bool(fragen)
+            anzeige = ", ".join(q["id"] or q["frage"] for q in fragen)
+            stand = f"offen:{anzeige}"
+            if e.get("frage_gehalten") != stand:
+                log.info(
+                    "%s: offene Frage im Briefkasten (%s) — Fenster bleibt, Ticket braucht die Session",
+                    f.name,
+                    anzeige,
+                )
+                e["frage_gehalten"] = stand
+            return True
+        e.pop("frage_gehalten", None)
+        return False
 
     def _platznot(self, repo: Path, info: SessionInfo | None, sitzung: str) -> bool:
         """Grenze voll (Speicher/Session-Zahl der tmux-Sitzung) und die Session meldet selbst ``idle``."""
