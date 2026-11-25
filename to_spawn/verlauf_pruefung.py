@@ -1,24 +1,22 @@
-"""Was hat seit der letzten weitergegebenen Frage kein Mensch geprüft? (#372, PR 374 Runde 9)
+"""Was hat seit der letzten weitergegebenen Frage kein Mensch geprüft? (#372, #389 Variante E)
 
 Eine Fenster-Frage ist Klasse 2, wenn sie selbst ein Klasse-2-Wort trägt
 (:func:`befugnis.ist_klasse_2`, breit: Wortteile zählen) oder die Session seit der Stelle, die
-der Leiter zuletzt weitergegeben hat, eine Klasse-2-HANDLUNG begangen oder angekündigt hat
-(:func:`befugnis.handlung_klasse_2`) ODER die breite Erkennung von ``cb5e5f5`` anschlägt
-(:func:`befugnis.ist_klasse_2_am_wortanfang` über Text und Werkzeug-Eingaben außer Datei-Inhalten;
-Variante U, Sicherheit vor Quote). Quelle ist das Transkript der Session, nicht der
-Fenster-Text: wer etwas ins Fenster getippt hat (Mensch, Aufpasser, Aufseher, Entscheider),
-spielt keine Rolle — Eingaben sind nie eine Grenze und werden nicht durchsucht.
+der Leiter zuletzt weitergegeben hat, eine Werkzeug-Handlung ausgeführt hat, die nicht auf der
+Erlaubt-Liste steht (:func:`erlaubt.unbekannt`, Variante E). Quelle ist das Transkript der
+Session, nicht der Fenster-Text: wer etwas ins Fenster getippt hat (Mensch, Aufpasser,
+Aufseher, Entscheider), spielt keine Rolle — Eingaben sind nie eine Grenze und werden nicht
+durchsucht.
 
 Durchsucht werden Einträge ``type=assistant`` ohne ``isApiErrorMessage`` (auch Unter-Agenten:
 ``isSidechain`` und ``<sessionId>/subagents/*.jsonl`` ab dem Zeitpunkt der Stelle); nie ``user``
-(Eingaben, Anstupser, ``tool_result``) und nie ``thinking``. Je Block: ``text`` und
-Task/Agent-``prompt`` als Text, bei allen übrigen Werkzeugen :data:`BEFEHL_FELDER` als Befehl, ``mcp__*``-Namen als Werkzeug und
-``file_path`` von :data:`DATEI_WERKZEUGE` und Read als Pfad (Datei-Inhalte nie). Die Muster
-selbst kennt nur :mod:`befugnis`.
+(Eingaben, Anstupser, ``tool_result``), nie ``thinking`` und keine reinen Text-Blöcke (ein Satz
+ohne Werkzeug-Aufruf ist keine Handlung). Die Erlaubt-Liste lebt allein in :mod:`to_spawn.erlaubt`.
 Die Stelle (``<sessionId>:<uuid>``) gehört dem Leiter; unbekannte uuid ⇒ ab Dateianfang. Fremde
 sessionId (Ablösung, ``/clear``) ⇒ neue Datei ab Anfang UND Rest der alten Datei ab der Stelle;
 fehlt die alte Datei ⇒ Klasse 2. Keine Stelle ⇒ zusätzlich die übrigen Session-Dateien des
-Ordners, die kurz vor dem Start oder danach geschrieben wurden (T7d, :func:`_vorgaengerinnen`). Eine kaputte Zeile mitten im Transkript nach der Stelle ⇒ Klasse 2.
+Ordners, die kurz vor dem Start oder danach geschrieben wurden (T7d, :func:`_vorgaengerinnen`).
+Eine kaputte Zeile mitten im Transkript nach der Stelle ⇒ Klasse 2.
 
 Rückfall, wenn das Transkript nicht lesbar ist (keine Gesprächs-ID, Datei fehlt, keine Zeile
 lesbar, letzte Zeile halb geschrieben): Fenster mit Verlauf (``capture-pane -J -S -2000``),
@@ -37,7 +35,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from to_spawn import aufpasser, befugnis, waechter_lauf
+from to_spawn import aufpasser, befugnis, erlaubt, waechter_lauf
 
 if TYPE_CHECKING:
     from to_spawn.aufseher_stand import Quellen
@@ -52,13 +50,6 @@ VERLAUF_ZEILEN = 2000
 UNGEPRUEFT = "Verlauf nicht lesbar — Live-Bezug ungeprüft"
 #: Grund für eine unlesbare Zeile mitten im Transkript (nicht: halbe letzte Zeile = Schreib-Verzug).
 KAPUTT = "Transkript-Zeile kaputt — Live-Bezug ungeprüft"
-#: Werkzeuge, deren Eingabe Datei-Inhalt ist: nur ``file_path`` zählt (Dauer-Fehlalarm, PR 374 R8).
-DATEI_WERKZEUGE = frozenset({"Write", "Edit", "MultiEdit", "NotebookEdit"})
-#: Werkzeuge, deren ``prompt`` ein Auftrag an einen Unter-Agenten ist (zählt wie eigener Text).
-AUFTRAG_WERKZEUGE = frozenset({"Task", "Agent"})
-#: Felder, die bei jedem anderen Werkzeug ein Befehl sind (Bash/PowerShell ``command``,
-#: ``mcp__*``-Fernaufrufe ``command``/``cmd``/``script``, Skill ``args``) — Windows-PC nicht blind.
-BEFEHL_FELDER = ("command", "cmd", "script", "args")
 #: So lange vor dem Start der Session darf eine Vorgängerin ohne Stelle zuletzt geschrieben haben.
 #: ponytail: festes Fenster statt Ticket-Start, Ticket-Start übergeben wenn Fehlalarm stört.
 VORGAENGER_FENSTER_S = 3600
@@ -149,50 +140,18 @@ def _session_grund(ordner: Path, sid: str, eintraege: list[dict[str, Any]], uuid
 
 
 def _grund(e: dict[str, Any]) -> str | None:
-    """Klasse-2-Handlung eines Eintrags (siehe Modul-Doc) oder ``None``."""
+    """Erste nicht als harmlos bekannte Handlung eines Eintrags (Variante E, #389) oder ``None``.
+
+    Trägt der Grund selbst kein Klasse-2-Wort, steht :data:`befugnis.HANDLUNG_KOPF` davor, damit
+    Briefkasten und Leiter die Frage mit :func:`befugnis.ist_klasse_2` einheitlich als Klasse 2
+    erkennen.
+    """
     if e is _KAPUTTE_ZEILE:
         return KAPUTT
-    if e.get("type") != "assistant" or e.get("isApiErrorMessage"):
+    grund = erlaubt.unbekannt(e)
+    if grund is None:
         return None
-    inhalt = (e.get("message") or {}).get("content")
-    if isinstance(inhalt, str):
-        inhalt = [{"type": "text", "text": inhalt}]
-    texte: list[str] = []
-    befehle: list[str] = []
-    werkzeuge: list[str] = []
-    pfade: list[str] = []
-    for b in inhalt if isinstance(inhalt, list) else ():
-        if not isinstance(b, dict):
-            continue
-        if b.get("type") == "text":
-            texte.append(str(b.get("text") or ""))
-            continue
-        if b.get("type") != "tool_use":
-            continue
-        name = str(b.get("name") or "")
-        eingabe = b.get("input") if isinstance(b.get("input"), dict) else {}
-        if name.startswith("mcp__"):
-            werkzeuge.append(name)
-        if name in AUFTRAG_WERKZEUGE:
-            texte.append(str(eingabe.get("prompt") or ""))
-        elif name in DATEI_WERKZEUGE or name == "Read":
-            pfade.append(str(eingabe.get("file_path") or eingabe.get("notebook_path") or ""))
-        else:
-            befehle.extend(str(eingabe[f]) for f in BEFEHL_FELDER if eingabe.get(f))
-            if name == "Skill":  # „/deploy live“: Name + args sind auch Text
-                texte.append(f"{eingabe.get('skill') or ''} {eingabe.get('args') or ''}")
-    # Variante U (#372): breite Erkennung von cb5e5f5 ODER Handlungs-Muster. Sicherheit vor Quote:
-    # die engen Muster allein waren in zwei Review-Runden nie dicht (neue Formulierungen rutschten
-    # durch); die Quote (~88 % Fehlalarm) löst eine Erlaubt-Liste im Folge-Issue, nicht ein Weglassen.
-    breit = [
-        b
-        for b in (inhalt if isinstance(inhalt, list) else ())
-        if not (isinstance(b, dict) and b.get("type") == "tool_use" and b.get("name") in DATEI_WERKZEUGE)
-    ]
-    return befugnis.handlung_klasse_2(texte=texte, befehle=befehle, werkzeuge=werkzeuge, pfade=pfade) or _erste_zeile(
-        waechter_lauf._texte({"message": {"content": breit}}, werkzeug=True),
-        befugnis.ist_klasse_2_am_wortanfang,
-    )
+    return grund if befugnis.ist_klasse_2(grund) else f"{befugnis.HANDLUNG_KOPF} {grund}"
 
 
 def _zeit(e: dict[str, Any]) -> datetime | None:

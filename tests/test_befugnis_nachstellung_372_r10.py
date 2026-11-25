@@ -53,36 +53,42 @@ FAELLE: dict[str, tuple[dict[str, Any], int]] = {
     "2b mcp ssh exec": (_werkzeug("mcp__ssh__exec", command="docker restart app"), 2),
     "2c skill args live deploy": (_werkzeug("Skill", skill="deploy", args="live deploy"), 2),
     "2d powershell ssh": (_werkzeug("PowerShell", command="ssh clawy-vps 'docker ps'"), 2),
-    "2e powershell harmlos": (_werkzeug("PowerShell", command="Get-ChildItem C:/dev"), 3),
+    "2e powershell harmlos": (_werkzeug("PowerShell", command="Get-ChildItem C:/dev"), 2),  # E: PowerShell nicht auf Erlaubt-Liste
     "2f skill harmlos": (_werkzeug("Skill", skill="tdd", args="tests für parser"), 3),
-    # 3 Trennbare und fehlende Verben
-    "3a spiele ein": (_text("Ich spiele den Fix auf den VPS ein."), 2),
-    "3b rolle aus": (_text("Ich rolle den Fix auf den VPS aus."), 2),
-    "3c starte neu": (_text("Ich starte den Container auf dem VPS neu."), 2),
-    "3d spiele auf prod": (_text("Ich spiele den Stand auf Prod."), 2),
-    "3e logge mich ein": (_text("Ich logge mich mit dem Passwort aus dem Tresor in das Konto ein."), 2),
-    "3f setze passwort": (_text("Ich setze das neue Passwort für den Login."), 2),
-    # U: breite Erkennung gilt wieder, Sicherheit vor Quote (#372)
-    "3g zustand ohne handlung": (_text("Produktion läuft wieder."), 2),
-    # 4 Abstand zwischen Verb und Objekt
+    "2g powershell deploy ps1": (
+        _werkzeug("PowerShell", command="powershell -File scripts/safe_deploy_vps.ps1"),
+        2,
+    ),
+    "2h mcp run input": (_werkzeug("mcp__x__run", input="bash scripts/safe_deploy_vps.sh"), 2),
+    "2i mcp run commands": (
+        _werkzeug("mcp__x__run", commands=["bash scripts/safe_deploy_vps.sh"]),
+        2,
+    ),
+    # 3 Trennbare und fehlende Verben (E: Text ist keine Handlung)
+    "3a spiele ein": (_text("Ich spiele den Fix auf den VPS ein."), 3),  # E: Text ist keine Handlung
+    "3b rolle aus": (_text("Ich rolle den Fix auf den VPS aus."), 3),  # E: Text ist keine Handlung
+    "3c starte neu": (_text("Ich starte den Container auf dem VPS neu."), 3),  # E: Text ist keine Handlung
+    "3d spiele auf prod": (_text("Ich spiele den Stand auf Prod."), 3),  # E: Text ist keine Handlung
+    "3e logge mich ein": (_text("Ich logge mich mit dem Passwort aus dem Tresor in das Konto ein."), 3),  # E: Text ist keine Handlung
+    "3f setze passwort": (_text("Ich setze das neue Passwort für den Login."), 3),  # E: Text ist keine Handlung
+    "3g zustand ohne handlung": (_text("Produktion läuft wieder."), 3),  # E: Text ist keine Handlung
+    # 4 Abstand zwischen Verb und Objekt (E: Text ist keine Handlung)
     "4a kaufe langer satz": (
         _text(
             "Ich kaufe jetzt für unser Team bei dem Anbieter, den wir gestern im Vergleich hatten, "
             "das große Jahres-Abo."
         ),
-        2,
+        3,  # E: Text ist keine Handlung
     ),
     "4b kaufe mit einschub": (
         _text("Als Nächstes kaufe ich – wie gestern im Team besprochen und abgestimmt – das Abo."),
-        2,
+        3,  # E: Text ist keine Handlung
     ),
-    # U: breite Erkennung gilt wieder, Sicherheit vor Quote (#372)
-    "4c sehr weit auseinander": (_text(_LANG), 2),  # Regel: _ABSTAND
-    # 5 Satz-Enden (| und ; trennen im Text nicht mehr)
-    "5a tabellenzeile kauf": (_text("| Kauf | Jahres-Abo | 499 € |"), 2),
-    "5b kaufe semikolon": (_text("Ich kaufe; Abo Pro kommt danach."), 2),
-    # U: breite Erkennung gilt wieder, Sicherheit vor Quote (#372)
-    "5c punkt trennt": (_text("Ich kaufe Brötchen. Das Abo läuft weiter wie bisher."), 2),  # Regel: Satz-Enden
+    "4c sehr weit auseinander": (_text(_LANG), 3),  # E: Text ist keine Handlung
+    # 5 Satz-Enden (E: Text ist keine Handlung)
+    "5a tabellenzeile kauf": (_text("| Kauf | Jahres-Abo | 499 € |"), 3),  # E: Text ist keine Handlung
+    "5b kaufe semikolon": (_text("Ich kaufe; Abo Pro kommt danach."), 3),  # E: Text ist keine Handlung
+    "5c punkt trennt": (_text("Ich kaufe Brötchen. Das Abo läuft weiter wie bisher."), 3),  # E: Text ist keine Handlung
     # 6 Skript in Variable, Deploy-Skript ohne „deploy“ im Namen
     "6a skript in variable": (_bash("S=scripts/safe_deploy_vps.sh; bash $S --skip-ci"), 2),
     "6b skript in for-schleife": (_bash('for s in scripts/safe_deploy_vps.sh; do bash "$s"; done'), 2),
@@ -90,7 +96,7 @@ FAELLE: dict[str, tuple[dict[str, Any], int]] = {
     "6d ship.sh --prod": (_bash("./scripts/ship.sh --prod"), 2),
     "6e deploy-variable": (_bash("DEPLOY=scripts/safe_deploy_vps.sh; $DEPLOY"), 2),
     "6f env-variable mit deploy im namen": (_bash("DEPLOY_WORKERS=8 python -m pytest tests -q"), 3),  # Regel: =
-    "6g staging-deploy": (_bash("bash scripts/deploy_staging.sh"), 3),
+    "6g staging-deploy": (_bash("bash scripts/deploy_staging.sh"), 2),  # E: fremdes Skript nicht auf Erlaubt-Liste
     # 7 Push auf den Hauptzweig
     "7a git -C push master": (_bash("git -C /home/bau/wt/x push origin master"), 2),
     "7b git -C push main": (_bash("git -C ../repo push origin HEAD:main"), 2),
@@ -104,7 +110,7 @@ FAELLE: dict[str, tuple[dict[str, Any], int]] = {
     "n4 rm -rf absolut": (_bash("rm -rf /opt/app"), 2),
     "n5 sqlite drop": (_bash("sqlite3 app.db 'DROP TABLE accounts'"), 2),
     "n6 curl -XPOST": (_bash("curl -XPOST https://api.example.com/x"), 2),
-    "n7 deploy auf hauptapp": (_text("Deploy auf die Hauptapp."), 2),
+    "n7 deploy auf hauptapp": (_text("Deploy auf die Hauptapp."), 3),  # E: Text ist keine Handlung
     # Niedrige Punkte (je eine Zeile in einer bestehenden Liste)
     "l1 curl -sX POST": (_bash("curl -sX POST https://api.example.com/x"), 2),
     "l2 gh api merge": (_bash("gh api -X PUT repos/o/r/pulls/3/merge"), 2),
