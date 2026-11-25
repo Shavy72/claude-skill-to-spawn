@@ -661,9 +661,15 @@ def _speicher_immer_frei(
     """
     ordner = tmp_path_factory.mktemp("speicher-frei")
     meminfo = ordner / "meminfo"
-    meminfo.write_text(f"MemAvailable:    {64 * 1024 * 1024} kB\n", encoding="utf-8")
+    meminfo.write_text(
+        f"MemTotal:        {64 * 1024 * 1024} kB\nMemAvailable:    {64 * 1024 * 1024} kB\n",
+        encoding="utf-8",
+    )
+    loadavg = ordner / "loadavg"
+    loadavg.write_text("0.20 0.20 0.20 1/100 1\n", encoding="utf-8")
     (ordner / "proc").mkdir()
     monkeypatch.setenv("TO_SPAWN_SPEICHER_MEMINFO", str(meminfo))
+    monkeypatch.setenv("TO_SPAWN_SPEICHER_LOADAVG", str(loadavg))
     monkeypatch.setenv("TO_SPAWN_SPEICHER_PROC", str(ordner / "proc"))
     # #460: Session-Status und vergebene Plätze ebenfalls aus der Attrappe, nie vom echten Rechner.
     (ordner / "sessions").mkdir()

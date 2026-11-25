@@ -1,28 +1,28 @@
-"""Ort-Wahl für große Testläufe (#760/#761, Beschlüsse E33/E34): Bau-Server oder GitHub.
+"""Ort-Wahl für alle Testläufe (#760/#761/#802, Beschlüsse E33/E34/E35): lokal oder GitHub.
 
 Tiefes Modul mit schmaler Schnittstelle (ein Befehl, ein Ergebnis):
 
-- **Nur Linux (Bau-Server)**: auf anderen Plattformen (z. B. Windows) meldet die Ort-Wahl
-  sofort ``github`` mit Grund — ohne Messung und ohne Wartezeit.
-- **Vor dem Start** (:func:`waehlen`): misst die Auslastung des Bau-Servers (freier Speicher,
-  1-Minuten-Last und laufende Bau-Sessions über :mod:`to_spawn.speicher`) über ein Fenster von
-  30 Minuten, bei Bedarf über weitere 30 Minuten. Bleibt der Server durchgehend ruhig, lautet
-  das Ergebnis ``server``; ein einziger knapper oder unlesbarer Messpunkt ergibt sofort
-  ``github``.
-- **Während des Laufs** (:func:`ausfuehren`): läuft der Test auf dem Bau-Server, überwacht
-  das Modul weiter die Auslastung. Kippt die Lage, wird der Server-Lauf sauber abgebrochen
-  und sofort an GitHub übergeben.
-- **Weiterlaufen nach Rundenende** (#761, E34): während einer großen Runde auf dem Bau-Server
-  vermerkt die Ort-Wahl den laufenden Lauf (:func:`runde_beginnen`), sodass Bau-Tickets über
-  :mod:`to_spawn.speicher` warten und optional angehaltene Sessions (:func:`session_anhalten`)
-  erfasst sind. Endet die Runde — regulär, durch Abbruch/Absturz oder bei Übergabe an GitHub —
-  gibt :func:`runde_beenden` den Server sofort frei und setzt angehaltene Sessions automatisch
-  per ``SIGCONT`` fort.
+- **Jeder Testlauf, Linux und Windows** (#802, E35, :func:`entscheiden`): kleine Ticket-Prüfung
+  (:mod:`to_spawn.pruef`) wie großer Spec-/Nacht-Lauf (:mod:`to_spawn.komplett_lauf`,
+  :func:`ausfuehren`) fragen dieselbe Ort-Wahl. Ergebnis ``lokal`` oder ``github``.
+- **Im Zweifel GitHub**: zuerst wird der Speicher über :func:`messen_system` /
+  :func:`speicher.system_speicher_mib` (Linux ``/proc/meminfo`` und Windows ``GlobalMemoryStatusEx``
+  hinter derselben Schnittstelle) gemessen. Ist der Speicher auch nur knapp oder die Messung
+  unsicher (fehlt, kaputt, schwankt, Fehler), heißt das Ergebnis ``github`` mit Grund im Log.
+- **Dynamische Schwelle an genau einer Stelle** (:func:`berechne_schwelle`): aus Gesamt-Speicher,
+  CPU-Kernen und Betriebssystem berechnet. Die Betriebssystem-Grundlast wird vorher abgezogen
+  (Windows mit Desktop-Programmen braucht mehr Reserve als ein Linux-Server).
+- **Repo ohne GitHub-Lauf**: hat das Repo keinen GitHub-Workflow und keinen ``github_befehl``,
+  läuft der Test mit Hinweis-Zeile im Log lokal, ohne Mail.
+- **Große Bau-Server-Runde mit Ruhefenster** (#760/#761, E33/E34, :func:`waehlen` /
+  :func:`ausfuehren`): misst den Linux-Bau-Server über ``fenster_min`` (30 min, optional +30 min),
+  überwacht während des Laufs, übergibt bei Kipp-Lage an GitHub und lässt angehaltene/gebremste
+  Bau-Tickets nach Rundenende sofort weiterlaufen.
 - **Erkennung im Repo** (#761, E34): :func:`pruefe_repo_runde` prüft rein lesend für die
   Bereitschafts-Prüfung (:mod:`to_spawn.inventur`), ob ein Repo eine große Runde hat und ob
   sie über die Ort-Wahl läuft — ohne jemals etwas im Repo umzubauen.
-- **Grenzwerte an genau einer Stelle**: alle Schwellen und Zeitfenster stammen allein aus
-  ``config.DEFAULTS["ort_wahl"]`` (überschreibbar in ``.to-spawn/config.json``).
+- **Grenzwerte an genau einer Stelle**: alle Schwellen, Zeitfenster und Rechenregel-Parameter
+  stammen allein aus ``config.DEFAULTS["ort_wahl"]`` (überschreibbar in ``.to-spawn/config.json``).
 - **Keine Mail, nur Log**: jede Entscheidung und jede Übergabe landet ausschließlich im Log.
 """
 
@@ -49,14 +49,16 @@ from . import config, prozessbaum, speicher, sperre, starter
 
 log = logging.getLogger("to_spawn.ort_wahl")
 
+ORT_LOKAL: Literal["lokal"] = "lokal"
 ORT_SERVER: Literal["server"] = "server"
 ORT_GITHUB: Literal["github"] = "github"
-Ort = Literal["server", "github"]
+Ort = Literal["lokal", "server", "github"]
+LaufArt = Literal["klein", "gross"]
 
 BEFEHLE: tuple[str, ...] = ("ort-wahl",)
 
 #: Vorgabe aus der einen Konfigurationsquelle ``config.DEFAULTS["ort_wahl"]``.
-VORGABE: dict[str, int | float] = dict(config.DEFAULTS["ort_wahl"])
+VORGABE: dict[str, Any] = dict(config.DEFAULTS["ort_wahl"])
 
 #: Test-Tür für die Datei der laufenden großen Runde (#761, analog ``TO_SPAWN_SPEICHER_PLATZ``).
 RUNDE_ENV = "TO_SPAWN_ORT_WAHL_RUNDE"
@@ -68,7 +70,7 @@ EXIT_FEHLER = 1
 EXIT_AUFRUF = 2
 
 _ORT_WAHL_AUFRUF_MUSTER = re.compile(
-    r"(?:\bort-wahl\b|\bto_spawn\.ort_wahl\b|\bimport\s+ort_wahl\b|\bort_wahl\.(?:waehlen|ausfuehren)\b)",
+    r"(?:\bort-wahl\b|\bto_spawn\.ort_wahl\b|\bimport\s+ort_wahl\b|\bort_wahl\.(?:waehlen|ausfuehren|entscheiden)\b)",
     re.IGNORECASE,
 )
 _RUNDE_SKRIPT_MUSTER = re.compile(
@@ -82,7 +84,7 @@ _SELF_HOSTED_MUSTER = re.compile(r"runs-on\s*:[^\n]*self-hosted", re.IGNORECASE)
 
 @dataclass(frozen=True)
 class Grenzen:
-    """Alle Schwellen und Fenster der Ort-Wahl — stets aus ``config.DEFAULTS['ort_wahl']``."""
+    """Alle Schwellen, Fenster und Rechenregel-Parameter der Ort-Wahl aus ``config.DEFAULTS['ort_wahl']``."""
 
     fenster_min: int
     verlaengerung_min: int
@@ -91,16 +93,63 @@ class Grenzen:
     min_frei_mib: int
     max_last: float
     max_bau_sessions: int
+    os_grundlast_linux_mib: int = 2048
+    os_grundlast_windows_mib: int = 6144
+    os_grundlast_sonst_mib: int = 4096
+    je_kern_mib: int = 256
+    max_kerne_rechnung: int = 16
+    puffer_anteil: float = 0.20
+    max_last_je_kern_linux: float = 0.5
+    max_last_je_kern_windows: float = 0.35
+    max_schwankung_anteil: float = 0.10
+    stichproben: int = 2
+    stichproben_abstand_s: float = 0.05
+    github_befehl: str = ""
+    github_befehl_schnell: str = ""
+    github_befehl_komplett: str = ""
+
+
+@dataclass(frozen=True)
+class Schwelle:
+    """Dynamisch aus Hardware und Betriebssystem berechnete Schwelle (#802, E35)."""
+
+    plattform: str
+    gesamt_mib: int
+    kerne: int
+    os_grundlast_mib: int
+    nutzbar_gesamt_mib: int
+    kern_bedarf_mib: int
+    puffer_mib: int
+    min_frei_mib: int
+    max_last: float
+    max_schwankung_mib: int
+
+    def als_dict(self) -> dict[str, Any]:
+        return {
+            "plattform": self.plattform,
+            "gesamt_mib": self.gesamt_mib,
+            "kerne": self.kerne,
+            "os_grundlast_mib": self.os_grundlast_mib,
+            "nutzbar_gesamt_mib": self.nutzbar_gesamt_mib,
+            "kern_bedarf_mib": self.kern_bedarf_mib,
+            "puffer_mib": self.puffer_mib,
+            "min_frei_mib": self.min_frei_mib,
+            "max_last": self.max_last,
+            "max_schwankung_mib": self.max_schwankung_mib,
+        }
 
 
 @dataclass(frozen=True)
 class Messpunkt:
-    """Einzelne Momentaufnahme der Auslastung des Linux-Bau-Servers."""
+    """Einzelne Momentaufnahme der Auslastung (Linux und Windows, #760/#802)."""
 
     frei_mib: int | None
-    last_1m: float | None
-    bau_sessions: int | None
+    last_1m: float | None = None
+    bau_sessions: int | None = None
     zeit_s: float | None = None
+    gesamt_mib: int | None = None
+    kerne: int | None = None
+    plattform: str | None = None
 
     def als_dict(self) -> dict[str, Any]:
         daten: dict[str, Any] = {
@@ -110,25 +159,40 @@ class Messpunkt:
         }
         if self.zeit_s is not None:
             daten["zeit_s"] = self.zeit_s
+        if self.gesamt_mib is not None:
+            daten["gesamt_mib"] = self.gesamt_mib
+        if self.kerne is not None:
+            daten["kerne"] = self.kerne
+        if self.plattform is not None:
+            daten["plattform"] = self.plattform
         return daten
 
 
 @dataclass(frozen=True)
 class WahlErgebnis:
-    """Ergebnis der Vorab-Entscheidung (:func:`waehlen`)."""
+    """Ergebnis der Vorab-Entscheidung (:func:`entscheiden` / :func:`waehlen`)."""
 
     ort: Ort
     grund: str
     messungen: tuple[Messpunkt, ...] = ()
     verlaengert: bool = False
+    schwelle: Schwelle | None = None
+    fallback_lokal: bool = False
+    empfohlen: Ort | None = None
 
     def als_dict(self) -> dict[str, Any]:
-        return {
+        daten: dict[str, Any] = {
             "ort": self.ort,
             "grund": self.grund,
             "verlaengert": self.verlaengert,
             "messungen": len(self.messungen),
+            "fallback_lokal": self.fallback_lokal,
         }
+        if self.empfohlen is not None:
+            daten["empfohlen"] = self.empfohlen
+        if self.schwelle is not None:
+            daten["schwelle"] = self.schwelle.als_dict()
+        return daten
 
 
 @dataclass(frozen=True)
@@ -194,6 +258,12 @@ def _zahl_float(block: dict[str, Any], name: str, *, min_wert: float) -> float:
     return vorgabe
 
 
+def _text(block: dict[str, Any], name: str) -> str:
+    vorgabe = str(config.DEFAULTS["ort_wahl"].get(name, ""))
+    wert = block.get(name)
+    return wert.strip() if isinstance(wert, str) else vorgabe
+
+
 def grenzen(konfig: dict[str, Any] | None) -> Grenzen:
     """Liest den Block ``ort_wahl`` aus ``konfig``; fehlende/ungültige Felder kommen aus ``config.DEFAULTS``."""
     block = (konfig or {}).get("ort_wahl") if isinstance(konfig, dict) else None
@@ -206,25 +276,214 @@ def grenzen(konfig: dict[str, Any] | None) -> Grenzen:
         min_frei_mib=_zahl_int(daten, "min_frei_mib", min_wert=0),
         max_last=_zahl_float(daten, "max_last", min_wert=0.0),
         max_bau_sessions=_zahl_int(daten, "max_bau_sessions", min_wert=0),
+        os_grundlast_linux_mib=_zahl_int(daten, "os_grundlast_linux_mib", min_wert=0),
+        os_grundlast_windows_mib=_zahl_int(daten, "os_grundlast_windows_mib", min_wert=0),
+        os_grundlast_sonst_mib=_zahl_int(daten, "os_grundlast_sonst_mib", min_wert=0),
+        je_kern_mib=_zahl_int(daten, "je_kern_mib", min_wert=0),
+        max_kerne_rechnung=_zahl_int(daten, "max_kerne_rechnung", min_wert=1),
+        puffer_anteil=_zahl_float(daten, "puffer_anteil", min_wert=0.0),
+        max_last_je_kern_linux=_zahl_float(daten, "max_last_je_kern_linux", min_wert=0.05),
+        max_last_je_kern_windows=_zahl_float(daten, "max_last_je_kern_windows", min_wert=0.05),
+        max_schwankung_anteil=_zahl_float(daten, "max_schwankung_anteil", min_wert=0.0),
+        stichproben=_zahl_int(daten, "stichproben", min_wert=1),
+        stichproben_abstand_s=_zahl_float(daten, "stichproben_abstand_s", min_wert=0.0),
+        github_befehl=_text(daten, "github_befehl"),
+        github_befehl_schnell=_text(daten, "github_befehl_schnell"),
+        github_befehl_komplett=_text(daten, "github_befehl_komplett"),
     )
 
 
-def punkt_pruefen(punkt: Messpunkt, schwellen: Grenzen) -> tuple[bool, str]:
-    """Prüft einen einzelnen :class:`Messpunkt` gegen ``schwellen`` (fail-closed bei fehlenden Werten)."""
+def _normalisiere_plattform(plattform: str) -> str:
+    wert = plattform.strip().lower()
+    if wert in ("linux", "linux2"):
+        return "linux"
+    if wert in ("win32", "windows", "cygwin", "msys"):
+        return "win32"
+    return wert
+
+
+def _normalisiere_art(art: str) -> LaufArt:
+    wert = art.strip().lower()
+    if wert in ("klein", "schnell"):
+        return "klein"
+    if wert in ("gross", "komplett"):
+        return "gross"
+    raise ValueError(f"Unbekannte Lauf-Art für Ort-Wahl: {art!r} (erlaubt: klein, schnell, gross, komplett)")
+
+
+def berechne_schwelle(
+    gesamt_mib: int,
+    kerne: int,
+    plattform: str,
+    konfig: dict[str, Any] | None = None,
+) -> Schwelle:
+    """Einzige Rechenregel für die dynamische Schwelle nach Hardware und Betriebssystem (#802, E35).
+
+    Zieht zuerst die Grundlast des Betriebssystems ab (Windows mit Desktop-Programmen braucht
+    mehr Reserve als ein Linux-Server) und berechnet daraus Mindest-Freispeicher, Last-Obergrenze
+    und zulässige Mess-Schwankung. Kleine Maschinen kippen dadurch anteilig früh zu GitHub,
+    größere Maschinen dürfen mehr lokal laufen lassen.
+    """
+    if isinstance(gesamt_mib, bool) or not isinstance(gesamt_mib, int) or gesamt_mib <= 0:
+        raise ValueError(f"Gesamtspeicher muss eine positive ganze Zahl sein, erhalten: {gesamt_mib!r}")
+    if isinstance(kerne, bool) or not isinstance(kerne, int) or kerne <= 0:
+        raise ValueError(f"CPU-Kerne müssen eine positive ganze Zahl sein, erhalten: {kerne!r}")
+    if not isinstance(plattform, str) or not plattform.strip():
+        raise ValueError(f"Betriebssystem fehlt oder ist leer: {plattform!r}")
+
+    g = grenzen(konfig)
+    os_name = _normalisiere_plattform(plattform)
+    if os_name == "linux":
+        os_grundlast_mib = g.os_grundlast_linux_mib
+        last_je_kern = g.max_last_je_kern_linux
+    elif os_name == "win32":
+        os_grundlast_mib = g.os_grundlast_windows_mib
+        last_je_kern = g.max_last_je_kern_windows
+    else:
+        os_grundlast_mib = g.os_grundlast_sonst_mib
+        last_je_kern = g.max_last_je_kern_windows
+
+    nutzbar_gesamt_mib = max(0, gesamt_mib - os_grundlast_mib)
+    kern_bedarf_mib = min(kerne, g.max_kerne_rechnung) * g.je_kern_mib
+    puffer_mib = round(nutzbar_gesamt_mib * g.puffer_anteil)
+    min_frei_mib = os_grundlast_mib + kern_bedarf_mib + puffer_mib
+    max_last = round(max(0.5, kerne * last_je_kern), 2)
+    max_schwankung_mib = max(512, round(nutzbar_gesamt_mib * g.max_schwankung_anteil))
+    return Schwelle(
+        plattform=os_name,
+        gesamt_mib=gesamt_mib,
+        kerne=kerne,
+        os_grundlast_mib=os_grundlast_mib,
+        nutzbar_gesamt_mib=nutzbar_gesamt_mib,
+        kern_bedarf_mib=kern_bedarf_mib,
+        puffer_mib=puffer_mib,
+        min_frei_mib=min_frei_mib,
+        max_last=max_last,
+        max_schwankung_mib=max_schwankung_mib,
+    )
+
+
+def _punkt_dynamisch_pruefen(
+    punkt: Messpunkt,
+    konfig: dict[str, Any] | None,
+    *,
+    art: LaufArt,
+    standard_plattform: str,
+) -> tuple[bool, str, Schwelle | None]:
+    """Prüft einen :class:`Messpunkt` gegen die eine dynamische Rechenregel (fail-closed, #802)."""
+    os_wert = standard_plattform if punkt.plattform is None else punkt.plattform
+    if not isinstance(os_wert, str) or not os_wert.strip():
+        return False, "Messung ungültig: Betriebssystem fehlt", None
+    if punkt.gesamt_mib is None:
+        return False, "Messung unvollständig: Gesamtspeicher fehlt", None
+    if isinstance(punkt.gesamt_mib, bool) or not isinstance(punkt.gesamt_mib, int) or punkt.gesamt_mib <= 0:
+        return False, f"Messung ungültig: Gesamtspeicher kaputt ({punkt.gesamt_mib!r})", None
+    if punkt.kerne is None:
+        return False, "Messung unvollständig: CPU-Kerne fehlen", None
+    if isinstance(punkt.kerne, bool) or not isinstance(punkt.kerne, int) or punkt.kerne <= 0:
+        return False, f"Messung ungültig: CPU-Kerne kaputt ({punkt.kerne!r})", None
     if punkt.frei_mib is None:
-        return False, "freier Speicher nicht lesbar"
-    if punkt.frei_mib < schwellen.min_frei_mib:
+        return False, "Messung unvollständig: freier Speicher nicht lesbar", None
+    if isinstance(punkt.frei_mib, bool) or not isinstance(punkt.frei_mib, int) or punkt.frei_mib < 0:
+        return False, f"Messung ungültig: freier Speicher negativ oder kaputt ({punkt.frei_mib!r})", None
+    if punkt.frei_mib > punkt.gesamt_mib:
+        return (
+            False,
+            f"Messung unplausibel: freier Speicher ({punkt.frei_mib} MiB) übersteigt Gesamtspeicher ({punkt.gesamt_mib} MiB)",
+            None,
+        )
+
+    schwelle = berechne_schwelle(punkt.gesamt_mib, punkt.kerne, os_wert, konfig)
+    if punkt.frei_mib < schwelle.min_frei_mib:
         return (
             False,
             (
-                f"Speicher knapp: {speicher._gb_text(punkt.frei_mib)} frei, "
-                f"Mindestmaß {speicher._gb_text(schwellen.min_frei_mib)}"
+                f"Speicher knapp ({schwelle.plattform}, {speicher._gb_text(punkt.gesamt_mib)}, {punkt.kerne} Kerne): "
+                f"{speicher._gb_text(punkt.frei_mib)} frei, Mindestmaß {speicher._gb_text(schwelle.min_frei_mib)}"
             ),
+            schwelle,
+        )
+    if punkt.last_1m is not None:
+        if (
+            isinstance(punkt.last_1m, bool)
+            or not isinstance(punkt.last_1m, (int, float))
+            or not math.isfinite(punkt.last_1m)
+            or punkt.last_1m < 0
+        ):
+            return False, f"Messung ungültig: Systemlast kaputt ({punkt.last_1m!r})", schwelle
+        if punkt.last_1m > schwelle.max_last:
+            return (
+                False,
+                f"Systemlast zu hoch: {punkt.last_1m:.2f}, Obergrenze {schwelle.max_last:.2f} ({punkt.kerne} Kerne)",
+                schwelle,
+            )
+    if punkt.bau_sessions is not None:
+        if isinstance(punkt.bau_sessions, bool) or not isinstance(punkt.bau_sessions, int) or punkt.bau_sessions < 0:
+            return False, f"Messung ungültig: Bau-Sessions kaputt ({punkt.bau_sessions!r})", schwelle
+        g = grenzen(konfig)
+        if art == "gross" and punkt.bau_sessions > g.max_bau_sessions:
+            return (
+                False,
+                f"{punkt.bau_sessions} laufende Bau-Session(s), Obergrenze {g.max_bau_sessions}",
+                schwelle,
+            )
+    return (
+        True,
+        (
+            f"genug Speicher ({schwelle.plattform}, {speicher._gb_text(punkt.gesamt_mib)}, {punkt.kerne} Kerne): "
+            f"{speicher._gb_text(punkt.frei_mib)} frei, Mindestmaß {speicher._gb_text(schwelle.min_frei_mib)}"
+        ),
+        schwelle,
+    )
+
+
+def _schwankung_pruefen(punkte: Sequence[Messpunkt], schwelle: Schwelle) -> str | None:
+    """Meldet einen Grund, wenn der freie Speicher über die Messreihe zu stark schwankt (#802)."""
+    if len(punkte) < 2:
+        return None
+    freie = [p.frei_mib for p in punkte if isinstance(p.frei_mib, int) and not isinstance(p.frei_mib, bool)]
+    if len(freie) < 2:
+        return None
+    spanne = max(freie) - min(freie)
+    if spanne > schwelle.max_schwankung_mib:
+        return (
+            f"Messung unsicher: freier Speicher schwankt um {speicher._gb_text(spanne)} "
+            f"(Grenze {speicher._gb_text(schwelle.max_schwankung_mib)})"
+        )
+    return None
+
+
+def punkt_pruefen(punkt: Messpunkt, schwellen: Grenzen, *, konfig: dict[str, Any] | None = None) -> tuple[bool, str]:
+    """Prüft einen einzelnen :class:`Messpunkt` gegen ``schwellen`` (fail-closed bei fehlenden Werten)."""
+    min_frei = schwellen.min_frei_mib
+    max_last = schwellen.max_last
+    if (
+        punkt.gesamt_mib is not None
+        and punkt.kerne is not None
+        and isinstance(punkt.gesamt_mib, int)
+        and not isinstance(punkt.gesamt_mib, bool)
+        and punkt.gesamt_mib > 0
+        and isinstance(punkt.kerne, int)
+        and not isinstance(punkt.kerne, bool)
+        and punkt.kerne > 0
+    ):
+        os_wert = punkt.plattform if punkt.plattform is not None else sys.platform
+        if isinstance(os_wert, str) and os_wert.strip():
+            dyn = berechne_schwelle(punkt.gesamt_mib, punkt.kerne, os_wert, konfig)
+            min_frei = dyn.min_frei_mib
+            max_last = dyn.max_last
+
+    if punkt.frei_mib is None:
+        return False, "freier Speicher nicht lesbar"
+    if punkt.frei_mib < min_frei:
+        return (
+            False,
+            (f"Speicher knapp: {speicher._gb_text(punkt.frei_mib)} frei, Mindestmaß {speicher._gb_text(min_frei)}"),
         )
     if punkt.last_1m is None or not math.isfinite(punkt.last_1m):
         return False, "Systemlast nicht lesbar"
-    if punkt.last_1m > schwellen.max_last:
-        return False, f"Systemlast zu hoch: {punkt.last_1m:.2f}, Obergrenze {schwellen.max_last:.2f}"
+    if punkt.last_1m > max_last:
+        return False, f"Systemlast zu hoch: {punkt.last_1m:.2f}, Obergrenze {max_last:.2f}"
     if punkt.bau_sessions is None:
         return False, "laufende Bau-Sessions nicht lesbar"
     if punkt.bau_sessions > schwellen.max_bau_sessions:
@@ -238,13 +497,186 @@ def punkt_pruefen(punkt: Messpunkt, schwellen: Grenzen) -> tuple[bool, str]:
     )
 
 
+def messen_system(plattform: str | None = None) -> Messpunkt:
+    """Misst Speicher, CPU-Kerne und (unter Linux) Last/Bau-Sessions über eine Schnittstelle (#802)."""
+    ziel = sys.platform if plattform is None else plattform
+    frei, gesamt = speicher.system_speicher_mib(plattform=ziel)
+    kerne = speicher.cpu_kerne()
+    if _normalisiere_plattform(ziel) == "linux":
+        last = speicher.last_1m()
+        sessions = speicher.laufende_sessions()
+    else:
+        last = None
+        sessions = None
+    return Messpunkt(
+        frei_mib=frei,
+        last_1m=last,
+        bau_sessions=sessions,
+        gesamt_mib=gesamt,
+        kerne=kerne,
+        plattform=ziel,
+    )
+
+
 def messen_linux() -> Messpunkt:
     """Liest Speicher, 1-Minuten-Last und arbeitende Bau-Sessions über :mod:`to_spawn.speicher`."""
-    return Messpunkt(
-        frei_mib=speicher.frei_mib(),
-        last_1m=speicher.last_1m(),
-        bau_sessions=speicher.laufende_sessions(),
+    return messen_system(plattform="linux")
+
+
+def github_befehl_fuer(konfig: dict[str, Any] | None, art: str = "schnell") -> str:
+    """Konfigurierter GitHub-Befehl aus ``ort_wahl`` (art-spezifisch vor allgemein, #802)."""
+    g = grenzen(konfig)
+    art_sauber = art.strip().lower()
+    if art_sauber in ("klein", "schnell") and g.github_befehl_schnell:
+        return g.github_befehl_schnell
+    if art_sauber in ("gross", "komplett") and g.github_befehl_komplett:
+        return g.github_befehl_komplett
+    return g.github_befehl
+
+
+def hat_github_lauf(repo: Path, konfig: dict[str, Any] | None = None, *, art: str = "schnell") -> bool:
+    """Hat ``repo`` einen GitHub-Testlauf (konfigurierter ``github_befehl`` oder Workflow in ``.github/workflows``)?"""
+    if github_befehl_fuer(konfig, art):
+        return True
+    ordner = repo / ".github" / "workflows"
+    if not ordner.is_dir():
+        return False
+    try:
+        return any(p.is_file() and p.suffix.lower() in (".yml", ".yaml") for p in ordner.iterdir())
+    except OSError as fehler:
+        log.warning("Ort-Wahl: Workflow-Ordner %s nicht lesbar: %s", ordner, fehler)
+        return False
+
+
+def _abschluss_ergebnis(
+    empfohlen: Ort,
+    grund: str,
+    punkte: Sequence[Messpunkt],
+    schwelle: Schwelle | None,
+    *,
+    repo: Path | None,
+    konfig: dict[str, Any] | None,
+    art: LaufArt,
+) -> WahlErgebnis:
+    """Wendet bei ``github`` den Rückfall auf ``lokal`` an, falls das Repo keinen GitHub-Lauf hat (#802 Punkt 5)."""
+    if empfohlen == ORT_GITHUB and repo is not None and not hat_github_lauf(repo, konfig, art=art):
+        hinweis = f"Repo hat keinen GitHub-Lauf — laufe lokal (eigentlich github: {grund})"
+        log.info("Ort-Wahl → lokal (Hinweis: %s)", hinweis)
+        return WahlErgebnis(
+            ort=ORT_LOKAL,
+            grund=hinweis,
+            messungen=tuple(punkte),
+            schwelle=schwelle,
+            fallback_lokal=True,
+            empfohlen=ORT_GITHUB,
+        )
+    log.info("Ort-Wahl → %s: %s", empfohlen, grund)
+    return WahlErgebnis(
+        ort=empfohlen,
+        grund=grund,
+        messungen=tuple(punkte),
+        schwelle=schwelle,
+        fallback_lokal=False,
+        empfohlen=empfohlen,
     )
+
+
+def entscheiden(
+    konfig: dict[str, Any] | None = None,
+    *,
+    art: str = "klein",
+    messung: Messpunkt | None = None,
+    messreihe: Sequence[Messpunkt] | None = None,
+    messen: Callable[[], Messpunkt] | None = None,
+    plattform: str | None = None,
+    repo: Path | None = None,
+    schlafen: Callable[[float], object] = time.sleep,
+) -> WahlErgebnis:
+    """Die eine Ort-Wahl für jeden Testlauf (kleine Ticket-Prüfung wie großer Lauf, Linux wie Windows, #802).
+
+    Misst zuerst den Speicher (oder prüft aufgezeichnete Messwerte). Im Zweifel — knapper Speicher,
+    hohe Last, fehlende/kaputte/schwankende Messung oder Messfehler — lautet das Ergebnis ``github``
+    mit Grund im Log. Hat ``repo`` keinen GitHub-Lauf, fällt der Lauf mit Hinweis im Log (ohne Mail)
+    auf ``lokal`` zurück.
+    """
+    lauf_art = _normalisiere_art(art)
+    ziel_plattform = sys.platform if plattform is None else plattform
+    g = grenzen(konfig)
+
+    punkte: list[Messpunkt] = []
+    letzte_schwelle: Schwelle | None = None
+    letzter_satz = ""
+
+    if messung is not None:
+        kandidaten: Sequence[Messpunkt] = (messung,)
+    elif messreihe is not None:
+        kandidaten = messreihe
+    else:
+        quelle = messen or (lambda: messen_system(plattform=ziel_plattform))
+        anzahl = max(1, g.stichproben)
+        for i in range(anzahl):
+            try:
+                punkt = quelle()
+            except Exception as fehler:  # noqa: BLE001 — jeder Messfehler gilt als unsicher → github
+                grund = f"Messung fehlgeschlagen ({type(fehler).__name__}: {fehler})"
+                log.warning("Ort-Wahl: %s", grund)
+                return _abschluss_ergebnis(
+                    ORT_GITHUB, grund, punkte, letzte_schwelle, repo=repo, konfig=konfig, art=lauf_art
+                )
+            punkte.append(punkt)
+            ok, satz, schwelle = _punkt_dynamisch_pruefen(
+                punkt, konfig, art=lauf_art, standard_plattform=ziel_plattform
+            )
+            if schwelle is not None:
+                letzte_schwelle = schwelle
+            if not ok:
+                return _abschluss_ergebnis(
+                    ORT_GITHUB, satz, punkte, letzte_schwelle, repo=repo, konfig=konfig, art=lauf_art
+                )
+            letzter_satz = satz
+            if i + 1 < anzahl and g.stichproben_abstand_s > 0:
+                schlafen(g.stichproben_abstand_s)
+        if letzte_schwelle is not None:
+            schwankung = _schwankung_pruefen(punkte, letzte_schwelle)
+            if schwankung is not None:
+                return _abschluss_ergebnis(
+                    ORT_GITHUB, schwankung, punkte, letzte_schwelle, repo=repo, konfig=konfig, art=lauf_art
+                )
+        return _abschluss_ergebnis(
+            ORT_LOKAL, letzter_satz, punkte, letzte_schwelle, repo=repo, konfig=konfig, art=lauf_art
+        )
+
+    if not kandidaten:
+        return _abschluss_ergebnis(
+            ORT_GITHUB,
+            "Messreihe leer — kein Messpunkt vorhanden",
+            (),
+            None,
+            repo=repo,
+            konfig=konfig,
+            art=lauf_art,
+        )
+
+    for idx, punkt in enumerate(kandidaten):
+        punkte.append(punkt)
+        ok, satz, schwelle = _punkt_dynamisch_pruefen(punkt, konfig, art=lauf_art, standard_plattform=ziel_plattform)
+        if schwelle is not None:
+            letzte_schwelle = schwelle
+        if not ok:
+            grund = satz if len(kandidaten) == 1 else f"Messpunkt {idx + 1}: {satz}"
+            return _abschluss_ergebnis(
+                ORT_GITHUB, grund, punkte, letzte_schwelle, repo=repo, konfig=konfig, art=lauf_art
+            )
+        letzter_satz = satz
+
+    if letzte_schwelle is not None:
+        schwankung = _schwankung_pruefen(punkte, letzte_schwelle)
+        if schwankung is not None:
+            return _abschluss_ergebnis(
+                ORT_GITHUB, schwankung, punkte, letzte_schwelle, repo=repo, konfig=konfig, art=lauf_art
+            )
+
+    return _abschluss_ergebnis(ORT_LOKAL, letzter_satz, punkte, letzte_schwelle, repo=repo, konfig=konfig, art=lauf_art)
 
 
 def _punkt_aus_dict(roh: Any, index: int) -> Messpunkt:
@@ -267,11 +699,22 @@ def _punkt_aus_dict(roh: Any, index: int) -> Messpunkt:
             raise ValueError(f"Messpunkt #{index}: {schluessel} muss eine Zahl oder null sein")
         return float(wert)
 
+    def _opt_str(schluessel: str) -> str | None:
+        wert = roh.get(schluessel)
+        if wert is None:
+            return None
+        if not isinstance(wert, str):
+            raise TypeError(f"Messpunkt #{index}: {schluessel} muss Text oder null sein")
+        return wert
+
     return Messpunkt(
         frei_mib=_opt_int("frei_mib"),
         last_1m=_opt_float("last_1m"),
         bau_sessions=_opt_int("bau_sessions"),
         zeit_s=_opt_float("zeit_s"),
+        gesamt_mib=_opt_int("gesamt_mib"),
+        kerne=_opt_int("kerne"),
+        plattform=_opt_str("plattform"),
     )
 
 
@@ -289,7 +732,9 @@ def messreihe_laden(pfad: Path) -> tuple[Messpunkt, ...]:
             return tuple(_punkt_aus_dict(e, i) for i, e in enumerate(geladen, 1))
         if isinstance(geladen, dict) and isinstance(geladen.get("messreihe"), list):
             return tuple(_punkt_aus_dict(e, i) for i, e in enumerate(geladen["messreihe"], 1))
-        if isinstance(geladen, dict) and any(k in geladen for k in ("frei_mib", "last_1m", "bau_sessions")):
+        if isinstance(geladen, dict) and any(
+            k in geladen for k in ("frei_mib", "last_1m", "bau_sessions", "gesamt_mib", "kerne", "plattform")
+        ):
             return (_punkt_aus_dict(geladen, 1),)
     zeilen = [z.strip() for z in text.splitlines() if z.strip()]
     return tuple(_punkt_aus_dict(json.loads(z), i) for i, z in enumerate(zeilen, 1))
@@ -992,12 +1437,23 @@ def pruefe_repo_runde(repo: Path, konfig: dict[str, Any] | None = None) -> RepoR
 
 
 def richte_parser_ein(unter: Any) -> None:
-    """Registriert den Unterbefehl ``to_spawn.py ort-wahl`` (#760)."""
+    """Registriert den Unterbefehl ``to_spawn.py ort-wahl`` (#760/#802)."""
     p = unter.add_parser(
         "ort-wahl",
-        help="Ort-Wahl für große Testläufe: Bau-Server wenn ruhig, sonst GitHub (#760)",
+        help="Ort-Wahl für Testläufe: lokal wenn Speicher reicht, sonst GitHub (#760/#802)",
     )
     p.add_argument("--repo", type=Path, default=None, help="Repo-Ordner für .to-spawn/config.json")
+    p.add_argument(
+        "--art",
+        choices=("klein", "schnell", "gross", "komplett"),
+        default=None,
+        help="Testlauf-Art (klein/schnell oder gross/komplett): liefert lokal oder github (#802)",
+    )
+    p.add_argument(
+        "--plattform",
+        default=None,
+        help="Betriebssystem für die Schwellen-Berechnung (Vorgabe: aktuelles System)",
+    )
     p.add_argument(
         "--verlaengern",
         action="store_true",
@@ -1063,6 +1519,17 @@ def lauf(args: argparse.Namespace, repo: Path) -> int:
         print(json.dumps(ergebnis.als_dict(), ensure_ascii=False) if args.json else ergebnis.ort)
         return ergebnis.exit_code
 
-    wahl = waehlen(konfig, messreihe=vorlauf, verlaengern=args.verlaengern)
+    if args.art is not None:
+        wahl = entscheiden(
+            konfig,
+            art=args.art,
+            messreihe=vorlauf,
+            plattform=args.plattform,
+            repo=ziel_repo if args.repo is not None else None,
+        )
+        print(json.dumps(wahl.als_dict(), ensure_ascii=False) if args.json else wahl.ort)
+        return EXIT_OK
+
+    wahl = waehlen(konfig, messreihe=vorlauf, verlaengern=args.verlaengern, plattform=args.plattform)
     print(json.dumps(wahl.als_dict(), ensure_ascii=False) if args.json else wahl.ort)
     return EXIT_OK

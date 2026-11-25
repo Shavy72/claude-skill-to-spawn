@@ -28,7 +28,6 @@ Exit-Codes: 0 fertig · 1 regulär fehlgeschlagen · 2 kein/unlesbarer Zustand �
 from __future__ import annotations
 
 import argparse
-import ctypes
 import json
 import logging
 import os
@@ -126,51 +125,22 @@ def logbuch_pfad() -> Path:
     return config.heim_ordner() / ".local" / "state" / "to-spawn" / "geraete-logbuch" / f"{geraet_name()}.jsonl"
 
 
-class _WindowsSpeicherStatus(ctypes.Structure):
-    """``MEMORYSTATUSEX`` für :func:`_windows_speicher_mib`."""
-
-    _fields_ = [
-        ("dwLength", ctypes.c_ulong),
-        ("dwMemoryLoad", ctypes.c_ulong),
-        ("ullTotalPhys", ctypes.c_ulonglong),
-        ("ullAvailPhys", ctypes.c_ulonglong),
-        ("ullTotalPageFile", ctypes.c_ulonglong),
-        ("ullAvailPageFile", ctypes.c_ulonglong),
-        ("ullTotalVirtual", ctypes.c_ulonglong),
-        ("ullAvailVirtual", ctypes.c_ulonglong),
-        ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
-    ]
+_WindowsSpeicherStatus = speicher._WindowsSpeicherStatus
 
 
 def _windows_speicher_mib() -> tuple[int | None, int | None]:
-    """(frei_mib, gesamt_mib) über ``GlobalMemoryStatusEx``; nicht verfügbar → ``(None, None)``."""
-    windll = getattr(ctypes, "windll", None)
-    if sys.platform != "win32" or windll is None:
-        return None, None
-    status = _WindowsSpeicherStatus()
-    status.dwLength = ctypes.sizeof(_WindowsSpeicherStatus)
-    try:
-        if not windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
-            return None, None
-    except (AttributeError, OSError):
-        return None, None
-    return int(status.ullAvailPhys // (1024 * 1024)), int(status.ullTotalPhys // (1024 * 1024))
+    """(frei_mib, gesamt_mib) über :func:`speicher.windows_speicher_mib` (eine Quelle, #802)."""
+    return speicher.windows_speicher_mib()
 
 
 def freier_speicher_mib() -> int | None:
-    """Freier Arbeitsspeicher in MiB: Linux/Test über :func:`speicher.frei_mib`, Windows über Kernel."""
-    wert = speicher.frei_mib()
-    if wert is not None:
-        return wert
-    return _windows_speicher_mib()[0]
+    """Freier Arbeitsspeicher in MiB: Linux und Windows über :func:`speicher.system_speicher_mib`."""
+    return speicher.system_speicher_mib()[0]
 
 
 def gesamt_speicher_mib() -> int | None:
-    """Gesamtspeicher in MiB: Linux/Test über :func:`speicher.gesamt_kib`, Windows über Kernel."""
-    kib = speicher.gesamt_kib()
-    if kib is not None:
-        return kib // 1024
-    return _windows_speicher_mib()[1]
+    """Gesamtspeicher in MiB: Linux und Windows über :func:`speicher.system_speicher_mib`."""
+    return speicher.system_speicher_mib()[1]
 
 
 def _speicher_text(frei: int | None) -> str:

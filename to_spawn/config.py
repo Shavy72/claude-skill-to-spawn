@@ -209,11 +209,11 @@ DEFAULTS: dict[str, Any] = {
         "max_sessions": 6,
         "staffel_s": 20,
     },
-    #: Ort-Wahl für große Testläufe (#760, Beschluss E33): Grenzwerte an genau einer Stelle.
-    #: Misst den Linux-Bau-Server über ``fenster_min`` Minuten (bei Bedarf weitere
-    #: ``verlaengerung_min`` Minuten) im Takt ``takt_s``: freier Speicher (``min_frei_mib``),
-    #: 1-Minuten-Systemlast (``max_last``) und arbeitende Bau-Sessions (``max_bau_sessions``).
-    #: ``lauf_takt_s`` = Prüftakt während eines laufenden Server-Tests.
+    #: Ort-Wahl für alle Testläufe (#760/#802, Beschlüsse E33/E35): Grenzwerte und Rechenregel-
+    #: Parameter an genau einer Stelle. Die dynamische Schwelle wird aus Gesamt-Speicher, Kernen
+    #: und Betriebssystem berechnet (OS-Grundlast vorher abgezogen: Windows mit Desktop-Programmen
+    #: braucht mehr Reserve als ein Linux-Server). ``github_befehl`` (optional, oder getrennt für
+    #: ``schnell``/``komplett``) führt bei Ergebnis ``github`` den GitHub-Testlauf aus.
     "ort_wahl": {
         "fenster_min": 30,
         "verlaengerung_min": 30,
@@ -222,6 +222,20 @@ DEFAULTS: dict[str, Any] = {
         "min_frei_mib": 4096,
         "max_last": 2.0,
         "max_bau_sessions": 0,
+        "os_grundlast_linux_mib": 2048,
+        "os_grundlast_windows_mib": 6144,
+        "os_grundlast_sonst_mib": 4096,
+        "je_kern_mib": 256,
+        "max_kerne_rechnung": 16,
+        "puffer_anteil": 0.20,
+        "max_last_je_kern_linux": 0.5,
+        "max_last_je_kern_windows": 0.35,
+        "max_schwankung_anteil": 0.10,
+        "stichproben": 2,
+        "stichproben_abstand_s": 0.05,
+        "github_befehl": "",
+        "github_befehl_schnell": "",
+        "github_befehl_komplett": "",
     },
 }
 

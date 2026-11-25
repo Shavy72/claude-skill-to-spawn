@@ -49,6 +49,7 @@ unabhängig von den Sessions, die gerade auf der Testmaschine laufen. Ebenso
 
 from __future__ import annotations
 
+import ctypes
 import json
 import logging
 import math
@@ -187,6 +188,70 @@ def gesamt_kib(meminfo: Path | None = None) -> int | None:
         if len(teile) >= 2 and teile[0] == "MemTotal:" and teile[1].isdigit():
             return int(teile[1])
     return None
+
+
+class _WindowsSpeicherStatus(ctypes.Structure):
+    """``MEMORYSTATUSEX`` für :func:`windows_speicher_mib` (#286/#802)."""
+
+    _fields_ = [
+        ("dwLength", ctypes.c_ulong),
+        ("dwMemoryLoad", ctypes.c_ulong),
+        ("ullTotalPhys", ctypes.c_ulonglong),
+        ("ullAvailPhys", ctypes.c_ulonglong),
+        ("ullTotalPageFile", ctypes.c_ulonglong),
+        ("ullAvailPageFile", ctypes.c_ulonglong),
+        ("ullTotalVirtual", ctypes.c_ulonglong),
+        ("ullAvailVirtual", ctypes.c_ulonglong),
+        ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+    ]
+
+
+def windows_speicher_mib() -> tuple[int | None, int | None]:
+    """``(frei_mib, gesamt_mib)`` über ``GlobalMemoryStatusEx`` unter Windows; sonst ``(None, None)``."""
+    windll = getattr(ctypes, "windll", None)
+    if sys.platform != "win32" or windll is None:
+        return None, None
+    status = _WindowsSpeicherStatus()
+    status.dwLength = ctypes.sizeof(_WindowsSpeicherStatus)
+    try:
+        if not windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
+            return None, None
+    except (AttributeError, OSError):
+        return None, None
+    return int(status.ullAvailPhys // (1024 * 1024)), int(status.ullTotalPhys // (1024 * 1024))
+
+
+def system_speicher_mib(plattform: str | None = None) -> tuple[int | None, int | None]:
+    """Einheitliche Speicher-Messung ``(frei_mib, gesamt_mib)`` für Linux und Windows (#802).
+
+    Mit gesetzter Test-Tür ``TO_SPAWN_SPEICHER_MEMINFO`` wird diese Datei plattformunabhängig
+    gelesen. Sonst liest Linux ``/proc/meminfo`` und Windows ``GlobalMemoryStatusEx``.
+    """
+    if os.environ.get("TO_SPAWN_SPEICHER_MEMINFO"):
+        frei = frei_mib()
+        kib = gesamt_kib()
+        return frei, (kib // 1024 if kib is not None else None)
+    ziel = sys.platform if plattform is None else plattform
+    if ziel == "linux":
+        frei = frei_mib()
+        kib = gesamt_kib()
+        return frei, (kib // 1024 if kib is not None else None)
+    if ziel == "win32":
+        return windows_speicher_mib()
+    return None, None
+
+
+def cpu_kerne() -> int | None:
+    """Zahl der logischen CPU-Kerne (Test-Tür ``TO_SPAWN_SPEICHER_KERNE``), ``None`` = unbekannt (#802)."""
+    eigen = os.environ.get("TO_SPAWN_SPEICHER_KERNE")
+    if eigen is not None:
+        sauber = eigen.strip()
+        if not sauber.isdigit():
+            return None
+        wert = int(sauber)
+        return wert if wert > 0 else None
+    kerne = os.cpu_count()
+    return kerne if isinstance(kerne, int) and kerne > 0 else None
 
 
 def rechner_grenze(gesamt: int | None) -> int:
