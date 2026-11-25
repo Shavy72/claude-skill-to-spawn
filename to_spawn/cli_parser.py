@@ -249,6 +249,16 @@ def baue_parser() -> _Parser:
     unter.add_parser(
         "hauptzweig", help="Name des Hauptzweigs ausgeben (Konfig, origin/HEAD, master/main) (#257)"
     )
+    p_sitzung = unter.add_parser(
+        "sitzung",
+        help="tmux-Session-Name je Repo ausgeben (#457; Exit 9 = gehört anderem Repo)",
+    )
+    p_sitzung.add_argument("spec", help="Spec-Nummer")
+    p_sitzung.add_argument(
+        "--nur-name",
+        action="store_true",
+        help="nur den eindeutigen Namen ausgeben, ohne tmux abzufragen",
+    )
     p_arbeit = unter.add_parser(
         "arbeitsstand",
         help="Erst-Start: Arbeitsordner auf origin/<Hauptzweig> nachziehen (nur fast-forward) oder Abbruch; "

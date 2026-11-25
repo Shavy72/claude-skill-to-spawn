@@ -147,7 +147,7 @@ class Auftrag:
 
     @property
     def sitzung(self) -> str:
-        return f"spec-{self.spec}"
+        return tmux_aufruf.sitzung_name(self.repo, self.spec)
 
 
 class Werkzeug(Protocol):
@@ -653,12 +653,13 @@ def _ablauf(a: Auftrag, w: Werkzeug, stand: _Stand) -> Ergebnis:
         return alt
     stand.alt = alt
 
+    sitzung = alt.sitzung or a.sitzung
     wt = Path(config.worktree_pfad(a.ticket, a.repo))
     befehl = _startbefehl(a.repo, a.ticket)
     if a.dry_run:
         return Ergebnis(
             EXIT_OK,
-            f"{a.kopf}: dry-run — alt {alt.ziel}, neu „{a.name_neu}“ in {a.sitzung}, cwd {a.repo}, Befehl: {befehl}",
+            f"{a.kopf}: dry-run — alt {alt.ziel}, neu „{a.name_neu}“ in {sitzung}, cwd {a.repo}, Befehl: {befehl}",
         )
 
     # a) Handoff-Auftrag ins alte Fenster (außer die Leiter hat ihn schon getippt und
@@ -674,7 +675,7 @@ def _ablauf(a: Auftrag, w: Werkzeug, stand: _Stand) -> Ergebnis:
 
     # b) neues Fenster: bau.py wie spawn (cwd Hauptbaum, bau.py wechselt selbst in den Worktree)
     stand.sessions = sessions_datei.Sicherung.merken(sessions_datei.pfad(a.repo, str(a.ticket)))
-    stand.neu = w.fenster_starten(a.sitzung, a.name_neu, str(a.repo), befehl)
+    stand.neu = w.fenster_starten(sitzung, a.name_neu, str(a.repo), befehl)
     log.info("respawn #%s: neues Fenster %s gestartet.", a.ticket, stand.neu)
 
     try:

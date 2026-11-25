@@ -82,23 +82,15 @@ MANIFEST="$MANIFESTE/spec-$SPEC.json"
 command -v tmux >/dev/null || { echo "tmux ist nicht installiert." >&2; exit 2; }
 
 # --- Session je Repo (#457) --------------------------------------------------
-# Der Name ``spec-<S>`` enthält das Repo nicht; jedes frische Repo beginnt bei Spec #1. Gehört
-# eine vorhandene Session ``spec-<S>`` einem anderen Repo, legt dieser Start nichts hinein
-# (Exit 9). Besitzer = Arbeitsordner der Session (``-c`` beim Anlegen, hier und in capo.py),
-# Repo-Kennung = ``origin``-Adresse (ein anderer Klon desselben Repos ist dieselbe Spec), ohne
-# ``origin`` der echte Pfad.
-SESSION="spec-$SPEC"
-repo_kennung() {
-  local url
-  url="$(git -C "$1" remote get-url origin 2>/dev/null || true)"
-  if [ -n "$url" ]; then echo "${url%.git}"; else (cd "$1" 2>/dev/null && pwd -P) || echo "$1"; fi
-}
-if tmux has-session -t "=$SESSION" 2>/dev/null; then
-  SESSION_ORDNER="$(tmux display-message -p -t "=$SESSION:" '#{session_path}' 2>/dev/null || true)"
-  if [ -n "$SESSION_ORDNER" ] && [ "$(repo_kennung "$SESSION_ORDNER")" != "$(repo_kennung "$REPO")" ]; then
-    echo "WEIGERUNG (#457): tmux-Session $SESSION gehört einem anderen Repo ($(repo_kennung "$SESSION_ORDNER"), Ordner $SESSION_ORDNER), nicht $(repo_kennung "$REPO") — nichts gestartet. Erst die andere Spec #$SPEC beenden (Session $SESSION schließen), dann erneut." >&2
-    exit 9
-  fi
+# Name (``spec-<kurz>-<S>``, im Übergang bestehende eigene ``spec-<S>``) und Besitzer-Prüfung
+# leben an genau einer Stelle (to_spawn/tmux_aufruf.py). Gehört die Ziel-Session einem
+# anderen Repo (normalisierte origin-Adresse, ohne origin gemeinsamer Git-Ordner): Exit 9.
+rc=0
+SESSION="$(TO_SPAWN_TMUX= TO_SPAWN_REPO="$REPO" "$PY" "$SKILL_HOME/to_spawn.py" sitzung "$SPEC")" || rc=$?
+if [ "$rc" -ne 0 ] || [ -z "$SESSION" ]; then
+  [ "$rc" -eq 9 ] && exit 9
+  echo "tmux-Session-Name nicht ermittelbar (to_spawn.py sitzung Exit $rc)." >&2
+  exit 2
 fi
 
 # --- 1. Stand holen (nie rebase/stash im geteilten Baum) --------------------
