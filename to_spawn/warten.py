@@ -43,7 +43,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
-from . import bau_log, config, konsole, manifest, prozessbaum, speicher, sperre, starter
+from . import bau_log, config, konsole, manifest, prozessbaum, speicher, sperre, ssh_beobachten, starter
 
 log = logging.getLogger("to_spawn.warten")
 
@@ -192,11 +192,18 @@ def _prozess_aktiv(pid: Any, erwartet_start: Any = None) -> bool:
         return False
 
 
-def ist_abbruch_exit(code: int, *, plattform: str | None = None) -> bool:
-    """Wurde der Prozess von außen abgebrochen (Signal / harter Abbruch), nicht regulär beendet?"""
+def ist_abbruch_exit(
+    code: int,
+    *,
+    plattform: str | None = None,
+    befehl: Sequence[str] | None = None,
+) -> bool:
+    """Wurde der Prozess von außen abgebrochen (Signal / harter Abbruch / SSH-Abbruch), nicht regulär beendet?"""
     ziel = plattform or sys.platform
     if code == 0:
         return False
+    if code == ssh_beobachten.SSH_EXIT_ABBRUCH and ssh_beobachten.ist_ssh_befehl(befehl, plattform=ziel):
+        return True
     if code < 0:
         return True
     if 128 < code <= 192:  # POSIX-Shell-Signalcodes (128 + Signal, z. B. 137 SIGKILL, 143 SIGTERM)
@@ -207,7 +214,9 @@ def ist_abbruch_exit(code: int, *, plattform: str | None = None) -> bool:
     return code in _WINDOWS_ABBRUCH_CODES or code >= 0xC0000000
 
 
-def _abbruch_grund_fuer_exit(code: int) -> str:
+def _abbruch_grund_fuer_exit(code: int, befehl: Sequence[str] | None = None) -> str:
+    if code == ssh_beobachten.SSH_EXIT_ABBRUCH and ssh_beobachten.ist_ssh_befehl(befehl):
+        return f"SSH-Verbindung abgebrochen (Exit {code}) — verbinde neu"
     if code < 0:
         sig_nr = -code
         try:
@@ -531,8 +540,8 @@ def _ueberwachen(
                 f"Ticket #{ticket}: Warten fertig (Versuch {versuch}/{max_versuche}){zusatz}",
             )
 
-        if ist_abbruch_exit(code):
-            grund = _abbruch_grund_fuer_exit(code)
+        if ist_abbruch_exit(code, befehl=befehl):
+            grund = _abbruch_grund_fuer_exit(code, befehl=befehl)
             eintrag = logbuch_schreiben(
                 ticket,
                 versuch=versuch,

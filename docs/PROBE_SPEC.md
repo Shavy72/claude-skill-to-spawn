@@ -208,6 +208,20 @@ Der Lauf besteht nur, wenn alle sieben Punkte aus #426 in **beiden** Varianten b
    Beide müssen bestehen.
 7. **Trennung:** Ein absichtlich roter Test des Bau-Werkzeugs darf die Probe-App nicht aufhalten.
 
+### 7.1 Zusatz-Prüffall PC-Lauf: Netz-Abbruch (#603)
+
+Während eines lokalen Bau-Tickets am Windows-PC das Netz gezielt für 1–3 Minuten trennen und ins
+Lauf-Protokoll (Abschnitt 5) aufnehmen:
+- **Messgrößen:** Zeitpunkt Netz weg, Zeitpunkt Netz zurück, Verhalten des Bau-Fensters (arbeitet
+  weiter, bleibt still stehen oder wird von Aufseher/Wecker geweckt), Zeit von Netz zurück bis zur
+  nächsten Bau-Aktivität.
+- **Folge:** Jedes stille Stehenbleiben zählt als System-Anomalie und bekommt ein eigenes Ticket mit
+  Ursache.
+- **Server-Beobachtungen:** Stehende SSH-Beobachtungen zum Bau-Server laufen über
+  `to_spawn.py ssh-beobachten` bzw. `to_spawn.py warten <N> -- ssh …` (automatisches Neuverbinden
+  mit Log-Zeile statt Abbruch bei Exit 255 / Timeout).
+- **Status:** Code-Teil umgesetzt; die echte Netz-Messung am Windows-PC ist noch offen (siehe #603).
+
 Die Vorlage selbst ist geprüft durch `tests/test_probe_vorlagen_426.py` (echte Prozesse und
 Abrufe): Anlegen, schnelle und Komplett-Prüfung grün, App-Abruf, Staging-/Live-Schritt mit
 Aufräumen, roter Werkzeug-Test wird weder vom Prüf-Befehl noch von nacktem `pytest` eingesammelt.

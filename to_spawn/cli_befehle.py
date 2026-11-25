@@ -48,6 +48,7 @@ from to_spawn import (
     setup,
     spec_rand,
     speicher,
+    ssh_beobachten,
     start_last,
     startklar,
     ticket_zustand,
@@ -597,6 +598,8 @@ def verteilen(ap: argparse.ArgumentParser, args: argparse.Namespace) -> int:
         return start_last.lauf_mit_args(args)
     if args.befehl == "warten":
         return warten.lauf(args, config.repo_wurzel(_repo_aus_umgebung()))
+    if args.befehl == "ssh-beobachten":
+        return ssh_beobachten.lauf(args, config.repo_wurzel(_repo_aus_umgebung()))
     if args.befehl in ort_wahl.BEFEHLE:
         return ort_wahl.lauf(args, config.repo_wurzel(_repo_aus_umgebung()))
     if args.befehl == "aufraeumen":
