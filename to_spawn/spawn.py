@@ -17,7 +17,7 @@ import time
 from pathlib import Path
 from typing import Any, Sequence, TextIO
 
-from . import auswahl, capo, config, manifest, probesitz, stand, starter, umzug
+from . import auswahl, capo, config, manifest, probesitz, stand, starter, tmux_aufruf, umzug
 
 log = logging.getLogger("to_spawn.spawn")
 
@@ -204,8 +204,9 @@ def ticket_eintrag(spec: int | str, ticket: int | str) -> Any:
 def _neustart_lokal_befehl(repo: Path, spec: int, ticket: int, auftrag: str) -> tuple[list[str], bool]:
     """(argv, über tmux?) — Linux: tmux-Fenster ``bau <N>`` wie capo; Windows: neuer wt-Tab."""
     if sys.platform != "win32":
-        fenster = capo.tmux_fenster(spec)
-        return capo.folge_befehl(repo, spec, ticket, fenster, auftrag), fenster is not None
+        sitzung, _ = tmux_aufruf.sitzung_aufloesen(repo, spec)
+        fenster = capo.tmux_fenster(spec, sitzung=sitzung)
+        return capo.folge_befehl(repo, spec, ticket, fenster, auftrag, sitzung=sitzung), fenster is not None
     return wt_tab_befehl(repo, ticket, auftrag), False
 
 

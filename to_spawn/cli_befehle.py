@@ -51,6 +51,7 @@ from to_spawn import (
     startklar,
     ticket_zustand,
     ticketstand,
+    tmux_aufruf,
     uebergabe_sichern,
     umzug,
     vorfall,
@@ -563,6 +564,18 @@ def verteilen(ap: argparse.ArgumentParser, args: argparse.Namespace) -> int:
     if args.befehl == "hauptzweig":
         # Nur der Name auf stdout — spawn_srv.sh liest ihn ein (#257).
         print(gh.hauptzweig(config.repo_wurzel(_repo_aus_umgebung())))
+        return 0
+    if args.befehl == "sitzung":
+        # Einzige Quelle für tmux-Session-Name + Besitzer-Prüfung (#457).
+        repo = config.repo_wurzel(_repo_aus_umgebung())
+        if args.nur_name:
+            print(tmux_aufruf.sitzung_name(repo, args.spec))
+            return 0
+        name, fremd = tmux_aufruf.sitzung_aufloesen(repo, args.spec)
+        if fremd:
+            print(fremd, file=sys.stderr)
+            return tmux_aufruf.EXIT_FREMD
+        print(name)
         return 0
     if args.befehl == "blocker":
         return _blocker(args)

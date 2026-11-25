@@ -281,6 +281,51 @@ def _adresse_normal(url: str) -> str:
     return f"{host}/{pfad.lower() if host == 'github.com' else pfad}"
 
 
+def repo_kennung(ordner: Path) -> str | None:
+    """Wem gehört ``ordner``? Einzige Stelle der Repo-Kennung (#457, #499, #508).
+
+    Normalisierte ``origin``-Adresse (``https``/``ssh``/``.git``/Groß-Kleinschreibung bei
+    ``github.com`` egal), ohne ``origin`` der echte gemeinsame Git-Ordner; ``None`` = kein
+    Git-Ordner. Ein anderer Klon desselben Repos hat dieselbe Kennung.
+    """
+    return _repo_kennung(ordner)
+
+
+def repo_kurzname(repo: Path) -> str:
+    """Eindeutiger, tmux-tauglicher Kurzname des Repos (Kleinbuchstaben, ``[a-z0-9_-]``, #457).
+
+    Bevorzugt den Repo-Namen aus der normalisierten ``origin``-Adresse, damit zwei Klone
+    desselben Repos (z. B. Hauptklon und Spec-Klon ``~/duoplus-<S>`` oder HTTPS vs. SSH)
+    denselben Session-Namen bilden. Ohne ``origin`` gilt :func:`_hauptrepo_name`.
+    """
+    wurzel = repo_wurzel(repo)
+    roh = ""
+    try:
+        lauf = subprocess.run(
+            ["git", "-C", str(wurzel), "remote", "get-url", "origin"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+            **prozessbaum.fensterlos(),
+        )
+    except OSError as fehler:
+        log.warning("git in %s nicht startbar: %s", wurzel, fehler)
+    else:
+        url = lauf.stdout.strip() if lauf.returncode == 0 else ""
+        if url:
+            normal = _adresse_normal(url)
+            teile = [t for t in normal.split("/") if t]
+            if teile:
+                roh = teile[-1]
+    if not roh:
+        roh = _hauptrepo_name(wurzel)
+    sauber = re.sub(r"[^a-z0-9_-]+", "-", roh.lower()).strip("-_")
+    sauber = re.sub(r"-{2,}", "-", sauber)[:40].rstrip("-_")
+    return sauber or "repo"
+
+
 def _repo_kennung(ordner: Path) -> str | None:
     """Wem gehört ``ordner``? ``origin``-Adresse (ohne ``.git``), ohne ``origin`` der echte
     gemeinsame Git-Ordner; ``None`` = kein Git-Ordner. Ein anderer Klon desselben Repos hat

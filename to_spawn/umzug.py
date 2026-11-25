@@ -35,7 +35,7 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any, TextIO
 
-from . import config, manifest, prozessbaum, sitzungsjob, starter
+from . import config, manifest, prozessbaum, sitzungsjob, starter, tmux_aufruf
 
 log = logging.getLogger("to_spawn.umzug")
 
@@ -205,6 +205,7 @@ def server_starten(
     ordner: str,
     umzug_ref: str | None = None,
     nur_wache: bool = False,
+    repo: Path | None = None,
 ) -> bool:
     """Startet ``bau <N>`` (oder nur ``wache <S>``) per SSH auf dem Server.
 
@@ -238,7 +239,7 @@ def server_starten(
             grund,
             was,
         )
-        if server_laeuft(spec, ticket, ziel=ziel, ordner=ordner):
+        if server_laeuft(spec, ticket, ziel=ziel, ordner=ordner, repo=repo):
             log.warning("%s läuft trotzdem auf %s — Start gilt als gelungen.", was, ziel)
             return True
         log.error("Server-Start scheiterte: SSH abgebrochen und %s läuft nicht auf %s.", was, ziel)
@@ -251,9 +252,24 @@ def server_starten(
     return False
 
 
-def server_fenster_schliessen(spec: str, ticket: str, *, ziel: str) -> bool:
+def _sitzungen_fern(spec: str, repo: Path | None = None) -> tuple[str, ...]:
+    """Kandidaten für den tmux-Session-Namen auf dem Server: neu (falls ``repo`` bekannt) + alt."""
+    alt = tmux_aufruf.sitzung_alt(spec)
+    if repo is None:
+        return (alt,)
+    neu = tmux_aufruf.sitzung_name(repo, spec)
+    return (neu, alt) if neu != alt else (alt,)
+
+
+def server_fenster_schliessen(
+    spec: str, ticket: str, *, ziel: str, repo: Path | None = None
+) -> bool:
     """tmux-Fenster ``bau <N>`` auf dem Server schließen (Doppelstart zurücknehmen)."""
-    befehl = f"tmux kill-window -t {shlex.quote(f'=spec-{spec}:bau {ticket}')}"
+    teile = [
+        f"tmux kill-window -t {shlex.quote(f'={sitz}:bau {ticket}')}"
+        for sitz in _sitzungen_fern(spec, repo)
+    ]
+    befehl = " 2>/dev/null || ".join(teile)
     log.info("Server-Fenster schließen: ssh %s %s", ziel, befehl)
     ergebnis = _ssh(ziel, befehl, SSH_KURZ_TIMEOUT)
     if ergebnis is None or ergebnis.returncode != 0:
@@ -276,10 +292,21 @@ def _stand_zeile(text: str, ticket: str) -> str | None:
     return None
 
 
-def server_laeuft(spec: str, ticket: str | None, *, ziel: str, ordner: str) -> bool:
+def server_laeuft(
+    spec: str,
+    ticket: str | None,
+    *,
+    ziel: str,
+    ordner: str,
+    repo: Path | None = None,
+) -> bool:
     """Einmal prüfen: tmux-Fenster da und (bei Tickets) Session nicht ``aus``."""
     fenster = "bau " + ticket if ticket else f"wache {spec}"
-    liste = _ssh(ziel, f"tmux list-windows -t ={shlex.quote('spec-' + spec)} -F '#W'", SSH_KURZ_TIMEOUT)
+    teile = [
+        f"tmux list-windows -t ={shlex.quote(sitz)} -F '#W'"
+        for sitz in _sitzungen_fern(spec, repo)
+    ]
+    liste = _ssh(ziel, " 2>/dev/null || ".join(teile), SSH_KURZ_TIMEOUT)
     if liste is None or liste.returncode != 0:
         return False
     if fenster not in [z.strip() for z in liste.stdout.splitlines()]:
@@ -297,10 +324,17 @@ def server_laeuft(spec: str, ticket: str | None, *, ziel: str, ordner: str) -> b
     return zustand is not None and zustand != "aus"
 
 
-def _warte_auf_server(spec: str, ticket: str | None, *, ziel: str, ordner: str) -> bool:
+def _warte_auf_server(
+    spec: str,
+    ticket: str | None,
+    *,
+    ziel: str,
+    ordner: str,
+    repo: Path | None = None,
+) -> bool:
     ende = time.monotonic() + BEWEIS_MAX
     while True:
-        if server_laeuft(spec, ticket, ziel=ziel, ordner=ordner):
+        if server_laeuft(spec, ticket, ziel=ziel, ordner=ordner, repo=repo):
             return True
         if time.monotonic() >= ende:
             return False
@@ -529,9 +563,9 @@ def umzug_einzel(
             print(f"Probelauf: ssh -o BatchMode=yes {ziel} {shlex.quote(spawn_befehl(spec, ticket, ordner, umzug_ref=ref))}")
             print("Probelauf — nichts committet, gepusht oder gestartet.")
             return EXIT_OK
-        if not server_starten(spec, ticket, ziel=ziel, ordner=ordner, umzug_ref=ref):
+        if not server_starten(spec, ticket, ziel=ziel, ordner=ordner, umzug_ref=ref, repo=haupt):
             raise Abbruch(EXIT_FEHLER, "Server-Start scheiterte — lokale Session läuft weiter.")
-        if not _warte_auf_server(spec, ticket, ziel=ziel, ordner=ordner):
+        if not _warte_auf_server(spec, ticket, ziel=ziel, ordner=ordner, repo=haupt):
             raise Abbruch(
                 EXIT_FEHLER,
                 f"Kein Beweis, dass #{ticket} auf {ziel} läuft (tmux-Fenster/sessions) — "
@@ -693,7 +727,7 @@ def umzug_alle(
 
     def server_bewiesen(ticket: str) -> bool:
         return _warte(
-            lambda: server_laeuft(spec, ticket, ziel=ziel, ordner=ordner),
+            lambda: server_laeuft(spec, ticket, ziel=ziel, ordner=ordner, repo=repo),
             BEWEIS_MAX,
             BEWEIS_TAKT,
         )
@@ -709,7 +743,7 @@ def umzug_alle(
                 ergebnis.update(daten)
                 return True
             return frisch(ticket)[0] == "aus" and server_laeuft(
-                spec, ticket, ziel=ziel, ordner=ordner
+                spec, ticket, ziel=ziel, ordner=ordner, repo=repo
             )
 
         try:
@@ -747,7 +781,7 @@ def umzug_alle(
                 if pid is None:
                     return stopp(ticket, "wartet, aber keine Prozess-ID")
                 # Erst der Server — scheitert er, bleibt lokal alles unangetastet.
-                if not server_starten(spec, ticket, ziel=ziel, ordner=ordner):
+                if not server_starten(spec, ticket, ziel=ziel, ordner=ordner, repo=repo):
                     return stopp(ticket, "Server-Start scheiterte — lokal unangetastet")
                 if not server_bewiesen(ticket):
                     return stopp(
@@ -760,7 +794,7 @@ def umzug_alle(
                     ziel_pid = neue_pid or pid
                     prozess_beenden(ziel_pid)
                     if not _warte(lambda: frisch(ticket)[0] == "aus", 30.0, min(takt, 1.0)):
-                        server_fenster_schliessen(spec, ticket, ziel=ziel)
+                        server_fenster_schliessen(spec, ticket, ziel=ziel, repo=repo)
                         return stopp(
                             ticket,
                             f"bau.py (pid {ziel_pid}) lässt sich nicht beenden — "
@@ -775,7 +809,7 @@ def umzug_alle(
                         ticket,
                         zustand,
                     )
-                    if not server_fenster_schliessen(spec, ticket, ziel=ziel):
+                    if not server_fenster_schliessen(spec, ticket, ziel=ziel, repo=repo):
                         return stopp(
                             ticket,
                             "läuft jetzt lokal und auf dem Server — Server-Fenster ließ "
@@ -797,10 +831,10 @@ def umzug_alle(
         return EXIT_OK
     if ohne_wache:
         return EXIT_OK
-    if not server_starten(spec, None, ziel=ziel, ordner=ordner, nur_wache=True):
+    if not server_starten(spec, None, ziel=ziel, ordner=ordner, nur_wache=True, repo=repo):
         print(f"Aufseher Spec #{spec}: Server-Start scheiterte — Aufseher bleibt lokal.")
         return EXIT_FEHLER
-    if not _warte(lambda: server_laeuft(spec, None, ziel=ziel, ordner=ordner), BEWEIS_MAX, BEWEIS_TAKT):
+    if not _warte(lambda: server_laeuft(spec, None, ziel=ziel, ordner=ordner, repo=repo), BEWEIS_MAX, BEWEIS_TAKT):
         print(f"Aufseher Spec #{spec}: kein tmux-Fenster auf {ziel} — Aufseher bleibt lokal.")
         return EXIT_FEHLER
     print(f"Aufseher Spec #{spec} umgezogen → {ziel}")
