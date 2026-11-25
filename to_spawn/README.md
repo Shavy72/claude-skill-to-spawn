@@ -208,7 +208,9 @@ Modul liest sie über `config.lade` / `config.pfad` / `config.maschine`. Ein fre
 - Repo (`.to-spawn/config.json`): `pfade.{manifeste,bau_log,agenten}`,
   `deploy.skripte[]` (`name`, `art` live/pruef, `pruef_schalter`, `fern`),
   `staging.schalter`, `befehle.wirkungskreis`, `vps.staging_log`, `worktree_basis`, `hauptzweig`.
-- Maschine (`~/.config/to-spawn/maschine.json`, Env `TO_SPAWN_MASCHINE`): `repos[]`
+- Maschine (`~/.config/to-spawn/maschine.json`, Env `TO_SPAWN_MASCHINE`): `rolle`
+  (`"server"`/`"pc"`, optional; auf dem Bau-Server wird `--ziel srv` wie `--ziel local`
+  behandelt, #408), `repos[]`
   (`slug`, `pfad`, `ticket_repo`, `worktree_basis`), `staging_sperren[]`,
   `hausmeister.{wurzeln,ordner_praefixe}` und `hausmeister.geschuetzte_ordner` — Letzteres
   schützt nur zusätzlich, die eingebaute Liste bleibt immer gültig. Wurzeln mit verstecktem
