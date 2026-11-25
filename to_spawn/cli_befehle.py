@@ -590,7 +590,7 @@ def verteilen(ap: argparse.ArgumentParser, args: argparse.Namespace) -> int:
     if args.befehl == "aufraeumen":
         return _aufraeumen(args, ap)
     if args.befehl == "sichern":
-        return uebergabe_sichern.lauf(args.dateien, trocken=args.trocken)
+        return uebergabe_sichern.lauf(args.dateien, trocken=args.trocken, nur_pruefen=args.pruefen)
     if args.befehl == "ticket-repo":
         return _ticket_repo_befehl(args, ap)
     if args.befehl == "ticketstand":
