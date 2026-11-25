@@ -238,6 +238,8 @@ FETCH_ZEIT_S = 60.0
 
 def _git_ausgabe(args: list[str], cwd: Path, timeout: float | None = None) -> tuple[int, str]:
     """``git <args>`` im Ordner ``cwd``; (Exit-Code, stdout) — 127 wenn git fehlt, 124 bei Zeitablauf."""
+    if timeout is None:
+        timeout = GIT_ZEIT_S
     try:
         fertig = subprocess.run(
             ["git", *args],
@@ -322,11 +324,13 @@ def hauptzweig(repo: Path | None = None) -> str:
     eigen = str(config.lade(wurzel).get("hauptzweig") or "").strip()
     if eigen:
         return eigen
-    code, kopf = _git_ausgabe(["symbolic-ref", "-q", "--short", "refs/remotes/origin/HEAD"], wurzel)
+    code, kopf = _git_ausgabe(
+        ["symbolic-ref", "-q", "--short", "refs/remotes/origin/HEAD"], wurzel, timeout=GIT_ZEIT_S
+    )
     if code == 0 and kopf.startswith("origin/") and len(kopf) > len("origin/"):
         return kopf[len("origin/") :]
     for name in ("main", "master"):
-        if _git_ausgabe(["rev-parse", "--verify", "-q", f"origin/{name}"], wurzel)[0] == 0:
+        if _git_ausgabe(["rev-parse", "--verify", "-q", f"origin/{name}"], wurzel, timeout=GIT_ZEIT_S)[0] == 0:
             return name
     return "master"
 
