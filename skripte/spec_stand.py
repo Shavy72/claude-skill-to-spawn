@@ -23,7 +23,7 @@ from pathlib import Path
 _SKILL = str(Path(__file__).resolve().parent.parent)
 if _SKILL not in sys.path:
     sys.path.insert(0, _SKILL)
-from to_spawn import befund, config, gh, prozessbaum, ticket_zustand  # noqa: E402
+from to_spawn import befund, config, gh, prozessbaum, spawn, ssh_beobachten, ticket_zustand  # noqa: E402
 
 log = logging.getLogger("spec_stand")
 #: Repo, in dem gearbeitet wird: ``TO_SPAWN_REPO`` (setzt die Weiterleitung im Repo), sonst
@@ -40,17 +40,26 @@ def sh(*args: str, cwd: Path | None = None) -> str:
     return r.stdout.strip()
 
 
-def server_head(konfig: dict) -> str:
-    """Kurz-SHA des Repos auf dem Server — nur wenn ``ssh_ziel`` und ``server_repo`` gesetzt sind, sonst leer."""
+def server_head(konfig: dict, *, pause_s: float = 2.0, max_neuverbindungen: int = 1) -> str:
+    """Kurz-SHA des Repos auf dem Server — nur wenn ``ssh_ziel`` und ``server_repo`` gesetzt sind, sonst leer.
+
+    Verbindet bei einem kurzen SSH-Aussetzer (Exit 255 / Timeout) automatisch neu mit Log-Zeile (#603).
+    """
     ziel = str(konfig.get("ssh_ziel") or "").strip()
     pfad = str(konfig.get("server_repo") or "").strip()
     if not ziel or not pfad:
         return ""
-    try:
-        return sh("ssh", ziel, f"cd {pfad} && git rev-parse --short HEAD")
-    except RuntimeError as e:
-        log.warning("Server-HEAD nicht lesbar: %s", e)
+    erg = ssh_beobachten.beobachten(
+        ziel,
+        f"cd {spawn.fern_ordner(pfad)} && git rev-parse --short HEAD",
+        timeout_s=30.0,
+        pause_s=pause_s,
+        max_neuverbindungen=max_neuverbindungen,
+    )
+    if erg.exit_code != 0:
+        log.warning("Server-HEAD nicht lesbar (Exit %s): %s", erg.exit_code, erg.stderr.strip()[:200])
         return ""
+    return erg.stdout.strip()
 
 
 def gh_json(pfad: str) -> object:

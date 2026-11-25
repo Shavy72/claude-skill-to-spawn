@@ -26,6 +26,7 @@ from to_spawn import (
     nest,
     ort_wahl,
     respawn,
+    ssh_beobachten,
     start_last,
     ticketstand,
     uebergabe_sichern,
@@ -441,6 +442,8 @@ def baue_parser() -> _Parser:
     )
     # Abbruchfester Warte-Schritt (#286): Zustand in Datei, Neustart mit Pause, Geräte-Logbuch.
     warten.richte_parser_ein(unter)
+    # Aussetzerfeste SSH-Beobachtung zum Bau-Server (#603): neu verbinden statt abbrechen.
+    ssh_beobachten.richte_parser_ein(unter)
     # Ort-Wahl für große Testläufe (#760, E33): Bau-Server wenn ruhig, sonst GitHub.
     ort_wahl.richte_parser_ein(unter)
     return ap

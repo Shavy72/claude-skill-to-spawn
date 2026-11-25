@@ -348,7 +348,15 @@ def server_laeuft(
     fenster = "bau " + ticket if ticket else f"wache {spec}"
     teile = [f"tmux list-windows -t ={shlex.quote(sitz)} -F '#W'" for sitz in _sitzungen_fern(spec, repo)]
     liste = _ssh(ziel, " 2>/dev/null || ".join(teile), SSH_KURZ_TIMEOUT)
-    if liste is None or liste.returncode != 0:
+    if liste is None or liste.returncode == SSH_EXIT_EIGEN:
+        grund = "keine Antwort" if liste is None else (liste.stderr or liste.stdout).strip()[:200] or "Exit 255"
+        log.warning(
+            "SSH-Beobachtung %s: Verbindung beim Status-Lesen abgebrochen (%s) — verbinde im nächsten Takt neu.",
+            ziel,
+            grund,
+        )
+        return False
+    if liste.returncode != 0:
         return False
     if fenster not in [z.strip() for z in liste.stdout.splitlines()]:
         return False
@@ -359,7 +367,15 @@ def server_laeuft(
         fern_skill_befehl(ordner, "python3", "sessions_stand.py", [spec]),
         SSH_KURZ_TIMEOUT,
     )
-    if stand is None or stand.returncode != 0:
+    if stand is None or stand.returncode == SSH_EXIT_EIGEN:
+        grund = "keine Antwort" if stand is None else (stand.stderr or stand.stdout).strip()[:200] or "Exit 255"
+        log.warning(
+            "SSH-Beobachtung %s: Verbindung beim Status-Lesen abgebrochen (%s) — verbinde im nächsten Takt neu.",
+            ziel,
+            grund,
+        )
+        return False
+    if stand.returncode != 0:
         return False
     zustand = _stand_zeile(stand.stdout, ticket)
     return zustand is not None and zustand != "aus"
