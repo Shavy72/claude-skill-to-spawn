@@ -35,7 +35,7 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any, TextIO
 
-from . import config, manifest, sitzungsjob, starter
+from . import config, manifest, prozessbaum, sitzungsjob, starter
 
 log = logging.getLogger("to_spawn.umzug")
 
@@ -100,6 +100,7 @@ def _git(ort: Path, *args: str) -> subprocess.CompletedProcess[str]:
         encoding="utf-8",
         errors="replace",
         check=False,
+        **prozessbaum.fensterlos(),
     )
 
 
@@ -586,7 +587,7 @@ def lokale_zustaende(repo: Path, spec: str) -> dict[str, tuple[str, int | None]]
 def prozess_beenden(pid: int) -> None:
     """Lokales ``bau.py`` beenden (nur im Zustand ``wartet`` — kein Claude-Kind)."""
     if _ist_windows():
-        subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True, check=False)
+        subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True, check=False, **prozessbaum.fensterlos())
         return
     try:
         os.kill(pid, signal.SIGTERM)
@@ -875,6 +876,7 @@ def _baum_beenden(prozess: subprocess.Popen[Any], frist: float) -> bool:
             encoding="utf-8",
             errors="replace",
             check=False,
+            **prozessbaum.fensterlos(),
         )
         try:
             prozess.wait(timeout=frist)
