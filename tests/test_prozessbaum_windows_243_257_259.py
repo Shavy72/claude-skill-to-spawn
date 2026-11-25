@@ -587,13 +587,26 @@ err = ctypes.get_last_error()
 if h:
     k.CloseHandle(h)
 bild = prozessbaum._bildpfad_windows(pid)
+befunde = prozessbaum.arbeitsordner_in_windows(wt)
+befund = befunde.get(pid)
 try:
     hausmeister_windows._kein_arbeitsordner_drin(wt)
-    print(f"FREI h={h} err={err} bild={bild!r}")
+    print(f"FREI h={h} err={err} bild={bild!r} befund={befund!r}")
     sys.exit(2)
 except hausmeister_windows.Bleibt as b:
-    print(f"BLEIBT fehler={b.fehler} h={h} err={err} bild={bild!r} grund={b.grund}")
-    sys.exit(0 if (b.fehler and h == 0 and err == 5 and str(pid) in b.grund) else 3)
+    print(f"BLEIBT fehler={b.fehler} h={h} err={err} bild={bild!r} befund={befund!r} grund={b.grund}")
+    ok = (
+        not h
+        and err == 5
+        and bool(bild)
+        and prozessbaum._ist_msys_bildpfad(bild)
+        and befund is not None
+        and befund.text is None
+        and befund.drin is None
+        and "MSYS/Cygwin" in befund.grund
+        and b.fehler
+    )
+    sys.exit(0 if ok else 3)
 """
 
 
