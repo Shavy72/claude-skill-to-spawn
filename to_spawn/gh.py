@@ -21,6 +21,7 @@ from typing import Any
 from to_spawn import starter, ticket_zustand
 
 log = logging.getLogger("to_spawn.gh")
+_COMMIT_SUCHE_GEMELDET: set[tuple[str, str]] = set()  # #618: schon gewarnte (Repo, Ticket)
 
 #: Test-Tür: Pfad eines Ersatz-Skripts für ``gh``; wirkt nur unter Test (:func:`starter.unter_test`).
 GH_STUB_ENV = "TO_SPAWN_GH_STUB"
@@ -282,9 +283,14 @@ def _commit_suche(repo: Path, nummer: int | str, format_: str, *refs: str) -> li
     code, text = _git_ausgabe(
         ["log", *refs, f"--format={format_}", "--fixed-strings", f"--grep=(#{nummer})"], repo, timeout=GIT_ZEIT_S
     )
+    schluessel = (str(repo), str(nummer))
     if code != 0:
-        log.warning("Commit-Suche (#%s) gescheitert (git Exit %s)", nummer, code)
+        # #618: je Repo + Ticket nur einmal warnen (Wecker fragt je 60-s-Takt), erst nach einem Erfolg wieder
+        melden = log.debug if schluessel in _COMMIT_SUCHE_GEMELDET else log.warning
+        _COMMIT_SUCHE_GEMELDET.add(schluessel)
+        melden("Commit-Suche (#%s) gescheitert (git Exit %s)", nummer, code)
         return None
+    _COMMIT_SUCHE_GEMELDET.discard(schluessel)
     return text.splitlines()
 
 
