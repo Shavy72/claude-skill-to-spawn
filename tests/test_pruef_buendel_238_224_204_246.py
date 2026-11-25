@@ -188,6 +188,31 @@ def test_requirements_unter_doku_muster_prueft_voll(tmp_path: Path) -> None:
     sofort_test._voll_rot(probe, "pruefen.doku_pfade zu weit: „*.txt“ trifft Code-Dateien")
 
 
+@pytest.mark.parametrize(
+    "pfad",
+    [
+        "requirements/dev.txt",
+        "web/requirements/test.txt",
+        "Requirements/Prod.TXT",
+    ],
+)
+def test_requirements_ordner_mit_txt_endung_ist_nie_doku(tmp_path: Path, pfad: str) -> None:
+    probe = _doku_repo(tmp_path / "ro", {pfad: "paket==1\n", "docs/requirements.md": "# Anforderungen\n"})
+    assert not sofort._ist_doku_datei(probe, "base", pfad)
+    assert sofort._ist_doku_datei(probe, "base", "docs/requirements.md")
+
+
+def test_requirements_ordner_unter_doku_muster_prueft_voll(tmp_path: Path) -> None:
+    probe = sofort_test._angriff(
+        tmp_path / "reqdir",
+        {"requirements/dev.txt": "ok\n", "app.py": _liest("requirements/dev.txt")},
+    )
+    sofort_test._erklaere(probe, ["docs/**", "**/*.txt"])
+    sofort_test._commit(probe, "requirements/dev.txt", "kaputt\n")
+    # ``**/*.txt`` trifft Konfig im ``requirements/``-Ordner → keine Abkürzung, voller Lauf, rot.
+    sofort_test._voll_rot(probe, "pruefen.doku_pfade zu weit: „**/*.txt“ trifft Code-Dateien")
+
+
 def _liest(ziel: str) -> str:
     return f'from pathlib import Path\ndef f():\n    return (Path(__file__).parent / "{ziel}").read_text().strip()\n'
 

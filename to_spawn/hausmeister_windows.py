@@ -106,8 +106,10 @@ def _kein_arbeitsordner_drin(ordner: Path) -> None:
     entfernte oder umgebogene Junction oder eine cwd ``\\\\localhost\\C$\\…`` ändern daran nichts,
     und ein veralteter cwd-Text nach Umbenennen hält kein neues leeres Ziel mehr unnötig fest
     (#259). Nicht feststellbar (Griff nicht zu übernehmen, Kennung unlesbar, cwd unlesbar) ⇒ bleibt
-    mit Fehler. Prozesse, die sich nicht öffnen lassen (fremd, erhöht), fehlen schon in der Liste
-    (#243), ebenso unlesbare Prozesse fremder Benutzer (#552)."""
+    mit Fehler. Nicht-MSYS-Prozesse, die sich nicht öffnen lassen (fremd, erhöht), fehlen schon in
+    der Liste, ebenso unlesbare Nicht-MSYS-Prozesse fremder Benutzer (#552); nicht zu öffnende
+    MSYS-/Cygwin-Prozesse stehen dagegen mit ``text=None, drin=None`` in der Liste und sperren
+    fail-closed (#243)."""
     try:
         befunde = prozessbaum.arbeitsordner_in_windows(ordner)
     except OSError as fehler:
