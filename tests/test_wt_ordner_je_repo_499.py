@@ -12,6 +12,7 @@ Echt: git (Wegwerf-Repos im Temp-Ordner), ``startstelle.betreten``. Keine Attrap
 
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 
@@ -163,5 +164,8 @@ def test_adresse_normal_lokaler_windows_pfad_gross_klein_egal(monkeypatch: pytes
     assert config._adresse_normal("https://gitlab.example.com/Team/Repo") == "gitlab.example.com/Team/Repo"
 
 
+@pytest.mark.skipif(
+    os.name == "nt", reason="Windows vergleicht Pfade ohne Groß-/Kleinschreibung (normcase), gewollt laut _adresse_normal"
+)
 def test_adresse_normal_lokaler_linux_pfad_behaelt_schreibweise() -> None:
     assert config._adresse_normal("/home/a/Repo") != config._adresse_normal("/home/a/repo")

@@ -23,7 +23,7 @@ from test_waechter_213 import _capo, _text, welt  # noqa: F401  (welt = Fixture)
 SKILL = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SKILL))
 
-from to_spawn import briefkasten, capo, ja_einrichten
+from to_spawn import bash_wahl, briefkasten, capo, ja_einrichten
 
 PLATZHALTER = re.compile(r"\{[A-Z][A-Z0-9_]*\}")
 #: Der Ja-Befehl, wie er im Annahme-Kommentar steht: ``! ~/.claude/bin/ja 902`` (#531).
@@ -42,8 +42,10 @@ def _ja_ausfuehren(
     sh, _cmd = ja_einrichten.befehl_anlegen(heim / ".claude", sys.executable)
     env = {k: v for k, v in os.environ.items() if not k.startswith("TO_SPAWN_")}
     env.update({"TO_SPAWN_REPO": str(welt["repo"]), "HOME": str(heim)})
+    # Unter Windows startet ``!`` den Befehl in der Git-Bash; die Shebang-Datei direkt geht dort nicht (WinError 193).
+    start = [bash_wahl.bash(), str(sh)] if os.name == "nt" else [str(sh)]
     return subprocess.run(
-        [str(sh), *treffer[0].split()],
+        [*start, *treffer[0].split()],
         cwd=welt["repo"],
         env=env,
         stdin=subprocess.DEVNULL,

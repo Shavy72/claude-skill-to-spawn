@@ -52,6 +52,7 @@ def _cli(repo: Path, *argv: str, **zusatz: str) -> subprocess.CompletedProcess[s
         stdin=subprocess.DEVNULL,
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=60,
         check=False,
     )

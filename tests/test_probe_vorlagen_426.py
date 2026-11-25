@@ -368,7 +368,9 @@ def test_beide_varianten_bekommen_dasselbe_beschluss_protokoll(tmp_path: Path) -
         ).stdout.split()
         assert eingecheckt == [f"docs/GRILL_{heute}_probe.md"]
         inhalte.append(datei.read_bytes())
-    assert inhalte[0] == inhalte[1] == PROTOKOLL.read_bytes()
+    # Windows-Klon (autocrlf): Vorlage hat CRLF, sed in anlegen.sh schreibt LF — Zeilenenden egal (#553).
+    vorlage = PROTOKOLL.read_bytes().replace(b"\r\n", b"\n")
+    assert inhalte[0] == inhalte[1] and inhalte[0].replace(b"\r\n", b"\n") == vorlage
 
 
 def test_kritik_text_steht_in_probe_spec_und_nicht_im_lauf_repo() -> None:

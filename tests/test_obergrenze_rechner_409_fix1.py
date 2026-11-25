@@ -2,7 +2,7 @@
 
 Die Sitzungs-Grenze (``max_sessions`` je ``spec-<S>``) allein ließe beliebig viele Specs
 nebeneinander starten. Darum gilt zusätzlich eine harte Grenze für den ganzen Rechner:
-1,5 × ``max_sessions`` je 16 GB Gesamtspeicher (``MemTotal``), gezählt über alle
+12 je 16 GB Gesamtspeicher (#284, unabhängig von ``max_sessions``) (``MemTotal``), gezählt über alle
 Claude-Prozesse. Echt sind tmux (eigener Socket, aus dem #409-Test), ``speicher`` und der
 Aufpasser; Attrappe ist nur ``/proc`` bzw. ``meminfo``.
 """
@@ -44,22 +44,22 @@ def _sitzung_dazu(welt: Welt, name: str) -> None:
 
 
 def test_rechner_grenze_zahlen() -> None:
-    """16 GB und 6 → 9; 32 GB und 5 → 15; ohne ``MemTotal`` gilt 16 GB."""
-    assert speicher.rechner_grenze(6, 16 * 1024 * 1024) == 9
-    assert speicher.rechner_grenze(5, 32 * 1024 * 1024) == 15
-    assert speicher.rechner_grenze(6, None) == 9
-    assert speicher.rechner_grenze(6, 16_300_000) == 9  # echter 16-GB-Rechner meldet etwas weniger
+    """16 GB → 12; 32 GB → 24; ohne ``MemTotal`` gilt 16 GB (284: Messung 25.11.2026, vorher 9/15, aus max_sessions)."""
+    assert speicher.rechner_grenze(16 * 1024 * 1024) == 12
+    assert speicher.rechner_grenze(32 * 1024 * 1024) == 24
+    assert speicher.rechner_grenze(None) == 12
+    assert speicher.rechner_grenze(16_300_000) == 12  # echter 16-GB-Rechner meldet etwas weniger
 
 
 def test_zwei_sitzungen_an_rechner_grenze_blockieren(welt: Welt) -> None:
-    """2 eigene + 5 fremde = 7 = 1,5 × 5 bei 16 GB: kein Start, obwohl ``spec-409`` Platz hat."""
+    """2 eigene + 10 fremde = 12 = Rechner-Grenze bei 16 GB: kein Start, obwohl ``spec-409`` Platz hat (284: war 2+5=7)."""
     for pid in (301, 302):
         _claude(welt, pid, EIGEN)
-    for pid in range(201, 206):
+    for pid in range(201, 211):
         _claude(welt, pid, FREMD)
     frei, text = speicher.platz_frei(_KONFIG, sitzung=EIGEN, tmux_socket=SOCKET)
     assert not frei, text
-    assert text == "Rechner voll: schon 7 Claude-Sessions auf dem Rechner (Obergrenze 7)"
+    assert text == "Rechner voll: schon 12 Claude-Sessions auf dem Rechner (Obergrenze 12)"
 
 
 def test_rechner_grenze_waechst_mit_gesamtspeicher(welt: Welt, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -68,11 +68,11 @@ def test_rechner_grenze_waechst_mit_gesamtspeicher(welt: Welt, tmp_path: Path, m
     monkeypatch.setenv("TO_SPAWN_SPEICHER_MEMINFO", str(gross))
     for pid in (301, 302):
         _claude(welt, pid, EIGEN)
-    for pid in range(201, 206):
+    for pid in range(201, 211):
         _claude(welt, pid, FREMD)
     frei, text = speicher.platz_frei(_KONFIG, sitzung=EIGEN, tmux_socket=SOCKET)
     assert frei, text
-    assert "Rechner 7 von 15" in text, text
+    assert "Rechner 12 von 24" in text, text  # 284: war 7 von 15
 
 
 # --- 2. Fehlerfall der Sitzungs-Suche ---------------------------------------

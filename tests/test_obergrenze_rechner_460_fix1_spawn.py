@@ -135,7 +135,7 @@ def _spawn(
 
 @pytest.mark.braucht("bash", "posix")
 def test_voll_ohne_aufseher_exit_5(tmp_path: Path) -> None:
-    lauf, gestartet = _spawn(tmp_path, "--ohne-wache", belegt=1)
+    lauf, gestartet = _spawn(tmp_path, "--ohne-wache", belegt=12)  # 284: Rechner-Grenze 12 (war 1 über max_sessions)
     ausgabe = lauf.stdout + lauf.stderr
     assert lauf.returncode == 5, ausgabe
     assert (
@@ -148,7 +148,7 @@ def test_voll_ohne_aufseher_exit_5(tmp_path: Path) -> None:
 def test_voll_wache_fenster_ohne_prozess_exit_5(tmp_path: Path) -> None:
     """Fenster ``wache <S>`` steht, aber kein ``wache.py`` lebt → niemand startet nach."""
     lauf, gestartet = _spawn(
-        tmp_path, "--ohne-wache", belegt=1, fenster=[f"wache {e2.SPEC}"]
+        tmp_path, "--ohne-wache", belegt=12, fenster=[f"wache {e2.SPEC}"]
     )
     ausgabe = lauf.stdout + lauf.stderr
     assert lauf.returncode == 5, ausgabe
@@ -161,7 +161,7 @@ def test_voll_wache_fenster_ohne_prozess_exit_5(tmp_path: Path) -> None:
 @pytest.mark.braucht("bash", "posix")
 def test_warte_zweig_ohne_nicht_gestartet(tmp_path: Path) -> None:
     """Aufseher-Prozess lebt, Rechner voll: nur die Warte-Zeile, kein „nicht gestartet“."""
-    lauf, gestartet = _spawn(tmp_path)
+    lauf, gestartet = _spawn(tmp_path, belegt=11)  # 284: 11 belegt + Aufseher = Rechner-Grenze 12
     ausgabe = lauf.stdout + lauf.stderr
     assert f"wache {e2.SPEC}" in gestartet and "bau 901" not in gestartet, gestartet
     assert lauf.returncode == 0, ausgabe

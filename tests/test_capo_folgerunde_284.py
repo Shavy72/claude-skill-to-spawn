@@ -10,6 +10,7 @@ der Test, dass der RICHTIGE Startbefehl mit den richtigen Argumenten rausging.
 from __future__ import annotations
 
 import json
+import shlex
 import sys
 from pathlib import Path
 
@@ -27,6 +28,8 @@ from test_waechter_213 import (  # noqa: F401  (welt = Fixture)
 )
 
 TMUX_STUB = Path(__file__).resolve().parent / "hilfen" / "tmux_stub_284.py"
+# bau.py des Skills, wie es im bash-Text steht (shlex-quotiert, unter Windows mit Laufwerk und Backslash).
+BAU_IM_FENSTER = shlex.quote(str(Path(__file__).resolve().parent.parent / "skripte" / "bau.py"))
 
 
 # --- Hilfen ------------------------------------------------------------------
@@ -99,7 +102,7 @@ def test_folge_runde_startet_mit_richtigem_befehl(
     assert "-n" in argv and argv[argv.index("-n") + 1] == "bau 901"
     assert "-c" in argv and argv[argv.index("-c") + 1] == str(welt["repo"])
     assert argv[-3:-1] == ["bash", "-lc"]
-    assert "/skripte/bau.py 901 --sofort; " in argv[-1]  # #277: bau.py direkt, nicht ~/.bashrc-bau
+    assert f"{BAU_IM_FENSTER} 901 --sofort; " in argv[-1]  # #277: bau.py direkt, nicht ~/.bashrc-bau
     assert "TO_SPAWN_HOME=" in argv[-1] and "REPO=" in argv[-1]
     assert _folgerunden(welt) == {"901": 1}
 

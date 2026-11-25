@@ -10,8 +10,8 @@ Kernel-Prozessliste (ctypes, kein Prozess-Start, #154). Wie der Baum gelesen wir
 steht nur hier. Die Aufrufer wählen nur Stufen (Signal + Wartezeit), Reihenfolge der PIDs und worauf gewartet wird.
 
 Windows: jedes Signal wird zu ``TerminateProcess`` (so macht es ``os.kill``) — die erste
-Stufe beendet also schon hart, ``SIGTERM`` lässt sich nicht abfangen. Nur ``ist_claude``
-liest weiter ``/proc`` (unter Windows immer „kein Claude“).
+Stufe beendet also schon hart, ``SIGTERM`` lässt sich nicht abfangen. ``ist_claude`` liest
+unter Windows die Kommandozeile aus dem Kernel statt ``/proc`` (#602).
 """
 
 from __future__ import annotations
@@ -117,9 +117,18 @@ def prozesse() -> dict[int, tuple[int, str, int]]:
     return liste
 
 
+class _KeinProc(FileNotFoundError):
+    """Das System hat gar kein ``/proc`` (Windows) — nicht „Prozess weg“."""
+
+
 def _proc(pid: int, datei: str) -> bytes:
-    """Rohinhalt von ``/proc/<pid>/<datei>`` (Naht für Tests)."""
-    return (_PROC / str(pid) / datei).read_bytes()
+    """Rohinhalt von ``/proc/<pid>/<datei>`` (Naht für Tests); fehlt ``/proc`` ganz: :class:`_KeinProc`."""
+    try:
+        return (_PROC / str(pid) / datei).read_bytes()
+    except FileNotFoundError:
+        if not _PROC.is_dir():
+            raise _KeinProc(f"{_PROC} fehlt") from None
+        raise
 
 
 def ist_claude(pid: int) -> bool:
@@ -127,11 +136,15 @@ def ist_claude(pid: int) -> bool:
 
     Prozess weg (``FileNotFoundError``/``ProcessLookupError``) heißt „kein Claude“.
     Unlesbar aus anderem Grund zählt als Claude: lieber warten als eine lebende
-    Session für beendet halten.
+    Session für beendet halten. Quelle ist ``/proc``, wo es eins gibt (auch ein von Tests
+    eingespeistes); fehlt es unter Windows, die Kommandozeile aus dem Kernel, geprüft wie
+    beim Staffel-Hook (:func:`ist_session_zeile`).
     """
     try:
         name = _proc(pid, "comm").decode(errors="replace").strip()
         argv = [teil.decode(errors="replace") for teil in _proc(pid, "cmdline").split(b"\0")]
+    except _KeinProc:
+        return _ist_claude_windows(pid) if _WINDOWS else False
     except (FileNotFoundError, ProcessLookupError):
         return False
     except OSError as fehler:
@@ -144,6 +157,21 @@ def ist_claude(pid: int) -> bool:
         return False
     skript = argv[1] if len(argv) > 1 else ""
     return Path(skript).name == "claude" or skript.endswith("claude-code/cli.js")
+
+
+def _ist_claude_windows(pid: int) -> bool:
+    """``ist_claude`` unter Windows: leere Kommandozeile heißt weg oder unlesbar — ``lebt`` entscheidet."""
+    try:
+        zeile = _kommandozeile_windows(pid)
+    except OSError as fehler:
+        log.warning("Kommandozeile von %s nicht lesbar (%s) — zählt als Claude.", pid, fehler)
+        return True
+    if zeile:
+        return ist_session_zeile(zeile, windows=True)
+    if not _lebt_windows(pid):
+        return False
+    log.warning("Kommandozeile von %s nicht lesbar — zählt als Claude.", pid)
+    return True
 
 
 def senden(pids: Sequence[int], sig: signal.Signals) -> None:
@@ -427,6 +455,20 @@ def _advapi32() -> Any:
 
 def _momentaufnahme_windows() -> dict[int, tuple[int, int]]:
     """PID → (Eltern-PID, Startzeit als FILETIME, 0 = unbekannt); unlesbar = ``OSError``."""
+    return {pid: (eltern, start) for pid, eltern, start, _ in _kernel_eintraege_windows()}
+
+
+def _programmnamen_windows() -> dict[int, str]:
+    """PID → Programmname laut Kernel (``ImageName``, z. B. ``pytest.exe``; ``""`` = unbekannt).
+
+    Auch für Prozesse fremder Konten lesbar, deren Kommandozeile verschlossen ist (#562).
+    Unlesbar = ``OSError``.
+    """
+    return {pid: name for pid, _, _, name in _kernel_eintraege_windows()}
+
+
+def _kernel_eintraege_windows() -> list[tuple[int, int, int, str]]:
+    """(PID, Eltern-PID, Startzeit, Programmname) aus ``NtQuerySystemInformation``; unlesbar = ``OSError``."""
     global _puffer_bytes
     _, nt = _win32()
     noetig = ctypes.c_ulong(0)
@@ -438,11 +480,20 @@ def _momentaufnahme_windows() -> dict[int, tuple[int, int]]:
         _puffer_bytes = max(_puffer_bytes * 2, noetig.value + (1 << 16))
     if status:
         raise OSError(f"NtQuerySystemInformation: Status 0x{status:08X}")
-    liste: dict[int, tuple[int, int]] = {}
+    liste: list[tuple[int, int, int, str]] = []
     versatz = 0
     while True:
         eintrag = _ProzessInfo.from_buffer(puffer, versatz)
-        liste[eintrag.UniqueProcessId or 0] = (eintrag.InheritedFromUniqueProcessId or 0, max(eintrag.CreateTime, 0))
+        bild = eintrag.ImageName
+        name = ctypes.wstring_at(bild.Buffer, bild.Length // 2) if bild.Buffer and bild.Length else ""
+        liste.append(
+            (
+                eintrag.UniqueProcessId or 0,
+                eintrag.InheritedFromUniqueProcessId or 0,
+                max(eintrag.CreateTime, 0),
+                name,
+            )
+        )
         if not eintrag.NextEntryOffset:
             return liste
         versatz += eintrag.NextEntryOffset
@@ -966,7 +1017,10 @@ def passende(muster: str, *, zeitgrenze: float = 30) -> list[tuple[int, str]]:
     ``re.error`` (Programmierfehler, kein Laufzeitfall).
 
     Linux: ``pgrep -af`` (Exit 1 = kein Treffer). Windows: Kernel-Prozessliste, je Prozess
-    die Kommandozeile (geschützte Prozesse ohne lesbare Kommandozeile passen nie).
+    die Kommandozeile. Ist sie unlesbar (fremdes Konto, erhöhte Rechte), entscheidet der
+    Programmname laut Kernel: passt er, zählt der Prozess fail-closed als Treffer mit dem
+    Programmnamen als Kommandozeile (#562) — ein Deploy unter fremdem Konto heißt nie „frei“.
+    Passt auch der Name nicht, bleibt der Prozess draußen.
     """
     regex = re.compile(muster)
     if _WINDOWS:
@@ -1033,12 +1087,26 @@ def _passende_windows(regex: re.Pattern[str]) -> list[tuple[int, str]]:
     except OSError as fehler:
         raise ProzesslisteFehler(f"Windows-Prozessliste nicht nutzbar ({fehler})") from None
     eigene = _eigene_kette_windows(liste)
+    namen: dict[int, str] | None = None  # erst holen, wenn eine Kommandozeile unlesbar ist
     treffer = []
     for pid in liste:
         if pid <= 4 or pid in eigene:  # 0 = Leerlauf, 4 = System: ohne Kommandozeile
             continue
         kommandozeile = _kommandozeile_windows(pid)
-        if kommandozeile and regex.search(kommandozeile):
+        if not kommandozeile:
+            # ponytail: nur der Programmname — ein Skript-Deploy (bash.exe …) unter fremdem
+            # Konto bleibt unsichtbar; Upgrade: Kommandozeile mit erhöhten Rechten lesen.
+            if namen is None:
+                try:
+                    namen = _programmnamen_windows()
+                except OSError as fehler:
+                    raise ProzesslisteFehler(f"Windows-Prozessliste nicht nutzbar ({fehler})") from None
+            kommandozeile = namen.get(pid, "")
+            if kommandozeile and regex.search(kommandozeile):
+                log.info("Kommandozeile von PID %s unlesbar, Programmname %s passt: Treffer", pid, kommandozeile)
+                treffer.append((pid, kommandozeile))
+            continue
+        if regex.search(kommandozeile):
             treffer.append((pid, kommandozeile))
     return treffer
 

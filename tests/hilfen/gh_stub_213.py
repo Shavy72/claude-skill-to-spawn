@@ -81,6 +81,7 @@ def _kommentare(nummer: str, daten: dict) -> list[dict]:
 
 
 def main() -> int:
+    sys.stdout.reconfigure(encoding="utf-8")  # wie echtes gh; Windows-Pipe wäre cp1252 (#553)
     args = sys.argv[1:]
     protokoll = os.environ.get("GH_STUB_PROTOKOLL")
     if protokoll:

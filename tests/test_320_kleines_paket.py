@@ -76,7 +76,8 @@ def _gh_befehl_im_kind(tmp_path: Path, *, test_merker: bool) -> subprocess.Compl
     leer = tmp_path / "leer"
     leer.mkdir()
     env = {k: v for k, v in os.environ.items() if k not in ("PYTEST_CURRENT_TEST", "TO_SPAWN_TESTLAUF")}
-    env.update(TO_SPAWN_GH_STUB=str(stub), PATH=str(leer), PYTHONPATH=str(SKILL))
+    # PYTHONUTF8: sonst schreibt das Kind stderr unter Windows in der ANSI-Codepage (cp1252).
+    env.update(TO_SPAWN_GH_STUB=str(stub), PATH=str(leer), PYTHONPATH=str(SKILL), PYTHONUTF8="1")
     if test_merker:
         env["TO_SPAWN_TESTLAUF"] = "1"
     return subprocess.run(
