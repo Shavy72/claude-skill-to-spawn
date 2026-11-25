@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import logging
 import os
-import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -184,6 +183,38 @@ def pruefen(repo: Path, basis: str, ziel: str, art: pruefplan.Art | None = None,
         )
         _schreibe(repo, zeile, art, warnung)
         return Urteil(leiter.GRUEN, zeile)
+    letzter = protokoll.letzter_lauf(repo)
+    wiederholt_grund = regeln.blinde_wiederholung(letzter, basis_sha, ziel_sha, schluessel)
+    if wiederholt_grund:
+        gemerkte_rote = (
+            list(letzter.get("rote_tests", []))
+            if isinstance(letzter, dict) and isinstance(letzter.get("rote_tests"), list)
+            else []
+        )
+        rote_namen = protokoll.letzte_rote(repo)
+        hinweis = f" — zuletzt rot: {', '.join(rote_namen)}" if rote_namen else ""
+        zeile = protokoll.zeile(
+            basis=basis_sha,
+            ziel=ziel_sha,
+            exit_code=leiter.ROT,
+            stufen=[
+                {
+                    "name": "nach_rot",
+                    "adapter": "",
+                    "lief": False,
+                    "grund": wiederholt_grund,
+                    "dauer_s": round(time.monotonic() - start, 2),
+                    "befehl": "",
+                }
+            ],
+            werkzeug=[regeln.stand()],
+            fehler_kurz=f"{wiederholt_grund}{hinweis}",
+            gesamt_s=time.monotonic() - start,
+            rote_tests=gemerkte_rote,
+            schluessel=schluessel,
+        )
+        _schreibe(repo, zeile, art, warnung)
+        return Urteil(leiter.ROT, zeile)
     eigen = pruefplan.befehl(config.lade(repo), art) if art is not None else None
     with temp_ordner.lauf(repo, von="pruef"):
         if eigen:
@@ -224,6 +255,13 @@ def pruefen(repo: Path, basis: str, ziel: str, art: pruefplan.Art | None = None,
         gesamt_s=time.monotonic() - start,
         auswahl=[stufe.auswahl for stufe in liste if stufe.auswahl] or None,
         wackler=[{"test": test, "adapter": stufe.adapter} for stufe in liste for test in stufe.wackler],
+        rote_tests=[
+            {"test": test, "adapter": stufe.adapter}
+            for stufe in liste
+            if stufe.ergebnis == leiter.ROT
+            for test in stufe.rote_tests
+        ],
+        schluessel=schluessel,
     )
     _schreibe(repo, zeile, art, warnung)
     cache.merke(schluessel, zeile)

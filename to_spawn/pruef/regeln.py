@@ -15,8 +15,12 @@ Abgleich zu ``/`` (Windows).
   Auswahl sieht nur ``basis..HEAD``, der Lauf aber den Arbeitsbaum.
 - **R3** Prüf-Konfig, Abhängigkeiten, ``conftest.py``, Test-Setup oder ``pruefen.risiko_pfade`` aus
   ``.to-spawn/config.json`` geändert → voll.
-- **LF** Der letzte Lauf im Protokoll war rot oder ein Gate-Fehler → voll; so laufen die zuletzt roten
-  Tests sicher mit (``--lf`` als Obermenge, für Python und Node gleich).
+- **LF / Nach Rot** Der letzte Lauf im Protokoll war rot oder ein Gate-Fehler:
+  - Bei unverändertem Stand (gleiche Basis, gleiches Ziel, gleicher Schlüssel) wird ein roter Lauf
+    nie blind wiederholt (:func:`blinde_wiederholung`, #795).
+  - Sind die zuletzt roten Tests bekannt und der Adapter kann sie gezielt mit der Auswahl starten,
+    laufen zuerst genau diese roten Tests plus die Auswahl des Tickets (#795).
+  - Sonst (Gate-Fehler oder rote Tests unbekannt) → voll; so laufen zuletzt rote Tests sicher mit.
 - **S0** Art ``schnell`` (#425) prüft nie voll: Wo ein Grund oben „voll“ verlangt, läuft kein Test.
   Ist dabei eine Code-Datei geändert (:func:`code_datei`), ist das ein Gate-Fehler, nie Grün;
   ohne Code-Datei bleibt es eine ausgelassene Stufe. ≥ 1 gewählter Test ist auch hier sicher (R2).
@@ -33,6 +37,7 @@ import hashlib
 import json
 from collections.abc import Collection, Sequence
 from pathlib import Path, PurePosixPath
+from typing import Any
 
 #: Code-Endungen je Adapter; alles andere ist für diesen Adapter Nicht-Code (R1).
 CODE_ENDUNGEN = {
@@ -80,8 +85,7 @@ _LF_URTEILE = frozenset({"rot", "gate-fehler"})
 
 def normal(pfad: str) -> str:
     """Pfad für jeden Abgleich: ``\\`` → ``/``, ohne führendes ``./``."""
-    pfad = pfad.replace("\\", "/")
-    return pfad[2:] if pfad.startswith("./") else pfad
+    return pfad.replace("\\", "/").removeprefix("./")
 
 
 def _ist_r3(pfad: str, risiko: list[str]) -> bool:
@@ -112,6 +116,26 @@ def risiko_pfade(repo: Path) -> list[str] | None:
     return muster
 
 
+def blinde_wiederholung(
+    letzter: dict[str, Any] | None,
+    basis: str,
+    ziel: str,
+    schluessel: str | None,
+) -> str:
+    """Grund, warum ein roter Lauf nicht blind wiederholt wird; ``""`` = Lauf darf starten (#795).
+
+    Greift nur bei eindeutig unverändertem Stand (Basis, Ziel und Prüf-Schlüssel identisch zum
+    letzten roten Lauf); bei fehlendem Schlüssel bleibt die Prüfung fail-closed offen.
+    """
+    if letzter is None or str(letzter.get("urteil", "")) != "rot":
+        return ""
+    if not schluessel or letzter.get("schluessel") != schluessel:
+        return ""
+    if letzter.get("basis") != basis or letzter.get("ziel") != ziel:
+        return ""
+    return "Nach Rot: Stand unverändert seit letztem roten Lauf — roter Lauf wird nicht blind wiederholt"
+
+
 def vorab(
     pfade: list[str] | None,
     adapter: str,
@@ -120,11 +144,14 @@ def vorab(
     r1: bool = True,
     doku: Collection[str] = frozenset(),
     offen: Sequence[str] | None = (),
+    rote_tests: Sequence[str] = (),
 ) -> str:
     """Grund für „voll“ vor der Auswahl; ``""`` = Auswahl darf laufen. ``r1=False`` nur im Rot-Beweis.
 
     ``doku`` = erklärte Doku aus ``sofort.erklaerte_doku``; ``offen`` = Änderungen im Arbeitsbaum
     gegen ``HEAD`` (``sofort.ungespeichert(repo)``, dieselbe Stelle wie das Gate), ``None`` = unklar.
+    ``rote_tests`` = bekannte rote Tests des letzten roten Laufs (#795): liegen sie vor, erlaubt die
+    „Nach Rot“-Regel den gezielten Lauf „Rote + Auswahl“ statt blindem Voll-Lauf.
     """
     if pfade is None:
         return "geänderte Dateien unbekannt (git diff gescheitert)"
@@ -132,7 +159,7 @@ def vorab(
         return "nichts geändert (nie Grün ohne Lauf)"
     if risiko is None:
         return "R3: pruefen.risiko_pfade unlesbar"
-    if letztes_urteil in _LF_URTEILE:
+    if letztes_urteil in _LF_URTEILE and not (letztes_urteil == "rot" and rote_tests):
         return f"LF: letzter Lauf {letztes_urteil}, zuletzt rote Tests laufen mit"
     if offen is None:
         return "AB: Arbeitsbaum unklar (git gescheitert)"
