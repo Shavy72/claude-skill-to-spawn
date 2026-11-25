@@ -464,3 +464,81 @@ def test_zeitgrenze_haelt_auch_bei_setsid_enkel(tmp_path: Path) -> None:
                 os.kill(int(pid_datei.read_text(encoding="utf-8").strip()), 9)
             except (OSError, ValueError):
                 pass
+
+
+# --- #468: Kopfwechsel im Hintergrund-Lauf -------------------------------------------------------
+
+
+def test_hintergrund_kopfwechsel_vor_kind_pruefung_keine_falschmeldung(
+    tmp_path: Path, echtes_nachziehen: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#468: Neuer Kopf kommt an, bevor das Kind prüft — Kind prüft den neuen Kopf, keine Falschmeldung."""
+    zaehl = tmp_path / "zaehl.txt"
+    klon, konfig = _klon(tmp_path, {"komplett": _befehl(zaehl)})
+    anderer, zweig = _mit_origin(tmp_path, klon)
+    echt = komplett_lauf.starter.starte
+    neuer_kopf: list[str] = []
+
+    def mit_kopfwechsel(argv: list[str], **kw: Any) -> Any:
+        if not neuer_kopf:
+            neuer_kopf.append(_neu_auf_origin(anderer, zweig, klon, "waehrenddessen.txt"))
+        return echt(argv, **kw)
+
+    monkeypatch.setattr(komplett_lauf.starter, "starte", mit_kopfwechsel)
+    erg = komplett_lauf.komplett_einmal(
+        klon, SPEC, Moment.ALLE_AUF_STAGING, konfig, takt=True
+    )
+    assert len(neuer_kopf) == 1
+    assert "ohne Ergebnis" not in erg.grund, erg
+    assert (erg.gelaufen, erg.ok, erg.laeuft, erg.kopf) == (True, True, False, neuer_kopf[0]), erg
+    assert "grün" in erg.grund, erg.grund
+    assert _laeufe(zaehl) == 1
+
+
+def test_hintergrund_kopfwechsel_nach_kind_pruefung_keine_falschmeldung(
+    tmp_path: Path,
+) -> None:
+    """#468: Kopf wechselt nach Start des Prüf-Befehls — kein „ohne Ergebnis“, aber noch nicht frei."""
+    zaehl = tmp_path / "zaehl.txt"
+    # Der Prüf-Befehl zählt sich und erzeugt während des Laufs einen neuen Commit im Klon,
+    # sodass der Merker auf den geprüften alten Kopf zeigt, HEAD danach aber schon weiter ist.
+    befehl = (
+        f"{_befehl(zaehl)} && "
+        "printf 'neu\\n' > nach.txt && "
+        "git add nach.txt && "
+        "git -c user.name=Bau -c user.email=bau@example.invalid commit -q -m nach"
+    )
+    klon, konfig = _klon(tmp_path, {"komplett": befehl})
+    alt = _git(klon, "rev-parse", "HEAD")
+    erg = komplett_lauf.komplett_einmal(
+        klon, SPEC, Moment.ALLE_AUF_STAGING, konfig, takt=True
+    )
+    neu = _git(klon, "rev-parse", "HEAD")
+    assert neu != alt
+    assert "ohne Ergebnis" not in erg.grund, erg
+    assert erg.ok and erg.laeuft and not erg.frei, erg
+    assert erg.kopf == neu, erg
+    assert _laeufe(zaehl) == 1
+
+
+def test_hintergrund_echt_ohne_ergebnis_meldet_fehler(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#468: Endet der Hintergrund-Lauf wirklich ohne Merker, bleibt die Fehlermeldung erhalten."""
+    zaehl = tmp_path / "zaehl.txt"
+    klon, konfig = _klon(tmp_path, {"komplett": _befehl(zaehl)})
+    echt = komplett_lauf.starter.starte
+    absturz = Path(os.environ[komplett_lauf.starter.TEST_BIN_ENV]) / "absturz_468.py"
+    absturz.write_text("import sys\nprint('kaputt')\nsys.exit(9)\n", encoding="utf-8")
+
+    def abgestuerzt(argv: list[str], **kw: Any) -> Any:
+        return echt([sys.executable, str(absturz)], **kw)
+
+    monkeypatch.setattr(komplett_lauf.starter, "starte", abgestuerzt)
+    erg = komplett_lauf.komplett_einmal(
+        klon, SPEC, Moment.ALLE_AUF_STAGING, konfig, takt=True
+    )
+    assert (erg.gelaufen, erg.ok, erg.laeuft) == (False, False, False), erg
+    assert "ohne Ergebnis beendet (Exit 9)" in erg.grund and "kaputt" in erg.grund, erg.grund
+    assert komplett_lauf.lies_merker(klon, SPEC) is None
+

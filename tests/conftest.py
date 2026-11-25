@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -20,7 +21,7 @@ import tempfile
 import textwrap
 import time
 from collections.abc import Callable, Iterator
-from pathlib import Path
+from pathlib import Path, PurePath
 from typing import Any
 
 import pytest
@@ -80,6 +81,19 @@ _ATTRAPPEN: set[str] = set()
 def stub_pfad(skript: Path) -> Path:
     """Pfad für ``TO_SPAWN_GH_STUB``-artige Env-Variablen: Windows ``name.py`` (Produktcode startet es über den Interpreter), sonst ``skript``."""
     return skript.with_name(skript.name + ".py") if os.name == "nt" else skript
+
+
+def shell_befehl(skript: PurePath, interpreter: str | PurePath = sys.executable) -> str:
+    """Shell-Befehlszeile für eine :func:`attrappe`, z. B. ``remote.origin.uploadpack`` (#643).
+
+    ``git`` startet solche Konfig-Werte über ``sh -c`` (unter Windows Git-Bash/MSYS2):
+    Backslashes im Windows-Pfad würden dort als Escape-Zeichen geschluckt, und ein
+    Shebang trägt unter Windows weder Backslashes noch Leerzeichen im Interpreter-Pfad.
+    Vorwärtsschrägstriche plus ``shlex.quote`` mit dem laufenden Interpreter starten
+    die Attrappe unter Linux, macOS und Windows gleich.
+    """
+    interp = interpreter if isinstance(interpreter, PurePath) else Path(interpreter)
+    return f"{shlex.quote(interp.as_posix())} {shlex.quote(skript.as_posix())}"
 
 
 def attrappe(ordner: Path, name: str, python_code: str) -> Path:

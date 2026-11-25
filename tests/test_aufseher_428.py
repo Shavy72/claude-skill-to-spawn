@@ -54,16 +54,8 @@ ERLAUBTE_WACHE_VORSILBEN: tuple[str, ...] = ("Deploy-", "Gate-", "Blocker-", "Um
 RUECKWAERTS_MARKE = "#428-alt"
 
 #: Einzelne Fundstellen (Datei, Zeilentext ohne Rand-Leerzeichen), die den alten Namen tragen dürfen.
-#: Neue Einträge nur mit Ticket-Grund.
-AUSNAHME_ZEILEN: frozenset[tuple[str, str]] = frozenset(
-    {
-        # 1:1-Übernahme, Angleichung folgt in #214 Teil B
-        (
-            "review-hook/stop.py",
-            '"""„Mensch nötig“ zusätzlich als JSON-Zeile festhalten (nachts liest die Wache das',
-        ),
-    }
-)
+#: Neue Einträge nur mit Ticket-Grund. (#214 Teil B: review-hook/stop.py angeglichen, Liste wieder leer.)
+AUSNAHME_ZEILEN: frozenset[tuple[str, str]] = frozenset()
 
 ROLLEN_MUSTER = re.compile(r"Wächter\w*|\bWachen?\b|\b[Ww]atchers?\b")
 
