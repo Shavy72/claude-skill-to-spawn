@@ -176,17 +176,21 @@ def test_punkt1_auf_platte_warten_fragt_fremde_tickets_doppelt_und_prozesse_je_o
     monkeypatch.setattr(hausmeister.uebergabe_sichern, "sichern", lambda **_kw: None)
 
     zyklen = speicher.auf_platte_warten(wer="bau 1477")
-    assert zyklen == 0, "9,5 % >= 5 % Startsperre: kein Wartezyklus, trotzdem synchroner Hausmeister-Lauf"
+    assert zyklen == 0, "9,5 % >= 5 % Startsperre: kein Wartezyklus"
+    assert gh_abfragen == [], "Kern-Fix #781: auf_platte_warten startet bei 9,5 % ohne synchronen Fremd-Ticket-Scan"
+    assert prozess_aufrufe == 0
 
+    # Direkter Hausmeister-Rundgang bei Platznot: Ticket-Daten gecacht (#781 Kern),
+    # Windows-Verstärker (_prozesse-Cache) bleibt offen für den Windows-Teil von #781.
+    rund = hausmeister.rundgang(loeschen=True)
+    assert rund.gelaufen is True
     gefragte_tickets = [nr for nr, _ in gh_abfragen]
-    assert 1498 in gefragte_tickets and 1499 in gefragte_tickets, (
-        "bau 1477 hat über auf_platte_warten fremde Tickets per gh abgefragt"
-    )
-    assert gefragte_tickets.count(1498) == 2 and gefragte_tickets.count(1499) == 2, (
-        "Jeder Ordner wird bei Platznot zweimal per gh abgefragt (_schliesszeit + _regeln)"
+    assert 1498 in gefragte_tickets and 1499 in gefragte_tickets
+    assert gefragte_tickets.count(1498) == 1 and gefragte_tickets.count(1499) == 1, (
+        "Kern-Fix #781: jeder Ordner wird je Rundgang höchstens einmal per gh abgefragt (_TICKET_DATEN_CACHE)"
     )
     assert prozess_aufrufe == 2, (
-        "Windows-Verstärker: hausmeister_windows._prozesse() läuft ohne Cache einmal je geschlossenem Ordner"
+        "Windows-Verstärker (offen): hausmeister_windows._prozesse() läuft ohne Cache einmal je geschlossenem Ordner"
     )
 
 
