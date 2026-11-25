@@ -43,7 +43,7 @@ def _bau_vorbereiten(
     monkeypatch.setattr(bau, "HOME", tmp_path / "leeres-home")
     monkeypatch.setenv("TMPDIR", str(tmp_path / "tmp"))
     (tmp_path / "tmp").mkdir(exist_ok=True)
-    monkeypatch.setattr(bau.temp_ordner, "umgebung", lambda: {"TMPDIR": str(tmp_path / "tmp")})
+    monkeypatch.setattr(bau.temp_ordner, "umgebung", lambda *_a, **_k: {"TMPDIR": str(tmp_path / "tmp")})
     monkeypatch.delenv("LOCALAPPDATA", raising=False)
     monkeypatch.delenv("BAU_AUFTRAG", raising=False)
     monkeypatch.setattr(bau, "gh_repo_ermitteln", lambda _repo: "test/fremdrepo")
@@ -106,7 +106,7 @@ def test_mit_eigenem_git_hooks_pfad_richtet_hook_ein(tmp_path: Path) -> None:
     hooks = quelle / "hooks"
     hooks.mkdir()
     (hooks / "setup_hooks.sh").write_text(
-        f"#!/bin/sh\ntest -d \"$1\" && printf '%s\\n' \"$1\" > \"{marke.as_posix()}\"\n",
+        f'test -d "$1" && printf \'%s\\n\' "$1" > "{marke.as_posix()}"\n',
         encoding="utf-8",
     )
     _git(quelle, "add", "-A")
