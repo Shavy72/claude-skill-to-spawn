@@ -35,7 +35,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
-from to_spawn import config
+from to_spawn import config, prozessbaum
 from to_spawn.pruef import ausfuehren, cache, leiter
 
 log = logging.getLogger("to_spawn.pruef")
@@ -106,6 +106,7 @@ def _git(repo: Path, *args: str) -> tuple[int, str]:
             encoding="utf-8",
             errors="replace",
             check=False,
+            **prozessbaum.fensterlos(),
         )
     except OSError as fehler:
         return ausfuehren.NICHT_GESTARTET, str(fehler)
@@ -142,6 +143,7 @@ def _git_status(repo: Path, *args: str) -> tuple[str, str]:
             encoding="utf-8",
             errors="replace",
             check=False,
+            **prozessbaum.fensterlos(),
         )
     except OSError as fehler:
         return "", str(fehler)

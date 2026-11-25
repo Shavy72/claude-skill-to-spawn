@@ -19,7 +19,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
-from conftest import attrappe
+from conftest import attrappe, shell_befehl
 from test_hausmeister_1368 import Welt, git, welt  # noqa: F401 — ``welt`` ist ein Fixture
 from test_hausmeister_skill_ordner_235 import _lauf, _ordner, _vorgabe
 from test_hausmeister_ticket_repo_176 import SKILL, TAG, Repos, repos  # noqa: F401
@@ -179,16 +179,16 @@ def test_m1a_ohne_nummer_server_nicht_erreichbar_bleibt(welt: Welt, repos: Repos
         welt.tmp,
         "upload-pack-aus-beim-ls-remote",
         f"""
-        import os, pathlib, sys
+        import pathlib, subprocess, sys
         marke = pathlib.Path({str(marke)!r})
         if marke.is_file():
             print("Server weg", file=sys.stderr)
             sys.exit(1)
         marke.touch()
-        os.execvp("git-upload-pack", ["git-upload-pack", *sys.argv[1:]])
+        sys.exit(subprocess.run(["git", "upload-pack", *sys.argv[1:]], check=False).returncode)
         """,
     )
-    git(wt, "config", "remote.origin.uploadpack", str(wrapper))
+    git(wt, "config", "remote.origin.uploadpack", shell_befehl(wrapper))
     welt.jetzt += 30 * TAG
 
     r = _lauf(welt)["skill-doku86"]

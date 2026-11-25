@@ -13,7 +13,9 @@ Erst wird alles gelesen und geplant. Verletzt eine Vorbedingung (Spec geschlosse
 Issue nicht in diesem Repo, Eintrag verletzt Pflichtfeld oder Grenze
 ``staffel.grenze_k`` laut :func:`manifest.pruefe_eintrag`, Abnahme-Ticket als
 Blocker), wird nichts geschrieben — ein zu großes Ticket wird so nie startbar.
-Nach dem Schreiben prüft :func:`manifest.pruefe` die ganze Spec; deren Weigerung
+Nach dem Schreiben prüft :func:`manifest.pruefe` die ganze Spec (mit
+``checkpoint_pflicht=False``, #406: ein noch fehlendes Abnahme-Ticket ist beim
+Anhängen nur Info, erst ``regularien``/``spawn`` prüfen es hart); deren Weigerung
 (Exit 3) betrifft dann nur noch andere Tickets oder die GitHub-Kette.
 Das GitHub-Repo kommt aus ``origin`` (:func:`gh.repo_aus_origin`), nie fest.
 Gestartet wird hier nichts — das bleibt beim Aufpasser.
@@ -107,7 +109,7 @@ def anhaengen(
             zeilen.append(f"ok  {schritt.text}")
     if not pruefen:
         return Ergebnis(0, zeilen)
-    bericht = manifest.pruefe(repo, s, konfig)
+    bericht = manifest.pruefe(repo, s, konfig, checkpoint_pflicht=False)
     zeilen.extend(bericht.text().splitlines())
     return Ergebnis(0 if bericht.sauber else manifest.EXIT_WEIGERUNG, zeilen)
 
