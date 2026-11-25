@@ -74,6 +74,13 @@ class _WinWelt:
 
         monkeypatch.setattr(ctypes, "get_last_error", self._get_last_error, raising=False)
         monkeypatch.setattr(ctypes, "set_last_error", self._set_last_error, raising=False)
+        # _hausmeister_nur_im_test (#649) filtert auf Nachfahren von os.getpid();
+        # diese gestellte Kernel-Welt hat keine echten Rechner-Prozesse.
+        monkeypatch.setattr(
+            prozessbaum,
+            "arbeitsordner_in_windows",
+            getattr(prozessbaum.arbeitsordner_in_windows, "__wrapped__", prozessbaum.arbeitsordner_in_windows),
+        )
         monkeypatch.setattr(prozessbaum, "_win32", lambda: (self._kernel(), self._nt()))
         monkeypatch.setattr(
             prozessbaum,
