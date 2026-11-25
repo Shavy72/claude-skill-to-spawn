@@ -768,23 +768,28 @@ def _arbeitsordner_griff_windows(pid: int) -> int | None:
             return None
         raise OSError(fehler, f"OpenProcess({pid}) zum Übernehmen des cwd-Griffs gescheitert")
     try:
-        code = ctypes.c_ulong(0)
-        if kernel.GetExitCodeProcess(prozess, ctypes.byref(code)) and code.value != _STILL_ACTIVE:
-            return None
+        for _ in range(3):
+            code = ctypes.c_ulong(0)
+            if kernel.GetExitCodeProcess(prozess, ctypes.byref(code)) and code.value != _STILL_ACTIVE:
+                return None
 
-        vorher = _curdir(prozess, pid)
-        fremd = int.from_bytes(vorher[16:24], "little")
-        if not fremd:
-            raise OSError(f"Prozess {pid}: kein cwd-Griff im PEB")
-        kopie = ctypes.c_void_p()
-        if not kernel.DuplicateHandle(
-            prozess, fremd, kernel.GetCurrentProcess(), ctypes.byref(kopie), 0, False, _DUPLICATE_SAME_ACCESS
-        ):
-            raise OSError(ctypes.get_last_error(), f"DuplicateHandle({pid}) gescheitert")
-        if _curdir(prozess, pid) != vorher:  # cwd wechselte: der Griff-Wert kann schon einem anderen gehören
+            vorher = _curdir(prozess, pid)
+            fremd = int.from_bytes(vorher[16:24], "little")
+            if not fremd:
+                raise OSError(f"Prozess {pid}: kein cwd-Griff im PEB")
+            kopie = ctypes.c_void_p()
+            if not kernel.DuplicateHandle(
+                prozess, fremd, kernel.GetCurrentProcess(), ctypes.byref(kopie), 0, False, _DUPLICATE_SAME_ACCESS
+            ):
+                fehler = ctypes.get_last_error()
+                if _curdir(prozess, pid) != vorher:  # cwd wechselte vor DuplicateHandle
+                    continue
+                raise OSError(fehler, f"DuplicateHandle({pid}) gescheitert")
+            if _curdir(prozess, pid) == vorher:
+                return kopie.value
+            # cwd wechselte: der Griff-Wert kann schon einem anderen gehören — kurz erneut prüfen
             kernel.CloseHandle(kopie)
-            raise OSError(f"Prozess {pid}: cwd wechselte während der Prüfung")
-        return kopie.value
+        raise OSError(f"Prozess {pid}: cwd wechselte während der Prüfung")
     finally:
         kernel.CloseHandle(prozess)
 
