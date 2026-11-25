@@ -27,7 +27,7 @@ from pathlib import Path
 _SKILL = str(Path(__file__).resolve().parent.parent)
 if _SKILL not in sys.path:
     sys.path.insert(0, _SKILL)
-from to_spawn import belege, config, manifest  # noqa: E402
+from to_spawn import belege, capo, config, manifest  # noqa: E402
 from to_spawn.belege import Lauf  # noqa: E402
 
 log = logging.getLogger("test_uebersicht")
@@ -113,6 +113,7 @@ _CSS = """
 background:var(--bg);color:var(--text)}main{max-width:760px;margin:0 auto;padding:20px 16px 48px}
 h1{font-size:1.9rem;line-height:1.25;margin:.2em 0 .4em}.leise{color:var(--leise)}
 .erklaer{background:var(--karte);border:1px solid var(--rand);border-radius:12px;padding:12px 16px;margin:16px 0}
+.hinweis{background:var(--grau-bg);border:1px solid var(--rand);border-radius:10px;padding:10px 14px;margin:10px 0}
 .karte{background:var(--karte);border:1px solid var(--rand);border-left:6px solid var(--grau);
 border-radius:12px;padding:14px 16px;margin:12px 0}.karte.gruen{border-left-color:var(--gruen)}
 .karte.rot{border-left-color:var(--rot)}.karte h2{font-size:1.05rem;margin:0 0 6px}
@@ -134,36 +135,49 @@ def _stand(lauf: Lauf) -> str:
     return datetime.fromtimestamp(lauf.zeit).strftime("%Y-%m-%d %H:%M") if lauf.zeit else "unbekannt"
 
 
-def _karte_html(k: Karte) -> str:
+def _karte_html(
+    k: Karte, *, belege_rel: str = capo.BELEGE_ORDNER, suchpfad: Path | None = None
+) -> str:
     e = html.escape
     marke, titel_quelle = _STATUS_TEXT[k.status], "Zahl stammt aus"
     if k.lauf:
-        befehl = k.lauf.befehl or f"Befehl nicht mitgeschrieben — Ausgabe aus docs/verify-hard/{k.lauf.datei}"
+        befehl = k.lauf.befehl or f"Befehl nicht mitgeschrieben — Ausgabe aus {belege_rel}/{k.lauf.datei}"
         beleg = f"<code>{e(befehl)}</code><br><code>{e(k.lauf.zeile)}</code>"
         zahl = f" ({k.lauf.passed} von {k.lauf.passed + k.lauf.failed} Tests grün)"
-        quelle = f"<code>docs/verify-hard/{e(k.lauf.datei)}</code> · Stand {_stand(k.lauf)}"
+        quelle = f"<code>{e(belege_rel)}/{e(k.lauf.datei)}</code> · Stand {_stand(k.lauf)}"
         if k.verdeckt and k.status == "offen":
             v = k.verdeckt
             marke = "⚠️ offen — neuer Teil-Lauf deckt älteren roten Lauf nicht ab"
             beleg += (
                 f"<br>Der neueste Lauf war grün, hat aber nur {k.lauf.passed} Tests geprüft. Ein älterer Lauf "
                 f"mit {v.passed + v.failed} Tests hatte {v.failed} Fehler "
-                f"(<code>docs/verify-hard/{e(v.datei)}</code> · Stand {_stand(v)}). Es fehlt: "
+                f"(<code>{e(belege_rel)}/{e(v.datei)}</code> · Stand {_stand(v)}). Es fehlt: "
                 f"{e(k.hinweis)}."
             )
     else:
-        zahl, quelle = f" ({KEIN_LAUF})", "—"
+        pfad_ort = str(suchpfad) if suchpfad is not None else f"{belege_rel}/"
+        zahl = f" ({KEIN_LAUF})"
         if k.abnahme:
             beleg = f"<code>ABNAHME: {e(k.abnahme)}</code>"
             titel_quelle = "Aussage stammt aus"
-            quelle = f"Abnahme-Zeile in <code>docs/verify-hard/{e(k.abnahme_datei)}</code>"
+            quelle = f"Abnahme-Zeile in <code>{e(belege_rel)}/{e(k.abnahme_datei)}</code>"
             if k.status != "offen":  # grün/rot steht in der Marke, ein „offen“ daneben widerspräche
                 zahl = ""
                 marke = "✅ grün — laut Abnahme-Zeile" if k.status == "gruen" else "❌ rot — laut Abnahme-Zeile"
         elif k.dateien:
-            beleg = "Belegseite ohne Testzahl: " + ", ".join(f"<code>{e(d)}</code>" for d in k.dateien)
+            beleg = "Belegseite ohne Testzahl: " + ", ".join(
+                f"<code>{e(belege_rel)}/{e(d)}</code>" for d in k.dateien
+            )
+            titel_quelle = "Gesuchter Pfad"
+            quelle = f"<code>{e(pfad_ort)}</code>"
         else:
-            beleg = "Keine Belegseite unter docs/verify-hard/ gefunden."
+            beleg = (
+                f"Keine Belegseite unter <code>{e(belege_rel)}/</code> gefunden "
+                f"(gesucht z. B. <code>{e(belege_rel)}/{e(k.nummer)}_gruen.txt</code>, "
+                f"<code>{e(belege_rel)}/{e(k.nummer)}.md</code>)."
+            )
+            titel_quelle = "Gesuchter Pfad"
+            quelle = f"<code>{e(pfad_ort)}</code>"
     klick = "ja — jemand hat es am echten System durchgeklickt" if k.klickweg else "nein"
     rot = (
         " Vorher gab es einen Rot-Beweis (der Test ist vor der Reparatur absichtlich gescheitert)."
@@ -180,21 +194,37 @@ def _karte_html(k: Karte) -> str:
     )
 
 
-def baue_html(spec: int, karten: list[Karte], heute: str) -> str:
+def baue_html(
+    spec: int,
+    karten: list[Karte],
+    heute: str,
+    *,
+    belege_rel: str = capo.BELEGE_ORDNER,
+    suchpfad: Path | None = None,
+) -> str:
     """Komplette Seite (mobil tauglich, Hell/Dunkel über Farb-Tokens)."""
     e = html.escape
+    kopf = kopfzeile(karten)
+    pfad_ort = str(suchpfad) if suchpfad is not None else f"{belege_rel}/"
+    hinweis = (
+        f'<p class="hinweis">Gesuchter Beleg-Pfad: <code>{e(pfad_ort)}</code> '
+        f"(erwartet z. B. <code>{e(belege_rel)}/&lt;N&gt;_gruen.txt</code>, "
+        f"<code>{e(belege_rel)}/&lt;N&gt;.md</code> oder Ordner <code>{e(belege_rel)}/&lt;N&gt;/</code>).</p>"
+        if KEIN_LAUF in kopf
+        else ""
+    )
     return (
         '<!doctype html><html lang="de"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width,initial-scale=1">'
         f"<title>Test-Übersicht Spec {spec}</title><style>{_CSS}</style></head><body><main>"
         f'<p class="leise">Test-Übersicht Spec {spec} · Stand {e(heute)}</p>'
-        f"<h1>{e(kopfzeile(karten))}</h1>"
+        f"<h1>{e(kopf)}</h1>{hinweis}"
         '<div class="erklaer">Ein <b>Test</b> ist ein kleines Prüf-Programm: es probiert eine Funktion '
         "aus und meldet „grün“ (klappt) oder „rot“ (klappt nicht). Jede Karte unten ist ein Arbeitspaket "
         "(<b>Ticket</b>). Der <b>Beleg</b> zeigt den Befehl, mit dem geprüft wurde, und die Zeile, die "
         "der Computer als Ergebnis ausgegeben hat. <b>Live-Klickweg</b> heißt: ein Mensch (oder ein "
         "Programm in seiner Rolle) hat es im echten System ausprobiert.</div>"
-        + "".join(_karte_html(k) for k in karten)
+        + "".join(_karte_html(k, belege_rel=belege_rel, suchpfad=suchpfad) for k in karten)
         + "</main></body></html>\n"
     )
 
@@ -216,13 +246,21 @@ def main(argv: list[str] | None = None) -> int:
     except (OSError, ValueError, AttributeError, TypeError) as fehler:
         log.error("Manifest spec-%s nicht lesbar: %s", a.spec, fehler)
         return 2
-    verify_hard = repo / "docs" / "verify-hard"
+    belege_rel = capo.belege_ordner(config.lade(repo))
+    verify_hard = (repo / belege_rel).resolve()
     karten = [werte_ticket(verify_hard, nr, titel) for nr, titel in tickets]
     jetzt = datetime.now()
     ziel = a.aus or repo / "docs" / "test-uebersicht" / f"{jetzt.date().isoformat()}_spec{a.spec}.html"
     ziel.parent.mkdir(parents=True, exist_ok=True)
-    ziel.write_text(baue_html(a.spec, karten, jetzt.strftime("%Y-%m-%d %H:%M")), encoding="utf-8")
-    log.info("%s", kopfzeile(karten))
+    ziel.write_text(
+        baue_html(a.spec, karten, jetzt.strftime("%Y-%m-%d %H:%M"), belege_rel=belege_rel, suchpfad=verify_hard),
+        encoding="utf-8",
+    )
+    kopf = kopfzeile(karten)
+    if KEIN_LAUF in kopf:
+        log.warning("%s — gesucht unter %s", kopf, verify_hard)
+    else:
+        log.info("%s", kopf)
     sys.stdout.write(f"{ziel}\n")
     return 0
 
