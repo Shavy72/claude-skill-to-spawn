@@ -476,3 +476,13 @@ def test_rechenregel_nur_an_einer_stelle() -> None:
         if "os_grundlast_windows_mib" in text or "berechne_schwelle" in text:
             treffer.append(rel)
     assert treffer == ["to_spawn/config.py", "to_spawn/ort_wahl.py"]
+
+
+def test_test_attrappe_haelt_rechner_grenze_12_und_erlaubt_ort_wahl_lokal() -> None:
+    """Fix #802: Die Test-Attrappe (``_speicher_immer_frei``) hält die 16-GB-Referenz (Rechner-Grenze 12)
+    und bleibt zugleich für die dynamische Ort-Wahl unter Linux und Windows frei (``lokal``).
+    """
+    assert speicher.rechner_grenze(speicher.gesamt_kib()) == 12
+    for plattform in ("linux", "win32"):
+        erg = ort_wahl.entscheiden(config.DEFAULTS, art="klein", plattform=plattform, schlafen=lambda _: None)
+        assert erg.ort == ort_wahl.ORT_LOKAL, (plattform, erg.grund)
