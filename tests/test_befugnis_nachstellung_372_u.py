@@ -140,7 +140,8 @@ SOLL_3: frozenset[str] = frozenset(
         "k push ticket",
     }
 )
-#: Beleg/Review verlangt 2, beide Stände liefern 3: offen, Variante E / Folge-Issue.
+#: Beleg/Review verlangt 2, beide Stände liefern 3: offen, Variante E / Folge-Issue (#389).
+#: 11 deploy-/push-Fälle sind mit #383 aus OFFEN nach soll_2 gewandert (27 → 16).
 OFFEN: frozenset[str] = frozenset(
     {
         "k bash -c",
@@ -148,26 +149,15 @@ OFFEN: frozenset[str] = frozenset(
         "k cp nach cron",
         "k eval",
         "k gh api POST -f",
-        "k push +ticket",
-        "k push :ticket",
-        "k skill deploy",
         "k tee systemd",
         "k xargs bash",
-        "r10 bash $(ls deploy)",
         "r10 cmd-feld",
-        "r10 feld code",
-        "r10 git --no-pager push haupt",
-        "r10 git -C leer push haupt",
-        "r10 git -P push haupt",
         "r9 aws s3 rm",
-        "r9 bloßes git push",
         "r9 compose up -d",
         "r9 curl --json",
         "r9 curl -T",
         "r9 find -delete",
         "r9 gh issue delete",
-        "r9 push --tags",
-        "r9 push origin HEAD",
         "r9 rm tmp/..",
         "r9 rm wt/..",
     }
@@ -211,4 +201,4 @@ def test_u_faelle_fest_je_gruppe() -> None:
     )
     assert SOLL_3 <= set(BLOECKE) and OFFEN <= set(BLOECKE) and not SOLL_3 & OFFEN
     soll_2 = set(BLOECKE) - SOLL_3 - OFFEN
-    assert (len(soll_2), len(SOLL_3), len(OFFEN)) == (86, 13, 27)
+    assert (len(soll_2), len(SOLL_3), len(OFFEN)) == (97, 13, 16)

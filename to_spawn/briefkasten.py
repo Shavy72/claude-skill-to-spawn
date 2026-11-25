@@ -331,9 +331,10 @@ def antworten(
     """Antwort des Aufsehers auf die offene Frage ``frage_id`` schreiben.
 
     ``von`` nur aus :data:`AUFSEHER_VON` (``ValueError`` sonst; der Nutzer antwortet über
-    :func:`nutzer_antworten`). ``ValueError`` bei leerer ``wahl`` oder ohne offene Frage mit dieser
-    ``id``; ``Verweigert`` in einer Bau-Session und solange das Ticket auf den Nutzer wartet
-    (offene Klasse-2-Frage, ``.kaputt-*``-Datei oder unlesbare/kaputte Hauptdatei).
+    :func:`nutzer_antworten`). ``ValueError`` bei leerer ``wahl``, ohne nicht leeren Beleg
+    (Fundstelle Pflicht, #365) oder ohne offene Frage mit dieser ``id``; ``Verweigert`` in einer
+    Bau-Session und solange das Ticket auf den Nutzer wartet (offene Klasse-2-Frage,
+    ``.kaputt-*``-Datei oder unlesbare/kaputte Hauptdatei).
     """
     if von not in AUFSEHER_VON:
         raise ValueError(f"von {von!r}: der Aufseher schreibt nur als {', '.join(AUFSEHER_VON)}.")
@@ -510,6 +511,11 @@ def _schreibe_antwort(
             raise ValueError(f"Ticket {n}: keine offene Frage {frage_id!r} im Briefkasten.")
         if von != NUTZER_VON and (gruende or _klasse_2_offen(daten["fragen"])):
             raise Verweigert(f"Ticket {n}: wartet auf den Nutzer (Klasse 2 oder kaputte Datei).")
+        belege_liste = [str(b).strip() for b in belege if str(b).strip()]
+        if von != NUTZER_VON and not belege_liste:
+            raise ValueError(
+                "Beleg fehlt (--beleg): eine Antwort des Aufsehers braucht mindestens eine nicht leere Fundstelle."
+            )
         frage = treffer[-1]
         if frage.get("antwort") is not None:
             alt = frage.get("verworfen")
@@ -518,7 +524,7 @@ def _schreibe_antwort(
             "ts": _jetzt(),
             "wahl": wahl,
             "grund": grund,
-            "belege": list(belege),
+            "belege": belege_liste,
             "von": von,
         }
         manifest.schreibe_atomar(datei, daten)

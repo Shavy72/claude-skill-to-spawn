@@ -109,6 +109,7 @@ from to_spawn import (
     starter,
     ticket_zustand,
     vorfall,
+    werkzeug,
 )
 from to_spawn import sperre as _sperre
 from to_spawn.waechter_lauf import _LIMIT_TEXT as LIMIT_TEXT
@@ -788,13 +789,13 @@ _programm = prozessbaum.programm_name
 
 
 def session_id_aus_argv(argv: list[str]) -> str | None:
-    """``--session-id <id>`` oder ``--resume <id>`` aus einem ``claude``-Aufruf."""
-    if not any(_programm(a) == "claude" for a in argv):
+    """``--session-id <id>``, ``--resume <id>`` oder ``--conversation <id>`` aus ``claude``/``agy``."""
+    if not any(werkzeug.ist_session_programm(a) for a in argv):
         return None
     for i, a in enumerate(argv):
-        if a in ("--session-id", "--resume") and i + 1 < len(argv):
+        if a in ("--session-id", "--resume", "--conversation") and i + 1 < len(argv):
             return argv[i + 1]
-        for flag in ("--session-id=", "--resume="):
+        for flag in ("--session-id=", "--resume=", "--conversation="):
             if a.startswith(flag):
                 return a[len(flag) :]
     return None
@@ -1052,7 +1053,7 @@ def session_finden(
     """
     for pid in prozess_baum(pane_pid):
         argv = _argv(pid)
-        if not any(_programm(a) == "claude" for a in argv):
+        if not any(werkzeug.ist_session_programm(a) for a in argv):
             continue
         argv_sid = session_id_aus_argv(argv)
         info = _session_json_lesen(pid, window_id, pane_id, heim)
@@ -1820,7 +1821,7 @@ class Aufpasser:
             print(f"[trocken] Fenster {ziel} schließen ({freigabe.grund})")
             return "fenster"
         baum = prozess_baum(pane_pid) if pane_pid else []
-        claude = [pid for pid in baum if prozessbaum.ist_claude(pid)]
+        claude = [pid for pid in baum if werkzeug.ist_session_pid(pid)]
         nach_exit = bool(claude) and not kette_beenden
         if nach_exit:
             ende = self._claude_exit(ziel, claude)
