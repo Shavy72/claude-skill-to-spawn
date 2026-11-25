@@ -421,6 +421,28 @@ def test_anlegen_loest_repo_slug_auf_ticket_repo_der_maschinen_liste_auf(
     assert not ordner.exists(), ergebnis[ordner]
 
 
+def _worktree_pfade(haupt: Path) -> set[str]:
+    """Normalisierte Pfade aller in ``haupt`` eingetragenen Worktrees (Linux & Windows).
+
+    ``git worktree list --porcelain`` schreibt unter Windows Schrägstriche (``C:/…``),
+    ``str(Path.resolve())`` dagegen Backslashes (``C:\\…``) — der Vergleich läuft daher
+    über :func:`hausmeister._pfad_schluessel` statt über Rohtext.
+    """
+    aus = subprocess.run(
+        ["git", "worktree", "list", "--porcelain"],
+        cwd=haupt,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=True,
+    ).stdout
+    return {
+        hausmeister._pfad_schluessel(Path(zeile[len("worktree ") :]))
+        for zeile in aus.splitlines()
+        if zeile.startswith("worktree ")
+    }
+
+
 def test_worktree_als_markierter_temp_ordner_wird_per_git_worktree_remove_geraeumt(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -433,26 +455,14 @@ def test_worktree_als_markierter_temp_ordner_wird_per_git_worktree_remove_geraeu
     _git(haupt, "worktree", "add", "-q", "-b", "wt-1801", str(wt), "origin/main")
     _alt_baum(_markieren(wt, 1801))
 
-    vorher = subprocess.run(
-        ["git", "worktree", "list", "--porcelain"],
-        cwd=haupt,
-        capture_output=True,
-        text=True,
-        check=True,
-    ).stdout
-    assert str(wt.resolve()) in vorher
+    wt_schluessel = hausmeister._pfad_schluessel(wt)
+    assert wt_schluessel in _worktree_pfade(haupt)
 
     ergebnis = dict(temp_ordner.aufraeumen(loeschen=True))
     assert not wt.exists(), ergebnis[wt]
 
-    nachher = subprocess.run(
-        ["git", "worktree", "list", "--porcelain"],
-        cwd=haupt,
-        capture_output=True,
-        text=True,
-        check=True,
-    ).stdout
-    assert str(wt.resolve()) not in nachher, f"Worktree noch im Hauptrepo eingetragen:\n{nachher}"
+    nachher = _worktree_pfade(haupt)
+    assert wt_schluessel not in nachher, f"Worktree noch im Hauptrepo eingetragen: {nachher}"
 
 
 @pytest.mark.braucht("posix")
@@ -485,11 +495,6 @@ def test_toctou_symlink_tausch_zwischen_pruefung_und_loeschen_schuetzt_ziel_work
     ergebnis = dict(temp_ordner.aufraeumen(loeschen=True))
     assert ergebnis[opfer].startswith("bleibt:"), ergebnis[opfer]
     assert (echter_wt / "wichtig.txt").is_file(), "Ziel-Worktree wurde trotz TOCTOU-Symlink angefasst!"
-    liste = subprocess.run(
-        ["git", "worktree", "list", "--porcelain"],
-        cwd=haupt,
-        capture_output=True,
-        text=True,
-        check=True,
-    ).stdout
-    assert str(echter_wt.resolve()) in liste, "Ziel-Worktree wurde aus dem Hauptrepo ausgetragen!"
+    assert hausmeister._pfad_schluessel(echter_wt) in _worktree_pfade(haupt), (
+        "Ziel-Worktree wurde aus dem Hauptrepo ausgetragen!"
+    )
