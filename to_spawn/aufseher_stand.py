@@ -566,6 +566,7 @@ class _Ergebnis:
     lagen: list[TicketLage]
     kommentare: dict[str, int]
     fenster: dict[str, dict[str, Any]]
+    ziele: dict[int, str] = field(default_factory=dict)
 
 
 def sammeln(spec: int, q: Quellen, vorher: _Vorher) -> _Ergebnis:
@@ -642,7 +643,8 @@ def sammeln(spec: int, q: Quellen, vorher: _Vorher) -> _Ergebnis:
     if ohne_log:
         # Eine Zeile statt einer je Ticket: der Aufseher liest die Ausgabe in seinen Kontext.
         log.warning("Kein Bau-Log (Kontext/Phase/Aussage „—“): %s", ", ".join(ohne_log))
-    return _Ergebnis(lagen, kommentare, merker)
+    ziele = {} if fenster is None else {n: ziel for n, (ziel, _aktiv) in fenster.items()}
+    return _Ergebnis(lagen, kommentare, merker, ziele)
 
 
 #: Rückfrage-Dialog: so viele letzte Zeilen (Frage samt Befehl darüber) bilden die Frage.
@@ -772,9 +774,7 @@ def ticket_lage(spec: int, ticket: int, q: Quellen, ordner: Path | None = None) 
     """
     erg = sammeln(spec, q, _vorher(spec, ordner))
     lage = next((t for t in erg.lagen if t.nummer == ticket), None)
-    fenster = {} if q.pc_still else (_fenster_liste(spec, q.tmux) or {})
-    eintrag = fenster.get(ticket)  # (tmux-Ziel, window_activity); am PC kein Ziel
-    return TicketBlick(lage, eintrag[0] if eintrag else None)
+    return TicketBlick(lage, erg.ziele.get(ticket))
 
 
 def _beleg_letzte_zeile(lage: TicketLage, zustand: Zustand) -> str:
