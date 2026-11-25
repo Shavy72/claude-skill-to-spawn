@@ -409,9 +409,15 @@ def test_t0_nicht_lesbar_meldet_warnung(tmp_path: Path) -> None:
 def _fake_tmux(ordner: Path) -> Path:
     """Attrappe für ``tmux`` im PATH (Linux + Windows): zeichnet auf, startet nichts (#731).
 
-    Unter Windows braucht auch Python (``to_spawn.py sitzung``/``speicher``) eine ``.exe``
-    im PATH; eine reine Bash-Datei scheitert mit ``WinError 2``, worauf ``speicher.py``
-    auf „zähle den ganzen Rechner“ zurückfällt.
+    Unter Windows ruft sowohl Git-Bash (``spawn_srv.sh``) als auch Python
+    (``to_spawn.py sitzung``/``speicher``) ``tmux`` über ``PATH`` auf:
+    - eine reine Bash-Datei scheitert in Python mit ``WinError 2``, worauf ``speicher.py``
+      auf „zähle den ganzen Rechner“ zurückfällt;
+    - eine endungslose Python-Datei *neben* ``tmux.exe`` im selben ``PATH``-Ordner wird
+      von Git-Bash vor ``tmux.exe`` gefunden und ohne passenden Shebang als Shell-Skript
+      ausgeführt (``import: command not found``).
+    Darum liegt unter Windows nur ``tmux.exe`` (über ``windows_starter``) im ``PATH``-Ordner,
+    das Python-Skript selbst in einem Unterordner außerhalb von ``PATH``.
     """
     from windows_attrappen import windows_starter
 
@@ -427,13 +433,13 @@ def _fake_tmux(ordner: Path) -> Path:
         "if sys.argv[1:2] in (['has-session'], ['list-windows']):\n"
         "    raise SystemExit(1)\n"
     )
-    skript = attrappe(ordner, "tmux", code)
     if sys.platform == "win32":
-        # Ohne #! überspringt Git-Bash die endungslose Datei und startet direkt tmux.exe
-        # (wie Python über CreateProcess/PATHEXT) — kein Backslash-Problem im Shebang.
-        skript.write_text("# Python-Attrappe für tmux.exe\n" + code, encoding="utf-8")
-        (ordner / "tmux.cmd").unlink(missing_ok=True)
-        windows_starter(skript)
+        # Skript außerhalb des PATH-Ordners, im PATH liegt nur tmux.exe — so treffen
+        # sowohl Git-Bash als auch Python (CreateProcess/PATHEXT) direkt die .exe.
+        skript = attrappe(ordner / "_py", "tmux", code)
+        windows_starter(skript).replace(ordner / "tmux.exe")
+    else:
+        attrappe(ordner, "tmux", code)
     return aufrufe
 
 
@@ -600,10 +606,16 @@ def test_spawn_srv_weg_mit_9_fremden_sessions_und_portabler_tmux_attrappe(
     gestartet = aufrufe.read_text(encoding="utf-8") if aufrufe.exists() else ""
     assert f"-n wache {e2.SPEC} " in gestartet, (gestartet, ausgabe)
     assert "bau 901" not in gestartet, (gestartet, ausgabe)
-    # Cross-Plattform-Nachweis: keine Bash-Shebang-Datei (die Python unter Windows nicht starten kann).
-    tmux_skript = lauf_ordner / "bin" / "tmux"
-    assert not tmux_skript.read_text(encoding="utf-8").startswith("#!/usr/bin/env bash")
-    tmux_start = lauf_ordner / "bin" / ("tmux.exe" if sys.platform == "win32" else "tmux")
+    # Cross-Plattform-Nachweis: unter Windows liegt nur tmux.exe im PATH (kein endungsloses
+    # tmux, das Git-Bash vor tmux.exe als Shell-Skript startet); auf POSIX ein Python-Skript
+    # ohne Bash-Shebang (das Python unter Windows nicht starten könnte).
+    if sys.platform == "win32":
+        assert not (lauf_ordner / "bin" / "tmux").exists()
+        assert not (lauf_ordner / "bin" / "tmux.cmd").exists()
+        tmux_start = lauf_ordner / "bin" / "tmux.exe"
+    else:
+        tmux_start = lauf_ordner / "bin" / "tmux"
+        assert not tmux_start.read_text(encoding="utf-8").startswith("#!/usr/bin/env bash")
     assert tmux_start.is_file(), f"tmux-Attrappe fehlt unter {tmux_start}"
     probe = subprocess.run(
         [str(tmux_start), "list-sessions", "-F", "#{session_name}"],
@@ -657,6 +669,78 @@ def test_spawn_srv_weg_isoliert_fremde_wache_in_prozessliste(
     assert lauf.returncode == 0, ausgabe
     gestartet = aufrufe.read_text(encoding="utf-8") if aufrufe.exists() else ""
     assert f"-n wache {e2.SPEC} " in gestartet, (gestartet, ausgabe)
+
+
+def test_fake_tmux_windows_legt_nur_exe_in_path_ohne_endungslosen_schatten(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#731 Fix 2: im PATH-Ordner darf unter Windows nur ``tmux.exe`` liegen.
+
+    Liegt daneben ein endungsloses Python-Skript ``tmux`` ohne Shebang im selben
+    ``PATH``-Ordner, findet Git-Bash es vor ``tmux.exe`` und führt es als Shell-Skript
+    aus (``import: command not found``, Exit 2).
+    """
+    import windows_attrappen
+
+    binaer = tmp_path / "bin"
+    starter_ziele: list[Path] = []
+
+    def _stub_starter(skript: Path) -> Path:
+        starter_ziele.append(skript)
+        exe = skript.with_name(skript.name + ".exe")
+        exe.write_bytes(b"MZ-attrappe")
+        return exe
+
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(windows_attrappen, "windows_starter", _stub_starter)
+
+    _fake_tmux(binaer)
+
+    assert (binaer / "tmux.exe").is_file()
+    assert not (binaer / "tmux").exists(), (
+        "endungsloses bin/tmux verdeckt tmux.exe in Git-Bash und scheitert als Shell-Skript"
+    )
+    assert not (binaer / "tmux.cmd").exists()
+    assert len(starter_ziele) == 1 and starter_ziele[0].is_file()
+    assert starter_ziele[0].parent != binaer
+
+
+def test_fake_tmux_laeuft_ueber_path_aus_bash_und_python(tmp_path: Path) -> None:
+    """#731 Fix 2: ``tmux`` aus :func:`_fake_tmux` läuft über ``PATH`` sowohl in bash als auch in Python."""
+    import shutil
+
+    from to_spawn import bash_wahl
+
+    binaer = tmp_path / "bin"
+    aufrufe = _fake_tmux(binaer)
+    umgebung = {**os.environ, "PATH": f"{binaer}{os.pathsep}{os.environ['PATH']}"}
+
+    bash_lauf = bash_wahl.lauf(
+        ["-c", 'command -v tmux >/dev/null && tmux new-session -d -s s -n "wache 900"'],
+        env=umgebung,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=30,
+    )
+    assert bash_lauf.returncode == 0, bash_lauf.stdout + bash_lauf.stderr
+
+    gefunden = shutil.which("tmux", path=str(binaer))
+    assert gefunden is not None
+    py_lauf = subprocess.run(
+        [gefunden, "list-sessions", "-F", "#{session_name}"],
+        env=umgebung,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+        timeout=30,
+    )
+    assert py_lauf.returncode == 0, py_lauf.stderr
+    assert py_lauf.stdout == ""
+    protokoll = aufrufe.read_text(encoding="utf-8")
+    assert "-n wache 900" in protokoll
+    assert "list-sessions -F #{session_name}" in protokoll
 
 
 if __name__ == "__main__":
