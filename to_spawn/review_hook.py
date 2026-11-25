@@ -62,7 +62,14 @@ def _git(quelle: Path, *args: str) -> str | None:
     """``git -C quelle …``; ``None``, wenn git fehlt oder ``quelle`` in keinem Repo liegt."""
     try:
         return subprocess.run(
-            ["git", "-C", str(quelle), *args], capture_output=True, check=True, text=True, encoding="utf-8"
+            ["git", "-C", str(quelle), *args],
+            capture_output=True,
+            check=True,
+            text=True,
+            encoding="utf-8",
+            # Installer startet das Modul als Skript (kein Paket-Import); Ausgabe abgefangen,
+            # ohne Fenster also immer unschädlich (#658).
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         ).stdout
     except (OSError, subprocess.CalledProcessError):
         return None

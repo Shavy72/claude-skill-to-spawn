@@ -1,22 +1,28 @@
 # Wiedereinstieg — hier anfangen, wenn der Bau steht
 
 Dieses Dokument ist der eine Einstieg für jede Session und jeden Menschen, der den Bau des
-Bau-Systems („USB-Stick“, Lastenheft L1–L9) fortsetzen soll — nach einem Abbruch, einem
+Bau-Systems („USB-Stick“, Lastenheft L1–L10) fortsetzen soll — nach einem Abbruch, einem
 Maschinen-Ausfall oder einer langen Pause. Es braucht keinen Chat und keine Übergabe-Datei.
 
 Pflege: Die führende Leit-Session hält den Abschnitt „Stand“ aktuell (nach jedem gemergten
-Paket einer Etappe und bei jeder Ablösung). Regel dazu: Lastenheft L5. Der Test
-`tests/test_uebergabe_sichern_145.py` wird rot, wenn der jüngste Stand-Eintrag mehr als 24 Stunden
-älter ist als der jüngste Merge.
+Paket einer Etappe und bei jeder Ablösung). Regel dazu: Lastenheft L5. Alle Uhrzeiten in diesem
+Dokument gelten in **Europe/Berlin (MEZ/MESZ)** (ältere Verlaufs-Einträge tragen teils noch
+„Server-Uhr“/„PC-Uhr“). Der Test `tests/test_uebergabe_sichern_145.py` prüft über
+`to_spawn.uebergabe_sichern.juengster_main_stand` gegen `origin/main` (einschließlich
+Squash-Merges) und wird rot, wenn der jüngste Stand-Eintrag mehr als 24 Stunden älter ist als der
+jüngste Merge auf `main`.
 
 **Ablösungs-Regel (Leit-Session, Aufseher, Ober-Aufsicht):** vor dem Start der Nachfolgerin
 1. hier im Abschnitt „Stand“ einen Eintrag schreiben (Stand, als Nächstes),
-2. `python <skill>/to_spawn.py sichern <Übergabe-Datei> [<Entscheidungs-Log>]` aufrufen. Das kopiert
-   Übergabe und Entscheidungs-Log in den privaten Sicherungs-Ordner der Maschine (Vorgabe:
-   Notiz-Tresor `to-spawn/sicherung/<Rechnername>/`, ohne Tresor `~/.local/share/to-spawn/sicherung/`;
-   eigener Ort: Maschinen-Liste, Gruppe `sicherung`, Schlüssel `ziel`) und lädt angefangene Zweige
-   des Skill-Repos hoch (nie `main`/`master`, nie `ticket/*`). Ein Ziel in einem öffentlichen Repo
-   wird verweigert.
+2. `python <skill>/to_spawn.py sichern <Übergabe-Datei> [<Entscheidungs-Log>]` aufrufen
+   (`<skill>` = `~/.claude/skills/to-spawn` bzw. der Skill-Klon; Standard-Dateinamen je Repo sind
+   `.claude-handoff*.md` und `entscheidungen.md` — sie werden auch ohne Argument eingesammelt und
+   nie ins öffentliche Repo committet). Das kopiert Übergabe und Entscheidungs-Log in den privaten
+   Sicherungs-Ordner der Maschine (Vorgabe: Notiz-Tresor `to-spawn/sicherung/<Rechnername>/`, ohne
+   Tresor `~/.local/share/to-spawn/sicherung/<Rechnername>/`; eigener Ort: Maschinen-Liste
+   `~/.config/to-spawn/maschine.json`, Gruppe `sicherung`, Schlüssel `ziel`) und lädt angefangene
+   Zweige des Skill-Repos hoch (nie `main`/`master`, nie `ticket/*`). Ein Ziel in einem öffentlichen
+   Repo wird verweigert.
 
 Die Aufseher-Ablösung und jeder Hausmeister-Rundgang rufen dieselbe Sicherung von selbst auf.
 
@@ -32,7 +38,7 @@ aktuell und räumt hinter sich auf. Prüfen und Gate sind schnell und prüfen nu
 
 | Was | Ort | Wozu |
 |---|---|---|
-| Auftrag, Wortlaut des Menschen 1:1 | `docs/LASTENHEFT.md` (L1–L9, A1–A64, N1–N23) | Was gewollt ist und was nicht. Bei Zweifel gilt der Wortlaut. |
+| Auftrag, Wortlaut des Menschen 1:1 | `docs/LASTENHEFT.md` (L1–L10, A1–A69, N1–N25) | Was gewollt ist und was nicht. Bei Zweifel gilt der Wortlaut. |
 | Plan, Design, Etappen 0–5, Stand | `docs/PLAN_L1_usb_stick.md` | Wie gebaut wird, in welcher Reihenfolge, was zuletzt geschah (Abschnitt „Stand“). |
 | Abnahme mit Belegen | `docs/ABNAHME_L1.md` | Was bewiesen ist. Tabelle M1–M15: die erste Zeile ohne Beleg ist das nächste Ziel. |
 | Prüftor-Vergleich | `docs/PRUEFTOR_VERGLEICH.md` | Messwerte, Quellen, Empfehlung und Bau-Pakete für den Prüf-Werkzeugkasten. |
@@ -44,6 +50,24 @@ Sind die Übergaben verloren, reicht dieses Repo: Auftrag, Plan, Abnahme und Iss
 was zum Weiterbauen nötig ist.
 
 ## 3. Stand
+
+Chronologisch absteigend (neuester Eintrag oben, ältere Einträge als Verlauf darunter; alle Uhrzeiten Europe/Berlin).
+
+- **2026-11-25 04:55 (Europe/Berlin, main f3c85b1):** Stand nach Probe-Lauf 3 und Windows-Härtung:
+  - Probe-Lauf 3 am 24./25.11.2026 auf dem Bau-Server in `docs/ABNAHME_L1.md` dokumentiert
+    (Pull-Request 661, `main f3c85b1`): M1 teilweise belegt (`-mit` 2 Anomalien, `-ohne` 3 Anomalien;
+    Abnahme durch den Nutzer 04:17 ohne Wartezeit im Minuten-Takt). Messlatte „null Anomalien“ noch
+    nicht bestanden — offene Hauptursache: Issue 624 (fertige stille Fenster blockieren Plätze).
+  - Jüngste Merges auf `main`: Pull-Request 657 (Issue 641, Worktree weicht bei gleicher Ticket-Nummer
+    in zwei Repos aus), Pull-Request 650 (Issue 284, Platz-Grenzen je Rechner aus Messung) sowie
+    Windows-Härtung und Terminal-/Freigabe-Sperren (Issues 283, 313, 553, 602; Pull-Requests 627, 629,
+    633, 634, 635, 639, 640, 644, 648, 651, 652, 653).
+  - Offen im Pull-Request (laut `gh pr list --state open`): 662 (Issue 660, Bau-Session wahlweise über
+    agy), 659 (Issue 658, Windows-Unterprozesse ohne Konsolenfenster), 250 (Issue 149 Rest,
+    Wackel-Prüfung).
+  - Als Nächstes: offene Pull-Requests 659, 662 und 250 fertig prüfen und mergen → offene Anomalien
+    aus Probe-Lauf 3 beheben (Issue 624, Reste zu 641) → Windows-Seite (Issue 68) und offene M-Zeilen
+    in `docs/ABNAHME_L1.md` abnehmen.
 
 - **2026-11-23 22:16 (Server-Uhr, main fff86c1):** Gemergt und am 23.11. 22:11 auf dem Bau-Server installiert
   (Install-Pfad `~/wt/skill-install-101`; `~/claude-skill-to-spawn` steht auf altem `7dc3ae8`, nicht benutzen):
@@ -296,7 +320,7 @@ was zum Weiterbauen nötig ist.
   - 201: Die Tests für „startklar“ und „respawn“ laufen unter Windows grün.
   - 210: Die Konfig-Tests von Hausmeister und Aufpasser laufen unter Windows grün (P7f).
   - 208: Issue 169 zu. Der Probelauf der Sicherung lädt nichts mehr hoch, Zweige mit Übergaben
-    mit Übergaben werden nicht mehr angefasst (die Sicherung verweigert). Rest → Issue 215.
+    werden nicht mehr angefasst (die Sicherung verweigert). Rest → Issue 215.
   - 207: Issue 101 zu. Die Prüfung läuft nur noch über die betroffenen Tests, mit Rückfall-Regeln
     R1–R3 auf den vollen Lauf. Rest → Issue 218.
   - 217: Roter Test auf main behoben (Attrappe in `test_pruef_doku_zu_weit_164` plattformneutral).
@@ -410,25 +434,41 @@ Etappen und Abnahme gilt der Plan. Der Plan-Abschnitt „Stand“ ist ein älter
 
 ## 4. So geht es weiter, wenn alles steht
 
-1. **Lesen** (in dieser Reihenfolge): `LASTENHEFT.md` → `PLAN_L1_usb_stick.md` (Design, Etappen,
-   Stand) → `ABNAHME_L1.md`.
-2. **Nachsehen, ob noch etwas läuft.** Bau-Server: `tmux ls` und
-   `tmux list-windows -t leit-bausystem` (höchste `leit <N>` führt). PC: ein Terminal-Tab
-   „Ober-Aufsicht“. Läuft eine Kette, nicht eine zweite starten, sondern dieser zuarbeiten.
-3. **Wirklichkeit gegen Dokumente abgleichen:** `gh pr list --state open`, `gh issue list`,
-   `git log origin/main -15`, installierter Skill-Stand auf der Maschine
-   (`python ~/.claude/skills/to-spawn/to_spawn.py einrichten --pruefen`). Meldet das
-   `skill_aktuell: grosse_luecke`, ist der Skill veraltet: `git -C ~/claude-skill-to-spawn pull && bash
-   ~/claude-skill-to-spawn/install.sh`. Abweichungen zuerst im Abschnitt „3. Stand“ festhalten.
-4. **Kette starten, falls keine läuft.** Immer über `~/.claude/bin/claude-frisch.sh` (Linux) bzw.
-   `claude-frisch.ps1` (Windows), nie `claude` mit geerbter Umgebung. Der Startauftrag lautet:
+1. **Lesen** (in dieser Reihenfolge): `docs/LASTENHEFT.md` → `docs/PLAN_L1_usb_stick.md` (Design,
+   Etappen, Stand) → `docs/ABNAHME_L1.md`.
+2. **Nachsehen, ob noch etwas läuft.** Auf den Bau-Server gelangt man über den eigenen SSH-Alias aus
+   `~/.ssh/config` (`ssh <bau-server-alias>`; Adresse und Zugangsdaten liegen nie in diesem öffentlichen
+   Repo, sondern nur im privaten Notiz-Tresor `projects/bau-system/WIEDEREINSTIEG_maschinen.md`).
+   Bau-Server: `tmux ls` und `tmux list-windows -t leit-bausystem` (höchste `leit <N>` führt).
+   PC (Windows): ein Terminal-Tab „Ober-Aufsicht“. Läuft eine Kette, nicht eine zweite starten,
+   sondern dieser zuarbeiten.
+3. **Skill installieren (frische Maschine) und Wirklichkeit gegen Dokumente abgleichen:**
+   - **Voraussetzungen:** `git`, Python 3.12+, `pytest`, angemeldetes `gh`, `claude`; unter Windows
+     zusätzlich PowerShell 7 (`pwsh`).
+   - **Erstinstallation**, falls `~/.claude/skills/to-spawn` noch nicht vorhanden ist:
+     - Linux: `git clone https://github.com/Shavy72/claude-skill-to-spawn ~/claude-skill-to-spawn && bash ~/claude-skill-to-spawn/install.sh`
+     - Windows (PowerShell 7): `git clone https://github.com/Shavy72/claude-skill-to-spawn "$env:TEMP\claude-skill-to-spawn"` und `pwsh -File "$env:TEMP\claude-skill-to-spawn\install.ps1"`
+   - **Abgleich:** `gh pr list --state open`, `gh issue list`, `git log origin/main -15`, installierter
+     Skill-Stand auf der Maschine (`python ~/.claude/skills/to-spawn/to_spawn.py einrichten --pruefen`).
+     Meldet das `skill_aktuell: grosse_luecke`, ist der Skill veraltet: im aktiven Skill-Klon
+     `git pull` und danach `install.sh` (Linux) bzw. `install.ps1` (Windows) ausführen. Abweichungen
+     zuerst im Abschnitt „3. Stand“ festhalten.
+4. **Kette starten, falls keine läuft.** Auf eingerichteten Maschinen über `~/.claude/bin/claude-frisch.sh`
+   (Linux) bzw. `~/.claude/bin/claude-frisch.ps1` (Windows), nie `claude` mit geerbter Umgebung. Die
+   Start-Skripte sind maschinen-lokal und liegen außerhalb dieses Repos (genaue Befehle je Maschine im
+   Notiz-Tresor `projects/bau-system/WIEDEREINSTIEG_maschinen.md`). **Rückfall auf einer frischen
+   Maschine ohne Start-Skript:** ein neues Terminal außerhalb jeder laufenden Claude-Session öffnen
+   (oder geerbte Sitzungs-Variablen wie `CLAUDECODE`, `CLAUDE_CODE_SESSION_*`,
+   `CLAUDE_CODE_CHILD_SESSION` vor dem Start entfernen — vollständige Liste in
+   `to_spawn/sitzung_env.py`) und `claude` dort frisch starten. Der Startauftrag lautet:
    „Lies `docs/WIEDEREINSTIEG.md` im Skill-Repo und verfolge das Ziel 1:1 weiter, bis es erreicht
    ist.“ Gibt es noch eine Übergabe-Datei, wird sie zusätzlich gelesen; sie wächst fortlaufend, es genügen
-   die letzten 200 Zeilen (`tail -200`). Die genauen Befehle für
-   die zwei Maschinen stehen im Notiz-Tresor (`projects/bau-system/WIEDEREINSTIEG_maschinen.md`).
-5. **Weiterbauen in der Reihenfolge der Etappen.** Offene Pull-Requests zuerst fertig machen
-   (Review, Linux- und Windows-Lauf, Merge nach der Merge-Regel in Abschnitt 5), dann die offenen Issues der niedrigsten Etappe, dann
-   die erste M-Zeile ohne Beleg.
+   die letzten 200 Zeilen (`tail -200`).
+5. **Weiterbauen in der Reihenfolge der Prioritäten.** Offene Pull-Requests zuerst fertig machen
+   (Review, Linux- und Windows-Lauf, Merge nach der Merge-Regel in Abschnitt 5), dann offene
+   System-Anomalien aus dem laufenden Probe-Lauf (L10), dann die offenen Issues der niedrigsten Etappe
+   (Schnitt und Reihenfolge in `docs/PLAN_L1_usb_stick.md`, Sammel-Issues: 49 = Etappe 1, 50 = Etappe 2,
+   51 = Etappe 3, 52 = Etappe 4, 53 = Etappe 5), dann die erste M-Zeile ohne Beleg in `docs/ABNAHME_L1.md`.
 
 ## 5. Regeln, die immer gelten
 
@@ -440,8 +480,49 @@ Etappen und Abnahme gilt der Plan. Der Plan-Abschnitt „Stand“ ist ein älter
 - Aufräumen, RAM, Platte, Neustarts landen nie beim Menschen (L4).
 - Kein Wissen nur im Chat oder nur auf einer Maschine: Was zählt, steht hier im Repo, als Issue
   oder im Tresor (L5).
-- Merge-Regel: Ein Pull-Request wird nur gemergt, wenn das Prüf-Urteil „Hartes: nein“ lautet. Vorher
-  die letzten Kommentare am Pull-Request lesen; bittet dort jemand um Aufschub, nicht mergen. Vor dem
-  Merge `main` in den Zweig hineinmergen und die Pflicht-Tests des Zweigs laufen lassen. Kein `rebase`,
-  kein `--force`. Befehl: `gh pr merge <N> --merge`.
+- Merge-Regel: Ein Pull-Request wird nur gemergt, wenn das Prüf-Urteil „Hartes: nein“ lautet. Dieses
+  Urteil (keine blockierenden Befunde) erzeugt das Review-Werkzeug unter `review/`
+  (Start über `python ~/.claude/review/review_route.py` / `review_beleg.py` / `rot_probe.py`; Ablauf in
+  `review/VERTRAG.md`) bzw. eine unabhängige Prüfung. Vorher die letzten Kommentare am Pull-Request
+  lesen; bittet dort jemand um Aufschub, nicht mergen. Vor dem Merge `main` in den Zweig hineinmergen
+  und die Pflicht-Tests des Zweigs (`python -m pytest -q <betroffene Tests>`) laufen lassen. Kein
+  `rebase`, kein `--force`. Befehl: `gh pr merge <N> --merge` (oder `--squash`, wenn Squash vereinbart
+  ist).
 - App-Live wird nie angefasst. Eine Leit-Kette je Maschine, eine Ober-Aufsicht am PC.
+
+## 6. Glossar
+
+- **Leit-Session / Leit-Kette (`leit <N>`):** Die führende Bau-Session auf dem Bau-Server
+  (tmux-Sitzung `leit-bausystem`, Fenster `leit <N>`, höchste Nummer führt); schneidet Pakete, lässt
+  bauen, prüft und mergt.
+- **Ober-Aufsicht:** Begleitende Leit-Session am Windows-PC; hält die Richtung, prüft die
+  Windows-Seite und führt Abnahmen mit.
+- **Aufseher (`wache <S>`):** Begleit-Session je Spec; prüft Schnittstellen, Belege und Gates, baut
+  selbst keinen Code.
+- **Bau-Session (`bau <N>`):** Session für ein einzelnes Ticket; wartet bei Blockern außerhalb der
+  KI-Session, baut dann im eigenen Worktree und schließt das Ticket.
+- **Hausmeister (`aufraeumen`):** Automatisierter Aufräum- und Sicherungs-Lauf
+  (`to_spawn/hausmeister.py`); räumt Worktrees, Zweige und Temp-Reste geschlossener Tickets und ruft
+  `uebergabe_sichern.sichern` als Netz auf.
+- **Maschinen-Liste (`~/.config/to-spawn/maschine.json`):** Maschinen-lokale Konfig-Datei (Repos,
+  Hausmeister-Wurzeln, Sicherungs-Ziel und -Dateimuster); nie im öffentlichen Repo.
+- **Probelauf (`--trocken` / `--dry-run`):** Meldet nur, was ein Befehl tun würde, ohne Dateien zu
+  schreiben, zu löschen oder Zweige hochzuladen (z. B. `to_spawn.py sichern --trocken`,
+  `aufraeumen --trocken`).
+- **Tür `pruefen` / Gate:** Einheitlicher Prüf-Werkzeugkasten im Skill (`to_spawn.py pruefen <basis> <ziel>`,
+  Etappe 3b); wählt selbst die kleinste ausreichende Prüf-Stufe, bevor ein Zweig weitergeht (Gate).
+- **Wackler (Wackel-Test):** Test, der ohne Code-Änderung mal grün und mal rot läuft; wird von der
+  Prüfung wiederholt und getrennt gemeldet, nie still übergangen.
+- **Schlange (Deploy-Schlange):** Serielle Prüf- und Bereitstellungs-Reihe im App-Repo; Änderungen am
+  Skill-Repo laufen davon getrennt.
+- **App-Repo / App-Live:** Ein nutzendes Anwendungs-Repo (erstes Beispiel: DuoPlus); dessen
+  Produktivbetrieb (`App-Live`) wird im autonomen Lauf nie angefasst.
+- **Probe-Varianten (`-mit` / `-ohne`):** Zwei Durchläufe im Probe-Repo — einmal mit bereits
+  eingerichteter Ausgangslage (`-mit`), einmal ab leerem Ausgangsstand (`-ohne`).
+- **„Hartes: nein“:** Prüf-Urteil ohne blockierende Befunde (aus `review/` bzw. unabhängiger Prüfung),
+  Voraussetzung der Merge-Regel.
+- **`agy`:** Alternativer CLI-Runner (Antigravity CLI), über den Bau-Sessions wahlweise neben `claude`
+  gestartet werden können (Issue 660).
+- **Kürzel aus dem Verlauf (`P7c–P7f`, `3b`, Sammel-Issues 49–53):** Paket-Bezeichnungen aus Etappe 1
+  (`P7c–P7f` = Windows-Test-Pakete zu Issue 68), Etappe 3 (`3b` = Bau des Prüf-Werkzeugkastens) und
+  den Etappen-Sammel-Issues (49 = Etappe 1 bis 53 = Etappe 5).

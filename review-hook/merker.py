@@ -51,15 +51,16 @@ def haupt(eingabe: dict[str, Any]) -> None:
     if text not in sitzung["dateien"]:
         sitzung["dateien"].append(text)
         geaendert = True
-    geaendert = start_sha_merken(sitzung, pfad) or geaendert
+    geaendert = start_sha_merken(sitzung, pfad, str(eingabe.get("agent_id") or "")) or geaendert
     if geaendert:
         speichere_sitzung(session_id, sitzung)
     return None
 
 
-def start_sha_merken(sitzung: dict[str, Any], pfad: Path) -> bool:
+def start_sha_merken(sitzung: dict[str, Any], pfad: Path, agent_id: str = "") -> bool:
     """HEAD je Repo beim ersten Eintrag festhalten: committet die Sitzung vor Zugende,
-    prüft stop.py gegen diese SHA statt gegen den (dann leeren) Diff zu HEAD."""
+    prüft stop.py gegen diese SHA statt gegen den (dann leeren) Diff zu HEAD.
+    Bei Subagenten (``agent_id`` gesetzt) zusätzlich die Zuordnung Helfer → Repo merken (#214)."""
     ordner = pfad.parent
     while not ordner.is_dir() and ordner != ordner.parent:
         ordner = ordner.parent
@@ -68,11 +69,18 @@ def start_sha_merken(sitzung: dict[str, Any], pfad: Path) -> bool:
     if ergebnis.returncode != 0 or len(zeilen) != 2:
         return False  # kein Repo oder noch kein Commit: stop.py prüft wie bisher gegen den Arbeitsbaum
     wurzel = Path(zeilen[0]).resolve().as_posix()
+    geaendert = False
     shas: dict[str, str] = sitzung.setdefault("start_sha", {})
-    if wurzel in shas:
-        return False
-    shas[wurzel] = zeilen[1]
-    return True
+    if wurzel not in shas:
+        shas[wurzel] = zeilen[1]
+        geaendert = True
+    if agent_id:
+        helfer: dict[str, list[str]] = sitzung.setdefault("helfer_repos", {})
+        liste = helfer.setdefault(agent_id, [])
+        if wurzel not in liste:
+            liste.append(wurzel)
+            geaendert = True
+    return geaendert
 
 
 if __name__ == "__main__":

@@ -33,7 +33,7 @@ from typing import Any
 _SKILL = str(Path(__file__).resolve().parent.parent)
 if _SKILL not in sys.path:
     sys.path.insert(0, _SKILL)
-from to_spawn import config, gh  # noqa: E402
+from to_spawn import config, gh, prozessbaum  # noqa: E402
 from to_spawn.manifest import manifest_pfad  # noqa: E402
 
 log = logging.getLogger("thermo_lauf")
@@ -78,6 +78,7 @@ def _git(repo: Path, *args: str) -> str:
         encoding="utf-8",
         errors="replace",
         check=False,
+        **prozessbaum.fensterlos(),
     )
     if lauf.returncode != 0:
         raise Fehler(f"git {' '.join(args)} fehlgeschlagen: {lauf.stderr.strip()}")

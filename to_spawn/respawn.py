@@ -226,6 +226,7 @@ class TmuxWerkzeug:
             text=True,
             check=False,
             timeout=30,
+            **prozessbaum.fensterlos(),
         )
         if fertig.returncode not in (0, 1):
             raise RuntimeError(f"pgrep nicht nutzbar: {fertig.stderr.strip()}")
@@ -342,6 +343,7 @@ class TmuxWerkzeug:
             text=True,
             check=True,
             timeout=30,
+            **prozessbaum.fensterlos(),
         ).stdout
 
     def alte_session_beenden(self, pane_pid: int) -> Beendet:

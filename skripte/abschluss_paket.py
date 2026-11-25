@@ -56,7 +56,7 @@ from test_uebersicht import lade_tickets  # noqa: E402
 from thermo_lauf import SPERRE_MIN, repo_ordner  # noqa: E402
 from thermo_lauf import marker_pfad as thermo_marker_pfad  # noqa: E402
 
-from to_spawn import bau_log, briefkasten, capo, config, melder, rundschau_deck  # noqa: E402
+from to_spawn import bau_log, briefkasten, capo, config, melder, prozessbaum, rundschau_deck  # noqa: E402
 
 log = logging.getLogger("abschluss_paket")
 
@@ -497,6 +497,7 @@ def wirkungskreis(repo: Path, spec: int) -> str:
             errors="replace",
             timeout=WIRKUNGSKREIS_ZEITLIMIT_S,
             check=False,
+            **prozessbaum.fensterlos(),
         )
     except (OSError, subprocess.TimeoutExpired) as fehler:
         return f"Wirkungskreis nicht ermittelt: {fehler}"

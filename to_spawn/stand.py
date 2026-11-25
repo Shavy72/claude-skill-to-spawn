@@ -20,7 +20,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from to_spawn import bash_wahl
+from to_spawn import bash_wahl, prozessbaum
 
 log = logging.getLogger("to_spawn.stand")
 
@@ -52,7 +52,7 @@ def _lauf(befehl: str, repo: Path, timeout_s: float) -> int | None:
         if teile and teile[0] == "bash":  # Tür für bash: Git-Bash unter Windows, ohne Pfadsperre
             return bash_wahl.lauf(teile[1:], cwd=str(repo), timeout=timeout_s, env=umgebung).returncode
         return subprocess.run(
-            teile, cwd=str(repo), check=False, timeout=timeout_s, env=umgebung
+            teile, cwd=str(repo), check=False, timeout=timeout_s, env=umgebung, **prozessbaum.fensterlos()
         ).returncode
     except subprocess.TimeoutExpired:
         log.error(
