@@ -15,7 +15,9 @@ für Reste und Worktree-Waisen ohne Ticket-Nummer, die nie ungesicherte Arbeit l
 # ruff: noqa: F811 — ``welt`` kommt als Fixture aus dem #1368-Test.
 from __future__ import annotations
 
+import os
 import shutil
+import stat
 import subprocess
 import sys
 from pathlib import Path
@@ -23,6 +25,8 @@ from pathlib import Path
 import pytest
 from test_hausmeister_196 import haupt_bekannt  # noqa: F401
 from test_hausmeister_1368 import Welt, welt  # noqa: F401
+
+from to_spawn import hausmeister_windows
 
 TAG = 24 * 3600.0
 ALT_TAGE = 30
@@ -32,11 +36,18 @@ def _altern(welt: Welt) -> None:
     welt.jetzt += ALT_TAGE * TAG
 
 
+def _ordner_weg(pfad: Path) -> None:
+    """Löscht ``pfad`` auch unter Windows trotz Schreibschutz in ``.git/objects``."""
+    if sys.version_info >= (3, 12):
+        shutil.rmtree(pfad, onexc=hausmeister_windows.schreibschutz_weg)
+    else:
+        shutil.rmtree(pfad, onerror=hausmeister_windows.schreibschutz_weg)
+
+
 def _kopie_ohne_git(welt: Welt, name: str, quelle: Path | None = None) -> Path:
-    """Kopiert ``quelle`` (Standard: Hauptklon) nach ``~/wt/<name>`` und entfernt ``.git``."""
+    """Kopiert ``quelle`` (Standard: Hauptklon) ohne ``.git`` nach ``~/wt/<name>``."""
     ziel = welt.heim / "wt" / name
-    shutil.copytree(quelle or welt.haupt, ziel)
-    shutil.rmtree(ziel / ".git")
+    shutil.copytree(quelle or welt.haupt, ziel, ignore=shutil.ignore_patterns(".git"))
     return ziel
 
 
@@ -184,8 +195,28 @@ def test_kopie_ohne_git_origin_nicht_erreichbar_fail_closed(
     welt = haupt_bekannt
     kopie = _kopie_ohne_git(welt, "kopie-offline")
     _altern(welt)
-    shutil.rmtree(welt.bare)  # origin weg
+    _ordner_weg(welt.bare)  # origin weg
 
     r = welt.aufraeumen(kopie, loeschen=True)
     assert r.art == "bleibt" and r.fehler, r
     assert kopie.is_dir()
+
+
+def test_kopie_und_origin_weg_trotz_windows_schreibschutz_in_git_objects(
+    haupt_bekannt: Welt, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Windows sperrt ``unlink`` auf schreibgeschützten ``.git/objects``-Dateien (WinError 5)."""
+    welt = haupt_bekannt
+    echt_unlink = os.unlink
+
+    def unlink_wie_windows(pfad: str | os.PathLike[str], *, dir_fd: int | None = None) -> None:
+        info = os.lstat(pfad) if dir_fd is None else os.lstat(pfad, dir_fd=dir_fd)
+        if stat.S_ISREG(info.st_mode) and not (info.st_mode & stat.S_IWRITE):
+            raise PermissionError(5, "Access is denied", str(pfad))
+        if dir_fd is None:
+            echt_unlink(pfad)
+        else:
+            echt_unlink(pfad, dir_fd=dir_fd)
+
+    monkeypatch.setattr(os, "unlink", unlink_wie_windows)
+    test_kopie_ohne_git_origin_nicht_erreichbar_fail_closed(welt)
