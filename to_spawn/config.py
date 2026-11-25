@@ -177,6 +177,12 @@ DEFAULTS: dict[str, Any] = {
     "startklar": {
         "schluessel": [],
     },
+    #: Eigenes Einreichen (#430): ``eigener_dienst: true`` in ``origin/<hauptzweig>`` heißt,
+    #: das Projekt betreibt einen eigenen Einreich-Dienst für ``ticket/*`` (``einreichen`` pusht
+    #: dann nur den Ticket-Zweig). Vorgabe ``False`` = Pull-Request + sofortiger Merge.
+    "einreichen": {
+        "eigener_dienst": False,
+    },
     #: Start-Text (#274 P1): ``zusatz_datei`` = Repo-Datei (relativ zur Wurzel), deren Text als
     #: Abschnitt „Regeln dieses Repos“ in den Skill-Start-Text kommt. Leer = kein Zusatz.
     "start_text": {
@@ -206,7 +212,7 @@ MASCHINE_DEFAULTS: dict[str, Any] = {
 HAUSMEISTER_GESCHUETZTE_ORDNER: tuple[str, ...] = tuple(vorgaben.HAUSMEISTER_GESCHUETZTE_ORDNER)
 #: Öffentliche Repos (Slugs), in die die Übergabe-Sicherung nie schreibt.
 OEFFENTLICHE_SLUGS: tuple[str, ...] = tuple(vorgaben.OEFFENTLICHE_SLUGS)
-#: Felder eines Eintrags in ``repos[]``; fehlende Felder gelten als "" (= ableiten).
+#: Felder eines Eintrags in ``repos[]``; fehlende Felder gelten als "" (bei ``ticket_repo`` = nicht belegt, #420/#542).
 REPO_FELDER = ("slug", "pfad", "ticket_repo", "worktree_basis")
 
 
@@ -495,8 +501,9 @@ def _fremder_besitzer(wt: Path, repo: Path) -> tuple[str, str] | None:
     return besitzer, eigen
 
 
-#: Zeilen, die ``sicherstellen`` in die Repo-``.gitignore`` schreibt: Laufdateien und
-#: Marker unter ``.to-spawn/`` bleiben unversioniert, nur die Konfig wird eingecheckt (#257).
+#: Zeilen, die ``sicherstellen`` lokal in ``.git/info/exclude`` schreibt (#257, #407):
+#: Laufdateien und Marker unter ``.to-spawn/`` bleiben unversioniert, nur die Konfig
+#: bleibt sichtbar für Git. Die getrackte Repo-``.gitignore`` wird nie verändert.
 GITIGNORE_BLOCK = (
     "# to-spawn: Laufdateien/Marker unversioniert, nur die Konfig eingecheckt",
     ".to-spawn/*",
@@ -504,27 +511,101 @@ GITIGNORE_BLOCK = (
 )
 
 
+def _git_exclude_pfad(wurzel: Path) -> tuple[Path, Path] | None:
+    """``(exclude_datei, git_common_dir)`` für ``wurzel`` oder ``None``, wenn kein Git-Repo (#407)."""
+    try:
+        aus_pfad = subprocess.run(
+            ["git", "-C", str(wurzel), "rev-parse", "--git-path", "info/exclude"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=15.0,
+            check=False,
+            **prozessbaum.fensterlos(),
+        )
+        aus_dir = subprocess.run(
+            ["git", "-C", str(wurzel), "rev-parse", "--git-common-dir"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=15.0,
+            check=False,
+            **prozessbaum.fensterlos(),
+        )
+    except (OSError, subprocess.TimeoutExpired) as fehler:
+        log.warning("git rev-parse in %s fehlgeschlagen — info/exclude nicht ergänzt: %s", wurzel, fehler)
+        aus_pfad = None
+        aus_dir = None
+    if (
+        aus_pfad is not None
+        and aus_dir is not None
+        and aus_pfad.returncode == 0
+        and aus_dir.returncode == 0
+        and aus_pfad.stdout.strip()
+        and aus_dir.stdout.strip()
+    ):
+        roh_pfad = Path(aus_pfad.stdout.strip())
+        roh_dir = Path(aus_dir.stdout.strip())
+        datei = roh_pfad if roh_pfad.is_absolute() else wurzel / roh_pfad
+        grenze = roh_dir if roh_dir.is_absolute() else wurzel / roh_dir
+        return datei, grenze
+    # Minimaler Test-Ordner mit eigenem ``.git``-Verzeichnis ohne ``git init``.
+    git_ordner = wurzel / ".git"
+    if git_ordner.is_dir() and not git_ordner.is_symlink():
+        return git_ordner / "info" / "exclude", git_ordner
+    return None
+
+
+def _ist_unter_grenze_ohne_symlink(datei: Path, grenze: Path) -> bool:
+    """``True``, wenn ``datei`` ohne Symlink-Umweg innerhalb von ``grenze`` liegt (#407)."""
+    basis = Path(os.path.abspath(grenze))
+    pfad = Path(os.path.abspath(datei))
+    if basis not in pfad.parents:
+        return False
+    stufe = pfad
+    while stufe != basis:
+        if stufe.is_symlink():
+            return False
+        stufe = stufe.parent
+    return basis.resolve() in pfad.resolve().parents
+
+
 def gitignore_ergaenzen(wurzel: Path) -> bool:
-    """Block aus ``GITIGNORE_BLOCK`` idempotent an ``.gitignore`` anhängen (``True`` = geschrieben)."""
-    datei = wurzel / ".gitignore"
+    """Block aus ``GITIGNORE_BLOCK`` idempotent an ``.git/info/exclude`` anhängen (``True`` = geschrieben).
+
+    Schreibt nie in die getrackte Repo-``.gitignore`` (#407). Kein Git-Repo oder Symlink
+    aus dem Git-Ordner heraus → Warnung, ``False``.
+    """
+    ziel = _git_exclude_pfad(wurzel)
+    if ziel is None:
+        log.warning("Kein Git-Repo (%s) — info/exclude nicht ergänzt", wurzel)
+        return False
+    datei, grenze = ziel
+    if not _ist_unter_grenze_ohne_symlink(datei, grenze):
+        log.warning("info/exclude nicht sicher unter %s (%s) — nicht ergänzt", grenze, datei)
+        return False
     try:
         vorhanden = datei.read_text(encoding="utf-8") if datei.is_file() else ""
     except OSError as fehler:
-        log.warning(".gitignore unlesbar (%s) — nicht ergänzt: %s", datei, fehler)
+        log.warning("info/exclude unlesbar (%s) — nicht ergänzt: %s", datei, fehler)
         return False
     zeilen = {zeile.strip() for zeile in vorhanden.splitlines()}
     fehlend = [zeile for zeile in GITIGNORE_BLOCK[1:] if zeile not in zeilen]
     if not fehlend:
         return False
-    block = "\n".join(GITIGNORE_BLOCK) + "\n"
+    kopf = [] if GITIGNORE_BLOCK[0] in zeilen else [GITIGNORE_BLOCK[0]]
+    block = "\n".join([*kopf, *fehlend]) + "\n"
     trenner = "" if not vorhanden or vorhanden.endswith("\n") else "\n"
     try:
+        datei.parent.mkdir(parents=True, exist_ok=True)
         with datei.open("a", encoding="utf-8") as strom:
             strom.write(f"{trenner}{block}")
     except OSError as fehler:
-        log.warning(".gitignore nicht schreibbar (%s): %s", datei, fehler)
+        log.warning("info/exclude nicht schreibbar (%s): %s", datei, fehler)
         return False
-    log.info(".gitignore ergänzt: %s", datei)
+    log.info("info/exclude ergänzt: %s", datei)
     return True
 
 
@@ -598,8 +679,9 @@ def sicherstellen(repo: Path | None = None) -> Path:
 
     Beim Anlegen bekommt ``worktree_basis`` den Vorschlag ``~/wt/<Repo-Name>`` (#257).
     Eine vorhandene Datei bleibt byte-gleich (Plan B8, #257): fehlende Felder liefert
-    ``lade`` beim Lesen aus ``DEFAULTS``, nichts wird nachgetragen. Dazu der
-    ``.gitignore``-Block für ``.to-spawn/`` (idempotent). Rückgabe: Pfad der Konfig-Datei.
+    ``lade`` beim Lesen aus ``DEFAULTS``, nichts wird nachgetragen. Dazu die lokalen
+    Exclude-Zeilen für ``.to-spawn/`` in ``.git/info/exclude`` (idempotent, #407).
+    Rückgabe: Pfad der Konfig-Datei.
     """
     wurzel = repo_wurzel(repo)
     datei = wurzel / KONFIG_PFAD
@@ -692,6 +774,15 @@ def live_schritt(konfig: dict[str, Any]) -> dict[str, str]:
     """
     gruppe = _gruppe(konfig, "live")
     return {schluessel: _text(gruppe, schluessel) for schluessel in _LIVE_TEXT_FELDER}
+
+
+def hat_einreich_dienst(konfig: dict[str, Any]) -> bool:
+    """``einreichen.eigener_dienst: true`` — das Projekt hat einen eigenen Einreich-Dienst (#430).
+
+    Einzige Stelle dieser Regel: nur ausdrücklich ``True`` zählt (nie aus Hook-Dateien
+    abgeleitet). Ohne Marker gilt der normale Weg (Pull-Request + sofortiger Merge).
+    """
+    return _gruppe(konfig, "einreichen").get("eigener_dienst") is True
 
 
 def live_bewusst_ohne(konfig: dict[str, Any]) -> bool:
@@ -995,7 +1086,9 @@ def maschine_eintragen(repo: Path | None = None, ticket_repo: str = "") -> dict[
     ein vorhandener Wert wird nie überschrieben. Der Einrichter übergibt ihn nur mit Beleg (#542).
 
     Schlüssel ist der Ordner (``pfad``). Neu: ``slug`` aus ``origin``, ``worktree_basis`` aus
-    der Repo-Konfig, ``ticket_repo`` leer (= ableiten). Zeigt ``origin`` nicht auf ein
+    der Repo-Konfig, ``ticket_repo`` leer (nicht belegt — der Hausmeister rät nie aus
+    ``slug``, sondern überspringt fail-closed; nur der Einrichter trägt es mit ``gh``-Beleg
+    ein, #420/#542). Zeigt ``origin`` nicht auf ein
     GitHub-Repo (Wegwerf-Klon mit lokalem Pfad, #112), bleibt die Liste unberührt: Warnung,
     Rückgabe des Eintrags ohne Schreiben. Schon da: nur leere Felder werden
     ergänzt, Eingetragenes bleibt. Fehlt die Datei, sind die Vorgaben die Basis — die

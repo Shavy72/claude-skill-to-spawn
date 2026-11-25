@@ -208,7 +208,7 @@ def _lege_konfig_an(ort: Ort) -> None:
             ausgabe=ort.ausgabe,
         )
         return
-    # Wie config.sicherstellen, aber ohne .gitignore-Schreiben (getrackt im App-Repo).
+    # Wie config.sicherstellen, aber ohne Exclude-Zeilen (eigener Baustein gitignore).
     inhalt = copy.deepcopy(config.DEFAULTS)
     inhalt["worktree_basis"] = config.worktree_basis_vorgabe(ort.wurzel)
     datei.parent.mkdir(parents=True, exist_ok=True)
@@ -527,7 +527,7 @@ _BAUSTEINE: list[Baustein] = [
     Baustein("manifest", 1, _pruefe_manifest, _lege_manifest_an),
     Baustein("gitignore", 1, _pruefe_gitignore, _lege_gitignore_an),
     Baustein("checkpoint_label", 2, _pruefe_label, _lege_label_an),
-    Baustein("maschinen_liste", 1, _pruefe_maschine, _lege_maschine_an),
+    Baustein("maschinen_liste", 2, _pruefe_maschine, _lege_maschine_an),
     Baustein("weiterleitungen", 1, _pruefe_weiterleitungen, _lege_weiterleitungen_an),
     Baustein("server_klon", 1, _pruefe_server_klon),
     Baustein("gh", 1, _pruefe_gh),

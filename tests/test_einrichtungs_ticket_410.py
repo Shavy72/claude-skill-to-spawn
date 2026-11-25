@@ -393,7 +393,8 @@ def test_ohne_einrichtung_nur_hinweis_aber_konfig_angelegt(tmp_path: Path) -> No
     _nichts_angelegt(repo, weltdatei, vorher)
     assert "nicht angelegt" in lauf.stdout and "[trocken]" not in lauf.stdout, ausgabe
     assert (repo / ".to-spawn" / "config.json").is_file()
-    assert ".to-spawn" in (repo / ".gitignore").read_text(encoding="utf-8")
+    assert ".to-spawn" in (repo / ".git" / "info" / "exclude").read_text(encoding="utf-8")
+    assert not (repo / ".gitignore").exists()
 
 
 def test_t0_nicht_lesbar_meldet_warnung(tmp_path: Path) -> None:
