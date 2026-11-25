@@ -34,7 +34,6 @@ SKILLS="$(nativ "$SKILLS")"
 CLAUDE_MD="$(nativ "$CLAUDE_MD")"
 
 ZIEL="$SKILLS/to-spawn"
-mkdir -p "$SKILLS"
 if [ -e "$ZIEL" ] && [ "$(cd "$ZIEL" && pwd -P)" = "$(cd "$HIER" && pwd -P)" ]; then
   echo "Abbruch: install.sh läuft aus dem Zielordner ($ZIEL) — aus dem Git-Klon starten." >&2
   exit 2
@@ -54,6 +53,107 @@ if [ -z "$PY" ]; then
   echo "Abbruch: python3 (ab 3.11) fehlt — erst Python installieren, dann install.sh erneut starten (nichts kopiert)." >&2
   exit 127
 fi
+
+ist_windows() {
+  case "$(uname -s 2>/dev/null || true)" in
+    MINGW*|MSYS*|CYGWIN*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+besitzer_info() {
+  if stat -c '%u %U:%G' "$1" 2>/dev/null; then
+    return 0
+  fi
+  stat -f '%u %Su:%Sg' "$1" 2>/dev/null || printf '%s %s\n' "" "unbekannt"
+}
+
+# pruefe_zielrechte (#297): vor dem ersten Schreiben Besitzer und Schreibrecht aller Zielordner prüfen.
+# Bricht vor jeder Änderung mit allen betroffenen Pfaden, Besitzer und Behebungsbefehl ab.
+pruefe_zielrechte() {
+  local meine_uid mein_nutzer meine_gruppe fehler_text="" gesehen=$'\n' pfad pruef_pfad ist_eltern
+  local besitzer_zeile uid_besitzer name_besitzer grund behebung naechst
+  meine_uid="$(id -u 2>/dev/null || echo "")"
+  mein_nutzer="$(id -un 2>/dev/null || echo "${USER:-nutzer}")"
+  meine_gruppe="$(id -gn 2>/dev/null || echo "$mein_nutzer")"
+  for pfad in "$@"; do
+    [ -n "$pfad" ] || continue
+    ist_eltern=0
+    pruef_pfad="$pfad"
+    if [ ! -e "$pruef_pfad" ]; then
+      ist_eltern=1
+      while [ ! -e "$pruef_pfad" ] && [ "$pruef_pfad" != "/" ] && [ "$pruef_pfad" != "." ]; do
+        naechst="$(dirname "$pruef_pfad")"
+        [ "$naechst" = "$pruef_pfad" ] && break
+        pruef_pfad="$naechst"
+      done
+    fi
+    [ -e "$pruef_pfad" ] || continue
+    case "$gesehen" in *$'\n'"$pruef_pfad"$'\n'*) continue ;; esac
+    gesehen="${gesehen}${pruef_pfad}"$'\n'
+
+    besitzer_zeile="$(besitzer_info "$pruef_pfad")"
+    uid_besitzer="${besitzer_zeile%% *}"
+    name_besitzer="${besitzer_zeile#* }"
+    [ "$name_besitzer" = "$besitzer_zeile" ] && name_besitzer="unbekannt"
+
+    grund=""
+    behebung=""
+    if ! ist_windows && [ -n "$meine_uid" ] && [ "$meine_uid" != "0" ] && [ -n "$uid_besitzer" ] && [ "$uid_besitzer" != "$meine_uid" ]; then
+      if [ "$ist_eltern" -eq 0 ] || [ ! -w "$pruef_pfad" ]; then
+        grund="Besitzer: $name_besitzer, erwartet: $mein_nutzer"
+        behebung="sudo chown -R $mein_nutzer:$meine_gruppe \"$pruef_pfad\""
+      fi
+    fi
+    if [ -z "$grund" ] && [ ! -w "$pruef_pfad" ]; then
+      grund="Besitzer: $name_besitzer, nicht beschreibbar"
+      behebung="chmod u+w \"$pruef_pfad\""
+    fi
+    if [ -n "$grund" ]; then
+      fehler_text="${fehler_text}  - ${pruef_pfad} (${grund}) — Behebung: ${behebung}"$'\n'
+    fi
+  done
+  if [ -n "$fehler_text" ]; then
+    echo "Abbruch: Zielordner nicht schreibbar oder fremder Besitzer (nichts geändert):" >&2
+    printf '%s' "$fehler_text" >&2
+    exit 1
+  fi
+}
+
+CLAUDE_DIR="$(dirname "$CLAUDE_MD")"
+HOME_CLAUDE="$(nativ "$HOME/.claude")"
+ZIEL_PFADE=(
+  "$SKILLS"
+  "$CLAUDE_DIR"
+  "$HOME_CLAUDE"
+  "$HOME_CLAUDE/hooks"
+  "$HOME_CLAUDE/hooks/review"
+  "$HOME_CLAUDE/review"
+)
+for vorhanden in \
+  "$SKILLS/_alt" \
+  "$ZIEL" \
+  "$SKILLS/review-dirigent" \
+  "$CLAUDE_MD" \
+  "$CLAUDE_DIR/bin" \
+  "$CLAUDE_DIR/settings.json" \
+  "$HOME_CLAUDE/hooks/_alt" \
+  "$HOME_CLAUDE/_alt"; do
+  [ -e "$vorhanden" ] && ZIEL_PFADE+=("$vorhanden")
+done
+for unter in "$HIER"/aliase/*/ "$HIER"/kette/skills/*/; do
+  [ -d "$unter" ] || continue
+  vorhanden="$SKILLS/$(basename "$unter")"
+  [ -e "$vorhanden" ] && ZIEL_PFADE+=("$vorhanden")
+done
+if [ -n "$REPO" ] && [ -d "$REPO" ]; then
+  REPO_PRUEF="$(nativ "$(cd "$REPO" && pwd)")"
+  MANIFESTE_PRUEF="$("$PY" -c 'import sys; sys.path.insert(0, sys.argv[1]); from pathlib import Path; from to_spawn import config; print(config.pfad(config.lade(Path(sys.argv[2])), "manifeste"))' "$HIER" "$REPO_PRUEF")"
+  ZIEL_PFADE+=("$REPO_PRUEF" "$REPO_PRUEF/scripts" "$MANIFESTE_PRUEF")
+fi
+pruefe_zielrechte "${ZIEL_PFADE[@]}"
+
+mkdir -p "$SKILLS"
 
 ZEIT="$(date +%Y%m%d-%H%M%S)"
 
@@ -87,7 +187,7 @@ sichere_und_kopiere() {
 # --- 1+2. Alten Stand sichern, Skill kopieren (ohne Git, Caches) -------------
 quellen=()
 for eintrag in SKILL.md README.md LICENSE to_spawn.py install.sh install.ps1 spawn_local.ps1 spawn_srv.ps1 \
-               to_spawn skripte repo-scripts aliase tests docs nest leitstand kette review-hook review probe; do
+               to_spawn skripte repo-scripts aliase tests docs nest leitstand kette review-hook review review-dirigent probe; do
   quellen+=("$HIER/$eintrag")
 done
 sichere_und_kopiere to-spawn "${quellen[@]}"
@@ -114,6 +214,12 @@ PYTHONPATH="$ZIEL" "$PY" -m to_spawn.ja_einrichten --claude-dir "$(dirname "$CLA
 
 # --- 3c. Review-Hook (review-hook/ → ~/.claude/hooks/review, #214) + Werkzeug (review/ → ~/.claude/review, #329); Regel in to_spawn/review_hook.py
 PYTHONPATH="$ZIEL" "$PY" -m to_spawn.review_hook --klon "$HIER"  # Klon: nur versionierte Dateien
+
+# --- 3d. Review-Dirigent (review-dirigent/ → <skills>/review-dirigent, #396) ---
+if [ -d "$HIER/review-dirigent" ]; then
+  sichere_und_kopiere review-dirigent "$HIER"/review-dirigent/*
+  echo "Review-Dirigent installiert: $SKILLS/review-dirigent"
+fi
 
 # --- 4. Repo-Hälfte (optional): nur fehlende Dateien --------------------------
 if [ -n "$REPO" ]; then

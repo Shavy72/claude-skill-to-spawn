@@ -19,7 +19,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from conftest import attrappe
+from conftest import attrappe, repo_dateien
 from test_hausmeister_1368 import (  # noqa: F401 — ``welt`` ist ein Fixture
     SKILL,
     Welt,
@@ -218,13 +218,13 @@ def test_bau_start_wartet_ueber_pruef_tuer() -> None:
 
 def _skill_dateien() -> list[Path]:
     dateien = [SKILL / "to_spawn" / "aufpasser.py", SKILL / "to_spawn" / "speicher.py"]
-    dateien += [p for p in (SKILL / "skripte").rglob("*") if p.is_file()]
+    dateien += repo_dateien(SKILL / "skripte")
     dateien += [
         p
-        for p in SKILL.rglob("*.md")
-        if "tests" not in p.parts and "docs" not in p.parts
+        for p in repo_dateien(SKILL)
+        if p.suffix == ".md" and not ({"tests", "docs"} & set(p.relative_to(SKILL).parts))
     ]
-    return [p for p in dateien if "__pycache__" not in p.parts]
+    return dateien
 
 
 def test_schwellen_nur_im_hausmeister() -> None:
