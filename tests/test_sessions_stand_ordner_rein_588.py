@@ -191,3 +191,50 @@ def test_prozesse_windows_gibt_arbeitsordner_mit(modul: ModuleType, tmp_path: Pa
     finally:
         kind.kill()
         kind.wait()
+
+
+def test_prozesse_lesen_windows_trennt_fremde_und_beendete_wache(
+    modul: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Windows: fremde oder eben beendete ``wache.py 900`` lässt Spec #900 auf ``aus``.
+
+    Sonst überspringt ``spawn_srv.sh --nur-wache`` das Fenster ``wache 900``, sobald ein
+    paralleler Test-Worker eine Aufseher-Session für dieselbe Spec-Nummer laufen hat.
+    """
+    import json
+    from types import SimpleNamespace
+
+    eigen = tmp_path / "eigen"
+    fremd = tmp_path / "fremd"
+    eigen.mkdir()
+    fremd.mkdir()
+    modul.REPO = eigen
+
+    wmi = [
+        {"ProcessId": 601, "ParentProcessId": 1, "Name": "python.exe", "CommandLine": r"python.exe skripte\wache.py 900", "Start": ""},
+        {"ProcessId": 602, "ParentProcessId": 1, "Name": "python.exe", "CommandLine": r"python.exe skripte\wache.py 901", "Start": ""},
+        {"ProcessId": 603, "ParentProcessId": 1, "Name": "python.exe", "CommandLine": r"python.exe skripte\wache.py 902", "Start": ""},
+    ]
+
+    def _peb_cwd(pid: int) -> str | None:
+        if pid == 601:
+            return str(fremd)
+        if pid == 602:
+            return None
+        return str(eigen)
+
+    monkeypatch.setattr(modul.sys, "platform", "win32")
+    monkeypatch.setattr(
+        modul.subprocess,
+        "run",
+        lambda *a, **k: SimpleNamespace(stdout=json.dumps(wmi)),
+    )
+    monkeypatch.setattr(modul.prozessbaum, "arbeitsordner_windows", _peb_cwd)
+    monkeypatch.setattr(modul.prozessbaum, "ist_weg_windows", lambda pid: pid == 602)
+
+    alle = modul.prozesse_lesen()
+    eintraege = {n: modul.Eintrag(n, "spec", f"Aufseher Spec #{n}") for n in ("900", "901", "902")}
+    modul.zuordnen(eintraege, alle)
+    assert eintraege["900"].zustand == "aus"
+    assert eintraege["901"].zustand == "aus"
+    assert eintraege["902"].zustand == "startet"
