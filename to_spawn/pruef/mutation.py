@@ -268,7 +268,9 @@ class Ergebnis:
             zeilen.extend(f"- `{pfad}`" for pfad in self.gepruefte_dateien)
             zeilen.extend(["", "</details>", ""])
         if self.ueberlebende:
-            zeilen.extend([f"<details><summary>Überlebende/auffällige Mutanten ({len(self.ueberlebende)})</summary>", ""])
+            zeilen.extend(
+                [f"<details><summary>Überlebende/auffällige Mutanten ({len(self.ueberlebende)})</summary>", ""]
+            )
             zeilen.extend(m.kurz() for m in self.ueberlebende)
             zeilen.extend(["", "</details>", ""])
         return "\n".join(zeilen)
@@ -636,9 +638,7 @@ def pruefe_diff(
     gepruefte = tuple(
         pfad
         for pfad in alle_geaendert
-        if ist_produktiv_python(pfad)
-        and _passt_pfad_filter(pfad, filter_liste)
-        and (wurzel / pfad).is_file()
+        if ist_produktiv_python(pfad) and _passt_pfad_filter(pfad, filter_liste) and (wurzel / pfad).is_file()
     )
     gepruefte_menge = frozenset(gepruefte)
     ausgeschlossene = tuple(pfad for pfad in alle_geaendert if pfad not in gepruefte_menge)

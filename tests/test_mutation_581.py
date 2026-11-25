@@ -121,6 +121,9 @@ def _fake_mutmut_paket(
             import sys
             from pathlib import Path
 
+            if hasattr(sys.stdout, "reconfigure"):
+                sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
             SPUR = Path({str(spur_datei)!r})
             args = sys.argv[1:]
 
@@ -226,7 +229,11 @@ def test_diff_waehlt_nur_geaenderte_produktiv_python_dateien(tmp_path: Path) -> 
                 return int(a + b)
             """),
     )
-    _schreibe(repo, "tests/test_rechnen.py", "from kern.rechnen import addiere\n\ndef test_addiere():\n    assert addiere(1, 2) == 3\n")
+    _schreibe(
+        repo,
+        "tests/test_rechnen.py",
+        "from kern.rechnen import addiere\n\ndef test_addiere():\n    assert addiere(1, 2) == 3\n",
+    )
     _schreibe(repo, "tests/hilfsmodul.py", "KONSTANTE = 99\n")
     _schreibe(repo, "tests/conftest.py", "# geändert\n")
     _schreibe(repo, "docs/hinweis.md", "# Aktualisiert\n")
@@ -518,10 +525,7 @@ def test_ungueltige_git_ref_liefert_fehler(tmp_path: Path) -> None:
 
 def test_parser_erkennt_mutmut2_emoji_und_results() -> None:
     """Parst mutmut-2-Fortschrittszeilen (inkl. ANSI/CR) und ``mutmut results``-Blöcke."""
-    ausgabe = (
-        "\x1b[32m3/10  🎉 2  ⏰ 0  🤔 0  🙁 1  🔇 0\x1b[0m\r"
-        "10/10  🎉 7  ⏰ 1  🤔 0  🙁 2  🔇 0\n"
-    )
+    ausgabe = "\x1b[32m3/10  🎉 2  ⏰ 0  🤔 0  🙁 1  🔇 0\x1b[0m\r10/10  🎉 7  ⏰ 1  🤔 0  🙁 2  🔇 0\n"
     zaehler = mutation.parse_mutmut_ausgabe(ausgabe)
     assert zaehler == mutation.Zaehler(
         gesamt=10,
@@ -580,7 +584,11 @@ def test_parser_erkennt_mutmut3_results() -> None:
 # --- 6. CLI-Schnittstelle ----------------------------------------------------------------------
 
 
-def test_cli_json_und_markdown_zusammenfassung(tmp_path: Path) -> None:
+def test_cli_json_und_markdown_zusammenfassung(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     """CLI liefert gültiges JSON, schreibt Markdown-Zusammenfassung und respektiert Exit-Codes."""
     repo = _probe_repo(tmp_path / "repo")
     _schreibe(repo, "kern/rechnen.py", "def addiere(a: int, b: int) -> int:\n    return (a + b)\n")
@@ -590,8 +598,7 @@ def test_cli_json_und_markdown_zusammenfassung(tmp_path: Path) -> None:
     spur = tmp_path / "cli_spur.json"
     fake_dir = _fake_mutmut_paket(tmp_path / "fake_site", spur, getoetet=2, ueberlebt=1)
     summary_md = tmp_path / "summary.md"
-
-    erg = _cli(
+    cli_args = [
         "--repo",
         str(repo),
         "--basis",
@@ -601,12 +608,23 @@ def test_cli_json_und_markdown_zusammenfassung(tmp_path: Path) -> None:
         "--json",
         "--zusammenfassung",
         str(summary_md),
-        cwd=repo,
-        extra_pythonpath=fake_dir,
-    )
+    ]
 
-    assert erg.returncode == 1, erg.stderr
-    daten = json.loads(erg.stdout)
+    if sys.platform.startswith("linux"):
+        erg = _cli(*cli_args, cwd=repo, extra_pythonpath=fake_dir)
+        returncode = erg.returncode
+        stdout = erg.stdout
+        fehler = erg.stderr
+    else:
+        monkeypatch.setattr(mutation.sys, "platform", "linux")
+        monkeypatch.setenv("PYTHONPATH", f"{fake_dir}{os.pathsep}{os.environ.get('PYTHONPATH', '')}")
+        returncode = mutation.main(cli_args)
+        aus = capsys.readouterr()
+        stdout = aus.out
+        fehler = aus.err
+
+    assert returncode == 1, fehler
+    daten = json.loads(stdout)
     assert daten["ok"] is False
     assert daten["gepruefte_dateien"] == ["kern/rechnen.py"]
     assert daten["zaehler"]["getoetet"] == 2
