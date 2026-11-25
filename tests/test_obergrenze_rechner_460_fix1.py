@@ -17,7 +17,7 @@ import pytest
 
 from to_spawn import aufpasser, speicher, sperre
 
-#: 16-GB-Rechner, max_sessions 6 → arbeitende Rechner-Grenze 9, Gesamtgrenze 18.
+#: 16-GB-Rechner, max_sessions 6 → arbeitende Rechner-Grenze 12, Gesamtgrenze 24 (Messung 25.11.2026, Refs 284/624; vorher 9/18).
 _KONFIG6 = {"speicher": {"max_sessions": 6, "min_frei_mib": 0, "staffel_s": 0}}
 _EIGEN_TMUX = "/tmp/tmux-test/default,111,0"
 _FREMD_TMUX = "/tmp/tmux-test/default,111,7"
@@ -82,21 +82,21 @@ def _starter_sichtbar(proc: Path, start: int = 4242) -> None:
 
 
 def test_gesamtgrenze_18_greift_bei_vielen_stillen(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """17 stille + 1 arbeitende fremde Session: arbeitende 1 von 9, aber insgesamt 18 von 18 → voll."""
+    """23 stille + 1 arbeitende fremde Session: arbeitende 1 von 12, aber insgesamt 24 von 24 → voll (284: war 17+1/18)."""
     proc, sessions = _welt(tmp_path, monkeypatch, tmux=_EIGEN_TMUX)
-    for pid in range(201, 218):
+    for pid in range(201, 224):
         _claude(proc, sessions, pid, "idle")
     _claude(proc, sessions, 301, "busy")
     frei, text = speicher.platz_frei_hier(_KONFIG6)
     assert not frei, text
-    assert "18" in text and "insgesamt" in text and "still" in text, text
+    assert "24" in text and "insgesamt" in text and "still" in text, text
     assert not text.startswith("Rechner voll: schon"), text  # unterscheidbar von „arbeitende voll“
 
 
 def test_unter_gesamtgrenze_frei(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """16 stille + 1 arbeitende = 17 < 18 → frei."""
+    """22 stille + 1 arbeitende = 23 < 24 → frei (284: war 16+1 < 18)."""
     proc, sessions = _welt(tmp_path, monkeypatch, tmux=_EIGEN_TMUX)
-    for pid in range(201, 217):
+    for pid in range(201, 223):
         _claude(proc, sessions, pid, "idle")
     _claude(proc, sessions, 301, "busy")
     frei, text = speicher.platz_frei_hier(_KONFIG6)
@@ -104,19 +104,19 @@ def test_unter_gesamtgrenze_frei(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 
 
 def test_arbeitende_rechner_grenze_meldet_weiter_rechner_voll(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """9 arbeitende fremde: alte Meldung „Rechner voll“ bleibt, Gesamtgrenze greift noch nicht."""
+    """12 arbeitende fremde (284: war 9): alte Meldung „Rechner voll“ bleibt, Gesamtgrenze greift noch nicht."""
     proc, sessions = _welt(tmp_path, monkeypatch, tmux=_EIGEN_TMUX)
-    for pid in range(301, 310):
+    for pid in range(301, 313):
         _claude(proc, sessions, pid, "busy")
     frei, text = speicher.platz_frei_hier(_KONFIG6)
     assert (frei, text) == (
         False,
-        "Rechner voll: schon 9 Claude-Sessions auf dem Rechner (Obergrenze 9)",
+        "Rechner voll: schon 12 Claude-Sessions auf dem Rechner (Obergrenze 12)",
     )
 
 
 def test_gesamt_grenze_ist_doppelte_rechner_grenze() -> None:
-    assert speicher.gesamt_grenze(6, 16 * 1024 * 1024) == 2 * speicher.rechner_grenze(6, 16 * 1024 * 1024) == 18
+    assert speicher.gesamt_grenze(16 * 1024 * 1024) == 2 * speicher.rechner_grenze(16 * 1024 * 1024) == 24
 
 
 # --- 2. Ausweichwege von _pruefen_und_belegen ------------------------------------

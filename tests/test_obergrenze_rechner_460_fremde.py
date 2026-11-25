@@ -1,6 +1,6 @@
 """#460 Abnahme: fremde Sessions füllen den Rechner — ``spawn`` meldet „wartet auf Platz“, nicht „nichts gestartet“.
 
-1. 9 arbeitende Claude-Sessions, davon nur 2 in der Spec-Sitzung (Obergrenze 6, Rechner-Grenze 9):
+1. 12 arbeitende Claude-Sessions, davon nur 2 in der Spec-Sitzung (Obergrenze 6, Rechner-Grenze 12; 284: war 9):
    der Aufseher bekommt sein Fenster (er wartet darin selbst auf Platz), der Rest wartet auf ihn —
    Exit 0, Warte-Zeile nennt den Grund, kein „nicht gestartet“.
 2. Gegenprobe: 9 eigene Sessions → Exit 5, Meldung nennt die volle Spec-Sitzung.
@@ -20,7 +20,7 @@ from test_obergrenze_rechner_460_fix1_spawn import _spawn
 
 @pytest.mark.braucht("bash", "posix")
 def test_neun_sessions_zwei_eigene_wartet_auf_platz_exit_0(tmp_path: Path) -> None:
-    lauf, gestartet = _spawn(tmp_path, max_sessions=6, belegt=7, belegt_eigen=2)
+    lauf, gestartet = _spawn(tmp_path, max_sessions=6, belegt=10, belegt_eigen=2)
     ausgabe = lauf.stdout + lauf.stderr
     assert lauf.returncode == 0, ausgabe
     assert "nicht gestartet" not in ausgabe and "nichts gestartet" not in ausgabe, ausgabe
