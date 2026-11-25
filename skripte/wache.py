@@ -90,7 +90,7 @@ def repo_aus_origin(fallback: str = "") -> str:
             ["git", "remote", "get-url", "origin"],
             cwd=str(REPO_ORDNER),
             capture_output=True,
-            text=True,
+            **konsole.UNTERPROZESS_TEXT,
             check=False,
             **prozessbaum.fensterlos(),
         ).stdout.strip()
@@ -185,9 +185,7 @@ def wartende_nachstarten(
                 cwd=str(repo),
                 env=umgebung,
                 capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
+                **konsole.UNTERPROZESS_TEXT,
                 timeout=600,
             )
         except (OSError, subprocess.SubprocessError) as fehler:

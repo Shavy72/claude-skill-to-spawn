@@ -27,7 +27,7 @@ import re
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
-from to_spawn import prozessbaum
+from to_spawn import konsole
 
 log = logging.getLogger("belege")
 
@@ -179,16 +179,13 @@ def zeitpunkt(datei: Path) -> float:
     # Bekannte Grenze: Eine schon committete Belegdatei, die danach lokal überschrieben und
     # noch nicht neu committet wurde, zählt mit ihrer alten Commit-Zeit, nicht mit „jetzt“.
     try:
-        aus = subprocess.run(
+        aus = konsole.lauf_daten(
             ["git", "log", "-1", "--format=%ct", "--", datei.name],
             cwd=datei.parent,
-            capture_output=True,
-            text=True,
             timeout=15,
             check=False,
-            **prozessbaum.fensterlos(),
         )
-        if aus.returncode == 0 and aus.stdout.strip():
+        if aus is not None and aus.returncode == 0 and aus.stdout.strip():
             return float(aus.stdout.strip())
     except (OSError, subprocess.SubprocessError, ValueError) as fehler:
         log.debug("Commit-Zeit nicht lesbar %s: %s", datei, fehler)

@@ -138,7 +138,7 @@ def _git(ordner: Path, *args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["git", "-C", str(ordner), *args],
         capture_output=True,
-        text=True,
+        **konsole.UNTERPROZESS_PFADE,
         check=False,
         **prozessbaum.fensterlos(),
     )
@@ -367,7 +367,7 @@ def git_hooks_einrichten(klon: Path) -> bool:
             ergebnis = subprocess.run(
                 ["sh", str(installer), str(klon)],
                 capture_output=True,
-                text=True,
+                **konsole.UNTERPROZESS_TEXT,
                 timeout=GIT_HOOKS_TIMEOUT_S,
                 check=False,
                 **prozessbaum.fensterlos(),
@@ -536,9 +536,11 @@ def _bws_geheimnisse(bws: str, projekt: str | None, token: str, environ: Mapping
     befehl = [bws, "secret", "list", *([projekt] if projekt else []), "--output", "json"]
     umgebung = {**environ, "BWS_ACCESS_TOKEN": token}
     try:
-        ergebnis = subprocess.run(befehl, env=umgebung, capture_output=True, text=True, check=False, timeout=120, **prozessbaum.fensterlos())
+        ergebnis = konsole.lauf_daten(befehl, env=umgebung, check=False, timeout=120)
     except (OSError, subprocess.TimeoutExpired) as fehler:
         raise NestFehler(f"bws nicht startbar ({type(fehler).__name__})") from fehler
+    if ergebnis is None:
+        raise NestFehler("bws-Ausgabe nicht lesbar (kein UTF-8)")
     if ergebnis.returncode != 0:
         grund = ergebnis.stderr.strip().replace(token, "***")[:200]
         raise NestFehler(f"bws scheiterte (Exit {ergebnis.returncode}): {grund}")

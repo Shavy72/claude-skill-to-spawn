@@ -46,6 +46,7 @@ from to_spawn import (
     anleitung,
     capo,
     config,
+    konsole,
     pc_fenster,
     prozessbaum,
     sessions_datei,
@@ -224,7 +225,7 @@ class TmuxWerkzeug:
         fertig = subprocess.run(
             ["pgrep", "-af", "bau.py"],
             capture_output=True,
-            text=True,
+            **konsole.UNTERPROZESS_TEXT,
             check=False,
             timeout=30,
             **prozessbaum.fensterlos(),
@@ -330,7 +331,7 @@ class TmuxWerkzeug:
         return subprocess.run(
             ["git", "-C", str(wt), *argumente],
             capture_output=True,
-            text=True,
+            **konsole.UNTERPROZESS_PFADE,
             check=True,
             timeout=30,
             **prozessbaum.fensterlos(),
