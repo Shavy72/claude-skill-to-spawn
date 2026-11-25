@@ -56,6 +56,7 @@ from to_spawn import (
     umzug,
     vorfall,
     waechter_takt,
+    wecker,
 )
 from to_spawn import einreichen as einreichen_modul
 from to_spawn import spawn as spawn_modul
@@ -550,6 +551,8 @@ def verteilen(ap: argparse.ArgumentParser, args: argparse.Namespace) -> int:
         return waechter_takt.lauf(args)
     if args.befehl == "aufpasser":
         return aufpasser.lauf_mit_args(args)
+    if args.befehl == "wecker":
+        return wecker.lauf(args)
     if args.befehl == "start-last":
         return start_last.lauf_mit_args(args)
     if args.befehl == "aufraeumen":

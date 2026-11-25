@@ -3,12 +3,13 @@
 Läuft per Cron alle 15 Minuten (0 Token, reines Skript) und sieht je tmux-Sitzung
 ``spec-<S>`` nach den Fenstern ``bau <N>`` und ``wache <S>``:
 
-0. **Deploy-Wache:** läuft ein Deploy (``--deploy-muster`` plus die Skripte aus
-   ``.to-spawn/config.json`` gegen ``pgrep -af``), wird in diesem Lauf nichts
-   angefasst — nur die Hashes werden fortgeschrieben. Prozesse älter als 6 h zählen
-   nicht (verwaiste Läufe), sie werden als „Waise ignoriert“ geloggt. Ein Gate
-   (``pytest``) sperrt nur das eigene Fenster — im Fensterbaum oder im
-   Ticket-Worktree —, nie den ganzen Server (#592).
+0. **Deploy-Wache (#262):** läuft ein Deploy (``--deploy-muster`` plus die Skripte aus
+   ``.to-spawn/config.json`` gegen ``prozessbaum.passende``), wird in diesem Lauf
+   nichts angefasst — weder der Hausmeister noch der externe Wecker noch tmux-Fenster
+   (nur die Hashes werden fortgeschrieben; bei gestörter Abfrage fail-closed). Prozesse
+   älter als 6 h zählen nicht (verwaiste Läufe), sie werden als „Waise ignoriert“
+   geloggt. Ein Gate (``pytest``) sperrt nur das eigene Fenster — im Fensterbaum oder
+   im Ticket-Worktree —, nie den ganzen Server (#592).
 1. **Fehlendes Fenster:** offenes Unter-Ticket ohne ``bau <N>`` (oder fehlendes
    ``wache <S>`` bei offenen Tickets) → Fenster anlegen. Liegt
    ``<repo>/.to-spawn/sessions/<N>.json`` (``wache-<S>.json``) und das Transkript
@@ -308,6 +309,9 @@ ARBEITS_MARKER = (
     "usage limit",
     "limit reset",
 )
+#: Nur echte laufende Arbeit (ohne Limit-Hinweise) — genutzt vom externen Wecker (#287),
+#: damit eine alte Limit-Meldung nach dem Reset einen neuen Weckruf nicht dauerhaft sperrt.
+LAUFEND_MARKER = ("esc to interrupt",)
 #: Marker, die nur in der Statuszeile unter dem Eingabefeld Arbeit bedeuten (#434):
 #: im Verlauf oben bleibt „✻ Waiting for 1 background agent to finish“ oft stehen,
 #: obwohl das Eingabefeld längst still ist.
@@ -429,6 +433,8 @@ class Einstellungen:
     karenz_platznot_s: float = KARENZ_PLATZNOT_S
     #: Wartezeit auf das Ende von Claude nach ``/exit`` (Tests setzen sie klein).
     exit_warten_s: float = EXIT_WARTEN_S
+    #: Optionaler Zustandsordner für den externen Wecker (#287); None ⇒ Standardordner.
+    wecker_zustand: Path | None = None
 
     def __post_init__(self) -> None:
         if self.hang_min < HANG_MIN_UNTERGRENZE:
@@ -535,6 +541,22 @@ def arbeitet(text: str, status: str | None = None) -> bool:
         return True
     return (
         arbeits_marker_aktiv(text)
+        or rueckfrage(text)
+        or bool(BLOCKER_WARTEN.search(text))
+    )
+
+
+def arbeitet_echt(text: str, status: str | None = None) -> bool:
+    """Wie :func:`arbeitet`, aber ohne Limit-Marker (#287).
+
+    Für den externen Wecker: nach einem Limit-Reset steht die alte Limit-Meldung oft noch
+    im Verlauf über ``❯``; sie darf den erneuten Weckruf nicht dauerhaft blockieren.
+    """
+    if status == "busy":
+        return True
+    return (
+        any(m in text for m in LAUFEND_MARKER)
+        or any(m in statuszeile(text) for m in STATUSZEILEN_ARBEITS_MARKER)
         or rueckfrage(text)
         or bool(BLOCKER_WARTEN.search(text))
     )
@@ -3100,6 +3122,37 @@ class Aufpasser:
             " (trocken)" if self.e.trocken else "",
         )
 
+    def _wecker_lauf(self) -> None:
+        """Sicherheitsnetz für den externen Wecker (#287): stößt fällige Weckaufträge an.
+
+        Fehlt ``auftraege.json``, endet :func:`to_spawn.wecker.durchgang` sofort ohne
+        Unterprozesse. Fehler halten den übrigen Aufpasser-Lauf nie auf.
+        """
+        from to_spawn import wecker  # spät: wecker importiert aufpasser
+
+        try:
+            ergebnisse = wecker.durchgang(
+                self.e.wecker_zustand,
+                tmux_socket=self.e.tmux_socket,
+                trocken=self.e.trocken,
+                jetzt=self.jetzt,
+            )
+        except NotImplementedError:
+            return
+        except Exception:  # Wecker darf den Aufpasser-Lauf nie aufhalten
+            log.exception("Externer Wecker gescheitert")
+            return
+        if ergebnisse:
+            geweckt = sum(1 for e in ergebnisse if e.ereignis == "geweckt")
+            gescheitert = sum(1 for e in ergebnisse if e.ereignis == "gescheitert")
+            (log.warning if gescheitert else log.info)(
+                "Wecker: %d geweckt, %d gescheitert, %d gesamt%s",
+                geweckt,
+                gescheitert,
+                len(ergebnisse),
+                " (trocken)" if self.e.trocken else "",
+            )
+
     def _deploy_wache(self, repos: Iterable[Path]) -> list[str]:
         """Setzt das Deploy-Muster für diese Repos und liefert die laufenden Deploy-/Gate-Prozesse."""
         self.muster = self.deploy_muster_fuer(repos)
@@ -3107,7 +3160,6 @@ class Aufpasser:
 
     def _lauf(self) -> None:
         self._starts_in_tick = 0
-        self._hausmeister_lauf()
         gesehen: list[tuple[str, str, list[Fenster], Path]] = []
         for sitzung, spec in self.sitzungen():
             try:
@@ -3131,6 +3183,13 @@ class Aufpasser:
                 except RuntimeError as fehler:
                     log.error("%s: Fenster nicht lesbar: %s", sitzung, fehler)
             return
+        # Entscheidung #262: Die Deploy-Wache läuft immer VOR dem Hausmeister (und dem
+        # externen Wecker). Ein laufender Deploy/Prüflauf (oder eine gestörte Wache,
+        # fail-closed) sperrt damit auch das Aufräumen von Ordnern, Zweigen und
+        # Docker-Resten; außerhalb des Aufpassers schützen den Hausmeister weiter seine
+        # eigenen Sperren je Ordner (laufender Prozess im Ordner, offenes Ticket, 24 h).
+        self._hausmeister_lauf()
+        self._wecker_lauf()
         for sitzung, spec, fenster, repo in gesehen:
             try:
                 self.sitzung_pruefen(sitzung, spec, fenster, repo)
