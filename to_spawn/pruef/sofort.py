@@ -25,19 +25,23 @@ ausgelassen (``lief=False`` + Grund) und die Leiter prüft voll weiter.
 
 from __future__ import annotations
 
+import argparse
 import fnmatch
 import json
 import logging
 import os
+import shlex
 import shutil
 import subprocess
+import sys
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
+from typing import Any
 
-from to_spawn import config, prozessbaum
-from to_spawn.pruef import ausfuehren, cache, leiter, regeln
+from to_spawn import bash_wahl, config, prozessbaum, temp_ordner
+from to_spawn.pruef import ausfuehren, cache, leiter, regeln, test_schutz
 
 log = logging.getLogger("to_spawn.pruef")
 
@@ -65,10 +69,15 @@ class _Linter:
     argumente: tuple[str, ...]
 
 
+def _finde_werkzeug(repo: Path, name: str) -> str | None:
+    """Werkzeug aus dem venv des Repos (Linux ``bin``, Windows ``Scripts``), sonst aus dem PATH."""
+    venv = [str(repo / ordner / teil) for ordner in (".venv", "venv") for teil in ("bin", "Scripts")]
+    return shutil.which(name, path=os.pathsep.join(venv)) or shutil.which(name)
+
+
 def _ruff(repo: Path) -> str | None:
     """ruff aus dem venv des Repos (Linux ``bin``, Windows ``Scripts``), sonst aus dem PATH."""
-    venv = [str(repo / ordner / teil) for ordner in (".venv", "venv") for teil in ("bin", "Scripts")]
-    return shutil.which("ruff", path=os.pathsep.join(venv)) or shutil.which("ruff")
+    return _finde_werkzeug(repo, "ruff")
 
 
 def _eslint(repo: Path) -> str | None:
@@ -425,3 +434,329 @@ def stufen(repo: Path, basis: str) -> tuple[list[leiter.Stufe], str]:
         )
     )
     return liste, NUR_DOKU if nur_doku else ""
+
+
+# --- Einheitlicher Stufe-0-Ablauf (vor dem Push / in der CI, #794) -----------------------------
+
+_SHELL_ZEICHEN = ("&&", "||", ";", "|", ">", "<", "$", "`", "\n")
+
+
+@dataclass(frozen=True)
+class Stufe0Ergebnis:
+    """Gesamtergebnis von :func:`stufe0` (ruff, Typ-Prüfung, Test-Schutz)."""
+
+    ok: bool
+    exit_code: int
+    stufen: tuple[leiter.Stufe, ...]
+    fehler_kurz: str
+    dauer_s: float
+    test_schutz: test_schutz.Ergebnis | None = None
+
+    def als_dict(self) -> dict[str, Any]:
+        return {
+            "ok": self.ok,
+            "exit_code": self.exit_code,
+            "dauer_s": self.dauer_s,
+            "fehler_kurz": self.fehler_kurz,
+            "stufen": [
+                {
+                    "name": s.name,
+                    "adapter": s.adapter,
+                    "lief": s.lief,
+                    "grund": s.grund,
+                    "dauer_s": s.dauer_s,
+                    "befehl": s.befehl,
+                    "werkzeug": s.werkzeug,
+                    "ergebnis": s.ergebnis,
+                }
+                for s in self.stufen
+            ],
+            "test_schutz": self.test_schutz.als_dict() if self.test_schutz is not None else None,
+        }
+
+    def bericht(self) -> str:
+        status = "grün" if self.ok else ("gate-fehler" if self.exit_code == leiter.GATE_FEHLER else "rot")
+        zeilen = [f"Stufe 0 {status} ({self.dauer_s:.2f} s):"]
+        for s in self.stufen:
+            marke = {
+                leiter.GRUEN: "grün",
+                leiter.ROT: "rot",
+                leiter.GATE_FEHLER: "gate-fehler",
+                leiter.AUSGELASSEN: "ausgelassen",
+            }.get(s.ergebnis, str(s.ergebnis))
+            zeilen.append(f"- {s.name}: {marke} ({s.grund})")
+        if self.fehler_kurz:
+            zeilen.append(self.fehler_kurz)
+        return "\n".join(zeilen)
+
+
+def _geaendert_zwischen(repo: Path, basis: str, ziel: str | None) -> list[str] | None:
+    if ziel is None:
+        return geaendert(repo, basis)
+    code, raus = _git(repo, "diff", "--name-only", "--no-renames", "-z", basis, ziel, "--")
+    if code != 0:
+        return None
+    return sorted({pfad for pfad in raus.split("\0") if pfad})
+
+
+def _konfig_aus_basis(repo: Path, basis: str) -> dict[str, Any] | None:
+    code, text = _git(repo, "show", f"{basis}:{config.KONFIG_PFAD.as_posix()}")
+    if code != 0:
+        return None
+    try:
+        daten = json.loads(text)
+    except ValueError as fehler:
+        log.warning("Konfig in %s unlesbar — fail-closed Vorgaben für Stufe 0: %s", basis, fehler)
+        return None
+    return daten if isinstance(daten, dict) else None
+
+
+def _stufe0_konfig_sicher(
+    repo: Path,
+    basis: str,
+    *,
+    ruff_befehl: str | None = None,
+    typ_befehl: str | None = None,
+    test_schutz_aktiv: bool | None = None,
+) -> config.Stufe0Konfig:
+    """Liest die Stufe-0-Konfig fail-closed: ein Commit darf Basis-Prüfungen nicht abschalten."""
+    basis_daten = _konfig_aus_basis(repo, basis)
+    basis_cfg = config.stufe0_konfig(basis_daten or {})
+    baum_cfg = config.stufe0_konfig(config.lade(repo))
+
+    ruff = ruff_befehl.strip() if ruff_befehl is not None else (basis_cfg.ruff or baum_cfg.ruff)
+    typ = typ_befehl.strip() if typ_befehl is not None else (basis_cfg.typ_pruefung or baum_cfg.typ_pruefung)
+    # Test-Schutz: Basis entscheidet; ohne Basis-Konfig gilt True (Arbeitsbaum darf nie abschalten).
+    schutz = test_schutz_aktiv if test_schutz_aktiv is not None else basis_cfg.test_schutz
+    return config.Stufe0Konfig(ruff=ruff, typ_pruefung=typ, test_schutz=schutz)
+
+
+def _zerlege_befehl(befehl_text: str) -> list[str]:
+    """Zerlegt einen Einzelbefehl plattformübergreifend (inkl. Windows-Pfaden mit ``\\``)."""
+    if sys.platform == "win32" and "\\" in befehl_text:
+        return [
+            teil[1:-1] if len(teil) >= 2 and teil[0] == teil[-1] and teil[0] in ('"', "'") else teil
+            for teil in shlex.split(befehl_text, posix=False)
+        ]
+    return shlex.split(befehl_text, posix=True)
+
+
+def _befehl_ausfuehren(repo: Path, name: str, befehl_text: str) -> leiter.Stufe:
+    """Führt einen konfigurierten Stufe-0-Befehl plattformübergreifend (Linux + Windows) aus."""
+    if any(zeichen in befehl_text for zeichen in _SHELL_ZEICHEN):
+        start = time.monotonic()
+        try:
+            erg = bash_wahl.lauf(
+                ["-c", befehl_text],
+                cwd=repo,
+                env={**os.environ, **temp_ordner.umgebung(ordner=repo, von="pruef", wiederverwenden=True)},
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+            )
+        except OSError as fehler:
+            text = f"bash für {name} fehlt: {fehler}"
+            return leiter.Stufe(name, "", False, text, 0.0, befehl_text, "bash", leiter.GATE_FEHLER, text)
+        dauer = round(time.monotonic() - start, 2)
+        ausgabe = erg.stdout or ""
+        if erg.returncode == 0:
+            return leiter.Stufe(name, "", True, "sauber", dauer, befehl_text, "bash", leiter.GRUEN, "")
+        if erg.returncode == ausfuehren.NICHT_GESTARTET:
+            return leiter.Stufe(
+                name,
+                "",
+                False,
+                f"Werkzeug nicht gefunden (Exit {erg.returncode})",
+                dauer,
+                befehl_text,
+                "bash",
+                leiter.GATE_FEHLER,
+                ausgabe,
+            )
+        return leiter.Stufe(
+            name,
+            "",
+            True,
+            f"Exit {erg.returncode}",
+            dauer,
+            befehl_text,
+            "bash",
+            leiter.ROT,
+            ausgabe or f"Exit {erg.returncode}",
+        )
+
+    try:
+        argv = _zerlege_befehl(befehl_text)
+    except ValueError as fehler:
+        text = f"Befehl für {name} ungültig: {fehler}"
+        return leiter.Stufe(name, "", False, text, 0.0, befehl_text, "", leiter.GATE_FEHLER, text)
+    if not argv:
+        return _ausgelassen(name, "", "Befehl leer")
+
+    programm = argv[0]
+    if "/" not in programm and "\\" not in programm:
+        gefunden = _finde_werkzeug(repo, programm)
+        if gefunden is not None:
+            argv = [gefunden, *argv[1:]]
+    erg_lauf = ausfuehren.lauf(argv, repo)
+    werkzeug = PurePosixPath(argv[0].replace("\\", "/")).name
+    if erg_lauf.code == 0:
+        return leiter.Stufe(
+            name, "", True, "sauber", round(erg_lauf.dauer_s, 2), befehl_text, werkzeug, leiter.GRUEN, ""
+        )
+    if erg_lauf.code == ausfuehren.NICHT_GESTARTET:
+        return leiter.Stufe(
+            name,
+            "",
+            False,
+            f"Werkzeug fehlt ({programm})",
+            round(erg_lauf.dauer_s, 2),
+            befehl_text,
+            werkzeug,
+            leiter.GATE_FEHLER,
+            erg_lauf.ausgabe,
+        )
+    return leiter.Stufe(
+        name,
+        "",
+        True,
+        f"Exit {erg_lauf.code}",
+        round(erg_lauf.dauer_s, 2),
+        befehl_text,
+        werkzeug,
+        leiter.ROT,
+        erg_lauf.ausgabe or f"Exit {erg_lauf.code}",
+    )
+
+
+def _ruff_stufe0(repo: Path, basis: str, ziel: str | None, befehl: str) -> leiter.Stufe:
+    if befehl:
+        return _befehl_ausfuehren(repo, "ruff", befehl)
+    pfade = _geaendert_zwischen(repo, basis, ziel)
+    if pfade is None:
+        return _ausgelassen("ruff", "py", "geänderte Dateien unbekannt (git diff gescheitert)")
+    ruff_linter = _LINTER[0]
+    dateien = [
+        pfad for pfad in pfade if PurePosixPath(pfad).suffix.lower() in ruff_linter.endungen and (repo / pfad).is_file()
+    ]
+    if not dateien:
+        return _ausgelassen("ruff", "py", "keine Python-Datei geändert")
+    stufe = _lint(repo, ruff_linter, dateien)
+    return leiter.Stufe(
+        "ruff",
+        stufe.adapter,
+        stufe.lief,
+        stufe.grund,
+        stufe.dauer_s,
+        stufe.befehl,
+        stufe.werkzeug,
+        stufe.ergebnis,
+        stufe.ausgabe,
+    )
+
+
+def _test_schutz_stufe0(
+    repo: Path, basis: str, ziel: str | None, *, aktiv: bool
+) -> tuple[leiter.Stufe, test_schutz.Ergebnis | None]:
+    if not aktiv:
+        return _ausgelassen("test_schutz", "py", "Test-Schutz per Basis-Konfig abgeschaltet"), None
+    start = time.monotonic()
+    erg = test_schutz.pruefe_diff(repo, basis, ziel)
+    dauer = round(time.monotonic() - start, 2)
+    befehl = f"to_spawn.pruef.test_schutz --basis {basis}" + (f" --ziel {ziel}" if ziel else "")
+    if erg.exit_code == test_schutz.EXIT_FEHLER:
+        return (
+            leiter.Stufe(
+                "test_schutz", "py", False, erg.hinweis, dauer, befehl, "test_schutz", leiter.GATE_FEHLER, erg.hinweis
+            ),
+            erg,
+        )
+    if erg.ok:
+        grund = f"{erg.zaehler.dateien_geprueft} Testdatei(en) geprüft"
+        return leiter.Stufe("test_schutz", "py", True, grund, dauer, befehl, "test_schutz", leiter.GRUEN, ""), erg
+    grund = f"{len(erg.verstoesse)} Verstoß/Verstöße"
+    return (
+        leiter.Stufe("test_schutz", "py", True, grund, dauer, befehl, "test_schutz", leiter.ROT, erg.bericht()),
+        erg,
+    )
+
+
+def stufe0(
+    repo: Path,
+    basis: str = "HEAD",
+    ziel: str | None = None,
+    *,
+    ruff_befehl: str | None = None,
+    typ_befehl: str | None = None,
+    test_schutz_aktiv: bool | None = None,
+) -> Stufe0Ergebnis:
+    """Einheitlicher Stufe-0-Ablauf (vor dem Push und in der CI): ruff, Typ-Prüfung, Test-Schutz."""
+    start = time.monotonic()
+    wurzel = config.repo_wurzel(repo)
+    cfg = _stufe0_konfig_sicher(
+        wurzel,
+        basis,
+        ruff_befehl=ruff_befehl,
+        typ_befehl=typ_befehl,
+        test_schutz_aktiv=test_schutz_aktiv,
+    )
+    ruff_stufe = _ruff_stufe0(wurzel, basis, ziel, cfg.ruff)
+    if cfg.typ_pruefung:
+        typ_stufe = _befehl_ausfuehren(wurzel, "typ_pruefung", cfg.typ_pruefung)
+    else:
+        typ_stufe = _ausgelassen("typ_pruefung", "", "Typ-Prüfung nicht konfiguriert (pruefung.typ_pruefung)")
+    schutz_stufe, schutz_erg = _test_schutz_stufe0(wurzel, basis, ziel, aktiv=cfg.test_schutz)
+
+    liste = [ruff_stufe, typ_stufe, schutz_stufe]
+    exit_code, fehler_kurz = leiter.ergebnis(liste)
+    return Stufe0Ergebnis(
+        ok=exit_code == leiter.GRUEN,
+        exit_code=exit_code,
+        stufen=tuple(liste),
+        fehler_kurz=fehler_kurz,
+        dauer_s=round(time.monotonic() - start, 2),
+        test_schutz=schutz_erg,
+    )
+
+
+def _stufe0_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="python -m to_spawn.pruef.sofort",
+        description="Einheitlicher Stufe-0-Ablauf: ruff, konfigurierbare Typ-Prüfung und Test-Schutz.",
+    )
+    parser.add_argument("--repo", type=Path, default=Path("."), help="Repo-Ordner (Vorgabe: aktueller Ordner)")
+    parser.add_argument(
+        "--basis", "--base", dest="basis", default="HEAD", help="Ausgangsstand (git-Ref, Vorgabe: HEAD)"
+    )
+    parser.add_argument(
+        "--ziel",
+        default=None,
+        help="Zielstand (git-Ref, z. B. HEAD in CI; weglassen = Arbeitsbaum gegen Basis prüfen)",
+    )
+    parser.add_argument("--ruff-befehl", default=None, help="Überschreibt pruefung.ruff")
+    parser.add_argument("--typ-befehl", default=None, help="Überschreibt pruefung.typ_pruefung")
+    parser.add_argument("--json", dest="als_json", action="store_true", help="Ergebnis als JSON auf stdout ausgeben")
+    return parser
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    args = _stufe0_parser().parse_args(argv)
+    erg = stufe0(
+        args.repo,
+        args.basis,
+        args.ziel,
+        ruff_befehl=args.ruff_befehl,
+        typ_befehl=args.typ_befehl,
+    )
+    if args.als_json:
+        sys.stdout.write(json.dumps(erg.als_dict(), ensure_ascii=False) + "\n")
+    else:
+        sys.stdout.write(erg.bericht() + "\n")
+    return erg.exit_code
+
+
+if __name__ == "__main__":
+    sys.exit(main())
