@@ -117,12 +117,10 @@ AUSNAHMEN: dict[tuple[str, str], tuple[tuple[str, ...], str]] = {
     # Weiterleitungs-Rückfall: Repo-Skript, sonst Skill-Skript
     ("to_spawn/aufpasser.py", "repo-skript"): (
         (
-            "EPO = \"cd {repo} && {py} scripts/bau.py {n}{resume}\"",
             "EPO = \"cd {repo} && {py} scripts/wache.py {s}{resume}\"",
-            "} {n} {resume} (Vorgabe: scripts/bau.py bzw. Skill)\",",
             "} {s} {resume} (Vorgabe: scripts/wache.py bzw. Skill)\",",
         ),
-        _WEITERLEITUNG + " (VORLAGE_*_REPO, Hilfe-Text)",
+        _WEITERLEITUNG + " (VORLAGE_WACHE_REPO, Hilfe-Text)",
     ),
     ("to_spawn/aufpasser.py", "duoplus"): (("Beispiele unten sind die DuoPlus-Vorgabe. Erster Treffer",), _DOKU),
     ("to_spawn/capo.py", "repo-skript"): (

@@ -206,6 +206,7 @@ def test_aufpasser_wegtest_fuenf_tickets_start_mit_zwei(
         lambda n, _r: (ticket_abfragen.append(n) or {"number": n, "state": "open", "labels": set()}),
     )
     monkeypatch.setattr(a, "belegte_tickets", lambda: set())
+    monkeypatch.setattr(aufpasser.gh, "blocked_by", lambda *_a, **_k: [])
     monkeypatch.setattr(aufpasser.speicher, "platz_frei", lambda *_a, **_k: (True, "frei"))
     monkeypatch.setattr(aufpasser.time, "sleep", lambda _s: None)
     monkeypatch.setattr(
@@ -224,7 +225,8 @@ def test_aufpasser_wegtest_fuenf_tickets_start_mit_zwei(
     a.sitzung_pruefen("spec-1330", "1330", [], repo)
 
     namen = [name for _, name, _ in gestartet]
-    assert namen == ["bau 101", "bau 102", "wache 1330"]
+    # #418: Aufseher startet vor den Bau-Fenstern.
+    assert namen == ["wache 1330", "bau 101", "bau 102"]
     assert all(f"10{k}" not in " ".join(kommentare) for k in (3, 4, 5))
     assert set(ticket_abfragen) == {101, 102}
 
@@ -252,6 +254,7 @@ def test_aufpasser_ohne_wache_und_fremder_rechner_kein_aufseher(
     )
     monkeypatch.setattr(a, "ticket_lesen", lambda n, _r: {"number": n, "state": "open", "labels": set()})
     monkeypatch.setattr(a, "belegte_tickets", lambda: set())
+    monkeypatch.setattr(aufpasser.gh, "blocked_by", lambda *_a, **_k: [])
     monkeypatch.setattr(aufpasser.speicher, "platz_frei", lambda *_a, **_k: (True, "frei"))
     monkeypatch.setattr(aufpasser.time, "sleep", lambda _s: None)
     monkeypatch.setattr(a, "fenster_starten", lambda _s, name, _c, _cmd: gestartet.append(name))
@@ -394,7 +397,8 @@ def test_capo_tick_fasst_nur_auswahl_an_und_schliesst_spec_nicht(
     from to_spawn import auswahl
 
     monkeypatch.setenv("TO_SPAWN_RECHNER", "bau-srv-1")
-    monkeypatch.setenv("TO_SPAWN_ZUSTAND", str(tmp_path / "capo-zustand"))
+    zustand_ordner = tmp_path / "capo-zustand"
+    monkeypatch.setenv("TO_SPAWN_WAECHTER_ORDNER", str(zustand_ordner))
     repo = _init_git_repo(tmp_path / "repo")
     # origin/main anlegen, damit haupt_ref funktioniert.
     _git(repo, "update-ref", "refs/remotes/origin/main", "HEAD")
@@ -458,6 +462,7 @@ def test_capo_tick_fasst_nur_auswahl_an_und_schliesst_spec_nicht(
     )
 
     erg = capo.tick(repo, 1330, "probe/repo", {"waechter": {"karenz_min": 0}}, jetzt=jetzt)
+    assert (zustand_ordner / "probe_repo_1330.json").is_file()
     assert kommentare == []
     assert wieder_geoeffnet == []
     assert all("#102" not in z and "#103" not in z for z in erg.zeilen)
@@ -508,7 +513,7 @@ def test_teilstart_takt_fasst_fremde_tickets_nicht_an(
     from to_spawn import auswahl
 
     monkeypatch.setenv("TO_SPAWN_RECHNER", "bau-srv-1")
-    monkeypatch.setenv("TO_SPAWN_ZUSTAND", str(tmp_path / "capo-zustand"))
+    monkeypatch.setenv("TO_SPAWN_WAECHTER_ORDNER", str(tmp_path / "capo-zustand"))
     repo = _init_git_repo(tmp_path / "repo")
     _git(repo, "update-ref", "refs/remotes/origin/main", "HEAD")
     auswahl.speichern(repo, 1330, [101], ohne_wache=False)

@@ -1239,7 +1239,7 @@ def fenster_log(repo: Path, ticket: int) -> Path:
 def bau_startzeile(repo: Path, ticket: int, auftrag: str = "", *schalter: str) -> str:
     """Shell-Zeile, mit der ein tmux-Fenster eine Bau-Session startet (``bash -lc``).
 
-    Einziger Ort für Ablösung (respawn) und Folge-Runde. Ruft ``bau.py`` des Skills direkt
+    Einziger Ort für Ablösung (respawn), Folge-Runde und Aufpasser (#419). Ruft ``bau.py`` des Skills direkt
     mit diesem Python auf, wie ``skripte/spawn_srv.sh`` (#257) — nie die Shell-Funktion
     ``bau`` aus ``~/.bashrc`` oder die ``.venv`` des Repos, die ein Spec-Klon nicht hat
     (#277). Vorspann ``REPO``/``TO_SPAWN_HOME``/``TO_SPAWN_REPO`` wie dort (#212). Die
