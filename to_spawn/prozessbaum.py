@@ -560,6 +560,8 @@ _PARAMS_CURRENT_DIRECTORY = 0x38
 #: Kurze Pausen (Sekunden) vor erneuter PEB-Griff-Prüfung bei Übergangszuständen
 #: (Startphase ohne cwd-Griff, laufender cwd-Wechsel, laufendes Beenden; #654).
 _GRIFF_WARTEN_S: tuple[float, ...] = (0.02, 0.05)
+#: So oft wird ``CURDIR`` insgesamt gelesen, wenn ein Prozess seine cwd während der Prüfung wechselt.
+_CURDIR_VERSUCHE = len(_GRIFF_WARTEN_S) + 1
 
 
 class _LeereCwd(OSError):
@@ -596,6 +598,10 @@ def _arbeitsordner_windows(pid: int) -> str | None:
     """Win32-cwd von ``pid``; ``None`` = nicht zu prüfen (weg, beendet, fremd/geschützt —
     wie ``PermissionError`` unter ``/proc``); ``OSError`` = läuft, ist offen, liefert aber nichts.
 
+    Wechselt ``pid`` seine cwd während des Lesens, wird bis zu :data:`_CURDIR_VERSUCHE`-mal neu
+    gelesen; bleibt die cwd unlesbar, zählt das weiter als ``OSError`` (fail-closed). Endet der
+    Prozess während des Lesens, zählt er als beendet (``None``).
+
     ponytail: 32-Bit-Prozesse (WOW64) führen ihre cwd im 32-Bit-PEB, hier steht die vom
     Start; Upgrade: ``ProcessWow64Information`` + PEB32 lesen. Die Umbenennungs-Probe
     deckt native 32-Bit-Prozesse ab.
@@ -609,21 +615,47 @@ def _arbeitsordner_windows(pid: int) -> str | None:
             return None
         raise OSError(fehler, f"OpenProcess({pid}) gescheitert")
     try:
-        if _ist_beendet_griff(kernel, griff):
-            return None  # beendet, nur noch Griffe offen (wie Zombie unter Linux)
-        try:
-            kopf = _curdir(griff, pid)
+        for _ in range(_CURDIR_VERSUCHE):
+            if _ist_beendet_griff(kernel, griff):
+                return None  # beendet, nur noch Griffe offen (wie Zombie unter Linux)
+            try:
+                kopf = _curdir(griff, pid)
+            except OSError:
+                if _ist_beendet_griff(kernel, griff):
+                    return None  # während des PEB-Lesens beendet (#654)
+                raise
             bytes_lang, puffer_adresse = int.from_bytes(kopf[:2], "little"), int.from_bytes(kopf[8:16], "little")
             if not bytes_lang or not puffer_adresse:
+                if _ist_beendet_griff(kernel, griff):
+                    return None
                 raise _LeereCwd(f"Prozess {pid}: leere cwd im PEB")
             try:
-                return _speicher(griff, pid, puffer_adresse, bytes_lang).decode("utf-16-le")
+                roh = _speicher(griff, pid, puffer_adresse, bytes_lang)
+            except OSError as fehler:
+                if _ist_beendet_griff(kernel, griff):
+                    return None
+                try:
+                    jetzt = _curdir(griff, pid)
+                except OSError:
+                    if _ist_beendet_griff(kernel, griff):
+                        return None
+                    raise fehler from None
+                if jetzt != kopf:  # cwd wechselte während des Lesens → neu versuchen
+                    continue
+                raise
+            try:
+                return roh.decode("utf-16-le")
             except UnicodeDecodeError as fehler:  # kaputte cwd = nicht lesbar, nie Abbruch
+                if _ist_beendet_griff(kernel, griff):
+                    return None
+                try:
+                    if _curdir(griff, pid) != kopf:
+                        continue
+                except OSError:
+                    if _ist_beendet_griff(kernel, griff):
+                        return None
                 raise OSError(f"Prozess {pid}: cwd nicht als UTF-16 lesbar ({fehler})") from None
-        except OSError:
-            if _ist_beendet_griff(kernel, griff):
-                return None  # während des PEB-Lesens beendet (#654)
-            raise
+        raise OSError(f"Prozess {pid}: cwd wechselte während der Prüfung")
     finally:
         kernel.CloseHandle(griff)
 
@@ -807,7 +839,7 @@ def _liegt_darin(griff: int, ziel: tuple[tuple[int, int], str], kennungen: dict[
 def _arbeitsordner_griff_windows(pid: int) -> int | None:
     """Eigene Kopie des cwd-Griffs von ``pid`` (Aufrufer schließt); ``None`` = Prozess weg oder
     beendet; ``OSError`` = läuft, Griff aber nicht zu übernehmen (fehlt, Rechte, cwd wechselte
-    während des Lesens).
+    wiederholt während des Lesens).
 
     Bei Übergangszuständen eines noch aktiven Prozesses (Startphase ohne cwd-Griff, laufender
     cwd-Wechsel oder Abbau beim Beenden) wird kurz nachgeprüft (:data:`_GRIFF_WARTEN_S`),

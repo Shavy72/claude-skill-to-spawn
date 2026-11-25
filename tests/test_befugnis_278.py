@@ -17,6 +17,8 @@ from types import ModuleType
 
 import pytest
 
+from conftest import repo_dateien
+
 SKILL = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SKILL))
 
@@ -99,9 +101,8 @@ def test_tabellentext_nur_in_befugnis() -> None:
     treffer = [
         p.relative_to(SKILL).as_posix()
         for ordner in ("to_spawn", "skripte", "repo-scripts")
-        for p in (SKILL / ordner).rglob("*")
-        if p.is_file()
-        and p.suffix in {".py", ".json", ".md", ".txt"}
+        for p in repo_dateien(SKILL / ordner)
+        if p.suffix in {".py", ".json", ".md", ".txt"}
         and GRENZE in p.read_text(encoding="utf-8")
     ]
     assert treffer == ["to_spawn/befugnis.py"]

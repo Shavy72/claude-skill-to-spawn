@@ -259,8 +259,8 @@ def test_spec_mit_geschlossenem_ticket_legt_nichts_an(tmp_path: Path) -> None:
     assert "läuft schon" in lauf.stdout
 
 
-def test_ticket_stand_unklar_legt_nichts_an(tmp_path: Path) -> None:
-    """``gh api`` scheitert beim Ticket-Stand: nichts anlegen (seit Review F1 zu 433: Exit 3)."""
+def test_ticket_stand_unklar_legt_nichts_an_exit_3(tmp_path: Path) -> None:
+    """``gh api`` scheitert beim Ticket-Stand: nichts anlegen und Exit 3 (Review F1 zu 433, #438)."""
     repo, weltdatei, umgebung = _aufbau(tmp_path)
     _welt_setzen(weltdatei, api_scheitert_einmal="issues/901")
     vorher = e2._manifest(repo).read_bytes()
@@ -471,16 +471,24 @@ def test_weg_spawn_srv_nur_wache_tickets_probelauf_legen_kein_t0_an(
         gestartet = aufrufe.read_text(encoding="utf-8") if aufrufe.exists() else ""
         if args == ("--nur-wache",):
             assert "[trocken]" not in ausgabe, ausgabe
+            assert f"-n wache {e2.SPEC} " in gestartet, gestartet
             assert "bau 901" not in gestartet, gestartet
+        if args == ("--tickets", "901"):
+            # Start-Nachweis (#438): das Fenster bau 901 startet tatsächlich.
+            assert "-n bau 901 " in gestartet, gestartet
         if args == ("--dry-run",):
             assert "new-session" not in gestartet and "new-window" not in gestartet
 
 
 def test_weg_spawn_srv_ganze_spec_legt_t0_an(tmp_path: Path) -> None:
-    # Gegenprobe: derselbe Weg ohne Schalter legt das Einrichtungs-Ticket an.
-    lauf, _repo, weltdatei, _vorher, _aufrufe = _spawn_srv_weg(tmp_path)
+    # Gegenprobe: derselbe Weg ohne Schalter legt das Einrichtungs-Ticket an und startet die Fenster.
+    lauf, _repo, weltdatei, _vorher, aufrufe = _spawn_srv_weg(tmp_path)
     ausgabe = lauf.stdout + lauf.stderr
+    assert lauf.returncode == 0, ausgabe
     assert len(e2._welt(weltdatei).get("angelegt", [])) == 1, ausgabe
+    gestartet = aufrufe.read_text(encoding="utf-8") if aufrufe.exists() else ""
+    assert "-n bau 901 " in gestartet, gestartet
+    assert f"-n bau {T0} " in gestartet, gestartet
 
 
 if __name__ == "__main__":

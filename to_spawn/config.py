@@ -127,6 +127,8 @@ DEFAULTS: dict[str, Any] = {
         "befehl": "",
         "url": "",
         "aufraeumen": "",
+        #: ``True`` = Repo arbeitet bewusst ohne Live-Schritt: kein Einrichtungs-Ticket dafür (#452).
+        "ohne": False,
     },
     #: Staging-Nest (#211) für den Probesitz (#214): ``url`` = Adresse, ``zugang_datei`` = Datei mit
     #: ``nutzer=…``/``passwort=…`` (oder ``user:pass``); leer = Punkt 3 bleibt rot mit „fehlt noch“.
@@ -531,7 +533,8 @@ def _staging_gruppe(konfig: dict[str, Any]) -> dict[str, Any]:
 def pruef_befehl(konfig: dict[str, Any], art: str) -> str:
     """Befehl ``pruefung.<art>`` (``schnell``/``komplett``, #425); ``""`` = nicht eingerichtet.
 
-    Nur für :mod:`to_spawn.pruefplan` — Aufrufer fragen dort (``pruefplan.befehl``).
+    Für :mod:`to_spawn.pruefplan` und :mod:`to_spawn.einrichtungs_ticket` (#452) — andere
+    Aufrufer fragen :func:`to_spawn.pruefplan.befehl`.
     """
     return _text(_gruppe(konfig, "pruefung"), art)
 
@@ -559,10 +562,22 @@ def komplett_zeitgrenze_s(konfig: dict[str, Any]) -> float:
     return float(KOMPLETT_ZEITGRENZE_MIN * 60)
 
 
+#: Text-Schlüssel der Gruppe ``live`` (#425); ``ohne`` ist ein Schalter (:func:`live_bewusst_ohne`).
+_LIVE_TEXT_FELDER: tuple[str, ...] = ("befehl", "url", "aufraeumen")
+
+
 def live_schritt(konfig: dict[str, Any]) -> dict[str, str]:
-    """Gruppe ``live`` (#425) mit allen Schlüsseln aus ``DEFAULTS``; ``""`` = nicht eingerichtet."""
+    """Text-Felder der Gruppe ``live`` (#425: ``befehl``, ``url``, ``aufraeumen``); ``""`` = nicht eingerichtet.
+
+    Für den Schalter ``live.ohne`` gibt es :func:`live_bewusst_ohne`.
+    """
     gruppe = _gruppe(konfig, "live")
-    return {schluessel: _text(gruppe, schluessel) for schluessel in DEFAULTS["live"]}
+    return {schluessel: _text(gruppe, schluessel) for schluessel in _LIVE_TEXT_FELDER}
+
+
+def live_bewusst_ohne(konfig: dict[str, Any]) -> bool:
+    """``live.ohne: true`` — das Repo arbeitet bewusst ohne Live-Schritt (#452)."""
+    return _gruppe(konfig, "live").get("ohne") is True
 
 
 def staging_bewusst_ohne(konfig: dict[str, Any]) -> bool:
