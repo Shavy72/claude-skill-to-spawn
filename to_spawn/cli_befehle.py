@@ -15,9 +15,11 @@ from pathlib import Path
 from typing import Any
 
 from to_spawn import (
+    abgleich,
     arbeitsstand,
     aufpasser,
     aufseher_stand,
+    auswahl,
     bau_log,
     befund,
     briefkasten,
@@ -45,13 +47,17 @@ from to_spawn import (
     setup,
     spec_rand,
     speicher,
+    start_last,
     startklar,
     ticket_zustand,
     ticketstand,
+    tmux_aufruf,
     uebergabe_sichern,
     umzug,
     vorfall,
     waechter_takt,
+    warten,
+    wecker,
 )
 from to_spawn import einreichen as einreichen_modul
 from to_spawn import spawn as spawn_modul
@@ -230,6 +236,43 @@ def _setup(repo: Path, args: argparse.Namespace) -> int:
     return 0
 
 
+def _ticket_repo_befehl(args: argparse.Namespace, ap: argparse.ArgumentParser) -> int:
+    """Unterbefehl ``ticket-repo``: zeigt, setzt oder zieht ``ticket_repo``-Einträge nach (#261)."""
+    if args.nachziehen:
+        if args.eintrag or args.wert:
+            ap.error("ticket-repo --nachziehen akzeptiert keine weiteren Argumente")
+        datei = config.maschine_datei()
+        if datei.is_file() and config._lies(datei)[0] is None:
+            print(f"FEHLER: Maschinen-Liste unlesbar ({datei}) — nicht überschrieben", file=sys.stderr)
+            return 1
+        aenderungen = config.maschine_ticket_repos_nachziehen()
+        if not aenderungen:
+            print("Maschinen-Liste: alle ticket_repo aktuell")
+            return 0
+        for aenderung in aenderungen:
+            print(aenderung.zeile())
+        return 0
+    if args.eintrag is None and args.wert is None:
+        datei = config.maschine_datei()
+        if datei.is_file() and config._lies(datei)[0] is None:
+            print(f"FEHLER: Maschinen-Liste unlesbar ({datei})", file=sys.stderr)
+            return 1
+        for eintrag in config.maschine()["repos"]:
+            wert = (eintrag.get("ticket_repo") or "").strip() or "(leer)"
+            print(f"{eintrag.get('slug', '')} ({eintrag.get('pfad', '')}): ticket_repo = {wert}")
+        return 0
+    if not args.eintrag or not args.wert:
+        ap.error("ticket-repo braucht <eintrag> <ticket_repo> oder --nachziehen")
+    try:
+        aenderungen = config.maschine_ticket_repo_setzen(args.eintrag, args.wert)
+    except (ValueError, LookupError, OSError) as fehler:
+        print(f"FEHLER: {fehler}", file=sys.stderr)
+        return 1
+    for aenderung in aenderungen:
+        print(aenderung.zeile())
+    return 0
+
+
 def _aufraeumen(args: argparse.Namespace, ap: argparse.ArgumentParser) -> int:
     """Hausmeister-CLI (#1368/#1373); Exit 1 nur bei Fehlern, „bleibt“ ist keiner."""
     if args.aufgabe_einrichten:
@@ -299,6 +342,19 @@ def _spec_schliessen(args: argparse.Namespace) -> int:
     for zeile in ergebnis.zeilen:
         print(zeile)
     return 0 if ergebnis.ok else 1
+
+
+def _spec_pruefen(args: argparse.Namespace) -> int:
+    """Unterbefehl ``spec-pruefen`` (#405): prüft Spec auf Quelle-Zeile/(E<n>) je Modus."""
+    repo = config.repo_wurzel(_repo_aus_umgebung())
+    try:
+        text = manifest.lies_spec_text(repo, args.spec)
+    except ValueError as fehler:
+        print(f"FEHLER: {fehler}", file=sys.stderr)
+        return 1
+    ergebnis = manifest.pruefe_spec(text, config.lade(repo))
+    print(ergebnis.text())
+    return 0 if ergebnis.darf_schneiden else manifest.EXIT_WEIGERUNG
 
 
 def _blocker(args: argparse.Namespace) -> int:
@@ -373,6 +429,7 @@ def _anhaengen(args: argparse.Namespace) -> int:
         args.ticket,
         config.lade(repo),
         blockiert_von=_tickets(args.blockiert_von) or [],
+        abnahme=_tickets(args.abnahme) or [],
         schaetzung_k=args.schaetzung,
         umfang=args.umfang,
         dateien=args.datei,
@@ -451,7 +508,11 @@ def _umrechnen(args: argparse.Namespace) -> int:
     if not ticket.isdigit():
         log.error("Ticket-Nummer fehlt — --ticket <N> angeben.")
         return 2
-    transkripte = Path(args.transkripte).expanduser()
+    transkripte = (
+        config.expand_heim(args.transkripte)
+        if args.transkripte
+        else config.heim_ordner() / ".claude" / "projects"
+    )
     if not transkripte.is_dir():
         log.error("Transkript-Ordner %s fehlt.", transkripte)
         return 1
@@ -506,6 +567,8 @@ def verteilen(ap: argparse.ArgumentParser, args: argparse.Namespace) -> int:
         return _befund(args)
     if args.befehl == "spec-schliessen":
         return _spec_schliessen(args)
+    if args.befehl == "spec-pruefen":
+        return _spec_pruefen(args)
     if args.befehl == "anhaengen":
         return _anhaengen(args)
     if args.befehl == "umrechnen":
@@ -514,6 +577,8 @@ def verteilen(ap: argparse.ArgumentParser, args: argparse.Namespace) -> int:
         return briefkasten_cli.lauf(args)
     if args.befehl in helfer_temp.BEFEHLE:
         return helfer_temp.lauf(args)
+    if args.befehl in abgleich.BEFEHLE:
+        return abgleich.lauf(args)
     if args.befehl == "entscheidungen":
         return _entscheidungen(args)
     if args.befehl == "nest":
@@ -524,10 +589,18 @@ def verteilen(ap: argparse.ArgumentParser, args: argparse.Namespace) -> int:
         return waechter_takt.lauf(args)
     if args.befehl == "aufpasser":
         return aufpasser.lauf_mit_args(args)
+    if args.befehl == "wecker":
+        return wecker.lauf(args)
+    if args.befehl == "start-last":
+        return start_last.lauf_mit_args(args)
+    if args.befehl == "warten":
+        return warten.lauf(args, config.repo_wurzel(_repo_aus_umgebung()))
     if args.befehl == "aufraeumen":
         return _aufraeumen(args, ap)
     if args.befehl == "sichern":
         return uebergabe_sichern.lauf(args.dateien, trocken=args.trocken)
+    if args.befehl == "ticket-repo":
+        return _ticket_repo_befehl(args, ap)
     if args.befehl == "ticketstand":
         # Nur lesen: Tabelle „X von Y fertig“ für jeden Aufseher-Tick.
         return ticketstand.lauf(args, config.repo_wurzel(_repo_aus_umgebung()))
@@ -555,6 +628,18 @@ def verteilen(ap: argparse.ArgumentParser, args: argparse.Namespace) -> int:
     if args.befehl == "hauptzweig":
         # Nur der Name auf stdout — spawn_srv.sh liest ihn ein (#257).
         print(gh.hauptzweig(config.repo_wurzel(_repo_aus_umgebung())))
+        return 0
+    if args.befehl == "sitzung":
+        # Einzige Quelle für tmux-Session-Name + Besitzer-Prüfung (#457).
+        repo = config.repo_wurzel(_repo_aus_umgebung())
+        if args.nur_name:
+            print(tmux_aufruf.sitzung_name(repo, args.spec))
+            return 0
+        name, fremd = tmux_aufruf.sitzung_aufloesen(repo, args.spec)
+        if fremd:
+            print(fremd, file=sys.stderr)
+            return tmux_aufruf.EXIT_FREMD
+        print(name)
         return 0
     if args.befehl == "blocker":
         return _blocker(args)
@@ -589,6 +674,9 @@ def verteilen(ap: argparse.ArgumentParser, args: argparse.Namespace) -> int:
             trocken=args.trocken,
             sitzung=args.sitzung,
         )
+
+    if args.befehl == "auswahl":
+        return auswahl.lauf(args, _repo_aus_umgebung() or config.repo_wurzel())
 
     repo = config.repo_wurzel()
     if args.befehl == "inventur":
@@ -635,6 +723,7 @@ def verteilen(ap: argparse.ArgumentParser, args: argparse.Namespace) -> int:
             konfig,
             ziel=args.ziel,
             tickets=_tickets(args.tickets),
+            ohne_wache=args.ohne_wache,
             dry_run=args.dry_run,
         )
     if args.befehl == "respawn":

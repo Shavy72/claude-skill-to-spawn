@@ -13,6 +13,7 @@ import sys
 import tokenize
 from pathlib import Path
 
+import pytest
 from test_review_quelle_329 import (
     NAMEN,
     NAMEN_DATEI,  # noqa: F401 — test_push_sperre_nest_1445 holt den Pfad von hier
@@ -279,6 +280,73 @@ def test_kein_fester_personenname_in_shell_kommentaren() -> None:
         if zeile.lstrip().startswith("#") and NAME.search(zeile)
     ]
     assert funde == [], f"fester Personenname statt Rolle: {funde}"
+
+
+#: Teil 6 (#325): Alle Python-Dateien unter ``skripte/`` und ``to_spawn/`` (inkl. ``skripte/bau.py``
+#: nach Merge #317 und ``to_spawn/pruefplan.py``) prüfen; Text-Bausteine nennen die Rolle.
+CODE_ORDNER_TEIL6 = ("skripte", "to_spawn")
+#: Teil 6 (#325): Ausnahmen unter ``docs/`` — Lastenheft enthält Wortlaut-Zitate des Menschen,
+#: ``docs/verify-hard/`` archiviert historische Prüf-Mitschnitte.
+DOKU_AUSGENOMMEN_TEIL6 = frozenset({"docs/LASTENHEFT.md"})
+DOKU_ORDNER_AUSGENOMMEN_TEIL6 = ("docs/verify-hard/",)
+
+
+def _code_text_funde_teil6() -> list[str]:
+    dateien = sorted(
+        p.relative_to(SKILL).as_posix()
+        for ordner in CODE_ORDNER_TEIL6
+        if (SKILL / ordner).is_dir()
+        for p in (SKILL / ordner).rglob("*.py")
+        if "__pycache__" not in p.parts
+    )
+    return [fund for datei in dateien for fund in _text_funde(datei)]
+
+
+def _doku_funde_teil6() -> list[str]:
+    doku_dir = SKILL / "docs"
+    if not doku_dir.is_dir():
+        return []
+    funde: list[str] = []
+    for p in sorted(doku_dir.rglob("*.md"), key=lambda pfad: pfad.relative_to(SKILL).as_posix()):
+        rel = p.relative_to(SKILL).as_posix()
+        if rel in DOKU_AUSGENOMMEN_TEIL6 or rel.startswith(DOKU_ORDNER_AUSGENOMMEN_TEIL6):
+            continue
+        for nr, zeile in enumerate(p.read_text(encoding="utf-8").splitlines(), 1):
+            if NAME.search(zeile):
+                funde.append(f"{rel}:{nr}")
+    return funde
+
+
+@nur_mit_namensliste
+def test_kein_fester_personenname_in_skripte_und_to_spawn_teil6() -> None:
+    """Teil 6 (#325): Alle Text-Bausteine in ``skripte/`` und ``to_spawn/`` nennen die Rolle."""
+    funde = _code_text_funde_teil6()
+    assert funde == [], f"fester Personenname statt Rolle: {funde}"
+
+
+@nur_mit_namensliste
+def test_kein_fester_personenname_in_doku_teil6() -> None:
+    """Teil 6 (#325): Doku unter ``docs/`` (außer Lastenheft und verify-hard) nennt die Rolle."""
+    funde = _doku_funde_teil6()
+    assert funde == [], f"fester Personenname statt Rolle: {funde}"
+
+
+def test_teil6_scan_mechanik(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Teil 6 (#325): Mechanik für Code- und Doku-Scan mit Kunstwort (auch ohne private Liste)."""
+    (tmp_path / "skripte").mkdir()
+    (tmp_path / "to_spawn").mkdir()
+    (tmp_path / "docs" / "agents").mkdir(parents=True)
+    (tmp_path / "docs" / "verify-hard" / "325").mkdir(parents=True)
+    (tmp_path / "skripte" / "bau.py").write_text("# fragt Kunstwort nie\nx = 1\n", encoding="utf-8")
+    (tmp_path / "to_spawn" / "modul.py").write_text('"""Kunstworts Vorgabe."""\n', encoding="utf-8")
+    (tmp_path / "docs" / "PLAN.md").write_text("Auftrag von Kunstwort.\n", encoding="utf-8")
+    (tmp_path / "docs" / "agents" / "regeln.md").write_text("Im Auftrag Kunstworts.\n", encoding="utf-8")
+    (tmp_path / "docs" / "LASTENHEFT.md").write_text("Wortlaut von Kunstwort.\n", encoding="utf-8")
+    (tmp_path / "docs" / "verify-hard" / "325" / "log.md").write_text("Archiv Kunstwort.\n", encoding="utf-8")
+    monkeypatch.setattr(sys.modules[__name__], "SKILL", tmp_path)
+    monkeypatch.setattr(sys.modules[__name__], "NAME", name_muster({"kunstwort"}))
+    assert _code_text_funde_teil6() == ["skripte/bau.py:1", "to_spawn/modul.py:1"]
+    assert _doku_funde_teil6() == ["docs/PLAN.md:1", "docs/agents/regeln.md:1"]
 
 
 def test_namensmuster_aus_kunst_liste(tmp_path: Path) -> None:

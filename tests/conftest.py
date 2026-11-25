@@ -10,11 +10,14 @@ Dateien. Die Zeitgrenzen selbst prüft ``test_waechter_213_fix.py`` ohne Schalte
 
 from __future__ import annotations
 
+import functools
+import hashlib
 import json
 import logging
 import os
 import shlex
 import shutil
+import site
 import subprocess
 import sys
 import tempfile
@@ -34,11 +37,25 @@ _HILFEN = str(Path(__file__).resolve().parent / "hilfen")
 if _HILFEN not in sys.path:
     sys.path.insert(0, _HILFEN)
 
-from git_bash import git_bash  # noqa: E402 — liegt in ``tests/hilfen`` (Pfad oben)
+import context_mode_attrappe  # liegt in ``tests/hilfen`` (Pfad oben)
+from git_bash import git_bash  # liegt in ``tests/hilfen`` (Pfad oben)
 
-from to_spawn import bash_wahl, prozessbaum  # noqa: E402 — Pfad setzt ``git_bash``
+from to_spawn import (  # Pfad setzt ``git_bash``
+    bash_wahl,
+    hausmeister,
+    hausmeister_windows,
+    prozessbaum,
+    vertrauen,
+)
 
 _WINDOWS = sys.platform == "win32"
+
+#: Echter Heimordner der Maschine vor Test-Umleitung (#232) — nur für Wächter/Prüfsummen, nie beschreiben.
+_ECHTES_HEIM: Path = Path.home().resolve()
+#: Python-User-Base vor HOME-Umleitung (#232): Kindprozesse finden weiter user-installierte Pakete (z. B. pytest).
+_START_USER_BASE: str = site.getuserbase()
+#: Vorher-Stand des echten Heimordners für den Prüfsummen-Wächter (#232): ``(claude_json, sha256, claude_dir_da)``.
+_HEIM_STAND = pytest.StashKey[tuple[Path, str | None, bool]]()
 
 #: Zeitgrenze je Test in Sekunden (#68): ein hängender Test (unter Windows z. B.
 #: ``test_aufseher_abloesung_436``) darf die Suite nicht unbegrenzt aufhalten. Gilt nur,
@@ -120,6 +137,41 @@ def attrappe(ordner: Path, name: str, python_code: str) -> Path:
     return skript
 
 
+#: Ordner von Werkzeugen, kein Repo-Inhalt — Rückfall, wenn git nicht greift (#491, #532).
+WERKZEUG_ORDNER = frozenset({".git", "__pycache__", ".ruff_cache", ".pytest_cache", ".mypy_cache"})
+
+
+def git_dateien(wurzel: Path) -> list[str] | None:
+    """Relativpfade unter ``wurzel``, die git kennt (``git ls-files``); ``None`` ohne git bzw. Repo (#491, #532)."""
+    try:
+        lauf = subprocess.run(
+            ["git", "-C", str(wurzel), "-c", "core.quotepath=false", "ls-files", "-z"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=True,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    return [rel for rel in lauf.stdout.split("\0") if rel]
+
+
+def repo_dateien(ordner: Path) -> list[Path]:
+    """Dateien unter ``ordner``, die zum Repo gehören — ohne ``__pycache__``/Caches (#491, #532).
+
+    Im Git-Repo liefert ``git ls-files`` nur erfasste Dateien (übrig gebliebene
+    ``__pycache__/*.pyc`` oder ``.ruff_cache`` fallen heraus). Ohne git: Rückfall auf
+    ``ordner.rglob("*")`` ohne :data:`WERKZEUG_ORDNER`.
+    """
+    bekannt = git_dateien(ordner)
+    kandidaten = ordner.rglob("*") if bekannt is None else (ordner / rel for rel in bekannt)
+    return sorted(
+        p
+        for p in kandidaten
+        if p.is_file() and not (WERKZEUG_ORDNER & set(p.relative_to(ordner).parts))
+    )
+
+
 #: Eigener Temp-Ordner dieses Laufs (#349), nur gesetzt, wenn ``pytest_configure`` ihn anlegte.
 _EIGENER_BASETEMP = pytest.StashKey[Path]()
 
@@ -133,9 +185,10 @@ _LOG = logging.getLogger(__name__)
 #: ponytail: feste Frist, Einstellung über ``temp_ordner``/Maschinen-Liste, wenn eine Maschine anders braucht.
 _RESTE_ALTER_S = 3600
 
-#: Ab diesem Inode-Anteil der Temp-Wurzel gilt nur noch :data:`_RESTE_ALTER_KNAPP_S` (#355):
-#: eine volle Suite hinterlässt rot ~220k Einträge, ``/tmp`` als tmpfs hat oft nur 1 Mio.
-_INODE_GRENZE = 0.70
+#: Ab diesem Inode-Anteil der Temp-Wurzel gilt nur noch :data:`_RESTE_ALTER_KNAPP_S` (#355) —
+#: Schwelle und Messung kommen aus genau einer Stelle (:mod:`to_spawn.hausmeister`).
+_INODE_GRENZE = hausmeister.INODE_WARN_ANTEIL
+_inode_anteil = hausmeister.inode_anteil
 
 #: Mindestalter toter Reste bei Inode-Knappheit (#355) — nie ein gerade startender Lauf.
 _RESTE_ALTER_KNAPP_S = 600
@@ -168,22 +221,21 @@ def _eigener_basetemp(config: pytest.Config) -> None:
     config.stash[_EIGENER_BASETEMP] = ordner
 
 
-def _inode_anteil(temp: Path) -> float | None:
-    """Belegter Inode-Anteil (0..1) des Laufwerks unter ``temp`` (#355); ``None`` = unbekannt.
+def _marker_retten(ordner: Path, pid: int, mtime: float | None = None) -> None:
+    """Steht ein ``pt-*``-Ordner nach ``rmtree`` noch ohne Marker, Marker neu schreiben (#355).
 
-    Unbekannt heißt: kein ``os.statvfs`` (Windows), Fehler, oder das Dateisystem meldet keine
-    feste Inode-Zahl (``f_files == 0``, z. B. btrfs). Dann gilt die normale Schonfrist.
+    Sonst verwaisen Ordner, in die während/nach ``rmtree`` noch ein Nachzügler-Prozess schrieb,
+    für immer, weil der Räumer nur markierte Ordner anfasst.
     """
-    statvfs = getattr(os, "statvfs", None)
-    if statvfs is None:
-        return None
+    marker = ordner / _MARKER
+    if not ordner.is_dir() or marker.exists():
+        return
     try:
-        werte = statvfs(temp)
-    except OSError:
-        return None
-    if werte.f_files <= 0:
-        return None
-    return 1 - werte.f_ffree / werte.f_files
+        marker.write_text(f"{pid}\n", encoding="utf-8")
+        if mtime is not None:
+            os.utime(marker, (mtime, mtime))
+    except OSError as fehler:
+        _LOG.warning("pt-Marker in %s nicht wiederherstellbar: %s", ordner, fehler)
 
 
 def _reste_raeumen(temp: Path, inode_anteil: Callable[[Path], float | None] = _inode_anteil) -> None:
@@ -202,6 +254,23 @@ def _reste_raeumen(temp: Path, inode_anteil: Callable[[Path], float | None] = _i
         _LOG.warning("pt-Räumer abgebrochen unter %s: %r", temp, fehler)
 
 
+def _pt_ordner_loeschen(ordner: Path) -> None:
+    """Löscht einen ``pt-*``-Ordner; unter Windows erst Schreibschutz lösen (``.git/objects``, #655).
+
+    Einzige Lösch-Stelle für ``pt-*``-Ordner (``_reste_raeumen_roh`` und ``pytest_sessionfinish``).
+    Nutzt :func:`to_spawn.hausmeister_windows.schreibschutz_weg` (eine Stelle für den
+    Schreibschutz-Handler). Unter POSIX bleibt ``shutil.rmtree`` ohne Handler: dort sperrt
+    ein Nur-Lese-Bit an Dateien das Löschen nicht, und fehlende Ordnerrechte bleiben sichtbar.
+    """
+    if not _WINDOWS:
+        shutil.rmtree(ordner)
+        return
+    if sys.version_info >= (3, 12):
+        shutil.rmtree(ordner, onexc=hausmeister_windows.schreibschutz_weg)
+    else:
+        shutil.rmtree(ordner, onerror=hausmeister_windows.schreibschutz_weg)
+
+
 def _reste_raeumen_roh(temp: Path, inode_anteil: Callable[[Path], float | None]) -> None:
     anteil = inode_anteil(temp)
     knapp = anteil is not None and anteil >= _INODE_GRENZE
@@ -214,7 +283,10 @@ def _reste_raeumen_roh(temp: Path, inode_anteil: Callable[[Path], float | None])
     for ordner in kandidaten:
         marker = ordner / _MARKER
         try:
-            if ordner.is_symlink() or marker.stat().st_mtime > grenze:
+            if ordner.is_symlink():
+                continue
+            marker_mtime = marker.stat().st_mtime
+            if marker_mtime > grenze:
                 continue
             pid = int(marker.read_text(encoding="utf-8").strip())
         except (OSError, ValueError):
@@ -224,18 +296,71 @@ def _reste_raeumen_roh(temp: Path, inode_anteil: Callable[[Path], float | None])
         if prozessbaum.lebt(pid):
             continue
         try:
-            shutil.rmtree(ordner)
+            _pt_ordner_loeschen(ordner)
         except OSError as fehler:
             _LOG.warning("pt-Räumer: Rest %s nicht löschbar: %s", ordner, fehler)
+        finally:
+            _marker_retten(ordner, pid, marker_mtime)
+
+
+def _datei_sha256(pfad: Path) -> str | None:
+    """SHA-256 einer Datei oder ``None``, wenn sie nicht existiert (#232)."""
+    try:
+        return hashlib.sha256(pfad.read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
+def _heim_waechter_aktiv() -> bool:
+    """Session-Prüfsumme fürs echte Heim: in CI immer aktiv, lokal per ``TO_SPAWN_HEIM_WAECHTER=1`` (#232).
+
+    Auf einem Bau-Server mit laufenden Live-Sessions schreibt Claude Code parallel in die echte
+    ``~/.claude.json`` — dort schützt die ``test_heim``-Fixture plus Schreibsperre je Test,
+    ohne dass fremde Sessions den Lauf kippen.
+    """
+    return bool(os.environ.get("CI") or os.environ.get("TO_SPAWN_HEIM_WAECHTER") == "1")
+
+
+def heim_anlegen(heim: Path) -> Path:
+    """Richtet einen isolierten Test-Heimordner mit genau den Start-Attrappen ein (#232).
+
+    Enthält:
+    - Pflicht-Plugin ``context-mode`` (:func:`context_mode_attrappe.plugin_anlegen`)
+    - Aufräum-Skript-Attrappe ``~/.claude/hooks/smart-zone/staffel/aufraeumen.mjs``
+    - Minimale ``.gitconfig`` (Name, E-Mail, ``defaultBranch = main``) für ``git commit`` in Tests
+    Bewusst KEINE ``~/.claude/settings.json`` (keine privaten Hooks) und keine echte ``~/.claude.json``.
+    """
+    heim.mkdir(parents=True, exist_ok=True)
+    context_mode_attrappe.plugin_anlegen(heim)
+    aufraeumen = heim / ".claude" / "hooks" / "smart-zone" / "staffel" / "aufraeumen.mjs"
+    aufraeumen.parent.mkdir(parents=True, exist_ok=True)
+    aufraeumen.write_text(
+        "// Attrappe für Startklar-Prüfung (#232)\nprocess.exit(0);\n",
+        encoding="utf-8",
+    )
+    gitconfig = heim / ".gitconfig"
+    if not gitconfig.exists():
+        gitconfig.write_text(
+            "[user]\n\tname = test\n\temail = test@example.invalid\n[init]\n\tdefaultBranch = main\n",
+            encoding="utf-8",
+        )
+    return heim
 
 
 @pytest.hookimpl(trylast=True)
 def pytest_sessionstart(session: pytest.Session) -> None:
-    """Eigenen Temp-Ordner markieren (#177): PID des Leit-Prozesses in :data:`_MARKER`.
+    """Eigenen Temp-Ordner markieren (#177) und bei aktivem Wächter Heim-Prüfsumme merken (#232).
 
     Erst hier, weil pytest einen gegebenen ``--basetemp`` beim ersten Zugriff leert
     (``getbasetemp``); der Aufruf hier legt ihn endgültig an, der Marker überlebt.
     """
+    if not hasattr(session.config, "workerinput") and _heim_waechter_aktiv():
+        claude_json = _ECHTES_HEIM / ".claude.json"
+        session.config.stash[_HEIM_STAND] = (
+            claude_json,
+            _datei_sha256(claude_json),
+            (_ECHTES_HEIM / ".claude").exists(),
+        )
     ordner = session.config.stash.get(_EIGENER_BASETEMP, None)
     if ordner is None:
         return
@@ -251,14 +376,41 @@ def pytest_sessionstart(session: pytest.Session) -> None:
 
 @pytest.hookimpl(trylast=True)
 def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
-    """Grüner Lauf: den selbst angelegten Temp-Ordner löschen (#349); rot bleibt er zum Nachsehen.
+    """Heim-Prüfsumme prüfen (#232) und bei grünem Lauf den eigenen Temp-Ordner löschen (#349).
 
     Nur der in ``_eigener_basetemp`` angelegte Pfad, nie ein Muster und nie ein fremdes
     ``--basetemp``. Reste roter Läufe räumt der Temp-Räumer (#177).
     """
+    if not hasattr(session.config, "workerinput"):
+        stand = session.config.stash.get(_HEIM_STAND, None)
+        if stand is not None:
+            claude_json, vorher_sha, vorher_claude_dir = stand
+            nachher_sha = _datei_sha256(claude_json)
+            verstoesse: list[str] = []
+            if nachher_sha != vorher_sha:
+                verstoesse.append(
+                    f"echte Nutzer-Konfiguration verändert: {claude_json} (vorher {vorher_sha}, nachher {nachher_sha})"
+                )
+            if not vorher_claude_dir and (_ECHTES_HEIM / ".claude").exists():
+                verstoesse.append(
+                    f"echter Ordner {_ECHTES_HEIM / '.claude'} wurde während des Testlaufs angelegt"
+                )
+            if verstoesse:
+                meldung = "Heim-Wächter (#232): " + "; ".join(verstoesse)
+                _LOG.error("%s", meldung)
+                sys.stderr.write(f"\nFEHLER: {meldung}\n")
+                session.exitstatus = pytest.ExitCode.TESTS_FAILED
+                exitstatus = int(pytest.ExitCode.TESTS_FAILED)
     ordner = session.config.stash.get(_EIGENER_BASETEMP, None)
     if ordner is not None and exitstatus == 0:
-        shutil.rmtree(ordner, ignore_errors=True)
+        try:
+            _pt_ordner_loeschen(ordner)
+        except FileNotFoundError:
+            pass
+        except OSError as fehler:
+            _LOG.warning("pt-Ordner %s nach grünem Lauf nicht löschbar: %s", ordner, fehler)
+        finally:
+            _marker_retten(ordner, os.getpid())
 
 
 def pytest_unconfigure(config: pytest.Config) -> None:
@@ -438,6 +590,45 @@ def _keine_to_spawn_umgebung(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def test_heim(
+    tmp_path_factory: pytest.TempPathFactory,
+    monkeypatch: pytest.MonkeyPatch,
+    _keine_to_spawn_umgebung: None,
+) -> Path:
+    """Isolierter Test-Heimordner je Test (#232): kein Test liest/schreibt das echte HOME.
+
+    ``HOME`` und ``USERPROFILE`` zeigen auf einen frischen Temp-Ordner mit Attrappen für
+    ``context-mode`` und ``aufraeumen.mjs`` (ohne private Hooks in ``settings.json``).
+    ``CLAUDE_CONFIG_DIR`` wird geleert; ``PYTHONUSERBASE`` bleibt erhalten, damit Python-
+    Kindprozesse user-installierte Pakete weiter finden. Schreibzugriffe auf die echte
+    ``~/.claude.json`` über ``vertrauen.sicherstellen`` werden aktiv gesperrt.
+    """
+    heim = heim_anlegen(tmp_path_factory.mktemp("heim"))
+    if not os.environ.get("PYTHONUSERBASE") and _START_USER_BASE:
+        monkeypatch.setenv("PYTHONUSERBASE", _START_USER_BASE)
+    monkeypatch.setenv("HOME", str(heim))
+    monkeypatch.setenv("USERPROFILE", str(heim))
+    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
+
+    echte_claude_json = (_ECHTES_HEIM / ".claude.json").resolve()
+    echt_sicherstellen = vertrauen.sicherstellen
+
+    @functools.wraps(echt_sicherstellen)
+    def _sicherstellen_ohne_echtes_heim(
+        *pfade: Path, claude_json: Path | None = None
+    ) -> list[str]:
+        ziel = (claude_json or vertrauen.claude_json_pfad()).expanduser().resolve()
+        if ziel == echte_claude_json:
+            raise PermissionError(
+                f"Test darf die echte Nutzer-Konfiguration nicht beschreiben: {ziel} (#232)"
+            )
+        return echt_sicherstellen(*pfade, claude_json=claude_json)
+
+    monkeypatch.setattr(vertrauen, "sicherstellen", _sicherstellen_ohne_echtes_heim)
+    return heim
+
+
+@pytest.fixture(autouse=True)
 def _speicher_immer_frei(
     tmp_path_factory: pytest.TempPathFactory,
     monkeypatch: pytest.MonkeyPatch,
@@ -518,25 +709,59 @@ def _arbeitsstand_im_test(monkeypatch: pytest.MonkeyPatch, _keine_to_spawn_umgeb
     monkeypatch.setenv("TO_SPAWN_TEST_ARBEITSSTAND_OK", "1")
 
 
+def _eigene_nachfahren(alle: dict[int, tuple[int, int]], wurzel: int) -> dict[int, tuple[int, int]]:
+    """Filtert eine Windows-Momentaufnahme auf Nachfahren von ``wurzel`` (#649).
+
+    So sieht die Hausmeister-Prüfung in Tests nie fremde Rechner-Prozesse (die gerade starten
+    oder enden und ohne cwd-Griff im PEB einen Test zufällig sperren), wohl aber jeden vom
+    Test selbst gestarteten Kindprozess samt Enkeln (z. B. ``sleep``, ``git``, MSYS-Kind).
+    Recycelte Eltern-PIDs fallen heraus wie in :func:`prozessbaum._kinder`.
+    """
+    kinder: dict[int, list[int]] = {}
+    for pid, (eltern, start) in alle.items():
+        if pid == eltern:
+            continue
+        vorfahr = alle.get(eltern)
+        if vorfahr is None:
+            if eltern != wurzel:
+                continue
+        elif vorfahr[1] and start and vorfahr[1] > start:
+            continue
+        kinder.setdefault(eltern, []).append(pid)
+    eigene: set[int] = set()
+    warteschlange = list(kinder.get(wurzel, ()))
+    while warteschlange:
+        pid = warteschlange.pop()
+        if pid not in eigene:
+            eigene.add(pid)
+            warteschlange.extend(kinder.get(pid, ()))
+    return {pid: alle[pid] for pid in eigene}
+
+
 @pytest.fixture(autouse=True)
 def _hausmeister_nur_im_test(
     tmp_path_factory: pytest.TempPathFactory,
     monkeypatch: pytest.MonkeyPatch,
     _keine_to_spawn_umgebung: None,
 ) -> None:
-    """Hausmeister (#1369) räumt in Tests nie echte Ordner auf.
+    """Hausmeister (#1369) räumt in Tests nie echte Ordner auf und sieht keine Fremdprozesse (#649).
 
     Start-Check (``to_spawn.py speicher``, ``bau.py``) und Aufpasser rufen
     ``hausmeister.aufraeumen_alles`` — ohne diese Fixture liefe das mit
     ``loeschen=True`` über die echten ``~/wt/*`` der Testmaschine. Wurzeln zeigen
-    auf einen leeren Ordner, Logs in ``tmp``, Platte gilt als frei. Tests mit
-    eigener Welt (``test_hausmeister_1368/1369``) setzen die Variablen neu.
+    auf einen leeren Ordner, Logs in ``tmp``, Platte gilt als frei. Unter Windows
+    bleibt die Prozessprüfung bei eigenen Kindprozessen (kein echtes PowerShell,
+    keine fremden Rechner-Prozesse im PEB). Tests mit eigener Welt
+    (``test_hausmeister_1368/1369``) setzen die Variablen neu; PowerShell-Attrappen
+    (``_POWERSHELL != "powershell"``) und direkte ``_prozesse()``-Tests laufen normal.
     """
     ordner = tmp_path_factory.mktemp("hausmeister")
     monkeypatch.setenv("TO_SPAWN_HAUSMEISTER_WURZELN", str(ordner / "keine" / "*"))
     monkeypatch.setenv("TO_SPAWN_HAUSMEISTER_LOG", str(ordner / "hausmeister.jsonl"))
     monkeypatch.setenv("TO_SPAWN_HINDERNIS_LOG", str(ordner / "hindernisse.jsonl"))
+    monkeypatch.setenv("TO_SPAWN_INSTALL_LOG", str(ordner / "install_fehler.jsonl"))
     monkeypatch.setenv("TO_SPAWN_HAUSMEISTER_PLATTE", "1")
+    monkeypatch.setenv("TO_SPAWN_HAUSMEISTER_INODES", "0")
     # #1371: keine echten GitHub-Remotes — sonst löschte ein Test alte sicherung/*-Zweige.
     monkeypatch.setenv("TO_SPAWN_HAUSMEISTER_ZWEIG_REPOS", "")
     # #1439: Zweig-Lauf fasst keine echten Hauptrepos an (leer = keine).
@@ -560,6 +785,42 @@ def _hausmeister_nur_im_test(
     # #145: Sicherung (Rundgang, Aufseher-Ablösung) schreibt nur in tmp, lädt keine echten Zweige hoch.
     monkeypatch.setenv("TO_SPAWN_SICHERUNG_ZIEL", str(ordner / "sicherung"))
     monkeypatch.setenv("TO_SPAWN_SICHERUNG_ZWEIG_REPOS", "")
+
+    # #649: Windows-Prozessprüfung des Hausmeisters sieht nie fremde Rechner-Prozesse.
+    from to_spawn import hausmeister_windows
+
+    echt_kein_prozess = hausmeister_windows.kein_prozess
+    echt_prozesse = hausmeister_windows._prozesse
+
+    def _kein_prozess_im_test(ziel: Path) -> None:
+        if hausmeister_windows._POWERSHELL == "powershell" and hausmeister_windows._prozesse is echt_prozesse:
+            hausmeister_windows._prozesse = list
+            try:
+                echt_kein_prozess(ziel)
+            finally:
+                hausmeister_windows._prozesse = echt_prozesse
+            return
+        echt_kein_prozess(ziel)
+
+    monkeypatch.setattr(hausmeister_windows, "kein_prozess", _kein_prozess_im_test)
+
+    echt_arbeitsordner = prozessbaum.arbeitsordner_in_windows
+
+    @functools.wraps(echt_arbeitsordner)
+    def _arbeitsordner_nur_eigene(ziel: str | Path) -> dict[int, prozessbaum.ArbeitsordnerBefund]:
+        echt_momentaufnahme = prozessbaum._momentaufnahme_windows
+        ich = os.getpid()
+
+        def _nur_eigene_momentaufnahme() -> dict[int, tuple[int, int]]:
+            return _eigene_nachfahren(echt_momentaufnahme(), ich)
+
+        prozessbaum._momentaufnahme_windows = _nur_eigene_momentaufnahme
+        try:
+            return echt_arbeitsordner(ziel)
+        finally:
+            prozessbaum._momentaufnahme_windows = echt_momentaufnahme
+
+    monkeypatch.setattr(prozessbaum, "arbeitsordner_in_windows", _arbeitsordner_nur_eigene)
 
 
 @pytest.fixture(autouse=True)

@@ -23,6 +23,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -47,6 +48,7 @@ from to_spawn import (  # noqa: E402
     manifest,
     nest,
     sitzung_env,
+    spawn_exit,
     speicher,
     starter,
     startklar,
@@ -90,7 +92,7 @@ def repo_aus_origin(fallback: str = "") -> str:
             ["git", "remote", "get-url", "origin"],
             cwd=str(REPO_ORDNER),
             capture_output=True,
-            text=True,
+            **konsole.UNTERPROZESS_TEXT,
             check=False,
             **prozessbaum.fensterlos(),
         ).stdout.strip()
@@ -136,9 +138,8 @@ def auf_speicher_warten(
     return speicher.auf_platz_warten(konfig, wer=wer, pruefen=pruefen, schlafen=schlafen, takt_s=takt_s)
 
 
-#: Umgebungsvariable mit der Warte-Datei (#560): ``spawn_srv.sh`` setzt sie im Fenster ``wache <S>``
-#: und schreibt dorthin die Tickets, die beim Start „wartet auf Platz“ bekamen.
-WARTE_ENV = "TO_SPAWN_WARTE_DATEI"
+#: Umgebungsvariable mit der Warte-Datei (#560, #604): einzige Quelle ist ``to_spawn.spawn_exit``.
+WARTE_ENV = spawn_exit.WARTE_ENV
 #: Takt des Nachstarters (#560): so viele Sekunden nach „Platz frei“ startet das nächste Fenster.
 NACHSTART_TAKT_S = 20
 
@@ -153,16 +154,15 @@ def wartende_nachstarten(
     takt_s: float | None = None,
     max_laeufe: int | None = None,
 ) -> int:
-    """Startet die Fenster nach, die ``spawn_srv.sh`` in ``datei`` als wartend vermerkt hat (#560).
+    """Startet die Fenster nach, die ``spawn_srv.sh`` in ``datei`` als wartend vermerkt hat (#560, #604).
 
-    Je Takt ein ``spawn_srv.sh <S> --tickets <liste>`` — es überspringt Laufendes und prüft vor
-    jedem Fenster den Speicher. Nur ``spawn_srv.sh`` schreibt und löscht die Datei, unter seiner
-    Sperre je Spec: es vereinigt neue Wartende mit der vorhandenen Liste, trägt nur gestartete oder
-    schon laufende Tickets aus und löscht die Datei erst, wenn sie leer ist. Exit 0 ohne „wartet
-    auf Platz“ und Datei weg = Ende; Datei noch da (weitere Wartende) oder sonst (wartet weiter,
-    voll, Fehler) → nächster Takt, unbegrenzt. Leere Datei = kein Auftrag, nächster Takt (#560).
-    Datei fehlt → im Takt weiter nachsehen:
-    ``spawn_srv.sh`` schreibt sie erst nach der Staffel-Pause, also nach dem Start des Aufsehers.
+    Normale Tickets laufen gebündelt über ``spawn_srv.sh <S> --tickets <liste>``, vermerkte
+    ``--umzug``-Zeilen einzeln über ``spawn_srv.sh <S> --tickets <N> --ohne-wache --umzug <ref>``.
+    Nur ``spawn_srv.sh`` schreibt und löscht die Datei, unter seiner Sperre je Spec: es vereinigt
+    neue Wartende mit der vorhandenen Liste, trägt nur gestartete oder schon laufende Tickets aus
+    und löscht die Datei erst, wenn sie leer ist. Exit 10 (Start-Sperre belegt) gilt als „später
+    erneut“, nicht als Fehler. Exit 0 ohne „wartet auf Platz“ und Datei weg = Ende; sonst nächster
+    Takt, unbegrenzt. Leere oder fehlende Datei → im Takt weiter nachsehen.
     Rückgabe = Zahl der ``spawn_srv.sh``-Läufe. ``takt_s`` leer = ``NACHSTART_TAKT_S`` (je Takt gelesen).
     """
     from to_spawn import bash_wahl
@@ -173,53 +173,86 @@ def wartende_nachstarten(
         if not datei.is_file():
             schlafen(NACHSTART_TAKT_S if takt_s is None else takt_s)
             continue
-        tickets = datei.read_text(encoding="utf-8").strip()
-        if not tickets:
+        normal, umzuege = spawn_exit.warteliste_lesen(datei.read_text(encoding="utf-8"))
+        if not normal and not umzuege:
             schlafen(NACHSTART_TAKT_S if takt_s is None else takt_s)
             continue
-        umgebung = dict(os.environ if env is None else env, TO_SPAWN_REPO=str(repo))
-        laeufe += 1
-        try:
-            lauf = bash_wahl.lauf(
-                [str(skript), str(spec), "--tickets", tickets],
-                cwd=str(repo),
-                env=umgebung,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=600,
+        umgebung = dict(os.environ if env is None else env, TO_SPAWN_REPO=str(repo), TO_SPAWN_NACHSTART="1")
+        auftraege: list[tuple[str, list[str]]] = []
+        if normal:
+            liste = ",".join(normal)
+            auftraege.append((liste, [str(skript), str(spec), "--tickets", liste]))
+        for ticket, ref in umzuege:
+            auftraege.append(
+                (
+                    f"{ticket} (umzug)",
+                    [str(skript), str(spec), "--tickets", ticket, "--ohne-wache", "--umzug", ref],
+                )
             )
-        except (OSError, subprocess.SubprocessError) as fehler:
-            log.warning("Nachstart Spec #%s: spawn_srv.sh nicht lauffähig: %s", spec, fehler)
-        else:
+        alle_gestartet = True
+        for beschreibung_text, befehl in auftraege:
+            if max_laeufe is not None and laeufe >= max_laeufe:
+                alle_gestartet = False
+                break
+            laeufe += 1
+            try:
+                lauf = bash_wahl.lauf(
+                    befehl,
+                    cwd=str(repo),
+                    env=umgebung,
+                    capture_output=True,
+                    **konsole.UNTERPROZESS_TEXT,
+                    timeout=600,
+                )
+            except (OSError, subprocess.SubprocessError) as fehler:
+                log.warning("Nachstart Spec #%s: spawn_srv.sh nicht lauffähig: %s", spec, fehler)
+                alle_gestartet = False
+                break
             ausgabe = (lauf.stdout or "") + (lauf.stderr or "")
             if lauf.returncode == 0 and "wartet auf Platz" not in ausgabe:
-                if not datei.is_file():
-                    log.info("Nachstart Spec #%s: wartende Fenster laufen (%s)", spec, tickets)
-                    return laeufe
-                log.info("Nachstart Spec #%s: %s läuft, neue Warteliste da", spec, tickets)
+                log.info("Nachstart Spec #%s: %s gestartet", spec, beschreibung_text)
+            elif spawn_exit.ist_spaeter_erneut(lauf.returncode):
+                log.info(
+                    "Nachstart Spec #%s: %s (Exit %s) — später erneut",
+                    spec,
+                    spawn_exit.beschreibung(lauf.returncode),
+                    lauf.returncode,
+                )
+                alle_gestartet = False
+                break
             else:
-                log.info("Nachstart Spec #%s: wartet weiter (Exit %s)", spec, lauf.returncode)
+                log.info(
+                    "Nachstart Spec #%s: wartet weiter (Exit %s, %s)",
+                    spec,
+                    lauf.returncode,
+                    spawn_exit.beschreibung(lauf.returncode),
+                )
+                alle_gestartet = False
+                break
+        if alle_gestartet:
+            if not datei.is_file():
+                log.info("Nachstart Spec #%s: alle wartenden Fenster laufen", spec)
+                return laeufe
+            log.info("Nachstart Spec #%s: neue Warteliste da", spec)
         schlafen(NACHSTART_TAKT_S if takt_s is None else takt_s)
     return laeufe
 
 
 def _nachstarter_starten(spec: int, repo: Path) -> threading.Thread | None:
-    """Nachstarter-Faden (#560), nur wenn ``spawn_srv.sh`` eine Warte-Datei mitgegeben hat.
+    """Nachstarter-Faden (#560, #604) für die Warteliste dieser Spec.
 
-    Lebt so lange wie der Aufseher: auch spätere ``spawn_srv.sh``-Läufe (Aufseher läuft schon, wird
-    nicht neu gestartet) vermerken ihre Wartenden in derselben Datei.
+    Nutzt ``TO_SPAWN_WARTE_DATEI`` (von ``spawn_srv.sh``/Aufpasser gesetzt) oder den
+    kanonischen Pfad :func:`to_spawn.spawn_exit.warte_datei`, damit auch ein direkt oder
+    vom Aufpasser gestarteter Aufseher die Warteliste kennt.
     """
     wert = os.environ.get(WARTE_ENV, "").strip()
-    if not wert:
-        return None
+    ziel = Path(wert) if wert else spawn_exit.warte_datei(repo, spec)
     umgebung = dict(os.environ)  # vor dem Umgebungs-Wechsel für Claude festhalten
 
     def faden() -> None:
         while True:
             try:
-                wartende_nachstarten(Path(wert), spec, repo, env=umgebung)
+                wartende_nachstarten(ziel, spec, repo, env=umgebung)
             except Exception:  # Faden darf den Aufseher nie mitreißen
                 log.exception("Nachstart Spec #%s gescheitert", spec)
                 time.sleep(NACHSTART_TAKT_S)
@@ -250,15 +283,23 @@ def volles_fenster(modell: str) -> str:
     return modell
 
 
-def prompt_bauen(spec: int, repo: str, takt: int, konfig: dict) -> str:
+def prompt_bauen(
+    spec: int,
+    repo: str,
+    takt: int,
+    konfig: dict,
+    *,
+    repo_ordner: Path | None = None,
+) -> str:
     """Aufseher-Prompt mit Server-Befehlen aus der Konfig (``ssh_ziel``, ``server_repo``)
     und dem Manifest-Pfad aus ``pfade.manifeste``."""
     # aufseher_vorlage (#450 F5): Linux/Bau-Server kennt nur ``python3``.
-    vorlage = startklar.aufseher_vorlage(PROMPT)
+    vorlage = startklar.aufseher_vorlage(_prompt_vorlage())
     text = vorlage.format(
         S=spec, REPO=repo, DATUM=date.today().isoformat(), TAKT=max(600, takt), SKILL=startklar.skill_pfad()
     )
-    text = text.replace("<MANIFEST>", manifest.manifest_im_repo(REPO_ORDNER, spec))
+    ziel_ordner = repo_ordner if repo_ordner is not None else REPO_ORDNER
+    text = text.replace("<MANIFEST>", manifest.manifest_im_repo(ziel_ordner, spec))
     return text.replace("<SSH>", str(konfig.get("ssh_ziel") or "bau-server")).replace(
         "<SERVER_REPO>", str(konfig.get("server_repo") or "<server_repo fehlt in .to-spawn/config.json>")
     )
@@ -316,7 +357,7 @@ TAKT_S = 1800
 #: Takt, wenn alle offenen Tickets nur noch auf die Abnahme des Menschen warten: 60 min (E38, #500).
 TAKT_ABNAHME_S = 3600
 
-PROMPT = """/loop Bau-Aufseher Spec #{S} ({REPO})
+_PROMPT_ROH = """/loop Bau-Aufseher Spec #{S} ({REPO})
 
 ## Auftrag
 Du bist verantwortlich, dass Spec #{S} vollständig, sauber und autonom fertig gebaut wird. Du bist eine voll fähige Session: lesen, prüfen, Subagenten nutzen, Fehler selbst beheben — was nötig ist, damit der Bau durchläuft.
@@ -378,22 +419,33 @@ E Dich selbst ablösen (deine Handoff-Grenze ist erreicht) — Selbstneustart na
   An der Handoff-Grenze stößt die Aufsicht die Ablösung selbst an (respawn): kommt der Auftrag „Ablösung dieser Session“, Handoff und Start-Prompt an die genannten Pfade schreiben und danach nichts mehr tun.
 
 ## Abschluss
-ABSCHLUSS schon vor Live: Bau fertig, bereit zur Abnahme (alle Bau-Tickets zu oder nur noch Live-Belege/checkpoint:human-Abnahme offen, bzw. „Kette … durch“ oder „SPEC FERTIG“) → PFLICHT Abschluss-Paket `--stand abnahme` (einmal): Rundschau als Artifact: Skill `rundschau` (fehlt er: melden, kein Ersatz), Aufbau und Prüfung allein nach to_spawn/rundschau_deck.py — `python {SKILL}/skripte/rundschau_deck.py erzeugen --texte <json> --entscheidungen <json> --nach <html>` (Teil 1 Nutzer-Präsentation, Teil 2 gewohnter Rest, Schluss Entscheidungs-Zeitstrahl aus dem Bau-Verlauf; Zahl nennen), Screenshots per echtem Browser-Blick; `ablegen --stand abnahme` verlangt `--rundschau-datei <html>`, fehlt sie oder ist die Prüfung rot: Exit 4 mit Mängelliste, nichts abgelegt, `python {SKILL}/skripte/belege_uebersicht.py {S}` und `python {SKILL}/skripte/test_uebersicht.py {S}` je als Artifact, Direkt-Links je Ticket in die Stage-App (staging.url aus .to-spawn/config.json + Route an die richtige Stelle, Rolle im Titel), Zugang nur als Namen (Basic-Auth-Nutzer, App-Rolle, Bitwarden-Eintragsname — nie Passwort), dann `python {SKILL}/skripte/abschluss_paket.py ablegen {S} --stand abnahme --stage <url> --rundschau <link> --rundschau-datei <html> --belege <link> --tests <link> --direkt "<Titel (als Rolle)>=<url>"… --basic-auth-nutzer <name> --app-rolle "<Name (rolle)>" --bitwarden <eintrag>` (legt ab, schreibt docs/agents/entscheidungen_{S}.md, mailt nicht).
-Danach Aufbau-Prüfung (einmal): `python {SKILL}/skripte/thermo_lauf.py plan {S}`. Exit 0 → je Eintrag in `teile` ein Subagent, alle parallel im selben Zug (`model: opus`, Prompt = Feld `prompt` unverändert); jede JSON-Antwort als `<befunde_ordner>/teil-<nr>.json` speichern, dann `python {SKILL}/skripte/thermo_lauf.py sammeln {S}`. Exit 2/4 → überspringen. Exit 3 → fehlenden Teil nachstarten, erneut sammeln. Kein Umbau in der Spec — Befunde stehen als Code-Befunde im Marker docs/agents/thermo_{S}.md (dritter Teil der Abschluss-Mail), kein Issue. Danach Rückblick (einmal): `python {SKILL}/skripte/rueckblick.py planen {S}`. Exit 0 → ein Subagent (`model: opus`, Skill mp-retro) liest `.to-spawn/rueckblick/{S}/auftrag.md` und schreibt dort `ergebnis.json` wie im Auftrag beschrieben, dann `python {SKILL}/skripte/rueckblick.py sammeln {S}` (schreibt docs/agents/rueckblick_{S}.md, mit Pathspec + [skip ci] committen + `python {SKILL}/to_spawn.py einreichen {S}`). Exit 4 → überspringen. Exit 3 → KI nachstarten, erneut sammeln. Exit 1 → Grund notieren, weiter. Zum Schluss `python {SKILL}/skripte/abschluss_paket.py nachsehen {S}` (genau eine Mail an den Menschen; nur für `--stand abnahme` gilt: Exit 3 = wartet noch, capo stößt es je Tick selbst an — nicht warten). Live-Schritt nur über `python {SKILL}/to_spawn.py live {S}` (die Tür prüft selbst vorher die Komplett-Prüfung, höchstens einmal je Spec): Exit 0 → live; Exit 1 → kein Live, Grund aus der Zeile beheben und erneut rufen; Exit 2 → `live.befehl` fehlt, Komplett-Prüfung grün, Live-Schritt nach Repo-Ablauf von Hand. Nach dem Live-Deploy dasselbe einmal mit `--stand live` (`abschluss_paket.py ablegen {S} --stand live …` + `abschluss_paket.py nachsehen {S} --stand live`); `nachsehen --stand live` bis Exit 0 wiederholen (capo stößt live nicht an).
-ENDE erst bei „SPEC FERTIG“ (alle Tickets zu; capo schreibt dann docs/agents/entscheidungen_{S}.md noch einmal neu). Übersichten + Abschluss + docs/agents/entscheidungen_{S}.md + docs/agents/thermo_{S}.md + docs/agents/rueckblick_{S}.md mit Pathspec + [skip ci] committen + `python {SKILL}/to_spawn.py einreichen {S}`, Abschlussbericht als Kommentar auf #{S} (max. 10 Zeilen, die Links); bei „SPEC FERTIG“ stop: true.
+ABSCHLUSS schon vor Live: {ABSCHLUSS}
+ENDE erst bei „SPEC FERTIG“ (alle Tickets zu; capo schreibt dann docs/agents/entscheidungen_{S}.md noch einmal neu). Übersichten + Abschluss + docs/agents/rundschau_{S}.html + docs/agents/selbstpruefung_{S}.md + docs/agents/entscheidungen_{S}.md + docs/agents/thermo_{S}.md + docs/agents/rueckblick_{S}.md mit Pathspec + [skip ci] committen + `python {SKILL}/to_spawn.py einreichen {S}`, Abschlussbericht als Kommentar auf #{S} (max. 10 Zeilen, die Links); bei „SPEC FERTIG“ stop: true.
 
 Erste Zeile jeder Antwort: 🧭 Opus · medium · Aufseher #{S}"""
 
 
 # Werkzeug-Befehle aus derselben Quelle wie die Startklar-Probe (#450 F5).
-PROMPT = PROMPT.replace("{AUFRAEUMEN}", startklar.BEFEHL_AUFRAEUMEN).replace("{NEUSTART}", startklar.BEFEHL_NEUSTART).replace("{RESPAWN}", startklar.BEFEHL_RESPAWN)
-# Feste Texte der Aufseher-Anleitung aus einer Quelle (#500).
-PROMPT = PROMPT.replace("{MINDSET}", anleitung.MINDSET).replace("{STOSS}", anleitung.STOSS).replace("{ABLOESE_SOP}", anleitung.ABLOESE_SOP)
-PROMPT = PROMPT.replace("{TAKT_ABNAHME}", str(TAKT_ABNAHME_S))
-# Befugnis und Beleg-Regel aus je einer Quelle (#278 P3b, #289): ``{SKILL}`` bleibt für ``format`` in ``prompt_bauen`` stehen.
-PROMPT = PROMPT.replace("{BEFUGNIS}", befugnis.aufseher_text("python {SKILL}/to_spawn.py")).replace(
-    "{KLASSE_2}", befugnis.klasse_2_erkennung()
-).replace("{BELEG_HINWEIS}", aufseher_stand.beleg_hinweis("python {SKILL}/to_spawn.py"))
+_PROMPT_ROH = _PROMPT_ROH.replace("{AUFRAEUMEN}", startklar.BEFEHL_AUFRAEUMEN).replace("{NEUSTART}", startklar.BEFEHL_NEUSTART).replace("{RESPAWN}", startklar.BEFEHL_RESPAWN)
+# Feste Texte der Aufseher-Anleitung aus einer Quelle (#500, #367).
+_PROMPT_ROH = _PROMPT_ROH.replace("{MINDSET}", anleitung.MINDSET).replace("{STOSS}", anleitung.STOSS).replace("{ABLOESE_SOP}", anleitung.ABLOESE_SOP).replace("{ABSCHLUSS}", anleitung.ABSCHLUSS_ANWEISUNG)
+_PROMPT_ROH = _PROMPT_ROH.replace("{TAKT_ABNAHME}", str(TAKT_ABNAHME_S))
+# Beleg-Regel und Klasse-2-Liste aus je einer Quelle (#278 P3b, #289); ``{BEFUGNIS}`` folgt
+# erst beim Zugriff dem aktuellen ``HOME``/``OBSIDIAN_VAULT`` (Notiz-Tresor, #232).
+_PROMPT_ROH = _PROMPT_ROH.replace("{KLASSE_2}", befugnis.klasse_2_erkennung()).replace(
+    "{BELEG_HINWEIS}", aufseher_stand.beleg_hinweis("python {SKILL}/to_spawn.py")
+)
+
+
+def _prompt_vorlage() -> str:
+    """Aufseher-Vorlage mit aktuellem ``befugnis.aufseher_text`` (folgt ``HOME``/``OBSIDIAN_VAULT`` zur Laufzeit, #232)."""
+    return _PROMPT_ROH.replace("{BEFUGNIS}", befugnis.aufseher_text("python {SKILL}/to_spawn.py"))
+
+
+def __getattr__(name: str) -> object:
+    if name == "PROMPT":
+        return _prompt_vorlage()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def logging_einrichten(repo_ordner: Path, spec: int, auf_terminal: bool) -> Path | None:
@@ -509,91 +561,96 @@ def main() -> int:
     # Eine Session im Worktree darf nicht das Repo des Launchers erben (#205).
     os.environ.pop("TO_SPAWN_REPO", None)
     os.environ["CLAUDE_CODE_FORCE_SESSION_PERSISTENCE"] = "1"
-    os.environ.update(temp_ordner.umgebung())  # #136: Temp auf die Platte, nie die RAM-Platte
+    os.environ.update(temp_ordner.umgebung(a.spec, repo=REPO, von="wache"))  # #136/#177: markierter Spec-Temp auf der Platte
     # Klick-Sperre nur für lokal gespawnte Sessions (Windows, Maus-Müll im Eingabefeld).
     terminal_maus.maus_ruhig()
     # Umzug (#212): /to-spawn-of im Aufseher zieht alle Sessions um und beendet am Ende
     # diese Aufseher-Session über die Umzug-Datei (Temp-Ordner je Lauf).
     lauf_ordner = Path(tempfile.mkdtemp(prefix=f"wache-{a.spec}-", dir=os.environ.get("TMPDIR")))
-    umzug_datei = lauf_ordner / "umzug.json"
-    abloese_datei = lauf_ordner / "abloesung.json"
-    os.environ["BAU_UMZUG_DATEI"] = str(umzug_datei)
-    os.environ["TO_SPAWN_WACHE_SPEC"] = str(a.spec)
-    os.environ[ABLOESE_ENV] = str(abloese_datei)
-    umzug_datei.unlink(missing_ok=True)
-    session_id = a.resume
-    start_prompt = prompt
-    terminal_log_abschalten()  # #541: ab hier gehört das Terminal Claude, Fäden loggen nur in die Datei
-    # Handoff-Blick (#542): eigener Faden prüft alle ≤ 2,5 min fällige Handoffs und
-    # startet die Leiter — nicht erst beim nächsten Aufseher-Tick (bis 30 min).
-    # Briefkasten-Wecker (#414): neue Frage weckt diese Session, Antwort die Bau-Session (≤ 1 min).
-    with handoff_blick.laeuft(
-        a.spec, handoff_blick.EchteNaht(REPO_ORDNER, ordner, REPO)
-    ), briefkasten_wecker.laeuft(a.spec, REPO_ORDNER, gh_repo=REPO):
-        for runde in range(1, MAX_ABLOESUNGEN + 2):
-            # Aufsicht (#213): Limit im Transkript → Ausweich-Modell; Umzug-/Ablöse-Datei → Ende.
-            code = waechter_lauf.fahre(
-                claude=claude,
-                spec=a.spec,
-                prompt=start_prompt,
-                modell=a.model,
-                ausweich=ausweich,
-                remote_control=remote_control,
-                repo=REPO_ORDNER,
-                cwd=ordner,
-                takt=waechter_lauf.zahl_aus_umgebung(
-                    "TO_SPAWN_AUFSICHT_TAKT", waechter_lauf.TAKT_S
+    try:
+        umzug_datei = lauf_ordner / "umzug.json"
+        abloese_datei = lauf_ordner / "abloesung.json"
+        os.environ["BAU_UMZUG_DATEI"] = str(umzug_datei)
+        os.environ["TO_SPAWN_WACHE_SPEC"] = str(a.spec)
+        os.environ[ABLOESE_ENV] = str(abloese_datei)
+        umzug_datei.unlink(missing_ok=True)
+        session_id = a.resume
+        start_prompt = prompt
+        terminal_log_abschalten()  # #541: ab hier gehört das Terminal Claude, Fäden loggen nur in die Datei
+        # Handoff-Blick (#542): eigener Faden prüft alle ≤ 2,5 min fällige Handoffs und
+        # startet die Leiter — nicht erst beim nächsten Aufseher-Tick (bis 30 min).
+        # Briefkasten-Wecker (#414): neue Frage weckt diese Session, Antwort die Bau-Session (≤ 1 min).
+        with handoff_blick.laeuft(
+            a.spec, handoff_blick.EchteNaht(REPO_ORDNER, ordner, REPO)
+        ), briefkasten_wecker.laeuft(a.spec, REPO_ORDNER, gh_repo=REPO):
+            for runde in range(1, MAX_ABLOESUNGEN + 2):
+                # Aufsicht (#213): Limit im Transkript → Ausweich-Modell; Umzug-/Ablöse-Datei → Ende.
+                code = waechter_lauf.fahre(
+                    claude=claude,
+                    spec=a.spec,
+                    prompt=start_prompt,
+                    modell=a.model,
+                    ausweich=ausweich,
+                    remote_control=remote_control,
+                    repo=REPO_ORDNER,
+                    cwd=ordner,
+                    takt=waechter_lauf.zahl_aus_umgebung(
+                        "TO_SPAWN_AUFSICHT_TAKT", waechter_lauf.TAKT_S
+                    )
+                    or waechter_lauf.TAKT_S,
+                    puffer=waechter_lauf.zahl_aus_umgebung(
+                        "TO_SPAWN_RESET_PUFFER_S", waechter_lauf.RESET_PUFFER_S
+                    ),
+                    hoechstens=waechter_lauf.zahl_aus_umgebung(
+                        "TO_SPAWN_RESET_MAX_S", waechter_lauf.MAX_WARTE_S
+                    )
+                    or waechter_lauf.MAX_WARTE_S,
+                    abbruch=lambda: umzug_datei.exists() or abloese_datei.exists(),
+                    session_id=session_id,
+                    effort=effort,
                 )
-                or waechter_lauf.TAKT_S,
-                puffer=waechter_lauf.zahl_aus_umgebung(
-                    "TO_SPAWN_RESET_PUFFER_S", waechter_lauf.RESET_PUFFER_S
-                ),
-                hoechstens=waechter_lauf.zahl_aus_umgebung(
-                    "TO_SPAWN_RESET_MAX_S", waechter_lauf.MAX_WARTE_S
-                )
-                or waechter_lauf.MAX_WARTE_S,
-                abbruch=lambda: umzug_datei.exists() or abloese_datei.exists(),
-                session_id=session_id,
-                effort=effort,
-            )
-            umzug_daten = umzug.lies_umzug(umzug_datei)
-            if umzug_daten is not None:
+                umzug_daten = umzug.lies_umzug(umzug_datei)
+                if umzug_daten is not None:
+                    log.info(
+                        "Umzug nach %s bestätigt — lokaler Aufseher beendet (Exit %s).",
+                        umzug_daten.get("ziel") or "?",
+                        code,
+                    )
+                    return 0
+                if not abloese_datei.exists():
+                    return code
+                try:
+                    daten = json.loads(abloese_datei.read_text(encoding="utf-8"))
+                    handoff = Path(daten["handoff"])
+                    start = str(daten.get("start") or "")
+                except (OSError, ValueError, KeyError, TypeError) as fehler:
+                    log.error(
+                        "Ablöse-Datei %s unlesbar (%s) — Aufseher endet.",
+                        abloese_datei,
+                        fehler,
+                    )
+                    return 2
+                abloese_datei.unlink(missing_ok=True)
+                if runde > MAX_ABLOESUNGEN:
+                    log.error(
+                        "Aufseher #%s: %s Ablösungen erreicht — keine weitere Nachfolge.",
+                        a.spec,
+                        MAX_ABLOESUNGEN,
+                    )
+                    return 2
                 log.info(
-                    "Umzug nach %s bestätigt — lokaler Aufseher beendet (Exit %s).",
-                    umzug_daten.get("ziel") or "?",
-                    code,
-                )
-                return 0
-            if not abloese_datei.exists():
-                return code
-            try:
-                daten = json.loads(abloese_datei.read_text(encoding="utf-8"))
-                handoff = Path(daten["handoff"])
-                start = str(daten.get("start") or "")
-            except (OSError, ValueError, KeyError, TypeError) as fehler:
-                log.error(
-                    "Ablöse-Datei %s unlesbar (%s) — Aufseher endet.",
-                    abloese_datei,
-                    fehler,
-                )
-                return 2
-            abloese_datei.unlink(missing_ok=True)
-            if runde > MAX_ABLOESUNGEN:
-                log.error(
-                    "Aufseher #%s: %s Ablösungen erreicht — keine weitere Nachfolge.",
+                    "Aufseher #%s: Ablösung %s — Nachfolge-Aufseher startet mit %s.",
                     a.spec,
-                    MAX_ABLOESUNGEN,
+                    runde,
+                    handoff,
                 )
-                return 2
-            log.info(
-                "Aufseher #%s: Ablösung %s — Nachfolge-Aufseher startet mit %s.",
-                a.spec,
-                runde,
-                handoff,
-            )
-            session_id = None
-            start_prompt = abloese_prompt(prompt, handoff, runde + 1, a.spec, start)
-    return code
+                session_id = None
+                start_prompt = abloese_prompt(prompt, handoff, runde + 1, a.spec, start)
+        return code
+    finally:
+        # #355: eigenen Lauf-Ordner räumen (nur echte ``wache-<spec>-*``-Ordner, keine Test-tmp_paths)
+        if lauf_ordner.name.startswith(f"wache-{a.spec}-"):
+            shutil.rmtree(lauf_ordner, ignore_errors=True)
 
 
 if __name__ == "__main__":

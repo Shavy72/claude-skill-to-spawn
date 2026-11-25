@@ -9,6 +9,10 @@ sie als ``C:\\c\\…`` missverstehen. Linux/macOS: ``bash`` aus dem ``PATH``, Um
 Tür für Aufrufer: ``lauf`` startet bash samt passender Umgebung — die Pfadsperre lässt sich so
 nicht vergessen. ``bash`` nur, wer allein den Pfad braucht (Test-Helfer); ``ist_wsl_stub`` ist
 die Regel, an der ein gefundener Pfad als WSL-Stub erkannt wird.
+
+Test-Naht (#646): ``TO_SPAWN_TEST_BASH_FEHLT=1`` wirkt nur unter Test
+(:func:`to_spawn.starter.unter_test`) und lässt :func:`bash` mit ``FileNotFoundError`` abbrechen —
+wirkt auch in Kind-Prozessen und unter Windows (wo Git-Bash sonst an festen Orten gefunden wird).
 """
 
 from __future__ import annotations
@@ -16,19 +20,20 @@ from __future__ import annotations
 import logging
 import os
 import shutil
-import signal
 import subprocess
 import sys
 from collections.abc import Mapping, Sequence
 from pathlib import Path, PureWindowsPath
 from typing import Any
 
-from to_spawn import prozessbaum
+from to_spawn import prozessbaum, sitzungsjob, starter
 
 log = logging.getLogger("to_spawn.bash_wahl")
 
 #: Standard-Installationsort von Git für Windows.
 _GIT_BASH_STANDARD = "C:/Program Files/Git/bin/bash.exe"
+#: Nur unter Test wirksam: :func:`bash` meldet ``FileNotFoundError`` (auch in Kind-Prozessen, #646).
+TEST_FEHLT_ENV = "TO_SPAWN_TEST_BASH_FEHLT"
 #: Schalter, mit denen MSYS die Pfad-Umsetzung für Windows-Programme abschaltet.
 _PFAD_SPERREN = ("MSYS_NO_PATHCONV", "MSYS2_ARG_CONV_EXCL")
 #: Sekunden, die :func:`lauf` nach dem Gruppen-Abbruch noch auf die Pipes wartet (#455).
@@ -49,6 +54,8 @@ def bash() -> str:
     ``git`` oder ``bash`` im ``PATH`` (nie der WSL-Stub). Sonst ``bash`` im ``PATH``.
     Fehlt sie → ``FileNotFoundError`` mit verständlicher Meldung, nie stiller Rückfall.
     """
+    if os.environ.get(TEST_FEHLT_ENV) == "1" and starter.unter_test():
+        raise FileNotFoundError(f"bash im Test ausgeblendet ({TEST_FEHLT_ENV}=1)")
     if sys.platform != "win32":
         pfad = shutil.which("bash")
         if pfad is None:
@@ -109,11 +116,14 @@ def lauf(
         )
     else:
         optionen["start_new_session"] = True
-    with subprocess.Popen(_befehlszeile(argumente), env=umgebung, **optionen) as prozess:
+    with (
+        subprocess.Popen(_befehlszeile(argumente), env=umgebung, **optionen) as prozess,
+        prozessbaum.gruppe_gebunden(prozess) as job,
+    ):
         try:
             aus, fehler = prozess.communicate(eingabe, timeout=zeitgrenze_s)
         except subprocess.TimeoutExpired:
-            _gruppe_beenden(prozess)
+            _gruppe_beenden(prozess, job=job)
             try:
                 aus, fehler = prozess.communicate(timeout=NACHLAUF_S)
             except subprocess.TimeoutExpired as rest:
@@ -161,29 +171,17 @@ def _text(roh: Any, optionen: Mapping[str, Any]) -> Any:
     return roh
 
 
-def _gruppe_beenden(prozess: subprocess.Popen[Any]) -> None:
+def _gruppe_beenden(
+    prozess: subprocess.Popen[Any],
+    *,
+    job: sitzungsjob.Job | None = None,
+) -> None:
     """bash aus :func:`lauf` samt allen Unterprozessen hart beenden.
 
-    Linux/macOS: ``SIGKILL`` an die eigene Prozessgruppe. Windows: ganzer Prozessbaum über
-    :mod:`to_spawn.prozessbaum` (dort ist jedes Signal ``TerminateProcess``).
-    ponytail: ein Enkel, der selbst ``setsid`` ruft, verlässt die Gruppe und lebt weiter;
-    :func:`lauf` wartet dann nur :data:`NACHLAUF_S` auf die Pipe. Upgrade-Pfad: Ausgabe in Datei.
+    Delegiert an die eine Stelle :func:`to_spawn.prozessbaum.gruppe_beenden` (Linux/macOS:
+    ``SIGKILL`` an die eigene Prozessgruppe; Windows: Job-Objekt + Prozessbaum).
+    ponytail: ein Enkel unter Linux, der selbst ``setsid`` ruft, verlässt die Gruppe und lebt
+    weiter; :func:`lauf` wartet dann nur :data:`NACHLAUF_S` auf die Pipe. Upgrade-Pfad: Ausgabe
+    in Datei.
     """
-    if sys.platform == "win32":
-        from to_spawn import prozessbaum  # spät: nur Windows braucht die Prozessliste
-
-        try:
-            prozessbaum.senden(prozessbaum.baum(prozess.pid), signal.SIGTERM)
-        except OSError as fehler:
-            log.warning("Prozessbaum von PID %d nicht beendet: %s", prozess.pid, fehler)
-        prozess.kill()
-        return
-    try:
-        os.killpg(prozess.pid, signal.SIGKILL)
-    except ProcessLookupError:
-        pass
-    except OSError as fehler:
-        log.warning(
-            "Prozessgruppe %d nicht beendet: %s — nur bash selbst", prozess.pid, fehler
-        )
-        prozess.kill()
+    prozessbaum.gruppe_beenden(prozess, job=job)

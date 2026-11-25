@@ -10,7 +10,7 @@ Aufruf (im Repo-Wurzelordner):
         # --tickets, --dry-run, --ohne-einrichtung (= --nur-wache), Spec läuft schon: nur Hinweis
     python ~/.claude/skills/to-spawn/to_spawn.py pruefen <basis> <ziel> [--repo <pfad>]  # Exit 0/1/2 + JSON (#99)
     python ~/.claude/skills/to-spawn/to_spawn.py anhaengen <S> <N> [--blockiert-von B,…] \
-        [--schaetzung K] [--umfang TEXT] [--datei PFAD:a-b …] [--trocken]  # Ticket nachtragen (E2-2)
+        [--abnahme A,…|keine] [--schaetzung K] [--umfang TEXT] [--datei PFAD:a-b …] [--trocken]  # Ticket nachtragen (E2-2)
     python ~/.claude/skills/to-spawn/to_spawn.py befund --spec <S> --ticket <N> --stufe gelb --text "…"  # Folge-Ticket
     python ~/.claude/skills/to-spawn/to_spawn.py spec-schliessen <S>  # Spec schließen mit Sperre (E2-4, Exit 0/1)
     python ~/.claude/skills/to-spawn/to_spawn.py hook-spec-sperre    # PreToolUse-Hook (Bash), JSON auf stdin
@@ -18,6 +18,7 @@ Aufruf (im Repo-Wurzelordner):
     python ~/.claude/skills/to-spawn/to_spawn.py lernstoff [--letzte 30]
     python ~/.claude/skills/to-spawn/to_spawn.py setup [--zeigen|--standard|--terminal …]
     python ~/.claude/skills/to-spawn/to_spawn.py einrichten [--pruefen]  # Repo einrichten (Exit 0/1, --pruefen 0/3)
+    python ~/.claude/skills/to-spawn/to_spawn.py ticket-repo [<eintrag> <ticket_repo>|--nachziehen]  # Maschinen-Liste (#261)
     python ~/.claude/skills/to-spawn/to_spawn.py probesitz [--punkt N …] [--zeigen] [--modell M]  # 7-Punkte-Abnahme (#214)
     python ~/.claude/skills/to-spawn/to_spawn.py deploy-status [--datei P] [--ticket N] [--still-min 60]
     python ~/.claude/skills/to-spawn/to_spawn.py hook-stop          # JSON auf stdin
@@ -40,7 +41,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from to_spawn import cli_befehle, cli_parser
+from to_spawn import cli_befehle, cli_parser, config
 
 ARGUMENTFEHLER_EXIT = cli_parser.ARGUMENTFEHLER_EXIT
 
@@ -52,7 +53,11 @@ def main(argv: list[str] | None = None) -> int:
             strom.reconfigure(encoding="utf-8", errors="replace")
     ap = cli_parser.baue_parser()
     args = ap.parse_args(argv)
-    return cli_befehle.verteilen(ap, args)
+    try:
+        return cli_befehle.verteilen(ap, args)
+    except config.KeinHeimOrdner as fehler:
+        print(f"FEHLER: {fehler}", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":

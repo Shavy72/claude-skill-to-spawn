@@ -158,18 +158,24 @@ def test_testkennung_mit_bindestrich_bleibt_ganz() -> None:
 class _Stellvertreter:
     """Adapter, dessen Wiederholung ein echter Prozess mit vorgegebenem Exit und Text ist."""
 
-    def __init__(self, code: int, text: str) -> None:
+    def __init__(self, code: int, text: str, voll_text: str | None = None) -> None:
         self._befehl = [
             sys.executable,
             "-c",
             f"import sys; print({text!r}); sys.exit({code})",
+        ]
+        voll_ausgabe = text if voll_text is None else voll_text
+        self._voll_befehl = [
+            sys.executable,
+            "-c",
+            f"import sys; print({voll_ausgabe!r}); sys.exit({code})",
         ]
 
     def nochmal_befehl(self, befehl: list[str], code: int) -> list[str] | None:
         return self._befehl
 
     def voll_nochmal_befehl(self, befehl: list[str]) -> list[str]:
-        return self._befehl
+        return self._voll_befehl
 
     def rote(self, ausgabe: str) -> set[str]:
         from to_spawn.pruef.adapter_py import ADAPTER
@@ -238,7 +244,11 @@ class _EchtePytestDeutung(_Stellvertreter):
         return ADAPTER.bestanden(ausgabe)
 
 
-_ERST_GANZ = ".F.                                                     [3/3]\nFAILED t.py::test_a - x\n"
+_ERST_GANZ = (
+    ".F.                                                     [3/3]\n"
+    "FAILED t.py::test_a - x\n"
+    "1 failed, 2 passed in 0.1s\n"
+)
 _ERST_ABGEBROCHEN = (
     ".F\nFAILED t.py::test_a - x\n!!! Interrupted: stopping after 1 failures !!!\n"
 )
@@ -277,7 +287,10 @@ def test_belegt_vollstaendig_bleibt_wackler(tmp_path: Path) -> None:
 
     erst = ausfuehren.Lauf(1, _ERST_GANZ, 0.1)
     zweit = ".                                                     [1/1]\n1 passed"
-    erg = wackler.nochmal(_EchtePytestDeutung(0, zweit), tmp_path, ["x"], erst)
+    voll = "...                                                   [3/3]\n3 passed"
+    erg = wackler.nochmal(
+        _EchtePytestDeutung(0, zweit, voll_text=voll), tmp_path, ["x"], erst
+    )
     assert erg is not None
     assert (erg.gruen, erg.wackler) == (True, ("t.py::test_a",))
 
@@ -346,3 +359,240 @@ def test_bestanden_liest_die_schlusszeile() -> None:
     assert ADAPTER.bestanden("F.  [2/2]\n1 failed, 1 passed in 0.1s") == 1
     assert ADAPTER.bestanden("==== 3 passed, 2 deselected in 0.1s ====") == 3
     assert ADAPTER.bestanden("") is None
+
+
+# --- #149: Härtung Wackler, zweiter voller Lauf, Bericht und PYTEST_ADDOPTS -------------------
+
+
+def _probe_mit_modus(
+    tmp_path: Path,
+    tests_text: str,
+    *,
+    parallel: bool = False,
+    ini_zusatz: str = "",
+    conftest_text: str = "",
+) -> Path:
+    """Probe-Repo seriell oder mit pytest-xdist (``parallel=True``) und optionalem ``conftest.py``."""
+    probe = _probe_mehrere(tmp_path, tests_text, ini_zusatz=ini_zusatz)
+    geaendert = False
+    if parallel:
+        (probe / "requirements.txt").write_text("pytest-xdist\n", encoding="utf-8")
+        geaendert = True
+    if conftest_text:
+        zaehler = tmp_path / "zaehler.txt"
+        (probe / "tests" / "conftest.py").write_text(
+            conftest_text.replace("{zaehler}", repr(str(zaehler))),
+            encoding="utf-8",
+        )
+        geaendert = True
+    if geaendert:
+        tuer._git(probe, "add", "-A")
+        tuer._git(probe, "commit", "-q", "--amend", "-m", "base")
+        tuer._git(probe, "tag", "-f", "base")
+    return probe
+
+
+_VOLL_SKIP_ODER_XFAIL = (
+    "import pytest\n\n"
+    "def test_0gruen():\n    pass\n\n"
+    "def test_1wackel():\n"
+    "    z = pathlib.Path({zaehler}); lauf = int(z.read_text()) + 1\n"
+    "    z.write_text(str(lauf))\n"
+    "    if lauf == 1:\n        assert False\n"
+    "    if lauf >= 3:\n        pytest.{art}('im vollen lauf weg')\n"
+)
+
+
+@pytest.mark.parametrize("art", ["skip", "xfail"])
+@pytest.mark.parametrize("parallel", [False, True], ids=["seriell", "xdist"])
+def test_wiederholung_gruen_voller_lauf_skip_oder_xfail_bleibt_rot(
+    tmp_path: Path, art: str, parallel: bool
+) -> None:
+    """#149 Befund 1 + 4: Lauf 1 rot, Lauf 2 grün, Lauf 3 (voll) überspringt → rot, nie Wackler."""
+    if parallel:
+        pytest.importorskip("xdist")
+    probe = _probe_mit_modus(
+        tmp_path,
+        _VOLL_SKIP_ODER_XFAIL.replace("{art}", art),
+        parallel=parallel,
+    )
+    erg = tuer._tuer(probe, "base", "HEAD")
+    assert erg.returncode == 1, erg.stdout + erg.stderr
+    zeile = tuer._zeile(erg)
+    assert zeile["urteil"] == "rot"
+    assert zeile["wackler"] == []
+    assert zeile["stufen"][0]["voll_nochmal_s"] > 0
+
+
+@pytest.mark.parametrize("parallel", [False, True], ids=["seriell", "xdist"])
+def test_wiederholung_gruen_voller_lauf_abwahl_bleibt_rot(
+    tmp_path: Path, parallel: bool
+) -> None:
+    """#149 Befund 1 + 4: Lauf 2 grün, im zweiten vollen Lauf wird der Wackel-Test abgewählt."""
+    if parallel:
+        pytest.importorskip("xdist")
+    conftest = (
+        "import pathlib\n\n"
+        "def pytest_collection_modifyitems(items):\n"
+        "    if int(pathlib.Path({zaehler}).read_text()) >= 2:\n"
+        "        items[:] = [i for i in items if i.name != 'test_1wackel']\n"
+    )
+    probe = _probe_mit_modus(
+        tmp_path,
+        "def test_0gruen():\n    pass\n\n" + _WACKEL,
+        parallel=parallel,
+        conftest_text=conftest,
+    )
+    erg = tuer._tuer(probe, "base", "HEAD")
+    assert erg.returncode == 1, erg.stdout + erg.stderr
+    zeile = tuer._zeile(erg)
+    assert zeile["urteil"] == "rot"
+    assert zeile["wackler"] == []
+    assert zeile["stufen"][0]["voll_nochmal_s"] > 0
+
+
+def test_wiederholung_gruen_voller_lauf_pytest_exit_null_bleibt_rot(
+    tmp_path: Path,
+) -> None:
+    """#149 Befund 1: Lauf 2 grün, zweiter voller Lauf steigt mit pytest.exit(..., returncode=0) aus."""
+    tests = (
+        "import pytest\n\n"
+        "def test_0gruen():\n    pass\n\n"
+        "def test_1wackel():\n"
+        "    z = pathlib.Path({zaehler}); lauf = int(z.read_text()) + 1\n"
+        "    z.write_text(str(lauf))\n"
+        "    if lauf == 1:\n        assert False\n"
+        "    if lauf >= 3:\n        pytest.exit('abgebrochen', returncode=0)\n"
+    )
+    probe = _probe_mehrere(tmp_path, tests)
+    erg = tuer._tuer(probe, "base", "HEAD")
+    assert erg.returncode == 1, erg.stdout + erg.stderr
+    zeile = tuer._zeile(erg)
+    assert zeile["urteil"] == "rot"
+    assert zeile["wackler"] == []
+    assert zeile["stufen"][0]["voll_nochmal_s"] > 0
+
+
+@pytest.mark.parametrize("parallel", [False, True], ids=["seriell", "xdist"])
+def test_gefaelschte_schlusszeile_per_atexit_taeuscht_zaehler_nicht(
+    tmp_path: Path, parallel: bool
+) -> None:
+    """#149 Befund 2: rot → skip mit gefälschtem ``1 passed`` per atexit bleibt rot."""
+    if parallel:
+        pytest.importorskip("xdist")
+    tests = (
+        "import atexit, pytest\n\n"
+        "def test_0gruen():\n    pass\n\n"
+        "def test_1rot_dann_skip():\n"
+        "    z = pathlib.Path({zaehler}); lauf = int(z.read_text()) + 1\n"
+        "    z.write_text(str(lauf))\n"
+        "    if lauf >= 2:\n"
+        "        atexit.register(lambda: print('\\n1 passed in 0.01s'))\n"
+        "        pytest.skip('weg')\n"
+        "    assert False\n"
+    )
+    probe = _probe_mit_modus(tmp_path, tests, parallel=parallel)
+    erg = tuer._tuer(probe, "base", "HEAD")
+    assert erg.returncode == 1, erg.stdout + erg.stderr
+    zeile = tuer._zeile(erg)
+    assert zeile["urteil"] == "rot"
+    assert zeile["wackler"] == []
+
+
+def test_addopts_q_mit_echtem_wackler_wird_aus_bericht_erkannt(tmp_path: Path) -> None:
+    """#149 Befund 3: ``addopts = -q`` (wirkt als ``-qq``, ohne Schlusszeile) liest aus dem Bericht."""
+    probe = _probe_mehrere(
+        tmp_path,
+        "def test_0gruen():\n    pass\n\n" + _WACKEL,
+        ini_zusatz="addopts = -q\n",
+    )
+    erg = tuer._tuer(probe, "base", "HEAD")
+    assert erg.returncode == 0, erg.stdout + erg.stderr
+    zeile = tuer._zeile(erg)
+    assert zeile["urteil"] == "wackler"
+    assert [w["test"] for w in zeile["wackler"]] == [
+        "tests/test_rechnen.py::test_1wackel"
+    ]
+
+
+def test_echter_wackler_mit_dauer_skip_bleibt_wackler(tmp_path: Path) -> None:
+    """Ein dauerhaft übersprungener Test (z. B. Plattform-Skip) blockiert echte Wackler nicht."""
+    tests = (
+        "import pytest\n\n"
+        "def test_0gruen():\n    pass\n\n"
+        "def test_2plattform_skip():\n    pytest.skip('andere Plattform')\n\n"
+        + _WACKEL
+    )
+    probe = _probe_mehrere(tmp_path, tests)
+    erg = tuer._tuer(probe, "base", "HEAD")
+    assert erg.returncode == 0, erg.stdout + erg.stderr
+    zeile = tuer._zeile(erg)
+    assert zeile["urteil"] == "wackler"
+    assert [w["test"] for w in zeile["wackler"]] == [
+        "tests/test_rechnen.py::test_1wackel"
+    ]
+
+
+@pytest.mark.parametrize(
+    "addopts",
+    [
+        "-k test_0gruen",
+        "--deselect tests/test_rechnen.py::test_1dauerrot",
+        "--co",
+    ],
+    ids=["k-filter", "deselect", "collect-only"],
+)
+def test_pytest_addopts_aus_umgebung_wird_bereinigt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, addopts: str
+) -> None:
+    """#149 Altlast: geerbtes ``PYTEST_ADDOPTS`` darf rote Tests nie ausblenden."""
+    probe = _probe_mehrere(
+        tmp_path,
+        "def test_0gruen():\n    pass\n\n" + _DAUERROT.format(n=1),
+    )
+    monkeypatch.setenv("PYTEST_ADDOPTS", addopts)
+    erg = tuer._tuer(probe, "base", "HEAD")
+    assert erg.returncode == 1, erg.stdout + erg.stderr
+    assert tuer._zeile(erg)["urteil"] == "rot"
+
+
+@pytest.mark.parametrize(
+    ("tests_text", "conftest_text"),
+    [
+        (
+            (
+                "import pytest\n\n"
+                "def test_0exit():\n    pytest.exit('stop', returncode=0)\n\n"
+                "def test_1rot():\n    assert False\n"
+            ),
+            "",
+        ),
+        (
+            (
+                "import pytest\n\n"
+                "@pytest.fixture\n"
+                "def ausstieg():\n    yield\n    pytest.exit('stop', returncode=0)\n\n"
+                "def test_0gruen(ausstieg):\n    pass\n\n"
+                "def test_1rot():\n    assert False\n"
+            ),
+            "",
+        ),
+        (
+            "def test_0rot():\n    assert False\n",
+            (
+                "import pytest\n\n"
+                "def pytest_collection_modifyitems(items):\n"
+                "    pytest.exit('stop', returncode=0)\n"
+            ),
+        ),
+    ],
+    ids=["im-test", "im-teardown", "bei-sammlung"],
+)
+def test_pytest_exit_null_im_vollen_lauf_ist_nie_gruen(
+    tmp_path: Path, tests_text: str, conftest_text: str
+) -> None:
+    """#149 Altlast: ``pytest.exit(..., returncode=0)`` ergibt nie Grün, wenn Tests fehlen."""
+    probe = _probe_mit_modus(tmp_path, tests_text, conftest_text=conftest_text)
+    erg = tuer._tuer(probe, "base", "HEAD")
+    assert erg.returncode != 0, erg.stdout + erg.stderr
+    assert tuer._zeile(erg)["urteil"] != "grün"

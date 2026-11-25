@@ -111,8 +111,9 @@ def _innen(pfad: Path, ordner: Path) -> bool:
 #: Skill-Skripte, die unter Test als Kind starten dürfen (Skript → Pflicht-Unterbefehl oder ``None``).
 #: Beide starten selbst nur durch diese Tür. Neue Einträge nur mit Grund.
 _SKILL_KINDER: dict[Path, tuple[str, ...] | None] = {
-    # takt: waechter_takt.starte_abgeloest; komplett: komplett_lauf._im_hintergrund (#455)
-    _SKILL / "to_spawn.py": ("takt", "komplett"),
+    # takt: waechter_takt.starte_abgeloest; komplett: komplett_lauf._im_hintergrund (#455);
+    # warten: warten._starte_laeufer_prozess (#286)
+    _SKILL / "to_spawn.py": ("takt", "komplett", "warten"),
     _SKILL / "skripte" / "bau.py": None,  # capo._starte_folge_runde, probesitz (Bau-Lauf)
 }
 

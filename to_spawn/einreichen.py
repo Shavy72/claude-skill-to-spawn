@@ -11,10 +11,10 @@ rufen denselben Befehl; die Regel, *wie* der Stand ankommt, steht nur hier:
   ``docs/`` anfassen; sie gehen über den Zweig ``ticket/<N>-uebergabe``. Code gehört in ein Ticket.
 
 Danach wird der Zweig gepusht (nie Force, nie direkt auf den Hauptzweig — die Git-Sperre bleibt
-unberührt). Bringt das Projekt eine eigene Push-Sperre samt Einreich-Dienst mit
-(``nest.GIT_HOOKS_INSTALLER`` auf ``origin/<hauptzweig>``), endet der Weg dort: der Dienst
-übernimmt ``ticket/*``. Sonst öffnet der Befehl einen Pull-Request und mergt ihn sofort mit
-Merge-Commit (``--match-head-commit``: nur genau der geprüfte Stand). Commit-SHAs bleiben
+unberührt). Hat das Projekt einen ausdrücklich konfigurierten eigenen Einreich-Dienst
+(``einreichen.eigener_dienst: true`` in ``origin/<hauptzweig>:.to-spawn/config.json``, #430),
+endet der Weg dort: der Dienst übernimmt ``ticket/*``. Sonst öffnet der Befehl einen Pull-Request
+und mergt ihn sofort mit Merge-Commit (``--match-head-commit``: nur genau der geprüfte Stand). Commit-SHAs bleiben
 erhalten, darum zieht der Hauptzweig vom Aufseher danach per Fast-Forward nach
 (lokal == origin). Keine Frage, kein Warten auf einen Takt.
 
@@ -34,6 +34,7 @@ Exit-Codes: 0 angekommen bzw. übergeben · 1 rot (Grund in der Meldung, nichts 
 
 from __future__ import annotations
 
+import json
 import logging
 import subprocess
 import time
@@ -42,7 +43,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TypeVar
 
-from . import config, gh, nest, prozessbaum, pruef, pruefplan, uebergabe_sichern
+from . import config, gh, prozessbaum, pruef, pruefplan, uebergabe_sichern
 
 log = logging.getLogger("to_spawn.einreichen")
 
@@ -152,15 +153,30 @@ def _pr_gemergt(ordner: Path, nr: str) -> bool:
 
 
 def _projekt_weg(ordner: Path, haupt: str) -> bool:
-    """Das Projekt bringt eigene Push-Sperre + Einreich-Dienst mit (übernimmt ``ticket/*``)."""
+    """Eigener Einreich-Dienst nur über ausdrücklichen Marker auf ``origin/<hauptzweig>`` (#430).
+
+    Liest ``.to-spawn/config.json`` aus dem Git-Objekt ``origin/<haupt>`` (nie aus dem
+    Arbeitsordner, den eine Bau-Session beschreiben darf). Fehlt die Datei oder der Marker
+    ``einreichen.eigener_dienst: true``, gilt der normale Weg (Pull-Request + Merge).
+    """
     erg = subprocess.run(
-        ["git", "-C", str(ordner), "cat-file", "-e", f"origin/{haupt}:{nest.GIT_HOOKS_INSTALLER.as_posix()}"],
+        ["git", "-C", str(ordner), "cat-file", "-p", f"origin/{haupt}:{config.KONFIG_PFAD.as_posix()}"],
         capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=GIT_MAX_S,
         check=False,
         **prozessbaum.fensterlos(),
     )
-    return erg.returncode == 0
+    if erg.returncode != 0:
+        return False
+    try:
+        daten = json.loads(erg.stdout)
+    except ValueError as fehler:
+        log.warning("einreichen: origin/%s:%s unlesbar (%s) — normaler Weg", haupt, config.KONFIG_PFAD, fehler)
+        return False
+    return isinstance(daten, dict) and config.hat_einreich_dienst(daten)
 
 
 def _zweig(ordner: Path, nummer: str, haupt: str) -> tuple[str, bool]:

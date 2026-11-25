@@ -23,6 +23,8 @@ OHNE_RAM_WERT = 2
 
 #: Exit-Code, wenn der Befehl gar nicht startet (wie die Shell bei „nicht gefunden“).
 NICHT_GESTARTET = 127
+#: Umgebungsvariablen, die fremde Test-Optionen einschleusen und je Lauf bereinigt werden (#149).
+_BEREINIGEN = frozenset({"PYTEST_ADDOPTS"})
 
 
 @dataclass(frozen=True)
@@ -30,6 +32,13 @@ class Lauf:
     code: int
     ausgabe: str
     dauer_s: float
+
+
+def _umgebung(ordner: Path | None = None) -> dict[str, str]:
+    """Eigene Prozess-Umgebung je Lauf: markierter Ticket-Temp (#136/#177), kein ``PYTEST_ADDOPTS`` (#149)."""
+    umg = {k: v for k, v in os.environ.items() if k not in _BEREINIGEN}
+    umg.update(temp_ordner.umgebung(ordner=ordner, von="pruef", wiederverwenden=True))
+    return umg
 
 
 def lauf(befehl: list[str], ordner: Path) -> Lauf:
@@ -40,7 +49,7 @@ def lauf(befehl: list[str], ordner: Path) -> Lauf:
         erg = subprocess.run(
             befehl,
             cwd=ordner,
-            env={**os.environ, **temp_ordner.umgebung()},  # #136: Temp nie auf die RAM-Platte
+            env=_umgebung(ordner),
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,

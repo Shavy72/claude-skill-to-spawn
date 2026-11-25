@@ -107,6 +107,7 @@ def _spawn(
             "TO_SPAWN_SPEICHER_SESSIONS": str(sessions),
             "TO_SPAWN_SPEICHER_MEMINFO": str(meminfo),
             "TO_SPAWN_SPEICHER_PLATZ": str(tmp_path / "platz.json"),
+            "TO_SPAWN_HAUSMEISTER_PLATTE": "0.5",
             "GIT_ALLOW_PROTOCOL": "file",
             "GIT_TERMINAL_PROMPT": "0",
         }

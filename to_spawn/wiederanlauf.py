@@ -9,13 +9,14 @@ Eine Frage, eine Antwort für alle Startwege (Erststart, Ablösung, Folge-Runde)
 
 Regel (:func:`entscheide`, rein): Ticket zu/verworfen → ``nichts``; fertig gebaut und
 nichts fehlt → ``nichts``; fertig gebaut und es fehlt etwas → ``abschluss``; nicht fertig
-gebaut → ``fortsetzen``, wenn ein Zweig ``ticket/<N>-*`` auf origin oder ein Commit mit
+gebaut → ``fortsetzen``, wenn ein Zweig ``ticket/<N>-*`` (auf origin oder lokal) oder ein Commit mit
 ``(#<N>)`` existiert, sonst ``neu``. „Fertig gebaut?“ beantwortet nur
 :func:`ticket_zustand.fertig_gebaut`, „zu?“ nur :func:`ticket_zustand.endgueltig_zu`.
 
 Was fehlt, sagen die Belegseiten (:mod:`to_spawn.belege`): kein Klickweg → „Klickweg-Beleg“
 (ausdrücklich „Klickweg: entfällt“ zählt als erfüllt), kein grüner Lauf → „grüner Testlauf“.
-Gelesen wird der Beleg-Ordner im Arbeitsbaum ``repo``. Zweige und Commits liefert :mod:`to_spawn.gh`.
+Gelesen wird der Beleg-Ordner bevorzugt im Ticket-Worktree ``wt-<N>`` (desselben Repos),
+sonst im Arbeitsbaum ``repo``. Zweige und Commits liefert :mod:`to_spawn.gh`.
 """
 
 from __future__ import annotations
@@ -78,7 +79,7 @@ def entscheide(signale: Signale) -> Wiederanlauf:
         )
     claim = f" Vergeben an: {', '.join(signale.assignees)}." if signale.assignees else ""
     if signale.zweige or signale.commits:
-        zweige = ", ".join(signale.zweige) if signale.zweige else "keiner auf origin"
+        zweige = ", ".join(signale.zweige) if signale.zweige else "keiner"
         return Wiederanlauf(
             "fortsetzen",
             (),
@@ -88,22 +89,26 @@ def entscheide(signale: Signale) -> Wiederanlauf:
     return Wiederanlauf("neu", (), f"Stand #{n}: noch keine Spur (kein Zweig, kein Commit).{claim} Von vorn beginnen.")
 
 
-def feststellen(ticket: int, repo: Path) -> Wiederanlauf | None:
-    """Lage von ``ticket`` aus Issue (gh), git (Zweig auf origin, Commits) und Belegseiten.
+def feststellen(
+    ticket: int, repo: Path, *, daten: Mapping[str, Any] | None = None
+) -> Wiederanlauf | None:
+    """Lage von ``ticket`` aus Issue (gh), git (Zweige auf origin + lokal, Commits) und Belegseiten.
 
+    ``daten``: schon gelesenes Issue-JSON (erspart eine doppelte ``gh``-Abfrage in der Startstelle).
     ``None``, wenn Issue oder git nicht lesbar sind — der Aufrufer startet dann nichts
     (fail-closed, wie :func:`ticket_zustand.lesen`).
     """
-    daten = ticket_zustand.lesen(ticket, repo, mit_claim=True)
+    if daten is None:
+        daten = ticket_zustand.lesen(ticket, repo, mit_claim=True)
     if daten is None:
         log.warning("Ticket #%s: Issue-Stand nicht lesbar", ticket)
         return None
-    zweige = _zweige(repo, ticket)
+    arbeitsbaum = _ticket_arbeitsbaum(repo, ticket)
+    zweige = _zweige(repo, ticket, arbeitsbaum)
     commits = _commits(repo, ticket)
     if zweige is None or commits is None:
         return None
-    verify_hard = repo / capo.belege_ordner(config.lade(repo))
-    beleg = belege.auswerten(verify_hard, str(ticket))
+    beleg = _belege_auswerten(repo, ticket, arbeitsbaum)
     fehlt = tuple(
         name
         for name, da in (
@@ -116,12 +121,47 @@ def feststellen(ticket: int, repo: Path) -> Wiederanlauf | None:
     return entscheide(Signale(ticket, daten, zweige, commits, tuple(a for a in assignees if a), fehlt))
 
 
-def _zweige(repo: Path, ticket: int) -> tuple[str, ...] | None:
-    """Zweige ``ticket/<N>-*`` auf origin; ``None`` = origin fehlt oder unerreichbar."""
-    namen = gh.origin_zweige(repo, f"ticket/{ticket}-*")
-    if namen is None:
+def _ticket_arbeitsbaum(repo: Path, ticket: int) -> Path | None:
+    """Ticket-Worktree ``wt-<N>`` desselben Repos, falls er existiert und nicht schon ``repo`` ist."""
+    wt = Path(config.worktree_pfad(ticket, repo)).expanduser()
+    if not wt.is_dir() or not (wt / ".git").exists():
         return None
-    return tuple(sorted(n for n in namen if n.startswith(f"ticket/{ticket}-")))
+    try:
+        if wt.resolve() == repo.resolve():
+            return None
+    except OSError:
+        return None
+    kennung_repo = config.repo_kennung(repo)
+    if kennung_repo is not None and config.repo_kennung(wt) != kennung_repo:
+        return None
+    return wt
+
+
+def _belege_auswerten(repo: Path, ticket: int, arbeitsbaum: Path | None = None) -> belege.Belege:
+    """Belege bevorzugt aus dem Ticket-Worktree (falls vorhanden und mit Belegen), sonst aus ``repo``."""
+    ordner = capo.belege_ordner(config.lade(repo))
+    if arbeitsbaum is not None:
+        wt_beleg = belege.auswerten(arbeitsbaum / ordner, str(ticket))
+        if wt_beleg.dateien:
+            return wt_beleg
+    return belege.auswerten(repo / ordner, str(ticket))
+
+
+def _zweige(repo: Path, ticket: int, arbeitsbaum: Path | None = None) -> tuple[str, ...] | None:
+    """Zweige ``ticket/<N>-*`` auf origin und lokal; ``None`` = origin/git fehlt oder unerreichbar."""
+    muster = f"ticket/{ticket}-*"
+    fern = gh.origin_zweige(repo, muster)
+    if fern is None:
+        return None
+    lokal = gh.lokale_zweige(repo, muster)
+    if lokal is None:
+        return None
+    alle = set(fern) | set(lokal)
+    if arbeitsbaum is not None:
+        wt_lokal = gh.lokale_zweige(arbeitsbaum, muster)
+        if wt_lokal is not None:
+            alle.update(wt_lokal)
+    return tuple(sorted(n for n in alle if n.startswith(f"ticket/{ticket}-")))
 
 
 def _commits(repo: Path, ticket: int) -> int | None:

@@ -13,8 +13,10 @@ from pathlib import Path
 from typing import NoReturn
 
 from to_spawn import (
+    abgleich,
     aufpasser,
     aufseher_stand,
+    auswahl,
     befund,
     briefkasten_cli,
     deploy_status,
@@ -23,10 +25,13 @@ from to_spawn import (
     leitstand,
     nest,
     respawn,
+    start_last,
     ticketstand,
     uebergabe_sichern,
     vorfall,
     waechter_takt,
+    warten,
+    wecker,
 )
 from to_spawn import einreichen as einreichen_modul
 from to_spawn.pruefplan import Moment
@@ -92,6 +97,7 @@ def baue_parser() -> _Parser:
     p_spawn.add_argument("spec")
     p_spawn.add_argument("--ziel", choices=["local", "srv"], help="Frage überspringen")
     p_spawn.add_argument("--tickets", help="nur diese Tickets, mit Komma getrennt")
+    p_spawn.add_argument("--ohne-wache", action="store_true", help="keinen Aufseher/Takt auf diesem Ziel starten")
     p_spawn.add_argument("--dry-run", action="store_true", help="nur den Befehl zeigen")
 
     p_neu = unter.add_parser("neustart", help="ein Ticket neu starten (Aufseher-Einzeiler)")
@@ -130,6 +136,11 @@ def baue_parser() -> _Parser:
     p_regularien = unter.add_parser("regularien", help="Regularien des Manifests prüfen")
     p_regularien.add_argument("spec")
     _regularien_optionen(p_regularien)
+    p_spec_pruefen = unter.add_parser(
+        "spec-pruefen",
+        help="Spec auf Quelle-Zeile und (E<n>) prüfen (Exit 0 frei / 3 Stopp / 1 unlesbar, #405)",
+    )
+    p_spec_pruefen.add_argument("spec", help="Spec als Issue-Nummer, URL oder Dateipfad")
     # Prüf-Werkzeugkasten (#99); ``pruefen <S>`` (nur ein Argument) leitet auf ``regularien``.
     p_pruefen = unter.add_parser(
         "pruefen", help="Stand prüfen: Exit 0 grün, 1 rot, 2 Gate-Fehler, JSON-Zeile auf stdout"
@@ -146,6 +157,12 @@ def baue_parser() -> _Parser:
     p_anh.add_argument("spec", type=int, help="Spec-Nummer (Eltern-Issue + Manifest)")
     p_anh.add_argument("ticket", type=int, help="anzuhängendes Issue")
     p_anh.add_argument("--blockiert-von", default="", metavar="B,…", help="Blocker-Tickets (Komma)")
+    p_anh.add_argument(
+        "--abnahme",
+        default="",
+        metavar="A,…|keine",
+        help="Abnahme-Ticket(s) dieser Kette (Komma; oder 'keine' für eine neue Kette)",
+    )
     p_anh.add_argument("--schaetzung", type=float, metavar="K", help="schaetzung_k (Tausend Token)")
     p_anh.add_argument("--umfang", metavar="TEXT", help="umfang (ein Satz Klartext)")
     p_anh.add_argument(
@@ -163,6 +180,26 @@ def baue_parser() -> _Parser:
         "--pruefen",
         action="store_true",
         help="nur prüfen, nichts schreiben (Exit 0 = alles da und aktuell, 3 = Abweichung)",
+    )
+    p_tr = unter.add_parser(
+        "ticket-repo",
+        help="ticket_repo in der Maschinen-Liste ausdrücklich setzen, zeigen oder veraltete Vorgaben nachziehen (#261)",
+    )
+    p_tr.add_argument(
+        "eintrag",
+        nargs="?",
+        help="Repo-Slug (<besitzer>/<name>) oder Ordner-Pfad aus der Maschinen-Liste",
+    )
+    p_tr.add_argument(
+        "wert",
+        nargs="?",
+        metavar="ticket_repo",
+        help="neues ticket_repo (<besitzer>/<name>)",
+    )
+    p_tr.add_argument(
+        "--nachziehen",
+        action="store_true",
+        help="bekannte veraltete Vorgabe-Werte in der Maschinen-Liste nachziehen (wiederholbar)",
     )
     p_setup = unter.add_parser(
         "setup", help="Terminal, Modell und Effort je Rolle wählen"
@@ -233,6 +270,16 @@ def baue_parser() -> _Parser:
 
     unter.add_parser(
         "hauptzweig", help="Name des Hauptzweigs ausgeben (Konfig, origin/HEAD, master/main) (#257)"
+    )
+    p_sitzung = unter.add_parser(
+        "sitzung",
+        help="tmux-Session-Name je Repo ausgeben (#457; Exit 9 = gehört anderem Repo)",
+    )
+    p_sitzung.add_argument("spec", help="Spec-Nummer")
+    p_sitzung.add_argument(
+        "--nur-name",
+        action="store_true",
+        help="nur den eindeutigen Namen ausgeben, ohne tmux abzufragen",
     )
     p_arbeit = unter.add_parser(
         "arbeitsstand",
@@ -315,6 +362,7 @@ def baue_parser() -> _Parser:
     # Tür B (#278 P2): Befugnis prüfen, Frage einwerfen, Antwort lesen/schreiben, Liste je Spec.
     briefkasten_cli.richte_parser_ein(unter)
     helfer_temp.richte_parser_ein(unter)  # #551
+    abgleich.richte_parser_ein(unter)  # #561
     p_ents = unter.add_parser("entscheidungen", help="Liste aller Entscheidungen einer Spec")
     p_ents.add_argument("spec")
 
@@ -325,8 +373,8 @@ def baue_parser() -> _Parser:
     p_um.add_argument("--repo", help="Ordner mit dem Bau-Log (sonst TO_SPAWN_LOG_REPO)")
     p_um.add_argument(
         "--transkripte",
-        default=str(Path.home() / ".claude" / "projects"),
-        help="Claude-Projektordner mit den Transkripten",
+        default=None,
+        help="Claude-Projektordner mit den Transkripten (Vorgabe: ~/.claude/projects)",
     )
 
     # Speicher-Schutz (#257 Paket B): Stand drucken, Exit 0 = frei, 5 = voll,
@@ -362,6 +410,7 @@ def baue_parser() -> _Parser:
     p_live.add_argument("spec", type=int)
 
     nest.richte_parser_ein(unter)
+    auswahl.richte_parser_ein(unter)
     leitstand.richte_parser_ein(unter)
     waechter_takt.richte_parser_ein(unter)
     aufseher_stand.richte_parser_ein(unter)
@@ -404,4 +453,15 @@ def baue_parser() -> _Parser:
     aufpasser.parser_fuellen(
         unter.add_parser("aufpasser", help="tmux-Fenster bau/wache beaufsichtigen (Cron)")
     )
+    # Externer Wecker (#287): Weckrufe von außerhalb der Session (Linux: Cron/tmux).
+    wecker.richte_parser_ein(unter)
+    # Start-Last (#412): Kontext nach Start je Fenstertyp (bau, aufseher) + Obergrenzen-Prüfung.
+    start_last.parser_fuellen(
+        unter.add_parser(
+            "start-last",
+            help="Start-Last (Kontext nach Start) je Fenstertyp messen und gegen Obergrenzen prüfen",
+        )
+    )
+    # Abbruchfester Warte-Schritt (#286): Zustand in Datei, Neustart mit Pause, Geräte-Logbuch.
+    warten.richte_parser_ein(unter)
     return ap

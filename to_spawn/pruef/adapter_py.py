@@ -2,14 +2,19 @@
 
 from __future__ import annotations
 
+import itertools
+import logging
 import os
 import re
 import sys
 import tempfile
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
-from to_spawn.pruef import ausfuehren
+from to_spawn.pruef import ausfuehren, leiter, wackler
 from to_spawn.pruef.leiter import Plan
+
+log = logging.getLogger("to_spawn.pruef")
 
 #: Dateien, an denen ein Python-Repo zu erkennen ist.
 _MERKMALE = (
@@ -36,10 +41,10 @@ _SCHLUSS = re.compile(
 )
 #: ``-o cache_dir=…`` im Befehl: je Lauf, der unabhängig vom vorigen sein muss, frisch.
 _CACHE_PREFIX = "cache_dir="
-#: Orte des Bau-Werkzeugs im App-Repo: deren Tests sammelt die App-Prüfung nie ein, auch wenn die
-#: App ``norecursedirs`` selbst setzt (#425 Abnahme 4, #415). Auswahl und
-#: Wiederholung bauen auf ``voll`` auf und erben den Ausschluss.
-_WERKZEUG_ORTE = (".to-spawn", ".claude")
+#: ``--junitxml=…`` im Befehl: je Lauf ein eigener maschinenlesbarer Bericht (#149).
+_BERICHT_PREFIX = "--junitxml="
+#: Abbruch-Zeile von pytest (``pytest.exit(..., returncode=0)`` oder ``Interrupted``).
+_ABBRUCH = re.compile(r"^!{3,}.*(?:Interrupted|_pytest\.outcomes\.Exit).*!{3,}$", re.MULTILINE)
 
 
 #: Dateien, in denen ein Repo pytest-xdist als eigene Abhängigkeit nennt.
@@ -101,10 +106,11 @@ def _paket(repo: Path) -> str:
 
 
 _cache_wurzel: tempfile.TemporaryDirectory[str] | None = None
+_bericht_nr = itertools.count(1)
 
 
-def _frischer_cache() -> str:
-    """Neuer, leerer pytest-``cache_dir`` je Plan; der Adapter räumt ihn selbst (#355).
+def _wurzel() -> str:
+    """Prozessweiter Temp-Ordner für pytest-Caches und -Berichte; räumt beim Prozessende auf (#355).
 
     Alle liegen in einem Ordner ``to_spawn_pytest_cache_*`` je Prozess, den ``TemporaryDirectory``
     beim Prozessende löscht — nach Erfolg, Ausnahme oder Zeitgrenze im Lauf. Eine Prüfung = ein
@@ -115,7 +121,47 @@ def _frischer_cache() -> str:
     global _cache_wurzel
     if _cache_wurzel is None or not Path(_cache_wurzel.name).is_dir():
         _cache_wurzel = tempfile.TemporaryDirectory(prefix="to_spawn_pytest_cache_", ignore_cleanup_errors=True)
-    return tempfile.mkdtemp(dir=_cache_wurzel.name)
+    return _cache_wurzel.name
+
+
+def _frischer_cache() -> str:
+    """Neuer, leerer pytest-``cache_dir`` je Plan; der Adapter räumt ihn selbst (#355)."""
+    return tempfile.mkdtemp(dir=_wurzel())
+
+
+def _frischer_bericht() -> str:
+    """Neuer, noch nicht angelegter JUnit-XML-Pfad je Lauf; fehlt er danach, ist nichts belegt (#149)."""
+    return str(Path(_wurzel()) / f"bericht-{next(_bericht_nr)}.xml")
+
+
+def _mit_bericht(befehl: list[str], pfad: str) -> list[str]:
+    """Setzt oder ersetzt ``--junitxml=…`` im Befehl für einen eigenen Lauf."""
+    eintrag = f"{_BERICHT_PREFIX}{pfad}"
+    if any(teil.startswith(_BERICHT_PREFIX) for teil in befehl):
+        return [eintrag if teil.startswith(_BERICHT_PREFIX) else teil for teil in befehl]
+    return [*befehl, eintrag]
+
+
+def _bericht_pfad(befehl: list[str]) -> Path | None:
+    """Letzter ``--junitxml=…``-Pfad aus ``befehl``; ``None``, wenn keiner gesetzt ist."""
+    pfad: str | None = None
+    for idx, teil in enumerate(befehl):
+        if teil.startswith(_BERICHT_PREFIX):
+            pfad = teil[len(_BERICHT_PREFIX) :]
+        elif teil == "--junitxml" and idx + 1 < len(befehl):
+            pfad = befehl[idx + 1]
+    return Path(pfad) if pfad else None
+
+
+def _xml_zahl(knoten: ET.Element, feld: str, vorgabe: int | None = None) -> int | None:
+    roh = knoten.get(feld)
+    if roh is None:
+        return vorgabe
+    try:
+        wert = int(roh)
+    except ValueError:
+        return None
+    return wert if wert >= 0 else None
 
 
 class PythonAdapter:
@@ -144,6 +190,7 @@ class PythonAdapter:
         # - ``console_output_style=count`` belegt ``[k/N]``: Grundlage für ``gelaufen``.
         # ``--sw`` bricht trotzdem nach dem ersten Rot ab (Exit 2 = rot, nie Wackler).
         cache = _frischer_cache()
+        bericht = _frischer_bericht()
         # Parallel nur, wenn das Repo pytest-xdist selbst nennt, es im Repo-Interpreter da ist und
         # > 1 Worker passt: ``worksteal`` gibt freien Workern Tests der langsamen ab (statt
         # ``loadfile``: eine Datei hält einen Worker fest).
@@ -166,7 +213,8 @@ class PythonAdapter:
                 f"cache_dir={cache}",
                 "-o",
                 "console_output_style=count",
-                *(f"--ignore={ort}" for ort in _WERKZEUG_ORTE),
+                f"{_BERICHT_PREFIX}{bericht}",
+                *(f"--ignore={ort}" for ort in leiter.WERKZEUG_ORTE),
                 *parallel,
             ],
             fehler="",
@@ -226,14 +274,68 @@ class PythonAdapter:
     def nochmal_befehl(self, befehl: list[str], code: int) -> list[str] | None:
         # Wiederholung nur bei echtem Test-Rot (1); Sammelfehler (2) wackeln nicht.
         # ``--lf`` ist pytest-eigen (cacheprovider); ``--lfnf none``: ohne Cache läuft nichts
-        # (Exit 5) statt alles, dann bleibt es beim ersten Rot.
-        return [*befehl, "--lf", "--lfnf", "none"] if code == 1 else None
+        # (Exit 5) statt alles, dann bleibt es beim ersten Rot. Eigener JUnit-Bericht je Lauf.
+        if code != 1:
+            return None
+        return [*_mit_bericht(befehl, _frischer_bericht()), "--lf", "--lfnf", "none"]
 
     def voll_nochmal_befehl(self, befehl: list[str]) -> list[str]:
-        # Zweiter voller Lauf mit frischem ``cache_dir``: ``--lf``/``--sw`` aus ``addopts`` sehen
-        # weder den ersten Lauf noch die Wiederholung, also läuft wieder alles.
+        # Zweiter voller Lauf mit frischem ``cache_dir`` und frischem JUnit-Bericht: ``--lf``/``--sw``
+        # aus ``addopts`` sehen weder den ersten Lauf noch die Wiederholung, also läuft wieder alles.
         cache = _frischer_cache()
-        return [f"{_CACHE_PREFIX}{cache}" if teil.startswith(_CACHE_PREFIX) else teil for teil in befehl]
+        mit_cache = [f"{_CACHE_PREFIX}{cache}" if teil.startswith(_CACHE_PREFIX) else teil for teil in befehl]
+        return _mit_bericht(mit_cache, _frischer_bericht())
+
+    def bericht(self, befehl: list[str], ausgabe: str) -> wackler.Bericht | None:
+        """Liest Test-Zähler aus dem maschinenlesbaren JUnit-XML-Bericht statt aus der Textzeile (#149)."""
+        pfad = _bericht_pfad(befehl)
+        if pfad is None:
+            return None
+        try:
+            wurzel = ET.parse(pfad).getroot()
+        except (OSError, ET.ParseError) as fehler:
+            log.warning("JUnit-Bericht %s unlesbar: %s", pfad, fehler)
+            return None
+        if wurzel.tag == "testsuite":
+            suites = [wurzel]
+        elif wurzel.tag == "testsuites":
+            suites = wurzel.findall("testsuite")
+        else:
+            return None
+        if not suites:
+            return None
+
+        gesamt = fehler_anz = ausnahmen = uebersprungen = 0
+        faelle: set[tuple[str, str]] = set()
+        abgebrochen = bool(_ABBRUCH.search(ausgabe))
+        for suite in suites:
+            t = _xml_zahl(suite, "tests")
+            f = _xml_zahl(suite, "failures", 0)
+            e = _xml_zahl(suite, "errors", 0)
+            s = _xml_zahl(suite, "skipped", 0)
+            if t is None or f is None or e is None or s is None:
+                return None
+            gesamt += t
+            fehler_anz += f
+            ausnahmen += e
+            uebersprungen += s
+            for fall in suite.findall("testcase"):
+                name = (fall.get("name") or "").strip()
+                if not name:
+                    # Offener Testfall ohne Namen entsteht bei ``pytest.exit(..., returncode=0)`` im Test.
+                    abgebrochen = True
+                    continue
+                faelle.add((fall.get("classname") or "", name))
+
+        bestanden = gesamt - fehler_anz - ausnahmen - uebersprungen
+        if bestanden < 0:
+            return None
+        im_bericht = len(faelle)
+        if abgebrochen:
+            return wackler.Bericht(None, None, im_bericht=im_bericht, abgebrochen=True)
+        fortschritt = self.gelaufen(ausgabe)
+        gelaufen = fortschritt if fortschritt is not None and fortschritt == im_bericht else None
+        return wackler.Bericht(gelaufen, bestanden, im_bericht=im_bericht, abgebrochen=False)
 
     def rote(self, ausgabe: str) -> set[str]:
         return {treffer.strip() for treffer in _ROT_ZEILE.findall(ausgabe)}

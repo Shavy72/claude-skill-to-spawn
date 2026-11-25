@@ -11,10 +11,11 @@ disable-model-invocation: true
 
 Dieser Abschnitt geht jedem anderen Text dieses Skills und jedem Projekt-Zusatz (`.to-spawn/kette.md`) vor. Herkunft der Regel: Abschnitt „Beschluss-Protokoll“ in `~/.claude/CLAUDE.md`. Kette: Grillen schreibt `docs/GRILL_*.md` → `/to-spec` baut die Spec nur daraus (Kopfzeile `Quelle: docs/GRILL_<…>.md`, jede Zeile endet mit `(E<n>)`) → hier entstehen Tickets nur aus der Spec.
 
-1. **Quelle ist die Spec, nie der Chat.** Spec aus dem Aufruf (Issue-Nummer, URL oder Pfad) ganz lesen, samt Kommentaren. Fehlen Quelle-Zeile oder `(E<n>)`-Zuordnung: nicht schneiden, sondern dem Nutzer melden — erst `/to-spec` aus dem Protokoll.
+1. **Quelle ist die Spec, nie der Chat.** Spec aus dem Aufruf (Issue-Nummer, URL oder Pfad) ganz lesen, samt Kommentaren. Vor dem Schnitt `python ~/.claude/skills/to-spawn/to_spawn.py spec-pruefen <S>` ausführen. Fehlen Quelle-Zeile oder `(E<n>)`-Zuordnung: im Normalmodus nicht schneiden, sondern dem Nutzer melden — erst `/to-spec` aus dem Protokoll.
 2. **Nur ✅.** Tickets nur aus Spec-Punkten mit `(E<n>)`. Jeder Ticket-Text nennt seine E-Nummern (Abschnitt `## Beschlüsse`, auch Prefactoring- und Abnahme-Tickets: die E-Nummern, denen sie dienen).
 3. **Nie 💭/❌.** Offene Fragen (💭) und Out of Scope (❌) werden keine Tickets und keine Akzeptanzkriterien.
 4. **Abdeckung vor dem Veröffentlichen.** Jede E-Nummer der Spec steckt in mindestens einem Ticket; kein Ticket ohne E-Nummer. Lücke → Schnitt nachbessern, nicht still weglassen.
+5. **Modus „unbeaufsichtigt“ (Dauerauftrag).** Ist `regularien.unbeaufsichtigt: true` in `.to-spawn/config.json` oder `TO_SPAWN_UNBEAUFSICHTIGT=1` gesetzt (`to_spawn.py spec-pruefen <S>` meldet „Modus: unbeaufsichtigt“ und Exit 0), sind fehlende Quelle-Zeile oder fehlende `(E<n>)`-Zuordnungen eine **Warnung** statt Stopp: Tickets direkt aus den Spec-Abschnitten schneiden, `## Beschlüsse` verweist auf den jeweiligen Spec-Abschnitt (oder vorhandene E-Nummern), und die Zustimmung in Schritt 4 gilt als gegeben. Ohne diesen Modus bleiben Prüfung und Zustimmung hart.
 
 > **Projekt-Vorrang (Pflicht, zuerst prüfen):** Liegt im Arbeitsordner `.to-spawn/kette.md`, dann diese Datei jetzt lesen (Projekt-Zusatz). Sie gilt **zusätzlich** zu diesem Skill, nie als Ersatz: Projekt-Regeln wie Klickweg-Rollen oder eine Werkzeug-Tabelle haben für Projekt-Spezifisches Vorrang, der übrige Text hier bleibt verbindlich. Der Abschnitt „Beschluss-Protokoll“ oben geht auch dem Projekt-Zusatz vor.
 
@@ -87,14 +88,14 @@ Ask the user:
 - Are the blocking edges correct: does each ticket only depend on tickets that genuinely gate it?
 - Should any tickets be merged or split further?
 
-Iterate until the user approves the breakdown. Vor der Zustimmung nichts veröffentlichen: ein angehängtes Ticket ist startbereit.
+Iterate until the user approves the breakdown. Vor der Zustimmung nichts veröffentlichen: ein angehängtes Ticket ist startbereit. Im Modus „unbeaufsichtigt“ (`regularien.unbeaufsichtigt: true` oder `TO_SPAWN_UNBEAUFSICHTIGT=1`) gilt die Zustimmung als gegeben — Schnitt kurz protokollieren und direkt mit Schritt 5 fortfahren.
 
 ### 5. Publish the tickets to the configured tracker
 
 Publish the approved tickets. **How** depends on the tracker `/setup-matt-pocock-skills` configured; the tickets are the same either way, only the shape of the blocking edges changes:
 
 - **Local files** → write one file per ticket under `.scratch/<feature-slug>/issues/<NN>-<slug>.md`, numbered from `01` in dependency order (blockers first). Each file's "Blocked by" lists the numbers/titles it depends on. Use the per-ticket file template below: one ticket per file, never a single combined file.
-- **A real issue tracker (GitHub, …)** → je Ticket in Blocker-Reihenfolge (Blocker zuerst, Abnahme-Ticket zuletzt):
+- **A real issue tracker (GitHub, …)** → vor dem ersten Issue-Anlegen `python ~/.claude/skills/to-spawn/to_spawn.py einrichten` ausführen (legt u. a. die Labels `ready-for-agent` und `checkpoint:human` bzw. `regularien.checkpoint_label` idempotent an, falls sie im Repo fehlen). Dann je Ticket in Blocker-Reihenfolge (Blocker zuerst, Abnahme-Ticket zuletzt):
   1. Issue im Repo dieses Arbeitsordners anlegen (Vorlage unten, `ready-for-agent`, beim Abnahme-Ticket zusätzlich `checkpoint:human`). `## Blocked by` nennt nur echte Issue-Nummern, nie Entwurfs-Nummern (#1, #2 …).
   2. Ticket an die Spec hängen — **die eine Tür für Kanten und Manifest**, nie Kanten von Hand setzen:
 
@@ -102,7 +103,7 @@ Publish the approved tickets. **How** depends on the tracker `/setup-matt-pocock
      python ~/.claude/skills/to-spawn/to_spawn.py anhaengen <S> <N> --blockiert-von <B1,B2> --schaetzung <K> --umfang "<ein Satz>" --datei <pfad:a-b> --datei <pfad:a-b>
      ```
 
-     Erst mit `--trocken` ansehen, dann ohne. `anhaengen` setzt die nativen Blocker-Kanten, schreibt den Manifest-Eintrag (Ordner aus `pfade.manifeste` in `.to-spawn/config.json`, fehlt der Schlüssel: Vorgabe des Skills; Ticket-Schlüssel = echte Issue-Nummer, `files` = Kontext-Paket), hängt die Kante vor jedes offene Abnahme-Ticket und macht das Issue zuletzt zum Unter-Issue der Spec. Ein zweiter Aufruf ändert nichts; Exit ≠ 0 heißt: nichts geschrieben, Fehlerzeile beheben, neu aufrufen.
+     Erst mit `--trocken` ansehen, dann ohne. `anhaengen` setzt die nativen Blocker-Kanten, schreibt den Manifest-Eintrag (Ordner aus `pfade.manifeste` in `.to-spawn/config.json`, fehlt der Schlüssel: Vorgabe des Skills; Ticket-Schlüssel = echte Issue-Nummer, `files` = Kontext-Paket), hängt die Kante vor das offene Abnahme-Ticket seiner Kette (bei mehreren Abnahmen ggf. `--abnahme` angeben) und macht das Issue zuletzt zum Unter-Issue der Spec. Ein zweiter Aufruf ändert nichts; Exit ≠ 0 heißt: nichts geschrieben, Fehlerzeile beheben, neu aufrufen.
   3. Das Abnahme-Ticket zuletzt anhängen, mit `--blockiert-von` aller Tickets, die es abnimmt.
 
 Work the **frontier**: any ticket whose blockers are all done. For a purely linear chain that means top to bottom.

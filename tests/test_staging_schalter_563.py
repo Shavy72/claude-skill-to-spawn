@@ -26,6 +26,8 @@ from test_waechter_213 import (  # noqa: F401  (welt = Fixture)
     welt,
 )
 
+from conftest import repo_dateien
+
 SKILL = Path(__file__).resolve().parents[1]
 
 SCHALTER_FAKE = (
@@ -178,8 +180,8 @@ def test_kein_pfad_im_skill_schaltet_live() -> None:
         re.DOTALL | re.IGNORECASE,
     )
     funde = []
-    for pfad in SKILL.rglob("*"):
-        if "tests" in pfad.parts or pfad.suffix not in {
+    for pfad in repo_dateien(SKILL):
+        if "tests" in pfad.relative_to(SKILL).parts or pfad.suffix not in {
             ".py",
             ".sh",
             ".ps1",

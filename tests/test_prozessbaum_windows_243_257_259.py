@@ -315,13 +315,14 @@ def test_259_kein_griff_leck_bei_fehler_nach_duplicate_handle(monkeypatch: pytes
     monkeypatch.setattr(prozessbaum, "_win32", lambda: (kernel, types.SimpleNamespace()))
     monkeypatch.setattr(ctypes, "set_last_error", lambda _n: None, raising=False)
 
-    aufrufe = iter([(10, 0x1000, 0x42, b"vorher"), None])
+    aufrufe = 0
 
     def curdir(_p: int, _pid: int):
-        wert = next(aufrufe)
-        if wert is None:
-            raise OSError("Prozess zwischenzeitlich beendet")
-        return wert
+        nonlocal aufrufe
+        aufrufe += 1
+        if aufrufe == 1:
+            return (10, 0x1000, 0x42, b"vorher")
+        raise OSError("Prozess zwischenzeitlich beendet")
 
     monkeypatch.setattr(prozessbaum, "_curdir", curdir)
     with pytest.raises(OSError, match="beendet"):

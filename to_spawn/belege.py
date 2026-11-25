@@ -27,7 +27,7 @@ import re
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
-from to_spawn import prozessbaum
+from to_spawn import konsole
 
 log = logging.getLogger("belege")
 
@@ -75,12 +75,20 @@ _ENTFAELLT = re.compile(
 _FORTSETZUNG = re.compile(
     r"[*_]*[ \t]*(?:\([^()\n]*\))?[ \t]*(?:[:—–,-][ \t]*[^\n]{1,80}?)?[ \t]*\.?[ \t]*"
 )
-#: Klammerzusatz und Grund dürfen nichts verneinen oder einfordern; „kein UI / keine Oberfläche“
+#: Vor der Aussage (selbe Tabellenzelle): offene Checkbox oder Frage-/Bedingungswort
+#: („- [ ] Klickweg entfällt“, „Ob Klickweg entfällt …“) zählt nicht als entfällt (#282).
+_VOR_DAGEGEN = re.compile(
+    r"\[\s\]|\b(?:ob|falls|wenn|sofern|vielleicht|eventuell|ggf|unklar|offen|prüf\w*|klär\w*|frage|behaupt\w*)\b",
+    re.IGNORECASE,
+)
+#: Klammerzusatz und Grund dürfen nichts verneinen, offenlassen oder bedingen; „kein UI / keine Oberfläche“
 #: ist ein Grund, keine Verneinung. „nur“ allein ist erlaubt („nur Doku“).
 _DAGEGEN = re.compile(
     r"\b(?:nicht|nie|nein|kein\w*(?!\s+(?:Oberfläche|UI|Frontend)\b)|nötig|erforderlich|pflicht\w*"
-    r"|trotzdem|aber|doch|jedoch|falsch|erst)\b|klick.?weg",
-    re.I,
+    r"|trotzdem|aber|doch|jedoch|falsch|erst"
+    r"|wenn|falls|sofern|sobald|bis|unklar|offen|fehlt|nachgeholt|nachholen|aussteh\w*|später|todo|tbd"
+    r"|prüf\w*|klär\w*|vielleicht|eventuell|ggf)\b|klick.?weg|live-beweis|live-klick",
+    re.IGNORECASE,
 )
 
 
@@ -88,6 +96,9 @@ def _entfaellt(zeile: str) -> bool:
     """Sagt die Zeile ausdrücklich und ohne Einschränkung, dass der Klickweg entfällt?"""
     treffer = _ENTFAELLT.search(zeile)
     if treffer is None:
+        return False
+    vor = zeile[: treffer.start()].rsplit("|", 1)[-1]
+    if _VOR_DAGEGEN.search(vor):
         return False
     rest = zeile[treffer.end() :].split("|", 1)[0].rstrip("\r\n")
     return _FORTSETZUNG.fullmatch(rest) is not None and not _DAGEGEN.search(rest)
@@ -146,8 +157,14 @@ def _lies(datei: Path) -> str:
         return ""
 
 
-def finde_dateien(verify_hard: Path, nummer: str) -> list[Path]:
-    """Alle .md/.txt-Belegdateien eines Tickets (Datei ``<N>…`` oder Ordner ``[<datum>_]<N>…``)."""
+TEXT_ENDUNGEN = frozenset({".md", ".txt"})
+BILD_ENDUNGEN = frozenset({".png", ".jpg", ".jpeg", ".webp"})
+
+
+def finde_dateien(
+    verify_hard: Path, nummer: str, *, endungen: frozenset[str] = TEXT_ENDUNGEN
+) -> list[Path]:
+    """Belegdateien eines Tickets (Datei ``<N>…`` oder Ordner ``[<datum>_]<N>…``) mit passenden Endungen."""
     muster = re.compile(rf"^(?:\d{{4}}-\d{{2}}-\d{{2}}_)?{re.escape(nummer)}(?=$|[_.\-])")
     treffer: list[Path] = []
     if not verify_hard.is_dir():
@@ -156,8 +173,13 @@ def finde_dateien(verify_hard: Path, nummer: str) -> list[Path]:
         if not muster.match(eintrag.name):
             continue
         kandidaten = sorted(eintrag.rglob("*")) if eintrag.is_dir() else [eintrag]
-        treffer += [k for k in kandidaten if k.is_file() and k.suffix.lower() in (".md", ".txt")]
+        treffer += [k for k in kandidaten if k.is_file() and k.suffix.lower() in endungen]
     return treffer
+
+
+def finde_bilder(verify_hard: Path, nummer: str) -> list[Path]:
+    """Alle Bild-Belege (``.png``/``.jpg``/``.jpeg``/``.webp``) eines Tickets (#367)."""
+    return finde_dateien(verify_hard, nummer, endungen=BILD_ENDUNGEN)
 
 
 def zeitpunkt(datei: Path) -> float:
@@ -168,16 +190,13 @@ def zeitpunkt(datei: Path) -> float:
     # Bekannte Grenze: Eine schon committete Belegdatei, die danach lokal überschrieben und
     # noch nicht neu committet wurde, zählt mit ihrer alten Commit-Zeit, nicht mit „jetzt“.
     try:
-        aus = subprocess.run(
+        aus = konsole.lauf_daten(
             ["git", "log", "-1", "--format=%ct", "--", datei.name],
             cwd=datei.parent,
-            capture_output=True,
-            text=True,
             timeout=15,
             check=False,
-            **prozessbaum.fensterlos(),
         )
-        if aus.returncode == 0 and aus.stdout.strip():
+        if aus is not None and aus.returncode == 0 and aus.stdout.strip():
             return float(aus.stdout.strip())
     except (OSError, subprocess.SubprocessError, ValueError) as fehler:
         log.debug("Commit-Zeit nicht lesbar %s: %s", datei, fehler)

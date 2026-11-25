@@ -65,6 +65,7 @@ from to_spawn import (
     arbeitsstand,
     bau_log,
     config,
+    konsole,
     manifest,
     prozessbaum,
     pruefplan,
@@ -213,13 +214,7 @@ def lies_merker(klon: Path, spec: int) -> Merker | None:
 
 def _git(klon: Path, *args: str) -> subprocess.CompletedProcess[str] | None:
     try:
-        return subprocess.run(
-            ["git", "-C", str(klon), *args],
-            capture_output=True,
-            text=True,
-            check=False,
-            **prozessbaum.fensterlos(),
-        )
+        return konsole.lauf_daten(["git", "-C", str(klon), *args], check=False)
     except OSError as fehler:
         log.warning("komplett_lauf: git fehlt: %s", fehler)
         return None
@@ -598,7 +593,7 @@ def _lauf(
 ) -> Ergebnis:
     """Befehl ausführen, Merker + Protokoll-Zeile schreiben; nur unter der Sperre aus :func:`_pruefen`."""
     start_zeit, start = _jetzt(), time.monotonic()
-    stufe = leiter.eigener_befehl(klon, befehl, "komplett", zeitgrenze_s)
+    stufe = leiter.eigener_befehl(klon, befehl, "komplett", zeitgrenze_s, ticket=spec)
     dauer = round(time.monotonic() - start, 2)
     exit_code = stufe.ergebnis
     if exit_code == leiter.GRUEN:

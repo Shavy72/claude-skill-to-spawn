@@ -208,6 +208,8 @@ def _folie(teil: int, f: dict[str, Any], *, bild_pflicht: bool) -> str:
             f"Folie „{f.get('titel', '?')}“ braucht ein Bild (Teil {teil})"
         )
     art = f' data-art="{html.escape(f["art"])}"' if f.get("art") else ""
+    ticket_nr = str(f.get("ticket") or "").strip().lstrip("#")
+    ticket_attr = f' data-ticket="{html.escape(ticket_nr)}"' if ticket_nr else ""
     rubrik = f.get("rubrik") or (
         "Neu" if teil == 1 else "Offen" if f.get("art") == "offenes" else "Details"
     )
@@ -218,10 +220,18 @@ def _folie(teil: int, f: dict[str, Any], *, bild_pflicht: bool) -> str:
     )
     punkte = "".join(f"<li>{html.escape(p)}</li>" for p in f.get("punkte", [])[:3])
     liste = f'<ul class="punkte">{punkte}</ul>' if punkte else ""
+    schritte = [str(s).strip() for s in (f.get("klickschritte") or []) if str(s).strip()]
+    klick = (
+        '<ol class="klickschritte">'
+        + "".join(f"<li>{html.escape(s)}</li>" for s in schritte)
+        + "</ol>"
+        if schritte
+        else ""
+    )
     return (
-        f'<section class="folie" data-teil="{teil}"{art} data-label="{TEIL_NAMEN[str(teil)]}">'
+        f'<section class="folie" data-teil="{teil}"{art}{ticket_attr} data-label="{TEIL_NAMEN[str(teil)]}">'
         f'<span class="rubrik">{html.escape(rubrik)}</span><h2>{html.escape(f["titel"])}</h2>'
-        f'<p class="kern">{html.escape(f["kern"])}</p>{bild}{liste}</section>'
+        f'<p class="kern">{html.escape(f["kern"])}</p>{bild}{liste}{klick}</section>'
     )
 
 
@@ -300,6 +310,8 @@ figure{margin:1.6em 0 0;padding:10px;background:var(--karte);border-radius:22px;
 img{display:block;max-width:100%;max-height:44vh;border-radius:14px}
 .punkte{list-style:none;display:flex;flex-wrap:wrap;gap:10px;justify-content:center;padding:0;margin:1.4em 0 0}
 .punkte li{background:var(--karte);box-shadow:0 2px 10px rgba(20,30,70,.1);border-radius:99px;padding:.4em 1em;font-size:1rem}
+.klickschritte{text-align:left;max-width:34em;margin:1.2em auto 0;padding:1em 1.4em 1em 2.2em;background:var(--karte);border-radius:16px;box-shadow:0 2px 10px rgba(20,30,70,.1)}
+.klickschritte li{margin:.35em 0}
 [data-art=offenes] .rubrik{background:transparent;border:2px solid var(--rot);color:var(--rot)}
 [data-teil="3"]>:first-child{margin-top:0}
 .zeitstrahl{flex:none;width:100%;max-width:480px;height:auto;font-size:16.5px;fill:var(--fg)}
@@ -405,6 +417,12 @@ class _Leser(HTMLParser):
         self._in_style = False
         self._stil: list[str] = []
         self._versteckte_klassen: set[str] = set()
+        self._in_klick = 0
+        self._klick_schritte: list[str] = []
+        self._in_klick_li = False
+        self._klick_li_text: list[str] = []
+        self._in_h2 = False
+        self._h2_text: list[str] = []
 
     def _merke_versteckte_klassen(self, css: str) -> None:
         for sel, regel in _CSS_REGEL.findall(css):
@@ -430,13 +448,23 @@ class _Leser(HTMLParser):
             )
             self._stapel.append((tag, versteckt))
         if tag == "section" and "folie" in a.get("class", "").split():
+            self._in_klick = 0
+            self._klick_schritte = []
+            self._in_klick_li = False
+            self._klick_li_text = []
+            self._in_h2 = False
+            self._h2_text = []
             self.folien.append(
                 {
                     "teil": a.get("data-teil", ""),
                     "art": a.get("data-art", ""),
+                    "ticket": a.get("data-ticket", "").strip().lstrip("#"),
+                    "titel": "",
                     "text": [],
                     "bilder": [],
                     "viz": [],
+                    "klickschritte": 0,
+                    "klick_listen": [],
                     "kern": 0,
                     "versteckt": any(h for _, h in self._stapel),
                     "h2": 0,
@@ -447,10 +475,21 @@ class _Leser(HTMLParser):
             return
         f = self.folien[-1]
         klassen = a.get("class", "").split()
+        versteckt_jetzt = any(h for _, h in self._stapel)
+        if tag == "ol" and "klickschritte" in klassen and not versteckt_jetzt:
+            if self._in_klick == 0:
+                self._klick_schritte = []
+            self._in_klick += 1
+        elif tag == "li" and self._in_klick > 0 and not versteckt_jetzt:
+            self._in_klick_li = True
+            self._klick_li_text = []
         if tag == "img":
             f["bilder"].append(a.get("src", ""))
         if tag == "h2":
             f["h2"] += 1
+            if not f["titel"]:
+                self._in_h2 = True
+                self._h2_text = []
         if tag == "p" and "kern" in klassen:
             f["kern"] += 1
         if tag == "svg":
@@ -466,7 +505,7 @@ class _Leser(HTMLParser):
             tag == "g"
             and "entscheidung" in klassen
             and self._zs
-            and not any(h for _, h in self._stapel)
+            and not versteckt_jetzt
         ):
             self._grp = {
                 "ticket": a.get("data-ticket", ""),
@@ -482,6 +521,24 @@ class _Leser(HTMLParser):
                 self._merke_versteckte_klassen("".join(self._stil))
                 self._stil = []
             self._in_style = False
+        if tag == "h2" and self._in_h2:
+            if self.folien and not self.folien[-1]["titel"]:
+                self.folien[-1]["titel"] = _norm("".join(self._h2_text))
+            self._in_h2 = False
+            self._h2_text = []
+        if tag == "li" and self._in_klick_li:
+            schritt = _norm("".join(self._klick_li_text))
+            if schritt:
+                self._klick_schritte.append(schritt)
+            self._in_klick_li = False
+            self._klick_li_text = []
+        if tag == "ol" and self._in_klick > 0:
+            self._in_klick -= 1
+            if self._in_klick == 0:
+                if self._klick_schritte and self.folien:
+                    self.folien[-1]["klickschritte"] += 1
+                    self.folien[-1]["klick_listen"].append(list(self._klick_schritte))
+                self._klick_schritte = []
         if tag in _VOID:
             return
         for k in range(len(self._stapel) - 1, -1, -1):
@@ -501,6 +558,10 @@ class _Leser(HTMLParser):
             self._stil.append(data)
         if self._aus or not self.folien:
             return
+        if self._in_h2:
+            self._h2_text.append(data)
+        if self._in_klick_li and not any(h for _, h in self._stapel):
+            self._klick_li_text.append(data)
         if self._grp is not None:
             self._grp["text"].append(data)
         if self._viz is not None and data.strip():
@@ -512,7 +573,73 @@ def _norm(s: str) -> str:
     return " ".join(s.split())
 
 
-def pruefe(text: str, eintraege: list[dict[str, str]]) -> list[str]:
+def _hat_bild(f: dict[str, Any]) -> bool:
+    """Sichtbare Folie mit echtem Bild oder sichtbarer ``svg.viz``-Grafik."""
+    return not f["versteckt"] and (
+        any(_uri_echt(s) for s in f["bilder"]) or any(v["formen"] for v in f["viz"])
+    )
+
+
+def klickschritte(text: str) -> list[dict[str, Any]]:
+    """Alle sichtbaren Klick-Schrittfolgen aus Teil 1/2 in Folien-Reihenfolge (#368)."""
+    leser = _Leser()
+    leser.feed(text)
+    folgen: list[dict[str, Any]] = []
+    for f in leser.folien:
+        if f["versteckt"] or f["teil"] not in ("1", "2"):
+            continue
+        titel = f["titel"] or _norm(" ".join(f["text"]))[:40]
+        ticket = f["ticket"]
+        if not ticket:
+            treffer = re.search(r"(?<!\d)#(\d+)(?!\d)", titel)
+            if treffer:
+                ticket = treffer.group(1)
+        for schritte in f["klick_listen"]:
+            folgen.append(
+                {
+                    "ticket": ticket,
+                    "titel": titel,
+                    "teil": f["teil"],
+                    "schritte": list(schritte),
+                }
+            )
+    return folgen
+
+
+def inhalt(text: str) -> dict[str, Any]:
+    """Inhalts-Angabe einer Rundschau (#367): Folien mit Bild, Klick-Schrittfolgen, Entscheidungs-Folie."""
+    leser = _Leser()
+    leser.feed(text)
+    return {
+        "bilder": sum(
+            1 for f in leser.folien if f["teil"] in ("1", "2") and _hat_bild(f)
+        ),
+        "klickschritte": sum(
+            f["klickschritte"]
+            for f in leser.folien
+            if f["teil"] in ("1", "2") and not f["versteckt"]
+        ),
+        "entscheidungen": any(
+            f["teil"] == "3" and not f["versteckt"] for f in leser.folien
+        ),
+    }
+
+
+def _folie_fuer_ticket(f: dict[str, Any], nummer: str) -> bool:
+    """Gehört diese sichtbare Inhaltsfolie zu Ticket ``nummer`` (``data-ticket`` oder ``#<nr>`` im Text)?"""
+    if f["versteckt"] or f["teil"] not in ("1", "2") or f["art"] in ("titel", "offenes"):
+        return False
+    if f["ticket"] == nummer:
+        return True
+    return bool(re.search(rf"(?<!\d)#{re.escape(nummer)}(?!\d)", _norm(" ".join(f["text"]))))
+
+
+def pruefe(
+    text: str,
+    eintraege: list[dict[str, str]],
+    *,
+    tickets: list[str] | None = None,
+) -> list[str]:
     """Mängel der Rundschau (leer = gültig). Jede Meldung sagt, was fehlt."""
     leser = _Leser()
     leser.feed(text)
@@ -565,6 +692,16 @@ def pruefe(text: str, eintraege: list[dict[str, str]]) -> list[str]:
                 maengel.append(
                     f"Folie „{name}“ (Teil 1): {woerter} Wörter (max. {MAX_WOERTER_TEIL1}) und {f['kern']} Kernsätze (genau 1)."
                 )
+    if tickets:
+        for roh in tickets:
+            nr = str(roh).strip().lstrip("#")
+            if not nr:
+                continue
+            passend = [f for f in leser.folien if _folie_fuer_ticket(f, nr)]
+            if not any(_hat_bild(f) for f in passend):
+                maengel.append(f"Ticket #{nr}: Folie mit Bild fehlt in der Rundschau.")
+            if not any(f["klickschritte"] > 0 for f in passend):
+                maengel.append(f"Ticket #{nr}: Klick-Schritte fehlen in der Rundschau.")
     schluss = [f for f in leser.folien if f["teil"] == "3"]
     if schluss:
         maengel += _pruefe_grafik(schluss[-1], eintraege)

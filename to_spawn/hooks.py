@@ -45,7 +45,8 @@ def marker_pfad(repo: Path, ticket: str | int) -> Path:
     return repo / ".to-spawn" / f"stop-{ticket}"
 
 
-def _zeilen(pfad: Path) -> list[dict[str, Any]]:
+def lese_transkript(pfad: Path) -> list[dict[str, Any]]:
+    """Liest ein Claude-Transkript (JSONL) fehlertolerant; fehlende Datei → leer."""
     if not pfad or not Path(pfad).is_file():
         return []
     ergebnis: list[dict[str, Any]] = []
@@ -60,6 +61,9 @@ def _zeilen(pfad: Path) -> list[dict[str, Any]]:
         if isinstance(eintrag, dict):
             ergebnis.append(eintrag)
     return ergebnis
+
+
+_zeilen = lese_transkript
 
 
 def _usage(eintrag: dict[str, Any]) -> dict[str, Any] | None:
@@ -125,6 +129,15 @@ def summiere(eintraege: list[dict[str, Any]]) -> dict[str, int]:
     return summe
 
 
+def _aufruf_kontext(verbrauch: dict[str, Any]) -> int:
+    """Kontextgröße eines einzelnen Modellaufrufs (``input`` + ``cache_read`` + ``cache_creation``)."""
+    return (
+        _zahl(verbrauch.get("input_tokens"))
+        + _zahl(verbrauch.get("cache_read_input_tokens"))
+        + _zahl(verbrauch.get("cache_creation_input_tokens"))
+    )
+
+
 def kontext(eintraege: list[dict[str, Any]]) -> dict[str, int] | None:
     """Spitzen-Kontext und Anzahl der Modellaufrufe (#238); ``None`` ohne Aufruf.
 
@@ -138,13 +151,21 @@ def kontext(eintraege: list[dict[str, Any]]) -> dict[str, int] | None:
     aufrufe = 0
     for verbrauch in _je_antwort(eintraege):
         aufrufe += 1
-        groesse = (
-            _zahl(verbrauch.get("input_tokens"))
-            + _zahl(verbrauch.get("cache_read_input_tokens"))
-            + _zahl(verbrauch.get("cache_creation_input_tokens"))
-        )
-        spitze = max(spitze, groesse)
+        spitze = max(spitze, _aufruf_kontext(verbrauch))
     return {"spitze": spitze, "aufrufe": aufrufe} if aufrufe else None
+
+
+def start_kontext(eintraege: list[dict[str, Any]]) -> int | None:
+    """Kontext nach Start (#412): Kontextgröße des ersten echten Aufrufs der Hauptsitzung.
+
+    Subagenten-Zeilen (``isSidechain: true``) und leere Null-Aufrufe (z. B. synthetische
+    Fehlerzeilen) zählen nicht mit. Ohne lesbaren Aufruf → ``None``.
+    """
+    for verbrauch in _je_antwort(haupt_zeilen(eintraege)):
+        groesse = _aufruf_kontext(verbrauch)
+        if groesse > 0:
+            return groesse
+    return None
 
 
 def modell_aus(eintraege: list[dict[str, Any]]) -> str | None:
@@ -286,15 +307,35 @@ def _ohne_log_repo(hook: str) -> None:
 def _starte_takt(repo: Path, ticket: str) -> None:
     """Nach ``session_ende`` den Aufseher-Takt der Spec abgelöst starten (#316).
 
-    Spec aus ``TO_SPAWN_SPEC`` (setzt ``bau.py``); ohne Spec nichts. Fehler nur loggen.
+    Spec aus ``TO_SPAWN_SPEC`` (setzt ``bau.py``); ohne Spec nichts. Bei ``--ohne-wache``
+    oder fremdem Rechner laut gespeicherter Auswahl wird kein Takt ausgelöst (#271).
+    Fehler nur loggen.
     """
     spec = os.environ.get("TO_SPAWN_SPEC", "").strip()
     if not spec.isdigit():
         return
     try:
-        from . import waechter_takt
+        from . import auswahl, waechter_takt
 
         ziel = Path(os.environ["TO_SPAWN_REPO"]) if os.environ.get("TO_SPAWN_REPO") else repo
+        stand_auswahl = auswahl.lesen(ziel, int(spec))
+        if not auswahl.wache_erlaubt(ziel, int(spec), auswahl=stand_auswahl, gelesen=True):
+            log.info(
+                "Aufseher-Takt #%s unterdrückt: laut Auswahl hier kein Aufseher (%s).",
+                spec,
+                auswahl.beschreibung(stand_auswahl),
+            )
+            return
+        if ticket.isdigit() and not auswahl.ticket_erlaubt(
+            ziel, int(spec), int(ticket), auswahl=stand_auswahl, gelesen=True
+        ):
+            log.info(
+                "Aufseher-Takt #%s unterdrückt: Ticket #%s außerhalb der Auswahl (%s).",
+                spec,
+                ticket,
+                auswahl.beschreibung(stand_auswahl),
+            )
+            return
         waechter_takt.starte_abgeloest(int(spec), ziel, f"session_ende #{ticket}")
     except Exception:  # noqa: BLE001 — der Hook darf die Bau-Session nie stören
         log.exception("Aufseher-Takt #%s nicht gestartet — Session läuft weiter.", spec)

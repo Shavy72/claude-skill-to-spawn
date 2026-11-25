@@ -26,7 +26,7 @@ from pathlib import Path
 _SKILL = str(Path(__file__).resolve().parent.parent)
 if _SKILL not in sys.path:
     sys.path.insert(0, _SKILL)
-from to_spawn import bau_log, capo, config, gh
+from to_spawn import auswahl, bau_log, capo, config, gh
 
 log = logging.getLogger("capo")
 #: Repo, in dem gearbeitet wird: ``TO_SPAWN_REPO`` (setzt die Weiterleitung im Repo), sonst
@@ -96,6 +96,7 @@ def main() -> int:
         else:
             log.warning("Sub-Issues nicht lesbar — nehme alle Bau-Logs des Repos.")
             tickets = [int(t) for t in bau_log.alle_tickets(repo)]
+        tickets = auswahl.filtere_nummern(tickets, auswahl.lesen(repo, a.spec))
         print(capo.uebersicht(repo, a.spec, tickets))
         return 0
 

@@ -77,3 +77,164 @@ def test_prozesse_linux_gibt_arbeitsordner_mit(modul: ModuleType, tmp_path: Path
     finally:
         kind.kill()
         kind.wait()
+
+
+def test_prozesse_lesen_windows_liest_arbeitsordner_und_filtert_beendete(
+    modul: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Windows: ``prozesse_lesen`` liest den PEB-Arbeitsordner und wirft beendete Prozesse raus.
+
+    Sonst meldet ``sessions_stand.py`` unter Windows ein ``bau.py 901`` aus einem fremden Repo
+    (z. B. paralleler Test-Worker) als laufend im eigenen Repo.
+    """
+    import json
+    from types import SimpleNamespace
+
+    eigen = tmp_path / "eigen"
+    fremd = tmp_path / "fremd"
+    eigen.mkdir()
+    fremd.mkdir()
+    modul.REPO = eigen
+
+    wmi = [
+        {"ProcessId": 401, "ParentProcessId": 1, "Name": "python.exe", "CommandLine": r"python.exe skripte\bau.py 901", "Start": ""},
+        {"ProcessId": 402, "ParentProcessId": 1, "Name": "python.exe", "CommandLine": r"python.exe skripte\bau.py 902", "Start": ""},
+        {"ProcessId": 403, "ParentProcessId": 1, "Name": "python.exe", "CommandLine": r"python.exe skripte\bau.py 903", "Start": ""},
+        {"ProcessId": 404, "ParentProcessId": 1, "Name": "python.exe", "CommandLine": r"python.exe skripte\bau.py 904", "Start": ""},
+    ]
+
+    def _peb_cwd(pid: int) -> str | None:
+        if pid == 401:
+            return str(fremd)
+        if pid == 402:
+            return None
+        if pid == 403:
+            return str(eigen)
+        raise OSError("PEB unlesbar")
+
+    monkeypatch.setattr(modul.sys, "platform", "win32")
+    monkeypatch.setattr(
+        modul.subprocess,
+        "run",
+        lambda *a, **k: SimpleNamespace(stdout=json.dumps(wmi)),
+    )
+    monkeypatch.setattr(modul.prozessbaum, "_arbeitsordner_windows", _peb_cwd)
+    monkeypatch.setattr(modul.prozessbaum, "_ist_weg_windows", lambda pid: pid == 402)
+
+    alle = modul.prozesse_lesen()
+    nach_pid = {p.pid: p for p in alle}
+    assert 402 not in nach_pid
+    assert nach_pid[401].ordner == fremd.resolve()
+    assert nach_pid[403].ordner == eigen.resolve()
+    assert nach_pid[404].ordner is None
+
+    eintraege = {n: modul.Eintrag(n, "ticket", f"Ticket {n}") for n in ("901", "902", "903", "904")}
+    modul.zuordnen(eintraege, alle)
+    assert eintraege["901"].zustand == "aus"
+    assert eintraege["902"].zustand == "aus"
+    assert eintraege["903"].zustand == "wartet"
+    assert eintraege["904"].zustand == "wartet"
+
+
+def test_prozesse_lesen_windows_einzelnes_json_objekt(
+    modul: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """PowerShell ``ConvertTo-Json`` liefert bei einem Treffer ein Objekt statt einer Liste."""
+    import json
+    from types import SimpleNamespace
+
+    eigen = tmp_path / "eigen"
+    eigen.mkdir()
+    modul.REPO = eigen
+    einzeln = {
+        "ProcessId": 501,
+        "ParentProcessId": 1,
+        "Name": "python.exe",
+        "CommandLine": r"python.exe skripte\bau.py 905",
+        "Start": "",
+    }
+    monkeypatch.setattr(modul.sys, "platform", "win32")
+    monkeypatch.setattr(
+        modul.subprocess,
+        "run",
+        lambda *a, **k: SimpleNamespace(stdout=json.dumps(einzeln)),
+    )
+    monkeypatch.setattr(modul.prozessbaum, "_arbeitsordner_windows", lambda _pid: str(eigen))
+    monkeypatch.setattr(modul.prozessbaum, "_ist_weg_windows", lambda _pid: False)
+
+    alle = modul.prozesse_lesen()
+    assert len(alle) == 1
+    assert alle[0].pid == 501
+    assert alle[0].ordner == eigen.resolve()
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="braucht Windows (PEB)")
+def test_prozesse_windows_gibt_arbeitsordner_mit(modul: ModuleType, tmp_path: Path) -> None:
+    """Echter Kindprozess unter Windows: fremder Arbeitsordner wird über PEB erkannt und ausgeschlossen."""
+    eigen = tmp_path / "eigen"
+    fremd = tmp_path / "fremd"
+    eigen.mkdir()
+    fremd.mkdir()
+    modul.REPO = eigen
+    kind = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(30)", "skripte/bau.py", "901"],
+        cwd=str(fremd),
+    )
+    try:
+        alle = modul.prozesse_lesen()
+        treffer = [p for p in alle if p.pid == kind.pid]
+        assert len(treffer) == 1
+        assert treffer[0].ordner == fremd.resolve()
+        eintraege = {"901": modul.Eintrag("901", "ticket", "Kern bauen")}
+        modul.zuordnen(eintraege, treffer)
+        assert eintraege["901"].zustand == "aus"
+    finally:
+        kind.kill()
+        kind.wait()
+
+
+def test_prozesse_lesen_windows_trennt_fremde_und_beendete_wache(
+    modul: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Windows: fremde oder eben beendete ``wache.py 900`` lässt Spec #900 auf ``aus``.
+
+    Sonst überspringt ``spawn_srv.sh --nur-wache`` das Fenster ``wache 900``, sobald ein
+    paralleler Test-Worker eine Aufseher-Session für dieselbe Spec-Nummer laufen hat.
+    """
+    import json
+    from types import SimpleNamespace
+
+    eigen = tmp_path / "eigen"
+    fremd = tmp_path / "fremd"
+    eigen.mkdir()
+    fremd.mkdir()
+    modul.REPO = eigen
+
+    wmi = [
+        {"ProcessId": 601, "ParentProcessId": 1, "Name": "python.exe", "CommandLine": r"python.exe skripte\wache.py 900", "Start": ""},
+        {"ProcessId": 602, "ParentProcessId": 1, "Name": "python.exe", "CommandLine": r"python.exe skripte\wache.py 901", "Start": ""},
+        {"ProcessId": 603, "ParentProcessId": 1, "Name": "python.exe", "CommandLine": r"python.exe skripte\wache.py 902", "Start": ""},
+    ]
+
+    def _peb_cwd(pid: int) -> str | None:
+        if pid == 601:
+            return str(fremd)
+        if pid == 602:
+            return None
+        return str(eigen)
+
+    monkeypatch.setattr(modul.sys, "platform", "win32")
+    monkeypatch.setattr(
+        modul.subprocess,
+        "run",
+        lambda *a, **k: SimpleNamespace(stdout=json.dumps(wmi)),
+    )
+    monkeypatch.setattr(modul.prozessbaum, "arbeitsordner_windows", _peb_cwd)
+    monkeypatch.setattr(modul.prozessbaum, "ist_weg_windows", lambda pid: pid == 602)
+
+    alle = modul.prozesse_lesen()
+    eintraege = {n: modul.Eintrag(n, "spec", f"Aufseher Spec #{n}") for n in ("900", "901", "902")}
+    modul.zuordnen(eintraege, alle)
+    assert eintraege["900"].zustand == "aus"
+    assert eintraege["901"].zustand == "aus"
+    assert eintraege["902"].zustand == "startet"

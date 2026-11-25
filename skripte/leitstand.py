@@ -56,9 +56,7 @@ _SKRIPTE = Path(__file__).resolve().parent
 _SKILL = str(_SKRIPTE.parent)
 if _SKILL not in sys.path:
     sys.path.insert(0, _SKILL)
-from to_spawn import bau_log, config, ticket_zustand  # noqa: E402
-from to_spawn import gh as gh_modul  # noqa: E402
-from to_spawn import manifest as manifest_modul  # noqa: E402
+from to_spawn import bau_log, config, gh as gh_modul, manifest as manifest_modul, ticket_zustand, tmux_aufruf  # noqa: E402
 from to_spawn.capo import AUFSEHER_KOEPFE  # noqa: E402
 
 # Fenster-Teil (Ablage, Zustands-/URL-Datei, seite, anweisung, mail, aktiv, sitzung) liegt in leitstand_fenster.py.
@@ -667,18 +665,16 @@ def blocker_nummern(kanten: list[dict[str, Any]] | None, body: str) -> list[int]
     return sorted(dict.fromkeys(nummern))
 
 
-def beobachten_fuer(ziel: str, spec: str, ssh_ziel: str) -> list[dict[str, str]]:
+def beobachten_fuer(ziel: str, spec: str, ssh_ziel: str, tmux_sitzung: str | None = None) -> list[dict[str, str]]:
     if ziel == "local":
         return [
             {"titel": "Stand als Tabelle", "befehl": f"sessions {spec}"},
-            {
-                "titel": "Live zuschauen (lokal)",
-                "befehl": f"Windows-Terminal-Fenster der Spec {spec} – je Ticket ein Tab „bau <N>“, dazu „wache {spec}“ (der Aufseher)",
-            },
+            {"titel": "Live zuschauen (lokal)", "befehl": f"Windows-Terminal-Fenster der Spec {spec} – je Ticket ein Tab „bau <N>“, dazu „wache {spec}“ (der Aufseher)"},
         ]
+    sitz = tmux_sitzung or tmux_aufruf.sitzung_alt(spec)
     return [
         {"titel": "Stand als Tabelle", "befehl": f"ssh {ssh_ziel} sessions {spec}"},
-        {"titel": "Live zuschauen (Bau-Server)", "befehl": f"ssh -t {ssh_ziel} tmux attach -t spec-{spec}"},
+        {"titel": "Live zuschauen (Bau-Server)", "befehl": f"ssh -t {ssh_ziel} tmux attach -t {sitz}"},
     ]
 
 
@@ -744,6 +740,7 @@ def seed_docs(
     checkpoint_label: str = "checkpoint:human",
     k_pro_min: float = K_PRO_MIN,
     repo_slug: str = "",
+    tmux_sitzung: str | None = None,
 ) -> list[tuple[str, str, dict[str, Any]]]:
     """Statische Dokumente ``meta/stand`` + ``tickets/<nr>`` — reine Rechnung.
 
@@ -785,7 +782,7 @@ def seed_docs(
         "titel": spec_titel(str(spec_daten.get("title") or manifest.get("feature") or f"Spec {spec}")),
         "ziel": ziel,
         "gestartet": gestartet,
-        "beobachten": beobachten_fuer(ziel, str(spec), ssh_ziel),
+        "beobachten": beobachten_fuer(ziel, str(spec), ssh_ziel, tmux_sitzung=tmux_sitzung),
         "hinweise": hinweise_fuer(ziel, str(spec), ssh_ziel, checkpoints, manifest.get("hinweise")),
     }
     if faktor is not None:
@@ -853,6 +850,7 @@ def seed(ablage: Ablage, ziel: str | None = None, gestartet: str | None = None) 
         checkpoint_label=str(konfig.get("regularien", {}).get("checkpoint_label", "checkpoint:human")),
         k_pro_min=float(leitstand_konfig.get("k_pro_min") or K_PRO_MIN),
         repo_slug=repo_slug(ablage.repo),
+        tmux_sitzung=tmux_aufruf.sitzung_name(ablage.repo, ablage.spec),
     )
     schon = set(zustand["seed_gesendet"])
     docs = [d for d in alle if f"{d[0]}/{d[1]}" not in schon][:MAX_DOKUMENTE]

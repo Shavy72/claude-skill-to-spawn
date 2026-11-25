@@ -34,9 +34,11 @@ import json
 import logging
 import os
 import re
+import socket
 import subprocess
 import sys
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -92,6 +94,9 @@ DEFAULTS: dict[str, Any] = {
         "checkpoint_label": "checkpoint:human",
         #: Ordner der Belegseiten, den der Aufseher je Ticket prüft (#213).
         "belege_ordner": "docs/verify-hard",
+        #: Unbeaufsichtigter Lauf (Dauerauftrag, #405): ``/to-tickets`` wertet die Zustimmung
+        #: als gegeben und meldet fehlende ``Quelle:``-Zeile / ``(E<n>)`` nur als Warnung.
+        "unbeaufsichtigt": False,
     },
     #: Aufseher (#213): Remote Control an, verwaist ab so vielen Stunden ohne Spur.
     "waechter": {
@@ -123,6 +128,8 @@ DEFAULTS: dict[str, Any] = {
         "befehl": "",
         "url": "",
         "aufraeumen": "",
+        #: ``True`` = Repo arbeitet bewusst ohne Live-Schritt: kein Einrichtungs-Ticket dafür (#452).
+        "ohne": False,
     },
     #: Staging-Nest (#211) für den Probesitz (#214): ``url`` = Adresse, ``zugang_datei`` = Datei mit
     #: ``nutzer=…``/``passwort=…`` (oder ``user:pass``); leer = Punkt 3 bleibt rot mit „fehlt noch“.
@@ -170,6 +177,12 @@ DEFAULTS: dict[str, Any] = {
     "startklar": {
         "schluessel": [],
     },
+    #: Eigenes Einreichen (#430): ``eigener_dienst: true`` in ``origin/<hauptzweig>`` heißt,
+    #: das Projekt betreibt einen eigenen Einreich-Dienst für ``ticket/*`` (``einreichen`` pusht
+    #: dann nur den Ticket-Zweig). Vorgabe ``False`` = Pull-Request + sofortiger Merge.
+    "einreichen": {
+        "eigener_dienst": False,
+    },
     #: Start-Text (#274 P1): ``zusatz_datei`` = Repo-Datei (relativ zur Wurzel), deren Text als
     #: Abschnitt „Regeln dieses Repos“ in den Skill-Start-Text kommt. Leer = kein Zusatz.
     "start_text": {
@@ -199,7 +212,7 @@ MASCHINE_DEFAULTS: dict[str, Any] = {
 HAUSMEISTER_GESCHUETZTE_ORDNER: tuple[str, ...] = tuple(vorgaben.HAUSMEISTER_GESCHUETZTE_ORDNER)
 #: Öffentliche Repos (Slugs), in die die Übergabe-Sicherung nie schreibt.
 OEFFENTLICHE_SLUGS: tuple[str, ...] = tuple(vorgaben.OEFFENTLICHE_SLUGS)
-#: Felder eines Eintrags in ``repos[]``; fehlende Felder gelten als "" (= ableiten).
+#: Felder eines Eintrags in ``repos[]``; fehlende Felder gelten als "" (bei ``ticket_repo`` = nicht belegt, #420/#542).
 REPO_FELDER = ("slug", "pfad", "ticket_repo", "worktree_basis")
 
 
@@ -222,6 +235,87 @@ def repo_wurzel(start: Path | None = None) -> Path:
         if (kandidat / ".git").exists():
             return kandidat
     return pfad
+
+
+#: Konkreter ``Path``-Typ des laufenden Systems — bleibt auch bei umgebogenem ``os.name`` gültig (#232).
+_SYSTEM_PFAD: type[Path] = type(Path())
+
+
+class KeinHeimOrdner(RuntimeError):
+    """Heimat-Ordner nicht bestimmbar (weder ``HOME`` noch ``USERPROFILE`` gesetzt, #212)."""
+
+
+_KEIN_HEIM_MELDUNG = (
+    "Heimat-Ordner nicht bestimmbar: weder HOME noch USERPROFILE in der Umgebung gesetzt."
+)
+
+
+def _ist_path_home_umgebogen() -> bool:
+    """True, wenn ``Path.home`` ersetzt wurde (z. B. ``monkeypatch.setattr(Path, 'home', …)``, #212)."""
+    fn = getattr(Path, "home", None)
+    modul = getattr(fn, "__module__", "") or ""
+    return not (modul == "pathlib" or modul.startswith("pathlib."))
+
+
+def heim_ordner() -> Path:
+    """Heimat-Ordner erst bei Gebrauch bestimmen — eine Tür für Windows und Linux (#212).
+
+    Liest die Umgebung (Windows: ``USERPROFILE``, ``HOMEDRIVE``+``HOMEPATH``, ``HOME``;
+    Linux/macOS: ``HOME``, ``USERPROFILE``). Fehlt alles, wirft :class:`KeinHeimOrdner`
+    mit verständlicher Meldung — Windows und Linux gleich (kein Absturz beim Import und
+    kein stiller Rückfall auf ``/etc/passwd``). Wurde ``Path.home`` in einem Test
+    umgebogen, respektiert die Tür das und übersetzt ``RuntimeError`` in
+    :class:`KeinHeimOrdner`. Nutzt :data:`_SYSTEM_PFAD`, damit auch ein umgebogenes
+    ``os.name`` keinen ``UnsupportedOperation``-Fehler auslöst (#232).
+    """
+    if _ist_path_home_umgebogen():
+        try:
+            return Path.home()
+        except RuntimeError as fehler:
+            raise KeinHeimOrdner(_KEIN_HEIM_MELDUNG) from fehler
+    if sys.platform == "win32":
+        laufwerk_pfad = (
+            os.environ.get("HOMEDRIVE", "").strip() + os.environ.get("HOMEPATH", "").strip()
+            if os.environ.get("HOMEPATH", "").strip()
+            else ""
+        )
+        kandidaten = (
+            os.environ.get("USERPROFILE", "").strip(),
+            laufwerk_pfad,
+            os.environ.get("HOME", "").strip(),
+        )
+    else:
+        kandidaten = (
+            os.environ.get("HOME", "").strip(),
+            os.environ.get("USERPROFILE", "").strip(),
+        )
+    for wert in kandidaten:
+        if wert:
+            return _SYSTEM_PFAD(wert)
+    raise KeinHeimOrdner(_KEIN_HEIM_MELDUNG)
+
+
+def expand_heim(pfad: str | Path) -> Path:
+    """Löst führendes ``~`` / ``~/…`` über die eine Tür :func:`heim_ordner` auf (#212)."""
+    text = os.fspath(pfad)
+    if text == "~":
+        return heim_ordner()
+    if text.startswith(("~/", "~\\")):
+        return heim_ordner() / text[2:]
+    if text.startswith("~"):
+        return _SYSTEM_PFAD(text).expanduser()
+    return _SYSTEM_PFAD(text)
+
+
+def notiz_tresor() -> Path:
+    """Ort des privaten Notiz-Tresors (Obsidian-Vault): ``$OBSIDIAN_VAULT``, sonst ``~/obsidian`` (#365).
+
+    Einzige Quelle für :mod:`to_spawn.uebergabe_sichern` und :mod:`to_spawn.befugnis`.
+    """
+    roh = os.environ.get("OBSIDIAN_VAULT", "").strip()
+    if roh:
+        return expand_heim(roh)
+    return heim_ordner() / "obsidian"
 
 
 def worktree_pfad(ticket: str | int, repo: Path | None = None) -> str:
@@ -268,6 +362,51 @@ def _adresse_normal(url: str) -> str:
     host, _, pfad = url.rstrip("/").removesuffix(".git").rstrip("/").partition("/")
     host = host.lower()
     return f"{host}/{pfad.lower() if host == 'github.com' else pfad}"
+
+
+def repo_kennung(ordner: Path) -> str | None:
+    """Wem gehört ``ordner``? Einzige Stelle der Repo-Kennung (#457, #499, #508).
+
+    Normalisierte ``origin``-Adresse (``https``/``ssh``/``.git``/Groß-Kleinschreibung bei
+    ``github.com`` egal), ohne ``origin`` der echte gemeinsame Git-Ordner; ``None`` = kein
+    Git-Ordner. Ein anderer Klon desselben Repos hat dieselbe Kennung.
+    """
+    return _repo_kennung(ordner)
+
+
+def repo_kurzname(repo: Path) -> str:
+    """Eindeutiger, tmux-tauglicher Kurzname des Repos (Kleinbuchstaben, ``[a-z0-9_-]``, #457).
+
+    Bevorzugt den Repo-Namen aus der normalisierten ``origin``-Adresse, damit zwei Klone
+    desselben Repos (z. B. Hauptklon und Spec-Klon ``~/<repo>-<S>`` oder HTTPS vs. SSH)
+    denselben Session-Namen bilden. Ohne ``origin`` gilt :func:`_hauptrepo_name`.
+    """
+    wurzel = repo_wurzel(repo)
+    roh = ""
+    try:
+        lauf = subprocess.run(
+            ["git", "-C", str(wurzel), "remote", "get-url", "origin"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+            **prozessbaum.fensterlos(),
+        )
+    except OSError as fehler:
+        log.warning("git in %s nicht startbar: %s", wurzel, fehler)
+    else:
+        url = lauf.stdout.strip() if lauf.returncode == 0 else ""
+        if url:
+            normal = _adresse_normal(url)
+            teile = [t for t in normal.split("/") if t]
+            if teile:
+                roh = teile[-1]
+    if not roh:
+        roh = _hauptrepo_name(wurzel)
+    sauber = re.sub(r"[^a-z0-9_-]+", "-", roh.lower()).strip("-_")
+    sauber = re.sub(r"-{2,}", "-", sauber)[:40].rstrip("-_")
+    return sauber or "repo"
 
 
 def _repo_kennung(ordner: Path) -> str | None:
@@ -362,8 +501,9 @@ def _fremder_besitzer(wt: Path, repo: Path) -> tuple[str, str] | None:
     return besitzer, eigen
 
 
-#: Zeilen, die ``sicherstellen`` in die Repo-``.gitignore`` schreibt: Laufdateien und
-#: Marker unter ``.to-spawn/`` bleiben unversioniert, nur die Konfig wird eingecheckt (#257).
+#: Zeilen, die ``sicherstellen`` lokal in ``.git/info/exclude`` schreibt (#257, #407):
+#: Laufdateien und Marker unter ``.to-spawn/`` bleiben unversioniert, nur die Konfig
+#: bleibt sichtbar für Git. Die getrackte Repo-``.gitignore`` wird nie verändert.
 GITIGNORE_BLOCK = (
     "# to-spawn: Laufdateien/Marker unversioniert, nur die Konfig eingecheckt",
     ".to-spawn/*",
@@ -371,27 +511,101 @@ GITIGNORE_BLOCK = (
 )
 
 
+def _git_exclude_pfad(wurzel: Path) -> tuple[Path, Path] | None:
+    """``(exclude_datei, git_common_dir)`` für ``wurzel`` oder ``None``, wenn kein Git-Repo (#407)."""
+    try:
+        aus_pfad = subprocess.run(
+            ["git", "-C", str(wurzel), "rev-parse", "--git-path", "info/exclude"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=15.0,
+            check=False,
+            **prozessbaum.fensterlos(),
+        )
+        aus_dir = subprocess.run(
+            ["git", "-C", str(wurzel), "rev-parse", "--git-common-dir"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=15.0,
+            check=False,
+            **prozessbaum.fensterlos(),
+        )
+    except (OSError, subprocess.TimeoutExpired) as fehler:
+        log.warning("git rev-parse in %s fehlgeschlagen — info/exclude nicht ergänzt: %s", wurzel, fehler)
+        aus_pfad = None
+        aus_dir = None
+    if (
+        aus_pfad is not None
+        and aus_dir is not None
+        and aus_pfad.returncode == 0
+        and aus_dir.returncode == 0
+        and aus_pfad.stdout.strip()
+        and aus_dir.stdout.strip()
+    ):
+        roh_pfad = Path(aus_pfad.stdout.strip())
+        roh_dir = Path(aus_dir.stdout.strip())
+        datei = roh_pfad if roh_pfad.is_absolute() else wurzel / roh_pfad
+        grenze = roh_dir if roh_dir.is_absolute() else wurzel / roh_dir
+        return datei, grenze
+    # Minimaler Test-Ordner mit eigenem ``.git``-Verzeichnis ohne ``git init``.
+    git_ordner = wurzel / ".git"
+    if git_ordner.is_dir() and not git_ordner.is_symlink():
+        return git_ordner / "info" / "exclude", git_ordner
+    return None
+
+
+def _ist_unter_grenze_ohne_symlink(datei: Path, grenze: Path) -> bool:
+    """``True``, wenn ``datei`` ohne Symlink-Umweg innerhalb von ``grenze`` liegt (#407)."""
+    basis = Path(os.path.abspath(grenze))
+    pfad = Path(os.path.abspath(datei))
+    if basis not in pfad.parents:
+        return False
+    stufe = pfad
+    while stufe != basis:
+        if stufe.is_symlink():
+            return False
+        stufe = stufe.parent
+    return basis.resolve() in pfad.resolve().parents
+
+
 def gitignore_ergaenzen(wurzel: Path) -> bool:
-    """Block aus ``GITIGNORE_BLOCK`` idempotent an ``.gitignore`` anhängen (``True`` = geschrieben)."""
-    datei = wurzel / ".gitignore"
+    """Block aus ``GITIGNORE_BLOCK`` idempotent an ``.git/info/exclude`` anhängen (``True`` = geschrieben).
+
+    Schreibt nie in die getrackte Repo-``.gitignore`` (#407). Kein Git-Repo oder Symlink
+    aus dem Git-Ordner heraus → Warnung, ``False``.
+    """
+    ziel = _git_exclude_pfad(wurzel)
+    if ziel is None:
+        log.warning("Kein Git-Repo (%s) — info/exclude nicht ergänzt", wurzel)
+        return False
+    datei, grenze = ziel
+    if not _ist_unter_grenze_ohne_symlink(datei, grenze):
+        log.warning("info/exclude nicht sicher unter %s (%s) — nicht ergänzt", grenze, datei)
+        return False
     try:
         vorhanden = datei.read_text(encoding="utf-8") if datei.is_file() else ""
     except OSError as fehler:
-        log.warning(".gitignore unlesbar (%s) — nicht ergänzt: %s", datei, fehler)
+        log.warning("info/exclude unlesbar (%s) — nicht ergänzt: %s", datei, fehler)
         return False
     zeilen = {zeile.strip() for zeile in vorhanden.splitlines()}
     fehlend = [zeile for zeile in GITIGNORE_BLOCK[1:] if zeile not in zeilen]
     if not fehlend:
         return False
-    block = "\n".join(GITIGNORE_BLOCK) + "\n"
+    kopf = [] if GITIGNORE_BLOCK[0] in zeilen else [GITIGNORE_BLOCK[0]]
+    block = "\n".join([*kopf, *fehlend]) + "\n"
     trenner = "" if not vorhanden or vorhanden.endswith("\n") else "\n"
     try:
+        datei.parent.mkdir(parents=True, exist_ok=True)
         with datei.open("a", encoding="utf-8") as strom:
             strom.write(f"{trenner}{block}")
     except OSError as fehler:
-        log.warning(".gitignore nicht schreibbar (%s): %s", datei, fehler)
+        log.warning("info/exclude nicht schreibbar (%s): %s", datei, fehler)
         return False
-    log.info(".gitignore ergänzt: %s", datei)
+    log.info("info/exclude ergänzt: %s", datei)
     return True
 
 
@@ -465,8 +679,9 @@ def sicherstellen(repo: Path | None = None) -> Path:
 
     Beim Anlegen bekommt ``worktree_basis`` den Vorschlag ``~/wt/<Repo-Name>`` (#257).
     Eine vorhandene Datei bleibt byte-gleich (Plan B8, #257): fehlende Felder liefert
-    ``lade`` beim Lesen aus ``DEFAULTS``, nichts wird nachgetragen. Dazu der
-    ``.gitignore``-Block für ``.to-spawn/`` (idempotent). Rückgabe: Pfad der Konfig-Datei.
+    ``lade`` beim Lesen aus ``DEFAULTS``, nichts wird nachgetragen. Dazu die lokalen
+    Exclude-Zeilen für ``.to-spawn/`` in ``.git/info/exclude`` (idempotent, #407).
+    Rückgabe: Pfad der Konfig-Datei.
     """
     wurzel = repo_wurzel(repo)
     datei = wurzel / KONFIG_PFAD
@@ -519,7 +734,8 @@ def _staging_gruppe(konfig: dict[str, Any]) -> dict[str, Any]:
 def pruef_befehl(konfig: dict[str, Any], art: str) -> str:
     """Befehl ``pruefung.<art>`` (``schnell``/``komplett``, #425); ``""`` = nicht eingerichtet.
 
-    Nur für :mod:`to_spawn.pruefplan` — Aufrufer fragen dort (``pruefplan.befehl``).
+    Für :mod:`to_spawn.pruefplan` und :mod:`to_spawn.einrichtungs_ticket` (#452) — andere
+    Aufrufer fragen :func:`to_spawn.pruefplan.befehl`.
     """
     return _text(_gruppe(konfig, "pruefung"), art)
 
@@ -547,10 +763,31 @@ def komplett_zeitgrenze_s(konfig: dict[str, Any]) -> float:
     return float(KOMPLETT_ZEITGRENZE_MIN * 60)
 
 
+#: Text-Schlüssel der Gruppe ``live`` (#425); ``ohne`` ist ein Schalter (:func:`live_bewusst_ohne`).
+_LIVE_TEXT_FELDER: tuple[str, ...] = ("befehl", "url", "aufraeumen")
+
+
 def live_schritt(konfig: dict[str, Any]) -> dict[str, str]:
-    """Gruppe ``live`` (#425) mit allen Schlüsseln aus ``DEFAULTS``; ``""`` = nicht eingerichtet."""
+    """Text-Felder der Gruppe ``live`` (#425: ``befehl``, ``url``, ``aufraeumen``); ``""`` = nicht eingerichtet.
+
+    Für den Schalter ``live.ohne`` gibt es :func:`live_bewusst_ohne`.
+    """
     gruppe = _gruppe(konfig, "live")
-    return {schluessel: _text(gruppe, schluessel) for schluessel in DEFAULTS["live"]}
+    return {schluessel: _text(gruppe, schluessel) for schluessel in _LIVE_TEXT_FELDER}
+
+
+def hat_einreich_dienst(konfig: dict[str, Any]) -> bool:
+    """``einreichen.eigener_dienst: true`` — das Projekt hat einen eigenen Einreich-Dienst (#430).
+
+    Einzige Stelle dieser Regel: nur ausdrücklich ``True`` zählt (nie aus Hook-Dateien
+    abgeleitet). Ohne Marker gilt der normale Weg (Pull-Request + sofortiger Merge).
+    """
+    return _gruppe(konfig, "einreichen").get("eigener_dienst") is True
+
+
+def live_bewusst_ohne(konfig: dict[str, Any]) -> bool:
+    """``live.ohne: true`` — das Repo arbeitet bewusst ohne Live-Schritt (#452)."""
+    return _gruppe(konfig, "live").get("ohne") is True
 
 
 def staging_bewusst_ohne(konfig: dict[str, Any]) -> bool:
@@ -630,8 +867,8 @@ def maschine_datei() -> Path:
     """Ort der Maschinen-Liste: ``TO_SPAWN_MASCHINE``, sonst ``~/.config/to-spawn/maschine.json``."""
     roh = os.environ.get("TO_SPAWN_MASCHINE")
     if roh:
-        return Path(roh).expanduser()
-    return Path.home() / ".config" / "to-spawn" / "maschine.json"
+        return expand_heim(roh)
+    return heim_ordner() / ".config" / "to-spawn" / "maschine.json"
 
 
 def _repo_eintrag(roh: Any) -> dict[str, str] | None:
@@ -676,6 +913,172 @@ def _gleicher_ort(a: str, b: Path) -> bool:
         return False
 
 
+def _schreibe_maschine(datei: Path, daten: dict[str, Any]) -> None:
+    """Schreibt die Maschinen-Liste atomar (temporäre Datei + ``os.replace``)."""
+    datei.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix=".maschine-", suffix=".tmp", dir=datei.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as strom:
+            strom.write(json.dumps(daten, indent=2, ensure_ascii=False) + "\n")
+        os.replace(tmp, datei)
+    except OSError:
+        Path(tmp).unlink(missing_ok=True)
+        raise
+
+
+#: Gültige Form eines GitHub-Ticket-Repos ``<besitzer>/<name>`` (#261).
+_TICKET_REPO_MUSTER = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+
+
+@dataclass(frozen=True)
+class TicketRepoAenderung:
+    """Ergebnis einer ``ticket_repo``-Änderung an einem ``repos[]``-Eintrag (#261)."""
+
+    slug: str
+    pfad: str
+    vorher: str
+    nachher: str
+
+    @property
+    def geaendert(self) -> bool:
+        return self.vorher != self.nachher
+
+    def zeile(self) -> str:
+        alt = self.vorher or "(leer)"
+        neu = self.nachher or "(leer)"
+        if not self.geaendert:
+            return f"{self.slug} ({self.pfad}): ticket_repo unverändert ({alt})"
+        return f"{self.slug} ({self.pfad}): ticket_repo {alt} → {neu}"
+
+
+def _veraltete_ticket_repo_ziele(daten: dict[str, Any]) -> list[tuple[dict[str, str], TicketRepoAenderung]]:
+    """Findet Einträge in ``daten["repos"]`` mit bekannter Alt-Vorgabe (``vorgaben.VERALTETE_TICKET_REPOS``)."""
+    soll_je_slug = {
+        e["slug"].lower(): e["ticket_repo"]
+        for e in vorgaben.REPOS
+        if e.get("slug") and e.get("ticket_repo")
+    }
+    alt_je_slug = {
+        slug.lower(): {wert.lower() for wert in werte}
+        for slug, werte in vorgaben.VERALTETE_TICKET_REPOS.items()
+    }
+    treffer: list[tuple[dict[str, str], TicketRepoAenderung]] = []
+    for eintrag in daten.get("repos", []):
+        if not isinstance(eintrag, dict):
+            continue
+        slug = (eintrag.get("slug") or "").strip()
+        schluessel = slug.lower()
+        soll = soll_je_slug.get(schluessel, "")
+        alte = alt_je_slug.get(schluessel, set())
+        ist = (eintrag.get("ticket_repo") or "").strip()
+        if soll and ist.lower() in alte and ist != soll:
+            treffer.append(
+                (
+                    eintrag,
+                    TicketRepoAenderung(
+                        slug=slug,
+                        pfad=str(eintrag.get("pfad") or ""),
+                        vorher=ist,
+                        nachher=soll,
+                    ),
+                )
+            )
+    return treffer
+
+
+def veraltete_ticket_repos(daten: dict[str, Any] | None = None) -> list[TicketRepoAenderung]:
+    """Liest veraltete Vorgabe-Werte von ``ticket_repo`` in der Maschinen-Liste (nur lesend, #261).
+
+    Fehlt die Datei oder ist sie unlesbar, liefert sie leer (keine stillschweigende Migration).
+    """
+    if daten is None:
+        datei = maschine_datei()
+        if not datei.is_file() or _lies(datei)[0] is None:
+            return []
+        daten = maschine()
+    return [aenderung for _, aenderung in _veraltete_ticket_repo_ziele(daten)]
+
+
+def maschine_ticket_repos_nachziehen() -> list[TicketRepoAenderung]:
+    """Zieht bekannte veraltete Vorgabe-Werte von ``ticket_repo`` in der Maschinen-Liste nach (#261).
+
+    Wiederholbar: fehlt die Datei oder ist alles aktuell, wird nichts geschrieben. Eine kaputte
+    Datei wird nie überschrieben (Warnung im Log). Bewusst abweichend gesetzte Werte bleiben (#542).
+    """
+    datei = maschine_datei()
+    if not datei.is_file():
+        return []
+    if _lies(datei)[0] is None:
+        log.warning("Maschinen-Liste unlesbar (%s) — nicht überschrieben", datei)
+        return []
+    daten = maschine()
+    treffer = _veraltete_ticket_repo_ziele(daten)
+    if not treffer:
+        return []
+    aenderungen: list[TicketRepoAenderung] = []
+    for eintrag, aenderung in treffer:
+        eintrag["ticket_repo"] = aenderung.nachher
+        aenderungen.append(aenderung)
+    _schreibe_maschine(datei, daten)
+    for aenderung in aenderungen:
+        log.info("Maschinen-Liste nachgezogen: %s (%s)", aenderung.zeile(), datei)
+    return aenderungen
+
+
+def maschine_ticket_repo_setzen(ziel: str | Path, ticket_repo: str) -> list[TicketRepoAenderung]:
+    """Setzt ``ticket_repo`` für passende Einträge in der Maschinen-Liste ausdrücklich (#261).
+
+    ``ziel`` trifft per ``slug`` (Groß-/Kleinschreibung egal) oder per Ordner-``pfad``.
+    ``ticket_repo`` muss die Form ``<besitzer>/<name>`` haben. Wiederholbar: stimmt der Wert
+    schon (und die Datei existiert), wird nicht neu geschrieben.
+    """
+    wert = ticket_repo.strip()
+    if not _TICKET_REPO_MUSTER.fullmatch(wert):
+        raise ValueError(
+            f"ticket_repo ungültig ({ticket_repo!r}) — erwartet wird <besitzer>/<name>"
+        )
+    datei = maschine_datei()
+    if datei.is_file() and _lies(datei)[0] is None:
+        raise ValueError(f"Maschinen-Liste unlesbar ({datei}) — nicht überschrieben")
+    daten = maschine()
+    ziel_text = str(ziel).strip()
+    ziel_klein = ziel_text.lower()
+    try:
+        ziel_pfad: Path | None = Path(ziel_text).expanduser().resolve()
+    except (OSError, ValueError):
+        ziel_pfad = None
+
+    treffer: list[dict[str, str]] = []
+    for eintrag in daten["repos"]:
+        if (eintrag.get("slug") or "").strip().lower() == ziel_klein or (
+            ziel_pfad is not None and _gleicher_ort(eintrag.get("pfad") or "", ziel_pfad)
+        ):
+            treffer.append(eintrag)
+    if not treffer:
+        raise LookupError(f"Kein Eintrag in {datei} für {ziel_text!r}")
+
+    aenderungen: list[TicketRepoAenderung] = []
+    geaendert = False
+    for eintrag in treffer:
+        vorher = (eintrag.get("ticket_repo") or "").strip()
+        aenderung = TicketRepoAenderung(
+            slug=eintrag.get("slug") or "",
+            pfad=eintrag.get("pfad") or "",
+            vorher=vorher,
+            nachher=wert,
+        )
+        if aenderung.geaendert:
+            eintrag["ticket_repo"] = wert
+            geaendert = True
+        aenderungen.append(aenderung)
+
+    if geaendert or not datei.is_file():
+        _schreibe_maschine(datei, daten)
+        for aenderung in aenderungen:
+            log.info("Maschinen-Liste geändert: %s (%s)", aenderung.zeile(), datei)
+    return aenderungen
+
+
 def maschine_eintragen(repo: Path | None = None, ticket_repo: str = "") -> dict[str, str]:
     """Trägt das Repo in ``repos[]`` der Maschinen-Liste ein und gibt seinen Eintrag zurück.
 
@@ -683,7 +1086,9 @@ def maschine_eintragen(repo: Path | None = None, ticket_repo: str = "") -> dict[
     ein vorhandener Wert wird nie überschrieben. Der Einrichter übergibt ihn nur mit Beleg (#542).
 
     Schlüssel ist der Ordner (``pfad``). Neu: ``slug`` aus ``origin``, ``worktree_basis`` aus
-    der Repo-Konfig, ``ticket_repo`` leer (= ableiten). Zeigt ``origin`` nicht auf ein
+    der Repo-Konfig, ``ticket_repo`` leer (nicht belegt — der Hausmeister rät nie aus
+    ``slug``, sondern überspringt fail-closed; nur der Einrichter trägt es mit ``gh``-Beleg
+    ein, #420/#542). Zeigt ``origin`` nicht auf ein
     GitHub-Repo (Wegwerf-Klon mit lokalem Pfad, #112), bleibt die Liste unberührt: Warnung,
     Rückgabe des Eintrags ohne Schreiben. Schon da: nur leere Felder werden
     ergänzt, Eingetragenes bleibt. Fehlt die Datei, sind die Vorgaben die Basis — die
@@ -722,14 +1127,54 @@ def maschine_eintragen(repo: Path | None = None, ticket_repo: str = "") -> dict[
     else:
         eintrag = neu
         daten["repos"].append(eintrag)
-    datei.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(prefix=".maschine-", suffix=".tmp", dir=datei.parent)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as strom:
-            strom.write(json.dumps(daten, indent=2, ensure_ascii=False) + "\n")
-        os.replace(tmp, datei)
-    except OSError:
-        Path(tmp).unlink(missing_ok=True)
-        raise
+    _schreibe_maschine(datei, daten)
     log.info("Maschinen-Liste: %s eingetragen (%s)", wurzel, datei)
     return eintrag
+
+
+#: Erlaubte Werte für ``rolle`` in der Maschinen-Liste (``maschine.json``, #408).
+_SERVER_ROLLEN = frozenset({"server", "bau-server", "bau_server"})
+_PC_ROLLEN = frozenset({"pc", "laptop", "lokal", "local"})
+_LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+
+
+def ssh_ziel(konfig: dict[str, Any] | None = None) -> str:
+    """SSH-Ziel des Bau-Servers: ``TO_SPAWN_SSH_ZIEL`` gewinnt, sonst Konfig ``ssh_ziel`` oder Vorgabe."""
+    umg = os.environ.get("TO_SPAWN_SSH_ZIEL", "").strip()
+    if umg:
+        return umg
+    wert = str((konfig or {}).get("ssh_ziel") or "").strip()
+    return wert or str(DEFAULTS["ssh_ziel"])
+
+
+def ist_bau_server(konfig: dict[str, Any] | None = None) -> bool:
+    """Läuft der Skill auf dem Bau-Server selbst? Einzige Stelle dieser Prüfung (#408).
+
+    Reihenfolge:
+    1. Maschinen-Liste (``maschine.json``): ``rolle`` (``"server"``/``"bau-server"`` → True,
+       ``"pc"``/``"laptop"``/``"lokal"`` → False) oder ``bau_server`` (Bool) gewinnt immer.
+    2. Hostname (``socket.gethostname()``) passt zu ``ssh_ziel`` (klein, ohne ``nutzer@``,
+       bei blankem Namen ohne Punkt auch der Kurzname vor dem ersten Punkt).
+    """
+    daten = maschine()
+    rolle = daten.get("rolle")
+    if isinstance(rolle, str) and rolle.strip():
+        normal = rolle.strip().lower()
+        if normal in _SERVER_ROLLEN:
+            return True
+        if normal in _PC_ROLLEN:
+            return False
+        log.warning("Maschinen-Liste: unbekannte rolle %r — Hostname entscheidet", rolle)
+    schalter = daten.get("bau_server")
+    if isinstance(schalter, bool):
+        return schalter
+    try:
+        host = socket.gethostname().strip().lower()
+    except OSError:
+        return False
+    if not host:
+        return False
+    ziel_host = ssh_ziel(konfig).strip().lower().rsplit("@", 1)[-1]
+    if not ziel_host or ziel_host in _LOOPBACK_HOSTS:
+        return False
+    return host == ziel_host or ("." not in ziel_host and host.split(".", 1)[0] == ziel_host)

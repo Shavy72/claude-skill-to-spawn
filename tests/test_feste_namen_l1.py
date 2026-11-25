@@ -19,6 +19,8 @@ from pathlib import Path
 
 import pytest
 
+from conftest import WERKZEUG_ORDNER, git_dateien, repo_dateien  # noqa: F401 — Re-Export
+
 SKILL = Path(__file__).resolve().parents[1]
 
 #: Was als feste Verdrahtung gilt (Name → Muster, je Zeile gezählt).
@@ -115,12 +117,10 @@ AUSNAHMEN: dict[tuple[str, str], tuple[tuple[str, ...], str]] = {
     # Weiterleitungs-Rückfall: Repo-Skript, sonst Skill-Skript
     ("to_spawn/aufpasser.py", "repo-skript"): (
         (
-            "EPO = \"cd {repo} && {py} scripts/bau.py {n}{resume}\"",
             "EPO = \"cd {repo} && {py} scripts/wache.py {s}{resume}\"",
-            "} {n} {resume} (Vorgabe: scripts/bau.py bzw. Skill)\",",
             "} {s} {resume} (Vorgabe: scripts/wache.py bzw. Skill)\",",
         ),
-        _WEITERLEITUNG + " (VORLAGE_*_REPO, Hilfe-Text)",
+        _WEITERLEITUNG + " (VORLAGE_WACHE_REPO, Hilfe-Text)",
     ),
     ("to_spawn/aufpasser.py", "duoplus"): (("Beispiele unten sind die DuoPlus-Vorgabe. Erster Treffer",), _DOKU),
     ("to_spawn/capo.py", "repo-skript"): (
@@ -277,41 +277,18 @@ AUSNAHMEN: dict[tuple[str, str], tuple[tuple[str, ...], str]] = {
 }
 
 
-#: Nur im Rückfall ohne git: Ordner von Werkzeugen, kein Skill-Code.
-WERKZEUG_ORDNER = frozenset({".git", "__pycache__", ".ruff_cache", ".pytest_cache", ".mypy_cache"})
-
-
-def _git_dateien() -> list[str] | None:
-    """Skill-relative Pfade, die git kennt (``git ls-files``); ``None`` ohne git bzw. Repo."""
-    try:
-        lauf = subprocess.run(
-            ["git", "-C", str(SKILL), "ls-files"], capture_output=True, text=True, encoding="utf-8", check=True
-        )
-    except (OSError, subprocess.CalledProcessError):
-        return None
-    return lauf.stdout.splitlines()
-
-
 def _skill_dateien() -> list[Path]:
-    """Skill-Code zum Scannen: nur Dateien, die git kennt — Werkzeug-Caches (``.ruff_cache`` …) fallen raus (#491).
-
-    Ohne git: Rückfall auf den Ordner-Baum ohne WERKZEUG_ORDNER (``.to-spawn/`` u. ä. zählen mit).
-    """
-    bekannt = _git_dateien()
-    if bekannt is None:
-        kandidaten = [p for p in SKILL.rglob("*") if not WERKZEUG_ORDNER & set(p.relative_to(SKILL).parts)]
-    else:
-        kandidaten = [SKILL / rel for rel in bekannt]
+    """Skill-Code zum Scannen: nur Dateien, die git kennt — Werkzeug-Caches (``.ruff_cache`` …) fallen raus (#491, #532)."""
     dateien: list[Path] = []
-    for p in kandidaten:
+    for p in repo_dateien(SKILL):
         teile = p.relative_to(SKILL).parts
         if len(teile) == 1:
             passt = p.suffix in {".py", ".sh", ".ps1"}
         else:
-            passt = teile[0] in ORDNER and p.suffix in ENDUNGEN and "__pycache__" not in teile
-        if passt and p.is_file():
+            passt = teile[0] in ORDNER and p.suffix in ENDUNGEN
+        if passt:
             dateien.append(p)
-    return sorted(dateien)
+    return dateien
 
 
 def _zeilen_treffer(rel: str, text: str, funde: dict[tuple[str, str], list[str]]) -> None:
@@ -401,7 +378,7 @@ NICHT_GESCANNT = frozenset({"tests", "docs", ".review"})
 
 def test_jeder_code_ordner_wird_gescannt() -> None:
     """P7b (#79): ein neuer Code-Ordner fällt nicht still aus dem Scan (Dirigent P6b, :39)."""
-    erfasst = _git_dateien()
+    erfasst = git_dateien(SKILL)
     assert erfasst is not None, "git ls-files im Skill-Ordner fehlgeschlagen"
     ordner = {teil.split("/", 1)[0] for teil in erfasst if "/" in teil and Path(teil).suffix in ENDUNGEN - {""}}
     assert sorted(ordner - set(ORDNER) - NICHT_GESCANNT) == []

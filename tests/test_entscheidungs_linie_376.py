@@ -16,6 +16,8 @@ from types import ModuleType
 
 import pytest
 
+from conftest import repo_dateien
+
 SKILL = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SKILL))
 
@@ -69,9 +71,9 @@ def test_aufseher_auftrag_traegt_linie_als_massstab() -> None:
 def test_linie_nur_an_einer_stelle_gepflegt() -> None:
     """Zweite Kopie im Skill (außer Tests/Belegen) → rot."""
     fundorte: dict[str, list[str]] = {m: [] for m in MERKMALE}
-    for datei in SKILL.rglob("*"):
+    for datei in repo_dateien(SKILL):
         teile = datei.relative_to(SKILL).parts
-        if not datei.is_file() or teile[0] in {".git", ".review", "tests", "docs"}:
+        if teile[0] in {".review", "tests", "docs"}:
             continue
         try:
             inhalt = datei.read_text(encoding="utf-8")
