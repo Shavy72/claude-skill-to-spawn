@@ -486,8 +486,8 @@ def test_weg_spawn_srv_nur_wache_tickets_probelauf_legen_kein_t0_an(
         gestartet = aufrufe.read_text(encoding="utf-8") if aufrufe.exists() else ""
         if args == ("--nur-wache",):
             assert "[trocken]" not in ausgabe, ausgabe
-            assert f"-n wache {e2.SPEC} " in gestartet, gestartet
-            assert "bau 901" not in gestartet, gestartet
+            assert f"-n wache {e2.SPEC} " in gestartet, (gestartet, ausgabe)
+            assert "bau 901" not in gestartet, (gestartet, ausgabe)
         if args == ("--tickets", "901"):
             # Start-Nachweis (#438): das Fenster bau 901 startet tatsächlich.
             assert "-n bau 901 " in gestartet, (gestartet, ausgabe)

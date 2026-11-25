@@ -76,8 +76,8 @@ if (-not (Get-Command wt -ErrorAction SilentlyContinue)) { throw "wt (Windows Te
 $hatTicketAuswahl = $Tickets.Count -gt 0
 if ($Tickets.Count -eq 0) {
     if (-not (Test-Path $manifest)) { throw "Manifest fehlt: $manifest — erst /to-tickets." }
-    $m = Get-Content $manifest -Raw | ConvertFrom-Json -AsHashtable
-    $Tickets = @($m.tickets.Keys | ForEach-Object { [int]$_ } | Sort-Object)
+    $m = Get-Content -LiteralPath $manifest -Raw -Encoding UTF8 | ConvertFrom-Json
+    $Tickets = if ($m -and $m.tickets) { @($m.tickets.PSObject.Properties | ForEach-Object { [int]$_.Name } | Sort-Object) } else { @() }
 }
 
 # Schon laufende Prozesse nie doppelt starten (Duplikat auf demselben Worktree = Gefahr, 17.09.2026 #187).
