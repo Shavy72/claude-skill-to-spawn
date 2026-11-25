@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from to_spawn import (
+    abgleich,
     arbeitsstand,
     aufpasser,
     aufseher_stand,
@@ -516,6 +517,8 @@ def verteilen(ap: argparse.ArgumentParser, args: argparse.Namespace) -> int:
         return briefkasten_cli.lauf(args)
     if args.befehl in helfer_temp.BEFEHLE:
         return helfer_temp.lauf(args)
+    if args.befehl in abgleich.BEFEHLE:
+        return abgleich.lauf(args)
     if args.befehl == "entscheidungen":
         return _entscheidungen(args)
     if args.befehl == "nest":

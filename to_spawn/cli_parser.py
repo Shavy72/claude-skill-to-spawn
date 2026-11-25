@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import NoReturn
 
 from to_spawn import (
+    abgleich,
     aufpasser,
     aufseher_stand,
     befund,
@@ -322,6 +323,7 @@ def baue_parser() -> _Parser:
     # Tür B (#278 P2): Befugnis prüfen, Frage einwerfen, Antwort lesen/schreiben, Liste je Spec.
     briefkasten_cli.richte_parser_ein(unter)
     helfer_temp.richte_parser_ein(unter)  # #551
+    abgleich.richte_parser_ein(unter)  # #561
     p_ents = unter.add_parser("entscheidungen", help="Liste aller Entscheidungen einer Spec")
     p_ents.add_argument("spec")
 

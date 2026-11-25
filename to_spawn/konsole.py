@@ -33,14 +33,22 @@ UNTERPROZESS_PFADE: _TextLesart = {"encoding": "utf-8", "errors": "surrogateesca
 
 
 def _text(wert: bytes | str | None) -> str:
-    return wert if isinstance(wert, str) else (wert or b"").decode("utf-8")
+    text = wert if isinstance(wert, str) else (wert or b"").decode("utf-8")
+    return text.replace("\r\n", "\n").replace("\r", "\n")
 
 
 def lauf_daten(befehl: list[str], **kwargs: Any) -> "subprocess.CompletedProcess[str] | None":
     """``subprocess.run`` mit Daten-Lesart (UTF-8 strict); ``None`` = Ausgabe nicht lesbar.
 
-    ``OSError``/``TimeoutExpired`` bleiben beim Aufrufer. Ein Nicht-UTF-8-Byte (z. B. Windows-Hinweis in
-    OEM-Kodierung) ist kein Absturz, sondern „nicht lesbar“: Aufräum- und Prüf-Wege laufen weiter.
+    Nur für Lese-/Prüf-Befehle mit gefangener Ausgabe — nie zum Starten von Sessions,
+    Terminals oder fremden Programmen (dafür gilt ``to_spawn.starter.starte``; der
+    AST-Prüf-Test in ``tests/test_starter_1406.py`` prüft auch Aufrufe von ``lauf_daten``).
+
+    Zeilenenden werden wie bei ``text=True`` auf LF vereinheitlicht (CRLF/CR → LF), damit
+    z. B. Docker- oder Windows-Fehlertexte kein ``\\r`` durchschleifen.
+    ``OSError``/``TimeoutExpired`` bleiben beim Aufrufer. Ein Nicht-UTF-8-Byte (z. B.
+    Windows-Hinweis in OEM-Kodierung) ist kein Absturz, sondern „nicht lesbar“: Aufräum-
+    und Prüf-Wege laufen weiter.
     """
     roh = subprocess.run(befehl, capture_output=True, **{**prozessbaum.fensterlos(), **kwargs})
     try:

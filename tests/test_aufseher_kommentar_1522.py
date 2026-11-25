@@ -27,6 +27,7 @@ ERLAUBT = {
     ("to_spawn/probesitz.py", "_aufraeumen"): "Probesitz-Wegwerf-Ticket, kein Aufseher",
     ("to_spawn/nest.py", ""): "Rechte-Liste ``Bash(gh issue comment:*)``, schreibt nichts",
     ("to_spawn/hooks.py", ""): "Ja-Sperre: Tabelle der Text-Schalter (#591), schreibt nichts",
+    ("to_spawn/erlaubt.py", ""): "Erlaubt-Liste der Verlauf-Prüfung (#389), schreibt nichts",
 }
 #: Ordner, die der Prüf-Test nicht liest (Tests stellen gh nach, der Rest ist kein Quelltext).
 AUSGENOMMEN = {"tests", ".git", ".venv", "venv", "__pycache__", ".pytest_cache"}

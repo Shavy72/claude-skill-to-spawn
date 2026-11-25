@@ -96,6 +96,10 @@ if ($zuBauenRc -ne 0) {
     $zuBauenRc = $LASTEXITCODE
 }
 $ErrorActionPreference = $eapVorher
+if ($zuBauenRc -ne 0 -and $zuBauen.Count -eq 0) {
+    Write-Host "Ticket-Stand nicht bestimmbar (gh-Fehler) — keine Tabs geöffnet." -ForegroundColor Red
+    exit 2
+}
 if ($zuBauenRc -ne 0) { Write-Host "Ticket-Stand nicht für alle Tickets bestimmbar — diese werden nicht gestartet." -ForegroundColor Yellow }
 $cmds = @()
 if (-not $OhneWache -and ($laufend -notcontains $Spec)) { $cmds += "wache $Spec" }
