@@ -130,6 +130,8 @@ def alter_s(pid: int) -> float | None:
     if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
         return None
     if _WINDOWS:
+        if pid >= 2**31:
+            return None
         try:
             start = _startzeit_windows(pid)
         except OSError:
