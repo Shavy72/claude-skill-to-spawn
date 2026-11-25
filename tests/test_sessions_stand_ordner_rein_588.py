@@ -9,18 +9,14 @@ Jetzt liest ``prozesse_linux`` den Ordner und gibt ihn am ``Prozess`` mit.
 from __future__ import annotations
 
 import importlib.util
-import json
 import os
 import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
-from types import ModuleType, SimpleNamespace
-from typing import Any
+from types import ModuleType
 
 import pytest
-
-from to_spawn import prozessbaum
 
 SKRIPTE = Path(__file__).resolve().parents[1] / "skripte"
 START = datetime(2026, 9, 17, 9, 13)
@@ -83,98 +79,115 @@ def test_prozesse_linux_gibt_arbeitsordner_mit(modul: ModuleType, tmp_path: Path
         kind.wait()
 
 
-def _windows_wmi_aufsetzen(
-    modul: ModuleType,
-    monkeypatch: pytest.MonkeyPatch,
-    rohe: Any,
-    befunde: dict[int, prozessbaum.ArbeitsordnerBefund] | Exception,
-    *,
-    lebende: set[int] | None = None,
+def test_prozesse_lesen_windows_liest_arbeitsordner_und_filtert_beendete(
+    modul: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Stellt den Windows-Zweig von ``prozesse_lesen`` ohne echtes PowerShell/PEB nach."""
+    """Windows: ``prozesse_lesen`` liest den PEB-Arbeitsordner und wirft beendete Prozesse raus.
+
+    Sonst meldet ``sessions_stand.py`` unter Windows ein ``bau.py 901`` aus einem fremden Repo
+    (z. B. paralleler Test-Worker) als laufend im eigenen Repo.
+    """
+    import json
+    from types import SimpleNamespace
+
+    eigen = tmp_path / "eigen"
+    fremd = tmp_path / "fremd"
+    eigen.mkdir()
+    fremd.mkdir()
+    modul.REPO = eigen
+
+    wmi = [
+        {"ProcessId": 401, "ParentProcessId": 1, "Name": "python.exe", "CommandLine": r"python.exe skripte\bau.py 901", "Start": ""},
+        {"ProcessId": 402, "ParentProcessId": 1, "Name": "python.exe", "CommandLine": r"python.exe skripte\bau.py 902", "Start": ""},
+        {"ProcessId": 403, "ParentProcessId": 1, "Name": "python.exe", "CommandLine": r"python.exe skripte\bau.py 903", "Start": ""},
+        {"ProcessId": 404, "ParentProcessId": 1, "Name": "python.exe", "CommandLine": r"python.exe skripte\bau.py 904", "Start": ""},
+    ]
+
+    def _peb_cwd(pid: int) -> str | None:
+        if pid == 401:
+            return str(fremd)
+        if pid == 402:
+            return None
+        if pid == 403:
+            return str(eigen)
+        raise OSError("PEB unlesbar")
+
     monkeypatch.setattr(modul.sys, "platform", "win32")
     monkeypatch.setattr(
         modul.subprocess,
         "run",
-        lambda *a, **k: SimpleNamespace(stdout=json.dumps(rohe)),
+        lambda *a, **k: SimpleNamespace(stdout=json.dumps(wmi)),
     )
-    if isinstance(befunde, Exception):
-        fehler = befunde
-
-        def _scheitert(_ordner: Path) -> dict[int, prozessbaum.ArbeitsordnerBefund]:
-            raise fehler
-
-        monkeypatch.setattr(modul.prozessbaum, "arbeitsordner_in_windows", _scheitert)
-    else:
-        monkeypatch.setattr(modul.prozessbaum, "arbeitsordner_in_windows", lambda _ordner: befunde)
-    aktiv = lebende if lebende is not None else set()
-    monkeypatch.setattr(modul.prozessbaum, "lebt", lambda pid: pid in aktiv)
-
-
-def test_windows_fremder_aufseher_zaehlt_nicht_als_eigenes_repo(
-    modul: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Windows: fremde ``wache.py 900`` (anderes Repo / Nachbar-Worker) darf eigenes ``Spec #900`` nicht blockieren."""
-    fremd = tmp_path.parent / "anderes-repo"
-    rohe = [
-        {"ProcessId": 4101, "ParentProcessId": 1, "Name": "python.exe", "CommandLine": "python skripte/wache.py 900"},
-        {"ProcessId": 4102, "ParentProcessId": 1, "Name": "python.exe", "CommandLine": "python skripte/bau.py 901"},
-        {"ProcessId": 4103, "ParentProcessId": 1, "Name": "python.exe", "CommandLine": "python skripte/bau.py 902"},
-        {"ProcessId": 4104, "ParentProcessId": 1, "Name": "python.exe", "CommandLine": "python skripte/bau.py 903"},
-    ]
-    befunde = {
-        4101: prozessbaum.ArbeitsordnerBefund(str(fremd), False),
-        4102: prozessbaum.ArbeitsordnerBefund(str(tmp_path), True),
-        # 4103 fehlt im Befund und lebt nicht mehr → bereits beendet (#494)
-        # 4104 hat unlesbare cwd, lebt aber noch → im Zweifel eigen
-        4104: prozessbaum.ArbeitsordnerBefund(None, None, "cwd unlesbar"),
-    }
-    _windows_wmi_aufsetzen(modul, monkeypatch, rohe, befunde, lebende={4101, 4102, 4104})
+    monkeypatch.setattr(modul.prozessbaum, "_arbeitsordner_windows", _peb_cwd)
+    monkeypatch.setattr(modul.prozessbaum, "_ist_weg_windows", lambda pid: pid == 402)
 
     alle = modul.prozesse_lesen()
-    assert [p.pid for p in alle] == [4101, 4102, 4104]
-    eintraege = {"900": modul.Eintrag("900", "spec", "Aufseher Spec #900")}
+    nach_pid = {p.pid: p for p in alle}
+    assert 402 not in nach_pid
+    assert nach_pid[401].ordner == fremd.resolve()
+    assert nach_pid[403].ordner == eigen.resolve()
+    assert nach_pid[404].ordner is None
+
+    eintraege = {n: modul.Eintrag(n, "ticket", f"Ticket {n}") for n in ("901", "902", "903", "904")}
     modul.zuordnen(eintraege, alle)
-    assert eintraege["900"].zustand == "aus"
-    assert eintraege["901"].zustand == "wartet"
-    assert "902" not in eintraege
+    assert eintraege["901"].zustand == "aus"
+    assert eintraege["902"].zustand == "aus"
     assert eintraege["903"].zustand == "wartet"
+    assert eintraege["904"].zustand == "wartet"
 
 
-def test_windows_einzelobjekt_json_und_junction_fremd_ordner(
+def test_prozesse_lesen_windows_einzelnes_json_objekt(
     modul: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Einzelnes JSON-Objekt aus ``ConvertTo-Json`` + ``drin=False`` trotz Text innerhalb ``REPO``."""
-    rohe = {
-        "ProcessId": 4201,
+    """PowerShell ``ConvertTo-Json`` liefert bei einem Treffer ein Objekt statt einer Liste."""
+    import json
+    from types import SimpleNamespace
+
+    eigen = tmp_path / "eigen"
+    eigen.mkdir()
+    modul.REPO = eigen
+    einzeln = {
+        "ProcessId": 501,
         "ParentProcessId": 1,
         "Name": "python.exe",
-        "CommandLine": "python skripte/wache.py 900",
+        "CommandLine": r"python.exe skripte\bau.py 905",
+        "Start": "",
     }
-    # Junction-Text sieht nach eigenem Repo aus, Griff-Identität sagt aber ``drin=False``.
-    befunde = {4201: prozessbaum.ArbeitsordnerBefund(str(tmp_path / "junction"), False)}
-    _windows_wmi_aufsetzen(modul, monkeypatch, rohe, befunde, lebende={4201})
+    monkeypatch.setattr(modul.sys, "platform", "win32")
+    monkeypatch.setattr(
+        modul.subprocess,
+        "run",
+        lambda *a, **k: SimpleNamespace(stdout=json.dumps(einzeln)),
+    )
+    monkeypatch.setattr(modul.prozessbaum, "_arbeitsordner_windows", lambda _pid: str(eigen))
+    monkeypatch.setattr(modul.prozessbaum, "_ist_weg_windows", lambda _pid: False)
 
     alle = modul.prozesse_lesen()
     assert len(alle) == 1
-    assert modul.ordner_fremd(alle[0].ordner) is True
-    eintraege = {"900": modul.Eintrag("900", "spec", "Aufseher Spec #900")}
-    modul.zuordnen(eintraege, alle)
-    assert eintraege["900"].zustand == "aus"
+    assert alle[0].pid == 501
+    assert alle[0].ordner == eigen.resolve()
 
 
-def test_windows_befund_fehler_faellt_sicher_ohne_absturz_zurueck(
-    modul: ModuleType, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Scheitert ``arbeitsordner_in_windows`` mit ``OSError``, bleibt die Liste lesbar (``ordner=None``)."""
-    rohe = [
-        {"ProcessId": 4301, "ParentProcessId": 1, "Name": "python.exe", "CommandLine": "python skripte/wache.py 900"}
-    ]
-    _windows_wmi_aufsetzen(modul, monkeypatch, rohe, OSError("Zugriff verweigert"), lebende={4301})
-
-    alle = modul.prozesse_lesen()
-    assert len(alle) == 1
-    assert alle[0].ordner is None
-    eintraege = {"900": modul.Eintrag("900", "spec", "Aufseher Spec #900")}
-    modul.zuordnen(eintraege, alle)
-    assert eintraege["900"].zustand == "startet"
+@pytest.mark.skipif(sys.platform != "win32", reason="braucht Windows (PEB)")
+def test_prozesse_windows_gibt_arbeitsordner_mit(modul: ModuleType, tmp_path: Path) -> None:
+    """Echter Kindprozess unter Windows: fremder Arbeitsordner wird über PEB erkannt und ausgeschlossen."""
+    eigen = tmp_path / "eigen"
+    fremd = tmp_path / "fremd"
+    eigen.mkdir()
+    fremd.mkdir()
+    modul.REPO = eigen
+    kind = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(30)", "skripte/bau.py", "901"],
+        cwd=str(fremd),
+    )
+    try:
+        alle = modul.prozesse_lesen()
+        treffer = [p for p in alle if p.pid == kind.pid]
+        assert len(treffer) == 1
+        assert treffer[0].ordner == fremd.resolve()
+        eintraege = {"901": modul.Eintrag("901", "ticket", "Kern bauen")}
+        modul.zuordnen(eintraege, treffer)
+        assert eintraege["901"].zustand == "aus"
+    finally:
+        kind.kill()
+        kind.wait()
