@@ -1,7 +1,7 @@
 """Aufpasser (Hausmeister) für Bau-Sessions im tmux — dünner Starter (#236).
 
 Aufruf (Cron alle 15 min oder von Hand):
-``python3 ~/.claude/skills/to-spawn/skripte/aufpasser.py [--trocken] [--tmux-socket NAME]
+``python3 "$TO_SPAWN_HOME/skripte/aufpasser.py" [--trocken] [--tmux-socket NAME]
 [--zustand DIR] [--hang-min N] [--bau-vorlage "…"] [--deploy-muster REGEX] [--cron-einrichten]``
 
 Die Logik lebt in ``to_spawn/aufpasser.py`` (Regeln, Sicherheitskette, Zustandsordner,

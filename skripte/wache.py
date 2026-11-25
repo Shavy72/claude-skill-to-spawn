@@ -303,12 +303,18 @@ def prompt_bauen(
     # aufseher_vorlage (#450 F5): Linux/Bau-Server kennt nur ``python3``.
     vorlage = startklar.aufseher_vorlage(_prompt_vorlage())
     text = vorlage.format(
-        S=spec, REPO=repo, DATUM=date.today().isoformat(), TAKT=max(600, takt), SKILL=startklar.skill_pfad()
+        S=spec,
+        REPO=repo,
+        DATUM=date.today().isoformat(),
+        TAKT=max(600, takt),
+        SKILL=startklar.skill_pfad(),
     )
     ziel_ordner = repo_ordner if repo_ordner is not None else REPO_ORDNER
     text = text.replace("<MANIFEST>", manifest.manifest_im_repo(ziel_ordner, spec))
-    return text.replace("<SSH>", str(konfig.get("ssh_ziel") or "bau-server")).replace(
-        "<SERVER_REPO>", str(konfig.get("server_repo") or "<server_repo fehlt in .to-spawn/config.json>")
+    return (
+        text.replace("<SSH>", str(konfig.get("ssh_ziel") or "bau-server"))
+        .replace("<SERVER_REPO>", str(konfig.get("server_repo") or "<server_repo fehlt in .to-spawn/config.json>"))
+        .replace("<FERN_SKILL>", config.fern_skill_pfad())
     )
 
 
@@ -419,7 +425,7 @@ B Ticket neu starten (Ticket steht auf „aus“)
   Erst mit `--dry-run` ansehen, dann ohne.
 C Stille Session: Eingriffs-Leiter (einziger Eingriffsweg, Regel „Hänger erkennen“)
   Per Ablöse-Subagent (`model: sonnet`, 1 Zeile Antwort): `python {SKILL}/to_spawn.py leiter {S} <N>` — erst `--dry-run`, dann ohne. Die Leiter merkt die Stufe, tippt nie in ein arbeitendes Fenster oder eine Rückfrage, stößt an, fordert den Handoff an und löst per Skill `respawn` ab (Ablöse-SOP Schritt 1–5). Stufe 3 ruft `{RESPAWN}` — nie direkt, nur über die Leiter. Exit 1 = du prüfst selbst (Zeile lesen; Bau-Server `pstree -p <PID>`, PC: Kinder-Spalte in Befehl A). Am PC (kein tmux) gibt es kein Anstupsen: die Leiter springt direkt zur Ablösung (Zeile „PC: Stufe 1 übersprungen“) — alte Session beenden, neuer Windows-Terminal-Tab `bau <N>` mit Remote Control und Handoff.
-  Auf dem Server läuft zusätzlich der Aufpasser (Cron, 15 min, Hausmeister für tote Fenster): `python3 ~/.claude/skills/to-spawn/skripte/aufpasser.py --trocken` (vom PC: `ssh <SSH> 'python3 ~/.claude/skills/to-spawn/skripte/aufpasser.py --trocken'`) zeigt, was er tun würde.
+  Auf dem Server läuft zusätzlich der Aufpasser (Cron, 15 min, Hausmeister für tote Fenster): `python3 <FERN_SKILL>/skripte/aufpasser.py --trocken` (vom PC: `ssh <SSH> 'python3 <FERN_SKILL>/skripte/aufpasser.py --trocken'`) zeigt, was er tun würde.
 D Session an der Smart-Zone-Grenze (Handoff-Grenze aus ~/.claude/smart-zone.json)
   Läuft sie noch: Befehl C — die Leiter erkennt die Grenze selbst und fährt die Ablöse-SOP (Stufe 3 = `{RESPAWN}`, nie direkt). Liegt schon ein Handoff, aber die Session ist tot / Ticket „aus“:
   `{NEUSTART} --handoff docs/handoffs/HANDOFF_<datum>_<N>.md --beenden` (Server: zusätzlich `--ziel srv`). Die neue Session startet mit dem Auftrag „Weiter ab Handoff …“.

@@ -78,8 +78,13 @@ GIT_TIMEOUT_S = 30
 UNVOLLSTAENDIG = "🔴 Datenlage unvollständig"
 #: Ort = (Statuszeile, rot). Rot = dort fehlen womöglich Daten.
 Ort = tuple[str, bool]
-#: Pfad dieses Skripts im installierten Skill auf dem Bau-Server.
-FERN_SKRIPT = "~/.claude/skills/to-spawn/skripte/rueckblick.py"
+
+
+def fern_skript() -> str:
+    """Pfad dieses Skripts im Skill auf dem Bau-Server (über :func:`config.fern_skill_pfad`, #786)."""
+    return config.fern_skill_pfad("skripte/rueckblick.py")
+
+
 #: Die vier Maßnahmen-Wege (E6), stärkster zuerst — Auftrag und Marker nennen sie nur von hier.
 WEGE = {
     1: "Prüf-Skript / capo-Regel / Hook",
@@ -331,7 +336,7 @@ def _bau_server(repo: Path, spec: int, tickets: list[str], ohne: bool) -> tuple[
     if not ziel:
         return {}, [("Bau-Server: nicht erreichbar (kein ssh_ziel in .to-spawn/config.json)", True)]
     name = f"Bau-Server {ziel}:{ordner}"
-    lauf = _ssh(ziel, f"cd {fern_ordner(ordner)} && python3 {FERN_SKRIPT} logs {spec} --repo .", SSH_TIMEOUT_S)
+    lauf = _ssh(ziel, f"cd {fern_ordner(ordner)} && python3 {fern_skript()} logs {spec} --repo .", SSH_TIMEOUT_S)
     if lauf is None:
         return {}, [(f"{name}: nicht erreichbar (keine Antwort nach {SSH_TIMEOUT_S} s oder ssh fehlt)", True)]
     if lauf.returncode == 2:
