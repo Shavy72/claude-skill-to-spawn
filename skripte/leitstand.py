@@ -307,6 +307,11 @@ def bau_zeilen(repo: Path, ticket: str) -> tuple[list[dict[str, Any]], float | N
 # ---------------------------------------------------------------- Ereignisse
 
 
+#: Ereignis-Arten und Ticket-Zustände für „braucht den Menschen“ (inkl. Übergangs-Alias für Alt-Stände).
+MENSCH_ARTEN: frozenset[str] = frozenset({"mensch", "david"})  # Übergangs-Alias (#325)
+BRAUCHT_MENSCH_ZUSTAENDE: frozenset[str] = frozenset({"braucht_mensch", "braucht_david"})  # Übergangs-Alias (#325)
+
+
 @dataclass
 class Ereignis:
     quelle: str
@@ -358,7 +363,7 @@ def aus_bau_log(ticket: str, zeilen: list[dict[str, Any]]) -> list[Ereignis]:
                 Ereignis(
                     quelle,
                     zeit,
-                    "david",
+                    "mensch",
                     f"#{nr} braucht den Menschen",
                     "Die Bau-Session kommt ohne dich nicht weiter. Bitte ins Fenster schauen.",
                     nr,
@@ -399,7 +404,7 @@ def aus_kommentaren(nummer: str, issue: dict[str, Any], spec: str) -> list[Ereig
             continue
         rein = body[len(kopf) :].lstrip()
         if "Mensch nötig" in body:
-            art = "david"
+            art = "mensch"
         elif re.search(r"\b(rot|Fehler|blockiert)\b", body):
             art = "problem"
         else:
@@ -410,15 +415,18 @@ def aus_kommentaren(nummer: str, issue: dict[str, Any], spec: str) -> list[Ereig
     return ergebnis
 
 
-def ohne_doppelte_david(aus_log: list[Ereignis], kommentare: list[Ereignis]) -> list[Ereignis]:
+def ohne_doppelte_mensch(aus_log: list[Ereignis], kommentare: list[Ereignis]) -> list[Ereignis]:
     """Bau-Log-„mensch_noetig“ weglassen, wenn der Aufseher binnen 5 Min dasselbe kommentiert hat."""
-    wache = [t for t in (als_zeit(e.zeit) for e in kommentare if e.art == "david") if t]
+    wache = [t for t in (als_zeit(e.zeit) for e in kommentare if e.art in MENSCH_ARTEN) if t]
 
     def doppelt(e: Ereignis) -> bool:
         zeit = als_zeit(e.zeit)
-        return e.art == "david" and zeit is not None and any(abs((w - zeit).total_seconds()) <= 300 for w in wache)
+        return e.art in MENSCH_ARTEN and zeit is not None and any(abs((w - zeit).total_seconds()) <= 300 for w in wache)
 
     return [e for e in aus_log if not doppelt(e)]
+
+
+ohne_doppelte_david = ohne_doppelte_mensch  # Übergangs-Alias (#325)
 
 
 # ---------------------------------------------------------------- Stand eines Tickets
@@ -429,7 +437,7 @@ def ticket_stand(
     prozess: str,
     issue: dict[str, Any],
     zeilen: list[dict[str, Any]],
-    david_zeiten: list[datetime],
+    mensch_zeiten: list[datetime],
     zustand: dict[str, Any],
 ) -> tuple[str, str | None]:
     """(zustand, phase) — Reihenfolge: fertig > verwaist > Gate rot > Mensch > läuft > wartet.
@@ -450,8 +458,8 @@ def ticket_stand(
     if letzte and letzte.get("typ") == "deploy_phase" and _ist_rot(letzte):
         return "fehler", kurz(f"Deploy rot: {felder_text(letzte, ('phase', 'grund'))}", 40)
     aktiv = [t for t in (als_zeit(z.get("ts")) for z in zeilen if z.get("typ") in AKTIVITAET) if t]
-    if david_zeiten and (not aktiv or max(david_zeiten) > max(aktiv)):
-        return "braucht_david", "Wartet auf den Menschen"
+    if mensch_zeiten and (not aktiv or max(mensch_zeiten) > max(aktiv)):
+        return "braucht_mensch", "Wartet auf den Menschen"
     phase = None
     if letzte is not None:
         typ = letzte.get("typ")
@@ -511,11 +519,11 @@ def berechne(
         zeilen, ist_k = zeilen_je_ticket.get(nr, ([], None))
         issue = issues.get(nr, {})
         kommentare = aus_kommentaren(nr, issue, spec)
-        ereignisse += kommentare + ohne_doppelte_david(aus_bau_log(nr, zeilen), kommentare)
-        david = [t for t in (als_zeit(e.zeit) for e in kommentare if e.art == "david") if t]
-        david += [t for t in (als_zeit(z.get("ts")) for z in zeilen if z.get("typ") == "mensch_noetig") if t]
-        stand, phase = ticket_stand(nr, prozesse.get(nr, "aus"), issue, zeilen, david, zustand)
-        if stand in ("läuft", "fertig", "braucht_david") and nr not in start:
+        ereignisse += kommentare + ohne_doppelte_mensch(aus_bau_log(nr, zeilen), kommentare)
+        mensch = [t for t in (als_zeit(e.zeit) for e in kommentare if e.art in MENSCH_ARTEN) if t]
+        mensch += [t for t in (als_zeit(z.get("ts")) for z in zeilen if z.get("typ") == "mensch_noetig") if t]
+        stand, phase = ticket_stand(nr, prozesse.get(nr, "aus"), issue, zeilen, mensch, zustand)
+        if stand in ("läuft", "fertig", *BRAUCHT_MENSCH_ZUSTAENDE) and nr not in start:
             erster = min((z.get("ts") for z in zeilen if z.get("typ") == "session_start"), default=None)
             start[nr] = lokal_iso(erster) or jetzt_iso()
         gelesen = "state" in issue  # Lesefehler: letzten bekannten Wert behalten, nichts raten

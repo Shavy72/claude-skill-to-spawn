@@ -183,7 +183,7 @@ def _gruppe(erg: hausmeister.Ergebnis) -> str:
         return _GRUPPEN[1]
     if erg.ticket is None:
         return _GRUPPEN[3]
-    if erg.fuer_david:
+    if erg.fuer_mensch:
         return _GRUPPEN[4]
     return _GRUPPEN[2]
 

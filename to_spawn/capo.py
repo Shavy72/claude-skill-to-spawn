@@ -1637,7 +1637,7 @@ def checkpoint_frage_zeit(zeilen: list[dict[str, Any]], kommentare: list[dict[st
     return max(echte) if echte else None
 
 
-def davids_antwort(kommentare: list[dict[str, Any]], seit: datetime) -> str:
+def mensch_antwort(kommentare: list[dict[str, Any]], seit: datetime) -> str:
     """Login des ersten Kommentars nach ``seit`` ohne Session- oder Aufseher-Marke.
 
     ``""`` = keine Antwort. Der Login trennt nicht (gleiches gh-Konto, #402) — nur die
@@ -1654,6 +1654,9 @@ def davids_antwort(kommentare: list[dict[str, Any]], seit: datetime) -> str:
             continue
         return autor or "jemand"
     return ""
+
+
+davids_antwort = mensch_antwort  # Übergangs-Alias (#325)
 
 
 def annahme_schon_gesetzt(kommentare: list[dict[str, Any]]) -> bool:
@@ -1741,7 +1744,7 @@ def _checkpoint(
     wartet = (jetzt - seit).total_seconds() / 60
     if wartet <= frist:
         return [f"#{n} Checkpoint wartet ({wartet:.0f} von {frist:.0f} min)"]
-    antwort = davids_antwort(kommentare, seit)
+    antwort = mensch_antwort(kommentare, seit)
     if antwort:
         # Ohne Marke heißt nur: nicht von einer Session mit neuem Prompt — kann der Mensch
         # sein oder eine Session mit altem Prompt („Probesitz beendet:“). Sichere Richtung.

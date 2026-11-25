@@ -5,8 +5,8 @@
 :root{
   --bg:#e3e6e0; --panel:#f5f6f2; --panel-2:#ebede7; --ink:#161a18; --muted:#566058; --faint:#879089;
   --line:#d0d5cd; --line-2:#b8bfb5; --track:#2a302c; --track-idle:#a2aaa3; --enamel:#1f3a2f; --enamel-ink:#f1f4ee;
-  --wait:#848c86; --run:#1f63d6; --done:#17804a; --david:#c27400; --err:#c42b2b; --befund:#4b6475;
-  --run-soft:rgba(31,99,214,.12); --david-soft:rgba(194,116,0,.14); --err-soft:rgba(196,43,43,.10); --done-soft:rgba(23,128,74,.11);
+  --wait:#848c86; --run:#1f63d6; --done:#17804a; --mensch:#c27400; --err:#c42b2b; --befund:#4b6475;
+  --run-soft:rgba(31,99,214,.12); --mensch-soft:rgba(194,116,0,.14); --err-soft:rgba(196,43,43,.10); --done-soft:rgba(23,128,74,.11);
   /* Naht-Farben: ruhige Akzente, bewusst abseits der Zustandsfarben */
   --n1:#0b7a84; --n2:#6b4bbd; --n3:#a13d6d; --nA:#8a6c3f; --n0:#7d867f;
   --shadow:0 1px 0 rgba(0,0,0,.04), 0 8px 22px -14px rgba(20,30,25,.35);
@@ -20,8 +20,8 @@
   :root:not([data-theme="light"]){
     --bg:#0e1210; --panel:#161b18; --panel-2:#1c221f; --ink:#e4e9e3; --muted:#9aa59d; --faint:#687269;
     --line:#262d29; --line-2:#36403a; --track:#c8d0c9; --track-idle:#3c463f; --enamel:#1d3a2d; --enamel-ink:#e6efe8;
-    --wait:#727c75; --run:#5a9dff; --done:#3cc278; --david:#ffae1f; --err:#ff5b52; --befund:#93aabb;
-    --run-soft:rgba(90,157,255,.14); --david-soft:rgba(255,174,31,.13); --err-soft:rgba(255,91,82,.12); --done-soft:rgba(60,194,120,.12);
+    --wait:#727c75; --run:#5a9dff; --done:#3cc278; --mensch:#ffae1f; --err:#ff5b52; --befund:#93aabb;
+    --run-soft:rgba(90,157,255,.14); --mensch-soft:rgba(255,174,31,.13); --err-soft:rgba(255,91,82,.12); --done-soft:rgba(60,194,120,.12);
     --n1:#46c1ca; --n2:#a893f0; --n3:#e585b5; --nA:#d2b489; --n0:#7f8a82;
     --shadow:0 1px 0 rgba(255,255,255,.03), 0 12px 26px -16px rgba(0,0,0,.85);
     --focus:#7fb3ff; color-scheme:dark;
@@ -30,8 +30,8 @@
 :root[data-theme="dark"]{
   --bg:#0e1210; --panel:#161b18; --panel-2:#1c221f; --ink:#e4e9e3; --muted:#9aa59d; --faint:#687269;
   --line:#262d29; --line-2:#36403a; --track:#c8d0c9; --track-idle:#3c463f; --enamel:#1d3a2d; --enamel-ink:#e6efe8;
-  --wait:#727c75; --run:#5a9dff; --done:#3cc278; --david:#ffae1f; --err:#ff5b52; --befund:#93aabb;
-  --run-soft:rgba(90,157,255,.14); --david-soft:rgba(255,174,31,.13); --err-soft:rgba(255,91,82,.12); --done-soft:rgba(60,194,120,.12);
+  --wait:#727c75; --run:#5a9dff; --done:#3cc278; --mensch:#ffae1f; --err:#ff5b52; --befund:#93aabb;
+  --run-soft:rgba(90,157,255,.14); --mensch-soft:rgba(255,174,31,.13); --err-soft:rgba(255,91,82,.12); --done-soft:rgba(60,194,120,.12);
   --n1:#46c1ca; --n2:#a893f0; --n3:#e585b5; --nA:#d2b489; --n0:#7f8a82;
   --shadow:0 1px 0 rgba(255,255,255,.03), 0 12px 26px -16px rgba(0,0,0,.85);
   --focus:#7fb3ff; color-scheme:dark;
@@ -79,7 +79,7 @@ h1 .specnr{color:var(--muted);font-weight:600}
 
 .beispiel{display:none;font-size:13.5px;background:var(--panel-2);border:1px dashed var(--line-2);padding:7px 12px;border-radius:4px;color:var(--muted);margin:0}
 .beispiel.an{display:block}
-.stand-alt{margin:0;font-size:13.5px;color:var(--ink);background:var(--david-soft);border:1px solid color-mix(in srgb,var(--david) 45%,var(--line));border-left:3px solid var(--david);padding:7px 12px;border-radius:4px}
+.stand-alt{margin:0;font-size:13.5px;color:var(--ink);background:var(--mensch-soft);border:1px solid color-mix(in srgb,var(--mensch) 45%,var(--line));border-left:3px solid var(--mensch);padding:7px 12px;border-radius:4px}
 .stand-alt[hidden]{display:none}
 
 /* Anzeige-Tafeln */
@@ -90,10 +90,10 @@ h1 .specnr{color:var(--muted);font-weight:600}
 .tafel .unter{font-size:13.5px;color:var(--muted)}
 .tafel.run{background:linear-gradient(0deg,var(--run-soft),var(--run-soft)),var(--panel)}
 .tafel.run .wert{color:var(--run)}
-.tafel.david{border-color:color-mix(in srgb,var(--david) 55%,var(--line));background:linear-gradient(0deg,var(--david-soft),var(--david-soft)),var(--panel)}
-.tafel.david.null{border-color:var(--line);background:var(--panel)}
-.tafel.david .wert{color:var(--david)}
-.tafel.david.null .wert{color:var(--ink)}
+.tafel.mensch{border-color:color-mix(in srgb,var(--mensch) 55%,var(--line));background:linear-gradient(0deg,var(--mensch-soft),var(--mensch-soft)),var(--panel)}
+.tafel.mensch.null{border-color:var(--line);background:var(--panel)}
+.tafel.mensch .wert{color:var(--mensch)}
+.tafel.mensch.null .wert{color:var(--ink)}
 .schiene{height:8px;background:var(--panel-2);border:1px solid var(--line);border-radius:2px;overflow:hidden;position:relative;margin:2px 0}
 .schiene i{position:absolute;inset:0 auto 0 0;background:var(--done);transition:width .6s ease}
 .schiene i.lauf{background:repeating-linear-gradient(90deg,var(--run) 0 6px,transparent 6px 9px);opacity:.55}
@@ -150,9 +150,9 @@ h1 .specnr{color:var(--muted);font-weight:600}
 .gleis{fill:none;stroke:var(--track-idle);stroke-width:3;stroke-linecap:round;stroke-linejoin:round}
 .gleis.frei{stroke:var(--track)}
 .gleis.fertig{stroke:var(--done)}
-.gleis.ziel-david{stroke:var(--david)}
+.gleis.ziel-mensch{stroke:var(--mensch)}
 .fluss{fill:none;stroke:var(--run);stroke-width:3;stroke-linecap:round;stroke-dasharray:2 12;animation:fluss 1.1s linear infinite}
-.fluss.david{stroke:var(--david)}
+.fluss.mensch{stroke:var(--mensch)}
 @keyframes fluss{from{stroke-dashoffset:28}to{stroke-dashoffset:0}}
 .weiche{fill:var(--panel);stroke:var(--track);stroke-width:2}
 .sweep{fill:none;stroke:var(--run);stroke-width:4;stroke-linecap:round;stroke-dasharray:60 3000;stroke-dashoffset:60;animation:sweep 1.4s ease-out forwards;opacity:.9}
@@ -172,7 +172,7 @@ h1 .specnr{color:var(--muted);font-weight:600}
 .knoten .titel{font-family:var(--f-body);font-size:13.5px;font-weight:600;fill:var(--ink)}
 .knoten .status{font-family:var(--f-mono);font-size:11px;fill:var(--muted)}
 .knoten .phase-t{font-family:var(--f-body);font-size:12px;font-style:italic;fill:var(--muted)}
-.knoten .phase-t.cp{fill:var(--david);font-style:normal;font-weight:600}
+.knoten .phase-t.cp{fill:var(--mensch);font-style:normal;font-weight:600}
 .knoten .pb-bg{fill:var(--panel-2);stroke:var(--line)}
 .knoten .pb{transition:width .8s ease}
 .lampe{stroke:rgba(0,0,0,.3);stroke-width:1}
@@ -180,14 +180,14 @@ h1 .specnr{color:var(--muted);font-weight:600}
 .knoten.z-laeuft .koerper{stroke:var(--run)}
 .knoten.z-laeuft .halo{stroke:var(--run);animation:halo 1.8s ease-out infinite}
 @keyframes halo{0%{transform:scale(1);opacity:.9}100%{transform:scale(2.6);opacity:0}}
-.knoten.z-david .koerper{stroke:var(--david);stroke-width:2.5}
-.knoten.z-david .lampe{animation:blink 1s steps(1) infinite}
+.knoten.z-mensch .koerper{stroke:var(--mensch);stroke-width:2.5}
+.knoten.z-mensch .lampe{animation:blink 1s steps(1) infinite}
 @keyframes blink{0%,60%{opacity:1}60.01%,100%{opacity:.3}}
 .knoten.z-fehler .koerper{stroke:var(--err);stroke-width:2}
 .knoten.z-fertig .koerper{stroke:var(--done)}
-.knoten.checkpoint .mensch{fill:var(--david)}
+.knoten.checkpoint .mensch{fill:var(--mensch)}
 .lampentest .knoten .lampe{animation:lampentest 1.2s steps(1) 1}
-@keyframes lampentest{0%{fill:var(--done)}25%{fill:var(--david)}50%{fill:var(--err)}75%{fill:var(--run)}}
+@keyframes lampentest{0%{fill:var(--done)}25%{fill:var(--mensch)}50%{fill:var(--err)}75%{fill:var(--run)}}
 
 /* Detail */
 .detail{border-top:2px solid var(--track);padding:18px;display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);gap:16px 28px;background:linear-gradient(0deg,color-mix(in srgb,var(--nc,transparent) 5%,transparent),color-mix(in srgb,var(--nc,transparent) 5%,transparent))}
@@ -217,7 +217,7 @@ h1 .specnr{color:var(--muted);font-weight:600}
 .fahrplan{background:var(--panel);border:1px solid var(--line);border-radius:6px;box-shadow:var(--shadow);padding:14px 16px 12px;display:flex;flex-direction:column;gap:12px}
 .prognose{display:flex;flex-wrap:wrap;gap:6px 26px;font-size:14px}
 .prognose b{font-family:var(--f-mono);font-variant-numeric:tabular-nums;font-size:17px}
-.prognose .dav b{color:var(--david)}
+.prognose .mensch b{color:var(--mensch)}
 .zl{padding-bottom:18px;display:grid;grid-template-columns:minmax(130px,250px) minmax(0,1fr);gap:0;position:relative}
 .zl-achse{grid-column:2;position:relative;height:20px;border-bottom:1px solid var(--line)}
 .zl-achse span{position:absolute;top:0;transform:translateX(-50%);font-family:var(--f-mono);font-size:10.5px;color:var(--faint);white-space:nowrap}
@@ -229,7 +229,7 @@ h1 .specnr{color:var(--muted);font-weight:600}
 .zl-bahn .soll{position:absolute;top:10px;height:12px;border:1.5px dashed var(--nc);border-radius:2px;background:color-mix(in srgb,var(--nc) 8%,transparent)}
 .zl-bahn .ist{position:absolute;top:14px;height:8px;border-radius:2px;background:var(--run)}
 .zl-bahn .ist.fertig{background:var(--done)}
-.zl-bahn .ist.david{background:var(--david)}
+.zl-bahn .ist.mensch{background:var(--mensch)}
 .zl-bahn .ist.fehler{background:var(--err)}
 .zl-bahn .ist.laeuft{box-shadow:0 0 0 3px var(--run-soft)}
 .zl-bahn .zahl{position:absolute;top:25px;font-family:var(--f-mono);font-size:10.5px;color:var(--muted);white-space:nowrap}
@@ -237,9 +237,9 @@ h1 .specnr{color:var(--muted);font-weight:600}
 .jetzt::before{content:"jetzt";position:absolute;bottom:-17px;left:3px;font-family:var(--f-mono);font-size:10px;color:var(--err);background:var(--panel);padding:0 2px}
 
 /* Meldungsleiste (offene Punkte für den Menschen) */
-.meldung{display:flex;align-items:center;gap:8px 14px;flex-wrap:wrap;margin:0;font-size:14px;color:var(--ink);background:var(--david-soft);border:1px solid color-mix(in srgb,var(--david) 35%,var(--line));border-radius:6px;padding:8px 12px}
+.meldung{display:flex;align-items:center;gap:8px 14px;flex-wrap:wrap;margin:0;font-size:14px;color:var(--ink);background:var(--mensch-soft);border:1px solid color-mix(in srgb,var(--mensch) 35%,var(--line));border-radius:6px;padding:8px 12px}
 .meldung[hidden]{display:none}
-.meldung .m-punkt{width:8px;height:8px;border-radius:50%;background:var(--david);flex:none}
+.meldung .m-punkt{width:8px;height:8px;border-radius:50%;background:var(--mensch);flex:none}
 .meldung .m-text{flex:1 1 220px;min-width:0;overflow-wrap:anywhere}
 .meldung .m-text b{font-weight:600}
 .knopf-klein{appearance:none;font:inherit;font-size:13px;background:var(--panel);border:1px solid var(--line-2);border-radius:4px;padding:4px 11px;cursor:pointer;white-space:nowrap;color:var(--ink)}
@@ -254,10 +254,10 @@ h1 .specnr{color:var(--muted);font-weight:600}
 .log-liste{list-style:none;margin:0;padding:0;border:1px solid var(--line);border-radius:6px;background:var(--panel);overflow:hidden}
 .log-e{display:grid;grid-template-columns:4px 58px minmax(0,1fr) auto;gap:2px 12px;align-items:start;padding:8px 12px 8px 0;border-bottom:1px solid var(--line);transition:background .4s ease}
 .log-e:last-child{border-bottom:0}
-.log-e.art-david{background:color-mix(in srgb,var(--david) 6%,var(--panel))}
+.log-e.art-mensch{background:color-mix(in srgb,var(--mensch) 6%,var(--panel))}
 .log-e.art-problem{background:color-mix(in srgb,var(--err) 5%,var(--panel))}
 .log-e.erledigt{background:var(--panel);opacity:.62}
-.log-e.blitz{background:var(--david-soft)}
+.log-e.blitz{background:var(--mensch-soft)}
 .log-e:focus{outline:none}
 .log-e .strich{grid-column:1;grid-row:1/3;align-self:stretch;background:var(--ac)}
 .log-e .zeit{grid-column:2;grid-row:1/3;font-family:var(--f-mono);font-size:12.5px;display:flex;flex-direction:column;line-height:1.3;padding-top:1px}
@@ -377,7 +377,7 @@ h1 .specnr{color:var(--muted);font-weight:600}
   .gl-inhalt{display:flex;flex-direction:column;gap:3px;min-width:0}
   .gl-titel{font-size:15px;font-weight:600;line-height:1.3;overflow-wrap:anywhere}
   .gl-titel b{font-family:var(--f-mono);font-weight:600;color:var(--muted)}
-  .gl-cp{font-size:12.5px;font-weight:600;color:var(--david)}
+  .gl-cp{font-size:12.5px;font-weight:600;color:var(--mensch)}
   .gl-phase{font-size:13px;font-style:italic;color:var(--muted);overflow-wrap:anywhere}
   .gl-status{font-size:13px;font-weight:500;color:var(--zc)}
   .gl-zeile.z-wartet .gl-status,.gl-zeile.z-blockiert .gl-status,.gl-zeile.z-bereit .gl-status{color:var(--muted)}
@@ -461,10 +461,10 @@ h1 .specnr{color:var(--muted);font-weight:600}
       <span class="wert" id="t-laeuft">0</span>
       <span class="unter" id="t-laeuft-unter">–</span>
     </div>
-    <div class="tafel david null" id="t-david-tafel">
+    <div class="tafel mensch null" id="t-mensch-tafel">
       <span class="lbl">Brauchst du mich?</span>
-      <span class="wert" id="t-david">0</span>
-      <span class="unter" id="t-david-unter">–</span>
+      <span class="wert" id="t-mensch">0</span>
+      <span class="unter" id="t-mensch-unter">–</span>
     </div>
     <div class="tafel">
       <span class="lbl">Wann fertig?</span>
@@ -579,7 +579,7 @@ h1 .specnr{color:var(--muted);font-weight:600}
       },
       // Einträge aus Collection "log", neueste zuerst
       log: [
-        { zeit: iso(now - 4 * MIN), art: "david", ticket: 377, titel: "Review ohne Beleg", text: "#377 hat ein Review angefordert, aber keinen Beleg geschrieben." },
+        { zeit: iso(now - 4 * MIN), art: "mensch", ticket: 377, titel: "Review ohne Beleg", text: "#377 hat ein Review angefordert, aber keinen Beleg geschrieben." },
         { zeit: iso(now - 5 * MIN), art: "problem", ticket: 379, titel: "Blockiert", text: "#379 ist blockiert, bis #378 fertig ist." },
         { zeit: iso(now - 6 * MIN), art: "info", ticket: 377, titel: "Fertig", text: "#377 ist fertig, Tests sind grün." },
         { zeit: iso(now - 14 * MIN), art: "befund", ticket: 377, titel: "Entscheidung", text: "#377 nutzt die vorhandene Rollen-Liste statt einer neuen Tabelle." },
@@ -629,9 +629,14 @@ h1 .specnr{color:var(--muted);font-weight:600}
   const kommaZahl = (n) => String(n).replace(".", ",");
   const nrListe = (arr) => "#" + arr.join(", #");
   const STUFEN = ["offen", "fertig_gebaut", "zu", "verworfen"];
-  const ZWORT = { wartet: "wartet", blockiert: "blockiert", bereit: "bereit", "läuft": "läuft", fertig: "fertig", braucht_david: "braucht dich", fehler: "Fehler" };
-  const ZFARBE = { wartet: "var(--wait)", blockiert: "var(--wait)", bereit: "var(--wait)", "läuft": "var(--run)", fertig: "var(--done)", braucht_david: "var(--david)", fehler: "var(--err)" };
-  const ZKLASSE = { "läuft": "z-laeuft", fertig: "z-fertig", braucht_david: "z-david", fehler: "z-fehler" };
+  const ZUSTAND_ALIAS = { braucht_david: "braucht_mensch" }; // Übergangs-Alias (#325)
+  const normZustand = (z) => {
+    const n = ZUSTAND_ALIAS[z] || z;
+    return ["wartet", "läuft", "fertig", "braucht_mensch", "fehler"].includes(n) ? n : "wartet";
+  };
+  const ZWORT = { wartet: "wartet", blockiert: "blockiert", bereit: "bereit", "läuft": "läuft", fertig: "fertig", braucht_mensch: "braucht dich", fehler: "Fehler" };
+  const ZFARBE = { wartet: "var(--wait)", blockiert: "var(--wait)", bereit: "var(--wait)", "läuft": "var(--run)", fertig: "var(--done)", braucht_mensch: "var(--mensch)", fehler: "var(--err)" };
+  const ZKLASSE = { "läuft": "z-laeuft", fertig: "z-fertig", braucht_mensch: "z-mensch", fehler: "z-fehler" };
 
   function normTicket(raw, idFallback) {
     const r = raw || {};
@@ -641,7 +646,7 @@ h1 .specnr{color:var(--muted);font-weight:600}
       nr, titel: String(r.titel || "Ticket " + nr), kurz: String(r.kurz || ""),
       art: r.art === "checkpoint" ? "checkpoint" : "bau",
       blocked_by: Array.isArray(r.blocked_by) ? r.blocked_by.map(Number).filter(Number.isFinite) : [],
-      zustand: ["wartet", "läuft", "fertig", "braucht_david", "fehler"].includes(r.zustand) ? r.zustand : "wartet",
+      zustand: normZustand(r.zustand),
       schaetzung_k: zahl(r.schaetzung_k, 0), ist_k: zahl(r.ist_k, null), erwartet_min: zahl(r.erwartet_min, 30),
       stufe: STUFEN.includes(r.stufe) ? r.stufe : r.ende ? "zu" : r.zustand === "fertig" ? "fertig_gebaut" : "offen",
       start: r.start || null, ende: r.ende || null, gebaut: r.gebaut || null, liefert: String(r.liefert || ""), beweis: String(r.beweis || ""),
@@ -730,7 +735,7 @@ h1 .specnr{color:var(--muted);font-weight:600}
     if (t.zustand === "fertig") return 100;
     if (t.fortschritt != null) return Math.max(0, Math.min(100, t.fortschritt));
     if (t.zustand === "wartet") return 0;
-    if (t.zustand === "braucht_david") return 95;
+    if (t.zustand === "braucht_mensch") return 95;
     const s = ts(t.start);
     const zeit = s != null && t.erwartet_min > 0 ? (now - s) / (t.erwartet_min * MIN) : 0;
     const f = zahl(meta && meta.faktor, 1) || 1;
@@ -749,7 +754,7 @@ h1 .specnr{color:var(--muted);font-weight:600}
   function prognose(now) {
     const t0 = ts(meta && meta.gestartet) ?? now;
     const plan = new Map();
-    let ende = t0, davidAb = null, davidJetzt = false;
+    let ende = t0, menschAb = null, menschJetzt = false;
     for (const t of model.reihenfolge) {
       let frei = t0;
       t.blocked_by.forEach((b) => { const p = plan.get(b); if (p) frei = Math.max(frei, p.pe); });
@@ -761,10 +766,10 @@ h1 .specnr{color:var(--muted);font-weight:600}
       else { ps = s ?? frei; pe = Math.max(ps + erw, now + (t.zustand === "läuft" ? 60000 : 0)); }
       plan.set(t.nr, { ps, pe });
       ende = Math.max(ende, pe);
-      if (t.zustand === "braucht_david") davidJetzt = true;
-      if (t.art === "checkpoint" && t.zustand !== "fertig") davidAb = davidAb == null ? ps : Math.min(davidAb, ps);
+      if (t.zustand === "braucht_mensch") menschJetzt = true;
+      if (t.art === "checkpoint" && t.zustand !== "fertig") menschAb = menschAb == null ? ps : Math.min(menschAb, ps);
     }
-    return { t0, plan, ende, davidAb, davidJetzt };
+    return { t0, plan, ende, menschAb, menschJetzt };
   }
 
   /* ---------- Text messen (für Umbruch ohne Kürzen) ---------- */
@@ -818,7 +823,7 @@ h1 .specnr{color:var(--muted);font-weight:600}
     let zst = "offen";
     if (n && fertig === n) zst = "fertig";
     else if (liste.some((t) => t.zustand === "fehler")) zst = "fehler";
-    else if (liste.some((t) => t.zustand === "braucht_david")) zst = "david";
+    else if (liste.some((t) => t.zustand === "braucht_mensch")) zst = "mensch";
     else if (liste.some((t) => t.zustand !== "wartet")) zst = "läuft";
     // Einstieg: Tickets ohne Vorgänger in derselben Phase
     const inPhase = new Set(liste.map((t) => t.nr));
@@ -836,7 +841,7 @@ h1 .specnr{color:var(--muted);font-weight:600}
     }
     return { liste, n, fertig, zst, ueber };
   }
-  const PZ = { offen: ["noch nicht dran", "var(--wait)"], "läuft": ["läuft", "var(--run)"], fertig: ["fertig", "var(--done)"], david: ["braucht dich", "var(--david)"], fehler: ["Fehler", "var(--err)"] };
+  const PZ = { offen: ["noch nicht dran", "var(--wait)"], "läuft": ["läuft", "var(--run)"], fertig: ["fertig", "var(--done)"], mensch: ["braucht dich", "var(--mensch)"], fehler: ["Fehler", "var(--err)"] };
   const icoPfeil = '<svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 8h10M8.5 4 12.5 8l-4 4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
   const icoHaken = '<svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8.5 6.5 12 13 4.5" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 
@@ -868,7 +873,7 @@ h1 .specnr{color:var(--muted);font-weight:600}
 
   /* ---------- Legende (sticky) ---------- */
   function renderLegende() {
-    const z = [["var(--wait)", "wartet"], ["var(--run)", "läuft"], ["var(--done)", "fertig"], ["var(--david)", "braucht dich"], ["var(--err)", "Fehler"]];
+    const z = [["var(--wait)", "wartet"], ["var(--run)", "läuft"], ["var(--done)", "fertig"], ["var(--mensch)", "braucht dich"], ["var(--err)", "Fehler"]];
     const html =
       '<span class="lg-gruppe"><b>Zustand</b>' + z.map(([f, w]) => '<span class="lg"><i class="punkt" style="background:' + f + '"></i>' + w + "</span>").join("") + "</span>" +
       '<i class="lg-trenner" aria-hidden="true"></i>' +
@@ -1025,11 +1030,11 @@ h1 .specnr{color:var(--muted);font-weight:600}
       let cls = "gleis";
       if (a.zustand === "fertig" && t.zustand === "fertig") cls += " fertig";
       else if (a.zustand === "fertig") cls += " frei";
-      if (t.art === "checkpoint" && a.zustand === "fertig") cls += " ziel-david";
+      if (t.art === "checkpoint" && a.zustand === "fertig") cls += " ziel-mensch";
       el("path", { d, class: cls }, gleise);
       sweeps.push(d);
-      const aktiv = a.zustand === "fertig" && (t.zustand === "läuft" || t.zustand === "braucht_david");
-      if (aktiv) el("path", { d, class: "fluss" + (t.zustand === "braucht_david" ? " david" : "") }, flussG);
+      const aktiv = a.zustand === "fertig" && (t.zustand === "läuft" || t.zustand === "braucht_mensch");
+      if (aktiv) el("path", { d, class: "fluss" + (t.zustand === "braucht_mensch" ? " mensch" : "") }, flussG);
       const wk = pts[pts.length - 2][0] + "," + pts[pts.length - 1][1];
       weichen.set(wk, (weichen.get(wk) || 0) + 1);
     }));
@@ -1103,7 +1108,7 @@ h1 .specnr{color:var(--muted);font-weight:600}
     if (z === "blockiert") return "wartet auf " + nrListe(offeneBlocker(t));
     if (z === "bereit") return "bereit · wartet auf Platz";
     if (z === "fertig") { const a = ts(t.start), e = fertigUm(t); return "fertig" + (a != null && e != null ? " · " + dauer(e - a) : ""); }
-    if (z === "braucht_david") return "Du bist dran";
+    if (z === "braucht_mensch") return "Du bist dran";
     if (z === "fehler") return "Fehler · " + p + " %";
     if (z === "läuft") return p + " % · " + restText(t, now);
     return ZWORT[z] || z;
@@ -1158,7 +1163,7 @@ h1 .specnr{color:var(--muted);font-weight:600}
       s = "fertig" + (a != null && e != null ? " · " + dauer(e - a) : "");
       return breiteVon(s, FONT_STATUS) > W - 20 ? "fertig" : s;
     }
-    if (z === "braucht_david") return "Du bist dran";
+    if (z === "braucht_mensch") return "Du bist dran";
     if (z === "fehler") return "Fehler · " + p + " %";
     s = p + " % · " + restText(t, now);
     if (breiteVon(s, FONT_STATUS) > W - 20) s = p + " %";
@@ -1192,7 +1197,7 @@ h1 .specnr{color:var(--muted);font-weight:600}
       '<div class="d-kopf"><div class="links">' +
         '<div class="chipreihe"><span class="chip" style="color:' + ZFARBE[z] + '">' + esc(ZWORT[z]) + "</span>" +
         '<span class="chip naht">' + esc(p.key === "A" || p.key === "0" ? p.name : p.label + " · " + p.name) + "</span>" +
-        (t.art === "checkpoint" ? '<span class="chip" style="color:var(--david)"><svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="4" r="3.2" fill="currentColor"/><path d="M2 16c0-4 2.7-6.6 6-6.6s6 2.6 6 6.6z" fill="currentColor"/></svg>Hier brauchen wir dich</span>' : "") +
+        (t.art === "checkpoint" ? '<span class="chip" style="color:var(--mensch)"><svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="4" r="3.2" fill="currentColor"/><path d="M2 16c0-4 2.7-6.6 6-6.6s6 2.6 6 6.6z" fill="currentColor"/></svg>Hier brauchen wir dich</span>' : "") +
         '<span class="chip num" style="color:var(--muted)" id="d-pct">' + pct + " %</span></div>" +
         "<h3>#" + t.nr + " " + esc(t.titel) + "</h3>" +
         (t.phase ? '<p style="color:var(--muted);font-style:italic">Gerade: ' + esc(t.phase) + "</p>" : "") +
@@ -1264,13 +1269,13 @@ h1 .specnr{color:var(--muted);font-weight:600}
       html += '<span class="soll" style="left:' + pos(sollStart) + "%;width:" + Math.max(0.6, pos(sollEnde) - pos(sollStart)) + '%" title="geplant ' + t.erwartet_min + ' Min"></span>';
       if (s != null) {
         const ie = e ?? now;
-        const cls = t.zustand === "fertig" ? "fertig" : t.zustand === "braucht_david" ? "david" : t.zustand === "fehler" ? "fehler" : "laeuft";
+        const cls = t.zustand === "fertig" ? "fertig" : t.zustand === "braucht_mensch" ? "mensch" : t.zustand === "fehler" ? "fehler" : "laeuft";
         html += '<span class="ist ' + cls + '" style="left:' + pos(s) + "%;width:" + Math.max(0.6, pos(ie) - pos(s)) + '%"></span>';
       }
       let zahlTxt = "";
       if (z === "fertig" && s != null && e != null) zahlTxt = dauer(e - s) + " statt " + t.erwartet_min + " Min";
       else if (t.zustand === "läuft") zahlTxt = Math.round(fortschritt(t, now)) + " % · " + restText(t, now);
-      else if (t.zustand === "braucht_david") zahlTxt = "wartet auf dich";
+      else if (t.zustand === "braucht_mensch") zahlTxt = "wartet auf dich";
       else if (t.zustand === "fehler") zahlTxt = "Fehler";
       else zahlTxt = "ab ca. " + hhmm(sollStart);
       const zp = Math.min(pos(sollStart), s != null ? pos(s) : 100);
@@ -1283,10 +1288,10 @@ h1 .specnr{color:var(--muted);font-weight:600}
     const achse = box.querySelector(".zl-achse"), lage = box.querySelector(".zl-jetzt-lage");
     if (achse && lage) { lage.style.left = achse.offsetLeft + "px"; lage.style.width = achse.offsetWidth + "px"; }
 
-    const davidTxt = pg.davidJetzt ? "jetzt" : pg.davidAb != null ? "ca. " + hhmm(pg.davidAb) : "–";
+    const menschTxt = pg.menschJetzt ? "jetzt" : pg.menschAb != null ? "ca. " + hhmm(pg.menschAb) : "–";
     $("prognose").innerHTML =
       '<span>Voraussichtlich fertig gegen <b>' + hhmm(pg.ende) + "</b></span>" +
-      '<span class="dav">Du wirst gebraucht: <b>' + davidTxt + "</b></span>";
+      '<span class="mensch">Du wirst gebraucht: <b>' + menschTxt + "</b></span>";
   }
 
   /* ---------- Kopf, Tafeln, Hinweise ---------- */
@@ -1312,13 +1317,13 @@ h1 .specnr{color:var(--muted);font-weight:600}
     $("t-ende").textContent = hhmm(pg.ende);
     $("t-ende-unter").textContent = pg.ende - now > 0 ? "noch ca. " + dauer(pg.ende - now) : "gleich";
 
-    const dm = davidListe();
-    const david = dm.length;
-    $("t-david").textContent = String(david);
-    $("t-david-tafel").classList.toggle("null", david === 0);
-    $("t-david-unter").textContent = david
+    const dm = menschListe();
+    const anzahl = dm.length;
+    $("t-mensch").textContent = String(anzahl);
+    $("t-mensch-tafel").classList.toggle("null", anzahl === 0);
+    $("t-mensch-unter").textContent = anzahl
       ? "Jetzt: " + dm.map((k) => (typeof k === "number" ? "#" + k : "Hinweis")).join(", ")
-      : pg.davidAb != null ? "Nein. Gegen " + hhmm(pg.davidAb) + " bei der Abnahme" : "Nein, gerade nicht";
+      : pg.menschAb != null ? "Nein. Gegen " + hhmm(pg.menschAb) + " bei der Abnahme" : "Nein, gerade nicht";
 
     const lauf = tickets.filter((t) => t.zustand === "läuft");
     $("t-laeuft").textContent = String(lauf.length);
@@ -1407,13 +1412,13 @@ h1 .specnr{color:var(--muted);font-weight:600}
     if (alt.hidden === istAlt) alt.hidden = !istAlt;
   }
 
-  // Wer braucht den Menschen? Tickets mit braucht_david + offene Log-Einträge art "david", je Ticket nur einmal.
+  // Wer braucht den Menschen? Tickets mit braucht_mensch + offene Log-Einträge art "mensch", je Ticket nur einmal.
   // Rückgabe: Ticketnummern (number) bzw. "log:<i>" für Einträge ohne Ticket.
-  function davidListe() {
+  function menschListe() {
     const s = new Set();
-    tickets.forEach((t) => { if (t.zustand === "braucht_david") s.add(t.nr); });
+    tickets.forEach((t) => { if (t.zustand === "braucht_mensch") s.add(t.nr); });
     logEintraege.forEach((e, i) => {
-      if (!e || e.art !== "david" || e.erledigt === true) return;
+      if (!e || logArt(e) !== "mensch" || e.erledigt === true) return;
       const nr = Number(e.ticket);
       s.add(e.ticket != null && Number.isFinite(nr) ? nr : "log:" + (e.id || i));
     });
@@ -1450,16 +1455,22 @@ h1 .specnr{color:var(--muted);font-weight:600}
   }
 
   /* ---------- Aufseher-Log ---------- */
-  const LOGART = { problem: ["Problem", "var(--err)"], david: ["braucht dich", "var(--david)"], befund: ["Befund", "var(--befund)"], info: ["Info", "var(--wait)"] };
-  const LOGFILTER = { alle: null, probleme: ["problem", "david"], befunde: ["befund"], info: ["info"] };
+  const LOGART_ALIAS = { david: "mensch" }; // Übergangs-Alias (#325)
+  const LOGART = { problem: ["Problem", "var(--err)"], mensch: ["braucht dich", "var(--mensch)"], befund: ["Befund", "var(--befund)"], info: ["Info", "var(--wait)"] };
+  const LOGFILTER = { alle: null, probleme: ["problem", "mensch"], befunde: ["befund"], info: ["info"] };
   const LOGCHIPS = [["alle", "Alle"], ["probleme", "Probleme"], ["befunde", "Befunde"], ["info", "Info"]];
-  const logArt = (e) => (e && LOGART[e.art] ? e.art : "info");
+  const logArt = (e) => {
+    const roh = e && e.art;
+    const art = LOGART_ALIAS[roh] || roh;
+    return LOGART[art] ? art : "info";
+  };
   const logSchluessel = (e, i) => String(e && e.id != null ? e.id : "i" + i);
 
-  // Offene Punkte für die Meldungsleiste: art "problem"/"david", nicht erledigt, höchstens 24 h alt
+  // Offene Punkte für die Meldungsleiste: art "problem"/"mensch", nicht erledigt, höchstens 24 h alt
   function offeneMeldungen(now) {
     return logEintraege.map((e, i) => ({ e, i })).filter(({ e }) => {
-      if (!e || (e.art !== "problem" && e.art !== "david") || e.erledigt === true) return false;
+      const a = logArt(e);
+      if (!e || (a !== "problem" && a !== "mensch") || e.erledigt === true) return false;
       const z = ts(e.zeit);
       return z != null && now - z <= 24 * 60 * MIN;
     });
@@ -1488,7 +1499,7 @@ h1 .specnr{color:var(--muted);font-weight:600}
     const now = Date.now();
     const liste = logEintraege.map((e, i) => ({ e, i })).filter(({ e }) => e && typeof e === "object");
     const zahlen = { alle: liste.length, probleme: 0, befunde: 0, info: 0 };
-    liste.forEach(({ e }) => { const a = logArt(e); zahlen[a === "problem" || a === "david" ? "probleme" : a === "befund" ? "befunde" : "info"]++; });
+    liste.forEach(({ e }) => { const a = logArt(e); zahlen[a === "problem" || a === "mensch" ? "probleme" : a === "befund" ? "befunde" : "info"]++; });
     chips.innerHTML = LOGCHIPS.map(([k, w]) => '<button type="button" class="log-chip" data-logfilter="' + k + '" aria-pressed="' + (logFilter === k) + '">' + w + '<span class="anz num">' + zahlen[k] + "</span></button>").join("");
     const erlaubt = LOGFILTER[logFilter];
     const sicht = erlaubt ? liste.filter(({ e }) => erlaubt.includes(logArt(e))) : liste;
@@ -1569,7 +1580,7 @@ h1 .specnr{color:var(--muted);font-weight:600}
     if (!model) return;
     const pg = prognose(now);
     for (const t of tickets) {
-      if (t.zustand !== "läuft" && t.zustand !== "fehler" && t.zustand !== "braucht_david") continue;
+      if (t.zustand !== "läuft" && t.zustand !== "fehler" && t.zustand !== "braucht_mensch") continue;
       const st = $("kst-" + t.nr); if (st) st.textContent = statusZeile(t, now);
       const pb = $("kpb-" + t.nr); if (pb) pb.setAttribute("width", (BARW * fortschritt(t, now)) / 100);
       const ls = $("gls-" + t.nr); if (ls) ls.textContent = listenStatus(t, now);
