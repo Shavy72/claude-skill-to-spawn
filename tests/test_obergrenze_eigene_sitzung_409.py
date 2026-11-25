@@ -21,6 +21,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -32,7 +33,6 @@ from to_spawn import speicher
 pytestmark = pytest.mark.braucht("tmux")
 
 WURZEL = Path(__file__).resolve().parent.parent
-SOCKET = f"obergrenze409-{os.getpid()}"
 EIGEN = "spec-409"
 FREMD = "leit-fremd"
 _ZAEHLER = itertools.count()
@@ -47,32 +47,59 @@ class Welt:
     tmp: Path
     proc: Path
     tmux_wert: dict[str, str]  # Sitzungsname → TMUX-Wert eines Prozesses darin
+    socket: str
 
 
-def _tmux(*args: str) -> str:
-    lauf = subprocess.run(["tmux", "-L", SOCKET, *args], capture_output=True, text=True, check=True, timeout=30)
+def _tmux(socket: str, *args: str) -> str:
+    """Führt ``tmux -L <socket> …`` aus; bei Fehler mit ``stderr`` in der Meldung (#428)."""
+    befehl = ["tmux", "-L", socket, *args]
+    lauf = subprocess.run(befehl, capture_output=True, text=True, check=False, timeout=30)
+    if lauf.returncode != 0:
+        details = [teil.strip() for teil in (lauf.stderr, lauf.stdout) if teil and teil.strip()]
+        anhang = f" — {' | '.join(details)}" if details else ""
+        raise RuntimeError(f"tmux fehlgeschlagen (Exit {lauf.returncode}): {befehl!r}{anhang}")
     return lauf.stdout
+
+
+def _tmux_beenden(socket: str, warte_s: float = 5.0) -> None:
+    """Beendet den tmux-Server auf ``socket`` und wartet, bis er nicht mehr antwortet (#428)."""
+    subprocess.run(["tmux", "-L", socket, "kill-server"], capture_output=True, text=True, check=False, timeout=30)
+    ende = time.monotonic() + warte_s
+    while time.monotonic() < ende:
+        probe = subprocess.run(
+            ["tmux", "-L", socket, "list-sessions"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+        if probe.returncode != 0 and "no sessions" not in probe.stderr:
+            return
+        time.sleep(0.05)
 
 
 @pytest.fixture()
 def welt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Welt]:
-    for name in (EIGEN, FREMD):
-        _tmux("new-session", "-d", "-s", name, "sleep 600")
-    werte: dict[str, str] = {}
-    for zeile in _tmux("list-sessions", "-F", "#{session_name}\t#{socket_path},#{pid},#{session_id}").splitlines():
-        name, wert = zeile.split("\t")
-        werte[name] = wert.replace("$", "")
-    meminfo = tmp_path / "meminfo"
-    meminfo.write_text("MemAvailable:   33554432 kB\n", encoding="utf-8")
-    proc = tmp_path / "proc"
-    proc.mkdir()
-    monkeypatch.setenv("TO_SPAWN_SPEICHER_PROC", str(proc))
-    monkeypatch.setenv("TO_SPAWN_SPEICHER_MEMINFO", str(meminfo))
-    monkeypatch.setenv("TO_SPAWN_TMUX", json.dumps(["tmux", "-L", SOCKET]))
+    socket = f"obergrenze409-{os.getpid()}-{next(_ZAEHLER)}"
+    monkeypatch.setenv("TO_SPAWN_TMUX", json.dumps(["tmux", "-L", socket]))
     try:
-        yield Welt(tmp_path, proc, werte)
+        for name in (EIGEN, FREMD):
+            _tmux(socket, "new-session", "-d", "-s", name, "sleep 600")
+        werte: dict[str, str] = {}
+        for zeile in _tmux(
+            socket, "list-sessions", "-F", "#{session_name}\t#{socket_path},#{pid},#{session_id}"
+        ).splitlines():
+            name, wert = zeile.split("\t")
+            werte[name] = wert.replace("$", "")
+        meminfo = tmp_path / "meminfo"
+        meminfo.write_text("MemAvailable:   33554432 kB\n", encoding="utf-8")
+        proc = tmp_path / "proc"
+        proc.mkdir()
+        monkeypatch.setenv("TO_SPAWN_SPEICHER_PROC", str(proc))
+        monkeypatch.setenv("TO_SPAWN_SPEICHER_MEMINFO", str(meminfo))
+        yield Welt(tmp_path, proc, werte, socket)
     finally:
-        subprocess.run(["tmux", "-L", SOCKET, "kill-server"], capture_output=True, check=False, timeout=30)
+        _tmux_beenden(socket)
 
 
 def _claude(welt: Welt, pid: int, sitzung: str | None) -> None:
@@ -154,7 +181,7 @@ def test_bau_fenster_wartet_bei_voller_eigener_grenze(
 
 def test_platz_frei_mit_sitzungsname_zaehlt_nur_eigene(welt: Welt) -> None:
     _vier_fremde_zwei_eigene(welt)
-    frei, text = speicher.platz_frei(_KONFIG, sitzung=EIGEN, tmux_socket=SOCKET)
+    frei, text = speicher.platz_frei(_KONFIG, sitzung=EIGEN, tmux_socket=welt.socket)
     assert frei, text
     assert f"2 Claude-Sessions in {EIGEN}" in text, text
 
@@ -163,7 +190,7 @@ def test_platz_frei_mit_sitzungsname_volle_eigene_grenze(welt: Welt) -> None:
     _vier_fremde_zwei_eigene(welt)
     for pid in (303, 304, 305):
         _claude(welt, pid, EIGEN)
-    frei, text = speicher.platz_frei(_KONFIG, sitzung=EIGEN, tmux_socket=SOCKET)
+    frei, text = speicher.platz_frei(_KONFIG, sitzung=EIGEN, tmux_socket=welt.socket)
     assert not frei
     assert text == f"schon 5 Claude-Sessions in {EIGEN} (Obergrenze 5)"
 
@@ -174,14 +201,14 @@ def test_unlesbare_umgebung_zaehlt_als_eigen(welt: Welt) -> None:
         ordner = welt.proc / str(pid)
         ordner.mkdir()
         (ordner / "cmdline").write_bytes(b"claude\0")
-    frei, text = speicher.platz_frei(_KONFIG, sitzung=EIGEN, tmux_socket=SOCKET)
+    frei, text = speicher.platz_frei(_KONFIG, sitzung=EIGEN, tmux_socket=welt.socket)
     assert not frei, text
 
 
 def test_sitzung_noch_nicht_da_fremde_zaehlen_nicht(welt: Welt) -> None:
     """Erster Start einer Spec: ``spec-<S>`` gibt es noch nicht — fremde Sessions blockieren nicht."""
     _vier_fremde_zwei_eigene(welt)
-    frei, text = speicher.platz_frei(_KONFIG, sitzung="spec-gibt-es-nicht", tmux_socket=SOCKET)
+    frei, text = speicher.platz_frei(_KONFIG, sitzung="spec-gibt-es-nicht", tmux_socket=welt.socket)
     assert frei, text
 
 
@@ -191,7 +218,7 @@ def test_ram_schutz_bleibt_fuer_fremde_sessions(welt: Welt, tmp_path: Path, monk
     knapp = tmp_path / "meminfo-knapp"
     knapp.write_text("MemAvailable:   1228800 kB\n", encoding="utf-8")
     monkeypatch.setenv("TO_SPAWN_SPEICHER_MEMINFO", str(knapp))
-    frei, text = speicher.platz_frei(_KONFIG, sitzung=EIGEN, tmux_socket=SOCKET)
+    frei, text = speicher.platz_frei(_KONFIG, sitzung=EIGEN, tmux_socket=welt.socket)
     assert not frei
     assert text.startswith("Speicher knapp: 1,2 GB frei"), text
 
@@ -239,3 +266,65 @@ def test_alle_zaehler_fragen_die_eigene_sitzung() -> None:
     assert "pruefen=speicher.platz_frei_hier" in wache
     assert aufpasser.count("sitzung=") >= 1 and "speicher.platz_frei(konfig)" not in aufpasser
     assert 'speicher --sitzung "$SESSION"' in spawn_srv
+
+
+# --- Fixture welt (#428) ------------------------------------------------------
+
+
+def test_welt_eigener_socket_je_aufruf(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """#428: jeder ``welt``-Aufruf nutzt einen eigenen Socket — kein ``duplicate session`` im selben Worker."""
+    a = tmp_path / "a"
+    b = tmp_path / "b"
+    a.mkdir()
+    b.mkdir()
+    gen_a = welt.__wrapped__(a, monkeypatch)
+    gen_b = welt.__wrapped__(b, monkeypatch)
+    socket_a = ""
+    socket_b = ""
+    try:
+        w_a = next(gen_a)
+        socket_a = json.loads(os.environ["TO_SPAWN_TMUX"])[-1]
+        w_b = next(gen_b)
+        socket_b = json.loads(os.environ["TO_SPAWN_TMUX"])[-1]
+        assert socket_a != socket_b
+        assert w_a.socket == socket_a
+        assert w_b.socket == socket_b
+    finally:
+        next(gen_b, None)
+        next(gen_a, None)
+    for socket in (socket_a, socket_b):
+        probe = subprocess.run(
+            ["tmux", "-L", socket, "list-sessions"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+        assert probe.returncode != 0, f"tmux-Server auf {socket} läuft nach Teardown weiter: {probe.stdout}"
+
+
+def test_tmux_fehler_enthaelt_stderr(welt: Welt) -> None:
+    """#428: Scheitert ein tmux-Aufruf, steht ``stderr`` in der Fehlermeldung."""
+    with pytest.raises(RuntimeError) as fehler:
+        _tmux(welt.socket, "new-session", "-d", "-s", EIGEN, "sleep 600")
+    assert "duplicate session" in str(fehler.value)
+
+
+def test_welt_setup_fehler_meldet_stderr_und_raeumt_auf(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#428: Scheitert das zweite ``new-session``, steht ``stderr`` in der Meldung und der Server wird beendet."""
+    monkeypatch.setattr(sys.modules[__name__], "FREMD", EIGEN)
+    gen = welt.__wrapped__(tmp_path, monkeypatch)
+    with pytest.raises(RuntimeError) as fehler:
+        next(gen)
+    socket = json.loads(os.environ["TO_SPAWN_TMUX"])[-1]
+    probe = subprocess.run(
+        ["tmux", "-L", socket, "list-sessions"],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+    )
+    assert "duplicate session" in str(fehler.value)
+    assert probe.returncode != 0, f"tmux-Server auf {socket} läuft nach Setup-Fehler weiter: {probe.stdout}"

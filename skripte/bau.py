@@ -63,6 +63,7 @@ from to_spawn import (
     umzug,
     vertrauen,
 )
+from to_spawn import prozessbaum
 from to_spawn.manifest import manifest_ordner
 from to_spawn.waechter_lauf import transkript_ordner
 
@@ -233,6 +234,7 @@ def ticket_from_gh(ticket: str) -> tuple[str, str | None]:
         text=True,
         encoding="utf-8",
         check=False,
+        **prozessbaum.fensterlos(),
     )
     if proc.returncode != 0:
         log.error("gh issue view %s fehlgeschlagen: %s", ticket, proc.stderr.strip())
@@ -259,6 +261,7 @@ def repo_aus_origin(fallback: str = "", repo: Path | None = None) -> str:
             capture_output=True,
             text=True,
             check=False,
+            **prozessbaum.fensterlos(),
         ).stdout.strip()
     except OSError:
         return fallback
@@ -298,7 +301,7 @@ GH_REPO = repo_aus_origin("") or os.environ.get("TO_SPAWN_GH_REPO", "").strip()
 
 
 def _gh_json(gh: str, *args: str) -> object | None:
-    proc = subprocess.run([gh, *args], capture_output=True, text=True, encoding="utf-8", check=False)
+    proc = subprocess.run([gh, *args], capture_output=True, text=True, encoding="utf-8", check=False, **prozessbaum.fensterlos())
     if proc.returncode != 0:
         log.warning("gh %s: %s", " ".join(args[:3]), proc.stderr.strip()[:200])
         return None
@@ -834,6 +837,7 @@ def _git_lauf(*args: str) -> subprocess.CompletedProcess[str]:
         encoding="utf-8",
         errors="replace",
         check=False,
+        **prozessbaum.fensterlos(),
     )
 
 

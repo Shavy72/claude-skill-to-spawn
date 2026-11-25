@@ -40,7 +40,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from to_spawn import bash_wahl, config, gh
+from to_spawn import bash_wahl, config, gh, prozessbaum
 from to_spawn.manifest import manifest_im_repo, manifest_pfad
 
 log = logging.getLogger("to_spawn.startklar")
@@ -208,6 +208,7 @@ def _git_lauf(ordner: Path, *args: str) -> subprocess.CompletedProcess[str] | No
             text=True,
             timeout=GIT_TIMEOUT_S,
             check=False,
+            **prozessbaum.fensterlos(),
         )
     except (OSError, subprocess.TimeoutExpired) as fehler:
         log.warning("git %s in %s fehlgeschlagen: %s", args[0], ordner, fehler)
@@ -287,6 +288,7 @@ def _laeuft(python: Path) -> bool:
                 capture_output=True,
                 timeout=INTERPRETER_TIMEOUT_S,
                 check=False,
+                **prozessbaum.fensterlos(),
             ).returncode
             == 0
         )
@@ -301,7 +303,7 @@ def _ausfuehren(
     """Führt ``argv`` aus; gibt bei Fehler den (geschwärzten) Grund zurück, sonst ``None``."""
     try:
         ergebnis = subprocess.run(
-            list(argv), capture_output=True, text=True, timeout=timeout, check=False
+            list(argv), capture_output=True, text=True, timeout=timeout, check=False, **prozessbaum.fensterlos()
         )
     except (OSError, subprocess.TimeoutExpired) as fehler:
         return _kurz(_schwaerzen(str(fehler), geheim))
@@ -356,6 +358,7 @@ def _fehlende_pakete(
             text=True,
             timeout=INTERPRETER_TIMEOUT_S,
             check=False,
+            **prozessbaum.fensterlos(),
         )
     except (OSError, subprocess.TimeoutExpired) as fehler:
         return f"Paket-Probe scheitert: {_kurz(_schwaerzen(str(fehler), geheim))}"

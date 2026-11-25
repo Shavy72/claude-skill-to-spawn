@@ -22,7 +22,7 @@ SKILL = Path(__file__).resolve().parent.parent
 if str(SKILL) not in sys.path:
     sys.path.insert(0, str(SKILL))
 
-from to_spawn import spawn, startklar, umzug, waechter_lauf  # noqa: E402
+from to_spawn import bash_wahl, spawn, startklar, umzug, waechter_lauf  # noqa: E402
 
 
 @pytest.fixture
@@ -42,20 +42,16 @@ def welt(tmp_path: Path) -> dict[str, Path]:
 
 
 def _bash(welt: dict[str, Path], befehl: str) -> subprocess.CompletedProcess[str]:
-    """Fern-Befehl in echter ``bash`` mit Wegwerf-``HOME``.
-
-    Ohne ``MSYS_NO_PATHCONV``/``MSYS2_ARG_CONV_EXCL``: Git-Bash muss ``~/…``-Pfade für das native
-    Windows-Python umwandeln (sonst ``/tmp/…`` → ``C:/tmp/…``); Linux kennt beide nicht.
-    """
-    weg = {"TO_SPAWN_REPO", "MSYS_NO_PATHCONV", "MSYS2_ARG_CONV_EXCL"}
-    umgebung = {k: v for k, v in os.environ.items() if k not in weg}
-    return subprocess.run(
-        ["bash", "-c", befehl],
+    """Fern-Befehl in echter ``bash`` mit Wegwerf-``HOME`` über ``bash_wahl.lauf`` (#186)."""
+    umgebung = {k: v for k, v in os.environ.items() if k != "TO_SPAWN_REPO"}
+    return bash_wahl.lauf(
+        ["-c", befehl],
         env={**umgebung, "HOME": str(welt["home"])},
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=30,
-        check=False,
     )
 
 

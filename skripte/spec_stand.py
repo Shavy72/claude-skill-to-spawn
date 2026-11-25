@@ -23,7 +23,7 @@ from pathlib import Path
 _SKILL = str(Path(__file__).resolve().parent.parent)
 if _SKILL not in sys.path:
     sys.path.insert(0, _SKILL)
-from to_spawn import befund, config, gh, ticket_zustand  # noqa: E402
+from to_spawn import befund, config, gh, prozessbaum, ticket_zustand  # noqa: E402
 
 log = logging.getLogger("spec_stand")
 #: Repo, in dem gearbeitet wird: ``TO_SPAWN_REPO`` (setzt die Weiterleitung im Repo), sonst
@@ -32,7 +32,7 @@ REPO_ORDNER = Path(os.environ["TO_SPAWN_REPO"]).resolve() if os.environ.get("TO_
 
 
 def sh(*args: str, cwd: Path | None = None) -> str:
-    r = subprocess.run(list(args), capture_output=True, text=True, encoding="utf-8", cwd=cwd, check=False)
+    r = subprocess.run(list(args), capture_output=True, text=True, encoding="utf-8", cwd=cwd, check=False, **prozessbaum.fensterlos())
     if r.returncode != 0:
         raise RuntimeError(f"{args[:3]} → {r.stderr.strip()[:200]}")
     return r.stdout.strip()
