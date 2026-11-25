@@ -35,7 +35,7 @@ if _HILFEN not in sys.path:
 
 from git_bash import git_bash  # noqa: E402 — liegt in ``tests/hilfen`` (Pfad oben)
 
-from to_spawn import bash_wahl, prozessbaum  # noqa: E402 — Pfad setzt ``git_bash``
+from to_spawn import bash_wahl, hausmeister_windows, prozessbaum  # noqa: E402 — Pfad setzt ``git_bash``
 
 _WINDOWS = sys.platform == "win32"
 
@@ -188,6 +188,23 @@ def _reste_raeumen(temp: Path, inode_anteil: Callable[[Path], float | None] = _i
         _LOG.warning("pt-Räumer abgebrochen unter %s: %r", temp, fehler)
 
 
+def _pt_ordner_loeschen(ordner: Path) -> None:
+    """Löscht einen ``pt-*``-Ordner; unter Windows erst Schreibschutz lösen (``.git/objects``, #655).
+
+    Einzige Lösch-Stelle für ``pt-*``-Ordner (``_reste_raeumen_roh`` und ``pytest_sessionfinish``).
+    Nutzt :func:`to_spawn.hausmeister_windows.schreibschutz_weg` (eine Stelle für den
+    Schreibschutz-Handler). Unter POSIX bleibt ``shutil.rmtree`` ohne Handler: dort sperrt
+    ein Nur-Lese-Bit an Dateien das Löschen nicht, und fehlende Ordnerrechte bleiben sichtbar.
+    """
+    if not _WINDOWS:
+        shutil.rmtree(ordner)
+        return
+    if sys.version_info >= (3, 12):
+        shutil.rmtree(ordner, onexc=hausmeister_windows.schreibschutz_weg)
+    else:
+        shutil.rmtree(ordner, onerror=hausmeister_windows.schreibschutz_weg)
+
+
 def _reste_raeumen_roh(temp: Path, inode_anteil: Callable[[Path], float | None]) -> None:
     anteil = inode_anteil(temp)
     knapp = anteil is not None and anteil >= _INODE_GRENZE
@@ -210,7 +227,7 @@ def _reste_raeumen_roh(temp: Path, inode_anteil: Callable[[Path], float | None])
         if prozessbaum.lebt(pid):
             continue
         try:
-            shutil.rmtree(ordner)
+            _pt_ordner_loeschen(ordner)
         except OSError as fehler:
             _LOG.warning("pt-Räumer: Rest %s nicht löschbar: %s", ordner, fehler)
 
@@ -244,7 +261,12 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
     """
     ordner = session.config.stash.get(_EIGENER_BASETEMP, None)
     if ordner is not None and exitstatus == 0:
-        shutil.rmtree(ordner, ignore_errors=True)
+        try:
+            _pt_ordner_loeschen(ordner)
+        except FileNotFoundError:
+            pass
+        except OSError as fehler:
+            _LOG.warning("pt-Ordner %s nach grünem Lauf nicht löschbar: %s", ordner, fehler)
 
 
 def pytest_unconfigure(config: pytest.Config) -> None:
