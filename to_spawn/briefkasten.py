@@ -380,48 +380,98 @@ def sperre_eingetragen() -> bool:
         return False
 
 
-def sperre_eingetragen_in(einstellungen: dict[str, Any]) -> bool:
-    """Wie :func:`sperre_eingetragen`, für schon gelesene Einstellungen (``KeyError`` o. ä. = nicht da)."""
+_ENV_ZUWEISUNG = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=[^`$]*")
+_PYTHON_NAME = re.compile(r"python(\d+(\.\d+)*)?(\.exe)?")
+_PYTHON_FLAG_EINFACH = re.compile(r"-[uBEsIOqP]+")
+_PYTHON_FLAG_WERT = re.compile(r"[A-Za-z0-9_.,:=-]+")
+
+
+def _zerlege_sperre_befehl(befehl: str) -> list[str] | None:
+    """Befehl wie die Shell in Wörter und Operatoren (``;``, ``|``, ``&``, ``<``, ``>``, ``()``) zerlegen."""
     try:
-        blocks = einstellungen["hooks"]["PreToolUse"]
-        return any(
-            "Bash" in b.get("matcher", "").split("|") and ist_sperre_befehl(h.get("command"), nur_aktiv=True)
-            for b in blocks
-            for h in b.get("hooks", [])
-        )
-    except (KeyError, TypeError, AttributeError):
+        lex = shlex.shlex(befehl, posix=True, punctuation_chars=True)
+        lex.whitespace_split = True
+        lex.commenters = ""
+        return list(lex)
+    except ValueError:
+        return None
+
+
+def sperre_eingetragen_in(einstellungen: dict[str, Any]) -> bool:
+    """Wie :func:`sperre_eingetragen`, für schon gelesene Einstellungen (falsche Form = nicht da)."""
+    if not isinstance(einstellungen, dict):
         return False
+    hooks = einstellungen.get("hooks")
+    if not isinstance(hooks, dict):
+        return False
+    blocks = hooks.get("PreToolUse")
+    if not isinstance(blocks, list):
+        return False
+    return any(
+        isinstance(b, dict)
+        and isinstance(b.get("matcher"), str)
+        and "Bash" in b["matcher"].split("|")
+        and isinstance(b.get("hooks"), list)
+        and any(
+            isinstance(h, dict) and ist_sperre_befehl(h.get("command"), nur_aktiv=True)
+            for h in b["hooks"]
+        )
+        for b in blocks
+    )
 
 
 def ist_sperre_befehl(befehl: object, *, nur_aktiv: bool = False) -> bool:
-    """Die eine Erkennung der Ja-Sperre in einem Hook-Befehl (#599).
+    """Die eine Erkennung der Ja-Sperre in einem Hook-Befehl (#599, #632).
 
     Standard (breit, für ``ja_einrichten``): jeder Eintrag ``<…>to_spawn.py … hook-ja-sperre`` —
-    auch tote (Datei fehlt) oder alte, damit Einrichten sie ersetzt statt verdoppelt.
-    ``nur_aktiv=True`` (eng, für den Nachweis :func:`sperre_eingetragen_in`): zusätzlich Befehlswort
-    Python oder ``to_spawn.py``, die Datei existiert und :data:`JA_SPERRE_HOOK` folgt direkt;
-    ``echo hook-ja-sperre`` o. ä. zählt nie als aktive Sperre.
+    auch tote (Datei fehlt), alte oder entschärfte, damit Einrichten sie ersetzt statt verdoppelt.
+    ``nur_aktiv=True`` (eng, für den Nachweis :func:`sperre_eingetragen_in`): ein einzelner Befehl
+    ohne Shell-Anhängsel, Zeilenumbrüche oder Umleitungen, bei dem ``to_spawn.py`` (direkt oder über
+    Python mit harmlosen Schaltern) das ausgeführte Programm ist, die Datei existiert und
+    :data:`JA_SPERRE_HOOK` das einzige Argument dahinter ist.
     Kein Text (``None``, leer, kein ``str``) oder nicht zerlegbar → ``False``.
     """
     if not isinstance(befehl, str):
         return False
-    try:
-        woerter = shlex.split(befehl)
-    except ValueError:
+    woerter = _zerlege_sperre_befehl(befehl)
+    if not woerter:
         return False
     if JA_SPERRE_HOOK not in woerter or not any(w.replace("\\", "/").endswith("to_spawn.py") for w in woerter):
         return False
     if not nur_aktiv:
         return True
-    erstes = next((w for w in woerter if "=" not in w), "").replace("\\", "/").rsplit("/", 1)[-1]
-    if erstes != "to_spawn.py" and not re.fullmatch(r"python[\d.]*(\.exe)?", erstes):
-        return False  # Befehlswort muss Python oder die to_spawn.py selbst sein (nicht ``echo …``)
-    return any(
-        w.replace("\\", "/").rsplit("/", 1)[-1] == "to_spawn.py"
-        and Path(w).is_file()
-        and woerter[i + 1 : i + 2] == [JA_SPERRE_HOOK]
-        for i, w in enumerate(woerter)
-    )
+    if "\n" in befehl.strip() or "\r" in befehl.strip():
+        return False
+    i = 0
+    while i < len(woerter) and _ENV_ZUWEISUNG.fullmatch(woerter[i]):
+        i += 1
+    if i >= len(woerter):
+        return False
+    name = woerter[i].replace("\\", "/").rsplit("/", 1)[-1].lower()
+    if name == "to_spawn.py":
+        skript = woerter[i]
+        i += 1
+    elif _PYTHON_NAME.fullmatch(name):
+        i += 1
+        while i < len(woerter):
+            wort = woerter[i]
+            if _PYTHON_FLAG_EINFACH.fullmatch(wort):
+                i += 1
+            elif wort in ("-X", "-W") and i + 1 < len(woerter) and _PYTHON_FLAG_WERT.fullmatch(woerter[i + 1]):
+                i += 2
+            elif len(wort) > 2 and wort[:2] in ("-X", "-W") and _PYTHON_FLAG_WERT.fullmatch(wort[2:]):
+                i += 1
+            else:
+                break
+        if i >= len(woerter):
+            return False
+        skript = woerter[i]
+        if skript.replace("\\", "/").rsplit("/", 1)[-1].lower() != "to_spawn.py":
+            return False
+        i += 1
+    else:
+        return False
+    return Path(skript).is_file() and woerter[i:] == [JA_SPERRE_HOOK]
 
 
 def menschen_nachweis(ist_tty: bool) -> None:
