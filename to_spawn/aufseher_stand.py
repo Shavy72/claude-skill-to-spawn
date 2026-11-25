@@ -474,7 +474,7 @@ def _fenster_lage(
     letzte = letzte_pane_zeile(text)
     if aufpasser.rueckfrage(text):
         return RUECKFRAGE, minuten, merker, letzte, ""
-    if any(m in text for m in aufpasser.ARBEITS_MARKER) or bool(aufpasser.LIMIT_TEXT.search(text)):
+    if aufpasser.arbeits_marker_aktiv(text):
         return ARBEITET, None, merker, letzte, ""
     if aufpasser.BLOCKER_WARTEN.search(text):
         return WARTET, minuten, merker, letzte, ""

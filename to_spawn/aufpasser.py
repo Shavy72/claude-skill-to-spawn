@@ -303,10 +303,13 @@ CRON_LOG = "cron.out"
 SKRIPT_STARTER = Path(__file__).resolve().parent.parent / "skripte" / "aufpasser.py"
 ARBEITS_MARKER = (
     "esc to interrupt",
-    "background agent",
     "usage limit",
     "limit reset",
 )
+#: Marker, die nur in der Statuszeile unter dem Eingabefeld Arbeit bedeuten (#434):
+#: im Verlauf oben bleibt „✻ Waiting for 1 background agent to finish“ oft stehen,
+#: obwohl das Eingabefeld längst still ist.
+STATUSZEILEN_ARBEITS_MARKER = ("background agent",)
 # Warte-Zeile von bau.py (Blocker offen). Nur diese Form zählt — „nächste Prüfung“
 # allein stand am 21.09. als Claude-Prosa im Scrollback eines idle Fensters.
 BLOCKER_WARTEN = re.compile(r"Ticket #\d+ wartet \(.*\) — nächste Prüfung in \d+ (?:min|s)\b")
@@ -329,8 +332,6 @@ BLOCKER_FREI_TEXT = (
 )
 #: Anstupser: derselbe Mindset-Stoß wie die Eingriffs-Leiter (#500, eine Quelle).
 ANSTUPS_TEXT = anleitung.anstupser("Aufpasser")
-VORLAGE_REPO = "cd {repo} && {py} scripts/bau.py {n}{resume}"
-VORLAGE_SKILL = "cd {repo} && TO_SPAWN_REPO={repo} {py} ~/.claude/skills/to-spawn/skripte/bau.py {n}{resume}"
 VORLAGE_WACHE_REPO = "cd {repo} && {py} scripts/wache.py {s}{resume}"
 VORLAGE_WACHE_SKILL = "cd {repo} && TO_SPAWN_REPO={repo} {py} ~/.claude/skills/to-spawn/skripte/wache.py {s}{resume}"
 #: Nie in eine Sicherung: Geheimnisse und Zugangsdateien — in JEDEM Unterordner.
@@ -507,6 +508,21 @@ class SessionInfo:
     aus_json: bool = True
 
 
+def arbeits_marker_aktiv(text: str) -> bool:
+    """Zeigt der Pane-Text einen laufenden Arbeits- oder Limit-Marker (#434)?
+
+    :data:`ARBEITS_MARKER` und :data:`LIMIT_TEXT` gelten im ganzen Bild;
+    :data:`STATUSZEILEN_ARBEITS_MARKER` (``background agent``) nur in der
+    :func:`statuszeile` unter dem Eingabefeld, damit stehengebliebene Verlaufszeilen
+    wie ``✻ Waiting for 1 background agent to finish`` ein stilles Fenster nicht sperren.
+    """
+    return (
+        any(m in text for m in ARBEITS_MARKER)
+        or any(m in statuszeile(text) for m in STATUSZEILEN_ARBEITS_MARKER)
+        or bool(LIMIT_TEXT.search(text))
+    )
+
+
 def arbeitet(text: str, status: str | None = None) -> bool:
     """Fenster arbeitet oder wartet auf Antwort → nie anfassen.
 
@@ -516,9 +532,9 @@ def arbeitet(text: str, status: str | None = None) -> bool:
     if status == "busy":
         return True
     return (
-        any(m in text for m in ARBEITS_MARKER + RUECKFRAGE_MARKER)
+        arbeits_marker_aktiv(text)
+        or rueckfrage(text)
         or bool(BLOCKER_WARTEN.search(text))
-        or bool(LIMIT_TEXT.search(text))
     )
 
 
@@ -703,6 +719,17 @@ def ohne_statuszeile(text: str) -> str:
     zeilen = text.splitlines()
     feld = _eingabefeld(zeilen)
     return text if feld is None else "\n".join(zeilen[: feld[1]])
+
+
+def statuszeile(text: str) -> str:
+    """Statuszeile unter dem Claude-Eingabefeld (#434); ohne Eingabefeld der ganze Text.
+
+    Gegenstück zu :func:`ohne_statuszeile`: ist das Claude-Eingabefeld zwischen zwei
+    Rahmenlinien sichtbar, gehört alles unter der unteren Rahmenlinie zur Statuszeile.
+    """
+    zeilen = text.splitlines()
+    feld = _eingabefeld([ohne_farben(z) for z in zeilen])
+    return text if feld is None else "\n".join(zeilen[feld[1] + 1 :])
 
 
 def _eingabefeld(zeilen: list[str]) -> tuple[int, int] | None:
@@ -1792,20 +1819,23 @@ class Aufpasser:
     # -- Eingreifen --------------------------------------------------------------
 
     def bau_befehl(self, repo: Path, ticket: int, resume: str | None) -> str:
-        venv = repo / ".venv" / "bin" / "python"
-        py = str(venv) if venv.is_file() else "python3"
+        """Startbefehl eines Bau-Fensters über :func:`capo.bau_startzeile` (#419).
+
+        Nur ein gesetztes ``--bau-vorlage`` (Tests/Überschreibung) nutzt die eigene
+        Vorlage; sonst baut ``capo.bau_startzeile`` dieselbe Startzeile wie Folge-Runde
+        und Ablösung — samt ``.to-spawn/fenster_<N>.log``.
+        """
         if self.e.bau_vorlage:
-            vorlage = self.e.bau_vorlage
-        elif (repo / "scripts" / "bau.py").is_file():
-            vorlage = VORLAGE_REPO
-        else:
-            vorlage = VORLAGE_SKILL
-        return vorlage.format(
-            repo=shlex.quote(str(repo)),
-            py=shlex.quote(py),
-            n=ticket,
-            resume=f" --resume {resume}" if resume else "",
-        )
+            venv = repo / ".venv" / "bin" / "python"
+            py = str(venv) if venv.is_file() else "python3"
+            return self.e.bau_vorlage.format(
+                repo=shlex.quote(str(repo)),
+                py=shlex.quote(py),
+                n=ticket,
+                resume=f" --resume {resume}" if resume else "",
+            )
+        schalter = ("--resume", resume) if resume else ()
+        return capo.bau_startzeile(repo, ticket, "", *schalter)
 
     def wache_befehl(self, repo: Path, spec: str, resume: str | None) -> str:
         """Startbefehl des Aufseher-Fensters (R1), analog ``bau_befehl``.
@@ -2916,6 +2946,20 @@ class Aufpasser:
         wie = f"mit Gespräch {sid[:8]}… fortgesetzt." if sid else "gestartet."
         self.melden(spec, repo, f"{sitzung}/{name}", "gestartet", f"{wer} {was}, {wie}")
 
+    def offene_blocker_von(self, ticket: int, repo: Path, gh_repo: str) -> list[int]:
+        """Noch nicht erledigte Blocker eines Tickets (#418, Regel: :func:`gh.offene_blocker`).
+
+        Kein GitHub-Slug oder Abfrage fehlgeschlagen ⇒ ``[]`` (fail-open; ``bau.py``
+        prüft seine Start-Schranke beim Anlauf selbst).
+        """
+        if not gh_repo:
+            return []
+        deps = gh.blocked_by(gh_repo, str(ticket), cwd=repo)
+        if deps is None:
+            log.warning("#%d: Blocker nicht lesbar — Start nicht gesperrt", ticket)
+            return []
+        return gh.offene_blocker(deps)
+
     def sitzung_pruefen(
         self, sitzung: str, spec: str, fenster: list[Fenster], repo: Path
     ) -> None:
@@ -2939,30 +2983,40 @@ class Aufpasser:
             sorted(offen_hier) or "-",
             f" ({auswahl.beschreibung(auswahl_stand)})" if auswahl_stand is not None else "",
         )
-        # Bau-Fenster nur für „noch nicht fertig gebaut“ (#279) innerhalb der Auswahl (#271);
-        # der Aufseher unten bleibt, bis alle gewählten Tickets endgültig zu sind.
-        bauen = self.zu_bauen(offen_hier)
-        fehlend = [t for t in sorted(bauen) if f"bau {t}" not in vorhanden]
-        # Läuft das Ticket schon in einer Fenster-Kette (oder folgt dort noch),
-        # kein eigenes Fenster — sonst zwei Sessions auf einem Ticket (#598).
-        belegt = self.belegte_tickets() if fehlend else set()
-        for ticket in fehlend:
-            if ticket in belegt:
-                log.info(
-                    "%s: #%d läuft in einer Fenster-Kette — kein Start", sitzung, ticket
-                )
-                continue
-            if not self.start_erlaubt(spec, repo, ticket):
-                continue
-            self.fehlendes_fenster(sitzung, spec, repo, ticket)
-        # Aufseher-Fenster fehlt (R2): nachstarten, solange die Spec (hier) offene Tickets
-        # hat und die Auswahl einen Aufseher auf diesem Rechner erlaubt (#271).
+        # Aufseher-Fenster fehlt (R2): zuerst nachstarten (#418), solange die Spec (hier)
+        # offene Tickets hat und die Auswahl einen Aufseher auf diesem Rechner erlaubt (#271).
         if (
             offen_hier
             and f"wache {spec}" not in vorhanden
             and self.start_erlaubt(spec, repo, None)
         ):
             self.fehlendes_fenster(sitzung, spec, repo, None)
+        # Bau-Fenster nur für „noch nicht fertig gebaut“ (#279) innerhalb der Auswahl (#271);
+        # der Aufseher oben bleibt, bis alle gewählten Tickets endgültig zu sind.
+        bauen = self.zu_bauen(offen_hier)
+        fehlend = [t for t in sorted(bauen) if f"bau {t}" not in vorhanden]
+        # Läuft das Ticket schon in einer Fenster-Kette (oder folgt dort noch),
+        # kein eigenes Fenster — sonst zwei Sessions auf einem Ticket (#598).
+        belegt = self.belegte_tickets() if fehlend else set()
+        gh_repo = gh.repo_aus_origin(repo) if fehlend else ""
+        for ticket in fehlend:
+            if ticket in belegt:
+                log.info(
+                    "%s: #%d läuft in einer Fenster-Kette — kein Start", sitzung, ticket
+                )
+                continue
+            blocker = self.offene_blocker_von(ticket, repo, gh_repo)
+            if blocker:
+                log.info(
+                    "%s: #%d hat offene Blocker (%s) — kein Start",
+                    sitzung,
+                    ticket,
+                    ", ".join(f"#{b}" for b in blocker),
+                )
+                continue
+            if not self.start_erlaubt(spec, repo, ticket):
+                continue
+            self.fehlendes_fenster(sitzung, spec, repo, ticket)
         for f in fenster:
             if f.ist_wache and not auswahl.wache_erlaubt(
                 repo, spec, auswahl=auswahl_stand, gelesen=True
@@ -3103,7 +3157,7 @@ def parser_fuellen(ap: argparse.ArgumentParser) -> argparse.ArgumentParser:
     )
     ap.add_argument(
         "--bau-vorlage",
-        help="Startbefehl mit {repo} {py} {n} {resume} (Vorgabe: scripts/bau.py bzw. Skill)",
+        help="Startbefehl mit {repo} {py} {n} {resume} (Vorgabe: capo.bau_startzeile)",
     )
     ap.add_argument(
         "--wache-vorlage",
