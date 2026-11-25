@@ -16,11 +16,16 @@ ist nichts belegt, das erste Rot bleibt stehen (fail-closed).
 
 from __future__ import annotations
 
+import json
+import logging
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
-from to_spawn.pruef import ausfuehren
+from to_spawn.pruef import ausfuehren, protokoll
+
+log = logging.getLogger("to_spawn.pruef.wackler")
 
 
 @runtime_checkable
@@ -141,3 +146,98 @@ def nochmal(adapter: object, repo: Path, befehl: list[str], erst: ausfuehren.Lau
     ):
         return Wiederholung(False, (), zweit_befehl, dauer, voll_s)
     return Wiederholung(True, wackler, zweit_befehl, dauer, voll_s)
+
+
+def normalisiere_test_id(name: str) -> str:
+    """Vereinheitlicht Test-IDs plattformübergreifend (Windows-``\\`` im Dateiteil vor ``::`` → ``/``)."""
+    text = name.strip()
+    if not text:
+        return ""
+    datei, trenner, rest = text.partition("::")
+    normal_datei = datei.replace("\\", "/")
+    return f"{normal_datei}{trenner}{rest}" if trenner else normal_datei
+
+
+def parse_zeit(roh: str) -> datetime | None:
+    """Parst einen ISO-Zeitstempel als UTC-``datetime``; ``None`` bei leerem/ungültigem Wert."""
+    text = roh.strip()
+    if not text:
+        return None
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        wert = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    return wert.astimezone(UTC) if wert.tzinfo is not None else wert.replace(tzinfo=UTC)
+
+
+@dataclass(frozen=True)
+class WacklerFund:
+    """Einzelner Eintrag aus der Wackler-Spur (``.to-spawn/pruef/wackler.jsonl``, #798)."""
+
+    test: str
+    adapter: str
+    zeit: str
+    basis: str = ""
+    ziel: str = ""
+
+    def zeitpunkt(self) -> datetime | None:
+        """Parst ``zeit`` als UTC-Zeitpunkt; ``None`` bei fehlendem oder ungültigem Format."""
+        return parse_zeit(self.zeit)
+
+
+def lese_spur(
+    repo: Path,
+    *,
+    pfad: Path | None = None,
+    seit: datetime | None = None,
+) -> tuple[WacklerFund, ...]:
+    """Liest die bestehende Wackler-Spur aus ``.to-spawn/pruef/wackler.jsonl`` (fail-safe).
+
+    Fehlende Datei liefert ``()``. Kaputte JSON-Zeilen oder Einträge ohne Testnamen werden mit
+    Log-Hinweis übersprungen. Ist ``seit`` angegeben, bleiben nur Funde mit gültigem Zeitpunkt
+    ``>= seit`` (UTC).
+    """
+    datei = pfad if pfad is not None else repo / protokoll.ORDNER / protokoll.WACKLER_DATEI
+    if not datei.is_file():
+        return ()
+    try:
+        zeilen = datei.read_text(encoding="utf-8").splitlines()
+    except OSError as fehler:
+        log.warning("Wackler-Spur unlesbar (%s): %s", datei, fehler)
+        return ()
+
+    grenze = (
+        seit.astimezone(UTC)
+        if seit is not None and seit.tzinfo is not None
+        else (seit.replace(tzinfo=UTC) if seit is not None else None)
+    )
+    funde: list[WacklerFund] = []
+    for nr, roh in enumerate(zeilen, start=1):
+        text = roh.strip()
+        if not text:
+            continue
+        try:
+            daten = json.loads(text)
+        except ValueError as fehler:
+            log.warning("Wackler-Spur %s:%d ungültiges JSON übersprungen: %s", datei, nr, fehler)
+            continue
+        if not isinstance(daten, dict):
+            continue
+        test_id = normalisiere_test_id(str(daten.get("test", "")))
+        if not test_id:
+            continue
+        fund = WacklerFund(
+            test=test_id,
+            adapter=str(daten.get("adapter", "")).strip(),
+            zeit=str(daten.get("zeit", "")).strip(),
+            basis=str(daten.get("basis", "")).strip(),
+            ziel=str(daten.get("ziel", "")).strip(),
+        )
+        if grenze is not None:
+            zeitpunkt = fund.zeitpunkt()
+            if zeitpunkt is None or zeitpunkt < grenze:
+                continue
+        funde.append(fund)
+    return tuple(funde)

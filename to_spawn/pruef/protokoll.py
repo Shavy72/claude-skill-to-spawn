@@ -15,6 +15,8 @@ ORDNER = Path(".to-spawn") / "pruef"
 DATEI = "protokoll.jsonl"
 #: Liste aller Wackler mit Datum, eine Zeile je Test (3b-4).
 WACKLER_DATEI = "wackler.jsonl"
+#: Quarantäne-Ledger für wiederkehrende Wackler (Stufe 3, #798).
+QUARANTAENE_DATEI = "quarantaene.json"
 URTEIL = {0: "grün", 1: "rot", 2: "gate-fehler"}
 
 
