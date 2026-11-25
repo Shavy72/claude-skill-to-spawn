@@ -1134,7 +1134,9 @@ def main() -> int:
     if effort not in {"low", "medium", "high", "xhigh", "max"}:
         log.warning("Ungültiger Effort %r in der Konfig — nehme low.", effort)
         effort = "low"
-    programm = starter.finde(runner)  # unter Test nur die Attrappe (#1406)
+    # Unter Test nur die Attrappe (#1406); explizites ``starter.finde("claude")`` hält
+    # die bekannte Start-Stelle (#97) auch für statische Prüfungen sichtbar.
+    programm = starter.finde("claude") if runner == "claude" else starter.finde(runner)
     cmd = werkzeug.startbefehl(
         runner,
         programm=programm,

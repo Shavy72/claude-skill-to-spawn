@@ -256,11 +256,14 @@ def test_bau_dry_run_standard_bleibt_claude(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     bau = _bau_fixture(tmp_path, monkeypatch)
+    gesucht: list[str] = []
+    monkeypatch.setattr(bau.starter, "finde", lambda name: (gesucht.append(name), f"/bin/{name}")[1])
     monkeypatch.setattr(bau.context_mode, "server_definition", lambda _d: {})
     monkeypatch.setattr(sys, "argv", ["bau.py", "660", "--dry-run"])
     assert bau.main() == 0
     ausgabe = capsys.readouterr().out
-    assert "claude" in ausgabe
+    assert gesucht == ["claude"]
+    assert "/bin/claude" in ausgabe
     assert "--settings" in ausgabe
     assert "--model claude-opus-5-5" in ausgabe
     assert '"<prompt>"' in ausgabe
@@ -270,6 +273,8 @@ def test_bau_dry_run_runner_agy_interaktiv_und_ohne_context_mode(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     bau = _bau_fixture(tmp_path, monkeypatch, {"runner": "agy"})
+    gesucht: list[str] = []
+    monkeypatch.setattr(bau.starter, "finde", lambda name: (gesucht.append(name), f"/bin/{name}")[1])
 
     def _fehlendes_plugin(_dir: Path) -> dict:
         raise context_mode.ContextModeFehlt("Plugin fehlt")
@@ -279,7 +284,8 @@ def test_bau_dry_run_runner_agy_interaktiv_und_ohne_context_mode(
     monkeypatch.setattr(sys, "argv", ["bau.py", "660", "--dry-run"])
     assert bau.main() == 0
     ausgabe = capsys.readouterr().out
-    assert "agy" in ausgabe
+    assert gesucht == ["agy"]
+    assert "/bin/agy" in ausgabe
     assert '-i "<prompt>"' in ausgabe
     assert "--model gemini-4-neon-high" in ausgabe
     assert "--dangerously-skip-permissions" in ausgabe
