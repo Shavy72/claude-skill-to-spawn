@@ -3,12 +3,13 @@
 Läuft per Cron alle 15 Minuten (0 Token, reines Skript) und sieht je tmux-Sitzung
 ``spec-<S>`` nach den Fenstern ``bau <N>`` und ``wache <S>``:
 
-0. **Deploy-Wache:** läuft ein Deploy (``--deploy-muster`` plus die Skripte aus
-   ``.to-spawn/config.json`` gegen ``pgrep -af``), wird in diesem Lauf nichts
-   angefasst — nur die Hashes werden fortgeschrieben. Prozesse älter als 6 h zählen
-   nicht (verwaiste Läufe), sie werden als „Waise ignoriert“ geloggt. Ein Gate
-   (``pytest``) sperrt nur das eigene Fenster — im Fensterbaum oder im
-   Ticket-Worktree —, nie den ganzen Server (#592).
+0. **Deploy-Wache (#262):** läuft ein Deploy (``--deploy-muster`` plus die Skripte aus
+   ``.to-spawn/config.json`` gegen ``prozessbaum.passende``), wird in diesem Lauf
+   nichts angefasst — weder der Hausmeister noch der externe Wecker noch tmux-Fenster
+   (nur die Hashes werden fortgeschrieben; bei gestörter Abfrage fail-closed). Prozesse
+   älter als 6 h zählen nicht (verwaiste Läufe), sie werden als „Waise ignoriert“
+   geloggt. Ein Gate (``pytest``) sperrt nur das eigene Fenster — im Fensterbaum oder
+   im Ticket-Worktree —, nie den ganzen Server (#592).
 1. **Fehlendes Fenster:** offenes Unter-Ticket ohne ``bau <N>`` (oder fehlendes
    ``wache <S>`` bei offenen Tickets) → Fenster anlegen. Liegt
    ``<repo>/.to-spawn/sessions/<N>.json`` (``wache-<S>.json``) und das Transkript
@@ -111,6 +112,7 @@ from to_spawn import (
     starter,
     ticket_zustand,
     tmux_aufruf,
+    uebergabe_sichern,
     vorfall,
     werkzeug,
 )
@@ -308,6 +310,9 @@ ARBEITS_MARKER = (
     "usage limit",
     "limit reset",
 )
+#: Nur echte laufende Arbeit (ohne Limit-Hinweise) — genutzt vom externen Wecker (#287),
+#: damit eine alte Limit-Meldung nach dem Reset einen neuen Weckruf nicht dauerhaft sperrt.
+LAUFEND_MARKER = ("esc to interrupt",)
 #: Marker, die nur in der Statuszeile unter dem Eingabefeld Arbeit bedeuten (#434):
 #: im Verlauf oben bleibt „✻ Waiting for 1 background agent to finish“ oft stehen,
 #: obwohl das Eingabefeld längst still ist.
@@ -458,6 +463,8 @@ class Einstellungen:
     karenz_platznot_s: float = KARENZ_PLATZNOT_S
     #: Wartezeit auf das Ende von Claude nach ``/exit`` (Tests setzen sie klein).
     exit_warten_s: float = EXIT_WARTEN_S
+    #: Optionaler Zustandsordner für den externen Wecker (#287); None ⇒ Standardordner.
+    wecker_zustand: Path | None = None
 
     def __post_init__(self) -> None:
         if self.hang_min < HANG_MIN_UNTERGRENZE:
@@ -499,6 +506,7 @@ class Fenster:
     pane_pid: int
     window_id: str = ""
     pane_id: str = ""
+    start_pfad: str = ""
 
     @property
     def ziel(self) -> str:
@@ -564,6 +572,22 @@ def arbeitet(text: str, status: str | None = None) -> bool:
         return True
     return (
         arbeits_marker_aktiv(text)
+        or rueckfrage(text)
+        or bool(BLOCKER_WARTEN.search(text))
+    )
+
+
+def arbeitet_echt(text: str, status: str | None = None) -> bool:
+    """Wie :func:`arbeitet`, aber ohne Limit-Marker (#287).
+
+    Für den externen Wecker: nach einem Limit-Reset steht die alte Limit-Meldung oft noch
+    im Verlauf über ``❯``; sie darf den erneuten Weckruf nicht dauerhaft blockieren.
+    """
+    if status == "busy":
+        return True
+    return (
+        any(m in text for m in LAUFEND_MARKER)
+        or any(m in statuszeile(text) for m in STATUSZEILEN_ARBEITS_MARKER)
         or rueckfrage(text)
         or bool(BLOCKER_WARTEN.search(text))
     )
@@ -1312,6 +1336,26 @@ def sichern(
         ).strip()
     finally:
         Path(index).unlink(missing_ok=True)
+    # #215: dieselbe Sperre wie beim Zweig-Upload und beim Hausmeister — nie vor dem Push
+    # eine Übergabe oder ein Entscheidungs-Log (auch in anderer Großschreibung) hochladen.
+    ausschluss_refs = (
+        ("--remotes=origin", "--glob=refs/haupt/*", "--glob=refs/sicherung/*", "--glob=refs/zweige/*")
+        if kopf is not None
+        else ("--remotes=origin",)
+    )
+    try:
+        gesperrt = uebergabe_sichern.gesperrte_pfade(worktree, commit, "--not", *ausschluss_refs)
+    except OSError as fehler:
+        raise RuntimeError(f"Prüfung gesperrter Pfade gescheitert: {fehler}") from None
+    if gesperrt:
+        log.error(
+            "Sicherung #%s verweigert: %s nie öffentlich",
+            ticket,
+            ", ".join(gesperrt),
+        )
+        raise RuntimeError(
+            f"Sicherung verweigert: {', '.join(gesperrt)} nie öffentlich"
+        )
     # #242: erst pushen, dann lokalen Ref nachziehen — ein gescheiterter Push darf
     # keinen ungepushten lokalen sicherung/<N>-Zweig hinterlassen.
     _git(worktree, "push", "-q", "origin", f"{commit}:{ref}")
@@ -1625,21 +1669,27 @@ class Aufpasser:
             "-t",
             f"={sitzung}",
             "-F",
-            "#{window_index}\t#{window_name}\t#{pane_current_path}\t#{pane_pid}\t#{window_id}\t#{pane_id}",
+            "#{window_index}\t#{window_name}\t#{pane_current_path}\t#{pane_pid}\t#{window_id}\t#{pane_id}\t#{pane_start_path}",
         ).splitlines():
             teile = zeile.split("\t")
-            if len(teile) != 6:
+            if len(teile) not in (6, 7):
                 continue
+            start_pfad = teile[6] if len(teile) == 7 else ""
+            # Direkt nach ``tmux new-session -d`` kann ``pane_current_path`` unter Last noch
+            # leer sein (Kindprozess hat tcgetpgrp/chdir noch nicht abgeschlossen);
+            # ``pane_start_path`` kennt tmux sofort beim Anlegen des Panes.
+            pfad = teile[2] or start_pfad
             liste.append(
                 Fenster(
                     sitzung,
                     spec,
                     teile[0],
                     teile[1],
-                    teile[2],
+                    pfad,
                     int(teile[3] or 0),
                     teile[4],
                     teile[5],
+                    start_pfad,
                 )
             )
         return liste
@@ -1666,10 +1716,14 @@ class Aufpasser:
         return belegt
 
     def repo_ordner(self, fenster: list[Fenster]) -> Path | None:
-        for f in fenster:
-            pfad = Path(f.pfad)
-            if (pfad / config.KONFIG_PFAD).is_file():
-                return pfad
+        for attr in ("pfad", "start_pfad"):
+            for f in fenster:
+                roh_pfad = getattr(f, attr, "")
+                if not roh_pfad:
+                    continue
+                pfad = Path(roh_pfad)
+                if (pfad / config.KONFIG_PFAD).is_file():
+                    return pfad
         if self.e.repo:
             return self.e.repo
         roh = os.environ.get("TO_SPAWN_REPO")
@@ -1698,12 +1752,13 @@ class Aufpasser:
                 kandidaten.append(echt)
 
         for f in fenster:
-            f_pfad = getattr(f, "pfad", None)
-            if not f_pfad:
-                continue
-            p = Path(f_pfad)
-            merk(p)
-            merk(_hauptklon_aus_worktree(p))
+            for attr in ("pfad", "start_pfad"):
+                f_pfad = getattr(f, attr, None)
+                if not f_pfad:
+                    continue
+                p = Path(f_pfad)
+                merk(p)
+                merk(_hauptklon_aus_worktree(p))
         merk(basis)
 
         def hat_manifest(ordner: Path) -> bool:
@@ -3189,6 +3244,40 @@ class Aufpasser:
             fehler,
             " (trocken)" if self.e.trocken else "",
         )
+        # #261: Bleib-Gründe gezählt auch im Aufpasser-Log (eine Format-Stelle im Hausmeister).
+        for zeile in hausmeister.bleib_zeilen(ergebnisse):
+            log.info("%s", zeile)
+
+    def _wecker_lauf(self) -> None:
+        """Sicherheitsnetz für den externen Wecker (#287): stößt fällige Weckaufträge an.
+
+        Fehlt ``auftraege.json``, endet :func:`to_spawn.wecker.durchgang` sofort ohne
+        Unterprozesse. Fehler halten den übrigen Aufpasser-Lauf nie auf.
+        """
+        from to_spawn import wecker  # spät: wecker importiert aufpasser
+
+        try:
+            ergebnisse = wecker.durchgang(
+                self.e.wecker_zustand,
+                tmux_socket=self.e.tmux_socket,
+                trocken=self.e.trocken,
+                jetzt=self.jetzt,
+            )
+        except NotImplementedError:
+            return
+        except Exception:  # Wecker darf den Aufpasser-Lauf nie aufhalten
+            log.exception("Externer Wecker gescheitert")
+            return
+        if ergebnisse:
+            geweckt = sum(1 for e in ergebnisse if e.ereignis == "geweckt")
+            gescheitert = sum(1 for e in ergebnisse if e.ereignis == "gescheitert")
+            (log.warning if gescheitert else log.info)(
+                "Wecker: %d geweckt, %d gescheitert, %d gesamt%s",
+                geweckt,
+                gescheitert,
+                len(ergebnisse),
+                " (trocken)" if self.e.trocken else "",
+            )
 
     def _deploy_wache(self, repos: Iterable[Path]) -> list[str]:
         """Setzt das Deploy-Muster für diese Repos und liefert die laufenden Deploy-/Gate-Prozesse."""
@@ -3197,7 +3286,6 @@ class Aufpasser:
 
     def _lauf(self) -> None:
         self._starts_in_tick = 0
-        self._hausmeister_lauf()
         gesehen: list[tuple[str, str, list[Fenster], Path]] = []
         for sitzung, spec in self.sitzungen():
             try:
@@ -3221,6 +3309,13 @@ class Aufpasser:
                 except RuntimeError as fehler:
                     log.error("%s: Fenster nicht lesbar: %s", sitzung, fehler)
             return
+        # Entscheidung #262: Die Deploy-Wache läuft immer VOR dem Hausmeister (und dem
+        # externen Wecker). Ein laufender Deploy/Prüflauf (oder eine gestörte Deploy-Wache,
+        # fail-closed) sperrt damit auch das Aufräumen von Ordnern, Zweigen und
+        # Docker-Resten; außerhalb des Aufpassers schützen den Hausmeister weiter seine
+        # eigenen Sperren je Ordner (laufender Prozess im Ordner, offenes Ticket, 24 h).
+        self._hausmeister_lauf()
+        self._wecker_lauf()
         for sitzung, spec, fenster, repo in gesehen:
             try:
                 self.sitzung_pruefen(sitzung, spec, fenster, repo)

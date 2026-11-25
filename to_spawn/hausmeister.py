@@ -65,7 +65,11 @@ Log nicht schreibbar ⇒ bleibt. Scheitert danach das Löschen, folgt eine zweit
 entscheiden muss.
 
 Zweite Tür (#1369): :func:`aufraeumen_alles` wendet dieselben Regeln auf alle Ordner
-unter den Wurzeln an. Platznot (weniger als :data:`PLATZNOT_ANTEIL` der Platte frei):
+unter den Wurzeln an. Im Aufpasser-Takt (:meth:`to_spawn.aufpasser.Aufpasser._lauf`,
+Entscheidung #262) läuft die Deploy-Wache immer VOR :func:`aufraeumen_alles`, sodass ein
+laufender Deploy/Prüflauf auch das Aufräumen sperrt; bei Direktaufrufen (CLI, Windows-Aufgabe,
+Start-Check) greifen die eigenen Sperren je Ordner (Prozess im Ordner, offenes Ticket, 24 h).
+Platznot (weniger als :data:`PLATZNOT_ANTEIL` der Platte frei):
 Ordner mit geschlossenem Ticket gehen sofort, auch vor Ablauf der 24 h — älteste
 Schließung zuerst, nach jeder Löschung neu gemessen; alle übrigen Regeln gelten
 unverändert. :func:`start_erlaubt` ist der Start-Check (``to_spawn.py speicher``,
@@ -133,7 +137,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from contextlib import ExitStack
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
@@ -1219,10 +1223,7 @@ def _zweig_entscheiden(
         return ergebnis("bleibt", ZWEIGE_AUS, sha, fehler=not trocken)
     art = "gesichert+gelöscht" if fehlende else "gelöscht"
     if fehlende and ort == "lokal":  # Remote-Commits liegen schon auf GitHub, lokale nicht
-        leck = aufpasser.git_lauf(
-            o.cwd, "log", "--format=", "--name-only", sha, "--not", o.haupt_ref,
-            f"--glob={o.sicherungen}", "--", *_glob(aufpasser.SICHERUNG_AUSSCHLUSS),
-        ).split()  # fmt: skip
+        leck = _geheimnis_pfade(o.cwd, sha, "--not", o.haupt_ref, f"--glob={o.sicherungen}")
         if leck:
             return ergebnis("bleibt", f"Geheimnis-Datei {leck[0]} in ungesichertem Commit", sha, fuer_david=True)
         try:  # #169: dieselbe Sperre wie der Zweig-Upload, Übergaben nie auf sicherung/<N>
@@ -2790,20 +2791,30 @@ def _ungesichertes(
     koepfe = _ungepushte_koepfe(repo, ist_worktree, auf_server)
     if koepfe:
         gegen = ["--not", *auf_server] if auf_server else []
-        leck = aufpasser.git_lauf(
-            repo,
-            "log",
-            "--ignore-missing",
-            "--format=",
-            "--name-only",
-            *koepfe,
-            *gegen,
-            "--",
-            *_glob(aufpasser.SICHERUNG_AUSSCHLUSS),
-        ).split()
+        leck = _geheimnis_pfade(repo, "--ignore-missing", *koepfe, *gegen)
         if leck:
             raise _Bleibt(f"Geheimnis-Datei {leck[0]} in ungepushtem Commit", fuer_david=True)
     return koepfe, zu_sichern, alle, sicherung_vorher
+
+
+def _geheimnis_pfade(cwd: Path, *rev_args: str) -> list[str]:
+    """Geheimnis-Pfade (``SICHERUNG_AUSSCHLUSS``) in Commits von ``rev_args`` per ``-z`` (#215).
+
+    Trennt NUL-getrennt über :func:`to_spawn.uebergabe_sichern.pfade_aus_nul`, damit Pfade
+    mit Leerzeichen, Zeilenumbruch oder Nicht-ASCII-Zeichen nie gequotet oder zerlegt werden.
+    """
+    aus = aufpasser.git_lauf(
+        cwd,
+        "log",
+        "-z",
+        "--format=",
+        "--name-only",
+        "--diff-merges=separate",
+        *rev_args,
+        "--",
+        *_glob(aufpasser.SICHERUNG_AUSSCHLUSS),
+    )
+    return uebergabe_sichern.pfade_aus_nul(aus)
 
 
 def _lokale_koepfe(repo: Path, ist_worktree: bool) -> list[str]:
@@ -3668,10 +3679,12 @@ def _kein_altbestand(echt: Path) -> None:
         raise _Bleibt(f"Altbestand, wartet auf das Ja des Menschen (Liste {pfad})")
 
 
-def _kennzahl_schreiben(ergebnisse: list[Ergebnis], *, trocken: bool) -> None:
-    """#1536: je Takt eine Zeile ``art="kennzahl"`` in :func:`_kennzahl_pfad` — „x von y gelöscht, z bleiben“
-    und die Bleib-Gründe gezählt (Zahlen im Grund als ``N``, ohne Klammer-Zusatz)."""
-    geloescht = sum(1 for e in ergebnisse if e.art != "bleibt")
+def bleib_gruende(ergebnisse: Sequence[Ergebnis]) -> tuple[dict[str, int], dict[str, list[str]]]:
+    """Zählt die Bleib-Gründe absteigend (Zahlen als ``N``, ohne Klammer-Zusatz).
+
+    Einzige Zähl- und Normier-Stelle für :func:`_kennzahl_schreiben` und
+    :meth:`to_spawn.aufpasser.Aufpasser._hausmeister_lauf` (#235, #261).
+    """
     gruende: dict[str, int] = {}
     fehler_je: dict[str, list[str]] = {}
     for e in ergebnisse:
@@ -3680,12 +3693,31 @@ def _kennzahl_schreiben(ergebnisse: list[Ergebnis], *, trocken: bool) -> None:
             gruende[schluessel] = gruende.get(schluessel, 0) + 1
             if e.fehler:
                 fehler_je.setdefault(schluessel, []).append(f"{e.ordner}: {e.grund}")
+    geordnet = dict(sorted(gruende.items(), key=lambda kv: (-kv[1], kv[0])))
+    return geordnet, fehler_je
+
+
+def bleib_zeilen(ergebnisse: Sequence[Ergebnis]) -> list[str]:
+    """Formatierte Log-Zeilen je Bleib-Grund (Anzahl + Grund, bei Fehlern Ordner und Text)."""
+    gruende, fehler_je = bleib_gruende(ergebnisse)
+    zeilen: list[str] = []
+    for schluessel, anzahl in gruende.items():
+        fehl = fehler_je.get(schluessel)
+        zusatz = f" — Fehler: {' | '.join(fehl)}" if fehl else ""
+        zeilen.append(f"Hausmeister: bleibt {anzahl}× {schluessel}{zusatz}")
+    return zeilen
+
+
+def _kennzahl_schreiben(ergebnisse: list[Ergebnis], *, trocken: bool) -> None:
+    """#1536: je Takt eine Zeile ``art="kennzahl"`` in :func:`_kennzahl_pfad` — „x von y gelöscht, z bleiben“
+    und die Bleib-Gründe gezählt (Zahlen im Grund als ``N``, ohne Klammer-Zusatz)."""
+    geloescht = sum(1 for e in ergebnisse if e.art != "bleibt")
+    gruende, _ = bleib_gruende(ergebnisse)
     satz = f"{geloescht} von {len(ergebnisse)} gelöscht, {len(ergebnisse) - geloescht} bleiben"
     log.info("Hausmeister: Kennzahl %s%s", satz, " (trocken)" if trocken else "")
     # #235: eine Zeile je Bleib-Grund mit Anzahl; Fehler zusätzlich mit Ordner und Text
-    for schluessel, anzahl in sorted(gruende.items(), key=lambda kv: -kv[1]):
-        fehl = fehler_je.get(schluessel)
-        log.info("Hausmeister: bleibt %d× %s%s", anzahl, schluessel, f" — Fehler: {' | '.join(fehl)}" if fehl else "")
+    for zeile in bleib_zeilen(ergebnisse):
+        log.info("%s", zeile)
     _log_zeile(
         {
             "zeit": datetime.now().astimezone().isoformat(timespec="seconds"),
@@ -3696,7 +3728,7 @@ def _kennzahl_schreiben(ergebnisse: list[Ergebnis], *, trocken: bool) -> None:
             "geloescht": geloescht,
             "bleiben": len(ergebnisse) - geloescht,
             "fehler": sum(1 for e in ergebnisse if e.fehler),
-            "bleib_gruende": dict(sorted(gruende.items(), key=lambda kv: -kv[1])),
+            "bleib_gruende": gruende,
         },
         _kennzahl_pfad(),
     )

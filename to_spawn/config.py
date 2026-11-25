@@ -38,6 +38,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -176,6 +177,12 @@ DEFAULTS: dict[str, Any] = {
     "startklar": {
         "schluessel": [],
     },
+    #: Eigenes Einreichen (#430): ``eigener_dienst: true`` in ``origin/<hauptzweig>`` heißt,
+    #: das Projekt betreibt einen eigenen Einreich-Dienst für ``ticket/*`` (``einreichen`` pusht
+    #: dann nur den Ticket-Zweig). Vorgabe ``False`` = Pull-Request + sofortiger Merge.
+    "einreichen": {
+        "eigener_dienst": False,
+    },
     #: Start-Text (#274 P1): ``zusatz_datei`` = Repo-Datei (relativ zur Wurzel), deren Text als
     #: Abschnitt „Regeln dieses Repos“ in den Skill-Start-Text kommt. Leer = kein Zusatz.
     "start_text": {
@@ -205,7 +212,7 @@ MASCHINE_DEFAULTS: dict[str, Any] = {
 HAUSMEISTER_GESCHUETZTE_ORDNER: tuple[str, ...] = tuple(vorgaben.HAUSMEISTER_GESCHUETZTE_ORDNER)
 #: Öffentliche Repos (Slugs), in die die Übergabe-Sicherung nie schreibt.
 OEFFENTLICHE_SLUGS: tuple[str, ...] = tuple(vorgaben.OEFFENTLICHE_SLUGS)
-#: Felder eines Eintrags in ``repos[]``; fehlende Felder gelten als "" (= ableiten).
+#: Felder eines Eintrags in ``repos[]``; fehlende Felder gelten als "" (bei ``ticket_repo`` = nicht belegt, #420/#542).
 REPO_FELDER = ("slug", "pfad", "ticket_repo", "worktree_basis")
 
 
@@ -494,8 +501,9 @@ def _fremder_besitzer(wt: Path, repo: Path) -> tuple[str, str] | None:
     return besitzer, eigen
 
 
-#: Zeilen, die ``sicherstellen`` in die Repo-``.gitignore`` schreibt: Laufdateien und
-#: Marker unter ``.to-spawn/`` bleiben unversioniert, nur die Konfig wird eingecheckt (#257).
+#: Zeilen, die ``sicherstellen`` lokal in ``.git/info/exclude`` schreibt (#257, #407):
+#: Laufdateien und Marker unter ``.to-spawn/`` bleiben unversioniert, nur die Konfig
+#: bleibt sichtbar für Git. Die getrackte Repo-``.gitignore`` wird nie verändert.
 GITIGNORE_BLOCK = (
     "# to-spawn: Laufdateien/Marker unversioniert, nur die Konfig eingecheckt",
     ".to-spawn/*",
@@ -503,27 +511,101 @@ GITIGNORE_BLOCK = (
 )
 
 
+def _git_exclude_pfad(wurzel: Path) -> tuple[Path, Path] | None:
+    """``(exclude_datei, git_common_dir)`` für ``wurzel`` oder ``None``, wenn kein Git-Repo (#407)."""
+    try:
+        aus_pfad = subprocess.run(
+            ["git", "-C", str(wurzel), "rev-parse", "--git-path", "info/exclude"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=15.0,
+            check=False,
+            **prozessbaum.fensterlos(),
+        )
+        aus_dir = subprocess.run(
+            ["git", "-C", str(wurzel), "rev-parse", "--git-common-dir"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=15.0,
+            check=False,
+            **prozessbaum.fensterlos(),
+        )
+    except (OSError, subprocess.TimeoutExpired) as fehler:
+        log.warning("git rev-parse in %s fehlgeschlagen — info/exclude nicht ergänzt: %s", wurzel, fehler)
+        aus_pfad = None
+        aus_dir = None
+    if (
+        aus_pfad is not None
+        and aus_dir is not None
+        and aus_pfad.returncode == 0
+        and aus_dir.returncode == 0
+        and aus_pfad.stdout.strip()
+        and aus_dir.stdout.strip()
+    ):
+        roh_pfad = Path(aus_pfad.stdout.strip())
+        roh_dir = Path(aus_dir.stdout.strip())
+        datei = roh_pfad if roh_pfad.is_absolute() else wurzel / roh_pfad
+        grenze = roh_dir if roh_dir.is_absolute() else wurzel / roh_dir
+        return datei, grenze
+    # Minimaler Test-Ordner mit eigenem ``.git``-Verzeichnis ohne ``git init``.
+    git_ordner = wurzel / ".git"
+    if git_ordner.is_dir() and not git_ordner.is_symlink():
+        return git_ordner / "info" / "exclude", git_ordner
+    return None
+
+
+def _ist_unter_grenze_ohne_symlink(datei: Path, grenze: Path) -> bool:
+    """``True``, wenn ``datei`` ohne Symlink-Umweg innerhalb von ``grenze`` liegt (#407)."""
+    basis = Path(os.path.abspath(grenze))
+    pfad = Path(os.path.abspath(datei))
+    if basis not in pfad.parents:
+        return False
+    stufe = pfad
+    while stufe != basis:
+        if stufe.is_symlink():
+            return False
+        stufe = stufe.parent
+    return basis.resolve() in pfad.resolve().parents
+
+
 def gitignore_ergaenzen(wurzel: Path) -> bool:
-    """Block aus ``GITIGNORE_BLOCK`` idempotent an ``.gitignore`` anhängen (``True`` = geschrieben)."""
-    datei = wurzel / ".gitignore"
+    """Block aus ``GITIGNORE_BLOCK`` idempotent an ``.git/info/exclude`` anhängen (``True`` = geschrieben).
+
+    Schreibt nie in die getrackte Repo-``.gitignore`` (#407). Kein Git-Repo oder Symlink
+    aus dem Git-Ordner heraus → Warnung, ``False``.
+    """
+    ziel = _git_exclude_pfad(wurzel)
+    if ziel is None:
+        log.warning("Kein Git-Repo (%s) — info/exclude nicht ergänzt", wurzel)
+        return False
+    datei, grenze = ziel
+    if not _ist_unter_grenze_ohne_symlink(datei, grenze):
+        log.warning("info/exclude nicht sicher unter %s (%s) — nicht ergänzt", grenze, datei)
+        return False
     try:
         vorhanden = datei.read_text(encoding="utf-8") if datei.is_file() else ""
     except OSError as fehler:
-        log.warning(".gitignore unlesbar (%s) — nicht ergänzt: %s", datei, fehler)
+        log.warning("info/exclude unlesbar (%s) — nicht ergänzt: %s", datei, fehler)
         return False
     zeilen = {zeile.strip() for zeile in vorhanden.splitlines()}
     fehlend = [zeile for zeile in GITIGNORE_BLOCK[1:] if zeile not in zeilen]
     if not fehlend:
         return False
-    block = "\n".join(GITIGNORE_BLOCK) + "\n"
+    kopf = [] if GITIGNORE_BLOCK[0] in zeilen else [GITIGNORE_BLOCK[0]]
+    block = "\n".join([*kopf, *fehlend]) + "\n"
     trenner = "" if not vorhanden or vorhanden.endswith("\n") else "\n"
     try:
+        datei.parent.mkdir(parents=True, exist_ok=True)
         with datei.open("a", encoding="utf-8") as strom:
             strom.write(f"{trenner}{block}")
     except OSError as fehler:
-        log.warning(".gitignore nicht schreibbar (%s): %s", datei, fehler)
+        log.warning("info/exclude nicht schreibbar (%s): %s", datei, fehler)
         return False
-    log.info(".gitignore ergänzt: %s", datei)
+    log.info("info/exclude ergänzt: %s", datei)
     return True
 
 
@@ -597,8 +679,9 @@ def sicherstellen(repo: Path | None = None) -> Path:
 
     Beim Anlegen bekommt ``worktree_basis`` den Vorschlag ``~/wt/<Repo-Name>`` (#257).
     Eine vorhandene Datei bleibt byte-gleich (Plan B8, #257): fehlende Felder liefert
-    ``lade`` beim Lesen aus ``DEFAULTS``, nichts wird nachgetragen. Dazu der
-    ``.gitignore``-Block für ``.to-spawn/`` (idempotent). Rückgabe: Pfad der Konfig-Datei.
+    ``lade`` beim Lesen aus ``DEFAULTS``, nichts wird nachgetragen. Dazu die lokalen
+    Exclude-Zeilen für ``.to-spawn/`` in ``.git/info/exclude`` (idempotent, #407).
+    Rückgabe: Pfad der Konfig-Datei.
     """
     wurzel = repo_wurzel(repo)
     datei = wurzel / KONFIG_PFAD
@@ -691,6 +774,15 @@ def live_schritt(konfig: dict[str, Any]) -> dict[str, str]:
     """
     gruppe = _gruppe(konfig, "live")
     return {schluessel: _text(gruppe, schluessel) for schluessel in _LIVE_TEXT_FELDER}
+
+
+def hat_einreich_dienst(konfig: dict[str, Any]) -> bool:
+    """``einreichen.eigener_dienst: true`` — das Projekt hat einen eigenen Einreich-Dienst (#430).
+
+    Einzige Stelle dieser Regel: nur ausdrücklich ``True`` zählt (nie aus Hook-Dateien
+    abgeleitet). Ohne Marker gilt der normale Weg (Pull-Request + sofortiger Merge).
+    """
+    return _gruppe(konfig, "einreichen").get("eigener_dienst") is True
 
 
 def live_bewusst_ohne(konfig: dict[str, Any]) -> bool:
@@ -821,6 +913,172 @@ def _gleicher_ort(a: str, b: Path) -> bool:
         return False
 
 
+def _schreibe_maschine(datei: Path, daten: dict[str, Any]) -> None:
+    """Schreibt die Maschinen-Liste atomar (temporäre Datei + ``os.replace``)."""
+    datei.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix=".maschine-", suffix=".tmp", dir=datei.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as strom:
+            strom.write(json.dumps(daten, indent=2, ensure_ascii=False) + "\n")
+        os.replace(tmp, datei)
+    except OSError:
+        Path(tmp).unlink(missing_ok=True)
+        raise
+
+
+#: Gültige Form eines GitHub-Ticket-Repos ``<besitzer>/<name>`` (#261).
+_TICKET_REPO_MUSTER = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+
+
+@dataclass(frozen=True)
+class TicketRepoAenderung:
+    """Ergebnis einer ``ticket_repo``-Änderung an einem ``repos[]``-Eintrag (#261)."""
+
+    slug: str
+    pfad: str
+    vorher: str
+    nachher: str
+
+    @property
+    def geaendert(self) -> bool:
+        return self.vorher != self.nachher
+
+    def zeile(self) -> str:
+        alt = self.vorher or "(leer)"
+        neu = self.nachher or "(leer)"
+        if not self.geaendert:
+            return f"{self.slug} ({self.pfad}): ticket_repo unverändert ({alt})"
+        return f"{self.slug} ({self.pfad}): ticket_repo {alt} → {neu}"
+
+
+def _veraltete_ticket_repo_ziele(daten: dict[str, Any]) -> list[tuple[dict[str, str], TicketRepoAenderung]]:
+    """Findet Einträge in ``daten["repos"]`` mit bekannter Alt-Vorgabe (``vorgaben.VERALTETE_TICKET_REPOS``)."""
+    soll_je_slug = {
+        e["slug"].lower(): e["ticket_repo"]
+        for e in vorgaben.REPOS
+        if e.get("slug") and e.get("ticket_repo")
+    }
+    alt_je_slug = {
+        slug.lower(): {wert.lower() for wert in werte}
+        for slug, werte in vorgaben.VERALTETE_TICKET_REPOS.items()
+    }
+    treffer: list[tuple[dict[str, str], TicketRepoAenderung]] = []
+    for eintrag in daten.get("repos", []):
+        if not isinstance(eintrag, dict):
+            continue
+        slug = (eintrag.get("slug") or "").strip()
+        schluessel = slug.lower()
+        soll = soll_je_slug.get(schluessel, "")
+        alte = alt_je_slug.get(schluessel, set())
+        ist = (eintrag.get("ticket_repo") or "").strip()
+        if soll and ist.lower() in alte and ist != soll:
+            treffer.append(
+                (
+                    eintrag,
+                    TicketRepoAenderung(
+                        slug=slug,
+                        pfad=str(eintrag.get("pfad") or ""),
+                        vorher=ist,
+                        nachher=soll,
+                    ),
+                )
+            )
+    return treffer
+
+
+def veraltete_ticket_repos(daten: dict[str, Any] | None = None) -> list[TicketRepoAenderung]:
+    """Liest veraltete Vorgabe-Werte von ``ticket_repo`` in der Maschinen-Liste (nur lesend, #261).
+
+    Fehlt die Datei oder ist sie unlesbar, liefert sie leer (keine stillschweigende Migration).
+    """
+    if daten is None:
+        datei = maschine_datei()
+        if not datei.is_file() or _lies(datei)[0] is None:
+            return []
+        daten = maschine()
+    return [aenderung for _, aenderung in _veraltete_ticket_repo_ziele(daten)]
+
+
+def maschine_ticket_repos_nachziehen() -> list[TicketRepoAenderung]:
+    """Zieht bekannte veraltete Vorgabe-Werte von ``ticket_repo`` in der Maschinen-Liste nach (#261).
+
+    Wiederholbar: fehlt die Datei oder ist alles aktuell, wird nichts geschrieben. Eine kaputte
+    Datei wird nie überschrieben (Warnung im Log). Bewusst abweichend gesetzte Werte bleiben (#542).
+    """
+    datei = maschine_datei()
+    if not datei.is_file():
+        return []
+    if _lies(datei)[0] is None:
+        log.warning("Maschinen-Liste unlesbar (%s) — nicht überschrieben", datei)
+        return []
+    daten = maschine()
+    treffer = _veraltete_ticket_repo_ziele(daten)
+    if not treffer:
+        return []
+    aenderungen: list[TicketRepoAenderung] = []
+    for eintrag, aenderung in treffer:
+        eintrag["ticket_repo"] = aenderung.nachher
+        aenderungen.append(aenderung)
+    _schreibe_maschine(datei, daten)
+    for aenderung in aenderungen:
+        log.info("Maschinen-Liste nachgezogen: %s (%s)", aenderung.zeile(), datei)
+    return aenderungen
+
+
+def maschine_ticket_repo_setzen(ziel: str | Path, ticket_repo: str) -> list[TicketRepoAenderung]:
+    """Setzt ``ticket_repo`` für passende Einträge in der Maschinen-Liste ausdrücklich (#261).
+
+    ``ziel`` trifft per ``slug`` (Groß-/Kleinschreibung egal) oder per Ordner-``pfad``.
+    ``ticket_repo`` muss die Form ``<besitzer>/<name>`` haben. Wiederholbar: stimmt der Wert
+    schon (und die Datei existiert), wird nicht neu geschrieben.
+    """
+    wert = ticket_repo.strip()
+    if not _TICKET_REPO_MUSTER.fullmatch(wert):
+        raise ValueError(
+            f"ticket_repo ungültig ({ticket_repo!r}) — erwartet wird <besitzer>/<name>"
+        )
+    datei = maschine_datei()
+    if datei.is_file() and _lies(datei)[0] is None:
+        raise ValueError(f"Maschinen-Liste unlesbar ({datei}) — nicht überschrieben")
+    daten = maschine()
+    ziel_text = str(ziel).strip()
+    ziel_klein = ziel_text.lower()
+    try:
+        ziel_pfad: Path | None = Path(ziel_text).expanduser().resolve()
+    except (OSError, ValueError):
+        ziel_pfad = None
+
+    treffer: list[dict[str, str]] = []
+    for eintrag in daten["repos"]:
+        if (eintrag.get("slug") or "").strip().lower() == ziel_klein or (
+            ziel_pfad is not None and _gleicher_ort(eintrag.get("pfad") or "", ziel_pfad)
+        ):
+            treffer.append(eintrag)
+    if not treffer:
+        raise LookupError(f"Kein Eintrag in {datei} für {ziel_text!r}")
+
+    aenderungen: list[TicketRepoAenderung] = []
+    geaendert = False
+    for eintrag in treffer:
+        vorher = (eintrag.get("ticket_repo") or "").strip()
+        aenderung = TicketRepoAenderung(
+            slug=eintrag.get("slug") or "",
+            pfad=eintrag.get("pfad") or "",
+            vorher=vorher,
+            nachher=wert,
+        )
+        if aenderung.geaendert:
+            eintrag["ticket_repo"] = wert
+            geaendert = True
+        aenderungen.append(aenderung)
+
+    if geaendert or not datei.is_file():
+        _schreibe_maschine(datei, daten)
+        for aenderung in aenderungen:
+            log.info("Maschinen-Liste geändert: %s (%s)", aenderung.zeile(), datei)
+    return aenderungen
+
+
 def maschine_eintragen(repo: Path | None = None, ticket_repo: str = "") -> dict[str, str]:
     """Trägt das Repo in ``repos[]`` der Maschinen-Liste ein und gibt seinen Eintrag zurück.
 
@@ -828,7 +1086,9 @@ def maschine_eintragen(repo: Path | None = None, ticket_repo: str = "") -> dict[
     ein vorhandener Wert wird nie überschrieben. Der Einrichter übergibt ihn nur mit Beleg (#542).
 
     Schlüssel ist der Ordner (``pfad``). Neu: ``slug`` aus ``origin``, ``worktree_basis`` aus
-    der Repo-Konfig, ``ticket_repo`` leer (= ableiten). Zeigt ``origin`` nicht auf ein
+    der Repo-Konfig, ``ticket_repo`` leer (nicht belegt — der Hausmeister rät nie aus
+    ``slug``, sondern überspringt fail-closed; nur der Einrichter trägt es mit ``gh``-Beleg
+    ein, #420/#542). Zeigt ``origin`` nicht auf ein
     GitHub-Repo (Wegwerf-Klon mit lokalem Pfad, #112), bleibt die Liste unberührt: Warnung,
     Rückgabe des Eintrags ohne Schreiben. Schon da: nur leere Felder werden
     ergänzt, Eingetragenes bleibt. Fehlt die Datei, sind die Vorgaben die Basis — die
@@ -867,15 +1127,7 @@ def maschine_eintragen(repo: Path | None = None, ticket_repo: str = "") -> dict[
     else:
         eintrag = neu
         daten["repos"].append(eintrag)
-    datei.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(prefix=".maschine-", suffix=".tmp", dir=datei.parent)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as strom:
-            strom.write(json.dumps(daten, indent=2, ensure_ascii=False) + "\n")
-        os.replace(tmp, datei)
-    except OSError:
-        Path(tmp).unlink(missing_ok=True)
-        raise
+    _schreibe_maschine(datei, daten)
     log.info("Maschinen-Liste: %s eingetragen (%s)", wurzel, datei)
     return eintrag
 

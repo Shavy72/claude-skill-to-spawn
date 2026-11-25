@@ -57,6 +57,7 @@ from to_spawn import (
     vorfall,
     waechter_takt,
     warten,
+    wecker,
 )
 from to_spawn import einreichen as einreichen_modul
 from to_spawn import spawn as spawn_modul
@@ -232,6 +233,43 @@ def _setup(repo: Path, args: argparse.Namespace) -> int:
         print(f"  Label {label} nicht angelegt — von Hand: gh label create {label}")
     print()
     print(setup.probesitz_block(repo))
+    return 0
+
+
+def _ticket_repo_befehl(args: argparse.Namespace, ap: argparse.ArgumentParser) -> int:
+    """Unterbefehl ``ticket-repo``: zeigt, setzt oder zieht ``ticket_repo``-Einträge nach (#261)."""
+    if args.nachziehen:
+        if args.eintrag or args.wert:
+            ap.error("ticket-repo --nachziehen akzeptiert keine weiteren Argumente")
+        datei = config.maschine_datei()
+        if datei.is_file() and config._lies(datei)[0] is None:
+            print(f"FEHLER: Maschinen-Liste unlesbar ({datei}) — nicht überschrieben", file=sys.stderr)
+            return 1
+        aenderungen = config.maschine_ticket_repos_nachziehen()
+        if not aenderungen:
+            print("Maschinen-Liste: alle ticket_repo aktuell")
+            return 0
+        for aenderung in aenderungen:
+            print(aenderung.zeile())
+        return 0
+    if args.eintrag is None and args.wert is None:
+        datei = config.maschine_datei()
+        if datei.is_file() and config._lies(datei)[0] is None:
+            print(f"FEHLER: Maschinen-Liste unlesbar ({datei})", file=sys.stderr)
+            return 1
+        for eintrag in config.maschine()["repos"]:
+            wert = (eintrag.get("ticket_repo") or "").strip() or "(leer)"
+            print(f"{eintrag.get('slug', '')} ({eintrag.get('pfad', '')}): ticket_repo = {wert}")
+        return 0
+    if not args.eintrag or not args.wert:
+        ap.error("ticket-repo braucht <eintrag> <ticket_repo> oder --nachziehen")
+    try:
+        aenderungen = config.maschine_ticket_repo_setzen(args.eintrag, args.wert)
+    except (ValueError, LookupError, OSError) as fehler:
+        print(f"FEHLER: {fehler}", file=sys.stderr)
+        return 1
+    for aenderung in aenderungen:
+        print(aenderung.zeile())
     return 0
 
 
@@ -565,6 +603,8 @@ def verteilen(ap: argparse.ArgumentParser, args: argparse.Namespace) -> int:
         return waechter_takt.lauf(args)
     if args.befehl == "aufpasser":
         return aufpasser.lauf_mit_args(args)
+    if args.befehl == "wecker":
+        return wecker.lauf(args)
     if args.befehl == "start-last":
         return start_last.lauf_mit_args(args)
     if args.befehl == "warten":
@@ -573,6 +613,8 @@ def verteilen(ap: argparse.ArgumentParser, args: argparse.Namespace) -> int:
         return _aufraeumen(args, ap)
     if args.befehl == "sichern":
         return uebergabe_sichern.lauf(args.dateien, trocken=args.trocken)
+    if args.befehl == "ticket-repo":
+        return _ticket_repo_befehl(args, ap)
     if args.befehl == "ticketstand":
         # Nur lesen: Tabelle „X von Y fertig“ für jeden Aufseher-Tick.
         return ticketstand.lauf(args, config.repo_wurzel(_repo_aus_umgebung()))
