@@ -54,6 +54,24 @@ was zum Weiterbauen nötig ist.
 
 Chronologisch absteigend (neuester Eintrag oben, ältere Einträge als Verlauf darunter; alle Uhrzeiten Europe/Berlin).
 
+- **2026-11-25 19:30 (Europe/Berlin, main 7005f9c):** Welle-13-Pakete gemergt und Windows-Teil von L5 (#756) am PC belegt:
+  - Seit `0741c91` gemergt: Pull-Requests 764 (Issue 762, Windows-Test-Härtung), 765 (Issue 755,
+    `sichern --pruefen` und Bau-Server-Beleg), 766 (Issue 578, Werkzeug-Fehler-Log), 768 (Issue 760,
+    Linux-Ort-Wahl für große Testläufe), 769 (Issue 757, Probe-1330-Befunde und `crontab`-Pfadschutz),
+    770 (Issue 257, Windows-PID-Grenze), 771 (Issue 347, `zweig_ticket_repo` in `maschine.json`),
+    772 (Issue 353, feste Wartezeiten in `spawn_srv`-Tests abgebaut), 773 (Issue 412, Skill-/MCP-Filter
+    im Aufseher) und 774 (Issue 660, `agy`-Kontext-Auswertung und `--runner`).
+  - Windows-PC (#756): `~/.config/to-spawn/maschine.json` angelegt (`sicherung.dateien` auf
+    Ober-Aufsicht-Übergabe + Entscheidungs-Log, `sicherung.ziel` auf privaten Notiz-Tresor), per
+    `to_spawn.py sichern --pruefen`, `--trocken` und zwei idempotenten Läufen (Exit 0) belegt sowie
+    Windows-Kaltstart-Probe M15 (Lauf 4) bestanden und in `docs/ABNAHME_L1.md` dokumentiert.
+  - Offen im Pull-Request (laut `gh pr list --state open`): 777 (Issue 641), 776 (Issue 761), 775
+    (Issue 325), 767 (Issue 259), 678 (Issue 122, Windows-Job-Objekt).
+  - Als Nächstes: offene Pull-Requests (777, 776, 775, 767, 678) prüfen und mergen → offene Anomalien
+    aus Probe-Lauf 3 (u. a. 624, 641) → Windows-Seite (#68) und offene M-Zeilen M1–M15 in
+    `docs/ABNAHME_L1.md` abnehmen; kurz vor „fertig“ Abschluss-Kaltstart-Probe M15 auf dem Bau-Server
+    (#755).
+
 - **2026-11-25 17:45 (Europe/Berlin, main 0741c91):** Großes Bau-Paket (Wellen 1–12) gemergt, #145 in Linux (#755) und Windows (#756) geteilt:
   - Seit `f3c85b1` gemergt (Auswahl): Pull-Requests 659 (Windows-Unterprozesse ohne Konsole), 662
     (Issue 660, Bau-Session wahlweise über `agy`), 666 (Issue 145, Stand-Prüfung mit Squash-Merges
@@ -468,23 +486,26 @@ Etappen und Abnahme gilt der Plan. Der Plan-Abschnitt „Stand“ ist ein älter
      zusätzlich PowerShell 7 (`pwsh`).
    - **Erstinstallation**, falls `~/.claude/skills/to-spawn` noch nicht vorhanden ist:
      - Linux: `git clone https://github.com/Shavy72/claude-skill-to-spawn ~/claude-skill-to-spawn && bash ~/claude-skill-to-spawn/install.sh`
-     - Windows (PowerShell 7): `git clone https://github.com/Shavy72/claude-skill-to-spawn "$env:TEMP\claude-skill-to-spawn"` und `pwsh -File "$env:TEMP\claude-skill-to-spawn\install.ps1"`
+     - Windows (PowerShell 7): `git clone https://github.com/Shavy72/claude-skill-to-spawn "$HOME\claude-skill-to-spawn"` und `pwsh -File "$HOME\claude-skill-to-spawn\install.ps1"` (dauerhafter Klon-Ordner statt Temp, damit `STAND.json` den Klon für spätere Updates und Zweig-Uploads kennt).
    - **Abgleich:** `gh pr list --state open`, `gh issue list`, `git log origin/main -15`, installierter
-     Skill-Stand auf der Maschine (`python ~/.claude/skills/to-spawn/to_spawn.py einrichten --pruefen`).
-     Meldet das `skill_aktuell: grosse_luecke`, ist der Skill veraltet: im aktiven Skill-Klon
-     `git pull` und danach `install.sh` (Linux) bzw. `install.ps1` (Windows) ausführen. Abweichungen
-     zuerst im Abschnitt „3. Stand“ festhalten.
+     Skill-Stand auf der Maschine (`python ~/.claude/skills/to-spawn/to_spawn.py einrichten --pruefen`,
+     unter Windows bei Anführungszeichen oder `cmd.exe` mit `"$HOME\.claude\skills\to-spawn\to_spawn.py"`
+     statt `"~/..."`). Meldet `--pruefen` `skill_aktuell: weicht_ab` (bzw. `grosse_luecke` beim
+     schreibenden `einrichten`), ist der Skill veraltet: im aktiven Skill-Klon `git pull` und danach
+     `install.sh` (Linux) bzw. `install.ps1` (Windows) ausführen. Abweichungen zuerst im Abschnitt
+     „3. Stand“ festhalten.
 4. **Kette starten, falls keine läuft.** Auf eingerichteten Maschinen über `~/.claude/bin/claude-frisch.sh`
-   (Linux) bzw. `~/.claude/bin/claude-frisch.ps1` (Windows), nie `claude` mit geerbter Umgebung. Die
+   (Linux) bzw. `"$HOME\.claude\bin\claude-frisch.ps1"` (Windows), nie `claude` mit geerbter Umgebung. Die
    Start-Skripte sind maschinen-lokal und liegen außerhalb dieses Repos (genaue Befehle je Maschine im
    Notiz-Tresor `projects/bau-system/WIEDEREINSTIEG_maschinen.md`). **Rückfall auf einer frischen
    Maschine ohne Start-Skript:** ein neues Terminal außerhalb jeder laufenden Claude-Session öffnen
    (oder geerbte Sitzungs-Variablen wie `CLAUDECODE`, `CLAUDE_CODE_SESSION_*`,
-   `CLAUDE_CODE_CHILD_SESSION` vor dem Start entfernen — vollständige Liste in
-   `to_spawn/sitzung_env.py`) und `claude` dort frisch starten. Der Startauftrag lautet:
+   `CLAUDE_CODE_CHILD_SESSION` vor dem Start entfernen — vollständige Liste in `to_spawn/sitzung_env.py`;
+   unter PowerShell z. B. `Remove-Item Env:CLAUDECODE,Env:CLAUDE_CODE_CHILD_SESSION -ErrorAction SilentlyContinue; Get-ChildItem Env:CLAUDE_CODE_SESSION_* | Remove-Item`)
+   und `claude` dort frisch starten. Der Startauftrag lautet:
    „Lies `docs/WIEDEREINSTIEG.md` im Skill-Repo und verfolge das Ziel 1:1 weiter, bis es erreicht
    ist.“ Gibt es noch eine Übergabe-Datei, wird sie zusätzlich gelesen; sie wächst fortlaufend, es genügen
-   die letzten 200 Zeilen (`tail -200`).
+   die letzten 200 Zeilen (`tail -200`, unter PowerShell `Get-Content <Datei> -Tail 200`).
 5. **Weiterbauen in der Reihenfolge der Prioritäten.** Offene Pull-Requests zuerst fertig machen
    (Review, Linux- und Windows-Lauf, Merge nach der Merge-Regel in Abschnitt 5), dann offene
    System-Anomalien aus dem laufenden Probe-Lauf (L10), dann die offenen Issues der niedrigsten Etappe
