@@ -146,6 +146,12 @@ def baue_parser() -> _Parser:
     p_anh.add_argument("spec", type=int, help="Spec-Nummer (Eltern-Issue + Manifest)")
     p_anh.add_argument("ticket", type=int, help="anzuhängendes Issue")
     p_anh.add_argument("--blockiert-von", default="", metavar="B,…", help="Blocker-Tickets (Komma)")
+    p_anh.add_argument(
+        "--abnahme",
+        default="",
+        metavar="A,…|keine",
+        help="Abnahme-Ticket(s) dieser Kette (Komma; oder 'keine' für eine neue Kette)",
+    )
     p_anh.add_argument("--schaetzung", type=float, metavar="K", help="schaetzung_k (Tausend Token)")
     p_anh.add_argument("--umfang", metavar="TEXT", help="umfang (ein Satz Klartext)")
     p_anh.add_argument(
