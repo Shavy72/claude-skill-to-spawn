@@ -137,9 +137,10 @@ if ($cmds.Count -eq 0) { Write-Host "Nichts zu starten."; exit 0 }
 
 # WICHTIG: keine Umgebungs-Variablen und keine ';' in den -Command-Text (wt liest ';' als Tab-Trenner).
 # Env (Transkript-Persistenz) setzt bau.py/wache.py selbst.
+# Teil C (#282): bei Exit 0 (z. B. „nichts zu tun“) schließt der Tab von selbst; bei Fehler bleibt -NoExit offen.
 $parts = @()
 foreach ($c in $cmds) {
-    $parts += @("new-tab", "--title", "`"$c`"", "-d", "`"$repo`"", "pwsh", "-NoExit", "-Command", "`"$c`"")
+    $parts += @("new-tab", "--title", "`"$c`"", "-d", "`"$repo`"", "pwsh", "-NoExit", "-Command", "`"$c && & { if (`$LASTEXITCODE -eq 0) { exit 0 } }`"")
     $parts += ";"
 }
 $parts = $parts[0..($parts.Count - 2)]
