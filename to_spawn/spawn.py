@@ -17,7 +17,7 @@ import time
 from pathlib import Path
 from typing import Any, Sequence, TextIO
 
-from . import capo, config, manifest, probesitz, stand, starter, umzug
+from . import auswahl, capo, config, manifest, probesitz, stand, starter, umzug
 
 log = logging.getLogger("to_spawn.spawn")
 
@@ -68,6 +68,8 @@ def baue_befehl(
     tickets: Sequence[str] | None,
     konfig: dict[str, Any],
     dry_run: bool,
+    *,
+    ohne_wache: bool = False,
 ) -> list[str]:
     """argv des Terminal-Skripts; auf Nicht-Windows ohne ``pwsh`` (#257).
 
@@ -77,7 +79,7 @@ def baue_befehl(
     """
     ziel = ziel_aufloesen(ziel, konfig)
     if sys.platform != "win32":
-        return _befehl_unix(ziel, spec, tickets, konfig, dry_run)
+        return _befehl_unix(ziel, spec, tickets, konfig, dry_run, ohne_wache=ohne_wache)
     if ziel == "srv":
         _server_repo_pflicht(konfig)
     skript = SKILL_ORDNER / SKRIPTE[ziel]
@@ -85,6 +87,8 @@ def baue_befehl(
     befehl = [pwsh, "-File", str(skript), "-Spec", str(spec)]
     if tickets:
         befehl += ["-Tickets", ",".join(str(t) for t in tickets)]
+    if ohne_wache:
+        befehl.append("-OhneWache")
     if ziel == "srv":
         befehl += ["-Zielserver", config.ssh_ziel(konfig)]
     if dry_run:
@@ -107,10 +111,14 @@ def _befehl_unix(
     tickets: Sequence[str] | None,
     konfig: dict[str, Any],
     dry_run: bool,
+    *,
+    ohne_wache: bool = False,
 ) -> list[str]:
     argumente = [str(spec)]
     if tickets:
         argumente += ["--tickets", ",".join(str(t) for t in tickets)]
+    if ohne_wache:
+        argumente.append("--ohne-wache")
     if dry_run:
         argumente.append("--dry-run")
     if ziel == "local":
@@ -126,6 +134,7 @@ def spawn(
     *,
     ziel: str | None = None,
     tickets: Sequence[str] | None = None,
+    ohne_wache: bool = False,
     dry_run: bool = False,
     eingabe: TextIO | None = None,
 ) -> int:
@@ -141,7 +150,7 @@ def spawn(
         return 2
     gewaehlt = ziel_aufloesen(gewaehlt, konfig)
     try:
-        befehl = baue_befehl(gewaehlt, spec, tickets, konfig, dry_run)
+        befehl = baue_befehl(gewaehlt, spec, tickets, konfig, dry_run, ohne_wache=ohne_wache)
     except ValueError as fehler:
         log.error("%s", fehler)
         return 2
@@ -257,6 +266,16 @@ def neustart(
         befehl = ["ssh", config.ssh_ziel(konfig), fern]
         print(" ".join(befehl[:2]), repr(fern))
         return starter.starte(befehl, cwd=repo, check=False, warten=True).returncode
+
+    stand_auswahl = auswahl.lesen(repo, spec)
+    if not auswahl.ticket_erlaubt(repo, spec, ticket, auswahl=stand_auswahl, gelesen=True):
+        meldung = (
+            f"WEIGERUNG: Ticket #{ticket} liegt außerhalb der gespeicherten Auswahl "
+            f"für Spec #{spec} ({auswahl.beschreibung(stand_auswahl)}) — kein Neustart."
+        )
+        log.error("%s", meldung)
+        print(meldung, file=sys.stderr)
+        return manifest.EXIT_WEIGERUNG
 
     os.environ["TO_SPAWN_REPO"] = str(repo)
     eintrag = ticket_eintrag(spec, ticket)

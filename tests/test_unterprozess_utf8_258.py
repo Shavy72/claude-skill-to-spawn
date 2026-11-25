@@ -7,6 +7,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from to_spawn import eigener_handoff, konsole
 
 WURZEL = Path(__file__).resolve().parent.parent
@@ -126,3 +128,43 @@ def test_nicht_utf8_ausgabe_ist_nicht_lesbar_kein_absturz(monkeypatch) -> None:
     assert docker_reste._docker(("ps",))[0] is False
     assert capo.vps_kopf({"ssh": "h", "pfad": "p"}) is None
     assert cache._tree(Path("."), "HEAD") is None
+
+
+def test_pruef_sha_nicht_utf8_ausgabe_liefert_none(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """#608 (1): ``pruef._sha`` stürzt bei kaputter Nicht-UTF-8-Ausgabe nicht ab, sondern liefert ``None``."""
+    from to_spawn import pruef
+
+    monkeypatch.setattr(subprocess, "run", _kaputt_lauf)
+    assert pruef._sha(tmp_path, "HEAD") is None
+
+    def _kaputt_stderr(befehl: list[str], **_k: object) -> subprocess.CompletedProcess[bytes]:
+        return subprocess.CompletedProcess(befehl, 1, b"", bytes([102, 0x81, 101]))
+
+    monkeypatch.setattr(subprocess, "run", _kaputt_stderr)
+    assert pruef._sha(tmp_path, "HEAD") is None
+
+
+def test_lauf_daten_vereinheitlicht_crlf_zu_lf(monkeypatch: pytest.MonkeyPatch) -> None:
+    """#608 (3): ``konsole.lauf_daten`` normiert CRLF/CR wie ``text=True`` auf LF (auch für Docker-Fehler)."""
+    from to_spawn import docker_reste
+
+    code = (
+        "import sys; "
+        "sys.stdout.buffer.write(b'zeile1\\r\\nzeile2\\r\\n'); "
+        "sys.stderr.buffer.write(b'fehler1\\r\\nfehler2\\rende\\r\\n')"
+    )
+    echt = konsole.lauf_daten([sys.executable, "-c", code], check=False)
+    assert echt is not None
+    assert echt.stdout == "zeile1\nzeile2\n"
+    assert echt.stderr == "fehler1\nfehler2\nende\n"
+
+    def _docker_crlf(befehl: list[str], **_k: object) -> subprocess.CompletedProcess[bytes]:
+        return subprocess.CompletedProcess(befehl, 1, b"", b"Fehler A\r\nFehler B\r\n")
+
+    monkeypatch.setattr(subprocess, "run", _docker_crlf)
+    ok, text = docker_reste._docker(("ps",))
+    assert ok is False
+    assert "\r" not in text
+    assert "Fehler A\nFehler B" in text

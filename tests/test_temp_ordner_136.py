@@ -485,6 +485,10 @@ TMP_AUSNAHMEN: dict[str, tuple[tuple[str, ...], str]] = {
         ("_RM_ERLAUBT = re.compile(r\"(?:/tmp/|/var/tmp/",),
         "Erlaubnis-Muster für rm -r in System-Temp-Ordnern (Verlauf-Prüfung, kein Arbeitsordner)",
     ),
+    "to_spawn/erlaubt.py": (
+        ('RM_ERLAUBTE_PRAEFIXE: tuple[str, ...] = ("/tmp/", "/var/tmp/", "~/wt/", "~/tmp")',),
+        "Erlaubnis-Präfixe für rm in System-Temp-Ordnern (Verlauf-Prüfung #389, kein Arbeitsordner)",
+    ),
     "to_spawn/hausmeister.py": (
         ("``~/*``, ``/tmp/*`` fallen weg",),
         "Docstring: /tmp/* wird als Hausmeister-Wurzel abgelehnt",

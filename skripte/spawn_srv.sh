@@ -259,6 +259,21 @@ for n in $TICKETS; do
   fi
 done
 
+# Teil-Start-Auswahl je Spec und Rechner merken (#271), damit Aufpasser, Aufseher-Stand,
+# sessions_stand, neustart, capo und Takt begrenzt bleiben. Trockenlauf und Nachstart aus
+# wache.py ändern die gespeicherte Auswahl nicht.
+if [ "$DRY_RUN" -eq 0 ] && [ "${TO_SPAWN_NACHSTART:-0}" != "1" ]; then
+  AUSWAHL_ARGS=(auswahl "$SPEC")
+  if [ "$NUR_WACHE" -eq 1 ]; then
+    AUSWAHL_ARGS+=(--nur-wache)
+  elif [ -n "$TICKETS_ARG" ]; then
+    AUSWAHL_ARGS+=(--tickets "$TICKETS_ARG")
+  fi
+  if [ "$OHNE_WACHE" -eq 1 ]; then AUSWAHL_ARGS+=(--ohne-wache); fi
+  if [ -n "$UMZUG_REF" ]; then AUSWAHL_ARGS+=(--umzug); fi
+  TO_SPAWN_REPO="$REPO" "$PY" "$SKILL_HOME/to_spawn.py" "${AUSWAHL_ARGS[@]}"
+fi
+
 if [ "${#GEPLANT[@]}" -eq 0 ]; then
   echo "Nichts zu starten — alle Fenster laufen schon."
   warteliste_aendern "" "$LAEUFT"

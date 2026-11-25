@@ -418,9 +418,11 @@ class _Leser(HTMLParser):
         self._stil: list[str] = []
         self._versteckte_klassen: set[str] = set()
         self._in_klick = 0
-        self._klick_hat_schritt = False
+        self._klick_schritte: list[str] = []
         self._in_klick_li = False
         self._klick_li_text: list[str] = []
+        self._in_h2 = False
+        self._h2_text: list[str] = []
 
     def _merke_versteckte_klassen(self, css: str) -> None:
         for sel, regel in _CSS_REGEL.findall(css):
@@ -447,18 +449,22 @@ class _Leser(HTMLParser):
             self._stapel.append((tag, versteckt))
         if tag == "section" and "folie" in a.get("class", "").split():
             self._in_klick = 0
-            self._klick_hat_schritt = False
+            self._klick_schritte = []
             self._in_klick_li = False
             self._klick_li_text = []
+            self._in_h2 = False
+            self._h2_text = []
             self.folien.append(
                 {
                     "teil": a.get("data-teil", ""),
                     "art": a.get("data-art", ""),
                     "ticket": a.get("data-ticket", "").strip().lstrip("#"),
+                    "titel": "",
                     "text": [],
                     "bilder": [],
                     "viz": [],
                     "klickschritte": 0,
+                    "klick_listen": [],
                     "kern": 0,
                     "versteckt": any(h for _, h in self._stapel),
                     "h2": 0,
@@ -472,7 +478,7 @@ class _Leser(HTMLParser):
         versteckt_jetzt = any(h for _, h in self._stapel)
         if tag == "ol" and "klickschritte" in klassen and not versteckt_jetzt:
             if self._in_klick == 0:
-                self._klick_hat_schritt = False
+                self._klick_schritte = []
             self._in_klick += 1
         elif tag == "li" and self._in_klick > 0 and not versteckt_jetzt:
             self._in_klick_li = True
@@ -481,6 +487,9 @@ class _Leser(HTMLParser):
             f["bilder"].append(a.get("src", ""))
         if tag == "h2":
             f["h2"] += 1
+            if not f["titel"]:
+                self._in_h2 = True
+                self._h2_text = []
         if tag == "p" and "kern" in klassen:
             f["kern"] += 1
         if tag == "svg":
@@ -512,17 +521,24 @@ class _Leser(HTMLParser):
                 self._merke_versteckte_klassen("".join(self._stil))
                 self._stil = []
             self._in_style = False
+        if tag == "h2" and self._in_h2:
+            if self.folien and not self.folien[-1]["titel"]:
+                self.folien[-1]["titel"] = _norm("".join(self._h2_text))
+            self._in_h2 = False
+            self._h2_text = []
         if tag == "li" and self._in_klick_li:
-            if "".join(self._klick_li_text).strip():
-                self._klick_hat_schritt = True
+            schritt = _norm("".join(self._klick_li_text))
+            if schritt:
+                self._klick_schritte.append(schritt)
             self._in_klick_li = False
             self._klick_li_text = []
         if tag == "ol" and self._in_klick > 0:
             self._in_klick -= 1
             if self._in_klick == 0:
-                if self._klick_hat_schritt and self.folien:
+                if self._klick_schritte and self.folien:
                     self.folien[-1]["klickschritte"] += 1
-                self._klick_hat_schritt = False
+                    self.folien[-1]["klick_listen"].append(list(self._klick_schritte))
+                self._klick_schritte = []
         if tag in _VOID:
             return
         for k in range(len(self._stapel) - 1, -1, -1):
@@ -542,6 +558,8 @@ class _Leser(HTMLParser):
             self._stil.append(data)
         if self._aus or not self.folien:
             return
+        if self._in_h2:
+            self._h2_text.append(data)
         if self._in_klick_li and not any(h for _, h in self._stapel):
             self._klick_li_text.append(data)
         if self._grp is not None:
@@ -560,6 +578,32 @@ def _hat_bild(f: dict[str, Any]) -> bool:
     return not f["versteckt"] and (
         any(_uri_echt(s) for s in f["bilder"]) or any(v["formen"] for v in f["viz"])
     )
+
+
+def klickschritte(text: str) -> list[dict[str, Any]]:
+    """Alle sichtbaren Klick-Schrittfolgen aus Teil 1/2 in Folien-Reihenfolge (#368)."""
+    leser = _Leser()
+    leser.feed(text)
+    folgen: list[dict[str, Any]] = []
+    for f in leser.folien:
+        if f["versteckt"] or f["teil"] not in ("1", "2"):
+            continue
+        titel = f["titel"] or _norm(" ".join(f["text"]))[:40]
+        ticket = f["ticket"]
+        if not ticket:
+            treffer = re.search(r"(?<!\d)#(\d+)(?!\d)", titel)
+            if treffer:
+                ticket = treffer.group(1)
+        for schritte in f["klick_listen"]:
+            folgen.append(
+                {
+                    "ticket": ticket,
+                    "titel": titel,
+                    "teil": f["teil"],
+                    "schritte": list(schritte),
+                }
+            )
+    return folgen
 
 
 def inhalt(text: str) -> dict[str, Any]:
