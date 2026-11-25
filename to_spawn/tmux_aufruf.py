@@ -39,7 +39,16 @@ def aufrufen(*argumente: str, eingabe: str | None = None, start: bool = False) -
     ``start=True``: der Aufruf startet etwas (``new-window``) und geht durch die Start-Tür.
     """
     unterbefehl = argumente[0] if argumente else ""
-    lauf_args = {"input": eingabe, "capture_output": True, "text": True, "check": True, "timeout": 30}
+    # tmux spricht UTF-8; ohne ``encoding`` liest Windows cp1252 und ``●``/``❯`` brechen (#602).
+    lauf_args = {
+        "input": eingabe,
+        "capture_output": True,
+        "text": True,
+        "encoding": "utf-8",
+        "errors": "replace",
+        "check": True,
+        "timeout": 30,
+    }
     try:
         if start:
             fertig = starter.starte([*capo._tmux_befehl(), *argumente], warten=True, **lauf_args)

@@ -181,6 +181,8 @@ time.sleep(float(os.environ.get("FAKE_SCHLAF", "100")))
 FAKE_TMUX = r"""#!/usr/bin/env python3
 import json, os, re, sys
 from pathlib import Path
+sys.stdout.reconfigure(encoding="utf-8")  # tmux spricht UTF-8, auch unter Windows (#602)
+sys.stdin.reconfigure(encoding="utf-8")
 args = sys.argv[1:]
 ordner = Path(os.environ["FAKE_TMUX_ORDNER"])
 ordner.mkdir(parents=True, exist_ok=True)
