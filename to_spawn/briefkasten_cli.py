@@ -19,7 +19,7 @@ import argparse
 import logging
 from typing import Any, NoReturn
 
-from to_spawn import befugnis, briefkasten
+from to_spawn import befugnis, briefkasten, konsole
 
 log = logging.getLogger("to_spawn")
 
@@ -108,12 +108,12 @@ def lauf(args: argparse.Namespace) -> int:
             print(f"#{args.ticket}: Antwort geschrieben")
             return 0
         if args.befehl == "ja":
-            briefkasten.menschen_nachweis(briefkasten.stdin_ist_terminal())
+            briefkasten.menschen_nachweis(konsole.stdin_ist_terminal())
             briefkasten.ja(args.ticket)
             print(f"#{args.ticket}: Ja geschrieben")
             return 0
         if args.befehl == "nutzer-antwort":
-            briefkasten.menschen_nachweis(briefkasten.stdin_ist_terminal())
+            briefkasten.menschen_nachweis(konsole.stdin_ist_terminal())
             datei = briefkasten.nutzer_antworten(args.ticket, args.frage_id, args.wahl, args.beleg, args.grund)
             print(f"#{args.ticket}: Antwort des Nutzers geschrieben")
             for o in briefkasten.offene([args.ticket]):
