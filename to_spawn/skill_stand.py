@@ -48,6 +48,9 @@ def _git(ort: Path, *args: str) -> str | None:
             errors="replace",
             check=False,
             timeout=_TIMEOUT,
+            # Eigenständig (Installer startet das Modul als Skript), daher ohne prozessbaum.fensterlos():
+            # Ausgabe ist abgefangen, ohne Fenster also immer unschädlich (#658).
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
     except (OSError, subprocess.TimeoutExpired) as fehler:
         log.warning("git %s: %s", " ".join(args[:2]), fehler)

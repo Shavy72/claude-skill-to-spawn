@@ -47,6 +47,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from to_spawn import prozessbaum
 
 log = logging.getLogger("to_spawn.inventur")
 
@@ -730,6 +731,7 @@ def lies_projekt(repo: Path) -> dict[str, Any]:
             errors="replace",
             timeout=60,
             check=False,
+            **prozessbaum.fensterlos(),
         )
         if lauf.returncode == 0:
             dateien = lauf.stdout.splitlines()
@@ -876,7 +878,7 @@ def _fuehre_aus(befehl: list[str]) -> int:
     """Echte Prüfung (z. B. ``gh auth status``): Exit-Code, Fehler zählen als 1."""
     try:
         return subprocess.run(
-            befehl, capture_output=True, timeout=30, check=False, stdin=subprocess.DEVNULL
+            befehl, capture_output=True, timeout=30, check=False, stdin=subprocess.DEVNULL, **prozessbaum.fensterlos()
         ).returncode
     except (OSError, subprocess.SubprocessError) as fehler:
         log.warning("Prüfung %s gescheitert: %s", " ".join(befehl), fehler)

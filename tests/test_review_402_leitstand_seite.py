@@ -93,3 +93,52 @@ def test_stoerung_endet_wenn_abo_nach_fehler_wieder_liefert(tmp_path: Path) -> N
     out = _lauf(tmp_path, "erholt")
     assert out["stoerung"] is False
     assert "gestört" not in out["text"]
+
+
+# --- #226: HTML immer LF (identische Bytes unter Windows und Linux) ----------
+
+WURZEL = Path(__file__).resolve().parent.parent
+
+
+def test_seite_html_hat_nur_lf() -> None:
+    """#226: ``leitstand/seite.html`` liegt unter Windows und Linux ohne CR (``\\r``) vor."""
+    roh = SEITE.read_bytes()
+    assert b"\n" in roh
+    assert b"\r" not in roh, "leitstand/seite.html enthält CR-Bytes (CRLF statt LF)"
+
+
+def test_gitattributes_erzwingt_lf_fuer_html(tmp_path: Path) -> None:
+    """#226: ``.gitattributes`` legt ``*.html text eol=lf`` fest und hält ``core.autocrlf=true`` ab."""
+    attr_datei = WURZEL / ".gitattributes"
+    if not attr_datei.is_file():
+        pytest.skip("installierte Kopie ohne .gitattributes")
+
+    if (WURZEL / ".git").exists():
+        check = subprocess.run(
+            ["git", "check-attr", "text", "eol", "--", "leitstand/seite.html"],
+            cwd=str(WURZEL),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+            check=True,
+        )
+        zeilen = check.stdout.splitlines()
+        assert any(z.endswith(": text: set") for z in zeilen), check.stdout
+        assert any(z.endswith(": eol: lf") for z in zeilen), check.stdout
+
+    # Echter Git-Checkout mit Windows-Vorgabe core.autocrlf=true: muss trotzdem LF liefern.
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    git_cfg = ["-c", "user.name=test", "-c", "user.email=test@example.invalid"]
+    subprocess.run(["git", "init", "-q"], cwd=str(repo), check=True, timeout=30)
+    (repo / ".gitattributes").write_bytes(attr_datei.read_bytes())
+    html = repo / "probe.html"
+    html.write_bytes(b"<!doctype html>\n<html>\n<body>ok</body>\n</html>\n")
+    subprocess.run(["git", "add", ".gitattributes", "probe.html"], cwd=str(repo), check=True, timeout=30)
+    subprocess.run(["git", *git_cfg, "commit", "-q", "-m", "init"], cwd=str(repo), check=True, timeout=30)
+    subprocess.run(["git", "config", "core.autocrlf", "true"], cwd=str(repo), check=True, timeout=30)
+    html.unlink()
+    subprocess.run(["git", "checkout", "--", "probe.html"], cwd=str(repo), check=True, timeout=30)
+    assert b"\r" not in html.read_bytes(), "Checkout mit core.autocrlf=true erzeugte CRLF in HTML-Datei"

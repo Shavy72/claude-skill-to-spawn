@@ -15,25 +15,13 @@ import sys
 from pathlib import Path
 
 import pytest
+from git_bash import git_bash  # tests/hilfen: eine Tür ``to_spawn.bash_wahl`` (#186)
 
 WURZEL = Path(__file__).resolve().parents[1]
 SKRIPT = (WURZEL / "spawn_local.ps1").as_posix()
 PWSH = shutil.which("pwsh")
 
-
-def _git_bash() -> str | None:
-    if sys.platform != "win32":
-        return None
-    for ordner in ("ProgramFiles", "ProgramW6432", "ProgramFiles(x86)"):
-        import os
-
-        basis = os.environ.get(ordner)
-        if basis and (Path(basis) / "Git" / "bin" / "bash.exe").is_file():
-            return str(Path(basis) / "Git" / "bin" / "bash.exe")
-    return None
-
-
-BASH = _git_bash()
+BASH = git_bash() if sys.platform == "win32" else None
 braucht_pwsh = pytest.mark.skipif(PWSH is None, reason="pwsh nicht vorhanden")
 braucht_bash = pytest.mark.skipif(BASH is None, reason="Git Bash (bash.exe von Git for Windows) nur unter Windows")
 

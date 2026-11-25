@@ -75,6 +75,7 @@ from to_spawn import (
     verlauf_pruefung,
     wiederanlauf,
 )
+from to_spawn import prozessbaum
 
 log = logging.getLogger("to_spawn.aufseher_stand")
 
@@ -144,6 +145,7 @@ def _tmux_echt(args: list[str]) -> str | None:
             errors="replace",
             timeout=TMUX_ZEIT_S,
             check=False,
+            **prozessbaum.fensterlos(),
         )
     except (OSError, subprocess.SubprocessError) as fehler:
         log.warning("tmux nicht nutzbar: %s", fehler)
