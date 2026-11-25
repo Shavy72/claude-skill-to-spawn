@@ -34,7 +34,13 @@ MAX_BYTES = 2_000_000
 _ROT_DATEI = re.compile(r"(?:^|[_\-/.])rot(?:[_\-/.]|$)", re.I)
 _PASSED = re.compile(r"\b(\d+) passed\b")
 _FAILED = re.compile(r"\b(\d+) (?:failed|errors?)\b")
-_BEFEHL = re.compile(r"(?<![\w./])(?:python3? -m pytest|pytest|node --test|npm (?:run )?test) [^\n`|]*")
+_UNITTEST_RAN = re.compile(r"\bRan\s+(\d+)\s+tests?\s+in\s+[\d.]+s\b")
+_UNITTEST_STATUS = re.compile(r"^(OK|FAILED)(?:\s*\(([^)]*)\))?$")
+_NODE_TESTS = re.compile(r"^\s*(?:ℹ|#)\s+tests\s+(\d+)\s*$")
+_NODE_WERT = re.compile(r"^\s*(?:ℹ|#)\s+(pass|fail|cancelled|skipped|todo|suites|duration_ms)\s+([\d.]+)\s*$")
+_BEFEHL = re.compile(
+    r"(?<![\w./])(?:python3? -m (?:pytest|unittest)(?: [^\n`|]*)?|(?:pytest|node --test) [^\n`|]*|npm (?:run )?test(?: [^\n`|]*)?)"
+)
 _ABNAHME = re.compile(r"ABNAHME[^:\n]*:\s*\**\s*([^\n*|]+)")
 # Abnahme-Stichwörter: Wortanfang fest, Endung frei (grün/grüne/grünen, belegt/belegte), aber
 # "unbelegt" trifft nicht. ROT nicht vor Bindestrich ("Rot-Beweis" ist Beleg, kein Urteil).
@@ -179,8 +185,78 @@ def zeitpunkt(datei: Path) -> float:
         return 0.0
 
 
+def _unittest_zahl(name: str, details: str) -> int:
+    treffer = re.search(rf"\b{re.escape(name)}=(\d+)\b", details)
+    return int(treffer.group(1)) if treffer else 0
+
+
+def _unittest_lauf(
+    zeilen: list[str], index: int, befehl: str, datei: str, nur_saubere_zeilen: bool
+) -> Lauf | None:
+    """Erkennt ``Ran N test(s) in …s`` samt ``OK``/``FAILED (…)`` ab Zeile ``index`` (#472)."""
+    zeile = zeilen[index]
+    treffer = _UNITTEST_RAN.search(zeile)
+    if treffer is None:
+        return None
+    rest = zeile[treffer.end() :].strip(" \t—–-:,`|*")
+    status_m = _UNITTEST_STATUS.match(rest) if rest else None
+    if status_m is None:
+        for folge in zeilen[index + 1 : index + 4]:
+            sauber = folge.strip()
+            if not sauber:
+                continue
+            status_m = _UNITTEST_STATUS.match(sauber)
+            break
+    if status_m is None:
+        return None
+    gesamt = int(treffer.group(1))
+    urteil, details = status_m.group(1), status_m.group(2) or ""
+    skipped = _unittest_zahl("skipped", details)
+    if urteil == "FAILED":
+        failed = (
+            _unittest_zahl("failures", details)
+            + _unittest_zahl("errors", details)
+            + _unittest_zahl("unexpected successes", details)
+        ) or 1
+        passed = max(0, gesamt - failed - skipped)
+    else:
+        failed = 0
+        passed = max(0, gesamt - skipped)
+    if passed == 0 and failed == 0:
+        return None
+    if nur_saubere_zeilen and (failed > 0 or "→" in zeile or re.search(r"\brot\b", zeile, re.IGNORECASE)):
+        return None
+    anzeige = f"{treffer.group(0)} — {status_m.group(0).strip()}"[:200]
+    return Lauf(passed=passed, failed=failed, zeile=anzeige, befehl=befehl, datei=datei)
+
+
+def _node_lauf(
+    zeilen: list[str], index: int, befehl: str, datei: str, nur_saubere_zeilen: bool
+) -> Lauf | None:
+    """Erkennt ``node --test``-Zusammenfassungen (``ℹ/# tests``, ``pass``, ``fail``, #472)."""
+    treffer = _NODE_TESTS.match(zeilen[index])
+    if treffer is None:
+        return None
+    werte: dict[str, int] = {}
+    for folge in zeilen[index + 1 : index + 11]:
+        wm = _NODE_WERT.match(folge)
+        if wm is None:
+            break
+        if wm.group(1) in ("pass", "fail"):
+            werte[wm.group(1)] = int(wm.group(2))
+    if "pass" not in werte or "fail" not in werte:
+        return None
+    passed, failed = werte["pass"], werte["fail"]
+    if passed == 0 and failed == 0:
+        return None
+    if nur_saubere_zeilen and failed > 0:
+        return None
+    anzeige = f"tests {treffer.group(1)}, pass {passed}, fail {failed}"
+    return Lauf(passed=passed, failed=failed, zeile=anzeige, befehl=befehl, datei=datei)
+
+
 def lauf_aus_text(text: str, datei: str, nur_saubere_zeilen: bool = False) -> Lauf | None:
-    """Letzte Zusammenfassungs-Zeile (``N passed``/``N failed``) eines Textes als Lauf.
+    """Letzte Zusammenfassungs-Zeile (pytest, unittest oder ``node --test``) eines Textes als Lauf.
 
     Stehen in einer Zeile mehrere ``N passed`` („54 passed vor Fix, danach 71 passed“), zählt
     die letzte.
@@ -191,21 +267,25 @@ def lauf_aus_text(text: str, datei: str, nur_saubere_zeilen: bool = False) -> La
     befehl_m = _BEFEHL.search(text)
     befehl = befehl_m.group(0).strip()[:200] if befehl_m else ""
     beste: Lauf | None = None
-    for zeile in text.splitlines():
+    zeilen = text.splitlines()
+    for index, zeile in enumerate(zeilen):
         p = _PASSED.findall(zeile)
         f = _FAILED.search(zeile)
-        if not p and not f:
-            continue
-        if nur_saubere_zeilen and (f or "→" in zeile or re.search(r"\brot\b", zeile, re.I)):
-            continue
-        lauf = Lauf(
-            passed=int(p[-1]) if p else 0,
-            failed=sum(int(x) for x in _FAILED.findall(zeile)),
-            zeile=zeile.strip(" =|\t")[:200],
-            befehl=befehl,
-            datei=datei,
-        )
-        if not nur_saubere_zeilen or beste is None or lauf.passed >= beste.passed:
+        lauf: Lauf | None = None
+        if p or f:
+            if not (nur_saubere_zeilen and (f or "→" in zeile or re.search(r"\brot\b", zeile, re.IGNORECASE))):
+                lauf = Lauf(
+                    passed=int(p[-1]) if p else 0,
+                    failed=sum(int(x) for x in _FAILED.findall(zeile)),
+                    zeile=zeile.strip(" =|\t")[:200],
+                    befehl=befehl,
+                    datei=datei,
+                )
+        else:
+            lauf = _unittest_lauf(zeilen, index, befehl, datei, nur_saubere_zeilen) or _node_lauf(
+                zeilen, index, befehl, datei, nur_saubere_zeilen
+            )
+        if lauf is not None and (not nur_saubere_zeilen or beste is None or lauf.passed >= beste.passed):
             beste = lauf
     return beste
 
