@@ -34,7 +34,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
-from . import config, prozessbaum, speicher
+from . import config, prozessbaum, speicher, starter
 
 log = logging.getLogger("to_spawn.ort_wahl")
 
@@ -414,11 +414,12 @@ def _server_abbrechen(proc: subprocess.Popen[Any], job: Any, frist_s: float) -> 
 
 
 def _github_starten(befehl: Sequence[str], cwd: Path | None) -> int:
-    lauf = subprocess.run(
+    lauf = starter.starte(
         list(befehl),
         cwd=cwd,
+        warten=True,
+        notnagel=None,
         check=False,
-        **prozessbaum.fensterlos(),
     )
     return int(lauf.returncode)
 
@@ -467,7 +468,7 @@ def ausfuehren(
     log.info("Ort-Wahl: starte großen Testlauf auf dem Bau-Server (%s)", wahl.grund)
 
     extra: dict[str, Any] = {"start_new_session": True} if sys.platform != "win32" else {}
-    proc = subprocess.Popen(list(server_befehl), cwd=cwd, **extra, **prozessbaum.fensterlos())
+    proc = starter.starte(list(server_befehl), cwd=cwd, notnagel=None, **extra)
     lauf_punkte: list[Messpunkt] = []
     reihe_iter: Iterator[Messpunkt] | None = iter(lauf_messreihe) if lauf_messreihe is not None else None
     quelle = lauf_messen or messen or messen_linux

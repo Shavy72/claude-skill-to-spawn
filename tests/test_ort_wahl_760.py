@@ -14,6 +14,8 @@ from __future__ import annotations
 import ast
 import json
 import logging
+import os
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -26,7 +28,14 @@ CLI = SKILL / "to_spawn.py"
 if str(SKILL) not in sys.path:
     sys.path.insert(0, str(SKILL))
 
-from to_spawn import config, ort_wahl, prozessbaum, speicher
+from to_spawn import config, ort_wahl, prozessbaum, speicher, starter
+
+
+def _test_skript(name: str, inhalt: str) -> Path:
+    """Legt ein Test-Skript im Attrappen-Ordner ``TO_SPAWN_TEST_BIN`` ab (#1406)."""
+    skript = Path(os.environ[starter.TEST_BIN_ENV]) / name
+    skript.write_text(inhalt, encoding="utf-8")
+    return skript
 
 
 def _ruhig(zeit_s: float | None = None) -> ort_wahl.Messpunkt:
@@ -161,16 +170,16 @@ def test_kippt_waehrend_server_lauf_bricht_ab_und_wechselt_zu_github(
     github_marker = tmp_path / "github_lief.txt"
 
     # Server-Befehl würde lange schlafen und erst am Ende eine Datei schreiben.
-    server_befehl = [
-        sys.executable,
-        "-c",
-        f"import pathlib, time; time.sleep(60); pathlib.Path({str(server_marker)!r}).write_text('fertig')",
-    ]
-    github_befehl = [
-        sys.executable,
-        "-c",
-        f"import pathlib; pathlib.Path({str(github_marker)!r}).write_text('uebernommen')",
-    ]
+    server_skript = _test_skript(
+        "server_langsam.py",
+        f"import pathlib, time\ntime.sleep(60)\npathlib.Path({str(server_marker)!r}).write_text('fertig')\n",
+    )
+    github_skript = _test_skript(
+        "github_uebernahme.py",
+        f"import pathlib\npathlib.Path({str(github_marker)!r}).write_text('uebernommen')\n",
+    )
+    server_befehl = [sys.executable, str(server_skript)]
+    github_befehl = [sys.executable, str(github_skript)]
 
     vorlauf = _ruhige_reihe(30, 60)
     lauf_reihe = [
@@ -207,16 +216,16 @@ def test_ruhiger_server_lauf_laeuft_ohne_github_durch(tmp_path: Path) -> None:
     server_marker = tmp_path / "server_ok.txt"
     github_marker = tmp_path / "github_darf_nicht.txt"
 
-    server_befehl = [
-        sys.executable,
-        "-c",
-        f"import pathlib; pathlib.Path({str(server_marker)!r}).write_text('server-ok')",
-    ]
-    github_befehl = [
-        sys.executable,
-        "-c",
-        f"import pathlib; pathlib.Path({str(github_marker)!r}).write_text('falsch')",
-    ]
+    server_skript = _test_skript(
+        "server_ruhig.py",
+        f"import pathlib\npathlib.Path({str(server_marker)!r}).write_text('server-ok')\n",
+    )
+    github_skript = _test_skript(
+        "github_nicht.py",
+        f"import pathlib\npathlib.Path({str(github_marker)!r}).write_text('falsch')\n",
+    )
+    server_befehl = [sys.executable, str(server_skript)]
+    github_befehl = [sys.executable, str(github_skript)]
 
     ergebnis = ort_wahl.ausfuehren(
         server_befehl,
@@ -391,8 +400,16 @@ def test_ausfuehren_direkt_github_bei_knappem_vorlauf_oder_windows(tmp_path: Pat
     """Ergibt schon die Vorab-Wahl ``github`` (knapp oder Windows), läuft der Server-Befehl nie."""
     server_marker = tmp_path / "server_darf_nicht.txt"
     github_marker = tmp_path / "github_direkt.txt"
-    server_cmd = [sys.executable, "-c", f"import pathlib; pathlib.Path({str(server_marker)!r}).write_text('falsch')"]
-    github_cmd = [sys.executable, "-c", f"import pathlib; pathlib.Path({str(github_marker)!r}).write_text('direkt')"]
+    server_skript = _test_skript(
+        "server_darf_nicht.py",
+        f"import pathlib\npathlib.Path({str(server_marker)!r}).write_text('falsch')\n",
+    )
+    github_skript = _test_skript(
+        "github_direkt.py",
+        f"import pathlib\npathlib.Path({str(github_marker)!r}).write_text('direkt')\n",
+    )
+    server_cmd = [sys.executable, str(server_skript)]
+    github_cmd = [sys.executable, str(github_skript)]
 
     erg = ort_wahl.ausfuehren(
         server_cmd,
@@ -445,10 +462,13 @@ def test_cli_ort_wahl_ueberwachter_lauf_kippt_zu_github(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     github_marker = tmp_path / "gh_cli.txt"
-    gh_skript = tmp_path / "gh_lauf.py"
-    gh_skript.write_text(f"import pathlib\npathlib.Path({str(github_marker)!r}).write_text('ok')\n", encoding="utf-8")
-    server_cmd = f"{sys.executable} -c 'import time; time.sleep(30)'"
-    github_cmd = f"{sys.executable} {gh_skript}"
+    server_skript = _test_skript("server_cli_langsam.py", "import time\ntime.sleep(30)\n")
+    gh_skript = _test_skript(
+        "gh_cli_lauf.py",
+        f"import pathlib\npathlib.Path({str(github_marker)!r}).write_text('ok')\n",
+    )
+    server_cmd = f"{shlex.quote(sys.executable)} {shlex.quote(str(server_skript))}"
+    github_cmd = f"{shlex.quote(sys.executable)} {shlex.quote(str(gh_skript))}"
 
     r = subprocess.run(
         [
@@ -478,3 +498,22 @@ def test_cli_ort_wahl_ueberwachter_lauf_kippt_zu_github(tmp_path: Path) -> None:
     assert daten["abgebrochen"] is True
     assert daten["uebergeben"] is True
     assert github_marker.read_text(encoding="utf-8") == "ok"
+
+
+def test_ausfuehren_nutzt_start_tuer_und_sperrt_fremden_befehl() -> None:
+    """Server- und GitHub-Starts laufen durch ``to_spawn.starter.starte`` und sperren Fremdprogramme im Test."""
+    with pytest.raises(starter.StartGesperrt):
+        ort_wahl.ausfuehren(
+            [sys.executable, "-c", "pass"],
+            [sys.executable, "-c", "pass"],
+            config.DEFAULTS,
+            plattform="win32",
+        )
+    with pytest.raises(starter.StartGesperrt):
+        ort_wahl.ausfuehren(
+            [sys.executable, "-c", "pass"],
+            [sys.executable, "-c", "pass"],
+            config.DEFAULTS,
+            messreihe=_ruhige_reihe(30, 60),
+            plattform="linux",
+        )
