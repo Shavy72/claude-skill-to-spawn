@@ -13,7 +13,10 @@ from typing import Any
 import pytest
 
 HOOKS = Path(__file__).resolve().parent.parent
-REVIEW = HOOKS.parent.parent / "review"
+if str(HOOKS) not in sys.path:
+    sys.path.insert(0, str(HOOKS))
+from _hookbasis import REVIEW
+
 BASIS_CONFIG = json.loads((REVIEW / "config.standard.json").read_text(encoding="utf-8"))
 
 
@@ -66,26 +69,32 @@ class Umgebung:
         text = ergebnis.stdout.decode("utf-8").strip()
         return ergebnis.returncode, (json.loads(text) if text else None)
 
-    def merke(self, repo: Path, datei: str, sid: str = "s1") -> None:
-        code, aus = self.hook(
-            "merker.py",
-            {
-                "session_id": sid,
-                "cwd": str(repo),
-                "tool_name": "Edit",
-                "tool_input": {"file_path": str(repo / datei)},
-            },
-        )
+    def merke(self, repo: Path, datei: str, sid: str = "s1", agent_id: str | None = None) -> None:
+        eingabe: dict[str, Any] = {
+            "session_id": sid,
+            "cwd": str(repo),
+            "tool_name": "Edit",
+            "tool_input": {"file_path": str(repo / datei)},
+        }
+        if agent_id is not None:
+            eingabe["agent_id"] = agent_id
+        code, aus = self.hook("merker.py", eingabe)
         assert (code, aus) == (0, None)
 
-    def stop(self, repo: Path, sid: str = "s1", aktiv: bool = False) -> dict | None:
+    def stop(
+        self,
+        repo: Path,
+        sid: str = "s1",
+        aktiv: bool = False,
+        transcript: Path | str = "",
+    ) -> dict | None:
         code, aus = self.hook(
             "stop.py",
             {
                 "session_id": sid,
                 "cwd": str(repo),
                 "stop_hook_active": aktiv,
-                "transcript_path": "",
+                "transcript_path": str(transcript),
             },
         )
         assert code == 0
