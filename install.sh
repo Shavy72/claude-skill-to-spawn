@@ -4,9 +4,10 @@
 # Repo-Weiterleitungen (repo-scripts/ → <Repo>/scripts, nur fehlende Dateien) + .to-spawn/config.json.
 # Dazu die Kette: kette/skills/* → <skills>/<name>, Regel-Blöcke kette/global/*.md → globale CLAUDE.md.
 #
-# Aufruf: bash install.sh [--repo <Pfad-zum-Repo>] [--skills <Ordner>] [--claude-md <Datei>]
+# Aufruf: bash install.sh [--repo <Pfad-zum-Repo>] [--skills <Ordner>] [--claude-md <Datei>] [--erzwingen]
 #   --skills     Zielordner der Skills (Vorgabe ~/.claude/skills)
 #   --claude-md  globale CLAUDE.md für die Regel-Blöcke (Vorgabe ~/.claude/CLAUDE.md)
+#   --erzwingen  Installations-Sperre bewusst überstimmen (roter/unbekannter Stand)
 # Ein vorhandener Skill-Ordner wird nie gelöscht, sondern nach <skills>/_alt/<name>-<zeit> verschoben.
 set -euo pipefail
 
@@ -14,12 +15,14 @@ HIER="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILLS="$HOME/.claude/skills"
 CLAUDE_MD="$HOME/.claude/CLAUDE.md"
 REPO=""
+ERZWINGEN=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --repo) REPO="${2:-}"; shift 2 ;;
     --skills) SKILLS="${2:-}"; shift 2 ;;
     --claude-md) CLAUDE_MD="${2:-}"; shift 2 ;;
-    -h|--help) sed -n '2,10p' "${BASH_SOURCE[0]}"; exit 0 ;;
+    --erzwingen) ERZWINGEN=1; shift ;;
+    -h|--help) sed -n '2,11p' "${BASH_SOURCE[0]}"; exit 0 ;;
     *) echo "Unbekanntes Argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -153,8 +156,13 @@ if [ -n "$REPO" ] && [ -d "$REPO" ]; then
 fi
 pruefe_zielrechte "${ZIEL_PFADE[@]}"
 
-# Skill-Test-Suite vor jedem Tausch prüfen (#415): rot → Abbruch ohne Änderung + Fehler-Log + Ticket.
-PYTHONPATH="$HIER" "$PY" -m to_spawn.install_pruefung pruefen --klon "$HIER" --python "$PY"
+# Installations-Sperre vor jedem Tausch prüfen (#415, #577): GitHub Actions, sonst lokale Suite;
+# rot/unbekannt → Abbruch ohne Änderung (+ Fehler-Log, bei Rot Ticket); --erzwingen überstimmt bewusst.
+PRUEF_ARGS=(--klon "$HIER" --python "$PY")
+if [ "$ERZWINGEN" -eq 1 ]; then
+  PRUEF_ARGS+=(--erzwingen)
+fi
+PYTHONPATH="$HIER" "$PY" -m to_spawn.install_pruefung pruefen "${PRUEF_ARGS[@]}"
 
 mkdir -p "$SKILLS"
 

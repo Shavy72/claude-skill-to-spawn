@@ -81,8 +81,27 @@ _ECHTER_LAUF = False
 #: Git-Wurzel des aktuellen Ordners — nie der Ort dieses Skripts (liegt im Skill, #205).
 REPO = Path(os.environ["TO_SPAWN_REPO"]).resolve() if os.environ.get("TO_SPAWN_REPO") else config.repo_wurzel()
 MANIFEST_DIR = manifest_ordner(REPO)
-HOME = Path.home()
-CLAUDE_DIR = HOME / ".claude"
+_START_HOME = Path.home()
+_START_CLAUDE_DIR = _START_HOME / ".claude"
+HOME = _START_HOME
+CLAUDE_DIR = _START_CLAUDE_DIR
+
+
+def _aktuelles_home() -> Path:
+    """Heimordner zur Laufzeit — folgt umgebogenem ``HOME``/``USERPROFILE`` (#232),
+    respektiert aber ein ausdrücklich gepatchtes Modul-Attribut ``HOME``."""
+    return HOME if HOME != _START_HOME else Path.home()
+
+
+def _aktuelles_claude_dir(home: Path | None = None) -> Path:
+    """Claude-Ordner zur Laufzeit (#232): Argument > gepatchtes Attribut > Laufzeit-HOME."""
+    if home is not None:
+        return home / ".claude"
+    if CLAUDE_DIR != _START_CLAUDE_DIR:
+        return CLAUDE_DIR
+    if HOME != _START_HOME:
+        return HOME / ".claude"
+    return context_mode.standard_claude_dir()
 
 
 # Pflicht-Skills: der globale Review-Stop-Hook (``~/.claude/hooks/review/stop.py``) fordert
@@ -423,7 +442,7 @@ def auf_speicher_warten(
 
 def known_skill_names(*, repo: Path | None = None, claude_dir: Path | None = None) -> set[str]:
     ziel_repo = repo if repo is not None else REPO
-    ziel_claude = claude_dir if claude_dir is not None else CLAUDE_DIR
+    ziel_claude = claude_dir if claude_dir is not None else _aktuelles_claude_dir()
     # Pflicht-Skills werden ohnehin erzwungen, auch ohne Datei auf dem Rechner (#478).
     names: set[str] = set(BUILTIN_SKILLS) | set(PFLICHT_SKILLS)
 
@@ -470,8 +489,8 @@ def known_skill_names(*, repo: Path | None = None, claude_dir: Path | None = Non
 def mcp_catalog(*, repo: Path | None = None, home: Path | None = None, claude_dir: Path | None = None) -> dict[str, dict]:
     """Reihenfolge: ~/.claude.json (global + dieses Projekt) → Repo .mcp.json → toolbox/mcp-archive.json."""
     ziel_repo = (repo if repo is not None else REPO).resolve()
-    ziel_home = home if home is not None else HOME
-    ziel_claude = claude_dir if claude_dir is not None else (ziel_home / ".claude" if home is not None else CLAUDE_DIR)
+    ziel_home = home if home is not None else _aktuelles_home()
+    ziel_claude = claude_dir if claude_dir is not None else _aktuelles_claude_dir(home)
     catalog: dict[str, dict] = {}
     claude_json = read_json(ziel_home / ".claude.json", {})
     project_servers: dict[str, dict] = {}
@@ -1108,7 +1127,7 @@ def main() -> int:
     # Gilt nur für ``claude``; ``agy`` nutzt weder ``--mcp-config`` noch das Claude-Plugin (#660).
     if runner == "claude":
         try:
-            mcp_servers.update(context_mode.server_definition(CLAUDE_DIR))
+            mcp_servers.update(context_mode.server_definition(_aktuelles_claude_dir()))
         except context_mode.ContextModeFehlt as fehler:
             log.error("%s", fehler)
             return 2

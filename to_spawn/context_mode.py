@@ -33,11 +33,15 @@ INSTALL_BEFEHL = "claude plugin install context-mode@context-mode"
 
 
 def claude_ordner() -> Path:
-    """Claude Codes Konfig-Ordner — ``CLAUDE_CONFIG_DIR`` gilt dort wie hier; erst bei Gebrauch (#212)."""
+    """Claude Codes Konfig-Ordner — ``CLAUDE_CONFIG_DIR`` gilt dort wie hier; erst bei Gebrauch (#212, #232)."""
     roh = os.environ.get("CLAUDE_CONFIG_DIR", "").strip()
     if roh:
         return config.expand_heim(roh)
     return config.heim_ordner() / ".claude"
+
+
+#: Alias für Aufrufer aus #232 (z. B. ``skripte/bau.py``) — gleiche Tür :func:`claude_ordner`.
+standard_claude_dir = claude_ordner
 
 
 class _LazyClaudeDir(os.PathLike[str]):
@@ -66,7 +70,8 @@ class _LazyClaudeDir(os.PathLike[str]):
 CLAUDE_DIR: Any = _LazyClaudeDir()
 
 
-def _ziel_ordner(claude_dir: Path | None) -> Path:
+def _ziel_claude_dir(claude_dir: Path | None) -> Path:
+    """Effektiver Konfig-Ordner: Argument > gepatchtes ``CLAUDE_DIR`` > Laufzeit-HOME (#212, #232)."""
     if claude_dir is not None:
         return claude_dir
     return claude_ordner() if isinstance(CLAUDE_DIR, _LazyClaudeDir) else CLAUDE_DIR
@@ -135,7 +140,7 @@ def _aus_cache(claude_dir: Path) -> Path | None:
 
 def plugin_wurzel(claude_dir: Path | None = None) -> Path | None:
     """Ordner des installierten Plugins (mit ``start.mjs``) oder None."""
-    ordner = _ziel_ordner(claude_dir)
+    ordner = _ziel_claude_dir(claude_dir)
     return _aus_registry(ordner) or _aus_cache(ordner)
 
 
@@ -167,7 +172,7 @@ def pruefen(claude_dir: Path | None = None, streng: bool = False) -> Path:
     ``enabledPlugins`` nicht abgeschaltet sein. ``bau.py`` schreibt den Server selbst und
     braucht nur die Dateien.
     """
-    ordner = _ziel_ordner(claude_dir)
+    ordner = _ziel_claude_dir(claude_dir)
     wurzel = plugin_wurzel(ordner)
     if wurzel is None:
         raise ContextModeFehlt(

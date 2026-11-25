@@ -109,6 +109,7 @@ from to_spawn import (
     speicher,
     starter,
     ticket_zustand,
+    tmux_aufruf,
     vorfall,
     werkzeug,
 )
@@ -1547,9 +1548,9 @@ class Aufpasser:
             return []
         gefunden = []
         for name in namen:
-            treffer = re.fullmatch(r"spec-(\d+)", name)
-            if treffer:
-                gefunden.append((name, treffer.group(1)))
+            spec = tmux_aufruf.spec_aus_sitzung(name)
+            if spec is not None:
+                gefunden.append((name, spec))
         return gefunden
 
     def fenster(self, sitzung: str, spec: str) -> list[Fenster]:
@@ -2795,7 +2796,9 @@ class Aufpasser:
 
     # -- Ein Lauf ----------------------------------------------------------------
 
-    def start_erlaubt(self, spec: str, repo: Path, ticket: int | None) -> bool:
+    def start_erlaubt(
+        self, spec: str, repo: Path, ticket: int | None, *, sitzung: str = ""
+    ) -> bool:
         """Regel 1: kein Start außerhalb der gespeicherten Teil-Start-Auswahl (#271), bei
         Stopp-Label oder wenn das Fenster in 6 h schon ``START_MAX``-mal gestartet wurde.
         ``ticket`` None = Aufseher-Fenster (prüft Auswahl/``--ohne-wache``/Rechner,
@@ -2840,7 +2843,7 @@ class Aufpasser:
             self.melden(
                 spec,
                 repo,
-                f"spec-{spec}/{name}",
+                f"{sitzung or tmux_aufruf.sitzung_alt(spec)}/{name}",
                 "startet_nicht",
                 f"{wer} startet nicht (Fenster verschwindet wieder) — braucht den Menschen.",
             )
@@ -2952,7 +2955,7 @@ class Aufpasser:
                     "%s: #%d läuft in einer Fenster-Kette — kein Start", sitzung, ticket
                 )
                 continue
-            if not self.start_erlaubt(spec, repo, ticket):
+            if not self.start_erlaubt(spec, repo, ticket, sitzung=sitzung):
                 continue
             self.fehlendes_fenster(sitzung, spec, repo, ticket)
         # Aufseher-Fenster fehlt (R2): nachstarten, solange die Spec (hier) offene Tickets
@@ -2960,7 +2963,7 @@ class Aufpasser:
         if (
             offen_hier
             and f"wache {spec}" not in vorhanden
-            and self.start_erlaubt(spec, repo, None)
+            and self.start_erlaubt(spec, repo, None, sitzung=sitzung)
         ):
             self.fehlendes_fenster(sitzung, spec, repo, None)
         for f in fenster:

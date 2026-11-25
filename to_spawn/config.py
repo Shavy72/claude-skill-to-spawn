@@ -93,6 +93,9 @@ DEFAULTS: dict[str, Any] = {
         "checkpoint_label": "checkpoint:human",
         #: Ordner der Belegseiten, den der Aufseher je Ticket prüft (#213).
         "belege_ordner": "docs/verify-hard",
+        #: Unbeaufsichtigter Lauf (Dauerauftrag, #405): ``/to-tickets`` wertet die Zustimmung
+        #: als gegeben und meldet fehlende ``Quelle:``-Zeile / ``(E<n>)`` nur als Warnung.
+        "unbeaufsichtigt": False,
     },
     #: Aufseher (#213): Remote Control an, verwaist ab so vielen Stunden ohne Spur.
     "waechter": {
@@ -227,6 +230,10 @@ def repo_wurzel(start: Path | None = None) -> Path:
     return pfad
 
 
+#: Konkreter ``Path``-Typ des laufenden Systems — bleibt auch bei umgebogenem ``os.name`` gültig (#232).
+_SYSTEM_PFAD: type[Path] = type(Path())
+
+
 class KeinHeimOrdner(RuntimeError):
     """Heimat-Ordner nicht bestimmbar (weder ``HOME`` noch ``USERPROFILE`` gesetzt, #212)."""
 
@@ -251,7 +258,8 @@ def heim_ordner() -> Path:
     mit verständlicher Meldung — Windows und Linux gleich (kein Absturz beim Import und
     kein stiller Rückfall auf ``/etc/passwd``). Wurde ``Path.home`` in einem Test
     umgebogen, respektiert die Tür das und übersetzt ``RuntimeError`` in
-    :class:`KeinHeimOrdner`.
+    :class:`KeinHeimOrdner`. Nutzt :data:`_SYSTEM_PFAD`, damit auch ein umgebogenes
+    ``os.name`` keinen ``UnsupportedOperation``-Fehler auslöst (#232).
     """
     if _ist_path_home_umgebogen():
         try:
@@ -276,7 +284,7 @@ def heim_ordner() -> Path:
         )
     for wert in kandidaten:
         if wert:
-            return Path(wert)
+            return _SYSTEM_PFAD(wert)
     raise KeinHeimOrdner(_KEIN_HEIM_MELDUNG)
 
 
@@ -288,8 +296,8 @@ def expand_heim(pfad: str | Path) -> Path:
     if text.startswith(("~/", "~\\")):
         return heim_ordner() / text[2:]
     if text.startswith("~"):
-        return Path(text).expanduser()
-    return Path(text)
+        return _SYSTEM_PFAD(text).expanduser()
+    return _SYSTEM_PFAD(text)
 
 
 def notiz_tresor() -> Path:
@@ -347,6 +355,51 @@ def _adresse_normal(url: str) -> str:
     host, _, pfad = url.rstrip("/").removesuffix(".git").rstrip("/").partition("/")
     host = host.lower()
     return f"{host}/{pfad.lower() if host == 'github.com' else pfad}"
+
+
+def repo_kennung(ordner: Path) -> str | None:
+    """Wem gehört ``ordner``? Einzige Stelle der Repo-Kennung (#457, #499, #508).
+
+    Normalisierte ``origin``-Adresse (``https``/``ssh``/``.git``/Groß-Kleinschreibung bei
+    ``github.com`` egal), ohne ``origin`` der echte gemeinsame Git-Ordner; ``None`` = kein
+    Git-Ordner. Ein anderer Klon desselben Repos hat dieselbe Kennung.
+    """
+    return _repo_kennung(ordner)
+
+
+def repo_kurzname(repo: Path) -> str:
+    """Eindeutiger, tmux-tauglicher Kurzname des Repos (Kleinbuchstaben, ``[a-z0-9_-]``, #457).
+
+    Bevorzugt den Repo-Namen aus der normalisierten ``origin``-Adresse, damit zwei Klone
+    desselben Repos (z. B. Hauptklon und Spec-Klon ``~/<repo>-<S>`` oder HTTPS vs. SSH)
+    denselben Session-Namen bilden. Ohne ``origin`` gilt :func:`_hauptrepo_name`.
+    """
+    wurzel = repo_wurzel(repo)
+    roh = ""
+    try:
+        lauf = subprocess.run(
+            ["git", "-C", str(wurzel), "remote", "get-url", "origin"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+            **prozessbaum.fensterlos(),
+        )
+    except OSError as fehler:
+        log.warning("git in %s nicht startbar: %s", wurzel, fehler)
+    else:
+        url = lauf.stdout.strip() if lauf.returncode == 0 else ""
+        if url:
+            normal = _adresse_normal(url)
+            teile = [t for t in normal.split("/") if t]
+            if teile:
+                roh = teile[-1]
+    if not roh:
+        roh = _hauptrepo_name(wurzel)
+    sauber = re.sub(r"[^a-z0-9_-]+", "-", roh.lower()).strip("-_")
+    sauber = re.sub(r"-{2,}", "-", sauber)[:40].rstrip("-_")
+    return sauber or "repo"
 
 
 def _repo_kennung(ordner: Path) -> str | None:

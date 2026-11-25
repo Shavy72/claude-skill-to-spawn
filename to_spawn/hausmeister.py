@@ -138,6 +138,7 @@ from to_spawn import (
     hindernis,
     temp_ordner,
     ticket_zustand,
+    tmux_aufruf,
     uebergabe_sichern,
 )
 from to_spawn import prozessbaum
@@ -1583,8 +1584,9 @@ def _keine_spec_sitzung(ticket: int) -> None:
         if "no server running" in lauf.stderr or "error connecting" in lauf.stderr:
             return
         raise _Bleibt(f"tmux nicht abfragbar: {lauf.stderr.strip()[:200]}", fehler=True)
-    if f"spec-{ticket}" in lauf.stdout.split():
-        raise _Bleibt(f"tmux-Sitzung spec-{ticket} läuft")
+    for name in lauf.stdout.split():
+        if tmux_aufruf.spec_aus_sitzung(name) == str(ticket):
+            raise _Bleibt(f"tmux-Sitzung {name} läuft")
 
 
 def _ticket_nummer(ordner: Path, echt: Path) -> int | None:

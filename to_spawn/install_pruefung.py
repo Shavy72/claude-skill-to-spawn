@@ -1,15 +1,25 @@
-"""Installations-Schutz (#415): Suite-Prüfung, Fehler-Log, Ticket-Deduplizierung und atomarer Tausch.
+"""Installations-Schutz (#415, #577): Installations-Sperre, Fehler-Log, Ticket-Deduplizierung und atomarer Tausch.
 
 Eine Stelle für ``install.sh`` und ``install.ps1``:
 
-1. ``pruefen``: fährt die Skill-Test-Suite (``pytest -q -p no:cacheprovider -n 4 --dist worksteal``,
-   wie ``skripte/suite.sh`` — Parallelität bleibt ungesenkt) gegen den neuen Klon, bevor eine
-   Datei im installierten Stand angefasst wird. Bei Rot:
-   - Exit ≠ 0 mit klarer Meldung auf stderr; der alte Stand bleibt Byte für Byte gleich.
-   - JSONL-Zeile (Zeit, SHA, rote Kennungen) im Fehler-Log im Datenordner des Skills
+1. ``pruefen`` / ``entscheiden``: die Tür „neuer Stand → installieren ja/nein“. Vor dem
+   ersten Kopieren prüft das Modul:
+   - zuerst das GitHub-Actions-Ergebnis des sauberen Commits (``pytest (ubuntu-latest)``
+     als Pflicht; ``pytest (windows-latest)`` als Anzeige, bis der Windows-Topf
+     #552 → #258 → #553 → #556 abgeschlossen ist).
+   - fehlt ein Actions-Ergebnis (kein GitHub-Origin, offline, Commit nicht gepusht oder
+     ungespeicherte Änderungen im Klon), fällt die Tür auf die lokale Skill-Test-Suite
+     zurück (``pytest -q -p no:cacheprovider -n 4 --dist worksteal``, wie ``skripte/suite.sh``
+     — Parallelität bleibt ungesenkt).
+   - Rot oder unbekannt → Exit ≠ 0 mit klarer Meldung (nennt den Lauf/Grund und
+     ``--erzwingen`` / ``-Erzwingen``); der alte Stand bleibt Byte für Byte gleich.
+   - JSONL-Zeile (Zeit, Ergebnis, Quelle, SHA, rote Kennungen / Lauf-URL) im Fehler-Log
      (``~/.claude/to-spawn/install_fehler.jsonl`` bzw. ``TO_SPAWN_INSTALL_LOG``).
-   - Genau ein offenes Ticket im Skill-Repo (Label ``install:rot``): steht schon eins offen,
-     kommt ein Kommentar statt eines zweiten Tickets. Keine Mail, kein Telegram, kein Push.
+   - Bei Rot genau ein offenes Ticket im Skill-Repo (Label ``install:rot``): steht schon
+     eins offen, kommt ein Kommentar statt eines zweiten Tickets. Keine Mail, kein Telegram,
+     kein Push.
+   - Bewusstes Überstimmen nur per ausdrücklichem Schalter ``--erzwingen`` (``install.sh``)
+     bzw. ``-Erzwingen`` (``install.ps1``).
 2. ``tauschen``: kopiert alle Quellen zuerst vollständig in einen versteckten Staging-Ordner
    auf demselben Dateisystem (inkl. Cache-Bereinigung, Ausführungsrechte und ``STAND.json``)
    und tauscht erst danach atomar mit dem Zielordner (Linux: ``renameat2(RENAME_EXCHANGE)``,
@@ -56,6 +66,13 @@ TICKET_LABEL = "install:rot"
 SUITE_WORKER = "4"
 #: Caches, die beim atomaren Kopieren nie im Ziel landen.
 CACHE_ORDNER = frozenset({"__pycache__", ".pytest_cache", ".ruff_cache"})
+#: GitHub-Actions-Job-Namen aus ``.github/workflows/tests.yml`` (#537, #577).
+CI_LINUX_JOB = "pytest (ubuntu-latest)"
+CI_WINDOWS_JOB = "pytest (windows-latest)"
+#: Windows-Lauf ist erst Pflicht, sobald der Windows-Topf (#552 → #258 → #553 → #556) zu ist (#577).
+#: Solange noch offen, gilt Windows als Anzeige und Linux als Pflicht.
+WINDOWS_PFLICHT = False
+_CI_ROT_SCHLUESSE = frozenset({"failure", "timed_out", "cancelled", "action_required", "startup_failure"})
 
 _ISSUE_URL = re.compile(r"/issues/(\d+)\s*$")
 _FEHLER_ZEILE = re.compile(r"^(FAILED|ERROR)\s+(.+)$")
@@ -71,6 +88,19 @@ class SuiteErgebnis(NamedTuple):
     exit_code: int
     rote_kennungen: list[str]
     ausgabe: str
+
+
+class TuerEntscheidung(NamedTuple):
+    """Ergebnis der Installations-Sperre „neuer Stand → installieren ja/nein“ (#577)."""
+
+    erlaubt: bool
+    zustand: str
+    quelle: str
+    exit_code: int
+    grund: str
+    rote_kennungen: list[str]
+    lauf_url: str = ""
+    warnung: str = ""
 
 
 def log_pfad() -> Path:
@@ -275,57 +305,287 @@ def ticket_melden(
     return f"#{url_treffer.group(1)}" if url_treffer else (ausgabe.strip() or None)
 
 
+def _klon_sauber(klon: Path) -> bool:
+    """True nur, wenn ``klon`` ein Git-Arbeitsbaum ohne ungespeicherte Änderungen ist."""
+    status = skill_stand._git(klon, "status", "--porcelain")
+    return status == ""
+
+
+def _ci_lauf_zustand(eintrag: dict[str, Any]) -> tuple[str, str, str]:
+    """Ordnet einen GitHub-Actions-Check-Run ein: ``(zustand, detail, url)``."""
+    status = str(eintrag.get("status") or "").lower()
+    schluss = str(eintrag.get("conclusion") or "").lower()
+    url = str(eintrag.get("html_url") or "")
+    if status == "completed":
+        if schluss == "success":
+            return "gruen", "success", url
+        if schluss in _CI_ROT_SCHLUESSE:
+            return "rot", schluss, url
+        return "unbekannt", schluss or "ohne-ergebnis", url
+    return "unbekannt", status or "unbekannt", url
+
+
+def _lauf_text(job: str, detail: str, url: str) -> str:
+    return f"{job} ({detail}, {url})" if url else f"{job} ({detail})"
+
+
+def ci_pruefen(
+    klon: Path,
+    sha: str,
+    *,
+    windows_pflicht: bool = WINDOWS_PFLICHT,
+) -> TuerEntscheidung | None:
+    """Prüft das GitHub-Actions-Ergebnis für ``sha``; ``None`` = nicht nutzbar → Rückfall auf lokal.
+
+    Rückfall auf die lokale Prüfung greift bei ungespeicherten Änderungen im Klon, fehlendem
+    GitHub-Origin, nicht erreichbarer GitHub-API oder wenn für ``sha`` noch gar kein
+    Skill-Test-Check-Run auf GitHub vorliegt.
+    """
+    if not sha or not _klon_sauber(klon):
+        return None
+    slug = gh.github_slug_aus_origin(klon)
+    if not slug:
+        return None
+    daten = gh.json_lauf(
+        ["api", f"repos/{slug}/commits/{sha}/check-runs?per_page=100"],
+        cwd=klon,
+    )
+    if not isinstance(daten, dict) or not isinstance(daten.get("check_runs"), list):
+        return None
+
+    neueste: dict[str, tuple[tuple[int, int], dict[str, Any]]] = {}
+    gesucht = {CI_LINUX_JOB, CI_WINDOWS_JOB}
+    for idx, eintrag in enumerate(daten["check_runs"]):
+        if not isinstance(eintrag, dict):
+            continue
+        name = str(eintrag.get("name") or "")
+        if name not in gesucht:
+            continue
+        roh_id = eintrag.get("id")
+        sort_key = (int(roh_id) if isinstance(roh_id, int) else 0, idx)
+        if name not in neueste or sort_key > neueste[name][0]:
+            neueste[name] = (sort_key, eintrag)
+
+    if not neueste:
+        return None
+
+    kurz = sha[: skill_stand.KURZ]
+    linux_paar = neueste.get(CI_LINUX_JOB)
+    if linux_paar is None:
+        return TuerEntscheidung(
+            erlaubt=False,
+            zustand="unbekannt",
+            quelle="github_actions",
+            exit_code=1,
+            grund=f"GitHub-Actions-Lauf {CI_LINUX_JOB} fehlt für Stand {kurz} (unbekannt)",
+            rote_kennungen=[f"ci:{CI_LINUX_JOB}:fehlt"],
+        )
+
+    l_zustand, l_detail, l_url = _ci_lauf_zustand(linux_paar[1])
+    if l_zustand != "gruen":
+        label = "rot" if l_zustand == "rot" else "unbekannt"
+        return TuerEntscheidung(
+            erlaubt=False,
+            zustand=l_zustand,
+            quelle="github_actions",
+            exit_code=1,
+            grund=(
+                f"GitHub-Actions-Lauf {label} für Stand {kurz}: "
+                f"{_lauf_text(CI_LINUX_JOB, l_detail, l_url)}"
+            ),
+            rote_kennungen=[f"ci:{CI_LINUX_JOB}:{l_detail}"],
+            lauf_url=l_url,
+        )
+
+    # Linux ist grün; Windows nach Modus bewerten (Pflicht vs. Anzeige).
+    win_paar = neueste.get(CI_WINDOWS_JOB)
+    if windows_pflicht:
+        if win_paar is None:
+            return TuerEntscheidung(
+                erlaubt=False,
+                zustand="unbekannt",
+                quelle="github_actions",
+                exit_code=1,
+                grund=f"GitHub-Actions-Lauf {CI_WINDOWS_JOB} fehlt für Stand {kurz} (Pflicht)",
+                rote_kennungen=[f"ci:{CI_WINDOWS_JOB}:fehlt"],
+            )
+        w_zustand, w_detail, w_url = _ci_lauf_zustand(win_paar[1])
+        if w_zustand != "gruen":
+            label = "rot" if w_zustand == "rot" else "unbekannt"
+            return TuerEntscheidung(
+                erlaubt=False,
+                zustand=w_zustand,
+                quelle="github_actions",
+                exit_code=1,
+                grund=(
+                    f"GitHub-Actions-Lauf {label} für Stand {kurz}: "
+                    f"{_lauf_text(CI_WINDOWS_JOB, w_detail, w_url)}"
+                ),
+                rote_kennungen=[f"ci:{CI_WINDOWS_JOB}:{w_detail}"],
+                lauf_url=w_url,
+            )
+        return TuerEntscheidung(
+            erlaubt=True,
+            zustand="gruen",
+            quelle="github_actions",
+            exit_code=0,
+            grund=f"GitHub Actions grün (Linux + Windows, Stand {kurz})",
+            rote_kennungen=[],
+            lauf_url=l_url,
+        )
+
+    warnung = ""
+    if win_paar is not None:
+        w_zustand, w_detail, w_url = _ci_lauf_zustand(win_paar[1])
+        if w_zustand != "gruen":
+            warnung = (
+                f"Hinweis (Windows-Anzeige, Windows-Topf noch offen): "
+                f"{_lauf_text(CI_WINDOWS_JOB, w_detail, w_url)} — Linux-Lauf ist grün."
+            )
+    return TuerEntscheidung(
+        erlaubt=True,
+        zustand="gruen",
+        quelle="github_actions",
+        exit_code=0,
+        grund=f"GitHub Actions grün (Linux, Stand {kurz})",
+        rote_kennungen=[],
+        lauf_url=l_url,
+        warnung=warnung,
+    )
+
+
+def entscheiden(
+    klon: Path,
+    *,
+    python_exe: str = sys.executable,
+    erzwingen: bool = False,
+    windows_pflicht: bool = WINDOWS_PFLICHT,
+) -> TuerEntscheidung:
+    """Einzige Entscheidungs-Tür „neuer Stand → installieren ja/nein“ (#577, #415)."""
+    sha = klon_sha(klon)
+    kurz = sha[: skill_stand.KURZ] if sha else "unbekannt"
+    if erzwingen:
+        return TuerEntscheidung(
+            erlaubt=True,
+            zustand="erzwungen",
+            quelle="erzwungen",
+            exit_code=0,
+            grund=f"Installations-Sperre per --erzwingen überstimmt (Stand {kurz})",
+            rote_kennungen=[],
+        )
+    if in_laufender_suite():
+        return TuerEntscheidung(
+            erlaubt=True,
+            zustand="gruen",
+            quelle="rekursion",
+            exit_code=0,
+            grund="Läuft bereits in aktiver pytest-Suite — keine verschachtelte Prüfung gestartet.",
+            rote_kennungen=[],
+        )
+    ci = ci_pruefen(klon, sha, windows_pflicht=windows_pflicht)
+    if ci is not None:
+        return ci
+
+    ergebnis = suite_fahren(klon, python_exe=python_exe)
+    if ergebnis.ok:
+        return TuerEntscheidung(
+            erlaubt=True,
+            zustand="gruen",
+            quelle="lokal",
+            exit_code=0,
+            grund=f"Lokale Skill-Test-Suite grün (Stand {kurz})",
+            rote_kennungen=[],
+        )
+    code = ergebnis.exit_code if ergebnis.exit_code != 0 else 1
+    return TuerEntscheidung(
+        erlaubt=False,
+        zustand="rot",
+        quelle="lokal",
+        exit_code=code,
+        grund=f"Lokale Skill-Test-Suite rot (Stand {kurz}, Exit {code})",
+        rote_kennungen=ergebnis.rote_kennungen,
+    )
+
+
 def pruefen(
     klon: Path,
     *,
     python_exe: str = sys.executable,
     log_datei: Path | None = None,
+    erzwingen: bool = False,
+    windows_pflicht: bool = WINDOWS_PFLICHT,
 ) -> int:
-    """Prüf-Tor vor der Installation: 0 = grün (oder Rekursionsschutz), ≠ 0 = rot (Abbruch)."""
-    if in_laufender_suite():
-        log.debug("Läuft bereits in aktiver pytest-Suite — keine verschachtelte Suite gestartet.")
+    """Prüf-Tor vor der Installation: 0 = grün/erzwungen/Rekursion, ≠ 0 = rot/unbekannt (Abbruch)."""
+    entscheidung = entscheiden(
+        klon,
+        python_exe=python_exe,
+        erzwingen=erzwingen,
+        windows_pflicht=windows_pflicht,
+    )
+    if entscheidung.quelle == "rekursion":
+        log.debug("%s", entscheidung.grund)
         return 0
-    ergebnis = suite_fahren(klon, python_exe=python_exe)
-    if ergebnis.ok:
+    if entscheidung.quelle == "erzwungen":
+        log.warning("Warnung: %s — wird ohne grüne Prüfung installiert.", entscheidung.grund)
+        return 0
+    if entscheidung.erlaubt:
+        if entscheidung.quelle == "github_actions":
+            log.info("%s", entscheidung.grund)
+        if entscheidung.warnung:
+            log.warning("%s", entscheidung.warnung)
         return 0
 
     zeit = jetzt_iso()
     sha = klon_sha(klon)
-    ticket = ticket_melden(
-        klon,
-        sha=sha,
-        exit_code=ergebnis.exit_code,
-        kennungen=ergebnis.rote_kennungen,
-        zeit=zeit,
-    )
+    ticket: str | None = None
+    if entscheidung.zustand == "rot":
+        ticket = ticket_melden(
+            klon,
+            sha=sha,
+            exit_code=entscheidung.exit_code,
+            kennungen=entscheidung.rote_kennungen,
+            zeit=zeit,
+        )
     ziel_log = log_datei or log_pfad()
-    log_schreiben(
-        {
-            "zeit": zeit,
-            "ergebnis": "rot",
-            "sha": sha,
-            "exit": ergebnis.exit_code,
-            "rote_kennungen": ergebnis.rote_kennungen,
-            "ticket": ticket,
-        },
-        datei=ziel_log,
-    )
+    eintrag: dict[str, Any] = {
+        "zeit": zeit,
+        "ergebnis": entscheidung.zustand,
+        "quelle": entscheidung.quelle,
+        "sha": sha,
+        "exit": entscheidung.exit_code,
+        "rote_kennungen": entscheidung.rote_kennungen,
+        "ticket": ticket,
+    }
+    if entscheidung.lauf_url:
+        eintrag["lauf_url"] = entscheidung.lauf_url
+    log_schreiben(eintrag, datei=ziel_log)
+
     kurz = sha[: skill_stand.KURZ] if sha else "unbekannt"
-    vorschau = ", ".join(ergebnis.rote_kennungen[:5])
-    if len(ergebnis.rote_kennungen) > 5:
-        vorschau += f" (+{len(ergebnis.rote_kennungen) - 5} weitere)"
     ticket_hinweis = f", Ticket {ticket}" if ticket else ""
-    log.error(
-        "Abbruch: Skill-Test-Suite rot (Stand %s, Exit %d, %d rote Kennung(en): %s%s) "
-        "— alter Stand bleibt unverändert. Fehler-Log: %s",
-        kurz,
-        ergebnis.exit_code,
-        len(ergebnis.rote_kennungen),
-        vorschau,
-        ticket_hinweis,
-        ziel_log,
-    )
-    return ergebnis.exit_code if ergebnis.exit_code != 0 else 1
+    if entscheidung.quelle == "github_actions":
+        log.error(
+            "Abbruch: %s%s — alter Stand bleibt unverändert. Fehler-Log: %s "
+            "(Überstimmen nur bewusst per --erzwingen bzw. -Erzwingen).",
+            entscheidung.grund,
+            ticket_hinweis,
+            ziel_log,
+        )
+    else:
+        vorschau = ", ".join(entscheidung.rote_kennungen[:5])
+        if len(entscheidung.rote_kennungen) > 5:
+            vorschau += f" (+{len(entscheidung.rote_kennungen) - 5} weitere)"
+        log.error(
+            "Abbruch: Skill-Test-Suite rot (Stand %s, Exit %d, %d rote Kennung(en): %s%s) "
+            "— alter Stand bleibt unverändert. Fehler-Log: %s "
+            "(Überstimmen nur bewusst per --erzwingen bzw. -Erzwingen).",
+            kurz,
+            entscheidung.exit_code,
+            len(entscheidung.rote_kennungen),
+            vorschau,
+            ticket_hinweis,
+            ziel_log,
+        )
+    return entscheidung.exit_code if entscheidung.exit_code != 0 else 1
 
 
 def verbuchen(
@@ -518,9 +778,14 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="befehl", required=True)
 
-    p_pruefen = sub.add_parser("pruefen", help="Skill-Suite vor dem Austausch ausführen")
+    p_pruefen = sub.add_parser("pruefen", help="Installations-Sperre vor dem Austausch prüfen")
     p_pruefen.add_argument("--klon", type=Path, required=True, help="Git-Klon des Skills")
     p_pruefen.add_argument("--python", default=sys.executable, help="Python-Interpreter für pytest")
+    p_pruefen.add_argument(
+        "--erzwingen",
+        action="store_true",
+        help="Installations-Sperre bewusst überstimmen (auch bei rotem/unbekanntem Stand)",
+    )
 
     p_verbuchen = sub.add_parser("verbuchen", help="Installierten grünen SHA im Fehler-Log vermerken")
     p_verbuchen.add_argument("--klon", type=Path, required=True, help="Git-Klon des Skills")
@@ -541,7 +806,7 @@ def main(argv: list[str] | None = None) -> int:
 
     args = parser.parse_args(argv)
     if args.befehl == "pruefen":
-        return pruefen(args.klon, python_exe=args.python)
+        return pruefen(args.klon, python_exe=args.python, erzwingen=args.erzwingen)
     if args.befehl == "verbuchen":
         return verbuchen(args.klon, ziel=args.ziel)
     tausche_atomar(
