@@ -21,6 +21,8 @@ from types import ModuleType
 
 import pytest
 
+from conftest import repo_dateien
+
 SKILL = Path(__file__).resolve().parent.parent
 NEST = SKILL / "nest" / "nest_server.sh"
 INSTALL_PS1 = SKILL / "install.ps1"
@@ -73,8 +75,8 @@ TEXT_ENDUNGEN = {
 
 def _aktive_dateien() -> list[Path]:
     dateien: list[Path] = []
-    for pfad in SKILL.rglob("*"):
-        if not pfad.is_file() or pfad.suffix not in TEXT_ENDUNGEN:
+    for pfad in repo_dateien(SKILL):
+        if pfad.suffix not in TEXT_ENDUNGEN:
             continue
         rel = pfad.relative_to(SKILL).as_posix()
         if any(rel == o or rel.startswith(o + "/") for o in AUSGENOMMENE_ORDNER):
@@ -365,3 +367,17 @@ def test_vorfall_alter_rollenname_ist_kein_neuer_vorfall(monkeypatch: pytest.Mon
     alt = vorfall("Frage ohne eigenen Vorschlag — der Wächter rät nicht (#285)")
     neu = vorfall("Frage ohne eigenen Vorschlag — der Aufseher rät nicht (#285)")
     assert alt.schluessel() == neu.schluessel()
+
+
+def test_aktive_dateien_ueberspringt_unter_pycache_und_caches(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#532: verschachtelte ``__pycache__``/``.ruff_cache``-Reste zählen nicht als aktive Skill-Dateien."""
+    (tmp_path / "nest" / "__pycache__").mkdir(parents=True)
+    (tmp_path / "nest" / "sauber.sh").write_text("echo ok\n", encoding="utf-8")
+    (tmp_path / "nest" / "__pycache__" / "rest").write_text("Wächter\n", encoding="utf-8")
+    (tmp_path / "probe" / ".ruff_cache").mkdir(parents=True)
+    (tmp_path / "probe" / ".ruff_cache" / "123").write_text("Wächter\n", encoding="utf-8")
+    monkeypatch.setattr(sys.modules[__name__], "SKILL", tmp_path)
+    rel = [p.relative_to(tmp_path).as_posix() for p in _aktive_dateien()]
+    assert rel == ["nest/sauber.sh"]

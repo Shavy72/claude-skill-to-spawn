@@ -33,7 +33,7 @@ from pathlib import Path
 _SKILL = str(Path(__file__).resolve().parent.parent)
 if _SKILL not in sys.path:
     sys.path.insert(0, _SKILL)
-from to_spawn import bau_log, config, konsole, manifest, prozessbaum  # noqa: E402
+from to_spawn import bau_log, config, konsole, manifest, prozessbaum, werkzeug  # noqa: E402
 
 log = logging.getLogger("sessions_stand")
 #: Repo, in dem gearbeitet wird: ``TO_SPAWN_REPO`` (setzt die Weiterleitung im Repo), sonst
@@ -45,8 +45,8 @@ MUSTER = re.compile(r"(?:scripts|skripte)[\\/](bau|wache)\.py\"?\s+(\d+)")
 #: Claude-Session aus ``bau``: der Settings-Pfad trägt die Ticket-Nummer (``<repo>-bau\\<N>-<zeit>[-<anhang>]``,
 #: Anhang seit ``mkdtemp`` in ``bau.py``).
 VERWAIST = re.compile(r"[\w.-]+-bau[\\/](\d+)-\d{8}-\d{6}(?:-\w+)?[\\/]settings\.json")
-#: Prozessnamen einer laufenden Claude-Session (Windows ``claude.exe``/``node.exe``, Linux ``claude``/``node``).
-SESSION_NAMEN = frozenset({"claude.exe", "node.exe", "claude", "node"})
+#: Prozessnamen einer laufenden Bau-Session (``claude``/``node``/``agy``, Windows + Linux, #660).
+SESSION_NAMEN = werkzeug.SESSION_NAMEN_ALLE
 #: Namen, unter denen eine verwaiste Claude-Session auftaucht (``node.exe`` bleibt draußen — auf Windows zu unscharf).
 VERWAIST_NAMEN = frozenset({"claude.exe", "claude", "node"})
 

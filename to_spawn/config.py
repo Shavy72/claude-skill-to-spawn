@@ -225,6 +225,14 @@ def repo_wurzel(start: Path | None = None) -> Path:
     return pfad
 
 
+def notiz_tresor() -> Path:
+    """Ort des privaten Notiz-Tresors (Obsidian-Vault): ``$OBSIDIAN_VAULT``, sonst ``~/obsidian`` (#365).
+
+    Einzige Quelle für :mod:`to_spawn.uebergabe_sichern` und :mod:`to_spawn.befugnis`.
+    """
+    return Path(os.environ.get("OBSIDIAN_VAULT") or "~/obsidian").expanduser()
+
+
 def worktree_pfad(ticket: str | int, repo: Path | None = None) -> str:
     """Wohin der Worktree eines Tickets gehört — unter ``$BAU_WT_DIR``, sonst Windows ``C:/dev``, Linux ``~/wt``.
 
