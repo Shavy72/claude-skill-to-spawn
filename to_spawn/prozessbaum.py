@@ -117,9 +117,18 @@ def prozesse() -> dict[int, tuple[int, str, int]]:
     return liste
 
 
+class _KeinProc(FileNotFoundError):
+    """Das System hat gar kein ``/proc`` (Windows) — nicht „Prozess weg“."""
+
+
 def _proc(pid: int, datei: str) -> bytes:
-    """Rohinhalt von ``/proc/<pid>/<datei>`` (Naht für Tests)."""
-    return (_PROC / str(pid) / datei).read_bytes()
+    """Rohinhalt von ``/proc/<pid>/<datei>`` (Naht für Tests); fehlt ``/proc`` ganz: :class:`_KeinProc`."""
+    try:
+        return (_PROC / str(pid) / datei).read_bytes()
+    except FileNotFoundError:
+        if not _PROC.is_dir():
+            raise _KeinProc(f"{_PROC} fehlt") from None
+        raise
 
 
 def ist_claude(pid: int) -> bool:
@@ -127,14 +136,15 @@ def ist_claude(pid: int) -> bool:
 
     Prozess weg (``FileNotFoundError``/``ProcessLookupError``) heißt „kein Claude“.
     Unlesbar aus anderem Grund zählt als Claude: lieber warten als eine lebende
-    Session für beendet halten. Windows: Kommandozeile aus dem Kernel, geprüft wie
+    Session für beendet halten. Quelle ist ``/proc``, wo es eins gibt (auch ein von Tests
+    eingespeistes); fehlt es unter Windows, die Kommandozeile aus dem Kernel, geprüft wie
     beim Staffel-Hook (:func:`ist_session_zeile`).
     """
-    if _WINDOWS:
-        return _ist_claude_windows(pid)
     try:
         name = _proc(pid, "comm").decode(errors="replace").strip()
         argv = [teil.decode(errors="replace") for teil in _proc(pid, "cmdline").split(b"\0")]
+    except _KeinProc:
+        return _ist_claude_windows(pid) if _WINDOWS else False
     except (FileNotFoundError, ProcessLookupError):
         return False
     except OSError as fehler:
@@ -162,6 +172,7 @@ def _ist_claude_windows(pid: int) -> bool:
         return False
     log.warning("Kommandozeile von %s nicht lesbar — zählt als Claude.", pid)
     return True
+
 
 def senden(pids: Sequence[int], sig: signal.Signals) -> None:
     """Schickt ``sig`` an jede PID in Listenfolge; schon beendete zählen nicht als Fehler.

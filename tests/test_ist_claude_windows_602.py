@@ -29,8 +29,8 @@ def windows(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(prozessbaum, "_kommandozeile_windows", lambda pid: LISTE.get(pid, ""))
     monkeypatch.setattr(prozessbaum, "_lebt_windows", lambda pid: pid in LISTE or pid == UNLESBAR)
 
-    def kein_proc(pid: int, datei: str) -> bytes:
-        raise AssertionError(f"/proc/{pid}/{datei} unter Windows gelesen")
+    def kein_proc(pid: int, datei: str) -> bytes:  # wie das echte ``_proc`` ohne ``/proc``
+        raise prozessbaum._KeinProc(f"/proc/{pid}/{datei}")
 
     monkeypatch.setattr(prozessbaum, "_proc", kein_proc)
 
