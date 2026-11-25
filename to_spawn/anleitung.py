@@ -125,7 +125,7 @@ def handoff_auftrag(handoff: str, start: str) -> str:
 
 
 #: Einzige Quelle der Abschluss-Anweisung für Aufseher-Prompt (``skripte/wache.py``) und
-#: Aufseher-Takt (``to_spawn/waechter_takt.py``) (#367). Platzhalter ``{S}`` und ``{SKILL}``
+#: Aufseher-Takt (``to_spawn/waechter_takt.py``) (#367, #429). Platzhalter ``{S}`` und ``{SKILL}``
 #: werden erst beim Bauen des jeweiligen Prompts gefüllt.
 ABSCHLUSS_ANWEISUNG = (
     "Bau fertig, bereit zur Abnahme (alle Bau-Tickets zu oder nur noch Live-Belege/checkpoint:human-Abnahme offen, "
