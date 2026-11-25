@@ -41,6 +41,8 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, Literal, overload
 
+from to_spawn import prozessbaum
+
 log = logging.getLogger("to_spawn.starter")
 
 #: Schalter „läuft unter Test“; setzt ``tests/conftest.py`` für jeden Test.
@@ -211,6 +213,7 @@ def starte(
     if unter_test():
         argv = _nur_attrappe(argv, popen_args.get("env"))
     ordner = str(cwd) if cwd is not None else None
+    popen_args = {**prozessbaum.fensterlos(), **popen_args}  # #658: Aufrufer-Flags gehen vor
     log.info("Start: %s (cwd %s)", argv[0], ordner)
     lauf: Any = subprocess.run if warten else subprocess.Popen
     if os.name == "nt" and _endung(argv[0]) in _BATCH:

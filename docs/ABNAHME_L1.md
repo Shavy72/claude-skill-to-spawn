@@ -49,7 +49,7 @@ Urteile: **belegt** · **teilweise** · **abweichend** (Soll anders erfüllt, mi
 | M12 | ≥ 20 absichtliche Fehler, 0 übersehen (DuoPlus ggf. „nicht anwendbar, weil keine Auswahl läuft“, siehe Plan-Stand) | – | noch nicht geprüft |
 | M13 | `PRUEFTOR_VERGLEICH.md`, Tempo gemessen | – | noch nicht geprüft |
 | M14 | Aufräumen ohne den Menschen (L4): Reste im Probe-Lauf, Hausmeister räumt, kein Lösch-Auftrag an den Menschen | – | offen |
-| M15 | Kaltstart-Probe (L5) | Kaltstart-Probe 21.11.2026 auf dem Bau-Server: frische Sonnet-Session nur mit `docs/WIEDEREINSTIEG.md`, Urteil BESTANDEN, 0 verhindernde Lücken; Windows-Seite offen | belegt (Bau-Server), Windows offen |
+| M15 | Kaltstart-Probe (L5) | Lauf 1 (21.11.2026 Bau-Server, frische Sonnet-Session): BESTANDEN, 0 verhindernde Lücken. Lauf 3 (25.11.2026 Bau-Server, frischer Prüfer-Subagent ohne Vorwissen nur mit `docs/WIEDEREINSTIEG.md` auf Stand `f3c85b1`): Ziel, Stand, offene Pull-Requests (659, 662, 250), nächste Schritte (624, 641, 68) und Einstieg auf frischer Maschine ohne privaten Tresor ohne Abweichung wiedergegeben, 0 Geheimnisse im Dokument; Detail-Hinweise (L10-Verweis, Glossar-Begriffe, Voraussetzungen) direkt eingearbeitet. Offen: Windows-Kaltstart-Probe am PC, Maschinen-Pfade am PC sowie Abschluss-Probe „vor fertig“. | teilweise (Bau-Server mitten im Bau belegt; Windows + Abschluss-Probe offen → #145) |
 
 ## Probe-Lauf 3 (24./25.11.2026, Bau-Server)
 
