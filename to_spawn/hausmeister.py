@@ -1307,7 +1307,11 @@ def _hauptrepos() -> list[Path]:
     roh = os.environ.get("TO_SPAWN_HAUSMEISTER_HAUPTREPOS")
     if roh is not None:
         return [Path(p).expanduser() for p in roh.split()]
-    pfade = (Path(p).expanduser() for e in _maschinen_repos() if (p := e["pfad"].strip()))
+    pfade = (
+        pfad
+        for e in _maschinen_repos()
+        if (pfad := config.repo_klon_pfad(e)) is not None
+    )
     return [p for p in dict.fromkeys(pfade) if _ist_git_repo(p)]
 
 

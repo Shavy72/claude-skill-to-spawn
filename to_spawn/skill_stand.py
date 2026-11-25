@@ -82,12 +82,27 @@ def stand(skill: Path = SKILL) -> str:
     return _lies_stempel(skill).get("commit", "")[:KURZ]
 
 
+def _klon_aus_stempel(stempel: dict[str, str]) -> Path | None:
+    """Vorhandener Klon-Ordner aus ``stempel["klon"]``, sonst ``None`` (#216, #707)."""
+    klon = stempel.get("klon", "").strip()
+    if not klon:
+        return None
+    pfad = Path(klon).expanduser()
+    return pfad if pfad.is_dir() else None
+
+
+def klon_ordner(skill: Path | None = None) -> Path | None:
+    """Vorhandener Klon-Ordner des Skills aus ``STAND.json`` (``klon``), sonst ``None`` (#707).
+
+    Einzige Stelle, die das Feld ``klon`` aus ``STAND.json`` als Ordner liest.
+    """
+    return _klon_aus_stempel(_lies_stempel(SKILL if skill is None else skill))
+
+
 def _klon_pfad(stempel: dict[str, str]) -> str:
     """Vorhandener Klon-Pfad aus dem Stempel, sonst Platzhalter ``<Skill-Klon>`` (#216)."""
-    klon = stempel.get("klon", "")
-    if klon and Path(klon).is_dir():
-        return klon
-    return "<Skill-Klon>"
+    pfad = _klon_aus_stempel(stempel)
+    return str(pfad) if pfad is not None else "<Skill-Klon>"
 
 
 def _befehl(klon: str) -> str:
