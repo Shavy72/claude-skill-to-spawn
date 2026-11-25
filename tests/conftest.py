@@ -656,14 +656,22 @@ def _speicher_immer_frei(
     Claude-Start ``to_spawn.speicher``. Ohne diese Fixture hinge das Ergebnis der
     ganzen Suite an den Sessions, die gerade auf der Testmaschine laufen (12 Claude-
     Prozesse → jeder Start-Test rot). Die Test-Tür des Moduls zeigt deshalb auf eine
-    Attrappe mit 64 GiB frei und leerer Prozessliste. ``test_speicher_257`` stellt
-    für seine Fälle eigene Attrappen (knapp/voll) über dieselben Variablen.
+    Attrappe mit 16 GiB (``speicher.BEZUG_GB``) frei und leerer Prozessliste — so
+    bleibt die Rechner-Grenze bei 12 (#284/#460) und die Ort-Wahl (#802) sieht
+    zugleich eine vollständige, freie Maschine. ``test_speicher_257`` stellt für
+    seine Fälle eigene Attrappen (knapp/voll) über dieselben Variablen.
     """
     ordner = tmp_path_factory.mktemp("speicher-frei")
     meminfo = ordner / "meminfo"
-    meminfo.write_text(f"MemAvailable:    {64 * 1024 * 1024} kB\n", encoding="utf-8")
+    meminfo.write_text(
+        f"MemTotal:        {16 * 1024 * 1024} kB\nMemAvailable:    {16 * 1024 * 1024} kB\n",
+        encoding="utf-8",
+    )
+    loadavg = ordner / "loadavg"
+    loadavg.write_text("0.20 0.20 0.20 1/100 1\n", encoding="utf-8")
     (ordner / "proc").mkdir()
     monkeypatch.setenv("TO_SPAWN_SPEICHER_MEMINFO", str(meminfo))
+    monkeypatch.setenv("TO_SPAWN_SPEICHER_LOADAVG", str(loadavg))
     monkeypatch.setenv("TO_SPAWN_SPEICHER_PROC", str(ordner / "proc"))
     # #460: Session-Status und vergebene Plätze ebenfalls aus der Attrappe, nie vom echten Rechner.
     (ordner / "sessions").mkdir()

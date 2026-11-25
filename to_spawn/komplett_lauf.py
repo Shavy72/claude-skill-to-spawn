@@ -67,6 +67,7 @@ from to_spawn import (
     config,
     konsole,
     manifest,
+    ort_wahl,
     prozessbaum,
     pruefplan,
     starter,
@@ -454,6 +455,7 @@ def _pruefen(
                     befehl,
                     kopf,
                     config.komplett_zeitgrenze_s(konfig),
+                    konfig,
                 )
     except _sperre.SperreNichtOeffenbar as fehler:
         return Ergebnis(
@@ -560,10 +562,30 @@ def _letzte_zeile(datei: Path) -> str:
     return zeilen[-1][:200] if zeilen else ""
 
 
-def _lauf(klon: Path, spec: int, moment: Moment, befehl: str, kopf: str, zeitgrenze_s: float) -> Ergebnis:
+def _lauf(
+    klon: Path,
+    spec: int,
+    moment: Moment,
+    befehl: str,
+    kopf: str,
+    zeitgrenze_s: float,
+    konfig: dict[str, Any] | None = None,
+) -> Ergebnis:
     """Befehl ausführen, Merker + Protokoll-Zeile schreiben; nur unter der Sperre aus :func:`_pruefen`."""
     start_zeit, start = _jetzt(), time.monotonic()
-    stufe = leiter.eigener_befehl(klon, befehl, "komplett", zeitgrenze_s, ticket=spec)
+    wahl = ort_wahl.entscheiden(konfig, art="gross", repo=klon)
+    if wahl.ort == ort_wahl.ORT_GITHUB and not ort_wahl.nutzt_ort_wahl(befehl):
+        gh_befehl = ort_wahl.github_befehl_fuer(konfig, "komplett")
+        if gh_befehl:
+            stufe = leiter.eigener_befehl(klon, gh_befehl, "komplett", zeitgrenze_s, ticket=spec)
+        else:
+            text = (
+                f"Ort-Wahl: github ({wahl.grund}) — Komplett-Prüfung auf GitHub Actions laufen lassen "
+                "(kein ort_wahl.github_befehl konfiguriert)"
+            )
+            stufe = leiter.Stufe("komplett", "", False, text, 0.0, befehl, "ort-wahl", leiter.GATE_FEHLER, text)
+    else:
+        stufe = leiter.eigener_befehl(klon, befehl, "komplett", zeitgrenze_s, ticket=spec)
     dauer = round(time.monotonic() - start, 2)
     exit_code = stufe.ergebnis
     if exit_code == leiter.GRUEN:
@@ -584,7 +606,7 @@ def _lauf(klon: Path, spec: int, moment: Moment, befehl: str, kopf: str, zeitgre
         "moment": moment.value,
         "grund": grund,
     }
-    _protokoll(klon, spec, moment, stufe, kopf, dauer)
+    _protokoll(klon, spec, moment, stufe, kopf, dauer, wahl=wahl)
     datei = _datei(klon, spec)
     try:
         datei.parent.mkdir(parents=True, exist_ok=True)
@@ -608,7 +630,16 @@ def _lauf(klon: Path, spec: int, moment: Moment, befehl: str, kopf: str, zeitgre
     return _aus_merker(Merker(**daten), spec, gelaufen=True)  # type: ignore[arg-type]
 
 
-def _protokoll(klon: Path, spec: int, moment: Moment, stufe: leiter.Stufe, kopf: str, dauer: float) -> None:
+def _protokoll(
+    klon: Path,
+    spec: int,
+    moment: Moment,
+    stufe: leiter.Stufe,
+    kopf: str,
+    dauer: float,
+    *,
+    wahl: ort_wahl.WahlErgebnis | None = None,
+) -> None:
     """Eine Zeile ``art: "komplett"`` im Prüf-Protokoll (#455); Schreibfehler bleiben eine Warnung."""
     zeile = protokoll.zeile(
         basis=kopf,
@@ -629,6 +660,9 @@ def _protokoll(klon: Path, spec: int, moment: Moment, stufe: leiter.Stufe, kopf:
         gesamt_s=dauer,
     )
     zeile.update(art="komplett", spec=int(spec), moment=moment.value)
+    if wahl is not None:
+        zeile["ort"] = wahl.ort
+        zeile["ort_grund"] = wahl.grund
     protokoll.schreibe(klon, zeile)
 
 

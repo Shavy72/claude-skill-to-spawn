@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from to_spawn import config, konsole, pruefplan, temp_ordner
+from to_spawn import config, konsole, ort_wahl, pruefplan, temp_ordner
 from to_spawn.pruef import (
     adapter_node,
     adapter_py,
@@ -215,12 +215,38 @@ def pruefen(repo: Path, basis: str, ziel: str, art: pruefplan.Art | None = None,
         )
         _schreibe(repo, zeile, art, warnung)
         return Urteil(leiter.ROT, zeile)
-    eigen = pruefplan.befehl(config.lade(repo), art) if art is not None else None
-    with temp_ordner.lauf(repo, von="pruef"):
-        if eigen:
-            liste = [leiter.eigener_befehl(repo, eigen, art)]
-        else:
-            liste = leiter.stufen(repo, _ADAPTER, basis_sha, art)
+    konfig = config.lade(repo)
+    ort_art: ort_wahl.LaufArt = "gross" if art == "komplett" else "klein"
+    wahl = ort_wahl.entscheiden(konfig, art=ort_art, repo=repo)
+    eigen = pruefplan.befehl(konfig, art) if art is not None else None
+    if wahl.ort == ort_wahl.ORT_GITHUB:
+        gh_befehl = ort_wahl.github_befehl_fuer(konfig, art or "schnell")
+        if not gh_befehl:
+            grund = (
+                f"Ort-Wahl: github ({wahl.grund}) — Tests auf GitHub Actions laufen lassen "
+                "(kein ort_wahl.github_befehl konfiguriert)"
+            )
+            zeile = protokoll.zeile(
+                basis=basis_sha,
+                ziel=ziel_sha,
+                exit_code=leiter.GATE_FEHLER,
+                stufen=[],
+                werkzeug=[],
+                fehler_kurz=grund,
+                gesamt_s=time.monotonic() - start,
+            )
+            zeile["ort"] = wahl.ort
+            zeile["ort_grund"] = wahl.grund
+            _schreibe(repo, zeile, art, warnung)
+            return Urteil(leiter.GATE_FEHLER, zeile)
+        with temp_ordner.lauf(repo, von="pruef"):
+            liste = [leiter.eigener_befehl(repo, gh_befehl, art or "schnell")]
+    else:
+        with temp_ordner.lauf(repo, von="pruef"):
+            if eigen:
+                liste = [leiter.eigener_befehl(repo, eigen, art)]
+            else:
+                liste = leiter.stufen(repo, _ADAPTER, basis_sha, art)
     if not liste:
         return _gate_fehler(
             repo,
@@ -263,6 +289,8 @@ def pruefen(repo: Path, basis: str, ziel: str, art: pruefplan.Art | None = None,
         ],
         schluessel=schluessel,
     )
+    zeile["ort"] = wahl.ort
+    zeile["ort_grund"] = wahl.grund
     _schreibe(repo, zeile, art, warnung)
     cache.merke(schluessel, zeile)
     return Urteil(exit_code, zeile)
