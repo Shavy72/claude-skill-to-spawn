@@ -261,6 +261,7 @@ def _git_ausgabe(args: list[str], cwd: Path, timeout: float | None = None) -> tu
         fertig = subprocess.run(
             ["git", *args],
             cwd=str(cwd),
+            env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -327,6 +328,20 @@ def origin_zweige(repo: Path, muster: str) -> list[str] | None:
     praefix = "refs/heads/"
     refs = (zeile.split("\t")[-1].strip() for zeile in text.splitlines())
     return [ref[len(praefix) :] for ref in refs if ref.startswith(praefix)]
+
+
+def lokale_zweige(repo: Path, muster: str) -> list[str] | None:
+    """Lokale Zweige in ``repo``, die das git-Muster ``muster`` treffen (z. B. ``ticket/7-*``).
+
+    Namen ohne ``refs/heads/``. ``None`` = git gescheitert.
+    """
+    code, text = _git_ausgabe(
+        ["for-each-ref", "--format=%(refname:short)", f"refs/heads/{muster}"], repo, timeout=GIT_ZEIT_S
+    )
+    if code != 0:
+        log.warning("git for-each-ref %s gescheitert (Exit %s)", muster, code)
+        return None
+    return [zeile.strip() for zeile in text.splitlines() if zeile.strip()]
 
 
 def hauptzweig(repo: Path | None = None) -> str:

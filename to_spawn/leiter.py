@@ -175,6 +175,8 @@ class Schritt:
     #: Merk-Schlüssel, den die Tür bei ``melden`` im Feld :attr:`Gemerkt.frage` ablegt (einmal
     #: melden, #282 P2); ``""`` = nichts merken.
     merken: str = ""
+    #: Bei ``zuruecksetzen`` nur :attr:`Gemerkt.frage` löschen und eine laufende Stufe 2 erhalten (#282).
+    stufe_behalten: bool = False
 
 
 @dataclass(frozen=True)
@@ -234,7 +236,7 @@ def entscheide(lage: Lage, gemerkt: Gemerkt, jetzt: float, handoff_k: float) -> 
                 "zuruecksetzen", "arbeitet wieder nach gescheitertem respawn"
             )
         if gemerkt.frage is not None:
-            return Schritt("zuruecksetzen", "arbeitet wieder nach Frage")
+            return Schritt("zuruecksetzen", "arbeitet wieder nach Frage", stufe_behalten=(stufe == 2))
         return Schritt("nichts", "arbeitet")
     if stufe == 5:
         vor = _minuten(jetzt, gemerkt.seit)
@@ -273,7 +275,11 @@ def entscheide(lage: Lage, gemerkt: Gemerkt, jetzt: float, handoff_k: float) -> 
             if text and gemerkt.frage == ABSCHLUSS_GEMELDET:
                 # Kürzer still als die Melde-Grenze: die Session hat zwischen zwei Takten gearbeitet,
                 # auch wenn kein Takt sie dabei sah — Merker löschen, die nächste Stille meldet neu.
-                return Schritt("zuruecksetzen", f"{text}, still {still} min — Meldung zurückgesetzt")
+                return Schritt(
+                    "zuruecksetzen",
+                    f"{text}, still {still} min — Meldung zurückgesetzt",
+                    stufe_behalten=(stufe == 2),
+                )
             if text:
                 return Schritt("nichts", f"{text} — nicht beenden")
         if not ruhig:
@@ -528,8 +534,9 @@ def _schritt(u: Umwelt, repo: Path, spec: int, ticket: int) -> Ergebnis:
             else:
                 beleg_zusatz = f" · {aufseher_stand.beleg_zeile(beleg)}"
     elif schritt.aktion == "zuruecksetzen":
-        stufe = 0
-        leitstand.setze_leiter_stufe(ticket, 0, None)
+        if not schritt.stufe_behalten:
+            stufe = 0
+            leitstand.setze_leiter_stufe(ticket, 0, None)
         if gemerkt.frage is not None:
             leitstand.setze_notiz(_FRAGE_NOTIZ.format(ticket=ticket), "")
     elif schritt.aktion == "abschliessen":
