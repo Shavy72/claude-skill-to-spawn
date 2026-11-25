@@ -25,6 +25,7 @@ from to_spawn import (
     leitstand,
     nest,
     ort_wahl,
+    regel_pruefung,
     respawn,
     ssh_beobachten,
     start_last,
@@ -446,4 +447,6 @@ def baue_parser() -> _Parser:
     ssh_beobachten.richte_parser_ein(unter)
     # Ort-Wahl für große Testläufe (#760, E33): Bau-Server wenn ruhig, sonst GitHub.
     ort_wahl.richte_parser_ein(unter)
+    # Regel-Prüfung (#584, E20/E21): doppelte to-spawn-Ablauf-Texte außerhalb des Skills.
+    regel_pruefung.richte_parser_ein(unter)
     return ap

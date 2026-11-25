@@ -87,6 +87,13 @@ def _stufe(zeile: dict, name: str) -> dict:
     return treffer[0]
 
 
+def _pruef_stufe(zeile: dict) -> dict:
+    """Die ausgeführte Test-Stufe der Leiter (``auswahl`` seit #795 oder ``voll``)."""
+    treffer = [stufe for stufe in zeile["stufen"] if stufe["name"] in ("auswahl", "voll")]
+    assert len(treffer) == 1, zeile["stufen"]
+    return treffer[0]
+
+
 def _erklaere(ordner: Path, muster: object, roh: str | None = None) -> None:
     """Repo erklärt seine Doku-Pfade (``pruefen.doku_pfade``) bzw. ``roh`` als Konfig-Text; neue Basis."""
     (ordner / ".to-spawn").mkdir(exist_ok=True)
@@ -149,7 +156,7 @@ def test_fehlendes_ruff_ist_ausgelassen_nicht_gruen_und_voll_prueft(
     assert urteil.exit == 0, urteil.zeile
     stufe = _stufe(urteil.zeile, "sofort")
     assert (stufe["lief"], stufe["grund"]) == (False, "Werkzeug fehlt (ruff)")
-    assert _stufe(urteil.zeile, "voll")["lief"] is True
+    assert _pruef_stufe(urteil.zeile)["lief"] is True
     assert (probe / "lief.txt").exists()
 
 
@@ -275,7 +282,8 @@ def test_umbenannte_code_datei_meldet_alt_und_neu_und_ist_keine_doku(
     code, zeile = _tuer(probe)
     assert code == 0, zeile
     assert _stufe(zeile, "doku")["grund"] == "Doku-Pfade nicht erklärt (pruefen.doku_pfade)"
-    assert _stufe(zeile, "voll")["lief"] is True
+    assert _pruef_stufe(zeile)["lief"] is True
+    assert (probe / "lief.txt").exists()
 
 
 def test_geloeschte_code_datei_ist_keine_doku(tmp_path: Path) -> None:

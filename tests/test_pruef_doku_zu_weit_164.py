@@ -29,7 +29,7 @@ def test_vorgaenger_commit_mit_zu_weitem_muster_gibt_code_commit_keine_abkuerzun
     assert doku["grund"] != "nur Doku", zeile
     assert doku["grund"].startswith("pruefen.doku_pfade zu weit"), doku
     assert f"„{muster}“" in doku["grund"], doku
-    assert sofort_test._stufe(zeile, "voll")["lief"] is True
+    assert sofort_test._pruef_stufe(zeile)["lief"] is True
     assert code == 1, zeile
 
 
@@ -67,7 +67,7 @@ def test_muster_trifft_echte_geaenderte_code_datei_keine_abkuerzung(
     assert doku["grund"] != "nur Doku", zeile
     assert doku["grund"].startswith("pruefen.doku_pfade zu weit"), doku
     assert f"„{muster}“" in doku["grund"], doku
-    assert sofort_test._stufe(zeile, "voll")["lief"] is True
+    assert sofort_test._pruef_stufe(zeile)["lief"] is True
     assert code == 1, zeile
 
 

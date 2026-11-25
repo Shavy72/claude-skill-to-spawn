@@ -9,6 +9,7 @@ import re
 import sys
 import tempfile
 import xml.etree.ElementTree as ET
+from collections.abc import Sequence
 from pathlib import Path
 
 from to_spawn.pruef import ausfuehren, leiter, wackler
@@ -84,25 +85,20 @@ def _python(repo: Path) -> str:
     return sys.executable
 
 
-#: Ordner, die nie das Anwendungs-Paket sind.
-_KEIN_PAKET = frozenset({"tests", "test", "docs", "build", "dist", "venv", "node_modules"})
-
-
-def _paket(repo: Path) -> str:
-    """Das eine Anwendungs-Paket oben im Repo (Ordner mit ``__init__.py``); "" = keins oder mehrere.
-
-    ponytail: nur ein Paket (pytest-impacted kennt ein Modul); mehrere → voll statt ``--impacted-module=.``,
-    das in großen Repos > 3 min braucht [DP].
-    """
-    treffer = [
-        ordner.name
-        for ordner in repo.iterdir()
-        if ordner.is_dir()
-        and not ordner.name.startswith(".")
-        and ordner.name not in _KEIN_PAKET
-        and (ordner / "__init__.py").is_file()
-    ]
-    return treffer[0] if len(treffer) == 1 else ""
+def _ohne_xdist(befehl: list[str]) -> list[str]:
+    """Entfernt ``-n``/``--dist``, damit Nach-Rot-Ziele streng in Reihenfolge (Rote zuerst) laufen."""
+    ergebnis: list[str] = []
+    idx = 0
+    while idx < len(befehl):
+        if befehl[idx] in ("-n", "--dist"):
+            idx += 2
+            continue
+        if befehl[idx].startswith(("-n=", "--dist=")):
+            idx += 1
+            continue
+        ergebnis.append(befehl[idx])
+        idx += 1
+    return ergebnis
 
 
 _cache_wurzel: tempfile.TemporaryDirectory[str] | None = None
@@ -220,47 +216,61 @@ class PythonAdapter:
             fehler="",
         )
 
-    def auswahl(self, repo: Path, basis: str) -> Plan:
-        # pytest-impacted: git-Diff ``basis``..Stand + statischer Import-Graph (PRUEFTOR_VERGLEICH A).
+    def auswahl(
+        self,
+        repo: Path,
+        basis: str,
+        *,
+        extra_tests: Sequence[str] = (),
+        pfade: Sequence[str] | None = None,
+    ) -> Plan:
+        """Testauswahl per statischem AST-Import-Graph ohne Einzelpaket-Zwang (#795).
+
+        Mit ``extra_tests`` (zuletzt rote Tests aus dem Protokoll) stehen diese streng vor den
+        geänderten Ticket-Tests; ohne Treffer bleibt ``befehl=[]`` (0 betroffene Tests, kein
+        unnötiger pytest-Start).
+        """
         plan = self.voll(repo)
         if plan.fehler:
             return plan
-        python = plan.befehl[0]
-        probe = ausfuehren.lauf(
-            [python, "-c", "import importlib.metadata as m; print(m.version('pytest-impacted'))"], repo
-        )
-        if probe.code != 0:
-            return Plan(werkzeug=plan.werkzeug, befehl=[], fehler="pytest-impacted fehlt")
-        paket = _paket(repo)
-        if not paket:
-            return Plan(werkzeug=plan.werkzeug, befehl=[], fehler="kein eindeutiges Paket für den Import-Graph")
-        tests = ["--impacted-tests-dir=tests"] if (repo / "tests").is_dir() else []
+        from to_spawn.pruef import import_graph
+
+        geaendert = list(pfade) if pfade is not None else import_graph.geaenderte_dateien(repo, basis)
+        if geaendert is None:
+            return Plan(werkzeug=plan.werkzeug, befehl=[], fehler="geänderte Dateien unbekannt (git diff gescheitert)")
+        wahl = import_graph.auswaehlen(repo, geaendert=geaendert)
+        if extra_tests:
+            ziele = import_graph.ziele_mit_roten(repo, wahl.tests, extra_tests)
+            if not ziele:
+                return Plan(
+                    werkzeug=f"{plan.werkzeug}+import-graph",
+                    befehl=[],
+                    fehler="zuletzt rote Tests nicht mehr auffindbar",
+                )
+            basis_befehl = _ohne_xdist(plan.befehl)
+        else:
+            ziele = wahl.tests
+            basis_befehl = plan.befehl
+        if not ziele:
+            return Plan(werkzeug=f"{plan.werkzeug}+import-graph", befehl=[], fehler="")
         return Plan(
-            werkzeug=f"{plan.werkzeug}+impacted@{probe.ausgabe.strip() or '?'}",
-            befehl=[
-                *plan.befehl,
-                "--impacted",
-                f"--impacted-module={paket}",
-                "--impacted-git-mode=branch",
-                f"--impacted-base-branch={basis}",
-                "--impacted-no-merge-base",
-                *tests,
-            ],
+            werkzeug=f"{plan.werkzeug}+import-graph",
+            befehl=[*basis_befehl, *ziele],
             fehler="",
         )
 
     def zaehle(self, code: int, ausgabe: str) -> tuple[int | None, int | None]:
-        # Exit 5 = nichts gewählt; sonst ``[N/N]`` plus ``deselected`` aus der Schlusszeile.
+        # Exit 5 = nichts gewählt; sonst ``[N/N]`` plus optionales ``deselected`` aus der Schlusszeile.
         if code == 5:
             return 0, None
         n = self.gelaufen(ausgabe)
         schluss = _SCHLUSS.findall(ausgabe)
         abgewaehlt = re.search(r"(\d+) deselected", schluss[-1]) if schluss else None
         if n is None and abgewaehlt and not re.search(r"passed|failed|error|skipped|xfailed|xpassed", schluss[-1]):
-            n = 0  # alles abgewählt: pytest-impacted endet mit Exit 0 und „N deselected“
+            n = 0  # alles abgewählt: endet mit Exit 0 und „N deselected“
         if n is None:
             return None, None
-        return n, n + (int(abgewaehlt.group(1)) if abgewaehlt else 0)
+        return n, (n + int(abgewaehlt.group(1)) if abgewaehlt else None)
 
     def deute(self, code: int) -> int:
         # pytest: 0 grün, 1 Tests rot, 2 abgebrochen/Sammelfehler (Import-Fehler im Code = rot),

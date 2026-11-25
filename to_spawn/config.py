@@ -891,6 +891,43 @@ def komplett_zeitgrenze_s(konfig: dict[str, Any]) -> float:
     return float(KOMPLETT_ZEITGRENZE_MIN * 60)
 
 
+@dataclass(frozen=True)
+class Stufe0Konfig:
+    """Einstellungen für den einheitlichen Stufe-0-Ablauf (ruff, Typ-Prüfung, Test-Schutz, #794).
+
+    Optionale Schlüssel unter ``pruefung.*`` (bewusst nicht in ``DEFAULTS["pruefung"]``,
+    damit dort weiter nur die Einrichtungs-Befehle ``schnell``/``komplett`` stehen):
+
+    - ``pruefung.ruff``: eigener ruff-Befehl als Text; leer = eingebauter ruff-Lauf.
+    - ``pruefung.typ_pruefung``: Typ-Prüf-Befehl als Text (z. B. ``"mypy to_spawn"`` oder
+      ``"pyright"``); leer = nicht konfiguriert (Stufe wird ausgelassen).
+    - ``pruefung.test_schutz``: ``bool`` (Vorgabe ``True``) — AST-Diff-Test-Schutz aktiv.
+    """
+
+    ruff: str = ""
+    typ_pruefung: str = ""
+    test_schutz: bool = True
+
+
+def stufe0_konfig(konfig: Mapping[str, Any]) -> Stufe0Konfig:
+    """Liest die Stufe-0-Einstellungen aus ``pruefung.*`` (#794)."""
+    gruppe = _gruppe(konfig, "pruefung")
+    ruff = _text(gruppe, "ruff")
+    typ = _text(gruppe, "typ_pruefung")
+    schutz_roh = gruppe.get("test_schutz")
+    if schutz_roh is None:
+        test_schutz = True
+    elif isinstance(schutz_roh, bool):
+        test_schutz = schutz_roh
+    else:
+        log.warning(
+            "Konfig-Wert pruefung.test_schutz=%r ist kein Wahrheitswert — Vorgabe True",
+            schutz_roh,
+        )
+        test_schutz = True
+    return Stufe0Konfig(ruff=ruff, typ_pruefung=typ, test_schutz=test_schutz)
+
+
 #: Text-Schlüssel der Gruppe ``live`` (#425); ``ohne`` ist ein Schalter (:func:`live_bewusst_ohne`).
 _LIVE_TEXT_FELDER: tuple[str, ...] = ("befehl", "url", "aufraeumen")
 
