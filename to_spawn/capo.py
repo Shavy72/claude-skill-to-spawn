@@ -60,6 +60,7 @@ from . import (
     befund,
     briefkasten,
     config,
+    fehlermeldung,
     gh,
     komplett_lauf,
     konsole,
@@ -2659,6 +2660,9 @@ def _tick(
                 schalter = staging_schalter.schalte_an(repo, gh_repo, spec, dry_run)
             except Exception as fehler:  # ein Ausreißer darf den Tick (sichern) nicht abbrechen
                 log.exception("Staging-Schalter Spec #%s: unerwarteter Fehler", spec)
+                _werkzeug_fehler(
+                    "capo.staging_schalter", "Staging-Schalter: unerwarteter Fehler", fehler, spec=spec, dry_run=dry_run
+                )
                 schalter = staging_schalter.Ergebnis(
                     [f"FEHLER: Staging-Schalter — unerwarteter Fehler ({type(fehler).__name__}: {fehler})."], False
                 )
@@ -2673,6 +2677,9 @@ def _tick(
             erg.zeilen += abschluss_anstossen(repo, spec, gh_repo, konfig, zustand, dry_run)
         except Exception as fehler:  # ein Ausreißer darf den Tick (sichern) nicht abbrechen
             log.exception("Abschluss-Mail Spec #%s: unerwarteter Fehler", spec)
+            _werkzeug_fehler(
+                "capo.abschluss_mail", "Abschluss-Mail: unerwarteter Fehler", fehler, spec=spec, dry_run=dry_run
+            )
             erg.zeilen.append(f"FEHLER: Abschluss-Mail — unerwarteter Fehler ({type(fehler).__name__}: {fehler}).")
     # Aufräumen erst nach der Abschluss-Mail (#1370): dann hat der Rückblick die Laufdateien
     # der Worktrees schon gesammelt.
@@ -2744,14 +2751,22 @@ def live_merken(repo: Path, spec: int, gh_repo: str = "") -> bool:
     return True
 
 
+def _werkzeug_fehler(quelle: str, titel: str, fehler: BaseException, *, spec: int, dry_run: bool = False) -> None:
+    """Unerwartete Werkzeug-Ausnahme ins eigene Log + Skill-Repo melden (#578, nie Mail)."""
+    if dry_run:
+        return
+    fehlermeldung.melde(quelle, titel, ausnahme=fehler, kontext={"spec": spec})
+
+
 def _spec_fenster_wegraeumen(repo: Path, spec: int) -> None:
     """Fenster der geschlossenen Spec wegräumen; Fehler nur loggen (Takt bleibt grün)."""
     from to_spawn import tmux_aufruf  # spät: tmux_aufruf importiert capo
 
     try:
         tmux_aufruf.spec_session_schliessen(repo, spec)
-    except Exception:  # der Takt endet nie rot am Aufräumen
+    except Exception as fehler:  # der Takt endet nie rot am Aufräumen
         log.exception("Fenster der Spec #%s nicht geschlossen", spec)
+        _werkzeug_fehler("capo.spec_fenster", "Spec-Fenster schließen: unerwarteter Fehler", fehler, spec=spec)
 
 
 def _komplett_alle_auf_staging(
@@ -2772,6 +2787,9 @@ def _komplett_alle_auf_staging(
             erg = komplett_lauf.komplett_einmal(repo, spec, Moment.ALLE_AUF_STAGING, konfig, takt=True)
     except Exception as fehler:  # ein Ausreißer darf den Tick (sichern) nicht abbrechen
         log.exception("Komplett-Prüfung Spec #%s: unerwarteter Fehler", spec)
+        _werkzeug_fehler(
+            "capo.komplett_pruefung", "Komplett-Prüfung: unerwarteter Fehler", fehler, spec=spec, dry_run=dry_run
+        )
         zeilen.append(f"FEHLER: Komplett-Prüfung — unerwarteter Fehler ({type(fehler).__name__}: {fehler}).")
         return True
     if dry_run:
@@ -2796,8 +2814,9 @@ def _spec_schliessen_schritt(
         return [f"[Probe] Spec #{spec} schließen: spec-schliessen {spec}"]
     try:
         ergebnis = befund.spec_schliessen(repo, gh_repo, spec)
-    except Exception:  # der Tick (sichern) bricht nie ab
+    except Exception as fehler:  # der Tick (sichern) bricht nie ab
         log.exception("Spec #%s schließen: unerwarteter Fehler", spec)
+        _werkzeug_fehler("capo.spec_schliessen", "Spec schließen: unerwarteter Fehler", fehler, spec=spec)
         return []
     if not ergebnis.ok:
         log.warning("Spec #%s bleibt offen: %s", spec, " | ".join(ergebnis.zeilen))
@@ -2821,6 +2840,7 @@ def _hausmeister_schluss(spec: int, zustand: dict[str, Any], jetzt: datetime, dr
         rund = hausmeister.rundgang(loeschen=not dry_run)
     except Exception as fehler:  # Vertrag sagt „wirft nie“; der Tick (sichern) bricht nie ab
         log.exception("Hausmeister Spec #%s: unerwarteter Fehler", spec)
+        _werkzeug_fehler("capo.hausmeister", "Hausmeister: unerwarteter Fehler", fehler, spec=spec, dry_run=dry_run)
         rund = hausmeister.Rundgang(False, f"unerwarteter Fehler ({type(fehler).__name__}: {fehler})")
     if dry_run:
         if not rund.gelaufen:
