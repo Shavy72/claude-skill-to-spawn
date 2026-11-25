@@ -148,7 +148,7 @@ def staffel_hook_pfad(repo: Path = REPO) -> Path:
     return eigene if eigene.is_file() else STAFFEL_HOOK_SKILL
 
 
-#: Frage-Sperre (#321): Bau-Sessions fragen David nie (AskUserQuestion aus, Stop mit Frage → weiter).
+#: Frage-Sperre (#321): Bau-Sessions fragen den Menschen nie (AskUserQuestion aus, Stop mit Frage → weiter).
 #: Wortgleich mit dem Server-Template (setup_bau_server_push.sh): Claude Code legt identische Befehle
 #: zusammen, der Hook läuft auf dem Bau-Server so nur einmal. ``~`` lösen Git-Bash und Linux auf.
 FRAGE_SPERRE_BEFEHL = "node ~/.claude/hooks/smart-zone/staffel/frage-sperre.mjs"
@@ -413,9 +413,10 @@ def auf_blocker_warten(
 def warte_modus(args: argparse.Namespace) -> str | None:
     """Blocker-Warten vor dem Start (#906): ``"voll"``, ``"nur_offen"`` (``--sofort``) oder ``None``.
 
-    ``--umzug``, ``--resume`` und ``--probesitz`` setzen laufende Arbeit fort → kein Warten.
+    ``--umzug``, ``--resume``, ``--probesitz`` und Abschluss-Wiederanlauf (#282) setzen
+    laufende/fertige Arbeit fort → kein Warten.
     """
-    if args.umzug or args.resume or args.probesitz:
+    if args.umzug or args.resume or args.probesitz or getattr(args, "abschluss", False):
         return None
     return "nur_offen" if args.sofort else "voll"
 
@@ -661,7 +662,7 @@ def frage_sperre_befehl() -> str:
 def staffel_aktiv(konfig: dict) -> bool:
     """Staffel-Neustart an der Smart-Zone-Grenze erlaubt? ``staffel.aktiv`` in der Repo-Konfig.
 
-    Aus (David, 24.09.2026): Neustarts mitten im Deploy-Gate brachen Tests ab und verloren
+    Aus (Vorgabe des Menschen, 24.09.2026): Neustarts mitten im Deploy-Gate brachen Tests ab und verloren
     Kontext. Die Smart Zone regelt dann allein der Ticket-Schnitt vorab; die Session baut
     ihr Ticket bis zum Ende durch.
 
@@ -792,6 +793,32 @@ def auftrag_prompt(prompt: str, auftrag: str) -> str:
     )
 
 
+def wiederanlauf_prompt(prompt: str, hinweis: str, *, art: str = "") -> str:
+    """Wiederanlauf-Stand klar abgesetzt vor den Prompt (#282).
+
+    Ohne Hinweis bleibt der Prompt unverändert. Bei ``art == "abschluss"``: das Ticket ist
+    fertig gebaut — Schritt 1 (Blocker-Prüfung) und Neubau entfallen.
+    """
+    text = hinweis.strip()
+    if not text:
+        return prompt
+    # Keine Backticks/Code-Zäune (Windows-Notnagel shell=True, wie staffel_prompt).
+    if art == "abschluss":
+        return (
+            "## Wiederanlauf-Stand (Abschluss)\n"
+            f"{text}\n\n"
+            "Überspringe Schritt 1 (Blocker-Prüfung) und den Neubau: das Ticket ist "
+            "bereits gebaut. Hole ausschließlich die oben genannten Abschluss-Schritte "
+            "nach, belege sie und schließe die Session ab.\n\n"
+            f"---\n\n{prompt}"
+        )
+    return (
+        "## Wiederanlauf-Stand\n"
+        f"{text}\n\n"
+        f"---\n\n{prompt}"
+    )
+
+
 def staffel_prompt(prompt: str, handoff: Path, runde: int) -> str:
     """Startkontext der Folge-Session: Handoff-Inhalt vor dem Originalauftrag."""
     try:
@@ -816,10 +843,12 @@ def staffel_prompt(prompt: str, handoff: Path, runde: int) -> str:
 
 
 def resume_prompt(ticket: str) -> str:
-    """Kurzer Weiter-Text, wenn der Aufpasser eine Session mit ``--resume`` fortsetzt."""
+    """Kurzer Weiter-Text, wenn der Aufpasser eine Session mit ``--resume`` fortsetzt (#236, #288)."""
     return (
         f"Aufpasser: Weiter mit Ticket #{ticket} genau dort, wo du warst. "
-        "Ticket offen? weiterbauen; nichts zu tun? ScheduleWakeup."
+        "Ticket noch offen? weiterbauen (bei offenem Blocker oder Checkpoint: ScheduleWakeup); "
+        "Ticket fertig gebaut oder geschlossen (nichts zu tun)? Loop mit stop: true beenden und "
+        "Session sofort mit /exit schließen — kein ScheduleWakeup."
     )
 
 
@@ -1072,11 +1101,11 @@ def main() -> int:
     auftrag = args.auftrag or os.environ.get("BAU_AUFTRAG", "")
     umzug_teile = umzug_handoff_lesen(args.umzug) if args.umzug else None
 
-    def start_texte() -> tuple[str, str]:
-        """Die eine Stelle für den Start-Text (#281): ``(Grund-Prompt, erster Prompt)`` aus der
-        Vorlage, wie sie JETZT auf der Platte liegt. ``main`` ruft sie beim Start (Vorlage kaputt
-        → sofort Exit 2, ``--print-prompt``) und erneut im Moment des Loslassens — ein Fenster,
-        das stundenlang auf Blocker wartet, startet so mit der Regel von jetzt."""
+    def start_texte(lage_hinweis: str = "", lage_art: str = "") -> tuple[str, str]:
+        """Die eine Stelle für den Start-Text (#281, #282): ``(Grund-Prompt, erster Prompt)`` aus
+        der Vorlage, wie sie JETZT auf der Platte liegt. ``main`` ruft sie beim Start (Vorlage
+        kaputt → sofort Exit 2, ``--print-prompt``) und erneut im Moment des Loslassens — ein
+        Fenster, das stundenlang auf Blocker wartet, startet so mit der Regel von jetzt."""
         try:
             grund = (
                 probesitz.WEGWERF_PROMPT.format(ticket=ticket)
@@ -1091,6 +1120,8 @@ def main() -> int:
         if auftrag.strip():
             # Vor dem Prompt, damit auch jede Staffel-Runde den Auftrag dieser Runde sieht (#285).
             grund = auftrag_prompt(grund, auftrag)
+        if lage_hinweis.strip():
+            grund = wiederanlauf_prompt(grund, lage_hinweis, art=lage_art)
         if umzug_teile is not None:
             branch, _pfad, handoff_text = umzug_teile
             return grund, umzug_prompt(grund, handoff_text, branch, ticket)
@@ -1134,8 +1165,9 @@ def main() -> int:
 
     # Temp-Dateien
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    # #136: auf der Platte (temp_ordner), nicht auf der RAM-Platte des System-Temps
-    out = Path(temp_ordner.umgebung().get("TMPDIR") or tempfile.gettempdir())
+    # #136/#177: markierter Ticket-Temp-Ordner auf der Platte (temp_ordner.anlegen)
+    temp_umg = temp_ordner.umgebung(args.ticket, repo=GH_REPO, von="bau")
+    out = Path(temp_umg.get("TMPDIR") or tempfile.gettempdir())
     basis = out / f"{GH_REPO.rsplit('/', 1)[-1]}-bau"
     basis.mkdir(parents=True, exist_ok=True)
     # mkdtemp statt ``<ticket>-<stamp>``: zwei Starts desselben Tickets in derselben Sekunde
@@ -1225,11 +1257,14 @@ def main() -> int:
     # läuft und ob das Ticket offen ist; unbekannt → kein Start (fail-closed).
     # ``--ohne-prompt`` ist der respawn-Start (#431): die alte Session läuft bis Schritt e
     # weiter und hält die Sperre — also Ablösung (höchstens eine je Ticket).
+    start: startstelle.Entscheidung | None = None
     if not args.probesitz:
         start = startstelle.betreten(ticket, GH_REPO, REPO, abloesung=args.ohne_prompt)
         if not start.erlaubt:
             print(start.grund, flush=True)
             return start.exit_code
+    # Fertig gebaut mit offenem Abschluss (#282): kein Blocker-Warten, kein Neubau.
+    args.abschluss = start is not None and start.art == "abschluss"
     global _ECHTER_LAUF
     _ECHTER_LAUF = True  # ab hier echter Lauf (Ticket-Ende stößt den Hausmeister an)
 
@@ -1273,7 +1308,7 @@ def main() -> int:
     # Eine Session im Worktree darf nicht das Repo des Launchers erben (#205).
     os.environ.pop("TO_SPAWN_REPO", None)
     os.environ["CLAUDE_CODE_FORCE_SESSION_PERSISTENCE"] = "1"
-    os.environ.update(temp_ordner.umgebung())  # #136: Temp auf die Platte, nie die RAM-Platte
+    os.environ.update(temp_umg)  # #136/#177: markierter Ticket-Temp auf der Platte, nie die RAM-Platte
     # Klick-Sperre nur für lokal gespawnte Sessions (Windows, Maus-Müll im Eingabefeld).
     terminal_maus.maus_ruhig()
 
@@ -1294,18 +1329,46 @@ def main() -> int:
     staffel_datei.unlink(missing_ok=True)
     runde = 1
     fingerabdruck = ""
+    handoff_aktuell: Path | None = None
     session_id_setzen(cmd, out, ticket=ticket, runde=runde)
     while True:
         umgebung = staffel_umgebung(ticket, staffel_datei, runde, fingerabdruck, args.staffel_max)
         umgebung.update(bau_log_umgebung(ticket, runde, float(umgebung["BAU_SESSION_START"]), effort, spec))
         os.environ.update(umgebung)
         # Ticket während Blocker-Wartezeit oder Vorrunde geschlossen → keine neue Runde (#97);
-        # Stand unbekannt → laut Exit 2, nie still wie „geschlossen“ (#191).
+        # Stand unbekannt → laut Exit 2, nie still wie „geschlossen“ (#191);
+        # Wiederanlauf-Lage je Runde frisch als Vorsatz-Block (#282).
+        weiter: startstelle.Entscheidung | None = None
         if not args.probesitz:
             weiter = startstelle.weiter_entscheidung(ticket, REPO)
             if not weiter.erlaubt:
                 print(weiter.grund, file=sys.stderr if weiter.exit_code else sys.stdout, flush=True)
                 return weiter.exit_code
+        lage_hinweis = weiter.hinweis if weiter is not None else ""
+        lage_art = weiter.art if weiter is not None else ""
+        if runde == 1:
+            if lage_hinweis:
+                runden_grund, runden_erster = start_texte(lage_hinweis, lage_art)
+                (out / "prompt.txt").write_text(runden_grund, encoding="utf-8")
+                if mit_prompt:
+                    if args.resume:
+                        aktueller_prompt = (
+                            f"{lage_hinweis}\n\n{resume_prompt(ticket)}"
+                            if lage_art == "abschluss"
+                            else resume_prompt(ticket)
+                        )
+                    else:
+                        aktueller_prompt = runden_erster
+                    werkzeug.prompt_setzen(
+                        cmd, runner, aktueller_prompt, hat_prompt=True, interaktiv=not args.probesitz
+                    )
+        elif handoff_aktuell is not None:
+            runden_grund = wiederanlauf_prompt(prompt, lage_hinweis, art=lage_art)
+            aktueller_prompt = staffel_prompt(runden_grund, handoff_aktuell, runde)
+            werkzeug.prompt_setzen(
+                cmd, runner, aktueller_prompt, hat_prompt=mit_prompt, interaktiv=not args.probesitz
+            )
+            mit_prompt = True
         (out / f"prompt-runde{runde}.txt").write_text(aktueller_prompt, encoding="utf-8")
         code, umzug_daten = starte_session(cmd, umzug_datei)
         if umzug_daten is not None:
@@ -1343,17 +1406,13 @@ def main() -> int:
             return exit_code(code)
         runde += 1
         fingerabdruck = str(uebergabe.get("fingerabdruck") or "")
+        handoff_aktuell = handoff
         log.info(
             "Staffel-Runde %d · Handoff %s · Vorsession endete mit Exit %s",
             runde,
             handoff.name,
             code,
         )
-        aktueller_prompt = staffel_prompt(prompt, handoff, runde)
-        werkzeug.prompt_setzen(
-            cmd, runner, aktueller_prompt, hat_prompt=mit_prompt, interaktiv=not args.probesitz
-        )
-        mit_prompt = True
         session_id_setzen(cmd, out, str(uuid.uuid4()), ticket=ticket, runde=runde)
 
 

@@ -75,12 +75,20 @@ _ENTFAELLT = re.compile(
 _FORTSETZUNG = re.compile(
     r"[*_]*[ \t]*(?:\([^()\n]*\))?[ \t]*(?:[:—–,-][ \t]*[^\n]{1,80}?)?[ \t]*\.?[ \t]*"
 )
-#: Klammerzusatz und Grund dürfen nichts verneinen oder einfordern; „kein UI / keine Oberfläche“
+#: Vor der Aussage (selbe Tabellenzelle): offene Checkbox oder Frage-/Bedingungswort
+#: („- [ ] Klickweg entfällt“, „Ob Klickweg entfällt …“) zählt nicht als entfällt (#282).
+_VOR_DAGEGEN = re.compile(
+    r"\[\s\]|\b(?:ob|falls|wenn|sofern|vielleicht|eventuell|ggf|unklar|offen|prüf\w*|klär\w*|frage|behaupt\w*)\b",
+    re.IGNORECASE,
+)
+#: Klammerzusatz und Grund dürfen nichts verneinen, offenlassen oder bedingen; „kein UI / keine Oberfläche“
 #: ist ein Grund, keine Verneinung. „nur“ allein ist erlaubt („nur Doku“).
 _DAGEGEN = re.compile(
     r"\b(?:nicht|nie|nein|kein\w*(?!\s+(?:Oberfläche|UI|Frontend)\b)|nötig|erforderlich|pflicht\w*"
-    r"|trotzdem|aber|doch|jedoch|falsch|erst)\b|klick.?weg",
-    re.I,
+    r"|trotzdem|aber|doch|jedoch|falsch|erst"
+    r"|wenn|falls|sofern|sobald|bis|unklar|offen|fehlt|nachgeholt|nachholen|aussteh\w*|später|todo|tbd"
+    r"|prüf\w*|klär\w*|vielleicht|eventuell|ggf)\b|klick.?weg|live-beweis|live-klick",
+    re.IGNORECASE,
 )
 
 
@@ -88,6 +96,9 @@ def _entfaellt(zeile: str) -> bool:
     """Sagt die Zeile ausdrücklich und ohne Einschränkung, dass der Klickweg entfällt?"""
     treffer = _ENTFAELLT.search(zeile)
     if treffer is None:
+        return False
+    vor = zeile[: treffer.start()].rsplit("|", 1)[-1]
+    if _VOR_DAGEGEN.search(vor):
         return False
     rest = zeile[treffer.end() :].split("|", 1)[0].rstrip("\r\n")
     return _FORTSETZUNG.fullmatch(rest) is not None and not _DAGEGEN.search(rest)

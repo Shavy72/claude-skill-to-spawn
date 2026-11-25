@@ -239,7 +239,9 @@ def stufen(repo: Path, adapter_liste: tuple[Adapter, ...], basis: str, art: str 
     return vorn + [_pruefe(repo, adapter, basis, pfade, art) for adapter in erkannt]
 
 
-def eigener_befehl(repo: Path, befehl: str, art: str, zeitgrenze_s: float | None = None) -> Stufe:
+def eigener_befehl(
+    repo: Path, befehl: str, art: str, zeitgrenze_s: float | None = None, *, ticket: int | None = None
+) -> Stufe:
     """Eingerichteten Prüf-Befehl ``pruefung.<art>`` in bash laufen lassen: Exit 0 grün, sonst rot.
 
     Fehlt bash, ist das ein Gate-Fehler (Werkzeug), kein roter Code. ``zeitgrenze_s`` (#455):
@@ -252,7 +254,7 @@ def eigener_befehl(repo: Path, befehl: str, art: str, zeitgrenze_s: float | None
             ["-c", befehl],
             zeitgrenze_s=zeitgrenze_s,
             cwd=repo,
-            env={**os.environ, **temp_ordner.umgebung()},
+            env={**os.environ, **temp_ordner.umgebung(ticket, ordner=repo, von="pruef", wiederverwenden=True)},
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
