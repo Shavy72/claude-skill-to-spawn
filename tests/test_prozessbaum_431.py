@@ -8,6 +8,7 @@ die Tests laufen gegen echte Kindprozesse, nicht gegen Attrappen.
 from __future__ import annotations
 
 import ast
+import contextlib
 import os
 import signal
 import subprocess
@@ -22,7 +23,7 @@ import pytest
 WURZEL = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(WURZEL))
 
-from to_spawn import aufpasser, prozessbaum
+from to_spawn import aufpasser, prozessbaum, sitzungsjob  # noqa: E402
 
 WINDOWS = sys.platform == "win32"
 #: SIGKILL gibt es unter Windows nicht; dort beendet jedes Signal per ``TerminateProcess`` hart.
@@ -124,15 +125,19 @@ def starten() -> Iterator[Starter]:
     """Startet Prozesse wie ``_starten`` und räumt ihren ganzen Baum danach hart ab — auch,
     wenn eine Zusicherung im Test fehlschlägt. Bleibt etwas übrig, wird der Test rot."""
     wurzeln: list[tuple[int, int]] = []
+    jobs = contextlib.ExitStack()
 
     def _start(befehl: list[str]) -> subprocess.Popen[bytes]:
         proz = _starten(befehl)
+        # Windows: Job-Objekt erwischt auch Git-Bash-Waisen beim Blockende (#197).
+        jobs.enter_context(sitzungsjob.gebunden(proz))
         wurzeln.append((proz.pid, prozessbaum.prozesse().get(proz.pid, (0, "", 0))[2]))
         return proz
 
     try:
         yield _start
     finally:
+        jobs.close()
         ergebnisse = [_abraeumen(wurzel, start) for wurzel, start in wurzeln]
         reste = [pid for lebende, _ in ergebnisse for pid in lebende]
         unklar = [pid for _, offen in ergebnisse for pid in offen]

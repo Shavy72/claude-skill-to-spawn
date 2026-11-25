@@ -119,15 +119,21 @@ class Job:
 def gebunden(prozess: Any) -> Iterator[Job]:
     """Hält ``prozess`` samt allen Nachkommen für die Dauer des Blocks in einem Job (siehe oben)."""
     griff: int | None = None
-    pid = int(prozess.pid) if hasattr(prozess, "pid") else 0
+    pid = 0
     if _WINDOWS:
         bereits_beendet = callable(getattr(prozess, "poll", None)) and prozess.poll() is not None
         if not bereits_beendet:
             try:
+                pid = int(prozess.pid)
                 griff = _job_fuer(pid)
             except (OSError, AttributeError, TypeError, ValueError, ctypes.ArgumentError) as fehler:
                 # Ein Job-Fehler darf den Bau nie abbrechen — die Session läuft dann ohne Job.
-                log.warning("Job für Session %s nicht angelegt (%s) — ohne Job", pid, fehler)
+                log.warning("Job für Session %s nicht angelegt (%s) — ohne Job", getattr(prozess, "pid", "?"), fehler)
+    if pid == 0 and hasattr(prozess, "pid"):
+        try:
+            pid = int(prozess.pid)
+        except (TypeError, ValueError):
+            pid = 0
     job = Job(pid, griff)
     try:
         yield job

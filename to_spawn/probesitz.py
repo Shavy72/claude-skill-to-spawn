@@ -37,7 +37,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, TextIO
 
-from . import bau_log, config, melder, nest, prozessbaum, sitzung_env, starter, werkzeug
+from . import bau_log, config, melder, nest, prozessbaum, sitzung_env, sitzungsjob, starter, werkzeug
 
 log = logging.getLogger("to_spawn.probesitz")
 
@@ -603,24 +603,26 @@ def session_fahren(
         start = time.monotonic()
         beobachtung: str | None = None
         zeit_um = False
-        try:
-            while True:
-                try:
-                    prozess.wait(timeout=BEOBACHTUNGS_TAKT_S)
-                    break
-                except subprocess.TimeoutExpired:
-                    pass
-                if beobachtung is None:
-                    beobachtung = beobachter(ticket)
-                    if beobachtung and ausgabe:
-                        ausgabe.write(f"    Wegwerf-Session sichtbar: {beobachtung}\n")
-                        ausgabe.flush()
-                if time.monotonic() - start > zeitlimit_s:
-                    zeit_um = True
-                    prozess_beenden(prozess)
-                    break
-        finally:
-            prozess_beenden(prozess)
+        # Job hält den ganzen Baum, auch Git-Bash-Kinder; Blockende beendet den Rest (#122).
+        with sitzungsjob.gebunden(prozess):
+            try:
+                while True:
+                    try:
+                        prozess.wait(timeout=BEOBACHTUNGS_TAKT_S)
+                        break
+                    except subprocess.TimeoutExpired:
+                        pass
+                    if beobachtung is None:
+                        beobachtung = beobachter(ticket)
+                        if beobachtung and ausgabe:
+                            ausgabe.write(f"    Wegwerf-Session sichtbar: {beobachtung}\n")
+                            ausgabe.flush()
+                    if time.monotonic() - start > zeitlimit_s:
+                        zeit_um = True
+                        prozess_beenden(prozess)
+                        break
+            finally:
+                prozess_beenden(prozess)
     code = prozess.returncode
     return SessionLauf(code if code is not None else -1, beobachtung, zeit_um, protokoll.name)
 

@@ -26,6 +26,7 @@ from to_spawn import (  # noqa: E402
     config,
     melder,
     sitzung_env,
+    sitzungsjob,
     speicher,
     sperre,
     starter,
@@ -359,7 +360,10 @@ def sitzung(ablage: Ablage, *, probe: bool = False) -> int:
     terminal_maus.maus_ruhig(env)  # Klick-Sperre nur hier, nicht global (Windows)
     try:
         # Vordergrund im eigenen Fenster (braucht die Konsole) — kein Hintergrundstart.
-        return starter.starte([claude, *befehl[1:]], cwd=ablage.repo, env=env, check=False, warten=True).returncode
+        # Job hält den ganzen Baum, auch Git-Bash-Kinder; Blockende beendet den Rest (#122).
+        prozess = starter.starte([claude, *befehl[1:]], cwd=ablage.repo, env=env)
+        with sitzungsjob.gebunden(prozess):
+            return prozess.wait()
     finally:
         sperre.close()
 

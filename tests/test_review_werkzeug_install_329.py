@@ -221,8 +221,14 @@ def test_review_tests_laufen_in_wurzel_suite_mit(tmp_path: Path) -> None:
         for z in (SKILL / "skripte" / "suite.sh").read_text(encoding="utf-8").splitlines()
         if z.lstrip().startswith("exec ")
     ]
-    assert len(suite_zeilen) == 1 and "python -m pytest " in suite_zeilen[0]
-    assert "pytest tests" not in suite_zeilen[0]
+    pytest_zeilen = [z for z in suite_zeilen if "python -m pytest " in z]
+    assert len(pytest_zeilen) == 1 and "pytest tests" not in pytest_zeilen[0], suite_zeilen
+    assert all(z == pytest_zeilen[0] or "skripte/suite.py" in z for z in suite_zeilen), suite_zeilen
+    if any("skripte/suite.py" in z for z in suite_zeilen):
+        from skripte import suite as suite_laeufer
+
+        suite_py_dateien = {Path(p).as_posix() for p in suite_laeufer.sammle_dateien(SKILL, [])}
+        assert soll_dateien <= suite_py_dateien, sorted(soll_dateien - suite_py_dateien)
 
 
 def test_gitattributes_haelt_review_auf_lf() -> None:

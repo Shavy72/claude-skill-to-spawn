@@ -41,6 +41,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -59,6 +60,7 @@ from . import (
     gh,
     leitstand,
     manifest,
+    sitzungsjob,
     starter,
     ticket_zustand,
     waechter_lauf,
@@ -537,12 +539,31 @@ def starte_claude(cmd: list[str], repo: Path, prompt: str) -> tuple[int, str]:
         stdout=subprocess.PIPE,
         env=_kind_env(),
     )
-    try:
-        roh_aus, _ = proc.communicate(prompt.encode("utf-8"), timeout=_timeout_s())
-    except subprocess.TimeoutExpired:
-        waechter_lauf._beende(proc)
-        raise
-    ausgabe = (roh_aus or b"").decode("utf-8", errors="replace")
+    teile: list[bytes] = []
+
+    def _lesen() -> None:
+        if proc.stdout is not None:
+            teile.append(proc.stdout.read())
+
+    leser = threading.Thread(target=_lesen, daemon=True)
+    leser.start()
+    # Job hält den ganzen Baum, auch Git-Bash-Kinder; Blockende beendet den Rest (#122).
+    # ``proc.wait`` statt ``communicate``: ein erbendes Kind hält sonst ``stdout`` offen
+    # und verzögerte das Schließen des Jobs bis zum Ende des Kinds.
+    with sitzungsjob.gebunden(proc):
+        try:
+            if proc.stdin is not None:
+                try:
+                    proc.stdin.write(prompt.encode("utf-8"))
+                    proc.stdin.close()
+                except OSError:
+                    pass
+            proc.wait(timeout=_timeout_s())
+        except subprocess.TimeoutExpired:
+            waechter_lauf._beende(proc)
+            raise
+    leser.join(timeout=5)
+    ausgabe = b"".join(teile).decode("utf-8", errors="replace")
     if ausgabe:
         sys.stdout.write(ausgabe)
         if not ausgabe.endswith("\n"):
