@@ -301,6 +301,19 @@ def _spec_schliessen(args: argparse.Namespace) -> int:
     return 0 if ergebnis.ok else 1
 
 
+def _spec_pruefen(args: argparse.Namespace) -> int:
+    """Unterbefehl ``spec-pruefen`` (#405): prüft Spec auf Quelle-Zeile/(E<n>) je Modus."""
+    repo = config.repo_wurzel(_repo_aus_umgebung())
+    try:
+        text = manifest.lies_spec_text(repo, args.spec)
+    except ValueError as fehler:
+        print(f"FEHLER: {fehler}", file=sys.stderr)
+        return 1
+    ergebnis = manifest.pruefe_spec(text, config.lade(repo))
+    print(ergebnis.text())
+    return 0 if ergebnis.darf_schneiden else manifest.EXIT_WEIGERUNG
+
+
 def _blocker(args: argparse.Namespace) -> int:
     """Unterbefehl ``blocker`` (#267): Warte-Prüfung der Bau-Session, Regel nur in ``gh.blocker_erledigt``.
 
@@ -506,6 +519,8 @@ def verteilen(ap: argparse.ArgumentParser, args: argparse.Namespace) -> int:
         return _befund(args)
     if args.befehl == "spec-schliessen":
         return _spec_schliessen(args)
+    if args.befehl == "spec-pruefen":
+        return _spec_pruefen(args)
     if args.befehl == "anhaengen":
         return _anhaengen(args)
     if args.befehl == "umrechnen":

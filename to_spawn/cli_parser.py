@@ -130,6 +130,11 @@ def baue_parser() -> _Parser:
     p_regularien = unter.add_parser("regularien", help="Regularien des Manifests prüfen")
     p_regularien.add_argument("spec")
     _regularien_optionen(p_regularien)
+    p_spec_pruefen = unter.add_parser(
+        "spec-pruefen",
+        help="Spec auf Quelle-Zeile und (E<n>) prüfen (Exit 0 frei / 3 Stopp / 1 unlesbar, #405)",
+    )
+    p_spec_pruefen.add_argument("spec", help="Spec als Issue-Nummer, URL oder Dateipfad")
     # Prüf-Werkzeugkasten (#99); ``pruefen <S>`` (nur ein Argument) leitet auf ``regularien``.
     p_pruefen = unter.add_parser(
         "pruefen", help="Stand prüfen: Exit 0 grün, 1 rot, 2 Gate-Fehler, JSON-Zeile auf stdout"
